@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+data/
+*.log
+.DS_Store
+.env
+.env.local
+.trae/
+Thumbs.db
+
+# License 私钥仅发行侧本地保管，严禁入库
+build/license-private.pem

@@ -1,0 +1,5 @@
+// 内置 RSA 公钥（DER 格式 Base64 编码）
+// 由 scripts/generate-license-key.js 生成，与私钥配对
+// 私钥仅在发行侧保存，绝不能嵌入应用
+export const PUBLIC_KEY_DER_B64 =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqptuxYXOx+71Z4orwU+O/J6FjXa76E5Ot6cIv2NfAD1tmyD7eOH0fM9db05kuVawNQUldCeQLmhPNTNT3HekRhxWVNjISdNYfuJ5TldUasrbK/emLipMj3UWNiCNL0UYzoCp47TRclAGFDyvLyi/hFZ4lcyiakQruhRLaPE7pT0ecqkEoKXOLGY1gkNGxGBhJpejXOsfs2SfNwH+4fpMMZn2haCc+tm9Mf83YQLSeAncyn1zSh/5JyyB2UwyefxrBoxriHzzvjMYlZYvZ/YWLIXsc7z7I8tiVUA0deAtDWlBFFwdkI7NCLMWVt9kJLBTSDbjkqwckBfushpSXmHp3wIDAQAB'

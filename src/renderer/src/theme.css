@@ -1,0 +1,108 @@
+/* ─────────────────────────────────────────────────────────────
+   PocketAI 双主题变量体系
+   暗色（默认）= Catppuccin Mocha
+   亮色（html.light）= Catppuccin Latte
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  /* ── 基础层级（暗 / Mocha）── */
+  --color-bg: #11111b;              /* 最底层 Crust（unlock 页底） */
+  --color-bg-secondary: #1e1e2e;   /* 卡片层 Base */
+  --color-sidebar: #181825;        /* Mantle */
+  --color-surface: #1e1e2e;        /* Base */
+  --color-surface-hover: #262637;  /* 悬浮/高亮行 */
+  --color-border: #313244;         /* Surface0 */
+  --color-accent: #89b4fa;         /* Blue */
+  --color-on-accent: #11111b;      /* accent 按钮上的文字 */
+
+  /* ── 文字 ── */
+  --color-text: #cdd6f4;           /* Text */
+  --color-text-muted: #6c7086;     /* Overlay0 */
+
+  /* ── 半透明覆盖 ── */
+  --color-hover-overlay: rgba(255, 255, 255, 0.05);
+  --color-input-bg: rgba(0, 0, 0, 0.2);
+  --color-inline-code-bg: rgba(255, 255, 255, 0.1);
+  --color-shadow: rgba(0, 0, 0, 0.4);
+  --color-accent-soft: rgba(137, 180, 250, 0.14);
+  --color-modal-overlay: rgba(0, 0, 0, 0.55);
+
+  /* ── 状态语义色（Mocha）── */
+  --color-danger: #f38ba8;
+  --color-danger-bg: rgba(243, 139, 168, 0.12);
+  --color-success: #a6e3a1;
+  --color-success-bg: rgba(166, 227, 161, 0.12);
+  --color-warning: #f9e2af;
+  --color-warning-bg: rgba(249, 226, 175, 0.12);
+  --color-info: #89dceb;
+  --color-info-bg: rgba(137, 220, 235, 0.12);
+
+  /* ── highlight.js 代码块（暗）── */
+  --hljs-bg: #11111b;
+  --hljs-text: #cdd6f4;
+  --hljs-keyword: #cba6f7;
+  --hljs-string: #a6e3a1;
+  --hljs-number: #fab387;
+  --hljs-comment: #6c7086;
+  --hljs-title: #89b4fa;
+  --hljs-attr: #f9e2af;
+  --hljs-built_in: #89dceb;
+}
+
+html.light {
+  /* ── 基础层级（亮 / Latte）── */
+  --color-bg: #dce0e8;              /* Crust */
+  --color-bg-secondary: #ffffff;   /* 卡片用纯白，与页面底拉开层次 */
+  --color-sidebar: #e6e9ef;        /* Mantle */
+  --color-surface: #eff1f5;        /* Base */
+  --color-surface-hover: #e6e9ef;  /* Mantle */
+  --color-border: #bcc0cc;         /* Surface2 */
+  --color-accent: #1e66f5;         /* Blue */
+  --color-on-accent: #ffffff;
+
+  /* ── 文字 ── */
+  --color-text: #4c4f69;           /* Text */
+  --color-text-muted: #7c7f93;     /* Overlay0 */
+
+  /* ── 半透明覆盖 ── */
+  --color-hover-overlay: rgba(0, 0, 0, 0.04);
+  --color-input-bg: #ffffff;
+  --color-inline-code-bg: rgba(0, 0, 0, 0.06);
+  --color-shadow: rgba(0, 0, 0, 0.12);
+  --color-accent-soft: rgba(30, 102, 245, 0.12);
+  --color-modal-overlay: rgba(0, 0, 0, 0.4);
+
+  /* ── 状态语义色（Latte）── */
+  --color-danger: #d20f39;
+  --color-danger-bg: rgba(210, 15, 57, 0.08);
+  --color-success: #40a02b;
+  --color-success-bg: rgba(64, 160, 43, 0.08);
+  --color-warning: #df8e1d;
+  --color-warning-bg: rgba(223, 142, 29, 0.1);
+  --color-info: #04a5e5;
+  --color-info-bg: rgba(4, 165, 229, 0.1);
+
+  /* ── highlight.js 代码块（亮）── */
+  --hljs-bg: #ffffff;
+  --hljs-text: #4c4f69;
+  --hljs-keyword: #8839ef;
+  --hljs-string: #40a02b;
+  --hljs-number: #fe640b;
+  --hljs-comment: #8c8fa1;
+  --hljs-title: #1e66f5;
+  --hljs-attr: #df8e1d;
+  --hljs-built_in: #04a5e5;
+}
+
+/* ── 主题切换平滑过渡（不作用于 transform 等，避免布局动画副作用）── */
+body,
+button,
+input,
+textarea,
+select,
+aside,
+nav,
+.markdown-body pre,
+.markdown-body code {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}

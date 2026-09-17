@@ -1,0 +1,275 @@
+// 硬件信息采集（平台管家地基工具）
+//
+// Windows 说明：wmic 在 Windows 11 24H2+ 已被移除，因此统一改用 PowerShell CIM；
+// Win32_VideoController.AdapterRAM 是 uint32，>4GB 显存会溢出，
+// 故从注册表 HardwareInformation.qwMemorySize 读取真实显存。
+import os from 'node:os'
+import { execSync } from 'node:child_process'
+import type { HardwareInfo, GpuInfo, DiskInfo } from '../../shared/types'
+import { APP_ROOT } from '../portable'
+
+function getCpu() {
+  const cpus = os.cpus()
+  return {
+    model: cpus[0]?.model?.trim() || 'unknown',
+    cores: cpus.length
+  }
+}
+
+function getMemory() {
+  return {
+    total: os.totalmem(),
+    free: os.freemem()
+  }
+}
+
+// ─── PowerShell 辅助（base64 EncodedCommand，规避引号转义问题） ──────
+
+function runPowerShell(script: string): string | null {
+  try {
+    const b64 = Buffer.from(script, 'utf16le').toString('base64')
+    const out = execSync(`powershell -NoProfile -NonInteractive -EncodedCommand ${b64}`, {
+      encoding: 'utf8',
+      timeout: 15000,
+      windowsHide: true
+    })
+    return out.trim()
+  } catch {
+    return null
+  }
+}
+
+function parseJsonSafe<T>(text: string | null): T | null {
+  if (!text) return null
+  // 剥离 PowerShell 可能混入的 CLIXML/进度输出，截取首个 {...} 或 [...]
+  const candidates = [text.indexOf('['), text.indexOf('{')].filter((i) => i >= 0)
+  if (candidates.length === 0) return null
+  const start = Math.min(...candidates)
+  const end = Math.max(text.lastIndexOf(']'), text.lastIndexOf('}'))
+  if (end <= start) return null
+  try {
+    return JSON.parse(text.slice(start, end + 1)) as T
+  } catch {
+    return null
+  }
+}
+
+// ─── GPU ────────────────────────────────────────────────────────────
+
+interface RawGpu {
+  name: string
+  memory: number | null
+  driver: string | null
+}
+
+const GPU_PS_SCRIPT = `
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+$result = @()
+$gpus = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -and $_.Name -notmatch 'Basic Display|Hyper-V' })
+foreach ($g in $gpus) {
+  $mem = [uint64]$g.AdapterRAM
+  if ($g.PNPDeviceID) {
+    $cls = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}'
+    $matchId = $g.PNPDeviceID.ToLower()
+    $sub = Get-ChildItem $cls | Where-Object {
+      (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).MatchingDeviceId -eq $matchId
+    } | Select-Object -First 1
+    if ($sub) {
+      $qw = (Get-ItemProperty $sub.PSPath -ErrorAction SilentlyContinue).'HardwareInformation.qwMemorySize'
+      if ($qw -and [uint64]$qw -gt $mem) { $mem = [uint64]$qw }
+    }
+  }
+  $result += [pscustomobject]@{ name = $g.Name; memory = $mem; driver = $g.DriverVersion }
+}
+ConvertTo-Json -InputObject $result -Compress
+`
+
+function getGpusWin32(): GpuInfo[] {
+  const raw = parseJsonSafe<RawGpu[] | RawGpu>(runPowerShell(GPU_PS_SCRIPT))
+  if (!raw) return []
+  const list = Array.isArray(raw) ? raw : [raw]
+  return list
+    .filter((g) => g?.name)
+    .map((g) => ({
+      name: String(g.name),
+      memory: g.memory && g.memory > 0 ? g.memory : undefined,
+      driver: g.driver || undefined,
+      cuda: /nvidia/i.test(String(g.name)),
+      mps: false
+    }))
+}
+
+function getGpus(): GpuInfo[] {
+  try {
+    if (process.platform === 'win32') {
+      return getGpusWin32()
+    }
+    if (process.platform === 'darwin') {
+      const out = execSync('system_profiler SPDisplaysDataType', { encoding: 'utf8' })
+      const gpus: GpuInfo[] = []
+      const re = /Chipset Model:\s*(.+)/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(out))) {
+        gpus.push({ name: m[1].trim(), cuda: false, mps: /apple/i.test(m[1]) })
+      }
+      return gpus
+    }
+    // linux
+    const out = execSync('lspci 2>/dev/null | grep -i vga', { encoding: 'utf8' })
+    const gpus: GpuInfo[] = []
+    for (const line of out.trim().split('\n')) {
+      if (line) gpus.push({ name: line.trim(), cuda: /nvidia/i.test(line), mps: false })
+    }
+    return gpus
+  } catch {
+    return []
+  }
+}
+
+// ─── 运行介质（APP_ROOT 所在磁盘） ─────────────────────────────────
+
+interface RawDisk {
+  drive: string | null
+  label: string | null
+  fs: string | null
+  total: number | null
+  free: number | null
+  dtype: number | null // Win32_LogicalDisk.DriveType
+  medium: string | null // MSFT_PhysicalDisk.MediaType（数字或字符串）
+  bus: string | null // MSFT_PhysicalDisk.BusType（数字或字符串）
+}
+
+// MSFT_PhysicalDisk 枚举值映射
+const MEDIA_MAP: Record<string, string> = { '3': 'HDD', '4': 'SSD', '5': 'Unspecified' }
+const BUS_MAP: Record<string, string> = {
+  '1': 'SCSI',
+  '2': 'ATAPI',
+  '3': 'ATA',
+  '4': 'IEEE1394',
+  '5': 'SSA',
+  '6': 'FibreChannel',
+  '7': 'USB',
+  '8': 'RAID',
+  '9': 'iSCSI',
+  '10': 'SAS',
+  '11': 'SATA',
+  '12': 'SD',
+  '13': 'MMC',
+  '14': 'Virtual',
+  '15': 'FileBackedVirtual',
+  '17': 'NVMe'
+}
+
+function mapEnum(map: Record<string, string>, v: string | number | null | undefined): string | null {
+  if (v === null || v === undefined || v === '') return null
+  const s = String(v)
+  if (/^[0-9]+$/.test(s)) return map[s] ?? s
+  return s
+}
+
+function getDiskWin32(driveLetter: string): DiskInfo {
+  const info: DiskInfo = {
+    type: 'unknown',
+    removable: false,
+    drive: `${driveLetter}:`,
+    volumeLabel: null,
+    filesystem: null,
+    totalSpace: null,
+    freeSpace: null,
+    mediumType: null,
+    busType: null
+  }
+
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+$r = @{ drive = $null; label = $null; fs = $null; total = $null; free = $null; dtype = $null; medium = $null; bus = $null }
+$ld = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${driveLetter}:'" | Select-Object -First 1
+if ($ld) {
+  $r.drive = $ld.DeviceID
+  $r.label = $ld.VolumeName
+  $r.fs = $ld.FileSystem
+  $r.total = [string][uint64]$ld.Size
+  $r.free = [string][uint64]$ld.FreeSpace
+  $r.dtype = [int]$ld.DriveType
+  $letter = $ld.DeviceID.TrimEnd(':')
+  $part = Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($part) {
+    $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { [string]$_.DeviceId -eq [string]$part.DiskNumber } | Select-Object -First 1
+    if ($pd) {
+      $r.medium = [string]$pd.MediaType
+      $r.bus = [string]$pd.BusType
+    }
+  }
+}
+ConvertTo-Json -InputObject $r -Compress
+`
+  const raw = parseJsonSafe<RawDisk>(runPowerShell(script))
+  if (!raw) return info
+
+  info.volumeLabel = raw.label || null
+  info.filesystem = raw.fs || null
+  info.totalSpace = raw.total ? Number(raw.total) : null
+  info.freeSpace = raw.free ? Number(raw.free) : null
+  info.mediumType = mapEnum(MEDIA_MAP, raw.medium)
+  info.busType = mapEnum(BUS_MAP, raw.bus)
+
+  const isRemovable = raw.dtype === 2 || info.busType === 'USB'
+  if (isRemovable) {
+    info.type = 'usb'
+    info.removable = true
+  } else if (info.mediumType === 'SSD') {
+    info.type = 'ssd'
+  } else if (info.mediumType === 'HDD') {
+    info.type = 'hdd'
+  } else if (raw.dtype === 3) {
+    // 无法识别物理介质时沿用旧行为：本地盘按 SSD 展示
+    info.type = 'ssd'
+  }
+  return info
+}
+
+function getDisk(): DiskInfo {
+  try {
+    if (process.platform === 'win32') {
+      const drive = APP_ROOT.match(/^([A-Za-z]):/)?.[1]?.toUpperCase()
+      if (drive) return getDiskWin32(drive)
+      return { type: 'unknown', removable: false, drive: null, volumeLabel: null, filesystem: null, totalSpace: null, freeSpace: null, mediumType: null, busType: null }
+    }
+    const info: DiskInfo = {
+      type: 'unknown',
+      removable: false,
+      drive: null,
+      volumeLabel: null,
+      filesystem: null,
+      totalSpace: null,
+      freeSpace: null,
+      mediumType: null,
+      busType: null
+    }
+    if (process.platform === 'darwin') {
+      const out = execSync(`diskutil info "${APP_ROOT}" | grep "Removable Media"`, { encoding: 'utf8' })
+      info.removable = /Removable/i.test(out) && !/Fixed/i.test(out)
+      info.type = info.removable ? 'usb' : 'ssd'
+    }
+    return info
+  } catch {
+    return { type: 'unknown', removable: false, drive: null, volumeLabel: null, filesystem: null, totalSpace: null, freeSpace: null, mediumType: null, busType: null }
+  }
+}
+
+export function getHardwareInfo(): HardwareInfo {
+  return {
+    cpu: getCpu(),
+    memory: getMemory(),
+    gpus: getGpus(),
+    disk: getDisk(),
+    os: {
+      platform: process.platform,
+      release: os.release(),
+      arch: process.arch,
+      hostname: os.hostname()
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "asst-default",
+  "name": "通用问答",
+  "description": "默认助手。自由问答、头脑风暴，支持多模型同题对照。",
+  "avatar": "💬",
+  "systemPrompt": "",
+  "defaultProviderId": null,
+  "defaultModel": null,
+  "defaultParams": null,
+  "toolPermissions": [],
+  "skillIds": [],
+  "welcomeMessage": "你好，我是通用问答助手。可以直接向我提问，也可以在顶部添加多个模型进行同题对照。",
+  "isPinned": true
+}

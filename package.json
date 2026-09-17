@@ -1,0 +1,109 @@
+{
+  "name": "pocket-ai",
+  "version": "0.1.0",
+  "description": "PocketAI - 本地优先可随身携带的 AI 工作台",
+  "main": "out/main/index.js",
+  "author": "PocketAI",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CXL/PocketAI.git"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "dist": "electron-vite build && electron-builder --win",
+    "dist:portable": "electron-vite build && electron-builder --win portable",
+    "dist:nsis": "electron-vite build && electron-builder --win nsis",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "archiver": "^6.0.2",
+    "better-sqlite3": "^11.6.0",
+    "better-sqlite3-multiple-ciphers": "^12.11.1",
+    "cheerio": "^1.2.0",
+    "electron-store": "^8.2.0",
+    "hash-wasm": "^4.11.0",
+    "highlight.js": "^11.12.0",
+    "mammoth": "^1.12.3",
+    "pdf-parse": "^2.4.5",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "unzipper": "^0.12.5",
+    "webdav": "^5.10.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@types/archiver": "^8.0.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/unzipper": "^0.10.11",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-updater": "^6.8.9",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "ai.pocket.desktop",
+    "productName": "PocketAI",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3-multiple-ciphers/**/*.node",
+      "node_modules/better-sqlite3/**/*.node"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.cache",
+      "!**/node_modules/{@types,typescript}"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "PocketAI-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PocketAI",
+      "perMachine": false
+    },
+    "portable": {
+      "artifactName": "PocketAI-${version}-Portable-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "CXL",
+      "repo": "PocketAI",
+      "channel": "latest"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # 国内网络可取消注释以下两行加速 Electron + NSIS 资源下载
+          # ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          # ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+      - name: Build & Package (NSIS + Portable)
+        run: npm run dist -- --win --x64
+        env:
+          # electron-builder GitHub provider 需要 GH_TOKEN 才能上传 Release
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts for debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-files
+          path: dist/*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # 关键：electron-updater NSIS 更新需要 latest.yml + nsis.zip + blockmap
+          # portable exe 作为额外附件
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

@@ -1,0 +1,10 @@
+const { app } = require('electron')
+const path = require('node:path')
+const Database = require('better-sqlite3')
+const db = new Database(path.join(__dirname, '..', 'data', 'app.db'), { readonly: true, fileMustExist: true })
+const a = db.prepare("SELECT id, tool_permissions FROM assistants WHERE id = 'asst-coder'").get()
+console.log('asst-coder tool_permissions:', a.tool_permissions)
+const p = db.prepare("SELECT id, name FROM providers WHERE id = 'ollama-local'").get()
+console.log('provider:', p.id, p.name)
+db.close()
+try { app.quit() } catch (e) { process.exit(0) }

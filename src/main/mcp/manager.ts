@@ -1,0 +1,291 @@
+// MCP Server 生命周期管理（M4.1）
+// 基于 StdioJsonRpcClient 实现：spawn → initialize 握手 → tools/list → tools/call → shutdown
+import { EventEmitter } from 'node:events'
+import path from 'node:path'
+import fs from 'node:fs'
+import { StdioJsonRpcClient } from './json-rpc'
+import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
+import { EXTENSIONS_DIR } from '../portable'
+import type {
+  McpServerRecord,
+  McpServerRuntime,
+  McpServerStatus,
+  McpServerStatusEvent,
+  McpServerLogEvent,
+  ToolSchema
+} from '../../shared/types'
+
+const MCP_PROTOCOL_VERSION = '2024-11-05'
+const MCP_EXTENSIONS_DIR = path.join(EXTENSIONS_DIR, 'mcp')
+
+/** 工具调用超时 30s */
+const TOOL_CALL_TIMEOUT = 30_000
+/** 单次启动 initialize 握手超时 */
+const INIT_TIMEOUT = 15_000
+/** 进程退出后自动重启最大次数 */
+const MAX_AUTO_RESTART = 3
+
+interface RuntimeEntry {
+  record: McpServerRecord
+  client: StdioJsonRpcClient | null
+  status: McpServerStatus
+  tools: ToolSchema[]
+  lastError: string | null
+  autoRestarts: number
+  logBuffer: string[] // 最近的 stderr 日志（环形）
+  startToken: number // 启动 token，用于异步竞争保护
+}
+
+const LOG_BUFFER_SIZE = 200
+
+class McpManager extends EventEmitter {
+  private runtimes = new Map<string, RuntimeEntry>()
+
+  /** 列出所有持久化记录（不含运行时状态） */
+  listRecords(): McpServerRecord[] {
+    return mcpServerRepo.list()
+  }
+
+  getRecord(id: string): McpServerRecord | null {
+    return mcpServerRepo.get(id)
+  }
+
+  /** 列出所有运行时状态（前端订阅用） */
+  listRuntimes(): McpServerRuntime[] {
+    return mcpServerRepo.list().map((r) => this.toRuntime(r))
+  }
+
+  private toRuntime(r: McpServerRecord): McpServerRuntime {
+    const entry = this.runtimes.get(r.id)
+    return {
+      ...r,
+      status: entry?.status ?? 'stopped',
+      tools: entry?.tools ?? [],
+      lastError: entry?.lastError ?? null,
+      pid: entry?.client?.pid
+    }
+  }
+
+  /** 启动 MCP Server：spawn → initialize 握手 → tools/list */
+  async start(id: string): Promise<McpServerRuntime> {
+    const record = mcpServerRepo.get(id)
+    if (!record) throw new Error(`MCP Server 不存在: ${id}`)
+
+    // 已运行则跳过
+    const existing = this.runtimes.get(id)
+    if (existing && existing.client && existing.status === 'running') {
+      return this.toRuntime(record)
+    }
+
+    if (record.transport === 'http') {
+      // v1 不实现 HTTP transport，留待 v2
+      throw new Error('v1 暂不支持 HTTP 传输的 MCP Server')
+    }
+
+    if (!record.command) throw new Error('缺少 stdio command')
+
+    // 准备 cwd：优先 extensions/mcp/{serverId}/
+    const serverCwd = path.join(MCP_EXTENSIONS_DIR, record.id)
+    if (!fs.existsSync(serverCwd)) {
+      fs.mkdirSync(serverCwd, { recursive: true })
+    }
+
+    const startToken = (existing?.startToken ?? 0) + 1
+    const entry: RuntimeEntry = {
+      record,
+      client: null,
+      status: 'starting',
+      tools: [],
+      lastError: null,
+      autoRestarts: existing?.autoRestarts ?? 0,
+      logBuffer: existing?.logBuffer ?? [],
+      startToken
+    }
+    this.runtimes.set(id, entry)
+    this.emitStatus(id, 'starting')
+
+    const client = new StdioJsonRpcClient({
+      command: record.command,
+      args: record.args,
+      env: record.env,
+      cwd: serverCwd,
+      requestTimeout: TOOL_CALL_TIMEOUT,
+      onLog: (stream, line) => this.handleLog(id, stream, line),
+      onExit: (code, signal) => this.handleExit(id, code, signal, startToken)
+    })
+
+    try {
+      await client.spawn()
+      entry.client = client
+
+      // initialize 握手
+      const initResult = await client.request<any>(
+        'initialize',
+        {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: 'PocketAI', version: '0.1.0' }
+        },
+        INIT_TIMEOUT
+      )
+      // 兼容 server 返回的 protocolVersion（v1 不强制校验版本一致性）
+      void initResult
+
+      // initialized 通知
+      client.notify('notifications/initialized')
+
+      // 拉取工具列表
+      const toolsResult = await client.request<{ tools: any[] }>('tools/list', {}, INIT_TIMEOUT)
+      entry.tools = (toolsResult?.tools ?? []).map((t) => this.normalizeMcpTool(t, id))
+      entry.status = 'running'
+      entry.lastError = null
+      this.emitStatus(id, 'running')
+      return this.toRuntime(record)
+    } catch (e) {
+      entry.status = 'error'
+      entry.lastError = (e as Error).message
+      entry.client = null
+      // 出错时关闭进程（如果已 spawn）
+      client.shutdown().catch(() => {})
+      this.emitStatus(id, 'error', entry.lastError)
+      throw e
+    }
+  }
+
+  /** 停止 MCP Server */
+  async stop(id: string): Promise<void> {
+    const entry = this.runtimes.get(id)
+    if (!entry || !entry.client) {
+      if (entry) {
+        entry.status = 'stopped'
+        this.emitStatus(id, 'stopped')
+      }
+      return
+    }
+    const client = entry.client
+    entry.client = null
+    entry.status = 'stopped'
+    entry.tools = []
+    this.emitStatus(id, 'stopped')
+    await client.shutdown().catch(() => {})
+  }
+
+  async restart(id: string): Promise<McpServerRuntime> {
+    await this.stop(id)
+    return this.start(id)
+  }
+
+  /** 列出某 MCP Server 的工具（要求已启动） */
+  async listTools(id: string): Promise<ToolSchema[]> {
+    const entry = this.runtimes.get(id)
+    if (!entry || !entry.client || entry.status !== 'running') {
+      throw new Error('MCP Server 未运行，请先启动')
+    }
+    return entry.tools
+  }
+
+  /** 调用工具 */
+  async callTool(id: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+    const entry = this.runtimes.get(id)
+    if (!entry || !entry.client || entry.status !== 'running') {
+      throw new Error('MCP Server 未运行')
+    }
+    const result = await entry.client.request<any>(
+      'tools/call',
+      { name, arguments: args ?? {} },
+      TOOL_CALL_TIMEOUT
+    )
+    return result
+  }
+
+  /** 停止所有运行中的 MCP Server（应用退出时调用） */
+  async stopAll(): Promise<void> {
+    const ids = Array.from(this.runtimes.keys())
+    await Promise.allSettled(ids.map((id) => this.stop(id)))
+  }
+
+  /** 把 MCP 协议返回的 tool 转成统一 ToolSchema */
+  private normalizeMcpTool(raw: any, serverId: string): ToolSchema {
+    const name: string = raw?.name ?? 'unknown'
+    return {
+      id: `mcp:${serverId}:${name}`,
+      name,
+      description: raw?.description ?? '',
+      parameters: (raw?.inputSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>,
+      source: 'mcp',
+      permission: 'auto', // MCP 工具默认 auto；后续可按名字匹配 confirm 列表
+      mcpServerId: serverId
+    }
+  }
+
+  private handleLog(serverId: string, stream: 'stdout' | 'stderr', line: string): void {
+    const entry = this.runtimes.get(serverId)
+    if (!entry) return
+    entry.logBuffer.push(`[${stream}] ${line}`)
+    if (entry.logBuffer.length > LOG_BUFFER_SIZE) {
+      entry.logBuffer.shift()
+    }
+    const evt: McpServerLogEvent = {
+      serverId,
+      stream,
+      line,
+      timestamp: Date.now()
+    }
+    this.emit('log', evt)
+  }
+
+  private handleExit(id: string, code: number | null, signal: NodeJS.Signals | null, startToken: number): void {
+    const entry = this.runtimes.get(id)
+    if (!entry) return
+    // 若是新的 start 流程触发的退出，忽略
+    if (entry.startToken !== startToken) return
+    if (entry.status === 'stopped') return // 主动停止导致的退出
+
+    entry.client = null
+    entry.tools = []
+
+    // 自动重启（最多 3 次）
+    if (entry.autoRestarts < MAX_AUTO_RESTART) {
+      entry.autoRestarts++
+      entry.status = 'starting'
+      entry.lastError = `进程意外退出 (code=${code}, signal=${signal?.toString() ?? 'null'})，第 ${entry.autoRestarts} 次自动重启`
+      this.emitStatus(id, 'starting', entry.lastError)
+      // 异步重启，不阻塞 exit 回调
+      this.start(id).catch((e) => {
+        // 失败由 start 内部已 emit error
+        void e
+      })
+      return
+    }
+
+    entry.status = 'error'
+    entry.lastError = `进程退出且已达自动重启上限 (code=${code}, signal=${signal?.toString() ?? 'null'})`
+    this.emitStatus(id, 'error', entry.lastError)
+  }
+
+  private emitStatus(id: string, status: McpServerStatus, lastError?: string | null): void {
+    const entry = this.runtimes.get(id)
+    const evt: McpServerStatusEvent = {
+      serverId: id,
+      status,
+      tools: entry?.tools ?? [],
+      lastError: lastError ?? entry?.lastError ?? null,
+      pid: entry?.client?.pid
+    }
+    this.emit('status', evt)
+  }
+
+  /** 订阅状态变化 */
+  onStatus(handler: (e: McpServerStatusEvent) => void): () => void {
+    this.on('status', handler)
+    return () => this.off('status', handler)
+  }
+
+  /** 订阅日志 */
+  onLog(handler: (e: McpServerLogEvent) => void): () => void {
+    this.on('log', handler)
+    return () => this.off('log', handler)
+  }
+}
+
+export const mcpManager = new McpManager()
