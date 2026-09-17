@@ -2,13 +2,19 @@
 // 聚合 内置工具 + MCP 工具，按助手 toolPermissions 过滤；提供统一执行入口
 
 import { BUILTIN_TOOLS } from './builtin'
+import { getFsTools } from './fs-tools'
 import { mcpManager } from '../mcp/manager'
 import type { ToolSchema, ToolResult } from '../../shared/types'
 
 class ToolRegistry {
+  /** 所有内置工具（含按配置动态注册的 fs.* 工具） */
+  private listBuiltinTools() {
+    return [...BUILTIN_TOOLS, ...getFsTools()]
+  }
+
   /** 列出所有内置工具的 schema */
   listBuiltin(): ToolSchema[] {
-    return BUILTIN_TOOLS.map((t) => t.schema)
+    return this.listBuiltinTools().map((t) => t.schema)
   }
 
   /** 列出所有已启动 MCP Server 的工具 schema */
@@ -76,7 +82,7 @@ class ToolRegistry {
 
     try {
       if (schema.source === 'builtin') {
-        const builtin = BUILTIN_TOOLS.find((t) => t.schema.id === schema.id)
+        const builtin = this.listBuiltinTools().find((t) => t.schema.id === schema.id)
         if (!builtin) {
           return { toolCallId: '', name: toolName, content: '内置工具未注册', isError: true }
         }

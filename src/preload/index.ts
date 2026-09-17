@@ -194,6 +194,10 @@ const api = {
   // ---------- Work Agent ----------
   abortAgent: (requestId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.AGENT_ABORT, requestId),
+  getAgentWorkspaceDir: (): Promise<string> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_WORKSPACE_DIR),
+  pickAgentWorkspaceDir: (): Promise<string> =>
+    ipcRenderer.invoke(IPC.AGENT_PICK_WORKSPACE_DIR),
 
   onAgentStep: (handler: (e: AgentStepEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: AgentStepEvent) => handler(data)

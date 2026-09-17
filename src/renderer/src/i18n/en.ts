@@ -233,6 +233,11 @@ export const en: Record<string, string> = {
   'agent.finalAnswer': 'Final answer',
   'agent.thinking': 'Thinking…',
   'agent.unknownError': 'Unknown error',
+  'agent.noModelsHint': 'No models fetched for this provider yet',
+  'agent.fetchModels': 'Fetch models',
+  'agent.fetching': 'Fetching…',
+  'agent.workspaceNone': 'Not set',
+  'agent.workspacePickTip': 'Pick the folder the Agent may read/write (fs_list / fs_read / fs_write only work inside it)',
 
   // ── Steward ──
   'steward.subtitle': 'Device capability profile · Steward Phase 0 foundation',

@@ -516,6 +516,8 @@ export const IPC = {
   AGENT_CHUNK_EVENT: 'agent:chunk-event', // 流式 thought 文本增量
   AGENT_DONE_EVENT: 'agent:done-event',
   AGENT_ERROR_EVENT: 'agent:error-event',
+  AGENT_GET_WORKSPACE_DIR: 'agent:get-workspace-dir',
+  AGENT_PICK_WORKSPACE_DIR: 'agent:pick-workspace-dir',
 
   // 工具（只读）
   TOOL_LIST_AVAILABLE: 'tool:list-available', // 列出所有可用工具（按助手机器权限可在外层过滤）

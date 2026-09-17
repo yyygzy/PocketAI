@@ -233,6 +233,11 @@ export const zh: Record<string, string> = {
   'agent.finalAnswer': '最终回答',
   'agent.thinking': '思考中…',
   'agent.unknownError': '未知错误',
+  'agent.noModelsHint': '该 Provider 尚未拉取模型列表',
+  'agent.fetchModels': '拉取模型',
+  'agent.fetching': '拉取中…',
+  'agent.workspaceNone': '未设置',
+  'agent.workspacePickTip': '选择 Agent 可读写的授权目录（fs_list / fs_read / fs_write 仅在此目录内生效）',
 
   // ── 平台管家 ──
   'steward.subtitle': '本机能力画像 · 平台管家 Phase 0 地基',

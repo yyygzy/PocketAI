@@ -1,7 +1,8 @@
 // 内置工具（M3.3 / M4.3）
 // v1 实现：time.now / calculator / web.fetch
-// 其它（web.search / file.read / file.write / calendar.read）保留 schema 但执行时报"未配置"，
-// 留作后续扩展点（搜索 API、文件授权目录、ICS 解析等）。
+// 文件读写（fs.list / fs.read / fs.write）在 fs-tools.ts，按工作目录配置动态注册。
+// 其它（web.search / calendar.read）保留 schema 但执行时报"未配置"，
+// 留作后续扩展点（搜索 API、ICS 解析等）。
 
 import type { ToolSchema } from '../../shared/types'
 
@@ -124,33 +125,6 @@ const webSearchTool = placeholder(
   }
 )
 
-const fileReadTool = placeholder(
-  'file.read',
-  'file_read',
-  '读取应用授权目录下的文件内容（v1：仅 data/ 目录下）。参数：path (string，相对 data 目录)。',
-  {
-    type: 'object',
-    properties: { path: { type: 'string' } },
-    required: ['path'],
-    additionalProperties: false
-  }
-)
-
-const fileWriteTool = placeholder(
-  'file.write',
-  'file_write',
-  '写入文件到应用 data 目录。需用户确认。参数：path (string)，content (string)。',
-  {
-    type: 'object',
-    properties: {
-      path: { type: 'string' },
-      content: { type: 'string' }
-    },
-    required: ['path', 'content'],
-    additionalProperties: false
-  }
-)
-
 const calendarReadTool = placeholder(
   'calendar.read',
   'calendar_read',
@@ -168,8 +142,6 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   calculatorTool,
   webFetchTool,
   webSearchTool,
-  fileReadTool,
-  fileWriteTool,
   calendarReadTool
 ]
 

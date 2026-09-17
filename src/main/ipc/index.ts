@@ -30,6 +30,7 @@ import { detectSourceType } from '../knowledge/parsers'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
 import { mcpManager } from '../mcp/manager'
 import { toolRegistry } from '../tools/registry'
+import { getWorkspaceDir, setWorkspaceDir } from '../tools/fs-tools'
 import { licenseService } from '../license/license'
 import { lockService } from '../lock/lock'
 import { healthService } from '../health/health'
@@ -408,6 +409,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.AGENT_ABORT, (_e, requestId: string) => {
     chatService.abort(requestId)
     return { ok: true }
+  })
+
+  // Agent 工作目录（fs_list/fs_read/fs_write 的安全边界）
+  ipcMain.handle(IPC.AGENT_GET_WORKSPACE_DIR, () => getWorkspaceDir())
+  ipcMain.handle(IPC.AGENT_PICK_WORKSPACE_DIR, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+    const result = await dialog.showOpenDialog(win!, {
+      title: '选择 Agent 工作目录 / Select Agent Workspace',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return getWorkspaceDir()
+    setWorkspaceDir(result.filePaths[0])
+    console.log('[agent] 工作目录已设置:', result.filePaths[0])
+    return getWorkspaceDir()
   })
 
   // ---------- License 授权 ----------

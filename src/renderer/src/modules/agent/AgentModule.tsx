@@ -428,6 +428,8 @@ const AgentPanel: React.FC = () => {
   const [assistantId, setAssistantId] = useState<string>('')
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
+  const [workspaceDir, setWorkspaceDir] = useState('')
+  const [fetchingModels, setFetchingModels] = useState(false)
   const requestIdRef = useRef<string>('')
   const stepBufRef = useRef<Map<string, { msg: AgentMessage; text: string }>>(new Map())
 
@@ -436,6 +438,7 @@ const AgentPanel: React.FC = () => {
       setProviders(ps.filter((p) => p.enabled))
       setAssistants(as_)
     })
+    window.pocketai.getAgentWorkspaceDir().then(setWorkspaceDir)
   }, [])
 
   useEffect(() => {
@@ -634,6 +637,24 @@ const AgentPanel: React.FC = () => {
     setRunning(false)
   }
 
+  const handlePickWorkspace = async () => {
+    const dir = await window.pocketai.pickAgentWorkspaceDir()
+    setWorkspaceDir(dir)
+  }
+
+  const handleFetchModels = async () => {
+    if (!providerId || fetchingModels) return
+    setFetchingModels(true)
+    try {
+      const models = await window.pocketai.fetchModels(providerId)
+      setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, models } : p)))
+    } catch {
+      // 拉取失败不阻断（Provider 配置问题在设置页有完整报错）
+    } finally {
+      setFetchingModels(false)
+    }
+  }
+
   return (
     <div className="flex gap-3 h-full">
       {/* 左：会话区（助手选择 + 新会话 + 历史会话） */}
@@ -707,7 +728,7 @@ const AgentPanel: React.FC = () => {
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          {selectedProvider && selectedProvider.models.length > 0 && (
+          {selectedProvider && selectedProvider.models.length > 0 ? (
             <select
               className="select-mini flex-1 min-w-0"
               value={model}
@@ -718,7 +739,31 @@ const AgentPanel: React.FC = () => {
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>
-          )}
+          ) : selectedProvider ? (
+            <>
+              <span className="text-xs text-[var(--color-text-muted)] flex-1 min-w-0 truncate">
+                {t('agent.noModelsHint')}
+              </span>
+              <button
+                className="btn-ghost text-xs shrink-0"
+                disabled={fetchingModels}
+                onClick={handleFetchModels}
+              >
+                {fetchingModels ? t('agent.fetching') : t('agent.fetchModels')}
+              </button>
+            </>
+          ) : null}
+          <button
+            className="btn-ghost text-xs shrink-0 max-w-[180px]"
+            onClick={handlePickWorkspace}
+            title={workspaceDir || t('agent.workspacePickTip')}
+          >
+            <span className="block truncate">
+              📁 {workspaceDir
+                ? workspaceDir.split(/[\\/]/).filter(Boolean).pop() || workspaceDir
+                : t('agent.workspaceNone')}
+            </span>
+          </button>
         </div>
 
         {/* 消息流 */}
