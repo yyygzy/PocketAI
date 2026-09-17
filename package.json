@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/CXL/PocketAI.git"
+    "url": "https://github.com/yyygzy/PocketAI.git"
   },
   "scripts": {
     "dev": "electron-vite dev",
@@ -101,7 +101,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "CXL",
+      "owner": "yyygzy",
       "repo": "PocketAI",
       "channel": "latest"
     }
