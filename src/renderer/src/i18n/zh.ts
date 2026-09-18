@@ -239,6 +239,28 @@ export const zh: Record<string, string> = {
   'agent.workspaceNone': '未设置',
   'agent.workspacePickTip': '选择 Agent 可读写的授权目录（fs_list / fs_read / fs_write 仅在此目录内生效）',
 
+  // 快捷浮窗
+  'set.popup': '快捷浮窗',
+  'popup.quickTitle': '快捷问答浮窗',
+  'popup.quickHint': '任意界面按快捷键，在置顶小窗中直接提问',
+  'popup.selectionTitle': '选区助手',
+  'popup.selectionHint': '在任意应用中选中文本后按快捷键，可快速翻译 / 总结 / 润色 / 提问',
+  'popup.settingsNote': '若快捷键无效，可能与其他软件冲突；关闭对应开关即可停用。',
+  'popup.titleQuick': '快捷问答',
+  'popup.titleSelection': '选区助手',
+  'popup.newChat': '新对话',
+  'popup.close': '关闭 (Esc)',
+  'popup.noProvider': '暂无可用模型服务',
+  'popup.quickEmptyHint': '输入问题，Enter 发送，Shift+Enter 换行；Esc 隐藏窗口',
+  'popup.selectionEmptyHint': '点击上方动作芯片处理选中文本，或直接在下方输入框追问',
+  'popup.inputPlaceholder': '输入消息，Enter 发送…',
+  'popup.stop': '停止',
+  'popup.send': '发送',
+  'popup.act.translate': '🌐 翻译',
+  'popup.act.summary': '📋 总结',
+  'popup.act.polish': '✨ 润色',
+  'popup.act.ask': '💬 就此提问',
+
   // ── 平台管家 ──
   'steward.subtitle': '本机能力画像 · 平台管家 Phase 0 地基',
   'steward.recheck': '重新检测',

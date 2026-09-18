@@ -239,6 +239,28 @@ export const en: Record<string, string> = {
   'agent.workspaceNone': 'Not set',
   'agent.workspacePickTip': 'Pick the folder the Agent may read/write (fs_list / fs_read / fs_write only work inside it)',
 
+  // Quick popup
+  'set.popup': 'Quick Popup',
+  'popup.quickTitle': 'Quick-ask popup',
+  'popup.quickHint': 'Press the hotkey in any app to ask from a pinned mini window',
+  'popup.selectionTitle': 'Selection assistant',
+  'popup.selectionHint': 'Select text in any app, press the hotkey to translate / summarize / polish / ask',
+  'popup.settingsNote': 'If a hotkey does not work, another app may own it; toggle off to disable.',
+  'popup.titleQuick': 'Quick Ask',
+  'popup.titleSelection': 'Selection Assistant',
+  'popup.newChat': 'New chat',
+  'popup.close': 'Close (Esc)',
+  'popup.noProvider': 'No model provider available',
+  'popup.quickEmptyHint': 'Type a question — Enter to send, Shift+Enter for newline, Esc to hide',
+  'popup.selectionEmptyHint': 'Use an action chip above to process the selected text, or ask below',
+  'popup.inputPlaceholder': 'Type a message, Enter to send…',
+  'popup.stop': 'Stop',
+  'popup.send': 'Send',
+  'popup.act.translate': '🌐 Translate',
+  'popup.act.summary': '📋 Summarize',
+  'popup.act.polish': '✨ Polish',
+  'popup.act.ask': '💬 Ask about it',
+
   // ── Steward ──
   'steward.subtitle': 'Device capability profile · Steward Phase 0 foundation',
   'steward.recheck': 'Re-scan',

@@ -199,6 +199,24 @@ const api = {
   pickAgentWorkspaceDir: (): Promise<string> =>
     ipcRenderer.invoke(IPC.AGENT_PICK_WORKSPACE_DIR),
 
+  // ---------- 快捷浮窗（快捷问答 / 选区助手） ----------
+  hidePopup: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.POPUP_HIDE),
+  getPopupPayload: (): Promise<import('../shared/types').PopupPayload | null> =>
+    ipcRenderer.invoke(IPC.POPUP_GET_PAYLOAD),
+  getPopupConfig: (): Promise<import('../shared/types').PopupConfig> =>
+    ipcRenderer.invoke(IPC.POPUP_GET_CONFIG),
+  setPopupConfig: (
+    patch: Partial<import('../shared/types').PopupConfig>
+  ): Promise<import('../shared/types').PopupConfig> =>
+    ipcRenderer.invoke(IPC.POPUP_SET_CONFIG, patch),
+  onPopupPayload: (handler: (e: import('../shared/types').PopupPayload) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: import('../shared/types').PopupPayload) =>
+      handler(data)
+    ipcRenderer.on(IPC.POPUP_PAYLOAD_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.POPUP_PAYLOAD_EVENT, listener)
+  },
+
   onAgentStep: (handler: (e: AgentStepEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: AgentStepEvent) => handler(data)
     ipcRenderer.on(IPC.AGENT_STEP_EVENT, listener)

@@ -34,6 +34,7 @@ import { appConfigRepo } from './db/repositories/app-config.repo'
 import { licenseService } from './license/license'
 import { initUpdateManager } from './update-manager'
 import { buildAppMenu } from './menu'
+import { initPopup } from './popup'
 
 app.setPath('userData', path.join(DATA_DIR, 'userdata'))
 app.setPath('sessionData', path.join(DATA_DIR, 'session'))
@@ -255,6 +256,9 @@ async function boot(): Promise<void> {
   )
 
   registerIpcHandlers()
+
+  // 快捷浮窗（快捷问答 / 选区助手）：全局快捷键 + IPC
+  initPopup()
 
   // 阶段 4：License 验证（仅当存在 license.lic 时）
   try {

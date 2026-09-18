@@ -46,6 +46,11 @@ export const SettingsModule: React.FC = () => {
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.popup')}</h3>
+          <PopupPanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
           <LicensePanel lic={lic} onChange={() => window.pocketai.getLicenseStatus().then(setLic)} />
         </div>
@@ -554,6 +559,73 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
           {t('lic.hint')}
         </p>
       )}
+    </div>
+  )
+}
+
+// ─── 快捷浮窗面板 ─────────────────────────────────────────────────
+
+const PopupPanel: React.FC = () => {
+  const { t } = useI18n()
+  const [cfg, setCfg] = useState<any>(null)
+
+  useEffect(() => {
+    window.pocketai.getPopupConfig().then(setCfg)
+  }, [])
+
+  if (!cfg) {
+    return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
+  }
+
+  const fmtAccel = (a: string) =>
+    a.replace('CommandOrControl', process.platform === 'darwin' ? '⌘' : 'Ctrl').replace(/\+/g, ' + ')
+
+  const toggle = async (key: 'quickEnabled' | 'selectionEnabled') => {
+    const next = { ...cfg, [key]: !cfg[key] }
+    setCfg(next) // 乐观更新
+    try {
+      const saved = await window.pocketai.setPopupConfig({ [key]: !cfg[key] })
+      setCfg(saved)
+    } catch {
+      setCfg(cfg)
+    }
+  }
+
+  const rows: Array<{ key: 'quickEnabled' | 'selectionEnabled'; title: string; hint: string; accel: string }> = [
+    { key: 'quickEnabled', title: t('popup.quickTitle'), hint: t('popup.quickHint'), accel: cfg.quickAccelerator },
+    { key: 'selectionEnabled', title: t('popup.selectionTitle'), hint: t('popup.selectionHint'), accel: cfg.selectionAccelerator }
+  ]
+
+  return (
+    <div className="space-y-2 text-xs">
+      {rows.map((r) => (
+        <div key={r.key} className="flex items-center justify-between gap-3 py-1">
+          <div className="min-w-0">
+            <div className="text-[var(--color-text)]">
+              {r.title}
+              <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded font-mono bg-[var(--color-sidebar)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+                {fmtAccel(r.accel)}
+              </span>
+            </div>
+            <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{r.hint}</div>
+          </div>
+          <button
+            role="switch"
+            aria-checked={cfg[r.key]}
+            onClick={() => toggle(r.key)}
+            className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${
+              cfg[r.key] ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                cfg[r.key] ? 'translate-x-4' : ''
+              }`}
+            />
+          </button>
+        </div>
+      ))}
+      <div className="text-[10px] text-[var(--color-text-muted)] pt-1">{t('popup.settingsNote')}</div>
     </div>
   )
 }

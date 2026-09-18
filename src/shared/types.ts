@@ -314,6 +314,22 @@ export interface ChatErrorEvent {
   error: string
 }
 
+// ---------- 快捷浮窗 ----------
+export type PopupMode = 'quick' | 'selection'
+
+export interface PopupPayload {
+  mode: PopupMode
+  text?: string // selection 模式下取到的选中文本
+  ts: number
+}
+
+export interface PopupConfig {
+  quickEnabled: boolean
+  selectionEnabled: boolean
+  quickAccelerator: string // 仅展示用（当前版本固定）
+  selectionAccelerator: string
+}
+
 // ---------- License 授权 ----------
 export type LicensePlan = 'free' | 'pro' | 'enterprise'
 
@@ -518,6 +534,13 @@ export const IPC = {
   AGENT_ERROR_EVENT: 'agent:error-event',
   AGENT_GET_WORKSPACE_DIR: 'agent:get-workspace-dir',
   AGENT_PICK_WORKSPACE_DIR: 'agent:pick-workspace-dir',
+
+  // ---------- 快捷浮窗（快捷问答 / 选区助手） ----------
+  POPUP_HIDE: 'popup:hide',
+  POPUP_GET_PAYLOAD: 'popup:get-payload',
+  POPUP_GET_CONFIG: 'popup:get-config',
+  POPUP_SET_CONFIG: 'popup:set-config',
+  POPUP_PAYLOAD_EVENT: 'popup:payload-event',
 
   // 工具（只读）
   TOOL_LIST_AVAILABLE: 'tool:list-available', // 列出所有可用工具（按助手机器权限可在外层过滤）
