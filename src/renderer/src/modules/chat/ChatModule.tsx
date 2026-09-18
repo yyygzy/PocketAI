@@ -38,7 +38,6 @@ export const ChatModule: React.FC = () => {
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [liveColumns, setLiveColumns] = useState<CompareColumn[] | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
-  const [tempPrompt, setTempPrompt] = useState('')
 
   const requestIdRef = useRef<string | null>(null)
   const finalizedRef = useRef(false)
@@ -318,8 +317,7 @@ export const ChatModule: React.FC = () => {
         conversationId: convId,
         assistantId: currentAssistantId,
         content: text,
-        targets: validTargets,
-        ...(tempPrompt.trim() ? { systemPrompt: tempPrompt.trim() } : {})
+        targets: validTargets
       })
       .catch(() => {
         if (requestIdRef.current === requestId) {
@@ -371,8 +369,6 @@ export const ChatModule: React.FC = () => {
         assistantName={currentAssistant?.name}
         assistant={currentAssistant}
         onAssistantUpdated={handleAssistantUpdated}
-        tempPrompt={tempPrompt}
-        onTempPromptChange={setTempPrompt}
         onSend={handleSend}
         onStop={handleStop}
       />

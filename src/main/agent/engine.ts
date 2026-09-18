@@ -101,9 +101,7 @@ class AgentEngine {
     let kbIds: string[] = []
     let skillIds: string[] = []
     let defaultParams: Record<string, unknown> | null = null
-    if (payload.systemPrompt !== undefined) {
-      effectivePrompt = payload.systemPrompt
-    } else if (assistantId) {
+    if (assistantId) {
       const assistant = assistantRepo.get(assistantId)
       effectivePrompt = assistant?.systemPrompt ?? ''
       toolPermissions = assistant?.toolPermissions ?? []

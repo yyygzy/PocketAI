@@ -66,13 +66,11 @@ class ChatService {
       return
     }
 
-    // 解析有效 SystemPrompt：单轮临时覆盖 > 助手模板（渲染变量后）
+    // 解析有效 SystemPrompt：助手模板（渲染变量后）
     let effectivePrompt = ''
     let assistantKbIds: string[] = []
     let assistantSkillIds: string[] = []
-    if (payload.systemPrompt !== undefined) {
-      effectivePrompt = payload.systemPrompt
-    } else if (assistantId) {
+    if (assistantId) {
       const assistant = assistantRepo.get(assistantId)
       effectivePrompt = assistant?.systemPrompt ?? ''
       assistantKbIds = assistant?.knowledgeBaseIds ?? []

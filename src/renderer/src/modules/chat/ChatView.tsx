@@ -22,8 +22,6 @@ interface Props {
   assistantName?: string
   assistant: AssistantRecord | null
   onAssistantUpdated: (a: AssistantRecord) => void
-  tempPrompt: string
-  onTempPromptChange: (s: string) => void
   onSend: (text: string) => void
   onStop: () => void
 }
@@ -38,8 +36,6 @@ export const ChatView: React.FC<Props> = ({
   assistantName,
   assistant,
   onAssistantUpdated,
-  tempPrompt,
-  onTempPromptChange,
   onSend,
   onStop
 }) => {
@@ -161,8 +157,6 @@ export const ChatView: React.FC<Props> = ({
         <ChatConfigBar
           assistant={assistant}
           onAssistantUpdated={onAssistantUpdated}
-          tempPrompt={tempPrompt}
-          onTempPromptChange={onTempPromptChange}
         />
       </div>
     </div>

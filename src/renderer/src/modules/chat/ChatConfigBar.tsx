@@ -1,6 +1,6 @@
-// 对话配置条（简化版）
-// - 技能 / 知识库 / 临时提示词 收纳为一个「上下文」按钮，默认收起，降低视觉噪音
-// - 按钮角标显示已配置项总数，临时提示词有内容时高亮
+// 对话配置条
+// - 技能 / 知识库 收纳为一个「上下文」按钮，默认收起，降低视觉噪音
+// - 按钮角标显示已配置项总数
 import React, { useState } from 'react'
 import type { AssistantRecord, KnowledgeBase, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
@@ -8,18 +8,11 @@ import { useI18n } from '../../i18n'
 interface Props {
   assistant: AssistantRecord | null
   onAssistantUpdated: (a: AssistantRecord) => void
-  tempPrompt: string
-  onTempPromptChange: (s: string) => void
 }
 
-type Section = 'skills' | 'kb' | 'temp' | null
+type Section = 'skills' | 'kb' | null
 
-export const ChatConfigBar: React.FC<Props> = ({
-  assistant,
-  onAssistantUpdated,
-  tempPrompt,
-  onTempPromptChange
-}) => {
+export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }) => {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [section, setSection] = useState<Section>(null)
@@ -54,7 +47,7 @@ export const ChatConfigBar: React.FC<Props> = ({
 
   const skillCount = assistant.skillIds?.length ?? 0
   const kbCount = assistant.knowledgeBaseIds?.length ?? 0
-  const total = skillCount + kbCount + (tempPrompt.trim() ? 1 : 0)
+  const total = skillCount + kbCount
 
   return (
     <div className="max-w-3xl mx-auto mt-1.5">
@@ -80,7 +73,7 @@ export const ChatConfigBar: React.FC<Props> = ({
       {/* 展开面板 */}
       {open && (
         <div className="mt-1.5 border border-[var(--color-border)] rounded-xl p-3 space-y-2 bg-[var(--color-bg)]">
-          {/* 三个子入口 */}
+          {/* 子入口 */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
               className={`text-[11px] px-2 py-1 rounded border ${
@@ -102,23 +95,12 @@ export const ChatConfigBar: React.FC<Props> = ({
             >
               📚 {t('ccb.kb')} <span className="opacity-60">({kbCount})</span>
             </button>
-            <button
-              className={`text-[11px] px-2 py-1 rounded border ${
-                section === 'temp' || !!tempPrompt.trim()
-                  ? 'border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]'
-              }`}
-              onClick={() => toggleSection('temp')}
-            >
-              📝 {t('ccb.tempPrompt')}
-              {tempPrompt.trim() && <span className="ml-1 text-[var(--color-accent)]">●</span>}
-            </button>
           </div>
 
           {/* 子面板 */}
           {section && (
             <div className="pt-2 border-t border-[var(--color-border)]">
-              {assistant.isBuiltin && section !== 'temp' ? (
+              {assistant.isBuiltin ? (
                 <p className="text-xs text-[var(--color-text-muted)]">{t('ccb.builtinHint')}</p>
               ) : section === 'skills' ? (
                 skills === null ? null : skills.length === 0 ? (
@@ -137,7 +119,7 @@ export const ChatConfigBar: React.FC<Props> = ({
                     ))}
                   </div>
                 )
-              ) : section === 'kb' ? (
+              ) : (
                 <>
                   {kbs === null ? null : kbs.length === 0 ? (
                     <p className="text-xs text-[var(--color-text-muted)]">{t('ccb.none')}</p>
@@ -156,25 +138,6 @@ export const ChatConfigBar: React.FC<Props> = ({
                     </div>
                   )}
                   <p className="text-[11px] text-[var(--color-text-muted)] mt-1">{t('ccb.kbHint')}</p>
-                </>
-              ) : (
-                <>
-                  <textarea
-                    className="input text-xs min-h-[64px] resize-y"
-                    value={tempPrompt}
-                    onChange={(e) => onTempPromptChange(e.target.value)}
-                    placeholder={t('ccb.tempPh')}
-                  />
-                  <div className="flex justify-end">
-                    {tempPrompt && (
-                      <button
-                        className="text-[11px] px-2 py-1 rounded btn-ghost"
-                        onClick={() => onTempPromptChange('')}
-                      >
-                        {t('ccb.clear')}
-                      </button>
-                    )}
-                  </div>
                 </>
               )}
             </div>

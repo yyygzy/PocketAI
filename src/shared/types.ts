@@ -289,7 +289,6 @@ export interface SendMessagePayload {
   assistantId: string | null
   content: string
   targets: ChatTarget[] // 1 个=单模型；多个=一问多答并行对照
-  systemPrompt?: string // 临时覆盖（优先级高于助手模板）
   agentMode?: boolean // true=走 Work Agent ReAct 循环；false/省略=普通对话
 }
 
