@@ -133,6 +133,7 @@ export const zh: Record<string, string> = {
   'ms.addCompare': '＋ 对照',
   'ms.notConfigured': '未配置',
   'ms.modelId': '模型 ID',
+  'ms.exitCompare': '退出对照',
 
   // ── 助手轨道/市场/编辑器 ──
   'rail.assistant': '助手',
@@ -346,6 +347,7 @@ export const zh: Record<string, string> = {
   // ── 对话配置条 ──
   'ccb.skills': '技能',
   'ccb.kb': '知识库',
+  'ccb.context': '上下文',
   'ccb.tempPrompt': '临时提示词',
   'ccb.builtinHint': '内置助手不可修改，请先在助手市场「复制为我的助手」',
   'ccb.none': '暂无可选项',

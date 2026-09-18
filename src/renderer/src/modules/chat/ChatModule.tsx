@@ -48,6 +48,8 @@ export const ChatModule: React.FC = () => {
   const streamingConvRef = useRef<string | null>(null)
   const currentConvRef = useRef<string | null>(null)
   currentConvRef.current = currentConvId
+  // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
+  const userEditedTargetsRef = useRef(false)
 
   const reloadConversations = useCallback(() => {
     return window.pocketai.listConversations(assistantIdRef.current).then(setConversations)
@@ -66,7 +68,11 @@ export const ChatModule: React.FC = () => {
     window.pocketai.listProviders().then((list) => {
       setProviders(list)
       const first = list.filter((p) => p.enabled)[0]
-      if (first) setTargets([{ providerId: first.id, model: first.models[0] ?? '' }])
+      if (first) {
+        // 智能默认：跳过 embed/向量模型，选第一个对话模型
+        const chatModel = first.models.find((m) => !/^(bge[-_]|embed|gte[-_]|e5[-_]|minilm|nomic-embed)/i.test(m)) ?? first.models[0] ?? ''
+        setTargets([{ providerId: first.id, model: chatModel }])
+      }
     })
 
     window.pocketai.listAssistants().then((list) => {
@@ -148,9 +154,11 @@ export const ChatModule: React.FC = () => {
   }
 
   // 根据会话记录回填最后使用的模型（含多模型对照整组恢复）
+  // 修复：若用户在切换会话后手动改了模型，不再用异步回填覆盖
   const restoreLastModel = useCallback(
     (conv: ConversationRecord) => {
       const applyPairs = (pairs: { providerId: string; model: string }[]) => {
+        if (userEditedTargetsRef.current) return // 用户已手动选择，尊重用户
         const valid = pairs.filter((p) => {
           const prov = providers.find((x) => x.id === p.providerId)
           return prov && prov.models.includes(p.model)
@@ -176,7 +184,7 @@ export const ChatModule: React.FC = () => {
         }
       }
 
-      // 回退：最后一条 assistant 消息的 provider/model
+      // 回退：最后一条 assistant 消息的 provider/model（异步，需防覆盖）
       window.pocketai.listMessages(conv.id).then((msgs) => {
         for (let i = msgs.length - 1; i >= 0; i--) {
           const m = msgs[i]
@@ -191,6 +199,7 @@ export const ChatModule: React.FC = () => {
   )
 
   const handleSelectConv = (id: string) => {
+    userEditedTargetsRef.current = false // 切换会话时重置，允许回填
     setCurrentConvId(id)
     loadMessages(id)
     const conv = conversations.find((c) => c.id === id)
@@ -246,6 +255,11 @@ export const ChatModule: React.FC = () => {
       }
     }
     input.click()
+  }
+
+  const handleTargetsChange = (next: ChatTarget[]) => {
+    userEditedTargetsRef.current = true
+    setTargets(next)
   }
 
   const handleSend = async (text: string) => {
@@ -328,7 +342,7 @@ export const ChatModule: React.FC = () => {
       <ChatView
         providers={providers}
         targets={targets}
-        onTargetsChange={setTargets}
+        onTargetsChange={handleTargetsChange}
         messages={messages}
         liveColumns={liveColumns}
         welcomeMessage={currentAssistant?.welcomeMessage}

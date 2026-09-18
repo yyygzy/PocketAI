@@ -133,6 +133,7 @@ export const en: Record<string, string> = {
   'ms.addCompare': '＋ Compare',
   'ms.notConfigured': 'Not configured',
   'ms.modelId': 'Model ID',
+  'ms.exitCompare': 'Exit compare',
 
   // ── Assistant rail / market / editor ──
   'rail.assistant': 'Assistants',
@@ -346,6 +347,7 @@ export const en: Record<string, string> = {
   // ── Chat config bar ──
   'ccb.skills': 'Skills',
   'ccb.kb': 'Knowledge',
+  'ccb.context': 'Context',
   'ccb.tempPrompt': 'Temp prompt',
   'ccb.builtinHint': 'Built-in assistants are read-only — duplicate one in the Assistant Market first.',
   'ccb.none': 'Nothing available yet',
