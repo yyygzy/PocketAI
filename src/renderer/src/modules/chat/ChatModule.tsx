@@ -206,9 +206,19 @@ export const ChatModule: React.FC = () => {
     if (conv) restoreLastModel(conv)
   }
 
-  const handleNewConv = () => {
-    setCurrentConvId(null)
+  const handleNewConv = async () => {
+    // 点击「新对话」直接在数据库创建一条对话记录，标题用当前助手名
+    const title = currentAssistant?.name || t('chat.newConversation')
+    const conv = await window.pocketai.createConversation(currentAssistantId, title)
+    userEditedTargetsRef.current = false // 新对话允许模型回填
+    setCurrentConvId(conv.id)
     setMessages([])
+    await reloadConversations()
+  }
+
+  const handleRenameConv = async (id: string, title: string) => {
+    await window.pocketai.renameConversation(id, title)
+    await reloadConversations()
   }
 
   const handleDeleteConv = async (id: string) => {
@@ -332,6 +342,7 @@ export const ChatModule: React.FC = () => {
             onSelect={handleSelectConv}
             onNew={handleNewConv}
             onDelete={handleDeleteConv}
+            onRename={handleRenameConv}
             onExport={handleExportConv}
             onImport={handleImportConv}
             embedded

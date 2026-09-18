@@ -108,6 +108,7 @@ export const en: Record<string, string> = {
   'chat.import': 'Import conversation',
   'chat.importShort': 'Import',
   'chat.export': 'Export',
+  'chat.rename': 'Rename',
   'chat.delete': 'Delete',
   'chat.noConversations': 'No conversations under this assistant',
   'chat.searching': '🔍 Searching…',

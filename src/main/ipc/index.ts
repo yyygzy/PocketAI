@@ -116,8 +116,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.CONVERSATION_LIST, (_e, assistantId?: string) =>
     conversationRepo.list(assistantId)
   )
-  ipcMain.handle(IPC.CONVERSATION_CREATE, (_e, assistantId?: string | null) =>
-    conversationRepo.create({ assistantId })
+  ipcMain.handle(IPC.CONVERSATION_CREATE, (_e, assistantId?: string | null, title?: string) =>
+    conversationRepo.create({ assistantId, title })
   )
   ipcMain.handle(IPC.CONVERSATION_DELETE, (_e, id: string) => {
     conversationRepo.delete(id)

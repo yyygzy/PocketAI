@@ -8,6 +8,7 @@ interface Props {
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  onRename?: (id: string, title: string) => void
   onExport?: (id: string) => void
   onImport?: () => void
   /** 嵌入到已有侧栏容器时，去掉自身宽度/边框/背景 */
@@ -30,6 +31,7 @@ export const ConversationList: React.FC<Props> = ({
   onSelect,
   onNew,
   onDelete,
+  onRename,
   onExport,
   onImport,
   embedded
@@ -113,6 +115,7 @@ export const ConversationList: React.FC<Props> = ({
               isActive={currentId === c.id}
               onSelect={() => onSelect(c.id)}
               onDelete={() => onDelete(c.id)}
+              onRename={onRename ? (title) => onRename(c.id, title) : undefined}
               onExport={onExport}
             />
           ))
@@ -127,25 +130,69 @@ const ConvItem: React.FC<{
   isActive: boolean
   onSelect: () => void
   onDelete: () => void
+  onRename?: (title: string) => void
   onExport?: (id: string) => void
-}> = ({ conv, isActive, onSelect, onDelete, onExport }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport }) => {
   const { t } = useI18n()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(conv.title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(conv.title)
+      requestAnimationFrame(() => {
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      })
+    }
+  }, [editing, conv.title])
+
+  const commit = () => {
+    const v = draft.trim()
+    if (v && v !== conv.title) onRename?.(v)
+    setEditing(false)
+  }
+
   return (
     <div
-      onClick={onSelect}
-      className={`group flex items-center gap-1 px-2.5 py-2 rounded text-sm cursor-pointer ${
-        isActive
+      onClick={editing ? undefined : onSelect}
+      onDoubleClick={() => onRename && setEditing(true)}
+      className={`group flex items-center gap-1 px-2.5 py-2 rounded text-sm ${
+        editing ? '' : 'cursor-pointer ' + (isActive
           ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-          : 'hover:bg-[var(--color-hover-overlay)] text-[var(--color-text)]'
+          : 'hover:bg-[var(--color-hover-overlay)] text-[var(--color-text)]')
       }`}
     >
-      <span className="flex-1 truncate">{conv.title}</span>
-      {onExport && (
+      {editing ? (
+        <input
+          ref={inputRef}
+          className="flex-1 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded px-1 py-0.5 text-sm outline-none focus:border-[var(--color-accent)]"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit()
+            if (e.key === 'Escape') setEditing(false)
+          }}
+        />
+      ) : (
+        <span className="flex-1 truncate">{conv.title}</span>
+      )}
+      {onExport && !editing && (
         <button
           onClick={(e) => { e.stopPropagation(); onExport(conv.id) }}
           className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
           title={t('chat.export')}
         >↓</button>
+      )}
+      {onRename && !editing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setEditing(true) }}
+          className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
+          title={t('chat.rename')}
+        >✎</button>
       )}
       <button
         onClick={(e) => { e.stopPropagation(); onDelete() }}

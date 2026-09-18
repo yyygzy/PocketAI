@@ -108,6 +108,7 @@ export const zh: Record<string, string> = {
   'chat.import': '导入会话',
   'chat.importShort': '导入',
   'chat.export': '导出',
+  'chat.rename': '重命名',
   'chat.delete': '删除',
   'chat.noConversations': '该助手下暂无对话',
   'chat.searching': '🔍 搜索中…',

@@ -84,8 +84,8 @@ const api = {
   // ---------- 会话 ----------
   listConversations: (assistantId?: string): Promise<ConversationRecord[]> =>
     ipcRenderer.invoke(IPC.CONVERSATION_LIST, assistantId),
-  createConversation: (assistantId?: string | null): Promise<ConversationRecord> =>
-    ipcRenderer.invoke(IPC.CONVERSATION_CREATE, assistantId),
+  createConversation: (assistantId?: string | null, title?: string): Promise<ConversationRecord> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_CREATE, assistantId, title),
   deleteConversation: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_DELETE, id),
   renameConversation: (id: string, title: string): Promise<{ ok: boolean }> =>
