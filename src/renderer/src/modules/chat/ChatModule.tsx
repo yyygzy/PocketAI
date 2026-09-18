@@ -38,6 +38,7 @@ export const ChatModule: React.FC = () => {
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [liveColumns, setLiveColumns] = useState<CompareColumn[] | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
+  const [marketDetailId, setMarketDetailId] = useState<string | undefined>(undefined)
 
   const requestIdRef = useRef<string | null>(null)
   const finalizedRef = useRef(false)
@@ -220,14 +221,9 @@ export const ChatModule: React.FC = () => {
     await reloadConversations()
   }
 
-  const handleDeleteAssistant = async (id: string) => {
-    await window.pocketai.deleteAssistant(id)
-    if (currentAssistantId === id) {
-      // 切到第一个可用助手
-      const next = assistants.find((a) => a.id !== id)
-      if (next) handleSelectAssistant(next.id)
-    }
-    await reloadAssistants()
+  const handleEditAssistant = (id: string) => {
+    setMarketDetailId(id)
+    setMarketOpen(true)
   }
 
   const handleDeleteConv = async (id: string) => {
@@ -341,8 +337,8 @@ export const ChatModule: React.FC = () => {
           assistants={assistants}
           activeId={currentAssistantId}
           onSelect={handleSelectAssistant}
-          onDelete={handleDeleteAssistant}
-          onOpenMarket={() => setMarketOpen(true)}
+          onEdit={handleEditAssistant}
+          onOpenMarket={() => { setMarketDetailId(undefined); setMarketOpen(true) }}
         />
         <div className="flex-1 min-h-0 flex flex-col">
           <ConversationList
@@ -376,12 +372,14 @@ export const ChatModule: React.FC = () => {
       {marketOpen && (
         <AssistantMarket
           providers={providers}
-          onClose={() => setMarketOpen(false)}
+          onClose={() => { setMarketOpen(false); setMarketDetailId(undefined) }}
           onChanged={reloadAssistants}
+          initialDetailId={marketDetailId}
           onUse={(id) => {
             handleSelectAssistant(id)
             handleNewConv()
             setMarketOpen(false)
+            setMarketDetailId(undefined)
           }}
         />
       )}

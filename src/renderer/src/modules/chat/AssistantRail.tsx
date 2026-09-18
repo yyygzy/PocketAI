@@ -6,11 +6,11 @@ interface Props {
   assistants: AssistantRecord[]
   activeId: string
   onSelect: (id: string) => void
-  onDelete?: (id: string) => void
+  onEdit?: (id: string) => void
   onOpenMarket: () => void
 }
 
-export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect, onDelete, onOpenMarket }) => {
+export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect, onEdit, onOpenMarket }) => {
   const { t } = useI18n()
   return (
     <div className="shrink-0 border-b border-[var(--color-border)]">
@@ -43,15 +43,12 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
                 {t('rail.mine')}
               </span>
             )}
-            {!a.isBuiltin && onDelete && (
+            {!a.isBuiltin && onEdit && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (confirm(t('rail.deleteConfirm', { name: a.name }))) onDelete(a.id)
-                }}
-                className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] w-4 h-4 flex items-center justify-center text-xs shrink-0"
-                title={t('common.delete')}
-              >×</button>
+                onClick={(e) => { e.stopPropagation(); onEdit(a.id) }}
+                className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs shrink-0"
+                title={t('common.edit')}
+              >✎</button>
             )}
           </div>
         ))}

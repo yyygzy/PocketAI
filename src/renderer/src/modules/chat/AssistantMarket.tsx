@@ -9,6 +9,8 @@ interface Props {
   onChanged: () => void
   /** 使用某个助手（内置或自定义）：选中并新建对话 */
   onUse?: (id: string) => void
+  /** 打开市场时直接进入该助手的详情页 */
+  initialDetailId?: string
 }
 
 type View =
@@ -17,10 +19,10 @@ type View =
   | { mode: 'edit'; id: string }
   | { mode: 'create' }
 
-export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged, onUse }) => {
+export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged, onUse, initialDetailId }) => {
   const { t } = useI18n()
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
-  const [view, setView] = useState<View>({ mode: 'grid' })
+  const [view, setView] = useState<View>(initialDetailId ? { mode: 'detail', id: initialDetailId } : { mode: 'grid' })
   const [toast, setToast] = useState('')
 
   const load = () => window.pocketai.listAssistants().then(setAssistants)
