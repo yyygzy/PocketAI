@@ -313,11 +313,11 @@ if (!gotLock) {
 }
 
 app.on('window-all-closed', () => {
-  dbService.close()
+  try { dbService.close() } catch { /* ignore */ }
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('will-quit', () => {
-  mcpManager.stopAll().catch(() => {})
-  dbService.close()
+  try { mcpManager.stopAll().catch(() => {}) } catch { /* ignore */ }
+  try { dbService.close() } catch { /* ignore */ }
 })
