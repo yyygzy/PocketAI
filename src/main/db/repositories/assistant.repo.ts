@@ -203,6 +203,16 @@ export const assistantRepo = {
     const existing = this.get(id)
     if (!existing) return
     if (existing.isBuiltin) throw new Error('内置助手不可删除')
-    dbService.getHandle().prepare('DELETE FROM assistants WHERE id=?').run(id)
+    const db = dbService.getHandle()
+    // 级联删除该助手下的对话及消息
+    const convIds = db
+      .prepare('SELECT id FROM conversations WHERE assistant_id=?')
+      .all(id) as { id: string }[]
+    for (const { id: cid } of convIds) {
+      db.prepare('DELETE FROM messages WHERE conversation_id=?').run(cid)
+      db.prepare('DELETE FROM message_fts WHERE conversation_id=?').run(cid)
+      db.prepare('DELETE FROM conversations WHERE id=?').run(cid)
+    }
+    db.prepare('DELETE FROM assistants WHERE id=?').run(id)
   }
 }

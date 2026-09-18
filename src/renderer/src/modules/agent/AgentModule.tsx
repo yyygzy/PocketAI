@@ -26,21 +26,21 @@ const ENV_PLACEHOLDER = '{"API_KEY":"xxx"}'
 
 export const AgentModule: React.FC = () => {
   const { t } = useI18n()
-  const [tab, setTab] = useState<Tab>('servers')
+  const [tab, setTab] = useState<Tab>('agent')
 
   return (
     <div className="flex flex-col h-full">
-      {/* 子标签 */}
+      {/* 子标签：Agent 对话放前面（主功能） */}
       <div className="flex gap-1 mb-3 border-b border-[var(--color-border)]">
-        <TabBtn active={tab === 'servers'} onClick={() => setTab('servers')}>
-          {t('agent.tabServers')}
-        </TabBtn>
         <TabBtn active={tab === 'agent'} onClick={() => setTab('agent')}>
           {t('agent.tabChat')}
         </TabBtn>
+        <TabBtn active={tab === 'servers'} onClick={() => setTab('servers')}>
+          {t('agent.tabServers')}
+        </TabBtn>
       </div>
       <div className="flex-1 overflow-hidden">
-        {tab === 'servers' ? <McpPanel /> : <AgentPanel />}
+        {tab === 'agent' ? <AgentPanel /> : <McpPanel />}
       </div>
     </div>
   )

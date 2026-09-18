@@ -221,6 +221,16 @@ export const ChatModule: React.FC = () => {
     await reloadConversations()
   }
 
+  const handleDeleteAssistant = async (id: string) => {
+    await window.pocketai.deleteAssistant(id)
+    if (currentAssistantId === id) {
+      // 切到第一个可用助手
+      const next = assistants.find((a) => a.id !== id)
+      if (next) handleSelectAssistant(next.id)
+    }
+    await reloadAssistants()
+  }
+
   const handleDeleteConv = async (id: string) => {
     await window.pocketai.deleteConversation(id)
     if (currentConvId === id) {
@@ -333,6 +343,7 @@ export const ChatModule: React.FC = () => {
           assistants={assistants}
           activeId={currentAssistantId}
           onSelect={handleSelectAssistant}
+          onDelete={handleDeleteAssistant}
           onOpenMarket={() => setMarketOpen(true)}
         />
         <div className="flex-1 min-h-0 flex flex-col">

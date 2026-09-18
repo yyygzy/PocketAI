@@ -6,10 +6,11 @@ interface Props {
   assistants: AssistantRecord[]
   activeId: string
   onSelect: (id: string) => void
+  onDelete?: (id: string) => void
   onOpenMarket: () => void
 }
 
-export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect, onOpenMarket }) => {
+export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect, onDelete, onOpenMarket }) => {
   const { t } = useI18n()
   return (
     <div className="shrink-0 border-b border-[var(--color-border)]">
@@ -25,11 +26,11 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
       </div>
       <div className="max-h-44 overflow-y-auto px-2 pb-2 space-y-0.5">
         {assistants.map((a) => (
-          <button
+          <div
             key={a.id}
             onClick={() => onSelect(a.id)}
             title={a.description}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] ${
+            className={`group w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] cursor-pointer ${
               activeId === a.id
                 ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
                 : 'hover:bg-[var(--color-hover-overlay)] text-[var(--color-text)]'
@@ -42,7 +43,17 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
                 {t('rail.mine')}
               </span>
             )}
-          </button>
+            {!a.isBuiltin && onDelete && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (confirm(t('rail.deleteConfirm', { name: a.name }))) onDelete(a.id)
+                }}
+                className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] w-4 h-4 flex items-center justify-center text-xs shrink-0"
+                title={t('common.delete')}
+              >×</button>
+            )}
+          </div>
         ))}
       </div>
     </div>

@@ -141,6 +141,7 @@ export const zh: Record<string, string> = {
   'rail.marketTitle': '助手市场 / 管理',
   'rail.market': '🧩 市场',
   'rail.mine': '我的',
+  'rail.deleteConfirm': '确定删除助手「{name}」？其下对话也会被删除。',
   'am.duplicated': '已复制为「我的助手」',
   'am.deleteConfirm': '确定删除这个自定义助手？其历史会话仍会保留。',
   'am.market': '助手市场',

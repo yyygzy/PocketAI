@@ -141,6 +141,7 @@ export const en: Record<string, string> = {
   'rail.marketTitle': 'Assistant market / manage',
   'rail.market': '🧩 Market',
   'rail.mine': 'Mine',
+  'rail.deleteConfirm': 'Delete assistant "{name}"? Its conversations will also be removed.',
   'am.duplicated': 'Copied to “My Assistants”',
   'am.deleteConfirm': 'Delete this custom assistant? Its conversations will be kept.',
   'am.market': 'Assistant Market',
