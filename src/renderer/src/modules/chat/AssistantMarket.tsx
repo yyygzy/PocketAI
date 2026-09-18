@@ -7,6 +7,8 @@ interface Props {
   providers: ProviderRecord[]
   onClose: () => void
   onChanged: () => void
+  /** 使用某个助手（内置或自定义）：选中并新建对话 */
+  onUse?: (id: string) => void
 }
 
 type View =
@@ -15,7 +17,7 @@ type View =
   | { mode: 'edit'; id: string }
   | { mode: 'create' }
 
-export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged }) => {
+export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged, onUse }) => {
   const { t } = useI18n()
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [view, setView] = useState<View>({ mode: 'grid' })
@@ -161,12 +163,26 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
               </dl>
 
               <div className="flex flex-wrap gap-2 mt-5">
+                {onUse && (
+                  <button
+                    className="btn-primary"
+                    onClick={() => onUse(current.id)}
+                  >
+                    {t('am.use')}
+                  </button>
+                )}
                 {current.isBuiltin ? (
-                  <button className="btn-primary" onClick={() => handleDuplicate(current.id)}>{t('am.copy')}</button>
+                  <button className="btn-ghost" onClick={() => handleDuplicate(current.id)}>
+                    {t('am.copy')}
+                  </button>
                 ) : (
                   <>
-                    <button className="btn-primary" onClick={() => setView({ mode: 'edit', id: current.id })}>{t('common.edit')}</button>
-                    <button className="btn-ghost text-[var(--color-danger)]" onClick={() => handleDelete(current.id)}>{t('common.delete')}</button>
+                    <button className="btn-ghost" onClick={() => setView({ mode: 'edit', id: current.id })}>
+                      {t('common.edit')}
+                    </button>
+                    <button className="btn-ghost text-[var(--color-danger)]" onClick={() => handleDelete(current.id)}>
+                      {t('common.delete')}
+                    </button>
                   </>
                 )}
                 <button className="btn-ghost" onClick={() => handleTogglePin(current)}>

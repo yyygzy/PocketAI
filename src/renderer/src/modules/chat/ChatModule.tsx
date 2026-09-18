@@ -360,6 +360,11 @@ export const ChatModule: React.FC = () => {
           providers={providers}
           onClose={() => setMarketOpen(false)}
           onChanged={reloadAssistants}
+          onUse={(id) => {
+            handleSelectAssistant(id)
+            handleNewConv()
+            setMarketOpen(false)
+          }}
         />
       )}
     </div>

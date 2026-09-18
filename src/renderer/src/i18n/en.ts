@@ -149,6 +149,7 @@ export const en: Record<string, string> = {
   'am.new': '＋ New Assistant',
   'am.pinned': 'Pinned',
   'am.builtin': 'Built-in',
+  'am.use': 'Use',
   'am.mine': 'Mine',
   'am.defaultModel': 'Default model',
   'am.welcome': 'Welcome message',

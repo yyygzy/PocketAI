@@ -149,6 +149,7 @@ export const zh: Record<string, string> = {
   'am.new': '＋ 新建助手',
   'am.pinned': '已置顶',
   'am.builtin': '内置',
+  'am.use': '使用',
   'am.mine': '我的',
   'am.defaultModel': '默认模型',
   'am.welcome': '欢迎语',
