@@ -4,23 +4,62 @@ import { TabBar, type Tab } from './components/TabBar'
 import { Workspace } from './components/Workspace'
 import { ToolApprovalDialog } from './components/ToolApprovalDialog'
 import { ToastProvider } from './components/ToastProvider'
+import { FirstRunWizard, type WizardVariant } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
 
 let tabCounter = 0
 const newTabId = () => `tab-${Date.now()}-${++tabCounter}`
 
+const TABS_STORAGE_KEY = 'pocketai.tabs.v1'
+
+/** 从 localStorage 恢复上次标签布局（仅存 moduleId/title/pinned，id 重建）；模块级缓存保证多次调用返回同一实例 */
+let persistedCache: Tab[] | null = null
+function loadPersistedTabs(): Tab[] {
+  if (persistedCache) return persistedCache
+  try {
+    const raw = localStorage.getItem(TABS_STORAGE_KEY)
+    if (!raw) throw new Error('empty')
+    const arr = JSON.parse(raw) as Array<{ moduleId: string; title: string; pinned?: boolean }>
+    const tabs = arr
+      .filter((x) => x && typeof x.moduleId === 'string' && typeof x.title === 'string')
+      .slice(0, 20)
+      .map((x) => ({ id: newTabId(), moduleId: x.moduleId, title: x.title, pinned: x.pinned }))
+    if (tabs.length === 0) throw new Error('empty')
+    persistedCache = tabs
+  } catch {
+    persistedCache = []
+  }
+  return persistedCache
+}
+
 export default function App() {
   const { t } = useI18n()
   const [activeModule, setActiveModule] = useState<ModuleId>('chat')
   const [collapsed, setCollapsed] = useState(false)
-  const [tabs, setTabs] = useState<Tab[]>(() => [
-    { id: newTabId(), title: t('tab.newChat'), moduleId: 'chat' }
-  ])
-  const [activeTabId, setActiveTabId] = useState<string>(tabs[0].id)
+  const [tabs, setTabs] = useState<Tab[]>(
+    () => loadPersistedTabs().length > 0
+      ? loadPersistedTabs()
+      : [{ id: newTabId(), title: t('tab.newChat'), moduleId: 'chat' }]
+  )
+  const [activeTabId, setActiveTabId] = useState<string>(() => {
+    const restored = loadPersistedTabs()
+    if (restored.length === 0) return tabs[0].id
+    try {
+      const savedActive = localStorage.getItem(TABS_STORAGE_KEY + '.active')
+      if (savedActive) {
+        // 恢复的 id 与重建 id 不同——保存时存的是激活位置 index
+        const idx = Number(savedActive)
+        if (Number.isInteger(idx) && idx >= 0 && idx < restored.length) return restored[idx].id
+      }
+    } catch { /* ignore */ }
+    return restored[0].id
+  })
   const [locked, setLocked] = useState(false)
   const [dbEncrypted, setDbEncrypted] = useState(false)
   const [lockPwd, setLockPwd] = useState('')
   const [lockErr, setLockErr] = useState('')
+  // 首启向导：未完成过 → 完整向导；便携盘换电脑 → 精简重检
+  const [wizard, setWizard] = useState<WizardVariant | null>(null)
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -45,6 +84,34 @@ export default function App() {
     })
     return off
   }, [])
+
+  // 首启向导 / 换电脑检测（DB 已就绪后查询；失败静默，不影响主功能）
+  useEffect(() => {
+    window.pocketai
+      .getWizardState()
+      .then((r) => {
+        if (!r.ok || !r.data) return
+        if (!r.data.wizardDone) setWizard('full')
+        else if (r.data.machineChanged) setWizard('recheck')
+      })
+      .catch(() => {})
+  }, [])
+
+  // 标签布局持久化：顺序 + 激活位置（下次启动恢复）
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        TABS_STORAGE_KEY,
+        JSON.stringify(
+          tabs.map((tb) => ({ moduleId: tb.moduleId, title: tb.title, pinned: tb.pinned }))
+        )
+      )
+      const idx = tabs.findIndex((tb) => tb.id === activeTabId)
+      localStorage.setItem(TABS_STORAGE_KEY + '.active', String(idx >= 0 ? idx : 0))
+    } catch {
+      // localStorage 不可用时静默（不影响标签功能本身）
+    }
+  }, [tabs, activeTabId])
 
   // 上报用户活跃（节流 5s），用于自动锁屏计时
   useEffect(() => {
@@ -142,6 +209,54 @@ export default function App() {
     })
   }
 
+  /** 拖拽排序：把 fromId 移动到 toId 的位置（其后），pinned 标签始终保持在开头 */
+  const handleReorder = (fromId: string, toId: string) => {
+    setTabs((prev) => {
+      const from = prev.findIndex((tb) => tb.id === fromId)
+      const to = prev.findIndex((tb) => tb.id === toId)
+      if (from < 0 || to < 0 || from === to) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      // pinned 固定在开头（稳定性排序：非 pinned 依次后移）
+      const pinned = next.filter((tb) => tb.pinned)
+      const normal = next.filter((tb) => !tb.pinned)
+      return pinned.length > 0 ? [...pinned, ...normal] : next
+    })
+  }
+
+  /** 关闭其他标签（保留指定标签与 pinned 标签） */
+  const handleCloseOthers = (id: string) => {
+    setTabs((prev) => {
+      const keep = prev.filter((tb) => tb.id === id || tb.pinned)
+      if (!keep.some((tb) => tb.id === activeTabId)) setActiveTabId(id)
+      return keep
+    })
+  }
+
+  /** 关闭右侧标签（pinned 标签不受影响） */
+  const handleCloseRight = (id: string) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((tb) => tb.id === id)
+      if (idx < 0) return prev
+      const keep = prev.filter((tb, i) => i <= idx || tb.pinned)
+      if (!keep.some((tb) => tb.id === activeTabId)) setActiveTabId(id)
+      return keep
+    })
+  }
+
+  /** 弹出到独立窗口：打开 detached 窗口并关闭本窗口对应标签 */
+  const handlePopOut = (id: string) => {
+    const tab = tabs.find((tb) => tb.id === id)
+    if (!tab) return
+    window.pocketai
+      .openDetachedWindow(tab.moduleId)
+      .then((r) => {
+        if (r.ok) handleCloseTab(id)
+      })
+      .catch(() => {})
+  }
+
   return (
     <ToastProvider>
       <div className="flex h-screen w-screen overflow-hidden">
@@ -160,6 +275,10 @@ export default function App() {
               onSelect={setActiveTabId}
               onClose={handleCloseTab}
               onNew={handleNewTab}
+              onReorder={handleReorder}
+              onCloseOthers={handleCloseOthers}
+              onCloseRight={handleCloseRight}
+              onPopOut={handlePopOut}
             />
             <Workspace moduleId={(activeTab?.moduleId as ModuleId) || 'chat'} />
           </div>
@@ -167,6 +286,11 @@ export default function App() {
 
         {/* 工具调用审批弹窗（shell_exec 等）；锁定时不挂载 */}
         {!locked && <ToolApprovalDialog />}
+
+        {/* 首启向导 / 换电脑重检：锁定时让位给锁屏遮罩 */}
+        {!locked && wizard && (
+          <FirstRunWizard variant={wizard} onClose={() => setWizard(null)} />
+        )}
 
         {locked && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm">
