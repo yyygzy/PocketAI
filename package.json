@@ -1,6 +1,6 @@
 {
   "name": "pocket-ai",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "PocketAI - 本地优先可随身携带的 AI 工作台",
   "main": "out/main/index.js",
   "author": "PocketAI",
