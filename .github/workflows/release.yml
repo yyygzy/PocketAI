@@ -1,4 +1,4 @@
-name: Release
+﻿name: Release
 
 on:
   push:
@@ -25,8 +25,8 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # 国内网络可取消注释以下两行加速 Electron + NSIS 资源下载
-        # （注意：env 块不能全注释留空，GitHub Actions 会解析报错）
+        # 鍥藉唴缃戠粶鍙彇娑堟敞閲婁互涓嬩袱琛屽姞閫?Electron + NSIS 璧勬簮涓嬭浇
+        # 锛堟敞鎰忥細env 鍧椾笉鑳藉叏娉ㄩ噴鐣欑┖锛孏itHub Actions 浼氳В鏋愭姤閿欙級
         # env:
         #   ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
         #   ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
@@ -35,7 +35,7 @@ jobs:
       - name: Build & Package (NSIS + Portable)
         run: npm run dist -- --win --x64
         env:
-          # electron-builder GitHub provider 需要 GH_TOKEN 才能上传 Release
+          # electron-builder GitHub provider 闇€瑕?GH_TOKEN 鎵嶈兘涓婁紶 Release
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts for debug
@@ -46,13 +46,16 @@ jobs:
           path: dist/*
 
       - name: Create GitHub Release
-        # 仅 tag 推送时发布；手动触发（workflow_dispatch）只验证构建
+        # 浠?tag 鎺ㄩ€佹椂鍙戝竷锛涙墜鍔ㄨЕ鍙戯紙workflow_dispatch锛夊彧楠岃瘉鏋勫缓
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          # 关键：electron-updater NSIS 更新需要 latest.yml + nsis.zip + blockmap
-          # portable exe 作为额外附件
-          files: dist/*
+          # 鍏抽敭锛歟lectron-updater NSIS 鏇存柊闇€瑕?latest.yml + nsis.zip + blockmap
+          # portable exe 浣滀负棰濆闄勪欢
+          files: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
           generate_release_notes: true
           draft: false
           prerelease: false
@@ -74,7 +77,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
         env:
-          # Linux 宿主原生模块由 postinstall 的 install-app-deps 处理
+          # Linux 瀹夸富鍘熺敓妯″潡鐢?postinstall 鐨?install-app-deps 澶勭悊
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
       - name: Build & Package (AppImage x64)
@@ -93,12 +96,12 @@ jobs:
             dist/*.yml
 
       - name: Create GitHub Release
-        # 仅 tag 推送时发布；手动触发（workflow_dispatch）只验证构建
+        # 浠?tag 鎺ㄩ€佹椂鍙戝竷锛涙墜鍔ㄨЕ鍙戯紙workflow_dispatch锛夊彧楠岃瘉鏋勫缓
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          # electron-updater AppImage 更新需要 latest-linux.yml + blockmap（增量下载）
-          # 精确匹配，避免把 dist/linux-unpacked 整目录传进 Release
+          # electron-updater AppImage 鏇存柊闇€瑕?latest-linux.yml + blockmap锛堝閲忎笅杞斤級
+          # 绮剧‘鍖归厤锛岄伩鍏嶆妸 dist/linux-unpacked 鏁寸洰褰曚紶杩?Release
           files: |
             dist/*.AppImage
             dist/*.blockmap
@@ -106,3 +109,4 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
