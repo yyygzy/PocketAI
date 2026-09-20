@@ -132,6 +132,7 @@ export const conversationRepo = {
           created_at: number
           tool_calls: string | null
           attachments: string | null
+          batch_id: string | null
         }>
       const cutIdx = all.findIndex((m) => m.id === upToMessageId)
       if (cutIdx === -1) throw new Error('分支起点消息不存在')
@@ -153,8 +154,8 @@ export const conversationRepo = {
 
       const idMap = new Map<string, string>()
       const insertMsg = db.prepare(
-        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at, tool_calls, attachments)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at, tool_calls, attachments, batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       for (const m of subset) {
         const newMsgId = randomUUID()
@@ -171,7 +172,8 @@ export const conversationRepo = {
           newParent,
           m.created_at,
           m.tool_calls ?? null,
-          m.attachments ?? null
+          m.attachments ?? null,
+          m.batch_id ?? null
         )
       }
       return this.get(newConvId)!

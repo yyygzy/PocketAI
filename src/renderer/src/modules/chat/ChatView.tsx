@@ -4,12 +4,49 @@ import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
 import { ComparisonColumns, type CompareColumn } from './ComparisonColumns'
+import { BranchNav } from './BranchNav'
 import { Composer } from './Composer'
 import { ChatConfigBar } from './ChatConfigBar'
 
 interface Turn {
   user: MessageRecord | null
   replies: MessageRecord[]
+  /** 按 batch 分组后的回复（每组 = 一次生成；多组即多分支） */
+  batches: MessageRecord[][]
+}
+
+/** 一轮回复按批次分组：有 batchId 按 batchId 归组；旧数据按“连续 5 秒内”归为同批 */
+function groupBatches(replies: MessageRecord[]): MessageRecord[][] {
+  const batches: MessageRecord[][] = []
+  let current: MessageRecord[] = []
+  let currentBatchId: string | null | undefined = undefined
+  for (const r of replies) {
+    if (r.batchId) {
+      if (r.batchId !== currentBatchId) {
+        current = [r]
+        batches.push(current)
+        currentBatchId = r.batchId
+      } else {
+        current.push(r)
+      }
+    } else {
+      const prev = current[current.length - 1]
+      if (prev && !prev.batchId && r.createdAt - prev.createdAt <= 5000) {
+        current.push(r)
+      } else {
+        current = [r]
+        batches.push(current)
+        currentBatchId = undefined
+      }
+    }
+  }
+  return batches
+}
+
+export interface FocusBranch {
+  turnKey: string
+  batchId: string
+  nonce: number
 }
 
 interface Props {
@@ -30,6 +67,8 @@ interface Props {
   onDeleteMessages: (ids: string[]) => void
   onForkConversation?: (messageId: string) => void
   onSaveAsNote?: (messageId: string) => void
+  /** 分支聚焦信号：生成完成后把指定轮次切到新分支 */
+  focusBranch?: FocusBranch | null
 }
 
 export const ChatView: React.FC<Props> = ({
@@ -49,12 +88,22 @@ export const ChatView: React.FC<Props> = ({
   onDeleteMessage,
   onDeleteMessages,
   onForkConversation,
-  onSaveAsNote
+  onSaveAsNote,
+  focusBranch
 }) => {
   const { t } = useI18n()
   const bottomRef = useRef<HTMLDivElement>(null)
   const streaming = liveColumns !== null
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  /** 各轮次手动选中的分支（turnKey → batchKey）；无条目时显示最新分支 */
+  const [activeBranchMap, setActiveBranchMap] = useState<Record<string, string>>({})
+
+  // 分支聚焦：重新生成/编辑重发完成后自动切到新分支
+  useEffect(() => {
+    if (focusBranch) {
+      setActiveBranchMap((prev) => ({ ...prev, [focusBranch.turnKey]: focusBranch.batchId }))
+    }
+  }, [focusBranch?.nonce])
 
   // 切换会话时清空选择
   useEffect(() => {
@@ -116,22 +165,23 @@ export const ChatView: React.FC<Props> = ({
     document.body.removeChild(ta)
   }
 
-  // 扁平消息 → 轮次分组
+  // 扁平消息 → 轮次分组（回复按 batch 分组为分支）
   const turns = useMemo<Turn[]>(() => {
     const result: Turn[] = []
     for (const m of messages) {
       if (m.role === 'user') {
-        result.push({ user: m, replies: [] })
+        result.push({ user: m, replies: [], batches: [] })
       } else if (m.role === 'assistant') {
         const last = result[result.length - 1]
         if (last) last.replies.push(m)
-        else result.push({ user: null, replies: [m] })
+        else result.push({ user: null, replies: [m], batches: [] })
       }
     }
+    for (const t of result) t.batches = groupBatches(t.replies)
     return result
   }, [messages])
 
-  // 实时流作为虚拟回复挂到最后一轮（乐观 user 消息此时无回复）
+  // 实时流作为虚拟批次挂到最后一轮（新发送：唯一批次；分支重跑：追加为最新批次）
   const renderedTurns: Turn[] = useMemo(() => {
     if (!liveColumns) return turns
     const virtualReplies: MessageRecord[] = liveColumns.map((c, i) => ({
@@ -145,15 +195,39 @@ export const ChatView: React.FC<Props> = ({
       parentId: null,
       createdAt: Date.now()
     }))
-    const copy = [...turns]
+    const copy = turns.map((t) => ({ ...t, batches: [...t.batches] }))
     const last = copy[copy.length - 1]
     if (last && last.user && last.replies.length === 0) {
-      last.replies = virtualReplies
+      last.batches = [virtualReplies]
+    } else if (last) {
+      last.batches = [...last.batches, virtualReplies]
     } else {
-      copy.push({ user: null, replies: virtualReplies })
+      copy.push({ user: null, replies: virtualReplies, batches: [virtualReplies] })
     }
     return copy
   }, [turns, liveColumns])
+
+  /** 批次标识：有 batchId 用 batchId，旧数据退化为下标 */
+  const batchKeyOf = (batch: MessageRecord[], idx: number): string => batch[0]?.batchId ?? `legacy:${idx}`
+
+  /** 某轮当前显示的批次下标：优先手动选择，否则最新批次 */
+  const activeBatchIndexOf = (turn: Turn, turnKey: string): number => {
+    if (turn.batches.length <= 1) return 0
+    const want = activeBranchMap[turnKey]
+    if (want) {
+      const idx = turn.batches.findIndex((b, i) => batchKeyOf(b, i) === want)
+      if (idx >= 0) return idx
+    }
+    return turn.batches.length - 1
+  }
+
+  const switchBranch = (turn: Turn, turnKey: string, dir: -1 | 1): void => {
+    const cur = activeBatchIndexOf(turn, turnKey)
+    const next = cur + dir
+    if (next < 0 || next >= turn.batches.length) return
+    const key = batchKeyOf(turn.batches[next], next)
+    setActiveBranchMap((prev) => ({ ...prev, [turnKey]: key }))
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -226,56 +300,74 @@ export const ChatView: React.FC<Props> = ({
             </div>
           )}
 
-          {renderedTurns.map((turn, ti) => (
-            <div key={turn.user?.id ?? `turn-${ti}`} className="space-y-4">
-              {turn.user && (
-                <MessageBubble
-                  role="user"
-                  content={turn.user.content}
-                  messageId={turn.user.id}
-                  attachments={turn.user.attachments}
-                  selected={selectedIds.has(turn.user.id)}
-                  onToggleSelect={toggleSelect}
-                  onCopy={handleCopyFallback}
-                  onDelete={handleDeleteOne}
-                  onResend={onResend}
-                  onFork={onForkConversation}
-                  onSaveAsNote={onSaveAsNote}
-                />
-              )}
-              {turn.replies.length === 1 ? (
-                <MessageBubble
-                  role="assistant"
-                  content={turn.replies[0].content}
-                  model={turn.replies[0].model}
-                  streaming={turn.replies[0].status === 'streaming'}
-                  messageId={turn.replies[0].id}
-                  selected={selectedIds.has(turn.replies[0].id)}
-                  onToggleSelect={toggleSelect}
-                  onCopy={handleCopyFallback}
-                  onDelete={handleDeleteOne}
-                  onRegenerate={onRegenerate}
-                  onFork={onForkConversation}
-                  onSaveAsNote={onSaveAsNote}
-                />
-              ) : turn.replies.length > 1 ? (
-                <ComparisonColumns
-                  providers={providers}
-                  columns={turn.replies.map((r) => ({
-                    providerId: r.provider ?? '',
-                    model: r.model ?? '',
-                    content: r.content,
-                    status: r.status === 'streaming' ? 'streaming' : r.status === 'error' ? 'error' : r.status === 'aborted' ? 'aborted' : 'done'
-                  }))}
-                  messageIds={turn.replies.map((r) => r.id)}
-                  selectedIds={selectedIds}
-                  onToggleSelect={toggleSelect}
-                  onCopy={handleCopyFallback}
-                  onDelete={handleDeleteOne}
-                />
-              ) : null}
-            </div>
-          ))}
+          {renderedTurns.map((turn, ti) => {
+            const turnKey = turn.user?.id ?? `turn-${ti}`
+            const activeIdx = activeBatchIndexOf(turn, turnKey)
+            const activeBatch = turn.batches[activeIdx] ?? []
+            const label = activeBatch
+              .map((r) => r.model)
+              .filter(Boolean)
+              .join(' · ')
+            return (
+              <div key={turn.user?.id ?? `turn-${ti}`} className="space-y-4">
+                {turn.user && (
+                  <MessageBubble
+                    role="user"
+                    content={turn.user.content}
+                    messageId={turn.user.id}
+                    attachments={turn.user.attachments}
+                    selected={selectedIds.has(turn.user.id)}
+                    onToggleSelect={toggleSelect}
+                    onCopy={handleCopyFallback}
+                    onDelete={handleDeleteOne}
+                    onResend={onResend}
+                    onFork={onForkConversation}
+                    onSaveAsNote={onSaveAsNote}
+                  />
+                )}
+                {activeBatch.length === 1 ? (
+                  <MessageBubble
+                    role="assistant"
+                    content={activeBatch[0].content}
+                    model={activeBatch[0].model}
+                    streaming={activeBatch[0].status === 'streaming'}
+                    messageId={activeBatch[0].id}
+                    selected={selectedIds.has(activeBatch[0].id)}
+                    onToggleSelect={toggleSelect}
+                    onCopy={handleCopyFallback}
+                    onDelete={handleDeleteOne}
+                    onRegenerate={onRegenerate}
+                    onFork={onForkConversation}
+                    onSaveAsNote={onSaveAsNote}
+                  />
+                ) : activeBatch.length > 1 ? (
+                  <ComparisonColumns
+                    providers={providers}
+                    columns={activeBatch.map((r) => ({
+                      providerId: r.provider ?? '',
+                      model: r.model ?? '',
+                      content: r.content,
+                      status: r.status === 'streaming' ? 'streaming' : r.status === 'error' ? 'error' : r.status === 'aborted' ? 'aborted' : 'done'
+                    }))}
+                    messageIds={activeBatch.map((r) => r.id)}
+                    selectedIds={selectedIds}
+                    onToggleSelect={toggleSelect}
+                    onCopy={handleCopyFallback}
+                    onDelete={handleDeleteOne}
+                  />
+                ) : null}
+                {turn.batches.length > 1 && (
+                  <BranchNav
+                    index={activeIdx}
+                    total={turn.batches.length}
+                    label={label}
+                    onPrev={() => switchBranch(turn, turnKey, -1)}
+                    onNext={() => switchBranch(turn, turnKey, 1)}
+                  />
+                )}
+              </div>
+            )
+          })}
 
           <div ref={bottomRef} />
         </div>

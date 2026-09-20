@@ -15,6 +15,7 @@ interface MessageRow {
   created_at: number
   tool_calls: string | null
   attachments: string | null
+  batch_id: string | null
 }
 
 function rowToRecord(row: MessageRow): MessageRecord {
@@ -33,7 +34,8 @@ function rowToRecord(row: MessageRow): MessageRecord {
     parentId: row.parent_id,
     createdAt: row.created_at,
     toolCalls: row.tool_calls ?? null,
-    attachments
+    attachments,
+    batchId: row.batch_id
   }
 }
 
@@ -64,6 +66,7 @@ export const messageRepo = {
     parentId?: string | null
     toolCalls?: string | null
     attachments?: ChatAttachment[]
+    batchId?: string | null
   }): MessageRecord {
     const id = randomUUID()
     const now = Date.now()
@@ -73,8 +76,8 @@ export const messageRepo = {
     dbService
       .getHandle()
       .prepare(
-        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at, tool_calls, attachments)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at, tool_calls, attachments, batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -87,7 +90,8 @@ export const messageRepo = {
         input.parentId ?? null,
         now,
         input.toolCalls ?? null,
-        attachmentsJson
+        attachmentsJson,
+        input.batchId ?? null
       )
     return {
       id,
@@ -100,7 +104,8 @@ export const messageRepo = {
       parentId: input.parentId ?? null,
       createdAt: now,
       toolCalls: input.toolCalls ?? null,
-      attachments: input.attachments
+      attachments: input.attachments,
+      batchId: input.batchId ?? null
     }
   },
 
@@ -120,14 +125,6 @@ export const messageRepo = {
 
   delete(id: string): void {
     dbService.getHandle().prepare('DELETE FROM messages WHERE id=?').run(id)
-  },
-
-  /** 删除指定用户消息的所有 AI 回复（parentId 匹配） */
-  deleteReplies(parentId: string): void {
-    dbService
-      .getHandle()
-      .prepare('DELETE FROM messages WHERE parent_id=? AND role=?')
-      .run(parentId, 'assistant')
   },
 
   /** 更新用户消息内容（编辑后重发） */

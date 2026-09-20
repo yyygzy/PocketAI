@@ -10,7 +10,7 @@ import type {
 import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
 import { ConversationList } from './ConversationList'
-import { ChatView } from './ChatView'
+import { ChatView, type FocusBranch } from './ChatView'
 import type { CompareColumn } from './ComparisonColumns'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
@@ -42,11 +42,14 @@ export const ChatModule: React.FC = () => {
   const [liveColumns, setLiveColumns] = useState<CompareColumn[] | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
   const [marketDetailId, setMarketDetailId] = useState<string | undefined>(undefined)
+  /** 分支聚焦信号：重新生成/编辑重发后把对应轮次切到新分支 */
+  const [focusBranch, setFocusBranch] = useState<FocusBranch | null>(null)
 
   const requestIdRef = useRef<string | null>(null)
   const finalizedRef = useRef(false)
   const totalColumnsRef = useRef(0)
   const settledCountRef = useRef(0)
+  const focusNonceRef = useRef(0)
   const assistantIdRef = useRef('asst-default')
   const streamingConvRef = useRef<string | null>(null)
   const currentConvRef = useRef<string | null>(null)
@@ -382,8 +385,11 @@ export const ChatModule: React.FC = () => {
       }))
     )
 
-    // 先从本地消息列表中移除旧 assistant 消息，避免显示重复
-    setMessages((prev) => prev.filter((m) => m.id !== messageId))
+    // 旧回复保留为分支；新分支生成中由 liveColumns 以虚拟批次显示
+    // 生成完成后自动把该轮切到新分支（batchId = requestId）
+    const old = messages.find((m) => m.id === messageId)
+    const turnKey = old?.parentId ?? messageId
+    setFocusBranch({ turnKey, batchId: requestId, nonce: ++focusNonceRef.current })
 
     window.pocketai
       .regenerateMessage({
@@ -401,9 +407,9 @@ export const ChatModule: React.FC = () => {
           if (currentConvRef.current === currentConvId) loadMessages(currentConvId)
         }
       })
-  }, [targets, currentConvId, currentAssistantId, loadMessages])
+  }, [targets, currentConvId, currentAssistantId, loadMessages, messages])
 
-  /** 改参重跑 / 编辑用户消息后重发 */
+  /** 改参重跑 / 编辑用户消息后重发：旧回复保留为分支，追加新批次 */
   const handleResend = useCallback(async (messageId: string, newContent?: string) => {
     if (requestIdRef.current) return // 正在流式中
     const validTargets = targets.filter((t) => t.providerId && t.model)
@@ -424,18 +430,11 @@ export const ChatModule: React.FC = () => {
       }))
     )
 
-    // 从本地消息列表中移除该用户消息之后的所有 AI 回复
-    setMessages((prev) => {
-      // 找到用户消息位置
-      const userMsgIndex = prev.findIndex((m) => m.id === messageId)
-      if (userMsgIndex === -1) return prev
-      // 如果有新内容，更新用户消息
-      const updated = newContent !== undefined
-        ? prev.map((m) => m.id === messageId ? { ...m, content: newContent } : m)
-        : prev
-      // 保留用户消息及之前的消息，移除该用户消息后的 AI 回复（下一轮 reply）
-      return updated.slice(0, userMsgIndex + 1)
-    })
+    // 本地乐观更新用户消息内容；旧回复保留为分支，由 liveColumns 以虚拟批次显示
+    if (newContent !== undefined) {
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, content: newContent } : m)))
+    }
+    setFocusBranch({ turnKey: messageId, batchId: requestId, nonce: ++focusNonceRef.current })
 
     window.pocketai
       .resendMessage({
@@ -529,6 +528,7 @@ export const ChatModule: React.FC = () => {
         onDeleteMessages={handleDeleteMessages}
         onForkConversation={handleForkConversation}
         onSaveAsNote={handleSaveAsNote}
+        focusBranch={focusBranch}
       />
 
       {marketOpen && (

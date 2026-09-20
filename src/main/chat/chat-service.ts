@@ -13,6 +13,7 @@ import type {
   ChatErrorEvent
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
+import { acquireKeepAwake, releaseKeepAwake } from '../keep-awake'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { messageRepo } from '../db/repositories/message.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
@@ -26,15 +27,71 @@ import type { MessageRecord } from '../../shared/types'
 
 type EmitFn = (channel: string, data: unknown) => void
 
+/** 按 batch 分组一轮回复：有 batchId 按 batchId 归组；旧数据（null）按“连续 5 秒内”归为同批 */
+function groupRepliesByBatch(replies: MessageRecord[]): MessageRecord[][] {
+  const batches: MessageRecord[][] = []
+  let current: MessageRecord[] = []
+  let currentBatchId: string | null | undefined = undefined
+  for (const r of replies) {
+    if (r.batchId) {
+      if (r.batchId !== currentBatchId) {
+        current = [r]
+        batches.push(current)
+        currentBatchId = r.batchId
+      } else {
+        current.push(r)
+      }
+    } else {
+      const prev = current[current.length - 1]
+      if (prev && !prev.batchId && r.createdAt - prev.createdAt <= 5000) {
+        current.push(r)
+      } else {
+        current = [r]
+        batches.push(current)
+        currentBatchId = undefined
+      }
+    }
+  }
+  return batches
+}
+
 /**
- * 组装上下文：历史中若一轮 user 后有多条 assistant（对照回复），
- * 只取第一条 done 回复进入上下文，保证 messages 角色交替合法。
+ * 挑出每轮 user 消息对应的“激活分支”回复 ID 集合：
+ * 从最新批次往前找第一条 done 回复（失败批次自动回退到上一个可用分支）。
+ */
+function pickActiveReplyIds(history: MessageRecord[]): Set<string> {
+  const chosen = new Set<string>()
+  let pending: MessageRecord[] = []
+  const flush = (): void => {
+    if (pending.length === 0) return
+    const batches = groupRepliesByBatch(pending)
+    for (let i = batches.length - 1; i >= 0; i--) {
+      const done = batches[i].find((r) => r.status === 'done')
+      if (done) {
+        chosen.add(done.id)
+        break
+      }
+    }
+    pending = []
+  }
+  for (const m of history) {
+    if (m.role === 'user') flush()
+    else if (m.role === 'assistant') pending.push(m)
+  }
+  flush()
+  return chosen
+}
+
+/**
+ * 组装上下文：历史中一轮 user 后可能有多条 assistant（分支/对照回复），
+ * 只取该轮激活分支（最新批次）的第一条 done 回复进入上下文，保证角色交替合法。
  */
 function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterChatMessage[] {
   const out: AdapterChatMessage[] = []
   if (systemPrompt && systemPrompt.trim()) {
     out.push({ role: 'system', content: systemPrompt })
   }
+  const activeReplyIds = pickActiveReplyIds(history)
   let awaitingAssistant = false
   for (const m of history) {
     if (m.status !== 'done') continue
@@ -66,10 +123,11 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
       }
       awaitingAssistant = true
     } else if (m.role === 'assistant' && awaitingAssistant) {
+      if (!activeReplyIds.has(m.id)) continue // 非激活分支的回复不进上下文
       out.push({ role: 'assistant', content: m.content })
       awaitingAssistant = false
     }
-    // 无前置 user 的 assistant 或多余的对照回复，均不进上下文
+    // 无前置 user 的 assistant 或多余的分支回复，均不进上下文
   }
   return out
 }
@@ -122,7 +180,12 @@ class ChatService {
 
     // Agent 模式：委托给 AgentEngine 走 ReAct 循环
     if (payload.agentMode) {
-      await agentEngine.run(payload, emit)
+      acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
+      try {
+        await agentEngine.run(payload, emit)
+      } finally {
+        releaseKeepAwake()
+      }
       return
     }
 
@@ -157,77 +220,80 @@ class ChatService {
     // 主控制器：停止时中断全部目标
     const master = new AbortController()
     this.controllers.set(requestId, master)
+    acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
 
-    // 1. 持久化用户消息
-    const userMsg = messageRepo.insert({
-      conversationId,
-      role: 'user',
-      content,
-      status: 'done',
-      attachments: payload.attachments
-    })
-
-    // 2. 会话标题与状态
-    const conv = conversationRepo.get(conversationId)
-    if (conv && (conv.title === '新对话' || !conv.title)) {
-      conversationRepo.rename(conversationId, content.slice(0, 20) || '新对话')
-    }
-    conversationRepo.touch(conversationId, {
-      modelLabel: targets.map((t) => `${t.providerId}:${t.model}`).join(' | '),
-      status: 'streaming'
-    })
-
-    // 3. 构建共享上下文（此刻历史含刚插入的用户消息，不含占位回复）
-    const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
-
-    // 3.5 注入附件：图片→multimodal 格式，文本→追加到消息内容
-    injectAttachments(messages, payload.attachments)
-    const placeholders = targets.map((t) =>
-      messageRepo.insert({
+    try {
+      // 1. 持久化用户消息
+      const userMsg = messageRepo.insert({
         conversationId,
-        role: 'assistant',
-        content: '',
-        provider: t.providerId,
-        model: t.model,
-        status: 'streaming',
-        parentId: userMsg.id
+        role: 'user',
+        content,
+        status: 'done',
+        attachments: payload.attachments
       })
-    )
 
-    // 5. 并发执行（同 Provider 自动限流）
-    const results = await Promise.allSettled(
-      targets.map((target, index) =>
-        this.runTarget({
-          requestId,
-          index,
-          target,
-          messages,
-          messageId: placeholders[index].id,
-          signal: master.signal,
-          emit
+      // 2. 会话标题与状态
+      const conv = conversationRepo.get(conversationId)
+      if (conv && (conv.title === '新对话' || !conv.title)) {
+        conversationRepo.rename(conversationId, content.slice(0, 20) || '新对话')
+      }
+      conversationRepo.touch(conversationId, {
+        modelLabel: targets.map((t) => `${t.providerId}:${t.model}`).join(' | '),
+        status: 'streaming'
+      })
+
+      // 3. 构建共享上下文（此刻历史含刚插入的用户消息，不含占位回复）
+      const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
+
+      // 3.5 注入附件：图片→multimodal 格式，文本→追加到消息内容
+      injectAttachments(messages, payload.attachments)
+      const placeholders = targets.map((t) =>
+        messageRepo.insert({
+          conversationId,
+          role: 'assistant',
+          content: '',
+          provider: t.providerId,
+          model: t.model,
+          status: 'streaming',
+          parentId: userMsg.id,
+          batchId: requestId
         })
       )
-    )
 
-    // 全部目标失败 → 标记 error；否则 done
-    const allFailed = results.every((r) => r.status === 'rejected')
-    conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
-    this.controllers.delete(requestId)
+      // 5. 并发执行（同 Provider 自动限流）
+      const results = await Promise.allSettled(
+        targets.map((target, index) =>
+          this.runTarget({
+            requestId,
+            index,
+            target,
+            messages,
+            messageId: placeholders[index].id,
+            signal: master.signal,
+            emit
+          })
+        )
+      )
+
+      // 全部目标失败 → 标记 error；否则 done
+      const allFailed = results.every((r) => r.status === 'rejected')
+      conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+    } finally {
+      this.controllers.delete(requestId)
+      releaseKeepAwake()
+    }
   }
 
-  /** 重新生成：删除旧 assistant 回复，用相同上下文重新请求 */
+  /** 重新生成：保留旧回复作为分支，用相同上下文追加一个新批次回复 */
   async regenerate(payload: RegeneratePayload, emit: EmitFn): Promise<void> {
     const { requestId, conversationId, messageId, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
 
-    // 获取要重新生成的旧 assistant 消息
+    // 获取要重新生成的旧 assistant 消息（仅用于校验与取 parent）
     const oldMsg = messageRepo.getById(messageId)
     if (!oldMsg || oldMsg.role !== 'assistant') {
       throw new Error('消息不存在或非助手消息')
     }
-
-    // 删除旧 assistant 消息（FTS 触发器自动清理）
-    messageRepo.delete(messageId)
 
     // 解析 SystemPrompt
     let effectivePrompt = ''
@@ -237,49 +303,55 @@ class ChatService {
     }
     const renderedPrompt = renderPrompt(effectivePrompt, {})
 
-    // 构建上下文（旧 assistant 已删除，所以历史中不含它）
+    // 构建上下文（旧回复保留在历史中，buildContext 只取激活分支）
     const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
 
     // 主控制器
     const master = new AbortController()
     this.controllers.set(requestId, master)
+    acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
 
-    // 为每个目标创建占位 assistant 消息
-    const placeholders = targets.map((t) =>
-      messageRepo.insert({
-        conversationId,
-        role: 'assistant',
-        content: '',
-        provider: t.providerId,
-        model: t.model,
-        status: 'streaming',
-        parentId: oldMsg.parentId
-      })
-    )
-
-    conversationRepo.touch(conversationId, { status: 'streaming' })
-
-    // 并发执行
-    const results = await Promise.allSettled(
-      targets.map((target, index) =>
-        this.runTarget({
-          requestId,
-          index,
-          target,
-          messages,
-          messageId: placeholders[index].id,
-          signal: master.signal,
-          emit
+    try {
+      // 为每个目标创建占位 assistant 消息（新批次 = 新分支）
+      const placeholders = targets.map((t) =>
+        messageRepo.insert({
+          conversationId,
+          role: 'assistant',
+          content: '',
+          provider: t.providerId,
+          model: t.model,
+          status: 'streaming',
+          parentId: oldMsg.parentId,
+          batchId: requestId
         })
       )
-    )
 
-    const allFailed = results.every((r) => r.status === 'rejected')
-    conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
-    this.controllers.delete(requestId)
+      conversationRepo.touch(conversationId, { status: 'streaming' })
+
+      // 并发执行
+      const results = await Promise.allSettled(
+        targets.map((target, index) =>
+          this.runTarget({
+            requestId,
+            index,
+            target,
+            messages,
+            messageId: placeholders[index].id,
+            signal: master.signal,
+            emit
+          })
+        )
+      )
+
+      const allFailed = results.every((r) => r.status === 'rejected')
+      conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+    } finally {
+      this.controllers.delete(requestId)
+      releaseKeepAwake()
+    }
   }
 
-  /** 改参重跑 / 编辑用户消息后重发：删除旧回复，用新参数重新请求 */
+  /** 改参重跑 / 编辑用户消息后重发：保留旧回复作为分支，追加一个新批次回复 */
   async resend(payload: ResendPayload, emit: EmitFn): Promise<void> {
     const { requestId, conversationId, messageId, content, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
@@ -289,13 +361,10 @@ class ChatService {
       throw new Error('消息不存在或非用户消息')
     }
 
-    // 如果提供了新内容，更新用户消息
+    // 如果提供了新内容，更新用户消息（旧回复保留为分支，可切换查看）
     if (content !== undefined && content !== userMsg.content) {
       messageRepo.updateUserContent(messageId, content)
     }
-
-    // 删除旧 AI 回复（parentId = 用户消息 ID）
-    messageRepo.deleteReplies(messageId)
 
     // 解析 SystemPrompt
     let effectivePrompt = ''
@@ -305,44 +374,50 @@ class ChatService {
     }
     const renderedPrompt = renderPrompt(effectivePrompt, {})
 
-    // 构建上下文（旧回复已删除，历史以更新后的用户消息结尾）
+    // 构建上下文（旧回复保留为分支，buildContext 只取激活分支）
     const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
 
     const master = new AbortController()
     this.controllers.set(requestId, master)
+    acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
 
-    // 为每个目标创建占位 assistant 消息
-    const placeholders = targets.map((t) =>
-      messageRepo.insert({
-        conversationId,
-        role: 'assistant',
-        content: '',
-        provider: t.providerId,
-        model: t.model,
-        status: 'streaming',
-        parentId: messageId
-      })
-    )
-
-    conversationRepo.touch(conversationId, { status: 'streaming' })
-
-    const results = await Promise.allSettled(
-      targets.map((target, index) =>
-        this.runTarget({
-          requestId,
-          index,
-          target,
-          messages,
-          messageId: placeholders[index].id,
-          signal: master.signal,
-          emit
+    try {
+      // 为每个目标创建占位 assistant 消息（新批次 = 新分支）
+      const placeholders = targets.map((t) =>
+        messageRepo.insert({
+          conversationId,
+          role: 'assistant',
+          content: '',
+          provider: t.providerId,
+          model: t.model,
+          status: 'streaming',
+          parentId: messageId,
+          batchId: requestId
         })
       )
-    )
 
-    const allFailed = results.every((r) => r.status === 'rejected')
-    conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
-    this.controllers.delete(requestId)
+      conversationRepo.touch(conversationId, { status: 'streaming' })
+
+      const results = await Promise.allSettled(
+        targets.map((target, index) =>
+          this.runTarget({
+            requestId,
+            index,
+            target,
+            messages,
+            messageId: placeholders[index].id,
+            signal: master.signal,
+            emit
+          })
+        )
+      )
+
+      const allFailed = results.every((r) => r.status === 'rejected')
+      conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+    } finally {
+      this.controllers.delete(requestId)
+      releaseKeepAwake()
+    }
   }
 
   private async runTarget(args: {

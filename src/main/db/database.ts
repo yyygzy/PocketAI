@@ -384,6 +384,15 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE mcp_servers ADD COLUMN python_packages TEXT NOT NULL DEFAULT '[]';
     `
+  },
+  {
+    // v17: 消息分支——batch_id 标识同一次生成请求的回复组（多模型对照为同批多条），
+    // 同一 user 消息下多个 batch 即多条分支，渲染端按 batch 分组做 ‹ x/y › 分支切换
+    version: 17,
+    name: 'messages_batch_id',
+    up: `
+      ALTER TABLE messages ADD COLUMN batch_id TEXT;
+    `
   }
 ]
 
