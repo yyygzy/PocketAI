@@ -8,8 +8,8 @@ import { useI18n } from '../../i18n'
 
 interface Props {
   onClose: () => void
-  /** 市场 内启停/导入/删除等写操作后通知父级刷新技能列表 */
-  onChanged: () => void
+  /** 市场 内启停/导入/删除等写操作后由父级统一刷新；返回最新列表，市场直接复用（单次 listSkills） */
+  onChanged: () => Promise<SkillRecord[]>
 }
 
 type View = { mode: 'grid' } | { mode: 'detail'; id: string }
@@ -56,10 +56,9 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   const handleToggle = useCallback(
     async (s: SkillRecord) => {
       await window.pocketai.saveSkill({ id: s.id, name: s.name, enabled: !s.enabled })
-      await load()
-      onChanged()
+      setSkills(await onChanged())
     },
-    [load, onChanged]
+    [onChanged]
   )
 
   /** 复制为我的技能：全字段另存（不传 id → 新建自定义副本），成功后跳副本详情 */
@@ -72,12 +71,11 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
         content: s.content,
         enabled: true
       })
-      await load()
-      onChanged()
+      setSkills(await onChanged())
       setView({ mode: 'detail', id: copy.id })
       flash(true, t('skill.market.duplicated'))
     },
-    [load, flash, t, onChanged]
+    [flash, t, onChanged]
   )
 
   const handleExport = useCallback(
@@ -93,10 +91,10 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
     const r = await window.pocketai.importSkill()
     if (r.ok && r.canceled) return
     if (r.ok && r.skill) {
-      await load()
+      setSkills(await onChanged())
       setView({ mode: 'detail', id: r.skill.id })
-      flash(true, t('skill.market.importDone'))
-      onChanged()
+      // 同名不阻断导入（独立副本），但明确告知，避免用户误以为覆盖
+      flash(true, r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone'))
       return
     }
     if (!r.ok) {
@@ -108,17 +106,16 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       }
       flash(false, t(keyMap[r.error ?? ''] ?? 'skill.market.importFailed'))
     }
-  }, [load, flash, t, onChanged])
+  }, [flash, t, onChanged])
 
   const handleDelete = useCallback(
     async (s: SkillRecord) => {
       if (!window.confirm(t('skill.deleteConfirm', { name: s.name }))) return
       await window.pocketai.deleteSkill(s.id)
-      await load()
+      setSkills(await onChanged())
       setView({ mode: 'grid' })
-      onChanged()
     },
-    [load, t, onChanged]
+    [t, onChanged]
   )
 
   const builtinBadge =

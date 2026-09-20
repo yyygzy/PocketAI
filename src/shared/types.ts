@@ -130,6 +130,8 @@ export interface MessageRecord {
   createdAt: number
   toolCalls?: string | null
   attachments?: ChatAttachment[]
+  /** 同一次生成请求的批次 ID（=requestId）；同 parent 下多个 batch 即多条分支；旧数据为 null */
+  batchId?: string | null
 }
 
 // ---------- 知识库 ----------
@@ -337,6 +339,12 @@ export interface WebSearchConfig {
   /** 渲染端永远拿到空串（Key 不回显明文），是否已配置看 hasKey */
   apiKey: string
   hasKey: boolean
+}
+
+/** 本地日历（calendar.read 工具）：启停 + .ics 文件路径列表（上限 10 个） */
+export interface CalendarConfig {
+  enabled: boolean
+  paths: string[]
 }
 
 // ---------- Channels（IM Bot 网关，v2 批次七：Telegram） ----------
@@ -584,6 +592,16 @@ export interface CleanupResult {
   removedOrphanMessages: number
   removedOrphanChunks: number
   vacuumedBytes: number
+}
+
+// ---------- 首启向导 ----------
+export interface WizardState {
+  /** 是否已完成过首启向导 */
+  wizardDone: boolean
+  /** 检测到机器指纹变化（便携盘换电脑） */
+  machineChanged: boolean
+  /** 当前是否运行在便携盘（可移动磁盘） */
+  isPortable: boolean
 }
 
 // ---------- 平台管家：模型推荐 ----------
@@ -982,6 +1000,16 @@ export const IPC = {
   AGENT_SET_SHELL_CONFIG: 'agent:set-shell-config',
   AGENT_GET_WEBSEARCH_CONFIG: 'agent:get-websearch-config',
   AGENT_SET_WEBSEARCH_CONFIG: 'agent:set-websearch-config',
+  AGENT_GET_CALENDAR_CONFIG: 'agent:get-calendar-config',
+  AGENT_SET_CALENDAR_CONFIG: 'agent:set-calendar-config',
+  AGENT_PICK_ICS_FILE: 'agent:pick-ics-file',
+
+  // ---------- License 授权（商业版） ----------
+  LICENSE_ACTIVATE: 'license:activate',
+  LICENSE_IMPORT_FILE: 'license:import-file',
+
+  // ---------- 独立窗口（标签弹出） ----------
+  APP_OPEN_DETACHED: 'app:open-detached',
   AGENT_TOOL_APPROVAL_EVENT: 'agent:tool-approval-event',
   AGENT_TOOL_APPROVE_RESPONSE: 'agent:tool-approve-response',
 
@@ -1032,6 +1060,18 @@ export const IPC = {
   ENCRYPTION_CHANGE_PASSWORD: 'encryption:change-password', // 密码轮换（设置页内，old → new）
   ENCRYPTION_DISABLE: 'encryption:disable', // 禁用加密（需密码验证）
   ENCRYPTION_ENABLE: 'encryption:enable', // 设置页启用加密（明文 DB → 设置主密码）
+  ENCRYPTION_HAS_RECOVERY: 'encryption:has-recovery', // 是否已生成恢复密钥
+  ENCRYPTION_GENERATE_RECOVERY: 'encryption:generate-recovery', // 生成/重新生成恢复密钥（返回明文码，仅一次）
+  ENCRYPTION_DISABLE_RECOVERY: 'encryption:disable-recovery', // 删除恢复密钥
+  ENCRYPTION_RECOVER: 'encryption:recover', // 忘记密码：恢复码 + 新密码重置
+  ENCRYPTION_SAVE_RECOVERY_FILE: 'encryption:save-recovery-file', // 恢复码另存为 txt
+
+  // ---------- 剪贴板守卫 ----------
+  CLIPBOARD_COPY_SENSITIVE: 'clipboard:copy-sensitive', // 复制敏感内容（TTL 后自动清除，锁屏立即清除）
+
+  // ---------- 首启向导 ----------
+  WIZARD_GET_STATE: 'wizard:get-state', // 是否完成过向导 + 换电脑检测结果
+  WIZARD_COMPLETE: 'wizard:complete', // 标记向导完成并记录当前机器指纹
 
   // ---------- 备份 ----------
   BACKUP_LOCAL: 'backup:local', // 本地备份（可选加密）

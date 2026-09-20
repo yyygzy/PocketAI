@@ -14,7 +14,8 @@ import type {
   UiPreferences,
   SidebarModuleId,
   TranslateRequestPayload,
-  ImageGeneratePayload
+  ImageGeneratePayload,
+  WizardState
 } from '../../shared/types'
 import { DEFAULT_SIDEBAR_ORDER } from '../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../shared/snippet'
@@ -22,6 +23,7 @@ import { getPaths } from '../portable'
 import { getHardwareInfo, refreshHardwareInfo } from '../steward/hardware'
 import { recommendModels } from '../steward/model-recommend'
 import { runAudit, runDiagnose } from '../steward/diagnose'
+import { getMachineId } from '../steward/machine'
 import { buildAppMenu } from '../menu'
 import { dbService } from '../db/database'
 import { providerRepo } from '../db/repositories/provider.repo'
@@ -46,6 +48,7 @@ import { toolRegistry } from '../tools/registry'
 import { getWorkspaceDir, setWorkspaceDir } from '../tools/fs-tools'
 import { getShellConfig, setShellConfig } from '../tools/shell-config'
 import { getWebSearchConfig, setWebSearchConfig } from '../tools/websearch-config'
+import { getCalendarConfig, setCalendarConfig } from '../tools/calendar-ics'
 import { getChannelConfig, setChannelConfig } from '../channels/channel-config'
 import { channelService } from '../channels/channel-service'
 import {
@@ -56,13 +59,17 @@ import {
   updateSandboxMeta
 } from '../sandbox/sandbox-service'
 import { resolveApproval } from '../agent/tool-approval'
-import { licenseService } from '../license/license'
+import { licenseService, assertCanCreateAssistant, assertCanCreateKb } from '../license/license'
+import { createDetachedWindow, DETACHED_MODULES } from '../windows/detached'
 import { lockService } from '../lock/lock'
 import { denyNewWindows } from '../net/external-links'
 import { healthService } from '../health/health'
 import { getBackupSchedule, setBackupSchedule, noteManualBackup } from '../backup/backup-scheduler'
 import { filesService } from '../files/files-service'
 import { masterKeyManager } from '../crypto/master-key'
+import { exportFieldCredentials, restoreFieldCredentials } from '../crypto/credential-rotation'
+import { recoveryKeyManager } from '../crypto/recovery-key'
+import { clipboardGuard } from '../crypto/clipboard-guard'
 import { unlockCoordinator } from '../crypto/unlock-coordinator'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { noteRepo } from '../db/repositories/note.repo'
@@ -80,6 +87,7 @@ import { runTranslate, abortTranslate } from '../translate/translate-service'
 import { listPythonRuntimes, downloadPortablePython } from '../python-runtime'
 import { getUiPreferences, setUiPreferences } from '../ui-preferences'
 import path from 'node:path'
+import fs from 'node:fs'
 import { DATA_DIR } from '../portable'
 
 /** 向所有 BrowserWindow 推送事件 */
@@ -129,17 +137,50 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.PROVIDER_TEST, (_e, id: string) => providerManager.test(id))
 
+  // ---------- License 授权（商业版）：粘贴激活码 / 导入授权文件 ----------
+  ipcMain.handle(IPC.LICENSE_ACTIVATE, (_e, code: unknown) => {
+    if (typeof code !== 'string' || !code.trim()) throw new Error('请输入激活码内容')
+    return licenseService.loadFromString(code)
+  })
+  ipcMain.handle(IPC.LICENSE_IMPORT_FILE, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) throw new Error('窗口不可用')
+    const result = await dialog.showOpenDialog(win, {
+      title: '导入授权文件',
+      properties: ['openFile'],
+      filters: [{ name: '授权文件', extensions: ['lic', 'txt', 'json'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true }
+    return { canceled: false, status: licenseService.loadFromFile(result.filePaths[0]) }
+  })
+
+  // ---------- 独立窗口（标签弹出） ----------
+  ipcMain.handle(IPC.APP_OPEN_DETACHED, (_e, moduleId: unknown) => {
+    if (typeof moduleId !== 'string' || !DETACHED_MODULES.has(moduleId)) {
+      return { ok: false, error: '不支持的模块' }
+    }
+    createDetachedWindow(moduleId)
+    return { ok: true }
+  })
+
   // ---------- 助手 ----------
   ipcMain.handle(IPC.ASSISTANT_LIST, () => assistantRepo.list())
   ipcMain.handle(IPC.ASSISTANT_GET, (_e, id: string) => assistantRepo.get(id))
-  ipcMain.handle(IPC.ASSISTANT_SAVE, (_e, record: Partial<AssistantRecord> & { name: string }) =>
-    assistantRepo.save(record)
-  )
+  ipcMain.handle(IPC.ASSISTANT_SAVE, (_e, record: Partial<AssistantRecord> & { name: string }) => {
+    // License 门控：免费版限制自建助手数量（新建/复制场景；内置助手不计）
+    if (!record.id || !assistantRepo.get(record.id)) {
+      assertCanCreateAssistant(assistantRepo.list().filter((a) => !a.isBuiltin).length)
+    }
+    return assistantRepo.save(record)
+  })
   ipcMain.handle(IPC.ASSISTANT_DELETE, (_e, id: string) => {
     assistantRepo.delete(id)
     return { ok: true }
   })
-  ipcMain.handle(IPC.ASSISTANT_DUPLICATE, (_e, id: string) => assistantRepo.duplicate(id))
+  ipcMain.handle(IPC.ASSISTANT_DUPLICATE, (_e, id: string) => {
+    assertCanCreateAssistant(assistantRepo.list().filter((a) => !a.isBuiltin).length)
+    return assistantRepo.duplicate(id)
+  })
   ipcMain.handle(IPC.ASSISTANT_SET_PINNED, (_e, id: string, pinned: boolean) => {
     assistantRepo.setPinned(id, pinned)
     return { ok: true }
@@ -360,9 +401,13 @@ export function registerIpcHandlers(): void {
   // ---------- 知识库 ----------
   ipcMain.handle(IPC.KB_LIST, () => kbRepo.list())
   ipcMain.handle(IPC.KB_GET, (_e, id: string) => kbRepo.get(id))
-  ipcMain.handle(IPC.KB_SAVE, (_e, record: Partial<KnowledgeBase> & { name: string }) =>
-    kbRepo.save(record)
-  )
+  ipcMain.handle(IPC.KB_SAVE, (_e, record: Partial<KnowledgeBase> & { name: string }) => {
+    // License 门控：免费版限制知识库数量（新建场景）
+    if (!record.id || !kbRepo.get(record.id)) {
+      assertCanCreateKb(kbRepo.list().length)
+    }
+    return kbRepo.save(record)
+  })
   ipcMain.handle(IPC.KB_DELETE, (_e, id: string) => {
     ingestionService.deleteKb(id)
     return { ok: true }
@@ -731,6 +776,32 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 本地日历配置（calendar.read 工具）：启停 + .ics 路径列表
+  ipcMain.handle(IPC.AGENT_GET_CALENDAR_CONFIG, () => getCalendarConfig())
+  ipcMain.handle(
+    IPC.AGENT_SET_CALENDAR_CONFIG,
+    (_e, input: { enabled?: unknown; paths?: unknown }) => {
+      const patch: { enabled?: boolean; paths?: string[] } = {}
+      if (typeof input?.enabled === 'boolean') patch.enabled = input.enabled
+      if (Array.isArray(input?.paths)) {
+        patch.paths = input.paths.filter((p): p is string => typeof p === 'string')
+      }
+      return setCalendarConfig(patch)
+    }
+  )
+  // 文件选择对话框挑 .ics 文件（渲染端拿到路径后走 set-config 保存）
+  ipcMain.handle(IPC.AGENT_PICK_ICS_FILE, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return { canceled: true }
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择日历文件',
+      properties: ['openFile'],
+      filters: [{ name: 'iCalendar', extensions: ['ics'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true }
+    return { canceled: false, path: result.filePaths[0] }
+  })
+
   // ---------- Channels（IM Bot 网关；Token 明文不出主进程） ----------
   ipcMain.handle(IPC.CHANNEL_GET_CONFIG, () => getChannelConfig())
   ipcMain.handle(
@@ -878,6 +949,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.ENCRYPTION_CHANGE_PASSWORD, async (_e, oldPassword: string, newPassword: string) => {
     // 密码轮换：用旧密码打开 → rekey → 更新 salt
     const salt = appConfigRepo.getMasterPasswordSalt()
+    // config.json 中的恢复包与 DB 开闭无关，rekey 前记录
+    const hadRecovery = recoveryKeyManager.hasRecovery()
     // 保存当前正确密钥，验证失败时回滚
     const currentKey = masterKeyManager.getDbKey()
     const oldKey = masterKeyManager.setKey(oldPassword, salt ?? undefined)
@@ -897,7 +970,7 @@ export function registerIpcHandlers(): void {
       }
       return { ok: false, error: '旧密码错误' }
     }
-    // ⚠️ key 还没切换，先用旧 key 取出 WebDAV 明文密码
+    // ⚠️ key 还没切换，先用旧 key 取出 WebDAV 明文密码 + 字段级凭据快照
     let webDAVPassword: string | null = null
     let savedCfg: any = null
     try {
@@ -905,6 +978,7 @@ export function registerIpcHandlers(): void {
       const oldCfg = loadWebDAVConfig()
       if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
     } catch { /* 无配置或解密失败，忽略 */ }
+    const fieldSnapshot = exportFieldCredentials()
 
     // rekey
     dbService.getHandle().pragma('journal_mode = DELETE')
@@ -926,9 +1000,16 @@ export function registerIpcHandlers(): void {
         saveWebDAVConfig(savedCfg)  // 直接复用 oldCfg，避免第二次 load 时 key mismatch
       } catch (e) { console.warn('[encryption] WebDAV 凭据重加密失败:', e) }
     }
+    restoreFieldCredentials(fieldSnapshot)
+
+    // masterKey 已换 → 旧恢复包解密的是旧 key，必须重生（用户需重新保存新恢复码）
+    let newRecoveryCode: string | undefined
+    if (hadRecovery) {
+      newRecoveryCode = recoveryKeyManager.enableRecovery(newKey)
+    }
 
     console.log('[encryption] 密码轮换成功')
-    return { ok: true }
+    return { ok: true, recoveryCode: newRecoveryCode }
   })
   ipcMain.handle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config
@@ -951,7 +1032,7 @@ export function registerIpcHandlers(): void {
       }
       return { ok: false, error: '密码错误' }
     }
-    // ⚠️ key 还没切换，先用 master key 取出 WebDAV 明文密码
+    // ⚠️ key 还没切换，先用 master key 取出 WebDAV 明文密码 + 字段级凭据快照
     let webDAVPassword: string | null = null
     let savedCfg: any = null
     try {
@@ -959,6 +1040,7 @@ export function registerIpcHandlers(): void {
       const oldCfg = loadWebDAVConfig()
       if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
     } catch { /* 忽略 */ }
+    const fieldSnapshot = exportFieldCredentials()
 
     dbService.getHandle().pragma('journal_mode = DELETE')
     dbService.getHandle().pragma("rekey = ''")
@@ -978,6 +1060,9 @@ export function registerIpcHandlers(): void {
         saveWebDAVConfig(savedCfg)  // 复用 oldCfg，避免 key mismatch
       } catch (e) { console.warn('[encryption] WebDAV 凭据重加密失败:', e) }
     }
+    restoreFieldCredentials(fieldSnapshot)
+    // 已无主密码，恢复密钥失去意义（也避免残留包指向旧 masterKey）
+    recoveryKeyManager.disableRecovery()
     return { ok: true }
   })
   ipcMain.handle(IPC.ENCRYPTION_ENABLE, async (_e, password: string) => {
@@ -985,7 +1070,7 @@ export function registerIpcHandlers(): void {
     if (masterKeyManager.isDbEncrypted()) {
       return { ok: false, error: '已经加密' }
     }
-    // ⚠️ 当前是 fixed key 模式，先取出 WebDAV 明文密码
+    // ⚠️ 当前是 fixed key 模式，先取出 WebDAV 明文密码 + 字段级凭据快照
     let webDAVPassword: string | null = null
     let savedCfg: any = null
     try {
@@ -993,6 +1078,7 @@ export function registerIpcHandlers(): void {
       const oldCfg = loadWebDAVConfig()
       if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
     } catch { /* 忽略 */ }
+    const fieldSnapshot = exportFieldCredentials()
 
     const newSalt = masterKeyManager.generateSalt()
     const masterKey = masterKeyManager.setKey(password, newSalt)  // ← key 切换为 master key
@@ -1000,6 +1086,8 @@ export function registerIpcHandlers(): void {
     appConfigRepo.setEncryptionMode('db')
     appConfigRepo.setHasMasterPassword(true)
     dbService.enableEncryption(masterKey)
+    // 防御：清掉历史残留恢复包（其包裹的是过去的 masterKey，对新库无效且会误导）
+    recoveryKeyManager.disableRecovery()
     console.log('[encryption] 已启用加密')
 
     // ⚠️ key 已切为 master，用 master key 重新加密 WebDAV 密码
@@ -1010,6 +1098,137 @@ export function registerIpcHandlers(): void {
         saveWebDAVConfig(savedCfg)  // 复用 oldCfg，避免 key mismatch
       } catch (e) { console.warn('[encryption] WebDAV 凭据重加密失败:', e) }
     }
+    restoreFieldCredentials(fieldSnapshot)
+    return { ok: true }
+  })
+
+  // ---------- 恢复密钥 ----------
+  ipcMain.handle(IPC.ENCRYPTION_HAS_RECOVERY, () => recoveryKeyManager.hasRecovery())
+
+  ipcMain.handle(IPC.ENCRYPTION_GENERATE_RECOVERY, () => {
+    // 仅 db 模式且已解锁：需要当前 masterKey 才能包裹
+    const masterKey = masterKeyManager.getDbKey()
+    if (!masterKeyManager.isDbEncrypted() || !masterKey) {
+      return { ok: false, error: '请先设置主密码并保持解锁状态' }
+    }
+    try {
+      const code = recoveryKeyManager.enableRecovery(masterKey)
+      return { ok: true, code }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.ENCRYPTION_DISABLE_RECOVERY, () => {
+    recoveryKeyManager.disableRecovery()
+    return { ok: true }
+  })
+
+  // 忘记密码：恢复码还原 masterKey → 打开 DB → rekey 为新密码。
+  // 成功后 DB 保持打开、manager 持有新 key；渲染端随后调用 unlockEncryption(newPassword)
+  // 完成 boot 协调器提交或运行时关解锁窗 + lockService.unlock()。
+  ipcMain.handle(
+    IPC.ENCRYPTION_RECOVER,
+    async (_e, payload: { code: string; newPassword: string } | undefined) => {
+      const code = payload?.code?.trim() ?? ''
+      const newPassword = payload?.newPassword ?? ''
+      if (!code) return { ok: false, error: '请输入恢复密钥' }
+      if (newPassword.length < 6) return { ok: false, error: '新密码至少 6 位' }
+
+      if (masterKeyManager.getMode() !== 'db') {
+        return { ok: false, error: '当前未启用主密码，无需恢复' }
+      }
+
+      // 1) 恢复码 → 旧 masterKey（GCM 校验失败即报错，不会动 DB）
+      let rawKey: Buffer
+      try {
+        rawKey = recoveryKeyManager.recoverMasterKey(code)
+      } catch (e) {
+        return { ok: false, error: (e as Error).message }
+      }
+
+      // 2) 用旧 key 打开 DB 并验证
+      dbService.close()
+      masterKeyManager.setRawKey(rawKey)
+      try {
+        dbService.open(rawKey)
+        dbService.getHandle().prepare('SELECT 1').get()
+      } catch {
+        masterKeyManager.clear()
+        dbService.close()
+        return { ok: false, error: '恢复密钥与当前数据库不匹配' }
+      }
+
+      // 3) 旧 key 下导出全部需重加密的凭据（WebDAV 密码 + 字段级凭据）
+      let webDAVPassword: string | null = null
+      let savedCfg: any = null
+      try {
+        const { loadWebDAVConfig } = await import('../backup/backup-service')
+        const oldCfg = loadWebDAVConfig()
+        if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
+      } catch { /* 无配置或解密失败，忽略 */ }
+      const fieldSnapshot = exportFieldCredentials()
+
+      // 4) rekey 为新密码
+      try {
+        dbService.getHandle().pragma('journal_mode = DELETE')
+        const newSalt = masterKeyManager.generateSalt()
+        appConfigRepo.setMasterPasswordSalt(newSalt)
+        const newKey = masterKeyManager.setKey(newPassword, newSalt)
+        const hex = newKey.toString('hex')
+        dbService.getHandle().pragma(`rekey = "x'${hex}'"`)
+        dbService.close()
+        dbService.open(newKey)
+        dbService.getHandle().pragma('journal_mode = WAL')
+
+        // 5) 新 key 下重加密凭据
+        if (webDAVPassword && savedCfg) {
+          try {
+            const { saveWebDAVConfig } = await import('../backup/backup-service')
+            savedCfg.passwordCipher = webDAVPassword
+            saveWebDAVConfig(savedCfg)
+          } catch (e) { console.warn('[encryption] 恢复后 WebDAV 凭据重加密失败:', e) }
+        }
+        restoreFieldCredentials(fieldSnapshot)
+
+        // 6) 旧恢复码包裹的是旧 masterKey → 生成新恢复码，要求用户重新保存
+        const newRecoveryCode = recoveryKeyManager.enableRecovery(newKey)
+        console.log('[encryption] 恢复密钥重置密码成功')
+        return { ok: true, recoveryCode: newRecoveryCode }
+      } catch (e) {
+        console.error('[encryption] 恢复后 rekey 失败:', e)
+        return { ok: false, error: `重置失败：${(e as Error).message}` }
+      }
+    }
+  )
+
+  // 恢复码另存为文本文件（设置页与重置成功页共用）
+  ipcMain.handle(IPC.ENCRYPTION_SAVE_RECOVERY_FILE, async (e, code: string) => {
+    try {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+      const content =
+        'PocketAI 恢复密钥\n' +
+        '==============================\n' +
+        '忘记主密码时，凭此码在解锁页重置密码。\n' +
+        '请妥善保管（建议离线保存），任何人拿到它都可以重置你的密码。\n\n' +
+        `${code}\n`
+      const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+        defaultPath: 'PocketAI-恢复密钥.txt',
+        filters: [{ name: '文本文件', extensions: ['txt'] }]
+      })
+      if (canceled || !filePath) return { ok: true, canceled: true }
+      fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 })
+      return { ok: true, path: filePath }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  // ---------- 剪贴板守卫 ----------
+  // 复制敏感内容（恢复码等）：TTL 到期自动清除；锁屏/应用隐藏时立即清除
+  ipcMain.handle(IPC.CLIPBOARD_COPY_SENSITIVE, (_e, text: string, ttlMs?: number) => {
+    if (typeof text !== 'string' || !text) return { ok: false, error: '无效内容' }
+    clipboardGuard.copySensitive(text, typeof ttlMs === 'number' ? ttlMs : undefined)
     return { ok: true }
   })
 
@@ -1137,8 +1356,11 @@ export function registerIpcHandlers(): void {
     lockService.markActive()
     return { ok: true }
   })
-  // 锁屏状态变化 → 广播
-  lockService.onStateChange((evt) => broadcast(IPC.LOCK_STATE_EVENT, evt))
+  // 锁屏状态变化 → 广播；锁屏/应用隐藏时立即清除剪贴板中的敏感内容
+  lockService.onStateChange((evt) => {
+    if (evt.state === 'locked') clipboardGuard.purge()
+    broadcast(IPC.LOCK_STATE_EVENT, evt)
+  })
 
   // ---------- 平台管家 ----------
   ipcMain.handle(IPC.HEALTH_REPORT, () => healthService.report())
@@ -1161,6 +1383,30 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.STEWARD_DIAGNOSE, () => {
     try {
       return { ok: true, data: runDiagnose() }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  // ---------- 首启向导 ----------
+  ipcMain.handle(IPC.WIZARD_GET_STATE, async () => {
+    try {
+      // 便携判定：便携版 exe 注入的 env；U 盘直跑安装版由向导硬件页展示 removable 细节
+      const isPortable = process.env['PORTABLE_EXECUTABLE_DIR'] !== undefined
+      const wizardDone = appConfigRepo.isFirstRunWizardDone()
+      const storedId = appConfigRepo.getMachineId()
+      // 从未记录过指纹 = 首次安装，由 wizardDone 驱动，不算「换电脑」
+      const machineChanged = storedId !== null && storedId !== (await getMachineId())
+      return { ok: true, data: { wizardDone, machineChanged, isPortable } satisfies WizardState }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.WIZARD_COMPLETE, async () => {
+    try {
+      appConfigRepo.setFirstRunWizardDone(true)
+      appConfigRepo.setMachineId(await getMachineId())
+      return { ok: true }
     } catch (e) {
       return { ok: false, error: (e as Error).message }
     }

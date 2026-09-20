@@ -30,6 +30,10 @@ import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { mcpManager } from './mcp/manager'
 import { masterKeyManager } from './crypto/master-key'
 import { unlockCoordinator } from './crypto/unlock-coordinator'
+import { migrateKvSecrets } from './crypto/secret-store'
+import { exportFieldCredentials, restoreFieldCredentials } from './crypto/credential-rotation'
+import { recoveryKeyManager } from './crypto/recovery-key'
+import { providerRepo } from './db/repositories/provider.repo'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { getHardwareInfo } from './steward/hardware'
 import { licenseService } from './license/license'
@@ -74,8 +78,68 @@ function tryOpenDbNoPassword(): boolean {
 
 // ─── 解锁窗口 ─────────────────────────────────────────────────────
 
+/**
+ * 页面加载失败/挂起自动重试。
+ * 双兜底：① did-fail-load（请求被丢）→ reload；② did-start-loading 后
+ * 8 秒无响应（请求在网络服务崩溃恢复期内挂起，既不成功也不失败）→ 强制
+ * reload。网络服务约 1-2 秒内重启完成，重试必然成功，窗口即可显示。
+ */
+function installLoadRetry(win: BrowserWindow, label: string): void {
+  let retries = 0
+  let hangTimer: NodeJS.Timeout | null = null
+  let warned = false
+
+  const retry = (why: string) => {
+    if (win.isDestroyed()) return
+    if (retries >= 5) {
+      console.error(`[boot] ${label} 页面加载失败（已重试 ${retries} 次）: ${why}`)
+      // 重试穷尽仍未加载成功 → 大概率安全软件（杀软/电脑管家类）查杀
+      // 网络服务进程。生产环境没有终端可看日志，弹窗引导用户自救。
+      if (!warned) {
+        warned = true
+        try {
+          dialog.showMessageBox({
+            type: 'warning',
+            title: '页面加载失败',
+            message: `${label}页面多次加载失败，界面可能一直空白。`,
+            detail:
+              '常见原因：安全软件（电脑管家/杀毒软件）拦截了应用的网络组件。\n' +
+              '请在安全软件中把本应用所在目录加入「信任区/白名单」后重新打开应用。\n' +
+              `应用目录：${app.getAppPath()}`
+          })
+        } catch { /* dialog 不可用时忽略 */ }
+      }
+      return
+    }
+    retries++
+    console.warn(`[boot] ${label} ${why}，${retries}/5 次重试…`)
+    win.webContents.reload()
+  }
+
+  win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+    if (!isMainFrame) return
+    retry(`加载失败(${code} ${desc})`)
+  })
+
+  win.webContents.on('did-start-loading', () => {
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = setTimeout(() => {
+      if (!win.isDestroyed() && !win.webContents.isLoading()) return
+      retry('页面加载超时(8s 无响应)')
+    }, 8000)
+  })
+
+  win.webContents.on('did-stop-loading', () => {
+    if (hangTimer) {
+      clearTimeout(hangTimer)
+      hangTimer = null
+    }
+  })
+}
+
 function showUnlockWindow(mode: 'unlock' | 'setPassword' = 'unlock'): void {
   if (unlockWindow) {
+    unlockWindow.setAlwaysOnTop(true, 'screen-saver')
     unlockWindow.focus()
     return
   }
@@ -99,9 +163,16 @@ function showUnlockWindow(mode: 'unlock' | 'setPassword' = 'unlock'): void {
     }
   })
 
-  unlockWindow.on('ready-to-show', () => unlockWindow?.show())
+  // 解锁窗是启动期强制模态（关闭即退出）：置顶 + 抢焦点，
+  // 防止被终端/其他窗口遮挡导致用户误以为「启动后没窗口」
+  unlockWindow.setAlwaysOnTop(true, 'screen-saver')
+  unlockWindow.on('ready-to-show', () => {
+    unlockWindow?.show()
+    unlockWindow?.focus()
+  })
   // 锁屏窗口同样收口外链
   denyNewWindows(unlockWindow.webContents)
+  installLoadRetry(unlockWindow, '解锁窗')
 
   // 渲染进程加载 unlock.html（独立入口），附带 mode 参数
   const query = `?mode=${mode}`
@@ -145,6 +216,8 @@ function createMainWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // 后台保活（2/2）：该窗口的 webContents 不参与 Chromium 背景节流
+  mainWindow.webContents.setBackgroundThrottling(false)
   mainWindow.on('closed', () => { mainWindow = null })
   // 隐私锁：窗口隐藏/最小化 → 计时；重新显示 → 取消计时
   mainWindow.on('hide', () => lockService.onAppHidden())
@@ -154,6 +227,7 @@ function createMainWindow(): void {
 
   // 外链收口：应用内拒开新窗，仅 http/https 跳系统浏览器（防 file:/javascript: 等）
   denyNewWindows(mainWindow.webContents)
+  installLoadRetry(mainWindow, '主窗口')
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -214,6 +288,7 @@ async function boot(): Promise<void> {
     const unlockMode: 'unlock' | 'setPassword' =
       dbService.getEncryptionMode() === 'none' && !hasExistingPassword ? 'setPassword' : 'unlock'
     showUnlockWindow(unlockMode)
+    console.log('[boot] 已弹出解锁窗口（屏幕置顶），请输入主密码；主窗口将在解锁后打开')
     const result = await unlockCoordinator.waitForUnlock()
 
     if (!result) {
@@ -260,10 +335,15 @@ async function boot(): Promise<void> {
       }
 
       // 明文 DB → enableEncryption
+      // 字段密钥将从固定混淆密钥切为主密码密钥：先在旧密钥下导出字段凭据
+      const fieldSnapshot = exportFieldCredentials()
       const masterKey = masterKeyManager.setKey(newPwd, salt)
       dbService.enableEncryption(masterKey)
       appConfigRepo.setEncryptionMode('db')
       appConfigRepo.setHasMasterPassword(true)
+      // 新库不应携带任何历史恢复包
+      recoveryKeyManager.disableRecovery()
+      restoreFieldCredentials(fieldSnapshot)
       console.log('[boot] DB 已加密')
     }
 
@@ -271,7 +351,15 @@ async function boot(): Promise<void> {
     unlockWindow = null
   }
 
-  // 阶段 3：同步助手 + 技能 + 注册 IPC
+  // 阶段 3：历史明文凭据一次性升级为字段加密（幂等；此时字段密钥在各模式均已可用）
+  try {
+    migrateKvSecrets()
+    providerRepo.migratePlaintextKeys()
+  } catch (e) {
+    console.warn('[crypto] 凭据迁移失败（不阻塞启动）:', e)
+  }
+
+  // 同步助手 + 技能
   const synced = syncBuiltinAssistants()
   console.log(
     `[assistants] 内置助手同步完成: ${synced.count} 个` +
@@ -312,6 +400,7 @@ async function boot(): Promise<void> {
 
   // 阶段 5：创建主窗口
   createMainWindow()
+  console.log('[boot] 主窗口已创建')
   // 应用已保存的窗口透明度
   applyOpacityToMainWindows()
 
@@ -341,8 +430,27 @@ async function boot(): Promise<void> {
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
+  // 已有实例在运行（含残留后台进程）：弹窗告知而非静默退出，
+  // 避免「npm run dev 后没窗口、没报错」的排查困扰（残留进程常因
+  // 终端 Ctrl+C 只杀 node/vite 不杀 electron 子进程树）
+  try {
+    dialog.showErrorBox('PocketAI 已在运行', '应用已有一个实例正在运行（可能最小化或在后台）。\n如无响应，请在任务管理器结束 electron.exe 后重试。')
+  } catch { /* dialog 不可用时保持静默退出 */ }
   app.quit()
 } else {
+  // 后台保活（1/2）：窗口最小化/被遮挡/失焦时禁用 Chromium 渲染节流，
+  // 否则后台 renderer 定时器被降到 1Hz、线程降优先级，后台生成/流式 UI 卡顿。
+  // 必须在 app ready 之前设置；应用整个生命周期生效。
+  app.commandLine.appendSwitch('disable-renderer-backgrounding')
+  app.commandLine.appendSwitch('disable-background-timer-throttling')
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+  // dev 专用：禁用系统代理。本机若运行代理/VPN 类软件（Clash、v2ray 等），
+  // 其系统代理/TUN 可能拦截 localhost 回环请求 → 渲染层加载 5173 挂起、
+  // 窗口永远空白；生产打包走 loadFile 不受影响，无需此开关。
+  if (!app.isPackaged) {
+    app.commandLine.appendSwitch('no-proxy-server')
+  }
+
   app.on('second-instance', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore()
@@ -370,10 +478,16 @@ if (!gotLock) {
       dialog.showErrorBox('启动失败', String(err))
       app.quit()
     })
+    console.log('[boot] app ready, boot() 已发起')
   })
 }
 
+app.on('before-quit', (e) => {
+  console.log('[quit] before-quit 触发（退出链路开始）')
+})
+
 app.on('window-all-closed', () => {
+  console.log('[quit] window-all-closed（所有窗口已关闭）')
   try { dbService.close() } catch { /* ignore */ }
   if (process.platform !== 'darwin') app.quit()
 })

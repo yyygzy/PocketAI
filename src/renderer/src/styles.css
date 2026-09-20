@@ -271,3 +271,64 @@ select option:disabled {
   padding: 1px 4px;
   border-radius: 3px;
 }
+
+/* ── 解锁页：恢复密钥 ── */
+.unlock-switch {
+  margin-top: 10px;
+  text-align: center;
+}
+.unlock-switch button {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.unlock-switch button:hover:not(:disabled) { text-decoration: underline; }
+.unlock-switch button:disabled { opacity: 0.5; cursor: default; }
+
+.unlock-btn-secondary {
+  flex: 1;
+  padding: 8px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.unlock-btn-secondary:hover { border-color: var(--color-accent); }
+
+.recovery-code-input {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 1px;
+}
+.recovery-code-box {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  font-size: 14px;
+  letter-spacing: 1.5px;
+  line-height: 1.8;
+  resize: none;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.unlock-recovery-warn {
+  font-size: 11px;
+  color: var(--color-warning);
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+/* Mermaid 图表块：横向可滚、图表居中 */
+.mermaid-block svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}

@@ -23,6 +23,59 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const MIN_TIMEOUT_MS = 10_000
 const MAX_TIMEOUT_MS = 120_000
 const MAX_OUTPUT_CHARS = 32 * 1024 // stdout/stderr 各自上限（字符）
+// 采集阶段按字节截断的上限：UTF-8 每字符最多 4 字节，留足余量后在解码侧按字符二次截断
+const MAX_OUTPUT_BYTES = MAX_OUTPUT_CHARS * 4
+
+/**
+ * 解码子进程输出。
+ * 中文 Windows 无控制台（管道重定向）时，cmd 内建命令与老程序固定输出 GBK(936)，
+ * chcp 65001 对重定向句柄无效；现代程序（node/git/Python UTF-8 模式）输出 UTF-8。
+ * 策略：严格 UTF-8 试解，失败则回退 GBK。截断可能落在多字节字符中间，试解前
+ * 允许砍掉末尾最多 3 个残字节；GBK 双字节流几乎不可能是合法 UTF-8，判定可靠。
+ */
+function decodeOutput(buf: Buffer): string {
+  const len = buf.length
+  for (let cut = 0; cut <= 3 && cut <= len; cut++) {
+    const candidate = cut === 0 ? buf : buf.subarray(0, len - cut)
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(candidate)
+    } catch {
+      // 末尾残字节或整体非 UTF-8：继续砍 / 最终回退 GBK
+    }
+  }
+  return new TextDecoder('gbk').decode(buf)
+}
+
+/** 按字节上限累积单个流的输出 */
+class OutputCollector {
+  private chunks: Buffer[] = []
+  private bytes = 0
+  private truncated = false
+
+  push(chunk: Buffer): void {
+    if (this.bytes >= MAX_OUTPUT_BYTES) {
+      this.truncated = true
+      return
+    }
+    let b = chunk
+    if (this.bytes + b.length > MAX_OUTPUT_BYTES) {
+      b = b.subarray(0, MAX_OUTPUT_BYTES - this.bytes)
+      this.truncated = true
+    }
+    this.chunks.push(b)
+    this.bytes += b.length
+  }
+
+  /** 解码 + 按字符截断 */
+  finish(): { text: string; truncated: boolean } {
+    let text = decodeOutput(Buffer.concat(this.chunks))
+    if (text.length > MAX_OUTPUT_CHARS) {
+      text = text.slice(0, MAX_OUTPUT_CHARS)
+      this.truncated = true
+    }
+    return { text, truncated: this.truncated }
+  }
+}
 
 /** 复合命令分隔符（&& / || / | / ; / Win 的 & / POSIX 换行）。朴素拆分，不做引号感知——
  *  误拆分只会造成「多一次确认」（安全方向），而 deny 级检查同时对整条命令生效。 */
@@ -212,12 +265,15 @@ function runCommand(
     const isWin = process.platform === 'win32'
     const file = isWin ? process.env.ComSpec || 'cmd.exe' : '/bin/sh'
     const args = isWin ? ['/d', '/s', '/c', command] : ['-c', command]
+    // Python 输出到管道时默认按区域编码（中文系统为 GBK）写字节，强制 UTF-8。
+    // 其余 Windows 程序（cmd 内建命令、老程序）仍会输出 GBK，由 decodeOutput 回退解码。
+    const childEnv: NodeJS.ProcessEnv = isWin
+      ? { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+      : process.env
 
-    // 收集输出（设上限，超出停止追加但不杀进程，继续等退出/超时）
-    let stdout = ''
-    let stderr = ''
-    let stdoutTruncated = false
-    let stderrTruncated = false
+    // 收集原始字节（编码在结束时统一判定，见 decodeOutput）
+    const stdoutBuf = new OutputCollector()
+    const stderrBuf = new OutputCollector()
     let timedOut = false
     let settled = false
     const startedAt = Date.now()
@@ -226,7 +282,7 @@ function runCommand(
       cwd: cwdAbs,
       windowsHide: true, // 不弹控制台窗口
       detached: !isWin, // POSIX 独立进程组，便于整组杀掉
-      env: process.env,
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe']
     })
 
@@ -250,47 +306,28 @@ function runCommand(
       settled = true
       clearTimeout(timer)
       abortSignal?.removeEventListener('abort', onAbort)
+      const out = stdoutBuf.finish()
+      const err = stderrBuf.finish()
       resolve({
         command,
         cwd: cwdAbs,
         exitCode,
         signal: signal ?? null,
-        stdout,
-        stderr,
-        stdoutTruncated,
-        stderrTruncated,
+        stdout: out.text,
+        stderr: err.text,
+        stdoutTruncated: out.truncated,
+        stderrTruncated: err.truncated,
         timedOut,
         durationMs: Date.now() - startedAt
       })
     }
 
-    child.stdout?.setEncoding('utf-8')
-    child.stderr?.setEncoding('utf-8')
-    child.stdout?.on('data', (chunk: string) => {
-      if (stdout.length >= MAX_OUTPUT_CHARS) {
-        stdoutTruncated = true
-        return
-      }
-      stdout += chunk
-      if (stdout.length > MAX_OUTPUT_CHARS) {
-        stdout = stdout.slice(0, MAX_OUTPUT_CHARS)
-        stdoutTruncated = true
-      }
-    })
-    child.stderr?.on('data', (chunk: string) => {
-      if (stderr.length >= MAX_OUTPUT_CHARS) {
-        stderrTruncated = true
-        return
-      }
-      stderr += chunk
-      if (stderr.length > MAX_OUTPUT_CHARS) {
-        stderr = stderr.slice(0, MAX_OUTPUT_CHARS)
-        stderrTruncated = true
-      }
-    })
+    // 不设 encoding：保留原始 Buffer，交给 decodeOutput 判编码（GBK/UTF-8）
+    child.stdout?.on('data', (chunk: Buffer) => stdoutBuf.push(chunk))
+    child.stderr?.on('data', (chunk: Buffer) => stderrBuf.push(chunk))
     child.on('error', (e) => {
-      // spawn 失败（shell 不存在等）：错误信息放 stderr
-      stderr += `\n[spawn 失败] ${e.message}`
+      // spawn 失败（shell 不存在等）：错误信息放 stderr（ASCII + 中文消息统一 UTF-8 编码）
+      stderrBuf.push(Buffer.from(`\n[spawn 失败] ${e.message}`, 'utf-8'))
       finish(null, null)
     })
     child.on('close', (code, signal) => finish(code, signal))

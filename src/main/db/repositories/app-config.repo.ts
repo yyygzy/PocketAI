@@ -21,6 +21,8 @@ const KEYS = {
   AUTO_LOCK_TIMEOUT: 'auto_lock_timeout', // ms，0=永不
   LICENSE_PATH: 'license_path', // 默认 license.lic 的路径
   AUTO_UPDATE_ENABLED: 'auto_update_enabled', // '1'=开启自动更新；缺省=关闭
+  FIRST_RUN_WIZARD_DONE: 'first_run_wizard_done', // '1'=已完成首启向导
+  MACHINE_ID: 'machine_id', // 上次运行的机器指纹（换电脑检测）
 } as const
 
 // ---------- 主密码 salt 双通道 ----------
@@ -51,6 +53,37 @@ function writeSaltToConfigFile(b64: string | null): void {
     // 0600：文件名通用，未来可能承载其他敏感配置；仅对新建文件生效
     writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
   } catch { /* 写失败不阻塞主流程：DB 内仍有备份 */ }
+}
+
+// ---------- 恢复密钥包（库外通道） ----------
+//
+// 与 salt 同理但更严格：恢复包用于「忘记主密码」场景，此时 DB 无法打开，
+// 包绝不能存进加密 DB（否则鸡生蛋）。只放 config.json，跟随便携目录走，
+// 且已纳入备份文件清单（files-service）。包内是「恢复码派生密钥加密后的
+// masterKey」，config.json 被读到也无法离线伪造（暴力破解恢复码）。
+
+function readRecoveryBlobFromConfigFile(): string | null {
+  try {
+    if (!existsSync(CONFIG_PATH)) return null
+    const cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return typeof cfg?.recoveryBlob === 'string' ? cfg.recoveryBlob : null
+  } catch {
+    return null
+  }
+}
+
+function writeRecoveryBlobToConfigFile(blob: string | null): void {
+  try {
+    let cfg: Record<string, unknown> = {}
+    if (existsSync(CONFIG_PATH)) {
+      try { cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) ?? {} } catch { /* 损坏则重建 */ }
+    }
+    if (blob === null) delete cfg.recoveryBlob
+    else cfg.recoveryBlob = blob
+    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
+  } catch (e) {
+    throw new Error(`恢复密钥写入 config.json 失败: ${(e as Error).message}`)
+  }
 }
 
 export const appConfigRepo = {
@@ -122,6 +155,20 @@ export const appConfigRepo = {
     try { this.delete(KEYS.MASTER_PASSWORD_SALT) } catch { /* DB 未开时忽略 */ }
   },
 
+  // ---------- 恢复密钥包 ----------
+
+  getRecoveryBlob(): string | null {
+    return readRecoveryBlobFromConfigFile()
+  },
+
+  setRecoveryBlob(blob: string): void {
+    writeRecoveryBlobToConfigFile(blob)
+  },
+
+  clearRecoveryBlob(): void {
+    writeRecoveryBlobToConfigFile(null)
+  },
+
   getAutoLockTimeout(): number {
     const v = this.get(KEYS.AUTO_LOCK_TIMEOUT)
     return v ? Number(v) : 0
@@ -146,5 +193,23 @@ export const appConfigRepo = {
 
   setAutoUpdateEnabled(enabled: boolean): void {
     this.set(KEYS.AUTO_UPDATE_ENABLED, enabled ? '1' : '0')
+  },
+
+  // ---------- 首启向导 ----------
+
+  isFirstRunWizardDone(): boolean {
+    return this.get(KEYS.FIRST_RUN_WIZARD_DONE) === '1'
+  },
+
+  setFirstRunWizardDone(done: boolean): void {
+    this.set(KEYS.FIRST_RUN_WIZARD_DONE, done ? '1' : '0')
+  },
+
+  getMachineId(): string | null {
+    return this.get(KEYS.MACHINE_ID)
+  },
+
+  setMachineId(id: string): void {
+    this.set(KEYS.MACHINE_ID, id)
   }
 }

@@ -239,7 +239,8 @@ export const ImageModule: React.FC = () => {
     []
   )
 
-  const canGenerate = !running && providerId !== '' && model.trim() !== ''
+  const canGenerate =
+    !running && providerId !== '' && model.trim() !== '' && prompt.trim().length <= MAX_PROMPT_CHARS
 
   return (
     <div ref={rootRef} className="flex flex-col h-full gap-3 overflow-y-auto">
@@ -300,7 +301,13 @@ export const ImageModule: React.FC = () => {
             maxLength={MAX_PROMPT_CHARS + 100}
             onChange={(e) => setPrompt(e.target.value)}
           />
-          <span className="absolute right-2 bottom-1.5 text-[10px] text-[var(--color-text-muted)] pointer-events-none">
+          <span
+            className={`absolute right-2 bottom-1.5 text-[10px] pointer-events-none ${
+              prompt.length > MAX_PROMPT_CHARS
+                ? 'text-[var(--color-danger)] font-medium'
+                : 'text-[var(--color-text-muted)]'
+            }`}
+          >
             {prompt.length}/{MAX_PROMPT_CHARS}
           </span>
         </div>

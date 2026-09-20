@@ -652,8 +652,14 @@ class AgentEngine {
       allowedToolIds,
       signal
     )
+    // 定时器句柄保留：工具先结束时必须 clear，否则 timer 会白挂 30s（虽不产生
+    // unhandledRejection，但会无谓持有 reject 闭包并推迟进程退出条件）
+    let toolTimer: ReturnType<typeof setTimeout> | undefined
     const timeoutPromise = new Promise<ToolResult>((_, reject) => {
-      setTimeout(() => reject(new Error(`工具 ${tc.function.name} 执行超时（${TOOL_TIMEOUT_MS / 1000}s）`)), TOOL_TIMEOUT_MS)
+      toolTimer = setTimeout(
+        () => reject(new Error(`工具 ${tc.function.name} 执行超时（${TOOL_TIMEOUT_MS / 1000}s）`)),
+        TOOL_TIMEOUT_MS
+      )
     })
     // Agent 中止：立即在 race 中出局（子进程由工具内 abort 监听负责杀树）
     let onAbort: (() => void) | null = null
@@ -671,6 +677,7 @@ class AgentEngine {
         isError: true
       }
     } finally {
+      clearTimeout(toolTimer)
       // 工具先结束时摘掉 abort 监听，避免监听器泄漏
       if (onAbort) signal.removeEventListener('abort', onAbort)
     }

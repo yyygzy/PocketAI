@@ -72,6 +72,9 @@ export const TranslateModule: React.FC = () => {
   const requestIdRef = useRef<string | null>(null)
   const runningRef = useRef(false)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // delta rAF 合批：长文本流式时单帧内的多个 chunk 合并为一次 setState
+  const deltaBufRef = useRef('')
+  const rafRef = useRef<number | null>(null)
 
   // ---------- 历史 ----------
   const [history, setHistory] = useState<TranslationRecord[]>([])
@@ -85,6 +88,14 @@ export const TranslateModule: React.FC = () => {
   const activeProvider = useMemo(
     () => enabledProviders.find((p) => p.id === providerId) ?? null,
     [enabledProviders, providerId]
+  )
+  /**
+   * 当前选中但已停用（或已删除）的 provider：回填历史时需要保留显示，
+   * 否则下拉无匹配项会空白；以禁用选项呈现「名称（已停用）」
+   */
+  const disabledSelectedProvider = useMemo(
+    () => (activeProvider ? null : providers.find((p) => p.id === providerId) ?? null),
+    [activeProvider, providers, providerId]
   )
   /** 模型下拉候选；回填历史时模型可能已不在缓存列表，补一条避免空选 */
   const modelOptions = useMemo(() => {
@@ -107,13 +118,26 @@ export const TranslateModule: React.FC = () => {
     window.pocketai.listGlossary().then(setGlossary)
   }, [])
 
-  // ---------- 流式增量订阅 ----------
+  // ---------- 流式增量订阅（rAF 合批） ----------
   useEffect(() => {
+    const flush = () => {
+      rafRef.current = null
+      const buf = deltaBufRef.current
+      if (buf) {
+        deltaBufRef.current = ''
+        setTargetText((prev) => prev + buf)
+      }
+    }
     const off = window.pocketai.onTranslateChunk((e) => {
-      if (e.requestId === requestIdRef.current) setTargetText((prev) => prev + e.delta)
+      if (e.requestId !== requestIdRef.current) return
+      deltaBufRef.current += e.delta
+      if (rafRef.current === null) rafRef.current = requestAnimationFrame(flush)
     })
     return () => {
       off()
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+      deltaBufRef.current = ''
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
       // 离开模块时中止进行中的翻译
       if (runningRef.current && requestIdRef.current) {
@@ -151,6 +175,10 @@ export const TranslateModule: React.FC = () => {
     requestIdRef.current = requestId
     runningRef.current = true
     setRunState('running')
+    // 清掉上一轮残留的合批缓冲，避免旧 chunk 拼到新译文
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+    deltaBufRef.current = ''
     setTargetText('')
 
     const result = await window.pocketai.translate({
@@ -268,7 +296,8 @@ export const TranslateModule: React.FC = () => {
                 baseUrl: '',
                 apiKeys: [],
                 models: [],
-                enabled: true,
+                // 已删除的 provider：以「已停用」补位展示，不进入可发起翻译的启用列表
+                enabled: false,
                 createdAt: 0
               }
             ]
@@ -410,7 +439,7 @@ export const TranslateModule: React.FC = () => {
               setModel(p?.models[0] ?? '')
             }}
           >
-            {enabledProviders.length === 0 && (
+            {enabledProviders.length === 0 && !disabledSelectedProvider && (
               <option value="">{t('translate.noProvider')}</option>
             )}
             {enabledProviders.map((p) => (
@@ -418,6 +447,12 @@ export const TranslateModule: React.FC = () => {
                 {p.name}
               </option>
             ))}
+            {/* 回填历史：原 provider 已停用/已删除时以禁用选项保留显示 */}
+            {disabledSelectedProvider && (
+              <option value={disabledSelectedProvider.id} disabled>
+                {disabledSelectedProvider.name} {t('translate.providerDisabled')}
+              </option>
+            )}
           </select>
           <select
             className="input text-xs py-1 w-auto max-w-[12rem]"

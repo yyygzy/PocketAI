@@ -37,6 +37,7 @@ import type {
   ModelRecommendation,
   AuditResult,
   DiagnoseResult,
+  WizardState,
   BackupScheduleStatus,
   UiPreferences,
   FileEntry,
@@ -52,6 +53,7 @@ import type {
   ShellConfig,
   ToolApprovalRequestEvent,
   WebSearchConfig,
+  CalendarConfig,
   ChannelConfig,
   ChannelStatusEvent,
   SandboxFileMeta,
@@ -114,6 +116,7 @@ const api = {
     ok: boolean
     canceled?: boolean
     skill?: SkillRecord
+    nameDuplicated?: boolean
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT),
 
@@ -341,6 +344,25 @@ const api = {
     patch: Partial<Pick<WebSearchConfig, 'enabled' | 'provider' | 'apiKey'>>
   ): Promise<WebSearchConfig> => ipcRenderer.invoke(IPC.AGENT_SET_WEBSEARCH_CONFIG, patch),
 
+  // ---------- 本地日历配置（calendar.read） ----------
+  getCalendarConfig: (): Promise<CalendarConfig> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_CALENDAR_CONFIG),
+  setCalendarConfig: (
+    patch: Partial<Pick<CalendarConfig, 'enabled' | 'paths'>>
+  ): Promise<CalendarConfig> => ipcRenderer.invoke(IPC.AGENT_SET_CALENDAR_CONFIG, patch),
+  pickIcsFile: (): Promise<{ canceled: boolean; path?: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_PICK_ICS_FILE),
+
+  // ---------- License 授权 ----------
+  activateLicense: (code: string): Promise<LicenseStatus> =>
+    ipcRenderer.invoke(IPC.LICENSE_ACTIVATE, code),
+  importLicenseFile: (): Promise<{ canceled: boolean; status?: LicenseStatus }> =>
+    ipcRenderer.invoke(IPC.LICENSE_IMPORT_FILE),
+
+  // ---------- 独立窗口 ----------
+  openDetachedWindow: (moduleId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.APP_OPEN_DETACHED, moduleId),
+
   /** 订阅工具审批请求（全局弹窗）；返回退订函数 */
   onToolApprovalRequest: (
     handler: (e: ToolApprovalRequestEvent) => void
@@ -480,12 +502,35 @@ const api = {
     ipcRenderer.invoke(IPC.ENCRYPTION_LOCK),
   setMasterPassword: (password: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_SET_MASTER_PASSWORD, password),
-  changePassword: (oldPassword: string, newPassword: string): Promise<{ ok: boolean; error?: string }> =>
+  changePassword: (
+    oldPassword: string,
+    newPassword: string
+  ): Promise<{ ok: boolean; error?: string; recoveryCode?: string }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_CHANGE_PASSWORD, oldPassword, newPassword),
   disableEncryption: (password: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_DISABLE, password),
   enableEncryption: (password: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_ENABLE, password),
+  hasRecoveryKey: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.ENCRYPTION_HAS_RECOVERY),
+  generateRecoveryKey: (): Promise<{ ok: boolean; code?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.ENCRYPTION_GENERATE_RECOVERY),
+  disableRecoveryKey: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.ENCRYPTION_DISABLE_RECOVERY),
+  recoverWithCode: (
+    code: string,
+    newPassword: string
+  ): Promise<{ ok: boolean; recoveryCode?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.ENCRYPTION_RECOVER, { code, newPassword }),
+  saveRecoveryFile: (
+    code: string
+  ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.ENCRYPTION_SAVE_RECOVERY_FILE, code),
+  copySensitiveToClipboard: (
+    text: string,
+    ttlMs?: number
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.CLIPBOARD_COPY_SENSITIVE, text, ttlMs),
 
   // ---------- 备份 ----------
   createLocalBackup: (): Promise<{ path: string; size: number; encrypted: boolean }> =>
@@ -566,6 +611,12 @@ const api = {
     ipcRenderer.invoke(IPC.STEWARD_AUDIT),
   runDiagnose: (): Promise<{ ok: boolean; data?: DiagnoseResult; error?: string }> =>
     ipcRenderer.invoke(IPC.STEWARD_DIAGNOSE),
+
+  // ---------- 首启向导 ----------
+  getWizardState: (): Promise<{ ok: boolean; data?: WizardState; error?: string }> =>
+    ipcRenderer.invoke(IPC.WIZARD_GET_STATE),
+  completeWizard: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.WIZARD_COMPLETE),
 
   // ---------- 文件模块 ----------
   listFiles: (relDir: string): Promise<FileEntry[]> =>

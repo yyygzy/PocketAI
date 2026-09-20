@@ -1,6 +1,6 @@
 // 技能管理模块：技能列表 / 创建编辑 / 启用开关 / 删除 / 市场（浏览/搜索/复制/导入导出）
 // 技能 = 可复用提示词片段，关联到助手后自动注入 SystemPrompt
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { SkillMarket } from './SkillMarket'
@@ -12,7 +12,13 @@ export const SkillModule: React.FC = () => {
   const [mode, setMode] = useState<'detail' | 'create' | 'edit'>('detail')
   const [marketOpen, setMarketOpen] = useState(false)
 
-  const load = () => window.pocketai.listSkills().then(setSkills)
+  // 返回最新列表供调用方复用：市场内写操作后市场与本页共享同一次 listSkills 结果，
+  // 避免市场自刷 + 本页 onChanged 双查
+  const load = useCallback(async () => {
+    const list = await window.pocketai.listSkills()
+    setSkills(list)
+    return list
+  }, [])
   useEffect(() => {
     load()
   }, [])
