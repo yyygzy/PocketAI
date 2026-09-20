@@ -167,11 +167,11 @@ export default function App() {
       {!locked && <ToolApprovalDialog />}
 
       {locked && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="w-80 rounded-xl bg-[#2a2a3e] p-8 text-center shadow-2xl">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm">
+          <div className="w-80 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-8 text-center shadow-2xl">
             <div className="mb-4 text-4xl">🔒</div>
-            <h2 className="mb-2 text-xl font-semibold text-white">已锁定</h2>
-            <p className="mb-6 text-sm text-gray-400">PocketAI 隐私保护已激活</p>
+            <h2 className="mb-2 text-xl font-semibold text-[var(--color-text)]">已锁定</h2>
+            <p className="mb-6 text-sm text-[var(--color-text-muted)]">PocketAI 隐私保护已激活</p>
             {dbEncrypted && (
               <input
                 type="password"
@@ -180,13 +180,13 @@ export default function App() {
                 onChange={(e) => setLockPwd(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
                 placeholder="输入主密码解锁"
-                className="mb-3 w-full rounded-lg border border-gray-600 bg-[#1e1e2e] px-4 py-2 text-white outline-none focus:border-blue-500"
+                className="mb-3 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-4 py-2 text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
               />
             )}
-            {lockErr && <div className="mb-3 text-sm text-red-400">{lockErr}</div>}
+            {lockErr && <div className="mb-3 text-sm text-[var(--color-danger)]">{lockErr}</div>}
             <button
               onClick={handleUnlock}
-              className="w-full rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+              className="w-full rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-[var(--color-on-accent)] hover:opacity-90"
             >
               {dbEncrypted ? '解锁' : '立即解锁'}
             </button>

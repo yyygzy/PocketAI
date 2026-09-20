@@ -361,6 +361,8 @@ export const zh: Record<string, string> = {
   'sandbox.fileMissing': '产物文件已丢失（磁盘上不存在）',
   'sandbox.tabAll': '全部产物',
   'sandbox.tabApps': '迷你应用',
+  'sandbox.stop': '停止',
+  'sandbox.stopPreview': '卸载 iframe（中止脚本 / 退出预览）',
 
   // ── 迷你应用（v2 批次九） ──
   'miniapp.library': '迷你应用库',

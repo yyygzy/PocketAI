@@ -7,7 +7,7 @@
 // 3. 选区取词零原生依赖：Windows 用 PowerShell SendKeys 模拟 Ctrl+C，
 //    macOS 用 osascript 模拟 Cmd+C，前后做剪贴板备份/还原；Linux 暂不支持。
 // 4. 快捷键开关持久化在 app_config，设置页切换后立即重新注册。
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, screen } from 'electron'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { appConfigRepo } from './db/repositories/app-config.repo'
@@ -133,12 +133,22 @@ async function sendCopyHotkey(): Promise<void> {
 async function grabSelectedText(): Promise<string> {
   if (process.platform !== 'win32' && process.platform !== 'darwin') return ''
 
-  // 1) 备份当前剪贴板（文本或图片）
-  const formats = clipboard.availableFormats()
-  const hadText = formats.includes('text/plain')
-  const backupText = hadText ? clipboard.readText() : ''
-  const backupImage =
-    !hadText && formats.includes('image/png') ? clipboard.readImage() : null
+  // 1) 备份当前剪贴板（文本或图片）—— E44 起 clipboard 重构为异步 W3C 风格 API
+  const hadText = await clipboard.has('text/plain')
+  const backupText = hadText ? await clipboard.readText() : ''
+  let backupImage: Blob | null = null
+  if (!hadText && (await clipboard.has('image/png'))) {
+    try {
+      for (const item of await clipboard.read()) {
+        if (item.types.includes('image/png')) {
+          backupImage = (await item.getType('image/png')) as Blob
+          break
+        }
+      }
+    } catch {
+      backupImage = null
+    }
+  }
 
   // 2) 向当前前台窗口发送复制快捷键，再读剪贴板
   try {
@@ -147,17 +157,21 @@ async function grabSelectedText(): Promise<string> {
     console.warn('[popup] 模拟复制失败:', (e as Error).message)
     return ''
   }
-  const text = clipboard.readText().trim()
+  const text = (await clipboard.readText()).trim()
 
   // 3) 剪贴板确实被选区内容替换 → 稍后还原用户原剪贴板
   if (text && text !== backupText.trim()) {
     setTimeout(() => {
-      try {
-        if (hadText) clipboard.writeText(backupText)
-        else if (backupImage && !backupImage.isEmpty()) clipboard.writeImage(backupImage)
-      } catch {
-        // 还原失败不影响主流程
-      }
+      void (async () => {
+        try {
+          if (hadText) await clipboard.writeText(backupText)
+          else if (backupImage) {
+            await clipboard.write([new ClipboardItem({ 'image/png': backupImage })])
+          }
+        } catch {
+          // 还原失败不影响主流程
+        }
+      })()
     }, 250)
   }
   // 选区文本长度保护（防止误抓到整页文本灌爆浮窗）

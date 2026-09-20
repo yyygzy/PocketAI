@@ -361,6 +361,8 @@ export const en: Record<string, string> = {
   'sandbox.fileMissing': 'Artifact file is missing on disk',
   'sandbox.tabAll': 'All artifacts',
   'sandbox.tabApps': 'Mini apps',
+  'sandbox.stop': 'Stop',
+  'sandbox.stopPreview': 'Unload iframe (abort scripts / exit preview)',
 
   // ── Mini apps (v2 batch 9) ──
   'miniapp.library': 'Mini apps',

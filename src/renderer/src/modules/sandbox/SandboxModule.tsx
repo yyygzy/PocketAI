@@ -105,7 +105,7 @@ export const SandboxModule: React.FC = () => {
       await openPreview(meta.id)
       setToast(t('sandbox.created'))
     } catch (err) {
-      alert((err as Error).message)
+      setToast((err as Error).message)
     } finally {
       setBusy(false)
     }
@@ -122,7 +122,7 @@ export const SandboxModule: React.FC = () => {
       if (editingId === id) setEditingId(null)
       await load()
     } catch (err) {
-      alert((err as Error).message)
+      setToast((err as Error).message)
     }
   }
 
@@ -132,8 +132,14 @@ export const SandboxModule: React.FC = () => {
       await load()
       setToast(toApp ? t('miniapp.promoted') : t('miniapp.demoted'))
     } catch (err) {
-      alert((err as Error).message)
+      setToast((err as Error).message)
     }
+  }
+
+  // 停止预览：卸载 iframe（中止脚本 / 重置预览态）
+  const handleStopPreview = () => {
+    setPreview(null)
+    setSelectedId(null)
   }
 
   const appFiles = files.filter((f) => f.isApp)
@@ -208,6 +214,7 @@ export const SandboxModule: React.FC = () => {
                 onDelete={() => void handleDelete(f.id)}
                 onToggleApp={() => void handleToggleApp(f, !f.isApp)}
                 onEdit={() => setEditingId(editingId === f.id ? null : f.id)}
+                onError={setToast}
                 onSaved={async () => {
                   setEditingId(null)
                   await load()
@@ -242,14 +249,21 @@ export const SandboxModule: React.FC = () => {
       <div className="flex-1 min-w-0 flex flex-col">
         {preview ? (
           <>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-medium truncate">
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <div className="text-sm font-medium truncate flex-1 min-w-0">
                 {preview.meta.isApp && <span className="mr-1">{preview.meta.icon}</span>}
                 {preview.meta.name}
               </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-info-bg)] text-[var(--color-info)]">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-info-bg)] text-[var(--color-info)] shrink-0">
                 {t('sandbox.isolatedBadge')}
               </span>
+              <button
+                onClick={handleStopPreview}
+                className="text-[10px] px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:border-[var(--color-danger-bg)] shrink-0"
+                title={t('sandbox.stopPreview')}
+              >
+                {t('sandbox.stop')}
+              </button>
             </div>
             <div className="flex-1 min-h-0 rounded-lg border border-[var(--color-border)] overflow-hidden bg-white">
               <iframe
@@ -304,8 +318,9 @@ const SandboxItem: React.FC<{
   onDelete: () => void
   onToggleApp: () => void
   onEdit: () => void
+  onError: (msg: string) => void
   onSaved: () => void
-}> = ({ f, selected, editing, onPreview, onDelete, onToggleApp, onEdit, onSaved }) => {
+}> = ({ f, selected, editing, onPreview, onDelete, onToggleApp, onEdit, onError, onSaved }) => {
   const { t } = useI18n()
   const [name, setName] = useState(f.name)
   const [icon, setIcon] = useState(f.icon)
@@ -327,7 +342,7 @@ const SandboxItem: React.FC<{
       await window.pocketai.updateSandboxMeta(f.id, { name, icon, description: desc })
       onSaved()
     } catch (err) {
-      alert((err as Error).message)
+      onError((err as Error).message)
     } finally {
       setSaving(false)
     }

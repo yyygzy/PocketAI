@@ -5,10 +5,21 @@ import path from 'node:path'
 import fs from 'node:fs'
 import type { AppPaths } from '../shared/types'
 
-/** 可执行文件所在目录（打包后）或项目根（开发时） */
-/** POCKETAI_APP_ROOT 环境变量可覆盖（测试用） */
+/**
+ * 可执行文件所在目录（打包后）或项目根（开发时）。
+ *
+ * 优先级：
+ *   1. POCKETAI_APP_ROOT 环境变量（测试覆盖）
+ *   2. PORTABLE_EXECUTABLE_DIR（electron-builder portable 单文件自解压运行时注入，
+ *      指向原 portable exe 所在目录；若锚定 app.getPath('exe') 会落到 %TEMP% 自解压
+ *      目录，USB 拔出即丢、便携性破坏）
+ *   3. app.isPackaged 时锚定 exe 所在目录（NSIS 安装版：exe 在真实安装目录）
+ *   4. process.cwd()（开发环境）
+ */
 export const APP_ROOT = process.env.POCKETAI_APP_ROOT
-  ?? (app.isPackaged ? path.dirname(app.getPath('exe')) : process.cwd())
+  ?? (app.isPackaged
+    ? (process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')))
+    : process.cwd())
 
 /** 数据目录 = APP_ROOT/data（永远跟着应用走） */
 export const DATA_DIR = path.join(APP_ROOT, 'data')
