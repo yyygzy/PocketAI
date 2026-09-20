@@ -1,14 +1,17 @@
 // 内置工具（M3.3 / M4.3）
 // v1 实现：time.now / calculator / web.fetch
 // v2 批次六：web.search 联网搜索真实现（websearch.ts + websearch-config.ts，默认关闭）
-// 文件读写（fs.list / fs.read / fs.write）在 fs-tools.ts，按工作目录配置动态注册。
-// calendar.read 保留 schema 但执行时报"未配置"，留作后续扩展点（.ics 解析等）。
+// v2 批次九：weather.query 免费天气（weather.ts，无需 Key）；calendar.read 本地 .ics 日历
+// （calendar-ics.ts，默认关闭，Agent 页配置）。文件读写（fs.list / fs.read / fs.write）在
+// fs-tools.ts，按工作目录配置动态注册。
 
 import vm from 'node:vm'
 import type { ToolSchema } from '../../shared/types'
 import { runWebSearch } from './websearch'
 import { runJsEval } from '../sandbox/js-eval-runner'
 import { safeFetch } from '../net/safe-fetch'
+import { weatherTool } from './weather'
+import { calendarReadTool } from './calendar-ics'
 
 /** 工具安全判定结果（与 ToolSchema.permission 基线取更严） */
 export type ToolDecision = 'allow' | 'confirm' | 'deny'
@@ -114,19 +117,6 @@ const webFetchTool: BuiltinTool = {
   }
 }
 
-// ---- 占位工具：保留 schema，执行时报"未配置" ----
-const placeholder = (
-  id: string,
-  name: string,
-  description: string,
-  parameters: Record<string, unknown>
-): BuiltinTool => ({
-  schema: { id, name, description, parameters, source: 'builtin', permission: 'confirm' },
-  async execute() {
-    throw new Error(`工具 ${name} 尚未配置（v1 占位）`)
-  }
-})
-
 // ---- 联网搜索（v2 批次六真实现）：默认关闭，Agent 页配置服务商与 Key 后启用 ----
 const webSearchTool: BuiltinTool = {
   schema: {
@@ -180,24 +170,13 @@ const jsEvalTool: BuiltinTool = {
   }
 }
 
-const calendarReadTool = placeholder(
-  'calendar.read',
-  'calendar_read',
-  '读取本地日历（v1 占位，后续接入 .ics 解析）。参数：range (string，如 today/this-week)。',
-  {
-    type: 'object',
-    properties: { range: { type: 'string' } },
-    required: ['range'],
-    additionalProperties: false
-  }
-)
-
 export const BUILTIN_TOOLS: BuiltinTool[] = [
   timeNowTool,
   calculatorTool,
   webFetchTool,
   webSearchTool,
   jsEvalTool,
+  weatherTool,
   calendarReadTool
 ]
 

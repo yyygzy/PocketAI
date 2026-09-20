@@ -204,3 +204,34 @@ export class LicenseService {
 }
 
 export const licenseService = new LicenseService()
+
+// ---------- 免费版（Lite）数量门控 ----------
+// 免费版（无 License 或 plan=free）限制自建资源数量；pro/enterprise 不受限。
+// 门控在 IPC 层调用（ASSISTANT_SAVE / ASSISTANT_DUPLICATE / KB_SAVE）。
+export const LITE_LIMITS = {
+  assistants: 3, // 用户自建助手（内置助手不计）
+  knowledgeBases: 1
+} as const
+
+function isPaidPlan(): boolean {
+  const cur = licenseService.getStatus()
+  return !!cur.valid && (cur.payload?.plan === 'pro' || cur.payload?.plan === 'enterprise')
+}
+
+export function assertCanCreateAssistant(nonBuiltinCount: number): void {
+  if (isPaidPlan()) return
+  if (nonBuiltinCount >= LITE_LIMITS.assistants) {
+    throw new Error(
+      `免费版最多创建 ${LITE_LIMITS.assistants} 个助手，激活专业版后解除限制（设置 → 授权激活）`
+    )
+  }
+}
+
+export function assertCanCreateKb(count: number): void {
+  if (isPaidPlan()) return
+  if (count >= LITE_LIMITS.knowledgeBases) {
+    throw new Error(
+      `免费版最多创建 ${LITE_LIMITS.knowledgeBases} 个知识库，激活专业版后解除限制（设置 → 授权激活）`
+    )
+  }
+}

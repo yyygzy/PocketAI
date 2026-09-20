@@ -24,6 +24,7 @@ import type {
   ToolResult,
   ShellConfig,
   WebSearchConfig,
+  CalendarConfig,
   ChannelConfig,
   ChannelStatusEvent
 } from '../../../../shared/types'
@@ -354,8 +355,16 @@ const McpPanel: React.FC = () => {
                       <MiniBtn onClick={() => handleStop(r.id)}>{t('common.stop')}</MiniBtn>
                       <MiniBtn onClick={() => handleRestart(r.id)}>{t('common.restart')}</MiniBtn>
                     </>
+                  ) : status === 'starting' ? (
+                    <MiniBtn disabled>{t('common.starting')}</MiniBtn>
                   ) : (
-                    <MiniBtn onClick={() => handleStart(r.id)}>{t('common.start')}</MiniBtn>
+                    <MiniBtn
+                      onClick={() => handleStart(r.id)}
+                      disabled={envInstalling}
+                      title={envInstalling ? t('agent.startWhileInstalling') : undefined}
+                    >
+                      {t('common.start')}
+                    </MiniBtn>
                   )}
                   <MiniBtn onClick={() => setEditing({ ...r })}>{t('common.edit')}</MiniBtn>
                   <MiniBtn
@@ -437,7 +446,7 @@ const StatusDot: React.FC<{ status: string }> = ({ status }) => {
 }
 
 const MiniBtn: React.FC<{
-  onClick: () => void
+  onClick?: () => void
   children: React.ReactNode
   danger?: boolean
   disabled?: boolean
@@ -887,6 +896,7 @@ interface AgentMessage {
 
 const AgentPanel: React.FC = () => {
   const { t } = useI18n()
+  const toast = useToast()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [conversations, setConversations] = useState<ConversationRecord[]>([])
@@ -902,6 +912,8 @@ const AgentPanel: React.FC = () => {
   const fileRef = useRef<HTMLInputElement>(null)
   const [workspaceDir, setWorkspaceDir] = useState('')
   const [shellConfig, setShellConfigState] = useState<ShellConfig>({ enabled: false, policy: 'confirm' })
+  /** 本地日历（calendar.read）配置 */
+  const [calConfig, setCalConfigState] = useState<CalendarConfig>({ enabled: false, paths: [] })
   const [wsConfig, setWsConfigState] = useState<WebSearchConfig>({
     enabled: false,
     provider: 'tavily',
@@ -922,6 +934,7 @@ const AgentPanel: React.FC = () => {
     window.pocketai.getAgentWorkspaceDir().then(setWorkspaceDir)
     window.pocketai.getShellConfig().then(setShellConfigState)
     window.pocketai.getWebSearchConfig().then(setWsConfigState)
+    window.pocketai.getCalendarConfig().then(setCalConfigState)
   }, [])
 
   useEffect(() => {
@@ -1161,9 +1174,39 @@ const AgentPanel: React.FC = () => {
   const patchWsConfig = async (
     patch: Partial<Pick<WebSearchConfig, 'enabled' | 'provider' | 'apiKey'>>
   ) => {
-    const next = await window.pocketai.setWebSearchConfig(patch)
-    setWsConfigState(next)
-    if (patch.apiKey !== undefined) setWsKeyDraft('')
+    // 超长预检：避免主进程拒绝后草稿被误清（后端仍有同样校验，双保险）
+    if (typeof patch.apiKey === 'string' && patch.apiKey.trim().length > 256) {
+      toast.error(t('agent.websearch.keyTooLong'))
+      return
+    }
+    try {
+      const next = await window.pocketai.setWebSearchConfig(patch)
+      setWsConfigState(next)
+      if (patch.apiKey !== undefined) setWsKeyDraft('')
+    } catch (e) {
+      toast.error((e as Error).message || t('common.unknownError'))
+    }
+  }
+
+  /** 日历配置变更：立即持久化 */
+  const patchCalConfig = async (patch: Partial<Pick<CalendarConfig, 'enabled' | 'paths'>>) => {
+    try {
+      setCalConfigState(await window.pocketai.setCalendarConfig(patch))
+    } catch (e) {
+      toast.error((e as Error).message || t('common.unknownError'))
+    }
+  }
+
+  /** 添加 .ics 日历文件（文件选择对话框） */
+  const handleAddIcs = async () => {
+    try {
+      const res = await window.pocketai.pickIcsFile()
+      if (res.canceled || !res.path) return
+      if (calConfig.paths.includes(res.path)) return
+      await patchCalConfig({ paths: [...calConfig.paths, res.path], enabled: true })
+    } catch (e) {
+      toast.error((e as Error).message || t('common.unknownError'))
+    }
   }
 
   const handleFetchModels = async () => {
@@ -1381,6 +1424,48 @@ const AgentPanel: React.FC = () => {
           </label>
           <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
             {wsConfig.enabled ? t('agent.websearch.hintOn') : t('agent.websearch.hintOff')}
+          </span>
+        </div>
+
+        {/* 本地日历（calendar.read）配置：添加 .ics 文件后 Agent 可读取日程 */}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs">
+          <label className="flex items-center gap-1.5 cursor-pointer select-none font-medium">
+            <input
+              type="checkbox"
+              checked={calConfig.enabled}
+              onChange={(e) => void patchCalConfig({ enabled: e.target.checked })}
+            />
+            📅 {t('agent.calendar.title')}
+          </label>
+          <button
+            className="btn-ghost text-[11px] shrink-0"
+            onClick={() => void handleAddIcs()}
+            title={t('agent.calendar.addTip')}
+          >
+            + {t('agent.calendar.add')}
+          </button>
+          {calConfig.paths.map((p) => (
+            <span
+              key={p}
+              className="inline-flex items-center gap-1 rounded bg-[var(--color-hover-overlay)] px-1.5 py-0.5 max-w-[220px]"
+              title={p}
+            >
+              <span className="truncate">{p.split(/[\\/]/).filter(Boolean).pop() || p}</span>
+              <button
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                title={t('agent.calendar.removeTip')}
+                onClick={() => void patchCalConfig({ paths: calConfig.paths.filter((x) => x !== p) })}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
+            {calConfig.enabled
+              ? calConfig.paths.length > 0
+                ? t('agent.calendar.hintOn')
+                : t('agent.calendar.hintNoFile')
+              : t('agent.calendar.hintOff')}
           </span>
         </div>
 
@@ -1742,9 +1827,18 @@ const ChannelsPanel: React.FC = () => {
   const patchCfg = async (
     patch: Partial<Omit<ChannelConfig, 'token' | 'hasToken'>> & { token?: string }
   ) => {
-    const next = await window.pocketai.setChannelConfig(patch)
-    setCfgState(next)
-    if (patch.token !== undefined) setTokenDraft('')
+    // Token 超长预检（后端仍有同样校验）；失败保留草稿便于修改
+    if (typeof patch.token === 'string' && patch.token.trim().length > 256) {
+      toast.error(t('channel.tokenTooLong'))
+      return
+    }
+    try {
+      const next = await window.pocketai.setChannelConfig(patch)
+      setCfgState(next)
+      if (patch.token !== undefined) setTokenDraft('')
+    } catch (e) {
+      toast.error((e as Error).message || t('common.unknownError'))
+    }
   }
 
   const handleStart = async () => {

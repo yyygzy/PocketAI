@@ -40,7 +40,12 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
     : null
 
   const handleDuplicate = async (id: string) => {
-    await window.pocketai.duplicateAssistant(id)
+    try {
+      await window.pocketai.duplicateAssistant(id)
+    } catch (e) {
+      flash((e as Error).message)
+      return
+    }
     await load()
     onChanged()
     flash(t('am.duplicated'))
