@@ -4,7 +4,8 @@ import type {
   AssistantRecord,
   ConversationRecord,
   MessageRecord,
-  ChatTarget
+  ChatTarget,
+  ChatAttachment
 } from '../../../../shared/types'
 import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
@@ -51,8 +52,15 @@ export const ChatModule: React.FC = () => {
   // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
   const userEditedTargetsRef = useRef(false)
 
-  const reloadConversations = useCallback(() => {
-    return window.pocketai.listConversations(assistantIdRef.current).then(setConversations)
+  const reloadConversations = useCallback((autoSelect = false) => {
+    return window.pocketai.listConversations(assistantIdRef.current, false).then((list) => {
+      setConversations(list)
+      // 自动选中最近一次使用的会话（列表已按 updated_at DESC 排序）
+      if (autoSelect && list.length > 0 && !currentConvRef.current) {
+        const first = list[0]
+        setCurrentConvId(first.id)
+      }
+    })
   }, [])
 
   const loadMessages = useCallback((convId: string) => {
@@ -82,7 +90,7 @@ export const ChatModule: React.FC = () => {
         assistantIdRef.current = def.id
         setCurrentAssistantId(def.id)
       }
-      reloadConversations()
+      reloadConversations(true)
     })
 
     const offChunk = window.pocketai.onChatChunk((e) => {
@@ -144,7 +152,7 @@ export const ChatModule: React.FC = () => {
     setCurrentAssistantId(id)
     setCurrentConvId(null)
     setMessages([])
-    reloadConversations()
+    reloadConversations(true)
 
     // 应用助手默认模型（助手级参数）；未配置则保留当前全局选择
     const asst = assistants.find((a) => a.id === id)
@@ -277,10 +285,22 @@ export const ChatModule: React.FC = () => {
     setTargets(next)
   }
 
-  const handleSend = async (text: string) => {
+  const handleSend = async (text: string, attachments?: ChatAttachment[]) => {
     if (requestIdRef.current) return
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0) return
+
+    // 视觉模型校验：如果有图片附件但模型名不支持 vision，弹出警告
+    if (attachments && attachments.some((a) => a.type === 'image')) {
+      const VISION_MODEL_PATTERNS = /gpt-4o|gpt-4-vision|claude-3|claude-4|gemini.*vision|gemini.*pro|doubao-vision|qwen-vl|qwen2-vl|llava|vision/i
+      const nonVisionTargets = validTargets.filter((t) => !VISION_MODEL_PATTERNS.test(t.model))
+      if (nonVisionTargets.length > 0) {
+        const modelList = nonVisionTargets.map((t) => t.model).join(', ')
+        if (!window.confirm(`以下模型可能不支持图片理解：${modelList}\n\n建议使用视觉模型（如 gpt-4o、claude-3、qwen-vl 等）。\n\n确定要发送吗？`)) {
+          return
+        }
+      }
+    }
 
     let convId = currentConvId
     if (!convId) {
@@ -313,7 +333,8 @@ export const ChatModule: React.FC = () => {
         conversationId: convId,
         assistantId: currentAssistantId,
         content: text,
-        targets: validTargets
+        targets: validTargets,
+        attachments
       })
       .catch(() => {
         if (requestIdRef.current === requestId) {
@@ -328,6 +349,139 @@ export const ChatModule: React.FC = () => {
   const handleStop = () => {
     if (requestIdRef.current) window.pocketai.abortChat(requestIdRef.current)
   }
+
+  const handleDeleteMessage = useCallback(async (id: string) => {
+    await window.pocketai.deleteMessage(id)
+    if (currentConvId) loadMessages(currentConvId)
+  }, [currentConvId, loadMessages])
+
+  const handleDeleteMessages = useCallback(async (ids: string[]) => {
+    await Promise.all(ids.map((id) => window.pocketai.deleteMessage(id)))
+    if (currentConvId) loadMessages(currentConvId)
+  }, [currentConvId, loadMessages])
+
+  const handleRegenerate = useCallback(async (messageId: string) => {
+    if (requestIdRef.current) return // 正在流式中
+    const validTargets = targets.filter((t) => t.providerId && t.model)
+    if (validTargets.length === 0 || !currentConvId) return
+
+    const requestId = crypto.randomUUID()
+    requestIdRef.current = requestId
+    finalizedRef.current = false
+    totalColumnsRef.current = validTargets.length
+    settledCountRef.current = 0
+    streamingConvRef.current = currentConvId
+    setLiveColumns(
+      validTargets.map((t) => ({
+        providerId: t.providerId,
+        model: t.model,
+        content: '',
+        status: 'streaming' as const
+      }))
+    )
+
+    // 先从本地消息列表中移除旧 assistant 消息，避免显示重复
+    setMessages((prev) => prev.filter((m) => m.id !== messageId))
+
+    window.pocketai
+      .regenerateMessage({
+        requestId,
+        conversationId: currentConvId,
+        assistantId: currentAssistantId,
+        messageId,
+        targets: validTargets
+      })
+      .catch(() => {
+        if (requestIdRef.current === requestId) {
+          requestIdRef.current = null
+          streamingConvRef.current = null
+          setLiveColumns(null)
+          if (currentConvRef.current === currentConvId) loadMessages(currentConvId)
+        }
+      })
+  }, [targets, currentConvId, currentAssistantId, loadMessages])
+
+  /** 改参重跑 / 编辑用户消息后重发 */
+  const handleResend = useCallback(async (messageId: string, newContent?: string) => {
+    if (requestIdRef.current) return // 正在流式中
+    const validTargets = targets.filter((t) => t.providerId && t.model)
+    if (validTargets.length === 0 || !currentConvId) return
+
+    const requestId = crypto.randomUUID()
+    requestIdRef.current = requestId
+    finalizedRef.current = false
+    totalColumnsRef.current = validTargets.length
+    settledCountRef.current = 0
+    streamingConvRef.current = currentConvId
+    setLiveColumns(
+      validTargets.map((t) => ({
+        providerId: t.providerId,
+        model: t.model,
+        content: '',
+        status: 'streaming' as const
+      }))
+    )
+
+    // 从本地消息列表中移除该用户消息之后的所有 AI 回复
+    setMessages((prev) => {
+      // 找到用户消息位置
+      const userMsgIndex = prev.findIndex((m) => m.id === messageId)
+      if (userMsgIndex === -1) return prev
+      // 如果有新内容，更新用户消息
+      const updated = newContent !== undefined
+        ? prev.map((m) => m.id === messageId ? { ...m, content: newContent } : m)
+        : prev
+      // 保留用户消息及之前的消息，移除该用户消息后的 AI 回复（下一轮 reply）
+      return updated.slice(0, userMsgIndex + 1)
+    })
+
+    window.pocketai
+      .resendMessage({
+        requestId,
+        conversationId: currentConvId,
+        assistantId: currentAssistantId,
+        messageId,
+        content: newContent,
+        targets: validTargets
+      })
+      .catch(() => {
+        if (requestIdRef.current === requestId) {
+          requestIdRef.current = null
+          streamingConvRef.current = null
+          setLiveColumns(null)
+          if (currentConvRef.current === currentConvId) loadMessages(currentConvId)
+        }
+      })
+  }, [targets, currentConvId, currentAssistantId, loadMessages])
+
+  /** 消息分支：从指定消息分叉出新会话并立即跳转 */
+  const handleForkConversation = useCallback(async (messageId: string) => {
+    if (!currentConvId) return
+    const r = await window.pocketai.forkConversation(currentConvId, messageId)
+    if (!r.ok || !r.conversation) {
+      alert(r.error ?? '分支创建失败')
+      return
+    }
+    await reloadConversations()
+    userEditedTargetsRef.current = false
+    setCurrentConvId(r.conversation.id)
+    await loadMessages(r.conversation.id)
+    restoreLastModel(r.conversation)
+  }, [currentConvId, reloadConversations, loadMessages, restoreLastModel])
+
+  // 另存为笔记：取消息内容创建笔记，然后跳到笔记模块并选中
+  const handleSaveAsNote = useCallback(async (messageId: string) => {
+    const msg = messages.find((m) => m.id === messageId)
+    if (!msg) return
+    try {
+      const note = await window.pocketai.createNoteFromMessage({ content: msg.content ?? '' })
+      window.dispatchEvent(new CustomEvent('pocketai:switch-module', { detail: { moduleId: 'notes' } }))
+      window.dispatchEvent(new CustomEvent('pocketai:open-note', { detail: { id: note.id } }))
+    } catch (e) {
+      // 主进程版本过旧/未重启时 IPC 无 handler，需给出明确提示而非静默无反应
+      window.alert(`保存为笔记失败，请完全退出并重启应用后再试。\n${(e as Error)?.message ?? e}`)
+    }
+  }, [messages])
 
   return (
     <div className="flex h-full min-w-0 relative">
@@ -367,6 +521,12 @@ export const ChatModule: React.FC = () => {
         onAssistantUpdated={handleAssistantUpdated}
         onSend={handleSend}
         onStop={handleStop}
+        onRegenerate={handleRegenerate}
+        onResend={handleResend}
+        onDeleteMessage={handleDeleteMessage}
+        onDeleteMessages={handleDeleteMessages}
+        onForkConversation={handleForkConversation}
+        onSaveAsNote={handleSaveAsNote}
       />
 
       {marketOpen && (

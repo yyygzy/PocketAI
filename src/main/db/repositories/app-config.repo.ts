@@ -1,6 +1,8 @@
 // app_config 仓储：键值对配置存储
 // 用于持久化 encryption_mode / has_master_password 等启动配置
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dbService } from '../database'
+import { CONFIG_PATH } from '../../portable'
 
 export type EncryptionMode = 'none' | 'db'
 export type CipherType = 'sqlcipher' // 目前只支持 SQLCipher
@@ -20,6 +22,36 @@ const KEYS = {
   LICENSE_PATH: 'license_path', // 默认 license.lic 的路径
   AUTO_UPDATE_ENABLED: 'auto_update_enabled', // '1'=开启自动更新；缺省=关闭
 } as const
+
+// ---------- 主密码 salt 双通道 ----------
+//
+// salt 不是秘密（KDF 公开参数），但必须在 DB 未解锁/未打开时可读，
+// 否则加密库会陷入「要读 salt 才能派生密钥解锁、要解锁才能读 salt」死锁
+// （salt 存在加密库内，boot 解锁在无 key 连接上必失败）。
+// 主通道：config.json（明文文件，随库无关）；DB 内保留一份兼容回退。
+
+function readSaltFromConfigFile(): string | null {
+  try {
+    if (!existsSync(CONFIG_PATH)) return null
+    const cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return typeof cfg?.masterPasswordSalt === 'string' ? cfg.masterPasswordSalt : null
+  } catch {
+    return null
+  }
+}
+
+function writeSaltToConfigFile(b64: string | null): void {
+  try {
+    let cfg: Record<string, unknown> = {}
+    if (existsSync(CONFIG_PATH)) {
+      try { cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) ?? {} } catch { /* 损坏则重建 */ }
+    }
+    if (b64 === null) delete cfg.masterPasswordSalt
+    else cfg.masterPasswordSalt = b64
+    // 0600：文件名通用，未来可能承载其他敏感配置；仅对新建文件生效
+    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
+  } catch { /* 写失败不阻塞主流程：DB 内仍有备份 */ }
+}
 
 export const appConfigRepo = {
   get(key: string): string | null {
@@ -64,12 +96,30 @@ export const appConfigRepo = {
   },
 
   getMasterPasswordSalt(): Buffer | null {
-    const b64 = this.get(KEYS.MASTER_PASSWORD_SALT)
-    return b64 ? Buffer.from(b64, 'base64') : null
+    // 主通道：config.json（DB 未打开/未解锁时也可读）
+    const fromFile = readSaltFromConfigFile()
+    if (fromFile) return Buffer.from(fromFile, 'base64')
+    // 回退：DB（旧版本只写了 DB 的数据）；读到即回填 config.json 自愈
+    try {
+      const b64 = this.get(KEYS.MASTER_PASSWORD_SALT)
+      if (!b64) return null
+      writeSaltToConfigFile(b64)
+      return Buffer.from(b64, 'base64')
+    } catch {
+      return null // DB 未打开或加密未解锁
+    }
   },
 
   setMasterPasswordSalt(salt: Buffer): void {
-    this.set(KEYS.MASTER_PASSWORD_SALT, salt.toString('base64'))
+    const b64 = salt.toString('base64')
+    writeSaltToConfigFile(b64)
+    this.set(KEYS.MASTER_PASSWORD_SALT, b64)
+  },
+
+  /** 清除 salt（禁用加密时调用）：config.json + DB 双删 */
+  clearMasterPasswordSalt(): void {
+    writeSaltToConfigFile(null)
+    try { this.delete(KEYS.MASTER_PASSWORD_SALT) } catch { /* DB 未开时忽略 */ }
   },
 
   getAutoLockTimeout(): number {

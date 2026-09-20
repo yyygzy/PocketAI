@@ -1,0 +1,52 @@
+// web_search 工具的联网搜索配置（app_config KV，模式与 shell-config 一致）
+//
+// - agent.websearch_enabled  ：'1' 开启；缺省/其它=关闭（默认安全）
+// - agent.websearch_provider ：'tavily'（默认）| 'bocha'
+// - agent.websearch_api_key  ：服务商 API Key（存本机加密库）
+//
+// 安全约定：getWebSearchConfig 面向渲染端返回时永远不回传 Key 明文（apiKey='' + hasKey 标记）；
+// 主进程内部读 Key 用 getWebSearchSecret()。
+import { appConfigRepo } from '../db/repositories/app-config.repo'
+import type { WebSearchConfig, WebSearchProvider } from '../../shared/types'
+
+const KEY_ENABLED = 'agent.websearch_enabled'
+const KEY_PROVIDER = 'agent.websearch_provider'
+const KEY_API_KEY = 'agent.websearch_api_key'
+
+/** 渲染端视图：不含 Key 明文 */
+export function getWebSearchConfig(): WebSearchConfig {
+  const enabled = appConfigRepo.get(KEY_ENABLED) === '1'
+  const providerRaw = appConfigRepo.get(KEY_PROVIDER)
+  const provider: WebSearchProvider = providerRaw === 'bocha' ? 'bocha' : 'tavily'
+  const key = appConfigRepo.get(KEY_API_KEY) ?? ''
+  return { enabled, provider, apiKey: '', hasKey: key.length > 0 }
+}
+
+/** 保存配置（字段白名单 + 值域校验）。apiKey：undefined=不动，''=清除，非空=覆盖 */
+export function setWebSearchConfig(
+  input: Partial<{ enabled: boolean; provider: WebSearchProvider; apiKey: string }>
+): WebSearchConfig {
+  if (typeof input.enabled === 'boolean') {
+    appConfigRepo.set(KEY_ENABLED, input.enabled ? '1' : '0')
+  }
+  if (input.provider === 'tavily' || input.provider === 'bocha') {
+    appConfigRepo.set(KEY_PROVIDER, input.provider)
+  }
+  if (typeof input.apiKey === 'string') {
+    const trimmed = input.apiKey.trim()
+    if (trimmed.length > 0 && trimmed.length <= 256) {
+      appConfigRepo.set(KEY_API_KEY, trimmed)
+    } else if (trimmed.length === 0) {
+      appConfigRepo.set(KEY_API_KEY, '')
+    }
+  }
+  return getWebSearchConfig()
+}
+
+/** 主进程内部读取 Key 明文（仅供 websearch.ts 发请求用） */
+export function getWebSearchSecret(): { enabled: boolean; provider: WebSearchProvider; apiKey: string } {
+  const enabled = appConfigRepo.get(KEY_ENABLED) === '1'
+  const providerRaw = appConfigRepo.get(KEY_PROVIDER)
+  const provider: WebSearchProvider = providerRaw === 'bocha' ? 'bocha' : 'tavily'
+  return { enabled, provider, apiKey: appConfigRepo.get(KEY_API_KEY) ?? '' }
+}

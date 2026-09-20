@@ -55,6 +55,21 @@ body {
   color: var(--color-text-muted);
 }
 
+/* 原生 <select> 展开后的选项列表：显式配色，
+   防止暗模式下未选中项为系统浅灰底 + 继承浅色文字而看不清 */
+select option,
+select optgroup {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+select option:checked {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+select option:disabled {
+  color: var(--color-text-muted);
+}
+
 .btn-primary {
   padding: 6px 16px;
   border-radius: 8px;

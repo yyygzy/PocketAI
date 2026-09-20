@@ -43,10 +43,15 @@ export function UnlockPage() {
 
     setBusy(true)
     try {
+      let res: { ok: boolean; error?: string }
       if (mode === 'unlock') {
-        await window.pocketai.unlockEncryption(password)
+        res = await window.pocketai.unlockEncryption(password)
       } else {
-        await window.pocketai.setMasterPassword(password)
+        res = await window.pocketai.setMasterPassword(password)
+      }
+      if (!res.ok) {
+        setError(res.error ?? t('unlock.submitFailed'))
+        return
       }
       // 提交后窗口会被主进程关闭
     } catch (e: any) {

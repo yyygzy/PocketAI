@@ -1,7 +1,7 @@
 // Message 数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
-import type { MessageRecord, MessageRole, MessageStatus } from '../../../shared/types'
+import type { MessageRecord, MessageRole, MessageStatus, ChatAttachment } from '../../../shared/types'
 
 interface MessageRow {
   id: string
@@ -13,9 +13,15 @@ interface MessageRow {
   status: string | null
   parent_id: string | null
   created_at: number
+  tool_calls: string | null
+  attachments: string | null
 }
 
 function rowToRecord(row: MessageRow): MessageRecord {
+  let attachments: ChatAttachment[] | undefined
+  if (row.attachments) {
+    try { attachments = JSON.parse(row.attachments) } catch { /* ignore */ }
+  }
   return {
     id: row.id,
     conversationId: row.conversation_id,
@@ -25,7 +31,9 @@ function rowToRecord(row: MessageRow): MessageRecord {
     model: row.model,
     status: (row.status as MessageStatus) ?? 'done',
     parentId: row.parent_id,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    toolCalls: row.tool_calls ?? null,
+    attachments
   }
 }
 
@@ -54,14 +62,19 @@ export const messageRepo = {
     model?: string | null
     status?: MessageStatus
     parentId?: string | null
+    toolCalls?: string | null
+    attachments?: ChatAttachment[]
   }): MessageRecord {
     const id = randomUUID()
     const now = Date.now()
+    const attachmentsJson = input.attachments && input.attachments.length > 0
+      ? JSON.stringify(input.attachments)
+      : null
     dbService
       .getHandle()
       .prepare(
-        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at, tool_calls, attachments)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -72,7 +85,9 @@ export const messageRepo = {
         input.model ?? null,
         input.status ?? 'done',
         input.parentId ?? null,
-        now
+        now,
+        input.toolCalls ?? null,
+        attachmentsJson
       )
     return {
       id,
@@ -83,7 +98,9 @@ export const messageRepo = {
       model: input.model ?? null,
       status: input.status ?? 'done',
       parentId: input.parentId ?? null,
-      createdAt: now
+      createdAt: now,
+      toolCalls: input.toolCalls ?? null,
+      attachments: input.attachments
     }
   },
 
@@ -92,5 +109,32 @@ export const messageRepo = {
       .getHandle()
       .prepare('UPDATE messages SET content=?, status=? WHERE id=?')
       .run(content, status, id)
+  },
+
+  updateToolCalls(id: string, toolCalls: string | null): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE messages SET tool_calls=? WHERE id=?')
+      .run(toolCalls, id)
+  },
+
+  delete(id: string): void {
+    dbService.getHandle().prepare('DELETE FROM messages WHERE id=?').run(id)
+  },
+
+  /** 删除指定用户消息的所有 AI 回复（parentId 匹配） */
+  deleteReplies(parentId: string): void {
+    dbService
+      .getHandle()
+      .prepare('DELETE FROM messages WHERE parent_id=? AND role=?')
+      .run(parentId, 'assistant')
+  },
+
+  /** 更新用户消息内容（编辑后重发） */
+  updateUserContent(id: string, content: string): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE messages SET content=? WHERE id=?')
+      .run(content, id)
   }
 }

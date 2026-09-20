@@ -7,6 +7,10 @@ import { KnowledgeModule } from '../modules/knowledge/KnowledgeModule'
 import { SkillModule } from '../modules/skills/SkillModule'
 import { AgentModule } from '../modules/agent/AgentModule'
 import { FilesModule } from '../modules/files/FilesModule'
+import { NotesModule } from '../modules/notes/NotesModule'
+import { TranslateModule } from '../modules/translate/TranslateModule'
+import { ImageModule } from '../modules/image/ImageModule'
+import { SandboxModule } from '../modules/sandbox/SandboxModule'
 import { useI18n } from '../i18n'
 
 interface WorkspaceProps {
@@ -72,6 +76,50 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
         <Header title={t('workspace.files.title')} subtitle={t('workspace.files.subtitle')} />
         <div className="h-[calc(100%-3rem)]">
           <FilesModule />
+        </div>
+      </div>
+    )
+  }
+
+  if (moduleId === 'notes') {
+    return (
+      <div className="flex-1 overflow-hidden p-5">
+        <Header title={t('workspace.notes.title')} subtitle={t('workspace.notes.subtitle')} />
+        <div className="h-[calc(100%-3rem)] rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg)]">
+          <NotesModule />
+        </div>
+      </div>
+    )
+  }
+
+  if (moduleId === 'translate') {
+    return (
+      <div className="flex-1 overflow-hidden p-5">
+        <Header title={t('workspace.translate.title')} subtitle={t('workspace.translate.subtitle')} />
+        <div className="h-[calc(100%-3rem)] rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg)]">
+          <TranslateModule />
+        </div>
+      </div>
+    )
+  }
+
+  if (moduleId === 'image') {
+    return (
+      <div className="flex-1 overflow-hidden p-5 flex flex-col">
+        <Header title={t('workspace.image.title')} subtitle={t('workspace.image.subtitle')} />
+        <div className="flex-1 min-h-0">
+          <ImageModule />
+        </div>
+      </div>
+    )
+  }
+
+  if (moduleId === 'sandbox') {
+    return (
+      <div className="flex-1 overflow-hidden p-5 flex flex-col">
+        <Header title={t('workspace.sandbox.title')} subtitle={t('workspace.sandbox.subtitle')} />
+        <div className="flex-1 min-h-0">
+          <SandboxModule />
         </div>
       </div>
     )

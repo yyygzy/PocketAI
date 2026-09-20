@@ -2,6 +2,7 @@
 // 支持格式：pdf / docx / xlsx / html / url / txt / md
 import fs from 'node:fs'
 import path from 'node:path'
+import { safeFetch } from '../../net/safe-fetch'
 import type { KbSourceType } from '../../../shared/types'
 
 export interface ParseResult {
@@ -111,11 +112,13 @@ async function parseHtml(html: string, fallbackTitle: string): Promise<ParseResu
 
 /** URL → 抓取 HTML → 文本 */
 async function parseUrl(url: string): Promise<ParseResult> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'PocketAI/0.1 (knowledge-base)' },
-    redirect: 'follow'
+  // 知识库导入 URL 可由 Agent/外部内容触发，必须走 safeFetch：
+  // 拦截内网/环回/云元数据地址（SSRF）、手动逐跳跟随重定向、限制体积与时长
+  const res = await safeFetch(url, {
+    timeoutMs: 30_000,
+    maxBytes: 10 * 1024 * 1024,
+    headers: { 'User-Agent': 'PocketAI/0.1 (knowledge-base)' }
   })
-  if (!res.ok) throw new Error(`抓取 URL 失败: HTTP ${res.status}`)
-  const html = await res.text()
-  return parseHtml(html, url)
+  if (res.status < 200 || res.status >= 300) throw new Error(`抓取 URL 失败: HTTP ${res.status}`)
+  return parseHtml(res.body.toString('utf8'), res.finalUrl)
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import type { ConversationRecord } from '../../../../shared/types'
+import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../../shared/snippet'
 import { useI18n } from '../../i18n'
 
 interface Props {
@@ -203,6 +204,27 @@ const ConvItem: React.FC<{
   )
 }
 
+/** 将「纯文本 + PUA 高亮令牌」片段渲染为 React 节点：
+ *  全程文本节点，任何 HTML/脚本字符都按字面显示，无注入面 */
+const HighlightedSnippet: React.FC<{ text: string }> = ({ text }) => {
+  const segments = text.split(SNIPPET_MARK_OPEN)
+  return (
+    <>
+      {segments.map((seg, i) => {
+        if (i === 0) return <React.Fragment key={i}>{seg}</React.Fragment>
+        const at = seg.indexOf(SNIPPET_MARK_CLOSE)
+        if (at < 0) return <React.Fragment key={i}>{seg}</React.Fragment>
+        return (
+          <React.Fragment key={i}>
+            <b>{seg.slice(0, at)}</b>
+            {seg.slice(at + SNIPPET_MARK_CLOSE.length)}
+          </React.Fragment>
+        )
+      })}
+    </>
+  )
+}
+
 const SearchResults: React.FC<{
   results: SearchResult[]
   searching: boolean
@@ -244,7 +266,7 @@ const SearchResults: React.FC<{
               <span className={`inline-block w-12 text-[var(--color-text-muted)] ${r.role === 'user' ? 'text-[var(--color-info)]' : r.role === 'assistant' ? 'text-[var(--color-success)]' : ''}`}>
                 {r.role === 'user' ? t('chat.roleYou') : r.role === 'assistant' ? t('chat.roleAI') : r.role}
               </span>
-              <span dangerouslySetInnerHTML={{ __html: r.snippet }} className="text-[var(--color-text)]" />
+              <span className="text-[var(--color-text)]"><HighlightedSnippet text={r.snippet} /></span>
             </div>
           ))}
         </div>

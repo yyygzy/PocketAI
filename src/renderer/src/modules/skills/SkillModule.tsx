@@ -1,14 +1,16 @@
-// 技能管理模块：技能列表 / 创建编辑 / 启用开关 / 删除
+// 技能管理模块：技能列表 / 创建编辑 / 启用开关 / 删除 / 市场（浏览/搜索/复制/导入导出）
 // 技能 = 可复用提示词片段，关联到助手后自动注入 SystemPrompt
 import React, { useEffect, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { SkillMarket } from './SkillMarket'
 
 export const SkillModule: React.FC = () => {
   const { t } = useI18n()
   const [skills, setSkills] = useState<SkillRecord[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'detail' | 'create' | 'edit'>('detail')
+  const [marketOpen, setMarketOpen] = useState(false)
 
   const load = () => window.pocketai.listSkills().then(setSkills)
   useEffect(() => {
@@ -38,15 +40,24 @@ export const SkillModule: React.FC = () => {
       <div className="w-60 shrink-0 flex flex-col">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold">{t('skill.title')}</h3>
-          <button
-            onClick={() => {
-              setMode('create')
-              setSelectedId(null)
-            }}
-            className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
-          >
-            {t('skill.new')}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setMarketOpen(true)}
+              title={t('skill.market.title')}
+              className="text-xs px-2 py-1 rounded bg-[var(--color-inline-code-bg)] hover:bg-[var(--color-hover-overlay)]"
+            >
+              🛒
+            </button>
+            <button
+              onClick={() => {
+                setMode('create')
+                setSelectedId(null)
+              }}
+              className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
+            >
+              {t('skill.new')}
+            </button>
+          </div>
         </div>
         <div className="space-y-1 overflow-y-auto">
           {skills.length === 0 && (
@@ -114,6 +125,11 @@ export const SkillModule: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 技能市场模态 */}
+      {marketOpen && (
+        <SkillMarket onClose={() => setMarketOpen(false)} onChanged={load} />
+      )}
     </div>
   )
 }

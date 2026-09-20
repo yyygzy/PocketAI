@@ -21,20 +21,27 @@
 // - 加密模式：如果 DB 是加密的，无密码 open() 会立即抛 SQLITE_NOTADB，catch 后
 //             直接显示解锁窗口（不需要先无密码打开）
 
-import { app, BrowserWindow, shell, dialog } from 'electron'
+import { app, BrowserWindow, dialog, powerMonitor } from 'electron'
 import path from 'node:path'
 import { ensureDirs, DATA_DIR } from './portable'
 import { dbService } from './db/database'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { mcpManager } from './mcp/manager'
 import { masterKeyManager } from './crypto/master-key'
 import { unlockCoordinator } from './crypto/unlock-coordinator'
 import { appConfigRepo } from './db/repositories/app-config.repo'
+import { getHardwareInfo } from './steward/hardware'
 import { licenseService } from './license/license'
 import { initUpdateManager } from './update-manager'
 import { buildAppMenu } from './menu'
 import { initPopup } from './popup'
+import { lockService } from './lock/lock'
+import { installLockGate } from './lock/ipc-gate'
+import { denyNewWindows } from './net/external-links'
+import { installContentSecurityPolicy } from './security/csp'
+import { initBackupScheduler, stopBackupScheduler } from './backup/backup-scheduler'
+import { applyOpacityToMainWindows } from './ui-preferences'
 
 app.setPath('userData', path.join(DATA_DIR, 'userdata'))
 app.setPath('sessionData', path.join(DATA_DIR, 'session'))
@@ -52,6 +59,9 @@ function tryOpenDbNoPassword(): boolean {
   } catch (e: any) {
     // SQLITE_NOTADB = 文件是加密的，必须用密码打开
     if (e?.code === 'SQLITE_NOTADB' || e?.message?.includes('not a database')) {
+      // 关掉无 key 的死连接：dbService.open() 对已开连接幂等返回，
+      // 死连接不关掉，后续带 key 重开和 salt 读取都会撞上它
+      try { dbService.close() } catch { /* ignore */ }
       return false
     }
     // 其他错误：未知 DB 损坏
@@ -64,7 +74,7 @@ function tryOpenDbNoPassword(): boolean {
 
 // ─── 解锁窗口 ─────────────────────────────────────────────────────
 
-function showUnlockWindow(): void {
+function showUnlockWindow(mode: 'unlock' | 'setPassword' = 'unlock'): void {
   if (unlockWindow) {
     unlockWindow.focus()
     return
@@ -90,15 +100,19 @@ function showUnlockWindow(): void {
   })
 
   unlockWindow.on('ready-to-show', () => unlockWindow?.show())
+  // 锁屏窗口同样收口外链
+  denyNewWindows(unlockWindow.webContents)
 
-  // 渲染进程加载 unlock.html（独立入口）
+  // 渲染进程加载 unlock.html（独立入口），附带 mode 参数
+  const query = `?mode=${mode}`
   if (process.env['ELECTRON_RENDERER_URL']) {
     // dev：Vite 服务器 URL 是 http://localhost:5173/ ，用 URL 替换 pathname
     const base = new URL(process.env['ELECTRON_RENDERER_URL'])
     base.pathname = '/unlock.html'
+    base.search = query
     unlockWindow.loadURL(base.toString())
   } else {
-    unlockWindow.loadFile(path.join(__dirname, '../renderer/unlock.html'))
+    unlockWindow.loadFile(path.join(__dirname, '../renderer/unlock.html'), { query: { mode } })
   }
 
   // 解锁窗口关闭 = 用户放弃（解锁是强制的，app 退出）
@@ -132,11 +146,14 @@ function createMainWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => { mainWindow = null })
+  // 隐私锁：窗口隐藏/最小化 → 计时；重新显示 → 取消计时
+  mainWindow.on('hide', () => lockService.onAppHidden())
+  mainWindow.on('show', () => lockService.onAppShown())
+  mainWindow.on('minimize', () => lockService.onAppHidden())
+  mainWindow.on('restore', () => lockService.onAppShown())
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  // 外链收口：应用内拒开新窗，仅 http/https 跳系统浏览器（防 file:/javascript: 等）
+  denyNewWindows(mainWindow.webContents)
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -149,6 +166,13 @@ function createMainWindow(): void {
 
 async function boot(): Promise<void> {
   ensureDirs()
+
+  // IPC 必须在任何窗口（含解锁窗）创建/加载前就位：
+  // 解锁窗挂载即会调用 encryption:unlock / menu:set-language 等通道，
+  // 若延后到解锁流程之后注册，这些 invoke 会得到 “No handler registered”。
+  // handler 均为惰性闭包，DB 尚未打开时注册也安全。
+  installLockGate()
+  registerIpcHandlers()
 
   // 阶段 1：尝试无密码打开 DB
   const openedPlaintext = tryOpenDbNoPassword()
@@ -174,6 +198,7 @@ async function boot(): Promise<void> {
     }
   } else {
     // DB 是加密的，必须解锁
+    masterKeyManager.init('db') // 先标记模式：锁屏 UI 与状态查询在解锁前就要依赖它
     needUnlock = true
     hasExistingPassword = true
   }
@@ -186,7 +211,9 @@ async function boot(): Promise<void> {
       console.log('[boot] 明文 DB，显示"设置主密码"流程')
     }
 
-    showUnlockWindow()
+    const unlockMode: 'unlock' | 'setPassword' =
+      dbService.getEncryptionMode() === 'none' && !hasExistingPassword ? 'setPassword' : 'unlock'
+    showUnlockWindow(unlockMode)
     const result = await unlockCoordinator.waitForUnlock()
 
     if (!result) {
@@ -256,10 +283,12 @@ async function boot(): Promise<void> {
       (syncedSkills.errors.length ? `，错误: ${syncedSkills.errors.join('; ')}` : '')
   )
 
-  registerIpcHandlers()
-
   // 快捷浮窗（快捷问答 / 选区助手）：全局快捷键 + IPC
+  // （IPC 网关于 boot 开头安装，此处 initPopup 注册的通道同样受其保护）
   initPopup()
+
+  // Channels 网关运行时接线（需读 app_config，必须在 DB 打开之后）
+  initChannelRuntime()
 
   // 阶段 4：License 验证（仅当存在 license.lic 时）
   try {
@@ -283,9 +312,29 @@ async function boot(): Promise<void> {
 
   // 阶段 5：创建主窗口
   createMainWindow()
+  // 应用已保存的窗口透明度
+  applyOpacityToMainWindows()
 
   // 阶段 6：自动更新（必须在主窗口创建后，因为 setStatus 里有 webContents.send）
   initUpdateManager()
+
+  // 阶段 7：隐私锁
+  // db 模式锁定 → 清除主进程密钥并关闭数据库（兑现 lock.ts 设计承诺；
+  // 解锁走 LOCK_UNLOCK 的「重开探针」重新验证主密码）。none 模式仅锁 UI：
+  // 明文库无秘密可保护，且定时备份依赖字段密钥继续工作。
+  lockService.onStateChange((evt) => {
+    if (evt.state !== 'locked') return
+    if (masterKeyManager.getMode() !== 'db') return
+    masterKeyManager.clear()
+    dbService.close()
+  })
+  lockService.init()
+  // 定时 WebDAV 备份调度器（内部自行判断开关/锁屏状态）
+  initBackupScheduler()
+  powerMonitor.on('suspend', () => lockService.onOsSleep())
+  powerMonitor.on('resume', () => lockService.onOsWake())
+  powerMonitor.on('lock-screen', () => lockService.lock('os-sleep'))
+  powerMonitor.on('unlock-screen', () => { /* 保持锁定，等用户在应用内解锁 */ })
 }
 
 // ─── 单实例锁 ───────────────────────────────────────────────────
@@ -302,8 +351,20 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    // 生产环境 CSP 必须在任何窗口创建前安装（解锁窗在 boot() 内创建）
+    installContentSecurityPolicy()
     // 默认中文菜单；渲染进程加载后会上报实际语言并重建
     buildAppMenu('zh')
+    // 硬件画像在启动时后台采集一次（结果缓存在主进程），
+    // 之后管家页面只读快照；需要时由用户点「重新检测」手动刷新。
+    // 延后到启动流程之后执行，避免系统命令采集拖慢开窗。
+    setImmediate(() => {
+      try {
+        getHardwareInfo()
+      } catch (err) {
+        console.warn('[boot] 启动硬件检测失败:', err)
+      }
+    })
     boot().catch((err) => {
       console.error('[boot] 启动失败:', err)
       dialog.showErrorBox('启动失败', String(err))
@@ -319,5 +380,6 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   try { mcpManager.stopAll().catch(() => {}) } catch { /* ignore */ }
+  try { stopBackupScheduler() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
 })

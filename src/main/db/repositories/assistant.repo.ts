@@ -210,7 +210,7 @@ export const assistantRepo = {
       .all(id) as { id: string }[]
     for (const { id: cid } of convIds) {
       db.prepare('DELETE FROM messages WHERE conversation_id=?').run(cid)
-      db.prepare('DELETE FROM message_fts WHERE conversation_id=?').run(cid)
+      db.prepare('DELETE FROM messages_fts WHERE conversation_id=?').run(cid)
       db.prepare('DELETE FROM conversations WHERE id=?').run(cid)
     }
     db.prepare('DELETE FROM assistants WHERE id=?').run(id)

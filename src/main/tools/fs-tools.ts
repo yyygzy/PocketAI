@@ -1,4 +1,4 @@
-// Agent 安全目录文件读写工具（fs.list / fs.read / fs.write）
+﻿// Agent 安全目录文件读写工具（fs.list / fs.read / fs.write）
 // 安全边界：所有路径必须落在用户授权的"工作目录"内（app_config: agent.workspace_dir）。
 // 校验方式复用 files-service.toAbs 的模式：反斜杠归一 → posix.normalize → resolve → 前缀校验 + NUL 检查。
 // 未设置工作目录时，三个工具不注册（不会出现在 {{tools}} 中，LLM 无从调用）。
@@ -21,8 +21,11 @@ export function setWorkspaceDir(dir: string): void {
   else appConfigRepo.delete(WORKSPACE_KEY)
 }
 
-/** 规范化相对路径并校验落点，返回工作目录内的绝对路径 */
-function toWorkspaceAbs(relPath: string): string {
+/**
+ * 规范化相对路径并校验落点，返回工作目录内的绝对路径。
+ * 供 fs.* 与 shell_exec 共用（同一安全边界）。
+ */
+export function resolveWorkspacePath(relPath: string): string {
   const ws = getWorkspaceDir()
   if (!ws) throw new Error('未设置 Agent 工作目录，请先在 Agent 页选择工作目录')
   const norm = path.posix
@@ -55,7 +58,7 @@ const fsListTool: BuiltinTool = {
   },
   async execute(args) {
     const rel = String(args?.path ?? '.')
-    const abs = toWorkspaceAbs(rel)
+    const abs = resolveWorkspacePath(rel)
     if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
       throw new Error(`目录不存在: ${rel}`)
     }
@@ -104,7 +107,7 @@ const fsReadTool: BuiltinTool = {
   async execute(args) {
     const rel = String(args?.path ?? '')
     if (!rel) throw new Error('path 不能为空')
-    const abs = toWorkspaceAbs(rel)
+    const abs = resolveWorkspacePath(rel)
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       throw new Error(`文件不存在: ${rel}`)
     }
@@ -150,7 +153,7 @@ const fsWriteTool: BuiltinTool = {
     const rel = String(args?.path ?? '')
     if (!rel) throw new Error('path 不能为空')
     const content = typeof args?.content === 'string' ? args.content : ''
-    const abs = toWorkspaceAbs(rel)
+    const abs = resolveWorkspacePath(rel)
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     const existed = fs.existsSync(abs) && fs.statSync(abs).isFile()
     fs.writeFileSync(abs, content, 'utf-8')

@@ -34,8 +34,11 @@ export interface ChunkRow {
 
 function bufferToFloat32(buf: Buffer | null): Float32Array | null {
   if (!buf || buf.byteLength === 0) return null
-  // 直接以 Buffer 的底层 ArrayBuffer 构造视图，零拷贝
-  return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)
+  // better-sqlite3 返回的 BLOB Buffer 可能非 4 字节对齐，Float32Array 要求对齐
+  // 拷贝到新分配的 Buffer 以保证 byteOffset 为 0
+  const aligned = Buffer.allocUnsafe(buf.byteLength)
+  buf.copy(aligned)
+  return new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4)
 }
 
 function float32ToBuffer(vec: Float32Array): Buffer {

@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import { StdioJsonRpcClient } from './json-rpc'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
 import { EXTENSIONS_DIR } from '../portable'
+import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
 import type {
   McpServerRecord,
   McpServerRuntime,
@@ -90,6 +91,42 @@ class McpManager extends EventEmitter {
       fs.mkdirSync(serverCwd, { recursive: true })
     }
 
+    // 根据运行时类型准备 command / args / env
+    // - binary：record.command 即可执行文件，原样启动
+    // - node：record.command 通常为 node 可执行路径，args 为脚本，原样启动
+    // - python（声明了依赖）：必须先在编辑页把依赖装进独立 venv；启动改用 venv 解释器，
+    //   注入 VIRTUAL_ENV 并把 venv 可执行目录前置到 PATH（console-script 子进程也走 venv）
+    // - python（未声明依赖，脚本/自备环境模式）：直接用 record.command，兼容旧用法
+    const runtime = record.runtime ?? 'binary'
+    let spawnCommand = record.command
+    let spawnArgs = record.args ?? []
+    const baseEnv: Record<string, string> = { ...process.env, ...(record.env ?? {}) } as Record<string, string>
+    if (runtime === 'python') {
+      const packages = record.pythonPackages ?? []
+      if (packages.length > 0) {
+        const envState = await pythonEnvService.getEnvState(record)
+        if (envState.status === 'installing') {
+          throw new Error('Python 依赖正在安装中，请等待安装完成后再启动')
+        }
+        if (envState.status !== 'ready') {
+          if (envState.status === 'stale') {
+            throw new Error('Python 虚拟环境已失效（可能更换了盘符或解释器），请在编辑页重新安装依赖后再启动')
+          }
+          throw new Error('Python 依赖尚未安装，请先在编辑页点击「安装依赖」，完成后再启动')
+        }
+        spawnCommand = venvPython(id)
+        Object.assign(baseEnv, {
+          VIRTUAL_ENV: venvDir(id),
+          PATH: `${venvBinDir(id)}${path.delimiter}${baseEnv.PATH ?? ''}`
+        })
+      }
+      Object.assign(baseEnv, {
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1',
+        PYTHONUNBUFFERED: '1'
+      })
+    }
+
     const startToken = (existing?.startToken ?? 0) + 1
     const entry: RuntimeEntry = {
       record,
@@ -105,9 +142,9 @@ class McpManager extends EventEmitter {
     this.emitStatus(id, 'starting')
 
     const client = new StdioJsonRpcClient({
-      command: record.command,
-      args: record.args,
-      env: record.env,
+      command: spawnCommand,
+      args: spawnArgs,
+      env: baseEnv,
       cwd: serverCwd,
       requestTimeout: TOOL_CALL_TIMEOUT,
       onLog: (stream, line) => this.handleLog(id, stream, line),

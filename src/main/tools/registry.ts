@@ -2,14 +2,16 @@
 // 聚合 内置工具 + MCP 工具，按助手 toolPermissions 过滤；提供统一执行入口
 
 import { BUILTIN_TOOLS } from './builtin'
+import type { ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
+import { getShellTools } from './shell-tools'
 import { mcpManager } from '../mcp/manager'
 import type { ToolSchema, ToolResult } from '../../shared/types'
 
 class ToolRegistry {
-  /** 所有内置工具（含按配置动态注册的 fs.* 工具） */
+  /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
   private listBuiltinTools() {
-    return [...BUILTIN_TOOLS, ...getFsTools()]
+    return [...BUILTIN_TOOLS, ...getFsTools(), ...getShellTools()]
   }
 
   /** 列出所有内置工具的 schema */
@@ -50,15 +52,67 @@ class ToolRegistry {
   formatForPrompt(tools: ToolSchema[]): string {
     if (tools.length === 0) return ''
     const lines = tools.map((t) => {
-      const paramsJson = JSON.stringify(t.parameters)
-      return `- ${t.name}: ${t.description} | 参数 schema: ${paramsJson} | id: ${t.id}`
+      const params = t.parameters as Record<string, any>
+      const paramList = params?.properties
+        ? Object.entries(params.properties)
+            .map(([k, v]) => {
+              const required = params.required?.includes(k) ? '必填' : '可选'
+              return `${k}(${(v as any)?.type ?? 'any'}, ${required}): ${(v as any)?.description ?? ''}`
+            })
+            .join('; ')
+        : '无参数'
+      return `- **${t.name}**: ${t.description}\n  参数: ${paramList}`
     })
-    return '可用工具（调用时返回 JSON 字符串）：\n' + lines.join('\n')
+    return '## 可用工具\n调用工具时返回 JSON 字符串结果。根据用户需求选择合适的工具：\n\n' + lines.join('\n\n')
   }
 
-  /** 执行单个工具调用 */
-  async execute(toolName: string, argsJson: string, allowedToolIds: Set<string>): Promise<ToolResult> {
-    // 先找 schema 校验是否在允许列表
+  /**
+   * 判定一次工具调用应直接执行 / 需用户确认 / 硬拒。
+   * 基线为 schema.permission；内置工具可通过 classify(args) 给出动态判定，
+   * 最终取两者中更严格者（deny > confirm > allow）。
+   */
+  classify(toolName: string, argsJson: string, allowedToolIds: Set<string>): ToolClassification {
+    const all = this.listAll()
+    const schema = all.find((t) => t.name === toolName)
+    if (!schema) return { decision: 'deny', reason: 'UNKNOWN_TOOL' }
+    if (!allowedToolIds.has('*') && !allowedToolIds.has(schema.id)) {
+      return { decision: 'deny', reason: 'TOOL_NOT_ALLOWED' }
+    }
+
+    let args: Record<string, unknown>
+    try {
+      args = argsJson ? (JSON.parse(argsJson) as Record<string, unknown>) : {}
+    } catch {
+      return { decision: 'deny', reason: 'BAD_ARGS' }
+    }
+
+    const baseline: ToolClassification =
+      schema.permission === 'deny'
+        ? { decision: 'deny', reason: 'TOOL_DENIED' }
+        : schema.permission === 'confirm'
+          ? { decision: 'confirm', reason: 'REQUIRES_CONFIRM' }
+          : { decision: 'allow' }
+
+    if (schema.source === 'builtin') {
+      const builtin = this.listBuiltinTools().find((t) => t.schema.id === schema.id)
+      if (builtin?.classify) {
+        try {
+          return stricterDecision(baseline, builtin.classify(args))
+        } catch {
+          return { decision: 'deny', reason: 'BAD_ARGS' }
+        }
+      }
+    }
+    return baseline
+  }
+
+  /** 执行单个工具调用（signal 透传给支持中止的长时工具，如 shell_exec） */
+  async execute(
+    toolName: string,
+    argsJson: string,
+    allowedToolIds: Set<string>,
+    signal?: AbortSignal
+  ): Promise<ToolResult> {
     const all = this.listAll()
     const schema = all.find((t) => t.name === toolName)
     if (!schema) {
@@ -86,7 +140,7 @@ class ToolRegistry {
         if (!builtin) {
           return { toolCallId: '', name: toolName, content: '内置工具未注册', isError: true }
         }
-        const content = await builtin.execute(args)
+        const content = await builtin.execute(args, { signal })
         return { toolCallId: '', name: toolName, content }
       }
       // MCP 工具
@@ -101,6 +155,12 @@ class ToolRegistry {
       return { toolCallId: '', name: toolName, content: (e as Error).message, isError: true }
     }
   }
+}
+
+/** 取两个判定中更严格者（deny > confirm > allow），reason 随更严结果 */
+function stricterDecision(a: ToolClassification, b: ToolClassification): ToolClassification {
+  const rank: Record<ToolClassification['decision'], number> = { allow: 0, confirm: 1, deny: 2 }
+  return rank[b.decision] > rank[a.decision] ? b : a
 }
 
 function stringifyMcpResult(raw: unknown): string {

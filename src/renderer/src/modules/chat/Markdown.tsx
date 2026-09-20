@@ -3,6 +3,11 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 
+// 链接/图片协议白名单：react-markdown 默认会编码危险协议，这里再显式兜底，
+// 防止依赖库行为变化放行 javascript:/vbscript:/file:/data:text/html 等。
+const SAFE_NAV_HREF = /^(https?:|mailto:)/i
+const SAFE_IMG_SRC = /^(https?:|data:image\/|blob:)/i
+
 export const Markdown: React.FC<{ content: string }> = ({ content }) => {
   return (
     <div className="markdown-body text-[14px] leading-relaxed">
@@ -10,9 +15,19 @@ export const Markdown: React.FC<{ content: string }> = ({ content }) => {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
-          a: ({ node, ...props }) => (
-            <a {...props} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline" />
-          ),
+          a: ({ node, href, children, ...props }) => {
+            // 非白名单协议：渲染为无 href 的纯文本样式锚点，不可点击
+            if (!href || !SAFE_NAV_HREF.test(href)) {
+              return <a {...props} className="text-[var(--color-accent)] underline">{children}</a>
+            }
+            return (
+              <a {...props} href={href} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline" />
+            )
+          },
+          img: ({ node, src, alt, ...props }) => {
+            if (!src || !SAFE_IMG_SRC.test(src)) return null
+            return <img {...props} src={src} alt={alt ?? ''} className="max-w-full rounded-lg my-2" />
+          },
           pre: ({ children }) => (
             <pre className="rounded-lg p-3 overflow-x-auto text-[13px] my-2 bg-[var(--hljs-bg)] text-[var(--hljs-text)]">{children}</pre>
           ),

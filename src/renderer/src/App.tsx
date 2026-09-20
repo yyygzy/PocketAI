@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Sidebar, type ModuleId } from './components/Sidebar'
 import { TabBar, type Tab } from './components/TabBar'
 import { Workspace } from './components/Workspace'
+import { ToolApprovalDialog } from './components/ToolApprovalDialog'
 import { useI18n } from './i18n'
 
 let tabCounter = 0
@@ -15,8 +16,71 @@ export default function App() {
     { id: newTabId(), title: t('tab.newChat'), moduleId: 'chat' }
   ])
   const [activeTabId, setActiveTabId] = useState<string>(tabs[0].id)
+  const [locked, setLocked] = useState(false)
+  const [dbEncrypted, setDbEncrypted] = useState(false)
+  const [lockPwd, setLockPwd] = useState('')
+  const [lockErr, setLockErr] = useState('')
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // 锁屏加固：inert 掉遮罩之外的全部内容，阻断 Tab 聚焦/键盘操作/读屏穿透
+  // （React 18 对 inert 属性支持不稳定，直接操作 DOM attribute 最可靠）
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    if (locked) el.setAttribute('inert', '')
+    else el.removeAttribute('inert')
+  }, [locked])
+
+  // 隐私锁：监听状态变化
+  useEffect(() => {
+    window.pocketai.getEncryptionStatus().then((s) => setDbEncrypted(s.dbEncrypted))
+    window.pocketai.getLockStatus().then((s) => setLocked(s.state === 'locked'))
+    const off = window.pocketai.onLockStateChange((e) => {
+      setLocked(e.state === 'locked')
+      setLockPwd('')
+      setLockErr('')
+    })
+    return off
+  }, [])
+
+  // 上报用户活跃（节流 5s），用于自动锁屏计时
+  useEffect(() => {
+    let last = 0
+    const onActivity = () => {
+      const now = Date.now()
+      if (now - last > 5000) {
+        last = now
+        window.pocketai.markActive()
+      }
+    }
+    window.addEventListener('mousemove', onActivity)
+    window.addEventListener('keydown', onActivity)
+    return () => {
+      window.removeEventListener('mousemove', onActivity)
+      window.removeEventListener('keydown', onActivity)
+    }
+  }, [])
+
+  // 允许其他模块通过 window 事件请求切换模块（如聊天「另存为笔记」跳到笔记页）
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ moduleId: ModuleId }>).detail
+      if (detail?.moduleId) handleModuleChange(detail.moduleId)
+    }
+    window.addEventListener('pocketai:switch-module', handler)
+    return () => window.removeEventListener('pocketai:switch-module', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs])
+
+  async function handleUnlock() {
+    setLockErr('')
+    const res = await window.pocketai.unlock(dbEncrypted ? lockPwd : undefined)
+    if (!res.ok) {
+      setLockErr(res.error ?? '解锁失败')
+    }
+  }
 
   const moduleTitle = (id: ModuleId): string => {
     const map: Record<ModuleId, string> = {
@@ -25,6 +89,10 @@ export default function App() {
       skills: t('tab.skills'),
       knowledge: t('tab.knowledge'),
       files: t('tab.files'),
+      notes: t('tab.notes'),
+      translate: t('tab.translate'),
+      image: t('tab.image'),
+      sandbox: t('tab.sandbox'),
       steward: t('tab.steward'),
       settings: t('tab.settings')
     }
@@ -75,22 +143,56 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      <Sidebar
-        active={activeModule}
-        onChange={handleModuleChange}
-        collapsed={collapsed}
-        onToggleCollapse={() => setCollapsed((c) => !c)}
-      />
-      <div className="flex flex-col flex-1 min-w-0">
-        <TabBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onSelect={setActiveTabId}
-          onClose={handleCloseTab}
-          onNew={handleNewTab}
+      {/* 主内容容器：锁定时整棵子树被 inert，遮罩本身放在容器外不受影响 */}
+      <div ref={contentRef} className="flex flex-1 min-w-0 h-full">
+        <Sidebar
+          active={activeModule}
+          onChange={handleModuleChange}
+          collapsed={collapsed}
+          onToggleCollapse={() => setCollapsed((c) => !c)}
         />
-        <Workspace moduleId={(activeTab?.moduleId as ModuleId) || 'chat'} />
+        <div className="flex flex-col flex-1 min-w-0">
+          <TabBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onSelect={setActiveTabId}
+            onClose={handleCloseTab}
+            onNew={handleNewTab}
+          />
+          <Workspace moduleId={(activeTab?.moduleId as ModuleId) || 'chat'} />
+        </div>
       </div>
+
+      {/* 工具调用审批弹窗（shell_exec 等）；锁定时不挂载 */}
+      {!locked && <ToolApprovalDialog />}
+
+      {locked && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="w-80 rounded-xl bg-[#2a2a3e] p-8 text-center shadow-2xl">
+            <div className="mb-4 text-4xl">🔒</div>
+            <h2 className="mb-2 text-xl font-semibold text-white">已锁定</h2>
+            <p className="mb-6 text-sm text-gray-400">PocketAI 隐私保护已激活</p>
+            {dbEncrypted && (
+              <input
+                type="password"
+                autoFocus
+                value={lockPwd}
+                onChange={(e) => setLockPwd(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+                placeholder="输入主密码解锁"
+                className="mb-3 w-full rounded-lg border border-gray-600 bg-[#1e1e2e] px-4 py-2 text-white outline-none focus:border-blue-500"
+              />
+            )}
+            {lockErr && <div className="mb-3 text-sm text-red-400">{lockErr}</div>}
+            <button
+              onClick={handleUnlock}
+              className="w-full rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+            >
+              {dbEncrypted ? '解锁' : '立即解锁'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

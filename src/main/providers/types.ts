@@ -1,9 +1,15 @@
 // Provider 适配器抽象接口（L2 模型抽象层）
 import type { ToolSchema, ToolCall } from '../../shared/types'
 
+export interface MessageContentPart {
+  type: 'text' | 'image_url'
+  text?: string
+  image_url?: { url: string; detail?: 'auto' | 'low' | 'high' }
+}
+
 export interface AdapterChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | MessageContentPart[]
   tool_calls?: ToolCall[] // assistant 消息携带的函数调用
   tool_call_id?: string // role=tool 时关联的调用 ID
   name?: string // role=tool 时的工具名
@@ -15,16 +21,19 @@ export interface ChatParams {
   maxTokens?: number
   signal?: AbortSignal
   tools?: ToolSchema[] // function calling：传入则模型可决定调用工具
+  toolChoice?: 'auto' | 'none' | 'required' // 工具调用策略，默认 'auto'
 }
 
 export interface ChatStreamHandlers {
   onDelta: (text: string) => void
   onToolCallDelta?: (toolCall: ToolCall) => void // 已聚合的工具调用（增量更新，仅用于 UX 预览）
+  onReasoningDelta?: (text: string) => void // 推理/思考过程增量（qwen 等模型返回 reasoning_content）
 }
 
 /** 流式聊天结果：content 文本 + 可选 tool_calls */
 export interface ChatStreamResult {
   content: string
+  reasoning?: string // 推理/思考过程（部分模型返回）
   toolCalls?: ToolCall[]
   finishReason?: string // 'stop' | 'tool_calls' | 'length' | ...
 }

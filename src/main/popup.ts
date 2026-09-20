@@ -12,19 +12,25 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { IPC } from '../shared/types'
-import type { PopupConfig, PopupPayload } from '../shared/types'
+import type { PopupConfig, PopupPayload, PopupSetConfigResult } from '../shared/types'
+import { lockService } from './lock/lock'
+import { denyNewWindows } from './net/external-links'
 
 const WIN_W = 440
 const WIN_H = 600
 
-const QUICK_ACCEL = 'CommandOrControl+Shift+Space'
-const SELECT_ACCEL = 'CommandOrControl+Shift+U'
+const DEFAULT_QUICK_ACCEL = 'CommandOrControl+Shift+Space'
+const DEFAULT_SELECT_ACCEL = 'CommandOrControl+Shift+U'
 const CFG_QUICK = 'popup.quick_enabled'
 const CFG_SELECTION = 'popup.selection_enabled'
+const CFG_QUICK_ACCEL = 'popup.quick_accel'
+const CFG_SELECT_ACCEL = 'popup.selection_accel'
 
 let popupWin: BrowserWindow | null = null
 let lastPayload: PopupPayload | null = null
 let grabbing: Promise<unknown> | null = null // 取词串行锁，防连按
+// 当前已注册的快捷键（更换/退出时按此清单反注册）
+let registeredAccels: string[] = []
 
 // ─── 配置 ─────────────────────────────────────────────────────────
 
@@ -32,25 +38,36 @@ function readEnabled(key: string): boolean {
   return appConfigRepo.get(key) !== '0' // 默认开启
 }
 
+function readAccelerator(key: string, fallback: string): string {
+  const v = appConfigRepo.get(key)
+  // 只做粗校验（含 + 且非空），占用冲突在注册阶段发现
+  return v && v.length <= 100 && v.includes('+') ? v : fallback
+}
+
 export function getPopupConfig(): PopupConfig {
   return {
     quickEnabled: readEnabled(CFG_QUICK),
     selectionEnabled: readEnabled(CFG_SELECTION),
-    quickAccelerator: QUICK_ACCEL,
-    selectionAccelerator: SELECT_ACCEL
+    quickAccelerator: readAccelerator(CFG_QUICK_ACCEL, DEFAULT_QUICK_ACCEL),
+    selectionAccelerator: readAccelerator(CFG_SELECT_ACCEL, DEFAULT_SELECT_ACCEL)
   }
 }
 
-function registerShortcuts(): void {
-  globalShortcut.unregister(QUICK_ACCEL)
-  globalShortcut.unregister(SELECT_ACCEL)
+/** 按给定配置注册快捷键（内部会先反注册旧的）；返回失败的 accel，全部成功返回 null */
+function registerWith(cfg: PopupConfig): string | null {
+  for (const a of registeredAccels) globalShortcut.unregister(a)
+  registeredAccels = []
 
-  if (readEnabled(CFG_QUICK)) {
-    const ok = globalShortcut.register(QUICK_ACCEL, () => openPopup('quick'))
-    if (!ok) console.warn('[popup] 快捷问答快捷键注册失败（可能被其他程序占用）:', QUICK_ACCEL)
+  if (cfg.quickEnabled) {
+    const ok = globalShortcut.register(cfg.quickAccelerator, () => openPopup('quick'))
+    if (!ok) {
+      console.warn('[popup] 快捷问答快捷键注册失败（可能被其他程序占用）:', cfg.quickAccelerator)
+      return cfg.quickAccelerator
+    }
+    registeredAccels.push(cfg.quickAccelerator)
   }
-  if (readEnabled(CFG_SELECTION)) {
-    const ok = globalShortcut.register(SELECT_ACCEL, () => {
+  if (cfg.selectionEnabled) {
+    const ok = globalShortcut.register(cfg.selectionAccelerator, () => {
       // 取词是异步的，串行化避免连按导致剪贴板错乱
       if (grabbing) return
       grabbing = grabSelectedText()
@@ -60,8 +77,18 @@ function registerShortcuts(): void {
           grabbing = null
         })
     })
-    if (!ok) console.warn('[popup] 选区助手快捷键注册失败（可能被其他程序占用）:', SELECT_ACCEL)
+    if (!ok) {
+      console.warn('[popup] 选区助手快捷键注册失败（可能被其他程序占用）:', cfg.selectionAccelerator)
+      // 失败时保留已成功注册的另一个
+      return cfg.selectionAccelerator
+    }
+    registeredAccels.push(cfg.selectionAccelerator)
   }
+  return null
+}
+
+function registerShortcuts(): void {
+  registerWith(getPopupConfig())
 }
 
 // ─── 选区取词（模拟复制 → 读剪贴板 → 还原） ─────────────────────────
@@ -184,6 +211,9 @@ function createPopupWindow(payload: PopupPayload): BrowserWindow {
   })
   win.setAlwaysOnTop(true, 'screen-saver')
 
+  // 浮窗渲染助手回复（含 markdown 链接），外链必须收口：拒开应用内新窗
+  denyNewWindows(win.webContents)
+
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'] + '#/popup')
   } else {
@@ -209,8 +239,10 @@ function createPopupWindow(payload: PopupPayload): BrowserWindow {
   return win
 }
 
-/** 唯一入口：幂等打开/聚焦浮窗 */
-export function openPopup(mode: 'quick' | 'selection', text?: string): BrowserWindow {
+/** 唯一入口：幂等打开/聚焦浮窗；锁屏状态下拒绝唤起，返回 null */
+export function openPopup(mode: 'quick' | 'selection', text?: string): BrowserWindow | null {
+  // 浮窗会展示会话/选区文本，锁屏时唤起会绕过主窗口锁屏遮罩
+  if (lockService.getStatus().state === 'locked') return null
   lastPayload = { mode, text, ts: Date.now() }
   if (popupWin && !popupWin.isDestroyed()) {
     popupWin.setBounds(positionFor(mode))
@@ -233,28 +265,71 @@ function hidePopup(): void {
 // ─── 初始化（boot 阶段 DB/IPC 就绪后调用一次） ──────────────────────
 
 export function initPopup(): void {
+  // 锁屏时自动隐藏已打开的浮窗（浮窗内容属于敏感上下文）
+  lockService.onStateChange((evt) => {
+    if (evt.state === 'locked') hidePopup()
+  })
+
   ipcMain.handle(IPC.POPUP_HIDE, () => {
     hidePopup()
     return { ok: true }
   })
   ipcMain.handle(IPC.POPUP_GET_PAYLOAD, () => lastPayload)
   ipcMain.handle(IPC.POPUP_GET_CONFIG, () => getPopupConfig())
-  ipcMain.handle(IPC.POPUP_SET_CONFIG, (_e, patch: Partial<PopupConfig>) => {
-    if (typeof patch.quickEnabled === 'boolean') {
-      appConfigRepo.set(CFG_QUICK, patch.quickEnabled ? '1' : '0')
+  ipcMain.handle(
+    IPC.POPUP_SET_CONFIG,
+    (_e, patch: Partial<PopupConfig>): PopupSetConfigResult => {
+      const current = getPopupConfig()
+      const nextQuick =
+        typeof patch.quickAccelerator === 'string'
+          ? patch.quickAccelerator.trim()
+          : current.quickAccelerator
+      const nextSelect =
+        typeof patch.selectionAccelerator === 'string'
+          ? patch.selectionAccelerator.trim()
+          : current.selectionAccelerator
+      const next: PopupConfig = {
+        quickEnabled:
+          typeof patch.quickEnabled === 'boolean' ? patch.quickEnabled : current.quickEnabled,
+        selectionEnabled:
+          typeof patch.selectionEnabled === 'boolean'
+            ? patch.selectionEnabled
+            : current.selectionEnabled,
+        quickAccelerator: nextQuick,
+        selectionAccelerator: nextSelect
+      }
+
+      // 两个快捷键不能相同（都启用时才会真正冲突）
+      if (
+        next.quickEnabled &&
+        next.selectionEnabled &&
+        nextQuick &&
+        nextQuick === nextSelect
+      ) {
+        return { ok: false, error: 'same', config: current }
+      }
+
+      // 先按新配置试注册：成功才落库；失败则用旧配置恢复，原快捷键不受影响
+      const failedAccel = registerWith(next)
+      if (failedAccel) {
+        registerShortcuts() // 恢复旧注册
+        return { ok: false, error: 'occupied', accel: failedAccel, config: current }
+      }
+
+      // 试注册通过 → 持久化（已注册的快捷键继续保留，无需再注册一次）
+      appConfigRepo.set(CFG_QUICK, next.quickEnabled ? '1' : '0')
+      appConfigRepo.set(CFG_SELECTION, next.selectionEnabled ? '1' : '0')
+      appConfigRepo.set(CFG_QUICK_ACCEL, nextQuick)
+      appConfigRepo.set(CFG_SELECT_ACCEL, nextSelect)
+      return { ok: true, config: getPopupConfig() }
     }
-    if (typeof patch.selectionEnabled === 'boolean') {
-      appConfigRepo.set(CFG_SELECTION, patch.selectionEnabled ? '1' : '0')
-    }
-    registerShortcuts()
-    return getPopupConfig()
-  })
+  )
 
   // app ready 后才能注册全局快捷键
   if (app.isReady()) registerShortcuts()
   else app.whenReady().then(registerShortcuts)
   app.on('will-quit', () => {
-    globalShortcut.unregister(QUICK_ACCEL)
-    globalShortcut.unregister(SELECT_ACCEL)
+    for (const a of registeredAccels) globalShortcut.unregister(a)
+    registeredAccels = []
   })
 }

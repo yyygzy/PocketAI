@@ -18,6 +18,8 @@ export const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 export const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments')
 export const EXTENSIONS_DIR = path.join(APP_ROOT, 'extensions')
 export const LOGS_DIR = path.join(DATA_DIR, 'logs')
+/** 运行时目录（存放便携 Python 等第三方运行时） */
+export const RUNTIME_DIR = path.join(APP_ROOT, 'runtime')
 
 export function getPaths(): AppPaths {
   return {
@@ -32,7 +34,7 @@ export function getPaths(): AppPaths {
 
 /** 确保所有数据目录存在 */
 export function ensureDirs(): void {
-  ;[DATA_DIR, ATTACHMENTS_DIR, EXTENSIONS_DIR, LOGS_DIR].forEach((dir) => {
+  ;[DATA_DIR, ATTACHMENTS_DIR, EXTENSIONS_DIR, LOGS_DIR, RUNTIME_DIR].forEach((dir) => {
     fs.mkdirSync(dir, { recursive: true })
   })
 }

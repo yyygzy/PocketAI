@@ -4,17 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PocketAI</title>
-    <script>
-      // 防闪烁：React 挂载前恢复主题/语言偏好（与主窗口共享 localStorage）
-      (function () {
-        try {
-          var theme = localStorage.getItem('pocketai.theme')
-          if (theme === 'light') document.documentElement.classList.add('light')
-          var lang = localStorage.getItem('pocketai.lang')
-          if (lang === 'en') document.documentElement.lang = 'en'
-        } catch (e) {}
-      })()
-    </script>
+    <script src="./theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

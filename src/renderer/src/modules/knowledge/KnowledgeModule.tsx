@@ -289,35 +289,9 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
     }
   }
 
-  const handleAddUrl = async () => {
-    const url = window.prompt(t('kb.promptUrl'))
-    if (!url) return
-    setBusy(true)
-    try {
-      await window.pocketai.addKbUrl(kb.id, url)
-      await refresh()
-    } catch (e) {
-      window.alert((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleAddText = async () => {
-    const title = window.prompt(t('kb.promptTitle'))
-    if (!title) return
-    const text = window.prompt(t('kb.promptText'))
-    if (!text) return
-    setBusy(true)
-    try {
-      await window.pocketai.addKbText(kb.id, text, title)
-      await refresh()
-    } catch (e) {
-      window.alert((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
+  // Electron 未实现 window.prompt（调用直接返回 null，不弹窗），
+  // 添加 URL / 录入文本改用应用内弹窗 AddSourceDialog
+  const [addSource, setAddSource] = useState<null | 'url' | 'text'>(null)
 
   const handleDeleteDoc = async (docId: string) => {
     if (!window.confirm(t('kb.delDocConfirm'))) return
@@ -380,10 +354,10 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
             <button onClick={handleAddFiles} disabled={busy} className="btn-primary text-xs disabled:opacity-50">
               {t('kb.upload')}
             </button>
-            <button onClick={handleAddUrl} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
+            <button onClick={() => setAddSource('url')} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
               {t('kb.addUrl')}
             </button>
-            <button onClick={handleAddText} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
+            <button onClick={() => setAddSource('text')} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
               {t('kb.addText')}
             </button>
           </div>
@@ -439,6 +413,16 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
       {/* 分块预览弹层 */}
       {previewDoc && (
         <ChunkPreview doc={previewDoc} onClose={() => setPreviewDoc(null)} />
+      )}
+
+      {/* 添加 URL / 录入文本 弹窗 */}
+      {addSource && (
+        <AddSourceDialog
+          kbId={kb.id}
+          mode={addSource}
+          onClose={() => setAddSource(null)}
+          onDone={refresh}
+        />
       )}
     </div>
   )
@@ -576,6 +560,108 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void }> = ({ doc,
               <p className="text-xs whitespace-pre-wrap">{c.content}</p>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------- 添加 URL / 录入文本（替代 Electron 不支持的 window.prompt） ----------
+const AddSourceDialog: React.FC<{
+  kbId: string
+  mode: 'url' | 'text'
+  onClose: () => void
+  onDone: () => Promise<void> | void
+}> = ({ kbId, mode, onClose, onDone }) => {
+  const { t } = useI18n()
+  const [url, setUrl] = useState('')
+  const [title, setTitle] = useState('')
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const valid = mode === 'url' ? !!url.trim() : !!title.trim() && !!text.trim()
+
+  const submit = async () => {
+    if (!valid || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      if (mode === 'url') {
+        await window.pocketai.addKbUrl(kbId, url.trim())
+      } else {
+        await window.pocketai.addKbText(kbId, text, title.trim())
+      }
+      await onDone()
+      onClose()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-modal-overlay)]"
+      onClick={onClose}
+    >
+      <div
+        className="w-[520px] max-h-[80vh] bg-[var(--color-sidebar)] rounded-lg border border-[var(--color-border)] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+          <h3 className="text-sm font-semibold">
+            {mode === 'url' ? t('kb.addUrl') : t('kb.addText')}
+          </h3>
+          <button onClick={onClose} className="btn-ghost text-xs">
+            {t('common.close')}
+          </button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          {mode === 'url' ? (
+            <Field label={t('kb.promptUrl')}>
+              <input
+                className="input w-full"
+                value={url}
+                autoFocus
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submit()}
+                placeholder="https://example.com/article"
+              />
+            </Field>
+          ) : (
+            <>
+              <Field label={t('kb.promptTitle')}>
+                <input
+                  className="input w-full"
+                  value={title}
+                  autoFocus
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </Field>
+              <Field label={t('kb.promptText')}>
+                <textarea
+                  className="input w-full h-56 resize-y"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+          {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-[var(--color-border)]">
+          <button onClick={onClose} className="btn-ghost text-xs" disabled={busy}>
+            {t('common.cancel')}
+          </button>
+          <button
+            onClick={submit}
+            disabled={!valid || busy}
+            className="btn-primary text-xs disabled:opacity-50"
+          >
+            {t('common.confirm')}
+          </button>
         </div>
       </div>
     </div>

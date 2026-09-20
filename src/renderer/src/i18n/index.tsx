@@ -49,9 +49,9 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 语言变化 → 通知主进程重建应用菜单（中/英文）
   useEffect(() => {
-    try {
-      window.pocketai?.setAppLanguage?.(lang)
-    } catch { /* 主进程未就绪时忽略 */ }
+    // invoke 是异步拒绝，try/catch 捕获不到，必须 .catch 兜底：
+    // 解锁窗/浮窗等页面挂载即触发，极端早于主进程注册时静默忽略即可
+    window.pocketai?.setAppLanguage?.(lang)?.catch?.(() => { /* 主进程未就绪时忽略 */ })
   }, [lang])
 
   const t = useCallback((key: string, params?: Record<string, string | number>) => {

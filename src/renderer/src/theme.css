@@ -5,6 +5,9 @@
    ───────────────────────────────────────────────────────────── */
 
 :root {
+  /* 原生控件（select 弹层、滚动条等）跟随暗色主题，避免下拉列表浅底白字 */
+  color-scheme: dark;
+
   /* ── 基础层级（暗 / Mocha）── */
   --color-bg: #11111b;              /* 最底层 Crust（unlock 页底） */
   --color-bg-secondary: #1e1e2e;   /* 卡片层 Base */
@@ -50,6 +53,9 @@
 }
 
 html.light {
+  /* 原生控件跟随亮色主题 */
+  color-scheme: light;
+
   /* ── 基础层级（亮 / Latte）── */
   --color-bg: #dce0e8;              /* Crust */
   --color-bg-secondary: #ffffff;   /* 卡片用纯白，与页面底拉开层次 */

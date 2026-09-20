@@ -5,18 +5,29 @@ import { IPC } from '../../shared/types'
 import type {
   ProviderRecord,
   SendMessagePayload,
+  RegeneratePayload,
+  ResendPayload,
   AssistantRecord,
   KnowledgeBase,
   McpServerRecord,
-  SkillRecord
+  SkillRecord,
+  UiPreferences,
+  SidebarModuleId,
+  TranslateRequestPayload,
+  ImageGeneratePayload
 } from '../../shared/types'
+import { DEFAULT_SIDEBAR_ORDER } from '../../shared/types'
+import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../shared/snippet'
 import { getPaths } from '../portable'
-import { getHardwareInfo } from '../steward/hardware'
+import { getHardwareInfo, refreshHardwareInfo } from '../steward/hardware'
+import { recommendModels } from '../steward/model-recommend'
+import { runAudit, runDiagnose } from '../steward/diagnose'
 import { buildAppMenu } from '../menu'
 import { dbService } from '../db/database'
 import { providerRepo } from '../db/repositories/provider.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
 import { skillRepo } from '../db/repositories/skill.repo'
+import { exportSkill, importSkill } from '../skills/skill-io'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { messageRepo } from '../db/repositories/message.repo'
 import { providerManager } from '../providers/manager'
@@ -29,15 +40,45 @@ import { ragService } from '../knowledge/rag'
 import { detectSourceType } from '../knowledge/parsers'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
 import { mcpManager } from '../mcp/manager'
+import { pythonEnvService, getPipSource, setPipSource } from '../mcp/python-env'
+import type { PythonPipSource } from '../../shared/types'
 import { toolRegistry } from '../tools/registry'
 import { getWorkspaceDir, setWorkspaceDir } from '../tools/fs-tools'
+import { getShellConfig, setShellConfig } from '../tools/shell-config'
+import { getWebSearchConfig, setWebSearchConfig } from '../tools/websearch-config'
+import { getChannelConfig, setChannelConfig } from '../channels/channel-config'
+import { channelService } from '../channels/channel-service'
+import {
+  listSandboxFiles,
+  createSandboxFile,
+  getSandboxFile,
+  deleteSandboxFile,
+  updateSandboxMeta
+} from '../sandbox/sandbox-service'
+import { resolveApproval } from '../agent/tool-approval'
 import { licenseService } from '../license/license'
 import { lockService } from '../lock/lock'
+import { denyNewWindows } from '../net/external-links'
 import { healthService } from '../health/health'
+import { getBackupSchedule, setBackupSchedule, noteManualBackup } from '../backup/backup-scheduler'
 import { filesService } from '../files/files-service'
 import { masterKeyManager } from '../crypto/master-key'
 import { unlockCoordinator } from '../crypto/unlock-coordinator'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
+import { noteRepo } from '../db/repositories/note.repo'
+import { translationRepo } from '../db/repositories/translation.repo'
+import { imageRepo } from '../db/repositories/image.repo'
+import {
+  runImageGenerate,
+  abortImageGenerate,
+  listImages,
+  getImageFile,
+  deleteImage,
+  saveImageAs
+} from '../images/image-service'
+import { runTranslate, abortTranslate } from '../translate/translate-service'
+import { listPythonRuntimes, downloadPortablePython } from '../python-runtime'
+import { getUiPreferences, setUiPreferences } from '../ui-preferences'
 import path from 'node:path'
 import { DATA_DIR } from '../portable'
 
@@ -52,7 +93,10 @@ function broadcast(channel: string, data: unknown): void {
 
 export function registerIpcHandlers(): void {
   // ---------- 系统 ----------
-  ipcMain.handle(IPC.SYSTEM_HARDWARE_INFO, () => getHardwareInfo())
+  // force=true 时重新采集（用户手动「重新检测」）；否则返回启动时缓存的快照
+  ipcMain.handle(IPC.SYSTEM_HARDWARE_INFO, (_e, force?: boolean) =>
+    force ? refreshHardwareInfo() : getHardwareInfo()
+  )
   ipcMain.handle(IPC.APP_GET_PATHS, () => getPaths())
   ipcMain.handle(IPC.MENU_SET_LANGUAGE, (_e, lang: string) => {
     buildAppMenu(lang === 'en' ? 'en' : 'zh')
@@ -112,9 +156,19 @@ export function registerIpcHandlers(): void {
     return { ok: true }
   })
 
+  // 技能市场：导出/导入（文件对话框在主进程弹出）
+  ipcMain.handle(IPC.SKILL_EXPORT, async (e, id: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    return exportSkill(win!, id)
+  })
+  ipcMain.handle(IPC.SKILL_IMPORT, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    return importSkill(win!)
+  })
+
   // ---------- 会话 ----------
-  ipcMain.handle(IPC.CONVERSATION_LIST, (_e, assistantId?: string) =>
-    conversationRepo.list(assistantId)
+  ipcMain.handle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean) =>
+    conversationRepo.list(assistantId, isAgent)
   )
   ipcMain.handle(IPC.CONVERSATION_CREATE, (_e, assistantId?: string | null, title?: string) =>
     conversationRepo.create({ assistantId, title })
@@ -183,26 +237,37 @@ export function registerIpcHandlers(): void {
     tx(payload.messages)
     return { ok: true, conversationId: newConv.id, messageCount: payload.messages.length }
   })
+  ipcMain.handle(IPC.CONVERSATION_FORK, (_e, conversationId: string, messageId: string) => {
+    try {
+      const conversation = conversationRepo.fork(conversationId, messageId)
+      return { ok: true, conversation }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
 
   // ---------- 消息 ----------
   ipcMain.handle(IPC.MESSAGE_LIST, (_e, conversationId: string) =>
     messageRepo.listByConversation(conversationId)
   )
+  ipcMain.handle(IPC.MESSAGE_DELETE, (_e, id: string) => {
+    messageRepo.delete(id)
+    return { ok: true }
+  })
   ipcMain.handle(IPC.MESSAGE_SEARCH, (_e, query: string) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()
     const handle = dbService.getHandle()
     const limit = 50
-    // HTML escape — 防 XSS（用户消息里可能有 <script> 等）
-    const esc = (s: string): string =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // 片段是「纯文本 + PUA 高亮令牌」，由渲染层作为 React 文本节点渲染，
+    // 不经过 HTML，因此不需要 HTML 转义（React 自动处理）
 
     // 先 FTS5 MATCH（trigram，中文 3+ 字）
     try {
       const ftsSql = `
         SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
                m.created_at, c.title AS conversation_title,
-               snippet(messages_fts, 0, '[b]', '[/b]', '…', 128) AS snippet
+               snippet(messages_fts, 0, ?, ?, '…', 128) AS snippet
         FROM messages_fts fts
         JOIN messages m ON m.id = fts.message_id
         JOIN conversations c ON c.id = m.conversation_id
@@ -210,19 +275,17 @@ export function registerIpcHandlers(): void {
         ORDER BY m.created_at DESC
         LIMIT ?
       `
-      const rows = handle.prepare(ftsSql).all(q, limit) as any[]
+      const rows = handle.prepare(ftsSql).all(SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE, q, limit) as any[]
       if (rows.length > 0) {
         return rows.map(r => {
-          // snippet() 用 [b] 标记 — 先 escape 非标记部分，再替换 [b]→<b>
-          const raw = r.snippet ?? ''
-          const escaped = esc(raw).replace(/\[b\]/g, '<b>').replace(/\[\/b\]/g, '</b>')
           return {
             messageId: r.msg_id,
             conversationId: r.conversation_id,
-            conversationTitle: esc(r.conversation_title ?? ''),
+            // 标题由渲染层作为 React 文本节点渲染（自动转义）
+            conversationTitle: r.conversation_title ?? '',
             role: r.role,
             content: r.content,
-            snippet: escaped,
+            snippet: r.snippet ?? '',
             createdAt: r.created_at
           }
         })
@@ -241,26 +304,24 @@ export function registerIpcHandlers(): void {
     `
     const like = `%${q.replace(/[%_]/g, '\\$&')}%`
     const rows = handle.prepare(likeSql).all(like, limit) as any[]
-    const safeQ = esc(q)
+    const lq = q.toLowerCase()
     return rows.map(r => {
-      const safeContent = esc(r.content ?? '')
-      const lowerSafeContent = safeContent.toLowerCase()
-      const lowerSafeQ = safeQ.toLowerCase()
-      const idx = lowerSafeContent.indexOf(lowerSafeQ)
+      const content = String(r.content ?? '')
+      const idx = content.toLowerCase().indexOf(lq)
       let snippet: string
       if (idx >= 0) {
         const start = Math.max(0, idx - 30)
-        const end = Math.min(safeContent.length, idx + safeQ.length + 60)
+        const end = Math.min(content.length, idx + q.length + 60)
         const before = start > 0 ? '…' : ''
-        const after = end < safeContent.length ? '…' : ''
-        snippet = before + safeContent.slice(start, idx) + '<b>' + safeQ + '</b>' + safeContent.slice(idx + safeQ.length, end) + after
+        const after = end < content.length ? '…' : ''
+        snippet = before + content.slice(start, idx) + SNIPPET_MARK_OPEN + content.slice(idx, idx + q.length) + SNIPPET_MARK_CLOSE + content.slice(idx + q.length, end) + after
       } else {
-        snippet = safeContent.slice(0, 128)
+        snippet = content.slice(0, 128)
       }
       return {
         messageId: r.msg_id,
         conversationId: r.conversation_id,
-        conversationTitle: esc(r.conversation_title ?? ''),
+        conversationTitle: r.conversation_title ?? '',
         role: r.role,
         content: r.content,
         snippet,
@@ -280,6 +341,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.CHAT_ABORT, (_e, requestId: string) => {
     chatService.abort(requestId)
     return { ok: true }
+  })
+
+  ipcMain.handle(IPC.CHAT_REGENERATE, (event, payload: RegeneratePayload) => {
+    const sender: WebContents = event.sender
+    return chatService.regenerate(payload, (channel, data) => {
+      if (!sender.isDestroyed()) sender.send(channel, data)
+    })
+  })
+
+  ipcMain.handle(IPC.CHAT_RESEND, (event, payload: ResendPayload) => {
+    const sender: WebContents = event.sender
+    return chatService.resend(payload, (channel, data) => {
+      if (!sender.isDestroyed()) sender.send(channel, data)
+    })
   })
 
   // ---------- 知识库 ----------
@@ -363,9 +438,25 @@ export function registerIpcHandlers(): void {
     mcpServerRepo.save(record)
   )
   ipcMain.handle(IPC.MCP_SERVER_DELETE, async (_e, id: string) => {
-    await mcpManager.stop(id)
-    mcpServerRepo.delete(id)
-    return { ok: true }
+    // 与安装整段（含前置 stop）共用 per-server 操作锁：安装/重装进行中删除一律拒绝，
+    // 避免 pip 进程树占用 venv 造成孤儿目录或静默重建
+    try {
+      return await pythonEnvService.withServerOp(id, async () => {
+        await mcpManager.stop(id)
+        // 清理该 Server 的独立 venv 与工作目录；清理失败不阻断 DB 删除（条目没了环境即为孤儿，
+        // 下次启动不会再引用），但把警告带回 UI 提示用户可手动删除目录
+        let warning: string | undefined
+        try {
+          await pythonEnvService.removeServerEnv(id)
+        } catch (e) {
+          warning = `配置已删除，但虚拟环境目录清理失败：${(e as Error).message}`
+        }
+        mcpServerRepo.delete(id)
+        return { ok: true as const, warning }
+      })
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message }
+    }
   })
   ipcMain.handle(IPC.MCP_SERVER_START, async (_e, id: string) => {
     try {
@@ -396,9 +487,198 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC.MCP_SERVER_GET_RUNTIMES, () => mcpManager.listRuntimes())
 
+  // ---------- Python MCP 依赖环境（venv / pip） ----------
+  // 安装：仅显式按钮触发；过程经 PYTHON_ENV_EVENT 广播推送，最终状态在 invoke 返回
+  ipcMain.handle(IPC.PYTHON_ENV_INSTALL, async (_e, serverId: string) => {
+    // 整段（含前置 stop）持 per-server 操作锁，与删除互斥；并发操作立即失败而非排队
+    try {
+      return await pythonEnvService.withServerOp(serverId, async () => {
+        const record = mcpServerRepo.get(serverId)
+        if (!record) return { ok: false as const, error: 'MCP Server 不存在或已被删除' }
+        // 重装会重写/删除 venv，运行中的进程会锁住其中的文件（Windows EBUSY）：先停再装，
+        // 安装完成后用户需自行重新启动（UI 状态会反映 stopped）。
+        await mcpManager.stop(serverId)
+        const state = await pythonEnvService.installForServer(record)
+        return { ok: true as const, state }
+      })
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.PYTHON_ENV_STATUS, async (_e, serverId: string) => {
+    // 整体包 try/catch：存量脏数据（如历史保存的非法包行）不应炸成未处理 rejection，
+    // 向 UI 返回结构化错误，由表单行内展示
+    try {
+      const record = mcpServerRepo.get(serverId)
+      if (!record) return { ok: false as const, error: 'MCP Server 不存在或已被删除' }
+      // 必须 await：getEnvState 是 async（要探测解释器版本），嵌套 Promise 无法被 IPC 结构化克隆
+      const state = await pythonEnvService.getEnvState(record)
+      return {
+        ok: true as const,
+        state,
+        recentEvents: pythonEnvService.recentEvents(serverId)
+      }
+    } catch (e) {
+      return { ok: false as const, error: `环境状态读取失败：${(e as Error).message}` }
+    }
+  })
+  ipcMain.handle(IPC.PYTHON_PIP_SOURCE_GET, () => ({ ok: true, source: getPipSource() }))
+  ipcMain.handle(IPC.PYTHON_PIP_SOURCE_SET, (_e, source: PythonPipSource) => {
+    try {
+      setPipSource(source)
+      return { ok: true, source: getPipSource() }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  // ---------- 笔记 ----------
+  ipcMain.handle(IPC.NOTES_LIST, () => noteRepo.list())
+  ipcMain.handle(IPC.NOTES_GET, (_e, id: string) => noteRepo.get(id))
+  ipcMain.handle(
+    IPC.NOTES_CREATE,
+    (_e, input: { title?: string; content?: string; tags?: string[] }) => noteRepo.create(input ?? {})
+  )
+  ipcMain.handle(
+    IPC.NOTES_UPDATE,
+    (
+      _e,
+      id: string,
+      patch: Partial<Pick<import('../../shared/types').Note, 'title' | 'content' | 'pinned'>> & {
+        tags?: string[]
+      }
+    ) => noteRepo.update(id, patch ?? {})
+  )
+  ipcMain.handle(IPC.NOTES_DELETE, (_e, id: string) => {
+    noteRepo.delete(id)
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.NOTES_SEARCH, (_e, keyword: string) => noteRepo.search(keyword ?? ''))
+  ipcMain.handle(
+    IPC.NOTES_CREATE_FROM_MESSAGE,
+    (_e, input: { title?: string; content: string }) => noteRepo.createFromMessage(input)
+  )
+
+  // Python 运行时
+  ipcMain.handle(IPC.PYTHON_RUNTIME_LIST, () => listPythonRuntimes())
+  ipcMain.handle(IPC.PYTHON_RUNTIME_DOWNLOAD, async () => downloadPortablePython())
+
+  // ---------- 翻译 ----------
+  // 发起翻译：delta 经 TRANSLATE_CHUNK_EVENT 广播，最终结果作为 invoke 返回值
+  ipcMain.handle(IPC.TRANSLATE_RUN, async (_e, payload: TranslateRequestPayload) => {
+    if (!payload || typeof payload.requestId !== 'string' || !payload.requestId) {
+      return { ok: false, aborted: false, error: 'INVALID_REQUEST' }
+    }
+    if (typeof payload.text !== 'string' || !payload.text.trim()) {
+      return { ok: false, aborted: false, error: 'EMPTY_TEXT' }
+    }
+    if (!payload.providerId || !payload.model) {
+      return { ok: false, aborted: false, error: 'MISSING_CONFIG' }
+    }
+    // 渲染端类型已排除 auto，这里仅防异常入参
+    if ((payload as { targetLang?: string }).targetLang === 'auto') {
+      return { ok: false, aborted: false, error: 'INVALID_TARGET_LANG' }
+    }
+    return runTranslate(payload, (requestId, delta) =>
+      broadcast(IPC.TRANSLATE_CHUNK_EVENT, { requestId, delta })
+    )
+  })
+  ipcMain.handle(IPC.TRANSLATE_ABORT, (_e, requestId: string) => {
+    if (typeof requestId === 'string') abortTranslate(requestId)
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.TRANSLATION_LIST, () => translationRepo.historyList())
+  ipcMain.handle(IPC.TRANSLATION_DELETE, (_e, id: string) => {
+    if (typeof id === 'string') translationRepo.historyDelete(id)
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.TRANSLATION_CLEAR, () => {
+    translationRepo.historyClear()
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.GLOSSARY_LIST, () => translationRepo.glossaryList())
+  ipcMain.handle(
+    IPC.GLOSSARY_SAVE,
+    (_e, input: { sourceTerm?: string; targetTerm?: string }) => {
+      const sourceTerm = String(input?.sourceTerm ?? '').trim()
+      const targetTerm = String(input?.targetTerm ?? '').trim()
+      if (!sourceTerm || !targetTerm) throw new Error('GLOSSARY_TERM_EMPTY')
+      return translationRepo.glossaryAdd({ sourceTerm, targetTerm })
+    }
+  )
+  ipcMain.handle(IPC.GLOSSARY_DELETE, (_e, id: string) => {
+    if (typeof id === 'string') translationRepo.glossaryDelete(id)
+    return { ok: true }
+  })
+
+  // ---------- 绘图（图像生成） ----------
+  ipcMain.handle(IPC.IMAGES_GENERATE, async (_e, payload: ImageGeneratePayload) => {
+    return runImageGenerate(payload)
+  })
+  ipcMain.handle(IPC.IMAGES_ABORT, (_e, requestId: string) => {
+    abortImageGenerate(String(requestId ?? ''))
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.IMAGES_LIST, () => listImages())
+  ipcMain.handle(IPC.IMAGES_GET_FILE, (_e, id: string) => getImageFile(String(id ?? '')))
+  ipcMain.handle(IPC.IMAGES_DELETE, (_e, id: string) => deleteImage(String(id ?? '')))
+  ipcMain.handle(IPC.IMAGES_SAVE_AS, async (e, id: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    return saveImageAs(win!, String(id ?? ''))
+  })
+
+  // ---------- 沙箱（v2 批次八：沙箱基础层） ----------
+  ipcMain.handle(IPC.SANDBOX_LIST, () => listSandboxFiles())
+  ipcMain.handle(
+    IPC.SANDBOX_CREATE,
+    (_e, payload: { name?: unknown; html?: unknown; opts?: unknown }) => {
+      // 字段类型校验；上限/清洗在 service 内做
+      if (typeof payload?.name !== 'string' || typeof payload?.html !== 'string') {
+        throw new Error('参数类型错误')
+      }
+      const opts = payload.opts as
+        | { icon?: unknown; description?: unknown; isApp?: unknown }
+        | undefined
+      const cleanOpts: { icon?: string; description?: string; isApp?: boolean } = {}
+      if (opts?.icon !== undefined && typeof opts.icon === 'string') cleanOpts.icon = opts.icon
+      if (opts?.description !== undefined && typeof opts.description === 'string')
+        cleanOpts.description = opts.description
+      if (opts?.isApp !== undefined) cleanOpts.isApp = !!opts.isApp
+      return createSandboxFile(payload.name, payload.html, cleanOpts)
+    }
+  )
+  ipcMain.handle(IPC.SANDBOX_GET, (_e, id: string) => getSandboxFile(String(id ?? '')))
+  ipcMain.handle(IPC.SANDBOX_DELETE, (_e, id: string) => {
+    deleteSandboxFile(String(id ?? ''))
+    return { ok: true }
+  })
+  ipcMain.handle(
+    IPC.SANDBOX_UPDATE_META,
+    (_e, payload: { id?: unknown; patch?: unknown }) => {
+      if (typeof payload?.id !== 'string' || typeof payload?.patch !== 'object' || payload.patch === null) {
+        throw new Error('参数类型错误')
+      }
+      const p = payload.patch as Record<string, unknown>
+      const patch: { name?: string; icon?: string; description?: string; isApp?: boolean } = {}
+      // 字段白名单：只允许这四个字段，其余忽略
+      if (p.name !== undefined && typeof p.name === 'string') patch.name = p.name
+      if (p.icon !== undefined && typeof p.icon === 'string') patch.icon = p.icon
+      if (p.description !== undefined && typeof p.description === 'string')
+        patch.description = p.description
+      if (p.isApp !== undefined) patch.isApp = !!p.isApp
+      return updateSandboxMeta(payload.id, patch)
+    }
+  )
+
   // MCP 状态变化 / 日志事件 → 广播给所有窗口
   mcpManager.onStatus((evt) => broadcast(IPC.MCP_SERVER_STATUS_EVENT, evt))
   mcpManager.onLog((evt) => broadcast(IPC.MCP_SERVER_LOG_EVENT, evt))
+  // Python 依赖安装（venv/pip 实时输出）→ 广播；渲染端按 serverId 自行过滤
+  pythonEnvService.onInstall((evt) => broadcast(IPC.PYTHON_ENV_EVENT, evt))
+
+  // Channels（IM Bot 网关）的 IPC handler 在下方统一注册；
+  // 其事件接线与 enabled=1 自动启动需访问 DB，由 initChannelRuntime()
+  // 在 boot 打开数据库之后单独调用（registerIpcHandlers 必须早于窗口创建）
 
   // ---------- 工具 ----------
   ipcMain.handle(IPC.TOOL_LIST_AVAILABLE, () => toolRegistry.listAll())
@@ -425,6 +705,91 @@ export function registerIpcHandlers(): void {
     return getWorkspaceDir()
   })
 
+  // 终端命令（shell_exec）策略配置
+  ipcMain.handle(IPC.AGENT_GET_SHELL_CONFIG, () => getShellConfig())
+  ipcMain.handle(
+    IPC.AGENT_SET_SHELL_CONFIG,
+    (_e, input: { enabled?: unknown; policy?: unknown }) => {
+      // 字段白名单 + 值域校验（setShellConfig 内部还会再校验一次）
+      const patch: { enabled?: boolean; policy?: 'confirm' | 'auto-safe' } = {}
+      if (typeof input?.enabled === 'boolean') patch.enabled = input.enabled
+      if (input?.policy === 'confirm' || input?.policy === 'auto-safe') patch.policy = input.policy
+      return setShellConfig(patch)
+    }
+  )
+
+  // 联网搜索配置（web.search 工具；Key 明文不出主进程，渲染端只拿 hasKey）
+  ipcMain.handle(IPC.AGENT_GET_WEBSEARCH_CONFIG, () => getWebSearchConfig())
+  ipcMain.handle(
+    IPC.AGENT_SET_WEBSEARCH_CONFIG,
+    (_e, input: { enabled?: unknown; provider?: unknown; apiKey?: unknown }) => {
+      const patch: { enabled?: boolean; provider?: 'tavily' | 'bocha'; apiKey?: string } = {}
+      if (typeof input?.enabled === 'boolean') patch.enabled = input.enabled
+      if (input?.provider === 'tavily' || input?.provider === 'bocha') patch.provider = input.provider
+      if (typeof input?.apiKey === 'string') patch.apiKey = input.apiKey
+      return setWebSearchConfig(patch)
+    }
+  )
+
+  // ---------- Channels（IM Bot 网关；Token 明文不出主进程） ----------
+  ipcMain.handle(IPC.CHANNEL_GET_CONFIG, () => getChannelConfig())
+  ipcMain.handle(
+    IPC.CHANNEL_SET_CONFIG,
+    (
+      _e,
+      input: {
+        enabled?: unknown
+        token?: unknown
+        whitelist?: unknown
+        assistantId?: unknown
+        providerId?: unknown
+        model?: unknown
+        agentMode?: unknown
+      }
+    ) => {
+      const patch: {
+        enabled?: boolean
+        token?: string
+        whitelist?: string
+        assistantId?: string
+        providerId?: string
+        model?: string
+        agentMode?: boolean
+      } = {}
+      if (typeof input?.enabled === 'boolean') patch.enabled = input.enabled
+      if (typeof input?.token === 'string') patch.token = input.token
+      if (typeof input?.whitelist === 'string') patch.whitelist = input.whitelist
+      if (typeof input?.assistantId === 'string') patch.assistantId = input.assistantId
+      if (typeof input?.providerId === 'string') patch.providerId = input.providerId
+      if (typeof input?.model === 'string') patch.model = input.model
+      if (typeof input?.agentMode === 'boolean') patch.agentMode = input.agentMode
+      return setChannelConfig(patch)
+    }
+  )
+  ipcMain.handle(IPC.CHANNEL_START, async () => {
+    try {
+      await channelService.start()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.CHANNEL_STOP, () => {
+    channelService.stop()
+    return { ok: true }
+  })
+
+  // 渲染端对工具审批弹窗的应答
+  ipcMain.handle(
+    IPC.AGENT_TOOL_APPROVE_RESPONSE,
+    (_e, payload: { approvalId?: unknown; approved?: unknown }) => {
+      const approvalId = String(payload?.approvalId ?? '')
+      const approved = payload?.approved === true
+      const matched = resolveApproval(approvalId, approved)
+      return { ok: matched }
+    }
+  )
+
   // ---------- License 授权 ----------
   ipcMain.handle(IPC.LICENSE_GET_STATUS, () => licenseService.getStatus())
   ipcMain.handle(IPC.LICENSE_LOAD_FILE, (_e, filePath: string) =>
@@ -445,34 +810,91 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.ENCRYPTION_GET_STATUS, () => ({
     mode: masterKeyManager.getMode(),
     unlocked: masterKeyManager.hasKey(),
-    dbEncrypted: masterKeyManager.isDbEncrypted(),
+    // 用模式判断而非「是否有 key」：锁定清 key 后此字段必须仍为 true，
+    // 否则锁屏 UI 会误判为无密码模式，用户无法提交密码解锁
+    dbEncrypted: masterKeyManager.getMode() === 'db',
     fieldEncrypted: masterKeyManager.hasKey(),
     masterPasswordVerified: masterKeyManager.hasKey()
   }))
   ipcMain.handle(IPC.ENCRYPTION_UNLOCK, (_e, password: string) => {
-    unlockCoordinator.submit({ password })
-    return { ok: true }
+    // Boot 阶段：交给 unlock coordinator
+    if (unlockCoordinator.isWaiting()) {
+      unlockCoordinator.submit({ password })
+      return { ok: true }
+    }
+    // 运行时解锁（加密锁后重新打开 DB）
+    const salt = appConfigRepo.getMasterPasswordSalt()
+    try {
+      const masterKey = masterKeyManager.setKey(password, salt ?? undefined)
+      dbService.open(masterKey)
+      dbService.getHandle().prepare('SELECT 1').get()
+      // 关闭解锁窗口
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.getTitle().includes('解锁') || win.getTitle().includes('Unlock')) {
+          win.close()
+        }
+      }
+      // 与隐私锁状态机同步（加密锁已把 lockService 置为 locked）
+      lockService.unlock()
+      return { ok: true }
+    } catch {
+      masterKeyManager.clear()
+      dbService.close()
+      return { ok: false, error: '密码错误' }
+    }
   })
   ipcMain.handle(IPC.ENCRYPTION_SET_MASTER_PASSWORD, (_e, password: string) => {
     unlockCoordinator.submit({ setPassword: password })
     return { ok: true }
   })
   ipcMain.handle(IPC.ENCRYPTION_LOCK, () => {
+    // 先进隐私锁状态机（同步触发 onStateChange → 清密钥 + 关库），
+    // 使 IPC 网关与主窗口遮罩在加密锁期间同样生效
+    lockService.lock('manual')
     masterKeyManager.clear()
     dbService.close()
+    // 显示解锁窗口供用户重新解锁
+    const unlockWin = new BrowserWindow({
+      width: 420, height: 380, resizable: false, minimizable: false,
+      maximizable: false, show: false, frame: true, autoHideMenuBar: true,
+      title: 'PocketAI — 解锁', backgroundColor: '#1e1e2e',
+      webPreferences: {
+        preload: path.join(__dirname, '../preload/index.js'),
+        nodeIntegration: false, contextIsolation: true, sandbox: true
+      }
+    })
+    unlockWin.on('ready-to-show', () => unlockWin.show())
+    denyNewWindows(unlockWin.webContents)
+    if (process.env['ELECTRON_RENDERER_URL']) {
+      const base = new URL(process.env['ELECTRON_RENDERER_URL'])
+      base.pathname = '/unlock.html'
+      base.search = '?mode=unlock'
+      unlockWin.loadURL(base.toString())
+    } else {
+      unlockWin.loadFile(path.join(__dirname, '../renderer/unlock.html'), { query: { mode: 'unlock' } })
+    }
     return { ok: true }
   })
   ipcMain.handle(IPC.ENCRYPTION_CHANGE_PASSWORD, async (_e, oldPassword: string, newPassword: string) => {
     // 密码轮换：用旧密码打开 → rekey → 更新 salt
     const salt = appConfigRepo.getMasterPasswordSalt()
+    // 保存当前正确密钥，验证失败时回滚
+    const currentKey = masterKeyManager.getDbKey()
     const oldKey = masterKeyManager.setKey(oldPassword, salt ?? undefined)
-    // 验证旧密码正确
-    if (!dbService.getHandle()) {
-      dbService.open(oldKey)
-    }
+    // 关闭 DB 并用旧密钥重新打开，真正校验旧密码
+    dbService.close()
     try {
+      dbService.open(oldKey)
       dbService.getHandle().prepare('SELECT 1').get()
     } catch {
+      // 旧密码错误，回滚到正确密钥
+      dbService.close()
+      if (currentKey) {
+        masterKeyManager.setRawKey(currentKey)
+        dbService.open(currentKey)
+      } else {
+        dbService.open()
+      }
       return { ok: false, error: '旧密码错误' }
     }
     // ⚠️ key 还没切换，先用旧 key 取出 WebDAV 明文密码
@@ -511,9 +933,23 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config
     const salt = appConfigRepo.getMasterPasswordSalt()
-    masterKeyManager.setKey(password, salt ?? undefined)
-    if (!dbService.getHandle()) {
-      dbService.open(masterKeyManager.getDbKey()!)
+    // 保存当前密钥，验证失败时回滚
+    const currentKey = masterKeyManager.getDbKey()
+    const derivedKey = masterKeyManager.setKey(password, salt ?? undefined)
+    // 关闭 DB 并用密钥重新打开，真正校验密码
+    dbService.close()
+    try {
+      dbService.open(derivedKey)
+      dbService.getHandle().prepare('SELECT 1').get()
+    } catch {
+      dbService.close()
+      if (currentKey) {
+        masterKeyManager.setRawKey(currentKey)
+        dbService.open(currentKey)
+      } else {
+        dbService.open()
+      }
+      return { ok: false, error: '密码错误' }
     }
     // ⚠️ key 还没切换，先用 master key 取出 WebDAV 明文密码
     let webDAVPassword: string | null = null
@@ -531,7 +967,7 @@ export function registerIpcHandlers(): void {
     dbService.open()
     appConfigRepo.setEncryptionMode('none')
     appConfigRepo.setHasMasterPassword(false)
-    appConfigRepo.delete('master_password_salt')
+    appConfigRepo.clearMasterPasswordSalt()
     console.log('[encryption] 已禁用加密')
 
     // ⚠️ key 已切为 fixed，用 fixed key 重新加密 WebDAV 密码
@@ -586,7 +1022,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.BACKUP_LOCAL_ENCRYPTED, async () => {
     const { createEncryptedLocalBackup } = await import('../backup/backup-service')
     const dir = path.join(DATA_DIR, 'backups')
-    return createEncryptedLocalBackup(dir)
+    try {
+      return { ok: true as const, ...(await createEncryptedLocalBackup(dir)) }
+    } catch (e) {
+      // none 模式等场景：不产出固定密钥假加密包，返回可读错误由 UI 提示
+      return { ok: false as const, error: (e as Error)?.message ?? '加密备份失败' }
+    }
   })
   ipcMain.handle(IPC.BACKUP_WEBDAV_SAVE_CONFIG, async (_e, cfg: any) => {
     const { saveWebDAVConfig } = await import('../backup/backup-service')
@@ -597,6 +1038,12 @@ export function registerIpcHandlers(): void {
     const { loadWebDAVConfig } = await import('../backup/backup-service')
     return loadWebDAVConfig()
   })
+  ipcMain.handle(IPC.BACKUP_SCHEDULE_GET, () => getBackupSchedule())
+  ipcMain.handle(
+    IPC.BACKUP_SCHEDULE_SET,
+    (_e, patch: { enabled?: boolean; intervalHours?: number }) =>
+      setBackupSchedule(patch ?? {})
+  )
   ipcMain.handle(IPC.BACKUP_WEBDAV_TEST, async (_e, cfg: any) => {
     const { testWebDAV } = await import('../backup/backup-service')
     return testWebDAV(cfg)
@@ -606,9 +1053,23 @@ export function registerIpcHandlers(): void {
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
     try {
-      return await createWebDAVBackup(cfg)
+      const r = await createWebDAVBackup(cfg)
+      noteManualBackup() // 手动上传后刷新定时备份计时
+      return r
     } catch (e: any) {
       return { ok: false, error: e?.message ?? '上传失败' }
+    }
+  })
+  ipcMain.handle(IPC.BACKUP_WEBDAV_UPLOAD_INCREMENTAL, async () => {
+    const { loadWebDAVConfig, createWebDAVIncrementalBackup } = await import('../backup/backup-service')
+    const cfg = loadWebDAVConfig()
+    if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    try {
+      const r = await createWebDAVIncrementalBackup(cfg)
+      noteManualBackup() // 手动备份同样刷新定时备份计时
+      return { ok: true, ...r }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? '增量备份失败' }
     }
   })
   ipcMain.handle(IPC.BACKUP_WEBDAV_LIST, async () => {
@@ -618,9 +1079,21 @@ export function registerIpcHandlers(): void {
     try { return await listWebDAVBackups(cfg) } catch { return [] }
   })
   ipcMain.handle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: string) => {
-    const { loadWebDAVConfig, restoreFromWebDAV } = await import('../backup/backup-service')
+    const {
+      loadWebDAVConfig,
+      restoreFromWebDAV,
+      restoreIncrementalFromWebDAV
+    } = await import('../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    // 按文件名前缀路由：pocketai-inc-* 走增量索引恢复，其余走全量 zip 恢复
+    if (filename.startsWith('pocketai-inc-')) {
+      try {
+        return await restoreIncrementalFromWebDAV(cfg, filename)
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? '增量恢复失败' }
+      }
+    }
     return restoreFromWebDAV(cfg, filename)
   })
   ipcMain.handle(IPC.BACKUP_WEBDAV_DELETE, async (_e, filename: string) => {
@@ -637,12 +1110,31 @@ export function registerIpcHandlers(): void {
     lockService.lock('manual')
     return { ok: true }
   })
-  ipcMain.handle(IPC.LOCK_UNLOCK, () => {
+  ipcMain.handle(IPC.LOCK_UNLOCK, (_e, password?: string) => {
+    // db 模式锁定时密钥已被清除、库已被关闭（见 index.ts 锁订阅），
+    // 内存比对不可用，只能用「重新派生 + 重开探针」验证密码
+    if (masterKeyManager.getMode() === 'db') {
+      if (!password) return { ok: false, error: '密码错误' }
+      const salt = appConfigRepo.getMasterPasswordSalt()
+      try {
+        const key = masterKeyManager.setKey(password, salt ?? undefined)
+        dbService.open(key)
+        dbService.getHandle().prepare('SELECT 1').get()
+      } catch {
+        masterKeyManager.clear()
+        dbService.close()
+        return { ok: false, error: '密码错误' }
+      }
+    }
     lockService.unlock()
     return { ok: true }
   })
   ipcMain.handle(IPC.LOCK_SET_AUTO_TIMEOUT, (_e, timeoutMs: number) => {
     lockService.setAutoTimeout(timeoutMs)
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.LOCK_MARK_ACTIVE, () => {
+    lockService.markActive()
     return { ok: true }
   })
   // 锁屏状态变化 → 广播
@@ -652,6 +1144,90 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.HEALTH_REPORT, () => healthService.report())
   ipcMain.handle(IPC.HEALTH_CLEANUP, () => healthService.cleanup())
   ipcMain.handle(IPC.HEALTH_VACUUM, () => healthService.vacuum())
+  ipcMain.handle(IPC.STEWARD_MODEL_RECOMMEND, async () => {
+    try {
+      return { ok: true, data: await recommendModels() }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.STEWARD_AUDIT, () => {
+    try {
+      return { ok: true, data: runAudit() }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.STEWARD_DIAGNOSE, () => {
+    try {
+      return { ok: true, data: runDiagnose() }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  // ---------- 界面偏好（透明度 / 自定义 CSS） ----------
+  ipcMain.handle(IPC.UI_GET_PREFS, () => {
+    try {
+      return { ok: true, data: getUiPreferences() }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.UI_SET_PREFS, (_e, patch: Partial<UiPreferences>) => {
+    try {
+      return { ok: true, data: setUiPreferences(patch ?? {}) }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  // ---------- 侧栏模块顺序 ----------
+  const K_SIDEBAR_ORDER = 'sidebar.order'
+
+  /** 读取侧栏顺序；配置缺失或非法时回退默认值 */
+  function readSidebarOrder(): SidebarModuleId[] {
+    const raw = appConfigRepo.get(K_SIDEBAR_ORDER)
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw)
+        if (
+          Array.isArray(arr) &&
+          arr.length === DEFAULT_SIDEBAR_ORDER.length &&
+          new Set(arr).size === DEFAULT_SIDEBAR_ORDER.length &&
+          DEFAULT_SIDEBAR_ORDER.every((m) => arr.includes(m))
+        ) {
+          return arr as SidebarModuleId[]
+        }
+      } catch {
+        /* 解析失败 → 回退默认 */
+      }
+    }
+    return [...DEFAULT_SIDEBAR_ORDER]
+  }
+
+  ipcMain.handle(IPC.SIDEBAR_GET_ORDER, () => {
+    try {
+      return { ok: true, data: readSidebarOrder() }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.SIDEBAR_SET_ORDER, (_e, order: SidebarModuleId[]) => {
+    try {
+      // 必须是全部模块的一个排列，否则拒绝
+      const valid =
+        Array.isArray(order) &&
+        order.length === DEFAULT_SIDEBAR_ORDER.length &&
+        new Set(order).size === DEFAULT_SIDEBAR_ORDER.length &&
+        DEFAULT_SIDEBAR_ORDER.every((m) => order.includes(m))
+      if (!valid) return { ok: false, error: 'invalid order' }
+      appConfigRepo.set(K_SIDEBAR_ORDER, JSON.stringify(order))
+      return { ok: true, data: order }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
 
   // ---------- 文件模块 ----------
   ipcMain.handle(IPC.FILE_LIST, (_e, relDir: string) => filesService.list(relDir))
@@ -670,4 +1246,15 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.FILE_OPEN_EXTERNAL, (_e, relPath: string) =>
     filesService.openExternal(relPath)
   )
+}
+
+/**
+ * Channels 运行时接线：必须在数据库打开后调用。
+ * registerIpcHandlers() 只做通道注册（窗口创建前），
+ * autoStart() 会读取 app_config，DB 未就绪时调用会抛 “Database not opened”。
+ */
+export function initChannelRuntime(): void {
+  channelService.init()
+  channelService.onStatus((evt) => broadcast(IPC.CHANNEL_STATUS_EVENT, evt))
+  void channelService.autoStart()
 }

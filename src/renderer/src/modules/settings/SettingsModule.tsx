@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
-import type { AppPaths, EncryptionStatus } from '../../../../shared/types'
+import type { AppPaths, EncryptionStatus, BackupScheduleStatus } from '../../../../shared/types'
 import { ProviderSettings, Notice } from './ProviderSettings'
 import { useI18n } from '../../i18n'
+import { injectCustomCss } from '../../custom-css'
 
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
@@ -20,7 +21,11 @@ export const SettingsModule: React.FC = () => {
     const unsub = window.pocketai.onUpdateEvent((data: any) => {
       setUpdateStatus(data)
     })
-    return unsub
+    // 锁屏遮罩不卸载本模块：解锁后 masterPasswordVerified 会变化，需重新拉取
+    const offLock = window.pocketai.onLockStateChange(() => {
+      window.pocketai.getEncryptionStatus().then(setEnc)
+    })
+    return () => { unsub(); offLock() }
   }, [])
 
   const refreshEnc = () => window.pocketai.getEncryptionStatus().then(setEnc)
@@ -37,7 +42,7 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.backup')}</h3>
-          <BackupPanel />
+          <BackupPanel enc={enc} />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
@@ -48,6 +53,11 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.popup')}</h3>
           <PopupPanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.appearance')}</h3>
+          <AppearancePanel />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
@@ -313,9 +323,15 @@ interface WDConfig {
   directory: string
 }
 
-const BackupPanel: React.FC = () => {
-  const { t } = useI18n()
+const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168]
+
+const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
+  const { t, lang } = useI18n()
+  // 加密备份唯一闸门是主进程 masterKeyManager.getDbKey()：
+  // 仅 db 模式且已解锁（主密码已验证）时可用；none 模式与锁屏期间禁用
+  const encrypted = !!enc?.dbEncrypted && !!enc?.masterPasswordVerified
   const [cfg, setCfg] = useState<WDConfig | null>(null)
+  const [schedule, setSchedule] = useState<BackupScheduleStatus | null>(null)
   const [webdavList, setWebdavList] = useState<any[]>([])
   const [listLoading, setListLoading] = useState(false)
   const [wdUrl, setWdUrl] = useState('')
@@ -331,7 +347,20 @@ const BackupPanel: React.FC = () => {
         setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
       }
     })
+    window.pocketai.getBackupSchedule().then(setSchedule)
   }, [])
+
+  const intervalLabel = (h: number): string => {
+    if (lang === 'en') {
+      return h === 24 ? 'Daily' : h === 48 ? 'Every 2 days' : h === 72 ? 'Every 3 days' : h === 168 ? 'Weekly' : `Every ${h} hours`
+    }
+    return h === 24 ? '每天' : h === 48 ? '每 2 天' : h === 72 ? '每 3 天' : h === 168 ? '每周' : `每 ${h} 小时`
+  }
+
+  async function saveSchedule(patch: { enabled?: boolean; intervalHours?: number }) {
+    const next = await window.pocketai.setBackupSchedule(patch)
+    setSchedule(next)
+  }
 
   const showNotice = (ok: boolean, text: string) => setNotice({ ok, text })
 
@@ -355,8 +384,13 @@ const BackupPanel: React.FC = () => {
     showNotice(true, t('bk.localDone', { size: (r.size / 1024).toFixed(1) }))
   }
   async function doEncBackup() {
+    if (!encrypted) return // 未启用主密码时按钮禁用，双保险
     showNotice(true, t('bk.encDoing'))
     const r = await window.pocketai.createEncryptedLocalBackup()
+    if (r.ok === false) {
+      showNotice(false, r.error || t('common.unknownError'))
+      return
+    }
     showNotice(true, t('bk.encDone', { size: (r.size / 1024).toFixed(1) }))
   }
 
@@ -366,6 +400,27 @@ const BackupPanel: React.FC = () => {
     if (r.ok === false) { showNotice(false, t('bk.uploadFail', { e: r.error ?? t('common.unknownError') })); return }
     showNotice(true, t('bk.uploaded', { name: r.filename ?? '' }))
     await refreshList()
+    window.pocketai.getBackupSchedule().then(setSchedule)
+  }
+
+  async function doIncrementalUpload() {
+    showNotice(true, t('bk.uploading'))
+    const r = await window.pocketai.uploadIncrementalBackup()
+    if (r.ok === false) {
+      showNotice(false, t('bk.uploadFail', { e: r.error ?? t('common.unknownError') }))
+      return
+    }
+    showNotice(
+      true,
+      t('bk.incDone', {
+        total: r.attachmentsTotal,
+        uploaded: r.blobsUploaded,
+        skipped: r.blobsSkipped,
+        kb: (r.bytesUploaded / 1024).toFixed(1)
+      })
+    )
+    await refreshList()
+    window.pocketai.getBackupSchedule().then(setSchedule)
   }
 
   async function refreshList() {
@@ -411,13 +466,60 @@ const BackupPanel: React.FC = () => {
         </div>
       </div>
 
+      {/* 定时备份（需先保存 WebDAV 配置） */}
+      {cfg && schedule && (
+        <div className="rounded-lg border border-[var(--color-border)] p-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-4 h-4 accent-[var(--color-accent)]"
+              checked={schedule.enabled}
+              onChange={(e) => saveSchedule({ enabled: e.target.checked })}
+            />
+            <span className="text-sm">{t('bk.scheduleEnable')}</span>
+          </label>
+          {schedule.enabled && (
+            <div className="mt-2 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[var(--color-text-muted)]">{t('bk.scheduleInterval')}</span>
+                <select
+                  className="input py-1 text-xs w-32"
+                  value={schedule.intervalHours}
+                  onChange={(e) => saveSchedule({ intervalHours: Number(e.target.value) })}
+                >
+                  {INTERVAL_OPTIONS.map((h) => (
+                    <option key={h} value={h}>{intervalLabel(h)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">
+                {schedule.lastResult?.ok
+                  ? t('bk.scheduleLastOk', { time: new Date(schedule.lastResult.at).toLocaleString() })
+                  : schedule.lastResult
+                    ? t('bk.scheduleLastFail', { time: new Date(schedule.lastResult.at).toLocaleString(), e: schedule.lastResult.error ?? '' })
+                    : t('bk.scheduleNever')}
+              </div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">{t('bk.scheduleHint')}</div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 本地备份 */}
       <div>
         <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('bk.localTitle')}</div>
         <div className="flex gap-2">
           <button className="btn-primary" onClick={doLocalBackup}>{t('bk.localBtn')}</button>
-          <button className="btn-ghost" onClick={doEncBackup}>{t('bk.encBtn')}</button>
+          <button
+            className="btn-ghost"
+            onClick={doEncBackup}
+            disabled={!encrypted}
+            title={encrypted ? undefined : t('bk.encNeedMaster')}
+          >{t('bk.encBtn')}</button>
         </div>
+        {!encrypted && (
+          <div className="text-[10px] text-[var(--color-text-muted)] mt-1.5">{t('bk.encNeedMaster')}</div>
+        )}
       </div>
 
       {/* WebDAV 操作 */}
@@ -425,10 +527,12 @@ const BackupPanel: React.FC = () => {
         <div>
           <div className="flex gap-2 mb-2">
             <button className="btn-primary" onClick={doUpload}>{t('bk.uploadBtn')}</button>
+            <button className="btn-ghost" onClick={doIncrementalUpload}>{t('bk.incBtn')}</button>
             <button className="btn-ghost" onClick={refreshList} disabled={listLoading}>
               {listLoading ? `⏳ ${t('common.loading')}` : t('bk.refresh')}
             </button>
           </div>
+          <p className="text-[10px] text-[var(--color-text-muted)] mb-2">{t('bk.incHint')}</p>
 
           {listLoading ? (
             <div className="text-xs text-[var(--color-text-muted)]">{t('bk.listLoading')}</div>
@@ -450,6 +554,14 @@ const BackupPanel: React.FC = () => {
                     <tr key={f.name} className="border-t border-[var(--color-border)]/40 hover:bg-[var(--color-hover-overlay)]">
                       <td className="px-3 py-1.5 font-mono truncate max-w-[240px]" title={f.name}>
                         {f.encrypted && <span className="text-[var(--color-warning)] mr-1">🔒</span>}
+                        {f.kind === 'incremental' && (
+                          <span
+                            className="mr-1 px-1 py-0.5 text-[9px] rounded border border-[var(--color-accent)] text-[var(--color-accent)] align-middle"
+                            title={t('bk.incBadgeTip')}
+                          >
+                            {t('bk.incBadge')}
+                          </span>
+                        )}
                         {f.name}
                       </td>
                       <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{(f.size / 1024).toFixed(1)} KB</td>
@@ -565,9 +677,66 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
 
 // ─── 快捷浮窗面板 ─────────────────────────────────────────────────
 
+// 修饰键集合：按下纯修饰键时不构成快捷键，继续等待组合
+const MODIFIER_KEYS = new Set(['Control', 'Meta', 'Alt', 'Shift'])
+
+// KeyboardEvent → Electron accelerator
+// 返回：null=仍是纯修饰键（继续捕获）；''=无效按键；否则为 accelerator 字符串
+function eventToAccelerator(e: React.KeyboardEvent): string | null {
+  const k = e.key
+  if (MODIFIER_KEYS.has(k)) return null
+  // 必须包含 Ctrl/⌘ 或 Alt（仅 Shift 的组合全局快捷键在多数平台无法注册）
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) return ''
+
+  const mods: string[] = []
+  if (e.ctrlKey || e.metaKey) mods.push('CommandOrControl')
+  if (e.altKey) mods.push('Alt')
+  if (e.shiftKey) mods.push('Shift')
+
+  let key = ''
+  if (/^[a-zA-Z0-9]$/.test(k)) {
+    key = k.toUpperCase()
+  } else {
+    const SPECIAL: Record<string, string> = {
+      ' ': 'Space',
+      Enter: 'Return',
+      Tab: 'Tab',
+      Backspace: 'Backspace',
+      Delete: 'Delete',
+      Insert: 'Insert',
+      Home: 'Home',
+      End: 'End',
+      PageUp: 'PageUp',
+      PageDown: 'PageDown',
+      ArrowUp: 'Up',
+      ArrowDown: 'Down',
+      ArrowLeft: 'Left',
+      ArrowRight: 'Right',
+      ',': 'Comma',
+      '.': 'Period',
+      '/': 'Slash',
+      '\\': 'Backslash',
+      '-': 'Minus',
+      '=': 'Equal',
+      ';': 'Semicolon',
+      "'": 'Quote',
+      '`': 'Backquote',
+      '[': 'BracketLeft',
+      ']': 'BracketRight'
+    }
+    key = SPECIAL[k] ?? (/^F([1-9]|1[0-9]|2[0-4])$/.test(k) ? k : '')
+  }
+  return key ? [...mods, key].join('+') : ''
+}
+
 const PopupPanel: React.FC = () => {
   const { t } = useI18n()
   const [cfg, setCfg] = useState<any>(null)
+  // 正在捕获哪一个快捷键；candidate 为已捕获到的组合
+  const [capturing, setCapturing] = useState<'quick' | 'selection' | null>(null)
+  const [candidate, setCandidate] = useState('')
+  const [captureErr, setCaptureErr] = useState('')
+  const [saveErr, setSaveErr] = useState('')
 
   useEffect(() => {
     window.pocketai.getPopupConfig().then(setCfg)
@@ -578,54 +747,279 @@ const PopupPanel: React.FC = () => {
   }
 
   const fmtAccel = (a: string) =>
-    a.replace('CommandOrControl', process.platform === 'darwin' ? '⌘' : 'Ctrl').replace(/\+/g, ' + ')
+    a.replace('CommandOrControl', /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl').replace(/\+/g, ' + ')
+
+  // 主进程返回的错误码映射为本地化文案
+  const mapResultError = (r: { error?: string; accel?: string }): string => {
+    if (r.error === 'same') return t('popup.accelSame')
+    if (r.error === 'occupied') {
+      const display = r.accel ? fmtAccel(r.accel) : ''
+      return t('popup.accelOccupied', { accel: display })
+    }
+    return t('common.unknownError')
+  }
 
   const toggle = async (key: 'quickEnabled' | 'selectionEnabled') => {
-    const next = { ...cfg, [key]: !cfg[key] }
-    setCfg(next) // 乐观更新
-    try {
-      const saved = await window.pocketai.setPopupConfig({ [key]: !cfg[key] })
-      setCfg(saved)
-    } catch {
-      setCfg(cfg)
+    const prev = cfg
+    setCfg({ ...cfg, [key]: !cfg[key] }) // 乐观更新
+    const r = await window.pocketai.setPopupConfig({ [key]: !cfg[key] })
+    if (r.ok && r.config) {
+      setCfg(r.config)
+    } else {
+      setCfg(prev)
+      setSaveErr(mapResultError(r))
     }
   }
 
-  const rows: Array<{ key: 'quickEnabled' | 'selectionEnabled'; title: string; hint: string; accel: string }> = [
-    { key: 'quickEnabled', title: t('popup.quickTitle'), hint: t('popup.quickHint'), accel: cfg.quickAccelerator },
-    { key: 'selectionEnabled', title: t('popup.selectionTitle'), hint: t('popup.selectionHint'), accel: cfg.selectionAccelerator }
+  const startCapture = (which: 'quick' | 'selection') => {
+    setCapturing(which)
+    setCandidate('')
+    setCaptureErr('')
+    setSaveErr('')
+  }
+
+  const onCaptureKeyDown = (e: React.KeyboardEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.key === 'Escape') {
+      setCapturing(null)
+      return
+    }
+    const accel = eventToAccelerator(e)
+    if (accel === null) return // 仍只按了修饰键
+    if (accel === '') {
+      setCaptureErr(t('popup.accelNeedModifier'))
+      return
+    }
+    setCandidate(accel)
+    setCaptureErr('')
+  }
+
+  const confirmCapture = async () => {
+    if (!capturing || !candidate) return
+    const patch =
+      capturing === 'quick' ? { quickAccelerator: candidate } : { selectionAccelerator: candidate }
+    const r = await window.pocketai.setPopupConfig(patch)
+    if (r.ok && r.config) {
+      setCfg(r.config)
+      setCapturing(null)
+      setCandidate('')
+    } else {
+      setSaveErr(mapResultError(r))
+    }
+  }
+
+  const rows: Array<{
+    which: 'quick' | 'selection'
+    key: 'quickEnabled' | 'selectionEnabled'
+    title: string
+    hint: string
+    accel: string
+  }> = [
+    {
+      which: 'quick',
+      key: 'quickEnabled',
+      title: t('popup.quickTitle'),
+      hint: t('popup.quickHint'),
+      accel: cfg.quickAccelerator
+    },
+    {
+      which: 'selection',
+      key: 'selectionEnabled',
+      title: t('popup.selectionTitle'),
+      hint: t('popup.selectionHint'),
+      accel: cfg.selectionAccelerator
+    }
   ]
 
   return (
     <div className="space-y-2 text-xs">
       {rows.map((r) => (
-        <div key={r.key} className="flex items-center justify-between gap-3 py-1">
-          <div className="min-w-0">
-            <div className="text-[var(--color-text)]">
-              {r.title}
-              <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded font-mono bg-[var(--color-sidebar)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
-                {fmtAccel(r.accel)}
-              </span>
+        <div key={r.key} className="py-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[var(--color-text)]">{r.title}</div>
+              <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{r.hint}</div>
             </div>
-            <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{r.hint}</div>
-          </div>
-          <button
-            role="switch"
-            aria-checked={cfg[r.key]}
-            onClick={() => toggle(r.key)}
-            className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${
-              cfg[r.key] ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                cfg[r.key] ? 'translate-x-4' : ''
+            <button
+              role="switch"
+              aria-checked={cfg[r.key]}
+              onClick={() => toggle(r.key)}
+              className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${
+                cfg[r.key] ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
               }`}
-            />
-          </button>
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  cfg[r.key] ? 'translate-x-4' : ''
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* 快捷键展示 / 捕获 */}
+          <div className="flex items-center gap-2 mt-1 ml-0.5">
+            {capturing === r.which ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  autoFocus
+                  onKeyDown={onCaptureKeyDown}
+                  onBlur={() => {
+                    /* 不在 blur 取消：允许点击保存按钮 */
+                  }}
+                  className="px-2 py-0.5 text-[10px] rounded font-mono border border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-sidebar)] outline-none"
+                >
+                  {candidate ? fmtAccel(candidate) : t('popup.accelCapturing')}
+                </button>
+                <button
+                  onClick={confirmCapture}
+                  disabled={!candidate}
+                  className="px-2 py-0.5 text-[10px] rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] disabled:opacity-40"
+                >
+                  {t('ui.save')}
+                </button>
+                <button
+                  onClick={() => setCapturing(null)}
+                  className="px-2 py-0.5 text-[10px] rounded border border-[var(--color-border)]"
+                >
+                  {t('common.cancel')}
+                </button>
+                {captureErr && (
+                  <span className="text-[10px] text-[var(--color-danger)]">{captureErr}</span>
+                )}
+              </div>
+            ) : (
+              <>
+                <span className="px-1.5 py-0.5 text-[10px] rounded font-mono bg-[var(--color-sidebar)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+                  {fmtAccel(r.accel)}
+                </span>
+                <button
+                  onClick={() => startCapture(r.which)}
+                  className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-2"
+                >
+                  {t('popup.editAccel')}
+                </button>
+              </>
+            )}
+          </div>
         </div>
       ))}
+      {saveErr && <div className="text-[10px] text-[var(--color-danger)] pt-0.5">{saveErr}</div>}
       <div className="text-[10px] text-[var(--color-text-muted)] pt-1">{t('popup.settingsNote')}</div>
+    </div>
+  )
+}
+
+// ─── 外观面板（窗口透明度 / 自定义 CSS）────────────────────────
+
+const AppearancePanel: React.FC = () => {
+  const { t } = useI18n()
+  const [opacity, setOpacity] = useState(1)
+  const [css, setCss] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    window.pocketai.getUiPrefs().then((r) => {
+      if (r.ok && r.data) {
+        setOpacity(r.data.opacity)
+        setCss(r.data.customCss)
+      }
+      setLoaded(true)
+    })
+  }, [])
+
+  // 滑块拖动结束后提交（拖动中只更新本地，避免频繁 IPC）
+  const commitOpacity = async (value: number) => {
+    const r = await window.pocketai.setUiPrefs({ opacity: value })
+    if (r.ok && r.data) {
+      setOpacity(r.data.opacity)
+    } else {
+      setNotice({ ok: false, text: r.error ?? t('common.unknownError') })
+    }
+  }
+
+  const saveCss = async () => {
+    const r = await window.pocketai.setUiPrefs({ customCss: css })
+    if (r.ok && r.data) {
+      setCss(r.data.customCss)
+      injectCustomCss(r.data.customCss) // 立即在当前窗口生效
+      setNotice({ ok: true, text: t('ui.saved') })
+    } else {
+      setNotice({ ok: false, text: r.error ?? t('common.unknownError') })
+    }
+  }
+
+  const resetCss = async () => {
+    setCss('')
+    const r = await window.pocketai.setUiPrefs({ customCss: '' })
+    if (r.ok && r.data) {
+      injectCustomCss('')
+      setNotice({ ok: true, text: t('ui.saved') })
+    }
+  }
+
+  if (!loaded) {
+    return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
+  }
+
+  return (
+    <div className="space-y-4 text-xs">
+      {/* 窗口透明度 */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[var(--color-text)]">{t('ui.opacity')}</span>
+          <span className="font-mono text-[var(--color-text-muted)]">{Math.round(opacity * 100)}%</span>
+        </div>
+        <input
+          type="range"
+          min={0.6}
+          max={1}
+          step={0.05}
+          value={opacity}
+          onChange={(e) => setOpacity(Number(e.target.value))}
+          onPointerUp={() => commitOpacity(opacity)}
+          onKeyUp={() => commitOpacity(opacity)}
+          className="w-full"
+        />
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.opacityHint')}</p>
+      </div>
+
+      {/* 自定义 CSS */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[var(--color-text)]">{t('ui.customCss')}</span>
+          <div className="flex gap-2">
+            <button
+              onClick={resetCss}
+              className="px-2 py-1 text-[11px] rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
+            >
+              {t('ui.clear')}
+            </button>
+            <button
+              onClick={saveCss}
+              className="px-2 py-1 text-[11px] rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
+            >
+              {t('ui.save')}
+            </button>
+          </div>
+        </div>
+        <textarea
+          value={css}
+          onChange={(e) => setCss(e.target.value)}
+          spellCheck={false}
+          rows={8}
+          placeholder={'body { /* ... */ }'}
+          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] p-2 font-mono text-[11px] resize-y outline-none focus:border-[var(--color-accent)]"
+        />
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.cssHint')}</p>
+      </div>
+
+      {notice && (
+        <div className={`text-[11px] ${notice.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}>
+          {notice.text}
+        </div>
+      )}
     </div>
   )
 }

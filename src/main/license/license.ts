@@ -48,8 +48,6 @@ export interface LicenseStatus {
   signatureOk: boolean
   /** 是否过期 */
   expired: boolean
-  /** 是否有某个功能 */
-  hasFeature: (feature: string) => boolean
 }
 
 // 需要签名的字段（按 key 字典序）
@@ -185,11 +183,9 @@ export class LicenseService {
       payload,
       error: valid ? undefined : this.lastError ?? '未找到有效 License',
       signatureOk: valid || this.lastError?.includes('签名校验失败') !== true && payload !== undefined,
-      expired,
-      hasFeature: (f: string) => {
-        if (!valid) return f === 'basic' // free 只有 basic
-        return this.hasFeature(f)
-      }
+      expired
+      // 注意：此处不能返回 hasFeature 等函数——IPC 结构化克隆无法序列化函数，
+      // 会报 “An object could not be cloned”。功能门控走 license:has-feature 通道。
     }
   }
 

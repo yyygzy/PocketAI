@@ -4,7 +4,10 @@
 import { IPC } from '../../shared/types'
 import type {
   SendMessagePayload,
+  RegeneratePayload,
+  ResendPayload,
   ChatTarget,
+  ChatAttachment,
   ChatChunkEvent,
   ChatDoneEvent,
   ChatErrorEvent
@@ -36,7 +39,31 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
   for (const m of history) {
     if (m.status !== 'done') continue
     if (m.role === 'user') {
-      out.push({ role: 'user', content: m.content })
+      // 如果用户消息带附件，还原为 multimodal content
+      if (m.attachments && m.attachments.length > 0) {
+        const textAttachments = m.attachments.filter(a => a.type === 'text')
+        const imageAttachments = m.attachments.filter(a => a.type === 'image')
+        let text = m.content
+        for (const ta of textAttachments) {
+          text += `\n\n--- ${ta.name} ---\n${ta.data}`
+        }
+        if (imageAttachments.length > 0) {
+          out.push({
+            role: 'user',
+            content: [
+              { type: 'text', text },
+              ...imageAttachments.map(a => ({
+                type: 'image_url' as const,
+                image_url: { url: a.data }
+              }))
+            ]
+          })
+        } else {
+          out.push({ role: 'user', content: text })
+        }
+      } else {
+        out.push({ role: 'user', content: m.content })
+      }
       awaitingAssistant = true
     } else if (m.role === 'assistant' && awaitingAssistant) {
       out.push({ role: 'assistant', content: m.content })
@@ -45,6 +72,39 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
     // 无前置 user 的 assistant 或多余的对照回复，均不进上下文
   }
   return out
+}
+
+/** 将附件注入到上下文最后一条 user 消息（构建 multimodal 格式） */
+function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAttachment[]): void {
+  if (!attachments || attachments.length === 0) return
+  // 找到最后一条 user 消息
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      const textContent = typeof messages[i].content === 'string' ? messages[i].content as string : ''
+      const textAttachments = attachments.filter(a => a.type === 'text')
+      const imageAttachments = attachments.filter(a => a.type === 'image')
+
+      // 文本附件内容追加到消息文本
+      let text = textContent
+      for (const ta of textAttachments) {
+        text += `\n\n--- ${ta.name} ---\n${ta.data}`
+      }
+
+      // 如果有图片，构建 multimodal content
+      if (imageAttachments.length > 0) {
+        messages[i].content = [
+          { type: 'text', text },
+          ...imageAttachments.map(a => ({
+            type: 'image_url' as const,
+            image_url: { url: a.data }
+          }))
+        ]
+      } else {
+        messages[i].content = text
+      }
+      break
+    }
+  }
 }
 
 class ChatService {
@@ -103,7 +163,8 @@ class ChatService {
       conversationId,
       role: 'user',
       content,
-      status: 'done'
+      status: 'done',
+      attachments: payload.attachments
     })
 
     // 2. 会话标题与状态
@@ -119,7 +180,8 @@ class ChatService {
     // 3. 构建共享上下文（此刻历史含刚插入的用户消息，不含占位回复）
     const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
 
-    // 4. 为每个目标创建占位 assistant 消息（parentId 指向同一条用户消息）
+    // 3.5 注入附件：图片→multimodal 格式，文本→追加到消息内容
+    injectAttachments(messages, payload.attachments)
     const placeholders = targets.map((t) =>
       messageRepo.insert({
         conversationId,
@@ -133,7 +195,7 @@ class ChatService {
     )
 
     // 5. 并发执行（同 Provider 自动限流）
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       targets.map((target, index) =>
         this.runTarget({
           requestId,
@@ -147,7 +209,139 @@ class ChatService {
       )
     )
 
-    conversationRepo.touch(conversationId, { status: 'done' })
+    // 全部目标失败 → 标记 error；否则 done
+    const allFailed = results.every((r) => r.status === 'rejected')
+    conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+    this.controllers.delete(requestId)
+  }
+
+  /** 重新生成：删除旧 assistant 回复，用相同上下文重新请求 */
+  async regenerate(payload: RegeneratePayload, emit: EmitFn): Promise<void> {
+    const { requestId, conversationId, messageId, targets, assistantId } = payload
+    if (!targets || targets.length === 0) throw new Error('未选择模型')
+
+    // 获取要重新生成的旧 assistant 消息
+    const oldMsg = messageRepo.getById(messageId)
+    if (!oldMsg || oldMsg.role !== 'assistant') {
+      throw new Error('消息不存在或非助手消息')
+    }
+
+    // 删除旧 assistant 消息（FTS 触发器自动清理）
+    messageRepo.delete(messageId)
+
+    // 解析 SystemPrompt
+    let effectivePrompt = ''
+    if (assistantId) {
+      const assistant = assistantRepo.get(assistantId)
+      effectivePrompt = assistant?.systemPrompt ?? ''
+    }
+    const renderedPrompt = renderPrompt(effectivePrompt, {})
+
+    // 构建上下文（旧 assistant 已删除，所以历史中不含它）
+    const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
+
+    // 主控制器
+    const master = new AbortController()
+    this.controllers.set(requestId, master)
+
+    // 为每个目标创建占位 assistant 消息
+    const placeholders = targets.map((t) =>
+      messageRepo.insert({
+        conversationId,
+        role: 'assistant',
+        content: '',
+        provider: t.providerId,
+        model: t.model,
+        status: 'streaming',
+        parentId: oldMsg.parentId
+      })
+    )
+
+    conversationRepo.touch(conversationId, { status: 'streaming' })
+
+    // 并发执行
+    const results = await Promise.allSettled(
+      targets.map((target, index) =>
+        this.runTarget({
+          requestId,
+          index,
+          target,
+          messages,
+          messageId: placeholders[index].id,
+          signal: master.signal,
+          emit
+        })
+      )
+    )
+
+    const allFailed = results.every((r) => r.status === 'rejected')
+    conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+    this.controllers.delete(requestId)
+  }
+
+  /** 改参重跑 / 编辑用户消息后重发：删除旧回复，用新参数重新请求 */
+  async resend(payload: ResendPayload, emit: EmitFn): Promise<void> {
+    const { requestId, conversationId, messageId, content, targets, assistantId } = payload
+    if (!targets || targets.length === 0) throw new Error('未选择模型')
+
+    const userMsg = messageRepo.getById(messageId)
+    if (!userMsg || userMsg.role !== 'user') {
+      throw new Error('消息不存在或非用户消息')
+    }
+
+    // 如果提供了新内容，更新用户消息
+    if (content !== undefined && content !== userMsg.content) {
+      messageRepo.updateUserContent(messageId, content)
+    }
+
+    // 删除旧 AI 回复（parentId = 用户消息 ID）
+    messageRepo.deleteReplies(messageId)
+
+    // 解析 SystemPrompt
+    let effectivePrompt = ''
+    if (assistantId) {
+      const assistant = assistantRepo.get(assistantId)
+      effectivePrompt = assistant?.systemPrompt ?? ''
+    }
+    const renderedPrompt = renderPrompt(effectivePrompt, {})
+
+    // 构建上下文（旧回复已删除，历史以更新后的用户消息结尾）
+    const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
+
+    const master = new AbortController()
+    this.controllers.set(requestId, master)
+
+    // 为每个目标创建占位 assistant 消息
+    const placeholders = targets.map((t) =>
+      messageRepo.insert({
+        conversationId,
+        role: 'assistant',
+        content: '',
+        provider: t.providerId,
+        model: t.model,
+        status: 'streaming',
+        parentId: messageId
+      })
+    )
+
+    conversationRepo.touch(conversationId, { status: 'streaming' })
+
+    const results = await Promise.allSettled(
+      targets.map((target, index) =>
+        this.runTarget({
+          requestId,
+          index,
+          target,
+          messages,
+          messageId: placeholders[index].id,
+          signal: master.signal,
+          emit
+        })
+      )
+    )
+
+    const allFailed = results.every((r) => r.status === 'rejected')
+    conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
     this.controllers.delete(requestId)
   }
 

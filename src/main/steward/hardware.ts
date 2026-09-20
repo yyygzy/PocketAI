@@ -259,7 +259,8 @@ function getDisk(): DiskInfo {
   }
 }
 
-export function getHardwareInfo(): HardwareInfo {
+/** 实际执行一次硬件采集（CPU/内存/GPU/磁盘/系统，可能调用系统命令，较重） */
+function collectHardwareInfo(): HardwareInfo {
   return {
     cpu: getCpu(),
     memory: getMemory(),
@@ -272,4 +273,22 @@ export function getHardwareInfo(): HardwareInfo {
       hostname: os.hostname()
     }
   }
+}
+
+// 硬件画像在平台启动时只采集一次，之后复用快照；
+// 用户在管家页面点「重新检测」时才通过 refreshHardwareInfo() 重新采集。
+let cachedHardware: HardwareInfo | null = null
+
+/** 获取硬件画像（首次调用时采集并缓存，后续直接返回快照） */
+export function getHardwareInfo(): HardwareInfo {
+  if (!cachedHardware) {
+    cachedHardware = collectHardwareInfo()
+  }
+  return cachedHardware
+}
+
+/** 重新采集硬件画像并刷新缓存（仅响应用户手动刷新） */
+export function refreshHardwareInfo(): HardwareInfo {
+  cachedHardware = collectHardwareInfo()
+  return cachedHardware
 }

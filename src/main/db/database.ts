@@ -274,8 +274,121 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL
       );
     `
+  },
+  {
+    version: 9,
+    name: 'messages_tool_calls',
+    up: `
+      ALTER TABLE messages ADD COLUMN tool_calls TEXT;
+    `
+  },
+  {
+    version: 10,
+    name: 'messages_attachments',
+    up: `
+      ALTER TABLE messages ADD COLUMN attachments TEXT;
+    `
+  },
+  {
+    // v11: V2 批次一——笔记模块 + MCP 运行时类型
+    version: 11,
+    name: 'notes_and_mcp_runtime',
+    up: `
+      CREATE TABLE IF NOT EXISTS notes (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '',
+        pinned INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
+      ALTER TABLE mcp_servers ADD COLUMN runtime TEXT NOT NULL DEFAULT 'binary';
+    `
+  },
+  {
+    // v12: V2 批次二——翻译模块（翻译历史 + 术语表）
+    version: 12,
+    name: 'translation_tables',
+    up: `
+      CREATE TABLE IF NOT EXISTS translations (
+        id TEXT PRIMARY KEY,
+        source_text TEXT NOT NULL DEFAULT '',
+        target_text TEXT NOT NULL DEFAULT '',
+        source_lang TEXT NOT NULL DEFAULT 'auto',
+        target_lang TEXT NOT NULL DEFAULT 'en',
+        style TEXT NOT NULL DEFAULT 'standard',
+        provider_id TEXT NOT NULL DEFAULT '',
+        provider_name TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_translations_created_at ON translations(created_at DESC);
+      CREATE TABLE IF NOT EXISTS translation_glossary (
+        id TEXT PRIMARY KEY,
+        source_term TEXT NOT NULL,
+        target_term TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `
+  },
+  {
+    // v13: V2 批次四——绘图模块（生成图片历史；图片文件存 data/images/，DB 只存相对路径）
+    version: 13,
+    name: 'images_table',
+    up: `
+      CREATE TABLE IF NOT EXISTS images (
+        id TEXT PRIMARY KEY,
+        prompt TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        provider_id TEXT NOT NULL DEFAULT '',
+        provider_name TEXT NOT NULL DEFAULT '',
+        size TEXT NOT NULL DEFAULT '1024x1024',
+        file_name TEXT NOT NULL,
+        bytes INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_images_created_at ON images(created_at DESC);
+    `
+  },
+  {
+    // v14: V2 批次八——沙箱基础层（HTML 产物元数据；文件本体存 data/sandbox/）
+    version: 14,
+    name: 'sandbox_files_table',
+    up: `
+      CREATE TABLE IF NOT EXISTS sandbox_files (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        size INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sandbox_files_created_at ON sandbox_files(created_at DESC);
+    `
+  },
+  {
+    // v15: V2 批次九——迷你应用元数据（icon/description/is_app）
+    version: 15,
+    name: 'sandbox_files_app_meta',
+    up: `
+      ALTER TABLE sandbox_files ADD COLUMN icon TEXT NOT NULL DEFAULT '📦';
+      ALTER TABLE sandbox_files ADD COLUMN description TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sandbox_files ADD COLUMN is_app INTEGER NOT NULL DEFAULT 0;
+    `
+  },
+  {
+    // v16: V2——Python 系 MCP：每 Server 的 pip 依赖列表（配合独立 venv）
+    version: 16,
+    name: 'mcp_server_python_packages',
+    up: `
+      ALTER TABLE mcp_servers ADD COLUMN python_packages TEXT NOT NULL DEFAULT '[]';
+    `
   }
 ]
+
+/** 代码内最新迁移版本（诊断模块用来判断库结构是否落后） */
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version
 
 export type EncryptionMode = 'none' | 'db'
 

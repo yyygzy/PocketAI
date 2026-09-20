@@ -11,6 +11,22 @@ import {
 } from './types'
 import type { ToolCall, ToolSchema } from '../../shared/types'
 
+/** 所有携带 Bearer API Key 的请求统一使用的 fetch 选项片段。
+ *  redirect:'manual'：fetch 默认 follow 会把 Authorization 头原样带给 Location
+ *  指向的任意主机（含 http 降级目标），等于泄漏 API Key。provider 正规部署
+ *  不会对 API 端点发 3xx，因此直接拒绝重定向最安全。 */
+const NO_REDIRECT: RequestInit = { redirect: 'manual' }
+
+/** 拒绝 3xx（配合 redirect:'manual'），给出可诊断的错误而非把 Key 发去第三方 */
+function assertNoRedirect(res: Response): void {
+  if (res.status >= 300 && res.status < 400) {
+    throw new ProviderError(
+      '服务端返回了重定向，已拒绝跟随（防止 API Key 被发送到重定向目标主机）；请检查 Base URL 是否正确',
+      res.status
+    )
+  }
+}
+
 /** 将统一 ToolSchema 数组转为 OpenAI tools 字段格式 */
 function toOpenAITools(tools: ToolSchema[]): unknown[] {
   return tools.map((t) => ({
@@ -85,8 +101,10 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       try {
         const res = await fetch(`${this.baseUrl}/models`, {
           method: 'GET',
-          headers: this.authHeaders(key)
+          headers: this.authHeaders(key),
+          ...NO_REDIRECT
         })
+        assertNoRedirect(res)
         if (!res.ok) {
           errors.push(`HTTP ${res.status}`)
           if (res.status === 401 || res.status === 403) continue
@@ -119,7 +137,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     }
     if (params.tools && params.tools.length > 0) {
       body.tools = toOpenAITools(params.tools)
-      body.tool_choice = 'auto'
+      body.tool_choice = params.toolChoice ?? 'auto'
     }
 
     const errors: string[] = []
@@ -132,13 +150,16 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           method: 'POST',
           headers: this.authHeaders(key),
           body: JSON.stringify(body),
-          signal: params.signal
+          signal: params.signal,
+          ...NO_REDIRECT
         })
       } catch (e) {
         if ((e as Error).name === 'AbortError') throw e
+        if (e instanceof ProviderError) throw e
         errors.push((e as Error).message)
         continue
       }
+      assertNoRedirect(res)
 
       if (!res.ok) {
         const text = await res.text().catch(() => '')
@@ -171,6 +192,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     const decoder = new TextDecoder()
     let buffer = ''
     let full = ''
+    let reasoning = ''
     const toolCallByIndex = new Map<number, AggregatedToolCall>()
     let finishReason: string | undefined
 
@@ -204,7 +226,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           const data = line.slice(5).trim()
           if (data === '[DONE]') {
             flushToolCallDeltas()
-            return { content: full, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason }
+            return { content: full, reasoning, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason }
           }
           try {
             const json = JSON.parse(data)
@@ -221,6 +243,13 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
             if (typeof textDelta === 'string' && textDelta.length > 0) {
               full += textDelta
               handlers.onDelta(textDelta)
+            }
+
+            // 推理/思考过程增量（部分模型如 qwen 会在 delta.reasoning_content 中返回）
+            const reasoningDelta: string | undefined = delta.reasoning_content
+            if (typeof reasoningDelta === 'string' && reasoningDelta.length > 0) {
+              reasoning += reasoningDelta
+              handlers.onReasoningDelta?.(reasoningDelta)
             }
 
             // tool_calls 增量聚合（OpenAI 把一次调用拆成多段发送）
@@ -252,7 +281,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     }
 
     flushToolCallDeltas()
-    return { content: full, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason }
+    return { content: full, reasoning, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason }
   }
 
   /** 批量向量化（OpenAI 兼容 /v1/embeddings） */
@@ -264,8 +293,10 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         const res = await fetch(`${this.baseUrl}/embeddings`, {
           method: 'POST',
           headers: this.authHeaders(key),
-          body: JSON.stringify({ model, input: texts })
+          body: JSON.stringify({ model, input: texts }),
+          ...NO_REDIRECT
         })
+        assertNoRedirect(res)
         if (!res.ok) {
           const text = await res.text().catch(() => '')
           if ((res.status === 401 || res.status === 403 || res.status === 429) && attempt < this.apiKeys.length - 1) {
@@ -285,6 +316,55 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       }
     }
     throw new ProviderError(`向量化失败: ${errors.join('; ') || '无可用 Key'}`)
+  }
+
+  /** 图像生成（OpenAI Images 兼容 /v1/images/generations，n 固定 1）。
+   *  兼容两种响应形态：data[0].b64_json（直接返回）与 data[0].url（由调用方下载）。 */
+  async generateImages(params: {
+    model: string
+    prompt: string
+    size: string
+    signal?: AbortSignal
+  }): Promise<{ b64?: string; url?: string }> {
+    const body = JSON.stringify({
+      model: params.model,
+      prompt: params.prompt,
+      size: params.size,
+      n: 1
+    })
+    const errors: string[] = []
+    for (let attempt = 0; attempt < Math.max(1, this.apiKeys.length); attempt++) {
+      const key = this.nextKey()
+      try {
+        const res = await fetch(`${this.baseUrl}/images/generations`, {
+          method: 'POST',
+          headers: this.authHeaders(key),
+          body,
+          signal: params.signal,
+          ...NO_REDIRECT
+        })
+        assertNoRedirect(res)
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          if ((res.status === 401 || res.status === 403 || res.status === 429) && attempt < this.apiKeys.length - 1) {
+            errors.push(`HTTP ${res.status}`)
+            continue
+          }
+          throw new ProviderError(`图像生成失败 HTTP ${res.status}: ${text.slice(0, 200)}`, res.status)
+        }
+        const json: any = await res.json()
+        const item = json?.data?.[0]
+        if (!item) throw new ProviderError('响应中没有图片数据')
+        if (typeof item.b64_json === 'string' && item.b64_json) return { b64: item.b64_json }
+        if (typeof item.url === 'string' && item.url) return { url: item.url }
+        throw new ProviderError('响应中既无 b64_json 也无 url')
+      } catch (e) {
+        if (e instanceof ProviderError) throw e
+        if ((e as Error).name === 'AbortError') throw e
+        errors.push((e as Error).message)
+      }
+    }
+    throw new ProviderError(`图像生成失败: ${errors.join('; ') || '无可用 Key'}`)
   }
 }
 

@@ -11,6 +11,7 @@ export const FilesModule: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const [preview, setPreview] = useState<{ entry: FileEntry; result: FileReadResult } | null>(null)
+  const [mkdirOpen, setMkdirOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async (dir: string) => {
@@ -71,13 +72,8 @@ export const FilesModule: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleMkdir = async () => {
-    const name = window.prompt(t('fm.mkdirPrompt'))
-    if (name === null) return
-    const res = await window.pocketai.mkdir(relDir, name)
-    flash(res.ok, res.ok ? t('fm.mkdirDone') : (res.error ?? t('fm.opFailed')))
-    load(relDir)
-  }
+  // Electron 未实现 window.prompt，新建文件夹改用应用内弹窗 MkdirDialog
+  const handleMkdir = () => setMkdirOpen(true)
 
   const handleDelete = async (e: FileEntry) => {
     const msg = e.isDir ? t('fm.deleteDirConfirm', { name: e.name }) : t('fm.deleteConfirm', { name: e.name })
@@ -322,6 +318,87 @@ export const FilesModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 新建文件夹 Modal（替代 Electron 不支持的 window.prompt） */}
+      {mkdirOpen && (
+        <MkdirDialog
+          relDir={relDir}
+          onClose={() => setMkdirOpen(false)}
+          onCreated={() => {
+            setMkdirOpen(false)
+            flash(true, t('fm.mkdirDone'))
+            load(relDir)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---------- 新建文件夹弹窗 ----------
+const MkdirDialog: React.FC<{
+  relDir: string
+  onClose: () => void
+  onCreated: () => void
+}> = ({ relDir, onClose, onCreated }) => {
+  const { t } = useI18n()
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async () => {
+    const trimmed = name.trim()
+    if (!trimmed || busy) return
+    setBusy(true)
+    setError('')
+    const res = await window.pocketai.mkdir(relDir, trimmed)
+    setBusy(false)
+    if (res.ok) {
+      onCreated()
+    } else {
+      setError(res.error ?? t('fm.opFailed'))
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-modal-overlay)]"
+      onClick={onClose}
+    >
+      <div
+        className="w-[420px] bg-[var(--color-sidebar)] rounded-lg border border-[var(--color-border)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+          <h3 className="text-sm font-semibold">📂 {t('fm.mkdir')}</h3>
+          <button onClick={onClose} className="btn-ghost text-xs">
+            {t('common.close')}
+          </button>
+        </div>
+        <div className="p-4 space-y-2">
+          <input
+            className="input w-full"
+            value={name}
+            autoFocus
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            placeholder={t('fm.mkdirPrompt')}
+          />
+          {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-[var(--color-border)]">
+          <button onClick={onClose} className="btn-ghost text-xs" disabled={busy}>
+            {t('common.cancel')}
+          </button>
+          <button
+            onClick={submit}
+            disabled={!name.trim() || busy}
+            className="btn-primary text-xs disabled:opacity-50"
+          >
+            {t('common.confirm')}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

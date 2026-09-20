@@ -128,6 +128,8 @@ export interface MessageRecord {
   status: MessageStatus
   parentId: string | null
   createdAt: number
+  toolCalls?: string | null
+  attachments?: ChatAttachment[]
 }
 
 // ---------- 知识库 ----------
@@ -204,25 +206,65 @@ export interface ToolCall {
 export interface ToolResult {
   toolCallId: string
   name: string
+  arguments?: string // 工具调用参数（JSON 字符串，用于历史回放）
   content: string // 序列化后的工具输出（JSON 字符串或纯文本）
   isError?: boolean
 }
 
 // ---------- MCP Server ----------
 export type McpTransport = 'stdio' | 'http'
+export type McpRuntime = 'node' | 'python' | 'binary'
 export type McpServerStatus = 'stopped' | 'starting' | 'running' | 'error'
 
 export interface McpServerRecord {
   id: string
   name: string
   transport: McpTransport
-  command: string | null // stdio: 可执行文件，如 'node'
+  runtime: 'node' | 'python' | 'binary' // stdio 解释器类型，binary=自定义可执行文件（向后兼容）
+  command: string | null // stdio: 可执行文件，如 'node' / 'python' 解释器路径
   args: string[] // stdio: 参数数组
   env: Record<string, string> // stdio: 环境变量
   url: string | null // http 传输
   enabled: boolean
   createdAt: number
+  /** runtime=python 时的 pip 依赖描述列表（每行一个，如 mcp-server-fetch==0.1.0）；其他 runtime 恒为 [] */
+  pythonPackages: string[]
 }
+
+// ---------- Python MCP 虚拟环境 ----------
+/** none=未创建；installing=安装进行中；ready=可用且依赖已装；stale=venv 失效（换盘符/换解释器/缺标记） */
+export type PythonEnvStatus = 'none' | 'installing' | 'ready' | 'stale'
+
+export interface PythonEnvState {
+  serverId: string
+  status: PythonEnvStatus
+  /** 当前记录里声明的依赖（未清洗） */
+  packages: string[]
+  /** venv 解释器版本（ready/stale 但可执行时可能有值） */
+  pythonVersion: string | null
+  /** 所选 base 解释器路径（record.command） */
+  basePython: string | null
+  /** 安装标记记录的已安装依赖（ready 时有值） */
+  installedPackages: string[]
+}
+
+/** Python 环境安装过程事件（venv/pip 阶段逐行输出；done/error 为终态） */
+export interface PythonEnvInstallEvent {
+  serverId: string
+  stage: 'venv' | 'pip' | 'done' | 'error'
+  /** 逐行输出内容（venv/pip 阶段） */
+  line?: string
+  /** 终态或阶段性说明（done/error 中文消息） */
+  message?: string
+  timestamp: number
+}
+
+/**
+ * pip 源传输形态：
+ * 'official' = https://pypi.org/simple，'tuna' = 清华镜像；
+ * 其他字符串视为自定义 index URL（调用方负责 http(s) 校验）。
+ */
+export type PythonPipSource = 'official' | 'tuna' | (string & {})
 
 /** 运行时状态（不持久化，由 manager 维护并随事件推送） */
 export interface McpServerRuntime extends McpServerRecord {
@@ -277,6 +319,83 @@ export interface AgentErrorEvent {
   error: string
 }
 
+// ---------- 终端命令工具（shell_exec） ----------
+/** 终端命令策略：confirm=逐条确认；auto-safe=仅危险命令确认（黑名单始终硬拒） */
+export type ShellPolicy = 'confirm' | 'auto-safe'
+
+export interface ShellConfig {
+  enabled: boolean
+  policy: ShellPolicy
+}
+
+/** 联网搜索服务商（v2 批次六：web.search 工具） */
+export type WebSearchProvider = 'tavily' | 'bocha'
+
+export interface WebSearchConfig {
+  enabled: boolean
+  provider: WebSearchProvider
+  /** 渲染端永远拿到空串（Key 不回显明文），是否已配置看 hasKey */
+  apiKey: string
+  hasKey: boolean
+}
+
+// ---------- Channels（IM Bot 网关，v2 批次七：Telegram） ----------
+export type ChannelStatus = 'stopped' | 'starting' | 'running' | 'error'
+
+export interface ChannelConfig {
+  enabled: boolean
+  /** 渲染端永远拿到空串（Token 不回显明文），是否已配置看 hasToken */
+  token: string
+  hasToken: boolean
+  /** 逗号分隔的 TG 数字 userId；空=拒绝所有（fail closed） */
+  whitelist: string
+  /** 绑定助手（systemPrompt/技能/知识库来源） */
+  assistantId: string
+  /** 目标模型；为空时回退绑定助手的默认模型 */
+  providerId: string
+  model: string
+  /** true=远程消息走 Agent ReAct（含工具调用），默认普通问答 */
+  agentMode: boolean
+}
+
+export interface ChannelStatusEvent {
+  status: ChannelStatus
+  lastError: string | null
+}
+
+// ---------- 沙箱（v2 批次八：沙箱基础层） ----------
+export interface SandboxFileMeta {
+  id: string
+  name: string
+  size: number
+  createdAt: number
+  // v2 批次九（迷你应用）：应用化元数据
+  icon: string // emoji，默认 📦
+  description: string // 可空
+  isApp: boolean // true=迷你应用，false=普通沙箱产物
+}
+
+/** 工具调用审批请求（主进程 → 渲染端全局弹窗） */
+export interface ToolApprovalRequestEvent {
+  approvalId: string
+  requestId: string
+  conversationId: string
+  toolName: string
+  /** 命令全文（shell_exec）或参数 JSON 摘要（其它 confirm 工具） */
+  command: string
+  /** 执行目录（shell_exec 时有值） */
+  cwd?: string
+  /** 风险原因 code，渲染端映射 i18n：agent.approval.reason.<code> */
+  reason: string
+  /** confirm=需用户确认；deny 不走弹窗（保留字段以备扩展） */
+  risk?: 'danger' | 'custom'
+}
+
+export interface ToolApprovalResponsePayload {
+  approvalId: string
+  approved: boolean
+}
+
 // ---------- 发送请求 ----------
 export interface ChatTarget {
   providerId: string
@@ -290,6 +409,35 @@ export interface SendMessagePayload {
   content: string
   targets: ChatTarget[] // 1 个=单模型；多个=一问多答并行对照
   agentMode?: boolean // true=走 Work Agent ReAct 循环；false/省略=普通对话
+  attachments?: ChatAttachment[] // 图片/文档附件
+}
+
+/** 聊天附件（图片或文档） */
+export interface ChatAttachment {
+  type: 'image' | 'text'
+  name: string
+  mimeType: string
+  size: number
+  /** image: base64 data URL (data:image/png;base64,...) | text: 文件文本内容 */
+  data: string
+}
+
+export interface RegeneratePayload {
+  requestId: string
+  conversationId: string
+  assistantId: string | null
+  messageId: string // 要重新生成的 assistant 消息 ID
+  targets: ChatTarget[]
+}
+
+/** 改参重跑 / 编辑用户消息后重发：删除旧回复，用新参数重新请求 */
+export interface ResendPayload {
+  requestId: string
+  conversationId: string
+  assistantId: string | null
+  messageId: string // 用户消息 ID
+  content?: string // 编辑后的新内容（不传则用原内容）
+  targets: ChatTarget[]
 }
 
 export interface ChatChunkEvent {
@@ -325,8 +473,18 @@ export interface PopupPayload {
 export interface PopupConfig {
   quickEnabled: boolean
   selectionEnabled: boolean
-  quickAccelerator: string // 仅展示用（当前版本固定）
+  quickAccelerator: string // Electron accelerator 字符串（可在设置中自定义）
   selectionAccelerator: string
+}
+
+/** 设置浮窗配置（含自定义快捷键）的返回结果；error 为机器可读错误码 */
+export interface PopupSetConfigResult {
+  ok: boolean
+  /** occupied=快捷键被占用/无效；same=两个快捷键相同 */
+  error?: 'occupied' | 'same'
+  /** occupied 时注册失败的 accelerator */
+  accel?: string
+  config: PopupConfig
 }
 
 // ---------- License 授权 ----------
@@ -348,7 +506,6 @@ export interface LicenseStatus {
   error?: string
   signatureOk: boolean
   expired: boolean
-  hasFeature: (feature: string) => boolean
 }
 
 // ---------- 自动更新 ----------
@@ -429,6 +586,242 @@ export interface CleanupResult {
   vacuumedBytes: number
 }
 
+// ---------- 平台管家：模型推荐 ----------
+export interface ModelPick {
+  /** Ollama 模型 tag，如 qwen2.5:7b-instruct-q4_K_M */
+  id: string
+  /** '首选' | '备选' | '向量' */
+  tag: string
+  reason: string
+  /** 是否已在本机 Ollama 中安装 */
+  installed: boolean
+}
+
+export interface ModelRecommendation {
+  /** 档位：入门 / 主流 / 高性能 / 旗舰（含 CPU 后缀） */
+  tier: string
+  /** 硬件画像一句话总结 */
+  summary: string
+  localPicks: ModelPick[]
+  /** 在线模型使用建议 */
+  onlineHint: string
+  ollamaRunning: boolean
+  installedModels: string[]
+  warnings: string[]
+}
+
+// ---------- 平台管家：安全检测 / 故障诊断 ----------
+export type CheckLevel = 'ok' | 'warn' | 'danger'
+
+export interface SecurityCheck {
+  id: string
+  label: string
+  level: CheckLevel
+  detail: string
+  suggestion?: string
+}
+
+export interface AuditResult {
+  /** 安全评分 0-100（danger -30 / warn -10） */
+  score: number
+  checks: SecurityCheck[]
+}
+
+export interface DiagnoseItem {
+  id: string
+  label: string
+  level: CheckLevel
+  detail: string
+  /** 可操作的修复建议 */
+  fix?: string
+}
+
+export interface DiagnoseResult {
+  items: DiagnoseItem[]
+}
+
+// ---------- 笔记 ----------
+export interface Note {
+  id: string
+  title: string
+  content: string
+  tags: string[]
+  pinned: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+/** Python 运行时信息（系统安装或便携版） */
+export interface PythonRuntime {
+  name: string
+  version: string
+  path: string
+  source: 'system' | 'portable'
+}
+
+// ---------- 翻译模块 ----------
+/** 源语言可用 auto（自动检测），目标语言不可 */
+export type TranslateLang =
+  | 'auto'
+  | 'zh'
+  | 'en'
+  | 'ja'
+  | 'ko'
+  | 'fr'
+  | 'de'
+  | 'ru'
+  | 'es'
+  | 'zh-TW'
+
+/** 翻译风格 */
+export type TranslateStyle = 'standard' | 'fluent' | 'literal' | 'formal'
+
+/** 翻译历史记录（v12 translations 表） */
+export interface TranslationRecord {
+  id: string
+  sourceText: string
+  targetText: string
+  sourceLang: TranslateLang
+  targetLang: Exclude<TranslateLang, 'auto'>
+  style: TranslateStyle
+  providerId: string
+  providerName: string
+  model: string
+  createdAt: number
+}
+
+/** 术语表条目（v12 translation_glossary 表） */
+export interface GlossaryTerm {
+  id: string
+  sourceTerm: string
+  targetTerm: string
+  createdAt: number
+}
+
+/** 渲染端发起翻译的请求载荷 */
+export interface TranslateRequestPayload {
+  requestId: string
+  providerId: string
+  model: string
+  sourceLang: TranslateLang
+  targetLang: Exclude<TranslateLang, 'auto'>
+  style: TranslateStyle
+  text: string
+  /** 是否在 system 提示词中注入术语表 */
+  glossaryEnabled: boolean
+}
+
+/** 主进程推给渲染端的流式译文增量 */
+export interface TranslateChunkEvent {
+  requestId: string
+  delta: string
+}
+
+// ---------- 绘图（图像生成，v13 images 表） ----------
+/** 允许的生成尺寸（OpenAI Images 兼容取值域） */
+export const IMAGE_SIZES = ['512x512', '768x768', '1024x1024', '1024x1792', '1792x1024'] as const
+export type ImageSize = (typeof IMAGE_SIZES)[number]
+
+/** 生成请求载荷 */
+export interface ImageGeneratePayload {
+  requestId: string
+  providerId: string
+  model: string
+  prompt: string
+  size: ImageSize
+}
+
+/** 图片历史记录（文件存 DATA_DIR/images/，DB 只存相对路径） */
+export interface ImageRecord {
+  id: string
+  prompt: string
+  model: string
+  providerId: string
+  providerName: string
+  size: string
+  /** 相对 DATA_DIR 的 posix 路径，如 images/2026-09/xxx.png */
+  fileName: string
+  bytes: number
+  createdAt: number
+}
+
+/** 列表项 = 记录 + 缩略图 dataUrl（缩略图缺失时为 null） */
+export interface ImageListItem extends ImageRecord {
+  thumbDataUrl: string | null
+}
+
+/** 生成结果（IPC 直接返回给渲染端） */
+export type ImageResult =
+  | { ok: true; record: ImageRecord; durationMs: number }
+  | { ok: false; aborted?: boolean; error: string }
+
+// ---------- 侧栏模块顺序 ----------
+export type SidebarModuleId =
+  | 'chat'
+  | 'agent'
+  | 'skills'
+  | 'knowledge'
+  | 'files'
+  | 'notes'
+  | 'translate'
+  | 'image'
+  | 'sandbox'
+  | 'steward'
+  | 'settings'
+
+/** 侧栏模块默认顺序（也是非法/缺项配置的回退值） */
+export const DEFAULT_SIDEBAR_ORDER: SidebarModuleId[] = [
+  'chat',
+  'agent',
+  'skills',
+  'knowledge',
+  'files',
+  'notes',
+  'translate',
+  'image',
+  'sandbox',
+  'steward',
+  'settings'
+]
+
+// ---------- 界面偏好（透明度 / 自定义 CSS） ----------
+export interface UiPreferences {
+  /** 窗口透明度 0.6–1，1 = 不透明 */
+  opacity: number
+  /** 渲染端注入的自定义 CSS */
+  customCss: string
+}
+
+// ---------- WebDAV 增量备份 ----------
+export interface IncrementalBackupResult {
+  /** 增量索引文件名（pocketai-inc-*.json[.enc]） */
+  filename: string
+  /** 本次实际上传字节数（含 DB/新附件 blob + 索引） */
+  bytesUploaded: number
+  /** 新上传的 blob 数量（DB + 变化附件） */
+  blobsUploaded: number
+  /** 命中远端去重、跳过上传的附件数量 */
+  blobsSkipped: number
+  /** 附件总数 */
+  attachmentsTotal: number
+  encrypted: boolean
+}
+
+// ---------- 定时备份 ----------
+export interface BackupRunResult {
+  ok: boolean
+  at: number
+  filename?: string
+  error?: string
+}
+
+export interface BackupScheduleStatus {
+  enabled: boolean
+  intervalHours: number
+  lastRunAt: number | null
+  lastResult: BackupRunResult | null
+}
+
 // ---------- 文件模块（数据目录文件管理器） ----------
 export interface FileEntry {
   name: string
@@ -479,6 +872,8 @@ export const IPC = {
   SKILL_GET: 'skill:get',
   SKILL_SAVE: 'skill:save',
   SKILL_DELETE: 'skill:delete',
+  SKILL_EXPORT: 'skill:export',
+  SKILL_IMPORT: 'skill:import',
 
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_CREATE: 'conversation:create',
@@ -486,12 +881,16 @@ export const IPC = {
   CONVERSATION_RENAME: 'conversation:rename',
   CONVERSATION_EXPORT: 'conversation:export',
   CONVERSATION_IMPORT: 'conversation:import',
+  CONVERSATION_FORK: 'conversation:fork',
 
   MESSAGE_LIST: 'message:list',
+  MESSAGE_DELETE: 'message:delete',
   MESSAGE_SEARCH: 'message:search',
 
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',
+  CHAT_REGENERATE: 'chat:regenerate',
+  CHAT_RESEND: 'chat:resend',
   CHAT_CHUNK_EVENT: 'chat:chunk-event',
   CHAT_DONE_EVENT: 'chat:done-event',
   CHAT_ERROR_EVENT: 'chat:error-event',
@@ -524,6 +923,52 @@ export const IPC = {
   MCP_SERVER_STATUS_EVENT: 'mcp-server:status-event',
   MCP_SERVER_LOG_EVENT: 'mcp-server:log-event',
 
+  // ---------- 笔记 ----------
+  NOTES_LIST: 'notes:list',
+  NOTES_GET: 'notes:get',
+  NOTES_CREATE: 'notes:create',
+  NOTES_UPDATE: 'notes:update',
+  NOTES_DELETE: 'notes:delete',
+  NOTES_SEARCH: 'notes:search',
+  NOTES_CREATE_FROM_MESSAGE: 'notes:create-from-message',
+
+  // Python 运行时
+  PYTHON_RUNTIME_LIST: 'python:runtime-list',
+  PYTHON_RUNTIME_DOWNLOAD: 'python:runtime-download',
+
+  // Python MCP 虚拟环境（venv + pip）
+  PYTHON_ENV_INSTALL: 'python-env:install',
+  PYTHON_ENV_STATUS: 'python-env:status',
+  PYTHON_ENV_EVENT: 'python-env:event',
+  PYTHON_PIP_SOURCE_GET: 'python-env:pip-source-get',
+  PYTHON_PIP_SOURCE_SET: 'python-env:pip-source-set',
+
+  // 翻译
+  TRANSLATE_RUN: 'translate:run',
+  TRANSLATE_ABORT: 'translate:abort',
+  TRANSLATE_CHUNK_EVENT: 'translate:chunk-event',
+  TRANSLATION_LIST: 'translation:list',
+  TRANSLATION_DELETE: 'translation:delete',
+  TRANSLATION_CLEAR: 'translation:clear',
+  GLOSSARY_LIST: 'glossary:list',
+  GLOSSARY_SAVE: 'glossary:save',
+  GLOSSARY_DELETE: 'glossary:delete',
+
+  // 绘图（图像生成）
+  IMAGES_GENERATE: 'images:generate',
+  IMAGES_ABORT: 'images:abort',
+  IMAGES_LIST: 'images:list',
+  IMAGES_GET_FILE: 'images:get-file',
+  IMAGES_DELETE: 'images:delete',
+  IMAGES_SAVE_AS: 'images:save-as',
+
+  // ---------- 沙箱（v2 批次八：沙箱基础层） ----------
+  SANDBOX_LIST: 'sandbox:list',
+  SANDBOX_CREATE: 'sandbox:create',
+  SANDBOX_GET: 'sandbox:get',
+  SANDBOX_DELETE: 'sandbox:delete',
+  SANDBOX_UPDATE_META: 'sandbox:update-meta',
+
   // Work Agent
   AGENT_RUN: 'agent:run',
   AGENT_ABORT: 'agent:abort',
@@ -533,6 +978,19 @@ export const IPC = {
   AGENT_ERROR_EVENT: 'agent:error-event',
   AGENT_GET_WORKSPACE_DIR: 'agent:get-workspace-dir',
   AGENT_PICK_WORKSPACE_DIR: 'agent:pick-workspace-dir',
+  AGENT_GET_SHELL_CONFIG: 'agent:get-shell-config',
+  AGENT_SET_SHELL_CONFIG: 'agent:set-shell-config',
+  AGENT_GET_WEBSEARCH_CONFIG: 'agent:get-websearch-config',
+  AGENT_SET_WEBSEARCH_CONFIG: 'agent:set-websearch-config',
+  AGENT_TOOL_APPROVAL_EVENT: 'agent:tool-approval-event',
+  AGENT_TOOL_APPROVE_RESPONSE: 'agent:tool-approve-response',
+
+  // ---------- Channels（IM Bot 网关，v2 批次七：Telegram） ----------
+  CHANNEL_GET_CONFIG: 'channel:get-config',
+  CHANNEL_SET_CONFIG: 'channel:set-config',
+  CHANNEL_START: 'channel:start',
+  CHANNEL_STOP: 'channel:stop',
+  CHANNEL_STATUS_EVENT: 'channel:status-event',
 
   // ---------- 快捷浮窗（快捷问答 / 选区助手） ----------
   POPUP_HIDE: 'popup:hide',
@@ -540,6 +998,14 @@ export const IPC = {
   POPUP_GET_CONFIG: 'popup:get-config',
   POPUP_SET_CONFIG: 'popup:set-config',
   POPUP_PAYLOAD_EVENT: 'popup:payload-event',
+
+  // ---------- 界面偏好 ----------
+  UI_GET_PREFS: 'ui:get-prefs',
+  UI_SET_PREFS: 'ui:set-prefs',
+
+  // ---------- 侧栏模块顺序 ----------
+  SIDEBAR_GET_ORDER: 'sidebar:get-order',
+  SIDEBAR_SET_ORDER: 'sidebar:set-order',
 
   // 工具（只读）
   TOOL_LIST_AVAILABLE: 'tool:list-available', // 列出所有可用工具（按助手机器权限可在外层过滤）
@@ -571,24 +1037,31 @@ export const IPC = {
   BACKUP_LOCAL: 'backup:local', // 本地备份（可选加密）
   BACKUP_LOCAL_ENCRYPTED: 'backup:local-encrypted', // 本地加密备份
   BACKUP_WEBDAV_TEST: 'backup:webdav-test', // 测试 WebDAV 连接
-  BACKUP_WEBDAV_UPLOAD: 'backup:webdav-upload', // 上传备份到 WebDAV
+  BACKUP_WEBDAV_UPLOAD: 'backup:webdav-upload', // 上传全量备份到 WebDAV
+  BACKUP_WEBDAV_UPLOAD_INCREMENTAL: 'backup:webdav-upload-incremental', // 增量备份（附件去重）
   BACKUP_WEBDAV_LIST: 'backup:webdav-list', // 列出 WebDAV 上的备份
   BACKUP_WEBDAV_RESTORE: 'backup:webdav-restore', // 从 WebDAV 恢复
   BACKUP_WEBDAV_DELETE: 'backup:webdav-delete', // 删除 WebDAV 备份
   BACKUP_WEBDAV_SAVE_CONFIG: 'backup:webdav-save-config', // 保存 WebDAV 配置
   BACKUP_WEBDAV_LOAD_CONFIG: 'backup:webdav-load-config', // 读取 WebDAV 配置
+  BACKUP_SCHEDULE_GET: 'backup:schedule-get', // 读取定时备份计划
+  BACKUP_SCHEDULE_SET: 'backup:schedule-set', // 保存定时备份计划
 
   // ---------- 隐私锁 ----------
   LOCK_GET_STATUS: 'lock:get-status',
   LOCK_LOCK: 'lock:lock',
   LOCK_UNLOCK: 'lock:unlock',
   LOCK_SET_AUTO_TIMEOUT: 'lock:set-auto-timeout',
+  LOCK_MARK_ACTIVE: 'lock:mark-active',
   LOCK_STATE_EVENT: 'lock:state-event',
 
   // ---------- 平台管家 ----------
   HEALTH_REPORT: 'health:report',
   HEALTH_CLEANUP: 'health:cleanup',
   HEALTH_VACUUM: 'health:vacuum',
+  STEWARD_MODEL_RECOMMEND: 'steward:model-recommend', // 按硬件画像推荐本地模型
+  STEWARD_AUDIT: 'steward:audit', // 安全检测
+  STEWARD_DIAGNOSE: 'steward:diagnose', // 故障诊断
 
   // ---------- 文件模块 ----------
   FILE_LIST: 'file:list',
