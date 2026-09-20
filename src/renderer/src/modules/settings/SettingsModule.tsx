@@ -137,6 +137,8 @@ const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => 
         {encrypted && !unlocked && <LockBtn onDone={onChange} />}
       </div>
 
+      {encrypted && unlocked && <RecoveryKeyCard setNotice={setNotice} />}
+
       {notice && <Notice ok={notice.ok} text={notice.text} />}
 
       <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed pt-1">
@@ -216,6 +218,7 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
   const [localErr, setLocalErr] = useState('')
+  const [rotatedCode, setRotatedCode] = useState('')
 
   async function submit() {
     setLocalErr('')
@@ -229,6 +232,8 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
       setOpen(false); setOldPwd(''); setNewPwd(''); setConfirm('')
       setNotice({ ok: true, text: t('enc.pwdUpdated') })
       onDone()  // ✅ 刷新加密状态
+      // 之前生成过恢复码：rekey 后旧码失效，必须让用户保存新码
+      if (r.recoveryCode) setRotatedCode(r.recoveryCode)
     } catch (e: any) {
       setLocalErr(e?.message ?? t('enc.fail'))
     } finally {
@@ -255,6 +260,13 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
           <button className="btn-primary" disabled={busy} onClick={submit}>{busy ? t('common.processing') : t('common.confirm')}</button>
         </div>
       </Modal>
+      {rotatedCode && (
+        <RecoveryCodeModal
+          code={rotatedCode}
+          title={t('enc.recoveryRotatedTitle')}
+          onClose={() => setRotatedCode('')}
+        />
+      )}
     </>
   )
 }
@@ -312,6 +324,130 @@ const LockBtn: React.FC<{ onDone: () => void }> = ({ onDone }) => {
     onDone()
   }
   return <button className="btn-ghost" onClick={lock}>{t('enc.lock')}</button>
+}
+
+// ─── 恢复密钥 ───────────────────────────────────────────────────
+
+/** 恢复码一次性展示弹窗：复制 / 另存文件 / 确认已保存 */
+const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => void }> = ({
+  code,
+  title,
+  onClose
+}) => {
+  const { t } = useI18n()
+  const [copied, setCopied] = useState(false)
+  return (
+    <Modal open title={title} onClose={onClose}>
+      <p className="text-xs text-[var(--color-warning)] mb-2">{t('enc.recoveryShowOnce')}</p>
+      <textarea
+        readOnly
+        rows={3}
+        value={code}
+        onFocus={(e) => e.currentTarget.select()}
+        className="input font-mono text-sm tracking-wider resize-none"
+      />
+      <div className="flex gap-2 my-3">
+        <button
+          className="btn-ghost"
+          onClick={async () => {
+            try {
+              await window.pocketai.copySensitiveToClipboard(code)
+              setCopied(true)
+            } catch { /* 剪贴板不可用时静默 */ }
+          }}
+        >
+          {t('enc.recoveryCopy')}
+        </button>
+        <button className="btn-ghost" onClick={() => window.pocketai.saveRecoveryFile(code)}>
+          {t('enc.recoverySaveFile')}
+        </button>
+      </div>
+      {copied && (
+        <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+          {t('enc.clipboardAutoClear', { s: 30 })}
+        </p>
+      )}
+      <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-3">
+        {t('enc.recoveryModalWarn')}
+      </p>
+      <div className="flex justify-end">
+        <button className="btn-primary" onClick={onClose}>{t('enc.recoverySaved')}</button>
+      </div>
+    </Modal>
+  )
+}
+
+const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
+  const { t } = useI18n()
+  const [hasKey, setHasKey] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [shownCode, setShownCode] = useState('')
+
+  const refresh = () => window.pocketai.hasRecoveryKey().then(setHasKey)
+  useEffect(() => {
+    void refresh()
+  }, [])
+
+  async function generate() {
+    // 已有恢复码时重新生成会作废旧码，二次确认
+    if (hasKey && !window.confirm(t('enc.recoveryRegenConfirm'))) return
+    setBusy(true)
+    try {
+      const r = await window.pocketai.generateRecoveryKey()
+      if (!r.ok || !r.code) {
+        setNotice({ ok: false, text: r.error ?? t('enc.recoveryGenFail') })
+        return
+      }
+      setShownCode(r.code)
+      void refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(t('enc.recoveryRemoveConfirm'))) return
+    await window.pocketai.disableRecoveryKey()
+    void refresh()
+    setNotice({ ok: true, text: t('enc.recoveryRemoved') })
+  }
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] p-3 mt-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-[var(--color-text)]">{t('enc.recoveryTitle')}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+            {hasKey ? t('enc.recoverySet') : t('enc.recoveryNotSet')}
+          </div>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button className="btn-ghost" disabled={busy} onClick={generate}>
+            {hasKey ? t('enc.recoveryRegen') : t('enc.recoveryGenerate')}
+          </button>
+          {hasKey && (
+            <button
+              className="btn-ghost text-[var(--color-danger)] hover:opacity-80"
+              disabled={busy}
+              onClick={remove}
+            >
+              {t('enc.recoveryRemove')}
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mt-2">
+        {t('enc.recoveryDesc')}
+      </p>
+      {shownCode && (
+        <RecoveryCodeModal
+          code={shownCode}
+          title={t('enc.recoveryModalTitle')}
+          onClose={() => setShownCode('')}
+        />
+      )}
+    </div>
+  )
 }
 
 // ─── 备份面板 ────────────────────────────────────────────────────
@@ -601,6 +737,9 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // 粘贴激活码模式（license.lic JSON 文本）：文件选择之外的另一激活入口
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [codeText, setCodeText] = useState('')
 
   if (!lic) {
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
@@ -630,6 +769,20 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
     onChange()
   }
 
+  const handlePasteActivate = async () => {
+    if (!codeText.trim()) return
+    setBusy(true); setNotice(null)
+    try {
+      const r = await window.pocketai.loadLicenseString(codeText)
+      if (!r.valid) { setNotice({ ok: false, text: r.error ?? t('lic.activateFail') }); return }
+      setNotice({ ok: true, text: t('lic.activated', { owner: r.payload?.owner ?? '', plan: r.payload?.plan ?? '' }) })
+      setPasteOpen(false); setCodeText('')
+      onChange()
+    } catch (e: any) {
+      setNotice({ ok: false, text: e?.message ?? t('lic.activateFail') })
+    } finally { setBusy(false) }
+  }
+
   const payload = lic.payload
 
   return (
@@ -654,15 +807,41 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
         <StatusRow label={t('lic.status')} value={t('lic.free')} ok={false} />
       )}
 
+      {!lic.valid && (
+        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+          {t('lic.liteLimits', { assistants: 3, kbs: 1 })}
+        </p>
+      )}
+
       <div className="flex gap-2 pt-1">
         <button className="btn-primary" disabled={busy} onClick={handleActivate}>
           {busy ? t('common.processing') : t('lic.activate')}
         </button>
+        {!lic.valid && (
+          <button className="btn-ghost" disabled={busy} onClick={() => setPasteOpen((v) => !v)}>
+            {t('lic.pasteCode')}
+          </button>
+        )}
         {lic.valid && (
           <button className="btn-ghost text-[var(--color-danger)]" onClick={handleClear}>{t('lic.clear')}</button>
         )}
         <input ref={fileRef} type="file" accept=".lic,.json" className="hidden" onChange={handleFile} />
       </div>
+
+      {pasteOpen && !lic.valid && (
+        <div className="space-y-2">
+          <textarea
+            rows={5}
+            value={codeText}
+            onChange={(e) => setCodeText(e.target.value)}
+            placeholder={t('lic.pastePlaceholder')}
+            className="input font-mono text-[11px] resize-none"
+          />
+          <button className="btn-primary" disabled={busy || !codeText.trim()} onClick={handlePasteActivate}>
+            {t('lic.pasteActivate')}
+          </button>
+        </div>
+      )}
 
       {notice && <Notice ok={notice.ok} text={notice.text} />}
 
