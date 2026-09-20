@@ -1,0 +1,35 @@
+# Linux AppImage 构建配置（与 package.json build 段平行的独立配置）
+# 用法：npm run dist:linux
+# 关键差异：files 排除规则保留 linux/linuxmusl prebuilds、排除 darwin/win32
+appId: ai.pocket.desktop
+productName: PocketAI
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3-multiple-ciphers/**/*.node
+  - node_modules/better-sqlite3/**/*.node
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - node_modules/**/*
+  - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
+  - '!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}'
+  - '!**/node_modules/*.d.ts'
+  - '!**/node_modules/.cache'
+  - '!**/node_modules/{@types,typescript}'
+  # Linux 版：排除 macOS/Windows 的 sqlite prebuilds，保留 linux(-musl) 运行时
+  - '!**/node_modules/{better-sqlite3-multiple-ciphers,better-sqlite3}/prebuilds/{darwin,win32}-*.node'
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Utility
+  artifactName: PocketAI-${version}-Linux-${arch}.${ext}
+publish:
+  provider: github
+  owner: yyygzy
+  repo: PocketAI
+  channel: latest

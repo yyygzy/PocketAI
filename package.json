@@ -18,6 +18,8 @@
     "dist": "electron-vite build && electron-builder --win",
     "dist:portable": "electron-vite build && electron-builder --win portable",
     "dist:nsis": "electron-vite build && electron-builder --win nsis",
+    "dist:linux": "electron-vite build && electron-builder --linux --config electron-builder.linux.yml",
+    "license": "node scripts/license-studio.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {

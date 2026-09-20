@@ -88,7 +88,7 @@ import { listPythonRuntimes, downloadPortablePython } from '../python-runtime'
 import { getUiPreferences, setUiPreferences } from '../ui-preferences'
 import path from 'node:path'
 import fs from 'node:fs'
-import { DATA_DIR } from '../portable'
+import { DATA_DIR, isPortableRuntime } from '../portable'
 
 /** 向所有 BrowserWindow 推送事件 */
 function broadcast(channel: string, data: unknown): void {
@@ -1391,8 +1391,8 @@ export function registerIpcHandlers(): void {
   // ---------- 首启向导 ----------
   ipcMain.handle(IPC.WIZARD_GET_STATE, async () => {
     try {
-      // 便携判定：便携版 exe 注入的 env；U 盘直跑安装版由向导硬件页展示 removable 细节
-      const isPortable = process.env['PORTABLE_EXECUTABLE_DIR'] !== undefined
+      // 便携判定：Windows portable exe / Linux AppImage；U 盘直跑安装版由向导硬件页展示 removable 细节
+      const isPortable = isPortableRuntime()
       const wizardDone = appConfigRepo.isFirstRunWizardDone()
       const storedId = appConfigRepo.getMachineId()
       // 从未记录过指纹 = 首次安装，由 wizardDone 驱动，不算「换电脑」

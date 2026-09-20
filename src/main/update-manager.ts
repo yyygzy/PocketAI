@@ -5,6 +5,7 @@ import { IPC, type UpdateStatus } from '../shared/types'
 import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { downloadAsarPatch, restartToApplyPatch, isPatchPending } from './update/asar-patcher'
+import { isPortableRuntime } from './portable'
 
 // ─── 单例 UpdateManager ──────────────────────────────────────────
 // 负责封装 electron-updater，维护状态机 + 互斥锁
@@ -115,12 +116,10 @@ class UpdateManager extends EventEmitter {
 
   // ── 获取环境信息 ────────────────────────────────────────────────
   getInfo() {
-    // portable 检测：electron-builder portable target 会设 PORTABLE_EXECUTABLE_DIR
-    const isPortable = app.isPackaged && !!process.env.PORTABLE_EXECUTABLE_DIR
     return {
       currentVersion: app.getVersion(),
       isPackaged: app.isPackaged,
-      isPortable,
+      isPortable: app.isPackaged && isPortableRuntime(),
       autoUpdateEnabled: this.autoUpdateEnabled
     }
   }
@@ -152,6 +151,12 @@ class UpdateManager extends EventEmitter {
       return { ok: true }
     }
 
+    // Linux：仅 AppImage 形态支持自动更新（electron-updater 的 AppImageUpdater 依赖 APPIMAGE env）
+    if (process.platform === 'linux' && !process.env.APPIMAGE) {
+      this.setStatus('unavailable', { error: '当前 Linux 运行形态不支持自动更新，请手动下载最新 AppImage' })
+      return { ok: true }
+    }
+
     this.busy = true
     this.error = undefined
     try {
@@ -179,10 +184,9 @@ class UpdateManager extends EventEmitter {
     this.error = undefined
     acquireKeepAwake() // 下载期间阻止系统睡眠（后台保活）
     try {
-      // ── 增量优先（仅安装版；便携版 asar 解压在 %TEMP%，替换无意义）──
+      // ── 增量优先（仅 Windows 安装版；便携版/AppImage 跳过）──
       // 任何一步失败（补丁不存在/校验失败/网络错误）静默回退全量更新
-      const isPortable = !!process.env.PORTABLE_EXECUTABLE_DIR
-      if (!isPortable) {
+      if (!isPortableRuntime()) {
         try {
           const patch = await downloadAsarPatch(this.newVersion ?? '')
           if (patch.ok) {
