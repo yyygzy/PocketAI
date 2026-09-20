@@ -2,7 +2,9 @@ import { app, ipcMain, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import EventEmitter from 'node:events'
 import { IPC, type UpdateStatus } from '../shared/types'
+import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
+import { downloadAsarPatch, restartToApplyPatch, isPatchPending } from './update/asar-patcher'
 
 // ─── 单例 UpdateManager ──────────────────────────────────────────
 // 负责封装 electron-updater，维护状态机 + 互斥锁
@@ -175,13 +177,34 @@ class UpdateManager extends EventEmitter {
 
     this.busy = true
     this.error = undefined
+    acquireKeepAwake() // 下载期间阻止系统睡眠（后台保活）
     try {
+      // ── 增量优先（仅安装版；便携版 asar 解压在 %TEMP%，替换无意义）──
+      // 任何一步失败（补丁不存在/校验失败/网络错误）静默回退全量更新
+      const isPortable = !!process.env.PORTABLE_EXECUTABLE_DIR
+      if (!isPortable) {
+        try {
+          const patch = await downloadAsarPatch(this.newVersion ?? '')
+          if (patch.ok) {
+            this.progress = 100
+            this.downloadedBytes = patch.patchBytes
+            this.totalBytes = patch.newSize
+            this.setStatus('downloaded', { newVersion: this.newVersion })
+            return { ok: true }
+          }
+        } catch {
+          // 回退全量（electron-updater）
+        }
+      }
+
       await autoUpdater.downloadUpdate()
       return { ok: true }
     } catch (e: any) {
       this.error = e?.message ?? String(e)
       this.setStatus('error', { error: this.error })
       return { ok: false, error: this.error }
+    } finally {
+      releaseKeepAwake()
     }
   }
 
@@ -192,6 +215,18 @@ class UpdateManager extends EventEmitter {
     }
     if (!app.isPackaged) {
       return { ok: false, error: '开发环境不支持安装' }
+    }
+
+    // 增量补丁就绪 → 延迟替换脚本 + 重启（不走 NSIS 安装器）
+    if (isPatchPending()) {
+      try {
+        restartToApplyPatch() // 内部 app.quit()
+        return { ok: true }
+      } catch (e: any) {
+        this.error = e?.message ?? String(e)
+        this.setStatus('error', { error: this.error })
+        return { ok: false, error: this.error }
+      }
     }
 
     try {
