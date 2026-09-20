@@ -25,11 +25,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        # 国内网络可取消注释以下两行加速 Electron + NSIS 资源下载
+        # （注意：env 块不能全注释留空，GitHub Actions 会解析报错）
+        # env:
+        #   ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        #   ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
         run: npm ci
-        env:
-          # 国内网络可取消注释以下两行加速 Electron + NSIS 资源下载
-          # ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-          # ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
       - name: Build & Package (NSIS + Portable)
         run: npm run dist -- --win --x64
