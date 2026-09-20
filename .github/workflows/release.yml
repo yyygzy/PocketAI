@@ -53,3 +53,49 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+  build-linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # Linux 宿主原生模块由 postinstall 的 install-app-deps 处理
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+
+      - name: Build & Package (AppImage x64)
+        run: npm run dist:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts for debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-files-linux
+          path: |
+            dist/*.AppImage
+            dist/*.yml
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # electron-updater AppImage 更新需要 latest-linux.yml
+          # 精确匹配，避免把 dist/linux-unpacked 整目录传进 Release
+          files: |
+            dist/*.AppImage
+            dist/*.yml
+          generate_release_notes: true
+          draft: false
+          prerelease: false
