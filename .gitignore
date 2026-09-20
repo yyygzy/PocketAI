@@ -11,3 +11,5 @@ Thumbs.db
 
 # License 私钥仅发行侧本地保管，严禁入库
 build/license-private.pem
+# 已签发的激活码与台账含用户信息，仅本地保管
+licenses/
