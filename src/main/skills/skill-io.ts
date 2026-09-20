@@ -58,7 +58,14 @@ export async function exportSkill(
 /** 从 JSON 文件导入技能（结构校验 + id 隔离） */
 export async function importSkill(
   win: BrowserWindow
-): Promise<{ ok: boolean; canceled?: boolean; skill?: SkillRecord; error?: string }> {
+): Promise<{
+  ok: boolean
+  canceled?: boolean
+  skill?: SkillRecord
+  /** 是否与已有技能同名（允许并存，仅提示用户） */
+  nameDuplicated?: boolean
+  error?: string
+}> {
   try {
     const { canceled, filePaths } = await dialog.showOpenDialog(win, {
       properties: ['openFile'],
@@ -90,9 +97,12 @@ export async function importSkill(
     const description = typeof raw.description === 'string' ? raw.description.trim() : ''
     const icon = typeof raw.icon === 'string' && raw.icon.trim() ? raw.icon.trim().slice(0, 4) : '⚡'
 
+    // 同名检测（不阻断：导入始终生成独立副本，仅把信号回传渲染端提示）
+    const nameDuplicated = skillRepo.list().some((s) => s.name === name)
+
     // 不传 id → skillRepo.save 重新生成 randomUUID；isBuiltin 强制 false
     const skill = skillRepo.save({ name, description, icon, content, enabled: true })
-    return { ok: true, skill }
+    return { ok: true, skill, nameDuplicated }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }

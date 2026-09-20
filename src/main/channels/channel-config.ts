@@ -1,13 +1,14 @@
 // Channels 网关配置（app_config KV，前缀 channel.tg_）
 //
-// - Token 明文仅主进程可读（getChannelSecret），渲染端只拿 hasToken 标记
+// - Token 为字段级密文（secret-store），明文仅主进程可读（getChannelSecret），渲染端只拿 hasToken 标记
 // - 白名单为逗号分隔的 TG 数字 userId，空=拒绝所有（fail closed）
 // - offset 持久化：重启后不重复处理旧消息
 import { appConfigRepo } from '../db/repositories/app-config.repo'
+import { getSecret, setSecret, hasSecret, SECRET_KV_KEYS } from '../crypto/secret-store'
 import type { ChannelConfig } from '../../shared/types'
 
 const KEY_ENABLED = 'channel.tg_enabled'
-const KEY_TOKEN = 'channel.tg_token'
+const KEY_TOKEN = SECRET_KV_KEYS.TELEGRAM_TOKEN
 const KEY_WHITELIST = 'channel.tg_whitelist'
 const KEY_ASSISTANT = 'channel.tg_assistant_id'
 const KEY_PROVIDER = 'channel.tg_provider_id'
@@ -20,7 +21,7 @@ export function getChannelConfig(): ChannelConfig {
   return {
     enabled: appConfigRepo.get(KEY_ENABLED) === '1',
     token: '',
-    hasToken: !!appConfigRepo.get(KEY_TOKEN),
+    hasToken: hasSecret(KEY_TOKEN),
     whitelist: appConfigRepo.get(KEY_WHITELIST) ?? '',
     assistantId: appConfigRepo.get(KEY_ASSISTANT) ?? '',
     providerId: appConfigRepo.get(KEY_PROVIDER) ?? '',
@@ -37,10 +38,14 @@ export function setChannelConfig(
     appConfigRepo.set(KEY_ENABLED, input.enabled ? '1' : '0')
   }
   if (input.token === '') {
-    appConfigRepo.delete(KEY_TOKEN)
+    setSecret(KEY_TOKEN, '')
   } else if (typeof input.token === 'string' && input.token.trim()) {
     const t = input.token.trim()
-    if (t.length <= 256) appConfigRepo.set(KEY_TOKEN, t)
+    if (t.length > 256) {
+      // 不静默丢弃：明确拒绝，由渲染端提示用户
+      throw new Error('Bot Token 过长（上限 256 字符），请检查后重试')
+    }
+    setSecret(KEY_TOKEN, t)
   }
   if (typeof input.whitelist === 'string') {
     // 只保留数字与逗号（数字 ID 白名单），清理重复/首尾逗号
@@ -61,7 +66,7 @@ export function setChannelConfig(
 
 /** 主进程内部读取敏感信息（telegram-gateway / channel-service 专用，不得外传） */
 export function getChannelSecret(): { token: string; whitelist: number[] } {
-  const token = appConfigRepo.get(KEY_TOKEN) ?? ''
+  const token = getSecret(KEY_TOKEN)
   const whitelist = (appConfigRepo.get(KEY_WHITELIST) ?? '')
     .split(',')
     .map((s) => Number(s.trim()))

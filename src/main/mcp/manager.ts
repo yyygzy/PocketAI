@@ -35,12 +35,15 @@ interface RuntimeEntry {
   autoRestarts: number
   logBuffer: string[] // 最近的 stderr 日志（环形）
   startToken: number // 启动 token，用于异步竞争保护
+  startPromise: Promise<McpServerRuntime> | null // 进行中的启动（并发去重，防重复 spawn 孤儿进程）
 }
 
 const LOG_BUFFER_SIZE = 200
 
 class McpManager extends EventEmitter {
   private runtimes = new Map<string, RuntimeEntry>()
+  /** 启动中的 in-flight Promise（同步登记，早于任何 await，并发 start 直接复用） */
+  private startingPromises = new Map<string, Promise<McpServerRuntime>>()
 
   /** 列出所有持久化记录（不含运行时状态） */
   listRecords(): McpServerRecord[] {
@@ -67,7 +70,7 @@ class McpManager extends EventEmitter {
     }
   }
 
-  /** 启动 MCP Server：spawn → initialize 握手 → tools/list */
+  /** 启动 MCP Server：并发调用自动去重（spawn → initialize 握手 → tools/list） */
   async start(id: string): Promise<McpServerRuntime> {
     const record = mcpServerRepo.get(id)
     if (!record) throw new Error(`MCP Server 不存在: ${id}`)
@@ -77,7 +80,26 @@ class McpManager extends EventEmitter {
     if (existing && existing.client && existing.status === 'running') {
       return this.toRuntime(record)
     }
+    // 启动进行中：复用同一个 Promise。否则连点会在 await 间隙各 spawn 一个进程，
+    // 后一个 entry 覆盖 map，先 spawn 的进程变成无人跟踪的孤儿
+    const inflight = this.startingPromises.get(id)
+    if (inflight) return inflight
 
+    const promise = this.doStart(id, record, existing ?? null)
+    // 同步登记（doStart 内首个 await 之前的代码也同步执行，但 map 在此刻已可见）
+    this.startingPromises.set(id, promise)
+    try {
+      return await promise
+    } finally {
+      this.startingPromises.delete(id)
+    }
+  }
+
+  private async doStart(
+    id: string,
+    record: McpServerRecord,
+    existing: RuntimeEntry | null
+  ): Promise<McpServerRuntime> {
     if (record.transport === 'http') {
       // v1 不实现 HTTP transport，留待 v2
       throw new Error('v1 暂不支持 HTTP 传输的 MCP Server')
@@ -136,7 +158,8 @@ class McpManager extends EventEmitter {
       lastError: null,
       autoRestarts: existing?.autoRestarts ?? 0,
       logBuffer: existing?.logBuffer ?? [],
-      startToken
+      startToken,
+      startPromise: null
     }
     this.runtimes.set(id, entry)
     this.emitStatus(id, 'starting')
@@ -174,17 +197,25 @@ class McpManager extends EventEmitter {
       // 拉取工具列表
       const toolsResult = await client.request<{ tools: any[] }>('tools/list', {}, INIT_TIMEOUT)
       entry.tools = (toolsResult?.tools ?? []).map((t) => this.normalizeMcpTool(t, id))
+      // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
+      if (entry.status === 'stopped') {
+        client.shutdown().catch(() => {})
+        return this.toRuntime(record)
+      }
       entry.status = 'running'
       entry.lastError = null
       this.emitStatus(id, 'running')
       return this.toRuntime(record)
     } catch (e) {
-      entry.status = 'error'
-      entry.lastError = (e as Error).message
       entry.client = null
       // 出错时关闭进程（如果已 spawn）
       client.shutdown().catch(() => {})
-      this.emitStatus(id, 'error', entry.lastError)
+      // 已被 stop 标记的不再回 error（保持 stopped），但异常仍抛给等待方
+      if (entry.status !== 'stopped') {
+        entry.status = 'error'
+        entry.lastError = (e as Error).message
+        this.emitStatus(id, 'error', entry.lastError)
+      }
       throw e
     }
   }
@@ -287,11 +318,16 @@ class McpManager extends EventEmitter {
       entry.status = 'starting'
       entry.lastError = `进程意外退出 (code=${code}, signal=${signal?.toString() ?? 'null'})，第 ${entry.autoRestarts} 次自动重启`
       this.emitStatus(id, 'starting', entry.lastError)
-      // 异步重启，不阻塞 exit 回调
-      this.start(id).catch((e) => {
-        // 失败由 start 内部已 emit error
-        void e
-      })
+      // 异步重启，不阻塞 exit 回调。若旧启动 Promise 仍在飞行（握手阶段崩溃），
+      // 先等其落定并移出 in-flight 表，否则 start() 会去重到旧 Promise 而不重新 spawn
+      const inflight = this.startingPromises.get(id)
+      const reboot = () =>
+        this.start(id).catch((e) => {
+          // 失败由 start 内部已 emit error
+          void e
+        })
+      if (inflight) void inflight.finally(reboot)
+      else void reboot()
       return
     }
 

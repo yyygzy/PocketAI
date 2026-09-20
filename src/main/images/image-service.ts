@@ -188,17 +188,24 @@ export async function runImageGenerate(payload: ImageGeneratePayload): Promise<I
       return { ok: false, error: '响应中没有图片数据' }
     }
 
-    // ---------- 落盘 + 写历史 ----------
+    // ---------- 落盘 + 写历史（DB 写失败时回滚已写文件，不留孤儿） ----------
     const saved = saveImage(buf, ext)
-    const record: ImageRecord = imageRepo.add({
-      prompt,
-      model,
-      providerId: payload.providerId,
-      providerName: provider.name,
-      size,
-      fileName: saved.rel,
-      bytes: saved.bytes
-    })
+    let record: ImageRecord
+    try {
+      record = imageRepo.add({
+        prompt,
+        model,
+        providerId: payload.providerId,
+        providerName: provider.name,
+        size,
+        fileName: saved.rel,
+        bytes: saved.bytes
+      })
+    } catch (dbErr) {
+      deleteQuiet(saved.abs)
+      deleteQuiet(resolveDataPath(thumbRelOf(saved.rel)))
+      throw dbErr
+    }
     pruneHistory()
 
     return { ok: true, record, durationMs: Date.now() - started }
