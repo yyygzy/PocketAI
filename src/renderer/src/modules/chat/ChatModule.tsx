@@ -13,6 +13,7 @@ import { ConversationList } from './ConversationList'
 import { ChatView } from './ChatView'
 import type { CompareColumn } from './ComparisonColumns'
 import { useI18n } from '../../i18n'
+import { useToast } from '../../components/ToastProvider'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -30,6 +31,7 @@ function tempMessage(role: 'user' | 'assistant', content: string, model?: string
 
 export const ChatModule: React.FC = () => {
   const { t } = useI18n()
+  const toast = useToast()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [currentAssistantId, setCurrentAssistantId] = useState<string>('asst-default')
@@ -246,7 +248,7 @@ export const ChatModule: React.FC = () => {
   const handleExportConv = async (id: string) => {
     const r = await window.pocketai.exportConversation(id)
     if (!r.ok || !r.data) {
-      alert(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+      toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
       return
     }
     const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' })
@@ -270,11 +272,11 @@ export const ChatModule: React.FC = () => {
         const text = await file.text()
         const payload = JSON.parse(text)
         const r = await window.pocketai.importConversation(payload)
-        if (!r.ok) { alert(t('chat.importFail', { e: r.error ?? t('common.unknownError') })); return }
-        alert(t('chat.importOk', { n: r.messageCount ?? 0 }))
+        if (!r.ok) { toast.error(t('chat.importFail', { e: r.error ?? t('common.unknownError') })); return }
+        toast.success(t('chat.importOk', { n: r.messageCount ?? 0 }))
         await reloadConversations()
       } catch (e: any) {
-        alert(t('chat.importFail', { e: e.message }))
+        toast.error(t('chat.importFail', { e: e.message }))
       }
     }
     input.click()
@@ -459,7 +461,7 @@ export const ChatModule: React.FC = () => {
     if (!currentConvId) return
     const r = await window.pocketai.forkConversation(currentConvId, messageId)
     if (!r.ok || !r.conversation) {
-      alert(r.error ?? '分支创建失败')
+      toast.error(r.error ?? '分支创建失败')
       return
     }
     await reloadConversations()
@@ -467,7 +469,7 @@ export const ChatModule: React.FC = () => {
     setCurrentConvId(r.conversation.id)
     await loadMessages(r.conversation.id)
     restoreLastModel(r.conversation)
-  }, [currentConvId, reloadConversations, loadMessages, restoreLastModel])
+  }, [currentConvId, reloadConversations, loadMessages, restoreLastModel, toast])
 
   // 另存为笔记：取消息内容创建笔记，然后跳到笔记模块并选中
   const handleSaveAsNote = useCallback(async (messageId: string) => {
@@ -479,9 +481,9 @@ export const ChatModule: React.FC = () => {
       window.dispatchEvent(new CustomEvent('pocketai:open-note', { detail: { id: note.id } }))
     } catch (e) {
       // 主进程版本过旧/未重启时 IPC 无 handler，需给出明确提示而非静默无反应
-      window.alert(`保存为笔记失败，请完全退出并重启应用后再试。\n${(e as Error)?.message ?? e}`)
+      toast.error(`保存为笔记失败，请完全退出并重启应用后再试。\n${(e as Error)?.message ?? e}`)
     }
-  }, [messages])
+  }, [messages, toast])
 
   return (
     <div className="flex h-full min-w-0 relative">

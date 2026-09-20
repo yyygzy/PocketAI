@@ -28,6 +28,7 @@ import type {
   ChannelStatusEvent
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { useToast } from '../../components/ToastProvider'
 import { requestSandboxOpenApps } from '../sandbox/SandboxModule'
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
@@ -107,6 +108,7 @@ const TabBtn: React.FC<{ active: boolean; onClick: () => void; children: React.R
 // ============================== MCP 服务管理 ==============================
 const McpPanel: React.FC = () => {
   const { t } = useI18n()
+  const toast = useToast()
   const [records, setRecords] = useState<McpServerRecord[]>([])
   const [runtimes, setRuntimes] = useState<McpServerRuntime[]>([])
   const [editing, setEditing] = useState<Partial<McpServerRecord> | null>(null)
@@ -242,14 +244,14 @@ const McpPanel: React.FC = () => {
 
   const handleStart = async (id: string) => {
     const r = await window.pocketai.startMcpServer(id)
-    if (!r.ok) alert(t('agent.startFail', { e: r.error ?? t('common.unknownError') }))
+    if (!r.ok) toast.error(t('agent.startFail', { e: r.error ?? t('common.unknownError') }))
   }
   const handleStop = async (id: string) => {
     await window.pocketai.stopMcpServer(id)
   }
   const handleRestart = async (id: string) => {
     const r = await window.pocketai.restartMcpServer(id)
-    if (!r.ok) alert(t('agent.restartFail', { e: r.error ?? t('common.unknownError') }))
+    if (!r.ok) toast.error(t('agent.restartFail', { e: r.error ?? t('common.unknownError') }))
   }
   const handleDelete = async (id: string) => {
     if (!confirm(t('agent.deleteConfirm'))) return
@@ -1493,6 +1495,7 @@ function extractFirstHtmlBlock(text: string): string | null {
 
 const MessageCard: React.FC<{ m: AgentMessage }> = ({ m }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [copied, setCopied] = React.useState(false)
   const [savedToSandbox, setSavedToSandbox] = React.useState(false)
   const [showReasoning, setShowReasoning] = React.useState(false)
@@ -1610,7 +1613,7 @@ const MessageCard: React.FC<{ m: AgentMessage }> = ({ m }) => {
             await window.pocketai.createSandboxFile(t('sandbox.agentDefaultName'), htmlBlock)
             setSavedToSandbox(true)
           } catch (err) {
-            alert((err as Error).message)
+            toast.error((err as Error).message)
           }
         }
         const openInstall = () => {
@@ -1636,7 +1639,7 @@ const MessageCard: React.FC<{ m: AgentMessage }> = ({ m }) => {
               new CustomEvent('pocketai:switch-module', { detail: { moduleId: 'sandbox' } })
             )
           } catch (err) {
-            alert((err as Error).message)
+            toast.error((err as Error).message)
           } finally {
             setInstallBusy(false)
           }
@@ -1713,6 +1716,7 @@ const MessageCard: React.FC<{ m: AgentMessage }> = ({ m }) => {
 // Token 明文仅存主进程，渲染端只拿 hasToken 标记（不回显）
 const ChannelsPanel: React.FC = () => {
   const { t } = useI18n()
+  const toast = useToast()
   const [cfg, setCfgState] = useState<ChannelConfig>({
     enabled: false,
     token: '',
@@ -1745,7 +1749,7 @@ const ChannelsPanel: React.FC = () => {
 
   const handleStart = async () => {
     const r = await window.pocketai.startChannel()
-    if (!r.ok) alert(r.error ?? t('common.unknownError'))
+    if (!r.ok) toast.error(r.error ?? t('common.unknownError'))
   }
   const handleStop = async () => {
     await window.pocketai.stopChannel()

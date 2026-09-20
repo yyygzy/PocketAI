@@ -8,6 +8,7 @@ import type {
   ProviderRecord
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { useToast } from '../../components/ToastProvider'
 
 export const KnowledgeModule: React.FC = () => {
   const { t } = useI18n()
@@ -264,6 +265,7 @@ const KbForm: React.FC<{
 // ---------- 知识库详情：文档 + 检索测试 ----------
 const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, onChanged }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [docs, setDocs] = useState<KbDocument[]>([])
   const [editing, setEditing] = useState(false)
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
@@ -305,7 +307,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
       await window.pocketai.reindexKbDocument(kb.id, docId)
       await refresh()
     } catch (e) {
-      window.alert((e as Error).message)
+      toast.error((e as Error).message)
     } finally {
       setBusy(false)
     }

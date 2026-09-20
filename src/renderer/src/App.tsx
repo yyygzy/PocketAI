@@ -3,6 +3,7 @@ import { Sidebar, type ModuleId } from './components/Sidebar'
 import { TabBar, type Tab } from './components/TabBar'
 import { Workspace } from './components/Workspace'
 import { ToolApprovalDialog } from './components/ToolApprovalDialog'
+import { ToastProvider } from './components/ToastProvider'
 import { useI18n } from './i18n'
 
 let tabCounter = 0
@@ -142,57 +143,59 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      {/* 主内容容器：锁定时整棵子树被 inert，遮罩本身放在容器外不受影响 */}
-      <div ref={contentRef} className="flex flex-1 min-w-0 h-full">
-        <Sidebar
-          active={activeModule}
-          onChange={handleModuleChange}
-          collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((c) => !c)}
-        />
-        <div className="flex flex-col flex-1 min-w-0">
-          <TabBar
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onSelect={setActiveTabId}
-            onClose={handleCloseTab}
-            onNew={handleNewTab}
+    <ToastProvider>
+      <div className="flex h-screen w-screen overflow-hidden">
+        {/* 主内容容器：锁定时整棵子树被 inert，遮罩本身放在容器外不受影响 */}
+        <div ref={contentRef} className="flex flex-1 min-w-0 h-full">
+          <Sidebar
+            active={activeModule}
+            onChange={handleModuleChange}
+            collapsed={collapsed}
+            onToggleCollapse={() => setCollapsed((c) => !c)}
           />
-          <Workspace moduleId={(activeTab?.moduleId as ModuleId) || 'chat'} />
-        </div>
-      </div>
-
-      {/* 工具调用审批弹窗（shell_exec 等）；锁定时不挂载 */}
-      {!locked && <ToolApprovalDialog />}
-
-      {locked && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm">
-          <div className="w-80 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-8 text-center shadow-2xl">
-            <div className="mb-4 text-4xl">🔒</div>
-            <h2 className="mb-2 text-xl font-semibold text-[var(--color-text)]">已锁定</h2>
-            <p className="mb-6 text-sm text-[var(--color-text-muted)]">PocketAI 隐私保护已激活</p>
-            {dbEncrypted && (
-              <input
-                type="password"
-                autoFocus
-                value={lockPwd}
-                onChange={(e) => setLockPwd(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-                placeholder="输入主密码解锁"
-                className="mb-3 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-4 py-2 text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              />
-            )}
-            {lockErr && <div className="mb-3 text-sm text-[var(--color-danger)]">{lockErr}</div>}
-            <button
-              onClick={handleUnlock}
-              className="w-full rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-[var(--color-on-accent)] hover:opacity-90"
-            >
-              {dbEncrypted ? '解锁' : '立即解锁'}
-            </button>
+          <div className="flex flex-col flex-1 min-w-0">
+            <TabBar
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onSelect={setActiveTabId}
+              onClose={handleCloseTab}
+              onNew={handleNewTab}
+            />
+            <Workspace moduleId={(activeTab?.moduleId as ModuleId) || 'chat'} />
           </div>
         </div>
-      )}
-    </div>
+
+        {/* 工具调用审批弹窗（shell_exec 等）；锁定时不挂载 */}
+        {!locked && <ToolApprovalDialog />}
+
+        {locked && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm">
+            <div className="w-80 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-8 text-center shadow-2xl">
+              <div className="mb-4 text-4xl">🔒</div>
+              <h2 className="mb-2 text-xl font-semibold text-[var(--color-text)]">已锁定</h2>
+              <p className="mb-6 text-sm text-[var(--color-text-muted)]">PocketAI 隐私保护已激活</p>
+              {dbEncrypted && (
+                <input
+                  type="password"
+                  autoFocus
+                  value={lockPwd}
+                  onChange={(e) => setLockPwd(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+                  placeholder="输入主密码解锁"
+                  className="mb-3 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-4 py-2 text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                />
+              )}
+              {lockErr && <div className="mb-3 text-sm text-[var(--color-danger)]">{lockErr}</div>}
+              <button
+                onClick={handleUnlock}
+                className="w-full rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-[var(--color-on-accent)] hover:opacity-90"
+              >
+                {dbEncrypted ? '解锁' : '立即解锁'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </ToastProvider>
   )
 }
