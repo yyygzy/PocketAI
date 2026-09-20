@@ -34,6 +34,7 @@ export const en: Record<string, string> = {
   'sidebar.settings': 'Settings',
   'sidebar.expand': 'Expand sidebar',
   'sidebar.collapse': 'Collapse sidebar',
+  'sidebar.lock': 'Lock',
   'controls.toggleTheme': 'Toggle light/dark theme',
   'controls.toggleLang': '切换为中文',
 
@@ -166,6 +167,11 @@ export const en: Record<string, string> = {
   'chat.branchNext': 'Next reply',
   'chat.branchPos': 'Reply {i} / {n}',
   'chat.branchHint': 'Multiple reply branches for the same question — switch with the arrows',
+  'chat.branchCompare': 'Compare all branches side by side',
+  'chat.branchExitCompare': 'Exit compare',
+  'chat.branchSetActive': 'Set active',
+  'chat.branchActive': 'Active branch',
+  'chat.branchUntitled': 'Unknown model',
 
   // ── Chat view / composer / model selector ──
   'chatview.start': 'Start a new conversation',
@@ -689,6 +695,13 @@ export const en: Record<string, string> = {
   'enc.changePwd': 'Change password',
   'enc.disable': 'Disable encryption',
   'enc.lock': '🔒 Lock',
+  'enc.autoLock': 'Auto-lock',
+  'enc.autoLockNever': 'Never',
+  'enc.autoLockMin': '{n} min',
+  'enc.autoLockHour': '1 hour',
+  'enc.autoLockSaved': 'Saved',
+  'enc.autoLockDesc': 'Automatically lock after the selected idle time; unlock with the master password',
+  'enc.lockNow': 'Lock now (Ctrl+L)',
   'enc.hint': 'AES-256-GCM encryption; the master key is derived via scrypt. Generate a recovery key so a forgotten password does not lock you out forever.',
   'enc.setPwdTitle': 'Set master password',
   'enc.setPwdDesc': 'AES-256-GCM encryption will be enabled for the database.',

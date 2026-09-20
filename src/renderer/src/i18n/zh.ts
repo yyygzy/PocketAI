@@ -34,6 +34,7 @@ export const zh: Record<string, string> = {
   'sidebar.settings': '设置',
   'sidebar.expand': '展开侧栏',
   'sidebar.collapse': '折叠侧栏',
+  'sidebar.lock': '锁定',
   'controls.toggleTheme': '切换明暗主题',
   'controls.toggleLang': 'Switch to English',
 
@@ -166,6 +167,11 @@ export const zh: Record<string, string> = {
   'chat.branchNext': '下一个回复',
   'chat.branchPos': '第 {i} / {n} 个回复',
   'chat.branchHint': '同一问题的多个回复分支，用左右箭头切换',
+  'chat.branchCompare': '并排对比所有分支',
+  'chat.branchExitCompare': '退出对比',
+  'chat.branchSetActive': '设为当前',
+  'chat.branchActive': '当前分支',
+  'chat.branchUntitled': '未知模型',
 
   // ── 对话视图/输入框/模型选择 ──
   'chatview.start': '开始新对话',
@@ -689,6 +695,13 @@ export const zh: Record<string, string> = {
   'enc.changePwd': '修改密码',
   'enc.disable': '禁用加密',
   'enc.lock': '🔒 锁定',
+  'enc.autoLock': '自动锁屏',
+  'enc.autoLockNever': '永不',
+  'enc.autoLockMin': '{n} 分钟',
+  'enc.autoLockHour': '1 小时',
+  'enc.autoLockSaved': '已保存',
+  'enc.autoLockDesc': '无操作超过所选时间后自动锁定，需输入主密码解锁',
+  'enc.lockNow': '立即锁定（Ctrl+L）',
   'enc.hint': 'AES-256-GCM 加密，主密码通过 scrypt 派生密钥。建议生成恢复密钥，以防忘记密码后数据无法找回。',
   'enc.setPwdTitle': '设置主密码',
   'enc.setPwdDesc': '将对数据库启用 AES-256-GCM 加密。',

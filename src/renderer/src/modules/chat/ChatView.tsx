@@ -5,6 +5,7 @@ import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
 import { ComparisonColumns, type CompareColumn } from './ComparisonColumns'
 import { BranchNav } from './BranchNav'
+import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
 import { ChatConfigBar } from './ChatConfigBar'
 
@@ -97,6 +98,8 @@ export const ChatView: React.FC<Props> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   /** 各轮次手动选中的分支（turnKey → batchKey）；无条目时显示最新分支 */
   const [activeBranchMap, setActiveBranchMap] = useState<Record<string, string>>({})
+  /** 处于并排对比模式的轮次（turnKey 集合） */
+  const [compareTurns, setCompareTurns] = useState<Set<string>>(new Set())
 
   // 分支聚焦：重新生成/编辑重发完成后自动切到新分支
   useEffect(() => {
@@ -229,6 +232,25 @@ export const ChatView: React.FC<Props> = ({
     setActiveBranchMap((prev) => ({ ...prev, [turnKey]: key }))
   }
 
+  const toggleCompare = (turnKey: string): void => {
+    setCompareTurns((prev) => {
+      const next = new Set(prev)
+      if (next.has(turnKey)) next.delete(turnKey)
+      else next.add(turnKey)
+      return next
+    })
+  }
+
+  /** 对比模式点「设为当前」：切激活分支并退出该轮对比 */
+  const activateBranch = (turnKey: string, batchKey: string): void => {
+    setActiveBranchMap((prev) => ({ ...prev, [turnKey]: batchKey }))
+    setCompareTurns((prev) => {
+      const next = new Set(prev)
+      next.delete(turnKey)
+      return next
+    })
+  }
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [renderedTurns.length, liveColumns])
@@ -308,6 +330,7 @@ export const ChatView: React.FC<Props> = ({
               .map((r) => r.model)
               .filter(Boolean)
               .join(' · ')
+            const comparing = compareTurns.has(turnKey) && turn.batches.length > 1
             return (
               <div key={turn.user?.id ?? `turn-${ti}`} className="space-y-4">
                 {turn.user && (
@@ -325,7 +348,17 @@ export const ChatView: React.FC<Props> = ({
                     onSaveAsNote={onSaveAsNote}
                   />
                 )}
-                {activeBatch.length === 1 ? (
+                {comparing ? (
+                  <BranchCompare
+                    batches={turn.batches}
+                    activeIndex={activeIdx}
+                    onActivate={(bi) => activateBranch(turnKey, batchKeyOf(turn.batches[bi], bi))}
+                    selectedIds={selectedIds}
+                    onToggleSelect={toggleSelect}
+                    onCopy={handleCopyFallback}
+                    onDelete={handleDeleteOne}
+                  />
+                ) : activeBatch.length === 1 ? (
                   <MessageBubble
                     role="assistant"
                     content={activeBatch[0].content}
@@ -361,6 +394,8 @@ export const ChatView: React.FC<Props> = ({
                     index={activeIdx}
                     total={turn.batches.length}
                     label={label}
+                    comparing={comparing}
+                    onToggleCompare={() => toggleCompare(turnKey)}
                     onPrev={() => switchBranch(turn, turnKey, -1)}
                     onNext={() => switchBranch(turn, turnKey, 1)}
                   />
