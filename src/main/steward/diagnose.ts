@@ -74,7 +74,7 @@ export function runAudit(): AuditResult {
         label: '自动锁屏',
         level: 'warn',
         detail: '未开启自动锁屏，最小化或离开后数据一直可读',
-        suggestion: '设置 → 隐私与加密 → 开启自动锁屏超时'
+        suggestion: '设置 → 隐私与加密 → 自动锁屏，选择无操作锁定时间；也可用侧边栏「锁定」按钮或 Ctrl+L 立即锁定'
       })
     }
   } else {

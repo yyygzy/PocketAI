@@ -64,6 +64,18 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
     }
   }, [])
 
+  // 手动锁屏快捷键：Ctrl/Cmd + L（与主窗口一致）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault()
+        window.pocketai.lock().catch(() => {})
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // 窗口标题 = 模块名
   useEffect(() => {
     const key = MODULE_TITLES[moduleId]

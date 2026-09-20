@@ -143,6 +143,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* 主题 + 语言 */}
       <ThemeLangControls collapsed={collapsed} />
 
+      {/* 手动锁屏：立即锁定，清密钥 + 全窗口遮罩 */}
+      <button
+        onClick={() => window.pocketai.lock().catch(() => {})}
+        className="h-10 border-t border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors flex items-center justify-center gap-2 text-sm"
+        title={t('enc.lockNow')}
+      >
+        <span className="text-base leading-none">🔒</span>
+        {!collapsed && <span>{t('sidebar.lock')}</span>}
+      </button>
+
       {/* 折叠按钮 */}
       <button
         onClick={onToggleCollapse}

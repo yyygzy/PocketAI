@@ -130,6 +130,8 @@ const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => 
       <StatusRow label={t('enc.status')} value={unlocked ? t('enc.unlocked') : t('enc.locked')} ok={unlocked} />
       <StatusRow label={t('enc.field')} value={t('enc.fieldValue')} ok />
 
+      <AutoLockRow />
+
       <div className="flex flex-wrap gap-2 pt-1">
         {!encrypted && <EnableEncryptionBtn onDone={onChange} setNotice={setNotice} />}
         {encrypted && unlocked && <ChangePasswordBtn onDone={onChange} setNotice={setNotice} />}
@@ -155,6 +157,61 @@ const StatusRow: React.FC<{ label: string; value: string; ok?: boolean }> = ({ l
     <span className={ok ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}>{value}</span>
   </div>
 )
+
+// 自动锁屏超时选项（ms）；0=永不
+const AUTO_LOCK_OPTIONS = [0, 60_000, 300_000, 900_000, 1_800_000, 3_600_000]
+
+const AutoLockRow: React.FC = () => {
+  const { t } = useI18n()
+  const [value, setValue] = useState<number | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    window.pocketai
+      .getLockStatus()
+      .then((s) => setValue(s.autoLockTimeout ?? 0))
+      .catch(() => setValue(0))
+  }, [])
+
+  const label = (ms: number) =>
+    ms === 0 ? t('enc.autoLockNever') : ms === 3_600_000 ? t('enc.autoLockHour') : t('enc.autoLockMin', { n: Math.round(ms / 60_000) })
+
+  async function change(ms: number) {
+    setValue(ms)
+    setSaved(false)
+    try {
+      const r = await window.pocketai.setAutoLockTimeout(ms)
+      if (r?.ok) {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 1500)
+      }
+    } catch {
+      /* 保持所选值，下次打开设置页会回读真实状态 */
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-[var(--color-text-muted)] w-16">{t('enc.autoLock')}</span>
+        <select
+          className="input py-1 text-xs w-32"
+          value={value ?? 0}
+          disabled={value === null}
+          onChange={(e) => change(Number(e.target.value))}
+        >
+          {AUTO_LOCK_OPTIONS.map((ms) => (
+            <option key={ms} value={ms}>
+              {label(ms)}
+            </option>
+          ))}
+        </select>
+        {saved && <span className="text-[11px] text-[var(--color-success)]">{t('enc.autoLockSaved')}</span>}
+      </div>
+      <div className="text-[11px] text-[var(--color-text-muted)] pl-[4.5rem]">{t('enc.autoLockDesc')}</div>
+    </div>
+  )
+}
 
 type NoticeFn = (n: { ok: boolean; text: string } | null) => void
 

@@ -131,6 +131,18 @@ export default function App() {
     }
   }, [])
 
+  // 手动锁屏快捷键：Ctrl/Cmd + L（窗口级，独立窗口也有自己的监听）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault()
+        window.pocketai.lock().catch(() => {})
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // 允许其他模块通过 window 事件请求切换模块（如聊天「另存为笔记」跳到笔记页）
   useEffect(() => {
     const handler = (e: Event) => {
