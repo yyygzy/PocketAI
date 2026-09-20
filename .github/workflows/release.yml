@@ -89,6 +89,7 @@ jobs:
           name: dist-files-linux
           path: |
             dist/*.AppImage
+            dist/*.blockmap
             dist/*.yml
 
       - name: Create GitHub Release
@@ -96,10 +97,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          # electron-updater AppImage 更新需要 latest-linux.yml
+          # electron-updater AppImage 更新需要 latest-linux.yml + blockmap（增量下载）
           # 精确匹配，避免把 dist/linux-unpacked 整目录传进 Release
           files: |
             dist/*.AppImage
+            dist/*.blockmap
             dist/*.yml
           generate_release_notes: true
           draft: false
