@@ -78,6 +78,7 @@ import { masterKeyManager } from '../crypto/master-key'
 import { exportFieldCredentials, restoreFieldCredentials } from '../crypto/credential-rotation'
 import { recoveryKeyManager } from '../crypto/recovery-key'
 import { clipboardGuard } from '../crypto/clipboard-guard'
+import { encryptWithPassword, decryptWithPassword } from '../crypto/portable-crypto'
 import { unlockCoordinator } from '../crypto/unlock-coordinator'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { noteRepo } from '../db/repositories/note.repo'
@@ -314,6 +315,84 @@ export function registerIpcHandlers(): void {
       const md = renderConversationToMarkdown(conv, messages)
       fs.writeFileSync(filePath, md, 'utf8')
       return { ok: true, path: filePath }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(IPC.CONVERSATION_EXPORT_ENCRYPTED, async (e, id: string, password: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    try {
+      const conv = conversationRepo.get(String(id ?? ''))
+      if (!conv) return { ok: false, error: '会话不存在' }
+      const messages = messageRepo.listByConversation(String(id ?? ''))
+      const assistant = conv.assistantId ? assistantRepo.get(conv.assistantId) ?? null : null
+
+      const payload = {
+        version: 1,
+        exportedAt: Date.now(),
+        conversation: conv,
+        messages,
+        assistant
+      }
+      const encrypted = encryptWithPassword(password, JSON.stringify(payload))
+
+      const safeName = conv.title.replace(/[<>:"/\\|?*]/g, '_').trim() || 'conversation'
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: `${safeName}.moxia`,
+        filters: [
+          { name: 'Moxia 加密文件', extensions: ['moxia'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      })
+      if (canceled || !filePath) return { ok: true, canceled: true }
+
+      fs.writeFileSync(filePath, encrypted)
+      return { ok: true, path: filePath }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(IPC.CONVERSATION_IMPORT_ENCRYPTED, async (e, password: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        properties: ['openFile'],
+        filters: [
+          { name: 'Moxia 加密文件', extensions: ['moxia'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      })
+      if (canceled || !filePaths?.length) return { ok: true, canceled: true }
+
+      const blob = fs.readFileSync(filePaths[0])
+      const plaintext = decryptWithPassword(password, blob)
+      const payload = JSON.parse(plaintext)
+
+      if (!payload?.conversation || !Array.isArray(payload.messages)) {
+        return { ok: false, error: '无效的加密文件内容' }
+      }
+
+      const c = payload.conversation
+      const newConv = conversationRepo.create({
+        assistantId: c.assistantId ?? null,
+        title: (c.title ?? '导入的会话') + ' (加密导入)',
+        modelLabel: c.modelLabel
+      })
+      let count = 0
+      for (const m of payload.messages) {
+        messageRepo.insert({
+          conversationId: newConv.id,
+          role: m.role,
+          content: m.content ?? '',
+          provider: m.provider ?? null,
+          model: m.model ?? null,
+          parentId: null
+        })
+        count++
+      }
+      return { ok: true, conversationId: newConv.id, messageCount: count }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }

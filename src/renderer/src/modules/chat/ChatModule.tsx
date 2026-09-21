@@ -281,6 +281,36 @@ export const ChatModule: React.FC = () => {
     input.click()
   }
 
+  // ---------- 加密导出/导入 ----------
+  const [cryptoPrompt, setCryptoPrompt] = useState<null | { kind: 'export' | 'import'; id?: string }>(null)
+  const [cryptoPwd, setCryptoPwd] = useState('')
+
+  const handleExportEncrypted = (id: string) => {
+    setCryptoPwd('')
+    setCryptoPrompt({ kind: 'export', id })
+  }
+  const handleImportEncrypted = () => {
+    setCryptoPwd('')
+    setCryptoPrompt({ kind: 'import' })
+  }
+  const confirmCrypto = async () => {
+    if (!cryptoPrompt) return
+    const pwd = cryptoPwd
+    setCryptoPrompt(null); setCryptoPwd('')
+    if (cryptoPrompt.kind === 'export') {
+      const r = await window.pocketai.exportConversationEncrypted(cryptoPrompt.id!, pwd)
+      if (r.canceled) return
+      if (!r.ok) { toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') })); return }
+      toast.success(t('chat.exportSuccess', { path: r.path ?? '' }))
+    } else {
+      const r = await window.pocketai.importConversationEncrypted(pwd)
+      if (r.canceled) return
+      if (!r.ok) { toast.error(t('chat.importFail', { e: r.error ?? t('common.unknownError') })); return }
+      toast.success(t('chat.importOk', { n: r.messageCount ?? 0 }))
+      await reloadConversations()
+    }
+  }
+
   const handleTargetsChange = (next: ChatTarget[]) => {
     userEditedTargetsRef.current = true
     setTargets(next)
@@ -500,7 +530,9 @@ export const ChatModule: React.FC = () => {
             onDelete={handleDeleteConv}
             onRename={handleRenameConv}
             onExport={handleExportConv}
+            onExportEncrypted={handleExportEncrypted}
             onImport={handleImportConv}
+            onImportEncrypted={handleImportEncrypted}
             embedded
           />
         </div>
@@ -540,6 +572,37 @@ export const ChatModule: React.FC = () => {
             setMarketDetailId(undefined)
           }}
         />
+      )}
+
+      {/* 密码弹窗 — 加密导出/导入 */}
+      {cryptoPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setCryptoPrompt(null)}>
+          <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-xl w-96 p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold mb-1">
+              {cryptoPrompt.kind === 'export' ? '🔐 加密导出会话' : '🔓 解密导入会话'}
+            </h3>
+            <p className="text-xs text-[var(--color-text-muted)] mb-4">
+              {cryptoPrompt.kind === 'export'
+                ? '输入一个密码保护导出的会话。导入时需要用同一个密码解密。'
+                : '输入加密文件的密码。密码错误或文件损坏都会导致解密失败。'}
+            </p>
+            <input
+              type="password"
+              autoFocus
+              value={cryptoPwd}
+              onChange={(e) => setCryptoPwd(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') confirmCrypto(); if (e.key === 'Escape') setCryptoPrompt(null) }}
+              placeholder="输入密码"
+              className="w-full px-3 py-2 border border-[var(--color-border)] rounded bg-[var(--color-input-bg)] text-sm outline-none focus:border-[var(--color-accent)]"
+            />
+            <div className="flex gap-2 mt-4 justify-end">
+              <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">取消</button>
+              <button onClick={confirmCrypto} disabled={!cryptoPwd} className="px-3 py-1.5 text-xs bg-[var(--color-accent)] text-white rounded disabled:opacity-50 hover:opacity-90">
+                {cryptoPrompt.kind === 'export' ? '导出' : '解密导入'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

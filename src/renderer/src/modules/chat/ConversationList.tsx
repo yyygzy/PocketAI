@@ -11,7 +11,9 @@ interface Props {
   onDelete: (id: string) => void
   onRename?: (id: string, title: string) => void
   onExport?: (id: string) => void
+  onExportEncrypted?: (id: string) => void
   onImport?: () => void
+  onImportEncrypted?: () => void
   /** 嵌入到已有侧栏容器时，去掉自身宽度/边框/背景 */
   embedded?: boolean
 }
@@ -34,7 +36,9 @@ export const ConversationList: React.FC<Props> = ({
   onDelete,
   onRename,
   onExport,
+  onExportEncrypted,
   onImport,
+  onImportEncrypted,
   embedded
 }) => {
   const { t } = useI18n()
@@ -97,6 +101,13 @@ export const ConversationList: React.FC<Props> = ({
               title={t('chat.import')}
             >⬇ {t('chat.importShort')}</button>
           )}
+          {onImportEncrypted && (
+            <button
+              onClick={onImportEncrypted}
+              className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+              title={t('chat.importEncrypted')}
+            >🔐 {t('chat.importEncryptedShort')}</button>
+          )}
         </div>
       </div>
 
@@ -118,6 +129,7 @@ export const ConversationList: React.FC<Props> = ({
               onDelete={() => onDelete(c.id)}
               onRename={onRename ? (title) => onRename(c.id, title) : undefined}
               onExport={onExport}
+              onExportEncrypted={onExportEncrypted}
             />
           ))
         )}
@@ -133,7 +145,8 @@ const ConvItem: React.FC<{
   onDelete: () => void
   onRename?: (title: string) => void
   onExport?: (id: string) => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport }) => {
+  onExportEncrypted?: (id: string) => void
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportEncrypted }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -187,6 +200,13 @@ const ConvItem: React.FC<{
           className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
           title={t('chat.export')}
         >↓</button>
+      )}
+      {onExportEncrypted && !editing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onExportEncrypted(conv.id) }}
+          className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
+          title={t('chat.exportEncrypted')}
+        >🔐</button>
       )}
       {onRename && !editing && (
         <button
