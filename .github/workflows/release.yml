@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 on:
   push:
@@ -60,6 +60,54 @@ jobs:
           draft: false
           prerelease: false
 
+  build-macos:
+    name: Build macOS (Intel + Apple Silicon)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+
+      - name: Build & Package (dmg + zip, x64 + arm64)
+        run: npx electron-builder --mac --x64 --arm64 --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts for debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-files-macos
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/*.yml
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/*.yml
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
   build-linux:
     name: Build Linux AppImage
     runs-on: ubuntu-latest
@@ -77,7 +125,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
         env:
-          # Linux 瀹夸富鍘熺敓妯″潡鐢?postinstall 鐨?install-app-deps 澶勭悊
+          # Linux 原生模块需要 postinstall 的 install-app-deps 处理
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
       - name: Build & Package (AppImage x64)
@@ -96,12 +144,9 @@ jobs:
             dist/*.yml
 
       - name: Create GitHub Release
-        # 浠?tag 鎺ㄩ€佹椂鍙戝竷锛涙墜鍔ㄨЕ鍙戯紙workflow_dispatch锛夊彧楠岃瘉鏋勫缓
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          # electron-updater AppImage 鏇存柊闇€瑕?latest-linux.yml + blockmap锛堝閲忎笅杞斤級
-          # 绮剧‘鍖归厤锛岄伩鍏嶆妸 dist/linux-unpacked 鏁寸洰褰曚紶杩?Release
           files: |
             dist/*.AppImage
             dist/*.blockmap

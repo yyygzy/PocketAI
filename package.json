@@ -117,6 +117,21 @@
     "portable": {
       "artifactName": "Moxia-${version}-Portable-${arch}.${ext}"
     },
+    "mac": {
+      "icon": "build/icon/icon-256.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "artifactName": "Moxia-${version}-${arch}.${ext}",
+      "category": "public.app-category.productivity"
+    },
     "publish": {
       "provider": "github",
       "owner": "yyygzy",
