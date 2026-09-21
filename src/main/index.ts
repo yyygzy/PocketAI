@@ -49,8 +49,8 @@ import { installContentSecurityPolicy } from './security/csp'
 import { initBackupScheduler, stopBackupScheduler } from './backup/backup-scheduler'
 import { applyOpacityToMainWindows } from './ui-preferences'
 
-app.setPath('userData', path.join(DATA_DIR, 'userdata'))
-app.setPath('sessionData', path.join(DATA_DIR, 'session'))
+// app.setPath 延后到 ensureDirs 之后执行：若 DATA_DIR 存在但非目录，
+// ensureDirs 会先删除重建，setPath 再使用时路径才安全。
 
 let mainWindow: BrowserWindow | null = null
 let unlockWindow: BrowserWindow | null = null
@@ -244,6 +244,10 @@ function createMainWindow(): void {
 
 async function boot(): Promise<void> {
   ensureDirs()
+
+  // ensureDirs 之后才设置路径：此时 DATA_DIR 一定是合法目录
+  app.setPath('userData', path.join(DATA_DIR, 'userdata'))
+  app.setPath('sessionData', path.join(DATA_DIR, 'session'))
 
   // IPC 必须在任何窗口（含解锁窗）创建/加载前就位：
   // 解锁窗挂载即会调用 encryption:unlock / menu:set-language 等通道，

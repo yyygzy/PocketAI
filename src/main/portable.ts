@@ -62,9 +62,23 @@ export function getPaths(): AppPaths {
   }
 }
 
-/** 确保所有数据目录存在 */
+/**
+ * 确保所有数据目录存在。
+ * 防御：若 DATA_DIR 存在但不是目录（同名文件/快捷方式/损坏的符号链接），
+ * 先删除再创建——旧版本可能误把文件留在此处。
+ */
 export function ensureDirs(): void {
-  ;[DATA_DIR, ATTACHMENTS_DIR, EXTENSIONS_DIR, LOGS_DIR, RUNTIME_DIR].forEach((dir) => {
+  const dirs = [DATA_DIR, ATTACHMENTS_DIR, EXTENSIONS_DIR, LOGS_DIR, RUNTIME_DIR]
+  for (const dir of dirs) {
+    try {
+      const st = fs.statSync(dir)
+      if (!st.isDirectory()) {
+        console.warn(`[portable] 路径存在但非目录，删除重建: ${dir}`)
+        fs.rmSync(dir, { recursive: true, force: true })
+      }
+    } catch {
+      // 路径不存在 → mkdirSync(recursive) 会创建
+    }
     fs.mkdirSync(dir, { recursive: true })
-  })
+  }
 }
