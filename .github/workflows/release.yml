@@ -80,7 +80,9 @@ jobs:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
       - name: Build & Package (dmg + zip, x64 + arm64)
-        run: npx electron-builder --mac --x64 --arm64 --publish never
+        run: |
+          npx electron-vite build
+          npx electron-builder --mac --x64 --arm64 --publish never
         env:
           # 无证书时跳过签名（identity:null），CI 只构建产物
           # 证书就绪后：取消注释 APPLE_* env + package.json 的 afterSign
