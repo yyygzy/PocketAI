@@ -1,6 +1,6 @@
 {
   "name": "pocket-ai",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "墨匣 (Moxia) - 本地优先可随身携带的 AI 工作台",
   "main": "out/main/index.js",
   "author": "Moxia",
