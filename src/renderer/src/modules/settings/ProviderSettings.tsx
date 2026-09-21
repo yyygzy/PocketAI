@@ -3,9 +3,20 @@ import type { ProviderRecord, ProviderType } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 
 const PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
+  // ── 海外主流 ──
   { label: 'OpenAI', type: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', needKey: true },
+  { label: 'Anthropic Claude', type: 'anthropic', baseUrl: 'https://api.anthropic.com', needKey: true },
+  { label: 'Google Gemini', type: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com', needKey: true },
+  { label: 'Groq', type: 'openai-compatible', baseUrl: 'https://api.groq.com/openai/v1', needKey: true },
+  { label: 'OpenRouter', type: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1', needKey: true },
+  // ── 国内主流（OpenAI 兼容） ──
   { label: 'DeepSeek', type: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', needKey: true },
-  { label: 'Moonshot', type: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1', needKey: true },
+  { label: 'Moonshot 月之暗面', type: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1', needKey: true },
+  { label: '智谱 GLM', type: 'openai-compatible', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', needKey: true },
+  { label: '通义千问 阿里云', type: 'openai-compatible', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', needKey: true },
+  { label: '火山方舟 豆包', type: 'openai-compatible', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', needKey: true },
+  { label: '硅基流动 SiliconFlow', type: 'openai-compatible', baseUrl: 'https://api.siliconflow.cn/v1', needKey: true },
+  // ── 本地 ──
   { label: 'Ollama', type: 'ollama', baseUrl: 'http://localhost:11434/v1', needKey: false },
   { label: 'LM Studio', type: 'ollama', baseUrl: 'http://localhost:1234/v1', needKey: false }
 ]
