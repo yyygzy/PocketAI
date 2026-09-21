@@ -110,6 +110,9 @@ jobs:
           rm -f dist/all/builder-debug.yml dist/all/最新.yml
           find dist/all -type f | sort
 
+      - name: Validate latest.yml version matches package.json
+        run: node scripts/check-update-yml.cjs dist/all
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/all/*
