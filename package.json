@@ -118,7 +118,7 @@
       "artifactName": "Moxia-${version}-Portable-${arch}.${ext}"
     },
     "mac": {
-      "icon": "build/icon/icon-256.png",
+      "icon": "build/icon/icon-512.png",
       "target": [
         {
           "target": "dmg",
