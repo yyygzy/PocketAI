@@ -347,15 +347,32 @@ export interface CalendarConfig {
   paths: string[]
 }
 
-// ---------- Channels（IM Bot 网关，v2 批次七：Telegram） ----------
+// ---------- Channels（IM Bot 网关：Telegram/飞书/钉钉/Slack/Discord） ----------
+export type ChannelType = 'telegram' | 'feishu' | 'dingtalk' | 'slack' | 'discord'
+export const CHANNEL_TYPES: readonly ChannelType[] = ['telegram', 'feishu', 'dingtalk', 'slack', 'discord']
+
 export type ChannelStatus = 'stopped' | 'starting' | 'running' | 'error'
 
+/**
+ * 网关统一配置（渲染端永远拿到空串密钥，是否已配置看 hasPrimarySecret/hasSecondarySecret）。
+ *
+ * 凭证字段说明：
+ * - Telegram: primary = Bot Token
+ * - Discord:  primary = Bot Token
+ * - Slack:    primary = Bot Token (xoxb-) ; secondary = App-Level Token (xapp-, Socket Mode)
+ * - 飞书:     appId = App ID（非密钥） ; secondary = App Secret
+ * - 钉钉:     appId = App Key（非密钥） ; secondary = App Secret
+ */
 export interface ChannelConfig {
+  type: ChannelType
   enabled: boolean
-  /** 渲染端永远拿到空串（Token 不回显明文），是否已配置看 hasToken */
-  token: string
-  hasToken: boolean
-  /** 逗号分隔的 TG 数字 userId；空=拒绝所有（fail closed） */
+  /** 主凭据是否已配置（Token/App Secret/Bot Token 等） */
+  hasPrimarySecret: boolean
+  /** 次凭据是否已配置（Slack appToken / 飞书&钉钉 appSecret） */
+  hasSecondarySecret: boolean
+  /** 飞书 App ID / 钉钉 App Key（非密钥，明文存） */
+  appId: string
+  /** 逗号分隔的用户/群 ID 白名单（统一字符串，空=拒绝所有，fail closed） */
   whitelist: string
   /** 绑定助手（systemPrompt/技能/知识库来源） */
   assistantId: string
@@ -367,6 +384,7 @@ export interface ChannelConfig {
 }
 
 export interface ChannelStatusEvent {
+  type: ChannelType
   status: ChannelStatus
   lastError: string | null
 }
@@ -677,6 +695,52 @@ export interface PythonRuntime {
   source: 'system' | 'portable'
 }
 
+// ---------- Ollama 便携运行时 ----------
+/** 当前 11434 服务由谁提供：portable=本平台下载的便携版；system=系统已装 Ollama */
+export type OllamaSource = 'portable' | 'system'
+
+export interface OllamaRuntimeStatus {
+  /** 当前平台是否提供便携发行包（仅 Windows x64 / Linux x64） */
+  platformSupported: boolean
+  /** 便携版二进制是否已下载解压 */
+  installed: boolean
+  /** 11434 API 是否可用（不区分便携/系统） */
+  running: boolean
+  /** 服务来源：便携 / 系统 / null（未运行） */
+  source: OllamaSource | null
+  version: string | null
+  /** 便携版安装目录（runtime/ollama-*） */
+  installDir: string | null
+  /** 模型文件目录（锚定平台 data/ollama-models，随 U 盘走） */
+  modelsDir: string
+  /** 发行包下载地址（UI 提示体积/手动下载用） */
+  downloadUrl: string | null
+  /** 发行包字节数（UI 体积提示） */
+  downloadBytes: number | null
+  models: string[]
+}
+
+export type OllamaInstallStage = 'download' | 'extract' | 'verify' | 'done'
+
+export interface OllamaInstallEvent {
+  stage: OllamaInstallStage
+  /** 0-100；extract 阶段无法精确计量时给出 95 下限 */
+  percent: number
+  receivedBytes?: number
+  totalBytes?: number | null
+  error?: string
+}
+
+export interface OllamaPullEvent {
+  model: string
+  /** ollama 原始状态：pulling manifest / pulling … / verifying sha256 / success / error */
+  status: string
+  /** 0-100（completed/total；total 未知时为 0） */
+  percent: number
+  done: boolean
+  error?: string
+}
+
 // ---------- 翻译模块 ----------
 /** 源语言可用 auto（自动检测），目标语言不可 */
 export type TranslateLang =
@@ -892,6 +956,9 @@ export const IPC = {
   SKILL_DELETE: 'skill:delete',
   SKILL_EXPORT: 'skill:export',
   SKILL_IMPORT: 'skill:import',
+  SKILL_SYNC: 'skill:sync',
+  SKILL_FETCH_INDEX: 'skill:fetch-index',
+  SKILL_IMPORT_URL: 'skill:import-url',
 
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_CREATE: 'conversation:create',
@@ -954,6 +1021,19 @@ export const IPC = {
   PYTHON_RUNTIME_LIST: 'python:runtime-list',
   PYTHON_RUNTIME_DOWNLOAD: 'python:runtime-download',
 
+  // Ollama 便携运行时（下载/解压/启动本地模型引擎）
+  OLLAMA_GET_STATUS: 'ollama:get-status',
+  OLLAMA_INSTALL: 'ollama:install',
+  OLLAMA_EVENT: 'ollama:event',
+  OLLAMA_START: 'ollama:start',
+  OLLAMA_STOP: 'ollama:stop',
+  OLLAMA_LIST_MODELS: 'ollama:list-models',
+  OLLAMA_PULL: 'ollama:pull',
+  OLLAMA_PULL_ABORT: 'ollama:pull-abort',
+  OLLAMA_PULL_EVENT: 'ollama:pull-event',
+  OLLAMA_MIRROR_GET: 'ollama:mirror-get',
+  OLLAMA_MIRROR_SET: 'ollama:mirror-set',
+
   // Python MCP 虚拟环境（venv + pip）
   PYTHON_ENV_INSTALL: 'python-env:install',
   PYTHON_ENV_STATUS: 'python-env:status',
@@ -1013,12 +1093,13 @@ export const IPC = {
   AGENT_TOOL_APPROVAL_EVENT: 'agent:tool-approval-event',
   AGENT_TOOL_APPROVE_RESPONSE: 'agent:tool-approve-response',
 
-  // ---------- Channels（IM Bot 网关，v2 批次七：Telegram） ----------
+  // ---------- Channels（IM Bot 网关：Telegram/飞书/钉钉/Slack/Discord） ----------
   CHANNEL_GET_CONFIG: 'channel:get-config',
   CHANNEL_SET_CONFIG: 'channel:set-config',
   CHANNEL_START: 'channel:start',
   CHANNEL_STOP: 'channel:stop',
   CHANNEL_STATUS_EVENT: 'channel:status-event',
+  CHANNEL_LIST_STATUS: 'channel:list-status',
 
   // ---------- 快捷浮窗（快捷问答 / 选区助手） ----------
   POPUP_HIDE: 'popup:hide',

@@ -51,6 +51,13 @@ import { getWebSearchConfig, setWebSearchConfig } from '../tools/websearch-confi
 import { getCalendarConfig, setCalendarConfig } from '../tools/calendar-ics'
 import { getChannelConfig, setChannelConfig } from '../channels/channel-config'
 import { channelService } from '../channels/channel-service'
+import { telegramGateway } from '../channels/telegram-gateway'
+import { discordGateway } from '../channels/discord-gateway'
+import { slackGateway } from '../channels/slack-gateway'
+import { feishuGateway } from '../channels/feishu-gateway'
+import { dingtalkGateway } from '../channels/dingtalk-gateway'
+import type { ChannelType } from '../../shared/types'
+import { CHANNEL_TYPES } from '../../shared/types'
 import {
   listSandboxFiles,
   createSandboxFile,
@@ -85,6 +92,7 @@ import {
 } from '../images/image-service'
 import { runTranslate, abortTranslate } from '../translate/translate-service'
 import { listPythonRuntimes, downloadPortablePython } from '../python-runtime'
+import { ollamaRuntime } from '../ollama/ollama-runtime'
 import { getUiPreferences, setUiPreferences } from '../ui-preferences'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -97,6 +105,36 @@ function broadcast(channel: string, data: unknown): void {
       win.webContents.send(channel, data)
     }
   }
+}
+
+/**
+ * 拉取模型成功后，确保存在指向本地 11434 的 Ollama provider 并包含该模型。
+ * 用户已手动配置过（含 LM Studio 等其他本地端口）时不动其记录，只补缺失的 ollama 条目。
+ */
+function ensureOllamaProvider(model: string): void {
+  const localBaseUrl = 'http://localhost:11434/v1'
+  const existing = providerRepo.list().find((p) => p.type === 'ollama' && p.baseUrl.includes('11434'))
+  if (existing) {
+    if (!existing.models.includes(model)) {
+      providerRepo.updateModels(existing.id, [...existing.models, model])
+    }
+    return
+  }
+  providerRepo.save({
+    id: '',
+    type: 'ollama',
+    name: 'Ollama（本地模型）',
+    baseUrl: localBaseUrl,
+    apiKeys: [],
+    models: [model],
+    enabled: true,
+    createdAt: Date.now()
+  })
+}
+
+function toChannelType(type: unknown): ChannelType {
+  const t = typeof type === 'string' ? type : ''
+  return (CHANNEL_TYPES as readonly string[]).includes(t) ? (t as ChannelType) : 'telegram'
 }
 
 export function registerIpcHandlers(): void {
@@ -205,6 +243,23 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.SKILL_IMPORT, async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
     return importSkill(win!)
+  })
+  ipcMain.handle(IPC.SKILL_SYNC, () => {
+    const { syncBuiltinSkills } = require('../assistant/builtin') as typeof import('../assistant/builtin')
+    return syncBuiltinSkills()
+  })
+  ipcMain.handle(IPC.SKILL_FETCH_INDEX, async (_e, indexUrl: string) => {
+    const { fetchRegistryIndex } = await import('../skills/skill-io')
+    const res = await fetchRegistryIndex(indexUrl)
+    if (!res.ok || !res.text) return { ok: false, error: res.error ?? '拉取失败', skills: [] }
+    const { parseRegistryIndex } = await import('../skills/skill-parser')
+    const { skills, error } = parseRegistryIndex(res.text)
+    if (error) return { ok: false, error, skills: [] }
+    return { ok: true, skills }
+  })
+  ipcMain.handle(IPC.SKILL_IMPORT_URL, async (_e, url: string) => {
+    const { importSkillFromUrl } = await import('../skills/skill-io')
+    return importSkillFromUrl(url)
   })
 
   // ---------- 会话 ----------
@@ -608,6 +663,46 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.PYTHON_RUNTIME_LIST, () => listPythonRuntimes())
   ipcMain.handle(IPC.PYTHON_RUNTIME_DOWNLOAD, async () => downloadPortablePython())
 
+  // ---------- Ollama 便携运行时 ----------
+  ipcMain.handle(IPC.OLLAMA_GET_STATUS, () => ollamaRuntime.getStatus())
+  ipcMain.handle(IPC.OLLAMA_INSTALL, async () =>
+    ollamaRuntime.install((e) => broadcast(IPC.OLLAMA_EVENT, e))
+  )
+  ipcMain.handle(IPC.OLLAMA_START, async () => {
+    await ollamaRuntime.start()
+    return { ok: true, status: await ollamaRuntime.getStatus() }
+  })
+  ipcMain.handle(IPC.OLLAMA_STOP, async () => {
+    await ollamaRuntime.stop()
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.OLLAMA_LIST_MODELS, () => ollamaRuntime.listModels())
+  ipcMain.handle(IPC.OLLAMA_PULL, async (_e, model: string) => {
+    const name = String(model ?? '').trim()
+    if (!name) return { ok: false, error: '模型名不能为空' }
+    try {
+      await ollamaRuntime.pullModel(name, (e) => broadcast(IPC.OLLAMA_PULL_EVENT, e))
+      // 拉取成功：确保存在指向本地 11434 的 ollama provider，并把新模型加入模型列表
+      ensureOllamaProvider(name)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle(IPC.OLLAMA_PULL_ABORT, () => {
+    ollamaRuntime.abortPull()
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.OLLAMA_MIRROR_GET, () => ({ ok: true, mirror: ollamaRuntime.getMirror() }))
+  ipcMain.handle(IPC.OLLAMA_MIRROR_SET, (_e, prefix: string) => {
+    try {
+      ollamaRuntime.setMirror(String(prefix ?? ''))
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
   // ---------- 翻译 ----------
   // 发起翻译：delta 经 TRANSLATE_CHUNK_EVENT 广播，最终结果作为 invoke 返回值
   ipcMain.handle(IPC.TRANSLATE_RUN, async (_e, payload: TranslateRequestPayload) => {
@@ -803,14 +898,20 @@ export function registerIpcHandlers(): void {
   })
 
   // ---------- Channels（IM Bot 网关；Token 明文不出主进程） ----------
-  ipcMain.handle(IPC.CHANNEL_GET_CONFIG, () => getChannelConfig())
+  ipcMain.handle(
+    IPC.CHANNEL_GET_CONFIG,
+    (_e, type: unknown) => getChannelConfig(toChannelType(type))
+  )
   ipcMain.handle(
     IPC.CHANNEL_SET_CONFIG,
     (
       _e,
+      type: unknown,
       input: {
         enabled?: unknown
-        token?: unknown
+        primarySecret?: unknown
+        secondarySecret?: unknown
+        appId?: unknown
         whitelist?: unknown
         assistantId?: unknown
         providerId?: unknown
@@ -820,7 +921,9 @@ export function registerIpcHandlers(): void {
     ) => {
       const patch: {
         enabled?: boolean
-        token?: string
+        primarySecret?: string
+        secondarySecret?: string
+        appId?: string
         whitelist?: string
         assistantId?: string
         providerId?: string
@@ -828,26 +931,45 @@ export function registerIpcHandlers(): void {
         agentMode?: boolean
       } = {}
       if (typeof input?.enabled === 'boolean') patch.enabled = input.enabled
-      if (typeof input?.token === 'string') patch.token = input.token
+      if (typeof input?.primarySecret === 'string') patch.primarySecret = input.primarySecret
+      if (typeof input?.secondarySecret === 'string') patch.secondarySecret = input.secondarySecret
+      if (typeof input?.appId === 'string') patch.appId = input.appId
       if (typeof input?.whitelist === 'string') patch.whitelist = input.whitelist
       if (typeof input?.assistantId === 'string') patch.assistantId = input.assistantId
       if (typeof input?.providerId === 'string') patch.providerId = input.providerId
       if (typeof input?.model === 'string') patch.model = input.model
       if (typeof input?.agentMode === 'boolean') patch.agentMode = input.agentMode
-      return setChannelConfig(patch)
+      return setChannelConfig(toChannelType(type), patch)
     }
   )
-  ipcMain.handle(IPC.CHANNEL_START, async () => {
+  ipcMain.handle(IPC.CHANNEL_START, async (_e, type: unknown) => {
     try {
-      await channelService.start()
+      await channelService.start(toChannelType(type))
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
   })
-  ipcMain.handle(IPC.CHANNEL_STOP, () => {
-    channelService.stop()
+  ipcMain.handle(IPC.CHANNEL_STOP, (_e, type: unknown) => {
+    channelService.stop(toChannelType(type))
     return { ok: true }
+  })
+  ipcMain.handle(IPC.CHANNEL_LIST_STATUS, () => {
+    // 返回各网关当前状态（未启动则 stopped）
+    const map: Record<string, { status: string; lastError: string | null }> = {}
+    for (const [t, gw] of Object.entries({
+      telegram: telegramGateway,
+      discord: discordGateway,
+      slack: slackGateway,
+      feishu: feishuGateway,
+      dingtalk: dingtalkGateway
+    })) {
+      map[t] = {
+        status: gw.isRunning() ? 'running' : 'stopped',
+        lastError: null
+      }
+    }
+    return map
   })
 
   // 渲染端对工具审批弹窗的应答
@@ -928,7 +1050,8 @@ export function registerIpcHandlers(): void {
     const unlockWin = new BrowserWindow({
       width: 420, height: 380, resizable: false, minimizable: false,
       maximizable: false, show: false, frame: true, autoHideMenuBar: true,
-      title: 'PocketAI — 解锁', backgroundColor: '#1e1e2e',
+      title: '墨匣 Moxia - PocketAI — 解锁', backgroundColor: '#1e1e2e',
+      icon: path.join(__dirname, '../../build/icon/icon-256.png'),
       webPreferences: {
         preload: path.join(__dirname, '../preload/index.js'),
         nodeIntegration: false, contextIsolation: true, sandbox: true
@@ -1207,13 +1330,13 @@ export function registerIpcHandlers(): void {
     try {
       const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
       const content =
-        'PocketAI 恢复密钥\n' +
+        '墨匣 恢复密钥\n' +
         '==============================\n' +
         '忘记主密码时，凭此码在解锁页重置密码。\n' +
         '请妥善保管（建议离线保存），任何人拿到它都可以重置你的密码。\n\n' +
         `${code}\n`
       const { canceled, filePath } = await dialog.showSaveDialog(win!, {
-        defaultPath: 'PocketAI-恢复密钥.txt',
+        defaultPath: '墨匣-恢复密钥.txt',
         filters: [{ name: '文本文件', extensions: ['txt'] }]
       })
       if (canceled || !filePath) return { ok: true, canceled: true }

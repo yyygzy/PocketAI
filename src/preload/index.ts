@@ -32,6 +32,9 @@ import type {
   EncryptionStatus,
   LockStatus,
   LockStateEvent,
+  OllamaRuntimeStatus,
+  OllamaInstallEvent,
+  OllamaPullEvent,
   HealthReport,
   CleanupResult,
   ModelRecommendation,
@@ -56,6 +59,7 @@ import type {
   CalendarConfig,
   ChannelConfig,
   ChannelStatusEvent,
+  ChannelType,
   SandboxFileMeta,
   ImageGeneratePayload,
   ImageResult,
@@ -119,6 +123,16 @@ const api = {
     nameDuplicated?: boolean
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT),
+  syncSkills: (): Promise<{ count: number; errors: string[] }> =>
+    ipcRenderer.invoke(IPC.SKILL_SYNC),
+  fetchSkillIndex: (
+    indexUrl: string
+  ): Promise<{ ok: boolean; skills?: Array<{ id: string; name: string; description?: string; icon?: string; url: string }>; error?: string }> =>
+    ipcRenderer.invoke(IPC.SKILL_FETCH_INDEX, indexUrl),
+  importSkillFromUrl: (
+    url: string
+  ): Promise<{ ok: boolean; skill?: SkillRecord; error?: string }> =>
+    ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url),
 
   // ---------- 会话 ----------
   listConversations: (assistantId?: string, isAgent?: boolean): Promise<ConversationRecord[]> =>
@@ -379,19 +393,30 @@ const api = {
     ipcRenderer.invoke(IPC.AGENT_TOOL_APPROVE_RESPONSE, { approvalId, approved }),
 
   // ---------- Channels（IM Bot 网关；Token 明文不出主进程） ----------
-  getChannelConfig: (): Promise<ChannelConfig> =>
-    ipcRenderer.invoke(IPC.CHANNEL_GET_CONFIG),
+  getChannelConfig: (type: ChannelType): Promise<ChannelConfig> =>
+    ipcRenderer.invoke(IPC.CHANNEL_GET_CONFIG, type),
   setChannelConfig: (
+    type: ChannelType,
     patch: Partial<
       Pick<
         ChannelConfig,
-        'enabled' | 'token' | 'whitelist' | 'assistantId' | 'providerId' | 'model' | 'agentMode'
+        | 'enabled'
+        | 'whitelist'
+        | 'appId'
+        | 'assistantId'
+        | 'providerId'
+        | 'model'
+        | 'agentMode'
       >
-    >
-  ): Promise<ChannelConfig> => ipcRenderer.invoke(IPC.CHANNEL_SET_CONFIG, patch),
-  startChannel: (): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke(IPC.CHANNEL_START),
-  stopChannel: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.CHANNEL_STOP),
+    > & { primarySecret?: string; secondarySecret?: string }
+  ): Promise<ChannelConfig> => ipcRenderer.invoke(IPC.CHANNEL_SET_CONFIG, type, patch),
+  startChannel: (type: ChannelType): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.CHANNEL_START, type),
+  stopChannel: (type: ChannelType): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CHANNEL_STOP, type),
+  /** 一次性读取所有网关状态快照（启动后初始化 UI） */
+  listChannelStatus: (): Promise<Record<string, { status: string; lastError: string | null }>> =>
+    ipcRenderer.invoke(IPC.CHANNEL_LIST_STATUS),
   /** 订阅网关状态变化；返回退订函数 */
   onChannelStatus: (handler: (e: ChannelStatusEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: ChannelStatusEvent) => handler(data)
@@ -634,7 +659,37 @@ const api = {
   openFileLocation: (relPath: string): Promise<FileOpResult> =>
     ipcRenderer.invoke(IPC.FILE_OPEN_LOCATION, relPath),
   openFileExternal: (relPath: string): Promise<FileOpResult> =>
-    ipcRenderer.invoke(IPC.FILE_OPEN_EXTERNAL, relPath)
+    ipcRenderer.invoke(IPC.FILE_OPEN_EXTERNAL, relPath),
+
+  // ---------- Ollama 便携运行时 ----------
+  getOllamaStatus: (): Promise<OllamaRuntimeStatus> =>
+    ipcRenderer.invoke(IPC.OLLAMA_GET_STATUS),
+  installOllama: (): Promise<OllamaRuntimeStatus> =>
+    ipcRenderer.invoke(IPC.OLLAMA_INSTALL),
+  startOllama: (): Promise<{ ok: boolean; status?: OllamaRuntimeStatus; error?: string }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_START),
+  stopOllama: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_STOP),
+  listOllamaModels: (): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.OLLAMA_LIST_MODELS),
+  pullOllamaModel: (model: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_PULL, model),
+  abortOllamaPull: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_PULL_ABORT),
+  onOllamaInstallEvent: (handler: (e: OllamaInstallEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: OllamaInstallEvent) => handler(data)
+    ipcRenderer.on(IPC.OLLAMA_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.OLLAMA_EVENT, listener)
+  },
+  onOllamaPullEvent: (handler: (e: OllamaPullEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: OllamaPullEvent) => handler(data)
+    ipcRenderer.on(IPC.OLLAMA_PULL_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.OLLAMA_PULL_EVENT, listener)
+  },
+  getOllamaMirror: (): Promise<{ ok: boolean; mirror?: string }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_MIRROR_GET),
+  setOllamaMirror: (prefix: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_MIRROR_SET, prefix)
 }
 
 contextBridge.exposeInMainWorld('pocketai', api)

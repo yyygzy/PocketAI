@@ -1,30 +1,47 @@
-// Channels 编排服务：TG 消息 → 白名单过滤 → 会话映射 → chatService → 回复
+// Channels 编排服务：多网关消息 → 白名单过滤 → 会话映射 → chatService → 回复
 //
+// 设计：
+// - 各 gateway 实现 IGateway；service 在 init() 中注册所有 gateway.onStatus
+// - autoStart() 遍历 CHANNEL_TYPES，enabled=1 则启动对应 gateway
+// - start(type)/stop(type) 控制单一网关；handleMessage(type, msg) 按 type 路由
 // - 白名单空=拒绝所有（fail closed）；非白名单静默忽略（仅主进程日志，不打印消息内容）
 // - 复用 chatService.send 双路径：agentMode=true 走 AgentEngine（含工具/审批弹窗）
 // - IM 不适合流式：用收集器捕获 done/error 事件，聚合完整回复后一次性发回
+// - 同一 chat 串行处理：busyChats Set（key = type:chatId）防并发
 import { randomUUID } from 'crypto'
-import { IPC } from '../../shared/types'
+import { IPC, CHANNEL_TYPES } from '../../shared/types'
 import type {
   AgentDoneEvent,
   AgentErrorEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  ChannelType,
+  ChannelStatusEvent,
   SendMessagePayload
 } from '../../shared/types'
 import { assistantRepo } from '../db/repositories/assistant.repo'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { chatService } from '../chat/chat-service'
-import { getChannelConfig, getChannelSecret } from './channel-config'
+import { getChannelConfig, getChannelSecrets, convMapKey } from './channel-config'
 import { telegramGateway } from './telegram-gateway'
-import type { TgIncomingMessage } from './telegram-gateway'
+import { discordGateway } from './discord-gateway'
+import { slackGateway } from './slack-gateway'
+import { feishuGateway } from './feishu-gateway'
+import { dingtalkGateway } from './dingtalk-gateway'
+import type { IGateway, IncomingMessage } from './gateway-base'
 
-const CONV_MAP_KEY = 'channel.tg_conv_map' // JSON: { [chatId]: conversationId }
+const GATEWAYS: Record<ChannelType, IGateway> = {
+  telegram: telegramGateway,
+  discord: discordGateway,
+  slack: slackGateway,
+  feishu: feishuGateway,
+  dingtalk: dingtalkGateway
+}
 
-function loadConvMap(): Record<string, string> {
+function loadConvMap(type: ChannelType): Record<string, string> {
   try {
-    const raw = appConfigRepo.get(CONV_MAP_KEY)
+    const raw = appConfigRepo.get(convMapKey(type))
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -36,15 +53,15 @@ function loadConvMap(): Record<string, string> {
   }
 }
 
-function saveConvMap(map: Record<string, string>): void {
-  appConfigRepo.set(CONV_MAP_KEY, JSON.stringify(map))
+function saveConvMap(type: ChannelType, map: Record<string, string>): void {
+  appConfigRepo.set(convMapKey(type), JSON.stringify(map))
 }
 
-type StatusListener = (evt: { status: string; lastError: string | null }) => void
+type StatusListener = (evt: ChannelStatusEvent) => void
 
 class ChannelService {
-  /** 同一 chat 串行处理：处理中新消息直接提示 */
-  private busyChats = new Set<number>()
+  /** 同一 chat 串行处理：处理中新消息直接提示（key: type:chatId） */
+  private busyChats = new Set<string>()
   private listeners = new Set<StatusListener>()
 
   onStatus(l: StatusListener): () => void {
@@ -52,72 +69,79 @@ class ChannelService {
     return () => this.listeners.delete(l)
   }
 
-  private emitStatus(evt: { status: string; lastError: string | null }): void {
+  private emitStatus(evt: ChannelStatusEvent): void {
     for (const l of this.listeners) l(evt)
   }
 
   init(): void {
-    // 网关状态 → 渲染端（ipc/index.ts 注册时接到 broadcast）
-    telegramGateway.onStatus((evt) => this.emitStatus(evt))
+    // 各网关状态 → 渲染端（ipc/index.ts 注册时接到 broadcast）
+    for (const type of CHANNEL_TYPES) {
+      const gw = GATEWAYS[type]
+      gw.onStatus((evt) => this.emitStatus(evt))
+    }
   }
 
-  /** 应用启动时调用：enabled=1 则自动启动（失败仅记状态，不阻断启动） */
+  /** 应用启动时调用：遍历所有 enabled=1 的网关自动启动 */
   async autoStart(): Promise<void> {
-    const cfg = getChannelConfig()
-    if (!cfg.enabled) return
-    try {
-      await this.start()
-    } catch (err) {
-      console.error('[channels] 自动启动失败:', (err as Error).message)
+    for (const type of CHANNEL_TYPES) {
+      const cfg = getChannelConfig(type)
+      if (!cfg.enabled) continue
+      try {
+        await this.start(type)
+      } catch (err) {
+        console.error(`[channels] ${type} 自动启动失败:`, (err as Error).message)
+      }
     }
   }
 
-  /** 启动网关（校验 enabled/token，由 gateway 负责 getMe 验证与轮询） */
-  async start(): Promise<void> {
-    const cfg = getChannelConfig()
-    if (!cfg.enabled) throw new Error('网关未启用，请先在配置中开启')
-    await telegramGateway.start((msg) => this.handleMessage(msg))
+  /** 启动单个网关（校验 enabled/secret，由 gateway 负责握手） */
+  async start(type: ChannelType): Promise<void> {
+    const cfg = getChannelConfig(type)
+    if (!cfg.enabled) throw new Error(`${type} 网关未启用，请先在配置中开启`)
+    const gw = GATEWAYS[type]
+    await gw.start((msg) => this.handleMessage(type, msg))
   }
 
-  stop(): void {
-    telegramGateway.stop()
+  stop(type: ChannelType): void {
+    GATEWAYS[type].stop()
   }
 
-  /** 单条入站消息处理（白名单 → 目标校验 → 会话 → 问答 → 回复） */
-  private async handleMessage(msg: TgIncomingMessage): Promise<void> {
-    const { whitelist } = getChannelSecret()
-    if (!whitelist.includes(msg.userId)) {
+  /** 单条入站消息处理（白名单 → 会话 → 问答 → 回复） */
+  private async handleMessage(type: ChannelType, msg: IncomingMessage): Promise<void> {
+    const { whitelist } = getChannelSecrets(type)
+    if (whitelist.length === 0 || !whitelist.includes(msg.userId)) {
       // 静默忽略，仅记日志（不打印消息内容，防泄露）
-      console.log(`[channels] 忽略非白名单用户 userId=${msg.userId} chatId=${msg.chatId}`)
+      console.log(`[channels] ${type} 忽略非白名单用户 userId=${msg.userId} chatId=${msg.chatId}`)
       return
     }
 
-    if (this.busyChats.has(msg.chatId)) {
-      await telegramGateway.sendText(msg.chatId, '正在处理上一条消息，请稍候…')
+    const busyKey = `${type}:${msg.chatId}`
+    if (this.busyChats.has(busyKey)) {
+      await GATEWAYS[type].sendText(msg.chatId, '正在处理上一条消息，请稍候…')
       return
     }
-    this.busyChats.add(msg.chatId)
+    this.busyChats.add(busyKey)
     try {
-      await this.processMessage(msg)
+      await this.processMessage(type, msg)
     } finally {
-      this.busyChats.delete(msg.chatId)
+      this.busyChats.delete(busyKey)
     }
   }
 
-  private async processMessage(msg: TgIncomingMessage): Promise<void> {
-    const cfg = getChannelConfig()
+  private async processMessage(type: ChannelType, msg: IncomingMessage): Promise<void> {
+    const cfg = getChannelConfig(type)
     const assistant = cfg.assistantId ? assistantRepo.get(cfg.assistantId) : null
     const providerId = cfg.providerId || assistant?.defaultProviderId || ''
     const model = cfg.model || assistant?.defaultModel || ''
     if (!providerId || !model) {
-      await telegramGateway.sendText(
+      await GATEWAYS[type].sendText(
         msg.chatId,
         '尚未配置目标模型：请在应用 Agent 页「Channels」选择助手与模型'
       )
       return
     }
 
-    const conversationId = this.ensureConversation(msg.chatId, msg.firstName, cfg.assistantId)
+    const conversationId = this.ensureConversation(type, msg.chatId, msg.firstName, cfg.assistantId)
     const payload: SendMessagePayload = {
       requestId: randomUUID(),
       conversationId,
@@ -129,26 +153,31 @@ class ChannelService {
 
     const result = await this.runChat(payload)
     if (result.ok && result.content?.trim()) {
-      await telegramGateway.sendText(msg.chatId, result.content)
+      await GATEWAYS[type].sendText(msg.chatId, result.content)
     } else {
-      await telegramGateway.sendText(msg.chatId, `处理失败：${result.error || '无回复内容'}`)
+      await GATEWAYS[type].sendText(msg.chatId, `处理失败：${result.error || '无回复内容'}`)
     }
   }
 
   /** 取/建 chat 对应的会话（KV 存映射；会话删除后自动重建） */
-  private ensureConversation(chatId: number, firstName: string, assistantId: string): string {
-    const map = loadConvMap()
-    const existing = map[String(chatId)]
+  private ensureConversation(
+    type: ChannelType,
+    chatId: string,
+    firstName: string,
+    assistantId: string
+  ): string {
+    const map = loadConvMap(type)
+    const existing = map[chatId]
     if (existing) {
       const conv = conversationRepo.get(existing)
       if (conv) return existing
     }
     const conv = conversationRepo.create({
       assistantId: assistantId || null,
-      title: `TG:${firstName || chatId}`.slice(0, 30)
+      title: `${type}:${firstName || chatId}`.slice(0, 30)
     })
-    map[String(chatId)] = conv.id
-    saveConvMap(map)
+    map[chatId] = conv.id
+    saveConvMap(type, map)
     return conv.id
   }
 

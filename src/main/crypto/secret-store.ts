@@ -14,6 +14,11 @@ import { encryptSecret, decryptSecret, isCipherText } from './field-encrypt'
 /** 受管 KV 键（唯一登记处；新增密钥类配置在此注册） */
 export const SECRET_KV_KEYS = {
   TELEGRAM_TOKEN: 'channel.tg_token',
+  FEISHU_APP_SECRET: 'channel.feishu_app_secret',
+  DINGTALK_APP_SECRET: 'channel.dingtalk_app_secret',
+  SLACK_BOT_TOKEN: 'channel.slack_bot_token',
+  SLACK_APP_TOKEN: 'channel.slack_app_token',
+  DISCORD_BOT_TOKEN: 'channel.discord_bot_token',
   WEBSEARCH_API_KEY: 'agent.websearch_api_key'
 } as const
 
