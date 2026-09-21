@@ -21,7 +21,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run dist -- --win --x64
+      # --publish never: build job 只产出, 不上传 Release (统一由 release job 做)
+      - run: npm run dist -- --win --x64 --publish never
 
       - name: Upload artifacts for debug
         if: always()
@@ -29,6 +30,7 @@ jobs:
         with:
           name: dist-files-win
           path: dist/*
+          if-no-files-found: ignore
 
   build-macos:
     name: Build macOS (Intel + Apple Silicon)
@@ -55,6 +57,7 @@ jobs:
         with:
           name: dist-files-macos
           path: dist/*
+          if-no-files-found: ignore
 
   build-linux:
     name: Build Linux AppImage
@@ -69,7 +72,7 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-      - run: npm run dist:linux
+      - run: npm run dist:linux -- --publish never
 
       - name: Upload artifacts for debug
         if: always()
@@ -77,6 +80,7 @@ jobs:
         with:
           name: dist-files-linux
           path: dist/*
+          if-no-files-found: ignore
 
   release:
     name: Create GitHub Release (all platforms)
@@ -87,12 +91,26 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: dist
-      - run: find dist -type f | sort
+          name: dist-files-win
+          path: dist/win
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-files-macos
+          path: dist/mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-files-linux
+          path: dist/linux
+
+      - name: Flatten to dist/
+        run: |
+          mkdir -p dist/all
+          cp dist/win/* dist/mac/* dist/linux/* dist/all/ 2>/dev/null || true
+          find dist/all -type f | sort
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/**
+          files: dist/all/*
           generate_release_notes: true
           draft: false
           prerelease: false
