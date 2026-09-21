@@ -459,40 +459,41 @@ export function registerIpcHandlers(): void {
     const q = query.trim()
     const handle = dbService.getHandle()
     const limit = 50
-    // 片段是「纯文本 + PUA 高亮令牌」，由渲染层作为 React 文本节点渲染，
-    // 不经过 HTML，因此不需要 HTML 转义（React 自动处理）
 
-    // 先 FTS5 MATCH（trigram，中文 3+ 字）
-    try {
-      const ftsSql = `
-        SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
-               m.created_at, c.title AS conversation_title,
-               snippet(messages_fts, 0, ?, ?, '…', 128) AS snippet
-        FROM messages_fts fts
-        JOIN messages m ON m.id = fts.message_id
-        JOIN conversations c ON c.id = m.conversation_id
-        WHERE messages_fts MATCH ?
-        ORDER BY m.created_at DESC
-        LIMIT ?
-      `
-      const rows = handle.prepare(ftsSql).all(SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE, q, limit) as any[]
-      if (rows.length > 0) {
-        return rows.map(r => {
-          return {
+    // FTS5 trigram tokenizer 要求查询 ≥ 3 字符才能有效匹配；
+    // 短查询（中文 1-2 字、英文单词前缀）直接走 LIKE，避免无效的 MATCH 尝试
+    const shortQuery = [...q].length < 3
+
+    // FTS5 MATCH（trigram，中文 3+ 字，英文连续 3+ 字母）
+    if (!shortQuery) {
+      try {
+        const ftsSql = `
+          SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
+                 m.created_at, c.title AS conversation_title,
+                 snippet(messages_fts, 0, ?, ?, '…', 128) AS snippet
+          FROM messages_fts fts
+          JOIN messages m ON m.id = fts.message_id
+          JOIN conversations c ON c.id = m.conversation_id
+          WHERE messages_fts MATCH ?
+          ORDER BY m.created_at DESC
+          LIMIT ?
+        `
+        const rows = handle.prepare(ftsSql).all(SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE, q, limit) as any[]
+        if (rows.length > 0) {
+          return rows.map(r => ({
             messageId: r.msg_id,
             conversationId: r.conversation_id,
-            // 标题由渲染层作为 React 文本节点渲染（自动转义）
             conversationTitle: r.conversation_title ?? '',
             role: r.role,
             content: r.content,
             snippet: r.snippet ?? '',
             createdAt: r.created_at
-          }
-        })
-      }
-    } catch { /* FTS5 未创建等情况 → 忽略，走 LIKE */ }
+          }))
+        }
+      } catch { /* FTS5 不可用 → 走 LIKE */ }
+    }
 
-    // Fallback: LIKE 兜底（中文 1-2 字、特殊字符等）
+    // Fallback: LIKE 兜底（短查询、特殊字符、未建 FTS5 索引等）
     const likeSql = `
       SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
              m.created_at, c.title AS conversation_title

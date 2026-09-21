@@ -236,13 +236,31 @@ const HighlightedSnippet: React.FC<{ text: string }> = ({ text }) => {
         if (at < 0) return <React.Fragment key={i}>{seg}</React.Fragment>
         return (
           <React.Fragment key={i}>
-            <b>{seg.slice(0, at)}</b>
+            <mark className="bg-[var(--color-accent-soft)] text-[var(--color-text)] rounded px-0.5 font-medium">
+              {seg.slice(0, at)}
+            </mark>
             {seg.slice(at + SNIPPET_MARK_CLOSE.length)}
           </React.Fragment>
         )
       })}
     </>
   )
+}
+
+/** Unix 毫秒时间戳 → 相对人类可读时间（1分钟前、2小时前、昨天、日期） */
+function relTime(ts: number): string {
+  const diff = Date.now() - ts
+  const m = Math.floor(diff / 60_000)
+  if (m < 1) return '刚刚'
+  if (m < 60) return `${m}分钟前`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}小时前`
+  const d = new Date(ts)
+  const now = new Date()
+  if (d.toDateString() === now.toDateString()) return '今天'
+  const y = new Date(now.getTime() - 86_400_000)
+  if (d.toDateString() === y.toDateString()) return '昨天'
+  return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
 const SearchResults: React.FC<{
@@ -283,10 +301,13 @@ const SearchResults: React.FC<{
               onClick={() => onSelectConv(r.conversationId)}
               className="text-[11px] px-2.5 py-1.5 rounded cursor-pointer hover:bg-[var(--color-hover-overlay)] border border-transparent hover:border-[var(--color-border)]"
             >
-              <span className={`inline-block w-12 text-[var(--color-text-muted)] ${r.role === 'user' ? 'text-[var(--color-info)]' : r.role === 'assistant' ? 'text-[var(--color-success)]' : ''}`}>
-                {r.role === 'user' ? t('chat.roleYou') : r.role === 'assistant' ? t('chat.roleAI') : r.role}
-              </span>
-              <span className="text-[var(--color-text)]"><HighlightedSnippet text={r.snippet} /></span>
+              <div className="flex items-center gap-1 mb-0.5">
+                <span className={`inline-block text-[var(--color-text-muted)] ${r.role === 'user' ? 'text-[var(--color-info)]' : r.role === 'assistant' ? 'text-[var(--color-success)]' : ''}`}>
+                  {r.role === 'user' ? t('chat.roleYou') : r.role === 'assistant' ? t('chat.roleAI') : r.role}
+                </span>
+                <span className="text-[var(--color-text-muted)] opacity-60">· {relTime(r.createdAt)}</span>
+              </div>
+              <span className="text-[var(--color-text)] leading-snug"><HighlightedSnippet text={r.snippet} /></span>
             </div>
           ))}
         </div>
