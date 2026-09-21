@@ -346,9 +346,10 @@ function classifyShellArgs(args: Record<string, unknown>): CommandClassification
   const verdict = classifyCommand(command, getWorkspaceDir() || process.cwd())
   if (verdict.decision === 'deny') return verdict
 
-  // 逐条确认：非黑名单命令也一律弹窗
+  // 逐条确认：非黑名单命令也一律弹窗，但保留 classifyCommand 的具体危险原因，
+  // 避免审批展示层再次调用 classifyCommand 造成重复分类。
   if (config.policy === 'confirm') {
-    return { decision: 'confirm', reason: 'REQUIRES_CONFIRM' }
+    return { decision: 'confirm', reason: verdict.reason ?? 'REQUIRES_CONFIRM' }
   }
   // 仅危险确认：沿用分类器结果（confirm/allow）
   return verdict

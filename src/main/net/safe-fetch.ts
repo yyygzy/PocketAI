@@ -27,7 +27,11 @@ export interface SafeFetchOptions {
   maxBytes?: number
   /** 最大重定向跳数，默认 5 */
   maxRedirects?: number
-  /** 附加请求头（如 User-Agent） */
+  /** HTTP 方法，默认 GET */
+  method?: string
+  /** 请求体（用于 POST/PUT）；会自动设置 Content-Length */
+  body?: string | Buffer
+  /** 附加请求头（如 Content-Type / Authorization） */
   headers?: Record<string, string>
   /**
    * 若提供，响应体直接流式写入该文件而非缓冲进内存（用于数百 MB 级下载）。
@@ -192,11 +196,13 @@ interface HopResult {
   res: http.IncomingMessage
 }
 
-/** 发起单跳 GET；连接钉在已校验 IP 上，https 仍按原域名做 SNI 与证书校验。
+/** 发起单跳请求；连接钉在已校验 IP 上，https 仍按原域名做 SNI 与证书校验。
  *  onRequest 在请求对象创建时同步回调，用于把外部 abort 接到「连接建立阶段」。 */
 function requestOnce(
   u: URL,
   ip: string,
+  method: string,
+  body: string | Buffer | undefined,
   headers: Record<string, string>,
   deadline: number,
   onRequest: (req: http.ClientRequest) => void
@@ -208,12 +214,21 @@ function requestOnce(
       reject(new SafeFetchError('SafeFetch 请求超时'))
       return
     }
+    const bodyBuf: Buffer | undefined = body !== undefined ? Buffer.from(body) : undefined
+    const reqHeaders: Record<string, string> = {
+      Host: u.host,
+      'User-Agent': USER_AGENT,
+      ...headers
+    }
+    if (bodyBuf !== undefined) {
+      reqHeaders['Content-Length'] = String(bodyBuf.length)
+    }
     const options: https.RequestOptions = {
-      method: 'GET',
+      method,
       host: ip,
       port: Number(u.port) || (isHttps ? 443 : 80),
       path: u.pathname + u.search,
-      headers: { Host: u.host, 'User-Agent': USER_AGENT, ...headers },
+      headers: reqHeaders,
       ...(isHttps ? { servername: u.hostname } : {})
     }
     const onRes = (res: http.IncomingMessage): void => {
@@ -231,6 +246,7 @@ function requestOnce(
       if (timer) clearTimeout(timer)
       reject(e)
     })
+    if (bodyBuf !== undefined) req.write(bodyBuf)
     req.end()
   })
 }
@@ -345,9 +361,13 @@ function normalizeHeaders(src: http.IncomingHttpHeaders): Record<string, string>
 }
 
 /**
- * 安全抓取一个 URL（GET）。
+ * 安全抓取一个 URL（支持 GET/POST 等方法）。
  * 与全局 fetch 不同：手动跟随重定向并对每一跳重新做 SSRF 校验，连接钉在已校验 IP 上，
  * 响应体有硬性字节上限，全程受总超时与外部 AbortSignal 约束。
+ *
+ * 重定向安全策略：301/302/303 自动降级为 GET 并丢弃请求体（防止凭据/body 转发到第三方）；
+ * 307/308 保留原方法与 body；每一跳的 headers 始终来自 opts.headers（含 Authorization），
+ * 因此如需避免凭据泄漏到重定向目标，请设置 maxRedirects: 0。
  */
 export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -370,6 +390,10 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
   }
   signal?.addEventListener('abort', onAbort, { once: true })
 
+  // 重定向时可能降级方法/丢弃 body，用可变副本
+  let method = (opts.method ?? 'GET').toUpperCase()
+  let body: string | Buffer | undefined = opts.body
+
   try {
     for (let hop = 0; ; hop++) {
       if (signal?.aborted) throw new SafeFetchError('已中止')
@@ -377,9 +401,17 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
       const ip = await resolveAndValidate(current)
       if (signal?.aborted) throw new SafeFetchError('已中止')
 
-      const { req, res } = await requestOnce(current, ip, opts.headers ?? {}, deadline, (r) => {
-        currentReq = r
-      })
+      const { req, res } = await requestOnce(
+        current,
+        ip,
+        method,
+        body,
+        opts.headers ?? {},
+        deadline,
+        (r) => {
+          currentReq = r
+        }
+      )
       const status = res.statusCode ?? 0
 
       if (isRedirect(status)) {
@@ -397,11 +429,17 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
         } catch {
           throw new SafeFetchError(`重定向地址无效: ${loc}`)
         }
+        // 301/302/303：按 HTTP 语义降级为 GET 并丢弃 body（防止凭据/请求体转发到第三方）
+        if (status === 301 || status === 302 || status === 303) {
+          method = 'GET'
+          body = undefined
+        }
+        // 307/308：保留 method 与 body
         current = next
         continue
       }
 
-      const body = await readBody(
+      const respBody = await readBody(
         res,
         req,
         maxBytes,
@@ -411,7 +449,7 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
       return {
         status,
         headers: normalizeHeaders(res.headers),
-        body,
+        body: respBody,
         finalUrl: current.toString()
       }
     }

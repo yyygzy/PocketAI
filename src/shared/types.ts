@@ -436,6 +436,8 @@ export interface SendMessagePayload {
   targets: ChatTarget[] // 1 个=单模型；多个=一问多答并行对照
   agentMode?: boolean // true=走 Work Agent ReAct 循环；false/省略=普通对话
   attachments?: ChatAttachment[] // 图片/文档附件
+  /** 无人值守场景（如 IM 通道）：需人工确认的工具不弹窗等待，直接返回错误 */
+  unattended?: boolean
 }
 
 /** 聊天附件（图片或文档） */

@@ -209,7 +209,8 @@ const MATH_ALLOWED: Record<string, number | ((...args: number[]) => number)> = {
 }
 const MATH_ALLOWED_KEYS = new Set(Object.keys(MATH_ALLOWED))
 
-function safeMathEval(expr: string): number {
+/** 安全数学表达式求值（白名单 + vm 沙箱）。导出供测试 */
+export function safeMathEval(expr: string): number {
   if (expr.length > 500) throw new Error('表达式过长（上限 500 字符）')
   // 仅允许：数字、空格、运算符、()、函数名、点
   if (!/^[\d\s+\-*/%().,a-z_]+$/i.test(expr)) {

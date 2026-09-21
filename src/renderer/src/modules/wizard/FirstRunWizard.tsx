@@ -164,15 +164,30 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       setSavedProviderId(providerId)
 
       // 2. 把 assistant 绑定到刚保存的 provider
+      //    内置助手只读，需先复制为「我的助手」再绑定 provider
+      let effectiveAssistantId = selectedAssistantId
       const assistant = assistants.find((a) => a.id === selectedAssistantId)
-      if (assistant && !assistant.defaultProviderId) {
-        await window.pocketai.saveAssistant({
-          ...assistant,
-          defaultProviderId: providerId,
-        })
+      if (assistant) {
+        let target = assistant
+        if (assistant.isBuiltin) {
+          target = await window.pocketai.duplicateAssistant(assistant.id)
+          effectiveAssistantId = target.id
+          setSelectedAssistantId(target.id)
+          // 把副本加入本地列表，供后续摘要展示
+          setAssistants((prev) => {
+            if (prev.some((a) => a.id === target.id)) return prev
+            return [...prev, target]
+          })
+        }
+        if (!target.defaultProviderId) {
+          await window.pocketai.saveAssistant({
+            ...target,
+            defaultProviderId: providerId,
+          })
+        }
       }
-      // 3. pin 选中的助手
-      await window.pocketai.setAssistantPinned(selectedAssistantId, true)
+      // 3. pin 选中的助手（内置的 pin 副本）
+      await window.pocketai.setAssistantPinned(effectiveAssistantId, true)
 
       // 4. 自动启用前 3 个内置 skill（轻量，让新用户开箱有技能）
       const skills = await window.pocketai.listSkills().catch(() => [])

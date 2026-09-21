@@ -148,7 +148,9 @@ class ChannelService {
       assistantId: cfg.assistantId || null,
       content: msg.text,
       targets: [{ providerId, model }],
-      agentMode: cfg.agentMode
+      agentMode: cfg.agentMode,
+      // IM 通道无人值守：需人工确认的工具直接报错，不挂 5 分钟审批
+      unattended: true
     }
 
     const result = await this.runChat(payload)

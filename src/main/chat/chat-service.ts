@@ -167,6 +167,9 @@ function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAtt
 
 class ChatService {
   private controllers = new Map<string, AbortController>()
+  /** 会话级互斥锁：同一 conversationId 的 send/regenerate/resend 串行执行，
+   *  避免 Web 端与 IM 通道并发写入导致上下文重建错乱。 */
+  private conversationLocks = new Map<string, Promise<unknown>>()
 
   abort(requestId: string): void {
     this.controllers.get(requestId)?.abort()
@@ -174,7 +177,32 @@ class ChatService {
     agentEngine.abort(requestId)
   }
 
+  /**
+   * 会话级串行锁：前序任务失败不阻塞后续（catch 吞掉），
+   * finally 中若无等待者则从 Map 清理，避免内存增长。
+   */
+  private withConversationLock<T>(conversationId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.conversationLocks.get(conversationId) ?? Promise.resolve()
+    let resolveNext!: () => void
+    const next = new Promise<void>((r) => {
+      resolveNext = r
+    })
+    this.conversationLocks.set(conversationId, next)
+    return (async () => {
+      try {
+        await prev.catch(() => {})
+        return await fn()
+      } finally {
+        resolveNext()
+        if (this.conversationLocks.get(conversationId) === next) {
+          this.conversationLocks.delete(conversationId)
+        }
+      }
+    })()
+  }
+
   async send(payload: SendMessagePayload, emit: EmitFn): Promise<void> {
+    return this.withConversationLock(payload.conversationId, async () => {
     const { requestId, conversationId, content, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
 
@@ -282,10 +310,12 @@ class ChatService {
       this.controllers.delete(requestId)
       releaseKeepAwake()
     }
+    })
   }
 
   /** 重新生成：保留旧回复作为分支，用相同上下文追加一个新批次回复 */
   async regenerate(payload: RegeneratePayload, emit: EmitFn): Promise<void> {
+    return this.withConversationLock(payload.conversationId, async () => {
     const { requestId, conversationId, messageId, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
 
@@ -349,10 +379,12 @@ class ChatService {
       this.controllers.delete(requestId)
       releaseKeepAwake()
     }
+    })
   }
 
   /** 改参重跑 / 编辑用户消息后重发：保留旧回复作为分支，追加一个新批次回复 */
   async resend(payload: ResendPayload, emit: EmitFn): Promise<void> {
+    return this.withConversationLock(payload.conversationId, async () => {
     const { requestId, conversationId, messageId, content, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
 
@@ -418,6 +450,7 @@ class ChatService {
       this.controllers.delete(requestId)
       releaseKeepAwake()
     }
+    })
   }
 
   private async runTarget(args: {

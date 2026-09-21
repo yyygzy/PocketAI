@@ -26,6 +26,34 @@ const INIT_TIMEOUT = 15_000
 /** 进程退出后自动重启最大次数 */
 const MAX_AUTO_RESTART = 3
 
+/**
+ * MCP 工具默认权限分级（基于工具名语义启发式）。
+ * 原则：保守默认 confirm，仅对明显只读的命名模式放行（auto），危险关键词强制 confirm。
+ * 注意：工具名可由 MCP Server 任意指定，此分级仅作为默认值；最终以助手 toolPermissions 为准。
+ */
+const MCP_READONLY_PREFIXES = [
+  'get', 'list', 'read', 'search', 'find', 'fetch', 'query',
+  'describe', 'show', 'status', 'info', 'check', 'ping',
+  'time', 'date', 'version', 'whoami', 'echo', 'help'
+]
+const MCP_DANGEROUS_KEYWORDS = [
+  'delete', 'remove', 'rm', 'drop', 'truncate', 'exec', 'execute',
+  'run', 'write', 'create', 'update', 'modify', 'edit', 'send',
+  'post', 'upload', 'install', 'uninstall', 'kill', 'stop',
+  'restart', 'shutdown', 'format', 'reboot', 'wipe', 'destroy',
+  'move', 'rename', 'chmod', 'chown', 'sudo', 'eval'
+]
+
+export function classifyMcpToolPermission(name: string): 'auto' | 'confirm' {
+  const lower = (name ?? '').toLowerCase()
+  // 危险关键词命中 → 必须人工确认
+  if (MCP_DANGEROUS_KEYWORDS.some((kw) => lower.includes(kw))) return 'confirm'
+  // 只读前缀命中 → 自动放行
+  if (MCP_READONLY_PREFIXES.some((p) => lower.startsWith(p))) return 'auto'
+  // 未知语义 → 保守 confirm
+  return 'confirm'
+}
+
 interface RuntimeEntry {
   record: McpServerRecord
   client: StdioJsonRpcClient | null
@@ -36,7 +64,11 @@ interface RuntimeEntry {
   logBuffer: string[] // 最近的 stderr 日志（环形）
   startToken: number // 启动 token，用于异步竞争保护
   startPromise: Promise<McpServerRuntime> | null // 进行中的启动（并发去重，防重复 spawn 孤儿进程）
+  stableTimer?: NodeJS.Timeout // 稳定运行 N 分钟后复位 autoRestarts 计数器
 }
+
+/** 稳定运行阈值：超过该时长未崩溃则视为稳定，复位 autoRestarts */
+const STABLE_RUNNING_MS = 5 * 60 * 1000
 
 const LOG_BUFFER_SIZE = 200
 
@@ -204,6 +236,11 @@ class McpManager extends EventEmitter {
       }
       entry.status = 'running'
       entry.lastError = null
+      // 稳定运行 STABLE_RUNNING_MS 后复位自动重启计数（崩溃循环才会累计，稳定运行后清零）
+      clearTimeout(entry.stableTimer)
+      entry.stableTimer = setTimeout(() => {
+        entry.autoRestarts = 0
+      }, STABLE_RUNNING_MS)
       this.emitStatus(id, 'running')
       return this.toRuntime(record)
     } catch (e) {
@@ -234,6 +271,8 @@ class McpManager extends EventEmitter {
     entry.client = null
     entry.status = 'stopped'
     entry.tools = []
+    clearTimeout(entry.stableTimer)
+    entry.stableTimer = undefined
     this.emitStatus(id, 'stopped')
     await client.shutdown().catch(() => {})
   }
@@ -281,7 +320,11 @@ class McpManager extends EventEmitter {
       description: raw?.description ?? '',
       parameters: (raw?.inputSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>,
       source: 'mcp',
-      permission: 'auto', // MCP 工具默认 auto；后续可按名字匹配 confirm 列表
+      // MCP 工具权限按名称分级：
+      //   - 命中危险关键词（写/删/执行类）→ confirm（必须人工确认）
+      //   - 命中只读前缀（get/list/read/...）→ auto（放行，减少常用工具摩擦）
+      //   - 其余未知语义 → confirm（保守默认，避免可疑工具直接执行）
+      permission: classifyMcpToolPermission(name),
       mcpServerId: serverId
     }
   }
@@ -311,6 +354,9 @@ class McpManager extends EventEmitter {
 
     entry.client = null
     entry.tools = []
+    // 崩溃时清除稳定运行定时器（未到稳定时长，计数器不复位）
+    clearTimeout(entry.stableTimer)
+    entry.stableTimer = undefined
 
     // 自动重启（最多 3 次）
     if (entry.autoRestarts < MAX_AUTO_RESTART) {

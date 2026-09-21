@@ -21,7 +21,7 @@ import type {
   MessageRecord
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
-import type { AdapterChatMessage, MessageContentPart } from '../providers/types'
+import type { AdapterChatMessage, MessageContentPart, ChatParams } from '../providers/types'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { messageRepo } from '../db/repositories/message.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
@@ -30,8 +30,28 @@ import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
 import { toolRegistry } from '../tools/registry'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
-import { classifyCommand } from '../tools/shell-tools'
 import { createApproval } from './tool-approval'
+
+// Agent 允许助手 defaultParams 透传的生成参数白名单。
+// 禁止透传 tools / toolChoice / stream / messages / model / signal 等控制面字段，
+// 防止第三方扩展助手的 defaultParams 注入破坏 Agent 工具调用或请求结构。
+const SAFE_DEFAULT_PARAM_KEYS = new Set([
+  'temperature',
+  'maxTokens',
+  'topP',
+  'frequencyPenalty',
+  'presencePenalty'
+])
+
+/** 从助手 defaultParams 中仅挑出白名单内的生成参数（导出供测试） */
+export function pickSafeParams(params: Record<string, unknown> | null): Record<string, unknown> {
+  if (!params) return {}
+  const out: Record<string, unknown> = {}
+  for (const k of SAFE_DEFAULT_PARAM_KEYS) {
+    if (k in params) out[k] = params[k]
+  }
+  return out
+}
 
 const MAX_STEPS = 10
 const LOOP_TIMEOUT_MS = 5 * 60 * 1000 // 5 分钟整体超时
@@ -106,27 +126,42 @@ function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAtt
   }
 }
 
-/** 从早期对话消息生成文本摘要（不调用 LLM，基于规则的精简提取） */
+/**
+ * 从早期对话消息生成文本摘要（不调用 LLM，基于规则的精简提取）。
+ * 优化：保留早期消息中「最后一条工具结果」完整内容（最多 MAX_TOOL_RESULT_CHARS），
+ * 因为它通常携带后续推理依赖的状态；其余工具结果与长文本适度截断，防止 token 溢出。
+ */
 function buildHistorySummary(earlyMsgs: MessageRecord[]): string {
   const lines: string[] = []
-  for (const m of earlyMsgs) {
+  // 定位早期消息中最后一条 tool 消息的索引，用于保留完整结果
+  let lastToolIdx = -1
+  for (let i = earlyMsgs.length - 1; i >= 0; i--) {
+    if (earlyMsgs[i].status === 'done' && earlyMsgs[i].role === 'tool') {
+      lastToolIdx = i
+      break
+    }
+  }
+  for (let i = 0; i < earlyMsgs.length; i++) {
+    const m = earlyMsgs[i]
     if (m.status !== 'done') continue
     if (m.role === 'user') {
-      lines.push(`用户: ${m.content.slice(0, 200)}`)
+      lines.push(`用户: ${m.content.slice(0, 300)}`)
     } else if (m.role === 'assistant') {
-      // 只取 assistant 回复的前 150 字作为摘要
-      const snippet = m.content.slice(0, 150).replace(/\n+/g, ' ')
-      lines.push(`助手: ${snippet}${m.content.length > 150 ? '…' : ''}`)
+      const snippet = m.content.slice(0, 250).replace(/\n+/g, ' ')
+      lines.push(`助手: ${snippet}${m.content.length > 250 ? '…' : ''}`)
     } else if (m.role === 'tool') {
       try {
         const tr = JSON.parse(m.content) as ToolResult
-        lines.push(`工具[${tr.name}]: ${tr.content.slice(0, 80).replace(/\n+/g, ' ')}…`)
+        // 最后一条工具结果保留较完整内容（最多 MAX_TOOL_RESULT_CHARS），其余截断
+        const limit = i === lastToolIdx ? MAX_TOOL_RESULT_CHARS : 300
+        const snippet = tr.content.slice(0, limit).replace(/\n+/g, ' ')
+        lines.push(`工具[${tr.name}]: ${snippet}${tr.content.length > limit ? '…' : ''}`)
       } catch { /* skip */ }
     }
   }
   // 限制摘要总长度
   const result = lines.join('\n')
-  return result.length > 1500 ? result.slice(0, 1500) + '\n…（摘要已截断）' : result
+  return result.length > 3000 ? result.slice(0, 3000) + '\n…（摘要已截断）' : result
 }
 
 function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterChatMessage[] {
@@ -218,8 +253,8 @@ function findLastAssistantWithToolCallId(
 }
 
 /** 构造审批弹窗展示内容：shell_exec 给命令全文+解析后的执行目录；其它工具给参数 JSON。
- *  逐条确认策略下（reason=REQUIRES_CONFIRM）对 shell 命令再跑一次内容分类，
- *  若属危险特征则把 reason/风险徽标升级为具体的 DANGEROUS_*，让用户看到真实风险。 */
+ *  classification.reason 已由 classifyShellArgs 保留 classifyCommand 的具体危险原因，
+ *  此处直接复用，不再重复调用 classifyCommand。 */
 function buildApprovalDisplay(
   tc: ToolCall,
   reason?: string
@@ -241,16 +276,8 @@ function buildApprovalDisplay(
       /* 保持工作目录根；执行阶段会再次校验 */
     }
 
-    let risk: 'danger' | 'custom' = reason?.startsWith('DANGEROUS_') ? 'danger' : 'custom'
-    let effectiveReason = reason
-    if (reason === 'REQUIRES_CONFIRM') {
-      const deeper = classifyCommand(command, cwdAbs ?? getWorkspaceDir() ?? process.cwd())
-      if (deeper.decision === 'confirm' && deeper.reason?.startsWith('DANGEROUS_')) {
-        effectiveReason = deeper.reason
-        risk = 'danger'
-      }
-    }
-    return { command, cwd: cwdAbs, risk, reason: effectiveReason }
+    const risk: 'danger' | 'custom' = reason?.startsWith('DANGEROUS_') ? 'danger' : 'custom'
+    return { command, cwd: cwdAbs, risk, reason }
   }
 
   return {
@@ -267,7 +294,7 @@ class AgentEngine {
   }
 
   async run(payload: SendMessagePayload, emit: EmitFn): Promise<void> {
-    const { requestId, conversationId, content, assistantId, targets } = payload
+    const { requestId, conversationId, content, assistantId, targets, unattended } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
     const target: ChatTarget = targets[0] // Agent 模式只取第一个目标
 
@@ -401,12 +428,12 @@ class AgentEngine {
         let accumulated = ''
         let reasoningAccumulated = ''
         const adapter = providerManager.getAdapter(target.providerId)
-        const chatParams: any = {
+        const chatParams: ChatParams = {
           model: target.model,
           signal: master.signal,
           maxTokens: 4096, // Agent 模式默认较大 token 上限，支持多步推理 + 工具调用
           temperature: 0.7, // 略低温度，提高工具调用确定性
-          ...(defaultParams ?? {})
+          ...pickSafeParams(defaultParams) // 仅透传白名单内的生成参数
         }
         if (tools.length > 0) {
           chatParams.tools = tools
@@ -459,11 +486,18 @@ class AgentEngine {
         }
 
         // 写入本步 assistant 文本
-        const stepText = result.content || ''
+        const toolCalls = result.toolCalls
+        const rawText = result.content || ''
+        // 模型因达到 max_tokens 被截断（finish_reason=length）且未产出工具调用时，
+        // 追加截断提示，避免用户拿到不完整的最终回答却无感知。
+        // 工具调用场景下若 arguments 被截断，JSON 解析会失败并由 classify/execute 错误路径处理。
+        const truncated = result.finishReason === 'length' && (!toolCalls || toolCalls.length === 0)
+        const stepText = truncated
+          ? `${rawText}\n\n_（回答因达到 token 上限被截断，如需完整内容请继续追问）_`
+          : rawText
         messageRepo.updateContent(assistantMsg.id, stepText, 'done')
 
         // 把 assistant 步骤消息加入上下文（保留 tool_calls 以便 LLM 看到自己的调用历史）
-        const toolCalls = result.toolCalls
         // 持久化 tool_calls 到 DB，供恢复会话时重建上下文
         if (toolCalls && toolCalls.length > 0) {
           messageRepo.updateToolCalls(assistantMsg.id, JSON.stringify(toolCalls))
@@ -534,30 +568,41 @@ class AgentEngine {
               isError: true
             }
           } else if (classification.decision === 'confirm') {
-            const display = buildApprovalDisplay(tc, classification.reason)
-            const approved = await createApproval(
-              {
-                requestId,
-                conversationId,
-                toolName: tc.function.name,
-                command: display.command,
-                cwd: display.cwd,
-                reason: display.reason ?? classification.reason ?? 'REQUIRES_CONFIRM',
-                risk: display.risk
-              },
-              emit,
-              master.signal
-            )
-            if (!approved) {
-              // 用户拒绝（或审批超时/Agent 中止）：以错误结果回灌，Agent 可据此换路继续
+            // 无人值守场景（IM 通道等）：不弹窗等待人工确认，直接以错误结果回灌，
+            // 避免挂起 5 分钟审批超时。Agent 可据此换路或在最终回答中说明需桌面端操作。
+            if (unattended) {
               toolResult = {
                 toolCallId: tc.id,
                 name: tc.function.name,
-                content: '用户拒绝执行该命令',
+                content: `工具 ${tc.function.name} 需人工确认，但当前为无人值守场景，请在桌面端操作`,
                 isError: true
               }
             } else {
-              toolResult = await this.executeWithTimeout(tc, allowedToolIds, master.signal)
+              const display = buildApprovalDisplay(tc, classification.reason)
+              const approved = await createApproval(
+                {
+                  requestId,
+                  conversationId,
+                  toolName: tc.function.name,
+                  command: display.command,
+                  cwd: display.cwd,
+                  reason: display.reason ?? classification.reason ?? 'REQUIRES_CONFIRM',
+                  risk: display.risk
+                },
+                emit,
+                master.signal
+              )
+              if (!approved) {
+                // 用户拒绝（或审批超时/Agent 中止）：以错误结果回灌，Agent 可据此换路继续
+                toolResult = {
+                  toolCallId: tc.id,
+                  name: tc.function.name,
+                  content: '用户拒绝执行该命令',
+                  isError: true
+                }
+              } else {
+                toolResult = await this.executeWithTimeout(tc, allowedToolIds, master.signal)
+              }
             }
           } else {
             // 执行（带 30s 超时）
@@ -646,25 +691,38 @@ class AgentEngine {
     allowedToolIds: Set<string>,
     signal: AbortSignal
   ): Promise<ToolResult> {
+    // 子控制器：超时或 Agent 中止时主动 abort，让底层工具（shell 进程树、MCP 请求、
+    // 网络请求等）及时清理，避免 Promise.race 超时后底层进程继续悬空运行。
+    const subController = new AbortController()
+    const onParentAbort = () => subController.abort()
+    signal.addEventListener('abort', onParentAbort, { once: true })
+    if (signal.aborted) subController.abort()
+
     const toolPromise = toolRegistry.execute(
       tc.function.name,
       tc.function.arguments,
       allowedToolIds,
-      signal
+      subController.signal
     )
     // 定时器句柄保留：工具先结束时必须 clear，否则 timer 会白挂 30s（虽不产生
     // unhandledRejection，但会无谓持有 reject 闭包并推迟进程退出条件）
     let toolTimer: ReturnType<typeof setTimeout> | undefined
     const timeoutPromise = new Promise<ToolResult>((_, reject) => {
       toolTimer = setTimeout(
-        () => reject(new Error(`工具 ${tc.function.name} 执行超时（${TOOL_TIMEOUT_MS / 1000}s）`)),
+        () => {
+          subController.abort() // 超时也主动 abort 底层工具（杀 shell 进程树等）
+          reject(new Error(`工具 ${tc.function.name} 执行超时（${TOOL_TIMEOUT_MS / 1000}s）`))
+        },
         TOOL_TIMEOUT_MS
       )
     })
-    // Agent 中止：立即在 race 中出局（子进程由工具内 abort 监听负责杀树）
+    // Agent 中止：立即在 race 中出局（子控制器 abort 负责通知底层工具杀树/取消请求）
     let onAbort: (() => void) | null = null
     const abortPromise = new Promise<ToolResult>((_, reject) => {
-      onAbort = () => reject(new Error('Agent 运行已中止'))
+      onAbort = () => {
+        subController.abort()
+        reject(new Error('Agent 运行已中止'))
+      }
       signal.addEventListener('abort', onAbort, { once: true })
     })
     try {
@@ -678,6 +736,7 @@ class AgentEngine {
       }
     } finally {
       clearTimeout(toolTimer)
+      signal.removeEventListener('abort', onParentAbort)
       // 工具先结束时摘掉 abort 监听，避免监听器泄漏
       if (onAbort) signal.removeEventListener('abort', onAbort)
     }

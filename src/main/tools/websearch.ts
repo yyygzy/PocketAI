@@ -6,12 +6,17 @@
 //
 // 归一化输出：紧凑 JSON 数组 [{title, url, snippet}]，snippet ≤400 字符（引擎层另有 2000 字符兜底）。
 // 出站域名仅以上两个固定端点；query/count 均做白名单校验。
+// 安全：统一走 safeFetch（SSRF 防护 + 响应体 5MB 上限 + 全程超时 + abort）；
+//       maxRedirects=0 禁止跟随重定向，避免 API Key / Bearer 被转发到 Location 第三方主机。
 import { getWebSearchSecret } from './websearch-config'
+import { safeFetch } from '../net/safe-fetch'
 
 const REQUEST_TIMEOUT_MS = 15_000
 const MAX_COUNT = 8
 const DEFAULT_COUNT = 5
 const MAX_SNIPPET_CHARS = 400
+/** 搜索响应体上限（5MB），防止被劫持/故障服务商返回巨型响应打爆内存 */
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 export interface WebSearchHit {
   title: string
@@ -43,43 +48,45 @@ export async function runWebSearch(
     MAX_COUNT
   )
 
-  // 用户中止（Agent 停止）与 15s 超时合并
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  const merged = signal ? AbortSignal.any([signal, timeout]) : timeout
-
-  let res: Response
+  // 用户中止（Agent 停止）与 15s 超时由 safeFetch 内部 deadline 统一控制；
+  // 外部 signal 透传给 safeFetch，中止时销毁底层连接。
+  let result
   if (provider === 'tavily') {
-    res = await fetch('https://api.tavily.com/search', {
+    result = await safeFetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey, query: q, max_results: n }),
-      signal: merged,
-      // api_key 在请求体中；禁止跟随重定向，避免凭据被转发到 Location 主机
-      redirect: 'manual'
+      signal,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      maxBytes: MAX_RESPONSE_BYTES,
+      // 禁止跟随重定向，避免请求体中的 api_key 被转发到 Location 第三方主机
+      maxRedirects: 0
     })
   } else {
-    res = await fetch('https://api.bochaai.com/v1/web-search', {
+    result = await safeFetch('https://api.bochaai.com/v1/web-search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ query: q, count: n, summary: true }),
-      signal: merged,
-      // Bearer Key 在请求头中；禁止跟随重定向，避免 Key 被发送到第三方主机
-      redirect: 'manual'
+      signal,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      maxBytes: MAX_RESPONSE_BYTES,
+      // 禁止跟随重定向，避免 Bearer Key 被发送到第三方主机
+      maxRedirects: 0
     })
   }
 
-  if (res.status >= 300 && res.status < 400) {
+  if (result.status >= 300 && result.status < 400) {
     throw new Error('搜索服务返回重定向，已拒绝跟随（防止 API Key 泄漏）')
   }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
+  if (result.status < 200 || result.status >= 300) {
+    const text = result.body.toString('utf-8')
     // 不透传请求体（内含 Key），只透传响应片段
-    throw new Error(`搜索失败 HTTP ${res.status}: ${cut(text, 200)}`)
+    throw new Error(`搜索失败 HTTP ${result.status}: ${cut(text, 200)}`)
   }
 
-  const json: any = await res.json().catch(() => null)
-  if (!json) throw new Error('搜索响应解析失败')
+  const json: any = JSON.parse(result.body.toString('utf-8') || 'null')
+  if (json === null) throw new Error('搜索响应解析失败')
 
   const hits: WebSearchHit[] =
     provider === 'tavily'
