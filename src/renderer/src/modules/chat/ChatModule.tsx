@@ -249,19 +249,15 @@ export const ChatModule: React.FC = () => {
   }
 
   const handleExportConv = async (id: string) => {
-    const r = await window.pocketai.exportConversation(id)
-    if (!r.ok || !r.data) {
+    const r = await window.pocketai.exportConversationMd(id)
+    if (r.canceled) return
+    if (!r.ok) {
       toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
       return
     }
-    const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const title = r.data.conversation?.title ?? 'conversation'
-    a.href = url
-    a.download = `pocketai-${title}-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    if (r.path) {
+      toast.success(t('chat.exportSuccess', { path: r.path }))
+    }
   }
 
   const handleImportConv = async () => {

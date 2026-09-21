@@ -159,6 +159,7 @@ export const en: Record<string, string> = {
   'chat.roleYou': 'You',
   'chat.roleAI': 'AI',
   'chat.exportFail': 'Export failed: {e}',
+  'chat.exportSuccess': 'Exported to {path}',
   'chat.importFail': 'Import failed: {e}',
   'chat.importOk': 'Imported: {n} messages',
   'chat.mermaidLoading': 'Rendering diagram…',

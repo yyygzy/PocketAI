@@ -145,6 +145,8 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_RENAME, id, title),
   exportConversation: (id: string): Promise<{ ok: boolean; data?: any; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT, id),
+  exportConversationMd: (id: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_MD, id),
   importConversation: (payload: any): Promise<{ ok: boolean; conversationId?: string; messageCount?: number; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT, payload),
   forkConversation: (conversationId: string, messageId: string): Promise<{ ok: boolean; conversation?: ConversationRecord; error?: string }> =>

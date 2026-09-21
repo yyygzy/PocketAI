@@ -293,6 +293,31 @@ export function registerIpcHandlers(): void {
       }
     }
   })
+  ipcMain.handle(IPC.CONVERSATION_EXPORT_MD, async (e, id: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    try {
+      const conv = conversationRepo.get(String(id ?? ''))
+      if (!conv) return { ok: false, error: '会话不存在' }
+      const messages = messageRepo.listByConversation(String(id ?? ''))
+
+      const safeName = conv.title.replace(/[<>:"/\\|?*]/g, '_').trim() || 'conversation'
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: `${safeName}.md`,
+        filters: [
+          { name: 'Markdown', extensions: ['md'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      })
+      if (canceled || !filePath) return { ok: true, canceled: true }
+
+      const md = renderConversationToMarkdown(conv, messages)
+      fs.writeFileSync(filePath, md, 'utf8')
+      return { ok: true, path: filePath }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle(IPC.CONVERSATION_IMPORT, (_e, payload: any) => {
     if (!payload?.conversation || !Array.isArray(payload.messages)) {
       return { ok: false, error: '无效的导出格式' }
@@ -1543,6 +1568,81 @@ export function registerIpcHandlers(): void {
       return { ok: false, error: (e as Error).message }
     }
   })
+
+// ==========================================================================
+// 辅助函数
+// ==========================================================================
+
+/** 把单条消息内容里的多行文本包裹成代码块，避免 Markdown 排版错乱 */
+function escapeMdCodeBlock(text: string): string {
+  if (!text) return ''
+  // 如果本身就有 ``` fence，改用 ~~~ fence 避免冲突
+  if (text.includes('```')) {
+    return '~~~\n' + text.trimEnd() + '\n~~~'
+  }
+  return text.trimEnd()
+}
+
+function roleLabel(role: string): string {
+  switch (role) {
+    case 'user': return '👤 用户'
+    case 'assistant': return '🤖 助手'
+    case 'system': return '⚙️ 系统'
+    case 'tool': return '🔧 工具'
+    default: return role
+  }
+}
+
+function renderConversationToMarkdown(
+  conv: { title: string; modelLabel: string | null; createdAt: number; updatedAt: number },
+  messages: { role: string; content: string; createdAt: number; toolCalls?: string | null }[]
+): string {
+  const dateFmt = (ts: number) => new Date(ts).toLocaleString()
+
+  const lines: string[] = []
+  lines.push(`# ${conv.title}`)
+  lines.push('')
+  lines.push(`> **模型**: \`${conv.modelLabel ?? '未知'}\``)
+  lines.push(`> **创建时间**: ${dateFmt(conv.createdAt)}`)
+  lines.push(`> **最后更新**: ${dateFmt(conv.updatedAt)}`)
+  lines.push(`> **消息数**: ${messages.length}`)
+  lines.push('')
+  lines.push('---')
+  lines.push('')
+
+  for (const msg of messages) {
+    lines.push(`## ${roleLabel(msg.role)} — ${dateFmt(msg.createdAt)}`)
+    lines.push('')
+
+    // 工具调用信息
+    if (msg.toolCalls) {
+      try {
+        const calls = JSON.parse(msg.toolCalls)
+        if (Array.isArray(calls) && calls.length > 0) {
+          lines.push('**Tool Calls**:')
+          for (const c of calls) {
+            lines.push(`- \`${c.function?.name ?? c.name ?? 'unknown'}\` → ${escapeMdCodeBlock(c.function?.arguments ?? JSON.stringify(c, null, 2))}`)
+          }
+          lines.push('')
+        }
+      } catch {
+        lines.push('**Tool Calls**:')
+        lines.push(escapeMdCodeBlock(msg.toolCalls))
+        lines.push('')
+      }
+    }
+
+    if (msg.content) {
+      lines.push(escapeMdCodeBlock(msg.content))
+      lines.push('')
+    }
+
+    lines.push('---')
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
   ipcMain.handle(IPC.UI_SET_PREFS, (_e, patch: Partial<UiPreferences>) => {
     try {
       return { ok: true, data: setUiPreferences(patch ?? {}) }

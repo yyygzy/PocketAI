@@ -965,6 +965,7 @@ export const IPC = {
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_RENAME: 'conversation:rename',
   CONVERSATION_EXPORT: 'conversation:export',
+  CONVERSATION_EXPORT_MD: 'conversation:export-md',
   CONVERSATION_IMPORT: 'conversation:import',
   CONVERSATION_FORK: 'conversation:fork',
 

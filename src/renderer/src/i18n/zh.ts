@@ -159,6 +159,7 @@ export const zh: Record<string, string> = {
   'chat.roleYou': '你',
   'chat.roleAI': 'AI',
   'chat.exportFail': '导出失败: {e}',
+  'chat.exportSuccess': '已导出到 {path}',
   'chat.importFail': '导入失败: {e}',
   'chat.importOk': '导入成功：{n} 条消息',
   'chat.mermaidLoading': '图表渲染中…',
