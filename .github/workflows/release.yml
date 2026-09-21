@@ -102,10 +102,12 @@ jobs:
           name: dist-files-linux
           path: dist/linux
 
-      - name: Flatten to dist/
+      - name: Flatten to dist/ (exclude debug files)
         run: |
           mkdir -p dist/all
           cp dist/win/* dist/mac/* dist/linux/* dist/all/ 2>/dev/null || true
+          # electron-builder 调试产物 + CI locale 导致的中文 yml, 不应进 Release
+          rm -f dist/all/builder-debug.yml dist/all/最新.yml
           find dist/all -type f | sort
 
       - uses: softprops/action-gh-release@v2

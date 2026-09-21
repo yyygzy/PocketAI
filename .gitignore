@@ -7,6 +7,7 @@ data/
 .DS_Store
 .env
 .env.local
+.env.*.local
 .trae/
 Thumbs.db
 
@@ -14,3 +15,26 @@ Thumbs.db
 build/license-private.pem
 # 已签发的激活码与台账含用户信息，仅本地保管
 licenses/
+# 测试许可证仅本地调试用，不应进 Release
+build/test-license.lic
+
+# electron-builder 调试产物（CI Release 里也会二次排除）
+builder-debug.yml
+latest.yml.bak
+# CI Windows runner 中文 locale 可能生成的中文 yml
+最新.yml
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统临时文件
+*.tmp
+*.bak
+
+# 测试脚本运行时生成
+scripts/tests/*.json
+scripts/tests/*.log
