@@ -31,7 +31,12 @@ export const DB_PATH = path.join(DATA_DIR, 'app.db')
 export const VECTOR_DB_PATH = path.join(DATA_DIR, 'vectors.db')
 export const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 export const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments')
-export const EXTENSIONS_DIR = path.join(APP_ROOT, 'extensions')
+/**
+ * 内置数据（assistants/skills）目录：打包后跟随 asar 走（只读），
+ * 不能用 APP_ROOT（exe 同级目录在 asar 外，找不到内置数据）。
+ * dev 时 app.getAppPath() = cwd（仓库根）；prod 时 = resources/app.asar。
+ */
+export const EXTENSIONS_DIR = path.join(app.getAppPath(), 'extensions')
 export const LOGS_DIR = path.join(DATA_DIR, 'logs')
 /** 运行时目录（存放便携 Python 等第三方运行时） */
 export const RUNTIME_DIR = path.join(APP_ROOT, 'runtime')

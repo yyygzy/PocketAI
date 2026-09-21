@@ -16,6 +16,7 @@ import http from 'node:http'
 import https from 'node:https'
 import dns from 'node:dns'
 import net from 'node:net'
+import fs from 'node:fs'
 
 export interface SafeFetchOptions {
   /** 外部中止信号（如 Agent 停止按钮）；中止时销毁底层连接 */
@@ -28,6 +29,13 @@ export interface SafeFetchOptions {
   maxRedirects?: number
   /** 附加请求头（如 User-Agent） */
   headers?: Record<string, string>
+  /**
+   * 若提供，响应体直接流式写入该文件而非缓冲进内存（用于数百 MB 级下载）。
+   * 仍受 maxBytes 硬上限保护；路径由调用方负责，本模块不做目录约束。
+   */
+  sinkFile?: string
+  /** 下载进度回调（received 已收字节；total 取 Content-Length，缺失为 null） */
+  onProgress?: (received: number, total: number | null) => void
 }
 
 export interface SafeFetchResult {
@@ -227,8 +235,14 @@ function requestOnce(
   })
 }
 
-/** 流式读取响应体并强制字节上限 */
-function readBody(res: http.IncomingMessage, req: http.ClientRequest, maxBytes: number, deadline: number): Promise<Buffer> {
+/** 流式读取响应体并强制字节上限；sink 模式直接落盘（返回空 Buffer） */
+function readBody(
+  res: http.IncomingMessage,
+  req: http.ClientRequest,
+  maxBytes: number,
+  deadline: number,
+  sink?: { file: string; onProgress?: (received: number, total: number | null) => void }
+): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const declared = Number(res.headers['content-length'] ?? 0)
     if (Number.isFinite(declared) && declared > maxBytes) {
@@ -241,6 +255,54 @@ function readBody(res: http.IncomingMessage, req: http.ClientRequest, maxBytes: 
     const timer = setTimeout(() => {
       req.destroy(new SafeFetchError('SafeFetch 读取响应超时'))
     }, Math.max(remaining, 1))
+
+    // sink 模式：边收边写文件，避免数百 MB 响应整体进内存
+    if (sink) {
+      const declaredTotal = Number.isFinite(declared) && declared > 0 ? declared : null
+      const fileStream = fs.createWriteStream(sink.file)
+      let received = 0
+      let lastReport = 0
+      const fail = (err: Error) => {
+        clearTimeout(timer)
+        fileStream.close(() => {
+          fs.rm(sink.file, { force: true }, () => reject(err))
+        })
+      }
+      fileStream.on('error', (err) => {
+        req.destroy()
+        fail(err)
+      })
+      res.on('data', (c: Buffer) => {
+        received += c.length
+        if (received > maxBytes) {
+          req.destroy(new SafeFetchError(`响应体超过上限（${Math.round(maxBytes / 1024 / 1024)}MB）`))
+          return
+        }
+        fileStream.write(c)
+        if (sink.onProgress && received - lastReport > 1_048_576) {
+          lastReport = received
+          sink.onProgress(received, declaredTotal)
+        }
+      })
+      res.on('end', () => {
+        sink.onProgress?.(received, declaredTotal)
+        fileStream.end(() => {
+          clearTimeout(timer)
+          resolve(Buffer.alloc(0))
+        })
+      })
+      res.on('error', (e) => {
+        clearTimeout(timer)
+        req.destroy()
+        fail(e)
+      })
+      req.on('error', (e) => {
+        clearTimeout(timer)
+        fail(e)
+      })
+      return
+    }
+
     const chunks: Buffer[] = []
     let total = 0
     res.on('data', (c: Buffer) => {
@@ -339,7 +401,13 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
         continue
       }
 
-      const body = await readBody(res, req, maxBytes, deadline)
+      const body = await readBody(
+        res,
+        req,
+        maxBytes,
+        deadline,
+        opts.sinkFile ? { file: opts.sinkFile, onProgress: opts.onProgress } : undefined
+      )
       return {
         status,
         headers: normalizeHeaders(res.headers),

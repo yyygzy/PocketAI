@@ -302,7 +302,7 @@ function showLedger() {
 async function main() {
   ensureKey()
   console.log('═══════════════════════════════════════')
-  console.log('  PocketAI 激活码签发台（离线 RSA 签发）')
+  console.log('  墨匣激活码签发台（离线 RSA 签发）')
   console.log('═══════════════════════════════════════')
   for (;;) {
     console.log('\n  1) 签发单个激活码')

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PocketAI 发布前检查脚本
+ * 墨匣发布前检查脚本
  *
  * 用法：
  *   node scripts/release-check.mjs           # 全量检查（含 tsc + electron-vite build）
@@ -92,12 +92,12 @@ group('B. 构建配置完整性')
 const build = pkg.build || {}
 const winTargets = (build.win?.target || []).map((t) => t.target || t)
 result(winTargets.includes('nsis') && winTargets.includes('portable') ? 'PASS' : 'FAIL', 'Windows 双包 target（nsis + portable）', winTargets.join(', '))
-result(build.portable?.artifactName === 'PocketAI-${version}-Portable-${arch}.${ext}' ? 'PASS' : 'WARN', '便携版 artifactName', build.portable?.artifactName || '未配置')
+result(build.portable?.artifactName === 'Moxia-${version}-Portable-${arch}.${ext}' ? 'PASS' : 'WARN', '便携版 artifactName', build.portable?.artifactName || '未配置')
 
 const lx = readText('electron-builder.linux.yml') || ''
 result(lx.includes('AppImage') ? 'PASS' : 'FAIL', 'Linux AppImage target', '')
 result(lx.includes('{darwin,win32}-*.node') ? 'PASS' : 'FAIL', '跨平台 prebuilds 排除规则（排除 darwin/win32）', '')
-result(lx.includes('artifactName: PocketAI-${version}-Linux-${arch}.${ext}') ? 'PASS' : 'WARN', 'Linux artifactName', '')
+result(lx.includes('artifactName: Moxia-${version}-Linux-${arch}.${ext}') ? 'PASS' : 'WARN', 'Linux artifactName', '')
 result(pkg.scripts?.['dist'] && pkg.scripts?.['dist:linux'] ? 'PASS' : 'FAIL', 'dist / dist:linux 脚本存在', '')
 
 result(wf.includes('build-linux') ? 'PASS' : 'FAIL', 'CI 有 build-linux job', '')
@@ -108,9 +108,9 @@ result(wf.includes('npm run dist:linux') ? 'PASS' : 'FAIL', 'CI Linux job 调用
 // ── C. 构建产物（存在才验） ──────────────────────────────
 group('C. 构建产物检查（本地 dist/）')
 const hasDist = existsSync(join(ROOT, 'dist'))
-const setups = distFiles(/^PocketAI-\d+\.\d+\.\d+-x64\.exe$/)
-const portables = distFiles(/^PocketAI-\d+\.\d+\.\d+-Portable-x64\.exe$/)
-const appimages = distFiles(/^PocketAI-\d+\.\d+\.\d+-Linux-x64\.AppImage$/i)
+const setups = distFiles(/^Moxia-\d+\.\d+\.\d+-x64\.exe$/)
+const portables = distFiles(/^Moxia-\d+\.\d+\.\d+-Portable-x64\.exe$/)
+const appimages = distFiles(/^Moxia-\d+\.\d+\.\d+-Linux-x64\.AppImage$/i)
 const latestYml = readText('dist/latest.yml')
 const latestLinuxYml = readText('dist/latest-linux.yml')
 const blockmaps = distFiles(/\.blockmap$/)
@@ -213,7 +213,7 @@ manualItem('Release 演练后复查', '发布 tag 后核对 Release 资产：2 �
 
 // ── 输出报告 ─────────────────────────────────────────────
 const icon = { PASS: '✓', FAIL: '✗', WARN: '!', SKIP: '-', MANUAL: '?' }
-let out = '\n========== PocketAI 发布前检查报告 ==========\n'
+let out = '\n========== 墨匣发布前检查报告 ==========\n'
 for (const r of rows) {
   if (r.type === 'group') { out += `\n── ${r.title}\n`; continue }
   out += `  ${icon[r.status]} ${r.status.padEnd(6)} ${r.name}${r.detail ? `  · ${r.detail}` : ''}\n`

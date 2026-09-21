@@ -243,7 +243,7 @@ export function runDiagnose(): DiagnoseResult {
     return {
       level: ok ? 'ok' : 'danger',
       detail: ok ? `v${current}（最新）` : `v${current}，代码要求 v${LATEST_SCHEMA_VERSION}`,
-      fix: ok ? undefined : '完全退出并重启 PocketAI，启动时会自动执行迁移'
+      fix: ok ? undefined : '完全退出并重启墨匣，启动时会自动执行迁移'
     }
   }))
 

@@ -8,6 +8,7 @@
 // completeWizard() 落盘「已完成」标记和当前机器指纹，下次不再弹出。
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
+import { OllamaPanel } from '../../components/OllamaPanel'
 import type {
   HardwareInfo,
   ModelRecommendation,
@@ -251,6 +252,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                   ⚠️ {w}
                 </p>
               ))}
+              <div className="mt-3">
+                <OllamaPanel compact />
+              </div>
             </>
           )}
         </>
