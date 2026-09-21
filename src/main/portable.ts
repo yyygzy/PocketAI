@@ -63,12 +63,16 @@ export function getPaths(): AppPaths {
 }
 
 /**
- * 确保所有数据目录存在。
- * 防御：若 DATA_DIR 存在但不是目录（同名文件/快捷方式/损坏的符号链接），
+ * 确保所有**可写数据目录**存在。
+ * 防御：若路径存在但不是目录（同名文件/快捷方式/损坏的符号链接），
  * 先删除再创建——旧版本可能误把文件留在此处。
+ *
+ * 注意：EXTENSIONS_DIR（打包进 asar 的只读内置数据）**不纳入**这里，
+ * asar 是单文件，对 `resources/app.asar/extensions` 做 mkdirSync/rmSync
+ * 会触发 ENOTDIR。
  */
 export function ensureDirs(): void {
-  const dirs = [DATA_DIR, ATTACHMENTS_DIR, EXTENSIONS_DIR, LOGS_DIR, RUNTIME_DIR]
+  const dirs = [DATA_DIR, ATTACHMENTS_DIR, LOGS_DIR, RUNTIME_DIR]
   for (const dir of dirs) {
     try {
       const st = fs.statSync(dir)

@@ -17,10 +17,13 @@ export function syncBuiltinAssistants(): { count: number; errors: string[] } {
     return { count, errors }
   }
 
-  const files = fs
-    .readdirSync(ASSISTANTS_DIR)
-    .filter((f) => f.endsWith('.json'))
-    .sort()
+  let files: string[] = []
+  try {
+    files = fs.readdirSync(ASSISTANTS_DIR).filter((f) => f.endsWith('.json')).sort()
+  } catch (e) {
+    errors.push(`readdirSync failed: ${(e as Error).message}`)
+    return { count, errors }
+  }
 
   for (const file of files) {
     try {
@@ -62,10 +65,13 @@ export function syncBuiltinSkills(): { count: number; errors: string[] } {
     return { count, errors }
   }
 
-  const files = fs
-    .readdirSync(SKILLS_DIR)
-    .filter((f) => f.endsWith('.json') || f.endsWith('.md'))
-    .sort()
+  let files: string[] = []
+  try {
+    files = fs.readdirSync(SKILLS_DIR).filter((f) => f.endsWith('.json') || f.endsWith('.md')).sort()
+  } catch (e) {
+    errors.push(`readdirSync failed: ${(e as Error).message}`)
+    return { count, errors }
+  }
 
   for (const file of files) {
     try {
