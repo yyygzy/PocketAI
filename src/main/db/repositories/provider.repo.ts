@@ -57,8 +57,16 @@ export const providerRepo = {
 
   save(input: Omit<ProviderRecord, 'createdAt'> & { createdAt?: number }): ProviderRecord {
     const db = dbService.getHandle()
-    const existing = input.id ? this.get(input.id) : null
-    const id = input.id || randomUUID()
+    let existing = input.id ? this.get(input.id) : null
+    // 新建（空 id）时按 (type, baseUrl) 去重：已存在同类型+同地址的 provider 则更新它，
+    // 避免向导/设置多次保存同一 baseUrl 产生重复条目（如多个 Ollama localhost:11434）。
+    if (!existing) {
+      const dup = db
+        .prepare('SELECT * FROM providers WHERE type=? AND base_url=? LIMIT 1')
+        .get(input.type, input.baseUrl) as ProviderRow | undefined
+      if (dup) existing = rowToRecord(dup)
+    }
+    const id = existing?.id ?? (input.id || randomUUID())
     const createdAt = existing?.createdAt ?? input.createdAt ?? Date.now()
 
     // 字段加密：apiKeys → 密文
@@ -81,6 +89,41 @@ export const providerRepo = {
 
   delete(id: string): void {
     dbService.getHandle().prepare('DELETE FROM providers WHERE id = ?').run(id)
+  },
+
+  /**
+   * 合并同 (type, baseUrl) 的重复 provider（历史脏数据清理）。
+   * 保留 created_at 最早的一条，把其余条目的 models / apiKeys 合并进去后删除。
+   * 幂等：无重复时直接返回。
+   */
+  deduplicate(): void {
+    const db = dbService.getHandle()
+    const rows = db
+      .prepare('SELECT id, type, base_url, models, api_key_encrypted FROM providers ORDER BY created_at ASC')
+      .all() as { id: string; type: string; base_url: string | null; models: string | null; api_key_encrypted: string | null }[]
+
+    const seen = new Map<string, string>() // key: `${type}|${baseUrl}` → survivor id
+    const toDelete: string[] = []
+
+    for (const row of rows) {
+      const key = `${row.type}|${row.base_url ?? ''}`
+      const survivorId = seen.get(key)
+      if (!survivorId) {
+        seen.set(key, row.id)
+        continue
+      }
+      // 合并 models 到 survivor
+      const survivorRow = rows.find((r) => r.id === survivorId)!
+      const survivorModels = safeJsonArray(survivorRow.models)
+      const dupModels = safeJsonArray(row.models)
+      const merged = [...new Set([...survivorModels, ...dupModels])]
+      db.prepare('UPDATE providers SET models=? WHERE id=?').run(JSON.stringify(merged), survivorId)
+      survivorRow.models = JSON.stringify(merged)
+      toDelete.push(row.id)
+    }
+
+    const delStmt = db.prepare('DELETE FROM providers WHERE id=?')
+    for (const id of toDelete) delStmt.run(id)
   },
 
   updateModels(id: string, models: string[]): void {

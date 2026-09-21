@@ -367,6 +367,13 @@ async function boot(): Promise<void> {
     console.warn('[crypto] 凭据迁移失败（不阻塞启动）:', e)
   }
 
+  // 阶段 3.1：合并同 (type, baseUrl) 的重复 provider（历史脏数据清理，幂等）
+  try {
+    providerRepo.deduplicate()
+  } catch (e) {
+    console.warn('[provider] 重复 provider 清理失败（不阻塞启动）:', e)
+  }
+
   // 同步助手 + 技能
   const synced = syncBuiltinAssistants()
   console.log(
