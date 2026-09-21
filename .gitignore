@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+dist-v*/
 data/
 *.log
 .DS_Store
