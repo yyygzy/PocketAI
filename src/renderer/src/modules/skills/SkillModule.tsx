@@ -11,6 +11,7 @@ export const SkillModule: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'detail' | 'create' | 'edit'>('detail')
   const [marketOpen, setMarketOpen] = useState(false)
+  const [keyword, setKeyword] = useState('')
 
   // 返回最新列表供调用方复用：市场内写操作后市场与本页共享同一次 listSkills 结果，
   // 避免市场自刷 + 本页 onChanged 双查
@@ -20,8 +21,19 @@ export const SkillModule: React.FC = () => {
     return list
   }, [])
   useEffect(() => {
+    // 打开技能页时自动同步内置（支持开发时热更新 + 生产环境首次载入）
+    window.pocketai.syncSkills().catch(() => {})
     load()
   }, [])
+
+  // 搜索过滤：名称 + 描述
+  const filtered = React.useMemo(() => {
+    const kw = keyword.trim().toLowerCase()
+    if (!kw) return skills
+    return skills.filter(
+      (s) => s.name.toLowerCase().includes(kw) || s.description.toLowerCase().includes(kw)
+    )
+  }, [skills, keyword])
 
   const selected = skills.find((s) => s.id === selectedId) ?? null
 
@@ -65,11 +77,17 @@ export const SkillModule: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="space-y-1 overflow-y-auto">
-          {skills.length === 0 && (
+        <input
+          className="input text-xs py-1 w-full mb-2"
+          placeholder={t('skill.searchPh')}
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+        />
+        <div className="space-y-1 overflow-y-auto flex-1">
+          {filtered.length === 0 && (
             <p className="text-xs text-[var(--color-text-muted)]">{t('skill.empty')}</p>
           )}
-          {skills.map((s) => (
+          {filtered.map((s) => (
             <button
               key={s.id}
               onClick={() => {

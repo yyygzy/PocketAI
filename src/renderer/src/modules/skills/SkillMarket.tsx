@@ -1,31 +1,76 @@
-// 技能市场（V2 批次五）：浏览/搜索 + 复制为我的技能 + 导入/导出
+// 技能市场：本地 + 在线商店 + URL 导入
 //
-// 复用 AssistantMarket 的模态模式：固定遮罩 + View 状态机（grid/detail）。
-// 内置技能内容锁定，编辑路径 = 「复制为我的技能」生成自定义副本。
+// Tab 状态机：tab='local'|'online'
+// - local: 原有技能列表（grid/detail），支持启停/复制/导出/删除
+// - online: 远程 registry index 拉取 + 网格展示 + 一键导入
+// URL 导入：粘贴 raw URL（.json 或 .md），safeFetch 后 parse 导入
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 
 interface Props {
   onClose: () => void
-  /** 市场 内启停/导入/删除等写操作后由父级统一刷新；返回最新列表，市场直接复用（单次 listSkills） */
   onChanged: () => Promise<SkillRecord[]>
 }
 
+type Tab = 'local' | 'online'
 type View = { mode: 'grid' } | { mode: 'detail'; id: string }
+
+/** 远程 registry index 条目 */
+interface RemoteSkill {
+  id: string
+  name: string
+  description?: string
+  icon?: string
+  url: string
+}
+
+/** 默认 registry（自建 GitHub 托管） */
+const DEFAULT_REGISTRY =
+  'https://raw.githubusercontent.com/yyygzy/skill-registry/main/index.json'
 
 export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   const { t } = useI18n()
+  const [tab, setTab] = useState<Tab>('local')
   const [skills, setSkills] = useState<SkillRecord[]>([])
+  const [remoteSkills, setRemoteSkills] = useState<RemoteSkill[]>([])
+  const [remoteLoading, setRemoteLoading] = useState(false)
+  const [remoteError, setRemoteError] = useState<string | null>(null)
+  const [registryUrl, setRegistryUrl] = useState(DEFAULT_REGISTRY)
   const [view, setView] = useState<View>({ mode: 'grid' })
   const [keyword, setKeyword] = useState('')
+  const [urlInput, setUrlInput] = useState('')
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const flash = useCallback((ok: boolean, text: string) => {
+    setToast({ ok, text })
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => setToast(null), 2400)
+  }, [])
+
   const load = useCallback(() => window.pocketai.listSkills().then(setSkills), [])
+
+  const fetchRemote = useCallback(
+    async (url: string) => {
+      setRemoteLoading(true)
+      setRemoteError(null)
+      const res = await window.pocketai.fetchSkillIndex(url)
+      setRemoteLoading(false)
+      if (res.ok && res.skills) {
+        setRemoteSkills(res.skills)
+        if (res.skills.length === 0) setRemoteError(t('skill.market.onlineEmpty'))
+      } else {
+        setRemoteError(res.error ?? t('skill.market.onlineFailed'))
+        setRemoteSkills([])
+      }
+    },
+    [t]
+  )
+
   useEffect(() => {
     load()
-    // Esc 关闭市场
+    if (tab === 'online') fetchRemote(registryUrl)
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
@@ -34,25 +79,33 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       window.removeEventListener('keydown', onKey)
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     }
-  }, [load, onClose])
+  }, [tab, registryUrl, load, fetchRemote, onClose])
 
-  const flash = useCallback((ok: boolean, text: string) => {
-    setToast({ ok, text })
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = setTimeout(() => setToast(null), 2400)
-  }, [])
-
-  // 搜索过滤：名称 + 描述，大小写不敏感；内置排前（与 skillRepo.list 排序一致）
+  // 搜索过滤
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
-    if (!kw) return skills
-    return skills.filter(
-      (s) => s.name.toLowerCase().includes(kw) || s.description.toLowerCase().includes(kw)
+    const pool = tab === 'local' ? skills : remoteSkills
+    if (!kw) return pool
+    return pool.filter(
+      (s) => s.name.toLowerCase().includes(kw) || (s.description ?? '').toLowerCase().includes(kw)
     )
-  }, [skills, keyword])
+  }, [tab, skills, remoteSkills, keyword])
 
-  const current = view.mode === 'detail' ? skills.find((s) => s.id === view.id) ?? null : null
+  const current =
+    view.mode === 'detail'
+      ? (tab === 'local'
+          ? skills.find((s) => s.id === view.id)
+          : remoteSkills.find((s) => s.id === view.id)) ?? null
+      : null
 
+  const handleTabSwitch = (t: Tab) => {
+    setTab(t)
+    setView({ mode: 'grid' })
+    setKeyword('')
+    setUrlInput('')
+  }
+
+  // ---------- 本地技能操作 ----------
   const handleToggle = useCallback(
     async (s: SkillRecord) => {
       await window.pocketai.saveSkill({ id: s.id, name: s.name, enabled: !s.enabled })
@@ -61,7 +114,6 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
     [onChanged]
   )
 
-  /** 复制为我的技能：全字段另存（不传 id → 新建自定义副本），成功后跳副本详情 */
   const handleDuplicate = useCallback(
     async (s: SkillRecord) => {
       const copy = await window.pocketai.saveSkill({
@@ -93,7 +145,6 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
     if (r.ok && r.skill) {
       setSkills(await onChanged())
       setView({ mode: 'detail', id: r.skill.id })
-      // 同名不阻断导入（独立副本），但明确告知，避免用户误以为覆盖
       flash(true, r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone'))
       return
     }
@@ -118,18 +169,51 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
     [t, onChanged]
   )
 
+  // ---------- 在线技能操作 ----------
+  const handleImportRemote = useCallback(
+    async (s: RemoteSkill) => {
+      const r = await window.pocketai.importSkillFromUrl(s.url)
+      if (r.ok && r.skill) {
+        await onChanged()
+        flash(true, t('skill.market.importDone'))
+      } else {
+        flash(false, r.error ?? t('skill.market.importFailed'))
+      }
+    },
+    [flash, t, onChanged]
+  )
+
+  const handleImportFromUrl = useCallback(async () => {
+    const url = urlInput.trim()
+    if (!url) {
+      flash(false, t('skill.market.urlEmpty'))
+      return
+    }
+    const r = await window.pocketai.importSkillFromUrl(url)
+    if (r.ok && r.skill) {
+      setSkills(await onChanged())
+      flash(true, t('skill.market.importDone'))
+      setUrlInput('')
+    } else {
+      flash(false, r.error ?? t('skill.market.importFailed'))
+    }
+  }, [urlInput, flash, t, onChanged])
+
   const builtinBadge =
     'text-[9px] px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)] shrink-0'
   const mineBadge =
     'text-[9px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)] shrink-0'
+  const onlineBadge =
+    'text-[9px] px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)] shrink-0'
 
+  // ---------- 渲染 ----------
   return (
     <div
       className="fixed inset-0 z-50 bg-[var(--color-modal-overlay)] backdrop-blur-sm flex items-center justify-center p-6"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl h-[80vh] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden"
+        className="w-full max-w-4xl h-[82vh] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
@@ -145,7 +229,11 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
               </button>
             )}
             <h2 className="font-semibold shrink-0">
-              {view.mode === 'grid' ? t('skill.market.title') : t('skill.market.detail')}
+              {view.mode === 'grid'
+                ? tab === 'local'
+                  ? t('skill.market.title')
+                  : t('skill.market.onlineTitle')
+                : t('skill.market.detail')}
             </h2>
             {view.mode === 'grid' && (
               <input
@@ -157,9 +245,18 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {view.mode === 'grid' && (
+            {view.mode === 'grid' && tab === 'local' && (
               <button className="btn-primary text-xs" onClick={handleImport}>
                 {t('skill.market.import')}
+              </button>
+            )}
+            {view.mode === 'grid' && tab === 'online' && (
+              <button
+                className="btn-ghost text-xs"
+                onClick={() => fetchRemote(registryUrl)}
+                disabled={remoteLoading}
+              >
+                {remoteLoading ? '…' : t('skill.market.refresh')}
               </button>
             )}
             <button
@@ -172,19 +269,90 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
           </div>
         </div>
 
+        {/* Tab 栏 */}
+        {view.mode === 'grid' && (
+          <div className="shrink-0 px-5 pt-3 flex items-center gap-2">
+            <button
+              className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors ${
+                tab === 'local'
+                  ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] border-[var(--color-accent)]'
+                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
+              }`}
+              onClick={() => handleTabSwitch('local')}
+            >
+              🛒 {t('skill.market.tabLocal')}
+            </button>
+            <button
+              className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors ${
+                tab === 'online'
+                  ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] border-[var(--color-accent)]'
+                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
+              }`}
+              onClick={() => handleTabSwitch('online')}
+            >
+              🌐 {t('skill.market.tabOnline')}
+            </button>
+          </div>
+        )}
+
+        {/* 在线 tab 的 URL 栏 + 粘贴导入 */}
+        {view.mode === 'grid' && tab === 'online' && (
+          <div className="shrink-0 px-5 pt-3 space-y-2">
+            <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+              <span className="shrink-0">{t('skill.market.registryLabel')}:</span>
+              <input
+                className="input text-xs py-1 flex-1"
+                value={registryUrl}
+                onChange={(e) => setRegistryUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') fetchRemote(registryUrl)
+                }}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                className="input text-xs py-1 flex-1"
+                placeholder={t('skill.market.urlImportPh')}
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleImportFromUrl()
+                }}
+              />
+              <button
+                className="btn-primary text-xs shrink-0"
+                onClick={handleImportFromUrl}
+                disabled={!urlInput.trim()}
+              >
+                {t('skill.market.importUrl')}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 内容区 */}
         <div className="flex-1 overflow-y-auto p-5">
           {view.mode === 'grid' ? (
+            // ========== Grid 视图 ==========
             filtered.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center">
-                <div className="text-3xl mb-2">🛒</div>
+                <div className="text-3xl mb-2">{tab === 'online' ? '🌐' : '🛒'}</div>
                 <p className="text-sm text-[var(--color-text-muted)]">
-                  {skills.length === 0 ? t('skill.market.empty') : t('skill.market.noMatch')}
+                  {tab === 'online'
+                    ? remoteLoading
+                      ? t('skill.market.loading')
+                      : remoteError
+                        ? remoteError
+                        : t('skill.market.onlineEmpty')
+                    : skills.length === 0
+                      ? t('skill.market.empty')
+                      : t('skill.market.noMatch')}
                 </p>
               </div>
-            ) : (
+            ) : tab === 'local' ? (
+              // 本地网格
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {filtered.map((s) => (
+                {(filtered as SkillRecord[]).map((s) => (
                   <button
                     key={s.id}
                     onClick={() => setView({ mode: 'detail', id: s.id })}
@@ -215,77 +383,49 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
                   </button>
                 ))}
               </div>
-            )
-          ) : current ? (
-            <div className="max-w-2xl mx-auto space-y-4">
-              <div className="flex items-start gap-3">
-                <span className="text-3xl">{current.icon}</span>
-                <div className="min-w-0">
-                  <div className="font-semibold flex items-center gap-2">
-                    {current.name}
-                    <span className={current.isBuiltin ? builtinBadge : mineBadge}>
-                      {current.isBuiltin ? t('skill.builtin') : t('skill.market.mine')}
-                    </span>
-                  </div>
-                  {current.description && (
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                      {current.description}
+            ) : (
+              // 在线网格
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {(filtered as RemoteSkill[]).map((s) => (
+                  <div
+                    key={s.id}
+                    className="rounded-xl border border-[var(--color-border)] p-3 bg-[var(--color-bg)]"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xl">{s.icon ?? '⚡'}</span>
+                      <span className="text-sm font-medium truncate flex-1">{s.name}</span>
+                      <span className={onlineBadge}>{t('skill.market.onlineBadge')}</span>
                     </div>
-                  )}
-                </div>
-                <span
-                  className={`ml-auto shrink-0 text-[11px] px-2 py-1 rounded ${
-                    current.enabled
-                      ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                      : 'bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)]'
-                  }`}
-                >
-                  {current.enabled ? t('skill.on') : t('skill.off')}
-                </span>
-              </div>
-
-              <pre className="input whitespace-pre-wrap font-mono text-xs leading-relaxed min-h-[200px] max-h-[46vh] overflow-y-auto">
-                {current.content}
-              </pre>
-
-              {/* 操作区 */}
-              <div className="flex flex-wrap gap-2 pt-1">
-                <button className="btn-ghost text-xs" onClick={() => handleToggle(current)}>
-                  {current.enabled ? t('skill.disable') : t('skill.enable')}
-                </button>
-                <button className="btn-primary text-xs" onClick={() => handleDuplicate(current)}>
-                  {t('skill.market.duplicate')}
-                </button>
-                <button className="btn-ghost text-xs" onClick={() => handleExport(current)}>
-                  {t('skill.market.export')}
-                </button>
-                {!current.isBuiltin && (
-                  <>
+                    <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed line-clamp-2 min-h-[2.4em] mb-2">
+                      {s.description || '—'}
+                    </p>
                     <button
-                      className="btn-ghost text-xs"
-                      title={t('skill.market.editHint')}
-                      onClick={() => {
-                        // 市场内不做编辑表单，回技能页操作（避免 toast 随模态卸载不可见）
-                        onClose()
-                      }}
+                      className="btn-primary text-xs w-full"
+                      onClick={() => handleImportRemote(s)}
                     >
-                      {t('common.edit')}
+                      {t('skill.market.importRemote')}
                     </button>
-                    <button
-                      className="btn-ghost text-xs text-[var(--color-danger)]"
-                      onClick={() => handleDelete(current)}
-                    >
-                      {t('common.delete')}
-                    </button>
-                  </>
-                )}
+                  </div>
+                ))}
               </div>
-              {current.isBuiltin && (
-                <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                  {t('skill.market.builtinHint')}
-                </p>
-              )}
-            </div>
+            )
+          ) : // ========== Detail 视图 ==========
+          current && tab === 'local' ? (
+            <LocalDetail
+              skill={current as SkillRecord}
+              onToggle={handleToggle}
+              onDuplicate={handleDuplicate}
+              onExport={handleExport}
+              onDelete={handleDelete}
+              builtinBadge={builtinBadge}
+              mineBadge={mineBadge}
+            />
+          ) : current && tab === 'online' ? (
+            <OnlineDetail
+              skill={current as RemoteSkill}
+              onImport={handleImportRemote}
+              onlineBadge={onlineBadge}
+            />
           ) : null}
         </div>
 
@@ -301,6 +441,104 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
             {toast.text}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ---------- 详情子组件 ----------
+const LocalDetail: React.FC<{
+  skill: SkillRecord
+  onToggle: (s: SkillRecord) => void
+  onDuplicate: (s: SkillRecord) => void
+  onExport: (s: SkillRecord) => void
+  onDelete: (s: SkillRecord) => void
+  builtinBadge: string
+  mineBadge: string
+}> = ({ skill, onToggle, onDuplicate, onExport, onDelete, builtinBadge, mineBadge }) => {
+  const { t } = useI18n()
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div className="flex items-start gap-3">
+        <span className="text-3xl">{skill.icon}</span>
+        <div className="min-w-0">
+          <div className="font-semibold flex items-center gap-2">
+            {skill.name}
+            <span className={skill.isBuiltin ? builtinBadge : mineBadge}>
+              {skill.isBuiltin ? t('skill.builtin') : t('skill.market.mine')}
+            </span>
+          </div>
+          {skill.description && (
+            <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{skill.description}</div>
+          )}
+        </div>
+        <span
+          className={`ml-auto shrink-0 text-[11px] px-2 py-1 rounded ${
+            skill.enabled
+              ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+              : 'bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)]'
+          }`}
+        >
+          {skill.enabled ? t('skill.on') : t('skill.off')}
+        </span>
+      </div>
+
+      <pre className="input whitespace-pre-wrap font-mono text-xs leading-relaxed min-h-[200px] max-h-[46vh] overflow-y-auto">
+        {skill.content}
+      </pre>
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button className="btn-ghost text-xs" onClick={() => onToggle(skill)}>
+          {skill.enabled ? t('skill.disable') : t('skill.enable')}
+        </button>
+        <button className="btn-primary text-xs" onClick={() => onDuplicate(skill)}>
+          {t('skill.market.duplicate')}
+        </button>
+        <button className="btn-ghost text-xs" onClick={() => onExport(skill)}>
+          {t('skill.market.export')}
+        </button>
+        {!skill.isBuiltin && (
+          <button className="btn-ghost text-xs text-[var(--color-danger)]" onClick={() => onDelete(skill)}>
+            {t('common.delete')}
+          </button>
+        )}
+      </div>
+      {skill.isBuiltin && (
+        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+          {t('skill.market.builtinHint')}
+        </p>
+      )}
+    </div>
+  )
+}
+
+const OnlineDetail: React.FC<{
+  skill: RemoteSkill
+  onImport: (s: RemoteSkill) => void
+  onlineBadge: string
+}> = ({ skill, onImport, onlineBadge }) => {
+  const { t } = useI18n()
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div className="flex items-start gap-3">
+        <span className="text-3xl">{skill.icon ?? '⚡'}</span>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold flex items-center gap-2">
+            {skill.name}
+            <span className={onlineBadge}>{t('skill.market.onlineBadge')}</span>
+          </div>
+          {skill.description && (
+            <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{skill.description}</div>
+          )}
+          <div className="text-[10px] text-[var(--color-text-muted)] mt-1 truncate" title={skill.url}>
+            ↗ {skill.url}
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button className="btn-primary text-xs" onClick={() => onImport(skill)}>
+          {t('skill.market.importRemote')}
+        </button>
       </div>
     </div>
   )

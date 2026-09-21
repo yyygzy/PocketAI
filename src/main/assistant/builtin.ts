@@ -1,9 +1,10 @@
-// 扫描 extensions/assistants/*.json 与 extensions/skills/*.json 并同步到 DB（纯数据，可热更新）
+// 扫描 extensions/assistants/*.json 与 extensions/skills/*.{json,md} 并同步到 DB（纯数据，可热更新）
 import fs from 'node:fs'
 import path from 'node:path'
 import { EXTENSIONS_DIR } from '../portable'
 import { assistantRepo, type BuiltinAssistant } from '../db/repositories/assistant.repo'
 import { skillRepo, type BuiltinSkill } from '../db/repositories/skill.repo'
+import { parseSkillText, toBuiltinSkill } from '../skills/skill-parser'
 
 const ASSISTANTS_DIR = path.join(EXTENSIONS_DIR, 'assistants')
 const SKILLS_DIR = path.join(EXTENSIONS_DIR, 'skills')
@@ -63,24 +64,20 @@ export function syncBuiltinSkills(): { count: number; errors: string[] } {
 
   const files = fs
     .readdirSync(SKILLS_DIR)
-    .filter((f) => f.endsWith('.json'))
+    .filter((f) => f.endsWith('.json') || f.endsWith('.md'))
     .sort()
 
   for (const file of files) {
     try {
       const raw = fs.readFileSync(path.join(SKILLS_DIR, file), 'utf8')
-      const json = JSON.parse(raw) as Partial<BuiltinSkill>
-      if (!json.id || !json.name) {
-        errors.push(`${file}: 缺少 id/name`)
+      const id = path.basename(file, path.extname(file))
+      const { shape, error } = parseSkillText(raw)
+      if (!shape) {
+        errors.push(`${file}: ${error}`)
         continue
       }
-      skillRepo.upsertBuiltin({
-        id: json.id,
-        name: json.name,
-        description: json.description ?? '',
-        icon: json.icon ?? '⚡',
-        content: json.content ?? ''
-      })
+      const bs: BuiltinSkill = toBuiltinSkill(id, shape)
+      skillRepo.upsertBuiltin(bs)
       count++
     } catch (e) {
       errors.push(`${file}: ${(e as Error).message}`)

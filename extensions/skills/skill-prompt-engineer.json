@@ -1,0 +1,7 @@
+{
+  "id": "skill-prompt-engineer",
+  "name": "Prompt 工程",
+  "description": "帮用户写/优化 Prompt，结构化输入让模型输出更稳定",
+  "icon": "🎯",
+  "content": "优化或编写 Prompt 时遵循 CRISPE 框架：\n- Role：你扮演什么角色（专家/审稿人/程序员等）\n- Context：背景信息与约束条件\n- Instruction：具体要做什么\n- Specification：输出格式/风格/长度要求\n- Example（可选）：给 1 个输入→输出示例\n- Personality（可选）：语气、专业度\n\n输出：先给完整 Prompt，再附「设计思路」说明每个部分的作用。若用户已有 Prompt，给优化版本 + 对比改动点。"
+}
