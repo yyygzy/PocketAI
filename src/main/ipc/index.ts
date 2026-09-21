@@ -30,6 +30,7 @@ import { providerRepo } from '../db/repositories/provider.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
 import { skillRepo } from '../db/repositories/skill.repo'
 import { exportSkill, importSkill } from '../skills/skill-io'
+import { syncBuiltinSkills } from '../assistant/builtin'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { messageRepo } from '../db/repositories/message.repo'
 import { providerManager } from '../providers/manager'
@@ -245,7 +246,6 @@ export function registerIpcHandlers(): void {
     return importSkill(win!)
   })
   ipcMain.handle(IPC.SKILL_SYNC, () => {
-    const { syncBuiltinSkills } = require('../assistant/builtin') as typeof import('../assistant/builtin')
     return syncBuiltinSkills()
   })
   ipcMain.handle(IPC.SKILL_FETCH_INDEX, async (_e, indexUrl: string) => {
