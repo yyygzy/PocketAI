@@ -23,7 +23,7 @@
 
 import { app, BrowserWindow, dialog, powerMonitor } from 'electron'
 import path from 'node:path'
-import { ensureDirs, DATA_DIR } from './portable'
+import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR } from './portable'
 import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
@@ -47,7 +47,7 @@ import { installLockGate } from './lock/ipc-gate'
 import { denyNewWindows } from './net/external-links'
 import { installContentSecurityPolicy } from './security/csp'
 import { initBackupScheduler, stopBackupScheduler } from './backup/backup-scheduler'
-import { applyOpacityToMainWindows } from './ui-preferences'
+import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER } from './ui-preferences'
 
 // app.setPath 延后到 ensureDirs 之后执行：若 DATA_DIR 存在但非目录，
 // ensureDirs 会先删除重建，setPath 再使用时路径才安全。
@@ -223,6 +223,8 @@ function createMainWindow(): void {
   // 后台保活（2/2）：该窗口的 webContents 不参与 Chromium 背景节流
   mainWindow.webContents.setBackgroundThrottling(false)
   mainWindow.on('closed', () => { mainWindow = null })
+  // 标记主窗口：透明度等窗口级偏好只应用到主窗口（浮窗/独立窗口不打此标记）
+  ;(mainWindow as any)[MAIN_WINDOW_MARKER] = true
   // 隐私锁：窗口隐藏/最小化 → 计时；重新显示 → 取消计时
   mainWindow.on('hide', () => lockService.onAppHidden())
   mainWindow.on('show', () => lockService.onAppShown())
@@ -244,6 +246,7 @@ function createMainWindow(): void {
 
 async function boot(): Promise<void> {
   ensureDirs()
+  migrateMcpExtensionsDir()
 
   // ensureDirs 之后才设置路径：此时 DATA_DIR 一定是合法目录
   app.setPath('userData', path.join(DATA_DIR, 'userdata'))

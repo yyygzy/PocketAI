@@ -17,7 +17,8 @@ export const MIN_OPACITY = 0.6
 export const MAX_OPACITY = 1
 export const MAX_CSS_LENGTH = 200_000
 
-const MAIN_WINDOW_TITLE = '墨匣'
+/** 主窗口标记属性（不靠标题区分，避免浮窗/独立窗口同标题被误应用透明度） */
+export const MAIN_WINDOW_MARKER = '__pocketaiMainWindow'
 
 function clampOpacity(v: number): number {
   if (!Number.isFinite(v)) return 1
@@ -51,7 +52,7 @@ export function applyOpacityToMainWindows(opacity?: number): void {
   const value = opacity ?? getUiPreferences().opacity
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue
-    if (win.getTitle() !== MAIN_WINDOW_TITLE) continue
+    if ((win as any)[MAIN_WINDOW_MARKER] !== true) continue
     try {
       win.setOpacity(value)
     } catch {

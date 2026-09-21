@@ -5,7 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { StdioJsonRpcClient } from './json-rpc'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
-import { EXTENSIONS_DIR } from '../portable'
+import { MCP_EXTENSIONS_DIR } from '../portable'
 import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
 import type {
   McpServerRecord,
@@ -17,7 +17,6 @@ import type {
 } from '../../shared/types'
 
 const MCP_PROTOCOL_VERSION = '2024-11-05'
-const MCP_EXTENSIONS_DIR = path.join(EXTENSIONS_DIR, 'mcp')
 
 /** 工具调用超时 30s */
 const TOOL_CALL_TIMEOUT = 30_000

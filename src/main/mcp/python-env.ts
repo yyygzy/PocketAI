@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { EXTENSIONS_DIR } from '../portable'
+import { MCP_EXTENSIONS_DIR } from '../portable'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import type {
   McpServerRecord,
@@ -25,8 +25,6 @@ import type {
   PythonEnvState,
   PythonPipSource
 } from '../../shared/types'
-
-const MCP_EXTENSIONS_DIR = path.join(EXTENSIONS_DIR, 'mcp')
 
 /** pip 安装整体超时 10 分钟（大包/弱网兜底） */
 const PIP_INSTALL_TIMEOUT = 10 * 60_000

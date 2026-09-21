@@ -35,8 +35,16 @@ export const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments')
  * 内置数据（assistants/skills）目录：打包后跟随 asar 走（只读），
  * 不能用 APP_ROOT（exe 同级目录在 asar 外，找不到内置数据）。
  * dev 时 app.getAppPath() = cwd（仓库根）；prod 时 = resources/app.asar。
+ * 注意：此目录只读，**不可**用于存放 MCP 服务器/venv 等可写数据。
  */
 export const EXTENSIONS_DIR = path.join(app.getAppPath(), 'extensions')
+/**
+ * 用户可写扩展目录（MCP 服务器 + Python venv）。
+ * 必须放在 DATA_DIR 下，跟随便携数据目录走；
+ * 不能用 EXTENSIONS_DIR（asar 只读，便携模式下解压到 %Temp% 会被清理）。
+ */
+export const USER_EXTENSIONS_DIR = path.join(DATA_DIR, 'extensions')
+export const MCP_EXTENSIONS_DIR = path.join(USER_EXTENSIONS_DIR, 'mcp')
 export const LOGS_DIR = path.join(DATA_DIR, 'logs')
 /** 运行时目录（存放便携 Python 等第三方运行时） */
 export const RUNTIME_DIR = path.join(APP_ROOT, 'runtime')
@@ -58,7 +66,7 @@ export function getPaths(): AppPaths {
     dbPath: DB_PATH,
     configPath: CONFIG_PATH,
     attachmentsDir: ATTACHMENTS_DIR,
-    extensionsDir: EXTENSIONS_DIR
+    extensionsDir: USER_EXTENSIONS_DIR
   }
 }
 
@@ -72,7 +80,7 @@ export function getPaths(): AppPaths {
  * 会触发 ENOTDIR。
  */
 export function ensureDirs(): void {
-  const dirs = [DATA_DIR, ATTACHMENTS_DIR, LOGS_DIR, RUNTIME_DIR]
+  const dirs = [DATA_DIR, ATTACHMENTS_DIR, LOGS_DIR, RUNTIME_DIR, USER_EXTENSIONS_DIR, MCP_EXTENSIONS_DIR]
   for (const dir of dirs) {
     try {
       const st = fs.statSync(dir)
@@ -84,5 +92,36 @@ export function ensureDirs(): void {
       // 路径不存在 → mkdirSync(recursive) 会创建
     }
     fs.mkdirSync(dir, { recursive: true })
+  }
+}
+
+/**
+ * 迁移历史 MCP 扩展目录：旧版本把 MCP 服务器/venv 放在 EXTENSIONS_DIR/mcp
+ * （asar 解压目录，便携模式下为 %Temp%），现迁移到 USER_EXTENSIONS_DIR/mcp
+ * （DATA_DIR 下，跟随便携数据目录）。幂等。
+ */
+export function migrateMcpExtensionsDir(): void {
+  const oldDir = path.join(EXTENSIONS_DIR, 'mcp')
+  if (oldDir === MCP_EXTENSIONS_DIR) return
+  try {
+    if (!fs.existsSync(oldDir)) return
+    const entries = fs.readdirSync(oldDir)
+    if (entries.length === 0) return
+    fs.mkdirSync(MCP_EXTENSIONS_DIR, { recursive: true })
+    for (const name of entries) {
+      const src = path.join(oldDir, name)
+      const dst = path.join(MCP_EXTENSIONS_DIR, name)
+      if (fs.existsSync(dst)) continue // 目标已存在，跳过（不覆盖）
+      try {
+        fs.renameSync(src, dst)
+      } catch {
+        // rename 跨卷失败（如 Temp 在 C:，DATA_DIR 在 E:）→ 复制后删除
+        fs.cpSync(src, dst, { recursive: true })
+        fs.rmSync(src, { recursive: true, force: true })
+      }
+    }
+    console.log(`[portable] MCP 扩展目录已迁移: ${oldDir} → ${MCP_EXTENSIONS_DIR}`)
+  } catch (e) {
+    console.warn('[portable] MCP 扩展目录迁移失败（不阻塞启动）:', e)
   }
 }
