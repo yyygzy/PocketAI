@@ -391,6 +391,11 @@ async function pullModel(model: string, onEvent?: (e: OllamaPullEvent) => void):
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
+  // 聚合多层下载进度：Ollama 按 digest 分层下载，每层有独立的 total/completed。
+  // 若直接用单层的 completed/total 显示，层切换时进度会从 80% 跳回 0%。
+  // 这里维护 digest → {total, completed}，整体进度 = Σcompleted / Σtotal。
+  const layers = new Map<string, { total: number; completed: number }>()
+  let lastPercent = 0
   try {
     for (;;) {
       const { value, done } = await reader.read()
@@ -401,10 +406,32 @@ async function pullModel(model: string, onEvent?: (e: OllamaPullEvent) => void):
         const line = buf.slice(0, idx).trim()
         buf = buf.slice(idx + 1)
         if (!line) continue
-        const evt = JSON.parse(line) as { status?: string; total?: number; completed?: number; error?: string }
+        const evt = JSON.parse(line) as {
+          status?: string; digest?: string; total?: number; completed?: number; error?: string
+        }
         if (evt.error) throw new Error(evt.error)
-        const percent = evt.total && evt.total > 0 ? Math.min(100, (evt.completed! / evt.total) * 100) : 0
+
+        // 只对 downloading 状态做层进度聚合；verifying/writing manifest 等保持原进度
+        if (evt.status === 'downloading' && evt.digest && evt.total != null) {
+          layers.set(evt.digest, { total: evt.total, completed: evt.completed ?? 0 })
+        }
+
+        let percent = 0
+        let totalSum = 0
+        let completedSum = 0
+        for (const l of layers.values()) {
+          totalSum += l.total
+          completedSum += Math.min(l.completed, l.total)
+        }
+        if (totalSum > 0) {
+          percent = Math.min(100, (completedSum / totalSum) * 100)
+        }
+        // 单调递增：防止层切换或校验阶段导致进度回退
+        if (percent < lastPercent) percent = lastPercent
+        else lastPercent = percent
+
         const finished = evt.status === 'success'
+        if (finished) percent = 100
         onEvent?.({ model, status: evt.status ?? '', percent, done: finished })
         if (finished) return
       }
