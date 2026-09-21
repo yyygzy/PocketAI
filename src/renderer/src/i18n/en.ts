@@ -961,6 +961,13 @@ export const en: Record<string, string> = {
   'upd.restartConfirm': 'Update downloaded. Restart and install now?',
   'upd.devHint': 'Auto-update is unavailable in development. It activates after packaging (npm run dist).',
   'upd.portableHint': 'For the portable build, download a new release and replace the executable manually; auto-update works best with the NSIS installer.',
+  'upd.changelogBtn': '📋 Changelog',
+  'upd.changelogTitle': 'Release History',
+  'upd.changelogLoading': 'Loading…',
+  'upd.changelogEmpty': 'No releases yet',
+  'upd.changelogFail': 'Failed to load: {e}',
+  'upd.changelogPrerelease': 'Pre-release',
+  'upd.changelogViewOnGitHub': 'View on GitHub',
 
   // Notes
   'notes.untitled': 'Untitled note',

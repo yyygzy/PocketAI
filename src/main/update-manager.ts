@@ -6,6 +6,7 @@ import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { downloadAsarPatch, restartToApplyPatch, isPatchPending } from './update/asar-patcher'
 import { isPortableRuntime } from './portable'
+import { safeFetch } from './net/safe-fetch'
 
 // ─── 单例 UpdateManager ──────────────────────────────────────────
 // 负责封装 electron-updater，维护状态机 + 互斥锁
@@ -268,4 +269,36 @@ export function initUpdateManager(): void {
 
   // 状态快照（渲染首次连接时调一下）
   ipcMain.handle('update:get-status', () => updateManager.getStatusSnapshot())
+
+  // 更新日志：从 GitHub Releases API 拉取
+  ipcMain.handle(IPC.CHANGELOG_FETCH, async () => {
+    try {
+      const url = 'https://api.github.com/repos/yyygzy/PocketAI/releases?per_page=10'
+      const res = await safeFetch(url, {
+        timeoutMs: 12000,
+        maxBytes: 2 * 1024 * 1024,
+        headers: { Accept: 'application/vnd.github+json' },
+      })
+      if (res.status !== 200) {
+        return { ok: false, error: `GitHub API HTTP ${res.status}` }
+      }
+      const data = JSON.parse(res.body.toString())
+      if (!Array.isArray(data)) {
+        return { ok: false, error: 'GitHub API 返回格式异常' }
+      }
+      const releases = data
+        .filter((r: any) => !r.draft)
+        .map((r: any) => ({
+          tag: String(r.tag_name ?? ''),
+          name: String(r.name ?? ''),
+          date: String(r.published_at ?? ''),
+          body: String(r.body ?? ''),
+          url: String(r.html_url ?? ''),
+          prerelease: !!r.prerelease,
+        }))
+      return { ok: true, releases }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? '拉取更新日志失败' }
+    }
+  })
 }

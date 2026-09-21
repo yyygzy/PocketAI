@@ -1273,6 +1273,28 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const [autoUpdate, setAutoUpdate] = useState<boolean>(info?.autoUpdateEnabled ?? false)
+  const [changelogOpen, setChangelogOpen] = useState(false)
+  const [changelogLoading, setChangelogLoading] = useState(false)
+  const [changelogError, setChangelogError] = useState<string | null>(null)
+  const [releases, setReleases] = useState<Array<{ tag: string; name: string; date: string; body: string; url: string; prerelease: boolean }>>([])
+
+  const handleOpenChangelog = async () => {
+    setChangelogOpen(true)
+    setChangelogLoading(true)
+    setChangelogError(null)
+    try {
+      const r = await window.pocketai.fetchChangelog()
+      if (r.ok && r.releases) {
+        setReleases(r.releases)
+      } else {
+        setChangelogError(r.error ?? t('upd.changelogEmpty'))
+      }
+    } catch (e: any) {
+      setChangelogError(e?.message ?? t('upd.changelogEmpty'))
+    } finally {
+      setChangelogLoading(false)
+    }
+  }
 
   const handleToggleAutoUpdate = async () => {
     const next = !autoUpdate
@@ -1388,7 +1410,7 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
         </div>
       )}
 
-      <div className="flex gap-2 pt-1">
+      <div className="flex gap-2 pt-1 flex-wrap">
         <button className="btn-ghost" disabled={busy || s === 'checking' || s === 'downloading'} onClick={handleCheck}>
           {t('upd.checkBtn')}
         </button>
@@ -1402,6 +1424,9 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
             {t('upd.installBtn')}
           </button>
         )}
+        <button className="btn-ghost" onClick={handleOpenChangelog}>
+          {t('upd.changelogBtn')}
+        </button>
       </div>
 
       {notice && <Notice ok={notice.ok} text={notice.text} />}
@@ -1417,6 +1442,52 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
           {t('upd.portableHint')}
         </p>
       )}
+
+      <Modal open={changelogOpen} title={t('upd.changelogTitle')} onClose={() => setChangelogOpen(false)} width={520}>
+        {changelogLoading ? (
+          <div className="text-xs text-[var(--color-text-muted)] text-center py-8">{t('upd.changelogLoading')}</div>
+        ) : changelogError ? (
+          <div className="text-xs text-[var(--color-danger)] text-center py-8">{t('upd.changelogFail', { e: changelogError })}</div>
+        ) : releases.length === 0 ? (
+          <div className="text-xs text-[var(--color-text-muted)] text-center py-8">{t('upd.changelogEmpty')}</div>
+        ) : (
+          <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-4">
+            {releases.map((r) => {
+              const d = r.date ? new Date(r.date) : null
+              const dateStr = d && !isNaN(d.getTime())
+                ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                : ''
+              return (
+                <div key={r.tag} className="border-b border-[var(--color-border)]/50 pb-3 last:border-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-mono text-[13px] font-semibold text-[var(--color-text)]">{r.tag}</span>
+                    {r.prerelease && (
+                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--color-warning-bg)] text-[var(--color-warning)]">{t('upd.changelogPrerelease')}</span>
+                    )}
+                    {dateStr && <span className="text-[10px] text-[var(--color-text-muted)] ml-auto">{dateStr}</span>}
+                  </div>
+                  {r.name && r.name !== r.tag && (
+                    <div className="text-[12px] text-[var(--color-text)] mb-1">{r.name}</div>
+                  )}
+                  {r.body ? (
+                    <pre className="text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed font-sans">{r.body}</pre>
+                  ) : null}
+                  {r.url && (
+                    <a
+                      href={r.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block mt-1 text-[11px] text-[var(--color-accent)] hover:underline"
+                    >
+                      {t('upd.changelogViewOnGitHub')} →
+                    </a>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

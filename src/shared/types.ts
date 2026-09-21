@@ -1132,6 +1132,7 @@ export const IPC = {
   UPDATE_DOWNLOAD: 'update:download', // 下载已发现的更新
   UPDATE_QUIT_INSTALL: 'update:quit-install', // 退出并安装
   UPDATE_EVENT: 'update:event', // 主进程推送事件到渲染
+  CHANGELOG_FETCH: 'changelog:fetch', // 从 GitHub Releases 拉取更新日志
 
   // ---------- 加密 ----------
   ENCRYPTION_GET_STATUS: 'encryption:get-status',

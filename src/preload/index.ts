@@ -605,6 +605,11 @@ const api = {
     ipcRenderer.on(IPC.UPDATE_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.UPDATE_EVENT, listener)
   },
+  fetchChangelog: (): Promise<{
+    ok: boolean
+    error?: string
+    releases?: Array<{ tag: string; name: string; date: string; body: string; url: string; prerelease: boolean }>
+  }> => ipcRenderer.invoke(IPC.CHANGELOG_FETCH),
 
   // ---------- 隐私锁 ----------
   getLockStatus: (): Promise<LockStatus> =>

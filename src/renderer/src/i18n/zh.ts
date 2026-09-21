@@ -961,6 +961,13 @@ export const zh: Record<string, string> = {
   'upd.restartConfirm': '更新已下载完成，立即重启并安装？',
   'upd.devHint': '开发环境不支持自动更新。打包后（npm run dist）自动生效。',
   'upd.portableHint': 'Portable 版本建议手动下载新版本替换；自动更新对 NSIS 安装版支持更好。',
+  'upd.changelogBtn': '📋 查看更新日志',
+  'upd.changelogTitle': '更新日志',
+  'upd.changelogLoading': '加载中…',
+  'upd.changelogEmpty': '暂无更新日志',
+  'upd.changelogFail': '加载失败: {e}',
+  'upd.changelogPrerelease': '预发布',
+  'upd.changelogViewOnGitHub': '在 GitHub 查看',
 
   // 笔记
   'notes.untitled': '未命名笔记',
