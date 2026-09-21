@@ -102,7 +102,10 @@ result(pkg.scripts?.['dist'] && pkg.scripts?.['dist:linux'] ? 'PASS' : 'FAIL', '
 
 result(wf.includes('build-linux') ? 'PASS' : 'FAIL', 'CI 有 build-linux job', '')
 result(wf.includes("startsWith(github.ref, 'refs/tags/v')") ? 'PASS' : 'FAIL', 'Release 步骤仅 tag 推送时执行', '')
-result(wf.includes('*.blockmap') && wf.includes('*.AppImage') && wf.includes('*.yml') ? 'PASS' : 'FAIL', 'CI 上传/发布 glob 含 blockmap + yml + AppImage', '')
+// CI 上传 glob 要么显式列 *.blockmap/*.AppImage/*.yml，要么用 dist/all/* 全目录（flatten 上传所有产物）
+const globAll = wf.includes('dist/all/*') || wf.includes('dist/**/*')
+const explicitGlobs = wf.includes('*.blockmap') && wf.includes('*.AppImage') && wf.includes('*.yml')
+result((globAll || explicitGlobs) ? 'PASS' : 'FAIL', 'CI 上传/发布 glob 含 blockmap + yml + AppImage', globAll ? '全目录上传 dist/all/*' : explicitGlobs ? '显式 glob' : '')
 result(wf.includes('npm run dist:linux') ? 'PASS' : 'FAIL', 'CI Linux job 调用 dist:linux', '')
 
 // ── C. 构建产物（存在才验） ──────────────────────────────
