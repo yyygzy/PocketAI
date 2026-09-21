@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import type { ProviderRecord, ProviderType } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 
-const PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
+export const PROVIDER_PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
   // ── 海外主流 ──
   { label: 'OpenAI', type: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', needKey: true },
   { label: 'Anthropic Claude', type: 'anthropic', baseUrl: 'https://api.anthropic.com', needKey: true },
@@ -152,7 +152,7 @@ export const ProviderSettings: React.FC = () => {
             <div>
               <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('provider.presets')}</label>
               <div className="flex flex-wrap gap-1.5">
-                {PRESETS.map((preset) => (
+                {PROVIDER_PRESETS.map((preset) => (
                   <button
                     key={preset.label}
                     onClick={() =>
