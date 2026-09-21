@@ -157,6 +157,12 @@ class UpdateManager extends EventEmitter {
       return { ok: true }
     }
 
+    // Windows Portable：electron-builder 不生成 app-update.yml，无法自动更新
+    if (process.platform === 'win32' && isPortableRuntime()) {
+      this.setStatus('unavailable', { error: '便携版不支持自动更新，请手动下载新版替换' })
+      return { ok: true }
+    }
+
     this.busy = true
     this.error = undefined
     try {
