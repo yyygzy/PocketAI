@@ -2,7 +2,7 @@
 # 用法：npm run dist:linux
 # 关键差异：files 排除规则保留 linux/linuxmusl prebuilds、排除 darwin/win32
 appId: ai.pocket.desktop
-productName: PocketAI
+productName: Moxia
 asar: true
 asarUnpack:
   - node_modules/better-sqlite3-multiple-ciphers/**/*.node
@@ -13,6 +13,7 @@ directories:
 files:
   - out/**/*
   - package.json
+  - extensions/**/*
   - node_modules/**/*
   - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
   - '!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}'
@@ -27,7 +28,8 @@ linux:
       arch:
         - x64
   category: Utility
-  artifactName: PocketAI-${version}-Linux-${arch}.${ext}
+  icon: build/icon/icon-256.png
+  artifactName: Moxia-${version}-Linux-${arch}.${ext}
 publish:
   provider: github
   owner: yyygzy

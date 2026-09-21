@@ -1,0 +1,15 @@
+<svg viewBox="0 0 680 680" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PocketAI app icon">
+  <title>PocketAI 图标</title>
+  <desc>便携盘承载发光智核与三节点能力网络的 APP 图标</desc>
+  <rect x="120" y="120" width="440" height="440" rx="104" fill="#534AB7"/>
+  <rect x="196" y="214" width="288" height="252" rx="40" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-opacity="0.9"/>
+  <circle cx="340" cy="340" r="78" fill="#CECBF6" fill-opacity="0.35"/>
+  <path d="M340 252 L408 340 L340 428 L272 340 Z" fill="#FFFFFF"/>
+  <circle cx="340" cy="340" r="22" fill="#0F6E56"/>
+  <circle cx="340" cy="180" r="20" fill="#FFFFFF"/>
+  <circle cx="486" cy="400" r="20" fill="#0F6E56"/>
+  <circle cx="194" cy="400" r="20" fill="#9FE1CB"/>
+  <line x1="340" y1="200" x2="340" y2="252" stroke="#CECBF6" stroke-width="6"/>
+  <line x1="470" y1="392" x2="406" y2="350" stroke="#CECBF6" stroke-width="6"/>
+  <line x1="210" y1="392" x2="274" y2="350" stroke="#CECBF6" stroke-width="6"/>
+</svg>

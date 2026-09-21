@@ -1,5 +1,6 @@
 // 应用菜单：中英文文案随渲染进程语言切换（IPC 上报）
-import { app, Menu, dialog, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, dialog, BrowserWindow, nativeImage, type MenuItemConstructorOptions } from 'electron'
+import path from 'node:path'
 
 export type MenuLang = 'zh' | 'en'
 
@@ -9,17 +10,28 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
 
   const template: MenuItemConstructorOptions[] = []
 
+  // macOS：设置原生 About 面板的自定义 icon（Windows 的 About 走 showMessageBox，已带 icon）
+  if (isMac) {
+    const iconPath = path.join(app.getAppPath(), 'build/icon/icon-256.png')
+    app.setAboutPanelOptions({
+      iconPath,
+      applicationName: '墨匣',
+      applicationVersion: app.getVersion(),
+      copyright: zh ? '本地优先 · 便携 · 加密' : 'Local-first · Portable · Encrypted'
+    })
+  }
+
   if (isMac) {
     template.push({
       label: app.name,
       submenu: [
-        { role: 'about', label: zh ? '关于 PocketAI' : 'About PocketAI' },
+        { role: 'about', label: zh ? '关于墨匣' : 'About Moxia' },
         { type: 'separator' },
-        { role: 'hide', label: zh ? '隐藏 PocketAI' : 'Hide PocketAI' },
+        { role: 'hide', label: zh ? '隐藏墨匣' : 'Hide Moxia' },
         { role: 'hideOthers', label: zh ? '隐藏其他' : 'Hide Others' },
         { role: 'unhide', label: zh ? '全部显示' : 'Show All' },
         { type: 'separator' },
-        { role: 'quit', label: zh ? '退出 PocketAI' : 'Quit PocketAI' }
+        { role: 'quit', label: zh ? '退出墨匣' : 'Quit Moxia' }
       ]
     })
   }
@@ -75,17 +87,22 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
       label: zh ? '帮助' : 'Help',
       submenu: [
         {
-          label: zh ? '关于 PocketAI' : 'About PocketAI',
+          label: zh ? '关于墨匣' : 'About Moxia',
           click: () => {
-            dialog.showMessageBox({
-              type: 'info',
-              title: 'PocketAI',
-              message: `PocketAI v${app.getVersion()}`,
+            const iconPath = path.join(app.getAppPath(), 'build/icon/icon-512.png')
+            const opts = {
+              type: 'info' as const,
+              title: '墨匣 Moxia - PocketAI',
+              message: `墨匣 v${app.getVersion()}`,
               detail: zh
                 ? '本地优先的 AI 工作站 · 便携 · 加密'
                 : 'Local-first AI workstation · Portable · Encrypted',
+              icon: nativeImage.createFromPath(iconPath),
               buttons: [zh ? '好的' : 'OK']
-            })
+            }
+            const focused = BrowserWindow.getFocusedWindow()
+            if (focused) dialog.showMessageBox(focused, opts)
+            else dialog.showMessageBox(opts)
           }
         }
       ]

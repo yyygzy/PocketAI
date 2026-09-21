@@ -1,9 +1,9 @@
 {
   "name": "pocket-ai",
-  "version": "1.0.0",
-  "description": "PocketAI - 本地优先可随身携带的 AI 工作台",
+  "version": "1.1.0",
+  "description": "墨匣 (Moxia) - 本地优先可随身携带的 AI 工作台",
   "main": "out/main/index.js",
-  "author": "PocketAI",
+  "author": "Moxia",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
@@ -65,7 +65,7 @@
   },
   "build": {
     "appId": "ai.pocket.desktop",
-    "productName": "PocketAI",
+    "productName": "Moxia",
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3-multiple-ciphers/**/*.node",
@@ -78,6 +78,7 @@
     "files": [
       "out/**/*",
       "package.json",
+      "extensions/**/*",
       "node_modules/**/*",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
@@ -88,6 +89,7 @@
     ],
     "extraResources": [],
     "win": {
+      "icon": "build/icon/icon-256.png",
       "target": [
         {
           "target": "nsis",
@@ -102,18 +104,18 @@
           ]
         }
       ],
-      "artifactName": "PocketAI-${version}-${arch}.${ext}"
+      "artifactName": "Moxia-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PocketAI",
+      "shortcutName": "Moxia",
       "perMachine": false
     },
     "portable": {
-      "artifactName": "PocketAI-${version}-Portable-${arch}.${ext}"
+      "artifactName": "Moxia-${version}-Portable-${arch}.${ext}"
     },
     "publish": {
       "provider": "github",

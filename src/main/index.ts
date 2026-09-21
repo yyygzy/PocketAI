@@ -1,4 +1,4 @@
-// PocketAI 主进程入口
+// 墨匣主进程入口
 //
 // 启动流程（Phase 4 加密版）：
 // ┌─────────────────────────────────────────────────────────┐
@@ -28,6 +28,7 @@ import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { mcpManager } from './mcp/manager'
+import { ollamaRuntime } from './ollama/ollama-runtime'
 import { masterKeyManager } from './crypto/master-key'
 import { unlockCoordinator } from './crypto/unlock-coordinator'
 import { migrateKvSecrets } from './crypto/secret-store'
@@ -39,6 +40,7 @@ import { getHardwareInfo } from './steward/hardware'
 import { licenseService } from './license/license'
 import { initUpdateManager } from './update-manager'
 import { buildAppMenu } from './menu'
+import { initTray, destroyTray } from './tray'
 import { initPopup } from './popup'
 import { lockService } from './lock/lock'
 import { installLockGate } from './lock/ipc-gate'
@@ -153,8 +155,9 @@ function showUnlockWindow(mode: 'unlock' | 'setPassword' = 'unlock'): void {
     show: false,
     frame: true,
     autoHideMenuBar: true,
-    title: 'PocketAI — 解锁',
+    title: '墨匣 Moxia - PocketAI — 解锁',
     backgroundColor: '#1e1e2e',
+    icon: path.join(app.getAppPath(), 'build/icon/icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -206,7 +209,8 @@ function createMainWindow(): void {
     minHeight: 600,
     show: false,
     backgroundColor: '#1e1e2e',
-    title: 'PocketAI',
+    title: '墨匣 Moxia - PocketAI',
+    icon: path.join(app.getAppPath(), 'build/icon/icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -401,6 +405,8 @@ async function boot(): Promise<void> {
   // 阶段 5：创建主窗口
   createMainWindow()
   console.log('[boot] 主窗口已创建')
+  // 系统托盘：单击切换可见性，右键菜单显示/退出
+  initTray('zh')
   // 应用已保存的窗口透明度
   applyOpacityToMainWindows()
 
@@ -434,7 +440,7 @@ if (!gotLock) {
   // 避免「npm run dev 后没窗口、没报错」的排查困扰（残留进程常因
   // 终端 Ctrl+C 只杀 node/vite 不杀 electron 子进程树）
   try {
-    dialog.showErrorBox('PocketAI 已在运行', '应用已有一个实例正在运行（可能最小化或在后台）。\n如无响应，请在任务管理器结束 electron.exe 后重试。')
+    dialog.showErrorBox('墨匣已在运行', '应用已有一个实例正在运行（可能最小化或在后台）。\n如无响应，请在任务管理器结束 electron.exe 后重试。')
   } catch { /* dialog 不可用时保持静默退出 */ }
   app.quit()
 } else {
@@ -493,7 +499,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  try { destroyTray() } catch { /* ignore */ }
   try { mcpManager.stopAll().catch(() => {}) } catch { /* ignore */ }
+  try { ollamaRuntime.cleanup() } catch { /* ignore */ }
   try { stopBackupScheduler() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
 })

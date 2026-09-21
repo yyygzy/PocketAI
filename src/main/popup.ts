@@ -215,7 +215,8 @@ function createPopupWindow(payload: PopupPayload): BrowserWindow {
     alwaysOnTop: true,
     show: false,
     backgroundColor: '#00000000',
-    title: 'PocketAI Popup',
+    title: '墨匣 Moxia - PocketAI',
+    icon: path.join(app.getAppPath(), 'build/icon/icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,

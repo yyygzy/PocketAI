@@ -17,7 +17,7 @@ export const MIN_OPACITY = 0.6
 export const MAX_OPACITY = 1
 export const MAX_CSS_LENGTH = 200_000
 
-const MAIN_WINDOW_TITLE = 'PocketAI'
+const MAIN_WINDOW_TITLE = '墨匣'
 
 function clampOpacity(v: number): number {
   if (!Number.isFinite(v)) return 1

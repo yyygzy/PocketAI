@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { ThemeLangControls } from './ThemeLangControls'
 import type { SidebarModuleId } from '../../../shared/types'
+import logoUrl from '../assets/logo-128.png'
 
 export type ModuleId = SidebarModuleId
 
@@ -88,8 +89,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       {/* Logo */}
       <div className="flex items-center gap-2 px-3 h-12 border-b border-[var(--color-border)]">
-        <span className="text-xl">🎒</span>
-        {!collapsed && <span className="font-bold text-sm">PocketAI</span>}
+        <img src={logoUrl} alt="墨匣" className="w-8 h-8 shrink-0" />
+        {!collapsed && <span className="font-bold text-sm">墨匣</span>}
       </div>
 
       {/* 模块列表（可拖拽排序） */}
@@ -126,15 +127,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }}
             onClick={() => onChange(id)}
             title={t(`sidebar.${id}`)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors cursor-grab active:cursor-grabbing ${
+            className={`relative w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors cursor-grab active:cursor-grabbing ${
               draggingId === id ? 'opacity-40' : ''
             } ${
               active === id
-                ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-semibold'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
             }`}
           >
-            <span className="text-lg shrink-0">{MODULE_ICONS[id]}</span>
+            {active === id && (
+              <span
+                className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-[var(--color-accent)]"
+                aria-hidden
+              />
+            )}
+            <span className={`text-lg shrink-0 ${active === id ? 'opacity-100' : 'opacity-80'}`}>
+              {MODULE_ICONS[id]}
+            </span>
             {!collapsed && <span className="truncate">{t(`sidebar.${id}`)}</span>}
           </button>
         ))}

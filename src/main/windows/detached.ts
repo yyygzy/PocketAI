@@ -19,7 +19,8 @@ export function createDetachedWindow(moduleId: string): void {
     minHeight: 480,
     show: false,
     backgroundColor: '#1e1e2e',
-    title: 'PocketAI',
+    title: '墨匣 Moxia - PocketAI',
+    icon: path.join(__dirname, '../../../build/icon/icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, '../../preload/index.js'),
       nodeIntegration: false,

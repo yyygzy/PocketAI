@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   PocketAI 双主题变量体系
+   墨匣 双主题变量体系
    暗色（默认）= Catppuccin Mocha
    亮色（html.light）= Catppuccin Latte
    ───────────────────────────────────────────────────────────── */
@@ -27,7 +27,7 @@
   --color-input-bg: rgba(0, 0, 0, 0.2);
   --color-inline-code-bg: rgba(255, 255, 255, 0.1);
   --color-shadow: rgba(0, 0, 0, 0.4);
-  --color-accent-soft: rgba(137, 180, 250, 0.14);
+  --color-accent-soft: rgba(137, 180, 250, 0.22);
   --color-modal-overlay: rgba(0, 0, 0, 0.55);
 
   /* ── 状态语义色（Mocha）── */
@@ -75,7 +75,7 @@ html.light {
   --color-input-bg: #ffffff;
   --color-inline-code-bg: rgba(0, 0, 0, 0.06);
   --color-shadow: rgba(0, 0, 0, 0.12);
-  --color-accent-soft: rgba(30, 102, 245, 0.12);
+  --color-accent-soft: rgba(30, 102, 245, 0.18);
   --color-modal-overlay: rgba(0, 0, 0, 0.4);
 
   /* ── 状态语义色（Latte）── */
