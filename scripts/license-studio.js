@@ -158,10 +158,17 @@ async function issueOne() {
 
   const features = await ask(`功能列表（回车=全量: ${DEFAULT_FEATURES}）\n: `, DEFAULT_FEATURES)
 
+  // 硬盘指纹（可选绑定）：用户在应用「设置 → 授权激活」页可查看本机指纹（16 位 hex）
+  const fingerprint = (await ask('\n硬盘指纹（回车=不绑定设备；绑定后仅该硬盘可激活）\n: ', '')).trim()
+  if (fingerprint && !/^[0-9a-fA-F]{16}$/.test(fingerprint)) {
+    console.log('  ✗ 指纹格式无效（应为 16 位 hex），本次签发中止')
+    return
+  }
+
   // 预览
   let preview
   try {
-    preview = issueLicense({ owner, plan, ...cleanTerm(termSpec), features: features.split(',').map((s) => s.trim()).filter(Boolean) })
+    preview = issueLicense({ owner, plan, ...cleanTerm(termSpec), features: features.split(',').map((s) => s.trim()).filter(Boolean), diskFingerprint: fingerprint })
   } catch (e) {
     console.error('✗ ' + e.message)
     return
@@ -171,6 +178,9 @@ async function issueOne() {
   console.log(`  版本     ${plan}`)
   console.log(`  有效期   ${describeExpiry(preview.expiresAt)}`)
   console.log(`  功能     ${preview.payload.features.join(', ')}`)
+  if (preview.payload.disk_fingerprint) {
+    console.log(`  设备绑定 ${preview.payload.disk_fingerprint}`)
+  }
   const ok = await askUntil('确认签发? [Y/n]: ', (a) => {
     const v = (a || 'y').toLowerCase()
     return v === 'y' || v === 'n' ? { ok: true, value: v === 'y' } : { ok: false }
@@ -181,7 +191,7 @@ async function issueOne() {
   }
 
   // 重新签发确认版（license_id 换新，避免「取消了又复用预览」）
-  const r = issueLicense({ owner, plan, ...cleanTerm(termSpec), features: features.split(',').map((s) => s.trim()).filter(Boolean) })
+  const r = issueLicense({ owner, plan, ...cleanTerm(termSpec), features: features.split(',').map((s) => s.trim()).filter(Boolean), diskFingerprint: fingerprint })
   const file = path.join(OUT_DIR, `${safeName(owner)}-${plan}-${todayTag()}.lic`)
   fs.mkdirSync(OUT_DIR, { recursive: true })
   fs.writeFileSync(file, r.licenseJson, 'utf8')

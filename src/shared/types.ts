@@ -1130,6 +1130,8 @@ export const IPC = {
   LICENSE_LOAD_STRING: 'license:load-string', // 传入 license 字符串
   LICENSE_CLEAR: 'license:clear',
   LICENSE_HAS_FEATURE: 'license:has-feature',
+  LICENSE_GET_FINGERPRINT: 'license:get-fingerprint', // 本机硬盘指纹（16 位 hex，可能 null）
+  LICENSE_ONLINE_ACTIVATE: 'license:online-activate', // 卡密在线激活（附带本机指纹请求激活服务器）
 
   // ---------- 自动更新 ----------
   UPDATE_GET_INFO: 'update:get-info', // 返回当前版本 + build 类型

@@ -378,6 +378,12 @@ const api = {
     ipcRenderer.invoke(IPC.LICENSE_ACTIVATE, code),
   importLicenseFile: (): Promise<{ canceled: boolean; status?: LicenseStatus }> =>
     ipcRenderer.invoke(IPC.LICENSE_IMPORT_FILE),
+  /** 本机硬盘指纹（16 位 hex）；null = 无法读取 */
+  getLicenseFingerprint: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.LICENSE_GET_FINGERPRINT),
+  /** 卡密在线激活：客户端自动附带本机硬盘指纹请求激活服务器 */
+  onlineActivateLicense: (code: string): Promise<LicenseStatus> =>
+    ipcRenderer.invoke(IPC.LICENSE_ONLINE_ACTIVATE, code),
 
   // ---------- 独立窗口 ----------
   openDetachedWindow: (moduleId: string): Promise<{ ok: boolean; error?: string }> =>

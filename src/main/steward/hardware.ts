@@ -5,6 +5,7 @@
 // 故从注册表 HardwareInformation.qwMemorySize 读取真实显存。
 import os from 'node:os'
 import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import type { HardwareInfo, GpuInfo, DiskInfo } from '../../shared/types'
 import { APP_ROOT } from '../portable'
 
@@ -291,4 +292,98 @@ export function getHardwareInfo(): HardwareInfo {
 export function refreshHardwareInfo(): HardwareInfo {
   cachedHardware = collectHardwareInfo()
   return cachedHardware
+}
+
+// ─── 硬盘物理序列号指纹（License 绑定用） ────────────────────────────
+//
+// 设计目标：APP_ROOT 所在物理硬盘的出厂序列号，跨系统一致、不可篡改。
+// 用于 Node-locked License：一个 license.lic 只能在这一个硬盘上使用，
+// 但同一硬盘插任意电脑都能验签通过（符合便携定位）。
+//
+// 注意：用序列号的 SHA-256 作为 fingerprint，避免明文暴露硬件信息。
+
+function getDiskSerialWin32(): string | null {
+  // APP_ROOT 形如 E:\...，取盘符
+  const drive = APP_ROOT.match(/^([A-Za-z]):/)?.[1]?.toUpperCase()
+  if (!drive) return null
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$letter = '${drive}'
+$part = Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $part) { exit 0 }
+$pd = Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { [string]$_.DeviceId -eq [string]$part.DiskNumber } | Select-Object -First 1
+if ($pd -and $pd.SerialNumber) { Write-Output $pd.SerialNumber.Trim() }
+`
+  const out = runPowerShell(script)
+  return out && out.trim() ? out.trim() : null
+}
+
+function getDiskSerialDarwin(): string | null {
+  try {
+    // 1. 找到 APP_ROOT 所在卷的设备标识，如 disk2s1
+    const info = execSync(`diskutil info "${APP_ROOT}"`, { encoding: 'utf8' })
+    const devMatch = info.match(/Device Identifier:\s*(disk\d+)(?:s\d+)?/)
+    if (!devMatch) return null
+    const wholeDisk = devMatch[1] // disk2
+
+    // 2. 从该物理盘的 IORegistry 中取序列号
+    //    IOBlockStorageDriver 节点下有 BSD Name = disk2，其父节点 IOBlockStorageDevice 有 Serial Number
+    const ioreg = execSync(
+      `ioreg -c IOBlockStorageDriver -r -l -w 0`,
+      { encoding: 'utf8' }
+    )
+    // 按 "+-o" 分割每个设备块
+    const blocks = ioreg.split(/\+-o /)
+    for (const block of blocks) {
+      if (new RegExp(`"BSD Name"\\s*=\\s*"${wholeDisk}"`).test(block)) {
+        const snMatch = block.match(/"Serial Number"\s*=\s*"([^"]+)"/)
+        if (snMatch) return snMatch[1].trim()
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function getDiskSerialLinux(): string | null {
+  try {
+    // 找 APP_ROOT 所在设备
+    const stat = execSync(`df "${APP_ROOT}" | tail -1`, { encoding: 'utf8' })
+    const devMatch = stat.match(/^(\/dev\/[a-z]+\d*)/)
+    if (!devMatch) return null
+    // /dev/sdb1 → /sys/block/sdb/device/serial
+    let dev = devMatch[1].replace('/dev/', '')
+    // 去掉分区号
+    dev = dev.replace(/\d+$/, '')
+    const serial = execSync(`cat /sys/block/${dev}/device/serial 2>/dev/null`, { encoding: 'utf8' }).trim()
+    return serial || null
+  } catch {
+    return null
+  }
+}
+
+/** 缓存的硬盘指纹，避免每次验签都跑系统命令 */
+let cachedFingerprint: string | null | undefined = undefined
+
+/**
+ * 获取 APP_ROOT 所在硬盘的物理序列号指纹（SHA-256 前 16 位 hex）。
+ * 同一硬盘跨系统一致；返回 null 表示无法获取（此时 License 不绑定设备）。
+ */
+export function getDiskFingerprint(): string | null {
+  if (cachedFingerprint !== undefined) return cachedFingerprint
+  let serial: string | null = null
+  try {
+    if (process.platform === 'win32') serial = getDiskSerialWin32()
+    else if (process.platform === 'darwin') serial = getDiskSerialDarwin()
+    else serial = getDiskSerialLinux()
+  } catch {
+    serial = null
+  }
+  if (!serial) {
+    cachedFingerprint = null
+    return null
+  }
+  cachedFingerprint = createHash('sha256').update(serial).digest('hex').slice(0, 16)
+  return cachedFingerprint
 }

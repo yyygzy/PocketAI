@@ -20,7 +20,7 @@ import type {
 import { DEFAULT_SIDEBAR_ORDER } from '../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../shared/snippet'
 import { getPaths } from '../portable'
-import { getHardwareInfo, refreshHardwareInfo } from '../steward/hardware'
+import { getHardwareInfo, refreshHardwareInfo, getDiskFingerprint } from '../steward/hardware'
 import { recommendModels } from '../steward/model-recommend'
 import { runAudit, runDiagnose } from '../steward/diagnose'
 import { getMachineId } from '../steward/machine'
@@ -68,6 +68,7 @@ import {
 } from '../sandbox/sandbox-service'
 import { resolveApproval } from '../agent/tool-approval'
 import { licenseService, assertCanCreateAssistant, assertCanCreateKb } from '../license/license'
+import { ACTIVATION_BASE_URL } from '../license/server-config'
 import { createDetachedWindow, DETACHED_MODULES } from '../windows/detached'
 import { lockService } from '../lock/lock'
 import { denyNewWindows } from '../net/external-links'
@@ -139,6 +140,28 @@ function toChannelType(type: unknown): ChannelType {
   return (CHANNEL_TYPES as readonly string[]).includes(t) ? (t as ChannelType) : 'telegram'
 }
 
+/**
+ * License 激活成功后持久化：写 DATA_DIR/license.lic（tmp+rename 原子写）并记录路径。
+ * 必须由调用方传入 license 原文——licenseService 只保留 payload，不含 signature。
+ */
+function persistLicense(status: { valid?: boolean }, rawContent: string): void {
+  if (!status?.valid || !rawContent) return
+  try {
+    const target = path.join(DATA_DIR, 'license.lic')
+    const tmp = target + '.tmp'
+    fs.writeFileSync(tmp, rawContent, 'utf8')
+    fs.renameSync(tmp, target)
+    appConfigRepo.setLicensePath(target)
+  } catch (e) {
+    console.warn('[license] 激活结果落盘失败（重启后可能需要重新激活）:', String(e))
+  }
+}
+
+/** 已存在的 license.lic 文件内容（导入文件场景复用原文） */
+function readLicenseFile(filePath: string): string {
+  return fs.readFileSync(filePath, 'utf8')
+}
+
 export function registerIpcHandlers(): void {
   // ---------- 系统 ----------
   // force=true 时重新采集（用户手动「重新检测」）；否则返回启动时缓存的快照
@@ -178,9 +201,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.PROVIDER_TEST, (_e, id: string) => providerManager.test(id))
 
   // ---------- License 授权（商业版）：粘贴激活码 / 导入授权文件 ----------
+  // 激活成功后统一落盘到 DATA_DIR/license.lic，否则重启后授权丢失
   ipcMain.handle(IPC.LICENSE_ACTIVATE, (_e, code: unknown) => {
     if (typeof code !== 'string' || !code.trim()) throw new Error('请输入激活码内容')
-    return licenseService.loadFromString(code)
+    const status = licenseService.loadFromString(code)
+    persistLicense(status, code)
+    return status
   })
   ipcMain.handle(IPC.LICENSE_IMPORT_FILE, async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
@@ -191,7 +217,9 @@ export function registerIpcHandlers(): void {
       filters: [{ name: '授权文件', extensions: ['lic', 'txt', 'json'] }]
     })
     if (result.canceled || result.filePaths.length === 0) return { canceled: true }
-    return { canceled: false, status: licenseService.loadFromFile(result.filePaths[0]) }
+    const status = licenseService.loadFromFile(result.filePaths[0])
+    persistLicense(status, readLicenseFile(result.filePaths[0]))
+    return { canceled: false, status }
   })
 
   // ---------- 独立窗口（标签弹出） ----------
@@ -1090,19 +1118,72 @@ export function registerIpcHandlers(): void {
 
   // ---------- License 授权 ----------
   ipcMain.handle(IPC.LICENSE_GET_STATUS, () => licenseService.getStatus())
-  ipcMain.handle(IPC.LICENSE_LOAD_FILE, (_e, filePath: string) =>
-    licenseService.loadFromFile(filePath)
-  )
-  ipcMain.handle(IPC.LICENSE_LOAD_STRING, (_e, content: string) =>
-    licenseService.loadFromString(content)
-  )
+  ipcMain.handle(IPC.LICENSE_LOAD_FILE, (_e, filePath: string) => {
+    const status = licenseService.loadFromFile(filePath)
+    persistLicense(status, readLicenseFile(filePath))
+    return status
+  })
+  ipcMain.handle(IPC.LICENSE_LOAD_STRING, (_e, content: string) => {
+    const status = licenseService.loadFromString(content)
+    persistLicense(status, content)
+    return status
+  })
   ipcMain.handle(IPC.LICENSE_CLEAR, () => {
     licenseService.clear()
+    // 同步删除落盘的 license.lic 并清空记录路径，防止重启后授权「复活」
+    try {
+      const fs = require('node:fs') as typeof import('node:fs')
+      const licPath = appConfigRepo.getLicensePath() || path.join(DATA_DIR, 'license.lic')
+      if (fs.existsSync(licPath)) fs.unlinkSync(licPath)
+    } catch (e) {
+      console.warn('[license] 删除 license.lic 失败:', String(e))
+    }
+    appConfigRepo.setLicensePath('')
     return { ok: true }
   })
   ipcMain.handle(IPC.LICENSE_HAS_FEATURE, (_e, feature: string) =>
     licenseService.hasFeature(feature)
   )
+  // 本机硬盘指纹（设置页展示，离线激活时发给卖家；null = 无法读取）
+  ipcMain.handle(IPC.LICENSE_GET_FINGERPRINT, () => getDiskFingerprint())
+  // 卡密在线激活：附带本机指纹请求激活服务器，返回的 license 过完整验签+比对后落盘
+  ipcMain.handle(IPC.LICENSE_ONLINE_ACTIVATE, async (_e, code: unknown) => {
+    if (typeof code !== 'string' || !code.trim()) throw new Error('请输入卡密')
+    const fingerprint = getDiskFingerprint()
+    if (!fingerprint) throw new Error('无法读取硬盘序列号，无法在线激活；请改用离线激活')
+
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 15_000)
+    try {
+      const res = await fetch(`${ACTIVATION_BASE_URL}/v1/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim(), fingerprint }),
+        signal: ctrl.signal
+      })
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; license?: string; error?: string }
+        | null
+      if (!res.ok || !data?.ok || typeof data.license !== 'string') {
+        const msg = String(data?.error ?? `激活服务器错误（HTTP ${res.status}）`)
+        throw new Error(msg.length > 200 ? msg.slice(0, 200) + '…' : msg)
+      }
+      const status = licenseService.loadFromString(data.license)
+      if (!status.valid) {
+        // 服务器返回的 license 未通过验签/指纹比对——可能被篡改，直接报错不落盘
+        throw new Error(status.error ?? '激活服务器返回的授权无效')
+      }
+      persistLicense(status, data.license)
+      return status
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        throw new Error('连接激活服务器超时，请检查网络后重试')
+      }
+      throw e
+    } finally {
+      clearTimeout(timer)
+    }
+  })
 
   // ---------- 加密 ----------
   ipcMain.handle(IPC.ENCRYPTION_GET_STATUS, () => ({

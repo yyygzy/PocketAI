@@ -803,6 +803,17 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
   // 粘贴激活码模式（license.lic JSON 文本）：文件选择之外的另一激活入口
   const [pasteOpen, setPasteOpen] = useState(false)
   const [codeText, setCodeText] = useState('')
+  // 卡密在线激活：卡密 + 服务器校验后下发绑定本机硬盘的 license
+  const [onlineCode, setOnlineCode] = useState('')
+  // 本机硬盘指纹：在线激活自动附带；离线激活时发给卖家签发绑定 license
+  const [fingerprint, setFingerprint] = useState<string | null>(null)
+  const [fpCopied, setFpCopied] = useState(false)
+  // 离线激活折叠区
+  const [offlineOpen, setOfflineOpen] = useState(false)
+
+  useEffect(() => {
+    window.pocketai.getLicenseFingerprint().then(setFingerprint).catch(() => setFingerprint(null))
+  }, [])
 
   if (!lic) {
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
@@ -846,6 +857,29 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
     } finally { setBusy(false) }
   }
 
+  const handleOnlineActivate = async () => {
+    if (!onlineCode.trim()) return
+    setBusy(true); setNotice(null)
+    try {
+      const r = await window.pocketai.onlineActivateLicense(onlineCode)
+      if (!r.valid) { setNotice({ ok: false, text: r.error ?? t('lic.activateFail') }); return }
+      setNotice({ ok: true, text: t('lic.activated', { owner: r.payload?.owner ?? '', plan: r.payload?.plan ?? '' }) })
+      setOnlineCode('')
+      onChange()
+    } catch (e: any) {
+      setNotice({ ok: false, text: e?.message ?? t('lic.activateFail') })
+    } finally { setBusy(false) }
+  }
+
+  const handleCopyFingerprint = async () => {
+    if (!fingerprint) return
+    try {
+      await navigator.clipboard.writeText(fingerprint)
+      setFpCopied(true)
+      setTimeout(() => setFpCopied(false), 2000)
+    } catch { /* 剪贴板不可用时静默 */ }
+  }
+
   const payload = lic.payload
 
   return (
@@ -864,7 +898,7 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
       ) : lic.expired && payload ? (
         <>
           <StatusRow label={t('lic.status')} value={t('lic.expired', { date: new Date(payload.expires_at).toLocaleDateString(locale) })} ok={false} />
-          <StatusRow label={t('lic.holder')} value={payload.owner} ok />
+          <StatusRow label={t('lic.holder')} value={payload.owner} ok={false} />
         </>
       ) : (
         <StatusRow label={t('lic.status')} value={t('lic.free')} ok={false} />
@@ -876,45 +910,84 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
         </p>
       )}
 
-      <div className="flex gap-2 pt-1">
-        {!lic.valid && (
-          <button className="btn-primary" disabled={busy} onClick={handleActivate}>
-            {busy ? t('common.processing') : t('lic.activate')}
-          </button>
-        )}
-        {!lic.valid && (
-          <button className="btn-ghost" disabled={busy} onClick={() => setPasteOpen((v) => !v)}>
-            {t('lic.pasteCode')}
-          </button>
-        )}
-        {lic.valid && (
+      {lic.valid && (
+        <div className="flex gap-2 pt-1">
           <button className="btn-ghost text-[var(--color-danger)]" onClick={handleClear}>{t('lic.clear')}</button>
-        )}
-        <input ref={fileRef} type="file" accept=".lic,.json" className="hidden" onChange={handleFile} />
-      </div>
-
-      {pasteOpen && !lic.valid && (
-        <div className="space-y-2">
-          <textarea
-            rows={5}
-            value={codeText}
-            onChange={(e) => setCodeText(e.target.value)}
-            placeholder={t('lic.pastePlaceholder')}
-            className="input font-mono text-[11px] resize-none"
-          />
-          <button className="btn-primary" disabled={busy || !codeText.trim()} onClick={handlePasteActivate}>
-            {t('lic.pasteActivate')}
-          </button>
         </div>
       )}
 
-      {notice && <Notice ok={notice.ok} text={notice.text} />}
+      {!lic.valid && (
+        <>
+          {/* 卡密在线激活（主入口） */}
+          <div className="space-y-1.5 pt-1">
+            <div className="text-[11px] font-medium">{t('lic.onlineTitle')}</div>
+            <div className="flex gap-2">
+              <input
+                className="input font-mono flex-1"
+                value={onlineCode}
+                onChange={(e) => setOnlineCode(e.target.value)}
+                placeholder={t('lic.codePlaceholder')}
+                disabled={busy}
+              />
+              <button className="btn-primary shrink-0" disabled={busy || !onlineCode.trim()} onClick={handleOnlineActivate}>
+                {busy ? t('common.processing') : t('lic.onlineActivate')}
+              </button>
+            </div>
+            <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('lic.onlineHint')}</p>
+          </div>
 
-      {!lic.valid && !lic.expired && (
-        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed pt-1">
-          {t('lic.hint')}
-        </p>
+          {/* 本机硬盘指纹：离线激活时发给卖家 */}
+          <div className="space-y-1.5">
+            <StatusRow
+              label={t('lic.fpLabel')}
+              value={fingerprint ?? t('lic.fpUnavailable')}
+              ok={!!fingerprint}
+            />
+            {fingerprint && (
+              <button className="btn-ghost" onClick={handleCopyFingerprint}>
+                {fpCopied ? t('lic.copied') : t('lic.copyFingerprint')}
+              </button>
+            )}
+          </div>
+
+          {/* 离线激活（折叠） */}
+          <div className="space-y-1.5">
+            <button className="btn-ghost" onClick={() => setOfflineOpen((v) => !v)}>
+              {offlineOpen ? '▾' : '▸'} {t('lic.offlineTitle')}
+            </button>
+            {offlineOpen && (
+              <div className="space-y-2">
+                <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('lic.offlineHint')}</p>
+                <div className="flex gap-2">
+                  <button className="btn-primary" disabled={busy} onClick={handleActivate}>
+                    {busy ? t('common.processing') : t('lic.activate')}
+                  </button>
+                  <button className="btn-ghost" disabled={busy} onClick={() => setPasteOpen((v) => !v)}>
+                    {t('lic.pasteCode')}
+                  </button>
+                  <input ref={fileRef} type="file" accept=".lic,.json" className="hidden" onChange={handleFile} />
+                </div>
+                {pasteOpen && (
+                  <div className="space-y-2">
+                    <textarea
+                      rows={5}
+                      value={codeText}
+                      onChange={(e) => setCodeText(e.target.value)}
+                      placeholder={t('lic.pastePlaceholder')}
+                      className="input font-mono text-[11px] resize-none"
+                    />
+                    <button className="btn-primary" disabled={busy || !codeText.trim()} onClick={handlePasteActivate}>
+                      {t('lic.pasteActivate')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
       )}
+
+      {notice && <Notice ok={notice.ok} text={notice.text} />}
     </div>
   )
 }

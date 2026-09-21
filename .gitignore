@@ -17,6 +17,10 @@ build/license-private.pem
 licenses/
 # 测试许可证仅本地调试用，不应进 Release
 build/test-license.lic
+# 激活服务器台账与可能放置的私钥副本
+license-server/licenses.json
+license-server/licenses.json.tmp
+license-server/*.pem
 
 # electron-builder 调试产物（CI Release 里也会二次排除）
 builder-debug.yml

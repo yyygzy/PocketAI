@@ -9,17 +9,20 @@
 //   "expires_at": 1767225600000,
 //   "plan": "pro",              // free / pro / enterprise
 //   "features": ["mcp", "agent", "backup", "encryption", "multi-runtime"],
+//   "disk_fingerprint": "",     // 硬盘指纹（SHA-256 前 16 位 hex）；空串 = 不绑定设备
 //   "signature": "base64(RSA-SHA256 签名)"
 // }
 //
 // 验签流程：
-// 1. 解析 license JSON，提取除 signature 外的所有字段
-// 2. 按 key 字典序拼接规范化字符串
+// 1. 解析 license JSON，提取除 signature 外的所有字段（含 disk_fingerprint）
+// 2. 按 key 字典序拼接规范化字符串（与应用内 SIGN_FIELDS、发行侧 issue-license.js 一致）
 // 3. RSA-SHA256 验签（公钥内置）
 // 4. 检查 expires_at、plan、features
+// 5. disk_fingerprint 非空时与 getDiskFingerprint()（APP_ROOT 所在硬盘）比对
 
 import { createVerify, publicDecrypt, constants } from 'node:crypto'
 import { PUBLIC_KEY_DER_B64 } from './public-key'
+import { getDiskFingerprint } from '../steward/hardware'
 
 export type LicensePlan = 'free' | 'pro' | 'enterprise'
 
@@ -31,6 +34,13 @@ export interface LicensePayload {
   expires_at: number
   plan: LicensePlan
   features: string[]
+  /**
+   * 硬盘指纹绑定（可选，SHA-256 前 16 位 hex）。
+   * - 有值：必须与 APP_ROOT 所在物理硬盘序列号的哈希匹配才 valid
+   *   （同一硬盘插任意电脑都能通过，符合便携定位；复制到别的硬盘则拒绝）
+   * - 无值 / 空串：不绑定设备（向后兼容旧 license）
+   */
+  disk_fingerprint?: string
 }
 
 export interface LicenseFile extends LicensePayload {
@@ -52,6 +62,7 @@ export interface LicenseStatus {
 
 // 需要签名的字段（按 key 字典序）
 const SIGN_FIELDS: (keyof LicensePayload)[] = [
+  'disk_fingerprint',
   'expires_at',
   'features',
   'issued_at',
@@ -129,7 +140,9 @@ export class LicenseService {
       issued_at: file.issued_at,
       expires_at: file.expires_at,
       plan: file.plan,
-      features: file.features
+      features: file.features,
+      // 必须参与规范化签名（SIGN_FIELDS 含此字段）；缺省按空串处理 = 不绑定设备
+      disk_fingerprint: String(file.disk_fingerprint ?? '')
     }
 
     // 2. 签名验证
@@ -147,6 +160,18 @@ export class LicenseService {
       this.lastError = `License 已于 ${new Date(payload.expires_at).toLocaleString('zh-CN')} 过期`
       this.current = payload
       return this.buildStatus(false, payload, expired)
+    }
+
+    // 4. 设备绑定检查：license 声明了硬盘指纹时，必须与 APP_ROOT 所在硬盘一致
+    //    （同一 U 盘插任意电脑都通过；复制 license 到别的硬盘则拒绝）
+    const bound = String(payload.disk_fingerprint ?? '').trim().toLowerCase()
+    if (bound) {
+      const localFp = getDiskFingerprint()
+      if (!localFp || localFp !== bound) {
+        this.lastError = `License 与当前硬盘不匹配（本机指纹: ${localFp ?? '无法读取'}），请联系卖家换绑`
+        this.current = payload
+        return this.buildStatus(false, payload)
+      }
     }
 
     // 全部通过

@@ -5,7 +5,8 @@ const fs = require('node:fs')
 
 const PLANS = ['free', 'pro', 'enterprise']
 const DEFAULT_FEATURES = 'mcp,agent,backup,encryption,multi-runtime'
-const SIGN_FIELDS = ['expires_at', 'features', 'issued_at', 'license_id', 'owner', 'plan', 'version']
+// 注意：必须与应用侧 license.ts 的 SIGN_FIELDS 完全一致（含 disk_fingerprint）
+const SIGN_FIELDS = ['disk_fingerprint', 'expires_at', 'features', 'issued_at', 'license_id', 'owner', 'plan', 'version']
 
 function canonicalize(payload) {
   return SIGN_FIELDS
@@ -32,10 +33,11 @@ const PERPETUAL = new Date('2099-12-31T23:59:59+08:00').getTime()
  * @param {number} [opts.days]       有效天数（与 expiresAt/expiresDate 三选一）
  * @param {number} [opts.expiresAt]  到期毫秒时间戳
  * @param {string[]} [opts.features] 功能列表，默认全量
+ * @param {string} [opts.diskFingerprint] 硬盘指纹（SHA-256 前 16 位 hex）；缺省空串 = 不绑定设备
  * @param {string} [opts.keyPath]    私钥路径，默认 build/license-private.pem
  * @returns {{ licenseJson: string, payload: object, licenseId: string, expiresAt: number }}
  */
-function issueLicense({ owner, plan, days, expiresAt, features, keyPath }) {
+function issueLicense({ owner, plan, days, expiresAt, features, diskFingerprint, keyPath }) {
   if (!owner || !String(owner).trim()) throw new Error('owner 不能为空')
   if (!PLANS.includes(plan)) throw new Error(`plan 仅支持 ${PLANS.join(' / ')}`)
   const keyFile = keyPath || require('node:path').join(__dirname, '..', '..', 'build', 'license-private.pem')
@@ -54,7 +56,9 @@ function issueLicense({ owner, plan, days, expiresAt, features, keyPath }) {
     issued_at: Date.now(),
     expires_at: exp,
     plan,
-    features: features.map((s) => String(s).trim()).filter(Boolean)
+    features: features.map((s) => String(s).trim()).filter(Boolean),
+    // 空串 = 不绑定设备（可在任何硬盘使用）；非空 = 只能在指纹匹配的硬盘上激活
+    disk_fingerprint: String(diskFingerprint ?? '').trim().toLowerCase()
   }
 
   const sign = createSign('RSA-SHA256')
