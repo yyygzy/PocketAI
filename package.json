@@ -130,7 +130,12 @@
         }
       ],
       "artifactName": "Moxia-${version}-${arch}.${ext}",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.plist",
+      "entitlementsInherit": "build/entitlements.plist",
+      "gatekeeperAssess": false,
+      "identity": null
     },
     "publish": {
       "provider": "github",
