@@ -11,6 +11,7 @@
 //   的原路径，托盘只在应用运行期间提供快捷入口
 import { app, Tray, Menu, BrowserWindow, nativeImage } from 'electron'
 import path from 'node:path'
+import { requestQuit } from './quit-manager'
 import type { MenuLang } from './menu'
 
 let tray: Tray | null = null
@@ -40,7 +41,7 @@ function rebuildMenu(): void {
     { type: 'separator' },
     {
       label: labelText('退出墨匣', 'Quit Moxia'),
-      click: () => app.quit()
+      click: () => requestQuit()
     }
   ])
   tray.setContextMenu(contextMenu)

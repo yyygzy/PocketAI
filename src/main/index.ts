@@ -27,8 +27,6 @@ import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR } from './portable'
 import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
-import { mcpManager } from './mcp/manager'
-import { ollamaRuntime } from './ollama/ollama-runtime'
 import { masterKeyManager } from './crypto/master-key'
 import { unlockCoordinator } from './crypto/unlock-coordinator'
 import { migrateKvSecrets } from './crypto/secret-store'
@@ -46,8 +44,9 @@ import { lockService } from './lock/lock'
 import { installLockGate } from './lock/ipc-gate'
 import { denyNewWindows } from './net/external-links'
 import { installContentSecurityPolicy } from './security/csp'
-import { initBackupScheduler, stopBackupScheduler } from './backup/backup-scheduler'
+import { initBackupScheduler } from './backup/backup-scheduler'
 import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER } from './ui-preferences'
+import { isQuitting, beginQuit, runCleanupChain, runFallbackCleanup } from './quit-manager'
 
 // app.setPath 延后到 ensureDirs 之后执行：若 DATA_DIR 存在但非目录，
 // ensureDirs 会先删除重建，setPath 再使用时路径才安全。
@@ -222,6 +221,22 @@ function createMainWindow(): void {
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   // 后台保活（2/2）：该窗口的 webContents 不参与 Chromium 背景节流
   mainWindow.webContents.setBackgroundThrottling(false)
+  // 关闭按钮 → 二次确认（防止误触），确认后才真正退出并清理所有子进程
+  mainWindow.on('close', async (e) => {
+    if (isQuitting()) return // 已在退出流程中（如托盘退出菜单主动设标志后 app.quit()）
+    e.preventDefault()
+    const choice = await dialog.showMessageBox(mainWindow!, {
+      type: 'warning',
+      title: '关闭墨匣',
+      message: '确定要关闭墨匣吗？',
+      detail: '关闭后将停止所有后台进程（包括本地 Ollama 模型引擎、MCP 服务等）。下次启动需要重新加载模型。',
+      buttons: ['取消', '退出墨匣'],
+      defaultId: 1,
+      cancelId: 0,
+      noLink: true
+    })
+    if (choice.response === 1) beginQuit()
+  })
   mainWindow.on('closed', () => { mainWindow = null })
   // 标记主窗口：透明度等窗口级偏好只应用到主窗口（浮窗/独立窗口不打此标记）
   ;(mainWindow as any)[MAIN_WINDOW_MARKER] = true
@@ -503,19 +518,23 @@ if (!gotLock) {
 }
 
 app.on('before-quit', (e) => {
-  console.log('[quit] before-quit 触发（退出链路开始）')
+  if (isQuitting()) return // 已在执行清理链中，不再拦截
+  e.preventDefault()
+  ;(async () => {
+    await runCleanupChain()
+    app.exit(0)
+  })()
 })
 
 app.on('window-all-closed', () => {
-  console.log('[quit] window-all-closed（所有窗口已关闭）')
-  try { dbService.close() } catch { /* ignore */ }
-  if (process.platform !== 'darwin') app.quit()
+  console.log('[quit] window-all-closed')
+  // macOS 上关掉所有窗口后仍保留 dock 图标，不自动退出
+  if (process.platform === 'darwin') return
+  if (isQuitting()) return // before-quit 已接管退出流程
+  app.quit()
 })
 
 app.on('will-quit', () => {
   try { destroyTray() } catch { /* ignore */ }
-  try { mcpManager.stopAll().catch(() => {}) } catch { /* ignore */ }
-  try { ollamaRuntime.cleanup() } catch { /* ignore */ }
-  try { stopBackupScheduler() } catch { /* ignore */ }
-  try { dbService.close() } catch { /* ignore */ }
+  runFallbackCleanup()
 })

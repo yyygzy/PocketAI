@@ -409,7 +409,15 @@ async function pullModel(model: string, onEvent?: (e: OllamaPullEvent) => void):
         const evt = JSON.parse(line) as {
           status?: string; digest?: string; total?: number; completed?: number; error?: string
         }
-        if (evt.error) throw new Error(evt.error)
+        if (evt.error) {
+          // Ollama 原生返回 "EOF" / "connection reset" 等网络中断错误，
+          // 翻译为用户可理解的提示
+          const msg = evt.error.toLowerCase()
+          if (msg.includes('eof') || msg.includes('connection reset') || msg.includes('broken pipe')) {
+            throw new Error('下载连接中断，请检查网络后重试（Ollama 服务正常）')
+          }
+          throw new Error(evt.error)
+        }
 
         // 只对 downloading 状态做层进度聚合；verifying/writing manifest 等保持原进度
         if (evt.status === 'downloading' && evt.digest && evt.total != null) {

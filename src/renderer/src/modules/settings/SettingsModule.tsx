@@ -877,9 +877,11 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
       )}
 
       <div className="flex gap-2 pt-1">
-        <button className="btn-primary" disabled={busy} onClick={handleActivate}>
-          {busy ? t('common.processing') : t('lic.activate')}
-        </button>
+        {!lic.valid && (
+          <button className="btn-primary" disabled={busy} onClick={handleActivate}>
+            {busy ? t('common.processing') : t('lic.activate')}
+          </button>
+        )}
         {!lic.valid && (
           <button className="btn-ghost" disabled={busy} onClick={() => setPasteOpen((v) => !v)}>
             {t('lic.pasteCode')}
