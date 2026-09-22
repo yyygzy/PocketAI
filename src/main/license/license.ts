@@ -158,7 +158,9 @@ export class LicenseService {
     const expired = now > payload.expires_at
     if (expired) {
       this.lastError = `License 已于 ${new Date(payload.expires_at).toLocaleString('zh-CN')} 过期`
-      this.current = payload
+      // 过期 license 不写入 current：否则 getStatus/hasFeature 会把它当有效授权。
+      // payload 通过本次返回值带给 UI 展示。
+      this.current = null
       return this.buildStatus(false, payload, expired)
     }
 
@@ -169,7 +171,8 @@ export class LicenseService {
       const localFp = getDiskFingerprint()
       if (!localFp || localFp !== bound) {
         this.lastError = `License 与当前硬盘不匹配（本机指纹: ${localFp ?? '无法读取'}），请联系卖家换绑`
-        this.current = payload
+        // 同上：绑定不匹配的 license 不得进入 current（避免换盘后仍享授权）
+        this.current = null
         return this.buildStatus(false, payload)
       }
     }
