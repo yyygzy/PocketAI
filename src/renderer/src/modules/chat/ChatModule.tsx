@@ -327,7 +327,7 @@ export const ChatModule: React.FC = () => {
       const nonVisionTargets = validTargets.filter((t) => !VISION_MODEL_PATTERNS.test(t.model))
       if (nonVisionTargets.length > 0) {
         const modelList = nonVisionTargets.map((t) => t.model).join(', ')
-        if (!window.confirm(`以下模型可能不支持图片理解：${modelList}\n\n建议使用视觉模型（如 gpt-4o、claude-3、qwen-vl 等）。\n\n确定要发送吗？`)) {
+        if (!window.confirm(t('chatview.visionWarn', { models: modelList }))) {
           return
         }
       }
@@ -486,7 +486,7 @@ export const ChatModule: React.FC = () => {
     if (!currentConvId) return
     const r = await window.pocketai.forkConversation(currentConvId, messageId)
     if (!r.ok || !r.conversation) {
-      toast.error(r.error ?? '分支创建失败')
+      toast.error(r.error ?? t('chatview.forkFailed'))
       return
     }
     await reloadConversations()
@@ -494,7 +494,7 @@ export const ChatModule: React.FC = () => {
     setCurrentConvId(r.conversation.id)
     await loadMessages(r.conversation.id)
     restoreLastModel(r.conversation)
-  }, [currentConvId, reloadConversations, loadMessages, restoreLastModel, toast])
+  }, [currentConvId, reloadConversations, loadMessages, restoreLastModel, toast, t])
 
   // 另存为笔记：取消息内容创建笔记，然后跳到笔记模块并选中
   const handleSaveAsNote = useCallback(async (messageId: string) => {
@@ -506,9 +506,9 @@ export const ChatModule: React.FC = () => {
       window.dispatchEvent(new CustomEvent('pocketai:open-note', { detail: { id: note.id } }))
     } catch (e) {
       // 主进程版本过旧/未重启时 IPC 无 handler，需给出明确提示而非静默无反应
-      toast.error(`保存为笔记失败，请完全退出并重启应用后再试。\n${(e as Error)?.message ?? e}`)
+      toast.error(t('chatview.saveNoteFailed', { msg: (e as Error)?.message ?? String(e) }))
     }
-  }, [messages, toast])
+  }, [messages, toast, t])
 
   return (
     <div className="flex h-full min-w-0 relative">
@@ -579,12 +579,12 @@ export const ChatModule: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setCryptoPrompt(null)}>
           <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-xl w-96 p-5" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-semibold mb-1">
-              {cryptoPrompt.kind === 'export' ? '🔐 加密导出会话' : '🔓 解密导入会话'}
+              {cryptoPrompt.kind === 'export' ? t('chatview.exportTitle') : t('chatview.importTitle')}
             </h3>
             <p className="text-xs text-[var(--color-text-muted)] mb-4">
               {cryptoPrompt.kind === 'export'
-                ? '输入一个密码保护导出的会话。导入时需要用同一个密码解密。'
-                : '输入加密文件的密码。密码错误或文件损坏都会导致解密失败。'}
+                ? t('chatview.exportPwdHint')
+                : t('chatview.importPwdHint')}
             </p>
             <input
               type="password"
@@ -592,13 +592,13 @@ export const ChatModule: React.FC = () => {
               value={cryptoPwd}
               onChange={(e) => setCryptoPwd(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') confirmCrypto(); if (e.key === 'Escape') setCryptoPrompt(null) }}
-              placeholder="输入密码"
+              placeholder={t('common.enterPassword')}
               className="w-full px-3 py-2 border border-[var(--color-border)] rounded bg-[var(--color-input-bg)] text-sm outline-none focus:border-[var(--color-accent)]"
             />
             <div className="flex gap-2 mt-4 justify-end">
-              <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">取消</button>
+              <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">{t('common.cancel')}</button>
               <button onClick={confirmCrypto} disabled={!cryptoPwd} className="px-3 py-1.5 text-xs bg-[var(--color-accent)] text-white rounded disabled:opacity-50 hover:opacity-90">
-                {cryptoPrompt.kind === 'export' ? '导出' : '解密导入'}
+                {cryptoPrompt.kind === 'export' ? t('chatview.export') : t('chatview.decryptImport')}
               </button>
             </div>
           </div>

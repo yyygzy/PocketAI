@@ -237,7 +237,7 @@ export const StewardModule: React.FC = () => {
 
       {/* 模型推荐（硬件画像） */}
       {recommendation && (
-        <Section title="🤖 模型推荐">
+        <Section title={t('steward.modelRec')}>
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-[var(--color-accent)] text-[var(--color-on-accent)]">
               {recommendation.tier}
@@ -247,11 +247,11 @@ export const StewardModule: React.FC = () => {
                 ? 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
                 : 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
             }`}>
-              Ollama {recommendation.ollamaRunning ? '● 运行中' : '○ 未运行'}
+              Ollama {recommendation.ollamaRunning ? t('steward.ollamaRunning') : t('steward.ollamaStopped')}
             </span>
             {recommendation.installedModels.length > 0 && (
               <span className="text-[11px] text-[var(--color-text-muted)]">
-                已装 {recommendation.installedModels.length} 个模型
+                {t('steward.installedCount', { n: recommendation.installedModels.length })}
               </span>
             )}
           </div>
@@ -265,7 +265,7 @@ export const StewardModule: React.FC = () => {
                   </span>
                   <span className="font-mono text-xs">{p.id}</span>
                   {p.installed && (
-                    <span className="text-[10px] text-[var(--color-success)]">✅ 已安装</span>
+                    <span className="text-[10px] text-[var(--color-success)]">{t('steward.installed')}</span>
                   )}
                 </div>
                 <p className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">{p.reason}</p>
@@ -285,35 +285,35 @@ export const StewardModule: React.FC = () => {
 
       {/* 数据健康报告 */}
       {health && (
-        <Section title="数据健康报告">
-          <Row label="总会话数" value={String(health.totalConversations)} />
-          <Row label="总消息数" value={String(health.totalMessages)} />
-          <Row label="知识库数" value={String(health.kbCount)} />
-          <Row label="附件占用" value={formatBytes(health.totalAttachmentsBytes)} />
+        <Section title={t('steward.dataHealth')}>
+          <Row label={t('steward.totalConv')} value={String(health.totalConversations)} />
+          <Row label={t('steward.totalMessages')} value={String(health.totalMessages)} />
+          <Row label={t('steward.kbCount')} value={String(health.kbCount)} />
+          <Row label={t('steward.attachSize')} value={formatBytes(health.totalAttachmentsBytes)} />
           <Row
-            label="孤儿消息"
+            label={t('steward.orphanMessages')}
             value={health.orphanMessages > 0 ? `⚠️ ${health.orphanMessages}` : '✅ 0'}
           />
           <Row
-            label="孤儿向量块"
+            label={t('steward.orphanChunks')}
             value={health.orphanChunks > 0 ? `⚠️ ${health.orphanChunks}` : '✅ 0'}
           />
         </Section>
       )}
 
       {/* 安全检测 */}
-      <Section title="🛡️ 安全检测">
+      <Section title={t('steward.security')}>
         <div className="flex items-center gap-3">
           <button
             onClick={handleAudit}
             disabled={checking !== null}
             className="px-3 py-1.5 text-xs rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] disabled:opacity-50 hover:opacity-90 transition-opacity"
           >
-            {checking === 'audit' ? '检测中...' : '开始安全检测'}
+            {checking === 'audit' ? t('steward.auditing') : t('steward.startAudit')}
           </button>
           {audit && (
             <span className="text-sm">
-              安全评分：
+              {t('steward.securityScore')}
               <span className={audit.score >= 80 ? 'text-[var(--color-success)]' : audit.score >= 50 ? 'text-[var(--color-warning)]' : 'text-[var(--color-danger)]'}>
                 {audit.score}
               </span>
@@ -342,13 +342,13 @@ export const StewardModule: React.FC = () => {
       </Section>
 
       {/* 故障诊断 */}
-      <Section title="🩺 故障诊断">
+      <Section title={t('steward.diagnosis')}>
         <button
           onClick={handleDiagnose}
           disabled={checking !== null}
           className="px-3 py-1.5 text-xs rounded border border-[var(--color-border)] text-[var(--color-text)] disabled:opacity-50 hover:bg-[var(--color-hover-overlay)] transition-colors"
         >
-          {checking === 'diagnose' ? '诊断中...' : '开始故障诊断'}
+          {checking === 'diagnose' ? t('steward.diagnosing') : t('steward.startDiagnose')}
         </button>
         {diagnose && (
           <div className="mt-3 space-y-2">
@@ -371,34 +371,38 @@ export const StewardModule: React.FC = () => {
       </Section>
 
       {/* 垃圾清理 */}
-      <Section title="垃圾清理">
+      <Section title={t('steward.cleanup')}>
         <div className="flex gap-2">
           <button
             onClick={handleCleanup}
             disabled={cleaning}
             className="px-3 py-1.5 text-xs rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] disabled:opacity-50 hover:opacity-90 transition-opacity"
           >
-            {cleaning ? '清理中...' : '安全清理'}
+            {cleaning ? t('steward.cleaning') : t('steward.startCleanup')}
           </button>
           <button
             onClick={handleVacuum}
             disabled={cleaning}
             className="px-3 py-1.5 text-xs rounded border border-[var(--color-border)] text-[var(--color-text)] disabled:opacity-50 hover:bg-[var(--color-hover-overlay)] transition-colors"
           >
-            VACUUM 压缩
+            {t('steward.vacuum')}
           </button>
         </div>
         <p className="text-[11px] text-[var(--color-text-muted)] mt-2">
-          「安全清理」删除孤儿消息/向量块并压缩数据库；「VACUUM」仅压缩不删除数据。
+          {t('steward.cleanupHint')}
         </p>
         {cleanupResult && (
           <div className="mt-2 px-2 py-1.5 rounded bg-[var(--color-success-bg)] text-[11px] text-[var(--color-success)]">
-            已删除孤儿消息 {cleanupResult.removedOrphanMessages} 条、孤儿向量块 {cleanupResult.removedOrphanChunks} 个，回收 {formatBytes(cleanupResult.vacuumedBytes)}
+            {t('steward.cleanupResult', {
+              m: cleanupResult.removedOrphanMessages,
+              c: cleanupResult.removedOrphanChunks,
+              b: formatBytes(cleanupResult.vacuumedBytes)
+            })}
           </div>
         )}
         {vacuumBytes !== null && (
           <div className="mt-2 px-2 py-1.5 rounded bg-[var(--color-success-bg)] text-[11px] text-[var(--color-success)]">
-            VACUUM 回收 {formatBytes(vacuumBytes)}
+            {t('steward.vacuumResult', { b: formatBytes(vacuumBytes) })}
           </div>
         )}
       </Section>

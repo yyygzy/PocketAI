@@ -12,7 +12,6 @@ interface Props {
   onActivate: (batchIndex: number) => void
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
-  onCopy: (content: string) => void
   onDelete: (id: string) => void
 }
 
@@ -26,7 +25,6 @@ export const BranchCompare: React.FC<Props> = ({
   onActivate,
   selectedIds,
   onToggleSelect,
-  onCopy,
   onDelete
 }) => {
   const { t } = useI18n()
@@ -81,7 +79,6 @@ export const BranchCompare: React.FC<Props> = ({
                     messageId={r.id}
                     selected={selectedIds.has(r.id)}
                     onToggleSelect={onToggleSelect}
-                    onCopy={onCopy}
                     onDelete={onDelete}
                   />
                 ))}

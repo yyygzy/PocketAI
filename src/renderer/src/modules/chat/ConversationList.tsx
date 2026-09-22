@@ -248,18 +248,18 @@ const HighlightedSnippet: React.FC<{ text: string }> = ({ text }) => {
 }
 
 /** Unix 毫秒时间戳 → 相对人类可读时间（1分钟前、2小时前、昨天、日期） */
-function relTime(ts: number): string {
+function relTime(ts: number, t: (k: string, p?: Record<string, string | number>) => string): string {
   const diff = Date.now() - ts
   const m = Math.floor(diff / 60_000)
-  if (m < 1) return '刚刚'
-  if (m < 60) return `${m}分钟前`
+  if (m < 1) return t('chat.justNow')
+  if (m < 60) return t('chat.minutesAgo', { n: m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h}小时前`
+  if (h < 24) return t('chat.hoursAgo', { n: h })
   const d = new Date(ts)
   const now = new Date()
-  if (d.toDateString() === now.toDateString()) return '今天'
+  if (d.toDateString() === now.toDateString()) return t('chat.today')
   const y = new Date(now.getTime() - 86_400_000)
-  if (d.toDateString() === y.toDateString()) return '昨天'
+  if (d.toDateString() === y.toDateString()) return t('chat.yesterday')
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
@@ -305,7 +305,7 @@ const SearchResults: React.FC<{
                 <span className={`inline-block text-[var(--color-text-muted)] ${r.role === 'user' ? 'text-[var(--color-info)]' : r.role === 'assistant' ? 'text-[var(--color-success)]' : ''}`}>
                   {r.role === 'user' ? t('chat.roleYou') : r.role === 'assistant' ? t('chat.roleAI') : r.role}
                 </span>
-                <span className="text-[var(--color-text-muted)] opacity-60">· {relTime(r.createdAt)}</span>
+                <span className="text-[var(--color-text-muted)] opacity-60">· {relTime(r.createdAt, t)}</span>
               </div>
               <span className="text-[var(--color-text)] leading-snug"><HighlightedSnippet text={r.snippet} /></span>
             </div>

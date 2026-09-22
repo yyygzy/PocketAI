@@ -85,7 +85,7 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
   async function handleUnlock() {
     setLockErr('')
     const res = await window.pocketai.unlock(dbEncrypted ? lockPwd : undefined)
-    if (!res.ok) setLockErr(res.error ?? '解锁失败')
+    if (!res.ok) setLockErr(res.error ?? t('lock.unlockFailed'))
   }
 
   return (
@@ -100,8 +100,8 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm">
             <div className="w-80 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-8 text-center shadow-2xl">
               <div className="mb-4 text-4xl">🔒</div>
-              <h2 className="mb-2 text-xl font-semibold text-[var(--color-text)]">已锁定</h2>
-              <p className="mb-6 text-sm text-[var(--color-text-muted)]">墨匣隐私保护已激活</p>
+              <h2 className="mb-2 text-xl font-semibold text-[var(--color-text)]">{t('lock.locked')}</h2>
+              <p className="mb-6 text-sm text-[var(--color-text-muted)]">{t('lock.protected')}</p>
               {dbEncrypted && (
                 <input
                   type="password"
@@ -109,7 +109,7 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
                   value={lockPwd}
                   onChange={(e) => setLockPwd(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-                  placeholder="输入主密码解锁"
+                  placeholder={t('lock.pwdPlaceholder')}
                   className="mb-3 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-4 py-2 text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
                 />
               )}
@@ -118,7 +118,7 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
                 onClick={handleUnlock}
                 className="w-full rounded-lg bg-[var(--color-accent)] px-4 py-2 font-medium text-[var(--color-on-accent)] hover:opacity-90"
               >
-                {dbEncrypted ? '解锁' : '立即解锁'}
+                {dbEncrypted ? t('lock.unlock') : t('lock.unlockNow')}
               </button>
             </div>
           </div>

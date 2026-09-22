@@ -1,6 +1,7 @@
-import React, { useState } from 'react'
+import React from 'react'
 import type { ProviderRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { CopyButton } from '../../components/CopyButton'
 import { Markdown } from './Markdown'
 
 export interface CompareColumn {
@@ -17,7 +18,6 @@ interface Props {
   messageIds?: string[]
   selectedIds?: Set<string>
   onToggleSelect?: (id: string) => void
-  onCopy?: (content: string) => void
   onDelete?: (id: string) => void
 }
 
@@ -27,11 +27,9 @@ export const ComparisonColumns: React.FC<Props> = ({
   messageIds,
   selectedIds,
   onToggleSelect,
-  onCopy,
   onDelete
 }) => {
   const { t } = useI18n()
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
   const nameOf = (id: string) => providers.find((p) => p.id === id)?.name ?? id
 
   const badgeOf = (status: CompareColumn['status']): { text: string; cls: string } | null => {
@@ -44,17 +42,6 @@ export const ComparisonColumns: React.FC<Props> = ({
         return { text: t('cmp.aborted'), cls: 'text-[var(--color-text-muted)] bg-[var(--color-hover-overlay)]' }
       default:
         return null
-    }
-  }
-
-  const handleCopy = async (idx: number, content: string) => {
-    if (!content) return
-    try {
-      await navigator.clipboard.writeText(content)
-      setCopiedIdx(idx)
-      setTimeout(() => setCopiedIdx(null), 1500)
-    } catch {
-      onCopy?.(content)
     }
   }
 
@@ -136,17 +123,15 @@ export const ComparisonColumns: React.FC<Props> = ({
             {/* 操作按钮 */}
             {selectable && (
               <div className="shrink-0 flex gap-1 px-3 py-1.5 border-t border-[var(--color-border)]">
-                <button
-                  onClick={() => handleCopy(i, col.content)}
+                <CopyButton
+                  text={col.content}
                   className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
-                >
-                  {copiedIdx === i ? '已复制' : '复制'}
-                </button>
+                />
                 <button
                   onClick={() => handleDelete(i)}
                   className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-danger-bg)] hover:text-[var(--color-danger)] transition-colors"
                 >
-                  删除
+                  {t('common.delete')}
                 </button>
               </div>
             )}

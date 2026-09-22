@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
 import type { MessageRecord, ChatAttachment } from '../../../../shared/types'
+import { useI18n } from '../../i18n'
+import { CopyButton } from '../../components/CopyButton'
 import { Markdown } from './Markdown'
 
 interface Props {
@@ -11,7 +13,6 @@ interface Props {
   attachments?: ChatAttachment[]
   selected?: boolean
   onToggleSelect?: (id: string) => void
-  onCopy?: (content: string) => void
   onDelete?: (id: string) => void
   onRegenerate?: (id: string) => void
   onResend?: (id: string, newContent?: string) => void
@@ -19,7 +20,8 @@ interface Props {
   onSaveAsNote?: (id: string) => void
 }
 
-export const MessageBubble: React.FC<Props> = ({
+/** React.memo：流式输出时只重渲染变化的消息，其余消息 props 不变即跳过（配合 ChatView 的 useCallback） */
+const MessageBubbleImpl: React.FC<Props> = ({
   role,
   content,
   streaming,
@@ -28,30 +30,18 @@ export const MessageBubble: React.FC<Props> = ({
   attachments,
   selected,
   onToggleSelect,
-  onCopy,
   onDelete,
   onRegenerate,
   onResend,
   onFork,
   onSaveAsNote
 }) => {
+  const { t } = useI18n()
   const isUser = role === 'user'
   const [hovered, setHovered] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(content)
   const selectable = !!messageId && !streaming
-
-  const handleCopy = async () => {
-    if (!content) return
-    try {
-      await navigator.clipboard.writeText(content)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      onCopy?.(content)
-    }
-  }
 
   const handleDelete = () => {
     if (messageId && onDelete) {
@@ -116,7 +106,7 @@ export const MessageBubble: React.FC<Props> = ({
                   onClick={() => setEditing(false)}
                   className="text-[11px] px-2 py-1 rounded bg-white/10 hover:bg-white/20 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={() => {
@@ -129,7 +119,7 @@ export const MessageBubble: React.FC<Props> = ({
                   }}
                   className="text-[11px] px-2 py-1 rounded bg-white/20 hover:bg-white/30 transition-colors"
                 >
-                  重发
+                  {t('chatview.resend')}
                 </button>
               </div>
             </div>
@@ -173,64 +163,61 @@ export const MessageBubble: React.FC<Props> = ({
         {/* 操作按钮：复制 / 编辑 / 改参重跑 / 重新生成 / 删除 */}
         {selectable && (hovered || selected) && !editing && (
           <div className={`flex gap-1 mt-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
-            <button
-              onClick={handleCopy}
-              title="复制"
+            <CopyButton
+              text={content}
               className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
-            >
-              {copied ? '已复制' : '复制'}
-            </button>
+            />
             {isUser && onResend && (
               <>
                 <button
                   onClick={() => { setEditText(content); setEditing(true) }}
-                  title="编辑后重发"
+                  title={t('chatview.editResendTitle')}
                   className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
                 >
-                  编辑
+                  {t('chatview.editResend')}
                 </button>
                 <button
                   onClick={() => onResend(messageId!)}
-                  title="用当前选中的模型重新发送"
+                  title={t('chatview.resendModelTitle')}
                   className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
                 >
-                  改参重跑
+                  {t('chatview.rerun')}
                 </button>
               </>
             )}
             {!isUser && onRegenerate && (
               <button
                 onClick={() => onRegenerate(messageId!)}
-                title="重新生成"
+                title={t('chatview.regenerate')}
                 className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
               >
-                重新生成
+                {t('chatview.regenerate')}
               </button>
             )}
             {onFork && (
               <button
                 onClick={() => onFork(messageId!)}
-                title="从此消息分叉出新对话"
+                title={t('chatview.forkTitle')}
                 className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
               >
-                分支
+                {t('chatview.fork')}
               </button>
             )}
             {onSaveAsNote && (
               <button
                 onClick={() => onSaveAsNote(messageId!)}
-                title="另存为笔记"
+                title={t('chatview.saveNoteTitle')}
                 className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
               >
-                存笔记
+                {t('chatview.saveNote')}
               </button>
             )}
             <button
               onClick={handleDelete}
-              title="删除"
+              title={t('common.delete')}
               className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-danger-bg)] hover:text-[var(--color-danger)] transition-colors"
             >
-              删除
+              {t('common.delete')}
             </button>
           </div>
         )}
@@ -238,3 +225,5 @@ export const MessageBubble: React.FC<Props> = ({
     </div>
   )
 }
+
+export const MessageBubble = React.memo(MessageBubbleImpl)

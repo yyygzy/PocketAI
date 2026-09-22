@@ -151,7 +151,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
           {/* 文件选择按钮 */}
           <button
             onClick={() => fileRef.current?.click()}
-            title="添加图片或文档"
+            title={t('common.attachFile')}
             className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

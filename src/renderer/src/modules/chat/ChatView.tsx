@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
@@ -94,6 +94,11 @@ export const ChatView: React.FC<Props> = ({
 }) => {
   const { t } = useI18n()
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollBoxRef = useRef<HTMLDivElement>(null)
+  /** 渐进渲染：先只渲染最近 N 轮，向上滚动再补渲染，避免长会话一次挂载上千 DOM */
+  const INITIAL_TURN_COUNT = 30
+  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_TURN_COUNT)
+  const restoredHeightRef = useRef(0)
   const streaming = liveColumns !== null
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   /** 各轮次手动选中的分支（turnKey → batchKey）；无条目时显示最新分支 */
@@ -108,65 +113,57 @@ export const ChatView: React.FC<Props> = ({
     }
   }, [focusBranch?.nonce])
 
-  // 切换会话时清空选择
+  // 切换会话（首条消息 id 变化）时清空选择并重置渐进渲染
+  const firstMsgId = messages[0]?.id ?? null
   useEffect(() => {
     setSelectedIds(new Set())
-  }, [messages.length === 0])
+    setVisibleTurnCount(INITIAL_TURN_COUNT)
+  }, [firstMsgId])
 
-  const toggleSelect = (id: string) => {
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  }
+  }, [])
 
-  const selectAll = () => {
+  const selectAll = useCallback(() => {
     const allIds = messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .map((m) => m.id)
     setSelectedIds(new Set(allIds))
-  }
+  }, [messages])
 
-  const clearSelection = () => setSelectedIds(new Set())
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
 
-  const handleCopySelected = async () => {
+  const handleCopySelected = useCallback(async () => {
     const selected = messages.filter((m) => selectedIds.has(m.id))
     const text = selected
-      .map((m) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
+      .map((m) => `${m.role === 'user' ? t('chatview.roleUser') : t('chatview.roleAssistant')}: ${m.content}`)
       .join('\n\n')
     try {
       await navigator.clipboard.writeText(text)
     } catch {
       // ignore
     }
-  }
+  }, [messages, selectedIds, t])
 
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = useCallback(() => {
     if (selectedIds.size === 0) return
     onDeleteMessages(Array.from(selectedIds))
     setSelectedIds(new Set())
-  }
+  }, [selectedIds, onDeleteMessages])
 
-  const handleDeleteOne = (id: string) => {
+  const handleDeleteOne = useCallback((id: string) => {
     onDeleteMessage(id)
     setSelectedIds((prev) => {
       const next = new Set(prev)
       next.delete(id)
       return next
     })
-  }
-
-  const handleCopyFallback = (content: string) => {
-    // clipboard API 失败时的降级
-    const ta = document.createElement('textarea')
-    ta.value = content
-    document.body.appendChild(ta)
-    ta.select()
-    try { document.execCommand('copy') } catch { /* ignore */ }
-    document.body.removeChild(ta)
-  }
+  }, [onDeleteMessage])
 
   // 扁平消息 → 轮次分组（回复按 batch 分组为分支）
   const turns = useMemo<Turn[]>(() => {
@@ -255,6 +252,30 @@ export const ChatView: React.FC<Props> = ({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [renderedTurns.length, liveColumns])
 
+  /** 渐进渲染切片：只渲染最近 visibleTurnCount 轮 */
+  const hiddenTurnCount = Math.max(0, renderedTurns.length - visibleTurnCount)
+  const visibleTurns = hiddenTurnCount > 0 ? renderedTurns.slice(hiddenTurnCount) : renderedTurns
+
+  // 向上滚动接近顶部时补渲染更早的轮次；加载后恢复视口位置（记录加载前高度差）
+  const handleScroll = useCallback(() => {
+    const el = scrollBoxRef.current
+    if (!el) return
+    if (el.scrollTop < 240 && hiddenTurnCount > 0) {
+      restoredHeightRef.current = el.scrollHeight
+      setVisibleTurnCount((n) => n + INITIAL_TURN_COUNT)
+    }
+  }, [hiddenTurnCount])
+
+  useEffect(() => {
+    const el = scrollBoxRef.current
+    if (el && restoredHeightRef.current) {
+      el.scrollTop = el.scrollHeight - restoredHeightRef.current
+      restoredHeightRef.current = 0
+    }
+  }, [visibleTurnCount])
+
+  const loadAllEarlier = useCallback(() => setVisibleTurnCount(renderedTurns.length), [renderedTurns.length])
+
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
 
   return (
@@ -273,38 +294,48 @@ export const ChatView: React.FC<Props> = ({
       {selectedIds.size > 0 && (
         <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-hover-overlay)]">
           <span className="text-xs text-[var(--color-text-muted)]">
-            已选 {selectedIds.size} 条
+            {t('chatview.selectedCount', { n: selectedIds.size })}
           </span>
           <button
             onClick={selectAll}
             className="text-xs px-2 py-1 rounded text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
           >
-            全选
+            {t('common.selectAll')}
           </button>
           <button
             onClick={handleCopySelected}
             className="text-xs px-2 py-1 rounded text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
           >
-            复制选中
+            {t('common.copySelected')}
           </button>
           <button
             onClick={handleDeleteSelected}
             className="text-xs px-2 py-1 rounded text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] transition-colors"
           >
-            删除选中
+            {t('common.deleteSelected')}
           </button>
           <button
             onClick={clearSelection}
             className="text-xs px-2 py-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-sidebar)] transition-colors ml-auto"
           >
-            取消
+            {t('common.cancel')}
           </button>
         </div>
       )}
 
       {/* 消息流 */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-4 py-5 space-y-6">
+          {hiddenTurnCount > 0 && (
+            <div className="text-center pb-1">
+              <button
+                onClick={loadAllEarlier}
+                className="text-xs px-3 py-1.5 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-hover)] hover:text-[var(--color-text)] transition-colors"
+              >
+                {t('chat.loadEarlier')}（{hiddenTurnCount}）
+              </button>
+            </div>
+          )}
           {renderedTurns.length === 0 && (
             <div className="flex flex-col items-center justify-center h-72 text-center px-6">
               <div className="text-4xl mb-3">🎒</div>
@@ -322,7 +353,7 @@ export const ChatView: React.FC<Props> = ({
             </div>
           )}
 
-          {renderedTurns.map((turn, ti) => {
+          {visibleTurns.map((turn, ti) => {
             const turnKey = turn.user?.id ?? `turn-${ti}`
             const activeIdx = activeBatchIndexOf(turn, turnKey)
             const activeBatch = turn.batches[activeIdx] ?? []
@@ -341,7 +372,6 @@ export const ChatView: React.FC<Props> = ({
                     attachments={turn.user.attachments}
                     selected={selectedIds.has(turn.user.id)}
                     onToggleSelect={toggleSelect}
-                    onCopy={handleCopyFallback}
                     onDelete={handleDeleteOne}
                     onResend={onResend}
                     onFork={onForkConversation}
@@ -355,7 +385,6 @@ export const ChatView: React.FC<Props> = ({
                     onActivate={(bi) => activateBranch(turnKey, batchKeyOf(turn.batches[bi], bi))}
                     selectedIds={selectedIds}
                     onToggleSelect={toggleSelect}
-                    onCopy={handleCopyFallback}
                     onDelete={handleDeleteOne}
                   />
                 ) : activeBatch.length === 1 ? (
@@ -367,7 +396,6 @@ export const ChatView: React.FC<Props> = ({
                     messageId={activeBatch[0].id}
                     selected={selectedIds.has(activeBatch[0].id)}
                     onToggleSelect={toggleSelect}
-                    onCopy={handleCopyFallback}
                     onDelete={handleDeleteOne}
                     onRegenerate={onRegenerate}
                     onFork={onForkConversation}
@@ -385,7 +413,6 @@ export const ChatView: React.FC<Props> = ({
                     messageIds={activeBatch.map((r) => r.id)}
                     selectedIds={selectedIds}
                     onToggleSelect={toggleSelect}
-                    onCopy={handleCopyFallback}
                     onDelete={handleDeleteOne}
                   />
                 ) : null}
