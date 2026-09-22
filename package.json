@@ -15,6 +15,7 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "check:update-yml": "node scripts/check-update-yml.cjs dist",
     "dist": "electron-vite build && electron-builder --win",
     "dist:portable": "electron-vite build && electron-builder --win portable",
@@ -25,7 +26,6 @@
   },
   "dependencies": {
     "archiver": "^6.0.2",
-    "better-sqlite3": "^13.0.3",
     "better-sqlite3-multiple-ciphers": "^13.0.3",
     "cheerio": "^1.2.0",
     "electron-store": "^8.2.0",
@@ -62,15 +62,15 @@
     "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^5.0.1"
   },
   "build": {
     "appId": "ai.pocket.desktop",
     "productName": "Moxia",
     "asar": true,
     "asarUnpack": [
-      "node_modules/better-sqlite3-multiple-ciphers/**/*.node",
-      "node_modules/better-sqlite3/**/*.node"
+      "node_modules/better-sqlite3-multiple-ciphers/**/*.node"
     ],
     "directories": {
       "output": "dist",
@@ -86,7 +86,7 @@
       "!**/node_modules/*.d.ts",
       "!**/node_modules/.cache",
       "!**/node_modules/{@types,typescript}",
-      "!**/node_modules/{better-sqlite3-multiple-ciphers,better-sqlite3}/prebuilds/{darwin,linux,linuxmusl}-*.node"
+      "!**/node_modules/{better-sqlite3-multiple-ciphers}/prebuilds/{darwin,linux,linuxmusl}-*.node"
     ],
     "extraResources": [],
     "win": {

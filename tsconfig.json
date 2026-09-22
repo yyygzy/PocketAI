@@ -18,6 +18,6 @@
       "@/*": ["src/renderer/src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "electron.vite.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "electron.vite.config.ts"],
   "exclude": ["node_modules", "out", "data"]
 }
