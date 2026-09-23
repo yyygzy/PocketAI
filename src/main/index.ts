@@ -45,6 +45,7 @@ import { installLockGate } from './lock/ipc-gate'
 import { denyNewWindows } from './net/external-links'
 import { installContentSecurityPolicy } from './security/csp'
 import { initBackupScheduler } from './backup/backup-scheduler'
+import { initTaskScheduler } from './backup/task-scheduler'
 import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, type MarkedBrowserWindow } from './ui-preferences'
 import { isQuitting, beginQuit, runCleanupChain, runFallbackCleanup } from './quit-manager'
 import { createLogger, configureLogDir } from './logger'
@@ -471,6 +472,8 @@ async function boot(): Promise<void> {
   lockService.init()
   // 定时 WebDAV 备份调度器（内部自行判断开关/锁屏状态）
   initBackupScheduler()
+  // 通用定时任务调度器（知识库健康检查、备份校验等）
+  initTaskScheduler()
   powerMonitor.on('suspend', () => lockService.onOsSleep())
   powerMonitor.on('resume', () => lockService.onOsWake())
   powerMonitor.on('lock-screen', () => lockService.lock('os-sleep'))

@@ -1062,6 +1062,8 @@ export const IPC = {
   SKILL_SYNC: 'skill:sync',
   SKILL_FETCH_INDEX: 'skill:fetch-index',
   SKILL_IMPORT_URL: 'skill:import-url',
+  SKILL_VALIDATE: 'skill:validate',
+  SKILL_TEMPLATES: 'skill:templates',
 
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_CREATE: 'conversation:create',

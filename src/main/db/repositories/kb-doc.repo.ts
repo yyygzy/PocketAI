@@ -38,6 +38,15 @@ export const kbDocRepo = {
     return rows.map(rowToRecord)
   },
 
+  /** 列出所有知识库的所有文档（供健康检查等后台任务使用） */
+  listAll(): KbDocument[] {
+    const rows = dbService
+      .getHandle()
+      .prepare('SELECT * FROM kb_documents ORDER BY created_at DESC')
+      .all() as KbDocRow[]
+    return rows.map(rowToRecord)
+  },
+
   get(id: string): KbDocument | null {
     const row = dbService
       .getHandle()

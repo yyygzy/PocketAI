@@ -5,6 +5,7 @@ import type { SkillRecord } from '../../../shared/types'
 import { skillRepo } from '../../db/repositories/skill.repo'
 import { exportSkill, importSkill } from '../../skills/skill-io'
 import { syncBuiltinSkills } from '../../assistant/builtin'
+import { validateSkillText, SKILL_TEMPLATES } from '../../skills/skill-parser'
 
 export function registerSkillHandlers(): void {
   ipcMain.handle(IPC.SKILL_LIST, () => skillRepo.list())
@@ -42,4 +43,8 @@ export function registerSkillHandlers(): void {
     const { importSkillFromUrl } = await import('../../skills/skill-io')
     return importSkillFromUrl(url)
   })
+
+  // SDK：技能校验 + 模板
+  ipcMain.handle(IPC.SKILL_VALIDATE, (_e, text: string) => validateSkillText(text))
+  ipcMain.handle(IPC.SKILL_TEMPLATES, () => SKILL_TEMPLATES)
 }

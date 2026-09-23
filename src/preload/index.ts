@@ -141,6 +141,10 @@ const api = {
     url: string
   ): Promise<{ ok: boolean; skill?: SkillRecord; error?: string }> =>
     ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url),
+  validateSkill: (text: string): Promise<{ ok: boolean; error?: string; warnings: string[]; shape?: { name: string; description: string; icon: string; content: string } }> =>
+    ipcRenderer.invoke(IPC.SKILL_VALIDATE, text),
+  getSkillTemplates: (): Promise<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>> =>
+    ipcRenderer.invoke(IPC.SKILL_TEMPLATES),
 
   // ---------- 会话 ----------
   listConversations: (assistantId?: string, isAgent?: boolean): Promise<ConversationRecord[]> =>

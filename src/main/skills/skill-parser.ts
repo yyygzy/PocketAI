@@ -13,12 +13,17 @@ export interface SkillShape {
   description: string
   icon: string
   content: string
+  /** 可选元数据（SDK v1 扩展，不影响执行，仅用于展示/分类） */
+  version?: string
+  author?: string
+  tags?: string[]
+  category?: string
 }
 
 const MAX_CONTENT_BYTES = 8 * 1024
 
 /** 合法 frontmatter key（白名单，拒绝任意字段注入） */
-const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'icon', 'title'])
+const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'icon', 'title', 'version', 'author', 'tags', 'category'])
 
 /** 标量 YAML 值解析（只处理 string / number / boolean，不支持嵌套） */
 function parseScalar(raw: string): string | number | boolean {
@@ -101,7 +106,13 @@ export function parseSkillJson(text: string): { shape: SkillShape | null; error:
     name: typeof raw.name === 'string' ? raw.name.trim() : '',
     description: typeof raw.description === 'string' ? raw.description.trim() : '',
     icon: typeof raw.icon === 'string' && raw.icon.trim() ? raw.icon.trim().slice(0, 4) : '⚡',
-    content: typeof raw.content === 'string' ? raw.content.trim() : ''
+    content: typeof raw.content === 'string' ? raw.content.trim() : '',
+    version: typeof raw.version === 'string' ? raw.version.trim() : undefined,
+    author: typeof raw.author === 'string' ? raw.author.trim() : undefined,
+    category: typeof raw.category === 'string' ? raw.category.trim() : undefined,
+    tags: Array.isArray(raw.tags)
+      ? raw.tags.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).slice(0, 10)
+      : undefined
   }
   const err = validate(shape)
   if (err) return { shape: null, error: err }
@@ -121,8 +132,15 @@ export function parseSkillMarkdown(text: string): { shape: SkillShape | null; er
   const description = (fm.description || '').trim()
   const icon = (fm.icon || '⚡').trim().slice(0, 4)
   const content = body
+  const version = (fm.version || '').trim() || undefined
+  const author = (fm.author || '').trim() || undefined
+  const category = (fm.category || '').trim() || undefined
+  // tags 支持逗号分隔：tag1, tag2, tag3
+  const tags = fm.tags
+    ? fm.tags.split(',').map((t) => t.trim()).filter(Boolean).slice(0, 10)
+    : undefined
 
-  const shape: SkillShape = { name, description, icon, content }
+  const shape: SkillShape = { name, description, icon, content, version, author, tags, category }
   const err = validate(shape)
   if (err) return { shape: null, error: err }
   return { shape, error: '' }
@@ -193,3 +211,71 @@ export function parseRegistryIndex(text: string): { skills: RegistrySkill[]; err
   }
   return { skills: out, error: '' }
 }
+
+// ─── SDK：技能校验与模板 ─────────────────────────────────────────
+
+/** 校验结果 */
+export interface SkillValidationResult {
+  ok: boolean
+  error?: string
+  warnings: string[]
+  shape?: SkillShape
+}
+
+/** 校验技能文本，返回详细结果（含警告，如缺少 description 等） */
+export function validateSkillText(text: string): SkillValidationResult {
+  const warnings: string[] = []
+  const { shape, error } = parseSkillText(text)
+  if (!shape || error) {
+    return { ok: false, error, warnings }
+  }
+  if (!shape.description) warnings.push('缺少 description，建议补充技能用途说明')
+  if (shape.content.length < 20) warnings.push('content 过短，可能无法有效引导模型')
+  if (shape.icon === '⚡') warnings.push('未设置 icon，使用默认 ⚡')
+  return { ok: true, warnings, shape }
+}
+
+/** 内置技能模板（供"从模板创建"使用） */
+export const SKILL_TEMPLATES: { id: string; name: string; description: string; shape: SkillShape }[] = [
+  {
+    id: 'general-assistant',
+    name: '通用助手模板',
+    description: '适用于日常问答、写作、分析的通用技能',
+    shape: {
+      name: '我的通用助手',
+      description: '一个友好、专业的通用助手',
+      icon: '🤖',
+      content: '你是一个友好、专业的助手。请用清晰、简洁的语言回答用户问题，必要时分点说明。遇到不确定的内容，坦诚告知用户。',
+      version: '1.0.0',
+      category: '通用'
+    }
+  },
+  {
+    id: 'code-assistant',
+    name: '代码助手模板',
+    description: '适用于代码生成、审查、调试的技能',
+    shape: {
+      name: '代码审查助手',
+      description: '专注于代码质量与最佳实践的审查助手',
+      icon: '💻',
+      content: '你是一个资深代码审查助手。审查代码时关注：1) 正确性与边界条件 2) 可读性与命名 3) 性能与资源泄漏 4) 安全隐患。给出具体改进建议，附代码示例。',
+      version: '1.0.0',
+      category: '开发',
+      tags: ['code', 'review']
+    }
+  },
+  {
+    id: 'translation',
+    name: '翻译助手模板',
+    description: '适用于多语言翻译与本地化的技能',
+    shape: {
+      name: '专业翻译',
+      description: '忠实原文、符合目标语言习惯的翻译助手',
+      icon: '🌐',
+      content: '你是一个专业翻译。翻译时：1) 忠实原文含义 2) 符合目标语言表达习惯 3) 保留专业术语 4) 不添加原文没有的内容。如遇歧义，在译文后用括号标注原文。',
+      version: '1.0.0',
+      category: '语言',
+      tags: ['translation']
+    }
+  }
+]

@@ -248,6 +248,35 @@ const SkillForm: React.FC<{
   const [content, setContent] = useState(skill?.content ?? '')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [validation, setValidation] = useState<{ ok: boolean; warnings: string[] } | null>(null)
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [templates, setTemplates] = useState<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>>([])
+
+  // 加载模板列表
+  useEffect(() => {
+    window.pocketai.getSkillTemplates().then(setTemplates).catch(() => {})
+  }, [])
+
+  // 实时校验（防抖 500ms）
+  useEffect(() => {
+    if (!content && !name) {
+      setValidation(null)
+      return
+    }
+    const text = JSON.stringify({ name, description, icon, content })
+    const timer = setTimeout(() => {
+      window.pocketai.validateSkill(text).then((r) => setValidation({ ok: r.ok, warnings: r.warnings })).catch(() => {})
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [name, description, icon, content])
+
+  const applyTemplate = (tpl: { name: string; description: string; icon: string; content: string }) => {
+    setName(tpl.name)
+    setDescription(tpl.description)
+    setIcon(tpl.icon)
+    setContent(tpl.content)
+    setShowTemplates(false)
+  }
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -305,6 +334,41 @@ const SkillForm: React.FC<{
       </div>
 
       {error && <div className="text-xs text-[var(--color-danger)] bg-[var(--color-danger-bg)] px-3 py-2 rounded">{error}</div>}
+
+      {/* 实时校验结果 */}
+      {validation && (
+        <div className={`text-xs px-3 py-2 rounded ${validation.ok ? 'bg-[var(--color-success-bg)] text-[var(--color-success)]' : 'bg-[var(--color-danger-bg)] text-[var(--color-danger)]'}`}>
+          {validation.ok ? '✓ 技能格式合法' : '✗ 技能格式不合法'}
+          {validation.warnings.length > 0 && (
+            <ul className="mt-1 list-disc list-inside opacity-80">
+              {validation.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* 模板选择 */}
+      {!skill && templates.length > 0 && (
+        <div>
+          <button className="btn-ghost text-xs" onClick={() => setShowTemplates(!showTemplates)}>
+            {showTemplates ? '− 收起模板' : '+ 从模板创建'}
+          </button>
+          {showTemplates && (
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {templates.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  className="text-left p-3 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-hover)] transition-colors"
+                  onClick={() => applyTemplate(tpl.shape)}
+                >
+                  <div className="font-medium text-sm">{tpl.name}</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{tpl.description}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-2 pt-1">
         <button className="btn-primary" onClick={handleSave} disabled={saving}>

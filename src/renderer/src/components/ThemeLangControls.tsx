@@ -1,13 +1,14 @@
-// 侧栏底部：明暗主题切换 + 中英文切换
+// 侧栏底部：明暗主题切换 + 语言切换
 // 主题状态直接操作 <html class="light"> 并持久化 localStorage（index.html 内联脚本防闪烁）
 import React, { useState } from 'react'
-import { useI18n } from '../i18n'
+import { useI18n, LANGS } from '../i18n'
 
 const THEME_KEY = 'pocketai.theme'
 
 export const ThemeLangControls: React.FC<{ collapsed?: boolean }> = ({ collapsed }) => {
   const { lang, setLang, toggleLang, t } = useI18n()
   const [light, setLight] = useState(() => document.documentElement.classList.contains('light'))
+  const currentNative = LANGS.find((l) => l.code === lang)?.native ?? '中'
 
   const toggleTheme = () => {
     const next = !light
@@ -34,7 +35,7 @@ export const ThemeLangControls: React.FC<{ collapsed?: boolean }> = ({ collapsed
           className="h-6 px-1 rounded text-[10px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors"
           title={t('controls.toggleLang')}
         >
-          {lang === 'zh' ? '中' : 'EN'}
+          {currentNative}
         </button>
       </div>
     )
@@ -46,28 +47,20 @@ export const ThemeLangControls: React.FC<{ collapsed?: boolean }> = ({ collapsed
         {light ? '🌙' : '☀️'}
       </button>
       <div className="ml-auto flex items-center rounded border border-[var(--color-border)] overflow-hidden text-[10px] font-semibold">
-        <button
-          onClick={() => setLang('zh')}
-          title={t('controls.toggleLang')}
-          className={`px-1.5 h-6 transition-colors ${
-            lang === 'zh'
-              ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-              : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)]'
-          }`}
-        >
-          中
-        </button>
-        <button
-          onClick={() => setLang('en')}
-          title={t('controls.toggleLang')}
-          className={`px-1.5 h-6 transition-colors ${
-            lang === 'en'
-              ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-              : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)]'
-          }`}
-        >
-          EN
-        </button>
+        {LANGS.map((l) => (
+          <button
+            key={l.code}
+            onClick={() => setLang(l.code)}
+            title={l.label}
+            className={`px-1.5 h-6 transition-colors ${
+              lang === l.code
+                ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)]'
+            }`}
+          >
+            {l.native}
+          </button>
+        ))}
       </div>
     </div>
   )

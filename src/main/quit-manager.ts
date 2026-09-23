@@ -3,6 +3,7 @@ import { app } from 'electron'
 import { mcpManager } from './mcp/manager'
 import { ollamaRuntime } from './ollama/ollama-runtime'
 import { stopBackupScheduler } from './backup/backup-scheduler'
+import { stopTaskScheduler } from './backup/task-scheduler'
 import { dbService } from './db/database'
 import { createLogger } from './logger'
 
@@ -48,6 +49,7 @@ export async function runCleanupChain(): Promise<void> {
     log.warn('ollamaRuntime.cleanup 异常:', err)
   }
   try { stopBackupScheduler() } catch { /* ignore */ }
+  try { stopTaskScheduler() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
   log.info('清理链完成')
 }
@@ -57,5 +59,6 @@ export function runFallbackCleanup(): void {
   try { ollamaRuntime.abortPull() } catch { /* ignore */ }
   try { ollamaRuntime.cleanup() } catch { /* ignore */ }
   try { stopBackupScheduler() } catch { /* ignore */ }
+  try { stopTaskScheduler() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
 }

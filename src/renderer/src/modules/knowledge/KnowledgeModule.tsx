@@ -1,5 +1,5 @@
 // 知识库模块：KB 列表 / 创建编辑 / 文档管理 / 分块预览 / 检索测试
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   KnowledgeBase,
   KbDocument,
@@ -274,10 +274,12 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
   const [editing, setEditing] = useState(false)
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
   const [busy, setBusy] = useState(false)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id).then(setDocs).catch(reportIpcError('kb.listDocuments')), [kb.id])
   useEffect(() => {
     loadDocs()
+    return () => stopPolling()
   }, [loadDocs])
 
   const refresh = async () => {
@@ -285,11 +287,33 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
     onChanged()
   }
 
+  /** 启动轮询：每 2s 刷新文档列表，直到没有 pending/parsing/indexing 状态的文档 */
+  const startPolling = () => {
+    stopPolling()
+    pollingRef.current = setInterval(async () => {
+      const list = await window.pocketai.listKbDocuments(kb.id).catch(() => null)
+      if (list) setDocs(list)
+      const hasIndexing = list?.some((d) => d.status === 'pending' || d.status === 'parsing' || d.status === 'indexing')
+      if (!hasIndexing) {
+        stopPolling()
+        onChanged()
+      }
+    }, 2000)
+  }
+
+  const stopPolling = () => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
+  }
+
   const handleAddFiles = async () => {
     setBusy(true)
     try {
       await window.pocketai.addKbFiles(kb.id)
       await refresh()
+      startPolling()
     } finally {
       setBusy(false)
     }
@@ -310,6 +334,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
     try {
       await window.pocketai.reindexKbDocument(kb.id, docId)
       await refresh()
+      startPolling()
     } catch (e) {
       toast.error(errText(e))
     } finally {
@@ -427,7 +452,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
           kbId={kb.id}
           mode={addSource}
           onClose={() => setAddSource(null)}
-          onDone={refresh}
+          onDone={async () => { await refresh(); startPolling() }}
         />
       )}
 

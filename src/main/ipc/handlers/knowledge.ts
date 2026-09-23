@@ -6,6 +6,7 @@ import { kbRepo } from '../../db/repositories/kb.repo'
 import { kbDocRepo } from '../../db/repositories/kb-doc.repo'
 import { kbChunkRepo } from '../../db/repositories/kb-chunk.repo'
 import { ingestionService } from '../../knowledge/ingestion'
+import { indexQueue } from '../../knowledge/index-queue'
 import { ragService } from '../../knowledge/rag'
 import { detectSourceType } from '../../knowledge/parsers'
 import { assertCanCreateKb } from '../../license/license'
@@ -44,27 +45,25 @@ export function registerKnowledgeHandlers(): void {
       const sourceType = detectSourceType(p)
       return kbDocRepo.insert({ kbId, source: p, sourceType, title: p })
     })
-    // 解析入库（顺序执行，避免压垮 Embedding API）
-    await ingestionService.ingestDocuments(
-      kbId,
-      docs.map((d) => d.id)
-    )
-    return kbDocRepo.list(kbId)
+    // 后台异步入库（不阻塞 IPC），前端轮询文档状态
+    for (const doc of docs) {
+      indexQueue.enqueue({ kbId, docId: doc.id, kind: 'file' })
+    }
+    return docs
   })
 
   ipcMain.handle(IPC.KB_DOC_ADD_URL, async (_e, kbId: string, url: string, title?: string) => {
     const doc = kbDocRepo.insert({ kbId, source: url, sourceType: 'url', title: title || url })
-    await ingestionService.ingestDocument(kbId, doc.id)
-    return kbDocRepo.get(doc.id)
+    indexQueue.enqueue({ kbId, docId: doc.id, kind: 'url' })
+    return doc
   })
 
   ipcMain.handle(
     IPC.KB_DOC_ADD_TEXT,
     async (_e, kbId: string, text: string, title: string) => {
-      // 纯文本直接入库：跳过解析，直接分块+向量化
       const doc = kbDocRepo.insert({ kbId, source: title, sourceType: 'txt', title })
-      await ingestionService.ingestText(kbId, doc.id, text, title)
-      return kbDocRepo.get(doc.id)
+      indexQueue.enqueue({ kbId, docId: doc.id, kind: 'text', payload: { text, title } })
+      return doc
     }
   )
 
@@ -73,8 +72,10 @@ export function registerKnowledgeHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.KB_DOC_REINDEX, async (_e, kbId: string, docId: string) => {
-    await ingestionService.ingestDocument(kbId, docId)
+  ipcMain.handle(IPC.KB_DOC_REINDEX, (_e, kbId: string, docId: string) => {
+    // 重置状态为 pending，后台异步重建索引
+    kbDocRepo.setStatus(docId, 'pending')
+    indexQueue.enqueue({ kbId, docId, kind: 'reindex' })
     return kbDocRepo.get(docId)
   })
 

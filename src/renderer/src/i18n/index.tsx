@@ -1,13 +1,24 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { zh } from './zh'
 import { en } from './en'
+import { ja } from './ja'
+import { ko } from './ko'
 
-export type Lang = 'zh' | 'en'
+export type Lang = 'zh' | 'en' | 'ja' | 'ko'
+
+export const LANGS: { code: Lang; label: string; native: string }[] = [
+  { code: 'zh', label: '中文', native: '中' },
+  { code: 'en', label: 'English', native: 'EN' },
+  { code: 'ja', label: '日本語', native: '日' },
+  { code: 'ko', label: '한국어', native: '한' }
+]
 
 const STORAGE_KEY = 'pocketai.lang'
 
 type Dict = Record<string, string>
-const dicts: Record<Lang, Dict> = { zh, en }
+const dicts: Record<Lang, Dict> = { zh, en, ja, ko }
+
+const HTML_LANG: Record<Lang, string> = { zh: 'zh-CN', en: 'en', ja: 'ja', ko: 'ko' }
 
 interface I18nValue {
   lang: Lang
@@ -27,7 +38,13 @@ const I18nContext = createContext<I18nValue>({
 function readInitialLang(): Lang {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
-    if (v === 'en' || v === 'zh') return v
+    if (v === 'zh' || v === 'en' || v === 'ja' || v === 'ko') return v
+  } catch { /* ignore */ }
+  // 浏览器语言检测：ja-JP/ko-KR 自动匹配，其余默认中文
+  try {
+    const nav = navigator.language.toLowerCase()
+    if (nav.startsWith('ja')) return 'ja'
+    if (nav.startsWith('ko')) return 'ko'
   } catch { /* ignore */ }
   return 'zh'
 }
@@ -39,12 +56,15 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLangState(next)
     try {
       localStorage.setItem(STORAGE_KEY, next)
-      document.documentElement.lang = next === 'en' ? 'en' : 'zh-CN'
+      document.documentElement.lang = HTML_LANG[next]
     } catch { /* ignore */ }
   }, [])
 
   const toggleLang = useCallback(() => {
-    setLang(lang === 'zh' ? 'en' : 'zh')
+    // 循环切换：zh → en → ja → ko → zh
+    const order: Lang[] = ['zh', 'en', 'ja', 'ko']
+    const idx = order.indexOf(lang)
+    setLang(order[(idx + 1) % order.length]!)
   }, [lang, setLang])
 
   // 语言变化 → 通知主进程重建应用菜单（中/英文）
