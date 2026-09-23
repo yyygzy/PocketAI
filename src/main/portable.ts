@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import type { AppPaths } from '../shared/types'
 import { createLogger } from './logger'
+import { errMsg } from './error'
 
 const log = createLogger('portable')
 
@@ -125,6 +126,6 @@ export function migrateMcpExtensionsDir(): void {
     }
     log.info(`MCP 扩展目录已迁移: ${oldDir} → ${MCP_EXTENSIONS_DIR}`)
   } catch (e) {
-    log.warn('MCP 扩展目录迁移失败（不阻塞启动）:', e)
+    log.warn('MCP 扩展目录迁移失败（不阻塞启动）:', errMsg(e))
   }
 }

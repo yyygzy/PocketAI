@@ -140,7 +140,7 @@ export function registerEncryptionHandlers(): void {
         const { saveWebDAVConfig } = await import('../../backup/backup-service')
         savedCfg.passwordCipher = webDAVPassword
         saveWebDAVConfig(savedCfg)  // 直接复用 oldCfg，避免第二次 load 时 key mismatch
-      } catch (e) { log.warn('WebDAV 凭据重加密失败:', e) }
+      } catch (e) { log.warn('WebDAV 凭据重加密失败:', errMsg(e)) }
     }
     restoreFieldCredentials(fieldSnapshot)
 
@@ -200,7 +200,7 @@ export function registerEncryptionHandlers(): void {
         const { saveWebDAVConfig } = await import('../../backup/backup-service')
         savedCfg.passwordCipher = webDAVPassword
         saveWebDAVConfig(savedCfg)  // 复用 oldCfg，避免 key mismatch
-      } catch (e) { log.warn('WebDAV 凭据重加密失败:', e) }
+      } catch (e) { log.warn('WebDAV 凭据重加密失败:', errMsg(e)) }
     }
     restoreFieldCredentials(fieldSnapshot)
     // 已无主密码，恢复密钥失去意义（也避免残留包指向旧 masterKey）
@@ -238,7 +238,7 @@ export function registerEncryptionHandlers(): void {
         const { saveWebDAVConfig } = await import('../../backup/backup-service')
         savedCfg.passwordCipher = webDAVPassword
         saveWebDAVConfig(savedCfg)  // 复用 oldCfg，避免 key mismatch
-      } catch (e) { log.warn('WebDAV 凭据重加密失败:', e) }
+      } catch (e) { log.warn('WebDAV 凭据重加密失败:', errMsg(e)) }
     }
     restoreFieldCredentials(fieldSnapshot)
     return { ok: true }
@@ -325,7 +325,7 @@ export function registerEncryptionHandlers(): void {
             const { saveWebDAVConfig } = await import('../../backup/backup-service')
             savedCfg.passwordCipher = webDAVPassword
             saveWebDAVConfig(savedCfg)
-          } catch (e) { log.warn('恢复后 WebDAV 凭据重加密失败:', e) }
+          } catch (e) { log.warn('恢复后 WebDAV 凭据重加密失败:', errMsg(e)) }
         }
         restoreFieldCredentials(fieldSnapshot)
 
@@ -334,7 +334,7 @@ export function registerEncryptionHandlers(): void {
         log.info('恢复密钥重置密码成功')
         return { ok: true, recoveryCode: newRecoveryCode }
       } catch (e) {
-        log.error('恢复后 rekey 失败:', e)
+        log.error('恢复后 rekey 失败:', errMsg(e))
         return { ok: false, error: `重置失败：${errMsg(e)}` }
       }
     }

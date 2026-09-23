@@ -359,7 +359,7 @@ async function boot(): Promise<void> {
         dbService.getHandle().prepare('SELECT 1').get()
         log.info('DB 解锁成功')
       } catch (e) {
-        log.error('密码错误或 DB 损坏:', e)
+        log.error('密码错误或 DB 损坏:', errMsg(e))
         dialog.showErrorBox('解锁失败', '密码错误或数据库已损坏')
         app.quit()
         return

@@ -4,6 +4,7 @@ import { dbService } from '../database'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../../crypto/field-encrypt'
 import type { ProviderRecord, ProviderType } from '../../../shared/types'
 import { createLogger } from '../../logger'
+import { errMsg } from '../../error'
 
 const log = createLogger('crypto')
 
@@ -179,7 +180,7 @@ export const providerRepo = {
       try {
         stmt.run(encryptApiKeys(apiKeys), id)
       } catch (e) {
-        log.warn(`Provider 凭据轮换恢复失败 ${id}:`, e)
+        log.warn(`Provider 凭据轮换恢复失败 ${id}:`, errMsg(e))
       }
     }
   }

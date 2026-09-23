@@ -11,6 +11,7 @@
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { encryptSecret, decryptSecret, isCipherText } from './field-encrypt'
 import { createLogger } from '../logger'
+import { errMsg } from '../error'
 
 const log = createLogger('crypto')
 
@@ -69,7 +70,7 @@ export function exportSecrets(
       const v = getSecret(key)
       if (v) snapshot[key] = v
     } catch (e) {
-      log.warn(`轮换导出失败 ${key}:`, e)
+      log.warn(`轮换导出失败 ${key}:`, errMsg(e))
     }
   }
   return snapshot
@@ -81,7 +82,7 @@ export function restoreSecrets(snapshot: Record<string, string>): void {
     try {
       setSecret(key, value)
     } catch (e) {
-      log.warn(`轮换恢复失败 ${key}:`, e)
+      log.warn(`轮换恢复失败 ${key}:`, errMsg(e))
     }
   }
 }
