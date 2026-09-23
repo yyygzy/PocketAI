@@ -1,35 +1,53 @@
-import React, { useEffect, useRef, useState } from 'react'
-import type { AppPaths, EncryptionStatus, BackupScheduleStatus } from '../../../../shared/types'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import type {
+  AppPaths,
+  EncryptionStatus,
+  BackupScheduleStatus,
+  LicenseStatus,
+  PopupConfig,
+  UpdateInfo,
+  UpdateEvent,
+  WebDAVConfig,
+  WebDAVBackupFile
+} from '../../../../shared/types'
 import { ProviderSettings, Notice } from './ProviderSettings'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
+import { useCopyFeedback } from '../../hooks/useCopyFeedback'
+import { useTransientNotice } from '../../hooks/useTransientNotice'
+import { logIpcError, reportIpcError } from '../../utils/ipc'
+
+/** 从 unknown 异常中取 message；非 Error 或无消息时回退 fallback */
+function errMsg(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback
+}
 
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
   const [paths, setPaths] = useState<AppPaths | null>(null)
   const [enc, setEnc] = useState<EncryptionStatus | null>(null)
-  const [lic, setLic] = useState<any>(null)
-  const [updateInfo, setUpdateInfo] = useState<any>(null)
-  const [updateStatus, setUpdateStatus] = useState<any>({ status: 'idle' })
+  const [lic, setLic] = useState<LicenseStatus | null>(null)
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [updateStatus, setUpdateStatus] = useState<UpdateEvent>({ status: 'idle' })
 
   useEffect(() => {
-    window.pocketai.getPaths().then(setPaths)
-    window.pocketai.getEncryptionStatus().then(setEnc)
-    window.pocketai.getLicenseStatus().then(setLic)
-    window.pocketai.getUpdateInfo().then(setUpdateInfo)
+    window.pocketai.getPaths().then(setPaths).catch(reportIpcError('settings.getPaths'))
+    window.pocketai.getEncryptionStatus().then(setEnc).catch(reportIpcError('settings.getEncryptionStatus'))
+    window.pocketai.getLicenseStatus().then(setLic).catch(reportIpcError('settings.getLicenseStatus'))
+    window.pocketai.getUpdateInfo().then(setUpdateInfo).catch(reportIpcError('settings.getUpdateInfo'))
     // 监听主进程推送的更新状态事件
-    const unsub = window.pocketai.onUpdateEvent((data: any) => {
+    const unsub = window.pocketai.onUpdateEvent((data) => {
       setUpdateStatus(data)
     })
     // 锁屏遮罩不卸载本模块：解锁后 masterPasswordVerified 会变化，需重新拉取
     const offLock = window.pocketai.onLockStateChange(() => {
-      window.pocketai.getEncryptionStatus().then(setEnc)
+      window.pocketai.getEncryptionStatus().then(setEnc).catch(reportIpcError('settings.onUnlock.getEncryptionStatus'))
     })
     return () => { unsub(); offLock() }
   }, [])
 
-  const refreshEnc = () => window.pocketai.getEncryptionStatus().then(setEnc)
+  const refreshEnc = () => window.pocketai.getEncryptionStatus().then(setEnc).catch(reportIpcError('settings.refreshEnc'))
 
   return (
     <div className="flex flex-col h-full">
@@ -68,7 +86,7 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
-          <LicensePanel lic={lic} onChange={() => window.pocketai.getLicenseStatus().then(setLic)} />
+          <LicensePanel lic={lic} onChange={() => window.pocketai.getLicenseStatus().then(setLic).catch(reportIpcError('license.refreshStatus'))} />
         </div>
       </div>
 
@@ -170,7 +188,7 @@ const AUTO_LOCK_OPTIONS = [0, 60_000, 300_000, 900_000, 1_800_000, 3_600_000]
 const AutoLockRow: React.FC = () => {
   const { t } = useI18n()
   const [value, setValue] = useState<number | null>(null)
-  const [saved, setSaved] = useState(false)
+  const { notice: saved, show: markSaved, clear: clearSaved } = useTransientNotice<boolean>(1500)
 
   useEffect(() => {
     window.pocketai
@@ -184,12 +202,11 @@ const AutoLockRow: React.FC = () => {
 
   async function change(ms: number) {
     setValue(ms)
-    setSaved(false)
+    clearSaved()
     try {
       const r = await window.pocketai.setAutoLockTimeout(ms)
       if (r?.ok) {
-        setSaved(true)
-        setTimeout(() => setSaved(false), 1500)
+        markSaved(true)
       }
     } catch {
       /* 保持所选值，下次打开设置页会回读真实状态 */
@@ -242,8 +259,8 @@ const EnableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }>
       setOpen(false); setPwd(''); setConfirm('')
       setNotice({ ok: true, text: t('enc.enabledOk') })
       onDone()
-    } catch (e: any) {
-      setLocalErr(e?.message ?? t('enc.fail'))
+    } catch (e) {
+      setLocalErr(errMsg(e, t('enc.fail')))
     } finally {
       setBusy(false)
     }
@@ -297,8 +314,8 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
       onDone()  // ✅ 刷新加密状态
       // 之前生成过恢复码：rekey 后旧码失效，必须让用户保存新码
       if (r.recoveryCode) setRotatedCode(r.recoveryCode)
-    } catch (e: any) {
-      setLocalErr(e?.message ?? t('enc.fail'))
+    } catch (e) {
+      setLocalErr(errMsg(e, t('enc.fail')))
     } finally {
       setBusy(false)
     }
@@ -351,8 +368,8 @@ const DisableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }
       setOpen(false); setPwd('')
       setNotice({ ok: true, text: t('enc.disabledOk') })
       onDone()
-    } catch (e: any) {
-      setLocalErr(e?.message ?? t('enc.fail'))
+    } catch (e) {
+      setLocalErr(errMsg(e, t('enc.fail')))
     } finally {
       setBusy(false)
     }
@@ -399,6 +416,7 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
 }) => {
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
   return (
     <Modal open title={title} onClose={onClose}>
       <p className="text-xs text-[var(--color-warning)] mb-2">{t('enc.recoveryShowOnce')}</p>
@@ -416,7 +434,11 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
             try {
               await window.pocketai.copySensitiveToClipboard(code)
               setCopied(true)
-            } catch { /* 剪贴板不可用时静默 */ }
+              setCopyFailed(false)
+            } catch {
+              // 恢复码复制失败必须提示：误以为已复制会导致无法找回数据
+              setCopyFailed(true)
+            }
           }}
         >
           {t('enc.recoveryCopy')}
@@ -429,6 +451,9 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
         <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
           {t('enc.clipboardAutoClear', { s: 30 })}
         </p>
+      )}
+      {copyFailed && (
+        <p className="text-[11px] text-[var(--color-danger)] mb-2">{t('common.copyFailed')}</p>
       )}
       <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-3">
         {t('enc.recoveryModalWarn')}
@@ -446,10 +471,10 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
   const [busy, setBusy] = useState(false)
   const [shownCode, setShownCode] = useState('')
 
-  const refresh = () => window.pocketai.hasRecoveryKey().then(setHasKey)
+  const refresh = useCallback(() => window.pocketai.hasRecoveryKey().then(setHasKey).catch(reportIpcError('settings.hasRecoveryKey')), [])
   useEffect(() => {
     void refresh()
-  }, [])
+  }, [refresh])
 
   async function generate() {
     // 已有恢复码时重新生成会作废旧码，二次确认
@@ -515,13 +540,6 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
 
 // ─── 备份面板 ────────────────────────────────────────────────────
 
-interface WDConfig {
-  url: string
-  username: string
-  passwordCipher: string
-  directory: string
-}
-
 const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168]
 
 const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
@@ -529,9 +547,9 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   // 加密备份唯一闸门是主进程 masterKeyManager.getDbKey()：
   // 仅 db 模式且已解锁（主密码已验证）时可用；none 模式与锁屏期间禁用
   const encrypted = !!enc?.dbEncrypted && !!enc?.masterPasswordVerified
-  const [cfg, setCfg] = useState<WDConfig | null>(null)
+  const [cfg, setCfg] = useState<WebDAVConfig | null>(null)
   const [schedule, setSchedule] = useState<BackupScheduleStatus | null>(null)
-  const [webdavList, setWebdavList] = useState<any[]>([])
+  const [webdavList, setWebdavList] = useState<WebDAVBackupFile[]>([])
   const [listLoading, setListLoading] = useState(false)
   const [wdUrl, setWdUrl] = useState('')
   const [wdUser, setWdUser] = useState('')
@@ -545,8 +563,8 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
         setCfg(c)
         setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
       }
-    })
-    window.pocketai.getBackupSchedule().then(setSchedule)
+    }).catch(reportIpcError('settings.loadWebDAVConfig'))
+    window.pocketai.getBackupSchedule().then(setSchedule).catch(reportIpcError('settings.refreshSchedule')).catch(reportIpcError('settings.getBackupSchedule'))
   }, [])
 
   const intervalLabel = (h: number): string => {
@@ -565,13 +583,13 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
 
   async function saveWD() {
     if (!wdUrl || !wdUser) return showNotice(false, t('bk.urlUserRequired'))
-    const c: any = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
+    const c: WebDAVConfig = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
     await window.pocketai.saveWebDAVConfig(c)
     setCfg(c); showNotice(true, t('bk.cfgSaved'))
   }
 
   async function testWD() {
-    const c: any = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
+    const c: WebDAVConfig = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
     showNotice(true, t('bk.connecting'))
     const r = await window.pocketai.testWebDAV(c)
     showNotice(r.ok, r.ok ? t('bk.connOk') : t('bk.connFail', { e: r.message ?? t('common.unknownError') }))
@@ -599,7 +617,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     if (r.ok === false) { showNotice(false, t('bk.uploadFail', { e: r.error ?? t('common.unknownError') })); return }
     showNotice(true, t('bk.uploaded', { name: r.filename ?? '' }))
     await refreshList()
-    window.pocketai.getBackupSchedule().then(setSchedule)
+    window.pocketai.getBackupSchedule().then(setSchedule).catch(reportIpcError('settings.refreshSchedule'))
   }
 
   async function doIncrementalUpload() {
@@ -619,7 +637,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       })
     )
     await refreshList()
-    window.pocketai.getBackupSchedule().then(setSchedule)
+    window.pocketai.getBackupSchedule().then(setSchedule).catch(reportIpcError('settings.refreshSchedule'))
   }
 
   async function refreshList() {
@@ -749,7 +767,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {webdavList.map((f: any) => (
+                  {webdavList.map((f) => (
                     <tr key={f.name} className="border-t border-[var(--color-border)]/40 hover:bg-[var(--color-hover-overlay)]">
                       <td className="px-3 py-1.5 font-mono truncate max-w-[240px]" title={f.name}>
                         {f.encrypted && <span className="text-[var(--color-warning)] mr-1">🔒</span>}
@@ -794,7 +812,7 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
 
 // ─── License 面板 ────────────────────────────────────────────────
 
-const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onChange }) => {
+const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }> = ({ lic, onChange }) => {
   const { t, lang } = useI18n()
   const locale = lang === 'en' ? 'en-US' : 'zh-CN'
   const [busy, setBusy] = useState(false)
@@ -807,12 +825,16 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
   const [onlineCode, setOnlineCode] = useState('')
   // 本机硬盘指纹：在线激活自动附带；离线激活时发给卖家签发绑定 license
   const [fingerprint, setFingerprint] = useState<string | null>(null)
-  const [fpCopied, setFpCopied] = useState(false)
+  // 指纹复制反馈（2s；含剪贴板降级与定时器清理）
+  const { copied: fpCopied, copy: copyFingerprint } = useCopyFeedback(2000)
   // 离线激活折叠区
   const [offlineOpen, setOfflineOpen] = useState(false)
 
   useEffect(() => {
-    window.pocketai.getLicenseFingerprint().then(setFingerprint).catch(() => setFingerprint(null))
+    window.pocketai.getLicenseFingerprint().then(setFingerprint).catch((e) => {
+      logIpcError('license.getFingerprint', e)
+      setFingerprint(null)
+    })
   }, [])
 
   if (!lic) {
@@ -831,8 +853,8 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
       if (!r.valid) { setNotice({ ok: false, text: r.error ?? t('lic.activateFail') }); return }
       setNotice({ ok: true, text: t('lic.activated', { owner: r.payload?.owner ?? '', plan: r.payload?.plan ?? '' }) })
       onChange()
-    } catch (e: any) {
-      setNotice({ ok: false, text: e?.message ?? t('lic.activateFail') })
+    } catch (e) {
+      setNotice({ ok: false, text: errMsg(e, t('lic.activateFail')) })
     } finally { setBusy(false) }
   }
 
@@ -852,8 +874,8 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
       setNotice({ ok: true, text: t('lic.activated', { owner: r.payload?.owner ?? '', plan: r.payload?.plan ?? '' }) })
       setPasteOpen(false); setCodeText('')
       onChange()
-    } catch (e: any) {
-      setNotice({ ok: false, text: e?.message ?? t('lic.activateFail') })
+    } catch (e) {
+      setNotice({ ok: false, text: errMsg(e, t('lic.activateFail')) })
     } finally { setBusy(false) }
   }
 
@@ -862,22 +884,23 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
     setBusy(true); setNotice(null)
     try {
       const r = await window.pocketai.onlineActivateLicense(onlineCode)
-      if (!r.valid) { setNotice({ ok: false, text: r.error ?? t('lic.activateFail') }); return }
-      setNotice({ ok: true, text: t('lic.activated', { owner: r.payload?.owner ?? '', plan: r.payload?.plan ?? '' }) })
+      if (!r.ok) {
+        // 按稳定错误码展示差异化提示（网络/卡密/服务端问题各有自助指引）
+        setNotice({ ok: false, text: t(`lic.err.${r.code}`) })
+        return
+      }
+      const { payload } = r.status
+      setNotice({ ok: true, text: t('lic.activated', { owner: payload?.owner ?? '', plan: payload?.plan ?? '' }) })
       setOnlineCode('')
       onChange()
-    } catch (e: any) {
-      setNotice({ ok: false, text: e?.message ?? t('lic.activateFail') })
+    } catch {
+      // IPC 本身异常（非业务错误）的兜底
+      setNotice({ ok: false, text: t('lic.activateFail') })
     } finally { setBusy(false) }
   }
 
-  const handleCopyFingerprint = async () => {
-    if (!fingerprint) return
-    try {
-      await navigator.clipboard.writeText(fingerprint)
-      setFpCopied(true)
-      setTimeout(() => setFpCopied(false), 2000)
-    } catch { /* 剪贴板不可用时静默 */ }
+  const handleCopyFingerprint = () => {
+    if (fingerprint) void copyFingerprint(fingerprint)
   }
 
   const payload = lic.payload
@@ -891,7 +914,7 @@ const LicensePanel: React.FC<{ lic: any; onChange: () => void }> = ({ lic, onCha
           <StatusRow label={t('lic.expires')} value={new Date(payload.expires_at).toLocaleDateString(locale)} ok />
           {payload.features.length > 0 && (
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              {t('lic.features')}{payload.features.map((f: string) => `✅${f}`).join(' ')}
+              {t('lic.features')}{payload.features.map((f) => `✅${f}`).join(' ')}
             </div>
           )}
         </>
@@ -1048,7 +1071,7 @@ function eventToAccelerator(e: React.KeyboardEvent): string | null {
 
 const PopupPanel: React.FC = () => {
   const { t } = useI18n()
-  const [cfg, setCfg] = useState<any>(null)
+  const [cfg, setCfg] = useState<PopupConfig | null>(null)
   // 正在捕获哪一个快捷键；candidate 为已捕获到的组合
   const [capturing, setCapturing] = useState<'quick' | 'selection' | null>(null)
   const [candidate, setCandidate] = useState('')
@@ -1056,7 +1079,11 @@ const PopupPanel: React.FC = () => {
   const [saveErr, setSaveErr] = useState('')
 
   useEffect(() => {
-    window.pocketai.getPopupConfig().then(setCfg)
+    // 失败时降级为「全关 + 空快捷键」，避免 cfg 永远 null 导致面板卡 loading
+    window.pocketai.getPopupConfig().then(setCfg).catch((e) => {
+      logIpcError('settings.getPopupConfig', e)
+      setCfg({ quickEnabled: false, selectionEnabled: false, quickAccelerator: '', selectionAccelerator: '' })
+    })
   }, [])
 
   if (!cfg) {
@@ -1243,6 +1270,10 @@ const AppearancePanel: React.FC = () => {
         setCss(r.data.customCss)
       }
       setLoaded(true)
+    }).catch((e) => {
+      // 失败也要解除 loading 门，否则面板永远转圈
+      logIpcError('settings.getUiPrefs', e)
+      setLoaded(true)
     })
   }, [])
 
@@ -1343,7 +1374,7 @@ const AppearancePanel: React.FC = () => {
 
 // ─── 更新面板 ────────────────────────────────────────────────────
 
-const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => {
+const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = ({ info, status }) => {
   const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
@@ -1364,8 +1395,8 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
       } else {
         setChangelogError(r.error ?? t('upd.changelogEmpty'))
       }
-    } catch (e: any) {
-      setChangelogError(e?.message ?? t('upd.changelogEmpty'))
+    } catch (e) {
+      setChangelogError(errMsg(e, t('upd.changelogEmpty')))
     } finally {
       setChangelogLoading(false)
     }
@@ -1396,8 +1427,8 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
     try {
       const r = await window.pocketai.checkUpdate()
       if (!r.ok) setNotice({ ok: false, text: r.error ?? t('upd.checkFail') })
-    } catch (e: any) {
-      setNotice({ ok: false, text: e?.message ?? t('upd.checkFail') })
+    } catch (e) {
+      setNotice({ ok: false, text: errMsg(e, t('upd.checkFail')) })
     } finally { setBusy(false) }
   }
 
@@ -1406,8 +1437,8 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
     try {
       const r = await window.pocketai.downloadUpdate()
       if (!r.ok) setNotice({ ok: false, text: r.error ?? t('upd.downloadFail') })
-    } catch (e: any) {
-      setNotice({ ok: false, text: e?.message ?? t('upd.downloadFail') })
+    } catch (e) {
+      setNotice({ ok: false, text: errMsg(e, t('upd.downloadFail')) })
     } finally { setBusy(false) }
   }
 
@@ -1415,8 +1446,8 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
     if (!window.confirm(t('upd.restartConfirm'))) return
     try {
       await window.pocketai.quitAndInstall()
-    } catch (e: any) {
-      setNotice({ ok: false, text: e?.message ?? t('upd.installFail') })
+    } catch (e) {
+      setNotice({ ok: false, text: errMsg(e, t('upd.installFail')) })
     }
   }
 
@@ -1491,7 +1522,7 @@ const UpdatePanel: React.FC<{ info: any; status: any }> = ({ info, status }) => 
         </button>
         {s === 'available' && (
           <button className="btn-primary" disabled={busy} onClick={handleDownload}>
-            {t('upd.downloadBtn', { v: newVer })}
+            {t('upd.downloadBtn', { v: newVer ?? '' })}
           </button>
         )}
         {s === 'downloaded' && (

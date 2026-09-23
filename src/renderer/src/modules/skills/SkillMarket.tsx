@@ -4,9 +4,11 @@
 // - local: 原有技能列表（grid/detail），支持启停/复制/导出/删除
 // - online: 远程 registry index 拉取 + 网格展示 + 一键导入
 // URL 导入：粘贴 raw URL（.json 或 .md），safeFetch 后 parse 导入
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { useTransientNotice } from '../../hooks/useTransientNotice'
+import { reportIpcError } from '../../utils/ipc'
 
 interface Props {
   onClose: () => void
@@ -40,16 +42,11 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   const [view, setView] = useState<View>({ mode: 'grid' })
   const [keyword, setKeyword] = useState('')
   const [urlInput, setUrlInput] = useState('')
-  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null)
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { notice: toast, show: showToast } = useTransientNotice<{ ok: boolean; text: string }>(2400)
 
-  const flash = useCallback((ok: boolean, text: string) => {
-    setToast({ ok, text })
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = setTimeout(() => setToast(null), 2400)
-  }, [])
+  const flash = useCallback((ok: boolean, text: string) => showToast({ ok, text }), [showToast])
 
-  const load = useCallback(() => window.pocketai.listSkills().then(setSkills), [])
+  const load = useCallback(() => window.pocketai.listSkills().then(setSkills).catch(reportIpcError('skills.list')), [])
 
   const fetchRemote = useCallback(
     async (url: string) => {
@@ -77,7 +74,6 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
     window.addEventListener('keydown', onKey)
     return () => {
       window.removeEventListener('keydown', onKey)
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     }
   }, [tab, registryUrl, load, fetchRemote, onClose])
 

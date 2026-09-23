@@ -17,6 +17,7 @@ import { OpenAICompatibleAdapter } from '../providers/openai-compatible'
 import { imageRepo, IMAGE_HISTORY_LIMIT } from '../db/repositories/image.repo'
 import { safeFetch } from '../net/safe-fetch'
 import { IMAGE_SIZES } from '../../shared/types'
+import { errMsg } from '../error'
 import type { ImageGeneratePayload, ImageRecord, ImageResult, ImageListItem } from '../../shared/types'
 
 const MAX_PROMPT_CHARS = 4000
@@ -174,7 +175,7 @@ export async function runImageGenerate(payload: ImageGeneratePayload): Promise<I
         maxBytes: MAX_IMAGE_BYTES
       })
       if (res.status < 200 || res.status >= 300) return { ok: false, error: `下载图片失败 HTTP ${res.status}` }
-      const contentType = (res.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
+      const contentType = (res.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase()
       const allowedMime: Record<string, string> = {
         'image/png': '.png',
         'image/jpeg': '.jpg',
@@ -210,12 +211,11 @@ export async function runImageGenerate(payload: ImageGeneratePayload): Promise<I
 
     return { ok: true, record, durationMs: Date.now() - started }
   } catch (e) {
-    const err = e as Error
     if (controller.signal.aborted) return { ok: false, aborted: true, error: '已停止' }
-    if (err?.name === 'TimeoutError') {
+    if (e instanceof Error && e.name === 'TimeoutError') {
       return { ok: false, error: `生成超时（${GENERATE_TIMEOUT_MS / 1000}s），已中止` }
     }
-    return { ok: false, error: err?.message ?? String(e) }
+    return { ok: false, error: errMsg(e) }
   } finally {
     controllers.delete(payload.requestId)
   }
@@ -267,7 +267,7 @@ export function getImageFile(id: string): { ok: boolean; dataUrl?: string; error
               : 'application/octet-stream'
     return { ok: true, dataUrl: `data:${mime};base64,${buf.toString('base64')}` }
   } catch (e) {
-    return { ok: false, error: (e as Error).message }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
@@ -285,7 +285,7 @@ export function deleteImage(id: string): { ok: boolean; error?: string } {
     }
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: (e as Error).message }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
@@ -306,6 +306,6 @@ export async function saveImageAs(
     fs.copyFileSync(abs, filePath)
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: (e as Error).message }
+    return { ok: false, error: errMsg(e) }
   }
 }

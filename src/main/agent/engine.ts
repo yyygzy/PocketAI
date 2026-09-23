@@ -30,6 +30,7 @@ import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
 import { toolRegistry } from '../tools/registry'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
+import { errMsg, isAbortError } from '../error'
 import { createApproval } from './tool-approval'
 
 // Agent 允许助手 defaultParams 透传的生成参数白名单。
@@ -104,8 +105,10 @@ type EmitFn = (channel: string, data: unknown) => void
 function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAttachment[]): void {
   if (!attachments || attachments.length === 0) return
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') {
-      const textContent = typeof messages[i].content === 'string' ? messages[i].content as string : ''
+    const m = messages[i]
+    if (!m) continue
+    if (m.role === 'user') {
+      const textContent = typeof m.content === 'string' ? m.content as string : ''
       const textAttachments = attachments.filter(a => a.type === 'text')
       const imageAttachments = attachments.filter(a => a.type === 'image')
       let text = textContent
@@ -117,9 +120,9 @@ function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAtt
           { type: 'text', text },
           ...imageAttachments.map(a => ({ type: 'image_url' as const, image_url: { url: a.data } }))
         ]
-        messages[i].content = parts
+        m.content = parts
       } else {
-        messages[i].content = text
+        m.content = text
       }
       break
     }
@@ -136,13 +139,16 @@ function buildHistorySummary(earlyMsgs: MessageRecord[]): string {
   // 定位早期消息中最后一条 tool 消息的索引，用于保留完整结果
   let lastToolIdx = -1
   for (let i = earlyMsgs.length - 1; i >= 0; i--) {
-    if (earlyMsgs[i].status === 'done' && earlyMsgs[i].role === 'tool') {
+    const m = earlyMsgs[i]
+    if (!m) continue
+    if (m.status === 'done' && m.role === 'tool') {
       lastToolIdx = i
       break
     }
   }
   for (let i = 0; i < earlyMsgs.length; i++) {
     const m = earlyMsgs[i]
+    if (!m) continue
     if (m.status !== 'done') continue
     if (m.role === 'user') {
       lines.push(`用户: ${m.content.slice(0, 300)}`)
@@ -245,6 +251,7 @@ function findLastAssistantWithToolCallId(
 ): AdapterChatMessage | null {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]
+    if (!m) continue
     if (m.role === 'assistant' && m.tool_calls?.some((tc: ToolCall) => tc.id === toolCallId)) {
       return m
     }
@@ -296,7 +303,7 @@ class AgentEngine {
   async run(payload: SendMessagePayload, emit: EmitFn): Promise<void> {
     const { requestId, conversationId, content, assistantId, targets, unattended } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
-    const target: ChatTarget = targets[0] // Agent 模式只取第一个目标
+  const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
 
     // 解析助手配置
     let effectivePrompt = ''
@@ -469,16 +476,16 @@ class AgentEngine {
           })
         } catch (e) {
           // 失败保留已生成部分
-          const partial = accumulated || `_(LLM 调用失败: ${(e as Error).message})_`
+          const partial = accumulated || `_(LLM 调用失败: ${errMsg(e)})_`
           messageRepo.updateContent(assistantMsg.id, partial, 'error')
-          if ((e as Error).name === 'AbortError') throw e
+          if (isAbortError(e)) throw e
           // 非 abort 错误：emit step error，并终止
           const evt: AgentStepEvent = {
             requestId,
             conversationId,
             stepIndex,
             type: 'error',
-            error: (e as Error).message,
+            error: errMsg(e),
             messageId: assistantMsg.id
           }
           emit(IPC.AGENT_STEP_EVENT, evt)
@@ -672,11 +679,11 @@ class AgentEngine {
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
       conversationRepo.touch(conversationId, { status: 'done' })
     } catch (e) {
-      const aborted = (e as Error).name === 'AbortError' || /中止/.test((e as Error).message)
+      const aborted = isAbortError(e) || /中止/.test(errMsg(e))
       const errEvt: AgentErrorEvent = {
         requestId,
         conversationId,
-        error: aborted ? 'Agent 运行已中止' : (e as Error).message
+        error: aborted ? 'Agent 运行已中止' : errMsg(e)
       }
       emit(IPC.AGENT_ERROR_EVENT, errEvt)
       conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
@@ -731,7 +738,7 @@ class AgentEngine {
       return {
         toolCallId: tc.id,
         name: tc.function.name,
-        content: `工具执行失败: ${(e as Error).message}`,
+        content: `工具执行失败: ${errMsg(e)}`,
         isError: true
       }
     } finally {

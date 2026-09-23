@@ -3,7 +3,7 @@
 // - unlock：DB 已加密，输入密码解锁
 // - setPassword：首次加密明文 DB，设置新密码
 // - recovery：忘记密码，用恢复码 + 新密码重置
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
 
 type UnlockMode = 'unlock' | 'setPassword' | 'recovery'
@@ -27,15 +27,101 @@ export function UnlockPage() {
     }
   }, [])
 
+  // ── B5：渲染层防暴力（前端只做禁用+倒计时；主进程侧防暴力为后续加固 TODO）──
+  const [showPwd, setShowPwd] = useState(false)
+  const failCountRef = useRef(0) // 连续失败计数（仅用于退避判断，不参与渲染）
+  const [lockedUntil, setLockedUntil] = useState(0) // 0 = 未锁定；否则退避结束时间戳
+  const [remainingMs, setRemainingMs] = useState(0)
+
+  useEffect(() => {
+    if (!lockedUntil) return
+    const tick = () => {
+      const left = lockedUntil - Date.now()
+      if (left <= 0) {
+        setRemainingMs(0)
+        setLockedUntil(0)
+      } else {
+        setRemainingMs(left)
+      }
+    }
+    tick()
+    const id = window.setInterval(tick, 200)
+    return () => window.clearInterval(id)
+  }, [lockedUntil])
+
+  // 连续错误 ≥5 次起锁；每次失败延时翻倍，上限 30s
+  function noteAuthFailure() {
+    const next = failCountRef.current + 1
+    failCountRef.current = next
+    if (next >= 5) {
+      const backoff = Math.min(1000 * 2 ** (next - 5), 30000)
+      setLockedUntil(Date.now() + backoff)
+    }
+  }
+
+  function resetFail() {
+    failCountRef.current = 0
+    setLockedUntil(0)
+    setRemainingMs(0)
+  }
+
+  // 密码输入框 + 显隐按钮（unlock/setPassword/recovery 三处复用）
+  const renderPwd = (opts: {
+    value: string
+    onChange: (v: string) => void
+    placeholder?: string
+    autoFocus?: boolean
+    disabled?: boolean
+  }) => (
+    <div style={{ position: 'relative' }}>
+      <input
+        type={showPwd ? 'text' : 'password'}
+        value={opts.value}
+        onChange={(e) => opts.onChange(e.target.value)}
+        placeholder={opts.placeholder}
+        autoFocus={opts.autoFocus}
+        disabled={opts.disabled}
+        onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit() }}
+        style={{ paddingRight: 32 }}
+      />
+      <button
+        type="button"
+        onClick={() => setShowPwd((v) => !v)}
+        aria-label={showPwd ? t('unlock.hidePwd') : t('unlock.showPwd')}
+        title={showPwd ? t('unlock.hidePwd') : t('unlock.showPwd')}
+        style={{
+          position: 'absolute',
+          right: 4,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          padding: 4,
+          fontSize: 16,
+          color: 'var(--color-text-muted)'
+        }}
+      >
+        {showPwd ? '🙈' : '👁'}
+      </button>
+    </div>
+  )
+
   // 恢复成功后的「进入应用」：rekey 已完成，用新密码走正常解锁收尾
   // （boot：提交协调器继续启动；运行时：重开 DB 探针 + 关闭解锁窗 + 解锁状态机）
   async function finishAfterRecovery() {
     setBusy(true)
     try {
       const res = await window.pocketai.unlockEncryption(password)
-      if (!res.ok) setError(t('unlock.recoverFinishFail'))
-    } catch (e: any) {
-      setError(e?.message ?? t('unlock.submitFailed'))
+      if (!res.ok) {
+        setError(t('unlock.recoverFinishFail'))
+        noteAuthFailure()
+      } else {
+        resetFail()
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('unlock.submitFailed'))
+      noteAuthFailure()
     } finally {
       setBusy(false)
     }
@@ -66,12 +152,16 @@ export function UnlockPage() {
         const r = await window.pocketai.recoverWithCode(recoveryCode, password)
         if (!r.ok || !r.recoveryCode) {
           setError(r.error ?? t('unlock.recoverFailed'))
+          noteAuthFailure()
           return
         }
+        // 重置成功，清空失败计数
+        resetFail()
         // 停在成功页展示新恢复码，用户确认保存后再进入应用
         setNewCode(r.recoveryCode)
-      } catch (e: any) {
-        setError(e?.message ?? t('unlock.recoverFailed'))
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t('unlock.recoverFailed'))
+        noteAuthFailure()
       } finally {
         setBusy(false)
       }
@@ -104,11 +194,15 @@ export function UnlockPage() {
       }
       if (!res.ok) {
         setError(res.error ?? t('unlock.submitFailed'))
+        noteAuthFailure()
         return
       }
+      // 成功：重置失败计数（unlock 后窗口由主进程关闭）
+      resetFail()
       // 提交后窗口会被主进程关闭
-    } catch (e: any) {
-      setError(e?.message ?? t('unlock.submitFailed'))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('unlock.submitFailed'))
+      noteAuthFailure()
     } finally {
       setBusy(false)
     }
@@ -138,7 +232,10 @@ export function UnlockPage() {
                 try {
                   await window.pocketai.copySensitiveToClipboard(newCode)
                   setCopied(true)
-                } catch { /* 剪贴板不可用时静默 */ }
+                } catch {
+                  // 恢复码复制失败必须提示：用户误以为已复制会导致无法找回数据
+                  setError(t('common.copyFailed'))
+                }
               }}
             >
               {t('unlock.copyCode')}
@@ -150,8 +247,12 @@ export function UnlockPage() {
           {copied && <p className="unlock-recovery-warn">{t('enc.clipboardAutoClear', { s: 30 })}</p>}
           <p className="unlock-recovery-warn">{t('unlock.recoveryWarn')}</p>
           {error && <div className="unlock-error">{error}</div>}
-          <button className="unlock-btn" onClick={finishAfterRecovery} disabled={busy}>
-            {busy ? t('common.processing') : t('unlock.enterApp')}
+          <button className="unlock-btn" onClick={finishAfterRecovery} disabled={busy || remainingMs > 0}>
+            {remainingMs > 0
+              ? t('unlock.tooManyAttempts', { s: Math.ceil(remainingMs / 1000) })
+              : busy
+              ? t('common.processing')
+              : t('unlock.enterApp')}
           </button>
         </div>
       </div>
@@ -204,15 +305,13 @@ export function UnlockPage() {
         {mode !== 'recovery' && (
           <div className="unlock-field">
             <label>{t('unlock.password')}</label>
-            <input
-              type="password"
-              autoFocus
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-              placeholder={t('unlock.phPwd')}
-              disabled={busy}
-            />
+            {renderPwd({
+              value: password,
+              onChange: setPassword,
+              placeholder: t('unlock.phPwd'),
+              autoFocus: true,
+              disabled: busy || remainingMs > 0
+            })}
           </div>
         )}
 
@@ -221,33 +320,34 @@ export function UnlockPage() {
             {mode === 'recovery' && (
               <div className="unlock-field">
                 <label>{t('unlock.newPassword')}</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t('unlock.phNewPwd')}
-                  disabled={busy}
-                />
+                {renderPwd({
+                  value: password,
+                  onChange: setPassword,
+                  placeholder: t('unlock.phNewPwd'),
+                  disabled: busy || remainingMs > 0
+                })}
               </div>
             )}
             <div className="unlock-field">
               <label>{t('unlock.confirm')}</label>
-              <input
-                type="password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-                placeholder={t('unlock.phConfirm')}
-                disabled={busy}
-              />
+              {renderPwd({
+                value: confirm,
+                onChange: setConfirm,
+                placeholder: t('unlock.phConfirm'),
+                disabled: busy || remainingMs > 0
+              })}
             </div>
           </>
         )}
 
         {error && <div className="unlock-error">{error}</div>}
 
-        <button className="unlock-btn" onClick={handleSubmit} disabled={busy}>
-          {busy ? t('common.processing') : btnText}
+        <button className="unlock-btn" onClick={handleSubmit} disabled={busy || remainingMs > 0}>
+          {remainingMs > 0
+            ? t('unlock.tooManyAttempts', { s: Math.ceil(remainingMs / 1000) })
+            : busy
+            ? t('common.processing')
+            : btnText}
         </button>
 
         <div className="unlock-switch">

@@ -11,6 +11,7 @@
 //  - 支持 AbortSignal（Agent 中止时立即销毁窗口）
 //  - 结果截断 2000 字符（后缀计入预算）；并发调用经模块级队列串行执行
 import { BrowserWindow } from 'electron'
+import { errMsg } from '../error'
 
 const EVAL_TIMEOUT_MS = 5_000
 const MAX_RESULT_CHARS = 2000
@@ -141,10 +142,10 @@ async function doRunEval(code: string, signal?: AbortSignal): Promise<string> {
         })
         .catch((err) => {
           // 窗口被超时/中止销毁时 executeJavaScript 会 reject——settle 已被占用则无副作用
-          finish(() => reject(new Error(`沙箱执行失败: ${(err as Error).message}`)))
+          finish(() => reject(new Error(`沙箱执行失败: ${errMsg(err)}`)))
         })
     } catch (err) {
-      finish(() => reject(new Error(`沙箱执行失败: ${(err as Error).message}`)))
+      finish(() => reject(new Error(`沙箱执行失败: ${errMsg(err)}`)))
     }
   })
 }

@@ -119,7 +119,7 @@ export async function downloadAsarPatch(latestVersion: string): Promise<AsarPatc
   const parts: Buffer[] = []
   let built = 0
   for (let i = 0; i < payload.chunks.length; i++) {
-    const c = payload.chunks[i]
+    const c = payload.chunks[i]!
     if (typeof c.d === 'string') {
       parts.push(Buffer.from(c.d, 'base64'))
     } else if (typeof c.r === 'number') {

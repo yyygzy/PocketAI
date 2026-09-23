@@ -18,6 +18,9 @@ import dns from 'node:dns'
 import net from 'node:net'
 import fs from 'node:fs'
 
+/** IPv6 展开后的 8 个 hextet 数字（expandIpv6 返回时保证长度为 8） */
+type Hextets = [number, number, number, number, number, number, number, number]
+
 export interface SafeFetchOptions {
   /** 外部中止信号（如 Agent 停止按钮）；中止时销毁底层连接 */
   signal?: AbortSignal
@@ -61,10 +64,11 @@ const USER_AGENT = 'PocketAI/0.1 (+local-first AI workstation)'
 // ---------- IP 白/黑名单校验 ----------
 
 /** IPv4 是否落在禁止访问的网段（环回/私网/链路本地/保留/组播等） */
-function isDisallowedIpv4(ip: string): boolean {
+export function isDisallowedIpv4(ip: string): boolean {
   const p = ip.split('.').map(Number)
   if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true
-  const [a, b] = p
+  const a = p[0]!
+  const b = p[1]!
   if (a === 0) return true // 0.0.0.0/8 未指定
   if (a === 10) return true // 10.0.0.0/8
   if (a === 127) return true // 环回
@@ -80,46 +84,65 @@ function isDisallowedIpv4(ip: string): boolean {
 }
 
 /** 把 IPv6 展开成 8 个 hextet 数字；无法解析返回 null。兼容 '::' 压缩与尾部点分 IPv4 */
-function expandIpv6(ip: string): number[] | null {
+export function expandIpv6(ip: string): Hextets | null {
   if (!/^[0-9a-f:.]+$/i.test(ip)) return null
   let head = ip
   let tail = ''
+  let hasCompress = false
   if (ip.includes('::')) {
     const parts = ip.split('::')
     if (parts.length > 2) return null
-    head = parts[0]
-    tail = parts[1]
+    head = parts[0] ?? ''
+    tail = parts[1] ?? ''
+    hasCompress = true
   }
   const parsePiece = (piece: string): number | 'v4' | null => {
     if (piece.includes('.')) return 'v4'
     return /^[0-9a-f]{1,4}$/i.test(piece) ? parseInt(piece, 16) : null
   }
-  const headPieces = head ? head.split(':') : []
-  const tailPieces = tail ? tail.split(':') : []
-  const nums: number[] = []
-  for (const piece of [...headPieces, ...tailPieces]) {
-    const v = parsePiece(piece)
-    if (v === null) return null
-    if (v === 'v4') {
-      const q = piece.split('.').map(Number)
-      if (q.length !== 4 || q.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null
-      nums.push((q[0] << 8) | q[1], (q[2] << 8) | q[3])
-    } else {
-      nums.push(v)
+  // 将一段段 pieces 解析为数字数组（点分 IPv4 占 2 个 hextet）；非法 piece → null
+  const toNums = (pieces: string[]): number[] | null => {
+    const out: number[] = []
+    for (const piece of pieces) {
+      const v = parsePiece(piece)
+      if (v === null) return null
+      if (v === 'v4') {
+        const q = piece.split('.').map(Number)
+        if (q.length !== 4 || q.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null
+        out.push((q[0]! << 8) | q[1]!, (q[2]! << 8) | q[3]!)
+      } else {
+        out.push(v)
+      }
     }
+    return out
   }
-  if (nums.length > 8) return null
-  while (nums.length < 8) nums.push(0)
-  return nums
+  const headNums = toNums(head ? head.split(':') : [])
+  if (headNums === null) return null
+  const tailNums = toNums(tail ? tail.split(':') : [])
+  if (tailNums === null) return null
+  // 无 '::' 压缩：head+tail 必须正好 8 段
+  if (!hasCompress) {
+    const nums = [...headNums, ...tailNums]
+    if (nums.length !== 8) return null
+    return nums as Hextets
+  }
+  // 有 '::' 压缩：head 在前、tail 在后、中间补零到 8 段。
+  // 关键：:: 在头部（::1）或中部（1::2）时，零必须填在 head 与 tail 之间，
+  // 而非简单拼到末尾——否则 ::1 会错展开成 [1,0,...]，让 isDisallowedIpv6 漏判环回。
+  if (headNums.length + tailNums.length >= 8) return null // :: 无补零空间则非法
+  const nums: number[] = [...headNums]
+  while (nums.length < 8 - tailNums.length) nums.push(0)
+  nums.push(...tailNums)
+  return nums as Hextets
 }
 
-function embeddedV4(h: number[], i: number): string {
-  const v = ((h[i] << 16) | h[i + 1]) >>> 0
+function embeddedV4(h: Hextets, i: number): string {
+  const v = ((h[i]! << 16) | h[i + 1]!) >>> 0
   return `${(v >>> 24) & 255}.${(v >>> 16) & 255}.${(v >>> 8) & 255}.${v & 255}`
 }
 
 /** IPv6 是否落在禁止访问的网段（含 IPv4-mapped / NAT64 内嵌地址的递归校验） */
-function isDisallowedIpv6(ip: string): boolean {
+export function isDisallowedIpv6(ip: string): boolean {
   const h = expandIpv6(ip)
   if (!h) return true // 解析不了的一律拒绝
   // IPv4-mapped ::ffff:0:0/96 与 NAT64 64:ff9b::/96：按内嵌 IPv4 判定
@@ -145,7 +168,7 @@ function isDisallowedIpv6(ip: string): boolean {
   return false
 }
 
-function isDisallowedIp(ip: string): boolean {
+export function isDisallowedIp(ip: string): boolean {
   const fam = net.isIP(ip)
   if (fam === 4) return isDisallowedIpv4(ip)
   if (fam === 6) return isDisallowedIpv6(ip)
@@ -154,7 +177,7 @@ function isDisallowedIp(ip: string): boolean {
 
 // ---------- URL 与 DNS 校验 ----------
 
-function assertFetchable(u: URL): void {
+export function assertFetchable(u: URL): void {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     throw new SafeFetchError(`仅支持 http/https 协议: ${u.protocol}`)
   }

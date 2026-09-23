@@ -47,7 +47,8 @@ async function rmrfRetry(target: string, attempts = 5): Promise<void> {
   const delays = [0, 300, 700, 1500, 3000]
   let lastErr: unknown
   for (let i = 0; i < attempts; i++) {
-    if (delays[i]) await sleep(delays[i])
+    const d = delays[i]
+    if (d) await sleep(d)
     try {
       fs.rmSync(target, { recursive: true, force: true })
       lastErr = undefined
@@ -105,7 +106,7 @@ export function venvPythonCandidates(id: string): string[] {
 
 /** venv 内解释器首选路径（文件可能不存在；用于 spawn 与错误展示） */
 export function venvPython(id: string): string {
-  return venvPythonCandidates(id)[0]
+  return venvPythonCandidates(id)[0]!
 }
 
 /** venv 可执行目录（注入 PATH 用） */
@@ -257,7 +258,7 @@ async function probeVersion(exe: string): Promise<string | null> {
   try {
     const { output } = await runProcess(exe, ['--version'], { timeoutMs: PROBE_TIMEOUT })
     const m = output.match(/Python\s+([\d.]+)/i)
-    return m ? m[1] : null
+    return m ? m[1] ?? null : null
   } catch {
     return null
   }
@@ -272,7 +273,7 @@ function readVenvHome(id: string): string | null {
     const text = fs.readFileSync(cfgPath, 'utf8')
     for (const line of text.split(/\r?\n/)) {
       const m = line.match(/^\s*home\s*=\s*(.+?)\s*$/i)
-      if (m) return m[1]
+      if (m) return m[1] ?? null
     }
     return null
   } catch {

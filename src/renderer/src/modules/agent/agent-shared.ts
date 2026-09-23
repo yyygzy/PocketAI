@@ -51,7 +51,7 @@ export async function readFileAsAttachment(file: File): Promise<ChatAttachment |
 /** 提取消息文本中第一个 ```html 代码块（供「在沙箱运行」按钮使用） */
 export function extractFirstHtmlBlock(text: string): string | null {
   const m = text.match(/```html\s*\r?\n([\s\S]*?)```/i)
-  return m ? m[1] : null
+  return m ? m[1] ?? null : null
 }
 
 /** DB MessageRecord[] → Agent 对话视图的 AgentMessage[]（tool 消息拆 call/result 两张卡） */

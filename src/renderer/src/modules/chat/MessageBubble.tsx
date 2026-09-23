@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import type { MessageRecord, ChatAttachment } from '../../../../shared/types'
+import type { ChatAttachment } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
 import { Markdown } from './Markdown'

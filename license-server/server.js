@@ -196,33 +196,33 @@ function readBody(req, maxBytes) {
 /** 卡密激活核心：返回 { status, body } */
 async function handleActivate(req, res, ip) {
   if (!rateLimitByIp(ip)) {
-    return { status: 429, body: { ok: false, error: '请求过于频繁，请稍后再试' } }
+    return { status: 429, body: { ok: false, code: 'RATE_LIMITED', error: '请求过于频繁，请稍后再试' } }
   }
 
   let raw
   try {
     raw = await readBody(req, 8 * 1024)
   } catch {
-    return { status: 413, body: { ok: false, error: '请求体过大' } }
+    return { status: 413, body: { ok: false, code: 'BAD_REQUEST', error: '请求体过大' } }
   }
   let body
   try {
     body = JSON.parse(raw)
   } catch {
-    return { status: 400, body: { ok: false, error: '请求格式错误' } }
+    return { status: 400, body: { ok: false, code: 'BAD_REQUEST', error: '请求格式错误' } }
   }
 
   const code = String(body?.code ?? '').trim().toUpperCase()
   const fingerprint = String(body?.fingerprint ?? '').trim().toLowerCase()
   if (!CODE_RE.test(code)) {
     noteCodeFail(code || '(empty)')
-    return { status: 400, body: { ok: false, error: '卡密格式无效' } }
+    return { status: 400, body: { ok: false, code: 'CODE_FORMAT_INVALID', error: '卡密格式无效' } }
   }
   if (!FP_RE.test(fingerprint)) {
-    return { status: 400, body: { ok: false, error: '硬盘指纹无效，请升级客户端后重试' } }
+    return { status: 400, body: { ok: false, code: 'FINGERPRINT_INVALID', error: '硬盘指纹无效，请升级客户端后重试' } }
   }
   if (isCodeLocked(code)) {
-    return { status: 429, body: { ok: false, error: '该卡密失败次数过多，已临时锁定，请稍后再试' } }
+    return { status: 429, body: { ok: false, code: 'CODE_LOCKED', error: '该卡密失败次数过多，已临时锁定，请稍后再试' } }
   }
 
   const data = loadData()
@@ -230,7 +230,7 @@ async function handleActivate(req, res, ip) {
   if (!rec) {
     noteCodeFail(code)
     console.log(`[activate] ${ip} 卡密不存在 ${maskCode(code)}`)
-    return { status: 404, body: { ok: false, error: '卡密不存在，请核对后重试' } }
+    return { status: 404, body: { ok: false, code: 'CODE_NOT_FOUND', error: '卡密不存在，请核对后重试' } }
   }
 
   // 已绑定：同盘幂等重发原文（不重签——license_id/issued_at 必须保持不变）
@@ -240,7 +240,7 @@ async function handleActivate(req, res, ip) {
       return { status: 200, body: { ok: true, license: rec.license_json } }
     }
     console.log(`[activate] ${ip} 已绑他盘 ${maskCode(code)}`)
-    return { status: 403, body: { ok: false, error: '该卡密已绑定其他硬盘，如需换绑请联系卖家' } }
+    return { status: 403, body: { ok: false, code: 'ALREADY_BOUND_OTHER', error: '该卡密已绑定其他硬盘，如需换绑请联系卖家' } }
   }
 
   // 未使用：绑定到当前指纹并签发 license
@@ -254,7 +254,7 @@ async function handleActivate(req, res, ip) {
     })
   } catch (e) {
     console.error(`[activate] 签发失败 ${maskCode(code)}: ${e.message}`)
-    return { status: 500, body: { ok: false, error: '服务器签发失败，请联系卖家' } }
+    return { status: 500, body: { ok: false, code: 'ISSUE_FAILED', error: '服务器签发失败，请联系卖家' } }
   }
 
   rec.status = 'bound'
@@ -289,7 +289,7 @@ function startServer() {
       json(res, 404, { ok: false, error: 'not found' })
     } catch (e) {
       console.error(`[http] ${ip} ${req.url}:`, e.message)
-      try { json(res, 500, { ok: false, error: '服务器内部错误' }) } catch { /* 已响应 */ }
+      try { json(res, 500, { ok: false, code: 'SERVER_ERROR', error: '服务器内部错误' }) } catch { /* 已响应 */ }
     }
   })
 

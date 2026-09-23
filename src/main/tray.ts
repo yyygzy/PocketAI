@@ -13,6 +13,9 @@ import { app, Tray, Menu, BrowserWindow, nativeImage } from 'electron'
 import path from 'node:path'
 import { requestQuit } from './quit-manager'
 import type { MenuLang } from './menu'
+import { createLogger } from './logger'
+
+const log = createLogger('tray')
 
 let tray: Tray | null = null
 let lang: MenuLang = 'zh'
@@ -55,7 +58,7 @@ export function initTray(currentLang: MenuLang): void {
   const iconPath = path.join(app.getAppPath(), 'build/icon/icon-256.png')
   const img = nativeImage.createFromPath(iconPath)
   if (img.isEmpty()) {
-    console.warn('[tray] icon not found, skip tray init:', iconPath)
+    log.warn('icon not found, skip tray init:', iconPath)
     return
   }
   tray = new Tray(img)

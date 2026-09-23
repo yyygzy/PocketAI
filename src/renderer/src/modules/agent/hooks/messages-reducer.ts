@@ -23,7 +23,7 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
         const idx = prev.findIndex((m) => m.id === e.messageId)
         if (idx !== -1) {
           // 已有占位消息：不可变更新 isFinal 标记
-          const cur = prev[idx]
+          const cur = prev[idx]!
           const updated: AgentMessage = { ...cur, isFinal: e.type === 'final' || cur.isFinal }
           return prev.map((m, i) => (i === idx ? updated : m))
         }
@@ -69,7 +69,7 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
     case 'chunk': {
       const idx = prev.findIndex((m) => m.id === action.messageId)
       if (idx === -1) return prev
-      const cur = prev[idx]
+      const cur = prev[idx]!
       const updated: AgentMessage = action.reasoning
         ? { ...cur, reasoning: (cur.reasoning ?? '') + action.delta }
         : { ...cur, text: (cur.text ?? '') + action.delta }

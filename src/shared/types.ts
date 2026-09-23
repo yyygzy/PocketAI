@@ -134,6 +134,26 @@ export interface MessageRecord {
   batchId?: string | null
 }
 
+/** 会话导出/导入文件载荷（明文 JSON 与加密 .moxia 内部同构） */
+export interface ConversationExportPayload {
+  version: number
+  exportedAt: number
+  conversation: ConversationRecord
+  messages: MessageRecord[]
+  assistant?: AssistantRecord | null
+}
+
+/** 消息全局搜索结果（FTS 命中与 LIKE 兜底的统一形状） */
+export interface MessageSearchResult {
+  messageId: string
+  conversationId: string
+  conversationTitle: string
+  role: MessageRole
+  content: string
+  snippet: string
+  createdAt: number
+}
+
 // ---------- 知识库 ----------
 export type KbDocStatus = 'pending' | 'parsing' | 'indexing' | 'ready' | 'error'
 export type KbSourceType = 'pdf' | 'docx' | 'xlsx' | 'html' | 'url' | 'txt' | 'md'
@@ -313,6 +333,15 @@ export interface AgentDoneEvent {
   finalMessageId: string
   fullContent: string
   stepCount: number
+}
+
+/** Agent 流式文本增量（逐 token 推送） */
+export interface AgentChunkEvent {
+  requestId: string
+  conversationId: string
+  stepIndex: number
+  messageId: string
+  delta: string
 }
 
 export interface AgentErrorEvent {
@@ -536,6 +565,27 @@ export interface LicenseStatus {
   expired: boolean
 }
 
+// ---------- 卡密在线激活 ----------
+/** 激活失败的稳定错误码：客户端据此走 i18n 差异化提示，不依赖服务端中文文案 */
+export type ActivationErrorCode =
+  | 'EMPTY_CODE' // 未输入卡密
+  | 'FINGERPRINT_UNAVAILABLE' // 本机读不到硬盘序列号
+  | 'NETWORK_UNREACHABLE' // 连不上激活服务器（断网/DNS/拒绝连接）
+  | 'NETWORK_TIMEOUT' // 请求超时
+  | 'RATE_LIMITED' // 触发限速
+  | 'CODE_LOCKED' // 卡密失败次数过多被临时锁定
+  | 'CODE_FORMAT_INVALID' // 卡密格式不对
+  | 'CODE_NOT_FOUND' // 卡密不存在
+  | 'ALREADY_BOUND_OTHER' // 卡密已绑定其他硬盘
+  | 'FINGERPRINT_INVALID' // 服务端认为指纹格式非法（客户端过旧）
+  | 'ISSUE_FAILED' // 服务端签发 license 失败
+  | 'SERVER_ERROR' // 其他 5xx / 未知服务端错误
+  | 'INVALID_LICENSE' // 下发的 license 未通过本地验签/指纹比对
+
+export type ActivationResult =
+  | { ok: true; status: LicenseStatus; /** license 原文，供 IPC 层落盘 */ license: string }
+  | { ok: false; code: ActivationErrorCode; detail?: string }
+
 // ---------- 自动更新 ----------
 export type UpdateStatus = 'idle' | 'checking' | 'available' | 'unavailable' | 'downloading' | 'downloaded' | 'error'
 
@@ -546,6 +596,8 @@ export interface UpdateInfo {
   isPackaged: boolean
   /** 是否为 portable 格式（非 NSIS installer） */
   isPortable: boolean
+  /** 自动更新开关是否开启（持久化于 app_config） */
+  autoUpdateEnabled: boolean
 }
 
 export interface UpdateEvent {
@@ -891,6 +943,27 @@ export interface IncrementalBackupResult {
   encrypted: boolean
 }
 
+// ---------- WebDAV 备份配置与文件列表 ----------
+export interface WebDAVConfig {
+  url: string
+  username: string
+  /** 密文（主进程字段加密层加密）；渲染端读取时已被主进程解密为明文 */
+  passwordCipher: string
+  directory: string
+}
+
+export interface WebDAVBackupFile {
+  /** 文件名：全量 pocketai-backup-*.zip / 增量 pocketai-inc-*.json[.enc] */
+  name: string
+  /** 字节数 */
+  size: number
+  /** 修改时间（ms 时间戳） */
+  mtime: number
+  /** 是否主密码加密包 */
+  encrypted: boolean
+  kind: 'full' | 'incremental'
+}
+
 // ---------- 定时备份 ----------
 export interface BackupRunResult {
   ok: boolean
@@ -1161,6 +1234,8 @@ export const IPC = {
   // ---------- 首启向导 ----------
   WIZARD_GET_STATE: 'wizard:get-state', // 是否完成过向导 + 换电脑检测结果
   WIZARD_COMPLETE: 'wizard:complete', // 标记向导完成并记录当前机器指纹
+  WIZARD_GET_LAST_PROVIDER: 'wizard:get-last-provider', // 读取向导上次保存的 provider id
+  WIZARD_SET_LAST_PROVIDER: 'wizard:set-last-provider', // 写入向导选中的 provider id（对话默认回填用）
 
   // ---------- 备份 ----------
   BACKUP_LOCAL: 'backup:local', // 本地备份（可选加密）

@@ -7,6 +7,7 @@ import { chunkText } from './chunker'
 import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
 import type { KbDocument, KnowledgeBase } from '../../shared/types'
+import { errMsg } from '../error'
 
 export class IngestionService {
   /**
@@ -36,7 +37,7 @@ export class IngestionService {
 
       await this.indexText(kb, docId, parsed.text)
     } catch (err) {
-      kbDocRepo.setStatus(docId, 'error', (err as Error).message)
+      kbDocRepo.setStatus(docId, 'error', errMsg(err))
     }
 
     return kbDocRepo.get(docId)!
@@ -54,7 +55,7 @@ export class IngestionService {
       kbChunkRepo.deleteByDoc(docId)
       await this.indexText(kb, docId, text)
     } catch (err) {
-      kbDocRepo.setStatus(docId, 'error', (err as Error).message)
+      kbDocRepo.setStatus(docId, 'error', errMsg(err))
     }
     return kbDocRepo.get(docId)!
   }
@@ -77,7 +78,7 @@ export class IngestionService {
 
     // 首次入库确定维度并写回知识库
     if (kb.embeddingDim === null && vectors.length > 0) {
-      kbRepo.setEmbeddingDim(kb.id, vectors[0].length)
+      kbRepo.setEmbeddingDim(kb.id, vectors[0]!.length)
     }
 
     // 4. 存储
@@ -86,7 +87,7 @@ export class IngestionService {
       kbId: kb.id,
       sequence: c.sequence,
       content: c.content,
-      embedding: vectors[i]
+      embedding: vectors[i]!
     }))
     kbChunkRepo.insertMany(chunks)
     kbDocRepo.setChunkCount(docId, chunks.length)

@@ -1,11 +1,12 @@
 // MCP Server 新增/编辑表单（stdio: binary/node/python + http），含 Python 依赖安装向导
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type {
   McpServerRecord,
   McpRuntime,
   PythonRuntime
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { errText } from '../../../utils/error'
 import { usePythonEnv } from './usePythonEnv'
 
 const ARGS_PLACEHOLDER = '["-y","@modelcontextprotocol/server-filesystem","/tmp"]'
@@ -55,7 +56,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
     if (errMsg) setError(errMsg)
   }
 
-  const loadPyRuntimes = async () => {
+  const loadPyRuntimes = useCallback(async () => {
     setPyLoading(true)
     try {
       setPyRuntimes(await window.pocketai.listPythonRuntimes())
@@ -64,12 +65,11 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
     } finally {
       setPyLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     if (runtime === 'python') void loadPyRuntimes()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime])
+  }, [runtime, loadPyRuntimes])
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -83,7 +83,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
       if (Array.isArray(parsed)) args = parsed.map(String)
       else throw new Error(t('agent.argsArray'))
     } catch (e) {
-      setError(t('agent.argsFail', { e: (e as Error).message }))
+      setError(t('agent.argsFail', { e: errText(e) }))
       return
     }
     try {
@@ -92,7 +92,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         env = Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v)]))
       } else throw new Error(t('agent.envObject'))
     } catch (e) {
-      setError(t('agent.envFail', { e: (e as Error).message }))
+      setError(t('agent.envFail', { e: errText(e) }))
       return
     }
 
@@ -111,7 +111,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         pythonPackages:
           transport === 'stdio' && runtime === 'python' ? packageLines : [],
         enabled
-      } as any)
+      })
       onSaved(saved)
       // 已存在的 server 保存后表单不会重挂（key 不变），依赖列表变化时必须主动重查，
       // 否则状态行仍显示旧的 ready，用户看不到 stale 提示
@@ -120,7 +120,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         if (errMsg) setError(errMsg)
       }
     } catch (e) {
-      setError((e as Error).message)
+      setError(errText(e))
     } finally {
       setSaving(false)
     }
@@ -179,7 +179,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
                         setPyRuntimes((prev) => [rt, ...prev])
                         setCommand(rt.path)
                       } catch (e) {
-                        setError(t('agent.f.pythonDownloadFail', { e: (e as Error).message }))
+                        setError(t('agent.f.pythonDownloadFail', { e: errText(e) }))
                       } finally {
                         setPyDownloading(false)
                       }

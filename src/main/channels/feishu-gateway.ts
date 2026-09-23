@@ -14,6 +14,7 @@
 // - stop 时关闭 WebSocket + 中断进行中的请求
 import type { ChannelStatusEvent } from '../../shared/types'
 import { getChannelSecrets } from './channel-config'
+import { createLogger } from '../logger'
 import {
   IGateway,
   IncomingMessage,
@@ -22,6 +23,8 @@ import {
   splitMessage,
   sleep
 } from './gateway-base'
+
+const log = createLogger('channels')
 
 const API_BASE = 'https://open.feishu.cn'
 const REQUEST_TIMEOUT_MS = 15_000
@@ -76,7 +79,6 @@ class FeishuGateway implements IGateway {
   private status = new StatusEmitter(this.type)
   private onMessage: MessageHandler | null = null
   private pingTimer: NodeJS.Timeout | null = null
-  private tenantToken: string | null = null
 
   onStatus(l: (evt: ChannelStatusEvent) => void): () => void {
     return this.status.add(l)
@@ -102,7 +104,6 @@ class FeishuGateway implements IGateway {
     try {
       const token = await this.fetchTenantToken(appId, appSecret, ctrl.signal)
       if (ctrl.signal.aborted) return
-      this.tenantToken = token
       const url = await this.fetchWsUrl(token, ctrl.signal)
       if (ctrl.signal.aborted) return
       this.connect(url, appId, appSecret, ctrl)
@@ -191,10 +192,10 @@ class FeishuGateway implements IGateway {
       try {
         const data: FeishuEvent = JSON.parse(typeof ev.data === 'string' ? ev.data : '')
         void this.handleEvent(data, appId, appSecret, ctrl).catch((err) => {
-          console.error('[channels] 飞书消息处理失败:', safeError(err, 'event'))
+          log.error('飞书消息处理失败:', safeError(err, 'event'))
         })
       } catch (err) {
-        console.error('[channels] 飞书解析失败:', safeError(err, 'parse'))
+        log.error('飞书解析失败:', safeError(err, 'parse'))
       }
     })
 
@@ -208,7 +209,9 @@ class FeishuGateway implements IGateway {
         this.status.emit('error', '握手阶段连接关闭')
         return
       }
-      void this.reconnect(appId, appSecret, ctrl)
+      void this.reconnect(appId, appSecret, ctrl).catch((err) => {
+        if (!ctrl.signal.aborted) log.error('飞书 reconnect 异常:', safeError(err, 'reconnect'))
+      })
     })
 
     ws.addEventListener('error', () => {
@@ -255,7 +258,7 @@ class FeishuGateway implements IGateway {
             firstName: ''
           })
         } catch (err) {
-          console.error('[channels] 消息处理失败:', safeError(err, 'handle'))
+          log.error('消息处理失败:', safeError(err, 'handle'))
         }
       }
     }
@@ -290,7 +293,6 @@ class FeishuGateway implements IGateway {
       try {
         const token = await this.fetchTenantToken(appId, appSecret, ctrl.signal)
         if (ctrl.signal.aborted) return
-        this.tenantToken = token
         const url = await this.fetchWsUrl(token, ctrl.signal)
         if (ctrl.signal.aborted) return
         this.connect(url, appId, appSecret, ctrl)
@@ -310,7 +312,6 @@ class FeishuGateway implements IGateway {
     this.ws = null
     this.running = false
     this.onMessage = null
-    this.tenantToken = null
     this.status.reset()
     this.status.emit('stopped')
   }

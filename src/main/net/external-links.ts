@@ -12,13 +12,17 @@
 // 故同源放行、跨源一律阻止并转系统浏览器，零功能影响。
 
 import { shell } from 'electron'
+import { createLogger } from '../logger'
+import { errMsg } from '../error'
+
+const log = createLogger('external-links')
 
 /** 仅放行 http/https，其余协议静默忽略 */
 export function openExternalSecure(rawUrl: string): void {
   try {
     const u = new URL(rawUrl)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return
-    void shell.openExternal(u.toString())
+    void shell.openExternal(u.toString()).catch((e) => log.error('openExternal 失败:', errMsg(e)))
   } catch {
     // 非法/相对 URL：忽略
   }

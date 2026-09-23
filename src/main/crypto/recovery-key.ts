@@ -25,11 +25,11 @@ const RAW_LEN = 20 // 恢复码随机字节数（160bit）
 // Crockford Base32 字母表（排除易混字符 I/L/O/U；解码时做容错映射）
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const DECODE_MAP: Record<string, number> = {}
-for (let i = 0; i < ALPHABET.length; i++) DECODE_MAP[ALPHABET[i]] = i
+for (let i = 0; i < ALPHABET.length; i++) DECODE_MAP[ALPHABET[i]!] = i
 // 常见看错/打错容错：I/L → 1，O → 0
-DECODE_MAP['I'] = DECODE_MAP['1']
-DECODE_MAP['L'] = DECODE_MAP['1']
-DECODE_MAP['O'] = DECODE_MAP['0']
+DECODE_MAP['I'] = DECODE_MAP['1']!
+DECODE_MAP['L'] = DECODE_MAP['1']!
+DECODE_MAP['O'] = DECODE_MAP['0']!
 
 /** 字节 → Crockford Base32 字符串 */
 function base32Encode(buf: Buffer): string {
@@ -46,24 +46,6 @@ function base32Encode(buf: Buffer): string {
   }
   if (bits > 0) out += ALPHABET[(value << (5 - bits)) & 31]
   return out
-}
-
-/** Crockford Base32 字符串 → 字节（长度/字符非法抛错） */
-function base32Decode(s: string): Buffer {
-  const out: number[] = []
-  let bits = 0
-  let value = 0
-  for (const ch of s) {
-    const v = DECODE_MAP[ch]
-    if (v === undefined) throw new Error('恢复密钥含非法字符')
-    value = (value << 5) | v
-    bits += 5
-    if (bits >= 8) {
-      out.push((value >>> (bits - 8)) & 0xff)
-      bits -= 8
-    }
-  }
-  return Buffer.from(out)
 }
 
 /** 规整用户输入：去分隔符/空白、大写、容错映射 */

@@ -7,6 +7,7 @@
 // - 主题切换（documentElement.light class）后自动重渲染（SVG 颜色固化，不随 CSS 变量变）
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
+import { errText } from '../../utils/error'
 
 // mermaid 11 为 ESM，默认导出
 type MermaidLib = typeof import('mermaid')['default']
@@ -58,7 +59,7 @@ export const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
       } catch (e) {
         if (!cancelled && mountedRef.current) {
           setSvg('')
-          setError((e as Error)?.message || 'mermaid render error')
+          setError(errText(e, 'mermaid render error'))
         }
       }
     }

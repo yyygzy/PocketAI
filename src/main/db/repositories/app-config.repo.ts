@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dbService } from '../database'
 import { CONFIG_PATH } from '../../portable'
+import { errMsg } from '../../error'
 
 export type EncryptionMode = 'none' | 'db'
 export type CipherType = 'sqlcipher' // 目前只支持 SQLCipher
@@ -82,7 +83,7 @@ function writeRecoveryBlobToConfigFile(blob: string | null): void {
     else cfg.recoveryBlob = blob
     writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
   } catch (e) {
-    throw new Error(`恢复密钥写入 config.json 失败: ${(e as Error).message}`)
+    throw new Error(`恢复密钥写入 config.json 失败: ${errMsg(e)}`)
   }
 }
 

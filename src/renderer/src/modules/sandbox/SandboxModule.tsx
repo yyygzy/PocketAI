@@ -1,4 +1,4 @@
-// 沙箱模块（V2 批次八 / 九）：AI 生成 HTML 的隔离运行与产物管理
+// 应用工坊模块（V2 批次八 / 九）：AI 生成 HTML 的隔离运行与产物管理
 //
 // 安全边界：
 //  - 预览 iframe 仅 sandbox="allow-scripts"：无 same-origin / 导航 / 弹窗 / 表单
@@ -6,9 +6,12 @@
 //  - 与宿主零 postMessage 通信（通信桥为迷你应用后续扩展点，本期刻意不开放）
 //
 // V2 批次九扩展：迷你应用（isApp）视图——网格展示已标记为应用的产物，支持设为应用/编辑/取消标记
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type { SandboxFileMeta } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { errText } from '../../utils/error'
+import { reportIpcError } from '../../utils/ipc'
+import { useTransientNotice } from '../../hooks/useTransientNotice'
 
 const PREVIEW_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:"
@@ -56,17 +59,18 @@ export const SandboxModule: React.FC = () => {
   const [newName, setNewName] = useState('')
   const [newHtml, setNewHtml] = useState('')
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  const { notice: toast, show: setToast } = useTransientNotice<string>(2500)
   // 编辑中的产物（设为应用 / 改元数据）
   const [editingId, setEditingId] = useState<string | null>(null)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setFiles(await window.pocketai.listSandboxFiles())
-  }
+  }, [])
 
   useEffect(() => {
-    void load()
-  }, [])
+    // load 内部无 try-catch，需挂 .catch 避免未处理 rejection
+    void load().catch(reportIpcError('sandbox.list'))
+  }, [load])
 
   // 挂载时消费「打开应用库」标记（Agent 安装为迷你应用后跳转）
   useEffect(() => {
@@ -75,13 +79,6 @@ export const SandboxModule: React.FC = () => {
       setTab('apps')
     }
   }, [])
-
-  // toast 自动消失（卸载清理定时器）
-  useEffect(() => {
-    if (!toast) return
-    const timer = setTimeout(() => setToast(null), 2500)
-    return () => clearTimeout(timer)
-  }, [toast])
 
   const openPreview = async (id: string) => {
     const r = await window.pocketai.getSandboxFile(id)
@@ -105,7 +102,7 @@ export const SandboxModule: React.FC = () => {
       await openPreview(meta.id)
       setToast(t('sandbox.created'))
     } catch (err) {
-      setToast((err as Error).message)
+      setToast(errText(err))
     } finally {
       setBusy(false)
     }
@@ -122,7 +119,7 @@ export const SandboxModule: React.FC = () => {
       if (editingId === id) setEditingId(null)
       await load()
     } catch (err) {
-      setToast((err as Error).message)
+      setToast(errText(err))
     }
   }
 
@@ -132,7 +129,7 @@ export const SandboxModule: React.FC = () => {
       await load()
       setToast(toApp ? t('miniapp.promoted') : t('miniapp.demoted'))
     } catch (err) {
-      setToast((err as Error).message)
+      setToast(errText(err))
     }
   }
 
@@ -342,7 +339,7 @@ const SandboxItem: React.FC<{
       await window.pocketai.updateSandboxMeta(f.id, { name, icon, description: desc })
       onSaved()
     } catch (err) {
-      onError((err as Error).message)
+      onError(errText(err))
     } finally {
       setSaving(false)
     }

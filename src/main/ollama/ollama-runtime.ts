@@ -13,13 +13,17 @@ import path from 'node:path'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import unzipper from 'unzipper'
 import { RUNTIME_DIR, DATA_DIR } from '../portable'
+import { errMsg } from '../error'
 import { safeFetch } from '../net/safe-fetch'
+import { createLogger } from '../logger'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import type {
   OllamaRuntimeStatus,
   OllamaInstallEvent,
   OllamaPullEvent
 } from '../../shared/types'
+
+const log = createLogger('ollama')
 
 const OLLAMA_VERSION = 'v0.34.2'
 const HOST = '127.0.0.1'
@@ -180,10 +184,10 @@ async function startServe(): Promise<{ started: boolean; reused: boolean }> {
   serveProc.stdout?.on('data', () => { /* 吞掉常规日志，避免污染主进程输出 */ })
   serveProc.stderr?.on('data', (d) => {
     const msg = String(d).trim()
-    if (msg) console.log(`[ollama] ${msg}`)
+    if (msg) log.debug(msg)
   })
   serveProc.on('exit', (code) => {
-    if (code !== 0 && code !== null) console.warn(`[ollama] serve 退出，code=${code}`)
+    if (code !== 0 && code !== null) log.warn(`serve 退出，code=${code}`)
     serveProc = null
   })
 
@@ -267,7 +271,7 @@ async function extractTarZst(archive: string, dest: string): Promise<void> {
       return
     } catch {
       throw new Error(
-        `解压 tar.zst 失败：系统缺少 zstd 支持（Ubuntu/Debian 可执行 sudo apt install zstd；错误：${(e1 as Error).message.slice(0, 200)}）`
+        `解压 tar.zst 失败：系统缺少 zstd 支持（Ubuntu/Debian 可执行 sudo apt install zstd；错误：${errMsg(e1).slice(0, 200)}）`
       )
     }
   }
@@ -331,7 +335,7 @@ async function install(onEvent?: (e: OllamaInstallEvent) => void): Promise<Ollam
     if (spec.format === 'zip') await extractZip(tmpArchive, dir)
     else await extractTarZst(tmpArchive, dir)
   } catch (e) {
-    throw new Error(`解压失败：${(e as Error).message}`)
+    throw new Error(`解压失败：${errMsg(e)}`)
   } finally {
     fs.rmSync(tmpArchive, { force: true })
   }
@@ -360,7 +364,7 @@ function probeExeVersion(exe: string): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(exe, ['--version'], { windowsHide: true, timeout: 8000 }, (_err, stdout, stderr) => {
       const m = `${stdout} ${stderr}`.match(/(\d+\.\d+\.\d+)/)
-      resolve(m ? m[1] : null)
+      resolve(m ? m[1] ?? null : null)
     })
   })
 }

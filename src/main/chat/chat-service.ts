@@ -20,6 +20,7 @@ import { assistantRepo } from '../db/repositories/assistant.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
+import { errMsg, isAbortError } from '../error'
 import { withProviderLimit } from './concurrency'
 import { agentEngine } from '../agent/engine'
 import type { AdapterChatMessage } from '../providers/types'
@@ -66,7 +67,9 @@ function pickActiveReplyIds(history: MessageRecord[]): Set<string> {
     if (pending.length === 0) return
     const batches = groupRepliesByBatch(pending)
     for (let i = batches.length - 1; i >= 0; i--) {
-      const done = batches[i].find((r) => r.status === 'done')
+      const batch = batches[i]
+      if (!batch) continue
+      const done = batch.find((r) => r.status === 'done')
       if (done) {
         chosen.add(done.id)
         break
@@ -135,10 +138,11 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
 /** 将附件注入到上下文最后一条 user 消息（构建 multimodal 格式） */
 function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAttachment[]): void {
   if (!attachments || attachments.length === 0) return
-  // 找到最后一条 user 消息
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') {
-      const textContent = typeof messages[i].content === 'string' ? messages[i].content as string : ''
+    const m = messages[i]
+    if (!m) continue
+    if (m.role === 'user') {
+      const textContent = typeof m.content === 'string' ? m.content as string : ''
       const textAttachments = attachments.filter(a => a.type === 'text')
       const imageAttachments = attachments.filter(a => a.type === 'image')
 
@@ -150,7 +154,7 @@ function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAtt
 
       // 如果有图片，构建 multimodal content
       if (imageAttachments.length > 0) {
-        messages[i].content = [
+        m.content = [
           { type: 'text', text },
           ...imageAttachments.map(a => ({
             type: 'image_url' as const,
@@ -158,7 +162,7 @@ function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAtt
           }))
         ]
       } else {
-        messages[i].content = text
+        m.content = text
       }
       break
     }
@@ -190,6 +194,7 @@ class ChatService {
     this.conversationLocks.set(conversationId, next)
     return (async () => {
       try {
+        // 串行锁链：上个任务的失败不阻断当前任务（每个任务自己有 try/catch），吞错即可
         await prev.catch(() => {})
         return await fn()
       } finally {
@@ -296,7 +301,7 @@ class ChatService {
             index,
             target,
             messages,
-            messageId: placeholders[index].id,
+            messageId: placeholders[index]!.id,
             signal: master.signal,
             emit
           })
@@ -366,7 +371,7 @@ class ChatService {
             index,
             target,
             messages,
-            messageId: placeholders[index].id,
+            messageId: placeholders[index]!.id,
             signal: master.signal,
             emit
           })
@@ -437,7 +442,7 @@ class ChatService {
             index,
             target,
             messages,
-            messageId: placeholders[index].id,
+            messageId: placeholders[index]!.id,
             signal: master.signal,
             emit
           })
@@ -487,12 +492,12 @@ class ChatService {
       const e: ChatDoneEvent = { requestId, targetIndex: index, messageId, fullContent: full }
       emit(IPC.CHAT_DONE_EVENT, e)
     } catch (err) {
-      const aborted = (err as Error).name === 'AbortError'
+      const aborted = isAbortError(err)
       // 中止/出错时保留已流式生成的部分内容
       const partial = accumulated
       const finalContent = aborted
         ? partial || '_(已停止)_'
-        : partial || `请求失败: ${(err as Error).message}`
+        : partial || `请求失败: ${errMsg(err)}`
       messageRepo.updateContent(messageId, finalContent, aborted ? 'aborted' : 'error')
 
       if (aborted) {
@@ -508,7 +513,7 @@ class ChatService {
           requestId,
           targetIndex: index,
           messageId,
-          error: (err as Error).message
+          error: errMsg(err)
         }
         emit(IPC.CHAT_ERROR_EVENT, e)
       }

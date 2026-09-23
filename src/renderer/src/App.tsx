@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Sidebar, type ModuleId } from './components/Sidebar'
 import { TabBar, type Tab } from './components/TabBar'
 import { Workspace } from './components/Workspace'
@@ -6,6 +6,7 @@ import { ToolApprovalDialog } from './components/ToolApprovalDialog'
 import { ToastProvider } from './components/ToastProvider'
 import { FirstRunWizard, type WizardVariant } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
+import { reportIpcError } from './utils/ipc'
 
 let tabCounter = 0
 const newTabId = () => `tab-${Date.now()}-${++tabCounter}`
@@ -43,16 +44,16 @@ export default function App() {
   )
   const [activeTabId, setActiveTabId] = useState<string>(() => {
     const restored = loadPersistedTabs()
-    if (restored.length === 0) return tabs[0].id
+    if (restored.length === 0) return tabs[0]!.id
     try {
       const savedActive = localStorage.getItem(TABS_STORAGE_KEY + '.active')
       if (savedActive) {
         // 恢复的 id 与重建 id 不同——保存时存的是激活位置 index
         const idx = Number(savedActive)
-        if (Number.isInteger(idx) && idx >= 0 && idx < restored.length) return restored[idx].id
+        if (Number.isInteger(idx) && idx >= 0 && idx < restored.length) return restored[idx]!.id
       }
     } catch { /* ignore */ }
-    return restored[0].id
+    return restored[0]!.id
   })
   const [locked, setLocked] = useState(false)
   const [dbEncrypted, setDbEncrypted] = useState(false)
@@ -75,8 +76,8 @@ export default function App() {
 
   // 隐私锁：监听状态变化
   useEffect(() => {
-    window.pocketai.getEncryptionStatus().then((s) => setDbEncrypted(s.dbEncrypted))
-    window.pocketai.getLockStatus().then((s) => setLocked(s.state === 'locked'))
+    window.pocketai.getEncryptionStatus().then((s) => setDbEncrypted(s.dbEncrypted)).catch(reportIpcError('app.getEncryptionStatus'))
+    window.pocketai.getLockStatus().then((s) => setLocked(s.state === 'locked')).catch(reportIpcError('app.getLockStatus'))
     const off = window.pocketai.onLockStateChange((e) => {
       setLocked(e.state === 'locked')
       setLockPwd('')
@@ -94,7 +95,7 @@ export default function App() {
         if (!r.data.wizardDone) setWizard('full')
         else if (r.data.machineChanged) setWizard('recheck')
       })
-      .catch(() => {})
+      .catch(reportIpcError('app.getWizardState'))
   }, [])
 
   // 标签布局持久化：顺序 + 激活位置（下次启动恢复）
@@ -136,12 +137,49 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
         e.preventDefault()
-        window.pocketai.lock().catch(() => {})
+        window.pocketai.lock().catch(reportIpcError('app.lock'))
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // 模块 → 标签标题（语言切换时随之更新）
+  const moduleTitle = useCallback(
+    (id: ModuleId): string => {
+      const map: Record<ModuleId, string> = {
+        chat: t('tab.newChat'),
+        agent: t('tab.newAgent'),
+        skills: t('tab.skills'),
+        knowledge: t('tab.knowledge'),
+        files: t('tab.files'),
+        notes: t('tab.notes'),
+        translate: t('tab.translate'),
+        image: t('tab.image'),
+        sandbox: t('tab.sandbox'),
+        steward: t('tab.steward'),
+        settings: t('tab.settings')
+      }
+      return map[id]
+    },
+    [t]
+  )
+
+  const handleModuleChange = useCallback(
+    (id: ModuleId) => {
+      setActiveModule(id)
+      // 切换模块时，若已有该模块标签则激活，否则新建
+      const existing = tabs.find((tb) => tb.moduleId === id)
+      if (existing) {
+        setActiveTabId(existing.id)
+      } else {
+        const tab: Tab = { id: newTabId(), title: moduleTitle(id), moduleId: id }
+        setTabs((prev) => [...prev, tab])
+        setActiveTabId(tab.id)
+      }
+    },
+    [tabs, moduleTitle]
+  )
 
   // 允许其他模块通过 window 事件请求切换模块（如聊天「另存为笔记」跳到笔记页）
   useEffect(() => {
@@ -151,48 +189,13 @@ export default function App() {
     }
     window.addEventListener('pocketai:switch-module', handler)
     return () => window.removeEventListener('pocketai:switch-module', handler)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabs])
+  }, [handleModuleChange])
 
   async function handleUnlock() {
     setLockErr('')
     const res = await window.pocketai.unlock(dbEncrypted ? lockPwd : undefined)
     if (!res.ok) {
       setLockErr(res.error ?? t('lock.unlockFailed'))
-    }
-  }
-
-  const moduleTitle = (id: ModuleId): string => {
-    const map: Record<ModuleId, string> = {
-      chat: t('tab.newChat'),
-      agent: t('tab.newAgent'),
-      skills: t('tab.skills'),
-      knowledge: t('tab.knowledge'),
-      files: t('tab.files'),
-      notes: t('tab.notes'),
-      translate: t('tab.translate'),
-      image: t('tab.image'),
-      sandbox: t('tab.sandbox'),
-      steward: t('tab.steward'),
-      settings: t('tab.settings')
-    }
-    return map[id]
-  }
-
-  const handleModuleChange = (id: ModuleId) => {
-    setActiveModule(id)
-    // 切换模块时，若已有该模块标签则激活，否则新建
-    const existing = tabs.find((tb) => tb.moduleId === id)
-    if (existing) {
-      setActiveTabId(existing.id)
-    } else {
-      const tab: Tab = {
-        id: newTabId(),
-        title: moduleTitle(id),
-        moduleId: id
-      }
-      setTabs((prev) => [...prev, tab])
-      setActiveTabId(tab.id)
     }
   }
 
@@ -210,7 +213,7 @@ export default function App() {
     setTabs((prev) => {
       const next = prev.filter((tb) => tb.id !== id)
       if (id === activeTabId && next.length > 0) {
-        setActiveTabId(next[next.length - 1].id)
+        setActiveTabId(next[next.length - 1]!.id)
       }
       if (next.length === 0) {
         const tb: Tab = { id: newTabId(), title: t('tab.newChat'), moduleId: 'chat' }
@@ -229,7 +232,7 @@ export default function App() {
       if (from < 0 || to < 0 || from === to) return prev
       const next = [...prev]
       const [moved] = next.splice(from, 1)
-      next.splice(to, 0, moved)
+      next.splice(to, 0, moved!)
       // pinned 固定在开头（稳定性排序：非 pinned 依次后移）
       const pinned = next.filter((tb) => tb.pinned)
       const normal = next.filter((tb) => !tb.pinned)
@@ -266,7 +269,7 @@ export default function App() {
       .then((r) => {
         if (r.ok) handleCloseTab(id)
       })
-      .catch(() => {})
+      .catch(reportIpcError('app.openDetached'))
   }
 
   return (

@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type { ProviderRecord, ProviderType } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 export const PROVIDER_PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
   // ── 海外主流 ──
@@ -41,10 +43,10 @@ export const ProviderSettings: React.FC = () => {
   const [keysText, setKeysText] = useState('')
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const load = () => window.pocketai.listProviders().then(setProviders)
+  const load = useCallback(() => window.pocketai.listProviders().then(setProviders).catch(reportIpcError('providerSettings.list')), [])
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
   const startEdit = (p: ProviderRecord | null) => {
     const rec = p ? { ...p } : emptyProvider()
@@ -84,7 +86,7 @@ export const ProviderSettings: React.FC = () => {
       setNotice({ ok: true, text: t('provider.fetchOk', { n: models.length }) })
       await load()
     } catch (e) {
-      setNotice({ ok: false, text: t('provider.fetchFail', { e: (e as Error).message }) })
+      setNotice({ ok: false, text: t('provider.fetchFail', { e: errText(e) }) })
     }
   }
 

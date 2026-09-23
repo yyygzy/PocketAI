@@ -5,6 +5,7 @@ import { EXTENSIONS_DIR } from '../portable'
 import { assistantRepo, type BuiltinAssistant } from '../db/repositories/assistant.repo'
 import { skillRepo, type BuiltinSkill } from '../db/repositories/skill.repo'
 import { parseSkillText, toBuiltinSkill } from '../skills/skill-parser'
+import { errMsg } from '../error'
 
 const ASSISTANTS_DIR = path.join(EXTENSIONS_DIR, 'assistants')
 const SKILLS_DIR = path.join(EXTENSIONS_DIR, 'skills')
@@ -21,7 +22,7 @@ export function syncBuiltinAssistants(): { count: number; errors: string[] } {
   try {
     files = fs.readdirSync(ASSISTANTS_DIR).filter((f) => f.endsWith('.json')).sort()
   } catch (e) {
-    errors.push(`readdirSync failed: ${(e as Error).message}`)
+    errors.push(`readdirSync failed: ${errMsg(e)}`)
     return { count, errors }
   }
 
@@ -50,7 +51,7 @@ export function syncBuiltinAssistants(): { count: number; errors: string[] } {
       })
       count++
     } catch (e) {
-      errors.push(`${file}: ${(e as Error).message}`)
+      errors.push(`${file}: ${errMsg(e)}`)
     }
   }
 
@@ -69,7 +70,7 @@ export function syncBuiltinSkills(): { count: number; errors: string[] } {
   try {
     files = fs.readdirSync(SKILLS_DIR).filter((f) => f.endsWith('.json') || f.endsWith('.md')).sort()
   } catch (e) {
-    errors.push(`readdirSync failed: ${(e as Error).message}`)
+    errors.push(`readdirSync failed: ${errMsg(e)}`)
     return { count, errors }
   }
 
@@ -86,7 +87,7 @@ export function syncBuiltinSkills(): { count: number; errors: string[] } {
       skillRepo.upsertBuiltin(bs)
       count++
     } catch (e) {
-      errors.push(`${file}: ${(e as Error).message}`)
+      errors.push(`${file}: ${errMsg(e)}`)
     }
   }
 

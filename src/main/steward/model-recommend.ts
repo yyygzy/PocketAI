@@ -34,7 +34,7 @@ async function probeOllamaModels(): Promise<{ running: boolean; models: string[]
 
 /** 已安装匹配：tag 精确相等，或本地以 "name:" 开头（同模型不同量化版本） */
 function isInstalled(installed: string[], name: string): boolean {
-  const base = name.split(':')[0].toLowerCase()
+  const base = name.split(':')[0]!.toLowerCase()
   return installed.some((m) => {
     const x = m.toLowerCase()
     return x === name.toLowerCase() || x.startsWith(base + ':')

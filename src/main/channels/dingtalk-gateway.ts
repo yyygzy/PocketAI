@@ -15,6 +15,7 @@
 // - stop 时关闭 WebSocket + 中断进行中的请求
 import type { ChannelStatusEvent } from '../../shared/types'
 import { getChannelSecrets } from './channel-config'
+import { createLogger } from '../logger'
 import {
   IGateway,
   IncomingMessage,
@@ -23,6 +24,8 @@ import {
   splitMessage,
   sleep
 } from './gateway-base'
+
+const log = createLogger('channels')
 
 const API_BASE = 'https://api.dingtalk.com'
 const REQUEST_TIMEOUT_MS = 15_000
@@ -161,10 +164,10 @@ class DingtalkGateway implements IGateway {
         const raw = typeof ev.data === 'string' ? ev.data : ''
         const msg: DingtalkWsMessage = JSON.parse(raw)
         void this.handleMessage(msg, appKey, appSecret, ctrl).catch((err) => {
-          console.error('[channels] 钉钉消息处理失败:', safeError(err, 'msg'))
+          log.error('钉钉消息处理失败:', safeError(err, 'msg'))
         })
       } catch (err) {
-        console.error('[channels] 钉钉解析失败:', safeError(err, 'parse'))
+        log.error('钉钉解析失败:', safeError(err, 'parse'))
       }
     })
 
@@ -177,7 +180,9 @@ class DingtalkGateway implements IGateway {
         this.status.emit('error', '握手阶段连接关闭')
         return
       }
-      void this.reconnect(appKey, appSecret, ctrl)
+      void this.reconnect(appKey, appSecret, ctrl).catch((err) => {
+        if (!ctrl.signal.aborted) log.error('钉钉 reconnect 异常:', safeError(err, 'reconnect'))
+      })
     })
 
     ws.addEventListener('error', () => {
@@ -194,8 +199,8 @@ class DingtalkGateway implements IGateway {
 
   private async handleMessage(
     msg: DingtalkWsMessage,
-    appKey: string,
-    appSecret: string,
+    _appKey: string,
+    _appSecret: string,
     _ctrl: AbortController
   ): Promise<void> {
     const topic = msg.Topic ?? msg.topic
@@ -222,10 +227,10 @@ class DingtalkGateway implements IGateway {
             firstName: inner.senderNick ?? ''
           })
         } catch (err) {
-          console.error('[channels] 消息处理失败:', safeError(err, 'handle'))
+          log.error('消息处理失败:', safeError(err, 'handle'))
         }
       } catch (err) {
-        console.error('[channels] 钉钉内层 JSON 解析失败:', safeError(err, 'parse'))
+        log.error('钉钉内层 JSON 解析失败:', safeError(err, 'parse'))
       }
     }
   }

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
+import { logIpcError, reportIpcError } from '../utils/ipc'
 import { ThemeLangControls } from './ThemeLangControls'
 import type { SidebarModuleId } from '../../../shared/types'
 import logoUrl from '../assets/logo-128.png'
@@ -23,7 +24,7 @@ const MODULE_ICONS: Record<ModuleId, string> = {
   notes: '📝',
   translate: '🌐',
   image: '🎨',
-  sandbox: '🧪',
+  sandbox: '🧩',
   steward: '🛠️',
   settings: '⚙️'
 }
@@ -42,14 +43,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [draggingId, setDraggingId] = useState<ModuleId | null>(null)
 
   useEffect(() => {
+    // 读取失败保持默认顺序，仅记诊断
     window.pocketai
       .getSidebarOrder()
       .then((r) => {
         if (r.ok && r.data && r.data.length === MODULE_IDS.length) setOrder(r.data)
       })
-      .catch(() => {
-        /* 读取失败保持默认顺序 */
-      })
+      .catch(reportIpcError('sidebar.getOrder'))
   }, [])
 
   // 把 from 位置的模块移动到 to 位置（拖拽悬停时实时预览）
@@ -70,15 +70,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     draggingIdRef.current = null
     setDraggingId(null)
     if (!id) return
-    // 落库；失败则回滚到服务端（已持久化）的顺序
+    // 落库；失败（返回未持久化或 reject）则回滚到服务端顺序
     const finalOrder = order
+    const rollback = () => {
+      window.pocketai
+        .getSidebarOrder()
+        .then((x) => x.ok && x.data && setOrder(x.data))
+        .catch(reportIpcError('sidebar.rollbackOrder'))
+    }
     window.pocketai.setSidebarOrder(finalOrder).then((r) => {
-      if (!r.ok || !r.data) {
-        window.pocketai
-          .getSidebarOrder()
-          .then((x) => x.ok && x.data && setOrder(x.data))
-          .catch(() => {})
-      }
+      if (!r.ok || !r.data) rollback()
+    }).catch((e) => {
+      logIpcError('sidebar.setOrder', e)
+      rollback()
     })
   }
 
@@ -154,7 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 手动锁屏：立即锁定，清密钥 + 全窗口遮罩 */}
       <button
-        onClick={() => window.pocketai.lock().catch(() => {})}
+        onClick={() => window.pocketai.lock().catch(reportIpcError('sidebar.lock'))}
         className="h-10 border-t border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors flex items-center justify-center gap-2 text-sm"
         title={t('enc.lockNow')}
       >

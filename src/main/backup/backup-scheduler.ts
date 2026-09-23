@@ -15,6 +15,10 @@
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { masterKeyManager } from '../crypto/master-key'
 import { loadWebDAVConfig, createWebDAVBackup } from './backup-service'
+import { createLogger } from '../logger'
+import { errMsg } from '../error'
+
+const log = createLogger('backup-scheduler')
 
 export interface BackupRunResult {
   ok: boolean
@@ -87,10 +91,10 @@ export async function runScheduledBackup(): Promise<BackupRunResult | null> {
     if (!cfg) throw new Error('未配置 WebDAV')
     const r = await createWebDAVBackup(cfg)
     result = { ok: true, at, filename: r.filename }
-    console.log(`[backup-scheduler] 定时备份成功: ${r.filename}`)
+    log.info(`定时备份成功: ${r.filename}`)
   } catch (e) {
-    result = { ok: false, at, error: (e as Error)?.message ?? '备份失败' }
-    console.warn(`[backup-scheduler] 定时备份失败: ${result.error}`)
+    result = { ok: false, at, error: errMsg(e, '备份失败') }
+    log.warn(`定时备份失败: ${result.error}`)
   } finally {
     running = false
   }
@@ -104,7 +108,7 @@ export function noteManualBackup(): void {
   appConfigRepo.set(K_LAST_RUN, String(Date.now()))
 }
 
-async function tick(): Promise<void> {
+export async function tick(): Promise<void> {
   try {
     const status = getBackupSchedule()
     if (!status.enabled) return
@@ -119,7 +123,7 @@ async function tick(): Promise<void> {
     if (!due) return
     await runScheduledBackup()
   } catch (e) {
-    console.warn('[backup-scheduler] tick 异常:', (e as Error)?.message ?? e)
+    log.warn('tick 异常:', errMsg(e))
   }
 }
 

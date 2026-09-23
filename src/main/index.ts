@@ -23,7 +23,7 @@
 
 import { app, BrowserWindow, dialog, powerMonitor } from 'electron'
 import path from 'node:path'
-import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR } from './portable'
+import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR, LOGS_DIR } from './portable'
 import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
@@ -45,8 +45,20 @@ import { installLockGate } from './lock/ipc-gate'
 import { denyNewWindows } from './net/external-links'
 import { installContentSecurityPolicy } from './security/csp'
 import { initBackupScheduler } from './backup/backup-scheduler'
-import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER } from './ui-preferences'
+import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, type MarkedBrowserWindow } from './ui-preferences'
 import { isQuitting, beginQuit, runCleanupChain, runFallbackCleanup } from './quit-manager'
+import { createLogger, configureLogDir } from './logger'
+import { errMsg } from './error'
+
+// 模块标签分散（boot/db/crypto/provider/license/quit/assistants/skills），按需各取一个 logger
+const log = createLogger('boot')
+const dbLog = createLogger('db')
+const cryptoLog = createLogger('crypto')
+const providerLog = createLogger('provider')
+const licenseLog = createLogger('license')
+const quitLog = createLogger('quit')
+const assistantsLog = createLogger('assistants')
+const skillsLog = createLogger('skills')
 
 // app.setPath 延后到 ensureDirs 之后执行：若 DATA_DIR 存在但非目录，
 // ensureDirs 会先删除重建，setPath 再使用时路径才安全。
@@ -61,17 +73,19 @@ function tryOpenDbNoPassword(): boolean {
     dbService.open()
     dbService.runMigrations()
     return true
-  } catch (e: any) {
+  } catch (e) {
     // SQLITE_NOTADB = 文件是加密的，必须用密码打开
-    if (e?.code === 'SQLITE_NOTADB' || e?.message?.includes('not a database')) {
+    const code = (e as { code?: string } | null)?.code
+    const msg = e instanceof Error ? e.message : ''
+    if (code === 'SQLITE_NOTADB' || msg.includes('not a database')) {
       // 关掉无 key 的死连接：dbService.open() 对已开连接幂等返回，
       // 死连接不关掉，后续带 key 重开和 salt 读取都会撞上它
       try { dbService.close() } catch { /* ignore */ }
       return false
     }
     // 其他错误：未知 DB 损坏
-    console.error('[db] 打开失败:', e?.message ?? e)
-    dialog.showErrorBox('数据库损坏', String(e?.message ?? e))
+    dbLog.error('打开失败:', msg || e)
+    dialog.showErrorBox('数据库损坏', msg || errMsg(e))
     process.exit(1)
   }
   return false
@@ -93,7 +107,7 @@ function installLoadRetry(win: BrowserWindow, label: string): void {
   const retry = (why: string) => {
     if (win.isDestroyed()) return
     if (retries >= 5) {
-      console.error(`[boot] ${label} 页面加载失败（已重试 ${retries} 次）: ${why}`)
+      log.error(`${label} 页面加载失败（已重试 ${retries} 次）: ${why}`)
       // 重试穷尽仍未加载成功 → 大概率安全软件（杀软/电脑管家类）查杀
       // 网络服务进程。生产环境没有终端可看日志，弹窗引导用户自救。
       if (!warned) {
@@ -113,7 +127,7 @@ function installLoadRetry(win: BrowserWindow, label: string): void {
       return
     }
     retries++
-    console.warn(`[boot] ${label} ${why}，${retries}/5 次重试…`)
+    log.warn(`${label} ${why}，${retries}/5 次重试…`)
     win.webContents.reload()
   }
 
@@ -239,7 +253,7 @@ function createMainWindow(): void {
   })
   mainWindow.on('closed', () => { mainWindow = null })
   // 标记主窗口：透明度等窗口级偏好只应用到主窗口（浮窗/独立窗口不打此标记）
-  ;(mainWindow as any)[MAIN_WINDOW_MARKER] = true
+  ;(mainWindow as MarkedBrowserWindow)[MAIN_WINDOW_MARKER] = true
   // 隐私锁：窗口隐藏/最小化 → 计时；重新显示 → 取消计时
   mainWindow.on('hide', () => lockService.onAppHidden())
   mainWindow.on('show', () => lockService.onAppShown())
@@ -261,6 +275,8 @@ function createMainWindow(): void {
 
 async function boot(): Promise<void> {
   ensureDirs()
+  // 日志落盘锚定便携目录 data/logs（LOGS_DIR 由 ensureDirs 保证存在）
+  configureLogDir(LOGS_DIR)
   migrateMcpExtensionsDir()
 
   // ensureDirs 之后才设置路径：此时 DATA_DIR 一定是合法目录
@@ -290,7 +306,7 @@ async function boot(): Promise<void> {
       // 1. 用户设置过密码但 DB 实际没加密（异常状态），或
       // 2. 用户取消密码后 app_config 没清理干净
       // 保守处理：要求用户重新设置密码，先让 DB 以无密码模式打开
-      console.warn('[boot] app_config 标记需要密码，但 DB 实际可无密码打开 → 进入解锁/重设流程')
+      log.warn('app_config 标记需要密码，但 DB 实际可无密码打开 → 进入解锁/重设流程')
       needUnlock = true
     } else {
       // 纯无密码模式
@@ -308,13 +324,13 @@ async function boot(): Promise<void> {
     // 如果 DB 已经被无密码打开过（上面的 tryOpenDbNoPassword），要先关闭再以密码重开
     if (dbService.getEncryptionMode() === 'none' && !hasExistingPassword) {
       // 无密码打开成功 → 说明 DB 实际是明文，让用户设置新密码
-      console.log('[boot] 明文 DB，显示"设置主密码"流程')
+      log.info('明文 DB，显示"设置主密码"流程')
     }
 
     const unlockMode: 'unlock' | 'setPassword' =
       dbService.getEncryptionMode() === 'none' && !hasExistingPassword ? 'setPassword' : 'unlock'
     showUnlockWindow(unlockMode)
-    console.log('[boot] 已弹出解锁窗口（屏幕置顶），请输入主密码；主窗口将在解锁后打开')
+    log.info('已弹出解锁窗口（屏幕置顶），请输入主密码；主窗口将在解锁后打开')
     const result = await unlockCoordinator.waitForUnlock()
 
     if (!result) {
@@ -340,9 +356,9 @@ async function boot(): Promise<void> {
       // 验证密码正确：跑一条简单 SQL
       try {
         dbService.getHandle().prepare('SELECT 1').get()
-        console.log('[boot] DB 解锁成功')
+        log.info('DB 解锁成功')
       } catch (e) {
-        console.error('[boot] 密码错误或 DB 损坏:', e)
+        log.error('密码错误或 DB 损坏:', e)
         dialog.showErrorBox('解锁失败', '密码错误或数据库已损坏')
         app.quit()
         return
@@ -355,7 +371,7 @@ async function boot(): Promise<void> {
 
       if (!openedPlaintext) {
         // 不应该走到这里（如果 DB 是加密的，用户应该走解锁流程）
-        console.error('[boot] 加密 DB 收到设置密码请求 → 拒绝')
+        log.error('加密 DB 收到设置密码请求 → 拒绝')
         app.quit()
         return
       }
@@ -370,7 +386,7 @@ async function boot(): Promise<void> {
       // 新库不应携带任何历史恢复包
       recoveryKeyManager.disableRecovery()
       restoreFieldCredentials(fieldSnapshot)
-      console.log('[boot] DB 已加密')
+      log.info('DB 已加密')
     }
 
     unlockWindow?.close()
@@ -382,25 +398,25 @@ async function boot(): Promise<void> {
     migrateKvSecrets()
     providerRepo.migratePlaintextKeys()
   } catch (e) {
-    console.warn('[crypto] 凭据迁移失败（不阻塞启动）:', e)
+    cryptoLog.warn('凭据迁移失败（不阻塞启动）:', e)
   }
 
   // 阶段 3.1：合并同 (type, baseUrl) 的重复 provider（历史脏数据清理，幂等）
   try {
     providerRepo.deduplicate()
   } catch (e) {
-    console.warn('[provider] 重复 provider 清理失败（不阻塞启动）:', e)
+    providerLog.warn('重复 provider 清理失败（不阻塞启动）:', e)
   }
 
   // 同步助手 + 技能
   const synced = syncBuiltinAssistants()
-  console.log(
-    `[assistants] 内置助手同步完成: ${synced.count} 个` +
+  assistantsLog.info(
+    `内置助手同步完成: ${synced.count} 个` +
       (synced.errors.length ? `，错误: ${synced.errors.join('; ')}` : '')
   )
   const syncedSkills = syncBuiltinSkills()
-  console.log(
-    `[skills] 内置技能同步完成: ${syncedSkills.count} 个` +
+  skillsLog.info(
+    `内置技能同步完成: ${syncedSkills.count} 个` +
       (syncedSkills.errors.length ? `，错误: ${syncedSkills.errors.join('; ')}` : '')
   )
 
@@ -416,7 +432,7 @@ async function boot(): Promise<void> {
     const licPath = appConfigRepo.getLicensePath()
     if (licPath) {
       licenseService.loadFromFile(licPath)
-      console.log('[license] 已加载:', licPath)
+      licenseLog.info('已加载:', licPath)
     } else {
       // 尝试默认路径
       const defaultLic = path.join(DATA_DIR, 'license.lic')
@@ -424,16 +440,16 @@ async function boot(): Promise<void> {
       if (fs.existsSync(defaultLic)) {
         licenseService.loadFromFile(defaultLic)
         appConfigRepo.setLicensePath(defaultLic)
-        console.log('[license] 已加载默认 license.lic')
+        licenseLog.info('已加载默认 license.lic')
       }
     }
   } catch (e) {
-    console.warn('[license] 加载失败:', String(e))
+    licenseLog.warn('加载失败:', String(e))
   }
 
   // 阶段 5：创建主窗口
   createMainWindow()
-  console.log('[boot] 主窗口已创建')
+  log.info('主窗口已创建')
   // 系统托盘：单击切换可见性，右键菜单显示/退出
   initTray('zh')
   // 应用已保存的窗口透明度
@@ -505,15 +521,15 @@ if (!gotLock) {
       try {
         getHardwareInfo()
       } catch (err) {
-        console.warn('[boot] 启动硬件检测失败:', err)
+        log.warn('启动硬件检测失败:', err)
       }
     })
     boot().catch((err) => {
-      console.error('[boot] 启动失败:', err)
+      log.error('启动失败:', err)
       dialog.showErrorBox('启动失败', String(err))
       app.quit()
     })
-    console.log('[boot] app ready, boot() 已发起')
+    log.info('app ready, boot() 已发起')
   })
 }
 
@@ -527,7 +543,7 @@ app.on('before-quit', (e) => {
 })
 
 app.on('window-all-closed', () => {
-  console.log('[quit] window-all-closed')
+  quitLog.info('window-all-closed')
   // macOS 上关掉所有窗口后仍保留 dock 图标，不自动退出
   if (process.platform === 'darwin') return
   if (isQuitting()) return // before-quit 已接管退出流程

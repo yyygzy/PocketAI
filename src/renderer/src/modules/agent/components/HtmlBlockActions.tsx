@@ -3,6 +3,7 @@ import React, { useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
 import { requestSandboxOpenApps } from '../../sandbox/SandboxModule'
+import { errText } from '../../../utils/error'
 
 export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock }) => {
   const { t } = useI18n()
@@ -20,7 +21,7 @@ export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock })
       await window.pocketai.createSandboxFile(t('sandbox.agentDefaultName'), htmlBlock)
       setSavedToSandbox(true)
     } catch (err) {
-      toast.error((err as Error).message)
+      toast.error(errText(err))
     }
   }
 
@@ -48,7 +49,7 @@ export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock })
         new CustomEvent('pocketai:switch-module', { detail: { moduleId: 'sandbox' } })
       )
     } catch (err) {
-      toast.error((err as Error).message)
+      toast.error(errText(err))
     } finally {
       setInstallBusy(false)
     }

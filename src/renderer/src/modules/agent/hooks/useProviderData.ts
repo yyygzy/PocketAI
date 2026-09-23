@@ -1,6 +1,7 @@
 // Provider / Assistant 基础数据加载与模型列表手动拉取
 import { useCallback, useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord } from '../../../../../shared/types'
+import { reportIpcError } from '../../../utils/ipc'
 
 export function useProviderData() {
   const [providers, setProviders] = useState<ProviderRecord[]>([])
@@ -8,10 +9,11 @@ export function useProviderData() {
   const [fetchingModels, setFetchingModels] = useState(false)
 
   useEffect(() => {
+    // Promise.all 任一 reject 整体 reject，必须挂 .catch 否则未处理 rejection 穿透
     void Promise.all([window.pocketai.listProviders(), window.pocketai.listAssistants()]).then(([ps, as_]) => {
       setProviders(ps.filter((p) => p.enabled))
       setAssistants(as_)
-    })
+    }).catch(reportIpcError('agent.loadProviderData'))
   }, [])
 
   /** 手动重新拉取某个 Provider 的模型列表；失败不阻断（设置页有完整报错） */

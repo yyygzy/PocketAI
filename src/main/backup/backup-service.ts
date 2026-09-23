@@ -12,8 +12,8 @@
 // 4. 文件名时间戳，永不覆盖旧备份
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto'
-import { createWriteStream, readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, statSync, readdirSync, rmSync, unlinkSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, statSync, readdirSync, rmSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 // archiver 是 CJS 模块（module.exports = function），@types 未声明 default 导出，
 // 用 require 避免 esbuild 将命名空间导入包装为不可调用对象
@@ -22,7 +22,7 @@ const archiver = require('archiver') as (format: string, options?: ArchiverOptio
 import unzipper from 'unzipper'
 import { dbService } from '../db/database'
 import { masterKeyManager } from '../crypto/master-key'
-import { DB_PATH, DATA_DIR, ATTACHMENTS_DIR } from '../portable'
+import { DB_PATH, ATTACHMENTS_DIR } from '../portable'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../crypto/field-encrypt'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import {
@@ -30,10 +30,13 @@ import {
   remoteExists, uploadRemoteBuffer, downloadRemoteFile,
   type WebDAVCredentials, type BackupFile
 } from './webdav-client'
+import { createLogger } from '../logger'
+import { errMsg } from '../error'
+
+const log = createLogger('backup')
 
 export { type WebDAVCredentials, type BackupFile }
 
-const ZIP_MAGIC = Buffer.from('PK\x03\x04')
 const ENC_PREFIX = 'PKBK1' // PocketAI Backup v1
 
 export interface BackupManifest {
@@ -193,18 +196,18 @@ function decryptBackup(blob: Buffer, salt: Buffer): Buffer {
 // ─── 公开 API ───────────────────────────────────────────────────
 
 export async function createLocalBackup(outDir: string): Promise<{ path: string; size: number; encrypted: boolean }> {
-  const { zip, manifest } = await createZipBuffer()
+  const { zip } = await createZipBuffer()
 
   const filename = `pocketai-backup-${new Date().toISOString().replace(/[:.]/g, '')}.zip`
   mkdirSync(outDir, { recursive: true })
   const outPath = join(outDir, filename)
   writeFileSync(outPath, zip)
-  console.log(`[backup] 本地备份: ${outPath} (${zip.length} bytes)`)
+  log.info(`本地备份: ${outPath} (${zip.length} bytes)`)
   return { path: outPath, size: zip.length, encrypted: false }
 }
 
 export async function createEncryptedLocalBackup(outDir: string): Promise<{ path: string; size: number; encrypted: boolean; saltB64: string }> {
-  const { zip, manifest } = await createZipBuffer()
+  const { zip } = await createZipBuffer()
   const { blob, salt } = encryptBackup(zip)
 
   const filename = `pocketai-backup-${new Date().toISOString().replace(/[:.]/g, '')}.enc.zip`
@@ -212,11 +215,10 @@ export async function createEncryptedLocalBackup(outDir: string): Promise<{ path
   const outPath = join(outDir, filename)
   // 0600：密文备份仍按最小权限落盘（同机其他用户不可读）；仅对新建文件生效
   writeFileSync(outPath, blob, { mode: 0o600 })
-  console.log(`[backup] 加密本地备份: ${outPath} (${blob.length} bytes, salt=${salt.toString('base64').slice(0,8)}...)`)
+  log.info(`加密本地备份: ${outPath} (${blob.length} bytes, salt=${salt.toString('base64').slice(0,8)}...)`)
   return { path: outPath, size: blob.length, encrypted: true, saltB64: salt.toString('base64') }
 }
 
-type WD = typeof import('./backup-service')
 function toCreds(cfg: WebDAVConfig): WebDAVCredentials {
   return {
     url: cfg.url,
@@ -226,8 +228,8 @@ function toCreds(cfg: WebDAVConfig): WebDAVCredentials {
   }
 }
 
-export async function createWebDAVBackup(credsOrCfg: any): Promise<{ filename: string; size: number; encrypted: boolean }> {
-  const creds = toCreds(credsOrCfg)
+export async function createWebDAVBackup(cfg: WebDAVConfig): Promise<{ filename: string; size: number; encrypted: boolean }> {
+  const creds = toCreds(cfg)
   const { zip } = await createZipBuffer()
   // 必须以「存在用户主密码密钥」为准；hasKey() 在 none 模式也为 true（init 即解锁），
   // 用它判断会导致公开固定密钥加密的假加密备份
@@ -243,7 +245,7 @@ export async function createWebDAVBackup(credsOrCfg: any): Promise<{ filename: s
 
   const filename = `pocketai-backup-${new Date().toISOString().replace(/[:.]/g, '')}${encrypted ? '.enc.zip' : '.zip'}`
   await uploadBuffer(creds, blob, filename)
-  console.log(`[backup] WebDAV 上传: ${filename} (${blob.length} bytes, encrypted=${encrypted})`)
+  log.info(`WebDAV 上传: ${filename} (${blob.length} bytes, encrypted=${encrypted})`)
   return { filename, size: blob.length, encrypted }
 }
 
@@ -291,9 +293,9 @@ function isEncryptedBlob(buf: Buffer, name: string): boolean {
 }
 
 export async function createWebDAVIncrementalBackup(
-  credsOrCfg: any
+  cfg: WebDAVConfig
 ): Promise<import('../../shared/types').IncrementalBackupResult> {
-  const creds = toCreds(credsOrCfg)
+  const creds = toCreds(cfg)
   // 同全量备份：以主密码密钥是否存在决定真加密（hasKey() 在 none 模式误报 true）
   const encrypted = masterKeyManager.getDbKey() !== null
 
@@ -358,8 +360,8 @@ export async function createWebDAVIncrementalBackup(
   await uploadBuffer(creds, indexPayload, indexName)
   bytesUploaded += indexPayload.length
 
-  console.log(
-    `[backup] WebDAV 增量备份: ${indexName}（附件 ${atts.length}，新传 ${blobsUploaded} blob，跳过 ${blobsSkipped}，共 ${bytesUploaded} bytes）`
+  log.info(
+    `WebDAV 增量备份: ${indexName}（附件 ${atts.length}，新传 ${blobsUploaded} blob，跳过 ${blobsSkipped}，共 ${bytesUploaded} bytes）`
   )
   return {
     filename: indexName,
@@ -373,10 +375,10 @@ export async function createWebDAVIncrementalBackup(
 
 /** 从 WebDAV 增量索引恢复（DB 全量替换；附件按 sha256 缺失才下载） */
 export async function restoreIncrementalFromWebDAV(
-  credsOrCfg: any,
+  cfg: WebDAVConfig,
   indexFilename: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const creds = toCreds(credsOrCfg)
+  const creds = toCreds(cfg)
 
   // 1. 下载并解密索引
   const indexRaw = await downloadFile(creds, indexFilename)
@@ -463,20 +465,20 @@ export async function restoreIncrementalFromWebDAV(
   }
   dbService.runMigrations()
 
-  console.log(`[backup] 增量恢复完成: ${indexFilename}`)
+  log.info(`增量恢复完成: ${indexFilename}`)
   return { ok: true }
 }
 
-export async function listWebDAVBackups(credsOrCfg: any): Promise<BackupFile[]> {
-  return listFiles(toCreds(credsOrCfg))
+export async function listWebDAVBackups(cfg: WebDAVConfig): Promise<BackupFile[]> {
+  return listFiles(toCreds(cfg))
 }
 
-export async function testWebDAV(credsOrCfg: any): Promise<{ ok: boolean; message?: string }> {
-  return testConnection(toCreds(credsOrCfg))
+export async function testWebDAV(cfg: WebDAVConfig): Promise<{ ok: boolean; message?: string }> {
+  return testConnection(toCreds(cfg))
 }
 
-export async function deleteWebDAVBackup(credsOrCfg: any, filename: string): Promise<void> {
-  await deleteFile(toCreds(credsOrCfg), filename)
+export async function deleteWebDAVBackup(cfg: WebDAVConfig, filename: string): Promise<void> {
+  await deleteFile(toCreds(cfg), filename)
 }
 
 // ─── 恢复安全校验（防 Zip Slip / symlink 攻击） ───────────────────
@@ -511,10 +513,10 @@ function removeStaleSidecars(dbPath: string): void {
 }
 
 export async function restoreFromWebDAV(
-  credsOrCfg: any,
+  cfg: WebDAVConfig,
   filename: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const creds = toCreds(credsOrCfg)
+  const creds = toCreds(cfg)
   // 1. 下载
   const blob = await downloadFile(creds, filename)
   // 2. 判断加密
@@ -523,8 +525,8 @@ export async function restoreFromWebDAV(
   if (isEncrypted) {
     try {
       zip = decryptBackup(blob, blob.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16))
-    } catch (e: any) {
-      const msg = e?.message ?? ''
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : ''
       if (msg.includes('decrypt') || msg.includes('auth')) {
         return { ok: false, error: '备份加密密钥与当前主密码不匹配，请在设置页输入恢复密码（暂不支持，当前会话密码必须一致）' }
       }
@@ -617,7 +619,7 @@ export async function restoreFromWebDAV(
     }
     dbService.runMigrations()
 
-    console.log(`[backup] 恢复完成: ${filename} (DB加密=${manifest.dbEncrypted})`)
+    log.info(`恢复完成: ${filename} (DB加密=${manifest.dbEncrypted})`)
     return result
   } catch (e) {
     // 恢复中途失败：尽量以无密钥/当前密钥重开，避免应用处于无 DB 状态
@@ -625,7 +627,7 @@ export async function restoreFromWebDAV(
       if (!masterKeyManager.getDbKey()) dbService.open()
       else dbService.open(masterKeyManager.getDbKey()!)
     } catch { /* 原库本身也无法打开，交给用户重启 */ }
-    result = { ok: false, error: `恢复失败：${(e as Error)?.message ?? e}` }
+    result = { ok: false, error: `恢复失败：${errMsg(e)}` }
     return result
   } finally {
     rmSync(tmp, { recursive: true, force: true })
@@ -653,7 +655,7 @@ export function loadWebDAVConfig(): WebDAVConfig | null {
     const cfg: WebDAVConfig = JSON.parse(raw)
     // 解密 password
     const pwdArr = decryptApiKeys(cfg.passwordCipher)
-    if (pwdArr.length > 0) cfg.passwordCipher = pwdArr[0]
+    if (pwdArr.length > 0) cfg.passwordCipher = pwdArr[0]!
     return cfg
   } catch {
     return null

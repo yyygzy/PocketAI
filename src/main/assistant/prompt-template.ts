@@ -22,7 +22,7 @@ export function renderPrompt(template: string, ctx: PromptContext = {}): string 
   const now = new Date()
   const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
   const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`
-  const weekday = WEEKDAYS[now.getDay()]
+  const weekday = WEEKDAYS[now.getDay()]!
 
   const map: Record<string, string> = {
     date,
@@ -35,7 +35,7 @@ export function renderPrompt(template: string, ctx: PromptContext = {}): string 
   }
 
   const rendered = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key: string) =>
-    Object.prototype.hasOwnProperty.call(map, key) ? map[key] : match
+    Object.prototype.hasOwnProperty.call(map, key) ? map[key]! : match
   )
 
   // 兜底：助手启用了技能但模板没写 {{skills}}，自动追加到末尾，保证技能生效

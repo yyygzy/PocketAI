@@ -12,7 +12,6 @@
 //
 import Database from 'better-sqlite3-multiple-ciphers'
 import fs from 'node:fs'
-import path from 'node:path'
 import { DB_PATH, DATA_DIR } from '../portable'
 
 export type Migration = {
@@ -397,7 +396,7 @@ const MIGRATIONS: Migration[] = [
 ]
 
 /** 代码内最新迁移版本（诊断模块用来判断库结构是否落后） */
-export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version
 
 export type EncryptionMode = 'none' | 'db'
 
@@ -476,8 +475,10 @@ export class DatabaseService {
 
   runMigrations(): void {
     if (!this.db) throw new Error('Database not opened')
+    // 局部变量 db 收窄后闭包内能保持类型，避免 this.db! 非空断言（this 类成员在闭包内会丢失收窄）
+    const db = this.db
 
-    this.db.exec(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
@@ -486,18 +487,18 @@ export class DatabaseService {
     `)
 
     const applied = new Set(
-      this.db
+      (db
         .prepare('SELECT version FROM schema_migrations')
-        .all()
-        .map((r: any) => r.version as number)
+        .all() as Array<{ version: number }>)
+        .map((r) => r.version)
     )
 
     const now = Date.now()
     for (const m of MIGRATIONS) {
       if (applied.has(m.version)) continue
-      const tx = this.db.transaction(() => {
-        this.db!.exec(m.up)
-        this.db!
+      const tx = db.transaction(() => {
+        db.exec(m.up)
+        db
           .prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
           .run(m.version, m.name, now)
       })
@@ -508,11 +509,14 @@ export class DatabaseService {
   integrityCheck(): { ok: boolean; details: string } {
     if (!this.db) return { ok: false, details: 'Database not opened' }
     try {
-      const row = this.db.pragma('integrity_check', { simple: true }) as any
+      // simple 模式：正常返回 'ok' 字符串；异常时驱动可能返回结果行数组
+      const row = this.db.pragma('integrity_check', { simple: true }) as
+        | string
+        | Array<{ integrity_check: string }>
       const result = Array.isArray(row) ? row[0]?.integrity_check : row
       return { ok: result === 'ok', details: String(result) }
-    } catch (e: any) {
-      return { ok: false, details: e.message }
+    } catch (e) {
+      return { ok: false, details: e instanceof Error ? e.message : String(e) }
     }
   }
 

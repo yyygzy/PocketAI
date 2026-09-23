@@ -27,19 +27,16 @@ const LOCK_IPC_WHITELIST: ReadonlySet<string> = new Set<string>([
 
 let installed = false
 
+type InvokeListener = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+type HandleFn = (channel: string, listener: InvokeListener) => void
+
 /** 安装锁网关（幂等）：包装 ipcMain.handle，locked 时拦截非白名单 invoke */
 export function installLockGate(): void {
   if (installed) return
   installed = true
 
-  const rawHandle = ipcMain.handle.bind(ipcMain) as (
-    channel: string,
-    listener: (event: IpcMainInvokeEvent, ...args: any[]) => any
-  ) => void
-  ;(ipcMain as any).handle = (
-    channel: string,
-    listener: (event: IpcMainInvokeEvent, ...args: any[]) => any
-  ): void => {
+  const rawHandle = ipcMain.handle.bind(ipcMain) as unknown as HandleFn
+  ;(ipcMain as unknown as { handle: HandleFn }).handle = (channel, listener) => {
     rawHandle(channel, async (event, ...args) => {
       if (lockService.getStatus().state === 'locked' && !LOCK_IPC_WHITELIST.has(channel)) {
         throw new Error('APP_LOCKED')

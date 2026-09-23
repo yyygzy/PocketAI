@@ -4,6 +4,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { Markdown } from '../modules/chat/Markdown'
+import { reportIpcError } from '../utils/ipc'
+import { errText } from '../utils/error'
 import type { AssistantRecord, PopupPayload, ProviderRecord } from '../../../shared/types'
 
 interface Msg {
@@ -48,6 +50,14 @@ export const PopupApp: React.FC = () => {
     [providers, providerId]
   )
 
+  // 浮窗载荷（快捷问答 / 选区文本）：首次拉取 + 后续推送
+  const applyPayload = useCallback((p: PopupPayload | null) => {
+    if (!p) return
+    setMode(p.mode)
+    setSelection(p.mode === 'selection' ? p.text ?? '' : '')
+    if (p.mode === 'quick') setTimeout(() => taRef.current?.focus(), 50)
+  }, [])
+
   // ─── 初始化：Provider / 助手 / payload ────────────────────────────
   useEffect(() => {
     window.pocketai.listProviders().then((ps) => {
@@ -57,15 +67,14 @@ export const PopupApp: React.FC = () => {
         if (cur && enabled.some((p) => p.id === cur)) return cur
         return enabled[0]?.id ?? ''
       })
-    })
+    }).catch(reportIpcError('popup.listProviders'))
     window.pocketai.listAssistants().then((as_) => {
       setAssistant(as_.find((a) => a.isBuiltin && /通用问答/.test(a.name)) ?? as_[0] ?? null)
-    })
-    window.pocketai.getPopupPayload().then(applyPayload)
+    }).catch(reportIpcError('popup.listAssistants'))
+    void window.pocketai.getPopupPayload().then(applyPayload).catch(reportIpcError('popup.getPayload'))
     const unsub = window.pocketai.onPopupPayload(applyPayload)
     return unsub
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [applyPayload])
 
   // provider/model 持久化 + 自动选中首个模型
   useEffect(() => {
@@ -91,7 +100,10 @@ export const PopupApp: React.FC = () => {
       setMessages((ms) => {
         const next = [...ms]
         const idx = next.findIndex((m, i) => m.role === 'assistant' && i === next.length - 1)
-        if (idx >= 0) next[idx] = { ...next[idx], content: next[idx].content + e.delta }
+        if (idx >= 0) {
+          const cur = next[idx]!
+          next[idx] = { ...cur, content: cur.content + e.delta }
+        }
         return next
       })
     })
@@ -101,8 +113,11 @@ export const PopupApp: React.FC = () => {
       setStreaming(false)
       setMessages((ms) => {
         const next = [...ms]
-        if (next.length && next[next.length - 1].role === 'assistant') {
-          next[next.length - 1] = { ...next[next.length - 1], content: e.fullContent || next[next.length - 1].content }
+        if (next.length) {
+          const last = next[next.length - 1]!
+          if (last.role === 'assistant') {
+            next[next.length - 1] = { ...last, content: e.fullContent || last.content }
+          }
         }
         return next
       })
@@ -113,8 +128,11 @@ export const PopupApp: React.FC = () => {
       setStreaming(false)
       setMessages((ms) => {
         const next = [...ms]
-        if (next.length && next[next.length - 1].role === 'assistant') {
-          next[next.length - 1] = { role: 'assistant', content: e.error, error: true }
+        if (next.length) {
+          const last = next[next.length - 1]!
+          if (last.role === 'assistant') {
+            next[next.length - 1] = { role: 'assistant', content: e.error, error: true }
+          }
         }
         return next
       })
@@ -126,20 +144,13 @@ export const PopupApp: React.FC = () => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [messages])
 
-  function applyPayload(p: PopupPayload | null) {
-    if (!p) return
-    setMode(p.mode)
-    setSelection(p.mode === 'selection' ? p.text ?? '' : '')
-    if (p.mode === 'quick') setTimeout(() => taRef.current?.focus(), 50)
-  }
-
   const fetchModels = useCallback(async () => {
     if (!providerId || fetchingModels) return
     setFetchingModels(true)
     try {
       const models = await window.pocketai.fetchModels(providerId)
       setProviders((ps) => ps.map((p) => (p.id === providerId ? { ...p, models } : p)))
-      if (models.length > 0) setModel(models[0])
+      if (models.length > 0) setModel(models[0]!)
     } catch {
       // 拉取失败在主窗口设置页有完整报错，浮窗内静默
     } finally {
@@ -153,11 +164,18 @@ export const PopupApp: React.FC = () => {
       const content = text.trim()
       if (!content || streaming || !providerId || !model) return
       let convId = conversationId
-      if (!convId) {
-        if (!assistant) return
-        const conv = await window.pocketai.createConversation(assistant.id)
-        convId = conv.id
-        setConversationId(convId)
+      try {
+        if (!convId) {
+          if (!assistant) return
+          const conv = await window.pocketai.createConversation(assistant.id)
+          convId = conv.id
+          setConversationId(convId)
+        }
+      } catch (e) {
+        // 创建会话失败：用户主动操作必须有可见反馈（参考 onChatError 形态）
+        // input 未清空、streaming 未置 true，用户可重试
+        setMessages((ms) => [...ms, { role: 'assistant', content: errText(e, t('common.unknownError')), error: true }])
+        return
       }
       const rid = `popup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       requestIdRef.current = rid
@@ -176,7 +194,7 @@ export const PopupApp: React.FC = () => {
         targets: [{ providerId, model }]
       })
     },
-    [streaming, providerId, model, conversationId, assistant]
+    [streaming, providerId, model, conversationId, assistant, t]
   )
 
   const stop = () => {

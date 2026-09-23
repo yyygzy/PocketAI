@@ -7,5 +7,7 @@
     if (theme === 'light') document.documentElement.classList.add('light')
     var lang = localStorage.getItem('pocketai.lang')
     if (lang === 'en') document.documentElement.lang = 'en'
-  } catch (e) {}
+  } catch (e) {
+    // localStorage 被禁用/隐私模式时静默降级默认主题，此阶段无日志通道
+  }
 })()

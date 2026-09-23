@@ -4,6 +4,9 @@ import { mcpManager } from './mcp/manager'
 import { ollamaRuntime } from './ollama/ollama-runtime'
 import { stopBackupScheduler } from './backup/backup-scheduler'
 import { dbService } from './db/database'
+import { createLogger } from './logger'
+
+const log = createLogger('quit')
 
 /** 退出流程中：防止 close 事件重复弹窗，也让 tray 退出菜单跳过弹窗 */
 let quitting = false
@@ -27,7 +30,7 @@ export function beginQuit(): void {
  * 顺序：abortPull → await mcpManager.stopAll → ollamaRuntime.cleanup → scheduler → db
  */
 export async function runCleanupChain(): Promise<void> {
-  console.log('[quit] before-quit → 异步清理链开始')
+  log.info('before-quit → 异步清理链开始')
   try {
     // 1. 中止正在进行的模型下载（HTTP 长连接必须先断）
     ollamaRuntime.abortPull()
@@ -36,17 +39,17 @@ export async function runCleanupChain(): Promise<void> {
     // 2. 停 MCP 服务器（shutdown → SIGTERM → 超时 SIGKILL）
     await mcpManager.stopAll()
   } catch (err) {
-    console.warn('[quit] mcpManager.stopAll 异常:', err)
+    log.warn('mcpManager.stopAll 异常:', err)
   }
   try {
     // 3. 停 Ollama serve（killTree 整树终止）
     ollamaRuntime.cleanup()
   } catch (err) {
-    console.warn('[quit] ollamaRuntime.cleanup 异常:', err)
+    log.warn('ollamaRuntime.cleanup 异常:', err)
   }
   try { stopBackupScheduler() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
-  console.log('[quit] 清理链完成')
+  log.info('清理链完成')
 }
 
 /** 兜底同步清理（will-quit 极端情况调用） */

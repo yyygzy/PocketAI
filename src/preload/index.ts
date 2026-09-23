@@ -7,6 +7,8 @@ import type {
   SkillRecord,
   ConversationRecord,
   MessageRecord,
+  ConversationExportPayload,
+  MessageSearchResult,
   SendMessagePayload,
   RegeneratePayload,
   ResendPayload,
@@ -25,10 +27,16 @@ import type {
   PythonEnvInstallEvent,
   PythonPipSource,
   AgentStepEvent,
+  AgentChunkEvent,
   AgentDoneEvent,
   AgentErrorEvent,
   ToolSchema,
   LicenseStatus,
+  ActivationResult,
+  UpdateInfo,
+  UpdateEvent,
+  WebDAVConfig,
+  WebDAVBackupFile,
   EncryptionStatus,
   LockStatus,
   LockStateEvent,
@@ -143,7 +151,7 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_DELETE, id),
   renameConversation: (id: string, title: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_RENAME, id, title),
-  exportConversation: (id: string): Promise<{ ok: boolean; data?: any; error?: string }> =>
+  exportConversation: (id: string): Promise<{ ok: boolean; data?: ConversationExportPayload; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT, id),
   exportConversationMd: (id: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_MD, id),
@@ -151,7 +159,7 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_ENCRYPTED, id, password),
   importConversationEncrypted: (password: string): Promise<{ ok: boolean; canceled?: boolean; conversationId?: string; messageCount?: number; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT_ENCRYPTED, password),
-  importConversation: (payload: any): Promise<{ ok: boolean; conversationId?: string; messageCount?: number; error?: string }> =>
+  importConversation: (payload: ConversationExportPayload): Promise<{ ok: boolean; conversationId?: string; messageCount?: number; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT, payload),
   forkConversation: (conversationId: string, messageId: string): Promise<{ ok: boolean; conversation?: ConversationRecord; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_FORK, conversationId, messageId),
@@ -161,7 +169,7 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_LIST, conversationId),
   deleteMessage: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.MESSAGE_DELETE, id),
-  searchMessages: (query: string): Promise<any[]> =>
+  searchMessages: (query: string): Promise<MessageSearchResult[]> =>
     ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query),
 
   // ---------- 聊天 ----------
@@ -381,8 +389,8 @@ const api = {
   /** 本机硬盘指纹（16 位 hex）；null = 无法读取 */
   getLicenseFingerprint: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC.LICENSE_GET_FINGERPRINT),
-  /** 卡密在线激活：客户端自动附带本机硬盘指纹请求激活服务器 */
-  onlineActivateLicense: (code: string): Promise<LicenseStatus> =>
+  /** 卡密在线激活：客户端自动附带本机硬盘指纹请求激活服务器；失败返回 { ok:false, code } */
+  onlineActivateLicense: (code: string): Promise<ActivationResult> =>
     ipcRenderer.invoke(IPC.LICENSE_ONLINE_ACTIVATE, code),
 
   // ---------- 独立窗口 ----------
@@ -495,15 +503,9 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.AGENT_STEP_EVENT, listener)
   },
   onAgentChunk: (
-    handler: (e: {
-      requestId: string
-      conversationId: string
-      stepIndex: number
-      messageId: string
-      delta: string
-    }) => void
+    handler: (e: AgentChunkEvent) => void
   ): (() => void) => {
-    const listener = (_e: IpcRendererEvent, data: any) => handler(data)
+    const listener = (_e: IpcRendererEvent, data: AgentChunkEvent) => handler(data)
     ipcRenderer.on(IPC.AGENT_CHUNK_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.AGENT_CHUNK_EVENT, listener)
   },
@@ -577,18 +579,18 @@ const api = {
     | { ok: false; error: string }
   > =>
     ipcRenderer.invoke(IPC.BACKUP_LOCAL_ENCRYPTED),
-  saveWebDAVConfig: (cfg: any): Promise<{ ok: boolean }> =>
+  saveWebDAVConfig: (cfg: WebDAVConfig): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg),
-  loadWebDAVConfig: (): Promise<any | null> =>
+  loadWebDAVConfig: (): Promise<WebDAVConfig | null> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_LOAD_CONFIG),
-  testWebDAV: (cfg: any): Promise<{ ok: boolean; message?: string }> =>
+  testWebDAV: (cfg: WebDAVConfig): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_TEST, cfg),
   uploadWebDAVBackup: (): Promise<{ ok?: boolean; filename?: string; size?: number; encrypted?: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_UPLOAD),
   uploadIncrementalBackup: (): Promise<
     import('../shared/types').IncrementalBackupResult & { ok?: boolean; error?: string }
   > => ipcRenderer.invoke(IPC.BACKUP_WEBDAV_UPLOAD_INCREMENTAL),
-  listWebDAVBackups: (): Promise<any[]> =>
+  listWebDAVBackups: (): Promise<WebDAVBackupFile[]> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_LIST),
   restoreWebDAVBackup: (filename: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_RESTORE, filename),
@@ -602,7 +604,7 @@ const api = {
     ipcRenderer.invoke(IPC.BACKUP_SCHEDULE_SET, patch),
 
   // ---------- 自动更新 ----------
-  getUpdateInfo: (): Promise<any> =>
+  getUpdateInfo: (): Promise<UpdateInfo> =>
     ipcRenderer.invoke(IPC.UPDATE_GET_INFO),
   checkUpdate: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.UPDATE_CHECK),
@@ -612,8 +614,8 @@ const api = {
     ipcRenderer.invoke(IPC.UPDATE_QUIT_INSTALL),
   setAutoUpdate: (enabled: boolean): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.UPDATE_SET_SETTINGS, enabled),
-  onUpdateEvent: (callback: (e: any) => void): (() => void) => {
-    const listener = (_e: Electron.IpcRendererEvent, data: any) => callback(data)
+  onUpdateEvent: (callback: (e: UpdateEvent) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, data: UpdateEvent) => callback(data)
     ipcRenderer.on(IPC.UPDATE_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.UPDATE_EVENT, listener)
   },
@@ -659,6 +661,10 @@ const api = {
     ipcRenderer.invoke(IPC.WIZARD_GET_STATE),
   completeWizard: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.WIZARD_COMPLETE),
+  getLastProvider: (): Promise<{ ok: boolean; data?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.WIZARD_GET_LAST_PROVIDER),
+  setLastProvider: (providerId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.WIZARD_SET_LAST_PROVIDER, providerId),
 
   // ---------- 文件模块 ----------
   listFiles: (relDir: string): Promise<FileEntry[]> =>

@@ -4,6 +4,7 @@
 import React, { useState } from 'react'
 import type { AssistantRecord, KnowledgeBase, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { reportIpcError } from '../../utils/ipc'
 
 interface Props {
   assistant: AssistantRecord | null
@@ -22,9 +23,9 @@ export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }
   const toggleSection = async (s: Exclude<Section, null>) => {
     setSection((prev) => (prev === s ? null : s))
     if (s === 'skills' && skills === null) {
-      window.pocketai.listSkills().then(setSkills)
+      window.pocketai.listSkills().then(setSkills).catch(reportIpcError('chatConfig.listSkills'))
     } else if (s === 'kb' && kbs === null) {
-      window.pocketai.listKnowledgeBases().then(setKbs)
+      window.pocketai.listKnowledgeBases().then(setKbs).catch(reportIpcError('chatConfig.listKnowledgeBases'))
     }
   }
 

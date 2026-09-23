@@ -4,6 +4,9 @@ import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import type { AppPaths } from '../shared/types'
+import { createLogger } from './logger'
+
+const log = createLogger('portable')
 
 /**
  * 可执行文件所在目录（打包后）或项目根（开发时）。
@@ -85,7 +88,7 @@ export function ensureDirs(): void {
     try {
       const st = fs.statSync(dir)
       if (!st.isDirectory()) {
-        console.warn(`[portable] 路径存在但非目录，删除重建: ${dir}`)
+        log.warn(`路径存在但非目录，删除重建: ${dir}`)
         fs.rmSync(dir, { recursive: true, force: true })
       }
     } catch {
@@ -120,8 +123,8 @@ export function migrateMcpExtensionsDir(): void {
         fs.rmSync(src, { recursive: true, force: true })
       }
     }
-    console.log(`[portable] MCP 扩展目录已迁移: ${oldDir} → ${MCP_EXTENSIONS_DIR}`)
+    log.info(`MCP 扩展目录已迁移: ${oldDir} → ${MCP_EXTENSIONS_DIR}`)
   } catch (e) {
-    console.warn('[portable] MCP 扩展目录迁移失败（不阻塞启动）:', e)
+    log.warn('MCP 扩展目录迁移失败（不阻塞启动）:', e)
   }
 }

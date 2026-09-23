@@ -1,6 +1,6 @@
 // Ollama 便携运行时管理面板：一键安装 → 启动 → 拉取推荐模型 → 自动注册 provider
 // 两种密度：向导页 compact（精简引导）/ 设置页 full（含路径与完整操作）
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   OllamaRuntimeStatus,
   OllamaInstallEvent,
@@ -8,6 +8,9 @@ import type {
   ModelRecommendation
 } from '../../../shared/types'
 import { useI18n } from '../i18n'
+import { reportIpcError } from '../utils/ipc'
+import { errText } from '../utils/error'
+import { useTransientNotice } from '../hooks/useTransientNotice'
 
 function formatMB(bytes: number | null | undefined): string {
   if (!bytes) return ''
@@ -23,15 +26,17 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const [starting, setStarting] = useState(false)
   const [pullEvt, setPullEvt] = useState<OllamaPullEvent | null>(null)
   const [pulling, setPulling] = useState<string | null>(null)
-  const [pullDone, setPullDone] = useState('')
+  const { notice: pullDone, show: markPullDone, clear: clearPullDone } = useTransientNotice<string>(4000)
   const [customModel, setCustomModel] = useState('')
   const [rec, setRec] = useState<ModelRecommendation | null>(null)
   const [mirror, setMirror] = useState('')
   const [mirrorDraft, setMirrorDraft] = useState('')
-  const [mirrorSaved, setMirrorSaved] = useState(false)
+  const { notice: mirrorSaved, show: markMirrorSaved } = useTransientNotice<boolean>(2000)
+  // handleStop 的延时回调：组件卸载后必须清理，避免对已卸载组件 setState
+  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const refresh = useCallback(() => {
-    window.pocketai.getOllamaStatus().then(setStatus).catch(() => {})
+    window.pocketai.getOllamaStatus().then(setStatus).catch(reportIpcError('ollama.getStatus'))
   }, [])
 
   useEffect(() => {
@@ -41,7 +46,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
         setMirror(r.mirror)
         setMirrorDraft(r.mirror)
       }
-    })
+    }).catch(reportIpcError('ollama.getMirror'))
     const off1 = window.pocketai.onOllamaInstallEvent((e) => setInstallEvt(e))
     const off2 = window.pocketai.onOllamaPullEvent((e) => setPullEvt(e))
     const timer = setInterval(refresh, 8000) // 兜底轮询（外部启停/系统 ollama 变化）
@@ -49,6 +54,10 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       off1()
       off2()
       clearInterval(timer)
+      if (stopTimerRef.current) {
+        clearTimeout(stopTimerRef.current)
+        stopTimerRef.current = null
+      }
     }
   }, [refresh])
 
@@ -56,7 +65,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     window.pocketai
       .recommendModels()
       .then((r) => r.ok && r.data && setRec(r.data))
-      .catch(() => {})
+      .catch(reportIpcError('ollama.recommendModels'))
   }, [])
 
   async function handleInstall() {
@@ -72,7 +81,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       if (r.status) setStatus(r.status)
       else refresh()
     } catch (e) {
-      setErr((e as Error).message || t('ollama.installFailed'))
+      setErr(errText(e, t('ollama.installFailed')))
     } finally {
       setInstalling(false)
       setStarting(false)
@@ -87,32 +96,49 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       if (r.ok && r.status) setStatus(r.status)
       else if (!r.ok) setErr(r.error || 'start failed')
     } catch (e) {
-      setErr((e as Error).message)
+      setErr(errText(e))
     } finally {
       setStarting(false)
     }
   }
 
   async function handleStop() {
-    await window.pocketai.stopOllama()
-    setTimeout(refresh, 800)
+    try {
+      await window.pocketai.stopOllama()
+    } catch (e) {
+      // stopOllama reject（通道失败/进程已退出）必须兜底，否则 unhandled 且 refresh 不执行
+      setErr(errText(e))
+    }
+    if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
+    stopTimerRef.current = setTimeout(() => {
+      stopTimerRef.current = null
+      refresh()
+    }, 800)
   }
 
-  async function pull(model: string) {
+  /** @returns 是否拉取成功（调用方据此决定是否清空输入框） */
+  async function pull(model: string): Promise<boolean> {
     const name = model.trim()
-    if (!name || pulling) return
+    if (!name || pulling) return false
     setErr('')
-    setPullDone('')
+    clearPullDone()
     setPulling(name)
     setPullEvt({ model: name, status: '', percent: 0, done: false })
-    const r = await window.pocketai.pullOllamaModel(name)
-    setPulling(null)
-    if (r.ok) {
-      setPullDone(name)
-      setTimeout(() => setPullDone(''), 4000)
-      refresh()
-    } else {
+    try {
+      const r = await window.pocketai.pullOllamaModel(name)
+      if (r.ok) {
+        markPullDone(name)
+        refresh()
+        return true
+      }
       setErr(`${name}: ${r.error}`)
+      return false
+    } catch (e) {
+      // IPC 层 reject（主进程异常/通道失败）：必须复位 pulling，否则按钮永久卡在拉取中
+      setErr(`${name}: ${e instanceof Error ? e.message : String(e)}`)
+      return false
+    } finally {
+      setPulling(null)
     }
   }
 
@@ -154,7 +180,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
         <div className="space-y-1">
           <div className="h-2 rounded bg-[var(--color-hover-overlay)] overflow-hidden">
             <div
-              className="h-full bg-[var(--color-accent)] transition-all"
+              className="h-full bg-[var(--color-accent)] transition-[width] duration-200"
               style={{ width: `${starting ? 100 : Math.max(2, installEvt?.percent ?? 0)}%` }}
             />
           </div>
@@ -203,13 +229,17 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
             <button
               className="shrink-0 px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text)]"
               onClick={async () => {
-                const r = await window.pocketai.setOllamaMirror(mirrorDraft)
-                if (r.ok) {
-                  setMirror(mirrorDraft.trim())
-                  setMirrorSaved(true)
-                  setTimeout(() => setMirrorSaved(false), 2000)
-                } else {
-                  setErr(r.error || 'bad mirror')
+                try {
+                  const r = await window.pocketai.setOllamaMirror(mirrorDraft)
+                  if (r.ok) {
+                    setMirror(mirrorDraft.trim())
+                    markMirrorSaved(true)
+                  } else {
+                    setErr(r.error || 'bad mirror')
+                  }
+                } catch (e) {
+                  // IPC reject 必须兜底，否则 unhandled 且用户无反馈
+                  setErr(errText(e))
                 }
               }}
             >
@@ -294,7 +324,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
               value={customModel}
               disabled={!!pulling}
               onChange={(e) => setCustomModel(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && pull(customModel).then(() => setCustomModel(''))}
+              onKeyDown={(e) => e.key === 'Enter' && void pull(customModel).then((ok) => { if (ok) setCustomModel('') })}
             />
             {pulling ? (
               <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-warning)]"
@@ -303,7 +333,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
               </button>
             ) : (
               <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)]"
-                onClick={() => pull(customModel).then(() => setCustomModel(''))}>
+                onClick={() => void pull(customModel).then((ok) => { if (ok) setCustomModel('') })}>
                 {t('ollama.pullBtn')}
               </button>
             )}
@@ -313,7 +343,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       {pulling && pullEvt && (
             <div className="space-y-1">
               <div className="h-1.5 rounded bg-[var(--color-hover-overlay)] overflow-hidden">
-                <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${pullEvt.percent}%` }} />
+                <div className="h-full bg-[var(--color-accent)] transition-[width] duration-200" style={{ width: `${pullEvt.percent}%` }} />
               </div>
               <div className="text-[10px] text-[var(--color-text-muted)]">
                 {t('ollama.pulling')} {pulling} · {pullEvt.status} · {pullEvt.percent.toFixed(0)}%

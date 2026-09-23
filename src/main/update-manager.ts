@@ -1,16 +1,35 @@
 import { app, ipcMain, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import EventEmitter from 'node:events'
-import { IPC, type UpdateStatus } from '../shared/types'
+import { IPC, type UpdateStatus, type UpdateEvent } from '../shared/types'
 import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { downloadAsarPatch, restartToApplyPatch, isPatchPending } from './update/asar-patcher'
 import { isPortableRuntime } from './portable'
 import { safeFetch } from './net/safe-fetch'
+import { createLogger } from './logger'
+
+/** 从 unknown 异常取可读文本 */
+function errText(e: unknown): string {
+  return e instanceof Error && e.message ? e.message : String(e)
+}
+
+/** GitHub Releases API 条目（仅用到的字段） */
+interface GitHubReleaseApi {
+  draft: boolean
+  tag_name?: string
+  name?: string
+  published_at?: string
+  body?: string
+  html_url?: string
+  prerelease?: boolean
+}
 
 // ─── 单例 UpdateManager ──────────────────────────────────────────
 // 负责封装 electron-updater，维护状态机 + 互斥锁
 // 事件通过 IPC.UPDATE_EVENT 通道推送到渲染进程
+
+const log = createLogger('update')
 
 class UpdateManager extends EventEmitter {
   private status: UpdateStatus = 'idle'
@@ -40,7 +59,7 @@ class UpdateManager extends EventEmitter {
     // 开启自动更新：启动后延迟检查一次（自动下载由 autoDownload 标志接管）
     if (this.autoUpdateEnabled) {
       setTimeout(() => {
-        this.check().catch(() => {})
+        this.check().catch((e) => log.warn('启动延迟 check 失败:', errText(e)))
       }, 5000)
     }
 
@@ -83,7 +102,7 @@ class UpdateManager extends EventEmitter {
   }
 
   // ── 推送状态到所有渲染窗口 ──────────────────────────────────────
-  private setStatus(status: UpdateStatus, extra: Record<string, any> = {}): void {
+  private setStatus(status: UpdateStatus, extra: Partial<Omit<UpdateEvent, 'status'>> = {}): void {
     this.status = status
     this.emit('status', { status, ...extra })
     // 推送到所有 webContents
@@ -99,7 +118,7 @@ class UpdateManager extends EventEmitter {
   }
 
   // ── 查询当前状态（IPC 直接返回，不用事件）───────────────────────
-  getStatusSnapshot(): Record<string, any> {
+  getStatusSnapshot(): Pick<UpdateEvent, 'status' | 'newVersion' | 'progress' | 'error'> {
     return {
       status: this.status,
       newVersion: this.newVersion,
@@ -130,14 +149,14 @@ class UpdateManager extends EventEmitter {
     this.autoUpdateEnabled = !!enabled
     try {
       appConfigRepo.setAutoUpdateEnabled(this.autoUpdateEnabled)
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? String(e) }
+    } catch (e) {
+      return { ok: false, error: errText(e) }
     }
     this.applyAutoUpdateFlags()
 
     // 开启时立即检查一次（仅打包环境）；关闭时不打断进行中的流程
     if (this.autoUpdateEnabled && app.isPackaged && !this.busy) {
-      this.check().catch(() => {})
+      this.check().catch((e) => log.warn('toggle autoUpdate 后 check 失败:', errText(e)))
     }
     return { ok: true }
   }
@@ -169,8 +188,8 @@ class UpdateManager extends EventEmitter {
     try {
       await autoUpdater.checkForUpdates()
       return { ok: true }
-    } catch (e: any) {
-      this.error = e?.message ?? String(e)
+    } catch (e) {
+      this.error = errText(e)
       this.setStatus('error', { error: this.error })
       return { ok: false, error: this.error }
     }
@@ -210,8 +229,8 @@ class UpdateManager extends EventEmitter {
 
       await autoUpdater.downloadUpdate()
       return { ok: true }
-    } catch (e: any) {
-      this.error = e?.message ?? String(e)
+    } catch (e) {
+      this.error = errText(e)
       this.setStatus('error', { error: this.error })
       return { ok: false, error: this.error }
     } finally {
@@ -233,8 +252,8 @@ class UpdateManager extends EventEmitter {
       try {
         restartToApplyPatch() // 内部 app.quit()
         return { ok: true }
-      } catch (e: any) {
-        this.error = e?.message ?? String(e)
+      } catch (e) {
+        this.error = errText(e)
         this.setStatus('error', { error: this.error })
         return { ok: false, error: this.error }
       }
@@ -244,8 +263,8 @@ class UpdateManager extends EventEmitter {
       // silent: true = 静默安装（不用 NSIS 界面）
       autoUpdater.quitAndInstall(true, true)
       return { ok: true }
-    } catch (e: any) {
-      this.error = e?.message ?? String(e)
+    } catch (e) {
+      this.error = errText(e)
       this.setStatus('error', { error: this.error })
       return { ok: false, error: this.error }
     }
@@ -282,13 +301,13 @@ export function initUpdateManager(): void {
       if (res.status !== 200) {
         return { ok: false, error: `GitHub API HTTP ${res.status}` }
       }
-      const data = JSON.parse(res.body.toString())
+      const data: unknown = JSON.parse(res.body.toString())
       if (!Array.isArray(data)) {
         return { ok: false, error: 'GitHub API 返回格式异常' }
       }
-      const releases = data
-        .filter((r: any) => !r.draft)
-        .map((r: any) => ({
+      const releases = (data as GitHubReleaseApi[])
+        .filter((r) => !r.draft)
+        .map((r) => ({
           tag: String(r.tag_name ?? ''),
           name: String(r.name ?? ''),
           date: String(r.published_at ?? ''),
@@ -297,8 +316,8 @@ export function initUpdateManager(): void {
           prerelease: !!r.prerelease,
         }))
       return { ok: true, releases }
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? '拉取更新日志失败' }
+    } catch (e) {
+      return { ok: false, error: errText(e) || '拉取更新日志失败' }
     }
   })
 }

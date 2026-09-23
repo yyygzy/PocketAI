@@ -20,9 +20,10 @@
 // 4. 检查 expires_at、plan、features
 // 5. disk_fingerprint 非空时与 getDiskFingerprint()（APP_ROOT 所在硬盘）比对
 
-import { createVerify, publicDecrypt, constants } from 'node:crypto'
+import { createVerify } from 'node:crypto'
 import { PUBLIC_KEY_DER_B64 } from './public-key'
 import { getDiskFingerprint } from '../steward/hardware'
+import { errMsg } from '../error'
 
 export type LicensePlan = 'free' | 'pro' | 'enterprise'
 
@@ -111,7 +112,7 @@ export class LicenseService {
       const raw = fs.readFileSync(filePath, 'utf8')
       return this.loadFromString(raw)
     } catch (e) {
-      this.lastError = `读取文件失败: ${(e as Error).message}`
+      this.lastError = `读取文件失败: ${errMsg(e)}`
       return this.buildStatus(false)
     }
   }
@@ -122,7 +123,7 @@ export class LicenseService {
     try {
       file = JSON.parse(content) as LicenseFile
     } catch (e) {
-      this.lastError = `JSON 解析失败: ${(e as Error).message}`
+      this.lastError = `JSON 解析失败: ${errMsg(e)}`
       return this.buildStatus(false)
     }
 

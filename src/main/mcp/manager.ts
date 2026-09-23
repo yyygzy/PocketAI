@@ -6,7 +6,9 @@ import fs from 'node:fs'
 import { StdioJsonRpcClient } from './json-rpc'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
 import { MCP_EXTENSIONS_DIR } from '../portable'
+import { errMsg } from '../error'
 import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
+import { createLogger } from '../logger'
 import type {
   McpServerRecord,
   McpServerRuntime,
@@ -17,6 +19,13 @@ import type {
 } from '../../shared/types'
 
 const MCP_PROTOCOL_VERSION = '2024-11-05'
+
+/** MCP tools/list 返回的原始工具形状（外部协议边界，字段不保证类型，取用前收窄） */
+interface McpRawTool {
+  name?: unknown
+  description?: unknown
+  inputSchema?: unknown
+}
 
 /** 工具调用超时 30s */
 const TOOL_CALL_TIMEOUT = 30_000
@@ -71,7 +80,9 @@ const STABLE_RUNNING_MS = 5 * 60 * 1000
 
 const LOG_BUFFER_SIZE = 200
 
-class McpManager extends EventEmitter {
+const log = createLogger('mcp')
+
+export class McpManager extends EventEmitter {
   private runtimes = new Map<string, RuntimeEntry>()
   /** 启动中的 in-flight Promise（同步登记，早于任何 await，并发 start 直接复用） */
   private startingPromises = new Map<string, Promise<McpServerRuntime>>()
@@ -210,7 +221,7 @@ class McpManager extends EventEmitter {
       entry.client = client
 
       // initialize 握手
-      const initResult = await client.request<any>(
+      const initResult = await client.request<unknown>(
         'initialize',
         {
           protocolVersion: MCP_PROTOCOL_VERSION,
@@ -226,11 +237,11 @@ class McpManager extends EventEmitter {
       client.notify('notifications/initialized')
 
       // 拉取工具列表
-      const toolsResult = await client.request<{ tools: any[] }>('tools/list', {}, INIT_TIMEOUT)
+      const toolsResult = await client.request<{ tools: McpRawTool[] }>('tools/list', {}, INIT_TIMEOUT)
       entry.tools = (toolsResult?.tools ?? []).map((t) => this.normalizeMcpTool(t, id))
       // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
       if (entry.status === 'stopped') {
-        client.shutdown().catch(() => {})
+        client.shutdown().catch((e) => log.warn('shutdown 失败（握手期停止）:', errMsg(e)))
         return this.toRuntime(record)
       }
       entry.status = 'running'
@@ -245,11 +256,11 @@ class McpManager extends EventEmitter {
     } catch (e) {
       entry.client = null
       // 出错时关闭进程（如果已 spawn）
-      client.shutdown().catch(() => {})
+      client.shutdown().catch((e) => log.warn('shutdown 失败（启动异常清理）:', errMsg(e)))
       // 已被 stop 标记的不再回 error（保持 stopped），但异常仍抛给等待方
       if (entry.status !== 'stopped') {
         entry.status = 'error'
-        entry.lastError = (e as Error).message
+        entry.lastError = errMsg(e)
         this.emitStatus(id, 'error', entry.lastError)
       }
       throw e
@@ -273,7 +284,8 @@ class McpManager extends EventEmitter {
     clearTimeout(entry.stableTimer)
     entry.stableTimer = undefined
     this.emitStatus(id, 'stopped')
-    await client.shutdown().catch(() => {})
+    // shutdown 失败不阻断 stop 流程（用户主动停止，进程已标记 stopped）
+    await client.shutdown().catch((e) => log.warn('shutdown 失败（stop）:', errMsg(e)))
   }
 
   async restart(id: string): Promise<McpServerRuntime> {
@@ -296,7 +308,7 @@ class McpManager extends EventEmitter {
     if (!entry || !entry.client || entry.status !== 'running') {
       throw new Error('MCP Server 未运行')
     }
-    const result = await entry.client.request<any>(
+    const result = await entry.client.request<unknown>(
       'tools/call',
       { name, arguments: args ?? {} },
       TOOL_CALL_TIMEOUT
@@ -311,12 +323,13 @@ class McpManager extends EventEmitter {
   }
 
   /** 把 MCP 协议返回的 tool 转成统一 ToolSchema */
-  private normalizeMcpTool(raw: any, serverId: string): ToolSchema {
-    const name: string = raw?.name ?? 'unknown'
+  private normalizeMcpTool(raw: McpRawTool, serverId: string): ToolSchema {
+    const name = typeof raw?.name === 'string' && raw.name ? raw.name : 'unknown'
+    const description = typeof raw?.description === 'string' ? raw.description : ''
     return {
       id: `mcp:${serverId}:${name}`,
       name,
-      description: raw?.description ?? '',
+      description,
       parameters: (raw?.inputSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>,
       source: 'mcp',
       // MCP 工具权限按名称分级：

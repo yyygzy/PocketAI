@@ -10,6 +10,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createInterface, type Interface } from 'node:readline'
+import { errMsg } from '../error'
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0'
@@ -71,13 +72,16 @@ export class StdioJsonRpcClient {
   async spawn(): Promise<void> {
     if (this.proc) return
     const { command, args = [], env, cwd } = this.opts
-    this.proc = spawn(command, args, {
+    // 用局部变量 proc 保持类型收窄，事件回调闭包内不需要 this.proc! 断言；
+    // ChildProcessWithoutNullStreams 的 stdin/stdout/stderr 类型本身就是非 null 的 Writable
+    const proc = spawn(command, args, {
       cwd,
       env: { ...process.env, ...(env ?? {}) },
       stdio: ['pipe', 'pipe', 'pipe']
     })
+    this.proc = proc
 
-    this.proc.on('exit', (code, signal) => {
+    proc.on('exit', (code, signal) => {
       this.closed = true
       // 拒绝所有挂起请求
       for (const [id, entry] of this.pending.entries()) {
@@ -88,23 +92,26 @@ export class StdioJsonRpcClient {
       this.opts.onExit?.(code, signal)
     })
 
-    this.proc.on('error', (err) => {
+    proc.on('error', (err) => {
       this.closed = true
-      for (const [, entry] of this.pending) {
+      // 与 exit 一致：清 timer + 删 pending + reject，避免 timer 残留二次 reject
+      for (const [id, entry] of this.pending.entries()) {
+        clearTimeout(entry.timer)
+        this.pending.delete(id)
         entry.reject(new Error(`进程错误: ${err.message}`))
       }
     })
 
     // 解析 stdout 行
-    this.readline = createInterface({ input: this.proc.stdout! })
+    this.readline = createInterface({ input: proc.stdout })
     this.readline.on('line', (line) => this.handleLine(line))
 
     // stderr 作为日志
-    const stderrRl = createInterface({ input: this.proc.stderr! })
+    const stderrRl = createInterface({ input: proc.stderr })
     stderrRl.on('line', (line) => this.opts.onLog?.('stderr', line))
 
     // 等待 stdout 可写
-    if (!this.proc.stdin.writable) {
+    if (!proc.stdin.writable) {
       throw new Error('子进程 stdin 不可写')
     }
   }
@@ -143,6 +150,8 @@ export class StdioJsonRpcClient {
     if (!this.proc || this.closed) {
       return Promise.reject(new Error('JSON-RPC 通道已关闭'))
     }
+    // 局部变量 proc 保持类型收窄：Promise executor 闭包内 this 类成员会丢失收窄
+    const proc = this.proc
     const id = this.nextId++
     const req: JsonRpcRequest = { jsonrpc: '2.0', id, method, params }
     const timeout = timeoutMs ?? this.opts.requestTimeout ?? 30000
@@ -165,11 +174,11 @@ export class StdioJsonRpcClient {
       })
 
       try {
-        this.proc!.stdin.write(JSON.stringify(req) + '\n')
+        proc.stdin.write(JSON.stringify(req) + '\n')
       } catch (e) {
         clearTimeout(timer)
         this.pending.delete(id)
-        reject(new Error(`写入 stdin 失败: ${(e as Error).message}`))
+        reject(new Error(`写入 stdin 失败: ${errMsg(e)}`))
       }
     })
   }
@@ -245,7 +254,8 @@ export class StdioJsonRpcClient {
       } catch (e) {
         clearTimeout(timer)
         this.pending.delete(id)
-        reject(e as Error)
+        // 统一拒绝值为 Error 实例：消费方按 .message/.name 处理，非 Error 抛出包一层
+        reject(e instanceof Error ? e : new Error(errMsg(e)))
       }
     })
   }

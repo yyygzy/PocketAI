@@ -56,7 +56,7 @@ export function chunkText(
 }
 
 /** 从 slice 中找目标子串的最后一个出现位置，要求至少在 minPos 之后 */
-function findLast(slice: string, token: string, minPos: number): number {
+export function findLast(slice: string, token: string, minPos: number): number {
   let idx = slice.lastIndexOf(token)
   while (idx !== -1 && idx < minPos) {
     idx = slice.lastIndexOf(token, idx - 1)

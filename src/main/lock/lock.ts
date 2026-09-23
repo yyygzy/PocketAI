@@ -19,13 +19,12 @@ export type LockReason = 'manual' | 'auto-timeout' | 'app-hidden' | 'os-sleep'
 
 const AUTO_LOCK_CHECK_INTERVAL = 10_000 // 10 秒检查一次
 
-class LockService extends EventEmitter {
+export class LockService extends EventEmitter {
   private state: LockState = 'unlocked'
   private lastUnlockedAt = Date.now()
   private autoLockTimeout = 0 // 0=永不自动锁
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private checkTimer: ReturnType<typeof setInterval> | null = null
-  private hiddenSince: number | null = null
 
   /** 初始化：启动自动检查 */
   init(): void {
@@ -77,11 +76,9 @@ class LockService extends EventEmitter {
   /** 应用隐藏时调用（BrowserWindow 'hide' / 'minimize'） */
   onAppHidden(): void {
     if (this.state === 'unlocked') {
-      this.hiddenSince = Date.now()
       if (this.autoLockTimeout > 0) {
         this.idleTimer = setTimeout(() => {
           this.lock('app-hidden')
-          this.hiddenSince = null
         }, this.autoLockTimeout)
       }
     }
@@ -93,7 +90,6 @@ class LockService extends EventEmitter {
       clearTimeout(this.idleTimer)
       this.idleTimer = null
     }
-    this.hiddenSince = null
   }
 
   /** 系统睡眠回调 */
@@ -109,6 +105,9 @@ class LockService extends EventEmitter {
   /** 手动空闲标记（可选：主进程在长时间无交互时调用） */
   markIdle(): void {
     if (this.autoLockTimeout > 0 && this.state === 'unlocked') {
+      // 重复调用时先清前一个 idleTimer，避免旧 timer 拐留导致提前锁屏
+      // （markActive/onAppShown 已在「活跃」时清；这里覆盖重排场景）
+      if (this.idleTimer) clearTimeout(this.idleTimer)
       this.idleTimer = setTimeout(() => this.lock('auto-timeout'), this.autoLockTimeout)
     }
   }

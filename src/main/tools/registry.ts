@@ -7,6 +7,7 @@ import { getFsTools } from './fs-tools'
 import { getShellTools } from './shell-tools'
 import { mcpManager } from '../mcp/manager'
 import type { ToolSchema, ToolResult } from '../../shared/types'
+import { errMsg } from '../error'
 
 class ToolRegistry {
   /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
@@ -52,12 +53,15 @@ class ToolRegistry {
   formatForPrompt(tools: ToolSchema[]): string {
     if (tools.length === 0) return ''
     const lines = tools.map((t) => {
-      const params = t.parameters as Record<string, any>
+      const params = t.parameters as {
+        properties?: Record<string, { type?: unknown; description?: unknown }>
+        required?: string[]
+      } | null
       const paramList = params?.properties
         ? Object.entries(params.properties)
             .map(([k, v]) => {
               const required = params.required?.includes(k) ? '必填' : '可选'
-              return `${k}(${(v as any)?.type ?? 'any'}, ${required}): ${(v as any)?.description ?? ''}`
+              return `${k}(${v.type ? String(v.type) : 'any'}, ${required}): ${v.description ? String(v.description) : ''}`
             })
             .join('; ')
         : '无参数'
@@ -150,9 +154,9 @@ class ToolRegistry {
       const raw = await mcpManager.callTool(schema.mcpServerId, schema.name, args)
       // MCP 返回 { content: [{ type, text }], isError? }，扁平化为字符串
       const content = stringifyMcpResult(raw)
-      return { toolCallId: '', name: toolName, content, isError: Boolean((raw as any)?.isError) }
+      return { toolCallId: '', name: toolName, content, isError: mcpResultIsError(raw) }
     } catch (e) {
-      return { toolCallId: '', name: toolName, content: (e as Error).message, isError: true }
+      return { toolCallId: '', name: toolName, content: errMsg(e), isError: true }
     }
   }
 }
@@ -161,6 +165,12 @@ class ToolRegistry {
 function stricterDecision(a: ToolClassification, b: ToolClassification): ToolClassification {
   const rank: Record<ToolClassification['decision'], number> = { allow: 0, confirm: 1, deny: 2 }
   return rank[b.decision] > rank[a.decision] ? b : a
+}
+
+/** 从 MCP tools/call 返回中提取 isError 标志（形状不保证，unknown 安全收窄） */
+function mcpResultIsError(raw: unknown): boolean {
+  if (typeof raw !== 'object' || raw === null || !('isError' in raw)) return false
+  return Boolean((raw as { isError: unknown }).isError)
 }
 
 function stringifyMcpResult(raw: unknown): string {

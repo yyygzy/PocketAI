@@ -6,6 +6,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import type { BuiltinTool } from './builtin'
+import { errMsg } from '../error'
 
 const WORKSPACE_KEY = 'agent.workspace_dir'
 const READ_LIMIT_BYTES = 256 * 1024 // 文本读取上限，超出截断
@@ -72,7 +73,7 @@ function assertWithinWorkspaceByRealpath(targetAbs: string, wsAbs: string): void
     }
   } catch (e) {
     // realpath 自身失败（权限/循环等）按越权处理，保守拒绝
-    if ((e as Error).message.includes('超出工作目录')) throw e
+    if (errMsg(e).includes('超出工作目录')) throw e
     throw new Error('路径校验失败')
   }
 }

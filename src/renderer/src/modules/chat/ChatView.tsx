@@ -8,6 +8,7 @@ import { BranchNav } from './BranchNav'
 import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
 import { ChatConfigBar } from './ChatConfigBar'
+import { writeClipboard } from '../../utils/clipboard'
 
 interface Turn {
   user: MessageRecord | null
@@ -107,11 +108,13 @@ export const ChatView: React.FC<Props> = ({
   const [compareTurns, setCompareTurns] = useState<Set<string>>(new Set())
 
   // 分支聚焦：重新生成/编辑重发完成后自动切到新分支
+  // 父组件每次 setFocusBranch 都自增 nonce，引用变即 nonce 变；直接依赖 focusBranch
+  // 消除 lint 警告，避免读 turnKey/batchId 时的 stale closure 风险
   useEffect(() => {
     if (focusBranch) {
       setActiveBranchMap((prev) => ({ ...prev, [focusBranch.turnKey]: focusBranch.batchId }))
     }
-  }, [focusBranch?.nonce])
+  }, [focusBranch])
 
   // 切换会话（首条消息 id 变化）时清空选择并重置渐进渲染
   const firstMsgId = messages[0]?.id ?? null
@@ -138,16 +141,13 @@ export const ChatView: React.FC<Props> = ({
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
 
-  const handleCopySelected = useCallback(async () => {
+  const handleCopySelected = useCallback(() => {
     const selected = messages.filter((m) => selectedIds.has(m.id))
     const text = selected
       .map((m) => `${m.role === 'user' ? t('chatview.roleUser') : t('chatview.roleAssistant')}: ${m.content}`)
       .join('\n\n')
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      // ignore
-    }
+    // 含 textarea 降级；无反馈 UI，失败静默
+    void writeClipboard(text)
   }, [messages, selectedIds, t])
 
   const handleDeleteSelected = useCallback(() => {
@@ -225,7 +225,7 @@ export const ChatView: React.FC<Props> = ({
     const cur = activeBatchIndexOf(turn, turnKey)
     const next = cur + dir
     if (next < 0 || next >= turn.batches.length) return
-    const key = batchKeyOf(turn.batches[next], next)
+    const key = batchKeyOf(turn.batches[next]!, next)
     setActiveBranchMap((prev) => ({ ...prev, [turnKey]: key }))
   }
 
@@ -382,7 +382,7 @@ export const ChatView: React.FC<Props> = ({
                   <BranchCompare
                     batches={turn.batches}
                     activeIndex={activeIdx}
-                    onActivate={(bi) => activateBranch(turnKey, batchKeyOf(turn.batches[bi], bi))}
+                    onActivate={(bi) => activateBranch(turnKey, batchKeyOf(turn.batches[bi]!, bi))}
                     selectedIds={selectedIds}
                     onToggleSelect={toggleSelect}
                     onDelete={handleDeleteOne}
@@ -390,11 +390,11 @@ export const ChatView: React.FC<Props> = ({
                 ) : activeBatch.length === 1 ? (
                   <MessageBubble
                     role="assistant"
-                    content={activeBatch[0].content}
-                    model={activeBatch[0].model}
-                    streaming={activeBatch[0].status === 'streaming'}
-                    messageId={activeBatch[0].id}
-                    selected={selectedIds.has(activeBatch[0].id)}
+                    content={activeBatch[0]!.content}
+                    model={activeBatch[0]!.model}
+                    streaming={activeBatch[0]!.status === 'streaming'}
+                    messageId={activeBatch[0]!.id}
+                    selected={selectedIds.has(activeBatch[0]!.id)}
                     onToggleSelect={toggleSelect}
                     onDelete={handleDeleteOne}
                     onRegenerate={onRegenerate}

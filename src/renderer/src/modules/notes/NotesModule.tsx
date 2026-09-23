@@ -6,6 +6,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Note } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { errText } from '../../utils/error'
+import { useTransientNotice } from '../../hooks/useTransientNotice'
 
 interface NoteDraft {
   title: string
@@ -38,22 +40,28 @@ export const NotesModule: React.FC = () => {
   const [creating, setCreating] = useState(false)
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [loadError, setLoadError] = useState(false)
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(4000)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const active = useMemo(() => notes.find((n) => n.id === activeId) ?? null, [notes, activeId])
 
-  const flash = useCallback((ok: boolean, text: string) => {
-    setNotice({ ok, text })
-    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
-    noticeTimerRef.current = setTimeout(() => setNotice(null), 4000)
+  // 组件卸载时清掉未触发的自动保存定时器，避免对已卸载组件 setState
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+    }
   }, [])
 
+  const flash = useCallback((ok: boolean, text: string) => showNotice({ ok, text }), [showNotice])
+
   /** 把超时错误翻译为可读文案 */
-  const errText = useCallback(
+  const noteErrorText = useCallback(
     (e: unknown, fallbackKey: string): string => {
-      return (e as Error)?.message === IPC_TIMEOUT ? t('notes.serviceTimeout') : t(fallbackKey, { e: (e as Error)?.message ?? '' })
+      const msg = errText(e, '')
+      return msg === IPC_TIMEOUT ? t('notes.serviceTimeout') : t(fallbackKey, { e: msg })
     },
     [t]
   )
@@ -131,7 +139,7 @@ export const NotesModule: React.FC = () => {
             setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))
           }
         } catch (e) {
-          flash(false, errText(e, 'notes.saveFail'))
+          flash(false, noteErrorText(e, 'notes.saveFail'))
         } finally {
           setSaving(false)
         }
@@ -150,7 +158,7 @@ export const NotesModule: React.FC = () => {
       setNotes((prev) => [note, ...prev])
       setActiveId(note.id)
     } catch (e) {
-      flash(false, errText(e, 'notes.createFail'))
+      flash(false, noteErrorText(e, 'notes.createFail'))
     } finally {
       setCreating(false)
     }
@@ -164,7 +172,7 @@ export const NotesModule: React.FC = () => {
       setNotes((prev) => prev.filter((n) => n.id !== active.id))
       setActiveId(null)
     } catch (e) {
-      flash(false, errText(e, 'notes.deleteFail'))
+      flash(false, noteErrorText(e, 'notes.deleteFail'))
     }
   }
 
@@ -188,7 +196,7 @@ export const NotesModule: React.FC = () => {
     } catch (e) {
       // 失败则回退置顶态
       setDraft((d) => ({ ...d, pinned: !nextPinned }))
-      flash(false, errText(e, 'notes.pinFail'))
+      flash(false, noteErrorText(e, 'notes.pinFail'))
     }
   }
 

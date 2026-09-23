@@ -10,6 +10,9 @@
 
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { encryptSecret, decryptSecret, isCipherText } from './field-encrypt'
+import { createLogger } from '../logger'
+
+const log = createLogger('crypto')
 
 /** 受管 KV 键（唯一登记处；新增密钥类配置在此注册） */
 export const SECRET_KV_KEYS = {
@@ -51,7 +54,7 @@ export function migrateKvSecrets(keys: readonly string[] = Object.values(SECRET_
     const raw = appConfigRepo.get(key)
     if (raw && !isCipherText(raw)) {
       appConfigRepo.set(key, encryptSecret(raw))
-      console.log(`[crypto] KV 凭据已升级为字段加密: ${key}`)
+      log.info(`KV 凭据已升级为字段加密: ${key}`)
     }
   }
 }
@@ -66,7 +69,7 @@ export function exportSecrets(
       const v = getSecret(key)
       if (v) snapshot[key] = v
     } catch (e) {
-      console.warn(`[crypto] 轮换导出失败 ${key}:`, e)
+      log.warn(`轮换导出失败 ${key}:`, e)
     }
   }
   return snapshot
@@ -78,7 +81,7 @@ export function restoreSecrets(snapshot: Record<string, string>): void {
     try {
       setSecret(key, value)
     } catch (e) {
-      console.warn(`[crypto] 轮换恢复失败 ${key}:`, e)
+      log.warn(`轮换恢复失败 ${key}:`, e)
     }
   }
 }

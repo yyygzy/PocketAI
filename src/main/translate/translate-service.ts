@@ -7,6 +7,7 @@
 //  - 支持 AbortController 中途停止；
 //  - 翻译成功后写入历史表（停止/失败不写）。
 import { providerManager } from '../providers/manager'
+import { errMsg, isAbortError } from '../error'
 import { translationRepo } from '../db/repositories/translation.repo'
 import type {
   GlossaryTerm,
@@ -140,8 +141,7 @@ export async function runTranslate(
 
     return { ok: true, content }
   } catch (e) {
-    const aborted = (e as Error)?.name === 'AbortError'
-    return { ok: false, aborted, error: (e as Error)?.message ?? String(e) }
+    return { ok: false, aborted: isAbortError(e), error: errMsg(e) }
   } finally {
     controllers.delete(payload.requestId)
   }

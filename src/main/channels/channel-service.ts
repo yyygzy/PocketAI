@@ -24,12 +24,16 @@ import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { chatService } from '../chat/chat-service'
 import { getChannelConfig, getChannelSecrets, convMapKey } from './channel-config'
+import { errMsg } from '../error'
 import { telegramGateway } from './telegram-gateway'
 import { discordGateway } from './discord-gateway'
 import { slackGateway } from './slack-gateway'
 import { feishuGateway } from './feishu-gateway'
 import { dingtalkGateway } from './dingtalk-gateway'
 import type { IGateway, IncomingMessage } from './gateway-base'
+import { createLogger } from '../logger'
+
+const log = createLogger('channels')
 
 const GATEWAYS: Record<ChannelType, IGateway> = {
   telegram: telegramGateway,
@@ -89,7 +93,7 @@ class ChannelService {
       try {
         await this.start(type)
       } catch (err) {
-        console.error(`[channels] ${type} 自动启动失败:`, (err as Error).message)
+        log.error(`${type} 自动启动失败:`, errMsg(err))
       }
     }
   }
@@ -111,7 +115,7 @@ class ChannelService {
     const { whitelist } = getChannelSecrets(type)
     if (whitelist.length === 0 || !whitelist.includes(msg.userId)) {
       // 静默忽略，仅记日志（不打印消息内容，防泄露）
-      console.log(`[channels] ${type} 忽略非白名单用户 userId=${msg.userId} chatId=${msg.chatId}`)
+      log.debug(`${type} 忽略非白名单用户 userId=${msg.userId} chatId=${msg.chatId}`)
       return
     }
 
@@ -208,7 +212,7 @@ class ChannelService {
         // chunk/step 事件忽略：IM 回复不流式
       }
       chatService.send(payload, emit).catch((err) =>
-        finish({ ok: false, error: (err as Error).message })
+        finish({ ok: false, error: errMsg(err) })
       )
     })
   }

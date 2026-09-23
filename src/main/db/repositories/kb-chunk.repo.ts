@@ -157,14 +157,14 @@ export const kbChunkRepo = {
   }
 }
 
-/** 余弦相似度：dot(a,b) / (|a|*|b|) */
-function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+/** 余弦相似度：dot(a,b) / (|a|*|b|)；零向量返回 0（避免 NaN 污染排序） */
+export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0
   let na = 0
   let nb = 0
   for (let i = 0; i < a.length; i++) {
-    const av = a[i]
-    const bv = b[i]
+    const av = a[i]!
+    const bv = b[i]!
     dot += av * bv
     na += av * av
     nb += bv * bv

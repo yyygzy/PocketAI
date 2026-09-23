@@ -9,6 +9,7 @@ import type {
   CheckLevel
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { logIpcError, reportIpcError } from '../../utils/ipc'
 
 const LEVEL_ICON: Record<CheckLevel, string> = { ok: '✅', warn: '⚠️', danger: '❌' }
 const LEVEL_CLS: Record<CheckLevel, string> = {
@@ -42,9 +43,9 @@ export const StewardModule: React.FC = () => {
     setRefreshing(true)
     try {
       const [hw, integ, healthReport] = await Promise.all([
-        window.pocketai.getHardwareInfo(force).catch(() => null),
-        window.pocketai.checkIntegrity().catch(() => null),
-        window.pocketai.getHealthReport().catch(() => null)
+        window.pocketai.getHardwareInfo(force).catch((e) => { logIpcError('steward.getHardwareInfo', e); return null }),
+        window.pocketai.checkIntegrity().catch((e) => { logIpcError('steward.checkIntegrity', e); return null }),
+        window.pocketai.getHealthReport().catch((e) => { logIpcError('steward.getHealthReport', e); return null })
       ])
       if (hw) setHardware(hw)
       if (integ) setIntegrity(integ)
@@ -55,7 +56,7 @@ export const StewardModule: React.FC = () => {
         .then((r) => {
           if (r.ok && r.data) setRecommendation(r.data)
         })
-        .catch(() => {})
+        .catch(reportIpcError('steward.recommendModels'))
       if (force) setManualCheckedAt(Date.now())
     } finally {
       setRefreshing(false)
@@ -77,7 +78,7 @@ export const StewardModule: React.FC = () => {
       // 静默刷新诊断结果（孤儿数据可能已被清除）
       window.pocketai.runDiagnose().then((r) => {
         if (r.ok && r.data) setDiagnose(r.data)
-      })
+      }).catch(reportIpcError('steward.runDiagnose'))
     } finally {
       setCleaning(false)
     }

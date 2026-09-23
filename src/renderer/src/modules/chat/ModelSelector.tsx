@@ -42,7 +42,7 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
   }
 
   const exitCompare = () => {
-    onChange([targets[0]])
+    onChange([targets[0]!])
   }
 
   // 扁平化所有可选模型：Provider名 / 模型名
@@ -60,7 +60,7 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
       )}
 
       {targets.map((target, i) => (
-        <div key={i} className="flex items-center gap-1">
+        <div key={`${target.providerId}-${target.model}`} className="flex items-center gap-1">
           <select
             className="select-mini min-w-[140px]"
             value={combinedValue(target)}

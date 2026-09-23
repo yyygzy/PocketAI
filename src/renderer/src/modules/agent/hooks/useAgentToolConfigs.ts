@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
+import { reportIpcError } from '../../../utils/ipc'
+import { errText } from '../../../utils/error'
 
 export function useAgentToolConfigs() {
   const { t } = useI18n()
@@ -21,10 +23,10 @@ export function useAgentToolConfigs() {
   const [wsKeyDraft, setWsKeyDraft] = useState('')
 
   useEffect(() => {
-    window.pocketai.getAgentWorkspaceDir().then(setWorkspaceDir)
-    window.pocketai.getShellConfig().then(setShellConfigState)
-    window.pocketai.getWebSearchConfig().then(setWsConfigState)
-    window.pocketai.getCalendarConfig().then(setCalConfigState)
+    window.pocketai.getAgentWorkspaceDir().then(setWorkspaceDir).catch(reportIpcError('agent.getWorkspaceDir'))
+    window.pocketai.getShellConfig().then(setShellConfigState).catch(reportIpcError('agent.getShellConfig'))
+    window.pocketai.getWebSearchConfig().then(setWsConfigState).catch(reportIpcError('agent.getWebSearchConfig'))
+    window.pocketai.getCalendarConfig().then(setCalConfigState).catch(reportIpcError('agent.getCalendarConfig'))
   }, [])
 
   const pickWorkspace = async () => {
@@ -33,7 +35,11 @@ export function useAgentToolConfigs() {
   }
 
   const patchShellConfig = async (patch: Partial<ShellConfig>) => {
-    setShellConfigState(await window.pocketai.setShellConfig(patch))
+    try {
+      setShellConfigState(await window.pocketai.setShellConfig(patch))
+    } catch (e) {
+      toast.error(errText(e, t('common.unknownError')))
+    }
   }
 
   const patchWsConfig = async (
@@ -49,7 +55,7 @@ export function useAgentToolConfigs() {
       setWsConfigState(next)
       if (patch.apiKey !== undefined) setWsKeyDraft('')
     } catch (e) {
-      toast.error((e as Error).message || t('common.unknownError'))
+      toast.error(errText(e, t('common.unknownError')))
     }
   }
 
@@ -57,7 +63,7 @@ export function useAgentToolConfigs() {
     try {
       setCalConfigState(await window.pocketai.setCalendarConfig(patch))
     } catch (e) {
-      toast.error((e as Error).message || t('common.unknownError'))
+      toast.error(errText(e, t('common.unknownError')))
     }
   }
 
@@ -69,7 +75,7 @@ export function useAgentToolConfigs() {
       if (calConfig.paths.includes(res.path)) return
       await patchCalConfig({ paths: [...calConfig.paths, res.path], enabled: true })
     } catch (e) {
-      toast.error((e as Error).message || t('common.unknownError'))
+      toast.error(errText(e, t('common.unknownError')))
     }
   }
 

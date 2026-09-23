@@ -7,6 +7,7 @@
 // - stop 用 AbortController 中断轮询与进行中的请求
 import type { ChannelStatusEvent } from '../../shared/types'
 import { getChannelSecrets, getTgOffset, setTgOffset } from './channel-config'
+import { createLogger } from '../logger'
 import {
   IGateway,
   IncomingMessage,
@@ -15,6 +16,8 @@ import {
   splitMessage,
   sleep
 } from './gateway-base'
+
+const log = createLogger('channels')
 
 const API_BASE = 'https://api.telegram.org'
 const LONG_POLL_TIMEOUT_S = 25
@@ -114,7 +117,7 @@ class TelegramGateway implements IGateway {
         ctrl.signal,
         GETME_TIMEOUT_MS
       )
-      console.log(`[channels] Telegram bot @${me.username} 凭证验证通过`)
+      log.info(`Telegram bot @${me.username} 凭证验证通过`)
     } catch (err) {
       this.starting = false
       // starting 阶段被 stop() 中止：stop 已发 stopped 状态，不再覆盖为 error
@@ -129,7 +132,10 @@ class TelegramGateway implements IGateway {
     if (ctrl.signal.aborted) return // getMe 成功瞬间被 stop
     this.running = true
     this.status.emit('running')
-    void this.pollLoop()
+    void this.pollLoop().catch((err) => {
+      // abort 时 catch 块内 sleep reject 是正常退出；其他 reject 记日志
+      if (!ctrl.signal.aborted) log.error('Telegram pollLoop 异常:', safeError(err, 'pollLoop'))
+    })
   }
 
   stop(): void {
@@ -178,13 +184,13 @@ class TelegramGateway implements IGateway {
             await this.onMessage?.(msg)
           } catch (err) {
             // 单条处理失败不影响轮询循环
-            console.error('[channels] 消息处理失败:', safeError(err, 'handle'))
+            log.error('消息处理失败:', safeError(err, 'handle'))
           }
         }
       } catch (err) {
         if (ctrl.signal.aborted) break
         const msg = safeError(err, 'getUpdates')
-        console.error('[channels]', msg)
+        log.error('Telegram getUpdates 轮询失败:', msg)
         this.status.emit('running', msg)
         // 可中断退避：stop 时立即退出循环而非睡满 backoff
         await sleep(backoffMs, ctrl.signal)

@@ -21,11 +21,30 @@ export interface BackupFile {
   kind: 'full' | 'incremental' // 全量 zip 包 / 增量索引
 }
 
+/** createClient 参数子集（仅用到 basic 认证；authType 保留字符串兼容 digest 扩展） */
+interface WebdavCreateClientOptions {
+  authType: 'basic' | 'digest'
+  credentials: { username: string; password: string }
+}
+
+/** webdav 模块动态导入后的形状（包是纯 ESM，仅按需 import()） */
+interface WebdavModule {
+  createClient: (url: string, opts?: WebdavCreateClientOptions) => WebDAVClient
+}
+
+/** PROPFIND 目录条目（webdav FileStat 的用到字段子集） */
+interface RemoteDirEntry {
+  filename: string
+  size?: number
+  lastmod?: string
+  type: 'file' | 'directory'
+}
+
 /** 懒加载 webdav 模块（缓存 promise，避免重复动态导入） */
-let webdavModulePromise: Promise<{ createClient: (url: string, opts: any) => WebDAVClient }> | null = null
+let webdavModulePromise: Promise<WebdavModule> | null = null
 function loadWebdav() {
   if (!webdavModulePromise) {
-    webdavModulePromise = import('webdav') as Promise<any>
+    webdavModulePromise = import('webdav') as Promise<WebdavModule>
   }
   return webdavModulePromise
 }
@@ -90,7 +109,7 @@ async function buildClient(creds: WebDAVCredentials): Promise<WebDAVClient> {
     throw new Error(`WebDAV 仅支持 http/https 协议（收到 ${parsed.protocol}）`)
   }
   const { createClient } = await loadWebdav()
-  const opts: any = {
+  const opts: WebdavCreateClientOptions = {
     authType: 'basic',
     credentials: { username: creds.username, password: creds.password }
   }
@@ -107,10 +126,11 @@ export async function testConnection(
     const client = await buildClient(creds)
     const exists = await client.exists('/', { signal: timeoutSignal(TIMEOUT_TEST_MS) })
     return exists ? { ok: true } : { ok: false, message: '目录不可访问' }
-  } catch (e: any) {
-    const msg = e?.name === 'TimeoutError' || e?.name === 'AbortError'
+  } catch (e) {
+    const name = e instanceof Error ? e.name : ''
+    const msg = name === 'TimeoutError' || name === 'AbortError'
       ? '连接超时（15s）'
-      : (e?.message ?? '连接失败')
+      : (e instanceof Error && e.message ? e.message : '连接失败')
     return { ok: false, message: msg }
   }
 }
@@ -136,15 +156,22 @@ export async function downloadFile(
 ): Promise<Buffer> {
   const client = await buildClient(creds)
   const p = remotePath(creds.directory, filename)
-  const content = await client.getFileContents(p, { signal: timeoutSignal(TIMEOUT_TRANSFER_MS) })
+  // 未启用 details 选项，返回体只可能是 Buffer / string / ArrayBuffer
+  const content = (await client.getFileContents(p, { signal: timeoutSignal(TIMEOUT_TRANSFER_MS) })) as
+    | Buffer
+    | string
+    | ArrayBuffer
   if (Buffer.isBuffer(content)) return assertDownloadSize(content)
-  return assertDownloadSize(Buffer.from(content as any))
+  if (typeof content === 'string') return assertDownloadSize(Buffer.from(content))
+  return assertDownloadSize(Buffer.from(content))
 }
 
 export async function listFiles(creds: WebDAVCredentials): Promise<BackupFile[]> {
   const client = await buildClient(creds)
   const dir = creds.directory ?? '/'
-  const entries: any[] = await client.getDirectoryContents(dir, { signal: timeoutSignal(TIMEOUT_LIGHT_MS) })
+  const entries = (await client.getDirectoryContents(dir, {
+    signal: timeoutSignal(TIMEOUT_LIGHT_MS)
+  })) as RemoteDirEntry[]
   return entries
     .filter(
       (e) =>
@@ -224,11 +251,13 @@ export async function downloadRemoteFile(
   relName: string
 ): Promise<Buffer> {
   const client = await buildClient(creds)
-  const content = await client.getFileContents(fullRemotePath(creds, relName), {
+  // 未启用 details 选项，返回体只可能是 Buffer / string / ArrayBuffer
+  const content = (await client.getFileContents(fullRemotePath(creds, relName), {
     signal: timeoutSignal(TIMEOUT_TRANSFER_MS)
-  })
+  })) as Buffer | string | ArrayBuffer
   if (Buffer.isBuffer(content)) return assertDownloadSize(content)
-  return assertDownloadSize(Buffer.from(content as any))
+  if (typeof content === 'string') return assertDownloadSize(Buffer.from(content))
+  return assertDownloadSize(Buffer.from(content))
 }
 
 export async function deleteFile(creds: WebDAVCredentials, filename: string): Promise<void> {

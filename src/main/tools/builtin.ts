@@ -11,6 +11,7 @@ import { runWebSearch } from './websearch'
 import { runJsEval } from '../sandbox/js-eval-runner'
 import { safeFetch } from '../net/safe-fetch'
 import { weatherTool } from './weather'
+import { errMsg } from '../error'
 import { calendarReadTool } from './calendar-ics'
 
 /** 工具安全判定结果（与 ToolSchema.permission 基线取更严） */
@@ -111,7 +112,7 @@ const webFetchTool: BuiltinTool = {
     })
     if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`)
     const html = res.body.toString('utf8')
-    const text = extractReadableText(html, maxChars)
+    const text = await extractReadableText(html, maxChars)
     const title = extractTitle(html)
     return JSON.stringify({ url, title, content: text })
   }
@@ -231,16 +232,15 @@ export function safeMathEval(expr: string): number {
     }
     return result
   } catch (e) {
-    throw new Error(`表达式求值失败: ${(e as Error).message}`)
+    throw new Error(`表达式求值失败: ${errMsg(e)}`)
   }
 }
 
 // ---- 辅助：从 HTML 抽取正文 ----
-function extractReadableText(html: string, maxChars: number): string {
-  // 延迟加载 cheerio，避免影响启动
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const cheerio = require('cheerio') as typeof import('cheerio')
-  const $ = cheerio.load(html)
+async function extractReadableText(html: string, maxChars: number): Promise<string> {
+  // 动态加载 cheerio（dependencies 被 externalize，运行时按需 ESM 加载，不拖慢启动）
+  const { load } = await import('cheerio')
+  const $ = load(html)
   // 移除明显非正文元素
   $('script,style,noscript,iframe,nav,footer,header,aside,form,button').remove()
   $('[role=banner],[role=navigation],[role=search]').remove()
@@ -253,5 +253,5 @@ function extractReadableText(html: string, maxChars: number): string {
 
 function extractTitle(html: string): string {
   const m = html.match(/<title[^>]*>([^<]+)<\/title>/i)
-  return m ? m[1].trim() : ''
+  return m ? m[1]!.trim() : ''
 }

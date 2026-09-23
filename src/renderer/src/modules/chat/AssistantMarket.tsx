@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { AssistantEditor } from './AssistantEditor'
+import { reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
+import { useTransientNotice } from '../../hooks/useTransientNotice'
 
 interface Props {
   providers: ProviderRecord[]
@@ -23,17 +26,12 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
   const { t } = useI18n()
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [view, setView] = useState<View>(initialDetailId ? { mode: 'detail', id: initialDetailId } : { mode: 'grid' })
-  const [toast, setToast] = useState('')
+  const { notice: toast, show: flash } = useTransientNotice<string>(2000)
 
-  const load = () => window.pocketai.listAssistants().then(setAssistants)
+  const load = () => window.pocketai.listAssistants().then(setAssistants).catch(reportIpcError('assistantMarket.list'))
   useEffect(() => {
     load()
   }, [])
-
-  const flash = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(''), 2000)
-  }
 
   const current = view.mode === 'detail' || view.mode === 'edit'
     ? assistants.find((a) => a.id === view.id) ?? null
@@ -43,7 +41,7 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
     try {
       await window.pocketai.duplicateAssistant(id)
     } catch (e) {
-      flash((e as Error).message)
+      flash(errText(e))
       return
     }
     await load()

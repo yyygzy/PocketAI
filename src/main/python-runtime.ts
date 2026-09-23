@@ -16,6 +16,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { RUNTIME_DIR } from './portable'
 import { safeFetch } from './net/safe-fetch'
 import type { PythonRuntime } from '../shared/types'
+import { errMsg } from './error'
 
 /** 便携 Python 发行信息（python-build-standalone） */
 const PYTHON_RELEASE_TAG = '20260901'
@@ -104,15 +105,15 @@ async function probe(candidate: string): Promise<{ version: string; path: string
   try {
     if (process.platform === 'win32') {
       const where = await execText('where', [candidate])
-      if (where) resolved = where.split(/\r?\n/)[0]
+      if (where) resolved = where.split(/\r?\n/)[0] ?? resolved
     } else {
       const which = await execText('which', [candidate])
-      if (which) resolved = which.split(/\r?\n/)[0]
+      if (which) resolved = which.split(/\r?\n/)[0] ?? resolved
     }
   } catch {
     /* 忽略 */
   }
-  return { version: m[1], path: resolved }
+  return { version: m[1] ?? '', path: resolved }
 }
 
 /** 检测系统已安装的 Python */
@@ -122,7 +123,7 @@ export async function detectSystemPython(): Promise<PythonRuntime[]> {
   const seen = new Set<string>()
   for (const c of candidates) {
     const parts = c.split(/\s+/)
-    const cmd = parts[0]
+    const cmd = parts[0]!
     const args = parts.slice(1)
     const out = await execText(cmd, [...args, '--version'])
     if (!out) continue
@@ -133,17 +134,17 @@ export async function detectSystemPython(): Promise<PythonRuntime[]> {
     try {
       if (process.platform === 'win32') {
         const where = await execText('where', [cmd])
-        if (where) realPath = where.split(/\r?\n/)[0]
+        if (where) realPath = where.split(/\r?\n/)[0] ?? realPath
       } else {
         const which = await execText('which', [cmd])
-        if (which) realPath = which.split(/\r?\n/)[0]
+        if (which) realPath = which.split(/\r?\n/)[0] ?? realPath
       }
     } catch {
       /* ignore */
     }
     if (seen.has(realPath.toLowerCase())) continue
     seen.add(realPath.toLowerCase())
-    runtimes.push({ name: `Python ${m[1]}`, version: m[1], path: realPath, source: 'system' })
+    runtimes.push({ name: `Python ${m[1] ?? ''}`, version: m[1] ?? '', path: realPath, source: 'system' })
   }
   return runtimes
 }
@@ -270,17 +271,20 @@ async function extractTarGz(tarPath: string, destDir: string): Promise<void> {
   }
 
   let longName = ''
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  let eof = false
+  while (!eof) {
     const header = await readAsync(512).catch(() => null)
     if (!header) break
     // 全零块 = tar 结束
-    if (header.every((b) => b === 0)) break
+    if (header.every((b) => b === 0)) {
+      eof = true
+      break
+    }
 
     const name = header.toString('utf8', 0, 100).replace(/\0+$/, '')
     const sizeStr = header.toString('utf8', 124, 136).replace(/\0+$/, '').trim()
     const size = parseInt(sizeStr, 8) || 0
-    const typeflag = String.fromCharCode(header[156])
+    const typeflag = String.fromCharCode(header[156] ?? 0)
     const linkname = header.toString('utf8', 157, 257).replace(/\0+$/, '')
     const prefix = header.toString('utf8', 345, 500).replace(/\0+$/, '')
 
@@ -386,7 +390,7 @@ export async function downloadPortablePython(
   try {
     await extractTarGz(tmpGz, dir)
   } catch (e) {
-    throw new Error(`便携 Python 解压失败：${(e as Error).message}`)
+    throw new Error(`便携 Python 解压失败：${errMsg(e)}`)
   } finally {
     if (fs.existsSync(tmpGz)) fs.unlinkSync(tmpGz)
   }

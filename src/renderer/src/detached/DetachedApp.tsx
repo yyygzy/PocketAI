@@ -4,6 +4,7 @@ import { Workspace } from '../components/Workspace'
 import { ToastProvider } from '../components/ToastProvider'
 import type { ModuleId } from '../components/Sidebar'
 import { useI18n } from '../i18n'
+import { reportIpcError } from '../utils/ipc'
 
 const MODULE_TITLES: Record<ModuleId, string> = {
   chat: 'tab.newChat',
@@ -29,8 +30,8 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
 
   // 锁屏状态与主窗口联动（锁屏事件广播到所有窗口）
   useEffect(() => {
-    window.pocketai.getEncryptionStatus().then((s) => setDbEncrypted(s.dbEncrypted)).catch(() => {})
-    window.pocketai.getLockStatus().then((s) => setLocked(s.state === 'locked')).catch(() => {})
+    window.pocketai.getEncryptionStatus().then((s) => setDbEncrypted(s.dbEncrypted)).catch(reportIpcError('detached.getEncryptionStatus'))
+    window.pocketai.getLockStatus().then((s) => setLocked(s.state === 'locked')).catch(reportIpcError('detached.getLockStatus'))
     return window.pocketai.onLockStateChange((e) => {
       setLocked(e.state === 'locked')
       setLockPwd('')
@@ -69,7 +70,7 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
         e.preventDefault()
-        window.pocketai.lock().catch(() => {})
+        window.pocketai.lock().catch(reportIpcError('detached.lock'))
       }
     }
     window.addEventListener('keydown', onKey)

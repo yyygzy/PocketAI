@@ -15,6 +15,9 @@ import type {
 } from '../../../../shared/types'
 import { IMAGE_SIZES } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { useCopyFeedback } from '../../hooks/useCopyFeedback'
+import { useTransientNotice } from '../../hooks/useTransientNotice'
+import { reportIpcError } from '../../utils/ipc'
 
 const MAX_PROMPT_CHARS = 4000
 const THUMB_MISSING_ICON = '🖼️'
@@ -43,11 +46,11 @@ export const ImageModule: React.FC = () => {
 
   // ---------- 请求状态 ----------
   const [running, setRunning] = useState(false)
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(2600)
   const requestIdRef = useRef<string | null>(null)
   const runningRef = useRef(false)
-  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 复制提示词的「已复制」反馈（含剪贴板降级与定时器清理） */
+  const { copied, copy: copyToClipboard } = useCopyFeedback()
 
   // ---------- 结果与历史 ----------
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -60,7 +63,6 @@ export const ImageModule: React.FC = () => {
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [copied, setCopied] = useState(false)
 
   const enabledProviders = useMemo(() => providers.filter((p) => p.enabled), [providers])
   const activeProvider = useMemo(
@@ -74,11 +76,7 @@ export const ImageModule: React.FC = () => {
   /** 模型 datalist 候选（图像模型常不在 /models 列表，允许手输） */
   const modelOptions = activeProvider?.models ?? []
 
-  const flash = useCallback((ok: boolean, text: string) => {
-    setNotice({ ok, text })
-    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
-    noticeTimerRef.current = setTimeout(() => setNotice(null), 2600)
-  }, [])
+  const flash = useCallback((ok: boolean, text: string) => showNotice({ ok, text }), [showNotice])
 
   // ---------- 初始加载 ----------
   useEffect(() => {
@@ -86,14 +84,12 @@ export const ImageModule: React.FC = () => {
       setProviders(list)
       const first = list.find((p) => p.enabled)
       if (first) setProviderId(first.id)
-    })
-    window.pocketai.listImages().then(setGallery)
+    }).catch(reportIpcError('image.listProviders'))
+    window.pocketai.listImages().then(setGallery).catch(reportIpcError('image.listImages'))
     return () => {
-      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
-      // 离开模块时中止进行中的生成
+      // 离开模块时中止进行中的生成；卸载路径上的失败无感知必要，静默
       if (runningRef.current && requestIdRef.current) {
-        window.pocketai.abortImage(requestIdRef.current).catch(() => {})
+        window.pocketai.abortImage(requestIdRef.current).catch(() => { /* 卸载中止，失败无影响 */ })
       }
     }
   }, [])
@@ -112,7 +108,7 @@ export const ImageModule: React.FC = () => {
       .then((r) => {
         if (alive && r.ok && r.dataUrl) setPreviewDataUrl(r.dataUrl)
       })
-      .catch(() => {})
+      .catch(reportIpcError('image.getPreviewFile'))
       .finally(() => {
         if (alive) setPreviewLoading(false)
       })
@@ -182,8 +178,8 @@ export const ImageModule: React.FC = () => {
             setLatestDataUrl(r.dataUrl)
           }
         })
-        .catch(() => {})
-      window.pocketai.listImages().then(setGallery)
+        .catch(reportIpcError('image.getLatestFile'))
+      window.pocketai.listImages().then(setGallery).catch(reportIpcError('image.refreshGallery'))
     } else if (res.aborted) {
       flash(false, t('image.aborted'))
     } else {
@@ -192,7 +188,7 @@ export const ImageModule: React.FC = () => {
   }, [enabledProviders.length, providerId, model, prompt, size, flash, t])
 
   const handleStop = useCallback(() => {
-    if (requestIdRef.current) window.pocketai.abortImage(requestIdRef.current).catch(() => {})
+    if (requestIdRef.current) window.pocketai.abortImage(requestIdRef.current).catch(() => { /* 用户主动中止，尽力而为 */ })
   }, [])
 
   // ---------- 历史操作 ----------
@@ -226,17 +222,10 @@ export const ImageModule: React.FC = () => {
   )
 
   const handleCopyPrompt = useCallback(
-    async (text: string) => {
-      try {
-        await navigator.clipboard.writeText(text)
-        setCopied(true)
-        if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
-        copiedTimerRef.current = setTimeout(() => setCopied(false), 1500)
-      } catch {
-        /* 剪贴板不可用 */
-      }
+    (text: string) => {
+      void copyToClipboard(text)
     },
-    []
+    [copyToClipboard]
   )
 
   const canGenerate =

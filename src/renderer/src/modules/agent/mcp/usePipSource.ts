@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import type { PythonPipSource } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { reportIpcError } from '../../../utils/ipc'
 
 export function usePipSource(notify: (msg: string) => void) {
   const { t } = useI18n()
@@ -19,7 +20,7 @@ export function usePipSource(notify: (msg: string) => void) {
           setPipCustomUrl(r.source)
         }
       }
-    })
+    }).catch(reportIpcError('mcp.getPythonPipSource'))
   }, [])
 
   const choosePipSource = async (next: PythonPipSource) => {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { McpRuntime, PythonEnvInstallEvent, PythonEnvState } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { errText } from '../../../utils/error'
 
 export function usePythonEnv(serverId: string | undefined, runtime: McpRuntime) {
   const { t } = useI18n()
@@ -23,7 +24,8 @@ export function usePythonEnv(serverId: string | undefined, runtime: McpRuntime) 
         return r.error
       }
     } catch (e) {
-      return (e as Error).message
+      // 非 Error 抛出时无有效文本可展示，按「无错误」处理避免错误条显示 undefined
+      return errText(e, '')
     }
     return ''
   }, [serverId])

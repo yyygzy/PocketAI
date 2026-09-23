@@ -8,6 +8,7 @@
 // - 单条消息上限 2000 字符
 import type { ChannelStatusEvent } from '../../shared/types'
 import { getChannelSecrets } from './channel-config'
+import { createLogger } from '../logger'
 import {
   IGateway,
   IncomingMessage,
@@ -16,6 +17,8 @@ import {
   splitMessage,
   sleep
 } from './gateway-base'
+
+const log = createLogger('channels')
 
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json'
 const API_BASE = 'https://discord.com/api/v10'
@@ -66,7 +69,6 @@ class DiscordGateway implements IGateway {
   private heartbeatTimer: NodeJS.Timeout | null = null
   private selfUserId: string | null = null
   private lastSeq: number | null = null
-  private sessionId: string | null = null
 
   onStatus(l: (evt: ChannelStatusEvent) => void): () => void {
     return this.status.add(l)
@@ -122,10 +124,10 @@ class DiscordGateway implements IGateway {
       try {
         const data: DiscordPayload = JSON.parse(typeof ev.data === 'string' ? ev.data : '')
         void this.handlePayload(data, token, ctrl).catch((err) => {
-          console.error('[channels] Discord 消息处理失败:', safeError(err, 'payload'))
+          log.error('Discord 消息处理失败:', safeError(err, 'payload'))
         })
       } catch (err) {
-        console.error('[channels] Discord 解析失败:', safeError(err, 'parse'))
+        log.error('Discord 解析失败:', safeError(err, 'parse'))
       }
     })
 
@@ -146,7 +148,9 @@ class DiscordGateway implements IGateway {
       // 运行中意外断开：尝试重连
       if (this.running) {
         this.running = false
-        void this.reconnect(token, ctrl)
+        void this.reconnect(token, ctrl).catch((err) => {
+          if (!ctrl.signal.aborted) log.error('Discord reconnect 异常:', safeError(err, 'reconnect'))
+        })
       }
     })
 
@@ -173,12 +177,11 @@ class DiscordGateway implements IGateway {
         if (p.t === 'READY') {
           const r = p.d as ReadyData
           this.selfUserId = r.user.id
-          this.sessionId = r.session_id
           this.starting = false
           if (ctrl.signal.aborted) return
           this.running = true
           this.status.emit('running')
-          console.log(`[channels] Discord bot @${r.user.username} 已就绪`)
+          log.info(`Discord bot @${r.user.username} 已就绪`)
         } else if (p.t === 'MESSAGE_CREATE') {
           const m = p.d as MessageCreateData
           if (m.author?.bot) return
@@ -193,7 +196,7 @@ class DiscordGateway implements IGateway {
               firstName: m.author.username
             })
           } catch (err) {
-            console.error('[channels] 消息处理失败:', safeError(err, 'handle'))
+            log.error('消息处理失败:', safeError(err, 'handle'))
           }
         }
         break
@@ -209,7 +212,6 @@ class DiscordGateway implements IGateway {
         break
       case 9: // Invalid Session
         // 重置会话后重新 Identify
-        this.sessionId = null
         this.lastSeq = null
         setTimeout(() => this.identify(token), 2000)
         break
@@ -282,7 +284,6 @@ class DiscordGateway implements IGateway {
     this.cleanupConnection()
     this.onMessage = null
     this.selfUserId = null
-    this.sessionId = null
     this.lastSeq = null
     this.status.reset()
     this.status.emit('stopped')

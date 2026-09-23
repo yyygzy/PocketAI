@@ -9,6 +9,7 @@ import type {
   ProviderRecord
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { reportIpcError } from '../../../utils/ipc'
 import { toAgentMessages, type AgentMessage } from '../agent-shared'
 import { messagesReducer } from './messages-reducer'
 
@@ -33,8 +34,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
     if (!assistantId) return
     void window.pocketai.listConversations(assistantId, true).then((list) => {
       setConversations(list)
-      setConversationId(list.length > 0 ? list[0].id : null)
-    })
+      setConversationId(list.length > 0 ? list[0]!.id : null)
+    }).catch(reportIpcError('agent.listConversations'))
   }, [assistantId])
 
   // 会话切换 → 加载历史消息
@@ -45,7 +46,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     }
     void window.pocketai.listMessages(conversationId).then((dbMsgs: MessageRecord[]) => {
       dispatch({ type: 'load', messages: toAgentMessages(dbMsgs) })
-    })
+    }).catch(reportIpcError('agent.listMessages'))
   }, [conversationId])
 
   // 订阅 Agent 流式事件（仅处理当前 requestId 的事件）
@@ -109,6 +110,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     void window.pocketai.listMessages(id).then((msgs) => {
       for (let i = msgs.length - 1; i >= 0; i--) {
         const m = msgs[i]
+        if (!m) continue
         if (m.role === 'assistant' && m.provider && m.model) {
           const p = providers.find((x) => x.id === m.provider)
           if (p) {
@@ -118,7 +120,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
           break
         }
       }
-    })
+    }).catch(reportIpcError('agent.restoreLastModel'))
   }
 
   /** 切换 Provider 时清空模型选择 */

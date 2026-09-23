@@ -53,7 +53,7 @@ export const ComparisonColumns: React.FC<Props> = ({
   const isSelectable = (idx: number) => {
     const id = messageIds?.[idx]
     const col = columns[idx]
-    return !!id && col.status !== 'streaming'
+    return !!id && col?.status !== 'streaming'
   }
 
   return (
@@ -70,7 +70,7 @@ export const ComparisonColumns: React.FC<Props> = ({
         const selectable = isSelectable(i)
         return (
           <div
-            key={i}
+            key={`${col.providerId}-${col.model}`}
             className={`flex flex-col rounded-xl border bg-[var(--color-sidebar)] min-h-[120px] max-h-[65vh] ${
               selected ? 'border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)]'
             }`}

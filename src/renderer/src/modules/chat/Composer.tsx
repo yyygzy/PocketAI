@@ -122,7 +122,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-1.5">
             {attachments.map((att, i) => (
-              <div key={i} className="relative group flex items-center gap-1.5 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg pl-1.5 pr-7 py-1 text-xs">
+              <div key={`${att.name}-${att.size}`} className="relative group flex items-center gap-1.5 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg pl-1.5 pr-7 py-1 text-xs">
                 {att.type === 'image' ? (
                   <img src={att.data} alt={att.name} className="w-6 h-6 rounded object-cover" />
                 ) : (

@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { OllamaPanel } from '../../components/OllamaPanel'
+import { logIpcError, reportIpcError } from '../../utils/ipc'
 import { PROVIDER_PRESETS } from '../settings/ProviderSettings'
 import type {
   HardwareInfo,
@@ -73,31 +74,34 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         setHardware(hw)
         setIsPortable(hw.disk.removable)
       })
-      .catch(() => {})
-    window.pocketai.getEncryptionStatus().then(setEncStatus).catch(() => {})
+      .catch(reportIpcError('wizard.getHardwareInfo'))
+    window.pocketai.getEncryptionStatus().then(setEncStatus).catch(reportIpcError('wizard.getEncryptionStatus'))
     // 模型推荐含一次 Ollama 端口探测，较轻，后台加载
     window.pocketai
       .recommendModels()
       .then((r) => {
         if (r.ok && r.data) setRecommendation(r.data)
       })
-      .catch(() => {})
+      .catch(reportIpcError('wizard.recommendModels'))
 
     // 加载已有 provider + assistant（向导 Step 1 用）
-    window.pocketai.listProviders().then(setProviders).catch(() => {})
+    window.pocketai.listProviders().then(setProviders).catch(reportIpcError('wizard.listProviders'))
     window.pocketai.listAssistants().then((list) => {
       setAssistants(list)
       // 默认选中第一个内置助手
       const firstBuiltin = list.find((a) => a.isBuiltin)
       if (firstBuiltin) setSelectedAssistantId(firstBuiltin.id)
-    }).catch(() => {})
+    }).catch(reportIpcError('wizard.listAssistants'))
   }, [])
 
   async function finish() {
     setBusy(true)
     try {
       await window.pocketai.completeWizard()
-    } catch { /* 标记失败不阻塞关闭 */ }
+    } catch (e) {
+      // 标记失败不阻塞关闭（向导已完成，重启后仍会再弹，但不卡死用户）
+      logIpcError('wizard.complete', e)
+    }
     onClose()
   }
 
@@ -162,6 +166,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         }
       }
       setSavedProviderId(providerId)
+      // 记录向导选中的 provider，供 ChatModule 初始化回填默认对话模型
+      window.pocketai.setLastProvider(providerId).catch(reportIpcError('wizard.setLastProvider'))
 
       // 2. 把 assistant 绑定到刚保存的 provider
       //    内置助手只读，需先复制为「我的助手」再绑定 provider
@@ -197,8 +203,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           await window.pocketai.saveSkill({ ...sk, enabled: true })
         }
       }
-    } catch (e: any) {
-      setSetupErr(e?.message ?? t('common.unknownError'))
+    } catch (e) {
+      setSetupErr(e instanceof Error ? e.message : t('common.unknownError'))
       return
     } finally {
       setBusy(false)
@@ -220,8 +226,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       setEncDone(true)
       setPwd(''); setPwd2('')
       setEncStatus({ ...(encStatus ?? { mode: 'none' as const }), mode: 'db' } as EncryptionStatus)
-    } catch (e: any) {
-      setEncErr(e?.message ?? t('enc.fail'))
+    } catch (e) {
+      setEncErr(e instanceof Error ? e.message : t('enc.fail'))
     } finally {
       setBusy(false)
     }
@@ -406,6 +412,15 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                 {t('wizard.localSetupLabel')}
               </label>
               <OllamaPanel compact />
+              {/* B7：Ollama 安装在后台进行，用户可不必等待直接进入下一步 */}
+              <button
+                type="button"
+                className="btn-ghost text-[11px] mt-2"
+                disabled={busy}
+                onClick={handleNextStep1}
+              >
+                {t('wizard.ollamaLater')}
+              </button>
             </div>
           ) : null}
 

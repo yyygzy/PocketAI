@@ -1,6 +1,8 @@
-// 统一的「复制」按钮：处理 clipboard API + textarea 降级 + 「已复制」反馈
-import React, { useCallback, useRef, useState } from 'react'
+// 统一的「复制」按钮：clipboard API + textarea 降级 + 「已复制」反馈
+// 复制与反馈逻辑收口在 utils/clipboard + hooks/useCopyFeedback
+import React from 'react'
 import { useI18n } from '../i18n'
+import { useCopyFeedback } from '../hooks/useCopyFeedback'
 
 interface Props {
   text: string
@@ -11,26 +13,6 @@ interface Props {
   feedbackMs?: number
 }
 
-/** 把文本写入剪贴板；clipboard API 在 file:// 等场景失败时降级到 execCommand */
-async function writeClipboard(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return
-  } catch {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    try {
-      document.execCommand('copy')
-    } finally {
-      document.body.removeChild(ta)
-    }
-  }
-}
-
 export const CopyButton: React.FC<Props> = ({
   text,
   className,
@@ -38,25 +20,11 @@ export const CopyButton: React.FC<Props> = ({
   feedbackMs = 1500
 }) => {
   const { t } = useI18n()
-  const [copied, setCopied] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const handleCopy = useCallback(async () => {
-    if (!text) return
-    await writeClipboard(text)
-    setCopied(true)
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => setCopied(false), feedbackMs)
-  }, [text, feedbackMs])
-
-  // 卸载时清理定时器
-  React.useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current)
-  }, [])
+  const { copied, copy } = useCopyFeedback(feedbackMs)
 
   return (
     <button
-      onClick={() => void handleCopy()}
+      onClick={() => void copy(text)}
       title={title ?? t('common.copy')}
       className={
         className ??

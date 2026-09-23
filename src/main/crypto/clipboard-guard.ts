@@ -7,8 +7,12 @@
 // 保守起见此时不清空——避免误覆盖用户剪贴板。
 
 import { clipboard } from 'electron'
+import { createLogger } from '../logger'
+import { errMsg } from '../error'
 
 export const SENSITIVE_CLIPBOARD_TTL_MS = 30_000
+
+const log = createLogger('clipboard-guard')
 
 class ClipboardGuard {
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -17,7 +21,7 @@ class ClipboardGuard {
   /** 复制敏感文本并安排 TTL 后自动清除（同一时间只跟踪最近一次） */
   copySensitive(text: string, ttlMs: number = SENSITIVE_CLIPBOARD_TTL_MS): void {
     const ttl = Math.max(1000, ttlMs)
-    void clipboard.writeText(text)
+    void clipboard.writeText(text).catch((e) => log.error('clipboard.writeText 失败:', errMsg(e)))
     this.pending = text
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {

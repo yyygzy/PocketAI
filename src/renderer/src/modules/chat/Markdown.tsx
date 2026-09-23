@@ -24,7 +24,7 @@ function extractCodeBlock(
   if (!m) return null
   // 代码块文本末尾通常带一个换行，渲染图表/原样显示时去掉
   const code = String(props.children ?? '').replace(/\n$/, '')
-  return { lang: m[1].toLowerCase(), code }
+  return { lang: m[1]!.toLowerCase(), code }
 }
 
 export const Markdown: React.FC<{ content: string }> = ({ content }) => {

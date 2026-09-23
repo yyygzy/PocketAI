@@ -1,5 +1,5 @@
 // 知识库模块：KB 列表 / 创建编辑 / 文档管理 / 分块预览 / 检索测试
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type {
   KnowledgeBase,
   KbDocument,
@@ -9,6 +9,8 @@ import type {
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
+import { reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 export const KnowledgeModule: React.FC = () => {
   const { t } = useI18n()
@@ -16,10 +18,10 @@ export const KnowledgeModule: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'detail' | 'create'>('detail')
 
-  const load = () => window.pocketai.listKnowledgeBases().then(setKbs)
+  const load = useCallback(() => window.pocketai.listKnowledgeBases().then(setKbs).catch(reportIpcError('kb.list')), [])
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
   const selected = kbs.find((k) => k.id === selectedId) ?? null
 
@@ -107,7 +109,7 @@ const KbForm: React.FC<{
   const [error, setError] = useState('')
 
   useEffect(() => {
-    window.pocketai.listProviders().then((ps) => setProviders(ps.filter((p) => p.enabled)))
+    window.pocketai.listProviders().then((ps) => setProviders(ps.filter((p) => p.enabled))).catch(reportIpcError('kb.listProviders'))
   }, [])
 
   const selectedProvider = providers.find((p) => p.id === providerId)
@@ -135,7 +137,7 @@ const KbForm: React.FC<{
       })
       onSaved(saved)
     } catch (e) {
-      setError((e as Error).message)
+      setError(errText(e))
     }
   }
 
@@ -271,10 +273,10 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const loadDocs = () => window.pocketai.listKbDocuments(kb.id).then(setDocs)
+  const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id).then(setDocs).catch(reportIpcError('kb.listDocuments')), [kb.id])
   useEffect(() => {
     loadDocs()
-  }, [kb.id])
+  }, [loadDocs])
 
   const refresh = async () => {
     await loadDocs()
@@ -307,7 +309,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
       await window.pocketai.reindexKbDocument(kb.id, docId)
       await refresh()
     } catch (e) {
-      toast.error((e as Error).message)
+      toast.error(errText(e))
     } finally {
       setBusy(false)
     }
@@ -464,7 +466,7 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
       const r = await window.pocketai.retrieveKb([kbId], query)
       setResults(r.chunks)
     } catch (e) {
-      setError((e as Error).message)
+      setError(errText(e))
     } finally {
       setLoading(false)
     }
@@ -528,6 +530,7 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void }> = ({ doc,
     window.pocketai
       .listKbChunks(doc.id)
       .then(setChunks)
+      .catch(reportIpcError('kb.listChunks'))
       .finally(() => setLoading(false))
   }, [doc.id])
 
@@ -597,7 +600,7 @@ const AddSourceDialog: React.FC<{
       await onDone()
       onClose()
     } catch (e) {
-      setError((e as Error).message)
+      setError(errText(e))
     } finally {
       setBusy(false)
     }

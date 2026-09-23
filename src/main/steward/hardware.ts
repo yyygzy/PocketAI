@@ -112,7 +112,7 @@ function getGpus(): GpuInfo[] {
       const re = /Chipset Model:\s*(.+)/g
       let m: RegExpExecArray | null
       while ((m = re.exec(out))) {
-        gpus.push({ name: m[1].trim(), cuda: false, mps: /apple/i.test(m[1]) })
+        gpus.push({ name: m[1]!.trim(), cuda: false, mps: /apple/i.test(m[1]!) })
       }
       return gpus
     }
@@ -337,7 +337,7 @@ function getDiskSerialDarwin(): string | null {
     for (const block of blocks) {
       if (new RegExp(`"BSD Name"\\s*=\\s*"${wholeDisk}"`).test(block)) {
         const snMatch = block.match(/"Serial Number"\s*=\s*"([^"]+)"/)
-        if (snMatch) return snMatch[1].trim()
+        if (snMatch) return snMatch[1]!.trim()
       }
     }
     return null
@@ -353,7 +353,7 @@ function getDiskSerialLinux(): string | null {
     const devMatch = stat.match(/^(\/dev\/[a-z]+\d*)/)
     if (!devMatch) return null
     // /dev/sdb1 → /sys/block/sdb/device/serial
-    let dev = devMatch[1].replace('/dev/', '')
+    let dev = devMatch[1]!.replace('/dev/', '')
     // 去掉分区号
     dev = dev.replace(/\d+$/, '')
     const serial = execSync(`cat /sys/block/${dev}/device/serial 2>/dev/null`, { encoding: 'utf8' }).trim()

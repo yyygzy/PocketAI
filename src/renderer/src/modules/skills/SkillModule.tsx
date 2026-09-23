@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 import { SkillMarket } from './SkillMarket'
 
 export const SkillModule: React.FC = () => {
@@ -22,7 +24,7 @@ export const SkillModule: React.FC = () => {
   }, [])
   useEffect(() => {
     // 打开技能页时自动同步内置（支持开发时热更新 + 生产环境首次载入）
-    window.pocketai.syncSkills().catch(() => {})
+    window.pocketai.syncSkills().catch(reportIpcError('skills.syncBuiltin'))
     load()
   }, [])
 
@@ -259,7 +261,7 @@ const SkillForm: React.FC<{
       })
       onSaved(saved)
     } catch (e) {
-      setError((e as Error).message)
+      setError(errText(e))
     } finally {
       setSaving(false)
     }

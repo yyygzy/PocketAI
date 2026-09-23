@@ -14,6 +14,8 @@ import { ChatView, type FocusBranch } from './ChatView'
 import type { CompareColumn } from './ComparisonColumns'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
+import { reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -62,31 +64,42 @@ export const ChatModule: React.FC = () => {
       setConversations(list)
       // 自动选中最近一次使用的会话（列表已按 updated_at DESC 排序）
       if (autoSelect && list.length > 0 && !currentConvRef.current) {
-        const first = list[0]
+        const first = list[0]!
         setCurrentConvId(first.id)
       }
-    })
+    }).catch(reportIpcError('chat.listConversations'))
   }, [])
 
   const loadMessages = useCallback((convId: string) => {
-    return window.pocketai.listMessages(convId).then(setMessages)
+    return window.pocketai.listMessages(convId).then(setMessages).catch(reportIpcError('chat.listMessages'))
   }, [])
 
   const reloadAssistants = useCallback(() => {
-    return window.pocketai.listAssistants().then(setAssistants)
+    return window.pocketai.listAssistants().then(setAssistants).catch(reportIpcError('chat.listAssistants'))
   }, [])
 
   // 初始加载 + 订阅流式事件
   useEffect(() => {
-    window.pocketai.listProviders().then((list) => {
+    // 同时拉取 provider 列表 + 向导上次保存的 provider id；
+    // 命中且仍 enabled 则优先回填该 provider，否则回退到第一个 enabled provider
+    Promise.all([
+      window.pocketai.listProviders(),
+      window.pocketai.getLastProvider()
+    ]).then(([list, lastRes]) => {
       setProviders(list)
-      const first = list.filter((p) => p.enabled)[0]
-      if (first) {
+      const lastId = lastRes.ok ? lastRes.data : undefined
+      const pick =
+        (lastId ? list.find((p) => p.id === lastId && p.enabled) : undefined) ??
+        list.filter((p) => p.enabled)[0]
+      if (pick) {
         // 智能默认：跳过 embed/向量模型，选第一个对话模型
-        const chatModel = first.models.find((m) => !/^(bge[-_]|embed|gte[-_]|e5[-_]|minilm|nomic-embed)/i.test(m)) ?? first.models[0] ?? ''
-        setTargets([{ providerId: first.id, model: chatModel }])
+        const chatModel =
+          pick.models.find((m) => !/^(bge[-_]|embed|gte[-_]|e5[-_]|minilm|nomic-embed)/i.test(m)) ??
+          pick.models[0] ??
+          ''
+        setTargets([{ providerId: pick.id, model: chatModel }])
       }
-    })
+    }).catch(reportIpcError('chat.listProviders'))
 
     window.pocketai.listAssistants().then((list) => {
       setAssistants(list)
@@ -96,7 +109,7 @@ export const ChatModule: React.FC = () => {
         setCurrentAssistantId(def.id)
       }
       reloadConversations(true)
-    })
+    }).catch(reportIpcError('chat.listAssistantsInit'))
 
     const offChunk = window.pocketai.onChatChunk((e) => {
       if (e.requestId !== requestIdRef.current) return
@@ -108,13 +121,13 @@ export const ChatModule: React.FC = () => {
       })
     })
 
-    const markSettled = (requestId: string, index: number, patch: Partial<CompareColumn>) => {
+    const markSettled = (_requestId: string, index: number, patch: Partial<CompareColumn>) => {
       setLiveColumns((prev) =>
         prev ? prev.map((c, i) => (i === index ? { ...c, ...patch } : c)) : prev
       )
       settledCountRef.current += 1
       if (!finalizedRef.current && settledCountRef.current >= totalColumnsRef.current) {
-        finalize(requestId)
+        finalize()
       }
     }
 
@@ -125,13 +138,17 @@ export const ChatModule: React.FC = () => {
       if (e.requestId === requestIdRef.current) markSettled(e.requestId, e.targetIndex, { status: 'error', error: e.error })
     })
 
-    function finalize(requestId: string) {
+    // finalize 在流式结束后延迟 200ms 再清空/重载，避免立即重渲染打断最后一段输出。
+    // 这个 timer 必须在 effect cleanup 时清掉，否则组件卸载后会触发 setLiveColumns 等。
+    let finalizeTimer: ReturnType<typeof setTimeout> | null = null
+    function finalize() {
       if (finalizedRef.current) return
       finalizedRef.current = true
       const convId = streamingConvRef.current
       requestIdRef.current = null
       streamingConvRef.current = null
-      setTimeout(() => {
+      finalizeTimer = setTimeout(() => {
+        finalizeTimer = null
         setLiveColumns(null)
         reloadConversations()
         if (convId && currentConvRef.current === convId) loadMessages(convId)
@@ -142,6 +159,7 @@ export const ChatModule: React.FC = () => {
       offChunk()
       offDone()
       offError()
+      if (finalizeTimer) clearTimeout(finalizeTimer)
     }
   }, [reloadConversations, loadMessages])
 
@@ -201,12 +219,13 @@ export const ChatModule: React.FC = () => {
       window.pocketai.listMessages(conv.id).then((msgs) => {
         for (let i = msgs.length - 1; i >= 0; i--) {
           const m = msgs[i]
+          if (!m) continue
           if (m.role === 'assistant' && m.provider && m.model) {
             applyPairs([{ providerId: m.provider, model: m.model }])
             break
           }
         }
-      })
+      }).catch(reportIpcError('chat.restoreLastModel'))
     },
     [providers]
   )
@@ -274,8 +293,8 @@ export const ChatModule: React.FC = () => {
         if (!r.ok) { toast.error(t('chat.importFail', { e: r.error ?? t('common.unknownError') })); return }
         toast.success(t('chat.importOk', { n: r.messageCount ?? 0 }))
         await reloadConversations()
-      } catch (e: any) {
-        toast.error(t('chat.importFail', { e: e.message }))
+      } catch (e) {
+        toast.error(t('chat.importFail', { e: e instanceof Error ? e.message : String(e) }))
       }
     }
     input.click()
@@ -506,7 +525,7 @@ export const ChatModule: React.FC = () => {
       window.dispatchEvent(new CustomEvent('pocketai:open-note', { detail: { id: note.id } }))
     } catch (e) {
       // 主进程版本过旧/未重启时 IPC 无 handler，需给出明确提示而非静默无反应
-      toast.error(t('chatview.saveNoteFailed', { msg: (e as Error)?.message ?? String(e) }))
+      toast.error(t('chatview.saveNoteFailed', { msg: errText(e) }))
     }
   }, [messages, toast, t])
 

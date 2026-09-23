@@ -9,6 +9,9 @@
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { masterKeyManager } from './master-key'
+import { createLogger } from '../logger'
+
+const log = createLogger('crypto')
 
 const CIPHER_PREFIX = 'v1:'
 const IV_LEN = 12
@@ -48,7 +51,7 @@ export function decryptSecret(stored: string | null | undefined): string {
     const pt = Buffer.concat([decipher.update(ct), decipher.final()])
     return pt.toString('utf8')
   } catch {
-    console.warn('[crypto] 字段密文解密失败（密钥不匹配、锁定中或数据损坏）')
+    log.warn('字段密文解密失败（密钥不匹配、锁定中或数据损坏）')
     return ''
   }
 }

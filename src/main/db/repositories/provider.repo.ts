@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../../crypto/field-encrypt'
 import type { ProviderRecord, ProviderType } from '../../../shared/types'
+import { createLogger } from '../../logger'
+
+const log = createLogger('crypto')
 
 interface ProviderRow {
   id: string
@@ -148,7 +151,7 @@ export const providerRepo = {
       if (stored && !isCipherText(stored)) {
         const keys = decryptApiKeys(stored)
         stmt.run(encryptApiKeys(keys), row.id)
-        console.log(`[crypto] Provider 凭据已升级为字段加密: ${row.id}`)
+        log.info(`Provider 凭据已升级为字段加密: ${row.id}`)
       }
     }
   },
@@ -176,7 +179,7 @@ export const providerRepo = {
       try {
         stmt.run(encryptApiKeys(apiKeys), id)
       } catch (e) {
-        console.warn(`[crypto] Provider 凭据轮换恢复失败 ${id}:`, e)
+        log.warn(`Provider 凭据轮换恢复失败 ${id}:`, e)
       }
     }
   }

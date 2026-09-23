@@ -91,7 +91,7 @@ export async function importSkill(
     })
     if (canceled || filePaths.length === 0) return { ok: true, canceled: true }
 
-    const file = filePaths[0]
+    const file = filePaths[0]!
     const stat = fs.statSync(file)
     if (stat.size > MAX_IMPORT_BYTES) return { ok: false, error: 'FILE_TOO_LARGE' }
 

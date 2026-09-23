@@ -8,6 +8,7 @@
 // - 单条消息上限 40000 字符（Slack 实际有更细粒度 4000 token 限制，留余量分片为 2900）
 import type { ChannelStatusEvent } from '../../shared/types'
 import { getChannelSecrets } from './channel-config'
+import { createLogger } from '../logger'
 import {
   IGateway,
   IncomingMessage,
@@ -16,6 +17,8 @@ import {
   splitMessage,
   sleep
 } from './gateway-base'
+
+const log = createLogger('channels')
 
 const API_BASE = 'https://slack.com/api'
 const REQUEST_TIMEOUT_MS = 15_000
@@ -51,7 +54,6 @@ class SlackGateway implements IGateway {
   private starting = false
   private status = new StatusEmitter(this.type)
   private onMessage: MessageHandler | null = null
-  private selfBotId: string | null = null
 
   onStatus(l: (evt: ChannelStatusEvent) => void): () => void {
     return this.status.add(l)
@@ -139,10 +141,10 @@ class SlackGateway implements IGateway {
       try {
         const env: SlackEnvelope = JSON.parse(typeof ev.data === 'string' ? ev.data : '')
         void this.handleEnvelope(env, botToken, ctrl).catch((err) => {
-          console.error('[channels] Slack 消息处理失败:', safeError(err, 'envelope'))
+          log.error('Slack 消息处理失败:', safeError(err, 'envelope'))
         })
       } catch (err) {
-        console.error('[channels] Slack 解析失败:', safeError(err, 'parse'))
+        log.error('Slack 解析失败:', safeError(err, 'parse'))
       }
     })
 
@@ -156,7 +158,10 @@ class SlackGateway implements IGateway {
         return
       }
       // 运行中意外断开：重连
-      void this.reconnect(botToken, ctrl)
+      void this.reconnect(botToken, ctrl).catch((err) => {
+        // abort 时 sleep reject 是正常退出路径；其他 reject 记日志
+        if (!ctrl.signal.aborted) log.error('Slack reconnect 异常:', safeError(err, 'reconnect'))
+      })
     })
 
     ws.addEventListener('error', () => {
@@ -172,7 +177,7 @@ class SlackGateway implements IGateway {
     this.status.emit('running')
   }
 
-  private async handleEnvelope(env: SlackEnvelope, botToken: string, ctrl: AbortController): Promise<void> {
+  private async handleEnvelope(env: SlackEnvelope, _botToken: string, ctrl: AbortController): Promise<void> {
     // 收到事件必须 ack 否则会被重发
     if (env.envelope_id && this.ws && this.ws.readyState === this.ws.OPEN) {
       this.ws.send(JSON.stringify({ envelope_id: env.envelope_id }))
@@ -194,7 +199,7 @@ class SlackGateway implements IGateway {
           firstName: ''
         })
       } catch (err) {
-        console.error('[channels] 消息处理失败:', safeError(err, 'handle'))
+        log.error('消息处理失败:', safeError(err, 'handle'))
       }
     }
     if (env.type === 'goodbye' && !ctrl.signal.aborted) {
@@ -237,7 +242,6 @@ class SlackGateway implements IGateway {
     this.ws = null
     this.running = false
     this.onMessage = null
-    this.selfBotId = null
     this.status.reset()
     this.status.emit('stopped')
   }

@@ -24,6 +24,24 @@ export interface WebSearchHit {
   snippet: string
 }
 
+// 两家搜索 API 响应（仅用到字段；外部边界，全部可选并在取用处收窄）
+interface TavilyItem {
+  title?: unknown
+  url?: unknown
+  content?: unknown
+  snippet?: unknown
+}
+interface BochaItem {
+  name?: unknown
+  url?: unknown
+  snippet?: unknown
+  summary?: unknown
+}
+interface SearchApiResponse {
+  results?: TavilyItem[]
+  data?: { webPages?: { value?: BochaItem[] } }
+}
+
 /** 摘要截断 */
 function cut(text: unknown, max: number): string {
   const s = String(text ?? '').replace(/\s+/g, ' ').trim()
@@ -85,21 +103,21 @@ export async function runWebSearch(
     throw new Error(`搜索失败 HTTP ${result.status}: ${cut(text, 200)}`)
   }
 
-  const json: any = JSON.parse(result.body.toString('utf-8') || 'null')
+  const json = JSON.parse(result.body.toString('utf-8') || 'null') as SearchApiResponse | null
   if (json === null) throw new Error('搜索响应解析失败')
 
   const hits: WebSearchHit[] =
     provider === 'tavily'
-      ? (Array.isArray(json.results) ? json.results : []).map((r: any) => ({
-          title: cut(r?.title, 200),
-          url: String(r?.url ?? ''),
-          snippet: cut(r?.content ?? r?.snippet, MAX_SNIPPET_CHARS)
+      ? (Array.isArray(json.results) ? json.results : []).map((r) => ({
+          title: cut(r.title, 200),
+          url: String(r.url ?? ''),
+          snippet: cut(r.content ?? r.snippet, MAX_SNIPPET_CHARS)
         }))
       : // 博查：data.webPages.value[]
-        ((json?.data?.webPages?.value ?? []) as any[]).map((r) => ({
-          title: cut(r?.name, 200),
-          url: String(r?.url ?? ''),
-          snippet: cut(r?.snippet ?? r?.summary, MAX_SNIPPET_CHARS)
+        (json.data?.webPages?.value ?? []).map((r) => ({
+          title: cut(r.name, 200),
+          url: String(r.url ?? ''),
+          snippet: cut(r.snippet ?? r.summary, MAX_SNIPPET_CHARS)
         }))
 
   return hits.filter((h) => h.title && h.url)

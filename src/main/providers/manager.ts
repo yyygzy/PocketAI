@@ -2,6 +2,7 @@
 import { providerRepo } from '../db/repositories/provider.repo'
 import { OpenAICompatibleAdapter } from './openai-compatible'
 import { normalizeBaseUrl, type ProviderAdapter } from './types'
+import { errMsg } from '../error'
 import type { ProviderRecord } from '../../shared/types'
 
 class ProviderManager {
@@ -49,7 +50,7 @@ class ProviderManager {
       const models = await this.fetchModels(id)
       return { ok: true, modelCount: models.length }
     } catch (e) {
-      return { ok: false, error: (e as Error).message }
+      return { ok: false, error: errMsg(e) }
     }
   }
 

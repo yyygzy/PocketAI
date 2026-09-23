@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord, KnowledgeBase, ToolSchema, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 interface Props {
   initial: Partial<AssistantRecord>
@@ -30,9 +32,9 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    window.pocketai.listKnowledgeBases().then(setKbs)
-    window.pocketai.listAvailableTools().then(setTools)
-    window.pocketai.listSkills().then(setSkills)
+    window.pocketai.listKnowledgeBases().then(setKbs).catch(reportIpcError('assistantEditor.listKbs'))
+    window.pocketai.listAvailableTools().then(setTools).catch(reportIpcError('assistantEditor.listTools'))
+    window.pocketai.listSkills().then(setSkills).catch(reportIpcError('assistantEditor.listSkills'))
   }, [])
 
   const enabledProviders = providers.filter((p) => p.enabled)
@@ -86,7 +88,7 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
       })
       onSaved(saved)
     } catch (e) {
-      setError((e as Error).message)
+      setError(errText(e))
     } finally {
       setSaving(false)
     }

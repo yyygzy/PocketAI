@@ -12,6 +12,8 @@ import type {
 import { CHANNEL_TYPES } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
+import { logIpcError, reportIpcError } from '../../../utils/ipc'
+import { errText } from '../../../utils/error'
 import { StatusDot, MiniBtn } from '../ui'
 
 export const ChannelsPanel: React.FC = () => {
@@ -29,8 +31,8 @@ export const ChannelsPanel: React.FC = () => {
 
   useEffect(() => {
     void loadAllConfigs()
-    window.pocketai.listProviders().then((ps) => setProviders(ps.filter((p) => p.enabled)))
-    window.pocketai.listAssistants().then(setAssistants)
+    window.pocketai.listProviders().then((ps) => setProviders(ps.filter((p) => p.enabled))).catch(reportIpcError('channels.listProviders'))
+    window.pocketai.listAssistants().then(setAssistants).catch(reportIpcError('channels.listAssistants'))
     return window.pocketai.onChannelStatus((evt) =>
       setStatuses((prev) => ({ ...prev, [evt.type]: evt }))
     )
@@ -42,7 +44,7 @@ export const ChannelsPanel: React.FC = () => {
       try {
         next[type] = await window.pocketai.getChannelConfig(type)
       } catch (e) {
-        console.warn('[channels] load config failed', type, e)
+        logIpcError(`channels.getConfig:${type}`, e)
       }
     }
     setCfgs(next)
@@ -55,7 +57,7 @@ export const ChannelsPanel: React.FC = () => {
       }
       setStatuses((prev) => ({ ...prev, ...ss }))
     } catch (e) {
-      console.warn('[channels] load status snapshot failed', e)
+      logIpcError('channels.listStatus', e)
     }
   }
 
@@ -103,7 +105,7 @@ export const ChannelsPanel: React.FC = () => {
       if (patch.primarySecret !== undefined) setPrimaryDraft('')
       if (patch.secondarySecret !== undefined) setSecondaryDraft('')
     } catch (e) {
-      toast.error((e as Error).message || t('common.unknownError'))
+      toast.error(errText(e, t('common.unknownError')))
     }
   }
 

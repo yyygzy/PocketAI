@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import type { BuiltinTool } from './builtin'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import type { CalendarConfig } from '../../shared/types'
+import { errMsg } from '../error'
 
 const KEY_ENABLED = 'agent.calendar_enabled'
 const KEY_PATHS = 'agent.calendar_ics_paths'
@@ -214,7 +215,7 @@ export const calendarReadTool: BuiltinTool = {
         const content = fs.readFileSync(p, 'utf8')
         for (const ev of parseIcs(content)) all.push({ ...ev, source: p })
       } catch (e) {
-        errors.push(`${p}: ${(e as Error).message}`)
+        errors.push(`${p}: ${errMsg(e)}`)
       }
     }
 

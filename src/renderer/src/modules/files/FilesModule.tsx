@@ -3,13 +3,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileEntry, FileReadResult } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { useTransientNotice } from '../../hooks/useTransientNotice'
 
 export const FilesModule: React.FC = () => {
   const { t } = useI18n()
   const [relDir, setRelDir] = useState('') // '' = data 根目录
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(2600)
   const [preview, setPreview] = useState<{ entry: FileEntry; result: FileReadResult } | null>(null)
   const [mkdirOpen, setMkdirOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -30,10 +31,7 @@ export const FilesModule: React.FC = () => {
     load(relDir)
   }, [relDir, load])
 
-  const flash = (ok: boolean, text: string) => {
-    setNotice({ ok, text })
-    window.setTimeout(() => setNotice(null), 2600)
-  }
+  const flash = useCallback((ok: boolean, text: string) => showNotice({ ok, text }), [showNotice])
 
   // ---------- 面包屑 ----------
   const crumbs = useMemo(() => {

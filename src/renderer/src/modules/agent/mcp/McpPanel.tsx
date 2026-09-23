@@ -1,5 +1,5 @@
 // MCP Server 管理面板：左列表（启停/编辑/删除 + pip 源） / 右编辑表单或日志
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type {
   McpServerRecord,
   McpServerRuntime,
@@ -12,6 +12,7 @@ import { useToast } from '../../../components/ToastProvider'
 import { StatusDot, MiniBtn } from '../ui'
 import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
+import { reportIpcError } from '../../../utils/ipc'
 
 export const McpPanel: React.FC = () => {
   const { t } = useI18n()
@@ -26,18 +27,19 @@ export const McpPanel: React.FC = () => {
 
   const pip = usePipSource(setNotice)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [recs, runs] = await Promise.all([
       window.pocketai.listMcpServers(),
       window.pocketai.getMcpRuntimes()
     ])
     setRecords(recs)
     setRuntimes(runs)
-  }
+  }, [])
 
   useEffect(() => {
-    void load()
-  }, [])
+    // load 内部无 try-catch，需挂 .catch 避免未处理 rejection
+    void load().catch(reportIpcError('mcp.list'))
+  }, [load])
 
   // 订阅状态变化
   useEffect(() => {

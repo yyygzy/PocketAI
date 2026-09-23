@@ -64,9 +64,9 @@ async function parsePdf(filePath: string): Promise<ParseResult> {
     const textResult = await parser.getText()
     let title = path.basename(filePath)
     try {
-      const info = await parser.getInfo()
-      const t = (info as any)?.info?.Title
-      if (t) title = t
+      const info = await parser.getInfo() as { info?: { Title?: unknown } } | null | undefined
+      const t = info?.info?.Title
+      if (typeof t === 'string' && t) title = t
     } catch {
       // 元信息读取失败不影响正文
     }
@@ -93,6 +93,7 @@ async function parseXlsx(filePath: string): Promise<ParseResult> {
   const parts: string[] = []
   for (const name of wb.SheetNames) {
     const sheet = wb.Sheets[name]
+    if (!sheet) continue
     const csv = XLSX.utils.sheet_to_csv(sheet)
     parts.push(`# ${name}\n${csv}`)
   }

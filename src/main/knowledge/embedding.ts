@@ -37,5 +37,5 @@ export async function embedQuery(
 ): Promise<Float32Array> {
   const adapter = providerManager.getAdapter(providerId)
   const [vec] = await adapter.embed([query], model)
-  return Float32Array.from(vec)
+  return Float32Array.from(vec!)
 }

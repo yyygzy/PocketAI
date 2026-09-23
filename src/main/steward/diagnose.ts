@@ -19,19 +19,20 @@ import { masterKeyManager } from '../crypto/master-key'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { providerRepo } from '../db/repositories/provider.repo'
 import { loadWebDAVConfig } from '../backup/backup-service'
+import { errMsg } from '../error'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { getHardwareInfo } from './hardware'
 import { DATA_DIR, DB_PATH } from '../portable'
 
 const DAY_MS = 24 * 3600 * 1000
 
-function levelScore(level: CheckLevel): number {
+export function levelScore(level: CheckLevel): number {
   if (level === 'danger') return 30
   if (level === 'warn') return 10
   return 0
 }
 
-function scoreOf(checks: SecurityCheck[]): number {
+export function scoreOf(checks: SecurityCheck[]): number {
   const deduct = checks.reduce((sum, c) => sum + levelScore(c.level), 0)
   return Math.max(0, 100 - deduct)
 }
@@ -103,7 +104,7 @@ export function runAudit(): AuditResult {
       id: 'integrity',
       label: '数据库完整性',
       level: 'danger',
-      detail: `完整性检查执行失败：${(e as Error).message}`
+      detail: `完整性检查执行失败：${errMsg(e)}`
     })
   }
 
@@ -155,7 +156,7 @@ export function runAudit(): AuditResult {
       id: 'backup-cloud',
       label: '云端备份',
       level: 'warn',
-      detail: `备份配置读取失败：${(e as Error).message}`
+      detail: `备份配置读取失败：${errMsg(e)}`
     })
   }
 
@@ -186,7 +187,7 @@ function safeItem(
   try {
     return { id, label, ...fn() }
   } catch (e) {
-    return { id, label, level: 'danger', detail: `检测异常：${(e as Error).message}` }
+    return { id, label, level: 'danger', detail: `检测异常：${errMsg(e)}` }
   }
 }
 

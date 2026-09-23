@@ -13,6 +13,8 @@ import type {
   TranslateStyle
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { useCopyFeedback } from '../../hooks/useCopyFeedback'
+import { reportIpcError } from '../../utils/ipc'
 
 /** 源语言候选（含自动检测） */
 const SOURCE_LANGS: TranslateLang[] = [
@@ -68,10 +70,10 @@ export const TranslateModule: React.FC = () => {
   const [targetText, setTargetText] = useState('')
   const [runState, setRunState] = useState<RunState>('idle')
   const [errorMsg, setErrorMsg] = useState('')
-  const [copied, setCopied] = useState(false)
+  /** 复制译文反馈（含剪贴板降级与定时器清理） */
+  const { copied, copy: copyToClipboard } = useCopyFeedback()
   const requestIdRef = useRef<string | null>(null)
   const runningRef = useRef(false)
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // delta rAF 合批：长文本流式时单帧内的多个 chunk 合并为一次 setState
   const deltaBufRef = useRef('')
   const rafRef = useRef<number | null>(null)
@@ -113,9 +115,9 @@ export const TranslateModule: React.FC = () => {
         setProviderId(first.id)
         if (first.models[0]) setModel(first.models[0])
       }
-    })
-    window.pocketai.listTranslations().then(setHistory)
-    window.pocketai.listGlossary().then(setGlossary)
+    }).catch(reportIpcError('translate.listProviders'))
+    window.pocketai.listTranslations().then(setHistory).catch(reportIpcError('translate.listTranslations'))
+    window.pocketai.listGlossary().then(setGlossary).catch(reportIpcError('translate.listGlossary'))
   }, [])
 
   // ---------- 流式增量订阅（rAF 合批） ----------
@@ -138,16 +140,15 @@ export const TranslateModule: React.FC = () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
       rafRef.current = null
       deltaBufRef.current = ''
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
-      // 离开模块时中止进行中的翻译
+      // 离开模块时中止进行中的翻译；卸载路径上的失败无感知必要，静默
       if (runningRef.current && requestIdRef.current) {
-        window.pocketai.abortTranslate(requestIdRef.current).catch(() => {})
+        window.pocketai.abortTranslate(requestIdRef.current).catch(() => { /* 卸载中止，失败无影响 */ })
       }
     }
   }, [])
 
   const reloadHistory = useCallback(() => {
-    window.pocketai.listTranslations().then(setHistory)
+    window.pocketai.listTranslations().then(setHistory).catch(reportIpcError('translate.reloadHistory'))
   }, [])
 
   // ---------- 发起翻译 ----------
@@ -225,7 +226,7 @@ export const TranslateModule: React.FC = () => {
   ])
 
   const handleStop = useCallback(() => {
-    if (requestIdRef.current) window.pocketai.abortTranslate(requestIdRef.current).catch(() => {})
+    if (requestIdRef.current) window.pocketai.abortTranslate(requestIdRef.current).catch(() => { /* 用户主动中止，尽力而为 */ })
   }, [])
 
   // ---------- 语言互换 ----------
@@ -247,33 +248,9 @@ export const TranslateModule: React.FC = () => {
   }, [sourceLang, targetLang, sourceText, targetText])
 
   // ---------- 复制译文 ----------
-  const handleCopy = useCallback(async () => {
-    if (!targetText) return
-    let ok = false
-    try {
-      await navigator.clipboard.writeText(targetText)
-      ok = true
-    } catch {
-      // clipboard API 不可用时回退到隐藏 textarea
-      try {
-        const ta = document.createElement('textarea')
-        ta.value = targetText
-        ta.style.position = 'fixed'
-        ta.style.opacity = '0'
-        document.body.appendChild(ta)
-        ta.select()
-        ok = document.execCommand('copy')
-        document.body.removeChild(ta)
-      } catch {
-        ok = false
-      }
-    }
-    if (ok) {
-      setCopied(true)
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
-      copiedTimerRef.current = setTimeout(() => setCopied(false), 1500)
-    }
-  }, [targetText])
+  const handleCopy = useCallback(() => {
+    void copyToClipboard(targetText)
+  }, [copyToClipboard, targetText])
 
   // ---------- 历史操作 ----------
   const handlePickHistory = useCallback((item: TranslationRecord) => {

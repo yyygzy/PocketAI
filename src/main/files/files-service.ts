@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { DATA_DIR } from '../portable'
 import type { FileEntry, FileReadResult, FileOpResult } from '../../shared/types'
+import { errMsg } from '../error'
 
 const TEXT_READ_LIMIT = 256 * 1024 // 文本预览最大 256KB，超出截断
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'])
@@ -123,7 +124,7 @@ function read(relPath: string): FileReadResult {
       fs.closeSync(fd)
     }
   } catch (e) {
-    return { ok: false, kind: 'binary', content: null, size: 0, truncated: false, mime: String(e) }
+    return { ok: false, kind: 'binary', content: null, size: 0, truncated: false, mime: errMsg(e) }
   }
 }
 

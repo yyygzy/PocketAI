@@ -15,6 +15,10 @@ import { IPC } from '../shared/types'
 import type { PopupConfig, PopupPayload, PopupSetConfigResult } from '../shared/types'
 import { lockService } from './lock/lock'
 import { denyNewWindows } from './net/external-links'
+import { errMsg } from './error'
+import { createLogger } from './logger'
+
+const log = createLogger('popup')
 
 const WIN_W = 440
 const WIN_H = 600
@@ -61,7 +65,7 @@ function registerWith(cfg: PopupConfig): string | null {
   if (cfg.quickEnabled) {
     const ok = globalShortcut.register(cfg.quickAccelerator, () => openPopup('quick'))
     if (!ok) {
-      console.warn('[popup] 快捷问答快捷键注册失败（可能被其他程序占用）:', cfg.quickAccelerator)
+      log.warn('快捷问答快捷键注册失败（可能被其他程序占用）:', cfg.quickAccelerator)
       return cfg.quickAccelerator
     }
     registeredAccels.push(cfg.quickAccelerator)
@@ -78,7 +82,7 @@ function registerWith(cfg: PopupConfig): string | null {
         })
     })
     if (!ok) {
-      console.warn('[popup] 选区助手快捷键注册失败（可能被其他程序占用）:', cfg.selectionAccelerator)
+      log.warn('选区助手快捷键注册失败（可能被其他程序占用）:', cfg.selectionAccelerator)
       // 失败时保留已成功注册的另一个
       return cfg.selectionAccelerator
     }
@@ -102,7 +106,8 @@ function runCmd(file: string, args: string[], timeout = 2500): Promise<void> {
       })
       p.on('error', reject)
     } catch (e) {
-      reject(e as Error)
+      // 统一拒绝值为 Error 实例（同步抛出理论上只有 Error，兜底包一层）
+      reject(e instanceof Error ? e : new Error(errMsg(e)))
     }
   })
 }
@@ -154,7 +159,7 @@ async function grabSelectedText(): Promise<string> {
   try {
     await sendCopyHotkey()
   } catch (e) {
-    console.warn('[popup] 模拟复制失败:', (e as Error).message)
+    log.warn('模拟复制失败:', errMsg(e))
     return ''
   }
   const text = (await clipboard.readText()).trim()
@@ -342,7 +347,7 @@ export function initPopup(): void {
 
   // app ready 后才能注册全局快捷键
   if (app.isReady()) registerShortcuts()
-  else app.whenReady().then(registerShortcuts)
+  else app.whenReady().then(registerShortcuts).catch((e) => log.error('registerShortcuts 失败:', errMsg(e)))
   app.on('will-quit', () => {
     for (const a of registeredAccels) globalShortcut.unregister(a)
     registeredAccels = []

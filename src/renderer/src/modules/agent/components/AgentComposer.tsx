@@ -31,7 +31,7 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-2">
           {attachments.map((attachment, i) => (
-            <div key={i} className="relative group flex items-center gap-1.5 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg pl-1.5 pr-7 py-1 text-xs">
+            <div key={`${attachment.name}-${attachment.size}`} className="relative group flex items-center gap-1.5 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg pl-1.5 pr-7 py-1 text-xs">
               {attachment.type === 'image' ? (
                 <img src={attachment.data} alt={attachment.name} className="w-6 h-6 rounded object-cover" />
               ) : (

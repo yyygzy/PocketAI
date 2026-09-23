@@ -179,7 +179,7 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
   // 2) 工作目录之外的绝对路径（盘符路径；POSIX 绝对路径误伤面大，仅对明显系统目录确认）
   const wsWin = workspaceAbs.toLowerCase().replace(/[\\/]+$/, '').replace(/\//g, '\\')
   for (const m of cmd.matchAll(WIN_ABS_PATH_RE)) {
-    const p = m[1]
+    const p = m[1]!
     const normWin = p.replace(/[\\/]+$/, '').toLowerCase().replace(/\//g, '\\')
     if (normWin !== wsWin && !normWin.startsWith(wsWin + '\\')) {
       return { decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' }
