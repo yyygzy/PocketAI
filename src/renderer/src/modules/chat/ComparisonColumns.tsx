@@ -125,11 +125,11 @@ export const ComparisonColumns: React.FC<Props> = ({
               <div className="shrink-0 flex gap-1 px-3 py-1.5 border-t border-[var(--color-border)]">
                 <CopyButton
                   text={col.content}
-                  className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+                  className="chip"
                 />
                 <button
                   onClick={() => handleDelete(i)}
-                  className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-danger-bg)] hover:text-[var(--color-danger)] transition-colors"
+                  className="chip chip-danger"
                 >
                   {t('common.delete')}
                 </button>

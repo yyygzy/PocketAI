@@ -251,7 +251,7 @@ export const SandboxModule: React.FC = () => {
                 {preview.meta.isApp && <span className="mr-1">{preview.meta.icon}</span>}
                 {preview.meta.name}
               </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-info-bg)] text-[var(--color-info)] shrink-0">
+              <span className="badge badge-info shrink-0">
                 {t('sandbox.isolatedBadge')}
               </span>
               <button

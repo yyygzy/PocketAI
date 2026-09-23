@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
+    "@tanstack/react-virtual": "^3.14.13",
     "@types/archiver": "^8.0.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.10.0",

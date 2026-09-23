@@ -6,9 +6,11 @@ import { useI18n } from '../../i18n'
 import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { SkillMarket } from './SkillMarket'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 export const SkillModule: React.FC = () => {
   const { t } = useI18n()
+  const { confirm, dialog } = useConfirm()
   const [skills, setSkills] = useState<SkillRecord[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'detail' | 'create' | 'edit'>('detail')
@@ -45,7 +47,7 @@ export const SkillModule: React.FC = () => {
   }
 
   const handleDelete = async (s: SkillRecord) => {
-    if (!window.confirm(t('skill.deleteConfirm', { name: s.name }))) return
+    if (!(await confirm({ message: t('skill.deleteConfirm', { name: s.name }), danger: true }))) return
     await window.pocketai.deleteSkill(s.id)
     if (selectedId === s.id) {
       setSelectedId(null)
@@ -156,6 +158,8 @@ export const SkillModule: React.FC = () => {
       {marketOpen && (
         <SkillMarket onClose={() => setMarketOpen(false)} onChanged={load} />
       )}
+
+      {dialog}
     </div>
   )
 }
@@ -177,7 +181,7 @@ const SkillDetail: React.FC<{
             <div className="font-semibold flex items-center gap-2">
               {skill.name}
               {skill.isBuiltin && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)]">
+                <span className="badge badge-muted">
                   {t('skill.builtin')}
                 </span>
               )}

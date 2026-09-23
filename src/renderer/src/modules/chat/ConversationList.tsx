@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import type { ConversationRecord } from '../../../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../../shared/snippet'
 import { useI18n } from '../../i18n'
+import { EmptyState } from '../../components/EmptyState'
 
 interface Props {
   conversations: ConversationRecord[]
@@ -117,9 +118,7 @@ export const ConversationList: React.FC<Props> = ({
           <SearchResults results={results} searching={searching} query={search} onSelectConv={onSelect} />
         ) : (
           conversations.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2">
-              {t('chat.noConversations')}
-            </p>
+            <EmptyState className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2" message={t('chat.noConversations')} />
           ) : conversations.map((c) => (
             <ConvItem
               key={c.id}
@@ -199,6 +198,7 @@ const ConvItem: React.FC<{
           onClick={(e) => { e.stopPropagation(); onExport(conv.id) }}
           className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
           title={t('chat.export')}
+          aria-label={t('chat.export')}
         >↓</button>
       )}
       {onExportEncrypted && !editing && (
@@ -206,6 +206,7 @@ const ConvItem: React.FC<{
           onClick={(e) => { e.stopPropagation(); onExportEncrypted(conv.id) }}
           className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
           title={t('chat.exportEncrypted')}
+          aria-label={t('chat.exportEncrypted')}
         >🔐</button>
       )}
       {onRename && !editing && (
@@ -213,12 +214,14 @@ const ConvItem: React.FC<{
           onClick={(e) => { e.stopPropagation(); setEditing(true) }}
           className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
           title={t('chat.rename')}
+          aria-label={t('chat.rename')}
         >✎</button>
       )}
       <button
         onClick={(e) => { e.stopPropagation(); onDelete() }}
         className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] w-4 h-4 flex items-center justify-center text-xs"
         title={t('chat.delete')}
+        aria-label={t('chat.delete')}
       >×</button>
     </div>
   )
@@ -271,10 +274,10 @@ const SearchResults: React.FC<{
 }> = ({ results, searching, query, onSelectConv }) => {
   const { t } = useI18n()
   if (searching) {
-    return <p className="text-xs text-[var(--color-text-muted)] text-center mt-6">{t('chat.searching')}</p>
+    return <EmptyState className="text-xs text-[var(--color-text-muted)] text-center mt-6" message={t('chat.searching')} />
   }
   if (results.length === 0) {
-    return <p className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2">{t('chat.noResult', { query })}</p>
+    return <EmptyState className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2" message={t('chat.noResult', { query })} />
   }
   // 按 conversationId 分组
   const grouped = new Map<string, { title: string; items: SearchResult[] }>()

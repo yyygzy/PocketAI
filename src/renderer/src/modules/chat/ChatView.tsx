@@ -9,6 +9,8 @@ import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
 import { ChatConfigBar } from './ChatConfigBar'
 import { writeClipboard } from '../../utils/clipboard'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
 
 interface Turn {
   user: MessageRecord | null
@@ -94,13 +96,12 @@ export const ChatView: React.FC<Props> = ({
   focusBranch
 }) => {
   const { t } = useI18n()
-  const bottomRef = useRef<HTMLDivElement>(null)
   const scrollBoxRef = useRef<HTMLDivElement>(null)
-  /** 渐进渲染：先只渲染最近 N 轮，向上滚动再补渲染，避免长会话一次挂载上千 DOM */
-  const INITIAL_TURN_COUNT = 30
-  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_TURN_COUNT)
-  const restoredHeightRef = useRef(0)
   const streaming = liveColumns !== null
+  // 用户是否处于底部锚定区（历史状态，scroll 事件更新，避免竞态抖动）
+  const isAtBottomRef = useRef(true)
+  // 切会话后待滚底标记：messages 异步加载，length 变化 effect 里消费
+  const pendingScrollBottomRef = useRef(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   /** 各轮次手动选中的分支（turnKey → batchKey）；无条目时显示最新分支 */
   const [activeBranchMap, setActiveBranchMap] = useState<Record<string, string>>({})
@@ -116,11 +117,12 @@ export const ChatView: React.FC<Props> = ({
     }
   }, [focusBranch])
 
-  // 切换会话（首条消息 id 变化）时清空选择并重置渐进渲染
+  // 切换会话（首条消息 id 变化）时清空选择并设待滚底标记
   const firstMsgId = messages[0]?.id ?? null
   useEffect(() => {
     setSelectedIds(new Set())
-    setVisibleTurnCount(INITIAL_TURN_COUNT)
+    pendingScrollBottomRef.current = true
+    isAtBottomRef.current = true
   }, [firstMsgId])
 
   const toggleSelect = useCallback((id: string) => {
@@ -207,6 +209,18 @@ export const ChatView: React.FC<Props> = ({
     return copy
   }, [turns, liveColumns])
 
+  // 虚拟化：每轮一个虚拟项，只渲染可视区 + overscan，避免长对话 DOM 线性增长
+  // 复用 V3-Eng-2 模式：measureElement 动态高度 + isNearBottom/shouldStickToBottom 滚底决策
+  const virtualizer = useVirtualizer({
+    count: renderedTurns.length,
+    getScrollElement: () => scrollBoxRef.current,
+    estimateSize: () => 200,
+    overscan: 4,
+    measureElement: (el) => {
+      return el instanceof HTMLElement ? el.getBoundingClientRect().height : 200
+    }
+  })
+
   /** 批次标识：有 batchId 用 batchId，旧数据退化为下标 */
   const batchKeyOf = (batch: MessageRecord[], idx: number): string => batch[0]?.batchId ?? `legacy:${idx}`
 
@@ -248,33 +262,27 @@ export const ChatView: React.FC<Props> = ({
     })
   }
 
+  // 滚底决策：切会话待滚底标记优先；否则流式追加时按 isAtBottomRef 跟滚
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [renderedTurns.length, liveColumns])
+    const count = renderedTurns.length
+    if (count === 0) return
+    const lastIndex = count - 1
+    if (pendingScrollBottomRef.current) {
+      virtualizer.scrollToIndex(lastIndex, { align: 'end' })
+      pendingScrollBottomRef.current = false
+      isAtBottomRef.current = true
+      return
+    }
+    if (shouldStickToBottom(false, isAtBottomRef.current, streaming)) {
+      virtualizer.scrollToIndex(lastIndex, { align: 'end' })
+    }
+  }, [renderedTurns.length, liveColumns, streaming, virtualizer])
 
-  /** 渐进渲染切片：只渲染最近 visibleTurnCount 轮 */
-  const hiddenTurnCount = Math.max(0, renderedTurns.length - visibleTurnCount)
-  const visibleTurns = hiddenTurnCount > 0 ? renderedTurns.slice(hiddenTurnCount) : renderedTurns
-
-  // 向上滚动接近顶部时补渲染更早的轮次；加载后恢复视口位置（记录加载前高度差）
   const handleScroll = useCallback(() => {
     const el = scrollBoxRef.current
     if (!el) return
-    if (el.scrollTop < 240 && hiddenTurnCount > 0) {
-      restoredHeightRef.current = el.scrollHeight
-      setVisibleTurnCount((n) => n + INITIAL_TURN_COUNT)
-    }
-  }, [hiddenTurnCount])
-
-  useEffect(() => {
-    const el = scrollBoxRef.current
-    if (el && restoredHeightRef.current) {
-      el.scrollTop = el.scrollHeight - restoredHeightRef.current
-      restoredHeightRef.current = 0
-    }
-  }, [visibleTurnCount])
-
-  const loadAllEarlier = useCallback(() => setVisibleTurnCount(renderedTurns.length), [renderedTurns.length])
+    isAtBottomRef.current = isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight, 48)
+  }, [])
 
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
 
@@ -323,20 +331,10 @@ export const ChatView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 消息流 */}
+      {/* 消息流（虚拟化：每轮一个虚拟项，只渲染可视区 + overscan） */}
       <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-4 py-5 space-y-6">
-          {hiddenTurnCount > 0 && (
-            <div className="text-center pb-1">
-              <button
-                onClick={loadAllEarlier}
-                className="text-xs px-3 py-1.5 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-hover)] hover:text-[var(--color-text)] transition-colors"
-              >
-                {t('chat.loadEarlier')}（{hiddenTurnCount}）
-              </button>
-            </div>
-          )}
-          {renderedTurns.length === 0 && (
+        <div className="max-w-5xl mx-auto px-4 py-5">
+          {renderedTurns.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-72 text-center px-6">
               <div className="text-4xl mb-3">🎒</div>
               {assistantName && <p className="text-[var(--color-text)] font-semibold">{assistantName}</p>}
@@ -351,87 +349,104 @@ export const ChatView: React.FC<Props> = ({
                 {t('chatview.hint')}
               </p>
             </div>
+          ) : (
+            <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
+              {virtualizer.getVirtualItems().map((vi) => {
+                const turn = renderedTurns[vi.index]
+                if (!turn) return null
+                const ti = vi.index
+                const turnKey = turn.user?.id ?? `turn-${ti}`
+                const activeIdx = activeBatchIndexOf(turn, turnKey)
+                const activeBatch = turn.batches[activeIdx] ?? []
+                const label = activeBatch
+                  .map((r) => r.model)
+                  .filter(Boolean)
+                  .join(' · ')
+                const comparing = compareTurns.has(turnKey) && turn.batches.length > 1
+                return (
+                  <div
+                    key={turn.user?.id ?? `turn-${ti}`}
+                    data-index={vi.index}
+                    ref={virtualizer.measureElement}
+                    className="space-y-4"
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      transform: `translateY(${vi.start}px)`,
+                      width: '100%',
+                      // pb-6 模拟原 space-y-6 轮次间距（absolute 元素 margin 不生效，用 padding 计入测量高度）
+                      paddingBottom: 24
+                    }}
+                  >
+                    {turn.user && (
+                      <MessageBubble
+                        role="user"
+                        content={turn.user.content}
+                        messageId={turn.user.id}
+                        attachments={turn.user.attachments}
+                        selected={selectedIds.has(turn.user.id)}
+                        onToggleSelect={toggleSelect}
+                        onDelete={handleDeleteOne}
+                        onResend={onResend}
+                        onFork={onForkConversation}
+                        onSaveAsNote={onSaveAsNote}
+                      />
+                    )}
+                    {comparing ? (
+                      <BranchCompare
+                        batches={turn.batches}
+                        activeIndex={activeIdx}
+                        onActivate={(bi) => activateBranch(turnKey, batchKeyOf(turn.batches[bi]!, bi))}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelect}
+                        onDelete={handleDeleteOne}
+                      />
+                    ) : activeBatch.length === 1 ? (
+                      <MessageBubble
+                        role="assistant"
+                        content={activeBatch[0]!.content}
+                        model={activeBatch[0]!.model}
+                        streaming={activeBatch[0]!.status === 'streaming'}
+                        messageId={activeBatch[0]!.id}
+                        selected={selectedIds.has(activeBatch[0]!.id)}
+                        onToggleSelect={toggleSelect}
+                        onDelete={handleDeleteOne}
+                        onRegenerate={onRegenerate}
+                        onFork={onForkConversation}
+                        onSaveAsNote={onSaveAsNote}
+                      />
+                    ) : activeBatch.length > 1 ? (
+                      <ComparisonColumns
+                        providers={providers}
+                        columns={activeBatch.map((r) => ({
+                          providerId: r.provider ?? '',
+                          model: r.model ?? '',
+                          content: r.content,
+                          status: r.status === 'streaming' ? 'streaming' : r.status === 'error' ? 'error' : r.status === 'aborted' ? 'aborted' : 'done'
+                        }))}
+                        messageIds={activeBatch.map((r) => r.id)}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelect}
+                        onDelete={handleDeleteOne}
+                      />
+                    ) : null}
+                    {turn.batches.length > 1 && (
+                      <BranchNav
+                        index={activeIdx}
+                        total={turn.batches.length}
+                        label={label}
+                        comparing={comparing}
+                        onToggleCompare={() => toggleCompare(turnKey)}
+                        onPrev={() => switchBranch(turn, turnKey, -1)}
+                        onNext={() => switchBranch(turn, turnKey, 1)}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           )}
-
-          {visibleTurns.map((turn, ti) => {
-            const turnKey = turn.user?.id ?? `turn-${ti}`
-            const activeIdx = activeBatchIndexOf(turn, turnKey)
-            const activeBatch = turn.batches[activeIdx] ?? []
-            const label = activeBatch
-              .map((r) => r.model)
-              .filter(Boolean)
-              .join(' · ')
-            const comparing = compareTurns.has(turnKey) && turn.batches.length > 1
-            return (
-              <div key={turn.user?.id ?? `turn-${ti}`} className="space-y-4">
-                {turn.user && (
-                  <MessageBubble
-                    role="user"
-                    content={turn.user.content}
-                    messageId={turn.user.id}
-                    attachments={turn.user.attachments}
-                    selected={selectedIds.has(turn.user.id)}
-                    onToggleSelect={toggleSelect}
-                    onDelete={handleDeleteOne}
-                    onResend={onResend}
-                    onFork={onForkConversation}
-                    onSaveAsNote={onSaveAsNote}
-                  />
-                )}
-                {comparing ? (
-                  <BranchCompare
-                    batches={turn.batches}
-                    activeIndex={activeIdx}
-                    onActivate={(bi) => activateBranch(turnKey, batchKeyOf(turn.batches[bi]!, bi))}
-                    selectedIds={selectedIds}
-                    onToggleSelect={toggleSelect}
-                    onDelete={handleDeleteOne}
-                  />
-                ) : activeBatch.length === 1 ? (
-                  <MessageBubble
-                    role="assistant"
-                    content={activeBatch[0]!.content}
-                    model={activeBatch[0]!.model}
-                    streaming={activeBatch[0]!.status === 'streaming'}
-                    messageId={activeBatch[0]!.id}
-                    selected={selectedIds.has(activeBatch[0]!.id)}
-                    onToggleSelect={toggleSelect}
-                    onDelete={handleDeleteOne}
-                    onRegenerate={onRegenerate}
-                    onFork={onForkConversation}
-                    onSaveAsNote={onSaveAsNote}
-                  />
-                ) : activeBatch.length > 1 ? (
-                  <ComparisonColumns
-                    providers={providers}
-                    columns={activeBatch.map((r) => ({
-                      providerId: r.provider ?? '',
-                      model: r.model ?? '',
-                      content: r.content,
-                      status: r.status === 'streaming' ? 'streaming' : r.status === 'error' ? 'error' : r.status === 'aborted' ? 'aborted' : 'done'
-                    }))}
-                    messageIds={activeBatch.map((r) => r.id)}
-                    selectedIds={selectedIds}
-                    onToggleSelect={toggleSelect}
-                    onDelete={handleDeleteOne}
-                  />
-                ) : null}
-                {turn.batches.length > 1 && (
-                  <BranchNav
-                    index={activeIdx}
-                    total={turn.batches.length}
-                    label={label}
-                    comparing={comparing}
-                    onToggleCompare={() => toggleCompare(turnKey)}
-                    onPrev={() => switchBranch(turn, turnKey, -1)}
-                    onNext={() => switchBranch(turn, turnKey, 1)}
-                  />
-                )}
-              </div>
-            )
-          })}
-
-          <div ref={bottomRef} />
         </div>
       </div>
 

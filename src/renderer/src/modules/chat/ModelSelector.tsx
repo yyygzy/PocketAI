@@ -80,6 +80,7 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
               disabled={disabled || targets.length <= 1}
               className="w-5 h-5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-hover-overlay)] disabled:opacity-20 text-xs shrink-0"
               title={t('ms.remove')}
+              aria-label={t('ms.remove')}
             >
               ×
             </button>
@@ -94,6 +95,7 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
           disabled={disabled || enabled.length === 0}
           className="w-7 h-7 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-30 shrink-0 flex items-center justify-center"
           title={t('ms.addAllTitle')}
+          aria-label={t('ms.addAllTitle')}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

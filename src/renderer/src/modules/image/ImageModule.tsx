@@ -18,6 +18,7 @@ import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { reportIpcError } from '../../utils/ipc'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 const MAX_PROMPT_CHARS = 4000
 const THUMB_MISSING_ICON = '🖼️'
@@ -51,6 +52,7 @@ export const ImageModule: React.FC = () => {
   const runningRef = useRef(false)
   /** 复制提示词的「已复制」反馈（含剪贴板降级与定时器清理） */
   const { copied, copy: copyToClipboard } = useCopyFeedback()
+  const { confirm, dialog } = useConfirm()
 
   // ---------- 结果与历史 ----------
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -196,7 +198,7 @@ export const ImageModule: React.FC = () => {
     async (id: string) => {
       const rec = gallery.find((g) => g.id === id)
       if (!rec) return
-      if (!window.confirm(t('image.deleteConfirm'))) return
+      if (!(await confirm({ message: t('image.deleteConfirm'), danger: true }))) return
       const res = await window.pocketai.deleteImage(id)
       if (res.ok) {
         setGallery((prev) => prev.filter((g) => g.id !== id))
@@ -470,6 +472,8 @@ export const ImageModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {dialog}
     </div>
   )
 }

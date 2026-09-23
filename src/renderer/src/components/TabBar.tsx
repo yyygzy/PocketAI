@@ -127,6 +127,7 @@ export const TabBar: React.FC<TabBarProps> = ({
               onMouseDown={(e) => e.stopPropagation()}
               className="opacity-0 group-hover:opacity-100 hover:bg-[var(--color-hover-overlay)] rounded w-4 h-4 flex items-center justify-center text-[10px]"
               title={t('tab.close')}
+              aria-label={t('tab.close')}
             >
               ×
             </button>
@@ -138,6 +139,7 @@ export const TabBar: React.FC<TabBarProps> = ({
         onClick={onNew}
         className="h-7 w-7 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] shrink-0"
         title={t('tab.new')}
+        aria-label={t('tab.new')}
       >
         +
       </button>

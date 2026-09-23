@@ -26,7 +26,7 @@ export const ThemeLangControls: React.FC<{ collapsed?: boolean }> = ({ collapsed
   if (collapsed) {
     return (
       <div className="flex flex-col items-center gap-1 py-2 border-t border-[var(--color-border)]">
-        <button onClick={toggleTheme} className={iconBtnCls} title={t('controls.toggleTheme')}>
+        <button onClick={toggleTheme} className={iconBtnCls} title={t('controls.toggleTheme')} aria-label={t('controls.toggleTheme')}>
           {light ? '🌙' : '☀️'}
         </button>
         <button

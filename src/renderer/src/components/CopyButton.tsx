@@ -28,7 +28,7 @@ export const CopyButton: React.FC<Props> = ({
       title={title ?? t('common.copy')}
       className={
         className ??
-        'text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors'
+        'chip'
       }
     >
       {copied ? t('common.copied') : t('common.copy')}

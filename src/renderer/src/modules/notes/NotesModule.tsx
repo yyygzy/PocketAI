@@ -8,6 +8,7 @@ import type { Note } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 interface NoteDraft {
   title: string
@@ -41,6 +42,7 @@ export const NotesModule: React.FC = () => {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [loadError, setLoadError] = useState(false)
   const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(4000)
+  const { confirm, dialog } = useConfirm()
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const active = useMemo(() => notes.find((n) => n.id === activeId) ?? null, [notes, activeId])
@@ -166,7 +168,7 @@ export const NotesModule: React.FC = () => {
 
   const handleDelete = async () => {
     if (!active) return
-    if (!window.confirm(t('notes.deleteConfirm', { title: active.title || t('notes.untitled') }))) return
+    if (!(await confirm({ message: t('notes.deleteConfirm', { title: active.title || t('notes.untitled') }), danger: true }))) return
     try {
       await withIpcTimeout(window.pocketai.deleteNote(active.id))
       setNotes((prev) => prev.filter((n) => n.id !== active.id))
@@ -362,6 +364,8 @@ export const NotesModule: React.FC = () => {
           </div>
         )}
       </div>
+
+      {dialog}
     </div>
   )
 }

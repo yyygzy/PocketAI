@@ -152,7 +152,7 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
         />
         <div className="flex flex-wrap gap-1.5 mt-1.5">
           {VARIABLE_KEYS.map((vk) => (
-            <span key={vk} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)]">
+            <span key={vk} className="badge badge-muted">
               {t(vk)}
             </span>
           ))}

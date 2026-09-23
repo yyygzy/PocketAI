@@ -48,6 +48,7 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
                 onClick={(e) => { e.stopPropagation(); onEdit(a.id) }}
                 className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs shrink-0"
                 title={t('common.edit')}
+                aria-label={t('common.edit')}
               >✎</button>
             )}
           </div>

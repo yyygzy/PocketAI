@@ -15,6 +15,7 @@ import type {
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { reportIpcError } from '../../utils/ipc'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 /** 源语言候选（含自动检测） */
 const SOURCE_LANGS: TranslateLang[] = [
@@ -72,6 +73,7 @@ export const TranslateModule: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('')
   /** 复制译文反馈（含剪贴板降级与定时器清理） */
   const { copied, copy: copyToClipboard } = useCopyFeedback()
+  const { confirm, dialog } = useConfirm()
   const requestIdRef = useRef<string | null>(null)
   const runningRef = useRef(false)
   // delta rAF 合批：长文本流式时单帧内的多个 chunk 合并为一次 setState
@@ -295,7 +297,7 @@ export const TranslateModule: React.FC = () => {
   )
 
   const handleClearHistory = useCallback(async () => {
-    if (!window.confirm(t('translate.history.clearConfirm'))) return
+    if (!(await confirm({ message: t('translate.history.clearConfirm'), danger: true }))) return
     await window.pocketai.clearTranslations()
     setHistory([])
   }, [t])
@@ -551,6 +553,8 @@ export const TranslateModule: React.FC = () => {
           onClose={() => setGlossaryOpen(false)}
         />
       )}
+
+      {dialog}
     </div>
   )
 }

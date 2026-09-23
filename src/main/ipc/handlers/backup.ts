@@ -1,7 +1,7 @@
 // 备份 IPC：本地备份（明文/加密）、WebDAV 配置与备份管理、定时计划
 import path from 'node:path'
 import { ipcMain } from 'electron'
-import { IPC, type WebDAVConfig as WebDAVConfigInput } from '../../../shared/types'
+import { IPC, type WebDAVConfig as WebDAVConfigInput, type MergeStrategy } from '../../../shared/types'
 import { getBackupSchedule, setBackupSchedule, noteManualBackup } from '../../backup/backup-scheduler'
 import { DATA_DIR } from '../../portable'
 import { errMsg } from '../safe-handle'
@@ -88,6 +88,28 @@ export function registerBackupHandlers(): void {
       }
     }
     return restoreFromWebDAV(cfg, filename)
+  })
+  ipcMain.handle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: string) => {
+    const { scanMergeConflicts } = await import('../../backup/merge-service')
+    const { loadWebDAVConfig } = await import('../../backup/backup-service')
+    const cfg = loadWebDAVConfig()
+    if (!cfg) return { ok: false, error: '未配置 WebDAV', tables: [], attachmentsToAdd: 0 }
+    try {
+      return await scanMergeConflicts(cfg, filename)
+    } catch (e) {
+      return { ok: false, error: errMsg(e, '扫描冲突失败'), tables: [], attachmentsToAdd: 0 }
+    }
+  })
+  ipcMain.handle(IPC.BACKUP_WEBDAV_MERGE_EXECUTE, async (_e, payload: { filename: string; strategy: MergeStrategy }) => {
+    const { executeMerge } = await import('../../backup/merge-service')
+    const { loadWebDAVConfig } = await import('../../backup/backup-service')
+    const cfg = loadWebDAVConfig()
+    if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    try {
+      return await executeMerge(cfg, payload.filename, payload.strategy)
+    } catch (e) {
+      return { ok: false, error: errMsg(e, '合并失败') }
+    }
   })
   ipcMain.handle(IPC.BACKUP_WEBDAV_DELETE, async (_e, filename: string) => {
     const { loadWebDAVConfig, deleteWebDAVBackup } = await import('../../backup/backup-service')

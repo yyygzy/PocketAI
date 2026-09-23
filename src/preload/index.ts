@@ -594,6 +594,13 @@ const api = {
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_LIST),
   restoreWebDAVBackup: (filename: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_RESTORE, filename),
+  mergeScanWebDAVBackup: (filename: string): Promise<import('../shared/types').MergeConflictReport> =>
+    ipcRenderer.invoke(IPC.BACKUP_WEBDAV_MERGE_SCAN, filename),
+  mergeExecuteWebDAVBackup: (
+    filename: string,
+    strategy: import('../shared/types').MergeStrategy
+  ): Promise<{ ok: boolean; error?: string; summary?: string }> =>
+    ipcRenderer.invoke(IPC.BACKUP_WEBDAV_MERGE_EXECUTE, { filename, strategy }),
   deleteWebDAVBackup: (filename: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_DELETE, filename),
   getBackupSchedule: (): Promise<BackupScheduleStatus> =>

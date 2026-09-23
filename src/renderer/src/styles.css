@@ -286,6 +286,56 @@ select option:disabled {
   padding: 4px 8px;
 }
 .unlock-switch button:hover:not(:disabled) { text-decoration: underline; }
+
+/* ── 可访问性：键盘焦点可见性 ──
+   全局 :focus-visible 轮廓：仅键盘 Tab 导航时显示，鼠标点击不触发。
+   覆盖此前各处 outline:none 的缺口，保证键盘用户能识别当前焦点位置。 */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── 原子组件：chip / badge / tag ──
+   收口此前散布于各模块的 text-[Npx] px-N py-N rounded ... 原子类堆砌。
+   - .chip：可点击的小型操作按钮（11px，hover 变色）
+   - .badge：静态标签/徽章（10px，带语义配色）
+   - .tag：带边框的小标签（10px）
+   尺寸与 Tailwind spacing 对齐：py-0.5=2px px-1.5=6px rounded=4px */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  transition: color .15s ease, background-color .15s ease;
+}
+.chip:hover { background-color: var(--color-hover-overlay); color: var(--color-text); }
+.chip-accent:hover { color: var(--color-accent); }
+.chip-danger:hover { background-color: var(--color-danger-bg); color: var(--color-danger); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.badge-accent { background: var(--color-accent-soft); color: var(--color-accent); }
+.badge-muted { background: var(--color-inline-code-bg); color: var(--color-text-muted); }
+.badge-overlay { background: var(--color-hover-overlay); color: var(--color-text-muted); }
+.badge-info { background: var(--color-info-bg); color: var(--color-info); }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
 .unlock-switch button:disabled { opacity: 0.5; cursor: default; }
 
 .unlock-btn-secondary {

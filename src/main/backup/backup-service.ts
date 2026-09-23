@@ -37,7 +37,7 @@ const log = createLogger('backup')
 
 export { type WebDAVCredentials, type BackupFile }
 
-const ENC_PREFIX = 'PKBK1' // PocketAI Backup v1
+export const ENC_PREFIX = 'PKBK1' // PocketAI Backup v1
 
 export interface BackupManifest {
   version: 1
@@ -165,7 +165,7 @@ function encryptBackup(zip: Buffer): { blob: Buffer; salt: Buffer } {
   return { blob, salt }
 }
 
-function decryptBackup(blob: Buffer, salt: Buffer): Buffer {
+export function decryptBackup(blob: Buffer, salt: Buffer): Buffer {
   if (!blob.slice(0, ENC_PREFIX.length).equals(Buffer.from(ENC_PREFIX))) {
     throw new Error('备份文件格式无效')
   }
@@ -219,7 +219,7 @@ export async function createEncryptedLocalBackup(outDir: string): Promise<{ path
   return { path: outPath, size: blob.length, encrypted: true, saltB64: salt.toString('base64') }
 }
 
-function toCreds(cfg: WebDAVConfig): WebDAVCredentials {
+export function toCreds(cfg: WebDAVConfig): WebDAVCredentials {
   return {
     url: cfg.url,
     username: cfg.username,
@@ -265,7 +265,7 @@ interface IncrementalAttachment {
   blob: string
 }
 
-interface IncrementalIndex {
+export interface IncrementalIndex {
   kind: 'pocketai-incremental'
   version: 1
   createdAt: string
@@ -288,7 +288,7 @@ function blobRelName(prefix: 'db' | 'att', sha: string, encrypted: boolean): str
   return `blobs/${prefix}-${sha}${encrypted ? '.enc' : '.bin'}`
 }
 
-function isEncryptedBlob(buf: Buffer, name: string): boolean {
+export function isEncryptedBlob(buf: Buffer, name: string): boolean {
   return buf.subarray(0, ENC_PREFIX.length).equals(Buffer.from(ENC_PREFIX)) || name.endsWith('.enc')
 }
 

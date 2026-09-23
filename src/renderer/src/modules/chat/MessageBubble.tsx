@@ -165,21 +165,21 @@ const MessageBubbleImpl: React.FC<Props> = ({
           <div className={`flex gap-1 mt-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
             <CopyButton
               text={content}
-              className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+              className="chip"
             />
             {isUser && onResend && (
               <>
                 <button
                   onClick={() => { setEditText(content); setEditing(true) }}
                   title={t('chatview.editResendTitle')}
-                  className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
+                  className="chip chip-accent"
                 >
                   {t('chatview.editResend')}
                 </button>
                 <button
                   onClick={() => onResend(messageId!)}
                   title={t('chatview.resendModelTitle')}
-                  className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
+                  className="chip chip-accent"
                 >
                   {t('chatview.rerun')}
                 </button>
@@ -215,7 +215,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
             <button
               onClick={handleDelete}
               title={t('common.delete')}
-              className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-danger-bg)] hover:text-[var(--color-danger)] transition-colors"
+              className="chip chip-danger"
             >
               {t('common.delete')}
             </button>

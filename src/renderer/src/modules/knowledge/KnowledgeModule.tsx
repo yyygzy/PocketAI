@@ -11,6 +11,7 @@ import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 export const KnowledgeModule: React.FC = () => {
   const { t } = useI18n()
@@ -268,6 +269,7 @@ const KbForm: React.FC<{
 const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, onChanged }) => {
   const { t } = useI18n()
   const toast = useToast()
+  const { confirm, dialog } = useConfirm()
   const [docs, setDocs] = useState<KbDocument[]>([])
   const [editing, setEditing] = useState(false)
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
@@ -298,7 +300,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
   const [addSource, setAddSource] = useState<null | 'url' | 'text'>(null)
 
   const handleDeleteDoc = async (docId: string) => {
-    if (!window.confirm(t('kb.delDocConfirm'))) return
+    if (!(await confirm({ message: t('kb.delDocConfirm'), danger: true }))) return
     await window.pocketai.deleteKbDocument(docId)
     await refresh()
   }
@@ -316,7 +318,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
   }
 
   const handleDeleteKb = async () => {
-    if (!window.confirm(t('kb.delKbConfirm', { name: kb.name }))) return
+    if (!(await confirm({ message: t('kb.delKbConfirm', { name: kb.name }), danger: true }))) return
     await window.pocketai.deleteKnowledgeBase(kb.id)
     onChanged()
   }
@@ -419,7 +421,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
         <ChunkPreview doc={previewDoc} onClose={() => setPreviewDoc(null)} />
       )}
 
-      {/* 添加 URL / 录入文本 弹窗 */}
+      {/* 添加 URL / 录入文本弹窗 */}
       {addSource && (
         <AddSourceDialog
           kbId={kb.id}
@@ -428,6 +430,8 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
           onDone={refresh}
         />
       )}
+
+      {dialog}
     </div>
   )
 }

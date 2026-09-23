@@ -139,9 +139,9 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
                   <h3 className="text-xl font-semibold flex items-center gap-2">
                     {current.name}
                     {current.isBuiltin ? (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]`}>{t('am.builtin')}</span>
+                      <span className="badge badge-accent">{t('am.builtin')}</span>
                     ) : (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)]">{t('am.mine')}</span>
+                      <span className="badge badge-muted">{t('am.mine')}</span>
                     )}
                   </h3>
                   <p className="text-sm text-[var(--color-text-muted)] mt-1">{current.description}</p>

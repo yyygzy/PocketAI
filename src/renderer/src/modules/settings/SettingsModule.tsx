@@ -17,6 +17,8 @@ import { injectCustomCss } from '../../custom-css'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { EmptyState } from '../../components/EmptyState'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 /** 从 unknown 异常中取 message；非 Error 或无消息时回退 fallback */
 function errMsg(e: unknown, fallback: string): string {
@@ -467,6 +469,7 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
 
 const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
   const { t } = useI18n()
+  const { confirm, dialog } = useConfirm()
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [shownCode, setShownCode] = useState('')
@@ -478,7 +481,7 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
 
   async function generate() {
     // 已有恢复码时重新生成会作废旧码，二次确认
-    if (hasKey && !window.confirm(t('enc.recoveryRegenConfirm'))) return
+    if (hasKey && !(await confirm({ message: t('enc.recoveryRegenConfirm'), danger: true }))) return
     setBusy(true)
     try {
       const r = await window.pocketai.generateRecoveryKey()
@@ -494,7 +497,7 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
   }
 
   async function remove() {
-    if (!window.confirm(t('enc.recoveryRemoveConfirm'))) return
+    if (!(await confirm({ message: t('enc.recoveryRemoveConfirm'), danger: true }))) return
     await window.pocketai.disableRecoveryKey()
     void refresh()
     setNotice({ ok: true, text: t('enc.recoveryRemoved') })
@@ -534,6 +537,8 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
           onClose={() => setShownCode('')}
         />
       )}
+
+      {dialog}
     </div>
   )
 }
@@ -544,6 +549,7 @@ const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168]
 
 const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   const { t, lang } = useI18n()
+  const { confirm, dialog } = useConfirm()
   // 加密备份唯一闸门是主进程 masterKeyManager.getDbKey()：
   // 仅 db 模式且已解锁（主密码已验证）时可用；none 模式与锁屏期间禁用
   const encrypted = !!enc?.dbEncrypted && !!enc?.masterPasswordVerified
@@ -556,6 +562,12 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   const [wdPwd, setWdPwd] = useState('')
   const [wdDir, setWdDir] = useState('')
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  // 合并恢复状态
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeFilename, setMergeFilename] = useState('')
+  const [mergeReport, setMergeReport] = useState<import('../../../../shared/types').MergeConflictReport | null>(null)
+  const [mergeScanning, setMergeScanning] = useState(false)
+  const [mergeExecuting, setMergeExecuting] = useState(false)
 
   useEffect(() => {
     window.pocketai.loadWebDAVConfig().then((c) => {
@@ -640,7 +652,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     window.pocketai.getBackupSchedule().then(setSchedule).catch(reportIpcError('settings.refreshSchedule'))
   }
 
-  async function refreshList() {
+  const refreshList = useCallback(async () => {
     setListLoading(true)
     try {
       const items = await window.pocketai.listWebDAVBackups()
@@ -650,20 +662,64 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     } finally {
       setListLoading(false)
     }
-  }
+  }, [t])
+
+  // 时间格式化：null/undefined → 从未；否则按语言本地化
+  const formatSyncTime = useCallback((ts: number | null | undefined): string => {
+    if (!ts) return t('bk.never')
+    return new Date(ts).toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN')
+  }, [t, lang])
+
+  // 配置加载完成后自动拉取云端备份列表，供同步状态卡片展示云端最新时间
+  useEffect(() => {
+    if (cfg) refreshList()
+  }, [cfg, refreshList])
 
   async function doRestore(filename: string) {
-    if (!window.confirm(t('bk.restoreConfirm', { name: filename }))) return
+    if (!(await confirm({ message: t('bk.restoreConfirm', { name: filename }), danger: true }))) return
     showNotice(true, t('bk.downloadingRestore'))
     const r = await window.pocketai.restoreWebDAVBackup(filename)
     showNotice(r.ok, r.ok ? t('bk.restoreOk') : t('bk.restoreFail', { e: r.error ?? t('common.unknownError') }))
   }
 
   async function doDelete(filename: string) {
-    if (!window.confirm(t('bk.deleteConfirm', { name: filename }))) return
+    if (!(await confirm({ message: t('bk.deleteConfirm', { name: filename }), danger: true }))) return
     await window.pocketai.deleteWebDAVBackup(filename)
     await refreshList()
     showNotice(true, t('bk.deleted'))
+  }
+
+  // 合并恢复：先扫描冲突，再弹窗让用户选策略
+  async function doMergeScan(filename: string) {
+    setMergeFilename(filename)
+    setMergeReport(null)
+    setMergeOpen(true)
+    setMergeScanning(true)
+    try {
+      const r = await window.pocketai.mergeScanWebDAVBackup(filename)
+      setMergeReport(r)
+    } catch (e) {
+      setMergeReport({ ok: false, error: String(e), tables: [], attachmentsToAdd: 0 })
+    } finally {
+      setMergeScanning(false)
+    }
+  }
+
+  async function doMergeExecute(strategy: import('../../../../shared/types').MergeStrategy) {
+    if (!mergeFilename) return
+    setMergeExecuting(true)
+    try {
+      const r = await window.pocketai.mergeExecuteWebDAVBackup(mergeFilename, strategy)
+      showNotice(r.ok, r.ok ? t('bk.mergeOk') : t('bk.mergeFail', { e: r.error ?? t('common.unknownError') }))
+      if (r.ok) {
+        setMergeOpen(false)
+        await refreshList()
+      }
+    } catch (e) {
+      showNotice(false, t('bk.mergeFail', { e: String(e) }))
+    } finally {
+      setMergeExecuting(false)
+    }
   }
 
   return (
@@ -682,6 +738,66 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
           <button className="btn-ghost" onClick={testWD}>{t('bk.testConn')}</button>
         </div>
       </div>
+
+      {/* 同步状态卡片：本地/云端时间对比 + 一键同步入口 */}
+      {cfg && (
+        <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-3">
+          <div className="text-xs text-[var(--color-text-muted)]">{t('bk.syncCard')}</div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <div className="text-[var(--color-text-muted)] mb-0.5">{t('bk.localLatest')}</div>
+              <div>{formatSyncTime(schedule?.lastRunAt)}</div>
+            </div>
+            <div>
+              <div className="text-[var(--color-text-muted)] mb-0.5">{t('bk.cloudLatest')}</div>
+              <div>
+                {listLoading
+                  ? t('bk.listLoading')
+                  : webdavList.length
+                    ? formatSyncTime(Math.max(...webdavList.map((f) => f.mtime)))
+                    : t('bk.cloudNotFetched')}
+              </div>
+            </div>
+          </div>
+          {(() => {
+            const localTs = schedule?.lastRunAt ?? 0
+            const cloudTs = webdavList.length ? Math.max(...webdavList.map((f) => f.mtime)) : 0
+            let hint = t('bk.inSyncHint')
+            if (localTs && !cloudTs) hint = t('bk.localNewerHint')
+            else if (!localTs && cloudTs) hint = t('bk.cloudNewerHint')
+            else if (localTs > cloudTs) hint = t('bk.localNewerHint')
+            else if (cloudTs > localTs) hint = t('bk.cloudNewerHint')
+            return <div className="text-[11px] text-[var(--color-text-muted)]">{hint}</div>
+          })()}
+          <div className="flex gap-2">
+            <button className="btn-primary" onClick={doIncrementalUpload} disabled={listLoading}>
+              {t('bk.syncNow')}
+            </button>
+            {webdavList.length > 0 &&
+              (() => {
+                const latest = [...webdavList].sort((a, b) => b.mtime - a.mtime)[0]
+                return latest ? (
+                  <>
+                    <button
+                      className="btn-ghost"
+                      onClick={() => doRestore(latest.name)}
+                      disabled={listLoading}
+                    >
+                      {t('bk.restoreFromCloud')}
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      onClick={() => doMergeScan(latest.name)}
+                      disabled={listLoading}
+                    >
+                      {t('bk.mergeFromCloud')}
+                    </button>
+                  </>
+                ) : null
+              })()}
+          </div>
+        </div>
+      )}
 
       {/* 定时备份（需先保存 WebDAV 配置） */}
       {cfg && schedule && (
@@ -785,6 +901,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
                       <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{new Date(f.mtime).toLocaleString()}</td>
                       <td className="px-3 py-1.5 text-right">
                         <button className="btn-ghost text-xs px-2 py-0.5 mr-1" onClick={() => doRestore(f.name)}>{t('bk.restore')}</button>
+                        <button className="btn-ghost text-xs px-2 py-0.5 mr-1" onClick={() => doMergeScan(f.name)}>{t('bk.merge')}</button>
                         <button className="btn-ghost text-[var(--color-danger)] hover:opacity-80 text-xs px-2 py-0.5" onClick={() => doDelete(f.name)}>{t('common.delete')}</button>
                       </td>
                     </tr>
@@ -797,6 +914,96 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       )}
 
       {notice && <Notice ok={notice.ok} text={notice.text} />}
+
+      {/* 合并冲突选择对话框 */}
+      {mergeOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm p-4"
+          onClick={() => !mergeExecuting && setMergeOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold mb-3">{t('bk.mergeTitle')}</h3>
+
+            {mergeScanning ? (
+              <div className="text-sm text-[var(--color-text-muted)] py-4 text-center">
+                {t('bk.mergeScanning')}
+              </div>
+            ) : !mergeReport || !mergeReport.ok ? (
+              <div className="text-sm text-[var(--color-danger)] py-2">
+                {mergeReport?.error || t('common.unknownError')}
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-[var(--color-text-muted)] mb-3">
+                  {t('bk.mergeDesc')}
+                </p>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto mb-3">
+                  {mergeReport.tables.filter((tb) => tb.cloudOnly + tb.localOnly + tb.both > 0).map((tb) => (
+                    <div key={tb.table} className="flex justify-between text-xs">
+                      <span className="font-mono text-[var(--color-text)]">{tb.table}</span>
+                      <span className="text-[var(--color-text-muted)]">
+                        {tb.cloudOnly > 0 && <span className="text-[var(--color-accent)]">+{tb.cloudOnly} </span>}
+                        {tb.localOnly > 0 && <span className="text-[var(--color-text-muted)]">本地+{tb.localOnly} </span>}
+                        {tb.both > 0 && <span className="text-[var(--color-warning)]">冲突{tb.both}</span>}
+                      </span>
+                    </div>
+                  ))}
+                  {mergeReport.attachmentsToAdd > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="font-mono text-[var(--color-text)]">attachments</span>
+                      <span className="text-[var(--color-accent)]">+{mergeReport.attachmentsToAdd}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mb-4">
+                  {t('bk.mergeStrategyHint')}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    className="btn-ghost text-left text-xs px-3 py-2"
+                    onClick={() => doMergeExecute('cloud')}
+                    disabled={mergeExecuting}
+                  >
+                    <div className="font-medium">{t('bk.mergeStrategyCloud')}</div>
+                    <div className="text-[var(--color-text-muted)] mt-0.5">{t('bk.mergeStrategyCloudDesc')}</div>
+                  </button>
+                  <button
+                    className="btn-ghost text-left text-xs px-3 py-2"
+                    onClick={() => doMergeExecute('local')}
+                    disabled={mergeExecuting}
+                  >
+                    <div className="font-medium">{t('bk.mergeStrategyLocal')}</div>
+                    <div className="text-[var(--color-text-muted)] mt-0.5">{t('bk.mergeStrategyLocalDesc')}</div>
+                  </button>
+                  <button
+                    className="btn-ghost text-left text-xs px-3 py-2"
+                    onClick={() => doMergeExecute('newer')}
+                    disabled={mergeExecuting}
+                  >
+                    <div className="font-medium">{t('bk.mergeStrategyNewer')}</div>
+                    <div className="text-[var(--color-text-muted)] mt-0.5">{t('bk.mergeStrategyNewerDesc')}</div>
+                  </button>
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={() => setMergeOpen(false)}
+                disabled={mergeExecuting}
+                className="px-3 py-1.5 rounded text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+              >
+                {mergeExecuting ? t('common.loading') : t('common.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog}
     </div>
   )
 }
@@ -814,6 +1021,7 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
 
 const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }> = ({ lic, onChange }) => {
   const { t, lang } = useI18n()
+  const { confirm, dialog } = useConfirm()
   const locale = lang === 'en' ? 'en-US' : 'zh-CN'
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
@@ -859,7 +1067,7 @@ const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }
   }
 
   const handleClear = async () => {
-    if (!window.confirm(t('lic.clearConfirm'))) return
+    if (!(await confirm({ message: t('lic.clearConfirm'), danger: true }))) return
     await window.pocketai.clearLicense()
     setNotice({ ok: true, text: t('lic.cleared') })
     onChange()
@@ -1011,6 +1219,8 @@ const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }
       )}
 
       {notice && <Notice ok={notice.ok} text={notice.text} />}
+
+      {dialog}
     </div>
   )
 }
@@ -1376,6 +1586,7 @@ const AppearancePanel: React.FC = () => {
 
 const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = ({ info, status }) => {
   const { t } = useI18n()
+  const { confirm, dialog } = useConfirm()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const [autoUpdate, setAutoUpdate] = useState<boolean>(info?.autoUpdateEnabled ?? false)
@@ -1443,7 +1654,7 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
   }
 
   const handleRestart = async () => {
-    if (!window.confirm(t('upd.restartConfirm'))) return
+    if (!(await confirm({ message: t('upd.restartConfirm') }))) return
     try {
       await window.pocketai.quitAndInstall()
     } catch (e) {
@@ -1551,11 +1762,11 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
 
       <Modal open={changelogOpen} title={t('upd.changelogTitle')} onClose={() => setChangelogOpen(false)} width={520}>
         {changelogLoading ? (
-          <div className="text-xs text-[var(--color-text-muted)] text-center py-8">{t('upd.changelogLoading')}</div>
+          <EmptyState className="text-xs text-[var(--color-text-muted)] text-center py-8" message={t('upd.changelogLoading')} />
         ) : changelogError ? (
           <div className="text-xs text-[var(--color-danger)] text-center py-8">{t('upd.changelogFail', { e: changelogError })}</div>
         ) : releases.length === 0 ? (
-          <div className="text-xs text-[var(--color-text-muted)] text-center py-8">{t('upd.changelogEmpty')}</div>
+          <EmptyState className="text-xs text-[var(--color-text-muted)] text-center py-8" message={t('upd.changelogEmpty')} />
         ) : (
           <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-4">
             {releases.map((r) => {
@@ -1594,6 +1805,8 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
           </div>
         )}
       </Modal>
+
+      {dialog}
     </div>
   )
 }

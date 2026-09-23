@@ -9,6 +9,7 @@ import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { reportIpcError } from '../../utils/ipc'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 interface Props {
   onClose: () => void
@@ -43,6 +44,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   const [keyword, setKeyword] = useState('')
   const [urlInput, setUrlInput] = useState('')
   const { notice: toast, show: showToast } = useTransientNotice<{ ok: boolean; text: string }>(2400)
+  const { confirm, dialog } = useConfirm()
 
   const flash = useCallback((ok: boolean, text: string) => showToast({ ok, text }), [showToast])
 
@@ -157,7 +159,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
 
   const handleDelete = useCallback(
     async (s: SkillRecord) => {
-      if (!window.confirm(t('skill.deleteConfirm', { name: s.name }))) return
+      if (!(await confirm({ message: t('skill.deleteConfirm', { name: s.name }), danger: true }))) return
       await window.pocketai.deleteSkill(s.id)
       setSkills(await onChanged())
       setView({ mode: 'grid' })
@@ -438,6 +440,8 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
           </div>
         )}
       </div>
+
+      {dialog}
     </div>
   )
 }

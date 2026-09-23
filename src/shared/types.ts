@@ -943,6 +943,30 @@ export interface IncrementalBackupResult {
   encrypted: boolean
 }
 
+// ---------- 双向合并恢复 ----------
+/** 冲突处理策略：local=保留本地 / cloud=保留云端 / newer=取较新 */
+export type MergeStrategy = 'local' | 'cloud' | 'newer'
+
+/** 单表冲突统计 */
+export interface MergeTableConflict {
+  table: string
+  /** 仅云端存在的行数（将插入本地） */
+  cloudOnly: number
+  /** 仅本地存在的行数（保留） */
+  localOnly: number
+  /** 两边都存在但内容不同的冲突行数 */
+  both: number
+}
+
+/** 合并冲突扫描报告 */
+export interface MergeConflictReport {
+  ok: boolean
+  error?: string
+  tables: MergeTableConflict[]
+  /** 附件将新增的数量（云端有本地无） */
+  attachmentsToAdd: number
+}
+
 // ---------- WebDAV 备份配置与文件列表 ----------
 export interface WebDAVConfig {
   url: string
@@ -1245,6 +1269,8 @@ export const IPC = {
   BACKUP_WEBDAV_UPLOAD_INCREMENTAL: 'backup:webdav-upload-incremental', // 增量备份（附件去重）
   BACKUP_WEBDAV_LIST: 'backup:webdav-list', // 列出 WebDAV 上的备份
   BACKUP_WEBDAV_RESTORE: 'backup:webdav-restore', // 从 WebDAV 恢复
+  BACKUP_WEBDAV_MERGE_SCAN: 'backup:webdav-merge-scan', // 扫描云端备份与本地的冲突
+  BACKUP_WEBDAV_MERGE_EXECUTE: 'backup:webdav-merge-execute', // 执行双向合并恢复
   BACKUP_WEBDAV_DELETE: 'backup:webdav-delete', // 删除 WebDAV 备份
   BACKUP_WEBDAV_SAVE_CONFIG: 'backup:webdav-save-config', // 保存 WebDAV 配置
   BACKUP_WEBDAV_LOAD_CONFIG: 'backup:webdav-load-config', // 读取 WebDAV 配置

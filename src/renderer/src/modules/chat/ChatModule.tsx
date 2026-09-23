@@ -10,12 +10,13 @@ import type {
 import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
 import { ConversationList } from './ConversationList'
-import { ChatView, type FocusBranch } from './ChatView'
-import type { CompareColumn } from './ComparisonColumns'
+import { ChatView } from './ChatView'
+import { useStreamSession } from './useStreamSession'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -34,6 +35,7 @@ function tempMessage(role: 'user' | 'assistant', content: string, model?: string
 export const ChatModule: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
+  const { confirm, dialog } = useConfirm()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [currentAssistantId, setCurrentAssistantId] = useState<string>('asst-default')
@@ -41,19 +43,10 @@ export const ChatModule: React.FC = () => {
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
   const [targets, setTargets] = useState<ChatTarget[]>([])
-  const [liveColumns, setLiveColumns] = useState<CompareColumn[] | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
   const [marketDetailId, setMarketDetailId] = useState<string | undefined>(undefined)
-  /** 分支聚焦信号：重新生成/编辑重发后把对应轮次切到新分支 */
-  const [focusBranch, setFocusBranch] = useState<FocusBranch | null>(null)
 
-  const requestIdRef = useRef<string | null>(null)
-  const finalizedRef = useRef(false)
-  const totalColumnsRef = useRef(0)
-  const settledCountRef = useRef(0)
-  const focusNonceRef = useRef(0)
   const assistantIdRef = useRef('asst-default')
-  const streamingConvRef = useRef<string | null>(null)
   const currentConvRef = useRef<string | null>(null)
   currentConvRef.current = currentConvId
   // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
@@ -78,7 +71,17 @@ export const ChatModule: React.FC = () => {
     return window.pocketai.listAssistants().then(setAssistants).catch(reportIpcError('chat.listAssistants'))
   }, [])
 
-  // 初始加载 + 订阅流式事件
+  // 流式会话收口：6 个流式 ref + liveColumns + focusBranch + 事件订阅全部内聚于 hook
+  // 解构取稳定回调（useCallback []），避免以对象形式入 useCallback 依赖致其每渲染重建
+  const {
+    liveColumns, focusBranch, isStreaming, beginStream, failStream, focusNewBranch, abort
+  } = useStreamSession({
+    loadMessages,
+    reloadConversations,
+    getCurrentConvId: () => currentConvRef.current
+  })
+
+  // 初始加载（providers/assistants/conversations）；流式事件订阅已移入 useStreamSession
   useEffect(() => {
     // 同时拉取 provider 列表 + 向导上次保存的 provider id；
     // 命中且仍 enabled 则优先回填该 provider，否则回退到第一个 enabled provider
@@ -110,58 +113,7 @@ export const ChatModule: React.FC = () => {
       }
       reloadConversations(true)
     }).catch(reportIpcError('chat.listAssistantsInit'))
-
-    const offChunk = window.pocketai.onChatChunk((e) => {
-      if (e.requestId !== requestIdRef.current) return
-      setLiveColumns((prev) => {
-        if (!prev) return prev
-        return prev.map((c, i) =>
-          i === e.targetIndex ? { ...c, content: c.content + e.delta } : c
-        )
-      })
-    })
-
-    const markSettled = (_requestId: string, index: number, patch: Partial<CompareColumn>) => {
-      setLiveColumns((prev) =>
-        prev ? prev.map((c, i) => (i === index ? { ...c, ...patch } : c)) : prev
-      )
-      settledCountRef.current += 1
-      if (!finalizedRef.current && settledCountRef.current >= totalColumnsRef.current) {
-        finalize()
-      }
-    }
-
-    const offDone = window.pocketai.onChatDone((e) => {
-      if (e.requestId === requestIdRef.current) markSettled(e.requestId, e.targetIndex, { status: 'done' })
-    })
-    const offError = window.pocketai.onChatError((e) => {
-      if (e.requestId === requestIdRef.current) markSettled(e.requestId, e.targetIndex, { status: 'error', error: e.error })
-    })
-
-    // finalize 在流式结束后延迟 200ms 再清空/重载，避免立即重渲染打断最后一段输出。
-    // 这个 timer 必须在 effect cleanup 时清掉，否则组件卸载后会触发 setLiveColumns 等。
-    let finalizeTimer: ReturnType<typeof setTimeout> | null = null
-    function finalize() {
-      if (finalizedRef.current) return
-      finalizedRef.current = true
-      const convId = streamingConvRef.current
-      requestIdRef.current = null
-      streamingConvRef.current = null
-      finalizeTimer = setTimeout(() => {
-        finalizeTimer = null
-        setLiveColumns(null)
-        reloadConversations()
-        if (convId && currentConvRef.current === convId) loadMessages(convId)
-      }, 200)
-    }
-
-    return () => {
-      offChunk()
-      offDone()
-      offError()
-      if (finalizeTimer) clearTimeout(finalizeTimer)
-    }
-  }, [reloadConversations, loadMessages])
+  }, [reloadConversations])
 
   const currentAssistant = assistants.find((a) => a.id === currentAssistantId) ?? null
 
@@ -336,7 +288,7 @@ export const ChatModule: React.FC = () => {
   }
 
   const handleSend = async (text: string, attachments?: ChatAttachment[]) => {
-    if (requestIdRef.current) return
+    if (isStreaming()) return
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0) return
 
@@ -346,7 +298,7 @@ export const ChatModule: React.FC = () => {
       const nonVisionTargets = validTargets.filter((t) => !VISION_MODEL_PATTERNS.test(t.model))
       if (nonVisionTargets.length > 0) {
         const modelList = nonVisionTargets.map((t) => t.model).join(', ')
-        if (!window.confirm(t('chatview.visionWarn', { models: modelList }))) {
+        if (!(await confirm({ message: t('chatview.visionWarn', { models: modelList }) }))) {
           return
         }
       }
@@ -362,20 +314,8 @@ export const ChatModule: React.FC = () => {
 
     setMessages((prev) => [...prev, tempMessage('user', text)])
 
-    const requestId = crypto.randomUUID()
-    requestIdRef.current = requestId
-    finalizedRef.current = false
-    totalColumnsRef.current = validTargets.length
-    settledCountRef.current = 0
-    streamingConvRef.current = convId
-    setLiveColumns(
-      validTargets.map((t) => ({
-        providerId: t.providerId,
-        model: t.model,
-        content: '',
-        status: 'streaming' as const
-      }))
-    )
+    const requestId = beginStream(convId, validTargets)
+    if (!requestId) return
 
     window.pocketai
       .sendMessage({
@@ -387,17 +327,12 @@ export const ChatModule: React.FC = () => {
         attachments
       })
       .catch(() => {
-        if (requestIdRef.current === requestId) {
-          requestIdRef.current = null
-          streamingConvRef.current = null
-          setLiveColumns(null)
-          if (convId && currentConvRef.current === convId) loadMessages(convId)
-        }
+        failStream(requestId, convId)
       })
   }
 
   const handleStop = () => {
-    if (requestIdRef.current) window.pocketai.abortChat(requestIdRef.current)
+    abort()
   }
 
   const handleDeleteMessage = useCallback(async (id: string) => {
@@ -411,30 +346,18 @@ export const ChatModule: React.FC = () => {
   }, [currentConvId, loadMessages])
 
   const handleRegenerate = useCallback(async (messageId: string) => {
-    if (requestIdRef.current) return // 正在流式中
+    if (isStreaming()) return // 正在流式中
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0 || !currentConvId) return
 
-    const requestId = crypto.randomUUID()
-    requestIdRef.current = requestId
-    finalizedRef.current = false
-    totalColumnsRef.current = validTargets.length
-    settledCountRef.current = 0
-    streamingConvRef.current = currentConvId
-    setLiveColumns(
-      validTargets.map((t) => ({
-        providerId: t.providerId,
-        model: t.model,
-        content: '',
-        status: 'streaming' as const
-      }))
-    )
+    const requestId = beginStream(currentConvId, validTargets)
+    if (!requestId) return
 
     // 旧回复保留为分支；新分支生成中由 liveColumns 以虚拟批次显示
     // 生成完成后自动把该轮切到新分支（batchId = requestId）
     const old = messages.find((m) => m.id === messageId)
     const turnKey = old?.parentId ?? messageId
-    setFocusBranch({ turnKey, batchId: requestId, nonce: ++focusNonceRef.current })
+    focusNewBranch(turnKey, requestId)
 
     window.pocketai
       .regenerateMessage({
@@ -445,41 +368,24 @@ export const ChatModule: React.FC = () => {
         targets: validTargets
       })
       .catch(() => {
-        if (requestIdRef.current === requestId) {
-          requestIdRef.current = null
-          streamingConvRef.current = null
-          setLiveColumns(null)
-          if (currentConvRef.current === currentConvId) loadMessages(currentConvId)
-        }
+        failStream(requestId, currentConvId)
       })
-  }, [targets, currentConvId, currentAssistantId, loadMessages, messages])
+  }, [targets, currentConvId, currentAssistantId, messages, isStreaming, beginStream, focusNewBranch, failStream])
 
   /** 改参重跑 / 编辑用户消息后重发：旧回复保留为分支，追加新批次 */
   const handleResend = useCallback(async (messageId: string, newContent?: string) => {
-    if (requestIdRef.current) return // 正在流式中
+    if (isStreaming()) return // 正在流式中
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0 || !currentConvId) return
 
-    const requestId = crypto.randomUUID()
-    requestIdRef.current = requestId
-    finalizedRef.current = false
-    totalColumnsRef.current = validTargets.length
-    settledCountRef.current = 0
-    streamingConvRef.current = currentConvId
-    setLiveColumns(
-      validTargets.map((t) => ({
-        providerId: t.providerId,
-        model: t.model,
-        content: '',
-        status: 'streaming' as const
-      }))
-    )
+    const requestId = beginStream(currentConvId, validTargets)
+    if (!requestId) return
 
     // 本地乐观更新用户消息内容；旧回复保留为分支，由 liveColumns 以虚拟批次显示
     if (newContent !== undefined) {
       setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, content: newContent } : m)))
     }
-    setFocusBranch({ turnKey: messageId, batchId: requestId, nonce: ++focusNonceRef.current })
+    focusNewBranch(messageId, requestId)
 
     window.pocketai
       .resendMessage({
@@ -491,14 +397,9 @@ export const ChatModule: React.FC = () => {
         targets: validTargets
       })
       .catch(() => {
-        if (requestIdRef.current === requestId) {
-          requestIdRef.current = null
-          streamingConvRef.current = null
-          setLiveColumns(null)
-          if (currentConvRef.current === currentConvId) loadMessages(currentConvId)
-        }
+        failStream(requestId, currentConvId)
       })
-  }, [targets, currentConvId, currentAssistantId, loadMessages])
+  }, [targets, currentConvId, currentAssistantId, isStreaming, beginStream, focusNewBranch, failStream])
 
   /** 消息分支：从指定消息分叉出新会话并立即跳转 */
   const handleForkConversation = useCallback(async (messageId: string) => {
@@ -623,6 +524,8 @@ export const ChatModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {dialog}
     </div>
   )
 }

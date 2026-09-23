@@ -24,13 +24,13 @@ export const BranchNav: React.FC<Props> = ({ index, total, label, comparing, onT
     <div className="flex items-center justify-center gap-1 mt-1.5 text-[11px] text-[var(--color-text-muted)]">
       {!comparing && (
         <>
-          <button onClick={onPrev} disabled={index <= 0} title={t('chat.branchPrev')} className={btnCls}>
+          <button onClick={onPrev} disabled={index <= 0} title={t('chat.branchPrev')} aria-label={t('chat.branchPrev')} className={btnCls}>
             ‹
           </button>
           <span className="tabular-nums" title={t('chat.branchHint')}>
             {t('chat.branchPos', { i: index + 1, n: total })}
           </span>
-          <button onClick={onNext} disabled={index >= total - 1} title={t('chat.branchNext')} className={btnCls}>
+          <button onClick={onNext} disabled={index >= total - 1} title={t('chat.branchNext')} aria-label={t('chat.branchNext')} className={btnCls}>
             ›
           </button>
         </>
@@ -44,6 +44,7 @@ export const BranchNav: React.FC<Props> = ({ index, total, label, comparing, onT
         <button
           onClick={onToggleCompare}
           title={comparing ? t('chat.branchExitCompare') : t('chat.branchCompare')}
+          aria-label={comparing ? t('chat.branchExitCompare') : t('chat.branchCompare')}
           className={`${comparing ? 'text-[var(--color-accent)]' : ''} ${btnCls}`}
         >
           ⇄

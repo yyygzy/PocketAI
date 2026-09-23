@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileEntry, FileReadResult } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
+import { EmptyState } from '../../components/EmptyState'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 export const FilesModule: React.FC = () => {
   const { t } = useI18n()
@@ -11,6 +13,7 @@ export const FilesModule: React.FC = () => {
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
   const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(2600)
+  const { confirm, dialog } = useConfirm()
   const [preview, setPreview] = useState<{ entry: FileEntry; result: FileReadResult } | null>(null)
   const [mkdirOpen, setMkdirOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -75,7 +78,7 @@ export const FilesModule: React.FC = () => {
 
   const handleDelete = async (e: FileEntry) => {
     const msg = e.isDir ? t('fm.deleteDirConfirm', { name: e.name }) : t('fm.deleteConfirm', { name: e.name })
-    if (!window.confirm(msg)) return
+    if (!(await confirm({ message: msg, danger: true }))) return
     const res = await window.pocketai.deleteFile(e.relPath)
     flash(res.ok, res.ok ? t('fm.deleteDone') : (res.error ?? t('fm.opFailed')))
     load(relDir)
@@ -170,9 +173,9 @@ export const FilesModule: React.FC = () => {
       {/* 文件表格 */}
       <div className="flex-1 overflow-y-auto rounded-lg border border-[var(--color-border)]">
         {loading ? (
-          <div className="p-6 text-sm text-[var(--color-text-muted)] text-center">{t('common.loading')}</div>
+          <EmptyState className="p-6 text-sm text-[var(--color-text-muted)] text-center" message={t('common.loading')} />
         ) : entries.length === 0 ? (
-          <div className="p-6 text-sm text-[var(--color-text-muted)] text-center">{t('fm.empty')}</div>
+          <EmptyState className="p-6 text-sm text-[var(--color-text-muted)] text-center" message={t('fm.empty')} />
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -329,6 +332,8 @@ export const FilesModule: React.FC = () => {
           }}
         />
       )}
+
+      {dialog}
     </div>
   )
 }

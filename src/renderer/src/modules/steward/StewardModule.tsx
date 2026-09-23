@@ -261,7 +261,7 @@ export const StewardModule: React.FC = () => {
             {recommendation.localPicks.map((p) => (
               <div key={p.id} className="rounded-lg border border-[var(--color-border)] p-2.5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-hover-overlay)] text-[var(--color-text-muted)]">
+                  <span className="badge badge-overlay">
                     {p.tag}
                   </span>
                   <span className="font-mono text-xs">{p.id}</span>

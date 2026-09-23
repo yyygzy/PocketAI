@@ -131,6 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }}
             onClick={() => onChange(id)}
             title={t(`sidebar.${id}`)}
+            aria-label={t(`sidebar.${id}`)}
             className={`relative w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors cursor-grab active:cursor-grabbing ${
               draggingId === id ? 'opacity-40' : ''
             } ${
@@ -161,6 +162,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         onClick={() => window.pocketai.lock().catch(reportIpcError('sidebar.lock'))}
         className="h-10 border-t border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors flex items-center justify-center gap-2 text-sm"
         title={t('enc.lockNow')}
+        aria-label={t('sidebar.lock')}
       >
         <span className="text-base leading-none">🔒</span>
         {!collapsed && <span>{t('sidebar.lock')}</span>}
@@ -171,6 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         onClick={onToggleCollapse}
         className="h-10 border-t border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors"
         title={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+        aria-label={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
       >
         {collapsed ? '›' : '‹'}
       </button>
