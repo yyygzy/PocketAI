@@ -85,11 +85,14 @@ function rowHash(row: Record<string, unknown>, idCol = 'id'): string {
 // ─── 下载并准备云端 DB ───────────────────────────────────────────
 
 /**
- * 从云端备份中提取 app.db 到临时文件。
+ * 从云端备份中提取 app.db 到临时文件，并（全量备份时）解压附件到临时目录。
  * 支持全量 zip 包和增量索引两种格式。
- * 返回临时 DB 文件路径及是否需要清理。
+ * 返回临时 DB 文件路径、附件目录路径（增量备份为 null）及清理函数。
  */
-async function extractCloudDb(cfg: WebDAVConfig, filename: string): Promise<{ dbPath: string; cleanup: () => void }> {
+async function extractCloudDb(
+  cfg: WebDAVConfig,
+  filename: string
+): Promise<{ dbPath: string; attachmentsDir: string | null; cleanup: () => void }> {
   const creds = toCreds(cfg)
   const tmp = join(tmpdir(), `pocketai-merge-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })
@@ -128,10 +131,11 @@ async function extractCloudDb(cfg: WebDAVConfig, filename: string): Promise<{ db
       }
       const dbPath = join(tmp, 'cloud.db')
       writeFileSync(dbPath, dbBuf)
-      return { dbPath, cleanup }
+      // 增量备份的附件按需单独下载，这里不解压
+      return { dbPath, attachmentsDir: null, cleanup }
     }
 
-    // 全量 zip 包：下载 → 解密 → 解压 → 取 app.db
+    // 全量 zip 包：下载 → 解密 → 解压 → 取 app.db + attachments/
     const blob = await downloadFile(creds, filename)
     const isEncrypted = filename.endsWith('.enc.zip')
     let zipBuf = blob
@@ -142,15 +146,24 @@ async function extractCloudDb(cfg: WebDAVConfig, filename: string): Promise<{ db
       )
     }
 
-    // 解压（复用 unzipper）
+    // 解压到临时目录
     const unzipper = await import('unzipper')
-    const archive = await unzipper.Open.buffer(zipBuf)
-    const dbEntry = archive.files.find((f) => f.path === 'app.db')
-    if (!dbEntry) throw new Error('备份包缺少 app.db')
-    const dbBuf = await dbEntry.buffer()
-    const dbPath = join(tmp, 'cloud.db')
-    writeFileSync(dbPath, dbBuf)
-    return { dbPath, cleanup }
+    await new Promise<void>((resolve, reject) => {
+      const { Readable } = require('node:stream')
+      Readable.from(zipBuf)
+        .pipe(unzipper.Extract({ path: tmp }))
+        .on('close', resolve)
+        .on('error', reject)
+    })
+
+    const dbPath = join(tmp, 'app.db')
+    if (!existsSync(dbPath)) throw new Error('备份包缺少 app.db')
+
+    // 附件目录（全量备份可能包含）
+    const attDir = join(tmp, 'attachments')
+    const attachmentsDir = existsSync(attDir) ? attDir : null
+
+    return { dbPath, attachmentsDir, cleanup }
   } catch (e) {
     cleanup()
     throw e
@@ -217,15 +230,13 @@ export function scanTableConflicts(localDb: Database.Database, cloudDb: Database
 
 /** 扫描所有表的冲突，返回报告 */
 export async function scanMergeConflicts(cfg: WebDAVConfig, filename: string): Promise<MergeConflictReport> {
-  let cloudDbPath: string | null = null
   let cloudDb: Database.Database | null = null
   let cleanup: (() => void) | null = null
 
   try {
     const extracted = await extractCloudDb(cfg, filename)
-    cloudDbPath = extracted.dbPath
     cleanup = extracted.cleanup
-    cloudDb = openCloudDb(cloudDbPath)
+    cloudDb = openCloudDb(extracted.dbPath)
 
     const localDb = dbService.getHandle()
     const tables: TableConflict[] = []
@@ -234,10 +245,12 @@ export async function scanMergeConflicts(cfg: WebDAVConfig, filename: string): P
       tables.push(scanTableConflicts(localDb, cloudDb, table, tsCol))
     }
 
-    // 附件统计：云端索引中有但本地没有的附件
+    // 附件统计：云端有但本地没有的附件数量
     let attachmentsToAdd = 0
+    const { ATTACHMENTS_DIR } = await import('../portable')
+
     if (filename.startsWith('pocketai-inc-')) {
-      // 增量索引可直接解析附件列表
+      // 增量索引：解析附件列表，统计本地不存在的
       const creds = toCreds(cfg)
       const indexRaw = await downloadFile(creds, filename)
       let indexBuf = indexRaw
@@ -248,15 +261,21 @@ export async function scanMergeConflicts(cfg: WebDAVConfig, filename: string): P
         )
       }
       const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
-      const { ATTACHMENTS_DIR } = await import('../portable')
-      // 统计云端附件中本地不存在的数量
       for (const a of index.attachments || []) {
         const local = join(ATTACHMENTS_DIR, a.name)
         if (!existsSync(local)) attachmentsToAdd++
       }
-    } else {
-      // 全量包无法不下载就统计附件，粗略估计为 0（实际合并时再处理）
-      attachmentsToAdd = 0
+    } else if (extracted.attachmentsDir) {
+      // 全量备份：遍历临时附件目录，统计本地不存在的
+      const { readdirSync, statSync } = await import('node:fs')
+      for (const name of readdirSync(extracted.attachmentsDir)) {
+        const src = join(extracted.attachmentsDir, name)
+        try {
+          if (!statSync(src).isFile()) continue
+          const local = join(ATTACHMENTS_DIR, name)
+          if (!existsSync(local)) attachmentsToAdd++
+        } catch { /* skip */ }
+      }
     }
 
     return { ok: true, tables, attachmentsToAdd }
@@ -387,15 +406,13 @@ export async function executeMerge(
   filename: string,
   strategy: MergeStrategy
 ): Promise<{ ok: boolean; error?: string; summary?: string }> {
-  let cloudDbPath: string | null = null
   let cloudDb: Database.Database | null = null
   let cleanup: (() => void) | null = null
 
   try {
     const extracted = await extractCloudDb(cfg, filename)
-    cloudDbPath = extracted.dbPath
     cleanup = extracted.cleanup
-    cloudDb = openCloudDb(cloudDbPath)
+    cloudDb = openCloudDb(extracted.dbPath)
 
     const localDb = dbService.getHandle()
     const summaryParts: string[] = []
@@ -414,9 +431,13 @@ export async function executeMerge(
       if (n > 0) summaryParts.push(`${table}: ${n} 行(云端)`)
     }
 
-    // 3. 附件合并（增量备份：按 sha256 去重下载缺失附件）
-    //    全量备份：附件在 zip 内，需解压合并（暂处理增量，全量走原恢复逻辑）
+    // 3. 附件合并
+    const { ATTACHMENTS_DIR } = await import('../portable')
+    mkdirSync(ATTACHMENTS_DIR, { recursive: true })
+    let attAdded = 0
+
     if (filename.startsWith('pocketai-inc-')) {
+      // 增量备份：按 sha256 去重下载缺失附件
       const creds = toCreds(cfg)
       const indexRaw = await downloadFile(creds, filename)
       let indexBuf = indexRaw
@@ -427,10 +448,7 @@ export async function executeMerge(
         )
       }
       const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
-      const { ATTACHMENTS_DIR } = await import('../portable')
-      mkdirSync(ATTACHMENTS_DIR, { recursive: true })
 
-      let attAdded = 0
       for (const a of index.attachments || []) {
         if (a.name.includes('/') || a.name.includes('\\') || a.name.includes('..')) continue
         const local = join(ATTACHMENTS_DIR, a.name)
@@ -451,8 +469,24 @@ export async function executeMerge(
         writeFileSync(local, data)
         attAdded++
       }
-      if (attAdded > 0) summaryParts.push(`附件: +${attAdded}`)
+    } else if (extracted.attachmentsDir) {
+      // 全量备份：从临时附件目录复制缺失附件到本地（按文件名去重）
+      const { readdirSync, statSync, copyFileSync } = await import('node:fs')
+      for (const name of readdirSync(extracted.attachmentsDir)) {
+        if (name.includes('/') || name.includes('\\') || name.includes('..')) continue
+        const src = join(extracted.attachmentsDir, name)
+        try {
+          if (!statSync(src).isFile()) continue
+          const local = join(ATTACHMENTS_DIR, name)
+          // 本地已有同名文件则跳过（不覆盖，避免覆盖本地更新的附件）
+          if (existsSync(local)) continue
+          copyFileSync(src, local)
+          attAdded++
+        } catch { /* skip */ }
+      }
     }
+
+    if (attAdded > 0) summaryParts.push(`附件: +${attAdded}`)
 
     log.info(`合并完成: ${filename} (${summaryParts.join(', ') || '无变化'})`)
     return { ok: true, summary: summaryParts.join('; ') || '无变化' }
