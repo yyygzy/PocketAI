@@ -11,6 +11,7 @@ interface Props {
   model?: string | null
   messageId?: string
   attachments?: ChatAttachment[]
+  sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
   selected?: boolean
   onToggleSelect?: (id: string) => void
   onDelete?: (id: string) => void
@@ -28,6 +29,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
   model,
   messageId,
   attachments,
+  sources,
   selected,
   onToggleSelect,
   onDelete,
@@ -41,6 +43,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(content)
+  const [showSources, setShowSources] = useState(false)
   const selectable = !!messageId && !streaming
 
   const handleDelete = () => {
@@ -134,6 +137,36 @@ const MessageBubbleImpl: React.FC<Props> = ({
             <span className="inline-block w-2 h-4 ml-0.5 bg-[var(--color-accent)] animate-pulse align-middle" />
           )}
         </div>
+
+        {/* 知识库引用来源 */}
+        {!isUser && sources && sources.length > 0 && (
+          <div className="mt-1.5">
+            <button
+              onClick={() => setShowSources((v) => !v)}
+              className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+            >
+              <span>{showSources ? '▼' : '▶'}</span>
+              <span>{t('chatview.sources', { count: sources.length })}</span>
+            </button>
+            {showSources && (
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                {sources.map((s, i) => (
+                  <div
+                    key={s.chunkId}
+                    className="px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)]"
+                  >
+                    <div className="text-[11px] text-[var(--color-accent)] font-medium truncate">
+                      {i + 1}. {s.docTitle}
+                    </div>
+                    <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">
+                      {s.content.slice(0, 120)}{s.content.length > 120 ? '…' : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 附件渲染 */}
         {isUser && attachments && attachments.length > 0 && !editing && (

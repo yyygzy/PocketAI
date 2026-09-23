@@ -330,10 +330,17 @@ class AgentEngine {
 
     // 知识库检索注入
     let knowledgeContext = ''
+    let sources: Array<{ chunkId: string; docId: string; docTitle: string; content: string }> = []
     if (effectivePrompt.includes('{{knowledge}}') && kbIds.length > 0) {
       try {
         const result = await ragService.retrieve(kbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
+        sources = result.chunks.map((c) => ({
+          chunkId: c.chunkId,
+          docId: c.docId,
+          docTitle: c.docTitle,
+          content: c.content
+        }))
       } catch {
         // 检索失败不阻断
       }
@@ -502,7 +509,7 @@ class AgentEngine {
         const stepText = truncated
           ? `${rawText}\n\n_（回答因达到 token 上限被截断，如需完整内容请继续追问）_`
           : rawText
-        messageRepo.updateContent(assistantMsg.id, stepText, 'done')
+        messageRepo.updateContent(assistantMsg.id, stepText, 'done', !toolCalls || toolCalls.length === 0 ? sources : undefined)
 
         // 把 assistant 步骤消息加入上下文（保留 tool_calls 以便 LLM 看到自己的调用历史）
         // 持久化 tool_calls 到 DB，供恢复会话时重建上下文

@@ -188,15 +188,15 @@ describe('ragService.buildContext — 上下文拼装', () => {
   it('空数组 → 空串', () => {
     expect(ragService.buildContext([])).toBe('')
   })
-  it('多块按 [标题]\\n正文 拼装并用分隔线连接', () => {
+  it('多块按 [序号. 标题]\\n正文 拼装并用分隔线连接', () => {
     const ctx = ragService.buildContext([
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { docTitle: '文档A', content: '内容A' } as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { docTitle: '文档B', content: '内容B' } as any
     ])
-    expect(ctx).toContain('[文档A]\n内容A')
-    expect(ctx).toContain('[文档B]\n内容B')
+    expect(ctx).toContain('[1. 文档A]\n内容A')
+    expect(ctx).toContain('[2. 文档B]\n内容B')
     expect(ctx).toContain('---')
     expect(ctx.startsWith('以下是相关知识库内容')).toBe(true)
   })

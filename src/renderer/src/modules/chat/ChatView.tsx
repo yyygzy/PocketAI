@@ -409,6 +409,7 @@ export const ChatView: React.FC<Props> = ({
                         model={activeBatch[0]!.model}
                         streaming={activeBatch[0]!.status === 'streaming'}
                         messageId={activeBatch[0]!.id}
+                        sources={activeBatch[0]!.sources ?? undefined}
                         selected={selectedIds.has(activeBatch[0]!.id)}
                         onToggleSelect={toggleSelect}
                         onDelete={handleDeleteOne}

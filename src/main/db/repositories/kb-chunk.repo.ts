@@ -154,6 +154,54 @@ export const kbChunkRepo = {
     }
     scored.sort((a, b) => b.score - a.score)
     return scored.slice(0, topK)
+  },
+
+  /**
+   * BM25 全文检索（基于 kb_chunks_fts FTS5 表）
+   * @param query 查询文本
+   * @param kbIds 在这些知识库中检索
+   * @param topK 返回前 K 条
+   * @returns 按 BM25 分数降序排列（score 为原始 BM25 值，越大越相关）
+   */
+  bm25Search(
+    query: string,
+    kbIds: string[],
+    topK: number
+  ): RetrievedChunk[] {
+    if (kbIds.length === 0 || !query.trim()) return []
+    const db = dbService.getHandle()
+
+    // 检查 FTS 表是否存在（兼容旧库未迁移的情况）
+    const ftsExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='kb_chunks_fts'"
+    ).get()
+    if (!ftsExists) return []
+
+    // 构造 FTS5 MATCH 查询：对查询分词，用 OR 连接（宽松匹配）
+    // 用双引号包裹每个 token 避免特殊字符
+    const tokens = query.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) return []
+    const matchExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ')
+
+    const placeholders = kbIds.map(() => '?').join(',')
+    const rows = db
+      .prepare(
+        `SELECT f.content, f.doc_id, f.kb_id, f.chunk_id, bm25(kb_chunks_fts) AS score
+         FROM kb_chunks_fts f
+         WHERE f.kb_chunks_fts MATCH ? AND f.kb_id IN (${placeholders})
+         ORDER BY score ASC
+         LIMIT ?`
+      )
+      .all(matchExpr, ...kbIds, topK) as Array<{ content: string; doc_id: string; kb_id: string; chunk_id: string; score: number }>
+
+    // FTS5 bm25() 返回值越小越相关，取负数使降序排列时相关的在前
+    return rows.map((r) => ({
+      chunkId: r.chunk_id,
+      docId: r.doc_id,
+      docTitle: '',
+      content: r.content,
+      score: -r.score
+    }))
   }
 }
 

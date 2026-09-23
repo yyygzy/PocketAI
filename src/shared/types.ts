@@ -132,6 +132,8 @@ export interface MessageRecord {
   attachments?: ChatAttachment[]
   /** 同一次生成请求的批次 ID（=requestId）；同 parent 下多个 batch 即多条分支；旧数据为 null */
   batchId?: string | null
+  /** 知识库引用来源（RAG 检索命中的 chunk 元信息） */
+  sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }> | null
 }
 
 /** 会话导出/导入文件载荷（明文 JSON 与加密 .moxia 内部同构） */
@@ -509,6 +511,8 @@ export interface ChatDoneEvent {
   targetIndex: number
   messageId: string
   fullContent: string
+  /** 知识库引用来源（RAG 检索命中的 chunk 元信息） */
+  sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
 }
 
 export interface ChatErrorEvent {

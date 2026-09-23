@@ -392,6 +392,50 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE messages ADD COLUMN batch_id TEXT;
     `
+  },
+  {
+    // v18: 知识库检索增强——kb_chunks FTS5 全文索引，支持 BM25 混合检索
+    version: 18,
+    name: 'kb_chunks_fts',
+    up: `
+      CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunks_fts USING fts5(
+        content,
+        doc_id UNINDEXED,
+        kb_id UNINDEXED,
+        chunk_id UNINDEXED,
+        tokenize='trigram'
+      );
+
+      -- 初始填充现有 chunk
+      INSERT INTO kb_chunks_fts(content, doc_id, kb_id, chunk_id)
+        SELECT content, doc_id, kb_id, id FROM kb_chunks;
+
+      -- 插入触发器：chunk 插入时同步 FTS
+      CREATE TRIGGER IF NOT EXISTS kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
+        INSERT INTO kb_chunks_fts(content, doc_id, kb_id, chunk_id)
+          VALUES (new.content, new.doc_id, new.kb_id, new.id);
+      END;
+
+      -- 删除触发器：chunk 删除时同步 FTS
+      CREATE TRIGGER IF NOT EXISTS kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts WHERE chunk_id = old.id;
+      END;
+
+      -- 更新触发器：chunk 内容更新时同步 FTS
+      CREATE TRIGGER IF NOT EXISTS kb_chunks_au AFTER UPDATE OF content ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts WHERE chunk_id = old.id;
+        INSERT INTO kb_chunks_fts(content, doc_id, kb_id, chunk_id)
+          VALUES (new.content, new.doc_id, new.kb_id, new.id);
+      END;
+    `
+  },
+  {
+    // v19: 知识库引用溯源——messages 表增加 sources JSON 列，存储 RAG 检索命中的 chunk 元信息
+    version: 19,
+    name: 'messages_sources',
+    up: `
+      ALTER TABLE messages ADD COLUMN sources TEXT;
+    `
   }
 ]
 

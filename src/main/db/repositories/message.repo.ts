@@ -16,12 +16,17 @@ interface MessageRow {
   tool_calls: string | null
   attachments: string | null
   batch_id: string | null
+  sources: string | null
 }
 
 function rowToRecord(row: MessageRow): MessageRecord {
   let attachments: ChatAttachment[] | undefined
   if (row.attachments) {
     try { attachments = JSON.parse(row.attachments) } catch { /* ignore */ }
+  }
+  let sources: MessageRecord['sources'] = undefined
+  if (row.sources) {
+    try { sources = JSON.parse(row.sources) } catch { /* ignore */ }
   }
   return {
     id: row.id,
@@ -35,7 +40,8 @@ function rowToRecord(row: MessageRow): MessageRecord {
     createdAt: row.created_at,
     toolCalls: row.tool_calls ?? null,
     attachments,
-    batchId: row.batch_id
+    batchId: row.batch_id,
+    sources
   }
 }
 
@@ -109,11 +115,12 @@ export const messageRepo = {
     }
   },
 
-  updateContent(id: string, content: string, status: MessageStatus): void {
+  updateContent(id: string, content: string, status: MessageStatus, sources?: MessageRecord['sources']): void {
+    const sourcesJson = sources && sources.length > 0 ? JSON.stringify(sources) : null
     dbService
       .getHandle()
-      .prepare('UPDATE messages SET content=?, status=? WHERE id=?')
-      .run(content, status, id)
+      .prepare('UPDATE messages SET content=?, status=?, sources=? WHERE id=?')
+      .run(content, status, sourcesJson, id)
   },
 
   updateToolCalls(id: string, toolCalls: string | null): void {

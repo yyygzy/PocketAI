@@ -235,10 +235,17 @@ class ChatService {
 
     // 若模板含 {{knowledge}} 且助手关联了知识库，则检索注入
     let knowledgeContext = ''
+    let sources: Array<{ chunkId: string; docId: string; docTitle: string; content: string }> = []
     if (effectivePrompt.includes('{{knowledge}}') && assistantKbIds.length > 0) {
       try {
         const result = await ragService.retrieve(assistantKbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
+        sources = result.chunks.map((c) => ({
+          chunkId: c.chunkId,
+          docId: c.docId,
+          docTitle: c.docTitle,
+          content: c.content
+        }))
       } catch {
         // 检索失败不阻断对话，仅跳过知识注入
       }
@@ -303,7 +310,8 @@ class ChatService {
             messages,
             messageId: placeholders[index]!.id,
             signal: master.signal,
-            emit
+            emit,
+            sources
           })
         )
       )
@@ -466,8 +474,9 @@ class ChatService {
     messageId: string
     signal: AbortSignal
     emit: EmitFn
+    sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
   }): Promise<void> {
-    const { requestId, index, target, messages, messageId, signal, emit } = args
+    const { requestId, index, target, messages, messageId, signal, emit, sources } = args
 
     let accumulated = ''
 
@@ -488,8 +497,8 @@ class ChatService {
       })
 
       const full = result.content
-      messageRepo.updateContent(messageId, full, 'done')
-      const e: ChatDoneEvent = { requestId, targetIndex: index, messageId, fullContent: full }
+      messageRepo.updateContent(messageId, full, 'done', sources)
+      const e: ChatDoneEvent = { requestId, targetIndex: index, messageId, fullContent: full, sources }
       emit(IPC.CHAT_DONE_EVENT, e)
     } catch (err) {
       const aborted = isAbortError(err)
@@ -498,14 +507,15 @@ class ChatService {
       const finalContent = aborted
         ? partial || '_(已停止)_'
         : partial || `请求失败: ${errMsg(err)}`
-      messageRepo.updateContent(messageId, finalContent, aborted ? 'aborted' : 'error')
+      messageRepo.updateContent(messageId, finalContent, aborted ? 'aborted' : 'error', sources)
 
       if (aborted) {
         const e: ChatDoneEvent = {
           requestId,
           targetIndex: index,
           messageId,
-          fullContent: partial
+          fullContent: partial,
+          sources
         }
         emit(IPC.CHAT_DONE_EVENT, e)
       } else {
