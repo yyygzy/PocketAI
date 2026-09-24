@@ -36,6 +36,11 @@ export interface ChatStreamResult {
   reasoning?: string // 推理/思考过程（部分模型返回）
   toolCalls?: ToolCall[]
   finishReason?: string // 'stop' | 'tool_calls' | 'length' | ...
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
 }
 
 export class ProviderError extends Error {

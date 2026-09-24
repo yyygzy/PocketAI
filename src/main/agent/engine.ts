@@ -44,6 +44,7 @@ const MAX_TOOL_RESULT_CHARS = 2000 // 工具结果在上下文中的最大字符
 const SUMMARIZE_THRESHOLD = 35 // 历史消息超过此数时，对超出窗口的部分生成摘要
 const MAX_LLM_RETRIES = 2 // LLM 调用失败重试次数（网络抖动/429/5xx），不含首次
 const RETRY_BASE_DELAY_MS = 1000 // 重试退避基数（指数退避：1s → 2s）
+const MAX_REPEAT_TOOL_CALLS = 2 // 相同工具+参数连续调用次数阈值，超过则触发反思（防止死循环）
 
 // ─── 状态机编排 ─────────────────────────────────────────────────
 // Agent 运行状态：llm（调用 LLM）→ tools（执行工具）→ llm → ... → final（最终回答）
@@ -69,6 +70,7 @@ interface AgentRunContext {
   finalContent: string
   finalMessageId: string
   lastAssistantMsgId: string // 上一步 LLM 产出的 assistant 消息 DB id，供 tool 消息 parentId 引用
+  recentToolSignatures: string[] // 最近几步工具调用签名，用于检测死循环（相同工具+参数重复调用）
 }
 
 // Agent 默认系统提示词：任务拆解 + 主动工具调用 + ReAct 推理 + 错误恢复 + 记忆感知
@@ -220,8 +222,20 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
   if (systemPrompt && systemPrompt.trim()) {
     out.push({ role: 'system', content: systemPrompt })
   }
+  // 找到最后一条带图片的 user 消息索引：只有它需要携带 base64，
+  // 更早的图片已在对应 assistant 回复中被 LLM 处理过，用文本占位避免多轮重复消耗 token。
+  let lastImageUserIdx = -1
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]!
+    if (m.role === 'user' && m.attachments?.some((a) => a.type === 'image')) {
+      lastImageUserIdx = i
+      break
+    }
+  }
+
   let awaitingAssistant = false
-  for (const m of history) {
+  for (let idx = 0; idx < history.length; idx++) {
+    const m = history[idx]!
     if (m.status !== 'done') continue
     if (m.role === 'user') {
       // 如果用户消息带附件，还原为 multimodal content
@@ -232,7 +246,8 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
         for (const ta of textAttachments) {
           text += `\n\n--- ${ta.name} ---\n${ta.data}`
         }
-        if (imageAttachments.length > 0) {
+        // 仅最后一条带图消息携带 base64；更早的图片用占位符引用，避免每轮重复发送
+        if (imageAttachments.length > 0 && idx === lastImageUserIdx) {
           out.push({
             role: 'user',
             content: [
@@ -243,6 +258,10 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
               }))
             ]
           })
+        } else if (imageAttachments.length > 0) {
+          // 非最新图片：用文本占位（已在更早的回复中被处理）
+          const placeholders = imageAttachments.map(a => `[图片: ${a.name}]`).join('、')
+          out.push({ role: 'user', content: `${text}\n\n_${placeholders}（图片已在之前的回复中处理，此处省略原始数据以节省 token）_` })
         } else {
           out.push({ role: 'user', content: text })
         }
@@ -272,10 +291,8 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
         const lastAssistant = findLastAssistantWithToolCallId(out, tr.toolCallId)
         // 若没找到对应的 assistant.tool_calls，跳过该 tool 消息（避免 LLM API 报错）
         if (!lastAssistant) continue
-        // 截断恢复的历史工具结果
-        const truncated = tr.content.length > MAX_TOOL_RESULT_CHARS
-          ? tr.content.slice(0, MAX_TOOL_RESULT_CHARS) + '\n…（结果已截断）'
-          : tr.content
+        // 压缩恢复的历史工具结果
+        const truncated = compressToolResult(tr.content, MAX_TOOL_RESULT_CHARS)
         out.push({
           role: 'tool',
           content: truncated,
@@ -302,6 +319,51 @@ function findLastAssistantWithToolCallId(
     }
   }
   return null
+}
+
+/** 计算一组 tool_calls 的确定性签名（按工具名排序后拼接 name:arguments），
+ *  用于检测死循环：相同工具+相同参数重复调用。 */
+function computeToolSignature(toolCalls: ToolCall[]): string {
+  return toolCalls
+    .map((tc) => `${tc.function.name}:${tc.function.arguments}`)
+    .sort()
+    .join('|')
+}
+
+/** 工具结果智能压缩：超长时保留关键信息而非简单截断。
+ *  - JSON 数组：保留长度 + 前 3 项 + 末尾摘要
+ *  - JSON 对象：保留所有键名 + 前几行值
+ *  - 纯文本：保留首段 + 末段
+ */
+function compressToolResult(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content
+  // 尝试 JSON 结构化压缩
+  const trimmed = content.trim()
+  if ((trimmed.startsWith('[') || trimmed.startsWith('{'))) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) {
+        const head = JSON.stringify(parsed.slice(0, 3), null, 2)
+        return `${head}\n…（数组共 ${parsed.length} 项，仅显示前 3 项，完整 ${content.length} 字符）`
+      }
+      if (parsed && typeof parsed === 'object') {
+        const keys = Object.keys(parsed)
+        const summary = keys.length > 20
+          ? `对象包含 ${keys.length} 个字段：${keys.slice(0, 15).join(', ')}…等`
+          : `对象字段：${keys.join(', ')}`
+        const head = JSON.stringify(parsed, null, 2).slice(0, Math.floor(maxChars * 0.7))
+        return `${head}\n…（${summary}，完整 ${content.length} 字符）`
+      }
+    } catch {
+      // 非合法 JSON，走纯文本压缩
+    }
+  }
+  // 纯文本：保留首段 + 末段
+  const headLen = Math.floor(maxChars * 0.6)
+  const tailLen = maxChars - headLen - 50
+  const head = content.slice(0, headLen)
+  const tail = content.slice(-tailLen)
+  return `${head}\n…（中间已省略，完整 ${content.length} 字符）\n${tail}`
 }
 
 /** 构造审批弹窗展示内容：shell_exec 给命令全文+解析后的执行目录；其它工具给参数 JSON。
@@ -531,7 +593,8 @@ class AgentEngine {
       stepCount: 0,
       finalContent: '',
       finalMessageId: '',
-      lastAssistantMsgId: ''
+      lastAssistantMsgId: '',
+      recentToolSignatures: []
     }
 
     try {
@@ -734,6 +797,7 @@ class AgentEngine {
 
     // 写入本步 assistant 文本
     const toolCalls = result.toolCalls
+    const tokenUsage = result.usage?.totalTokens
     const rawText = result.content || ''
     const truncated = result.finishReason === 'length' && (!toolCalls || toolCalls.length === 0)
     const stepText = truncated
@@ -779,6 +843,7 @@ class AgentEngine {
         stepIndex,
         stepType: 'final',
         durationMs: Date.now() - stepStart,
+        tokenUsage,
         status: 'success'
       })
       return 'final'
@@ -791,6 +856,7 @@ class AgentEngine {
       stepIndex,
       stepType: 'llm',
       durationMs: Date.now() - stepStart,
+      tokenUsage,
       status: 'success'
     })
     return 'tools'
@@ -809,6 +875,45 @@ class AgentEngine {
     const lastAssistant = messages[messages.length - 1]
     const toolCalls = lastAssistant?.tool_calls
     if (!toolCalls || toolCalls.length === 0) return 'llm'
+
+    // 死循环检测：相同工具+参数连续调用超过阈值时，注入反思引导而非重复执行
+    const signature = computeToolSignature(toolCalls)
+    const repeatCount = ctx.recentToolSignatures.filter((s) => s === signature).length
+    if (repeatCount >= MAX_REPEAT_TOOL_CALLS) {
+      const toolList = Array.from(new Set(toolCalls.map((tc) => tc.function.name))).join('、')
+      messages.push({
+        role: 'user',
+        content: `检测到你连续 ${repeatCount + 1} 次调用了相同的工具（${toolList}）和参数，但结果未达预期。
+请停下来反思：
+1. 这个工具是否真的能解决当前问题？
+2. 是否需要更换工具或调整参数？
+3. 是否可以直接基于已有信息给出回答？
+请不要重复相同的调用，换一种方式继续。`
+      })
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex,
+        type: 'thought',
+        text: `_（检测到工具重复调用，已引导 Agent 反思调整策略）_`
+      })
+      agentTraceRepo.insert({
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex,
+        stepType: 'tools',
+        toolName: toolList,
+        durationMs: Date.now() - stepStart,
+        status: 'error',
+        error: `重复工具调用已拦截：${signature}`
+      })
+      return 'llm'
+    }
+    // 记录本步签名，仅保留最近 MAX_REPEAT_TOOL_CALLS 条用于连续重复判断
+    ctx.recentToolSignatures.push(signature)
+    if (ctx.recentToolSignatures.length > MAX_REPEAT_TOOL_CALLS) {
+      ctx.recentToolSignatures.shift()
+    }
 
     // 分类执行
     const classifications = toolCalls.map((tc) =>
@@ -904,9 +1009,7 @@ class AgentEngine {
         status: 'done'
       })
 
-      const truncatedResult = toolResult.content.length > MAX_TOOL_RESULT_CHARS
-        ? toolResult.content.slice(0, MAX_TOOL_RESULT_CHARS) + '\n…（结果已截断，完整内容 ' + toolResult.content.length + ' 字符）'
-        : toolResult.content
+      const truncatedResult = compressToolResult(toolResult.content, MAX_TOOL_RESULT_CHARS)
       messages.push({
         role: 'tool',
         content: truncatedResult,
@@ -1031,6 +1134,7 @@ class AgentEngine {
         stepIndex: ctx.stepCount + 1,
         stepType: 'degrade',
         durationMs: Date.now() - stepStart,
+        tokenUsage: degradeResult.usage?.totalTokens,
         status: 'success'
       })
     } catch (e) {

@@ -39,6 +39,11 @@ interface StreamChunk {
       tool_calls?: StreamToolCallDelta[]
     }
   }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  }
 }
 
 interface EmbeddingsResponse {
@@ -165,7 +170,9 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       messages: toOpenAIMessages(messages),
       temperature: params.temperature ?? 0.7,
       max_tokens: params.maxTokens,
-      stream: true
+      stream: true,
+      // 请求服务端在流末尾返回 usage（token 用量），部分兼容服务忽略此字段
+      stream_options: { include_usage: true }
     }
     if (params.tools && params.tools.length > 0) {
       body.tools = toOpenAITools(params.tools)
@@ -229,6 +236,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     let reasoning = ''
     const toolCallByIndex = new Map<number, AggregatedToolCall>()
     let finishReason: string | undefined
+    let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
 
     const onAbort = () => {
       // abort 路径：reader.cancel 失败无关紧要（请求已被中止，流要丢弃），吞错即可
@@ -261,10 +269,18 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           const data = line.slice(5).trim()
           if (data === '[DONE]') {
             flushToolCallDeltas()
-            return { content: full, reasoning, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason }
+            return { content: full, reasoning, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason, usage }
           }
           try {
             const json = JSON.parse(data) as StreamChunk
+            // token 用量：服务端通常在最后一个 chunk 返回 usage（可能无 choices）
+            if (json.usage && typeof json.usage.total_tokens === 'number') {
+              usage = {
+                promptTokens: json.usage.prompt_tokens ?? 0,
+                completionTokens: json.usage.completion_tokens ?? 0,
+                totalTokens: json.usage.total_tokens
+              }
+            }
             const choice = json.choices?.[0]
             if (!choice) continue
             if (choice.finish_reason) {
@@ -316,7 +332,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     }
 
     flushToolCallDeltas()
-    return { content: full, reasoning, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason }
+    return { content: full, reasoning, toolCalls: finalizeToolCalls(toolCallByIndex), finishReason, usage }
   }
 
   /** 批量向量化（OpenAI 兼容 /v1/embeddings） */
