@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Note } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
+import { logIpcError } from '../../utils/ipc'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 
@@ -76,7 +77,8 @@ export const NotesModule: React.FC = () => {
         )
         setNotes(list)
         setLoadError(false)
-      } catch {
+      } catch (e) {
+        logIpcError('notes.load', e)
         setLoadError(true)
         setNotes([])
       }

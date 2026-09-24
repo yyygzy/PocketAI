@@ -136,7 +136,11 @@ export function UnlockPage() {
   }
 
   async function saveCodeFile(code: string) {
-    await window.pocketai.saveRecoveryFile(code)
+    try {
+      await window.pocketai.saveRecoveryFile(code)
+    } catch (e) {
+      setError(errText(e, t('common.unknownError')))
+    }
   }
 
   async function handleSubmit() {

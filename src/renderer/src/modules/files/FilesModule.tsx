@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileEntry, FileReadResult } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { errText } from '../../utils/error'
+import { logIpcError, reportIpcError } from '../../utils/ipc'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -23,7 +25,8 @@ export const FilesModule: React.FC = () => {
     try {
       const list = await window.pocketai.listFiles(dir)
       setEntries(list)
-    } catch {
+    } catch (e) {
+      logIpcError('files.listFiles', e)
       setEntries([])
     } finally {
       setLoading(false)
@@ -62,8 +65,13 @@ export const FilesModule: React.FC = () => {
       for (let i = 0; i < bytes.length; i += chunk) {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
       }
-      const res = await window.pocketai.uploadFile(relDir, f.name, btoa(binary))
-      if (!res.ok) failCount++
+      try {
+        const res = await window.pocketai.uploadFile(relDir, f.name, btoa(binary))
+        if (!res.ok) failCount++
+      } catch (e) {
+        logIpcError('files.uploadFile', e)
+        failCount++
+      }
     }
     flash(
       failCount === 0,
@@ -79,19 +87,31 @@ export const FilesModule: React.FC = () => {
   const handleDelete = async (e: FileEntry) => {
     const msg = e.isDir ? t('fm.deleteDirConfirm', { name: e.name }) : t('fm.deleteConfirm', { name: e.name })
     if (!(await confirm({ message: msg, danger: true }))) return
-    const res = await window.pocketai.deleteFile(e.relPath)
-    flash(res.ok, res.ok ? t('fm.deleteDone') : (res.error ?? t('fm.opFailed')))
+    try {
+      const res = await window.pocketai.deleteFile(e.relPath)
+      flash(res.ok, res.ok ? t('fm.deleteDone') : (res.error ?? t('fm.opFailed')))
+    } catch (err) {
+      flash(false, errText(err, t('fm.opFailed')))
+    }
     load(relDir)
   }
 
   const handleOpenPreview = async (e: FileEntry) => {
-    const result = await window.pocketai.readFile(e.relPath)
-    setPreview({ entry: e, result })
+    try {
+      const result = await window.pocketai.readFile(e.relPath)
+      setPreview({ entry: e, result })
+    } catch (err) {
+      flash(false, errText(err, t('fm.opFailed')))
+    }
   }
 
   const handleSaveAs = async (e: FileEntry) => {
-    const res = await window.pocketai.saveFileAs(e.relPath)
-    if (!res.ok) flash(false, res.error ?? t('fm.opFailed'))
+    try {
+      const res = await window.pocketai.saveFileAs(e.relPath)
+      if (!res.ok) flash(false, res.error ?? t('fm.opFailed'))
+    } catch (err) {
+      flash(false, errText(err, t('fm.opFailed')))
+    }
   }
 
   const fmtSize = (size: number): string => {
@@ -132,7 +152,7 @@ export const FilesModule: React.FC = () => {
         <button className="btn-ghost text-xs" onClick={() => load(relDir)}>
           🔄 {t('fm.refresh')}
         </button>
-        <button className="btn-ghost text-xs" onClick={() => window.pocketai.openFileLocation(relDir || '.')}>
+        <button className="btn-ghost text-xs" onClick={() => window.pocketai.openFileLocation(relDir || '.').catch(reportIpcError('files.openFileLocation'))}>
           📤 {t('fm.openDataDir')}
         </button>
         {notice && (
@@ -221,14 +241,14 @@ export const FilesModule: React.FC = () => {
                       <button
                         className="px-1.5 py-1 rounded text-xs hover:bg-[var(--color-hover-overlay)]"
                         title={t('fm.openExternal')}
-                        onClick={() => window.pocketai.openFileExternal(e.relPath)}
+                        onClick={() => window.pocketai.openFileExternal(e.relPath).catch(reportIpcError('files.openFileExternal'))}
                       >
                         ↗
                       </button>
                       <button
                         className="px-1.5 py-1 rounded text-xs hover:bg-[var(--color-hover-overlay)]"
                         title={t('fm.openLocation')}
-                        onClick={() => window.pocketai.openFileLocation(e.relPath)}
+                        onClick={() => window.pocketai.openFileLocation(e.relPath).catch(reportIpcError('files.openFileLocation'))}
                       >
                         📍
                       </button>
@@ -311,7 +331,7 @@ export const FilesModule: React.FC = () => {
                 <button className="btn-ghost text-xs" onClick={() => handleSaveAs(preview.entry)}>
                   💾 {t('fm.saveAs')}
                 </button>
-                <button className="btn-ghost text-xs" onClick={() => window.pocketai.openFileExternal(preview.entry.relPath)}>
+                <button className="btn-ghost text-xs" onClick={() => window.pocketai.openFileExternal(preview.entry.relPath).catch(reportIpcError('files.openFileExternal'))}>
                   ↗ {t('fm.openExternal')}
                 </button>
               </div>
@@ -354,12 +374,17 @@ const MkdirDialog: React.FC<{
     if (!trimmed || busy) return
     setBusy(true)
     setError('')
-    const res = await window.pocketai.mkdir(relDir, trimmed)
-    setBusy(false)
-    if (res.ok) {
-      onCreated()
-    } else {
-      setError(res.error ?? t('fm.opFailed'))
+    try {
+      const res = await window.pocketai.mkdir(relDir, trimmed)
+      if (res.ok) {
+        onCreated()
+      } else {
+        setError(res.error ?? t('fm.opFailed'))
+      }
+    } catch (err) {
+      setError(errText(err, t('fm.opFailed')))
+    } finally {
+      setBusy(false)
     }
   }
 

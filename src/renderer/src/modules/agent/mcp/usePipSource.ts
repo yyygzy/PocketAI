@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { PythonPipSource } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { reportIpcError } from '../../../utils/ipc'
+import { errText } from '../../../utils/error'
 
 export function usePipSource(notify: (msg: string) => void) {
   const { t } = useI18n()
@@ -30,9 +31,13 @@ export function usePipSource(notify: (msg: string) => void) {
     }
     setPipCustomOpen(false)
     setPipCustomError('')
-    const r = await window.pocketai.setPythonPipSource(next)
-    if (r.ok && r.source) setPipSourceState(r.source)
-    else if (r.error) notify(r.error)
+    try {
+      const r = await window.pocketai.setPythonPipSource(next)
+      if (r.ok && r.source) setPipSourceState(r.source)
+      else if (r.error) notify(r.error)
+    } catch (e) {
+      notify(errText(e, t('agent.mcp.setPipSourceFailed')))
+    }
   }
 
   const saveCustomPipSource = async () => {
@@ -47,12 +52,16 @@ export function usePipSource(notify: (msg: string) => void) {
       setPipCustomError(t('agent.f.pipCustomInvalid'))
       return
     }
-    const r = await window.pocketai.setPythonPipSource(url)
-    if (r.ok && r.source) {
-      setPipSourceState(r.source)
-      setPipCustomError('')
-    } else if (r.error) {
-      setPipCustomError(r.error)
+    try {
+      const r = await window.pocketai.setPythonPipSource(url)
+      if (r.ok && r.source) {
+        setPipSourceState(r.source)
+        setPipCustomError('')
+      } else if (r.error) {
+        setPipCustomError(r.error)
+      }
+    } catch (e) {
+      setPipCustomError(errText(e, t('agent.mcp.setPipSourceFailed')))
     }
   }
 

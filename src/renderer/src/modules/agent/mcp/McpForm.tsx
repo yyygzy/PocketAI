@@ -7,6 +7,7 @@ import type {
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { errText } from '../../../utils/error'
+import { logIpcError } from '../../../utils/ipc'
 import { usePythonEnv } from './usePythonEnv'
 
 const ARGS_PLACEHOLDER = '["-y","@modelcontextprotocol/server-filesystem","/tmp"]'
@@ -60,7 +61,8 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
     setPyLoading(true)
     try {
       setPyRuntimes(await window.pocketai.listPythonRuntimes())
-    } catch {
+    } catch (e) {
+      logIpcError('mcp.listPythonRuntimes', e)
       setPyRuntimes([])
     } finally {
       setPyLoading(false)

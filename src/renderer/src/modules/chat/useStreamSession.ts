@@ -146,7 +146,10 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
   }, [])
 
   const abort = useCallback(() => {
-    if (requestIdRef.current) window.pocketai.abortChat(requestIdRef.current)
+    if (requestIdRef.current) {
+      // 中止操作允许静默失败：用户主动停止流式，reject 不影响 UI
+      window.pocketai.abortChat(requestIdRef.current).catch(() => {})
+    }
   }, [])
 
   return {

@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 import type { ToolApprovalRequestEvent } from '../../../shared/types'
+import { logIpcError } from '../utils/ipc'
 
 export const ToolApprovalDialog: React.FC = () => {
   const { t } = useI18n()
@@ -31,14 +32,20 @@ export const ToolApprovalDialog: React.FC = () => {
     const head = queue[0]
     if (!head || busy) return
     setBusy(true)
-    const res = await window.pocketai.respondToolApproval(head.approvalId, approved)
-    if (!res.ok) {
-      // 主进程已按 5 分钟超时自动拒绝：保留弹窗并提示，不允许误以为已放行
+    try {
+      const res = await window.pocketai.respondToolApproval(head.approvalId, approved)
+      if (!res.ok) {
+        // 主进程已按 5 分钟超时自动拒绝：保留弹窗并提示，不允许误以为已放行
+        setStaleNote(true)
+        return
+      }
+      setQueue((prev) => prev.slice(1))
+    } catch (e) {
+      logIpcError('toolApproval.respond', e)
       setStaleNote(true)
+    } finally {
       setBusy(false)
-      return
     }
-    setQueue((prev) => prev.slice(1))
   }
 
   if (!current) return null

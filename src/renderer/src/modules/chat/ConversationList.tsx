@@ -3,6 +3,7 @@ import type { ConversationRecord } from '../../../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../../shared/snippet'
 import { useI18n } from '../../i18n'
 import { EmptyState } from '../../components/EmptyState'
+import { logIpcError } from '../../utils/ipc'
 
 interface Props {
   conversations: ConversationRecord[]
@@ -59,7 +60,8 @@ export const ConversationList: React.FC<Props> = ({
       try {
         const r = await window.pocketai.searchMessages(search.trim())
         setResults(r)
-      } catch {
+      } catch (e) {
+        logIpcError('chat.searchMessages', e)
         setResults([])
       } finally {
         setSearching(false)

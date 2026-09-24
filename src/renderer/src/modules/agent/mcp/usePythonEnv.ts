@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { McpRuntime, PythonEnvInstallEvent, PythonEnvState } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { errText } from '../../../utils/error'
+import { logIpcError } from '../../../utils/ipc'
 
 export function usePythonEnv(serverId: string | undefined, runtime: McpRuntime) {
   const { t } = useI18n()
@@ -24,6 +25,7 @@ export function usePythonEnv(serverId: string | undefined, runtime: McpRuntime) 
         return r.error
       }
     } catch (e) {
+      logIpcError('mcp.getPythonEnvStatus', e)
       // 非 Error 抛出时无有效文本可展示，按「无错误」处理避免错误条显示 undefined
       return errText(e, '')
     }
@@ -61,14 +63,20 @@ export function usePythonEnv(serverId: string | undefined, runtime: McpRuntime) 
       ...prev,
       { serverId, stage: 'venv', timestamp: Date.now(), message: t('agent.f.pythonInstallStart') }
     ])
-    const r = await window.pocketai.installPythonEnv(serverId)
-    setInstalling(false)
-    if (r.ok && r.state) {
-      setEnvState(r.state)
-      return ''
+    try {
+      const r = await window.pocketai.installPythonEnv(serverId)
+      if (r.ok && r.state) {
+        setEnvState(r.state)
+        return ''
+      }
+      await refresh()
+      return t('agent.f.pythonInstallFailed', { e: r.error ?? t('common.unknownError') })
+    } catch (e) {
+      logIpcError('mcp.installPythonEnv', e)
+      return errText(e, t('agent.f.pythonInstallFailed', { e: t('common.unknownError') }))
+    } finally {
+      setInstalling(false)
     }
-    await refresh()
-    return t('agent.f.pythonInstallFailed', { e: r.error ?? t('common.unknownError') })
   }, [serverId, refresh, t])
 
   return { envState, envEvents, installing, envLogRef, refresh, install }
