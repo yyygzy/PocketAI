@@ -19,7 +19,7 @@ interface MessageRow {
   sources: string | null
 }
 
-function rowToRecord(row: MessageRow): MessageRecord {
+export function rowToRecord(row: MessageRow): MessageRecord {
   let attachments: ChatAttachment[] | undefined
   if (row.attachments) {
     try { attachments = JSON.parse(row.attachments) } catch { /* ignore */ }

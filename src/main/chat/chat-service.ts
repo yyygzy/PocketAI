@@ -7,7 +7,6 @@ import type {
   RegeneratePayload,
   ResendPayload,
   ChatTarget,
-  ChatAttachment,
   ChatChunkEvent,
   ChatDoneEvent,
   ChatErrorEvent
@@ -23,6 +22,7 @@ import { ragService } from '../knowledge/rag'
 import { errMsg, isAbortError } from '../error'
 import { withProviderLimit } from './concurrency'
 import { agentEngine } from '../agent/engine'
+import { injectAttachments, appendTextAttachments, buildImageParts } from './context-attachments'
 import type { AdapterChatMessage } from '../providers/types'
 import type { MessageRecord } from '../../shared/types'
 
@@ -103,21 +103,9 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
       if (m.attachments && m.attachments.length > 0) {
         const textAttachments = m.attachments.filter(a => a.type === 'text')
         const imageAttachments = m.attachments.filter(a => a.type === 'image')
-        let text = m.content
-        for (const ta of textAttachments) {
-          text += `\n\n--- ${ta.name} ---\n${ta.data}`
-        }
+        const text = appendTextAttachments(m.content, textAttachments)
         if (imageAttachments.length > 0) {
-          out.push({
-            role: 'user',
-            content: [
-              { type: 'text', text },
-              ...imageAttachments.map(a => ({
-                type: 'image_url' as const,
-                image_url: { url: a.data }
-              }))
-            ]
-          })
+          out.push({ role: 'user', content: buildImageParts(text, imageAttachments) })
         } else {
           out.push({ role: 'user', content: text })
         }
@@ -133,40 +121,6 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
     // 无前置 user 的 assistant 或多余的分支回复，均不进上下文
   }
   return out
-}
-
-/** 将附件注入到上下文最后一条 user 消息（构建 multimodal 格式） */
-function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAttachment[]): void {
-  if (!attachments || attachments.length === 0) return
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (!m) continue
-    if (m.role === 'user') {
-      const textContent = typeof m.content === 'string' ? m.content as string : ''
-      const textAttachments = attachments.filter(a => a.type === 'text')
-      const imageAttachments = attachments.filter(a => a.type === 'image')
-
-      // 文本附件内容追加到消息文本
-      let text = textContent
-      for (const ta of textAttachments) {
-        text += `\n\n--- ${ta.name} ---\n${ta.data}`
-      }
-
-      // 如果有图片，构建 multimodal content
-      if (imageAttachments.length > 0) {
-        m.content = [
-          { type: 'text', text },
-          ...imageAttachments.map(a => ({
-            type: 'image_url' as const,
-            image_url: { url: a.data }
-          }))
-        ]
-      } else {
-        m.content = text
-      }
-      break
-    }
-  }
 }
 
 class ChatService {

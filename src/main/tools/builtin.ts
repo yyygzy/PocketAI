@@ -3,8 +3,8 @@
 // v2 批次六：web.search 联网搜索真实现（websearch.ts + websearch-config.ts，默认关闭）
 // v2 批次九：weather.query 免费天气（weather.ts，无需 Key）；calendar.read 本地 .ics 日历
 // （calendar-ics.ts，默认关闭，Agent 页配置）。文件读写（fs.list / fs.read / fs.write）在
-// fs-tools.ts，按工作目录配置动态注册。
-
+// fs-tools.ts，按工作目录配置动态注册；kb_search 知识库混合检索在
+// kb-search.ts，kbIds 由引擎按次运行经 ctx 透传。
 import vm from 'node:vm'
 import type { ToolSchema } from '../../shared/types'
 import { runWebSearch } from './websearch'
@@ -13,6 +13,9 @@ import { safeFetch } from '../net/safe-fetch'
 import { weatherTool } from './weather'
 import { errMsg } from '../error'
 import { calendarReadTool } from './calendar-ics'
+import { kbSearchTool } from './kb-search'
+import { todoWriteTool } from './todo-write'
+import { memorySaveTool } from './memory-save'
 
 /** 工具安全判定结果（与 ToolSchema.permission 基线取更严） */
 export type ToolDecision = 'allow' | 'confirm' | 'deny'
@@ -31,9 +34,21 @@ export interface BuiltinTool {
   classify?(args: Record<string, unknown>): ToolClassification
 }
 
-/** 工具执行上下文（目前只透传中止信号） */
+/** Agent 运行级上下文片段（todo_write 等需要向渲染端发事件的工具使用） */
+export interface ToolAgentContext {
+  requestId: string
+  conversationId: string
+  emit: (channel: string, payload: unknown) => void
+  stepIndex?: number
+}
+
+/** 工具执行上下文（目前只透传中止信号与按次运行的运行时数据） */
 export interface ToolExecuteContext {
   signal?: AbortSignal
+  /** 当前 Agent 运行绑定的知识库 id 列表（kb_search 用，引擎按次运行透传） */
+  kbIds?: string[]
+  /** 当前 Agent 运行标识与事件出口（todo_write 用） */
+  agent?: ToolAgentContext
 }
 
 const timeNowTool: BuiltinTool = {
@@ -182,7 +197,10 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   webSearchTool,
   jsEvalTool,
   weatherTool,
-  calendarReadTool
+  calendarReadTool,
+  kbSearchTool,
+  todoWriteTool,
+  memorySaveTool
 ]
 
 // ---- 辅助：安全的数学表达式求值 ----

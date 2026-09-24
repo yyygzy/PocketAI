@@ -87,13 +87,29 @@ function writeRecoveryBlobToConfigFile(blob: string | null): void {
   }
 }
 
+// ---------- 内存读缓存 ----------
+// app_config 是主进程单写者的键值表：写只经 set/delete（同步更新缓存），
+// restore 整库替换 DB 文件后由 clearAppConfigCache() 失效。
+// get 在热路径被高频调用（工具注册表 classify/execute 每步都读
+// workspace_dir / shell 开关），每次打 SQLite 不必要；null 也缓存
+// （key 未设置是常态，避免反复 miss 查库）。
+const getCache = new Map<string, string | null>()
+
+/** 清空 app_config 读缓存（restore 整库替换 DB 文件后必须调用） */
+export function clearAppConfigCache(): void {
+  getCache.clear()
+}
+
 export const appConfigRepo = {
   get(key: string): string | null {
+    if (getCache.has(key)) return getCache.get(key)!
     const row = dbService
       .getHandle()
       .prepare('SELECT value FROM app_config WHERE key = ?')
       .get(key) as { value: string | null } | undefined
-    return row?.value ?? null
+    const value = row?.value ?? null
+    getCache.set(key, value)
+    return value
   },
 
   set(key: string, value: string): void {
@@ -105,10 +121,12 @@ export const appConfigRepo = {
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
       )
       .run(key, value, now)
+    getCache.set(key, value)
   },
 
   delete(key: string): void {
     dbService.getHandle().prepare('DELETE FROM app_config WHERE key = ?').run(key)
+    getCache.set(key, null)
   },
 
   // ---------- 便捷方法 ----------

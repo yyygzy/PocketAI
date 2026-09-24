@@ -40,6 +40,7 @@ export interface ChatStreamResult {
     promptTokens: number
     completionTokens: number
     totalTokens: number
+    cachedTokens?: number // 命中缓存的输入 token 数（Anthropic cache_read / OpenAI cached_tokens）
   }
 }
 

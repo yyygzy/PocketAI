@@ -2,7 +2,7 @@
 // 聚合 内置工具 + MCP 工具，按助手 toolPermissions 过滤；提供统一执行入口
 
 import { BUILTIN_TOOLS } from './builtin'
-import type { ToolClassification } from './builtin'
+import type { ToolAgentContext, ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
 import { getShellTools } from './shell-tools'
 import { mcpManager } from '../mcp/manager'
@@ -115,12 +115,14 @@ class ToolRegistry {
     return baseline
   }
 
-  /** 执行单个工具调用（signal 透传给支持中止的长时工具，如 shell_exec） */
+  /** 执行单个工具调用（signal 透传给支持中止的长时工具，kbIds/agent 透传给 kb_search/todo_write） */
   async execute(
     toolName: string,
     argsJson: string,
     allowedToolIds: Set<string>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    kbIds?: string[],
+    agent?: ToolAgentContext
   ): Promise<ToolResult> {
     const all = this.listAll()
     const schema = all.find((t) => t.name === toolName)
@@ -142,11 +144,10 @@ class ToolRegistry {
     } catch (e) {
       // 参数解析失败：返回丰富错误信息（原始参数+错误原因+修正引导），
       // 用 [BAD_ARGS] 前缀标记，engine 可据此追加修正引导消息。
-      const raw = argsJson ? argsJson.slice(0, 200) : '(空)'
       return {
         toolCallId: '',
         name: toolName,
-        content: `[BAD_ARGS] 参数 JSON 解析失败：${errMsg(e)}\n原始参数：${raw}\n请修正 JSON 格式（确保引号、逗号、括号正确）后重新调用该工具，不要使用相同的错误参数。`,
+        content: badArgsError(argsJson, errMsg(e)),
         isError: true
       }
     }
@@ -157,7 +158,7 @@ class ToolRegistry {
         if (!builtin) {
           return { toolCallId: '', name: toolName, content: '内置工具未注册', isError: true }
         }
-        const content = await builtin.execute(args, { signal })
+        const content = await builtin.execute(args, { signal, kbIds, agent })
         return { toolCallId: '', name: toolName, content }
       }
       // MCP 工具
@@ -172,6 +173,15 @@ class ToolRegistry {
       return { toolCallId: '', name: toolName, content: errMsg(e), isError: true }
     }
   }
+}
+
+/**
+ * BAD_ARGS 富文本错误（[BAD_ARGS] 前缀供引擎识别并追加修正引导）。
+ * classify 解析失败（deny 路径）与 execute 解析失败共用，保证引导文案一致。
+ */
+export function badArgsError(argsJson: string, detail: string): string {
+  const raw = argsJson ? argsJson.slice(0, 200) : '(空)'
+  return `[BAD_ARGS] 参数 JSON 解析失败：${detail}\n原始参数：${raw}\n请修正 JSON 格式（确保引号、逗号、括号正确）后重新调用该工具，不要使用相同的错误参数。`
 }
 
 /** 取两个判定中更严格者（deny > confirm > allow），reason 随更严结果 */

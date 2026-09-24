@@ -108,6 +108,14 @@ export interface SkillRecord {
   createdAt: number
 }
 
+// ---------- 用户记忆（长期记忆条目） ----------
+export interface UserMemoryRecord {
+  id: string
+  content: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface ConversationRecord {
   id: string
   assistantId: string | null
@@ -315,7 +323,13 @@ export interface McpServerLogEvent {
 }
 
 // ---------- Work Agent ----------
-export type AgentStepType = 'thought' | 'tool_call' | 'tool_result' | 'final' | 'error'
+export type AgentStepType = 'thought' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'todo'
+
+/** 任务清单条目（todo_write 工具维护，渲染端步骤化 checklist 展示） */
+export interface TodoItem {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
 
 export interface AgentStepEvent {
   requestId: string
@@ -325,6 +339,7 @@ export interface AgentStepEvent {
   text?: string // thought/final 的文本
   toolCall?: ToolCall // tool_call 步骤
   toolResult?: ToolResult // tool_result 步骤
+  todos?: TodoItem[] // todo 步骤：当前完整任务清单
   error?: string
   messageId?: string // 持久化到 DB 的消息 ID（assistant/tool 消息）
   done?: boolean // 是否为最后一步
@@ -1070,6 +1085,11 @@ export const IPC = {
   SKILL_IMPORT_URL: 'skill:import-url',
   SKILL_VALIDATE: 'skill:validate',
   SKILL_TEMPLATES: 'skill:templates',
+
+  MEMORY_LIST: 'memory:list',
+  MEMORY_ADD: 'memory:add',
+  MEMORY_UPDATE: 'memory:update',
+  MEMORY_DELETE: 'memory:delete',
 
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_CREATE: 'conversation:create',

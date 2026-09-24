@@ -14,6 +14,7 @@ export interface PromptContext {
   knowledge?: string
   tools?: string
   skills?: string
+  memory?: string
 }
 
 export function renderPrompt(template: string, ctx: PromptContext = {}): string {
@@ -31,16 +32,22 @@ export function renderPrompt(template: string, ctx: PromptContext = {}): string 
     user_name: ctx.userName ?? '',
     knowledge: ctx.knowledge ?? '',
     tools: ctx.tools ?? '',
-    skills: ctx.skills ?? ''
+    skills: ctx.skills ?? '',
+    memory: ctx.memory ?? ''
   }
 
   const rendered = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key: string) =>
     Object.prototype.hasOwnProperty.call(map, key) ? map[key]! : match
   )
 
+  let result = rendered
   // 兜底：助手启用了技能但模板没写 {{skills}}，自动追加到末尾，保证技能生效
   if (ctx.skills && ctx.skills.trim() && !template.includes('{{skills')) {
-    return rendered.trimEnd() + '\n\n' + ctx.skills
+    result = result.trimEnd() + '\n\n' + ctx.skills
   }
-  return rendered
+  // 兜底：有用户记忆但模板没写 {{memory}}，自动追加到末尾
+  if (ctx.memory && ctx.memory.trim() && !template.includes('{{memory')) {
+    result = result.trimEnd() + '\n\n' + ctx.memory
+  }
+  return result
 }

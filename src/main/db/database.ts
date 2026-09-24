@@ -451,6 +451,20 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE messages ADD COLUMN sources TEXT;
     `
+  },
+  {
+    // v20: 用户记忆——长期记忆条目（Agent memory_save 主动保存 + 设置页手动维护）
+    version: 20,
+    name: 'user_memory',
+    up: `
+      CREATE TABLE IF NOT EXISTS user_memory (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_memory_updated_at ON user_memory(updated_at DESC);
+    `
   }
 ]
 

@@ -11,6 +11,7 @@ import type {
   WebDAVBackupFile
 } from '../../../../shared/types'
 import { ProviderSettings, Notice } from './ProviderSettings'
+import { UserMemoryPanel } from './UserMemoryPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
@@ -80,6 +81,11 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.appearance')}</h3>
           <AppearancePanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.memory')}</h3>
+          <UserMemoryPanel />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">

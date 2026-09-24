@@ -4,6 +4,7 @@
 import {
   ProviderError,
   type AdapterChatMessage,
+  type MessageContentPart,
   type ChatParams,
   type ChatStreamHandlers,
   type ChatStreamResult,
@@ -43,6 +44,10 @@ interface StreamChunk {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
+    // Anthropic（OpenAI 兼容端点透传）：命中缓存的输入 token 数
+    cache_read_input_tokens?: number
+    // OpenAI 官方：缓存命中详情
+    prompt_tokens_details?: { cached_tokens?: number } | null
   }
 }
 
@@ -76,9 +81,38 @@ export function toOpenAITools(tools: ToolSchema[]): unknown[] {
   }))
 }
 
-/** 将 AdapterChatMessage 转为 OpenAI messages 格式（带 tool_calls / tool_call_id） */
-export function toOpenAIMessages(messages: AdapterChatMessage[]): unknown[] {
-  return messages.map((m) => {
+/** Anthropic prompt caching：cache_control 断点标记（OpenAI 兼容端点透传） */
+const CACHE_CONTROL = { type: 'ephemeral' } as const
+
+/**
+ * 把文本内容包成 content blocks 并在最后一个块上打 cache_control 断点。
+ * Anthropic 缓存以断点前缀为单位：system + 最新用户轮之前的全部历史可被缓存复用，
+ * 多轮对话下每轮新请求命中上一轮写入的缓存前缀，输入 token 按约 1/10 计价。
+ */
+function markCacheBreakpoint(content: string | MessageContentPart[]): unknown {
+  if (typeof content === 'string') {
+    if (!content) return content // 空文本不打标记（无效块会被 Anthropic 拒绝）
+    return [{ type: 'text', text: content, cache_control: CACHE_CONTROL }]
+  }
+  if (content.length === 0) return content
+  // 多模态：最后一个 part 打标记（不修改原对象，避免副作用）
+  return content.map((p, i) => (i === content.length - 1 ? { ...p, cache_control: CACHE_CONTROL } : p))
+}
+
+/** 将 AdapterChatMessage 转为 OpenAI messages 格式（带 tool_calls / tool_call_id）。
+ *  promptCache=true（Anthropic 型 provider）时对 system 与最后一条 user 消息打
+ *  cache_control 断点；其余消息保持原样，false 时输出与原实现完全一致。 */
+export function toOpenAIMessages(messages: AdapterChatMessage[], promptCache = false): unknown[] {
+  let lastUserIdx = -1
+  if (promptCache) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]!.role === 'user') {
+        lastUserIdx = i
+        break
+      }
+    }
+  }
+  return messages.map((m, idx) => {
     if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
       return {
         role: 'assistant',
@@ -98,6 +132,9 @@ export function toOpenAIMessages(messages: AdapterChatMessage[]): unknown[] {
         name: m.name
       }
     }
+    if (promptCache && (m.role === 'system' || idx === lastUserIdx)) {
+      return { role: m.role, content: markCacheBreakpoint(m.content) }
+    }
     return { role: m.role, content: m.content }
   })
 }
@@ -114,7 +151,9 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
   constructor(
     private readonly baseUrl: string,
-    private readonly apiKeys: string[] = []
+    private readonly apiKeys: string[] = [],
+    /** Anthropic prompt caching：对 system 与最后一条 user 消息打 cache_control 断点 */
+    private readonly promptCache = false
   ) {}
 
   private nextKey(): string | null {
@@ -167,7 +206,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   ): Promise<ChatStreamResult> {
     const body: Record<string, unknown> = {
       model: params.model,
-      messages: toOpenAIMessages(messages),
+      messages: toOpenAIMessages(messages, this.promptCache),
       temperature: params.temperature ?? 0.7,
       max_tokens: params.maxTokens,
       stream: true,
@@ -274,13 +313,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           try {
             const json = JSON.parse(data) as StreamChunk
             // token 用量：服务端通常在最后一个 chunk 返回 usage（可能无 choices）
-            if (json.usage && typeof json.usage.total_tokens === 'number') {
-              usage = {
-                promptTokens: json.usage.prompt_tokens ?? 0,
-                completionTokens: json.usage.completion_tokens ?? 0,
-                totalTokens: json.usage.total_tokens
-              }
-            }
+            const parsed = parseUsage(json.usage)
+            if (parsed) usage = parsed
             const choice = json.choices?.[0]
             if (!choice) continue
             if (choice.finish_reason) {
@@ -433,4 +467,30 @@ export function finalizeToolCalls(map: Map<number, AggregatedToolCall>): ToolCal
     })
   }
   return out.length > 0 ? out : undefined
+}
+
+/** 解析流式响应中的 usage（total_tokens 缺失时视为无效）。
+ *  缓存命中数取 Anthropic 风格 cache_read_input_tokens，缺省回退 OpenAI 风格
+ *  prompt_tokens_details.cached_tokens；两者都没有则 undefined。导出供测试。 */
+export function parseUsage(
+  raw: unknown
+): { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number } | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const u = raw as {
+    prompt_tokens?: unknown
+    completion_tokens?: unknown
+    total_tokens?: unknown
+    cache_read_input_tokens?: unknown
+    prompt_tokens_details?: { cached_tokens?: unknown } | null
+  }
+  if (typeof u.total_tokens !== 'number') return undefined
+  const cachedAnthropic = typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : undefined
+  const cachedOpenai = typeof u.prompt_tokens_details?.cached_tokens === 'number' ? u.prompt_tokens_details.cached_tokens : undefined
+  const cachedTokens = cachedAnthropic ?? cachedOpenai
+  return {
+    promptTokens: typeof u.prompt_tokens === 'number' ? u.prompt_tokens : 0,
+    completionTokens: typeof u.completion_tokens === 'number' ? u.completion_tokens : 0,
+    totalTokens: u.total_tokens,
+    ...(cachedTokens !== undefined ? { cachedTokens } : {})
+  }
 }

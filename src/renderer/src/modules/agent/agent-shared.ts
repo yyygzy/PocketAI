@@ -1,5 +1,5 @@
 // Agent 模块共享：类型、常量与纯函数（MCP 面板 / Agent 对话 / Channels 共用）
-import type { ChatAttachment, MessageRecord, ToolCall, ToolResult } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult } from '../../../../shared/types'
 
 export type Tab = 'agent' | 'servers' | 'channels'
 
@@ -10,6 +10,7 @@ export interface AgentMessage {
   reasoning?: string
   toolCall?: ToolCall
   toolResult?: ToolResult
+  todos?: TodoItem[] // 任务清单卡片（todo_write 步骤，随每次调用整卡更新）
   stepIndex?: number
   isFinal?: boolean
   isError?: boolean

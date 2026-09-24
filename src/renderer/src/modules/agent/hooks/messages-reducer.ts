@@ -57,6 +57,16 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
           stepIndex: e.stepIndex
         }]
       }
+      if (e.type === 'todo' && e.todos) {
+        // 任务清单：同一次运行内复用同一张卡片，每次 todo_write 整卡替换
+        const id = `todos-${e.requestId}`
+        const idx = prev.findIndex((m) => m.id === id)
+        if (idx !== -1) {
+          const updated: AgentMessage = { ...prev[idx]!, todos: e.todos }
+          return prev.map((m, i) => (i === idx ? updated : m))
+        }
+        return [...prev, { id, role: 'assistant', text: '', todos: e.todos, stepIndex: e.stepIndex }]
+      }
       // error
       return [...prev, {
         id: `step-${e.stepIndex}-err`,

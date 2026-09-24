@@ -4,7 +4,7 @@
 // 白名单标识符 + vm 沙箱，防止任意代码执行（RCE）。
 //
 // 策略：safeMathEval 仅依赖 node:vm + errMsg，但 builtin.ts 顶层 import 重依赖
-// （websearch/js-eval-runner/safe-fetch/weather/calendar-ics），全部 mock 掉。
+// （websearch/js-eval-runner/safe-fetch/weather/calendar-ics/kb-search→db 链），全部 mock 掉。
 import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../src/main/tools/websearch', () => ({ runWebSearch: async () => '' }))
@@ -12,6 +12,9 @@ vi.mock('../src/main/sandbox/js-eval-runner', () => ({ runJsEval: async () => ''
 vi.mock('../src/main/net/safe-fetch', () => ({ safeFetch: async () => ({ status: 200, body: Buffer.alloc(0) }) }))
 vi.mock('../src/main/tools/weather', () => ({ weatherTool: {} }))
 vi.mock('../src/main/tools/calendar-ics', () => ({ calendarReadTool: {} }))
+vi.mock('../src/main/tools/kb-search', () => ({ kbSearchTool: {} }))
+vi.mock('../src/main/tools/todo-write', () => ({ todoWriteTool: {} }))
+vi.mock('../src/main/tools/memory-save', () => ({ memorySaveTool: {} }))
 
 import { safeMathEval } from '../src/main/tools/builtin'
 

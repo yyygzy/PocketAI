@@ -24,7 +24,7 @@ import { dbService } from '../db/database'
 import { masterKeyManager } from '../crypto/master-key'
 import { DB_PATH, ATTACHMENTS_DIR } from '../portable'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../crypto/field-encrypt'
-import { appConfigRepo } from '../db/repositories/app-config.repo'
+import { appConfigRepo, clearAppConfigCache } from '../db/repositories/app-config.repo'
 import {
   testConnection, uploadBuffer, downloadFile, listFiles, deleteFile,
   remoteExists, uploadRemoteBuffer, downloadRemoteFile,
@@ -613,6 +613,9 @@ export async function restoreFromWebDAV(
     const dbInBackup = join(tmp, 'app.db')
     if (existsSync(dbInBackup)) {
       copyFileSync(dbInBackup, DB_PATH)
+      // DB 文件已被备份内容整体替换（含 app_config 表）：内存读缓存失效，
+      // 后续 appConfigRepo.get 重新查库，避免读到替换前的 stale 配置
+      clearAppConfigCache()
     }
 
     // 9. 替换 attachments（如果备份里有）

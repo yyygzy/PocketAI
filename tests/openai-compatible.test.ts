@@ -1,13 +1,14 @@
 // openai-compatible 消息/工具转换测试
 //
-// 覆盖 src/main/providers/openai-compatible.ts 的三个纯函数：
+// 覆盖 src/main/providers/openai-compatible.ts 的四个纯函数：
 // - toOpenAITools：ToolSchema → OpenAI tools 格式
-// - toOpenAIMessages：AdapterChatMessage → OpenAI messages 格式（含 tool_calls / tool role）
+// - toOpenAIMessages：AdapterChatMessage → OpenAI messages 格式（含 tool_calls / tool role / promptCache 断点）
 // - finalizeToolCalls：聚合 Map → ToolCall[]（按 index 排序、空 name+args 跳过、id 兜底）
+// - parseUsage：流式 usage 解析（含 Anthropic/OpenAI 两种缓存命中字段）
 //
-// 策略：三函数均纯函数，模块顶层无重依赖，直接导入测试。
+// 策略：均为纯函数，模块顶层无重依赖，直接导入测试。
 import { describe, it, expect } from 'vitest'
-import { toOpenAITools, toOpenAIMessages, finalizeToolCalls } from '../src/main/providers/openai-compatible'
+import { toOpenAITools, toOpenAIMessages, finalizeToolCalls, parseUsage } from '../src/main/providers/openai-compatible'
 import type { AdapterChatMessage } from '../src/main/providers/types'
 import type { ToolSchema } from '../src/shared/types'
 
@@ -186,5 +187,128 @@ describe('finalizeToolCalls — 聚合工具调用整理', () => {
     map.set(0, { index: 0, id: 'c0', name: 'a', arguments: '{}' })
     const result = finalizeToolCalls(map)!
     expect(result[0]!.type).toBe('function')
+  })
+})
+
+// ── toOpenAIMessages — promptCache（Anthropic cache_control 断点）───
+describe('toOpenAIMessages — promptCache 断点', () => {
+  const CC = { type: 'ephemeral' }
+
+  it('默认 false → system/user 保持字符串（与原行为一致）', () => {
+    const msgs: AdapterChatMessage[] = [
+      { role: 'system', content: '你是助手' },
+      { role: 'user', content: '你好' }
+    ]
+    expect(toOpenAIMessages(msgs)).toEqual([
+      { role: 'system', content: '你是助手' },
+      { role: 'user', content: '你好' }
+    ])
+  })
+
+  it('promptCache=true → system 转为带 cache_control 的 content blocks', () => {
+    const msgs: AdapterChatMessage[] = [{ role: 'system', content: '你是助手' }]
+    const result = toOpenAIMessages(msgs, true)
+    expect(result[0]).toEqual({
+      role: 'system',
+      content: [{ type: 'text', text: '你是助手', cache_control: CC }]
+    })
+  })
+
+  it('只给最后一条 user 打断点，早期 user 不打', () => {
+    const msgs: AdapterChatMessage[] = [
+      { role: 'user', content: '第一问' },
+      { role: 'assistant', content: '第一答' },
+      { role: 'user', content: '第二问' }
+    ]
+    const result = toOpenAIMessages(msgs, true)
+    expect((result[0] as any).content).toBe('第一问')
+    expect((result[1] as any).content).toBe('第一答')
+    expect((result[2] as any).content).toEqual([{ type: 'text', text: '第二问', cache_control: CC }])
+  })
+
+  it('assistant(tool_calls) 与 tool 消息不受影响', () => {
+    const msgs: AdapterChatMessage[] = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'a', arguments: '{}' } }]
+      },
+      { role: 'tool', content: '结果', tool_call_id: 'c1', name: 'a' }
+    ]
+    const result = toOpenAIMessages(msgs, true)
+    expect((result[0] as any).content).toBeNull()
+    expect(result[1]).toEqual({ role: 'tool', content: '结果', tool_call_id: 'c1', name: 'a' })
+  })
+
+  it('多模态数组内容：最后一个 part 打标记，原数组不被修改', () => {
+    const parts: AdapterChatMessage['content'] = [
+      { type: 'text', text: '看这张图' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,xxx' } }
+    ]
+    const snapshot = JSON.stringify(parts)
+    const msgs: AdapterChatMessage[] = [{ role: 'user', content: parts }]
+    const result = toOpenAIMessages(msgs, true)
+    const out = (result[0] as any).content as Array<Record<string, unknown>>
+    expect(out).toHaveLength(2)
+    expect(out[0]!.cache_control).toBeUndefined()
+    expect(out[1]!.cache_control).toEqual(CC)
+    expect(out[1]!.image_url).toEqual({ url: 'data:image/png;base64,xxx' })
+    expect(JSON.stringify(parts)).toBe(snapshot) // 输入未被突变
+  })
+
+  it('空字符串 content 不打标记（无效块会被 Anthropic 拒绝）', () => {
+    const msgs: AdapterChatMessage[] = [{ role: 'user', content: '' }]
+    expect(toOpenAIMessages(msgs, true)).toEqual([{ role: 'user', content: '' }])
+  })
+
+  it('无 system 且无 user（只有 assistant/tool）→ 原样输出', () => {
+    const msgs: AdapterChatMessage[] = [
+      { role: 'assistant', content: '回答' },
+      { role: 'tool', content: 'r', tool_call_id: 'c1' }
+    ]
+    expect(toOpenAIMessages(msgs, true)).toEqual([
+      { role: 'assistant', content: '回答' },
+      { role: 'tool', content: 'r', tool_call_id: 'c1' }
+    ])
+  })
+})
+
+// ── parseUsage ───────────────────────────────────────────
+describe('parseUsage — 流式 usage 解析', () => {
+  it('基础字段：缺失的 prompt/completion 按 0 兜底', () => {
+    expect(parseUsage({ total_tokens: 100 })).toEqual({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 100
+    })
+  })
+
+  it('Anthropic 风格 cache_read_input_tokens → cachedTokens', () => {
+    expect(parseUsage({ total_tokens: 100, prompt_tokens: 80, completion_tokens: 20, cache_read_input_tokens: 60 })).toEqual({
+      promptTokens: 80,
+      completionTokens: 20,
+      totalTokens: 100,
+      cachedTokens: 60
+    })
+  })
+
+  it('OpenAI 风格 prompt_tokens_details.cached_tokens → cachedTokens', () => {
+    expect(
+      parseUsage({ total_tokens: 100, prompt_tokens_details: { cached_tokens: 64 } })!.cachedTokens
+    ).toBe(64)
+  })
+
+  it('无缓存字段 → 无 cachedTokens 键', () => {
+    expect(parseUsage({ total_tokens: 100, prompt_tokens: 80, completion_tokens: 20 })).not.toHaveProperty('cachedTokens')
+  })
+
+  it('total_tokens 缺失或非对象 → undefined', () => {
+    expect(parseUsage({ prompt_tokens: 80 })).toBeUndefined()
+    expect(parseUsage(null)).toBeUndefined()
+    expect(parseUsage('usage')).toBeUndefined()
+  })
+
+  it('prompt_tokens_details 为 null 时不抛错', () => {
+    expect(parseUsage({ total_tokens: 10, prompt_tokens_details: null })!.cachedTokens).toBeUndefined()
   })
 })

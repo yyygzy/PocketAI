@@ -67,6 +67,33 @@ const AgentMessageCardImpl: React.FC<{ m: AgentMessage }> = ({ m }) => {
     )
   }
 
+  // 任务清单卡（todo_write）：状态图标 + 进度计数，同一次运行内整卡更新
+  if (m.role === 'assistant' && m.todos && m.todos.length > 0) {
+    const done = m.todos.filter((item) => item.status === 'completed').length
+    return (
+      <div className="px-3 py-2 rounded-lg border border-[var(--color-info-bg)] bg-[var(--color-info-bg)] text-sm max-w-[80%]">
+        <div className="flex justify-between items-center mb-1.5">
+          <span className="text-xs text-[var(--color-info)] font-medium">{t('agent.todoTitle')}</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            {t('agent.todoProgress', { done, total: m.todos.length })}
+          </span>
+        </div>
+        <ul className="space-y-1">
+          {m.todos.map((item, i) => (
+            <li key={i} className="flex items-start gap-2 text-[13px]">
+              <span className="shrink-0">
+                {item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▶' : '□'}
+              </span>
+              <span className={item.status === 'completed' ? 'line-through text-[var(--color-text-muted)]' : ''}>
+                {item.content}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
+
   // assistant
   const htmlBlock = m.isFinal && m.text ? extractFirstHtmlBlock(m.text) : null
   return (

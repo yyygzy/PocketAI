@@ -19,9 +19,11 @@ class ProviderManager {
 
     // Phase 1：所有类型（含 ollama）均走 OpenAI 兼容端点
     // Phase 后续：gemini / anthropic 在此分派专用适配器
+    // Anthropic 型走 OpenAI 兼容层并启用 prompt caching（cache_control 断点降输入成本）
     const adapter = new OpenAICompatibleAdapter(
       normalizeBaseUrl(record.baseUrl),
-      record.apiKeys
+      record.apiKeys,
+      record.type === 'anthropic'
     )
     this.adapters.set(id, adapter)
     return adapter

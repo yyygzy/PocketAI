@@ -1,4 +1,4 @@
-﻿// Work Agent 引擎（M4.3）：带工具权限 + 多步 ReAct 循环
+// Work Agent 引擎（M4.3）：带工具权限 + 多步 ReAct 循环
 // 流程：
 //   1. 组装上下文 + 工具 schema → 渲染 SystemPrompt（{{tools}}/{{knowledge}}）
 //   2. 持久化 user 消息
@@ -14,14 +14,13 @@ import type {
   AgentDoneEvent,
   AgentErrorEvent,
   ChatTarget,
-  ChatAttachment,
   ToolCall,
   ToolResult,
   ToolSchema,
   MessageRecord
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
-import type { AdapterChatMessage, MessageContentPart, ChatParams } from '../providers/types'
+import type { AdapterChatMessage, ChatParams } from '../providers/types'
 import { ProviderError } from '../providers/types'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { messageRepo } from '../db/repositories/message.repo'
@@ -29,9 +28,12 @@ import { assistantRepo } from '../db/repositories/assistant.repo'
 import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
+import { buildMemoryContext } from '../assistant/memory'
 import { ragService } from '../knowledge/rag'
-import { toolRegistry } from '../tools/registry'
+import { toolRegistry, badArgsError } from '../tools/registry'
+import type { ToolAgentContext } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
+import { injectAttachments, appendTextAttachments, buildImageParts } from '../chat/context-attachments'
 import { errMsg, isAbortError } from '../error'
 import { createApproval } from './tool-approval'
 import { pickSafeParams } from './safe-params'
@@ -45,6 +47,7 @@ const SUMMARIZE_THRESHOLD = 35 // 历史消息超过此数时，对超出窗口�
 const MAX_LLM_RETRIES = 2 // LLM 调用失败重试次数（网络抖动/429/5xx），不含首次
 const RETRY_BASE_DELAY_MS = 1000 // 重试退避基数（指数退避：1s → 2s）
 const MAX_REPEAT_TOOL_CALLS = 2 // 相同工具+参数连续调用次数阈值，超过则触发反思（防止死循环）
+const PLAN_SKIP_MIN_CHARS = 30 // 单行输入不超过此长度时跳过规划阶段（问候/闲聊/一句话问答不值得多花一次 LLM 往返）
 
 // ─── 状态机编排 ─────────────────────────────────────────────────
 // Agent 运行状态：llm（调用 LLM）→ tools（执行工具）→ llm → ... → final（最终回答）
@@ -63,6 +66,8 @@ interface AgentRunContext {
   allowedToolIds: Set<string>
   defaultParams: Record<string, unknown>
   sources: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
+  /** 当前助手绑定的知识库 id 列表，按次运行透传给 kb_search 工具 */
+  kbIds: string[]
   emit: <T>(channel: string, payload: T) => void
   unattended: boolean
   // 运行时可变状态
@@ -86,6 +91,9 @@ const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），�
 - 用户问时间/日期 → 调用 time_now
 - 数学计算 → 调用 calculator，表达式仅支持 + - * / ** % () 和数学函数
 - 需要读取网页内容 → 调用 web_fetch（url + 可选 maxChars）
+- 需要查询用户知识库中的资料 → 调用 kb_search（query + 可选 top_k）
+- 复杂多步任务 → 先调用 todo_write 建立任务清单，每完成一步就更新对应项状态（pending → in_progress → completed）
+- 用户表达个人偏好、背景事实或要求"记住某事" → 调用 memory_save（禁止记录密码、密钥等敏感信息）
 - 用户让你读写文件 → 调用 fs_list / fs_read / fs_write（需工作目录）
 
 ## ReAct 推理流程
@@ -109,44 +117,72 @@ const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），�
 可用工具列表：
 {{tools}}
 
-{{knowledge}}`
+{{knowledge}}
+
+{{memory}}`
 
 type EmitFn = (channel: string, data: unknown) => void
 
-/** 将附件注入到上下文最后一条 user 消息（构建 multimodal 格式） */
-function injectAttachments(messages: AdapterChatMessage[], attachments?: ChatAttachment[]): void {
-  if (!attachments || attachments.length === 0) return
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (!m) continue
-    if (m.role === 'user') {
-      const textContent = typeof m.content === 'string' ? m.content as string : ''
-      const textAttachments = attachments.filter(a => a.type === 'text')
-      const imageAttachments = attachments.filter(a => a.type === 'image')
-      let text = textContent
-      for (const ta of textAttachments) {
-        text += `\n\n--- ${ta.name} ---\n${ta.data}`
-      }
-      if (imageAttachments.length > 0) {
-        const parts: MessageContentPart[] = [
-          { type: 'text', text },
-          ...imageAttachments.map(a => ({ type: 'image_url' as const, image_url: { url: a.data } }))
-        ]
-        m.content = parts
-      } else {
-        m.content = text
-      }
-      break
-    }
+/**
+ * 规划阶段跳过启发式（降低首响延迟：规划是首轮前的一次额外 LLM 往返）。
+ * 跳过条件：
+ * 1. 无可用工具 → 规划出的步骤没有工具可执行，规划无意义；
+ * 2. 输入为不超过 PLAN_SKIP_MIN_CHARS 的单行文本 → 大概率是问候/闲聊/一句话问答，
+ *    主提示词已含任务拆解引导，无需额外规划。
+ */
+export function shouldSkipPlanning(content: string, toolCount: number): boolean {
+  if (toolCount === 0) return true
+  const trimmed = content.trim()
+  return trimmed.length < PLAN_SKIP_MIN_CHARS && !trimmed.includes('\n')
+}
+
+// ─── Token 估算（轻量估算，无需 tokenizer 依赖） ─────────────────────────
+// 估算规则：CJK 字符（汉字/假名/谚文/全角标点）≈ 1 token/字；其他（拉丁/数字/符号）≈ 4 字符/token。
+// 用 token 预算替代字符截断：字符数对中文严重低估（1 字 ≈ 1 token 却按 4 字符算）、对英文高估。
+const CJK_CHAR_RE = /[\u3000-\u9fff\uf900-\ufaff\uac00-\ud7af\uff00-\uffef]/
+const HISTORY_USER_TOKENS = 120 // 历史摘要单条 user 消息预算
+const HISTORY_ASSISTANT_TOKENS = 80 // 历史摘要单条 assistant 消息预算
+const HISTORY_TOOL_TOKENS = 80 // 历史摘要普通工具结果预算
+const HISTORY_LAST_TOOL_TOKENS = 600 // 历史摘要「最后一条工具结果」预算（携带后续推理依赖的状态）
+const HISTORY_TOTAL_TOKENS = 1200 // 历史摘要总预算
+const LLM_SUMMARY_LINE_TOKENS = 80 // LLM 摘要输入单条 user/assistant 消息预算
+const LLM_SUMMARY_TOOL_TOKENS = 40 // LLM 摘要输入单条工具结果预算
+const LLM_SUMMARY_INPUT_TOKENS = 1200 // LLM 摘要输入总预算
+
+/** 估算文本 token 数：CJK ≈ 1 token/字，其他 ≈ 4 字符/token（向上取整）。 */
+export function estimateTokens(text: string): number {
+  let cjk = 0
+  let other = 0
+  for (const ch of text) {
+    if (CJK_CHAR_RE.test(ch)) cjk++
+    else other++
   }
+  return cjk + Math.ceil(other / 4)
+}
+
+/**
+ * 按 token 预算截断文本：预算内原样返回；超预算时二分查找最大前缀（确定性），
+ * 截断后追加 '…'（为省略号预留 1 token）。
+ */
+export function cutToTokens(text: string, maxTokens: number): string {
+  if (maxTokens <= 0) return ''
+  if (estimateTokens(text) <= maxTokens) return text
+  let lo = 0
+  let hi = text.length
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (estimateTokens(text.slice(0, mid)) + 1 <= maxTokens) lo = mid
+    else hi = mid - 1
+  }
+  return text.slice(0, lo) + '…'
 }
 
 /**
  * 从早期对话消息生成文本摘要（不调用 LLM，基于规则的精简提取）。
- * 优化：保留早期消息中「最后一条工具结果」完整内容（最多 MAX_TOOL_RESULT_CHARS），
- * 因为它通常携带后续推理依赖的状态；其余工具结果与长文本适度截断，防止 token 溢出。
+ * 优化：保留早期消息中「最后一条工具结果」较完整内容（最多 HISTORY_LAST_TOOL_TOKENS），
+ * 因为它通常携带后续推理依赖的状态；其余内容按 token 预算截断，防止 token 溢出。
  */
-function buildHistorySummary(earlyMsgs: MessageRecord[]): string {
+export function buildHistorySummary(earlyMsgs: MessageRecord[]): string {
   const lines: string[] = []
   // 定位早期消息中最后一条 tool 消息的索引，用于保留完整结果
   let lastToolIdx = -1
@@ -163,28 +199,25 @@ function buildHistorySummary(earlyMsgs: MessageRecord[]): string {
     if (!m) continue
     if (m.status !== 'done') continue
     if (m.role === 'user') {
-      lines.push(`用户: ${m.content.slice(0, 300)}`)
+      lines.push(`用户: ${cutToTokens(m.content, HISTORY_USER_TOKENS)}`)
     } else if (m.role === 'assistant') {
-      const snippet = m.content.slice(0, 250).replace(/\n+/g, ' ')
-      lines.push(`助手: ${snippet}${m.content.length > 250 ? '…' : ''}`)
+      lines.push(`助手: ${cutToTokens(m.content.replace(/\n+/g, ' '), HISTORY_ASSISTANT_TOKENS)}`)
     } else if (m.role === 'tool') {
       try {
         const tr = JSON.parse(m.content) as ToolResult
-        // 最后一条工具结果保留较完整内容（最多 MAX_TOOL_RESULT_CHARS），其余截断
-        const limit = i === lastToolIdx ? MAX_TOOL_RESULT_CHARS : 300
-        const snippet = tr.content.slice(0, limit).replace(/\n+/g, ' ')
-        lines.push(`工具[${tr.name}]: ${snippet}${tr.content.length > limit ? '…' : ''}`)
+        // 最后一条工具结果保留较完整内容（HISTORY_LAST_TOOL_TOKENS），其余截断
+        const limit = i === lastToolIdx ? HISTORY_LAST_TOOL_TOKENS : HISTORY_TOOL_TOKENS
+        lines.push(`工具[${tr.name}]: ${cutToTokens(tr.content.replace(/\n+/g, ' '), limit)}`)
       } catch { /* skip */ }
     }
   }
-  // 限制摘要总长度
-  const result = lines.join('\n')
-  return result.length > 3000 ? result.slice(0, 3000) + '\n…（摘要已截断）' : result
+  // 限制摘要总 token 预算
+  return cutToTokens(lines.join('\n'), HISTORY_TOTAL_TOKENS)
 }
 
 /**
  * 用 LLM 生成对话历史摘要，失败/超时时降级为规则摘要。
- * 输入限制在 4000 字符内避免 token 溢出，输出限制 800 token。
+ * 输入限制在 LLM_SUMMARY_INPUT_TOKENS 内避免 token 溢出，输出限制 800 token。
  */
 async function summarizeHistoryWithLLM(
   earlyMsgs: MessageRecord[],
@@ -192,15 +225,15 @@ async function summarizeHistoryWithLLM(
   model: string,
   signal: AbortSignal
 ): Promise<string> {
-  // 把早期消息压缩为简短文本（每条截断），作为摘要输入
+  // 把早期消息压缩为简短文本（每条按 token 预算截断），作为摘要输入
   const lines: string[] = []
   for (const m of earlyMsgs) {
     if (!m || m.status !== 'done') continue
-    if (m.role === 'user') lines.push(`用户: ${m.content.slice(0, 150)}`)
-    else if (m.role === 'assistant') lines.push(`助手: ${m.content.slice(0, 150)}`)
-    else if (m.role === 'tool') lines.push(`工具结果: ${m.content.slice(0, 80)}`)
+    if (m.role === 'user') lines.push(`用户: ${cutToTokens(m.content, LLM_SUMMARY_LINE_TOKENS)}`)
+    else if (m.role === 'assistant') lines.push(`助手: ${cutToTokens(m.content, LLM_SUMMARY_LINE_TOKENS)}`)
+    else if (m.role === 'tool') lines.push(`工具结果: ${cutToTokens(m.content, LLM_SUMMARY_TOOL_TOKENS)}`)
   }
-  const input = lines.join('\n').slice(0, 4000)
+  const input = cutToTokens(lines.join('\n'), LLM_SUMMARY_INPUT_TOKENS)
   const prompt = `请简要总结以下对话历史，保留关键信息：用户的核心需求、已执行的工具调用及重要结果、达成的结论。用简洁的中文，不超过 300 字。\n\n${input}`
 
   try {
@@ -217,10 +250,21 @@ async function summarizeHistoryWithLLM(
   }
 }
 
-function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterChatMessage[] {
+export function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterChatMessage[] {
   const out: AdapterChatMessage[] = []
   if (systemPrompt && systemPrompt.trim()) {
     out.push({ role: 'system', content: systemPrompt })
+  }
+  // 预收集历史中已被 tool 消息应答过的 toolCallId：
+  // assistant.tool_calls 中没有对应 tool 结果的调用（中止/出错时的残留）必须剥离，
+  // 否则严格 OpenAI 兼容端会因「tool_calls 未被应答」直接报 400。
+  const answeredToolCallIds = new Set<string>()
+  for (const m of history) {
+    if (m.role !== 'tool' || m.status !== 'done') continue
+    try {
+      const tr = JSON.parse(m.content) as ToolResult
+      if (tr?.toolCallId) answeredToolCallIds.add(tr.toolCallId)
+    } catch { /* 老消息格式，跳过 */ }
   }
   // 找到最后一条带图片的 user 消息索引：只有它需要携带 base64，
   // 更早的图片已在对应 assistant 回复中被 LLM 处理过，用文本占位避免多轮重复消耗 token。
@@ -242,22 +286,10 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
       if (m.attachments && m.attachments.length > 0) {
         const textAttachments = m.attachments.filter(a => a.type === 'text')
         const imageAttachments = m.attachments.filter(a => a.type === 'image')
-        let text = m.content
-        for (const ta of textAttachments) {
-          text += `\n\n--- ${ta.name} ---\n${ta.data}`
-        }
+        const text = appendTextAttachments(m.content, textAttachments)
         // 仅最后一条带图消息携带 base64；更早的图片用占位符引用，避免每轮重复发送
         if (imageAttachments.length > 0 && idx === lastImageUserIdx) {
-          out.push({
-            role: 'user',
-            content: [
-              { type: 'text', text },
-              ...imageAttachments.map(a => ({
-                type: 'image_url' as const,
-                image_url: { url: a.data }
-              }))
-            ]
-          })
+          out.push({ role: 'user', content: buildImageParts(text, imageAttachments) })
         } else if (imageAttachments.length > 0) {
           // 非最新图片：用文本占位（已在更早的回复中被处理）
           const placeholders = imageAttachments.map(a => `[图片: ${a.name}]`).join('、')
@@ -276,7 +308,11 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
         try {
           const parsed = JSON.parse(m.toolCalls)
           if (Array.isArray(parsed) && parsed.length > 0) {
-            assistantMsg.tool_calls = parsed as ToolCall[]
+            // 仅保留有 tool 结果应答的调用，剥离中止/失败残留的悬空 tool_calls
+            const answered = (parsed as ToolCall[]).filter((tc) => answeredToolCallIds.has(tc.id))
+            if (answered.length > 0) {
+              assistantMsg.tool_calls = answered
+            }
           }
         } catch {
           // tool_calls 解析失败，忽略
@@ -285,6 +321,8 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
       out.push(assistantMsg)
       awaitingAssistant = false
     } else if (m.role === 'tool' && out.length > 0) {
+      // 工具结果之后的 assistant 消息是同轮 ReAct 推理的延续，必须进上下文
+      awaitingAssistant = true
       // 还原上一轮 tool 消息
       try {
         const tr = JSON.parse(m.content) as ToolResult
@@ -323,7 +361,7 @@ function findLastAssistantWithToolCallId(
 
 /** 计算一组 tool_calls 的确定性签名（按工具名排序后拼接 name:arguments），
  *  用于检测死循环：相同工具+相同参数重复调用。 */
-function computeToolSignature(toolCalls: ToolCall[]): string {
+export function computeToolSignature(toolCalls: ToolCall[]): string {
   return toolCalls
     .map((tc) => `${tc.function.name}:${tc.function.arguments}`)
     .sort()
@@ -335,7 +373,7 @@ function computeToolSignature(toolCalls: ToolCall[]): string {
  *  - JSON 对象：保留所有键名 + 前几行值
  *  - 纯文本：保留首段 + 末段
  */
-function compressToolResult(content: string, maxChars: number): string {
+export function compressToolResult(content: string, maxChars: number): string {
   if (content.length <= maxChars) return content
   // 尝试 JSON 结构化压缩
   const trimmed = content.trim()
@@ -458,10 +496,12 @@ class AgentEngine {
     const toolsText = toolRegistry.formatForPrompt(tools)
 
     const skillsContext = buildSkillsContext(skillIds)
+    const memoryContext = buildMemoryContext()
     const renderedPrompt = renderPrompt(effectivePrompt, {
       knowledge: knowledgeContext,
       tools: toolsText,
-      skills: skillsContext
+      skills: skillsContext,
+      memory: memoryContext
     })
 
     // 持久化用户消息
@@ -523,11 +563,12 @@ class AgentEngine {
     // 显式规划阶段（Plan-and-Execute）：
     // 首轮对话（无历史工具调用）先让 LLM 输出执行计划，注入 system prompt 引导后续执行。
     // 规划失败不阻塞主流程；简单任务模型会输出"无需计划"。
+    // 无工具/短单行输入时跳过规划（shouldSkipPlanning），避免白付一次 LLM 往返。
     let planText = ''
     const hasToolHistory = messages.some(
       (m) => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls?.length)
     )
-    if (!hasToolHistory) {
+    if (!hasToolHistory && !shouldSkipPlanning(content, tools.length)) {
       try {
         const planAdapter = providerManager.getAdapter(target.providerId)
         const planSystem = `你是一个任务规划助手。请分析用户的最新请求，制定简洁的执行计划。
@@ -572,10 +613,6 @@ class AgentEngine {
       })
     }
 
-    let stepCount = 0
-    let finalContent = ''
-    let finalMessageId = ''
-
     // 状态机上下文：封装所有跨节点共享的可变状态
     const ctx: AgentRunContext = {
       requestId,
@@ -588,6 +625,7 @@ class AgentEngine {
       allowedToolIds,
       defaultParams: defaultParams ?? {},
       sources,
+      kbIds,
       emit,
       unattended: unattended ?? false,
       stepCount: 0,
@@ -617,23 +655,20 @@ class AgentEngine {
 
       // 超步数降级：再调一次 LLM（不带 tools）强制生成最终回答
       if (state !== 'final') {
-        await this.runDegradeStep(ctx)
+        const degradeOk = await this.runDegradeStep(ctx)
+        if (!degradeOk) {
+          // 降级失败时 runDegradeStep 内已 emit 错误事件并更新会话状态，
+          // 此处直接结束，不再发 DONE 事件（避免 error+done 双事件、状态被 done 覆盖）
+          return
+        }
       }
-
-      // 同步回局部变量（保持后续 done 事件逻辑不变）
-      stepCount = ctx.stepCount
-      finalContent = ctx.finalContent
-      finalMessageId = ctx.finalMessageId
-      void stepCount // 已用于 doneEvt
-      void finalContent
-      void finalMessageId
 
       const doneEvt: AgentDoneEvent = {
         requestId,
         conversationId,
-        finalMessageId,
-        fullContent: finalContent,
-        stepCount,
+        finalMessageId: ctx.finalMessageId,
+        fullContent: ctx.finalContent,
+        stepCount: ctx.stepCount,
         traceStats: agentTraceRepo.statsByRequest(requestId)
       }
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
@@ -868,8 +903,10 @@ class AgentEngine {
    * 返回下一个状态：'llm'。
    */
   private async runToolsStep(ctx: AgentRunContext, stepIndex: number): Promise<AgentState> {
-    const { conversationId, messages, master, allowedToolIds, emit, unattended, requestId } = ctx
+    const { conversationId, messages, master, allowedToolIds, emit, unattended, requestId, kbIds } = ctx
     const stepStart = Date.now()
+    // 运行级上下文片段：透传给需要向渲染端发事件的内置工具（todo_write）
+    const agentCtx: ToolAgentContext = { requestId, conversationId, emit, stepIndex }
 
     // 获取上一步 LLM 返回的 tool_calls（从 messages 最后一条 assistant 消息取）
     const lastAssistant = messages[messages.length - 1]
@@ -937,12 +974,21 @@ class AgentEngine {
       })
 
       if (classification.decision === 'deny') {
-        results[i] = {
-          toolCallId: tc.id,
-          name: tc.function.name,
-          content: `命令被安全策略拒绝：${classification.reason ?? 'BLOCKED'}`,
-          isError: true
-        }
+        // BAD_ARGS（参数 JSON 解析失败）走富文本错误，命中下方修正引导注入；
+        // 其余 deny 原因按安全策略拒绝处理。
+        results[i] = classification.reason === 'BAD_ARGS'
+          ? {
+              toolCallId: tc.id,
+              name: tc.function.name,
+              content: badArgsError(tc.function.arguments, 'JSON 格式非法（已被安全策略拦截）'),
+              isError: true
+            }
+          : {
+              toolCallId: tc.id,
+              name: tc.function.name,
+              content: `命令被安全策略拒绝：${classification.reason ?? 'BLOCKED'}`,
+              isError: true
+            }
       } else if (classification.decision === 'confirm') {
         if (unattended) {
           results[i] = {
@@ -974,13 +1020,13 @@ class AgentEngine {
               isError: true
             }
           } else {
-            results[i] = await this.executeWithTimeout(tc, allowedToolIds, master.signal)
+            results[i] = await this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, agentCtx)
           }
         }
       } else {
         const idx = i
         allowTasks.push(
-          this.executeWithTimeout(tc, allowedToolIds, master.signal).then((r) => {
+          this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, agentCtx).then((r) => {
             results[idx] = r
           })
         )
@@ -1057,8 +1103,10 @@ class AgentEngine {
 
   /**
    * 降级节点：超步数时再调一次 LLM（不带 tools）强制生成最终回答。
+   * 成功返回 true；失败时内部已 trace + emit 错误事件 + 更新会话状态，返回 false，
+   * 由调用方直接结束（不再发 DONE 事件）。
    */
-  private async runDegradeStep(ctx: AgentRunContext): Promise<void> {
+  private async runDegradeStep(ctx: AgentRunContext): Promise<boolean> {
     const { conversationId, target, messages, master, userMsg, defaultParams, emit, requestId } = ctx
     const stepStart = Date.now()
 
@@ -1137,6 +1185,7 @@ class AgentEngine {
         tokenUsage: degradeResult.usage?.totalTokens,
         status: 'success'
       })
+      return true
     } catch (e) {
       const aborted = isAbortError(e) || /中止/.test(errMsg(e))
       // trace：降级步骤失败
@@ -1157,6 +1206,7 @@ class AgentEngine {
           : `已达最大推理步数（${MAX_STEPS}），且降级总结失败：${errMsg(e)}`
       })
       conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
+      return false
     }
   }
 
@@ -1165,20 +1215,22 @@ class AgentEngine {
   private async executeWithTimeout(
     tc: ToolCall,
     allowedToolIds: Set<string>,
-    signal: AbortSignal
+    signal: AbortSignal,
+    kbIds?: string[],
+    agent?: ToolAgentContext
   ): Promise<ToolResult> {
     // 子控制器：超时或 Agent 中止时主动 abort，让底层工具（shell 进程树、MCP 请求、
     // 网络请求等）及时清理，避免 Promise.race 超时后底层进程继续悬空运行。
     const subController = new AbortController()
-    const onParentAbort = () => subController.abort()
-    signal.addEventListener('abort', onParentAbort, { once: true })
     if (signal.aborted) subController.abort()
 
     const toolPromise = toolRegistry.execute(
       tc.function.name,
       tc.function.arguments,
       allowedToolIds,
-      subController.signal
+      subController.signal,
+      kbIds,
+      agent
     )
     // 按工具 schema 配置的 timeoutMs 决定超时；未配置时使用默认 30s。
     // 不同工具需求不同（如 shell_exec 可长，calculator 应短）。
@@ -1196,7 +1248,7 @@ class AgentEngine {
         timeoutMs
       )
     })
-    // Agent 中止：立即在 race 中出局（子控制器 abort 负责通知底层工具杀树/取消请求）
+    // Agent 中止：主动 abort 底层工具（子控制器负责杀树/取消请求）并让 race 立即出局
     let onAbort: (() => void) | null = null
     const abortPromise = new Promise<ToolResult>((_, reject) => {
       onAbort = () => {
@@ -1216,7 +1268,6 @@ class AgentEngine {
       }
     } finally {
       clearTimeout(toolTimer)
-      signal.removeEventListener('abort', onParentAbort)
       // 工具先结束时摘掉 abort 监听，避免监听器泄漏
       if (onAbort) signal.removeEventListener('abort', onAbort)
     }

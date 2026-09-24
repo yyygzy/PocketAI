@@ -5,6 +5,7 @@ import type {
   ProviderRecord,
   AssistantRecord,
   SkillRecord,
+  UserMemoryRecord,
   ConversationRecord,
   MessageRecord,
   ConversationExportPayload,
@@ -112,6 +113,15 @@ const api = {
     ipcRenderer.invoke(IPC.ASSISTANT_DUPLICATE, id),
   setAssistantPinned: (id: string, pinned: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_SET_PINNED, id, pinned),
+
+  // ---------- 用户记忆 ----------
+  listMemories: (): Promise<UserMemoryRecord[]> => ipcRenderer.invoke(IPC.MEMORY_LIST),
+  addMemory: (content: string): Promise<UserMemoryRecord> =>
+    ipcRenderer.invoke(IPC.MEMORY_ADD, content),
+  updateMemory: (id: string, content: string): Promise<UserMemoryRecord> =>
+    ipcRenderer.invoke(IPC.MEMORY_UPDATE, id, content),
+  deleteMemory: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.MEMORY_DELETE, id),
 
   // ---------- 技能 ----------
   listSkills: (): Promise<SkillRecord[]> => ipcRenderer.invoke(IPC.SKILL_LIST),

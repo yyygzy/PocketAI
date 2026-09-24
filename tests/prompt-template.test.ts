@@ -68,4 +68,26 @@ describe('renderPrompt — 模板变量渲染', () => {
     expect(out).toBe('技能：S')
     expect(out.match(/S/g)?.length).toBe(1)
   })
+
+  it('模板含 {{memory}} 时直接替换', () => {
+    expect(renderPrompt('记忆：{{memory}}', { memory: '偏好简洁' })).toBe('记忆：偏好简洁')
+  })
+
+  it('模板不含 {{memory}} 但有 memory 时自动追加到末尾', () => {
+    const out = renderPrompt('你是助手', { memory: '偏好简洁' })
+    expect(out).toContain('你是助手')
+    expect(out.endsWith('偏好简洁')).toBe(true)
+  })
+
+  it('memory 为空串/纯空白时不自动追加', () => {
+    expect(renderPrompt('你是助手', { memory: '' })).toBe('你是助手')
+    expect(renderPrompt('你是助手', { memory: '   ' })).toBe('你是助手')
+  })
+
+  it('skills 与 memory 同时缺占位符时依次追加', () => {
+    const out = renderPrompt('你是助手', { skills: '技能列表', memory: '偏好简洁' })
+    expect(out).toContain('技能列表')
+    expect(out).toContain('偏好简洁')
+    expect(out.endsWith('偏好简洁')).toBe(true)
+  })
 })
