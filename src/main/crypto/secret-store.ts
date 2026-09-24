@@ -86,8 +86,10 @@ export function exportSecrets(
 
 /** 密钥轮换后：用「新字段密钥」重新加密落盘；空快照对应键保持删除态 */
 export function restoreSecrets(snapshot: Record<string, string>): void {
-  // 仅恢复已注册的受管密钥，丢弃未知 key，防止轮换过程注入脏数据
-  const parsed = z.record(secretKeySchema, secretValueSchema).parse(snapshot)
+  // 仅校验值类型（string + 长度上限），key 的合法性由 setSecret 内的 secretKeySchema 兜底；
+  // 注意：z.record(secretKeySchema, ...) 在 Zod 4 下会把所有 enum key 视为必填，
+  // 而 exportSecrets 只导出有值的 key，故此处不能用 enum 作为 key schema。
+  const parsed = z.record(z.string(), secretValueSchema).parse(snapshot)
   for (const [key, value] of Object.entries(parsed)) {
     try {
       setSecret(key, value)
