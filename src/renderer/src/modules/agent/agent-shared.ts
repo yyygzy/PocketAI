@@ -62,7 +62,13 @@ export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
     if (m.role === 'user') {
       out.push({ id: m.id, role: 'user', text: m.content, attachments: m.attachments })
     } else if (m.role === 'assistant') {
-      out.push({ id: m.id, role: 'assistant', text: m.content, isFinal: m.status === 'done' })
+      // 历史加载：streaming 残留（中断/出错未清理）视为终止，避免永远显示「思考中…」
+      out.push({
+        id: m.id,
+        role: 'assistant',
+        text: m.content || (m.status === 'streaming' ? '（中断）' : ''),
+        isFinal: true
+      })
     } else if (m.role === 'tool') {
       try {
         const tr = JSON.parse(m.content) as ToolResult

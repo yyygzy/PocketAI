@@ -55,17 +55,32 @@ const timeNowTool: BuiltinTool = {
   schema: {
     id: 'time.now',
     name: 'time_now',
-    description: '获取当前本地时间（ISO 8601 与人类可读格式）。无参数。',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    description:
+      '获取本地时间（ISO 8601 与人类可读格式 + Unix 毫秒时间戳）。可选 offset_days 参数做日期偏移：如查"100天后"传 {"offset_days": 100}，"3天前"传 {"offset_days": -3}。无参数时返回当前时间。',
+    parameters: {
+      type: 'object',
+      properties: {
+        offset_days: {
+          type: 'number',
+          description: '日期偏移天数（可负）。例如 100 表示 100 天后，-7 表示一周前。'
+        }
+      },
+      additionalProperties: false
+    },
     source: 'builtin',
     permission: 'auto',
     timeoutMs: 3_000 // 纯本地操作，3s 足够
   },
-  async execute() {
-    const now = new Date()
+  async execute(args) {
+    const offsetDays = typeof args.offset_days === 'number' && Number.isFinite(args.offset_days) ? args.offset_days : 0
+    const now = new Date(Date.now() + offsetDays * 86_400_000)
+    const weekdays = ['日', '一', '二', '三', '四', '五', '六']
     return JSON.stringify({
       iso: now.toISOString(),
       local: now.toLocaleString('zh-CN', { hour12: false }),
+      weekday: `星期${weekdays[now.getDay()]}`,
+      timestamp: now.getTime(),
+      offset_days: offsetDays,
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone
     })
   }

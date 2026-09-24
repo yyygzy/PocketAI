@@ -41,6 +41,26 @@ import { pickSafeParams } from './safe-params'
 
 const MAX_STEPS = 10
 const logger = createLogger('agent')
+
+/** 安全写入 trace，防止 DB 问题阻塞主流程 */
+function safeTrace(rec: Parameters<typeof agentTraceRepo.insert>[0]): void {
+  try {
+    agentTraceRepo.insert(rec)
+  } catch (e) {
+    logger.warn(`[agent] trace 写入失败: ${errMsg(e)}`)
+  }
+}
+
+/** 安全获取 trace 统计，表不存在时返回默认值 */
+function safeTraceStats(requestId: string): { totalDurationMs: number; totalTokens: number; stepCount: number } {
+  try {
+    return agentTraceRepo.statsByRequest(requestId)
+  } catch (e) {
+    logger.warn(`[agent] trace 统计失败: ${errMsg(e)}`)
+    return { totalDurationMs: 0, totalTokens: 0, stepCount: 0 }
+  }
+}
+
 const REPLAN_EXTRA_STEPS = 5 // 首次超步数时重规划一次，追加的步数预算
 const LOOP_TIMEOUT_MS = 5 * 60 * 1000 // 5 分钟整体超时
 const TOOL_TIMEOUT_MS = 30_000 // 单个工具调用超时
@@ -101,6 +121,34 @@ const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），�
 - 复杂多步任务 → 先调用 todo_write 建立任务清单，每完成一步就更新对应项状态（pending → in_progress → completed）
 - 用户表达个人偏好、背景事实或要求"记住某事" → 调用 memory_save（禁止记录密码、密钥等敏感信息）
 - 用户让你读写文件 → 调用 fs_list / fs_read / fs_write（需工作目录）
+
+## 调用示例（必须严格模仿）
+
+用户说"把结果写入 result.txt"：
+❌ 错误：直接回复"已将结果写入 result.txt"——你没有真正写入，这是欺骗用户
+✅ 正确：调用 fs_write 工具 → 等待工具返回结果 → 再告知用户已写入
+
+用户问"今天几号"：
+❌ 错误：凭记忆直接回答一个日期
+✅ 正确：调用 time_now 工具 → 用工具返回的真实日期回答
+
+用户问"N 天后/前是几号、星期几"：
+❌ 错误：把日期字符串拼进 calculator 表达式做毫秒运算（日期字符串不是数字，必报错）
+✅ 正确：调用 time_now 并传 offset_days 参数，如 100 天后 → {"offset_days": 100} → 工具直接返回目标日期与星期几
+
+## 工具选择规则（严格遵守）
+1. 查日期/时间/日期推算（N 天前后）→ 只调用 time_now（推算用 offset_days 参数），禁止用 shell_exec 或 js_eval 获取日期
+2. 纯数学计算 → 只调用 calculator，禁止用 shell_exec 或 js_eval 计算
+3. 写文件 → 只调用 fs_write；读文件 → 只调用 fs_read；列目录 → 只调用 fs_list
+4. shell_exec 与 js_eval 仅用于以上专用工具无法覆盖的场景
+
+## 失败处理规则
+同一个工具连续失败 2 次后，禁止再尝试相同或相似操作。应换用其他工具，或直接向用户说明失败原因并给出已有结果。
+
+## 绝对禁止
+1. 禁止假装执行了操作：没有实际调用工具并得到返回结果，就不许声称"已完成/已写入/已查询到"
+2. 禁止只在文本中描述"我现在将调用工具…"却不真正调用——要么立刻调用工具，要么明确说明无法完成
+3. 工具返回的内容才是事实依据，最终回答必须基于工具返回的真实结果
 
 ## ReAct 推理流程
 每一步按以下结构思考并输出：
@@ -462,7 +510,7 @@ class AgentEngine {
   async run(payload: SendMessagePayload, emit: EmitFn): Promise<void> {
     const { requestId, conversationId, content, assistantId, targets, unattended } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
-  const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
+    const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
 
     // 解析助手配置
     let effectivePrompt = ''
@@ -693,7 +741,7 @@ class AgentEngine {
         finalMessageId: ctx.finalMessageId,
         fullContent: ctx.finalContent,
         stepCount: ctx.stepCount,
-        traceStats: agentTraceRepo.statsByRequest(requestId)
+        traceStats: safeTraceStats(requestId)
       }
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
       conversationRepo.touch(conversationId, { status: 'done' })
@@ -800,6 +848,7 @@ class AgentEngine {
         })
       }
       try {
+        logger.info(`[agent] step=${stepIndex} 调用 streamChat...`)
         result = await adapter.streamChat(messages, chatParams, {
           onDelta: (delta) => {
             accumulated += delta
@@ -825,6 +874,7 @@ class AgentEngine {
         })
         break
       } catch (e) {
+        logger.debug(`streamChat 失败 step=${stepIndex}: ${errMsg(e)}`)
         if (isAbortError(e)) throw e
         const retryable =
           (e instanceof ProviderError && e.retryable) || !(e instanceof ProviderError)
@@ -861,7 +911,7 @@ class AgentEngine {
         messageId: assistantMsg.id
       })
       // trace：LLM 步骤失败
-      agentTraceRepo.insert({
+      safeTrace({
         requestId: ctx.requestId,
         conversationId,
         stepIndex,
@@ -877,6 +927,7 @@ class AgentEngine {
     const toolCalls = result.toolCalls
     const tokenUsage = result.usage?.totalTokens
     const rawText = result.content || ''
+    logger.info(`[agent] step=${stepIndex} 进入后处理 toolCalls=${toolCalls?.length ?? 0}`)
     const truncated = result.finishReason === 'length' && (!toolCalls || toolCalls.length === 0)
     let stepText = truncated
       ? `${rawText}\n\n_（回答因达到 token 上限被截断，如需完整内容请继续追问）_`
@@ -886,6 +937,7 @@ class AgentEngine {
     // 首次：占位消息标记「重试中」并注入提示重跑一轮 llm；重试后仍空：写兜底文案正常结束。
     if (!stepText.trim() && (!toolCalls || toolCalls.length === 0)) {
       if (!ctx.retriedEmpty) {
+        logger.info(`[agent] step=${stepIndex} 空响应，触发重试`)
         ctx.retriedEmpty = true
         const retryText = '（模型返回空内容，正在重试…）'
         messageRepo.updateContent(assistantMsg.id, retryText, 'done')
@@ -903,7 +955,7 @@ class AgentEngine {
           text: retryText,
           messageId: assistantMsg.id
         })
-        agentTraceRepo.insert({
+        safeTrace({
           requestId: ctx.requestId,
           conversationId,
           stepIndex,
@@ -922,13 +974,16 @@ class AgentEngine {
     ctx.pendingAssistantMsgId = '' // 占位已写终态
 
     if (toolCalls && toolCalls.length > 0) {
+      logger.info(`[agent] step=${stepIndex} 写入 toolCalls`)
       messageRepo.updateToolCalls(assistantMsg.id, JSON.stringify(toolCalls))
+      logger.info(`[agent] step=${stepIndex} toolCalls 写入完成`)
     }
     messages.push({
       role: 'assistant',
       content: stepText,
       ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
     })
+    logger.info(`[agent] step=${stepIndex} messages.push 完成`)
 
     emit(IPC.AGENT_STEP_EVENT, {
       requestId: ctx.requestId,
@@ -938,6 +993,7 @@ class AgentEngine {
       text: stepText,
       messageId: assistantMsg.id
     })
+    logger.info(`[agent] step=${stepIndex} emit thought 完成`)
 
     // 无 tool_calls → 最终回答
     if (!toolCalls || toolCalls.length === 0) {
@@ -953,7 +1009,7 @@ class AgentEngine {
         done: true
       })
       // trace：LLM 步骤成功（最终回答）
-      agentTraceRepo.insert({
+      safeTrace({
         requestId: ctx.requestId,
         conversationId,
         stepIndex,
@@ -966,7 +1022,8 @@ class AgentEngine {
     }
 
     // trace：LLM 步骤成功（产出工具调用）
-    agentTraceRepo.insert({
+    logger.info(`[agent] step=${stepIndex} 准备写入 trace`)
+    safeTrace({
       requestId: ctx.requestId,
       conversationId,
       stepIndex,
@@ -975,6 +1032,7 @@ class AgentEngine {
       tokenUsage,
       status: 'success'
     })
+    logger.info(`[agent] step=${stepIndex} trace 写入完成，返回 tools`)
     return 'tools'
   }
 
@@ -986,6 +1044,7 @@ class AgentEngine {
   private async runToolsStep(ctx: AgentRunContext, stepIndex: number): Promise<AgentState> {
     const { conversationId, messages, master, allowedToolIds, emit, unattended, requestId, kbIds } = ctx
     const stepStart = Date.now()
+    logger.info(`[agent] step=${stepIndex} 进入 runToolsStep, messages=${messages.length}`)
     // 运行级上下文片段：透传给需要向渲染端发事件的内置工具（todo_write）
     const agentCtx: ToolAgentContext = { requestId, conversationId, emit, stepIndex }
 
@@ -1015,7 +1074,7 @@ class AgentEngine {
         type: 'thought',
         text: `_（检测到工具重复调用，已引导 Agent 反思调整策略）_`
       })
-      agentTraceRepo.insert({
+      safeTrace({
         requestId: ctx.requestId,
         conversationId,
         stepIndex,
@@ -1168,7 +1227,7 @@ class AgentEngine {
     // trace：工具执行步骤（记录工具名列表与是否有错误）
     const toolNames = toolCalls.map((tc) => tc.function.name).join(',')
     const hasError = results.some((r) => r?.isError)
-    agentTraceRepo.insert({
+    safeTrace({
       requestId: ctx.requestId,
       conversationId,
       stepIndex,
@@ -1196,7 +1255,7 @@ class AgentEngine {
       type: 'replan',
       text: `已达步数上限，正在评估进度并重新规划（追加 ${REPLAN_EXTRA_STEPS} 步预算）…`
     })
-    agentTraceRepo.insert({
+    safeTrace({
       requestId: ctx.requestId,
       conversationId: ctx.conversationId,
       stepIndex: ctx.stepCount,
@@ -1281,7 +1340,7 @@ class AgentEngine {
         done: true
       })
       // trace：降级步骤成功
-      agentTraceRepo.insert({
+      safeTrace({
         requestId: ctx.requestId,
         conversationId,
         stepIndex: ctx.stepCount + 1,
@@ -1294,7 +1353,7 @@ class AgentEngine {
     } catch (e) {
       const aborted = isAbortError(e) || /中止/.test(errMsg(e))
       // trace：降级步骤失败
-      agentTraceRepo.insert({
+      safeTrace({
         requestId: ctx.requestId,
         conversationId,
         stepIndex: ctx.stepCount + 1,

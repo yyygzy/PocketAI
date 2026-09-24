@@ -22,9 +22,14 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
       if (e.type === 'thought' || e.type === 'final') {
         const idx = prev.findIndex((m) => m.id === e.messageId)
         if (idx !== -1) {
-          // 已有占位消息：不可变更新 isFinal 标记
+          // 已有占位消息：不可变更新文本与 isFinal 标记
+          // text 更新场景：占位清理（错误/中止提示）、空响应重试提示、流式结束完整文本
           const cur = prev[idx]!
-          const updated: AgentMessage = { ...cur, isFinal: e.type === 'final' || cur.isFinal }
+          const updated: AgentMessage = {
+            ...cur,
+            text: e.text ?? cur.text,
+            isFinal: e.type === 'final' || cur.isFinal
+          }
           return prev.map((m, i) => (i === idx ? updated : m))
         }
         if (e.messageId) {
