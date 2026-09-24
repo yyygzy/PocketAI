@@ -50,7 +50,7 @@ export function resolveWorkspacePath(relPath: string): string {
  * 策略：从目标向上找第一个存在的节点，realpath 它，与工作目录的 realpath 比较前缀。
  * 若目标路径上无任何存在节点（整条都是待创建的），则无法 follow symlink，放行。
  */
-function assertWithinWorkspaceByRealpath(targetAbs: string, wsAbs: string): void {
+export function assertWithinWorkspaceByRealpath(targetAbs: string, wsAbs: string): void {
   let current = targetAbs
   let existing: string | null = null
   // 向上找第一个存在的节点（目录或文件）

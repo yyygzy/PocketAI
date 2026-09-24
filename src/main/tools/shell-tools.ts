@@ -378,7 +378,8 @@ const shellExecTool: BuiltinTool = {
     },
     source: 'builtin',
     // 基线 auto：实际判定全部交给 classify（策略关闭→deny，逐条确认→confirm）
-    permission: 'auto'
+    permission: 'auto',
+    timeoutMs: 120_000 // shell 命令可能耗时较长（如编译、下载），给 120s
   },
 
   /** 工具级判定（与 registry 的 schema 基线取更严） */

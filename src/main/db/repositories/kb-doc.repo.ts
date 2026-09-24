@@ -16,7 +16,7 @@ interface KbDocRow {
   created_at: number
 }
 
-function rowToRecord(row: KbDocRow): KbDocument {
+export function rowToRecord(row: KbDocRow): KbDocument {
   return {
     id: row.id,
     kbId: row.kb_id,

@@ -58,7 +58,7 @@ function destroyWindow(): void {
   win = null
 }
 
-function cut(s: string, max = MAX_RESULT_CHARS): string {
+export function cut(s: string, max = MAX_RESULT_CHARS): string {
   if (s.length <= max) return s
   const suffix = `\n…（截断，共 ${s.length} 字符）`
   return s.slice(0, Math.max(0, max - suffix.length)) + suffix

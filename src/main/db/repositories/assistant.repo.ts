@@ -22,7 +22,7 @@ interface AssistantRow {
   created_at: number
 }
 
-function safeArray(s: string | null): string[] {
+export function safeArray(s: string | null): string[] {
   if (!s) return []
   try {
     const v = JSON.parse(s)
@@ -32,7 +32,7 @@ function safeArray(s: string | null): string[] {
   }
 }
 
-function safeObject(s: string | null): Record<string, unknown> | null {
+export function safeObject(s: string | null): Record<string, unknown> | null {
   if (!s) return null
   try {
     const v = JSON.parse(s)
@@ -42,7 +42,7 @@ function safeObject(s: string | null): Record<string, unknown> | null {
   }
 }
 
-function rowToRecord(row: AssistantRow): AssistantRecord {
+export function rowToRecord(row: AssistantRow): AssistantRecord {
   return {
     id: row.id,
     name: row.name,

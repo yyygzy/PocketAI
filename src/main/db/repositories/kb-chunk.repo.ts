@@ -32,7 +32,7 @@ export interface ChunkRow {
   created_at: number
 }
 
-function bufferToFloat32(buf: Buffer | null): Float32Array | null {
+export function bufferToFloat32(buf: Buffer | null): Float32Array | null {
   if (!buf || buf.byteLength === 0) return null
   // better-sqlite3 返回的 BLOB Buffer 可能非 4 字节对齐，Float32Array 要求对齐
   // 拷贝到新分配的 Buffer 以保证 byteOffset 为 0
@@ -41,7 +41,7 @@ function bufferToFloat32(buf: Buffer | null): Float32Array | null {
   return new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4)
 }
 
-function float32ToBuffer(vec: Float32Array): Buffer {
+export function float32ToBuffer(vec: Float32Array): Buffer {
   return Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength)
 }
 

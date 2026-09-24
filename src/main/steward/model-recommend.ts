@@ -33,7 +33,7 @@ async function probeOllamaModels(): Promise<{ running: boolean; models: string[]
 }
 
 /** 已安装匹配：tag 精确相等，或本地以 "name:" 开头（同模型不同量化版本） */
-function isInstalled(installed: string[], name: string): boolean {
+export function isInstalled(installed: string[], name: string): boolean {
   const base = name.split(':')[0]!.toLowerCase()
   return installed.some((m) => {
     const x = m.toLowerCase()
@@ -47,7 +47,7 @@ interface TierRule {
   picks: Array<{ id: string; reason: string }>
 }
 
-function pickByHardware(hw: HardwareInfo): TierRule {
+export function pickByHardware(hw: HardwareInfo): TierRule {
   const memGB = hw.memory.total / GB
   const nvidia = hw.gpus.find((g) => g.cuda)
   const vramGB = nvidia?.memory ? nvidia.memory / GB : 0

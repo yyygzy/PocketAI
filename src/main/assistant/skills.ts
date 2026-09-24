@@ -3,7 +3,7 @@ import { skillRepo } from '../db/repositories/skill.repo'
 import type { SkillRecord } from '../../shared/types'
 
 /** 格式化单个技能为提示词片段 */
-function formatSkill(s: SkillRecord): string {
+export function formatSkill(s: SkillRecord): string {
   const desc = s.description ? `\n（${s.description}）` : ''
   return `### ${s.icon} ${s.name}${desc}\n${s.content.trim()}`
 }

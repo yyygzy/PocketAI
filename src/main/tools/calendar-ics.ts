@@ -62,12 +62,12 @@ export interface IcsEvent {
 }
 
 /** iCalendar 文本反转义（\n \, \; \\） */
-function unescapeText(s: string): string {
+export function unescapeText(s: string): string {
   return s.replace(/\\n/gi, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\')
 }
 
 /** 解析 DTSTART/DTEND 值；返回 { date, allDay }；无法解析返回 null */
-function parseIcsDate(propValue: string, rawParams: string): { date: Date; allDay: boolean } | null {
+export function parseIcsDate(propValue: string, rawParams: string): { date: Date; allDay: boolean } | null {
   const value = propValue.trim()
   if (/^\d{8}$/.test(value)) {
     // VALUE=DATE 全天事件：本地零点
@@ -153,7 +153,7 @@ export function parseIcs(content: string): IcsEvent[] {
 
 // ---------- 工具 ----------
 
-function fmtLocal(d: Date): { date: string; time: string | null } {
+export function fmtLocal(d: Date): { date: string; time: string | null } {
   const pad = (n: number): string => String(n).padStart(2, '0')
   return {
     date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
@@ -162,7 +162,7 @@ function fmtLocal(d: Date): { date: string; time: string | null } {
 }
 
 /** range → [起, 止)（upcoming 为 now 起未来 30 天） */
-function rangeWindow(range: string): { label: string; from: Date; to: Date | null } {
+export function rangeWindow(range: string): { label: string; from: Date; to: Date | null } {
   const now = new Date()
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const DAY = 24 * 60 * 60 * 1000

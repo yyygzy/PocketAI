@@ -31,7 +31,7 @@ const THUMB_QUALITY = 70
 const controllers = new Map<string, AbortController>()
 
 /** 把 DB 存的相对路径解析到 DATA_DIR 内的绝对路径（防库被篡改后穿越） */
-function resolveDataPath(rel: string): string {
+export function resolveDataPath(rel: string): string {
   const norm = path.posix.normalize((rel ?? '').replace(/\\/g, '/')).replace(/^\/+|\/+$/g, '')
   if (norm.includes('\0')) throw new Error('非法路径')
   const abs = path.resolve(DATA_DIR, norm)
@@ -42,7 +42,7 @@ function resolveDataPath(rel: string): string {
 }
 
 /** 由相对文件路径推导缩略图相对路径（images/2026-09/x.png → images/.thumbs/x.jpg） */
-function thumbRelOf(rel: string): string {
+export function thumbRelOf(rel: string): string {
   const dir = path.posix.dirname(rel)
   const ext = path.posix.extname(rel)
   const stem = path.posix.basename(rel, ext)
@@ -58,7 +58,7 @@ function deleteQuiet(abs: string): void {
 }
 
 /** 拒绝下载内网/环回地址的图片链接（快速失败给出友好报错；逐跳 SSRF 防护由 safeFetch 统一执行） */
-function isPrivateHostUrl(raw: string): boolean {
+export function isPrivateHostUrl(raw: string): boolean {
   try {
     const u = new URL(raw)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return true

@@ -40,7 +40,7 @@ function runPowerShell(script: string): string | null {
   }
 }
 
-function parseJsonSafe<T>(text: string | null): T | null {
+export function parseJsonSafe<T>(text: string | null): T | null {
   if (!text) return null
   // 剥离 PowerShell 可能混入的 CLIXML/进度输出，截取首个 {...} 或 [...]
   const candidates = [text.indexOf('['), text.indexOf('{')].filter((i) => i >= 0)
@@ -162,7 +162,7 @@ const BUS_MAP: Record<string, string> = {
   '17': 'NVMe'
 }
 
-function mapEnum(map: Record<string, string>, v: string | number | null | undefined): string | null {
+export function mapEnum(map: Record<string, string>, v: string | number | null | undefined): string | null {
   if (v === null || v === undefined || v === '') return null
   const s = String(v)
   if (/^[0-9]+$/.test(s)) return map[s] ?? s

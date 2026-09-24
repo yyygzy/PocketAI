@@ -29,7 +29,7 @@ export function openExternalSecure(rawUrl: string): void {
 }
 
 /** 取 URL 的 origin；非法 URL 返回 null */
-function originOf(raw: string): string | null {
+export function originOf(raw: string): string | null {
   try {
     return new URL(raw).origin
   } catch {

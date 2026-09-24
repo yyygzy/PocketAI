@@ -15,7 +15,7 @@ interface ConversationRow {
   updated_at: number
 }
 
-function rowToRecord(row: ConversationRow): ConversationRecord {
+export function rowToRecord(row: ConversationRow): ConversationRecord {
   return {
     id: row.id,
     assistantId: row.assistant_id,

@@ -23,7 +23,7 @@ interface KbCountRow {
   chunk_count: number
 }
 
-function rowToRecord(row: KbRow): KnowledgeBase {
+export function rowToRecord(row: KbRow): KnowledgeBase {
   const counts = dbService
     .getHandle()
     .prepare(

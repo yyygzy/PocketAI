@@ -10,7 +10,7 @@ import type { ChannelConfig, ChannelType } from '../../shared/types'
 import { channelSetConfigSchema, channelTypeArgSchema } from '../../shared/schemas/channels'
 
 /** type → KV 前缀（telegram 保留旧前缀以兼容历史数据） */
-function prefixFor(type: ChannelType): string {
+export function prefixFor(type: ChannelType): string {
   return type === 'telegram' ? 'channel.tg_' : `channel.${type}_`
 }
 
@@ -25,7 +25,7 @@ const FIELD_CONV_MAP = 'conv_map'
 const FIELD_OFFSET = 'offset' // Telegram update offset / Discord session_id 等
 
 /** type → 主凭据 secret-store key（无则 null） */
-function primarySecretKey(type: ChannelType): string | null {
+export function primarySecretKey(type: ChannelType): string | null {
   switch (type) {
     case 'telegram':
       return SECRET_KV_KEYS.TELEGRAM_TOKEN
@@ -40,7 +40,7 @@ function primarySecretKey(type: ChannelType): string | null {
 }
 
 /** type → 次凭据 secret-store key（无则 null） */
-function secondarySecretKey(type: ChannelType): string | null {
+export function secondarySecretKey(type: ChannelType): string | null {
   switch (type) {
     case 'feishu':
       return SECRET_KV_KEYS.FEISHU_APP_SECRET
@@ -54,7 +54,7 @@ function secondarySecretKey(type: ChannelType): string | null {
   }
 }
 
-function bool(b: unknown): boolean {
+export function bool(b: unknown): boolean {
   return b === '1'
 }
 

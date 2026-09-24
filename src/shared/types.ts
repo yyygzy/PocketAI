@@ -219,6 +219,7 @@ export interface ToolSchema {
   source: 'builtin' | 'mcp'
   permission?: 'auto' | 'confirm' | 'deny'
   mcpServerId?: string // source='mcp' 时所属的 MCP Server
+  timeoutMs?: number // 单工具执行超时（毫秒），未配置时使用默认 30s
 }
 
 export interface ToolCall {
@@ -335,6 +336,11 @@ export interface AgentDoneEvent {
   finalMessageId: string
   fullContent: string
   stepCount: number
+  traceStats?: {
+    totalDurationMs: number
+    totalTokens: number
+    stepCount: number
+  }
 }
 
 /** Agent 流式文本增量（逐 token 推送） */

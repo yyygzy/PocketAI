@@ -23,6 +23,7 @@
 
 import { app, BrowserWindow, dialog, powerMonitor } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs'
 
 /** 应用图标路径：Windows 用 .ico（含 16/32/48/256 多尺寸，任务栏显示更清晰），
  *  其他平台用 256px png */
@@ -490,6 +491,14 @@ async function boot(): Promise<void> {
 
 // ─── 单实例锁 ───────────────────────────────────────────────────
 
+// 在 requestSingleInstanceLock 之前重定向 userData：
+// Electron 的 process singleton lock 文件位于 userData 目录下，
+// 若不提前设置，会落到 %APPDATA%/<app-name>/lockfile，
+// 在沙箱/受限环境下写入被拒导致启动失败。提前锚定到便携 data 目录。
+const userDataDir = path.join(DATA_DIR, 'userdata')
+fs.mkdirSync(userDataDir, { recursive: true })
+app.setPath('userData', userDataDir)
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   // 已有实例在运行（含残留后台进程）：弹窗告知而非静默退出，
@@ -511,6 +520,11 @@ if (!gotLock) {
   // 窗口永远空白；生产打包走 loadFile 不受影响，无需此开关。
   if (!app.isPackaged) {
     app.commandLine.appendSwitch('no-proxy-server')
+    // dev 专用：禁用 Chromium 沙箱。受限环境（CI/沙箱/无 GPU 驱动）下
+    // Chromium 网络服务与 GPU 进程可能因沙箱权限不足崩溃，导致窗口白屏。
+    // 生产打包不启用，保持安全沙箱。
+    app.commandLine.appendSwitch('no-sandbox')
+    app.commandLine.appendSwitch('disable-gpu')
   }
 
   app.on('second-instance', () => {

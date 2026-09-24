@@ -1,4 +1,4 @@
-// Work Agent 引擎（M4.3）：带工具权限 + 多步 ReAct 循环
+﻿// Work Agent 引擎（M4.3）：带工具权限 + 多步 ReAct 循环
 // 流程：
 //   1. 组装上下文 + 工具 schema → 渲染 SystemPrompt（{{tools}}/{{knowledge}}）
 //   2. 持久化 user 消息
@@ -11,20 +11,22 @@
 import { IPC } from '../../shared/types'
 import type {
   SendMessagePayload,
-  AgentStepEvent,
   AgentDoneEvent,
   AgentErrorEvent,
   ChatTarget,
   ChatAttachment,
   ToolCall,
   ToolResult,
+  ToolSchema,
   MessageRecord
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import type { AdapterChatMessage, MessageContentPart, ChatParams } from '../providers/types'
+import { ProviderError } from '../providers/types'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { messageRepo } from '../db/repositories/message.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
+import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
@@ -40,6 +42,34 @@ const TOOL_TIMEOUT_MS = 30_000 // 单个工具调用超时
 const MAX_CONTEXT_MESSAGES = 30 // 上下文窗口：最多保留最近 30 条消息（不含 system），防止 token 溢出
 const MAX_TOOL_RESULT_CHARS = 2000 // 工具结果在上下文中的最大字符数（截断防止撑爆 token 窗口）
 const SUMMARIZE_THRESHOLD = 35 // 历史消息超过此数时，对超出窗口的部分生成摘要
+const MAX_LLM_RETRIES = 2 // LLM 调用失败重试次数（网络抖动/429/5xx），不含首次
+const RETRY_BASE_DELAY_MS = 1000 // 重试退避基数（指数退避：1s → 2s）
+
+// ─── 状态机编排 ─────────────────────────────────────────────────
+// Agent 运行状态：llm（调用 LLM）→ tools（执行工具）→ llm → ... → final（最终回答）
+// 超步数时进入 degrade 降级。后续可扩展 reflect（反思）、route（路由）等节点。
+type AgentState = 'llm' | 'tools' | 'final'
+
+/** Agent 单次运行的共享上下文，供各状态节点读写。 */
+interface AgentRunContext {
+  requestId: string
+  conversationId: string
+  target: ChatTarget
+  messages: AdapterChatMessage[]
+  master: AbortController
+  userMsg: MessageRecord
+  tools: ToolSchema[]
+  allowedToolIds: Set<string>
+  defaultParams: Record<string, unknown>
+  sources: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
+  emit: <T>(channel: string, payload: T) => void
+  unattended: boolean
+  // 运行时可变状态
+  stepCount: number
+  finalContent: string
+  finalMessageId: string
+  lastAssistantMsgId: string // 上一步 LLM 产出的 assistant 消息 DB id，供 tool 消息 parentId 引用
+}
 
 // Agent 默认系统提示词：任务拆解 + 主动工具调用 + ReAct 推理 + 错误恢复 + 记忆感知
 const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），具备多步推理和工具调用能力。请严格遵循以下工作流程：
@@ -148,6 +178,41 @@ function buildHistorySummary(earlyMsgs: MessageRecord[]): string {
   // 限制摘要总长度
   const result = lines.join('\n')
   return result.length > 3000 ? result.slice(0, 3000) + '\n…（摘要已截断）' : result
+}
+
+/**
+ * 用 LLM 生成对话历史摘要，失败/超时时降级为规则摘要。
+ * 输入限制在 4000 字符内避免 token 溢出，输出限制 800 token。
+ */
+async function summarizeHistoryWithLLM(
+  earlyMsgs: MessageRecord[],
+  adapter: ReturnType<typeof providerManager.getAdapter>,
+  model: string,
+  signal: AbortSignal
+): Promise<string> {
+  // 把早期消息压缩为简短文本（每条截断），作为摘要输入
+  const lines: string[] = []
+  for (const m of earlyMsgs) {
+    if (!m || m.status !== 'done') continue
+    if (m.role === 'user') lines.push(`用户: ${m.content.slice(0, 150)}`)
+    else if (m.role === 'assistant') lines.push(`助手: ${m.content.slice(0, 150)}`)
+    else if (m.role === 'tool') lines.push(`工具结果: ${m.content.slice(0, 80)}`)
+  }
+  const input = lines.join('\n').slice(0, 4000)
+  const prompt = `请简要总结以下对话历史，保留关键信息：用户的核心需求、已执行的工具调用及重要结果、达成的结论。用简洁的中文，不超过 300 字。\n\n${input}`
+
+  try {
+    const result = await adapter.streamChat(
+      [{ role: 'user', content: prompt }],
+      { model, signal, maxTokens: 800, temperature: 0.3 },
+      { onDelta: () => {} }
+    )
+    const summary = (result.content || '').trim()
+    return summary || buildHistorySummary(earlyMsgs)
+  } catch {
+    // LLM 摘要失败（网络/离线/超时）：降级为规则摘要
+    return buildHistorySummary(earlyMsgs)
+  }
 }
 
 function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterChatMessage[] {
@@ -368,7 +433,14 @@ class AgentEngine {
     let summaryPrefix = ''
     if (allHistory.length > SUMMARIZE_THRESHOLD) {
       const earlyMsgs = allHistory.slice(0, allHistory.length - MAX_CONTEXT_MESSAGES)
-      summaryPrefix = buildHistorySummary(earlyMsgs)
+      // 优先用 LLM 生成高质量摘要，失败/超时降级为规则摘要
+      const summaryAdapter = providerManager.getAdapter(target.providerId)
+      summaryPrefix = await summarizeHistoryWithLLM(
+        earlyMsgs,
+        summaryAdapter,
+        target.model,
+        master.signal
+      )
     }
     const windowedHistory = allHistory.length > MAX_CONTEXT_MESSAGES
       ? allHistory.slice(-MAX_CONTEXT_MESSAGES)
@@ -386,282 +458,120 @@ class AgentEngine {
       toolPermissions.includes('*') ? ['*'] : toolPermissions
     )
 
+    // 显式规划阶段（Plan-and-Execute）：
+    // 首轮对话（无历史工具调用）先让 LLM 输出执行计划，注入 system prompt 引导后续执行。
+    // 规划失败不阻塞主流程；简单任务模型会输出"无需计划"。
+    let planText = ''
+    const hasToolHistory = messages.some(
+      (m) => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls?.length)
+    )
+    if (!hasToolHistory) {
+      try {
+        const planAdapter = providerManager.getAdapter(target.providerId)
+        const planSystem = `你是一个任务规划助手。请分析用户的最新请求，制定简洁的执行计划。
+要求：
+1. 用数字编号列出步骤（1. 2. 3. ...），每步不超过 20 字
+2. 简单任务（问好、闲聊、一句话可答）输出"无需计划"
+3. 只输出计划本身，不要额外解释`
+        const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
+        const planMessages: AdapterChatMessage[] = [{ role: 'system', content: planSystem }]
+        if (lastUserMsg) planMessages.push(lastUserMsg)
+
+        const planResult = await planAdapter.streamChat(
+          planMessages,
+          {
+            model: target.model,
+            signal: master.signal,
+            maxTokens: 512,
+            temperature: 0.3
+          },
+          { onDelta: () => {} }
+        )
+        planText = (planResult.content || '').trim()
+      } catch {
+        // 规划失败不阻塞主流程，降级为无计划模式
+      }
+    }
+
+    // 将计划注入 system prompt，引导后续 ReAct 循环按计划执行
+    if (planText && planText !== '无需计划') {
+      const planInjection = `\n\n## 执行计划\n${planText}\n\n请按以上计划逐步执行，每步可调用工具获取中间结果，全部完成后给出最终回答。`
+      const sysMsg = messages.find((m) => m.role === 'system')
+      if (sysMsg && typeof sysMsg.content === 'string') {
+        sysMsg.content += planInjection
+      }
+      // emit 计划到前端展示（stepIndex=0，不持久化到 DB，避免污染对话历史）
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex: 0,
+        type: 'thought',
+        text: `**执行计划**\n${planText}`
+      })
+    }
+
     let stepCount = 0
     let finalContent = ''
     let finalMessageId = ''
 
+    // 状态机上下文：封装所有跨节点共享的可变状态
+    const ctx: AgentRunContext = {
+      requestId,
+      conversationId,
+      target,
+      messages,
+      master,
+      userMsg,
+      tools,
+      allowedToolIds,
+      defaultParams: defaultParams ?? {},
+      sources,
+      emit,
+      unattended: unattended ?? false,
+      stepCount: 0,
+      finalContent: '',
+      finalMessageId: '',
+      lastAssistantMsgId: ''
+    }
+
     try {
-      while (stepCount < MAX_STEPS) {
-        if (master.signal.aborted) throw new Error('Agent 运行已中止')
+      // 状态机驱动：llm → tools → llm → ... → final
+      // 超步数（stepCount >= MAX_STEPS）时跳出循环进入 degrade 降级
+      let state: AgentState = 'llm'
+      while (state !== 'final') {
+        if (ctx.master.signal.aborted) throw new Error('Agent 运行已中止')
+        if (ctx.stepCount >= MAX_STEPS) break
 
-        stepCount++
-        const stepIndex = stepCount
+        ctx.stepCount++
+        const stepIndex = ctx.stepCount
 
-        // 创建本轮 assistant 占位消息
-        const assistantMsg = messageRepo.insert({
-          conversationId,
-          role: 'assistant',
-          content: '',
-          provider: target.providerId,
-          model: target.model,
-          status: 'streaming',
-          parentId: userMsg.id
-        })
-
-        // 先 emit thought 占位（空文本），让前端创建消息卡片，后续 chunk 增量更新
-        emit(IPC.AGENT_STEP_EVENT, {
-          requestId,
-          conversationId,
-          stepIndex,
-          type: 'thought',
-          text: '',
-          messageId: assistantMsg.id
-        })
-
-        // 调用 LLM
-        let accumulated = ''
-        let reasoningAccumulated = ''
-        const adapter = providerManager.getAdapter(target.providerId)
-        const chatParams: ChatParams = {
-          model: target.model,
-          signal: master.signal,
-          maxTokens: 4096, // Agent 模式默认较大 token 上限，支持多步推理 + 工具调用
-          temperature: 0.7, // 略低温度，提高工具调用确定性
-          ...pickSafeParams(defaultParams) // 仅透传白名单内的生成参数
-        }
-        if (tools.length > 0) {
-          chatParams.tools = tools
-          chatParams.toolChoice = 'auto' // 明确指示模型可自主选择是否调用工具
-        }
-
-        let result
-        try {
-          result = await adapter.streamChat(messages, chatParams, {
-            onDelta: (delta) => {
-              accumulated += delta
-              // 推送 thought 文本增量（前端可拼接到当前 step 的 assistant 消息）
-              emit(IPC.AGENT_CHUNK_EVENT, {
-                requestId,
-                conversationId,
-                stepIndex,
-                messageId: assistantMsg.id,
-                delta
-              })
-            },
-            onReasoningDelta: (delta) => {
-              reasoningAccumulated += delta
-              // 推送思考过程增量
-              emit(IPC.AGENT_CHUNK_EVENT, {
-                requestId,
-                conversationId,
-                stepIndex,
-                messageId: assistantMsg.id,
-                delta,
-                reasoning: true
-              })
-            }
-          })
-        } catch (e) {
-          // 失败保留已生成部分
-          const partial = accumulated || `_(LLM 调用失败: ${errMsg(e)})_`
-          messageRepo.updateContent(assistantMsg.id, partial, 'error')
-          if (isAbortError(e)) throw e
-          // 非 abort 错误：emit step error，并终止
-          const evt: AgentStepEvent = {
-            requestId,
-            conversationId,
-            stepIndex,
-            type: 'error',
-            error: errMsg(e),
-            messageId: assistantMsg.id
-          }
-          emit(IPC.AGENT_STEP_EVENT, evt)
-          throw e
-        }
-
-        // 写入本步 assistant 文本
-        const toolCalls = result.toolCalls
-        const rawText = result.content || ''
-        // 模型因达到 max_tokens 被截断（finish_reason=length）且未产出工具调用时，
-        // 追加截断提示，避免用户拿到不完整的最终回答却无感知。
-        // 工具调用场景下若 arguments 被截断，JSON 解析会失败并由 classify/execute 错误路径处理。
-        const truncated = result.finishReason === 'length' && (!toolCalls || toolCalls.length === 0)
-        const stepText = truncated
-          ? `${rawText}\n\n_（回答因达到 token 上限被截断，如需完整内容请继续追问）_`
-          : rawText
-        messageRepo.updateContent(assistantMsg.id, stepText, 'done', !toolCalls || toolCalls.length === 0 ? sources : undefined)
-
-        // 把 assistant 步骤消息加入上下文（保留 tool_calls 以便 LLM 看到自己的调用历史）
-        // 持久化 tool_calls 到 DB，供恢复会话时重建上下文
-        if (toolCalls && toolCalls.length > 0) {
-          messageRepo.updateToolCalls(assistantMsg.id, JSON.stringify(toolCalls))
-        }
-        const assistantAdapterMsg: AdapterChatMessage = {
-          role: 'assistant',
-          content: stepText,
-          ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
-        }
-        messages.push(assistantAdapterMsg)
-
-        // emit thought step
-        const thoughtEvt: AgentStepEvent = {
-          requestId,
-          conversationId,
-          stepIndex,
-          type: 'thought',
-          text: stepText,
-          messageId: assistantMsg.id
-        }
-        emit(IPC.AGENT_STEP_EVENT, thoughtEvt)
-
-        // 无 tool_calls → 最终回答
-        if (!toolCalls || toolCalls.length === 0) {
-          finalContent = stepText
-          finalMessageId = assistantMsg.id
-          // 标记最后一步
-          const finalEvt: AgentStepEvent = {
-            requestId,
-            conversationId,
-            stepIndex,
-            type: 'final',
-            text: stepText,
-            messageId: assistantMsg.id,
-            done: true
-          }
-          emit(IPC.AGENT_STEP_EVENT, finalEvt)
-          break
-        }
-
-        // 有 tool_calls → 逐个执行
-        for (const tc of toolCalls) {
-          if (master.signal.aborted) throw new Error('Agent 运行已中止')
-
-          // emit tool_call step
-          const callEvt: AgentStepEvent = {
-            requestId,
-            conversationId,
-            stepIndex,
-            type: 'tool_call',
-            toolCall: tc
-          }
-          emit(IPC.AGENT_STEP_EVENT, callEvt)
-
-          // 安全门：deny 硬拒 / confirm 走人工审批 / allow 直接执行
-          const classification = toolRegistry.classify(
-            tc.function.name,
-            tc.function.arguments,
-            allowedToolIds
-          )
-
-          let toolResult: ToolResult
-          if (classification.decision === 'deny') {
-            toolResult = {
-              toolCallId: tc.id,
-              name: tc.function.name,
-              content: `命令被安全策略拒绝：${classification.reason ?? 'BLOCKED'}`,
-              isError: true
-            }
-          } else if (classification.decision === 'confirm') {
-            // 无人值守场景（IM 通道等）：不弹窗等待人工确认，直接以错误结果回灌，
-            // 避免挂起 5 分钟审批超时。Agent 可据此换路或在最终回答中说明需桌面端操作。
-            if (unattended) {
-              toolResult = {
-                toolCallId: tc.id,
-                name: tc.function.name,
-                content: `工具 ${tc.function.name} 需人工确认，但当前为无人值守场景，请在桌面端操作`,
-                isError: true
-              }
-            } else {
-              const display = buildApprovalDisplay(tc, classification.reason)
-              const approved = await createApproval(
-                {
-                  requestId,
-                  conversationId,
-                  toolName: tc.function.name,
-                  command: display.command,
-                  cwd: display.cwd,
-                  reason: display.reason ?? classification.reason ?? 'REQUIRES_CONFIRM',
-                  risk: display.risk
-                },
-                emit,
-                master.signal
-              )
-              if (!approved) {
-                // 用户拒绝（或审批超时/Agent 中止）：以错误结果回灌，Agent 可据此换路继续
-                toolResult = {
-                  toolCallId: tc.id,
-                  name: tc.function.name,
-                  content: '用户拒绝执行该命令',
-                  isError: true
-                }
-              } else {
-                toolResult = await this.executeWithTimeout(tc, allowedToolIds, master.signal)
-              }
-            }
-          } else {
-            // 执行（带 30s 超时）
-            toolResult = await this.executeWithTimeout(tc, allowedToolIds, master.signal)
-          }
-
-          // 持久化 tool 消息（content 存 JSON，含调用参数便于历史回放）
-          const toolMsg = messageRepo.insert({
-            conversationId,
-            role: 'tool',
-            content: JSON.stringify({
-              toolCallId: toolResult.toolCallId || tc.id,
-              name: toolResult.name,
-              arguments: tc.function.arguments,
-              content: toolResult.content,
-              isError: toolResult.isError ?? false
-            }),
-            parentId: assistantMsg.id,
-            status: 'done'
-          })
-
-          // 追加到 messages（OpenAI 格式：role=tool, content, tool_call_id, name）
-          // 截断工具结果，防止长输出撑爆上下文窗口
-          const truncatedResult = toolResult.content.length > MAX_TOOL_RESULT_CHARS
-            ? toolResult.content.slice(0, MAX_TOOL_RESULT_CHARS) + '\n…（结果已截断，完整内容 ' + toolResult.content.length + ' 字符）'
-            : toolResult.content
-          const toolAdapterMsg: AdapterChatMessage = {
-            role: 'tool',
-            content: truncatedResult,
-            tool_call_id: tc.id,
-            name: tc.function.name
-          }
-          messages.push(toolAdapterMsg)
-
-          // emit tool_result step
-          const resultEvt: AgentStepEvent = {
-            requestId,
-            conversationId,
-            stepIndex,
-            type: 'tool_result',
-            toolResult: { ...toolResult, toolCallId: tc.id },
-            messageId: toolMsg.id
-          }
-          emit(IPC.AGENT_STEP_EVENT, resultEvt)
+        if (state === 'llm') {
+          state = await this.runLLMStep(ctx, stepIndex)
+        } else {
+          state = await this.runToolsStep(ctx, stepIndex)
         }
       }
 
-      // 超过最大步数仍未结束
-      if (!finalMessageId) {
-        const evt: AgentErrorEvent = {
-          requestId,
-          conversationId,
-          error: `已达最大推理步数（${MAX_STEPS}）`
-        }
-        emit(IPC.AGENT_ERROR_EVENT, evt)
-        conversationRepo.touch(conversationId, { status: 'error' })
-        return
+      // 超步数降级：再调一次 LLM（不带 tools）强制生成最终回答
+      if (state !== 'final') {
+        await this.runDegradeStep(ctx)
       }
+
+      // 同步回局部变量（保持后续 done 事件逻辑不变）
+      stepCount = ctx.stepCount
+      finalContent = ctx.finalContent
+      finalMessageId = ctx.finalMessageId
+      void stepCount // 已用于 doneEvt
+      void finalContent
+      void finalMessageId
 
       const doneEvt: AgentDoneEvent = {
         requestId,
         conversationId,
         finalMessageId,
         fullContent: finalContent,
-        stepCount
+        stepCount,
+        traceStats: agentTraceRepo.statsByRequest(requestId)
       }
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
       conversationRepo.touch(conversationId, { status: 'done' })
@@ -679,6 +589,474 @@ class AgentEngine {
       this.controllers.delete(requestId)
     }
   }
+
+  // ─── 状态机节点方法 ────────────────────────────────────────────
+
+  /**
+   * LLM 调用节点：流式调用模型，持久化 assistant 消息，emit thought 事件。
+   * 返回下一个状态：有 tool_calls → 'tools'，无 → 'final'。
+   * 失败时抛错（由外层 catch 处理）。
+   */
+  private async runLLMStep(ctx: AgentRunContext, stepIndex: number): Promise<AgentState> {
+    const { conversationId, target, messages, master, userMsg, tools, defaultParams, sources, emit } = ctx
+    const stepStart = Date.now()
+
+    // 创建本轮 assistant 占位消息
+    const assistantMsg = messageRepo.insert({
+      conversationId,
+      role: 'assistant',
+      content: '',
+      provider: target.providerId,
+      model: target.model,
+      status: 'streaming',
+      parentId: userMsg.id
+    })
+
+    // 记录本轮 assistant 消息 id，供后续 tool 消息 parentId 引用
+    ctx.lastAssistantMsgId = assistantMsg.id
+
+    // 先 emit thought 占位（空文本），让前端创建消息卡片，后续 chunk 增量更新
+    emit(IPC.AGENT_STEP_EVENT, {
+      requestId: ctx.requestId,
+      conversationId,
+      stepIndex,
+      type: 'thought',
+      text: '',
+      messageId: assistantMsg.id
+    })
+
+    // 调用 LLM
+    let accumulated = ''
+    let reasoningAccumulated = ''
+    const adapter = providerManager.getAdapter(target.providerId)
+    const chatParams: ChatParams = {
+      model: target.model,
+      signal: master.signal,
+      maxTokens: 4096,
+      temperature: 0.7,
+      ...pickSafeParams(defaultParams)
+    }
+    if (tools.length > 0) {
+      chatParams.tools = tools
+      chatParams.toolChoice = 'auto'
+    }
+
+    // 调用 LLM（带重试）
+    let result: Awaited<ReturnType<typeof adapter.streamChat>> | undefined
+    let llmError: unknown
+    for (let attempt = 0; attempt <= MAX_LLM_RETRIES; attempt++) {
+      if (master.signal.aborted) throw new Error('Agent 运行已中止')
+      if (attempt > 0) {
+        accumulated = ''
+        reasoningAccumulated = ''
+        emit(IPC.AGENT_STEP_EVENT, {
+          requestId: ctx.requestId,
+          conversationId,
+          stepIndex,
+          type: 'thought',
+          text: '',
+          messageId: assistantMsg.id
+        })
+      }
+      try {
+        result = await adapter.streamChat(messages, chatParams, {
+          onDelta: (delta) => {
+            accumulated += delta
+            emit(IPC.AGENT_CHUNK_EVENT, {
+              requestId: ctx.requestId,
+              conversationId,
+              stepIndex,
+              messageId: assistantMsg.id,
+              delta
+            })
+          },
+          onReasoningDelta: (delta) => {
+            reasoningAccumulated += delta
+            emit(IPC.AGENT_CHUNK_EVENT, {
+              requestId: ctx.requestId,
+              conversationId,
+              stepIndex,
+              messageId: assistantMsg.id,
+              delta,
+              reasoning: true
+            })
+          }
+        })
+        break
+      } catch (e) {
+        if (isAbortError(e)) throw e
+        const retryable =
+          (e instanceof ProviderError && e.retryable) || !(e instanceof ProviderError)
+        if (!retryable || attempt >= MAX_LLM_RETRIES) {
+          llmError = e
+          break
+        }
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt)
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, delay)
+          master.signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer)
+              resolve()
+            },
+            { once: true }
+          )
+        })
+        if (master.signal.aborted) throw new Error('Agent 运行已中止')
+      }
+    }
+
+    if (!result) {
+      const e = llmError
+      const partial = accumulated || `_(LLM 调用失败: ${errMsg(e)})_`
+      messageRepo.updateContent(assistantMsg.id, partial, 'error')
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex,
+        type: 'error',
+        error: errMsg(e),
+        messageId: assistantMsg.id
+      })
+      // trace：LLM 步骤失败
+      agentTraceRepo.insert({
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex,
+        stepType: 'llm',
+        durationMs: Date.now() - stepStart,
+        status: 'error',
+        error: errMsg(e)
+      })
+      throw e
+    }
+
+    // 写入本步 assistant 文本
+    const toolCalls = result.toolCalls
+    const rawText = result.content || ''
+    const truncated = result.finishReason === 'length' && (!toolCalls || toolCalls.length === 0)
+    const stepText = truncated
+      ? `${rawText}\n\n_（回答因达到 token 上限被截断，如需完整内容请继续追问）_`
+      : rawText
+    messageRepo.updateContent(assistantMsg.id, stepText, 'done', !toolCalls || toolCalls.length === 0 ? sources : undefined)
+
+    if (toolCalls && toolCalls.length > 0) {
+      messageRepo.updateToolCalls(assistantMsg.id, JSON.stringify(toolCalls))
+    }
+    messages.push({
+      role: 'assistant',
+      content: stepText,
+      ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
+    })
+
+    emit(IPC.AGENT_STEP_EVENT, {
+      requestId: ctx.requestId,
+      conversationId,
+      stepIndex,
+      type: 'thought',
+      text: stepText,
+      messageId: assistantMsg.id
+    })
+
+    // 无 tool_calls → 最终回答
+    if (!toolCalls || toolCalls.length === 0) {
+      ctx.finalContent = stepText
+      ctx.finalMessageId = assistantMsg.id
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex,
+        type: 'final',
+        text: stepText,
+        messageId: assistantMsg.id,
+        done: true
+      })
+      // trace：LLM 步骤成功（最终回答）
+      agentTraceRepo.insert({
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex,
+        stepType: 'final',
+        durationMs: Date.now() - stepStart,
+        status: 'success'
+      })
+      return 'final'
+    }
+
+    // trace：LLM 步骤成功（产出工具调用）
+    agentTraceRepo.insert({
+      requestId: ctx.requestId,
+      conversationId,
+      stepIndex,
+      stepType: 'llm',
+      durationMs: Date.now() - stepStart,
+      status: 'success'
+    })
+    return 'tools'
+  }
+
+  /**
+   * 工具执行节点：分类执行 tool_calls（deny/confirm/allow），
+   * allow 类并行执行，结果按原顺序持久化与 emit。
+   * 返回下一个状态：'llm'。
+   */
+  private async runToolsStep(ctx: AgentRunContext, stepIndex: number): Promise<AgentState> {
+    const { conversationId, messages, master, allowedToolIds, emit, unattended, requestId } = ctx
+    const stepStart = Date.now()
+
+    // 获取上一步 LLM 返回的 tool_calls（从 messages 最后一条 assistant 消息取）
+    const lastAssistant = messages[messages.length - 1]
+    const toolCalls = lastAssistant?.tool_calls
+    if (!toolCalls || toolCalls.length === 0) return 'llm'
+
+    // 分类执行
+    const classifications = toolCalls.map((tc) =>
+      toolRegistry.classify(tc.function.name, tc.function.arguments, allowedToolIds)
+    )
+
+    const results: ToolResult[] = new Array(toolCalls.length)
+    const allowTasks: Promise<void>[] = []
+
+    for (let i = 0; i < toolCalls.length; i++) {
+      if (master.signal.aborted) throw new Error('Agent 运行已中止')
+      const tc = toolCalls[i]!
+      const classification = classifications[i]!
+
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex,
+        type: 'tool_call',
+        toolCall: tc
+      })
+
+      if (classification.decision === 'deny') {
+        results[i] = {
+          toolCallId: tc.id,
+          name: tc.function.name,
+          content: `命令被安全策略拒绝：${classification.reason ?? 'BLOCKED'}`,
+          isError: true
+        }
+      } else if (classification.decision === 'confirm') {
+        if (unattended) {
+          results[i] = {
+            toolCallId: tc.id,
+            name: tc.function.name,
+            content: `工具 ${tc.function.name} 需人工确认，但当前为无人值守场景，请在桌面端操作`,
+            isError: true
+          }
+        } else {
+          const display = buildApprovalDisplay(tc, classification.reason)
+          const approved = await createApproval(
+            {
+              requestId,
+              conversationId,
+              toolName: tc.function.name,
+              command: display.command,
+              cwd: display.cwd,
+              reason: display.reason ?? classification.reason ?? 'REQUIRES_CONFIRM',
+              risk: display.risk
+            },
+            emit,
+            master.signal
+          )
+          if (!approved) {
+            results[i] = {
+              toolCallId: tc.id,
+              name: tc.function.name,
+              content: '用户拒绝执行该命令',
+              isError: true
+            }
+          } else {
+            results[i] = await this.executeWithTimeout(tc, allowedToolIds, master.signal)
+          }
+        }
+      } else {
+        const idx = i
+        allowTasks.push(
+          this.executeWithTimeout(tc, allowedToolIds, master.signal).then((r) => {
+            results[idx] = r
+          })
+        )
+      }
+    }
+
+    await Promise.all(allowTasks)
+
+    // 按原顺序持久化 + push messages + emit tool_result
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i]!
+      const toolResult = results[i]!
+
+      // 持久化 tool 消息，parentId 指向上一步 assistant 消息
+      const toolMsg = messageRepo.insert({
+        conversationId,
+        role: 'tool',
+        content: JSON.stringify({
+          toolCallId: toolResult.toolCallId || tc.id,
+          name: toolResult.name,
+          arguments: tc.function.arguments,
+          content: toolResult.content,
+          isError: toolResult.isError ?? false
+        }),
+        parentId: ctx.lastAssistantMsgId,
+        status: 'done'
+      })
+
+      const truncatedResult = toolResult.content.length > MAX_TOOL_RESULT_CHARS
+        ? toolResult.content.slice(0, MAX_TOOL_RESULT_CHARS) + '\n…（结果已截断，完整内容 ' + toolResult.content.length + ' 字符）'
+        : toolResult.content
+      messages.push({
+        role: 'tool',
+        content: truncatedResult,
+        tool_call_id: tc.id,
+        name: tc.function.name
+      })
+
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex,
+        type: 'tool_result',
+        toolResult: { ...toolResult, toolCallId: tc.id },
+        messageId: toolMsg.id
+      })
+    }
+
+    // BAD_ARGS 自动修正引导
+    const hasBadArgs = results.some(
+      (r) => r?.isError && r.content.startsWith('[BAD_ARGS]')
+    )
+    if (hasBadArgs) {
+      messages.push({
+        role: 'user',
+        content: '上一步工具调用因参数 JSON 格式错误而失败。请仔细检查参数格式（注意引号、逗号、括号必须正确），使用正确的 JSON 格式重新调用该工具，不要重复使用错误的参数。'
+      })
+    }
+
+    // trace：工具执行步骤（记录工具名列表与是否有错误）
+    const toolNames = toolCalls.map((tc) => tc.function.name).join(',')
+    const hasError = results.some((r) => r?.isError)
+    agentTraceRepo.insert({
+      requestId: ctx.requestId,
+      conversationId,
+      stepIndex,
+      stepType: 'tools',
+      toolName: toolNames,
+      durationMs: Date.now() - stepStart,
+      status: hasError ? 'error' : 'success',
+      error: hasError ? results.find((r) => r?.isError)?.content : undefined
+    })
+
+    return 'llm'
+  }
+
+  /**
+   * 降级节点：超步数时再调一次 LLM（不带 tools）强制生成最终回答。
+   */
+  private async runDegradeStep(ctx: AgentRunContext): Promise<void> {
+    const { conversationId, target, messages, master, userMsg, defaultParams, emit, requestId } = ctx
+    const stepStart = Date.now()
+
+    try {
+      const degradeMsg = messageRepo.insert({
+        conversationId,
+        role: 'assistant',
+        content: '',
+        provider: target.providerId,
+        model: target.model,
+        status: 'streaming',
+        parentId: userMsg.id
+      })
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex: ctx.stepCount + 1,
+        type: 'thought',
+        text: '',
+        messageId: degradeMsg.id
+      })
+
+      messages.push({
+        role: 'user',
+        content: `已达到最大推理步数（${MAX_STEPS} 步）。请基于上面已有的工具调用结果和对话信息，直接给出最终回答，不要再调用任何工具。`
+      })
+
+      const degradeAdapter = providerManager.getAdapter(target.providerId)
+      const degradeParams: ChatParams = {
+        model: target.model,
+        signal: master.signal,
+        maxTokens: 2048,
+        temperature: 0.3,
+        ...pickSafeParams(defaultParams)
+      }
+
+      let degradeAccumulated = ''
+      const degradeResult = await degradeAdapter.streamChat(messages, degradeParams, {
+        onDelta: (delta) => {
+          degradeAccumulated += delta
+          emit(IPC.AGENT_CHUNK_EVENT, {
+            requestId,
+            conversationId,
+            stepIndex: ctx.stepCount + 1,
+            messageId: degradeMsg.id,
+            delta
+          })
+        }
+      })
+
+      const degradeText = degradeResult.content || '（已达最大推理步数，未能生成最终回答）'
+      const finalText = degradeResult.finishReason === 'length'
+        ? `${degradeText}\n\n_（回答因达到 token 上限被截断）_`
+        : degradeText
+      messageRepo.updateContent(degradeMsg.id, finalText, 'done')
+
+      ctx.finalContent = finalText
+      ctx.finalMessageId = degradeMsg.id
+
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex: ctx.stepCount + 1,
+        type: 'final',
+        text: finalText,
+        messageId: degradeMsg.id,
+        done: true
+      })
+      // trace：降级步骤成功
+      agentTraceRepo.insert({
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex: ctx.stepCount + 1,
+        stepType: 'degrade',
+        durationMs: Date.now() - stepStart,
+        status: 'success'
+      })
+    } catch (e) {
+      const aborted = isAbortError(e) || /中止/.test(errMsg(e))
+      // trace：降级步骤失败
+      agentTraceRepo.insert({
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex: ctx.stepCount + 1,
+        stepType: 'degrade',
+        durationMs: Date.now() - stepStart,
+        status: 'error',
+        error: errMsg(e)
+      })
+      emit(IPC.AGENT_ERROR_EVENT, {
+        requestId,
+        conversationId,
+        error: aborted
+          ? 'Agent 运行已中止'
+          : `已达最大推理步数（${MAX_STEPS}），且降级总结失败：${errMsg(e)}`
+      })
+      conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
+    }
+  }
+
+  // ─── 原有辅助方法 ──────────────────────────────────────────────
 
   private async executeWithTimeout(
     tc: ToolCall,
@@ -698,16 +1076,20 @@ class AgentEngine {
       allowedToolIds,
       subController.signal
     )
-    // 定时器句柄保留：工具先结束时必须 clear，否则 timer 会白挂 30s（虽不产生
+    // 按工具 schema 配置的 timeoutMs 决定超时；未配置时使用默认 30s。
+    // 不同工具需求不同（如 shell_exec 可长，calculator 应短）。
+    const toolSchema = toolRegistry.getSchema(tc.function.name)
+    const timeoutMs = toolSchema?.timeoutMs ?? TOOL_TIMEOUT_MS
+    // 定时器句柄保留：工具先结束时必须 clear，否则 timer 会白挂 N 秒（虽不产生
     // unhandledRejection，但会无谓持有 reject 闭包并推迟进程退出条件）
     let toolTimer: ReturnType<typeof setTimeout> | undefined
     const timeoutPromise = new Promise<ToolResult>((_, reject) => {
       toolTimer = setTimeout(
         () => {
           subController.abort() // 超时也主动 abort 底层工具（杀 shell 进程树等）
-          reject(new Error(`工具 ${tc.function.name} 执行超时（${TOOL_TIMEOUT_MS / 1000}s）`))
+          reject(new Error(`工具 ${tc.function.name} 执行超时（${timeoutMs / 1000}s）`))
         },
-        TOOL_TIMEOUT_MS
+        timeoutMs
       )
     })
     // Agent 中止：立即在 race 中出局（子控制器 abort 负责通知底层工具杀树/取消请求）

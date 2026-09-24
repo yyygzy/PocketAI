@@ -27,12 +27,12 @@ const FILE_FILTERS = [
 ]
 
 /** 导出文件名净化：截断 40 字符并去除文件系统非法字符 */
-function safeFileName(name: string): string {
+export function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 40) || 'skill'
 }
 
 /** 把 SkillShape 保存为自定义技能（不传 id → 自动生成 UUID；isBuiltin=false） */
-function saveShapeAsSkill(shape: SkillShape): SkillRecord {
+export function saveShapeAsSkill(shape: SkillShape): SkillRecord {
   skillShapeSchema.parse(shape)
   return skillRepo.save({
     name: shape.name,

@@ -33,7 +33,7 @@ interface GlossaryRow {
 
 const HISTORY_LIMIT = 100
 
-function rowToTranslation(row: TranslationRow): TranslationRecord {
+export function rowToTranslation(row: TranslationRow): TranslationRecord {
   return {
     id: row.id,
     sourceText: row.source_text,
@@ -48,7 +48,7 @@ function rowToTranslation(row: TranslationRow): TranslationRecord {
   }
 }
 
-function rowToGlossary(row: GlossaryRow): GlossaryTerm {
+export function rowToGlossary(row: GlossaryRow): GlossaryTerm {
   return {
     id: row.id,
     sourceTerm: row.source_term,

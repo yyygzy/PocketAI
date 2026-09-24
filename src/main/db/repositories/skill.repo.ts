@@ -15,7 +15,7 @@ interface SkillRow {
   created_at: number
 }
 
-function rowToRecord(row: SkillRow): SkillRecord {
+export function rowToRecord(row: SkillRow): SkillRecord {
   return {
     id: row.id,
     name: row.name,

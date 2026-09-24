@@ -36,6 +36,11 @@ class ToolRegistry {
     return [...this.listBuiltin(), ...this.listMcp()]
   }
 
+  /** 按工具名查找 schema（内置 + MCP），未找到返回 undefined */
+  getSchema(toolName: string): ToolSchema | undefined {
+    return this.listAll().find((t) => t.name === toolName)
+  }
+
   /**
    * 按助手权限过滤出可用工具。
    * toolPermissions 为空时返回空数组（保守策略，避免给普通助手加工具）。
@@ -134,8 +139,16 @@ class ToolRegistry {
     let args: Record<string, unknown>
     try {
       args = argsJson ? (JSON.parse(argsJson) as Record<string, unknown>) : {}
-    } catch {
-      return { toolCallId: '', name: toolName, content: '参数 JSON 解析失败', isError: true }
+    } catch (e) {
+      // 参数解析失败：返回丰富错误信息（原始参数+错误原因+修正引导），
+      // 用 [BAD_ARGS] 前缀标记，engine 可据此追加修正引导消息。
+      const raw = argsJson ? argsJson.slice(0, 200) : '(空)'
+      return {
+        toolCallId: '',
+        name: toolName,
+        content: `[BAD_ARGS] 参数 JSON 解析失败：${errMsg(e)}\n原始参数：${raw}\n请修正 JSON 格式（确保引号、逗号、括号正确）后重新调用该工具，不要使用相同的错误参数。`,
+        isError: true
+      }
     }
 
     try {
@@ -162,18 +175,18 @@ class ToolRegistry {
 }
 
 /** 取两个判定中更严格者（deny > confirm > allow），reason 随更严结果 */
-function stricterDecision(a: ToolClassification, b: ToolClassification): ToolClassification {
+export function stricterDecision(a: ToolClassification, b: ToolClassification): ToolClassification {
   const rank: Record<ToolClassification['decision'], number> = { allow: 0, confirm: 1, deny: 2 }
   return rank[b.decision] > rank[a.decision] ? b : a
 }
 
 /** 从 MCP tools/call 返回中提取 isError 标志（形状不保证，unknown 安全收窄） */
-function mcpResultIsError(raw: unknown): boolean {
+export function mcpResultIsError(raw: unknown): boolean {
   if (typeof raw !== 'object' || raw === null || !('isError' in raw)) return false
   return Boolean((raw as { isError: unknown }).isError)
 }
 
-function stringifyMcpResult(raw: unknown): string {
+export function stringifyMcpResult(raw: unknown): string {
   if (typeof raw === 'string') return raw
   const obj = raw as { content?: Array<{ type: string; text?: string }> }
   if (Array.isArray(obj?.content)) {

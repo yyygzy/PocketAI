@@ -29,7 +29,7 @@ function resolveDataPath(rel: string): string {
 }
 
 /** 清洗名称：控制符 → 空格，trim，截断 60 字符，空值给默认名 */
-function cleanName(name: string, fallback = '未命名'): string {
+export function cleanName(name: string, fallback = '未命名'): string {
   return (
     String(name ?? '')
       .replace(/[\x00-\x1f\x7f]/g, ' ')
@@ -39,7 +39,7 @@ function cleanName(name: string, fallback = '未命名'): string {
 }
 
 /** 清洗图标：取首个 emoji/可见字符，空值给默认 */
-function cleanIcon(icon: string): string {
+export function cleanIcon(icon: string): string {
   const s = String(icon ?? '').trim()
   if (!s) return DEFAULT_ICON
   // 取第一个 grapheme（粗略：取首字符即可，emoji 通常占 1-2 个码元）
@@ -47,7 +47,7 @@ function cleanIcon(icon: string): string {
 }
 
 /** 清洗描述：控制符清除，截断 200 字符 */
-function cleanDescription(desc: string): string {
+export function cleanDescription(desc: string): string {
   return String(desc ?? '')
     .replace(/[\x00-\x1f\x7f]/g, ' ')
     .trim()

@@ -26,7 +26,7 @@ export type MarkedBrowserWindow = BrowserWindow & {
   [K in typeof MAIN_WINDOW_MARKER]?: boolean
 }
 
-function clampOpacity(v: number): number {
+export function clampOpacity(v: number): number {
   if (!Number.isFinite(v)) return 1
   return Math.min(MAX_OPACITY, Math.max(MIN_OPACITY, v))
 }

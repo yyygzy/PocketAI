@@ -43,7 +43,8 @@ const timeNowTool: BuiltinTool = {
     description: '获取当前本地时间（ISO 8601 与人类可读格式）。无参数。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     source: 'builtin',
-    permission: 'auto'
+    permission: 'auto',
+    timeoutMs: 3_000 // 纯本地操作，3s 足够
   },
   async execute() {
     const now = new Date()
@@ -70,6 +71,7 @@ const calculatorTool: BuiltinTool = {
       additionalProperties: false
     },
     source: 'builtin',
+    timeoutMs: 5_000, // 纯计算，5s 足够
     permission: 'auto'
   },
   async execute(args) {
@@ -95,7 +97,8 @@ const webFetchTool: BuiltinTool = {
       additionalProperties: false
     },
     source: 'builtin',
-    permission: 'auto'
+    permission: 'auto',
+    timeoutMs: 30_000 // 网络请求，默认 30s
   },
   async execute(args, ctx) {
     const url = String(args?.url ?? '').trim()
@@ -135,7 +138,8 @@ const webSearchTool: BuiltinTool = {
       additionalProperties: false
     },
     source: 'builtin',
-    permission: 'auto'
+    permission: 'auto',
+    timeoutMs: 30_000 // 网络搜索，默认 30s
   },
   async execute(args, ctx) {
     const query = String(args?.query ?? '').trim()

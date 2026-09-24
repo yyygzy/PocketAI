@@ -60,7 +60,7 @@ function assertNoRedirect(res: Response): void {
 }
 
 /** 将统一 ToolSchema 数组转为 OpenAI tools 字段格式 */
-function toOpenAITools(tools: ToolSchema[]): unknown[] {
+export function toOpenAITools(tools: ToolSchema[]): unknown[] {
   return tools.map((t) => ({
     type: 'function',
     function: {
@@ -72,7 +72,7 @@ function toOpenAITools(tools: ToolSchema[]): unknown[] {
 }
 
 /** 将 AdapterChatMessage 转为 OpenAI messages 格式（带 tool_calls / tool_call_id） */
-function toOpenAIMessages(messages: AdapterChatMessage[]): unknown[] {
+export function toOpenAIMessages(messages: AdapterChatMessage[]): unknown[] {
   return messages.map((m) => {
     if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
       return {
@@ -404,7 +404,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 }
 
 /** 把聚合的工具调用整理成最终 ToolCall 数组（丢弃空 ID 的） */
-function finalizeToolCalls(map: Map<number, AggregatedToolCall>): ToolCall[] | undefined {
+export function finalizeToolCalls(map: Map<number, AggregatedToolCall>): ToolCall[] | undefined {
   if (map.size === 0) return undefined
   const sorted = Array.from(map.values()).sort((a, b) => a.index - b.index)
   const out: ToolCall[] = []

@@ -19,7 +19,7 @@ interface NoteRow {
   updated_at: number
 }
 
-function rowToNote(row: NoteRow): Note {
+export function rowToNote(row: NoteRow): Note {
   return {
     id: row.id,
     title: row.title,
@@ -31,7 +31,7 @@ function rowToNote(row: NoteRow): Note {
   }
 }
 
-function tagsToStr(tags: string[] | undefined): string {
+export function tagsToStr(tags: string[] | undefined): string {
   if (!tags) return ''
   return tags.map((t) => t.trim()).filter(Boolean).join(',')
 }

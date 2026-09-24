@@ -284,12 +284,12 @@ export interface IncrementalIndex {
   attachments: IncrementalAttachment[]
 }
 
-function sha256Hex(buf: Buffer): string {
+export function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex')
 }
 
 /** 加密时的 blob 后缀规则，集中管理避免不一致 */
-function blobRelName(prefix: 'db' | 'att', sha: string, encrypted: boolean): string {
+export function blobRelName(prefix: 'db' | 'att', sha: string, encrypted: boolean): string {
   return `blobs/${prefix}-${sha}${encrypted ? '.enc' : '.bin'}`
 }
 
@@ -500,7 +500,7 @@ export async function deleteWebDAVBackup(cfg: WebDAVConfig, filename: string): P
  * WebDAV 上的备份包可被服务器/中间人篡改，恶意条目 "../app.db" 之类
  * 会在解压时写到临时目录之外（覆盖任意文件），必须先校验再解压。
  */
-function isSafeZipEntryName(rawName: string): boolean {
+export function isSafeZipEntryName(rawName: string): boolean {
   const name = String(rawName ?? '').replace(/\\/g, '/') // zip 规范用 /，容忍 Windows 制包的 \
   if (!name) return false
   if (name.startsWith('/') || /^[a-zA-Z]:/.test(name)) return false // 绝对路径 / 盘符
