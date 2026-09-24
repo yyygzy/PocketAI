@@ -7,7 +7,7 @@ export interface AgentTraceRecord {
   requestId: string
   conversationId: string
   stepIndex: number
-  stepType: 'llm' | 'tools' | 'final' | 'degrade'
+  stepType: 'llm' | 'tools' | 'final' | 'degrade' | 'replan'
   toolName?: string
   durationMs?: number
   tokenUsage?: number

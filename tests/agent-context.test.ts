@@ -49,6 +49,7 @@ import {
   computeToolSignature,
   buildHistorySummary,
   shouldSkipPlanning,
+  buildReplanPrompt,
   estimateTokens,
   cutToTokens
 } from '../src/main/agent/engine'
@@ -371,6 +372,22 @@ describe('buildHistorySummary', () => {
     ]
     const summary = buildHistorySummary(history)
     expect(summary).toContain('工具[web_search]: 搜索到的内容')
+  })
+})
+
+describe('buildReplanPrompt — 超步数重规划提示', () => {
+  it('包含已执行步数与追加预算，引导评估进度', () => {
+    const out = buildReplanPrompt(10, 5)
+    expect(out).toContain('已执行 10 步')
+    expect(out).toContain('追加 5 步预算')
+    expect(out).toContain('评估进度')
+    expect(out).toContain('直接给出最终回答')
+  })
+
+  it('参数化：不同步数与预算正确渲染', () => {
+    const out = buildReplanPrompt(3, 2)
+    expect(out).toContain('已执行 3 步')
+    expect(out).toContain('追加 2 步预算')
   })
 })
 

@@ -20,6 +20,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, dispatch] = useReducer(messagesReducer, [] as AgentMessage[])
   const [running, setRunning] = useState(false)
+  const [interrupted, setInterrupted] = useState(false) // 上次运行被中止/出错（可断点恢复）
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const requestIdRef = useRef('')
@@ -38,8 +39,9 @@ export function useAgentChat(providers: ProviderRecord[]) {
     }).catch(reportIpcError('agent.listConversations'))
   }, [assistantId])
 
-  // 会话切换 → 加载历史消息
+  // 会话切换 → 加载历史消息（同时复位中断标记）
   useEffect(() => {
+    setInterrupted(false)
     if (!conversationId) {
       dispatch({ type: 'clear' })
       return
@@ -64,10 +66,16 @@ export function useAgentChat(providers: ProviderRecord[]) {
       })
     )
     offs.push(
-      window.pocketai.onAgentDone((_e: AgentDoneEvent) => setRunning(false))
+      window.pocketai.onAgentDone((_e: AgentDoneEvent) => {
+        setRunning(false)
+        setInterrupted(false)
+      })
     )
     offs.push(
-      window.pocketai.onAgentError((_e: AgentErrorEvent) => setRunning(false))
+      window.pocketai.onAgentError((_e: AgentErrorEvent) => {
+        setRunning(false)
+        setInterrupted(true)
+      })
     )
     return () => offs.forEach((off) => off())
   }, [t])
@@ -143,6 +151,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
       message: { id: `u_${Date.now()}`, role: 'user', text: content, attachments: [...attachments] }
     })
     setRunning(true)
+    setInterrupted(false)
 
     return window.pocketai.sendMessage({
       requestId,
@@ -160,6 +169,14 @@ export function useAgentChat(providers: ProviderRecord[]) {
     setRunning(false)
   }
 
+  /** 断点恢复：中止/出错后一键续跑（消息历史已在 DB，LLM 基于完整上下文继续） */
+  const resume = () => {
+    return send(
+      '请继续执行刚才未完成的任务：先简要回顾已完成的步骤和已获得的结果，然后从中断处继续执行剩余步骤。',
+      []
+    )
+  }
+
   return {
     assistantId,
     setAssistantId,
@@ -167,6 +184,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     conversationId,
     messages,
     running,
+    interrupted,
     providerId,
     model,
     setModel,
@@ -177,7 +195,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
     selectConversation,
     changeProvider,
     send,
-    abort
+    abort,
+    resume
   }
 }
 

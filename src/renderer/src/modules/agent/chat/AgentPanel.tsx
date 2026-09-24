@@ -56,6 +56,16 @@ export const AgentPanel: React.FC = () => {
           emptyHint={t('agent.emptyHint')}
         />
 
+        {/* 断点恢复：上次运行中止/出错时显示「继续执行」入口 */}
+        {chat.interrupted && !chat.running && chat.canSend && (
+          <button
+            onClick={() => void chat.resume()}
+            className="mb-2 self-start text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+          >
+            {t('agent.resume')}
+          </button>
+        )}
+
         <AgentComposer
           running={chat.running}
           canSend={chat.canSend}

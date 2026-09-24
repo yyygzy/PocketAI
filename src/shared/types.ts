@@ -323,7 +323,7 @@ export interface McpServerLogEvent {
 }
 
 // ---------- Work Agent ----------
-export type AgentStepType = 'thought' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'todo'
+export type AgentStepType = 'thought' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'todo' | 'replan'
 
 /** 任务清单条目（todo_write 工具维护，渲染端步骤化 checklist 展示） */
 export interface TodoItem {

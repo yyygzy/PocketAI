@@ -35,10 +35,13 @@ import type { ToolAgentContext } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
 import { injectAttachments, appendTextAttachments, buildImageParts } from '../chat/context-attachments'
 import { errMsg, isAbortError } from '../error'
+import { createLogger } from '../logger'
 import { createApproval } from './tool-approval'
 import { pickSafeParams } from './safe-params'
 
 const MAX_STEPS = 10
+const logger = createLogger('agent')
+const REPLAN_EXTRA_STEPS = 5 // 首次超步数时重规划一次，追加的步数预算
 const LOOP_TIMEOUT_MS = 5 * 60 * 1000 // 5 分钟整体超时
 const TOOL_TIMEOUT_MS = 30_000 // 单个工具调用超时
 const MAX_CONTEXT_MESSAGES = 30 // 上下文窗口：最多保留最近 30 条消息（不含 system），防止 token 溢出
@@ -72,6 +75,9 @@ interface AgentRunContext {
   unattended: boolean
   // 运行时可变状态
   stepCount: number
+  maxSteps: number // 步数预算上限（首次触顶重规划后 += REPLAN_EXTRA_STEPS）
+  retriedEmpty: boolean // 空响应已重试过一次（本地小模型可能返回空 content + 空 tool_calls）
+  pendingAssistantMsgId: string // 当前轮 streaming 占位消息 id（写入终态后清空），供 catch 清理避免 UI 卡「思考中」
   finalContent: string
   finalMessageId: string
   lastAssistantMsgId: string // 上一步 LLM 产出的 assistant 消息 DB id，供 tool 消息 parentId 引用
@@ -134,6 +140,14 @@ export function shouldSkipPlanning(content: string, toolCount: number): boolean 
   if (toolCount === 0) return true
   const trimmed = content.trim()
   return trimmed.length < PLAN_SKIP_MIN_CHARS && !trimmed.includes('\n')
+}
+
+/**
+ * 重规划提示文本：首次超步数时注入（仅内存上下文，不持久化），
+ * 引导 LLM 评估进度、聚焦剩余关键步骤；任务实质完成时直接给最终回答。
+ */
+export function buildReplanPrompt(executedSteps: number, extraSteps: number): string {
+  return `[系统提示] 已执行 ${executedSteps} 步，达到初始步数上限。请快速评估进度：哪些子任务已完成、哪些还未完成？聚焦最关键的剩余步骤继续执行（已追加 ${extraSteps} 步预算）；如果任务实质上已完成，请直接给出最终回答，不要再调用工具。`
 }
 
 // ─── Token 估算（轻量估算，无需 tokenizer 依赖） ─────────────────────────
@@ -629,6 +643,9 @@ class AgentEngine {
       emit,
       unattended: unattended ?? false,
       stepCount: 0,
+      maxSteps: MAX_STEPS,
+      retriedEmpty: false,
+      pendingAssistantMsgId: '',
       finalContent: '',
       finalMessageId: '',
       lastAssistantMsgId: '',
@@ -637,11 +654,18 @@ class AgentEngine {
 
     try {
       // 状态机驱动：llm → tools → llm → ... → final
-      // 超步数（stepCount >= MAX_STEPS）时跳出循环进入 degrade 降级
+      // 首次触顶（stepCount >= maxSteps）时注入重规划提示并追加步数预算继续执行；
+      // 再次触顶才跳出循环进入 degrade 降级
       let state: AgentState = 'llm'
+      let replanned = false
       while (state !== 'final') {
         if (ctx.master.signal.aborted) throw new Error('Agent 运行已中止')
-        if (ctx.stepCount >= MAX_STEPS) break
+        if (ctx.stepCount >= ctx.maxSteps) {
+          if (replanned) break
+          replanned = true
+          this.runReplanStep(ctx)
+          continue
+        }
 
         ctx.stepCount++
         const stepIndex = ctx.stepCount
@@ -675,11 +699,28 @@ class AgentEngine {
       conversationRepo.touch(conversationId, { status: 'done' })
     } catch (e) {
       const aborted = isAbortError(e) || /中止/.test(errMsg(e))
-      const errEvt: AgentErrorEvent = {
-        requestId,
-        conversationId,
-        error: aborted ? 'Agent 运行已中止' : errMsg(e)
+      const errText = aborted ? 'Agent 运行已中止' : errMsg(e)
+      // 清理流式占位消息：错误/中止时把当前轮 assistant 占位写入终态并同步 UI，
+      // 否则渲染端消息卡永远显示「思考中…」（只清 pending，不覆盖已完成消息）
+      if (ctx.pendingAssistantMsgId) {
+        const pendingId = ctx.pendingAssistantMsgId
+        ctx.pendingAssistantMsgId = ''
+        const noticeText = aborted ? '（已中止）' : `（出错：${errText}）`
+        try {
+          messageRepo.updateContent(pendingId, noticeText, aborted ? 'aborted' : 'error')
+          emit(IPC.AGENT_STEP_EVENT, {
+            requestId,
+            conversationId,
+            stepIndex: ctx.stepCount,
+            type: 'thought',
+            text: noticeText,
+            messageId: pendingId
+          })
+        } catch (cleanupErr) {
+          logger.warn(`清理占位消息失败: ${errMsg(cleanupErr)}`)
+        }
       }
+      const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
       emit(IPC.AGENT_ERROR_EVENT, errEvt)
       conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
     } finally {
@@ -712,6 +753,8 @@ class AgentEngine {
 
     // 记录本轮 assistant 消息 id，供后续 tool 消息 parentId 引用
     ctx.lastAssistantMsgId = assistantMsg.id
+    // 标记当前 streaming 占位，catch 清理时只处理它（不覆盖已完成的上一轮消息）
+    ctx.pendingAssistantMsgId = assistantMsg.id
 
     // 先 emit thought 占位（空文本），让前端创建消息卡片，后续 chunk 增量更新
     emit(IPC.AGENT_STEP_EVENT, {
@@ -835,10 +878,48 @@ class AgentEngine {
     const tokenUsage = result.usage?.totalTokens
     const rawText = result.content || ''
     const truncated = result.finishReason === 'length' && (!toolCalls || toolCalls.length === 0)
-    const stepText = truncated
+    let stepText = truncated
       ? `${rawText}\n\n_（回答因达到 token 上限被截断，如需完整内容请继续追问）_`
       : rawText
+
+    // 空响应防御：本地小模型可能返回空 content + 空 tool_calls。
+    // 首次：占位消息标记「重试中」并注入提示重跑一轮 llm；重试后仍空：写兜底文案正常结束。
+    if (!stepText.trim() && (!toolCalls || toolCalls.length === 0)) {
+      if (!ctx.retriedEmpty) {
+        ctx.retriedEmpty = true
+        const retryText = '（模型返回空内容，正在重试…）'
+        messageRepo.updateContent(assistantMsg.id, retryText, 'done')
+        ctx.pendingAssistantMsgId = '' // 占位已写终态
+        messages.push({ role: 'assistant', content: retryText })
+        messages.push({
+          role: 'user',
+          content: '[系统提示] 你的上一条回复为空。请直接回答用户的问题，或调用合适的工具获取信息。'
+        })
+        emit(IPC.AGENT_STEP_EVENT, {
+          requestId: ctx.requestId,
+          conversationId,
+          stepIndex,
+          type: 'thought',
+          text: retryText,
+          messageId: assistantMsg.id
+        })
+        agentTraceRepo.insert({
+          requestId: ctx.requestId,
+          conversationId,
+          stepIndex,
+          stepType: 'llm',
+          durationMs: Date.now() - stepStart,
+          tokenUsage,
+          status: 'error',
+          error: 'empty_response'
+        })
+        return 'llm'
+      }
+      stepText = '（模型未返回内容，请重试或更换模型）'
+    }
+
     messageRepo.updateContent(assistantMsg.id, stepText, 'done', !toolCalls || toolCalls.length === 0 ? sources : undefined)
+    ctx.pendingAssistantMsgId = '' // 占位已写终态
 
     if (toolCalls && toolCalls.length > 0) {
       messageRepo.updateToolCalls(assistantMsg.id, JSON.stringify(toolCalls))
@@ -1102,6 +1183,30 @@ class AgentEngine {
   }
 
   /**
+   * 重规划节点（同步，无 LLM 调用）：首次超步数时注入重规划提示到内存上下文、
+   * 追加步数预算、emit replan 事件（渲染端显示提示条）、记 trace。
+   */
+  private runReplanStep(ctx: AgentRunContext): void {
+    ctx.maxSteps += REPLAN_EXTRA_STEPS
+    ctx.messages.push({ role: 'user', content: buildReplanPrompt(ctx.stepCount, REPLAN_EXTRA_STEPS) })
+    ctx.emit(IPC.AGENT_STEP_EVENT, {
+      requestId: ctx.requestId,
+      conversationId: ctx.conversationId,
+      stepIndex: ctx.stepCount,
+      type: 'replan',
+      text: `已达步数上限，正在评估进度并重新规划（追加 ${REPLAN_EXTRA_STEPS} 步预算）…`
+    })
+    agentTraceRepo.insert({
+      requestId: ctx.requestId,
+      conversationId: ctx.conversationId,
+      stepIndex: ctx.stepCount,
+      stepType: 'replan',
+      durationMs: 0,
+      status: 'success'
+    })
+  }
+
+  /**
    * 降级节点：超步数时再调一次 LLM（不带 tools）强制生成最终回答。
    * 成功返回 true；失败时内部已 trace + emit 错误事件 + 更新会话状态，返回 false，
    * 由调用方直接结束（不再发 DONE 事件）。
@@ -1131,7 +1236,7 @@ class AgentEngine {
 
       messages.push({
         role: 'user',
-        content: `已达到最大推理步数（${MAX_STEPS} 步）。请基于上面已有的工具调用结果和对话信息，直接给出最终回答，不要再调用任何工具。`
+        content: `已达到最大推理步数（${ctx.maxSteps} 步）。请基于上面已有的工具调用结果和对话信息，直接给出最终回答，不要再调用任何工具。`
       })
 
       const degradeAdapter = providerManager.getAdapter(target.providerId)

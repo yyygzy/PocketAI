@@ -67,6 +67,15 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
         }
         return [...prev, { id, role: 'assistant', text: '', todos: e.todos, stepIndex: e.stepIndex }]
       }
+      if (e.type === 'replan') {
+        // 重规划提示：纯文本提示条（无 DB 消息），渲染端按普通 assistant 文本显示
+        return [...prev, {
+          id: `replan-${e.requestId}-${e.stepIndex}`,
+          role: 'assistant',
+          text: `💡 ${e.text ?? ''}`,
+          stepIndex: e.stepIndex
+        }]
+      }
       // error
       return [...prev, {
         id: `step-${e.stepIndex}-err`,
