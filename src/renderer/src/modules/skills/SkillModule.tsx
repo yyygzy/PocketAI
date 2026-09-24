@@ -252,9 +252,9 @@ const SkillForm: React.FC<{
   const [showTemplates, setShowTemplates] = useState(false)
   const [templates, setTemplates] = useState<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>>([])
 
-  // 加载模板列表
+  // 加载模板列表（后台刷新，失败仅记诊断日志，保持空列表不影响 UI）
   useEffect(() => {
-    window.pocketai.getSkillTemplates().then(setTemplates).catch(() => {})
+    window.pocketai.getSkillTemplates().then(setTemplates).catch(reportIpcError('skills.getTemplates'))
   }, [])
 
   // 实时校验（防抖 500ms）
@@ -265,7 +265,8 @@ const SkillForm: React.FC<{
     }
     const text = JSON.stringify({ name, description, icon, content })
     const timer = setTimeout(() => {
-      window.pocketai.validateSkill(text).then((r) => setValidation({ ok: r.ok, warnings: r.warnings })).catch(() => {})
+      // 实时校验为后台辅助，失败仅记诊断日志，保持原校验状态不打断输入
+      window.pocketai.validateSkill(text).then((r) => setValidation({ ok: r.ok, warnings: r.warnings })).catch(reportIpcError('skills.validate'))
     }, 500)
     return () => clearTimeout(timer)
   }, [name, description, icon, content])

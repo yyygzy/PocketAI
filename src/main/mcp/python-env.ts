@@ -235,6 +235,7 @@ function runProcess(cmd: string, args: string[], opts: RunOptions = {}): Promise
             detached: true,
             stdio: 'ignore'
           })
+          killer.on('error', () => { /* taskkill 失败退回单进程杀 */ })
           killer.unref()
           return
         } catch {

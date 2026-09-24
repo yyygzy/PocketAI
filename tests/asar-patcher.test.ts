@@ -34,7 +34,7 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('node:child_process', () => ({
-  spawn: vi.fn(() => ({ unref: vi.fn() }))
+  spawn: vi.fn(() => ({ unref: vi.fn(), on: vi.fn() }))
 }))
 
 // 测试密钥对：私钥通过 mock 模块的隐藏导出带回（真实 public-key.ts 无此导出）

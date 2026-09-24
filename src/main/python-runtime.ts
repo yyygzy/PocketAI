@@ -212,7 +212,18 @@ function resolveUnder(base: string, name: string): string {
  */
 async function extractTarGz(tarPath: string, destDir: string): Promise<void> {
   const gunzip = zlib.createGunzip()
-  const input = fs.createReadStream(tarPath).pipe(gunzip)
+  const readStream = fs.createReadStream(tarPath)
+  const onStreamError = (err: Error) => {
+    streamError = err
+    ended = true
+    if (pending) {
+      const fn = pending
+      pending = null
+      fn()
+    }
+  }
+  readStream.on('error', onStreamError)
+  const input = readStream.pipe(gunzip)
 
   let buffer = Buffer.alloc(0)
   let pending: (() => void) | null = null
@@ -238,15 +249,7 @@ async function extractTarGz(tarPath: string, destDir: string): Promise<void> {
       fn()
     }
   })
-  input.on('error', (err) => {
-    streamError = err
-    ended = true
-    if (pending) {
-      const fn = pending
-      pending = null
-      fn()
-    }
-  })
+  input.on('error', onStreamError)
 
   const readAsync = (size: number): Promise<Buffer> =>
     new Promise((resolve, reject) => {
@@ -321,7 +324,10 @@ async function extractTarGz(tarPath: string, destDir: string): Promise<void> {
         fileStream.write(data)
         remaining -= data.length
       }
-      await new Promise<void>((res, rej) => fileStream.end((err?: NodeJS.ErrnoException) => (err ? rej(err) : res())))
+      await new Promise<void>((res, rej) => {
+        fileStream.on('error', rej)
+        fileStream.end((err?: NodeJS.ErrnoException) => (err ? rej(err) : res()))
+      })
       // 跳过填充字节使总长度对齐到 512
       const pad = (512 - (size % 512)) % 512
       if (pad) await readAsync(pad)
@@ -378,7 +384,7 @@ export async function downloadPortablePython(
       lastErr = null
       break
     } catch (e) {
-      lastErr = e as Error
+      lastErr = e instanceof Error ? e : new Error(String(e))
       if (fs.existsSync(tmpGz)) fs.unlinkSync(tmpGz)
       await new Promise((r) => setTimeout(r, 1000 * attempt))
     }

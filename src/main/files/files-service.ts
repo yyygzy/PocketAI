@@ -28,7 +28,7 @@ const MIME_MAP: Record<string, string> = {
 }
 
 /** 规范化 relPath（'/' 或 '\' 分隔、去首尾），拒绝穿越，返回绝对路径 */
-function toAbs(relPath: string): string {
+export function toAbs(relPath: string): string {
   const norm = path.posix.normalize((relPath ?? '').replace(/\\/g, '/')).replace(/^\/+|\/+$/g, '')
   if (norm === '..' || norm.startsWith('../') || norm.includes('\0')) {
     throw new Error('非法路径')
@@ -41,7 +41,7 @@ function toAbs(relPath: string): string {
 }
 
 /** 清洗文件/文件夹名：禁路径分隔符与特殊字符 */
-function sanitizeName(name: string): string {
+export function sanitizeName(name: string): string {
   const cleaned = (name ?? '').trim()
   if (!cleaned || cleaned === '.' || cleaned === '..' || /[\\/:*?"<>|\0]/.test(cleaned)) {
     throw new Error('非法文件名')

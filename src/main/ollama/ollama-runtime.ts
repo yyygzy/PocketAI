@@ -141,6 +141,7 @@ function killTree(proc: ChildProcess): void {
     if (process.platform === 'win32') {
       // ollama.exe 会衍生 runner 子进程，必须 /T 整树终止
       spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true })
+        .on('error', () => { /* taskkill 失败不阻塞退出流程 */ })
     } else {
       // spawn 时 detached:true → 负 pid 杀整个进程组
       try {
@@ -185,6 +186,10 @@ async function startServe(): Promise<{ started: boolean; reused: boolean }> {
   serveProc.stderr?.on('data', (d) => {
     const msg = String(d).trim()
     if (msg) log.debug(msg)
+  })
+  serveProc.on('error', (e) => {
+    log.warn(`ollama serve 启动失败：${e.message}`)
+    serveProc = null
   })
   serveProc.on('exit', (code) => {
     if (code !== 0 && code !== null) log.warn(`serve 退出，code=${code}`)
@@ -243,6 +248,7 @@ async function extractZip(archive: string, dest: string): Promise<void> {
   }
   await new Promise<void>((resolve, reject) => {
     fs.createReadStream(archive)
+      .on('error', reject)
       .pipe(unzipper.Extract({ path: dest }))
       .on('close', resolve)
       .on('error', reject)
@@ -318,7 +324,7 @@ async function install(onEvent?: (e: OllamaInstallEvent) => void): Promise<Ollam
       lastErr = null
       break
     } catch (e) {
-      lastErr = e as Error
+      lastErr = e instanceof Error ? e : new Error(String(e))
       if (fs.existsSync(tmpArchive)) fs.rmSync(tmpArchive, { force: true })
       await new Promise((r) => setTimeout(r, 1500 * attempt))
     }

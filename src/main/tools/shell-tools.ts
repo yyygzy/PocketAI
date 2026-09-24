@@ -231,6 +231,7 @@ function killProcessTree(pid: number): void {
         detached: true,
         stdio: 'ignore'
       })
+      killer.on('error', () => { /* taskkill 失败退回单进程杀 */ })
       killer.unref()
     } catch {
       // taskkill 不可用时退回单进程杀

@@ -194,9 +194,11 @@ export function restartToApplyPatch(): void {
       windowsHide: true,
       cwd: workDir
     })
+    child.on('error', () => { /* 更新脚本启动失败由用户手动处理 */ })
     child.unref()
   } else {
     const child = spawn('sh', [script], { detached: true, stdio: 'ignore', cwd: workDir })
+    child.on('error', () => { /* 更新脚本启动失败由用户手动处理 */ })
     child.unref()
   }
   app.quit()

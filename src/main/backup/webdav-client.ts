@@ -72,27 +72,27 @@ function timeoutSignal(ms: number): AbortSignal {
 }
 
 /** 上传前体积预检（避免把超大缓冲推到一半才失败） */
-function assertUploadSize(data: Buffer): void {
+export function assertUploadSize(data: Buffer): void {
   if (data.length > MAX_TRANSFER_BYTES) {
     throw new Error(`备份体积 ${(data.length / 1024 / 1024).toFixed(0)}MB 超过 ${MAX_TRANSFER_BYTES / 1024 / 1024}MB 上限`)
   }
 }
 
 /** 下载后体积校验（注：此时响应已缓冲，本检查防的是后续处理被错误巨文件拖垮） */
-function assertDownloadSize(buf: Buffer): Buffer {
+export function assertDownloadSize(buf: Buffer): Buffer {
   if (buf.length > MAX_TRANSFER_BYTES) {
     throw new Error(`远端文件体积 ${(buf.length / 1024 / 1024).toFixed(0)}MB 超过 ${MAX_TRANSFER_BYTES / 1024 / 1024}MB 上限，已中止`)
   }
   return buf
 }
 
-function remotePath(dir: string | undefined, filename: string): string {
+export function remotePath(dir: string | undefined, filename: string): string {
   const prefix = dir ? dir.replace(/\/+$/, '') : ''
   return prefix ? `${prefix}/${filename}` : filename
 }
 
 /** 远端完整相对路径（directory 前缀 + 相对名，相对名可含子目录） */
-function fullRemotePath(creds: WebDAVCredentials, relName: string): string {
+export function fullRemotePath(creds: WebDAVCredentials, relName: string): string {
   return remotePath(creds.directory, relName.replace(/^\/+/, ''))
 }
 
