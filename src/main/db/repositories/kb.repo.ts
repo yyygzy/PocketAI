@@ -1,6 +1,7 @@
 // 知识库数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import type { KnowledgeBase } from '../../../shared/types'
 
 interface KbRow {
@@ -109,7 +110,7 @@ export const kbRepo = {
         now
       )
     }
-    return this.get(id)!
+    return mustGet(() => this.get(id), '知识库')
   },
 
   /** 首次入库确定向量维度后写回 */

@@ -1,6 +1,7 @@
 // MCP Server 数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import type { McpServerRecord, McpTransport, McpRuntime } from '../../../shared/types'
 
 interface McpServerRow {
@@ -133,7 +134,7 @@ export const mcpServerRepo = {
         JSON.stringify(pythonPackages)
       )
     }
-    return this.get(id)!
+    return mustGet(() => this.get(id), 'MCP Server')
   },
 
   delete(id: string): void {

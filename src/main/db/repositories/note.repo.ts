@@ -6,6 +6,7 @@
 // 标签以逗号分隔字符串存储（轻量，不建关联表）。
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import type { Note } from '../../../shared/types'
 
 interface NoteRow {
@@ -70,7 +71,7 @@ export const noteRepo = {
         now,
         now
       )
-    return this.get(id)!
+    return mustGet(() => this.get(id), '笔记')
   },
 
   /** 从消息另存为笔记：标题取内容前 30 字 */

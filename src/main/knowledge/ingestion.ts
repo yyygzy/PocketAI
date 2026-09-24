@@ -8,6 +8,7 @@ import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
 import type { KbDocument, KnowledgeBase } from '../../shared/types'
 import { errMsg } from '../error'
+import { mustGet } from '../db/must-get'
 import { z } from 'zod'
 
 export class IngestionService {
@@ -41,7 +42,7 @@ export class IngestionService {
       kbDocRepo.setStatus(docId, 'error', errMsg(err))
     }
 
-    return kbDocRepo.get(docId)!
+    return mustGet(() => kbDocRepo.get(docId), '知识库文档')
   }
 
   /** 直接注入纯文本（手工录入），跳过文件解析 */
@@ -61,7 +62,7 @@ export class IngestionService {
     } catch (err) {
       kbDocRepo.setStatus(docId, 'error', errMsg(err))
     }
-    return kbDocRepo.get(docId)!
+    return mustGet(() => kbDocRepo.get(docId), '知识库文档')
   }
 
   /** 分块 → 向量化 → 存储（解析后共用） */

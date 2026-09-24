@@ -7,6 +7,7 @@
 // 安全依赖工作目录锚定 + 命令分类 + 用户审批。
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import type { ShellConfig, ShellPolicy } from '../../shared/types'
+import { shellConfigSchema } from '../../shared/schemas/agent'
 
 const KEY_ENABLED = 'agent.shell_enabled'
 const KEY_POLICY = 'agent.shell_policy'
@@ -21,11 +22,12 @@ export function getShellConfig(): ShellConfig {
 
 /** 保存终端策略（字段白名单 + 值域校验） */
 export function setShellConfig(input: Partial<ShellConfig>): ShellConfig {
-  if (typeof input.enabled === 'boolean') {
-    appConfigRepo.set(KEY_ENABLED, input.enabled ? '1' : '0')
+  const patch = shellConfigSchema.parse(input)
+  if (typeof patch.enabled === 'boolean') {
+    appConfigRepo.set(KEY_ENABLED, patch.enabled ? '1' : '0')
   }
-  if (input.policy === 'confirm' || input.policy === 'auto-safe') {
-    appConfigRepo.set(KEY_POLICY, input.policy)
+  if (patch.policy === 'confirm' || patch.policy === 'auto-safe') {
+    appConfigRepo.set(KEY_POLICY, patch.policy)
   }
   return getShellConfig()
 }

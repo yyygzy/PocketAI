@@ -1,6 +1,7 @@
 // Conversation 数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import type { ConversationRecord } from '../../../shared/types'
 
 interface ConversationRow {
@@ -68,7 +69,7 @@ export const conversationRepo = {
          VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?)`
       )
       .run(id, input.assistantId ?? null, input.title ?? '新对话', input.modelLabel ?? null, now, now)
-    return this.get(id)!
+    return mustGet(() => this.get(id), '会话')
   },
 
   rename(id: string, title: string): void {
@@ -176,7 +177,7 @@ export const conversationRepo = {
           m.batch_id ?? null
         )
       }
-      return this.get(newConvId)!
+      return mustGet(() => this.get(newConvId), '会话副本')
     })
     return tx()
   }

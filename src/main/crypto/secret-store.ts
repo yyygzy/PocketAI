@@ -12,6 +12,7 @@ import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { encryptSecret, decryptSecret, isCipherText } from './field-encrypt'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
+import { z } from 'zod'
 
 const log = createLogger('crypto')
 
@@ -26,14 +27,21 @@ export const SECRET_KV_KEYS = {
   WEBSEARCH_API_KEY: 'agent.websearch_api_key'
 } as const
 
+/** key 必须是已注册的受管密钥，防止任意 key 污染 app_config */
+const secretKeySchema = z.enum(Object.values(SECRET_KV_KEYS) as [string, ...string[]])
+/** 单值密钥长度上限（token/API key 通常远小于此；兜底防巨串写入） */
+const secretValueSchema = z.string().max(1024)
+
 /** 加密写入；空串/纯空白 = 删除凭据 */
 export function setSecret(key: string, value: string): void {
-  const v = typeof value === 'string' ? value.trim() : ''
+  const k = secretKeySchema.parse(key)
+  const raw = secretValueSchema.parse(value)
+  const v = raw.trim()
   if (!v) {
-    appConfigRepo.delete(key)
+    appConfigRepo.delete(k)
     return
   }
-  appConfigRepo.set(key, encryptSecret(v))
+  appConfigRepo.set(k, encryptSecret(v))
 }
 
 /** 解密读取（不存在/解密失败 → 空串）；历史明文透明兼容 */
@@ -78,7 +86,9 @@ export function exportSecrets(
 
 /** 密钥轮换后：用「新字段密钥」重新加密落盘；空快照对应键保持删除态 */
 export function restoreSecrets(snapshot: Record<string, string>): void {
-  for (const [key, value] of Object.entries(snapshot)) {
+  // 仅恢复已注册的受管密钥，丢弃未知 key，防止轮换过程注入脏数据
+  const parsed = z.record(secretKeySchema, secretValueSchema).parse(snapshot)
+  for (const [key, value] of Object.entries(parsed)) {
     try {
       setSecret(key, value)
     } catch (e) {

@@ -1,6 +1,7 @@
 // 知识库文档数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import type { KbDocument, KbDocStatus, KbSourceType } from '../../../shared/types'
 
 interface KbDocRow {
@@ -69,7 +70,7 @@ export const kbDocRepo = {
          VALUES (?, ?, ?, ?, ?, 0, 'pending', NULL, ?)`
       )
       .run(id, input.kbId, input.source, input.sourceType, input.title ?? input.source, Date.now())
-    return this.get(id)!
+    return mustGet(() => this.get(id), '知识库文档')
   },
 
   setStatus(id: string, status: KbDocStatus, error?: string | null): void {

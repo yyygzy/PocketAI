@@ -9,6 +9,7 @@
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { getSecret, setSecret, hasSecret, SECRET_KV_KEYS } from '../crypto/secret-store'
 import type { WebSearchConfig, WebSearchProvider } from '../../shared/types'
+import { websearchConfigSchema } from '../../shared/schemas/agent'
 
 const KEY_ENABLED = 'agent.websearch_enabled'
 const KEY_PROVIDER = 'agent.websearch_provider'
@@ -26,14 +27,15 @@ export function getWebSearchConfig(): WebSearchConfig {
 export function setWebSearchConfig(
   input: Partial<{ enabled: boolean; provider: WebSearchProvider; apiKey: string }>
 ): WebSearchConfig {
-  if (typeof input.enabled === 'boolean') {
-    appConfigRepo.set(KEY_ENABLED, input.enabled ? '1' : '0')
+  const patch = websearchConfigSchema.parse(input)
+  if (typeof patch.enabled === 'boolean') {
+    appConfigRepo.set(KEY_ENABLED, patch.enabled ? '1' : '0')
   }
-  if (input.provider === 'tavily' || input.provider === 'bocha') {
-    appConfigRepo.set(KEY_PROVIDER, input.provider)
+  if (patch.provider === 'tavily' || patch.provider === 'bocha') {
+    appConfigRepo.set(KEY_PROVIDER, patch.provider)
   }
-  if (typeof input.apiKey === 'string') {
-    const trimmed = input.apiKey.trim()
+  if (typeof patch.apiKey === 'string') {
+    const trimmed = patch.apiKey.trim()
     if (trimmed.length === 0) {
       setSecret(KEY_API_KEY, '')
     } else if (trimmed.length > 256) {

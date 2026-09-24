@@ -25,11 +25,11 @@ const RAW_LEN = 20 // 恢复码随机字节数（160bit）
 // Crockford Base32 字母表（排除易混字符 I/L/O/U；解码时做容错映射）
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const DECODE_MAP: Record<string, number> = {}
-for (let i = 0; i < ALPHABET.length; i++) DECODE_MAP[ALPHABET[i]!] = i
+for (let i = 0; i < ALPHABET.length; i++) DECODE_MAP[ALPHABET[i] ?? ''] = i
 // 常见看错/打错容错：I/L → 1，O → 0
-DECODE_MAP['I'] = DECODE_MAP['1']!
-DECODE_MAP['L'] = DECODE_MAP['1']!
-DECODE_MAP['O'] = DECODE_MAP['0']!
+DECODE_MAP['I'] = DECODE_MAP['1'] ?? 0
+DECODE_MAP['L'] = DECODE_MAP['1'] ?? 0
+DECODE_MAP['O'] = DECODE_MAP['0'] ?? 0
 
 /** 字节 → Crockford Base32 字符串 */
 function base32Encode(buf: Buffer): string {
@@ -59,7 +59,8 @@ export function normalizeRecoveryCode(input: string): string {
 export function generateRecoveryCode(): string {
   const raw = randomBytes(RAW_LEN)
   const encoded = base32Encode(raw) // 32 字符
-  return encoded.match(/.{4}/g)!.join('-')
+  const groups = encoded.match(/.{4}/g)
+  return groups ? groups.join('-') : encoded
 }
 
 /** 用恢复码派生密钥并加密 masterKey，落盘恢复包 */

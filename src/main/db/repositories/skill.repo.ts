@@ -1,6 +1,7 @@
 // Skill 数据访问（技能 = 可复用提示词片段）
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import type { SkillRecord } from '../../../shared/types'
 
 interface SkillRow {
@@ -84,7 +85,7 @@ export const skillRepo = {
       if (input.enabled !== undefined && input.enabled !== existing.enabled) {
         this.setEnabled(id, input.enabled)
       }
-      return this.get(id)!
+      return mustGet(() => this.get(id), '技能')
     }
 
     const record: SkillRecord = {
@@ -111,7 +112,7 @@ export const skillRepo = {
         record.enabled ? 1 : 0, record.createdAt
       )
     }
-    return this.get(id)!
+    return mustGet(() => this.get(id), '技能')
   },
 
   setEnabled(id: string, enabled: boolean): void {

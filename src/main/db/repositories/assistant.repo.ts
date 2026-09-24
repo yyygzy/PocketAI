@@ -1,6 +1,7 @@
 // Assistant 数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import type { AssistantRecord } from '../../../shared/types'
 
 interface AssistantRow {
@@ -169,7 +170,7 @@ export const assistantRepo = {
         record.isPinned ? 1 : 0, record.createdAt
       )
     }
-    return this.get(id)!
+    return mustGet(() => this.get(id), '助手')
   },
 
   /** 复制任意助手为「我的助手」 */

@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { z } from 'zod'
 import { MCP_EXTENSIONS_DIR } from '../portable'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { errMsg } from '../error'
@@ -66,6 +67,28 @@ const INDEX_URLS: Record<'official' | 'tuna', string> = {
   official: 'https://pypi.org/simple',
   tuna: 'https://pypi.tuna.tsinghua.edu.cn/simple'
 }
+
+/** pip 源：official / tuna 或 http(s) 自定义镜像 URL */
+const pipSourceSchema = z.union([
+  z.enum(['official', 'tuna']),
+  z.string().url().refine((v) => {
+    try {
+      const u = new URL(v)
+      return u.protocol === 'http:' || u.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }, '自定义 pip 源仅支持 http(s) 协议')
+])
+
+/** installForServer 入参校验：仅 Python stdio 类型可安装依赖 */
+const installRecordSchema = z.object({
+  id: z.string().min(1),
+  transport: z.literal('stdio'),
+  runtime: z.literal('python'),
+  command: z.string().min(1),
+  pythonPackages: z.array(z.string()).default([])
+}).passthrough()
 
 interface EnvMarker {
   /** 规范化依赖列表的 sha256，用于包列表变更检测 */
@@ -302,20 +325,12 @@ export function getPipSource(): PythonPipSource {
 
 /** 持久化 pip 源；自定义值必须是非空 http(s) URL */
 export function setPipSource(source: PythonPipSource): void {
-  if (source === 'official' || source === 'tuna') {
-    appConfigRepo.set(PIP_SOURCE_CONFIG_KEY, source)
+  const s = pipSourceSchema.parse(source)
+  if (s === 'official' || s === 'tuna') {
+    appConfigRepo.set(PIP_SOURCE_CONFIG_KEY, s)
     return
   }
-  let url: URL
-  try {
-    url = new URL(source)
-  } catch {
-    throw new Error('自定义 pip 源不是合法 URL')
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('自定义 pip 源仅支持 http(s) 协议')
-  }
-  appConfigRepo.set(PIP_SOURCE_CONFIG_KEY, source.trim())
+  appConfigRepo.set(PIP_SOURCE_CONFIG_KEY, s.trim())
 }
 
 function resolveIndexUrl(source: PythonPipSource): string {
@@ -470,19 +485,20 @@ class PythonEnvService extends EventEmitter {
    * （覆盖「上次 pip 失败后重试」场景）。成功写标记并返回最新状态；失败发 error 事件且不写标记。
    */
   async installForServer(record: McpServerRecord): Promise<PythonEnvState> {
-    const id = record.id
+    const r = installRecordSchema.parse(record)
+    const id = r.id
     serverDir(id) // 路径校验
-    if (record.transport !== 'stdio' || record.runtime !== 'python') {
+    if (r.transport !== 'stdio' || r.runtime !== 'python') {
       throw new Error('仅 Python 运行时的 MCP Server 支持安装依赖')
     }
-    if (!record.command) {
+    if (!r.command) {
       throw new Error('请先选择 Python 解释器，再安装依赖')
     }
-    const basePython = path.resolve(record.command)
+    const basePython = path.resolve(r.command)
     if (!fs.existsSync(basePython)) {
       throw new Error(`选择的 Python 解释器不存在：${basePython}`)
     }
-    const requirements = sanitizeRequirements(record.pythonPackages ?? [])
+    const requirements = sanitizeRequirements(r.pythonPackages ?? [])
     if (requirements.length === 0) {
       throw new Error('依赖列表为空，请至少填写一个 pip 包名')
     }

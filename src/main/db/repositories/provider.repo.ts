@@ -1,6 +1,7 @@
 // Provider 数据访问 — 透明字段加密
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { mustGet } from '../must-get'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../../crypto/field-encrypt'
 import type { ProviderRecord, ProviderType } from '../../../shared/types'
 import { createLogger } from '../../logger'
@@ -88,7 +89,7 @@ export const providerRepo = {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(id, input.type, input.name, input.baseUrl, apiKeysCipher, models, enabled, createdAt)
     }
-    return this.get(id)!
+    return mustGet(() => this.get(id), 'Provider')
   },
 
   delete(id: string): void {
@@ -106,6 +107,7 @@ export const providerRepo = {
       .prepare('SELECT id, type, base_url, models, api_key_encrypted FROM providers ORDER BY created_at ASC')
       .all() as { id: string; type: string; base_url: string | null; models: string | null; api_key_encrypted: string | null }[]
 
+    const rowById = new Map(rows.map((r) => [r.id, r]))
     const seen = new Map<string, string>() // key: `${type}|${baseUrl}` → survivor id
     const toDelete: string[] = []
 
@@ -116,8 +118,9 @@ export const providerRepo = {
         seen.set(key, row.id)
         continue
       }
-      // 合并 models 到 survivor
-      const survivorRow = rows.find((r) => r.id === survivorId)!
+      // 合并 models 到 survivor（survivorId 来自 seen，必然存在于 rowById）
+      const survivorRow = rowById.get(survivorId)
+      if (!survivorRow) continue
       const survivorModels = safeJsonArray(survivorRow.models)
       const dupModels = safeJsonArray(row.models)
       const merged = [...new Set([...survivorModels, ...dupModels])]
