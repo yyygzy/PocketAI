@@ -152,13 +152,14 @@ const ConvItem: React.FC<{
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (editing) {
-      setDraft(conv.title)
-      requestAnimationFrame(() => {
-        inputRef.current?.focus()
-        inputRef.current?.select()
-      })
-    }
+    if (!editing) return
+    setDraft(conv.title)
+    let rafId: number
+    rafId = requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+    return () => cancelAnimationFrame(rafId)
   }, [editing, conv.title])
 
   const commit = () => {
