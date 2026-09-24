@@ -1,6 +1,6 @@
 // 独立窗口（标签弹出）：与主窗口共用 index.html 入口，#/detached?module=xxx hash 分流
 // 放独立模块避免 index.ts ↔ ipc/index.ts 循环依赖
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, app } from 'electron'
 import path from 'node:path'
 import { lockService } from '../lock/lock'
 import { denyNewWindows } from '../net/external-links'
@@ -20,7 +20,9 @@ export function createDetachedWindow(moduleId: string): void {
     show: false,
     backgroundColor: '#1e1e2e',
     title: '墨匣 Moxia - PocketAI',
-    icon: path.join(__dirname, '../../../build/icon/icon-256.png'),
+    icon: process.platform === 'win32'
+      ? path.join(app.getAppPath(), 'build/icon/icon.ico')
+      : path.join(__dirname, '../../../build/icon/icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, '../../preload/index.js'),
       nodeIntegration: false,

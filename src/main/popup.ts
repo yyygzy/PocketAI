@@ -7,7 +7,7 @@
 // 3. 选区取词零原生依赖：Windows 用 PowerShell SendKeys 模拟 Ctrl+C，
 //    macOS 用 osascript 模拟 Cmd+C，前后做剪贴板备份/还原；Linux 暂不支持。
 // 4. 快捷键开关持久化在 app_config，设置页切换后立即重新注册。
-import { app, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, globalShortcut, screen } from 'electron'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { appConfigRepo } from './db/repositories/app-config.repo'
@@ -17,6 +17,7 @@ import { lockService } from './lock/lock'
 import { denyNewWindows } from './net/external-links'
 import { errMsg } from './error'
 import { createLogger } from './logger'
+import { safeHandle, argsSchema, z } from './ipc/safe-handle'
 
 const log = createLogger('popup')
 
@@ -221,9 +222,11 @@ function createPopupWindow(payload: PopupPayload): BrowserWindow {
     show: false,
     backgroundColor: '#00000000',
     title: '墨匣 Moxia - PocketAI',
-    icon: path.join(app.getAppPath(), 'build/icon/icon-256.png'),
+    icon: process.platform === 'win32'
+      ? path.join(app.getAppPath(), 'build/icon/icon.ico')
+      : path.join(app.getAppPath(), 'build/icon/icon-256.png'),
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../preload/popup.js'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true
@@ -290,13 +293,13 @@ export function initPopup(): void {
     if (evt.state === 'locked') hidePopup()
   })
 
-  ipcMain.handle(IPC.POPUP_HIDE, () => {
+  safeHandle(IPC.POPUP_HIDE, () => {
     hidePopup()
     return { ok: true }
   })
-  ipcMain.handle(IPC.POPUP_GET_PAYLOAD, () => lastPayload)
-  ipcMain.handle(IPC.POPUP_GET_CONFIG, () => getPopupConfig())
-  ipcMain.handle(
+  safeHandle(IPC.POPUP_GET_PAYLOAD, () => lastPayload)
+  safeHandle(IPC.POPUP_GET_CONFIG, () => getPopupConfig())
+  safeHandle(
     IPC.POPUP_SET_CONFIG,
     (_e, patch: Partial<PopupConfig>): PopupSetConfigResult => {
       const current = getPopupConfig()
@@ -342,7 +345,13 @@ export function initPopup(): void {
       appConfigRepo.set(CFG_QUICK_ACCEL, nextQuick)
       appConfigRepo.set(CFG_SELECT_ACCEL, nextSelect)
       return { ok: true, config: getPopupConfig() }
-    }
+    },
+    argsSchema(z.object({
+      quickEnabled: z.boolean().optional(),
+      selectionEnabled: z.boolean().optional(),
+      quickAccelerator: z.string().optional(),
+      selectionAccelerator: z.string().optional()
+    }))
   )
 
   // app ready 后才能注册全局快捷键

@@ -1,6 +1,5 @@
 // IM 渠道（Telegram/Discord/Slack/飞书/钉钉 Bot 网关）IPC
 // Token 明文不出主进程；运行时接线必须在 DB 打开后由 initChannelRuntime() 单独调用
-import { ipcMain } from 'electron'
 import { IPC } from '../../../shared/types'
 import type { ChannelType } from '../../../shared/types'
 import { CHANNEL_TYPES } from '../../../shared/types'
@@ -12,7 +11,8 @@ import { slackGateway } from '../../channels/slack-gateway'
 import { feishuGateway } from '../../channels/feishu-gateway'
 import { dingtalkGateway } from '../../channels/dingtalk-gateway'
 import { broadcast } from '../broadcast'
-import { safeHandle } from '../safe-handle'
+import { safeHandle, argsSchema } from '../safe-handle'
+import { channelSetConfigSchema, channelTypeArgSchema } from '../../../shared/schemas/channels'
 
 function toChannelType(type: unknown): ChannelType {
   const t = typeof type === 'string' ? type : ''
@@ -20,11 +20,12 @@ function toChannelType(type: unknown): ChannelType {
 }
 
 export function registerChannelHandlers(): void {
-  ipcMain.handle(
+  safeHandle(
     IPC.CHANNEL_GET_CONFIG,
-    (_e, type: unknown) => getChannelConfig(toChannelType(type))
+    (_e, type: unknown) => getChannelConfig(toChannelType(type)),
+    argsSchema(channelTypeArgSchema)
   )
-  ipcMain.handle(
+  safeHandle(
     IPC.CHANNEL_SET_CONFIG,
     (
       _e,
@@ -62,17 +63,18 @@ export function registerChannelHandlers(): void {
       if (typeof input?.model === 'string') patch.model = input.model
       if (typeof input?.agentMode === 'boolean') patch.agentMode = input.agentMode
       return setChannelConfig(toChannelType(type), patch)
-    }
+    },
+    argsSchema(channelTypeArgSchema, channelSetConfigSchema)
   )
   safeHandle(IPC.CHANNEL_START, async (_e, type: unknown) => {
     await channelService.start(toChannelType(type))
     return { ok: true }
-  })
-  ipcMain.handle(IPC.CHANNEL_STOP, (_e, type: unknown) => {
+  }, argsSchema(channelTypeArgSchema))
+  safeHandle(IPC.CHANNEL_STOP, (_e, type: unknown) => {
     channelService.stop(toChannelType(type))
     return { ok: true }
-  })
-  ipcMain.handle(IPC.CHANNEL_LIST_STATUS, () => {
+  }, argsSchema(channelTypeArgSchema))
+  safeHandle(IPC.CHANNEL_LIST_STATUS, () => {
     // 返回各网关当前状态（未启动则 stopped）
     const map: Record<string, { status: string; lastError: string | null }> = {}
     for (const [t, gw] of Object.entries({

@@ -38,7 +38,7 @@ vi.mock('../src/main/db/database', () => {
 
 import { classifyCommand } from '../src/main/tools/shell-tools'
 import { classifyMcpToolPermission } from '../src/main/mcp/manager'
-import { pickSafeParams } from '../src/main/agent/engine'
+import { pickSafeParams } from '../src/main/agent/safe-params'
 import { setWorkspaceDir, resolveWorkspacePath } from '../src/main/tools/fs-tools'
 import { safeMathEval } from '../src/main/tools/builtin'
 

@@ -1,9 +1,10 @@
 // 消息 IPC：列表 / 删除 / 全局搜索（FTS5 trigram + LIKE 兜底）
-import { ipcMain } from 'electron'
 import { IPC } from '../../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../shared/snippet'
 import { dbService } from '../../db/database'
 import { messageRepo } from '../../db/repositories/message.repo'
+import { safeHandle, argsSchema, z } from '../safe-handle'
+import { idSchema } from '../../../shared/schemas/providers'
 
 /** 全局搜索 SQL 行（FTS 与 LIKE 两查询同构，FTS 多一个 snippet 列） */
 interface MessageSearchRow {
@@ -17,14 +18,14 @@ interface MessageSearchRow {
 }
 
 export function registerMessageHandlers(): void {
-  ipcMain.handle(IPC.MESSAGE_LIST, (_e, conversationId: string) =>
-    messageRepo.listByConversation(conversationId)
-  )
-  ipcMain.handle(IPC.MESSAGE_DELETE, (_e, id: string) => {
+  safeHandle(IPC.MESSAGE_LIST, (_e, conversationId: string) =>
+    messageRepo.listByConversation(conversationId),
+  argsSchema(idSchema))
+  safeHandle(IPC.MESSAGE_DELETE, (_e, id: string) => {
     messageRepo.delete(id)
     return { ok: true }
-  })
-  ipcMain.handle(IPC.MESSAGE_SEARCH, (_e, query: string) => {
+  }, argsSchema(idSchema))
+  safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()
     const handle = dbService.getHandle()
@@ -99,5 +100,5 @@ export function registerMessageHandlers(): void {
         createdAt: r.created_at
       }
     })
-  })
+  }, argsSchema(z.string()))
 }

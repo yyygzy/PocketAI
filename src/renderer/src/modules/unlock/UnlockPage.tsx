@@ -3,8 +3,10 @@
 // - unlock：DB 已加密，输入密码解锁
 // - setPassword：首次加密明文 DB，设置新密码
 // - recovery：忘记密码，用恢复码 + 新密码重置
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
+import { useCopyFeedback } from '../../hooks/useCopyFeedback'
+import { errText } from '../../utils/error'
 
 type UnlockMode = 'unlock' | 'setPassword' | 'recovery'
 
@@ -15,9 +17,15 @@ export function UnlockPage() {
   const [confirm, setConfirm] = useState('')
   const [recoveryCode, setRecoveryCode] = useState('')
   const [newCode, setNewCode] = useState('') // 恢复成功后服务端签发的新恢复码
-  const [copied, setCopied] = useState(false) // 恢复码已复制到剪贴板（将自动清除）
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // 恢复码走主进程敏感剪贴板（30s 自动过期），反馈态 2s 后自动复位
+  const sensitiveWriter = useCallback(async (text: string) => {
+    const r = await window.pocketai.copySensitiveToClipboard(text)
+    return r.ok
+  }, [])
+  const { copied, copy } = useCopyFeedback(2000, sensitiveWriter)
 
   useEffect(() => {
     // 从 URL 参数读取模式：unlock.html?mode=setPassword
@@ -120,7 +128,7 @@ export function UnlockPage() {
         resetFail()
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('unlock.submitFailed'))
+      setError(errText(e, t('unlock.submitFailed')))
       noteAuthFailure()
     } finally {
       setBusy(false)
@@ -160,7 +168,7 @@ export function UnlockPage() {
         // 停在成功页展示新恢复码，用户确认保存后再进入应用
         setNewCode(r.recoveryCode)
       } catch (e) {
-        setError(e instanceof Error ? e.message : t('unlock.recoverFailed'))
+        setError(errText(e, t('unlock.recoverFailed')))
         noteAuthFailure()
       } finally {
         setBusy(false)
@@ -201,7 +209,7 @@ export function UnlockPage() {
       resetFail()
       // 提交后窗口会被主进程关闭
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('unlock.submitFailed'))
+      setError(errText(e, t('unlock.submitFailed')))
       noteAuthFailure()
     } finally {
       setBusy(false)
@@ -230,8 +238,7 @@ export function UnlockPage() {
               className="unlock-btn-secondary"
               onClick={async () => {
                 try {
-                  await window.pocketai.copySensitiveToClipboard(newCode)
-                  setCopied(true)
+                  if (!(await copy(newCode))) setError(t('common.copyFailed'))
                 } catch {
                   // 恢复码复制失败必须提示：用户误以为已复制会导致无法找回数据
                   setError(t('common.copyFailed'))

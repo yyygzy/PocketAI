@@ -32,27 +32,7 @@ import { toolRegistry } from '../tools/registry'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
 import { errMsg, isAbortError } from '../error'
 import { createApproval } from './tool-approval'
-
-// Agent 允许助手 defaultParams 透传的生成参数白名单。
-// 禁止透传 tools / toolChoice / stream / messages / model / signal 等控制面字段，
-// 防止第三方扩展助手的 defaultParams 注入破坏 Agent 工具调用或请求结构。
-const SAFE_DEFAULT_PARAM_KEYS = new Set([
-  'temperature',
-  'maxTokens',
-  'topP',
-  'frequencyPenalty',
-  'presencePenalty'
-])
-
-/** 从助手 defaultParams 中仅挑出白名单内的生成参数（导出供测试） */
-export function pickSafeParams(params: Record<string, unknown> | null): Record<string, unknown> {
-  if (!params) return {}
-  const out: Record<string, unknown> = {}
-  for (const k of SAFE_DEFAULT_PARAM_KEYS) {
-    if (k in params) out[k] = params[k]
-  }
-  return out
-}
+import { pickSafeParams } from './safe-params'
 
 const MAX_STEPS = 10
 const LOOP_TIMEOUT_MS = 5 * 60 * 1000 // 5 分钟整体超时

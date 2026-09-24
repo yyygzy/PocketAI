@@ -9,7 +9,7 @@ interface Props {
   content: string
   streaming?: boolean
   model?: string | null
-  messageId?: string
+  messageId: string
   attachments?: ChatAttachment[]
   sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
   selected?: boolean
@@ -64,7 +64,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
           <input
             type="checkbox"
             checked={!!selected}
-            onChange={() => onToggleSelect?.(messageId!)}
+            onChange={() => onToggleSelect?.(messageId)}
             className={`w-4 h-4 rounded cursor-pointer accent-[var(--color-accent)] ${hovered || selected ? 'opacity-100' : 'opacity-0'} transition-opacity`}
           />
         </div>
@@ -96,7 +96,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
                     e.preventDefault()
                     if (editText.trim() && editText.trim() !== content) {
                       setEditing(false)
-                      onResend?.(messageId!, editText.trim())
+                      onResend?.(messageId, editText.trim())
                     }
                   }
                   if (e.key === 'Escape') {
@@ -115,7 +115,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
                   onClick={() => {
                     if (editText.trim() && editText.trim() !== content) {
                       setEditing(false)
-                      onResend?.(messageId!, editText.trim())
+                      onResend?.(messageId, editText.trim())
                     } else {
                       setEditing(false)
                     }
@@ -210,7 +210,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
                   {t('chatview.editResend')}
                 </button>
                 <button
-                  onClick={() => onResend(messageId!)}
+                  onClick={() => onResend(messageId)}
                   title={t('chatview.resendModelTitle')}
                   className="chip chip-accent"
                 >
@@ -220,7 +220,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
             )}
             {!isUser && onRegenerate && (
               <button
-                onClick={() => onRegenerate(messageId!)}
+                onClick={() => onRegenerate(messageId)}
                 title={t('chatview.regenerate')}
                 className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
               >
@@ -229,7 +229,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
             )}
             {onFork && (
               <button
-                onClick={() => onFork(messageId!)}
+                onClick={() => onFork(messageId)}
                 title={t('chatview.forkTitle')}
                 className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
               >
@@ -238,7 +238,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
             )}
             {onSaveAsNote && (
               <button
-                onClick={() => onSaveAsNote(messageId!)}
+                onClick={() => onSaveAsNote(messageId)}
                 title={t('chatview.saveNoteTitle')}
                 className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
               >

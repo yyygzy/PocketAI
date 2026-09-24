@@ -19,6 +19,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { MCP_EXTENSIONS_DIR } from '../portable'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
+import { errMsg } from '../error'
 import type {
   McpServerRecord,
   PythonEnvInstallEvent,
@@ -582,7 +583,7 @@ class PythonEnvService extends EventEmitter {
     } catch (e) {
       // pip 尾部输出可能回显含凭据的 index URL；事件流已在 emitEvent 脱敏，
       // 这里对经 IPC 错误通道（invoke → 表单错误条）抛出的 message 同样脱敏
-      const rawMsg = e instanceof Error ? e.message : String(e)
+      const rawMsg = errMsg(e)
       const msg = redactUrlCredentials(rawMsg)
       // 原始 pip 英文输出之后附一条可执行的中文下一步，降低小白排查成本
       emit('error', { message: `依赖安装失败：${msg}` })

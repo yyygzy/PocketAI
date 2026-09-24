@@ -13,6 +13,7 @@
 import Database from 'better-sqlite3-multiple-ciphers'
 import fs from 'node:fs'
 import { DB_PATH, DATA_DIR } from '../portable'
+import { errMsg } from '../error'
 
 export type Migration = {
   version: number
@@ -560,7 +561,7 @@ export class DatabaseService {
       const result = Array.isArray(row) ? row[0]?.integrity_check : row
       return { ok: result === 'ok', details: String(result) }
     } catch (e) {
-      return { ok: false, details: e instanceof Error ? e.message : String(e) }
+      return { ok: false, details: errMsg(e) }
     }
   }
 

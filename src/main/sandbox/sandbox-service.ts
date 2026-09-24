@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { DATA_DIR } from '../portable'
 import { sandboxRepo } from '../db/repositories/sandbox.repo'
 import type { SandboxFileMeta } from '../../shared/types'
+import { z } from 'zod'
 
 const SANDBOX_DIR_NAME = 'sandbox'
 export const MAX_HTML_BYTES = 256 * 1024
@@ -68,6 +69,8 @@ export function createSandboxFile(
   html: string,
   opts: CreateSandboxOptions = {}
 ): SandboxFileMeta {
+  z.string().min(1).parse(name)
+  z.string().parse(html)
   const content = String(html ?? '')
   if (!content.trim()) throw new Error('HTML 内容不能为空')
   const bytes = Buffer.byteLength(content, 'utf8')
@@ -92,6 +95,7 @@ export function createSandboxFile(
 }
 
 export function getSandboxFile(id: string): { meta: SandboxFileMeta; html: string } | null {
+  z.string().min(1).parse(id)
   const row = sandboxRepo.get(String(id ?? ''))
   if (!row) return null
   const abs = resolveDataPath(`${SANDBOX_DIR_NAME}/${row.fileName}`)
@@ -116,6 +120,7 @@ export function updateSandboxMeta(
   id: string,
   patch: { name?: string; icon?: string; description?: string; isApp?: boolean }
 ): SandboxFileMeta | null {
+  z.string().min(1).parse(id)
   const row = sandboxRepo.get(String(id ?? ''))
   if (!row) return null
   const cleanPatch: { name?: string; icon?: string; description?: string; isApp?: boolean } = {}
@@ -131,6 +136,7 @@ export function updateSandboxMeta(
 }
 
 export function deleteSandboxFile(id: string): void {
+  z.string().min(1).parse(id)
   const row = sandboxRepo.get(String(id ?? ''))
   if (!row) return
   sandboxRepo.delete(row.id)

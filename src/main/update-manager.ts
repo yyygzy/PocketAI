@@ -1,4 +1,4 @@
-import { app, ipcMain, webContents } from 'electron'
+import { app, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import EventEmitter from 'node:events'
 import { IPC, type UpdateStatus, type UpdateEvent } from '../shared/types'
@@ -7,12 +7,9 @@ import { appConfigRepo } from './db/repositories/app-config.repo'
 import { downloadAsarPatch, restartToApplyPatch, isPatchPending } from './update/asar-patcher'
 import { isPortableRuntime } from './portable'
 import { safeFetch } from './net/safe-fetch'
+import { safeHandle, argsSchema, z } from './ipc/safe-handle'
 import { createLogger } from './logger'
-
-/** 从 unknown 异常取可读文本 */
-function errText(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : String(e)
-}
+import { errMsg } from './error'
 
 /** GitHub Releases API 条目（仅用到的字段） */
 interface GitHubReleaseApi {
@@ -59,7 +56,7 @@ class UpdateManager extends EventEmitter {
     // 开启自动更新：启动后延迟检查一次（自动下载由 autoDownload 标志接管）
     if (this.autoUpdateEnabled) {
       setTimeout(() => {
-        this.check().catch((e) => log.warn('启动延迟 check 失败:', errText(e)))
+        this.check().catch((e) => log.warn('启动延迟 check 失败:', errMsg(e)))
       }, 5000)
     }
 
@@ -150,13 +147,13 @@ class UpdateManager extends EventEmitter {
     try {
       appConfigRepo.setAutoUpdateEnabled(this.autoUpdateEnabled)
     } catch (e) {
-      return { ok: false, error: errText(e) }
+      return { ok: false, error: errMsg(e) }
     }
     this.applyAutoUpdateFlags()
 
     // 开启时立即检查一次（仅打包环境）；关闭时不打断进行中的流程
     if (this.autoUpdateEnabled && app.isPackaged && !this.busy) {
-      this.check().catch((e) => log.warn('toggle autoUpdate 后 check 失败:', errText(e)))
+      this.check().catch((e) => log.warn('toggle autoUpdate 后 check 失败:', errMsg(e)))
     }
     return { ok: true }
   }
@@ -189,7 +186,7 @@ class UpdateManager extends EventEmitter {
       await autoUpdater.checkForUpdates()
       return { ok: true }
     } catch (e) {
-      this.error = errText(e)
+      this.error = errMsg(e)
       this.setStatus('error', { error: this.error })
       return { ok: false, error: this.error }
     }
@@ -230,7 +227,7 @@ class UpdateManager extends EventEmitter {
       await autoUpdater.downloadUpdate()
       return { ok: true }
     } catch (e) {
-      this.error = errText(e)
+      this.error = errMsg(e)
       this.setStatus('error', { error: this.error })
       return { ok: false, error: this.error }
     } finally {
@@ -253,7 +250,7 @@ class UpdateManager extends EventEmitter {
         restartToApplyPatch() // 内部 app.quit()
         return { ok: true }
       } catch (e) {
-        this.error = errText(e)
+        this.error = errMsg(e)
         this.setStatus('error', { error: this.error })
         return { ok: false, error: this.error }
       }
@@ -264,7 +261,7 @@ class UpdateManager extends EventEmitter {
       autoUpdater.quitAndInstall(true, true)
       return { ok: true }
     } catch (e) {
-      this.error = errText(e)
+      this.error = errMsg(e)
       this.setStatus('error', { error: this.error })
       return { ok: false, error: this.error }
     }
@@ -278,19 +275,19 @@ export function initUpdateManager(): void {
   updateManager.init()
 
   // 注册 IPC handlers
-  ipcMain.handle(IPC.UPDATE_GET_INFO, () => updateManager.getInfo())
-  ipcMain.handle(IPC.UPDATE_CHECK, () => updateManager.check())
-  ipcMain.handle(IPC.UPDATE_DOWNLOAD, () => updateManager.download())
-  ipcMain.handle(IPC.UPDATE_QUIT_INSTALL, () => updateManager.quitAndInstall())
-  ipcMain.handle(IPC.UPDATE_SET_SETTINGS, (_e, enabled: boolean) =>
-    updateManager.setAutoUpdate(!!enabled)
-  )
+  safeHandle(IPC.UPDATE_GET_INFO, () => updateManager.getInfo())
+  safeHandle(IPC.UPDATE_CHECK, () => updateManager.check())
+  safeHandle(IPC.UPDATE_DOWNLOAD, () => updateManager.download())
+  safeHandle(IPC.UPDATE_QUIT_INSTALL, () => updateManager.quitAndInstall())
+  safeHandle(IPC.UPDATE_SET_SETTINGS, (_e, enabled: boolean) =>
+    updateManager.setAutoUpdate(!!enabled),
+  argsSchema(z.boolean()))
 
   // 状态快照（渲染首次连接时调一下）
-  ipcMain.handle('update:get-status', () => updateManager.getStatusSnapshot())
+  safeHandle('update:get-status', () => updateManager.getStatusSnapshot())
 
   // 更新日志：从 GitHub Releases API 拉取
-  ipcMain.handle(IPC.CHANGELOG_FETCH, async () => {
+  safeHandle(IPC.CHANGELOG_FETCH, async () => {
     try {
       const url = 'https://api.github.com/repos/yyygzy/PocketAI/releases?per_page=10'
       const res = await safeFetch(url, {
@@ -317,7 +314,7 @@ export function initUpdateManager(): void {
         }))
       return { ok: true, releases }
     } catch (e) {
-      return { ok: false, error: errText(e) || '拉取更新日志失败' }
+      return { ok: false, error: errMsg(e) || '拉取更新日志失败' }
     }
   })
 }

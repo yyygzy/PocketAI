@@ -10,10 +10,12 @@
 import fs from 'node:fs'
 import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
+import { errMsg } from '../error'
 import { skillRepo } from '../db/repositories/skill.repo'
 import type { SkillRecord } from '../../shared/types'
 import { parseSkillText, type SkillShape } from './skill-parser'
 import { safeFetch } from '../net/safe-fetch'
+import { skillShapeSchema } from '../../shared/schemas/skills'
 
 /** 导入文件大小上限（技能本质是文本，256KB 足够宽裕） */
 const MAX_IMPORT_BYTES = 256 * 1024
@@ -31,6 +33,7 @@ function safeFileName(name: string): string {
 
 /** 把 SkillShape 保存为自定义技能（不传 id → 自动生成 UUID；isBuiltin=false） */
 function saveShapeAsSkill(shape: SkillShape): SkillRecord {
+  skillShapeSchema.parse(shape)
   return skillRepo.save({
     name: shape.name,
     description: shape.description,
@@ -70,7 +73,7 @@ export async function exportSkill(
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 4), 'utf8')
     return { ok: true, path: filePath }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
@@ -110,7 +113,7 @@ export async function importSkill(
     const skill = saveShapeAsSkill(shape)
     return { ok: true, skill, nameDuplicated }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
@@ -124,7 +127,7 @@ export async function importSkillFromUrl(
     try {
       res = await safeFetch(url, { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000 })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = errMsg(e)
       return { ok: false, error: `网络请求失败: ${msg}` }
     }
     if (res.status >= 300) {
@@ -139,7 +142,7 @@ export async function importSkillFromUrl(
     const skill = saveShapeAsSkill(shape)
     return { ok: true, skill }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
@@ -152,7 +155,7 @@ export async function fetchRegistryIndex(
     if (res.status >= 300) return { ok: false, error: `HTTP ${res.status}` }
     return { ok: true, text: res.body.toString('utf8') }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = errMsg(e)
     return { ok: false, error: msg }
   }
 }

@@ -19,6 +19,7 @@ import { safeFetch } from '../net/safe-fetch'
 import { IMAGE_SIZES } from '../../shared/types'
 import { errMsg } from '../error'
 import type { ImageGeneratePayload, ImageRecord, ImageResult, ImageListItem } from '../../shared/types'
+import { imageGenerateSchema } from '../../shared/schemas/images'
 
 const MAX_PROMPT_CHARS = 4000
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024 // 单图 20MB 上限
@@ -115,6 +116,7 @@ function pruneHistory(): void {
  * 成功：落盘 + 写历史 + 返回记录；中止/超时/HTTP 错误：不写历史。
  */
 export async function runImageGenerate(payload: ImageGeneratePayload): Promise<ImageResult> {
+  imageGenerateSchema.parse(payload)
   const started = Date.now()
   const controller = new AbortController()
   controllers.set(payload.requestId, controller)

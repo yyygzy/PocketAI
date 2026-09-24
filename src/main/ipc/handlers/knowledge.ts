@@ -1,5 +1,5 @@
 // 知识库 IPC：库管理 / 文档摄取 / 分块预览 / 检索测试（含免费版数量门控）
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import type { KnowledgeBase } from '../../../shared/types'
 import { kbRepo } from '../../db/repositories/kb.repo'
@@ -10,26 +10,34 @@ import { indexQueue } from '../../knowledge/index-queue'
 import { ragService } from '../../knowledge/rag'
 import { detectSourceType } from '../../knowledge/parsers'
 import { assertCanCreateKb } from '../../license/license'
+import { safeHandle, argsSchema } from '../safe-handle'
+import {
+  kbSaveSchema,
+  kbDocAddUrlArgsSchema,
+  kbDocAddTextArgsSchema,
+  kbRetrieveArgsSchema
+} from '../../../shared/schemas/knowledge'
+import { idSchema } from '../../../shared/schemas/providers'
 
 export function registerKnowledgeHandlers(): void {
-  ipcMain.handle(IPC.KB_LIST, () => kbRepo.list())
-  ipcMain.handle(IPC.KB_GET, (_e, id: string) => kbRepo.get(id))
-  ipcMain.handle(IPC.KB_SAVE, (_e, record: Partial<KnowledgeBase> & { name: string }) => {
+  safeHandle(IPC.KB_LIST, () => kbRepo.list())
+  safeHandle(IPC.KB_GET, (_e, id: string) => kbRepo.get(id), argsSchema(idSchema))
+  safeHandle(IPC.KB_SAVE, (_e, record: Partial<KnowledgeBase> & { name: string }) => {
     // License 门控：免费版限制知识库数量（新建场景）
     if (!record.id || !kbRepo.get(record.id)) {
       assertCanCreateKb(kbRepo.list().length)
     }
     return kbRepo.save(record)
-  })
-  ipcMain.handle(IPC.KB_DELETE, (_e, id: string) => {
+  }, argsSchema(kbSaveSchema))
+  safeHandle(IPC.KB_DELETE, (_e, id: string) => {
     ingestionService.deleteKb(id)
     return { ok: true }
-  })
+  }, argsSchema(idSchema))
 
   // ---------- 知识库文档 ----------
-  ipcMain.handle(IPC.KB_DOC_LIST, (_e, kbId: string) => kbDocRepo.list(kbId))
+  safeHandle(IPC.KB_DOC_LIST, (_e, kbId: string) => kbDocRepo.list(kbId), argsSchema(idSchema))
 
-  ipcMain.handle(IPC.KB_DOC_ADD_FILE, async (e, kbId: string) => {
+  safeHandle(IPC.KB_DOC_ADD_FILE, async (e, kbId: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
     const result = await dialog.showOpenDialog(win!, {
       title: '选择知识库文档',
@@ -50,40 +58,41 @@ export function registerKnowledgeHandlers(): void {
       indexQueue.enqueue({ kbId, docId: doc.id, kind: 'file' })
     }
     return docs
-  })
+  }, argsSchema(idSchema))
 
-  ipcMain.handle(IPC.KB_DOC_ADD_URL, async (_e, kbId: string, url: string, title?: string) => {
+  safeHandle(IPC.KB_DOC_ADD_URL, async (_e, kbId: string, url: string, title?: string) => {
     const doc = kbDocRepo.insert({ kbId, source: url, sourceType: 'url', title: title || url })
     indexQueue.enqueue({ kbId, docId: doc.id, kind: 'url' })
     return doc
-  })
+  }, kbDocAddUrlArgsSchema)
 
-  ipcMain.handle(
+  safeHandle(
     IPC.KB_DOC_ADD_TEXT,
     async (_e, kbId: string, text: string, title: string) => {
       const doc = kbDocRepo.insert({ kbId, source: title, sourceType: 'txt', title })
       indexQueue.enqueue({ kbId, docId: doc.id, kind: 'text', payload: { text, title } })
       return doc
-    }
+    },
+    kbDocAddTextArgsSchema
   )
 
-  ipcMain.handle(IPC.KB_DOC_DELETE, (_e, docId: string) => {
+  safeHandle(IPC.KB_DOC_DELETE, (_e, docId: string) => {
     kbDocRepo.delete(docId)
     return { ok: true }
-  })
+  }, argsSchema(idSchema))
 
-  ipcMain.handle(IPC.KB_DOC_REINDEX, (_e, kbId: string, docId: string) => {
+  safeHandle(IPC.KB_DOC_REINDEX, (_e, kbId: string, docId: string) => {
     // 重置状态为 pending，后台异步重建索引
     kbDocRepo.setStatus(docId, 'pending')
     indexQueue.enqueue({ kbId, docId, kind: 'reindex' })
     return kbDocRepo.get(docId)
-  })
+  }, argsSchema(idSchema, idSchema))
 
   // ---------- 知识库分块 ----------
-  ipcMain.handle(IPC.KB_CHUNK_LIST, (_e, docId: string) => kbChunkRepo.listByDoc(docId))
+  safeHandle(IPC.KB_CHUNK_LIST, (_e, docId: string) => kbChunkRepo.listByDoc(docId), argsSchema(idSchema))
 
   // ---------- 知识库检索测试 ----------
-  ipcMain.handle(IPC.KB_RETRIEVE, async (_e, kbIds: string[], query: string) =>
-    ragService.retrieve(kbIds, query)
-  )
+  safeHandle(IPC.KB_RETRIEVE, async (_e, kbIds: string[], query: string) =>
+    ragService.retrieve(kbIds, query),
+  kbRetrieveArgsSchema)
 }

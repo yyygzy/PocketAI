@@ -1,5 +1,4 @@
 // 隐私锁 IPC：状态 / 锁定 / 解锁（db 模式下走重开探针验密）/ 自动超时 / 活跃标记
-import { ipcMain } from 'electron'
 import { IPC } from '../../../shared/types'
 import { lockService } from '../../lock/lock'
 import { masterKeyManager } from '../../crypto/master-key'
@@ -7,14 +6,16 @@ import { clipboardGuard } from '../../crypto/clipboard-guard'
 import { dbService } from '../../db/database'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { broadcast } from '../broadcast'
+import { safeHandle, argsSchema, z } from '../safe-handle'
+import { masterPasswordSchema } from '../../../shared/schemas/encryption'
 
 export function registerLockHandlers(): void {
-  ipcMain.handle(IPC.LOCK_GET_STATUS, () => lockService.getStatus())
-  ipcMain.handle(IPC.LOCK_LOCK, () => {
+  safeHandle(IPC.LOCK_GET_STATUS, () => lockService.getStatus())
+  safeHandle(IPC.LOCK_LOCK, () => {
     lockService.lock('manual')
     return { ok: true }
   })
-  ipcMain.handle(IPC.LOCK_UNLOCK, (_e, password?: string) => {
+  safeHandle(IPC.LOCK_UNLOCK, (_e, password?: string) => {
     // db 模式锁定时密钥已被清除、库已被关闭（见 index.ts 锁订阅），
     // 内存比对不可用，只能用「重新派生 + 重开探针」验证密码
     if (masterKeyManager.getMode() === 'db') {
@@ -32,12 +33,12 @@ export function registerLockHandlers(): void {
     }
     lockService.unlock()
     return { ok: true }
-  })
-  ipcMain.handle(IPC.LOCK_SET_AUTO_TIMEOUT, (_e, timeoutMs: number) => {
+  }, argsSchema(masterPasswordSchema.optional()))
+  safeHandle(IPC.LOCK_SET_AUTO_TIMEOUT, (_e, timeoutMs: number) => {
     lockService.setAutoTimeout(timeoutMs)
     return { ok: true }
-  })
-  ipcMain.handle(IPC.LOCK_MARK_ACTIVE, () => {
+  }, argsSchema(z.number().int().nonnegative()))
+  safeHandle(IPC.LOCK_MARK_ACTIVE, () => {
     lockService.markActive()
     return { ok: true }
   })

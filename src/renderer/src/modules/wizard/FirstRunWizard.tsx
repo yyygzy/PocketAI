@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 import { PROVIDER_PRESETS } from '../settings/ProviderSettings'
 import type {
   HardwareInfo,
@@ -204,7 +205,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         }
       }
     } catch (e) {
-      setSetupErr(e instanceof Error ? e.message : t('common.unknownError'))
+      setSetupErr(errText(e, t('common.unknownError')))
       return
     } finally {
       setBusy(false)
@@ -227,7 +228,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       setPwd(''); setPwd2('')
       setEncStatus({ ...(encStatus ?? { mode: 'none' as const }), mode: 'db' } as EncryptionStatus)
     } catch (e) {
-      setEncErr(e instanceof Error ? e.message : t('enc.fail'))
+      setEncErr(errText(e, t('enc.fail')))
     } finally {
       setBusy(false)
     }
@@ -399,7 +400,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                 className="input w-full"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={t('wizard.apiKeyPh', { p: selectedPreset!.label })}
+                placeholder={t('wizard.apiKeyPh', { p: selectedPreset?.label ?? '' })}
                 disabled={busy}
               />
               <p className="text-[10px] text-[var(--color-text-muted)] mt-1">

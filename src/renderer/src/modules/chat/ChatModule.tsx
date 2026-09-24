@@ -246,7 +246,7 @@ export const ChatModule: React.FC = () => {
         toast.success(t('chat.importOk', { n: r.messageCount ?? 0 }))
         await reloadConversations()
       } catch (e) {
-        toast.error(t('chat.importFail', { e: e instanceof Error ? e.message : String(e) }))
+        toast.error(t('chat.importFail', { e: errText(e) }))
       }
     }
     input.click()

@@ -1,18 +1,23 @@
 // 备份 IPC：本地备份（明文/加密）、WebDAV 配置与备份管理、定时计划
 import path from 'node:path'
-import { ipcMain } from 'electron'
 import { IPC, type WebDAVConfig as WebDAVConfigInput, type MergeStrategy } from '../../../shared/types'
 import { getBackupSchedule, setBackupSchedule, noteManualBackup } from '../../backup/backup-scheduler'
 import { DATA_DIR } from '../../portable'
-import { errMsg } from '../safe-handle'
+import { safeHandle, errMsg, argsSchema } from '../safe-handle'
+import {
+  webdavConfigSchema,
+  backupSchedulePatchSchema,
+  backupFilenameSchema,
+  mergeExecutePayloadSchema
+} from '../../../shared/schemas/backup'
 
 export function registerBackupHandlers(): void {
-  ipcMain.handle(IPC.BACKUP_LOCAL, async () => {
+  safeHandle(IPC.BACKUP_LOCAL, async () => {
     const { createLocalBackup } = await import('../../backup/backup-service')
     const dir = path.join(DATA_DIR, 'backups')
     return createLocalBackup(dir)
   })
-  ipcMain.handle(IPC.BACKUP_LOCAL_ENCRYPTED, async () => {
+  safeHandle(IPC.BACKUP_LOCAL_ENCRYPTED, async () => {
     const { createEncryptedLocalBackup } = await import('../../backup/backup-service')
     const dir = path.join(DATA_DIR, 'backups')
     try {
@@ -22,26 +27,27 @@ export function registerBackupHandlers(): void {
       return { ok: false as const, error: errMsg(e, '加密备份失败') }
     }
   })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_SAVE_CONFIG, async (_e, cfg: WebDAVConfigInput) => {
+  safeHandle(IPC.BACKUP_WEBDAV_SAVE_CONFIG, async (_e, cfg: WebDAVConfigInput) => {
     const { saveWebDAVConfig } = await import('../../backup/backup-service')
     saveWebDAVConfig(cfg)
     return { ok: true }
-  })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_LOAD_CONFIG, async () => {
+  }, argsSchema(webdavConfigSchema))
+  safeHandle(IPC.BACKUP_WEBDAV_LOAD_CONFIG, async () => {
     const { loadWebDAVConfig } = await import('../../backup/backup-service')
     return loadWebDAVConfig()
   })
-  ipcMain.handle(IPC.BACKUP_SCHEDULE_GET, () => getBackupSchedule())
-  ipcMain.handle(
+  safeHandle(IPC.BACKUP_SCHEDULE_GET, () => getBackupSchedule())
+  safeHandle(
     IPC.BACKUP_SCHEDULE_SET,
     (_e, patch: { enabled?: boolean; intervalHours?: number }) =>
-      setBackupSchedule(patch ?? {})
+      setBackupSchedule(patch ?? {}),
+    argsSchema(backupSchedulePatchSchema)
   )
-  ipcMain.handle(IPC.BACKUP_WEBDAV_TEST, async (_e, cfg: WebDAVConfigInput) => {
+  safeHandle(IPC.BACKUP_WEBDAV_TEST, async (_e, cfg: WebDAVConfigInput) => {
     const { testWebDAV } = await import('../../backup/backup-service')
     return testWebDAV(cfg)
-  })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_UPLOAD, async () => {
+  }, argsSchema(webdavConfigSchema))
+  safeHandle(IPC.BACKUP_WEBDAV_UPLOAD, async () => {
     const { loadWebDAVConfig, createWebDAVBackup } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
@@ -53,7 +59,7 @@ export function registerBackupHandlers(): void {
       return { ok: false, error: errMsg(e, '上传失败') }
     }
   })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_UPLOAD_INCREMENTAL, async () => {
+  safeHandle(IPC.BACKUP_WEBDAV_UPLOAD_INCREMENTAL, async () => {
     const { loadWebDAVConfig, createWebDAVIncrementalBackup } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
@@ -65,13 +71,13 @@ export function registerBackupHandlers(): void {
       return { ok: false, error: errMsg(e, '增量备份失败') }
     }
   })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_LIST, async () => {
+  safeHandle(IPC.BACKUP_WEBDAV_LIST, async () => {
     const { loadWebDAVConfig, listWebDAVBackups } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return []
     try { return await listWebDAVBackups(cfg) } catch { return [] }
   })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: string) => {
+  safeHandle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: string) => {
     const {
       loadWebDAVConfig,
       restoreFromWebDAV,
@@ -88,8 +94,8 @@ export function registerBackupHandlers(): void {
       }
     }
     return restoreFromWebDAV(cfg, filename)
-  })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: string) => {
+  }, argsSchema(backupFilenameSchema))
+  safeHandle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: string) => {
     const { scanMergeConflicts } = await import('../../backup/merge-service')
     const { loadWebDAVConfig } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
@@ -99,8 +105,8 @@ export function registerBackupHandlers(): void {
     } catch (e) {
       return { ok: false, error: errMsg(e, '扫描冲突失败'), tables: [], attachmentsToAdd: 0 }
     }
-  })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_MERGE_EXECUTE, async (_e, payload: { filename: string; strategy: MergeStrategy }) => {
+  }, argsSchema(backupFilenameSchema))
+  safeHandle(IPC.BACKUP_WEBDAV_MERGE_EXECUTE, async (_e, payload: { filename: string; strategy: MergeStrategy }) => {
     const { executeMerge } = await import('../../backup/merge-service')
     const { loadWebDAVConfig } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
@@ -110,12 +116,12 @@ export function registerBackupHandlers(): void {
     } catch (e) {
       return { ok: false, error: errMsg(e, '合并失败') }
     }
-  })
-  ipcMain.handle(IPC.BACKUP_WEBDAV_DELETE, async (_e, filename: string) => {
+  }, argsSchema(mergeExecutePayloadSchema))
+  safeHandle(IPC.BACKUP_WEBDAV_DELETE, async (_e, filename: string) => {
     const { loadWebDAVConfig, deleteWebDAVBackup } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
     await deleteWebDAVBackup(cfg, filename)
     return { ok: true }
-  })
+  }, argsSchema(backupFilenameSchema))
 }

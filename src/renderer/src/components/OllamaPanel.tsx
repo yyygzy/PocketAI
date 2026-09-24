@@ -135,7 +135,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       return false
     } catch (e) {
       // IPC 层 reject（主进程异常/通道失败）：必须复位 pulling，否则按钮永久卡在拉取中
-      setErr(`${name}: ${e instanceof Error ? e.message : String(e)}`)
+      setErr(`${name}: ${errText(e)}`)
       return false
     } finally {
       setPulling(null)

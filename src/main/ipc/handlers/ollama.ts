@@ -1,10 +1,9 @@
 // Ollama 便携运行时 IPC：安装/启停/拉模型/镜像源
-import { ipcMain } from 'electron'
 import { IPC } from '../../../shared/types'
 import { ollamaRuntime } from '../../ollama/ollama-runtime'
 import { providerRepo } from '../../db/repositories/provider.repo'
 import { broadcast } from '../broadcast'
-import { safeHandle } from '../safe-handle'
+import { safeHandle, argsSchema, z } from '../safe-handle'
 
 /**
  * 拉取模型成功后，确保存在指向本地 11434 的 Ollama provider 并包含该模型。
@@ -32,19 +31,19 @@ function ensureOllamaProvider(model: string): void {
 }
 
 export function registerOllamaHandlers(): void {
-  ipcMain.handle(IPC.OLLAMA_GET_STATUS, () => ollamaRuntime.getStatus())
-  ipcMain.handle(IPC.OLLAMA_INSTALL, async () =>
+  safeHandle(IPC.OLLAMA_GET_STATUS, () => ollamaRuntime.getStatus())
+  safeHandle(IPC.OLLAMA_INSTALL, async () =>
     ollamaRuntime.install((e) => broadcast(IPC.OLLAMA_EVENT, e))
   )
-  ipcMain.handle(IPC.OLLAMA_START, async () => {
+  safeHandle(IPC.OLLAMA_START, async () => {
     await ollamaRuntime.start()
     return { ok: true, status: await ollamaRuntime.getStatus() }
   })
-  ipcMain.handle(IPC.OLLAMA_STOP, async () => {
+  safeHandle(IPC.OLLAMA_STOP, async () => {
     await ollamaRuntime.stop()
     return { ok: true }
   })
-  ipcMain.handle(IPC.OLLAMA_LIST_MODELS, () => ollamaRuntime.listModels())
+  safeHandle(IPC.OLLAMA_LIST_MODELS, () => ollamaRuntime.listModels())
   safeHandle(IPC.OLLAMA_PULL, async (_e, model: string) => {
     const name = String(model ?? '').trim()
     if (!name) return { ok: false, error: '模型名不能为空' }
@@ -52,14 +51,14 @@ export function registerOllamaHandlers(): void {
     // 拉取成功：确保存在指向本地 11434 的 ollama provider，并把新模型加入模型列表
     ensureOllamaProvider(name)
     return { ok: true }
-  })
-  ipcMain.handle(IPC.OLLAMA_PULL_ABORT, () => {
+  }, argsSchema(z.string().min(1)))
+  safeHandle(IPC.OLLAMA_PULL_ABORT, () => {
     ollamaRuntime.abortPull()
     return { ok: true }
   })
-  ipcMain.handle(IPC.OLLAMA_MIRROR_GET, () => ({ ok: true, mirror: ollamaRuntime.getMirror() }))
+  safeHandle(IPC.OLLAMA_MIRROR_GET, () => ({ ok: true, mirror: ollamaRuntime.getMirror() }))
   safeHandle(IPC.OLLAMA_MIRROR_SET, (_e, prefix: string) => {
     ollamaRuntime.setMirror(String(prefix ?? ''))
     return { ok: true }
-  })
+  }, argsSchema(z.string()))
 }

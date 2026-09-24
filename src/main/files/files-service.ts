@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import { DATA_DIR } from '../portable'
 import type { FileEntry, FileReadResult, FileOpResult } from '../../shared/types'
 import { errMsg } from '../error'
+import { safeRelPath, safeRelDir, safeFileName, base64Content } from '../../shared/schemas/files'
 
 const TEXT_READ_LIMIT = 256 * 1024 // 文本预览最大 256KB，超出截断
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'])
@@ -130,6 +131,9 @@ function read(relPath: string): FileReadResult {
 
 function upload(relDir: string, name: string, base64: string): FileOpResult {
   try {
+    safeRelDir.parse(relDir)
+    safeFileName.parse(name)
+    base64Content.parse(base64)
     const absDir = toAbs(relDir)
     const abs = path.join(absDir, sanitizeName(name))
     if (!abs.startsWith(DATA_DIR + path.sep) && abs !== DATA_DIR) {
@@ -152,18 +156,20 @@ function upload(relDir: string, name: string, base64: string): FileOpResult {
     fs.writeFileSync(target, buf)
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: String(e instanceof Error ? e.message : e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
 function mkdir(relDir: string, name: string): FileOpResult {
   try {
+    safeRelDir.parse(relDir)
+    safeFileName.parse(name)
     const absDir = toAbs(relDir)
     const abs = path.join(absDir, sanitizeName(name))
     fs.mkdirSync(abs, { recursive: true })
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: String(e instanceof Error ? e.message : e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
@@ -175,6 +181,7 @@ const PROTECTED_ROOT_ENTRIES = new Set([
 
 function remove(relPath: string): FileOpResult {
   try {
+    safeRelPath.parse(relPath)
     const abs = toAbs(relPath)
     if (abs === DATA_DIR) return { ok: false, error: '不能删除数据目录本身' }
     const rel = path.relative(DATA_DIR, abs).replace(/\\/g, '/')
@@ -185,13 +192,14 @@ function remove(relPath: string): FileOpResult {
     fs.rmSync(abs, { recursive: true, force: false })
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: String(e instanceof Error ? e.message : e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
 /** 另存为：弹出系统保存对话框，将数据目录内文件复制到用户选择的位置 */
 async function saveAs(relPath: string): Promise<FileOpResult> {
   try {
+    safeRelPath.parse(relPath)
     const abs = toAbs(relPath)
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       return { ok: false, error: '目标不是文件' }
@@ -204,29 +212,31 @@ async function saveAs(relPath: string): Promise<FileOpResult> {
     fs.copyFileSync(abs, filePath)
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: String(e instanceof Error ? e.message : e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
 function openLocation(relPath: string): FileOpResult {
   try {
+    safeRelDir.parse(relPath)
     const abs = toAbs(relPath)
     if (!fs.existsSync(abs)) return { ok: false, error: '目标不存在' }
     shell.showItemInFolder(abs)
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: String(e instanceof Error ? e.message : e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 
 async function openExternal(relPath: string): Promise<FileOpResult> {
   try {
+    safeRelPath.parse(relPath)
     const abs = toAbs(relPath)
     if (!fs.existsSync(abs)) return { ok: false, error: '目标不存在' }
     await shell.openPath(abs)
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: String(e instanceof Error ? e.message : e) }
+    return { ok: false, error: errMsg(e) }
   }
 }
 

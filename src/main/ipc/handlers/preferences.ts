@@ -6,7 +6,8 @@ import { isPortableRuntime } from '../../portable'
 import { getMachineId } from '../../steward/machine'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { getUiPreferences, setUiPreferences } from '../../ui-preferences'
-import { safeHandle } from '../safe-handle'
+import { safeHandle, argsSchema, z } from '../safe-handle'
+import { uiPrefsPatchSchema, sidebarOrderSchema } from '../../../shared/schemas/preferences'
 
 const K_SIDEBAR_ORDER = 'sidebar.order'
 const K_LAST_PROVIDER = 'wizard.last_provider_id'
@@ -54,7 +55,7 @@ export function registerPreferenceHandlers(): void {
   safeHandle(IPC.UI_SET_PREFS, (_e, patch: Partial<UiPreferences>) => ({
     ok: true as const,
     data: setUiPreferences(patch ?? {})
-  }))
+  }), argsSchema(uiPrefsPatchSchema))
 
   // ---------- 侧栏模块顺序 ----------
   safeHandle(IPC.SIDEBAR_GET_ORDER, () => ({ ok: true as const, data: readSidebarOrder() }))
@@ -68,7 +69,7 @@ export function registerPreferenceHandlers(): void {
     if (!valid) return { ok: false as const, error: 'invalid order' }
     appConfigRepo.set(K_SIDEBAR_ORDER, JSON.stringify(order))
     return { ok: true as const, data: order }
-  })
+  }, argsSchema(sidebarOrderSchema))
 
   // ---------- 向导上次保存的 provider（对话默认回填用） ----------
   safeHandle(IPC.WIZARD_GET_LAST_PROVIDER, () => ({
@@ -78,5 +79,5 @@ export function registerPreferenceHandlers(): void {
   safeHandle(IPC.WIZARD_SET_LAST_PROVIDER, (_e, providerId: string) => {
     appConfigRepo.set(K_LAST_PROVIDER, providerId)
     return { ok: true as const }
-  })
+  }, argsSchema(z.string()))
 }

@@ -17,13 +17,9 @@ import { injectCustomCss } from '../../custom-css'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
-
-/** 从 unknown 异常中取 message；非 Error 或无消息时回退 fallback */
-function errMsg(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback
-}
 
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
@@ -179,7 +175,7 @@ const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => 
 const StatusRow: React.FC<{ label: string; value: string; ok?: boolean }> = ({ label, value, ok }) => (
   <div className="flex items-center gap-2 text-xs">
     <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-[var(--color-success)]' : 'bg-[var(--color-warning)]'}`} />
-    <span className="text-[var(--color-text-muted)] w-16">{label}</span>
+    <span className="text-[var(--color-text-muted)] w-32 shrink-0 whitespace-nowrap">{label}</span>
     <span className={ok ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}>{value}</span>
   </div>
 )
@@ -262,7 +258,7 @@ const EnableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }>
       setNotice({ ok: true, text: t('enc.enabledOk') })
       onDone()
     } catch (e) {
-      setLocalErr(errMsg(e, t('enc.fail')))
+      setLocalErr(errText(e, t('enc.fail')))
     } finally {
       setBusy(false)
     }
@@ -317,7 +313,7 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
       // 之前生成过恢复码：rekey 后旧码失效，必须让用户保存新码
       if (r.recoveryCode) setRotatedCode(r.recoveryCode)
     } catch (e) {
-      setLocalErr(errMsg(e, t('enc.fail')))
+      setLocalErr(errText(e, t('enc.fail')))
     } finally {
       setBusy(false)
     }
@@ -371,7 +367,7 @@ const DisableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }
       setNotice({ ok: true, text: t('enc.disabledOk') })
       onDone()
     } catch (e) {
-      setLocalErr(errMsg(e, t('enc.fail')))
+      setLocalErr(errText(e, t('enc.fail')))
     } finally {
       setBusy(false)
     }
@@ -417,8 +413,13 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
   onClose
 }) => {
   const { t } = useI18n()
-  const [copied, setCopied] = useState(false)
-  const [copyFailed, setCopyFailed] = useState(false)
+  // 恢复码走主进程敏感剪贴板（30s 自动过期），反馈态 2s 后自动复位
+  const sensitiveWriter = useCallback(async (text: string) => {
+    const r = await window.pocketai.copySensitiveToClipboard(text)
+    return r.ok
+  }, [])
+  const { copied, copy } = useCopyFeedback(2000, sensitiveWriter)
+  const { notice: copyFailed, show: showCopyFailed } = useTransientNotice<boolean>(3000)
   return (
     <Modal open title={title} onClose={onClose}>
       <p className="text-xs text-[var(--color-warning)] mb-2">{t('enc.recoveryShowOnce')}</p>
@@ -434,12 +435,10 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
           className="btn-ghost"
           onClick={async () => {
             try {
-              await window.pocketai.copySensitiveToClipboard(code)
-              setCopied(true)
-              setCopyFailed(false)
+              if (!(await copy(code))) showCopyFailed(true)
             } catch {
               // 恢复码复制失败必须提示：误以为已复制会导致无法找回数据
-              setCopyFailed(true)
+              showCopyFailed(true)
             }
           }}
         >
@@ -699,7 +698,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       const r = await window.pocketai.mergeScanWebDAVBackup(filename)
       setMergeReport(r)
     } catch (e) {
-      setMergeReport({ ok: false, error: String(e), tables: [], attachmentsToAdd: 0 })
+      setMergeReport({ ok: false, error: errText(e, t('bk.mergeFail')), tables: [], attachmentsToAdd: 0 })
     } finally {
       setMergeScanning(false)
     }
@@ -716,7 +715,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
         await refreshList()
       }
     } catch (e) {
-      showNotice(false, t('bk.mergeFail', { e: String(e) }))
+      showNotice(false, t('bk.mergeFail', { e: errText(e) }))
     } finally {
       setMergeExecuting(false)
     }
@@ -1062,7 +1061,7 @@ const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }
       setNotice({ ok: true, text: t('lic.activated', { owner: r.payload?.owner ?? '', plan: r.payload?.plan ?? '' }) })
       onChange()
     } catch (e) {
-      setNotice({ ok: false, text: errMsg(e, t('lic.activateFail')) })
+      setNotice({ ok: false, text: errText(e, t('lic.activateFail')) })
     } finally { setBusy(false) }
   }
 
@@ -1083,7 +1082,7 @@ const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }
       setPasteOpen(false); setCodeText('')
       onChange()
     } catch (e) {
-      setNotice({ ok: false, text: errMsg(e, t('lic.activateFail')) })
+      setNotice({ ok: false, text: errText(e, t('lic.activateFail')) })
     } finally { setBusy(false) }
   }
 
@@ -1607,7 +1606,7 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
         setChangelogError(r.error ?? t('upd.changelogEmpty'))
       }
     } catch (e) {
-      setChangelogError(errMsg(e, t('upd.changelogEmpty')))
+      setChangelogError(errText(e, t('upd.changelogEmpty')))
     } finally {
       setChangelogLoading(false)
     }
@@ -1639,7 +1638,7 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
       const r = await window.pocketai.checkUpdate()
       if (!r.ok) setNotice({ ok: false, text: r.error ?? t('upd.checkFail') })
     } catch (e) {
-      setNotice({ ok: false, text: errMsg(e, t('upd.checkFail')) })
+      setNotice({ ok: false, text: errText(e, t('upd.checkFail')) })
     } finally { setBusy(false) }
   }
 
@@ -1649,7 +1648,7 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
       const r = await window.pocketai.downloadUpdate()
       if (!r.ok) setNotice({ ok: false, text: r.error ?? t('upd.downloadFail') })
     } catch (e) {
-      setNotice({ ok: false, text: errMsg(e, t('upd.downloadFail')) })
+      setNotice({ ok: false, text: errText(e, t('upd.downloadFail')) })
     } finally { setBusy(false) }
   }
 
@@ -1658,7 +1657,7 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
     try {
       await window.pocketai.quitAndInstall()
     } catch (e) {
-      setNotice({ ok: false, text: errMsg(e, t('upd.installFail')) })
+      setNotice({ ok: false, text: errText(e, t('upd.installFail')) })
     }
   }
 

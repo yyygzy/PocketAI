@@ -41,7 +41,9 @@
     "remark-math": "^6.0.0",
     "unzipper": "^0.12.5",
     "webdav": "^5.10.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^4.6.5",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",

@@ -7,6 +7,7 @@
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { getSecret, setSecret, hasSecret, SECRET_KV_KEYS } from '../crypto/secret-store'
 import type { ChannelConfig, ChannelType } from '../../shared/types'
+import { channelSetConfigSchema, channelTypeArgSchema } from '../../shared/schemas/channels'
 
 /** type → KV 前缀（telegram 保留旧前缀以兼容历史数据） */
 function prefixFor(type: ChannelType): string {
@@ -84,6 +85,8 @@ export function setChannelConfig(
     secondarySecret?: string
   }
 ): ChannelConfig {
+  channelTypeArgSchema.parse(type)
+  channelSetConfigSchema.parse(input)
   const p = prefixFor(type)
   const pk = primarySecretKey(type)
   const sk = secondarySecretKey(type)

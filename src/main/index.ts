@@ -23,6 +23,14 @@
 
 import { app, BrowserWindow, dialog, powerMonitor } from 'electron'
 import path from 'node:path'
+
+/** 应用图标路径：Windows 用 .ico（含 16/32/48/256 多尺寸，任务栏显示更清晰），
+ *  其他平台用 256px png */
+function appIconPath(): string {
+  return process.platform === 'win32'
+    ? path.join(app.getAppPath(), 'build/icon/icon.ico')
+    : path.join(app.getAppPath(), 'build/icon/icon-256.png')
+}
 import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR, LOGS_DIR } from './portable'
 import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
@@ -77,7 +85,7 @@ function tryOpenDbNoPassword(): boolean {
   } catch (e) {
     // SQLITE_NOTADB = 文件是加密的，必须用密码打开
     const code = (e as { code?: string } | null)?.code
-    const msg = e instanceof Error ? e.message : ''
+    const msg = errMsg(e, '')
     if (code === 'SQLITE_NOTADB' || msg.includes('not a database')) {
       // 关掉无 key 的死连接：dbService.open() 对已开连接幂等返回，
       // 死连接不关掉，后续带 key 重开和 salt 读取都会撞上它
@@ -162,7 +170,7 @@ function showUnlockWindow(mode: 'unlock' | 'setPassword' = 'unlock'): void {
 
   unlockWindow = new BrowserWindow({
     width: 420,
-    height: 380,
+    height: 440,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -171,9 +179,9 @@ function showUnlockWindow(mode: 'unlock' | 'setPassword' = 'unlock'): void {
     autoHideMenuBar: true,
     title: '墨匣 Moxia - PocketAI — 解锁',
     backgroundColor: '#1e1e2e',
-    icon: path.join(app.getAppPath(), 'build/icon/icon-256.png'),
+    icon: appIconPath(),
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../preload/unlock.js'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true
@@ -224,7 +232,7 @@ function createMainWindow(): void {
     show: false,
     backgroundColor: '#1e1e2e',
     title: '墨匣 Moxia - PocketAI',
-    icon: path.join(app.getAppPath(), 'build/icon/icon-256.png'),
+    icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -445,7 +453,7 @@ async function boot(): Promise<void> {
       }
     }
   } catch (e) {
-    licenseLog.warn('加载失败:', String(e))
+    licenseLog.warn('加载失败:', errMsg(e))
   }
 
   // 阶段 5：创建主窗口

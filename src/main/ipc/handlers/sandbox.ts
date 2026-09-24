@@ -1,5 +1,4 @@
 // 沙箱（本地 HTML 小应用）IPC：列表/创建/读取/删除/元信息更新
-import { ipcMain } from 'electron'
 import { IPC } from '../../../shared/types'
 import {
   listSandboxFiles,
@@ -8,10 +7,13 @@ import {
   deleteSandboxFile,
   updateSandboxMeta
 } from '../../sandbox/sandbox-service'
+import { safeHandle, argsSchema } from '../safe-handle'
+import { sandboxCreateSchema, sandboxUpdateMetaSchema } from '../../../shared/schemas/sandbox'
+import { idSchema } from '../../../shared/schemas/providers'
 
 export function registerSandboxHandlers(): void {
-  ipcMain.handle(IPC.SANDBOX_LIST, () => listSandboxFiles())
-  ipcMain.handle(
+  safeHandle(IPC.SANDBOX_LIST, () => listSandboxFiles())
+  safeHandle(
     IPC.SANDBOX_CREATE,
     (_e, payload: { name?: unknown; html?: unknown; opts?: unknown }) => {
       // 字段类型校验；上限/清洗在 service 内做
@@ -27,14 +29,15 @@ export function registerSandboxHandlers(): void {
         cleanOpts.description = opts.description
       if (opts?.isApp !== undefined) cleanOpts.isApp = !!opts.isApp
       return createSandboxFile(payload.name, payload.html, cleanOpts)
-    }
+    },
+    argsSchema(sandboxCreateSchema)
   )
-  ipcMain.handle(IPC.SANDBOX_GET, (_e, id: string) => getSandboxFile(String(id ?? '')))
-  ipcMain.handle(IPC.SANDBOX_DELETE, (_e, id: string) => {
+  safeHandle(IPC.SANDBOX_GET, (_e, id: string) => getSandboxFile(String(id ?? '')), argsSchema(idSchema))
+  safeHandle(IPC.SANDBOX_DELETE, (_e, id: string) => {
     deleteSandboxFile(String(id ?? ''))
     return { ok: true }
-  })
-  ipcMain.handle(
+  }, argsSchema(idSchema))
+  safeHandle(
     IPC.SANDBOX_UPDATE_META,
     (_e, payload: { id?: unknown; patch?: unknown }) => {
       if (typeof payload?.id !== 'string' || typeof payload?.patch !== 'object' || payload.patch === null) {
@@ -49,6 +52,7 @@ export function registerSandboxHandlers(): void {
         patch.description = p.description
       if (p.isApp !== undefined) patch.isApp = !!p.isApp
       return updateSandboxMeta(payload.id, patch)
-    }
+    },
+    argsSchema(sandboxUpdateMetaSchema)
   )
 }

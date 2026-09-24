@@ -1,17 +1,24 @@
 // 笔记 IPC
-import { ipcMain } from 'electron'
 import { IPC } from '../../../shared/types'
 import type { Note } from '../../../shared/types'
 import { noteRepo } from '../../db/repositories/note.repo'
+import { safeHandle, argsSchema, z } from '../safe-handle'
+import {
+  notesCreateSchema,
+  notesUpdatePatchSchema,
+  notesCreateFromMessageSchema
+} from '../../../shared/schemas/notes'
+import { idSchema } from '../../../shared/schemas/providers'
 
 export function registerNoteHandlers(): void {
-  ipcMain.handle(IPC.NOTES_LIST, () => noteRepo.list())
-  ipcMain.handle(IPC.NOTES_GET, (_e, id: string) => noteRepo.get(id))
-  ipcMain.handle(
+  safeHandle(IPC.NOTES_LIST, () => noteRepo.list())
+  safeHandle(IPC.NOTES_GET, (_e, id: string) => noteRepo.get(id), argsSchema(idSchema))
+  safeHandle(
     IPC.NOTES_CREATE,
-    (_e, input: { title?: string; content?: string; tags?: string[] }) => noteRepo.create(input ?? {})
+    (_e, input: { title?: string; content?: string; tags?: string[] }) => noteRepo.create(input ?? {}),
+    argsSchema(notesCreateSchema)
   )
-  ipcMain.handle(
+  safeHandle(
     IPC.NOTES_UPDATE,
     (
       _e,
@@ -19,15 +26,17 @@ export function registerNoteHandlers(): void {
       patch: Partial<Pick<Note, 'title' | 'content' | 'pinned'>> & {
         tags?: string[]
       }
-    ) => noteRepo.update(id, patch ?? {})
+    ) => noteRepo.update(id, patch ?? {}),
+    argsSchema(idSchema, notesUpdatePatchSchema)
   )
-  ipcMain.handle(IPC.NOTES_DELETE, (_e, id: string) => {
+  safeHandle(IPC.NOTES_DELETE, (_e, id: string) => {
     noteRepo.delete(id)
     return { ok: true }
-  })
-  ipcMain.handle(IPC.NOTES_SEARCH, (_e, keyword: string) => noteRepo.search(keyword ?? ''))
-  ipcMain.handle(
+  }, argsSchema(idSchema))
+  safeHandle(IPC.NOTES_SEARCH, (_e, keyword: string) => noteRepo.search(keyword ?? ''), argsSchema(z.string()))
+  safeHandle(
     IPC.NOTES_CREATE_FROM_MESSAGE,
-    (_e, input: { title?: string; content: string }) => noteRepo.createFromMessage(input)
+    (_e, input: { title?: string; content: string }) => noteRepo.createFromMessage(input),
+    argsSchema(notesCreateFromMessageSchema)
   )
 }

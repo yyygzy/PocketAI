@@ -18,7 +18,7 @@ const RRF_K = 60
  * Reciprocal Rank Fusion：将多路检索结果的排名融合为单一分数
  * score = Σ 1 / (k + rank_i)
  */
-function rrfFuse(results: RetrievedChunk[][]): RetrievedChunk[] {
+export function rrfFuse(results: RetrievedChunk[][]): RetrievedChunk[] {
   const map = new Map<string, { chunk: RetrievedChunk; score: number }>()
 
   for (const list of results) {

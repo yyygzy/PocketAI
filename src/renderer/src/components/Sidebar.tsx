@@ -92,9 +92,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       style={{ width: collapsed ? 56 : 200 }}
     >
       {/* Logo */}
-      <div className="flex items-center gap-2 px-3 h-12 border-b border-[var(--color-border)]">
-        <img src={logoUrl} alt="墨匣" className="w-8 h-8 shrink-0" />
-        {!collapsed && <span className="font-bold text-sm">墨匣</span>}
+      <div className="flex items-center gap-2 px-3 h-14 border-b border-[var(--color-border)]">
+        <img src={logoUrl} alt="墨匣" className="w-10 h-10 shrink-0" />
+        {!collapsed && <span className="font-bold text-base">墨匣</span>}
       </div>
 
       {/* 模块列表（可拖拽排序） */}

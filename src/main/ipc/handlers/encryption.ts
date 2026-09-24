@@ -1,7 +1,7 @@
 // 加密 IPC：主密码设置/解锁/轮换/启停、恢复密钥、剪贴板敏感内容守卫
 import path from 'node:path'
 import fs from 'node:fs'
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { BrowserWindow, dialog, app } from 'electron'
 import { IPC } from '../../../shared/types'
 import { dbService } from '../../db/database'
 import { masterKeyManager } from '../../crypto/master-key'
@@ -14,12 +14,17 @@ import { lockService } from '../../lock/lock'
 import { denyNewWindows } from '../../net/external-links'
 import type { WebDAVConfig } from '../../backup/backup-service'
 import { createLogger } from '../../logger'
-import { safeHandle, errMsg } from '../safe-handle'
+import { safeHandle, errMsg, argsSchema, z } from '../safe-handle'
+import {
+  masterPasswordSchema,
+  recoveryCodeSchema,
+  recoverPayloadSchema
+} from '../../../shared/schemas/encryption'
 
 const log = createLogger('encryption')
 
 export function registerEncryptionHandlers(): void {
-  ipcMain.handle(IPC.ENCRYPTION_GET_STATUS, () => ({
+  safeHandle(IPC.ENCRYPTION_GET_STATUS, () => ({
     mode: masterKeyManager.getMode(),
     unlocked: masterKeyManager.hasKey(),
     // 用模式判断而非「是否有 key」：锁定清 key 后此字段必须仍为 true，
@@ -28,7 +33,7 @@ export function registerEncryptionHandlers(): void {
     fieldEncrypted: masterKeyManager.hasKey(),
     masterPasswordVerified: masterKeyManager.hasKey()
   }))
-  ipcMain.handle(IPC.ENCRYPTION_UNLOCK, (_e, password: string) => {
+  safeHandle(IPC.ENCRYPTION_UNLOCK, (_e, password: string) => {
     // Boot 阶段：交给 unlock coordinator
     if (unlockCoordinator.isWaiting()) {
       unlockCoordinator.submit({ password })
@@ -54,12 +59,12 @@ export function registerEncryptionHandlers(): void {
       dbService.close()
       return { ok: false, error: '密码错误' }
     }
-  })
-  ipcMain.handle(IPC.ENCRYPTION_SET_MASTER_PASSWORD, (_e, password: string) => {
+  }, argsSchema(masterPasswordSchema))
+  safeHandle(IPC.ENCRYPTION_SET_MASTER_PASSWORD, (_e, password: string) => {
     unlockCoordinator.submit({ setPassword: password })
     return { ok: true }
-  })
-  ipcMain.handle(IPC.ENCRYPTION_LOCK, () => {
+  }, argsSchema(masterPasswordSchema))
+  safeHandle(IPC.ENCRYPTION_LOCK, () => {
     // 先进隐私锁状态机（同步触发 onStateChange → 清密钥 + 关库），
     // 使 IPC 网关与主窗口遮罩在加密锁期间同样生效
     lockService.lock('manual')
@@ -67,12 +72,14 @@ export function registerEncryptionHandlers(): void {
     dbService.close()
     // 显示解锁窗口供用户重新解锁
     const unlockWin = new BrowserWindow({
-      width: 420, height: 380, resizable: false, minimizable: false,
+      width: 420, height: 440, resizable: false, minimizable: false,
       maximizable: false, show: false, frame: true, autoHideMenuBar: true,
       title: '墨匣 Moxia - PocketAI — 解锁', backgroundColor: '#1e1e2e',
-      icon: path.join(__dirname, '../../build/icon/icon-256.png'),
+      icon: process.platform === 'win32'
+        ? path.join(app.getAppPath(), 'build/icon/icon.ico')
+        : path.join(__dirname, '../../build/icon/icon-256.png'),
       webPreferences: {
-        preload: path.join(__dirname, '../preload/index.js'),
+        preload: path.join(__dirname, '../preload/unlock.js'),
         nodeIntegration: false, contextIsolation: true, sandbox: true
       }
     })
@@ -88,7 +95,7 @@ export function registerEncryptionHandlers(): void {
     }
     return { ok: true }
   })
-  ipcMain.handle(IPC.ENCRYPTION_CHANGE_PASSWORD, async (_e, oldPassword: string, newPassword: string) => {
+  safeHandle(IPC.ENCRYPTION_CHANGE_PASSWORD, async (_e, oldPassword: string, newPassword: string) => {
     // 密码轮换：用旧密码打开 → rekey → 更新 salt
     const salt = appConfigRepo.getMasterPasswordSalt()
     // config.json 中的恢复包与 DB 开闭无关，rekey 前记录
@@ -152,8 +159,8 @@ export function registerEncryptionHandlers(): void {
 
     log.info('密码轮换成功')
     return { ok: true, recoveryCode: newRecoveryCode }
-  })
-  ipcMain.handle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
+  }, argsSchema(masterPasswordSchema, masterPasswordSchema))
+  safeHandle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config
     const salt = appConfigRepo.getMasterPasswordSalt()
     // 保存当前密钥，验证失败时回滚
@@ -206,8 +213,8 @@ export function registerEncryptionHandlers(): void {
     // 已无主密码，恢复密钥失去意义（也避免残留包指向旧 masterKey）
     recoveryKeyManager.disableRecovery()
     return { ok: true }
-  })
-  ipcMain.handle(IPC.ENCRYPTION_ENABLE, async (_e, password: string) => {
+  }, argsSchema(masterPasswordSchema))
+  safeHandle(IPC.ENCRYPTION_ENABLE, async (_e, password: string) => {
     // 设置页启用加密（DB 当前是明文打开状态）
     if (masterKeyManager.isDbEncrypted()) {
       return { ok: false, error: '已经加密' }
@@ -242,10 +249,10 @@ export function registerEncryptionHandlers(): void {
     }
     restoreFieldCredentials(fieldSnapshot)
     return { ok: true }
-  })
+  }, argsSchema(masterPasswordSchema))
 
   // ---------- 恢复密钥 ----------
-  ipcMain.handle(IPC.ENCRYPTION_HAS_RECOVERY, () => recoveryKeyManager.hasRecovery())
+  safeHandle(IPC.ENCRYPTION_HAS_RECOVERY, () => recoveryKeyManager.hasRecovery())
 
   safeHandle(IPC.ENCRYPTION_GENERATE_RECOVERY, () => {
     // 仅 db 模式且已解锁：需要当前 masterKey 才能包裹
@@ -257,7 +264,7 @@ export function registerEncryptionHandlers(): void {
     return { ok: true as const, code }
   })
 
-  ipcMain.handle(IPC.ENCRYPTION_DISABLE_RECOVERY, () => {
+  safeHandle(IPC.ENCRYPTION_DISABLE_RECOVERY, () => {
     recoveryKeyManager.disableRecovery()
     return { ok: true }
   })
@@ -265,7 +272,7 @@ export function registerEncryptionHandlers(): void {
   // 忘记密码：恢复码还原 masterKey → 打开 DB → rekey 为新密码。
   // 成功后 DB 保持打开、manager 持有新 key；渲染端随后调用 unlockEncryption(newPassword)
   // 完成 boot 协调器提交或运行时关解锁窗 + lockService.unlock()。
-  ipcMain.handle(
+  safeHandle(
     IPC.ENCRYPTION_RECOVER,
     async (_e, payload: { code: string; newPassword: string } | undefined) => {
       const code = payload?.code?.trim() ?? ''
@@ -337,7 +344,8 @@ export function registerEncryptionHandlers(): void {
         log.error('恢复后 rekey 失败:', errMsg(e))
         return { ok: false, error: `重置失败：${errMsg(e)}` }
       }
-    }
+    },
+    argsSchema(recoverPayloadSchema)
   )
 
   // 恢复码另存为文本文件（设置页与重置成功页共用）
@@ -356,13 +364,13 @@ export function registerEncryptionHandlers(): void {
     if (canceled || !filePath) return { ok: true as const, canceled: true }
     fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 })
     return { ok: true as const, path: filePath }
-  })
+  }, argsSchema(recoveryCodeSchema))
 
   // ---------- 剪贴板守卫 ----------
   // 复制敏感内容（恢复码等）：TTL 到期自动清除；锁屏/应用隐藏时立即清除
-  ipcMain.handle(IPC.CLIPBOARD_COPY_SENSITIVE, (_e, text: string, ttlMs?: number) => {
+  safeHandle(IPC.CLIPBOARD_COPY_SENSITIVE, (_e, text: string, ttlMs?: number) => {
     if (typeof text !== 'string' || !text) return { ok: false, error: '无效内容' }
     clipboardGuard.copySensitive(text, typeof ttlMs === 'number' ? ttlMs : undefined)
     return { ok: true }
-  })
+  }, argsSchema(z.string(), z.number().optional()))
 }

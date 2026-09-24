@@ -1,5 +1,5 @@
 // 会话管理 IPC：增删改查 / 导出（JSON / Markdown / 加密包）/ 导入 / Fork
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { BrowserWindow, dialog } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import { IPC, type ConversationExportPayload } from '../../../shared/types'
@@ -8,24 +8,30 @@ import { conversationRepo } from '../../db/repositories/conversation.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
-import { safeHandle } from '../safe-handle'
+import { safeHandle, argsSchema, z } from '../safe-handle'
+import {
+  conversationExportPayloadSchema,
+  conversationListArgsSchema,
+  conversationCreateArgsSchema
+} from '../../../shared/schemas/conversations'
+import { idSchema } from '../../../shared/schemas/providers'
 
 export function registerConversationHandlers(): void {
-  ipcMain.handle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean) =>
-    conversationRepo.list(assistantId, isAgent)
-  )
-  ipcMain.handle(IPC.CONVERSATION_CREATE, (_e, assistantId?: string | null, title?: string) =>
-    conversationRepo.create({ assistantId, title })
-  )
-  ipcMain.handle(IPC.CONVERSATION_DELETE, (_e, id: string) => {
+  safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean) =>
+    conversationRepo.list(assistantId, isAgent),
+  conversationListArgsSchema)
+  safeHandle(IPC.CONVERSATION_CREATE, (_e, assistantId?: string | null, title?: string) =>
+    conversationRepo.create({ assistantId, title }),
+  conversationCreateArgsSchema)
+  safeHandle(IPC.CONVERSATION_DELETE, (_e, id: string) => {
     conversationRepo.delete(id)
     return { ok: true }
-  })
-  ipcMain.handle(IPC.CONVERSATION_RENAME, (_e, id: string, title: string) => {
+  }, argsSchema(idSchema))
+  safeHandle(IPC.CONVERSATION_RENAME, (_e, id: string, title: string) => {
     conversationRepo.rename(id, title)
     return { ok: true }
-  })
-  ipcMain.handle(IPC.CONVERSATION_EXPORT, (_e, id: string) => {
+  }, argsSchema(idSchema, z.string()))
+  safeHandle(IPC.CONVERSATION_EXPORT, (_e, id: string) => {
     const conv = conversationRepo.get(id)
     if (!conv) return { ok: false, error: '会话不存在' }
     const messages = messageRepo.listByConversation(id)
@@ -40,7 +46,7 @@ export function registerConversationHandlers(): void {
         assistant
       }
     }
-  })
+  }, argsSchema(idSchema))
   safeHandle(IPC.CONVERSATION_EXPORT_MD, async (e, id: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: '窗口不可用' }
@@ -61,7 +67,7 @@ export function registerConversationHandlers(): void {
     const md = renderConversationToMarkdown(conv, messages)
     fs.writeFileSync(filePath, md, 'utf8')
     return { ok: true, path: filePath }
-  })
+  }, argsSchema(idSchema))
   safeHandle(IPC.CONVERSATION_EXPORT_ENCRYPTED, async (e, id: string, password: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: '窗口不可用' }
@@ -91,7 +97,7 @@ export function registerConversationHandlers(): void {
 
     fs.writeFileSync(filePath, encrypted)
     return { ok: true, path: filePath }
-  })
+  }, argsSchema(idSchema, z.string().min(1)))
   safeHandle(IPC.CONVERSATION_IMPORT_ENCRYPTED, async (e, password: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: '窗口不可用' }
@@ -131,8 +137,8 @@ export function registerConversationHandlers(): void {
       count++
     }
     return { ok: true, conversationId: newConv.id, messageCount: count }
-  })
-  ipcMain.handle(IPC.CONVERSATION_IMPORT, (_e, payload: ConversationExportPayload) => {
+  }, argsSchema(z.string().min(1)))
+  safeHandle(IPC.CONVERSATION_IMPORT, (_e, payload: ConversationExportPayload) => {
     if (!payload?.conversation || !Array.isArray(payload.messages)) {
       return { ok: false, error: '无效的导出格式' }
     }
@@ -171,11 +177,11 @@ export function registerConversationHandlers(): void {
     })
     tx(payload.messages)
     return { ok: true, conversationId: newConv.id, messageCount: payload.messages.length }
-  })
+  }, argsSchema(conversationExportPayloadSchema))
   safeHandle(IPC.CONVERSATION_FORK, (_e, conversationId: string, messageId: string) => ({
     ok: true as const,
     conversation: conversationRepo.fork(conversationId, messageId)
-  }))
+  }), argsSchema(idSchema, idSchema))
 }
 
 // ==========================================================================

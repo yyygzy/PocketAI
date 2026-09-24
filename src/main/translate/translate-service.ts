@@ -15,6 +15,7 @@ import type {
   TranslateRequestPayload,
   TranslateStyle
 } from '../../shared/types'
+import { translateRequestSchema } from '../../shared/schemas/translate'
 
 /** 翻译结果（IPC 直接返回给渲染端） */
 export type TranslateResult =
@@ -97,6 +98,7 @@ export async function runTranslate(
   payload: TranslateRequestPayload,
   emit: TranslateChunkEmitter
 ): Promise<TranslateResult> {
+  translateRequestSchema.parse(payload)
   const controller = new AbortController()
   controllers.set(payload.requestId, controller)
 

@@ -358,6 +358,7 @@ export const ChatView: React.FC<Props> = ({
                 const turnKey = turn.user?.id ?? `turn-${ti}`
                 const activeIdx = activeBatchIndexOf(turn, turnKey)
                 const activeBatch = turn.batches[activeIdx] ?? []
+                const msg = activeBatch[0]! // length === 1 分支内必非空
                 const label = activeBatch
                   .map((r) => r.model)
                   .filter(Boolean)
@@ -405,12 +406,12 @@ export const ChatView: React.FC<Props> = ({
                     ) : activeBatch.length === 1 ? (
                       <MessageBubble
                         role="assistant"
-                        content={activeBatch[0]!.content}
-                        model={activeBatch[0]!.model}
-                        streaming={activeBatch[0]!.status === 'streaming'}
-                        messageId={activeBatch[0]!.id}
-                        sources={activeBatch[0]!.sources ?? undefined}
-                        selected={selectedIds.has(activeBatch[0]!.id)}
+                        content={msg.content}
+                        model={msg.model}
+                        streaming={msg.status === 'streaming'}
+                        messageId={msg.id}
+                        sources={msg.sources ?? undefined}
+                        selected={selectedIds.has(msg.id)}
                         onToggleSelect={toggleSelect}
                         onDelete={handleDeleteOne}
                         onRegenerate={onRegenerate}

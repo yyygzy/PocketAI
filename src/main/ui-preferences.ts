@@ -9,6 +9,7 @@
 import { BrowserWindow } from 'electron'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import type { UiPreferences } from '../shared/types'
+import { uiPrefsPatchSchema } from '../shared/schemas/preferences'
 
 const K_OPACITY = 'ui.opacity'
 const K_CUSTOM_CSS = 'ui.custom_css'
@@ -40,6 +41,7 @@ export function getUiPreferences(): UiPreferences {
 
 /** 保存偏好（部分更新），并立即把透明度应用到主窗口 */
 export function setUiPreferences(patch: Partial<UiPreferences>): UiPreferences {
+  uiPrefsPatchSchema.parse(patch)
   if (patch.opacity !== undefined) {
     appConfigRepo.set(K_OPACITY, String(clampOpacity(patch.opacity)))
   }

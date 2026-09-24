@@ -8,6 +8,7 @@ import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
 import type { KbDocument, KnowledgeBase } from '../../shared/types'
 import { errMsg } from '../error'
+import { z } from 'zod'
 
 export class IngestionService {
   /**
@@ -45,6 +46,9 @@ export class IngestionService {
 
   /** 直接注入纯文本（手工录入），跳过文件解析 */
   async ingestText(kbId: string, docId: string, text: string, _title: string): Promise<KbDocument> {
+    z.string().min(1).parse(kbId)
+    z.string().min(1).parse(docId)
+    z.string().min(1, '文本内容不能为空').parse(text)
     const kb = kbRepo.get(kbId)
     if (!kb) throw new Error('知识库不存在')
     if (!kb.embeddingProviderId || !kb.embeddingModel) {
