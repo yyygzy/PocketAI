@@ -35,7 +35,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.agent.title')} subtitle={t('workspace.agent.subtitle')} />
-        <div className="h-[calc(100%-3rem)]">
+        <div className="h-[calc(100%-2.25rem)]">
           <Suspense fallback={<ModuleFallback />}>
             <AgentModule />
           </Suspense>
@@ -47,7 +47,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.settings.title')} subtitle={t('workspace.settings.subtitle')} />
-        <div className="h-[calc(100%-3rem)]">
+        <div className="h-[calc(100%-2.25rem)]">
           <Suspense fallback={<ModuleFallback />}>
             <SettingsModule />
           </Suspense>
@@ -69,7 +69,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.skills.title')} subtitle={t('workspace.skills.subtitle')} />
-        <div className="h-[calc(100%-3rem)]">
+        <div className="h-[calc(100%-2.25rem)]">
           <Suspense fallback={<ModuleFallback />}>
             <SkillModule />
           </Suspense>
@@ -81,7 +81,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.kb.title')} subtitle={t('workspace.kb.subtitle')} />
-        <div className="h-[calc(100%-3rem)]">
+        <div className="h-[calc(100%-2.25rem)]">
           <Suspense fallback={<ModuleFallback />}>
             <KnowledgeModule />
           </Suspense>
@@ -94,7 +94,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.files.title')} subtitle={t('workspace.files.subtitle')} />
-        <div className="h-[calc(100%-3rem)]">
+        <div className="h-[calc(100%-2.25rem)]">
           <Suspense fallback={<ModuleFallback />}>
             <FilesModule />
           </Suspense>
@@ -107,7 +107,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.notes.title')} subtitle={t('workspace.notes.subtitle')} />
-        <div className="h-[calc(100%-3rem)] rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg)]">
+        <div className="h-[calc(100%-2.25rem)] rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg)]">
           <Suspense fallback={<ModuleFallback />}>
             <NotesModule />
           </Suspense>
@@ -120,7 +120,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.translate.title')} subtitle={t('workspace.translate.subtitle')} />
-        <div className="h-[calc(100%-3rem)] rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg)]">
+        <div className="h-[calc(100%-2.25rem)] rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg)]">
           <Suspense fallback={<ModuleFallback />}>
             <TranslateModule />
           </Suspense>
@@ -159,8 +159,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
 }
 
 const Header: React.FC<{ title: string; subtitle?: string }> = ({ title, subtitle }) => (
-  <div className="mb-4">
-    <h1 className="text-xl font-bold">{title}</h1>
-    {subtitle && <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
+  <div className="mb-3 flex items-baseline gap-2">
+    <h1 className="text-lg font-bold">{title}</h1>
+    {subtitle && <p className="text-xs text-[var(--color-text-muted)]">{subtitle}</p>}
   </div>
 )

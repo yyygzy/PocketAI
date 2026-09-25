@@ -1,5 +1,5 @@
-// Agent 对话面板：左侧会话栏 + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
-import React from 'react'
+// Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
+import React, { useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
@@ -17,34 +17,50 @@ export const AgentPanel: React.FC = () => {
   const chat = useAgentChat(providers)
   const tools = useAgentToolConfigs()
   const att = useAttachments()
+  const [railOpen, setRailOpen] = useState(true)
 
   return (
     <div className="flex gap-3 h-full">
-      <SessionRail
-        assistants={assistants}
-        assistantId={chat.assistantId}
-        onAssistantChange={chat.setAssistantId}
-        conversations={chat.conversations}
-        conversationId={chat.conversationId}
-        onSelect={chat.selectConversation}
-        onNew={() => void chat.newConversation()}
-        onDelete={(id) => void chat.deleteConversation(id)}
-      />
+      {railOpen && (
+        <SessionRail
+          assistants={assistants}
+          assistantId={chat.assistantId}
+          onAssistantChange={chat.setAssistantId}
+          conversations={chat.conversations}
+          conversationId={chat.conversationId}
+          onSelect={chat.selectConversation}
+          onNew={() => void chat.newConversation()}
+          onDelete={(id) => void chat.deleteConversation(id)}
+          onRename={(id, title) => void chat.renameConversation(id, title)}
+        />
+      )}
 
       {/* 右：对话区 */}
       <div className="flex-1 flex flex-col min-w-0">
-        <AgentModelBar
-          providers={providers}
-          providerId={chat.providerId}
-          model={chat.model}
-          onProviderChange={chat.changeProvider}
-          onModelChange={chat.setModel}
-          selectedProvider={chat.selectedProvider}
-          fetchingModels={fetchingModels}
-          onFetchModels={() => void fetchModels(chat.providerId)}
-          workspaceDir={tools.workspaceDir}
-          onPickWorkspace={() => void tools.pickWorkspace()}
-        />
+        <div className="flex items-start gap-1">
+          <button
+            onClick={() => setRailOpen((v) => !v)}
+            className="shrink-0 mt-0.5 w-5 h-6 flex items-center justify-center text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] rounded"
+            title={t('agent.toggleRail')}
+            aria-label={t('agent.toggleRail')}
+          >
+            {railOpen ? '◀' : '▶'}
+          </button>
+          <div className="flex-1 min-w-0">
+            <AgentModelBar
+              providers={providers}
+              providerId={chat.providerId}
+              model={chat.model}
+              onProviderChange={chat.changeProvider}
+              onModelChange={chat.setModel}
+              selectedProvider={chat.selectedProvider}
+              fetchingModels={fetchingModels}
+              onFetchModels={() => void fetchModels(chat.providerId)}
+              workspaceDir={tools.workspaceDir}
+              onPickWorkspace={() => void tools.pickWorkspace()}
+            />
+          </div>
+        </div>
 
         <AgentToolBars tools={tools} />
 
@@ -54,6 +70,7 @@ export const AgentPanel: React.FC = () => {
           running={chat.running}
           conversationId={chat.conversationId}
           emptyHint={t('agent.emptyHint')}
+          onDeleteMessage={chat.running ? undefined : (id) => void chat.deleteMessage(id)}
         />
 
         {/* 断点恢复：上次运行中止/出错时显示「继续执行」入口 */}

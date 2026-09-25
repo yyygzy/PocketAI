@@ -574,6 +574,14 @@ class AgentEngine {
       status: 'done',
       attachments: payload.attachments
     })
+    // 回传用户消息 DB id，渲染端本地占位卡（u_xxx）据此获得可删除的 dbId
+    emit(IPC.AGENT_STEP_EVENT, {
+      requestId,
+      conversationId,
+      stepIndex: 0,
+      type: 'user',
+      messageId: userMsg.id
+    })
 
     // 会话标题与状态
     const conv = conversationRepo.get(conversationId)

@@ -15,6 +15,7 @@ export interface AgentMessage {
   isFinal?: boolean
   isError?: boolean
   attachments?: ChatAttachment[]
+  dbId?: string // 对应 DB message.id（用于删除单条消息；live 占位卡需等主进程回传）
 }
 
 // ---------- 附件读取 ----------
@@ -60,14 +61,15 @@ export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
   const out: AgentMessage[] = []
   for (const m of dbMsgs) {
     if (m.role === 'user') {
-      out.push({ id: m.id, role: 'user', text: m.content, attachments: m.attachments })
+      out.push({ id: m.id, role: 'user', text: m.content, attachments: m.attachments, dbId: m.id })
     } else if (m.role === 'assistant') {
       // 历史加载：streaming 残留（中断/出错未清理）视为终止，避免永远显示「思考中…」
       out.push({
         id: m.id,
         role: 'assistant',
         text: m.content || (m.status === 'streaming' ? '（中断）' : ''),
-        isFinal: true
+        isFinal: true,
+        dbId: m.id
       })
     } else if (m.role === 'tool') {
       try {
@@ -82,7 +84,8 @@ export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
               id: tr.toolCallId,
               type: 'function',
               function: { name: tr.name, arguments: tr.arguments }
-            }
+            },
+            dbId: m.id
           })
         }
         out.push({
@@ -90,10 +93,11 @@ export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
           role: 'tool',
           text: tr.content,
           toolResult: tr,
-          isError: tr.isError
+          isError: tr.isError,
+          dbId: m.id
         })
       } catch {
-        out.push({ id: m.id, role: 'tool', text: m.content })
+        out.push({ id: m.id, role: 'tool', text: m.content, dbId: m.id })
       }
     }
   }

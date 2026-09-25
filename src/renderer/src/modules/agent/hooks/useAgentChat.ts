@@ -1,5 +1,5 @@
 // Agent 对话核心：助手/会话/消息流（reducer）/运行状态/Provider·模型选择/发送与中止
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type {
   AgentDoneEvent,
   AgentErrorEvent,
@@ -93,6 +93,24 @@ export function useAgentChat(providers: ProviderRecord[]) {
     setConversations((prev) => prev.filter((c) => c.id !== id))
     if (conversationId === id) setConversationId(null)
   }
+
+  // 重命名会话（本地同步更新，无需整表刷新）
+  const renameConversation = async (id: string, title: string) => {
+    await window.pocketai.renameConversation(id, title)
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)))
+  }
+
+  // 删除单条消息：本地先行移除（tool call/result 配对卡由 reducer 一并清理），有 dbId 再删 DB
+  // 用 ref 读 messages 保持 callback 引用稳定（AgentMessageCard 是 memo，引用变化会使全部卡片失去 memo 优化）
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+  const deleteMessage = useCallback(async (id: string) => {
+    const target = messagesRef.current.find((m) => m.id === id)
+    dispatch({ type: 'delete', id })
+    if (target?.dbId) {
+      await window.pocketai.deleteMessage(target.dbId).catch(reportIpcError('agent.deleteMessage'))
+    }
+  }, [])
 
   // 点击历史会话 → 自动回填该会话最后使用的 Provider/模型
   const selectConversation = (id: string) => {
@@ -192,6 +210,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
     canSend,
     newConversation,
     deleteConversation,
+    renameConversation,
+    deleteMessage,
     selectConversation,
     changeProvider,
     send,

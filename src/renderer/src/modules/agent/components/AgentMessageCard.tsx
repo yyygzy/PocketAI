@@ -8,9 +8,30 @@ import { HtmlBlockActions } from './HtmlBlockActions'
 
 const cardBtnClass = 'text-[10px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors'
 
-const AgentMessageCardImpl: React.FC<{ m: AgentMessage }> = ({ m }) => {
+/** 卡片操作区：复制 + 删除（删除仅非流式时由父级传入） */
+const CardActions: React.FC<{ copyText: string; onDelete?: () => void }> = ({ copyText, onDelete }) => {
+  const { t } = useI18n()
+  return (
+    <div className="flex justify-end gap-1 mt-1">
+      <CopyButton text={copyText} className={cardBtnClass} />
+      {onDelete && (
+        <button
+          onClick={onDelete}
+          className={`${cardBtnClass} hover:text-[var(--color-danger)]`}
+          title={t('common.delete')}
+          aria-label={t('common.delete')}
+        >
+          {t('common.delete')}
+        </button>
+      )}
+    </div>
+  )
+}
+
+const AgentMessageCardImpl: React.FC<{ m: AgentMessage; onDelete?: (id: string) => void }> = ({ m, onDelete }) => {
   const { t } = useI18n()
   const [showReasoning, setShowReasoning] = useState(false)
+  const del = onDelete ? () => onDelete(m.id) : undefined
 
   if (m.role === 'user') {
     return (
@@ -29,9 +50,7 @@ const AgentMessageCardImpl: React.FC<{ m: AgentMessage }> = ({ m }) => {
               ))}
             </div>
           )}
-          <div className="flex justify-end mt-1">
-            <CopyButton text={m.text} className={cardBtnClass} />
-          </div>
+          <CardActions copyText={m.text} onDelete={del} />
         </div>
       </div>
     )
@@ -44,9 +63,7 @@ const AgentMessageCardImpl: React.FC<{ m: AgentMessage }> = ({ m }) => {
         <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all">
           {m.toolCall.function.arguments}
         </pre>
-        <div className="flex justify-end mt-1">
-          <CopyButton text={m.toolCall.function.arguments} className={cardBtnClass} />
-        </div>
+        <CardActions copyText={m.toolCall.function.arguments} onDelete={del} />
       </div>
     )
   }
@@ -60,9 +77,7 @@ const AgentMessageCardImpl: React.FC<{ m: AgentMessage }> = ({ m }) => {
         <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
           {m.toolResult.content}
         </pre>
-        <div className="flex justify-end mt-1">
-          <CopyButton text={m.toolResult.content} className={cardBtnClass} />
-        </div>
+        <CardActions copyText={m.toolResult.content} onDelete={del} />
       </div>
     )
   }
@@ -118,11 +133,7 @@ const AgentMessageCardImpl: React.FC<{ m: AgentMessage }> = ({ m }) => {
       {m.isFinal && <div className="text-[10px] text-[var(--color-accent)] mb-1">{t('agent.finalAnswer')}</div>}
       <div className={`whitespace-pre-wrap ${m.isError ? 'text-[var(--color-danger)]' : ''}`}>{m.text || (m.isFinal ? '' : t('agent.thinking'))}</div>
       {htmlBlock && <HtmlBlockActions htmlBlock={htmlBlock} />}
-      {m.text && (
-        <div className="flex justify-end mt-1">
-          <CopyButton text={m.text} className={cardBtnClass} />
-        </div>
-      )}
+      {m.text && <CardActions copyText={m.text} onDelete={del} />}
     </div>
   )
 }

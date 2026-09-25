@@ -6,6 +6,7 @@ export type MessagesAction =
   | { type: 'load'; messages: AgentMessage[] }
   | { type: 'clear' }
   | { type: 'append'; message: AgentMessage }
+  | { type: 'delete'; id: string }
   | { type: 'step'; event: AgentStepEvent; unknownErrorText: string }
   | { type: 'chunk'; messageId: string; delta: string; reasoning?: boolean }
 
@@ -17,8 +18,31 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
       return []
     case 'append':
       return [...prev, action.message]
+    case 'delete': {
+      // 删除单条消息：tool_call/tool_result 同源卡片按 dbId 或 toolCallId 配对一起删
+      const target = prev.find((m) => m.id === action.id)
+      if (!target) return prev
+      const dbId = target.dbId
+      const tcId = target.toolResult?.toolCallId ?? target.toolCall?.id
+      return prev.filter((m) => {
+        if (m.id === action.id) return false
+        if (dbId && m.dbId === dbId) return false
+        if (tcId && (m.toolCall?.id === tcId || m.toolResult?.toolCallId === tcId)) return false
+        return true
+      })
+    }
     case 'step': {
       const e = action.event
+      // 用户消息已持久化：回填最近一条本地占位用户卡的 dbId（供删除单条消息）
+      if (e.type === 'user' && e.messageId) {
+        for (let i = prev.length - 1; i >= 0; i--) {
+          const m = prev[i]!
+          if (m.role === 'user' && !m.dbId) {
+            return prev.map((x, j) => (j === i ? { ...x, dbId: e.messageId } : x))
+          }
+        }
+        return prev
+      }
       if (e.type === 'thought' || e.type === 'final') {
         const idx = prev.findIndex((m) => m.id === e.messageId)
         if (idx !== -1) {
@@ -28,7 +52,8 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
           const updated: AgentMessage = {
             ...cur,
             text: e.text ?? cur.text,
-            isFinal: e.type === 'final' || cur.isFinal
+            isFinal: e.type === 'final' || cur.isFinal,
+            dbId: e.messageId ?? cur.dbId
           }
           return prev.map((m, i) => (i === idx ? updated : m))
         }
@@ -38,7 +63,8 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
             role: 'assistant',
             text: e.text ?? '',
             stepIndex: e.stepIndex,
-            isFinal: e.type === 'final'
+            isFinal: e.type === 'final',
+            dbId: e.messageId
           }]
         }
         return prev
@@ -59,7 +85,8 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
           text: e.toolResult?.content ?? '',
           toolResult: e.toolResult,
           isError: e.toolResult?.isError,
-          stepIndex: e.stepIndex
+          stepIndex: e.stepIndex,
+          dbId: e.messageId
         }]
       }
       if (e.type === 'todo' && e.todos) {
@@ -87,7 +114,8 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
         role: 'assistant',
         text: `⚠️ ${e.error ?? action.unknownErrorText}`,
         isError: true,
-        stepIndex: e.stepIndex
+        stepIndex: e.stepIndex,
+        dbId: e.messageId
       }]
     }
     case 'chunk': {

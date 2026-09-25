@@ -30,7 +30,7 @@ export const AgentModelBar: React.FC<Props> = ({
 }) => {
   const { t } = useI18n()
   return (
-    <div className="flex items-center gap-2 mb-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-3 py-2">
+    <div className="flex items-center gap-2 mb-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-2 py-1">
       <span className="text-xs font-semibold text-[var(--color-text-muted)] shrink-0">
         {t('agent.modelConfig')}
       </span>

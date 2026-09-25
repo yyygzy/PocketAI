@@ -15,13 +15,16 @@ export interface VirtualMessageListProps {
   conversationId: string | null
   /** 空列表时渲染的提示节点 */
   emptyHint: ReactNode
+  /** 删除单条消息（非流式时由父级传入） */
+  onDeleteMessage?: (id: string) => void
 }
 
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   messages,
   running,
   conversationId,
-  emptyHint
+  emptyHint,
+  onDeleteMessage
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新）
@@ -32,6 +35,8 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollRef.current,
+    // 以消息 id 为 key：删除中间消息后高度缓存跟随消息而非索引，避免卡片位置错乱/重叠
+    getItemKey: (index) => messages[index]?.id ?? index,
     estimateSize: () => 60,
     overscan: 6,
     measureElement: (el) => {
@@ -104,7 +109,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
                 paddingBottom: 8
               }}
             >
-              <AgentMessageCard m={m} />
+              <AgentMessageCard m={m} onDelete={onDeleteMessage} />
             </div>
           )
         })}
