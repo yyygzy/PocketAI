@@ -551,7 +551,7 @@ if (!gotLock) {
     })
     boot().catch((err) => {
       log.error('启动失败:', err)
-      dialog.showErrorBox('启动失败', String(err))
+      dialog.showErrorBox('启动失败', errMsg(err))
       app.quit()
     })
     log.info('app ready, boot() 已发起')

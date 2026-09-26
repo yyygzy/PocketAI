@@ -44,6 +44,7 @@ export const PopupApp: React.FC = () => {
   const requestIdRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const selectedProvider = useMemo(
     () => providers.find((p) => p.id === providerId) ?? null,
@@ -55,7 +56,10 @@ export const PopupApp: React.FC = () => {
     if (!p) return
     setMode(p.mode)
     setSelection(p.mode === 'selection' ? p.text ?? '' : '')
-    if (p.mode === 'quick') setTimeout(() => taRef.current?.focus(), 50)
+    if (p.mode === 'quick') {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
+      focusTimerRef.current = setTimeout(() => { taRef.current?.focus() }, 50)
+    }
   }, [])
 
   // ─── 初始化：Provider / 助手 / payload ────────────────────────────
@@ -137,7 +141,10 @@ export const PopupApp: React.FC = () => {
         return next
       })
     })
-    return () => { offChunk(); offDone(); offError() }
+    return () => {
+      offChunk(); offDone(); offError()
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
+    }
   }, [])
 
   useEffect(() => {
