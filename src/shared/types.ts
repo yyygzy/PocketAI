@@ -352,6 +352,13 @@ export interface AgentRunStats {
   stepCount: number
 }
 
+/** 会话级累计统计（跨该会话全部运行聚合，刷新后仍可恢复） */
+export interface AgentSessionStats {
+  runCount: number          // 运行次数 = DISTINCT request_id
+  totalDurationMs: number   // 全部运行耗时之和
+  totalTokens: number       // 全部运行 token 之和
+}
+
 /** Agent 单步执行轨迹（agent_traces 表一行，渲染层分步明细用） */
 export interface AgentTraceRecord {
   id: string
@@ -1280,6 +1287,7 @@ export const IPC = {
   AGENT_PICK_ICS_FILE: 'agent:pick-ics-file',
   AGENT_GET_LATEST_RUN_STATS: 'agent:get-latest-run-stats', // 会话最近一次运行统计（trace 聚合，只读）
   AGENT_GET_LATEST_RUN_TRACES: 'agent:get-latest-run-traces', // 会话最近一次运行分步明细（只读）
+  AGENT_GET_SESSION_STATS: 'agent:get-session-stats', // 会话级累计统计（跨全部运行聚合，只读）
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

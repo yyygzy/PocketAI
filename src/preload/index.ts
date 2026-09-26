@@ -32,6 +32,7 @@ import type {
   AgentDoneEvent,
   AgentErrorEvent,
   AgentRunStats,
+  AgentSessionStats,
   AgentTraceRecord,
   ToolSchema,
   LicenseStatus,
@@ -406,6 +407,9 @@ const api = {
   /** 会话最近一次 Agent 运行分步明细（step_index 升序）；无记录返回空数组 */
   getLatestRunTraces: (conversationId: string): Promise<AgentTraceRecord[]> =>
     ipcRenderer.invoke(IPC.AGENT_GET_LATEST_RUN_TRACES, conversationId),
+  /** 会话级累计统计（跨全部运行：运行次数/总耗时/总 token）；无记录返回 null */
+  getSessionStats: (conversationId: string): Promise<AgentSessionStats | null> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_SESSION_STATS, conversationId),
 
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>

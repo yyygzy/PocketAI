@@ -4,6 +4,7 @@ import type {
   AgentDoneEvent,
   AgentErrorEvent,
   AgentRunStats,
+  AgentSessionStats,
   AgentStepEvent,
   AgentTraceRecord,
   ChatAttachment,
@@ -24,6 +25,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const [running, setRunning] = useState(false)
   const [interrupted, setInterrupted] = useState(false) // 上次运行被中止/出错（可断点恢复）
   const [runStats, setRunStats] = useState<AgentRunStats | null>(null) // 当前会话最近一次运行统计（trace 持久化，切回/刷新后恢复）
+  const [sessionStats, setSessionStats] = useState<AgentSessionStats | null>(null) // 当前会话累计统计（跨全部运行）
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
   const [currentStep, setCurrentStep] = useState(0) // 当前运行正在执行的步数（running 时显示，结束后丢弃）
@@ -52,6 +54,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
   useEffect(() => {
     setInterrupted(false)
     setRunStats(null)
+    setSessionStats(null)
     setLatestTraces(null)
     setTracesLoading(false)
     if (!conversationId) {
@@ -66,6 +69,10 @@ export function useAgentChat(providers: ProviderRecord[]) {
     void window.pocketai.getLatestRunStats(conversationId).then((stats) => {
       if (conversationIdRef.current === conversationId) setRunStats(stats)
     }).catch(reportIpcError('agent.getLatestRunStats'))
+    // 加载会话累计统计（跨全部运行聚合）
+    void window.pocketai.getSessionStats(conversationId).then((stats) => {
+      if (conversationIdRef.current === conversationId) setSessionStats(stats)
+    }).catch(reportIpcError('agent.getSessionStats'))
   }, [conversationId])
 
   // 订阅 Agent 流式事件（仅处理当前 requestId 的事件）
@@ -91,6 +98,10 @@ export function useAgentChat(providers: ProviderRecord[]) {
         // 仅在事件仍归属当前会话时展示统计（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setRunStats(e.traceStats ?? null)
+          // 运行结束后刷新会话累计统计（本次运行已入库）
+          void window.pocketai.getSessionStats(e.conversationId).then((stats) => {
+            if (conversationIdRef.current === e.conversationId) setSessionStats(stats)
+          }).catch(reportIpcError('agent.getSessionStats'))
         }
       })
     )
@@ -279,6 +290,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     running,
     interrupted,
     runStats,
+    sessionStats,
     latestTraces,
     tracesLoading,
     loadLatestTraces,

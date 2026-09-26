@@ -115,3 +115,32 @@ describe('agentTraceRepo.latestTracesByConversation', () => {
     expect(traces[0]).toMatchObject({ requestId: 'new', stepType: 'degrade' })
   })
 })
+
+describe('agentTraceRepo.sessionStatsByConversation', () => {
+  it('会话无 trace → null', () => {
+    expect(agentTraceRepo.sessionStatsByConversation('empty')).toBeNull()
+  })
+
+  it('跨多次运行累计：runCount 去重、耗时与 token 求和', () => {
+    agentTraceRepo.insert({ requestId: 'r1', conversationId: 'c1', stepIndex: 0, stepType: 'llm', durationMs: 100, tokenUsage: 10, status: 'success' })
+    agentTraceRepo.insert({ requestId: 'r1', conversationId: 'c1', stepIndex: 1, stepType: 'tools', durationMs: 50, status: 'success' })
+    agentTraceRepo.insert({ requestId: 'r2', conversationId: 'c1', stepIndex: 0, stepType: 'llm', durationMs: 200, tokenUsage: 30, status: 'success' })
+
+    expect(agentTraceRepo.sessionStatsByConversation('c1')).toEqual({
+      runCount: 2,
+      totalDurationMs: 350,
+      totalTokens: 40
+    })
+  })
+
+  it('不混入其他会话的 trace', () => {
+    agentTraceRepo.insert({ requestId: 'r1', conversationId: 'c1', stepIndex: 0, stepType: 'llm', durationMs: 100, tokenUsage: 10, status: 'success' })
+    agentTraceRepo.insert({ requestId: 'r2', conversationId: 'c2', stepIndex: 0, stepType: 'llm', durationMs: 9999, tokenUsage: 999, status: 'success' })
+
+    expect(agentTraceRepo.sessionStatsByConversation('c1')).toEqual({
+      runCount: 1,
+      totalDurationMs: 100,
+      totalTokens: 10
+    })
+  })
+})

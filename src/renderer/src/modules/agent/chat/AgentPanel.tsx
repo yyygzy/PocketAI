@@ -184,7 +184,17 @@ export const AgentPanel: React.FC = () => {
             </button>
 
             {statsExpanded && (
-              <div className="mt-1 ml-4 max-h-56 overflow-y-auto border border-[var(--color-border)] rounded p-2 space-y-1 bg-[var(--color-bg-secondary)]">
+              <div className="mt-1 ml-4 max-h-72 overflow-y-auto border border-[var(--color-border)] rounded p-2 space-y-1 bg-[var(--color-bg-secondary)]">
+                {/* 会话累计统计（跨该会话全部运行） */}
+                {chat.sessionStats && (
+                  <div className="text-xs text-[var(--color-text-muted)] pb-1 border-b border-[var(--color-border)]">
+                    {t('agent.sessionStats', {
+                      runs: chat.sessionStats.runCount,
+                      duration: formatRunDuration(chat.sessionStats.totalDurationMs),
+                      tokens: chat.sessionStats.totalTokens.toLocaleString('en-US')
+                    })}
+                  </div>
+                )}
                 {chat.tracesLoading && (
                   <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
                 )}

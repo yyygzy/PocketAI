@@ -112,6 +112,11 @@ export function registerAgentHandlers(): void {
     agentTraceRepo.latestTracesByConversation(conversationId),
   argsSchema(idSchema))
 
+  // 会话级累计统计（跨该会话全部运行：运行次数/总耗时/总 token）
+  safeHandle(IPC.AGENT_GET_SESSION_STATS, (_e, conversationId: string) =>
+    agentTraceRepo.sessionStatsByConversation(conversationId),
+  argsSchema(idSchema))
+
   // 渲染端对工具审批弹窗的应答
   safeHandle(
     IPC.AGENT_TOOL_APPROVE_RESPONSE,

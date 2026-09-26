@@ -400,6 +400,7 @@ export const ko: Record<string, string> = {
   'agent.traceType.replan': '재계획',
   'agent.traceEmpty': '단계 상세 없음',
   'agent.runningStep': '{n}단계 실행 중…',
+  'agent.sessionStats': '세션 합계: {runs}회 실행 · 소요 시간 {duration} · {tokens}토큰',
   'agent.noModelsHint': '이 공급자의 모델 목록이 아직 조회되지 않았습니다',
   'agent.fetchModels': '모델 조회',
   'agent.fetching': '조회 중…',

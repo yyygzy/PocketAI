@@ -427,6 +427,7 @@ export const zh: Record<string, string> = {
   'agent.traceType.replan': '重新规划',
   'agent.traceEmpty': '暂无分步明细',
   'agent.runningStep': '正在执行 第 {n} 步…',
+  'agent.sessionStats': '会话累计：{runs} 次运行 · 耗时 {duration} · {tokens} tokens',
   'agent.noModelsHint': '该 Provider 尚未拉取模型列表',
   'agent.fetchModels': '拉取模型',
   'agent.fetching': '拉取中…',

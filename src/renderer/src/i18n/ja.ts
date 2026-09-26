@@ -400,6 +400,7 @@ export const ja: Record<string, string> = {
   'agent.traceType.replan': '再計画',
   'agent.traceEmpty': 'ステップ詳細なし',
   'agent.runningStep': 'ステップ {n} を実行中…',
+  'agent.sessionStats': 'セッション合計：{runs}回実行 · 所要時間 {duration} · {tokens}トークン',
   'agent.noModelsHint': 'このプロバイダーのモデルリストはまだ取得されていません',
   'agent.fetchModels': 'モデルを取得',
   'agent.fetching': '取得中…',
