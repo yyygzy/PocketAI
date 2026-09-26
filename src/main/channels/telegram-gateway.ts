@@ -15,7 +15,9 @@ import {
   safeError,
   splitMessage,
   sleep,
-  fetchWithTimeout
+  fetchWithTimeout,
+  MAX_REPLY_CHARS,
+  MAX_BACKOFF_MS
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -25,9 +27,7 @@ const LONG_POLL_TIMEOUT_S = 25
 const REQUEST_TIMEOUT_MS = 35_000 // 覆盖 long poll 25s + 网络余量
 const GETME_TIMEOUT_MS = 10_000
 const TG_MSG_LIMIT = 4096
-const MAX_REPLY_CHARS = 8000
 const MIN_BACKOFF_MS = 1_000
-const MAX_BACKOFF_MS = 60_000
 
 interface TgUpdate {
   update_id: number

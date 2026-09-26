@@ -23,7 +23,9 @@ import {
   safeError,
   splitMessage,
   sleep,
-  fetchWithTimeout
+  fetchWithTimeout,
+  MAX_REPLY_CHARS,
+  MAX_BACKOFF_MS
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -31,9 +33,7 @@ const log = createLogger('channels')
 const API_BASE = 'https://api.dingtalk.com'
 const REQUEST_TIMEOUT_MS = 15_000
 const DINGTALK_MSG_LIMIT = 4000 // 钉钉单条消息文本上限约 4096，留 buffer
-const MAX_REPLY_CHARS = 8000
 const MIN_BACKOFF_MS = 1_000
-const MAX_BACKOFF_MS = 60_000
 
 interface DingtalkOpenResult {
   ServerUrl?: string

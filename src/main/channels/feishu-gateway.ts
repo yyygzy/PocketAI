@@ -22,7 +22,9 @@ import {
   safeError,
   splitMessage,
   sleep,
-  fetchWithTimeout
+  fetchWithTimeout,
+  MAX_REPLY_CHARS,
+  MAX_BACKOFF_MS
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -30,9 +32,7 @@ const log = createLogger('channels')
 const API_BASE = 'https://open.feishu.cn'
 const REQUEST_TIMEOUT_MS = 15_000
 const FEISHU_MSG_LIMIT = 4000 // 飞书单条消息文本上限约 4096，留 buffer
-const MAX_REPLY_CHARS = 8000
 const MIN_BACKOFF_MS = 1_000
-const MAX_BACKOFF_MS = 60_000
 const PING_INTERVAL_MS = 30_000
 
 interface TenantTokenResult {

@@ -16,7 +16,9 @@ import {
   safeError,
   splitMessage,
   sleep,
-  fetchWithTimeout
+  fetchWithTimeout,
+  MAX_REPLY_CHARS,
+  MAX_BACKOFF_MS
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -24,9 +26,7 @@ const log = createLogger('channels')
 const API_BASE = 'https://slack.com/api'
 const REQUEST_TIMEOUT_MS = 15_000
 const SLACK_MSG_LIMIT = 2900 // Slack 文本建议上限 4000，留 buffer
-const MAX_REPLY_CHARS = 8000
 const MIN_BACKOFF_MS = 1_000
-const MAX_BACKOFF_MS = 60_000
 
 interface SlackEnvelope {
   type: string

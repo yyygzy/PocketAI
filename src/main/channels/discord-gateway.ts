@@ -16,7 +16,9 @@ import {
   safeError,
   splitMessage,
   sleep,
-  fetchWithTimeout
+  fetchWithTimeout,
+  MAX_REPLY_CHARS,
+  MAX_BACKOFF_MS
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -25,9 +27,7 @@ const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json'
 const API_BASE = 'https://discord.com/api/v10'
 const REQUEST_TIMEOUT_MS = 15_000
 const DISCORD_MSG_LIMIT = 2000
-const MAX_REPLY_CHARS = 8000
 const MIN_BACKOFF_MS = 1_000
-const MAX_BACKOFF_MS = 60_000
 
 // Intents：GUILD_MESSAGES(1<<9) | DIRECT_MESSAGES(1<<12) | MESSAGE_CONTENT(1<<15)
 const INTENTS = (1 << 9) | (1 << 12) | (1 << 15)

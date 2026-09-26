@@ -8,6 +8,11 @@
 // - 回复为纯文本（不用 parse_mode / markdown，避免注入与转义问题）
 import type { ChannelStatus, ChannelStatusEvent, ChannelType } from '../../shared/types'
 
+/** 各平台单条消息字符上限（统一 8000，超出自动分片） */
+export const MAX_REPLY_CHARS = 8000
+/** 网关重连退避上限 */
+export const MAX_BACKOFF_MS = 60_000
+
 /** 入站文本消息（仅私聊文本；图片/文件等类型 v1 不处理） */
 export interface IncomingMessage {
   /** 平台原生 chat ID（字符串） */
