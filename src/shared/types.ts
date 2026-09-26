@@ -345,17 +345,20 @@ export interface AgentStepEvent {
   done?: boolean // 是否为最后一步
 }
 
+/** 一次 Agent 运行的汇总统计（DONE 事件携带，渲染层展示本次运行成本） */
+export interface AgentRunStats {
+  totalDurationMs: number
+  totalTokens: number
+  stepCount: number
+}
+
 export interface AgentDoneEvent {
   requestId: string
   conversationId: string
   finalMessageId: string
   fullContent: string
   stepCount: number
-  traceStats?: {
-    totalDurationMs: number
-    totalTokens: number
-    stepCount: number
-  }
+  traceStats?: AgentRunStats
 }
 
 /** Agent 流式文本增量（逐 token 推送） */

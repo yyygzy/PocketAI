@@ -391,6 +391,7 @@ export const ja: Record<string, string> = {
   'agent.todoProgress': '{{done}}/{{total}} 完了',
   'agent.resume': '実行を再開',
   'agent.rerun': '再実行',
+  'agent.runStats': '{steps}ステップ · 所要時間 {duration} · {tokens}トークン',
   'agent.noModelsHint': 'このプロバイダーのモデルリストはまだ取得されていません',
   'agent.fetchModels': 'モデルを取得',
   'agent.fetching': '取得中…',

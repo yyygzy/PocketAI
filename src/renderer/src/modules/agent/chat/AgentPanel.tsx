@@ -10,6 +10,7 @@ import { AgentModelBar } from '../components/AgentModelBar'
 import { AgentToolBars } from '../components/AgentToolBars'
 import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
+import { formatRunDuration } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { errText } from '../../../utils/error'
 
@@ -144,6 +145,17 @@ export const AgentPanel: React.FC = () => {
           onDeleteMessage={chat.running ? undefined : (id) => void chat.deleteMessage(id)}
           onRerunMessage={chat.running ? undefined : (id) => void chat.rerun(id)}
         />
+
+        {/* 本次运行统计：步数/耗时/token，仅运行结束展示；新一轮运行、切会话或刷新后消失 */}
+        {!chat.running && chat.runStats && (
+          <div className="mb-2 self-start text-xs text-[var(--color-text-muted)]">
+            {t('agent.runStats', {
+              steps: chat.runStats.stepCount,
+              duration: formatRunDuration(chat.runStats.totalDurationMs),
+              tokens: chat.runStats.totalTokens.toLocaleString('en-US')
+            })}
+          </div>
+        )}
 
         {/* 断点恢复：上次运行中止/出错时显示「继续执行」入口 */}
         {chat.interrupted && !chat.running && chat.canSend && (

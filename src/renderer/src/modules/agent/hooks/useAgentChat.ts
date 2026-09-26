@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type {
   AgentDoneEvent,
   AgentErrorEvent,
+  AgentRunStats,
   AgentStepEvent,
   ChatAttachment,
   MessageRecord,
@@ -21,9 +22,13 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const [messages, dispatch] = useReducer(messagesReducer, [] as AgentMessage[])
   const [running, setRunning] = useState(false)
   const [interrupted, setInterrupted] = useState(false) // 上次运行被中止/出错（可断点恢复）
+  const [runStats, setRunStats] = useState<AgentRunStats | null>(null) // 最近一次完成运行的统计（仅当前会话、刷新后消失）
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const requestIdRef = useRef('')
+  // 事件订阅闭包内读取当前会话（effect 仅依赖 [t]，不能直接用 conversationId state）
+  const conversationIdRef = useRef<string | null>(null)
+  conversationIdRef.current = conversationId
 
   const selectedProvider = useMemo(
     () => providers.find((p) => p.id === providerId),
@@ -39,9 +44,10 @@ export function useAgentChat(providers: ProviderRecord[]) {
     }).catch(reportIpcError('agent.listConversations'))
   }, [assistantId])
 
-  // 会话切换 → 加载历史消息（同时复位中断标记）
+  // 会话切换 → 加载历史消息（同时复位中断标记与运行统计）
   useEffect(() => {
     setInterrupted(false)
+    setRunStats(null)
     if (!conversationId) {
       dispatch({ type: 'clear' })
       return
@@ -66,9 +72,13 @@ export function useAgentChat(providers: ProviderRecord[]) {
       })
     )
     offs.push(
-      window.pocketai.onAgentDone((_e: AgentDoneEvent) => {
+      window.pocketai.onAgentDone((e: AgentDoneEvent) => {
         setRunning(false)
         setInterrupted(false)
+        // 仅在事件仍归属当前会话时展示统计（切会话后迟到的 DONE 不覆盖）
+        if (e.conversationId === conversationIdRef.current) {
+          setRunStats(e.traceStats ?? null)
+        }
       })
     )
     offs.push(
@@ -181,6 +191,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     })
     setRunning(true)
     setInterrupted(false)
+    setRunStats(null) // 新一轮运行：清除上轮统计，待 DONE 事件更新
 
     return window.pocketai.sendMessage({
       requestId,
@@ -235,6 +246,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     messages,
     running,
     interrupted,
+    runStats,
     providerId,
     model,
     setModel,

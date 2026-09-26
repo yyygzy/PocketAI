@@ -50,6 +50,13 @@ export async function readFileAsAttachment(file: File): Promise<ChatAttachment |
   })
 }
 
+/** 运行耗时人类可读：<1s 显示毫秒，否则秒（保留 1 位小数） */
+export function formatRunDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '-'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
 /** 提取消息文本中第一个 ```html 代码块（供「在沙箱运行」按钮使用） */
 export function extractFirstHtmlBlock(text: string): string | null {
   const m = text.match(/```html\s*\r?\n([\s\S]*?)```/i)

@@ -418,6 +418,7 @@ export const zh: Record<string, string> = {
   'agent.todoProgress': '{{done}}/{{total}} 已完成',
   'agent.resume': '继续执行',
   'agent.rerun': '重新运行',
+  'agent.runStats': '{steps} 步 · 耗时 {duration} · {tokens} tokens',
   'agent.noModelsHint': '该 Provider 尚未拉取模型列表',
   'agent.fetchModels': '拉取模型',
   'agent.fetching': '拉取中…',
