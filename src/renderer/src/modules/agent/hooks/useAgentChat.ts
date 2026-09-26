@@ -5,6 +5,7 @@ import type {
   AgentErrorEvent,
   AgentRunStats,
   AgentStepEvent,
+  AgentTraceRecord,
   ChatAttachment,
   MessageRecord,
   ProviderRecord
@@ -22,7 +23,9 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const [messages, dispatch] = useReducer(messagesReducer, [] as AgentMessage[])
   const [running, setRunning] = useState(false)
   const [interrupted, setInterrupted] = useState(false) // 上次运行被中止/出错（可断点恢复）
-  const [runStats, setRunStats] = useState<AgentRunStats | null>(null) // 最近一次完成运行的统计（仅当前会话、刷新后消失）
+  const [runStats, setRunStats] = useState<AgentRunStats | null>(null) // 当前会话最近一次运行统计（trace 持久化，切回/刷新后恢复）
+  const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
+  const [tracesLoading, setTracesLoading] = useState(false)
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const requestIdRef = useRef('')
@@ -44,10 +47,12 @@ export function useAgentChat(providers: ProviderRecord[]) {
     }).catch(reportIpcError('agent.listConversations'))
   }, [assistantId])
 
-  // 会话切换 → 加载历史消息（同时复位中断标记与运行统计）
+  // 会话切换 → 加载历史消息（同时复位中断标记、运行统计与分步明细）
   useEffect(() => {
     setInterrupted(false)
     setRunStats(null)
+    setLatestTraces(null)
+    setTracesLoading(false)
     if (!conversationId) {
       dispatch({ type: 'clear' })
       return
@@ -183,6 +188,22 @@ export function useAgentChat(providers: ProviderRecord[]) {
 
   const canSend = !!providerId && !!model && !!conversationId && !!assistantId
 
+  /** 懒加载当前会话最近一次运行的分步明细（展开统计条时调用；带快速切会话竞态防护） */
+  const loadLatestTraces = useCallback(() => {
+    const convId = conversationIdRef.current
+    if (!convId) return
+    setTracesLoading(true)
+    void window.pocketai.getLatestRunTraces(convId).then((traces) => {
+      if (conversationIdRef.current === convId) {
+        setLatestTraces(traces)
+        setTracesLoading(false)
+      }
+    }).catch((e) => {
+      reportIpcError('agent.getLatestRunTraces')(e)
+      if (conversationIdRef.current === convId) setTracesLoading(false)
+    })
+  }, [])
+
   const send = (text: string, attachments: ChatAttachment[]) => {
     const content = text.trim()
     if (!content || !providerId || !model || !conversationId || running) return
@@ -197,6 +218,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     setRunning(true)
     setInterrupted(false)
     setRunStats(null) // 新一轮运行：清除上轮统计，待 DONE 事件更新
+    setLatestTraces(null) // 旧分步明细失效，下次展开重新拉取
 
     return window.pocketai.sendMessage({
       requestId,
@@ -252,6 +274,9 @@ export function useAgentChat(providers: ProviderRecord[]) {
     running,
     interrupted,
     runStats,
+    latestTraces,
+    tracesLoading,
+    loadLatestTraces,
     providerId,
     model,
     setModel,

@@ -352,6 +352,21 @@ export interface AgentRunStats {
   stepCount: number
 }
 
+/** Agent 单步执行轨迹（agent_traces 表一行，渲染层分步明细用） */
+export interface AgentTraceRecord {
+  id: string
+  requestId: string
+  conversationId: string
+  stepIndex: number
+  stepType: 'llm' | 'tools' | 'final' | 'degrade' | 'replan'
+  toolName?: string
+  durationMs?: number
+  tokenUsage?: number
+  status: 'success' | 'error'
+  error?: string
+  createdAt: number
+}
+
 export interface AgentDoneEvent {
   requestId: string
   conversationId: string
@@ -1264,6 +1279,7 @@ export const IPC = {
   AGENT_SET_CALENDAR_CONFIG: 'agent:set-calendar-config',
   AGENT_PICK_ICS_FILE: 'agent:pick-ics-file',
   AGENT_GET_LATEST_RUN_STATS: 'agent:get-latest-run-stats', // 会话最近一次运行统计（trace 聚合，只读）
+  AGENT_GET_LATEST_RUN_TRACES: 'agent:get-latest-run-traces', // 会话最近一次运行分步明细（只读）
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

@@ -1,5 +1,5 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
@@ -22,6 +22,16 @@ export const AgentPanel: React.FC = () => {
   const tools = useAgentToolConfigs()
   const att = useAttachments()
   const [railOpen, setRailOpen] = useState(true)
+  const [statsExpanded, setStatsExpanded] = useState(false)
+
+  // 切换会话后收起分步明细（明细数据由 hook 在切会话时清空，展开态同步复位）
+  useEffect(() => { setStatsExpanded(false) }, [chat.conversationId])
+
+  const toggleStats = () => {
+    const next = !statsExpanded
+    setStatsExpanded(next)
+    if (next && chat.latestTraces === null) chat.loadLatestTraces()
+  }
 
   // ---------- 会话导入/导出（对齐 Chat 模块）：Markdown 直接导出，加密导出/导入先弹密码框 ----------
   const [cryptoPrompt, setCryptoPrompt] = useState<null | { kind: 'export'; id: string } | { kind: 'import' }>(null)
@@ -146,14 +156,54 @@ export const AgentPanel: React.FC = () => {
           onRerunMessage={chat.running ? undefined : (id) => void chat.rerun(id)}
         />
 
-        {/* 本次运行统计：步数/耗时/token，仅运行结束展示；新一轮运行、切会话或刷新后消失 */}
+        {/* 本次运行统计：步数/耗时/token，点击展开分步明细；新一轮运行/切会话时复位 */}
         {!chat.running && chat.runStats && (
-          <div className="mb-2 self-start text-xs text-[var(--color-text-muted)]">
-            {t('agent.runStats', {
-              steps: chat.runStats.stepCount,
-              duration: formatRunDuration(chat.runStats.totalDurationMs),
-              tokens: chat.runStats.totalTokens.toLocaleString('en-US')
-            })}
+          <div className="mb-2 self-start w-full max-w-[640px]">
+            <button
+              onClick={toggleStats}
+              className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+              title={t('agent.runStatsDetail')}
+              aria-expanded={statsExpanded}
+            >
+              <span className="w-3 inline-block">{statsExpanded ? '▾' : '▸'}</span>
+              <span>
+                {t('agent.runStats', {
+                  steps: chat.runStats.stepCount,
+                  duration: formatRunDuration(chat.runStats.totalDurationMs),
+                  tokens: chat.runStats.totalTokens.toLocaleString('en-US')
+                })}
+              </span>
+            </button>
+
+            {statsExpanded && (
+              <div className="mt-1 ml-4 max-h-56 overflow-y-auto border border-[var(--color-border)] rounded p-2 space-y-1 bg-[var(--color-bg-secondary)]">
+                {chat.tracesLoading && (
+                  <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
+                )}
+                {!chat.tracesLoading && (!chat.latestTraces || chat.latestTraces.length === 0) && (
+                  <div className="text-xs text-[var(--color-text-muted)]">{t('agent.traceEmpty')}</div>
+                )}
+                {!chat.tracesLoading && chat.latestTraces?.map((tr, i) => (
+                  <div key={tr.id} className="text-xs leading-relaxed">
+                    <div className="flex flex-wrap items-baseline gap-x-1.5">
+                      <span className="text-[var(--color-text-muted)]">#{i + 1}</span>
+                      <span className={tr.status === 'error' ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'}>
+                        {tr.status === 'error' ? '✕' : '✓'}
+                      </span>
+                      <span>{t(`agent.traceType.${tr.stepType}`)}</span>
+                      {tr.toolName && <span className="text-[var(--color-primary)]">{tr.toolName}</span>}
+                      <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
+                      {typeof tr.tokenUsage === 'number' && (
+                        <span className="text-[var(--color-text-muted)]">{tr.tokenUsage.toLocaleString('en-US')} tokens</span>
+                      )}
+                    </div>
+                    {tr.error && (
+                      <div className="ml-4 text-[var(--color-danger)] whitespace-pre-wrap break-all">{tr.error}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

@@ -107,6 +107,11 @@ export function registerAgentHandlers(): void {
     agentTraceRepo.latestStatsByConversation(conversationId),
   argsSchema(idSchema))
 
+  // 会话最近一次 Agent 运行的分步明细（按 step_index 升序）
+  safeHandle(IPC.AGENT_GET_LATEST_RUN_TRACES, (_e, conversationId: string) =>
+    agentTraceRepo.latestTracesByConversation(conversationId),
+  argsSchema(idSchema))
+
   // 渲染端对工具审批弹窗的应答
   safeHandle(
     IPC.AGENT_TOOL_APPROVE_RESPONSE,

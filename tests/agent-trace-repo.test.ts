@@ -87,3 +87,31 @@ describe('agentTraceRepo.latestStatsByConversation', () => {
     })
   })
 })
+
+describe('agentTraceRepo.latestTracesByConversation', () => {
+  it('会话无 trace → 空数组', () => {
+    expect(agentTraceRepo.latestTracesByConversation('empty')).toEqual([])
+  })
+
+  it('返回最近一次运行的全部分步，按 step_index 升序', () => {
+    agentTraceRepo.insert({ requestId: 'old', conversationId: 'c1', stepIndex: 0, stepType: 'llm', durationMs: 1, status: 'success' })
+    agentTraceRepo.insert({ requestId: 'new', conversationId: 'c1', stepIndex: 1, stepType: 'tools', toolName: 'time_now,calculator', durationMs: 20, status: 'error', error: 'boom' })
+    agentTraceRepo.insert({ requestId: 'new', conversationId: 'c1', stepIndex: 0, stepType: 'llm', durationMs: 10, tokenUsage: 5, status: 'success' })
+
+    const traces = agentTraceRepo.latestTracesByConversation('c1')
+    expect(traces).toHaveLength(2)
+    expect(traces.map((x) => x.stepIndex)).toEqual([0, 1])
+    expect(traces[0]).toMatchObject({ requestId: 'new', stepType: 'llm', durationMs: 10, tokenUsage: 5, status: 'success' })
+    expect(traces[1]).toMatchObject({ requestId: 'new', stepType: 'tools', toolName: 'time_now,calculator', status: 'error', error: 'boom' })
+  })
+
+  it('不混入其他会话或旧运行的分步', () => {
+    agentTraceRepo.insert({ requestId: 'old', conversationId: 'c1', stepIndex: 0, stepType: 'final', status: 'success' })
+    agentTraceRepo.insert({ requestId: 'other', conversationId: 'c2', stepIndex: 0, stepType: 'llm', status: 'success' })
+    agentTraceRepo.insert({ requestId: 'new', conversationId: 'c1', stepIndex: 0, stepType: 'degrade', status: 'success' })
+
+    const traces = agentTraceRepo.latestTracesByConversation('c1')
+    expect(traces).toHaveLength(1)
+    expect(traces[0]).toMatchObject({ requestId: 'new', stepType: 'degrade' })
+  })
+})

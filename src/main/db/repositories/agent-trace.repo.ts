@@ -1,21 +1,7 @@
 // Agent Trace 数据访问：记录 Agent 每一步的执行情况，供调试/性能分析使用
 import { randomUUID } from 'node:crypto'
-import type { AgentRunStats } from '../../../shared/types'
+import type { AgentRunStats, AgentTraceRecord } from '../../../shared/types'
 import { dbService } from '../database'
-
-export interface AgentTraceRecord {
-  id: string
-  requestId: string
-  conversationId: string
-  stepIndex: number
-  stepType: 'llm' | 'tools' | 'final' | 'degrade' | 'replan'
-  toolName?: string
-  durationMs?: number
-  tokenUsage?: number
-  status: 'success' | 'error'
-  error?: string
-  createdAt: number
-}
 
 interface AgentTraceRow {
   id: string
@@ -29,6 +15,17 @@ interface AgentTraceRow {
   status: string
   error: string | null
   created_at: number
+}
+
+/** 会话最近一次运行的 requestId（created_at 最新，同毫秒 rowid 兜底）；无记录返回 null */
+function latestRequestId(conversationId: string): string | null {
+  const row = dbService.getHandle().prepare(
+    `SELECT request_id FROM agent_traces
+     WHERE conversation_id = ?
+     ORDER BY created_at DESC, rowid DESC
+     LIMIT 1`
+  ).get(conversationId) as { request_id: string } | undefined
+  return row?.request_id ?? null
 }
 
 function rowToRecord(row: AgentTraceRow): AgentTraceRecord {
@@ -102,26 +99,22 @@ export const agentTraceRepo = {
     }
   },
 
-  /** 会话最近一次运行的汇总统计（最新 created_at 所属 requestId 聚合）；无 trace 返回 null */
+  /** 会话最近一次运行的汇总统计；无 trace 返回 null */
   latestStatsByConversation(conversationId: string): AgentRunStats | null {
-    const row = dbService.getHandle().prepare(
-      `SELECT COALESCE(SUM(duration_ms), 0) AS total_duration,
-              COALESCE(SUM(token_usage), 0) AS total_tokens,
-              COUNT(*) AS step_count
-       FROM agent_traces
-       WHERE request_id = (
-         SELECT request_id FROM agent_traces
-         WHERE conversation_id = ?
-         ORDER BY created_at DESC, rowid DESC
-         LIMIT 1
-       )`
-    ).get(conversationId) as { total_duration: number; total_tokens: number; step_count: number } | undefined
-    if (!row || row.step_count === 0) return null
-    return {
-      totalDurationMs: row.total_duration,
-      totalTokens: row.total_tokens,
-      stepCount: row.step_count
-    }
+    const requestId = latestRequestId(conversationId)
+    if (!requestId) return null
+    const stats = agentTraceRepo.statsByRequest(requestId)
+    return stats.stepCount === 0 ? null : stats
+  },
+
+  /** 会话最近一次运行的分步明细（按 step_index 升序）；无 trace 返回空数组 */
+  latestTracesByConversation(conversationId: string): AgentTraceRecord[] {
+    const requestId = latestRequestId(conversationId)
+    if (!requestId) return []
+    const rows = dbService.getHandle().prepare(
+      'SELECT * FROM agent_traces WHERE request_id = ? ORDER BY step_index ASC, rowid ASC'
+    ).all(requestId) as AgentTraceRow[]
+    return rows.map(rowToRecord)
   },
 
   /** 清理指定 requestId 的 trace */
