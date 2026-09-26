@@ -9,7 +9,8 @@ import type {
   ChatTarget,
   ChatChunkEvent,
   ChatDoneEvent,
-  ChatErrorEvent
+  ChatErrorEvent,
+  MessageSource
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import { acquireKeepAwake, releaseKeepAwake } from '../keep-awake'
@@ -189,7 +190,7 @@ class ChatService {
 
     // 若模板含 {{knowledge}} 且助手关联了知识库，则检索注入
     let knowledgeContext = ''
-    let sources: Array<{ chunkId: string; docId: string; docTitle: string; content: string }> = []
+    let sources: MessageSource[] = []
     if (effectivePrompt.includes('{{knowledge}}') && assistantKbIds.length > 0) {
       try {
         const result = await ragService.retrieve(assistantKbIds, content)
@@ -428,7 +429,7 @@ class ChatService {
     messageId: string
     signal: AbortSignal
     emit: EmitFn
-    sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
+    sources?: MessageSource[]
   }): Promise<void> {
     const { requestId, index, target, messages, messageId, signal, emit, sources } = args
 

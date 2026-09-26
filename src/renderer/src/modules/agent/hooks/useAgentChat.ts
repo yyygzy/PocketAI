@@ -98,6 +98,10 @@ export function useAgentChat(providers: ProviderRecord[]) {
         // 仅在事件仍归属当前会话时展示统计（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setRunStats(e.traceStats ?? null)
+          // 把知识库引用来源挂到最终回答卡片（流式结束即时显示，无需 reload）
+          if (e.sources?.length) {
+            dispatch({ type: 'setSources', messageId: e.finalMessageId, sources: e.sources })
+          }
           // 运行结束后刷新会话累计统计（本次运行已入库）
           void window.pocketai.getSessionStats(e.conversationId).then((stats) => {
             if (conversationIdRef.current === e.conversationId) setSessionStats(stats)

@@ -17,7 +17,8 @@ import type {
   ToolCall,
   ToolResult,
   ToolSchema,
-  MessageRecord
+  MessageRecord,
+  MessageSource
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import type { AdapterChatMessage, ChatParams } from '../providers/types'
@@ -88,7 +89,7 @@ interface AgentRunContext {
   tools: ToolSchema[]
   allowedToolIds: Set<string>
   defaultParams: Record<string, unknown>
-  sources: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
+  sources: MessageSource[]
   /** 当前助手绑定的知识库 id 列表，按次运行透传给 kb_search 工具 */
   kbIds: string[]
   emit: <T>(channel: string, payload: T) => void
@@ -538,7 +539,7 @@ class AgentEngine {
 
     // 知识库检索注入
     let knowledgeContext = ''
-    let sources: Array<{ chunkId: string; docId: string; docTitle: string; content: string }> = []
+    let sources: MessageSource[] = []
     if (effectivePrompt.includes('{{knowledge}}') && kbIds.length > 0) {
       try {
         const result = await ragService.retrieve(kbIds, content)
@@ -750,7 +751,8 @@ class AgentEngine {
         finalMessageId: ctx.finalMessageId,
         fullContent: ctx.finalContent,
         stepCount: ctx.stepCount,
-        traceStats: safeTraceStats(requestId)
+        traceStats: safeTraceStats(requestId),
+        sources: ctx.sources.length > 0 ? ctx.sources : undefined
       }
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
       conversationRepo.touch(conversationId, { status: 'done' })

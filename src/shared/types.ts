@@ -141,7 +141,15 @@ export interface MessageRecord {
   /** 同一次生成请求的批次 ID（=requestId）；同 parent 下多个 batch 即多条分支；旧数据为 null */
   batchId?: string | null
   /** 知识库引用来源（RAG 检索命中的 chunk 元信息） */
-  sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }> | null
+  sources?: MessageSource[] | null
+}
+
+/** RAG 检索命中的知识库 chunk 引用来源 */
+export interface MessageSource {
+  chunkId: string
+  docId: string
+  docTitle: string
+  content: string
 }
 
 /** 会话导出/导入文件载荷（明文 JSON 与加密 .moxia 内部同构） */
@@ -381,6 +389,8 @@ export interface AgentDoneEvent {
   fullContent: string
   stepCount: number
   traceStats?: AgentRunStats
+  /** 知识库引用来源（RAG 检索命中的 chunk），仅最终回答无 tool_calls 时携带 */
+  sources?: MessageSource[]
 }
 
 /** Agent 流式文本增量（逐 token 推送） */
@@ -560,7 +570,7 @@ export interface ChatDoneEvent {
   messageId: string
   fullContent: string
   /** 知识库引用来源（RAG 检索命中的 chunk 元信息） */
-  sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
+  sources?: MessageSource[]
 }
 
 export interface ChatErrorEvent {

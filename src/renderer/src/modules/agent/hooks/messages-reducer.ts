@@ -10,6 +10,7 @@ export type MessagesAction =
   | { type: 'truncateFrom'; id: string }
   | { type: 'step'; event: AgentStepEvent; unknownErrorText: string }
   | { type: 'chunk'; messageId: string; delta: string; reasoning?: boolean }
+  | { type: 'setSources'; messageId: string; sources: AgentMessage['sources'] }
 
 export function messagesReducer(prev: AgentMessage[], action: MessagesAction): AgentMessage[] {
   switch (action.type) {
@@ -132,6 +133,11 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
         ? { ...cur, reasoning: (cur.reasoning ?? '') + action.delta }
         : { ...cur, text: (cur.text ?? '') + action.delta }
       return prev.map((m, i) => (i === idx ? updated : m))
+    }
+    case 'setSources': {
+      const idx = prev.findIndex((m) => m.id === action.messageId)
+      if (idx === -1) return prev
+      return prev.map((m, i) => (i === idx ? { ...m, sources: action.sources } : m))
     }
   }
 }

@@ -1,5 +1,5 @@
 // Agent 模块共享：类型、常量与纯函数（MCP 面板 / Agent 对话 / Channels 共用）
-import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult, MessageSource } from '../../../../shared/types'
 
 export type Tab = 'agent' | 'servers' | 'channels'
 
@@ -15,6 +15,8 @@ export interface AgentMessage {
   isFinal?: boolean
   isError?: boolean
   attachments?: ChatAttachment[]
+  /** 知识库引用来源（RAG 检索命中的 chunk） */
+  sources?: MessageSource[]
   dbId?: string // 对应 DB message.id（用于删除单条消息；live 占位卡需等主进程回传）
 }
 
@@ -91,6 +93,7 @@ export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
         role: 'assistant',
         text: m.content || (m.status === 'streaming' ? '（中断）' : ''),
         isFinal: true,
+        sources: m.sources ?? undefined,
         dbId: m.id
       })
     } else if (m.role === 'tool') {

@@ -144,6 +144,7 @@ const AgentMessageCardImpl: React.FC<{
 }> = ({ m, onDelete, onRerun, onRegenerate }) => {
   const { t } = useI18n()
   const [showReasoning, setShowReasoning] = useState(false)
+  const [showSources, setShowSources] = useState(false)
   const del = onDelete ? () => onDelete(m.id) : undefined
 
   if (m.role === 'user') {
@@ -233,6 +234,35 @@ const AgentMessageCardImpl: React.FC<{
       {m.isFinal && <div className="text-[10px] text-[var(--color-accent)] mb-1">{t('agent.finalAnswer')}</div>}
       <div className={`whitespace-pre-wrap ${m.isError ? 'text-[var(--color-danger)]' : ''}`}>{m.text || (m.isFinal ? '' : t('agent.thinking'))}</div>
       {htmlBlock && <HtmlBlockActions htmlBlock={htmlBlock} />}
+      {/* 知识库引用来源 */}
+      {m.sources && m.sources.length > 0 && (
+        <div className="mt-2">
+          <button
+            onClick={() => setShowSources((v) => !v)}
+            className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+          >
+            <span>{showSources ? '▼' : '▶'}</span>
+            <span>{t('chatview.sources', { count: m.sources.length })}</span>
+          </button>
+          {showSources && (
+            <div className="mt-1.5 flex flex-col gap-1.5">
+              {m.sources.map((s, i) => (
+                <div
+                  key={s.chunkId}
+                  className="px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)]"
+                >
+                  <div className="text-[11px] text-[var(--color-accent)] font-medium truncate">
+                    {i + 1}. {s.docTitle}
+                  </div>
+                  <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">
+                    {s.content.slice(0, 120)}{s.content.length > 120 ? '…' : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {m.text && (
         <CardActions
           copyText={m.text}
