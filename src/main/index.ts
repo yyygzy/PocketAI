@@ -55,6 +55,7 @@ import { denyNewWindows } from './net/external-links'
 import { installContentSecurityPolicy } from './security/csp'
 import { initBackupScheduler } from './backup/backup-scheduler'
 import { initTaskScheduler } from './backup/task-scheduler'
+import { initReminderScheduler } from './reminder/scheduler'
 import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, type MarkedBrowserWindow } from './ui-preferences'
 import { isQuitting, beginQuit, runCleanupChain, runFallbackCleanup } from './quit-manager'
 import { createLogger, configureLogDir } from './logger'
@@ -483,6 +484,8 @@ async function boot(): Promise<void> {
   initBackupScheduler()
   // 通用定时任务调度器（知识库健康检查、备份校验等）
   initTaskScheduler()
+  // Agent 定时提醒调度器（30s tick，到点系统通知 + 广播）
+  initReminderScheduler()
   powerMonitor.on('suspend', () => lockService.onOsSleep())
   powerMonitor.on('resume', () => lockService.onOsWake())
   powerMonitor.on('lock-screen', () => lockService.lock('os-sleep'))

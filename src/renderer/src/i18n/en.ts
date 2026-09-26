@@ -229,6 +229,10 @@ export const en: Record<string, string> = {
   'lock.unlockNow': 'Unlock now',
   'lock.unlockFailed': 'Unlock failed',
 
+  // ── Reminders ──
+  'reminder.fired': '⏰ Reminder: {{text}}',
+  'reminder.missedSummary': '{{count}} reminder(s) expired while the app was not running',
+
   // ── Platform steward (static labels; check labels/details come from main-process data) ──
   'steward.modelRec': '🤖 Model recommendations',
   'steward.ollamaRunning': '● Running',

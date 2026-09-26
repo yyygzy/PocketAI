@@ -209,6 +209,10 @@ export const ja: Record<string, string> = {
   'lock.unlock': 'ロック解除',
   'lock.unlockNow': '今すぐロック解除',
   'lock.unlockFailed': 'ロック解除に失敗しました',
+
+  // ── リマインダー ──
+  'reminder.fired': '⏰ リマインダー：{{text}}',
+  'reminder.missedSummary': 'アプリ未起動中に期限切れになったリマインダーが {{count}} 件あります',
   'steward.modelRec': '🤖 モデル推奨',
   'steward.ollamaRunning': '● 実行中',
   'steward.ollamaStopped': '○ 停止中',

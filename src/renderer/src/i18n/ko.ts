@@ -209,6 +209,10 @@ export const ko: Record<string, string> = {
   'lock.unlock': '잠금 해제',
   'lock.unlockNow': '지금 잠금 해제',
   'lock.unlockFailed': '잠금 해제 실패',
+
+  // ── 리마인더 ──
+  'reminder.fired': '⏰ 리마인더: {{text}}',
+  'reminder.missedSummary': '앱이 실행되지 않는 동안 만료된 리마인더 {{count}}개가 있습니다',
   'steward.modelRec': '🤖 모델 추천',
   'steward.ollamaRunning': '● 실행 중',
   'steward.ollamaStopped': '○ 중지됨',

@@ -16,6 +16,7 @@ import { calendarReadTool } from './calendar-ics'
 import { kbSearchTool } from './kb-search'
 import { todoWriteTool } from './todo-write'
 import { memorySaveTool } from './memory-save'
+import { reminderSetTool, reminderListTool, reminderCancelTool } from './reminder'
 
 /** 工具安全判定结果（与 ToolSchema.permission 基线取更严） */
 export type ToolDecision = 'allow' | 'confirm' | 'deny'
@@ -215,7 +216,10 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   calendarReadTool,
   kbSearchTool,
   todoWriteTool,
-  memorySaveTool
+  memorySaveTool,
+  reminderSetTool,
+  reminderListTool,
+  reminderCancelTool
 ]
 
 // ---- 辅助：安全的数学表达式求值 ----

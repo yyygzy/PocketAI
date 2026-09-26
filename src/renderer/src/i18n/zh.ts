@@ -229,6 +229,10 @@ export const zh: Record<string, string> = {
   'lock.unlockNow': '立即解锁',
   'lock.unlockFailed': '解锁失败',
 
+  // ── 定时提醒 ──
+  'reminder.fired': '⏰ 提醒：{{text}}',
+  'reminder.missedSummary': '有 {{count}} 条提醒在应用未运行期间过期',
+
   // ── 平台管家（静态文案；检测项 label/detail 来自主进程数据） ──
   'steward.modelRec': '🤖 模型推荐',
   'steward.ollamaRunning': '● 运行中',

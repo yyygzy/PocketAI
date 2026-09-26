@@ -465,6 +465,22 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_user_memory_updated_at ON user_memory(updated_at DESC);
     `
+  },
+  {
+    // v21: Agent 定时提醒——一次性提醒条目（reminder_set/list/cancel 内置工具 + reminder scheduler 到点触发）
+    version: 21,
+    name: 'reminders',
+    up: `
+      CREATE TABLE IF NOT EXISTS reminders (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        fire_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', -- pending | fired | cancelled | missed
+        conversation_id TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_reminders_status_fire_at ON reminders(status, fire_at);
+    `
   }
 ]
 

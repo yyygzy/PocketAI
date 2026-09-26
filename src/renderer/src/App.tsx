@@ -4,6 +4,7 @@ import { TabBar } from './components/TabBar'
 import { Workspace } from './components/Workspace'
 import { ToolApprovalDialog } from './components/ToolApprovalDialog'
 import { ToastProvider } from './components/ToastProvider'
+import { ReminderListener } from './hooks/ReminderListener'
 import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
 import { reportIpcError } from './utils/ipc'
@@ -163,6 +164,7 @@ export default function App() {
 
   return (
     <ToastProvider>
+      <ReminderListener />
       <div className="flex h-screen w-screen overflow-hidden">
         <div ref={contentRef} className="flex flex-1 min-w-0 h-full">
           <Sidebar

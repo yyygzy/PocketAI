@@ -120,6 +120,7 @@ const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），�
 - 需要查询用户知识库中的资料 → 调用 kb_search（query + 可选 top_k）
 - 复杂多步任务 → 先调用 todo_write 建立任务清单，每完成一步就更新对应项状态（pending → in_progress → completed）
 - 用户表达个人偏好、背景事实或要求"记住某事" → 调用 memory_save（禁止记录密码、密钥等敏感信息）
+- 用户提到时间相关的提醒请求 → 先调用 time_now 确认当前时间，再调用 reminder_set；优先使用 in_minutes 相对参数
 - 用户让你读写文件 → 调用 fs_list / fs_read / fs_write（需工作目录）
 
 ## 调用示例（必须严格模仿）

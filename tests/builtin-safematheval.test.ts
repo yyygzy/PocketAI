@@ -15,6 +15,9 @@ vi.mock('../src/main/tools/calendar-ics', () => ({ calendarReadTool: {} }))
 vi.mock('../src/main/tools/kb-search', () => ({ kbSearchTool: {} }))
 vi.mock('../src/main/tools/todo-write', () => ({ todoWriteTool: {} }))
 vi.mock('../src/main/tools/memory-save', () => ({ memorySaveTool: {} }))
+vi.mock('../src/main/db/repositories/reminder.repo', () => ({
+  reminderRepo: { create: vi.fn(), countPending: vi.fn(() => 0), listPending: vi.fn(() => []), listByStatus: vi.fn(() => []), listDue: vi.fn(() => []), markFired: vi.fn(), markMissed: vi.fn(), cancel: vi.fn(() => false) }
+}))
 
 import { safeMathEval } from '../src/main/tools/builtin'
 

@@ -46,6 +46,7 @@ import type {
   AuthLockState,
   LockStatus,
   LockStateEvent,
+  ReminderFiredPayload,
   OllamaRuntimeStatus,
   OllamaInstallEvent,
   OllamaPullEvent,
@@ -690,6 +691,11 @@ const api = {
     const listener = (_e: IpcRendererEvent, data: LockStateEvent) => handler(data)
     ipcRenderer.on(IPC.LOCK_STATE_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.LOCK_STATE_EVENT, listener)
+  },
+  onReminderFired: (handler: (e: ReminderFiredPayload) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: ReminderFiredPayload) => handler(data)
+    ipcRenderer.on(IPC.REMINDER_FIRED, listener)
+    return () => ipcRenderer.removeListener(IPC.REMINDER_FIRED, listener)
   },
 
   // ---------- 平台管家 ----------

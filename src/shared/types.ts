@@ -696,6 +696,30 @@ export interface AuthLockState {
   recover: { retryAfterMs: number; attempts: number }
 }
 
+// ---------- Agent 定时提醒 ----------
+
+export type ReminderStatus = 'pending' | 'fired' | 'cancelled' | 'missed'
+
+/** 一次性提醒条目（reminder 工具创建，scheduler 到点触发） */
+export interface ReminderRecord {
+  id: string
+  text: string
+  /** 触发时间（epoch ms） */
+  fireAt: number
+  status: ReminderStatus
+  conversationId: string | null
+  createdAt: number
+}
+
+/** REMINDER_FIRED 广播载荷；missed>0 表示重启后补发的过期提醒汇总 */
+export interface ReminderFiredPayload {
+  id?: string
+  text?: string
+  fireAt?: number
+  /** 启动恢复时一次性补发的 missed 条数（>0 时无单条字段） */
+  missed?: number
+}
+
 export interface UnlockPayload {
   /** 用户输入的主密码（空字符串=无密码模式） */
   password: string
@@ -1389,6 +1413,9 @@ export const IPC = {
   LOCK_SET_AUTO_TIMEOUT: 'lock:set-auto-timeout',
   LOCK_MARK_ACTIVE: 'lock:mark-active',
   LOCK_STATE_EVENT: 'lock:state-event',
+
+  // ---------- Agent 定时提醒 ----------
+  REMINDER_FIRED: 'reminder:fired',
 
   // ---------- 平台管家 ----------
   HEALTH_REPORT: 'health:report',
