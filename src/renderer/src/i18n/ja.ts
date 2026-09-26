@@ -372,8 +372,6 @@ export const ja: Record<string, string> = {
   'agent.sectionAssistant': 'アシスタント',
   'agent.sectionSessions': 'セッション',
   'agent.noSessions': 'セッションはまだありません',
-  'agent.searchSession': '🔍 セッションを検索…',
-  'agent.noSearchResult': '一致するセッションがありません',
   'agent.modelConfig': 'モデル',
   'agent.toolConfig': 'ツール設定',
   'agent.collapse': '折りたたむ',

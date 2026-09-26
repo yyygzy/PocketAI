@@ -399,8 +399,6 @@ export const en: Record<string, string> = {
   'agent.sectionAssistant': 'Assistant',
   'agent.sectionSessions': 'Sessions',
   'agent.noSessions': 'No sessions yet',
-  'agent.searchSession': '🔍 Search sessions…',
-  'agent.noSearchResult': 'No matching sessions',
   'agent.modelConfig': 'Model',
   'agent.toolConfig': 'Tool config',
   'agent.collapse': 'Collapse',

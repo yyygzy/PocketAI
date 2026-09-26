@@ -399,8 +399,6 @@ export const zh: Record<string, string> = {
   'agent.sectionAssistant': '助手',
   'agent.sectionSessions': '会话',
   'agent.noSessions': '暂无会话',
-  'agent.searchSession': '🔍 搜索会话…',
-  'agent.noSearchResult': '没有匹配的会话',
   'agent.modelConfig': '模型',
   'agent.toolConfig': '工具配置',
   'agent.collapse': '收起',

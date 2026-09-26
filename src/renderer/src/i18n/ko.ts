@@ -372,8 +372,6 @@ export const ko: Record<string, string> = {
   'agent.sectionAssistant': '어시스턴트',
   'agent.sectionSessions': '세션',
   'agent.noSessions': '세션 없음',
-  'agent.searchSession': '🔍 세션 검색…',
-  'agent.noSearchResult': '일치하는 세션이 없습니다',
   'agent.modelConfig': '모델',
   'agent.toolConfig': '도구 설정',
   'agent.collapse': '접기',

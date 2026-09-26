@@ -100,6 +100,17 @@ export function useAgentChat(providers: ProviderRecord[]) {
     setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)))
   }
 
+  // 重新拉取当前助手的会话列表（导入会话后用；不改变当前选中）
+  const reloadConversations = useCallback(async () => {
+    if (!assistantId) return
+    try {
+      const list = await window.pocketai.listConversations(assistantId, true)
+      setConversations(list)
+    } catch (e) {
+      reportIpcError('agent.reloadConversations')(e)
+    }
+  }, [assistantId])
+
   // 删除单条消息：本地先行移除（tool call/result 配对卡由 reducer 一并清理），有 dbId 再删 DB
   // 用 ref 读 messages 保持 callback 引用稳定（AgentMessageCard 是 memo，引用变化会使全部卡片失去 memo 优化）
   const messagesRef = useRef(messages)
@@ -211,6 +222,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     newConversation,
     deleteConversation,
     renameConversation,
+    reloadConversations,
     deleteMessage,
     selectConversation,
     changeProvider,

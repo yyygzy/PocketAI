@@ -25,11 +25,13 @@ export function registerMessageHandlers(): void {
     messageRepo.delete(id)
     return { ok: true }
   }, argsSchema(idSchema))
-  safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string) => {
+  safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string, assistantId?: string | null) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()
     const handle = dbService.getHandle()
     const limit = 50
+    // 可选助手过滤：Agent 侧栏按助手隔离会话；Chat 不传则全局搜索
+    const asstFilter = assistantId ? ' AND c.assistant_id = ?' : ''
 
     // FTS5 trigram tokenizer 要求查询 ≥ 3 字符才能有效匹配；
     // 短查询（中文 1-2 字、英文单词前缀）直接走 LIKE，避免无效的 MATCH 尝试
@@ -45,11 +47,14 @@ export function registerMessageHandlers(): void {
           FROM messages_fts fts
           JOIN messages m ON m.id = fts.message_id
           JOIN conversations c ON c.id = m.conversation_id
-          WHERE messages_fts MATCH ?
+          WHERE messages_fts MATCH ?${asstFilter}
           ORDER BY m.created_at DESC
           LIMIT ?
         `
-        const rows = handle.prepare(ftsSql).all(SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE, q, limit) as MessageSearchRow[]
+        const ftsParams: (string | number)[] = [SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE, q]
+        if (assistantId) ftsParams.push(assistantId)
+        ftsParams.push(limit)
+        const rows = handle.prepare(ftsSql).all(...ftsParams) as MessageSearchRow[]
         if (rows.length > 0) {
           return rows.map(r => ({
             messageId: r.msg_id,
@@ -70,12 +75,15 @@ export function registerMessageHandlers(): void {
              m.created_at, c.title AS conversation_title
       FROM messages m
       JOIN conversations c ON c.id = m.conversation_id
-      WHERE m.content LIKE ?
+      WHERE m.content LIKE ?${asstFilter}
       ORDER BY m.created_at DESC
       LIMIT ?
     `
     const like = `%${q.replace(/[%_]/g, '\\$&')}%`
-    const rows = handle.prepare(likeSql).all(like, limit) as MessageSearchRow[]
+    const likeParams: (string | number)[] = [like]
+    if (assistantId) likeParams.push(assistantId)
+    likeParams.push(limit)
+    const rows = handle.prepare(likeSql).all(...likeParams) as MessageSearchRow[]
     const lq = q.toLowerCase()
     return rows.map(r => {
       const content = String(r.content ?? '')
@@ -100,5 +108,5 @@ export function registerMessageHandlers(): void {
         createdAt: r.created_at
       }
     })
-  }, argsSchema(z.string()))
+  }, argsSchema(z.string(), z.string().nullish()))
 }

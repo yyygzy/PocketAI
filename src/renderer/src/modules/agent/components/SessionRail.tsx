@@ -1,7 +1,9 @@
-// Agent 左侧栏：助手选择 + 新建会话 + 历史会话列表（支持内联重命名）
+// Agent 左侧栏：助手选择 + 新建会话 + 历史会话列表（支持内联重命名、消息全文搜索）
 import React, { useEffect, useRef, useState } from 'react'
-import type { AssistantRecord, ConversationRecord } from '../../../../../shared/types'
+import type { AssistantRecord, ConversationRecord, MessageSearchResult } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { MessageSearchResults } from '../../../components/MessageSearchResults'
+import { logIpcError } from '../../../utils/ipc'
 
 interface Props {
   assistants: AssistantRecord[]
@@ -13,6 +15,10 @@ interface Props {
   onNew: () => void
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
+  onExport?: (id: string) => void
+  onExportEncrypted?: (id: string) => void
+  onImport?: () => void
+  onImportEncrypted?: () => void
 }
 
 export const SessionRail: React.FC<Props> = ({
@@ -24,14 +30,45 @@ export const SessionRail: React.FC<Props> = ({
   onSelect,
   onNew,
   onDelete,
-  onRename
+  onRename,
+  onExport,
+  onExportEncrypted,
+  onImport,
+  onImportEncrypted
 }) => {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
-  const keyword = search.trim().toLowerCase()
-  const filtered = keyword
-    ? conversations.filter((c) => (c.title || '').toLowerCase().includes(keyword))
-    : conversations
+  const keyword = search.trim()
+  const [results, setResults] = useState<MessageSearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+
+  // 全文搜索（debounce 200ms，按当前助手隔离；与 Chat 侧栏同一后端通道）
+  useEffect(() => {
+    if (!keyword) {
+      setResults([])
+      return
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        setResults(await window.pocketai.searchMessages(keyword, assistantId || undefined))
+      } catch (e) {
+        logIpcError('agent.searchMessages', e)
+        setResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 200)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [keyword, assistantId])
+
+  // 点搜索结果 → 进入对应会话并退出搜索态
+  const handleSelectResult = (id: string) => {
+    onSelect(id)
+    setSearch('')
+  }
   return (
     <div className="w-60 shrink-0 flex flex-col bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg p-2">
       <div className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide mb-1.5 px-0.5">
@@ -47,17 +84,37 @@ export const SessionRail: React.FC<Props> = ({
           <option key={a.id} value={a.id}>{a.avatar} {a.name}</option>
         ))}
       </select>
-      <button
-        onClick={onNew}
-        disabled={!assistantId}
-        className="text-xs px-2 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40 mb-2"
-      >
-        {t('agent.newSession')}
-      </button>
+      <div className="flex gap-1 mb-2">
+        <button
+          onClick={onNew}
+          disabled={!assistantId}
+          className="flex-1 text-xs px-2 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40"
+        >
+          {t('agent.newSession')}
+        </button>
+        {onImport && (
+          <button
+            onClick={onImport}
+            disabled={!assistantId}
+            className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
+            title={t('chat.import')}
+            aria-label={t('chat.import')}
+          >⬇ {t('chat.importShort')}</button>
+        )}
+        {onImportEncrypted && (
+          <button
+            onClick={onImportEncrypted}
+            disabled={!assistantId}
+            className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
+            title={t('chat.importEncrypted')}
+            aria-label={t('chat.importEncrypted')}
+          >🔐</button>
+        )}
+      </div>
       <div className="relative mb-1.5">
         <input
           className="input text-xs pl-2 py-1"
-          placeholder={t('agent.searchSession')}
+          placeholder={t('chat.searchPlaceholder')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -73,21 +130,34 @@ export const SessionRail: React.FC<Props> = ({
         {t('agent.sectionSessions')}
       </div>
       <div className="flex-1 overflow-y-auto space-y-1">
-        {filtered.length === 0 && (
-          <p className="text-[11px] text-[var(--color-text-muted)] px-0.5">
-            {keyword ? t('agent.noSearchResult') : t('agent.noSessions')}
-          </p>
-        )}
-        {filtered.map((c) => (
-          <SessionItem
-            key={c.id}
-            conv={c}
-            isActive={conversationId === c.id}
-            onSelect={() => onSelect(c.id)}
-            onDelete={() => onDelete(c.id)}
-            onRename={(title) => onRename(c.id, title)}
+        {keyword ? (
+          <MessageSearchResults
+            results={results}
+            searching={searching}
+            query={keyword}
+            onSelectConv={handleSelectResult}
           />
-        ))}
+        ) : (
+          <>
+            {conversations.length === 0 && (
+              <p className="text-[11px] text-[var(--color-text-muted)] px-0.5">
+                {t('agent.noSessions')}
+              </p>
+            )}
+            {conversations.map((c) => (
+              <SessionItem
+                key={c.id}
+                conv={c}
+                isActive={conversationId === c.id}
+                onSelect={() => onSelect(c.id)}
+                onDelete={() => onDelete(c.id)}
+                onRename={(title) => onRename(c.id, title)}
+                onExport={onExport ? () => onExport(c.id) : undefined}
+                onExportEncrypted={onExportEncrypted ? () => onExportEncrypted(c.id) : undefined}
+              />
+            ))}
+          </>
+        )}
       </div>
     </div>
   )
@@ -100,7 +170,9 @@ const SessionItem: React.FC<{
   onSelect: () => void
   onDelete: () => void
   onRename: (title: string) => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename }) => {
+  onExport?: () => void
+  onExportEncrypted?: () => void
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportEncrypted }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -154,6 +226,22 @@ const SessionItem: React.FC<{
       )}
       {!editing && (
         <>
+          {onExport && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onExport() }}
+              className="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+              title={t('chat.export')}
+              aria-label={t('chat.export')}
+            >↓</button>
+          )}
+          {onExportEncrypted && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onExportEncrypted() }}
+              className="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+              title={t('chat.exportEncrypted')}
+              aria-label={t('chat.exportEncrypted')}
+            >🔐</button>
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); setEditing(true) }}
             className="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
