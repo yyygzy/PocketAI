@@ -127,24 +127,28 @@ export function registerBackupHandlers(): void {
     }
     return restoreFromWebDAV(cfg, fn, { backupPassword: pwd })
   })
-  safeHandle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: string) => {
+  safeHandle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: unknown, backupPassword?: unknown) => {
     const { scanMergeConflicts } = await import('../../backup/merge-service')
     const { loadWebDAVConfig } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV', tables: [], attachmentsToAdd: 0 }
+    const fn = backupFilenameSchema.parse(filename)
+    const pwd = z.string().min(1).nullish().parse(backupPassword ?? null) ?? undefined
     try {
-      return await scanMergeConflicts(cfg, filename)
+      return await scanMergeConflicts(cfg, fn, { backupPassword: pwd })
     } catch (e) {
       return { ok: false, error: errMsg(e, '扫描冲突失败'), tables: [], attachmentsToAdd: 0 }
     }
-  }, argsSchema(backupFilenameSchema))
-  safeHandle(IPC.BACKUP_WEBDAV_MERGE_EXECUTE, async (_e, payload: { filename: string; strategy: MergeStrategy }) => {
+  })
+  safeHandle(IPC.BACKUP_WEBDAV_MERGE_EXECUTE, async (_e, payload: { filename: string; strategy: MergeStrategy; backupPassword?: string }) => {
     const { executeMerge } = await import('../../backup/merge-service')
     const { loadWebDAVConfig } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
     try {
-      return await executeMerge(cfg, payload.filename, payload.strategy)
+      return await executeMerge(cfg, payload.filename, payload.strategy, {
+        backupPassword: payload.backupPassword || undefined
+      })
     } catch (e) {
       return { ok: false, error: errMsg(e, '合并失败') }
     }

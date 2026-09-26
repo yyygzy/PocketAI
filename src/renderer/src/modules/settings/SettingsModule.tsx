@@ -573,6 +573,8 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   const [mergeReport, setMergeReport] = useState<import('../../../../shared/types').MergeConflictReport | null>(null)
   const [mergeScanning, setMergeScanning] = useState(false)
   const [mergeExecuting, setMergeExecuting] = useState(false)
+  // 异机合并：备份密码（扫描成功后沿用到执行阶段）
+  const [mergePwd, setMergePwd] = useState('')
 
   useEffect(() => {
     window.pocketai.loadWebDAVConfig().then((c) => {
@@ -757,15 +759,18 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     showNotice(true, t('bk.deleted'))
   }
 
-  // 合并恢复：先扫描冲突，再弹窗让用户选策略
-  async function doMergeScan(filename: string) {
+  // 合并恢复：先扫描冲突，再弹窗让用户选策略；异机备份按三态错误在弹窗内输密码重扫
+  async function doMergeScan(filename: string, pwd?: string) {
     setMergeFilename(filename)
     setMergeReport(null)
     setMergeOpen(true)
     setMergeScanning(true)
+    if (pwd === undefined) setMergePwd('') // 首次扫描清空旧密码；密码重试保留输入
     try {
-      const r = await window.pocketai.mergeScanWebDAVBackup(filename)
+      const r = await window.pocketai.mergeScanWebDAVBackup(filename, pwd)
       setMergeReport(r)
+      // 扫描成功后记住密码，执行阶段沿用（合并不改本机主密码）
+      if (r.ok) setMergePwd(pwd ?? '')
     } catch (e) {
       setMergeReport({ ok: false, error: errText(e, t('bk.mergeFail')), tables: [], attachmentsToAdd: 0 })
     } finally {
@@ -773,15 +778,33 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     }
   }
 
+  /** 密码弹窗内「重新扫描」 */
+  async function doMergeRescanWithPwd() {
+    const pwd = mergePwd.trim()
+    if (!pwd || !mergeFilename) return
+    await doMergeScan(mergeFilename, pwd)
+  }
+
   async function doMergeExecute(strategy: import('../../../../shared/types').MergeStrategy) {
     if (!mergeFilename) return
     setMergeExecuting(true)
     try {
-      const r = await window.pocketai.mergeExecuteWebDAVBackup(mergeFilename, strategy)
-      showNotice(r.ok, r.ok ? t('bk.mergeOk') : t('bk.mergeFail', { e: r.error ?? t('common.unknownError') }))
+      const r = await window.pocketai.mergeExecuteWebDAVBackup(mergeFilename, strategy, mergePwd || undefined)
       if (r.ok) {
+        showNotice(true, t('bk.mergeOk'))
         setMergeOpen(false)
         await refreshList()
+      } else if (r.code === 'badPassword' || r.code === 'legacyNoCross') {
+        // 理论上扫描成功后不会再出现；优雅降级为行内提示并回到密码态
+        setMergeReport({
+          ok: false,
+          code: r.code,
+          error: r.error,
+          tables: [],
+          attachmentsToAdd: 0
+        })
+      } else {
+        showNotice(false, t('bk.mergeFail', { e: r.error ?? t('common.unknownError') }))
       }
     } catch (e) {
       showNotice(false, t('bk.mergeFail', { e: errText(e) }))
@@ -1001,9 +1024,39 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
                 {t('bk.mergeScanning')}
               </div>
             ) : !mergeReport || !mergeReport.ok ? (
-              <div className="text-sm text-[var(--color-danger)] py-2">
-                {mergeReport?.error || t('common.unknownError')}
-              </div>
+              mergeReport?.code === 'needBackupPassword' || mergeReport?.code === 'badPassword' ? (
+                <div className="py-1">
+                  <p className="text-xs text-[var(--color-text-muted)] mb-2">{t('bk.mergePwdHint')}</p>
+                  <input
+                    type="password"
+                    className="input w-full text-sm"
+                    placeholder={t('bk.restorePwdPlaceholder')}
+                    value={mergePwd}
+                    autoFocus
+                    disabled={mergeExecuting}
+                    onChange={(e) => setMergePwd(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void doMergeRescanWithPwd() }}
+                  />
+                  {mergeReport.code === 'badPassword' && (
+                    <div className="text-xs text-[var(--color-danger)] mt-2">{t('bk.restoreBadPwd')}</div>
+                  )}
+                  <div className="flex justify-end mt-3">
+                    <button
+                      className="px-3 py-1.5 rounded text-sm bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40"
+                      disabled={mergeExecuting || !mergePwd.trim()}
+                      onClick={() => void doMergeRescanWithPwd()}
+                    >
+                      {t('bk.mergeRescan')}
+                    </button>
+                  </div>
+                </div>
+              ) : mergeReport?.code === 'legacyNoCross' ? (
+                <div className="text-sm text-[var(--color-danger)] py-2">{t('bk.restoreLegacy')}</div>
+              ) : (
+                <div className="text-sm text-[var(--color-danger)] py-2">
+                  {mergeReport?.error || t('common.unknownError')}
+                </div>
+              )
             ) : (
               <>
                 <p className="text-xs text-[var(--color-text-muted)] mb-3">

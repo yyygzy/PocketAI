@@ -51,8 +51,8 @@ export const ENC_PREFIX_V2 = 'PKBK2'
 /** 历史导出名（v1）；外部以 前缀.length+12 取 backupSalt 的偏移对 v1/v2 均成立，保留 */
 export const ENC_PREFIX = ENC_PREFIX_V1
 
-/** 备份解密失败原因（供恢复 UI 区分：弹密码框 / 密码错误重试 / 旧包不支持异机） */
-export type BackupDecryptCode = 'badPassword' | 'legacyNoCross' | 'unavailable'
+/** 备份解密失败原因（供恢复/合并 UI 区分：弹密码框 / 密码错误重试 / 旧包不支持异机） */
+export type BackupDecryptCode = 'badPassword' | 'needPassword' | 'legacyNoCross' | 'unavailable'
 
 export class BackupDecryptError extends Error {
   code: BackupDecryptCode
@@ -269,10 +269,9 @@ export function decryptBackup(
   try {
     return Buffer.concat([decipher.update(env.ct), decipher.final()])
   } catch {
-    // GCM 校验失败：密码路径=密码错误可重试；无密码路径由调用方转 needBackupPassword
-    throw opts.password !== undefined
-      ? new BackupDecryptError('badPassword', '备份密码错误')
-      : new Error('decrypt auth failed')
+    if (opts.password !== undefined) throw new BackupDecryptError('badPassword', '备份密码错误')
+    // 无密码（同机会话密钥）路径 GCM 失败：密钥与备份不匹配，调用方应提示输入备份密码
+    throw new BackupDecryptError('needPassword', '备份加密密钥与当前主密码不匹配')
   }
 }
 
@@ -521,6 +520,9 @@ export async function restoreIncrementalFromWebDAV(
       } catch (e) {
         if (e instanceof BackupDecryptError && opts.backupPassword) {
           return { ok: false, code: e.code === 'badPassword' ? 'badPassword' : 'legacyNoCross', error: e.message }
+        }
+        if (e instanceof BackupDecryptError && e.code === 'needPassword') {
+          return { ok: false, code: 'needBackupPassword', error: `blob 解密密钥不匹配：${blobRel}` }
         }
         return { ok: false, error: `blob 解密失败：${blobRel}` }
       }

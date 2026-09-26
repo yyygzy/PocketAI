@@ -1062,6 +1062,8 @@ export const en: Record<string, string> = {
   'bk.mergeTitle': 'Merge Restore',
   'bk.mergeDesc': 'Merge cloud backup with local data, keeping new content from both sides. Config (assistants/models/skills) follows cloud.',
   'bk.mergeScanning': 'Scanning conflicts…',
+  'bk.mergePwdHint': 'This merge backup cannot be decrypted with the current master password. Enter the master password used when the backup was created and rescan. Merging does not change the master password of this device.',
+  'bk.mergeRescan': 'Rescan',
   'bk.mergeStrategyHint': 'When conflicts are detected, choose a strategy:',
   'bk.mergeStrategyCloud': 'Keep cloud version',
   'bk.mergeStrategyCloudDesc': 'Conflict rows follow cloud, local additions are kept',

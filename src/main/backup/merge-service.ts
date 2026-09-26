@@ -25,7 +25,11 @@ import {
   type IncrementalIndex,
   isEncryptedBlob,
   ENC_PREFIX,
+  ENC_PREFIX_V1,
+  ENC_PREFIX_V2,
   decryptBackup,
+  deriveBackupDbKey,
+  BackupDecryptError,
   toCreds
 } from './backup-service'
 import { downloadFile, downloadRemoteFile } from './webdav-client'
@@ -37,6 +41,35 @@ const log = createLogger('merge')
 
 /** 单表冲突统计（复用 shared 类型别名） */
 export type { TableConflict }
+
+/** 合并解密选项：backupPassword 为制作备份时的主密码（异机合并） */
+export interface MergeOpts {
+  backupPassword?: string
+}
+
+/** 合并结果的密码三态（与 BackupRestoreResult.code 同语义） */
+export type MergeResultCode = 'needBackupPassword' | 'badPassword' | 'legacyNoCross'
+
+/** 合并路径统一解密：salt 内嵌偏移对 PKBK1/PKBK2 一致；错误原样冒泡由调用方映射 */
+function decryptMergeBlob(blob: Buffer, opts: MergeOpts): Buffer {
+  const salt = blob.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
+  return decryptBackup(blob, salt, opts.backupPassword ? { password: opts.backupPassword } : undefined)
+}
+
+/** 异机合并时从加密信封派生备份库（只读云库）的 SQLCipher key；同机回退当前会话密钥 */
+function cloudKeyFor(blob: Buffer, opts: MergeOpts): Buffer | null {
+  if (opts.backupPassword) return deriveBackupDbKey(blob, opts.backupPassword)
+  return masterKeyManager.getDbKey()
+}
+
+/** 把备份解密错误映射为合并结果 code（非解密错误返回 undefined） */
+function mapDecryptCode(e: unknown): MergeResultCode | undefined {
+  if (!(e instanceof BackupDecryptError)) return undefined
+  if (e.code === 'badPassword') return 'badPassword'
+  if (e.code === 'legacyNoCross') return 'legacyNoCross'
+  if (e.code === 'needPassword') return 'needBackupPassword'
+  return undefined
+}
 
 // ─── 表分类配置 ───────────────────────────────────────────────────
 
@@ -91,8 +124,9 @@ function rowHash(row: Record<string, unknown>, idCol = 'id'): string {
  */
 async function extractCloudDb(
   cfg: WebDAVConfig,
-  filename: string
-): Promise<{ dbPath: string; attachmentsDir: string | null; cleanup: () => void }> {
+  filename: string,
+  opts: MergeOpts = {}
+): Promise<{ dbPath: string; attachmentsDir: string | null; cloudDbKey: Buffer | null; cleanup: () => void }> {
   const creds = toCreds(cfg)
   const tmp = join(tmpdir(), `pocketai-merge-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })
@@ -107,11 +141,10 @@ async function extractCloudDb(
       const indexRaw = await downloadFile(creds, filename)
       let indexBuf = indexRaw
       if (isEncryptedBlob(indexRaw, filename)) {
-        indexBuf = decryptBackup(
-          indexRaw,
-          indexRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
-        )
+        indexBuf = decryptMergeBlob(indexRaw, opts)
       }
+      // 云库 key：密码路径从索引信封派生，同机路径用当前会话密钥
+      const cloudDbKey = isEncryptedBlob(indexRaw, filename) ? cloudKeyFor(indexRaw, opts) : null
       const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
       if (index.kind !== 'pocketai-incremental' || !index.db?.blob) {
         throw new Error('不是有效的增量备份索引')
@@ -120,10 +153,7 @@ async function extractCloudDb(
       const blobRaw = await downloadRemoteFile(creds, index.db.blob)
       let dbBuf = blobRaw
       if (index.encrypted || isEncryptedBlob(blobRaw, index.db.blob)) {
-        dbBuf = decryptBackup(
-          blobRaw,
-          blobRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
-        )
+        dbBuf = decryptMergeBlob(blobRaw, opts)
       }
       // 校验 sha256
       if (sha256Hex(dbBuf) !== index.db.sha256) {
@@ -132,19 +162,19 @@ async function extractCloudDb(
       const dbPath = join(tmp, 'cloud.db')
       writeFileSync(dbPath, dbBuf)
       // 增量备份的附件按需单独下载，这里不解压
-      return { dbPath, attachmentsDir: null, cleanup }
+      return { dbPath, attachmentsDir: null, cloudDbKey, cleanup }
     }
 
     // 全量 zip 包：下载 → 解密 → 解压 → 取 app.db + attachments/
     const blob = await downloadFile(creds, filename)
-    const isEncrypted = filename.endsWith('.enc.zip')
+    // 加密判定看扩展名 + 信封魔数（WebDA 文件被改名也不漏解密）
+    const head = blob.subarray(0, 5).toString('latin1')
+    const isEncrypted = filename.endsWith('.enc.zip') || head === ENC_PREFIX_V1 || head === ENC_PREFIX_V2
     let zipBuf = blob
     if (isEncrypted) {
-      zipBuf = decryptBackup(
-        blob,
-        blob.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
-      )
+      zipBuf = decryptMergeBlob(blob, opts)
     }
+    const cloudDbKey = isEncrypted ? cloudKeyFor(blob, opts) : null
 
     // 解压到临时目录
     const unzipper = await import('unzipper')
@@ -163,18 +193,21 @@ async function extractCloudDb(
     const attDir = join(tmp, 'attachments')
     const attachmentsDir = existsSync(attDir) ? attDir : null
 
-    return { dbPath, attachmentsDir, cleanup }
+    return { dbPath, attachmentsDir, cloudDbKey, cleanup }
   } catch (e) {
     cleanup()
     throw e
   }
 }
 
-/** 打开临时云端 DB（处理 sqlcipher 加密） */
-function openCloudDb(dbPath: string): Database.Database {
+/**
+ * 打开临时云端 DB（只读）处理 sqlcipher 加密。
+ * explicitKey 为异机合并时从备份信封派生的云库 key；不传则用当前会话密钥（同机）。
+ * 注意：不切换全局 masterKeyManager——本地库仍以原密钥打开，合并只写本地库。
+ */
+function openCloudDb(dbPath: string, explicitKey?: Buffer | null): Database.Database {
   const db = new Database(dbPath, { readonly: true })
-  // 尝试以当前主密码密钥打开（云端备份若加密，密钥应与当前一致）
-  const dbKey = masterKeyManager.getDbKey()
+  const dbKey = explicitKey !== undefined ? explicitKey : masterKeyManager.getDbKey()
   if (dbKey) {
     db.pragma('cipher = sqlcipher')
     db.pragma('legacy = 0')
@@ -229,14 +262,18 @@ export function scanTableConflicts(localDb: Database.Database, cloudDb: Database
 }
 
 /** 扫描所有表的冲突，返回报告 */
-export async function scanMergeConflicts(cfg: WebDAVConfig, filename: string): Promise<MergeConflictReport> {
+export async function scanMergeConflicts(
+  cfg: WebDAVConfig,
+  filename: string,
+  opts: MergeOpts = {}
+): Promise<MergeConflictReport> {
   let cloudDb: Database.Database | null = null
   let cleanup: (() => void) | null = null
 
   try {
-    const extracted = await extractCloudDb(cfg, filename)
+    const extracted = await extractCloudDb(cfg, filename, opts)
     cleanup = extracted.cleanup
-    cloudDb = openCloudDb(extracted.dbPath)
+    cloudDb = openCloudDb(extracted.dbPath, extracted.cloudDbKey)
 
     const localDb = dbService.getHandle()
     const tables: TableConflict[] = []
@@ -255,10 +292,7 @@ export async function scanMergeConflicts(cfg: WebDAVConfig, filename: string): P
       const indexRaw = await downloadFile(creds, filename)
       let indexBuf = indexRaw
       if (isEncryptedBlob(indexRaw, filename)) {
-        indexBuf = decryptBackup(
-          indexRaw,
-          indexRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
-        )
+        indexBuf = decryptMergeBlob(indexRaw, opts)
       }
       const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
       for (const a of index.attachments || []) {
@@ -280,7 +314,14 @@ export async function scanMergeConflicts(cfg: WebDAVConfig, filename: string): P
 
     return { ok: true, tables, attachmentsToAdd }
   } catch (e) {
-    return { ok: false, error: errMsg(e, '扫描冲突失败'), tables: [], attachmentsToAdd: 0 }
+    const code = mapDecryptCode(e)
+    return {
+      ok: false,
+      code,
+      error: code ? (e as Error).message : errMsg(e, '扫描冲突失败'),
+      tables: [],
+      attachmentsToAdd: 0
+    }
   } finally {
     if (cloudDb) {
       try { cloudDb.close() } catch { /* ignore */ }
@@ -404,15 +445,16 @@ export function overwriteTable(localDb: Database.Database, cloudDb: Database.Dat
 export async function executeMerge(
   cfg: WebDAVConfig,
   filename: string,
-  strategy: MergeStrategy
-): Promise<{ ok: boolean; error?: string; summary?: string }> {
+  strategy: MergeStrategy,
+  opts: MergeOpts = {}
+): Promise<{ ok: boolean; error?: string; summary?: string; code?: MergeResultCode }> {
   let cloudDb: Database.Database | null = null
   let cleanup: (() => void) | null = null
 
   try {
-    const extracted = await extractCloudDb(cfg, filename)
+    const extracted = await extractCloudDb(cfg, filename, opts)
     cleanup = extracted.cleanup
-    cloudDb = openCloudDb(extracted.dbPath)
+    cloudDb = openCloudDb(extracted.dbPath, extracted.cloudDbKey)
 
     const localDb = dbService.getHandle()
     const summaryParts: string[] = []
@@ -442,10 +484,7 @@ export async function executeMerge(
       const indexRaw = await downloadFile(creds, filename)
       let indexBuf = indexRaw
       if (isEncryptedBlob(indexRaw, filename)) {
-        indexBuf = decryptBackup(
-          indexRaw,
-          indexRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
-        )
+        indexBuf = decryptMergeBlob(indexRaw, opts)
       }
       const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
 
@@ -460,10 +499,7 @@ export async function executeMerge(
         const blobRaw = await downloadRemoteFile(creds, a.blob)
         let data = blobRaw
         if (index.encrypted || isEncryptedBlob(blobRaw, a.blob)) {
-          data = decryptBackup(
-            blobRaw,
-            blobRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
-          )
+          data = decryptMergeBlob(blobRaw, opts)
         }
         if (sha256Hex(data) !== a.sha256) continue
         writeFileSync(local, data)
@@ -491,7 +527,12 @@ export async function executeMerge(
     log.info(`合并完成: ${filename} (${summaryParts.join(', ') || '无变化'})`)
     return { ok: true, summary: summaryParts.join('; ') || '无变化' }
   } catch (e) {
-    return { ok: false, error: errMsg(e, '合并失败') }
+    const code = mapDecryptCode(e)
+    return {
+      ok: false,
+      code,
+      error: code ? (e as Error).message : errMsg(e, '合并失败')
+    }
   } finally {
     if (cloudDb) {
       try { cloudDb.close() } catch { /* ignore */ }

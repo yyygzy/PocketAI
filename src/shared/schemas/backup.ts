@@ -23,5 +23,6 @@ export const backupSchedulePatchSchema = z.object({
 /** 合并执行入参 */
 export const mergeExecutePayloadSchema = z.object({
   filename: backupFilenameSchema,
-  strategy: z.enum(['local', 'cloud', 'newer'])
+  strategy: z.enum(['local', 'cloud', 'newer']),
+  backupPassword: z.string().min(1).optional()
 })

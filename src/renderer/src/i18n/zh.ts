@@ -1062,6 +1062,8 @@ export const zh: Record<string, string> = {
   'bk.mergeTitle': '合并恢复',
   'bk.mergeDesc': '将云端备份与本地数据合并，保留双方新增内容。配置类（助手/模型/技能等）以云端为准。',
   'bk.mergeScanning': '正在扫描冲突…',
+  'bk.mergePwdHint': '该合并备份无法用当前主密码解密，请输入制作备份时使用的主密码后重新扫描。合并不会改变本机主密码。',
+  'bk.mergeRescan': '重新扫描',
   'bk.mergeStrategyHint': '检测到冲突时，请选择处理策略：',
   'bk.mergeStrategyCloud': '保留云端版本',
   'bk.mergeStrategyCloudDesc': '冲突行以云端为准，本地新增内容仍保留',

@@ -1008,6 +1008,16 @@ export interface MergeConflictReport {
   tables: MergeTableConflict[]
   /** 附件将新增的数量（云端有本地无） */
   attachmentsToAdd: number
+  /** 解密三态：needBackupPassword 需输入备份密码；badPassword 密码错误；legacyNoCross 旧包不支持异机 */
+  code?: 'needBackupPassword' | 'badPassword' | 'legacyNoCross'
+}
+
+/** 合并执行结果（code 与 MergeConflictReport 同语义） */
+export interface MergeExecuteResult {
+  ok: boolean
+  error?: string
+  summary?: string
+  code?: 'needBackupPassword' | 'badPassword' | 'legacyNoCross'
 }
 
 // ---------- WebDAV 备份配置与文件列表 ----------

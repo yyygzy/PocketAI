@@ -984,6 +984,8 @@ export const ja: Record<string, string> = {
   'bk.mergeTitle': 'マージ復元',
   'bk.mergeDesc': 'クラウドバックアップをローカルデータとマージし、両方の新しいコンテンツを保持します。設定（アシスタント/モデル/スキル）はクラウドに従います。',
   'bk.mergeScanning': '競合をスキャン中…',
+  'bk.mergePwdHint': 'このマージバックアップは現在のマスターパスワードで復号できません。バックアップ作成時のマスターパスワードを入力して再スキャンしてください。マージでは本機のマスターパスワードは変更されません。',
+  'bk.mergeRescan': '再スキャン',
   'bk.mergeStrategyHint': '競合が検出された場合、戦略を選択してください：',
   'bk.mergeStrategyCloud': 'クラウド版を保持',
   'bk.mergeStrategyCloudDesc': '競合行はクラウドに従い、ローカルの追加は保持',

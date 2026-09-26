@@ -984,6 +984,8 @@ export const ko: Record<string, string> = {
   'bk.mergeTitle': '병합 복원',
   'bk.mergeDesc': '클라우드 백업을 로컬 데이터와 병합하여 양쪽의 새로운 콘텐츠를 유지합니다. 설정(어시스턴트/모델/스킬)은 클라우드를 따릅니다.',
   'bk.mergeScanning': '충돌 스캔 중…',
+  'bk.mergePwdHint': '이 병합 백업은 현재 마스터 비밀번호로 해독할 수 없습니다. 백업 생성 시 사용한 마스터 비밀번호를 입력하고 다시 스캔하세요. 병합해도 이 기기의 마스터 비밀번호는 변경되지 않습니다.',
+  'bk.mergeRescan': '다시 스캔',
   'bk.mergeStrategyHint': '충돌이 감지되면 전략을 선택하세요:',
   'bk.mergeStrategyCloud': '클라우드 버전 유지',
   'bk.mergeStrategyCloudDesc': '충돌 행은 클라우드를 따르고, 로컬 추가는 유지',
