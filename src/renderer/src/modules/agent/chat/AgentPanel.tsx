@@ -13,6 +13,7 @@ import { VirtualMessageList } from '../components/VirtualMessageList'
 import { formatRunDuration } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { errText } from '../../../utils/error'
+import { writeClipboard } from '../../../utils/clipboard'
 
 export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
@@ -31,6 +32,13 @@ export const AgentPanel: React.FC = () => {
     const next = !statsExpanded
     setStatsExpanded(next)
     if (next && chat.latestTraces === null) chat.loadLatestTraces()
+  }
+
+  const handleCopyTraces = async () => {
+    if (!chat.latestTraces || chat.latestTraces.length === 0) return
+    const ok = await writeClipboard(JSON.stringify(chat.latestTraces, null, 2))
+    if (ok) toast.success(t('agent.traceCopied'))
+    else toast.error(t('agent.copyFailed'))
   }
 
   // ---------- 会话导入/导出（对齐 Chat 模块）：Markdown 直接导出，加密导出/导入先弹密码框 ----------
@@ -185,16 +193,26 @@ export const AgentPanel: React.FC = () => {
 
             {statsExpanded && (
               <div className="mt-1 ml-4 max-h-72 overflow-y-auto border border-[var(--color-border)] rounded p-2 space-y-1 bg-[var(--color-bg-secondary)]">
-                {/* 会话累计统计（跨该会话全部运行） */}
-                {chat.sessionStats && (
-                  <div className="text-xs text-[var(--color-text-muted)] pb-1 border-b border-[var(--color-border)]">
-                    {t('agent.sessionStats', {
-                      runs: chat.sessionStats.runCount,
-                      duration: formatRunDuration(chat.sessionStats.totalDurationMs),
-                      tokens: chat.sessionStats.totalTokens.toLocaleString('en-US')
-                    })}
+                {/* 头部：会话累计统计（左） + 复制 JSON 按钮（右） */}
+                <div className="flex items-center justify-between gap-2 pb-1 border-b border-[var(--color-border)]">
+                  <div className="text-xs text-[var(--color-text-muted)]">
+                    {chat.sessionStats
+                      ? t('agent.sessionStats', {
+                          runs: chat.sessionStats.runCount,
+                          duration: formatRunDuration(chat.sessionStats.totalDurationMs),
+                          tokens: chat.sessionStats.totalTokens.toLocaleString('en-US')
+                        })
+                      : t('agent.traceDetail')}
                   </div>
-                )}
+                  <button
+                    onClick={handleCopyTraces}
+                    disabled={!chat.latestTraces || chat.latestTraces.length === 0}
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-text-muted)] disabled:opacity-40 disabled:hover:text-[var(--color-text-muted)] disabled:hover:border-[var(--color-border)] transition-colors"
+                    title={t('agent.copyTraceJson')}
+                  >
+                    {t('agent.copyTraceJson')}
+                  </button>
+                </div>
                 {chat.tracesLoading && (
                   <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
                 )}
