@@ -497,6 +497,8 @@ export interface ToolApprovalRequestEvent {
 export interface ToolApprovalResponsePayload {
   approvalId: string
   approved: boolean
+  /** 勾选「本次会话总是允许」：后续同会话同工具名直接放行（不落库） */
+  alwaysAllow?: boolean
 }
 
 // ---------- 发送请求 ----------

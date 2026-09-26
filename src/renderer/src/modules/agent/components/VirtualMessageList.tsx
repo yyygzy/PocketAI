@@ -17,8 +17,10 @@ export interface VirtualMessageListProps {
   emptyHint: ReactNode
   /** 删除单条消息（非流式时由父级传入） */
   onDeleteMessage?: (id: string) => void
-  /** 截断重跑某条用户消息（非流式时由父级传入） */
-  onRerunMessage?: (id: string) => void
+  /** 截断重跑某条用户消息（非流式时由父级传入）；overrideText 非空为编辑后重发 */
+  onRerunMessage?: (id: string, overrideText?: string) => void
+  /** 重新生成最后一条 final 助手回复（非流式时由父级传入） */
+  onRegenerateMessage?: (id: string) => void
 }
 
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
@@ -27,7 +29,8 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   conversationId,
   emptyHint,
   onDeleteMessage,
-  onRerunMessage
+  onRerunMessage,
+  onRegenerateMessage
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新）
@@ -97,6 +100,9 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
         {items.map((vi) => {
           const m = messages[vi.index]
           if (!m) return null
+          // 仅最后一条 final 助手卡提供「重新生成」（重跑其前最近的用户消息）
+          const isLastFinal =
+            vi.index === messages.length - 1 && m.role === 'assistant' && m.isFinal
           return (
             <div
               key={m.id}
@@ -112,7 +118,12 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
                 paddingBottom: 8
               }}
             >
-              <AgentMessageCard m={m} onDelete={onDeleteMessage} onRerun={onRerunMessage} />
+              <AgentMessageCard
+                m={m}
+                onDelete={onDeleteMessage}
+                onRerun={onRerunMessage}
+                onRegenerate={isLastFinal ? onRegenerateMessage : undefined}
+              />
             </div>
           )
         })}

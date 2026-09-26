@@ -13,7 +13,7 @@ import type {
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { reportIpcError } from '../../../utils/ipc'
-import { toAgentMessages, type AgentMessage } from '../agent-shared'
+import { findRerunSourceId, toAgentMessages, type AgentMessage } from '../agent-shared'
 import { messagesReducer } from './messages-reducer'
 
 export function useAgentChat(providers: ProviderRecord[]) {
@@ -262,14 +262,15 @@ export function useAgentChat(providers: ProviderRecord[]) {
 
   /**
    * 截断重跑：以某条历史用户消息为界，删除它及其后的全部消息（DB + UI），
-   * 用相同文本与附件重新发起。Agent 为线性历史，不引入 Chat 的分支体系。
+   * 用文本与附件重新发起。Agent 为线性历史，不引入 Chat 的分支体系。
    * 仅对已持久化（有 dbId）的用户消息可用；DB 删除成功后才动 UI，失败仅记日志。
+   * overrideText 非空时为「编辑后重发」：沿用附件，文本以编辑内容为准。
    */
-  const rerun = async (id: string) => {
+  const rerun = async (id: string, overrideText?: string) => {
     if (running) return
     const target = messagesRef.current.find((m) => m.id === id)
     if (!target || target.role !== 'user' || !target.dbId || !target.text.trim()) return
-    const text = target.text
+    const text = overrideText?.trim() || target.text
     const attachments = target.attachments ?? []
     try {
       await window.pocketai.truncateMessagesFrom(target.dbId)
@@ -279,6 +280,12 @@ export function useAgentChat(providers: ProviderRecord[]) {
     }
     dispatch({ type: 'truncateFrom', id })
     send(text, attachments)
+  }
+
+  /** 重新生成某条助手回复：定位其前最近的可重跑用户消息后截断重跑 */
+  const regenerate = (assistantId: string) => {
+    const sourceId = findRerunSourceId(messagesRef.current, assistantId)
+    if (sourceId) void rerun(sourceId)
   }
 
   return {
@@ -310,7 +317,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
     send,
     abort,
     resume,
-    rerun
+    rerun,
+    regenerate
   }
 }
 

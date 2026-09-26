@@ -23,5 +23,6 @@ export const calendarConfigSchema = z.object({
 /** AGENT_TOOL_APPROVE_RESPONSE 入参 */
 export const toolApproveResponseSchema = z.object({
   approvalId: z.string().min(1),
-  approved: z.boolean()
+  approved: z.boolean(),
+  alwaysAllow: z.boolean().optional()
 })

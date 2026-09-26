@@ -120,10 +120,11 @@ export function registerAgentHandlers(): void {
   // 渲染端对工具审批弹窗的应答
   safeHandle(
     IPC.AGENT_TOOL_APPROVE_RESPONSE,
-    (_e, payload: { approvalId?: unknown; approved?: unknown }) => {
+    (_e, payload: { approvalId?: unknown; approved?: unknown; alwaysAllow?: unknown }) => {
       const approvalId = String(payload?.approvalId ?? '')
       const approved = payload?.approved === true
-      const matched = resolveApproval(approvalId, approved)
+      const alwaysAllow = payload?.alwaysAllow === true
+      const matched = resolveApproval(approvalId, approved, alwaysAllow)
       return { ok: matched }
     },
     argsSchema(toolApproveResponseSchema)

@@ -12,6 +12,8 @@ export const ToolApprovalDialog: React.FC = () => {
   // 防双击：同一帧重复点击不得连吞两条排队审批
   const [busy, setBusy] = useState(false)
   const [staleNote, setStaleNote] = useState(false)
+  // 「本次会话总是允许」勾选状态：每条审批独立重置
+  const [alwaysAllow, setAlwaysAllow] = useState(false)
 
   useEffect(() => {
     // 返回值为退订函数
@@ -22,10 +24,11 @@ export const ToolApprovalDialog: React.FC = () => {
 
   const current = queue[0] ?? null
 
-  // 切到下一条审批时重置按钮锁与超时提示
+  // 切到下一条审批时重置按钮锁、超时提示与总是允许勾选
   useEffect(() => {
     setBusy(false)
     setStaleNote(false)
+    setAlwaysAllow(false)
   }, [current?.approvalId])
 
   const respond = async (approved: boolean) => {
@@ -33,7 +36,8 @@ export const ToolApprovalDialog: React.FC = () => {
     if (!head || busy) return
     setBusy(true)
     try {
-      const res = await window.pocketai.respondToolApproval(head.approvalId, approved)
+      // 仅在允许时把「总是允许」带上；拒绝一律不记
+      const res = await window.pocketai.respondToolApproval(head.approvalId, approved, approved && alwaysAllow)
       if (!res.ok) {
         // 主进程已按 5 分钟超时自动拒绝：保留弹窗并提示，不允许误以为已放行
         setStaleNote(true)
@@ -110,9 +114,23 @@ export const ToolApprovalDialog: React.FC = () => {
 
         {/* 操作区（允许键不做 autofocus，防止回车误放行） */}
         <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-[var(--color-border)] shrink-0">
-          <span className="text-[11px] text-[var(--color-text-muted)]">
-            {staleNote ? t('agent.approval.expired') : t('agent.approval.autoRejectHint')}
-          </span>
+          {staleNote ? (
+            <span className="text-[11px] text-[var(--color-text-muted)]">{t('agent.approval.expired')}</span>
+          ) : (
+            <label
+              className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-[var(--color-text-muted)]"
+              title={t('agent.approval.alwaysAllowHint')}
+            >
+              <input
+                type="checkbox"
+                checked={alwaysAllow}
+                disabled={busy}
+                onChange={(e) => setAlwaysAllow(e.target.checked)}
+                className="accent-[var(--color-accent)]"
+              />
+              {t('agent.approval.alwaysAllow')}
+            </label>
+          )}
           <div className="flex gap-2">
             {staleNote ? (
               <button className="btn-ghost text-xs" onClick={() => setQueue((prev) => prev.slice(1))}>

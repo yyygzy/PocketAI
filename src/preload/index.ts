@@ -439,9 +439,10 @@ const api = {
   /** 应答工具审批弹窗 */
   respondToolApproval: (
     approvalId: string,
-    approved: boolean
+    approved: boolean,
+    alwaysAllow = false
   ): Promise<{ ok: boolean }> =>
-    ipcRenderer.invoke(IPC.AGENT_TOOL_APPROVE_RESPONSE, { approvalId, approved }),
+    ipcRenderer.invoke(IPC.AGENT_TOOL_APPROVE_RESPONSE, { approvalId, approved, alwaysAllow }),
 
   // ---------- Channels（IM Bot 网关；Token 明文不出主进程） ----------
   getChannelConfig: (type: ChannelType): Promise<ChannelConfig> =>

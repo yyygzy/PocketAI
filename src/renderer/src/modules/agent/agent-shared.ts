@@ -18,6 +18,21 @@ export interface AgentMessage {
   dbId?: string // 对应 DB message.id（用于删除单条消息；live 占位卡需等主进程回传）
 }
 
+/**
+ * 「重新生成」：给定某条助手消息，定位它之前最近一条可重跑的用户消息（卡片 id）。
+ * 可重跑条件：role=user、有 dbId（已持久化才能截断）、文本非空。
+ * 找不到返回 null（如运行中的占位卡、前面全是工具卡）。
+ */
+export function findRerunSourceId(messages: AgentMessage[], assistantId: string): string | null {
+  const idx = messages.findIndex((m) => m.id === assistantId)
+  if (idx <= 0) return null
+  for (let i = idx - 1; i >= 0; i--) {
+    const m = messages[i]!
+    if (m.role === 'user' && m.dbId && m.text.trim()) return m.id
+  }
+  return null
+}
+
 // ---------- 附件读取 ----------
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
 const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript']

@@ -9,6 +9,7 @@ import { messageRepo } from '../../db/repositories/message.repo'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
 import { safeHandle, argsSchema, z } from '../safe-handle'
+import { clearSessionAllow } from '../../agent/tool-approval'
 import {
   conversationExportPayloadSchema,
   conversationListArgsSchema,
@@ -25,6 +26,7 @@ export function registerConversationHandlers(): void {
   conversationCreateArgsSchema)
   safeHandle(IPC.CONVERSATION_DELETE, (_e, id: string) => {
     conversationRepo.delete(id)
+    clearSessionAllow(id) // 清会话级工具「总是允许」白名单
     return { ok: true }
   }, argsSchema(idSchema))
   safeHandle(IPC.CONVERSATION_RENAME, (_e, id: string, title: string) => {
