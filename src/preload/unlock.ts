@@ -16,6 +16,7 @@ import type { PocketAPI } from './index'
 type UnlockApiShape = Pick<
   PocketAPI,
   | 'unlockEncryption'
+  | 'getAuthLockState'
   | 'setMasterPassword'
   | 'recoverWithCode'
   | 'saveRecoveryFile'
@@ -24,16 +25,13 @@ type UnlockApiShape = Pick<
 
 const api: UnlockApiShape = {
   // ── 解锁 / 设密 ──
-  unlockEncryption: (password: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke(IPC.ENCRYPTION_UNLOCK, password),
-  setMasterPassword: (password: string): Promise<{ ok: boolean; error?: string }> =>
+  unlockEncryption: (password) => ipcRenderer.invoke(IPC.ENCRYPTION_UNLOCK, password),
+  getAuthLockState: () => ipcRenderer.invoke(IPC.ENCRYPTION_AUTH_STATUS),
+  setMasterPassword: (password) =>
     ipcRenderer.invoke(IPC.ENCRYPTION_SET_MASTER_PASSWORD, password),
 
   // ── 恢复码 ──
-  recoverWithCode: (
-    code: string,
-    newPassword: string
-  ): Promise<{ ok: boolean; recoveryCode?: string; error?: string }> =>
+  recoverWithCode: (code, newPassword) =>
     ipcRenderer.invoke(IPC.ENCRYPTION_RECOVER, { code, newPassword }),
   saveRecoveryFile: (
     code: string

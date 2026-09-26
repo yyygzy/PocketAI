@@ -653,6 +653,24 @@ export interface EncryptionStatus {
   masterPasswordVerified: boolean
 }
 
+/** 主密码解锁 / 恢复码重置的统一返回：成功仅 ok；失败带错误与主进程限流信息 */
+export interface AuthResult {
+  ok: boolean
+  error?: string
+  /** 本次失败是否触发了限流锁定（区别于普通密码错误） */
+  locked?: boolean
+  /** 距下次可尝试的剩余毫秒（锁定中或刚触发锁定时有意义） */
+  retryAfterMs?: number
+  /** 当前桶连续失败次数（供 UI 提示剩余尝试机会） */
+  attempts?: number
+}
+
+/** ENCRYPTION_AUTH_STATUS 返回：解锁与恢复两个桶各自的限流状态 */
+export interface AuthLockState {
+  unlock: { retryAfterMs: number; attempts: number }
+  recover: { retryAfterMs: number; attempts: number }
+}
+
 export interface UnlockPayload {
   /** 用户输入的主密码（空字符串=无密码模式） */
   password: string
@@ -1273,6 +1291,7 @@ export const IPC = {
   // ---------- 加密 ----------
   ENCRYPTION_GET_STATUS: 'encryption:get-status',
   ENCRYPTION_UNLOCK: 'encryption:unlock', // 主密码解锁（打开加密 DB）
+  ENCRYPTION_AUTH_STATUS: 'encryption:auth-status', // 查询解锁/恢复的主进程限流锁定状态
   ENCRYPTION_LOCK: 'encryption:lock', // 锁定（关闭加密 DB，清密钥）
   ENCRYPTION_SET_MASTER_PASSWORD: 'encryption:set-master-password', // 首次设置密码（通过解锁窗口）
   ENCRYPTION_CHANGE_PASSWORD: 'encryption:change-password', // 密码轮换（设置页内，old → new）

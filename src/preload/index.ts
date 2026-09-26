@@ -39,6 +39,8 @@ import type {
   WebDAVConfig,
   WebDAVBackupFile,
   EncryptionStatus,
+  AuthResult,
+  AuthLockState,
   LockStatus,
   LockStateEvent,
   OllamaRuntimeStatus,
@@ -183,8 +185,8 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_LIST, conversationId),
   deleteMessage: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.MESSAGE_DELETE, id),
-  searchMessages: (query: string): Promise<MessageSearchResult[]> =>
-    ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query),
+  searchMessages: (query: string, assistantId?: string): Promise<MessageSearchResult[]> =>
+    ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query, assistantId),
 
   // ---------- 聊天 ----------
   sendMessage: (payload: SendMessagePayload): Promise<void> =>
@@ -549,8 +551,10 @@ const api = {
   // ---------- 加密 ----------
   getEncryptionStatus: (): Promise<EncryptionStatus> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_GET_STATUS),
-  unlockEncryption: (password: string): Promise<{ ok: boolean }> =>
+  unlockEncryption: (password: string): Promise<AuthResult> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_UNLOCK, password),
+  getAuthLockState: (): Promise<AuthLockState> =>
+    ipcRenderer.invoke(IPC.ENCRYPTION_AUTH_STATUS),
   lockEncryption: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_LOCK),
   setMasterPassword: (password: string): Promise<{ ok: boolean }> =>
@@ -573,7 +577,7 @@ const api = {
   recoverWithCode: (
     code: string,
     newPassword: string
-  ): Promise<{ ok: boolean; recoveryCode?: string; error?: string }> =>
+  ): Promise<AuthResult & { recoveryCode?: string }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_RECOVER, { code, newPassword }),
   saveRecoveryFile: (
     code: string

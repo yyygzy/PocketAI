@@ -42,3 +42,5 @@ latest.yml.bak
 # 测试脚本运行时生成
 scripts/tests/*.json
 scripts/tests/*.log
+# vitest JSON reporter 产物
+.vitest/

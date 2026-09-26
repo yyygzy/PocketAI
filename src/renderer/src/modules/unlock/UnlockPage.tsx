@@ -3,7 +3,7 @@
 // - unlock：DB 已加密，输入密码解锁
 // - setPassword：首次加密明文 DB，设置新密码
 // - recovery：忘记密码，用恢复码 + 新密码重置
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { errText } from '../../utils/error'
@@ -35,9 +35,9 @@ export function UnlockPage() {
     }
   }, [])
 
-  // ── B5：渲染层防暴力（前端只做禁用+倒计时；主进程侧防暴力为后续加固 TODO）──
+  // ── 防暴力破解：失败计数与退避锁定均在主进程（auth-ratelimit），
+  //    渲染层只负责拉取状态并展示倒计时；刷新/重开解锁窗无法绕过 ──
   const [showPwd, setShowPwd] = useState(false)
-  const failCountRef = useRef(0) // 连续失败计数（仅用于退避判断，不参与渲染）
   const [lockedUntil, setLockedUntil] = useState(0) // 0 = 未锁定；否则退避结束时间戳
   const [remainingMs, setRemainingMs] = useState(0)
 
@@ -57,18 +57,39 @@ export function UnlockPage() {
     return () => window.clearInterval(id)
   }, [lockedUntil])
 
-  // 连续错误 ≥5 次起锁；每次失败延时翻倍，上限 30s
-  function noteAuthFailure() {
-    const next = failCountRef.current + 1
-    failCountRef.current = next
-    if (next >= 5) {
-      const backoff = Math.min(1000 * 2 ** (next - 5), 30000)
-      setLockedUntil(Date.now() + backoff)
+  /** 挂载 / 切换 unlock↔recovery 模式时，从主进程同步对应桶的锁定态 */
+  const syncLockState = useCallback(async (m: UnlockMode) => {
+    if (m === 'setPassword') {
+      setLockedUntil(0)
+      setRemainingMs(0)
+      return
+    }
+    try {
+      const s = await window.pocketai.getAuthLockState()
+      const ms = (m === 'recovery' ? s.recover : s.unlock)?.retryAfterMs ?? 0
+      if (ms > 0) {
+        setLockedUntil(Date.now() + ms)
+        setRemainingMs(ms)
+      } else {
+        setLockedUntil(0)
+        setRemainingMs(0)
+      }
+    } catch {
+      // 状态拉取失败不阻断解锁流程（主进程仍会在提交时强制拦截）
+    }
+  }, [])
+
+  useEffect(() => { void syncLockState(mode) }, [mode, syncLockState])
+
+  /** 主进程认证失败返回：带 retryAfterMs 时进入锁定倒计时，否则仅展示错误 */
+  function applyAuthResult(r: { retryAfterMs?: number }) {
+    if (r.retryAfterMs && r.retryAfterMs > 0) {
+      setLockedUntil(Date.now() + r.retryAfterMs)
+      setRemainingMs(r.retryAfterMs)
     }
   }
 
-  function resetFail() {
-    failCountRef.current = 0
+  function clearLock() {
     setLockedUntil(0)
     setRemainingMs(0)
   }
@@ -123,13 +144,12 @@ export function UnlockPage() {
       const res = await window.pocketai.unlockEncryption(password)
       if (!res.ok) {
         setError(t('unlock.recoverFinishFail'))
-        noteAuthFailure()
+        applyAuthResult(res)
       } else {
-        resetFail()
+        clearLock()
       }
     } catch (e) {
       setError(errText(e, t('unlock.submitFailed')))
-      noteAuthFailure()
     } finally {
       setBusy(false)
     }
@@ -164,16 +184,15 @@ export function UnlockPage() {
         const r = await window.pocketai.recoverWithCode(recoveryCode, password)
         if (!r.ok || !r.recoveryCode) {
           setError(r.error ?? t('unlock.recoverFailed'))
-          noteAuthFailure()
+          applyAuthResult(r)
           return
         }
-        // 重置成功，清空失败计数
-        resetFail()
+        // 重置成功，清空本地锁定态（主进程两桶已随密码重置清零）
+        clearLock()
         // 停在成功页展示新恢复码，用户确认保存后再进入应用
         setNewCode(r.recoveryCode)
       } catch (e) {
         setError(errText(e, t('unlock.recoverFailed')))
-        noteAuthFailure()
       } finally {
         setBusy(false)
       }
@@ -198,7 +217,7 @@ export function UnlockPage() {
 
     setBusy(true)
     try {
-      let res: { ok: boolean; error?: string }
+      let res: { ok: boolean; error?: string; retryAfterMs?: number }
       if (mode === 'unlock') {
         res = await window.pocketai.unlockEncryption(password)
       } else {
@@ -206,15 +225,14 @@ export function UnlockPage() {
       }
       if (!res.ok) {
         setError(res.error ?? t('unlock.submitFailed'))
-        noteAuthFailure()
+        applyAuthResult(res)
         return
       }
-      // 成功：重置失败计数（unlock 后窗口由主进程关闭）
-      resetFail()
+      // 成功：清锁定态（unlock 后窗口由主进程关闭）
+      clearLock()
       // 提交后窗口会被主进程关闭
     } catch (e) {
       setError(errText(e, t('unlock.submitFailed')))
-      noteAuthFailure()
     } finally {
       setBusy(false)
     }

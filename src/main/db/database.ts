@@ -546,6 +546,11 @@ export class DatabaseService {
     return this.encryptionMode
   }
 
+  /** DB 当前是否持有打开句柄（解锁 handler 预验证前判断，避免 open() 幂等跳过密码校验） */
+  isOpen(): boolean {
+    return this.db !== null
+  }
+
   runMigrations(): void {
     if (!this.db) throw new Error('Database not opened')
     // 局部变量 db 收窄后闭包内能保持类型，避免 this.db! 非空断言（this 类成员在闭包内会丢失收窄）

@@ -9,6 +9,7 @@ import { exportFieldCredentials, restoreFieldCredentials } from '../../crypto/cr
 import { recoveryKeyManager } from '../../crypto/recovery-key'
 import { clipboardGuard } from '../../crypto/clipboard-guard'
 import { unlockCoordinator } from '../../crypto/unlock-coordinator'
+import { authRateLimiter, AUTH_BUCKET } from '../../crypto/auth-ratelimit'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { lockService } from '../../lock/lock'
 import { denyNewWindows } from '../../net/external-links'
@@ -33,11 +34,58 @@ export function registerEncryptionHandlers(): void {
     fieldEncrypted: masterKeyManager.hasKey(),
     masterPasswordVerified: masterKeyManager.hasKey()
   }))
+  safeHandle(IPC.ENCRYPTION_AUTH_STATUS, () => {
+    // 解锁窗挂载/刷新时拉取：渲染层不再自持计数，锁定态以主进程为准
+    const now = Date.now()
+    const u = authRateLimiter.check(AUTH_BUCKET.UNLOCK, now)
+    const r = authRateLimiter.check(AUTH_BUCKET.RECOVER, now)
+    return {
+      unlock: { retryAfterMs: u.retryAfterMs, attempts: u.attempts },
+      recover: { retryAfterMs: r.retryAfterMs, attempts: r.attempts }
+    }
+  })
   safeHandle(IPC.ENCRYPTION_UNLOCK, (_e, password: string) => {
+    // 主进程限流：锁定中直接拒绝（渲染层计数可被刷新窗口绕过，以此处为权威）
+    const gate = authRateLimiter.check(AUTH_BUCKET.UNLOCK)
+    if (!gate.allowed) {
+      return {
+        ok: false as const,
+        error: '尝试过于频繁，请稍后再试',
+        locked: true,
+        retryAfterMs: gate.retryAfterMs,
+        attempts: gate.attempts
+      }
+    }
     // Boot 阶段：交给 unlock coordinator
     if (unlockCoordinator.isWaiting()) {
+      // 正常加密 boot 时 DB 尚未打开：先在 handler 内预验证密码——
+      // 错误直接返回让解锁窗重试并计入限流（此前 boot 密码错误是原生弹框 + app.quit，
+      // 应用每次退出，限流无从生效）。验证后关闭句柄，boot 仍按原状态机打开。
+      if (!dbService.isOpen()) {
+        const preSalt = appConfigRepo.getMasterPasswordSalt()
+        const preKey = masterKeyManager.setKey(password, preSalt ?? undefined)
+        try {
+          dbService.open(preKey)
+          dbService.getHandle().prepare('SELECT 1').get()
+        } catch {
+          masterKeyManager.clear()
+          dbService.close()
+          const v = authRateLimiter.fail(AUTH_BUCKET.UNLOCK)
+          return {
+            ok: false as const,
+            error: '密码错误',
+            locked: v.retryAfterMs > 0,
+            retryAfterMs: v.retryAfterMs,
+            attempts: v.attempts
+          }
+        }
+        dbService.close()
+      }
+      // dbService 已打开（config 标记有密码但库可明文打开的异常态）：
+      // 不在此预验证，维持原 boot 流程（错误时弹框退出）
+      authRateLimiter.reset(AUTH_BUCKET.UNLOCK)
       unlockCoordinator.submit({ password })
-      return { ok: true }
+      return { ok: true as const }
     }
     // 运行时解锁（加密锁后重新打开 DB）
     const salt = appConfigRepo.getMasterPasswordSalt()
@@ -53,11 +101,19 @@ export function registerEncryptionHandlers(): void {
       }
       // 与隐私锁状态机同步（加密锁已把 lockService 置为 locked）
       lockService.unlock()
-      return { ok: true }
+      authRateLimiter.reset(AUTH_BUCKET.UNLOCK)
+      return { ok: true as const }
     } catch {
       masterKeyManager.clear()
       dbService.close()
-      return { ok: false, error: '密码错误' }
+      const v = authRateLimiter.fail(AUTH_BUCKET.UNLOCK)
+      return {
+        ok: false as const,
+        error: '密码错误',
+        locked: v.retryAfterMs > 0,
+        retryAfterMs: v.retryAfterMs,
+        attempts: v.attempts
+      }
     }
   }, argsSchema(masterPasswordSchema))
   safeHandle(IPC.ENCRYPTION_SET_MASTER_PASSWORD, (_e, password: string) => {
@@ -275,6 +331,17 @@ export function registerEncryptionHandlers(): void {
   safeHandle(
     IPC.ENCRYPTION_RECOVER,
     async (_e, payload: { code: string; newPassword: string } | undefined) => {
+      // 主进程限流：恢复码同样是秘密，锁定中拒绝尝试
+      const gate = authRateLimiter.check(AUTH_BUCKET.RECOVER)
+      if (!gate.allowed) {
+        return {
+          ok: false as const,
+          error: '尝试过于频繁，请稍后再试',
+          locked: true,
+          retryAfterMs: gate.retryAfterMs,
+          attempts: gate.attempts
+        }
+      }
       const code = payload?.code?.trim() ?? ''
       const newPassword = payload?.newPassword ?? ''
       if (!code) return { ok: false, error: '请输入恢复密钥' }
@@ -289,7 +356,14 @@ export function registerEncryptionHandlers(): void {
       try {
         rawKey = recoveryKeyManager.recoverMasterKey(code)
       } catch (e) {
-        return { ok: false, error: errMsg(e) }
+        const v = authRateLimiter.fail(AUTH_BUCKET.RECOVER)
+        return {
+          ok: false as const,
+          error: errMsg(e),
+          locked: v.retryAfterMs > 0,
+          retryAfterMs: v.retryAfterMs,
+          attempts: v.attempts
+        }
       }
 
       // 2) 用旧 key 打开 DB 并验证
@@ -301,7 +375,14 @@ export function registerEncryptionHandlers(): void {
       } catch {
         masterKeyManager.clear()
         dbService.close()
-        return { ok: false, error: '恢复密钥与当前数据库不匹配' }
+        const v = authRateLimiter.fail(AUTH_BUCKET.RECOVER)
+        return {
+          ok: false as const,
+          error: '恢复密钥与当前数据库不匹配',
+          locked: v.retryAfterMs > 0,
+          retryAfterMs: v.retryAfterMs,
+          attempts: v.attempts
+        }
       }
 
       // 3) 旧 key 下导出全部需重加密的凭据（WebDAV 密码 + 字段级凭据）
@@ -338,8 +419,11 @@ export function registerEncryptionHandlers(): void {
 
         // 6) 旧恢复码包裹的是旧 masterKey → 生成新恢复码，要求用户重新保存
         const newRecoveryCode = recoveryKeyManager.enableRecovery(newKey)
+        // 密码已变更：解锁/恢复两桶失败计数全部作废
+        authRateLimiter.reset(AUTH_BUCKET.RECOVER)
+        authRateLimiter.reset(AUTH_BUCKET.UNLOCK)
         log.info('恢复密钥重置密码成功')
-        return { ok: true, recoveryCode: newRecoveryCode }
+        return { ok: true as const, recoveryCode: newRecoveryCode }
       } catch (e) {
         log.error('恢复后 rekey 失败:', errMsg(e))
         return { ok: false, error: `重置失败：${errMsg(e)}` }
