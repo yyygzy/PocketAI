@@ -36,6 +36,10 @@ const baseRow = {
   chunk_overlap: 200,
   top_k: 20,
   top_n: 5,
+  rerank_provider_id: null,
+  rerank_model: null,
+  hyde_provider_id: null,
+  hyde_model: null,
   created_at: 100
 }
 

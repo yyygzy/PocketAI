@@ -6,6 +6,9 @@ vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: {} }))
 vi.mock('../src/main/db/repositories/kb-chunk.repo', () => ({ kbChunkRepo: {} }))
 vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({ kbDocRepo: {} }))
 vi.mock('../src/main/knowledge/embedding', () => ({ embedQuery: vi.fn() }))
+vi.mock('../src/main/providers/manager', () => ({
+  providerManager: { getAdapter: () => null }
+}))
 
 import { rrfFuse, ragService } from '../src/main/knowledge/rag'
 import type { RetrievedChunk } from '../src/shared/types'

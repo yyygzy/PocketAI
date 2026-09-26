@@ -39,6 +39,8 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "sqlite-vec": "^0.1.9",
+    "sqlite-vec-windows-x64": "^0.1.9",
     "unzipper": "^0.12.5",
     "webdav": "^5.10.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
@@ -73,7 +75,8 @@
     "productName": "Moxia",
     "asar": true,
     "asarUnpack": [
-      "node_modules/better-sqlite3-multiple-ciphers/**/*.node"
+      "node_modules/better-sqlite3-multiple-ciphers/**/*.node",
+      "node_modules/sqlite-vec*/**/*.{dll,dylib,so}"
     ],
     "directories": {
       "output": "dist",

@@ -14,6 +14,9 @@ import Database from 'better-sqlite3-multiple-ciphers'
 import fs from 'node:fs'
 import { DB_PATH, DATA_DIR } from '../portable'
 import { errMsg } from '../error'
+import { createLogger } from '../logger'
+
+const logger = createLogger('db')
 
 export type Migration = {
   version: number
@@ -481,6 +484,24 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_reminders_status_fire_at ON reminders(status, fire_at);
     `
+  },
+  {
+    // v22: 知识库 RAG 检索重排序（LLM-based rerank）配置
+    version: 22,
+    name: 'kb_rerank',
+    up: `
+      ALTER TABLE knowledge_bases ADD COLUMN rerank_provider_id TEXT;
+      ALTER TABLE knowledge_bases ADD COLUMN rerank_model TEXT;
+    `
+  },
+  {
+    // v23: 知识库 HyDE 查询重写（用 LLM 生成假设文档做向量检索）
+    version: 23,
+    name: 'kb_hyde',
+    up: `
+      ALTER TABLE knowledge_bases ADD COLUMN hyde_provider_id TEXT;
+      ALTER TABLE knowledge_bases ADD COLUMN hyde_model TEXT;
+    `
   }
 ]
 
@@ -492,6 +513,8 @@ export type EncryptionMode = 'none' | 'db'
 export class DatabaseService {
   private db: Database.Database | null = null
   private encryptionMode: EncryptionMode = 'none'
+  /** sqlite-vec 向量扩展是否加载成功 */
+  private vecEnabled = false
 
   /**
    * 打开数据库。
@@ -520,6 +543,25 @@ export class DatabaseService {
     // WAL 在加密/无加密模式下都可用
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+
+    // 尝试加载 sqlite-vec 向量扩展（失败不阻断，降级为纯 JS KNN）
+    try {
+      // 兼容打包后 asar.unpacked 路径：require.resolve 返回 app.asar/...，需替换为 app.asar.unpacked/...
+      const vec = require('sqlite-vec') as { getLoadablePath: () => string; load: (db: unknown, path: string) => void }
+      let extPath = vec.getLoadablePath()
+      extPath = extPath.replace('app.asar', 'app.asar.unpacked')
+      this.db.loadExtension(extPath)
+      this.vecEnabled = true
+      logger.info('sqlite-vec 向量扩展已加载')
+    } catch (e) {
+      this.vecEnabled = false
+      logger.warn(`sqlite-vec 加载失败，向量检索降级为纯 JS KNN：${errMsg(e)}`)
+    }
+  }
+
+  /** sqlite-vec 向量扩展是否可用 */
+  isVecEnabled(): boolean {
+    return this.vecEnabled
   }
 
   /** 对现有明文数据库启用加密（迁移流程） */

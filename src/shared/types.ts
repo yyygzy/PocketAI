@@ -187,6 +187,12 @@ export interface KnowledgeBase {
   chunkOverlap: number
   topK: number
   topN: number
+  /** RAG 重排序 LLM provider（空则跳过 rerank，仅用 RRF） */
+  rerankProviderId: string | null
+  rerankModel: string | null
+  /** HyDE 查询重写 LLM provider（空则用原 query 做向量检索） */
+  hydeProviderId: string | null
+  hydeModel: string | null
   documentCount: number
   chunkCount: number
   createdAt: number

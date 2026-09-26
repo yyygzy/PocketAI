@@ -107,6 +107,10 @@ const KbForm: React.FC<{
   const [chunkOverlap, setChunkOverlap] = useState(kb?.chunkOverlap ?? 200)
   const [topK, setTopK] = useState(kb?.topK ?? 20)
   const [topN, setTopN] = useState(kb?.topN ?? 5)
+  const [rerankProviderId, setRerankProviderId] = useState(kb?.rerankProviderId ?? '')
+  const [rerankModel, setRerankModel] = useState(kb?.rerankModel ?? '')
+  const [hydeProviderId, setHydeProviderId] = useState(kb?.hydeProviderId ?? '')
+  const [hydeModel, setHydeModel] = useState(kb?.hydeModel ?? '')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -114,6 +118,8 @@ const KbForm: React.FC<{
   }, [])
 
   const selectedProvider = providers.find((p) => p.id === providerId)
+  const selectedRerankProvider = providers.find((p) => p.id === rerankProviderId)
+  const selectedHydeProvider = providers.find((p) => p.id === hydeProviderId)
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -134,7 +140,11 @@ const KbForm: React.FC<{
         chunkSize,
         chunkOverlap,
         topK,
-        topN
+        topN,
+        rerankProviderId: rerankProviderId || null,
+        rerankModel: rerankModel || null,
+        hydeProviderId: hydeProviderId || null,
+        hydeModel: hydeModel || null
       })
       onSaved(saved)
     } catch (e) {
@@ -209,6 +219,92 @@ const KbForm: React.FC<{
           />
         )}
       </Field>
+
+      {/* 重排序（可选）：用 LLM 对检索候选重排，提升精度 */}
+      <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-3">
+        <div className="text-xs text-[var(--color-text-muted)]">{t('kb.rerankHint')}</div>
+        <Field label={t('kb.rerankProvider')}>
+          <select
+            className="input"
+            value={rerankProviderId}
+            onChange={(e) => {
+              setRerankProviderId(e.target.value)
+              setRerankModel('')
+            }}
+          >
+            <option value="">{t('kb.rerankDisabled')}</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {rerankProviderId && (
+          <Field label={t('kb.rerankModel')}>
+            {selectedRerankProvider && selectedRerankProvider.models.length > 0 ? (
+              <select className="input" value={rerankModel} onChange={(e) => setRerankModel(e.target.value)}>
+                <option value="">{t('kb.pleaseSelect')}</option>
+                {selectedRerankProvider.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="input font-mono text-xs"
+                value={rerankModel}
+                onChange={(e) => setRerankModel(e.target.value)}
+                placeholder="gpt-4o-mini"
+              />
+            )}
+          </Field>
+        )}
+      </div>
+
+      {/* HyDE 查询重写（可选）：用 LLM 生成假设文档做向量检索 */}
+      <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-3">
+        <div className="text-xs text-[var(--color-text-muted)]">{t('kb.hydeHint')}</div>
+        <Field label={t('kb.hydeProvider')}>
+          <select
+            className="input"
+            value={hydeProviderId}
+            onChange={(e) => {
+              setHydeProviderId(e.target.value)
+              setHydeModel('')
+            }}
+          >
+            <option value="">{t('kb.hydeDisabled')}</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {hydeProviderId && (
+          <Field label={t('kb.hydeModel')}>
+            {selectedHydeProvider && selectedHydeProvider.models.length > 0 ? (
+              <select className="input" value={hydeModel} onChange={(e) => setHydeModel(e.target.value)}>
+                <option value="">{t('kb.pleaseSelect')}</option>
+                {selectedHydeProvider.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="input font-mono text-xs"
+                value={hydeModel}
+                onChange={(e) => setHydeModel(e.target.value)}
+                placeholder="gpt-4o-mini"
+              />
+            )}
+          </Field>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Field label={t('kb.chunkSize')}>

@@ -3,6 +3,7 @@
 // 后续可平滑切换 sqlite-vec 扩展以支持更大规模检索
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { kbVecRepo } from './kb-vec.repo'
 import type { KbChunk, RetrievedChunk } from '../../../shared/types'
 
 export interface ChunkInsert {
@@ -57,10 +58,11 @@ function rowToChunk(row: ChunkRow): KbChunk {
 }
 
 export const kbChunkRepo = {
-  /** 批量插入分块（含向量） */
+  /** 批量插入分块（含向量）；vec 扩展可用时同步写入向量索引 */
   insertMany(chunks: ChunkInsert[]): void {
     if (chunks.length === 0) return
     const db = dbService.getHandle()
+    const vecEnabled = dbService.isVecEnabled()
     const stmt = db.prepare(
       `INSERT INTO kb_chunks (id, doc_id, kb_id, sequence, content, embedding, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -68,8 +70,9 @@ export const kbChunkRepo = {
     const now = Date.now()
     const tx = db.transaction((items: ChunkInsert[]) => {
       for (const c of items) {
+        const id = c.id ?? randomUUID()
         stmt.run(
-          c.id ?? randomUUID(),
+          id,
           c.docId,
           c.kbId,
           c.sequence,
@@ -77,6 +80,9 @@ export const kbChunkRepo = {
           float32ToBuffer(c.embedding),
           now
         )
+        if (vecEnabled) {
+          kbVecRepo.insert(id, c.embedding, c.embedding.length)
+        }
       }
     })
     tx(chunks)
@@ -92,10 +98,12 @@ export const kbChunkRepo = {
   },
 
   deleteByDoc(docId: string): void {
+    if (dbService.isVecEnabled()) kbVecRepo.deleteByDoc(docId)
     dbService.getHandle().prepare('DELETE FROM kb_chunks WHERE doc_id=?').run(docId)
   },
 
   deleteByKb(kbId: string): void {
+    if (dbService.isVecEnabled()) kbVecRepo.deleteByKb(kbId)
     dbService.getHandle().prepare('DELETE FROM kb_chunks WHERE kb_id=?').run(kbId)
   },
 
@@ -114,6 +122,24 @@ export const kbChunkRepo = {
     }))
   },
 
+  /** 按分块 id 批量加载向量（用于 MMR 多样性重排）；无向量的 id 不出现在结果中 */
+  loadEmbeddingsByIds(ids: string[]): Map<string, Float32Array> {
+    const result = new Map<string, Float32Array>()
+    if (ids.length === 0) return result
+    const placeholders = ids.map(() => '?').join(',')
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        `SELECT id, embedding FROM kb_chunks WHERE id IN (${placeholders}) AND embedding IS NOT NULL`
+      )
+      .all(...ids) as Array<{ id: string; embedding: Buffer | null }>
+    for (const r of rows) {
+      const vec = bufferToFloat32(r.embedding)
+      if (vec) result.set(r.id, vec)
+    }
+    return result
+  },
+
   /**
    * 余弦相似度 KNN 检索
    * @param query 查询向量
@@ -127,6 +153,19 @@ export const kbChunkRepo = {
     topK: number
   ): RetrievedChunk[] {
     if (kbIds.length === 0) return []
+
+    // sqlite-vec 可用时走原生向量索引（欧氏距离，远快于全表扫描）
+    if (dbService.isVecEnabled()) {
+      const hits = kbVecRepo.search(query, kbIds, query.length, topK)
+      return hits.map((h) => ({
+        chunkId: h.chunkId,
+        docId: h.docId,
+        docTitle: '',
+        content: h.content,
+        score: h.score
+      }))
+    }
+
     const db = dbService.getHandle()
 
     // 收集候选分块（多 KB 合并检索）

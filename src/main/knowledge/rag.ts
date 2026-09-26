@@ -4,6 +4,9 @@ import { kbRepo } from '../db/repositories/kb.repo'
 import { kbChunkRepo } from '../db/repositories/kb-chunk.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { embedQuery } from './embedding'
+import { rerankChunks } from './reranker'
+import { generateHypotheticalDoc } from './hyde'
+import { mmrSelect } from './mmr'
 import type { RetrievedChunk, RetrievalResult } from '../../shared/types'
 
 export interface RetrieveOptions {
@@ -54,6 +57,30 @@ class RAGService {
     const topK = opts.topK ?? 20
     const topN = opts.topN ?? 5
     const all: RetrievedChunk[] = []
+    let rerankProvider: string | null = null
+    let rerankModel: string | null = null
+    let hydeProvider: string | null = null
+    let hydeModel: string | null = null
+
+    // 取第一个配置了 hyde/rerank 的 KB（同一会话内统一）
+    for (const kbId of kbIds) {
+      const kb = kbRepo.get(kbId)
+      if (!kb) continue
+      if (!hydeProvider && kb.hydeProviderId && kb.hydeModel) {
+        hydeProvider = kb.hydeProviderId
+        hydeModel = kb.hydeModel
+      }
+      if (!rerankProvider && kb.rerankProviderId && kb.rerankModel) {
+        rerankProvider = kb.rerankProviderId
+        rerankModel = kb.rerankModel
+      }
+    }
+
+    // HyDE：用假设文档做向量检索的 embedding，BM25 仍用原 query
+    const hydeDoc = hydeProvider && hydeModel
+      ? await generateHypotheticalDoc(query, hydeProvider, hydeModel)
+      : null
+    const embedText = hydeDoc ?? query
 
     for (const kbId of kbIds) {
       const kb = kbRepo.get(kbId)
@@ -63,10 +90,10 @@ class RAGService {
       const vectorResults: RetrievedChunk[] = []
       const bm25Results: RetrievedChunk[] = []
 
-      // 1. 向量检索（需要 embedding 配置）
+      // 1. 向量检索（HyDE 开启时用假设文档 embedding）
       if (kb.embeddingProviderId && kb.embeddingModel) {
         try {
-          const qVec = await embedQuery(kb.embeddingProviderId, kb.embeddingModel, query)
+          const qVec = await embedQuery(kb.embeddingProviderId, kb.embeddingModel, embedText)
           vectorResults.push(...kbChunkRepo.knnSearch(qVec, [kbId], topK))
         } catch {
           // 向量化失败不阻断，仅跳过向量检索
@@ -85,9 +112,24 @@ class RAGService {
       all.push(...fused)
     }
 
-    // 多 KB 合并后再次按融合分数排序，取 Top-N
+    // 多 KB 合并后再次按融合分数排序
     all.sort((a, b) => b.score - a.score)
-    const picked = all.slice(0, topN)
+
+    // 3. 重排序：取 topK 候选给 LLM rerank
+    const candidates = all.slice(0, topK)
+    const reranked =
+      rerankProvider && rerankModel
+        ? await rerankChunks(query, candidates, rerankProvider, rerankModel)
+        : candidates
+
+    // 4. MMR 多样性选择：在相关性与去重之间权衡后取 topN
+    let picked: RetrievedChunk[]
+    try {
+      const vecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
+      picked = mmrSelect(reranked, vecs, topN)
+    } catch {
+      picked = reranked.slice(0, topN)
+    }
 
     // 填充文档标题
     const titleCache = new Map<string, string>()

@@ -14,6 +14,10 @@ const knowledgeBaseFull = z.object({
   chunkOverlap: z.number().int().nonnegative(),
   topK: z.number().int().positive(),
   topN: z.number().int().positive(),
+  rerankProviderId: z.string().nullable(),
+  rerankModel: z.string().nullable(),
+  hydeProviderId: z.string().nullable(),
+  hydeModel: z.string().nullable(),
   documentCount: z.number().int().nonnegative(),
   chunkCount: z.number().int().nonnegative(),
   createdAt: z.number().int().nonnegative()

@@ -15,6 +15,10 @@ interface KbRow {
   chunk_overlap: number
   top_k: number
   top_n: number
+  rerank_provider_id: string | null
+  rerank_model: string | null
+  hyde_provider_id: string | null
+  hyde_model: string | null
   created_at: number
 }
 
@@ -43,6 +47,10 @@ export function rowToRecord(row: KbRow): KnowledgeBase {
     chunkOverlap: row.chunk_overlap,
     topK: row.top_k,
     topN: row.top_n,
+    rerankProviderId: row.rerank_provider_id,
+    rerankModel: row.rerank_model,
+    hydeProviderId: row.hyde_provider_id,
+    hydeModel: row.hyde_model,
     documentCount: counts.doc_count,
     chunkCount: counts.chunk_count,
     createdAt: row.created_at
@@ -75,7 +83,8 @@ export const kbRepo = {
       db.prepare(
         `UPDATE knowledge_bases SET
            name=?, description=?, embedding_provider_id=?, embedding_model=?,
-           embedding_dim=?, chunk_size=?, chunk_overlap=?, top_k=?, top_n=?
+           embedding_dim=?, chunk_size=?, chunk_overlap=?, top_k=?, top_n=?,
+           rerank_provider_id=?, rerank_model=?, hyde_provider_id=?, hyde_model=?
          WHERE id=?`
       ).run(
         input.name,
@@ -87,6 +96,10 @@ export const kbRepo = {
         input.chunkOverlap ?? existing.chunkOverlap,
         input.topK ?? existing.topK,
         input.topN ?? existing.topN,
+        input.rerankProviderId ?? existing.rerankProviderId,
+        input.rerankModel ?? existing.rerankModel,
+        input.hydeProviderId ?? existing.hydeProviderId,
+        input.hydeModel ?? existing.hydeModel,
         id
       )
     } else {
@@ -94,8 +107,9 @@ export const kbRepo = {
       db.prepare(
         `INSERT INTO knowledge_bases
            (id, name, description, embedding_provider_id, embedding_model, embedding_dim,
-            chunk_size, chunk_overlap, top_k, top_n, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            chunk_size, chunk_overlap, top_k, top_n, rerank_provider_id, rerank_model,
+            hyde_provider_id, hyde_model, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -107,6 +121,10 @@ export const kbRepo = {
         input.chunkOverlap ?? 200,
         input.topK ?? 20,
         input.topN ?? 5,
+        input.rerankProviderId ?? null,
+        input.rerankModel ?? null,
+        input.hydeProviderId ?? null,
+        input.hydeModel ?? null,
         now
       )
     }

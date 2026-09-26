@@ -3,7 +3,7 @@
 import { kbRepo } from '../db/repositories/kb.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbChunkRepo, type ChunkInsert } from '../db/repositories/kb-chunk.repo'
-import { chunkText } from './chunker'
+import { chunkMarkdown } from './chunker'
 import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
 import type { KbDocument, KnowledgeBase } from '../../shared/types'
@@ -67,8 +67,8 @@ export class IngestionService {
 
   /** 分块 → 向量化 → 存储（解析后共用） */
   private async indexText(kb: KnowledgeBase, docId: string, rawText: string): Promise<void> {
-    // 2. 分块
-    const chunkResults = chunkText(rawText, {
+    // 2. 分块（Markdown 结构感知：按标题切节 + 标题链前缀）
+    const chunkResults = chunkMarkdown(rawText, {
       chunkSize: kb.chunkSize,
       chunkOverlap: kb.chunkOverlap
     })
