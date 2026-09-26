@@ -318,7 +318,7 @@ export async function scanMergeConflicts(
     return {
       ok: false,
       code,
-      error: code ? (e as Error).message : errMsg(e, '扫描冲突失败'),
+      error: errMsg(e, code ? '' : '扫描冲突失败'),
       tables: [],
       attachmentsToAdd: 0
     }
@@ -531,7 +531,7 @@ export async function executeMerge(
     return {
       ok: false,
       code,
-      error: code ? (e as Error).message : errMsg(e, '合并失败')
+      error: errMsg(e, code ? '' : '合并失败')
     }
   } finally {
     if (cloudDb) {
