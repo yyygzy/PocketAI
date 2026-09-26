@@ -654,26 +654,24 @@ export interface RestoreResult {
   passwordChanged?: boolean
 }
 
-export async function restoreFromWebDAV(
-  cfg: WebDAVConfig,
-  filename: string,
-  opts: { backupPassword?: string } = {}
+/**
+ * 恢复核心：对已下载/读出的备份包字节执行解密 → 安全校验 → 解压 → 替换 DB/附件 → 重开。
+ * WebDAV 与本地文件恢复共用，保证两条路径安全行为一致（Zip Slip/符号链接/密钥回滚）。
+ */
+export async function restoreBackupBlob(
+  blob: Buffer,
+  encrypted: boolean,
+  opts: { backupPassword?: string; displayName?: string } = {}
 ): Promise<RestoreResult> {
-  webdavConfigSchema.parse(cfg)
-  backupFilenameSchema.parse(filename)
-  const creds = toCreds(cfg)
   // 异机恢复会把内存主密钥切换为备份库密钥；失败/取消时必须恢复原会话密钥
   const prevDbKey = masterKeyManager.getDbKey()
   const restoreSessionKey = () => {
     if (prevDbKey) masterKeyManager.setRawKey(prevDbKey)
     else masterKeyManager.setKey('') // 回到 none 模式固定字段密钥
   }
-  // 1. 下载
-  const blob = await downloadFile(creds, filename)
-  // 2. 判断加密
-  const isEncrypted = filename.endsWith('.enc.zip')
+  // 1. 解密（加密包）
   let zip: Buffer
-  if (isEncrypted) {
+  if (encrypted) {
     const backupSalt = blob.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
     if (opts.backupPassword) {
       // 异机路径：密码 → 派生备份库 DB key → 解密；成功后切换会话密钥以打开还原库
@@ -722,7 +720,7 @@ export async function restoreFromWebDAV(
   const tmp = join(tmpdir(), `pocketai-restore-${Date.now()}`)
   let result: RestoreResult = { ok: true }
   let dbReplaced = false
-  const usedBackupPassword = !!opts.backupPassword && isEncrypted
+  const usedBackupPassword = !!opts.backupPassword && encrypted
   try {
     mkdirSync(tmp, { recursive: true })
     await new Promise<void>((resolve, reject) => {
@@ -797,7 +795,7 @@ export async function restoreFromWebDAV(
     }
     dbService.runMigrations()
 
-    log.info(`恢复完成: ${filename} (DB加密=${manifest.dbEncrypted}, 异机密码=${usedBackupPassword})`)
+    log.info(`恢复完成: ${opts.displayName ?? '备份包'} (DB加密=${manifest.dbEncrypted}, 异机密码=${usedBackupPassword})`)
     result = usedBackupPassword ? { ok: true, passwordChanged: true } : { ok: true }
     return result
   } catch (e) {
@@ -820,6 +818,37 @@ export async function restoreFromWebDAV(
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
+}
+
+/** 从 WebDAV 备份恢复（全量 zip；增量索引走 restoreIncrementalFromWebDAV） */
+export async function restoreFromWebDAV(
+  cfg: WebDAVConfig,
+  filename: string,
+  opts: { backupPassword?: string } = {}
+): Promise<RestoreResult> {
+  webdavConfigSchema.parse(cfg)
+  backupFilenameSchema.parse(filename)
+  const blob = await downloadFile(toCreds(cfg), filename)
+  return restoreBackupBlob(blob, filename.endsWith('.enc.zip'), {
+    backupPassword: opts.backupPassword,
+    displayName: filename
+  })
+}
+
+/**
+ * 从本地备份文件恢复（U 盘换机场景）：读取 .zip/.enc.zip 后走统一恢复核心。
+ * 加密判定同时看扩展名与信封魔数，防止改后缀绕过解密路径。
+ */
+export async function restoreFromLocalFile(
+  filePath: string,
+  opts: { backupPassword?: string } = {}
+): Promise<RestoreResult> {
+  z.string().min(1).parse(filePath)
+  const blob = readFileSync(filePath)
+  const head = blob.subarray(0, 5).toString('latin1')
+  const encrypted = filePath.endsWith('.enc.zip') || head === ENC_PREFIX_V1 || head === ENC_PREFIX_V2
+  const displayName = filePath.split(/[\\/]/).pop() || filePath
+  return restoreBackupBlob(blob, encrypted, { backupPassword: opts.backupPassword, displayName })
 }
 
 // ─── WebDAV 配置存取 ─────────────────────────────────────────────

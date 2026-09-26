@@ -925,6 +925,8 @@ export const ko: Record<string, string> = {
   'bk.connFail': '연결 실패: {e}',
   'bk.localTitle': '로컬 백업 (data/backups/에 저장)',
   'bk.localBtn': '📁 로컬 백업',
+  'bk.localRestoreBtn': '♻️ 파일에서 복원',
+  'bk.localRestoreConfirm': '⚠️ 로컬 백업에서 복원하면 현재 데이터가 덮어씌워집니다. 계속할까요?',
   'bk.encBtn': '🔐 암호화 백업',
   'bk.packing': '패킹 중…',
   'bk.localDone': '로컬 백업 완료 ({size} KB)',

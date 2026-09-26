@@ -680,24 +680,31 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     if (cfg) refreshList()
   }, [cfg, refreshList])
 
-  // 异机恢复密码弹窗：当前主密码解不开备份时，输入制作备份时的主密码重试
-  const [restorePwdFile, setRestorePwdFile] = useState<string | null>(null)
+  // 恢复密码弹窗：当前主密码解不开备份时，输入制作备份时的主密码重试（WebDAV/本地共用）
+  type RestoreTarget =
+    | { kind: 'webdav'; name: string }
+    | { kind: 'local'; name: string; filePath: string }
+  const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null)
   const [restorePwdValue, setRestorePwdValue] = useState('')
   const [restorePwdError, setRestorePwdError] = useState('')
   const [restorePwdBusy, setRestorePwdBusy] = useState(false)
 
-  /** 实际恢复调用：无密码先试同机路径；返回结果由调用方决定是否弹密码框 */
-  async function runRestore(filename: string, backupPassword?: string) {
-    const r = await window.pocketai.restoreWebDAVBackup(filename, backupPassword)
+  /** 收口恢复结果：成功提示；密码三态打开/更新密码弹窗；其他失败走 notice */
+  function handleRestoreResult(
+    r: import('../../../../shared/types').BackupRestoreResult,
+    target: RestoreTarget | null
+  ): void {
     if (r.ok) {
-      setRestorePwdFile(null)
+      setRestoreTarget(null)
       setRestorePwdValue('')
       showNotice(true, r.passwordChanged ? t('bk.restoreOkPasswordChanged') : t('bk.restoreOk'))
       return
     }
     if (r.code === 'needBackupPassword' || r.code === 'badPassword' || r.code === 'legacyNoCross') {
-      // 打开密码弹窗并保留对应错误；needBackupPassword 首次打开不显示错误
-      setRestorePwdFile(filename)
+      // 本地恢复首次返回时携带选中文件路径，据此构造密码重试目标
+      const next: RestoreTarget | null =
+        target ?? (r.filePath ? { kind: 'local', name: r.filePath.split(/[\\/]/).pop() || r.filePath, filePath: r.filePath } : null)
+      if (next) setRestoreTarget(next)
       setRestorePwdError(
         r.code === 'badPassword' ? t('bk.restoreBadPwd')
           : r.code === 'legacyNoCross' ? t('bk.restoreLegacy')
@@ -705,18 +712,28 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       )
       return
     }
-    setRestorePwdFile(null)
+    setRestoreTarget(null)
     showNotice(false, t('bk.restoreFail', { e: r.error ?? t('common.unknownError') }))
   }
 
   async function doRestore(filename: string) {
     if (!(await confirm({ message: t('bk.restoreConfirm', { name: filename }), danger: true }))) return
     showNotice(true, t('bk.downloadingRestore'))
-    await runRestore(filename)
+    const r = await window.pocketai.restoreWebDAVBackup(filename)
+    handleRestoreResult(r, { kind: 'webdav', name: filename })
+  }
+
+  /** 本地恢复：首次主进程弹文件选择器；取消静默；需要密码时记住文件路径供框内重试 */
+  async function doLocalRestorePick() {
+    if (!(await confirm({ message: t('bk.localRestoreConfirm'), danger: true }))) return
+    showNotice(true, t('bk.downloadingRestore'))
+    const r = await window.pocketai.restoreLocalBackup()
+    if (r.canceled) return
+    handleRestoreResult(r, null)
   }
 
   async function doRestoreWithPassword() {
-    if (!restorePwdFile) return
+    if (!restoreTarget) return
     const pwd = restorePwdValue.trim()
     if (!pwd) {
       setRestorePwdError(t('bk.restoreBadPwd'))
@@ -724,7 +741,10 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     }
     setRestorePwdBusy(true)
     try {
-      await runRestore(restorePwdFile, pwd)
+      const r = restoreTarget.kind === 'webdav'
+        ? await window.pocketai.restoreWebDAVBackup(restoreTarget.name, pwd)
+        : await window.pocketai.restoreLocalBackup({ filePath: restoreTarget.filePath, backupPassword: pwd })
+      handleRestoreResult(r, restoreTarget)
     } finally {
       setRestorePwdBusy(false)
     }
@@ -889,7 +909,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       {/* 本地备份 */}
       <div>
         <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('bk.localTitle')}</div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button className="btn-primary" onClick={doLocalBackup}>{t('bk.localBtn')}</button>
           <button
             className="btn-ghost"
@@ -897,6 +917,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
             disabled={!encrypted}
             title={encrypted ? undefined : t('bk.encNeedMaster')}
           >{t('bk.encBtn')}</button>
+          <button className="btn-ghost" onClick={doLocalRestorePick}>{t('bk.localRestoreBtn')}</button>
         </div>
         {!encrypted && (
           <div className="text-[10px] text-[var(--color-text-muted)] mt-1.5">{t('bk.encNeedMaster')}</div>
@@ -1051,11 +1072,11 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
         </div>
       )}
 
-      {/* 异机恢复：输入备份密码 */}
-      {restorePwdFile && (
+      {/* 异机恢复：输入备份密码（WebDAV/本地共用） */}
+      {restoreTarget && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm p-4"
-          onClick={() => !restorePwdBusy && setRestorePwdFile(null)}
+          onClick={() => !restorePwdBusy && setRestoreTarget(null)}
         >
           <div
             className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 shadow-lg"
@@ -1063,7 +1084,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
           >
             <h3 className="text-sm font-semibold mb-2">{t('bk.restorePwdTitle')}</h3>
             <p className="text-xs text-[var(--color-text-muted)] mb-3 break-all">
-              {t('bk.restorePwdHint', { name: restorePwdFile })}
+              {t('bk.restorePwdHint', { name: restoreTarget.name })}
             </p>
             <input
               type="password"
@@ -1080,7 +1101,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
             )}
             <div className="flex justify-end gap-2 mt-4">
               <button
-                onClick={() => setRestorePwdFile(null)}
+                onClick={() => setRestoreTarget(null)}
                 disabled={restorePwdBusy}
                 className="px-3 py-1.5 rounded text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
               >

@@ -1,5 +1,6 @@
-// 备份 IPC：本地备份（明文/加密）、WebDAV 配置与备份管理、定时计划
+// 备份 IPC：本地备份（明文/加密）、本地恢复、WebDAV 配置与备份管理、定时计划
 import path from 'node:path'
+import { dialog, BrowserWindow } from 'electron'
 import { IPC, type WebDAVConfig as WebDAVConfigInput, type MergeStrategy } from '../../../shared/types'
 import { getBackupSchedule, setBackupSchedule, noteManualBackup } from '../../backup/backup-scheduler'
 import { DATA_DIR } from '../../portable'
@@ -78,6 +79,33 @@ export function registerBackupHandlers(): void {
     if (!cfg) return []
     try { return await listWebDAVBackups(cfg) } catch { return [] }
   })
+  safeHandle(IPC.BACKUP_LOCAL_RESTORE, async (e, payload?: { filePath?: string; backupPassword?: string }) => {
+    const { restoreFromLocalFile } = await import('../../backup/backup-service')
+    // 首次调用（无 filePath）由主进程弹文件选择器；密码重试回传 filePath 静默复用
+    let filePath = typeof payload?.filePath === 'string' ? payload.filePath.trim() : ''
+    if (!filePath) {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+      if (!win) return { ok: false, error: '窗口不可用' }
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        properties: ['openFile'],
+        filters: [
+          { name: 'PocketAI 备份（zip / enc.zip）', extensions: ['zip'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      })
+      if (canceled || !filePaths?.length) return { ok: true, canceled: true }
+      filePath = filePaths[0]!
+    }
+    try {
+      const r = await restoreFromLocalFile(filePath, { backupPassword: payload?.backupPassword || undefined })
+      // 让渲染层在密码重试时复用同一文件
+      if (!r.ok && r.code) return { ...r, filePath }
+      return r
+    } catch (e) {
+      return { ok: false, error: errMsg(e, '本地恢复失败') }
+    }
+  })
+
   safeHandle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: unknown, backupPassword?: unknown) => {
     const {
       loadWebDAVConfig,

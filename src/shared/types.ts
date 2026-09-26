@@ -1031,14 +1031,18 @@ export interface WebDAVBackupFile {
   kind: 'full' | 'incremental'
 }
 
-/** WebDAV 恢复结果（全量/增量共用）；code 驱动渲染层备份密码弹窗 */
+/** WebDAV/本地恢复结果；code 驱动渲染层备份密码弹窗 */
 export interface BackupRestoreResult {
   ok: boolean
   error?: string
+  /** 用户取消了文件选择器（仅本地恢复） */
+  canceled?: boolean
   /** needBackupPassword: 当前主密码解不开，需输入备份密码；badPassword: 密码错误可重试；legacyNoCross: v1 旧包无法异机恢复 */
   code?: 'needBackupPassword' | 'badPassword' | 'legacyNoCross'
   /** 异机密码恢复成功：主密码已变为备份时密码，应提示用户重启 */
   passwordChanged?: boolean
+  /** 选中的备份文件绝对路径：密码重试时回传，避免再次弹选择器（仅本地恢复） */
+  filePath?: string
 }
 
 // ---------- 定时备份 ----------
@@ -1326,6 +1330,7 @@ export const IPC = {
   // ---------- 备份 ----------
   BACKUP_LOCAL: 'backup:local', // 本地备份（可选加密）
   BACKUP_LOCAL_ENCRYPTED: 'backup:local-encrypted', // 本地加密备份
+  BACKUP_LOCAL_RESTORE: 'backup:local-restore', // 从本地备份文件恢复（主进程弹文件选择器）
   BACKUP_WEBDAV_TEST: 'backup:webdav-test', // 测试 WebDAV 连接
   BACKUP_WEBDAV_UPLOAD: 'backup:webdav-upload', // 上传全量备份到 WebDAV
   BACKUP_WEBDAV_UPLOAD_INCREMENTAL: 'backup:webdav-upload-incremental', // 增量备份（附件去重）

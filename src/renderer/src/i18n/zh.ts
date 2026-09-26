@@ -1003,6 +1003,8 @@ export const zh: Record<string, string> = {
   'bk.connFail': '连接失败：{e}',
   'bk.localTitle': '本地备份（保存到 data/backups/）',
   'bk.localBtn': '📁 本地备份',
+  'bk.localRestoreBtn': '♻️ 从文件恢复',
+  'bk.localRestoreConfirm': '⚠️ 从本地备份恢复将覆盖当前数据，确定？',
   'bk.encBtn': '🔐 加密备份',
   'bk.packing': '正在打包…',
   'bk.localDone': '本地备份完成 ({size} KB)',

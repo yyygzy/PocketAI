@@ -925,6 +925,8 @@ export const ja: Record<string, string> = {
   'bk.connFail': '接続失敗：{e}',
   'bk.localTitle': 'ローカルバックアップ（data/backups/ に保存）',
   'bk.localBtn': '📁 ローカルバックアップ',
+  'bk.localRestoreBtn': '♻️ ファイルから復元',
+  'bk.localRestoreConfirm': '⚠️ ローカルバックアップから復元すると現在のデータが上書きされます。続行しますか？',
   'bk.encBtn': '🔐 暗号化バックアップ',
   'bk.packing': 'パッキング中…',
   'bk.localDone': 'ローカルバックアップ完了（{size} KB）',

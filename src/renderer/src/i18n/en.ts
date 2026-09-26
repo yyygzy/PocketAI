@@ -1003,6 +1003,8 @@ export const en: Record<string, string> = {
   'bk.connFail': 'Connection failed: {e}',
   'bk.localTitle': 'Local backup (saved to data/backups/)',
   'bk.localBtn': '📁 Local backup',
+  'bk.localRestoreBtn': '♻️ Restore from file',
+  'bk.localRestoreConfirm': '⚠️ Restoring from a local backup overwrites current data. Continue?',
   'bk.encBtn': '🔐 Encrypted backup',
   'bk.packing': 'Packing…',
   'bk.localDone': 'Local backup complete ({size} KB)',

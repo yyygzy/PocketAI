@@ -599,6 +599,10 @@ const api = {
     | { ok: false; error: string }
   > =>
     ipcRenderer.invoke(IPC.BACKUP_LOCAL_ENCRYPTED),
+  restoreLocalBackup: (
+    payload?: { filePath?: string; backupPassword?: string }
+  ): Promise<import('../shared/types').BackupRestoreResult> =>
+    ipcRenderer.invoke(IPC.BACKUP_LOCAL_RESTORE, payload),
   saveWebDAVConfig: (cfg: WebDAVConfig): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg),
   loadWebDAVConfig: (): Promise<WebDAVConfig | null> =>
