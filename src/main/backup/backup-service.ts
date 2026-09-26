@@ -22,6 +22,7 @@ const archiver = require('archiver') as (format: string, options?: ArchiverOptio
 import unzipper from 'unzipper'
 import { dbService } from '../db/database'
 import { masterKeyManager } from '../crypto/master-key'
+import { deriveKeySync } from '../crypto/index'
 import { DB_PATH, ATTACHMENTS_DIR } from '../portable'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../crypto/field-encrypt'
 import { appConfigRepo, clearAppConfigCache } from '../db/repositories/app-config.repo'
@@ -39,7 +40,72 @@ const log = createLogger('backup')
 
 export { type WebDAVCredentials, type BackupFile }
 
-export const ENC_PREFIX = 'PKBK1' // PocketAI Backup v1
+/** v1 包：PKBK1 + iv(12) + backupSalt(16) + tag(16) + ct —— 仅同机（当前主密码）可解 */
+export const ENC_PREFIX_V1 = 'PKBK1' // PocketAI Backup v1
+/**
+ * v2 包：PKBK2 + iv(12) + backupSalt(16) + masterSalt(16) + tag(16) + ct
+ * masterSalt 即主密码 scrypt salt（非秘密，设计上可公开），随包携带后，
+ * 在其他设备上仅凭「备份时主密码」即可派生出 DB key 解密并打开备份库。
+ */
+export const ENC_PREFIX_V2 = 'PKBK2'
+/** 历史导出名（v1）；外部以 前缀.length+12 取 backupSalt 的偏移对 v1/v2 均成立，保留 */
+export const ENC_PREFIX = ENC_PREFIX_V1
+
+/** 备份解密失败原因（供恢复 UI 区分：弹密码框 / 密码错误重试 / 旧包不支持异机） */
+export type BackupDecryptCode = 'badPassword' | 'legacyNoCross' | 'unavailable'
+
+export class BackupDecryptError extends Error {
+  code: BackupDecryptCode
+  constructor(code: BackupDecryptCode, message: string) {
+    super(message)
+    this.name = 'BackupDecryptError'
+    this.code = code
+  }
+}
+
+interface BackupEnvelope {
+  version: 1 | 2
+  iv: Buffer
+  backupSalt: Buffer
+  masterSalt: Buffer | null
+  tag: Buffer
+  ct: Buffer
+}
+
+/** 解析加密备份包信封（v1/v2 自适应）；格式不符抛错 */
+function parseBackupEnvelope(blob: Buffer): BackupEnvelope {
+  const head = blob.subarray(0, 5).toString('latin1')
+  if (head === ENC_PREFIX_V2) {
+    let o = 5
+    const iv = blob.subarray(o, o + 12); o += 12
+    const backupSalt = blob.subarray(o, o + 16); o += 16
+    const masterSalt = blob.subarray(o, o + 16); o += 16
+    const tag = blob.subarray(o, o + 16); o += 16
+    const ct = blob.subarray(o)
+    return { version: 2, iv, backupSalt, masterSalt, tag, ct }
+  }
+  if (head === ENC_PREFIX_V1) {
+    let o = 5
+    const iv = blob.subarray(o, o + 12); o += 12
+    const backupSalt = blob.subarray(o, o + 16); o += 16
+    const tag = blob.subarray(o, o + 16); o += 16
+    const ct = blob.subarray(o)
+    return { version: 1, iv, backupSalt, masterSalt: null, tag, ct }
+  }
+  throw new BackupDecryptError('unavailable', '备份文件格式无效')
+}
+
+/**
+ * 从 v2 备份包与备份密码派生备份库的 DB key：scrypt(password, masterSalt)。
+ * 异机恢复时用于解密外层包并打开还原后的 SQLCipher 库。
+ */
+export function deriveBackupDbKey(blob: Buffer, password: string): Buffer {
+  const env = parseBackupEnvelope(blob)
+  if (env.version !== 2 || !env.masterSalt) {
+    throw new BackupDecryptError('legacyNoCross', '旧版加密备份不携带主密码盐，无法在其他设备凭密码恢复')
+  }
+  return deriveKeySync(password, env.masterSalt).key
+}
 
 export interface BackupManifest {
   version: 1
@@ -153,6 +219,9 @@ function encryptBackup(zip: Buffer): { blob: Buffer; salt: Buffer } {
   // 用它加密等于没加密（旧版本曾回退固定密钥产出 .enc.zip，属安全假象，已禁止）。
   const baseKey = masterKeyManager.getDbKey()
   if (!baseKey) throw new Error('未启用主密码加密，无法生成加密备份')
+  // 主密码 scrypt salt：随 v2 包携带（非秘密），使异机可凭备份密码恢复
+  const masterSalt = appConfigRepo.getMasterPasswordSalt()
+  if (!masterSalt) throw new Error('主密码盐缺失，无法生成可恢复的加密备份')
   const salt = randomBytes(16)
   // 派生实际加密密钥（salt 混入）。baseKey 已是高熵 32 字节密钥
   // （主密码经 scrypt 慢派生的产物），此处用 sha256 混盐做密钥分离即可，
@@ -162,37 +231,49 @@ function encryptBackup(zip: Buffer): { blob: Buffer; salt: Buffer } {
   const cipher = createCipheriv('aes-256-gcm', encKey, iv)
   const ct = Buffer.concat([cipher.update(zip), cipher.final()])
   const tag = cipher.getAuthTag()
-  // 格式: PKBK1(5) + iv(12) + salt(16) + tag(16) + ct
-  const blob = Buffer.concat([Buffer.from(ENC_PREFIX), iv, salt, tag, ct])
+  // 格式: PKBK2(5) + iv(12) + salt(16) + masterSalt(16) + tag(16) + ct
+  const blob = Buffer.concat([Buffer.from(ENC_PREFIX_V2), iv, salt, masterSalt, tag, ct])
   return { blob, salt }
 }
 
-export function decryptBackup(blob: Buffer, salt: Buffer): Buffer {
-  if (!blob.slice(0, ENC_PREFIX.length).equals(Buffer.from(ENC_PREFIX))) {
-    throw new Error('备份文件格式无效')
-  }
-  const masterKey = masterKeyManager.getDbKey()
-  // 仅解密方向保留固定密钥回退：兼容 none 模式下旧版本产出的 .enc.zip
-  let baseKey = masterKey
-  if (!baseKey) {
-    try {
-      baseKey = masterKeyManager.getFieldKey()
-    } catch {
-      throw new Error('备份解密密钥不可用（应用已锁定）')
+export function decryptBackup(
+  blob: Buffer,
+  salt: Buffer,
+  opts: { password?: string } = {}
+): Buffer {
+  const env = parseBackupEnvelope(blob)
+  let baseKey: Buffer | null
+  if (opts.password !== undefined) {
+    // 异机恢复：凭备份密码 + 包内 masterSalt 派生备份库 DB key
+    if (env.version !== 2 || !env.masterSalt) {
+      throw new BackupDecryptError('legacyNoCross', '旧版加密备份不携带主密码盐，无法在其他设备凭密码恢复')
+    }
+    baseKey = deriveKeySync(opts.password, env.masterSalt).key
+  } else {
+    // 同机恢复：直接使用当前会话 DB key
+    const masterKey = masterKeyManager.getDbKey()
+    baseKey = masterKey
+    if (!baseKey) {
+      // 仅解密方向保留固定密钥回退：兼容 none 模式下旧版本产出的 .enc.zip
+      try {
+        baseKey = masterKeyManager.getFieldKey()
+      } catch {
+        throw new BackupDecryptError('unavailable', '备份解密密钥不可用（应用已锁定）')
+      }
     }
   }
   const encKey = createHash('sha256').update(baseKey).update(salt).digest()
 
-  let offset = ENC_PREFIX.length
-  const iv = blob.subarray(offset, offset + 12); offset += 12
-  // salt 段与入参 salt 相同（调用方均从 blob 内嵌偏移读出后传入），跳过
-  offset += 16
-  const tag = blob.subarray(offset, offset + 16); offset += 16
-  const ct = blob.subarray(offset)
-
-  const decipher = createDecipheriv('aes-256-gcm', encKey, iv)
-  decipher.setAuthTag(tag)
-  return Buffer.concat([decipher.update(ct), decipher.final()])
+  const decipher = createDecipheriv('aes-256-gcm', encKey, env.iv)
+  decipher.setAuthTag(env.tag)
+  try {
+    return Buffer.concat([decipher.update(env.ct), decipher.final()])
+  } catch {
+    // GCM 校验失败：密码路径=密码错误可重试；无密码路径由调用方转 needBackupPassword
+    throw opts.password !== undefined
+      ? new BackupDecryptError('badPassword', '备份密码错误')
+      : new Error('decrypt auth failed')
+  }
 }
 
 // ─── 公开 API ───────────────────────────────────────────────────
@@ -294,7 +375,8 @@ export function blobRelName(prefix: 'db' | 'att', sha: string, encrypted: boolea
 }
 
 export function isEncryptedBlob(buf: Buffer, name: string): boolean {
-  return buf.subarray(0, ENC_PREFIX.length).equals(Buffer.from(ENC_PREFIX)) || name.endsWith('.enc')
+  const head = buf.subarray(0, 5).toString('latin1')
+  return head === ENC_PREFIX_V1 || head === ENC_PREFIX_V2 || name.endsWith('.enc')
 }
 
 export async function createWebDAVIncrementalBackup(
@@ -382,23 +464,34 @@ export async function createWebDAVIncrementalBackup(
 /** 从 WebDAV 增量索引恢复（DB 全量替换；附件按 sha256 缺失才下载） */
 export async function restoreIncrementalFromWebDAV(
   cfg: WebDAVConfig,
-  indexFilename: string
-): Promise<{ ok: boolean; error?: string }> {
+  indexFilename: string,
+  opts: { backupPassword?: string } = {}
+): Promise<RestoreResult> {
   webdavConfigSchema.parse(cfg)
   backupFilenameSchema.parse(indexFilename)
   const creds = toCreds(cfg)
+  const prevDbKey = masterKeyManager.getDbKey()
+  const restoreSessionKey = () => {
+    if (prevDbKey) masterKeyManager.setRawKey(prevDbKey)
+    else masterKeyManager.setKey('')
+  }
+  const decryptOpts = opts.backupPassword ? { password: opts.backupPassword } : undefined
 
   // 1. 下载并解密索引
   const indexRaw = await downloadFile(creds, indexFilename)
   let indexBuf = indexRaw
   if (isEncryptedBlob(indexRaw, indexFilename)) {
+    const salt = indexRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
     try {
-      indexBuf = decryptBackup(
-        indexRaw,
-        indexRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
-      )
-    } catch {
-      return { ok: false, error: '增量索引解密失败：加密密钥与当前主密码不匹配' }
+      indexBuf = decryptBackup(indexRaw, salt, decryptOpts)
+    } catch (e) {
+      if (e instanceof BackupDecryptError) {
+        if (opts.backupPassword) {
+          return { ok: false, code: e.code === 'badPassword' ? 'badPassword' : 'legacyNoCross', error: e.message }
+        }
+        if (e.code === 'unavailable') return { ok: false, error: e.message }
+      }
+      return { ok: false, code: 'needBackupPassword', error: '增量索引解密失败：加密密钥与当前主密码不匹配，请输入备份密码' }
     }
   }
   let index: IncrementalIndex
@@ -415,16 +508,20 @@ export async function restoreIncrementalFromWebDAV(
   const fetchBlobVerified = async (
     blobRel: string,
     expectedSha: string
-  ): Promise<{ ok: boolean; data?: Buffer; error?: string }> => {
+  ): Promise<{ ok: boolean; data?: Buffer; error?: string; code?: RestoreResult['code'] }> => {
     const blobRaw = await downloadRemoteFile(creds, blobRel)
     let data = blobRaw
     if (index.encrypted || isEncryptedBlob(blobRaw, blobRel)) {
       try {
         data = decryptBackup(
           blobRaw,
-          blobRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
+          blobRaw.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16),
+          decryptOpts
         )
-      } catch {
+      } catch (e) {
+        if (e instanceof BackupDecryptError && opts.backupPassword) {
+          return { ok: false, code: e.code === 'badPassword' ? 'badPassword' : 'legacyNoCross', error: e.message }
+        }
         return { ok: false, error: `blob 解密失败：${blobRel}` }
       }
     }
@@ -436,13 +533,27 @@ export async function restoreIncrementalFromWebDAV(
 
   // 2. DB blob（必须下载）
   const dbRes = await fetchBlobVerified(index.db.blob, index.db.sha256)
-  if (!dbRes.ok || !dbRes.data) return { ok: false, error: dbRes.error }
+  if (!dbRes.ok || !dbRes.data) return { ok: false, code: dbRes.code, error: dbRes.error }
+
+  // 异机恢复：外层解密通过即密码正确，用同一密码 + 包内 masterSalt 派生备份库 DB key
+  if (opts.backupPassword && isEncryptedBlob(indexRaw, indexFilename)) {
+    try {
+      masterKeyManager.setRawKey(deriveBackupDbKey(indexRaw, opts.backupPassword))
+    } catch (e) {
+      restoreSessionKey()
+      if (e instanceof BackupDecryptError) {
+        return { ok: false, code: 'legacyNoCross', error: e.message }
+      }
+      return { ok: false, error: '备份密码派生失败' }
+    }
+  }
 
   // 3. 附件：本地已有同 sha256 文件则跳过，否则下载
   mkdirSync(ATTACHMENTS_DIR, { recursive: true })
   for (const a of index.attachments) {
     // 防路径穿越：索引中的附件名只能是裸文件名
     if (a.name.includes('/') || a.name.includes('\\') || a.name.includes('..')) {
+      restoreSessionKey()
       return { ok: false, error: `非法的附件名：${a.name}` }
     }
     const local = join(ATTACHMENTS_DIR, a.name)
@@ -454,28 +565,38 @@ export async function restoreIncrementalFromWebDAV(
       }
     }
     const res = await fetchBlobVerified(a.blob, a.sha256)
-    if (!res.ok || !res.data) return { ok: false, error: res.error }
+    if (!res.ok || !res.data) {
+      restoreSessionKey()
+      return { ok: false, code: res.code, error: res.error }
+    }
     writeFileSync(local, res.data)
   }
 
   // 4. 关闭 DB → 替换 → 以正确密钥重开 + 迁移（与全量恢复一致）
   // 破坏前预检：备份库加密但当前无主密码密钥时直接拒绝，避免替换后打不开
   if (index.dbEncrypted && !masterKeyManager.getDbKey()) {
+    restoreSessionKey()
     return { ok: false, error: '该增量备份来自加密库，但当前会话未解锁主密码，请先解锁后再恢复' }
   }
   dbService.close()
   removeStaleSidecars(DB_PATH)
   writeFileSync(DB_PATH, dbRes.data)
   const dbKey = masterKeyManager.getDbKey()
-  if (index.dbEncrypted && dbKey) {
-    dbService.open(dbKey)
-  } else {
-    dbService.open()
+  try {
+    if (index.dbEncrypted && dbKey) {
+      dbService.open(dbKey)
+    } else {
+      dbService.open()
+    }
+    dbService.runMigrations()
+  } catch (e) {
+    // 替换后用备份库密钥打不开：磁盘已是备份库，不能恢复原会话密钥，交给用户重启
+    log.error(`增量恢复后重开 DB 失败: ${errMsg(e)}`)
+    return { ok: false, error: '备份库已还原但无法打开，请重启应用并使用备份密码解锁' }
   }
-  dbService.runMigrations()
 
-  log.info(`增量恢复完成: ${indexFilename}`)
-  return { ok: true }
+  log.info(`增量恢复完成: ${indexFilename} (异机密码=${!!opts.backupPassword})`)
+  return opts.backupPassword ? { ok: true, passwordChanged: true } : { ok: true }
 }
 
 export async function listWebDAVBackups(cfg: WebDAVConfig): Promise<BackupFile[]> {
@@ -524,27 +645,57 @@ function removeStaleSidecars(dbPath: string): void {
   }
 }
 
+export interface RestoreResult {
+  ok: boolean
+  error?: string
+  /** needBackupPassword: 当前主密码解不开，需用户输入备份密码；badPassword: 密码错误可重试；legacyNoCross: v1 旧包不支持异机 */
+  code?: 'needBackupPassword' | 'badPassword' | 'legacyNoCross'
+  /** 使用备份密码异机恢复成功：主密码已变为备份时密码，UI 应提示重启 */
+  passwordChanged?: boolean
+}
+
 export async function restoreFromWebDAV(
   cfg: WebDAVConfig,
-  filename: string
-): Promise<{ ok: boolean; error?: string }> {
+  filename: string,
+  opts: { backupPassword?: string } = {}
+): Promise<RestoreResult> {
   webdavConfigSchema.parse(cfg)
   backupFilenameSchema.parse(filename)
   const creds = toCreds(cfg)
+  // 异机恢复会把内存主密钥切换为备份库密钥；失败/取消时必须恢复原会话密钥
+  const prevDbKey = masterKeyManager.getDbKey()
+  const restoreSessionKey = () => {
+    if (prevDbKey) masterKeyManager.setRawKey(prevDbKey)
+    else masterKeyManager.setKey('') // 回到 none 模式固定字段密钥
+  }
   // 1. 下载
   const blob = await downloadFile(creds, filename)
   // 2. 判断加密
   const isEncrypted = filename.endsWith('.enc.zip')
   let zip: Buffer
   if (isEncrypted) {
-    try {
-      zip = decryptBackup(blob, blob.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16))
-    } catch (e) {
-      const msg = errMsg(e, '')
-      if (msg.includes('decrypt') || msg.includes('auth')) {
-        return { ok: false, error: '备份加密密钥与当前主密码不匹配，请在设置页输入恢复密码（暂不支持，当前会话密码必须一致）' }
+    const backupSalt = blob.subarray(ENC_PREFIX.length + 12, ENC_PREFIX.length + 12 + 16)
+    if (opts.backupPassword) {
+      // 异机路径：密码 → 派生备份库 DB key → 解密；成功后切换会话密钥以打开还原库
+      try {
+        zip = decryptBackup(blob, backupSalt, { password: opts.backupPassword })
+        masterKeyManager.setRawKey(deriveBackupDbKey(blob, opts.backupPassword))
+      } catch (e) {
+        if (e instanceof BackupDecryptError) {
+          return { ok: false, code: e.code === 'badPassword' ? 'badPassword' : 'legacyNoCross', error: e.message }
+        }
+        return { ok: false, error: '解密失败：备份包可能已损坏' }
       }
-      return { ok: false, error: '解密失败：备份包可能已损坏' }
+    } else {
+      // 同机路径：先用当前会话密钥尝试；GCM 失败说明备份来自其他密码 → 请用户输入备份密码
+      try {
+        zip = decryptBackup(blob, backupSalt)
+      } catch (e) {
+        if (e instanceof BackupDecryptError && e.code === 'unavailable') {
+          return { ok: false, error: e.message }
+        }
+        return { ok: false, code: 'needBackupPassword', error: '备份加密密钥与当前主密码不匹配，请输入制作该备份时使用的主密码' }
+      }
     }
   } else {
     zip = blob
@@ -555,10 +706,12 @@ export async function restoreFromWebDAV(
   //    事后无法挽回，必须先校验再解压
   const archive = await unzipper.Open.buffer(zip).catch(() => null)
   if (!archive) {
+    restoreSessionKey()
     return { ok: false, error: '备份包损坏：无法读取 ZIP 目录' }
   }
   for (const f of archive.files) {
     if (!isSafeZipEntryName(f.path)) {
+      restoreSessionKey()
       return { ok: false, error: `备份包含非法条目路径，已中止恢复：${f.path}` }
     }
   }
@@ -567,7 +720,9 @@ export async function restoreFromWebDAV(
   //    tmp 目录里是备份包解出的明文 app.db（加密备份也已在第 2 步解密），
   //    任何路径退出（含解压失败、符号链接拒绝、manifest 损坏、恢复异常）都必须清除
   const tmp = join(tmpdir(), `pocketai-restore-${Date.now()}`)
-  let result: { ok: boolean; error?: string } = { ok: true }
+  let result: RestoreResult = { ok: true }
+  let dbReplaced = false
+  const usedBackupPassword = !!opts.backupPassword && isEncrypted
   try {
     mkdirSync(tmp, { recursive: true })
     await new Promise<void>((resolve, reject) => {
@@ -580,6 +735,7 @@ export async function restoreFromWebDAV(
 
     // 符号链接检查：真实链接会让后续复制（跟随链接）读出宿主任意文件
     if (containsSymlink(tmp)) {
+      restoreSessionKey()
       result = { ok: false, error: '备份包含符号链接条目，已中止恢复' }
       return result
     }
@@ -587,6 +743,7 @@ export async function restoreFromWebDAV(
     // 6. 验证 manifest
     const manifestPath = join(tmp, 'manifest.json')
     if (!existsSync(manifestPath)) {
+      restoreSessionKey()
       result = { ok: false, error: '备份包损坏：缺少 manifest.json' }
       return result
     }
@@ -594,6 +751,7 @@ export async function restoreFromWebDAV(
     try {
       manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as BackupManifest
     } catch {
+      restoreSessionKey()
       result = { ok: false, error: '备份包损坏：manifest.json 解析失败' }
       return result
     }
@@ -601,6 +759,7 @@ export async function restoreFromWebDAV(
     // 6.5 破坏前预检：备份内 DB 加密但当前会话没有主密码密钥时无法重开，
     //     必须在关库/替换文件之前拒绝，否则会把应用留在「库已换但打不开」的砖状态
     if (manifest.dbEncrypted && !masterKeyManager.getDbKey()) {
+      restoreSessionKey()
       result = { ok: false, error: '该备份来自加密库，但当前会话未解锁主密码，请先解锁后再恢复' }
       return result
     }
@@ -613,6 +772,7 @@ export async function restoreFromWebDAV(
     const dbInBackup = join(tmp, 'app.db')
     if (existsSync(dbInBackup)) {
       copyFileSync(dbInBackup, DB_PATH)
+      dbReplaced = true
       // DB 文件已被备份内容整体替换（含 app_config 表）：内存读缓存失效，
       // 后续 appConfigRepo.get 重新查库，避免读到替换前的 stale 配置
       clearAppConfigCache()
@@ -637,14 +797,23 @@ export async function restoreFromWebDAV(
     }
     dbService.runMigrations()
 
-    log.info(`恢复完成: ${filename} (DB加密=${manifest.dbEncrypted})`)
+    log.info(`恢复完成: ${filename} (DB加密=${manifest.dbEncrypted}, 异机密码=${usedBackupPassword})`)
+    result = usedBackupPassword ? { ok: true, passwordChanged: true } : { ok: true }
     return result
   } catch (e) {
-    // 恢复中途失败：尽量以无密钥/当前密钥重开，避免应用处于无 DB 状态
+    // 恢复中途失败：
+    // - DB 替换前失败（解压/manifest/预检）：磁盘仍是原库，恢复原会话密钥并重开
+    // - DB 替换后失败：保留备份库密钥（与磁盘库一致），交给用户重启处理
     try {
-      const dbKey3 = masterKeyManager.getDbKey()
-      if (!dbKey3) dbService.open()
-      else dbService.open(dbKey3)
+      if (!dbReplaced) {
+        restoreSessionKey()
+        const k = masterKeyManager.getDbKey()
+        if (!k) dbService.open()
+        else dbService.open(k)
+      } else {
+        const k = masterKeyManager.getDbKey()
+        if (k) dbService.open(k)
+      }
     } catch { /* 原库本身也无法打开，交给用户重启 */ }
     result = { ok: false, error: `恢复失败：${errMsg(e)}` }
     return result

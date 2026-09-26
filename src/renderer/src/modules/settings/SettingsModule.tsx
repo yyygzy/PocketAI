@@ -680,11 +680,54 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     if (cfg) refreshList()
   }, [cfg, refreshList])
 
+  // 异机恢复密码弹窗：当前主密码解不开备份时，输入制作备份时的主密码重试
+  const [restorePwdFile, setRestorePwdFile] = useState<string | null>(null)
+  const [restorePwdValue, setRestorePwdValue] = useState('')
+  const [restorePwdError, setRestorePwdError] = useState('')
+  const [restorePwdBusy, setRestorePwdBusy] = useState(false)
+
+  /** 实际恢复调用：无密码先试同机路径；返回结果由调用方决定是否弹密码框 */
+  async function runRestore(filename: string, backupPassword?: string) {
+    const r = await window.pocketai.restoreWebDAVBackup(filename, backupPassword)
+    if (r.ok) {
+      setRestorePwdFile(null)
+      setRestorePwdValue('')
+      showNotice(true, r.passwordChanged ? t('bk.restoreOkPasswordChanged') : t('bk.restoreOk'))
+      return
+    }
+    if (r.code === 'needBackupPassword' || r.code === 'badPassword' || r.code === 'legacyNoCross') {
+      // 打开密码弹窗并保留对应错误；needBackupPassword 首次打开不显示错误
+      setRestorePwdFile(filename)
+      setRestorePwdError(
+        r.code === 'badPassword' ? t('bk.restoreBadPwd')
+          : r.code === 'legacyNoCross' ? t('bk.restoreLegacy')
+            : ''
+      )
+      return
+    }
+    setRestorePwdFile(null)
+    showNotice(false, t('bk.restoreFail', { e: r.error ?? t('common.unknownError') }))
+  }
+
   async function doRestore(filename: string) {
     if (!(await confirm({ message: t('bk.restoreConfirm', { name: filename }), danger: true }))) return
     showNotice(true, t('bk.downloadingRestore'))
-    const r = await window.pocketai.restoreWebDAVBackup(filename)
-    showNotice(r.ok, r.ok ? t('bk.restoreOk') : t('bk.restoreFail', { e: r.error ?? t('common.unknownError') }))
+    await runRestore(filename)
+  }
+
+  async function doRestoreWithPassword() {
+    if (!restorePwdFile) return
+    const pwd = restorePwdValue.trim()
+    if (!pwd) {
+      setRestorePwdError(t('bk.restoreBadPwd'))
+      return
+    }
+    setRestorePwdBusy(true)
+    try {
+      await runRestore(restorePwdFile, pwd)
+    } finally {
+      setRestorePwdBusy(false)
+    }
   }
 
   async function doDelete(filename: string) {
@@ -1002,6 +1045,53 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
                 className="px-3 py-1.5 rounded text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
               >
                 {mergeExecuting ? t('common.loading') : t('common.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 异机恢复：输入备份密码 */}
+      {restorePwdFile && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm p-4"
+          onClick={() => !restorePwdBusy && setRestorePwdFile(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold mb-2">{t('bk.restorePwdTitle')}</h3>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3 break-all">
+              {t('bk.restorePwdHint', { name: restorePwdFile })}
+            </p>
+            <input
+              type="password"
+              className="input w-full text-sm"
+              placeholder={t('bk.restorePwdPlaceholder')}
+              value={restorePwdValue}
+              autoFocus
+              disabled={restorePwdBusy}
+              onChange={(e) => { setRestorePwdValue(e.target.value); setRestorePwdError('') }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void doRestoreWithPassword() }}
+            />
+            {restorePwdError && (
+              <div className="text-xs text-[var(--color-danger)] mt-2">{restorePwdError}</div>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setRestorePwdFile(null)}
+                disabled={restorePwdBusy}
+                className="px-3 py-1.5 rounded text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => void doRestoreWithPassword()}
+                disabled={restorePwdBusy}
+                className="px-3 py-1.5 rounded text-sm bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40"
+              >
+                {restorePwdBusy ? t('common.loading') : t('bk.restorePwdConfirm')}
               </button>
             </div>
           </div>

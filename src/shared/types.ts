@@ -1031,6 +1031,16 @@ export interface WebDAVBackupFile {
   kind: 'full' | 'incremental'
 }
 
+/** WebDAV 恢复结果（全量/增量共用）；code 驱动渲染层备份密码弹窗 */
+export interface BackupRestoreResult {
+  ok: boolean
+  error?: string
+  /** needBackupPassword: 当前主密码解不开，需输入备份密码；badPassword: 密码错误可重试；legacyNoCross: v1 旧包无法异机恢复 */
+  code?: 'needBackupPassword' | 'badPassword' | 'legacyNoCross'
+  /** 异机密码恢复成功：主密码已变为备份时密码，应提示用户重启 */
+  passwordChanged?: boolean
+}
+
 // ---------- 定时备份 ----------
 export interface BackupRunResult {
   ok: boolean

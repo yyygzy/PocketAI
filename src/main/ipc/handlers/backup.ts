@@ -10,6 +10,7 @@ import {
   backupFilenameSchema,
   mergeExecutePayloadSchema
 } from '../../../shared/schemas/backup'
+import { z } from 'zod'
 
 export function registerBackupHandlers(): void {
   safeHandle(IPC.BACKUP_LOCAL, async () => {
@@ -77,7 +78,7 @@ export function registerBackupHandlers(): void {
     if (!cfg) return []
     try { return await listWebDAVBackups(cfg) } catch { return [] }
   })
-  safeHandle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: string) => {
+  safeHandle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: unknown, backupPassword?: unknown) => {
     const {
       loadWebDAVConfig,
       restoreFromWebDAV,
@@ -85,16 +86,19 @@ export function registerBackupHandlers(): void {
     } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    const fn = backupFilenameSchema.parse(filename)
+    // 异机恢复密码：空串/缺省视为未提供；不做空值以外的格式约束（主密码可含任意字符）
+    const pwd = z.string().min(1).nullish().parse(backupPassword ?? null) ?? undefined
     // 按文件名前缀路由：pocketai-inc-* 走增量索引恢复，其余走全量 zip 恢复
-    if (filename.startsWith('pocketai-inc-')) {
+    if (fn.startsWith('pocketai-inc-')) {
       try {
-        return await restoreIncrementalFromWebDAV(cfg, filename)
+        return await restoreIncrementalFromWebDAV(cfg, fn, { backupPassword: pwd })
       } catch (e) {
         return { ok: false, error: errMsg(e, '增量恢复失败') }
       }
     }
-    return restoreFromWebDAV(cfg, filename)
-  }, argsSchema(backupFilenameSchema))
+    return restoreFromWebDAV(cfg, fn, { backupPassword: pwd })
+  })
   safeHandle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: string) => {
     const { scanMergeConflicts } = await import('../../backup/merge-service')
     const { loadWebDAVConfig } = await import('../../backup/backup-service')
