@@ -15,7 +15,8 @@ import {
   StatusEmitter,
   safeError,
   splitMessage,
-  sleep
+  sleep,
+  fetchWithTimeout
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -308,19 +309,18 @@ class DiscordGateway implements IGateway {
     token: string,
     timeoutMs = REQUEST_TIMEOUT_MS
   ): Promise<unknown> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), timeoutMs)
-    try {
-      const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}${path}`,
+      {
         method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bot ${token}`
         },
-        body: JSON.stringify(body),
-        signal: timeoutCtrl.signal,
-        redirect: 'manual'
-      })
+        body: JSON.stringify(body)
+      },
+      timeoutMs
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error(`HTTP ${res.status}（服务端重定向，已拒绝以保护 Bot Token）`)
       }
@@ -329,9 +329,6 @@ class DiscordGateway implements IGateway {
         throw new Error(`HTTP ${res.status}: ${data?.message ?? res.statusText}`)
       }
       return await res.json().catch(() => null)
-    } finally {
-      clearTimeout(timer)
-    }
   }
 }
 

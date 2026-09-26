@@ -14,7 +14,8 @@ import {
   StatusEmitter,
   safeError,
   splitMessage,
-  sleep
+  sleep,
+  fetchWithTimeout
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -70,18 +71,16 @@ class TelegramGateway implements IGateway {
   ): Promise<T> {
     const { primary: token } = getChannelSecrets('telegram')
     if (!token) throw new Error('未配置 Bot Token')
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), timeoutMs)
-    const merged = signal ? AbortSignal.any([signal, timeoutCtrl.signal]) : timeoutCtrl.signal
-    try {
-      const res = await fetch(`${API_BASE}/bot${token}/${method}`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/bot${token}/${method}`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: merged,
-        // Bot Token 在 URL 路径中；禁止跟随重定向，避免 token 被发往 Location 主机
-        redirect: 'manual'
-      })
+        body: JSON.stringify(body)
+      },
+      timeoutMs,
+      signal
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error(`HTTP ${res.status}（服务端重定向，已拒绝以保护 Bot Token）`)
       }
@@ -91,9 +90,6 @@ class TelegramGateway implements IGateway {
         throw new Error(`HTTP ${res.status}${desc}`)
       }
       return data.result as T
-    } finally {
-      clearTimeout(timer)
-    }
   }
 
   /** 启动：先 getMe 验证凭证，成功后进入后台轮询循环（不阻塞调用方） */

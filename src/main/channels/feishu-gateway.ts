@@ -21,7 +21,8 @@ import {
   StatusEmitter,
   safeError,
   splitMessage,
-  sleep
+  sleep,
+  fetchWithTimeout
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -119,17 +120,16 @@ class FeishuGateway implements IGateway {
   }
 
   private async fetchTenantToken(appId: string, appSecret: string, signal: AbortSignal): Promise<string> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS)
-    const merged = AbortSignal.any([signal, timeoutCtrl.signal])
-    try {
-      const res = await fetch(`${API_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/open-apis/auth/v3/tenant_access_token/internal`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
-        signal: merged,
-        redirect: 'manual'
-      })
+        body: JSON.stringify({ app_id: appId, app_secret: appSecret })
+      },
+      REQUEST_TIMEOUT_MS,
+      signal
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 App Secret')
       }
@@ -138,26 +138,22 @@ class FeishuGateway implements IGateway {
         throw new Error(data?.msg ?? `HTTP ${res.status}`)
       }
       return data.tenant_access_token
-    } finally {
-      clearTimeout(timer)
-    }
   }
 
   private async fetchWsUrl(tenantToken: string, signal: AbortSignal): Promise<string> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS)
-    const merged = AbortSignal.any([signal, timeoutCtrl.signal])
-    try {
-      const res = await fetch(`${API_BASE}/open-apis/v1.0/event/ws/get_url?type=events_v2`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/open-apis/v1.0/event/ws/get_url?type=events_v2`,
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${tenantToken}`
         },
-        body: JSON.stringify({}),
-        signal: merged,
-        redirect: 'manual'
-      })
+        body: JSON.stringify({})
+      },
+      REQUEST_TIMEOUT_MS,
+      signal
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 tenant_access_token')
       }
@@ -167,9 +163,6 @@ class FeishuGateway implements IGateway {
         throw new Error(data?.msg ?? `HTTP ${res.status}`)
       }
       return url
-    } finally {
-      clearTimeout(timer)
-    }
   }
 
   private connect(url: string, appId: string, appSecret: string, ctrl: AbortController): void {
@@ -346,19 +339,18 @@ class FeishuGateway implements IGateway {
     tenantToken: string,
     timeoutMs = REQUEST_TIMEOUT_MS
   ): Promise<unknown> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), timeoutMs)
-    try {
-      const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}${path}`,
+      {
         method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${tenantToken}`
         },
-        body: JSON.stringify(body),
-        signal: timeoutCtrl.signal,
-        redirect: 'manual'
-      })
+        body: JSON.stringify(body)
+      },
+      timeoutMs
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 tenant_access_token')
       }
@@ -367,9 +359,6 @@ class FeishuGateway implements IGateway {
         throw new Error(`HTTP ${res.status}: ${data?.msg ?? data?.message ?? res.statusText}`)
       }
       return await res.json().catch(() => null)
-    } finally {
-      clearTimeout(timer)
-    }
   }
 }
 

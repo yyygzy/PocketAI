@@ -22,7 +22,8 @@ import {
   StatusEmitter,
   safeError,
   splitMessage,
-  sleep
+  sleep,
+  fetchWithTimeout
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -120,17 +121,16 @@ class DingtalkGateway implements IGateway {
     appSecret: string,
     signal: AbortSignal
   ): Promise<{ url: string; token: string }> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS)
-    const merged = AbortSignal.any([signal, timeoutCtrl.signal])
-    try {
-      const res = await fetch(`${API_BASE}/v1.0/gateway/connections/open`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/v1.0/gateway/connections/open`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: appKey, clientSecret: appSecret }),
-        signal: merged,
-        redirect: 'manual'
-      })
+        body: JSON.stringify({ clientId: appKey, clientSecret: appSecret })
+      },
+      REQUEST_TIMEOUT_MS,
+      signal
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 App Secret')
       }
@@ -141,9 +141,6 @@ class DingtalkGateway implements IGateway {
         throw new Error(`HTTP ${res.status}`)
       }
       return { url, token: token ?? '' }
-    } finally {
-      clearTimeout(timer)
-    }
   }
 
   private connect(url: string, appKey: string, appSecret: string, ctrl: AbortController): void {
@@ -302,17 +299,16 @@ class DingtalkGateway implements IGateway {
 
   /** 钉钉 access_token 派生：POST /v1.0/oauth2/accessToken */
   private async getAccessToken(appKey: string, appSecret: string, signal: AbortSignal): Promise<string> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS)
-    const merged = AbortSignal.any([signal, timeoutCtrl.signal])
-    try {
-      const res = await fetch(`${API_BASE}/v1.0/oauth2/accessToken`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/v1.0/oauth2/accessToken`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appKey, appSecret }),
-        signal: merged,
-        redirect: 'manual'
-      })
+        body: JSON.stringify({ appKey, appSecret })
+      },
+      REQUEST_TIMEOUT_MS,
+      signal
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 App Secret')
       }
@@ -321,9 +317,6 @@ class DingtalkGateway implements IGateway {
         throw new Error(`HTTP ${res.status}`)
       }
       return data.accessToken
-    } finally {
-      clearTimeout(timer)
-    }
   }
 
   private async callApi(
@@ -335,19 +328,18 @@ class DingtalkGateway implements IGateway {
     timeoutMs = REQUEST_TIMEOUT_MS
   ): Promise<unknown> {
     const accessToken = await this.getAccessToken(appKey, appSecret, new AbortController().signal)
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), timeoutMs)
-    try {
-      const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}${path}`,
+      {
         method,
         headers: {
           'Content-Type': 'application/json',
           'x-acs-dingtalk-access-token': accessToken
         },
-        body: JSON.stringify(body),
-        signal: timeoutCtrl.signal,
-        redirect: 'manual'
-      })
+        body: JSON.stringify(body)
+      },
+      timeoutMs
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 access_token')
       }
@@ -356,9 +348,6 @@ class DingtalkGateway implements IGateway {
         throw new Error(`HTTP ${res.status}: ${data?.message ?? data?.msg ?? res.statusText}`)
       }
       return await res.json().catch(() => null)
-    } finally {
-      clearTimeout(timer)
-    }
   }
 }
 

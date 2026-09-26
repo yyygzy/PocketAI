@@ -102,3 +102,26 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
     signal.addEventListener('abort', onAbort, { once: true })
   })
 }
+
+/**
+ * 带超时的 fetch：内部 AbortController 超时 + 可选外部 signal 合并，
+ * 强制 redirect:'manual' 防止重定向泄漏凭证，finally 清理 timer。
+ * 调用方不要在 init 里传 signal / redirect，由本函数统一注入。
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<Response> {
+  const timeoutCtrl = new AbortController()
+  const timer = setTimeout(() => timeoutCtrl.abort(), timeoutMs)
+  const merged = signal
+    ? AbortSignal.any([signal, timeoutCtrl.signal])
+    : timeoutCtrl.signal
+  try {
+    return await fetch(url, { ...init, signal: merged, redirect: 'manual' })
+  } finally {
+    clearTimeout(timer)
+  }
+}

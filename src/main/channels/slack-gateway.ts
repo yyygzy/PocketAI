@@ -15,7 +15,8 @@ import {
   StatusEmitter,
   safeError,
   splitMessage,
-  sleep
+  sleep,
+  fetchWithTimeout
 } from './gateway-base'
 
 const log = createLogger('channels')
@@ -98,20 +99,19 @@ class SlackGateway implements IGateway {
 
   /** 调用 apps.connections.open 拿到 WebSocket URL */
   private async openSocket(appToken: string, signal: AbortSignal): Promise<string> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS)
-    const merged = AbortSignal.any([signal, timeoutCtrl.signal])
-    try {
-      const res = await fetch(`${API_BASE}/apps.connections.open`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/apps.connections.open`,
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${appToken}`
         },
-        body: JSON.stringify({}),
-        signal: merged,
-        redirect: 'manual'
-      })
+        body: JSON.stringify({})
+      },
+      REQUEST_TIMEOUT_MS,
+      signal
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 App Token')
       }
@@ -120,9 +120,6 @@ class SlackGateway implements IGateway {
         throw new Error(data?.error ?? `HTTP ${res.status}`)
       }
       return data.url
-    } finally {
-      clearTimeout(timer)
-    }
   }
 
   private connect(url: string, botToken: string, ctrl: AbortController): void {
@@ -265,19 +262,18 @@ class SlackGateway implements IGateway {
     botToken: string,
     timeoutMs = REQUEST_TIMEOUT_MS
   ): Promise<unknown> {
-    const timeoutCtrl = new AbortController()
-    const timer = setTimeout(() => timeoutCtrl.abort(), timeoutMs)
-    try {
-      const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetchWithTimeout(
+      `${API_BASE}${path}`,
+      {
         method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${botToken}`
         },
-        body: JSON.stringify(body),
-        signal: timeoutCtrl.signal,
-        redirect: 'manual'
-      })
+        body: JSON.stringify(body)
+      },
+      timeoutMs
+    )
       if (res.status >= 300 && res.status < 400) {
         throw new Error('HTTP 重定向，已拒绝以保护 Bot Token')
       }
@@ -286,9 +282,6 @@ class SlackGateway implements IGateway {
         throw new Error(data?.error ?? `HTTP ${res.status}`)
       }
       return data
-    } finally {
-      clearTimeout(timer)
-    }
   }
 }
 
