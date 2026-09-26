@@ -156,6 +156,14 @@ export const AgentPanel: React.FC = () => {
           onRerunMessage={chat.running ? undefined : (id) => void chat.rerun(id)}
         />
 
+        {/* 运行中：实时步数提示（step 事件实时更新，结束后丢弃） */}
+        {chat.running && (
+          <div className="mb-2 self-start text-xs text-[var(--color-text-muted)] flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-accent)] animate-pulse" />
+            <span>{t('agent.runningStep', { n: chat.currentStep })}</span>
+          </div>
+        )}
+
         {/* 本次运行统计：步数/耗时/token，点击展开分步明细；新一轮运行/切会话时复位 */}
         {!chat.running && chat.runStats && (
           <div className="mb-2 self-start w-full max-w-[640px]">

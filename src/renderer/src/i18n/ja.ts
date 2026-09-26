@@ -399,6 +399,7 @@ export const ja: Record<string, string> = {
   'agent.traceType.degrade': 'フォールバック',
   'agent.traceType.replan': '再計画',
   'agent.traceEmpty': 'ステップ詳細なし',
+  'agent.runningStep': 'ステップ {n} を実行中…',
   'agent.noModelsHint': 'このプロバイダーのモデルリストはまだ取得されていません',
   'agent.fetchModels': 'モデルを取得',
   'agent.fetching': '取得中…',

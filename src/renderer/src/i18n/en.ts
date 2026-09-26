@@ -426,6 +426,7 @@ export const en: Record<string, string> = {
   'agent.traceType.degrade': 'Fallback',
   'agent.traceType.replan': 'Replanning',
   'agent.traceEmpty': 'No step details',
+  'agent.runningStep': 'Executing step {n}…',
   'agent.noModelsHint': 'No models fetched for this provider yet',
   'agent.fetchModels': 'Fetch models',
   'agent.fetching': 'Fetching…',

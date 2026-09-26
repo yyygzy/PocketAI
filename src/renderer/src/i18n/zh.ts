@@ -426,6 +426,7 @@ export const zh: Record<string, string> = {
   'agent.traceType.degrade': '降级处理',
   'agent.traceType.replan': '重新规划',
   'agent.traceEmpty': '暂无分步明细',
+  'agent.runningStep': '正在执行 第 {n} 步…',
   'agent.noModelsHint': '该 Provider 尚未拉取模型列表',
   'agent.fetchModels': '拉取模型',
   'agent.fetching': '拉取中…',

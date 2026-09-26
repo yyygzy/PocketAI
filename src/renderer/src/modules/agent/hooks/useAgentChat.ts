@@ -26,6 +26,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const [runStats, setRunStats] = useState<AgentRunStats | null>(null) // 当前会话最近一次运行统计（trace 持久化，切回/刷新后恢复）
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
+  const [currentStep, setCurrentStep] = useState(0) // 当前运行正在执行的步数（running 时显示，结束后丢弃）
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const requestIdRef = useRef('')
@@ -73,6 +74,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     offs.push(
       window.pocketai.onAgentStep((e: AgentStepEvent) => {
         if (e.requestId !== requestIdRef.current) return
+        setCurrentStep(e.stepIndex)
         dispatch({ type: 'step', event: e, unknownErrorText: t('agent.unknownError') })
       })
     )
@@ -85,6 +87,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
       window.pocketai.onAgentDone((e: AgentDoneEvent) => {
         setRunning(false)
         setInterrupted(false)
+        setCurrentStep(0)
         // 仅在事件仍归属当前会话时展示统计（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setRunStats(e.traceStats ?? null)
@@ -95,6 +98,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
       window.pocketai.onAgentError((_e: AgentErrorEvent) => {
         setRunning(false)
         setInterrupted(true)
+        setCurrentStep(0)
       })
     )
     return () => offs.forEach((off) => off())
@@ -219,6 +223,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     setInterrupted(false)
     setRunStats(null) // 新一轮运行：清除上轮统计，待 DONE 事件更新
     setLatestTraces(null) // 旧分步明细失效，下次展开重新拉取
+    setCurrentStep(0)
 
     return window.pocketai.sendMessage({
       requestId,
@@ -277,6 +282,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     latestTraces,
     tracesLoading,
     loadLatestTraces,
+    currentStep,
     providerId,
     model,
     setModel,

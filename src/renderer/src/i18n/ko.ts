@@ -399,6 +399,7 @@ export const ko: Record<string, string> = {
   'agent.traceType.degrade': '대체 처리',
   'agent.traceType.replan': '재계획',
   'agent.traceEmpty': '단계 상세 없음',
+  'agent.runningStep': '{n}단계 실행 중…',
   'agent.noModelsHint': '이 공급자의 모델 목록이 아직 조회되지 않았습니다',
   'agent.fetchModels': '모델 조회',
   'agent.fetching': '조회 중…',
