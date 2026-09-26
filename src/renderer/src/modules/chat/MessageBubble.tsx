@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import type { ChatAttachment } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
+import { AttachmentGrid } from '../../components/AttachmentGrid'
 import { Markdown } from './Markdown'
 
 interface Props {
@@ -170,27 +171,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
 
         {/* 附件渲染 */}
         {isUser && attachments && attachments.length > 0 && !editing && (
-          <div className={`flex flex-wrap gap-1.5 mt-1.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
-            {attachments.map((att, i) => (
-              att.type === 'image' ? (
-                <img
-                  key={i}
-                  src={att.data}
-                  alt={att.name}
-                  className="w-20 h-20 object-cover rounded-lg border border-[var(--color-border)] cursor-pointer"
-                  onClick={() => window.open(att.data, '_blank')}
-                />
-              ) : (
-                <div
-                  key={i}
-                  className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-muted)]"
-                  title={`${att.name} (${(att.size / 1024).toFixed(1)} KB)`}
-                >
-                  📄 <span className="truncate max-w-[120px] text-[var(--color-text)]">{att.name}</span>
-                </div>
-              )
-            ))}
-          </div>
+          <AttachmentGrid attachments={attachments} align="end" />
         )}
 
         {/* 操作按钮：复制 / 编辑 / 改参重跑 / 重新生成 / 删除 */}

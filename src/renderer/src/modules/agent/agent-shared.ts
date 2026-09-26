@@ -21,13 +21,13 @@ export interface AgentMessage {
 // ---------- 附件读取 ----------
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
 const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript']
-const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js', '.ts', '.tsx', '.jsx', '.yaml', '.yml', '.sh', '.sql', '.log']
+const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js', '.ts', '.tsx', '.jsx', '.yaml', '.yml', '.sh', '.sql', '.log', '.ini', '.conf', '.toml']
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024
 const MAX_TEXT_SIZE = 2 * 1024 * 1024
 /** 单条消息最多附带的附件数（与原实现保持一致） */
 export const MAX_ATTACHMENTS = 8
-/** 文件选择框 accept 列表 */
-export const ATTACHMENT_ACCEPT = 'image/*,.txt,.md,.json,.csv,.html,.xml,.py,.js,.ts,.tsx,.jsx,.yaml,.yml,.sh,.sql,.log'
+/** 文件选择框 accept 列表（与 Chat Composer 对齐） */
+export const ATTACHMENT_ACCEPT = 'image/*,.txt,.md,.json,.csv,.html,.xml,.py,.js,.ts,.tsx,.jsx,.yaml,.yml,.sh,.sql,.log,.ini,.conf,.toml'
 
 export async function readFileAsAttachment(file: File): Promise<ChatAttachment | null> {
   const ext = '.' + file.name.split('.').pop()?.toLowerCase()

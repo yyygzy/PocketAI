@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { CopyButton } from '../../../components/CopyButton'
+import { AttachmentGrid } from '../../../components/AttachmentGrid'
 import { extractFirstHtmlBlock, type AgentMessage } from '../agent-shared'
 import { HtmlBlockActions } from './HtmlBlockActions'
 
@@ -54,17 +55,9 @@ const AgentMessageCardImpl: React.FC<{
       <div className="flex justify-end">
         <div className="bg-[var(--color-accent-soft)] px-3 py-2 rounded-lg max-w-[80%] text-sm select-text">
           {m.text}
-          {/* 附件渲染 */}
+          {/* 附件渲染（与 Chat 历史消息共用 AttachmentGrid） */}
           {m.attachments && m.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-1.5 justify-end">
-              {m.attachments.map((att, i) => (
-                att.type === 'image' ? (
-                  <img key={i} src={att.data} alt={att.name} className="w-16 h-16 object-cover rounded border border-[var(--color-border)]" />
-                ) : (
-                  <span key={i} className="text-[11px] bg-white/10 px-1.5 py-0.5 rounded">📄 {att.name}</span>
-                )
-              ))}
-            </div>
+            <AttachmentGrid attachments={m.attachments} align="end" />
           )}
           <CardActions copyText={m.text} onDelete={del} onRerun={rerun} />
         </div>
