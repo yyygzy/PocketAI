@@ -1,5 +1,6 @@
 // Agent Trace 数据访问：记录 Agent 每一步的执行情况，供调试/性能分析使用
 import { randomUUID } from 'node:crypto'
+import type { AgentRunStats } from '../../../shared/types'
 import { dbService } from '../database'
 
 export interface AgentTraceRecord {
@@ -98,6 +99,28 @@ export const agentTraceRepo = {
       totalDurationMs: row?.total_duration ?? 0,
       totalTokens: row?.total_tokens ?? 0,
       stepCount: row?.step_count ?? 0
+    }
+  },
+
+  /** 会话最近一次运行的汇总统计（最新 created_at 所属 requestId 聚合）；无 trace 返回 null */
+  latestStatsByConversation(conversationId: string): AgentRunStats | null {
+    const row = dbService.getHandle().prepare(
+      `SELECT COALESCE(SUM(duration_ms), 0) AS total_duration,
+              COALESCE(SUM(token_usage), 0) AS total_tokens,
+              COUNT(*) AS step_count
+       FROM agent_traces
+       WHERE request_id = (
+         SELECT request_id FROM agent_traces
+         WHERE conversation_id = ?
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT 1
+       )`
+    ).get(conversationId) as { total_duration: number; total_tokens: number; step_count: number } | undefined
+    if (!row || row.step_count === 0) return null
+    return {
+      totalDurationMs: row.total_duration,
+      totalTokens: row.total_tokens,
+      stepCount: row.step_count
     }
   },
 

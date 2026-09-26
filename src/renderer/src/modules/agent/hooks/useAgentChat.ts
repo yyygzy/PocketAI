@@ -55,6 +55,11 @@ export function useAgentChat(providers: ProviderRecord[]) {
     void window.pocketai.listMessages(conversationId).then((dbMsgs: MessageRecord[]) => {
       dispatch({ type: 'load', messages: toAgentMessages(dbMsgs) })
     }).catch(reportIpcError('agent.listMessages'))
+    // 恢复该会话最近一次运行统计（trace 持久化，刷新/切回仍可见）；
+    // 快速切会话时用 ref 丢弃迟到响应，避免旧会话统计覆盖当前会话
+    void window.pocketai.getLatestRunStats(conversationId).then((stats) => {
+      if (conversationIdRef.current === conversationId) setRunStats(stats)
+    }).catch(reportIpcError('agent.getLatestRunStats'))
   }, [conversationId])
 
   // 订阅 Agent 流式事件（仅处理当前 requestId 的事件）

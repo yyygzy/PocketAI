@@ -1263,6 +1263,7 @@ export const IPC = {
   AGENT_GET_CALENDAR_CONFIG: 'agent:get-calendar-config',
   AGENT_SET_CALENDAR_CONFIG: 'agent:set-calendar-config',
   AGENT_PICK_ICS_FILE: 'agent:pick-ics-file',
+  AGENT_GET_LATEST_RUN_STATS: 'agent:get-latest-run-stats', // 会话最近一次运行统计（trace 聚合，只读）
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

@@ -8,6 +8,7 @@ import { getShellConfig, setShellConfig } from '../../tools/shell-config'
 import { getWebSearchConfig, setWebSearchConfig } from '../../tools/websearch-config'
 import { getCalendarConfig, setCalendarConfig } from '../../tools/calendar-ics'
 import { resolveApproval } from '../../agent/tool-approval'
+import { agentTraceRepo } from '../../db/repositories/agent-trace.repo'
 import { safeHandle, argsSchema } from '../safe-handle'
 import { createLogger } from '../../logger'
 import {
@@ -94,12 +95,17 @@ export function registerAgentHandlers(): void {
     if (!win) return { canceled: true }
     const result = await dialog.showOpenDialog(win, {
       title: '选择日历文件',
-      properties: ['openFile'],
-      filters: [{ name: 'iCalendar', extensions: ['ics'] }]
+      filters: [{ name: 'iCalendar', extensions: ['ics'] }],
+      properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return { canceled: true }
     return { canceled: false, path: result.filePaths[0] }
   })
+
+  // 会话最近一次 Agent 运行的汇总统计（步数/耗时/token，来自 agent_traces 聚合）
+  safeHandle(IPC.AGENT_GET_LATEST_RUN_STATS, (_e, conversationId: string) =>
+    agentTraceRepo.latestStatsByConversation(conversationId),
+  argsSchema(idSchema))
 
   // 渲染端对工具审批弹窗的应答
   safeHandle(
