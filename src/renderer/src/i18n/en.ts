@@ -417,6 +417,7 @@ export const en: Record<string, string> = {
   'agent.todoTitle': 'Task list',
   'agent.todoProgress': '{{done}}/{{total}} completed',
   'agent.resume': 'Resume',
+  'agent.rerun': 'Rerun',
   'agent.noModelsHint': 'No models fetched for this provider yet',
   'agent.fetchModels': 'Fetch models',
   'agent.fetching': 'Fetching…',

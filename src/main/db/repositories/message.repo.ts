@@ -134,6 +134,24 @@ export const messageRepo = {
     dbService.getHandle().prepare('DELETE FROM messages WHERE id=?').run(id)
   },
 
+  /**
+   * 截断重跑：删除目标消息及其在同一会话中之后插入的所有消息。
+   * 以 rowid（插入顺序）为界，比 created_at 同毫秒歧义更精确；
+   * 不影响其他会话。返回删除行数，目标不存在时返回 0。
+   * FTS 索引由 messages_ad DELETE 触发器联动清理。
+   */
+  truncateFrom(messageId: string): number {
+    const handle = dbService.getHandle()
+    const target = handle
+      .prepare('SELECT rowid AS rid, conversation_id FROM messages WHERE id=?')
+      .get(messageId) as { rid: number; conversation_id: string } | undefined
+    if (!target) return 0
+    const res = handle
+      .prepare('DELETE FROM messages WHERE conversation_id=? AND rowid>=?')
+      .run(target.conversation_id, target.rid)
+    return res.changes
+  },
+
   /** 更新用户消息内容（编辑后重发） */
   updateUserContent(id: string, content: string): void {
     dbService

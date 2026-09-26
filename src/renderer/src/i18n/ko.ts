@@ -390,6 +390,7 @@ export const ko: Record<string, string> = {
   'agent.todoTitle': '작업 목록',
   'agent.todoProgress': '{{done}}/{{total}} 완료',
   'agent.resume': '실행 계속',
+  'agent.rerun': '다시 실행',
   'agent.noModelsHint': '이 공급자의 모델 목록이 아직 조회되지 않았습니다',
   'agent.fetchModels': '모델 조회',
   'agent.fetching': '조회 중…',

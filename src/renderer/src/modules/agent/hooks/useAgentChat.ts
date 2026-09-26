@@ -206,6 +206,27 @@ export function useAgentChat(providers: ProviderRecord[]) {
     )
   }
 
+  /**
+   * 截断重跑：以某条历史用户消息为界，删除它及其后的全部消息（DB + UI），
+   * 用相同文本与附件重新发起。Agent 为线性历史，不引入 Chat 的分支体系。
+   * 仅对已持久化（有 dbId）的用户消息可用；DB 删除成功后才动 UI，失败仅记日志。
+   */
+  const rerun = async (id: string) => {
+    if (running) return
+    const target = messagesRef.current.find((m) => m.id === id)
+    if (!target || target.role !== 'user' || !target.dbId || !target.text.trim()) return
+    const text = target.text
+    const attachments = target.attachments ?? []
+    try {
+      await window.pocketai.truncateMessagesFrom(target.dbId)
+    } catch (e) {
+      reportIpcError('agent.truncateMessagesFrom')(e)
+      return
+    }
+    dispatch({ type: 'truncateFrom', id })
+    send(text, attachments)
+  }
+
   return {
     assistantId,
     setAssistantId,
@@ -228,7 +249,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
     changeProvider,
     send,
     abort,
-    resume
+    resume,
+    rerun
   }
 }
 

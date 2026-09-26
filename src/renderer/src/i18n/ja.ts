@@ -390,6 +390,7 @@ export const ja: Record<string, string> = {
   'agent.todoTitle': 'タスクリスト',
   'agent.todoProgress': '{{done}}/{{total}} 完了',
   'agent.resume': '実行を再開',
+  'agent.rerun': '再実行',
   'agent.noModelsHint': 'このプロバイダーのモデルリストはまだ取得されていません',
   'agent.fetchModels': 'モデルを取得',
   'agent.fetching': '取得中…',

@@ -17,6 +17,8 @@ export interface VirtualMessageListProps {
   emptyHint: ReactNode
   /** 删除单条消息（非流式时由父级传入） */
   onDeleteMessage?: (id: string) => void
+  /** 截断重跑某条用户消息（非流式时由父级传入） */
+  onRerunMessage?: (id: string) => void
 }
 
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
@@ -24,7 +26,8 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   running,
   conversationId,
   emptyHint,
-  onDeleteMessage
+  onDeleteMessage,
+  onRerunMessage
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新）
@@ -109,7 +112,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
                 paddingBottom: 8
               }}
             >
-              <AgentMessageCard m={m} onDelete={onDeleteMessage} />
+              <AgentMessageCard m={m} onDelete={onDeleteMessage} onRerun={onRerunMessage} />
             </div>
           )
         })}

@@ -185,6 +185,8 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_LIST, conversationId),
   deleteMessage: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.MESSAGE_DELETE, id),
+  truncateMessagesFrom: (id: string): Promise<{ ok: boolean; deleted: number }> =>
+    ipcRenderer.invoke(IPC.MESSAGE_TRUNCATE_FROM, id),
   searchMessages: (query: string, assistantId?: string): Promise<MessageSearchResult[]> =>
     ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query, assistantId),
 

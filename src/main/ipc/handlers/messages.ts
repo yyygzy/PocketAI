@@ -25,6 +25,12 @@ export function registerMessageHandlers(): void {
     messageRepo.delete(id)
     return { ok: true }
   }, argsSchema(idSchema))
+
+  // 截断重跑：删除目标消息及同会话其后全部消息（Agent 线性历史「重新运行」）
+  safeHandle(IPC.MESSAGE_TRUNCATE_FROM, (_e, id: string) => {
+    const deleted = messageRepo.truncateFrom(id)
+    return { ok: true, deleted }
+  }, argsSchema(idSchema))
   safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string, assistantId?: string | null) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()

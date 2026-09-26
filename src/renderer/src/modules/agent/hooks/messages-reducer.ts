@@ -7,6 +7,7 @@ export type MessagesAction =
   | { type: 'clear' }
   | { type: 'append'; message: AgentMessage }
   | { type: 'delete'; id: string }
+  | { type: 'truncateFrom'; id: string }
   | { type: 'step'; event: AgentStepEvent; unknownErrorText: string }
   | { type: 'chunk'; messageId: string; delta: string; reasoning?: boolean }
 
@@ -30,6 +31,11 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
         if (tcId && (m.toolCall?.id === tcId || m.toolResult?.toolCallId === tcId)) return false
         return true
       })
+    }
+    case 'truncateFrom': {
+      // 截断重跑：保留目标消息之前的内容，目标及其后所有卡片移除（消息按时间有序）
+      const idx = prev.findIndex((m) => m.id === action.id)
+      return idx === -1 ? prev : prev.slice(0, idx)
     }
     case 'step': {
       const e = action.event

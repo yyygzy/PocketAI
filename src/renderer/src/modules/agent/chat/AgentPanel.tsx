@@ -142,6 +142,7 @@ export const AgentPanel: React.FC = () => {
           conversationId={chat.conversationId}
           emptyHint={t('agent.emptyHint')}
           onDeleteMessage={chat.running ? undefined : (id) => void chat.deleteMessage(id)}
+          onRerunMessage={chat.running ? undefined : (id) => void chat.rerun(id)}
         />
 
         {/* 断点恢复：上次运行中止/出错时显示「继续执行」入口 */}

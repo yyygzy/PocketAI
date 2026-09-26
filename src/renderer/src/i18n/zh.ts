@@ -417,6 +417,7 @@ export const zh: Record<string, string> = {
   'agent.todoTitle': '任务清单',
   'agent.todoProgress': '{{done}}/{{total}} 已完成',
   'agent.resume': '继续执行',
+  'agent.rerun': '重新运行',
   'agent.noModelsHint': '该 Provider 尚未拉取模型列表',
   'agent.fetchModels': '拉取模型',
   'agent.fetching': '拉取中…',

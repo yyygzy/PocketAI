@@ -8,11 +8,21 @@ import { HtmlBlockActions } from './HtmlBlockActions'
 
 const cardBtnClass = 'text-[10px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors'
 
-/** 卡片操作区：复制 + 删除（删除仅非流式时由父级传入） */
-const CardActions: React.FC<{ copyText: string; onDelete?: () => void }> = ({ copyText, onDelete }) => {
+/** 卡片操作区：重跑（可选）+ 复制 + 删除（删除仅非流式时由父级传入） */
+const CardActions: React.FC<{ copyText: string; onDelete?: () => void; onRerun?: () => void }> = ({ copyText, onDelete, onRerun }) => {
   const { t } = useI18n()
   return (
     <div className="flex justify-end gap-1 mt-1">
+      {onRerun && (
+        <button
+          onClick={onRerun}
+          className={`${cardBtnClass} hover:text-[var(--color-accent)]`}
+          title={t('agent.rerun')}
+          aria-label={t('agent.rerun')}
+        >
+          ↻ {t('agent.rerun')}
+        </button>
+      )}
       <CopyButton text={copyText} className={cardBtnClass} />
       {onDelete && (
         <button
@@ -28,10 +38,16 @@ const CardActions: React.FC<{ copyText: string; onDelete?: () => void }> = ({ co
   )
 }
 
-const AgentMessageCardImpl: React.FC<{ m: AgentMessage; onDelete?: (id: string) => void }> = ({ m, onDelete }) => {
+const AgentMessageCardImpl: React.FC<{
+  m: AgentMessage
+  onDelete?: (id: string) => void
+  onRerun?: (id: string) => void
+}> = ({ m, onDelete, onRerun }) => {
   const { t } = useI18n()
   const [showReasoning, setShowReasoning] = useState(false)
   const del = onDelete ? () => onDelete(m.id) : undefined
+  // 重跑仅用于已持久化的用户消息（无 dbId 的临时占位卡不能截断）
+  const rerun = onRerun && m.role === 'user' && m.dbId ? () => onRerun(m.id) : undefined
 
   if (m.role === 'user') {
     return (
@@ -50,7 +66,7 @@ const AgentMessageCardImpl: React.FC<{ m: AgentMessage; onDelete?: (id: string) 
               ))}
             </div>
           )}
-          <CardActions copyText={m.text} onDelete={del} />
+          <CardActions copyText={m.text} onDelete={del} onRerun={rerun} />
         </div>
       </div>
     )

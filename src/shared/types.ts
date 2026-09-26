@@ -1122,6 +1122,7 @@ export const IPC = {
 
   MESSAGE_LIST: 'message:list',
   MESSAGE_DELETE: 'message:delete',
+  MESSAGE_TRUNCATE_FROM: 'message:truncate-from', // 截断重跑：删除目标消息及其后全部消息
   MESSAGE_SEARCH: 'message:search',
 
   CHAT_SEND: 'chat:send',
