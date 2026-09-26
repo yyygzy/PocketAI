@@ -396,6 +396,7 @@ export const ja: Record<string, string> = {
   'agent.resume': '実行を再開',
   'agent.rerun': '再実行',
   'agent.regenerate': '再生成',
+  'agent.jumpToBottom': '一番下へ',
   'agent.runStats': '{steps}ステップ · 所要時間 {duration} · {tokens}トークン',
   'agent.runStatsDetail': 'この実行のステップ詳細を表示',
   'agent.traceType.llm': '思考',

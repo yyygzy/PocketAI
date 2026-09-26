@@ -423,6 +423,7 @@ export const zh: Record<string, string> = {
   'agent.resume': '继续执行',
   'agent.rerun': '重新运行',
   'agent.regenerate': '重新生成',
+  'agent.jumpToBottom': '回到底部',
   'agent.runStats': '{steps} 步 · 耗时 {duration} · {tokens} tokens',
   'agent.runStatsDetail': '查看本次运行分步明细',
   'agent.traceType.llm': '思考',

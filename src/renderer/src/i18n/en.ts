@@ -423,6 +423,7 @@ export const en: Record<string, string> = {
   'agent.resume': 'Resume',
   'agent.rerun': 'Rerun',
   'agent.regenerate': 'Regenerate',
+  'agent.jumpToBottom': 'Back to bottom',
   'agent.runStats': '{steps} steps · {duration} · {tokens} tokens',
   'agent.runStatsDetail': 'View step-by-step details of this run',
   'agent.traceType.llm': 'LLM',

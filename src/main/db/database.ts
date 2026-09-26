@@ -502,6 +502,26 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE knowledge_bases ADD COLUMN hyde_provider_id TEXT;
       ALTER TABLE knowledge_bases ADD COLUMN hyde_model TEXT;
     `
+  },
+  {
+    version: 24,
+    name: 'fix_agent_traces_missing',
+    // 兼容：历史版本若 v1 未成功创建 agent_traces（或表被删），此处幂等补建。
+    up: `
+      CREATE TABLE IF NOT EXISTS agent_traces (
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        step_index INTEGER NOT NULL,
+        step_type TEXT NOT NULL, -- llm | tools | final | degrade
+        tool_name TEXT,          -- 仅 tools 步骤
+        duration_ms INTEGER,     -- 步骤耗时
+        token_usage INTEGER,     -- token 用量（如 provider 返回）
+        status TEXT NOT NULL,    -- success | error
+        error TEXT,              -- 错误信息
+        created_at INTEGER NOT NULL
+      );
+    `
   }
 ]
 

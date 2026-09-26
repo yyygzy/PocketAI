@@ -2,6 +2,23 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentRunStats, AgentSessionStats, AgentTraceRecord } from '../../../shared/types'
 import { dbService } from '../database'
+import { createLogger } from '../../logger'
+
+const log = createLogger('agent-trace')
+
+/** agent_traces 表是否可用（缺失时只记一次 warn，后续静默降级） */
+let tableMissingWarned = false
+
+function isTableMissingError(e: unknown): boolean {
+  return e instanceof Error && /no such table: agent_traces/.test(e.message)
+}
+
+function warnTableMissingOnce(): void {
+  if (!tableMissingWarned) {
+    tableMissingWarned = true
+    log.warn('agent_traces 表缺失，统计/明细功能降级为空（下次启动 migration v24 会补建）')
+  }
+}
 
 interface AgentTraceRow {
   id: string
@@ -19,13 +36,21 @@ interface AgentTraceRow {
 
 /** 会话最近一次运行的 requestId（created_at 最新，同毫秒 rowid 兜底）；无记录返回 null */
 function latestRequestId(conversationId: string): string | null {
-  const row = dbService.getHandle().prepare(
-    `SELECT request_id FROM agent_traces
-     WHERE conversation_id = ?
-     ORDER BY created_at DESC, rowid DESC
-     LIMIT 1`
-  ).get(conversationId) as { request_id: string } | undefined
-  return row?.request_id ?? null
+  try {
+    const row = dbService.getHandle().prepare(
+      `SELECT request_id FROM agent_traces
+       WHERE conversation_id = ?
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT 1`
+    ).get(conversationId) as { request_id: string } | undefined
+    return row?.request_id ?? null
+  } catch (e) {
+    if (isTableMissingError(e)) {
+      warnTableMissingOnce()
+      return null
+    }
+    throw e
+  }
 }
 
 function rowToRecord(row: AgentTraceRow): AgentTraceRecord {
@@ -109,17 +134,25 @@ export const agentTraceRepo = {
 
   /** 会话级累计统计（跨全部运行：运行次数/总耗时/总 token）；无 trace 返回 null */
   sessionStatsByConversation(conversationId: string): AgentSessionStats | null {
-    const row = dbService.getHandle().prepare(
-      `SELECT COUNT(DISTINCT request_id) AS run_count,
-              COALESCE(SUM(duration_ms), 0) AS total_duration,
-              COALESCE(SUM(token_usage), 0) AS total_tokens
-       FROM agent_traces WHERE conversation_id = ?`
-    ).get(conversationId) as { run_count: number; total_duration: number; total_tokens: number } | undefined
-    if (!row || row.run_count === 0) return null
-    return {
-      runCount: row.run_count,
-      totalDurationMs: row.total_duration,
-      totalTokens: row.total_tokens
+    try {
+      const row = dbService.getHandle().prepare(
+        `SELECT COUNT(DISTINCT request_id) AS run_count,
+                COALESCE(SUM(duration_ms), 0) AS total_duration,
+                COALESCE(SUM(token_usage), 0) AS total_tokens
+         FROM agent_traces WHERE conversation_id = ?`
+      ).get(conversationId) as { run_count: number; total_duration: number; total_tokens: number } | undefined
+      if (!row || row.run_count === 0) return null
+      return {
+        runCount: row.run_count,
+        totalDurationMs: row.total_duration,
+        totalTokens: row.total_tokens
+      }
+    } catch (e) {
+      if (isTableMissingError(e)) {
+        warnTableMissingOnce()
+        return null
+      }
+      throw e
     }
   },
 

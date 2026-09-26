@@ -1,9 +1,10 @@
 // 虚拟消息列表：用 @tanstack/react-virtual 只渲染可视区消息，避免长对话 DOM 线性增长
 // 滚底逻辑：流式追加时若用户在底部锚定区则自动跟滚；用户主动向上滚后停止跟滚（尊重阅读）
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AgentMessageCard } from './AgentMessageCard'
 import { isNearBottom, shouldStickToBottom } from './virtual-list-utils'
+import { useI18n } from '../../../i18n'
 import type { AgentMessage } from '../agent-shared'
 import type { ReactNode } from 'react'
 
@@ -32,11 +33,14 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   onRerunMessage,
   onRegenerateMessage
 }) => {
+  const { t } = useI18n()
   const scrollRef = useRef<HTMLDivElement>(null)
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新）
   const isAtBottomRef = useRef(true)
   // 切会话后待滚底标记：messages 异步加载，length 变化 effect 里消费
   const pendingScrollBottomRef = useRef(true)
+  // 滚出底部锚定区时显示「回到底部」悬浮按钮
+  const [showJumpBottom, setShowJumpBottom] = useState(false)
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -54,13 +58,24 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el) return
-    isAtBottomRef.current = isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight, 48)
+    const atBottom = isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight, 48)
+    isAtBottomRef.current = atBottom
+    setShowJumpBottom(!atBottom)
+  }
+
+  /** 点击悬浮按钮：立即滚到底并恢复流式跟滚 */
+  const jumpToBottom = () => {
+    if (messages.length === 0) return
+    virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
+    isAtBottomRef.current = true
+    setShowJumpBottom(false)
   }
 
   // 切会话：设待滚底标记（不立即滚，messages 可能尚未加载完）
   useEffect(() => {
     pendingScrollBottomRef.current = true
     isAtBottomRef.current = true
+    setShowJumpBottom(false)
   }, [conversationId])
 
   // 消息数变化或流式状态变化：按待滚底标记 / 跟滚规则决定是否滚到底
@@ -72,10 +87,12 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
       virtualizer.scrollToIndex(lastIndex, { align: 'end' })
       pendingScrollBottomRef.current = false
       isAtBottomRef.current = true
+      setShowJumpBottom(false)
       return
     }
     if (shouldStickToBottom(isAtBottomRef.current, isAtBottomRef.current, running)) {
       virtualizer.scrollToIndex(lastIndex, { align: 'end' })
+      setShowJumpBottom(false)
     }
   }, [messages.length, running, virtualizer])
 
@@ -91,43 +108,57 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   const totalHeight = virtualizer.getTotalSize()
 
   return (
-    <div
-      ref={scrollRef}
-      onScroll={handleScroll}
-      className="flex-1 overflow-y-auto space-y-2 pr-1"
-    >
-      <div style={{ position: 'relative', height: totalHeight, width: '100%' }}>
-        {items.map((vi) => {
-          const m = messages[vi.index]
-          if (!m) return null
-          // 仅最后一条 final 助手卡提供「重新生成」（重跑其前最近的用户消息）
-          const isLastFinal =
-            vi.index === messages.length - 1 && m.role === 'assistant' && m.isFinal
-          return (
-            <div
-              key={m.id}
-              data-index={vi.index}
-              ref={virtualizer.measureElement}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                transform: `translateY(${vi.start}px)`,
-                width: '100%',
-                // pb-2 模拟原 space-y-2 的项间距（absolute 元素 margin 不生效，用 padding 计入测量高度）
-                paddingBottom: 8
-              }}
-            >
-              <AgentMessageCard
-                m={m}
-                onDelete={onDeleteMessage}
-                onRerun={onRerunMessage}
-                onRegenerate={isLastFinal ? onRegenerateMessage : undefined}
-              />
-            </div>
-          )
-        })}
+    <div className="relative flex-1 min-h-0">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="absolute inset-0 overflow-y-auto space-y-2 pr-1"
+      >
+        <div style={{ position: 'relative', height: totalHeight, width: '100%' }}>
+          {items.map((vi) => {
+            const m = messages[vi.index]
+            if (!m) return null
+            // 仅最后一条 final 助手卡提供「重新生成」（重跑其前最近的用户消息）
+            const isLastFinal =
+              vi.index === messages.length - 1 && m.role === 'assistant' && m.isFinal
+            return (
+              <div
+                key={m.id}
+                data-index={vi.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  transform: `translateY(${vi.start}px)`,
+                  width: '100%',
+                  // pb-2 模拟原 space-y-2 的项间距（absolute 元素 margin 不生效，用 padding 计入测量高度）
+                  paddingBottom: 8
+                }}
+              >
+                <AgentMessageCard
+                  m={m}
+                  onDelete={onDeleteMessage}
+                  onRerun={onRerunMessage}
+                  onRegenerate={isLastFinal ? onRegenerateMessage : undefined}
+                />
+              </div>
+            )
+          })}
+        </div>
       </div>
+      {showJumpBottom && (
+        <button
+          type="button"
+          onClick={jumpToBottom}
+          title={t('agent.jumpToBottom')}
+          aria-label={t('agent.jumpToBottom')}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs shadow-md border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+        >
+          <span aria-hidden>↓</span>
+          {t('agent.jumpToBottom')}
+        </button>
+      )}
     </div>
   )
 }

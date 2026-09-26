@@ -396,6 +396,7 @@ export const ko: Record<string, string> = {
   'agent.resume': '실행 계속',
   'agent.rerun': '다시 실행',
   'agent.regenerate': '다시 생성',
+  'agent.jumpToBottom': '맨 아래로',
   'agent.runStats': '{steps}단계 · 소요 시간 {duration} · {tokens}토큰',
   'agent.runStatsDetail': '이번 실행의 단계별 상세 보기',
   'agent.traceType.llm': '사고',
