@@ -11,6 +11,7 @@ import { useI18n } from '../../i18n'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+import { formatBytes } from '../../utils/format'
 import { PROVIDER_PRESETS } from '../settings/ProviderSettings'
 import type {
   HardwareInfo,
@@ -24,18 +25,6 @@ import type {
 export type WizardVariant = 'full' | 'recheck'
 
 const FULL_STEPS = 3
-
-const formatBytes = (n: number): string => {
-  if (!Number.isFinite(n) || n <= 0) return '-'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
-}
 
 // 向导里优先展示的预设（按中文用户常用度排序）
 const WIZARD_PRESET_LABELS = ['DeepSeek', 'OpenAI', 'Anthropic Claude', 'Moonshot 月之暗面', 'Ollama', 'LM Studio']

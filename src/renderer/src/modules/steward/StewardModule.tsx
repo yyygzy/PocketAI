@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { formatBytes } from '../../utils/format'
 
 const LEVEL_ICON: Record<CheckLevel, string> = { ok: '✅', warn: '⚠️', danger: '❌' }
 const LEVEL_CLS: Record<CheckLevel, string> = {
@@ -114,13 +115,6 @@ export const StewardModule: React.FC = () => {
     } finally {
       setChecking(null)
     }
-  }
-
-  const formatBytes = (b: number) => {
-    if (b < 1024) return `${b} B`
-    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
-    if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`
-    return `${(b / 1024 / 1024 / 1024).toFixed(1)} GB`
   }
 
   const fmtDiskType = (v: string) => {
