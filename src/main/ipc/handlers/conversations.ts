@@ -112,7 +112,12 @@ export function registerConversationHandlers(): void {
 
     const blob = fs.readFileSync(filePaths[0]!)
     const plaintext = decryptWithPassword(password, blob)
-    const payload = JSON.parse(plaintext)
+    let payload: ConversationExportPayload
+    try {
+      payload = JSON.parse(plaintext) as ConversationExportPayload
+    } catch {
+      return { ok: false, error: '文件已损坏（解密成功但内容不是有效 JSON）' }
+    }
 
     if (!payload?.conversation || !Array.isArray(payload.messages)) {
       return { ok: false, error: '无效的加密文件内容' }
@@ -122,7 +127,7 @@ export function registerConversationHandlers(): void {
     const newConv = conversationRepo.create({
       assistantId: c.assistantId ?? null,
       title: (c.title ?? '导入的会话') + ' (加密导入)',
-      modelLabel: c.modelLabel
+      modelLabel: c.modelLabel ?? undefined
     })
     let count = 0
     for (const m of payload.messages) {

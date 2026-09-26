@@ -103,7 +103,12 @@ export async function runWebSearch(
     throw new Error(`搜索失败 HTTP ${result.status}: ${cut(text, 200)}`)
   }
 
-  const json = JSON.parse(result.body.toString('utf-8') || 'null') as SearchApiResponse | null
+  let json: SearchApiResponse | null
+  try {
+    json = JSON.parse(result.body.toString('utf-8') || 'null') as SearchApiResponse | null
+  } catch {
+    throw new Error('搜索服务返回了无效的 JSON 响应')
+  }
   if (json === null) throw new Error('搜索响应解析失败')
 
   const hits: WebSearchHit[] =

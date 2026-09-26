@@ -57,7 +57,12 @@ async function geocode(location: string, signal?: AbortSignal): Promise<GeocodeH
     '&count=1&language=zh&format=json'
   const res = await safeFetch(url, { signal, timeoutMs: 10_000, maxBytes: 512 * 1024 })
   if (res.status !== 200) throw new Error(`地理编码服务返回 HTTP ${res.status}`)
-  const data = JSON.parse(res.body.toString('utf8')) as { results?: GeocodeHit[] }
+  let data: { results?: GeocodeHit[] }
+  try {
+    data = JSON.parse(res.body.toString('utf8')) as { results?: GeocodeHit[] }
+  } catch {
+    throw new Error('地理编码服务返回了无效的 JSON 响应')
+  }
   const hit = data.results?.[0]
   if (!hit) throw new Error(`未找到地点「${location}」，请尝试更大的城市名`)
   return hit
@@ -95,7 +100,7 @@ export const weatherTool: BuiltinTool = {
       `&timezone=auto&forecast_days=${days}`
     const res = await safeFetch(url, { signal: ctx?.signal, timeoutMs: 10_000, maxBytes: 512 * 1024 })
     if (res.status !== 200) throw new Error(`天气服务返回 HTTP ${res.status}`)
-    const data = JSON.parse(res.body.toString('utf8')) as {
+    let data: {
       current?: Record<string, number>
       daily?: {
         time: string[]
@@ -104,6 +109,11 @@ export const weatherTool: BuiltinTool = {
         temperature_2m_min: number[]
         precipitation_sum: number[]
       }
+    }
+    try {
+      data = JSON.parse(res.body.toString('utf8')) as typeof data
+    } catch {
+      throw new Error('天气服务返回了无效的 JSON 响应')
     }
 
     const c = data.current
