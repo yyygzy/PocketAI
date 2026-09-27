@@ -21,6 +21,7 @@ import { z } from 'zod'
 import { MCP_EXTENSIONS_DIR } from '../portable'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { errMsg } from '../error'
+import { pythonPipSourceSchema } from '../../shared/schemas/mcp'
 import type {
   McpServerRecord,
   PythonEnvInstallEvent,
@@ -68,18 +69,8 @@ const INDEX_URLS: Record<'official' | 'tuna', string> = {
   tuna: 'https://pypi.tuna.tsinghua.edu.cn/simple'
 }
 
-/** pip 源：official / tuna 或 http(s) 自定义镜像 URL */
-const pipSourceSchema = z.union([
-  z.enum(['official', 'tuna']),
-  z.string().url().refine((v) => {
-    try {
-      const u = new URL(v)
-      return u.protocol === 'http:' || u.protocol === 'https:'
-    } catch {
-      return false
-    }
-  }, '自定义 pip 源仅支持 http(s) 协议')
-])
+// pip 源校验规则（official/tuna/http(s) URL）单一来源在 shared/schemas/mcp.ts，
+// 与 IPC PYTHON_PIP_SOURCE_SET 入参共用同一 schema，禁止双侧各写一份。
 
 /** installForServer 入参校验：仅 Python stdio 类型可安装依赖 */
 const installRecordSchema = z.object({
@@ -326,7 +317,7 @@ export function getPipSource(): PythonPipSource {
 
 /** 持久化 pip 源；自定义值必须是非空 http(s) URL */
 export function setPipSource(source: PythonPipSource): void {
-  const s = pipSourceSchema.parse(source)
+  const s = pythonPipSourceSchema.parse(source)
   if (s === 'official' || s === 'tuna') {
     appConfigRepo.set(PIP_SOURCE_CONFIG_KEY, s)
     return

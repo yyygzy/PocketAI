@@ -36,5 +36,22 @@ export const safeFileName = z
   .min(1, '文件名不能为空')
   .refine((n) => !/[\\/]/.test(n), '文件名不合法：不能包含路径分隔符')
 
-/** base64 内容：非空字符串 */
-export const base64Content = z.string().min(1, '内容不能为空')
+/**
+ * 上传文件解码后字节上限（files-service 解码后复核的最终硬界）。
+ */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+/**
+ * base64 字符串长度上限：100MiB 的 base64 编码为 ceil(n/3)*4 ≈ 139.8M 字符，
+ * 取 140MiB 字符留余量。必须在 Buffer.from 解码**之前**拦截：超限字符串已随 IPC
+ * 到达主进程，再解码会多分配一份等长 Buffer（内存翻倍尖峰），故入口先快速失败。
+ */
+export const MAX_UPLOAD_BASE64_CHARS = 140 * 1024 * 1024
+
+/** base64 内容：非空字符串，长度在解码前预检（防内存翻倍） */
+export const base64Content = z
+  .string()
+  .min(1, '内容不能为空')
+  .max(
+    MAX_UPLOAD_BASE64_CHARS,
+    `文件超过 ${Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限`
+  )

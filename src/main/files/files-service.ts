@@ -6,7 +6,13 @@ import fs from 'node:fs'
 import { DATA_DIR } from '../portable'
 import type { FileEntry, FileReadResult, FileOpResult } from '../../shared/types'
 import { errMsg } from '../error'
-import { safeRelPath, safeRelDir, safeFileName, base64Content } from '../../shared/schemas/files'
+import {
+  safeRelPath,
+  safeRelDir,
+  safeFileName,
+  base64Content,
+  MAX_UPLOAD_BYTES
+} from '../../shared/schemas/files'
 
 const TEXT_READ_LIMIT = 256 * 1024 // 文本预览最大 256KB，超出截断
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'])
@@ -139,8 +145,12 @@ function upload(relDir: string, name: string, base64: string): FileOpResult {
     if (!abs.startsWith(DATA_DIR + path.sep) && abs !== DATA_DIR) {
       return { ok: false, error: '路径超出数据目录范围' }
     }
+    // schema 已在解码前按 base64 字符长度预检（防内存翻倍）；此处按真实解码字节复核，
+    // 作为内部调用方的最终硬界（base64 长度合法但二进制膨胀的兜底）
     const buf = Buffer.from(base64, 'base64')
-    if (buf.length > 100 * 1024 * 1024) return { ok: false, error: '文件超过 100MB 上限' }
+    if (buf.length > MAX_UPLOAD_BYTES) {
+      return { ok: false, error: `文件超过 ${Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限` }
+    }
     fs.mkdirSync(absDir, { recursive: true })
     // 同名自动加后缀
     let target = abs
