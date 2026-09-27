@@ -417,6 +417,7 @@ export const en: Record<string, string> = {
   'agent.toolResult': '✅ Tool result',
   'agent.finalAnswer': 'Final answer',
   'agent.thinking': 'Thinking…',
+  'agent.copyReasoning': 'Copy reasoning',
   'agent.unknownError': 'Unknown error',
   'agent.todoTitle': 'Task list',
   'agent.todoProgress': '{{done}}/{{total}} completed',

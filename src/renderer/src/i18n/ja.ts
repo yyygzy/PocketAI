@@ -390,6 +390,7 @@ export const ja: Record<string, string> = {
   'agent.toolResult': '✅ ツール結果',
   'agent.finalAnswer': '最終回答',
   'agent.thinking': '思考中…',
+  'agent.copyReasoning': '思考プロセスをコピー',
   'agent.unknownError': '不明なエラー',
   'agent.todoTitle': 'タスクリスト',
   'agent.todoProgress': '{{done}}/{{total}} 完了',

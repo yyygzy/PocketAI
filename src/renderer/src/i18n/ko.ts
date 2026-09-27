@@ -390,6 +390,7 @@ export const ko: Record<string, string> = {
   'agent.toolResult': '✅ 도구 결과',
   'agent.finalAnswer': '최종 답변',
   'agent.thinking': '생각 중…',
+  'agent.copyReasoning': '사고 과정 복사',
   'agent.unknownError': '알 수 없는 오류',
   'agent.todoTitle': '작업 목록',
   'agent.todoProgress': '{{done}}/{{total}} 완료',

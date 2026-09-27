@@ -417,6 +417,7 @@ export const zh: Record<string, string> = {
   'agent.toolResult': '✅ 工具结果',
   'agent.finalAnswer': '最终回答',
   'agent.thinking': '思考中…',
+  'agent.copyReasoning': '复制思考过程',
   'agent.unknownError': '未知错误',
   'agent.todoTitle': '任务清单',
   'agent.todoProgress': '{{done}}/{{total}} 已完成',

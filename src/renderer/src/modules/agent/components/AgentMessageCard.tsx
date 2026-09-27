@@ -217,13 +217,17 @@ const AgentMessageCardImpl: React.FC<{
       {/* 思考过程（可折叠） */}
       {m.reasoning && m.reasoning.trim() && (
         <div className="mb-2">
-          <button
-            onClick={() => setShowReasoning((v) => !v)}
-            className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] flex items-center gap-1"
-          >
-            <span>{showReasoning ? '▼' : '▶'}</span>
-            <span>{t('agent.thinking')}（{m.reasoning.length} 字）</span>
-          </button>
+          <div className="flex items-center justify-between gap-1">
+            <button
+              onClick={() => setShowReasoning((v) => !v)}
+              className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] flex items-center gap-1"
+            >
+              <span>{showReasoning ? '▼' : '▶'}</span>
+              <span>{t('agent.thinking')}（{m.reasoning.length} 字）</span>
+            </button>
+            {/* 思考过程单独复制（纯思考卡无正文时这是唯一复制入口） */}
+            <CopyButton text={m.reasoning} title={t('agent.copyReasoning')} className={cardBtnClass} />
+          </div>
           {showReasoning && (
             <div className="mt-1 px-2 py-1.5 rounded bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)] whitespace-pre-wrap max-h-60 overflow-y-auto">
               {m.reasoning}
