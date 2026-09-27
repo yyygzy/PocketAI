@@ -3,7 +3,8 @@
 // 覆盖 src/main/net/external-links.ts 的 URL 安全边界：
 // - openExternalSecure：仅放行 http/https，其余协议静默拒绝
 // - originOf：URL origin 提取，非法返回 null
-// - denyNewWindows：拒开新窗 + 跨源导航拦截（同源放行、跨源阻止并转系统浏览器）
+// - denyNewWindows：拒开新窗 + 跨源导航拦截（同源放行、跨源阻止并转系统浏览器；
+//   opaque origin（file://）改同文件判定，跨文件阻止且不转系统浏览器）
 //
 // 策略：vi.mock electron shell 捕获 openExternal 调用；denyNewWindows 用 mock
 // webContents 手动触发 setWindowOpenHandler / will-navigate 回调。
@@ -142,6 +143,78 @@ describe('denyNewWindows — 拒开新窗 + 跨源导航拦截', () => {
     const wc = mockWebContents('https://app.local')
     denyNewWindows(wc as unknown as Electron.WebContents)
     wc._triggerNavigate('file:///etc/passwd')
+    expect(wc._preventDefaultMock).toHaveBeenCalled()
+    expect(openExternalMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('denyNewWindows — opaque origin（file://）导航收口', () => {
+  function mockWebContents(currentUrl: string) {
+    let navigateHandler: ((e: { preventDefault: () => void }, url: string) => void) | null = null
+    const preventDefaultMock = vi.fn()
+    return {
+      setWindowOpenHandler: () => {},
+      on: (event: string, fn: (e: { preventDefault: () => void }, url: string) => void) => {
+        if (event === 'will-navigate') navigateHandler = fn
+      },
+      getURL: () => currentUrl,
+      _triggerNavigate: (url: string) => navigateHandler!({ preventDefault: preventDefaultMock }, url),
+      _preventDefaultMock: preventDefaultMock
+    }
+  }
+
+  const APP_ENTRY = 'file:///C:/PocketAI/resources/app.asar/dist/renderer/index.html'
+
+  it('file:// 同文件导航（仅 hash 不同）→ 放行', () => {
+    const wc = mockWebContents(`${APP_ENTRY}#/chat`)
+    denyNewWindows(wc as unknown as Electron.WebContents)
+    wc._triggerNavigate(`${APP_ENTRY}#/settings`)
+    expect(wc._preventDefaultMock).not.toHaveBeenCalled()
+  })
+
+  it('file:// 同文件导航（带 search）→ 放行', () => {
+    const wc = mockWebContents(APP_ENTRY)
+    denyNewWindows(wc as unknown as Electron.WebContents)
+    wc._triggerNavigate(`${APP_ENTRY}?v=2#/chat`)
+    expect(wc._preventDefaultMock).not.toHaveBeenCalled()
+  })
+
+  it('file:// 跨文件导航（拖入恶意 HTML）→ preventDefault 且不转系统浏览器', () => {
+    const wc = mockWebContents(APP_ENTRY)
+    denyNewWindows(wc as unknown as Electron.WebContents)
+    wc._triggerNavigate('file:///C:/Users/victim/Downloads/evil.html')
+    expect(wc._preventDefaultMock).toHaveBeenCalled()
+    expect(openExternalMock).not.toHaveBeenCalled()
+  })
+
+  it('file:// → 外部 https 链接 → preventDefault + 转系统浏览器（合法外链不受影响）', () => {
+    const wc = mockWebContents(APP_ENTRY)
+    denyNewWindows(wc as unknown as Electron.WebContents)
+    wc._triggerNavigate('https://example.com/docs')
+    expect(wc._preventDefaultMock).toHaveBeenCalled()
+    expect(openExternalMock).toHaveBeenCalledWith('https://example.com/docs')
+  })
+
+  it('file:// → javascript: → preventDefault 且不转系统浏览器', () => {
+    const wc = mockWebContents(APP_ENTRY)
+    denyNewWindows(wc as unknown as Electron.WebContents)
+    wc._triggerNavigate('javascript:alert(1)')
+    expect(wc._preventDefaultMock).toHaveBeenCalled()
+    expect(openExternalMock).not.toHaveBeenCalled()
+  })
+
+  it('about:blank（js_eval 隐藏窗口）→ file:// 本地文件 → 阻止且不转系统浏览器', () => {
+    const wc = mockWebContents('about:blank')
+    denyNewWindows(wc as unknown as Electron.WebContents)
+    wc._triggerNavigate('file:///C:/Windows/System32/drivers/etc/hosts')
+    expect(wc._preventDefaultMock).toHaveBeenCalled()
+    expect(openExternalMock).not.toHaveBeenCalled()
+  })
+
+  it('data: → data:（均为 opaque origin 但路径不同）→ 阻止且不转系统浏览器', () => {
+    const wc = mockWebContents('data:text/html,<p>a</p>')
+    denyNewWindows(wc as unknown as Electron.WebContents)
+    wc._triggerNavigate('data:text/html,<script>alert(1)</script>')
     expect(wc._preventDefaultMock).toHaveBeenCalled()
     expect(openExternalMock).not.toHaveBeenCalled()
   })

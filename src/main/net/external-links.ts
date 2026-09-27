@@ -10,12 +10,21 @@
 // 整套 IPC API 就会落在远程页面的执行上下文里（等同把本机能力交出去）。
 // 本应用渲染层只有 hash 路由（same-document 导航不触发 will-navigate），
 // 故同源放行、跨源一律阻止并转系统浏览器，零功能影响。
+//
+// opaque origin 特例：file:// / data: / about:blank 的 origin 都是字符串
+// 'null'，两两相等是假象，不能按同源放行——否则生产环境（渲染层以 file://
+// 加载）任意 file://→file:// 导航（如把恶意 HTML 文件拖进窗口）都会被放行，
+// 导航后 preload 重新注入、恶意页面获得完整 IPC 面。故 opaque origin 只
+// 允许同文件导航（忽略 hash/search），跨文件一律阻止且不转系统浏览器。
 
 import { shell } from 'electron'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
 
 const log = createLogger('external-links')
+
+/** opaque origin（file:/data:/about:blank 等）序列化后的字符串，不可用于同源比较 */
+const OPAQUE_ORIGIN = 'null'
 
 /** 仅放行 http/https，其余协议静默忽略 */
 export function openExternalSecure(rawUrl: string): void {
@@ -45,10 +54,31 @@ export function denyNewWindows(webContents: Electron.WebContents): void {
   })
 
   webContents.on('will-navigate', (e, targetUrl) => {
-    const current = originOf(webContents.getURL())
+    const currentUrl = webContents.getURL()
+    const current = originOf(currentUrl)
     const target = originOf(targetUrl)
-    // 同源放行（生产 file:// 页面之间、开发 vite dev server 内部）
-    if (current && target && current === target) return
+
+    // 同源放行（dev vite origin 内部；生产 file:// 走下面的 opaque 分支）
+    if (current && target && current !== OPAQUE_ORIGIN && current === target) {
+      return
+    }
+
+    // opaque origin（file:// / data: / about:blank 等）：origin 全是 'null'，
+    // 不能用 origin 比较；只允许同文件（去掉 hash/search 后路径相同），
+    // 跨文件一律阻止且不转系统浏览器（file:// 不应跳到外部浏览器）。
+    if (current === OPAQUE_ORIGIN && target === OPAQUE_ORIGIN) {
+      try {
+        const cur = new URL(currentUrl)
+        const tgt = new URL(targetUrl)
+        if (cur.pathname === tgt.pathname && cur.host === tgt.host) return
+      } catch {
+        // 任一 URL 非法则直接阻止
+      }
+      e.preventDefault()
+      log.warn(`阻止 opaque-origin 跨文件导航: ${currentUrl} → ${targetUrl}`)
+      return
+    }
+
     e.preventDefault()
     openExternalSecure(targetUrl)
   })
