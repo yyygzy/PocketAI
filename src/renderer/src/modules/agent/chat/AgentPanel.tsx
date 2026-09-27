@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
+import { useAgentShortcuts } from '../hooks/useAgentShortcuts'
 import { useAgentToolConfigs } from '../hooks/useAgentToolConfigs'
 import { useAttachments } from '../hooks/useAttachments'
 import { SessionRail } from '../components/SessionRail'
@@ -86,6 +87,15 @@ export const AgentPanel: React.FC = () => {
     chat.conversations.find((c) => c.id === chat.conversationId)?.title?.trim() ||
     t('agent.copyMdDefaultTitle')
   const hasMessages = chat.messages.length > 0
+
+  // 全局快捷键：Ctrl+N 新建 / Ctrl+K 搜索 / Ctrl+/ 聚焦输入框 / Esc 停止
+  useAgentShortcuts({
+    running: chat.running,
+    searchEnabled: hasMessages,
+    onNew: () => void chat.newConversation(),
+    onSearch: () => { if (!searchOpen) openSearch() },
+    onAbort: chat.abort
+  })
 
   // 头部快捷：导出 .md（复用会话栏同一通道）
   const handleExportCurrent = () => {
@@ -213,7 +223,7 @@ export const AgentPanel: React.FC = () => {
           <button
             onClick={() => (searchOpen ? closeSearch() : openSearch())}
             disabled={!hasMessages}
-            title={t('agent.search')}
+            title={`${t('agent.search')} (Ctrl+K)`}
             aria-label={t('agent.search')}
             aria-pressed={searchOpen}
             className={`shrink-0 mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${

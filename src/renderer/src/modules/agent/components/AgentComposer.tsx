@@ -118,6 +118,7 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
           </svg>
         </button>
         <textarea
+          data-agent-composer-input
           className="input flex-1 text-sm min-h-[40px] max-h-[120px] resize-none"
           value={input}
           onChange={(e) => handleInputChange(e.target.value)}
@@ -150,6 +151,7 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
             }
           }}
           placeholder={t('agent.inputPh')}
+          title={t('agent.composerTitle')}
           disabled={running}
         />
         {running ? (

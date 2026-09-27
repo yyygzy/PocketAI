@@ -412,6 +412,7 @@ export const zh: Record<string, string> = {
   'agent.selectModel': '选择模型…',
   'agent.emptyHint': '选择助手 → 新会话 → 选择 Provider/模型 → 输入任务。Agent 会自动调用可用工具。',
   'agent.inputPh': '给 Agent 一个任务（Enter 发送，Shift+Enter 换行）',
+  'agent.composerTitle': '输入消息（Ctrl+/ 聚焦）',
   'agent.callTool': '🔧 调用工具: {name}',
   'agent.toolError': '⚠️ 工具错误',
   'agent.toolResult': '✅ 工具结果',

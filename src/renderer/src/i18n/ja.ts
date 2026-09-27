@@ -385,6 +385,7 @@ export const ja: Record<string, string> = {
   'agent.selectModel': 'モデルを選択…',
   'agent.emptyHint': 'アシスタントを選択 → 新しいセッション → プロバイダー/モデルを選択 → タスクを入力。エージェントは利用可能なツールを自動的に呼び出します。',
   'agent.inputPh': 'エージェントにタスクを与えてください（Enter で送信、Shift+Enter で改行）',
+  'agent.composerTitle': 'メッセージ入力（Ctrl+/ でフォーカス）',
   'agent.callTool': '🔧 ツール呼び出し: {name}',
   'agent.toolError': '⚠️ ツールエラー',
   'agent.toolResult': '✅ ツール結果',

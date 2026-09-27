@@ -36,6 +36,7 @@ export const AgentSearchBar: React.FC<Props> = ({
     <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)]">
       <input
         ref={inputRef}
+        data-agent-search-input
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         onKeyDown={(e) => {
@@ -45,6 +46,8 @@ export const AgentSearchBar: React.FC<Props> = ({
             else onNext()
           } else if (e.key === 'Escape') {
             e.preventDefault()
+            // 阻止冒泡到 window：运行中按 Esc 只关搜索，不触发停止生成
+            e.stopPropagation()
             onClose()
           }
         }}

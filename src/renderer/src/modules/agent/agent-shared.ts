@@ -245,3 +245,40 @@ export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
   }
   return out
 }
+
+// ---------- 全局键盘快捷键 ----------
+
+/** Agent 面板内的快捷键动作 */
+export type AgentShortcutId = 'new' | 'search' | 'focusComposer' | 'abort'
+
+/** 快捷键判定所需的最小键盘事件（window keydown） */
+export interface ShortcutKeyEvent {
+  ctrlKey: boolean
+  metaKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  key: string
+}
+
+/**
+ * 识别 Agent 面板快捷键：
+ * - Ctrl/Cmd+N：新建会话
+ * - Ctrl/Cmd+K：打开消息搜索（无消息时不可用，与头部按钮 disabled 对齐）
+ * - Ctrl/Cmd+/：聚焦输入框
+ * - Esc（无修饰、运行中）：停止生成
+ * 不匹配返回 null。Alt 组合一律不参与，避免与输入法/系统快捷键冲突。
+ */
+export function matchAgentShortcut(
+  e: ShortcutKeyEvent,
+  ctx: { running: boolean; searchEnabled: boolean }
+): AgentShortcutId | null {
+  const key = e.key.toLowerCase()
+  const mod = (e.ctrlKey || e.metaKey) && !e.altKey
+  if (mod && !e.shiftKey) {
+    if (key === 'n') return 'new'
+    if (key === 'k' && ctx.searchEnabled) return 'search'
+    if (key === '/') return 'focusComposer'
+  }
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && key === 'escape' && ctx.running) return 'abort'
+  return null
+}

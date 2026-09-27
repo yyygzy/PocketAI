@@ -385,6 +385,7 @@ export const ko: Record<string, string> = {
   'agent.selectModel': '모델 선택…',
   'agent.emptyHint': '어시스턴트 선택 → 새 세션 → 공급자/모델 선택 → 작업 입력. 에이전트는 사용 가능한 도구를 자동으로 호출합니다.',
   'agent.inputPh': '에이전트에게 작업을 지정하세요 (Enter로 전송, Shift+Enter로 줄 바꿈)',
+  'agent.composerTitle': '메시지 입력 (Ctrl+/로 포커스)',
   'agent.callTool': '🔧 도구 호출: {name}',
   'agent.toolError': '⚠️ 도구 오류',
   'agent.toolResult': '✅ 도구 결과',

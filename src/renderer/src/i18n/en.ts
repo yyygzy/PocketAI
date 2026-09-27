@@ -412,6 +412,7 @@ export const en: Record<string, string> = {
   'agent.selectModel': 'Select model…',
   'agent.emptyHint': 'Select assistant → New session → pick provider/model → enter a task. The agent calls available tools automatically.',
   'agent.inputPh': 'Give the agent a task (Enter to send, Shift+Enter for a new line)',
+  'agent.composerTitle': 'Message input (Ctrl+/ to focus)',
   'agent.callTool': '🔧 Tool call: {name}',
   'agent.toolError': '⚠️ Tool error',
   'agent.toolResult': '✅ Tool result',
