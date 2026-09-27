@@ -21,6 +21,7 @@ import {
   IncomingMessage,
   StatusEmitter,
   safeError,
+  sanitizeIncoming,
   splitMessage,
   sleep,
   fetchWithTimeout,
@@ -214,15 +215,16 @@ class DingtalkGateway implements IGateway {
       try {
         const inner = JSON.parse(msg.data) as DingtalkBotMessage
         if (inner.msgType && inner.msgType !== 'text') return
-        const text = inner.text?.content?.trim()
-        if (!text || !inner.senderStaffId || !inner.conversationId) return
+        // 统一入站收口（字段类型/长度上限），非法静默丢弃
+        const incoming = sanitizeIncoming({
+          chatId: inner.conversationId,
+          userId: inner.senderStaffId,
+          text: inner.text?.content,
+          firstName: inner.senderNick
+        })
+        if (!incoming) return
         try {
-          await this.onMessage?.({
-            chatId: inner.conversationId,
-            userId: inner.senderStaffId,
-            text,
-            firstName: inner.senderNick ?? ''
-          })
+          await this.onMessage?.(incoming)
         } catch (err) {
           log.error('消息处理失败:', safeError(err, 'handle'))
         }

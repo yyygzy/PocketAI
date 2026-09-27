@@ -14,6 +14,7 @@ import {
   IncomingMessage,
   StatusEmitter,
   safeError,
+  sanitizeIncoming,
   splitMessage,
   sleep,
   fetchWithTimeout,
@@ -187,15 +188,16 @@ class DiscordGateway implements IGateway {
           const m = p.d as MessageCreateData
           if (m.author?.bot) return
           if (this.selfUserId && m.author?.id === this.selfUserId) return
-          const text = (m.content ?? '').trim()
-          if (!text) return
+          // 统一入站收口（字段类型/长度上限），非法静默丢弃
+          const incoming = sanitizeIncoming({
+            chatId: m.channel_id,
+            userId: m.author?.id,
+            text: m.content,
+            firstName: m.author?.username
+          })
+          if (!incoming) return
           try {
-            await this.onMessage?.({
-              chatId: m.channel_id,
-              userId: m.author.id,
-              text,
-              firstName: m.author.username
-            })
+            await this.onMessage?.(incoming)
           } catch (err) {
             log.error('消息处理失败:', safeError(err, 'handle'))
           }

@@ -13,6 +13,7 @@ import {
   IncomingMessage,
   StatusEmitter,
   safeError,
+  sanitizeIncoming,
   splitMessage,
   sleep,
   fetchWithTimeout,
@@ -198,13 +199,13 @@ class TelegramGateway implements IGateway {
   private extractMessage(u: TgUpdate): IncomingMessage | null {
     const m = u.message
     if (!m || !m.from || m.from.is_bot) return null
-    if (typeof m.text !== 'string' || !m.text.trim()) return null
-    return {
-      chatId: String(m.chat.id),
-      userId: String(m.from.id),
-      text: m.text.trim(),
-      firstName: m.chat.first_name ?? ''
-    }
+    // 统一入站收口（类型/长度上限），非法或空消息返回 null 丢弃
+    return sanitizeIncoming({
+      chatId: m.chat?.id,
+      userId: m.from.id,
+      text: m.text,
+      firstName: m.chat?.first_name
+    })
   }
 }
 

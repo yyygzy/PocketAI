@@ -13,6 +13,62 @@ export const MAX_REPLY_CHARS = 8000
 /** 网关重连退避上限 */
 export const MAX_BACKOFF_MS = 60_000
 
+// ─── 入站消息边界 ────────────────────────────────────────────────
+// 长连接由平台鉴权，但消息字段仍是外部数据（恶意用户、被盗号、平台异常推送）：
+// 文本会进 Agent/LLM 与 SQLite，chatId/userId 会进白名单匹配、KV 映射与出站 API
+// 调用，必须在进入业务链前统一收口，各 gateway 不得自行拼装 IncomingMessage。
+
+/** 入站文本字符上限（各平台单条上限最大约 4096，20000 已留足余量） */
+export const MAX_INCOMING_TEXT_CHARS = 20_000
+/** chatId/userId 字符上限（各平台 ID 均远小于此，如 Discord 雪花 18~19 位） */
+export const MAX_INCOMING_ID_CHARS = 128
+/** 发送者显示名字符上限（用于会话标题） */
+export const MAX_INCOMING_NAME_CHARS = 200
+
+/** 入站原始字段（运行时来自 JSON.parse，全部按 unknown 处理） */
+export interface RawIncoming {
+  chatId?: unknown
+  userId?: unknown
+  text?: unknown
+  firstName?: unknown
+}
+
+/** id 类字段：接受 string/number（部分平台 JSON 给数字 ID），拒绝对象/布尔/null */
+function coerceId(v: unknown, maxChars: number): string | null {
+  const s = typeof v === 'number' && Number.isFinite(v) ? String(v) : typeof v === 'string' ? v : null
+  if (s === null) return null
+  const t = s.trim()
+  if (!t) return null
+  return t.length > maxChars ? t.slice(0, maxChars) : t
+}
+
+/**
+ * 入站消息统一收口：字段类型/长度非法时返回 null（调用方静默丢弃，仅 debug 日志）。
+ * - chatId/userId：必填，string/number，非空，超长按上限截断
+ * - text：必须是非空字符串，trim 后超长按上限截断并附截断提示
+ * - firstName：可选，非字符串按空串，超长截断
+ */
+export function sanitizeIncoming(raw: RawIncoming): IncomingMessage | null {
+  const chatId = coerceId(raw.chatId, MAX_INCOMING_ID_CHARS)
+  const userId = coerceId(raw.userId, MAX_INCOMING_ID_CHARS)
+  if (!chatId || !userId) return null
+  if (typeof raw.text !== 'string') return null
+  const text = raw.text.trim()
+  if (!text) return null
+
+  const boundedText =
+    text.length > MAX_INCOMING_TEXT_CHARS
+      ? text.slice(0, MAX_INCOMING_TEXT_CHARS) + '\n…（消息过长已截断）'
+      : text
+
+  const firstName =
+    typeof raw.firstName === 'string'
+      ? raw.firstName.trim().slice(0, MAX_INCOMING_NAME_CHARS)
+      : ''
+
+  return { chatId, userId, text: boundedText, firstName }
+}
+
 /** 入站文本消息（仅私聊文本；图片/文件等类型 v1 不处理） */
 export interface IncomingMessage {
   /** 平台原生 chat ID（字符串） */

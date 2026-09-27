@@ -30,7 +30,7 @@ import { discordGateway } from './discord-gateway'
 import { slackGateway } from './slack-gateway'
 import { feishuGateway } from './feishu-gateway'
 import { dingtalkGateway } from './dingtalk-gateway'
-import type { IGateway, IncomingMessage } from './gateway-base'
+import { type IGateway, type IncomingMessage, sanitizeIncoming } from './gateway-base'
 import { createLogger } from '../logger'
 
 const log = createLogger('channels')
@@ -110,8 +110,15 @@ class ChannelService {
     GATEWAYS[type].stop()
   }
 
-  /** 单条入站消息处理（白名单 → 会话 → 问答 → 回复） */
+  /** 单条入站消息处理（收口复查 → 白名单 → 会话 → 问答 → 回复） */
   private async handleMessage(type: ChannelType, msg: IncomingMessage): Promise<void> {
+    // 纵深防御：各 gateway 已收口，这里再复查一次（防未来新增通道绕过 sanitize）
+    const safe = sanitizeIncoming(msg)
+    if (!safe) {
+      log.debug(`${type} 丢弃字段非法的入站消息`)
+      return
+    }
+    msg = safe
     const { whitelist } = getChannelSecrets(type)
     if (whitelist.length === 0 || !whitelist.includes(msg.userId)) {
       // 静默忽略，仅记日志（不打印消息内容，防泄露）

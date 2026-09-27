@@ -6,7 +6,14 @@
 //
 // 策略：纯函数，模块仅 import 类型，直接测试。
 import { describe, it, expect } from 'vitest'
-import { safeError, splitMessage } from '../src/main/channels/gateway-base'
+import {
+  safeError,
+  splitMessage,
+  sanitizeIncoming,
+  MAX_INCOMING_TEXT_CHARS,
+  MAX_INCOMING_ID_CHARS,
+  MAX_INCOMING_NAME_CHARS
+} from '../src/main/channels/gateway-base'
 
 // ── safeError ────────────────────────────────────────────
 describe('safeError — 错误消息脱敏', () => {
@@ -98,5 +105,115 @@ describe('splitMessage — 消息分片', () => {
     const result = splitMessage(text, 3)
     // 所有片拼回应等于原文本（除了可能的开头换行被去）
     expect(result.join('\n')).toBe(text)
+  })
+})
+
+// ── sanitizeIncoming ─────────────────────────────────────
+describe('sanitizeIncoming — 入站消息统一收口', () => {
+  const valid = { chatId: 'c1', userId: 'u1', text: 'hello', firstName: 'Tom' }
+
+  it('合法消息原样返回（text 被 trim）', () => {
+    expect(sanitizeIncoming(valid)).toEqual({
+      chatId: 'c1',
+      userId: 'u1',
+      text: 'hello',
+      firstName: 'Tom'
+    })
+  })
+
+  it('text 前后空白被 trim', () => {
+    expect(sanitizeIncoming({ ...valid, text: '  hi  ' })?.text).toBe('hi')
+  })
+
+  it('firstName 缺失/非字符串 → 空串', () => {
+    expect(sanitizeIncoming({ chatId: 'c', userId: 'u', text: 't' })?.firstName).toBe('')
+    expect(
+      sanitizeIncoming({ chatId: 'c', userId: 'u', text: 't', firstName: 123 })?.firstName
+    ).toBe('')
+    expect(
+      sanitizeIncoming({ chatId: 'c', userId: 'u', text: 't', firstName: null })?.firstName
+    ).toBe('')
+  })
+
+  it('chatId 缺失/非字符串非数字 → null', () => {
+    expect(sanitizeIncoming({ userId: 'u', text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: '', userId: 'u', text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: '   ', userId: 'u', text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: {}, userId: 'u', text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: true, userId: 'u', text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: null, userId: 'u', text: 't' })).toBeNull()
+  })
+
+  it('userId 缺失/非法 → null', () => {
+    expect(sanitizeIncoming({ chatId: 'c', text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: 'c', userId: [], text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: 'c', userId: {}, text: 't' })).toBeNull()
+  })
+
+  it('数字型 id 接受并 String 化（Telegram 风格）', () => {
+    const r = sanitizeIncoming({ chatId: 123456789, userId: 987654321, text: 't' })
+    expect(r?.chatId).toBe('123456789')
+    expect(r?.userId).toBe('987654321')
+  })
+
+  it('NaN/Infinity id 拒绝', () => {
+    expect(sanitizeIncoming({ chatId: NaN, userId: 'u', text: 't' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: Infinity, userId: 'u', text: 't' })).toBeNull()
+  })
+
+  it('id 前后空白被 trim', () => {
+    expect(sanitizeIncoming({ chatId: ' c ', userId: 'u', text: 't' })?.chatId).toBe('c')
+  })
+
+  it('text 非字符串/空串/纯空白 → null', () => {
+    expect(sanitizeIncoming({ chatId: 'c', userId: 'u', text: 42 })).toBeNull()
+    expect(sanitizeIncoming({ chatId: 'c', userId: 'u', text: null })).toBeNull()
+    expect(sanitizeIncoming({ chatId: 'c', userId: 'u', text: {} })).toBeNull()
+    expect(sanitizeIncoming({ chatId: 'c', userId: 'u', text: '' })).toBeNull()
+    expect(sanitizeIncoming({ chatId: 'c', userId: 'u', text: '   ' })).toBeNull()
+  })
+
+  it(`text 超过 ${MAX_INCOMING_TEXT_CHARS} 字符 → 截断并附提示`, () => {
+    const long = 'a'.repeat(MAX_INCOMING_TEXT_CHARS + 500)
+    const r = sanitizeIncoming({ chatId: 'c', userId: 'u', text: long })
+    expect(r).not.toBeNull()
+    expect(r!.text.length).toBeLessThan(long.length)
+    expect(r!.text.startsWith('a'.repeat(MAX_INCOMING_TEXT_CHARS))).toBe(true)
+    expect(r!.text.endsWith('（消息过长已截断）')).toBe(true)
+  })
+
+  it('text 恰好等于上限 → 原样不截断', () => {
+    const exact = '字'.repeat(MAX_INCOMING_TEXT_CHARS)
+    const r = sanitizeIncoming({ chatId: 'c', userId: 'u', text: exact })
+    expect(r?.text).toBe(exact)
+  })
+
+  it(`chatId 超过 ${MAX_INCOMING_ID_CHARS} 字符 → 硬截断无提示`, () => {
+    const long = 'x'.repeat(MAX_INCOMING_ID_CHARS + 100)
+    const r = sanitizeIncoming({ chatId: long, userId: 'u', text: 't' })
+    expect(r?.chatId).toBe('x'.repeat(MAX_INCOMING_ID_CHARS))
+  })
+
+  it(`userId 超过 ${MAX_INCOMING_ID_CHARS} 字符 → 硬截断`, () => {
+    const long = 'y'.repeat(MAX_INCOMING_ID_CHARS + 50)
+    const r = sanitizeIncoming({ chatId: 'c', userId: long, text: 't' })
+    expect(r?.userId).toBe('y'.repeat(MAX_INCOMING_ID_CHARS))
+  })
+
+  it(`firstName 超过 ${MAX_INCOMING_NAME_CHARS} 字符 → 截断`, () => {
+    const long = '名'.repeat(MAX_INCOMING_NAME_CHARS + 30)
+    const r = sanitizeIncoming({ chatId: 'c', userId: 'u', text: 't', firstName: long })
+    expect(r?.firstName).toBe('名'.repeat(MAX_INCOMING_NAME_CHARS))
+  })
+
+  it('firstName 前后空白被 trim', () => {
+    expect(
+      sanitizeIncoming({ chatId: 'c', userId: 'u', text: 't', firstName: '  Jerry  ' })?.firstName
+    ).toBe('Jerry')
+  })
+
+  it('返回新对象，不复用入站引用', () => {
+    const r = sanitizeIncoming(valid)
+    expect(r).not.toBe(valid)
   })
 })

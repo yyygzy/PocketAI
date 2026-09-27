@@ -20,6 +20,7 @@ import {
   IncomingMessage,
   StatusEmitter,
   safeError,
+  sanitizeIncoming,
   splitMessage,
   sleep,
   fetchWithTimeout,
@@ -235,21 +236,23 @@ class FeishuGateway implements IGateway {
         const m = inner.event?.message
         const sender = inner.event?.sender?.sender_id
         if (!m || m.message_type !== 'text' || !m.chat_id || !sender) return
-        let text = ''
+        let text: unknown = ''
         try {
-          const content = JSON.parse(m.content ?? '{}') as { text?: string }
-          text = (content.text ?? '').trim()
+          const content = JSON.parse(m.content ?? '{}') as { text?: unknown }
+          text = content.text
         } catch {
           return
         }
-        if (!text) return
+        // 统一入站收口（字段类型/长度上限），非法静默丢弃
+        const incoming = sanitizeIncoming({
+          chatId: m.chat_id,
+          userId: sender.open_id ?? sender.union_id ?? sender.user_id ?? '',
+          text,
+          firstName: ''
+        })
+        if (!incoming) return
         try {
-          await this.onMessage?.({
-            chatId: m.chat_id,
-            userId: sender.open_id ?? sender.union_id ?? sender.user_id ?? '',
-            text,
-            firstName: ''
-          })
+          await this.onMessage?.(incoming)
         } catch (err) {
           log.error('消息处理失败:', safeError(err, 'handle'))
         }

@@ -14,6 +14,7 @@ import {
   IncomingMessage,
   StatusEmitter,
   safeError,
+  sanitizeIncoming,
   splitMessage,
   sleep,
   fetchWithTimeout,
@@ -187,14 +188,16 @@ class SlackGateway implements IGateway {
     if (env.type === 'events_api' && env.payload?.event?.type === 'message') {
       const e = env.payload.event
       if (e.bot_id) return // 忽略其他 bot 消息（含自己回的）
-      if (!e.user || !e.text || !e.channel) return
+      // 统一入站收口（字段类型/长度上限），非法静默丢弃
+      const incoming = sanitizeIncoming({
+        chatId: e.channel,
+        userId: e.user,
+        text: e.text,
+        firstName: ''
+      })
+      if (!incoming) return
       try {
-        await this.onMessage?.({
-          chatId: e.channel,
-          userId: e.user,
-          text: e.text.trim(),
-          firstName: ''
-        })
+        await this.onMessage?.(incoming)
       } catch (err) {
         log.error('消息处理失败:', safeError(err, 'handle'))
       }
