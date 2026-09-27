@@ -18,7 +18,7 @@ import {
   createSign,
   type KeyObject
 } from 'node:crypto'
-import { gzipSync } from 'node:zlib'
+import { gzipSync, gunzipSync } from 'node:zlib'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -54,14 +54,26 @@ vi.mock('../src/main/net/safe-fetch', () => ({
   safeFetch: (...args: unknown[]) => safeFetchMock(...args)
 }))
 
+// 部分 mock zlib：保留真实 gzipSync（构造补丁），spyon gunzipSync 以断言解压上限参数
+vi.mock('node:zlib', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:zlib')>()
+  return { ...actual, gunzipSync: vi.fn(actual.gunzipSync) }
+})
+
 import { app } from 'electron'
 import { spawn } from 'node:child_process'
 import {
   downloadAsarPatch,
   isPatchPending,
-  restartToApplyPatch
+  restartToApplyPatch,
+  PATCH_MAX_DECOMPRESSED
 } from '../src/main/update/asar-patcher'
 import * as keyModule from '../src/main/license/public-key'
+
+/** 重算 chunksSha256（篡改 chunks 后须同步，才能越过清单校验测到重建层） */
+function recomputeChunksHash(p: PatchPayload): void {
+  p.chunksSha256 = sha256Hex(Buffer.from(JSON.stringify(p.chunks), 'utf8'))
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const privPem = (keyModule as any).__TEST_PRIVATE_KEY_PEM as string
@@ -126,8 +138,10 @@ function diffChunks(oldBuf: Buffer, newBuf: Buffer, blockSize: number): PatchChu
 interface BuildOptions {
   /** 签发私钥（默认测试配套私钥；传入 wrongPrivPem 模拟伪造补丁） */
   signKey?: string | KeyObject
-  /** 签名前篡改 payload（chunksSha256 客户端不单独复验，可借此注入坏块） */
+  /** 签名前篡改 payload（可自行重算 chunksSha256 以越过清单复验测后续层级） */
   tamper?: (p: PatchPayload) => void
+  /** 签名后、gzip 前篡改 payload（签名仍有效，专测 chunksSha256 复验等签名后防线） */
+  tamperAfterSign?: (p: PatchPayload) => void
   oldVersion?: string
   newVersion?: string
   blockSize?: number
@@ -154,6 +168,7 @@ function makePatchGz(oldBuf: Buffer, newBuf: Buffer, opts: BuildOptions = {}): B
   signer.update(canonical)
   signer.end()
   payload.sig = signer.sign(opts.signKey ?? privPem, 'base64')
+  opts.tamperAfterSign?.(payload)
   return gzipSync(Buffer.from(JSON.stringify(payload), 'utf8'))
 }
 
@@ -179,6 +194,8 @@ beforeEach(() => {
   safeFetchMock.mockReset()
   vi.mocked(spawn).mockClear()
   vi.mocked(app.quit).mockClear()
+  // 只清调用记录；mockReset 会丢掉 vi.fn(actual.gunzipSync) 的真实实现
+  vi.mocked(gunzipSync).mockClear()
   Object.defineProperty(process, 'resourcesPath', {
     value: resourcesDir,
     configurable: true,
@@ -277,15 +294,32 @@ describe('downloadAsarPatch 重建校验', () => {
 
   it('引用越界块 → 拒绝', async () => {
     const gz = makePatchGz(OLD_ASAR, NEW_ASAR, {
-      tamper: (p) => { p.chunks = [{ r: 99999 }] }
+      tamper: (p) => {
+        p.chunks = [{ r: 99999 }]
+        recomputeChunksHash(p)
+      }
     })
     safeFetchMock.mockResolvedValue({ status: 200, body: gz })
     await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/越界块/)
   })
 
+  it('负索引块 → 拒绝', async () => {
+    const gz = makePatchGz(OLD_ASAR, NEW_ASAR, {
+      tamper: (p) => {
+        p.chunks = [{ r: -1 }]
+        recomputeChunksHash(p)
+      }
+    })
+    safeFetchMock.mockResolvedValue({ status: 200, body: gz })
+    await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/补丁块 0 无效/)
+  })
+
   it('既无 d 也无 r 的无效块 → 拒绝', async () => {
     const gz = makePatchGz(OLD_ASAR, NEW_ASAR, {
-      tamper: (p) => { p.chunks = [{}] }
+      tamper: (p) => {
+        p.chunks = [{}]
+        recomputeChunksHash(p)
+      }
     })
     safeFetchMock.mockResolvedValue({ status: 200, body: gz })
     await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/补丁块 0 无效/)
@@ -293,7 +327,10 @@ describe('downloadAsarPatch 重建校验', () => {
 
   it('重建块数为 0、大小不符 → 拒绝', async () => {
     const gz = makePatchGz(OLD_ASAR, NEW_ASAR, {
-      tamper: (p) => { p.chunks = [] }
+      tamper: (p) => {
+        p.chunks = []
+        recomputeChunksHash(p)
+      }
     })
     safeFetchMock.mockResolvedValue({ status: 200, body: gz })
     await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/重建大小不匹配/)
@@ -304,10 +341,63 @@ describe('downloadAsarPatch 重建校验', () => {
       tamper: (p) => {
         const evil = Buffer.alloc(128, 0x77)
         p.chunks = [{ r: 0 }, { d: evil.toString('base64') }, { r: 2 }, { d: blockY.toString('base64') }]
+        recomputeChunksHash(p)
       }
     })
     safeFetchMock.mockResolvedValue({ status: 200, body: gz })
     await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/newSha256 不匹配/)
+  })
+})
+
+describe('downloadAsarPatch 解压炸弹/清单/元数据加固', () => {
+  it('gunzipSync 带 512MB 解压上限调用', async () => {
+    const gz = makePatchGz(OLD_ASAR, NEW_ASAR)
+    safeFetchMock.mockResolvedValue({ status: 200, body: gz })
+    makeFakeAsar(OLD_ASAR)
+    await downloadAsarPatch('1.2.8')
+    expect(gunzipSync).toHaveBeenCalledTimes(1)
+    expect(gunzipSync).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      expect.objectContaining({ maxOutputLength: PATCH_MAX_DECOMPRESSED })
+    )
+  })
+
+  it('解压输出超上限（gzip 炸弹）→ 明确拒绝，不落入解析分支', async () => {
+    vi.mocked(gunzipSync).mockImplementationOnce(() => {
+      const e = new Error('buffer too large') as Error & { code?: string }
+      e.code = 'ERR_BUFFER_TOO_LARGE'
+      throw e
+    })
+    // 体积极小的高压缩比素材即可；实际超限由 mock 模拟，不造 512MB 夹具
+    safeFetchMock.mockResolvedValue({ status: 200, body: gzipSync(Buffer.alloc(1, 0)) })
+    await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/解压后体积超限/)
+  })
+
+  it('签名有效但 chunks 在签发后被替换 → chunksSha256 复验拒绝', async () => {
+    const gz = makePatchGz(OLD_ASAR, NEW_ASAR, {
+      tamperAfterSign: (p) => { p.chunks = [] }
+    })
+    safeFetchMock.mockResolvedValue({ status: 200, body: gz })
+    makeFakeAsar(OLD_ASAR)
+    await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/块清单校验失败/)
+  })
+
+  it('blockSize 非法（0）→ 元数据校验先于验签拒绝', async () => {
+    const gz = makePatchGz(OLD_ASAR, NEW_ASAR, {
+      tamper: (p) => { p.blockSize = 0 }
+    })
+    safeFetchMock.mockResolvedValue({ status: 200, body: gz })
+    makeFakeAsar(OLD_ASAR)
+    await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/块大小非法/)
+  })
+
+  it('哈希字段非 64 位十六进制 → 元数据校验拒绝', async () => {
+    const gz = makePatchGz(OLD_ASAR, NEW_ASAR, {
+      tamper: (p) => { p.oldSha256 = 'not-a-hash' }
+    })
+    safeFetchMock.mockResolvedValue({ status: 200, body: gz })
+    makeFakeAsar(OLD_ASAR)
+    await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/元数据校验失败/)
   })
 })
 
