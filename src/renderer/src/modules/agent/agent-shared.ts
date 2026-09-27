@@ -35,6 +35,34 @@ export function findRerunSourceId(messages: AgentMessage[], assistantId: string)
   return null
 }
 
+// ---------- 斜杠快捷指令 ----------
+
+export interface SlashCommand {
+  /** 触发词，不含 /（如 summary） */
+  name: string
+  /** 菜单显示名（i18n） */
+  label: string
+  /** 选中后填入输入框的提示模板（i18n） */
+  template: string
+}
+
+/**
+ * 解析输入框当前是否处于斜杠指令输入态。
+ * 规则：去掉前导空白后以 / 开头，且 / 之后不含空白与第二个 /（单个命令词）。
+ * @returns 命令词（可能为空串，表示刚敲入 /）；非指令态返回 null
+ */
+export function getSlashQuery(input: string): string | null {
+  const m = /^\s*\/([^\s/]*)$/.exec(input)
+  return m ? (m[1] ?? '') : null
+}
+
+/** 按命令词前缀过滤（大小写不敏感）；query 为空时返回全部 */
+export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return commands
+  return commands.filter((c) => c.name.toLowerCase().startsWith(q))
+}
+
 // ---------- 附件读取 ----------
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
 const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript']
