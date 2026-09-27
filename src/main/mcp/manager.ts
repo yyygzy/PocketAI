@@ -1,9 +1,15 @@
 // MCP Server 生命周期管理（M4.1）
-// 基于 StdioJsonRpcClient 实现：spawn → initialize 握手 → tools/list → tools/call → shutdown
+// 传输层无关：stdio（子进程）与 http（Streamable HTTP）均实现 McpTransportClient，
+// 统一流程：spawn/连接 → initialize 握手 → tools/list → tools/call → shutdown
 import { EventEmitter } from 'node:events'
 import path from 'node:path'
 import fs from 'node:fs'
-import { StdioJsonRpcClient } from './json-rpc'
+import {
+  StdioJsonRpcClient,
+  McpTransportError,
+  type McpTransportClient
+} from './json-rpc'
+import { HttpJsonRpcClient } from './http-transport'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
 import { MCP_EXTENSIONS_DIR } from '../portable'
 import { errMsg } from '../error'
@@ -72,7 +78,7 @@ export function classifyMcpToolPermission(name: string): 'auto' | 'confirm' {
 
 interface RuntimeEntry {
   record: McpServerRecord
-  client: StdioJsonRpcClient | null
+  client: McpTransportClient | null
   status: McpServerStatus
   tools: ToolSchema[]
   lastError: string | null
@@ -150,11 +156,91 @@ export class McpManager extends EventEmitter {
     record: McpServerRecord,
     existing: RuntimeEntry | null
   ): Promise<McpServerRuntime> {
+    const startToken = (existing?.startToken ?? 0) + 1
+
+    // 按传输类型创建 client（stdio 走子进程，http 走 HTTP+SSE）
+    const client = await this.createClient(id, record, startToken)
+
+    const entry: RuntimeEntry = {
+      record,
+      client: null,
+      status: 'starting',
+      tools: [],
+      lastError: null,
+      autoRestarts: existing?.autoRestarts ?? 0,
+      logBuffer: existing?.logBuffer ?? [],
+      startToken,
+      startPromise: null
+    }
+    this.runtimes.set(id, entry)
+    this.emitStatus(id, 'starting')
+
+    try {
+      await client.spawn()
+      entry.client = client
+
+      // initialize 握手
+      const initResult = await client.request<unknown>(
+        'initialize',
+        {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: 'PocketAI', version: '0.1.0' }
+        },
+        INIT_TIMEOUT
+      )
+      // 兼容 server 返回的 protocolVersion（v1 不强制校验版本一致性）
+      void initResult
+
+      // initialized 通知
+      client.notify('notifications/initialized')
+
+      // 拉取工具列表（外部协议边界：形状/数量/字段大小全部收紧后才进入运行时）
+      const toolsResult = await client.request<unknown>('tools/list', {}, INIT_TIMEOUT)
+      entry.tools = this.normalizeToolList(toolsResult, id)
+      // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
+      if (entry.status === 'stopped') {
+        client.shutdown().catch((e) => log.warn('shutdown 失败（握手期停止）:', errMsg(e)))
+        return this.toRuntime(record)
+      }
+      entry.status = 'running'
+      entry.lastError = null
+      // 稳定运行 STABLE_RUNNING_MS 后复位自动重启计数（崩溃循环才会累计，稳定运行后清零）
+      clearTimeout(entry.stableTimer)
+      entry.stableTimer = setTimeout(() => {
+        entry.autoRestarts = 0
+      }, STABLE_RUNNING_MS)
+      this.emitStatus(id, 'running')
+      return this.toRuntime(record)
+    } catch (e) {
+      entry.client = null
+      // 出错时关闭连接（如果已 spawn）
+      client.shutdown().catch((e) => log.warn('shutdown 失败（启动异常清理）:', errMsg(e)))
+      // 已被 stop 标记的不再回 error（保持 stopped），但异常仍抛给等待方
+      if (entry.status !== 'stopped') {
+        entry.status = 'error'
+        entry.lastError = errMsg(e)
+        this.emitStatus(id, 'error', entry.lastError)
+      }
+      throw e
+    }
+  }
+
+  /** 根据 record.transport 创建对应传输层 client */
+  private async createClient(
+    id: string,
+    record: McpServerRecord,
+    startToken: number
+  ): Promise<McpTransportClient> {
     if (record.transport === 'http') {
-      // v1 不实现 HTTP transport，留待 v2
-      throw new Error('v1 暂不支持 HTTP 传输的 MCP Server')
+      if (!record.url) throw new Error('HTTP 传输缺少 url')
+      return new HttpJsonRpcClient({
+        url: record.url,
+        requestTimeout: TOOL_CALL_TIMEOUT
+      })
     }
 
+    // stdio 传输
     if (!record.command) throw new Error('缺少 stdio command')
 
     // 准备 cwd：优先 extensions/mcp/{serverId}/
@@ -199,22 +285,7 @@ export class McpManager extends EventEmitter {
       })
     }
 
-    const startToken = (existing?.startToken ?? 0) + 1
-    const entry: RuntimeEntry = {
-      record,
-      client: null,
-      status: 'starting',
-      tools: [],
-      lastError: null,
-      autoRestarts: existing?.autoRestarts ?? 0,
-      logBuffer: existing?.logBuffer ?? [],
-      startToken,
-      startPromise: null
-    }
-    this.runtimes.set(id, entry)
-    this.emitStatus(id, 'starting')
-
-    const client = new StdioJsonRpcClient({
+    return new StdioJsonRpcClient({
       command: spawnCommand,
       args: spawnArgs,
       env: baseEnv,
@@ -223,56 +294,6 @@ export class McpManager extends EventEmitter {
       onLog: (stream, line) => this.handleLog(id, stream, line),
       onExit: (code, signal) => this.handleExit(id, code, signal, startToken)
     })
-
-    try {
-      await client.spawn()
-      entry.client = client
-
-      // initialize 握手
-      const initResult = await client.request<unknown>(
-        'initialize',
-        {
-          protocolVersion: MCP_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: 'PocketAI', version: '0.1.0' }
-        },
-        INIT_TIMEOUT
-      )
-      // 兼容 server 返回的 protocolVersion（v1 不强制校验版本一致性）
-      void initResult
-
-      // initialized 通知
-      client.notify('notifications/initialized')
-
-      // 拉取工具列表（外部协议边界：形状/数量/字段大小全部收紧后才进入运行时）
-      const toolsResult = await client.request<unknown>('tools/list', {}, INIT_TIMEOUT)
-      entry.tools = this.normalizeToolList(toolsResult, id)
-      // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
-      if (entry.status === 'stopped') {
-        client.shutdown().catch((e) => log.warn('shutdown 失败（握手期停止）:', errMsg(e)))
-        return this.toRuntime(record)
-      }
-      entry.status = 'running'
-      entry.lastError = null
-      // 稳定运行 STABLE_RUNNING_MS 后复位自动重启计数（崩溃循环才会累计，稳定运行后清零）
-      clearTimeout(entry.stableTimer)
-      entry.stableTimer = setTimeout(() => {
-        entry.autoRestarts = 0
-      }, STABLE_RUNNING_MS)
-      this.emitStatus(id, 'running')
-      return this.toRuntime(record)
-    } catch (e) {
-      entry.client = null
-      // 出错时关闭进程（如果已 spawn）
-      client.shutdown().catch((e) => log.warn('shutdown 失败（启动异常清理）:', errMsg(e)))
-      // 已被 stop 标记的不再回 error（保持 stopped），但异常仍抛给等待方
-      if (entry.status !== 'stopped') {
-        entry.status = 'error'
-        entry.lastError = errMsg(e)
-        this.emitStatus(id, 'error', entry.lastError)
-      }
-      throw e
-    }
   }
 
   /** 停止 MCP Server */
@@ -311,17 +332,29 @@ export class McpManager extends EventEmitter {
   }
 
   /** 调用工具 */
-  async callTool(id: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+  async callTool(id: string, name: string, args: Record<string,unknown>): Promise<unknown> {
     const entry = this.runtimes.get(id)
     if (!entry || !entry.client || entry.status !== 'running') {
       throw new Error('MCP Server 未运行')
     }
-    const result = await entry.client.request<unknown>(
-      'tools/call',
-      { name, arguments: args ?? {} },
-      TOOL_CALL_TIMEOUT
-    )
-    return result
+    try {
+      return await entry.client.request<unknown>(
+        'tools/call',
+        { name, arguments: args ?? {} },
+        TOOL_CALL_TIMEOUT
+      )
+    } catch (e) {
+      // HTTP 传输无进程退出事件，连接级失败不会被 handleExit 感知；
+      // 若保持 running，UI 显示服务正常但后续调用必失败，需用户手动 restart。
+      // stdio 的进程死亡由 handleExit 收口、单次超时不代表服务不可用，故不联动。
+      // 业务级错误（McpBusinessError）是 server 正常响应，也不联动。
+      if (entry.record.transport === 'http' && e instanceof McpTransportError) {
+        entry.status = 'error'
+        entry.lastError = errMsg(e)
+        this.emitStatus(id, 'error', entry.lastError)
+      }
+      throw e
+    }
   }
 
   /** 停止所有运行中的 MCP Server（应用退出时调用） */

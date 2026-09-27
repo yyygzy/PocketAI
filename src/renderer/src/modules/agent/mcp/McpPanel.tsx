@@ -216,6 +216,11 @@ export const McpPanel: React.FC = () => {
                     </>
                   ) : status === 'starting' ? (
                     <MiniBtn disabled>{t('common.starting')}</MiniBtn>
+                  ) : status === 'error' ? (
+                    // error 状态走 restart：start 不会清理残留 client（其 stop 才会 shutdown）
+                    <MiniBtn onClick={() => void handleRestart(r.id)}>
+                      {t('common.restart')}
+                    </MiniBtn>
                   ) : (
                     <MiniBtn
                       onClick={() => void handleStart(r.id)}

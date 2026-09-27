@@ -57,6 +57,34 @@ vi.mock('../src/main/mcp/json-rpc', () => ({
       mocks.clients.push(self)
       return self
     }
+  },
+  // 与 src/main/mcp/json-rpc.ts 同名同类，供 manager instanceof 收口
+  McpTransportError: class McpTransportError extends Error {
+    readonly kind: string
+    constructor(kind: string, message: string) {
+      super(message)
+      this.name = 'McpTransportError'
+      this.kind = kind
+    }
+  }
+}))
+
+vi.mock('../src/main/mcp/http-transport', () => ({
+  HttpJsonRpcClient: class {
+    constructor(opts: Record<string, unknown>) {
+      const self: FakeClient = {
+        opts,
+        pid: undefined as unknown as number, // http 无本地进程
+        spawn: vi.fn(() => mocks.spawnImpl()),
+        request: vi.fn(() => mocks.requestImpl()),
+        notify: vi.fn(),
+        shutdown: vi.fn(async () => {}),
+        callOnLog: () => {},
+        callOnExit: () => {}
+      }
+      mocks.clients.push(self)
+      return self
+    }
   }
 }))
 
@@ -112,6 +140,7 @@ import {
   MAX_MCP_TOOL_DESC_CHARS,
   MAX_MCP_TOOL_SCHEMA_CHARS
 } from '../src/main/mcp/manager'
+import { McpTransportError } from '../src/main/mcp/json-rpc'
 
 // ---------- 工具 ----------
 
@@ -194,6 +223,8 @@ describe('McpManager — start 基础校验', () => {
     const p2 = mgr.start('srv1')
     // 同步登记完成，第二次 start 直接复用 in-flight Promise
     expect(mocks.clients).toHaveLength(1)
+    // createClient 现为 async，需让 microtask 执行到 client.spawn() 才会赋值 resolveSpawn
+    await Promise.resolve()
     resolveSpawn()
     // 让后续 initialize / tools/list 走默认 requestImpl 返回 {} —— 但 start 需要 tools 字段
     // 所以恢复默认 requestImpl 让其返回 { tools: [] }
@@ -203,9 +234,19 @@ describe('McpManager — start 基础校验', () => {
     expect(r2).toBe(r1)
   })
 
-  it('HTTP transport → throw "v1 暂不支持 HTTP"', async () => {
-    mocks.repoList = [makeRecord({ transport: 'http' })]
-    await expect(mgr.start('srv1')).rejects.toThrow('v1 暂不支持 HTTP')
+  it('HTTP transport 缺 url → throw "HTTP 传输缺少 url"', async () => {
+    mocks.repoList = [makeRecord({ transport: 'http', url: null })]
+    await expect(mgr.start('srv1')).rejects.toThrow('HTTP 传输缺少 url')
+  })
+
+  it('HTTP transport → 用 HttpJsonRpcClient 启动，pid undefined，握手成功', async () => {
+    mocks.repoList = [makeRecord({ transport: 'http', url: 'https://example.com/mcp' })]
+    mocks.requestImpl = async () => ({ tools: [] })
+    const r = await mgr.start('srv1')
+    expect(r.status).toBe('running')
+    expect(r.pid).toBeUndefined()
+    expect(mocks.clients).toHaveLength(1)
+    expect(mocks.clients[0]!.opts.url).toBe('https://example.com/mcp')
   })
 
   it('缺 command → throw "缺少 stdio command"', async () => {
@@ -556,5 +597,59 @@ describe('McpManager — 稳定运行复位', () => {
     // 推进 5 分钟 + 1ms 触发 stableTimer
     vi.advanceTimersByTime(5 * 60 * 1000 + 1)
     expect(entry.autoRestarts).toBe(0)
+  })
+})
+
+describe('McpManager — callTool 状态联动（HTTP 无 onExit 收口）', () => {
+  /** 取运行时 entry（测试辅助 cast） */
+  function getEntry(): { status: string; lastError: string | null } {
+    return (mgr as unknown as {
+      runtimes: Map<string, { status: string; lastError: string | null }>
+    }).runtimes.get('srv1')!
+  }
+
+  /** start 完成后让 fake client 的 tools/call 请求抛指定错误 */
+  async function mockCallFailure(err: unknown): Promise<void> {
+    const fake = mocks.clients[0]!
+    fake.request.mockImplementation(async (method: string) => {
+      if (method === 'tools/call') throw err
+      throw new Error(`未预期的请求: ${method}`)
+    })
+  }
+
+  it('HTTP 传输级错误 → status error + emit，后续调用被状态守门拒绝', async () => {
+    mocks.repoList = [makeRecord({ transport: 'http', url: 'https://example.com/mcp' })]
+    mocks.requestImpl = async () => ({ tools: [] })
+    await mgr.start('srv1')
+
+    await mockCallFailure(new McpTransportError('network', 'fetch failed'))
+    await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('fetch failed')
+
+    expect(getEntry().status).toBe('error')
+    expect(getEntry().lastError).toBe('fetch failed')
+    expect(events.at(-1)).toMatchObject({ status: 'error', lastError: 'fetch failed' })
+
+    // error 状态必须经 restart 恢复：callTool 直接被守门拒绝
+    await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('MCP Server 未运行')
+  })
+
+  it('HTTP 非传输级错误（普通 Error，如工具执行失败）→ 保持 running', async () => {
+    mocks.repoList = [makeRecord({ transport: 'http', url: 'https://example.com/mcp' })]
+    mocks.requestImpl = async () => ({ tools: [] })
+    await mgr.start('srv1')
+
+    await mockCallFailure(new Error('tool boom'))
+    await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('tool boom')
+    expect(getEntry().status).toBe('running')
+  })
+
+  it('stdio 即使抛 McpTransportError 也不联动（进程死亡由 handleExit 收口）', async () => {
+    mocks.repoList = [makeRecord()]
+    mocks.requestImpl = async () => ({ tools: [] })
+    await mgr.start('srv1')
+
+    await mockCallFailure(new McpTransportError('timeout', '慢请求'))
+    await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('慢请求')
+    expect(getEntry().status).toBe('running')
   })
 })

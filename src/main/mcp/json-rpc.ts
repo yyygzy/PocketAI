@@ -91,7 +91,61 @@ export interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown }
 }
 
-export type StdioLogHandler = (stream: 'stdout' | 'stderr', line: string) => void
+export interface StdioLogHandler {
+  (stream: 'stdout' | 'stderr', line: string): void
+}
+
+/** 传输级错误类别：连接级失败，非 server 正常响应 */
+export type McpTransportErrorKind = 'network' | 'timeout' | 'protocol'
+
+/**
+ * 传输级错误：请求未能获得 server 的有效协议响应
+ * （网络不可达、请求超时、SSE 异常、响应超限等）。
+ * manager 据此判断远端服务已不可用；与 {@link McpBusinessError} 相区别。
+ */
+export class McpTransportError extends Error {
+  readonly kind: McpTransportErrorKind
+  constructor(kind: McpTransportErrorKind, message: string) {
+    super(message)
+    this.name = 'McpTransportError'
+    this.kind = kind
+  }
+}
+
+/**
+ * 业务级错误：server 存活并正常返回了 JSON-RPC error 响应。
+ * 连接状态不应因此改变（工具本身执行失败 ≠ 服务不可用）。
+ */
+export class McpBusinessError extends Error {
+  readonly code: number
+  constructor(code: number, message: string) {
+    super(`${message} (code=${code})`)
+    this.name = 'McpBusinessError'
+    this.code = code
+  }
+}
+
+/**
+ * MCP 传输层客户端公共接口。
+ * stdio（StdioJsonRpcClient）与 http（HttpJsonRpcClient）共享同一契约，
+ * manager 不关心底层传输方式，只面向此接口编程。
+ */
+export interface McpTransportClient {
+  /** 进程 PID（http 传输无本地进程，返回 undefined） */
+  readonly pid: number | undefined
+  /** 传输通道是否已关闭 */
+  readonly transportClosed: boolean
+  /** 建立连接/启动进程 */
+  spawn(): Promise<void>
+  /** 发送 JSON-RPC 请求并等待响应 */
+  request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T>
+  /** 发送 JSON-RPC 通知（无 id，不等响应） */
+  notify(method: string, params?: unknown): void
+  /** 注册 server 推送的通知处理器，返回取消函数 */
+  onNotification(handler: (n: JsonRpcNotification) => void): () => void
+  /** 优雅关闭 */
+  shutdown(timeoutMs?: number): Promise<void>
+}
 
 export interface StdioClientOptions {
   command: string
@@ -108,7 +162,7 @@ export interface StdioClientOptions {
   onLog?: StdioLogHandler
 }
 
-export class StdioJsonRpcClient {
+export class StdioJsonRpcClient implements McpTransportClient {
   private proc: ChildProcessWithoutNullStreams | null = null
   private stdoutReader: BoundedLineReader | null = null
   private stderrReader: BoundedLineReader | null = null
