@@ -10,7 +10,7 @@ import { AgentModelBar } from '../components/AgentModelBar'
 import { AgentToolBars } from '../components/AgentToolBars'
 import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
-import { formatRunDuration } from '../agent-shared'
+import { formatRunDuration, agentMessagesToMarkdown } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { errText } from '../../../utils/error'
 import { writeClipboard } from '../../../utils/clipboard'
@@ -38,6 +38,25 @@ export const AgentPanel: React.FC = () => {
     if (!chat.latestTraces || chat.latestTraces.length === 0) return
     const ok = await writeClipboard(JSON.stringify(chat.latestTraces, null, 2))
     if (ok) toast.success(t('agent.traceCopied'))
+    else toast.error(t('agent.copyFailed'))
+  }
+
+  // 当前会话标题（用于复制 Markdown 的一级标题）
+  const currentTitle =
+    chat.conversations.find((c) => c.id === chat.conversationId)?.title?.trim() ||
+    t('agent.copyMdDefaultTitle')
+  const hasMessages = chat.messages.length > 0
+
+  // 头部快捷：导出 .md（复用会话栏同一通道）
+  const handleExportCurrent = () => {
+    if (chat.conversationId) void handleExportMd(chat.conversationId)
+  }
+
+  // 头部快捷：一键复制全文为 Markdown（内存消息，含工具步骤）
+  const handleCopyAsMarkdown = async () => {
+    const md = agentMessagesToMarkdown(chat.messages, currentTitle)
+    const ok = await writeClipboard(md)
+    if (ok) toast.success(t('agent.copyMdOk'))
     else toast.error(t('agent.copyFailed'))
   }
 
@@ -150,6 +169,32 @@ export const AgentPanel: React.FC = () => {
               onPickWorkspace={() => void tools.pickWorkspace()}
             />
           </div>
+          {/* 头部快捷：复制全文 Markdown / 导出 .md 文件（侧栏收起时也可用） */}
+          <button
+            onClick={() => void handleCopyAsMarkdown()}
+            disabled={!hasMessages}
+            title={t('agent.copyAsMd')}
+            aria-label={t('agent.copyAsMd')}
+            className="shrink-0 mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+          <button
+            onClick={handleExportCurrent}
+            disabled={!hasMessages}
+            title={t('agent.exportCurrent')}
+            aria-label={t('agent.exportCurrent')}
+            className="shrink-0 mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
         </div>
 
         <AgentToolBars tools={tools} />

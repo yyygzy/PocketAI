@@ -63,6 +63,60 @@ export function filterSlashCommands(commands: SlashCommand[], query: string): Sl
   return commands.filter((c) => c.name.toLowerCase().startsWith(q))
 }
 
+/** 工具调用参数 JSON 美化；非合法 JSON 原样返回 */
+function prettyJson(raw: string | undefined): string {
+  if (!raw) return ''
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
+/**
+ * 把内存中的 Agent 消息序列化为 Markdown（供一键复制；文件导出走主进程 renderConversationToMarkdown）。
+ * - user/assistant：正文原文保留（可能本身含 Markdown）
+ * - tool：工具名 + 参数/输出代码块；错误标记
+ * - 流式占位空卡（无正文/无工具信息）跳过
+ */
+export function agentMessagesToMarkdown(messages: AgentMessage[], title: string): string {
+  const lines: string[] = [`# ${title}`, '']
+  for (const m of messages) {
+    if (m.role === 'tool') {
+      const name = m.toolResult?.name ?? m.toolCall?.function.name ?? 'tool'
+      lines.push(`## 🔧 工具：${name}`, '')
+      const args = m.toolResult?.arguments ?? m.toolCall?.function.arguments
+      if (args) {
+        lines.push('**参数：**', '', '```json', prettyJson(args), '```', '')
+      }
+      if (m.toolResult?.content) {
+        if (m.toolResult.isError) lines.push('**结果（错误）：**', '')
+        lines.push('```', m.toolResult.content, '```', '')
+      }
+      lines.push('---', '')
+      continue
+    }
+
+    const label = m.role === 'user' ? '👤 用户' : '🤖 助手'
+    const hasBody =
+      m.text.trim() ||
+      (m.attachments && m.attachments.length > 0)
+    if (!hasBody) continue
+
+    lines.push(`## ${label}`, '')
+    if (m.attachments && m.attachments.length > 0) {
+      for (const a of m.attachments) {
+        lines.push(`- 📎 ${a.name}${a.type === 'image' ? '（图片）' : ''}`)
+      }
+      lines.push('')
+    }
+    if (m.isError) lines.push('> ⚠️ 该消息生成失败', '')
+    if (m.text.trim()) lines.push(m.text.trim(), '')
+    lines.push('---', '')
+  }
+  return lines.join('\n')
+}
+
 // ---------- 附件读取 ----------
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
 const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript']
