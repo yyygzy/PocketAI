@@ -1,5 +1,5 @@
 import React from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
@@ -11,6 +11,18 @@ import { MermaidBlock } from './MermaidBlock'
 // 防止依赖库行为变化放行 javascript:/vbscript:/file:/data:text/html 等。
 const SAFE_NAV_HREF = /^(https?:|mailto:)/i
 const SAFE_IMG_SRC = /^(https?:|data:image\/|blob:)/i
+
+/**
+ * URL 收口（react-markdown v10 的 defaultUrlTransform 只放行
+ * https?|ircs?|mailto|xmpp，会清空所有 data:/blob:，导致内嵌图片无法显示）。
+ * 仅补开 **data:image/** 与 blob:：二者都只进入 <img> 加载上下文，
+ * 浏览器按图片解析、非图片资源加载失败，不存在脚本执行面；
+ * data:text/html 等仍然清空（不能整体放行 data:）。
+ */
+function safeUrlTransform(value: string): string {
+  if (/^data:image\//i.test(value) || /^blob:/i.test(value)) return value
+  return defaultUrlTransform(value)
+}
 
 /** 从 pre > code 元素提取语言名与代码文本（react-markdown v10 结构） */
 function extractCodeBlock(
@@ -31,6 +43,7 @@ export const Markdown: React.FC<{ content: string }> = ({ content }) => {
   return (
     <div className="markdown-body text-[14px] leading-relaxed">
       <ReactMarkdown
+        urlTransform={safeUrlTransform}
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
@@ -40,7 +53,9 @@ export const Markdown: React.FC<{ content: string }> = ({ content }) => {
               return <a {...props} className="text-[var(--color-accent)] underline">{children}</a>
             }
             return (
-              <a {...props} href={href} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline" />
+              <a {...props} href={href} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline">
+                {children}
+              </a>
             )
           },
           img: ({ node, src, alt, ...props }) => {
