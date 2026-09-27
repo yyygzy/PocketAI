@@ -631,7 +631,7 @@ export function isSafeZipEntryName(rawName: string): boolean {
 }
 
 /** 递归检查目录中是否存在符号链接（真实链接会使后续复制跟着链接读出任意文件） */
-function containsSymlink(dir: string): boolean {
+export function containsSymlink(dir: string): boolean {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isSymbolicLink()) return true
     if (entry.isDirectory() && containsSymlink(join(dir, entry.name))) return true

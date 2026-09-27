@@ -12,8 +12,10 @@ import { safeHandle, argsSchema, z } from '../safe-handle'
 import { clearSessionAllow } from '../../agent/tool-approval'
 import {
   conversationExportPayloadSchema,
+  conversationImportDataSchema,
   conversationListArgsSchema,
-  conversationCreateArgsSchema
+  conversationCreateArgsSchema,
+  CONVERSATION_IMPORT_MAX_FILE_BYTES
 } from '../../../shared/schemas/conversations'
 import { idSchema } from '../../../shared/schemas/providers'
 
@@ -112,36 +114,71 @@ export function registerConversationHandlers(): void {
     })
     if (canceled || !filePaths?.length) return { ok: true, canceled: true }
 
+    // 文件大小预检：解密需要完整载入内存，先挡掉数 GB 的伪造文件
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(filePaths[0]!)
+    } catch {
+      return { ok: false, error: '无法读取所选文件' }
+    }
+    if (!stat.isFile() || stat.size > CONVERSATION_IMPORT_MAX_FILE_BYTES) {
+      return {
+        ok: false,
+        error: `文件过大或不是有效文件（上限 ${Math.floor(CONVERSATION_IMPORT_MAX_FILE_BYTES / 1024 / 1024)}MB）`
+      }
+    }
+
     const blob = fs.readFileSync(filePaths[0]!)
     const plaintext = decryptWithPassword(password, blob)
-    let payload: ConversationExportPayload
+    let raw: unknown
     try {
-      payload = JSON.parse(plaintext) as ConversationExportPayload
+      raw = JSON.parse(plaintext)
     } catch {
       return { ok: false, error: '文件已损坏（解密成功但内容不是有效 JSON）' }
     }
 
-    if (!payload?.conversation || !Array.isArray(payload.messages)) {
-      return { ok: false, error: '无效的加密文件内容' }
+    // 解密只保证密文真实性，不保证内容善意：按导入边界 schema 逐字段校验
+    const parsed = conversationImportDataSchema.safeParse(raw)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      const path = issue?.path?.join('.') || '内容'
+      return { ok: false, error: `无效的加密文件内容：${path} ${issue?.message ?? '校验失败'}` }
     }
-
+    const payload = parsed.data
     const c = payload.conversation
     const newConv = conversationRepo.create({
       assistantId: c.assistantId ?? null,
       title: (c.title ?? '导入的会话') + ' (加密导入)',
       modelLabel: c.modelLabel ?? undefined
     })
+
+    // 事务原子写入：中途失败回滚，不留下半个导入会话
+    const handle = dbService.getHandle()
     let count = 0
-    for (const m of payload.messages) {
-      messageRepo.insert({
-        conversationId: newConv.id,
-        role: m.role,
-        content: m.content ?? '',
-        provider: m.provider ?? null,
-        model: m.model ?? null,
-        parentId: null
-      })
-      count++
+    const tx = handle.transaction((msgs: typeof payload.messages) => {
+      for (const m of msgs) {
+        handle.prepare(
+          `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          randomUUID(),
+          newConv.id,
+          m.role,
+          m.content ?? '',
+          m.provider ?? null,
+          m.model ?? null,
+          m.status ?? 'done',
+          null,
+          m.createdAt ?? Date.now()
+        )
+        count++
+      }
+    })
+    try {
+      tx(payload.messages)
+    } catch (e) {
+      conversationRepo.delete(newConv.id)
+      return { ok: false, error: `导入写入失败，已回滚：${(e as Error)?.message ?? '未知错误'}` }
     }
     return { ok: true, conversationId: newConv.id, messageCount: count }
   }, argsSchema(z.string().min(1)))

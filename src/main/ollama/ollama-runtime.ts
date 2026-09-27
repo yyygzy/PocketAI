@@ -229,7 +229,7 @@ function verifyHash(filePath: string, spec: AssetSpec): void {
   }
 }
 
-/** zip 条目名安全校验（与 backup-service 同一 Zip Slip 规则） */
+/** zip 条目名安全校验（与 backup-service 同一 Zip Slip 规则；本地副本避免拉入备份模块重依赖链） */
 function isSafeZipEntryName(rawName: string): boolean {
   const name = String(rawName ?? '').replace(/\\/g, '/')
   if (!name) return false

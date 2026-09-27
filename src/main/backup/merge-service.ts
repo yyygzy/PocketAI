@@ -30,7 +30,9 @@ import {
   decryptBackup,
   deriveBackupDbKey,
   BackupDecryptError,
-  toCreds
+  toCreds,
+  isSafeZipEntryName,
+  containsSymlink
 } from './backup-service'
 import { downloadFile, downloadRemoteFile } from './webdav-client'
 import { createLogger } from '../logger'
@@ -102,10 +104,85 @@ function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex')
 }
 
-/** 获取表的所有列名 */
+/** 获取表的所有列名（仅用于受信本地库；云库列名必须过 safeMergeColumns） */
 function getColumns(db: Database.Database, table: string): string[] {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
   return rows.map((r) => r.name)
+}
+
+/** SQL 标识符白名单：列名会拼进 INSERT/UPDATE 文本，只接受普通标识符 */
+const SQL_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+/**
+ * 合并写库列名收口：云库来自不可信备份，其 PRAGMA 声明的列名可能是
+ * `x) VALUES (...);--` 之类的畸形标识符。只允许「本地表真实存在」且标识符合法的列，
+ * 以本地 schema 为白名单取交集，杜绝经恶意备份库 DDL 的 SQL 注入。
+ */
+function safeMergeColumns(localDb: Database.Database, cloudDb: Database.Database, table: string): string[] {
+  const localCols = new Set(getColumns(localDb, table))
+  return getColumns(cloudDb, table).filter((c) => SQL_IDENTIFIER_RE.test(c) && localCols.has(c))
+}
+
+/** 增量索引附件条目上限（防畸形索引驱动海量 existsSync/下载循环 DoS） */
+const MAX_INDEX_ATTACHMENTS = 10000
+const MAX_ATTACH_NAME_CHARS = 255
+const MAX_BLOB_PATH_CHARS = 512
+const HEX64_RE = /^[0-9a-f]{64}$/i
+
+/**
+ * 解析并校验增量备份索引。
+ * 索引虽经解密（防篡改），但异机合并/账号被入侵场景下来源不等于可信，
+ * 只 JSON.parse 后直接 cast 会让畸形附件项进入下载/落盘循环，这里逐字段收紧。
+ */
+export function parseIncrementalIndex(buf: Buffer): IncrementalIndex {
+  let raw: unknown
+  try {
+    raw = JSON.parse(buf.toString('utf8'))
+  } catch {
+    throw new Error('增量备份索引不是有效 JSON')
+  }
+  const o = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
+  if (!o || o.kind !== 'pocketai-incremental') {
+    throw new Error('不是有效的增量备份索引')
+  }
+  const db = (o.db && typeof o.db === 'object' ? o.db : null) as Record<string, unknown> | null
+  if (!db || typeof db.blob !== 'string' || !db.blob || typeof db.sha256 !== 'string' || !HEX64_RE.test(db.sha256)) {
+    throw new Error('增量备份索引 db 字段非法（缺少 blob 或 sha256 不合法）')
+  }
+  if (db.blob.length > MAX_BLOB_PATH_CHARS) throw new Error('增量备份索引 db.blob 路径超长')
+
+  const attachments: IncrementalIndex['attachments'] = []
+  if (o.attachments != null) {
+    if (!Array.isArray(o.attachments)) throw new Error('增量备份索引 attachments 格式非法')
+    if (o.attachments.length > MAX_INDEX_ATTACHMENTS) {
+      throw new Error(`增量备份附件数超过上限 ${MAX_INDEX_ATTACHMENTS}`)
+    }
+    for (const item of o.attachments) {
+      const a = (item && typeof item === 'object' ? item : null) as Record<string, unknown> | null
+      if (!a || typeof a.name !== 'string' || typeof a.sha256 !== 'string' || typeof a.blob !== 'string') {
+        throw new Error('增量备份索引存在字段缺失的附件条目')
+      }
+      if (a.name.length === 0 || a.name.length > MAX_ATTACH_NAME_CHARS) throw new Error('附件名长度非法')
+      if (!HEX64_RE.test(a.sha256)) throw new Error('附件 sha256 非法')
+      if (a.blob.length === 0 || a.blob.length > MAX_BLOB_PATH_CHARS) throw new Error('附件 blob 路径长度非法')
+      attachments.push({
+        name: a.name,
+        sha256: a.sha256.toLowerCase(),
+        size: typeof a.size === 'number' && Number.isFinite(a.size) ? a.size : 0,
+        blob: a.blob
+      })
+    }
+  }
+
+  return {
+    kind: 'pocketai-incremental',
+    version: 1,
+    createdAt: typeof o.createdAt === 'string' ? o.createdAt : '',
+    encrypted: o.encrypted === true,
+    dbEncrypted: o.dbEncrypted === true,
+    db: { blob: db.blob, sha256: db.sha256.toLowerCase(), size: typeof db.size === 'number' ? db.size : 0 },
+    attachments
+  }
 }
 
 /** 计算行内容哈希（排除 id 列）用于冲突检测 */
@@ -145,10 +222,7 @@ async function extractCloudDb(
       }
       // 云库 key：密码路径从索引信封派生，同机路径用当前会话密钥
       const cloudDbKey = isEncryptedBlob(indexRaw, filename) ? cloudKeyFor(indexRaw, opts) : null
-      const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
-      if (index.kind !== 'pocketai-incremental' || !index.db?.blob) {
-        throw new Error('不是有效的增量备份索引')
-      }
+      const index = parseIncrementalIndex(indexBuf)
 
       const blobRaw = await downloadRemoteFile(creds, index.db.blob)
       let dbBuf = blobRaw
@@ -176,8 +250,17 @@ async function extractCloudDb(
     }
     const cloudDbKey = isEncrypted ? cloudKeyFor(blob, opts) : null
 
-    // 解压到临时目录
+    // 解压前先读中央目录预校验所有条目（防 Zip Slip，与 restore 路径同一规则）：
+    // 云备份可被 WebDAV 账号入侵/异机分享污染，含 "../" 的条目会直接写出临时目录
     const unzipper = await import('unzipper')
+    const archive = await unzipper.Open.buffer(zipBuf).catch(() => null)
+    if (!archive) throw new Error('备份包损坏：无法读取 ZIP 目录')
+    for (const f of archive.files) {
+      if (!isSafeZipEntryName(f.path)) {
+        throw new Error(`备份包含非法条目路径，已中止合并：${f.path}`)
+      }
+    }
+
     await new Promise<void>((resolve, reject) => {
       const { Readable } = require('node:stream')
       Readable.from(zipBuf)
@@ -185,6 +268,11 @@ async function extractCloudDb(
         .on('close', resolve)
         .on('error', reject)
     })
+
+    // 符号链接条目会让后续附件复制跟着链接读写宿主任意文件
+    if (containsSymlink(tmp)) {
+      throw new Error('备份包含符号链接条目，已中止合并')
+    }
 
     const dbPath = join(tmp, 'app.db')
     if (!existsSync(dbPath)) throw new Error('备份包缺少 app.db')
@@ -294,8 +382,8 @@ export async function scanMergeConflicts(
       if (isEncryptedBlob(indexRaw, filename)) {
         indexBuf = decryptMergeBlob(indexRaw, opts)
       }
-      const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
-      for (const a of index.attachments || []) {
+      const index = parseIncrementalIndex(indexBuf)
+      for (const a of index.attachments) {
         const local = join(ATTACHMENTS_DIR, a.name)
         if (!existsSync(local)) attachmentsToAdd++
       }
@@ -343,8 +431,12 @@ export function mergeTable(
   const cloudTbl = cloudDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)
   if (!cloudTbl) return { inserted: 0, updated: 0, skipped: 0 }
 
-  const columns = getColumns(cloudDb, table)
-  if (columns.length === 0) return { inserted: 0, updated: 0, skipped: 0 }
+  // 列名以本地 schema 为白名单取交集（防恶意云库畸形列名注入 SQL）；
+  // 交集为空或缺 id、或只剩 id（UPDATE 会拼出空 SET）时整表跳过
+  const columns = safeMergeColumns(localDb, cloudDb, table)
+  if (columns.length < 2 || !columns.includes('id')) {
+    return { inserted: 0, updated: 0, skipped: 0 }
+  }
 
   const cloudRows = cloudDb.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>
   const localRows = localDb.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>
@@ -418,8 +510,10 @@ export function overwriteTable(localDb: Database.Database, cloudDb: Database.Dat
   const cloudTbl = cloudDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)
   if (!cloudTbl) return 0
 
-  const columns = getColumns(cloudDb, table)
-  if (columns.length === 0) return 0
+  // 列名以本地 schema 为白名单取交集（防恶意云库畸形列名注入 SQL）；
+  // 交集退化（空/缺 id/只剩 id）时整表跳过，避免清空本地后写入残行
+  const columns = safeMergeColumns(localDb, cloudDb, table)
+  if (columns.length < 2 || !columns.includes('id')) return 0
 
   const cloudRows = cloudDb.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>
   const placeholders = columns.map(() => '?').join(', ')
@@ -486,9 +580,9 @@ export async function executeMerge(
       if (isEncryptedBlob(indexRaw, filename)) {
         indexBuf = decryptMergeBlob(indexRaw, opts)
       }
-      const index = JSON.parse(indexBuf.toString('utf8')) as IncrementalIndex
+      const index = parseIncrementalIndex(indexBuf)
 
-      for (const a of index.attachments || []) {
+      for (const a of index.attachments) {
         if (a.name.includes('/') || a.name.includes('\\') || a.name.includes('..')) continue
         const local = join(ATTACHMENTS_DIR, a.name)
         if (existsSync(local)) {
