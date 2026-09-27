@@ -117,6 +117,41 @@ export function agentMessagesToMarkdown(messages: AgentMessage[], title: string)
   return lines.join('\n')
 }
 
+// ---------- 会话内消息搜索 ----------
+
+export interface MessageSearchHit {
+  /** 命中消息在 messages 数组中的下标（时间顺序） */
+  index: number
+  /** 命中消息 id */
+  id: string
+  /** 命中角色 */
+  role: AgentMessage['role']
+}
+
+/** 取出消息参与搜索的全部文本（正文 + 工具名/参数/输出） */
+function searchableText(m: AgentMessage): string {
+  const parts = [m.text]
+  if (m.toolCall) parts.push(m.toolCall.function.name, m.toolCall.function.arguments)
+  if (m.toolResult) parts.push(m.toolResult.name, m.toolResult.arguments ?? '', m.toolResult.content)
+  return parts.join('\n')
+}
+
+/**
+ * 会话内搜索：大小写不敏感子串匹配，按时间顺序返回命中（正文/工具名/参数/输出）。
+ * query 为空或仅空白时返回空数组。
+ */
+export function searchAgentMessages(messages: AgentMessage[], query: string): MessageSearchHit[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+  const hits: MessageSearchHit[] = []
+  messages.forEach((m, index) => {
+    if (searchableText(m).toLowerCase().includes(q)) {
+      hits.push({ index, id: m.id, role: m.role })
+    }
+  })
+  return hits
+}
+
 // ---------- 附件读取 ----------
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
 const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript']

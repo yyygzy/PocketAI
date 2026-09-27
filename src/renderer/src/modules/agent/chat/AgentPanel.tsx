@@ -10,7 +10,8 @@ import { AgentModelBar } from '../components/AgentModelBar'
 import { AgentToolBars } from '../components/AgentToolBars'
 import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
-import { formatRunDuration, agentMessagesToMarkdown } from '../agent-shared'
+import { AgentSearchBar } from '../components/AgentSearchBar'
+import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { errText } from '../../../utils/error'
 import { writeClipboard } from '../../../utils/clipboard'
@@ -24,6 +25,45 @@ export const AgentPanel: React.FC = () => {
   const att = useAttachments()
   const [railOpen, setRailOpen] = useState(true)
   const [statsExpanded, setStatsExpanded] = useState(false)
+
+  // ---------- 会话内消息搜索 ----------
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchActive, setSearchActive] = useState(0)
+  const searchHits = React.useMemo(
+    () => (searchOpen ? searchAgentMessages(chat.messages, searchQuery) : []),
+    [searchOpen, chat.messages, searchQuery]
+  )
+  // 命中集合变化（查询词/消息变化）时把当前命中收回到合法范围
+  useEffect(() => {
+    setSearchActive((i) => (searchHits.length === 0 ? 0 : Math.min(i, searchHits.length - 1)))
+  }, [searchHits])
+  // 切会话时关闭搜索
+  useEffect(() => {
+    setSearchOpen(false)
+    setSearchQuery('')
+    setSearchActive(0)
+  }, [chat.conversationId])
+
+  const openSearch = () => {
+    setSearchOpen(true)
+    setSearchQuery('')
+    setSearchActive(0)
+  }
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setSearchQuery('')
+    setSearchActive(0)
+  }
+  const gotoPrevHit = () => {
+    if (searchHits.length === 0) return
+    setSearchActive((i) => (i - 1 + searchHits.length) % searchHits.length)
+  }
+  const gotoNextHit = () => {
+    if (searchHits.length === 0) return
+    setSearchActive((i) => (i + 1) % searchHits.length)
+  }
+  const activeHit = searchHits[searchActive] ?? null
 
   // 切换会话后收起分步明细（明细数据由 hook 在切会话时清空，展开态同步复位）
   useEffect(() => { setStatsExpanded(false) }, [chat.conversationId])
@@ -169,6 +209,24 @@ export const AgentPanel: React.FC = () => {
               onPickWorkspace={() => void tools.pickWorkspace()}
             />
           </div>
+          {/* 头部快捷：会话内搜索 */}
+          <button
+            onClick={() => (searchOpen ? closeSearch() : openSearch())}
+            disabled={!hasMessages}
+            title={t('agent.search')}
+            aria-label={t('agent.search')}
+            aria-pressed={searchOpen}
+            className={`shrink-0 mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${
+              searchOpen
+                ? 'bg-[var(--color-hover-overlay)] text-[var(--color-accent)]'
+                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </button>
           {/* 头部快捷：复制全文 Markdown / 导出 .md 文件（侧栏收起时也可用） */}
           <button
             onClick={() => void handleCopyAsMarkdown()}
@@ -199,6 +257,19 @@ export const AgentPanel: React.FC = () => {
 
         <AgentToolBars tools={tools} />
 
+        {/* 会话内消息搜索栏 */}
+        {searchOpen && (
+          <AgentSearchBar
+            query={searchQuery}
+            onQueryChange={setSearchQuery}
+            activeHit={searchActive}
+            hitCount={searchHits.length}
+            onPrev={gotoPrevHit}
+            onNext={gotoNextHit}
+            onClose={closeSearch}
+          />
+        )}
+
         {/* 消息流（虚拟化：只渲染可视区，避免长对话 DOM 线性增长） */}
         <VirtualMessageList
           messages={chat.messages}
@@ -208,6 +279,8 @@ export const AgentPanel: React.FC = () => {
           onDeleteMessage={chat.running ? undefined : (id) => void chat.deleteMessage(id)}
           onRerunMessage={chat.running ? undefined : (id, text) => void chat.rerun(id, text)}
           onRegenerateMessage={chat.running ? undefined : (id) => chat.regenerate(id)}
+          focusIndex={activeHit?.index ?? null}
+          highlightId={activeHit?.id ?? null}
         />
 
         {/* 运行中：实时步数提示（step 事件实时更新，结束后丢弃） */}

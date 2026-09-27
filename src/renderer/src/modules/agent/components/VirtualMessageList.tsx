@@ -22,6 +22,10 @@ export interface VirtualMessageListProps {
   onRerunMessage?: (id: string, overrideText?: string) => void
   /** 重新生成最后一条 final 助手回复（非流式时由父级传入） */
   onRegenerateMessage?: (id: string) => void
+  /** 搜索定位：需要滚动到的消息下标（变化时居中滚动） */
+  focusIndex?: number | null
+  /** 搜索定位：当前高亮的消息 id（外层卡片加 ring） */
+  highlightId?: string | null
 }
 
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
@@ -31,7 +35,9 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   emptyHint,
   onDeleteMessage,
   onRerunMessage,
-  onRegenerateMessage
+  onRegenerateMessage,
+  focusIndex,
+  highlightId
 }) => {
   const { t } = useI18n()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -77,6 +83,12 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
     isAtBottomRef.current = true
     setShowJumpBottom(false)
   }, [conversationId])
+
+  // 搜索定位：focusIndex 变化时居中滚动到该消息（独立于跟滚逻辑，不改变 isAtBottom）
+  useEffect(() => {
+    if (focusIndex == null || focusIndex < 0 || focusIndex >= messages.length) return
+    virtualizer.scrollToIndex(focusIndex, { align: 'center' })
+  }, [focusIndex, virtualizer, messages.length])
 
   // 消息数变化或流式状态变化：按待滚底标记 / 跟滚规则决定是否滚到底
   useEffect(() => {
@@ -126,6 +138,11 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
                 key={m.id}
                 data-index={vi.index}
                 ref={virtualizer.measureElement}
+                className={
+                  highlightId === m.id
+                    ? 'rounded-lg ring-2 ring-[var(--color-accent)] ring-offset-2 ring-offset-[var(--color-bg)] transition-shadow'
+                    : undefined
+                }
                 style={{
                   position: 'absolute',
                   top: 0,
