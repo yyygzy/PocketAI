@@ -53,6 +53,7 @@ import { lockService } from './lock/lock'
 import { installLockGate } from './lock/ipc-gate'
 import { denyNewWindows } from './net/external-links'
 import { installContentSecurityPolicy } from './security/csp'
+import { installPermissionGuards } from './security/permissions'
 import { initBackupScheduler } from './backup/backup-scheduler'
 import { initTaskScheduler } from './backup/task-scheduler'
 import { initReminderScheduler } from './reminder/scheduler'
@@ -540,6 +541,8 @@ if (!gotLock) {
   app.whenReady().then(() => {
     // 生产环境 CSP 必须在任何窗口创建前安装（解锁窗在 boot() 内创建）
     installContentSecurityPolicy()
+    // 权限收口同理：默认拒绝 Chromium 所有权限（摄像头/麦克风/定位/通知/剪贴板等）
+    installPermissionGuards()
     // 默认中文菜单；渲染进程加载后会上报实际语言并重建
     buildAppMenu('zh')
     // 硬件画像在启动时后台采集一次（结果缓存在主进程），
