@@ -196,18 +196,72 @@ export function mcpResultIsError(raw: unknown): boolean {
   return Boolean((raw as { isError: unknown }).isError)
 }
 
+/**
+ * MCP 工具结果扁平化后的最大字符数。
+ * 引擎只会把压缩到 2000 字符的副本喂给 LLM，但完整结果会写 SQLite 并经 IPC 广播渲染层；
+ * 被投毒/失控的 MCP server 可返回超大结果撑爆 DB/IPC/渲染进程，故在协议边界先封顶。
+ */
+export const MAX_MCP_RESULT_CHARS = 256 * 1024
+/** content 数组最大项数（每项至少 1 字符，配合总字符上限双保险） */
+const MAX_MCP_RESULT_ITEMS = 100
+
+function appendTruncatedNotice(out: string, max: number): string {
+  return `${out}\n…[工具输出过大，已截断至 ${max} 字符]`
+}
+
 export function stringifyMcpResult(raw: unknown): string {
-  if (typeof raw === 'string') return raw
-  const obj = raw as { content?: Array<{ type: string; text?: string }> }
-  if (Array.isArray(obj?.content)) {
-    return obj.content
-      .map((c) => (c.type === 'text' && c.text ? c.text : JSON.stringify(c)))
-      .join('\n')
+  if (typeof raw === 'string') {
+    return raw.length <= MAX_MCP_RESULT_CHARS
+      ? raw
+      : appendTruncatedNotice(raw.slice(0, MAX_MCP_RESULT_CHARS), MAX_MCP_RESULT_CHARS)
   }
+  const obj = raw as { content?: unknown } | null
+  if (Array.isArray(obj?.content)) {
+    const items = (obj as { content: unknown[] }).content
+    const parts: string[] = []
+    let total = 0
+    let charLimited = false
+    let droppedItems = 0
+    for (let i = 0; i < items.length; i++) {
+      if (parts.length >= MAX_MCP_RESULT_ITEMS) {
+        droppedItems = items.length - i
+        break
+      }
+      const c = items[i] as { type?: unknown; text?: unknown }
+      // 与旧逻辑一致：非 text 项或空 text 走 JSON 序列化
+      const piece =
+        c && typeof c === 'object' && c.type === 'text' && c.text
+          ? String(c.text)
+          : safeJsonStringify(c)
+      if (total + piece.length > MAX_MCP_RESULT_CHARS) {
+        parts.push(piece.slice(0, MAX_MCP_RESULT_CHARS - total))
+        total = MAX_MCP_RESULT_CHARS
+        charLimited = true
+        droppedItems = items.length - i - 1
+        break
+      }
+      parts.push(piece)
+      total += piece.length
+    }
+    let out = parts.join('\n')
+    if (charLimited) out = appendTruncatedNotice(out, MAX_MCP_RESULT_CHARS)
+    if (droppedItems > 0) {
+      out += `\n…[工具输出项数过多，已丢弃尾部 ${droppedItems} 项（上限 ${MAX_MCP_RESULT_ITEMS} 项）]`
+    }
+    return out
+  }
+  const json = safeJsonStringify(raw)
+  return json.length <= MAX_MCP_RESULT_CHARS
+    ? json
+    : appendTruncatedNotice(json.slice(0, MAX_MCP_RESULT_CHARS), MAX_MCP_RESULT_CHARS)
+}
+
+/** JSON.stringify 失败（BigInt/循环引用等）降级为 String() */
+function safeJsonStringify(v: unknown): string {
   try {
-    return JSON.stringify(raw)
+    return JSON.stringify(v)
   } catch {
-    return String(raw)
+    return String(v)
   }
 }
 

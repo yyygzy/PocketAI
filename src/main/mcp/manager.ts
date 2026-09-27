@@ -33,6 +33,14 @@ const TOOL_CALL_TIMEOUT = 30_000
 const INIT_TIMEOUT = 15_000
 /** 进程退出后自动重启最大次数 */
 const MAX_AUTO_RESTART = 3
+/** 单个 MCP Server 允许声明的最大工具数（防伪造海量工具撑爆广播/LLM 系统提示） */
+export const MAX_MCP_TOOLS = 200
+/** 工具名遵循 MCP 规范：字母/数字开头，字母数字下划线连字符，1..64 */
+export const MCP_TOOL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+/** 单工具描述长度上限（仅喂 LLM，超长截断） */
+export const MAX_MCP_TOOL_DESC_CHARS = 4096
+/** 单工具 inputSchema 序列化长度上限（防超大 JSON Schema 撑爆 LLM 上下文） */
+export const MAX_MCP_TOOL_SCHEMA_CHARS = 64 * 1024
 
 /**
  * MCP 工具默认权限分级（基于工具名语义启发式）。
@@ -236,9 +244,9 @@ export class McpManager extends EventEmitter {
       // initialized 通知
       client.notify('notifications/initialized')
 
-      // 拉取工具列表
-      const toolsResult = await client.request<{ tools: McpRawTool[] }>('tools/list', {}, INIT_TIMEOUT)
-      entry.tools = (toolsResult?.tools ?? []).map((t) => this.normalizeMcpTool(t, id))
+      // 拉取工具列表（外部协议边界：形状/数量/字段大小全部收紧后才进入运行时）
+      const toolsResult = await client.request<unknown>('tools/list', {}, INIT_TIMEOUT)
+      entry.tools = this.normalizeToolList(toolsResult, id)
       // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
       if (entry.status === 'stopped') {
         client.shutdown().catch((e) => log.warn('shutdown 失败（握手期停止）:', errMsg(e)))
@@ -322,15 +330,44 @@ export class McpManager extends EventEmitter {
     await Promise.allSettled(ids.map((id) => this.stop(id)))
   }
 
-  /** 把 MCP 协议返回的 tool 转成统一 ToolSchema */
-  private normalizeMcpTool(raw: McpRawTool, serverId: string): ToolSchema {
-    const name = typeof raw?.name === 'string' && raw.name ? raw.name : 'unknown'
-    const description = typeof raw?.description === 'string' ? raw.description : ''
+  /** tools/list 结果收口：非数组/超量直接拒绝（恶意/失控 server 不应静默降级为空/部分工具集） */
+  private normalizeToolList(raw: unknown, serverId: string): ToolSchema[] {
+    const tools = (raw as { tools?: unknown } | null)?.tools
+    if (!Array.isArray(tools)) {
+      throw new Error('MCP Server 返回的工具列表格式非法（tools 不是数组），已拒绝启动')
+    }
+    if (tools.length > MAX_MCP_TOOLS) {
+      throw new Error(`MCP Server 声明了 ${tools.length} 个工具，超过上限 ${MAX_MCP_TOOLS}，已拒绝启动`)
+    }
+    return tools.map((t, i) => this.normalizeMcpTool(t, i, serverId))
+  }
+
+  /** 把 MCP 协议返回的单个 tool 校验并转成统一 ToolSchema；非法名称/schema 直接拒绝启动 */
+  private normalizeMcpTool(raw: unknown, index: number, serverId: string): ToolSchema {
+    const o = (raw && typeof raw === 'object' ? raw : {}) as McpRawTool
+    const name = typeof o.name === 'string' ? o.name : ''
+    if (!MCP_TOOL_NAME_RE.test(name)) {
+      throw new Error(`MCP Server 第 ${index + 1} 个工具名称非法（需为 1..64 位字母数字/_-），已拒绝启动`)
+    }
+    let description = typeof o.description === 'string' ? o.description : ''
+    if (description.length > MAX_MCP_TOOL_DESC_CHARS) {
+      description = description.slice(0, MAX_MCP_TOOL_DESC_CHARS)
+      log.warn(`MCP 工具 ${name} 描述超长（>${MAX_MCP_TOOL_DESC_CHARS}），已截断`)
+    }
+    // inputSchema 必须是普通 JSON 对象；数组/字符串/数字等畸形类型用空 schema 兜底
+    let parameters: Record<string, unknown> = { type: 'object', properties: {} }
+    if (o.inputSchema && typeof o.inputSchema === 'object' && !Array.isArray(o.inputSchema)) {
+      const schemaJson = JSON.stringify(o.inputSchema)
+      if (schemaJson.length > MAX_MCP_TOOL_SCHEMA_CHARS) {
+        throw new Error(`MCP 工具 ${name} 的 inputSchema 超过 ${MAX_MCP_TOOL_SCHEMA_CHARS} 字符上限，已拒绝启动`)
+      }
+      parameters = o.inputSchema as Record<string, unknown>
+    }
     return {
       id: `mcp:${serverId}:${name}`,
       name,
       description,
-      parameters: (raw?.inputSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>,
+      parameters,
       source: 'mcp',
       // MCP 工具权限按名称分级：
       //   - 命中危险关键词（写/删/执行类）→ confirm（必须人工确认）

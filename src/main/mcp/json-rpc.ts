@@ -6,11 +6,70 @@
 //  - 支持 server -> client 的 notification（无 id）
 //  - 超时控制：单次请求默认 30s
 //  - 优雅退出：发送 shutdown 请求 → 等待进程退出 → 必要时强杀
+//  - 单行字节上限：恶意/被投毒 server 输出无换行巨行时丢弃，防内存耗尽 DoS
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { createInterface, type Interface } from 'node:readline'
+import type { Readable } from 'node:stream'
 import { errMsg } from '../error'
+
+/** 单条 NDJSON 消息/日志行的最大字节数（正常协议消息远小于此） */
+export const DEFAULT_MAX_LINE_BYTES = 32 * 1024 * 1024
+
+interface BoundedLineReader {
+  stop(): void
+}
+
+/**
+ * 带上限的行读取器（readline 没有行长度限制，一条数 GB 的无换行行会吃光主进程内存）。
+ * 自行按 \n 切分；单行超过 maxBytes 后停止缓存该行内容直到下一个换行，丢弃并回调一次
+ * onOverflow（回调不得携带行内容，避免警告路径本身把巨串带入日志缓冲）。
+ */
+function createBoundedLineReader(
+  stream: Readable,
+  onLine: (line: string) => void,
+  onOverflow: (limitBytes: number) => void,
+  maxBytes: number
+): BoundedLineReader {
+  const parts: Buffer[] = []
+  let pending = 0
+  let discarding = false
+
+  const onData = (chunk: Buffer): void => {
+    let start = 0
+    while (start < chunk.length) {
+      const nl = chunk.indexOf(0x0a, start)
+      const end = nl === -1 ? chunk.length : nl
+      const piece = chunk.subarray(start, end)
+      if (!discarding) {
+        if (pending + piece.length > maxBytes) {
+          discarding = true
+          parts.length = 0
+          pending = 0
+          onOverflow(maxBytes)
+        } else if (piece.length > 0) {
+          // copy 一份：chunk 可能被流回收，subarray 只是共享内存的视图
+          parts.push(Buffer.from(piece))
+          pending += piece.length
+        }
+      }
+      if (nl === -1) break
+      if (!discarding) {
+        const line = Buffer.concat(parts).toString('utf8').replace(/\r$/, '')
+        parts.length = 0
+        pending = 0
+        if (line.trim()) onLine(line)
+      } else {
+        // 被丢弃行的行尾到达，下个字节起恢复解析
+        discarding = false
+      }
+      start = nl + 1
+    }
+  }
+
+  stream.on('data', onData)
+  return { stop: () => stream.off('data', onData) }
+}
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0'
@@ -41,6 +100,8 @@ export interface StdioClientOptions {
   cwd?: string
   /** 每个请求的超时（ms），默认 30000 */
   requestTimeout?: number
+  /** 单行 NDJSON/日志的最大字节数，默认 DEFAULT_MAX_LINE_BYTES */
+  maxLineBytes?: number
   /** 进程退出时回调 */
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void
   /** stderr / 非协议 stdout 日志 */
@@ -49,7 +110,8 @@ export interface StdioClientOptions {
 
 export class StdioJsonRpcClient {
   private proc: ChildProcessWithoutNullStreams | null = null
-  private readline: Interface | null = null
+  private stdoutReader: BoundedLineReader | null = null
+  private stderrReader: BoundedLineReader | null = null
   private nextId = 1
   private pending = new Map<
     number | string,
@@ -102,13 +164,22 @@ export class StdioJsonRpcClient {
       }
     })
 
-    // 解析 stdout 行
-    this.readline = createInterface({ input: proc.stdout })
-    this.readline.on('line', (line) => this.handleLine(line))
+    // 解析 stdout NDJSON（带单行字节上限，防恶意 server 巨行内存耗尽）
+    const maxLineBytes = this.opts.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES
+    this.stdoutReader = createBoundedLineReader(
+      proc.stdout,
+      (line) => this.handleLine(line),
+      () => this.opts.onLog?.('stdout', '[协议消息超过单行大小上限，已丢弃]'),
+      maxLineBytes
+    )
 
-    // stderr 作为日志
-    const stderrRl = createInterface({ input: proc.stderr })
-    stderrRl.on('line', (line) => this.opts.onLog?.('stderr', line))
+    // stderr 作为日志（同样限单行大小，且不把巨串灌进日志环形缓冲）
+    this.stderrReader = createBoundedLineReader(
+      proc.stderr,
+      (line) => this.opts.onLog?.('stderr', line),
+      () => this.opts.onLog?.('stderr', '[日志行超过单行大小上限，已丢弃]'),
+      maxLineBytes
+    )
 
     // 等待 stdout 可写
     if (!proc.stdin.writable) {
@@ -204,8 +275,10 @@ export class StdioJsonRpcClient {
     if (!this.proc) return
     const proc = this.proc
     this.proc = null
-    this.readline?.close()
-    this.readline = null
+    this.stdoutReader?.stop()
+    this.stderrReader?.stop()
+    this.stdoutReader = null
+    this.stderrReader = null
 
     if (!this.closed && proc.stdin.writable) {
       try {

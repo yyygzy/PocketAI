@@ -170,6 +170,77 @@ describe('StdioJsonRpcClient - notify / onNotification', () => {
   })
 })
 
+describe('StdioJsonRpcClient - 单行字节上限', () => {
+  it('超限行被丢弃且不进入协议解析；随后正常响应仍能 resolve', async () => {
+    const logs: Array<{ stream: string; line: string }> = []
+    client = new StdioJsonRpcClient({
+      command: 'fake',
+      args: [],
+      maxLineBytes: 64,
+      requestTimeout: 2000,
+      onLog: (stream, line) => logs.push({ stream, line })
+    })
+    await client.spawn()
+    const p = client.request('tools/list')
+    await Promise.resolve()
+    const sent = readSentRequests()[0] as { id: number }
+    const child = currentChild()
+    // 100 字节的非 JSON 巨行（超 64B 上限）——既不能撑内存，也不能被当日志原文回传
+    child.stdout.write(Buffer.alloc(100, 0x61))
+    child.stdout.write('\n')
+    // 紧接着的合法响应必须正常处理（解析在丢弃行后恢复）
+    child.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: sent.id, result: { ok: true } }) + '\n')
+    await expect(p).resolves.toEqual({ ok: true })
+    const overflowLog = logs.find((l) => l.stream === 'stdout' && l.line.includes('上限'))
+    expect(overflowLog).toBeDefined()
+    // 警告不得携带巨行原文
+    expect(overflowLog!.line).not.toContain('a'.repeat(20))
+  })
+
+  it('超长行跨越多个 chunk 到达 → 累计超限后丢弃，换行后恢复', async () => {
+    const logs: string[] = []
+    client = new StdioJsonRpcClient({
+      command: 'fake',
+      args: [],
+      maxLineBytes: 64,
+      onLog: (stream, line) => stream === 'stdout' && logs.push(line)
+    })
+    await client.spawn()
+    const child = currentChild()
+    child.stdout.write(Buffer.alloc(40, 0x62)) // 未超限、未换行
+    child.stdout.write(Buffer.alloc(40, 0x62)) // 累计 80B 超限
+    child.stdout.write('\n')
+    child.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'progress' }) + '\n')
+    // 通知可被接收即证明解析已恢复
+    const received: unknown[] = []
+    client.onNotification((n) => received.push(n))
+    // 再发一条，确保上一行丢弃状态未污染后续
+    child.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'progress2' }) + '\n')
+    expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({ method: 'progress2' })
+    expect(logs.some((l) => l.includes('上限'))).toBe(true)
+  })
+
+  it('stderr 超长行 → 只回传固定警告，不回传原文', async () => {
+    const logs: Array<{ stream: string; line: string }> = []
+    client = new StdioJsonRpcClient({
+      command: 'fake',
+      args: [],
+      maxLineBytes: 64,
+      onLog: (stream, line) => logs.push({ stream, line })
+    })
+    await client.spawn()
+    currentChild().stderr.write(Buffer.alloc(100, 0x63))
+    currentChild().stderr.write('\n')
+    // 正常短日志不受影响
+    currentChild().stderr.write('normal stderr line\n')
+    expect(logs).toContainEqual({ stream: 'stderr', line: 'normal stderr line' })
+    const warn = logs.find((l) => l.stream === 'stderr' && l.line.includes('上限'))
+    expect(warn).toBeDefined()
+    expect(warn!.line).not.toContain('c'.repeat(20))
+  })
+})
+
 describe('StdioJsonRpcClient - 异常路径', () => {
   it('进程 exit 拒绝所有 pending 请求（携带 code/signal）', async () => {
     await client.spawn()

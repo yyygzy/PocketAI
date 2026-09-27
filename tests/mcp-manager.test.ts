@@ -106,7 +106,12 @@ vi.mock('../src/main/logger', () => ({
 
 // ---------- 导入被测 ----------
 
-import { McpManager } from '../src/main/mcp/manager'
+import {
+  McpManager,
+  MAX_MCP_TOOLS,
+  MAX_MCP_TOOL_DESC_CHARS,
+  MAX_MCP_TOOL_SCHEMA_CHARS
+} from '../src/main/mcp/manager'
 
 // ---------- 工具 ----------
 
@@ -277,14 +282,13 @@ describe('McpManager — start 成功路径', () => {
       reqIdx++
       return reqIdx === 1
         ? { protocolVersion: '2024-11-05' } // initialize
-        : { tools: [{ name: 'get_user', description: '获取用户' }, { description: 'no name' }] } // tools/list
+        : { tools: [{ name: 'get_user', description: '获取用户' }, { name: 'list_items' }] } // tools/list
     }
     const r = await mgr.start('srv1')
     expect(r.status).toBe('running')
     expect(r.tools).toHaveLength(2)
     expect(r.tools[0]).toMatchObject({ id: 'mcp:srv1:get_user', name: 'get_user', permission: 'auto' })
-    // 第二个无 name → 'unknown'，命中危险词不命中只读前缀 → confirm
-    expect(r.tools[1]).toMatchObject({ name: 'unknown', permission: 'confirm' })
+    expect(r.tools[1]).toMatchObject({ id: 'mcp:srv1:list_items', name: 'list_items', permission: 'auto' })
     expect(events.map((e) => e.status)).toEqual(['starting', 'running'])
   })
 
@@ -314,6 +318,69 @@ describe('McpManager — start 成功路径', () => {
     expect(r.status).toBe('stopped')
     expect(mocks.clients[0]!.shutdown).toHaveBeenCalledTimes(1)
     expect(events.at(-1)?.status).not.toBe('running')
+  })
+})
+
+describe('McpManager — tools/list 边界收紧（防恶意/失控 server）', () => {
+  /** initialize 返回 init，第二次请求（tools/list）返回 { tools } */
+  function mockToolsResult(tools: unknown): void {
+    let reqIdx = 0
+    mocks.requestImpl = async () =>
+      ++reqIdx === 1 ? { protocolVersion: '2024-11-05' } : { tools }
+  }
+
+  beforeEach(() => {
+    mocks.repoList = [makeRecord()]
+  })
+
+  it('tools 不是数组（缺失）→ 拒绝启动', async () => {
+    let reqIdx = 0
+    mocks.requestImpl = async () => (++reqIdx === 1 ? { protocolVersion: 'x' } : {})
+    await expect(mgr.start('srv1')).rejects.toThrow(/工具列表格式非法/)
+  })
+
+  it('工具数超过上限 → 拒绝启动', async () => {
+    mockToolsResult(Array.from({ length: MAX_MCP_TOOLS + 1 }, (_, i) => ({ name: `tool_${i}` })))
+    await expect(mgr.start('srv1')).rejects.toThrow(new RegExp(`超过上限 ${MAX_MCP_TOOLS}`))
+  })
+
+  it('工具名缺失/为空 → 拒绝启动', async () => {
+    mockToolsResult([{ name: 'ok_tool' }, { description: 'no name' }])
+    await expect(mgr.start('srv1')).rejects.toThrow(/第 2 个工具名称非法/)
+  })
+
+  it('工具名含非法字符（冒号）/超 64 字符 → 拒绝启动', async () => {
+    mockToolsResult([{ name: 'evil:name' }])
+    await expect(mgr.start('srv1')).rejects.toThrow(/工具名称非法/)
+    mockToolsResult([{ name: 'a'.repeat(65) }])
+    await expect(mgr.start('srv1')).rejects.toThrow(/工具名称非法/)
+  })
+
+  it('description 超长 → 截断到上限，正常启动', async () => {
+    const longDesc = 'x'.repeat(MAX_MCP_TOOL_DESC_CHARS + 100)
+    mockToolsResult([{ name: 'get_x', description: longDesc }])
+    const r = await mgr.start('srv1')
+    expect(r.status).toBe('running')
+    expect(r.tools[0]!.description).toHaveLength(MAX_MCP_TOOL_DESC_CHARS)
+  })
+
+  it('inputSchema 为非对象（字符串）→ 兜底为空 schema，正常启动', async () => {
+    mockToolsResult([{ name: 'get_x', inputSchema: 'not-an-object' }])
+    const r = await mgr.start('srv1')
+    expect(r.status).toBe('running')
+    expect(r.tools[0]!.parameters).toEqual({ type: 'object', properties: {} })
+  })
+
+  it('inputSchema 序列化超 64KB → 拒绝启动', async () => {
+    mockToolsResult([{ name: 'get_x', inputSchema: { pad: 'y'.repeat(MAX_MCP_TOOL_SCHEMA_CHARS + 10) } }])
+    await expect(mgr.start('srv1')).rejects.toThrow(/inputSchema 超过/)
+  })
+
+  it('恰好达到工具数上限且名称合法 → 正常启动', async () => {
+    mockToolsResult(Array.from({ length: MAX_MCP_TOOLS }, (_, i) => ({ name: `t${i}` })))
+    const r = await mgr.start('srv1')
+    expect(r.status).toBe('running')
+    expect(r.tools).toHaveLength(MAX_MCP_TOOLS)
   })
 })
 
