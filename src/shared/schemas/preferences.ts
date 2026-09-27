@@ -1,7 +1,9 @@
 // 偏好设置 IPC 入参 schema
 import { z } from 'zod'
 
-/** UI_SET_PREFS 入参：Partial<UiPreferences> */
+/** UI_SET_PREFS 入参：Partial<UiPreferences>
+ *  customCss 不在此设 max：服务层 setUiPreferences 统一截断到 MAX_CSS_LENGTH(200KB)，
+ *  截断语义（不报错）是既有设计，schema 拒绝会改变该行为。 */
 export const uiPrefsPatchSchema = z.object({
   opacity: z.number().min(0.6).max(1).optional(),
   customCss: z.string().optional()
