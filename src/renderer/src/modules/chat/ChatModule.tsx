@@ -192,17 +192,25 @@ export const ChatModule: React.FC = () => {
 
   const handleNewConv = async () => {
     // 点击「新对话」直接在数据库创建一条对话记录，标题用当前助手名
-    const title = currentAssistant?.name || t('chat.newConversation')
-    const conv = await window.pocketai.createConversation(currentAssistantId, title)
-    userEditedTargetsRef.current = false // 新对话允许模型回填
-    setCurrentConvId(conv.id)
-    setMessages([])
-    await reloadConversations()
+    try {
+      const title = currentAssistant?.name || t('chat.newConversation')
+      const conv = await window.pocketai.createConversation(currentAssistantId, title)
+      userEditedTargetsRef.current = false // 新对话允许模型回填
+      setCurrentConvId(conv.id)
+      setMessages([])
+      await reloadConversations()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
   }
 
   const handleRenameConv = async (id: string, title: string) => {
-    await window.pocketai.renameConversation(id, title)
-    await reloadConversations()
+    try {
+      await window.pocketai.renameConversation(id, title)
+      await reloadConversations()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
   }
 
   const handleEditAssistant = (id: string) => {
@@ -211,23 +219,31 @@ export const ChatModule: React.FC = () => {
   }
 
   const handleDeleteConv = async (id: string) => {
-    await window.pocketai.deleteConversation(id)
-    if (currentConvId === id) {
-      setCurrentConvId(null)
-      setMessages([])
+    try {
+      await window.pocketai.deleteConversation(id)
+      if (currentConvId === id) {
+        setCurrentConvId(null)
+        setMessages([])
+      }
+      await reloadConversations()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
     }
-    await reloadConversations()
   }
 
   const handleExportConv = async (id: string) => {
-    const r = await window.pocketai.exportConversationMd(id)
-    if (r.canceled) return
-    if (!r.ok) {
-      toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
-      return
-    }
-    if (r.path) {
-      toast.success(t('chat.exportSuccess', { path: r.path }))
+    try {
+      const r = await window.pocketai.exportConversationMd(id)
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      if (r.path) {
+        toast.success(t('chat.exportSuccess', { path: r.path }))
+      }
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
     }
   }
 
@@ -266,19 +282,25 @@ export const ChatModule: React.FC = () => {
   }
   const confirmCrypto = async () => {
     if (!cryptoPrompt) return
+    const kind = cryptoPrompt.kind
     const pwd = cryptoPwd
     setCryptoPrompt(null); setCryptoPwd('')
-    if (cryptoPrompt.kind === 'export') {
-      const r = await window.pocketai.exportConversationEncrypted(cryptoPrompt.id!, pwd)
-      if (r.canceled) return
-      if (!r.ok) { toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') })); return }
-      toast.success(t('chat.exportSuccess', { path: r.path ?? '' }))
-    } else {
-      const r = await window.pocketai.importConversationEncrypted(pwd)
-      if (r.canceled) return
-      if (!r.ok) { toast.error(t('chat.importFail', { e: r.error ?? t('common.unknownError') })); return }
-      toast.success(t('chat.importOk', { n: r.messageCount ?? 0 }))
-      await reloadConversations()
+    try {
+      if (kind === 'export') {
+        const r = await window.pocketai.exportConversationEncrypted(cryptoPrompt.id!, pwd)
+        if (r.canceled) return
+        if (!r.ok) { toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') })); return }
+        toast.success(t('chat.exportSuccess', { path: r.path ?? '' }))
+      } else {
+        const r = await window.pocketai.importConversationEncrypted(pwd)
+        if (r.canceled) return
+        if (!r.ok) { toast.error(t('chat.importFail', { e: r.error ?? t('common.unknownError') })); return }
+        toast.success(t('chat.importOk', { n: r.messageCount ?? 0 }))
+        await reloadConversations()
+      }
+    } catch (e) {
+      // IPC 层 reject（对话框打开失败/通道异常）：按导出/导入方向给出可见反馈
+      toast.error(t(kind === 'export' ? 'chat.exportFail' : 'chat.importFail', { e: errText(e) }))
     }
   }
 
@@ -336,14 +358,22 @@ export const ChatModule: React.FC = () => {
   }
 
   const handleDeleteMessage = useCallback(async (id: string) => {
-    await window.pocketai.deleteMessage(id)
-    if (currentConvId) loadMessages(currentConvId)
-  }, [currentConvId, loadMessages])
+    try {
+      await window.pocketai.deleteMessage(id)
+      if (currentConvId) loadMessages(currentConvId)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }, [currentConvId, loadMessages, toast, t])
 
   const handleDeleteMessages = useCallback(async (ids: string[]) => {
-    await Promise.all(ids.map((id) => window.pocketai.deleteMessage(id)))
-    if (currentConvId) loadMessages(currentConvId)
-  }, [currentConvId, loadMessages])
+    try {
+      await Promise.all(ids.map((id) => window.pocketai.deleteMessage(id)))
+      if (currentConvId) loadMessages(currentConvId)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }, [currentConvId, loadMessages, toast, t])
 
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (isStreaming()) return // 正在流式中

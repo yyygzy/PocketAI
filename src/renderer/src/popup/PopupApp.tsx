@@ -236,7 +236,8 @@ export const PopupApp: React.FC = () => {
       e.preventDefault()
       void send(input)
     } else if (e.key === 'Escape') {
-      void window.pocketai.hidePopup()
+      // 关窗失败无影响（合理静默）
+      void window.pocketai.hidePopup().catch(() => {})
     }
   }
 
@@ -270,7 +271,7 @@ export const PopupApp: React.FC = () => {
           <button
             className="btn-ghost !px-2 !py-0.5 text-xs"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            onClick={() => void window.pocketai.hidePopup()}
+            onClick={() => void window.pocketai.hidePopup().catch(() => {})} // 关窗失败无影响（合理静默）
             title={t('popup.close')}
           >
             ✕

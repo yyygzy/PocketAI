@@ -328,7 +328,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
             />
             {pulling ? (
               <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-warning)]"
-                onClick={() => window.pocketai.abortOllamaPull()}>
+                onClick={() => window.pocketai.abortOllamaPull().catch(reportIpcError('ollama.abortPull'))}>
                 ✕ {t('ollama.abort')}
               </button>
             ) : (

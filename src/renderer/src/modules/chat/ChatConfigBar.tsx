@@ -5,6 +5,8 @@ import React, { useState } from 'react'
 import type { AssistantRecord, KnowledgeBase, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
+import { useToast } from '../../components/ToastProvider'
 
 interface Props {
   assistant: AssistantRecord | null
@@ -15,6 +17,7 @@ type Section = 'skills' | 'kb' | null
 
 export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [open, setOpen] = useState(false)
   const [section, setSection] = useState<Section>(null)
   const [skills, setSkills] = useState<SkillRecord[] | null>(null)
@@ -33,8 +36,12 @@ export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }
     if (!assistant) return
     const cur = assistant[field] ?? []
     const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
-    const saved = await window.pocketai.saveAssistant({ ...assistant, [field]: next })
-    onAssistantUpdated(saved)
+    try {
+      const saved = await window.pocketai.saveAssistant({ ...assistant, [field]: next })
+      onAssistantUpdated(saved)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
   }
 
   const chipCls = (on: boolean) =>
