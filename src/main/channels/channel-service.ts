@@ -43,7 +43,7 @@ const GATEWAYS: Record<ChannelType, IGateway> = {
   dingtalk: dingtalkGateway
 }
 
-function loadConvMap(type: ChannelType): Record<string, string> {
+export function loadConvMap(type: ChannelType): Record<string, string> {
   try {
     const raw = appConfigRepo.get(convMapKey(type))
     if (!raw) return {}
@@ -57,13 +57,13 @@ function loadConvMap(type: ChannelType): Record<string, string> {
   }
 }
 
-function saveConvMap(type: ChannelType, map: Record<string, string>): void {
+export function saveConvMap(type: ChannelType, map: Record<string, string>): void {
   appConfigRepo.set(convMapKey(type), JSON.stringify(map))
 }
 
 type StatusListener = (evt: ChannelStatusEvent) => void
 
-class ChannelService {
+export class ChannelService {
   /** 同一 chat 串行处理：处理中新消息直接提示（key: type:chatId） */
   private busyChats = new Set<string>()
   private listeners = new Set<StatusListener>()
