@@ -19,6 +19,7 @@ export const ja: Record<string, string> = {
   'common.add': '追加',
   'common.none': '（なし）',
   'common.unknownError': '不明なエラー',
+  'common.opFailed': '操作に失敗しました：{msg}',
   'common.copy': 'コピー',
   'common.copied': 'コピーしました',
   'common.copyFailed': 'コピーに失敗しました。再試行してください',

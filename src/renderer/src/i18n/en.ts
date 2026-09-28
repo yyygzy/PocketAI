@@ -20,6 +20,7 @@ export const en: Record<string, string> = {
   'common.add': 'Add',
   'common.none': '(None)',
   'common.unknownError': 'Unknown error',
+  'common.opFailed': 'Operation failed: {msg}',
   'common.copy': 'Copy',
   'common.copied': 'Copied',
   'common.copyFailed': 'Copy failed, please try again',

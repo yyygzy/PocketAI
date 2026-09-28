@@ -20,6 +20,7 @@ export const zh: Record<string, string> = {
   'common.add': '添加',
   'common.none': '（无）',
   'common.unknownError': '未知错误',
+  'common.opFailed': '操作失败：{msg}',
   'common.copy': '复制',
   'common.copied': '已复制',
   'common.copyFailed': '复制失败，请重试',

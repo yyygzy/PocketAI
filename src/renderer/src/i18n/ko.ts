@@ -19,6 +19,7 @@ export const ko: Record<string, string> = {
   'common.add': '추가',
   'common.none': '(없음)',
   'common.unknownError': '알 수 없는 오류',
+  'common.opFailed': '작업 실패: {msg}',
   'common.copy': '복사',
   'common.copied': '복사됨',
   'common.copyFailed': '복사 실패, 다시 시도하세요',

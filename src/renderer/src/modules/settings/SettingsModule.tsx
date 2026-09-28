@@ -21,6 +21,7 @@ import { logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
+import { useToast } from '../../components/ToastProvider'
 
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
@@ -212,8 +213,9 @@ const AutoLockRow: React.FC = () => {
       if (r?.ok) {
         markSaved(true)
       }
-    } catch {
-      /* 保持所选值，下次打开设置页会回读真实状态 */
+    } catch (e) {
+      // 设计意图：保持所选值，下次打开设置页会回读真实状态；失败必须留痕
+      logIpcError('settings.setAutoLockTimeout', e)
     }
   }
 
@@ -403,9 +405,14 @@ const DisableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }
 
 const LockBtn: React.FC<{ onDone: () => void }> = ({ onDone }) => {
   const { t } = useI18n()
+  const toast = useToast()
   async function lock() {
-    await window.pocketai.lockEncryption()
-    onDone()
+    try {
+      await window.pocketai.lockEncryption()
+      onDone()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
   }
   return <button className="btn-ghost" onClick={lock}>{t('enc.lock')}</button>
 }
