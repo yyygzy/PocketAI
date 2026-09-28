@@ -8,6 +8,7 @@ import { conversationRepo } from '../../db/repositories/conversation.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
+import { errMsg } from '../../error'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { clearSessionAllow } from '../../agent/tool-approval'
 import {
@@ -178,7 +179,7 @@ export function registerConversationHandlers(): void {
       tx(payload.messages)
     } catch (e) {
       conversationRepo.delete(newConv.id)
-      return { ok: false, error: `导入写入失败，已回滚：${(e as Error)?.message ?? '未知错误'}` }
+      return { ok: false, error: `导入写入失败，已回滚：${errMsg(e)}` }
     }
     return { ok: true, conversationId: newConv.id, messageCount: count }
   }, argsSchema(z.string().min(1)))

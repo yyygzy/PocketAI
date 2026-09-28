@@ -14,7 +14,7 @@
 //  - 不做进程管理（无 spawn/exit），shutdown 仅发送协议级 shutdown 请求
 
 import { EventEmitter } from 'node:events'
-import { errMsg } from '../error'
+import { errMsg, isAbortError } from '../error'
 import {
   McpBusinessError,
   McpTransportError,
@@ -246,7 +246,7 @@ export class HttpJsonRpcClient implements McpTransportClient {
       } catch (e) {
         // 已分类的错误原样透传
         if (e instanceof McpTransportError || e instanceof McpBusinessError) throw e
-        if ((e as Error).name === 'AbortError') {
+        if (isAbortError(e)) {
           throw new McpTransportError('timeout', `JSON-RPC 请求超时: ${method} (${timeout}ms)`)
         }
         // fetch 网络失败 / JSON 响应体畸形：连接级失败

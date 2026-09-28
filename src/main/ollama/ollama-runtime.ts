@@ -188,7 +188,7 @@ async function startServe(): Promise<{ started: boolean; reused: boolean }> {
     if (msg) log.debug(msg)
   })
   serveProc.on('error', (e) => {
-    log.warn(`ollama serve 启动失败：${e.message}`)
+    log.warn(`ollama serve 启动失败：${errMsg(e)}`)
     serveProc = null
   })
   serveProc.on('exit', (code) => {
