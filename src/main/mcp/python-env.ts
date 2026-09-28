@@ -252,7 +252,7 @@ function runProcess(cmd: string, args: string[], opts: RunOptions = {}): Promise
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
-      reject(new Error(`无法启动 ${path.basename(cmd)}：${err.message}`))
+      reject(new Error(`无法启动 ${path.basename(cmd)}：${errMsg(err)}`))
     })
     proc.on('close', (code) => {
       if (settled) return

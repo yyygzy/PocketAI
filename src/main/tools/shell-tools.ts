@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process'
 import type { BuiltinTool } from './builtin'
 import { getWorkspaceDir, resolveWorkspacePath } from './fs-tools'
 import { getShellConfig } from './shell-config'
+import { errMsg } from '../error'
 
 export type CommandDecision = 'allow' | 'confirm' | 'deny'
 
@@ -328,7 +329,7 @@ function runCommand(
     child.stderr?.on('data', (chunk: Buffer) => stderrBuf.push(chunk))
     child.on('error', (e) => {
       // spawn 失败（shell 不存在等）：错误信息放 stderr（ASCII + 中文消息统一 UTF-8 编码）
-      stderrBuf.push(Buffer.from(`\n[spawn 失败] ${e.message}`, 'utf-8'))
+      stderrBuf.push(Buffer.from(`\n[spawn 失败] ${errMsg(e)}`, 'utf-8'))
       finish(null, null)
     })
     child.on('close', (code, signal) => finish(code, signal))

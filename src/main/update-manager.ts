@@ -93,8 +93,8 @@ class UpdateManager extends EventEmitter {
     })
 
     autoUpdater.on('error', (err) => {
-      this.error = err.message
-      this.setStatus('error', { error: err.message })
+      this.error = errMsg(err)
+      this.setStatus('error', { error: errMsg(err) })
     })
   }
 

@@ -214,7 +214,7 @@ export class StdioJsonRpcClient implements McpTransportClient {
       for (const [id, entry] of this.pending.entries()) {
         clearTimeout(entry.timer)
         this.pending.delete(id)
-        entry.reject(new Error(`进程错误: ${err.message}`))
+        entry.reject(new Error(`进程错误: ${errMsg(err)}`))
       }
     })
 
