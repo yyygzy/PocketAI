@@ -66,9 +66,12 @@ function portableDownloadUrl(): string | null {
   return `https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_RELEASE_TAG}/${asset}`
 }
 
-/** 校验下载包 SHA256 是否与官方钉版一致（解压前最后一道关） */
-function verifyArchiveHash(filePath: string): void {
-  const expected = PINNED_SHA256[platformKey()]
+/**
+ * 校验下载包 SHA256 是否与官方钉版一致（解压前最后一道关）。
+ * expectedOverride 仅用于测试注入；prod 调用不传，自动按 platformKey 取 PINNED_SHA256。
+ */
+export function verifyArchiveHash(filePath: string, expectedOverride?: string): void {
+  const expected = expectedOverride ?? PINNED_SHA256[platformKey()]
   if (!expected) {
     // PINNED_SHA256 与 PLATFORM_TRIPLES 必须同步覆盖；走到这里是开发期配置错误
     throw new Error(`当前平台缺少钉版 SHA256：${platformKey()}`)
@@ -196,7 +199,7 @@ async function downloadToFile(url: string, dest: string, opts: DownloadOptions =
  * 下载的 tar 包来自网络，必须按 Zip Slip 同级防护处理 —— 包内文件随后会被执行，
  * 一个逃逸到 runtime 目录外的写入即可覆盖任意可执行文件。
  */
-function resolveUnder(base: string, name: string): string {
+export function resolveUnder(base: string, name: string): string {
   const abs = path.resolve(base, name)
   if (abs !== base && !abs.startsWith(base + path.sep)) {
     throw new Error(`tar 条目路径越界: ${name}`)
@@ -210,7 +213,7 @@ function resolveUnder(base: string, name: string): string {
  * 不支持稀疏文件等高级特性，足以解压 python-build-standalone。
  * 安全：所有条目路径与符号链接目标都必须落在 destDir 内（resolveUnder）。
  */
-async function extractTarGz(tarPath: string, destDir: string): Promise<void> {
+export async function extractTarGz(tarPath: string, destDir: string): Promise<void> {
   const gunzip = zlib.createGunzip()
   const readStream = fs.createReadStream(tarPath)
   const onStreamError = (err: Error) => {

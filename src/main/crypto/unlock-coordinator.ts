@@ -16,7 +16,7 @@ type UnlockResult =
   | { setPassword: string }    // 明文 DB 首次设置密码
   | null                       // 用户关闭了窗口（放弃）
 
-class UnlockCoordinator extends EventEmitter {
+export class UnlockCoordinator extends EventEmitter {
   private waiting = false
   private resolver: ((result: UnlockResult) => void) | null = null
 

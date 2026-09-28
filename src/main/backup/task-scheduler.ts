@@ -95,6 +95,7 @@ const tasks: TaskDef[] = [
 // ─── 调度核心 ────────────────────────────────────────────────────
 
 let timer: NodeJS.Timeout | null = null
+let bootDelay: NodeJS.Timeout | null = null
 
 function getLastRun(key: string): number | null {
   const v = Number(appConfigRepo.get(`task.${key}.last_run_at`))
@@ -117,7 +118,7 @@ async function runTask(task: TaskDef): Promise<void> {
   }
 }
 
-async function tick(): Promise<void> {
+export async function tick(): Promise<void> {
   try {
     const now = Date.now()
     for (const task of tasks) {
@@ -136,11 +137,15 @@ async function tick(): Promise<void> {
 export function initTaskScheduler(): void {
   if (timer) return
   // 启动 60 秒后首次 tick（等待系统稳定），之后每 10 分钟
-  setTimeout(() => void tick(), 60 * 1000)
+  bootDelay = setTimeout(() => void tick(), 60 * 1000)
   timer = setInterval(() => void tick(), TICK_MS)
 }
 
 export function stopTaskScheduler(): void {
+  if (bootDelay) {
+    clearTimeout(bootDelay)
+    bootDelay = null
+  }
   if (timer) {
     clearInterval(timer)
     timer = null

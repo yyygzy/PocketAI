@@ -15,7 +15,7 @@ export interface IndexTask {
   payload?: { text?: string; title?: string }
 }
 
-class IndexQueue {
+export class IndexQueue {
   private queue: IndexTask[] = []
   private running = false
   private listeners = new Set<(task: IndexTask) => void>()
