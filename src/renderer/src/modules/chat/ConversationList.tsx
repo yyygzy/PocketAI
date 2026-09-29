@@ -16,6 +16,8 @@ interface Props {
   onExportEncrypted?: (id: string) => void
   onImport?: () => void
   onImportEncrypted?: () => void
+  /** 搜索结果点击：跳转定位到匹配消息（convId + messageId） */
+  onSelectMessage?: (convId: string, messageId: string) => void
   /** 嵌入到已有侧栏容器时，去掉自身宽度/边框/背景 */
   embedded?: boolean
 }
@@ -31,25 +33,50 @@ export const ConversationList: React.FC<Props> = ({
   onExportEncrypted,
   onImport,
   onImportEncrypted,
+  onSelectMessage,
   embedded
 }) => {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<MessageSearchResult[]>([])
   const [searching, setSearching] = useState(false)
+  const [dateFilter, setDateFilter] = useState<'all' | '7d' | '30d' | 'custom'>('all')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const PAGE = 50
 
+  // 日期筛选 → dateRange 参数
+  const dateRange = (() => {
+    if (dateFilter === 'all') return undefined
+    if (dateFilter === 'custom') {
+      const r: { from?: number; to?: number } = {}
+      if (customFrom) r.from = new Date(customFrom).getTime()
+      if (customTo) r.to = new Date(customTo).getTime() + 86_400_000 // 含当天全天
+      return r
+    }
+    const days = dateFilter === '7d' ? 7 : 30
+    return { from: Date.now() - days * 86_400_000 }
+  })()
+
+  // 搜索（首页）
   useEffect(() => {
     if (!search.trim()) {
       setResults([])
+      setHasMore(false)
       return
     }
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
+      setOffset(0)
       try {
-        const r = await window.pocketai.searchMessages(search.trim())
+        const r = await window.pocketai.searchMessages(search.trim(), null, dateRange, 0)
         setResults(r)
+        setHasMore(r.length === PAGE)
       } catch (e) {
         logIpcError('chat.searchMessages', e)
         setResults([])
@@ -58,7 +85,24 @@ export const ConversationList: React.FC<Props> = ({
       }
     }, 200)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [search])
+  }, [search, dateFilter, customFrom, customTo, dateRange])
+
+  // 加载更多
+  const loadMore = async () => {
+    if (loadingMore || !search.trim()) return
+    setLoadingMore(true)
+    try {
+      const next = offset + PAGE
+      const r = await window.pocketai.searchMessages(search.trim(), null, dateRange, next)
+      setResults((prev) => [...prev, ...r])
+      setOffset(next)
+      setHasMore(r.length === PAGE)
+    } catch (e) {
+      logIpcError('chat.searchMessages.loadMore', e)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   const isSearching = search.trim().length > 0
 
@@ -102,12 +146,42 @@ export const ConversationList: React.FC<Props> = ({
             >🔐 {t('chat.importEncryptedShort')}</button>
           )}
         </div>
+        {isSearching && (
+          <div className="flex flex-wrap gap-1">
+            {(['all', '7d', '30d', 'custom'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setDateFilter(f)}
+                className={`text-[10px] px-1.5 py-0.5 rounded ${dateFilter === f ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+              >
+                {t(`chat.searchDate${f === 'all' ? 'All' : f === '7d' ? '7d' : f === '30d' ? '30d' : 'Custom'}`)}
+              </button>
+            ))}
+          </div>
+        )}
+        {isSearching && dateFilter === 'custom' && (
+          <div className="flex gap-1 text-[10px]">
+            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="input text-[10px] px-1 py-0.5 flex-1" />
+            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="input text-[10px] px-1 py-0.5 flex-1" />
+          </div>
+        )}
       </div>
 
       {/* 结果区 / 会话列表 */}
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
         {isSearching ? (
-          <MessageSearchResults results={results} searching={searching} query={search} onSelectConv={onSelect} />
+          <MessageSearchResults
+            results={results}
+            searching={searching}
+            query={search}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            onSelectConv={onSelect}
+            onSelectMessage={(convId, msgId) => {
+              onSelectMessage ? onSelectMessage(convId, msgId) : onSelect(convId)
+            }}
+            onLoadMore={loadMore}
+          />
         ) : (
           conversations.length === 0 ? (
             <EmptyState className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2" message={t('chat.noConversations')} />

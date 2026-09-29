@@ -197,8 +197,13 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_DELETE, id),
   truncateMessagesFrom: (id: string): Promise<{ ok: boolean; deleted: number }> =>
     ipcRenderer.invoke(IPC.MESSAGE_TRUNCATE_FROM, id),
-  searchMessages: (query: string, assistantId?: string): Promise<MessageSearchResult[]> =>
-    ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query, assistantId),
+  searchMessages: (
+    query: string,
+    assistantId?: string | null,
+    dateRange?: { from?: number; to?: number },
+    offset?: number
+  ): Promise<MessageSearchResult[]> =>
+    ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query, assistantId, dateRange, offset),
   getUsageSummary: (days?: number): Promise<UsageSummary> =>
     ipcRenderer.invoke(IPC.USAGE_GET, days),
   getDataHealth: (): Promise<DataHealthReport> =>

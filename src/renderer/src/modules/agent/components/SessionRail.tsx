@@ -19,6 +19,8 @@ interface Props {
   onExportEncrypted?: (id: string) => void
   onImport?: () => void
   onImportEncrypted?: () => void
+  /** 搜索结果点击：跳转定位到匹配消息（convId + messageId） */
+  onSelectMessage?: (convId: string, messageId: string) => void
 }
 
 export const SessionRail: React.FC<Props> = ({
@@ -34,26 +36,35 @@ export const SessionRail: React.FC<Props> = ({
   onExport,
   onExportEncrypted,
   onImport,
-  onImportEncrypted
+  onImportEncrypted,
+  onSelectMessage
 }) => {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
   const keyword = search.trim()
   const [results, setResults] = useState<MessageSearchResult[]>([])
   const [searching, setSearching] = useState(false)
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const PAGE = 50
 
   // 全文搜索（debounce 200ms，按当前助手隔离；与 Chat 侧栏同一后端通道）
   useEffect(() => {
     if (!keyword) {
       setResults([])
+      setHasMore(false)
       return
     }
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
+      setOffset(0)
       try {
-        setResults(await window.pocketai.searchMessages(keyword, assistantId || undefined))
+        const r = await window.pocketai.searchMessages(keyword, assistantId || undefined, undefined, 0)
+        setResults(r)
+        setHasMore(r.length === PAGE)
       } catch (e) {
         logIpcError('agent.searchMessages', e)
         setResults([])
@@ -64,9 +75,31 @@ export const SessionRail: React.FC<Props> = ({
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [keyword, assistantId])
 
-  // 点搜索结果 → 进入对应会话并退出搜索态
+  // 加载更多
+  const loadMore = async () => {
+    if (loadingMore || !keyword) return
+    setLoadingMore(true)
+    try {
+      const next = offset + PAGE
+      const r = await window.pocketai.searchMessages(keyword, assistantId || undefined, undefined, next)
+      setResults((prev) => [...prev, ...r])
+      setOffset(next)
+      setHasMore(r.length === PAGE)
+    } catch (e) {
+      logIpcError('agent.searchMessages.loadMore', e)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  // 点搜索结果 → 进入对应会话（带 messageId 定位）并退出搜索态
   const handleSelectResult = (id: string) => {
     onSelect(id)
+    setSearch('')
+  }
+  const handleSelectMessage = (convId: string, messageId: string) => {
+    if (onSelectMessage) onSelectMessage(convId, messageId)
+    else onSelect(convId)
     setSearch('')
   }
   return (
@@ -135,7 +168,11 @@ export const SessionRail: React.FC<Props> = ({
             results={results}
             searching={searching}
             query={keyword}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
             onSelectConv={handleSelectResult}
+            onSelectMessage={handleSelectMessage}
+            onLoadMore={loadMore}
           />
         ) : (
           <>

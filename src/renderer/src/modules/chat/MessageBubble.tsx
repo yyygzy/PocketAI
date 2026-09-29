@@ -15,6 +15,8 @@ interface Props {
   attachments?: ChatAttachment[]
   sources?: MessageSource[]
   selected?: boolean
+  /** 搜索跳转临时高亮（ring 闪烁动画，2s 后由父组件清除） */
+  highlight?: boolean
   onToggleSelect?: (id: string) => void
   onDelete?: (id: string) => void
   onRegenerate?: (id: string) => void
@@ -33,6 +35,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
   attachments,
   sources,
   selected,
+  highlight,
   onToggleSelect,
   onDelete,
   onRegenerate,
@@ -94,7 +97,9 @@ const MessageBubbleImpl: React.FC<Props> = ({
             isUser
               ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-br-md'
               : 'bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-bl-md'
-          } ${selected ? 'ring-2 ring-[var(--color-accent)]' : ''}`}
+          } ${selected ? 'ring-2 ring-[var(--color-accent)]' : ''} ${
+            highlight ? 'ring-2 ring-[var(--color-warning)] animate-pulse' : ''
+          }`}
         >
           {editing && isUser ? (
             <div className="flex flex-col gap-2">

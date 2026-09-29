@@ -45,6 +45,8 @@ export const ChatModule: React.FC = () => {
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [marketOpen, setMarketOpen] = useState(false)
   const [marketDetailId, setMarketDetailId] = useState<string | undefined>(undefined)
+  /** 搜索跳转定位的消息 id（消费后清空，传给 ChatView） */
+  const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
 
   const assistantIdRef = useRef('asst-default')
   const currentConvRef = useRef<string | null>(null)
@@ -189,6 +191,14 @@ export const ChatModule: React.FC = () => {
     const conv = conversations.find((c) => c.id === id)
     if (conv) restoreLastModel(conv)
   }
+
+  // 搜索跳转：切到目标会话并设 focusMessageId 让 ChatView 滚动+高亮
+  const handleSelectMessage = useCallback((convId: string, messageId: string) => {
+    userEditedTargetsRef.current = false
+    setCurrentConvId(convId)
+    loadMessages(convId)
+    setFocusMessageId(messageId)
+  }, [loadMessages])
 
   const handleNewConv = async () => {
     // 点击「新对话」直接在数据库创建一条对话记录，标题用当前助手名
@@ -483,6 +493,7 @@ export const ChatModule: React.FC = () => {
             onExportEncrypted={handleExportEncrypted}
             onImport={handleImportConv}
             onImportEncrypted={handleImportEncrypted}
+            onSelectMessage={handleSelectMessage}
             embedded
           />
         </div>
@@ -507,6 +518,7 @@ export const ChatModule: React.FC = () => {
         onForkConversation={handleForkConversation}
         onSaveAsNote={handleSaveAsNote}
         focusBranch={focusBranch}
+        focusMessageId={focusMessageId}
       />
 
       {marketOpen && (

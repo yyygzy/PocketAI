@@ -73,6 +73,8 @@ interface Props {
   onSaveAsNote?: (messageId: string) => void
   /** 分支聚焦信号：生成完成后把指定轮次切到新分支 */
   focusBranch?: FocusBranch | null
+  /** 搜索跳转定位：加载会话后滚动到匹配消息并临时高亮 */
+  focusMessageId?: string | null
 }
 
 export const ChatView: React.FC<Props> = ({
@@ -93,7 +95,8 @@ export const ChatView: React.FC<Props> = ({
   onDeleteMessages,
   onForkConversation,
   onSaveAsNote,
-  focusBranch
+  focusBranch,
+  focusMessageId
 }) => {
   const { t } = useI18n()
   const scrollBoxRef = useRef<HTMLDivElement>(null)
@@ -107,6 +110,7 @@ export const ChatView: React.FC<Props> = ({
   const [activeBranchMap, setActiveBranchMap] = useState<Record<string, string>>({})
   /** 处于并排对比模式的轮次（turnKey 集合） */
   const [compareTurns, setCompareTurns] = useState<Set<string>>(new Set())
+  const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
 
   // 分支聚焦：重新生成/编辑重发完成后自动切到新分支
   // 父组件每次 setFocusBranch 都自增 nonce，引用变即 nonce 变；直接依赖 focusBranch
@@ -220,6 +224,19 @@ export const ChatView: React.FC<Props> = ({
       return el instanceof HTMLElement ? el.getBoundingClientRect().height : 200
     }
   })
+
+  // 搜索跳转定位：messages 加载后找到匹配消息所在 turn，滚到居中 + 临时高亮 2s
+  useEffect(() => {
+    if (!focusMessageId || messages.length === 0) return
+    const idx = renderedTurns.findIndex(
+      (t) => t.user?.id === focusMessageId || t.replies.some((r) => r.id === focusMessageId)
+    )
+    if (idx < 0) return
+    virtualizer.scrollToIndex(idx, { align: 'center' })
+    setHighlightMsgId(focusMessageId)
+    const timer = setTimeout(() => setHighlightMsgId(null), 2000)
+    return () => clearTimeout(timer)
+  }, [focusMessageId, messages, renderedTurns, virtualizer])
 
   /** 批次标识：有 batchId 用 batchId，旧数据退化为下标 */
   const batchKeyOf = (batch: MessageRecord[], idx: number): string => batch[0]?.batchId ?? `legacy:${idx}`
@@ -387,6 +404,7 @@ export const ChatView: React.FC<Props> = ({
                         messageId={turn.user.id}
                         attachments={turn.user.attachments}
                         selected={selectedIds.has(turn.user.id)}
+                        highlight={highlightMsgId === turn.user.id}
                         onToggleSelect={toggleSelect}
                         onDelete={handleDeleteOne}
                         onResend={onResend}
@@ -412,6 +430,7 @@ export const ChatView: React.FC<Props> = ({
                         messageId={msg.id}
                         sources={msg.sources ?? undefined}
                         selected={selectedIds.has(msg.id)}
+                        highlight={highlightMsgId === msg.id}
                         onToggleSelect={toggleSelect}
                         onDelete={handleDeleteOne}
                         onRegenerate={onRegenerate}

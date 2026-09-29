@@ -36,13 +36,17 @@ export function registerMessageHandlers(): void {
   // 用量聚合汇总（token 用量按日/provider/模型，最近 N 天）
   safeHandle(IPC.USAGE_GET, (_e, days?: number) => usageService.getSummary(days),
     argsSchema(z.number().int().min(1).max(365).optional()))
-  safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string, assistantId?: string | null) => {
+  safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string, assistantId?: string | null, dateRange?: { from?: number; to?: number }, offset?: number) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()
     const handle = dbService.getHandle()
     const limit = 50
+    const off = Math.max(0, offset ?? 0)
     // 可选助手过滤：Agent 侧栏按助手隔离会话；Chat 不传则全局搜索
     const asstFilter = assistantId ? ' AND c.assistant_id = ?' : ''
+    // 可选日期范围（from/to 为 Unix 毫秒）
+    const dateFilter = dateRange?.from != null ? ' AND m.created_at >= ?' : ''
+    const dateToFilter = dateRange?.to != null ? ' AND m.created_at <= ?' : ''
 
     // FTS5 trigram tokenizer 要求查询 ≥ 3 字符才能有效匹配；
     // 短查询（中文 1-2 字、英文单词前缀）直接走 LIKE，避免无效的 MATCH 尝试
@@ -58,13 +62,15 @@ export function registerMessageHandlers(): void {
           FROM messages_fts fts
           JOIN messages m ON m.id = fts.message_id
           JOIN conversations c ON c.id = m.conversation_id
-          WHERE messages_fts MATCH ?${asstFilter}
+          WHERE messages_fts MATCH ?${asstFilter}${dateFilter}${dateToFilter}
           ORDER BY m.created_at DESC
-          LIMIT ?
+          LIMIT ? OFFSET ?
         `
         const ftsParams: (string | number)[] = [SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE, q]
         if (assistantId) ftsParams.push(assistantId)
-        ftsParams.push(limit)
+        if (dateRange?.from != null) ftsParams.push(dateRange.from)
+        if (dateRange?.to != null) ftsParams.push(dateRange.to)
+        ftsParams.push(limit, off)
         const rows = handle.prepare(ftsSql).all(...ftsParams) as MessageSearchRow[]
         if (rows.length > 0) {
           return rows.map(r => ({
@@ -86,14 +92,16 @@ export function registerMessageHandlers(): void {
              m.created_at, c.title AS conversation_title
       FROM messages m
       JOIN conversations c ON c.id = m.conversation_id
-      WHERE m.content LIKE ?${asstFilter}
+      WHERE m.content LIKE ?${asstFilter}${dateFilter}${dateToFilter}
       ORDER BY m.created_at DESC
-      LIMIT ?
+      LIMIT ? OFFSET ?
     `
     const like = `%${q.replace(/[%_]/g, '\\$&')}%`
     const likeParams: (string | number)[] = [like]
     if (assistantId) likeParams.push(assistantId)
-    likeParams.push(limit)
+    if (dateRange?.from != null) likeParams.push(dateRange.from)
+    if (dateRange?.to != null) likeParams.push(dateRange.to)
+    likeParams.push(limit, off)
     const rows = handle.prepare(likeSql).all(...likeParams) as MessageSearchRow[]
     const lq = q.toLowerCase()
     return rows.map(r => {
@@ -119,5 +127,5 @@ export function registerMessageHandlers(): void {
         createdAt: r.created_at
       }
     })
-  }, argsSchema(z.string(), z.string().nullish()))
+  }, argsSchema(z.string(), z.string().nullish(), z.object({ from: z.number().optional(), to: z.number().optional() }).optional(), z.number().int().min(0).optional()))
 }

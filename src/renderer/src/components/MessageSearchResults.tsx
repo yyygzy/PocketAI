@@ -49,8 +49,12 @@ export const MessageSearchResults: React.FC<{
   results: MessageSearchResult[]
   searching: boolean
   query: string
+  hasMore: boolean
+  loadingMore: boolean
   onSelectConv: (convId: string) => void
-}> = ({ results, searching, query, onSelectConv }) => {
+  onSelectMessage: (convId: string, messageId: string) => void
+  onLoadMore: () => void
+}> = ({ results, searching, query, hasMore, loadingMore, onSelectConv, onSelectMessage, onLoadMore }) => {
   const { t } = useI18n()
   if (searching) {
     return <EmptyState className="text-xs text-[var(--color-text-muted)] text-center mt-6" message={t('chat.searching')} />
@@ -80,7 +84,7 @@ export const MessageSearchResults: React.FC<{
           {group.items.map((r) => (
             <div
               key={r.messageId}
-              onClick={() => onSelectConv(r.conversationId)}
+              onClick={() => onSelectMessage(r.conversationId, r.messageId)}
               className="text-[11px] px-2.5 py-1.5 rounded cursor-pointer hover:bg-[var(--color-hover-overlay)] border border-transparent hover:border-[var(--color-border)]"
             >
               <div className="flex items-center gap-1 mb-0.5">
@@ -94,6 +98,15 @@ export const MessageSearchResults: React.FC<{
           ))}
         </div>
       ))}
+      {hasMore && (
+        <button
+          onClick={onLoadMore}
+          disabled={loadingMore}
+          className="w-full text-center text-[11px] text-[var(--color-accent)] px-2 py-2 hover:underline disabled:opacity-50"
+        >
+          {loadingMore ? t('chat.searchLoading') : t('chat.searchLoadMore')}
+        </button>
+      )}
     </>
   )
 }
