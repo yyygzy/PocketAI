@@ -9,6 +9,7 @@ import type {
 } from '../../../../shared/types'
 import { BUILTIN_EMBED_PROVIDER_ID, BUILTIN_EMBED_MODEL } from '../../../../shared/types'
 import KbAskPanel from './KbAskPanel'
+import { consumePendingSourceJump, KB_SOURCE_JUMP_EVENT } from './source-jump'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
@@ -20,11 +21,30 @@ export const KnowledgeModule: React.FC = () => {
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'detail' | 'create'>('detail')
+  /** 来源跳转待定位目标（聊天/KB 问答来源块 → 本模块定位分块） */
+  const [jumpFocus, setJumpFocus] = useState<{ docId: string; seq: number } | null>(null)
 
   const load = useCallback(() => window.pocketai.listKnowledgeBases().then(setKbs).catch(reportIpcError('kb.list')), [])
   useEffect(() => {
     load()
   }, [load])
+
+  // 来源跳转：已挂载时即时消费事件；未挂载场景由 App 切模块后从 pending 消费
+  useEffect(() => {
+    const consume = (d: { kbId: string; docId: string; seq: number }) => {
+      setMode('detail')
+      setSelectedId(d.kbId)
+      setJumpFocus({ docId: d.docId, seq: d.seq })
+    }
+    const handler = () => {
+      const d = consumePendingSourceJump()
+      if (d) consume(d)
+    }
+    window.addEventListener(KB_SOURCE_JUMP_EVENT, handler)
+    const pending = consumePendingSourceJump()
+    if (pending) consume(pending)
+    return () => window.removeEventListener(KB_SOURCE_JUMP_EVENT, handler)
+  }, [])
 
   const selected = kbs.find((k) => k.id === selectedId) ?? null
 
@@ -82,7 +102,12 @@ export const KnowledgeModule: React.FC = () => {
             onCancel={() => setMode('detail')}
           />
         ) : selected ? (
-          <KbDetail kb={selected} onChanged={load} />
+          <KbDetail
+            kb={selected}
+            onChanged={load}
+            jumpFocus={jumpFocus}
+            onJumpHandled={() => setJumpFocus(null)}
+          />
         ) : (
           <div className="flex items-center justify-center h-full text-sm text-[var(--color-text-muted)]">
             {t('kb.selectPrompt')}
@@ -415,7 +440,12 @@ const KbForm: React.FC<{
 }
 
 // ---------- 知识库详情：文档 + 检索测试 ----------
-const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, onChanged }) => {
+const KbDetail: React.FC<{
+  kb: KnowledgeBase
+  onChanged: () => void
+  jumpFocus?: { docId: string; seq: number } | null
+  onJumpHandled?: () => void
+}> = ({ kb, onChanged, jumpFocus, onJumpHandled }) => {
   const { t } = useI18n()
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
@@ -431,6 +461,17 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
     loadDocs()
     return () => stopPolling()
   }, [loadDocs])
+
+  // 来源跳转消费：目标文档加载到后打开分块预览（含问答 tab 时先切回文档 tab）；
+  // 文档不存在（已删除/不属于本库）则悬空不消费，无副作用
+  useEffect(() => {
+    if (!jumpFocus) return
+    const doc = docs.find((d) => d.id === jumpFocus.docId)
+    if (!doc) return
+    setAskMode(false)
+    setPreviewDoc(doc)
+    onJumpHandled?.()
+  }, [jumpFocus, docs, onJumpHandled])
 
   const refresh = async () => {
     await loadDocs()
@@ -686,7 +727,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
 
       {/* 分块预览弹层 */}
       {previewDoc && (
-        <ChunkPreview doc={previewDoc} onClose={() => setPreviewDoc(null)} />
+        <ChunkPreview doc={previewDoc} onClose={() => setPreviewDoc(null)} focusSeq={jumpFocus?.seq ?? null} />
       )}
 
       {/* 添加 URL / 录入文本弹窗 */}
@@ -793,10 +834,16 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
 }
 
 // ---------- 分块预览 ----------
-const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void }> = ({ doc, onClose }) => {
+const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: number | null }> = ({
+  doc,
+  onClose,
+  focusSeq
+}) => {
   const { t } = useI18n()
   const [chunks, setChunks] = useState<KbChunk[]>([])
   const [loading, setLoading] = useState(true)
+  /** 来源跳转命中的分块高亮（短暂闪烁后恢复） */
+  const [hlSeq, setHlSeq] = useState<number | null>(null)
 
   useEffect(() => {
     window.pocketai
@@ -805,6 +852,17 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void }> = ({ doc,
       .catch(reportIpcError('kb.listChunks'))
       .finally(() => setLoading(false))
   }, [doc.id])
+
+  // 来源跳转定位：滚动到目标分块并高亮闪烁
+  useEffect(() => {
+    if (focusSeq == null || loading || chunks.length === 0) return
+    const el = document.getElementById(`kb-chunk-${focusSeq}`)
+    if (!el) return
+    el.scrollIntoView({ block: 'center' })
+    setHlSeq(focusSeq)
+    const timer = setTimeout(() => setHlSeq(null), 1800)
+    return () => clearTimeout(timer)
+  }, [focusSeq, loading, chunks])
 
   return (
     <div
@@ -829,7 +887,12 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void }> = ({ doc,
           {chunks.map((c) => (
             <div
               key={c.id}
-              className="p-2 rounded bg-[var(--color-input-bg)] border border-[var(--color-border)]"
+              id={`kb-chunk-${c.sequence}`}
+              className={`p-2 rounded bg-[var(--color-input-bg)] border transition-colors ${
+                hlSeq === c.sequence
+                  ? 'border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]'
+                  : 'border-[var(--color-border)]'
+              }`}
             >
               <div className="text-[10px] text-[var(--color-text-muted)] mb-1">
                 #{c.sequence}

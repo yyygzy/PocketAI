@@ -285,11 +285,17 @@ function createMainWindow(): void {
 
 // ─── 核心启动流程 ─────────────────────────────────────────────────
 
+/** 启动埋点：各阶段相对 boot 起点（含解锁等待，用户交互时间单独标注） */
+const BOOT_T0 = performance.now()
+function bootMark(stage: string): void {
+  log.info(`[perf] ${stage}: ${(performance.now() - BOOT_T0).toFixed(0)}ms`)
+}
+
 async function boot(): Promise<void> {
   ensureDirs()
-  // 日志落盘锚定便携目录 data/logs（LOGS_DIR 由 ensureDirs 保证存在）
   configureLogDir(LOGS_DIR)
   migrateMcpExtensionsDir()
+  bootMark('目录/日志初始化')
 
   // ensureDirs 之后才设置路径：此时 DATA_DIR 一定是合法目录
   app.setPath('userData', path.join(DATA_DIR, 'userdata'))
@@ -304,6 +310,7 @@ async function boot(): Promise<void> {
 
   // 阶段 1：尝试无密码打开 DB
   const openedPlaintext = tryOpenDbNoPassword()
+  bootMark(openedPlaintext ? 'DB 无密码打开+迁移' : 'DB 加密探测')
 
   let needUnlock = false
   let hasExistingPassword = false
@@ -403,7 +410,15 @@ async function boot(): Promise<void> {
 
     unlockWindow?.close()
     unlockWindow = null
+    bootMark('解锁流程完成（含用户输入等待）')
   }
+
+  // 阶段 2（时序优化）：主窗口尽早创建。
+  // IPC handlers 已在 boot 开头注册（惰性闭包），渲染层数据全部经 IPC 拉取，
+  // 不依赖下方同步杂务；窗口 loadFile 异步加载渲染 bundle 与主进程杂务并行，
+  // 开窗时间从「杂务之和 + 渲染加载」降为「max(杂务, 渲染加载)」。
+  createMainWindow()
+  bootMark('主窗口已创建（渲染 bundle 开始加载）')
 
   // 阶段 3：历史明文凭据一次性升级为字段加密（幂等；此时字段密钥在各模式均已可用）
   try {
@@ -419,6 +434,7 @@ async function boot(): Promise<void> {
   } catch (e) {
     providerLog.warn('重复 provider 清理失败（不阻塞启动）:', e)
   }
+  bootMark('凭据迁移 + provider 去重')
 
   // 同步助手 + 技能
   const synced = syncBuiltinAssistants()
@@ -431,6 +447,7 @@ async function boot(): Promise<void> {
     `内置技能同步完成: ${syncedSkills.count} 个` +
       (syncedSkills.errors.length ? `，错误: ${syncedSkills.errors.join('; ')}` : '')
   )
+  bootMark('内置助手/技能同步')
 
   // 快捷浮窗（快捷问答 / 选区助手）：全局快捷键 + IPC
   // （IPC 网关于 boot 开头安装，此处 initPopup 注册的通道同样受其保护）
@@ -458,10 +475,8 @@ async function boot(): Promise<void> {
   } catch (e) {
     licenseLog.warn('加载失败:', errMsg(e))
   }
+  bootMark('浮窗/Channels/License')
 
-  // 阶段 5：创建主窗口
-  createMainWindow()
-  log.info('主窗口已创建')
   // 系统托盘：单击切换可见性，右键菜单显示/退出
   initTray('zh')
   // 应用已保存的窗口透明度
@@ -491,6 +506,7 @@ async function boot(): Promise<void> {
   powerMonitor.on('resume', () => lockService.onOsWake())
   powerMonitor.on('lock-screen', () => lockService.lock('os-sleep'))
   powerMonitor.on('unlock-screen', () => { /* 保持锁定，等用户在应用内解锁 */ })
+  bootMark('锁/备份/任务/提醒调度器启动完成')
 }
 
 // ─── 单实例锁 ───────────────────────────────────────────────────

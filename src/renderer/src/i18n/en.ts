@@ -210,6 +210,7 @@ export const en: Record<string, string> = {
   'chatview.saveNote': 'Save note',
   'chatview.saveNoteTitle': 'Save as note',
   'chatview.sources': 'Sources ({count})',
+  'chatview.viewSource': 'View source',
   'chatview.roleUser': 'User',
   'chatview.roleAssistant': 'Assistant',
   'chatview.visionWarn': 'These models may not support image understanding: {models}\n\nVision models (gpt-4o, claude-3, qwen-vl, etc.) are recommended.\n\nSend anyway?',

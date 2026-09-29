@@ -210,6 +210,7 @@ export const zh: Record<string, string> = {
   'chatview.saveNote': '存笔记',
   'chatview.saveNoteTitle': '另存为笔记',
   'chatview.sources': '引用来源 ({count})',
+  'chatview.viewSource': '查看原文',
   'chatview.roleUser': '用户',
   'chatview.roleAssistant': '助手',
   'chatview.visionWarn': '以下模型可能不支持图片理解：{models}\n\n建议使用视觉模型（如 gpt-4o、claude-3、qwen-vl 等）。\n\n确定要发送吗？',

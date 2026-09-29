@@ -18,6 +18,8 @@ function makeChunk(
   overrides: Partial<{
     chunkId: string
     docId: string
+    kbId: string
+    seq: number
     docTitle: string
     content: string
     score: number
@@ -26,6 +28,8 @@ function makeChunk(
   return {
     chunkId: 'c1',
     docId: 'd1',
+    kbId: 'kb1',
+    seq: 0,
     docTitle: '产品手册',
     content: '这是文档片段内容',
     score: 0.123456,

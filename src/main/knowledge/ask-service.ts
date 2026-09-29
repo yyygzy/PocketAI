@@ -42,7 +42,9 @@ export function chunksToSources(chunks: RetrievedChunk[]): MessageSource[] {
     chunkId: c.chunkId,
     docId: c.docId,
     docTitle: c.docTitle,
-    content: c.content
+    content: c.content,
+    kbId: c.kbId,
+    seq: c.seq
   }))
 }
 

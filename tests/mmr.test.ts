@@ -4,7 +4,7 @@ import { mmrSelect } from '../src/main/knowledge/mmr'
 import type { RetrievedChunk } from '../src/shared/types'
 
 function chunk(id: string, score: number): RetrievedChunk {
-  return { chunkId: id, docId: `doc-${id}`, docTitle: '', content: `content-${id}`, score }
+  return { chunkId: id, docId: `doc-${id}`, kbId: 'kb1', seq: 0, docTitle: '', content: `content-${id}`, score }
 }
 
 function v(...vals: number[]): Float32Array {

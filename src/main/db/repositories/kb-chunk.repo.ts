@@ -160,6 +160,8 @@ export const kbChunkRepo = {
       return hits.map((h) => ({
         chunkId: h.chunkId,
         docId: h.docId,
+        kbId: h.kbId,
+        seq: h.seq,
         docTitle: '',
         content: h.content,
         score: h.score
@@ -172,7 +174,7 @@ export const kbChunkRepo = {
     const placeholders = kbIds.map(() => '?').join(',')
     const rows = db
       .prepare(
-        `SELECT c.id, c.doc_id, c.kb_id, c.content, c.embedding
+        `SELECT c.id, c.doc_id, c.kb_id, c.sequence, c.content, c.embedding
          FROM kb_chunks c
          WHERE c.kb_id IN (${placeholders}) AND c.embedding IS NOT NULL
            AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)`
@@ -187,6 +189,8 @@ export const kbChunkRepo = {
       scored.push({
         chunkId: r.id,
         docId: r.doc_id,
+        kbId: r.kb_id,
+        seq: r.sequence,
         docTitle: '', // 由调用方 join 文档标题
         content: r.content,
         score
@@ -226,19 +230,22 @@ export const kbChunkRepo = {
     const placeholders = kbIds.map(() => '?').join(',')
     const rows = db
       .prepare(
-        `SELECT f.content, f.doc_id, f.kb_id, f.chunk_id, bm25(kb_chunks_fts) AS score
+        `SELECT f.content, f.doc_id, f.kb_id, f.chunk_id, c.sequence, bm25(kb_chunks_fts) AS score
          FROM kb_chunks_fts f
+         JOIN kb_chunks c ON c.id = f.chunk_id
          WHERE f.kb_chunks_fts MATCH ? AND f.kb_id IN (${placeholders})
            AND f.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)
          ORDER BY score ASC
          LIMIT ?`
       )
-      .all(matchExpr, ...kbIds, topK) as Array<{ content: string; doc_id: string; kb_id: string; chunk_id: string; score: number }>
+      .all(matchExpr, ...kbIds, topK) as Array<{ content: string; doc_id: string; kb_id: string; chunk_id: string; sequence: number; score: number }>
 
     // FTS5 bm25() 返回值越小越相关，取负数使降序排列时相关的在前
     return rows.map((r) => ({
       chunkId: r.chunk_id,
       docId: r.doc_id,
+      kbId: r.kb_id,
+      seq: r.sequence,
       docTitle: '',
       content: r.content,
       score: -r.score

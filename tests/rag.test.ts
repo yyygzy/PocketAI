@@ -14,7 +14,7 @@ import { rrfFuse, ragService } from '../src/main/knowledge/rag'
 import type { RetrievedChunk } from '../src/shared/types'
 
 function chunk(id: string, score = 0): RetrievedChunk {
-  return { chunkId: id, docId: `doc-${id}`, docTitle: '', content: `content-${id}`, score }
+  return { chunkId: id, docId: `doc-${id}`, kbId: 'kb1', seq: 0, docTitle: '', content: `content-${id}`, score }
 }
 
 describe('rrfFuse — RRF 混合重排', () => {
@@ -82,7 +82,7 @@ describe('buildContext — 知识上下文拼装', () => {
 
   it('头部带编号引用指令，单 chunk 格式为 [序号. 标题]\\n内容', () => {
     const ctx = ragService.buildContext([
-      { chunkId: '1', docId: 'd1', docTitle: '文档A', content: '内容1', score: 0.5 }
+      { chunkId: '1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: '文档A', content: '内容1', score: 0.5 }
     ])
     expect(ctx).toContain('用编号标注来源（如 [1]、[2]）')
     expect(ctx).toContain('不要编造')
@@ -91,8 +91,8 @@ describe('buildContext — 知识上下文拼装', () => {
 
   it('多 chunk 用 --- 分隔，编号与顺序一致', () => {
     const ctx = ragService.buildContext([
-      { chunkId: '1', docId: 'd1', docTitle: 'A', content: 'c1', score: 0.5 },
-      { chunkId: '2', docId: 'd2', docTitle: 'B', content: 'c2', score: 0.3 }
+      { chunkId: '1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: 'A', content: 'c1', score: 0.5 },
+      { chunkId: '2', docId: 'd2', kbId: 'kb1', seq: 1, docTitle: 'B', content: 'c2', score: 0.3 }
     ])
     expect(ctx).toContain('[1. A]\nc1')
     expect(ctx).toContain('[2. B]\nc2')

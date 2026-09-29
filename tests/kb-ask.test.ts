@@ -53,8 +53,8 @@ describe('buildAskMessages — 问答消息拼装', () => {
 
   it('chunksToSources：RetrievedChunk 映射为 MessageSource', () => {
     const out = chunksToSources([
-      { chunkId: 'c1', docId: 'd1', docTitle: '手册', content: '正文', score: 0.9 }
+      { chunkId: 'c1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: '手册', content: '正文', score: 0.9 }
     ])
-    expect(out).toEqual([{ chunkId: 'c1', docId: 'd1', docTitle: '手册', content: '正文' }])
+    expect(out).toEqual([{ chunkId: 'c1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: '手册', content: '正文' }])
   })
 })

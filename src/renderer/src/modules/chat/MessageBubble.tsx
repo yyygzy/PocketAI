@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
-import type { ChatAttachment } from '../../../../shared/types'
+import type { ChatAttachment, MessageSource } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
+import { requestSourceJump } from '../knowledge/source-jump'
 import { AttachmentGrid } from '../../components/AttachmentGrid'
 import { Markdown } from './Markdown'
 
@@ -12,7 +13,7 @@ interface Props {
   model?: string | null
   messageId: string
   attachments?: ChatAttachment[]
-  sources?: Array<{ chunkId: string; docId: string; docTitle: string; content: string }>
+  sources?: MessageSource[]
   selected?: boolean
   onToggleSelect?: (id: string) => void
   onDelete?: (id: string) => void
@@ -180,6 +181,18 @@ const MessageBubbleImpl: React.FC<Props> = ({
                       <span className="text-[11px] text-[var(--color-accent)] font-medium truncate">
                         {s.docTitle}
                       </span>
+                      {s.kbId && s.seq !== undefined && (
+                        <button
+                          onClick={() =>
+                            requestSourceJump({ kbId: s.kbId!, docId: s.docId, seq: s.seq! })
+                          }
+                          title={t('chatview.viewSource')}
+                          aria-label={t('chatview.viewSource')}
+                          className="ml-auto shrink-0 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+                        >
+                          ↗
+                        </button>
+                      )}
                     </div>
                     <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">
                       {s.content.slice(0, 120)}{s.content.length > 120 ? '…' : ''}

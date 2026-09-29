@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { EmptyState } from '../../components/EmptyState'
+import { requestSourceJump } from './source-jump'
 import { Markdown } from '../chat/Markdown'
 import type {
   KnowledgeBase,
@@ -212,6 +213,18 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
                           <span className="text-[11px] text-[var(--color-accent)] font-medium truncate">
                             {s.docTitle}
                           </span>
+                          {s.kbId && s.seq !== undefined && (
+                            <button
+                              onClick={() =>
+                                requestSourceJump({ kbId: s.kbId!, docId: s.docId, seq: s.seq! })
+                              }
+                              title={t('chatview.viewSource')}
+                              aria-label={t('chatview.viewSource')}
+                              className="ml-auto shrink-0 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+                            >
+                              ↗
+                            </button>
+                          )}
                         </div>
                         <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">
                           {s.content.slice(0, 120)}

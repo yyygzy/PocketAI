@@ -193,6 +193,7 @@ export const ja: Record<string, string> = {
   'chatview.saveNote': 'メモに保存',
   'chatview.saveNoteTitle': 'メモとして保存',
   'chatview.sources': '参照元 ({count})',
+  'chatview.viewSource': '原文を見る',
   'chatview.roleUser': 'ユーザー',
   'chatview.roleAssistant': 'アシスタント',
   'chatview.visionWarn': '以下のモデルは画像理解に対応していない可能性があります：{models}\n\n視覚モデル（gpt-4o、claude-3、qwen-vl など）の使用を推奨します。\n\nそれでも送信しますか？',

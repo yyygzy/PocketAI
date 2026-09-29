@@ -210,6 +210,10 @@ export interface MessageSource {
   docId: string
   docTitle: string
   content: string
+  /** 所属知识库 id（旧数据无此字段，不可跳转原文） */
+  kbId?: string
+  /** 分块序号（旧数据无此字段，不可跳转原文） */
+  seq?: number
 }
 
 // ---------- KB 问答模式（知识库详情页内选库即聊，轻量不落库） ----------
@@ -310,6 +314,10 @@ export interface KbChunk {
 export interface RetrievedChunk {
   chunkId: string
   docId: string
+  /** 所属知识库 id（来源跳转原文用） */
+  kbId: string
+  /** 分块在文档内的序号（来源跳转原文定位用） */
+  seq: number
   docTitle: string
   content: string
   score: number

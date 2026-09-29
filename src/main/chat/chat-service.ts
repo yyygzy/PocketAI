@@ -199,7 +199,9 @@ class ChatService {
           chunkId: c.chunkId,
           docId: c.docId,
           docTitle: c.docTitle,
-          content: c.content
+          content: c.content,
+          kbId: c.kbId,
+          seq: c.seq
         }))
       } catch {
         // 检索失败不阻断对话，仅跳过知识注入

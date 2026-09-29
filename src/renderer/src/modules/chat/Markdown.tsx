@@ -1,12 +1,26 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import type { PluggableList } from 'unified'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
-import rehypeKatex from 'rehype-katex'
-import 'katex/dist/katex.min.css'
 import { MermaidBlock } from './MermaidBlock'
 import { remarkCitations } from './remark-citations'
+
+// katex 懒加载（主包瘦身 ~280KB）：rehype-katex + katex.min.css 均为动态 import，
+// 模块图不再静态包含。ready 前公式以原始 LaTeX 文本渲染，ready 后重渲染为公式；
+// CSS 与插件同批加载，不会出现无样式的公式中间态。
+let katexPromise: Promise<void> | null = null
+let katexPlugin: PluggableList[number] | null = null
+function ensureKatex(): Promise<void> {
+  katexPromise ??= Promise.all([
+    import('rehype-katex').then((m) => {
+      katexPlugin = m.default
+    }),
+    import('katex/dist/katex.min.css')
+  ]).then(() => undefined)
+  return katexPromise
+}
 
 // 链接/图片协议白名单：react-markdown 默认会编码危险协议，这里再显式兜底，
 // 防止依赖库行为变化放行 javascript:/vbscript:/file:/data:text/html 等。
@@ -47,13 +61,29 @@ export const Markdown: React.FC<{
   /** 引用徽章点击回调（定位到来源块对应条目）；未传时徽章仅展示不可点 */
   onCitation?: (n: number) => void
 }> = ({ content, citationCount = 0, onCitation }) => {
+  // katex 就绪后一次性重渲染所有 Markdown 实例（模块级单例，全局仅一次）
+  const [katexReady, setKatexReady] = useState(Boolean(katexPlugin))
+  useEffect(() => {
+    if (katexReady) return
+    let alive = true
+    void ensureKatex().then(() => {
+      if (alive) setKatexReady(true)
+    })
+    return () => {
+      alive = false
+    }
+  }, [katexReady])
+
   const plugins = citationCount > 0 ? [remarkGfm, remarkMath, remarkCitations] : [remarkGfm, remarkMath]
+  const rehypePlugins: PluggableList = katexPlugin
+    ? [katexPlugin, [rehypeHighlight, { detect: true, ignoreMissing: true }]]
+    : [[rehypeHighlight, { detect: true, ignoreMissing: true }]]
   return (
     <div className="markdown-body text-[14px] leading-relaxed">
       <ReactMarkdown
         urlTransform={safeUrlTransform}
         remarkPlugins={plugins}
-        rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        rehypePlugins={rehypePlugins}
         components={{
           sup: ({ node, children, ...props }) => {
             // 知识库引用徽章（remarkCitations 产出）：hProperties['data-citation'] → properties.dataCitation

@@ -193,6 +193,7 @@ export const ko: Record<string, string> = {
   'chatview.saveNote': '메모로 저장',
   'chatview.saveNoteTitle': '메모로 저장',
   'chatview.sources': '출처 ({count})',
+  'chatview.viewSource': '원문 보기',
   'chatview.roleUser': '사용자',
   'chatview.roleAssistant': '어시스턴트',
   'chatview.visionWarn': '다음 모델은 이미지 이해를 지원하지 않을 수 있습니다: {models}\n\n비전 모델(gpt-4o, claude-3, qwen-vl 등) 사용을 권장합니다.\n\n그래도 전송할까요?',

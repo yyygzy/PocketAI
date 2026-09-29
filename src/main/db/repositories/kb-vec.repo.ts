@@ -103,7 +103,7 @@ export const kbVecRepo = {
     kbIds: string[],
     dim: number,
     topK: number
-  ): Array<{ chunkId: string; docId: string; content: string; score: number }> {
+  ): Array<{ chunkId: string; docId: string; kbId: string; seq: number; content: string; score: number }> {
     if (kbIds.length === 0) return []
     this.ensureTable(dim)
     const db = dbService.getHandle()
@@ -113,7 +113,7 @@ export const kbVecRepo = {
     const oversample = topK * 3
     const rows = db
       .prepare(
-        `SELECT c.id AS chunk_id, c.doc_id, c.content, v.distance
+        `SELECT c.id AS chunk_id, c.doc_id, c.kb_id, c.sequence, c.content, v.distance
          FROM (
            SELECT rowid, distance FROM ${vecTableName(dim)}
            WHERE embedding MATCH ?
@@ -129,12 +129,16 @@ export const kbVecRepo = {
       .all(float32ToBuffer(query), oversample, dim, ...kbIds) as Array<{
       chunk_id: string
       doc_id: string
+      kb_id: string
+      sequence: number
       content: string
       distance: number
     }>
     return rows.slice(0, topK).map((r) => ({
       chunkId: r.chunk_id,
       docId: r.doc_id,
+      kbId: r.kb_id,
+      seq: r.sequence,
       content: r.content,
       score: 1 / (1 + r.distance)
     }))

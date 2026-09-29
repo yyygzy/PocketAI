@@ -1,8 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { zh } from './zh'
-import { en } from './en'
-import { ja } from './ja'
-import { ko } from './ko'
 
 export type Lang = 'zh' | 'en' | 'ja' | 'ko'
 
@@ -15,8 +12,24 @@ export const LANGS: { code: Lang; label: string; native: string }[] = [
 
 const STORAGE_KEY = 'pocketai.lang'
 
+// 主包瘦身：zh（默认语言 + 兜底字典）常驻，其余语言动态 import 按需加载。
+// 加载完成前 t() 回退 zh；本地 chunk 加载毫秒级，切换几乎无感。
 type Dict = Record<string, string>
-const dicts: Record<Lang, Dict> = { zh, en, ja, ko }
+const dicts: Partial<Record<Lang, Dict>> = { zh }
+
+const langLoaders: Record<Exclude<Lang, 'zh'>, () => Promise<Dict>> = {
+  en: () => import('./en').then((m) => m.en),
+  ja: () => import('./ja').then((m) => m.ja),
+  ko: () => import('./ko').then((m) => m.ko)
+}
+const langPromises: Partial<Record<Exclude<Lang, 'zh'>, Promise<Dict>>> = {}
+function ensureLang(lang: Exclude<Lang, 'zh'>): Promise<Dict> {
+  langPromises[lang] ??= langLoaders[lang]().then((dict) => {
+    dicts[lang] = dict
+    return dict
+  })
+  return langPromises[lang]!
+}
 
 const HTML_LANG: Record<Lang, string> = { zh: 'zh-CN', en: 'en', ja: 'ja', ko: 'ko' }
 
@@ -52,7 +65,13 @@ function readInitialLang(): Lang {
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [lang, setLangState] = useState<Lang>(readInitialLang)
 
+  // 初始语言为非 zh 时按需补载对应字典（加载完成前 t() 回退 zh）
+  useEffect(() => {
+    if (lang !== 'zh' && !dicts[lang]) void ensureLang(lang)
+  }, [lang])
+
   const setLang = useCallback((next: Lang) => {
+    if (next !== 'zh' && !dicts[next]) void ensureLang(next)
     setLangState(next)
     try {
       localStorage.setItem(STORAGE_KEY, next)
@@ -75,7 +94,8 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [lang])
 
   const t = useCallback((key: string, params?: Record<string, string | number>) => {
-    let str = dicts[lang][key] ?? dicts.zh[key] ?? key
+    // 目标语言字典未加载完成时回退 zh（兜底链保证任何时刻都有可用文本）
+    let str = dicts[lang]?.[key] ?? dicts.zh?.[key] ?? key
     if (params) {
       for (const [k, v] of Object.entries(params)) {
         str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
