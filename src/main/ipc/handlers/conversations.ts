@@ -2,7 +2,9 @@
 import { BrowserWindow, dialog } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
+import path from 'node:path'
 import { IPC, type ConversationExportPayload } from '../../../shared/types'
+import { buildConversationMarkdown, safeFileName, dedupeFileNames } from '../../../shared/export-markdown'
 import { dbService } from '../../db/database'
 import { conversationRepo } from '../../db/repositories/conversation.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
@@ -58,10 +60,10 @@ export function registerConversationHandlers(): void {
     const conv = conversationRepo.get(String(id ?? ''))
     if (!conv) return { ok: false, error: '会话不存在' }
     const messages = messageRepo.listByConversation(String(id ?? ''))
+    const assistant = conv.assistantId ? assistantRepo.get(conv.assistantId) ?? null : null
 
-    const safeName = conv.title.replace(/[<>:"/\\|?*]/g, '_').trim() || 'conversation'
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
-      defaultPath: `${safeName}.md`,
+      defaultPath: `${safeFileName(conv.title)}.md`,
       filters: [
         { name: 'Markdown', extensions: ['md'] },
         { name: '所有文件', extensions: ['*'] }
@@ -69,10 +71,60 @@ export function registerConversationHandlers(): void {
     })
     if (canceled || !filePath) return { ok: true, canceled: true }
 
-    const md = renderConversationToMarkdown(conv, messages)
+    const md = buildConversationMarkdown(conv, messages, assistant?.name ?? null)
     fs.writeFileSync(filePath, md, 'utf8')
     return { ok: true, path: filePath }
   }, argsSchema(idSchema))
+
+  // HTML 内容由渲染端生成（复用应用内 Markdown 管线，零新依赖），主进程只负责选路径存盘
+  safeHandle(IPC.CONVERSATION_EXPORT_HTML, async (e, id: string, html: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    const conv = conversationRepo.get(String(id ?? ''))
+    if (!conv) return { ok: false, error: '会话不存在' }
+
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: `${safeFileName(conv.title)}.html`,
+      filters: [
+        { name: 'HTML 网页', extensions: ['html'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePath) return { ok: true, canceled: true }
+
+    fs.writeFileSync(filePath, html, 'utf8')
+    return { ok: true, path: filePath }
+  }, argsSchema(idSchema, z.string().min(1).max(50 * 1024 * 1024)))
+
+  // 批量导出：渲染端生成全部文件内容，主进程选目录统一写入（重名自动加序号）
+  safeHandle(IPC.CONVERSATION_EXPORT_BATCH, async (e, files: Array<{ name: string; content: string }>) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    if (!Array.isArray(files) || files.length === 0) return { ok: false, error: '没有可导出的会话' }
+
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (canceled || !filePaths?.[0]) return { ok: true, canceled: true }
+    const dir = filePaths[0]
+
+    const finalNames = dedupeFileNames(files.map((f) => safeFileName(f.name)))
+    let count = 0
+    const failed: string[] = []
+    files.forEach((f, i) => {
+      try {
+        fs.writeFileSync(path.join(dir, finalNames[i]!), f.content, 'utf8')
+        count++
+      } catch {
+        failed.push(f.name)
+      }
+    })
+    return { ok: true, count, dir, failed }
+  }, argsSchema(z.array(z.object({
+    name: z.string().min(1).max(200),
+    content: z.string().max(50 * 1024 * 1024)
+  })).min(1).max(500)))
+
   safeHandle(IPC.CONVERSATION_EXPORT_ENCRYPTED, async (e, id: string, password: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: '窗口不可用' }
@@ -90,7 +142,7 @@ export function registerConversationHandlers(): void {
     }
     const encrypted = encryptWithPassword(password, JSON.stringify(payload))
 
-    const safeName = conv.title.replace(/[<>:"/\\|?*]/g, '_').trim() || 'conversation'
+    const safeName = safeFileName(conv.title)
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       defaultPath: `${safeName}.moxia`,
       filters: [
@@ -229,77 +281,3 @@ export function registerConversationHandlers(): void {
   }), argsSchema(idSchema, idSchema))
 }
 
-// ==========================================================================
-// Markdown 导出辅助函数
-// ==========================================================================
-
-/** 把单条消息内容里的多行文本包裹成代码块，避免 Markdown 排版错乱 */
-function escapeMdCodeBlock(text: string): string {
-  if (!text) return ''
-  // 如果本身就有 ``` fence，改用 ~~~ fence 避免冲突
-  if (text.includes('```')) {
-    return '~~~\n' + text.trimEnd() + '\n~~~'
-  }
-  return text.trimEnd()
-}
-
-function roleLabel(role: string): string {
-  switch (role) {
-    case 'user': return '👤 用户'
-    case 'assistant': return '🤖 助手'
-    case 'system': return '⚙️ 系统'
-    case 'tool': return '🔧 工具'
-    default: return role
-  }
-}
-
-function renderConversationToMarkdown(
-  conv: { title: string; modelLabel: string | null; createdAt: number; updatedAt: number },
-  messages: { role: string; content: string; createdAt: number; toolCalls?: string | null }[]
-): string {
-  const dateFmt = (ts: number) => new Date(ts).toLocaleString()
-
-  const lines: string[] = []
-  lines.push(`# ${conv.title}`)
-  lines.push('')
-  lines.push(`> **模型**: \`${conv.modelLabel ?? '未知'}\``)
-  lines.push(`> **创建时间**: ${dateFmt(conv.createdAt)}`)
-  lines.push(`> **最后更新**: ${dateFmt(conv.updatedAt)}`)
-  lines.push(`> **消息数**: ${messages.length}`)
-  lines.push('')
-  lines.push('---')
-  lines.push('')
-
-  for (const msg of messages) {
-    lines.push(`## ${roleLabel(msg.role)} — ${dateFmt(msg.createdAt)}`)
-    lines.push('')
-
-    // 工具调用信息
-    if (msg.toolCalls) {
-      try {
-        const calls = JSON.parse(msg.toolCalls)
-        if (Array.isArray(calls) && calls.length > 0) {
-          lines.push('**Tool Calls**:')
-          for (const c of calls) {
-            lines.push(`- \`${c.function?.name ?? c.name ?? 'unknown'}\` → ${escapeMdCodeBlock(c.function?.arguments ?? JSON.stringify(c, null, 2))}`)
-          }
-          lines.push('')
-        }
-      } catch {
-        lines.push('**Tool Calls**:')
-        lines.push(escapeMdCodeBlock(msg.toolCalls))
-        lines.push('')
-      }
-    }
-
-    if (msg.content) {
-      lines.push(escapeMdCodeBlock(msg.content))
-      lines.push('')
-    }
-
-    lines.push('---')
-    lines.push('')
-  }
-
-  return lines.join('\n')
-}

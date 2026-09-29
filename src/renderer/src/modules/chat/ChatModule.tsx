@@ -12,11 +12,14 @@ import { AssistantMarket } from './AssistantMarket'
 import { ConversationList } from './ConversationList'
 import { ChatView } from './ChatView'
 import { useStreamSession } from './useStreamSession'
+import { useAppStore } from '../../store/app-store'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
+import { buildConversationMarkdown, safeFileName } from '../../../../shared/export-markdown'
+import { buildConversationHtml } from '../../utils/export-html'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -82,6 +85,12 @@ export const ChatModule: React.FC = () => {
     reloadConversations,
     getCurrentConvId: () => currentConvRef.current
   })
+
+  // busy 上报：流式生成中豁免休眠，防止切走标签后被 LRU 卸载导致输出中断；
+  // 重挂时 liveColumns 归 null，effect 自动重新上报 false
+  useEffect(() => {
+    useAppStore.getState().setModuleBusy('chat', liveColumns !== null)
+  }, [liveColumns])
 
   // 初始加载（providers/assistants/conversations）；流式事件订阅已移入 useStreamSession
   useEffect(() => {
@@ -254,6 +263,73 @@ export const ChatModule: React.FC = () => {
       }
     } catch (e) {
       toast.error(t('chat.exportFail', { e: errText(e) }))
+    }
+  }
+
+  // HTML 导出：渲染端生成自包含 HTML（复用 Markdown 渲染管线），主进程存盘
+  const handleExportHtml = async (id: string) => {
+    try {
+      const conv = conversations.find((c) => c.id === id)
+      if (!conv) {
+        toast.error(t('chat.exportFail', { e: t('common.unknownError') }))
+        return
+      }
+      const msgs = await window.pocketai.listMessages(id)
+      const assistantName = conv.assistantId
+        ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
+        : null
+      const html = await buildConversationHtml(conv, msgs, assistantName)
+      const r = await window.pocketai.exportConversationHtml(id, html)
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      if (r.path) toast.success(t('chat.exportSuccess', { path: r.path }))
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
+    }
+  }
+
+  // 批量导出当前助手的全部会话到所选目录（重名由主进程加序号）
+  const batchBusyRef = useRef(false)
+  const handleBatchExport = async (format: 'md' | 'html') => {
+    if (batchBusyRef.current) return
+    batchBusyRef.current = true
+    try {
+      const list = await window.pocketai.listConversations(assistantIdRef.current, false)
+      if (list.length === 0) {
+        toast.info(t('chat.exportBatchEmpty'))
+        return
+      }
+      const files: Array<{ name: string; content: string }> = []
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i]!
+        const msgs = await window.pocketai.listMessages(c.id)
+        const assistantName = c.assistantId
+          ? assistants.find((a) => a.id === c.assistantId)?.name ?? null
+          : null
+        const content = format === 'md'
+          ? buildConversationMarkdown(c, msgs, assistantName)
+          : await buildConversationHtml(c, msgs, assistantName)
+        files.push({ name: `${safeFileName(c.title)}.${format}`, content })
+        // 同步渲染管线（尤其 HTML）会阻塞 UI，每 10 个会话让出一帧
+        if (i % 10 === 9) await new Promise((r) => setTimeout(r, 0))
+      }
+      const r = await window.pocketai.exportConversationsBatch(files)
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      const warn = r.failed && r.failed.length > 0
+        ? `（${r.failed.length} ${t('chat.exportBatchFailed')}）`
+        : ''
+      toast.success(`${t('chat.exportBatchDone', { n: r.count ?? 0, dir: r.dir ?? '' })}${warn}`)
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
+    } finally {
+      batchBusyRef.current = false
     }
   }
 
@@ -490,7 +566,9 @@ export const ChatModule: React.FC = () => {
             onDelete={handleDeleteConv}
             onRename={handleRenameConv}
             onExport={handleExportConv}
+            onExportHtml={handleExportHtml}
             onExportEncrypted={handleExportEncrypted}
+            onBatchExport={handleBatchExport}
             onImport={handleImportConv}
             onImportEncrypted={handleImportEncrypted}
             onSelectMessage={handleSelectMessage}

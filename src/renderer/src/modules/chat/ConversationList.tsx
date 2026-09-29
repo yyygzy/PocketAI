@@ -13,7 +13,9 @@ interface Props {
   onDelete: (id: string) => void
   onRename?: (id: string, title: string) => void
   onExport?: (id: string) => void
+  onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
+  onBatchExport?: (format: 'md' | 'html') => void
   onImport?: () => void
   onImportEncrypted?: () => void
   /** 搜索结果点击：跳转定位到匹配消息（convId + messageId） */
@@ -30,7 +32,9 @@ export const ConversationList: React.FC<Props> = ({
   onDelete,
   onRename,
   onExport,
+  onExportHtml,
   onExportEncrypted,
+  onBatchExport,
   onImport,
   onImportEncrypted,
   onSelectMessage,
@@ -131,6 +135,18 @@ export const ConversationList: React.FC<Props> = ({
           >
             {t('chat.newConversation')}
           </button>
+          {onBatchExport && (
+            <ExportMenu
+              triggerTitle={t('chat.exportBatch')}
+              triggerContent="📤"
+              triggerClassName="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+              items={[
+                { key: 'md', label: t('chat.exportBatchMd') },
+                { key: 'html', label: t('chat.exportBatchHtml') }
+              ]}
+              onPick={(k) => onBatchExport(k as 'md' | 'html')}
+            />
+          )}
           {onImport && (
             <button
               onClick={onImport}
@@ -194,6 +210,7 @@ export const ConversationList: React.FC<Props> = ({
               onDelete={() => onDelete(c.id)}
               onRename={onRename ? (title) => onRename(c.id, title) : undefined}
               onExport={onExport}
+              onExportHtml={onExportHtml}
               onExportEncrypted={onExportEncrypted}
             />
           ))
@@ -210,8 +227,9 @@ const ConvItem: React.FC<{
   onDelete: () => void
   onRename?: (title: string) => void
   onExport?: (id: string) => void
+  onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportEncrypted }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -260,13 +278,17 @@ const ConvItem: React.FC<{
       ) : (
         <span className="flex-1 truncate">{conv.title}</span>
       )}
-      {onExport && !editing && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onExport(conv.id) }}
-          className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
-          title={t('chat.export')}
-          aria-label={t('chat.export')}
-        >↓</button>
+      {(onExport || onExportHtml) && !editing && (
+        <ExportMenu
+          triggerTitle={t('chat.exportMenu')}
+          triggerContent="↓"
+          triggerClassName="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
+          items={[
+            ...(onExport ? [{ key: 'md', label: t('chat.exportMd') }] : []),
+            ...(onExportHtml ? [{ key: 'html', label: t('chat.exportHtml') }] : [])
+          ]}
+          onPick={(k) => (k === 'html' ? onExportHtml?.(conv.id) : onExport?.(conv.id))}
+        />
       )}
       {onExportEncrypted && !editing && (
         <button
@@ -290,6 +312,60 @@ const ConvItem: React.FC<{
         title={t('chat.delete')}
         aria-label={t('chat.delete')}
       >×</button>
+    </div>
+  )
+}
+
+/** 下拉小菜单（导出格式选择）：点外部/Esc 关闭；点击与菜单项均阻止冒泡防穿透到会话行 */
+export const ExportMenu: React.FC<{
+  triggerTitle: string
+  triggerContent: React.ReactNode
+  triggerClassName: string
+  items: Array<{ key: string; label: string }>
+  onPick: (key: string) => void
+}> = ({ triggerTitle, triggerContent, triggerClassName, items, onPick }) => {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        title={triggerTitle}
+        aria-label={triggerTitle}
+        className={triggerClassName}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
+      >{triggerContent}</button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-0.5 min-w-[140px] py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-lg">
+          {items.map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] whitespace-nowrap"
+              onClick={(e) => {
+                e.stopPropagation()
+                setOpen(false)
+                onPick(it.key)
+              }}
+            >{it.label}</button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

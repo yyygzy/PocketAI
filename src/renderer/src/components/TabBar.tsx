@@ -18,6 +18,8 @@ interface TabBarProps {
   onReorder: (fromId: string, toId: string) => void
   onCloseOthers: (id: string) => void
   onCloseRight: (id: string) => void
+  /** 固定/取消固定标签 */
+  onTogglePin: (id: string) => void
   /** 弹出到独立窗口 */
   onPopOut: (id: string) => void
 }
@@ -32,6 +34,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   onReorder,
   onCloseOthers,
   onCloseRight,
+  onTogglePin,
   onPopOut
 }) => {
   const { t } = useI18n()
@@ -151,6 +154,15 @@ export const TabBar: React.FC<TabBarProps> = ({
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
+          <button
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-hover-overlay)]"
+            onClick={() => {
+              onTogglePin(menu.tabId)
+              setMenu(null)
+            }}
+          >
+            {tabs.find((tb) => tb.id === menu.tabId)?.pinned ? t('tab.unpin') : t('tab.pin')}
+          </button>
           <button
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-hover-overlay)]"
             onClick={() => {

@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import type { AssistantRecord, ConversationRecord, MessageSearchResult } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { MessageSearchResults } from '../../../components/MessageSearchResults'
+import { ExportMenu } from '../../chat/ConversationList'
 import { logIpcError } from '../../../utils/ipc'
 
 interface Props {
@@ -16,7 +17,9 @@ interface Props {
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
   onExport?: (id: string) => void
+  onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
+  onBatchExport?: (format: 'md' | 'html') => void
   onImport?: () => void
   onImportEncrypted?: () => void
   /** 搜索结果点击：跳转定位到匹配消息（convId + messageId） */
@@ -34,7 +37,9 @@ export const SessionRail: React.FC<Props> = ({
   onDelete,
   onRename,
   onExport,
+  onExportHtml,
   onExportEncrypted,
+  onBatchExport,
   onImport,
   onImportEncrypted,
   onSelectMessage
@@ -125,6 +130,18 @@ export const SessionRail: React.FC<Props> = ({
         >
           {t('agent.newSession')}
         </button>
+        {onBatchExport && (
+          <ExportMenu
+            triggerTitle={t('chat.exportBatch')}
+            triggerContent="📤"
+            triggerClassName="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
+            items={[
+              { key: 'md', label: t('chat.exportBatchMd') },
+              { key: 'html', label: t('chat.exportBatchHtml') }
+            ]}
+            onPick={(k) => onBatchExport(k as 'md' | 'html')}
+          />
+        )}
         {onImport && (
           <button
             onClick={onImport}
@@ -190,6 +207,7 @@ export const SessionRail: React.FC<Props> = ({
                 onDelete={() => onDelete(c.id)}
                 onRename={(title) => onRename(c.id, title)}
                 onExport={onExport ? () => onExport(c.id) : undefined}
+                onExportHtml={onExportHtml ? () => onExportHtml(c.id) : undefined}
                 onExportEncrypted={onExportEncrypted ? () => onExportEncrypted(c.id) : undefined}
               />
             ))}
@@ -208,8 +226,9 @@ const SessionItem: React.FC<{
   onDelete: () => void
   onRename: (title: string) => void
   onExport?: () => void
+  onExportHtml?: () => void
   onExportEncrypted?: () => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportEncrypted }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -263,13 +282,17 @@ const SessionItem: React.FC<{
       )}
       {!editing && (
         <>
-          {onExport && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onExport() }}
-              className="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
-              title={t('chat.export')}
-              aria-label={t('chat.export')}
-            >↓</button>
+          {(onExport || onExportHtml) && (
+            <ExportMenu
+              triggerTitle={t('chat.exportMenu')}
+              triggerContent="↓"
+              triggerClassName="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+              items={[
+                ...(onExport ? [{ key: 'md', label: t('chat.exportMd') }] : []),
+                ...(onExportHtml ? [{ key: 'html', label: t('chat.exportHtml') }] : [])
+              ]}
+              onPick={(k) => (k === 'html' ? onExportHtml?.() : onExport?.())}
+            />
           )}
           {onExportEncrypted && (
             <button

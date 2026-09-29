@@ -27,6 +27,8 @@ export default function App() {
   const reorderTabs = useAppStore((s) => s.reorderTabs)
   const closeOthers = useAppStore((s) => s.closeOthers)
   const closeRight = useAppStore((s) => s.closeRight)
+  const togglePin = useAppStore((s) => s.togglePin)
+  const touchModule = useAppStore((s) => s.touchModule)
   const setActiveTabId = useAppStore((s) => s.setActiveTabId)
   const setLocked = useAppStore((s) => s.setLocked)
   const setDbEncrypted = useAppStore((s) => s.setDbEncrypted)
@@ -39,6 +41,11 @@ export default function App() {
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId)
   const contentRef = useRef<HTMLDivElement>(null)
+
+  // 标签/模块切换：更新保活 LRU（挂载新模块、超阈值时休眠最久未访问者）
+  useEffect(() => {
+    touchModule(activeModule)
+  }, [activeModule, touchModule])
 
   // 锁屏加固：inert 掉遮罩之外的全部内容
   useEffect(() => {
@@ -183,9 +190,10 @@ export default function App() {
               onReorder={reorderTabs}
               onCloseOthers={closeOthers}
               onCloseRight={closeRight}
+              onTogglePin={togglePin}
               onPopOut={handlePopOut}
             />
-            <Workspace moduleId={(activeTab?.moduleId as ModuleId) || 'chat'} />
+            <Workspace activeModule={(activeTab?.moduleId as ModuleId) || activeModule} />
           </div>
         </div>
 

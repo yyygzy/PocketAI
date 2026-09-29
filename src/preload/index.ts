@@ -181,6 +181,10 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT, id),
   exportConversationMd: (id: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_MD, id),
+  exportConversationHtml: (id: string, html: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_HTML, id, html),
+  exportConversationsBatch: (files: Array<{ name: string; content: string }>): Promise<{ ok: boolean; canceled?: boolean; count?: number; dir?: string; failed?: string[]; error?: string }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_BATCH, files),
   exportConversationEncrypted: (id: string, password: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_ENCRYPTED, id, password),
   importConversationEncrypted: (password: string): Promise<{ ok: boolean; canceled?: boolean; conversationId?: string; messageCount?: number; error?: string }> =>

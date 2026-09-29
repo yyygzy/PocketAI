@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react'
 import type { ModuleId } from './Sidebar'
 import { ChatModule } from '../modules/chat/ChatModule'
 import { useI18n } from '../i18n'
+import { useAppStore } from '../store/app-store'
 
 // 首屏核心模块直出（chat 是默认落地页，直出避免首屏 Suspense 闪烁）
 // 其余模块按需懒加载，减小首屏 chunk
@@ -17,7 +18,7 @@ const ImageModule = lazy(() => import('../modules/image/ImageModule').then((m) =
 const SandboxModule = lazy(() => import('../modules/sandbox/SandboxModule').then((m) => ({ default: m.SandboxModule })))
 
 interface WorkspaceProps {
-  moduleId: ModuleId
+  activeModule: ModuleId
 }
 
 /** 模块 chunk 加载时的占位（与应用主题一致） */
@@ -27,11 +28,12 @@ const ModuleFallback: React.FC = () => (
   </div>
 )
 
-export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
+/** 各模块内容（与原单模块渲染结构一一对应；chat 无外壳直出） */
+const ModuleBody: React.FC<{ id: ModuleId }> = ({ id }) => {
   const { t } = useI18n()
 
-  if (moduleId === 'chat') return <ChatModule />
-  if (moduleId === 'agent') {
+  if (id === 'chat') return <ChatModule />
+  if (id === 'agent') {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.agent.title')} subtitle={t('workspace.agent.subtitle')} />
@@ -43,7 +45,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-  if (moduleId === 'settings') {
+  if (id === 'settings') {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.settings.title')} subtitle={t('workspace.settings.subtitle')} />
@@ -55,7 +57,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-  if (moduleId === 'steward') {
+  if (id === 'steward') {
     return (
       <div className="flex-1 overflow-auto p-6">
         <Header title={t('workspace.steward.title')} subtitle={t('workspace.steward.subtitle')} />
@@ -65,7 +67,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-  if (moduleId === 'skills') {
+  if (id === 'skills') {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.skills.title')} subtitle={t('workspace.skills.subtitle')} />
@@ -77,7 +79,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-  if (moduleId === 'knowledge') {
+  if (id === 'knowledge') {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.kb.title')} subtitle={t('workspace.kb.subtitle')} />
@@ -89,8 +91,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-
-  if (moduleId === 'files') {
+  if (id === 'files') {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.files.title')} subtitle={t('workspace.files.subtitle')} />
@@ -102,8 +103,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-
-  if (moduleId === 'notes') {
+  if (id === 'notes') {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.notes.title')} subtitle={t('workspace.notes.subtitle')} />
@@ -115,8 +115,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-
-  if (moduleId === 'translate') {
+  if (id === 'translate') {
     return (
       <div className="flex-1 overflow-hidden p-5">
         <Header title={t('workspace.translate.title')} subtitle={t('workspace.translate.subtitle')} />
@@ -128,8 +127,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-
-  if (moduleId === 'image') {
+  if (id === 'image') {
     return (
       <div className="flex-1 overflow-hidden p-5 flex flex-col">
         <Header title={t('workspace.image.title')} subtitle={t('workspace.image.subtitle')} />
@@ -141,8 +139,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
       </div>
     )
   }
-
-  if (moduleId === 'sandbox') {
+  if (id === 'sandbox') {
     return (
       <div className="flex-1 overflow-hidden p-5 flex flex-col">
         <Header title={t('workspace.sandbox.title')} subtitle={t('workspace.sandbox.subtitle')} />
@@ -156,6 +153,31 @@ export const Workspace: React.FC<WorkspaceProps> = ({ moduleId }) => {
   }
 
   return null
+}
+
+/**
+ * 工作区：已挂载模块全部保留在 DOM 中（保活），
+ * 非活动模块 display:none——组件 state / 滚动位置 / 输入草稿全部保留；
+ * 超过 MAX_KEPT_MODULES 时由 app-store 按 LRU 淘汰（dormant 卸载，重挂按需重建）。
+ */
+export const Workspace: React.FC<WorkspaceProps> = ({ activeModule }) => {
+  const mountedModules = useAppStore((s) => s.mountedModules)
+  // 防御：活动模块必须在挂载集合中（独立窗口 / store 尚未 touch 的首帧）
+  const visible = mountedModules.includes(activeModule) ? mountedModules : [...mountedModules, activeModule]
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      {visible.map((id) => (
+        <div
+          key={id}
+          aria-hidden={id !== activeModule}
+          className={id === activeModule ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}
+        >
+          <ModuleBody id={id} />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 const Header: React.FC<{ title: string; subtitle?: string }> = ({ title, subtitle }) => (

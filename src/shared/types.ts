@@ -1364,6 +1364,8 @@ export const IPC = {
   CONVERSATION_RENAME: 'conversation:rename',
   CONVERSATION_EXPORT: 'conversation:export',
   CONVERSATION_EXPORT_MD: 'conversation:export-md',
+  CONVERSATION_EXPORT_HTML: 'conversation:export-html',
+  CONVERSATION_EXPORT_BATCH: 'conversation:export-batch',
   CONVERSATION_EXPORT_ENCRYPTED: 'conversation:export-enc',
   CONVERSATION_IMPORT_ENCRYPTED: 'conversation:import-enc',
   CONVERSATION_IMPORT: 'conversation:import',

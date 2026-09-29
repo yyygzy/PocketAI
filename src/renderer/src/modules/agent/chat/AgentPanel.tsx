@@ -14,14 +14,21 @@ import { VirtualMessageList } from '../components/VirtualMessageList'
 import { AgentSearchBar } from '../components/AgentSearchBar'
 import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
+import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
 import { writeClipboard } from '../../../utils/clipboard'
+import { safeFileName, buildConversationMarkdown } from '../../../../../shared/export-markdown'
+import { buildConversationHtml } from '../../../utils/export-html'
 
 export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
   const { providers, assistants, fetchingModels, fetchModels } = useProviderData()
   const chat = useAgentChat(providers)
+  // busy 上报：Agent 运行中豁免休眠，防止切走标签后被 LRU 卸载导致任务中断
+  useEffect(() => {
+    useAppStore.getState().setModuleBusy('agent', chat.running)
+  }, [chat.running])
   const tools = useAgentToolConfigs()
   const att = useAttachments()
   const [railOpen, setRailOpen] = useState(true)
@@ -124,6 +131,67 @@ export const AgentPanel: React.FC = () => {
     if (r.path) toast.success(t('chat.exportSuccess', { path: r.path }))
   }
 
+  // HTML 导出：渲染端生成自包含 HTML，主进程存盘
+  const handleExportHtml = async (id: string) => {
+    try {
+      const conv = chat.conversations.find((c) => c.id === id)
+      if (!conv) {
+        toast.error(t('chat.exportFail', { e: t('common.unknownError') }))
+        return
+      }
+      const msgs = await window.pocketai.listMessages(id)
+      const assistantName = chat.assistantId
+        ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
+        : null
+      const html = await buildConversationHtml(conv, msgs, assistantName)
+      const r = await window.pocketai.exportConversationHtml(id, html)
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      if (r.path) toast.success(t('chat.exportSuccess', { path: r.path }))
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
+    }
+  }
+
+  // 批量导出当前助手全部会话（列表即范围）
+  const handleBatchExport = async (format: 'md' | 'html') => {
+    const list = chat.conversations
+    if (list.length === 0) {
+      toast.info(t('chat.exportBatchEmpty'))
+      return
+    }
+    try {
+      const assistantName = chat.assistantId
+        ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
+        : null
+      const files: Array<{ name: string; content: string }> = []
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i]!
+        const msgs = await window.pocketai.listMessages(c.id)
+        const content = format === 'html'
+          ? await buildConversationHtml(c, msgs, assistantName)
+          : buildConversationMarkdown(c, msgs, assistantName)
+        files.push({ name: `${safeFileName(c.title)}.${format}`, content })
+        if (i % 10 === 9) await new Promise((r) => setTimeout(r, 0))
+      }
+      const r = await window.pocketai.exportConversationsBatch(files)
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      const warn = r.failed && r.failed.length > 0
+        ? `（${r.failed.length} ${t('chat.exportBatchFailed')}）`
+        : ''
+      toast.success(`${t('chat.exportBatchDone', { n: r.count ?? 0, dir: r.dir ?? '' })}${warn}`)
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
+    }
+  }
+
   // JSON 明文导入：选择文件 → 解析 → IPC 入库 → 刷新当前助手会话列表
   const handleImportJson = () => {
     const input = document.createElement('input')
@@ -188,6 +256,8 @@ export const AgentPanel: React.FC = () => {
           onDelete={(id) => void chat.deleteConversation(id)}
           onRename={(id, title) => void chat.renameConversation(id, title)}
           onExport={(id) => void handleExportMd(id)}
+          onExportHtml={(id) => void handleExportHtml(id)}
+          onBatchExport={(fmt) => void handleBatchExport(fmt)}
           onExportEncrypted={(id) => { setCryptoPwd(''); setCryptoPrompt({ kind: 'export', id }) }}
           onImport={handleImportJson}
           onImportEncrypted={() => { setCryptoPwd(''); setCryptoPrompt({ kind: 'import' }) }}

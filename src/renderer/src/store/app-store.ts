@@ -8,9 +8,53 @@ import type { Tab } from '../components/TabBar'
 import type { WizardVariant } from '../modules/wizard/FirstRunWizard'
 
 const TABS_STORAGE_KEY = 'pocketai.tabs.v1'
-
 let tabCounter = 0
 const newTabId = () => `tab-${Date.now()}-${++tabCounter}`
+
+/** 同时保活（挂载但隐藏）的模块数上限；超出后 LRU 尾部进入 dormant（卸载渲染） */
+export const MAX_KEPT_MODULES = 4
+
+/** pinned 标签前置（保持 pinned 组与普通组各自的相对顺序）；无 pinned 时原样返回 */
+export function pinFirst(tabs: Tab[]): Tab[] {
+  const pinned = tabs.filter((tb) => tb.pinned)
+  if (pinned.length === 0) return tabs
+  const normal = tabs.filter((tb) => !tb.pinned)
+  return [...pinned, ...normal]
+}
+
+export interface EvictCtx {
+  /** 当前活动模块，永不淘汰 */
+  activeId: string
+  /** 拥有 pinned 标签的模块，豁免淘汰 */
+  pinnedIds: string[]
+  /** 任务运行中（流式等）的模块，豁免淘汰 */
+  busyIds: string[]
+  max: number
+}
+
+/**
+ * LRU 休眠淘汰：mounted 头部为最近访问。
+ * 总数超 max 时，从非保护候选的尾部（最久未访问）逐个淘汰；
+ * busy 模块占名额但不被淘汰——宁可多占内存也不中断流式。
+ */
+export function evictMounted<T extends string>(mounted: T[], ctx: EvictCtx): T[] {
+  if (mounted.length <= ctx.max) return mounted
+  const protectedIds = new Set([ctx.activeId, ...ctx.pinnedIds, ...ctx.busyIds])
+  const result = [...mounted]
+  for (let i = result.length - 1; i >= 0 && result.length > ctx.max; i--) {
+    if (!protectedIds.has(result[i]!)) result.splice(i, 1)
+  }
+  return result
+}
+
+/**
+ * 关闭标签后收敛保活列表：移除已无标签的模块（卸载孤儿挂载），
+ * 并保证新活动模块在列（保持其余模块 LRU 顺序）。
+ */
+export function reconcileMounted<T extends string>(mounted: T[], tabs: Tab[], activeModule: T): T[] {
+  const tabModules = new Set(tabs.map((tb) => tb.moduleId))
+  return [activeModule, ...mounted.filter((m) => m !== activeModule && tabModules.has(m))]
+}
 
 /** 初始标签布局（persist 未命中时的兜底） */
 function initialTabs(): { tabs: Tab[]; activeTabId: string } {
@@ -23,6 +67,10 @@ interface AppState {
   activeModule: ModuleId
   tabs: Tab[]
   activeTabId: string
+  /** 已挂载（保活中）的模块，LRU 顺序：头部最近访问；不持久化 */
+  mountedModules: ModuleId[]
+  /** 任务运行中（流式等）的模块标记，休眠时豁免；不持久化 */
+  busyModules: Partial<Record<ModuleId, boolean>>
   setActiveModule: (id: ModuleId) => void
   setActiveTabId: (id: string) => void
   /** 切换模块：已有该模块标签则激活，否则新建（title 为 i18n 后的标签标题） */
@@ -32,6 +80,12 @@ interface AppState {
   reorderTabs: (fromId: string, toId: string) => void
   closeOthers: (id: string) => void
   closeRight: (id: string) => void
+  /** 固定/取消固定标签（固定标签前置且不可休眠） */
+  togglePin: (id: string) => void
+  /** 模块被激活（标签切换）时更新 LRU 并执行休眠淘汰 */
+  touchModule: (id: ModuleId) => void
+  /** 模块上报忙碌状态（流式开始/结束）；busy 解除时补做淘汰 */
+  setModuleBusy: (id: ModuleId, busy: boolean) => void
   /** 弹出到独立窗口后关闭本标签（由 App 调用，因需 IPC） */
   removeTabAfterPopOut: (id: string) => void
 
@@ -54,6 +108,8 @@ export const useAppStore = create<AppState>()(
         const { tabs, activeTabId } = initialTabs()
         return { tabs, activeTabId }
       })(),
+      mountedModules: ['chat'],
+      busyModules: {},
 
       setActiveModule: (id) => set({ activeModule: id }),
 
@@ -90,9 +146,15 @@ export const useAppStore = create<AppState>()(
           }
           if (next.length === 0) {
             const tb: Tab = { id: newTabId(), title: '新对话', moduleId: 'chat' }
-            return { tabs: [tb], activeTabId: tb.id }
+            return { tabs: [tb], activeTabId: tb.id, activeModule: 'chat', mountedModules: ['chat'] as ModuleId[] }
           }
-          return { tabs: next, activeTabId: nextActive }
+          const activeMod = (next.find((tb) => tb.id === nextActive)?.moduleId ?? 'chat') as ModuleId
+          return {
+            tabs: next,
+            activeTabId: nextActive,
+            activeModule: activeMod,
+            mountedModules: reconcileMounted(state.mountedModules, next, activeMod)
+          }
         })
       },
 
@@ -104,17 +166,62 @@ export const useAppStore = create<AppState>()(
           const next = [...state.tabs]
           const [moved] = next.splice(from, 1)
           next.splice(to, 0, moved!)
-          const pinned = next.filter((tb) => tb.pinned)
-          const normal = next.filter((tb) => !tb.pinned)
-          return { tabs: pinned.length > 0 ? [...pinned, ...normal] : next }
+          return { tabs: pinFirst(next) }
         })
       },
+
+      togglePin: (id) =>
+        set((state) => ({
+          tabs: pinFirst(state.tabs.map((tb) => (tb.id === id ? { ...tb, pinned: !tb.pinned } : tb)))
+        })),
+
+      touchModule: (id) =>
+        set((state) => {
+          const next: ModuleId[] = [id, ...state.mountedModules.filter((m) => m !== id)]
+          const pinnedIds = state.tabs.filter((tb) => tb.pinned).map((tb) => tb.moduleId)
+          const busyIds = Object.entries(state.busyModules)
+            .filter(([, v]) => v)
+            .map(([k]) => k)
+          return {
+            mountedModules: evictMounted(next, {
+              activeId: state.activeModule,
+              pinnedIds,
+              busyIds,
+              max: MAX_KEPT_MODULES
+            })
+          }
+        }),
+
+      setModuleBusy: (id, busy) =>
+        set((state) => {
+          const busyModules = { ...state.busyModules, [id]: busy }
+          const pinnedIds = state.tabs.filter((tb) => tb.pinned).map((tb) => tb.moduleId)
+          const busyIds = Object.entries(busyModules)
+            .filter(([, v]) => v)
+            .map(([k]) => k)
+          return {
+            busyModules,
+            // busy 解除时尝试补淘汰；busy 置位时淘汰结果不变（仅多一个豁免）
+            mountedModules: evictMounted(state.mountedModules, {
+              activeId: state.activeModule,
+              pinnedIds,
+              busyIds,
+              max: MAX_KEPT_MODULES
+            })
+          }
+        }),
 
       closeOthers: (id) => {
         set((state) => {
           const keep = state.tabs.filter((tb) => tb.id === id || tb.pinned)
           const activeTabId = keep.some((tb) => tb.id === state.activeTabId) ? state.activeTabId : id
-          return { tabs: keep, activeTabId }
+          const activeMod = (keep.find((tb) => tb.id === activeTabId)?.moduleId ?? 'chat') as ModuleId
+          return {
+            tabs: keep,
+            activeTabId,
+            activeModule: activeMod,
+            mountedModules: reconcileMounted(state.mountedModules, keep, activeMod)
+          }
         })
       },
 
@@ -124,7 +231,13 @@ export const useAppStore = create<AppState>()(
           if (idx < 0) return state
           const keep = state.tabs.filter((tb, i) => i <= idx || tb.pinned)
           const activeTabId = keep.some((tb) => tb.id === state.activeTabId) ? state.activeTabId : id
-          return { tabs: keep, activeTabId }
+          const activeMod = (keep.find((tb) => tb.id === activeTabId)?.moduleId ?? 'chat') as ModuleId
+          return {
+            tabs: keep,
+            activeTabId,
+            activeModule: activeMod,
+            mountedModules: reconcileMounted(state.mountedModules, keep, activeMod)
+          }
         })
       },
 
@@ -156,7 +269,16 @@ export const useAppStore = create<AppState>()(
         const idx = typeof p.activeTabId === 'number' && p.activeTabId >= 0 && p.activeTabId < tabs.length
           ? p.activeTabId
           : 0
-        return { ...current, tabs, activeTabId: tabs[idx]!.id }
+        // 重启后只挂载活动模块，其余按需恢复保活（mountedModules/busyModules 属会话态不持久化）
+        const activeMod = tabs[idx]!.moduleId as ModuleId
+        return {
+          ...current,
+          tabs,
+          activeTabId: tabs[idx]!.id,
+          activeModule: activeMod,
+          mountedModules: [activeMod],
+          busyModules: {}
+        }
       },
     }
   )

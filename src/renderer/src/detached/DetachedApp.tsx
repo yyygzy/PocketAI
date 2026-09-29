@@ -95,7 +95,7 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
         ref={contentRef}
         className="h-screen w-screen flex flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]"
       >
-        <Workspace moduleId={moduleId} />
+        <Workspace activeModule={moduleId} />
 
         {locked && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm">
