@@ -20,6 +20,10 @@ interface Props {
   onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
   onBatchExport?: (format: 'md' | 'html') => void
+  /** 归档区会话（底部折叠展示） */
+  archivedConversations?: ConversationRecord[]
+  onTogglePin?: (id: string, pinned: boolean) => void
+  onSetArchived?: (id: string, archived: boolean) => void
   onImport?: () => void
   onImportEncrypted?: () => void
   /** 搜索结果点击：跳转定位到匹配消息（convId + messageId） */
@@ -40,12 +44,16 @@ export const SessionRail: React.FC<Props> = ({
   onExportHtml,
   onExportEncrypted,
   onBatchExport,
+  archivedConversations,
+  onTogglePin,
+  onSetArchived,
   onImport,
   onImportEncrypted,
   onSelectMessage
 }) => {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
   const keyword = search.trim()
   const [results, setResults] = useState<MessageSearchResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -209,8 +217,37 @@ export const SessionRail: React.FC<Props> = ({
                 onExport={onExport ? () => onExport(c.id) : undefined}
                 onExportHtml={onExportHtml ? () => onExportHtml(c.id) : undefined}
                 onExportEncrypted={onExportEncrypted ? () => onExportEncrypted(c.id) : undefined}
+                onTogglePin={onTogglePin ? (pinned) => onTogglePin(c.id, pinned) : undefined}
+                onSetArchived={onSetArchived ? (archived) => onSetArchived(c.id, archived) : undefined}
               />
             ))}
+            {!!archivedConversations?.length && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowArchived((v) => !v)}
+                  className="w-full flex items-center gap-1 px-1 py-1 rounded text-[11px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)]"
+                >
+                  <span className="text-[9px]">{showArchived ? '▼' : '▶'}</span>
+                  <span>📦 {t('chat.archivedSection', { n: archivedConversations.length })}</span>
+                </button>
+                {showArchived && archivedConversations.map((c) => (
+                  <SessionItem
+                    key={c.id}
+                    conv={c}
+                    inArchive
+                    isActive={conversationId === c.id}
+                    onSelect={() => onSelect(c.id)}
+                    onDelete={() => onDelete(c.id)}
+                    onRename={(title) => onRename(c.id, title)}
+                    onExport={onExport ? () => onExport(c.id) : undefined}
+                    onExportHtml={onExportHtml ? () => onExportHtml(c.id) : undefined}
+                    onExportEncrypted={onExportEncrypted ? () => onExportEncrypted(c.id) : undefined}
+                    onSetArchived={onSetArchived ? (archived) => onSetArchived(c.id, archived) : undefined}
+                  />
+                ))}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -228,7 +265,11 @@ const SessionItem: React.FC<{
   onExport?: () => void
   onExportHtml?: () => void
   onExportEncrypted?: () => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted }) => {
+  onTogglePin?: (pinned: boolean) => void
+  onSetArchived?: (archived: boolean) => void
+  /** 归档区内的行：不显示置顶项、归档项文案改取消归档 */
+  inArchive?: boolean
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, inArchive }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -277,11 +318,29 @@ const SessionItem: React.FC<{
         />
       ) : (
         <div className="flex-1 min-w-0 px-2 py-1.5">
-          <div className="truncate">{displayTitle}</div>
+          <div className="truncate">
+            {conv.pinned && <span className="mr-1 text-[9px] opacity-70" title={t('chat.unpin')}>📍</span>}
+            {displayTitle}
+          </div>
         </div>
       )}
       {!editing && (
         <>
+          <ExportMenu
+            triggerTitle={t('chat.more')}
+            triggerContent="⋯"
+            triggerClassName="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-sm leading-none text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+            items={[
+              ...(onTogglePin && !inArchive ? [{ key: 'pin', label: conv.pinned ? t('chat.unpin') : t('chat.pin') }] : []),
+              ...(onSetArchived ? [{ key: 'archive', label: inArchive ? t('chat.unarchive') : t('chat.archive') }] : []),
+              { key: 'rename', label: t('chat.rename') }
+            ]}
+            onPick={(k) => {
+              if (k === 'pin') onTogglePin?.(!conv.pinned)
+              else if (k === 'archive') onSetArchived?.(!inArchive)
+              else if (k === 'rename') setEditing(true)
+            }}
+          />
           {(onExport || onExportHtml) && (
             <ExportMenu
               triggerTitle={t('chat.exportMenu')}
@@ -302,12 +361,6 @@ const SessionItem: React.FC<{
               aria-label={t('chat.exportEncrypted')}
             >🔐</button>
           )}
-          <button
-            onClick={(e) => { e.stopPropagation(); setEditing(true) }}
-            className="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
-            title={t('chat.rename')}
-            aria-label={t('chat.rename')}
-          >✎</button>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete() }}
             className="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 mr-1 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"

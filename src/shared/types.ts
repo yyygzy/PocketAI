@@ -124,6 +124,12 @@ export interface ConversationRecord {
   status: string
   createdAt: number
   updatedAt: number
+  /** 置顶（列表排序权重，组内仍按更新时间） */
+  pinned: boolean
+  /** 已归档（主列表隐藏，归档区可找回） */
+  archived: boolean
+  /** 归档时间戳；未归档为 null */
+  archivedAt?: number | null
 }
 
 export interface MessageRecord {
@@ -1359,6 +1365,8 @@ export const IPC = {
   MEMORY_DELETE: 'memory:delete',
 
   CONVERSATION_LIST: 'conversation:list',
+  CONVERSATION_SET_PINNED: 'conversation:set-pinned',
+  CONVERSATION_SET_ARCHIVED: 'conversation:set-archived',
   CONVERSATION_CREATE: 'conversation:create',
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_RENAME: 'conversation:rename',

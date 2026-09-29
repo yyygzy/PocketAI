@@ -43,6 +43,7 @@ export const ChatModule: React.FC = () => {
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [currentAssistantId, setCurrentAssistantId] = useState<string>('asst-default')
   const [conversations, setConversations] = useState<ConversationRecord[]>([])
+  const [archivedConversations, setArchivedConversations] = useState<ConversationRecord[]>([])
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
   const [targets, setTargets] = useState<ChatTarget[]>([])
@@ -58,9 +59,14 @@ export const ChatModule: React.FC = () => {
   const userEditedTargetsRef = useRef(false)
 
   const reloadConversations = useCallback((autoSelect = false) => {
-    return window.pocketai.listConversations(assistantIdRef.current, false).then((list) => {
+    const aid = assistantIdRef.current
+    return Promise.all([
+      window.pocketai.listConversations(aid, false, false),
+      window.pocketai.listConversations(aid, false, true)
+    ]).then(([list, archived]) => {
       setConversations(list)
-      // 自动选中最近一次使用的会话（列表已按 updated_at DESC 排序）
+      setArchivedConversations(archived)
+      // 自动选中最近一次使用的会话（列表已按置顶权重+updated_at DESC 排序）
       if (autoSelect && list.length > 0 && !currentConvRef.current) {
         const first = list[0]!
         setCurrentConvId(first.id)
@@ -245,6 +251,26 @@ export const ChatModule: React.FC = () => {
         setMessages([])
       }
       await reloadConversations()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }
+
+  const handleTogglePin = async (id: string, pinned: boolean) => {
+    try {
+      await window.pocketai.setConversationPinned(id, pinned)
+      await reloadConversations()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }
+
+  // 归档：仅列表层面隐藏，内容区与视图不切换；取消归档即时回主列表
+  const handleSetArchived = async (id: string, archived: boolean) => {
+    try {
+      await window.pocketai.setConversationArchived(id, archived)
+      await reloadConversations()
+      if (archived) toast.info(t('chat.archivedHint'))
     } catch (e) {
       toast.error(t('common.opFailed', { msg: errText(e) }))
     }
@@ -572,6 +598,9 @@ export const ChatModule: React.FC = () => {
             onImport={handleImportConv}
             onImportEncrypted={handleImportEncrypted}
             onSelectMessage={handleSelectMessage}
+            archivedConversations={archivedConversations}
+            onTogglePin={handleTogglePin}
+            onSetArchived={handleSetArchived}
             embedded
           />
         </div>

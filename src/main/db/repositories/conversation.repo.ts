@@ -13,6 +13,9 @@ interface ConversationRow {
   status: string | null
   created_at: number
   updated_at: number
+  pinned?: number
+  archived?: number
+  archived_at?: number | null
 }
 
 export function rowToRecord(row: ConversationRow): ConversationRecord {
@@ -23,30 +26,49 @@ export function rowToRecord(row: ConversationRow): ConversationRecord {
     modelLabel: row.model,
     status: row.status ?? 'idle',
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    pinned: !!row.pinned,
+    archived: !!row.archived,
+    archivedAt: row.archived_at ?? null
   }
 }
 
+/** list 查询条件拼装（纯函数，便于单测） */
+export interface ConvListArgs {
+  assistantId?: string
+  isAgent?: boolean
+  /** true=只取归档；false/undefined=只取活跃（默认） */
+  archivedOnly?: boolean
+}
+
+export function buildConvListQuery(args: ConvListArgs): { where: string; vals: unknown[]; orderBy: string } {
+  const conds: string[] = []
+  const vals: unknown[] = []
+  conds.push(args.archivedOnly ? 'archived = 1' : 'archived = 0')
+  if (args.assistantId === 'asst-default') {
+    conds.push("(assistant_id = 'asst-default' OR assistant_id IS NULL)")
+  } else if (args.assistantId) {
+    conds.push('assistant_id = ?')
+    vals.push(args.assistantId)
+  }
+  if (args.isAgent === true) {
+    conds.push("model LIKE 'agent:%'")
+  } else if (args.isAgent === false) {
+    conds.push("(model NOT LIKE 'agent:%' OR model IS NULL)")
+  }
+  const orderBy = args.archivedOnly
+    ? 'pinned DESC, archived_at DESC, updated_at DESC'
+    : 'pinned DESC, updated_at DESC'
+  return { where: ' WHERE ' + conds.join(' AND '), vals, orderBy }
+}
+
 export const conversationRepo = {
-  /** 列出会话；assistantId 给定时按助手归集；isAgent 控制是否只列 Agent 会话 */
-  list(assistantId?: string, isAgent?: boolean): ConversationRecord[] {
-    const conds: string[] = []
-    const vals: unknown[] = []
-    if (assistantId === 'asst-default') {
-      conds.push("(assistant_id = 'asst-default' OR assistant_id IS NULL)")
-    } else if (assistantId) {
-      conds.push('assistant_id = ?')
-      vals.push(assistantId)
-    }
-    if (isAgent === true) {
-      conds.push("model LIKE 'agent:%'")
-    } else if (isAgent === false) {
-      conds.push("(model NOT LIKE 'agent:%' OR model IS NULL)")
-    }
-    const where = conds.length ? ' WHERE ' + conds.join(' AND ') : ''
+  /** 列出会话；assistantId 给定时按助手归集；isAgent 控制是否只列 Agent 会话；archivedOnly 切换归档区 */
+  list(assistantId?: string, isAgent?: boolean, opts: { archivedOnly?: boolean } = {}): ConversationRecord[] {
+    const { where, vals, orderBy } = buildConvListQuery({ assistantId, isAgent, archivedOnly: opts.archivedOnly })
     const rows = dbService
       .getHandle()
-      .prepare(`SELECT * FROM conversations${where} ORDER BY updated_at DESC`)
+      .prepare(`SELECT * FROM conversations${where} ORDER BY ${orderBy}`)
       .all(...vals) as ConversationRow[]
     return rows.map(rowToRecord)
   },
@@ -79,8 +101,24 @@ export const conversationRepo = {
       .run(title, Date.now(), id)
   },
 
+  setPinned(id: string, pinned: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET pinned=? WHERE id=?')
+      .run(pinned ? 1 : 0, id)
+  },
+
+  /** 归档写 archived_at；取消归档清空。不动 pinned（恢复后保持原置顶态） */
+  setArchived(id: string, archived: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET archived=?, archived_at=? WHERE id=?')
+      .run(archived ? 1 : 0, archived ? Date.now() : null, id)
+  },
+
   touch(id: string, patch: { modelLabel?: string; status?: string } = {}): void {
-    const sets = ['updated_at=?']
+    // 归档会话重新活跃（收到消息/状态变化）自动回到主列表
+    const sets = ['updated_at=?', 'archived=0', 'archived_at=NULL']
     const vals: unknown[] = [Date.now()]
     if (patch.modelLabel !== undefined) {
       sets.push('model=?')

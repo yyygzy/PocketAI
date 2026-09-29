@@ -86,9 +86,10 @@ export const conversationExportPayloadSchema = z.object({
   assistant: z.unknown().nullable().optional()
 })
 
-/** CONVERSATION_LIST 可选参：(assistantId?, isAgent?) */
+/** CONVERSATION_LIST 可选参：(assistantId?, isAgent?, archivedOnly?) */
 export const conversationListArgsSchema = z.tuple([
   z.string().nullable().optional(),
+  z.boolean().optional(),
   z.boolean().optional()
 ])
 

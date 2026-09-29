@@ -565,6 +565,16 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE knowledge_bases ADD COLUMN ocr_provider_id TEXT;
       ALTER TABLE knowledge_bases ADD COLUMN ocr_model TEXT;
     `
+  },
+  {
+    // v30: 会话置顶与归档——置顶参与列表排序权重，归档后主列表隐藏（可在归档区找回）
+    version: 30,
+    name: 'conv_pin_archive',
+    up: `
+      ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE conversations ADD COLUMN archived_at INTEGER;
+    `
   }
 ]
 

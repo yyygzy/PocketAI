@@ -16,6 +16,10 @@ interface Props {
   onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
   onBatchExport?: (format: 'md' | 'html') => void
+  /** 归档区会话（底部折叠展示） */
+  archivedConversations?: ConversationRecord[]
+  onTogglePin?: (id: string, pinned: boolean) => void
+  onSetArchived?: (id: string, archived: boolean) => void
   onImport?: () => void
   onImportEncrypted?: () => void
   /** 搜索结果点击：跳转定位到匹配消息（convId + messageId） */
@@ -35,6 +39,9 @@ export const ConversationList: React.FC<Props> = ({
   onExportHtml,
   onExportEncrypted,
   onBatchExport,
+  archivedConversations,
+  onTogglePin,
+  onSetArchived,
   onImport,
   onImportEncrypted,
   onSelectMessage,
@@ -50,6 +57,7 @@ export const ConversationList: React.FC<Props> = ({
   const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
   const PAGE = 50
 
@@ -199,21 +207,53 @@ export const ConversationList: React.FC<Props> = ({
             onLoadMore={loadMore}
           />
         ) : (
-          conversations.length === 0 ? (
-            <EmptyState className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2" message={t('chat.noConversations')} />
-          ) : conversations.map((c) => (
-            <ConvItem
-              key={c.id}
-              conv={c}
-              isActive={currentId === c.id}
-              onSelect={() => onSelect(c.id)}
-              onDelete={() => onDelete(c.id)}
-              onRename={onRename ? (title) => onRename(c.id, title) : undefined}
-              onExport={onExport}
-              onExportHtml={onExportHtml}
-              onExportEncrypted={onExportEncrypted}
-            />
-          ))
+          <>
+            {conversations.length === 0 && (
+              <EmptyState className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2" message={t('chat.noConversations')} />
+            )}
+            {conversations.map((c) => (
+              <ConvItem
+                key={c.id}
+                conv={c}
+                isActive={currentId === c.id}
+                onSelect={() => onSelect(c.id)}
+                onDelete={() => onDelete(c.id)}
+                onRename={onRename ? (title) => onRename(c.id, title) : undefined}
+                onExport={onExport}
+                onExportHtml={onExportHtml}
+                onExportEncrypted={onExportEncrypted}
+                onTogglePin={onTogglePin}
+                onSetArchived={onSetArchived}
+              />
+            ))}
+            {!!archivedConversations?.length && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowArchived((v) => !v)}
+                  className="w-full flex items-center gap-1 px-2.5 py-1.5 rounded text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)]"
+                >
+                  <span className="text-[10px]">{showArchived ? '▼' : '▶'}</span>
+                  <span>📦 {t('chat.archivedSection', { n: archivedConversations.length })}</span>
+                </button>
+                {showArchived && archivedConversations.map((c) => (
+                  <ConvItem
+                    key={c.id}
+                    conv={c}
+                    inArchive
+                    isActive={currentId === c.id}
+                    onSelect={() => onSelect(c.id)}
+                    onDelete={() => onDelete(c.id)}
+                    onRename={onRename ? (title) => onRename(c.id, title) : undefined}
+                    onExport={onExport}
+                    onExportHtml={onExportHtml}
+                    onExportEncrypted={onExportEncrypted}
+                    onSetArchived={onSetArchived}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -229,7 +269,11 @@ const ConvItem: React.FC<{
   onExport?: (id: string) => void
   onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted }) => {
+  onTogglePin?: (id: string, pinned: boolean) => void
+  onSetArchived?: (id: string, archived: boolean) => void
+  /** 归档区内的行：菜单不显示置顶项、归档项文案改取消归档 */
+  inArchive?: boolean
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, inArchive }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -276,7 +320,27 @@ const ConvItem: React.FC<{
           }}
         />
       ) : (
-        <span className="flex-1 truncate">{conv.title}</span>
+        <span className="flex-1 truncate">
+          {conv.pinned && <span className="mr-1 text-[10px] opacity-70" title={t('chat.unpin')}>📍</span>}
+          {conv.title}
+        </span>
+      )}
+      {(onTogglePin || onSetArchived || onRename) && !editing && (
+        <ExportMenu
+          triggerTitle={t('chat.more')}
+          triggerContent="⋯"
+          triggerClassName="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-sm leading-none"
+          items={[
+            ...(onTogglePin && !inArchive ? [{ key: 'pin', label: conv.pinned ? t('chat.unpin') : t('chat.pin') }] : []),
+            ...(onSetArchived ? [{ key: 'archive', label: inArchive ? t('chat.unarchive') : t('chat.archive') }] : []),
+            ...(onRename ? [{ key: 'rename', label: t('chat.rename') }] : [])
+          ]}
+          onPick={(k) => {
+            if (k === 'pin') onTogglePin?.(conv.id, !conv.pinned)
+            else if (k === 'archive') onSetArchived?.(conv.id, !inArchive)
+            else if (k === 'rename') setEditing(true)
+          }}
+        />
       )}
       {(onExport || onExportHtml) && !editing && (
         <ExportMenu
@@ -297,14 +361,6 @@ const ConvItem: React.FC<{
           title={t('chat.exportEncrypted')}
           aria-label={t('chat.exportEncrypted')}
         >🔐</button>
-      )}
-      {onRename && !editing && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setEditing(true) }}
-          className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
-          title={t('chat.rename')}
-          aria-label={t('chat.rename')}
-        >✎</button>
       )}
       <button
         onClick={(e) => { e.stopPropagation(); onDelete() }}

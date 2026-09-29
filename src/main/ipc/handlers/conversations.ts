@@ -23,9 +23,17 @@ import {
 import { idSchema } from '../../../shared/schemas/providers'
 
 export function registerConversationHandlers(): void {
-  safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean) =>
-    conversationRepo.list(assistantId, isAgent),
+  safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean, archivedOnly?: boolean) =>
+    conversationRepo.list(assistantId, isAgent, { archivedOnly }),
   conversationListArgsSchema)
+  safeHandle(IPC.CONVERSATION_SET_PINNED, (_e, id: string, pinned: boolean) => {
+    conversationRepo.setPinned(String(id ?? ''), pinned)
+    return { ok: true }
+  }, argsSchema(idSchema, z.boolean()))
+  safeHandle(IPC.CONVERSATION_SET_ARCHIVED, (_e, id: string, archived: boolean) => {
+    conversationRepo.setArchived(String(id ?? ''), archived)
+    return { ok: true }
+  }, argsSchema(idSchema, z.boolean()))
   safeHandle(IPC.CONVERSATION_CREATE, (_e, assistantId?: string | null, title?: string) =>
     conversationRepo.create({ assistantId, title }),
   conversationCreateArgsSchema)

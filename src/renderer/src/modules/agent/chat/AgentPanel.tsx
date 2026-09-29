@@ -192,6 +192,24 @@ export const AgentPanel: React.FC = () => {
     }
   }
 
+  // 置顶/归档（归档仅列表层面隐藏，不影响当前查看；提示可在归档区找回）
+  const handleTogglePin = async (id: string, pinned: boolean) => {
+    try {
+      await chat.toggleConversationPinned(id, pinned)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }
+
+  const handleSetArchived = async (id: string, archived: boolean) => {
+    try {
+      await chat.setConversationArchivedState(id, archived)
+      if (archived) toast.info(t('chat.archivedHint'))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }
+
   // JSON 明文导入：选择文件 → 解析 → IPC 入库 → 刷新当前助手会话列表
   const handleImportJson = () => {
     const input = document.createElement('input')
@@ -259,6 +277,9 @@ export const AgentPanel: React.FC = () => {
           onExportHtml={(id) => void handleExportHtml(id)}
           onBatchExport={(fmt) => void handleBatchExport(fmt)}
           onExportEncrypted={(id) => { setCryptoPwd(''); setCryptoPrompt({ kind: 'export', id }) }}
+          archivedConversations={chat.archivedConversations}
+          onTogglePin={(id, pinned) => void handleTogglePin(id, pinned)}
+          onSetArchived={(id, archived) => void handleSetArchived(id, archived)}
           onImport={handleImportJson}
           onImportEncrypted={() => { setCryptoPwd(''); setCryptoPrompt({ kind: 'import' }) }}
         />

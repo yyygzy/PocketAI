@@ -169,8 +169,12 @@ const api = {
     ipcRenderer.invoke(IPC.SKILL_TEMPLATES),
 
   // ---------- 会话 ----------
-  listConversations: (assistantId?: string, isAgent?: boolean): Promise<ConversationRecord[]> =>
-    ipcRenderer.invoke(IPC.CONVERSATION_LIST, assistantId, isAgent),
+  listConversations: (assistantId?: string, isAgent?: boolean, archivedOnly?: boolean): Promise<ConversationRecord[]> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_LIST, assistantId, isAgent, archivedOnly),
+  setConversationPinned: (id: string, pinned: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SET_PINNED, id, pinned),
+  setConversationArchived: (id: string, archived: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SET_ARCHIVED, id, archived),
   createConversation: (assistantId?: string | null, title?: string): Promise<ConversationRecord> =>
     ipcRenderer.invoke(IPC.CONVERSATION_CREATE, assistantId, title),
   deleteConversation: (id: string): Promise<{ ok: boolean }> =>

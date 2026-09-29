@@ -103,7 +103,10 @@ const mocks = vi.hoisted(() => {
           modelLabel: input.modelLabel ?? '',
           createdAt: Date.now(),
           updatedAt: Date.now(),
-          status: 'done'
+          status: 'done',
+          pinned: false,
+          archived: false,
+          archivedAt: null
         }
         this.conversationDb.set(id, rec)
         return rec
@@ -482,7 +485,10 @@ describe('processMessage 分支（模型配置 / 会话映射 / 结果分流）'
       modelLabel: '',
       createdAt: 1,
       updatedAt: 1,
-      status: 'done'
+      status: 'done',
+      pinned: false,
+      archived: false,
+      archivedAt: null
     })
     mocks.chatSend.onSend = (_p, emit) => {
       emit(IPC.CHAT_DONE_EVENT, { fullContent: 'r' })

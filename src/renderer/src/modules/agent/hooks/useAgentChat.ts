@@ -20,6 +20,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const { t } = useI18n()
   const [assistantId, setAssistantId] = useState('')
   const [conversations, setConversations] = useState<import('../../../../../shared/types').ConversationRecord[]>([])
+  const [archivedConversations, setArchivedConversations] = useState<import('../../../../../shared/types').ConversationRecord[]>([])
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, dispatch] = useReducer(messagesReducer, [] as AgentMessage[])
   const [running, setRunning] = useState(false)
@@ -41,11 +42,15 @@ export function useAgentChat(providers: ProviderRecord[]) {
     [providers, providerId]
   )
 
-  // 助手切换 → 拉会话列表并自动选中最近一次（列表已按 updated_at DESC 排序）
+  // 助手切换 → 拉活跃+归档会话列表并自动选中最近一次（活跃列表已按置顶权重+updated_at DESC 排序）
   useEffect(() => {
     if (!assistantId) return
-    void window.pocketai.listConversations(assistantId, true).then((list) => {
+    void Promise.all([
+      window.pocketai.listConversations(assistantId, true, false),
+      window.pocketai.listConversations(assistantId, true, true)
+    ]).then(([list, archived]) => {
       setConversations(list)
+      setArchivedConversations(archived)
       setConversationId(list.length > 0 ? list[0]!.id : null)
     }).catch(reportIpcError('agent.listConversations'))
   }, [assistantId])
@@ -130,21 +135,40 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const deleteConversation = async (id: string) => {
     await window.pocketai.deleteConversation(id)
     setConversations((prev) => prev.filter((c) => c.id !== id))
+    setArchivedConversations((prev) => prev.filter((c) => c.id !== id))
     if (conversationId === id) setConversationId(null)
   }
 
-  // 重命名会话（本地同步更新，无需整表刷新）
+  // 重命名会话（本地同步更新两列表，无需整表刷新）
   const renameConversation = async (id: string, title: string) => {
     await window.pocketai.renameConversation(id, title)
-    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)))
+    const patch = (c: { id: string }) => (c.id === id ? { title } : {})
+    setConversations((prev) => prev.map((c) => ({ ...c, ...patch(c) })))
+    setArchivedConversations((prev) => prev.map((c) => ({ ...c, ...patch(c) })))
   }
 
-  // 重新拉取当前助手的会话列表（导入会话后用；不改变当前选中）
+  // 置顶/取消置顶：重新拉取保证排序权重生效
+  const toggleConversationPinned = async (id: string, pinned: boolean) => {
+    await window.pocketai.setConversationPinned(id, pinned)
+    await reloadConversations()
+  }
+
+  // 归档/取消归档：重新拉取活跃与归档两列表
+  const setConversationArchivedState = async (id: string, archived: boolean) => {
+    await window.pocketai.setConversationArchived(id, archived)
+    await reloadConversations()
+  }
+
+  // 重新拉取当前助手的活跃+归档会话列表（导入/归档操作后用；不改变当前选中）
   const reloadConversations = useCallback(async () => {
     if (!assistantId) return
     try {
-      const list = await window.pocketai.listConversations(assistantId, true)
+      const [list, archived] = await Promise.all([
+        window.pocketai.listConversations(assistantId, true, false),
+        window.pocketai.listConversations(assistantId, true, true)
+      ])
       setConversations(list)
+      setArchivedConversations(archived)
     } catch (e) {
       reportIpcError('agent.reloadConversations')(e)
     }
@@ -162,10 +186,10 @@ export function useAgentChat(providers: ProviderRecord[]) {
     }
   }, [])
 
-  // 点击历史会话 → 自动回填该会话最后使用的 Provider/模型
+  // 点击历史会话 → 自动回填该会话最后使用的 Provider/模型（含归档区会话）
   const selectConversation = (id: string) => {
     setConversationId(id)
-    const c = conversations.find((x) => x.id === id)
+    const c = conversations.find((x) => x.id === id) ?? archivedConversations.find((x) => x.id === id)
     if (c?.modelLabel) {
       // 格式："providerId:model" / 多目标 "pid1:m1 | pid2:m2" / Agent "agent:pid:model"
       const first = c.modelLabel.split('|')[0]?.trim() ?? ''
@@ -296,6 +320,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     assistantId,
     setAssistantId,
     conversations,
+    archivedConversations,
     conversationId,
     messages,
     running,
@@ -314,6 +339,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
     newConversation,
     deleteConversation,
     renameConversation,
+    toggleConversationPinned,
+    setConversationArchivedState,
     reloadConversations,
     deleteMessage,
     selectConversation,
