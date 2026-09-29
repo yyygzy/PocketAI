@@ -50,7 +50,8 @@ vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
         mocks.doc.error = error ?? null
       }
     },
-    setChunkCount: (id: string, n: number) => mocks.chunkCounts.push({ id, n })
+    setChunkCount: (id: string, n: number) => mocks.chunkCounts.push({ id, n }),
+    setContentHash: () => {}
   }
 }))
 vi.mock('../src/main/db/repositories/kb-chunk.repo', () => ({
@@ -88,6 +89,8 @@ function makeKb(over: Partial<KnowledgeBase> = {}): KnowledgeBase {
     rerankModel: null,
     hydeProviderId: null,
     hydeModel: null,
+    multiQueryProviderId: null,
+    multiQueryModel: null,
     documentCount: 0,
     chunkCount: 0,
     createdAt: 0,
@@ -104,6 +107,8 @@ function makeDoc(source: string): KbDocument & { status: string; error: string |
     status: 'pending',
     chunkCount: 0,
     error: null,
+    contentHash: null,
+    enabled: true,
     createdAt: 0
   }
 }

@@ -24,7 +24,8 @@ const baseRow = {
   tool_calls: null,
   attachments: null,
   batch_id: null,
-  sources: null
+  sources: null,
+  usage: null
 }
 
 describe('rowToRecord — DB 行映射为 MessageRecord', () => {
@@ -91,6 +92,16 @@ describe('rowToRecord — DB 行映射为 MessageRecord', () => {
   it('sources 非法 JSON → 降级为 undefined（不抛错）', () => {
     const rec = rowToRecord({ ...baseRow, sources: '[broken' })
     expect(rec.sources).toBeUndefined()
+  })
+
+  it('usage 合法 JSON → 解析为用量对象', () => {
+    const rec = rowToRecord({ ...baseRow, usage: '{"promptTokens":10,"completionTokens":5,"totalTokens":15}' })
+    expect(rec.usage?.totalTokens).toBe(15)
+  })
+
+  it('usage 非法 JSON → 降级为 undefined（不抛错）', () => {
+    const rec = rowToRecord({ ...baseRow, usage: '{broken' })
+    expect(rec.usage).toBeUndefined()
   })
 
   it('role 透传（assistant/tool 等角色字符串原样保留）', () => {

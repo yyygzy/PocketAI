@@ -10,12 +10,18 @@ import type {
   MessageRecord,
   ConversationExportPayload,
   MessageSearchResult,
+  UsageSummary,
+  DataHealthReport,
   SendMessagePayload,
   RegeneratePayload,
   ResendPayload,
   ChatChunkEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  MessageSource,
+  KbAskChunkEvent,
+  KbAskDoneEvent,
+  KbAskErrorEvent,
   KnowledgeBase,
   KbDocument,
   KbChunk,
@@ -193,6 +199,10 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_TRUNCATE_FROM, id),
   searchMessages: (query: string, assistantId?: string): Promise<MessageSearchResult[]> =>
     ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query, assistantId),
+  getUsageSummary: (days?: number): Promise<UsageSummary> =>
+    ipcRenderer.invoke(IPC.USAGE_GET, days),
+  getDataHealth: (): Promise<DataHealthReport> =>
+    ipcRenderer.invoke(IPC.DATA_HEALTH_GET),
 
   // ---------- 聊天 ----------
   sendMessage: (payload: SendMessagePayload): Promise<void> =>
@@ -220,6 +230,33 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.CHAT_ERROR_EVENT, listener)
   },
 
+  // ---------- KB 问答模式 ----------
+  kbAsk: (args: {
+    kbIds: string[]
+    providerId: string
+    model: string
+    question: string
+    history: { role: 'user' | 'assistant'; content: string }[]
+  }): Promise<{ requestId: string; sources: MessageSource[] }> =>
+    ipcRenderer.invoke(IPC.KB_ASK, args),
+  kbAskAbort: (requestId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_ASK_ABORT, requestId),
+  onKbAskChunk: (handler: (e: KbAskChunkEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: KbAskChunkEvent) => handler(data)
+    ipcRenderer.on(IPC.KB_ASK_CHUNK_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.KB_ASK_CHUNK_EVENT, listener)
+  },
+  onKbAskDone: (handler: (e: KbAskDoneEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: KbAskDoneEvent) => handler(data)
+    ipcRenderer.on(IPC.KB_ASK_DONE_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.KB_ASK_DONE_EVENT, listener)
+  },
+  onKbAskError: (handler: (e: KbAskErrorEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: KbAskErrorEvent) => handler(data)
+    ipcRenderer.on(IPC.KB_ASK_ERROR_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.KB_ASK_ERROR_EVENT, listener)
+  },
+
   // ---------- 知识库 ----------
   listKnowledgeBases: (): Promise<KnowledgeBase[]> => ipcRenderer.invoke(IPC.KB_LIST),
   getKnowledgeBase: (id: string): Promise<KnowledgeBase | null> =>
@@ -234,14 +271,23 @@ const api = {
     ipcRenderer.invoke(IPC.KB_DOC_LIST, kbId),
   addKbFiles: (kbId: string): Promise<KbDocument[]> =>
     ipcRenderer.invoke(IPC.KB_DOC_ADD_FILE, kbId),
+  addKbFolder: (kbId: string): Promise<{ docs: KbDocument[]; skippedCount: number; truncated: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_DOC_ADD_FOLDER, kbId),
   addKbUrl: (kbId: string, url: string, title?: string): Promise<KbDocument | null> =>
     ipcRenderer.invoke(IPC.KB_DOC_ADD_URL, kbId, url, title),
   addKbText: (kbId: string, text: string, title: string): Promise<KbDocument | null> =>
     ipcRenderer.invoke(IPC.KB_DOC_ADD_TEXT, kbId, text, title),
   deleteKbDocument: (docId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.KB_DOC_DELETE, docId),
-  reindexKbDocument: (kbId: string, docId: string): Promise<KbDocument | null> =>
+  reindexKbDocument: (kbId: string, docId: string): Promise<KbDocument> =>
     ipcRenderer.invoke(IPC.KB_DOC_REINDEX, kbId, docId),
+  checkKbUpdates: (kbId: string): Promise<{
+    checked: number
+    unchanged: number
+    issues: { docId: string; title: string; source: string; kind: 'changed' | 'missing' }[]
+  }> => ipcRenderer.invoke(IPC.KB_SYNC_CHECK, kbId),
+  setKbDocEnabled: (kbId: string, docId: string, enabled: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_DOC_SET_ENABLED, kbId, docId, enabled),
 
   listKbChunks: (docId: string): Promise<KbChunk[]> =>
     ipcRenderer.invoke(IPC.KB_CHUNK_LIST, docId),

@@ -452,7 +452,7 @@ class ChatService {
       })
 
       const full = result.content
-      messageRepo.updateContent(messageId, full, 'done', sources)
+      messageRepo.updateContent(messageId, full, 'done', sources, result.usage)
       const e: ChatDoneEvent = { requestId, targetIndex: index, messageId, fullContent: full, sources }
       emit(IPC.CHAT_DONE_EVENT, e)
     } catch (err) {

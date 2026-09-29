@@ -53,6 +53,16 @@ const MessageBubbleImpl: React.FC<Props> = ({
     }
   }
 
+  /** 正文 [n] 引用徽章点击：展开来源块并滚动定位到第 n 条 */
+  const handleCitation = (n: number) => {
+    setShowSources(true)
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`kb-source-${messageId}-${n}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    })
+  }
+
   return (
     <div
       className={`flex ${isUser ? 'justify-end' : 'justify-start'} group relative`}
@@ -130,7 +140,13 @@ const MessageBubbleImpl: React.FC<Props> = ({
           ) : isUser ? (
             <div className="whitespace-pre-wrap text-[14px] leading-relaxed select-text">{content}</div>
           ) : content ? (
-            <div className="select-text"><Markdown content={content} /></div>
+            <div className="select-text">
+              <Markdown
+                content={content}
+                citationCount={sources?.length ?? 0}
+                onCitation={handleCitation}
+              />
+            </div>
           ) : streaming ? (
             <span className="inline-block w-2 h-4 bg-[var(--color-accent)] animate-pulse align-middle" />
           ) : null}
@@ -154,10 +170,16 @@ const MessageBubbleImpl: React.FC<Props> = ({
                 {sources.map((s, i) => (
                   <div
                     key={s.chunkId}
-                    className="px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)]"
+                    id={`kb-source-${messageId}-${i + 1}`}
+                    className="px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] scroll-mt-2"
                   >
-                    <div className="text-[11px] text-[var(--color-accent)] font-medium truncate">
-                      {i + 1}. {s.docTitle}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="shrink-0 text-[10px] px-1 rounded border border-[var(--color-border)] text-[var(--color-accent)] font-medium">
+                        [{i + 1}]
+                      </span>
+                      <span className="text-[11px] text-[var(--color-accent)] font-medium truncate">
+                        {s.docTitle}
+                      </span>
                     </div>
                     <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">
                       {s.content.slice(0, 120)}{s.content.length > 120 ? '…' : ''}

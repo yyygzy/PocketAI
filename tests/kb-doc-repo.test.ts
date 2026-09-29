@@ -18,6 +18,8 @@ const baseRow = {
   source_type: 'pdf',
   title: '文档标题',
   chunk_count: 10,
+  content_hash: null,
+  enabled: 1,
   status: 'ready',
   error: null,
   created_at: 100

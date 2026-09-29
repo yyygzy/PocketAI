@@ -6,6 +6,7 @@ import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import { MermaidBlock } from './MermaidBlock'
+import { remarkCitations } from './remark-citations'
 
 // 链接/图片协议白名单：react-markdown 默认会编码危险协议，这里再显式兜底，
 // 防止依赖库行为变化放行 javascript:/vbscript:/file:/data:text/html 等。
@@ -39,14 +40,40 @@ function extractCodeBlock(
   return { lang: m[1]!.toLowerCase(), code }
 }
 
-export const Markdown: React.FC<{ content: string }> = ({ content }) => {
+export const Markdown: React.FC<{
+  content: string
+  /** 知识库来源条数：> 0 时启用正文 [n] 引用徽章解析；未传完全不拆（PopupApp/对比列等场景零行为变化） */
+  citationCount?: number
+  /** 引用徽章点击回调（定位到来源块对应条目）；未传时徽章仅展示不可点 */
+  onCitation?: (n: number) => void
+}> = ({ content, citationCount = 0, onCitation }) => {
+  const plugins = citationCount > 0 ? [remarkGfm, remarkMath, remarkCitations] : [remarkGfm, remarkMath]
   return (
     <div className="markdown-body text-[14px] leading-relaxed">
       <ReactMarkdown
         urlTransform={safeUrlTransform}
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={plugins}
         rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
+          sup: ({ node, children, ...props }) => {
+            // 知识库引用徽章（remarkCitations 产出）：hProperties['data-citation'] → properties.dataCitation
+            const dataProps = (node as unknown as { properties?: Record<string, unknown> }).properties
+            const raw = dataProps?.dataCitation
+            const n = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN
+            if (!Number.isFinite(n)) return <sup {...props}>{children}</sup>
+            const inRange = n >= 1 && n <= citationCount
+            const cls = inRange
+              ? 'kb-citation inline-flex items-center align-super mx-0.5 px-1 rounded border border-[var(--color-border)] text-[10px] leading-[1.4] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors'
+              : 'kb-citation inline-flex items-center align-super mx-0.5 px-1 rounded border border-[var(--color-border)] text-[10px] leading-[1.4] text-[var(--color-text-muted)]'
+            if (inRange && onCitation) {
+              return (
+                <button type="button" className={`${cls} cursor-pointer`} onClick={() => onCitation(n)}>
+                  [{n}]
+                </button>
+              )
+            }
+            return <span className={cls}>[{n}]</span>
+          },
           a: ({ node, href, children, ...props }) => {
             // 非白名单协议：渲染为无 href 的纯文本样式锚点，不可点击
             if (!href || !SAFE_NAV_HREF.test(href)) {

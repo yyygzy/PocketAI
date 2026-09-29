@@ -8,6 +8,7 @@ const realDb = new Database(':memory:')
 loadVec(realDb)
 realDb.exec(`
   CREATE TABLE kb_chunks (id TEXT PRIMARY KEY, doc_id TEXT, kb_id TEXT, sequence INTEGER, content TEXT, embedding BLOB, created_at INTEGER);
+  CREATE TABLE kb_documents (id TEXT PRIMARY KEY, kb_id TEXT, source TEXT, source_type TEXT, title TEXT, chunk_count INTEGER DEFAULT 0, status TEXT DEFAULT 'pending', error TEXT, content_hash TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER DEFAULT 0);
 `)
 
 vi.mock('../src/main/db/database', () => ({
@@ -50,6 +51,17 @@ describe('kb-vec 向量索引（sqlite-vec）', () => {
   it('kbIds 过滤：不在指定 KB 的结果不返回', () => {
     const results = kbChunkRepo.knnSearch(new Float32Array([0, 0, 1]), ['kb-nonexist'], 3)
     expect(results).toHaveLength(0)
+  })
+
+  it('停用文档（enabled=0）的向量不参与检索，恢复后回归', () => {
+    realDb.prepare("INSERT INTO kb_documents (id, kb_id, enabled, created_at) VALUES ('d2', 'kb1', 0, 0)").run()
+    // 汽车（[0,0,1]）属于 d2，停用后被排除
+    const excluded = kbChunkRepo.knnSearch(new Float32Array([0, 0, 1]), ['kb1'], 3)
+    expect(excluded.find((r) => r.content === '汽车有四个轮子')).toBeUndefined()
+
+    realDb.prepare("UPDATE kb_documents SET enabled = 1 WHERE id = 'd2'").run()
+    const restored = kbChunkRepo.knnSearch(new Float32Array([0, 0, 1]), ['kb1'], 3)
+    expect(restored.find((r) => r.content === '汽车有四个轮子')).toBeTruthy()
   })
 
   it('deleteByDoc 后该文档向量从索引移除', () => {

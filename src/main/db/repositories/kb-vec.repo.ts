@@ -108,7 +108,9 @@ export const kbVecRepo = {
     this.ensureTable(dim)
     const db = dbService.getHandle()
     const placeholders = kbIds.map(() => '?').join(',')
-    // 子查询先在 vec0 表上完成 KNN（带 LIMIT，sqlite-vec 要求），再 JOIN 映射与分块表
+    // 子查询先在 vec0 表上完成 KNN（带 LIMIT，sqlite-vec 要求），再 JOIN 映射与分块表；
+    // JOIN 层排除已停用文档（enabled=0），因此子查询按 3 倍超额取样防止过滤后不足 topK
+    const oversample = topK * 3
     const rows = db
       .prepare(
         `SELECT c.id AS chunk_id, c.doc_id, c.content, v.distance
@@ -121,9 +123,10 @@ export const kbVecRepo = {
          JOIN ${MAP_TABLE} m ON m.vec_rowid = v.rowid AND m.dim = ?
          JOIN kb_chunks c ON c.id = m.chunk_id
          WHERE c.kb_id IN (${placeholders})
+           AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)
          ORDER BY v.distance ASC`
       )
-      .all(float32ToBuffer(query), topK, dim, ...kbIds) as Array<{
+      .all(float32ToBuffer(query), oversample, dim, ...kbIds) as Array<{
       chunk_id: string
       doc_id: string
       content: string

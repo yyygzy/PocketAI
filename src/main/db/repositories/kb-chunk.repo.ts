@@ -174,7 +174,8 @@ export const kbChunkRepo = {
       .prepare(
         `SELECT c.id, c.doc_id, c.kb_id, c.content, c.embedding
          FROM kb_chunks c
-         WHERE c.kb_id IN (${placeholders}) AND c.embedding IS NOT NULL`
+         WHERE c.kb_id IN (${placeholders}) AND c.embedding IS NOT NULL
+           AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)`
       )
       .all(...kbIds) as ChunkRow[]
 
@@ -228,6 +229,7 @@ export const kbChunkRepo = {
         `SELECT f.content, f.doc_id, f.kb_id, f.chunk_id, bm25(kb_chunks_fts) AS score
          FROM kb_chunks_fts f
          WHERE f.kb_chunks_fts MATCH ? AND f.kb_id IN (${placeholders})
+           AND f.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)
          ORDER BY score ASC
          LIMIT ?`
       )

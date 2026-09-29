@@ -6,6 +6,7 @@ import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { embedQuery } from './embedding'
 import { rerankChunks } from './reranker'
 import { generateHypotheticalDoc } from './hyde'
+import { generateMultiQueries } from './multi-query'
 import { mmrSelect } from './mmr'
 import type { RetrievedChunk, RetrievalResult } from '../../shared/types'
 
@@ -61,8 +62,10 @@ class RAGService {
     let rerankModel: string | null = null
     let hydeProvider: string | null = null
     let hydeModel: string | null = null
+    let multiQueryProvider: string | null = null
+    let multiQueryModel: string | null = null
 
-    // 取第一个配置了 hyde/rerank 的 KB（同一会话内统一）
+    // 取第一个配置了 hyde/rerank/multiQuery 的 KB（同一会话内统一）
     for (const kbId of kbIds) {
       const kb = kbRepo.get(kbId)
       if (!kb) continue
@@ -74,6 +77,10 @@ class RAGService {
         rerankProvider = kb.rerankProviderId
         rerankModel = kb.rerankModel
       }
+      if (!multiQueryProvider && kb.multiQueryProviderId && kb.multiQueryModel) {
+        multiQueryProvider = kb.multiQueryProviderId
+        multiQueryModel = kb.multiQueryModel
+      }
     }
 
     // HyDE：用假设文档做向量检索的 embedding，BM25 仍用原 query
@@ -82,29 +89,46 @@ class RAGService {
       : null
     const embedText = hydeDoc ?? query
 
+    // Multi-Query：LLM 改写出多个视角变体查询（失败降级为仅原 query）
+    const variants =
+      multiQueryProvider && multiQueryModel
+        ? (await generateMultiQueries(query, multiQueryProvider, multiQueryModel)) ?? []
+        : []
+    // 原 query 在前：向量路可用 HyDE 文本，变体只用自身
+    const queryVariants: Array<{ q: string; useHyde: boolean }> = [
+      { q: query, useHyde: true },
+      ...variants.map((v) => ({ q: v, useHyde: false }))
+    ]
+
     for (const kbId of kbIds) {
       const kb = kbRepo.get(kbId)
       if (!kb) continue
 
-      // 收集两路检索结果
+      // 收集全部查询的双路检索结果（原 query + 变体），统一 RRF 融合
       const vectorResults: RetrievedChunk[] = []
       const bm25Results: RetrievedChunk[] = []
 
-      // 1. 向量检索（HyDE 开启时用假设文档 embedding）
-      if (kb.embeddingProviderId && kb.embeddingModel) {
-        try {
-          const qVec = await embedQuery(kb.embeddingProviderId, kb.embeddingModel, embedText)
-          vectorResults.push(...kbChunkRepo.knnSearch(qVec, [kbId], topK))
-        } catch {
-          // 向量化失败不阻断，仅跳过向量检索
+      for (const { q, useHyde } of queryVariants) {
+        // 1. 向量检索（原 query 在 HyDE 开启时用假设文档 embedding）
+        if (kb.embeddingProviderId && kb.embeddingModel) {
+          try {
+            const qVec = await embedQuery(
+              kb.embeddingProviderId,
+              kb.embeddingModel,
+              useHyde ? embedText : q
+            )
+            vectorResults.push(...kbChunkRepo.knnSearch(qVec, [kbId], topK))
+          } catch {
+            // 向量化失败不阻断，仅跳过该查询的向量检索
+          }
         }
-      }
 
-      // 2. BM25 全文检索
-      try {
-        bm25Results.push(...kbChunkRepo.bm25Search(query, [kbId], topK))
-      } catch {
-        // FTS 检索失败不阻断
+        // 2. BM25 全文检索
+        try {
+          bm25Results.push(...kbChunkRepo.bm25Search(q, [kbId], topK))
+        } catch {
+          // FTS 检索失败不阻断
+        }
       }
 
       // RRF 融合两路结果
@@ -144,11 +168,15 @@ class RAGService {
     return { query, chunks: picked }
   }
 
-  /** 拼装注入到 SystemPrompt 的知识上下文 */
+  /** 拼装注入到 SystemPrompt 的知识上下文（带编号引用指令，正文 [n] 与 sources 顺序一一对应） */
   buildContext(chunks: RetrievedChunk[]): string {
     if (chunks.length === 0) return ''
     const parts = chunks.map((c, i) => `[${i + 1}. ${c.docTitle}]\n${c.content}`)
-    return `以下是相关知识库内容：\n\n${parts.join('\n\n---\n\n')}`
+    return (
+      '以下是相关知识库内容。回答时请依据这些内容，并在引用到的句子末尾用编号标注来源（如 [1]、[2]）；' +
+      '知识库中没有的信息不要编造。\n\n' +
+      parts.join('\n\n---\n\n')
+    )
   }
 }
 

@@ -12,6 +12,8 @@ import type {
 } from '../../../../shared/types'
 import { ProviderSettings, Notice } from './ProviderSettings'
 import { UserMemoryPanel } from './UserMemoryPanel'
+import { UsagePanel } from './UsagePanel'
+import { DataHealthPanel } from './DataHealthPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
@@ -53,6 +55,16 @@ export const SettingsModule: React.FC = () => {
     <div className="flex flex-col h-full">
       <div className="flex-1 min-h-0 overflow-auto">
         <ProviderSettings />
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.usage')}</h3>
+          <UsagePanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.dataHealth')}</h3>
+          <DataHealthPanel />
+        </div>
 
         <div className="mt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.localModel')}</h3>

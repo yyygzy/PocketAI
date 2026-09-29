@@ -17,6 +17,7 @@ interface MessageRow {
   attachments: string | null
   batch_id: string | null
   sources: string | null
+  usage: string | null
 }
 
 export function rowToRecord(row: MessageRow): MessageRecord {
@@ -27,6 +28,10 @@ export function rowToRecord(row: MessageRow): MessageRecord {
   let sources: MessageRecord['sources'] = undefined
   if (row.sources) {
     try { sources = JSON.parse(row.sources) } catch { /* ignore */ }
+  }
+  let usage: MessageRecord['usage'] = undefined
+  if (row.usage) {
+    try { usage = JSON.parse(row.usage) } catch { /* ignore */ }
   }
   return {
     id: row.id,
@@ -41,7 +46,8 @@ export function rowToRecord(row: MessageRow): MessageRecord {
     toolCalls: row.tool_calls ?? null,
     attachments,
     batchId: row.batch_id,
-    sources
+    sources,
+    usage
   }
 }
 
@@ -115,12 +121,19 @@ export const messageRepo = {
     }
   },
 
-  updateContent(id: string, content: string, status: MessageStatus, sources?: MessageRecord['sources']): void {
+  updateContent(
+    id: string,
+    content: string,
+    status: MessageStatus,
+    sources?: MessageRecord['sources'],
+    usage?: MessageRecord['usage']
+  ): void {
     const sourcesJson = sources && sources.length > 0 ? JSON.stringify(sources) : null
+    const usageJson = usage ? JSON.stringify(usage) : null
     dbService
       .getHandle()
-      .prepare('UPDATE messages SET content=?, status=?, sources=? WHERE id=?')
-      .run(content, status, sourcesJson, id)
+      .prepare('UPDATE messages SET content=?, status=?, sources=?, usage=? WHERE id=?')
+      .run(content, status, sourcesJson, usageJson, id)
   },
 
   updateToolCalls(id: string, toolCalls: string | null): void {

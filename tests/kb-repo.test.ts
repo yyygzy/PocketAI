@@ -40,6 +40,8 @@ const baseRow = {
   rerank_model: null,
   hyde_provider_id: null,
   hyde_model: null,
+  multiquery_provider_id: null,
+  multiquery_model: null,
   created_at: 100
 }
 

@@ -49,6 +49,8 @@ const knowledgeBaseFull = z.object({
   rerankModel: z.string().max(KB_MAX_MODEL_CHARS).nullable(),
   hydeProviderId: z.string().max(KB_MAX_ID_CHARS).nullable(),
   hydeModel: z.string().max(KB_MAX_MODEL_CHARS).nullable(),
+  multiQueryProviderId: z.string().max(KB_MAX_ID_CHARS).nullable(),
+  multiQueryModel: z.string().max(KB_MAX_MODEL_CHARS).nullable(),
   documentCount: z.number().int().nonnegative(),
   chunkCount: z.number().int().nonnegative(),
   createdAt: z.number().int().nonnegative()

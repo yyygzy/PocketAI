@@ -142,6 +142,66 @@ export interface MessageRecord {
   batchId?: string | null
   /** 知识库引用来源（RAG 检索命中的 chunk 元信息） */
   sources?: MessageSource[] | null
+  /** token 用量（provider 返回，assistant 消息记录；旧数据为 null） */
+  usage?: UsageStats | null
+}
+
+/** 单次生成的 token 用量（provider 流式末尾返回的 usage） */
+export interface UsageStats {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  /** 命中缓存的输入 token 数（Anthropic cache_read / OpenAI cached_tokens） */
+  cachedTokens?: number
+}
+
+/** 用量聚合汇总（按时间范围过滤） */
+export interface UsageSummary {
+  days: number
+  totals: {
+    requests: number
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+    cachedTokens: number
+  }
+  daily: { date: string; totalTokens: number }[]
+  byProvider: { provider: string; requests: number; totalTokens: number }[]
+  byModel: { provider: string; model: string; requests: number; totalTokens: number }[]
+}
+
+/** 数据健康度报告（Settings「数据健康」面板）：数据体量 / 知识库索引状态 / 备份与维护任务 */
+export interface DataHealthReport {
+  /** 数据目录体积明细（字节）；dbBytes 含 WAL，dataDirBytes 为全目录递归合计 */
+  sizes: {
+    dataDirBytes: number
+    dbBytes: number
+    vectorDbBytes: number
+    attachmentsBytes: number
+    extensionsBytes: number
+    logsBytes: number
+    otherBytes: number
+  }
+  /** 知识库文档索引状态分布 + 失败文档清单（最多 10 条，创建时间倒序） */
+  kb: {
+    total: number
+    byStatus: Record<KbDocStatus, number>
+    errorDocs: { id: string; kbName: string; title: string; error: string | null; createdAt: number }[]
+  }
+  /** WebDAV 云备份状态 */
+  backup: {
+    configured: boolean
+    enabled: boolean
+    intervalHours: number
+    lastRunAt: number | null
+    lastOkAt: number | null
+    lastError: string | null
+  }
+  /** 内置维护任务（task-scheduler）上次运行时间 */
+  tasks: {
+    kbHealthCheckLastRunAt: number | null
+    backupVerifyLastRunAt: number | null
+  }
 }
 
 /** RAG 检索命中的知识库 chunk 引用来源 */
@@ -150,6 +210,27 @@ export interface MessageSource {
   docId: string
   docTitle: string
   content: string
+}
+
+// ---------- KB 问答模式（知识库详情页内选库即聊，轻量不落库） ----------
+export interface KbAskMessage {
+  role: 'user' | 'assistant'
+  content: string
+  /** 仅 assistant 消息携带：本轮引用来源 */
+  sources?: MessageSource[]
+}
+export interface KbAskChunkEvent {
+  requestId: string
+  delta: string
+}
+export interface KbAskDoneEvent {
+  requestId: string
+  fullContent: string
+  sources: MessageSource[]
+}
+export interface KbAskErrorEvent {
+  requestId: string
+  error: string
 }
 
 /** 会话导出/导入文件载荷（明文 JSON 与加密 .moxia 内部同构） */
@@ -193,6 +274,9 @@ export interface KnowledgeBase {
   /** HyDE 查询重写 LLM provider（空则用原 query 做向量检索） */
   hydeProviderId: string | null
   hydeModel: string | null
+  /** Multi-Query 多查询扩展 LLM provider（空则只检索原 query） */
+  multiQueryProviderId: string | null
+  multiQueryModel: string | null
   documentCount: number
   chunkCount: number
   createdAt: number
@@ -207,6 +291,10 @@ export interface KbDocument {
   chunkCount: number
   status: KbDocStatus
   error: string | null
+  /** file 文档入库时的内容 sha256（增量同步检测用；旧数据/非 file 类型为 null） */
+  contentHash: string | null
+  /** 文档级检索开关：false 临时排除出检索范围（不删除、不重索引） */
+  enabled: boolean
   createdAt: number
 }
 
@@ -1161,6 +1249,15 @@ export interface FileOpResult {
   error?: string
 }
 
+// ---------- 知识库内置本地 embedding ----------
+/** 内置 embedding 在 KB 配置中的虚拟 provider id（providers 表中不存在，embedding 服务拦截分派） */
+export const BUILTIN_EMBED_PROVIDER_ID = 'builtin'
+/** 内置模型固定 model 名（与 scripts/fetch-embedding-model.mjs 下载目录一致） */
+export const BUILTIN_EMBED_MODEL = 'Xenova/bge-small-zh-v1.5'
+export const BUILTIN_EMBED_DIM = 512
+/** bge 中文系列检索场景的查询指令前缀（仅加在查询侧，文档侧不加） */
+export const BUILTIN_QUERY_PREFIX = '为这个句子生成表示以用于检索相关文章：'
+
 // ---------- IPC 通道 ----------
 export const IPC = {
   SYSTEM_HARDWARE_INFO: 'system:hardware-info',
@@ -1215,6 +1312,8 @@ export const IPC = {
   MESSAGE_DELETE: 'message:delete',
   MESSAGE_TRUNCATE_FROM: 'message:truncate-from', // 截断重跑：删除目标消息及其后全部消息
   MESSAGE_SEARCH: 'message:search',
+  USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
+  DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
 
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',
@@ -1231,13 +1330,21 @@ export const IPC = {
 
   KB_DOC_LIST: 'kb-doc:list',
   KB_DOC_ADD_FILE: 'kb-doc:add-file',
+  KB_DOC_ADD_FOLDER: 'kb-doc:add-folder',
   KB_DOC_ADD_URL: 'kb-doc:add-url',
   KB_DOC_ADD_TEXT: 'kb-doc:add-text',
   KB_DOC_DELETE: 'kb-doc:delete',
   KB_DOC_REINDEX: 'kb-doc:reindex',
+  KB_SYNC_CHECK: 'kb:sync-check',
+  KB_DOC_SET_ENABLED: 'kb-doc:set-enabled',
 
   KB_CHUNK_LIST: 'kb-chunk:list',
   KB_RETRIEVE: 'kb:retrieve',
+  KB_ASK: 'kb:ask',
+  KB_ASK_ABORT: 'kb:ask-abort',
+  KB_ASK_CHUNK_EVENT: 'kb-ask:chunk-event',
+  KB_ASK_DONE_EVENT: 'kb-ask:done-event',
+  KB_ASK_ERROR_EVENT: 'kb-ask:error-event',
 
   // MCP Server
   MCP_SERVER_LIST: 'mcp-server:list',

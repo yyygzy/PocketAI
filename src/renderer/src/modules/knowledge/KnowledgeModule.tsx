@@ -7,6 +7,8 @@ import type {
   RetrievedChunk,
   ProviderRecord
 } from '../../../../shared/types'
+import { BUILTIN_EMBED_PROVIDER_ID, BUILTIN_EMBED_MODEL } from '../../../../shared/types'
+import KbAskPanel from './KbAskPanel'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
@@ -111,6 +113,8 @@ const KbForm: React.FC<{
   const [rerankModel, setRerankModel] = useState(kb?.rerankModel ?? '')
   const [hydeProviderId, setHydeProviderId] = useState(kb?.hydeProviderId ?? '')
   const [hydeModel, setHydeModel] = useState(kb?.hydeModel ?? '')
+  const [multiQueryProviderId, setMultiQueryProviderId] = useState(kb?.multiQueryProviderId ?? '')
+  const [multiQueryModel, setMultiQueryModel] = useState(kb?.multiQueryModel ?? '')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -120,6 +124,7 @@ const KbForm: React.FC<{
   const selectedProvider = providers.find((p) => p.id === providerId)
   const selectedRerankProvider = providers.find((p) => p.id === rerankProviderId)
   const selectedHydeProvider = providers.find((p) => p.id === hydeProviderId)
+  const selectedMultiQueryProvider = providers.find((p) => p.id === multiQueryProviderId)
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -144,7 +149,9 @@ const KbForm: React.FC<{
         rerankProviderId: rerankProviderId || null,
         rerankModel: rerankModel || null,
         hydeProviderId: hydeProviderId || null,
-        hydeModel: hydeModel || null
+        hydeModel: hydeModel || null,
+        multiQueryProviderId: multiQueryProviderId || null,
+        multiQueryModel: multiQueryModel || null
       })
       onSaved(saved)
     } catch (e) {
@@ -180,10 +187,11 @@ const KbForm: React.FC<{
           value={providerId}
           onChange={(e) => {
             setProviderId(e.target.value)
-            setModel('')
+            setModel(e.target.value === BUILTIN_EMBED_PROVIDER_ID ? BUILTIN_EMBED_MODEL : '')
           }}
         >
           <option value="">{t('kb.pleaseSelect')}</option>
+          <option value={BUILTIN_EMBED_PROVIDER_ID}>{t('kb.builtinProvider')}</option>
           {providers.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -193,7 +201,9 @@ const KbForm: React.FC<{
       </Field>
 
       <Field label={t('kb.embModel')}>
-        {selectedProvider && selectedProvider.models.length > 0 ? (
+        {providerId === BUILTIN_EMBED_PROVIDER_ID ? (
+          <input className="input font-mono text-xs" value={BUILTIN_EMBED_MODEL} disabled readOnly />
+        ) : selectedProvider && selectedProvider.models.length > 0 ? (
           <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
             <option value="">{t('kb.pleaseSelect')}</option>
             {selectedProvider.models
@@ -306,6 +316,49 @@ const KbForm: React.FC<{
         )}
       </div>
 
+      {/* Multi-Query 多查询扩展（可选）：LLM 把问题改写成多个视角查询分别检索后融合 */}
+      <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-3">
+        <div className="text-xs text-[var(--color-text-muted)]">{t('kb.multiQueryHint')}</div>
+        <Field label={t('kb.multiQueryProvider')}>
+          <select
+            className="input"
+            value={multiQueryProviderId}
+            onChange={(e) => {
+              setMultiQueryProviderId(e.target.value)
+              setMultiQueryModel('')
+            }}
+          >
+            <option value="">{t('kb.multiQueryDisabled')}</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {multiQueryProviderId && (
+          <Field label={t('kb.multiQueryModel')}>
+            {selectedMultiQueryProvider && selectedMultiQueryProvider.models.length > 0 ? (
+              <select className="input" value={multiQueryModel} onChange={(e) => setMultiQueryModel(e.target.value)}>
+                <option value="">{t('kb.pleaseSelect')}</option>
+                {selectedMultiQueryProvider.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="input font-mono text-xs"
+                value={multiQueryModel}
+                onChange={(e) => setMultiQueryModel(e.target.value)}
+                placeholder="gpt-4o-mini"
+              />
+            )}
+          </Field>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <Field label={t('kb.chunkSize')}>
           <input
@@ -370,6 +423,7 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
   const [editing, setEditing] = useState(false)
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
   const [busy, setBusy] = useState(false)
+  const [askMode, setAskMode] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id).then(setDocs).catch(reportIpcError('kb.listDocuments')), [kb.id])
@@ -415,6 +469,23 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
     }
   }
 
+  /** 批量导入文件夹：递归扫描支持的文档入队；无命中/被截断时给出提示 */
+  const handleAddFolder = async () => {
+    setBusy(true)
+    try {
+      const r = await window.pocketai.addKbFolder(kb.id)
+      if (r.docs.length === 0) {
+        toast.warning(t('kb.folderNoMatch'))
+      } else if (r.truncated) {
+        toast.warning(t('kb.folderTruncated', { n: r.docs.length }))
+      }
+      await refresh()
+      startPolling()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // Electron 未实现 window.prompt（调用直接返回 null，不弹窗），
   // 添加 URL / 录入文本改用应用内弹窗 AddSourceDialog
   const [addSource, setAddSource] = useState<null | 'url' | 'text'>(null)
@@ -442,6 +513,48 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
     if (!(await confirm({ message: t('kb.delKbConfirm', { name: kb.name }), danger: true }))) return
     await window.pocketai.deleteKnowledgeBase(kb.id)
     onChanged()
+  }
+
+  /** 文档级检索开关：停用后临时排除出检索范围（不删除、不重索引） */
+  const handleToggleDoc = async (docId: string, enabled: boolean) => {
+    try {
+      await window.pocketai.setKbDocEnabled(kb.id, docId, enabled)
+      await refresh()
+    } catch (e) {
+      toast.error(errText(e))
+    }
+  }
+
+  /** 增量同步：检测 file 文档源文件变更，变更的重索引、丢失的移除（经确认） */
+  const handleSyncCheck = async () => {
+    setBusy(true)
+    try {
+      const r = await window.pocketai.checkKbUpdates(kb.id)
+      const changed = r.issues.filter((i) => i.kind === 'changed')
+      const missing = r.issues.filter((i) => i.kind === 'missing')
+      if (r.issues.length === 0) {
+        toast.info(t('kb.syncUpToDate', { n: r.checked }))
+        return
+      }
+      const ok = await confirm({
+        message: t('kb.syncConfirm', { n: changed.length, m: missing.length }),
+        danger: missing.length > 0
+      })
+      if (!ok) return
+      for (const doc of changed) {
+        await window.pocketai.reindexKbDocument(kb.id, doc.docId)
+      }
+      for (const doc of missing) {
+        await window.pocketai.deleteKbDocument(doc.docId)
+      }
+      await refresh()
+      if (changed.length > 0) startPolling()
+      toast.success(t('kb.syncDone', { n: changed.length, m: missing.length }))
+    } catch (e) {
+      toast.error(errText(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   if (editing) {
@@ -473,7 +586,18 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
         </div>
       </div>
 
-      {/* 文档管理 */}
+      {/* 视图切换：文档管理 / 问答（hidden 保挂载，问答对话不丢） */}
+      <div className="flex gap-1">
+        <button onClick={() => setAskMode(false)} className={askMode ? 'chip' : 'chip chip-accent'}>
+          {t('kb.docsTab')}
+        </button>
+        <button onClick={() => setAskMode(true)} className={askMode ? 'chip chip-accent' : 'chip'}>
+          {t('kb.askTab')}
+        </button>
+      </div>
+
+      {/* 文档管理 + 检索测试（文档 tab） */}
+      <div hidden={askMode}>
       <div>
         <div className="flex items-center justify-between mb-2">
           <h4 className="text-sm font-semibold">{t('kb.documents')}</h4>
@@ -481,11 +605,17 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
             <button onClick={handleAddFiles} disabled={busy} className="btn-primary text-xs disabled:opacity-50">
               {t('kb.upload')}
             </button>
+            <button onClick={handleAddFolder} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
+              {t('kb.importFolder')}
+            </button>
             <button onClick={() => setAddSource('url')} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
               {t('kb.addUrl')}
             </button>
             <button onClick={() => setAddSource('text')} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
               {t('kb.addText')}
+            </button>
+            <button onClick={handleSyncCheck} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">
+              {t('kb.checkUpdates')}
             </button>
           </div>
         </div>
@@ -499,8 +629,17 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
           {docs.map((d) => (
             <div
               key={d.id}
-              className="flex items-center gap-3 px-3 py-2 rounded bg-[var(--color-sidebar)] border border-[var(--color-border)]"
+              className={`flex items-center gap-3 px-3 py-2 rounded bg-[var(--color-sidebar)] border border-[var(--color-border)]${d.enabled ? '' : ' opacity-60'}`}
             >
+              <input
+                type="checkbox"
+                checked={d.enabled}
+                onChange={() => void handleToggleDoc(d.id, !d.enabled)}
+                disabled={busy}
+                className="shrink-0 cursor-pointer"
+                title={d.enabled ? t('kb.docEnabled') : t('kb.docDisabled')}
+                aria-label={d.enabled ? t('kb.docEnabled') : t('kb.docDisabled')}
+              />
               <StatusBadge status={d.status} />
               <div className="flex-1 min-w-0">
                 <div className="text-sm truncate">{d.title || d.source}</div>
@@ -536,6 +675,14 @@ const KbDetail: React.FC<{ kb: KnowledgeBase; onChanged: () => void }> = ({ kb, 
 
       {/* 检索测试 */}
       <RetrievalTest kbId={kb.id} topN={kb.topN} />
+      </div>
+
+      {/* KB 问答（问答 tab） */}
+      <div hidden={!askMode}>
+        <h4 className="text-sm font-semibold mb-1">{t('kb.askTitle')}</h4>
+        <p className="text-[11px] text-[var(--color-text-muted)] mb-3">{t('kb.askHint')}</p>
+        <KbAskPanel kb={kb} />
+      </div>
 
       {/* 分块预览弹层 */}
       {previewDoc && (

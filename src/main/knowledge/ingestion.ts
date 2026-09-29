@@ -6,6 +6,7 @@ import { kbChunkRepo, type ChunkInsert } from '../db/repositories/kb-chunk.repo'
 import { chunkMarkdown } from './chunker'
 import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
+import { hashFile } from './sync-check'
 import type { KbDocument, KnowledgeBase } from '../../shared/types'
 import { errMsg } from '../error'
 import { mustGet } from '../db/must-get'
@@ -32,6 +33,13 @@ export class IngestionService {
 
       // 1. 解析
       kbDocRepo.setStatus(docId, 'parsing')
+      // 记录源内容 hash（增量同步检测用）：仅本地文件可算出，
+      // URL/手工文本/文件丢失时 hashFile 失败写 null，天然不参与后续检测
+      try {
+        kbDocRepo.setContentHash(docId, await hashFile(doc.source))
+      } catch {
+        kbDocRepo.setContentHash(docId, null)
+      }
       const parsed = await parseDocument(doc.source, doc.sourceType)
       if (!parsed.text.trim()) {
         throw new Error('文档解析后内容为空')

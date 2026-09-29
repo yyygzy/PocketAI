@@ -17,14 +17,16 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check:update-yml": "node scripts/check-update-yml.cjs dist",
-    "dist": "electron-vite build && electron-builder --win",
-    "dist:portable": "electron-vite build && electron-builder --win portable",
-    "dist:nsis": "electron-vite build && electron-builder --win nsis",
-    "dist:linux": "electron-vite build && electron-builder --linux --config electron-builder.linux.yml",
+    "dist": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win",
+    "dist:portable": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win portable",
+    "dist:nsis": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win nsis",
+    "dist:linux": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --linux --config electron-builder.linux.yml",
+    "fetch:model": "node scripts/fetch-embedding-model.mjs",
     "license": "node scripts/license-studio.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
     "archiver": "^6.0.2",
     "better-sqlite3-multiple-ciphers": "^13.0.3",
     "cheerio": "^1.2.0",
@@ -75,7 +77,8 @@
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3-multiple-ciphers/**/*.node",
-      "node_modules/sqlite-vec*/**/*.{dll,dylib,so}"
+      "node_modules/sqlite-vec*/**/*.{dll,dylib,so}",
+      "node_modules/onnxruntime-node/**"
     ],
     "directories": {
       "output": "dist",
@@ -93,7 +96,13 @@
       "!**/node_modules/{@types,typescript}",
       "!**/node_modules/{better-sqlite3-multiple-ciphers}/prebuilds/{darwin,linux,linuxmusl}-*.node"
     ],
-    "extraResources": [],
+    "extraResources": [
+      {
+        "from": "resources/models",
+        "to": "models",
+        "filter": ["**/*"]
+      }
+    ],
     "win": {
       "icon": "build/icon/icon.ico",
       "target": [

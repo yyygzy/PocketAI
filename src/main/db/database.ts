@@ -522,6 +522,40 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL
       );
     `
+  },
+  {
+    // v25: 用量统计——messages 表增加 usage JSON 列（token 用量），并补 created_at 索引供范围聚合
+    version: 25,
+    name: 'messages_usage',
+    up: `
+      ALTER TABLE messages ADD COLUMN usage TEXT;
+      CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+    `
+  },
+  {
+    // v26: 知识库 Multi-Query 多查询扩展（用 LLM 把问题改写成多个视角查询分别检索后融合）
+    version: 26,
+    name: 'kb_multiquery',
+    up: `
+      ALTER TABLE knowledge_bases ADD COLUMN multiquery_provider_id TEXT;
+      ALTER TABLE knowledge_bases ADD COLUMN multiquery_model TEXT;
+    `
+  },
+  {
+    // v27: 文档增量同步——file 文档入库时记录内容 sha256，检测源文件变更
+    version: 27,
+    name: 'kb_doc_content_hash',
+    up: `
+      ALTER TABLE kb_documents ADD COLUMN content_hash TEXT;
+    `
+  },
+  {
+    // v28: 文档级检索开关——enabled=0 的文档临时排除出检索范围（不删除、不重索引）
+    version: 28,
+    name: 'kb_doc_enabled',
+    up: `
+      ALTER TABLE kb_documents ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+    `
   }
 ]
 

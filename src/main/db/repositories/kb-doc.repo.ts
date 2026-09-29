@@ -13,6 +13,8 @@ interface KbDocRow {
   chunk_count: number
   status: string
   error: string | null
+  content_hash: string | null
+  enabled: number
   created_at: number
 }
 
@@ -26,6 +28,8 @@ export function rowToRecord(row: KbDocRow): KbDocument {
     chunkCount: row.chunk_count,
     status: row.status as KbDocStatus,
     error: row.error,
+    contentHash: row.content_hash,
+    enabled: row.enabled === 1,
     createdAt: row.created_at
   }
 }
@@ -85,6 +89,22 @@ export const kbDocRepo = {
       .getHandle()
       .prepare('UPDATE kb_documents SET chunk_count=? WHERE id=?')
       .run(count, id)
+  },
+
+  /** 记录 file 文档内容 hash（增量同步检测用；传 null 清除） */
+  setContentHash(id: string, hash: string | null): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE kb_documents SET content_hash=? WHERE id=?')
+      .run(hash, id)
+  },
+
+  /** 文档级检索开关：enabled=false 临时排除出检索范围（不删除、不重索引） */
+  setEnabled(id: string, enabled: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE kb_documents SET enabled=? WHERE id=?')
+      .run(enabled ? 1 : 0, id)
   },
 
   delete(id: string): void {

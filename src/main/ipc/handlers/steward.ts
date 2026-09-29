@@ -1,8 +1,9 @@
-// 平台管家 IPC：健康报告/清理/VACUUM、模型推荐、安全审计、故障诊断
+// 平台管家 IPC：健康报告/清理/VACUUM、模型推荐、安全审计、故障诊断、数据健康度
 import { IPC } from '../../../shared/types'
 import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
+import { getDataHealthReport } from '../../steward/data-health'
 import { safeHandle } from '../safe-handle'
 
 export function registerStewardHandlers(): void {
@@ -15,4 +16,5 @@ export function registerStewardHandlers(): void {
   }))
   safeHandle(IPC.STEWARD_AUDIT, () => ({ ok: true as const, data: runAudit() }))
   safeHandle(IPC.STEWARD_DIAGNOSE, () => ({ ok: true as const, data: runDiagnose() }))
+  safeHandle(IPC.DATA_HEALTH_GET, () => getDataHealthReport())
 }

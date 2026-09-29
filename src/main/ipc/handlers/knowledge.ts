@@ -1,4 +1,5 @@
 // 知识库 IPC：库管理 / 文档摄取 / 分块预览 / 检索测试（含免费版数量门控）
+import { z } from 'zod'
 import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import type { KnowledgeBase } from '../../../shared/types'
@@ -8,6 +9,9 @@ import { kbChunkRepo } from '../../db/repositories/kb-chunk.repo'
 import { ingestionService } from '../../knowledge/ingestion'
 import { indexQueue } from '../../knowledge/index-queue'
 import { ragService } from '../../knowledge/rag'
+import { kbAskService } from '../../knowledge/ask-service'
+import { checkKbFileUpdates } from '../../knowledge/sync-check'
+import { scanFolderFiles } from '../../knowledge/folder-scan'
 import { detectSourceType } from '../../knowledge/parsers'
 import { assertCanCreateKb } from '../../license/license'
 import { safeHandle, argsSchema } from '../safe-handle'
@@ -60,6 +64,29 @@ export function registerKnowledgeHandlers(): void {
     return docs
   }, argsSchema(idSchema))
 
+  safeHandle(IPC.KB_DOC_ADD_FOLDER, async (e, kbId: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+    const result = await dialog.showOpenDialog(win!, {
+      title: '选择要导入的文件夹',
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return { docs: [], skippedCount: 0, truncated: false }
+    }
+
+    // 递归扫描：按扩展名过滤，跳过隐藏目录/node_modules/符号链接，单文件 50MB、单次 500 个上限
+    const scan = scanFolderFiles(result.filePaths[0]!)
+    const docs = scan.files.map((p) => {
+      const sourceType = detectSourceType(p)
+      return kbDocRepo.insert({ kbId, source: p, sourceType, title: p })
+    })
+    // 后台异步入库（不阻塞 IPC），前端轮询文档状态
+    for (const doc of docs) {
+      indexQueue.enqueue({ kbId, docId: doc.id, kind: 'file' })
+    }
+    return { docs, skippedCount: scan.skippedCount, truncated: scan.truncated }
+  }, argsSchema(idSchema))
+
   safeHandle(IPC.KB_DOC_ADD_URL, async (_e, kbId: string, url: string, title?: string) => {
     const doc = kbDocRepo.insert({ kbId, source: url, sourceType: 'url', title: title || url })
     indexQueue.enqueue({ kbId, docId: doc.id, kind: 'url' })
@@ -95,4 +122,37 @@ export function registerKnowledgeHandlers(): void {
   safeHandle(IPC.KB_RETRIEVE, async (_e, kbIds: string[], query: string) =>
     ragService.retrieve(kbIds, query),
   kbRetrieveArgsSchema)
+
+  // ---------- KB 问答模式（选库即聊，不落库） ----------
+  const kbAskArgsSchema = z.object({
+    kbIds: z.array(idSchema).min(1),
+    providerId: z.string().min(1),
+    model: z.string().min(1),
+    question: z.string().min(1).max(100_000),
+    history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).max(50)
+  })
+  safeHandle(IPC.KB_ASK, (e, args: {
+    kbIds: string[]
+    providerId: string
+    model: string
+    question: string
+    history: { role: 'user' | 'assistant'; content: string }[]
+  }) => kbAskService.ask(e.sender, args), argsSchema(kbAskArgsSchema))
+  safeHandle(IPC.KB_ASK_ABORT, (_e, requestId: string) => {
+    kbAskService.abort(requestId)
+    return { ok: true }
+  }, argsSchema(z.string().min(1)))
+
+  // ---------- 增量同步：检测 file 文档源文件变更 ----------
+  safeHandle(IPC.KB_SYNC_CHECK, (_e, kbId: string) => checkKbFileUpdates(kbId), argsSchema(idSchema))
+
+  // ---------- 文档级检索开关 ----------
+  safeHandle(
+    IPC.KB_DOC_SET_ENABLED,
+    (_e, _kbId: string, docId: string, enabled: boolean) => {
+      kbDocRepo.setEnabled(docId, enabled)
+      return { ok: true }
+    },
+    argsSchema(idSchema, idSchema, z.boolean()),
+  )
 }

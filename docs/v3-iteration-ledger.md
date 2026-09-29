@@ -45,18 +45,18 @@
 ### 工程
 - **大列表虚拟化**（已落地）：AgentPanel 消息流 + ChatView 轮次流均引入 `@tanstack/react-virtual` 虚拟滚动。AgentPanel 消息级（V3-Eng-2）；ChatView 轮次级（V3-Eng-3）——移除渐进渲染切片/补渲染/视口恢复，每轮一个虚拟项，只渲染可视区 + overscan=4，复用 virtual-list-utils.ts 的 isNearBottom/shouldStickToBottom 纯函数做滚底决策。
 - **流式 ref 收口**（已落地）：`ChatModule` 6 个流式 ref（requestId/finalized/totalColumns/settledCount/focusNonce/streamingConv）+ liveColumns/focusBranch 状态 + 事件订阅逻辑，提 `useStreamSession` hook 内聚，暴露 beginStream/failStream/focusNewBranch/abort/isStreaming 原子操作。
-- **i18n 扩展**：中英完整，可扩日韩。
+- **i18n 扩展**（已落地）：中英日韩四语完整（ja.ts/ko.ts 各 1221 条，含浏览器语言自动检测 ja-JP/ko-KR、ThemeLangControls 四语切换）；2026-09-29 将 i18n-parity.test.ts 从 zh/en 双语扩展为四语对等校验（key 集合/非空/占位符三不变量全量覆盖 ja/ko）。
 
 ---
 
 ## 四、V3 迭代方向
 
 1. **多设备配置/对话漫游**（已落地）：BackupPanel 已具备 WebDAV 增量上传/恢复/列表/定时全部能力 + 同步状态卡片（V3-Iter-1）。V3-Iter-2 新增双向合并冲突解决：用户内容表（conversations/messages/notes/images/translations/translation_glossary/sandbox_files）行级合并保留双方新增，配置类表（assistants/providers/skills/mcp_servers/kb_*）云端覆盖，本地敏感表（app_config/field_keys/license_records/schema_migrations）不动；冲突时弹窗让用户选择保留云端/本地/较新策略；附件按 sha256 去重下载。
-2. **知识库检索增强**：混合检索（向量 + BM25）+ 重排 + 引用溯源展示（消息内联来源块）。
-3. **Agent 定时/后台任务**：已有子任务编排 + 渠道分发，加定时触发（每日知识库同步、定时备份校验）。
-4. **插件/技能 SDK**：技能市场已有，开放第三方 skill 开发规范形成生态。
-5. **性能与体量**：大库虚拟化 + 向量索引重建后台化。
-6. **移动伴侣**：便携盘 + 桌面已成型，移动端只读查看/轻交互作为 v2 差异化。
+2. **知识库检索增强**（已落地，2026-09-29 复核确认）：混合检索（向量 + BM25）+ 重排 + 引用溯源展示（消息内联来源块）。复核发现该方向在 v2 周期已完整实现、台账登记滞后——rag.ts 双路检索 + RRF 融合、kb_chunks_fts FTS5 表 + 触发器同步、reranker.ts LLM rerank + mmr.ts MMR、另有 HyDE；chat-service/agent engine 检索后 sources 落库（v19 migration messages.sources 列）并经 ChatDoneEvent 传至 MessageBubble 可折叠来源块。
+3. **Agent 定时/后台任务**（已落地，2026-09-29 复核确认）：commit b051174 新增 `src/main/backup/task-scheduler.ts` 通用定时调度器——启动 60s 后首跑、每 10min tick、按任务独立间隔（app_config `task.*.last_run_at` 持久化）执行：kb_health_check（6h，修复卡在 pending/parsing/indexing 超 1h 的文档）与 backup_verify（24h，下载最新备份校验 sha256/增量索引格式）。quit-manager 注册停止。
+4. **插件/技能 SDK**（已落地，2026-09-29 复核确认）：commit b051174 SDK v1——skill-parser 扩展 frontmatter 元数据（version/author/tags/category，白名单同步扩容），新增 validateSkillText（含缺 description/content 过短/默认 icon 三类警告）与 SKILL_TEMPLATES（通用/代码/翻译三模板）；IPC 新增 SKILL_VALIDATE/SKILL_TEMPLATES，SkillModule 增加校验与从模板创建 UI。
+5. **性能与体量**（已落地）：大库虚拟化（V3-Eng-2/3）+ 向量索引重建后台化（commit b051174：新增 `src/main/knowledge/index-queue.ts` 顺序任务队列，KB_DOC_ADD_FILE/URL/TEXT/REINDEX 全部入队即返不再阻塞 IPC；KnowledgeModule 2s 轮询文档状态，pending/parsing/indexing 全部结束后自动停止）。
+6. **移动伴侣**（暂缓，2026-09-29 本轮跳过）：便携盘 + 桌面已成型，移动端只读查看/轻交互作为 v2 差异化。待定形态：导出静态 HTML 查看器 / 本地 LAN Web 服务 / 加密备份包移动端解密查看（DB 为应用层字段加密非 SQLCipher，手机读库需走导出格式而非直接读 app.db）。
 
 ---
 
@@ -74,3 +74,4 @@
 | 2026-09-23 | V3-Iter-1 | 多设备对话漫游 MVP：BackupPanel 加「同步状态卡片」（仅 cfg 已配置时渲染）——两列对比本地最新（schedule.lastRunAt）与云端最新（webdavList 中 mtime 最大值）+ 对比结论行（本地较新建议上传 / 云端较新建议恢复 / 已同步）+ 主按钮「立即同步」（复用 uploadIncrementalBackup）+ 云端 newer 时次按钮「从云端恢复」（取 mtime 最大备份调 doRestore，含现有 confirm 破坏性确认）。refreshList 改 useCallback([t]) 稳定化 + 新增 formatSyncTime([t,lang]) + 自动拉取 effect（cfg 加载后自动 refreshList，免手动点刷新）。10 个 bk.sync* i18n key 中英对齐。无主进程改动，纯渲染层增强 | typecheck 0 / vitest 19文件309用例 / build 三端 |
 | 2026-09-23 | V3-Eng-3 | ChatView 轮次级虚拟化：移除渐进渲染（INITIAL_TURN_COUNT=30 切片 + 向上滚补渲染 + 视口恢复 + 顶部「加载更早」按钮 + bottomRef.scrollIntoView），改为 useVirtualizer 每轮一虚拟项（复用 V3-Eng-2 模式：measureElement 动态高度 + overscan=4 + estimateSize 200 兜底 + paddingBottom:24 模拟原 space-y-6 项间距）。滚底逻辑复用 isNearBottom/shouldStickToBottom 纯函数 + isAtBottomRef 历史状态 + pendingScrollBottomRef 切会话待滚底标记。emptyHint（renderedTurns.length===0）early return 渲染欢迎块。删 chat.loadEarlier i18n 死键（zh/en parity 保持，i18n-parity 测试通过）。保留 turns/renderedTurns 数据层、selectedIds/activeBranchMap/compareTurns 状态、focusBranch effect、分支/对比/多选交互全不变。「大列表虚拟化」工程项部分落地→已落地（AgentPanel 消息级 + ChatView 轮次级全量收口） | typecheck 0 / vitest 19文件309用例 / build 三端 |
 | 2026-09-23 | V3-Iter-2 | 多设备对话漫游——双向合并冲突解决：新增 `src/main/backup/merge-service.ts`，核心能力为 scanMergeConflicts（下载云端备份到临时 DB，逐表统计 cloudOnly/localOnly/both）与 executeMerge（按策略执行合并）。表分类：用户内容表（conversations/messages/notes/images/translations/translation_glossary/sandbox_files）行级合并——云端独有插入、本地独有保留、同 id 内容不同按策略取舍（local/cloud/newer，newer 按 updated_at/created_at 时间戳）；配置类表（assistants/providers/skills/mcp_servers/knowledge_bases/kb_documents/kb_chunks）云端覆盖；本地敏感表（app_config/field_keys/license_records/schema_migrations）不动。附件按 sha256 去重下载缺失文件。支持全量 zip 与增量索引两种备份格式，加密备份用当前 masterKey 解密。IPC 新增 BACKUP_WEBDAV_MERGE_SCAN / BACKUP_WEBDAV_MERGE_EXECUTE，预加载暴露 mergeScanWebDAVBackup / mergeExecuteWebDAVBackup。BackupPanel 同步状态卡片与备份列表各加「合并」按钮，点击后先扫描冲突展示各表新增/冲突统计，再弹窗让用户选策略（保留云端/保留本地/保留较新）。backup-service.ts 导出 ENC_PREFIX/toCreds/isEncryptedBlob/decryptBackup/IncrementalIndex 供复用。新增 tests/merge-service.test.ts（13 用例，内存 DB 验证 scanTableConflicts/mergeTable/overwriteTable） | typecheck 0 / vitest 20文件322用例 / build 三端 |
+| 2026-09-29 | V3-Review-1 | 台账复核：发现 commit b051174（feat(v3)）已实现方向 2/3/4/5 与 i18n 扩展但台账未同步——方向 2 混合检索为 v2 周期成果；方向 3 task-scheduler（kb_health_check 6h + backup_verify 24h）；方向 4 技能 SDK v1（校验 + 三模板 + frontmatter 元数据）；方向 5 index-queue 后台化 + KnowledgeModule 轮询；i18n 日韩四语（ja/ko 各 1221 条 + 语言检测）。逐一验证证据链后全部标记已落地。顺带修复缺口：i18n-parity.test.ts 从 zh/en 扩展为四语对等校验 | typecheck 0 / vitest 121文件1841用例 / build 三端 |

@@ -981,7 +981,13 @@ class AgentEngine {
       stepText = '（模型未返回内容，请重试或更换模型）'
     }
 
-    messageRepo.updateContent(assistantMsg.id, stepText, 'done', !toolCalls || toolCalls.length === 0 ? sources : undefined)
+    messageRepo.updateContent(
+      assistantMsg.id,
+      stepText,
+      'done',
+      !toolCalls || toolCalls.length === 0 ? sources : undefined,
+      result.usage
+    )
     ctx.pendingAssistantMsgId = '' // 占位已写终态
 
     if (toolCalls && toolCalls.length > 0) {

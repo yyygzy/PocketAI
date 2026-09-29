@@ -3,6 +3,7 @@ import { IPC } from '../../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../shared/snippet'
 import { dbService } from '../../db/database'
 import { messageRepo } from '../../db/repositories/message.repo'
+import { usageService } from '../../usage/usage-service'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { idSchema } from '../../../shared/schemas/providers'
 
@@ -31,6 +32,10 @@ export function registerMessageHandlers(): void {
     const deleted = messageRepo.truncateFrom(id)
     return { ok: true, deleted }
   }, argsSchema(idSchema))
+
+  // 用量聚合汇总（token 用量按日/provider/模型，最近 N 天）
+  safeHandle(IPC.USAGE_GET, (_e, days?: number) => usageService.getSummary(days),
+    argsSchema(z.number().int().min(1).max(365).optional()))
   safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string, assistantId?: string | null) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()

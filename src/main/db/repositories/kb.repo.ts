@@ -19,6 +19,8 @@ interface KbRow {
   rerank_model: string | null
   hyde_provider_id: string | null
   hyde_model: string | null
+  multiquery_provider_id: string | null
+  multiquery_model: string | null
   created_at: number
 }
 
@@ -51,6 +53,8 @@ export function rowToRecord(row: KbRow): KnowledgeBase {
     rerankModel: row.rerank_model,
     hydeProviderId: row.hyde_provider_id,
     hydeModel: row.hyde_model,
+    multiQueryProviderId: row.multiquery_provider_id,
+    multiQueryModel: row.multiquery_model,
     documentCount: counts.doc_count,
     chunkCount: counts.chunk_count,
     createdAt: row.created_at
@@ -84,7 +88,8 @@ export const kbRepo = {
         `UPDATE knowledge_bases SET
            name=?, description=?, embedding_provider_id=?, embedding_model=?,
            embedding_dim=?, chunk_size=?, chunk_overlap=?, top_k=?, top_n=?,
-           rerank_provider_id=?, rerank_model=?, hyde_provider_id=?, hyde_model=?
+           rerank_provider_id=?, rerank_model=?, hyde_provider_id=?, hyde_model=?,
+           multiquery_provider_id=?, multiquery_model=?
          WHERE id=?`
       ).run(
         input.name,
@@ -100,6 +105,8 @@ export const kbRepo = {
         input.rerankModel ?? existing.rerankModel,
         input.hydeProviderId ?? existing.hydeProviderId,
         input.hydeModel ?? existing.hydeModel,
+        input.multiQueryProviderId ?? existing.multiQueryProviderId,
+        input.multiQueryModel ?? existing.multiQueryModel,
         id
       )
     } else {
@@ -108,8 +115,8 @@ export const kbRepo = {
         `INSERT INTO knowledge_bases
            (id, name, description, embedding_provider_id, embedding_model, embedding_dim,
             chunk_size, chunk_overlap, top_k, top_n, rerank_provider_id, rerank_model,
-            hyde_provider_id, hyde_model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            hyde_provider_id, hyde_model, multiquery_provider_id, multiquery_model, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -125,6 +132,8 @@ export const kbRepo = {
         input.rerankModel ?? null,
         input.hydeProviderId ?? null,
         input.hydeModel ?? null,
+        input.multiQueryProviderId ?? null,
+        input.multiQueryModel ?? null,
         now
       )
     }
