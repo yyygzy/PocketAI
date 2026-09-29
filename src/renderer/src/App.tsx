@@ -5,6 +5,7 @@ import { Workspace } from './components/Workspace'
 import { ToolApprovalDialog } from './components/ToolApprovalDialog'
 import { ToastProvider } from './components/ToastProvider'
 import { ReminderListener } from './hooks/ReminderListener'
+import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
 import { reportIpcError } from './utils/ipc'
@@ -97,17 +98,8 @@ export default function App() {
     }
   }, [])
 
-  // 手动锁屏快捷键：Ctrl/Cmd + L
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
-        e.preventDefault()
-        window.pocketai.lock().catch(reportIpcError('app.lock'))
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  // 应用内全局快捷键中枢（Ctrl+数字切标签 / Ctrl+W 关标签 / Ctrl+, 设置 / Ctrl+L 锁屏 / 会话类）
+  useGlobalShortcuts()
 
   // 模块 → 标签标题（语言切换时随之更新）
   const moduleTitle = useCallback(

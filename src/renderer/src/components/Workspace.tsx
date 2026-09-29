@@ -170,6 +170,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ activeModule }) => {
       {visible.map((id) => (
         <div
           key={id}
+          data-active-module={id === activeModule ? id : undefined}
           aria-hidden={id !== activeModule}
           className={id === activeModule ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}
         >

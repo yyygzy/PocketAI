@@ -763,6 +763,16 @@ export const zh: Record<string, string> = {
   'ui.saved': '已保存并生效',
 
   // 快捷浮窗
+  'set.shortcuts.title': '键盘快捷键',
+  'set.shortcuts.tab': '切换到第 1~9 个标签',
+  'set.shortcuts.closeTab': '关闭当前标签',
+  'set.shortcuts.settings': '打开设置',
+  'set.shortcuts.lock': '锁定应用',
+  'set.shortcuts.newConv': '新建会话',
+  'set.shortcuts.search': '聚焦搜索',
+  'set.shortcuts.composer': '聚焦消息输入框',
+  'set.shortcuts.abort': '停止生成（流式生成中、焦点不在输入框时）',
+  'set.shortcuts.hint': 'macOS 上 Ctrl 对应 ⌘ 键；为避免与输入法冲突，Alt 组合不参与。',
   'set.popup': '快捷浮窗',
   'popup.quickTitle': '快捷问答浮窗',
   'popup.quickHint': '任意界面按快捷键，在置顶小窗中直接提问',

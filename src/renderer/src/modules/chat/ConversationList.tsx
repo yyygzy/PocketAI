@@ -124,6 +124,7 @@ export const ConversationList: React.FC<Props> = ({
       <div className="p-2 space-y-2">
         <div className="relative">
           <input
+            data-chat-search-input
             className="input text-xs pl-7"
             placeholder={t('chat.searchPlaceholder')}
             value={search}

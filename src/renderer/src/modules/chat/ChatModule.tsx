@@ -13,6 +13,7 @@ import { ConversationList } from './ConversationList'
 import { ChatView } from './ChatView'
 import { useStreamSession } from './useStreamSession'
 import { useAppStore } from '../../store/app-store'
+import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
@@ -228,6 +229,29 @@ export const ChatModule: React.FC = () => {
       toast.error(t('common.opFailed', { msg: errText(e) }))
     }
   }
+
+  // 应用内快捷键（中枢派发）：仅活动 chat 实例响应，防保活隐藏实例误触
+  const shortcutConvRef = useRef({ newConv: () => {}, abort: () => {} })
+  shortcutConvRef.current = { newConv: () => void handleNewConv(), abort }
+  useEffect(() => {
+    const onShortcut = (ev: Event) => {
+      if (!isActiveModuleInstance('chat')) return
+      const { action } = (ev as CustomEvent<AppShortcutEventDetail>).detail
+      if (action === 'newConv') {
+        shortcutConvRef.current.newConv()
+      } else if (action === 'focusSearch') {
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLInputElement>('[data-chat-search-input]')?.focus()
+        })
+      } else if (action === 'focusComposer') {
+        document.querySelector<HTMLTextAreaElement>('[data-chat-composer-input]')?.focus()
+      } else if (action === 'abort') {
+        shortcutConvRef.current.abort()
+      }
+    }
+    window.addEventListener(APP_SHORTCUT_EVENT, onShortcut)
+    return () => window.removeEventListener(APP_SHORTCUT_EVENT, onShortcut)
+  }, [])
 
   const handleRenameConv = async (id: string, title: string) => {
     try {

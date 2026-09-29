@@ -763,6 +763,16 @@ export const en: Record<string, string> = {
   'ui.saved': 'Saved and applied',
 
   // Quick popup
+  'set.shortcuts.title': 'Keyboard Shortcuts',
+  'set.shortcuts.tab': 'Switch to tab 1–9',
+  'set.shortcuts.closeTab': 'Close current tab',
+  'set.shortcuts.settings': 'Open Settings',
+  'set.shortcuts.lock': 'Lock app',
+  'set.shortcuts.newConv': 'New conversation',
+  'set.shortcuts.search': 'Focus search',
+  'set.shortcuts.composer': 'Focus message input',
+  'set.shortcuts.abort': 'Stop generating (while streaming and focus is not in an input)',
+  'set.shortcuts.hint': 'On macOS, Ctrl corresponds to the ⌘ key. Alt combinations are intentionally ignored.',
   'set.popup': 'Quick Popup',
   'popup.quickTitle': 'Quick-ask popup',
   'popup.quickHint': 'Press the hotkey in any app to ask from a pinned mini window',

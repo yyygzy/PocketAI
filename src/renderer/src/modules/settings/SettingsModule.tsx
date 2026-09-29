@@ -24,6 +24,41 @@ import { errText } from '../../utils/error'
 import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
+import { modLabel } from '../../utils/shortcuts'
+
+// ─── 键盘快捷键速查（只读，应用内固定快捷键） ────────────────────────────
+const ShortcutHelpPanel: React.FC = () => {
+  const { t } = useI18n()
+  const mod = modLabel()
+  const rows: Array<[string, string]> = [
+    [t('set.shortcuts.tab'), `${mod}+1 … ${mod}+9`],
+    [t('set.shortcuts.closeTab'), `${mod}+W`],
+    [t('set.shortcuts.settings'), `${mod}+,`],
+    [t('set.shortcuts.lock'), `${mod}+L`],
+    [t('set.shortcuts.newConv'), `${mod}+N`],
+    [t('set.shortcuts.search'), `${mod}+K`],
+    [t('set.shortcuts.composer'), `${mod}+/`],
+    [t('set.shortcuts.abort'), 'Esc']
+  ]
+  return (
+    <div>
+      <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
+        {rows.map(([label, keys], i) => (
+          <div
+            key={label}
+            className={`flex items-center justify-between px-3 py-2 text-xs ${i % 2 ? 'bg-[var(--color-surface)]' : ''}`}
+          >
+            <span className="text-[var(--color-text)]">{label}</span>
+            <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-input-bg)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--color-text-muted)]">
+              {keys}
+            </kbd>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-[var(--color-text-muted)]">{t('set.shortcuts.hint')}</p>
+    </div>
+  )
+}
 
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
@@ -89,6 +124,11 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.popup')}</h3>
           <PopupPanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.shortcuts.title')}</h3>
+          <ShortcutHelpPanel />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">

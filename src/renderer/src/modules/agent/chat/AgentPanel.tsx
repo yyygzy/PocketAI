@@ -1,9 +1,9 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
-import { useAgentShortcuts } from '../hooks/useAgentShortcuts'
+import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../../hooks/useGlobalShortcuts'
 import { useAgentToolConfigs } from '../hooks/useAgentToolConfigs'
 import { useAttachments } from '../hooks/useAttachments'
 import { SessionRail } from '../components/SessionRail'
@@ -95,14 +95,44 @@ export const AgentPanel: React.FC = () => {
     t('agent.copyMdDefaultTitle')
   const hasMessages = chat.messages.length > 0
 
-  // 全局快捷键：Ctrl+N 新建 / Ctrl+K 搜索 / Ctrl+/ 聚焦输入框 / Esc 停止
-  useAgentShortcuts({
-    running: chat.running,
-    searchEnabled: hasMessages,
-    onNew: () => void chat.newConversation(),
-    onSearch: () => { if (!searchOpen) openSearch() },
-    onAbort: chat.abort
+  // 应用内快捷键（中枢派发）：Ctrl+N 新建 / Ctrl+K 搜索 / Ctrl+/ 聚焦输入框 / Esc 停止
+  // 仅活动 agent 实例响应（保活隐藏实例 / 同模块非活动实例由 data-active-module 守卫拦截）
+  const shortcutRef = useRef({
+    searchEnabled: false,
+    searchOpen: false,
+    newConv: () => {},
+    openSearch: () => {},
+    abort: () => {}
   })
+  shortcutRef.current = {
+    searchEnabled: hasMessages,
+    searchOpen,
+    newConv: () => void chat.newConversation(),
+    openSearch,
+    abort: chat.abort
+  }
+  useEffect(() => {
+    const onShortcut = (ev: Event) => {
+      if (!isActiveModuleInstance('agent')) return
+      const { action } = (ev as CustomEvent<AppShortcutEventDetail>).detail
+      const r = shortcutRef.current
+      if (action === 'newConv') {
+        r.newConv()
+      } else if (action === 'focusSearch') {
+        if (!r.searchEnabled) return // 与头部搜索按钮 disabled 对齐：无消息时不可用
+        if (!r.searchOpen) r.openSearch()
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLInputElement>('[data-agent-search-input]')?.focus()
+        })
+      } else if (action === 'focusComposer') {
+        document.querySelector<HTMLTextAreaElement>('[data-agent-composer-input]')?.focus()
+      } else if (action === 'abort') {
+        r.abort()
+      }
+    }
+    window.addEventListener(APP_SHORTCUT_EVENT, onShortcut)
+    return () => window.removeEventListener(APP_SHORTCUT_EVENT, onShortcut)
+  }, [])
 
   // 头部快捷：导出 .md（复用会话栏同一通道）
   const handleExportCurrent = () => {

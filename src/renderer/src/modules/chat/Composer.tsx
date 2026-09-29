@@ -169,6 +169,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
 
           <textarea
             ref={taRef}
+            data-chat-composer-input
             value={text}
             onChange={(e) => {
               setText(e.target.value)

@@ -39,7 +39,13 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
   template.push(
     {
       label: zh ? '文件' : 'File',
-      submenu: [isMac ? { role: 'close' as const, label: zh ? '关闭窗口' : 'Close Window' } : { role: 'quit' as const, label: zh ? '退出' : 'Exit' }]
+      // 不用 role:'close'：其默认 accelerator CmdOrCtrl+W 会抢在渲染端之前关掉整个窗口；
+      // Ctrl/⌘+W 已让给「关闭当前标签」（见 useGlobalShortcuts），此处仅保留鼠标可点的关闭窗口项（无快捷键）
+      submenu: [
+        isMac
+          ? { label: zh ? '关闭窗口' : 'Close Window', click: () => BrowserWindow.getFocusedWindow()?.close() }
+          : { role: 'quit' as const, label: zh ? '退出' : 'Exit' }
+      ]
     },
     {
       label: zh ? '编辑' : 'Edit',
@@ -79,7 +85,7 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
         { role: 'minimize', label: zh ? '最小化' : 'Minimize' },
         ...(isMac
           ? [{ role: 'zoom' as const, label: zh ? '缩放' : 'Zoom' }, { type: 'separator' } as MenuItemConstructorOptions, { role: 'front' as const, label: zh ? '前置全部窗口' : 'Bring All to Front' }]
-          : [{ role: 'close' as const, label: zh ? '关闭窗口' : 'Close Window' }])
+          : [{ label: zh ? '关闭窗口' : 'Close Window', click: () => BrowserWindow.getFocusedWindow()?.close() }])
       ]
     },
     {
