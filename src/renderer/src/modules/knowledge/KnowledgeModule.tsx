@@ -140,6 +140,8 @@ const KbForm: React.FC<{
   const [hydeModel, setHydeModel] = useState(kb?.hydeModel ?? '')
   const [multiQueryProviderId, setMultiQueryProviderId] = useState(kb?.multiQueryProviderId ?? '')
   const [multiQueryModel, setMultiQueryModel] = useState(kb?.multiQueryModel ?? '')
+  const [ocrProviderId, setOcrProviderId] = useState(kb?.ocrProviderId ?? '')
+  const [ocrModel, setOcrModel] = useState(kb?.ocrModel ?? '')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -150,6 +152,7 @@ const KbForm: React.FC<{
   const selectedRerankProvider = providers.find((p) => p.id === rerankProviderId)
   const selectedHydeProvider = providers.find((p) => p.id === hydeProviderId)
   const selectedMultiQueryProvider = providers.find((p) => p.id === multiQueryProviderId)
+  const selectedOcrProvider = providers.find((p) => p.id === ocrProviderId)
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -176,7 +179,9 @@ const KbForm: React.FC<{
         hydeProviderId: hydeProviderId || null,
         hydeModel: hydeModel || null,
         multiQueryProviderId: multiQueryProviderId || null,
-        multiQueryModel: multiQueryModel || null
+        multiQueryModel: multiQueryModel || null,
+        ocrProviderId: ocrProviderId || null,
+        ocrModel: ocrModel || null
       })
       onSaved(saved)
     } catch (e) {
@@ -377,6 +382,49 @@ const KbForm: React.FC<{
                 className="input font-mono text-xs"
                 value={multiQueryModel}
                 onChange={(e) => setMultiQueryModel(e.target.value)}
+                placeholder="gpt-4o-mini"
+              />
+            )}
+          </Field>
+        )}
+      </div>
+
+      {/* OCR 文字识别（可选）：图片文档入库时用视觉模型识别文字后走常规索引 */}
+      <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-3">
+        <div className="text-xs text-[var(--color-text-muted)]">{t('kb.ocrHint')}</div>
+        <Field label={t('kb.ocrProvider')}>
+          <select
+            className="input"
+            value={ocrProviderId}
+            onChange={(e) => {
+              setOcrProviderId(e.target.value)
+              setOcrModel('')
+            }}
+          >
+            <option value="">{t('kb.ocrDisabled')}</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {ocrProviderId && (
+          <Field label={t('kb.ocrModel')}>
+            {selectedOcrProvider && selectedOcrProvider.models.length > 0 ? (
+              <select className="input" value={ocrModel} onChange={(e) => setOcrModel(e.target.value)}>
+                <option value="">{t('kb.pleaseSelect')}</option>
+                {selectedOcrProvider.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="input font-mono text-xs"
+                value={ocrModel}
+                onChange={(e) => setOcrModel(e.target.value)}
                 placeholder="gpt-4o-mini"
               />
             )}

@@ -29,6 +29,8 @@ describe('KB_IMPORT_EXTS — 扩展名清单', () => {
     expect(KB_IMPORT_EXTS.has('.md')).toBe(true)
     expect(KB_IMPORT_EXTS.has('.pdf')).toBe(true)
     expect(KB_IMPORT_EXTS.has('.docx')).toBe(true)
+    expect(KB_IMPORT_EXTS.has('.png')).toBe(true)
+    expect(KB_IMPORT_EXTS.has('.jpg')).toBe(true)
     expect(KB_IMPORT_EXTS.has('.log')).toBe(false)
     expect(KB_IMPORT_EXTS.has('.exe')).toBe(false)
   })
@@ -43,7 +45,7 @@ describe('scanFolderFiles — 递归扫描', () => {
     fs.writeFileSync(path.join(dir, 'd.exe'), 'no')
     fs.writeFileSync(path.join(dir, 'e.log'), 'no')
 
-    const r = scanFolderFiles(dir)
+    const r = scanFolderFiles(dir, true)
     expect(r.files.map((f) => path.basename(f))).toEqual(['a.md', 'b.txt', 'c.pdf'])
     expect(r.skippedCount).toBe(2) // d.exe + e.log
     expect(r.truncated).toBe(false)
@@ -60,7 +62,7 @@ describe('scanFolderFiles — 递归扫描', () => {
     fs.writeFileSync(path.join(dir, 'node_modules', 'pkg.md'), 'x')
     fs.writeFileSync(path.join(dir, 'README.md'), 'x')
 
-    const r = scanFolderFiles(dir)
+    const r = scanFolderFiles(dir, true)
     const names = r.files.map((f) => path.basename(f)).sort()
     expect(names).toEqual(['README.md', 'deep.md'])
     expect(r.skippedCount).toBe(0)
@@ -70,7 +72,7 @@ describe('scanFolderFiles — 递归扫描', () => {
     const dir = mkdtemp()
     fs.writeFileSync(path.join(dir, 'A.MD'), 'x')
     fs.writeFileSync(path.join(dir, 'B.PDF'), 'x')
-    const r = scanFolderFiles(dir)
+    const r = scanFolderFiles(dir, true)
     expect(r.files).toHaveLength(2)
   })
 
@@ -80,7 +82,7 @@ describe('scanFolderFiles — 递归扫描', () => {
     // 只需让 stat 尺寸超限，写稀疏内容即可：写一个大于上限的截断文件开销太大，
     // 改为把上限调小不可行（常量导出），因此此处验证小文件不触发 + 单独验证上限常量
     fs.writeFileSync(big, 'x')
-    const r = scanFolderFiles(dir)
+    const r = scanFolderFiles(dir, true)
     expect(r.files).toHaveLength(1)
     expect(KB_MAX_FILE_BYTES).toBeGreaterThan(0)
   })
@@ -90,16 +92,30 @@ describe('scanFolderFiles — 递归扫描', () => {
     // 常量上限可能很大，构造超量文件在内存中可行但慢；这里直接验证常量与
     // scanFolderFiles 在小规模下不截断的行为，截断逻辑由常量守卫保证
     for (let i = 0; i < 10; i++) fs.writeFileSync(path.join(dir, `f${i}.md`), 'x')
-    const r = scanFolderFiles(dir)
+    const r = scanFolderFiles(dir, true)
     expect(r.files).toHaveLength(10)
     expect(r.truncated).toBe(false)
     expect(KB_MAX_FILES_PER_IMPORT).toBeGreaterThan(0)
   })
 
   it('不存在的目录静默返回空结果（读取失败不抛错，与子目录无权限行为一致）', () => {
-    const r = scanFolderFiles(path.join(os.tmpdir(), 'pocketai-not-exist-dir-xyz'))
+    const r = scanFolderFiles(path.join(os.tmpdir(), 'pocketai-not-exist-dir-xyz'), true)
     expect(r.files).toEqual([])
     expect(r.skippedCount).toBe(0)
     expect(r.truncated).toBe(false)
+  })
+
+  it('图片文件：includeImages=true 收入、false 计入 skipped', () => {
+    const dir = mkdtemp()
+    fs.writeFileSync(path.join(dir, 'shot.png'), 'x')
+    fs.writeFileSync(path.join(dir, 'doc.jpg'), 'x')
+    fs.writeFileSync(path.join(dir, 'a.md'), 'x')
+
+    const withImg = scanFolderFiles(dir, true)
+    expect(withImg.files.map((f) => path.basename(f)).sort()).toEqual(['a.md', 'doc.jpg', 'shot.png'])
+
+    const noImg = scanFolderFiles(dir, false)
+    expect(noImg.files.map((f) => path.basename(f))).toEqual(['a.md'])
+    expect(noImg.skippedCount).toBe(2) // 两张图片跳过
   })
 })

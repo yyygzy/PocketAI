@@ -21,6 +21,8 @@ interface KbRow {
   hyde_model: string | null
   multiquery_provider_id: string | null
   multiquery_model: string | null
+  ocr_provider_id: string | null
+  ocr_model: string | null
   created_at: number
 }
 
@@ -55,6 +57,8 @@ export function rowToRecord(row: KbRow): KnowledgeBase {
     hydeModel: row.hyde_model,
     multiQueryProviderId: row.multiquery_provider_id,
     multiQueryModel: row.multiquery_model,
+    ocrProviderId: row.ocr_provider_id,
+    ocrModel: row.ocr_model,
     documentCount: counts.doc_count,
     chunkCount: counts.chunk_count,
     createdAt: row.created_at
@@ -89,7 +93,7 @@ export const kbRepo = {
            name=?, description=?, embedding_provider_id=?, embedding_model=?,
            embedding_dim=?, chunk_size=?, chunk_overlap=?, top_k=?, top_n=?,
            rerank_provider_id=?, rerank_model=?, hyde_provider_id=?, hyde_model=?,
-           multiquery_provider_id=?, multiquery_model=?
+           multiquery_provider_id=?, multiquery_model=?, ocr_provider_id=?, ocr_model=?
          WHERE id=?`
       ).run(
         input.name,
@@ -107,6 +111,8 @@ export const kbRepo = {
         input.hydeModel ?? existing.hydeModel,
         input.multiQueryProviderId ?? existing.multiQueryProviderId,
         input.multiQueryModel ?? existing.multiQueryModel,
+        input.ocrProviderId ?? existing.ocrProviderId,
+        input.ocrModel ?? existing.ocrModel,
         id
       )
     } else {
@@ -115,8 +121,9 @@ export const kbRepo = {
         `INSERT INTO knowledge_bases
            (id, name, description, embedding_provider_id, embedding_model, embedding_dim,
             chunk_size, chunk_overlap, top_k, top_n, rerank_provider_id, rerank_model,
-            hyde_provider_id, hyde_model, multiquery_provider_id, multiquery_model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            hyde_provider_id, hyde_model, multiquery_provider_id, multiquery_model,
+            ocr_provider_id, ocr_model, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -134,6 +141,8 @@ export const kbRepo = {
         input.hydeModel ?? null,
         input.multiQueryProviderId ?? null,
         input.multiQueryModel ?? null,
+        input.ocrProviderId ?? null,
+        input.ocrModel ?? null,
         now
       )
     }

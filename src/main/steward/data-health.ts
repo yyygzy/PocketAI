@@ -9,7 +9,7 @@
 
 import { readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
-import type { DataHealthReport, KbDocStatus, KbDocument } from '../../shared/types'
+import type { DataHealthReport, KbDocStatus, KbDocument, KbIntegrityReport } from '../../shared/types'
 import { DATA_DIR } from '../portable'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
@@ -17,6 +17,8 @@ import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { loadWebDAVConfig } from '../backup/backup-service'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { errMsg } from '../error'
+import { getBootPerf } from './boot-perf'
+import { getKbIntegrityReport } from '../knowledge/kb-health'
 
 // ─── 纯函数：数据目录体积分类聚合 ────────────────────────────────
 
@@ -136,13 +138,24 @@ export function getDataHealthReport(): DataHealthReport {
   walkDataDir(DATA_DIR, DATA_DIR, entries)
   const sizes = aggregateDataSizes(entries)
 
-  // 2. 知识库索引状态
+  // 2. 知识库索引状态 + 完整性探测（探测整体容错：失败按全空处理，不阻断报告）
   const docs = kbDocRepo.listAll()
   const kbNameById = new Map(kbRepo.list().map((k) => [k.id, k.name]))
+  let integrity: KbIntegrityReport = {
+    orphanVectors: 0,
+    orphanChunks: 0,
+    brokenDocs: [],
+    duplicates: [],
+    providerIssues: []
+  }
+  try {
+    integrity = getKbIntegrityReport()
+  } catch { /* 探测失败按全空 */ }
   const kb = {
     total: docs.length,
     byStatus: groupDocStatus(docs),
-    errorDocs: topErrorDocs(docs, (kbId) => kbNameById.get(kbId) ?? '(未知库)')
+    errorDocs: topErrorDocs(docs, (kbId) => kbNameById.get(kbId) ?? '(未知库)'),
+    integrity
   }
 
   // 3. 备份状态（未配置 WebDAV 时 schedule 仍可读，lastRunAt 为 null）
@@ -171,5 +184,8 @@ export function getDataHealthReport(): DataHealthReport {
     backupVerifyLastRunAt: readLastRun('task.backup_verify.last_run_at')
   }
 
-  return { sizes, kb, backup, tasks }
+  // 5. 本次启动各阶段耗时（内存埋点即时快照）
+  const boot = getBootPerf()
+
+  return { sizes, kb, backup, tasks, boot }
 }

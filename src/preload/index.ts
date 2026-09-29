@@ -203,6 +203,13 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_GET, days),
   getDataHealth: (): Promise<DataHealthReport> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_GET),
+  // KB 数据健康修复动作（探测只读随 getDataHealth 返回）
+  cleanKbOrphans: (): Promise<{ removedVectors: number; removedChunks: number }> =>
+    ipcRenderer.invoke(IPC.DATA_HEALTH_KB_CLEAN),
+  deduplicateKbDocs: (keepDocId: string): Promise<{ removed: number }> =>
+    ipcRenderer.invoke(IPC.DATA_HEALTH_KB_DEDUP, keepDocId),
+  reindexKbDocs: (docIds: string[]): Promise<{ enqueued: number }> =>
+    ipcRenderer.invoke(IPC.DATA_HEALTH_KB_REINDEX, docIds),
 
   // ---------- 聊天 ----------
   sendMessage: (payload: SendMessagePayload): Promise<void> =>

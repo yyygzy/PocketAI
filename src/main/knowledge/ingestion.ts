@@ -1,11 +1,13 @@
 // 入库流水线：解析 → 分块 → 向量化 → 存储
 // 失败不中断整个知识库，仅记录单文档错误
+import path from 'node:path'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbChunkRepo, type ChunkInsert } from '../db/repositories/kb-chunk.repo'
 import { chunkMarkdown } from './chunker'
 import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
+import { ocrImageFile } from './ocr'
 import { hashFile } from './sync-check'
 import type { KbDocument, KnowledgeBase } from '../../shared/types'
 import { errMsg } from '../error'
@@ -40,9 +42,13 @@ export class IngestionService {
       } catch {
         kbDocRepo.setContentHash(docId, null)
       }
-      const parsed = await parseDocument(doc.source, doc.sourceType)
+      const parsed = await parseForIngest(doc.source, doc.sourceType, kb)
       if (!parsed.text.trim()) {
-        throw new Error('文档解析后内容为空')
+        throw new Error(
+          doc.source.toLowerCase().endsWith('.pdf')
+            ? 'PDF 未包含可提取文本（可能是扫描版，暂不支持 OCR，请转为图片后导入）'
+            : '文档解析后内容为空'
+        )
       }
 
       await this.indexText(kb, docId, parsed.text)
@@ -124,3 +130,22 @@ export class IngestionService {
 }
 
 export const ingestionService = new IngestionService()
+
+/**
+ * 按来源类型解析出纯文本。
+ * 图片文档走 OCR（需要 KB 配置视觉模型，未配置时给出小白可读的引导错误），
+ * 其余类型走常规文件解析器。
+ */
+async function parseForIngest(
+  source: string,
+  sourceType: KbDocument['sourceType'],
+  kb: KnowledgeBase
+): Promise<{ text: string; title: string }> {
+  if (sourceType !== 'image') {
+    return parseDocument(source, sourceType)
+  }
+  if (!kb.ocrProviderId || !kb.ocrModel) {
+    throw new Error('图片文档需要在知识库设置中配置 OCR 视觉模型')
+  }
+  return { text: await ocrImageFile(source, kb.ocrProviderId, kb.ocrModel), title: path.basename(source) }
+}

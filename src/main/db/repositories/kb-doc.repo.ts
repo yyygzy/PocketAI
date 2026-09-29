@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
+import { kbChunkRepo } from './kb-chunk.repo'
 import type { KbDocument, KbDocStatus, KbSourceType } from '../../../shared/types'
 
 interface KbDocRow {
@@ -108,6 +109,8 @@ export const kbDocRepo = {
   },
 
   delete(id: string): void {
+    // 收口清理：kb_vec_map/vec 表无 FK，若只删文档行，分块虽级联删除但 vectors.db 会残留孤儿向量
+    kbChunkRepo.deleteByDoc(id)
     dbService.getHandle().prepare('DELETE FROM kb_documents WHERE id=?').run(id)
   },
 

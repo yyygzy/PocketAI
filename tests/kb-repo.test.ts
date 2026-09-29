@@ -42,6 +42,8 @@ const baseRow = {
   hyde_model: null,
   multiquery_provider_id: null,
   multiquery_model: null,
+  ocr_provider_id: null,
+  ocr_model: null,
   created_at: 100
 }
 

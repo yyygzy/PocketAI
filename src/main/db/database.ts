@@ -556,6 +556,15 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE kb_documents ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
     `
+  },
+  {
+    // v29: 图片 OCR 入库——图片文档用 KB 配置的视觉模型识别文字后走常规索引（空=关闭）
+    version: 29,
+    name: 'kb_ocr',
+    up: `
+      ALTER TABLE knowledge_bases ADD COLUMN ocr_provider_id TEXT;
+      ALTER TABLE knowledge_bases ADD COLUMN ocr_model TEXT;
+    `
   }
 ]
 

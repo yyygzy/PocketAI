@@ -7,8 +7,12 @@ import path from 'node:path'
 /** 与 KB_DOC_ADD_FILE 文件对话框 filters 对齐的可导入扩展名 */
 export const KB_IMPORT_EXTS = new Set([
   '.pdf', '.docx', '.xlsx', '.xls', '.html', '.htm',
-  '.txt', '.md', '.markdown', '.csv', '.json'
+  '.txt', '.md', '.markdown', '.csv', '.json',
+  '.png', '.jpg', '.jpeg', '.webp', '.gif'
 ])
+
+/** 图片扩展名子集：仅 KB 配置了 OCR 视觉模型时才导入，否则扫描时跳过 */
+export const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
 
 /** 单文件上限：解析器会把整个文件读进内存（pdf-parse/XLSX.readFile），50MB 已覆盖常规文档 */
 export const KB_MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -29,9 +33,11 @@ export interface FolderScanResult {
 
 /**
  * 递归扫描目录下可导入的文档（同步 fs，目录遍历开销远小于后续入库）。
+ * @param includeImages 是否收图片文件（KB 已配置 OCR 视觉模型时为 true；
+ *                      false 时图片计入 skippedCount，避免批量入库全部报错）
  * 目录不存在/不可读时抛错由调用方处理；空目录返回空结果。
  */
-export function scanFolderFiles(dir: string): FolderScanResult {
+export function scanFolderFiles(dir: string, includeImages: boolean): FolderScanResult {
   const files: string[] = []
   let skippedCount = 0
   let truncated = false
@@ -57,7 +63,13 @@ export function scanFolderFiles(dir: string): FolderScanResult {
         continue
       }
       if (!entry.isFile()) continue
-      if (!KB_IMPORT_EXTS.has(path.extname(name).toLowerCase())) {
+      const ext = path.extname(name).toLowerCase()
+      if (!KB_IMPORT_EXTS.has(ext)) {
+        skippedCount++
+        continue
+      }
+      // 图片仅在 KB 配置了 OCR 时收，否则视为跳过
+      if (IMAGE_EXTS.has(ext) && !includeImages) {
         skippedCount++
         continue
       }

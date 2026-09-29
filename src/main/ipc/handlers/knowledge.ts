@@ -48,6 +48,7 @@ export function registerKnowledgeHandlers(): void {
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: '文档', extensions: ['pdf', 'docx', 'xlsx', 'xls', 'html', 'htm', 'txt', 'md', 'markdown', 'csv', 'json'] },
+        { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
         { name: '所有文件', extensions: ['*'] }
       ]
     })
@@ -75,7 +76,10 @@ export function registerKnowledgeHandlers(): void {
     }
 
     // 递归扫描：按扩展名过滤，跳过隐藏目录/node_modules/符号链接，单文件 50MB、单次 500 个上限
-    const scan = scanFolderFiles(result.filePaths[0]!)
+    // 图片仅在 KB 配置了 OCR 视觉模型时收，否则扫描阶段直接跳过
+    const kb = kbRepo.get(kbId)
+    const includeImages = !!(kb?.ocrProviderId && kb?.ocrModel)
+    const scan = scanFolderFiles(result.filePaths[0]!, includeImages)
     const docs = scan.files.map((p) => {
       const sourceType = detectSourceType(p)
       return kbDocRepo.insert({ kbId, source: p, sourceType, title: p })

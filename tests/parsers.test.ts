@@ -64,6 +64,14 @@ describe('detectSourceType — 源类型推断', () => {
     expect(detectSourceType('/data/config.json')).toBe('txt')
   })
 
+  it('图片扩展名 → image（OCR 链路）', () => {
+    expect(detectSourceType('/data/shot.png')).toBe('image')
+    expect(detectSourceType('/data/scan.JPG')).toBe('image')
+    expect(detectSourceType('/data/pic.jpeg')).toBe('image')
+    expect(detectSourceType('/data/pic.webp')).toBe('image')
+    expect(detectSourceType('/data/anim.gif')).toBe('image')
+  })
+
   it('未知扩展名 → txt（兜底）', () => {
     expect(detectSourceType('/data/unknown.xyz')).toBe('txt')
   })

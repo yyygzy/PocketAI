@@ -69,6 +69,10 @@ vi.mock('../src/main/knowledge/embedding', () => ({
     return texts.map(() => Float32Array.from([0.1, 0.2, 0.3]))
   })
 }))
+// ingestion 间接 import ocr → providerManager → database/portable（electron）链路，隔离之
+vi.mock('../src/main/providers/manager', () => ({
+  providerManager: { getAdapter: () => null }
+}))
 
 import { IngestionService } from '../src/main/knowledge/ingestion'
 
@@ -91,6 +95,8 @@ function makeKb(over: Partial<KnowledgeBase> = {}): KnowledgeBase {
     hydeModel: null,
     multiQueryProviderId: null,
     multiQueryModel: null,
+    ocrProviderId: null,
+    ocrModel: null,
     documentCount: 0,
     chunkCount: 0,
     createdAt: 0,

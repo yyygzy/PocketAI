@@ -1,5 +1,5 @@
 // 文档解析：按 sourceType 分派到对应解析器，统一返回纯文本
-// 支持格式：pdf / docx / xlsx / html / url / txt / md
+// 支持格式：pdf / docx / xlsx / html / url / txt / md（image 由 OCR 链路处理，见 ../ocr.ts）
 import fs from 'node:fs'
 import path from 'node:path'
 import { safeFetch } from '../../net/safe-fetch'
@@ -11,6 +11,7 @@ export interface ParseResult {
 }
 
 const TEXT_EXTS = new Set(['.txt', '.md', '.markdown', '.csv', '.log', '.json'])
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
 
 export function detectSourceType(filePathOrUrl: string): KbSourceType {
   const lower = filePathOrUrl.toLowerCase()
@@ -22,6 +23,7 @@ export function detectSourceType(filePathOrUrl: string): KbSourceType {
   if (ext === '.docx') return 'docx'
   if (ext === '.xlsx' || ext === '.xls') return 'xlsx'
   if (ext === '.html' || ext === '.htm') return 'html'
+  if (IMAGE_EXTS.has(ext)) return 'image'
   if (TEXT_EXTS.has(ext)) return ext === '.md' || ext === '.markdown' ? 'md' : 'txt'
   return 'txt'
 }
@@ -42,6 +44,9 @@ export async function parseDocument(
       return parseHtml(fs.readFileSync(source, 'utf8'), path.basename(source))
     case 'url':
       return parseUrl(source)
+    case 'image':
+      // 防御：图片不在此解析（default 分支会把二进制当文本读出乱码），必须走 OCR 链路
+      throw new Error('图片文档需通过 OCR 链路解析（知识库需配置 OCR 视觉模型）')
     case 'md':
     case 'txt':
     default:

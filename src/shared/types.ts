@@ -170,6 +170,48 @@ export interface UsageSummary {
   byModel: { provider: string; model: string; requests: number; totalTokens: number }[]
 }
 
+/** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */
+export interface KbBrokenDoc {
+  id: string
+  kbName: string
+  title: string
+  /** missing-vec = 有 embedding 无向量索引（vec 库丢了）；dim-mismatch = 向量维度与知识库配置不一致（换模型未重建） */
+  reason: 'missing-vec' | 'dim-mismatch'
+}
+
+/** KB 数据健康：重复文档组（同库同内容 hash） */
+export interface KbDuplicateGroup {
+  kbId: string
+  kbName: string
+  hash: string
+  /** 同组文档，创建时间升序（最早在前，去重保留它） */
+  docs: { id: string; title: string; createdAt: number }[]
+}
+
+/** KB 数据健康：知识库配置的 provider 引用失效 */
+export interface KbProviderIssue {
+  kbId: string
+  kbName: string
+  /** 引用角色：embedding | rerank | hyde | multiquery | ocr */
+  role: string
+  /** missing = provider 已删除；disabled = 已禁用；model-missing = 模型不在该 provider 模型列表 */
+  issue: 'missing' | 'disabled' | 'model-missing'
+}
+
+/** KB 数据健康：完整性探测结果（只读探测 + 可修复项，见 src/main/knowledge/kb-health.ts） */
+export interface KbIntegrityReport {
+  /** 孤儿向量：kb_vec_map 中 chunk 已不存在的残留行（删文档历史泄漏） */
+  orphanVectors: number
+  /** 孤儿 chunk：kb_chunks 中所属文档已不存在的残留行 */
+  orphanChunks: number
+  /** 缺向量/维度不匹配文档（一键重建索引可修） */
+  brokenDocs: KbBrokenDoc[]
+  /** 重复文档组（保留最早删其余） */
+  duplicates: KbDuplicateGroup[]
+  /** provider 引用失效清单（不阻断检索，阻断入库/重索引与对应增强能力） */
+  providerIssues: KbProviderIssue[]
+}
+
 /** 数据健康度报告（Settings「数据健康」面板）：数据体量 / 知识库索引状态 / 备份与维护任务 */
 export interface DataHealthReport {
   /** 数据目录体积明细（字节）；dbBytes 含 WAL，dataDirBytes 为全目录递归合计 */
@@ -187,6 +229,8 @@ export interface DataHealthReport {
     total: number
     byStatus: Record<KbDocStatus, number>
     errorDocs: { id: string; kbName: string; title: string; error: string | null; createdAt: number }[]
+    /** 完整性探测（KB 数据健康，见 src/main/knowledge/kb-health.ts） */
+    integrity: KbIntegrityReport
   }
   /** WebDAV 云备份状态 */
   backup: {
@@ -201,6 +245,12 @@ export interface DataHealthReport {
   tasks: {
     kbHealthCheckLastRunAt: number | null
     backupVerifyLastRunAt: number | null
+  }
+  /** 本次启动各阶段累计耗时（主进程内存埋点；USB 冷启动可视化） */
+  boot: {
+    stages: { id: string; ms: number }[]
+    /** 启动流程完成总耗时（最后一个阶段的累计毫秒） */
+    totalMs: number
   }
 }
 
@@ -259,7 +309,7 @@ export interface MessageSearchResult {
 
 // ---------- 知识库 ----------
 export type KbDocStatus = 'pending' | 'parsing' | 'indexing' | 'ready' | 'error'
-export type KbSourceType = 'pdf' | 'docx' | 'xlsx' | 'html' | 'url' | 'txt' | 'md'
+export type KbSourceType = 'pdf' | 'docx' | 'xlsx' | 'html' | 'url' | 'txt' | 'md' | 'image'
 
 export interface KnowledgeBase {
   id: string
@@ -281,6 +331,9 @@ export interface KnowledgeBase {
   /** Multi-Query 多查询扩展 LLM provider（空则只检索原 query） */
   multiQueryProviderId: string | null
   multiQueryModel: string | null
+  /** 图片 OCR 视觉模型 provider（空则图片文档不可入库；识别文字后走常规索引） */
+  ocrProviderId: string | null
+  ocrModel: string | null
   documentCount: number
   chunkCount: number
   createdAt: number
@@ -1322,6 +1375,9 @@ export const IPC = {
   MESSAGE_SEARCH: 'message:search',
   USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
+  DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
+  DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
+  DATA_HEALTH_KB_REINDEX: 'dataHealth:kb-reindex', // 缺向量/维度不匹配文档一键重建索引
 
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',
