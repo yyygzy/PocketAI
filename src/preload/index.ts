@@ -11,6 +11,7 @@ import type {
   ConversationExportPayload,
   MessageSearchResult,
   UsageSummary,
+  UsageConversationItem,
   UsagePricing,
   UsageModelItem,
   DataHealthReport,
@@ -222,6 +223,8 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query, assistantId, dateRange, offset),
   getUsageSummary: (days?: number): Promise<UsageSummary> =>
     ipcRenderer.invoke(IPC.USAGE_GET, days),
+  getUsageConversations: (days?: number, limit?: number): Promise<UsageConversationItem[]> =>
+    ipcRenderer.invoke(IPC.USAGE_CONVERSATIONS, days, limit),
   getUsagePricing: (): Promise<UsagePricing> =>
     ipcRenderer.invoke(IPC.USAGE_PRICING_GET),
   setUsagePricing: (pricing: UsagePricing): Promise<UsagePricing> =>

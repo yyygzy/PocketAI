@@ -197,6 +197,18 @@ export interface UsagePricing {
   prices: Record<string, ModelPrice>
 }
 
+/** 会话维度用量排行项（UsagePanel 会话排行区块） */
+export interface UsageConversationItem {
+  conversationId: string
+  /** 会话已删除/无记录时的标题兜底占位 */
+  title: string
+  requests: number
+  totalTokens: number
+  cost: number
+  /** 该会话最近一次计费生成时间 */
+  lastUsedAt: number
+}
+
 /** 历史出现过的模型（单价编辑器清单项，覆盖全部时间） */
 export interface UsageModelItem {
   provider: string
@@ -1429,6 +1441,7 @@ export const IPC = {
   MESSAGE_TRUNCATE_FROM: 'message:truncate-from', // 截断重跑：删除目标消息及其后全部消息
   MESSAGE_SEARCH: 'message:search',
   USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
+  USAGE_CONVERSATIONS: 'usage:conversations', // 会话维度用量排行（标题/次数/token/费用）
   USAGE_PRICING_GET: 'usage:pricing-get', // 用量单价配置读取
   USAGE_PRICING_SET: 'usage:pricing-set', // 用量单价配置保存
   USAGE_MODELS: 'usage:models', // 历史出现过的 provider/模型清单（单价编辑器用）

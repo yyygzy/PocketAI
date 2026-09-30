@@ -708,6 +708,8 @@ export const en: Record<string, string> = {
   'usage.daily': 'Daily Trend',
   'usage.byProvider': 'By Provider',
   'usage.byModel': 'By Model (Top 10)',
+  'usage.byConversation': 'By Conversation (Top 20)',
+  'usage.conversation': 'Conversation',
   'usage.noData': 'No usage data in the selected range (messages generated before this version have no usage recorded)',
   'usage.requestCount': '{count} calls',
   'usage.model': 'Model',

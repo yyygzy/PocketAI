@@ -708,6 +708,8 @@ export const zh: Record<string, string> = {
   'usage.daily': '按日趋势',
   'usage.byProvider': '按服务商',
   'usage.byModel': '按模型（Top 10）',
+  'usage.byConversation': '会话排行（Top 20）',
+  'usage.conversation': '会话',
   'usage.noData': '所选时间范围内暂无用量数据（旧版本生成的消息未记录用量）',
   'usage.requestCount': '{count} 次',
   'usage.model': '模型',

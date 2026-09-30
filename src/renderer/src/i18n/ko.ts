@@ -655,6 +655,8 @@ export const ko: Record<string, string> = {
   'usage.daily': '일별 추이',
   'usage.byProvider': '공급자별',
   'usage.byModel': '모델별 (Top 10)',
+  'usage.byConversation': '대화별 (Top 20)',
+  'usage.conversation': '대화',
   'usage.noData': '선택한 기간에 사용량 데이터가 없습니다 (이전 버전에서 생성된 메시지는 기록이 없음)',
   'usage.requestCount': '{count}회',
   'usage.model': '모델',

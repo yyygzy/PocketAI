@@ -655,6 +655,8 @@ export const ja: Record<string, string> = {
   'usage.daily': '日別推移',
   'usage.byProvider': 'プロバイダ別',
   'usage.byModel': 'モデル別（Top 10）',
+  'usage.byConversation': '会話別（Top 20）',
+  'usage.conversation': '会話',
   'usage.noData': '選択した期間内の使用量データがありません（旧バージョンで生成されたメッセージには記録がありません）',
   'usage.requestCount': '{count} 回',
   'usage.model': 'モデル',

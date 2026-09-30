@@ -41,6 +41,11 @@ export function registerMessageHandlers(): void {
     usageService.getSummary(days, getUsagePricing().prices),
     argsSchema(z.number().int().min(1).max(365).optional()))
 
+  // 会话维度用量排行（UsagePanel 会话排行区块；随天数范围联动）
+  safeHandle(IPC.USAGE_CONVERSATIONS, (_e, days?: number, limit?: number) =>
+    usageService.listConversationUsage(days, limit, getUsagePricing().prices),
+    argsSchema(z.number().int().min(1).max(365).optional(), z.number().int().min(1).max(100).optional()))
+
   // 用量单价配置：读取 / 保存（zod 过边界 + parsePricing 规范化）/ 历史模型清单
   safeHandle(IPC.USAGE_PRICING_GET, () => getUsagePricing())
   safeHandle(IPC.USAGE_PRICING_SET, (_e, payload: unknown) => {

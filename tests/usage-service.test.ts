@@ -11,7 +11,7 @@ vi.mock('../src/main/db/database', () => ({
   dbService: { getHandle: () => ({ prepare: () => ({ all: () => [], get: () => undefined, run: () => {} }) }) }
 }))
 
-import { parseUsageJson, localDateKey, aggregateUsage, type UsageRow } from '../src/main/usage/usage-service'
+import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, type UsageRow, type UsageConversationRow } from '../src/main/usage/usage-service'
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   provider: 'openai',
@@ -175,5 +175,74 @@ describe('aggregateUsage', () => {
     const openai = s.byProvider.find((p) => p.provider === 'openai')
     expect(openai?.cost).toBe(0.0004)
     expect(openai?.totalTokens).toBe(300)
+  })
+})
+
+describe('aggregateConversationUsage', () => {
+  const convRow = (over: Partial<UsageConversationRow> = {}): UsageConversationRow => ({
+    conversation_id: 'c1',
+    title: '会话一',
+    provider: 'openai',
+    model: 'gpt-4o',
+    usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150 }),
+    created_at: Date.now(),
+    ...over
+  })
+
+  it('多会话分组聚合：requests/totalTokens 累加，按 totalTokens 倒序，lastUsedAt 取最大', () => {
+    const now = Date.now()
+    const items = aggregateConversationUsage([
+      convRow({ conversation_id: 'c1', title: '会话一', created_at: now - 1000 }),
+      convRow({ conversation_id: 'c1', title: '会话一', created_at: now }), // 同会话第二条
+      convRow({ conversation_id: 'c2', title: '会话二', usage: JSON.stringify({ promptTokens: 400, completionTokens: 400, totalTokens: 800 }), created_at: now })
+    ])
+    expect(items).toHaveLength(2)
+    expect(items[0]!.conversationId).toBe('c2') // 800 > 300
+    expect(items[0]!.totalTokens).toBe(800)
+    expect(items[1]!.conversationId).toBe('c1')
+    expect(items[1]!.requests).toBe(2)
+    expect(items[1]!.totalTokens).toBe(300)
+    expect(items[1]!.lastUsedAt).toBe(now)
+  })
+
+  it('标题取 JOIN 值；NULL/空串兜底 (未知会话)，同会话首行无标题后行有时取非空', () => {
+    const items = aggregateConversationUsage([
+      convRow({ conversation_id: 'c1', title: null }),
+      convRow({ conversation_id: 'c2', title: '  ' }),
+      convRow({ conversation_id: 'c3', title: null, created_at: 1 }),
+      convRow({ conversation_id: 'c3', title: '后到的标题', created_at: 2 })
+    ])
+    const byId = new Map(items.map((i) => [i.conversationId, i]))
+    expect(byId.get('c1')?.title).toBe('(未知会话)')
+    expect(byId.get('c2')?.title).toBe('(未知会话)')
+    expect(byId.get('c3')?.title).toBe('后到的标题')
+  })
+
+  it('坏 usage 行跳过不计数', () => {
+    const items = aggregateConversationUsage([
+      convRow({ usage: 'broken' }),
+      convRow({ usage: null }),
+      convRow()
+    ])
+    expect(items).toHaveLength(1)
+    expect(items[0]!.requests).toBe(1)
+    expect(items[0]!.totalTokens).toBe(150)
+  })
+
+  it('conversation_id 为空 → (未知会话) 分组不崩', () => {
+    const items = aggregateConversationUsage([convRow({ conversation_id: '' })])
+    expect(items[0]!.conversationId).toBe('(未知会话)')
+  })
+
+  it('配置单价时费用正确，未配置模型 cost=0', () => {
+    const prices = { 'openai::gpt-4o': { input: 2, output: 4 } } // (100×2+50×4)/1e6 = 0.0004
+    const items = aggregateConversationUsage([
+      convRow({ conversation_id: 'c1', title: '计价会话' }),
+      convRow({ conversation_id: 'c2', title: '未配价会话', model: 'gpt-4o-mini' })
+    ], prices)
+    const byId = new Map(items.map((i) => [i.conversationId, i]))
+    expect(byId.get('c1')?.cost).toBe(0.0004)
+    expect(byId.get('c2')?.cost).toBe(0)
+    expect(byId.get('c2')?.totalTokens).toBe(150)
   })
 })

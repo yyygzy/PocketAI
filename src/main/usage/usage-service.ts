@@ -2,7 +2,7 @@
 // 数据来源：chat 与 agent 链路在生成完成时把 provider 返回的 usage 落库（v25 migration）
 // 聚合在 JS 侧完成（行级数据量可控，且坏 JSON 容错/时区日切比 SQL JSON 函数更直观可控）
 import { dbService } from '../db/database'
-import type { ModelPrice, UsageStats, UsageSummary } from '../../shared/types'
+import type { ModelPrice, UsageConversationItem, UsageStats, UsageSummary } from '../../shared/types'
 import { computeUsageCost, priceKey, roundCost } from './pricing'
 
 /** 聚合输入行（SQL 只拉必要列） */
@@ -129,6 +129,47 @@ export function aggregateUsage(
   }
 }
 
+/** 会话维度聚合输入行（LEFT JOIN conversations 带出标题） */
+export interface UsageConversationRow extends UsageRow {
+  conversation_id: string
+  title: string | null
+}
+
+/**
+ * 聚合会话维度用量行 → UsageConversationItem[]（按 totalTokens 倒序）。
+ * 与 aggregateUsage 同口径：坏 JSON 跳过、未配单价费用计 0、roundCost 消浮点尾巴。
+ * 会话标题取 JOIN 值，空/NULL 兜底「(未知会话)」；时间过滤由 SQL created_at >= since 承担。
+ */
+export function aggregateConversationUsage(
+  rows: UsageConversationRow[],
+  prices: Record<string, ModelPrice> = {}
+): UsageConversationItem[] {
+  const convMap = new Map<
+    string,
+    { title: string; requests: number; totalTokens: number; cost: number; lastUsedAt: number }
+  >()
+  for (const row of rows) {
+    const u = parseUsageJson(row.usage)
+    if (!u) continue
+    const id = row.conversation_id || '(未知会话)'
+    const title = row.title?.trim() || '(未知会话)'
+    const cost = prices[priceKey(row.provider || '(未知)', row.model || '(未知)')]
+      ? computeUsageCost(u, prices[priceKey(row.provider || '(未知)', row.model || '(未知)')]!)
+      : 0
+    const c = convMap.get(id) ?? { title, requests: 0, totalTokens: 0, cost: 0, lastUsedAt: 0 }
+    // 标题以首条非空为准（同会话行 JOIN 值一致，防御性取非空）
+    if (!c.title || c.title === '(未知会话)') c.title = title
+    c.requests++
+    c.totalTokens += u.totalTokens
+    c.cost += cost
+    c.lastUsedAt = Math.max(c.lastUsedAt, row.created_at)
+    convMap.set(id, c)
+  }
+  return Array.from(convMap.entries())
+    .map(([conversationId, v]) => ({ conversationId, ...v, cost: roundCost(v.cost) }))
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+}
+
 class UsageService {
   /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */
   getSummary(days = 30, prices: Record<string, ModelPrice> = {}): UsageSummary {
@@ -143,6 +184,31 @@ class UsageService {
       )
       .all(since) as UsageRow[]
     return aggregateUsage(rows, safeDays, prices)
+  }
+
+  /**
+   * 会话维度用量排行（UsagePanel 会话排行区块）。
+   * LEFT JOIN conversations 带出标题（会话已删除时 title 为 NULL，聚合侧兜底）；
+   * limit 截断在聚合后按 totalTokens 倒序取前 N。
+   */
+  listConversationUsage(
+    days = 30,
+    limit = 20,
+    prices: Record<string, ModelPrice> = {}
+  ): UsageConversationItem[] {
+    const safeDays = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), 365) : 30
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 100) : 20
+    const since = Date.now() - safeDays * 24 * 3600 * 1000
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        `SELECT m.conversation_id, c.title, m.provider, m.model, m.usage, m.created_at
+         FROM messages m LEFT JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.role='assistant' AND m.status='done' AND m.usage IS NOT NULL AND m.created_at >= ?
+         ORDER BY m.created_at ASC`
+      )
+      .all(since) as UsageConversationRow[]
+    return aggregateConversationUsage(rows, prices).slice(0, safeLimit)
   }
 
   /**

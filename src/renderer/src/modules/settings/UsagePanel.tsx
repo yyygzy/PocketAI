@@ -2,7 +2,7 @@
 // 数据来源：messages.usage（chat/agent 生成完成时落库），IPC getUsageSummary 聚合
 // 费用按本机配置的「每 100 万 token 单价」估算，单价仅存本地不上传
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ModelPrice, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
+import type { ModelPrice, UsageConversationItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
@@ -32,6 +32,7 @@ export const UsagePanel: React.FC = () => {
   const toast = useToast()
   const [days, setDays] = useState<number>(30)
   const [summary, setSummary] = useState<UsageSummary | null>(null)
+  const [convUsage, setConvUsage] = useState<UsageConversationItem[]>([])
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
   const [showEditor, setShowEditor] = useState(false)
 
@@ -39,6 +40,7 @@ export const UsagePanel: React.FC = () => {
 
   const load = useCallback((d: number) => {
     window.pocketai.getUsageSummary(d).then(setSummary).catch(reportIpcError('usage.get'))
+    window.pocketai.getUsageConversations(d, 20).then(setConvUsage).catch(reportIpcError('usage.conversations'))
   }, [])
 
   useEffect(() => {
@@ -162,6 +164,37 @@ export const UsagePanel: React.FC = () => {
               ))}
             </tbody>
           </table>
+
+          {/* 会话排行（Top20，随天数范围联动） */}
+          {convUsage.length > 0 && (
+            <>
+              <div className="mb-1 mt-4 text-xs font-semibold text-[var(--color-text)]">{t('usage.byConversation')}</div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[var(--color-text-muted)]">
+                    <th className="py-1 pr-2 font-normal">{t('usage.conversation')}</th>
+                    <th className="py-1 pr-2 font-normal text-right">{t('usage.requests')}</th>
+                    <th className="py-1 pr-2 font-normal text-right">{t('usage.totalTokens')}</th>
+                    <th className="py-1 font-normal text-right">{t('usage.cost')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {convUsage.map((c) => (
+                    <tr key={c.conversationId} className="border-t border-[var(--color-border)]">
+                      <td className="py-1.5 pr-2 truncate max-w-0">
+                        <span className="text-[var(--color-text)]" title={c.title}>{c.title}</span>
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-[var(--color-text-muted)]">{c.requests}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(c.totalTokens)}</td>
+                      <td className="py-1.5 text-right font-mono text-[var(--color-accent)]">
+                        {c.cost > 0 ? `${currencySymbol}${fmtCost(c.cost)}` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
         </>
       )}
 
