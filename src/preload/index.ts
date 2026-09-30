@@ -18,6 +18,7 @@ import type {
   ChatChunkEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  ConversationTitleEvent,
   MessageSource,
   KbAskChunkEvent,
   KbAskDoneEvent,
@@ -68,6 +69,7 @@ import type {
   FileReadResult,
   FileOpResult,
   Note,
+  PromptSnippetRecord,
   PythonRuntime,
   HardwareInfo,
   TranslateRequestPayload,
@@ -197,6 +199,10 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT, payload),
   forkConversation: (conversationId: string, messageId: string): Promise<{ ok: boolean; conversation?: ConversationRecord; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_FORK, conversationId, messageId),
+  getSmartTitleEnabled: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SMART_TITLE_GET),
+  setSmartTitleEnabled: (enabled: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SMART_TITLE_SET, enabled),
 
   // ---------- 消息 ----------
   listMessages: (conversationId: string): Promise<MessageRecord[]> =>
@@ -248,6 +254,11 @@ const api = {
     const listener = (_e: IpcRendererEvent, data: ChatErrorEvent) => handler(data)
     ipcRenderer.on(IPC.CHAT_ERROR_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.CHAT_ERROR_EVENT, listener)
+  },
+  onConversationTitle: (handler: (e: ConversationTitleEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: ConversationTitleEvent) => handler(data)
+    ipcRenderer.on(IPC.CONVERSATION_TITLE_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.CONVERSATION_TITLE_EVENT, listener)
   },
 
   // ---------- KB 问答模式 ----------
@@ -396,6 +407,19 @@ const api = {
     title?: string
     content: string
   }): Promise<Note> => ipcRenderer.invoke(IPC.NOTES_CREATE_FROM_MESSAGE, input),
+
+  // ---------- 提示词片段 ----------
+  listPromptSnippets: (): Promise<PromptSnippetRecord[]> => ipcRenderer.invoke(IPC.SNIPPETS_LIST),
+  createPromptSnippet: (input: {
+    title: string
+    content: string
+  }): Promise<PromptSnippetRecord> => ipcRenderer.invoke(IPC.SNIPPETS_CREATE, input),
+  updatePromptSnippet: (
+    id: string,
+    patch: Partial<Pick<PromptSnippetRecord, 'title' | 'content'>>
+  ): Promise<PromptSnippetRecord | null> => ipcRenderer.invoke(IPC.SNIPPETS_UPDATE, id, patch),
+  deletePromptSnippet: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.SNIPPETS_DELETE, id),
 
   // ---------- Python 运行时 ----------
   listPythonRuntimes: (): Promise<PythonRuntime[]> => ipcRenderer.invoke(IPC.PYTHON_RUNTIME_LIST),

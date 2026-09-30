@@ -575,6 +575,31 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE conversations ADD COLUMN archived_at INTEGER;
     `
+  },
+  {
+    // v31: 提示词片段库——用户自存常用提示词（支持 {{变量}} 占位），在聊天输入框就地选用
+    version: 31,
+    name: 'prompt_snippets',
+    up: `
+      CREATE TABLE IF NOT EXISTS prompt_snippets (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_prompt_snippets_updated_at ON prompt_snippets(updated_at DESC);
+    `
+  },
+  {
+    // v32: 会话智能标题——title_default=1 表示标题仍是系统占位，允许首轮消息自动命名；
+    // 用户手动改名/自动命名完成后置 0。存量已有真实标题的会话回填 0，避免升级后被突然改名。
+    version: 32,
+    name: 'conv_title_default',
+    up: `
+      ALTER TABLE conversations ADD COLUMN title_default INTEGER NOT NULL DEFAULT 1;
+      UPDATE conversations SET title_default = 0 WHERE title IS NOT NULL AND title <> '新对话';
+    `
   }
 ]
 

@@ -40,6 +40,8 @@ vi.mock('../src/main/tools/fs-tools', () => ({
   resolveWorkspacePath: (p: string) => p
 }))
 vi.mock('../src/main/assistant/skills', () => ({ buildSkillsContext: () => '' }))
+// engine 新增的智能标题编排会拉起 app-config/portable/electron 链；纯函数测试用不到，整体打桩
+vi.mock('../src/main/conversation/title-gen', () => ({ runFirstMessageTitle: () => {} }))
 
 import type { MessageRecord, ChatAttachment, ToolCall, ToolResult } from '../src/shared/types'
 import type { AdapterChatMessage } from '../src/main/providers/types'

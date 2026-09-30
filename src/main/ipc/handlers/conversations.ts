@@ -21,6 +21,7 @@ import {
   CONVERSATION_IMPORT_MAX_FILE_BYTES
 } from '../../../shared/schemas/conversations'
 import { idSchema } from '../../../shared/schemas/providers'
+import { isSmartTitleEnabled, setSmartTitleEnabled } from '../../conversation/title-config'
 
 export function registerConversationHandlers(): void {
   safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean, archivedOnly?: boolean) =>
@@ -46,6 +47,11 @@ export function registerConversationHandlers(): void {
     conversationRepo.rename(id, title)
     return { ok: true }
   }, argsSchema(idSchema, z.string()))
+  safeHandle(IPC.CONVERSATION_SMART_TITLE_GET, () => isSmartTitleEnabled())
+  safeHandle(IPC.CONVERSATION_SMART_TITLE_SET, (_e, enabled: boolean) => {
+    setSmartTitleEnabled(enabled)
+    return { ok: true }
+  }, argsSchema(z.boolean()))
   safeHandle(IPC.CONVERSATION_EXPORT, (_e, id: string) => {
     const conv = conversationRepo.get(id)
     if (!conv) return { ok: false, error: '会话不存在' }
@@ -210,7 +216,8 @@ export function registerConversationHandlers(): void {
     const newConv = conversationRepo.create({
       assistantId: c.assistantId ?? null,
       title: (c.title ?? '导入的会话') + ' (加密导入)',
-      modelLabel: c.modelLabel ?? undefined
+      modelLabel: c.modelLabel ?? undefined,
+      titleDefault: false
     })
 
     // 事务原子写入：中途失败回滚，不留下半个导入会话
@@ -251,7 +258,8 @@ export function registerConversationHandlers(): void {
     const newConv = conversationRepo.create({
       assistantId: c.assistantId ?? null,
       title: (c.title ?? '导入的会话') + ' (导入)',
-      modelLabel: c.modelLabel ?? undefined
+      modelLabel: c.modelLabel ?? undefined,
+      titleDefault: false
     })
     // 为每条消息生成新 UUID + 构建 oldId→newId 映射（处理 parentId 链）
     const idMap = new Map<string, string>()

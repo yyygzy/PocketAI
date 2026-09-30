@@ -16,6 +16,7 @@ interface ConversationRow {
   pinned?: number
   archived?: number
   archived_at?: number | null
+  title_default?: number
 }
 
 export function rowToRecord(row: ConversationRow): ConversationRecord {
@@ -29,7 +30,8 @@ export function rowToRecord(row: ConversationRow): ConversationRecord {
     updatedAt: row.updated_at,
     pinned: !!row.pinned,
     archived: !!row.archived,
-    archivedAt: row.archived_at ?? null
+    archivedAt: row.archived_at ?? null,
+    titleDefault: row.title_default !== 0
   }
 }
 
@@ -81,24 +83,35 @@ export const conversationRepo = {
     return row ? rowToRecord(row) : null
   },
 
-  create(input: { assistantId?: string | null; title?: string; modelLabel?: string } = {}): ConversationRecord {
+  create(input: { assistantId?: string | null; title?: string; modelLabel?: string; titleDefault?: boolean } = {}): ConversationRecord {
     const now = Date.now()
     const id = randomUUID()
+    // 新建会话默认标题仍是占位（titleDefault=1）；导入/恢复的会话传 false 视为已定稿
+    const titleDefault = input.titleDefault === false ? 0 : 1
     dbService
       .getHandle()
       .prepare(
-        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?)`
+        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default)
+         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?)`
       )
-      .run(id, input.assistantId ?? null, input.title ?? '新对话', input.modelLabel ?? null, now, now)
+      .run(id, input.assistantId ?? null, input.title ?? '新对话', input.modelLabel ?? null, now, now, titleDefault)
     return mustGet(() => this.get(id), '会话')
   },
 
+  /** 重命名标题同时视为定稿，后续不再自动命名 */
   rename(id: string, title: string): void {
     dbService
       .getHandle()
-      .prepare('UPDATE conversations SET title=?, updated_at=? WHERE id=?')
+      .prepare('UPDATE conversations SET title=?, title_default=0, updated_at=? WHERE id=?')
       .run(title, Date.now(), id)
+  },
+
+  /** 仅消费「占位标题」标记（不改标题）：开关关闭且占位标题不是「新对话」时使用 */
+  setTitleDefault(id: string, isDefault: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET title_default=? WHERE id=?')
+      .run(isDefault ? 1 : 0, id)
   },
 
   setPinned(id: string, pinned: boolean): void {
@@ -180,8 +193,8 @@ export const conversationRepo = {
       const now = Date.now()
       const newConvId = randomUUID()
       db.prepare(
-        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?)`
+        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default)
+         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, 0)`
       ).run(
         newConvId,
         src.assistantId,

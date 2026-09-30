@@ -130,6 +130,8 @@ export interface ConversationRecord {
   archived: boolean
   /** 归档时间戳；未归档为 null */
   archivedAt?: number | null
+  /** 标题仍是系统占位（首轮消息可自动命名）；手动改名/自动命名完成后为 false */
+  titleDefault: boolean
 }
 
 export interface MessageRecord {
@@ -734,6 +736,12 @@ export interface ChatDoneEvent {
   sources?: MessageSource[]
 }
 
+/** 智能标题后台生成完成事件（主进程广播，渲染端就地更新会话列表） */
+export interface ConversationTitleEvent {
+  conversationId: string
+  title: string
+}
+
 export interface ChatErrorEvent {
   requestId: string
   targetIndex: number
@@ -1002,6 +1010,15 @@ export interface Note {
   content: string
   tags: string[]
   pinned: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+/** 提示词片段（用户自存常用提示词，content 可含 {{变量}} 占位） */
+export interface PromptSnippetRecord {
+  id: string
+  title: string
+  content: string
   createdAt: number
   updatedAt: number
 }
@@ -1378,6 +1395,8 @@ export const IPC = {
   CONVERSATION_IMPORT_ENCRYPTED: 'conversation:import-enc',
   CONVERSATION_IMPORT: 'conversation:import',
   CONVERSATION_FORK: 'conversation:fork',
+  CONVERSATION_SMART_TITLE_GET: 'conversation:smart-title-get',
+  CONVERSATION_SMART_TITLE_SET: 'conversation:smart-title-set',
 
   MESSAGE_LIST: 'message:list',
   MESSAGE_DELETE: 'message:delete',
@@ -1396,6 +1415,7 @@ export const IPC = {
   CHAT_CHUNK_EVENT: 'chat:chunk-event',
   CHAT_DONE_EVENT: 'chat:done-event',
   CHAT_ERROR_EVENT: 'chat:error-event',
+  CONVERSATION_TITLE_EVENT: 'conversation:title-event',
 
   KB_LIST: 'kb:list',
   KB_GET: 'kb:get',
@@ -1441,6 +1461,12 @@ export const IPC = {
   NOTES_DELETE: 'notes:delete',
   NOTES_SEARCH: 'notes:search',
   NOTES_CREATE_FROM_MESSAGE: 'notes:create-from-message',
+
+  // ---------- 提示词片段 ----------
+  SNIPPETS_LIST: 'snippets:list',
+  SNIPPETS_CREATE: 'snippets:create',
+  SNIPPETS_UPDATE: 'snippets:update',
+  SNIPPETS_DELETE: 'snippets:delete',
 
   // Python 运行时
   PYTHON_RUNTIME_LIST: 'python:runtime-list',

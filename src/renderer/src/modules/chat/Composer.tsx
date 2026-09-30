@@ -1,5 +1,6 @@
 import React, { useRef, useState, useCallback } from 'react'
 import { useI18n } from '../../i18n'
+import { SnippetButton } from '../../components/SnippetButton'
 import type { ChatAttachment } from '../../../../shared/types'
 
 interface Props {
@@ -115,6 +116,21 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
     setAttachments((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  // 提示词片段：在 textarea 光标处替换选区插入（受控组件，走 setText 而非直接改 DOM）
+  const insertAtCursor = (insert: string) => {
+    const ta = taRef.current
+    const start = ta?.selectionStart ?? text.length
+    const end = ta?.selectionEnd ?? start
+    const next = text.slice(0, start) + insert + text.slice(end)
+    setText(next)
+    requestAnimationFrame(() => {
+      ta?.focus()
+      const pos = start + insert.length
+      ta?.setSelectionRange(pos, pos)
+      resize()
+    })
+  }
+
   return (
     <div className="shrink-0 px-4 pb-4 pt-2">
       <div className="max-w-3xl mx-auto">
@@ -166,6 +182,8 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
             className="hidden"
             onChange={handleFilePick}
           />
+
+          <SnippetButton onInsert={insertAtCursor} />
 
           <textarea
             ref={taRef}

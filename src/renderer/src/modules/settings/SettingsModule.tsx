@@ -60,6 +60,56 @@ const ShortcutHelpPanel: React.FC = () => {
   )
 }
 
+/** 对话设置：智能标题开关（首条消息后用模型生成短标题） */
+const ConversationSettingsPanel: React.FC = () => {
+  const { t } = useI18n()
+  // null=尚未加载，避免开关初始闪烁
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    window.pocketai.getSmartTitleEnabled().then(setEnabled).catch(reportIpcError('settings.getSmartTitle'))
+  }, [])
+
+  const toggle = async () => {
+    const next = !enabled
+    setEnabled(next) // 乐观更新
+    try {
+      await window.pocketai.setSmartTitleEnabled(next)
+    } catch (e) {
+      setEnabled(!next)
+      reportIpcError('settings.setSmartTitle')(e)
+    }
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="py-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[var(--color-text)]">{t('set.smartTitle')}</div>
+            <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{t('set.smartTitleHint')}</div>
+          </div>
+          <button
+            role="switch"
+            aria-checked={!!enabled}
+            disabled={enabled === null}
+            onClick={() => void toggle()}
+            className={`relative shrink-0 w-9 h-5 rounded-full transition-colors disabled:opacity-50 ${
+              enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                enabled ? 'translate-x-4' : ''
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
   const [paths, setPaths] = useState<AppPaths | null>(null)
@@ -129,6 +179,11 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.shortcuts.title')}</h3>
           <ShortcutHelpPanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.chat')}</h3>
+          <ConversationSettingsPanel />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">

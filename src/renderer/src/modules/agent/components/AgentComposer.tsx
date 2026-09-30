@@ -1,6 +1,7 @@
-// Agent 底部输入区：附件预览/拖拽/选择 + 斜杠快捷指令 + 输入框 + 发送/停止
-import React, { useMemo, useState } from 'react'
+// Agent 底部输入区：附件预览/拖拽/选择 + 斜杠快捷指令 + 提示词片段 + 输入框 + 发送/停止
+import React, { useMemo, useRef, useState } from 'react'
 import { useI18n } from '../../../i18n'
+import { SnippetButton } from '../../../components/SnippetButton'
 import type { useAttachments } from '../hooks/useAttachments'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { filterSlashCommands, getSlashQuery, type SlashCommand } from '../agent-shared'
@@ -21,6 +22,7 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
   const [input, setInput] = useState('')
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  const taRef = useRef<HTMLTextAreaElement>(null)
   const { attachments, dragOver, removeAt, clear, openPicker, fileInputProps, dropZoneProps } = att
 
   // 内置斜杠指令（label/template 随界面语言）
@@ -70,6 +72,19 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
     clear()
   }
 
+  // 提示词片段：在 textarea 光标处替换选区插入
+  const insertAtCursor = (insert: string) => {
+    const ta = taRef.current
+    const start = ta?.selectionStart ?? input.length
+    const end = ta?.selectionEnd ?? start
+    setInput(input.slice(0, start) + insert + input.slice(end))
+    requestAnimationFrame(() => {
+      ta?.focus()
+      const pos = start + insert.length
+      ta?.setSelectionRange(pos, pos)
+    })
+  }
+
   return (
     <>
       {/* 附件预览 */}
@@ -117,7 +132,9 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
           </svg>
         </button>
+        <SnippetButton onInsert={insertAtCursor} disabled={running} />
         <textarea
+          ref={taRef}
           data-agent-composer-input
           className="input flex-1 text-sm min-h-[40px] max-h-[120px] resize-none"
           value={input}

@@ -53,7 +53,7 @@ const mocks = vi.hoisted(() => {
   const conversationDb = new Map<string, ConversationRecord>()
   const conversationRepo = {
     get: vi.fn<(id: string) => ConversationRecord | null>(),
-    create: vi.fn<(input: { assistantId?: string | null; title?: string; modelLabel?: string }) => ConversationRecord>(),
+    create: vi.fn<(input: { assistantId?: string | null; title?: string; modelLabel?: string; titleDefault?: boolean }) => ConversationRecord>(),
     touch: vi.fn<(id: string, patch: { modelLabel?: string; status?: string }) => void>(),
     rename: vi.fn<(id: string, title: string) => void>()
   }
@@ -106,7 +106,8 @@ const mocks = vi.hoisted(() => {
           status: 'done',
           pinned: false,
           archived: false,
-          archivedAt: null
+          archivedAt: null,
+          titleDefault: input.titleDefault !== false
         }
         this.conversationDb.set(id, rec)
         return rec
@@ -488,7 +489,8 @@ describe('processMessage 分支（模型配置 / 会话映射 / 结果分流）'
       status: 'done',
       pinned: false,
       archived: false,
-      archivedAt: null
+      archivedAt: null,
+      titleDefault: false
     })
     mocks.chatSend.onSend = (_p, emit) => {
       emit(IPC.CHAT_DONE_EVENT, { fullContent: 'r' })

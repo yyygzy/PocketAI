@@ -101,6 +101,26 @@ describe('rowToRecord — DB 行映射为 ConversationRecord', () => {
     expect(archived.archived).toBe(true)
     expect(archived.archivedAt).toBe(999)
   })
+
+  it('titleDefault：旧库行缺列 → true（可自动命名）；0 → false；1 → true', () => {
+    const legacy = rowToRecord({
+      id: 'c8', assistant_id: null, title: '新对话', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0
+    })
+    expect(legacy.titleDefault).toBe(true)
+
+    const finalized = rowToRecord({
+      id: 'c9', assistant_id: null, title: '手改标题', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0, title_default: 0
+    })
+    expect(finalized.titleDefault).toBe(false)
+
+    const fresh = rowToRecord({
+      id: 'c10', assistant_id: null, title: '新对话', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0, title_default: 1
+    })
+    expect(fresh.titleDefault).toBe(true)
+  })
 })
 
 describe('buildConvListQuery — 列表过滤/排序条件', () => {

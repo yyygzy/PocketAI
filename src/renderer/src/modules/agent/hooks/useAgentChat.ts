@@ -121,6 +121,14 @@ export function useAgentChat(providers: ProviderRecord[]) {
         setCurrentStep(0)
       })
     )
+    // 智能标题后台生成完成：就地更新活跃/归档两个列表（done 后 reload 为兜底）
+    offs.push(
+      window.pocketai.onConversationTitle(({ conversationId, title }) => {
+        const patch = (c: { id: string }) => (c.id === conversationId ? { title } : {})
+        setConversations((prev) => prev.map((c) => ({ ...c, ...patch(c) })))
+        setArchivedConversations((prev) => prev.map((c) => ({ ...c, ...patch(c) })))
+      })
+    )
     return () => offs.forEach((off) => off())
   }, [t])
 

@@ -15,6 +15,7 @@ import type {
 import { providerManager } from '../providers/manager'
 import { acquireKeepAwake, releaseKeepAwake } from '../keep-awake'
 import { conversationRepo } from '../db/repositories/conversation.repo'
+import { runFirstMessageTitle } from '../conversation/title-gen'
 import { messageRepo } from '../db/repositories/message.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
 import { renderPrompt } from '../assistant/prompt-template'
@@ -230,10 +231,13 @@ class ChatService {
       })
 
       // 2. 会话标题与状态
-      const conv = conversationRepo.get(conversationId)
-      if (conv && (conv.title === '新对话' || !conv.title)) {
-        conversationRepo.rename(conversationId, content.slice(0, 20) || '新对话')
-      }
+      // 首轮消息：先落截断标题，后台用模型生成短标题（开关可控、失败静默降级）
+      runFirstMessageTitle({
+        conversationId,
+        userContent: content,
+        providerId: targets[0]!.providerId,
+        model: targets[0]!.model
+      })
       conversationRepo.touch(conversationId, {
         modelLabel: targets.map((t) => `${t.providerId}:${t.model}`).join(' | '),
         status: 'streaming'

@@ -253,6 +253,16 @@ export const ChatModule: React.FC = () => {
     return () => window.removeEventListener(APP_SHORTCUT_EVENT, onShortcut)
   }, [])
 
+  // 智能标题后台生成完成：就地更新活跃/归档两个列表（流式结束后的 reload 为兜底）
+  useEffect(() => {
+    return window.pocketai.onConversationTitle(({ conversationId, title }) => {
+      const patch = (list: ConversationRecord[]) =>
+        list.map((c) => (c.id === conversationId ? { ...c, title } : c))
+      setConversations(patch)
+      setArchivedConversations(patch)
+    })
+  }, [])
+
   const handleRenameConv = async (id: string, title: string) => {
     try {
       await window.pocketai.renameConversation(id, title)

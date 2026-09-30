@@ -13,6 +13,7 @@ import { registerChatHandlers } from './handlers/chat'
 import { registerKnowledgeHandlers } from './handlers/knowledge'
 import { registerMcpHandlers } from './handlers/mcp'
 import { registerNoteHandlers } from './handlers/notes'
+import { registerSnippetHandlers } from './handlers/snippets'
 import { registerMemoryHandlers } from './handlers/memory'
 import { registerOllamaHandlers } from './handlers/ollama'
 import { registerTranslateHandlers } from './handlers/translate'
@@ -39,6 +40,7 @@ export function registerIpcHandlers(): void {
   registerKnowledgeHandlers()
   registerMcpHandlers()
   registerNoteHandlers()
+  registerSnippetHandlers()
   registerMemoryHandlers()
   registerOllamaHandlers()
   registerTranslateHandlers()
