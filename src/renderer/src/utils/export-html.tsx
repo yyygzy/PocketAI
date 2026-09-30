@@ -107,8 +107,8 @@ function MessageView({ msg }: { msg: MessageRecord }): React.ReactElement {
       {msg.toolCalls && <ToolCalls raw={msg.toolCalls} />}
       {msg.content && (
         msg.role === 'user'
-          ? <div className="user-msg"><Markdown content={msg.content} /></div>
-          : <Markdown content={msg.content} />
+          ? <div className="user-msg"><Markdown content={msg.content} codeCopy={false} /></div>
+          : <Markdown content={msg.content} codeCopy={false} />
       )}
       {sources.length > 0 && (
         <>

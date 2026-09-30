@@ -65,7 +65,7 @@ describe('localDateKey', () => {
 describe('aggregateUsage', () => {
   it('空行 → 全零汇总 + daily 补零填充 days 天', () => {
     const s = aggregateUsage([], 7)
-    expect(s.totals).toEqual({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0 })
+    expect(s.totals).toEqual({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, cost: 0 })
     expect(s.daily).toHaveLength(7)
     expect(s.daily.every((d) => d.totalTokens === 0)).toBe(true)
     expect(s.byProvider).toEqual([])
@@ -134,5 +134,46 @@ describe('aggregateUsage', () => {
     // 降序：最高分 model-11 在前
     expect(s.byModel[0]?.model).toBe('model-11')
     expect(s.byProvider).toHaveLength(1)
+  })
+
+  it('传入价格表时 totals/daily/byModel 正确计费用', () => {
+    const today = new Date()
+    const d1 = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1, 10, 0).getTime() // 昨天
+    const prices = {
+      // 默认行 openai/gpt-4o（100 prompt/50 completion）：(100×2 + 50×4)/1e6 = 0.0004
+      'openai::gpt-4o': { input: 2, output: 4 },
+      // anthropic/claude-sonnet（200 prompt 含 50 缓存/200 completion）：
+      // (150×2 + 50×0.4 + 200×4)/1e6 = (300 + 20 + 800)/1e6 = 0.00112
+      'anthropic::claude-sonnet': { input: 2, output: 4, cache: 0.4 }
+    }
+    const s = aggregateUsage([
+      row({ created_at: d1 }),
+      row({
+        created_at: d1,
+        provider: 'anthropic',
+        model: 'claude-sonnet',
+        usage: JSON.stringify({ promptTokens: 200, completionTokens: 200, totalTokens: 400, cachedTokens: 50 })
+      })
+    ], 5, prices)
+    expect(s.totals.cost).toBe(0.00152)
+    expect(s.byModel.find((m) => m.model === 'gpt-4o')?.cost).toBe(0.0004)
+    expect(s.byModel.find((m) => m.model === 'claude-sonnet')?.cost).toBe(0.00112)
+    // daily 费用并入发生日（昨天），其余补零日 cost=0
+    const usedDay = s.daily.find((d) => d.date === localDateKey(d1))
+    expect(usedDay?.cost).toBe(0.00152)
+    expect(s.daily.filter((d) => d.date !== localDateKey(d1)).every((d) => d.cost === 0)).toBe(true)
+  })
+
+  it('未配置单价的模型 cost=0 且 token 统计不变；byProvider 费用=其模型费用之和', () => {
+    const s = aggregateUsage([
+      row({ provider: 'openai', model: 'gpt-4o' }),
+      row({ provider: 'openai', model: 'gpt-4o-mini' })
+    ], 3, { 'openai::gpt-4o': { input: 2, output: 4 } })
+    expect(s.totals.cost).toBe(0.0004) // 仅 gpt-4o 计价
+    expect(s.totals.totalTokens).toBe(300) // 两条都计数
+    expect(s.byModel.find((m) => m.model === 'gpt-4o-mini')?.cost).toBe(0)
+    const openai = s.byProvider.find((p) => p.provider === 'openai')
+    expect(openai?.cost).toBe(0.0004)
+    expect(openai?.totalTokens).toBe(300)
   })
 })

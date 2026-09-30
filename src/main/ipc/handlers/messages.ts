@@ -4,6 +4,9 @@ import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../shared/snippet'
 import { dbService } from '../../db/database'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { usageService } from '../../usage/usage-service'
+import { getUsagePricing, setUsagePricing } from '../../usage/pricing-config'
+import { parsePricing } from '../../usage/pricing'
+import { usagePricingSchema } from '../../../shared/schemas/usage'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { idSchema } from '../../../shared/schemas/providers'
 
@@ -33,9 +36,20 @@ export function registerMessageHandlers(): void {
     return { ok: true, deleted }
   }, argsSchema(idSchema))
 
-  // 用量聚合汇总（token 用量按日/provider/模型，最近 N 天）
-  safeHandle(IPC.USAGE_GET, (_e, days?: number) => usageService.getSummary(days),
+  // 用量聚合汇总（token 用量按日/provider/模型，最近 N 天；费用按本地单价估算）
+  safeHandle(IPC.USAGE_GET, (_e, days?: number) =>
+    usageService.getSummary(days, getUsagePricing().prices),
     argsSchema(z.number().int().min(1).max(365).optional()))
+
+  // 用量单价配置：读取 / 保存（zod 过边界 + parsePricing 规范化）/ 历史模型清单
+  safeHandle(IPC.USAGE_PRICING_GET, () => getUsagePricing())
+  safeHandle(IPC.USAGE_PRICING_SET, (_e, payload: unknown) => {
+    const parsed = usagePricingSchema.parse(payload)
+    const normalized = parsePricing(parsed)
+    setUsagePricing(normalized)
+    return normalized
+  }, argsSchema(usagePricingSchema))
+  safeHandle(IPC.USAGE_MODELS, () => usageService.listDistinctModels())
   safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string, assistantId?: string | null, dateRange?: { from?: number; to?: number }, offset?: number) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()

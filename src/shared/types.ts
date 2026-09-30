@@ -172,10 +172,36 @@ export interface UsageSummary {
     completionTokens: number
     totalTokens: number
     cachedTokens: number
+    /** 按本地配置单价估算的总费用（币种见 UsagePricing.currency；未配单价的模型计 0） */
+    cost: number
   }
-  daily: { date: string; totalTokens: number }[]
-  byProvider: { provider: string; requests: number; totalTokens: number }[]
-  byModel: { provider: string; model: string; requests: number; totalTokens: number }[]
+  daily: { date: string; totalTokens: number; cost: number }[]
+  byProvider: { provider: string; requests: number; totalTokens: number; cost: number }[]
+  byModel: { provider: string; model: string; requests: number; totalTokens: number; cost: number }[]
+}
+
+/** 单个模型的单价（每 100 万 token，币种由 UsagePricing.currency 统一表示） */
+export interface ModelPrice {
+  /** 未命中缓存的输入 token 单价 */
+  input: number
+  /** 输出 token 单价 */
+  output: number
+  /** 命中缓存的输入 token 单价；省略时按输入价计 */
+  cache?: number
+}
+
+/** 用量计价配置（本地 KV，不上传） */
+export interface UsagePricing {
+  currency: 'CNY' | 'USD'
+  /** key = `${providerId}::${model}` */
+  prices: Record<string, ModelPrice>
+}
+
+/** 历史出现过的模型（单价编辑器清单项，覆盖全部时间） */
+export interface UsageModelItem {
+  provider: string
+  model: string
+  lastUsedAt: number
 }
 
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */
@@ -1403,6 +1429,9 @@ export const IPC = {
   MESSAGE_TRUNCATE_FROM: 'message:truncate-from', // 截断重跑：删除目标消息及其后全部消息
   MESSAGE_SEARCH: 'message:search',
   USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
+  USAGE_PRICING_GET: 'usage:pricing-get', // 用量单价配置读取
+  USAGE_PRICING_SET: 'usage:pricing-set', // 用量单价配置保存
+  USAGE_MODELS: 'usage:models', // 历史出现过的 provider/模型清单（单价编辑器用）
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
