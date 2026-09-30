@@ -4,6 +4,8 @@
 // - parseUsageJson：正常/缺字段/负数/坏 JSON 容错
 // - localDateKey：本地时区切日
 // - aggregateUsage：汇总/按日补零/按 provider/模型聚合/Top10 截断
+// - aggregateConversationUsage：会话维度分组/标题兜底/费用
+// - aggregateAssistantUsage：助手维度分组/名称兜底/费用
 import { describe, it, expect, vi } from 'vitest'
 
 // mock dbService 所在模块（usage-service 顶部 import 链会加载 database.ts → electron）
@@ -11,7 +13,7 @@ vi.mock('../src/main/db/database', () => ({
   dbService: { getHandle: () => ({ prepare: () => ({ all: () => [], get: () => undefined, run: () => {} }) }) }
 }))
 
-import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, type UsageRow, type UsageConversationRow } from '../src/main/usage/usage-service'
+import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, type UsageRow, type UsageConversationRow, type UsageAssistantRow } from '../src/main/usage/usage-service'
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   provider: 'openai',
@@ -244,5 +246,71 @@ describe('aggregateConversationUsage', () => {
     expect(byId.get('c1')?.cost).toBe(0.0004)
     expect(byId.get('c2')?.cost).toBe(0)
     expect(byId.get('c2')?.totalTokens).toBe(150)
+  })
+})
+
+describe('aggregateAssistantUsage', () => {
+  const asstRow = (over: Partial<UsageAssistantRow> = {}): UsageAssistantRow => ({
+    assistant_id: 'a1',
+    name: '写作助手',
+    provider: 'openai',
+    model: 'gpt-4o',
+    usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150 }),
+    created_at: Date.now(),
+    ...over
+  })
+
+  it('多助手分组聚合：requests/totalTokens 累加，按 totalTokens 倒序，lastUsedAt 取最大', () => {
+    const now = Date.now()
+    const items = aggregateAssistantUsage([
+      asstRow({ assistant_id: 'a1', name: '写作助手', created_at: now - 1000 }),
+      asstRow({ assistant_id: 'a1', name: '写作助手', created_at: now }), // 同助手第二条
+      asstRow({ assistant_id: 'a2', name: '翻译助手', usage: JSON.stringify({ promptTokens: 400, completionTokens: 400, totalTokens: 800 }), created_at: now })
+    ])
+    expect(items).toHaveLength(2)
+    expect(items[0]!.assistantId).toBe('a2') // 800 > 300
+    expect(items[0]!.totalTokens).toBe(800)
+    expect(items[1]!.assistantId).toBe('a1')
+    expect(items[1]!.requests).toBe(2)
+    expect(items[1]!.totalTokens).toBe(300)
+    expect(items[1]!.lastUsedAt).toBe(now)
+  })
+
+  it('名称取 JOIN 值；NULL/空串/assistant_id 空 兜底 (未知助手)，同助手首行无名后行有时取非空', () => {
+    const items = aggregateAssistantUsage([
+      asstRow({ assistant_id: 'a1', name: null }),
+      asstRow({ assistant_id: 'a2', name: '  ' }),
+      asstRow({ assistant_id: '', name: '孤儿消息' }), // assistant_id 空 → id 也走兜底
+      asstRow({ assistant_id: 'a3', name: null, created_at: 1 }),
+      asstRow({ assistant_id: 'a3', name: '后到的名称', created_at: 2 })
+    ])
+    const byId = new Map(items.map((i) => [i.assistantId, i]))
+    expect(byId.get('a1')?.name).toBe('(未知助手)')
+    expect(byId.get('a2')?.name).toBe('(未知助手)')
+    expect(byId.get('(未知助手)')?.name).toBe('孤儿消息') // assistant_id 空与无名共享兜底组
+    expect(byId.get('a3')?.name).toBe('后到的名称')
+  })
+
+  it('坏 usage 行跳过不计数', () => {
+    const items = aggregateAssistantUsage([
+      asstRow({ usage: 'broken' }),
+      asstRow({ usage: null }),
+      asstRow()
+    ])
+    expect(items).toHaveLength(1)
+    expect(items[0]!.requests).toBe(1)
+    expect(items[0]!.totalTokens).toBe(150)
+  })
+
+  it('配置单价时费用正确，未配置模型 cost=0', () => {
+    const prices = { 'openai::gpt-4o': { input: 2, output: 4 } } // (100×2+50×4)/1e6 = 0.0004
+    const items = aggregateAssistantUsage([
+      asstRow({ assistant_id: 'a1', name: '计价助手' }),
+      asstRow({ assistant_id: 'a2', name: '未配价助手', model: 'gpt-4o-mini' })
+    ], prices)
+    const byId = new Map(items.map((i) => [i.assistantId, i]))
+    expect(byId.get('a1')?.cost).toBe(0.0004)
+    expect(byId.get('a2')?.cost).toBe(0)
+    expect(byId.get('a2')?.totalTokens).toBe(150)
   })
 })

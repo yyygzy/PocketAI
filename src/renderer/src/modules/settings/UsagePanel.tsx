@@ -1,8 +1,8 @@
-// 用量统计面板：token 用量汇总 + 按日趋势（纯 CSS 柱状图）+ provider/模型排行 + 费用估算
+// 用量统计面板：token 用量汇总 + 按日趋势（纯 CSS 柱状图）+ provider/模型/会话/助手排行 + 费用估算
 // 数据来源：messages.usage（chat/agent 生成完成时落库），IPC getUsageSummary 聚合
 // 费用按本机配置的「每 100 万 token 单价」估算，单价仅存本地不上传
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ModelPrice, UsageConversationItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
+import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
@@ -33,6 +33,7 @@ export const UsagePanel: React.FC = () => {
   const [days, setDays] = useState<number>(30)
   const [summary, setSummary] = useState<UsageSummary | null>(null)
   const [convUsage, setConvUsage] = useState<UsageConversationItem[]>([])
+  const [asstUsage, setAsstUsage] = useState<UsageAssistantItem[]>([])
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
   const [showEditor, setShowEditor] = useState(false)
 
@@ -41,6 +42,7 @@ export const UsagePanel: React.FC = () => {
   const load = useCallback((d: number) => {
     window.pocketai.getUsageSummary(d).then(setSummary).catch(reportIpcError('usage.get'))
     window.pocketai.getUsageConversations(d, 20).then(setConvUsage).catch(reportIpcError('usage.conversations'))
+    window.pocketai.getUsageAssistants(d, 10).then(setAsstUsage).catch(reportIpcError('usage.assistants'))
   }, [])
 
   useEffect(() => {
@@ -188,6 +190,37 @@ export const UsagePanel: React.FC = () => {
                       <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(c.totalTokens)}</td>
                       <td className="py-1.5 text-right font-mono text-[var(--color-accent)]">
                         {c.cost > 0 ? `${currencySymbol}${fmtCost(c.cost)}` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {/* 助手排行（Top10，随天数范围联动） */}
+          {asstUsage.length > 0 && (
+            <>
+              <div className="mb-1 mt-4 text-xs font-semibold text-[var(--color-text)]">{t('usage.byAssistant')}</div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[var(--color-text-muted)]">
+                    <th className="py-1 pr-2 font-normal">{t('usage.assistant')}</th>
+                    <th className="py-1 pr-2 font-normal text-right">{t('usage.requests')}</th>
+                    <th className="py-1 pr-2 font-normal text-right">{t('usage.totalTokens')}</th>
+                    <th className="py-1 font-normal text-right">{t('usage.cost')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {asstUsage.map((a) => (
+                    <tr key={a.assistantId} className="border-t border-[var(--color-border)]">
+                      <td className="py-1.5 pr-2 truncate max-w-0">
+                        <span className="text-[var(--color-text)]" title={a.name}>{a.name}</span>
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-[var(--color-text-muted)]">{a.requests}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(a.totalTokens)}</td>
+                      <td className="py-1.5 text-right font-mono text-[var(--color-accent)]">
+                        {a.cost > 0 ? `${currencySymbol}${fmtCost(a.cost)}` : '—'}
                       </td>
                     </tr>
                   ))}

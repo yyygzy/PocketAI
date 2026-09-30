@@ -209,6 +209,18 @@ export interface UsageConversationItem {
   lastUsedAt: number
 }
 
+/** 助手维度用量排行项（UsagePanel 助手排行区块） */
+export interface UsageAssistantItem {
+  assistantId: string
+  /** 助手已删除/无记录时的名称兜底占位 */
+  name: string
+  requests: number
+  totalTokens: number
+  cost: number
+  /** 该助手最近一次计费生成时间 */
+  lastUsedAt: number
+}
+
 /** 历史出现过的模型（单价编辑器清单项，覆盖全部时间） */
 export interface UsageModelItem {
   provider: string
@@ -312,7 +324,7 @@ export interface MessageSource {
   seq?: number
 }
 
-// ---------- KB 问答模式（知识库详情页内选库即聊，轻量不落库） ----------
+// ---------- KB 问答模式（知识库详情页内选库即聊，轻量流式） ----------
 export interface KbAskMessage {
   role: 'user' | 'assistant'
   content: string
@@ -331,6 +343,30 @@ export interface KbAskDoneEvent {
 export interface KbAskErrorEvent {
   requestId: string
   error: string
+}
+
+/** KB 问答会话落库记录（messages 以 JSON 单列存储，一行一个会话） */
+export interface KbAskSessionRecord {
+  id: string
+  kbId: string
+  /** 首问截断生成的会话标题 */
+  title: string
+  messages: KbAskMessage[]
+  providerId: string
+  model: string
+  createdAt: number
+  updatedAt: number
+}
+/** KB 问答会话列表项（瘦身元数据，不含消息正文） */
+export interface KbAskSessionMeta {
+  id: string
+  kbId: string
+  title: string
+  messageCount: number
+  providerId: string
+  model: string
+  createdAt: number
+  updatedAt: number
 }
 
 /** 会话导出/导入文件载荷（明文 JSON 与加密 .moxia 内部同构） */
@@ -1444,6 +1480,7 @@ export const IPC = {
   MESSAGE_SEARCH: 'message:search',
   USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
   USAGE_CONVERSATIONS: 'usage:conversations', // 会话维度用量排行（标题/次数/token/费用）
+  USAGE_ASSISTANTS: 'usage:assistants', // 助手维度用量排行（名称/次数/token/费用）
   USAGE_PRICING_GET: 'usage:pricing-get', // 用量单价配置读取
   USAGE_PRICING_SET: 'usage:pricing-set', // 用量单价配置保存
   USAGE_MODELS: 'usage:models', // 历史出现过的 provider/模型清单（单价编辑器用）
@@ -1483,6 +1520,13 @@ export const IPC = {
   KB_ASK_CHUNK_EVENT: 'kb-ask:chunk-event',
   KB_ASK_DONE_EVENT: 'kb-ask:done-event',
   KB_ASK_ERROR_EVENT: 'kb-ask:error-event',
+  KB_ASK_SESSION_SAVE: 'kb-ask-session:save',
+  KB_ASK_SESSION_LIST: 'kb-ask-session:list',
+  KB_ASK_SESSION_GET: 'kb-ask-session:get',
+  KB_ASK_SESSION_DELETE: 'kb-ask-session:delete',
+  KB_ASK_SESSION_RENAME: 'kb-ask-session:rename',
+  KB_ASK_SESSION_EXPORT_MD: 'kb-ask-session:export-md',
+  KB_ASK_SESSION_EXPORT_HTML: 'kb-ask-session:export-html',
 
   // MCP Server
   MCP_SERVER_LIST: 'mcp-server:list',

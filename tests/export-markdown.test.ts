@@ -3,11 +3,13 @@ import { describe, it, expect } from 'vitest'
 import type { MessageRecord } from '../src/shared/types'
 import {
   buildConversationMarkdown,
+  buildKbAskSessionMarkdown,
   formatSources,
   formatAttachments,
   safeFileName,
   dedupeFileNames
 } from '../src/shared/export-markdown'
+import type { KbAskMessage } from '../src/shared/types'
 
 const conv = {
   title: '测试会话',
@@ -128,6 +130,58 @@ describe('usage / 文件名工具', () => {
     // 无扩展名也工作
     expect(dedupeFileNames(['x', 'x'])).toEqual(['x', 'x-2'])
     expect(dedupeFileNames([])).toEqual([])
+  })
+})
+
+describe('buildKbAskSessionMarkdown', () => {
+  const session = {
+    title: 'KB 问答会话',
+    model: 'gpt-test',
+    createdAt: new Date('2026-09-01T10:00:00').getTime(),
+    updatedAt: new Date('2026-09-01T10:05:00').getTime()
+  }
+
+  it('头部含标题、模型、消息数', () => {
+    const md = buildKbAskSessionMarkdown(session, [])
+    expect(md).toContain('# KB 问答会话')
+    expect(md).toContain('`gpt-test`')
+    expect(md).toContain('**消息数**：0')
+  })
+
+  it('user 消息用引用块包裹，assistant 正文保真', () => {
+    const messages: KbAskMessage[] = [
+      { role: 'user', content: '什么是 RAG？' },
+      { role: 'assistant', content: '# RAG\n\n检索增强生成。' }
+    ]
+    const md = buildKbAskSessionMarkdown(session, messages)
+    expect(md).toContain('> 什么是 RAG？')
+    expect(md).toContain('# RAG')
+    expect(md).toContain('检索增强生成。')
+  })
+
+  it('assistant 来源按文档标题去重输出', () => {
+    const messages: KbAskMessage[] = [
+      {
+        role: 'assistant',
+        content: '回答',
+        sources: [
+          { chunkId: 'c1', docId: 'd1', docTitle: '文档A', content: '...' },
+          { chunkId: 'c2', docId: 'd2', docTitle: '文档A', content: '...' },
+          { chunkId: 'c3', docId: 'd3', docTitle: '文档B', content: '...' }
+        ]
+      }
+    ]
+    const md = buildKbAskSessionMarkdown(session, messages)
+    expect(md).toContain('[1] 文档A')
+    expect(md).toContain('[2] 文档B')
+    expect(md).not.toContain('[3] 文档A')
+  })
+
+  it('空内容消息仍输出角色标题，无来源块', () => {
+    const messages: KbAskMessage[] = [{ role: 'assistant', content: '' }]
+    const md = buildKbAskSessionMarkdown(session, messages)
+    expect(md).toContain('## 🤖 助手')
+    expect(md).not.toContain('参考来源')
   })
 })
 

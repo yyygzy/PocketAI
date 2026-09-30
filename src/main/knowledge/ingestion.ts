@@ -4,6 +4,7 @@ import path from 'node:path'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbChunkRepo, type ChunkInsert } from '../db/repositories/kb-chunk.repo'
+import { kbAskSessionRepo } from '../db/repositories/kb-ask-session.repo'
 import { chunkMarkdown } from './chunker'
 import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
@@ -125,6 +126,7 @@ export class IngestionService {
   /** 删除知识库全部数据 */
   deleteKb(kbId: string): void {
     kbChunkRepo.deleteByKb(kbId)
+    kbAskSessionRepo.deleteByKb(kbId) // 问答留痕随库级联清理
     kbRepo.delete(kbId) // documents 通过 ON DELETE CASCADE 级联
   }
 }

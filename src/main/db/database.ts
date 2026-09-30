@@ -600,6 +600,25 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE conversations ADD COLUMN title_default INTEGER NOT NULL DEFAULT 1;
       UPDATE conversations SET title_default = 0 WHERE title IS NOT NULL AND title <> '新对话';
     `
+  },
+  {
+    // v33: KB 问答留痕——每个问答会话一行，消息体（含引用来源）JSON 存储，
+    // 关窗/切库后可回看与继续追问；KB 删除时随库级联清理
+    version: 33,
+    name: 'kb_ask_sessions',
+    up: `
+      CREATE TABLE IF NOT EXISTS kb_ask_sessions (
+        id TEXT PRIMARY KEY,
+        kb_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        messages_json TEXT NOT NULL DEFAULT '[]',
+        provider_id TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_kb_ask_sessions_kb ON kb_ask_sessions(kb_id, updated_at DESC);
+    `
   }
 ]
 

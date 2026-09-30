@@ -6,6 +6,7 @@
 // - 追加 RAG 参考来源、附件、token 用量信息
 import type {
   ChatAttachment,
+  KbAskMessage,
   MessageRecord,
   MessageSource,
   UsageStats
@@ -170,6 +171,52 @@ export function buildConversationMarkdown(
     const usage = usageLine(msg.usage)
     if (usage) lines.push(usage, '')
 
+    lines.push('---', '')
+  }
+
+  return lines.join('\n')
+}
+
+/** KB 问答会话导出所需的会话元信息（KbAskMessage 之外的部分） */
+export interface ExportKbAskSessionMeta {
+  title: string
+  model: string
+  createdAt: number
+  updatedAt: number
+}
+
+/**
+ * 构建 KB 问答会话 Markdown（纯函数，主进程 IPC 与测试共用）。
+ * 比 buildConversationMarkdown 更简：KbAskMessage 无 attachments/toolCalls/usage/createdAt，
+ * 仅 role/content/sources；每条消息不单独标时间（问答时序由消息顺序体现）。
+ */
+export function buildKbAskSessionMarkdown(
+  session: ExportKbAskSessionMeta,
+  messages: KbAskMessage[]
+): string {
+  const dateFmt = (ts: number) => new Date(ts).toLocaleString()
+
+  const lines: string[] = []
+  lines.push(`# ${session.title}`, '')
+  lines.push(`> **模型**：\`${session.model || '未知'}\``)
+  lines.push(`> **创建时间**：${dateFmt(session.createdAt)}`)
+  lines.push(`> **最后更新**：${dateFmt(session.updatedAt)}`)
+  lines.push(`> **消息数**：${messages.length}`)
+  lines.push('', '---', '')
+
+  for (const msg of messages) {
+    lines.push(`## ${roleLabel(msg.role)}`, '')
+    if (msg.content) {
+      if (msg.role === 'user') {
+        lines.push(quoteBlock(msg.content), '')
+      } else {
+        lines.push(msg.content.replace(/\s+$/, ''), '')
+      }
+    }
+    const srcLines = formatSources(msg.sources)
+    if (srcLines.length > 0) {
+      lines.push('**参考来源：**', ...srcLines.map((s) => `- ${s}`), '')
+    }
     lines.push('---', '')
   }
 

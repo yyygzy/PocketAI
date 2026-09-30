@@ -1,11 +1,13 @@
 // 知识库 IPC：库管理 / 文档摄取 / 分块预览 / 检索测试（含免费版数量门控）
 import { z } from 'zod'
+import fs from 'node:fs'
 import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import type { KnowledgeBase } from '../../../shared/types'
 import { kbRepo } from '../../db/repositories/kb.repo'
 import { kbDocRepo } from '../../db/repositories/kb-doc.repo'
 import { kbChunkRepo } from '../../db/repositories/kb-chunk.repo'
+import { kbAskSessionRepo } from '../../db/repositories/kb-ask-session.repo'
 import { ingestionService } from '../../knowledge/ingestion'
 import { indexQueue } from '../../knowledge/index-queue'
 import { ragService } from '../../knowledge/rag'
@@ -22,6 +24,8 @@ import {
   kbRetrieveArgsSchema
 } from '../../../shared/schemas/knowledge'
 import { idSchema } from '../../../shared/schemas/providers'
+import { buildKbAskSessionMarkdown, safeFileName } from '../../../shared/export-markdown'
+import type { KbAskSessionRecord } from '../../../shared/types'
 
 export function registerKnowledgeHandlers(): void {
   safeHandle(IPC.KB_LIST, () => kbRepo.list())
@@ -127,7 +131,7 @@ export function registerKnowledgeHandlers(): void {
     ragService.retrieve(kbIds, query),
   kbRetrieveArgsSchema)
 
-  // ---------- KB 问答模式（选库即聊，不落库） ----------
+  // ---------- KB 问答模式（选库即聊，流式生成） ----------
   const kbAskArgsSchema = z.object({
     kbIds: z.array(idSchema).min(1),
     providerId: z.string().min(1),
@@ -146,6 +150,90 @@ export function registerKnowledgeHandlers(): void {
     kbAskService.abort(requestId)
     return { ok: true }
   }, argsSchema(z.string().min(1)))
+
+  // ---------- KB 问答留痕（会话落库，渲染端全量 upsert 单写路径） ----------
+  const kbAskSessionSaveSchema = z.object({
+    id: z.string().min(1),
+    kbId: idSchema,
+    title: z.string().max(200),
+    messages: z
+      .array(
+        z.object({
+          role: z.enum(['user', 'assistant']),
+          content: z.string(),
+          sources: z
+            .array(
+              z.object({
+                chunkId: z.string(),
+                docId: z.string(),
+                docTitle: z.string(),
+                content: z.string(),
+                kbId: z.string().optional(),
+                seq: z.number().optional()
+              })
+            )
+            .optional()
+        })
+      )
+      .max(200),
+    providerId: z.string(),
+    model: z.string(),
+    createdAt: z.number().int().positive(),
+    updatedAt: z.number().int().positive()
+  })
+  safeHandle(IPC.KB_ASK_SESSION_SAVE, (_e, record: KbAskSessionRecord) => {
+    kbAskSessionRepo.upsert(record)
+    return { ok: true }
+  }, argsSchema(kbAskSessionSaveSchema))
+  safeHandle(IPC.KB_ASK_SESSION_LIST, (_e, kbId: string) => kbAskSessionRepo.listByKb(kbId), argsSchema(idSchema))
+  safeHandle(IPC.KB_ASK_SESSION_GET, (_e, id: string) => kbAskSessionRepo.get(id), argsSchema(idSchema))
+  safeHandle(IPC.KB_ASK_SESSION_DELETE, (_e, id: string) => {
+    kbAskSessionRepo.delete(id)
+    return { ok: true }
+  }, argsSchema(idSchema))
+
+  // ---------- KB 问答会话重命名 ----------
+  safeHandle(IPC.KB_ASK_SESSION_RENAME, (_e, id: string, title: string) => {
+    kbAskSessionRepo.rename(id, title)
+    return { ok: true }
+  }, argsSchema(idSchema, z.string().min(1).max(200)))
+
+  // ---------- KB 问答会话导出 Markdown（主进程从 DB 拉取后构建存盘） ----------
+  safeHandle(IPC.KB_ASK_SESSION_EXPORT_MD, async (e, id: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    const rec = kbAskSessionRepo.get(id)
+    if (!rec) return { ok: false, error: '会话不存在' }
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: `${safeFileName(rec.title)}.md`,
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePath) return { ok: true, canceled: true }
+    const md = buildKbAskSessionMarkdown(rec, rec.messages)
+    fs.writeFileSync(filePath, md, 'utf8')
+    return { ok: true, path: filePath }
+  }, argsSchema(idSchema))
+
+  // ---------- KB 问答会话导出 HTML（渲染端构建后传主进程存盘） ----------
+  safeHandle(IPC.KB_ASK_SESSION_EXPORT_HTML, async (e, id: string, html: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    const rec = kbAskSessionRepo.get(id)
+    if (!rec) return { ok: false, error: '会话不存在' }
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: `${safeFileName(rec.title)}.html`,
+      filters: [
+        { name: 'HTML 网页', extensions: ['html'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePath) return { ok: true, canceled: true }
+    fs.writeFileSync(filePath, html, 'utf8')
+    return { ok: true, path: filePath }
+  }, argsSchema(idSchema, z.string().min(1).max(50 * 1024 * 1024)))
 
   // ---------- 增量同步：检测 file 文档源文件变更 ----------
   safeHandle(IPC.KB_SYNC_CHECK, (_e, kbId: string) => checkKbFileUpdates(kbId), argsSchema(idSchema))

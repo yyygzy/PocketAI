@@ -12,6 +12,7 @@ import type {
   MessageSearchResult,
   UsageSummary,
   UsageConversationItem,
+  UsageAssistantItem,
   UsagePricing,
   UsageModelItem,
   DataHealthReport,
@@ -26,6 +27,8 @@ import type {
   KbAskChunkEvent,
   KbAskDoneEvent,
   KbAskErrorEvent,
+  KbAskSessionMeta,
+  KbAskSessionRecord,
   KnowledgeBase,
   KbDocument,
   KbChunk,
@@ -229,6 +232,8 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_GET, days),
   getUsageConversations: (days?: number, limit?: number): Promise<UsageConversationItem[]> =>
     ipcRenderer.invoke(IPC.USAGE_CONVERSATIONS, days, limit),
+  getUsageAssistants: (days?: number, limit?: number): Promise<UsageAssistantItem[]> =>
+    ipcRenderer.invoke(IPC.USAGE_ASSISTANTS, days, limit),
   getUsagePricing: (): Promise<UsagePricing> =>
     ipcRenderer.invoke(IPC.USAGE_PRICING_GET),
   setUsagePricing: (pricing: UsagePricing): Promise<UsagePricing> =>
@@ -302,6 +307,20 @@ const api = {
     ipcRenderer.on(IPC.KB_ASK_ERROR_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.KB_ASK_ERROR_EVENT, listener)
   },
+  saveKbAskSession: (record: KbAskSessionRecord): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_SAVE, record),
+  listKbAskSessions: (kbId: string): Promise<KbAskSessionMeta[]> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_LIST, kbId),
+  getKbAskSession: (id: string): Promise<KbAskSessionRecord | null> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_GET, id),
+  deleteKbAskSession: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_DELETE, id),
+  renameKbAskSession: (id: string, title: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_RENAME, id, title),
+  exportKbAskSessionMd: (id: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_EXPORT_MD, id),
+  exportKbAskSessionHtml: (id: string, html: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_EXPORT_HTML, id, html),
 
   // ---------- 知识库 ----------
   listKnowledgeBases: (): Promise<KnowledgeBase[]> => ipcRenderer.invoke(IPC.KB_LIST),

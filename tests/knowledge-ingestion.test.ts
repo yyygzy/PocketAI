@@ -62,6 +62,10 @@ vi.mock('../src/main/db/repositories/kb-chunk.repo', () => ({
     }
   }
 }))
+// ingestion.deleteKb 级联删除问答留痕（repo 顶部 import database → electron，须隔离）
+vi.mock('../src/main/db/repositories/kb-ask-session.repo', () => ({
+  kbAskSessionRepo: { deleteByKb: () => {} }
+}))
 vi.mock('../src/main/knowledge/embedding', () => ({
   embedTexts: vi.fn(async (_providerId: string, _model: string, texts: string[]) => {
     mocks.embedCalls.push(texts.length)

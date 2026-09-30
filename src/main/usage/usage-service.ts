@@ -2,7 +2,7 @@
 // 数据来源：chat 与 agent 链路在生成完成时把 provider 返回的 usage 落库（v25 migration）
 // 聚合在 JS 侧完成（行级数据量可控，且坏 JSON 容错/时区日切比 SQL JSON 函数更直观可控）
 import { dbService } from '../db/database'
-import type { ModelPrice, UsageConversationItem, UsageStats, UsageSummary } from '../../shared/types'
+import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageStats, UsageSummary } from '../../shared/types'
 import { computeUsageCost, priceKey, roundCost } from './pricing'
 
 /** 聚合输入行（SQL 只拉必要列） */
@@ -170,6 +170,47 @@ export function aggregateConversationUsage(
     .sort((a, b) => b.totalTokens - a.totalTokens)
 }
 
+/** 助手维度聚合输入行（LEFT JOIN assistants 带出名称，conversations 带出归属） */
+export interface UsageAssistantRow extends UsageRow {
+  assistant_id: string | null
+  name: string | null
+}
+
+/**
+ * 聚合助手维度用量行 → UsageAssistantItem[]（按 totalTokens 倒序）。
+ * 与 aggregateConversationUsage 同口径：坏 JSON 跳过、未配单价费用计 0、roundCost 消浮点尾巴。
+ * 助手名称取 JOIN 值，空/NULL/已删除兜底「(未知助手)」；时间过滤由 SQL created_at >= since 承担。
+ */
+export function aggregateAssistantUsage(
+  rows: UsageAssistantRow[],
+  prices: Record<string, ModelPrice> = {}
+): UsageAssistantItem[] {
+  const asstMap = new Map<
+    string,
+    { name: string; requests: number; totalTokens: number; cost: number; lastUsedAt: number }
+  >()
+  for (const row of rows) {
+    const u = parseUsageJson(row.usage)
+    if (!u) continue
+    const id = row.assistant_id || '(未知助手)'
+    const name = row.name?.trim() || '(未知助手)'
+    const cost = prices[priceKey(row.provider || '(未知)', row.model || '(未知)')]
+      ? computeUsageCost(u, prices[priceKey(row.provider || '(未知)', row.model || '(未知)')]!)
+      : 0
+    const a = asstMap.get(id) ?? { name, requests: 0, totalTokens: 0, cost: 0, lastUsedAt: 0 }
+    // 名称以首条非空为准（同助手行 JOIN 值一致，防御性取非空）
+    if (!a.name || a.name === '(未知助手)') a.name = name
+    a.requests++
+    a.totalTokens += u.totalTokens
+    a.cost += cost
+    a.lastUsedAt = Math.max(a.lastUsedAt, row.created_at)
+    asstMap.set(id, a)
+  }
+  return Array.from(asstMap.entries())
+    .map(([assistantId, v]) => ({ assistantId, ...v, cost: roundCost(v.cost) }))
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+}
+
 class UsageService {
   /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */
   getSummary(days = 30, prices: Record<string, ModelPrice> = {}): UsageSummary {
@@ -209,6 +250,33 @@ class UsageService {
       )
       .all(since) as UsageConversationRow[]
     return aggregateConversationUsage(rows, prices).slice(0, safeLimit)
+  }
+
+  /**
+   * 助手维度用量排行（UsagePanel 助手排行区块）。
+   * conversations LEFT JOIN assistants 带出助手名称（assistant_id 为 NULL/助手已删除时聚合侧兜底）；
+   * limit 截断在聚合后按 totalTokens 倒序取前 N。
+   */
+  listAssistantUsage(
+    days = 30,
+    limit = 10,
+    prices: Record<string, ModelPrice> = {}
+  ): UsageAssistantItem[] {
+    const safeDays = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), 365) : 30
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 100) : 10
+    const since = Date.now() - safeDays * 24 * 3600 * 1000
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        `SELECT m.provider, m.model, m.usage, m.created_at, c.assistant_id, a.name
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         LEFT JOIN assistants a ON a.id = c.assistant_id
+         WHERE m.role='assistant' AND m.status='done' AND m.usage IS NOT NULL AND m.created_at >= ?
+         ORDER BY m.created_at ASC`
+      )
+      .all(since) as UsageAssistantRow[]
+    return aggregateAssistantUsage(rows, prices).slice(0, safeLimit)
   }
 
   /**

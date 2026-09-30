@@ -1,14 +1,19 @@
 // KB 问答面板：知识库详情页内「选库即聊」——自动检索拼上下文，流式回答带编号引用。
-// 轻量实现：对话内存态（不落库），模型选择记忆在 localStorage，默认第一个启用 provider。
+// 问答会话落库留痕（渲染端全量 upsert 单写路径），可从历史列表回看与继续追问；
+// 模型选择记忆在 localStorage，默认第一个启用 provider。
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { EmptyState } from '../../components/EmptyState'
 import { requestSourceJump } from './source-jump'
 import { Markdown } from '../chat/Markdown'
+import { ExportMenu } from '../chat/ConversationList'
+import { sessionTitleFrom } from '../../../../shared/kb-ask-session'
+import { buildKbAskSessionHtml } from '../../utils/export-html'
 import type {
   KnowledgeBase,
   KbAskMessage,
+  KbAskSessionMeta,
   MessageSource,
   ProviderRecord
 } from '../../../../shared/types'
@@ -16,6 +21,16 @@ import { errText } from '../../utils/error'
 
 const PROVIDER_KEY = 'kbask.providerId'
 const modelKey = (p: string) => `kbask.model.${p}`
+
+/** 会话时间展示：当天只显示时分，跨天显示日期（同年省略年份） */
+const fmtSessionTime = (ts: number): string => {
+  const d = new Date(ts)
+  const now = new Date()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (d.toDateString() === now.toDateString()) return hm
+  const ymd = `${d.getFullYear() === now.getFullYear() ? '' : `${d.getFullYear()}/`}${d.getMonth() + 1}/${d.getDate()}`
+  return `${ymd} ${hm}`
+}
 
 const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
   const { t } = useI18n()
@@ -31,6 +46,32 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
   const [pending, setPending] = useState(false)
   const requestRef = useRef<string | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
+  // msgs 镜像：一次性挂载的流式订阅与持久化需要拿到最新全量消息
+  const msgsRef = useRef<KbAskMessage[]>([])
+  // 会话留痕：当前会话 id / 创建时间；历史列表与展开态
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionCreatedAt, setSessionCreatedAt] = useState(0)
+  const [sessionList, setSessionList] = useState<KbAskSessionMeta[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  // 重命名内联编辑：正在编辑的会话 id 与草稿标题
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  // 导出进行中（防重入）
+  const [exportingId, setExportingId] = useState<string | null>(null)
+
+  /** 拉取本库历史会话列表（仅元数据，更新时间倒序） */
+  const refreshSessions = () => {
+    window.pocketai
+      .listKbAskSessions(kb.id)
+      .then(setSessionList)
+      .catch(() => {}) // 留痕属增强能力，列表加载失败不打断问答
+  }
+
+  // 挂载即拉取历史（「历史」按钮上展示数量）
+  useEffect(() => {
+    refreshSessions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kb.id])
 
   // 加载启用的 provider + 记忆的模型选择；默认第一个 provider 的第一个模型（小白零配置）
   useEffect(() => {
@@ -68,6 +109,32 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
     if (providerId) localStorage.setItem(modelKey(providerId), m)
   }
 
+  /** 会话落库：全量 msgs upsert 单写路径；留痕失败静默（不打断问答） */
+  const persistSession = (
+    next: KbAskMessage[],
+    sid: string | null = sessionId,
+    createdAt = sessionCreatedAt
+  ) => {
+    if (!sid || next.length === 0) return
+    const firstUser = next.find((m) => m.role === 'user')
+    window.pocketai
+      .saveKbAskSession({
+        id: sid,
+        kbId: kb.id,
+        title: sessionTitleFrom(firstUser?.content ?? ''),
+        messages: next,
+        providerId,
+        model,
+        createdAt: createdAt || Date.now(),
+        updatedAt: Date.now()
+      })
+      .then(refreshSessions)
+      .catch(() => {})
+  }
+  // 经 ref 转发：一次性挂载的流式订阅闭包始终调用最新实现（拿到最新 provider/model/sessionId）
+  const persistRef = useRef(persistSession)
+  persistRef.current = persistSession
+
   // 流式事件订阅（一次挂载；requestId 校验防串扰）
   useEffect(() => {
     const offChunk = window.pocketai.onKbAskChunk((e) => {
@@ -77,10 +144,14 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
     const offDone = window.pocketai.onKbAskDone((e) => {
       if (e.requestId !== requestRef.current) return
       requestRef.current = null
-      setMsgs((m) => [
-        ...m,
+      // 追加回答并落库（含引用来源）；发送时已存过提问，此处为第二次 upsert
+      const next: KbAskMessage[] = [
+        ...msgsRef.current,
         { role: 'assistant', content: e.fullContent, sources: e.sources }
-      ])
+      ]
+      msgsRef.current = next
+      setMsgs(next)
+      persistRef.current(next)
       setStreamText('')
       setStreamSources([])
       setPending(false)
@@ -115,14 +186,26 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
       return
     }
     setInput('')
-    const history: { role: 'user' | 'assistant'; content: string }[] = msgs.map((m) => ({
+    // 首轮发问生成会话 id；先落「含提问」，回答完成后再落「含回答」
+    let sid = sessionId
+    let createdAt = sessionCreatedAt
+    if (!sid) {
+      sid = crypto.randomUUID()
+      createdAt = Date.now()
+      setSessionId(sid)
+      setSessionCreatedAt(createdAt)
+    }
+    const history: { role: 'user' | 'assistant'; content: string }[] = msgsRef.current.map((m) => ({
       role: m.role,
       content: m.content
     }))
-    setMsgs((m) => [...m, { role: 'user', content: q }])
+    const next: KbAskMessage[] = [...msgsRef.current, { role: 'user', content: q }]
+    msgsRef.current = next
+    setMsgs(next)
     setStreamText('')
     setStreamSources([])
     setPending(true)
+    persistRef.current(next, sid, createdAt)
     try {
       const { requestId } = await window.pocketai.kbAsk({
         kbIds: [kb.id],
@@ -140,6 +223,106 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
 
   const stop = () => {
     if (requestRef.current) void window.pocketai.kbAskAbort(requestRef.current)
+  }
+
+  /** 开始新会话：中止进行中的请求并清空当前对话 */
+  const startNewSession = () => {
+    if (requestRef.current) {
+      void window.pocketai.kbAskAbort(requestRef.current)
+      requestRef.current = null
+      setPending(false)
+    }
+    setSessionId(null)
+    setSessionCreatedAt(0)
+    msgsRef.current = []
+    setMsgs([])
+    setStreamText('')
+    setStreamSources([])
+    setShowHistory(false)
+  }
+
+  /** 加载历史会话：中止进行中的请求，回放全部消息，可继续追问 */
+  const loadSession = (id: string) => {
+    if (requestRef.current) {
+      void window.pocketai.kbAskAbort(requestRef.current)
+      requestRef.current = null
+      setPending(false)
+    }
+    window.pocketai
+      .getKbAskSession(id)
+      .then((rec) => {
+        if (!rec) {
+          refreshSessions()
+          return
+        }
+        setSessionId(rec.id)
+        setSessionCreatedAt(rec.createdAt)
+        msgsRef.current = rec.messages
+        setMsgs(rec.messages)
+        setStreamText('')
+        setStreamSources([])
+        setShowHistory(false)
+      })
+      .catch((e) => toast.error(errText(e)))
+  }
+
+  /** 删除历史会话；删的是当前会话则回到新对话态 */
+  const removeSession = (id: string) => {
+    window.pocketai
+      .deleteKbAskSession(id)
+      .then(() => {
+        refreshSessions()
+        if (id === sessionId) startNewSession()
+      })
+      .catch((e) => toast.error(errText(e)))
+  }
+
+  /** 发起重命名：进入内联编辑态，草稿初始化为当前标题 */
+  const beginRename = (id: string, currentTitle: string) => {
+    setRenamingId(id)
+    setRenameDraft(currentTitle)
+  }
+
+  /** 提交重命名（空串不提交），成功后刷新列表 */
+  const commitRename = (id: string) => {
+    const title = renameDraft.trim()
+    setRenamingId(null)
+    if (!title) return
+    window.pocketai
+      .renameKbAskSession(id, title)
+      .then(() => refreshSessions())
+      .catch((e) => toast.error(errText(e)))
+  }
+
+  /** 导出会话：MD 走主进程构建；HTML 渲染端构建后传主进程存盘 */
+  const exportSession = async (id: string, format: 'md' | 'html') => {
+    if (exportingId) return
+    setExportingId(id)
+    try {
+      if (format === 'md') {
+        const r = await window.pocketai.exportKbAskSessionMd(id)
+        if (r.ok && !r.canceled && r.path) toast.success(t('kb.askExported', { path: r.path }))
+        else if (!r.ok && r.error) toast.error(r.error)
+      } else {
+        const rec = await window.pocketai.getKbAskSession(id)
+        if (!rec) {
+          toast.error(t('kb.askSessionNotFound'))
+          refreshSessions()
+          return
+        }
+        const html = await buildKbAskSessionHtml(
+          { title: rec.title, model: rec.model, createdAt: rec.createdAt, updatedAt: rec.updatedAt },
+          rec.messages
+        )
+        const r = await window.pocketai.exportKbAskSessionHtml(id, html)
+        if (r.ok && !r.canceled && r.path) toast.success(t('kb.askExported', { path: r.path }))
+        else if (!r.ok && r.error) toast.error(r.error)
+      }
+    } catch (e) {
+      toast.error(errText(e))
+    } finally {
+      setExportingId(null)
+    }
   }
 
   const jumpToSource = (msgIndex: number, n: number) => {
@@ -173,6 +356,131 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
           />
         )}
       </div>
+
+      {/* 会话工具行：历史切换 + 新对话 + 当前会话重命名/导出 */}
+      <div className="flex items-center gap-1.5 mb-2">
+        <button
+          onClick={() => {
+            if (!showHistory) refreshSessions()
+            setShowHistory(!showHistory)
+          }}
+          className={`text-xs px-2 py-1 rounded border transition-colors${
+            showHistory
+              ? ' border-[var(--color-accent)] text-[var(--color-accent)]'
+              : ' border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]'
+          }`}
+        >
+          {t('kb.askHistory')}（{sessionList.length}）
+        </button>
+        <button onClick={startNewSession} className="btn-ghost text-xs">
+          {t('kb.askNewSession')}
+        </button>
+        {sessionId && !pending && (
+          <>
+            <button
+              onClick={() => {
+                const cur = sessionList.find((s) => s.id === sessionId)
+                beginRename(sessionId, cur?.title ?? '')
+              }}
+              className="btn-ghost text-xs"
+              title={t('chat.rename')}
+            >
+              {t('chat.rename')}
+            </button>
+            <ExportMenu
+              triggerTitle={t('chat.exportMenu')}
+              triggerContent="↓"
+              triggerClassName="btn-ghost text-xs"
+              items={[
+                { key: 'md', label: t('chat.exportMd') },
+                { key: 'html', label: t('chat.exportHtml') }
+              ]}
+              onPick={(k) => void exportSession(sessionId!, k as 'md' | 'html')}
+            />
+          </>
+        )}
+      </div>
+
+      {/* 历史会话列表 */}
+      {showHistory && (
+        <div className="mb-3 space-y-1 max-h-40 overflow-y-auto pr-1">
+          {sessionList.length === 0 && (
+            <p className="text-xs text-[var(--color-text-muted)] py-3 text-center">{t('kb.askNoSessions')}</p>
+          )}
+          {sessionList.map((s) => (
+            <div
+              key={s.id}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded bg-[var(--color-sidebar)] border transition-colors${
+                renamingId === s.id ? '' : ' cursor-pointer'
+              }${
+                s.id === sessionId
+                  ? ' border-[var(--color-accent)]'
+                  : ' border-[var(--color-border)] hover:border-[var(--color-accent)]'
+              }`}
+              onClick={() => renamingId !== s.id && loadSession(s.id)}
+            >
+              <div className="flex-1 min-w-0">
+                {renamingId === s.id ? (
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename(s.id)
+                      else if (e.key === 'Escape') setRenamingId(null)
+                    }}
+                    onBlur={() => commitRename(s.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="input text-[13px] w-full py-0"
+                  />
+                ) : (
+                  <div className="text-[13px] truncate">{s.title}</div>
+                )}
+                <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+                  {fmtSessionTime(s.updatedAt)} · {t('kb.askMsgCount', { n: s.messageCount })}
+                  {s.model ? ` · ${s.model}` : ''}
+                </div>
+              </div>
+              {renamingId !== s.id && (
+                <>
+                  <button
+                    onClick={(ev) => {
+                      ev.stopPropagation()
+                      beginRename(s.id, s.title)
+                    }}
+                    className="shrink-0 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+                    title={t('chat.rename')}
+                    aria-label={t('chat.rename')}
+                  >
+                    ✎
+                  </button>
+                  <ExportMenu
+                    triggerTitle={t('chat.exportMenu')}
+                    triggerContent="↓"
+                    triggerClassName="shrink-0 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+                    items={[
+                      { key: 'md', label: t('chat.exportMd') },
+                      { key: 'html', label: t('chat.exportHtml') }
+                    ]}
+                    onPick={(k) => void exportSession(s.id, k as 'md' | 'html')}
+                  />
+                  <button
+                    onClick={(ev) => {
+                      ev.stopPropagation()
+                      removeSession(s.id)
+                    }}
+                    className="shrink-0 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
+                    title={t('common.delete')}
+                    aria-label={t('common.delete')}
+                  >
+                    ✕
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* 消息列表 */}
       <div ref={listRef} className="flex-1 overflow-y-auto space-y-3 pr-1">

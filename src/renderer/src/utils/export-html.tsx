@@ -7,8 +7,8 @@
 //
 // 已知限制：katex/mermaid 为懒加载，导出瞬间未就绪时公式/图表保留源码文本。
 import React from 'react'
-import type { MessageRecord } from '../../../shared/types'
-import type { ExportConversationMeta } from '../../../shared/export-markdown'
+import type { KbAskMessage, MessageRecord } from '../../../shared/types'
+import type { ExportConversationMeta, ExportKbAskSessionMeta } from '../../../shared/export-markdown'
 import { formatSources, formatAttachments, roleLabel } from '../../../shared/export-markdown'
 import { Markdown } from '../modules/chat/Markdown'
 // react-dom/server 体积可观，动态 import 拆为独立 chunk——仅导出 HTML 时加载，不回退主包瘦身成果
@@ -158,6 +158,65 @@ export async function buildConversationHtml(
           </div>
           <hr className="rule" />
           {messages.map((m) => <MessageView key={m.id} msg={m} />)}
+          <div className="footer">由 PocketAI 导出</div>
+        </div>
+      </body>
+    </html>
+  )
+  return '<!doctype html>\n' + markup
+}
+
+/** KB 问答消息视图：user 引用块气泡 / assistant Markdown + 来源列表（无附件/工具/token） */
+function KbAskMessageView({ msg }: { msg: KbAskMessage }): React.ReactElement {
+  const sources = formatSources(msg.sources)
+  return (
+    <section className="msg">
+      <h2>{roleLabel(msg.role)}</h2>
+      {msg.content && (
+        msg.role === 'user'
+          ? <div className="user-msg"><Markdown content={msg.content} codeCopy={false} /></div>
+          : <Markdown content={msg.content} codeCopy={false} />
+      )}
+      {sources.length > 0 && (
+        <>
+          <div className="sources"><strong>参考来源：</strong></div>
+          <ol className="sources">
+            {sources.map((s, i) => <li key={i}>{s.replace(/^\[\d+\]\s*/, '')}</li>)}
+          </ol>
+        </>
+      )}
+      <hr className="rule" />
+    </section>
+  )
+}
+
+/**
+ * 构建 KB 问答会话自包含 HTML（结构简化：无助手名/附件/工具/token）。
+ */
+export async function buildKbAskSessionHtml(
+  session: ExportKbAskSessionMeta,
+  messages: KbAskMessage[]
+): Promise<string> {
+  const { renderToStaticMarkup } = await import('react-dom/server')
+  const markup = renderToStaticMarkup(
+    <html lang="zh-CN">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>{session.title}</title>
+        <style>{STYLE}</style>
+      </head>
+      <body>
+        <div className="doc">
+          <h1>{session.title}</h1>
+          <div className="meta">
+            <div><strong>模型</strong>：{session.model || '未知'}</div>
+            <div><strong>创建时间</strong>：{new Date(session.createdAt).toLocaleString()}</div>
+            <div><strong>最后更新</strong>：{new Date(session.updatedAt).toLocaleString()}</div>
+            <div><strong>消息数</strong>：{messages.length}</div>
+          </div>
+          <hr className="rule" />
+          {messages.map((m, i) => <KbAskMessageView key={i} msg={m} />)}
           <div className="footer">由 PocketAI 导出</div>
         </div>
       </body>

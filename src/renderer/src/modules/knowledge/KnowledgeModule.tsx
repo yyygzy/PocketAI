@@ -766,11 +766,11 @@ const KbDetail: React.FC<{
       <RetrievalTest kbId={kb.id} topN={kb.topN} />
       </div>
 
-      {/* KB 问答（问答 tab） */}
+      {/* KB 问答（问答 tab；key 保证切库重挂载，会话状态不跨库串数据） */}
       <div hidden={!askMode}>
         <h4 className="text-sm font-semibold mb-1">{t('kb.askTitle')}</h4>
         <p className="text-[11px] text-[var(--color-text-muted)] mb-3">{t('kb.askHint')}</p>
-        <KbAskPanel kb={kb} />
+        <KbAskPanel key={kb.id} kb={kb} />
       </div>
 
       {/* 分块预览弹层 */}
