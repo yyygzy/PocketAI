@@ -19,8 +19,8 @@ import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
-import { buildConversationMarkdown, safeFileName } from '../../../../shared/export-markdown'
 import { buildConversationHtml } from '../../utils/export-html'
+import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX } from '../../utils/batch-export'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -351,41 +351,39 @@ export const ChatModule: React.FC = () => {
     }
   }
 
-  // 批量导出当前助手的全部会话到所选目录（重名由主进程加序号）
+  // 批量导出：convs 缺省 = 当前助手全部会话；传入 = 多选导出（重名由主进程加序号）
   const batchBusyRef = useRef(false)
-  const handleBatchExport = async (format: 'md' | 'html') => {
+  const handleBatchExport = async (format: 'md' | 'html', convs?: ConversationRecord[]) => {
     if (batchBusyRef.current) return
     batchBusyRef.current = true
     try {
-      const list = await window.pocketai.listConversations(assistantIdRef.current, false)
+      const list = convs ?? (await window.pocketai.listConversations(assistantIdRef.current, false))
       if (list.length === 0) {
         toast.info(t('chat.exportBatchEmpty'))
         return
       }
-      const files: Array<{ name: string; content: string }> = []
-      for (let i = 0; i < list.length; i++) {
-        const c = list[i]!
-        const msgs = await window.pocketai.listMessages(c.id)
-        const assistantName = c.assistantId
-          ? assistants.find((a) => a.id === c.assistantId)?.name ?? null
-          : null
-        const content = format === 'md'
-          ? buildConversationMarkdown(c, msgs, assistantName)
-          : await buildConversationHtml(c, msgs, assistantName)
-        files.push({ name: `${safeFileName(c.title)}.${format}`, content })
-        // 同步渲染管线（尤其 HTML）会阻塞 UI，每 10 个会话让出一帧
-        if (i % 10 === 9) await new Promise((r) => setTimeout(r, 0))
+      let selected = list
+      if (convs) {
+        const capped = capSelection(convs)
+        selected = capped.list
+        if (capped.dropped > 0) {
+          toast.info(t('chat.exportMultiCapped', { max: BATCH_EXPORT_MAX, dropped: capped.dropped }))
+        }
       }
-      const r = await window.pocketai.exportConversationsBatch(files)
-      if (r.canceled) return
-      if (!r.ok) {
-        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
-        return
+      const files = await buildBatchExportFiles({
+        convs: selected,
+        format,
+        listMessages: (id) => window.pocketai.listMessages(id),
+        resolveAssistantName: (assistantId) =>
+          assistantId ? assistants.find((a) => a.id === assistantId)?.name ?? null : null
+      })
+      const outcome = await finishBatchExport(files)
+      if (outcome.kind === 'failed') {
+        toast.error(t('chat.exportFail', { e: outcome.error || t('common.unknownError') }))
+      } else if (outcome.kind === 'done') {
+        const warn = outcome.failedCount > 0 ? `（${outcome.failedCount} ${t('chat.exportBatchFailed')}）` : ''
+        toast.success(`${t('chat.exportBatchDone', { n: outcome.count, dir: outcome.dir })}${warn}`)
       }
-      const warn = r.failed && r.failed.length > 0
-        ? `（${r.failed.length} ${t('chat.exportBatchFailed')}）`
-        : ''
-      toast.success(`${t('chat.exportBatchDone', { n: r.count ?? 0, dir: r.dir ?? '' })}${warn}`)
     } catch (e) {
       toast.error(t('chat.exportFail', { e: errText(e) }))
     } finally {
@@ -629,6 +627,7 @@ export const ChatModule: React.FC = () => {
             onExportHtml={handleExportHtml}
             onExportEncrypted={handleExportEncrypted}
             onBatchExport={handleBatchExport}
+            onBatchExportSelected={(fmt, convs) => void handleBatchExport(fmt, convs)}
             onImport={handleImportConv}
             onImportEncrypted={handleImportEncrypted}
             onSelectMessage={handleSelectMessage}

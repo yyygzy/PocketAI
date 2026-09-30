@@ -1,5 +1,6 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
 import React, { useEffect, useRef, useState } from 'react'
+import type { ConversationRecord } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
@@ -17,8 +18,8 @@ import { useToast } from '../../../components/ToastProvider'
 import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
 import { writeClipboard } from '../../../utils/clipboard'
-import { safeFileName, buildConversationMarkdown } from '../../../../../shared/export-markdown'
 import { buildConversationHtml } from '../../../utils/export-html'
+import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX } from '../../../utils/batch-export'
 
 export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
@@ -186,37 +187,38 @@ export const AgentPanel: React.FC = () => {
     }
   }
 
-  // 批量导出当前助手全部会话（列表即范围）
-  const handleBatchExport = async (format: 'md' | 'html') => {
-    const list = chat.conversations
+  // 批量导出：convs 缺省 = 当前助手全部会话（列表即范围）；传入 = 多选导出
+  const handleBatchExport = async (format: 'md' | 'html', convs?: ConversationRecord[]) => {
+    const list = convs ?? chat.conversations
     if (list.length === 0) {
       toast.info(t('chat.exportBatchEmpty'))
       return
     }
     try {
+      let selected = list
+      if (convs) {
+        const capped = capSelection(convs)
+        selected = capped.list
+        if (capped.dropped > 0) {
+          toast.info(t('chat.exportMultiCapped', { max: BATCH_EXPORT_MAX, dropped: capped.dropped }))
+        }
+      }
       const assistantName = chat.assistantId
         ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
         : null
-      const files: Array<{ name: string; content: string }> = []
-      for (let i = 0; i < list.length; i++) {
-        const c = list[i]!
-        const msgs = await window.pocketai.listMessages(c.id)
-        const content = format === 'html'
-          ? await buildConversationHtml(c, msgs, assistantName)
-          : buildConversationMarkdown(c, msgs, assistantName)
-        files.push({ name: `${safeFileName(c.title)}.${format}`, content })
-        if (i % 10 === 9) await new Promise((r) => setTimeout(r, 0))
+      const files = await buildBatchExportFiles({
+        convs: selected,
+        format,
+        listMessages: (id) => window.pocketai.listMessages(id),
+        resolveAssistantName: () => assistantName
+      })
+      const outcome = await finishBatchExport(files)
+      if (outcome.kind === 'failed') {
+        toast.error(t('chat.exportFail', { e: outcome.error || t('common.unknownError') }))
+      } else if (outcome.kind === 'done') {
+        const warn = outcome.failedCount > 0 ? `（${outcome.failedCount} ${t('chat.exportBatchFailed')}）` : ''
+        toast.success(`${t('chat.exportBatchDone', { n: outcome.count, dir: outcome.dir })}${warn}`)
       }
-      const r = await window.pocketai.exportConversationsBatch(files)
-      if (r.canceled) return
-      if (!r.ok) {
-        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
-        return
-      }
-      const warn = r.failed && r.failed.length > 0
-        ? `（${r.failed.length} ${t('chat.exportBatchFailed')}）`
-        : ''
-      toast.success(`${t('chat.exportBatchDone', { n: r.count ?? 0, dir: r.dir ?? '' })}${warn}`)
     } catch (e) {
       toast.error(t('chat.exportFail', { e: errText(e) }))
     }
@@ -306,6 +308,7 @@ export const AgentPanel: React.FC = () => {
           onExport={(id) => void handleExportMd(id)}
           onExportHtml={(id) => void handleExportHtml(id)}
           onBatchExport={(fmt) => void handleBatchExport(fmt)}
+          onBatchExportSelected={(fmt, convs) => void handleBatchExport(fmt, convs)}
           onExportEncrypted={(id) => { setCryptoPwd(''); setCryptoPrompt({ kind: 'export', id }) }}
           archivedConversations={chat.archivedConversations}
           onTogglePin={(id, pinned) => void handleTogglePin(id, pinned)}

@@ -20,6 +20,8 @@ interface Props {
   onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
   onBatchExport?: (format: 'md' | 'html') => void
+  /** 多选导出：把选中的会话（按列表显示顺序）交父级导出 */
+  onBatchExportSelected?: (format: 'md' | 'html', convs: ConversationRecord[]) => void
   /** 归档区会话（底部折叠展示） */
   archivedConversations?: ConversationRecord[]
   onTogglePin?: (id: string, pinned: boolean) => void
@@ -44,6 +46,7 @@ export const SessionRail: React.FC<Props> = ({
   onExportHtml,
   onExportEncrypted,
   onBatchExport,
+  onBatchExportSelected,
   archivedConversations,
   onTogglePin,
   onSetArchived,
@@ -54,6 +57,9 @@ export const SessionRail: React.FC<Props> = ({
   const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [showArchived, setShowArchived] = useState(false)
+  // 多选导出模式：与搜索态互斥；选中集合用数组保序（导出按列表显示顺序）
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const keyword = search.trim()
   const [results, setResults] = useState<MessageSearchResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -62,6 +68,35 @@ export const SessionRail: React.FC<Props> = ({
   const [loadingMore, setLoadingMore] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
   const PAGE = 50
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedIds([])
+  }
+
+  // Esc 退出多选
+  useEffect(() => {
+    if (!selectMode) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') exitSelectMode() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selectMode])
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  const allSelected = conversations.length > 0 && conversations.every((c) => selectedIds.includes(c.id))
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? [] : conversations.map((c) => c.id))
+  }
+
+  const selectedConvs = conversations.filter((c) => selectedIds.includes(c.id))
+  const handleExportSelected = (format: 'md' | 'html') => {
+    if (selectedConvs.length === 0) return
+    onBatchExportSelected?.(format, selectedConvs)
+    exitSelectMode()
+  }
 
   // 全文搜索（debounce 200ms，按当前助手隔离；与 Chat 侧栏同一后端通道）
   useEffect(() => {
@@ -131,42 +166,68 @@ export const SessionRail: React.FC<Props> = ({
         ))}
       </select>
       <div className="flex gap-1 mb-2">
-        <button
-          onClick={onNew}
-          disabled={!assistantId}
-          className="flex-1 text-xs px-2 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40"
-        >
-          {t('agent.newSession')}
-        </button>
-        {onBatchExport && (
-          <ExportMenu
-            triggerTitle={t('chat.exportBatch')}
-            triggerContent="📤"
-            triggerClassName="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
-            items={[
-              { key: 'md', label: t('chat.exportBatchMd') },
-              { key: 'html', label: t('chat.exportBatchHtml') }
-            ]}
-            onPick={(k) => onBatchExport(k as 'md' | 'html')}
-          />
-        )}
-        {onImport && (
-          <button
-            onClick={onImport}
-            disabled={!assistantId}
-            className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
-            title={t('chat.import')}
-            aria-label={t('chat.import')}
-          >⬇ {t('chat.importShort')}</button>
-        )}
-        {onImportEncrypted && (
-          <button
-            onClick={onImportEncrypted}
-            disabled={!assistantId}
-            className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
-            title={t('chat.importEncrypted')}
-            aria-label={t('chat.importEncrypted')}
-          >🔐</button>
+        {selectMode ? (
+          <>
+            <button
+              onClick={toggleSelectAll}
+              className="flex-1 text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)]"
+            >
+              {t('common.selectAll')}{allSelected ? ' ✓' : ''}
+            </button>
+            <button
+              onClick={exitSelectMode}
+              className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >{t('common.cancel')}</button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={onNew}
+              disabled={!assistantId}
+              className="flex-1 text-xs px-2 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40"
+            >
+              {t('agent.newSession')}
+            </button>
+            {onBatchExport && (
+              <ExportMenu
+                triggerTitle={t('chat.exportBatch')}
+                triggerContent="📤"
+                triggerClassName="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
+                items={[
+                  { key: 'md', label: t('chat.exportBatchMd') },
+                  { key: 'html', label: t('chat.exportBatchHtml') },
+                  ...(onBatchExportSelected ? [{ key: 'multi', label: t('chat.exportMulti') }] : [])
+                ]}
+                onPick={(k) => {
+                  if (k === 'multi') {
+                    setSearch('')
+                    setSelectedIds([])
+                    setSelectMode(true)
+                  } else {
+                    onBatchExport(k as 'md' | 'html')
+                  }
+                }}
+              />
+            )}
+            {onImport && (
+              <button
+                onClick={onImport}
+                disabled={!assistantId}
+                className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
+                title={t('chat.import')}
+                aria-label={t('chat.import')}
+              >⬇ {t('chat.importShort')}</button>
+            )}
+            {onImportEncrypted && (
+              <button
+                onClick={onImportEncrypted}
+                disabled={!assistantId}
+                className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap disabled:opacity-40"
+                title={t('chat.importEncrypted')}
+                aria-label={t('chat.importEncrypted')}
+              >🔐</button>
+            )}
+          </>
         )}
       </div>
       <div className="relative mb-1.5">
@@ -219,6 +280,9 @@ export const SessionRail: React.FC<Props> = ({
                 onExportEncrypted={onExportEncrypted ? () => onExportEncrypted(c.id) : undefined}
                 onTogglePin={onTogglePin ? (pinned) => onTogglePin(c.id, pinned) : undefined}
                 onSetArchived={onSetArchived ? (archived) => onSetArchived(c.id, archived) : undefined}
+                selectMode={selectMode}
+                checked={selectedIds.includes(c.id)}
+                onToggleSelect={() => toggleSelect(c.id)}
               />
             ))}
             {!!archivedConversations?.length && (
@@ -251,6 +315,25 @@ export const SessionRail: React.FC<Props> = ({
           </>
         )}
       </div>
+
+      {/* 多选操作条（selectMode 时固定底部；归档区不参与多选） */}
+      {selectMode && (
+        <div className="shrink-0 border-t border-[var(--color-border)] pt-2 mt-1 flex items-center gap-1.5">
+          <span className="text-[11px] text-[var(--color-text-muted)] flex-1 truncate">
+            {t('chat.exportMultiCount', { n: selectedConvs.length })}
+          </span>
+          <button
+            onClick={() => handleExportSelected('md')}
+            disabled={selectedConvs.length === 0}
+            className="text-[11px] px-2 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40 whitespace-nowrap"
+          >{t('chat.exportSelectedMd')}</button>
+          <button
+            onClick={() => handleExportSelected('html')}
+            disabled={selectedConvs.length === 0}
+            className="text-[11px] px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)] disabled:opacity-40 whitespace-nowrap"
+          >{t('chat.exportSelectedHtml')}</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -267,9 +350,13 @@ const SessionItem: React.FC<{
   onExportEncrypted?: () => void
   onTogglePin?: (pinned: boolean) => void
   onSetArchived?: (archived: boolean) => void
+  /** 多选模式：行首 checkbox，点击行=切换选中，隐藏操作按钮 */
+  selectMode?: boolean
+  checked?: boolean
+  onToggleSelect?: () => void
   /** 归档区内的行：不显示置顶项、归档项文案改取消归档 */
   inArchive?: boolean
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, inArchive }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -292,17 +379,28 @@ const SessionItem: React.FC<{
   }
 
   const displayTitle = conv.title || t('agent.defaultConvTitle')
+  const rowActive = selectMode ? checked : isActive
 
   return (
     <div
-      onClick={editing ? undefined : onSelect}
-      onDoubleClick={() => setEditing(true)}
+      onClick={editing ? undefined : (selectMode && onToggleSelect ? onToggleSelect : onSelect)}
+      onDoubleClick={() => !selectMode && setEditing(true)}
       className={`group flex items-center rounded text-xs ${
-        editing ? '' : 'cursor-pointer ' + (isActive
+        editing ? '' : 'cursor-pointer ' + (rowActive
           ? 'bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]'
           : 'hover:bg-[var(--color-hover-overlay)]')
       }`}
     >
+      {selectMode && (
+        <input
+          type="checkbox"
+          checked={!!checked}
+          onChange={() => onToggleSelect?.()}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 ml-2 w-3.5 h-3.5 accent-[var(--color-accent)] cursor-pointer"
+          aria-label={displayTitle}
+        />
+      )}
       {editing ? (
         <input
           ref={inputRef}
@@ -319,12 +417,12 @@ const SessionItem: React.FC<{
       ) : (
         <div className="flex-1 min-w-0 px-2 py-1.5">
           <div className="truncate">
-            {conv.pinned && <span className="mr-1 text-[9px] opacity-70" title={t('chat.unpin')}>📍</span>}
+            {conv.pinned && !selectMode && <span className="mr-1 text-[9px] opacity-70" title={t('chat.unpin')}>📍</span>}
             {displayTitle}
           </div>
         </div>
       )}
-      {!editing && (
+      {!editing && !selectMode && (
         <>
           <ExportMenu
             triggerTitle={t('chat.more')}

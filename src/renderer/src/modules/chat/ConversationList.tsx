@@ -16,6 +16,8 @@ interface Props {
   onExportHtml?: (id: string) => void
   onExportEncrypted?: (id: string) => void
   onBatchExport?: (format: 'md' | 'html') => void
+  /** 多选导出：把选中的会话（按列表显示顺序）交父级导出 */
+  onBatchExportSelected?: (format: 'md' | 'html', convs: ConversationRecord[]) => void
   /** 归档区会话（底部折叠展示） */
   archivedConversations?: ConversationRecord[]
   onTogglePin?: (id: string, pinned: boolean) => void
@@ -39,6 +41,7 @@ export const ConversationList: React.FC<Props> = ({
   onExportHtml,
   onExportEncrypted,
   onBatchExport,
+  onBatchExportSelected,
   archivedConversations,
   onTogglePin,
   onSetArchived,
@@ -58,8 +61,40 @@ export const ConversationList: React.FC<Props> = ({
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
+  // 多选导出模式：与搜索态互斥；选中集合用数组保序（导出按列表显示顺序）
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
   const PAGE = 50
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedIds([])
+  }
+
+  // Esc 退出多选
+  useEffect(() => {
+    if (!selectMode) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') exitSelectMode() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selectMode])
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  const allSelected = conversations.length > 0 && conversations.every((c) => selectedIds.includes(c.id))
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? [] : conversations.map((c) => c.id))
+  }
+
+  const selectedConvs = conversations.filter((c) => selectedIds.includes(c.id))
+  const handleExportSelected = (format: 'md' | 'html') => {
+    if (selectedConvs.length === 0) return
+    onBatchExportSelected?.(format, selectedConvs)
+    exitSelectMode()
+  }
 
   // 日期筛选 → dateRange 参数
   const dateRange = (() => {
@@ -138,37 +173,63 @@ export const ConversationList: React.FC<Props> = ({
           )}
         </div>
         <div className="flex gap-1">
-          <button
-            onClick={onNew}
-            className="flex-1 text-sm px-3 py-2 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 font-medium"
-          >
-            {t('chat.newConversation')}
-          </button>
-          {onBatchExport && (
-            <ExportMenu
-              triggerTitle={t('chat.exportBatch')}
-              triggerContent="📤"
-              triggerClassName="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
-              items={[
-                { key: 'md', label: t('chat.exportBatchMd') },
-                { key: 'html', label: t('chat.exportBatchHtml') }
-              ]}
-              onPick={(k) => onBatchExport(k as 'md' | 'html')}
-            />
-          )}
-          {onImport && (
-            <button
-              onClick={onImport}
-              className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
-              title={t('chat.import')}
-            >⬇ {t('chat.importShort')}</button>
-          )}
-          {onImportEncrypted && (
-            <button
-              onClick={onImportEncrypted}
-              className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
-              title={t('chat.importEncrypted')}
-            >🔐 {t('chat.importEncryptedShort')}</button>
+          {selectMode ? (
+            <>
+              <button
+                onClick={toggleSelectAll}
+                className="flex-1 text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)]"
+              >
+                {t('common.selectAll')}{allSelected ? ' ✓' : ''}
+              </button>
+              <button
+                onClick={exitSelectMode}
+                className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >{t('common.cancel')}</button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={onNew}
+                className="flex-1 text-sm px-3 py-2 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 font-medium"
+              >
+                {t('chat.newConversation')}
+              </button>
+              {onBatchExport && (
+                <ExportMenu
+                  triggerTitle={t('chat.exportBatch')}
+                  triggerContent="📤"
+                  triggerClassName="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+                  items={[
+                    { key: 'md', label: t('chat.exportBatchMd') },
+                    { key: 'html', label: t('chat.exportBatchHtml') },
+                    ...(onBatchExportSelected ? [{ key: 'multi', label: t('chat.exportMulti') }] : [])
+                  ]}
+                  onPick={(k) => {
+                    if (k === 'multi') {
+                      setSearch('')
+                      setSelectedIds([])
+                      setSelectMode(true)
+                    } else {
+                      onBatchExport(k as 'md' | 'html')
+                    }
+                  }}
+                />
+              )}
+              {onImport && (
+                <button
+                  onClick={onImport}
+                  className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+                  title={t('chat.import')}
+                >⬇ {t('chat.importShort')}</button>
+              )}
+              {onImportEncrypted && (
+                <button
+                  onClick={onImportEncrypted}
+                  className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+                  title={t('chat.importEncrypted')}
+                >🔐 {t('chat.importEncryptedShort')}</button>
+              )}
+            </>
           )}
         </div>
         {isSearching && (
@@ -225,6 +286,9 @@ export const ConversationList: React.FC<Props> = ({
                 onExportEncrypted={onExportEncrypted}
                 onTogglePin={onTogglePin}
                 onSetArchived={onSetArchived}
+                selectMode={selectMode}
+                checked={selectedIds.includes(c.id)}
+                onToggleSelect={() => toggleSelect(c.id)}
               />
             ))}
             {!!archivedConversations?.length && (
@@ -257,6 +321,25 @@ export const ConversationList: React.FC<Props> = ({
           </>
         )}
       </div>
+
+      {/* 多选操作条（selectMode 时固定底部；归档区不参与多选） */}
+      {selectMode && (
+        <div className="shrink-0 border-t border-[var(--color-border)] px-2 py-2 flex items-center gap-1.5 bg-[var(--color-sidebar)]">
+          <span className="text-[11px] text-[var(--color-text-muted)] flex-1 truncate">
+            {t('chat.exportMultiCount', { n: selectedConvs.length })}
+          </span>
+          <button
+            onClick={() => handleExportSelected('md')}
+            disabled={selectedConvs.length === 0}
+            className="text-[11px] px-2 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40 whitespace-nowrap"
+          >{t('chat.exportSelectedMd')}</button>
+          <button
+            onClick={() => handleExportSelected('html')}
+            disabled={selectedConvs.length === 0}
+            className="text-[11px] px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)] disabled:opacity-40 whitespace-nowrap"
+          >{t('chat.exportSelectedHtml')}</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -272,9 +355,13 @@ const ConvItem: React.FC<{
   onExportEncrypted?: (id: string) => void
   onTogglePin?: (id: string, pinned: boolean) => void
   onSetArchived?: (id: string, archived: boolean) => void
+  /** 多选模式：行首 checkbox，点击行=切换选中，隐藏操作按钮 */
+  selectMode?: boolean
+  checked?: boolean
+  onToggleSelect?: () => void
   /** 归档区内的行：菜单不显示置顶项、归档项文案改取消归档 */
   inArchive?: boolean
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, inArchive }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -297,16 +384,28 @@ const ConvItem: React.FC<{
     setEditing(false)
   }
 
+  const rowActive = selectMode ? checked : isActive
+
   return (
     <div
-      onClick={editing ? undefined : onSelect}
-      onDoubleClick={() => onRename && setEditing(true)}
+      onClick={editing ? undefined : (selectMode && onToggleSelect ? onToggleSelect : onSelect)}
+      onDoubleClick={() => onRename && !selectMode && setEditing(true)}
       className={`group flex items-center gap-1 px-2.5 py-2 rounded text-sm ${
-        editing ? '' : 'cursor-pointer ' + (isActive
+        editing ? '' : 'cursor-pointer ' + (rowActive
           ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
           : 'hover:bg-[var(--color-hover-overlay)] text-[var(--color-text)]')
       }`}
     >
+      {selectMode && (
+        <input
+          type="checkbox"
+          checked={!!checked}
+          onChange={() => onToggleSelect?.()}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 w-3.5 h-3.5 accent-[var(--color-accent)] cursor-pointer"
+          aria-label={conv.title}
+        />
+      )}
       {editing ? (
         <input
           ref={inputRef}
@@ -322,11 +421,11 @@ const ConvItem: React.FC<{
         />
       ) : (
         <span className="flex-1 truncate">
-          {conv.pinned && <span className="mr-1 text-[10px] opacity-70" title={t('chat.unpin')}>📍</span>}
+          {conv.pinned && !selectMode && <span className="mr-1 text-[10px] opacity-70" title={t('chat.unpin')}>📍</span>}
           {conv.title}
         </span>
       )}
-      {(onTogglePin || onSetArchived || onRename) && !editing && (
+      {(onTogglePin || onSetArchived || onRename) && !editing && !selectMode && (
         <ExportMenu
           triggerTitle={t('chat.more')}
           triggerContent="⋯"
@@ -343,7 +442,7 @@ const ConvItem: React.FC<{
           }}
         />
       )}
-      {(onExport || onExportHtml) && !editing && (
+      {(onExport || onExportHtml) && !editing && !selectMode && (
         <ExportMenu
           triggerTitle={t('chat.exportMenu')}
           triggerContent="↓"
@@ -355,7 +454,7 @@ const ConvItem: React.FC<{
           onPick={(k) => (k === 'html' ? onExportHtml?.(conv.id) : onExport?.(conv.id))}
         />
       )}
-      {onExportEncrypted && !editing && (
+      {onExportEncrypted && !editing && !selectMode && (
         <button
           onClick={(e) => { e.stopPropagation(); onExportEncrypted(conv.id) }}
           className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
@@ -363,12 +462,14 @@ const ConvItem: React.FC<{
           aria-label={t('chat.exportEncrypted')}
         >🔐</button>
       )}
-      <button
-        onClick={(e) => { e.stopPropagation(); onDelete() }}
-        className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] w-4 h-4 flex items-center justify-center text-xs"
-        title={t('chat.delete')}
-        aria-label={t('chat.delete')}
-      >×</button>
+      {!selectMode && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] w-4 h-4 flex items-center justify-center text-xs"
+          title={t('chat.delete')}
+          aria-label={t('chat.delete')}
+        >×</button>
+      )}
     </div>
   )
 }
