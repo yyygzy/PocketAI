@@ -4,9 +4,9 @@
 // - capSelection：空/不足上限原样/超上限截断保序
 // - buildBatchExportFiles：md/html 组装、文件名 safeFileName、顺序、onProgress、让帧不崩
 //   （listMessages/resolveAssistantName 内存 stub，buildConversationHtml 在 node 下可跑——export-markdown.test 已验证链路）
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { ConversationRecord, MessageRecord } from '../src/shared/types'
-import { capSelection, buildBatchExportFiles, BATCH_EXPORT_MAX } from '../src/renderer/src/utils/batch-export'
+import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../src/renderer/src/utils/batch-export'
 
 const conv = (id: string, title: string, over: Partial<ConversationRecord> = {}): ConversationRecord => ({
   id,
@@ -96,5 +96,48 @@ describe('buildBatchExportFiles', () => {
     const files = await buildBatchExportFiles({ convs: [conv('cx', '空会话')], format: 'md', ...deps })
     expect(files).toHaveLength(1)
     expect(files[0]!.name).toBe('空会话.md')
+  })
+
+  it('pdf 路径：产出 .pdf 扩展名，content 仍为自包含 HTML（主进程负责转换）', async () => {
+    const files = await buildBatchExportFiles({ convs: convs.slice(0, 1), format: 'pdf', ...deps })
+    expect(files[0]!.name).toBe('测试_会话一.pdf')
+    expect(files[0]!.content).toContain('</html>')
+    expect(files[0]!.content).toContain('回答标题')
+  })
+})
+
+describe('finishBatchExport', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const stubPocketai = (pdfBatch: ReturnType<typeof vi.fn>, batch?: ReturnType<typeof vi.fn>) => {
+    vi.stubGlobal('window', {
+      pocketai: {
+        exportConversationsPdfBatch: pdfBatch,
+        exportConversationsBatch: batch ?? vi.fn()
+      }
+    })
+  }
+
+  it('pdf 分支走 exportConversationsPdfBatch 且透传结果', async () => {
+    const pdfBatch = vi.fn().mockResolvedValue({ ok: true, count: 2, dir: '/tmp/x', failed: ['b.pdf'] })
+    const batch = vi.fn()
+    stubPocketai(pdfBatch, batch)
+    const outcome = await finishBatchExport([{ name: 'a.pdf', content: '<html></html>' }], 'pdf')
+    expect(pdfBatch).toHaveBeenCalledTimes(1)
+    expect(batch).not.toHaveBeenCalled()
+    expect(outcome).toEqual({ kind: 'done', count: 2, dir: '/tmp/x', failedCount: 1 })
+  })
+
+  it('md/html 分支仍走既有通道；canceled 归一化', async () => {
+    const batch = vi.fn().mockResolvedValue({ ok: true, canceled: true })
+    stubPocketai(vi.fn(), batch)
+    expect(await finishBatchExport([{ name: 'a.md', content: '# t' }], 'md')).toEqual({ kind: 'canceled' })
+    expect(batch).toHaveBeenCalledTimes(1)
+  })
+
+  it('BATCH_PDF_MAX = 50（conversations.ts PDF_BATCH handler 同值）', () => {
+    expect(BATCH_PDF_MAX).toBe(50)
   })
 })

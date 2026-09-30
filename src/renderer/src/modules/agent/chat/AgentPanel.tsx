@@ -19,7 +19,7 @@ import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
 import { writeClipboard } from '../../../utils/clipboard'
 import { buildConversationHtml } from '../../../utils/export-html'
-import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX } from '../../../utils/batch-export'
+import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
 
 export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
@@ -187,20 +187,47 @@ export const AgentPanel: React.FC = () => {
     }
   }
 
+  // PDF 导出：同一自包含 HTML 交给主进程隐藏窗口 printToPDF（见 main/export/pdf.ts）
+  const handleExportPdf = async (id: string) => {
+    try {
+      const conv = chat.conversations.find((c) => c.id === id)
+      if (!conv) {
+        toast.error(t('chat.exportFail', { e: t('common.unknownError') }))
+        return
+      }
+      const msgs = await window.pocketai.listMessages(id)
+      const assistantName = chat.assistantId
+        ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
+        : null
+      const html = await buildConversationHtml(conv, msgs, assistantName)
+      const r = await window.pocketai.exportConversationPdf(id, html)
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      if (r.path) toast.success(t('chat.exportSuccess', { path: r.path }))
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
+    }
+  }
+
   // 批量导出：convs 缺省 = 当前助手全部会话（列表即范围）；传入 = 多选导出
-  const handleBatchExport = async (format: 'md' | 'html', convs?: ConversationRecord[]) => {
+  // pdf 逐会话 printToPDF 耗时高，选中上限收紧为 BATCH_PDF_MAX
+  const handleBatchExport = async (format: 'md' | 'html' | 'pdf', convs?: ConversationRecord[]) => {
     const list = convs ?? chat.conversations
     if (list.length === 0) {
       toast.info(t('chat.exportBatchEmpty'))
       return
     }
     try {
+      const max = format === 'pdf' ? BATCH_PDF_MAX : BATCH_EXPORT_MAX
       let selected = list
       if (convs) {
-        const capped = capSelection(convs)
+        const capped = capSelection(convs, max)
         selected = capped.list
         if (capped.dropped > 0) {
-          toast.info(t('chat.exportMultiCapped', { max: BATCH_EXPORT_MAX, dropped: capped.dropped }))
+          toast.info(t('chat.exportMultiCapped', { max, dropped: capped.dropped }))
         }
       }
       const assistantName = chat.assistantId
@@ -212,7 +239,7 @@ export const AgentPanel: React.FC = () => {
         listMessages: (id) => window.pocketai.listMessages(id),
         resolveAssistantName: () => assistantName
       })
-      const outcome = await finishBatchExport(files)
+      const outcome = await finishBatchExport(files, format)
       if (outcome.kind === 'failed') {
         toast.error(t('chat.exportFail', { e: outcome.error || t('common.unknownError') }))
       } else if (outcome.kind === 'done') {
@@ -307,6 +334,7 @@ export const AgentPanel: React.FC = () => {
           onRename={(id, title) => void chat.renameConversation(id, title)}
           onExport={(id) => void handleExportMd(id)}
           onExportHtml={(id) => void handleExportHtml(id)}
+          onExportPdf={(id) => void handleExportPdf(id)}
           onBatchExport={(fmt) => void handleBatchExport(fmt)}
           onBatchExportSelected={(fmt, convs) => void handleBatchExport(fmt, convs)}
           onExportEncrypted={(id) => { setCryptoPwd(''); setCryptoPrompt({ kind: 'export', id }) }}

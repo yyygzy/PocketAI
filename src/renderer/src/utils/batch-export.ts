@@ -4,8 +4,8 @@ import type { ConversationRecord, MessageRecord } from '../../../shared/types'
 import { safeFileName, buildConversationMarkdown } from '../../../shared/export-markdown'
 import { buildConversationHtml } from './export-html'
 
-/** 导出格式 */
-export type BatchExportFormat = 'md' | 'html'
+/** 导出格式（pdf：content 仍为自包含 HTML，主进程 printToPDF 转换） */
+export type BatchExportFormat = 'md' | 'html' | 'pdf'
 
 /** 单个导出文件（与 CONVERSATION_EXPORT_BATCH IPC 的 files 元素同构） */
 export interface BatchExportFile {
@@ -25,6 +25,9 @@ export interface BatchExportResult {
 
 /** IPC files 数量上限（conversations.ts handler 同值） */
 export const BATCH_EXPORT_MAX = 500
+
+/** 批量导出 PDF 上限（逐会话 printToPDF 耗时 ~1s/个，conversations.ts PDF_BATCH handler 同值） */
+export const BATCH_PDF_MAX = 50
 
 /**
  * 选中集截断：超上限保留前 max 个（按列表显示顺序），返回被忽略数量供 UI 提示。
@@ -58,10 +61,12 @@ export async function buildBatchExportFiles(opts: {
     const msgs = await listMessages(c.id)
     const assistantName = resolveAssistantName(c.assistantId ?? null)
     const content =
-      format === 'html'
-        ? await buildConversationHtml(c, msgs, assistantName)
-        : buildConversationMarkdown(c, msgs, assistantName)
-    files.push({ name: `${safeFileName(c.title)}.${format}`, content })
+      format === 'md'
+        ? buildConversationMarkdown(c, msgs, assistantName)
+        : await buildConversationHtml(c, msgs, assistantName)
+    // pdf 的 content 仍为自包含 HTML，主进程 printToPDF 转换后按 .pdf 落盘
+    const ext = format === 'pdf' ? 'pdf' : format
+    files.push({ name: `${safeFileName(c.title)}.${ext}`, content })
     onProgress?.(i + 1, convs.length)
     if (i % 10 === 9) await new Promise((r) => setTimeout(r, 0))
   }
@@ -76,9 +81,17 @@ export type BatchExportOutcome =
 
 /**
  * 调主进程批量写盘并归一化结果（canceled / failed / done）。
+ * format==='pdf' 走 printToPDF 批量通道（上限 50），md/html 走既有通道。
  */
-export async function finishBatchExport(files: BatchExportFile[]): Promise<BatchExportOutcome> {
-  const r = (await window.pocketai.exportConversationsBatch(files)) as BatchExportResult
+export async function finishBatchExport(
+  files: BatchExportFile[],
+  format: BatchExportFormat = 'md'
+): Promise<BatchExportOutcome> {
+  const r = (
+    format === 'pdf'
+      ? await window.pocketai.exportConversationsPdfBatch(files)
+      : await window.pocketai.exportConversationsBatch(files)
+  ) as BatchExportResult
   if (r.canceled) return { kind: 'canceled' }
   if (!r.ok) return { kind: 'failed', error: r.error ?? '' }
   return { kind: 'done', count: r.count ?? 0, dir: r.dir ?? '', failedCount: r.failed?.length ?? 0 }

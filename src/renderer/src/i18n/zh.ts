@@ -180,6 +180,8 @@ export const zh: Record<string, string> = {
   'chat.exportMulti': '多选导出…',
   'chat.exportSelectedMd': '导出所选 MD',
   'chat.exportSelectedHtml': '导出所选网页',
+  'chat.exportPdf': '导出 PDF',
+  'chat.exportSelectedPdf': '导出所选 PDF',
   'chat.exportMultiCount': '已选 {n} 个会话',
   'chat.exportMultiCapped': '单次最多导出 {max} 个，已忽略 {dropped} 个',
   'chat.more': '更多',

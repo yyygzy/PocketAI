@@ -180,6 +180,8 @@ export const en: Record<string, string> = {
   'chat.exportMulti': 'Select & export…',
   'chat.exportSelectedMd': 'Export selected MD',
   'chat.exportSelectedHtml': 'Export selected HTML',
+  'chat.exportPdf': 'Export PDF',
+  'chat.exportSelectedPdf': 'Export selected PDF',
   'chat.exportMultiCount': '{n} conversations selected',
   'chat.exportMultiCapped': 'At most {max} per export; {dropped} ignored',
   'chat.more': 'More',

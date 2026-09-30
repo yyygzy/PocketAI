@@ -14,10 +14,11 @@ interface Props {
   onRename?: (id: string, title: string) => void
   onExport?: (id: string) => void
   onExportHtml?: (id: string) => void
+  onExportPdf?: (id: string) => void
   onExportEncrypted?: (id: string) => void
   onBatchExport?: (format: 'md' | 'html') => void
   /** 多选导出：把选中的会话（按列表显示顺序）交父级导出 */
-  onBatchExportSelected?: (format: 'md' | 'html', convs: ConversationRecord[]) => void
+  onBatchExportSelected?: (format: 'md' | 'html' | 'pdf', convs: ConversationRecord[]) => void
   /** 归档区会话（底部折叠展示） */
   archivedConversations?: ConversationRecord[]
   onTogglePin?: (id: string, pinned: boolean) => void
@@ -39,6 +40,7 @@ export const ConversationList: React.FC<Props> = ({
   onRename,
   onExport,
   onExportHtml,
+  onExportPdf,
   onExportEncrypted,
   onBatchExport,
   onBatchExportSelected,
@@ -90,7 +92,7 @@ export const ConversationList: React.FC<Props> = ({
   }
 
   const selectedConvs = conversations.filter((c) => selectedIds.includes(c.id))
-  const handleExportSelected = (format: 'md' | 'html') => {
+  const handleExportSelected = (format: 'md' | 'html' | 'pdf') => {
     if (selectedConvs.length === 0) return
     onBatchExportSelected?.(format, selectedConvs)
     exitSelectMode()
@@ -283,6 +285,7 @@ export const ConversationList: React.FC<Props> = ({
                 onRename={onRename ? (title) => onRename(c.id, title) : undefined}
                 onExport={onExport}
                 onExportHtml={onExportHtml}
+                onExportPdf={onExportPdf}
                 onExportEncrypted={onExportEncrypted}
                 onTogglePin={onTogglePin}
                 onSetArchived={onSetArchived}
@@ -312,6 +315,7 @@ export const ConversationList: React.FC<Props> = ({
                     onRename={onRename ? (title) => onRename(c.id, title) : undefined}
                     onExport={onExport}
                     onExportHtml={onExportHtml}
+                    onExportPdf={onExportPdf}
                     onExportEncrypted={onExportEncrypted}
                     onSetArchived={onSetArchived}
                   />
@@ -338,6 +342,13 @@ export const ConversationList: React.FC<Props> = ({
             disabled={selectedConvs.length === 0}
             className="text-[11px] px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)] disabled:opacity-40 whitespace-nowrap"
           >{t('chat.exportSelectedHtml')}</button>
+          {onBatchExportSelected && (
+            <button
+              onClick={() => handleExportSelected('pdf')}
+              disabled={selectedConvs.length === 0}
+              className="text-[11px] px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)] disabled:opacity-40 whitespace-nowrap"
+            >{t('chat.exportSelectedPdf')}</button>
+          )}
         </div>
       )}
     </div>
@@ -352,6 +363,7 @@ const ConvItem: React.FC<{
   onRename?: (title: string) => void
   onExport?: (id: string) => void
   onExportHtml?: (id: string) => void
+  onExportPdf?: (id: string) => void
   onExportEncrypted?: (id: string) => void
   onTogglePin?: (id: string, pinned: boolean) => void
   onSetArchived?: (id: string, archived: boolean) => void
@@ -361,7 +373,7 @@ const ConvItem: React.FC<{
   onToggleSelect?: () => void
   /** 归档区内的行：菜单不显示置顶项、归档项文案改取消归档 */
   inArchive?: boolean
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportPdf, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -449,9 +461,10 @@ const ConvItem: React.FC<{
           triggerClassName="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] w-4 h-4 flex items-center justify-center text-xs"
           items={[
             ...(onExport ? [{ key: 'md', label: t('chat.exportMd') }] : []),
-            ...(onExportHtml ? [{ key: 'html', label: t('chat.exportHtml') }] : [])
+            ...(onExportHtml ? [{ key: 'html', label: t('chat.exportHtml') }] : []),
+            ...(onExportPdf ? [{ key: 'pdf', label: t('chat.exportPdf') }] : [])
           ]}
-          onPick={(k) => (k === 'html' ? onExportHtml?.(conv.id) : onExport?.(conv.id))}
+          onPick={(k) => (k === 'html' ? onExportHtml?.(conv.id) : k === 'pdf' ? onExportPdf?.(conv.id) : onExport?.(conv.id))}
         />
       )}
       {onExportEncrypted && !editing && !selectMode && (

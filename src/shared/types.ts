@@ -1428,6 +1428,8 @@ export const IPC = {
   CONVERSATION_EXPORT: 'conversation:export',
   CONVERSATION_EXPORT_MD: 'conversation:export-md',
   CONVERSATION_EXPORT_HTML: 'conversation:export-html',
+  CONVERSATION_EXPORT_PDF: 'conversation:export-pdf', // 单条导出 PDF（渲染端传自包含 HTML，主进程隐藏窗口 printToPDF）
+  CONVERSATION_EXPORT_PDF_BATCH: 'conversation:export-pdf-batch', // 多选批量导出 PDF（上限 50）
   CONVERSATION_EXPORT_BATCH: 'conversation:export-batch',
   CONVERSATION_EXPORT_ENCRYPTED: 'conversation:export-enc',
   CONVERSATION_IMPORT_ENCRYPTED: 'conversation:import-enc',

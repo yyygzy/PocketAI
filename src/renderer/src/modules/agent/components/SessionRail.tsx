@@ -18,10 +18,11 @@ interface Props {
   onRename: (id: string, title: string) => void
   onExport?: (id: string) => void
   onExportHtml?: (id: string) => void
+  onExportPdf?: (id: string) => void
   onExportEncrypted?: (id: string) => void
   onBatchExport?: (format: 'md' | 'html') => void
   /** 多选导出：把选中的会话（按列表显示顺序）交父级导出 */
-  onBatchExportSelected?: (format: 'md' | 'html', convs: ConversationRecord[]) => void
+  onBatchExportSelected?: (format: 'md' | 'html' | 'pdf', convs: ConversationRecord[]) => void
   /** 归档区会话（底部折叠展示） */
   archivedConversations?: ConversationRecord[]
   onTogglePin?: (id: string, pinned: boolean) => void
@@ -44,6 +45,7 @@ export const SessionRail: React.FC<Props> = ({
   onRename,
   onExport,
   onExportHtml,
+  onExportPdf,
   onExportEncrypted,
   onBatchExport,
   onBatchExportSelected,
@@ -92,7 +94,7 @@ export const SessionRail: React.FC<Props> = ({
   }
 
   const selectedConvs = conversations.filter((c) => selectedIds.includes(c.id))
-  const handleExportSelected = (format: 'md' | 'html') => {
+  const handleExportSelected = (format: 'md' | 'html' | 'pdf') => {
     if (selectedConvs.length === 0) return
     onBatchExportSelected?.(format, selectedConvs)
     exitSelectMode()
@@ -277,6 +279,7 @@ export const SessionRail: React.FC<Props> = ({
                 onRename={(title) => onRename(c.id, title)}
                 onExport={onExport ? () => onExport(c.id) : undefined}
                 onExportHtml={onExportHtml ? () => onExportHtml(c.id) : undefined}
+                onExportPdf={onExportPdf ? () => onExportPdf(c.id) : undefined}
                 onExportEncrypted={onExportEncrypted ? () => onExportEncrypted(c.id) : undefined}
                 onTogglePin={onTogglePin ? (pinned) => onTogglePin(c.id, pinned) : undefined}
                 onSetArchived={onSetArchived ? (archived) => onSetArchived(c.id, archived) : undefined}
@@ -306,6 +309,7 @@ export const SessionRail: React.FC<Props> = ({
                     onRename={(title) => onRename(c.id, title)}
                     onExport={onExport ? () => onExport(c.id) : undefined}
                     onExportHtml={onExportHtml ? () => onExportHtml(c.id) : undefined}
+                    onExportPdf={onExportPdf ? () => onExportPdf(c.id) : undefined}
                     onExportEncrypted={onExportEncrypted ? () => onExportEncrypted(c.id) : undefined}
                     onSetArchived={onSetArchived ? (archived) => onSetArchived(c.id, archived) : undefined}
                   />
@@ -332,6 +336,13 @@ export const SessionRail: React.FC<Props> = ({
             disabled={selectedConvs.length === 0}
             className="text-[11px] px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)] disabled:opacity-40 whitespace-nowrap"
           >{t('chat.exportSelectedHtml')}</button>
+          {onBatchExportSelected && (
+            <button
+              onClick={() => handleExportSelected('pdf')}
+              disabled={selectedConvs.length === 0}
+              className="text-[11px] px-2 py-1.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)] disabled:opacity-40 whitespace-nowrap"
+            >{t('chat.exportSelectedPdf')}</button>
+          )}
         </div>
       )}
     </div>
@@ -347,6 +358,7 @@ const SessionItem: React.FC<{
   onRename: (title: string) => void
   onExport?: () => void
   onExportHtml?: () => void
+  onExportPdf?: () => void
   onExportEncrypted?: () => void
   onTogglePin?: (pinned: boolean) => void
   onSetArchived?: (archived: boolean) => void
@@ -356,7 +368,7 @@ const SessionItem: React.FC<{
   onToggleSelect?: () => void
   /** 归档区内的行：不显示置顶项、归档项文案改取消归档 */
   inArchive?: boolean
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportPdf, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -446,9 +458,10 @@ const SessionItem: React.FC<{
               triggerClassName="opacity-0 group-hover:opacity-100 shrink-0 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
               items={[
                 ...(onExport ? [{ key: 'md', label: t('chat.exportMd') }] : []),
-                ...(onExportHtml ? [{ key: 'html', label: t('chat.exportHtml') }] : [])
+                ...(onExportHtml ? [{ key: 'html', label: t('chat.exportHtml') }] : []),
+                ...(onExportPdf ? [{ key: 'pdf', label: t('chat.exportPdf') }] : [])
               ]}
-              onPick={(k) => (k === 'html' ? onExportHtml?.() : onExport?.())}
+              onPick={(k) => (k === 'html' ? onExportHtml?.() : k === 'pdf' ? onExportPdf?.() : onExport?.())}
             />
           )}
           {onExportEncrypted && (

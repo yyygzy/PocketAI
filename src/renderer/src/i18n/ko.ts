@@ -165,6 +165,8 @@ export const ko: Record<string, string> = {
   'chat.exportMulti': '다중 선택 내보내기…',
   'chat.exportSelectedMd': '선택 항목 MD 내보내기',
   'chat.exportSelectedHtml': '선택 항목 HTML 내보내기',
+  'chat.exportPdf': 'PDF 내보내기',
+  'chat.exportSelectedPdf': '선택 항목 PDF 내보내기',
   'chat.exportMultiCount': '{n}개 대화 선택됨',
   'chat.exportMultiCapped': '한 번에 최대 {max}개까지 내보낼 수 있습니다. {dropped}개 무시됨',
   'chat.more': '더보기',

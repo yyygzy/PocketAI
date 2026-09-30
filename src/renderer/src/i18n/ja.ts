@@ -165,6 +165,8 @@ export const ja: Record<string, string> = {
   'chat.exportMulti': '複数選択して書き出す…',
   'chat.exportSelectedMd': '選択分をMDで書き出す',
   'chat.exportSelectedHtml': '選択分をHTMLで書き出す',
+  'chat.exportPdf': 'PDFを出力',
+  'chat.exportSelectedPdf': '選択分をPDFで書き出す',
   'chat.exportMultiCount': '{n} 件の会話を選択中',
   'chat.exportMultiCapped': '1回の書き出しは最大 {max} 件。{dropped} 件を無視しました',
   'chat.more': 'その他',

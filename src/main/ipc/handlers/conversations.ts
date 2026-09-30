@@ -10,6 +10,7 @@ import { conversationRepo } from '../../db/repositories/conversation.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
+import { htmlToPdf } from '../../export/pdf'
 import { errMsg } from '../../error'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { clearSessionAllow } from '../../agent/tool-approval'
@@ -138,6 +139,63 @@ export function registerConversationHandlers(): void {
     name: z.string().min(1).max(200),
     content: z.string().max(50 * 1024 * 1024)
   })).min(1).max(500)))
+
+  // 单条导出 PDF：渲染端生成自包含 HTML，主进程隐藏窗口 printToPDF 后存盘（见 export/pdf.ts）
+  safeHandle(IPC.CONVERSATION_EXPORT_PDF, async (e, id: string, html: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    const conv = conversationRepo.get(String(id ?? ''))
+    if (!conv) return { ok: false, error: '会话不存在' }
+
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: `${safeFileName(conv.title)}.pdf`,
+      filters: [
+        { name: 'PDF 文档', extensions: ['pdf'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePath) return { ok: true, canceled: true }
+
+    try {
+      const pdf = await htmlToPdf(html)
+      fs.writeFileSync(filePath, Buffer.from(pdf))
+      return { ok: true, path: filePath }
+    } catch (err) {
+      return { ok: false, error: errMsg(err) }
+    }
+  }, argsSchema(idSchema, z.string().min(1).max(50 * 1024 * 1024)))
+
+  // 批量导出 PDF：同 EXPORT_BATCH 模式（选目录/重名加序号/单文件失败计 failed），
+  // 但逐会话 printToPDF 耗时 ~1s/个，数组上限收紧到 50（渲染端多选通道同限）
+  safeHandle(IPC.CONVERSATION_EXPORT_PDF_BATCH, async (e, files: Array<{ name: string; content: string }>) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    if (!Array.isArray(files) || files.length === 0) return { ok: false, error: '没有可导出的会话' }
+
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (canceled || !filePaths?.[0]) return { ok: true, canceled: true }
+    const dir = filePaths[0]
+
+    const finalNames = dedupeFileNames(files.map((f) => safeFileName(f.name)))
+    let count = 0
+    const failed: string[] = []
+    // 串行转换：隐藏窗口单例 + 队列在 htmlToPdf 内部，这里顺序 await 即可
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const pdf = await htmlToPdf(files[i]!.content)
+        fs.writeFileSync(path.join(dir, finalNames[i]!), Buffer.from(pdf))
+        count++
+      } catch {
+        failed.push(files[i]!.name)
+      }
+    }
+    return { ok: true, count, dir, failed }
+  }, argsSchema(z.array(z.object({
+    name: z.string().min(1).max(200),
+    content: z.string().min(1).max(50 * 1024 * 1024)
+  })).min(1).max(50)))
 
   safeHandle(IPC.CONVERSATION_EXPORT_ENCRYPTED, async (e, id: string, password: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]

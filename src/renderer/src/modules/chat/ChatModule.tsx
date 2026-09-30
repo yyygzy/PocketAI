@@ -20,7 +20,7 @@ import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
-import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX } from '../../utils/batch-export'
+import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -351,9 +351,35 @@ export const ChatModule: React.FC = () => {
     }
   }
 
+  // PDF 导出：同一自包含 HTML 交给主进程隐藏窗口 printToPDF（见 main/export/pdf.ts）
+  const handleExportPdf = async (id: string) => {
+    try {
+      const conv = conversations.find((c) => c.id === id)
+      if (!conv) {
+        toast.error(t('chat.exportFail', { e: t('common.unknownError') }))
+        return
+      }
+      const msgs = await window.pocketai.listMessages(id)
+      const assistantName = conv.assistantId
+        ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
+        : null
+      const html = await buildConversationHtml(conv, msgs, assistantName)
+      const r = await window.pocketai.exportConversationPdf(id, html)
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      if (r.path) toast.success(t('chat.exportSuccess', { path: r.path }))
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
+    }
+  }
+
   // 批量导出：convs 缺省 = 当前助手全部会话；传入 = 多选导出（重名由主进程加序号）
+  // pdf 逐会话 printToPDF 耗时高，选中上限收紧为 BATCH_PDF_MAX
   const batchBusyRef = useRef(false)
-  const handleBatchExport = async (format: 'md' | 'html', convs?: ConversationRecord[]) => {
+  const handleBatchExport = async (format: 'md' | 'html' | 'pdf', convs?: ConversationRecord[]) => {
     if (batchBusyRef.current) return
     batchBusyRef.current = true
     try {
@@ -362,12 +388,13 @@ export const ChatModule: React.FC = () => {
         toast.info(t('chat.exportBatchEmpty'))
         return
       }
+      const max = format === 'pdf' ? BATCH_PDF_MAX : BATCH_EXPORT_MAX
       let selected = list
       if (convs) {
-        const capped = capSelection(convs)
+        const capped = capSelection(convs, max)
         selected = capped.list
         if (capped.dropped > 0) {
-          toast.info(t('chat.exportMultiCapped', { max: BATCH_EXPORT_MAX, dropped: capped.dropped }))
+          toast.info(t('chat.exportMultiCapped', { max, dropped: capped.dropped }))
         }
       }
       const files = await buildBatchExportFiles({
@@ -377,7 +404,7 @@ export const ChatModule: React.FC = () => {
         resolveAssistantName: (assistantId) =>
           assistantId ? assistants.find((a) => a.id === assistantId)?.name ?? null : null
       })
-      const outcome = await finishBatchExport(files)
+      const outcome = await finishBatchExport(files, format)
       if (outcome.kind === 'failed') {
         toast.error(t('chat.exportFail', { e: outcome.error || t('common.unknownError') }))
       } else if (outcome.kind === 'done') {
@@ -625,6 +652,7 @@ export const ChatModule: React.FC = () => {
             onRename={handleRenameConv}
             onExport={handleExportConv}
             onExportHtml={handleExportHtml}
+            onExportPdf={handleExportPdf}
             onExportEncrypted={handleExportEncrypted}
             onBatchExport={handleBatchExport}
             onBatchExportSelected={(fmt, convs) => void handleBatchExport(fmt, convs)}
