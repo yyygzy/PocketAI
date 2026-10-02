@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import type { ChatAttachment, MessageSource, UsagePricing, UsageStats } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord, MessageSource, UsagePricing, UsageStats } from '../../../../shared/types'
 import { computeUsageCost, priceKey } from '../../../../shared/usage-pricing'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
@@ -31,6 +31,16 @@ interface Props {
   onResend?: (id: string, newContent?: string) => void
   onFork?: (id: string) => void
   onSaveAsNote?: (id: string) => void
+  /** 本条消息引用的被引用消息（用于顶部引用条） */
+  replyTo?: MessageRecord | null
+  /** 点击引用条跳转到被引用消息 */
+  onJumpToReply?: (id: string) => void
+  /** 引用本条消息（设置 Composer 引用状态）；父级通过 id 查找完整消息 */
+  onReply?: (id: string) => void
+  /** 收藏星标状态（starred 时常显 ⭐，不依赖 hover） */
+  starred?: boolean
+  /** 切换收藏星标 */
+  onToggleStar?: (id: string, starred: boolean) => void
 }
 
 /** React.memo：流式输出时只重渲染变化的消息，其余消息 props 不变即跳过（配合 ChatView 的 useCallback） */
@@ -52,7 +62,12 @@ const MessageBubbleImpl: React.FC<Props> = ({
   onRegenerate,
   onResend,
   onFork,
-  onSaveAsNote
+  onSaveAsNote,
+  replyTo,
+  onJumpToReply,
+  onReply,
+  starred,
+  onToggleStar
 }) => {
   const { t } = useI18n()
   const isUser = role === 'user'
@@ -120,6 +135,23 @@ const MessageBubbleImpl: React.FC<Props> = ({
             <span>🤖</span>
             {model && <span className="font-mono">{model}</span>}
           </div>
+        )}
+        {/* 引用条：本条消息引用的被引用消息预览，点击跳转 */}
+        {replyTo && (
+          <button
+            onClick={() => onJumpToReply?.(replyTo.id)}
+            className={`block w-full text-left mb-1.5 px-2.5 py-1.5 rounded-lg text-[11px] line-clamp-2 break-all transition-colors ${
+              isUser
+                ? 'bg-white/15 text-white/80 hover:bg-white/25'
+                : 'bg-[var(--color-hover-overlay)] text-[var(--color-text-muted)] hover:bg-[var(--color-border)]'
+            }`}
+            title={t('chat.jumpToReply')}
+          >
+            <span className="font-medium mr-1">
+              {replyTo.role === 'user' ? t('chat.you') : t('chat.assistant')}:
+            </span>
+            {replyTo.content || t('chat.replyEmpty')}
+          </button>
         )}
         <div
           className={`px-3.5 py-2.5 rounded-2xl ${
@@ -254,13 +286,24 @@ const MessageBubbleImpl: React.FC<Props> = ({
           <AttachmentGrid attachments={attachments} align="end" />
         )}
 
-        {/* 操作按钮：复制 / 编辑 / 改参重跑 / 重新生成 / 删除 */}
-        {selectable && (hovered || selected) && !editing && (
+        {/* 操作按钮：复制 / 引用 / 编辑 / 改参重跑 / 重新生成 / 删除 / 收藏星标（已收藏常显） */}
+        {selectable && (hovered || selected || starred) && !editing && (
           <div className={`flex gap-1 mt-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
+            {(hovered || selected) && (
+              <>
             <CopyButton
               text={content}
               className="chip"
             />
+            {onReply && (
+              <button
+                onClick={() => onReply(messageId)}
+                title={t('chat.reply')}
+                className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
+              >
+                {t('chat.reply')}
+              </button>
+            )}
             {isUser && onResend && (
               <>
                 <button
@@ -313,6 +356,18 @@ const MessageBubbleImpl: React.FC<Props> = ({
             >
               {t('common.delete')}
             </button>
+              </>
+            )}
+            {onToggleStar && (
+              <button
+                onClick={() => onToggleStar(messageId, !starred)}
+                title={starred ? t('chat.unstar') : t('chat.star')}
+                aria-label={starred ? t('chat.unstar') : t('chat.star')}
+                className={`text-[11px] px-1.5 py-0.5 rounded transition-colors ${starred ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)]'}`}
+              >
+                {starred ? '⭐' : '☆'}
+              </button>
+            )}
           </div>
         )}
       </div>

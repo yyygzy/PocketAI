@@ -1,13 +1,25 @@
-import React, { useRef, useState, useCallback } from 'react'
+import React, { useRef, useState, useCallback, useEffect } from 'react'
 import { useI18n } from '../../i18n'
 import { SnippetButton } from '../../components/SnippetButton'
-import type { ChatAttachment } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord } from '../../../../shared/types'
 
 interface Props {
   streaming: boolean
   canSend: boolean
-  onSend: (text: string, attachments?: ChatAttachment[]) => void
+  onSend: (text: string, attachments?: ChatAttachment[], replyToId?: string | null) => void
   onStop: () => void
+  /** 当前待回复的引用消息（显示引用条） */
+  replyTo?: MessageRecord | null
+  /** 取消引用 */
+  onCancelReply?: () => void
+  /** 草稿归属会话 id（切换时触发旧会话提交 + 新会话回填） */
+  draftKey: string
+  /** 当前会话已保存的草稿文本（draftKey 变化后生效） */
+  draft?: string
+  /** 文本每次变化（防抖落库由父级负责；空串=立即清除） */
+  onDraftChange?: (text: string) => void
+  /** 切换会话：把旧会话最新文本同步交父级立即落库 */
+  onDraftCommit?: (convId: string, text: string) => void
 }
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
@@ -16,13 +28,36 @@ const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js'
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_TEXT_SIZE = 2 * 1024 * 1024 // 2MB
 
-export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }) => {
+export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit }) => {
   const { t } = useI18n()
-  const [text, setText] = useState('')
+  const [text, setText] = useState(draft ?? '')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [dragOver, setDragOver] = useState(false)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // 最新文本镜像：切会话 effect 里提交旧会话草稿时读取（effect 闭包里的 text 是旧值不可靠）
+  const textRef = useRef(text)
+  // 上一个草稿归属会话：draftKey 变化时先把旧会话文本同步提交
+  const prevKeyRef = useRef(draftKey)
+
+  // draftKey 变化（切会话）或 draft 异步加载到达：提交旧会话 → 回填新会话草稿。
+  // 同一次渲染内 draft 已随父级清空为 ''，异步加载完成后再次触发本 effect。
+  useEffect(() => {
+    if (prevKeyRef.current !== draftKey) {
+      if (prevKeyRef.current) onDraftCommit?.(prevKeyRef.current, textRef.current)
+      prevKeyRef.current = draftKey
+    }
+    setText(draft ?? '')
+    textRef.current = draft ?? ''
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, draft])
+
+  /** 更新文本并同步草稿回调（片段插入也走这里） */
+  const updateText = (next: string) => {
+    setText(next)
+    textRef.current = next
+    onDraftChange?.(next)
+  }
 
   const resize = () => {
     const ta = taRef.current
@@ -34,9 +69,11 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
   const submit = () => {
     const trimmed = text.trim()
     if ((!trimmed && attachments.length === 0) || !canSend || streaming) return
-    onSend(trimmed, attachments.length > 0 ? attachments : undefined)
-    setText('')
+    onSend(trimmed, attachments.length > 0 ? attachments : undefined, replyTo?.id ?? null)
+    // 清空并立即删除草稿（空串走父级立即清除分支，不经防抖）
+    updateText('')
     setAttachments([])
+    onCancelReply?.()
     requestAnimationFrame(() => {
       if (taRef.current) taRef.current.style.height = 'auto'
     })
@@ -122,7 +159,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
     const start = ta?.selectionStart ?? text.length
     const end = ta?.selectionEnd ?? start
     const next = text.slice(0, start) + insert + text.slice(end)
-    setText(next)
+    updateText(next)
     requestAnimationFrame(() => {
       ta?.focus()
       const pos = start + insert.length
@@ -153,6 +190,27 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* 引用回复条：显示被引用消息的角色+内容预览，可取消 */}
+        {replyTo && (
+          <div className="flex items-start gap-2 mb-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-hover-overlay)] border-l-2 border-[var(--color-accent)]">
+            <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${replyTo.role === 'user' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-border)] text-[var(--color-text-muted)]'}`}>
+              {replyTo.role === 'user' ? t('chat.you') : t('chat.assistant')}
+            </span>
+            <span className="flex-1 text-[12px] text-[var(--color-text-muted)] line-clamp-2 break-all">
+              {replyTo.content || t('chat.replyEmpty')}
+            </span>
+            <button
+              onClick={onCancelReply}
+              className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              title={t('common.cancel')}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         )}
 
@@ -190,7 +248,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop }
             data-chat-composer-input
             value={text}
             onChange={(e) => {
-              setText(e.target.value)
+              updateText(e.target.value)
               resize()
             }}
             onKeyDown={handleKeyDown}

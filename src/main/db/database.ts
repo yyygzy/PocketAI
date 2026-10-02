@@ -619,6 +619,49 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_kb_ask_sessions_kb ON kb_ask_sessions(kb_id, updated_at DESC);
     `
+  },
+  {
+    // v34: 消息引用回复——user 消息可引用会话内另一条消息（reply_to_id 指向被引用消息 id）
+    version: 34,
+    name: 'message_reply_to',
+    up: `
+      ALTER TABLE messages ADD COLUMN reply_to_id TEXT;
+    `
+  },
+  {
+    // v35: 消息收藏星标——starred 标记重要消息，侧边栏收藏列表跨会话统一查看
+    version: 35,
+    name: 'message_starred',
+    up: `
+      ALTER TABLE messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_messages_starred ON messages(starred, created_at DESC);
+    `
+  },
+  {
+    // v36: 输入草稿持久化——按会话存未发送文本，切会话/重启不丢；独立表避免列表带出草稿全文
+    version: 36,
+    name: 'conversation_drafts',
+    up: `
+      CREATE TABLE IF NOT EXISTS conversation_drafts (
+        conversation_id TEXT PRIMARY KEY,
+        draft TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `
+  },
+  {
+    // v37: 会话分组文件夹——组按助手维度归集（NULL 覆盖默认/自由会话）；会话 group_id NULL=未分组
+    version: 37,
+    name: 'conversation_groups',
+    up: `
+      CREATE TABLE IF NOT EXISTS conversation_groups (
+        id TEXT PRIMARY KEY,
+        assistant_id TEXT,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      ALTER TABLE conversations ADD COLUMN group_id TEXT;
+    `
   }
 ]
 

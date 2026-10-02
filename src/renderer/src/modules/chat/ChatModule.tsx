@@ -3,6 +3,7 @@ import type {
   ProviderRecord,
   AssistantRecord,
   ConversationRecord,
+  ConversationGroupRecord,
   MessageRecord,
   ChatTarget,
   ChatAttachment
@@ -48,26 +49,45 @@ export const ChatModule: React.FC = () => {
   const [archivedConversations, setArchivedConversations] = useState<ConversationRecord[]>([])
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
+  const [replyToMessage, setReplyToMessage] = useState<MessageRecord | null>(null)
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [marketOpen, setMarketOpen] = useState(false)
   const [marketDetailId, setMarketDetailId] = useState<string | undefined>(undefined)
   /** 搜索跳转定位的消息 id（消费后清空，传给 ChatView） */
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
+  /** 当前会话已加载的草稿文本（切会话同步清空，异步加载后回填） */
+  const [activeDraft, setActiveDraft] = useState('')
+  /** 当前助手维度的分组文件夹（随 reloadConversations 一并拉取） */
+  const [groups, setGroups] = useState<ConversationGroupRecord[]>([])
 
   const assistantIdRef = useRef('asst-default')
   const currentConvRef = useRef<string | null>(null)
   currentConvRef.current = currentConvId
   // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
   const userEditedTargetsRef = useRef(false)
+  // 草稿防抖句柄 + 最新文本镜像（卸载/关闭时尽力落库）
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const draftTextRef = useRef('')
+  // 空会话清理所需镜像：供切换入口的稳定回调读取最新消息/列表（避免 useCallback 闭包陈旧）
+  const messagesRef = useRef<MessageRecord[]>([])
+  useEffect(() => { messagesRef.current = messages }, [messages])
+  const convIndexRef = useRef<Map<string, ConversationRecord>>(new Map())
+  useEffect(() => {
+    const idx = new Map<string, ConversationRecord>()
+    for (const c of [...conversations, ...archivedConversations]) idx.set(c.id, c)
+    convIndexRef.current = idx
+  }, [conversations, archivedConversations])
 
   const reloadConversations = useCallback((autoSelect = false) => {
     const aid = assistantIdRef.current
     return Promise.all([
       window.pocketai.listConversations(aid, false, false),
-      window.pocketai.listConversations(aid, false, true)
-    ]).then(([list, archived]) => {
+      window.pocketai.listConversations(aid, false, true),
+      window.pocketai.listConversationGroups(aid)
+    ]).then(([list, archived, groupList]) => {
       setConversations(list)
       setArchivedConversations(archived)
+      setGroups(groupList)
       // 自动选中最近一次使用的会话（列表已按置顶权重+updated_at DESC 排序）
       if (autoSelect && list.length > 0 && !currentConvRef.current) {
         const first = list[0]!
@@ -130,7 +150,11 @@ export const ChatModule: React.FC = () => {
         assistantIdRef.current = def.id
         setCurrentAssistantId(def.id)
       }
-      reloadConversations(true)
+      // 先清扫历史版本/崩溃前遗留的空壳会话，再拉列表自动选中（清扫失败不阻断加载）
+      window.pocketai
+        .cleanupEmptyConversations()
+        .catch(reportIpcError('chat.cleanupEmptyConversations'))
+        .finally(() => { void reloadConversations(true) })
     }).catch(reportIpcError('chat.listAssistantsInit'))
   }, [reloadConversations])
 
@@ -142,6 +166,7 @@ export const ChatModule: React.FC = () => {
   }
 
   const handleSelectAssistant = (id: string) => {
+    discardCurrentIfEmpty()
     assistantIdRef.current = id
     setCurrentAssistantId(id)
     setCurrentConvId(null)
@@ -201,8 +226,117 @@ export const ChatModule: React.FC = () => {
     [providers]
   )
 
+  /** 落库草稿并同步列表 📝 标记（空文本=删除草稿行）；清待发防抖由调用方负责 */
+  const saveDraft = useCallback((convId: string, text: string) => {
+    const has = text.trim().length > 0
+    window.pocketai
+      .setConversationDraft(convId, has ? text : '')
+      .then(() => {
+        // 本地同步列表标记，避免等下次 reload
+        const patch = (list: ConversationRecord[]) =>
+          list.some((c) => c.id === convId && !!c.hasDraft !== has)
+            ? list.map((c) => (c.id === convId ? { ...c, hasDraft: has } : c))
+            : list
+        setConversations((prev) => patch(prev))
+        setArchivedConversations((prev) => patch(prev))
+      })
+      .catch(reportIpcError('chat.setConversationDraft'))
+  }, [])
+
+  /** 每键回调：非空防抖 600ms 落库；空串立即删除（发送/手动清空场景） */
+  const handleDraftChange = useCallback((text: string) => {
+    const id = currentConvRef.current
+    draftTextRef.current = text
+    if (!id) return
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = undefined
+    }
+    if (!text.trim()) {
+      saveDraft(id, '')
+      return
+    }
+    draftTimerRef.current = setTimeout(() => {
+      draftTimerRef.current = undefined
+      saveDraft(id, draftTextRef.current)
+    }, 600)
+  }, [saveDraft])
+
+  /** 切会话时 Composer 同步提交旧会话未防抖文本 */
+  const commitDraft = useCallback((convId: string, text: string) => {
+    draftTextRef.current = text
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = undefined
+    }
+    saveDraft(convId, text)
+  }, [saveDraft])
+
+  // 会话切换统一加载草稿（手动切换/新对话/初始自动选中/搜索跳转全覆盖）；
+  // 同步清空防旧会话文本闪现，异步加载完成后回填；cancelled 守卫防快速连切竞态
+  useEffect(() => {
+    let cancelled = false
+    if (!currentConvId) {
+      setActiveDraft('')
+      draftTextRef.current = ''
+      return
+    }
+    setActiveDraft('')
+    draftTextRef.current = ''
+    window.pocketai
+      .getConversationDraft(currentConvId)
+      .then((d) => { if (!cancelled) { setActiveDraft(d); draftTextRef.current = d } })
+      .catch((e) => { if (!cancelled) reportIpcError('chat.getConversationDraft')(e) })
+    return () => { cancelled = true }
+  }, [currentConvId])
+
+  // 关闭/卸载：取消待发防抖，尽力把最后一次击键落库（invoke 不 await；崩溃窗口仅 600ms）
+  useEffect(() => {
+    const flush = () => {
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current)
+        draftTimerRef.current = undefined
+        const id = currentConvRef.current
+        if (id && draftTextRef.current.trim()) {
+          void window.pocketai.setConversationDraft(id, draftTextRef.current).catch(() => {})
+        }
+      }
+    }
+    window.addEventListener('beforeunload', flush)
+    window.addEventListener('pagehide', flush)
+    return () => {
+      window.removeEventListener('beforeunload', flush)
+      window.removeEventListener('pagehide', flush)
+    }
+  }, [])
+
+  /**
+   * 切走前清理当前空壳会话：自动标题 + 未置顶 + 0 消息 + 0 草稿才删。
+   * 草稿判断用渲染端同步镜像 draftTextRef（不查库），规避防抖窗口内 DB 尚无草稿的竞态；
+   * SQL 端再叠四重守卫兜底。删除确认后本地同步列表，不 await、不阻塞跳转。
+   */
+  const discardCurrentIfEmpty = useCallback(() => {
+    const id = currentConvRef.current
+    if (!id) return
+    if (messagesRef.current.length > 0) return
+    if (draftTextRef.current.trim()) return
+    const conv = convIndexRef.current.get(id)
+    if (!conv || !conv.titleDefault || conv.pinned) return
+    window.pocketai
+      .deleteConversationIfEmpty(id)
+      .then((r) => {
+        if (!r.deleted) return
+        setConversations((prev) => prev.filter((c) => c.id !== id))
+        setArchivedConversations((prev) => prev.filter((c) => c.id !== id))
+      })
+      .catch(reportIpcError('chat.deleteConversationIfEmpty'))
+  }, [])
+
   const handleSelectConv = (id: string) => {
+    discardCurrentIfEmpty()
     userEditedTargetsRef.current = false // 切换会话时重置，允许回填
+    setActiveDraft('') // 同步清空，防新会话草稿异步到达前闪现旧文本
+    draftTextRef.current = ''
     setCurrentConvId(id)
     loadMessages(id)
     const conv = conversations.find((c) => c.id === id)
@@ -211,18 +345,32 @@ export const ChatModule: React.FC = () => {
 
   // 搜索跳转：切到目标会话并设 focusMessageId 让 ChatView 滚动+高亮
   const handleSelectMessage = useCallback((convId: string, messageId: string) => {
+    discardCurrentIfEmpty()
     userEditedTargetsRef.current = false
+    setActiveDraft('')
+    draftTextRef.current = ''
     setCurrentConvId(convId)
     loadMessages(convId)
     setFocusMessageId(messageId)
-  }, [loadMessages])
+  }, [loadMessages, discardCurrentIfEmpty])
 
   const handleNewConv = async () => {
+    // 当前会话本身就是空壳（自动标题+未置顶+0消息；挂草稿的也一并复用，草稿随会话保留）
+    // → 不新建行，避免点一次「新对话」堆一个空「新对话」
+    const curId = currentConvId
+    const cur = curId ? convIndexRef.current.get(curId) : null
+    if (cur && cur.titleDefault && !cur.pinned && messagesRef.current.length === 0) {
+      userEditedTargetsRef.current = false // 与新建同口径，允许模型回填
+      setReplyToMessage(null)
+      return
+    }
     // 点击「新对话」直接在数据库创建一条对话记录，标题用当前助手名
     try {
       const title = currentAssistant?.name || t('chat.newConversation')
       const conv = await window.pocketai.createConversation(currentAssistantId, title)
       userEditedTargetsRef.current = false // 新对话允许模型回填
+      setActiveDraft('')
+      draftTextRef.current = ''
       setCurrentConvId(conv.id)
       setMessages([])
       await reloadConversations()
@@ -301,6 +449,20 @@ export const ChatModule: React.FC = () => {
         setMessages([])
       }
       await reloadConversations()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }
+
+  const handleBatchDeleteConv = async (ids: string[]) => {
+    try {
+      const r = await window.pocketai.deleteConversations(ids)
+      if (currentConvId && ids.includes(currentConvId)) {
+        setCurrentConvId(null)
+        setMessages([])
+      }
+      await reloadConversations()
+      toast.success(t('chat.batchDeleteDone', { n: r.deleted }))
     } catch (e) {
       toast.error(t('common.opFailed', { msg: errText(e) }))
     }
@@ -496,7 +658,7 @@ export const ChatModule: React.FC = () => {
     setTargets(next)
   }
 
-  const handleSend = async (text: string, attachments?: ChatAttachment[]) => {
+  const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null) => {
     if (isStreaming()) return
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0) return
@@ -533,12 +695,92 @@ export const ChatModule: React.FC = () => {
         assistantId: currentAssistantId,
         content: text,
         targets: validTargets,
-        attachments
+        attachments,
+        replyToId: replyToId ?? null
       })
       .catch(() => {
         failStream(requestId, convId)
       })
+    setReplyToMessage(null)
   }
+
+  // 引用回复：ChatView 已查好完整消息，直接设置
+  const handleSetReply = (msg: MessageRecord | null) => {
+    setReplyToMessage(msg)
+  }
+
+  // 收藏星标：IPC 落库 + 本地 messages 同步（不 reload，零闪烁）；收藏列表内取消收藏也走这里
+  const handleToggleStar = useCallback(async (id: string, starred: boolean) => {
+    try {
+      await window.pocketai.setMessageStarred(id, starred)
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, starred } : m)))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }, [toast, t])
+
+  /** 批量收藏/取消收藏：逐条落库后一次本地 map；部分失败仍同步已成功者 */
+  const handleBatchToggleStar = useCallback(async (ids: string[], starred: boolean) => {
+    const ok = new Set<string>()
+    await Promise.all(ids.map(async (id) => {
+      try { await window.pocketai.setMessageStarred(id, starred); ok.add(id) } catch { /* 单条失败静默跳过 */ }
+    }))
+    setMessages((prev) => prev.map((m) => (ok.has(m.id) ? { ...m, starred } : m)))
+  }, [])
+
+  // ---------- 会话分组文件夹 ----------
+  /** 本地 patch 会话分组归属（活跃+归档两列表） */
+  const patchConvGroup = useCallback((convId: string, groupId: string | null) => {
+    const patch = (list: ConversationRecord[]) =>
+      list.some((c) => c.id === convId && c.groupId !== groupId)
+        ? list.map((c) => (c.id === convId ? { ...c, groupId } : c))
+        : list
+    setConversations((prev) => patch(prev))
+    setArchivedConversations((prev) => patch(prev))
+  }, [])
+
+  const handleCreateGroup = useCallback(async (name: string): Promise<boolean> => {
+    try {
+      const g = await window.pocketai.createConversationGroup(currentAssistantId, name)
+      setGroups((prev) => [...prev, g])
+      return true
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+      return false
+    }
+  }, [currentAssistantId, toast, t])
+
+  const handleRenameGroup = useCallback(async (id: string, name: string) => {
+    try {
+      await window.pocketai.renameConversationGroup(id, name)
+      setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, name } : g)))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }, [toast, t])
+
+  /** 解散组：IPC 事务内解绑会话；本地同步移除组并把组内会话置回未分组 */
+  const handleDeleteGroup = useCallback(async (id: string) => {
+    try {
+      await window.pocketai.deleteConversationGroup(id)
+      setGroups((prev) => prev.filter((g) => g.id !== id))
+      setConversations((prev) => prev.map((c) => (c.groupId === id ? { ...c, groupId: null } : c)))
+      setArchivedConversations((prev) => prev.map((c) => (c.groupId === id ? { ...c, groupId: null } : c)))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }, [toast, t])
+
+  /** 移动会话到文件夹（null=移出）；乐观本地更新，失败回滚由 reload 兜底 */
+  const handleMoveConv = useCallback(async (convId: string, groupId: string | null) => {
+    patchConvGroup(convId, groupId)
+    try {
+      await window.pocketai.setConversationGroup(convId, groupId)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+      void reloadConversations()
+    }
+  }, [patchConvGroup, reloadConversations, toast, t])
 
   const handleStop = () => {
     abort()
@@ -672,12 +914,19 @@ export const ChatModule: React.FC = () => {
             onExportEncrypted={handleExportEncrypted}
             onBatchExport={handleBatchExport}
             onBatchExportSelected={(fmt, convs) => void handleBatchExport(fmt, convs)}
+            onBatchDelete={handleBatchDeleteConv}
             onImport={handleImportConv}
             onImportEncrypted={handleImportEncrypted}
             onSelectMessage={handleSelectMessage}
             archivedConversations={archivedConversations}
             onTogglePin={handleTogglePin}
             onSetArchived={handleSetArchived}
+            onToggleStar={handleToggleStar}
+            groups={groups}
+            onCreateGroup={handleCreateGroup}
+            onRenameGroup={handleRenameGroup}
+            onDeleteGroup={handleDeleteGroup}
+            onMoveConv={handleMoveConv}
             embedded
           />
         </div>
@@ -703,6 +952,14 @@ export const ChatModule: React.FC = () => {
         onSaveAsNote={handleSaveAsNote}
         focusBranch={focusBranch}
         focusMessageId={focusMessageId}
+        replyToMessage={replyToMessage}
+        onReply={handleSetReply}
+        onToggleStar={handleToggleStar}
+        onBatchToggleStar={handleBatchToggleStar}
+        draftKey={currentConvId ?? ''}
+        draft={activeDraft}
+        onDraftChange={handleDraftChange}
+        onDraftCommit={commitDraft}
       />
 
       {marketOpen && (

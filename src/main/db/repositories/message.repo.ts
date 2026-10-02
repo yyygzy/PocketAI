@@ -1,7 +1,7 @@
 // Message 数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
-import type { MessageRecord, MessageRole, MessageStatus, ChatAttachment } from '../../../shared/types'
+import type { MessageRecord, MessageRole, MessageStatus, ChatAttachment, StarredMessageItem } from '../../../shared/types'
 
 interface MessageRow {
   id: string
@@ -18,6 +18,8 @@ interface MessageRow {
   batch_id: string | null
   sources: string | null
   usage: string | null
+  reply_to_id: string | null
+  starred: number
 }
 
 export function rowToRecord(row: MessageRow): MessageRecord {
@@ -47,7 +49,9 @@ export function rowToRecord(row: MessageRow): MessageRecord {
     attachments,
     batchId: row.batch_id,
     sources,
-    usage
+    usage,
+    replyToId: row.reply_to_id ?? null,
+    starred: !!row.starred
   }
 }
 
@@ -79,6 +83,7 @@ export const messageRepo = {
     toolCalls?: string | null
     attachments?: ChatAttachment[]
     batchId?: string | null
+    replyToId?: string | null
   }): MessageRecord {
     const id = randomUUID()
     const now = Date.now()
@@ -88,8 +93,8 @@ export const messageRepo = {
     dbService
       .getHandle()
       .prepare(
-        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at, tool_calls, attachments, batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at, tool_calls, attachments, batch_id, reply_to_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -103,7 +108,8 @@ export const messageRepo = {
         now,
         input.toolCalls ?? null,
         attachmentsJson,
-        input.batchId ?? null
+        input.batchId ?? null,
+        input.replyToId ?? null
       )
     return {
       id,
@@ -117,7 +123,9 @@ export const messageRepo = {
       createdAt: now,
       toolCalls: input.toolCalls ?? null,
       attachments: input.attachments,
-      batchId: input.batchId ?? null
+      batchId: input.batchId ?? null,
+      replyToId: input.replyToId ?? null,
+      starred: false
     }
   },
 
@@ -171,5 +179,42 @@ export const messageRepo = {
       .getHandle()
       .prepare('UPDATE messages SET content=? WHERE id=?')
       .run(content, id)
+  },
+
+  /** 收藏星标：标记/取消重要消息 */
+  setStarred(id: string, starred: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE messages SET starred=? WHERE id=?')
+      .run(starred ? 1 : 0, id)
+  },
+
+  /** 收藏列表：跨会话统一查看，时间倒序；会话已删除时标题兜底空串 */
+  listStarred(limit = 200): StarredMessageItem[] {
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        `SELECT m.id, m.conversation_id, c.title AS conversation_title, m.role, m.content, m.created_at
+         FROM messages m LEFT JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.starred = 1
+         ORDER BY m.created_at DESC, m.rowid DESC
+         LIMIT ?`
+      )
+      .all(limit) as {
+      id: string
+      conversation_id: string
+      conversation_title: string | null
+      role: string
+      content: string | null
+      created_at: number
+    }[]
+    return rows.map((r) => ({
+      id: r.id,
+      conversationId: r.conversation_id,
+      conversationTitle: r.conversation_title ?? '',
+      role: r.role as MessageRole,
+      content: r.content ?? '',
+      createdAt: r.created_at
+    }))
   }
 }

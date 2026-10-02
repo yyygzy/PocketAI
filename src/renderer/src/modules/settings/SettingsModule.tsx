@@ -665,6 +665,8 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
 // ─── 备份面板 ────────────────────────────────────────────────────
 
 const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168]
+/** 全量备份保留份数选项：0=不自动清理 */
+const RETENTION_OPTIONS = [0, 3, 5, 10, 20, 30]
 
 const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   const { t, lang } = useI18n()
@@ -707,7 +709,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     return h === 24 ? '每天' : h === 48 ? '每 2 天' : h === 72 ? '每 3 天' : h === 168 ? '每周' : `每 ${h} 小时`
   }
 
-  async function saveSchedule(patch: { enabled?: boolean; intervalHours?: number }) {
+  async function saveSchedule(patch: { enabled?: boolean; intervalHours?: number; retentionCount?: number }) {
     const next = await window.pocketai.setBackupSchedule(patch)
     setSchedule(next)
   }
@@ -1030,14 +1032,30 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
                   ))}
                 </select>
               </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[var(--color-text-muted)]">{t('bk.retention')}</span>
+                <select
+                  className="input py-1 text-xs w-32"
+                  value={schedule.retentionCount}
+                  onChange={(e) => saveSchedule({ retentionCount: Number(e.target.value) })}
+                >
+                  {RETENTION_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n === 0 ? t('bk.retentionNever') : String(n)}</option>
+                  ))}
+                </select>
+              </div>
               <div className="text-[11px] text-[var(--color-text-muted)]">
                 {schedule.lastResult?.ok
-                  ? t('bk.scheduleLastOk', { time: new Date(schedule.lastResult.at).toLocaleString() })
+                  ? t('bk.scheduleLastOk', { time: new Date(schedule.lastResult.at).toLocaleString() }) +
+                    (schedule.lastResult.pruned ? t('bk.schedulePruned', { count: schedule.lastResult.pruned }) : '')
                   : schedule.lastResult
                     ? t('bk.scheduleLastFail', { time: new Date(schedule.lastResult.at).toLocaleString(), e: schedule.lastResult.error ?? '' })
                     : t('bk.scheduleNever')}
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)]">{t('bk.scheduleHint')}</div>
+              {schedule.retentionCount > 0 && (
+                <div className="text-[11px] text-[var(--color-text-muted)]">{t('bk.retentionHint')}</div>
+              )}
             </div>
           )}
         </div>

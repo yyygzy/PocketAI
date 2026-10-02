@@ -41,7 +41,7 @@ export function registerBackupHandlers(): void {
   safeHandle(IPC.BACKUP_SCHEDULE_GET, () => getBackupSchedule())
   safeHandle(
     IPC.BACKUP_SCHEDULE_SET,
-    (_e, patch: { enabled?: boolean; intervalHours?: number }) =>
+    (_e, patch: { enabled?: boolean; intervalHours?: number; retentionCount?: number }) =>
       setBackupSchedule(patch ?? {}),
     argsSchema(backupSchedulePatchSchema)
   )

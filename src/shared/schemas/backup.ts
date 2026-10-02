@@ -17,7 +17,8 @@ export const webdavConfigSchema = z.object({
 /** 定时备份计划 patch */
 export const backupSchedulePatchSchema = z.object({
   enabled: z.boolean().optional(),
-  intervalHours: z.number().int().positive().optional()
+  intervalHours: z.number().int().positive().optional(),
+  retentionCount: z.number().int().min(0).max(100).optional()
 })
 
 /** 合并执行入参 */

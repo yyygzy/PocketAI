@@ -8,6 +8,7 @@ import type {
   UserMemoryRecord,
   ConversationRecord,
   MessageRecord,
+  StarredMessageItem,
   ConversationExportPayload,
   MessageSearchResult,
   UsageSummary,
@@ -190,6 +191,8 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_CREATE, assistantId, title),
   deleteConversation: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_DELETE, id),
+  deleteConversations: (ids: string[]): Promise<{ ok: boolean; deleted: number }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_BATCH_DELETE, ids),
   renameConversation: (id: string, title: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_RENAME, id, title),
   exportConversation: (id: string): Promise<{ ok: boolean; data?: ConversationExportPayload; error?: string }> =>
@@ -216,6 +219,24 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_SMART_TITLE_GET),
   setSmartTitleEnabled: (enabled: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_SMART_TITLE_SET, enabled),
+  getConversationDraft: (id: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_DRAFT_GET, id),
+  setConversationDraft: (id: string, draft: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_DRAFT_SET, id, draft),
+  deleteConversationIfEmpty: (id: string): Promise<{ deleted: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_DELETE_IF_EMPTY, id),
+  cleanupEmptyConversations: (): Promise<{ deleted: number }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_CLEANUP_EMPTY),
+  listConversationGroups: (assistantId?: string | null): Promise<import('../shared/types').ConversationGroupRecord[]> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_GROUP_LIST, assistantId ?? null),
+  createConversationGroup: (assistantId: string | null, name: string): Promise<import('../shared/types').ConversationGroupRecord> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_GROUP_CREATE, assistantId, name),
+  renameConversationGroup: (id: string, name: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_GROUP_RENAME, id, name),
+  deleteConversationGroup: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_GROUP_DELETE, id),
+  setConversationGroup: (convId: string, groupId: string | null): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SET_GROUP, convId, groupId),
 
   // ---------- 消息 ----------
   listMessages: (conversationId: string): Promise<MessageRecord[]> =>
@@ -231,6 +252,10 @@ const api = {
     offset?: number
   ): Promise<MessageSearchResult[]> =>
     ipcRenderer.invoke(IPC.MESSAGE_SEARCH, query, assistantId, dateRange, offset),
+  setMessageStarred: (id: string, starred: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.MESSAGE_SET_STARRED, id, starred),
+  listStarredMessages: (limit?: number): Promise<StarredMessageItem[]> =>
+    ipcRenderer.invoke(IPC.MESSAGE_LIST_STARRED, limit),
   getUsageSummary: (days?: number): Promise<UsageSummary> =>
     ipcRenderer.invoke(IPC.USAGE_GET, days),
   getUsageConversations: (days?: number, limit?: number): Promise<UsageConversationItem[]> =>
@@ -243,8 +268,8 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_PRICING_SET, pricing),
   listUsageModels: (): Promise<UsageModelItem[]> =>
     ipcRenderer.invoke(IPC.USAGE_MODELS),
-  getUsageDetail: (days?: number, limit?: number): Promise<UsageDetailResult> =>
-    ipcRenderer.invoke(IPC.USAGE_DETAIL_GET, days, limit),
+  getUsageDetail: (days?: number, limit?: number, conversationId?: string, assistantId?: string | null): Promise<UsageDetailResult> =>
+    ipcRenderer.invoke(IPC.USAGE_DETAIL_GET, days, limit, conversationId, assistantId),
   exportUsageCsv: (
     payload: { days: number; content: string }
   ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
@@ -803,7 +828,7 @@ const api = {
   getBackupSchedule: (): Promise<BackupScheduleStatus> =>
     ipcRenderer.invoke(IPC.BACKUP_SCHEDULE_GET),
   setBackupSchedule: (
-    patch: { enabled?: boolean; intervalHours?: number }
+    patch: { enabled?: boolean; intervalHours?: number; retentionCount?: number }
   ): Promise<BackupScheduleStatus> =>
     ipcRenderer.invoke(IPC.BACKUP_SCHEDULE_SET, patch),
 

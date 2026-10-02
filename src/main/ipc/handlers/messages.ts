@@ -48,6 +48,17 @@ export function registerMessageHandlers(): void {
     return { ok: true, deleted }
   }, argsSchema(idSchema))
 
+  // 收藏星标：标记/取消重要消息
+  safeHandle(IPC.MESSAGE_SET_STARRED, (_e, id: string, starred: boolean) => {
+    messageRepo.setStarred(id, starred)
+    return { ok: true }
+  }, argsSchema(idSchema, z.boolean()))
+
+  // 收藏列表：跨会话统一查看（时间倒序，上限 500 由渲染端控制更小的默认值）
+  safeHandle(IPC.MESSAGE_LIST_STARRED, (_e, limit?: number) =>
+    messageRepo.listStarred(limit),
+    argsSchema(z.number().int().min(1).max(500).optional()))
+
   // 用量聚合汇总（token 用量按日/provider/模型，最近 N 天；费用按本地单价估算）
   safeHandle(IPC.USAGE_GET, (_e, days?: number) =>
     usageService.getSummary(days, getUsagePricing().prices),
@@ -73,10 +84,16 @@ export function registerMessageHandlers(): void {
   }, argsSchema(usagePricingSchema))
   safeHandle(IPC.USAGE_MODELS, () => usageService.listDistinctModels())
 
-  // 行级用量明细（CSV 导出，最近 N 天；超出 limit 置 truncated 让渲染端提示）
-  safeHandle(IPC.USAGE_DETAIL_GET, (_e, days?: number, limit?: number) =>
-    usageService.listUsageDetail(days, limit, getUsagePricing().prices),
-    argsSchema(z.number().int().min(1).max(365).optional(), z.number().int().min(1).max(20000).optional()))
+  // 行级用量明细（CSV 导出，最近 N 天；超出 limit 置 truncated 让渲染端提示；
+  // conversationId 非空只查该会话；assistantId 非 undefined 按助手过滤（null=自由会话））
+  safeHandle(IPC.USAGE_DETAIL_GET, (_e, days?: number, limit?: number, conversationId?: string, assistantId?: string | null) =>
+    usageService.listUsageDetail(days, limit, getUsagePricing().prices, conversationId, assistantId),
+    argsSchema(
+      z.number().int().min(1).max(365).optional(),
+      z.number().int().min(1).max(20000).optional(),
+      z.string().max(64).optional(),
+      z.string().max(64).nullable().optional()
+    ))
 
   // 用量明细 CSV 落盘：渲染端拼装（含 UTF-8 BOM）→ 主进程弹保存框写文件
   safeHandle(

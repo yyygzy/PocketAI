@@ -254,6 +254,30 @@ export function aggregateUsageDetail(
   return items
 }
 
+/**
+ * 明细查询维度过滤拼装（纯函数，便于单测）。
+ * conversationId 非空 → 按会话过滤；assistantId：undefined=不过滤、null=自由会话（IS NULL）、字符串=按助手过滤。
+ * 返回片段以空格开头，可直接拼进 WHERE 尾部；vals 顺序与片段占位符一致。
+ */
+export function buildUsageDetailScope(
+  conversationId?: string,
+  assistantId?: string | null
+): { sql: string; vals: unknown[] } {
+  const conds: string[] = []
+  const vals: unknown[] = []
+  if (conversationId) {
+    conds.push('AND m.conversation_id = ?')
+    vals.push(conversationId)
+  }
+  if (assistantId === null) {
+    conds.push('AND c.assistant_id IS NULL')
+  } else if (assistantId) {
+    conds.push('AND c.assistant_id = ?')
+    vals.push(assistantId)
+  }
+  return { sql: conds.length ? ' ' + conds.join(' ') : '', vals }
+}
+
 class UsageService {
   /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */
   getSummary(days = 30, prices: Record<string, ModelPrice> = {}): UsageSummary {
@@ -323,18 +347,22 @@ class UsageService {
   }
 
   /**
-   * 行级用量明细（CSV 导出）。
+   * 行级用量明细（CSV 导出 / 会话·助手维度明细弹窗）。
    * 内查 limit+1 行判断截断：超出 limit 时 truncated=true 且只返回前 limit 条（时间倒序最近的）。
    * 时间过滤、JOIN 口径与 listAssistantUsage 一致。
+   * conversationId 非空时只查该会话；assistantId 非 undefined 时按助手过滤（null=自由会话）。
    */
   listUsageDetail(
     days = 30,
     limit = 10000,
-    prices: Record<string, ModelPrice> = {}
+    prices: Record<string, ModelPrice> = {},
+    conversationId?: string,
+    assistantId?: string | null
   ): { items: UsageDetailItem[]; truncated: boolean } {
     const safeDays = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), 365) : 30
     const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 20000) : 10000
     const since = Date.now() - safeDays * 24 * 3600 * 1000
+    const scope = buildUsageDetailScope(conversationId, assistantId)
     const rows = dbService
       .getHandle()
       .prepare(
@@ -343,11 +371,11 @@ class UsageService {
          FROM messages m
          JOIN conversations c ON c.id = m.conversation_id
          LEFT JOIN assistants a ON a.id = c.assistant_id
-         WHERE m.role='assistant' AND m.status='done' AND m.usage IS NOT NULL AND m.created_at >= ?
+         WHERE m.role='assistant' AND m.status='done' AND m.usage IS NOT NULL AND m.created_at >= ?${scope.sql}
          ORDER BY m.created_at DESC
          LIMIT ?`
       )
-      .all(since, safeLimit + 1) as UsageDetailRow[]
+      .all(since, ...scope.vals, safeLimit + 1) as UsageDetailRow[]
     const truncated = rows.length > safeLimit
     return { items: aggregateUsageDetail(truncated ? rows.slice(0, safeLimit) : rows, prices), truncated }
   }

@@ -3,13 +3,63 @@
 // 覆盖 src/main/db/repositories/conversation.repo.ts 的 rowToRecord：
 // DB 行 → ConversationRecord 映射（title null→'新对话'、status null→'idle'）。
 //
-// 策略：纯函数，mock dbService/mustGet 避免模块加载时初始化。
-import { describe, it, expect, vi } from 'vitest'
+// 策略：mock dbService 的 prepare() 链（捕获 SQL/参数），rowToRecord/buildConvListQuery 为纯函数。
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('../src/main/db/database', () => ({ dbService: { getHandle: () => ({}) } }))
+const { state } = vi.hoisted(() => ({
+  state: {
+    lastSql: '',
+    lastParams: [] as unknown[],
+    rows: [] as unknown[],
+    row: undefined as unknown,
+    runSqls: [] as string[],
+    runChanges: 1 as number,
+    transactionRuns: 0 as number
+  }
+}))
+
+vi.mock('../src/main/db/database', () => ({
+  dbService: {
+    getHandle: () => ({
+      prepare: (sql: string) => ({
+        all: (...params: unknown[]) => {
+          state.lastSql = sql
+          state.lastParams = params
+          return state.rows
+        },
+        get: (...params: unknown[]) => {
+          state.lastSql = sql
+          state.lastParams = params
+          return state.row
+        },
+        run: (...params: unknown[]) => {
+          state.lastSql = sql
+          state.lastParams = params
+          state.runSqls.push(sql)
+          return { changes: state.runChanges }
+        }
+      }),
+      // 立即执行事务体（delete 级联测试用）
+      transaction: (fn: () => unknown) => () => {
+        state.transactionRuns++
+        fn()
+      }
+    })
+  }
+}))
 vi.mock('../src/main/db/must-get', () => ({ mustGet: () => null }))
 
-import { rowToRecord, buildConvListQuery } from '../src/main/db/repositories/conversation.repo'
+import { rowToRecord, buildConvListQuery, conversationRepo } from '../src/main/db/repositories/conversation.repo'
+
+beforeEach(() => {
+  state.lastSql = ''
+  state.lastParams = []
+  state.rows = []
+  state.row = undefined
+  state.runSqls = []
+  state.runChanges = 1
+  state.transactionRuns = 0
+})
 
 describe('rowToRecord — DB 行映射为 ConversationRecord', () => {
   it('全 null 可选字段 → 默认值填充', () => {
@@ -121,6 +171,40 @@ describe('rowToRecord — DB 行映射为 ConversationRecord', () => {
     })
     expect(fresh.titleDefault).toBe(true)
   })
+
+  it('lastMessagePreview：非 list 查询缺列 → null；list 带出 → 透传', () => {
+    const noPreview = rowToRecord({
+      id: 'c11', assistant_id: null, title: 't', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0
+    })
+    expect(noPreview.lastMessagePreview).toBeNull()
+
+    const withPreview = rowToRecord({
+      id: 'c12', assistant_id: null, title: 't', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0, last_preview: '最近一条消息内容'
+    })
+    expect(withPreview.lastMessagePreview).toBe('最近一条消息内容')
+  })
+
+  it('hasDraft：旧库行缺列 → false；0 → false；1 → true', () => {
+    const legacy = rowToRecord({
+      id: 'c13', assistant_id: null, title: 't', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0
+    })
+    expect(legacy.hasDraft).toBe(false)
+
+    const noDraft = rowToRecord({
+      id: 'c14', assistant_id: null, title: 't', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0, has_draft: 0
+    })
+    expect(noDraft.hasDraft).toBe(false)
+
+    const hasDraft = rowToRecord({
+      id: 'c15', assistant_id: null, title: 't', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0, has_draft: 1
+    })
+    expect(hasDraft.hasDraft).toBe(true)
+  })
 })
 
 describe('buildConvListQuery — 列表过滤/排序条件', () => {
@@ -150,5 +234,86 @@ describe('buildConvListQuery — 列表过滤/排序条件', () => {
     expect(asst.where).toContain('archived = 1')
     // 参数顺序：assistantId 先于 archived 条件之前的拼装位置（archived 无参数），仅一个绑定值
     expect(asst.vals).toEqual(['asst-9'])
+  })
+
+  it('list() SQL 带出 has_draft EXISTS 子查询并映射 📝 标记', () => {
+    state.rows = [{
+      id: 'c16', assistant_id: null, title: 't', model: null, params: null,
+      status: null, created_at: 0, updated_at: 0, has_draft: 1
+    }]
+    const list = conversationRepo.list()
+    expect(state.lastSql).toContain('EXISTS(SELECT 1 FROM conversation_drafts d WHERE d.conversation_id = c.id) AS has_draft')
+    expect(list[0]!.hasDraft).toBe(true)
+  })
+})
+
+describe('conversationRepo 草稿读写（getDraft/setDraft）', () => {
+  it('getDraft：有行 → 透传 draft 文本，SQL 按 conversation_id 查询', () => {
+    state.row = { draft: '写到一半的内容' }
+    const d = conversationRepo.getDraft('c100')
+    expect(d).toBe('写到一半的内容')
+    expect(state.lastSql).toContain('SELECT draft FROM conversation_drafts WHERE conversation_id=?')
+    expect(state.lastParams).toEqual(['c100'])
+  })
+
+  it('getDraft：无行 → 空串（新会话/已发送清空）', () => {
+    state.row = undefined
+    expect(conversationRepo.getDraft('c101')).toBe('')
+  })
+
+  it('setDraft：非空 → UPSERT（ON CONFLICT 更新 draft/updated_at），参数 [id, text, ts]', () => {
+    conversationRepo.setDraft('c102', '草稿文本')
+    expect(state.lastSql).toContain('INSERT INTO conversation_drafts')
+    expect(state.lastSql).toContain('ON CONFLICT(conversation_id) DO UPDATE')
+    expect(state.lastParams[0]).toBe('c102')
+    expect(state.lastParams[1]).toBe('草稿文本')
+    expect(typeof state.lastParams[2]).toBe('number')
+    expect((state.lastParams[2] as number) > 0).toBe(true)
+  })
+
+  it('setDraft：空串 → DELETE 草稿行（发送/手动清空）', () => {
+    conversationRepo.setDraft('c103', '')
+    expect(state.lastSql).toContain('DELETE FROM conversation_drafts WHERE conversation_id=?')
+    expect(state.lastParams).toEqual(['c103'])
+  })
+})
+
+describe('conversationRepo.delete — 草稿级联删除', () => {
+  it('删除会话事务内同步删除 messages/fts/草稿/会话四步', () => {
+    conversationRepo.delete('c200')
+    expect(state.transactionRuns).toBe(1)
+    expect(state.runSqls.some((s) => s.includes('DELETE FROM conversation_drafts WHERE conversation_id=?'))).toBe(true)
+    expect(state.lastSql).toContain('DELETE FROM conversations WHERE id=?')
+    expect(state.lastParams).toEqual(['c200'])
+  })
+})
+
+describe('空会话自动清理（deleteIfEmpty / cleanupEmptyConversations）', () => {
+  it('deleteIfEmpty：SQL 含四重守卫（自动标题/未置顶/无消息/无草稿）+ 绑定 id，changes=1→true', () => {
+    state.runChanges = 1
+    const deleted = conversationRepo.deleteIfEmpty('c300')
+    expect(deleted).toBe(true)
+    expect(state.lastSql).toContain('DELETE FROM conversations')
+    expect(state.lastSql).toContain('id=? AND title_default=1 AND pinned=0')
+    expect(state.lastSql).toContain('NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)')
+    expect(state.lastSql).toContain('NOT EXISTS (SELECT 1 FROM conversation_drafts WHERE conversation_id = conversations.id)')
+    expect(state.lastParams).toEqual(['c300'])
+  })
+
+  it('deleteIfEmpty：守卫未命中（已重命名/置顶/有消息/有草稿）changes=0 → false', () => {
+    state.runChanges = 0
+    expect(conversationRepo.deleteIfEmpty('c301')).toBe(false)
+    expect(state.lastParams).toEqual(['c301'])
+  })
+
+  it('cleanupEmptyConversations：全局清扫无 id 绑定、守卫同款，返回删除条数', () => {
+    state.runChanges = 3
+    const count = conversationRepo.cleanupEmptyConversations()
+    expect(count).toBe(3)
+    expect(state.lastSql).toContain('DELETE FROM conversations')
+    expect(state.lastSql).toContain('title_default=1 AND pinned=0')
+    expect(state.lastSql).toContain('NOT EXISTS (SELECT 1 FROM messages')
+    expect(state.lastSql).toContain('NOT EXISTS (SELECT 1 FROM conversation_drafts')
+    expect(state.lastParams).toEqual([])
   })
 })

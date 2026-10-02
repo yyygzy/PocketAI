@@ -132,6 +132,20 @@ export interface ConversationRecord {
   archivedAt?: number | null
   /** 标题仍是系统占位（首轮消息可自动命名）；手动改名/自动命名完成后为 false */
   titleDefault: boolean
+  /** 列表预览：最新一条消息内容截断（仅 list 查询带出，80 字符内；无消息为 null） */
+  lastMessagePreview?: string | null
+  /** 列表预览：该会话有未发送草稿（仅 list 查询带出） */
+  hasDraft?: boolean
+  /** 所属分组文件夹 id；null=未分组（顶层平铺） */
+  groupId?: string | null
+}
+
+/** 会话分组文件夹（按助手维度归集） */
+export interface ConversationGroupRecord {
+  id: string
+  assistantId: string | null
+  name: string
+  createdAt: number
 }
 
 export interface MessageRecord {
@@ -152,6 +166,21 @@ export interface MessageRecord {
   sources?: MessageSource[] | null
   /** token 用量（provider 返回，assistant 消息记录；旧数据为 null） */
   usage?: UsageStats | null
+  /** 引用回复：本条消息引用的同会话另一条消息 id（user 消息记录；未引用为 null） */
+  replyToId?: string | null
+  /** 收藏星标：用户标记的重要消息（旧数据为 false） */
+  starred?: boolean
+}
+
+/** 收藏列表项（精简结构，侧边栏收藏视图预览用；按 createdAt 倒序） */
+export interface StarredMessageItem {
+  id: string
+  conversationId: string
+  /** 所属会话标题；会话已删除时为空串 */
+  conversationTitle: string
+  role: MessageRole
+  content: string
+  createdAt: number
 }
 
 /** 单次生成的 token 用量（provider 流式末尾返回的 usage） */
@@ -801,6 +830,8 @@ export interface SendMessagePayload {
   attachments?: ChatAttachment[] // 图片/文档附件
   /** 无人值守场景（如 IM 通道）：需人工确认的工具不弹窗等待，直接返回错误 */
   unattended?: boolean
+  /** 引用回复：本条用户消息引用的同会话另一条消息 id */
+  replyToId?: string | null
 }
 
 /** 聊天附件（图片或文档） */
@@ -1415,12 +1446,16 @@ export interface BackupRunResult {
   ok: boolean
   at: number
   filename?: string
+  /** 本次成功后轮转删除的旧全量包份数 */
+  pruned?: number
   error?: string
 }
 
 export interface BackupScheduleStatus {
   enabled: boolean
   intervalHours: number
+  /** 保留最近 N 份全量包，0=不自动清理 */
+  retentionCount: number
   lastRunAt: number | null
   lastResult: BackupRunResult | null
 }
@@ -1502,6 +1537,7 @@ export const IPC = {
   CONVERSATION_SET_ARCHIVED: 'conversation:set-archived',
   CONVERSATION_CREATE: 'conversation:create',
   CONVERSATION_DELETE: 'conversation:delete',
+  CONVERSATION_BATCH_DELETE: 'conversation:batch-delete',
   CONVERSATION_RENAME: 'conversation:rename',
   CONVERSATION_EXPORT: 'conversation:export',
   CONVERSATION_EXPORT_MD: 'conversation:export-md',
@@ -1515,11 +1551,22 @@ export const IPC = {
   CONVERSATION_FORK: 'conversation:fork',
   CONVERSATION_SMART_TITLE_GET: 'conversation:smart-title-get',
   CONVERSATION_SMART_TITLE_SET: 'conversation:smart-title-set',
+  CONVERSATION_DRAFT_GET: 'conversation:draft-get', // 读取会话未发送草稿
+  CONVERSATION_DRAFT_SET: 'conversation:draft-set', // 保存草稿（空串=清除）
+  CONVERSATION_DELETE_IF_EMPTY: 'conversation:delete-if-empty', // 守卫删除空会话（0消息0草稿/自动标题/未置顶）
+  CONVERSATION_CLEANUP_EMPTY: 'conversation:cleanup-empty', // 启动全局清扫空会话
+  CONVERSATION_GROUP_LIST: 'conversation:group-list', // 分组文件夹列表（按助手过滤）
+  CONVERSATION_GROUP_CREATE: 'conversation:group-create',
+  CONVERSATION_GROUP_RENAME: 'conversation:group-rename',
+  CONVERSATION_GROUP_DELETE: 'conversation:group-delete', // 解散组（组内会话回到未分组，不删内容）
+  CONVERSATION_SET_GROUP: 'conversation:set-group', // 移动会话到组（groupId=null 移出）
 
   MESSAGE_LIST: 'message:list',
   MESSAGE_DELETE: 'message:delete',
   MESSAGE_TRUNCATE_FROM: 'message:truncate-from', // 截断重跑：删除目标消息及其后全部消息
   MESSAGE_SEARCH: 'message:search',
+  MESSAGE_SET_STARRED: 'message:set-starred', // 收藏星标：标记/取消重要消息
+  MESSAGE_LIST_STARRED: 'message:list-starred', // 收藏列表：跨会话统一查看（时间倒序）
   USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
   USAGE_CONVERSATIONS: 'usage:conversations', // 会话维度用量排行（标题/次数/token/费用）
   USAGE_ASSISTANTS: 'usage:assistants', // 助手维度用量排行（名称/次数/token/费用）

@@ -20,8 +20,10 @@ import {
   noteManualBackup,
   tick,
   initBackupScheduler,
-  stopBackupScheduler
+  stopBackupScheduler,
+  selectPrunableBackups
 } from '../src/main/backup/backup-scheduler'
+import type { WebDAVBackupFile } from '../src/shared/types'
 
 // ---------- mock 工厂 ----------
 
@@ -39,6 +41,12 @@ const mocks = vi.hoisted(() => ({
   backupError: null as Error | null,
   backupImpl: null as null | (() => Promise<{ filename: string; size: number; encrypted: boolean }>),
   backupCalls: 0,
+  // 轮转：远端清单 / 已删文件名 / 删除行为
+  listResult: [] as WebDAVBackupFile[],
+  listError: null as Error | null,
+  deleted: [] as string[],
+  deleteError: null as Error | null,
+  deleteFailOnce: false,
   reset() {
     this.config.clear()
     this.configGetThrows = false
@@ -49,6 +57,11 @@ const mocks = vi.hoisted(() => ({
     this.backupError = null
     this.backupImpl = null
     this.backupCalls = 0
+    this.listResult = []
+    this.listError = null
+    this.deleted = []
+    this.deleteError = null
+    this.deleteFailOnce = false
   }
 }))
 
@@ -79,6 +92,18 @@ vi.mock('../src/main/backup/backup-service', () => ({
     if (mocks.backupError) throw mocks.backupError
     if (mocks.backupResult) return mocks.backupResult
     throw new Error('未配置 WebDAV')
+  },
+  listWebDAVBackups: async () => {
+    if (mocks.listError) throw mocks.listError
+    return mocks.listResult
+  },
+  deleteWebDAVBackup: async (_cfg: unknown, filename: string) => {
+    if (mocks.deleteFailOnce) {
+      mocks.deleteFailOnce = false
+      throw new Error('403')
+    }
+    if (mocks.deleteError) throw mocks.deleteError
+    mocks.deleted.push(filename)
   }
 }))
 
@@ -154,6 +179,23 @@ describe('setBackupSchedule 配置写入', () => {
     setBackupSchedule({ intervalHours: -3 })
     expect(mocks.config.get('backup.schedule_interval_hours')).toBeUndefined()
   })
+
+  it('retentionCount：0/合法值写入，超 100 与负数忽略；get 解析兜底 0 并钳到 100', () => {
+    setBackupSchedule({ retentionCount: 0 })
+    expect(mocks.config.get('backup.retention_count')).toBe('0')
+    expect(getBackupSchedule().retentionCount).toBe(0)
+    setBackupSchedule({ retentionCount: 10 })
+    expect(getBackupSchedule().retentionCount).toBe(10)
+    setBackupSchedule({ retentionCount: 999 })
+    expect(mocks.config.get('backup.retention_count')).toBe('10') // 未写入，保持 10
+    setBackupSchedule({ retentionCount: -1 })
+    expect(mocks.config.get('backup.retention_count')).toBe('10')
+    // 存量脏数据（超上限/非数）兜底
+    mocks.config.set('backup.retention_count', '500')
+    expect(getBackupSchedule().retentionCount).toBe(100)
+    mocks.config.set('backup.retention_count', 'abc')
+    expect(getBackupSchedule().retentionCount).toBe(0)
+  })
 })
 
 // ---------- runScheduledBackup ----------
@@ -172,7 +214,7 @@ describe('runScheduledBackup 执行与互斥', () => {
     // 持久化
     expect(Number(mocks.config.get('backup.last_run_at'))).toBe(r!.at)
     const stored = JSON.parse(mocks.config.get('backup.last_result')!)
-    expect(stored).toEqual({ ok: true, at: r!.at, filename: 'b.zip' })
+    expect(stored).toEqual({ ok: true, at: r!.at, filename: 'b.zip', pruned: 0 })
   })
 
   it('失败路径：loadWebDAVConfig 返回 null → 抛错 → {ok:false,at,error}，仍持久化', async () => {
@@ -209,6 +251,119 @@ describe('runScheduledBackup 执行与互斥', () => {
     resolveFirst({ filename: 'x.zip', size: 1, encrypted: false })
     const r1 = await p1
     expect(r1?.ok).toBe(true)
+  })
+})
+
+// ---------- selectPrunableBackups ----------
+
+const fullFile = (name: string, mtime: number): WebDAVBackupFile => ({
+  name, mtime, size: 1, encrypted: false, kind: 'full'
+})
+const incFile = (name: string, mtime: number): WebDAVBackupFile => ({
+  name, mtime, size: 1, encrypted: false, kind: 'incremental'
+})
+
+describe('selectPrunableBackups 轮转决策', () => {
+  it('keep<=0 / 非法 → 空数组（关闭轮转）', () => {
+    expect(selectPrunableBackups([fullFile('a.zip', 1)], 0)).toEqual([])
+    expect(selectPrunableBackups([fullFile('a.zip', 1)], -3)).toEqual([])
+    expect(selectPrunableBackups([fullFile('a.zip', 1)], NaN)).toEqual([])
+  })
+
+  it('全量份数不超过 keep → 空数组', () => {
+    const files = [fullFile('new.zip', 300), fullFile('old.zip', 100)]
+    expect(selectPrunableBackups(files, 2)).toEqual([])
+    expect(selectPrunableBackups(files, 5)).toEqual([])
+  })
+
+  it('超出 keep：返回最旧优先（mtime 升序）的删除列表', () => {
+    const files = [
+      fullFile('d.zip', 400), fullFile('c.zip', 300), fullFile('b.zip', 200), fullFile('a.zip', 100)
+    ]
+    expect(selectPrunableBackups(files, 2)).toEqual(['a.zip', 'b.zip'])
+  })
+
+  it('输入乱序也按 mtime 决策', () => {
+    const files = [
+      fullFile('a.zip', 100), fullFile('d.zip', 400), fullFile('b.zip', 200), fullFile('c.zip', 300)
+    ]
+    expect(selectPrunableBackups(files, 1)).toEqual(['a.zip', 'b.zip', 'c.zip'])
+  })
+
+  it('incremental 不参与计数也永不删除', () => {
+    const files = [
+      incFile('pocketai-inc-1.json', 400),
+      fullFile('d.zip', 350), fullFile('c.zip', 300), fullFile('b.zip', 200), fullFile('a.zip', 100)
+    ]
+    expect(selectPrunableBackups(files, 2)).toEqual(['a.zip', 'b.zip'])
+  })
+
+  it('justUploaded 兜底排除：新包因时钟漂移落入待删区时被救回（宁可少删）', () => {
+    const files = [
+      fullFile('old1.zip', 300), fullFile('old2.zip', 200),
+      fullFile('fresh.zip', 50) // 时钟漂移导致新包 mtime 最旧
+    ]
+    // 无排除时 fresh.zip 会被删；带 justUploaded 后待删列表为空
+    expect(selectPrunableBackups(files, 2)).toEqual(['fresh.zip'])
+    expect(selectPrunableBackups(files, 2, 'fresh.zip')).toEqual([])
+  })
+})
+
+// ---------- runScheduledBackup 轮转集成 ----------
+
+describe('runScheduledBackup 备份后轮转', () => {
+  it('retention=2 + 4 全量 1 增量（含本次新包）：删最旧 2 个全量、增量不动、pruned=2', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.config.set('backup.retention_count', '2')
+    mocks.backupResult = { filename: 'pocketai-backup-new.zip', size: 1, encrypted: false }
+    mocks.listResult = [
+      fullFile('pocketai-backup-new.zip', 500),
+      incFile('pocketai-inc-1.json', 450),
+      fullFile('pocketai-backup-3.zip', 400),
+      fullFile('pocketai-backup-2.zip', 300),
+      fullFile('pocketai-backup-1.zip', 200)
+    ]
+    const r = await runScheduledBackup()
+    expect(r?.ok).toBe(true)
+    expect(r?.pruned).toBe(2)
+    expect(mocks.deleted).toEqual(['pocketai-backup-1.zip', 'pocketai-backup-2.zip'])
+  })
+
+  it('retention=0（默认）：不列举不删除，pruned=0', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backupResult = { filename: 'b.zip', size: 1, encrypted: false }
+    mocks.listResult = [fullFile('should-not-list.zip', 1)] // 即便有清单也不应被消费
+    const r = await runScheduledBackup()
+    expect(r?.ok).toBe(true)
+    expect(r?.pruned).toBe(0)
+    expect(mocks.deleted).toEqual([])
+  })
+
+  it('单个删除抛错：备份仍成功，pruned 只计成功数，后续删除继续', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.config.set('backup.retention_count', '1')
+    mocks.backupResult = { filename: 'new.zip', size: 1, encrypted: false }
+    mocks.listResult = [
+      fullFile('new.zip', 400), fullFile('mid.zip', 300),
+      fullFile('old.zip', 200), fullFile('oldest.zip', 100)
+    ]
+    // 待删顺序 oldest→old→mid；第一次（oldest）抛错后恢复，后续两个继续删
+    mocks.deleteFailOnce = true
+    const r = await runScheduledBackup()
+    expect(r?.ok).toBe(true)
+    expect(r?.pruned).toBe(2)
+    expect(mocks.deleted).toEqual(['old.zip', 'mid.zip'])
+  })
+
+  it('列举抛错：不影响备份成功，pruned=0', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.config.set('backup.retention_count', '2')
+    mocks.backupResult = { filename: 'b.zip', size: 1, encrypted: false }
+    mocks.listError = new Error('PROPFIND 500')
+    const r = await runScheduledBackup()
+    expect(r?.ok).toBe(true)
+    expect(r?.pruned).toBe(0)
+    expect(mocks.deleted).toEqual([])
   })
 })
 

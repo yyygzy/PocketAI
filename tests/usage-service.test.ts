@@ -13,7 +13,7 @@ vi.mock('../src/main/db/database', () => ({
   dbService: { getHandle: () => ({ prepare: () => ({ all: () => [], get: () => undefined, run: () => {} }) }) }
 }))
 
-import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, aggregateUsageDetail, type UsageRow, type UsageConversationRow, type UsageAssistantRow, type UsageDetailRow } from '../src/main/usage/usage-service'
+import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, aggregateUsageDetail, buildUsageDetailScope, type UsageRow, type UsageConversationRow, type UsageAssistantRow, type UsageDetailRow } from '../src/main/usage/usage-service'
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   provider: 'openai',
@@ -381,5 +381,43 @@ describe('aggregateUsageDetail', () => {
     ], prices)
     expect(items[0]!.cost).toBe(0.0004)
     expect(items[1]!.cost).toBe(0)
+  })
+})
+
+describe('buildUsageDetailScope — 明细维度过滤拼装', () => {
+  it('双参数 undefined → 无过滤（CSV 全量导出）', () => {
+    const s = buildUsageDetailScope()
+    expect(s.sql).toBe('')
+    expect(s.vals).toEqual([])
+  })
+
+  it('仅 conversationId → 按会话过滤', () => {
+    const s = buildUsageDetailScope('c1')
+    expect(s.sql).toBe(' AND m.conversation_id = ?')
+    expect(s.vals).toEqual(['c1'])
+  })
+
+  it('仅 assistantId → 按助手过滤', () => {
+    const s = buildUsageDetailScope(undefined, 'a1')
+    expect(s.sql).toBe(' AND c.assistant_id = ?')
+    expect(s.vals).toEqual(['a1'])
+  })
+
+  it('assistantId=null → 自由会话 IS NULL 过滤（无占位符）', () => {
+    const s = buildUsageDetailScope(undefined, null)
+    expect(s.sql).toBe(' AND c.assistant_id IS NULL')
+    expect(s.vals).toEqual([])
+  })
+
+  it('会话+助手同时给 → 双条件且参数顺序会话在前', () => {
+    const s = buildUsageDetailScope('c1', 'a1')
+    expect(s.sql).toBe(' AND m.conversation_id = ? AND c.assistant_id = ?')
+    expect(s.vals).toEqual(['c1', 'a1'])
+  })
+
+  it('assistantId=空串 → 不过滤（falsy 与 undefined 同口径）', () => {
+    const s = buildUsageDetailScope(undefined, '')
+    expect(s.sql).toBe('')
+    expect(s.vals).toEqual([])
   })
 })

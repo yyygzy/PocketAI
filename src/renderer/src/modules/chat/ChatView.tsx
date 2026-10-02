@@ -49,6 +49,20 @@ function groupBatches(replies: MessageRecord[]): MessageRecord[][] {
   return batches
 }
 
+/**
+ * 会话内搜索：返回 content 包含关键词（不区分大小写）的消息 id 列表，按消息原顺序。
+ * 关键词 trim 后为空 → 空数组；纯前端实现，messages 已在内存。
+ */
+export function findMatchIds(messages: MessageRecord[], keyword: string): string[] {
+  const kw = keyword.trim().toLowerCase()
+  if (!kw) return []
+  const out: string[] = []
+  for (const m of messages) {
+    if (m.content && m.content.toLowerCase().includes(kw)) out.push(m.id)
+  }
+  return out
+}
+
 export interface FocusBranch {
   turnKey: string
   batchId: string
@@ -77,6 +91,22 @@ interface Props {
   focusBranch?: FocusBranch | null
   /** 搜索跳转定位：加载会话后滚动到匹配消息并临时高亮 */
   focusMessageId?: string | null
+  /** 当前待回复的引用消息（Composer 显示引用条） */
+  replyToMessage?: MessageRecord | null
+  /** 设置/清除引用消息 */
+  onReply?: (msg: MessageRecord | null) => void
+  /** 切换消息收藏星标（IPC 落库由父级负责） */
+  onToggleStar?: (id: string, starred: boolean) => void
+  /** 批量收藏/取消收藏选中消息（starred=选中含任一未收藏时传 true，全已收藏时 false） */
+  onBatchToggleStar?: (ids: string[], starred: boolean) => void
+  /** 草稿归属会话 id（切换时 Composer 提交旧会话+回填新会话） */
+  draftKey?: string
+  /** 当前会话已保存草稿 */
+  draft?: string
+  /** 草稿文本变化（防抖落库；空串立即清除） */
+  onDraftChange?: (text: string) => void
+  /** 切会话时同步提交旧会话草稿 */
+  onDraftCommit?: (convId: string, text: string) => void
 }
 
 export const ChatView: React.FC<Props> = ({
@@ -98,9 +128,30 @@ export const ChatView: React.FC<Props> = ({
   onForkConversation,
   onSaveAsNote,
   focusBranch,
-  focusMessageId
+  focusMessageId,
+  replyToMessage,
+  onReply,
+  onToggleStar,
+  onBatchToggleStar,
+  draftKey,
+  draft,
+  onDraftChange,
+  onDraftCommit
 }) => {
   const { t } = useI18n()
+  // 被引用消息快速查找表（用于气泡顶部显示引用条）
+  const msgById = useMemo(() => {
+    const m = new Map<string, MessageRecord>()
+    for (const mm of messages) m.set(mm.id, mm)
+    return m
+  }, [messages])
+  const replyPreview = (id: string | null | undefined): MessageRecord | null =>
+    id ? msgById.get(id) ?? null : null
+  // MessageBubble 传 messageId，这里查找完整消息后交父级设置引用状态
+  const handleReply = useCallback((id: string) => {
+    const m = msgById.get(id)
+    if (m) onReply?.(m)
+  }, [msgById, onReply])
   const scrollBoxRef = useRef<HTMLDivElement>(null)
   const streaming = liveColumns !== null
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新，避免竞态抖动）
@@ -113,6 +164,11 @@ export const ChatView: React.FC<Props> = ({
   /** 处于并排对比模式的轮次（turnKey 集合） */
   const [compareTurns, setCompareTurns] = useState<Set<string>>(new Set())
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
+  // 会话内搜索：开关/关键词/当前命中下标
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [curMatchIdx, setCurMatchIdx] = useState(0)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   /** 本机单价配置：气泡 token 微展示命中单价时附带估算费用；拉取失败静默只显示 token */
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
   useEffect(() => {
@@ -168,6 +224,18 @@ export const ChatView: React.FC<Props> = ({
     onDeleteMessages(Array.from(selectedIds))
     setSelectedIds(new Set())
   }, [selectedIds, onDeleteMessages])
+
+  /**
+   * 批量星标：选中中存在任一条未收藏 → 全部收藏；全部已收藏 → 全部取消。
+   * 完成后清空选择。
+   */
+  const selectedList = messages.filter((m) => selectedIds.has(m.id))
+  const allSelectedStarred = selectedList.length > 0 && selectedList.every((m) => m.starred)
+  const handleBatchStar = useCallback(() => {
+    if (selectedIds.size === 0) return
+    onBatchToggleStar?.(Array.from(selectedIds), !allSelectedStarred)
+    setSelectedIds(new Set())
+  }, [selectedIds, allSelectedStarred, onBatchToggleStar])
 
   const handleDeleteOne = useCallback((id: string) => {
     onDeleteMessage(id)
@@ -310,6 +378,82 @@ export const ChatView: React.FC<Props> = ({
 
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
 
+  // 会话内搜索命中列表（按消息顺序）
+  const matchIds = useMemo(() => findMatchIds(messages, searchKeyword), [messages, searchKeyword])
+
+  // 关键词变化时重置到第一个命中
+  useEffect(() => {
+    setCurMatchIdx(0)
+  }, [searchKeyword])
+
+  // 跳转到第 dir 个命中（dir=1 下一个，-1 上一个，循环）
+  const gotoMatch = useCallback(
+    (dir: 1 | -1) => {
+      if (matchIds.length === 0) return
+      setCurMatchIdx((prev) => {
+        const next = (prev + dir + matchIds.length) % matchIds.length
+        const mid = matchIds[next]
+        if (!mid) return prev
+        const idx = renderedTurns.findIndex(
+          (t) => t.user?.id === mid || t.replies.some((r) => r.id === mid)
+        )
+        if (idx >= 0) {
+          virtualizer.scrollToIndex(idx, { align: 'center' })
+          setHighlightMsgId(mid)
+          setTimeout(() => setHighlightMsgId(null), 2000)
+        }
+        return next
+      })
+    },
+    [matchIds, renderedTurns, virtualizer]
+  )
+
+  // 点击引用条：跳转到被引用消息并临时高亮
+  const onJumpToReply = useCallback((targetId: string) => {
+    const idx = renderedTurns.findIndex(
+      (t) => t.user?.id === targetId || t.replies.some((r) => r.id === targetId)
+    )
+    if (idx >= 0) {
+      virtualizer.scrollToIndex(idx, { align: 'center' })
+      setHighlightMsgId(targetId)
+      setTimeout(() => setHighlightMsgId(null), 2000)
+    }
+  }, [renderedTurns, virtualizer])
+
+  // 打开搜索并聚焦输入框
+  const openSearch = useCallback(() => {
+    setSearchOpen(true)
+    setTimeout(() => searchInputRef.current?.focus(), 0)
+  }, [])
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    setSearchKeyword('')
+    setCurMatchIdx(0)
+  }, [])
+
+  // 搜索快捷键：Ctrl/Cmd+F 打开；打开后 Enter 下一个 / Shift+Enter 上一个 / Esc 关闭
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        openSearch()
+        return
+      }
+      if (!searchOpen) return
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeSearch()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        gotoMatch(e.shiftKey ? -1 : 1)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [searchOpen, openSearch, closeSearch, gotoMatch])
+
   // 本会话累计用量（账单口径：含分支重跑全部批次；旧消息无 usage 自然不计）
   const sessionUsage = useMemo(() => sumMessagesUsage(messages, pricing), [messages, pricing])
   const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
@@ -337,7 +481,62 @@ export const ChatView: React.FC<Props> = ({
           onChange={onTargetsChange}
           disabled={streaming}
         />
+        <button
+          onClick={openSearch}
+          className="ml-auto p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+          title={t('chatview.searchInConversation')}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+        </button>
       </div>
+
+      {/* 会话内搜索条 */}
+      {searchOpen && (
+        <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-hover-overlay)]">
+          <input
+            ref={searchInputRef}
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            placeholder={t('chatview.searchPlaceholder')}
+            className="flex-1 min-w-0 px-2 py-1 text-sm rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+          />
+          <span className="text-xs text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">
+            {matchIds.length === 0 ? '0/0' : `${curMatchIdx + 1}/${matchIds.length}`}
+          </span>
+          <button
+            onClick={() => gotoMatch(-1)}
+            disabled={matchIds.length === 0}
+            className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-sidebar)] disabled:opacity-30"
+            title={t('chatview.searchPrev')}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m18 15-6-6-6 6" />
+            </svg>
+          </button>
+          <button
+            onClick={() => gotoMatch(1)}
+            disabled={matchIds.length === 0}
+            className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-sidebar)] disabled:opacity-30"
+            title={t('chatview.searchNext')}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+          <button
+            onClick={closeSearch}
+            className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-sidebar)]"
+            title={t('common.close')}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* 批量操作栏（选中消息时显示） */}
       {selectedIds.size > 0 && (
@@ -357,6 +556,14 @@ export const ChatView: React.FC<Props> = ({
           >
             {t('common.copySelected')}
           </button>
+          {onBatchToggleStar && (
+            <button
+              onClick={handleBatchStar}
+              className="text-xs px-2 py-1 rounded text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
+            >
+              {allSelectedStarred ? t('common.unstarSelected') : t('common.starSelected')}
+            </button>
+          )}
           <button
             onClick={handleDeleteSelected}
             className="text-xs px-2 py-1 rounded text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] transition-colors"
@@ -444,6 +651,8 @@ export const ChatView: React.FC<Props> = ({
                         content={turn.user.content}
                         messageId={turn.user.id}
                         attachments={turn.user.attachments}
+                        replyTo={replyPreview(turn.user.replyToId)}
+                        onJumpToReply={onJumpToReply}
                         selected={selectedIds.has(turn.user.id)}
                         highlight={highlightMsgId === turn.user.id}
                         onToggleSelect={toggleSelect}
@@ -451,6 +660,9 @@ export const ChatView: React.FC<Props> = ({
                         onResend={onResend}
                         onFork={onForkConversation}
                         onSaveAsNote={onSaveAsNote}
+                        onReply={handleReply}
+                        starred={turn.user.starred}
+                        onToggleStar={onToggleStar}
                       />
                     )}
                     {comparing ? (
@@ -474,6 +686,8 @@ export const ChatView: React.FC<Props> = ({
                         usage={msg.usage ?? null}
                         provider={msg.provider ?? null}
                         pricing={pricing}
+                        replyTo={replyPreview(msg.replyToId)}
+                        onJumpToReply={onJumpToReply}
                         selected={selectedIds.has(msg.id)}
                         highlight={highlightMsgId === msg.id}
                         onToggleSelect={toggleSelect}
@@ -481,6 +695,9 @@ export const ChatView: React.FC<Props> = ({
                         onRegenerate={onRegenerate}
                         onFork={onForkConversation}
                         onSaveAsNote={onSaveAsNote}
+                        onReply={handleReply}
+                        starred={msg.starred}
+                        onToggleStar={onToggleStar}
                       />
                     ) : activeBatch.length > 1 ? (
                       <ComparisonColumns
@@ -516,7 +733,18 @@ export const ChatView: React.FC<Props> = ({
         </div>
       </div>
 
-      <Composer streaming={streaming} canSend={canSend} onSend={onSend} onStop={onStop} />
+      <Composer
+        streaming={streaming}
+        canSend={canSend}
+        onSend={onSend}
+        onStop={onStop}
+        replyTo={replyToMessage ?? null}
+        onCancelReply={() => onReply?.(null)}
+        draftKey={draftKey ?? ''}
+        draft={draft}
+        onDraftChange={onDraftChange}
+        onDraftCommit={onDraftCommit}
+      />
 
       {/* 输入框下方：对话配置条（技能/知识库/工具权限/临时提示词） */}
       <div className="shrink-0 px-4 pb-3">

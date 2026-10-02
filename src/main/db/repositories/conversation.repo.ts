@@ -17,6 +17,12 @@ interface ConversationRow {
   archived?: number
   archived_at?: number | null
   title_default?: number
+  /** 列表预览列（仅 list 查询带出）：最新一条消息内容截断 */
+  last_preview?: string | null
+  /** 列表预览列（仅 list 查询带出）：是否有未发送草稿 */
+  has_draft?: number
+  /** v37：所属分组文件夹 id；NULL=未分组 */
+  group_id?: string | null
 }
 
 export function rowToRecord(row: ConversationRow): ConversationRecord {
@@ -31,7 +37,10 @@ export function rowToRecord(row: ConversationRow): ConversationRecord {
     pinned: !!row.pinned,
     archived: !!row.archived,
     archivedAt: row.archived_at ?? null,
-    titleDefault: row.title_default !== 0
+    titleDefault: row.title_default !== 0,
+    lastMessagePreview: row.last_preview ?? null,
+    hasDraft: !!row.has_draft,
+    groupId: row.group_id ?? null
   }
 }
 
@@ -65,12 +74,23 @@ export function buildConvListQuery(args: ConvListArgs): { where: string; vals: u
 }
 
 export const conversationRepo = {
-  /** 列出会话；assistantId 给定时按助手归集；isAgent 控制是否只列 Agent 会话；archivedOnly 切换归档区 */
+  /** 列出会话；assistantId 给定时按助手归集；isAgent 控制是否只列 Agent 会话；archivedOnly 切换归档区。
+   *  单条 SQL 关联子查询带出最新一条消息预览（80 字符、换行折叠为空格），避免逐会话 N+1 查询 */
   list(assistantId?: string, isAgent?: boolean, opts: { archivedOnly?: boolean } = {}): ConversationRecord[] {
     const { where, vals, orderBy } = buildConvListQuery({ assistantId, isAgent, archivedOnly: opts.archivedOnly })
     const rows = dbService
       .getHandle()
-      .prepare(`SELECT * FROM conversations${where} ORDER BY ${orderBy}`)
+      .prepare(
+        `SELECT c.*, (
+           SELECT substr(replace(replace(m.content, char(13), ' '), char(10), ' '), 1, 80)
+           FROM messages m
+           WHERE m.conversation_id = c.id
+           ORDER BY m.created_at DESC, m.rowid DESC
+           LIMIT 1
+         ) AS last_preview,
+         EXISTS(SELECT 1 FROM conversation_drafts d WHERE d.conversation_id = c.id) AS has_draft
+         FROM conversations c${where} ORDER BY ${orderBy}`
+      )
       .all(...vals) as ConversationRow[]
     return rows.map(rowToRecord)
   },
@@ -154,9 +174,71 @@ export const conversationRepo = {
       // 级联删除消息（FTS 触发器自动同步）
       db.prepare('DELETE FROM messages WHERE conversation_id=?').run(id)
       db.prepare('DELETE FROM messages_fts WHERE conversation_id=?').run(id)
+      // 级联删除未发送草稿
+      db.prepare('DELETE FROM conversation_drafts WHERE conversation_id=?').run(id)
       db.prepare('DELETE FROM conversations WHERE id=?').run(id)
     })
     tx()
+  },
+
+  /** 读取会话未发送草稿；无草稿返回空串 */
+  getDraft(id: string): string {
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT draft FROM conversation_drafts WHERE conversation_id=?')
+      .get(id) as { draft: string } | undefined
+    return row?.draft ?? ''
+  },
+
+  /** 保存草稿（UPSERT）；空串删除草稿行（发送后/手动清空） */
+  setDraft(id: string, text: string): void {
+    const handle = dbService.getHandle()
+    if (!text) {
+      handle.prepare('DELETE FROM conversation_drafts WHERE conversation_id=?').run(id)
+      return
+    }
+    handle
+      .prepare(
+        `INSERT INTO conversation_drafts (conversation_id, draft, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(conversation_id) DO UPDATE SET draft = excluded.draft, updated_at = excluded.updated_at`
+      )
+      .run(id, text, Date.now())
+  },
+
+  /**
+   * 空会话守卫删除：仅删除「自动标题 + 未置顶 + 0 消息 + 0 草稿」的行。
+   * 守卫保证无消息/无草稿，无需走 delete() 的事务级联；返回是否真的删到。
+   * 切会话时由渲染端对前一个会话调用，防止点「新对话」未发消息即切走堆积空壳。
+   */
+  deleteIfEmpty(id: string): boolean {
+    const res = dbService
+      .getHandle()
+      .prepare(
+        `DELETE FROM conversations
+         WHERE id=? AND title_default=1 AND pinned=0
+           AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
+           AND NOT EXISTS (SELECT 1 FROM conversation_drafts WHERE conversation_id = conversations.id)`
+      )
+      .run(id) as { changes: number }
+    return res.changes > 0
+  },
+
+  /**
+   * 全局清扫空会话（启动时调用）：活跃/归档区一并清理——
+   * 0 内容 + 自动标题 + 未置顶的归档空行同样是垃圾；返回删除条数。
+   */
+  cleanupEmptyConversations(): number {
+    const res = dbService
+      .getHandle()
+      .prepare(
+        `DELETE FROM conversations
+         WHERE title_default=1 AND pinned=0
+           AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
+           AND NOT EXISTS (SELECT 1 FROM conversation_drafts WHERE conversation_id = conversations.id)`
+      )
+      .run() as { changes: number }
+    return res.changes
   },
 
   /**

@@ -2,7 +2,7 @@
 // 数据来源：messages.usage（chat/agent 生成完成时落库），IPC getUsageSummary 聚合
 // 费用按本机配置的「每 100 万 token 单价」估算，单价仅存本地不上传
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
+import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
@@ -26,6 +26,39 @@ export const UsagePanel: React.FC = () => {
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
   const [showEditor, setShowEditor] = useState(false)
   const [exporting, setExporting] = useState(false)
+  // 逐轮明细弹窗（会话/助手两个维度共用；showConv 控制是否显示「会话」列）
+  const [detail, setDetail] = useState<{ title: string; showConv: boolean } | null>(null)
+  const [detailItems, setDetailItems] = useState<UsageDetailItem[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
+
+  const openDetail = useCallback(async (id: string, title: string) => {
+    setDetail({ title, showConv: false })
+    setDetailLoading(true)
+    setDetailItems([])
+    try {
+      const r = await window.pocketai.getUsageDetail(days, EXPORT_LIMIT, id)
+      setDetailItems(r.items)
+    } catch (e) {
+      reportIpcError('usage.detail')(e)
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [days])
+
+  // 助手维度明细：assistantId 为 null 表示自由会话（排行里聚合为「(未知助手)」）
+  const openAsstDetail = useCallback(async (assistantId: string | null, name: string) => {
+    setDetail({ title: name, showConv: true })
+    setDetailLoading(true)
+    setDetailItems([])
+    try {
+      const r = await window.pocketai.getUsageDetail(days, EXPORT_LIMIT, undefined, assistantId)
+      setDetailItems(r.items)
+    } catch (e) {
+      reportIpcError('usage.detail')(e)
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [days])
 
   const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
 
@@ -211,7 +244,8 @@ export const UsagePanel: React.FC = () => {
                     <th className="py-1 pr-2 font-normal">{t('usage.conversation')}</th>
                     <th className="py-1 pr-2 font-normal text-right">{t('usage.requests')}</th>
                     <th className="py-1 pr-2 font-normal text-right">{t('usage.totalTokens')}</th>
-                    <th className="py-1 font-normal text-right">{t('usage.cost')}</th>
+                    <th className="py-1 pr-2 font-normal text-right">{t('usage.cost')}</th>
+                    <th className="py-1 font-normal text-right">{t('usage.detail')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -230,6 +264,21 @@ export const UsagePanel: React.FC = () => {
                       <td className="py-1.5 text-right font-mono text-[var(--color-accent)]">
                         {c.cost > 0 ? `${currencySymbol}${fmtCost(c.cost)}` : '—'}
                       </td>
+                      <td className="py-1.5 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openDetail(c.conversationId, c.title)
+                          }}
+                          className="text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                          title={t('usage.viewDetail')}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -247,7 +296,8 @@ export const UsagePanel: React.FC = () => {
                     <th className="py-1 pr-2 font-normal">{t('usage.assistant')}</th>
                     <th className="py-1 pr-2 font-normal text-right">{t('usage.requests')}</th>
                     <th className="py-1 pr-2 font-normal text-right">{t('usage.totalTokens')}</th>
-                    <th className="py-1 font-normal text-right">{t('usage.cost')}</th>
+                    <th className="py-1 pr-2 font-normal text-right">{t('usage.cost')}</th>
+                    <th className="py-1 font-normal text-right">{t('usage.detail')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -265,6 +315,22 @@ export const UsagePanel: React.FC = () => {
                       <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(a.totalTokens)}</td>
                       <td className="py-1.5 text-right font-mono text-[var(--color-accent)]">
                         {a.cost > 0 ? `${currencySymbol}${fmtCost(a.cost)}` : '—'}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            // 聚合 key 为 '(未知助手)' 的行对应 assistant_id 为 NULL 的自由会话
+                            openAsstDetail(a.assistantId === '(未知助手)' ? null : a.assistantId, a.name)
+                          }}
+                          className="text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+                          title={t('usage.viewDetail')}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -296,6 +362,101 @@ export const UsagePanel: React.FC = () => {
               onError={(e) => toast.error(t('common.opFailed', { msg: errText(e) }))}
             />
           )}
+        </div>
+      )}
+
+      {/* 逐轮用量明细弹窗（会话/助手维度共用；助手维度多一列「会话」） */}
+      {detail && (
+        <div
+          className="fixed inset-0 z-[9998] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm p-4"
+          onClick={() => setDetail(null)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-[var(--color-text)] truncate">{detail.title}</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">{t('usage.detailSubtitle', { days })}</div>
+              </div>
+              <button
+                onClick={() => setDetail(null)}
+                className="ml-auto p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-sidebar)]"
+                title={t('common.close')}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {detailLoading ? (
+                <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">{t('common.loading')}</div>
+              ) : detailItems.length === 0 ? (
+                <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">{t('usage.detailEmpty')}</div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-[var(--color-surface)]">
+                    <tr className="text-left text-[var(--color-text-muted)]">
+                      <th className="py-2 px-3 font-normal">{t('usage.detailTime')}</th>
+                      {detail.showConv && <th className="py-2 px-3 font-normal">{t('usage.conversation')}</th>}
+                      <th className="py-2 px-3 font-normal">{t('usage.detailModel')}</th>
+                      <th className="py-2 px-3 font-normal text-right">{t('usage.detailIn')}</th>
+                      <th className="py-2 px-3 font-normal text-right">{t('usage.detailOut')}</th>
+                      <th className="py-2 px-3 font-normal text-right">{t('usage.detailCached')}</th>
+                      <th className="py-2 px-3 font-normal text-right">{t('usage.detailTotal')}</th>
+                      <th className="py-2 px-3 font-normal text-right">{t('usage.cost')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailItems.map((m, i) => (
+                      <tr key={i} className="border-t border-[var(--color-border)]">
+                        <td className="py-1.5 px-3 text-[var(--color-text-muted)] whitespace-nowrap">
+                          {new Date(m.createdAt).toLocaleString()}
+                        </td>
+                        {detail.showConv && (
+                          <td className="py-1.5 px-3 text-[var(--color-text)] truncate max-w-[120px]" title={m.conversationTitle}>
+                            {m.conversationTitle}
+                          </td>
+                        )}
+                        <td className="py-1.5 px-3 text-[var(--color-text)] truncate max-w-[140px]" title={`${m.provider}/${m.model}`}>
+                          {m.model}
+                        </td>
+                        <td className="py-1.5 px-3 text-right font-mono text-[var(--color-text)]">{m.promptTokens.toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono text-[var(--color-text)]">{m.completionTokens.toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono text-[var(--color-text-muted)]">{m.cachedTokens.toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono text-[var(--color-text)]">{m.totalTokens.toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono text-[var(--color-accent)]">
+                          {m.cost > 0 ? `${currencySymbol}${fmtCost(m.cost)}` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-[var(--color-border)] font-semibold">
+                      <td className="py-2 px-3 text-[var(--color-text)]" colSpan={detail.showConv ? 3 : 2}>{t('usage.detailTotal')}</td>
+                      <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
+                        {detailItems.reduce((s, m) => s + m.promptTokens, 0).toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
+                        {detailItems.reduce((s, m) => s + m.completionTokens, 0).toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono text-[var(--color-text-muted)]">
+                        {detailItems.reduce((s, m) => s + m.cachedTokens, 0).toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
+                        {detailItems.reduce((s, m) => s + m.totalTokens, 0).toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono text-[var(--color-accent)]">
+                        {currencySymbol}{fmtCost(detailItems.reduce((s, m) => s + m.cost, 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

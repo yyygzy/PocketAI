@@ -227,7 +227,8 @@ class ChatService {
         role: 'user',
         content,
         status: 'done',
-        attachments: payload.attachments
+        attachments: payload.attachments,
+        replyToId: payload.replyToId ?? null
       })
 
       // 2. 会话标题与状态

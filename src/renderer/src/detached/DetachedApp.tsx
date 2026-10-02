@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Workspace } from '../components/Workspace'
 import { ToastProvider } from '../components/ToastProvider'
+import { SelectionToolbar } from '../components/SelectionToolbar'
 import type { ModuleId } from '../components/Sidebar'
 import { useI18n } from '../i18n'
 import { reportIpcError } from '../utils/ipc'
@@ -96,6 +97,7 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
         className="h-screen w-screen flex flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]"
       >
         <Workspace activeModule={moduleId} />
+        {!locked && <SelectionToolbar />}
 
         {locked && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm">

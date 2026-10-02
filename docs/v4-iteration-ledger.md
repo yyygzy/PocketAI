@@ -43,6 +43,159 @@
 - **方案**：migration v29 knowledge_bases 加 ocr_provider_id/ocr_model（空=关闭，同构 MultiQuery 配置模式）；新增 `src/main/knowledge/ocr.ts`（OCR_SYSTEM_PROMPT 提取文字/表格转 Markdown/不编造；imageMime 纯函数；单图 10MB 上限；ocrImageFile 读文件→base64 data URL→adapter.streamChat 多模态单轮）；KbSourceType 加 'image'，parsers detectSourceType 收图片扩展（parseDocument case 'image' 抛错防御防二进制乱码）；ingestion parseForIngest 分流（未配 OCR 抛小白可读引导错误；PDF 空文本报错细化为「可能是扫描版，请转图片」）；文件对话框 filters + folder-scan 白名单加图片，scanFolderFiles 加 includeImages 参数（KB 未配 OCR 时文件夹导入自动跳过图片防批量报错）；KbForm 新增「OCR 文字识别」配置区块（复制 MultiQuery 模式）+ kb.ocr* 四语 key。
 - **决策记录**：扫描版 PDF 不做（页面转图片需 canvas 原生依赖，便携打包风险大），引导转图片导入；本地 OCR（tesseract）不做（中文质量差+体积大），只走视觉模型 API 零打包体积。
 
+### V4-Iter-54 编辑重发校准 + 消息批量收藏 + 会话分组文件夹（已落地）
+
+- **范围**：用户点名三个候选一起做。调研校准结论：① 用户消息「编辑重发」**早已完整存在**（MessageBubble textarea 编辑态 + handleResend 分支链路 + i18n，零开发仅回归）；② 会话内消息多选框架与批量删除/复制也已存在（selectedIds/全选/操作条/气泡 checkbox），仅缺批量收藏；③ 会话分组文件夹为全新特性，是本批主体。
+- **方案（A 批量收藏）**：ChatView 操作条复制/删除之间加星标按钮——选中消息含任一未收藏显示「收藏选中」、全已收藏显示「取消收藏选中」；新 prop onBatchToggleStar，ChatModule `Promise.all(setMessageStarred)` 后单次 setMessages map（单条失败静默跳过仅同步成功项）；i18n +2 key。
+- **方案（B 分组文件夹）**：
+  - migration v37：新表 `conversation_groups(id PK, assistant_id, name, created_at)` + conversations 加列 `group_id`（NULL=未分组）；无 FK。
+  - 新 repo conversation-group.repo.ts：list（助手口径 asst-default→=值OR IS NULL，created_at ASC）/create（UUID+trim 1-40，assistantId 缺省 null）/rename/delete（事务先 UPDATE conversations SET group_id=NULL 再删组，只解散不删内容）/setConversationGroup（null=移出）；纯函数 buildGroupListWhere 导出供单测；conversation.repo rowToRecord +groupId（list SELECT c.* 天然带出）。
+  - IPC 5 个 safeHandle（GROUP_LIST/CREATE/RENAME/DELETE/SET_GROUP，zod name trim 1-40）+ preload 5 桥接；types ConversationGroupRecord/groupId。
+  - ChatModule：groups state 并入 reloadConversations 的 Promise.all 第三请求（助手切换/初始自动重拉）；create/rename/delete/move 四回调（move 乐观本地 patch 活跃+归档两列表，失败 reload 回滚）；delete 本地同步解绑。
+  - ConversationList：分区仅普通浏览态生效（搜索/收藏/多选/标题过滤平铺）；collapsedGroups 折叠集合（默认全展开，含当前会话的组自动展开）；组按组内最近会话 updatedAt DESC 排（零 sort_order），组内 pinned DESC/updatedAt DESC；空组隐藏不删；未分组标题带为拖出放置目标（有组时才占位）；组头 📁/📂+数量+▶/▼+hover ✏️重命名/🗑解散（confirm 明示会话不删）；原生 HTML5 DnD（同 Sidebar 模式，MIME application/x-pocketai-conv，仅活跃区普通态可拖，归档不拖）；ConvItem ⋯ 菜单扁平追加各文件夹项（当前组 ✓）+移出项兜底无拖拽习惯；工具行 📁＋ 内联输入建组（Enter/Esc/blur）。
+- **决策记录**：组带 assistant_id 同会话口径，跨助手移动不暴露；不做 sort_order——组顺序跟随最近使用更直觉且零维护；归档区不参与分组（归档=离场）；拖拽与菜单双通道保证可达性；编辑重发不重写（台账明确记录已存在防重复立项）。
+- **明确不做**：文件夹嵌套/颜色图标/拖拽排序/手动排序；归档区分组、跨助手移动、文件夹导出；消息批量转发/批量引用；Agent 面板/浮窗批量收藏；编辑重发任何改动。
+
+### V4-Iter-53 空会话自动清理（已落地）
+
+- **范围**：点「新对话」立即在数据库建行，不发消息就切走/切助手会堆积标题为「新对话」/助手名的 0 消息空壳，永久占列表且无任何清理逻辑。本批从「不产生」与「静默回收」两端收口：空会话上再点新对话直接复用、切走时守卫删除、启动全局清扫历史遗留。
+- **方案**：
+  - 数据层（无 migration）：conversationRepo 新增 `deleteIfEmpty(id)`——`DELETE ... WHERE id=? AND title_default=1 AND pinned=0 AND NOT EXISTS(messages) AND NOT EXISTS(conversation_drafts)` 四重守卫，changes>0 返回布尔，守卫保证无子行走普通 DELETE 不需事务级联；`cleanupEmptyConversations()` 同款全局 SQL（不带 id，活跃/归档区都清），返回删除条数。
+  - IPC：`CONVERSATION_DELETE_IF_EMPTY`（idSchema，删除命中才 clearSessionAllow，返 {deleted:boolean}）/ `CONVERSATION_CLEANUP_EMPTY`（无参，返 {deleted:number}）；preload `deleteConversationIfEmpty`/`cleanupEmptyConversations`。
+  - ChatModule 三触发（全静默，零 i18n key 零 toast）：① 新对话复用——handleNewConv 开头判断当前会话「自动标题+未置顶+0 消息」（挂草稿的也复用，草稿随会话保留，建行反制造挂草稿空壳）则只重置引用态直接 return，不建行；② 切走清理——`discardCurrentIfEmpty()` useCallback([]) 读 ref 镜像（messagesRef/convIndexRef 每渲染同步、draftTextRef 为 Iter-52 同步镜像），命中守卫则 fire-and-forget 调 deleteIfEmpty，deleted 后本地过滤两列表，挂在 handleSelectConv/handleSelectMessage/handleSelectAssistant 三入口；③ 启动清扫——初始 listAssistants 后先 cleanupEmptyConversations（catch 报错不阻断）finally 再 reloadConversations(true)，清历史版本与崩溃前 600ms 窗口空壳。
+- **决策记录**：草稿判定用渲染端 draftTextRef 同步值而非查库——避开 Iter-52 草稿 600ms 防抖未落库窗口（SQL NOT EXISTS drafts 作第二重保险）；手动重命名（title_default=0）/置顶（pinned=1）即免疫全部清理路径（用户有意保留的空白板）；归档空行启动时一并物理删除（四重守卫保证零用户内容）；有消息但被手动删光的重命名会话保留（title_default=0 守卫）；无「关闭会话」概念、无确认弹窗、无定时清扫。
+- **明确不做**：不做关闭确认弹窗/清理结果通知；不做定时清扫；不做 Agent/浮窗特殊处理（同库全局清扫天然覆盖）；不动 handleSend 首次发消息建行路径（彼时无「前一个会话」可清）。
+
+### V4-Iter-52 输入草稿持久化（已落地）
+
+- **范围**：输入框写到一半切会话/重启，文本现状只在 Composer 内存里——同次运行切走再切回文本侥幸残留，重启必丢。本批按会话持久化未发送文本：输入 600ms 防抖落库，切会话先同步提交旧会话再回填目标会话草稿，发送后立即清除，会话列表 📝 标记提示有未发送内容。
+- **方案**：
+  - 数据层：migration v36 新增独立表 `conversation_drafts(conversation_id TEXT PRIMARY KEY, draft TEXT NOT NULL, updated_at INTEGER NOT NULL)`——独立表而非 conversations 加列，列表只经 EXISTS 子查询带布尔，不把草稿全文拉进列表行；无外键（与 messages 等同口径），delete 事务内手动级联删草稿；fork 不复制草稿。
+  - conversationRepo：`getDraft(id)`（无行返回 ''）、`setDraft(id,text)`（空串 DELETE；非空 INSERT ... ON CONFLICT(conversation_id) DO UPDATE 的 UPSERT，Date.now() 时间戳）；ConversationRow+`has_draft?`、rowToRecord+`hasDraft:!!has_draft`；list() SQL 在 last_preview 子查询后加 `EXISTS(SELECT 1 FROM conversation_drafts d WHERE d.conversation_id=c.id) AS has_draft`。
+  - IPC：`CONVERSATION_DRAFT_GET`（idSchema）/`CONVERSATION_DRAFT_SET`（idSchema + z.string().max(100_000)，空串=清除）；preload `getConversationDraft`/`setConversationDraft`；types +`hasDraft?:boolean` 两 IPC 常量。
+  - Composer：Props 加 draftKey/draft/onDraftChange/onDraftCommit；内部 text 加 `textRef` 镜像 + `prevKeyRef`；effect[draftKey,draft]——key 变化先 onDraftCommit 旧会话最新文本再回填 draft，draft 异步到达时再次回填；所有写文本路径（onChange / insertAtCursor 片段插入 / submit 清空）统一收口到 `updateText`（setText+textRef+onDraftChange）。
+  - ChatModule：activeDraft state + draftTimerRef（600ms 防抖）+ draftTextRef 镜像；handleSelectConv/handleSelectMessage/handleNewConv 同步 setActiveDraft('') 防旧草稿一帧闪现；currentConvId effect 统一加载（cancelled 守卫防快速连切竞态，失败兜底 ''）；handleDraftChange（非空防抖/空串立即删）、commitDraft（切会话立即落库）；落库成功后本地 patch conversations/archivedConversations 的 hasDraft（不等 reload 零延迟出 📝）；beforeunload/pagehide 不 await 尽力 flush 最后 600ms 窗口内击键；ChatView 纯透传 4 props。
+  - ConversationList ConvItem 标题行 pinned 📍 同处加 📝（10px，title=draftHint，仅非多选态）；i18n 四语 +1 key chat.draftHint。
+- **决策记录**：草稿只存文本——附件 dataURL 可能数 MB 不入库、replyTo 仅 id 不随草稿恢复；防抖 600ms（停止打字后落库，平衡 IPC 频率与丢失窗口）；切会话走同步提交而非等防抖（Composer 不重挂载无 key，必须在回填新文本前抢救 textRef）；独立表 EXISTS 方案避免列表查询带出全文；beforeunload 用 invoke 不 await 的尽力策略（崩溃窗口仅剩防抖间隔 600ms）。
+- **明确不做**：附件持久化、replyTo 恢复、草稿列表/搜索、Agent/浮窗草稿、多设备同步。
+
+### V4-Iter-51 消息收藏星标（已落地）
+
+- **范围**：重要消息散落在各会话里找不回。本批加消息收藏：hover 消息点 ☆ 标记 → ⭐ 常显，侧边栏工具行 ⭐ 入口打开收藏列表（跨会话、时间倒序、上限 200），点击跳转回原消息，行内可取消收藏。
+- **方案**：
+  - 数据层：migration v35 `message_starred`——messages 加 `starred INTEGER NOT NULL DEFAULT 0` + `idx_messages_starred(starred, created_at DESC)`；`MessageRecord.starred?: boolean`；新增 `StarredMessageItem` 精简列表项（id/conversationId/conversationTitle/role/content/createdAt）。
+  - messageRepo：`setStarred(id, starred)`（UPDATE 1/0）；`listStarred(limit=200)`——LEFT JOIN conversations 带标题（会话删除兜底空串），`WHERE starred=1 ORDER BY created_at DESC, rowid DESC`（同毫秒口径与 Iter-49 预览一致）。
+  - IPC：`MESSAGE_SET_STARRED`（idSchema+z.boolean()）/ `MESSAGE_LIST_STARRED`（limit 1-500 可选）；preload `setMessageStarred`/`listStarredMessages`。
+  - MessageBubble：操作按钮区容器显隐条件 `hovered || selected || starred`，其余按钮仍 hover 显现，星标按钮独立常显（⭐ accent / ☆ muted），位置固定行尾防抖位。
+  - ChatModule `handleToggleStar`：IPC 落库 + `setMessages` 本地 map 更新（不 reload 零闪烁），同函数透传 ConversationList（收藏列表内取消收藏复用）。
+  - ConversationList：`starredMode` 与搜索/过滤/多选互斥（进入时清其余 state）；工具行加 ⭐ 按钮（accent 高亮 aria-pressed）；StarredResults 组件（角色标签 + 会话标题 + relTime + 内容 line-clamp-2，行尾 hover ☆ 取消收藏），点击复用 `onSelectMessage` → focusMessageId 滚动高亮链路。
+  - i18n 四语 +4 key（chat.star/unstar/starredList/starredEmpty）。
+- **决策记录**：收藏列表上限 200 硬编码（与 MESSAGE_SEARCH 分页量级一致，不加分页）；取消收藏只从列表移除不 toast（行消失即反馈）；listStarred 不走 FTS（无搜索需求）；starred 消息选中态与 hover 态共享操作区容器（不新增常驻行高）。
+- **明确不做**：不做收藏分组/标签、收藏消息导出、Agent/浮窗星标、收藏数角标、导出格式带星标。
+
+### V4-Iter-50 助手维度用量明细弹窗（已落地）
+
+- **范围**：V4-Iter-45 决策记录留尾「助手明细可后续扩展」——用量面板助手排行只能看聚合，点开看不到逐轮明细。本批在助手排行加「明细」按钮，弹窗展示该助手最近 N 天每一轮 assistant 生成的 token 明细（含所属会话列）。
+- **方案**：
+  - 数据层：`listUsageDetail` 加第 5 参 `assistantId?: string | null`（undefined=不过滤、null=自由会话 IS NULL、字符串=按助手过滤）；过滤拼装抽纯函数 `buildUsageDetailScope(conversationId?, assistantId?)` 导出直测，返回带前导空格的 SQL 片段 + 有序参数值。
+  - IPC：`USAGE_DETAIL_GET` handler argsSchema 加第 4 参 `z.string().max(64).nullable().optional()`；preload `getUsageDetail` 透传。
+  - UsagePanel：弹窗 state 泛化 `detailConv` → `detail: { title, showConv }`（会话/助手两维度共用弹窗）；`openAsstDetail(assistantId|null, name)` 调 `getUsageDetail(days, EXPORT_LIMIT, undefined, assistantId)`；助手排行表头加「明细」列 + 行尾眼睛按钮（stopPropagation 不触发行跳转）；聚合 key 为 `'(未知助手)'` 的行传 null（对应 assistant_id 为 NULL 的自由会话）。
+  - 弹窗助手维度多一列「会话」（明细行已有 conversationTitle 字段），tfoot 合计行 colSpan 随 showConv 切换。
+  - i18n 零新 key（全部复用 Iter-45 的 usage.detail* 与 usage.conversation）；usage-service.test +6 用例（buildUsageDetailScope 全组合 + 参数顺序）。
+- **决策记录**：`assistantId=null` 用 `IS NULL` 而非参数绑定（NULL 不参与 = 比较）；空串按不过滤处理（falsy 与 undefined 同口径，防 UI 误传）；助手已删除的行 assistant_id 非空仍可查明细（过滤走 conversations 列不依赖 assistants JOIN）；明细按时间倒序与会话明细同口径。
+- **明确不做**：不做明细行点击跳回会话（Iter-45 已否）；不做明细内搜索/排序；不做 provider/模型维度明细弹窗（排行已够用）。
+
+### V4-Iter-49 会话列表消息预览（已落地）
+
+- **范围**：会话列表只显示标题，想快速辨识内容必须点进去。本批在会话行标题下方加一行最新消息截断预览（常驻显示，非 hover），主列表与归档区同享。
+- **方案**：
+  - 数据层：`conversation.repo.ts` 的 `list()` SQL 改 `SELECT c.*, (SELECT substr(replace(replace(m.content, char(13),' '), char(10),' '), 1, 80) FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1) AS last_preview FROM conversations c...`——单条 SQL 关联子查询带预览，避免逐会话 N+1；换行符折叠为空格防预览行内换行；活跃/归档列表同一 `list()` 自动继承。
+  - 类型：`ConversationRecord` 加 `lastMessagePreview?: string | null`（仅 list 查询带出）；`ConversationRow` 加 `last_preview?: string | null`；`rowToRecord` 映射 `?? null`（get/create 等非 list 路径缺列安全回退）。
+  - 渲染层：`ConversationList.tsx` ConvItem 标题区改 `flex-col`（标题行 + 预览行）；预览行 `text-[11px] leading-4 text-[var(--color-text-muted)] truncate`；仅非多选态且预览非空渲染，避免行高跳动；过滤态（Iter-47 filteredConversations）与归档区共用行组件自动生效。
+  - 测试：conversation-repo.test +1 用例（缺列 → null；list 带出 → 透传）。
+- **决策记录**：预览内容即消息原文不新增 i18n key；截断 80 字符在 SQL 层做（substr）而非前端截断，减少 IPC 载荷；`ORDER BY created_at DESC, rowid DESC` 与 fork 同毫秒消息排序口径一致；预览不随流式实时刷新（下次 reloadConversations 自然更新，避免流式期间列表高频重渲染）。
+- **明确不做**：不做 hover 才显示（常驻更符合「快速辨识」目标）；不做多行预览（line-clamp-2 行高翻倍，列表密度损失大）；不做流式中预览实时更新；不预览 tool/system 角色标签（预览只取内容，角色区分留给详情页）。
+
+### V4-Iter-48 消息引用回复（已落地）
+
+- **范围**：长对话中想追溯某条消息的上下文，只能滚动翻找。本批加消息引用回复：hover 消息点「引用」→ Composer 显示引用条 → 发送后该 user 消息顶部带被引用消息预览条，点击跳转回原消息。
+- **方案**：
+  - 数据层：migration v34 给 messages 表加 `reply_to_id TEXT`；`MessageRecord` 加 `replyToId?: string | null`；`MessageRow`/`rowToRecord`/`insert` 同步映射；`SendMessagePayload` 加 `replyToId?`；chat-service 持久化 user 消息时写入 `replyToId`。
+  - 渲染层：ChatModule 加 `replyToMessage` state + `handleSetReply`；ChatView 建 `msgById` Map，`handleReply(id)` 查找完整消息交父级；`onJumpToReply` 复用 `virtualizer.scrollToIndex('center')` + `highlightMsgId` 2s 高亮（与搜索跳转同口径）。
+  - MessageBubble：Props 加 `replyTo`/`onJumpToReply`/`onReply`；气泡内容上方加引用条（角色标签+内容截断，点击跳转）；操作按钮区 CopyButton 后加「引用」按钮（user/assistant 均可用）。
+  - Composer：Props 加 `replyTo`/`onCancelReply`；textarea 上方加引用条（角色+内容预览+关闭按钮）；submit 时传 `replyToId` 并清空引用状态。
+  - i18n 四语 +5 key（chat.reply/you/assistant/replyEmpty/jumpToReply）；message-repo 测试 +1 用例（replyToId 映射）。
+- **决策记录**：replyToId 只存 user 消息（assistant 回复不引用，避免链路过长）；被引用消息删除后引用条显示「（空消息）」，不报错；引用跳转复用现有高亮机制不新造动画；不把引用内容拼进 prompt（只做 UI 上下文提示，不影响模型输入，避免 token 膨胀和语义偏差）。
+- **明确不做**：不做嵌套引用（A 引用 B，B 引用 C 只显示一层）；不做引用内容随消息编辑同步更新（引用的是发送时的快照 id，内容取当前最新）；不做跨会话引用。
+
+### V4-Iter-47 会话列表标题过滤（已落地）
+
+- **范围**：会话多了翻列表找会话慢，现有搜索框是消息全文搜索（跨会话 IPC），不能快速按标题定位会话。本批在消息搜索框下加「过滤会话」输入框，纯前端按标题过滤。
+- **方案**：
+  - ConversationList 加 `convFilter` state；`filteredConversations = conversations.filter(title 不区分大小写 includes)`，空关键词不过滤。
+  - 消息搜索框下方加过滤输入框（仅 `!isSearching && !selectMode` 时显示，避免与消息搜索/多选模式视觉冲突），带清空按钮。
+  - 会话列表 `conversations.map` → `filteredConversations.map`；空态区分「无会话」与「无匹配会话」。
+  - i18n 四语 +2 key（chat.filterConversations / chat.noFilteredConversations）。
+- **决策记录**：纯前端 filter 零 IPC（conversations 已在内存，列表通常百量级）；与消息搜索框视觉区分（上下排列，placeholder 文案不同）；不做最近搜索记录/高亮匹配（过度设计）。
+- **明确不做**：不做按消息内容过滤会话（消息搜索已有）；不做拼音/模糊匹配；不做过滤后全选（多选模式与过滤互斥）。
+
+### V4-Iter-46 历史会话批量删除（已落地）
+
+- **范围**：会话只能逐个删，Iter-23 批量导出已建多选模式但删除没复用。本批在多选操作条加「批量删除」按钮，一键删选中的多个会话。
+- **方案**：
+  - 新增 `IPC.CONVERSATION_BATCH_DELETE`：handler 接收 ids 数组（z.array(idSchema).max(500)），逐个 `conversationRepo.delete` + `clearSessionAllow`，单条 try/catch 不中断，返回 `{ ok, deleted }`。
+  - preload `deleteConversations(ids)`。
+  - ConversationList：props 加 `onBatchDelete?: (ids: string[]) => void`；多选操作条在导出按钮后加红色「批量删除」按钮（disabled=无选中/deleting，删除中显示 common.deleting）；`handleDeleteSelected` 先 `window.confirm` 二次确认（chat.batchDeleteConfirm），再 await onBatchDelete。
+  - ChatModule：`handleBatchDeleteConv` 调 IPC → 若当前会话在被删列表则清空 → reloadConversations → toast 成功（chat.batchDeleteDone，含实际删除数）。
+  - i18n 四语 +4 key（chat.batchDelete/batchDeleteConfirm/batchDeleteDone + common.deleting）。
+- **决策记录**：复用既有多选模式不重造 UI；批量走独立 IPC 而非前端循环调单条（一次往返，单条失败不连累其余）；二次确认用 window.confirm（与项目其他危险操作一致，不引 useConfirm 依赖）；上限 500 防爆。
+- **明确不做**：不做归档会话批量删除（归档区不参与多选，与导出一致）；不做删除进度条（500 以内毫秒级）；不做删除撤销（FK 级联后无法回滚）。
+
+### V4-Iter-45 消息级用量明细弹窗（已落地）
+
+- **范围**：V4-Iter-25 决策记录留尾「不做消息级用量弹窗」——用量面板会话排行只能看聚合（请求数/token/费用），点开看不到逐轮明细，深度对账无出口。本批在会话排行行加「明细」按钮，弹窗展示该会话最近 N 天每一轮 assistant 生成的 token 明细。
+- **方案**：
+  - 复用 Iter-41 的 `listUsageDetail`，加第四参 `conversationId?`：非空时 SQL 追加 `AND m.conversation_id = ?`（参数化防注入，空值退化为 CSV 导出全量行为，零破坏性）；IPC handler argsSchema 加第三参 `z.string().max(64).optional()`；preload `getUsageDetail(days?, limit?, conversationId?)`。
+  - UsagePanel：会话排行表头加「明细」列，行尾眼睛图标按钮（stopPropagation 不触发行跳转），点击 `openDetail(id, title)` 调 `getUsageDetail(days, EXPORT_LIMIT, id)`。
+  - 弹窗：标题（会话名 + 最近 N 天）+ 表格（时间/模型/输入/输出/缓存/total/费用）+ tfoot 合计行（reduce 汇总各列）；点遮罩/关闭按钮关闭；loading/空态。
+  - i18n 四语 +10 key（usage.detail/viewDetail/detailSubtitle/detailEmpty/detailTime/detailModel/detailIn/detailOut/detailCached/detailTotal）；common.loading/close 复用。
+- **决策记录**：复用现有 IPC 不新增通道（conversationId 可选参数向后兼容，CSV 导出传 undefined 行为不变）；明细按时间倒序（最近在前），与排行口径一致；费用沿用 pricing 配置，未配单价的模型 cost=0 显示「—」；不加导出按钮（CSV 导出已是全量，单会话明细可从全量 CSV 过滤）。
+- **明确不做**：不做单条消息跳转回会话；不做明细内搜索/排序；不做助手维度明细弹窗（结构同构但 Iter-25 留尾只提消息级，助手明细可后续扩展）。
+
+### V4-Iter-44 会话内消息搜索（已落地）
+
+- **范围**：长会话找不回某条消息——全局搜索（MESSAGE_SEARCH）只能跨会话列结果，不能在当前会话内定位。本批在 ChatView 内加搜索条，输入关键词匹配消息并滚动定位+高亮。
+- **方案**：
+  - 纯前端实现，messages 已在内存，零新 IPC。
+  - 导出纯函数 `findMatchIds(messages, keyword)`：trim 后小写匹配 content，按消息顺序返回命中 id 列表；空关键词/无命中返回 []。
+  - ChatView 状态：searchOpen / searchKeyword / curMatchIdx / searchInputRef；matchIds 用 useMemo；关键词变化重置 curMatchIdx=0。
+  - `gotoMatch(dir)`：循环取命中 id，findIndex 定位所在 turn，`virtualizer.scrollToIndex(idx, 'center')` + 复用既有 `highlightMsgId` 机制高亮 2s（与全局搜索跳转同口径）。
+  - UI：模型选择栏右端加搜索图标按钮；展开搜索条（输入框 + 计数 i/n + 上/下按钮 + 关闭），无命中时计数 0/0 且上下按钮禁用。
+  - 快捷键：Ctrl/Cmd+F 打开并聚焦；打开后 Enter 下一个 / Shift+Enter 上一个 / Esc 关闭；Ctrl+F preventDefault 避免浏览器原生查找。
+  - i18n 四语 +4 key（chatview.searchInConversation/searchPlaceholder/searchPrev/searchNext）。
+  - 测试：新建 tests/chat-search.test.ts 6 用例（空关键词/不区分大小写/多命中顺序/无命中/trim/空 content 跳过）。
+- **决策记录**：复用虚拟列表 scrollToIndex + highlightMsgId，不重造定位机制；纯函数抽出来便于单测，UI 交互不补测试（与 Iter-43 纯 UI 接线同口径）；搜索只匹配 content 不匹配附件/来源（覆盖日常找话需求，避免误命中噪声）。
+- **明确不做**：不做正则/全词匹配选项；不做替换；不跨会话搜索（全局搜索已有）；不搜附件内容。
+
+### V4-Iter-43 子窗口划词浮条挂接（已落地）
+
+- **范围**：V4-Iter-37 决策记录留尾——应用内划词浮条（SelectionToolbar）只挂在主窗口 App.tsx，DetachedApp 独立窗口（标签弹出的单模块全屏窗，无侧边栏/TabBar）选中文本无浮条。本批补齐，独立窗内选中文本也出翻译/总结/改写动作条，与主窗口行为一致。
+- **方案**：DetachedApp.tsx 单文件改动——import SelectionToolbar，在 contentRef 容器内 Workspace 之后、`!locked` 条件下渲染（与 App.tsx 同口径：锁屏时不挂载；锁屏遮罩 z-9999 高于浮条 z-9000，即便同时存在也被遮挡）。SelectionToolbar 自包含（useI18n + window.pocketai.getPopupConfig/openSelectionPopup），DetachedApp 已在 I18nProvider 内、有 ToastProvider、有 locked 状态，零新依赖、零新 IPC、零 i18n key。
+- **决策记录**：浮条放 contentRef 内而非 ToastProvider 直接子级——与 App.tsx 结构对齐，且 locked 时 contentRef 设 inert 兜底（虽然 !locked 已不渲染，双保险）；独立窗与主窗共享同一浮窗进程单例，openSelectionPopup 唤起主浮窗无需改动。
+- **明确不做**：不改 SelectionToolbar 定位/行为逻辑；不为独立窗做独立的浮窗进程（复用主浮窗单例）。
+
+### V4-Iter-42 WebDAV 定时备份轮转清理（已落地）
+
+- **范围**：策划书 6.1 必做「手动/定时备份到 WebDAV」的收尾缺口——定时备份链路（10 分钟 tick/间隔可配/静默执行/状态展示）完整，但 runScheduledBackup 只上传不清理，每天一个全量 zip（加密包含 DB+附件），WebDAV 空间无限增长，只能到云列表逐个手删。本批加「保留最近 N 份全量包」自动轮转。
+- **方案**：
+  - backup-scheduler：新键 backup.retention_count（默认 0=不清理，老用户升级零行为变化，自动删除必须显式开启，上限 100）；BackupScheduleStatus/BackupRunResult（shared 与 scheduler 两份定义）同步加 retentionCount/pruned；setBackupSchedule 收 retentionCount（clamp 0-100），zod patch 同步。
+  - 纯函数 selectPrunableBackups(files, keep, justUploaded)：keep≤0→[]；只处理 kind='full'（incremental 索引引用 blobs/ 内容寻址对象，按份数盲删会断增量恢复链）；mtime 倒序取最新 keep 份（含本次新包），其余待删；justUploaded 再兜底过滤——WebDAV 时钟漂移导致新包 mtime 异常落入待删区也绝不删（宁可少删）；删除列表 reverse 成最旧优先，中途失败留下的也是较新包。
+  - runScheduledBackup 成功后 pruneOldBackups：列清单→决策→逐个 deleteWebDAVBackup（每个独立 try/catch，失败 warn 继续），pruned 计成功数写入 last_result；列举/清理整段 try/catch，轮转任何失败不改变备份成功结论。手动上传 handler 不接轮转（手动场景用户对云文件有掌控）。
+  - 设置页定时备份区加「保留份数」select（不自动清理/3/5/10/20/30），>0 时显示 hint（仅全量轮转、增量不受影响），上次成功文案 pruned>0 追加清理份数；i18n 四语 +4 key。
+  - 测试：扩 backup-scheduler.test（mock +listWebDAVBackups/deleteWebDAVBackup/deleted/deleteFailOnce）——纯函数 6 用例（关闭/不足份数/超份最旧优先/乱序/增量不参与/时钟漂移救回新包）、轮转集成 4 用例（retention=2 删最旧 2 增量不动/默认 0 零列举零删除/单删失败继续且 pruned 只计成功/列举失败不连累备份）、retention 配置解析与钳制 1 用例；既有成功路径断言随 pruned:0 更新。
+- **决策记录**：默认关闭轮转（自动删除是不可逆动作，升级零行为变化）；按份数不按天数（与「每天一个包」直觉一致且不依赖 WebDAV 时钟）；保留集先含新包、justUploaded 只作安全网（计划初版先排除新包导致其不占名额多删一份，测试推演时修正）；删除最旧优先保证中断安全。
+- **明确不做**：不轮转增量包与其 blob；手动上传/备份后不触发清理；不加「立即清理」批量按钮（云列表已有逐条删除）；不顺手改诊断/数据健康面板的备份描述句。
+
 ### V4-Iter-41 用量数据 CSV 导出（已落地）
 
 - **范围**：Iter-24 起用量体系（聚合/排行/单价/气泡微展示/会话累计）多次被提「可导出算账」未做。用量面板只能看聚合不能带走，月度复盘/报销/自定义透视无出口。本批在用量面板范围行加「导出 CSV」，导出**行级明细**（每轮 assistant 生成一行）而非聚合视图——聚合 UI 已可见，明细丢进表格才能自由透视。
@@ -473,6 +626,19 @@
 | 2026-09-29 | V4-Iter-12 | 渲染 bundle 拆包（首屏主包瘦身，配合 V4-Iter-2 启动优化）：产物分析确认 mermaid 全家桶已是动态 import 按需 chunk、模块级 React.lazy 已落地（Workspace 10 模块），主包 1515KB min 的真实大头 = rehype-katex 静态引入 katex 全量 + i18n 四语全量常驻。① Markdown.tsx katex 两段式懒加载——移除 rehype-katex/katex.min.css 静态 import，模块级 ensureKatex() 动态 import 双资源（Promise 单例 katexPromise 防重复，katexPlugin 模块级缓存），组件挂载 useEffect 触发，ready 前公式以原始 LaTeX 文本渲染、ready 后 setKatexReady 全局一次性重渲染为公式（CSS 与插件同批到达，无无样式中间态；unified PluggableList 类型标注），PopupApp/对比列等复用 Markdown 的场景自动继承。② i18n/index.tsx 按需加载——仅 zh 常驻主包（默认语言 + 兜底字典），langLoaders en/ja/ko 动态 import（命名导出 m.en/m.ja/m.ko），ensureLang Promise 缓存防重复加载；I18nProvider 初始语言非 zh 时 effect 补载、setLang 时预载，未就绪期间 t() 兜底链回退 zh（dicts 改 Partial，本地 chunk 毫秒级几乎无感）；i18n-parity 测试静态 import 四文件不受影响。效果：主包 1515KB→1052KB（-31%），katex 484KB（含 css 29KB+字体 ttf 按需）、en 73KB/ja 92KB/ko 81KB 全部独立按需 chunk，首屏临界链仅剩主包+默认 chat 模块 | typecheck 0 / vitest 130文件1906用例 / build 三端 |
 | 2026-09-29 | V4-Iter-13 | 图片 OCR 入知识库（截图/扫描件文字识别检索，知识库增强第九批）：migration v29 `kb_ocr`——knowledge_bases 加 ocr_provider_id/ocr_model TEXT 列（空=关闭，同构 MultiQuery 配置模式），kb.repo KbRow/rowToRecord/UPDATE/INSERT 四处映射补齐；新增 `src/main/knowledge/ocr.ts`（仿 multi-query.ts）——OCR_SYSTEM_PROMPT（提取全部文字/保持阅读顺序/表格转 Markdown/公式 LaTeX/不解释不编造）、imageMime 纯函数（png/jpg/jpeg/webp/gif→MIME，未知 null）、OCR_MAX_IMAGE_BYTES=10MB（base64 后 ~13MB 请求体主流视觉 API 限额内）、ocrImageFile（stat 超限抛错→readFileSync→base64 data URL→providerManager.getAdapter→adapter.streamChat 多模态单轮 [system + user(text+image_url)]，temperature 0/maxTokens 4096/onDelta noop→content.trim()，空文本抛错；无 adapter/读取失败/模型报错由调用方定语义）；shared/types KbSourceType 加 'image'、KnowledgeBase 加 ocrProviderId/ocrModel；parsers detectSourceType 收图片扩展→'image'（parseDocument case 'image' 抛错防御，防 default 分支把二进制当 txt 读出乱码）；ingestion parseForIngest 分流——image 走 OCR（未配 ocrProviderId/ocrModel 抛「图片文档需要在知识库设置中配置 OCR 视觉模型」小白引导），其余走 parseDocument；「解析后内容为空」按 .pdf 细化为「可能是扫描版，暂不支持 OCR，请转为图片后导入」；hashFile 对图片天然有效增量同步零改动；KB_DOC_ADD_FILE dialog filters 加「图片」组，folder-scan KB_IMPORT_EXTS 加图片扩展 + 导出 IMAGE_EXTS 子集，scanFolderFiles 加 includeImages 必选参数（图片扩展且 false 计入 skippedCount——KB 未配 OCR 时文件夹导入自动跳过图片防批量入库全报错，handlers 调用处传 !!(kb.ocrProviderId && kb.ocrModel)）；KnowledgeModule KbForm 新增「OCR 文字识别」配置区块（复制 MultiQuery 区块：provider 下拉空选项=关闭 + 选中后 model 下拉/手输 + ocrHint 文案）；i18n 新增 kb.ocrHint/ocrProvider/ocrModel/ocrDisabled 中英日韩四语对齐；新增 tests/ocr.test.ts 8 用例（imageMime 映射×2/ocrImageFile 成功 trim+多模态请求结构/无 adapter/超限不发请求/不支持格式/空文本/HTTP 429 透传，mock providerManager + tmpdir 真实文件），parsers.test.ts 加图片扩展 5 断言，folder-scan.test.ts 适配新签名 + 加 includeImages 双态用例，kb-repo/knowledge-ingestion fixture 补 ocr 字段与 providerManager mock | typecheck 0 / vitest 132文件1919用例 / build 三端 |
 | 2026-09-29 | V4-Iter-14 | KB 数据健康（完整性探测与修复，知识库运维）：新增 `src/main/knowledge/kb-health.ts`——只读探测 getKbIntegrityReport 四组（kb_vec_map LEFT JOIN kb_chunks 孤儿向量计数（表不存在容错）/孤儿 chunk 防御探测/缺向量 doc（仅 isVecEnabled 时，DISTINCT doc_id）/维度不匹配 doc（length(embedding)!=knowledge_bases.embedding_dim*4，换模型未重建检索静默漏块））逐项 try/catch 容错；纯函数导出直测——findDuplicateGroups（kb_id+content_hash 分组、hash null 跳过（旧数据/URL/手工文本天然不参与）、组内创建时间升序最早在前）、collectProviderIssues（每库 embedding/rerank/hyde/multiquery/ocr 五引用 × missing（已删除）/disabled（禁用）/model-missing（模型不在 provider.models，列表为空不校验防误报），未配置 providerId 跳过）；修复动作 cleanOrphans（孤儿向量逐条 kbVecRepo.deleteByChunk（异常兜底直删 map 行）、孤儿 chunk 先 kbVecRepo.deleteByDoc 再 DELETE 收尾，返回计数）/reindexDocs（kbDocRepo.setStatus pending + indexQueue.enqueue kind:'reindex'，复用 KB_DOC_REINDEX 链路，ingestion 内部先清旧分块）/deduplicate(keepDocId)（同库同 contentHash 其余删除，无 hash/不存在抛错）；泄漏 bug 修复收口 kbDocRepo.delete() 先 kbChunkRepo.deleteByDoc（内部含 vec_map/vec 清理）再删文档行——KB_DOC_DELETE 此前只删文档行，chunks 靠 FK 级联但 vectors.db 无 FK 无人清理，删单文档必留孤儿向量，KB_DOC_DELETE 与去重动作全部堵漏；shared/types DataHealthReport.kb 加 integrity: KbIntegrityReport（orphanVectors/orphanChunks/brokenDocs{reason:'missing-vec'|'dim-mismatch'}/duplicates/providerIssues）+ 4 个子接口；data-health getDataHealthReport 第 2 组探测并入（整体容错失败按全空）；IPC DATA_HEALTH_KB_CLEAN/KB_DEDUP/KB_REINDEX 挂 steward.ts（argsSchema(idSchema)/idSchema.array()）；preload cleanKbOrphans/deduplicateKbDocs/reindexKbDocs；DataHealthPanel 索引状态区块后新增「知识库完整性」区块——integrityOk 全空一行文案，否则孤儿 Row（warn）+清理按钮、brokenDocs 表（Top10）+一键重建索引按钮、重复组行（库/数量/标题串）+保留最早删其余（useConfirm danger 确认弹窗，dialog 渲染补齐）、providerIssues 表（库/角色/问题）；runAction 统一 busy 防重/成功 toast/自动刷新；i18n 新增 dh.integrity.* 27 key 中英日韩四语对齐；新增 tests/kb-health.test.ts 11 用例（重复分组同库聚合/跨库不合并/null 跳过/kbName 注入、provider missing/disabled/missing 优先于禁用/model-missing/空列表不误报/未配置跳过、reindexDocs pending+入队+不存在跳过、deduplicate 保留删其余/无 hash 与不存在抛错——vi.hoisted 内存 docStore/queued 驱动编排逻辑） | typecheck 0 / vitest 133文件1930用例 / build 三端 |
+| 2026-10-02 | V4-Iter-50 | 助手维度用量明细弹窗（Iter-45 留尾收尾）：listUsageDetail 加第 5 参 assistantId?:string|null（undefined=不过滤/null=自由会话 IS NULL/字符串=按助手）；过滤拼装抽纯函数 buildUsageDetailScope 导出直测；USAGE_DETAIL_GET argsSchema 加第 4 参 z.string.max64.nullable.optional，preload getUsageDetail 透传；UsagePanel 弹窗 state 泛化 detailConv→detail{title,showConv} 两维度共用，openAsstDetail 传 undefined conversationId，助手排行加明细列眼睛按钮（stopPropagation），'(未知助手)' 行传 null，弹窗助手维度多一列「会话」（明细行已有 conversationTitle），tfoot colSpan 随 showConv 切换；i18n 零新 key；usage-service.test +6 用例；不做明细行跳回会话/明细内搜索/provider·模型维度明细 | typecheck 0 / vitest 152文件2164用例 / build 三端 |
+| 2026-10-02 | V4-Iter-54 | 三合一：①用户消息编辑重发——调研确认早已完整存在（MessageBubble 编辑态 textarea/Enter/Esc+handleResend 分支保留+resendMessage IPC+i18n），零改动仅回归；②消息批量收藏——ChatView 操作条+星标按钮（含任一未收藏→全收藏/全已收藏→全取消），+onBatchToggleStar prop，ChatModule Promise.all 逐条落库+单次 map（单条失败跳过），i18n +2 common key；③会话分组文件夹（主体）：migration v37 conversation_groups(id,assistant_id,name,created_at)+conversations.group_id；新建 conversation-group.repo.ts（list/create UUID/rename/delete 事务先解绑会话再删组/setConversationGroup，buildGroupListWhere 纯函数 asst-default→OR IS NULL）；conversation.repo rowToRecord+groupId；5 IPC safeHandle（zod name trim 1-40）+5 preload；ChatModule groups state 并入 reloadConversations 三请求+CRUD/move 乐观更新两列表；ConversationList 普通态分区（顶层未分组+组按组内最近更新排/组内 pinned 优先/空组隐藏/当前组自动展开/折叠集合），组头 📁📂 ✏️🗑 confirm 解散不删会话，原生 DnD（x-pocketai-conv MIME，文件夹头+未分组带 drop 高亮），⋯ 菜单扁平加组项（当前组 ✓）+移出，📁＋内联建组；搜索/过滤/多选/收藏态平铺、归档不分组；i18n 四语 +10 key；新建 conversation-group-repo.test.ts +10 用例；不做嵌套/排序/跨助手/归档组/批量转发/Agent 侧 | typecheck 0 / vitest 153文件2189用例 / build 三端 |
+| 2026-10-02 | V4-Iter-53 | 空会话自动清理（点新对话未发消息不再堆积空壳）：conversationRepo +deleteIfEmpty(id)（四重守卫 title_default=1/pinned=0/NOT EXISTS messages/NOT EXISTS conversation_drafts，返 changes>0，无子行免事务级联）+cleanupEmptyConversations()（全局同款 SQL 活跃/归档通清，返条数）；IPC CONVERSATION_DELETE_IF_EMPTY（命中才 clearSessionAllow，返 deleted 布尔）/CONVERSATION_CLEANUP_EMPTY + preload 两桥接；ChatModule 三触发——handleNewConv 当前会话自动标题+未置顶+0 消息（含挂草稿）直接复用不建行、discardCurrentIfEmpty 稳定回调用 messagesRef/convIndexRef/draftTextRef 镜像判定（规避草稿 600ms 防抖竞态）fire-and-forget 删除并本地过滤列表、挂 handleSelectConv/handleSelectMessage/handleSelectAssistant；启动 listAssistants 后先清扫 finally 再 reloadConversations(true)（catch 不阻断）；零 migration/零 i18n/零 toast；conversation-repo.test mock +runChanges +3 用例；重命名/置顶免疫、归档空行同清、不做弹窗/定时/Agent 特判 | typecheck 0 / vitest 152文件2179用例 / build 三端 |
+| 2026-10-02 | V4-Iter-52 | 输入草稿持久化（切会话/重启不丢未发送文本）：migration v36 独立表 conversation_drafts(conversation_id PK,draft,updated_at)，delete 事务级联删、fork 不复制；conversationRepo getDraft（无行''）/setDraft（空串 DELETE/非空 UPSERT ON CONFLICT），list() 加 EXISTS 子查询 has_draft 经 rowToRecord 映射；ConversationRecord+hasDraft、IPC CONVERSATION_DRAFT_GET/SET（SET 文本 max 100k，空串=清除）+preload 两桥接；Composer 4 props（draftKey/draft/onDraftChange/onDraftCommit），textRef+prevKeyRef，effect 在 key 变化时先 commit 旧会话再回填 draft（覆盖异步加载），onChange/insertAtCursor/submit 清空统一收口 updateText；ChatModule activeDraft+600ms 防抖 timer+draftTextRef，三个切会话入口同步清空防闪现，currentConvId effect cancelled 守卫加载，落库后本地 patch 列表 hasDraft 零延迟出 📝，beforeunload/pagehide 尽力 flush；ChatView 纯透传；ConversationList 标题行 📝 10px（非多选态）；i18n 四语 +1 key chat.draftHint；conversation-repo.test mock 升级 vi.hoisted prepare/all/get/run+transaction 捕获链 +7 用例（has_draft 映射/list SQL/读写/空删/级联）；不做附件持久化/replyTo 恢复/草稿列表/Agent 草稿/多端同步 | typecheck 0 / vitest 152文件2176用例 / build 三端 |
+| 2026-10-02 | V4-Iter-51 | 消息收藏星标（重要消息跨会话找回）：migration v35 messages 加 starred INTEGER DEFAULT 0 + idx_messages_starred(starred,created_at DESC)；MessageRecord+starred?:boolean、新增 StarredMessageItem 精简列表项；messageRepo setStarred/listStarred（LEFT JOIN conversations 带标题、删除兜底空串、created_at DESC+rowid DESC）；IPC MESSAGE_SET_STARRED/MESSAGE_LIST_STARRED + preload setMessageStarred/listStarredMessages；MessageBubble 操作区显隐条件 hovered||selected||starred 星标按钮独立常显（⭐accent/☆muted 固定行尾）；ChatModule handleToggleStar（IPC+setMessages 本地 map 不 reload）；ConversationList starredMode 与搜索/过滤/多选互斥 + 工具行 ⭐ 入口 + StarredResults 组件（角色+标题+relTime+line-clamp-2 内容、行尾 hover ☆ 取消、点击复用 onSelectMessage 跳转链路）；i18n 四语 +4 key；message-repo.test +5 用例（mock prepare 链捕获 SQL/参数）；不做分组/导出/Agent 星标/角标 | typecheck 0 / vitest 152文件2169用例 / build 三端 |
+| 2026-10-02 | V4-Iter-49 | 会话列表消息预览（快速辨识内容不用点进去）：conversation.repo list() SQL 加关联子查询 `(SELECT substr(replace(replace(m.content,char(13),' '),char(10),' '),1,80) FROM messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1) AS last_preview`（单 SQL 避免 N+1，换行折叠为空格，活跃/归档列表同享）；ConversationRecord+lastMessagePreview?:string|null、ConversationRow+last_preview、rowToRecord 映射（非 list 路径缺列回退 null）；ConversationList ConvItem 标题区改 flex-col 加 11px muted truncate 预览行（仅非多选态且非空渲染，过滤态/归档区自动继承）；i18n 零新 key（预览即消息原文）；conversation-repo.test +1 用例；不做 hover 才显示/多行预览/流式实时刷新/角色标签 | typecheck 0 / vitest 152文件2158用例 / build 三端 |
+| 2026-10-02 | V4-Iter-48 | 消息引用回复（长对话追溯上下文）：migration v34 messages 加 reply_to_id TEXT；MessageRecord/SendMessagePayload 加 replyToId；MessageRow/rowToRecord/insert 同步；chat-service 持久化 user 消息写 replyToId；ChatModule replyToMessage state+handleSetReply；ChatView msgById Map+handleReply 查完整消息+onJumpToReply 复用 scrollToIndex center+highlightMsgId 2s；MessageBubble 加 replyTo 引用条（角色+内容截断点击跳转）+CopyButton 后「引用」按钮；Composer 加 replyTo 引用条（角色+预览+关闭）submit 传 replyToId 并清空；i18n 四语 +5 key；message-repo 测试 +1；不拼 prompt/不嵌套/不跨会话 | typecheck 0 / vitest 152文件2157用例 / build 三端 |
+| 2026-10-02 | V4-Iter-47 | 会话列表标题过滤（快速定位会话）：ConversationList 加 convFilter state + filteredConversations（title 不区分大小写 includes，空不过滤）；消息搜索框下加过滤输入框（仅 !isSearching && !selectMode 显示，带清空按钮）；conversations.map→filteredConversations.map，空态区分无会话/无匹配；i18n 四语 +2 key；纯前端零 IPC，不做消息内容过滤/拼音匹配/过滤后全选 | typecheck 0 / vitest 152文件2156用例 / build 三端 |
+| 2026-10-02 | V4-Iter-46 | 历史会话批量删除（复用 Iter-23 多选模式）：新增 IPC CONVERSATION_BATCH_DELETE（ids 数组 max500，逐个 delete+clearSessionAllow，单条 try/catch 不中断，返 deleted 计数）；preload deleteConversations；ConversationList props 加 onBatchDelete，多选操作条导出按钮后加红色批量删除按钮（二次确认 window.confirm，删除中显示 common.deleting）；ChatModule handleBatchDeleteConv 调 IPC→当前会话在删列表则清空→reload→toast 成功含实际删除数；i18n 四语 +4 key；不做归档区批量删除/进度条/撤销 | typecheck 0 / vitest 152文件2156用例 / build 三端 |
+| 2026-10-02 | V4-Iter-45 | 消息级用量明细弹窗（Iter-25 留尾收尾，深度对账）：listUsageDetail 加第四参 conversationId?（非空 SQL 追加 AND conversation_id=? 参数化，空值退化 CSV 全量零破坏）；IPC argsSchema 第三参 z.string max64 optional；preload getUsageDetail 加 conversationId；UsagePanel 会话排行加「明细」列眼睛图标按钮（stopPropagation 不触发行跳转）+ 弹窗（时间/模型/输入/输出/缓存/total/费用 + tfoot reduce 合计 + loading/空态 + 点遮罩关闭）；i18n 四语 +10 key；不加单条跳转/明细内搜索/助手维度弹窗 | typecheck 0 / vitest 152文件2156用例 / build 三端 |
+| 2026-10-02 | V4-Iter-44 | 会话内消息搜索（长会话找不回消息）：ChatView 导出纯函数 findMatchIds（trim 后小写匹配 content 按序返 id）+ searchOpen/keyword/curMatchIdx 状态 + matchIds useMemo；gotoMatch 复用 virtualizer.scrollToIndex('center')+highlightMsgId 高亮 2s（与全局搜索跳转同口径）；模型栏搜索图标按钮展开搜索条（输入框+i/n 计数+上下+关闭，无命中禁用上下）；快捷键 Ctrl/Cmd+F 打开聚焦/Enter 下一个/Shift+Enter 上一个/Esc 关闭（Ctrl+F preventDefault 防浏览器原生查找）；i18n 四语 +4 key；chat-search.test 6 用例；零新 IPC 纯前端 | typecheck 0 / vitest 152文件2156用例 / build 三端 |
+| 2026-10-02 | V4-Iter-43 | 子窗口划词浮条挂接（Iter-37 留尾收尾）：DetachedApp.tsx 单文件 import SelectionToolbar，在 contentRef 内 Workspace 后 !locked 条件渲染（与 App.tsx 同口径，锁屏遮罩 z-9999 高于浮条 z-9000）；SelectionToolbar 自包含零新依赖/IPC/i18n，复用主浮窗单例；纯 UI 接线不补测试 | typecheck 0 / vitest 151文件2150用例 / build 三端 |
+| 2026-10-02 | V4-Iter-42 | WebDAV 定时备份轮转清理（策划书 6.1 定时备份收尾，治远端无限堆积）：backup-scheduler +K_RETENTION（默认 0 关闭/上限 100）、BackupScheduleStatus+retentionCount、BackupRunResult+pruned（shared 与本地双定义同步）、zod patch+0-100；纯函数 selectPrunableBackups（只清 full 保增量引用链/mtime 倒序保留含新包/justUploaded 兜底防时钟漂移误删/最旧优先删除保中断安全）；runScheduledBackup 成功后 pruneOldBackups 列举→逐个删独立容错、pruned 入 last_result、轮转失败不连累备份 ok；手动上传不触发；设置页保留份数 select（0/3/5/10/20/30）+hint+pruned 文案；i18n 四语 +4 key；backup-scheduler.test 扩 mock +11 用例（纯函数 6/集成 4/配置 1，测试推演修正「新包占保留名额」语义）；不做增量轮转/立即清理按钮 | typecheck 0 / vitest 151文件2150用例 / build 三端 |
 | 2026-10-02 | V4-Iter-41 | 用量数据 CSV 导出（月度复盘/报销/透视）：shared +UsageDetailItem/UsageDetailResult 与 USAGE_DETAIL_GET/USAGE_EXPORT_CSV 两 IPC；usage-service +aggregateUsageDetail 纯函数（坏 JSON 跳过/未配价 0/roundCost/倒序保持/未知会话兜底/assistant 名 null）+listUsageDetail（JOIN conversations+assistants，limit+1 判 truncated，clamp 365 天/20000 行）；handler 明细薄封装+CSV 落盘照搬诊断报告模式（默认名 pocketai-usage-{days}d-时间戳.csv，content zod 500 万字符上限）；preload +2 桥接；新建 renderer/utils/usage-csv.ts（RFC4180 转义/本地时间格式/10 列固定序/BOM+CRLF/null 助手空串）；UsagePanel chips 行导出按钮（无数据禁用、busy 防重、成功 toast 条数、截断 warning、取消静默）；i18n 四语 +6 key 列头复用既有；usage-csv.test 11 用例+usage-service.test 补 5 用例；不做 XLSX/列选择/正文导出 | typecheck 0 / vitest 151文件2139用例 / build 三端 |
 | 2026-10-02 | V4-Iter-40 | 管家推荐模型一键拉取（闭环策划书 6.1「检测→推荐→下载」）：新建 hooks/useOllamaPull.ts（从 OllamaPanel 收口 pulling/pullEvt/事件订阅/守卫/双兜底复位/abort，onDone·onError 走 ref 订阅只挂一次，卸载不中断后台拉取）+同文件纯函数 pickPullState 五态（installed/pulling/busy-other/disabled/pullable，installed 最高优先级）；OllamaPanel 改 hook 接线 UI 文案零变化（doPull 包 clearPullDone，pullError 独立行）；StewardModule refreshRecommendation 抽 useCallback 复用，onDone 重拉推荐刷新 installed+toast、onError toast，卡片按五态渲染进度条（status+%+中断）/禁用（未运行 title 引导去设置）/拉取按钮，向量模型同等待遇；i18n 四语仅 +steward.pullNeedRunning（韩文内引号改「」避语法冲突）其余复用 ollama.*；ollama-pull-state.test 6 用例；不做自动注册 provider/管家页启动安装/并发拉取 | typecheck 0 / vitest 150文件2123用例 / build 三端 |
 | 2026-10-02 | V4-Iter-39 | 管家诊断报告导出（策划书 6.4 远程求助）：新建 renderer/utils/diagnostic-report.ts buildDiagnosticReport 纯函数（ReportLabels 字典注入+复用 formatBytes，固定五段①硬件②模型推荐③数据健康④安全体检⑤故障诊断，缺失段不省略标 notRun/notAvailable，时间手动 pad 不依赖 locale）；main IPC STEWARD_EXPORT_REPORT（steward.ts safeHandle+zod content≤200000，showSaveDialog 默认名 pocketai-report-时间戳.txt，取消 canceled/成功 path）；preload +exportStewardReport；StewardModule 顶部导出按钮，handleExport 先 Promise.all 补跑 audit/diagnose（setState 同步刷新，失败容忍）+getUpdateInfo 取版本，toast 成败反馈，硬件用快照不 force；i18n 四语 21 新 key 字段复用既有 steward.*、段名新建 reportSec* 不剥 emoji；grep 核实体检只查 Key 存在性零凭证泄露；diagnostic-report.test 11 用例（五段字段/GB 一位小数/段序/全 null/空诊断/完整性异常/无 GPU+USB） | typecheck 0 / vitest 149文件2117用例 / build 三端 |

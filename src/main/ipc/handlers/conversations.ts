@@ -7,6 +7,7 @@ import { IPC, type ConversationExportPayload } from '../../../shared/types'
 import { buildConversationMarkdown, safeFileName, dedupeFileNames } from '../../../shared/export-markdown'
 import { dbService } from '../../db/database'
 import { conversationRepo } from '../../db/repositories/conversation.repo'
+import { conversationGroupRepo } from '../../db/repositories/conversation-group.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
@@ -44,6 +45,21 @@ export function registerConversationHandlers(): void {
     clearSessionAllow(id) // 清会话级工具「总是允许」白名单
     return { ok: true }
   }, argsSchema(idSchema))
+  // 批量删除会话：事务内逐个删（含消息/向量 FK 级联 + 工具白名单清理），单条失败不中断
+  safeHandle(IPC.CONVERSATION_BATCH_DELETE, (_e, ids: string[]) => {
+    const safe = ids.filter((id): id is string => typeof id === 'string' && id.length > 0).slice(0, 500)
+    let ok = 0
+    for (const id of safe) {
+      try {
+        conversationRepo.delete(id)
+        clearSessionAllow(id)
+        ok++
+      } catch {
+        // 单条失败跳过，继续删其余
+      }
+    }
+    return { ok: true, deleted: ok }
+  }, argsSchema(z.array(idSchema).max(500)))
   safeHandle(IPC.CONVERSATION_RENAME, (_e, id: string, title: string) => {
     conversationRepo.rename(id, title)
     return { ok: true }
@@ -53,6 +69,43 @@ export function registerConversationHandlers(): void {
     setSmartTitleEnabled(enabled)
     return { ok: true }
   }, argsSchema(z.boolean()))
+
+  // 输入草稿：读取/保存（空串清除）；上限 100k 与消息正文一致
+  safeHandle(IPC.CONVERSATION_DRAFT_GET, (_e, id: string) => conversationRepo.getDraft(id),
+    argsSchema(idSchema))
+  safeHandle(IPC.CONVERSATION_DRAFT_SET, (_e, id: string, draft: string) => {
+    conversationRepo.setDraft(id, draft)
+    return { ok: true }
+  }, argsSchema(idSchema, z.string().max(100_000)))
+
+  // 空会话守卫删除（切会话时对前一个会话调用）；命中删除才清工具白名单
+  safeHandle(IPC.CONVERSATION_DELETE_IF_EMPTY, (_e, id: string) => {
+    const deleted = conversationRepo.deleteIfEmpty(id)
+    if (deleted) clearSessionAllow(id)
+    return { deleted }
+  }, argsSchema(idSchema))
+  // 启动全局清扫历史遗留空壳（0 消息/0 草稿/自动标题/未置顶）
+  safeHandle(IPC.CONVERSATION_CLEANUP_EMPTY, () => ({ deleted: conversationRepo.cleanupEmptyConversations() }))
+
+  // 会话分组文件夹：列表/新建/重命名/解散（解散只解绑会话不删内容）/移动会话
+  safeHandle(IPC.CONVERSATION_GROUP_LIST, (_e, assistantId?: string | null) =>
+    conversationGroupRepo.list(assistantId ?? undefined),
+    argsSchema(z.string().max(64).nullable().optional()))
+  safeHandle(IPC.CONVERSATION_GROUP_CREATE, (_e, assistantId: string | null, name: string) =>
+    conversationGroupRepo.create({ assistantId, name: name.trim() }),
+    argsSchema(z.string().max(64).nullable(), z.string().trim().min(1).max(40)))
+  safeHandle(IPC.CONVERSATION_GROUP_RENAME, (_e, id: string, name: string) => {
+    conversationGroupRepo.rename(id, name.trim())
+    return { ok: true }
+  }, argsSchema(idSchema, z.string().trim().min(1).max(40)))
+  safeHandle(IPC.CONVERSATION_GROUP_DELETE, (_e, id: string) => {
+    conversationGroupRepo.delete(id)
+    return { ok: true }
+  }, argsSchema(idSchema))
+  safeHandle(IPC.CONVERSATION_SET_GROUP, (_e, convId: string, groupId: string | null) => {
+    conversationGroupRepo.setConversationGroup(convId, groupId)
+    return { ok: true }
+  }, argsSchema(idSchema, z.string().max(64).nullable()))
   safeHandle(IPC.CONVERSATION_EXPORT, (_e, id: string) => {
     const conv = conversationRepo.get(id)
     if (!conv) return { ok: false, error: '会话不存在' }
