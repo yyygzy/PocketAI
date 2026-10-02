@@ -7,6 +7,7 @@ import { requestSourceJump } from '../knowledge/source-jump'
 import { AttachmentGrid } from '../../components/AttachmentGrid'
 import { Markdown } from './Markdown'
 import { fmtTokens, fmtCost } from '../../utils/token'
+import { formatDateTime } from '../../utils/time'
 
 interface Props {
   role: 'user' | 'assistant'
@@ -14,6 +15,8 @@ interface Props {
   streaming?: boolean
   model?: string | null
   messageId: string
+  /** 消息创建时间（用于 hover 时间戳 tooltip） */
+  createdAt?: number
   attachments?: ChatAttachment[]
   sources?: MessageSource[]
   selected?: boolean
@@ -50,6 +53,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
   streaming,
   model,
   messageId,
+  createdAt,
   attachments,
   sources,
   selected,
@@ -116,6 +120,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
       className={`flex ${isUser ? 'justify-end' : 'justify-start'} group relative`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      title={createdAt ? formatDateTime(createdAt) : undefined}
     >
       {/* 选择框（非 user 流式消息可选中） */}
       {selectable && (

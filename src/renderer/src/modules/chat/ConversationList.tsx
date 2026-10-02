@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n'
 import { EmptyState } from '../../components/EmptyState'
 import { MessageSearchResults, relTime } from '../../components/MessageSearchResults'
 import { logIpcError } from '../../utils/ipc'
+import { formatDateTime } from '../../utils/time'
 
 interface Props {
   conversations: ConversationRecord[]
@@ -800,6 +801,12 @@ const ConvItem: React.FC<{
             <span className="block truncate text-[11px] leading-4 text-[var(--color-text-muted)]">{conv.lastMessagePreview}</span>
           )}
         </div>
+      )}
+      {/* 最后活跃相对时间：非编辑/非多选态显示，避免布局挤压 */}
+      {!editing && !selectMode && (
+        <span className="shrink-0 text-[10px] text-[var(--color-text-muted)] opacity-70 ml-1" title={formatDateTime(conv.updatedAt)}>
+          {relTime(conv.updatedAt, t)}
+        </span>
       )}
       {(onTogglePin || onSetArchived || onRename || onMoveConv) && !editing && !selectMode && (
         <ExportMenu

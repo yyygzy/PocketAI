@@ -13,6 +13,8 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
 import { sumMessagesUsage } from '../../utils/usage-summary'
 import { fmtTokens, fmtCost } from '../../utils/token'
+import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
+import { exportConversationAsPng } from '../../utils/export-image'
 
 interface Turn {
   user: MessageRecord | null
@@ -164,6 +166,12 @@ export const ChatView: React.FC<Props> = ({
   /** 处于并排对比模式的轮次（turnKey 集合） */
   const [compareTurns, setCompareTurns] = useState<Set<string>>(new Set())
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
+  /** 长会话滚动超过阈值时显示「回到顶部」按钮 */
+  const [showJumpTop, setShowJumpTop] = useState(false)
+  /** 当前是否在底部（state 驱动回底按钮显隐，与 isAtBottomRef 同步） */
+  const [atBottom, setAtBottom] = useState(true)
+  /** 导出长图进行中（防重复点击） */
+  const [exportingImage, setExportingImage] = useState(false)
   // 会话内搜索：开关/关键词/当前命中下标
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
@@ -373,10 +381,52 @@ export const ChatView: React.FC<Props> = ({
   const handleScroll = useCallback(() => {
     const el = scrollBoxRef.current
     if (!el) return
-    isAtBottomRef.current = isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight, 48)
+    const near = isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight, 48)
+    isAtBottomRef.current = near
+    setAtBottom(near)
+    setShowJumpTop(el.scrollTop > 300)
   }, [])
 
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
+
+  /** 回到底部：滚到最后一轮并标记在底部（恢复流式跟滚） */
+  const jumpToBottom = useCallback(() => {
+    if (renderedTurns.length === 0) return
+    virtualizer.scrollToIndex(renderedTurns.length - 1, { align: 'end' })
+    isAtBottomRef.current = true
+    setAtBottom(true)
+  }, [renderedTurns.length, virtualizer])
+
+  /** 回到首条消息 */
+  const jumpToTop = useCallback(() => {
+    virtualizer.scrollToIndex(0, { align: 'start' })
+  }, [virtualizer])
+
+  /**
+   * 导出当前会话为 PNG 长图：
+   * 把完整 messages 临时渲染到离屏容器（绕过虚拟化，保证 DOM 完整），
+   * 用 html-to-image 截图后触发下载，完成即卸载离屏容器。
+   * 超过 500 条仅导出最近 500 条（防 OOM）。
+   */
+  const handleExportImage = useCallback(async () => {
+    if (exportingImage || messages.length === 0) return
+    const LIMIT = 500
+    const slice = messages.length > LIMIT ? messages.slice(-LIMIT) : messages
+    setExportingImage(true)
+    try {
+      await exportConversationAsPng({
+        messages: slice,
+        truncated: messages.length > LIMIT,
+        assistantName: assistantName ?? null,
+        fileName: `pocketai-${fileTimestamp(Date.now())}.png`,
+        t
+      })
+    } catch (e) {
+      console.error('export image failed', e)
+    } finally {
+      setExportingImage(false)
+    }
+  }, [exportingImage, messages, assistantName, t])
 
   // 会话内搜索命中列表（按消息顺序）
   const matchIds = useMemo(() => findMatchIds(messages, searchKeyword), [messages, searchKeyword])
@@ -491,6 +541,24 @@ export const ChatView: React.FC<Props> = ({
             <path d="m21 21-4.3-4.3" />
           </svg>
         </button>
+        <button
+          onClick={() => void handleExportImage()}
+          disabled={exportingImage || messages.length === 0}
+          className="ml-1 p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors disabled:opacity-40"
+          title={exportingImage ? t('chat.exportingImage') : t('chat.exportImage')}
+        >
+          {exportingImage ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="9" cy="9" r="2" />
+              <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+            </svg>
+          )}
+        </button>
       </div>
 
       {/* 会话内搜索条 */}
@@ -580,7 +648,7 @@ export const ChatView: React.FC<Props> = ({
       )}
 
       {/* 消息流（虚拟化：每轮一个虚拟项，只渲染可视区 + overscan） */}
-      <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative">
         <div className="max-w-5xl mx-auto px-4 py-5">
           {/* 本会话累计用量条（随消息流滚动，hover 看输入/输出/缓存明细） */}
           {renderedTurns.length > 0 && sessionUsage.totalTokens > 0 && (
@@ -629,6 +697,12 @@ export const ChatView: React.FC<Props> = ({
                   .filter(Boolean)
                   .join(' · ')
                 const comparing = compareTurns.has(turnKey) && turn.batches.length > 1
+                // 该轮时间戳：用户消息优先，否则取该轮首条回复
+                const turnTs = turn.user?.createdAt ?? turn.replies[0]?.createdAt
+                // 日期分隔线：与上一轮不同自然日时在轮顶插入
+                const prev = ti > 0 ? renderedTurns[ti - 1] : null
+                const prevTs = prev ? (prev.user?.createdAt ?? prev.replies[0]?.createdAt) : null
+                const showDateSep = !!turnTs && (!prevTs || isDifferentDay(turnTs, prevTs))
                 return (
                   <div
                     key={turn.user?.id ?? `turn-${ti}`}
@@ -645,11 +719,21 @@ export const ChatView: React.FC<Props> = ({
                       paddingBottom: 24
                     }}
                   >
+                    {showDateSep && turnTs && (
+                      <div className="flex items-center gap-2 my-1">
+                        <div className="flex-1 h-px bg-[var(--color-border)]" />
+                        <span className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
+                          {daySeparatorLabel(turnTs, t)}
+                        </span>
+                        <div className="flex-1 h-px bg-[var(--color-border)]" />
+                      </div>
+                    )}
                     {turn.user && (
                       <MessageBubble
                         role="user"
                         content={turn.user.content}
                         messageId={turn.user.id}
+                        createdAt={turn.user.createdAt}
                         attachments={turn.user.attachments}
                         replyTo={replyPreview(turn.user.replyToId)}
                         onJumpToReply={onJumpToReply}
@@ -682,6 +766,7 @@ export const ChatView: React.FC<Props> = ({
                         model={msg.model}
                         streaming={msg.status === 'streaming'}
                         messageId={msg.id}
+                        createdAt={msg.createdAt}
                         sources={msg.sources ?? undefined}
                         usage={msg.usage ?? null}
                         provider={msg.provider ?? null}
@@ -731,6 +816,29 @@ export const ChatView: React.FC<Props> = ({
             </div>
           )}
         </div>
+        {/* 浮动跳转按钮：回到底部（非底部时）/ 回到顶部（滚动超 300px 时） */}
+        {(showJumpTop || !atBottom) && renderedTurns.length > 0 && (
+          <div className="absolute right-4 bottom-4 flex flex-col gap-2 z-20">
+            {showJumpTop && (
+              <button
+                onClick={jumpToTop}
+                title={t('chat.jumpToTop')}
+                className="w-9 h-9 rounded-full bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-md flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+              </button>
+            )}
+            {!isAtBottomRef.current && (
+              <button
+                onClick={jumpToBottom}
+                title={t('chat.jumpToBottom')}
+                className="w-9 h-9 rounded-full bg-[var(--color-accent)] text-[var(--color-on-accent)] shadow-md flex items-center justify-center hover:opacity-90 transition-opacity"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <Composer
