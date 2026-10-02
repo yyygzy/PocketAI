@@ -13,7 +13,7 @@ vi.mock('../src/main/db/database', () => ({
   dbService: { getHandle: () => ({ prepare: () => ({ all: () => [], get: () => undefined, run: () => {} }) }) }
 }))
 
-import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, type UsageRow, type UsageConversationRow, type UsageAssistantRow } from '../src/main/usage/usage-service'
+import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, aggregateUsageDetail, type UsageRow, type UsageConversationRow, type UsageAssistantRow, type UsageDetailRow } from '../src/main/usage/usage-service'
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   provider: 'openai',
@@ -312,5 +312,74 @@ describe('aggregateAssistantUsage', () => {
     expect(byId.get('a1')?.cost).toBe(0.0004)
     expect(byId.get('a2')?.cost).toBe(0)
     expect(byId.get('a2')?.totalTokens).toBe(150)
+  })
+})
+
+describe('aggregateUsageDetail', () => {
+  const detailRow = (over: Partial<UsageDetailRow> = {}): UsageDetailRow => ({
+    provider: 'openai',
+    model: 'gpt-4o',
+    usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 20 }),
+    created_at: Date.now(),
+    conversation_id: 'c1',
+    conversation_title: '测试会话',
+    assistant_id: 'a1',
+    assistant_name: '写作助手',
+    ...over
+  })
+
+  it('空行 → 空数组', () => {
+    expect(aggregateUsageDetail([])).toEqual([])
+  })
+
+  it('JOIN 行拆出明细字段，保持入参顺序不重排', () => {
+    const t1 = Date.now() - 1000
+    const t2 = Date.now()
+    const items = aggregateUsageDetail([
+      detailRow({ created_at: t1, model: 'older' }),
+      detailRow({ created_at: t2, model: 'newer' })
+    ])
+    expect(items).toHaveLength(2)
+    expect(items.map((i) => i.model)).toEqual(['older', 'newer'])
+    expect(items[0]).toMatchObject({
+      conversationId: 'c1', conversationTitle: '测试会话',
+      assistantId: 'a1', assistantName: '写作助手',
+      provider: 'openai', promptTokens: 100, completionTokens: 50, cachedTokens: 20, totalTokens: 150
+    })
+  })
+
+  it('坏 usage 行跳过', () => {
+    const items = aggregateUsageDetail([
+      detailRow({ usage: 'broken' }),
+      detailRow({ usage: null }),
+      detailRow()
+    ])
+    expect(items).toHaveLength(1)
+    expect(items[0]!.totalTokens).toBe(150)
+  })
+
+  it('cachedTokens 缺省时计 0；provider/model/标题为空时兜底', () => {
+    const items = aggregateUsageDetail([
+      detailRow({
+        usage: JSON.stringify({ promptTokens: 1, completionTokens: 1, totalTokens: 2 }),
+        provider: null, model: null,
+        conversation_id: '', conversation_title: '  ',
+        assistant_id: null, assistant_name: null
+      })
+    ])
+    expect(items[0]).toMatchObject({
+      provider: '(未知)', model: '(未知)', conversationId: '(未知会话)', conversationTitle: '(未知会话)',
+      assistantId: null, assistantName: null, cachedTokens: 0
+    })
+  })
+
+  it('配置单价时费用正确并 roundCost，未配置模型 cost=0', () => {
+    const prices = { 'openai::gpt-4o': { input: 2, output: 4 } } // (100×2+50×4)/1e6 = 0.0004
+    const items = aggregateUsageDetail([
+      detailRow(),
+      detailRow({ model: 'gpt-4o-mini' })
+    ], prices)
+    expect(items[0]!.cost).toBe(0.0004)
+    expect(items[1]!.cost).toBe(0)
   })
 })

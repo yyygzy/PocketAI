@@ -1,10 +1,12 @@
 import React, { useState } from 'react'
-import type { ChatAttachment, MessageSource } from '../../../../shared/types'
+import type { ChatAttachment, MessageSource, UsagePricing, UsageStats } from '../../../../shared/types'
+import { computeUsageCost, priceKey } from '../../../../shared/usage-pricing'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
 import { requestSourceJump } from '../knowledge/source-jump'
 import { AttachmentGrid } from '../../components/AttachmentGrid'
 import { Markdown } from './Markdown'
+import { fmtTokens, fmtCost } from '../../utils/token'
 
 interface Props {
   role: 'user' | 'assistant'
@@ -17,6 +19,12 @@ interface Props {
   selected?: boolean
   /** 搜索跳转临时高亮（ring 闪烁动画，2s 后由父组件清除） */
   highlight?: boolean
+  /** 本条 assistant 消息的 token 用量（done 重载后带值，流式中为 null） */
+  usage?: UsageStats | null
+  /** 本条消息的 provider id（配合 model + pricing 计算气泡费用） */
+  provider?: string | null
+  /** 本机单价配置（缺省/拉取失败时只显示 token 数） */
+  pricing?: UsagePricing | null
   onToggleSelect?: (id: string) => void
   onDelete?: (id: string) => void
   onRegenerate?: (id: string) => void
@@ -36,6 +44,9 @@ const MessageBubbleImpl: React.FC<Props> = ({
   sources,
   selected,
   highlight,
+  usage,
+  provider,
+  pricing,
   onToggleSelect,
   onDelete,
   onRegenerate,
@@ -50,6 +61,24 @@ const MessageBubbleImpl: React.FC<Props> = ({
   const [editText, setEditText] = useState(content)
   const [showSources, setShowSources] = useState(false)
   const selectable = !!messageId && !streaming
+
+  // token 微展示：仅 done 且带 usage 的 assistant 消息渲染；命中本机单价时附带估算费用
+  const unitPrice =
+    !isUser && usage && pricing && provider && model
+      ? pricing.prices[priceKey(provider, model)]
+      : undefined
+  const costValue = usage && unitPrice ? computeUsageCost(usage, unitPrice) : 0
+  const costText = fmtCost(costValue)
+  const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
+  const tokenHint = usage
+    ? [
+        t('chatview.tokenHint', { prompt: usage.promptTokens, completion: usage.completionTokens }),
+        usage.cachedTokens && usage.cachedTokens > 0 ? t('chatview.tokenCachedHint', { cached: usage.cachedTokens }) : '',
+        costText ? `${currencySymbol}${costText}` : ''
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : ''
 
   const handleDelete = () => {
     if (messageId && onDelete) {
@@ -206,6 +235,17 @@ const MessageBubbleImpl: React.FC<Props> = ({
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* token 微展示：总量 + 命中单价时的估算费用，hover 看输入/输出/缓存明细 */}
+        {!isUser && usage && !streaming && (
+          <div
+            className="mt-1 text-[10px] text-[var(--color-text-muted)] font-mono cursor-default"
+            title={tokenHint}
+          >
+            {t('chatview.tokenLine', { tokens: fmtTokens(usage.totalTokens) })}
+            {costText && <span className="ml-1.5 text-[var(--color-accent)]">{currencySymbol}{costText}</span>}
           </div>
         )}
 

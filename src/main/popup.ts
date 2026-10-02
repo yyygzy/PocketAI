@@ -12,7 +12,7 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { IPC } from '../shared/types'
-import type { PopupConfig, PopupPayload, PopupSetConfigResult } from '../shared/types'
+import type { PopupConfig, PopupPayload, PopupSetConfigResult, SelectionAction } from '../shared/types'
 import { lockService } from './lock/lock'
 import { denyNewWindows } from './net/external-links'
 import { errMsg } from './error'
@@ -262,11 +262,18 @@ function createPopupWindow(payload: PopupPayload): BrowserWindow {
   return win
 }
 
+/** 选区文本上限（应用内划词与模拟复制取词同一口径，防灌爆浮窗） */
+const MAX_SELECTION_TEXT = 8000
+
 /** 唯一入口：幂等打开/聚焦浮窗；锁屏状态下拒绝唤起，返回 null */
-export function openPopup(mode: 'quick' | 'selection', text?: string): BrowserWindow | null {
+export function openPopup(
+  mode: 'quick' | 'selection',
+  text?: string,
+  action?: SelectionAction
+): BrowserWindow | null {
   // 浮窗会展示会话/选区文本，锁屏时唤起会绕过主窗口锁屏遮罩
   if (lockService.getStatus().state === 'locked') return null
-  lastPayload = { mode, text, ts: Date.now() }
+  lastPayload = { mode, text, action: mode === 'selection' ? action : undefined, ts: Date.now() }
   if (popupWin && !popupWin.isDestroyed()) {
     popupWin.setBounds(positionFor(mode))
     if (!popupWin.isVisible()) popupWin.show()
@@ -297,6 +304,20 @@ export function initPopup(): void {
     hidePopup()
     return { ok: true }
   })
+  // 应用内划词浮条入口：带文本与动作唤起浮窗单例（锁屏拒绝→ ok:false）
+  safeHandle(
+    IPC.POPUP_OPEN_SELECTION,
+    (_e, args: { text: string; action: SelectionAction }) => {
+      const text = args.text.trim().slice(0, MAX_SELECTION_TEXT)
+      if (!text) return { ok: false }
+      const win = openPopup('selection', text, args.action)
+      return { ok: win !== null }
+    },
+    argsSchema(z.object({
+      text: z.string().min(1).max(MAX_SELECTION_TEXT),
+      action: z.enum(['translate', 'summary', 'polish', 'ask'])
+    }))
+  )
   safeHandle(IPC.POPUP_GET_PAYLOAD, () => lastPayload)
   safeHandle(IPC.POPUP_GET_CONFIG, () => getPopupConfig())
   safeHandle(

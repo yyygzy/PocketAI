@@ -2,8 +2,8 @@
 // 数据来源：chat 与 agent 链路在生成完成时把 provider 返回的 usage 落库（v25 migration）
 // 聚合在 JS 侧完成（行级数据量可控，且坏 JSON 容错/时区日切比 SQL JSON 函数更直观可控）
 import { dbService } from '../db/database'
-import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageStats, UsageSummary } from '../../shared/types'
-import { computeUsageCost, priceKey, roundCost } from './pricing'
+import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageDetailItem, UsageStats, UsageSummary } from '../../shared/types'
+import { computeUsageCost, priceKey, roundCost } from '../../shared/usage-pricing'
 
 /** 聚合输入行（SQL 只拉必要列） */
 export interface UsageRow {
@@ -211,6 +211,49 @@ export function aggregateAssistantUsage(
     .sort((a, b) => b.totalTokens - a.totalTokens)
 }
 
+/** 行级明细聚合输入行（JOIN conversations + assistants 带出标题与助手名） */
+export interface UsageDetailRow extends UsageRow {
+  conversation_id: string
+  conversation_title: string | null
+  assistant_id: string | null
+  assistant_name: string | null
+}
+
+/**
+ * 聚合行级用量明细 → UsageDetailItem[]（CSV 导出用，每轮生成一行）。
+ * 与既有聚合同口径：坏 JSON 跳过、未配单价费用计 0、roundCost 消浮点尾巴；保持入参顺序（SQL 已按时间倒序）。
+ */
+export function aggregateUsageDetail(
+  rows: UsageDetailRow[],
+  prices: Record<string, ModelPrice> = {}
+): UsageDetailItem[] {
+  const items: UsageDetailItem[] = []
+  for (const row of rows) {
+    const u = parseUsageJson(row.usage)
+    if (!u) continue
+    const provider = row.provider || '(未知)'
+    const model = row.model || '(未知)'
+    const cost = prices[priceKey(provider, model)]
+      ? computeUsageCost(u, prices[priceKey(provider, model)]!)
+      : 0
+    items.push({
+      createdAt: row.created_at,
+      conversationId: row.conversation_id || '(未知会话)',
+      conversationTitle: row.conversation_title?.trim() || '(未知会话)',
+      assistantId: row.assistant_id,
+      assistantName: row.assistant_name?.trim() || null,
+      provider,
+      model,
+      promptTokens: u.promptTokens,
+      completionTokens: u.completionTokens,
+      cachedTokens: u.cachedTokens ?? 0,
+      totalTokens: u.totalTokens,
+      cost: roundCost(cost)
+    })
+  }
+  return items
+}
+
 class UsageService {
   /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */
   getSummary(days = 30, prices: Record<string, ModelPrice> = {}): UsageSummary {
@@ -277,6 +320,36 @@ class UsageService {
       )
       .all(since) as UsageAssistantRow[]
     return aggregateAssistantUsage(rows, prices).slice(0, safeLimit)
+  }
+
+  /**
+   * 行级用量明细（CSV 导出）。
+   * 内查 limit+1 行判断截断：超出 limit 时 truncated=true 且只返回前 limit 条（时间倒序最近的）。
+   * 时间过滤、JOIN 口径与 listAssistantUsage 一致。
+   */
+  listUsageDetail(
+    days = 30,
+    limit = 10000,
+    prices: Record<string, ModelPrice> = {}
+  ): { items: UsageDetailItem[]; truncated: boolean } {
+    const safeDays = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), 365) : 30
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 20000) : 10000
+    const since = Date.now() - safeDays * 24 * 3600 * 1000
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        `SELECT m.conversation_id, c.title AS conversation_title, c.assistant_id, a.name AS assistant_name,
+                m.provider, m.model, m.usage, m.created_at
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         LEFT JOIN assistants a ON a.id = c.assistant_id
+         WHERE m.role='assistant' AND m.status='done' AND m.usage IS NOT NULL AND m.created_at >= ?
+         ORDER BY m.created_at DESC
+         LIMIT ?`
+      )
+      .all(since, safeLimit + 1) as UsageDetailRow[]
+    const truncated = rows.length > safeLimit
+    return { items: aggregateUsageDetail(truncated ? rows.slice(0, safeLimit) : rows, prices), truncated }
   }
 
   /**

@@ -3,6 +3,7 @@ import { Sidebar, type ModuleId } from './components/Sidebar'
 import { TabBar } from './components/TabBar'
 import { Workspace } from './components/Workspace'
 import { ToolApprovalDialog } from './components/ToolApprovalDialog'
+import { SelectionToolbar } from './components/SelectionToolbar'
 import { ToastProvider } from './components/ToastProvider'
 import { ReminderListener } from './hooks/ReminderListener'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
@@ -190,6 +191,9 @@ export default function App() {
         </div>
 
         {!locked && <ToolApprovalDialog />}
+
+        {/* 应用内划词浮条（选区助手；锁屏不挂载，杜绝敏感内容外泄） */}
+        {!locked && <SelectionToolbar />}
 
         {!locked && wizard && (
           <FirstRunWizard variant={wizard} onClose={() => setWizard(null)} />

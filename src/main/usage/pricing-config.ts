@@ -1,7 +1,7 @@
 // 用量计价配置 KV 读写（app_config，缺省人民币与空价表）
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import type { UsagePricing } from '../../shared/types'
-import { parsePricing } from './pricing'
+import { parsePricing } from '../../shared/usage-pricing'
 
 const K_USAGE_PRICING = 'usage.pricing'
 

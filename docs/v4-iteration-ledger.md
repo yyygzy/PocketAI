@@ -43,6 +43,155 @@
 - **方案**：migration v29 knowledge_bases 加 ocr_provider_id/ocr_model（空=关闭，同构 MultiQuery 配置模式）；新增 `src/main/knowledge/ocr.ts`（OCR_SYSTEM_PROMPT 提取文字/表格转 Markdown/不编造；imageMime 纯函数；单图 10MB 上限；ocrImageFile 读文件→base64 data URL→adapter.streamChat 多模态单轮）；KbSourceType 加 'image'，parsers detectSourceType 收图片扩展（parseDocument case 'image' 抛错防御防二进制乱码）；ingestion parseForIngest 分流（未配 OCR 抛小白可读引导错误；PDF 空文本报错细化为「可能是扫描版，请转图片」）；文件对话框 filters + folder-scan 白名单加图片，scanFolderFiles 加 includeImages 参数（KB 未配 OCR 时文件夹导入自动跳过图片防批量报错）；KbForm 新增「OCR 文字识别」配置区块（复制 MultiQuery 模式）+ kb.ocr* 四语 key。
 - **决策记录**：扫描版 PDF 不做（页面转图片需 canvas 原生依赖，便携打包风险大），引导转图片导入；本地 OCR（tesseract）不做（中文质量差+体积大），只走视觉模型 API 零打包体积。
 
+### V4-Iter-41 用量数据 CSV 导出（已落地）
+
+- **范围**：Iter-24 起用量体系（聚合/排行/单价/气泡微展示/会话累计）多次被提「可导出算账」未做。用量面板只能看聚合不能带走，月度复盘/报销/自定义透视无出口。本批在用量面板范围行加「导出 CSV」，导出**行级明细**（每轮 assistant 生成一行）而非聚合视图——聚合 UI 已可见，明细丢进表格才能自由透视。
+- **方案**：
+  - shared/types：+UsageDetailItem（createdAt/conversationId·title/assistantId·name 可空/provider/model/prompt·completion·cached·totalTokens/cost）、UsageDetailResult{items,truncated}；IPC +USAGE_DETAIL_GET/USAGE_EXPORT_CSV。
+  - usage-service：+UsageDetailRow 与纯函数 aggregateUsageDetail（同口径坏 JSON 跳过、未配价 cost=0、roundCost、保持入参倒序、标题空/会话 id 空兜底「(未知会话)」、assistant 名 trim 后 null）；+listUsageDetail(days,limit=10000) SQL messages JOIN conversations LEFT JOIN assistants（同助手排行口径），内查 limit+1 判 truncated、clamp days 1-365/limit 1-20000。
+  - handlers/messages：USAGE_DETAIL_GET 薄封装带价；USAGE_EXPORT_CSV 照搬 STEWARD_EXPORT_REPORT 模式（渲染端拼文本含 BOM，主进程 showSaveDialog+writeFileSync，defaultPath pocketai-usage-{days}d-{timestamp}.csv，filters csv，content zod 上限 500 万字符，返回 ok/canceled/path）。
+  - preload +getUsageDetail/exportUsageCsv（PocketAPI=typeof api 自动同步）。
+  - 新建 renderer/utils/usage-csv.ts：csvCell RFC4180 转义（逗号/引号/CRLF 双引号包裹、内部 " 翻倍）、formatLocalTime 本地 YYYY-MM-DD HH:mm:ss、buildUsageCsv（10 列固定序：时间/会话/助手/服务商/模型/输入/输出/缓存/总/花费，\uFEFF 开头 + CRLF 行尾，assistantName null → 空串）。
+  - UsagePanel：chips 行右侧 ml-auto 导出按钮（无数据/导出中 disabled+title），handleExportCsv busy 防重→查明细→i18n 表头注入构建 CSV→落盘；成功 toast 条数，truncated 追加 warning 提示缩小范围，取消静默、失败 common.opFailed。
+  - i18n 四语 +6 key：exportCsv/exportCsvDone{count}/exportCsvTruncated{limit}/colTime/colProvider/colCached；列头其余复用 usage.conversation/assistant/model/prompt/completion/totalTokens/cost。
+- **决策记录**：导行级明细而不导面板聚合（多区块塞单 CSV 难用，明细透视表可还原一切聚合）；CSV+BOM 而非 XLSX（零表格库依赖，Excel/Numbers 直开中文不乱码）；截断在 service 内用 limit+1 判定而非 COUNT 二查；主进程不碰任何文案与表头，与诊断报告导出职责划分一致。
+- **明确不做**：不做 XLSX/多 sheet；不做列选择/导出模板/自定义时间区间（7/30/90 chips 已联动）；不导消息正文（隐私敏感、体积大，仅统计字段）。
+
+### V4-Iter-40 管家推荐模型一键拉取（已落地）
+
+- **范围**：策划书 6.1 平台管家含「模型推荐下载」。OLLAMA_PULL 流式拉取链路（主进程单例+进度广播+中止）与设置页 OllamaPanel 拉取 UI 早已完整，但管家推荐卡片只显示 installed ✓ 标记，未装模型无动作——「检测→推荐→下载」闭环断在最后一跳，用户得去设置页手输模型名。本批在推荐卡片直接加拉取按钮+实时进度+中止。
+- **方案**：
+  - 新建 hooks/useOllamaPull.ts：从 OllamaPanel 收口 pulling/pullEvt state、onOllamaPullEvent 挂载订阅（卸载 off 不中断后台拉取）、空名/忙碌守卫、IPC !ok 与 reject 双兜底复位、abort；onDone/onError 回调走 ref（订阅只挂一次）；同文件导出纯函数 pickPullState（installed→pulling→busy-other→disabled→pullable 五态优先级，installed 最高防事件残留误显进度）。
+  - OllamaPanel 重构接线：删自有 state/订阅/pull 函数改用 hook（onDone markPullDone+refresh，pull 错误独立 pullError 行与安装错误 err 分行），doPull 包一层 clearPullDone；UI/文案零变化，OllamaPullEvent 类型 import 随之下线。
+  - StewardModule：refreshRecommendation 抽 useCallback 与 load 共用；hook onDone 重拉推荐（installedModels 来自实时端口探测，不本地乐观更新）+toast 成功、onError toast 失败；localPicks 卡片按 pickPullState 渲染——pulling 内嵌 1.5px 进度条（ollama 原始 status+百分比+中断按钮），busy-other/disabled 禁用（disabled title 引导去设置启动），pullable 显示「⬇️ 拉取」；installed 仅保留顶部绿标不出按钮；向量模型同等待遇。
+  - i18n：四语仅新增 steward.pullNeedRunning 1 key（韩文字串内引号改用「」避免与 JS 单引号冲突，typecheck 当场抓住），其余复用 ollama.pullBtn/abort/pulling/pullDone。
+  - 测试：新建 tests/ollama-pull-state.test.ts 6 用例（installed 优先/自身 pulling/忙别的/disabled/忙碌优先于未运行/pullable）；hook 编排不做 renderHook（仓库无该设施），状态组合全走纯函数。
+- **决策记录**：抽 hook 而非管家页复制订阅逻辑（两处共用行为一致，OllamaPanel 纯接线重构 UI 零变化）；ollama 未运行只禁用+引导，不在管家页做启动/安装/镜像（无 runtime status 链路，启动心智归 OllamaPanel，避免半套实现）；拉取成功重拉 recommendModels 刷新 installed；主进程拉取全局单例，其他卡片 busy-other 禁用。
+- **明确不做**：不做拉取完成自动注册 provider 模型（models 列表拉取是另一链路，与 OllamaPanel 现行为一致）；不做管家页 Ollama 安装/启动/镜像配置；不改推荐算法与卡片排序；不做并发多模型拉取（主进程单例限制）。
+
+### V4-Iter-39 管家诊断报告导出（已落地）
+
+- **范围**：策划书 6.4「诊断报告可导出为文本，便于远程求助」此前缺导出入口——管家页六块数据（硬件画像/DB 完整性/数据健康/模型推荐/安全体检/故障诊断）只能看不能带走。本批在管家页顶部加「📄 导出报告」，一键补跑体检/诊断并保存为带时间戳的 .txt。
+- **方案**：
+  - 新建 renderer/utils/diagnostic-report.ts：buildDiagnosticReport(data, labels) 纯函数 + ReportLabels 字典注入（复用 formatBytes）；固定五段结构 ①系统硬件（CPU/内存 GB/GPU 含显存 CUDA MPS 驱动/磁盘盘符类型总线容量可移动）②模型推荐（档位/summary/Ollama 态/已装列表/localPicks tag+id+installed+reason/在线建议/警告）③数据健康（完整性+会话消息知识库计数+附件+孤儿）④安全体检（/100 分+逐项 ✅⚠️❌ label-detail+建议行）⑤故障诊断（同构+修复行，空诊断显示整体正常）；缺失段不省略，audit/diagnose 未跑标 notRun、硬件/推荐 null 标 notAvailable；时间手动 pad 成本地 YYYY-MM-DD HH:mm:ss 不依赖 locale。
+  - main：IPC STEWARD_EXPORT_REPORT，steward.ts safeHandle + zod（content 1..200000），仿 snippets export 走 dialog.showSaveDialog（默认名 pocketai-report-YYYYMMDD-HHmm.txt，文本文件/所有文件过滤），取消→canceled、写盘→path；preload +exportStewardReport。
+  - UI：StewardModule 顶部 recheck 旁加按钮（flex gap 包裹）；handleExport 先 Promise.all 补跑 runAudit/runDiagnose（结果同时 setState 刷新页面，失败 catch 容忍沿用已有 state）+getUpdateInfo 取 currentVersion，再拼报告调 IPC；成功 toast.success、失败/!ok toast.error（useToast）；硬件/health 用挂载快照不 force 重采（避免导出触发慢硬件采集）。
+  - i18n：四语新增 21 key（导出按钮/态/成败 toast/报告头与段名/建议·修复/已装模型·在线建议·注意事项/评分/三态词），字段级标签全部复用既有 steward.* key；段名单独建 reportSec* 而非剥离 emoji（避免跨语言正则脆弱）。
+  - 脱敏核实：grep 确认 runAudit/runDiagnose 只检查 apiKeys 存在性（p.apiKeys.filter(Boolean).length），不输出 Key 明文，报告零敏感凭证。
+  - 测试：新建 tests/diagnostic-report.test.ts 11 用例（全量数据头部时间版本/五段各字段/GB 精确一位小数/段顺序固定；全 null 不抛错+notRun/notAvailable/版本占位；空诊断显整体正常；完整性异常出 details；无 GPU+USB 可移动）。
+- **决策记录**：纯函数放渲染端（六块数据全在 state，零 IPC 往返，main 只落盘，与既有分工一致）；导出时自动补跑 audit/diagnose（求助场景必须最新，省掉用户先手动跑两个按钮；硬件采集慢不强制重采）；纯文本 .txt 而非 PDF/JSON（远程求助粘贴最通用）；ReportLabels 注入而非纯函数 import i18n（可测+语言跟随 UI）；不剥离 emoji 而新建无 emoji 段名 key。
+- **明确不做**：不做 PDF/HTML 报告；不做日志文件打包附加（属日志功能域）；不做段落勾选自定义；不做定时导出；不在报告中含会话内容/知识库正文等业务数据。
+
+### V4-Iter-38 浮窗回答一键复制（已落地）
+
+- **范围**：Iter-37 划词浮条打通了「选中→翻译/总结/润色」入口，但结果出来后要拿走只能手动框选浮窗文本再 Ctrl+C——选区助手最高频工作流（翻译/润色→粘走）的最后一跳缺失。本批给浮窗每条 assistant 回复加 hover 复制按钮。
+- **方案**：PopupApp.tsx 单文件改动——新增 AssistantBubble 子组件（relative group 包裹 Markdown + 绝对定位圆形小按钮 -top-2 -right-2，hover 气泡/键盘聚焦显现，复制成功态常显 1.5s 并切换对勾图标，SVG 与 Markdown 代码块复制按钮同口径）；复用 useCopyFeedback（统一 1500ms 反馈态+writeClipboard 含 execCommand 降级，适配浮窗 file:// 透明窗口场景）；消息 map 中 assistant 非错误且有内容走新组件，错误气泡/流式占位/user 消息保持原样；复制内容=模型原文（与代码块复制 raw 口径一致，摘要带列表符号可接受）；i18n 零新 key（common.copy/common.copied 四语早已存在）；纯 UI 改动无新纯逻辑不新增测试。
+- **决策记录**：不主动关窗——浮窗本就是 blur 自隐的 Spotlight 形态，用户复制后切到目标窗口粘贴时窗口自然隐藏，按钮只管复制+反馈，避免连续操作（再问一轮/多动作）被打断；按钮放气泡右上角而非底部动作行（浮窗 440px 纵向空间金贵，hover 显现零常态占用）；错误消息不给复制（错误排查走主窗口设置页，浮窗错误仅提示重试）。
+- **明确不做**：不做「复制为纯文本」（剥离 Markdown 符号）双模式（翻译/润色输出几乎无 markdown，双按钮增加选择负担）；不做复制后自动关闭选项；不动主窗口 MessageBubble（其操作行复制/编辑/重跑/删除已完整）；不做历史回复批量复制。
+
+### V4-Iter-37 应用内划词浮条（选区助手补齐，已落地）
+
+- **范围**：策划书 6.1 v1 必做「选区助手：划词浮条（翻译/总结/改写）」此前只完成了一半——全局快捷键版（Ctrl+Shift+U 任意应用模拟复制取词→浮窗，Ctrl+Shift+U），但应用内划词没有就地入口。本批在主窗口选中正文后于选区旁浮出动作条，点击直接唤起既有浮窗单例并自动执行动作。
+- **方案**：
+  - 链路复用不造第二套：浮条只做入口 → 新 IPC POPUP_OPEN_SELECTION（zod text 1..8000 + action enum，trim/截断/锁屏拒绝复用 openPopup）→ PopupPayload 加 `action?: SelectionAction` → PopupApp 就绪后自动执行；浮窗的流式/模型选择/多轮/Markdown 全继承。
+  - shared：新增 SelectionAction 联合类型；openPopup(mode, text?, action?) 第三参写 payload（quick 模式强制无 action）；主 preload +openSelectionPopup。
+  - 新建 utils/selection-actions.ts：SELECTION_ACTIONS 单一顺序源；composeSelectionPrompt 从 PopupApp 抽出 4 条中文提示词（PopupApp 删内联改引用，动作芯片 map 也改用常量）；normalizeSelectionText（trim/空白 null/8000 截断）；isEditableSelectionHost 复用 shortcuts.isEditableTarget 鸭子判定并沿 parentElement 链上溯 64 层（contenteditable 子节点场景），不重复造 editable 判定。
+  - 新建 components/SelectionToolbar.tsx + App 挂载（!locked 才挂）：document mouseup(左键)/keyup(Shift) 后延迟一帧读 selection；fixed 浮条 useLayoutEffect 按实测尺寸定位（选区上方居中，空间不足翻下，水平夹取视口）；按钮 onMouseDown preventDefault 防清选区；隐藏=mousedown 浮条外(capture)/selectionchange 空/Esc/scroll capture 即藏/blur；开关读 getPopupConfig().selectionEnabled，window focus 刷新；按钮文案直接复用 popup.act.* 四语（含 emoji）。
+  - PopupApp：pendingActionRef 按 payload.ts 标记，effect 在 mode=selection+assistant/provider/model 就绪+非流式时自动跑一次后清空；快捷键取词入口不带 action 保持「芯片等用户点」旧行为。
+  - i18n 不新增 key：popup.selectionHint 四语文案补充「应用内选中正文即浮出工具条」。
+  - 测试：新建 tests/selection-actions.test.ts 14 用例（动作顺序/宿主判定 null+四类输入元素+祖先链/normalize 空空白 trim 超长恰界/4 动作提示词特征）；主进程 popup handler 沿用仓库零 popup 测试惯例不新增。
+- **决策记录**：浮条只唤起浮窗不做就地内联回答（避免重复实现流式链路，回答也不打断阅读上下文）；带 action 自动执行（浮条按钮已表意图，进浮窗再点芯片是冗余；两入口语义不同故快捷键链路不自动）；与全局快捷键共用 selectionEnabled 一个开关不新增设置项（用户心智同一个「选区助手」）；scroll 即藏而非跟随重定位（零错位闪烁，重划成本低）；提示词不抽到 shared（仅渲染端两处使用，主进程不消费）。
+- **明确不做**：不做复制/搜索等浏览器原生动作；不做就地回答/就地替换原文；不覆盖 detached 子窗口（独立窗口/preload，后续可同构挂接）；不做浮条自定义开关与自定义动作提示词；Linux 全局取词仍不支持（既有现状，与本批无关）。
+
+### V4-Iter-36 会话累计用量条（已落地）
+
+- **范围**：Iter-35 解决了「每轮气泡看单行 token/费用」，但用户仍需自己心算「这个会话总共花了多少」。本批在会话消息流顶部加累计用量条：本会话全部 assistant 消息 token 汇总 + 按各自模型单价求和的估算费用，hover 看输入/输出/缓存明细，零新 IPC（messages/pricing 均已在渲染端）。
+- **方案**：新建 `src/renderer/src/utils/usage-summary.ts`——sumMessagesUsage(messages, pricing) 纯函数（只计 role=assistant 且带 usage 的 done 消息；逐条 priceKey(provider,model) 查价 computeUsageCost 后 roundCost 汇总；输出 prompt/completion/cached/total/cost/counted）；ChatView useMemo 派生 summary（deps messages/pricing），消息流容器顶部虚拟列表外渲染 11px muted 胶囊（右对齐，随消息流滚走不占固定布局），totalTokens>0 才显示，费用 fmtCost 为空（未配单价）时只显 token，title 复用 chatview.tokenHint/tokenCachedHint + 费用行；i18n 新增 chatview.sessionUsage 四语 1 key（明细 key 复用 Iter-35）；新建 tests/usage-summary.test.ts 6 用例（空会话/user 与无 usage 跳过计数/无 pricing 费用 0/单模型计费 7 元/多模型多批次含缓存价 12.7 元/单价缺失与无 provider 只计 token）。
+- **决策记录**：账单口径=全部 assistant 消息（含分支重跑各批次），与 usage-service 聚合一致——重跑真实发生消费，用户要看的是「实际花了多少」而非「当前可见分支花了多少」；费用逐条按消息自带 provider/model 计价再求和，不做会话级单一模型假设；放消息流内随滚动消失而非顶部固定栏（省布局高度，长会话中顶部自然让位内容，需要时滚回顶部即可）；不新增明细 title key（直接复用气泡同款输入/输出/缓存文案）。
+- **明确不做**：不做会话内逐轮费用明细表（Iter-25 留尾保留，气泡单行+累计已覆盖日常感知）；不做历史会话列表上的费用列（需跨会话聚合查询，用量面板已有会话排行+跳转）；不做费用预算/超支提醒（数据可视化模块未列，避免过度设计）。
+
+### V4-Iter-35 气泡 token 微展示（已落地）
+
+- **范围**：单条消息 usage 早已落库（V4-Iter-1），用量面板有聚合视图，但对话过程中看不到每轮花了多少 token——最贴近消费时刻的位置无感知。本批在每条 assistant 气泡下加 10px 微展示：总 token 缩写 + 命中本机单价时的估算费用，hover title 看输入/输出/缓存明细；分支对比列同口径可横向比较。
+- **方案**：
+  - 纯函数收口：`src/main/usage/pricing.ts` → `src/shared/usage-pricing.ts`（本就零 electron/DB 依赖，主进程与渲染端共用 computeUsageCost/priceKey/parsePricing）；import 改道 usage-service/pricing-config/handlers(messages)/tests。
+  - 新建 `src/renderer/src/utils/token.ts`：fmtTokens/fmtCost 从 UsagePanel 抽出共用；UsagePanel 删私有实现，本地同构 `pk` 改用共享 priceKey（消除重复）。
+  - MessageBubble：+props usage/provider/pricing；assistant 气泡来源块下渲染 token 行（fmtTokens(totalTokens) + 费用 accent 小字），title 拼输入/输出/缓存命中明细（cached=0 省略），无 usage/streaming 不渲染。
+  - ChatView：挂载拉 getUsagePricing 存 state（失败静默=只显示 token），assistant MessageBubble 传 usage/provider/pricing，pricing 透传 BranchCompare（其内部 MessageBubble 传齐三参）。
+  - 调研校准：ChatDoneEvent 不带 usage，但 useStreamSession done 后 200ms 自动 loadMessages 带 usage 重载，无需改事件链路；MessageBubble 仅 ChatView/BranchCompare 使用，Agent/浮窗自动排除（同 Iter-22 口径）。
+  - i18n：chatview.tokenLine/tokenHint/tokenCachedHint 中英日韩四语 3 key。
+  - 测试：usage-pricing.test 改 import 路径用例不动；新建 tests/token-format.test.ts 6 用例（fmtTokens k/M 分级边界、fmtCost 0/负/NaN 空串与精度分级）。
+- **决策记录**：pricing 纯函数移 shared 而非渲染端重复实现（DRY，文件头本就标注「便于单测」；pricing-config 的 KV 读写含 DB 依赖保留 main 不动）；费用用原生 title 而非自定义弹层（与用量柱 tooltip 同模式，零样式成本）；不设显示开关（10px muted 常显干扰极小，有反馈再加）。
+- **明确不做**：不做流式进行中实时 token（多数 provider 仅流末尾返回 usage）、不覆盖 Agent 面板/浮窗、不做消息级用量弹窗（台账留尾保留）。
+
+### V4-Iter-34 KB 问答历史跨库漫游（已落地）
+
+- **范围**：V4-Iter-28 留尾四项收官（搜索 Iter-30 / 重命名导出 Iter-29 / 自动清理 Iter-33 已落地）——问答历史此前只能逐库进入「库详情→问答 tab→历史」翻看，跨库找旧问答必须一个个库点。本批在知识库模块加统一入口跨库查看/搜索全部问答留痕，点击直达所属库回放。
+- **方案**：
+  - repo：kb-ask-session.repo 增 `listAll(limit)` / `searchAll(keyword, limit)`——`FROM kb_ask_sessions s LEFT JOIN knowledge_bases k ON k.id=s.kb_id` 带库名，`ORDER BY s.updated_at DESC LIMIT ?`；空串回退 listAll；RoamRow = SessionRow & {kb_name: string|null}，null 回落空串交 UI 兜底。
+  - types：+KbAskRoamItem（extends KbAskSessionMeta +kbName）+IPC KB_ASK_SESSION_LIST_ALL/SEARCH_ALL。
+  - IPC/preload：knowledge.ts 2 safeHandle（limit zod int 1-500）；preload listAllKbAskSessions/searchAllKbAskSessions（默认 200）。
+  - UI：新建 `KbAskRoam.tsx`（搜索框 200ms 防抖 + 会话行：标题/库名 chip/时间·消息数·模型，空态区分无历史/无匹配）；KnowledgeModule mode 联合加 'roam'，左栏标题行加 🕘 入口，右栏 mode==='roam' 渲染 KbAskRoam；点击行 → setAskJumpId+setMode('detail')+setSelectedId（模块 state 提升，不走 source-jump 式事件）；KbDetail 加 askJumpId/onAskJumpHandled props，effect 收到非空 setAskMode(true) 并透传 KbAskPanel；KbAskPanel 加 openSessionId/onSessionOpened props，effect 消费（setShowHistory(true)+loadSession+回调清空），兼容切库重挂载首消费与同库二次跳转；fmtSessionTime 导出供漫游列表复用。
+  - i18n：kb.roamTitle/roamSearchPlaceholder/roamEmpty/roamSearchEmpty/roamKbDeleted 中英日韩四语 5 key。
+  - 测试：kb-ask-session-repo.test 补 listAll/searchAll 4 用例（JOIN+ORDER+LIMIT SQL 与参数、LIKE 参数顺序、空白回退、kb_name null 兜底空串）。
+- **决策记录**：漫游入口仅在知识库模块内，模块必然已挂载，用模块 state 提升最简（KbAskRoam 是 KnowledgeModule 的一个 mode），不引入 sessionStorage/事件——后续若有外部模块入口再升级 source-jump 模式；LIMIT 200 与 Iter-33 自动清理配套，不做分页；LEFT JOIN 仅防御（deleteKb 已级联 deleteByKb，无主会话理论不存在）。
+- **明确不做**：不做分页/加载更多、不做按库筛选 chip（搜索框够用）、不做外部模块入口。
+
+### V4-Iter-33 KB 问答历史自动清理（已落地）
+
+- **范围**：V4-Iter-28 决策记录留尾——问答留痕只增不减，仅支持手动单条删除，久了无限膨胀。本批补保留策略（每库最多 N 条 / 保留最近 N 天），保存新会话时顺手清理。
+- **方案**：
+  - repo：kb-ask-session.repo 增 `prune(kbId, policy)`——keepDays>0 删 `updated_at < 阈值`、keepCount>0 删 `id NOT IN (SELECT ... ORDER BY updated_at DESC LIMIT ?)`，返回合计删除数。
+  - 配置：新建 `src/main/knowledge/ask-retention-config.ts`（仿 pricing-config）——app_config 键 `kbAsk.retention`，JSON `{keepCount, keepDays}`；parseKbAskRetention 容错（非对象/负数/NaN/小数→回退或取整），默认双 0 = 关闭。
+  - 联动：KB_ASK_SESSION_SAVE handler upsert 后读配置，非全 0 则 prune 该库（策略触发点而非调度器，零定时器复杂度）。
+  - IPC：types +KB_ASK_RETENTION_GET/SET；knowledge.ts 2 个 safeHandle + zod（keepCount 0-10000 / keepDays 0-3650）；preload 双桥接 + KbAskRetention 类型导入。
+  - UI：KbAskPanel 历史列表搜索框下加「自动清理」btn-ghost 按钮（策略生效时 accent 高亮）→ 展开行内配置（保留条数 不限/50/100/200/500 + 保留天数 不限/7/30/90/180 双 select），切换即保存 + toast + 刷新列表。
+  - i18n：kb.askRetention/askRetentionCount/askRetentionDays/askRetentionUnlimited/askRetentionSaved 中英日韩四语 5 key。
+  - 测试：kb-ask-session-repo.test 补 prune 4 用例（仅 keepDays/仅 keepCount/双策略合计/双 0 不删）；新建 ask-retention-config.test 6 用例（parse 非对象/非法值/小数取整、get 无配置/坏 JSON/set-get 往返）。
+- **决策记录**：默认双 0 关闭，不静默删用户数据；prune 挂在 SAVE handler 层而非 repo.upsert 内部（repo 保持纯数据访问，编排归 handler）；仓库无 retention 调度先例（backup/log 均无自动清理），upsert 是天然触发点，天数策略同样由写入触发，不引入定时器。
+- **明确不做**：不做全局跨库清理 UI、不做定时调度器、不做清理前确认弹窗（策略由用户显式设置，预期内行为）。
+
+### V4-Iter-32 用量排行点击跳转（已落地）
+
+- **范围**：V4-Iter-25/27 连续两次留尾——用量面板展示排行数据但不能直接操作。本批补点击跳转到对应会话/助手，打通洞察到操作最后一公里。
+- **方案**：
+  - 新建 `src/renderer/src/modules/settings/usage-jump.ts`：仿 source-jump.ts 跨模块导航模式——`USAGE_JUMP_EVENT` 事件 + sessionStorage pending 存取 + `requestUsageJump`（写 pending + 切模块 + 广播）+ `consumePendingUsageJump`（读后即清 + 类型校验容错）。
+  - UsagePanel：会话/助手排行行加 `cursor-pointer hover:bg-hover-overlay` + onClick 调 `requestUsageJump`，title 提示「点击跳转」。
+  - ChatModule：useEffect 监听 USAGE_JUMP_EVENT，消费 pending → conversation 调 handleSelectConv / assistant 调 handleSelectAssistant（后者内含 reloadConversations 重载）。
+  - i18n：usage.clickToJump 四语对齐。
+  - 测试：tests/usage-jump.test.ts 6 用例（request/consume 正常存取、读后即清、非法 JSON、非法 type、缺字段、无 pending）。
+- **决策记录**：复用 source-jump.ts 的 sessionStorage+event 模式而非全局状态——跨模块跳转有先例且事件驱动更解耦；跳转到助手即切换当前助手并重载会话列表（复用 handleSelectAssistant 既有行为）。
+- **明确不做**：不做到消息级别（V4-Iter-15 搜索跳转已做，这里只跳模块+选中对象）、不做动画/过渡、不做浏览器历史/返回栈。
+
+### V4-Iter-31 提示词片段库导入导出（已落地）
+
+- **范围**：V4-Iter-20 留尾——片段仅存本机，换设备/重装即丢。本批补 JSON 文件导出（备份/分享）+ 导入（迁移/合并）。
+- **方案**：
+  - repo：snippet.repo 增 `findByTitle(title)` + `createOrUpdateByTitle(title, content)`——同 title UPDATE（保留原 id）、无同 title INSERT（新 UUID）。
+  - shared/types：+IPC 常量 SNIPPETS_EXPORT/SNIPPETS_IMPORT。
+  - schemas：snippetImportSchema（宽松校验顶层 snippets 数组，逐条字段验证在 handler 层做）。
+  - IPC：snippets.ts 增 EXPORT（主进程 list() → JSON.stringify → showSaveDialog 存盘）+ IMPORT（showOpenDialog 读 JSON → zod 校验 → 逐条 createOrUpdateByTitle 统计 imported/overwritten/skipped）。
+  - preload：exportPromptSnippets + importPromptSnippets 桥接。
+  - UI（SnippetButton）：列表底部工具行 btn-ghost「⬇ 导出 / ⬆ 导入」按钮；导出成功 toast 路径、导入成功 toast 计数、失败 toast 错误。
+  - i18n：snippet.exportTitle/importTitle/exported/imported/importFailed 中英日韩四语 5 key。
+  - 测试：tests/snippet-repo.test.ts 3 用例（createOrUpdateByTitle UPDATE/INSERT 分支、findByTitle 命中/未命中）。
+- **决策记录**：同名覆盖策略（UPDATE）——片段列表按更新时间排序，无自定义 id 语义需求，同 title 即认为是同一条记录；不做增量/合并策略选择 UI（行为可预测优先）。
+- **明确不做**：不做加密导出（片段不含敏感信息）、不做云同步/分享链接。
+
+### V4-Iter-30 KB 问答会话搜索（已落地）
+
+- **范围**：V4-Iter-28/29 留尾——问答留痕只增不减，历史列表只能按时间倒序翻页，留痕多了找不回等于白留。本批在历史列表加搜索，按标题+消息正文检索。
+- **方案**：
+  - repo：kb-ask-session.repo 增 `searchByKb(kbId, keyword)`——`title LIKE ? OR messages_json LIKE ?`（LIKE 实现，不引 FTS5 migration）；空串/空白回退 `listByKb`（避免 `LIKE '%%'` 全表扫描）。
+  - shared/types：+IPC 常量 `KB_ASK_SESSION_SEARCH`。
+  - IPC：knowledge.ts safeHandle + argsSchema(idSchema, z.string().max(200))。
+  - preload：searchKbAskSessions(kbId, keyword) 桥接。
+  - UI（KbAskPanel.tsx）：历史列表顶部加搜索输入框（200ms 防抖，卸载清 timer）；搜索态空结果显示「无匹配会话」，非搜索态空结果显示「暂无历史会话」；关闭历史面板自动清空搜索态。
+  - i18n：kb.askSearchPlaceholder/kb.askSearchEmpty 中英日韩四语 2 key。
+  - 测试：tests/kb-ask-session-repo.test.ts 5 用例（LIKE 匹配标题+消息体/空串回退全量/空白回退全量/无匹配空数组/非法 JSON 容错解析）。
+- **决策记录**：LIKE 而非 FTS5——kb_ask_sessions 数据量级（几十~几百条）下 LIKE 完全够用，不引入 migration/触发器/tokenizer 复杂度；messages_json 是 JSON 字符串，LIKE 会匹配到 JSON 结构字符属可接受噪音。
+- **明确不做**：不做 FTS5、不做跨库搜索、不做搜索结果高亮、搜索历史、自动补全。
+
 ### V4-Iter-29 KB 问答会话重命名与导出（已落地）
 
 - **范围**：V4-Iter-28 留痕收尾——会话标题由首问自动截断生成不可手动改（长问截断后辨识度差）、问答成果无法导出带走。本批补：会话重命名（内联编辑）+ 单会话导出 Markdown/HTML。
@@ -324,6 +473,18 @@
 | 2026-09-29 | V4-Iter-12 | 渲染 bundle 拆包（首屏主包瘦身，配合 V4-Iter-2 启动优化）：产物分析确认 mermaid 全家桶已是动态 import 按需 chunk、模块级 React.lazy 已落地（Workspace 10 模块），主包 1515KB min 的真实大头 = rehype-katex 静态引入 katex 全量 + i18n 四语全量常驻。① Markdown.tsx katex 两段式懒加载——移除 rehype-katex/katex.min.css 静态 import，模块级 ensureKatex() 动态 import 双资源（Promise 单例 katexPromise 防重复，katexPlugin 模块级缓存），组件挂载 useEffect 触发，ready 前公式以原始 LaTeX 文本渲染、ready 后 setKatexReady 全局一次性重渲染为公式（CSS 与插件同批到达，无无样式中间态；unified PluggableList 类型标注），PopupApp/对比列等复用 Markdown 的场景自动继承。② i18n/index.tsx 按需加载——仅 zh 常驻主包（默认语言 + 兜底字典），langLoaders en/ja/ko 动态 import（命名导出 m.en/m.ja/m.ko），ensureLang Promise 缓存防重复加载；I18nProvider 初始语言非 zh 时 effect 补载、setLang 时预载，未就绪期间 t() 兜底链回退 zh（dicts 改 Partial，本地 chunk 毫秒级几乎无感）；i18n-parity 测试静态 import 四文件不受影响。效果：主包 1515KB→1052KB（-31%），katex 484KB（含 css 29KB+字体 ttf 按需）、en 73KB/ja 92KB/ko 81KB 全部独立按需 chunk，首屏临界链仅剩主包+默认 chat 模块 | typecheck 0 / vitest 130文件1906用例 / build 三端 |
 | 2026-09-29 | V4-Iter-13 | 图片 OCR 入知识库（截图/扫描件文字识别检索，知识库增强第九批）：migration v29 `kb_ocr`——knowledge_bases 加 ocr_provider_id/ocr_model TEXT 列（空=关闭，同构 MultiQuery 配置模式），kb.repo KbRow/rowToRecord/UPDATE/INSERT 四处映射补齐；新增 `src/main/knowledge/ocr.ts`（仿 multi-query.ts）——OCR_SYSTEM_PROMPT（提取全部文字/保持阅读顺序/表格转 Markdown/公式 LaTeX/不解释不编造）、imageMime 纯函数（png/jpg/jpeg/webp/gif→MIME，未知 null）、OCR_MAX_IMAGE_BYTES=10MB（base64 后 ~13MB 请求体主流视觉 API 限额内）、ocrImageFile（stat 超限抛错→readFileSync→base64 data URL→providerManager.getAdapter→adapter.streamChat 多模态单轮 [system + user(text+image_url)]，temperature 0/maxTokens 4096/onDelta noop→content.trim()，空文本抛错；无 adapter/读取失败/模型报错由调用方定语义）；shared/types KbSourceType 加 'image'、KnowledgeBase 加 ocrProviderId/ocrModel；parsers detectSourceType 收图片扩展→'image'（parseDocument case 'image' 抛错防御，防 default 分支把二进制当 txt 读出乱码）；ingestion parseForIngest 分流——image 走 OCR（未配 ocrProviderId/ocrModel 抛「图片文档需要在知识库设置中配置 OCR 视觉模型」小白引导），其余走 parseDocument；「解析后内容为空」按 .pdf 细化为「可能是扫描版，暂不支持 OCR，请转为图片后导入」；hashFile 对图片天然有效增量同步零改动；KB_DOC_ADD_FILE dialog filters 加「图片」组，folder-scan KB_IMPORT_EXTS 加图片扩展 + 导出 IMAGE_EXTS 子集，scanFolderFiles 加 includeImages 必选参数（图片扩展且 false 计入 skippedCount——KB 未配 OCR 时文件夹导入自动跳过图片防批量入库全报错，handlers 调用处传 !!(kb.ocrProviderId && kb.ocrModel)）；KnowledgeModule KbForm 新增「OCR 文字识别」配置区块（复制 MultiQuery 区块：provider 下拉空选项=关闭 + 选中后 model 下拉/手输 + ocrHint 文案）；i18n 新增 kb.ocrHint/ocrProvider/ocrModel/ocrDisabled 中英日韩四语对齐；新增 tests/ocr.test.ts 8 用例（imageMime 映射×2/ocrImageFile 成功 trim+多模态请求结构/无 adapter/超限不发请求/不支持格式/空文本/HTTP 429 透传，mock providerManager + tmpdir 真实文件），parsers.test.ts 加图片扩展 5 断言，folder-scan.test.ts 适配新签名 + 加 includeImages 双态用例，kb-repo/knowledge-ingestion fixture 补 ocr 字段与 providerManager mock | typecheck 0 / vitest 132文件1919用例 / build 三端 |
 | 2026-09-29 | V4-Iter-14 | KB 数据健康（完整性探测与修复，知识库运维）：新增 `src/main/knowledge/kb-health.ts`——只读探测 getKbIntegrityReport 四组（kb_vec_map LEFT JOIN kb_chunks 孤儿向量计数（表不存在容错）/孤儿 chunk 防御探测/缺向量 doc（仅 isVecEnabled 时，DISTINCT doc_id）/维度不匹配 doc（length(embedding)!=knowledge_bases.embedding_dim*4，换模型未重建检索静默漏块））逐项 try/catch 容错；纯函数导出直测——findDuplicateGroups（kb_id+content_hash 分组、hash null 跳过（旧数据/URL/手工文本天然不参与）、组内创建时间升序最早在前）、collectProviderIssues（每库 embedding/rerank/hyde/multiquery/ocr 五引用 × missing（已删除）/disabled（禁用）/model-missing（模型不在 provider.models，列表为空不校验防误报），未配置 providerId 跳过）；修复动作 cleanOrphans（孤儿向量逐条 kbVecRepo.deleteByChunk（异常兜底直删 map 行）、孤儿 chunk 先 kbVecRepo.deleteByDoc 再 DELETE 收尾，返回计数）/reindexDocs（kbDocRepo.setStatus pending + indexQueue.enqueue kind:'reindex'，复用 KB_DOC_REINDEX 链路，ingestion 内部先清旧分块）/deduplicate(keepDocId)（同库同 contentHash 其余删除，无 hash/不存在抛错）；泄漏 bug 修复收口 kbDocRepo.delete() 先 kbChunkRepo.deleteByDoc（内部含 vec_map/vec 清理）再删文档行——KB_DOC_DELETE 此前只删文档行，chunks 靠 FK 级联但 vectors.db 无 FK 无人清理，删单文档必留孤儿向量，KB_DOC_DELETE 与去重动作全部堵漏；shared/types DataHealthReport.kb 加 integrity: KbIntegrityReport（orphanVectors/orphanChunks/brokenDocs{reason:'missing-vec'|'dim-mismatch'}/duplicates/providerIssues）+ 4 个子接口；data-health getDataHealthReport 第 2 组探测并入（整体容错失败按全空）；IPC DATA_HEALTH_KB_CLEAN/KB_DEDUP/KB_REINDEX 挂 steward.ts（argsSchema(idSchema)/idSchema.array()）；preload cleanKbOrphans/deduplicateKbDocs/reindexKbDocs；DataHealthPanel 索引状态区块后新增「知识库完整性」区块——integrityOk 全空一行文案，否则孤儿 Row（warn）+清理按钮、brokenDocs 表（Top10）+一键重建索引按钮、重复组行（库/数量/标题串）+保留最早删其余（useConfirm danger 确认弹窗，dialog 渲染补齐）、providerIssues 表（库/角色/问题）；runAction 统一 busy 防重/成功 toast/自动刷新；i18n 新增 dh.integrity.* 27 key 中英日韩四语对齐；新增 tests/kb-health.test.ts 11 用例（重复分组同库聚合/跨库不合并/null 跳过/kbName 注入、provider missing/disabled/missing 优先于禁用/model-missing/空列表不误报/未配置跳过、reindexDocs pending+入队+不存在跳过、deduplicate 保留删其余/无 hash 与不存在抛错——vi.hoisted 内存 docStore/queued 驱动编排逻辑） | typecheck 0 / vitest 133文件1930用例 / build 三端 |
+| 2026-10-02 | V4-Iter-41 | 用量数据 CSV 导出（月度复盘/报销/透视）：shared +UsageDetailItem/UsageDetailResult 与 USAGE_DETAIL_GET/USAGE_EXPORT_CSV 两 IPC；usage-service +aggregateUsageDetail 纯函数（坏 JSON 跳过/未配价 0/roundCost/倒序保持/未知会话兜底/assistant 名 null）+listUsageDetail（JOIN conversations+assistants，limit+1 判 truncated，clamp 365 天/20000 行）；handler 明细薄封装+CSV 落盘照搬诊断报告模式（默认名 pocketai-usage-{days}d-时间戳.csv，content zod 500 万字符上限）；preload +2 桥接；新建 renderer/utils/usage-csv.ts（RFC4180 转义/本地时间格式/10 列固定序/BOM+CRLF/null 助手空串）；UsagePanel chips 行导出按钮（无数据禁用、busy 防重、成功 toast 条数、截断 warning、取消静默）；i18n 四语 +6 key 列头复用既有；usage-csv.test 11 用例+usage-service.test 补 5 用例；不做 XLSX/列选择/正文导出 | typecheck 0 / vitest 151文件2139用例 / build 三端 |
+| 2026-10-02 | V4-Iter-40 | 管家推荐模型一键拉取（闭环策划书 6.1「检测→推荐→下载」）：新建 hooks/useOllamaPull.ts（从 OllamaPanel 收口 pulling/pullEvt/事件订阅/守卫/双兜底复位/abort，onDone·onError 走 ref 订阅只挂一次，卸载不中断后台拉取）+同文件纯函数 pickPullState 五态（installed/pulling/busy-other/disabled/pullable，installed 最高优先级）；OllamaPanel 改 hook 接线 UI 文案零变化（doPull 包 clearPullDone，pullError 独立行）；StewardModule refreshRecommendation 抽 useCallback 复用，onDone 重拉推荐刷新 installed+toast、onError toast，卡片按五态渲染进度条（status+%+中断）/禁用（未运行 title 引导去设置）/拉取按钮，向量模型同等待遇；i18n 四语仅 +steward.pullNeedRunning（韩文内引号改「」避语法冲突）其余复用 ollama.*；ollama-pull-state.test 6 用例；不做自动注册 provider/管家页启动安装/并发拉取 | typecheck 0 / vitest 150文件2123用例 / build 三端 |
+| 2026-10-02 | V4-Iter-39 | 管家诊断报告导出（策划书 6.4 远程求助）：新建 renderer/utils/diagnostic-report.ts buildDiagnosticReport 纯函数（ReportLabels 字典注入+复用 formatBytes，固定五段①硬件②模型推荐③数据健康④安全体检⑤故障诊断，缺失段不省略标 notRun/notAvailable，时间手动 pad 不依赖 locale）；main IPC STEWARD_EXPORT_REPORT（steward.ts safeHandle+zod content≤200000，showSaveDialog 默认名 pocketai-report-时间戳.txt，取消 canceled/成功 path）；preload +exportStewardReport；StewardModule 顶部导出按钮，handleExport 先 Promise.all 补跑 audit/diagnose（setState 同步刷新，失败容忍）+getUpdateInfo 取版本，toast 成败反馈，硬件用快照不 force；i18n 四语 21 新 key 字段复用既有 steward.*、段名新建 reportSec* 不剥 emoji；grep 核实体检只查 Key 存在性零凭证泄露；diagnostic-report.test 11 用例（五段字段/GB 一位小数/段序/全 null/空诊断/完整性异常/无 GPU+USB） | typecheck 0 / vitest 149文件2117用例 / build 三端 |
+| 2026-10-02 | V4-Iter-38 | 浮窗回答一键复制（Iter-37 选区助手工作流闭环最后一跳）：PopupApp.tsx 单文件改动——新增 AssistantBubble 子组件（group 包裹 Markdown+绝对定位圆形复制按钮 -top-2 -right-2，hover/focus 显现，复制成功对勾态 1.5s，SVG 与代码块复制按钮同口径）；复用 useCopyFeedback+writeClipboard（file:// 透明窗 execCommand 降级）；仅 assistant 非错误有内容气泡启用，错误/流式占位/user 原样；复制模型原文与代码块 raw 口径一致；i18n 零新 key 复用 common.copy/copied；纯 UI 无新逻辑不补测试；不主动关窗（blur 自隐 Spotlight 形态，切窗粘贴自然隐藏，不打断连续多动作） | typecheck 0 / vitest 148文件2106用例 / build 三端 |
+| 2026-10-02 | V4-Iter-37 | 应用内划词浮条（选区助手补齐策划书 6.1 必做）：全局快捷键版（Ctrl+Shift+U 取词浮窗）已有，本批补应用内就地入口——shared +SelectionAction 类型、PopupPayload +action、IPC POPUP_OPEN_SELECTION；main popup.ts openPopup 第三参 action + safeHandle（zod text≤8000/action enum，trim 截断/锁屏拒绝 ok:false）；主 preload +openSelectionPopup；新建 renderer/utils/selection-actions.ts（SELECTION_ACTIONS 顺序源/composeSelectionPrompt 从 PopupApp 抽出 4 条提示词/normalizeSelectionText 8000 截断/isEditableSelectionHost 复用 shortcuts.isEditableTarget 沿 parentElement 链上溯不重复造）；新建 components/SelectionToolbar.tsx（mouseup 左键+keyup Shift 延迟一帧读选区；fixed 浮条实测尺寸定位上方不足翻下水平夹取；onMouseDown preventDefault 防清选区；隐藏=capture mousedown 外/selectionchange 空/Esc/scroll/blur；selectionEnabled 开关 focus 刷新；文案复用 popup.act.*）App !locked 挂载；PopupApp pendingActionRef 按 ts 标记就绪后自动执行一次，快捷键入口无 action 保持手动芯片；i18n 零新 key 仅更新 popup.selectionHint 四语；selection-actions.test 14 用例 | typecheck 0 / vitest 148文件2106用例 / build 三端 |
+| 2026-10-02 | V4-Iter-36 | 会话累计用量条（Iter-35 气泡微展示上卷，实时回答「本会话花了多少」）：新建 renderer/utils/usage-summary.ts sumMessagesUsage(messages,pricing) 纯函数（仅 assistant+带 usage 消息计入 counted；逐条 priceKey(provider,model) 查价 computeUsageCost 后 roundCost 汇总，多模型多批次各自计价；返回 prompt/completion/cached/total/cost/counted）；ChatView useMemo 派生（deps messages/pricing），消息流容器顶部虚拟列表外 11px muted 右对齐胶囊随滚动消失，totalTokens>0 才显示，未配单价 fmtCost 空串时只显 token，title 复用 tokenHint/tokenCachedHint+费用行；账单口径=全部批次含分支重跑（与 usage-service 一致，重跑真实消费）；i18n chatview.sessionUsage 四语 1 key 明细复用 Iter-35；usage-summary.test 6 用例（空会话/user 与无 usage 跳过/无 pricing/单模型 7 元/多模型含缓存价 12.7 元/缺单价缺 provider 只计 token）；零新 IPC | typecheck 0 / vitest 147文件2092用例 / build 三端 |
+| 2026-10-02 | V4-Iter-35 | 气泡 token 微展示（对话中实时感知每轮花费）：pricing 纯函数收口 src/main/usage/pricing.ts→src/shared/usage-pricing.ts（零依赖主渲染共用 computeUsageCost/priceKey/parsePricing，pricing-config KV 读写留 main），import 改道 usage-service/pricing-config/handlers messages/usage-pricing.test；新建 renderer/utils/token.ts（fmtTokens/fmtCost 从 UsagePanel 抽出，UsagePanel 删私有实现+同构 pk 改共享 priceKey）；MessageBubble +usage/provider/pricing props，assistant 气泡下来源块下 10px muted 行显示缩写总 token+命中单价 ¥/$费用（accent 小字），title 原生提示输入/输出/缓存命中明细（cached=0 省略），无 usage/streaming 不渲染；ChatView 挂载拉 getUsagePricing（失败静默只显 token）透传 MessageBubble+BranchCompare（分支对比可横向比 token/费用）；调研校准 done 后 useStreamSession 200ms 自动 loadMessages 带 usage 无需改事件链、Agent/浮窗不用 MessageBubble 自动排除；i18n chatview.tokenLine/tokenHint/tokenCachedHint 四语 3 key；token-format.test 新建 6 用例（k/M 分级边界/费用 0 负 NaN/精度分级），usage-pricing.test 改路径用例不动 | typecheck 0 / vitest 146文件2086用例 / build 三端 |
+| 2026-10-02 | V4-Iter-34 | KB 问答历史跨库漫游（V4-Iter-28 留尾四项收官）：kb-ask-session.repo +listAll(limit)/searchAll(keyword,limit)——LEFT JOIN knowledge_bases 带库名 ORDER BY s.updated_at DESC LIMIT ?，空串回退 listAll，kb_name null 回落空串 UI 兜底；types +KbAskRoamItem（extends KbAskSessionMeta+kbName）+IPC KB_ASK_SESSION_LIST_ALL/SEARCH_ALL；knowledge.ts 2 safeHandle（limit zod 1-500）+preload 双桥接（默认 200）；新建 KbAskRoam.tsx（200ms 防抖搜索+会话行标题/库名 chip/时间·消息数·模型+双空态）；KnowledgeModule mode 联合加 roam +左栏 🕘 入口，点击行模块 state 提升 setAskJumpId+setMode detail+setSelectedId（入口在模块内不用 source-jump 事件）；KbDetail 加 askJumpId/onAskJumpHandled props（effect setAskMode(true) 透传）；KbAskPanel 加 openSessionId/onSessionOpened（effect setShowHistory(true)+loadSession+回调清空，兼容切库重挂载与同库二次跳转）；fmtSessionTime 导出复用；i18n kb.roam* 中英日韩四语 5 key；kb-ask-session-repo.test +4 用例（JOIN SQL/LIKE 参数顺序/空白回退/null 兜底） | typecheck 0 / vitest 145文件2080用例 / build 三端 |
+| 2026-10-02 | V4-Iter-33 | KB 问答历史自动清理（V4-Iter-28 留尾收官项）：kb-ask-session.repo +prune(kbId, policy)——keepDays>0 删 updated_at<阈值、keepCount>0 删 id NOT IN（ORDER BY updated_at DESC LIMIT ?），返回合计删除数；新建 src/main/knowledge/ask-retention-config.ts（仿 pricing-config，app_config 键 kbAsk.retention JSON {keepCount,keepDays}，parseKbAskRetention 容错回退双 0=关闭不静默删数据）；KB_ASK_SESSION_SAVE handler upsert 后非全 0 即 prune 该库（写入触发而非定时调度器，repo 保持纯数据访问编排归 handler）；types +KbAskRetention +IPC KB_ASK_RETENTION_GET/SET；knowledge.ts 2 safeHandle + zod（0-10000/0-3650）；preload 双桥接；KbAskPanel 历史列表加「自动清理」btn-ghost（生效时 accent 高亮）→ 展开双 select 行内配置（条数 不限/50/100/200/500 + 天数 不限/7/30/90/180）切换即保存 toast+刷新；i18n kb.askRetention* 中英日韩四语 5 key；kb-ask-session-repo.test +prune 4 用例（仅天数/仅条数/双策略合计/双 0 不删），新建 ask-retention-config.test 6 用例（parse 容错/get 回退/set-get 往返） | typecheck 0 / vitest 145文件2076用例 / build 三端 |
+| 2026-10-02 | V4-Iter-32 | 用量排行点击跳转（V4-Iter-25/27 连续两次留尾，打通洞察到操作最后一公里）：新建 `src/renderer/src/modules/settings/usage-jump.ts` 仿 source-jump 模式——USAGE_JUMP_EVENT='usage-open-target' + UsageJumpDetail 联合类型（conversation{convId}/assistant{assistantId}），requestUsageJump 写 sessionStorage 'usage-pending-jump' + dispatch 'pocketai:switch-module' {moduleId:'chat'} + 广播事件（已挂载即时消费，未挂载挂载后 consume），consumePendingUsageJump 读后即清 + type/字段校验容错；UsagePanel 会话/助手排行 tr 加 cursor-pointer+hover:bg-hover-overlay + onClick requestUsageJump + title 提示（行 title 移到 tr，td span 不再重复）；ChatModule useEffect 监听 USAGE_JUMP_EVENT → conversation 调 handleSelectConv(d.convId)/assistant 调 handleSelectAssistant(d.assistantId)（后者含 setCurrentAssistantId+setCurrentConvId(null)+reloadConversations(true)），deps [handleSelectConv, handleSelectAssistant]；i18n usage.clickToJump 中英日韩四语 1 key；tests/usage-jump.test.ts 6 用例（request 写 pending+双事件/consume 读后即清/非法 JSON/非法 type/缺字段/无 pending，vi.stubGlobal mock sessionStorage+window 解决 node 环境无 DOM API） | typecheck 0 / vitest 144文件2066用例 / build 三端 |
+| 2026-10-02 | V4-Iter-31 | 提示词片段库导入导出（V4-Iter-20 留尾）：snippet.repo +findByTitle(title) + createOrUpdateByTitle(title, content)（同 title UPDATE 保留原 id / 无同 title INSERT 新 UUID）；types +IPC SNIPPETS_EXPORT/SNIPPETS_IMPORT；schemas/snippets.ts +snippetImportSchema（宽松校验顶层 snippets 数组，逐条字段验证在 handler 层做）；snippets.ts 增 EXPORT（主进程 list() → JSON.stringify → showSaveDialog 存盘，safeFileName 命名）+ IMPORT（showOpenDialog 读 JSON → JSON.parse → snippetImportSchema.safeParse → 逐条 createOrUpdateByTitle 统计 imported/overwritten/skipped，title>100/content>20000 单条跳过）；preload exportPromptSnippets/importPromptSnippets 桥接；SnippetButton 列表底部工具行 btn-ghost「⬇ 导出 / ⬆ 导入」按钮（导出成功 toast 路径、导入成功 toast 计数、失败 toast 错误）；i18n snippet.exportTitle/importTitle/exported/imported/importFailed 中英日韩四语 5 key；tests/snippet-repo.test.ts 3 用例（UPDATE/INSERT 分支、findByTitle 命中/未命中） | typecheck 0 / vitest 143文件2060用例 / build 三端 |
+| 2026-10-02 | V4-Iter-30 | KB 问答会话搜索（V4-Iter-28/29 留尾）：kb-ask-session.repo +searchByKb（`title LIKE ? OR messages_json LIKE ?`，空串/空白回退 listByKb 防全表扫描）；types +IPC KB_ASK_SESSION_SEARCH；knowledge.ts safeHandle + argsSchema(idSchema, z.string().max(200))；preload searchKbAskSessions 桥接；KbAskPanel 历史列表顶部加搜索输入框（200ms 防抖 + 卸载清 timer），搜索态空结果显示「无匹配会话」/非搜索态显示「暂无历史会话」，关闭历史面板自动清搜索态；i18n kb.askSearchPlaceholder/kb.askSearchEmpty 四语 2 key；tests/kb-ask-session-repo.test.ts 5 用例（LIKE 匹配/空串回退/空白回退/无匹配/非法 JSON 容错） | typecheck 0 / vitest 142文件2057用例 / build 三端 |
 | 2026-09-30 | V4-Iter-29 | KB 问答会话重命名与导出（V4-Iter-28 留尾）：kb-ask-session.repo +rename（UPDATE 仅 title+updated_at）；types +IPC KB_ASK_SESSION_RENAME/EXPORT_MD/EXPORT_HTML；shared/export-markdown.ts +buildKbAskSessionMarkdown（头部元信息+user 引用块+assistant 保真+来源去重，KbAskMessage 无附件/工具/token 结构更简）；knowledge.ts 3 handler（RENAME zod id+title 1-200；EXPORT_MD 主进程 get→build→showSaveDialog→writeFileSync；EXPORT_HTML 渲染端构建后传主进程存盘 zod ≤50MB）；preload 3 桥接；renderer/utils/export-html.tsx +buildKbAskSessionHtml（复用 STYLE/Markdown/formatSources，react-dom/server 动态 import 拆包）；KbAskPanel 历史列表项加重命名 ✎ 内联编辑（Enter/Esc/失焦）+ 导出 ↓ 菜单（复用 ExportMenu MD/HTML）+ 删除，当前会话工具行加重命名+导出（仅非 pending 防导出未完成流式内容）；i18n 复用 chat.rename/exportMd/exportHtml 等 + 增 kb.askExported({path})/kb.askSessionNotFound 四语 2 key；export-markdown.test +4 用例 | typecheck 0 / vitest 141文件2052用例 / build 三端 |
 | 2026-09-30 | V4-Iter-28 | KB 问答留痕（V4-Iter-8 留尾）：migration v33 `kb_ask_sessions` 新表（id/kb_id/title/messages_json/provider_id/model/created_at/updated_at + kb_id+updated_at 索引，消息体含 sources JSON 单列存储，一轮问答一行）；shared/types +KbAskSessionRecord/KbAskSessionMeta +IPC KB_ASK_SESSION_SAVE/LIST/GET/DELETE；新建 shared/kb-ask-session.ts 纯函数 sessionTitleFrom（首问截断40字）/parseKbAskMessages（容错解析过滤非法项，零依赖放 shared 供 repo+tests 复用）；新建 kb-ask-session.repo.ts（upsert INSERT OR REPLACE/listByKb 回 meta 不含正文/get 容错还原/delete/deleteByKb）；knowledge.ts 4 safeHandle（SAVE zod 完整 schema messages≤200）+preload 4 桥接；渲染端全量 upsert 单写路径（ask-service 零改动）——send 首轮 crypto.randomUUID 生成 sessionId 存「含提问」、onKbAskDone 存「含回答+sources」，msgsRef 镜像+persistRef 转发保证一次性挂载订阅拿到最新值；KbAskPanel 加历史(N)/新对话工具行 + 历史列表（标题/消息数/相对时间/模型，当前会话高亮+单条删除）+ 加载历史回放可继续追问；KnowledgeModule KbAskPanel 加 key={kb.id} 防切库跨库串数据；ingestion deleteKb 级联 kbAskSessionRepo.deleteByKb；i18n 四语改 kb.askHint + 增 kb.askHistory/askNewSession/askNoSessions/askMsgCount({n})；kb-ask-history.test 8 用例 + knowledge-ingestion.test 补 repo mock 隔离 electron 链路 | typecheck 0 / vitest 141文件2048用例 / build 三端 |
 | 2026-09-30 | V4-Iter-27 | 助手用量排行（V4-Iter-25 留尾）：types +UsageAssistantItem +USAGE_ASSISTANTS；usage-service 新增 UsageAssistantRow（messages JOIN conversations INNER 归属 + LEFT JOIN assistants 带名）+ 纯函数 aggregateAssistantUsage（与 aggregateConversationUsage 同构：按 assistant_id 分组，坏 JSON 跳过/computeUsageCost 计费/roundCost，totalTokens 倒序，name 空兜底「(未知助手)」防御取首个非空，lastUsedAt=MAX(created_at)）+ listAssistantUsage(days 1-365/limit 1-100 默认 10)；IPC safeHandle+zod 双 optional+prices 透传，preload getUsageAssistants；UsagePanel 会话排行后加「助手排行」Top10 表（随 load(days)/reload 联动，空不渲染）；i18n usage.byAssistant/usage.assistant 四语；usage-service.test 22→26 用例 | typecheck 0 / vitest 140文件2040用例 / build 三端 |

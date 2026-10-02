@@ -1,5 +1,5 @@
 import React from 'react'
-import type { MessageRecord } from '../../../../shared/types'
+import type { MessageRecord, UsagePricing } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { MessageBubble } from './MessageBubble'
 
@@ -13,6 +13,8 @@ interface Props {
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
   onDelete: (id: string) => void
+  /** 本机单价配置（透传气泡，分支间可横向比 token/费用） */
+  pricing?: UsagePricing | null
 }
 
 /**
@@ -25,7 +27,8 @@ export const BranchCompare: React.FC<Props> = ({
   onActivate,
   selectedIds,
   onToggleSelect,
-  onDelete
+  onDelete,
+  pricing
 }) => {
   const { t } = useI18n()
   return (
@@ -77,6 +80,9 @@ export const BranchCompare: React.FC<Props> = ({
                     model={r.model}
                     streaming={r.status === 'streaming'}
                     messageId={r.id}
+                    usage={r.usage ?? null}
+                    provider={r.provider ?? null}
+                    pricing={pricing ?? null}
                     selected={selectedIds.has(r.id)}
                     onToggleSelect={onToggleSelect}
                     onDelete={onDelete}

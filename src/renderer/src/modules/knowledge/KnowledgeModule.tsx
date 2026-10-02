@@ -9,6 +9,7 @@ import type {
 } from '../../../../shared/types'
 import { BUILTIN_EMBED_PROVIDER_ID, BUILTIN_EMBED_MODEL } from '../../../../shared/types'
 import KbAskPanel from './KbAskPanel'
+import { KbAskRoam } from './KbAskRoam'
 import { consumePendingSourceJump, KB_SOURCE_JUMP_EVENT } from './source-jump'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
@@ -20,9 +21,11 @@ export const KnowledgeModule: React.FC = () => {
   const { t } = useI18n()
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [mode, setMode] = useState<'detail' | 'create'>('detail')
+  const [mode, setMode] = useState<'detail' | 'create' | 'roam'>('detail')
   /** 来源跳转待定位目标（聊天/KB 问答来源块 → 本模块定位分块） */
   const [jumpFocus, setJumpFocus] = useState<{ docId: string; seq: number } | null>(null)
+  /** 跨库漫游跳转目标会话 id（KbDetail 消费后清空） */
+  const [askJumpId, setAskJumpId] = useState<string | null>(null)
 
   const load = useCallback(() => window.pocketai.listKnowledgeBases().then(setKbs).catch(reportIpcError('kb.list')), [])
   useEffect(() => {
@@ -54,15 +57,31 @@ export const KnowledgeModule: React.FC = () => {
       <div className="w-60 shrink-0 flex flex-col">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold">{t('kb.title')}</h3>
-          <button
-            onClick={() => {
-              setMode('create')
-              setSelectedId(null)
-            }}
-            className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
-          >
-            {t('kb.new')}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                setMode('roam')
+                setSelectedId(null)
+              }}
+              className={`text-xs px-2 py-1 rounded border transition-colors${
+                mode === 'roam'
+                  ? ' border-[var(--color-accent)] text-[var(--color-accent)]'
+                  : ' border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]'
+              }`}
+              title={t('kb.roamTitle')}
+            >
+              🕘
+            </button>
+            <button
+              onClick={() => {
+                setMode('create')
+                setSelectedId(null)
+              }}
+              className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
+            >
+              {t('kb.new')}
+            </button>
+          </div>
         </div>
         <div className="space-y-1 overflow-y-auto">
           {kbs.length === 0 && (
@@ -92,7 +111,15 @@ export const KnowledgeModule: React.FC = () => {
 
       {/* 右侧 */}
       <div className="flex-1 overflow-y-auto">
-        {mode === 'create' ? (
+        {mode === 'roam' ? (
+          <KbAskRoam
+            onOpen={(kbId, sessionId) => {
+              setAskJumpId(sessionId)
+              setMode('detail')
+              setSelectedId(kbId)
+            }}
+          />
+        ) : mode === 'create' ? (
           <KbForm
             onSaved={(kb) => {
               setMode('detail')
@@ -107,6 +134,8 @@ export const KnowledgeModule: React.FC = () => {
             onChanged={load}
             jumpFocus={jumpFocus}
             onJumpHandled={() => setJumpFocus(null)}
+            askJumpId={askJumpId}
+            onAskJumpHandled={() => setAskJumpId(null)}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-sm text-[var(--color-text-muted)]">
@@ -493,7 +522,10 @@ const KbDetail: React.FC<{
   onChanged: () => void
   jumpFocus?: { docId: string; seq: number } | null
   onJumpHandled?: () => void
-}> = ({ kb, onChanged, jumpFocus, onJumpHandled }) => {
+  /** 跨库漫游跳转目标会话 id（切到问答 tab 并透传给 KbAskPanel） */
+  askJumpId?: string | null
+  onAskJumpHandled?: () => void
+}> = ({ kb, onChanged, jumpFocus, onJumpHandled, askJumpId = null, onAskJumpHandled }) => {
   const { t } = useI18n()
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
@@ -503,6 +535,11 @@ const KbDetail: React.FC<{
   const [busy, setBusy] = useState(false)
   const [askMode, setAskMode] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 跨库漫游跳转：切到问答 tab（KbAskPanel 挂载/保活后自行消费 askJumpId）
+  useEffect(() => {
+    if (askJumpId) setAskMode(true)
+  }, [askJumpId])
 
   const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id).then(setDocs).catch(reportIpcError('kb.listDocuments')), [kb.id])
   useEffect(() => {
@@ -770,7 +807,12 @@ const KbDetail: React.FC<{
       <div hidden={!askMode}>
         <h4 className="text-sm font-semibold mb-1">{t('kb.askTitle')}</h4>
         <p className="text-[11px] text-[var(--color-text-muted)] mb-3">{t('kb.askHint')}</p>
-        <KbAskPanel key={kb.id} kb={kb} />
+        <KbAskPanel
+          key={kb.id}
+          kb={kb}
+          openSessionId={askJumpId}
+          onSessionOpened={onAskJumpHandled}
+        />
       </div>
 
       {/* 分块预览弹层 */}

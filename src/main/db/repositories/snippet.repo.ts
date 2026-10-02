@@ -74,5 +74,28 @@ export const snippetRepo = {
 
   delete(id: string): void {
     dbService.getHandle().prepare('DELETE FROM prompt_snippets WHERE id=?').run(id)
+  },
+
+  /** 按 title 查找片段；不存在返回 null */
+  findByTitle(title: string): PromptSnippetRecord | null {
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT * FROM prompt_snippets WHERE title=?')
+      .get(title) as SnippetRow | undefined
+    return row ? rowToSnippet(row) : null
+  },
+
+  /** 导入用：同 title 覆盖（UPDATE 保留原 id），无同 title 新建（INSERT 新 UUID） */
+  createOrUpdateByTitle(title: string, content: string): { record: PromptSnippetRecord; overwritten: boolean } {
+    const existing = this.findByTitle(title)
+    if (existing) {
+      dbService
+        .getHandle()
+        .prepare('UPDATE prompt_snippets SET content=?, updated_at=? WHERE id=?')
+        .run(content, Date.now(), existing.id)
+      const updated = mustGet(() => this.get(existing.id), '提示词片段')
+      return { record: updated, overwritten: true }
+    }
+    return { record: this.create({ title, content }), overwritten: false }
   }
 }

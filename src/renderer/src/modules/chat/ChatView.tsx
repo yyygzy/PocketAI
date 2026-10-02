@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord } from '../../../../shared/types'
+import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, UsagePricing } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
@@ -11,6 +11,8 @@ import { ChatConfigBar } from './ChatConfigBar'
 import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
+import { sumMessagesUsage } from '../../utils/usage-summary'
+import { fmtTokens, fmtCost } from '../../utils/token'
 
 interface Turn {
   user: MessageRecord | null
@@ -111,6 +113,11 @@ export const ChatView: React.FC<Props> = ({
   /** 处于并排对比模式的轮次（turnKey 集合） */
   const [compareTurns, setCompareTurns] = useState<Set<string>>(new Set())
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
+  /** 本机单价配置：气泡 token 微展示命中单价时附带估算费用；拉取失败静默只显示 token */
+  const [pricing, setPricing] = useState<UsagePricing | null>(null)
+  useEffect(() => {
+    window.pocketai.getUsagePricing().then(setPricing).catch(() => {})
+  }, [])
 
   // 分支聚焦：重新生成/编辑重发完成后自动切到新分支
   // 父组件每次 setFocusBranch 都自增 nonce，引用变即 nonce 变；直接依赖 focusBranch
@@ -303,6 +310,23 @@ export const ChatView: React.FC<Props> = ({
 
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
 
+  // 本会话累计用量（账单口径：含分支重跑全部批次；旧消息无 usage 自然不计）
+  const sessionUsage = useMemo(() => sumMessagesUsage(messages, pricing), [messages, pricing])
+  const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
+  const sessionCostText = fmtCost(sessionUsage.cost)
+  const sessionUsageHint = [
+    t('chatview.tokenHint', {
+      prompt: sessionUsage.promptTokens,
+      completion: sessionUsage.completionTokens
+    }),
+    sessionUsage.cachedTokens > 0
+      ? t('chatview.tokenCachedHint', { cached: sessionUsage.cachedTokens })
+      : '',
+    sessionCostText ? `${currencySymbol}${sessionCostText}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
+
   return (
     <div className="flex-1 flex flex-col min-w-0">
       {/* 顶部模型选择栏 */}
@@ -351,6 +375,23 @@ export const ChatView: React.FC<Props> = ({
       {/* 消息流（虚拟化：每轮一个虚拟项，只渲染可视区 + overscan） */}
       <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-4 py-5">
+          {/* 本会话累计用量条（随消息流滚动，hover 看输入/输出/缓存明细） */}
+          {renderedTurns.length > 0 && sessionUsage.totalTokens > 0 && (
+            <div
+              title={sessionUsageHint}
+              className="flex justify-end mb-3 text-[11px] text-[var(--color-text-muted)] font-mono cursor-default"
+            >
+              <span className="px-2 py-0.5 rounded-full bg-[var(--color-hover-overlay)]">
+                {t('chatview.sessionUsage', { tokens: fmtTokens(sessionUsage.totalTokens) })}
+                {sessionCostText && (
+                  <span className="ml-1.5 text-[var(--color-accent)]">
+                    {currencySymbol}
+                    {sessionCostText}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
           {renderedTurns.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-72 text-center px-6">
               <div className="text-4xl mb-3">🎒</div>
@@ -420,6 +461,7 @@ export const ChatView: React.FC<Props> = ({
                         selectedIds={selectedIds}
                         onToggleSelect={toggleSelect}
                         onDelete={handleDeleteOne}
+                        pricing={pricing}
                       />
                     ) : activeBatch.length === 1 ? (
                       <MessageBubble
@@ -429,6 +471,9 @@ export const ChatView: React.FC<Props> = ({
                         streaming={msg.status === 'streaming'}
                         messageId={msg.id}
                         sources={msg.sources ?? undefined}
+                        usage={msg.usage ?? null}
+                        provider={msg.provider ?? null}
+                        pricing={pricing}
                         selected={selectedIds.has(msg.id)}
                         highlight={highlightMsgId === msg.id}
                         onToggleSelect={toggleSelect}

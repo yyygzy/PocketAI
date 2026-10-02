@@ -4,13 +4,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   OllamaRuntimeStatus,
   OllamaInstallEvent,
-  OllamaPullEvent,
   ModelRecommendation
 } from '../../../shared/types'
 import { useI18n } from '../i18n'
 import { reportIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useTransientNotice } from '../hooks/useTransientNotice'
+import { useOllamaPull } from '../hooks/useOllamaPull'
 
 function formatMB(bytes: number | null | undefined): string {
   if (!bytes) return ''
@@ -24,8 +24,6 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const [installing, setInstalling] = useState(false)
   const [err, setErr] = useState('')
   const [starting, setStarting] = useState(false)
-  const [pullEvt, setPullEvt] = useState<OllamaPullEvent | null>(null)
-  const [pulling, setPulling] = useState<string | null>(null)
   const { notice: pullDone, show: markPullDone, clear: clearPullDone } = useTransientNotice<string>(4000)
   const [customModel, setCustomModel] = useState('')
   const [rec, setRec] = useState<ModelRecommendation | null>(null)
@@ -39,6 +37,14 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     window.pocketai.getOllamaStatus().then(setStatus).catch(reportIpcError('ollama.getStatus'))
   }, [])
 
+  // 模型拉取（进度事件/中止/成功刷新）与管家推荐卡片共用同一 hook
+  const { pulling, pullEvt, error: pullError, pull, abort: abortPull } = useOllamaPull({
+    onDone: (model) => {
+      markPullDone(model)
+      refresh()
+    }
+  })
+
   useEffect(() => {
     refresh()
     window.pocketai.getOllamaMirror().then((r) => {
@@ -48,11 +54,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       }
     }).catch(reportIpcError('ollama.getMirror'))
     const off1 = window.pocketai.onOllamaInstallEvent((e) => setInstallEvt(e))
-    const off2 = window.pocketai.onOllamaPullEvent((e) => setPullEvt(e))
     const timer = setInterval(refresh, 8000) // 兜底轮询（外部启停/系统 ollama 变化）
     return () => {
       off1()
-      off2()
       clearInterval(timer)
       if (stopTimerRef.current) {
         clearTimeout(stopTimerRef.current)
@@ -116,32 +120,6 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     }, 800)
   }
 
-  /** @returns 是否拉取成功（调用方据此决定是否清空输入框） */
-  async function pull(model: string): Promise<boolean> {
-    const name = model.trim()
-    if (!name || pulling) return false
-    setErr('')
-    clearPullDone()
-    setPulling(name)
-    setPullEvt({ model: name, status: '', percent: 0, done: false })
-    try {
-      const r = await window.pocketai.pullOllamaModel(name)
-      if (r.ok) {
-        markPullDone(name)
-        refresh()
-        return true
-      }
-      setErr(`${name}: ${r.error}`)
-      return false
-    } catch (e) {
-      // IPC 层 reject（主进程异常/通道失败）：必须复位 pulling，否则按钮永久卡在拉取中
-      setErr(`${name}: ${errText(e)}`)
-      return false
-    } finally {
-      setPulling(null)
-    }
-  }
-
   const stageText = (e: OllamaInstallEvent | null): string => {
     if (!e) return ''
     if (e.stage === 'download') return t('ollama.stageDownload')
@@ -153,6 +131,12 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   // 推荐里排除纯向量模型单独标注，其余作为对话模型快捷拉取
   const chatPicks = (rec?.localPicks ?? []).filter((p) => p.tag !== '向量').slice(0, 3)
   const embedPick = (rec?.localPicks ?? []).find((p) => p.tag === '向量')
+
+  /** 发起拉取并清掉上一次的完成提示（hook 不管调用方的 notice） */
+  const doPull = (model: string): Promise<boolean> => {
+    clearPullDone()
+    return pull(model)
+  }
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2.5">
@@ -286,7 +270,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
                     key={p.id}
                     disabled={!!pulling || p.installed}
                     title={p.reason}
-                    onClick={() => pull(p.id)}
+                    onClick={() => void doPull(p.id)}
                     className={`text-[10px] px-2 py-1 rounded border font-mono ${
                       p.installed
                         ? 'border-[var(--color-success)] text-[var(--color-success)] cursor-default'
@@ -301,7 +285,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
                   <button
                     disabled={!!pulling || embedPick.installed}
                     title={embedPick.reason}
-                    onClick={() => pull(embedPick.id)}
+                    onClick={() => void doPull(embedPick.id)}
                     className={`text-[10px] px-2 py-1 rounded border font-mono ${
                       embedPick.installed
                         ? 'border-[var(--color-success)] text-[var(--color-success)] cursor-default'
@@ -324,16 +308,16 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
               value={customModel}
               disabled={!!pulling}
               onChange={(e) => setCustomModel(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void pull(customModel).then((ok) => { if (ok) setCustomModel('') })}
+              onKeyDown={(e) => e.key === 'Enter' && void doPull(customModel).then((ok) => { if (ok) setCustomModel('') })}
             />
             {pulling ? (
               <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-warning)]"
-                onClick={() => window.pocketai.abortOllamaPull().catch(reportIpcError('ollama.abortPull'))}>
+                onClick={abortPull}>
                 ✕ {t('ollama.abort')}
               </button>
             ) : (
               <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)]"
-                onClick={() => void pull(customModel).then((ok) => { if (ok) setCustomModel('') })}>
+                onClick={() => void doPull(customModel).then((ok) => { if (ok) setCustomModel('') })}>
                 {t('ollama.pullBtn')}
               </button>
             )}
@@ -355,6 +339,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       )}
 
       {err && <div className="text-[11px] text-[var(--color-danger)] leading-relaxed">⚠️ {err}</div>}
+      {pullError && <div className="text-[11px] text-[var(--color-danger)] leading-relaxed">⚠️ {pullError}</div>}
 
       {!compact && status?.installed && (
         <div className="text-[10px] text-[var(--color-text-muted)] pt-1 border-t border-[var(--color-border)] space-y-0.5">

@@ -153,6 +153,32 @@ export const SnippetButton: React.FC<Props> = ({ onInsert, disabled }) => {
     }
   }
 
+  // 导出全部片段为 JSON
+  const handleExport = async () => {
+    try {
+      const res = await window.pocketai.exportPromptSnippets()
+      if (res.ok && res.path) toast.success(t('snippet.exported', { path: res.path }))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }
+
+  // 导入 JSON 文件，成功后刷新列表
+  const handleImport = async () => {
+    try {
+      const res = await window.pocketai.importPromptSnippets()
+      if (!res.ok) {
+        if (res.error) toast.error(t('snippet.importFailed', { msg: res.error }))
+        return
+      }
+      if (res.canceled) return
+      toast.success(t('snippet.imported', { n: res.imported ?? 0, m: res.overwritten ?? 0 }))
+      await refresh()
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }
+
   // 选用：有变量先进填充态，无变量直接插入
   const pickSnippet = (s: PromptSnippetRecord) => {
     const vars = extractTemplateVars(s.content)
@@ -274,6 +300,15 @@ export const SnippetButton: React.FC<Props> = ({ onInsert, disabled }) => {
                     </button>
                   </div>
                 ))}
+              </div>
+              {/* 底部工具行 */}
+              <div className="flex items-center justify-between px-3 pt-2 pb-2 border-t border-[var(--color-border)]">
+                <button type="button" onClick={() => void handleExport()} className="btn-ghost text-[11px] px-2 py-1">
+                  ⬇ {t('snippet.exportTitle')}
+                </button>
+                <button type="button" onClick={() => void handleImport()} className="btn-ghost text-[11px] px-2 py-1">
+                  ⬆ {t('snippet.importTitle')}
+                </button>
               </div>
             </div>
           )}

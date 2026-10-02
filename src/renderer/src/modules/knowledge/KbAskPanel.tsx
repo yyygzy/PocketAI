@@ -13,6 +13,7 @@ import { buildKbAskSessionHtml } from '../../utils/export-html'
 import type {
   KnowledgeBase,
   KbAskMessage,
+  KbAskRetention,
   KbAskSessionMeta,
   MessageSource,
   ProviderRecord
@@ -23,7 +24,7 @@ const PROVIDER_KEY = 'kbask.providerId'
 const modelKey = (p: string) => `kbask.model.${p}`
 
 /** 会话时间展示：当天只显示时分，跨天显示日期（同年省略年份） */
-const fmtSessionTime = (ts: number): string => {
+export const fmtSessionTime = (ts: number): string => {
   const d = new Date(ts)
   const now = new Date()
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -32,7 +33,12 @@ const fmtSessionTime = (ts: number): string => {
   return `${ymd} ${hm}`
 }
 
-const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
+const KbAskPanel: React.FC<{
+  kb: KnowledgeBase
+  /** 跨库漫游跳转目标会话 id（非空时展开历史并回放；消费后父级清空） */
+  openSessionId?: string | null
+  onSessionOpened?: () => void
+}> = ({ kb, openSessionId = null, onSessionOpened }) => {
   const { t } = useI18n()
   const toast = useToast()
 
@@ -58,20 +64,58 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
   const [renameDraft, setRenameDraft] = useState('')
   // 导出进行中（防重入）
   const [exportingId, setExportingId] = useState<string | null>(null)
+  // 历史搜索关键词 + 防抖 timer
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 自动清理保留策略（双 0 = 关闭）；展开配置行
+  const [retention, setRetention] = useState<KbAskRetention>({ keepCount: 0, keepDays: 0 })
+  const [showRetention, setShowRetention] = useState(false)
 
-  /** 拉取本库历史会话列表（仅元数据，更新时间倒序） */
-  const refreshSessions = () => {
-    window.pocketai
-      .listKbAskSessions(kb.id)
-      .then(setSessionList)
+  /** 拉取本库历史会话列表（仅元数据，更新时间倒序）；有关键词时走搜索 */
+  const refreshSessions = (kw = searchKeyword) => {
+    const k = kw.trim()
+    const p = k
+      ? window.pocketai.searchKbAskSessions(kb.id, k)
+      : window.pocketai.listKbAskSessions(kb.id)
+    p.then(setSessionList)
       .catch(() => {}) // 留痕属增强能力，列表加载失败不打断问答
   }
 
-  // 挂载即拉取历史（「历史」按钮上展示数量）
+  /** 搜索输入：200ms 防抖后查询 */
+  const onSearchInput = (kw: string) => {
+    setSearchKeyword(kw)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => refreshSessions(kw), 200)
+  }
+
+  // 卸载时清理防抖 timer
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    }
+  }, [])
+
+  // 挂载即拉取历史（「历史」按钮上展示数量）与保留策略
   useEffect(() => {
     refreshSessions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kb.id])
+
+  useEffect(() => {
+    window.pocketai.getKbAskRetention().then(setRetention).catch(() => {})
+  }, [])
+
+  /** 保存保留策略：切换即生效，下次保存会话时顺手清理 */
+  const saveRetention = (next: KbAskRetention) => {
+    setRetention(next)
+    window.pocketai
+      .setKbAskRetention(next)
+      .then(() => {
+        toast.success(t('kb.askRetentionSaved'))
+        refreshSessions()
+      })
+      .catch(() => {})
+  }
 
   // 加载启用的 provider + 记忆的模型选择；默认第一个 provider 的第一个模型（小白零配置）
   useEffect(() => {
@@ -128,7 +172,7 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
         createdAt: createdAt || Date.now(),
         updatedAt: Date.now()
       })
-      .then(refreshSessions)
+      .then(() => refreshSessions())
       .catch(() => {})
   }
   // 经 ref 转发：一次性挂载的流式订阅闭包始终调用最新实现（拿到最新 provider/model/sessionId）
@@ -266,6 +310,15 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
       .catch((e) => toast.error(errText(e)))
   }
 
+  // 跨库漫游跳转：外部传入会话 id → 展开历史面板并回放，随后通知父级清空
+  useEffect(() => {
+    if (!openSessionId) return
+    setShowHistory(true)
+    loadSession(openSessionId)
+    onSessionOpened?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSessionId])
+
   /** 删除历史会话；删的是当前会话则回到新对话态 */
   const removeSession = (id: string) => {
     window.pocketai
@@ -362,6 +415,11 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
         <button
           onClick={() => {
             if (!showHistory) refreshSessions()
+            else {
+              // 关闭历史面板时清空搜索态
+              setSearchKeyword('')
+              if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+            }
             setShowHistory(!showHistory)
           }}
           className={`text-xs px-2 py-1 rounded border transition-colors${
@@ -401,11 +459,56 @@ const KbAskPanel: React.FC<{ kb: KnowledgeBase }> = ({ kb }) => {
         )}
       </div>
 
-      {/* 历史会话列表 */}
+      {/* 历史会话列表（含搜索） */}
       {showHistory && (
         <div className="mb-3 space-y-1 max-h-40 overflow-y-auto pr-1">
+          <input
+            className="input text-xs w-full mb-1"
+            value={searchKeyword}
+            onChange={(e) => onSearchInput(e.target.value)}
+            placeholder={t('kb.askSearchPlaceholder')}
+          />
+          {/* 自动清理保留策略：切换即保存，下次写入会话时顺手清理 */}
+          <button
+            onClick={() => setShowRetention(!showRetention)}
+            className={`btn-ghost text-xs mb-1${
+              retention.keepCount > 0 || retention.keepDays > 0 ? ' text-[var(--color-accent)]' : ''
+            }`}
+          >
+            {t('kb.askRetention')}
+          </button>
+          {showRetention && (
+            <div className="flex items-center gap-2 mb-1 text-xs text-[var(--color-text-muted)]">
+              <span>{t('kb.askRetentionCount')}</span>
+              <select
+                className="input text-xs"
+                value={retention.keepCount}
+                onChange={(e) => saveRetention({ ...retention, keepCount: Number(e.target.value) })}
+              >
+                {[0, 50, 100, 200, 500].map((n) => (
+                  <option key={n} value={n}>
+                    {n === 0 ? t('kb.askRetentionUnlimited') : n}
+                  </option>
+                ))}
+              </select>
+              <span>{t('kb.askRetentionDays')}</span>
+              <select
+                className="input text-xs"
+                value={retention.keepDays}
+                onChange={(e) => saveRetention({ ...retention, keepDays: Number(e.target.value) })}
+              >
+                {[0, 7, 30, 90, 180].map((n) => (
+                  <option key={n} value={n}>
+                    {n === 0 ? t('kb.askRetentionUnlimited') : n}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {sessionList.length === 0 && (
-            <p className="text-xs text-[var(--color-text-muted)] py-3 text-center">{t('kb.askNoSessions')}</p>
+            <p className="text-xs text-[var(--color-text-muted)] py-3 text-center">
+              {searchKeyword.trim() ? t('kb.askSearchEmpty') : t('kb.askNoSessions')}
+            </p>
           )}
           {sessionList.map((s) => (
             <div

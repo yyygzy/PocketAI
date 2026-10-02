@@ -12,6 +12,7 @@ import { ingestionService } from '../../knowledge/ingestion'
 import { indexQueue } from '../../knowledge/index-queue'
 import { ragService } from '../../knowledge/rag'
 import { kbAskService } from '../../knowledge/ask-service'
+import { getKbAskRetention, setKbAskRetention } from '../../knowledge/ask-retention-config'
 import { checkKbFileUpdates } from '../../knowledge/sync-check'
 import { scanFolderFiles } from '../../knowledge/folder-scan'
 import { detectSourceType } from '../../knowledge/parsers'
@@ -183,6 +184,11 @@ export function registerKnowledgeHandlers(): void {
   })
   safeHandle(IPC.KB_ASK_SESSION_SAVE, (_e, record: KbAskSessionRecord) => {
     kbAskSessionRepo.upsert(record)
+    // 自动清理：用户显式配置保留策略后，保存新会话时顺手 prune 该库
+    const retention = getKbAskRetention()
+    if (retention.keepCount > 0 || retention.keepDays > 0) {
+      kbAskSessionRepo.prune(record.kbId, retention)
+    }
     return { ok: true }
   }, argsSchema(kbAskSessionSaveSchema))
   safeHandle(IPC.KB_ASK_SESSION_LIST, (_e, kbId: string) => kbAskSessionRepo.listByKb(kbId), argsSchema(idSchema))
@@ -234,6 +240,36 @@ export function registerKnowledgeHandlers(): void {
     fs.writeFileSync(filePath, html, 'utf8')
     return { ok: true, path: filePath }
   }, argsSchema(idSchema, z.string().min(1).max(50 * 1024 * 1024)))
+
+  // ---------- KB 问答会话搜索（LIKE 匹配标题/消息体，空串返回全部） ----------
+  safeHandle(
+    IPC.KB_ASK_SESSION_SEARCH,
+    (_e, kbId: string, keyword: string) => kbAskSessionRepo.searchByKb(kbId, keyword),
+    argsSchema(idSchema, z.string().max(200))
+  )
+
+  // ---------- KB 问答历史跨库漫游（限量 1-500，默认 200） ----------
+  safeHandle(
+    IPC.KB_ASK_SESSION_LIST_ALL,
+    (_e, limit: number) => kbAskSessionRepo.listAll(limit),
+    argsSchema(z.number().int().min(1).max(500))
+  )
+  safeHandle(
+    IPC.KB_ASK_SESSION_SEARCH_ALL,
+    (_e, keyword: string, limit: number) => kbAskSessionRepo.searchAll(keyword, limit),
+    argsSchema(z.string().max(200), z.number().int().min(1).max(500))
+  )
+
+  // ---------- KB 问答历史自动清理策略（双 0 = 关闭） ----------
+  const kbAskRetentionSchema = z.object({
+    keepCount: z.number().int().min(0).max(10000),
+    keepDays: z.number().int().min(0).max(3650)
+  })
+  safeHandle(IPC.KB_ASK_RETENTION_GET, () => getKbAskRetention())
+  safeHandle(IPC.KB_ASK_RETENTION_SET, (_e, policy: { keepCount: number; keepDays: number }) => {
+    setKbAskRetention(policy)
+    return { ok: true }
+  }, argsSchema(kbAskRetentionSchema))
 
   // ---------- 增量同步：检测 file 文档源文件变更 ----------
   safeHandle(IPC.KB_SYNC_CHECK, (_e, kbId: string) => checkKbFileUpdates(kbId), argsSchema(idSchema))

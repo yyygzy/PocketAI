@@ -7,25 +7,14 @@ import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
 import { reportIpcError } from '../../utils/ipc'
-
-/** token 数量级缩写：<1000 原样，≥1000 显示 k，≥1M 显示 M */
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 100_000 ? 0 : 1)}k`
-  return String(n)
-}
-
-/** 费用格式：≥1 两位小数，0<n<1 四位小数，0 → 空串（UI 显示 —） */
-function fmtCost(n: number): string {
-  if (!n || n <= 0) return ''
-  if (n >= 1) return n.toFixed(2)
-  return n.toFixed(4)
-}
+import { requestUsageJump } from './usage-jump'
+import { fmtTokens, fmtCost } from '../../utils/token'
+import { buildUsageCsv } from '../../utils/usage-csv'
+import { priceKey } from '../../../../shared/usage-pricing'
 
 const RANGES = [7, 30, 90] as const
-
-/** provider::model 价格表 key（与主进程 priceKey 同构） */
-const pk = (provider: string, model: string) => `${provider}::${model}`
+/** 导出行级明细的上限（与主进程 listUsageDetail 默认值一致；超出会提示截断） */
+const EXPORT_LIMIT = 10000
 
 export const UsagePanel: React.FC = () => {
   const { t } = useI18n()
@@ -36,6 +25,7 @@ export const UsagePanel: React.FC = () => {
   const [asstUsage, setAsstUsage] = useState<UsageAssistantItem[]>([])
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
   const [showEditor, setShowEditor] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
 
@@ -55,13 +45,48 @@ export const UsagePanel: React.FC = () => {
 
   const reload = useCallback(() => load(days), [days, load])
 
+  /** 导出当前时间范围的行级明细 CSV（每轮生成一行，可丢进表格透视/报销） */
+  const handleExportCsv = useCallback(async () => {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const { items, truncated } = await window.pocketai.getUsageDetail(days, EXPORT_LIMIT)
+      if (items.length === 0) return
+      const csv = buildUsageCsv(items, {
+        time: t('usage.colTime'),
+        conversation: t('usage.conversation'),
+        assistant: t('usage.assistant'),
+        provider: t('usage.colProvider'),
+        model: t('usage.model'),
+        prompt: t('usage.prompt'),
+        completion: t('usage.completion'),
+        cached: t('usage.colCached'),
+        total: t('usage.totalTokens'),
+        cost: t('usage.cost')
+      })
+      const r = await window.pocketai.exportUsageCsv({ days, content: csv })
+      if (!r.ok) {
+        toast.error(t('common.opFailed', { msg: r.error ?? '' }))
+        return
+      }
+      if (r.canceled) return
+      toast.success(t('usage.exportCsvDone', { count: items.length }))
+      if (truncated) toast.warning(t('usage.exportCsvTruncated', { limit: EXPORT_LIMIT }))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    } finally {
+      setExporting(false)
+    }
+  }, [days, exporting, t, toast])
+
   const maxDaily = summary ? Math.max(...summary.daily.map((d) => d.totalTokens), 1) : 1
   const maxProvider = summary && summary.byProvider.length > 0 ? summary.byProvider[0]!.totalTokens : 1
+  const hasData = !!summary && summary.totals.requests > 0
 
   return (
     <div>
       {/* 范围切换 */}
-      <div className="flex gap-1.5 mb-3">
+      <div className="flex items-center gap-1.5 mb-3">
         {RANGES.map((d) => (
           <button
             key={d}
@@ -71,6 +96,15 @@ export const UsagePanel: React.FC = () => {
             {t(`usage.days${d}`)}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => void handleExportCsv()}
+          disabled={!hasData || exporting}
+          className="chip ml-auto"
+          title={hasData ? undefined : t('usage.noData')}
+        >
+          {exporting ? '⏳' : '⬇️'} {t('usage.exportCsv')}
+        </button>
       </div>
 
       {!summary ? (
@@ -182,9 +216,14 @@ export const UsagePanel: React.FC = () => {
                 </thead>
                 <tbody>
                   {convUsage.map((c) => (
-                    <tr key={c.conversationId} className="border-t border-[var(--color-border)]">
+                    <tr
+                      key={c.conversationId}
+                      className="border-t border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-hover-overlay)]"
+                      onClick={() => requestUsageJump({ type: 'conversation', convId: c.conversationId })}
+                      title={t('usage.clickToJump')}
+                    >
                       <td className="py-1.5 pr-2 truncate max-w-0">
-                        <span className="text-[var(--color-text)]" title={c.title}>{c.title}</span>
+                        <span className="text-[var(--color-text)]">{c.title}</span>
                       </td>
                       <td className="py-1.5 pr-2 text-right text-[var(--color-text-muted)]">{c.requests}</td>
                       <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(c.totalTokens)}</td>
@@ -213,9 +252,14 @@ export const UsagePanel: React.FC = () => {
                 </thead>
                 <tbody>
                   {asstUsage.map((a) => (
-                    <tr key={a.assistantId} className="border-t border-[var(--color-border)]">
+                    <tr
+                      key={a.assistantId}
+                      className="border-t border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-hover-overlay)]"
+                      onClick={() => requestUsageJump({ type: 'assistant', assistantId: a.assistantId })}
+                      title={t('usage.clickToJump')}
+                    >
                       <td className="py-1.5 pr-2 truncate max-w-0">
-                        <span className="text-[var(--color-text)]" title={a.name}>{a.name}</span>
+                        <span className="text-[var(--color-text)]">{a.name}</span>
                       </td>
                       <td className="py-1.5 pr-2 text-right text-[var(--color-text-muted)]">{a.requests}</td>
                       <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(a.totalTokens)}</td>
@@ -281,7 +325,7 @@ const PriceEditor: React.FC<{
     const seen = new Set<string>()
     const out: { key: string; provider: string; model: string }[] = []
     for (const m of models ?? []) {
-      const key = pk(m.provider, m.model)
+      const key = priceKey(m.provider, m.model)
       if (seen.has(key)) continue
       seen.add(key)
       out.push({ key, provider: m.provider, model: m.model })

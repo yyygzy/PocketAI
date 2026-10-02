@@ -228,6 +228,30 @@ export interface UsageModelItem {
   lastUsedAt: number
 }
 
+/** 用量行级明细项（CSV 导出，每轮 assistant 生成一行；按 createdAt 倒序） */
+export interface UsageDetailItem {
+  createdAt: number
+  conversationId: string
+  /** JOIN 不到会话标题时的兜底占位 */
+  conversationTitle: string
+  /** 自由会话（无助手）或助手已删除时为 null */
+  assistantId: string | null
+  assistantName: string | null
+  provider: string
+  model: string
+  promptTokens: number
+  completionTokens: number
+  cachedTokens: number
+  totalTokens: number
+  cost: number
+}
+
+/** 行级明细查询结果（超出 limit 时 truncated=true） */
+export interface UsageDetailResult {
+  items: UsageDetailItem[]
+  truncated: boolean
+}
+
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */
 export interface KbBrokenDoc {
   id: string
@@ -367,6 +391,19 @@ export interface KbAskSessionMeta {
   model: string
   createdAt: number
   updatedAt: number
+}
+
+/** KB 问答历史自动清理策略（双 0 = 关闭，不静默删数据） */
+export interface KbAskRetention {
+  /** 每库最多保留最近 N 条（0 = 不限） */
+  keepCount: number
+  /** 保留最近 N 天（0 = 不限） */
+  keepDays: number
+}
+
+/** 跨库漫游列表项：会话元数据 + 所属库名（库缺失时为空串，UI 兜底显示） */
+export interface KbAskRoamItem extends KbAskSessionMeta {
+  kbName: string
 }
 
 /** 会话导出/导入文件载荷（明文 JSON 与加密 .moxia 内部同构） */
@@ -826,9 +863,14 @@ export interface ChatErrorEvent {
 // ---------- 快捷浮窗 ----------
 export type PopupMode = 'quick' | 'selection'
 
+/** 选区助手动作（浮条按钮与浮窗动作芯片共用） */
+export type SelectionAction = 'translate' | 'summary' | 'polish' | 'ask'
+
 export interface PopupPayload {
   mode: PopupMode
   text?: string // selection 模式下取到的选中文本
+  /** selection 模式下入口指定的动作；存在时浮窗就绪后自动执行（应用内划词浮条带此参） */
+  action?: SelectionAction
   ts: number
 }
 
@@ -1484,6 +1526,8 @@ export const IPC = {
   USAGE_PRICING_GET: 'usage:pricing-get', // 用量单价配置读取
   USAGE_PRICING_SET: 'usage:pricing-set', // 用量单价配置保存
   USAGE_MODELS: 'usage:models', // 历史出现过的 provider/模型清单（单价编辑器用）
+  USAGE_DETAIL_GET: 'usage:detail-get', // 用量行级明细（CSV 导出）
+  USAGE_EXPORT_CSV: 'usage:export-csv', // 用量明细 CSV 保存文件
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
@@ -1527,6 +1571,11 @@ export const IPC = {
   KB_ASK_SESSION_RENAME: 'kb-ask-session:rename',
   KB_ASK_SESSION_EXPORT_MD: 'kb-ask-session:export-md',
   KB_ASK_SESSION_EXPORT_HTML: 'kb-ask-session:export-html',
+  KB_ASK_SESSION_SEARCH: 'kb-ask-session:search',
+  KB_ASK_SESSION_LIST_ALL: 'kb-ask-session:list-all',
+  KB_ASK_SESSION_SEARCH_ALL: 'kb-ask-session:search-all',
+  KB_ASK_RETENTION_GET: 'kb-ask:retention-get',
+  KB_ASK_RETENTION_SET: 'kb-ask:retention-set',
 
   // MCP Server
   MCP_SERVER_LIST: 'mcp-server:list',
@@ -1555,6 +1604,8 @@ export const IPC = {
   SNIPPETS_CREATE: 'snippets:create',
   SNIPPETS_UPDATE: 'snippets:update',
   SNIPPETS_DELETE: 'snippets:delete',
+  SNIPPETS_EXPORT: 'snippets:export',
+  SNIPPETS_IMPORT: 'snippets:import',
 
   // Python 运行时
   PYTHON_RUNTIME_LIST: 'python:runtime-list',
@@ -1645,6 +1696,7 @@ export const IPC = {
 
   // ---------- 快捷浮窗（快捷问答 / 选区助手） ----------
   POPUP_HIDE: 'popup:hide',
+  POPUP_OPEN_SELECTION: 'popup:open-selection',
   POPUP_GET_PAYLOAD: 'popup:get-payload',
   POPUP_GET_CONFIG: 'popup:get-config',
   POPUP_SET_CONFIG: 'popup:set-config',
@@ -1737,6 +1789,7 @@ export const IPC = {
   STEWARD_MODEL_RECOMMEND: 'steward:model-recommend', // 按硬件画像推荐本地模型
   STEWARD_AUDIT: 'steward:audit', // 安全检测
   STEWARD_DIAGNOSE: 'steward:diagnose', // 故障诊断
+  STEWARD_EXPORT_REPORT: 'steward:export-report', // 诊断报告导出为文本文件
 
   // ---------- 文件模块 ----------
   FILE_LIST: 'file:list',

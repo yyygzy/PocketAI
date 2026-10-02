@@ -21,6 +21,7 @@ import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
 import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
+import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -252,6 +253,21 @@ export const ChatModule: React.FC = () => {
     window.addEventListener(APP_SHORTCUT_EVENT, onShortcut)
     return () => window.removeEventListener(APP_SHORTCUT_EVENT, onShortcut)
   }, [])
+
+  // 用量排行点击跳转：消费 pending 参数，定位会话或切换助手
+  useEffect(() => {
+    const onUsageJump = () => {
+      const d = consumePendingUsageJump()
+      if (!d) return
+      if (d.type === 'conversation') {
+        handleSelectConv(d.convId)
+      } else if (d.type === 'assistant') {
+        handleSelectAssistant(d.assistantId)
+      }
+    }
+    window.addEventListener(USAGE_JUMP_EVENT, onUsageJump)
+    return () => window.removeEventListener(USAGE_JUMP_EVENT, onUsageJump)
+  }, [handleSelectConv, handleSelectAssistant])
 
   // 智能标题后台生成完成：就地更新活跃/归档两个列表（流式结束后的 reload 为兜底）
   useEffect(() => {

@@ -1,11 +1,13 @@
 // 消息 IPC：列表 / 删除 / 全局搜索（FTS5 trigram + LIKE 兜底）
+import fs from 'node:fs'
+import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../shared/snippet'
 import { dbService } from '../../db/database'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { usageService } from '../../usage/usage-service'
 import { getUsagePricing, setUsagePricing } from '../../usage/pricing-config'
-import { parsePricing } from '../../usage/pricing'
+import { parsePricing } from '../../../shared/usage-pricing'
 import { usagePricingSchema } from '../../../shared/schemas/usage'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { idSchema } from '../../../shared/schemas/providers'
@@ -19,6 +21,16 @@ interface MessageSearchRow {
   content: string
   snippet?: string | null
   created_at: number
+}
+
+/** 用量 CSV 内容上限（约 2 万行明细，远超正常月度导出量，仅做防灌爆） */
+const USAGE_CSV_MAX_CHARS = 5_000_000
+
+/** 导出文件名时间戳 YYYYMMDD-HHmm（与管家报告导出同手法） */
+function usageFileTimestamp(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
 }
 
 export function registerMessageHandlers(): void {
@@ -60,6 +72,31 @@ export function registerMessageHandlers(): void {
     return normalized
   }, argsSchema(usagePricingSchema))
   safeHandle(IPC.USAGE_MODELS, () => usageService.listDistinctModels())
+
+  // 行级用量明细（CSV 导出，最近 N 天；超出 limit 置 truncated 让渲染端提示）
+  safeHandle(IPC.USAGE_DETAIL_GET, (_e, days?: number, limit?: number) =>
+    usageService.listUsageDetail(days, limit, getUsagePricing().prices),
+    argsSchema(z.number().int().min(1).max(365).optional(), z.number().int().min(1).max(20000).optional()))
+
+  // 用量明细 CSV 落盘：渲染端拼装（含 UTF-8 BOM）→ 主进程弹保存框写文件
+  safeHandle(
+    IPC.USAGE_EXPORT_CSV,
+    async (e, args: { days: number; content: string }) => {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+      if (!win) return { ok: false as const, error: '窗口不可用' }
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: `pocketai-usage-${args.days}d-${usageFileTimestamp()}.csv`,
+        filters: [
+          { name: 'CSV 文件', extensions: ['csv'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      })
+      if (canceled || !filePath) return { ok: true as const, canceled: true as const }
+      fs.writeFileSync(filePath, args.content, 'utf8')
+      return { ok: true as const, path: filePath }
+    },
+    argsSchema(z.object({ days: z.number().int().min(1).max(365), content: z.string().min(1).max(USAGE_CSV_MAX_CHARS) }))
+  )
   safeHandle(IPC.MESSAGE_SEARCH, (_e, query: string, assistantId?: string | null, dateRange?: { from?: number; to?: number }, offset?: number) => {
     if (!query || query.trim().length < 1) return []
     const q = query.trim()

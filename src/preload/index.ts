@@ -15,6 +15,7 @@ import type {
   UsageAssistantItem,
   UsagePricing,
   UsageModelItem,
+  UsageDetailResult,
   DataHealthReport,
   SendMessagePayload,
   RegeneratePayload,
@@ -28,6 +29,8 @@ import type {
   KbAskDoneEvent,
   KbAskErrorEvent,
   KbAskSessionMeta,
+  KbAskRoamItem,
+  KbAskRetention,
   KbAskSessionRecord,
   KnowledgeBase,
   KbDocument,
@@ -240,6 +243,12 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_PRICING_SET, pricing),
   listUsageModels: (): Promise<UsageModelItem[]> =>
     ipcRenderer.invoke(IPC.USAGE_MODELS),
+  getUsageDetail: (days?: number, limit?: number): Promise<UsageDetailResult> =>
+    ipcRenderer.invoke(IPC.USAGE_DETAIL_GET, days, limit),
+  exportUsageCsv: (
+    payload: { days: number; content: string }
+  ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.USAGE_EXPORT_CSV, payload),
   getDataHealth: (): Promise<DataHealthReport> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_GET),
   // KB 数据健康修复动作（探测只读随 getDataHealth 返回）
@@ -321,6 +330,16 @@ const api = {
     ipcRenderer.invoke(IPC.KB_ASK_SESSION_EXPORT_MD, id),
   exportKbAskSessionHtml: (id: string, html: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.KB_ASK_SESSION_EXPORT_HTML, id, html),
+  searchKbAskSessions: (kbId: string, keyword: string): Promise<KbAskSessionMeta[]> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_SEARCH, kbId, keyword),
+  listAllKbAskSessions: (limit = 200): Promise<KbAskRoamItem[]> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_LIST_ALL, limit),
+  searchAllKbAskSessions: (keyword: string, limit = 200): Promise<KbAskRoamItem[]> =>
+    ipcRenderer.invoke(IPC.KB_ASK_SESSION_SEARCH_ALL, keyword, limit),
+  getKbAskRetention: (): Promise<KbAskRetention> =>
+    ipcRenderer.invoke(IPC.KB_ASK_RETENTION_GET),
+  setKbAskRetention: (policy: KbAskRetention): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_ASK_RETENTION_SET, policy),
 
   // ---------- 知识库 ----------
   listKnowledgeBases: (): Promise<KnowledgeBase[]> => ipcRenderer.invoke(IPC.KB_LIST),
@@ -454,6 +473,10 @@ const api = {
   ): Promise<PromptSnippetRecord | null> => ipcRenderer.invoke(IPC.SNIPPETS_UPDATE, id, patch),
   deletePromptSnippet: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.SNIPPETS_DELETE, id),
+  exportPromptSnippets: (): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.SNIPPETS_EXPORT),
+  importPromptSnippets: (): Promise<{ ok: boolean; canceled?: boolean; imported?: number; overwritten?: number; skipped?: number; error?: string }> =>
+    ipcRenderer.invoke(IPC.SNIPPETS_IMPORT),
 
   // ---------- Python 运行时 ----------
   listPythonRuntimes: (): Promise<PythonRuntime[]> => ipcRenderer.invoke(IPC.PYTHON_RUNTIME_LIST),
@@ -622,6 +645,11 @@ const api = {
   // ---------- 快捷浮窗（快捷问答 / 选区助手） ----------
   hidePopup: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.POPUP_HIDE),
+  openSelectionPopup: (
+    text: string,
+    action: import('../shared/types').SelectionAction
+  ): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.POPUP_OPEN_SELECTION, { text, action }),
   getPopupPayload: (): Promise<import('../shared/types').PopupPayload | null> =>
     ipcRenderer.invoke(IPC.POPUP_GET_PAYLOAD),
   getPopupConfig: (): Promise<import('../shared/types').PopupConfig> =>
@@ -836,6 +864,10 @@ const api = {
     ipcRenderer.invoke(IPC.STEWARD_AUDIT),
   runDiagnose: (): Promise<{ ok: boolean; data?: DiagnoseResult; error?: string }> =>
     ipcRenderer.invoke(IPC.STEWARD_DIAGNOSE),
+  exportStewardReport: (
+    content: string
+  ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.STEWARD_EXPORT_REPORT, { content }),
 
   // ---------- 首启向导 ----------
   getWizardState: (): Promise<{ ok: boolean; data?: WizardState; error?: string }> =>

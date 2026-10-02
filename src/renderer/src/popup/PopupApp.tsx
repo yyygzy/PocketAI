@@ -6,7 +6,12 @@ import { useI18n } from '../i18n'
 import { Markdown } from '../modules/chat/Markdown'
 import { reportIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
-import type { AssistantRecord, PopupPayload, ProviderRecord } from '../../../shared/types'
+import { useCopyFeedback } from '../hooks/useCopyFeedback'
+import type { AssistantRecord, PopupPayload, ProviderRecord, SelectionAction } from '../../../shared/types'
+import {
+  SELECTION_ACTIONS,
+  composeSelectionPrompt
+} from '../utils/selection-actions'
 
 interface Msg {
   role: 'user' | 'assistant'
@@ -52,10 +57,15 @@ export const PopupApp: React.FC = () => {
   )
 
   // 浮窗载荷（快捷问答 / 选区文本）：首次拉取 + 后续推送
+  const pendingActionRef = useRef<{ ts: number; action: SelectionAction } | null>(null)
   const applyPayload = useCallback((p: PopupPayload | null) => {
     if (!p) return
     setMode(p.mode)
     setSelection(p.mode === 'selection' ? p.text ?? '' : '')
+    if (p.mode === 'selection' && p.action && SELECTION_ACTIONS.includes(p.action)) {
+      // 应用内划词浮条带动作：待 provider/model/助手就绪后自动执行（见下方 effect）
+      pendingActionRef.current = { ts: p.ts, action: p.action }
+    }
     if (p.mode === 'quick') {
       if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
       focusTimerRef.current = setTimeout(() => { taRef.current?.focus() }, 50)
@@ -217,19 +227,22 @@ export const PopupApp: React.FC = () => {
   }
 
   // ─── 选区动作 ─────────────────────────────────────────────────────
-  const runSelectionAction = (action: 'translate' | 'summary' | 'polish' | 'ask') => {
+  const runSelectionAction = (action: SelectionAction) => {
     const text = selection.trim()
     if (!text || streaming) return
-    const composed =
-      action === 'translate'
-        ? `请把下面的内容翻译成英文（若内容已是英文则翻译成简体中文）。只输出译文，不要解释。\n\n"""\n${text}\n"""`
-        : action === 'summary'
-          ? `请用简体中文总结下面内容的要点，使用不超过 5 条要点的无序列表。\n\n"""\n${text}\n"""`
-          : action === 'polish'
-            ? `请润色改写下面的内容，保持原意与原语言，只输出改写后的全文，不要解释。\n\n"""\n${text}\n"""`
-            : text
-    void send(composed)
+    void send(composeSelectionPrompt(action, text))
   }
+
+  // 划词浮条唤起（payload 带 action）：provider/model/助手就绪且非流式时自动跑一次。
+  // 快捷键取词入口不带 action，保持「显示芯片等用户选」的旧行为。
+  useEffect(() => {
+    const pending = pendingActionRef.current
+    if (!pending || mode !== 'selection' || streaming) return
+    if (!selection.trim() || !assistant || !providerId || !model) return
+    pendingActionRef.current = null
+    runSelectionAction(pending.action)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, selection, assistant, providerId, model, streaming])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -319,7 +332,7 @@ export const PopupApp: React.FC = () => {
                 : selection}
             </div>
             <div className="flex gap-1.5 mt-1.5 flex-wrap">
-              {(['translate', 'summary', 'polish', 'ask'] as const).map((a) => (
+              {SELECTION_ACTIONS.map((a) => (
                 <button
                   key={a}
                   className="btn-ghost text-xs !py-0.5"
@@ -354,7 +367,15 @@ export const PopupApp: React.FC = () => {
               }`}
             >
               {m.role === 'assistant' ? (
-                m.content ? <Markdown content={m.content} /> : <span className="opacity-50">…</span>
+                m.content ? (
+                  m.error ? (
+                    <Markdown content={m.content} />
+                  ) : (
+                    <AssistantBubble content={m.content} />
+                  )
+                ) : (
+                  <span className="opacity-50">…</span>
+                )
               ) : (
                 <span className="whitespace-pre-wrap">{m.content}</span>
               )}
@@ -391,6 +412,43 @@ export const PopupApp: React.FC = () => {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * assistant 回复气泡：hover 时右上角浮出一键复制按钮。
+ * 选区助手工作流闭环——翻译/润色/总结结果一键复制走（浮窗失焦自隐，
+ * 用户切到目标窗口粘贴时窗口自然隐藏，无需按钮主动关窗）。
+ * 图标与 Markdown 代码块复制按钮同口径；复制模型原文（与代码块复制 raw 一致）。
+ */
+const AssistantBubble: React.FC<{ content: string }> = ({ content }) => {
+  const { t } = useI18n()
+  const { copied, copy } = useCopyFeedback()
+  const label = copied ? t('common.copied') : t('common.copy')
+  return (
+    <div className="relative group">
+      <Markdown content={content} />
+      <button
+        type="button"
+        title={label}
+        aria-label={label}
+        onClick={() => void copy(content)}
+        className={`absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] shadow-sm transition-opacity hover:text-[var(--color-text)] ${
+          copied ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+        }`}
+      >
+        {copied ? (
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8.5 6.5 12 13 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="5" y="5" width="8.5" height="8.5" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M3 10.5H2.5A1.5 1.5 0 0 1 1 9V2.5A1.5 1.5 0 0 1 2.5 1H9a1.5 1.5 0 0 1 1.5 1.5V3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        )}
+      </button>
     </div>
   )
 }

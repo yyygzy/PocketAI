@@ -1,6 +1,6 @@
 // pricing 用量费用估算纯函数测试
 //
-// 覆盖 src/main/usage/pricing.ts（无 electron/DB 依赖，可直接 import）：
+// 覆盖 src/shared/usage-pricing.ts（零依赖，主进程与渲染端共用）：
 // - computeUsageCost：输入/缓存/输出分段计价、缓存价留空回退输入价、异常缓存夹断、全 0 价
 // - parsePricing：币种白名单回退、prices 脏数据整条丢弃、key 合法性
 // - sanitizeModelPrice：input/output 必填、cache 可空、cache=0 保留
@@ -13,7 +13,7 @@ import {
   parsePricing,
   computeUsageCost,
   priceKey
-} from '../src/main/usage/pricing'
+} from '../src/shared/usage-pricing'
 
 const u = (over: Record<string, number> = {}) => ({
   promptTokens: 1_000_000,

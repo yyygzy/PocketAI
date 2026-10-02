@@ -23,3 +23,8 @@ export const snippetUpdatePatchSchema = z
   .refine((p) => p.title !== undefined || p.content !== undefined, {
     message: 'patch must contain title or content'
   })
+
+/** 导入 JSON 文件结构（宽松校验，逐条验证在 handler 层做） */
+export const snippetImportSchema = z.object({
+  snippets: z.array(z.any())
+})

@@ -1,7 +1,7 @@
 // 用量费用估算纯函数：单价解析/清洗与单次 usage 计费。
 // 单价口径：每 100 万 token 的价格（币种由用户在设置中统一选择，仅作展示前缀）。
-// 不依赖 electron / DB，便于单测；KV 读写在 pricing-config.ts。
-import type { UsagePricing, UsageStats } from '../../shared/types'
+// 零依赖收口到 shared：主进程聚合/校验与渲染端气泡计费共用同一份实现。
+import type { UsagePricing, UsageStats } from './types'
 
 /** 价格计量单位：所有单价均为「每 100 万 token」 */
 export const PRICE_UNIT = 1_000_000
