@@ -203,6 +203,8 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_HTML, id, html),
   exportConversationsBatch: (files: Array<{ name: string; content: string }>): Promise<{ ok: boolean; canceled?: boolean; count?: number; dir?: string; failed?: string[]; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_BATCH, files),
+  exportMessages: (payload: { defaultName: string; content: string }): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_MESSAGES, payload),
   exportConversationPdf: (id: string, html: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_PDF, id, html),
   exportConversationsPdfBatch: (files: Array<{ name: string; content: string }>): Promise<{ ok: boolean; canceled?: boolean; count?: number; dir?: string; failed?: string[]; error?: string }> =>
@@ -237,6 +239,16 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_GROUP_DELETE, id),
   setConversationGroup: (convId: string, groupId: string | null): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_SET_GROUP, convId, groupId),
+  setConversationNote: (convId: string, note: string | null): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SET_NOTE, convId, note),
+
+  // ---------- 窗口行为（开机自启/关窗到托盘） ----------
+  getWindowBehavior: (): Promise<import('../shared/types').WindowBehaviorSettings> =>
+    ipcRenderer.invoke(IPC.WINDOW_BEHAVIOR_GET),
+  setLaunchAtLogin: (enabled: boolean): Promise<import('../shared/types').WindowBehaviorSettings> =>
+    ipcRenderer.invoke(IPC.WINDOW_BEHAVIOR_SET_LAUNCH, enabled),
+  setCloseToTray: (enabled: boolean): Promise<import('../shared/types').WindowBehaviorSettings> =>
+    ipcRenderer.invoke(IPC.WINDOW_BEHAVIOR_SET_CLOSE_TO_TRAY, enabled),
 
   // ---------- 消息 ----------
   listMessages: (conversationId: string): Promise<MessageRecord[]> =>
@@ -256,6 +268,14 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_SET_STARRED, id, starred),
   listStarredMessages: (limit?: number): Promise<StarredMessageItem[]> =>
     ipcRenderer.invoke(IPC.MESSAGE_LIST_STARRED, limit),
+  forwardMessage: (input: {
+    targetConvId: string | null
+    sourceConvId: string | null
+    role: 'user' | 'assistant'
+    content: string
+    model: string | null
+  }): Promise<{ ok: boolean; convId: string; messageId: string }> =>
+    ipcRenderer.invoke(IPC.MESSAGE_FORWARD, input),
   getUsageSummary: (days?: number): Promise<UsageSummary> =>
     ipcRenderer.invoke(IPC.USAGE_GET, days),
   getUsageConversations: (days?: number, limit?: number): Promise<UsageConversationItem[]> =>
@@ -268,6 +288,10 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_PRICING_SET, pricing),
   listUsageModels: (): Promise<UsageModelItem[]> =>
     ipcRenderer.invoke(IPC.USAGE_MODELS),
+  getUsageBudget: (): Promise<import('../shared/types').UsageBudgetStatus> =>
+    ipcRenderer.invoke(IPC.USAGE_BUDGET_GET),
+  setUsageBudget: (daily: number | null, monthly: number | null): Promise<import('../shared/types').UsageBudgetStatus> =>
+    ipcRenderer.invoke(IPC.USAGE_BUDGET_SET, daily, monthly),
   getUsageDetail: (days?: number, limit?: number, conversationId?: string, assistantId?: string | null): Promise<UsageDetailResult> =>
     ipcRenderer.invoke(IPC.USAGE_DETAIL_GET, days, limit, conversationId, assistantId),
   exportUsageCsv: (
@@ -691,6 +715,14 @@ const api = {
     patch: Partial<UiPreferences>
   ): Promise<{ ok: boolean; data?: UiPreferences; error?: string }> =>
     ipcRenderer.invoke(IPC.UI_SET_PREFS, patch),
+
+  // ---------- 回复完成系统通知 ----------
+  getReplyNotifyEnabled: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.NOTIFY_REPLY_GET),
+  setReplyNotifyEnabled: (enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.NOTIFY_REPLY_SET, enabled),
+  showReplyNotification: (payload: { title: string; body: string }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.NOTIFY_REPLY_SHOW, payload),
 
   // ---------- 侧栏模块顺序 ----------
   getSidebarOrder: (): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>

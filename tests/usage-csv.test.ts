@@ -14,6 +14,7 @@ const h = {
 
 const item = (over: Partial<UsageDetailItem> = {}): UsageDetailItem => ({
   createdAt: new Date(2026, 9, 2, 15, 4, 5).getTime(),
+  messageId: 'm1',
   conversationId: 'c1',
   conversationTitle: '测试会话',
   assistantId: 'a1',

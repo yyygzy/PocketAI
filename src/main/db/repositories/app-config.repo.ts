@@ -24,6 +24,10 @@ const KEYS = {
   AUTO_UPDATE_ENABLED: 'auto_update_enabled', // '1'=开启自动更新；缺省=关闭
   FIRST_RUN_WIZARD_DONE: 'first_run_wizard_done', // '1'=已完成首启向导
   MACHINE_ID: 'machine_id', // 上次运行的机器指纹（换电脑检测）
+  LAUNCH_AT_LOGIN: 'launch_at_login', // '1'=开机自启（仅打包版生效）；缺省=关
+  CLOSE_TO_TRAY: 'close_to_tray', // '1'=关窗最小化到托盘而非退出；缺省=关
+  USAGE_BUDGET_DAILY: 'usage_budget_daily', // 数字字符串（¥）；空/缺省=不限制
+  USAGE_BUDGET_MONTHLY: 'usage_budget_monthly', // 同上
 } as const
 
 // ---------- 主密码 salt 双通道 ----------
@@ -212,6 +216,46 @@ export const appConfigRepo = {
 
   setAutoUpdateEnabled(enabled: boolean): void {
     this.set(KEYS.AUTO_UPDATE_ENABLED, enabled ? '1' : '0')
+  },
+
+  // ---------- 窗口行为（开机自启 / 关窗到托盘） ----------
+
+  isLaunchAtLogin(): boolean {
+    return this.get(KEYS.LAUNCH_AT_LOGIN) === '1'
+  },
+
+  setLaunchAtLogin(enabled: boolean): void {
+    this.set(KEYS.LAUNCH_AT_LOGIN, enabled ? '1' : '0')
+  },
+
+  isCloseToTray(): boolean {
+    return this.get(KEYS.CLOSE_TO_TRAY) === '1'
+  },
+
+  setCloseToTray(enabled: boolean): void {
+    this.set(KEYS.CLOSE_TO_TRAY, enabled ? '1' : '0')
+  },
+
+  // ---------- 用量预算（¥，null=不限制） ----------
+
+  getUsageBudgetDaily(): number | null {
+    const v = this.get(KEYS.USAGE_BUDGET_DAILY)
+    const n = v ? Number(v) : NaN
+    return Number.isFinite(n) && n > 0 ? n : null
+  },
+
+  setUsageBudgetDaily(v: number | null): void {
+    this.set(KEYS.USAGE_BUDGET_DAILY, v && v > 0 ? String(v) : '')
+  },
+
+  getUsageBudgetMonthly(): number | null {
+    const v = this.get(KEYS.USAGE_BUDGET_MONTHLY)
+    const n = v ? Number(v) : NaN
+    return Number.isFinite(n) && n > 0 ? n : null
+  },
+
+  setUsageBudgetMonthly(v: number | null): void {
+    this.set(KEYS.USAGE_BUDGET_MONTHLY, v && v > 0 ? String(v) : '')
   },
 
   // ---------- 首启向导 ----------

@@ -126,6 +126,41 @@ function quoteBlock(text: string): string {
 }
 
 /**
+ * 单条消息 → Markdown 行（含角色/时间标题、附件、toolCalls、正文、来源、用量、分隔线）。
+ * 整会话导出与消息子集导出共用，保证格式一致。
+ */
+function formatMessageBlock(msg: MessageRecord, dateFmt: (ts: number) => string): string[] {
+  const lines: string[] = []
+  lines.push(`## ${roleLabel(msg.role)} — ${dateFmt(msg.createdAt)}`, '')
+
+  const attLines = formatAttachments(msg.attachments)
+  if (attLines.length > 0) lines.push(...attLines, '')
+
+  if (msg.toolCalls) lines.push(...formatToolCalls(msg.toolCalls), '')
+
+  if (msg.content) {
+    if (msg.role === 'user') {
+      // 用户内容引用块包裹：视觉区分 + 防内容伪造文档标题/分隔结构
+      lines.push(quoteBlock(msg.content), '')
+    } else {
+      // assistant/system/tool 正文保真（保留 AI 回复的 Markdown 排版）
+      lines.push(msg.content.replace(/\s+$/, ''), '')
+    }
+  }
+
+  const srcLines = formatSources(msg.sources)
+  if (srcLines.length > 0) {
+    lines.push('**参考来源：**', ...srcLines.map((s) => `- ${s}`), '')
+  }
+
+  const usage = usageLine(msg.usage)
+  if (usage) lines.push(usage, '')
+
+  lines.push('---', '')
+  return lines
+}
+
+/**
  * 构建单个会话的 Markdown 导出文本。
  * @param assistantName 助手名称（由调用方查询后注入，纯函数不依赖 repo）
  */
@@ -146,32 +181,42 @@ export function buildConversationMarkdown(
   lines.push('', '---', '')
 
   for (const msg of messages) {
-    lines.push(`## ${roleLabel(msg.role)} — ${dateFmt(msg.createdAt)}`, '')
+    lines.push(...formatMessageBlock(msg, dateFmt))
+  }
 
-    const attLines = formatAttachments(msg.attachments)
-    if (attLines.length > 0) lines.push(...attLines, '')
+  return lines.join('\n')
+}
 
-    if (msg.toolCalls) lines.push(...formatToolCalls(msg.toolCalls), '')
+/** 消息子集（多选导出）所需的元信息 */
+export interface ExportMessagesMeta {
+  /** 文档标题（一般取会话标题） */
+  title: string
+  /** 助手名称（可选，写入头部） */
+  assistantName?: string | null
+}
 
-    if (msg.content) {
-      if (msg.role === 'user') {
-        // 用户内容引用块包裹：视觉区分 + 防内容伪造文档标题/分隔结构
-        lines.push(quoteBlock(msg.content), '')
-      } else {
-        // assistant/system/tool 正文保真（保留 AI 回复的 Markdown 排版）
-        lines.push(msg.content.replace(/\s+$/, ''), '')
-      }
-    }
+/**
+ * 构建会话内选中消息子集的 Markdown（多选导出用）。
+ * 消息顺序由调用方保证（一般按会话内时间顺序过滤）；空数组返回仅含头部的文档。
+ */
+export function buildMessagesMarkdown(
+  meta: ExportMessagesMeta,
+  messages: MessageRecord[]
+): string {
+  const dateFmt = (ts: number) => new Date(ts).toLocaleString()
 
-    const srcLines = formatSources(msg.sources)
-    if (srcLines.length > 0) {
-      lines.push('**参考来源：**', ...srcLines.map((s) => `- ${s}`), '')
-    }
+  const lines: string[] = []
+  lines.push(`# ${meta.title}`, '')
+  if (meta.assistantName) lines.push(`> **助手**：${meta.assistantName}`)
+  lines.push(`> **导出时间**：${dateFmt(Date.now())}`)
+  lines.push(`> **选中消息数**：${messages.length}`)
+  if (messages.length > 0) {
+    lines.push(`> **时间范围**：${dateFmt(messages[0]!.createdAt)} ~ ${dateFmt(messages[messages.length - 1]!.createdAt)}`)
+  }
+  lines.push('', '---', '')
 
-    const usage = usageLine(msg.usage)
-    if (usage) lines.push(usage, '')
-
-    lines.push('---', '')
+  for (const msg of messages) {
+    lines.push(...formatMessageBlock(msg, dateFmt))
   }
 
   return lines.join('\n')

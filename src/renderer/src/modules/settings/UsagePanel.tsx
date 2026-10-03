@@ -2,7 +2,7 @@
 // 数据来源：messages.usage（chat/agent 生成完成时落库），IPC getUsageSummary 聚合
 // 费用按本机配置的「每 100 万 token 单价」估算，单价仅存本地不上传
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
+import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
@@ -30,6 +30,12 @@ export const UsagePanel: React.FC = () => {
   const [detail, setDetail] = useState<{ title: string; showConv: boolean } | null>(null)
   const [detailItems, setDetailItems] = useState<UsageDetailItem[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
+  // 预算提醒：daily/monthly 上限（null=不限）+ 今日/本月已花估算
+  const [budget, setBudget] = useState<UsageBudgetStatus | null>(null)
+  const [budgetEditing, setBudgetEditing] = useState(false)
+  const [budgetDailyDraft, setBudgetDailyDraft] = useState('')
+  const [budgetMonthlyDraft, setBudgetMonthlyDraft] = useState('')
+  const [budgetSaving, setBudgetSaving] = useState(false)
 
   const openDetail = useCallback(async (id: string, title: string) => {
     setDetail({ title, showConv: false })
@@ -75,6 +81,37 @@ export const UsagePanel: React.FC = () => {
   useEffect(() => {
     window.pocketai.getUsagePricing().then(setPricing).catch(reportIpcError('usage.pricingGet'))
   }, [])
+
+  useEffect(() => {
+    window.pocketai.getUsageBudget().then(setBudget).catch(reportIpcError('usage.budgetGet'))
+  }, [])
+
+  /** 保存预算：空=不限制（存 null）；非法数字拦截 */
+  const saveBudget = useCallback(async () => {
+    const parse = (s: string): number | null | 'invalid' => {
+      const v = s.trim()
+      if (!v) return null
+      const n = Number(v)
+      return Number.isFinite(n) && n >= 0 ? n : 'invalid'
+    }
+    const daily = parse(budgetDailyDraft)
+    const monthly = parse(budgetMonthlyDraft)
+    if (daily === 'invalid' || monthly === 'invalid') {
+      toast.error(t('usage.priceInvalid'))
+      return
+    }
+    setBudgetSaving(true)
+    try {
+      const next = await window.pocketai.setUsageBudget(daily, monthly)
+      setBudget(next)
+      setBudgetEditing(false)
+      toast.success(t('usage.budgetSaved'))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    } finally {
+      setBudgetSaving(false)
+    }
+  }, [budgetDailyDraft, budgetMonthlyDraft, t, toast])
 
   const reload = useCallback(() => load(days), [days, load])
 
@@ -139,6 +176,53 @@ export const UsagePanel: React.FC = () => {
           {exporting ? '⏳' : '⬇️'} {t('usage.exportCsv')}
         </button>
       </div>
+
+      {/* 预算提醒：每日/每月进度条，超支红字；未配置时显示「未设置」由 ⚙️ 进入编辑 */}
+      {budget && (
+        <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-3 py-2">
+          <div className="flex items-center mb-1.5">
+            <span className="text-xs font-semibold text-[var(--color-text)]">{t('usage.budget')}</span>
+            <button
+              type="button"
+              className="ml-auto text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+              onClick={() => {
+                if (!budgetEditing) {
+                  setBudgetDailyDraft(budget.daily !== null ? String(budget.daily) : '')
+                  setBudgetMonthlyDraft(budget.monthly !== null ? String(budget.monthly) : '')
+                }
+                setBudgetEditing((v) => !v)
+              }}
+            >
+              {budgetEditing ? t('common.cancel') : `⚙️ ${t('usage.budget')}`}
+            </button>
+          </div>
+          <BudgetRow label={t('usage.budgetDaily')} limit={budget.daily} cost={budget.todayCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetDaily') })} />
+          <BudgetRow label={t('usage.budgetMonthly')} limit={budget.monthly} cost={budget.monthCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetMonthly') })} />
+          {budgetEditing && (
+            <div className="mt-2 flex items-center gap-2 text-[11px]">
+              <span className="text-[var(--color-text-muted)] shrink-0">{t('usage.budgetDaily')}</span>
+              <input
+                className="w-20 px-1.5 py-1 font-mono rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                inputMode="decimal"
+                placeholder="—"
+                value={budgetDailyDraft}
+                onChange={(e) => setBudgetDailyDraft(e.target.value)}
+              />
+              <span className="text-[var(--color-text-muted)] shrink-0 ml-2">{t('usage.budgetMonthly')}</span>
+              <input
+                className="w-20 px-1.5 py-1 font-mono rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                inputMode="decimal"
+                placeholder="—"
+                value={budgetMonthlyDraft}
+                onChange={(e) => setBudgetMonthlyDraft(e.target.value)}
+              />
+              <button type="button" disabled={budgetSaving} onClick={() => void saveBudget()} className="chip chip-accent ml-auto">
+                {t('usage.budgetSave')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {!summary ? (
         <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
@@ -410,8 +494,13 @@ export const UsagePanel: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {detailItems.map((m, i) => (
-                      <tr key={i} className="border-t border-[var(--color-border)]">
+                    {detailItems.map((m) => (
+                      <tr
+                        key={m.messageId}
+                        className="border-t border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-hover-overlay)]"
+                        onClick={() => requestUsageJump({ type: 'conversation', convId: m.conversationId, messageId: m.messageId })}
+                        title={t('usage.detailJumpHint')}
+                      >
                         <td className="py-1.5 px-3 text-[var(--color-text-muted)] whitespace-nowrap">
                           {new Date(m.createdAt).toLocaleString()}
                         </td>
@@ -643,3 +732,28 @@ const StatCard: React.FC<{ label: string; value: string; hint?: string }> = ({ l
     <div className="text-base font-semibold font-mono text-[var(--color-text)] mt-0.5" title={hint}>{value}</div>
   </div>
 )
+
+/** 预算行：label + 已花/上限 + 进度条；超限时进度条与金额变红并显示超支文案 */
+const BudgetRow: React.FC<{ label: string; limit: number | null; cost: number; symbol: string; overText: string }> = ({ label, limit, cost, symbol, overText }) => {
+  const over = limit !== null && limit > 0 && cost > limit
+  const pct = limit !== null && limit > 0 ? Math.min((cost / limit) * 100, 100) : 0
+  return (
+    <div className="mb-1.5 last:mb-0">
+      <div className="flex justify-between text-[11px] mb-0.5">
+        <span className="text-[var(--color-text-muted)]">{label}</span>
+        <span className={over ? 'text-[var(--color-danger)] font-semibold' : 'text-[var(--color-text)]'}>
+          {symbol}{fmtCost(cost)} / {limit !== null ? `${symbol}${fmtCost(limit)}` : '—'}
+          {over && <span className="ml-1.5">{overText}</span>}
+        </span>
+      </div>
+      {limit !== null && (
+        <div className="h-1.5 rounded bg-[var(--color-bg)] overflow-hidden">
+          <div
+            className={`h-full rounded ${over ? 'bg-[var(--color-danger)]' : 'bg-[var(--color-accent)]'} opacity-80`}
+            style={{ width: `${Math.max(pct, cost > 0 ? 2 : 0)}%` }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}

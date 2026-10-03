@@ -4,7 +4,7 @@
 export const USAGE_JUMP_EVENT = 'usage-open-target'
 
 export type UsageJumpDetail =
-  | { type: 'conversation'; convId: string }
+  | { type: 'conversation'; convId: string; messageId?: string }
   | { type: 'assistant'; assistantId: string }
 
 const PENDING_KEY = 'usage-pending-jump'

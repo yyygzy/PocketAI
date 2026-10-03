@@ -39,6 +39,8 @@ interface Props {
   onDeleteGroup?: (id: string) => void
   /** 拖拽/菜单移动会话到组；null=移出分组 */
   onMoveConv?: (convId: string, groupId: string | null) => void
+  /** 备注编辑 */
+  onSetNote?: (convId: string, note: string | null) => void
   /** 嵌入到已有侧栏容器时，去掉自身宽度/边框/背景 */
   embedded?: boolean
 }
@@ -69,6 +71,7 @@ export const ConversationList: React.FC<Props> = ({
   onRenameGroup,
   onDeleteGroup,
   onMoveConv,
+  onSetNote,
   embedded
 }) => {
   const { t } = useI18n()
@@ -315,6 +318,7 @@ export const ConversationList: React.FC<Props> = ({
       onToggleSelect={() => toggleSelect(c.id)}
       groups={groups}
       onMoveConv={groupedMode ? onMoveConv : undefined}
+      onSetNote={onSetNote}
       draggable={groupedMode && !selectMode}
     />
   )
@@ -726,11 +730,17 @@ const ConvItem: React.FC<{
   /** 文件夹菜单项 + 移动回调；不给则不显示「移入分组」菜单 */
   groups?: ConversationGroupRecord[]
   onMoveConv?: (convId: string, groupId: string | null) => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportPdf, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive, indented, draggable, groups, onMoveConv }) => {
+  /** 备注编辑回调；不给则不显示备注菜单项 */
+  onSetNote?: (convId: string, note: string | null) => void
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportPdf, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive, indented, draggable, groups, onMoveConv, onSetNote }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
   const inputRef = useRef<HTMLInputElement>(null)
+  // 备注行内编辑态
+  const [noteEditing, setNoteEditing] = useState(false)
+  const [noteDraft, setNoteDraft] = useState(conv.note ?? '')
+  const noteInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!editing) return
@@ -749,11 +759,25 @@ const ConvItem: React.FC<{
     setEditing(false)
   }
 
+  useEffect(() => {
+    if (!noteEditing) return
+    setNoteDraft(conv.note ?? '')
+    let rafId: number
+    rafId = requestAnimationFrame(() => noteInputRef.current?.focus())
+    return () => cancelAnimationFrame(rafId)
+  }, [noteEditing, conv.note])
+
+  const commitNote = () => {
+    const v = noteDraft.trim()
+    if (v !== (conv.note ?? '')) onSetNote?.(conv.id, v || null)
+    setNoteEditing(false)
+  }
+
   const rowActive = selectMode ? checked : isActive
 
   return (
     <div
-      onClick={editing ? undefined : (selectMode && onToggleSelect ? onToggleSelect : onSelect)}
+      onClick={editing || noteEditing ? undefined : (selectMode && onToggleSelect ? onToggleSelect : onSelect)}
       onDoubleClick={() => onRename && !selectMode && setEditing(true)}
       draggable={draggable && !editing && !selectMode}
       onDragStart={(e) => {
@@ -800,6 +824,25 @@ const ConvItem: React.FC<{
           {!selectMode && conv.lastMessagePreview && (
             <span className="block truncate text-[11px] leading-4 text-[var(--color-text-muted)]">{conv.lastMessagePreview}</span>
           )}
+          {/* 备注：编辑态显示 input，否则有备注时显示一行 */}
+          {!selectMode && noteEditing ? (
+            <input
+              ref={noteInputRef}
+              className="block w-full mt-0.5 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded px-1 py-0.5 text-[10px] outline-none focus:border-[var(--color-accent)]"
+              value={noteDraft}
+              placeholder={t('chat.notePh')}
+              maxLength={200}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={commitNote}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitNote()
+                if (e.key === 'Escape') setNoteEditing(false)
+              }}
+            />
+          ) : (!selectMode && conv.note ? (
+            <span className="block truncate text-[10px] leading-4 text-[var(--color-text-muted)] opacity-80" title={conv.note}>📝 {conv.note}</span>
+          ) : null)}
         </div>
       )}
       {/* 最后活跃相对时间：非编辑/非多选态显示，避免布局挤压 */}
@@ -808,7 +851,7 @@ const ConvItem: React.FC<{
           {relTime(conv.updatedAt, t)}
         </span>
       )}
-      {(onTogglePin || onSetArchived || onRename || onMoveConv) && !editing && !selectMode && (
+      {(onTogglePin || onSetArchived || onRename || onMoveConv || onSetNote) && !editing && !noteEditing && !selectMode && (
         <ExportMenu
           triggerTitle={t('chat.more')}
           triggerContent="⋯"
@@ -817,6 +860,7 @@ const ConvItem: React.FC<{
             ...(onTogglePin && !inArchive ? [{ key: 'pin', label: conv.pinned ? t('chat.unpin') : t('chat.pin') }] : []),
             ...(onSetArchived ? [{ key: 'archive', label: inArchive ? t('chat.unarchive') : t('chat.archive') }] : []),
             ...(onRename ? [{ key: 'rename', label: t('chat.rename') }] : []),
+            ...(onSetNote ? [{ key: 'note', label: t('chat.noteEdit') }] : []),
             // 移入分组（当前所在组加 ✓）；已在组中则补「移出文件夹」
             ...(onMoveConv && groups
               ? groups.map((g) => ({ key: `grp:${g.id}`, label: `${conv.groupId === g.id ? '✓ ' : ''}📁 ${g.name}` }))
@@ -827,6 +871,7 @@ const ConvItem: React.FC<{
             if (k === 'pin') onTogglePin?.(conv.id, !conv.pinned)
             else if (k === 'archive') onSetArchived?.(conv.id, !inArchive)
             else if (k === 'rename') setEditing(true)
+            else if (k === 'note') setNoteEditing(true)
             else if (k === 'grp-out') onMoveConv?.(conv.id, null)
             else if (k.startsWith('grp:')) onMoveConv?.(conv.id, k.slice(4))
           }}

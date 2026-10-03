@@ -4,6 +4,7 @@ import type { MessageRecord } from '../src/shared/types'
 import {
   buildConversationMarkdown,
   buildKbAskSessionMarkdown,
+  buildMessagesMarkdown,
   formatSources,
   formatAttachments,
   safeFileName,
@@ -60,6 +61,45 @@ describe('buildConversationMarkdown', () => {
     expect(md).toContain('`gpt-test`')
     expect(md).toContain('**助手**：小助手')
     expect(md).toContain('**消息数**：1')
+  })
+})
+
+describe('buildMessagesMarkdown', () => {
+  it('头部含标题/助手名/选中条数/时间范围', () => {
+    const md = buildMessagesMarkdown(
+      { title: '测试会话', assistantName: '小助手' },
+      [
+        msg({ id: 'a', role: 'user', content: '你好', createdAt: 1_700_000_000_000 }),
+        msg({ id: 'b', role: 'assistant', content: '在的', createdAt: 1_700_000_060_000 })
+      ]
+    )
+    expect(md).toContain('# 测试会话')
+    expect(md).toContain('**助手**：小助手')
+    expect(md).toContain('**选中消息数**：2')
+    expect(md).toContain('**时间范围**：')
+    // 消息块沿用统一渲染（角色标题 + 用户引用块）
+    expect(md).toContain('## 👤 用户')
+    expect(md).toContain('> 你好')
+    expect(md).toContain('在的')
+  })
+
+  it('按入参顺序输出（调用方负责会话内排序），不自行重排', () => {
+    const md = buildMessagesMarkdown(
+      { title: 't' },
+      [
+        msg({ id: 'later', content: '第二条', createdAt: 200 }),
+        msg({ id: 'earlier', content: '第一条', createdAt: 100 })
+      ]
+    )
+    expect(md.indexOf('第二条')).toBeLessThan(md.indexOf('第一条'))
+  })
+
+  it('空消息数组：仅头部，无时间范围行，不产生消息块', () => {
+    const md = buildMessagesMarkdown({ title: '空导出' }, [])
+    expect(md).toContain('# 空导出')
+    expect(md).toContain('**选中消息数**：0')
+    expect(md).not.toContain('**时间范围**')
+    expect(md).not.toContain('## 👤 用户')
   })
 })
 

@@ -21,6 +21,7 @@ import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
+import { buildMessagesMarkdown } from '../../../../shared/export-markdown'
 import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
 
@@ -111,7 +112,25 @@ export const ChatModule: React.FC = () => {
   } = useStreamSession({
     loadMessages,
     reloadConversations,
-    getCurrentConvId: () => currentConvRef.current
+    getCurrentConvId: () => currentConvRef.current,
+    // 回复完成通知：仅窗口不可见或失焦时弹（前台不打扰）；开关关闭/异常一律静默
+    onStreamsSettled: (convId, outcome) => {
+      if (!document.hidden && document.hasFocus()) return
+      void (async () => {
+        try {
+          if (!(await window.pocketai.getReplyNotifyEnabled())) return
+          const conv = conversations.find((c) => c.id === convId)
+          const asst = assistants.find((a) => a.id === (conv?.assistantId ?? currentAssistantId))
+          const title = asst?.name || 'PocketAI'
+          const body = outcome === 'done'
+            ? t('notify.replyDoneBody', { title: conv?.title ?? '' })
+            : t('notify.replyErrorBody')
+          await window.pocketai.showReplyNotification({ title, body })
+        } catch {
+          /* 通知失败不影响主流程 */
+        }
+      })()
+    }
   })
 
   // busy 上报：流式生成中豁免休眠，防止切走标签后被 LRU 卸载导致输出中断；
@@ -408,14 +427,27 @@ export const ChatModule: React.FC = () => {
       const d = consumePendingUsageJump()
       if (!d) return
       if (d.type === 'conversation') {
-        handleSelectConv(d.convId)
+        // 明细行带 messageId：定位到会话内该条消息（滚动+高亮）
+        if (d.messageId) handleSelectMessage(d.convId, d.messageId)
+        else handleSelectConv(d.convId)
       } else if (d.type === 'assistant') {
         handleSelectAssistant(d.assistantId)
       }
     }
     window.addEventListener(USAGE_JUMP_EVENT, onUsageJump)
     return () => window.removeEventListener(USAGE_JUMP_EVENT, onUsageJump)
-  }, [handleSelectConv, handleSelectAssistant])
+  }, [handleSelectConv, handleSelectAssistant, handleSelectMessage])
+
+  // 用量预算启动提醒：今日/本月估算费用超预算时提示（进入聊天模块时检查一次）
+  useEffect(() => {
+    window.pocketai.getUsageBudget().then((b) => {
+      if (b.daily !== null && b.daily > 0 && b.todayCost > b.daily) {
+        toast.warning(t('usage.budgetExceeded', { scope: t('usage.budgetDaily') }))
+      } else if (b.monthly !== null && b.monthly > 0 && b.monthCost > b.monthly) {
+        toast.warning(t('usage.budgetExceeded', { scope: t('usage.budgetMonthly') }))
+      }
+    }).catch(() => { /* 预算状态不可达不阻断聊天 */ })
+  }, [toast, t])
 
   // 智能标题后台生成完成：就地更新活跃/归档两个列表（流式结束后的 reload 为兜底）
   useEffect(() => {
@@ -619,6 +651,9 @@ export const ChatModule: React.FC = () => {
 
   // ---------- 加密导出/导入 ----------
   const [cryptoPrompt, setCryptoPrompt] = useState<null | { kind: 'export' | 'import'; id?: string }>(null)
+  // 消息跨会话转发：待转发的消息（弹窗选择目标会话/新会话）
+  const [forwardSource, setForwardSource] = useState<MessageRecord | null>(null)
+  const [forwarding, setForwarding] = useState(false)
   const [cryptoPwd, setCryptoPwd] = useState('')
 
   const handleExportEncrypted = (id: string) => {
@@ -728,6 +763,33 @@ export const ChatModule: React.FC = () => {
     setMessages((prev) => prev.map((m) => (ok.has(m.id) ? { ...m, starred } : m)))
   }, [])
 
+  /** 多选消息导出 Markdown：按会话内顺序过滤 → 构建 → 主进程另存为单文件；不清选择 */
+  const handleExportMessages = useCallback(async (ids: string[]) => {
+    const idSet = new Set(ids)
+    const picked = messages.filter((m) => idSet.has(m.id))
+    if (picked.length === 0) return
+    const conv = conversations.find((c) => c.id === currentConvId)
+    const assistantName = conv
+      ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
+      : null
+    const title = conv?.title || 'PocketAI'
+    const md = buildMessagesMarkdown({ title, assistantName }, picked)
+    try {
+      const r = await window.pocketai.exportMessages({
+        defaultName: `${title}-${picked.length}`,
+        content: md
+      })
+      if (r.canceled) return
+      if (!r.ok) {
+        toast.error(t('chat.exportFail', { e: r.error ?? t('common.unknownError') }))
+        return
+      }
+      if (r.path) toast.success(t('chat.exportSuccess', { path: r.path }))
+    } catch (e) {
+      toast.error(t('chat.exportFail', { e: errText(e) }))
+    }
+  }, [messages, conversations, currentConvId, assistants, toast, t])
+
   // ---------- 会话分组文件夹 ----------
   /** 本地 patch 会话分组归属（活跃+归档两列表） */
   const patchConvGroup = useCallback((convId: string, groupId: string | null) => {
@@ -781,6 +843,44 @@ export const ChatModule: React.FC = () => {
       void reloadConversations()
     }
   }, [patchConvGroup, reloadConversations, toast, t])
+
+  /** 设置会话备注（乐观本地更新两列表，失败回滚由 reload 兜底） */
+  const handleSetNote = useCallback(async (convId: string, note: string | null) => {
+    const patch = (list: ConversationRecord[]) =>
+      list.map((c) => (c.id === convId ? { ...c, note } : c))
+    setConversations((prev) => patch(prev))
+    setArchivedConversations((prev) => patch(prev))
+    try {
+      await window.pocketai.setConversationNote(convId, note)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+      void reloadConversations()
+    }
+  }, [reloadConversations, toast, t])
+
+  /** 转发消息：targetConvId=null 时主进程按源会话助手维度新建会话；成功后跳过去 */
+  const handleForwardPick = useCallback(async (targetConvId: string | null) => {
+    const src = forwardSource
+    if (!src || forwarding) return
+    setForwarding(true)
+    try {
+      const r = await window.pocketai.forwardMessage({
+        targetConvId,
+        sourceConvId: src.conversationId,
+        role: src.role === 'assistant' ? 'assistant' : 'user',
+        content: src.content,
+        model: src.model ?? null
+      })
+      setForwardSource(null)
+      toast.success(t('chat.forwarded'))
+      await reloadConversations()
+      handleSelectMessage(r.convId, r.messageId)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    } finally {
+      setForwarding(false)
+    }
+  }, [forwardSource, forwarding, reloadConversations, handleSelectMessage, toast, t])
 
   const handleStop = () => {
     abort()
@@ -927,6 +1027,7 @@ export const ChatModule: React.FC = () => {
             onRenameGroup={handleRenameGroup}
             onDeleteGroup={handleDeleteGroup}
             onMoveConv={handleMoveConv}
+            onSetNote={handleSetNote}
             embedded
           />
         </div>
@@ -956,6 +1057,8 @@ export const ChatModule: React.FC = () => {
         onReply={handleSetReply}
         onToggleStar={handleToggleStar}
         onBatchToggleStar={handleBatchToggleStar}
+        onExportMessages={handleExportMessages}
+        onForward={setForwardSource}
         draftKey={currentConvId ?? ''}
         draft={activeDraft}
         onDraftChange={handleDraftChange}
@@ -1002,6 +1105,43 @@ export const ChatModule: React.FC = () => {
               <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">{t('common.cancel')}</button>
               <button onClick={confirmCrypto} disabled={!cryptoPwd} className="px-3 py-1.5 text-xs bg-[var(--color-accent)] text-white rounded disabled:opacity-50 hover:opacity-90">
                 {cryptoPrompt.kind === 'export' ? t('chatview.export') : t('chatview.decryptImport')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 消息转发弹窗：选择目标会话，或新建会话 */}
+      {forwardSource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setForwardSource(null)}>
+          <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-xl w-96 max-h-[70vh] flex flex-col p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold mb-1">{t('chat.forward')}</h3>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3 truncate" title={forwardSource.content}>
+              {forwardSource.content.slice(0, 60)}
+            </p>
+            <button
+              onClick={() => void handleForwardPick(null)}
+              disabled={forwarding}
+              className="w-full text-left px-3 py-2 mb-2 text-sm rounded border border-dashed border-[var(--color-border)] text-[var(--color-accent)] hover:bg-[var(--color-hover)] disabled:opacity-50"
+            >
+              ＋ {t('chat.forwardNew')}
+            </button>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {conversations.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => void handleForwardPick(c.id)}
+                  disabled={forwarding}
+                  className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[var(--color-hover)] disabled:opacity-50 truncate"
+                  title={c.title}
+                >
+                  {c.pinned ? '📌 ' : ''}{c.title}
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end mt-3">
+              <button onClick={() => setForwardSource(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">
+                {t('common.cancel')}
               </button>
             </div>
           </div>

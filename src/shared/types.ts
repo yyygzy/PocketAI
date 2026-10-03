@@ -138,6 +138,8 @@ export interface ConversationRecord {
   hasDraft?: boolean
   /** 所属分组文件夹 id；null=未分组（顶层平铺） */
   groupId?: string | null
+  /** v38：会话备注；null=无备注 */
+  note?: string | null
 }
 
 /** 会话分组文件夹（按助手维度归集） */
@@ -146,6 +148,14 @@ export interface ConversationGroupRecord {
   assistantId: string | null
   name: string
   createdAt: number
+}
+
+/** 窗口行为设置：开机自启（仅打包版生效）/ 关窗最小化到托盘 */
+export interface WindowBehaviorSettings {
+  launchAtLogin: boolean
+  closeToTray: boolean
+  /** setLoginItemSettings 是否实际被调用（dev 环境为 false） */
+  launchAtLoginApplied: boolean
 }
 
 export interface MessageRecord {
@@ -260,6 +270,8 @@ export interface UsageModelItem {
 /** 用量行级明细项（CSV 导出，每轮 assistant 生成一行；按 createdAt 倒序） */
 export interface UsageDetailItem {
   createdAt: number
+  /** 消息 id（明细弹窗点击跳回会话内该条消息用） */
+  messageId: string
   conversationId: string
   /** JOIN 不到会话标题时的兜底占位 */
   conversationTitle: string
@@ -279,6 +291,14 @@ export interface UsageDetailItem {
 export interface UsageDetailResult {
   items: UsageDetailItem[]
   truncated: boolean
+}
+
+/** 用量预算状态：daily/monthly 为预算上限（null=不限制），todayCost/monthCost 为已花估算费用 */
+export interface UsageBudgetStatus {
+  daily: number | null
+  monthly: number | null
+  todayCost: number
+  monthCost: number
 }
 
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */
@@ -1349,12 +1369,17 @@ export const DEFAULT_SIDEBAR_ORDER: SidebarModuleId[] = [
   'settings'
 ]
 
-// ---------- 界面偏好（透明度 / 自定义 CSS） ----------
+// ---------- 界面偏好（透明度 / 自定义 CSS / 聊天字号） ----------
+/** 聊天正文字号档位：small 13px / medium 14px / large 16px */
+export type ChatFontSize = 'small' | 'medium' | 'large'
+
 export interface UiPreferences {
   /** 窗口透明度 0.6–1，1 = 不透明 */
   opacity: number
   /** 渲染端注入的自定义 CSS */
   customCss: string
+  /** 聊天正文字号档位；旧数据缺省按 medium */
+  chatFontSize: ChatFontSize
 }
 
 // ---------- WebDAV 增量备份 ----------
@@ -1545,6 +1570,7 @@ export const IPC = {
   CONVERSATION_EXPORT_PDF: 'conversation:export-pdf', // 单条导出 PDF（渲染端传自包含 HTML，主进程隐藏窗口 printToPDF）
   CONVERSATION_EXPORT_PDF_BATCH: 'conversation:export-pdf-batch', // 多选批量导出 PDF（上限 50）
   CONVERSATION_EXPORT_BATCH: 'conversation:export-batch',
+  CONVERSATION_EXPORT_MESSAGES: 'conversation:export-messages', // 多选消息子集导出单个 md（渲染端传文件名+内容）
   CONVERSATION_EXPORT_ENCRYPTED: 'conversation:export-enc',
   CONVERSATION_IMPORT_ENCRYPTED: 'conversation:import-enc',
   CONVERSATION_IMPORT: 'conversation:import',
@@ -1560,6 +1586,11 @@ export const IPC = {
   CONVERSATION_GROUP_RENAME: 'conversation:group-rename',
   CONVERSATION_GROUP_DELETE: 'conversation:group-delete', // 解散组（组内会话回到未分组，不删内容）
   CONVERSATION_SET_GROUP: 'conversation:set-group', // 移动会话到组（groupId=null 移出）
+  CONVERSATION_SET_NOTE: 'conversation:set-note', // 设置会话备注（trim 空串存 NULL）
+
+  WINDOW_BEHAVIOR_GET: 'window-behavior:get', // 读取窗口行为设置（开机自启/关窗到托盘）
+  WINDOW_BEHAVIOR_SET_LAUNCH: 'window-behavior:set-launch', // 设置开机自启
+  WINDOW_BEHAVIOR_SET_CLOSE_TO_TRAY: 'window-behavior:set-close-to-tray', // 设置关窗最小化到托盘
 
   MESSAGE_LIST: 'message:list',
   MESSAGE_DELETE: 'message:delete',
@@ -1567,6 +1598,7 @@ export const IPC = {
   MESSAGE_SEARCH: 'message:search',
   MESSAGE_SET_STARRED: 'message:set-starred', // 收藏星标：标记/取消重要消息
   MESSAGE_LIST_STARRED: 'message:list-starred', // 收藏列表：跨会话统一查看（时间倒序）
+  MESSAGE_FORWARD: 'message:forward', // 跨会话转发：插入一条不触发 AI 的消息（targetConvId=null 新建会话）
   USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
   USAGE_CONVERSATIONS: 'usage:conversations', // 会话维度用量排行（标题/次数/token/费用）
   USAGE_ASSISTANTS: 'usage:assistants', // 助手维度用量排行（名称/次数/token/费用）
@@ -1575,6 +1607,8 @@ export const IPC = {
   USAGE_MODELS: 'usage:models', // 历史出现过的 provider/模型清单（单价编辑器用）
   USAGE_DETAIL_GET: 'usage:detail-get', // 用量行级明细（CSV 导出）
   USAGE_EXPORT_CSV: 'usage:export-csv', // 用量明细 CSV 保存文件
+  USAGE_BUDGET_GET: 'usage:budget-get', // 预算状态（今日/本月已花 + 已配置预算）
+  USAGE_BUDGET_SET: 'usage:budget-set', // 保存预算（null=不限制）
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
@@ -1752,6 +1786,11 @@ export const IPC = {
   // ---------- 界面偏好 ----------
   UI_GET_PREFS: 'ui:get-prefs',
   UI_SET_PREFS: 'ui:set-prefs',
+
+  // ---------- 回复完成系统通知 ----------
+  NOTIFY_REPLY_GET: 'notify:reply-get',
+  NOTIFY_REPLY_SET: 'notify:reply-set',
+  NOTIFY_REPLY_SHOW: 'notify:reply-show', // 渲染端请求弹原生通知（主进程统一发，点击聚焦主窗口）
 
   // ---------- 侧栏模块顺序 ----------
   SIDEBAR_GET_ORDER: 'sidebar:get-order',

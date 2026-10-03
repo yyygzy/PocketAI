@@ -6,6 +6,7 @@ import { isPortableRuntime } from '../../portable'
 import { getMachineId } from '../../steward/machine'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { getUiPreferences, setUiPreferences } from '../../ui-preferences'
+import { isReplyNotifyEnabled, setReplyNotifyEnabled, showReplyNotification } from '../../notify/reply-notify'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { uiPrefsPatchSchema, sidebarOrderSchema } from '../../../shared/schemas/preferences'
 
@@ -56,6 +57,22 @@ export function registerPreferenceHandlers(): void {
     ok: true as const,
     data: setUiPreferences(patch ?? {})
   }), argsSchema(uiPrefsPatchSchema))
+
+  // ---------- 回复完成系统通知 ----------
+  safeHandle(IPC.NOTIFY_REPLY_GET, () => isReplyNotifyEnabled())
+  safeHandle(IPC.NOTIFY_REPLY_SET, (_e, enabled: boolean) => setReplyNotifyEnabled(enabled), argsSchema(z.boolean()))
+  safeHandle(
+    IPC.NOTIFY_REPLY_SHOW,
+    (_e, payload: { title: string; body: string }) => {
+      // 长度收紧：通知正文不需要长文本
+      showReplyNotification(payload.title.slice(0, 100), payload.body.slice(0, 300))
+      return { ok: true as const }
+    },
+    argsSchema(z.object({
+      title: z.string().min(1).max(200),
+      body: z.string().min(1).max(1000)
+    }))
+  )
 
   // ---------- 侧栏模块顺序 ----------
   safeHandle(IPC.SIDEBAR_GET_ORDER, () => ({ ok: true as const, data: readSidebarOrder() }))

@@ -8,15 +8,23 @@
 
 import { BrowserWindow } from 'electron'
 import { appConfigRepo } from './db/repositories/app-config.repo'
-import type { UiPreferences } from '../shared/types'
+import type { UiPreferences, ChatFontSize } from '../shared/types'
 import { uiPrefsPatchSchema } from '../shared/schemas/preferences'
 
 const K_OPACITY = 'ui.opacity'
 const K_CUSTOM_CSS = 'ui.custom_css'
+const K_CHAT_FONT_SIZE = 'ui.chat_font_size'
 
 export const MIN_OPACITY = 0.6
 export const MAX_OPACITY = 1
 export const MAX_CSS_LENGTH = 200_000
+
+const FONT_SIZES: readonly ChatFontSize[] = ['small', 'medium', 'large']
+
+/** 非法/缺失字号档位回退 medium */
+export function normalizeChatFontSize(v: string | null | undefined): ChatFontSize {
+  return v && (FONT_SIZES as readonly string[]).includes(v) ? (v as ChatFontSize) : 'medium'
+}
 
 /** 主窗口标记属性（不靠标题区分，避免浮窗/独立窗口同标题被误应用透明度） */
 export const MAIN_WINDOW_MARKER = '__pocketaiMainWindow' as const
@@ -35,7 +43,8 @@ export function getUiPreferences(): UiPreferences {
   const raw = Number(appConfigRepo.get(K_OPACITY))
   return {
     opacity: Number.isFinite(raw) && raw > 0 ? clampOpacity(raw) : 1,
-    customCss: appConfigRepo.get(K_CUSTOM_CSS) ?? ''
+    customCss: appConfigRepo.get(K_CUSTOM_CSS) ?? '',
+    chatFontSize: normalizeChatFontSize(appConfigRepo.get(K_CHAT_FONT_SIZE))
   }
 }
 
@@ -48,6 +57,9 @@ export function setUiPreferences(patch: Partial<UiPreferences>): UiPreferences {
   if (patch.customCss !== undefined) {
     const css = patch.customCss.slice(0, MAX_CSS_LENGTH)
     appConfigRepo.set(K_CUSTOM_CSS, css)
+  }
+  if (patch.chatFontSize !== undefined) {
+    appConfigRepo.set(K_CHAT_FONT_SIZE, normalizeChatFontSize(patch.chatFontSize))
   }
   const next = getUiPreferences()
   applyOpacityToMainWindows(next.opacity)

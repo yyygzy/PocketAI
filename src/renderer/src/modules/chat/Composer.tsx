@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import { useI18n } from '../../i18n'
 import { SnippetButton } from '../../components/SnippetButton'
+import { loadHistory, pushHistory } from '../../utils/input-history'
 import type { ChatAttachment, MessageRecord } from '../../../../shared/types'
 
 interface Props {
@@ -39,6 +40,9 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
   const textRef = useRef(text)
   // 上一个草稿归属会话：draftKey 变化时先把旧会话文本同步提交
   const prevKeyRef = useRef(draftKey)
+  // 输入历史导航：historyRef 惰性加载（首次按 ↑）；navIndex=null=未导航，0=最新一条，越大越早
+  const historyRef = useRef<string[] | null>(null)
+  const [navIndex, setNavIndex] = useState<number | null>(null)
 
   // draftKey 变化（切会话）或 draft 异步加载到达：提交旧会话 → 回填新会话草稿。
   // 同一次渲染内 draft 已随父级清空为 ''，异步加载完成后再次触发本 effect。
@@ -49,10 +53,11 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
     }
     setText(draft ?? '')
     textRef.current = draft ?? ''
+    setNavIndex(null) // 切会话/草稿回填时退出历史导航，避免 ↑↓ 覆盖草稿
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, draft])
 
-  /** 更新文本并同步草稿回调（片段插入也走这里） */
+  /** 更新文本并同步草稿回调（片段插入/历史召回也走这里） */
   const updateText = (next: string) => {
     setText(next)
     textRef.current = next
@@ -69,20 +74,74 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
   const submit = () => {
     const trimmed = text.trim()
     if ((!trimmed && attachments.length === 0) || !canSend || streaming) return
+    // 发送前推入历史（只推正文，附件/引用不加入历史）
+    if (trimmed) pushHistory(trimmed)
     onSend(trimmed, attachments.length > 0 ? attachments : undefined, replyTo?.id ?? null)
     // 清空并立即删除草稿（空串走父级立即清除分支，不经防抖）
     updateText('')
     setAttachments([])
+    setNavIndex(null)
     onCancelReply?.()
     requestAnimationFrame(() => {
       if (taRef.current) taRef.current.style.height = 'auto'
     })
   }
 
+  /** 历史导航：↑ 召回更旧，↓ 更新，Esc 退出；仅限空输入时由 ↑ 进入 */
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       submit()
+      return
+    }
+    // 编辑中不拦截方向键（中文候选栏期间也放行）
+    if (e.nativeEvent.isComposing) return
+    // 历史导航：空输入时 ↑ 进入；导航中继续 ↑↓（此时文本非空，须放行 navIndex 分支）
+    if (e.key === 'ArrowUp') {
+      if (text.trim() === '' || navIndex !== null) {
+        if (navIndex === null) {
+          const hist = historyRef.current ?? loadHistory()
+          if (!historyRef.current) historyRef.current = hist
+          if (hist.length > 0) {
+            e.preventDefault()
+            const idx = hist.length - 1 // 最新一条（索引最大）
+            setNavIndex(idx)
+            updateText(hist[idx] ?? '')
+            requestAnimationFrame(resize)
+          }
+        } else if (navIndex !== null && navIndex > 0) {
+          e.preventDefault()
+          const idx = navIndex - 1
+          setNavIndex(idx)
+          updateText(historyRef.current?.[idx] ?? '')
+          requestAnimationFrame(resize)
+        }
+      }
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      if (navIndex !== null && historyRef.current) {
+        e.preventDefault()
+        if (navIndex < historyRef.current.length - 1) {
+          const idx = navIndex + 1
+          setNavIndex(idx)
+          updateText(historyRef.current[idx] ?? '')
+        } else {
+          // 最新一条后再按 ↓ 回空串
+          setNavIndex(null)
+          updateText('')
+        }
+        requestAnimationFrame(resize)
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      if (navIndex !== null) {
+        e.preventDefault()
+        setNavIndex(null)
+        updateText('')
+        requestAnimationFrame(resize)
+      }
     }
   }
 
@@ -248,13 +307,15 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
             data-chat-composer-input
             value={text}
             onChange={(e) => {
+              // 用户主动输入（非导航回填）：退出历史导航，视为新文本
+              if (navIndex !== null) setNavIndex(null)
               updateText(e.target.value)
               resize()
             }}
             onKeyDown={handleKeyDown}
             rows={1}
             placeholder={canSend ? t('composer.ph') : t('composer.noProvider')}
-            className="flex-1 bg-transparent resize-none outline-none text-[14px] leading-relaxed px-2 py-1.5 max-h-[200px]"
+            className="flex-1 bg-transparent resize-none outline-none text-[var(--chat-font-size)] leading-relaxed px-2 py-1.5 max-h-[200px]"
           />
 
           {streaming ? (

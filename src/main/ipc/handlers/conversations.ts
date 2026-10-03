@@ -106,6 +106,10 @@ export function registerConversationHandlers(): void {
     conversationGroupRepo.setConversationGroup(convId, groupId)
     return { ok: true }
   }, argsSchema(idSchema, z.string().max(64).nullable()))
+  safeHandle(IPC.CONVERSATION_SET_NOTE, (_e, convId: string, note: string | null) => {
+    conversationRepo.setNote(convId, note)
+    return { ok: true }
+  }, argsSchema(idSchema, z.string().max(200).nullable()))
   safeHandle(IPC.CONVERSATION_EXPORT, (_e, id: string) => {
     const conv = conversationRepo.get(id)
     if (!conv) return { ok: false, error: '会话不存在' }
@@ -192,6 +196,28 @@ export function registerConversationHandlers(): void {
     name: z.string().min(1).max(200),
     content: z.string().max(50 * 1024 * 1024)
   })).min(1).max(500)))
+
+  // 多选消息子集导出：渲染端已构建好 Markdown，主进程只负责选路径写单文件
+  safeHandle(IPC.CONVERSATION_EXPORT_MESSAGES, async (e, payload: { defaultName: string; content: string }) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    const baseName = safeFileName(payload.defaultName.replace(/\.md$/i, '') || 'messages')
+
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: `${baseName}.md`,
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePath) return { ok: true, canceled: true }
+
+    fs.writeFileSync(filePath, payload.content, 'utf8')
+    return { ok: true, path: filePath }
+  }, argsSchema(z.object({
+    defaultName: z.string().min(1).max(200),
+    content: z.string().min(1).max(5 * 1024 * 1024)
+  })))
 
   // 单条导出 PDF：渲染端生成自包含 HTML，主进程隐藏窗口 printToPDF 后存盘（见 export/pdf.ts）
   safeHandle(IPC.CONVERSATION_EXPORT_PDF, async (e, id: string, html: string) => {

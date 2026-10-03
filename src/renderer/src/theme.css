@@ -8,6 +8,9 @@
   /* 原生控件（select 弹层、滚动条等）跟随暗色主题，避免下拉列表浅底白字 */
   color-scheme: dark;
 
+  /* 聊天正文字号档位（设置页三档切换；缺省 medium 14px） */
+  --chat-font-size: 14px;
+
   /* ── 基础层级（暗 / Mocha）── */
   --color-bg: #11111b;              /* 最底层 Crust（unlock 页底） */
   --color-bg-secondary: #1e1e2e;   /* 卡片层 Base */

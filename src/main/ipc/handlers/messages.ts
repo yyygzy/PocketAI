@@ -5,6 +5,8 @@ import { IPC } from '../../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../shared/snippet'
 import { dbService } from '../../db/database'
 import { messageRepo } from '../../db/repositories/message.repo'
+import { conversationRepo } from '../../db/repositories/conversation.repo'
+import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { usageService } from '../../usage/usage-service'
 import { getUsagePricing, setUsagePricing } from '../../usage/pricing-config'
 import { parsePricing } from '../../../shared/usage-pricing'
@@ -59,6 +61,36 @@ export function registerMessageHandlers(): void {
     messageRepo.listStarred(limit),
     argsSchema(z.number().int().min(1).max(500).optional()))
 
+  // 跨会话转发：往目标会话插入一条不触发 AI 的消息；targetConvId=null 时先按源会话助手维度新建会话
+  safeHandle(IPC.MESSAGE_FORWARD, (_e, input: {
+    targetConvId: string | null
+    sourceConvId: string | null
+    role: 'user' | 'assistant'
+    content: string
+    model: string | null
+  }) => {
+    let convId = input.targetConvId
+    if (!convId) {
+      const src = input.sourceConvId ? conversationRepo.get(input.sourceConvId) : null
+      convId = conversationRepo.create({ assistantId: src?.assistantId ?? null }).id
+    }
+    const msg = messageRepo.insert({
+      conversationId: convId,
+      role: input.role,
+      content: input.content,
+      model: input.model,
+      status: 'done'
+    })
+    conversationRepo.touch(convId)
+    return { ok: true, convId, messageId: msg.id }
+  }, argsSchema(z.object({
+    targetConvId: idSchema.nullable(),
+    sourceConvId: idSchema.nullable(),
+    role: z.enum(['user', 'assistant']),
+    content: z.string().min(1).max(200_000),
+    model: z.string().max(200).nullable()
+  })))
+
   // 用量聚合汇总（token 用量按日/provider/模型，最近 N 天；费用按本地单价估算）
   safeHandle(IPC.USAGE_GET, (_e, days?: number) =>
     usageService.getSummary(days, getUsagePricing().prices),
@@ -83,6 +115,15 @@ export function registerMessageHandlers(): void {
     return normalized
   }, argsSchema(usagePricingSchema))
   safeHandle(IPC.USAGE_MODELS, () => usageService.listDistinctModels())
+
+  // 用量预算：读取状态（含今日/本月已花估算）；保存后返回最新状态
+  safeHandle(IPC.USAGE_BUDGET_GET, () =>
+    usageService.getBudgetStatus(getUsagePricing().prices))
+  safeHandle(IPC.USAGE_BUDGET_SET, (_e, daily: number | null, monthly: number | null) => {
+    appConfigRepo.setUsageBudgetDaily(daily)
+    appConfigRepo.setUsageBudgetMonthly(monthly)
+    return usageService.getBudgetStatus(getUsagePricing().prices)
+  }, argsSchema(z.number().min(0).nullable(), z.number().min(0).nullable()))
 
   // 行级用量明细（CSV 导出，最近 N 天；超出 limit 置 truncated 让渲染端提示；
   // conversationId 非空只查该会话；assistantId 非 undefined 按助手过滤（null=自由会话））

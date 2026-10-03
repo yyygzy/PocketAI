@@ -2,7 +2,8 @@
 // 数据来源：chat 与 agent 链路在生成完成时把 provider 返回的 usage 落库（v25 migration）
 // 聚合在 JS 侧完成（行级数据量可控，且坏 JSON 容错/时区日切比 SQL JSON 函数更直观可控）
 import { dbService } from '../db/database'
-import type { ModelPrice, UsageAssistantItem, UsageConversationItem, UsageDetailItem, UsageStats, UsageSummary } from '../../shared/types'
+import { appConfigRepo } from '../db/repositories/app-config.repo'
+import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageStats, UsageSummary } from '../../shared/types'
 import { computeUsageCost, priceKey, roundCost } from '../../shared/usage-pricing'
 
 /** 聚合输入行（SQL 只拉必要列） */
@@ -213,6 +214,7 @@ export function aggregateAssistantUsage(
 
 /** 行级明细聚合输入行（JOIN conversations + assistants 带出标题与助手名） */
 export interface UsageDetailRow extends UsageRow {
+  message_id: string
   conversation_id: string
   conversation_title: string | null
   assistant_id: string | null
@@ -238,6 +240,7 @@ export function aggregateUsageDetail(
       : 0
     items.push({
       createdAt: row.created_at,
+      messageId: row.message_id,
       conversationId: row.conversation_id || '(未知会话)',
       conversationTitle: row.conversation_title?.trim() || '(未知会话)',
       assistantId: row.assistant_id,
@@ -279,6 +282,38 @@ export function buildUsageDetailScope(
 }
 
 class UsageService {
+  /** 汇总一批 usage 行的估算费用（预算/面板共用口径：仅 done + usage 非空；未配置单价的模型计 0） */
+  private sumCostSince(sinceTs: number, prices: Record<string, ModelPrice>): number {
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        `SELECT provider, model, usage, created_at FROM messages
+         WHERE role='assistant' AND status='done' AND usage IS NOT NULL AND created_at >= ?`
+      )
+      .all(sinceTs) as UsageRow[]
+    let cost = 0
+    for (const row of rows) {
+      const u = parseUsageJson(row.usage)
+      if (!u) continue
+      const p = prices[priceKey(row.provider || '(未知)', row.model || '(未知)')]
+      if (p) cost += computeUsageCost(u, p)
+    }
+    return roundCost(cost)
+  }
+
+  /** 预算状态：今日（本地 0 点起）/ 本月（1 号起）估算费用 + 已配置预算（null=不限制） */
+  getBudgetStatus(prices: Record<string, ModelPrice> = {}): UsageBudgetStatus {
+    const now = new Date()
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+    return {
+      daily: appConfigRepo.getUsageBudgetDaily(),
+      monthly: appConfigRepo.getUsageBudgetMonthly(),
+      todayCost: this.sumCostSince(dayStart, prices),
+      monthCost: this.sumCostSince(monthStart, prices)
+    }
+  }
+
   /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */
   getSummary(days = 30, prices: Record<string, ModelPrice> = {}): UsageSummary {
     const safeDays = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), 365) : 30
@@ -366,7 +401,7 @@ class UsageService {
     const rows = dbService
       .getHandle()
       .prepare(
-        `SELECT m.conversation_id, c.title AS conversation_title, c.assistant_id, a.name AS assistant_name,
+        `SELECT m.id AS message_id, m.conversation_id, c.title AS conversation_title, c.assistant_id, a.name AS assistant_name,
                 m.provider, m.model, m.usage, m.created_at
          FROM messages m
          JOIN conversations c ON c.id = m.conversation_id

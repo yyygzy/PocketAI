@@ -104,3 +104,33 @@ describe('appConfigRepo 内存读缓存', () => {
     expect(ctx.getSelectCount()).toBe(1) // 缓存已清，这次 get 真查了库
   })
 })
+
+describe('appConfigRepo 用量预算 helper（null=不限制）', () => {
+  let ctx: Awaited<ReturnType<typeof loadRepo>>
+
+  beforeEach(async () => {
+    ctx = await loadRepo()
+  })
+
+  it('缺省 → null（不限制）', () => {
+    expect(ctx.appConfigRepo.getUsageBudgetDaily()).toBeNull()
+    expect(ctx.appConfigRepo.getUsageBudgetMonthly()).toBeNull()
+  })
+
+  it('设置正数 → 读回同值（每日/每月独立）', () => {
+    ctx.appConfigRepo.setUsageBudgetDaily(5)
+    ctx.appConfigRepo.setUsageBudgetMonthly(100)
+    expect(ctx.appConfigRepo.getUsageBudgetDaily()).toBe(5)
+    expect(ctx.appConfigRepo.getUsageBudgetMonthly()).toBe(100)
+  })
+
+  it('set null/0/负数 → 清除（读回 null）', () => {
+    ctx.appConfigRepo.setUsageBudgetDaily(5)
+    ctx.appConfigRepo.setUsageBudgetDaily(null)
+    expect(ctx.appConfigRepo.getUsageBudgetDaily()).toBeNull()
+    ctx.appConfigRepo.setUsageBudgetDaily(0)
+    expect(ctx.appConfigRepo.getUsageBudgetDaily()).toBeNull()
+    ctx.appConfigRepo.setUsageBudgetMonthly(-3)
+    expect(ctx.appConfigRepo.getUsageBudgetMonthly()).toBeNull()
+  })
+})

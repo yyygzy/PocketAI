@@ -113,7 +113,7 @@ export const Markdown: React.FC<{
     ? [katexPlugin, [rehypeHighlight, { detect: true, ignoreMissing: true }]]
     : [[rehypeHighlight, { detect: true, ignoreMissing: true }]]
   return (
-    <div className="markdown-body text-[14px] leading-relaxed">
+    <div className="markdown-body text-[var(--chat-font-size)] leading-relaxed">
       <ReactMarkdown
         urlTransform={safeUrlTransform}
         remarkPlugins={plugins}

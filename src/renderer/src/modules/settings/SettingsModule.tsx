@@ -3,6 +3,7 @@ import type {
   AppPaths,
   EncryptionStatus,
   BackupScheduleStatus,
+  ChatFontSize,
   LicenseStatus,
   PopupConfig,
   UpdateInfo,
@@ -17,6 +18,7 @@ import { DataHealthPanel } from './DataHealthPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
+import { applyChatFontSize, normalizeFontSize } from '../../chat-font'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
@@ -1773,12 +1775,19 @@ const AppearancePanel: React.FC = () => {
   const [css, setCss] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  // 窗口行为：开机自启 / 关窗最小化到托盘
+  const [launchAtLogin, setLaunchAtLogin] = useState(false)
+  const [closeToTray, setCloseToTray] = useState(false)
+  // 聊天字号三档；回复完成系统通知开关
+  const [chatFontSize, setChatFontSize] = useState<ChatFontSize>('medium')
+  const [replyNotify, setReplyNotify] = useState(true)
 
   useEffect(() => {
     window.pocketai.getUiPrefs().then((r) => {
       if (r.ok && r.data) {
         setOpacity(r.data.opacity)
         setCss(r.data.customCss)
+        setChatFontSize(normalizeFontSize(r.data.chatFontSize))
       }
       setLoaded(true)
     }).catch((e) => {
@@ -1786,7 +1795,61 @@ const AppearancePanel: React.FC = () => {
       logIpcError('settings.getUiPrefs', e)
       setLoaded(true)
     })
+    window.pocketai.getWindowBehavior().then((r) => {
+      setLaunchAtLogin(r.launchAtLogin)
+      setCloseToTray(r.closeToTray)
+    }).catch((e) => logIpcError('settings.getWindowBehavior', e))
+    window.pocketai.getReplyNotifyEnabled().then(setReplyNotify).catch(() => setReplyNotify(true))
   }, [])
+
+  const toggleLaunchAtLogin = async (next: boolean) => {
+    setLaunchAtLogin(next)
+    try {
+      const r = await window.pocketai.setLaunchAtLogin(next)
+      setLaunchAtLogin(r.launchAtLogin)
+    } catch (e) {
+      setLaunchAtLogin(!next)
+      setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
+    }
+  }
+
+  const toggleCloseToTray = async (next: boolean) => {
+    setCloseToTray(next)
+    try {
+      const r = await window.pocketai.setCloseToTray(next)
+      setCloseToTray(r.closeToTray)
+    } catch (e) {
+      setCloseToTray(!next)
+      setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
+    }
+  }
+
+  // 字号切换：即时生效（CSS 变量）+ 持久化；失败回退档位
+  const changeChatFontSize = async (next: ChatFontSize) => {
+    const prev = chatFontSize
+    setChatFontSize(next)
+    applyChatFontSize(next)
+    try {
+      const r = await window.pocketai.setUiPrefs({ chatFontSize: next })
+      if (r.ok && r.data) setChatFontSize(normalizeFontSize(r.data.chatFontSize))
+      else throw new Error(r.error ?? 'failed')
+    } catch (e) {
+      setChatFontSize(prev)
+      applyChatFontSize(prev)
+      setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
+    }
+  }
+
+  const toggleReplyNotify = async (next: boolean) => {
+    setReplyNotify(next)
+    try {
+      const enabled = await window.pocketai.setReplyNotifyEnabled(next)
+      setReplyNotify(enabled)
+    } catch (e) {
+      setReplyNotify(!next)
+      setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
+    }
+  }
 
   // 滑块拖动结束后提交（拖动中只更新本地，避免频繁 IPC）
   const commitOpacity = async (value: number) => {
@@ -1842,6 +1905,71 @@ const AppearancePanel: React.FC = () => {
           className="w-full"
         />
         <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.opacityHint')}</p>
+      </div>
+
+      {/* 窗口行为：开机自启 / 关窗最小化到托盘 */}
+      <div className="space-y-2">
+        <div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-4 h-4 accent-[var(--color-accent)]"
+              checked={launchAtLogin}
+              onChange={(e) => void toggleLaunchAtLogin(e.target.checked)}
+            />
+            <span className="text-[var(--color-text)]">{t('ui.launchAtLogin')}</span>
+          </label>
+          <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('ui.launchAtLoginHint')}</p>
+        </div>
+        <div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-4 h-4 accent-[var(--color-accent)]"
+              checked={closeToTray}
+              onChange={(e) => void toggleCloseToTray(e.target.checked)}
+            />
+            <span className="text-[var(--color-text)]">{t('ui.closeToTray')}</span>
+          </label>
+          <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('ui.closeToTrayHint')}</p>
+        </div>
+      </div>
+
+      {/* 聊天字号三档 */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[var(--color-text)]">{t('ui.fontSize')}</span>
+          <div className="flex gap-1">
+            {(['small', 'medium', 'large'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => void changeChatFontSize(s)}
+                className={`px-2.5 py-1 text-[11px] rounded border transition-colors ${
+                  chatFontSize === s
+                    ? 'border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                    : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)]'
+                }`}
+              >
+                {t(`ui.font${s === 'small' ? 'Small' : s === 'medium' ? 'Mid' : 'Large'}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.fontSizeHint')}</p>
+      </div>
+
+      {/* 回复完成系统通知 */}
+      <div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            className="w-4 h-4 accent-[var(--color-accent)]"
+            checked={replyNotify}
+            onChange={(e) => void toggleReplyNotify(e.target.checked)}
+          />
+          <span className="text-[var(--color-text)]">{t('set.replyNotify')}</span>
+        </label>
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('set.replyNotifyHint')}</p>
       </div>
 
       {/* 自定义 CSS */}

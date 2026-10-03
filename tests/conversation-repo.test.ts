@@ -91,12 +91,28 @@ describe('rowToRecord — DB 行映射为 ConversationRecord', () => {
       params: null,
       status: 'streaming',
       created_at: 300,
-      updated_at: 400
+      updated_at: 400,
+      note: 'VIP 客户'
     })
     expect(rec.assistantId).toBe('asst-1')
     expect(rec.title).toBe('我的对话')
     expect(rec.modelLabel).toBe('gpt-4o')
     expect(rec.status).toBe('streaming')
+    expect(rec.note).toBe('VIP 客户')
+  })
+
+  it('note 缺省/NULL → null（v38 前旧行无该列值）', () => {
+    const rec = rowToRecord({
+      id: 'c2b',
+      assistant_id: null,
+      title: null,
+      model: null,
+      params: null,
+      status: null,
+      created_at: 0,
+      updated_at: 0
+    })
+    expect(rec.note).toBeNull()
   })
 
   it('status=空串 → 透传空串（不回退 idle）', () => {
@@ -275,6 +291,26 @@ describe('conversationRepo 草稿读写（getDraft/setDraft）', () => {
     conversationRepo.setDraft('c103', '')
     expect(state.lastSql).toContain('DELETE FROM conversation_drafts WHERE conversation_id=?')
     expect(state.lastParams).toEqual(['c103'])
+  })
+})
+
+describe('conversationRepo.setNote — 备注（v38）', () => {
+  it('非空备注 → trim 后 UPDATE，不动 updated_at（备注不改变活跃排序）', () => {
+    conversationRepo.setNote('c400', '  重要客户  ')
+    expect(state.lastSql).toBe('UPDATE conversations SET note=? WHERE id=?')
+    expect(state.lastParams).toEqual(['重要客户', 'c400'])
+    expect(state.lastSql).not.toContain('updated_at')
+  })
+
+  it('纯空格 → trim 后为空存 NULL（清除备注）', () => {
+    conversationRepo.setNote('c401', '   ')
+    expect(state.lastSql).toBe('UPDATE conversations SET note=? WHERE id=?')
+    expect(state.lastParams).toEqual([null, 'c401'])
+  })
+
+  it('null → 存 NULL', () => {
+    conversationRepo.setNote('c402', null)
+    expect(state.lastParams).toEqual([null, 'c402'])
   })
 })
 

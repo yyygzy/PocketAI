@@ -8,12 +8,38 @@
 // - aggregateAssistantUsage：助手维度分组/名称兜底/费用
 import { describe, it, expect, vi } from 'vitest'
 
-// mock dbService 所在模块（usage-service 顶部 import 链会加载 database.ts → electron）
-vi.mock('../src/main/db/database', () => ({
-  dbService: { getHandle: () => ({ prepare: () => ({ all: () => [], get: () => undefined, run: () => {} }) }) }
+// 可操控的 mock 状态：rows=sumCostSince 的 SQL 返回行；daily/monthly=预算 KV
+const h = vi.hoisted(() => ({
+  rows: [] as { provider: string | null; model: string | null; usage: string | null; created_at: number }[],
+  daily: null as number | null,
+  monthly: null as number | null
 }))
 
-import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, aggregateUsageDetail, buildUsageDetailScope, type UsageRow, type UsageConversationRow, type UsageAssistantRow, type UsageDetailRow } from '../src/main/usage/usage-service'
+// mock dbService 所在模块（usage-service 顶部 import 链会加载 database.ts → electron）
+vi.mock('../src/main/db/database', () => ({
+  dbService: {
+    getHandle: () => ({
+      prepare: () => ({
+        // sumCostSince 带 sinceTs 参数：按 created_at >= since 过滤（贴近真实 SQL 语义）
+        all: (since?: number) =>
+          typeof since === 'number' ? h.rows.filter((r) => r.created_at >= since) : h.rows,
+        get: () => undefined,
+        run: () => {}
+      })
+    })
+  }
+}))
+// mock appConfigRepo（其 import 链 portable.ts → electron 在测试环境不可用）
+vi.mock('../src/main/db/repositories/app-config.repo', () => ({
+  appConfigRepo: {
+    getUsageBudgetDaily: () => h.daily,
+    getUsageBudgetMonthly: () => h.monthly,
+    setUsageBudgetDaily: (v: number | null) => { h.daily = v },
+    setUsageBudgetMonthly: (v: number | null) => { h.monthly = v }
+  }
+}))
+
+import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, aggregateUsageDetail, buildUsageDetailScope, usageService, type UsageRow, type UsageConversationRow, type UsageAssistantRow, type UsageDetailRow } from '../src/main/usage/usage-service'
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   provider: 'openai',
@@ -321,6 +347,7 @@ describe('aggregateUsageDetail', () => {
     model: 'gpt-4o',
     usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 20 }),
     created_at: Date.now(),
+    message_id: 'm1',
     conversation_id: 'c1',
     conversation_title: '测试会话',
     assistant_id: 'a1',
@@ -342,6 +369,7 @@ describe('aggregateUsageDetail', () => {
     expect(items).toHaveLength(2)
     expect(items.map((i) => i.model)).toEqual(['older', 'newer'])
     expect(items[0]).toMatchObject({
+      messageId: 'm1',
       conversationId: 'c1', conversationTitle: '测试会话',
       assistantId: 'a1', assistantName: '写作助手',
       provider: 'openai', promptTokens: 100, completionTokens: 50, cachedTokens: 20, totalTokens: 150
@@ -419,5 +447,59 @@ describe('buildUsageDetailScope — 明细维度过滤拼装', () => {
     const s = buildUsageDetailScope(undefined, '')
     expect(s.sql).toBe('')
     expect(s.vals).toEqual([])
+  })
+})
+
+describe('usageService.getBudgetStatus — 预算状态（今日/本月估算费用 + 已配置预算）', () => {
+  // 每 100×2+50×4 /1e6 = 0.0004/行
+  const prices = { 'openai::gpt-4o': { input: 2, output: 4 } }
+  const usageRow = (created_at: number) => ({
+    provider: 'openai', model: 'gpt-4o',
+    usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150 }),
+    created_at
+  })
+
+  it('未配置预算 → daily/monthly 为 null；今日行计入 todayCost 与 monthCost', () => {
+    h.daily = null
+    h.monthly = null
+    h.rows = [usageRow(Date.now())]
+    const s = usageService.getBudgetStatus(prices)
+    expect(s.daily).toBeNull()
+    expect(s.monthly).toBeNull()
+    expect(s.todayCost).toBe(0.0004)
+    expect(s.monthCost).toBe(0.0004)
+  })
+
+  it('本月 1 号的行计入 monthCost；todayCost 仅当 1 号=今天时才含它', () => {
+    const now = new Date()
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+    h.rows = [usageRow(Date.now()), usageRow(monthStart)]
+    const s = usageService.getBudgetStatus(prices)
+    expect(s.monthCost).toBe(0.0008)
+    // 每月 1 号当天跑测试时 dayStart === monthStart，两行都算「今天」
+    expect(s.todayCost).toBe(dayStart === monthStart ? 0.0008 : 0.0004)
+  })
+
+  it('未配单价的模型费用计 0；坏 usage 行跳过', () => {
+    h.rows = [
+      { provider: 'openai', model: 'no-price-model', usage: JSON.stringify({ promptTokens: 1, completionTokens: 1, totalTokens: 2 }), created_at: Date.now() },
+      { provider: 'openai', model: 'gpt-4o', usage: 'broken', created_at: Date.now() }
+    ]
+    const s = usageService.getBudgetStatus(prices)
+    expect(s.todayCost).toBe(0)
+    expect(s.monthCost).toBe(0)
+  })
+
+  it('预算读写回环：appConfigRepo 设置的值原样返回', () => {
+    h.rows = []
+    h.daily = 5
+    h.monthly = 100
+    const s = usageService.getBudgetStatus(prices)
+    expect(s.daily).toBe(5)
+    expect(s.monthly).toBe(100)
+    expect(s.todayCost).toBe(0)
+    h.daily = null
+    h.monthly = null
   })
 })

@@ -6,7 +6,8 @@ import { z } from 'zod'
  *  截断语义（不报错）是既有设计，schema 拒绝会改变该行为。 */
 export const uiPrefsPatchSchema = z.object({
   opacity: z.number().min(0.6).max(1).optional(),
-  customCss: z.string().optional()
+  customCss: z.string().optional(),
+  chatFontSize: z.enum(['small', 'medium', 'large']).optional()
 })
 
 const sidebarModuleSchema = z.enum([

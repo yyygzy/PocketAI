@@ -23,6 +23,8 @@ interface ConversationRow {
   has_draft?: number
   /** v37：所属分组文件夹 id；NULL=未分组 */
   group_id?: string | null
+  /** v38：会话备注；NULL=无备注 */
+  note?: string | null
 }
 
 export function rowToRecord(row: ConversationRow): ConversationRecord {
@@ -40,7 +42,8 @@ export function rowToRecord(row: ConversationRow): ConversationRecord {
     titleDefault: row.title_default !== 0,
     lastMessagePreview: row.last_preview ?? null,
     hasDraft: !!row.has_draft,
-    groupId: row.group_id ?? null
+    groupId: row.group_id ?? null,
+    note: row.note ?? null
   }
 }
 
@@ -139,6 +142,15 @@ export const conversationRepo = {
       .getHandle()
       .prepare('UPDATE conversations SET pinned=? WHERE id=?')
       .run(pinned ? 1 : 0, id)
+  },
+
+  /** 备注：trim 后空串存 NULL；不动 updated_at（备注不改变活跃排序） */
+  setNote(id: string, note: string | null): void {
+    const v = note?.trim() || null
+    dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET note=? WHERE id=?')
+      .run(v, id)
   },
 
   /** 归档写 archived_at；取消归档清空。不动 pinned（恢复后保持原置顶态） */

@@ -6,6 +6,7 @@ import { DetachedApp } from './detached/DetachedApp'
 import type { ModuleId } from './components/Sidebar'
 import { I18nProvider } from './i18n'
 import { loadAndInjectCustomCss } from './custom-css'
+import { loadAndApplyChatFontSize } from './chat-font'
 import './styles.css'
 
 // 快捷浮窗与主窗口共用 index.html，用 hash 区分（#/popup），避免新增构建入口
@@ -22,8 +23,9 @@ if (window.location.hash.startsWith('#/detached')) {
 }
 const isDetached = detachedModule !== null
 
-// 先注入用户自定义 CSS，再渲染（异步，可能有极短暂闪烁）
+// 先注入用户自定义 CSS / 应用聊天字号档位，再渲染（异步，可能有极短暂闪烁）
 loadAndInjectCustomCss()
+loadAndApplyChatFontSize()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

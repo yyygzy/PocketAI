@@ -101,6 +101,10 @@ interface Props {
   onToggleStar?: (id: string, starred: boolean) => void
   /** 批量收藏/取消收藏选中消息（starred=选中含任一未收藏时传 true，全已收藏时 false） */
   onBatchToggleStar?: (ids: string[], starred: boolean) => void
+  /** 导出选中消息为 Markdown 单文件（另存对话框由主进程弹出） */
+  onExportMessages?: (ids: string[]) => void
+  /** 转发消息到其他会话（弹窗由父级 ChatModule 负责） */
+  onForward?: (msg: MessageRecord) => void
   /** 草稿归属会话 id（切换时 Composer 提交旧会话+回填新会话） */
   draftKey?: string
   /** 当前会话已保存草稿 */
@@ -135,6 +139,8 @@ export const ChatView: React.FC<Props> = ({
   onReply,
   onToggleStar,
   onBatchToggleStar,
+  onExportMessages,
+  onForward,
   draftKey,
   draft,
   onDraftChange,
@@ -154,6 +160,11 @@ export const ChatView: React.FC<Props> = ({
     const m = msgById.get(id)
     if (m) onReply?.(m)
   }, [msgById, onReply])
+  // 转发同理：MessageBubble 只持有 messageId，查全量记录后交父级弹窗
+  const handleForward = useCallback((id: string) => {
+    const m = msgById.get(id)
+    if (m) onForward?.(m)
+  }, [msgById, onForward])
   const scrollBoxRef = useRef<HTMLDivElement>(null)
   const streaming = liveColumns !== null
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新，避免竞态抖动）
@@ -624,6 +635,14 @@ export const ChatView: React.FC<Props> = ({
           >
             {t('common.copySelected')}
           </button>
+          {onExportMessages && (
+            <button
+              onClick={() => onExportMessages(Array.from(selectedIds))}
+              className="text-xs px-2 py-1 rounded text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
+            >
+              {t('chatview.exportSelected')}
+            </button>
+          )}
           {onBatchToggleStar && (
             <button
               onClick={handleBatchStar}
@@ -745,8 +764,10 @@ export const ChatView: React.FC<Props> = ({
                         onFork={onForkConversation}
                         onSaveAsNote={onSaveAsNote}
                         onReply={handleReply}
+                        onForward={handleForward}
                         starred={turn.user.starred}
                         onToggleStar={onToggleStar}
+                        selectMode={selectedIds.size > 0}
                       />
                     )}
                     {comparing ? (
@@ -781,8 +802,10 @@ export const ChatView: React.FC<Props> = ({
                         onFork={onForkConversation}
                         onSaveAsNote={onSaveAsNote}
                         onReply={handleReply}
+                        onForward={handleForward}
                         starred={msg.starred}
                         onToggleStar={onToggleStar}
+                        selectMode={selectedIds.size > 0}
                       />
                     ) : activeBatch.length > 1 ? (
                       <ComparisonColumns

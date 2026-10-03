@@ -662,6 +662,14 @@ const MIGRATIONS: Migration[] = [
       );
       ALTER TABLE conversations ADD COLUMN group_id TEXT;
     `
+  },
+  {
+    // v38: 会话备注——note NULL=无备注；不参与搜索/排序，仅列表展示与 hover
+    version: 38,
+    name: 'conversation_note',
+    up: `
+      ALTER TABLE conversations ADD COLUMN note TEXT;
+    `
   }
 ]
 

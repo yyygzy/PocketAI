@@ -48,6 +48,7 @@ import { licenseService } from './license/license'
 import { initUpdateManager } from './update-manager'
 import { buildAppMenu } from './menu'
 import { initTray, destroyTray } from './tray'
+import { applyLaunchAtLogin, isCloseToTray, registerWindowBehaviorHandlers } from './window-behavior'
 import { initPopup } from './popup'
 import { lockService } from './lock/lock'
 import { installLockGate } from './lock/ipc-gate'
@@ -252,6 +253,11 @@ function createMainWindow(): void {
   mainWindow.on('close', async (e) => {
     if (isQuitting()) return // 已在退出流程中（如托盘退出菜单主动设标志后 app.quit()）
     e.preventDefault()
+    // 关窗到托盘：开启后关窗只隐藏不退出，托盘「退出墨匣」菜单仍可真退出
+    if (isCloseToTray()) {
+      mainWindow?.hide()
+      return
+    }
     const choice = await dialog.showMessageBox(mainWindow!, {
       type: 'warning',
       title: '关闭墨匣',
@@ -476,6 +482,9 @@ async function boot(): Promise<void> {
 
   // 系统托盘：单击切换可见性，右键菜单显示/退出
   initTray('zh')
+  // 窗口行为：注册 IPC + 应用开机自启配置（仅打包版生效）
+  registerWindowBehaviorHandlers()
+  applyLaunchAtLogin()
   // 应用已保存的窗口透明度
   applyOpacityToMainWindows()
 

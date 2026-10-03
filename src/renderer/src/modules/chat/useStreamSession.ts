@@ -24,6 +24,22 @@ export interface UseStreamSessionOptions {
   reloadConversations: () => void
   /** 读取当前会话 id（finalize 时判断是否仍需 loadMessages） */
   getCurrentConvId: () => string | null
+  /**
+   * 全部目标列落定后的成败汇总（在 finalize 时同步触发一次）：
+   * 至少一列 done → 'done'；全部 error/aborted → 'error'。供失焦通知等使用。
+   */
+  onStreamsSettled?: (convId: string, outcome: 'done' | 'error') => void
+}
+
+/** 单列落定状态（与 CompareColumn['status'] 对齐，含 abort 中断） */
+export type SettledStatus = 'done' | 'error' | 'aborted'
+
+/**
+ * 汇总各列落定状态：至少一列 done 即整体成功；空数组或全非 done 为失败。
+ * 纯函数，供单测。
+ */
+export function settledOutcome(statuses: readonly SettledStatus[]): 'done' | 'error' {
+  return statuses.some((s) => s === 'done') ? 'done' : 'error'
 }
 
 export interface UseStreamSessionApi {
@@ -53,6 +69,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
   const settledCountRef = useRef(0)
   const focusNonceRef = useRef(0)
   const streamingConvRef = useRef<string | null>(null)
+  // 各列落定状态（finalize 时汇总成败供 onStreamsSettled）
+  const resultsRef = useRef<SettledStatus[]>([])
 
   // opts 存 ref，避免事件订阅 effect 因回调重建而反复重订阅（流式期间重订阅可能丢 chunk）
   const optsRef = useRef(opts)
@@ -74,6 +92,9 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       setLiveColumns((prev) =>
         prev ? prev.map((c, i) => (i === index ? { ...c, ...patch } : c)) : prev
       )
+      if (patch.status === 'done' || patch.status === 'error' || patch.status === 'aborted') {
+        resultsRef.current[index] = patch.status
+      }
       settledCountRef.current += 1
       if (!finalizedRef.current && settledCountRef.current >= totalColumnsRef.current) {
         finalize()
@@ -94,6 +115,10 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       if (finalizedRef.current) return
       finalizedRef.current = true
       const convId = streamingConvRef.current
+      // 成败汇总同步通知（失焦系统通知用）；缺记录按 error 保守处理
+      if (convId) {
+        optsRef.current.onStreamsSettled?.(convId, settledOutcome(resultsRef.current))
+      }
       requestIdRef.current = null
       streamingConvRef.current = null
       finalizeTimer = setTimeout(() => {
@@ -121,6 +146,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     finalizedRef.current = false
     totalColumnsRef.current = targets.length
     settledCountRef.current = 0
+    resultsRef.current = new Array(targets.length)
     streamingConvRef.current = convId
     setLiveColumns(
       targets.map((t) => ({

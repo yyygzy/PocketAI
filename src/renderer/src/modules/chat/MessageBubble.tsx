@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { ChatAttachment, MessageRecord, MessageSource, UsagePricing, UsageStats } from '../../../../shared/types'
 import { computeUsageCost, priceKey } from '../../../../shared/usage-pricing'
 import { useI18n } from '../../i18n'
@@ -8,6 +8,8 @@ import { AttachmentGrid } from '../../components/AttachmentGrid'
 import { Markdown } from './Markdown'
 import { fmtTokens, fmtCost } from '../../utils/token'
 import { formatDateTime } from '../../utils/time'
+import { writeClipboard } from '../../utils/clipboard'
+import { isTtsSupported, speak, stop, subscribeSpeak, stripSpeechText } from '../../utils/tts'
 
 interface Props {
   role: 'user' | 'assistant'
@@ -40,10 +42,14 @@ interface Props {
   onJumpToReply?: (id: string) => void
   /** 引用本条消息（设置 Composer 引用状态）；父级通过 id 查找完整消息 */
   onReply?: (id: string) => void
+  /** 转发本条消息到其他会话；父级通过 id 查找完整消息 */
+  onForward?: (id: string) => void
   /** 收藏星标状态（starred 时常显 ⭐，不依赖 hover） */
   starred?: boolean
   /** 切换收藏星标 */
   onToggleStar?: (id: string, starred: boolean) => void
+  /** 多选模式：禁用右键菜单（与点选操作冲突） */
+  selectMode?: boolean
 }
 
 /** React.memo：流式输出时只重渲染变化的消息，其余消息 props 不变即跳过（配合 ChatView 的 useCallback） */
@@ -70,16 +76,34 @@ const MessageBubbleImpl: React.FC<Props> = ({
   replyTo,
   onJumpToReply,
   onReply,
+  onForward,
   starred,
-  onToggleStar
+  onToggleStar,
+  selectMode
 }) => {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const isUser = role === 'user'
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(content)
   const [showSources, setShowSources] = useState(false)
   const selectable = !!messageId && !streaming
+  // 右键菜单：点项即执行，点击外部/Esc 关闭
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  // 用量详情弹窗
+  const [usageModal, setUsageModal] = useState(false)
+  // TTS：全局单例当前朗读的消息 id（仅 assistant 非流式可朗读）
+  const ttsSupported = isTtsSupported()
+  const canSpeak = ttsSupported && !isUser && !streaming && !!content.trim()
+  const [speakingId, setSpeakingId] = useState<string | null>(null)
+  useEffect(() => subscribeSpeak((s) => setSpeakingId(s?.id ?? null)), [])
+  // 卸载时若朗读的是本条则停止（切会话/虚拟列表回收）
+  useEffect(() => () => stop(messageId), [messageId])
+  const speaking = speakingId === messageId
+  const toggleSpeak = () => {
+    if (speaking) stop()
+    else speak(messageId, stripSpeechText(content), lang)
+  }
 
   // token 微展示：仅 done 且带 usage 的 assistant 消息渲染；命中本机单价时附带估算费用
   const unitPrice =
@@ -105,6 +129,40 @@ const MessageBubbleImpl: React.FC<Props> = ({
     }
   }
 
+  // 右键菜单打开时 Esc 关闭（点击外部由透明 overlay 承接）
+  useEffect(() => {
+    if (!ctxMenu) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCtxMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ctxMenu])
+
+  /** 右键菜单项：复刻 hover 操作区（按 props 可用性过滤），点项即执行并关闭 */
+  const ctxItems: { key: string; label: string; danger?: boolean; onClick: () => void }[] = []
+  if (ctxMenu) {
+    ctxItems.push({ key: 'copy', label: t('common.copy'), onClick: () => void writeClipboard(content) })
+    if (canSpeak) {
+      ctxItems.push({
+        key: 'speak',
+        label: speaking ? t('chat.stopSpeak') : t('chat.speak'),
+        onClick: toggleSpeak
+      })
+    }
+    if (onReply) ctxItems.push({ key: 'reply', label: t('chat.reply'), onClick: () => onReply(messageId) })
+    if (onForward) ctxItems.push({ key: 'forward', label: t('chat.forward'), onClick: () => onForward(messageId) })
+    if (isUser && onResend) {
+      ctxItems.push({ key: 'edit', label: t('chatview.editResend'), onClick: () => { setEditText(content); setEditing(true) } })
+      ctxItems.push({ key: 'rerun', label: t('chatview.rerun'), onClick: () => onResend(messageId) })
+    }
+    if (!isUser && onRegenerate) ctxItems.push({ key: 'regen', label: t('chatview.regenerate'), onClick: () => onRegenerate(messageId) })
+    if (onFork) ctxItems.push({ key: 'fork', label: t('chatview.fork'), onClick: () => onFork(messageId) })
+    if (onSaveAsNote) ctxItems.push({ key: 'note', label: t('chatview.saveNote'), onClick: () => onSaveAsNote(messageId) })
+    if (onToggleStar) ctxItems.push({ key: 'star', label: starred ? t('chat.unstar') : t('chat.star'), onClick: () => onToggleStar(messageId, !starred) })
+    if (onDelete) ctxItems.push({ key: 'del', label: t('common.delete'), danger: true, onClick: handleDelete })
+  }
+
   /** 正文 [n] 引用徽章点击：展开来源块并滚动定位到第 n 条 */
   const handleCitation = (n: number) => {
     setShowSources(true)
@@ -120,6 +178,12 @@ const MessageBubbleImpl: React.FC<Props> = ({
       className={`flex ${isUser ? 'justify-end' : 'justify-start'} group relative`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onContextMenu={(e) => {
+        if (!selectable || editing || selectMode) return
+        e.preventDefault()
+        e.stopPropagation()
+        setCtxMenu({ x: e.clientX, y: e.clientY })
+      }}
       title={createdAt ? formatDateTime(createdAt) : undefined}
     >
       {/* 选择框（非 user 流式消息可选中） */}
@@ -210,7 +274,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
               </div>
             </div>
           ) : isUser ? (
-            <div className="whitespace-pre-wrap text-[14px] leading-relaxed select-text">{content}</div>
+            <div className="whitespace-pre-wrap text-[var(--chat-font-size)] leading-relaxed select-text">{content}</div>
           ) : content ? (
             <div className="select-text">
               <Markdown
@@ -275,11 +339,12 @@ const MessageBubbleImpl: React.FC<Props> = ({
           </div>
         )}
 
-        {/* token 微展示：总量 + 命中单价时的估算费用，hover 看输入/输出/缓存明细 */}
+        {/* token 微展示：总量 + 命中单价时的估算费用，点击展开详情弹窗 */}
         {!isUser && usage && !streaming && (
           <div
-            className="mt-1 text-[10px] text-[var(--color-text-muted)] font-mono cursor-default"
-            title={tokenHint}
+            className="mt-1 text-[10px] text-[var(--color-text-muted)] font-mono cursor-pointer hover:opacity-80"
+            title={tokenHint ? `${tokenHint}\n${t('chat.usageDetailHint')}` : t('chat.usageDetailHint')}
+            onClick={() => setUsageModal(true)}
           >
             {t('chatview.tokenLine', { tokens: fmtTokens(usage.totalTokens) })}
             {costText && <span className="ml-1.5 text-[var(--color-accent)]">{currencySymbol}{costText}</span>}
@@ -292,7 +357,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
         )}
 
         {/* 操作按钮：复制 / 引用 / 编辑 / 改参重跑 / 重新生成 / 删除 / 收藏星标（已收藏常显） */}
-        {selectable && (hovered || selected || starred) && !editing && (
+        {selectable && (hovered || selected || starred || speaking) && !editing && (
           <div className={`flex gap-1 mt-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
             {(hovered || selected) && (
               <>
@@ -307,6 +372,16 @@ const MessageBubbleImpl: React.FC<Props> = ({
                 className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
               >
                 {t('chat.reply')}
+              </button>
+            )}
+            {onForward && (
+              <button
+                onClick={() => onForward(messageId)}
+                title={t('chat.forward')}
+                aria-label={t('chat.forward')}
+                className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
+              >
+                ↪
               </button>
             )}
             {isUser && onResend && (
@@ -354,6 +429,16 @@ const MessageBubbleImpl: React.FC<Props> = ({
                 {t('chatview.saveNote')}
               </button>
             )}
+            {canSpeak && !speaking && (
+              <button
+                onClick={toggleSpeak}
+                title={t('chat.speak')}
+                aria-label={t('chat.speak')}
+                className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)] transition-colors"
+              >
+                🔊
+              </button>
+            )}
             <button
               onClick={handleDelete}
               title={t('common.delete')}
@@ -362,6 +447,16 @@ const MessageBubbleImpl: React.FC<Props> = ({
               {t('common.delete')}
             </button>
               </>
+            )}
+            {canSpeak && speaking && (
+              <button
+                onClick={toggleSpeak}
+                title={t('chat.stopSpeak')}
+                aria-label={t('chat.stopSpeak')}
+                className="text-[11px] px-1.5 py-0.5 rounded text-[var(--color-accent)] hover:bg-[var(--color-hover-overlay)] transition-colors animate-pulse"
+              >
+                ⏹
+              </button>
             )}
             {onToggleStar && (
               <button
@@ -376,6 +471,76 @@ const MessageBubbleImpl: React.FC<Props> = ({
           </div>
         )}
       </div>
+      {/* 右键菜单：fixed 定位 + 视口边缘 clamp，透明 overlay 承接外部点击/再次右键 */}
+      {ctxMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null) }}
+          />
+          <div
+            className="fixed z-50 min-w-[140px] py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl"
+            style={{
+              left: Math.min(ctxMenu.x, window.innerWidth - 160),
+              top: Math.min(ctxMenu.y, window.innerHeight - ctxItems.length * 30 - 16)
+            }}
+          >
+            {ctxItems.map((item) => (
+              <button
+                key={item.key}
+                className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                  item.danger
+                    ? 'text-[var(--color-danger)] hover:bg-[var(--color-hover-overlay)]'
+                    : 'text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)]'
+                }`}
+                onClick={() => { setCtxMenu(null); item.onClick() }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* 消息级用量弹窗：token 分解 + 命中单价 + 估算费用 */}
+      {usageModal && usage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setUsageModal(false)}>
+          <div className="w-80 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold mb-3">{t('chat.usageDetail')}</h3>
+            {(provider || model) && (
+              <div className="text-xs mb-3 text-[var(--color-text-muted)] font-mono truncate" title={`${provider ?? ''} / ${model ?? ''}`}>
+                {provider}{provider && model ? ' / ' : ''}{model}
+              </div>
+            )}
+            <div className="space-y-1.5 text-xs font-mono">
+              <div className="flex justify-between"><span className="text-[var(--color-text-muted)]">{t('chat.tokensIn')}</span><span>{fmtTokens(usage.promptTokens)}</span></div>
+              <div className="flex justify-between"><span className="text-[var(--color-text-muted)]">{t('chat.tokensOut')}</span><span>{fmtTokens(usage.completionTokens)}</span></div>
+              {!!usage.cachedTokens && usage.cachedTokens > 0 && (
+                <div className="flex justify-between"><span className="text-[var(--color-text-muted)]">{t('chat.tokensCached')}</span><span>{fmtTokens(usage.cachedTokens)}</span></div>
+              )}
+              <div className="flex justify-between border-t border-[var(--color-border)] pt-1.5"><span className="text-[var(--color-text-muted)]">{t('chat.tokensTotal')}</span><span className="font-semibold">{fmtTokens(usage.totalTokens)}</span></div>
+            </div>
+            {unitPrice ? (
+              <div className="mt-3 space-y-1.5 text-xs font-mono">
+                <div className="flex justify-between"><span className="text-[var(--color-text-muted)]">{t('usage.priceInput')}</span><span>{currencySymbol}{unitPrice.input}/1M</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-muted)]">{t('usage.priceOutput')}</span><span>{currencySymbol}{unitPrice.output}/1M</span></div>
+                {unitPrice.cache !== undefined && (
+                  <div className="flex justify-between"><span className="text-[var(--color-text-muted)]">{t('usage.priceCache')}</span><span>{currencySymbol}{unitPrice.cache}/1M</span></div>
+                )}
+                <div className="flex justify-between border-t border-[var(--color-border)] pt-1.5"><span className="text-[var(--color-text-muted)]">{t('usage.cost')}</span><span className="font-semibold text-[var(--color-accent)]">{currencySymbol}{costText}</span></div>
+              </div>
+            ) : (
+              <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">{t('chat.usageNoPrice')}</div>
+            )}
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setUsageModal(false)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">
+                {t('common.close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

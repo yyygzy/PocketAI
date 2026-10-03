@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { AssistantRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 
@@ -12,6 +12,12 @@ interface Props {
 
 export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect, onEdit, onOpenMarket }) => {
   const { t } = useI18n()
+  // 助手搜索：名称/描述大小写不敏感过滤；空串显示全部
+  const [q, setQ] = useState('')
+  const kw = q.trim().toLowerCase()
+  const filtered = kw
+    ? assistants.filter((a) => a.name.toLowerCase().includes(kw) || a.description.toLowerCase().includes(kw))
+    : assistants
   return (
     <div className="shrink-0 border-b border-[var(--color-border)]">
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
@@ -24,8 +30,19 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
           {t('rail.market')}
         </button>
       </div>
+      <div className="px-2 pb-1.5">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t('rail.searchPh')}
+          className="w-full h-7 px-2 text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+        />
+      </div>
       <div className="max-h-44 overflow-y-auto px-2 pb-2 space-y-0.5">
-        {assistants.map((a) => (
+        {filtered.length === 0 && (
+          <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">{t('rail.searchEmpty')}</div>
+        )}
+        {filtered.map((a) => (
           <div
             key={a.id}
             onClick={() => onSelect(a.id)}
