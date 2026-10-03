@@ -49,6 +49,7 @@ import { initUpdateManager } from './update-manager'
 import { buildAppMenu } from './menu'
 import { initTray, destroyTray } from './tray'
 import { applyLaunchAtLogin, isCloseToTray, registerWindowBehaviorHandlers } from './window-behavior'
+import { applyProxySettings, registerProxyHandlers } from './net/proxy'
 import { initPopup } from './popup'
 import { lockService } from './lock/lock'
 import { installLockGate } from './lock/ipc-gate'
@@ -485,6 +486,9 @@ async function boot(): Promise<void> {
   // 窗口行为：注册 IPC + 应用开机自启配置（仅打包版生效）
   registerWindowBehaviorHandlers()
   applyLaunchAtLogin()
+  // 网络代理：注册 IPC + 在任何模型 API 请求前应用已保存的代理（回环地址直连）
+  registerProxyHandlers()
+  applyProxySettings()
   // 应用已保存的窗口透明度
   applyOpacityToMainWindows()
 

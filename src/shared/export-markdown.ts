@@ -74,6 +74,8 @@ export function formatAttachments(attachments: ChatAttachment[] | null | undefin
   for (const att of attachments) {
     if (att.type === 'image') {
       lines.push(`📎 图片：${att.name}`)
+    } else if (att.type === 'kb') {
+      lines.push(`📎 知识库：${att.name}`)
     } else {
       const preview = att.data && att.data.length > TEXT_ATTACH_PREVIEW_LIMIT
         ? att.data.slice(0, TEXT_ATTACH_PREVIEW_LIMIT) + '\n…（截断）'

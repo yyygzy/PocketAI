@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { findMatchIds } from '../src/renderer/src/modules/chat/ChatView'
 import type { MessageRecord } from '../src/shared/types'
 
-const mk = (id: string, content: string): MessageRecord => ({
+const mk = (id: string, content: string, attachments?: { type: 'image'; name: string; mimeType: string; size: number; data: string }[]): MessageRecord => ({
   id,
   conversationId: 'c1',
   role: 'user',
@@ -12,7 +12,8 @@ const mk = (id: string, content: string): MessageRecord => ({
   model: null,
   status: 'done',
   parentId: null,
-  createdAt: 0
+  createdAt: 0,
+  attachments
 })
 
 describe('findMatchIds 会话内消息搜索', () => {
@@ -51,5 +52,20 @@ describe('findMatchIds 会话内消息搜索', () => {
     expect(findMatchIds(withEmpty, '')).toEqual([])
     // 空 content 不会被任意关键词命中
     expect(findMatchIds(withEmpty, '排序')).not.toContain('m6')
+  })
+
+  it('附件文件名参与匹配（不区分大小写）', () => {
+    const withAtt = [
+      mk('a1', '看一下这张图', [
+        { type: 'image', name: 'Screenshot-2026.png', mimeType: 'image/png', size: 100, data: 'data:image/png;base64,xx' }
+      ]),
+      mk('a2', '', [
+        { type: 'image', name: '报错截图.PNG', mimeType: 'image/png', size: 100, data: 'data:image/png;base64,yy' }
+      ])
+    ]
+    expect(findMatchIds(withAtt, 'screenshot')).toEqual(['a1'])
+    expect(findMatchIds(withAtt, '截图')).toEqual(['a2'])
+    // content 命中优先，附件命中不重复
+    expect(findMatchIds([...messages, ...withAtt], '排序')).toEqual(['m1', 'm2', 'm3', 'm4'])
   })
 })

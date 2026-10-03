@@ -28,6 +28,7 @@ const KEYS = {
   CLOSE_TO_TRAY: 'close_to_tray', // '1'=关窗最小化到托盘而非退出；缺省=关
   USAGE_BUDGET_DAILY: 'usage_budget_daily', // 数字字符串（¥）；空/缺省=不限制
   USAGE_BUDGET_MONTHLY: 'usage_budget_monthly', // 同上
+  NET_PROXY_URL: 'net_proxy_url', // 主进程 API 流量代理 URL（http/https）；空/缺省=直连
 } as const
 
 // ---------- 主密码 salt 双通道 ----------
@@ -256,6 +257,18 @@ export const appConfigRepo = {
 
   setUsageBudgetMonthly(v: number | null): void {
     this.set(KEYS.USAGE_BUDGET_MONTHLY, v && v > 0 ? String(v) : '')
+  },
+
+  // ---------- 网络代理（已 normalize 的 http/https URL；''=直连） ----------
+
+  getProxyUrl(): string {
+    return this.get(KEYS.NET_PROXY_URL) ?? ''
+  },
+
+  /** url 为空串时清除配置（恢复直连语义） */
+  setProxyUrl(url: string): void {
+    if (url === '') this.delete(KEYS.NET_PROXY_URL)
+    else this.set(KEYS.NET_PROXY_URL, url)
   },
 
   // ---------- 首启向导 ----------

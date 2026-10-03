@@ -140,6 +140,8 @@ export interface ConversationRecord {
   groupId?: string | null
   /** v38：会话备注；null=无备注 */
   note?: string | null
+  /** v39：会话级系统提示词覆盖；null=使用助手默认 */
+  systemPromptOverride?: string | null
 }
 
 /** 会话分组文件夹（按助手维度归集） */
@@ -852,16 +854,20 @@ export interface SendMessagePayload {
   unattended?: boolean
   /** 引用回复：本条用户消息引用的同会话另一条消息 id */
   replyToId?: string | null
+  /** @ 引用的知识库 id 列表（从 attachments 中提取，仅发送时有效） */
+  kbRefs?: string[]
 }
 
 /** 聊天附件（图片或文档） */
 export interface ChatAttachment {
-  type: 'image' | 'text'
+  type: 'image' | 'text' | 'kb'
   name: string
   mimeType: string
   size: number
-  /** image: base64 data URL (data:image/png;base64,...) | text: 文件文本内容 */
+  /** image: base64 data URL (data:image/png;base64,...) | text: 文件文本内容 | kb: 空串 */
   data: string
+  /** kb 类型时必填：知识库 id */
+  kbId?: string
 }
 
 export interface RegeneratePayload {
@@ -1066,6 +1072,15 @@ export interface ReminderFiredPayload {
   fireAt?: number
   /** 启动恢复时一次性补发的 missed 条数（>0 时无单条字段） */
   missed?: number
+}
+
+/** REMINDER_CREATE 入参（渲染端右键「提醒我」直建；时间由渲染端预设纯函数算好） */
+export interface ReminderCreatePayload {
+  text: string
+  /** 触发时间（epoch ms，主进程二次校验 >now 且 ≤now+30d） */
+  fireAt: number
+  /** 来源会话（可空） */
+  conversationId?: string | null
 }
 
 export interface UnlockPayload {
@@ -1571,6 +1586,8 @@ export const IPC = {
   CONVERSATION_EXPORT_PDF_BATCH: 'conversation:export-pdf-batch', // 多选批量导出 PDF（上限 50）
   CONVERSATION_EXPORT_BATCH: 'conversation:export-batch',
   CONVERSATION_EXPORT_MESSAGES: 'conversation:export-messages', // 多选消息子集导出单个 md（渲染端传文件名+内容）
+  EXPORT_PREPARE_DRAG: 'export:prepare-drag', // 导出拖拽：渲染端传文件名+内容，主进程写临时文件返回路径
+  EXPORT_START_DRAG: 'export:start-drag', // 导出拖拽：dragstart 同步 send，主进程校验路径后 webContents.startDrag
   CONVERSATION_EXPORT_ENCRYPTED: 'conversation:export-enc',
   CONVERSATION_IMPORT_ENCRYPTED: 'conversation:import-enc',
   CONVERSATION_IMPORT: 'conversation:import',
@@ -1587,6 +1604,7 @@ export const IPC = {
   CONVERSATION_GROUP_DELETE: 'conversation:group-delete', // 解散组（组内会话回到未分组，不删内容）
   CONVERSATION_SET_GROUP: 'conversation:set-group', // 移动会话到组（groupId=null 移出）
   CONVERSATION_SET_NOTE: 'conversation:set-note', // 设置会话备注（trim 空串存 NULL）
+  CONVERSATION_SET_SYSTEM_PROMPT_OVERRIDE: 'conversation:set-system-prompt-override', // 设置会话级系统提示词覆盖（trim 空串存 NULL）
 
   WINDOW_BEHAVIOR_GET: 'window-behavior:get', // 读取窗口行为设置（开机自启/关窗到托盘）
   WINDOW_BEHAVIOR_SET_LAUNCH: 'window-behavior:set-launch', // 设置开机自启
@@ -1594,6 +1612,7 @@ export const IPC = {
 
   MESSAGE_LIST: 'message:list',
   MESSAGE_DELETE: 'message:delete',
+  MESSAGE_DELETE_BATCH: 'message:delete-batch', // 批量删除：单 IPC 删除多条消息（上限 500）
   MESSAGE_TRUNCATE_FROM: 'message:truncate-from', // 截断重跑：删除目标消息及其后全部消息
   MESSAGE_SEARCH: 'message:search',
   MESSAGE_SET_STARRED: 'message:set-starred', // 收藏星标：标记/取消重要消息
@@ -1730,6 +1749,9 @@ export const IPC = {
   IMAGES_GET_FILE: 'images:get-file',
   IMAGES_DELETE: 'images:delete',
   IMAGES_SAVE_AS: 'images:save-as',
+  /** 灯箱：图片 data URL 写系统剪贴板 / 另存为本地文件 */
+  CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image',
+  IMAGE_SAVE_DATAURL: 'images:save-dataurl',
 
   // ---------- 沙箱（v2 批次八：沙箱基础层） ----------
   SANDBOX_LIST: 'sandbox:list',
@@ -1791,6 +1813,10 @@ export const IPC = {
   NOTIFY_REPLY_GET: 'notify:reply-get',
   NOTIFY_REPLY_SET: 'notify:reply-set',
   NOTIFY_REPLY_SHOW: 'notify:reply-show', // 渲染端请求弹原生通知（主进程统一发，点击聚焦主窗口）
+
+  // ---------- 网络代理（主进程 API 流量） ----------
+  NET_PROXY_GET: 'net:proxy-get', // 读取当前代理 URL（''=直连）
+  NET_PROXY_SET: 'net:proxy-set', // 保存并立即应用代理（''=恢复直连）
 
   // ---------- 侧栏模块顺序 ----------
   SIDEBAR_GET_ORDER: 'sidebar:get-order',
@@ -1867,6 +1893,8 @@ export const IPC = {
 
   // ---------- Agent 定时提醒 ----------
   REMINDER_FIRED: 'reminder:fired',
+  /** 用户直建提醒（消息右键「提醒我」；Agent 工具走 reminder_set 不经此 IPC） */
+  REMINDER_CREATE: 'reminder:create',
 
   // ---------- 平台管家 ----------
   HEALTH_REPORT: 'health:report',

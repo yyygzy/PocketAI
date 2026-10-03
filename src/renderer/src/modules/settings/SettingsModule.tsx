@@ -174,6 +174,11 @@ export const SettingsModule: React.FC = () => {
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.network')}</h3>
+          <NetworkPanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.popup')}</h3>
           <PopupPanel />
         </div>
@@ -1768,6 +1773,74 @@ const PopupPanel: React.FC = () => {
 }
 
 // ─── 外观面板（窗口透明度 / 自定义 CSS）────────────────────────
+
+// 网络面板：主进程 API 流量代理（http/https）。留空=直连；保存后立即应用，
+// 回环地址（localhost/127.0.0.1）始终直连。非法地址主进程返回错误且不写库。
+const NetworkPanel: React.FC = () => {
+  const { t } = useI18n()
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    window.pocketai.getProxyUrl()
+      .then((v) => { setProxyUrl(v); setLoaded(true) })
+      .catch((e) => {
+        logIpcError('settings.getProxyUrl', e)
+        setLoaded(true)
+      })
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    setNotice(null)
+    try {
+      const r = await window.pocketai.setProxyUrl(proxyUrl.trim())
+      if (typeof r === 'string') {
+        setProxyUrl(r)
+        setNotice({ ok: true, text: t('set.proxySaved') })
+      } else {
+        setNotice({ ok: false, text: r.error || t('set.proxyInvalid') })
+      }
+    } catch (e) {
+      setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!loaded) {
+    return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={proxyUrl}
+          onChange={(e) => setProxyUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void save() }}
+          placeholder="http://127.0.0.1:7890"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          className="flex-1 min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+        />
+        <button type="button" className="btn-primary shrink-0" disabled={saving} onClick={() => void save()}>
+          {t('set.proxySave')}
+        </button>
+      </div>
+      <p className="text-[10px] leading-relaxed text-[var(--color-text-muted)]">{t('set.proxyHint')}</p>
+      {notice && (
+        <p className={`text-[11px] ${notice.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}>
+          {notice.text}
+        </p>
+      )}
+    </div>
+  )
+}
 
 const AppearancePanel: React.FC = () => {
   const { t } = useI18n()

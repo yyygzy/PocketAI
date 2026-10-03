@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest'
 import React from 'react'
 import { renderToString } from 'react-dom/server'
 import { AttachmentGrid, ImageLightbox } from '../src/renderer/src/components/AttachmentGrid'
+import { ToastProvider } from '../src/renderer/src/components/ToastProvider'
 import type { ChatAttachment } from '../src/shared/types'
 
 const PNG_DATA =
@@ -53,14 +54,21 @@ describe('AttachmentGrid — 静态渲染', () => {
 })
 
 describe('ImageLightbox — 放大态渲染', () => {
-  it('渲染原图 + dialog 语义 + 遮罩', () => {
+  it('渲染原图 + dialog 语义 + 遮罩 + 复制/另存按钮', () => {
     const html = renderToString(
-      React.createElement(ImageLightbox, { src: PNG_DATA, onClose: () => {} })
+      React.createElement(
+        ToastProvider,
+        null,
+        React.createElement(ImageLightbox, { src: PNG_DATA, name: 'shot.png', onClose: () => {} })
+      )
     )
     expect(html).toContain('role="dialog"')
     expect(html).toContain('aria-modal="true"')
     expect(html).toContain('fixed inset-0')
     expect(html).toContain('src="data:image/')
     expect(html).toContain('max-h-full')
+    // 灯箱操作：复制到剪贴板 / 另存为 / 关闭
+    expect(html).toContain('lightbox.copyImage')
+    expect(html).toContain('lightbox.saveImage')
   })
 })

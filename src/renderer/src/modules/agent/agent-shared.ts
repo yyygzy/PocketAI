@@ -1,5 +1,6 @@
 // Agent 模块共享：类型、常量与纯函数（MCP 面板 / Agent 对话 / Channels 共用）
 import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult, MessageSource } from '../../../../shared/types'
+import type { SlashCommand } from '../../utils/snippet-slash'
 
 export type Tab = 'agent' | 'servers' | 'channels'
 
@@ -37,14 +38,41 @@ export function findRerunSourceId(messages: AgentMessage[], assistantId: string)
 
 // ---------- 斜杠快捷指令 ----------
 
-export interface SlashCommand {
-  /** 触发词，不含 /（如 summary） */
-  name: string
-  /** 菜单显示名（i18n） */
-  label: string
-  /** 选中后填入输入框的提示模板（i18n） */
-  template: string
+/** 运行中实时步骤条的一步（chip 流数据；todo 步骤不进 chip，已有 checklist 卡） */
+export interface LiveStep {
+  stepIndex: number
+  type: 'thought' | 'tool_call' | 'tool_result' | 'replan' | 'error'
+  /** tool_call 步骤的工具名 */
+  toolName?: string
 }
+
+/** chip 流最大保留长度（防超长运行撑爆 UI；超出丢最旧） */
+export const LIVE_STEPS_MAX = 50
+
+/**
+ * liveSteps 归约（纯函数，可单测）：把 step 事件追加到 chip 流。
+ * - 不在白名单的类型（user/todo/final）返回原数组（引用不变，不触发重渲染）
+ * - 同一 stepIndex 的 thought 占位→正式更新会去重为一条（同 index 同类型覆盖）
+ * - 超出 LIVE_STEPS_MAX 丢最旧
+ */
+export function reduceLiveSteps(prev: LiveStep[], event: { stepIndex: number; type: string; toolCall?: ToolCall }): LiveStep[] {
+  const t = event.type
+  if (t !== 'thought' && t !== 'tool_call' && t !== 'tool_result' && t !== 'replan' && t !== 'error') return prev
+  const step: LiveStep = {
+    stepIndex: event.stepIndex,
+    type: t,
+    toolName: t === 'tool_call' ? event.toolCall?.function?.name : undefined
+  }
+  // 同 stepIndex 同类型覆盖（thought 先 emit 占位再 emit 正式文本，chip 只留一条）
+  const dupIdx = prev.findIndex((s) => s.stepIndex === step.stepIndex && s.type === step.type)
+  const next = dupIdx >= 0
+    ? prev.map((s, i) => (i === dupIdx ? step : s))
+    : [...prev, step]
+  return next.length > LIVE_STEPS_MAX ? next.slice(next.length - LIVE_STEPS_MAX) : next
+}
+
+// SlashCommand 统一收口到 utils/snippet-slash（含 kind 分组字段），此处再导出保持既有引用路径
+export type { SlashCommand } from '../../utils/snippet-slash'
 
 /**
  * 解析输入框当前是否处于斜杠指令输入态。
@@ -106,7 +134,7 @@ export function agentMessagesToMarkdown(messages: AgentMessage[], title: string)
     lines.push(`## ${label}`, '')
     if (m.attachments && m.attachments.length > 0) {
       for (const a of m.attachments) {
-        lines.push(`- 📎 ${a.name}${a.type === 'image' ? '（图片）' : ''}`)
+        lines.push(`- 📎 ${a.name}${a.type === 'image' ? '（图片）' : ''}${a.type === 'kb' ? '（知识库）' : ''}`)
       }
       lines.push('')
     }

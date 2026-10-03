@@ -24,6 +24,9 @@ import { buildConversationHtml } from '../../utils/export-html'
 import { buildMessagesMarkdown } from '../../../../shared/export-markdown'
 import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
+import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../utils/palette-nav'
+import { buildReminderText } from '../../utils/reminder-presets'
+import { formatDateTime } from '../../utils/time'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
   return {
@@ -94,7 +97,11 @@ export const ChatModule: React.FC = () => {
         const first = list[0]!
         setCurrentConvId(first.id)
       }
-    }).catch(reportIpcError('chat.listConversations'))
+      return list
+    }).catch((e) => {
+      reportIpcError('chat.listConversations')(e)
+      return []
+    })
   }, [])
 
   const loadMessages = useCallback((convId: string) => {
@@ -372,6 +379,75 @@ export const ChatModule: React.FC = () => {
     loadMessages(convId)
     setFocusMessageId(messageId)
   }, [loadMessages, discardCurrentIfEmpty])
+
+  // 命令面板导航：跨助手先切助手+拉列表（不 autoSelect，防覆盖目标）再定位会话；
+  // 仅助手项（无 conversationId）走标准助手切换自动选最近会话
+  const handlePaletteOpen = useCallback((detail: OpenConversationDetail) => {
+    if (detail.isAgent) return
+    // 仅助手项：切助手（discard + reload autoSelect 最近会话 + 默认模型回填）
+    if (!detail.conversationId) {
+      if (detail.assistantId && detail.assistantId !== assistantIdRef.current) {
+        discardCurrentIfEmpty()
+        const asst = assistants.find((a) => a.id === detail.assistantId)
+        assistantIdRef.current = detail.assistantId
+        setCurrentAssistantId(detail.assistantId)
+        setCurrentConvId(null)
+        setMessages([])
+        void reloadConversations(true)
+        if (asst?.defaultProviderId && asst.defaultModel) {
+          setTargets([{ providerId: asst.defaultProviderId, model: asst.defaultModel }]
+          )
+        }
+      }
+      return
+    }
+    const targetId = detail.conversationId
+    const openWithin = (conv?: ConversationRecord) => {
+      userEditedTargetsRef.current = false
+      setActiveDraft('')
+      draftTextRef.current = ''
+      setCurrentConvId(targetId)
+      void loadMessages(targetId)
+      if (conv) restoreLastModel(conv)
+    }
+    if (detail.assistantId && detail.assistantId !== assistantIdRef.current) {
+      discardCurrentIfEmpty()
+      const asst = assistants.find((a) => a.id === detail.assistantId)
+      assistantIdRef.current = detail.assistantId
+      setCurrentAssistantId(detail.assistantId)
+      setCurrentConvId(null)
+      setMessages([])
+      if (asst?.defaultProviderId && asst.defaultModel) {
+        setTargets([{ providerId: asst.defaultProviderId, model: asst.defaultModel }])
+      }
+      void reloadConversations(false).then((list) => {
+        // 事件路径与 pending 兜底竞态时清掉残留（助手此刻已匹配）
+        consumePendingOpenConversation(false, detail.assistantId)
+        openWithin(list.find((c) => c.id === targetId))
+      })
+    } else {
+      discardCurrentIfEmpty()
+      consumePendingOpenConversation(false, assistantIdRef.current)
+      openWithin(conversations.find((c) => c.id === targetId))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistants, conversations, reloadConversations, loadMessages, restoreLastModel, discardCurrentIfEmpty])
+
+  // 命令面板：挂载时消费 pending（面板从其他模块跳来，chat 可能尚未挂载；isAgent 不匹配保留）+ 常驻事件
+  useEffect(() => {
+    const pending = consumePendingOpenConversation(false, assistantIdRef.current)
+    if (pending) handlePaletteOpen(pending)
+    // 仅挂载首帧消费一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<OpenConversationDetail>).detail
+      if (d && !d.isAgent) handlePaletteOpen(d)
+    }
+    window.addEventListener(OPEN_CONVERSATION_EVENT, handler)
+    return () => window.removeEventListener(OPEN_CONVERSATION_EVENT, handler)
+  }, [handlePaletteOpen])
 
   const handleNewConv = async () => {
     // 当前会话本身就是空壳（自动标题+未置顶+0消息；挂草稿的也一并复用，草稿随会话保留）
@@ -693,7 +769,7 @@ export const ChatModule: React.FC = () => {
     setTargets(next)
   }
 
-  const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null) => {
+  const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => {
     if (isStreaming()) return
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0) return
@@ -731,7 +807,8 @@ export const ChatModule: React.FC = () => {
         content: text,
         targets: validTargets,
         attachments,
-        replyToId: replyToId ?? null
+        replyToId: replyToId ?? null,
+        kbRefs
       })
       .catch(() => {
         failStream(requestId, convId)
@@ -789,6 +866,29 @@ export const ChatModule: React.FC = () => {
       toast.error(t('chat.exportFail', { e: errText(e) }))
     }
   }, [messages, conversations, currentConvId, assistants, toast, t])
+
+  /** 导出拖拽准备：与 handleExportMessages 同构构建 Markdown，写临时文件返回拖拽路径（不写则 null 退化） */
+  const handlePrepareMessagesDrag = useCallback(async (ids: string[]): Promise<string | null> => {
+    const idSet = new Set(ids)
+    const picked = messages.filter((m) => idSet.has(m.id))
+    if (picked.length === 0) return null
+    const conv = conversations.find((c) => c.id === currentConvId)
+    const assistantName = conv
+      ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
+      : null
+    const title = conv?.title || 'PocketAI'
+    const md = buildMessagesMarkdown({ title, assistantName }, picked)
+    try {
+      const r = await window.pocketai.prepareExportDrag({
+        defaultName: `${title}-${picked.length}`,
+        ext: 'md',
+        content: md
+      })
+      return r.ok && r.path ? r.path : null
+    } catch {
+      return null
+    }
+  }, [messages, conversations, currentConvId, assistants])
 
   // ---------- 会话分组文件夹 ----------
   /** 本地 patch 会话分组归属（活跃+归档两列表） */
@@ -858,6 +958,20 @@ export const ChatModule: React.FC = () => {
     }
   }, [reloadConversations, toast, t])
 
+  /** 设置会话级系统提示词覆盖（乐观本地更新，失败回滚由 reload 兜底） */
+  const handleSetSystemPromptOverride = useCallback(async (convId: string, text: string | null) => {
+    const patch = (list: ConversationRecord[]) =>
+      list.map((c) => (c.id === convId ? { ...c, systemPromptOverride: text } : c))
+    setConversations((prev) => patch(prev))
+    setArchivedConversations((prev) => patch(prev))
+    try {
+      await window.pocketai.setConversationSystemPromptOverride(convId, text)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+      void reloadConversations()
+    }
+  }, [reloadConversations, toast, t])
+
   /** 转发消息：targetConvId=null 时主进程按源会话助手维度新建会话；成功后跳过去 */
   const handleForwardPick = useCallback(async (targetConvId: string | null) => {
     const src = forwardSource
@@ -897,7 +1011,8 @@ export const ChatModule: React.FC = () => {
 
   const handleDeleteMessages = useCallback(async (ids: string[]) => {
     try {
-      await Promise.all(ids.map((id) => window.pocketai.deleteMessage(id)))
+      const res = await window.pocketai.deleteMessagesBatch(ids)
+      if (!res.ok) throw new Error('delete failed')
       if (currentConvId) loadMessages(currentConvId)
     } catch (e) {
       toast.error(t('common.opFailed', { msg: errText(e) }))
@@ -989,6 +1104,22 @@ export const ChatModule: React.FC = () => {
     }
   }, [messages, toast, t])
 
+  // 消息右键「提醒我」：正文截取 200 字，带会话 id 落库；到点由系统通知
+  const handleRemind = useCallback(async (messageId: string, fireAt: number) => {
+    const msg = messages.find((m) => m.id === messageId)
+    const text = msg ? buildReminderText(msg.content ?? '') : ''
+    if (!text) {
+      toast.error(t('reminder.menu.emptyText'))
+      return
+    }
+    try {
+      await window.pocketai.createReminder({ text, fireAt, conversationId: currentConvId ?? null })
+      toast.success(t('reminder.menu.created', { time: formatDateTime(fireAt) }))
+    } catch (e) {
+      toast.error(errText(e))
+    }
+  }, [messages, currentConvId, toast, t])
+
   return (
     <div className="flex h-full min-w-0 relative">
       {/* 左栏：助手 + 该助手的会话 */}
@@ -1058,11 +1189,15 @@ export const ChatModule: React.FC = () => {
         onToggleStar={handleToggleStar}
         onBatchToggleStar={handleBatchToggleStar}
         onExportMessages={handleExportMessages}
+        onPrepareMessagesDrag={handlePrepareMessagesDrag}
         onForward={setForwardSource}
         draftKey={currentConvId ?? ''}
         draft={activeDraft}
         onDraftChange={handleDraftChange}
         onDraftCommit={commitDraft}
+        systemPromptOverride={conversations.find((c) => c.id === currentConvId)?.systemPromptOverride ?? null}
+        onSetSystemPromptOverride={currentConvId ? (text) => handleSetSystemPromptOverride(currentConvId, text) : undefined}
+        onRemind={handleRemind}
       />
 
       {marketOpen && (

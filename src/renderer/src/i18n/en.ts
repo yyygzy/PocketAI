@@ -213,6 +213,8 @@ export const en: Record<string, string> = {
   'chat.forward': 'Forward',
   'chat.speak': 'Read aloud',
   'chat.stopSpeak': 'Stop reading',
+  'chat.codeExpand': 'Expand all ({n} lines)',
+  'chat.codeCollapse': 'Collapse',
   'chat.forwardNew': 'Forward to new conversation',
   'chat.forwarded': 'Forwarded',
   'chat.usageDetail': 'Usage details',
@@ -228,6 +230,7 @@ export const en: Record<string, string> = {
   'chat.jumpToTop': 'Jump to first message',
   'chat.jumpToBottom': 'Jump to bottom',
   'chat.exportImage': 'Export as long image',
+  'chat.exportImageDrag': 'Export as long image (drag to desktop)',
   'chat.exportingImage': 'Generating image…',
   'chat.exportImageTooLong': 'Only the latest 500 messages exported',
   'chat.exportMultiCapped': 'At most {max} per export; {dropped} ignored',
@@ -283,6 +286,7 @@ export const en: Record<string, string> = {
   'chatview.hint': 'Pick a model above; tap “＋ Compare” to run multiple models on the same question, side by side.',
   'chatview.selectedCount': '{n} selected',
   'chatview.exportSelected': 'Export selected',
+  'chatview.exportSelectedDrag': 'Export selected as Markdown (drag to desktop)',
   'chatview.editResend': 'Edit',
   'chatview.editResendTitle': 'Edit and resend',
   'chatview.resend': 'Resend',
@@ -574,6 +578,11 @@ export const en: Record<string, string> = {
   'agent.traceType.replan': 'Replanning',
   'agent.traceEmpty': 'No step details',
   'agent.runningStep': 'Executing step {n}…',
+  'agent.liveStep.thought': 'Think',
+  'agent.liveStep.tool_call': 'Call',
+  'agent.liveStep.tool_result': 'Result',
+  'agent.liveStep.replan': 'Replan',
+  'agent.liveStep.error': 'Error',
   'agent.sessionStats': 'Session total: {runs} runs · {duration} · {tokens} tokens',
   'agent.traceDetail': 'Step details',
   'agent.copyTraceJson': 'Copy JSON',
@@ -919,6 +928,11 @@ export const en: Record<string, string> = {
   'set.smartTitle': 'Smart titles',
   'set.replyNotify': 'Reply completion notifications',
   'set.replyNotifyHint': 'When the window is minimized or another app is focused, show a system notification when the assistant finishes (or fails). Click it to return to the app.',
+  'set.network': '🌐 Network',
+  'set.proxySave': 'Save',
+  'set.proxySaved': 'Proxy saved and applied now',
+  'set.proxyInvalid': 'Invalid proxy URL',
+  'set.proxyHint': 'Use an HTTP proxy for main-process requests (chat, embeddings, MCP, online checks). Format: http://127.0.0.1:7890 (http/https only; socks5 is not supported). localhost and 127.0.0.1 always connect directly; save an empty field to restore direct connection. Runtime/model downloads are not proxied yet.',
   'notify.replyDoneBody': 'Reply ready in “{title}”',
   'notify.replyErrorBody': 'The reply failed. Click to go back and check.',
   'set.smartTitleHint': 'After the first message in a new conversation, automatically generate a short title (up to 10 characters) with the current model. This makes one very small token call; on failure it falls back to the opening text of your message and never interrupts chat. Manually renamed titles are never overwritten.',
@@ -947,6 +961,39 @@ export const en: Record<string, string> = {
   'popup.act.summary': '📋 Summarize',
   'popup.act.polish': '✨ Polish',
   'popup.act.ask': '💬 Ask about it',
+  'popup.addAttachment': 'Add attachment',
+  'popup.attachUnsupported': 'Unsupported file type (images, text and common documents only)',
+  'popup.attachLimit': 'Up to {n} attachments',
+  'popup.dropToAttach': 'Drop to attach',
+  'popup.removeAttachment': 'Remove attachment',
+
+  // ── Global command palette (Ctrl+P) ──
+  'palette.placeholder': 'Search conversations, assistants, knowledge bases, modules…',
+  'palette.groupConvChat': '💬 Chat conversations',
+  'palette.groupConvAgent': '🤖 Agent conversations',
+  'palette.groupAssistant': '🧑‍🏫 Assistants',
+  'palette.groupKb': '📚 Knowledge bases',
+  'palette.groupModule': '⚡ Modules',
+  'palette.noResults': 'No matches found',
+
+  // ── Image lightbox ──
+  'lightbox.copyImage': '📋 Copy image',
+  'lightbox.copiedImage': '✓ Copied',
+  'lightbox.copyFailed': 'Failed to copy to clipboard',
+  'lightbox.saveImage': '💾 Save as',
+  'lightbox.saved': 'Image saved',
+  'lightbox.saveFailed': 'Failed to save image',
+
+  // ── Quick reminder from message ──
+  'reminder.menu.remindMe': 'Remind me',
+  'reminder.menu.in15m': 'In 15 minutes',
+  'reminder.menu.in1h': 'In 1 hour',
+  'reminder.menu.in3h': 'In 3 hours',
+  'reminder.menu.next9am': 'Next 09:00',
+  'reminder.menu.customMinutes': 'minutes',
+  'reminder.menu.create': 'Create',
+  'reminder.menu.created': 'Reminder set: {time}',
+  'reminder.menu.emptyText': 'This message has no text to remind about',
 
   // ── Steward ──
   'steward.subtitle': 'Device capability profile · Steward Phase 0 foundation',
@@ -1633,5 +1680,29 @@ export const en: Record<string, string> = {
   'image.openLocation': 'Show in folder',
   'image.openExternal': 'Open',
   'image.deleteConfirm': 'Delete this image and its history record?',
-  'image.loadFailed': 'Failed to load image or the file no longer exists'
+  'image.loadFailed': 'Failed to load image or the file no longer exists',
+
+  // ── System prompt override ──
+  'chat.sysOverride.button': 'System prompt',
+  'chat.sysOverride.title': 'Override system prompt',
+  'chat.sysOverride.ph': 'Leave blank to use the assistant default',
+  'chat.sysOverride.phNoAssistant': 'No system prompt set for current assistant',
+  'chat.sysOverride.save': 'Save',
+  'chat.sysOverride.clear': 'Clear',
+  'chat.sysOverride.active': 'Overridden',
+  'chat.sysOverride.saved': 'System prompt updated',
+
+  // ── Slash commands ──
+  'slash.section.builtin': 'Shortcuts',
+  'slash.section.snippets': 'My Snippets',
+  'slash.noMatch': 'No matching command or snippet',
+  'slash.hint': '↑↓ to select, Enter to insert, Esc to close',
+
+  // ── @ mention (knowledge base / file) ──
+  'mention.recentFiles': 'Recent files',
+  'mention.newFile': 'Select new file',
+  'mention.knowledge': 'Knowledge base',
+  'mention.noMatch': 'No matching file or knowledge base',
+  'mention.kbAttached': 'Referenced knowledge base: {name}',
+  'mention.kbLimit': 'Up to {n} knowledge bases'
 }

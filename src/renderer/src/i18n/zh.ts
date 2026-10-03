@@ -213,6 +213,8 @@ export const zh: Record<string, string> = {
   'chat.forward': '转发',
   'chat.speak': '朗读',
   'chat.stopSpeak': '停止朗读',
+  'chat.codeExpand': '展开全部（{n} 行）',
+  'chat.codeCollapse': '收起',
   'chat.forwardNew': '转发到新会话',
   'chat.forwarded': '已转发',
   'chat.usageDetail': '用量详情',
@@ -228,6 +230,7 @@ export const zh: Record<string, string> = {
   'chat.jumpToTop': '回到首条消息',
   'chat.jumpToBottom': '回到底部',
   'chat.exportImage': '导出为长图',
+  'chat.exportImageDrag': '导出为长图（可拖拽到桌面）',
   'chat.exportingImage': '正在生成长图…',
   'chat.exportImageTooLong': '仅导出最近 500 条消息',
   'chat.exportMultiCapped': '单次最多导出 {max} 个，已忽略 {dropped} 个',
@@ -283,6 +286,7 @@ export const zh: Record<string, string> = {
   'chatview.hint': '选择顶部模型；点「＋ 对照」可让多个模型同题竞答、左右对比',
   'chatview.selectedCount': '已选 {n} 条',
   'chatview.exportSelected': '导出选中',
+  'chatview.exportSelectedDrag': '导出选中为 Markdown（可拖拽到桌面）',
   'chatview.editResend': '编辑',
   'chatview.editResendTitle': '编辑后重发',
   'chatview.resend': '重发',
@@ -574,6 +578,11 @@ export const zh: Record<string, string> = {
   'agent.traceType.replan': '重新规划',
   'agent.traceEmpty': '暂无分步明细',
   'agent.runningStep': '正在执行 第 {n} 步…',
+  'agent.liveStep.thought': '思考',
+  'agent.liveStep.tool_call': '调用',
+  'agent.liveStep.tool_result': '结果',
+  'agent.liveStep.replan': '重规划',
+  'agent.liveStep.error': '错误',
   'agent.sessionStats': '会话累计：{runs} 次运行 · 耗时 {duration} · {tokens} tokens',
   'agent.traceDetail': '分步明细',
   'agent.copyTraceJson': '复制 JSON',
@@ -919,6 +928,11 @@ export const zh: Record<string, string> = {
   'set.smartTitle': '智能标题',
   'set.replyNotify': '回复完成通知',
   'set.replyNotifyHint': '窗口最小化或切到其他应用时，助手回复完成（或失败）后弹出系统通知，点击通知返回应用。',
+  'set.network': '🌐 网络',
+  'set.proxySave': '保存',
+  'set.proxySaved': '代理设置已保存并立即生效',
+  'set.proxyInvalid': '代理地址无效',
+  'set.proxyHint': '为主进程网络请求（模型对话、Embedding、MCP、联网校验等）设置 HTTP 代理，需形如 http://127.0.0.1:7890（仅支持 http/https，暂不支持 socks5）。localhost 与 127.0.0.1 始终直连；留空保存即恢复直连。运行环境与模型下载类流量暂不走代理。',
   'notify.replyDoneBody': '会话「{title}」的回复已完成',
   'notify.replyErrorBody': '回复未成功生成，点击返回查看',
   'set.smartTitleHint': '新会话发出第一条消息后，用当前模型自动生成不超过 10 个字的短标题（会产生一次极少量 token 调用；失败则回退为消息开头文字，不影响对话）。手动改名后不再自动覆盖。',
@@ -947,6 +961,39 @@ export const zh: Record<string, string> = {
   'popup.act.summary': '📋 总结',
   'popup.act.polish': '✨ 润色',
   'popup.act.ask': '💬 就此提问',
+  'popup.addAttachment': '添加附件',
+  'popup.attachUnsupported': '不支持的文件类型（仅支持图片、文本与常见文档）',
+  'popup.attachLimit': '最多添加 {n} 个附件',
+  'popup.dropToAttach': '松开以添加附件',
+  'popup.removeAttachment': '移除附件',
+
+  // ── 全局命令面板（Ctrl+P） ──
+  'palette.placeholder': '搜索会话、助手、知识库、模块…',
+  'palette.groupConvChat': '💬 聊天会话',
+  'palette.groupConvAgent': '🤖 智能体会话',
+  'palette.groupAssistant': '🧑‍🏫 助手',
+  'palette.groupKb': '📚 知识库',
+  'palette.groupModule': '⚡ 模块',
+  'palette.noResults': '无匹配结果',
+
+  // ── 图片灯箱 ──
+  'lightbox.copyImage': '📋 复制图片',
+  'lightbox.copiedImage': '✓ 已复制',
+  'lightbox.copyFailed': '复制到剪贴板失败',
+  'lightbox.saveImage': '💾 另存为',
+  'lightbox.saved': '图片已保存',
+  'lightbox.saveFailed': '保存图片失败',
+
+  // ── 消息快捷提醒 ──
+  'reminder.menu.remindMe': '⏰ 提醒我',
+  'reminder.menu.in15m': '15 分钟后',
+  'reminder.menu.in1h': '1 小时后',
+  'reminder.menu.in3h': '3 小时后',
+  'reminder.menu.next9am': '下一个 09:00',
+  'reminder.menu.customMinutes': '分钟后',
+  'reminder.menu.create': '创建',
+  'reminder.menu.created': '已设置提醒：{time}',
+  'reminder.menu.emptyText': '该消息没有可提醒的文本内容',
 
   // ── 平台管家 ──
   'steward.subtitle': '本机能力画像 · 平台管家 Phase 0 地基',
@@ -1633,5 +1680,29 @@ export const zh: Record<string, string> = {
   'image.openLocation': '所在位置',
   'image.openExternal': '打开',
   'image.deleteConfirm': '删除这张图片及其历史记录？',
-  'image.loadFailed': '图片加载失败或文件已不存在'
+  'image.loadFailed': '图片加载失败或文件已不存在',
+
+  // ── 系统提示词覆盖 ──
+  'chat.sysOverride.button': '系统提示词',
+  'chat.sysOverride.title': '覆盖系统提示词',
+  'chat.sysOverride.ph': '留空则使用助手默认提示词',
+  'chat.sysOverride.phNoAssistant': '当前助手未设置系统提示词',
+  'chat.sysOverride.save': '保存',
+  'chat.sysOverride.clear': '清除',
+  'chat.sysOverride.active': '已覆盖',
+  'chat.sysOverride.saved': '系统提示词已更新',
+
+  // ── 斜杠快捷指令 ──
+  'slash.section.builtin': '快捷指令',
+  'slash.section.snippets': '我的片段',
+  'slash.noMatch': '没有匹配的指令或片段',
+  'slash.hint': '↑↓ 选择，Enter 插入，Esc 关闭',
+
+  // ── @ 引用（知识库/文件） ──
+  'mention.recentFiles': '最近文件',
+  'mention.newFile': '选择新文件',
+  'mention.knowledge': '知识库',
+  'mention.noMatch': '没有匹配的文件或知识库',
+  'mention.kbAttached': '已引用知识库：{name}',
+  'mention.kbLimit': '最多引用 {n} 个知识库'
 }

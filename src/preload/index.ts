@@ -64,6 +64,7 @@ import type {
   LockStatus,
   LockStateEvent,
   ReminderFiredPayload,
+  ReminderCreatePayload,
   OllamaRuntimeStatus,
   OllamaInstallEvent,
   OllamaPullEvent,
@@ -205,6 +206,11 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_BATCH, files),
   exportMessages: (payload: { defaultName: string; content: string }): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_MESSAGES, payload),
+  // 导出拖拽：prepare 预写临时文件（pointerdown 异步调），startDrag 在 dragstart 里同步 send
+  prepareExportDrag: (payload: { defaultName: string; ext: 'md' | 'png'; content: string }): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.EXPORT_PREPARE_DRAG, payload),
+  startExportDrag: (path: string): void =>
+    ipcRenderer.send(IPC.EXPORT_START_DRAG, { path }),
   exportConversationPdf: (id: string, html: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_PDF, id, html),
   exportConversationsPdfBatch: (files: Array<{ name: string; content: string }>): Promise<{ ok: boolean; canceled?: boolean; count?: number; dir?: string; failed?: string[]; error?: string }> =>
@@ -241,6 +247,8 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_SET_GROUP, convId, groupId),
   setConversationNote: (convId: string, note: string | null): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_SET_NOTE, convId, note),
+  setConversationSystemPromptOverride: (convId: string, text: string | null): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SET_SYSTEM_PROMPT_OVERRIDE, convId, text),
 
   // ---------- 窗口行为（开机自启/关窗到托盘） ----------
   getWindowBehavior: (): Promise<import('../shared/types').WindowBehaviorSettings> =>
@@ -255,6 +263,8 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_LIST, conversationId),
   deleteMessage: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.MESSAGE_DELETE, id),
+  deleteMessagesBatch: (ids: string[]): Promise<{ ok: boolean; deleted: number }> =>
+    ipcRenderer.invoke(IPC.MESSAGE_DELETE_BATCH, ids),
   truncateMessagesFrom: (id: string): Promise<{ ok: boolean; deleted: number }> =>
     ipcRenderer.invoke(IPC.MESSAGE_TRUNCATE_FROM, id),
   searchMessages: (
@@ -567,6 +577,15 @@ const api = {
     ipcRenderer.invoke(IPC.IMAGES_DELETE, id),
   saveImageAs: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.IMAGES_SAVE_AS, id),
+  /** 灯箱：复制图片 data URL 到系统剪贴板 */
+  writeImageClipboard: (dataUrl: string): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC.CLIPBOARD_WRITE_IMAGE, { dataUrl }),
+  /** 灯箱：图片 data URL 另存为（用户取消返回 { canceled: true }） */
+  saveDataUrlImage: (
+    dataUrl: string,
+    defaultName?: string
+  ): Promise<{ canceled: true } | { path: string }> =>
+    ipcRenderer.invoke(IPC.IMAGE_SAVE_DATAURL, { dataUrl, defaultName }),
 
   // ---------- 工具 ----------
   listAvailableTools: (): Promise<ToolSchema[]> => ipcRenderer.invoke(IPC.TOOL_LIST_AVAILABLE),
@@ -723,6 +742,12 @@ const api = {
     ipcRenderer.invoke(IPC.NOTIFY_REPLY_SET, enabled),
   showReplyNotification: (payload: { title: string; body: string }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.NOTIFY_REPLY_SHOW, payload),
+
+  // ---------- 网络代理（成功返回规整 URL，''=直连；失败返回 { ok:false, error }） ----------
+  getProxyUrl: (): Promise<string> =>
+    ipcRenderer.invoke(IPC.NET_PROXY_GET),
+  setProxyUrl: (url: string): Promise<string | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.NET_PROXY_SET, url),
 
   // ---------- 侧栏模块顺序 ----------
   getSidebarOrder: (): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>
@@ -907,6 +932,11 @@ const api = {
     ipcRenderer.on(IPC.REMINDER_FIRED, listener)
     return () => ipcRenderer.removeListener(IPC.REMINDER_FIRED, listener)
   },
+  /** 消息右键「提醒我」直建一次性提醒 */
+  createReminder: (
+    payload: ReminderCreatePayload
+  ): Promise<{ ok: true; id: string; fireAt: number }> =>
+    ipcRenderer.invoke(IPC.REMINDER_CREATE, payload),
 
   // ---------- 平台管家 ----------
   getHealthReport: (): Promise<HealthReport> =>

@@ -5,6 +5,7 @@ import { PopupApp } from './popup/PopupApp'
 import { DetachedApp } from './detached/DetachedApp'
 import type { ModuleId } from './components/Sidebar'
 import { I18nProvider } from './i18n'
+import { ToastProvider } from './components/ToastProvider'
 import { loadAndInjectCustomCss } from './custom-css'
 import { loadAndApplyChatFontSize } from './chat-font'
 import './styles.css'
@@ -30,7 +31,15 @@ loadAndApplyChatFontSize()
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <I18nProvider>
-      {isPopup ? <PopupApp /> : isDetached ? <DetachedApp moduleId={detachedModule!} /> : <App />}
+      {isPopup ? (
+        <ToastProvider>
+          <PopupApp />
+        </ToastProvider>
+      ) : isDetached ? (
+        <DetachedApp moduleId={detachedModule!} />
+      ) : (
+        <App />
+      )}
     </I18nProvider>
   </React.StrictMode>
 )

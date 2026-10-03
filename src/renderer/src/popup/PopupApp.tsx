@@ -4,10 +4,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { Markdown } from '../modules/chat/Markdown'
+import { AttachmentGrid } from '../components/AttachmentGrid'
+import { useToast } from '../components/ToastProvider'
 import { reportIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useCopyFeedback } from '../hooks/useCopyFeedback'
-import type { AssistantRecord, PopupPayload, ProviderRecord, SelectionAction } from '../../../shared/types'
+import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../modules/agent/agent-shared'
+import type { AssistantRecord, ChatAttachment, PopupPayload, ProviderRecord, SelectionAction } from '../../../shared/types'
 import {
   SELECTION_ACTIONS,
   composeSelectionPrompt
@@ -17,6 +20,7 @@ interface Msg {
   role: 'user' | 'assistant'
   content: string
   error?: boolean
+  attachments?: ChatAttachment[]
 }
 
 const LS_PROVIDER = 'pocketai.popup.provider'
@@ -34,6 +38,7 @@ const pickChatModel = (models: string[]): string => {
 
 export const PopupApp: React.FC = () => {
   const { t } = useI18n()
+  const toast = useToast()
   const [mode, setMode] = useState<'quick' | 'selection'>('quick')
   const [selection, setSelection] = useState('')
   const [providers, setProviders] = useState<ProviderRecord[]>([])
@@ -45,6 +50,12 @@ export const PopupApp: React.FC = () => {
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  /** 待发附件（发送成功后清空；随消息一起持久化） */
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  /** 拖拽进窗悬停计数（子元素 dragenter/leave 成对，计数器防闪烁） */
+  const [dragOver, setDragOver] = useState(false)
+  const dragCounterRef = useRef(0)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const requestIdRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -175,11 +186,71 @@ export const PopupApp: React.FC = () => {
     }
   }, [providerId, fetchingModels])
 
+  // ─── 附件（粘贴 / 拖拽 / 文件选择三入口，规则与主窗 Composer 一致） ─────
+  const addFiles = useCallback(async (files: FileList | File[]) => {
+    const list = Array.from(files)
+    if (list.length === 0) return
+    let unsupported = 0
+    const accepted: ChatAttachment[] = []
+    for (const f of list) {
+      const att = await readFileAsAttachment(f)
+      if (att) accepted.push(att)
+      else unsupported++
+    }
+    if (accepted.length === 0 && unsupported > 0) {
+      toast.warning(t('popup.attachUnsupported'))
+      return
+    }
+    setAttachments((prev) => {
+      const room = MAX_ATTACHMENTS - prev.length
+      if (room <= 0) {
+        toast.warning(t('popup.attachLimit', { n: MAX_ATTACHMENTS }))
+        return prev
+      }
+      const next = [...prev, ...accepted.slice(0, room)]
+      if (accepted.length > room || unsupported > 0) {
+        // 超限/不支持合并为一条提示，避免多文件时 toast 轰炸
+        toast.warning(unsupported > 0 ? t('popup.attachUnsupported') : t('popup.attachLimit', { n: MAX_ATTACHMENTS }))
+      }
+      return next
+    })
+  }, [t, toast])
+
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+      e.preventDefault()
+      void addFiles(e.clipboardData.files)
+    }
+  }
+
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    dragCounterRef.current += 1
+    setDragOver(true)
+  }
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!dragOver) return
+    e.preventDefault()
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1)
+    if (dragCounterRef.current === 0) setDragOver(false)
+  }
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragCounterRef.current = 0
+    setDragOver(false)
+    if (e.dataTransfer.files.length > 0) void addFiles(e.dataTransfer.files)
+  }
+
+  const removeAttachment = (idx: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx))
+  }
+
   // ─── 发送 ─────────────────────────────────────────────────────────
   const send = useCallback(
     async (text: string) => {
       const content = text.trim()
-      if (!content || streaming || !providerId || !model) return
+      if ((!content && attachments.length === 0) || streaming || !providerId || !model) return
       let convId = conversationId
       try {
         if (!convId) {
@@ -195,12 +266,14 @@ export const PopupApp: React.FC = () => {
         return
       }
       const rid = `popup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const sentAtts = attachments
       requestIdRef.current = rid
       setStreaming(true)
       setInput('')
+      setAttachments([])
       setMessages((ms) => [
         ...ms,
-        { role: 'user', content },
+        { role: 'user', content, attachments: sentAtts.length > 0 ? sentAtts : undefined },
         { role: 'assistant', content: '' }
       ])
       window.pocketai.sendMessage({
@@ -208,10 +281,11 @@ export const PopupApp: React.FC = () => {
         conversationId: convId,
         assistantId: assistant?.id ?? null,
         content,
+        attachments: sentAtts.length > 0 ? sentAtts : undefined,
         targets: [{ providerId, model }]
       })
     },
-    [streaming, providerId, model, conversationId, assistant, t]
+    [streaming, providerId, model, conversationId, assistant, attachments, t]
   )
 
   const stop = () => {
@@ -224,6 +298,7 @@ export const PopupApp: React.FC = () => {
     if (streaming) stop()
     setConversationId(null)
     setMessages([])
+    setAttachments([])
   }
 
   // ─── 选区动作 ─────────────────────────────────────────────────────
@@ -249,8 +324,18 @@ export const PopupApp: React.FC = () => {
       e.preventDefault()
       void send(input)
     } else if (e.key === 'Escape') {
+      if (streaming) {
+        // 流式中 Esc 先中止生成（与主窗口 abort 语义一致），非流式才隐藏浮窗
+        e.preventDefault()
+        stop()
+        return
+      }
       // 关窗失败无影响（合理静默）
       void window.pocketai.hidePopup().catch(() => {})
+    } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
+      // Ctrl/⌘+N：清空重开一轮问答（浮窗内局部快捷键，filterShortcutForContext popup 同款语义）
+      e.preventDefault()
+      resetConversation()
     }
   }
 
@@ -258,11 +343,24 @@ export const PopupApp: React.FC = () => {
   const models = selectedProvider?.models ?? []
 
   return (
-    <div className="h-screen w-screen p-1.5">
+    <div
+      className="h-screen w-screen p-1.5"
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div
-        className="flex flex-col h-full rounded-xl overflow-hidden border border-[var(--color-border)]"
+        className={`relative flex flex-col h-full rounded-xl overflow-hidden border transition-shadow ${
+          dragOver ? 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent)] ring-opacity-60' : 'border-[var(--color-border)]'
+        }`}
         style={{ background: 'var(--color-bg)', boxShadow: '0 12px 40px rgba(0,0,0,.35)' }}
       >
+        {dragOver && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-[var(--color-accent)] bg-opacity-10 pointer-events-none">
+            <span className="text-xs font-semibold text-[var(--color-accent)]">{t('popup.dropToAttach')}</span>
+          </div>
+        )}
         {/* 标题栏（可拖拽；按钮必须 no-drag） */}
         <div
           className="flex items-center gap-2 px-3 py-1.5 shrink-0 select-none"
@@ -377,17 +475,64 @@ export const PopupApp: React.FC = () => {
                   <span className="opacity-50">…</span>
                 )
               ) : (
-                <span className="whitespace-pre-wrap">{m.content}</span>
+                <>
+                  {m.content && <span className="whitespace-pre-wrap">{m.content}</span>}
+                  {m.attachments && m.attachments.length > 0 && <AttachmentGrid attachments={m.attachments} align="end" />}
+                </>
               )}
             </div>
           ))}
         </div>
+
+        {/* 待发附件栏：图片缩略图 / 文本文件名，× 移除 */}
+        {attachments.length > 0 && (
+          <div className="shrink-0 px-3 pt-2 flex flex-wrap gap-1.5">
+            {attachments.map((att, i) => (
+              <div key={`${att.name}-${i}`} className="relative group">
+                {att.type === 'image' ? (
+                  <img src={att.data} alt={att.name} title={att.name} className="w-10 h-10 object-cover rounded-lg border border-[var(--color-border)]" />
+                ) : (
+                  <div className="h-10 max-w-[140px] flex items-center gap-1 px-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[10px] text-[var(--color-text-muted)]">
+                    📄 <span className="truncate">{att.name}</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(i)}
+                  title={t('popup.removeAttachment')}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-[var(--color-danger)] text-white text-[9px] leading-none opacity-90 hover:opacity-100"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* 输入区 */}
         <div
           className="shrink-0 px-3 py-2 border-t border-[var(--color-border)] flex items-end gap-1.5"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ATTACHMENT_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) void addFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            className="btn-ghost text-xs shrink-0 !px-1.5"
+            title={t('popup.addAttachment')}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            📎
+          </button>
           <textarea
             ref={taRef}
             className="input flex-1 resize-none text-xs leading-relaxed py-1.5 max-h-28"
@@ -396,6 +541,7 @@ export const PopupApp: React.FC = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
           />
           {streaming ? (
             <button className="btn-ghost text-xs shrink-0" onClick={stop}>
@@ -404,7 +550,7 @@ export const PopupApp: React.FC = () => {
           ) : (
             <button
               className="btn-primary text-xs shrink-0"
-              disabled={!canSend || !input.trim()}
+              disabled={!canSend || (!input.trim() && attachments.length === 0)}
               onClick={() => void send(input)}
             >
               {t('popup.send')}

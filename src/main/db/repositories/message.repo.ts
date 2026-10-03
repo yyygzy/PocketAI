@@ -156,6 +156,23 @@ export const messageRepo = {
   },
 
   /**
+   * 批量删除：事务 + IN 占位符；FTS 触发器自动同步。
+   * 去重防占位符膨胀；返回实际删除行数。
+   * 上限 500 由 IPC schema 保证（SQLite 占位符默认上限 999）。
+   */
+  deleteBatch(ids: string[]): number {
+    if (ids.length === 0) return 0
+    const unique = Array.from(new Set(ids))
+    const placeholders = unique.map(() => '?').join(',')
+    const db = dbService.getHandle()
+    const tx = db.transaction(() => {
+      const res = db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...unique)
+      return res.changes
+    })
+    return tx()
+  },
+
+  /**
    * 截断重跑：删除目标消息及其在同一会话中之后插入的所有消息。
    * 以 rowid（插入顺序）为界，比 created_at 同毫秒歧义更精确；
    * 不影响其他会话。返回删除行数，目标不存在时返回 0。

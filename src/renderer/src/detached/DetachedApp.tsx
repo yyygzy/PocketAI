@@ -6,6 +6,8 @@ import { SelectionToolbar } from '../components/SelectionToolbar'
 import type { ModuleId } from '../components/Sidebar'
 import { useI18n } from '../i18n'
 import { reportIpcError } from '../utils/ipc'
+import { matchAppShortcut, filterShortcutForContext, type ConversationShortcutAction } from '../utils/shortcuts'
+import { APP_SHORTCUT_EVENT, type AppShortcutEventDetail } from '../hooks/useGlobalShortcuts'
 
 const MODULE_TITLES: Record<ModuleId, string> = {
   chat: 'tab.newChat',
@@ -66,13 +68,21 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
     }
   }, [])
 
-  // 手动锁屏快捷键：Ctrl/Cmd + L（与主窗口一致）
+  // 应用内快捷键中枢：lock / 会话类四动作（newConv / focusSearch / focusComposer / abort）
+  // Workspace 内的 ChatModule / AgentPanel 已监听 APP_SHORTCUT_EVENT 且守卫可通过
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
-        e.preventDefault()
+      const m = matchAppShortcut(e, { running: false })
+      if (!m) return
+      const filtered = filterShortcutForContext(m, 'detached')
+      if (!filtered) return
+      e.preventDefault()
+      if (filtered.id === 'lock') {
         window.pocketai.lock().catch(reportIpcError('detached.lock'))
+        return
       }
+      const detail: AppShortcutEventDetail = { action: filtered.id as ConversationShortcutAction }
+      window.dispatchEvent(new CustomEvent<AppShortcutEventDetail>(APP_SHORTCUT_EVENT, { detail }))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

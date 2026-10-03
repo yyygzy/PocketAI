@@ -31,7 +31,8 @@ vi.mock('../src/main/db/database', () => ({
             return { changes: 1 }
           }
         }
-      }
+      },
+      transaction: (fn: () => unknown) => () => fn()
     })
   }
 }))
@@ -156,6 +157,41 @@ describe('rowToRecord — DB 行映射为 MessageRecord', () => {
     const legacy = { ...baseRow } as Record<string, unknown>
     delete legacy.starred
     expect(rowToRecord(legacy as unknown as Parameters<typeof rowToRecord>[0]).starred).toBe(false)
+  })
+})
+
+describe('deleteBatch — 批量删除', () => {
+  it('空数组 → 返回 0 且不执行 SQL', () => {
+    const result = messageRepo.deleteBatch([])
+    expect(result).toBe(0)
+  })
+
+  it('去重：重复 id 只保留一个占位符', () => {
+    messageRepo.deleteBatch(['m1', 'm1', 'm2'])
+    expect(state.lastSql).toContain('DELETE FROM messages')
+    expect(state.lastSql).toContain('IN (')
+    expect(state.lastParams).toEqual(['m1', 'm2'])
+  })
+
+  it('上限截断：>500 条由 IPC schema 保证（repo 层不截断）', () => {
+    // 注释：deleteBatch 本身不截断，上限 500 由 IPC schema (z.array().max(500)) 保证
+    // 这里验证 600 条 id 能正常传入（不抛错），占位符与 id 数量一致
+    const ids = Array.from({ length: 600 }, (_, i) => `m${i}`)
+    messageRepo.deleteBatch(ids)
+    const qCount = (state.lastSql.match(/\?/g) ?? []).length
+    expect(qCount).toBe(600)
+  })
+
+  it('正常批量：3 条不同 id → SQL 与参数正确', () => {
+    messageRepo.deleteBatch(['m1', 'm2', 'm3'])
+    expect(state.lastSql).toContain('DELETE FROM messages')
+    expect(state.lastParams).toEqual(['m1', 'm2', 'm3'])
+  })
+
+  it('单条 id → 等价于单条删除', () => {
+    messageRepo.deleteBatch(['m1'])
+    expect(state.lastSql).toContain('DELETE FROM messages')
+    expect(state.lastParams).toEqual(['m1'])
   })
 })
 

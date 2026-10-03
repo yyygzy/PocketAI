@@ -47,14 +47,31 @@ export function useAttachments() {
     onDragLeave: () => setDragOver(false)
   }
 
+  /** 直接铺到输入容器 div 上的粘贴 props：剪贴板带文件（截图/复制文件）时附加，纯文本放行 */
+  const pasteProps = {
+    onPaste: async (e: React.ClipboardEvent) => {
+      if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+        e.preventDefault()
+        await addFiles(e.clipboardData.files)
+      }
+    }
+  }
+
+  /** 直接追加任意 attachment（如 kb chip） */
+  const addAttachment = useCallback((att: ChatAttachment) => {
+    setAttachments((prev) => [...prev, att].slice(0, MAX_ATTACHMENTS))
+  }, [])
+
   return {
     attachments,
     dragOver,
     addFiles,
+    addAttachment,
     removeAt,
     clear,
     openPicker,
     fileInputProps,
-    dropZoneProps
+    dropZoneProps,
+    pasteProps
   }
 }

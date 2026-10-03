@@ -8,10 +8,11 @@
 import type { AdapterChatMessage, MessageContentPart } from '../providers/types'
 import type { ChatAttachment } from '../../shared/types'
 
-/** 将文本附件拼接为「--- name ---」分隔区块，追加到消息文本末尾 */
+/** 将文本附件拼接为「--- name ---」分隔区块，追加到消息文本末尾（kb 类型跳过） */
 export function appendTextAttachments(text: string, textAtts: ChatAttachment[]): string {
   let out = text
   for (const ta of textAtts) {
+    if (ta.type === 'kb') continue
     out += `\n\n--- ${ta.name} ---\n${ta.data}`
   }
   return out
@@ -35,6 +36,7 @@ export function injectAttachments(messages: AdapterChatMessage[], attachments?: 
       const textContent = typeof m.content === 'string' ? m.content as string : ''
       const textAttachments = attachments.filter(a => a.type === 'text')
       const imageAttachments = attachments.filter(a => a.type === 'image')
+      // kb 类型不进入上下文，仅用于检索时提取 kbId
 
       const text = appendTextAttachments(textContent, textAttachments)
 

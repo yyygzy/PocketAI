@@ -3,9 +3,9 @@ import { describe, it, expect } from 'vitest'
 import { filterSlashCommands, getSlashQuery, type SlashCommand } from '../src/renderer/src/modules/agent/agent-shared'
 
 const commands: SlashCommand[] = [
-  { name: 'summary', label: '总结', template: 'tpl-summary' },
-  { name: 'translate', label: '翻译', template: 'tpl-translate' },
-  { name: 'polish', label: '润色', template: 'tpl-polish' }
+  { name: 'summary', label: '总结', template: 'tpl-summary', kind: 'builtin' },
+  { name: 'translate', label: '翻译', template: 'tpl-translate', kind: 'builtin' },
+  { name: 'polish', label: '润色', template: 'tpl-polish', kind: 'builtin' }
 ]
 
 describe('getSlashQuery', () => {

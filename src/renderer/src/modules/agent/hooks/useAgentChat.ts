@@ -13,8 +13,9 @@ import type {
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { reportIpcError } from '../../../utils/ipc'
-import { findRerunSourceId, toAgentMessages, type AgentMessage } from '../agent-shared'
+import { findRerunSourceId, toAgentMessages, reduceLiveSteps, type AgentMessage, type LiveStep } from '../agent-shared'
 import { messagesReducer } from './messages-reducer'
+import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../../utils/palette-nav'
 
 export function useAgentChat(providers: ProviderRecord[]) {
   const { t } = useI18n()
@@ -30,6 +31,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
   const [currentStep, setCurrentStep] = useState(0) // 当前运行正在执行的步数（running 时显示，结束后丢弃）
+  /** 运行中实时步骤条 chip 流（done/error/切会话清空；不打 messages-reducer，避免污染消息流） */
+  const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const requestIdRef = useRef('')
@@ -45,23 +48,49 @@ export function useAgentChat(providers: ProviderRecord[]) {
   // 助手切换 → 拉活跃+归档会话列表并自动选中最近一次（活跃列表已按置顶权重+updated_at DESC 排序）
   useEffect(() => {
     if (!assistantId) return
+    let cancelled = false
     void Promise.all([
       window.pocketai.listConversations(assistantId, true, false),
       window.pocketai.listConversations(assistantId, true, true)
     ]).then(([list, archived]) => {
+      if (cancelled) return
       setConversations(list)
       setArchivedConversations(archived)
-      setConversationId(list.length > 0 ? list[0]!.id : null)
+      // 命令面板跨助手跳来：pending 指定会话优先于「自动选最近」（助手不匹配保留 pending）
+      const pending = consumePendingOpenConversation(true, assistantId)
+      if (pending?.conversationId && pending.assistantId === assistantId) {
+        setConversationId(pending.conversationId)
+      } else {
+        setConversationId(list.length > 0 ? list[0]!.id : null)
+      }
     }).catch(reportIpcError('agent.listConversations'))
+    return () => { cancelled = true }
   }, [assistantId])
 
-  // 会话切换 → 加载历史消息（同时复位中断标记、运行统计与分步明细）
+  // 命令面板导航（同助手直接开会话；跨助手交助手切换 effect 消费 pending）
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<OpenConversationDetail>).detail
+      if (!d || !d.isAgent) return
+      if (d.assistantId && d.assistantId !== assistantId) {
+        setAssistantId(d.assistantId) // 助手 effect 重新拉列表时消费 pending
+        return
+      }
+      consumePendingOpenConversation(true, assistantId) // 同助手：清掉 pending 防残留
+      if (d.conversationId) setConversationId(d.conversationId)
+    }
+    window.addEventListener(OPEN_CONVERSATION_EVENT, handler)
+    return () => window.removeEventListener(OPEN_CONVERSATION_EVENT, handler)
+  }, [assistantId])
+
+
   useEffect(() => {
     setInterrupted(false)
     setRunStats(null)
     setSessionStats(null)
     setLatestTraces(null)
     setTracesLoading(false)
+    setLiveSteps([])
     if (!conversationId) {
       dispatch({ type: 'clear' })
       return
@@ -87,6 +116,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
       window.pocketai.onAgentStep((e: AgentStepEvent) => {
         if (e.requestId !== requestIdRef.current) return
         setCurrentStep(e.stepIndex)
+        setLiveSteps((prev) => reduceLiveSteps(prev, e))
         dispatch({ type: 'step', event: e, unknownErrorText: t('agent.unknownError') })
       })
     )
@@ -100,6 +130,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
         setRunning(false)
         setInterrupted(false)
         setCurrentStep(0)
+        setLiveSteps([])
         // 仅在事件仍归属当前会话时展示统计（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setRunStats(e.traceStats ?? null)
@@ -119,6 +150,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
         setRunning(false)
         setInterrupted(true)
         setCurrentStep(0)
+        setLiveSteps([])
       })
     )
     // 智能标题后台生成完成：就地更新活跃/归档两个列表（done 后 reload 为兜底）
@@ -279,7 +311,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
       content,
       targets: [{ providerId, model }],
       agentMode: true,
-      attachments: attachments.length > 0 ? attachments : undefined
+      attachments: attachments.length > 0 ? attachments : undefined,
+      kbRefs: attachments.filter((a) => a.type === 'kb').map((a) => a.kbId).filter(Boolean) as string[]
     })
   }
 
@@ -339,6 +372,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     tracesLoading,
     loadLatestTraces,
     currentStep,
+    liveSteps,
     providerId,
     model,
     setModel,

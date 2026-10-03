@@ -25,6 +25,8 @@ interface ConversationRow {
   group_id?: string | null
   /** v38：会话备注；NULL=无备注 */
   note?: string | null
+  /** v39：系统提示词覆盖；NULL=使用助手默认 */
+  system_prompt_override?: string | null
 }
 
 export function rowToRecord(row: ConversationRow): ConversationRecord {
@@ -43,7 +45,8 @@ export function rowToRecord(row: ConversationRow): ConversationRecord {
     lastMessagePreview: row.last_preview ?? null,
     hasDraft: !!row.has_draft,
     groupId: row.group_id ?? null,
-    note: row.note ?? null
+    note: row.note ?? null,
+    systemPromptOverride: row.system_prompt_override ?? null
   }
 }
 
@@ -150,6 +153,15 @@ export const conversationRepo = {
     dbService
       .getHandle()
       .prepare('UPDATE conversations SET note=? WHERE id=?')
+      .run(v, id)
+  },
+
+  /** 系统提示词覆盖：trim 后空串存 NULL（恢复默认）；不动 updated_at（不改变活跃排序） */
+  setSystemPromptOverride(id: string, text: string | null): void {
+    const v = text?.trim() || null
+    dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET system_prompt_override=? WHERE id=?')
       .run(v, id)
   },
 
@@ -287,15 +299,16 @@ export const conversationRepo = {
       const now = Date.now()
       const newConvId = randomUUID()
       db.prepare(
-        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default)
-         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, 0)`
+        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default, system_prompt_override)
+         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, 0, ?)`
       ).run(
         newConvId,
         src.assistantId,
         `${src.title || '新对话'} (分支)`,
         src.modelLabel,
         now,
-        now
+        now,
+        src.systemPromptOverride
       )
 
       const idMap = new Map<string, string>()

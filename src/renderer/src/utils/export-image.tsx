@@ -102,7 +102,7 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()))
 }
 
-export async function exportConversationAsPng(options: ExportImageOptions): Promise<void> {
+export async function exportConversationAsPng(options: ExportImageOptions): Promise<string> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   let root: Root | null = null
@@ -128,6 +128,7 @@ export async function exportConversationAsPng(options: ExportImageOptions): Prom
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
+    return dataUrl // 返回给调用方缓存（导出拖拽复用，免重复截图）
   } finally {
     if (root) {
       root.unmount()

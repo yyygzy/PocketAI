@@ -105,6 +105,7 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
       if (m.attachments && m.attachments.length > 0) {
         const textAttachments = m.attachments.filter(a => a.type === 'text')
         const imageAttachments = m.attachments.filter(a => a.type === 'image')
+        // kb 类型附件不进上下文（kbId 已在发送时通过 kbRefs 参与检索）
         const text = appendTextAttachments(m.content, textAttachments)
         if (imageAttachments.length > 0) {
           out.push({ role: 'user', content: buildImageParts(text, imageAttachments) })
@@ -178,23 +179,34 @@ class ChatService {
       return
     }
 
-    // 解析有效 SystemPrompt：助手模板（渲染变量后）
-    let effectivePrompt = ''
+    // 解析有效 SystemPrompt：会话级覆盖 > 助手模板 > 空
+    // 覆盖优先级：conversation.systemPromptOverride（用户显式设置）> assistant.systemPrompt
+    const conv = conversationRepo.get(conversationId)
+    const overridePrompt = conv?.systemPromptOverride?.trim() || null
+    let effectivePrompt = overridePrompt ?? ''
     let assistantKbIds: string[] = []
     let assistantSkillIds: string[] = []
     if (assistantId) {
       const assistant = assistantRepo.get(assistantId)
-      effectivePrompt = assistant?.systemPrompt ?? ''
+      if (!effectivePrompt) {
+        effectivePrompt = assistant?.systemPrompt ?? ''
+      }
       assistantKbIds = assistant?.knowledgeBaseIds ?? []
       assistantSkillIds = assistant?.skillIds ?? []
     }
 
-    // 若模板含 {{knowledge}} 且助手关联了知识库，则检索注入
+    // 合并 @ 引用的知识库（kbRefs）与助手默认关联知识库，去重
+    const extraKbIds = payload.kbRefs ?? []
+    const allKbIds = [...new Set([...assistantKbIds, ...extraKbIds])]
+
+    // 检索触发条件：模板含 {{knowledge}}（助手默认行为）或用户显式 @ 引用了知识库
+    const shouldRetrieve = effectivePrompt.includes('{{knowledge}}') || extraKbIds.length > 0
     let knowledgeContext = ''
     let sources: MessageSource[] = []
-    if (effectivePrompt.includes('{{knowledge}}') && assistantKbIds.length > 0) {
+    let extraSystemPrompt: string | null = null
+    if (shouldRetrieve && allKbIds.length > 0) {
       try {
-        const result = await ragService.retrieve(assistantKbIds, content)
+        const result = await ragService.retrieve(allKbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
         sources = result.chunks.map((c) => ({
           chunkId: c.chunkId,
@@ -204,6 +216,10 @@ class ChatService {
           kbId: c.kbId,
           seq: c.seq
         }))
+        // 模板不含 {{knowledge}} 但用户显式 @ 引用了知识库 → 追加为独立 system 消息
+        if (!effectivePrompt.includes('{{knowledge}}') && knowledgeContext) {
+          extraSystemPrompt = `以下是与用户问题相关的知识库内容：\n\n${knowledgeContext}`
+        }
       } catch {
         // 检索失败不阻断对话，仅跳过知识注入
       }
@@ -247,7 +263,12 @@ class ChatService {
       // 3. 构建共享上下文（此刻历史含刚插入的用户消息，不含占位回复）
       const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
 
-      // 3.5 注入附件：图片→multimodal 格式，文本→追加到消息内容
+      // 3.5 若 effectivePrompt 不含 {{knowledge}} 但有额外知识库内容，追加为独立 system 消息
+      if (extraSystemPrompt) {
+        messages.unshift({ role: 'system', content: extraSystemPrompt })
+      }
+
+      // 3.6 注入附件：图片→multimodal 格式，文本→追加到消息内容（kb 类型跳过）
       injectAttachments(messages, payload.attachments)
       const placeholders = targets.map((t) =>
         messageRepo.insert({
@@ -300,9 +321,11 @@ class ChatService {
       throw new Error('消息不存在或非助手消息')
     }
 
-    // 解析 SystemPrompt
-    let effectivePrompt = ''
-    if (assistantId) {
+    // 解析 SystemPrompt：会话级覆盖 > 助手模板 > 空
+    const conv = conversationRepo.get(conversationId)
+    const overridePrompt = conv?.systemPromptOverride?.trim() || null
+    let effectivePrompt = overridePrompt ?? ''
+    if (assistantId && !effectivePrompt) {
       const assistant = assistantRepo.get(assistantId)
       effectivePrompt = assistant?.systemPrompt ?? ''
     }
@@ -373,9 +396,11 @@ class ChatService {
       messageRepo.updateUserContent(messageId, content)
     }
 
-    // 解析 SystemPrompt
-    let effectivePrompt = ''
-    if (assistantId) {
+    // 解析 SystemPrompt：会话级覆盖 > 助手模板 > 空
+    const conv = conversationRepo.get(conversationId)
+    const overridePrompt = conv?.systemPromptOverride?.trim() || null
+    let effectivePrompt = overridePrompt ?? ''
+    if (assistantId && !effectivePrompt) {
       const assistant = assistantRepo.get(assistantId)
       effectivePrompt = assistant?.systemPrompt ?? ''
     }

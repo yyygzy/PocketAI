@@ -353,3 +353,41 @@ describe('空会话自动清理（deleteIfEmpty / cleanupEmptyConversations）',
     expect(state.lastParams).toEqual([])
   })
 })
+
+describe('setSystemPromptOverride — 会话级系统提示词覆盖', () => {
+  it('设置覆盖文本 → UPDATE system_prompt_override=?', () => {
+    conversationRepo.setSystemPromptOverride('c500', '你是专业翻译')
+    expect(state.lastSql).toBe('UPDATE conversations SET system_prompt_override=? WHERE id=?')
+    expect(state.lastParams).toEqual(['你是专业翻译', 'c500'])
+  })
+
+  it('空串 → trim 后为空存 NULL（恢复默认）', () => {
+    conversationRepo.setSystemPromptOverride('c501', '   ')
+    expect(state.lastParams).toEqual([null, 'c501'])
+  })
+
+  it('null → 存 NULL', () => {
+    conversationRepo.setSystemPromptOverride('c502', null)
+    expect(state.lastParams).toEqual([null, 'c502'])
+  })
+
+  it('rowToRecord 透传 systemPromptOverride', () => {
+    const rec = rowToRecord({
+      id: 'c503',
+      assistant_id: null,
+      title: '测试',
+      model: null,
+      status: 'idle',
+      created_at: 1,
+      updated_at: 1,
+      pinned: 0,
+      archived: 0,
+      archived_at: null,
+      title_default: 1,
+      note: null,
+      group_id: null,
+      system_prompt_override: '覆盖提示词'
+    } as unknown as Parameters<typeof rowToRecord>[0])
+    expect(rec.systemPromptOverride).toBe('覆盖提示词')
+  })
+})

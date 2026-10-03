@@ -43,6 +43,7 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "sqlite-vec": "^0.1.9",
+    "undici": "^7.29.1",
     "unzipper": "^0.12.5",
     "webdav": "^5.11.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",

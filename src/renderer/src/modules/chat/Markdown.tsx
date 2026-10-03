@@ -8,7 +8,7 @@ import { MermaidBlock } from './MermaidBlock'
 import { remarkCitations } from './remark-citations'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
-import { parseCodeProps, type ParsedCodeBlock } from '../../utils/code-block'
+import { parseCodeProps, countCodeLines, isCollapsible, CODE_PREVIEW_LINES, type ParsedCodeBlock } from '../../utils/code-block'
 
 // katex 懒加载（主包瘦身 ~280KB）：rehype-katex + katex.min.css 均为动态 import，
 // 模块图不再静态包含。ready 前公式以原始 LaTeX 文本渲染，ready 后重渲染为公式；
@@ -55,14 +55,32 @@ function extractCodeBlock(
 const PRE_CLASS =
   'rounded-lg p-3 overflow-x-auto text-[13px] bg-[var(--hljs-bg)] text-[var(--hljs-text)]'
 
-/** 围栏代码块：右上角「复制」按钮（含已复制反馈），按钮定位于包裹层，不随横向滚动移位 */
+/** 围栏代码块：右上角「复制」按钮（含已复制反馈），按钮定位于包裹层，不随横向滚动移位；
+ *  超 20 行默认折叠（12 行预览 + 渐变遮罩 + 展开/收起条），流式中越过阈值不自动收起 */
 const CodeBlock: React.FC<{ block: ParsedCodeBlock; children: React.ReactNode }> = ({ block, children }) => {
   const { t } = useI18n()
   const { copied, copy } = useCopyFeedback()
   const label = copied ? t('common.copied') : t('common.copy')
+  const lines = countCodeLines(block.code)
+  const canCollapse = isCollapsible(block.code)
+  // 初始折叠态只在挂载时计算：流式生成中越过 20 行不打断阅读，历史消息重挂即折叠
+  const [collapsed, setCollapsed] = useState(() => isCollapsible(block.code))
+  // 12 行 × 20px 行高 = 240px；overflow-y 裁切不影响 pre 自身的横向滚动条
+  const previewMaxHeight = CODE_PREVIEW_LINES * 20
   return (
     <div className="relative group my-2">
-      <pre className={`${PRE_CLASS} m-0`}>{children}</pre>
+      <pre
+        className={`${PRE_CLASS} m-0 ${collapsed ? 'overflow-y-hidden' : ''}`}
+        style={collapsed ? { maxHeight: previewMaxHeight } : undefined}
+      >
+        {children}
+      </pre>
+      {canCollapse && collapsed && (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-14 rounded-b-lg bg-gradient-to-t from-[var(--hljs-bg)] to-transparent"
+          aria-hidden="true"
+        />
+      )}
       <button
         type="button"
         onClick={() => void copy(block.code)}
@@ -82,6 +100,15 @@ const CodeBlock: React.FC<{ block: ParsedCodeBlock; children: React.ReactNode }>
         )}
         <span>{label}</span>
       </button>
+      {canCollapse && (
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="block w-full py-1 text-center text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+        >
+          {collapsed ? t('chat.codeExpand', { n: lines }) : t('chat.codeCollapse')}
+        </button>
+      )}
     </div>
   )
 }

@@ -445,11 +445,32 @@ export const AgentPanel: React.FC = () => {
           highlightId={activeHit?.id ?? null}
         />
 
-        {/* 运行中：实时步数提示（step 事件实时更新，结束后丢弃） */}
+        {/* 运行中：实时步骤条（chip 流，step 事件驱动；结束后由 runStats 区接管） */}
         {chat.running && (
-          <div className="mb-2 self-start text-xs text-[var(--color-text-muted)] flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-accent)] animate-pulse" />
-            <span>{t('agent.runningStep', { n: chat.currentStep })}</span>
+          <div className="mb-2 self-start w-full max-w-[640px] flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+            <span className="inline-block w-2 h-2 shrink-0 rounded-full bg-[var(--color-accent)] animate-pulse" />
+            <span className="shrink-0">{t('agent.runningStep', { n: chat.currentStep })}</span>
+            {chat.liveSteps.length > 0 && (
+              <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1 py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {chat.liveSteps.map((s, i) => {
+                  const isLast = i === chat.liveSteps.length - 1
+                  return (
+                    <span
+                      key={`${s.stepIndex}-${s.type}-${i}`}
+                      className={`shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-[10px] leading-none ${
+                        s.type === 'error'
+                          ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
+                          : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+                      } ${isLast ? 'animate-pulse border-[var(--color-accent)] text-[var(--color-accent)]' : ''}`}
+                    >
+                      <span>{t(`agent.liveStep.${s.type}`)}</span>
+                      {s.toolName && <span className="text-[var(--color-primary)]">{s.toolName}</span>}
+                      <span className="opacity-60">#{s.stepIndex}</span>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
 

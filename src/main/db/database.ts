@@ -670,6 +670,14 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE conversations ADD COLUMN note TEXT;
     `
+  },
+  {
+    // v39: 会话级系统提示词覆盖——NULL=使用助手默认，TEXT 存覆盖内容
+    version: 39,
+    name: 'conversation_system_prompt_override',
+    up: `
+      ALTER TABLE conversations ADD COLUMN system_prompt_override TEXT;
+    `
   }
 ]
 

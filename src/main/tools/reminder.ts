@@ -3,10 +3,9 @@
 // 避免小模型时区换算错误。落库后由 main/reminder/scheduler 扫描到点触发系统通知。
 import type { BuiltinTool } from './builtin'
 import { reminderRepo } from '../db/repositories/reminder.repo'
+import { MAX_PENDING_REMINDERS, MAX_REMINDER_MINUTES } from '../../shared/schemas/reminder'
 
-const MAX_PENDING = 50
 const MIN_MINUTES = 1
-const MAX_MINUTES = 43_200 // 30 天
 
 function formatLocal(ts: number): string {
   return new Date(ts).toLocaleString('zh-CN', { hour12: false })
@@ -43,8 +42,8 @@ export const reminderSetTool: BuiltinTool = {
     let fireAt: number
     if (hasMinutes) {
       const m = Math.floor(args!.in_minutes as number)
-      if (m < MIN_MINUTES || m > MAX_MINUTES)
-        throw new Error(`in_minutes 需在 ${MIN_MINUTES}-${MAX_MINUTES} 之间（最长 30 天）`)
+      if (m < MIN_MINUTES || m > MAX_REMINDER_MINUTES)
+        throw new Error(`in_minutes 需在 ${MIN_MINUTES}-${MAX_REMINDER_MINUTES} 之间（最长 30 天）`)
       fireAt = Date.now() + m * 60_000
     } else {
       fireAt = Date.parse((args!.at as string).trim())
@@ -52,8 +51,8 @@ export const reminderSetTool: BuiltinTool = {
     }
     if (fireAt <= Date.now()) throw new Error('触发时间必须晚于当前时间')
 
-    if (reminderRepo.countPending() >= MAX_PENDING)
-      throw new Error(`待触发提醒已达上限 ${MAX_PENDING} 条，请先 reminder_cancel 清理`)
+    if (reminderRepo.countPending() >= MAX_PENDING_REMINDERS)
+      throw new Error(`待触发提醒已达上限 ${MAX_PENDING_REMINDERS} 条，请先 reminder_cancel 清理`)
 
     const rec = reminderRepo.create(text, fireAt, ctx?.agent?.conversationId ?? null)
     return JSON.stringify({ ok: true, id: rec.id, text: rec.text, fireAt: rec.fireAt, fireAtLocal: formatLocal(rec.fireAt) })

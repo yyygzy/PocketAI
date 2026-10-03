@@ -15,6 +15,7 @@ import { sumMessagesUsage } from '../../utils/usage-summary'
 import { fmtTokens, fmtCost } from '../../utils/token'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
 import { exportConversationAsPng } from '../../utils/export-image'
+import { rangeBetween, mergeRange } from '../../utils/message-select'
 
 interface Turn {
   user: MessageRecord | null
@@ -52,7 +53,7 @@ function groupBatches(replies: MessageRecord[]): MessageRecord[][] {
 }
 
 /**
- * 会话内搜索：返回 content 包含关键词（不区分大小写）的消息 id 列表，按消息原顺序。
+ * 会话内搜索：返回 content 或附件文件名包含关键词（不区分大小写）的消息 id 列表，按消息原顺序。
  * 关键词 trim 后为空 → 空数组；纯前端实现，messages 已在内存。
  */
 export function findMatchIds(messages: MessageRecord[], keyword: string): string[] {
@@ -60,7 +61,9 @@ export function findMatchIds(messages: MessageRecord[], keyword: string): string
   if (!kw) return []
   const out: string[] = []
   for (const m of messages) {
-    if (m.content && m.content.toLowerCase().includes(kw)) out.push(m.id)
+    if (m.content && m.content.toLowerCase().includes(kw)) { out.push(m.id); continue }
+    // 附件（图片/文本/知识库引用）按文件名参与检索，纯图片消息也可被搜到
+    if (m.attachments?.some((a) => a.name.toLowerCase().includes(kw))) out.push(m.id)
   }
   return out
 }
@@ -103,6 +106,8 @@ interface Props {
   onBatchToggleStar?: (ids: string[], starred: boolean) => void
   /** 导出选中消息为 Markdown 单文件（另存对话框由主进程弹出） */
   onExportMessages?: (ids: string[]) => void
+  /** 导出拖拽准备：pointerdown 预构建 Markdown 并写临时文件，返回拖拽用路径（失败/未就绪为 null） */
+  onPrepareMessagesDrag?: (ids: string[]) => Promise<string | null>
   /** 转发消息到其他会话（弹窗由父级 ChatModule 负责） */
   onForward?: (msg: MessageRecord) => void
   /** 草稿归属会话 id（切换时 Composer 提交旧会话+回填新会话） */
@@ -113,6 +118,12 @@ interface Props {
   onDraftChange?: (text: string) => void
   /** 切会话时同步提交旧会话草稿 */
   onDraftCommit?: (convId: string, text: string) => void
+  /** 本会话的系统提示词覆盖（NULL=使用助手默认） */
+  systemPromptOverride?: string | null
+  /** 设置/清除会话级系统提示词覆盖 */
+  onSetSystemPromptOverride?: (text: string | null) => void
+  /** 消息右键「提醒我」：父级按 id 取正文并调 IPC 建提醒 */
+  onRemind?: (messageId: string, fireAt: number) => void
 }
 
 export const ChatView: React.FC<Props> = ({
@@ -140,11 +151,15 @@ export const ChatView: React.FC<Props> = ({
   onToggleStar,
   onBatchToggleStar,
   onExportMessages,
+  onPrepareMessagesDrag,
   onForward,
   draftKey,
   draft,
   onDraftChange,
-  onDraftCommit
+  onDraftCommit,
+  systemPromptOverride,
+  onSetSystemPromptOverride,
+  onRemind
 }) => {
   const { t } = useI18n()
   // 被引用消息快速查找表（用于气泡顶部显示引用条）
@@ -172,6 +187,8 @@ export const ChatView: React.FC<Props> = ({
   // 切会话后待滚底标记：messages 异步加载，length 变化 effect 里消费
   const pendingScrollBottomRef = useRef(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  /** Shift 范围连选的锚点（最后一次普通点击的消息 id）；切会话清空 */
+  const lastAnchorRef = useRef<string | null>(null)
   /** 各轮次手动选中的分支（turnKey → batchKey）；无条目时显示最新分支 */
   const [activeBranchMap, setActiveBranchMap] = useState<Record<string, string>>({})
   /** 处于并排对比模式的轮次（turnKey 集合） */
@@ -183,6 +200,13 @@ export const ChatView: React.FC<Props> = ({
   const [atBottom, setAtBottom] = useState(true)
   /** 导出长图进行中（防重复点击） */
   const [exportingImage, setExportingImage] = useState(false)
+  /** 长图拖拽缓存：上次导出的 dataUrl + 文件名（messages 引用变化即失效） */
+  const pngCacheRef = useRef<{ dataUrl: string; fileName: string; messagesRef: MessageRecord[] } | null>(null)
+  /** 拖拽临时文件路径（pointerdown 预写入，dragstart 同步消费；null=未就绪） */
+  const dragPathRef = useRef<string | null>(null)
+  /** 系统提示词覆盖弹层开关 */
+  const [sysOverrideOpen, setSysOverrideOpen] = useState(false)
+  const [sysOverrideText, setSysOverrideText] = useState('')
   // 会话内搜索：开关/关键词/当前命中下标
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
@@ -207,27 +231,42 @@ export const ChatView: React.FC<Props> = ({
   const firstMsgId = messages[0]?.id ?? null
   useEffect(() => {
     setSelectedIds(new Set())
+    lastAnchorRef.current = null
     pendingScrollBottomRef.current = true
     isAtBottomRef.current = true
   }, [firstMsgId])
 
-  const toggleSelect = useCallback((id: string) => {
+  /** 可选择消息的有序 id（仅 user/assistant，与全选/范围选择同口径） */
+  const selectableIds = useMemo(
+    () => messages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => m.id),
+    [messages]
+  )
+
+  const toggleSelect = useCallback((id: string, range = false) => {
+    if (range && lastAnchorRef.current) {
+      // Shift+点击：锚点到目标整段并入（区间外既有选择保留，锚点不变可连续扩展）
+      const span = rangeBetween(selectableIds, lastAnchorRef.current, id)
+      setSelectedIds((prev) => mergeRange(prev, span))
+      return
+    }
     setSelectedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  }, [])
+    lastAnchorRef.current = id
+  }, [selectableIds])
 
   const selectAll = useCallback(() => {
-    const allIds = messages
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => m.id)
-    setSelectedIds(new Set(allIds))
-  }, [messages])
+    setSelectedIds(new Set(selectableIds))
+    lastAnchorRef.current = selectableIds[0] ?? null
+  }, [selectableIds])
 
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set())
+    lastAnchorRef.current = null
+  }, [])
 
   const handleCopySelected = useCallback(() => {
     const selected = messages.filter((m) => selectedIds.has(m.id))
@@ -425,19 +464,53 @@ export const ChatView: React.FC<Props> = ({
     const slice = messages.length > LIMIT ? messages.slice(-LIMIT) : messages
     setExportingImage(true)
     try {
-      await exportConversationAsPng({
+      const fileName = `pocketai-${fileTimestamp(Date.now())}.png`
+      const dataUrl = await exportConversationAsPng({
         messages: slice,
         truncated: messages.length > LIMIT,
         assistantName: assistantName ?? null,
-        fileName: `pocketai-${fileTimestamp(Date.now())}.png`,
+        fileName,
         t
       })
+      // 缓存供导出拖拽复用（messages 引用变化即视为失效）
+      pngCacheRef.current = { dataUrl, fileName, messagesRef: messages }
     } catch (e) {
       console.error('export image failed', e)
     } finally {
       setExportingImage(false)
     }
   }, [exportingImage, messages, assistantName, t])
+
+  /** 长图按钮 pointerdown：有 PNG 缓存时预写拖拽临时文件（无缓存则本次不可拖，退化为点击导出） */
+  const handleImageDragPointerDown = useCallback(() => {
+    dragPathRef.current = null
+    const cache = pngCacheRef.current
+    if (!cache || cache.messagesRef !== messages) return
+    const base64 = cache.dataUrl.split(',')[1] ?? ''
+    if (!base64) return
+    void window.pocketai.prepareExportDrag({ defaultName: cache.fileName, ext: 'png', content: base64 })
+      .then((r) => { if (r.ok && r.path) dragPathRef.current = r.path })
+      .catch(() => {})
+  }, [messages])
+
+  /** dragstart 同步消费预写路径；未就绪（预写未完成/失败）则取消本次拖拽，不影响点击导出 */
+  const handleExportDragStart = useCallback((e: React.DragEvent) => {
+    const p = dragPathRef.current
+    if (!p) {
+      e.preventDefault()
+      return
+    }
+    window.pocketai.startExportDrag(p)
+  }, [])
+
+  /** 多选导出按钮 pointerdown：预构建 Markdown 写临时文件（内容轻量，pointerdown→dragstart 间隙足够） */
+  const handleMessagesDragPointerDown = useCallback(() => {
+    dragPathRef.current = null
+    if (!onPrepareMessagesDrag) return
+    void onPrepareMessagesDrag(Array.from(selectedIds))
+      .then((p) => { dragPathRef.current = p })
+      .catch(() => {})
+  }, [onPrepareMessagesDrag, selectedIds])
 
   // 会话内搜索命中列表（按消息顺序）
   const matchIds = useMemo(() => findMatchIds(messages, searchKeyword), [messages, searchKeyword])
@@ -552,11 +625,26 @@ export const ChatView: React.FC<Props> = ({
             <path d="m21 21-4.3-4.3" />
           </svg>
         </button>
+        {/* 系统提示词覆盖：会话级临时覆盖助手全局提示词 */}
+        {onSetSystemPromptOverride && (
+          <button
+            onClick={() => { setSysOverrideText(systemPromptOverride ?? ''); setSysOverrideOpen(true) }}
+            className="ml-1 p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+            title={t('chat.sysOverride.button')}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </button>
+        )}
         <button
           onClick={() => void handleExportImage()}
+          draggable
+          onPointerDown={handleImageDragPointerDown}
+          onDragStart={handleExportDragStart}
           disabled={exportingImage || messages.length === 0}
           className="ml-1 p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors disabled:opacity-40"
-          title={exportingImage ? t('chat.exportingImage') : t('chat.exportImage')}
+          title={exportingImage ? t('chat.exportingImage') : t('chat.exportImageDrag')}
         >
           {exportingImage ? (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -638,6 +726,10 @@ export const ChatView: React.FC<Props> = ({
           {onExportMessages && (
             <button
               onClick={() => onExportMessages(Array.from(selectedIds))}
+              draggable={!!onPrepareMessagesDrag}
+              onPointerDown={handleMessagesDragPointerDown}
+              onDragStart={handleExportDragStart}
+              title={t('chatview.exportSelectedDrag')}
               className="text-xs px-2 py-1 rounded text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
             >
               {t('chatview.exportSelected')}
@@ -768,6 +860,7 @@ export const ChatView: React.FC<Props> = ({
                         starred={turn.user.starred}
                         onToggleStar={onToggleStar}
                         selectMode={selectedIds.size > 0}
+                        onRemind={onRemind}
                       />
                     )}
                     {comparing ? (
@@ -806,6 +899,7 @@ export const ChatView: React.FC<Props> = ({
                         starred={msg.starred}
                         onToggleStar={onToggleStar}
                         selectMode={selectedIds.size > 0}
+                        onRemind={onRemind}
                       />
                     ) : activeBatch.length > 1 ? (
                       <ComparisonColumns
@@ -875,7 +969,57 @@ export const ChatView: React.FC<Props> = ({
         draft={draft}
         onDraftChange={onDraftChange}
         onDraftCommit={onDraftCommit}
+        messages={messages}
       />
+
+      {/* 系统提示词覆盖弹层：textarea 预填当前 override，无 override 时灰色显示助手默认预览 */}
+      {sysOverrideOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setSysOverrideOpen(false)}>
+          <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-xl w-[520px] max-h-[70vh] flex flex-col p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold mb-1">{t('chat.sysOverride.title')}</h3>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">
+              {assistant?.systemPrompt ? t('chat.sysOverride.ph') : t('chat.sysOverride.phNoAssistant')}
+            </p>
+            {!systemPromptOverride && assistant?.systemPrompt && (
+              <div className="mb-3 p-2.5 rounded bg-[var(--color-hover-overlay)] text-[11px] text-[var(--color-text-muted)] max-h-24 overflow-y-auto whitespace-pre-wrap">
+                {assistant.systemPrompt.slice(0, 500)}{assistant.systemPrompt.length > 500 ? '…' : ''}
+              </div>
+            )}
+            <textarea
+              autoFocus
+              value={sysOverrideText}
+              onChange={(e) => setSysOverrideText(e.target.value)}
+              placeholder={t('chat.sysOverride.ph')}
+              rows={6}
+              className="w-full px-3 py-2 border border-[var(--color-border)] rounded bg-[var(--color-input-bg)] text-sm outline-none focus:border-[var(--color-accent)] resize-y"
+            />
+            <div className="flex gap-2 mt-4 justify-end">
+              <button
+                onClick={() => { setSysOverrideOpen(false); onSetSystemPromptOverride?.(null) }}
+                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)] text-[var(--color-text-muted)]"
+              >
+                {t('chat.sysOverride.clear')}
+              </button>
+              <button
+                onClick={() => setSysOverrideOpen(false)}
+                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => {
+                  const v = sysOverrideText.trim() || null
+                  onSetSystemPromptOverride?.(v)
+                  setSysOverrideOpen(false)
+                }}
+                className="px-3 py-1.5 text-xs bg-[var(--color-accent)] text-white rounded hover:opacity-90"
+              >
+                {t('chat.sysOverride.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 输入框下方：对话配置条（技能/知识库/工具权限/临时提示词） */}
       <div className="shrink-0 px-4 pb-3">

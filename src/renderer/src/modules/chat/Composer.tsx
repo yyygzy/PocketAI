@@ -1,13 +1,25 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react'
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import { useI18n } from '../../i18n'
 import { SnippetButton } from '../../components/SnippetButton'
+import { SlashMenu } from '../../components/SlashMenu'
+import { MentionMenu, type MentionItem } from '../../components/MentionMenu'
+import { SnippetVarsDialog } from '../../components/SnippetVarsDialog'
 import { loadHistory, pushHistory } from '../../utils/input-history'
-import type { ChatAttachment, MessageRecord } from '../../../../shared/types'
+import { extractTemplateVars } from '../../utils/snippet-template'
+import {
+  getSnippetTrigger,
+  snippetToCommand,
+  filterSnippetCommands,
+  buildBuiltinSlashCommands,
+  type SlashCommand
+} from '../../utils/snippet-slash'
+import { getMentionQuery, filterMentionKbs, filterMentionFiles } from '../../utils/mention'
+import type { ChatAttachment, KnowledgeBase, MessageRecord, PromptSnippetRecord } from '../../../../shared/types'
 
 interface Props {
   streaming: boolean
   canSend: boolean
-  onSend: (text: string, attachments?: ChatAttachment[], replyToId?: string | null) => void
+  onSend: (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => void
   onStop: () => void
   /** 当前待回复的引用消息（显示引用条） */
   replyTo?: MessageRecord | null
@@ -21,6 +33,10 @@ interface Props {
   onDraftChange?: (text: string) => void
   /** 切换会话：把旧会话最新文本同步交父级立即落库 */
   onDraftCommit?: (convId: string, text: string) => void
+  /** 当前会话消息（用于 @ 面板提取最近附件） */
+  messages?: MessageRecord[]
+  /** 知识库列表（用于 @ 面板） */
+  kbs?: KnowledgeBase[]
 }
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
@@ -29,7 +45,7 @@ const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js'
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_TEXT_SIZE = 2 * 1024 * 1024 // 2MB
 
-export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit }) => {
+export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit, messages = [], kbs = [] }) => {
   const { t } = useI18n()
   const [text, setText] = useState(draft ?? '')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
@@ -43,6 +59,103 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
   // 输入历史导航：historyRef 惰性加载（首次按 ↑）；navIndex=null=未导航，0=最新一条，越大越早
   const historyRef = useRef<string[] | null>(null)
   const [navIndex, setNavIndex] = useState<number | null>(null)
+
+  // / # 触发片段/指令菜单
+  const [slashDismissed, setSlashDismissed] = useState(false)
+  const [slashIndex, setSlashIndex] = useState(0)
+  // 用户片段（首次触发时惰性拉取；ref 存数据防重复请求，ready 仅作刷新信号）
+  const snippetsRef = useRef<PromptSnippetRecord[] | null>(null)
+  const [snippetsReady, setSnippetsReady] = useState(0)
+  // 片段变量填充态（含 {{var}} 的片段选中后先收集变量再插入）
+  const [varSnippet, setVarSnippet] = useState<PromptSnippetRecord | null>(null)
+
+  // @ 触发 mention 面板
+  const [mentionDismissed, setMentionDismissed] = useState(false)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  // 知识库列表（首次触发时惰性拉取）
+  const kbsRef = useRef<KnowledgeBase[] | null>(null)
+
+  // 内置斜杠指令（label/template 随界面语言）
+  const builtins = useMemo<SlashCommand[]>(() => buildBuiltinSlashCommands(t), [t])
+
+  // 当前触发态：光标前最后一个 / 或 #（行首/空白后才触发）
+  const cursor = taRef.current?.selectionStart ?? text.length
+  const triggerInfo = slashDismissed ? null : getSnippetTrigger(text, cursor)
+  const slashCommands = useMemo<SlashCommand[]>(() => {
+    const snippetCmds = (snippetsRef.current ?? []).map(snippetToCommand)
+    if (triggerInfo?.trigger === '#') return snippetCmds
+    if (triggerInfo?.trigger === '/') return [...builtins, ...snippetCmds]
+    return []
+    // snippetsReady 变化时重建（snippetsRef.current 已更新）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerInfo?.trigger, builtins, snippetsReady])
+
+  const slashFiltered = useMemo(
+    () => (triggerInfo ? filterSnippetCommands(slashCommands, triggerInfo.query) : []),
+    [triggerInfo, slashCommands]
+  )
+  const slashMenuOpen = triggerInfo !== null
+
+  // @ 触发态
+  const mentionInfo = mentionDismissed ? null : getMentionQuery(text, cursor)
+  const mentionItems = useMemo<MentionItem[]>(() => {
+    if (!mentionInfo) return []
+    const q = mentionInfo.query
+    // 最近文件（从当前会话消息附件中提取）
+    const recentFiles = filterMentionFiles(messages, q).map((att) => ({
+      type: 'recent' as const,
+      label: att.name,
+      meta: att.type === 'image' ? t('common.image') : t('common.text'),
+      value: att.name
+    }))
+    // 选择新文件
+    const newFile = [{ type: 'newFile' as const, label: t('mention.newFile'), value: 'newFile' }]
+    // 知识库
+    const kbList = filterMentionKbs(kbsRef.current ?? kbs, q).map((kb) => ({
+      type: 'kb' as const,
+      label: kb.name,
+      meta: `${kb.documentCount} ${t('common.docs')}`,
+      value: kb.id
+    }))
+    return [...recentFiles, ...newFile, ...kbList]
+  }, [mentionInfo, messages, kbs, t])
+
+  const mentionMenuOpen = mentionInfo !== null
+
+  // @ 触发词变化时高亮回到第一项
+  useEffect(() => {
+    setMentionIndex(0)
+  }, [mentionInfo?.query])
+
+  // 首次进入 @ 触发态时惰性拉取知识库列表
+  useEffect(() => {
+    if (mentionInfo && kbsRef.current === null) {
+      kbsRef.current = [] // 占位防并发重复拉取
+      window.pocketai.listKnowledgeBases()
+        .then((list) => {
+          kbsRef.current = list
+        })
+        .catch(() => {})
+    }
+  }, [mentionInfo])
+
+  // 触发词变化时高亮回到第一项
+  useEffect(() => {
+    setSlashIndex(0)
+  }, [triggerInfo?.query])
+
+  // 首次进入触发态时惰性拉取片段列表
+  useEffect(() => {
+    if (triggerInfo && snippetsRef.current === null) {
+      snippetsRef.current = [] // 占位防并发重复拉取
+      window.pocketai.listPromptSnippets()
+        .then((list) => {
+          snippetsRef.current = list
+          setSnippetsReady((n) => n + 1)
+        })
+        .catch(() => {})
+    }
+  }, [triggerInfo])
 
   // draftKey 变化（切会话）或 draft 异步加载到达：提交旧会话 → 回填新会话草稿。
   // 同一次渲染内 draft 已随父级清空为 ''，异步加载完成后再次触发本 effect。
@@ -76,7 +189,9 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
     if ((!trimmed && attachments.length === 0) || !canSend || streaming) return
     // 发送前推入历史（只推正文，附件/引用不加入历史）
     if (trimmed) pushHistory(trimmed)
-    onSend(trimmed, attachments.length > 0 ? attachments : undefined, replyTo?.id ?? null)
+    // 提取 kbRefs（kb 类型附件的 kbId）
+    const kbRefs = attachments.filter((a) => a.type === 'kb').map((a) => a.kbId).filter(Boolean) as string[]
+    onSend(trimmed, attachments.length > 0 ? attachments : undefined, replyTo?.id ?? null, kbRefs.length > 0 ? kbRefs : undefined)
     // 清空并立即删除草稿（空串走父级立即清除分支，不经防抖）
     updateText('')
     setAttachments([])
@@ -87,15 +202,147 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
     })
   }
 
+  // 片段变量填充弹出时保存当时的触发位置，供后续替换区间使用
+  const pendingReplaceRef = useRef<{ startPos: number } | null>(null)
+
+  /** 替换区间 [startPos, 当前光标] 为指定内容 */
+  const replaceTriggerRange = (content: string, startPos?: number) => {
+    const sp = startPos ?? triggerInfo?.startPos
+    if (sp === undefined) return
+    const cur = taRef.current?.selectionStart ?? text.length
+    const next = text.slice(0, sp) + content + text.slice(cur)
+    updateText(next)
+    requestAnimationFrame(() => {
+      const ta = taRef.current
+      ta?.focus()
+      const pos = sp + content.length
+      ta?.setSelectionRange(pos, pos)
+      resize()
+    })
+  }
+
+  /** 选中菜单项：片段含 {{var}} 先弹变量填充层，否则直接替换触发区间 */
+  const pickSlashCommand = (index: number) => {
+    const cmd = slashFiltered[index]
+    if (!cmd) return
+    const info = triggerInfo
+    if (!info) return
+    if (cmd.kind === 'snippet') {
+      const snippetId = cmd.name.replace(/^snippet:/, '')
+      const snippet = snippetsRef.current?.find((s) => s.id === snippetId)
+      if (!snippet) return
+      if (extractTemplateVars(snippet.content).length > 0) {
+        pendingReplaceRef.current = { startPos: info.startPos }
+        setVarSnippet(snippet)
+        return
+      }
+      replaceTriggerRange(snippet.content, info.startPos)
+      return
+    }
+    replaceTriggerRange(`${cmd.template} `, info.startPos)
+  }
+
+  /** 选中 @ 菜单项：知识库追加为 kb chip，文件追加为普通附件 */
+  const pickMentionItem = (index: number) => {
+    const item = mentionItems[index]
+    if (!item) return
+    const info = mentionInfo
+    if (!info) return
+    // 先移除触发区间文本（@query）
+    const next = text.slice(0, info.startPos) + text.slice(taRef.current?.selectionStart ?? text.length)
+    updateText(next)
+    if (item.type === 'kb') {
+      const kb = (kbsRef.current ?? kbs).find((k) => k.id === item.value)
+      if (!kb) return
+      const kbAtt: ChatAttachment = {
+        type: 'kb',
+        name: kb.name,
+        mimeType: '',
+        size: 0,
+        data: '',
+        kbId: kb.id
+      }
+      setAttachments((prev) => [...prev, kbAtt])
+    } else if (item.type === 'recent') {
+      // 最近文件：从历史消息附件中复制一份
+      const found = messages
+        .flatMap((m) => m.attachments ?? [])
+        .find((a) => a.name === item.value)
+      if (found) setAttachments((prev) => [...prev, found])
+    }
+    // newFile 类型走 fileRef.click()（见下方 onPickNewFile）
+    requestAnimationFrame(() => {
+      taRef.current?.focus()
+      resize()
+    })
+  }
+
+  /** 选择新文件：触发隐藏 file input */
+  const pickMentionNewFile = () => {
+    // 先移除触发区间文本
+    const info = mentionInfo
+    if (info) {
+      const next = text.slice(0, info.startPos) + text.slice(taRef.current?.selectionStart ?? text.length)
+      updateText(next)
+    }
+    fileRef.current?.click()
+  }
+
   /** 历史导航：↑ 召回更旧，↓ 更新，Esc 退出；仅限空输入时由 ↑ 进入 */
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // 中文输入法候选期间不劫持任何键
+    if (e.nativeEvent.isComposing) return
+    // @ 菜单打开时优先处理菜单导航
+    if (mentionMenuOpen) {
+      if (e.key === 'ArrowDown' && mentionItems.length > 0) {
+        e.preventDefault()
+        setMentionIndex((i) => (i + 1) % mentionItems.length)
+        return
+      }
+      if (e.key === 'ArrowUp' && mentionItems.length > 0) {
+        e.preventDefault()
+        setMentionIndex((i) => (i - 1 + mentionItems.length) % mentionItems.length)
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && mentionItems.length > 0) {
+        e.preventDefault()
+        pickMentionItem(mentionIndex)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMentionDismissed(true)
+        return
+      }
+    }
+    // 斜杠/片段菜单打开时优先处理菜单导航
+    if (slashMenuOpen) {
+      if (e.key === 'ArrowDown' && slashFiltered.length > 0) {
+        e.preventDefault()
+        setSlashIndex((i) => (i + 1) % slashFiltered.length)
+        return
+      }
+      if (e.key === 'ArrowUp' && slashFiltered.length > 0) {
+        e.preventDefault()
+        setSlashIndex((i) => (i - 1 + slashFiltered.length) % slashFiltered.length)
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && slashFiltered.length > 0) {
+        e.preventDefault()
+        pickSlashCommand(slashIndex)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSlashDismissed(true)
+        return
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
       return
     }
-    // 编辑中不拦截方向键（中文候选栏期间也放行）
-    if (e.nativeEvent.isComposing) return
     // 历史导航：空输入时 ↑ 进入；导航中继续 ↑↓（此时文本非空，须放行 navIndex 分支）
     if (e.key === 'ArrowUp') {
       if (text.trim() === '' || navIndex !== null) {
@@ -203,6 +450,16 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
     if (e.dataTransfer.files) handleFiles(e.dataTransfer.files)
   }
 
+  // 粘贴附件：剪贴板带文件（截图工具复制的图片 / 复制的文件）时直接附加，
+  // 阻止浏览器把图片路径/二进制塞进文本；纯文本粘贴完全放行
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const files = e.clipboardData.files
+    if (files && files.length > 0) {
+      e.preventDefault()
+      void handleFiles(files)
+    }
+  }
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
     setDragOver(true)
@@ -237,6 +494,8 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
               <div key={`${att.name}-${att.size}`} className="relative group flex items-center gap-1.5 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg pl-1.5 pr-7 py-1 text-xs">
                 {att.type === 'image' ? (
                   <img src={att.data} alt={att.name} className="w-6 h-6 rounded object-cover" />
+                ) : att.type === 'kb' ? (
+                  <span className="text-[var(--color-text-muted)]">📚</span>
                 ) : (
                   <span className="text-[var(--color-text-muted)]">📄</span>
                 )}
@@ -274,13 +533,47 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
         )}
 
         <div
-          className={`flex items-end gap-2 bg-[var(--color-sidebar)] border rounded-2xl p-2 transition-colors ${
+          className={`relative flex items-end gap-2 bg-[var(--color-sidebar)] border rounded-2xl p-2 transition-colors ${
             dragOver ? 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]' : 'border-[var(--color-border)] focus-within:border-[var(--color-accent)]'
           }`}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={() => setDragOver(false)}
+          onPaste={handlePaste}
         >
+          {/* / # 触发菜单（变量填充层打开时隐藏菜单避免重叠） */}
+          {slashMenuOpen && !varSnippet && (
+            <SlashMenu
+              commands={slashFiltered}
+              activeIndex={slashIndex}
+              onHover={setSlashIndex}
+              onPick={pickSlashCommand}
+            />
+          )}
+          {/* @ 触发菜单 */}
+          {mentionMenuOpen && (
+            <MentionMenu
+              items={mentionItems}
+              activeIndex={mentionIndex}
+              onHover={setMentionIndex}
+              onPick={pickMentionItem}
+              onPickNewFile={pickMentionNewFile}
+            />
+          )}
+          {varSnippet && (
+            <SnippetVarsDialog
+              snippet={varSnippet}
+              onCancel={() => {
+                setVarSnippet(null)
+                pendingReplaceRef.current = null
+              }}
+              onInsert={(content) => {
+                replaceTriggerRange(content, pendingReplaceRef.current?.startPos)
+                setVarSnippet(null)
+                pendingReplaceRef.current = null
+              }}
+            />
+          )}
           {/* 文件选择按钮 */}
           <button
             onClick={() => fileRef.current?.click()}
@@ -310,6 +603,8 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
               // 用户主动输入（非导航回填）：退出历史导航，视为新文本
               if (navIndex !== null) setNavIndex(null)
               updateText(e.target.value)
+              // 重新进入 / # 触发态时解除 Esc 关闭状态
+              if (getSnippetTrigger(e.target.value, e.target.selectionStart) !== null) setSlashDismissed(false)
               resize()
             }}
             onKeyDown={handleKeyDown}

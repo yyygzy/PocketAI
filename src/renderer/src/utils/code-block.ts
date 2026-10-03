@@ -34,3 +34,25 @@ export function parseCodeProps(props: { className?: string; children?: ReactNode
   const code = nodesToText(props.children).replace(/\n$/, '')
   return { lang: m ? m[1]!.toLowerCase() : null, code }
 }
+
+/** 代码块超过此行数默认折叠（长日志/长源码不再刷屏） */
+export const CODE_COLLAPSE_THRESHOLD = 20
+/** 折叠态露出的预览行数（CSS max-height 按 12 行 × 20px = 240px 裁切） */
+export const CODE_PREVIEW_LINES = 12
+
+/** 统计代码行数：按换行切分；空串计 0 行 */
+export function countCodeLines(code: string): number {
+  if (code === '') return 0
+  return code.split('\n').length
+}
+
+/** 是否应默认折叠：行数严格大于阈值 */
+export function isCollapsible(code: string, threshold: number = CODE_COLLAPSE_THRESHOLD): boolean {
+  return countCodeLines(code) > threshold
+}
+
+/** 取前 n 行用于预览（纯函数；UI 实际用 CSS 裁切，此函数主要供测试/语义复用） */
+export function previewLines(code: string, n: number): string {
+  if (n <= 0) return ''
+  return code.split('\n').slice(0, n).join('\n')
+}

@@ -9,6 +9,9 @@ import { reportIpcError } from '../utils/ipc'
 /** 会话类快捷键事件名 */
 export const APP_SHORTCUT_EVENT = 'pai:app-shortcut'
 
+/** 命令面板开关事件名（CommandPalette 常驻监听） */
+export const COMMAND_PALETTE_EVENT = 'pai:command-palette'
+
 export type AppShortcutEventDetail = { action: ConversationShortcutAction }
 
 /** 响应会话类快捷键的模块 */
@@ -44,6 +47,11 @@ export function useGlobalShortcuts(): void {
         case 'lock':
           e.preventDefault()
           window.pocketai.lock().catch(reportIpcError('app.lock'))
+          break
+        case 'commandPalette':
+          // 任意模块均可呼出（面板内自行加载数据源）；编辑态同样拦截浏览器打印
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent(COMMAND_PALETTE_EVENT))
           break
         case 'newConv':
         case 'focusSearch':

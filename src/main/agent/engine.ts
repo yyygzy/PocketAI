@@ -351,6 +351,7 @@ export function buildContext(history: MessageRecord[], systemPrompt?: string): A
       if (m.attachments && m.attachments.length > 0) {
         const textAttachments = m.attachments.filter(a => a.type === 'text')
         const imageAttachments = m.attachments.filter(a => a.type === 'image')
+        // kb 类型附件不进上下文（kbId 已在发送时通过 kbRefs 参与检索）
         const text = appendTextAttachments(m.content, textAttachments)
         // 仅最后一条带图消息携带 base64；更早的图片用占位符引用，避免每轮重复发送
         if (imageAttachments.length > 0 && idx === lastImageUserIdx) {

@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
 import { requestSourceJump } from '../knowledge/source-jump'
 import { AttachmentGrid } from '../../components/AttachmentGrid'
+import { ReminderMenu } from '../../components/ReminderMenu'
 import { Markdown } from './Markdown'
 import { fmtTokens, fmtCost } from '../../utils/token'
 import { formatDateTime } from '../../utils/time'
@@ -30,7 +31,8 @@ interface Props {
   provider?: string | null
   /** 本机单价配置（缺省/拉取失败时只显示 token 数） */
   pricing?: UsagePricing | null
-  onToggleSelect?: (id: string) => void
+  /** range=true 表示 Shift+点击（由父级执行锚点范围连选） */
+  onToggleSelect?: (id: string, range?: boolean) => void
   onDelete?: (id: string) => void
   onRegenerate?: (id: string) => void
   onResend?: (id: string, newContent?: string) => void
@@ -50,6 +52,8 @@ interface Props {
   onToggleStar?: (id: string, starred: boolean) => void
   /** 多选模式：禁用右键菜单（与点选操作冲突） */
   selectMode?: boolean
+  /** 基于本条消息创建定时提醒（右键「提醒我」；ChatModule 提供，Agent 侧不传） */
+  onRemind?: (id: string, fireAt: number) => void
 }
 
 /** React.memo：流式输出时只重渲染变化的消息，其余消息 props 不变即跳过（配合 ChatView 的 useCallback） */
@@ -79,7 +83,8 @@ const MessageBubbleImpl: React.FC<Props> = ({
   onForward,
   starred,
   onToggleStar,
-  selectMode
+  selectMode,
+  onRemind
 }) => {
   const { t, lang } = useI18n()
   const isUser = role === 'user'
@@ -90,6 +95,8 @@ const MessageBubbleImpl: React.FC<Props> = ({
   const selectable = !!messageId && !streaming
   // 右键菜单：点项即执行，点击外部/Esc 关闭
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  // 「提醒我」时间预设浮层锚点
+  const [remindMenu, setRemindMenu] = useState<{ x: number; y: number } | null>(null)
   // 用量详情弹窗
   const [usageModal, setUsageModal] = useState(false)
   // TTS：全局单例当前朗读的消息 id（仅 assistant 非流式可朗读）
@@ -159,6 +166,12 @@ const MessageBubbleImpl: React.FC<Props> = ({
     if (!isUser && onRegenerate) ctxItems.push({ key: 'regen', label: t('chatview.regenerate'), onClick: () => onRegenerate(messageId) })
     if (onFork) ctxItems.push({ key: 'fork', label: t('chatview.fork'), onClick: () => onFork(messageId) })
     if (onSaveAsNote) ctxItems.push({ key: 'note', label: t('chatview.saveNote'), onClick: () => onSaveAsNote(messageId) })
+    if (onRemind)
+      ctxItems.push({
+        key: 'remind',
+        label: `⏰ ${t('reminder.menu.remindMe')}`,
+        onClick: () => setRemindMenu({ x: ctxMenu.x, y: ctxMenu.y })
+      })
     if (onToggleStar) ctxItems.push({ key: 'star', label: starred ? t('chat.unstar') : t('chat.star'), onClick: () => onToggleStar(messageId, !starred) })
     if (onDelete) ctxItems.push({ key: 'del', label: t('common.delete'), danger: true, onClick: handleDelete })
   }
@@ -192,7 +205,9 @@ const MessageBubbleImpl: React.FC<Props> = ({
           <input
             type="checkbox"
             checked={!!selected}
-            onChange={() => onToggleSelect?.(messageId)}
+            // change 事件不带 shiftKey，用 click 捕获 Shift 连选（键盘空格触发的 click 视为普通点选）
+            onClick={(e) => onToggleSelect?.(messageId, e.shiftKey)}
+            onChange={() => { /* 受控组件占位，选中逻辑在 onClick */ }}
             className={`w-4 h-4 rounded cursor-pointer accent-[var(--color-accent)] ${hovered || selected ? 'opacity-100' : 'opacity-0'} transition-opacity`}
           />
         </div>
@@ -501,6 +516,18 @@ const MessageBubbleImpl: React.FC<Props> = ({
             ))}
           </div>
         </>
+      )}
+
+      {/* 「提醒我」时间预设浮层：选择后交父级按消息 id 取正文建提醒 */}
+      {remindMenu && onRemind && (
+        <ReminderMenu
+          anchor={remindMenu}
+          onClose={() => setRemindMenu(null)}
+          onPick={(fireAt) => {
+            setRemindMenu(null)
+            onRemind(messageId, fireAt)
+          }}
+        />
       )}
 
       {/* 消息级用量弹窗：token 分解 + 命中单价 + 估算费用 */}

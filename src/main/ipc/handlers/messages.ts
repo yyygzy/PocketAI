@@ -21,12 +21,22 @@ interface MessageSearchRow {
   conversation_title?: string | null
   role: string
   content: string
+  /** LIKE 兜底路径带出（附件名命中时生成 📎 snippet 用）；FTS 路径不查询该列 */
+  attachments?: string | null
   snippet?: string | null
   created_at: number
 }
 
 /** 用量 CSV 内容上限（约 2 万行明细，远超正常月度导出量，仅做防灌爆） */
 const USAGE_CSV_MAX_CHARS = 5_000_000
+
+/**
+ * 附件文件名匹配 SQL 片段：json_each 展开 attachments JSON 数组，instr 子串匹配（避免 LIKE 通配符转义问题；
+ * lower() 双侧保持与 LIKE/FTS 一致的 ASCII 大小写不敏感语义）。锚定 $.name 字段，不会误命中图片 base64 data。
+ */
+const ATT_NAME_MATCH = `EXISTS (SELECT 1 FROM json_each(m.attachments) je WHERE instr(lower(json_extract(je.value, '$.name')), lower(?)) > 0)`
+/** 附件命中时的 snippet：📎 前缀 + 文件名（与 agent-shared 附件清单同款标记） */
+const ATT_NAME_SNIPPET = `(SELECT '📎 ' || json_extract(je.value, '$.name') FROM json_each(m.attachments) je WHERE instr(lower(json_extract(je.value, '$.name')), lower(?)) > 0 LIMIT 1)`
 
 /** 导出文件名时间戳 YYYYMMDD-HHmm（与管家报告导出同手法） */
 function usageFileTimestamp(): string {
@@ -43,6 +53,12 @@ export function registerMessageHandlers(): void {
     messageRepo.delete(id)
     return { ok: true }
   }, argsSchema(idSchema))
+
+  // 批量删除：单 IPC 删除多条消息（上限 500）
+  safeHandle(IPC.MESSAGE_DELETE_BATCH, (_e, ids: string[]) => {
+    const deleted = messageRepo.deleteBatch(ids)
+    return { ok: true, deleted }
+  }, argsSchema(z.array(idSchema).min(1).max(500)))
 
   // 截断重跑：删除目标消息及同会话其后全部消息（Agent 线性历史「重新运行」）
   safeHandle(IPC.MESSAGE_TRUNCATE_FROM, (_e, id: string) => {
@@ -172,20 +188,36 @@ export function registerMessageHandlers(): void {
     const shortQuery = [...q].length < 3
 
     // FTS5 MATCH（trigram，中文 3+ 字，英文连续 3+ 字母）
+    // UNION 附件名匹配分支：content 未命中但附件文件名命中的消息也可搜到（NOT IN 去重已命中行）
     if (!shortQuery) {
       try {
         const ftsSql = `
-          SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
-                 m.created_at, c.title AS conversation_title,
-                 snippet(messages_fts, 0, ?, ?, '…', 128) AS snippet
-          FROM messages_fts fts
-          JOIN messages m ON m.id = fts.message_id
-          JOIN conversations c ON c.id = m.conversation_id
-          WHERE messages_fts MATCH ?${asstFilter}${dateFilter}${dateToFilter}
-          ORDER BY m.created_at DESC
+          SELECT * FROM (
+            SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
+                   m.created_at, c.title AS conversation_title,
+                   snippet(messages_fts, 0, ?, ?, '…', 128) AS snippet
+            FROM messages_fts fts
+            JOIN messages m ON m.id = fts.message_id
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE messages_fts MATCH ?${asstFilter}${dateFilter}${dateToFilter}
+            UNION
+            SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
+                   m.created_at, c.title AS conversation_title,
+                   ${ATT_NAME_SNIPPET} AS snippet
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE m.attachments IS NOT NULL AND ${ATT_NAME_MATCH}
+              AND m.id NOT IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ?)
+              ${asstFilter}${dateFilter}${dateToFilter}
+          )
+          ORDER BY created_at DESC
           LIMIT ? OFFSET ?
         `
         const ftsParams: (string | number)[] = [SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE, q]
+        if (assistantId) ftsParams.push(assistantId)
+        if (dateRange?.from != null) ftsParams.push(dateRange.from)
+        if (dateRange?.to != null) ftsParams.push(dateRange.to)
+        ftsParams.push(q, q, q) // 附件分支：snippet 取名 / EXISTS 匹配 / NOT IN 去重
         if (assistantId) ftsParams.push(assistantId)
         if (dateRange?.from != null) ftsParams.push(dateRange.from)
         if (dateRange?.to != null) ftsParams.push(dateRange.to)
@@ -206,17 +238,18 @@ export function registerMessageHandlers(): void {
     }
 
     // Fallback: LIKE 兜底（短查询、特殊字符、未建 FTS5 索引等）
+    // 附件名也参与匹配：content LIKE 或 attachments 中任一文件名命中
     const likeSql = `
-      SELECT m.id AS msg_id, m.conversation_id, m.role, m.content,
+      SELECT m.id AS msg_id, m.conversation_id, m.role, m.content, m.attachments,
              m.created_at, c.title AS conversation_title
       FROM messages m
       JOIN conversations c ON c.id = m.conversation_id
-      WHERE m.content LIKE ?${asstFilter}${dateFilter}${dateToFilter}
+      WHERE (m.content LIKE ? OR (m.attachments IS NOT NULL AND ${ATT_NAME_MATCH}))${asstFilter}${dateFilter}${dateToFilter}
       ORDER BY m.created_at DESC
       LIMIT ? OFFSET ?
     `
     const like = `%${q.replace(/[%_]/g, '\\$&')}%`
-    const likeParams: (string | number)[] = [like]
+    const likeParams: (string | number)[] = [like, q]
     if (assistantId) likeParams.push(assistantId)
     if (dateRange?.from != null) likeParams.push(dateRange.from)
     if (dateRange?.to != null) likeParams.push(dateRange.to)
@@ -233,6 +266,15 @@ export function registerMessageHandlers(): void {
         const before = start > 0 ? '…' : ''
         const after = end < content.length ? '…' : ''
         snippet = before + content.slice(start, idx) + SNIPPET_MARK_OPEN + content.slice(idx, idx + q.length) + SNIPPET_MARK_CLOSE + content.slice(idx + q.length, end) + after
+      } else if (r.attachments) {
+        // 内容未命中 → 按附件名生成 snippet（📎 标记 + 文件名）
+        try {
+          const atts = JSON.parse(r.attachments) as { name?: string }[]
+          const hit = atts.find((a) => typeof a.name === 'string' && a.name.toLowerCase().includes(lq))
+          snippet = hit ? '📎 ' + hit.name : content.slice(0, 128)
+        } catch {
+          snippet = content.slice(0, 128)
+        }
       } else {
         snippet = content.slice(0, 128)
       }

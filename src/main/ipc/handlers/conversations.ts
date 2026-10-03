@@ -1,5 +1,5 @@
 // 会话管理 IPC：增删改查 / 导出（JSON / Markdown / 加密包）/ 导入 / Fork
-import { BrowserWindow, dialog } from 'electron'
+import { BrowserWindow, dialog, ipcMain, nativeImage } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -24,6 +24,14 @@ import {
 } from '../../../shared/schemas/conversations'
 import { idSchema } from '../../../shared/schemas/providers'
 import { isSmartTitleEnabled, setSmartTitleEnabled } from '../../conversation/title-config'
+import { cleanupDragTempDir, writeDragTempFile, isDragTempPath, DRAG_CONTENT_MAX_CHARS } from '../../export/drag-temp'
+
+/** 拖拽图标（Windows startDrag 要求非空 icon）：内置 1×1 透明 PNG */
+function dragIcon(): Electron.NativeImage {
+  return nativeImage.createFromDataURL(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  )
+}
 
 export function registerConversationHandlers(): void {
   safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean, archivedOnly?: boolean) =>
@@ -110,6 +118,10 @@ export function registerConversationHandlers(): void {
     conversationRepo.setNote(convId, note)
     return { ok: true }
   }, argsSchema(idSchema, z.string().max(200).nullable()))
+  safeHandle(IPC.CONVERSATION_SET_SYSTEM_PROMPT_OVERRIDE, (_e, convId: string, text: string | null) => {
+    conversationRepo.setSystemPromptOverride(convId, text)
+    return { ok: true }
+  }, argsSchema(idSchema, z.string().max(100_000).nullable()))
   safeHandle(IPC.CONVERSATION_EXPORT, (_e, id: string) => {
     const conv = conversationRepo.get(id)
     if (!conv) return { ok: false, error: '会话不存在' }
@@ -218,6 +230,33 @@ export function registerConversationHandlers(): void {
     defaultName: z.string().min(1).max(200),
     content: z.string().min(1).max(5 * 1024 * 1024)
   })))
+
+  // 导出拖拽到桌面（Electron 文件拖出）：
+  // prepare-drag（invoke，pointerdown 预调）：内容写到 os.tmpdir()/pocketai-export/ 下，返回路径
+  // start-drag（send，dragstart 同步调）：校验路径归属后 webContents.startDrag
+  safeHandle(IPC.EXPORT_PREPARE_DRAG, (_e, payload: { defaultName: string; ext: 'md' | 'png'; content: string }) => {
+    try {
+      // 每次准备时顺手清理过期临时文件（惰性清理，无需定时器）
+      cleanupDragTempDir()
+      const filePath = writeDragTempFile(payload.defaultName, payload.ext, payload.content)
+      return { ok: true as const, path: filePath }
+    } catch (err) {
+      return { ok: false as const, error: errMsg(err) }
+    }
+  }, argsSchema(z.object({
+    defaultName: z.string().min(1).max(200),
+    ext: z.enum(['md', 'png']),
+    content: z.string().min(1).max(DRAG_CONTENT_MAX_CHARS)
+  })))
+
+  // dragstart 是同步事件，只能走 send（不能用 invoke 等待返回值）；
+  // 安全关键：渲染端可传任意路径，必须校验归属拖拽临时目录，否则等于任意文件拖出泄露
+  ipcMain.on(IPC.EXPORT_START_DRAG, (e, payload: unknown) => {
+    const p = payload as { path?: unknown }
+    if (typeof p?.path !== 'string' || !isDragTempPath(p.path)) return
+    if (!fs.existsSync(p.path)) return
+    e.sender.startDrag({ file: p.path, icon: dragIcon() })
+  })
 
   // 单条导出 PDF：渲染端生成自包含 HTML，主进程隐藏窗口 printToPDF 后存盘（见 export/pdf.ts）
   safeHandle(IPC.CONVERSATION_EXPORT_PDF, async (e, id: string, html: string) => {

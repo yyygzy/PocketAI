@@ -1,6 +1,6 @@
 // 应用内快捷键纯函数测试（node 环境，事件/元素用鸭子类型对象构造）
 import { describe, expect, it } from 'vitest'
-import { isEditableTarget, matchAppShortcut, type ShortcutKeyLike } from '../src/renderer/src/utils/shortcuts'
+import { isEditableTarget, matchAppShortcut, filterShortcutForContext, type ShortcutKeyLike, type AppShortcutMatch } from '../src/renderer/src/utils/shortcuts'
 
 function key(partial: Partial<ShortcutKeyLike> & Pick<ShortcutKeyLike, 'key'>): ShortcutKeyLike {
   return { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, target: null, ...partial }
@@ -22,6 +22,11 @@ describe('matchAppShortcut 修饰键组合', () => {
     expect(matchAppShortcut(key({ key: 'w', ctrlKey: true }), { running: false })).toEqual({ id: 'closeTab' })
     expect(matchAppShortcut(key({ key: ',', ctrlKey: true }), { running: false })).toEqual({ id: 'openSettings' })
     expect(matchAppShortcut(key({ key: 'l', ctrlKey: true }), { running: false })).toEqual({ id: 'lock' })
+  })
+
+  it('Ctrl+P（⌘+P）命中全局命令面板', () => {
+    expect(matchAppShortcut(key({ key: 'p', ctrlKey: true }), { running: false })).toEqual({ id: 'commandPalette' })
+    expect(matchAppShortcut(key({ key: 'P', metaKey: true }), { running: false })).toEqual({ id: 'commandPalette' })
   })
 
   it('Ctrl+1~9 命中切标签并带序号；0 不命中', () => {
@@ -98,5 +103,30 @@ describe('isEditableTarget', () => {
     expect(isEditableTarget(fakeEl('DIV', true) as EventTarget)).toBe(true)
     expect(isEditableTarget(fakeEl('DIV') as EventTarget)).toBe(false)
     expect(isEditableTarget(fakeEl('BUTTON') as EventTarget)).toBe(false)
+  })
+})
+
+describe('filterShortcutForContext', () => {
+  const m = (id: AppShortcutMatch['id']): AppShortcutMatch => ({ id })
+
+  it('detached 放行会话类四动作 + lock；屏蔽 tab/closeTab/openSettings', () => {
+    expect(filterShortcutForContext(m('newConv'), 'detached')?.id).toBe('newConv')
+    expect(filterShortcutForContext(m('focusSearch'), 'detached')?.id).toBe('focusSearch')
+    expect(filterShortcutForContext(m('focusComposer'), 'detached')?.id).toBe('focusComposer')
+    expect(filterShortcutForContext(m('abort'), 'detached')?.id).toBe('abort')
+    expect(filterShortcutForContext(m('lock'), 'detached')?.id).toBe('lock')
+    expect(filterShortcutForContext(m('tab'), 'detached')).toBeNull()
+    expect(filterShortcutForContext(m('closeTab'), 'detached')).toBeNull()
+    expect(filterShortcutForContext(m('openSettings'), 'detached')).toBeNull()
+    // 命令面板仅主窗：独立窗无模块切换，屏蔽
+    expect(filterShortcutForContext(m('commandPalette'), 'detached')).toBeNull()
+  })
+
+  it('popup 仅放行 newConv；命令面板在浮窗也屏蔽', () => {
+    expect(filterShortcutForContext(m('newConv'), 'popup')?.id).toBe('newConv')
+    expect(filterShortcutForContext(m('abort'), 'popup')).toBeNull()
+    expect(filterShortcutForContext(m('tab'), 'popup')).toBeNull()
+    expect(filterShortcutForContext(m('lock'), 'popup')).toBeNull()
+    expect(filterShortcutForContext(m('commandPalette'), 'popup')).toBeNull()
   })
 })

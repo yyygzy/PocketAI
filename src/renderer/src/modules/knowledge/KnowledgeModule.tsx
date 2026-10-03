@@ -11,6 +11,7 @@ import { BUILTIN_EMBED_PROVIDER_ID, BUILTIN_EMBED_MODEL } from '../../../../shar
 import KbAskPanel from './KbAskPanel'
 import { KbAskRoam } from './KbAskRoam'
 import { consumePendingSourceJump, KB_SOURCE_JUMP_EVENT } from './source-jump'
+import { consumePendingKb, OPEN_KB_EVENT } from '../../utils/palette-nav'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { reportIpcError } from '../../utils/ipc'
@@ -47,6 +48,22 @@ export const KnowledgeModule: React.FC = () => {
     const pending = consumePendingSourceJump()
     if (pending) consume(pending)
     return () => window.removeEventListener(KB_SOURCE_JUMP_EVENT, handler)
+  }, [])
+
+  // 命令面板：打开指定知识库（已挂载即时消费；未挂载由 pending 兜底）
+  useEffect(() => {
+    const openKb = (kbId: string) => {
+      setMode('detail')
+      setSelectedId(kbId)
+    }
+    const handler = (e: Event) => {
+      const kbId = (e as CustomEvent<{ kbId: string }>).detail?.kbId
+      if (kbId) openKb(kbId)
+    }
+    window.addEventListener(OPEN_KB_EVENT, handler)
+    const pending = consumePendingKb()
+    if (pending) openKb(pending)
+    return () => window.removeEventListener(OPEN_KB_EVENT, handler)
   }, [])
 
   const selected = kbs.find((k) => k.id === selectedId) ?? null

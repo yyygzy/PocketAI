@@ -28,6 +28,7 @@ import { registerLockHandlers } from './handlers/lock'
 import { registerStewardHandlers } from './handlers/steward'
 import { registerPreferenceHandlers } from './handlers/preferences'
 import { registerFileHandlers } from './handlers/files'
+import { registerReminderHandlers } from './handlers/reminders'
 
 export function registerIpcHandlers(): void {
   registerSystemHandlers()
@@ -55,6 +56,7 @@ export function registerIpcHandlers(): void {
   registerStewardHandlers()
   registerPreferenceHandlers()
   registerFileHandlers()
+  registerReminderHandlers()
 }
 
 // Channels 运行时接线：必须在数据库打开后调用（见 channels.ts 说明）

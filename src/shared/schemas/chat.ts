@@ -31,11 +31,16 @@ const chatTargetSchema = z.object({
 })
 
 const chatAttachmentSchema = z.object({
-  type: z.enum(['image', 'text']),
+  type: z.enum(['image', 'text', 'kb']),
   name: z.string().max(CHAT_MAX_ATTACHMENT_NAME_CHARS),
   mimeType: z.string().max(CHAT_MAX_MIME_CHARS),
   size: z.number().int().nonnegative().max(CHAT_MAX_ATTACHMENT_DATA_CHARS),
-  data: z.string().max(CHAT_MAX_ATTACHMENT_DATA_CHARS)
+  data: z.string().max(CHAT_MAX_ATTACHMENT_DATA_CHARS),
+  kbId: z.string().max(CHAT_MAX_ID_CHARS).optional()
+}).superRefine((att, ctx) => {
+  if (att.type === 'kb' && !att.kbId) {
+    ctx.addIssue({ code: 'custom', message: 'kb 类型附件必须携带 kbId' })
+  }
 })
 
 /** 附件公共收口：数量与 data 总量双重上限 */
@@ -65,7 +70,8 @@ export const sendMessagePayloadSchema = z.object({
   targets: z.array(chatTargetSchema).min(1, '至少需要一个目标模型').max(CHAT_MAX_TARGETS),
   agentMode: z.boolean().optional(),
   attachments: attachmentsField.optional(),
-  unattended: z.boolean().optional()
+  unattended: z.boolean().optional(),
+  kbRefs: z.array(z.string().max(CHAT_MAX_ID_CHARS)).max(10).optional()
 })
 
 /** CHAT_REGENERATE 入参 */

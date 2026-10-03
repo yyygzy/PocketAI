@@ -19,6 +19,7 @@ export type AppShortcutId =
   | 'focusSearch'
   | 'focusComposer'
   | 'abort'
+  | 'commandPalette' // 全局命令面板（仅主窗；filterShortcutForContext 默认屏蔽）
 
 export interface AppShortcutMatch {
   id: AppShortcutId
@@ -62,6 +63,8 @@ export function matchAppShortcut(e: ShortcutKeyLike, ctx: { running: boolean }):
         return { id: 'newConv' }
       case 'k':
         return { id: 'focusSearch' }
+      case 'p':
+        return { id: 'commandPalette' }
       case '/':
         return { id: 'focusComposer' }
       default:
@@ -87,4 +90,33 @@ export function matchAppShortcut(e: ShortcutKeyLike, ctx: { running: boolean }):
 export function modLabel(): string {
   const platform = typeof navigator !== 'undefined' ? navigator.platform ?? '' : ''
   return /mac/i.test(platform) ? '⌘' : 'Ctrl'
+}
+
+/** 非主窗口上下文：detached=独立窗（单模块无标签栏）、popup=快捷浮窗（简易问答） */
+export type ShortcutContext = 'detached' | 'popup'
+
+/**
+ * 按窗口上下文裁剪快捷键动作（纯函数）：
+ * - detached：放行会话类四动作 + lock；屏蔽 tab/closeTab（无标签栏）与 openSettings（单模块无模块切换）
+ * - popup：仅放行 newConv（清空重开一轮问答）；其余由浮窗自身局部处理
+ * 返回 null 表示该上下文不响应此动作。
+ */
+export function filterShortcutForContext(
+  match: AppShortcutMatch,
+  ctx: ShortcutContext
+): AppShortcutMatch | null {
+  if (ctx === 'popup') {
+    return match.id === 'newConv' ? match : null
+  }
+  // detached
+  switch (match.id) {
+    case 'newConv':
+    case 'focusSearch':
+    case 'focusComposer':
+    case 'abort':
+    case 'lock':
+      return match
+    default:
+      return null
+  }
 }

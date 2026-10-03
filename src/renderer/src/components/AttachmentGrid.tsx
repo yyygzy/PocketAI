@@ -6,6 +6,8 @@
 // 改为应用内 lightbox overlay，对小白用户也更直观。
 import React, { useEffect, useState } from 'react'
 import type { ChatAttachment } from '../../../shared/types'
+import { useI18n } from '../i18n'
+import { useToast } from './ToastProvider'
 
 interface Props {
   attachments: ChatAttachment[]
@@ -19,8 +21,13 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`
 }
 
-/** 图片放大 overlay：点击遮罩或按 Esc 关闭，点击图片本身不关闭 */
-export const ImageLightbox: React.FC<{ src: string; onClose: () => void }> = ({ src, onClose }) => {
+/** 图片放大 overlay：点击遮罩或按 Esc 关闭，点击图片本身不关闭；右上角复制到剪贴板 / 另存为 */
+export const ImageLightbox: React.FC<{ src: string; name?: string; onClose: () => void }> = ({ src, name, onClose }) => {
+  const { t } = useI18n()
+  const toast = useToast()
+  const [copied, setCopied] = useState(false)
+  const [busy, setBusy] = useState(false)
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -29,6 +36,33 @@ export const ImageLightbox: React.FC<{ src: string; onClose: () => void }> = ({ 
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const copyImage = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await window.pocketai.writeImageClipboard(src)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch {
+      toast.error(t('lightbox.copyFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveImage = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const r = await window.pocketai.saveDataUrlImage(src, name)
+      if ('path' in r) toast.success(t('lightbox.saved'))
+    } catch {
+      toast.error(t('lightbox.saveFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center cursor-zoom-out p-4"
@@ -36,6 +70,34 @@ export const ImageLightbox: React.FC<{ src: string; onClose: () => void }> = ({ 
       role="dialog"
       aria-modal="true"
     >
+      <div className="absolute top-3 right-3 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          onClick={copyImage}
+          disabled={busy}
+          title={copied ? t('lightbox.copiedImage') : t('lightbox.copyImage')}
+          className="px-2.5 py-1 text-xs rounded-lg border border-white/25 bg-black/50 text-white/90 hover:bg-black/70 disabled:opacity-50"
+        >
+          {copied ? t('lightbox.copiedImage') : t('lightbox.copyImage')}
+        </button>
+        <button
+          type="button"
+          onClick={saveImage}
+          disabled={busy}
+          title={t('lightbox.saveImage')}
+          className="px-2.5 py-1 text-xs rounded-lg border border-white/25 bg-black/50 text-white/90 hover:bg-black/70 disabled:opacity-50"
+        >
+          {t('lightbox.saveImage')}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          title="✕"
+          className="w-7 h-7 flex items-center justify-center rounded-lg border border-white/25 bg-black/50 text-white/90 hover:bg-black/70"
+        >
+          ✕
+        </button>
+      </div>
       <img
         src={src}
         className="max-w-full max-h-full object-contain rounded cursor-default"
@@ -46,8 +108,8 @@ export const ImageLightbox: React.FC<{ src: string; onClose: () => void }> = ({ 
 }
 
 export const AttachmentGrid: React.FC<Props> = ({ attachments, align = 'end' }) => {
-  /** 当前放大的图片 data URL；null 表示关闭 */
-  const [zoomSrc, setZoomSrc] = useState<string | null>(null)
+  /** 当前放大的图片（data URL + 文件名）；null 表示关闭 */
+  const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null)
 
   if (attachments.length === 0) return null
   return (
@@ -61,8 +123,16 @@ export const AttachmentGrid: React.FC<Props> = ({ attachments, align = 'end' }) 
               alt={att.name}
               title={att.name}
               className="w-20 h-20 object-cover rounded-lg border border-[var(--color-border)] cursor-zoom-in"
-              onClick={() => setZoomSrc(att.data)}
+              onClick={() => setZoom({ src: att.data, name: att.name })}
             />
+          ) : att.type === 'kb' ? (
+            <div
+              key={`${att.name}-${i}`}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-muted)]"
+              title={`${att.name}`}
+            >
+              📚 <span className="truncate max-w-[120px] text-[var(--color-text)]">{att.name}</span>
+            </div>
           ) : (
             <div
               key={`${att.name}-${i}`}
@@ -74,7 +144,7 @@ export const AttachmentGrid: React.FC<Props> = ({ attachments, align = 'end' }) 
           )
         )}
       </div>
-      {zoomSrc && <ImageLightbox src={zoomSrc} onClose={() => setZoomSrc(null)} />}
+      {zoom && <ImageLightbox src={zoom.src} name={zoom.name} onClose={() => setZoom(null)} />}
     </>
   )
 }

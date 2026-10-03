@@ -11,7 +11,7 @@ interface Props {
   /** 点击「设为当前分支」：切换该轮激活分支（随后父组件退出对比模式） */
   onActivate: (batchIndex: number) => void
   selectedIds: Set<string>
-  onToggleSelect: (id: string) => void
+  onToggleSelect: (id: string, range?: boolean) => void
   onDelete: (id: string) => void
   /** 本机单价配置（透传气泡，分支间可横向比 token/费用） */
   pricing?: UsagePricing | null

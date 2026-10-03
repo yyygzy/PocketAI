@@ -98,3 +98,9 @@ export const conversationCreateArgsSchema = z.tuple([
   z.string().nullable().optional(),
   z.string().optional()
 ])
+
+/** CONVERSATION_SET_SYSTEM_PROMPT_OVERRIDE 入参：(conversationId, text|null) */
+export const conversationSetSystemPromptOverrideArgsSchema = z.tuple([
+  z.string().min(1).max(64),
+  z.string().max(100_000).nullable()
+])
