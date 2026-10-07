@@ -678,6 +678,23 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE conversations ADD COLUMN system_prompt_override TEXT;
     `
+  },
+  {
+    // v40: 消息置顶——会话内钉住关键消息，ChatView 顶部横幅展示；0/1 存布尔
+    version: 40,
+    name: 'message_pinned',
+    up: `
+      ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_messages_pinned ON messages(conversation_id, pinned);
+    `
+  },
+  {
+    // v41: MCP http 传输自定义请求头（如 Authorization: Bearer）；JSON 对象字符串，NULL 视为 {}
+    version: 41,
+    name: 'mcp_server_headers',
+    up: `
+      ALTER TABLE mcp_servers ADD COLUMN headers TEXT;
+    `
   }
 ]
 

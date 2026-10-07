@@ -116,6 +116,7 @@ export default function App() {
         translate: t('tab.translate'),
         image: t('tab.image'),
         sandbox: t('tab.sandbox'),
+        terminal: t('tab.terminal'),
         steward: t('tab.steward'),
         settings: t('tab.settings')
       }

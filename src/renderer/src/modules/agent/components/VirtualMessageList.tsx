@@ -22,6 +22,8 @@ export interface VirtualMessageListProps {
   onRerunMessage?: (id: string, overrideText?: string) => void
   /** 重新生成最后一条 final 助手回复（非流式时由父级传入） */
   onRegenerateMessage?: (id: string) => void
+  /** 右键「提醒我」：按消息 id 取正文建提醒 */
+  onRemindMessage?: (id: string, fireAt: number) => void
   /** 搜索定位：需要滚动到的消息下标（变化时居中滚动） */
   focusIndex?: number | null
   /** 搜索定位：当前高亮的消息 id（外层卡片加 ring） */
@@ -36,6 +38,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   onDeleteMessage,
   onRerunMessage,
   onRegenerateMessage,
+  onRemindMessage,
   focusIndex,
   highlightId
 }) => {
@@ -158,6 +161,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
                   onDelete={onDeleteMessage}
                   onRerun={onRerunMessage}
                   onRegenerate={isLastFinal ? onRegenerateMessage : undefined}
+                  onRemind={onRemindMessage}
                 />
               </div>
             )

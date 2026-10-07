@@ -20,6 +20,8 @@ interface MessageRow {
   usage: string | null
   reply_to_id: string | null
   starred: number
+  /** v40 新增；旧库迁移后必有列，NOT NULL DEFAULT 0 */
+  pinned: number
 }
 
 export function rowToRecord(row: MessageRow): MessageRecord {
@@ -51,7 +53,8 @@ export function rowToRecord(row: MessageRow): MessageRecord {
     sources,
     usage,
     replyToId: row.reply_to_id ?? null,
-    starred: !!row.starred
+    starred: !!row.starred,
+    pinned: !!row.pinned
   }
 }
 
@@ -204,6 +207,14 @@ export const messageRepo = {
       .getHandle()
       .prepare('UPDATE messages SET starred=? WHERE id=?')
       .run(starred ? 1 : 0, id)
+  },
+
+  /** 置顶：会话内钉住关键消息（顶部横幅展示） */
+  setPinned(id: string, pinned: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE messages SET pinned=? WHERE id=?')
+      .run(pinned ? 1 : 0, id)
   },
 
   /** 收藏列表：跨会话统一查看，时间倒序；会话已删除时标题兜底空串 */

@@ -840,6 +840,16 @@ export const ChatModule: React.FC = () => {
     setMessages((prev) => prev.map((m) => (ok.has(m.id) ? { ...m, starred } : m)))
   }, [])
 
+  // 消息置顶：IPC 落库 + 本地 messages 同步（不 reload，零闪烁）
+  const handleToggleMessagePin = useCallback(async (id: string, pinned: boolean) => {
+    try {
+      await window.pocketai.setMessagePinned(id, pinned)
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, pinned } : m)))
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
+  }, [toast, t])
+
   /** 多选消息导出 Markdown：按会话内顺序过滤 → 构建 → 主进程另存为单文件；不清选择 */
   const handleExportMessages = useCallback(async (ids: string[]) => {
     const idSet = new Set(ids)
@@ -1104,6 +1114,33 @@ export const ChatModule: React.FC = () => {
     }
   }, [messages, toast, t])
 
+  // 助手配置导入导出：主进程负责文件对话框与落盘，此处只做结果提示与列表刷新
+  const handleExportAssistants = useCallback(async () => {
+    const r = await window.pocketai.exportAssistants()
+    if (!r.ok) {
+      toast.error(r.error)
+      return
+    }
+    if ('canceled' in r && r.canceled) return
+    if ('count' in r) toast.success(t('rail.exportDone', { count: r.count }))
+  }, [toast, t])
+
+  const handleImportAssistants = useCallback(async () => {
+    const r = await window.pocketai.importAssistants()
+    if (!r.ok) {
+      toast.error(r.error)
+      return
+    }
+    if ('canceled' in r && r.canceled) return
+    if ('imported' in r) {
+      await reloadAssistants()
+      toast.success(t('rail.importDone', { imported: r.imported, overwritten: r.overwritten, skipped: r.skipped }))
+      if (r.droppedKb > 0 || r.droppedSkills > 0) {
+        toast.error(t('rail.importDropped', { kb: r.droppedKb, skills: r.droppedSkills }))
+      }
+    }
+  }, [reloadAssistants, toast, t])
+
   // 消息右键「提醒我」：正文截取 200 字，带会话 id 落库；到点由系统通知
   const handleRemind = useCallback(async (messageId: string, fireAt: number) => {
     const msg = messages.find((m) => m.id === messageId)
@@ -1130,6 +1167,8 @@ export const ChatModule: React.FC = () => {
           onSelect={handleSelectAssistant}
           onEdit={handleEditAssistant}
           onOpenMarket={() => { setMarketDetailId(undefined); setMarketOpen(true) }}
+          onExport={() => void handleExportAssistants()}
+          onImport={() => void handleImportAssistants()}
         />
         <div className="flex-1 min-h-0 flex flex-col">
           <ConversationList
@@ -1198,6 +1237,7 @@ export const ChatModule: React.FC = () => {
         systemPromptOverride={conversations.find((c) => c.id === currentConvId)?.systemPromptOverride ?? null}
         onSetSystemPromptOverride={currentConvId ? (text) => handleSetSystemPromptOverride(currentConvId, text) : undefined}
         onRemind={handleRemind}
+        onTogglePin={handleToggleMessagePin}
       />
 
       {marketOpen && (

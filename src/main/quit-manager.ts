@@ -4,6 +4,7 @@ import { mcpManager } from './mcp/manager'
 import { ollamaRuntime } from './ollama/ollama-runtime'
 import { stopBackupScheduler } from './backup/backup-scheduler'
 import { stopTaskScheduler } from './backup/task-scheduler'
+import { killAllTerminals } from './terminal/terminal-service'
 import { dbService } from './db/database'
 import { createLogger } from './logger'
 
@@ -50,6 +51,7 @@ export async function runCleanupChain(): Promise<void> {
   }
   try { stopBackupScheduler() } catch { /* ignore */ }
   try { stopTaskScheduler() } catch { /* ignore */ }
+  try { killAllTerminals() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
   log.info('清理链完成')
 }
@@ -60,5 +62,6 @@ export function runFallbackCleanup(): void {
   try { ollamaRuntime.cleanup() } catch { /* ignore */ }
   try { stopBackupScheduler() } catch { /* ignore */ }
   try { stopTaskScheduler() } catch { /* ignore */ }
+  try { killAllTerminals() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
 }

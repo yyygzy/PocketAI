@@ -24,8 +24,14 @@ const MCP_MAX_ENV_VALUE_CHARS = 32_768
 /** pip 依赖数量/单项长度——与 python-env 服务层 MAX_REQ_COUNT/MAX_REQ_LINE_LEN 对齐 */
 export const MCP_MAX_PACKAGES = 50
 export const MCP_MAX_PACKAGE_CHARS = 200
+/** http 自定义请求头上限 */
+const MCP_MAX_HEADERS = 32
+const MCP_MAX_HEADER_KEY = 128
+const MCP_MAX_HEADER_VALUE = 4096
 /** URL 字段长度（兜底，协议另由 refine 校验） */
 const MCP_MAX_URL_CHARS = 2048
+/** 试运行参数 JSON 字符串上限（主进程解析前先做长度拦截，防超大 payload 占内存） */
+const MCP_MAX_ARGS_JSON_CHARS = 32 * 1024
 
 /**
  * Server ID：必须与 src/main/mcp/python-env.ts serverDir 的目录名白名单完全一致
@@ -70,6 +76,20 @@ const mcpServerRecordFull = z.object({
       }
     }),
   url: mcpHttpUrlSchema.nullable(),
+  /** http 自定义请求头（如 Authorization）；stdio 由 repo 归一化为 {} */
+  headers: z
+    .record(
+      z.string().min(1).max(MCP_MAX_HEADER_KEY),
+      z.string().max(MCP_MAX_HEADER_VALUE)
+    )
+    .superRefine((headers, ctx) => {
+      if (Object.keys(headers).length > MCP_MAX_HEADERS) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `请求头不能超过 ${MCP_MAX_HEADERS} 项`
+        })
+      }
+    }),
   enabled: z.boolean(),
   createdAt: z.number().int().nonnegative(),
   pythonPackages: z
@@ -81,6 +101,21 @@ const mcpServerRecordFull = z.object({
 export const mcpServerSaveSchema = mcpServerRecordFull
   .partial()
   .extend({ name: z.string().min(1).max(MCP_MAX_NAME_CHARS) })
+
+/**
+ * MCP_SERVER_CALL_TOOL 入参（面板手动试运行）。
+ * toolName 字符集与 manager.ts MCP_TOOL_NAME_RE 保持一致（两处独立定义，勿只改一处）；
+ * argsJson 为未解析的 JSON 字符串，解析失败在主进程 handler 内转结构化错误。
+ */
+export const mcpCallToolSchema = z.object({
+  serverId: mcpServerIdSchema,
+  toolName: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/, '工具名不合法'),
+  argsJson: z.string().max(MCP_MAX_ARGS_JSON_CHARS)
+})
 
 /**
  * PYTHON_PIP_SOURCE_SET 入参：'official' | 'tuna' | 自定义 http(s) 镜像 URL。

@@ -14,7 +14,7 @@ interface SidebarProps {
   onToggleCollapse: () => void
 }
 
-const MODULE_IDS: ModuleId[] = ['chat', 'agent', 'skills', 'knowledge', 'files', 'notes', 'translate', 'image', 'sandbox', 'steward', 'settings']
+const MODULE_IDS: ModuleId[] = ['chat', 'agent', 'skills', 'knowledge', 'files', 'notes', 'translate', 'image', 'sandbox', 'terminal', 'steward', 'settings']
 const MODULE_ICONS: Record<ModuleId, string> = {
   chat: '💬',
   agent: '🤖',
@@ -25,6 +25,7 @@ const MODULE_ICONS: Record<ModuleId, string> = {
   translate: '🌐',
   image: '🎨',
   sandbox: '🧩',
+  terminal: '🖥️',
   steward: '🛠️',
   settings: '⚙️'
 }

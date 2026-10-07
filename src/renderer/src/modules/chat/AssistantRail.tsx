@@ -8,9 +8,11 @@ interface Props {
   onSelect: (id: string) => void
   onEdit?: (id: string) => void
   onOpenMarket: () => void
+  onExport?: () => void
+  onImport?: () => void
 }
 
-export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect, onEdit, onOpenMarket }) => {
+export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect, onEdit, onOpenMarket, onExport, onImport }) => {
   const { t } = useI18n()
   // 助手搜索：名称/描述大小写不敏感过滤；空串显示全部
   const [q, setQ] = useState('')
@@ -22,13 +24,33 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
     <div className="shrink-0 border-b border-[var(--color-border)]">
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
         <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">{t('rail.assistant')}</span>
-        <button
-          onClick={onOpenMarket}
-          className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] flex items-center gap-1"
-          title={t('rail.marketTitle')}
-        >
-          {t('rail.market')}
-        </button>
+        <div className="flex items-center gap-2">
+          {onImport && (
+            <button
+              onClick={onImport}
+              className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+              title={t('rail.importTitle')}
+            >
+              {t('rail.import')}
+            </button>
+          )}
+          {onExport && (
+            <button
+              onClick={onExport}
+              className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
+              title={t('rail.exportTitle')}
+            >
+              {t('rail.export')}
+            </button>
+          )}
+          <button
+            onClick={onOpenMarket}
+            className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] flex items-center gap-1"
+            title={t('rail.marketTitle')}
+          >
+            {t('rail.market')}
+          </button>
+        </div>
       </div>
       <div className="px-2 pb-1.5">
         <input

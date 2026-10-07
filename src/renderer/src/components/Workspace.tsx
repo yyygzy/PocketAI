@@ -16,6 +16,7 @@ const NotesModule = lazy(() => import('../modules/notes/NotesModule').then((m) =
 const TranslateModule = lazy(() => import('../modules/translate/TranslateModule').then((m) => ({ default: m.TranslateModule })))
 const ImageModule = lazy(() => import('../modules/image/ImageModule').then((m) => ({ default: m.ImageModule })))
 const SandboxModule = lazy(() => import('../modules/sandbox/SandboxModule').then((m) => ({ default: m.SandboxModule })))
+const TerminalModule = lazy(() => import('../modules/terminal/TerminalModule').then((m) => ({ default: m.TerminalModule })))
 
 interface WorkspaceProps {
   activeModule: ModuleId
@@ -146,6 +147,18 @@ const ModuleBody: React.FC<{ id: ModuleId }> = ({ id }) => {
         <div className="flex-1 min-h-0">
           <Suspense fallback={<ModuleFallback />}>
             <SandboxModule />
+          </Suspense>
+        </div>
+      </div>
+    )
+  }
+  if (id === 'terminal') {
+    return (
+      <div className="flex-1 overflow-hidden p-5 flex flex-col">
+        <Header title={t('workspace.terminal.title')} subtitle={t('workspace.terminal.subtitle')} />
+        <div className="flex-1 min-h-0">
+          <Suspense fallback={<ModuleFallback />}>
+            <TerminalModule />
           </Suspense>
         </div>
       </div>

@@ -9,6 +9,15 @@ function vecTableName(dim: number): string {
   return `kb_vec_${dim}`
 }
 
+/** kb_vec_map 由 ensureTable 懒创建（首次 insert/search 时）：全新库从未写过向量时表不存在，
+ *  而索引/删除流程会先走清理路径，此处守卫防「no such table」误报为文档索引失败 */
+function mapTableExists(): boolean {
+  return !!dbService
+    .getHandle()
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+    .get(MAP_TABLE)
+}
+
 export const kbVecRepo = {
   /** 确保某维度的 vec0 表与映射表存在（幂等） */
   ensureTable(dim: number): void {
@@ -45,6 +54,7 @@ export const kbVecRepo = {
 
   /** 删除单个 chunk 的向量索引 */
   deleteByChunk(chunkId: string): void {
+    if (!mapTableExists()) return
     const db = dbService.getHandle()
     const row = db.prepare(`SELECT vec_rowid, dim FROM ${MAP_TABLE} WHERE chunk_id=?`).get(chunkId) as
       | { vec_rowid: number; dim: number }
@@ -56,6 +66,7 @@ export const kbVecRepo = {
 
   /** 删除某文档全部分块的向量索引 */
   deleteByDoc(docId: string): void {
+    if (!mapTableExists()) return
     const db = dbService.getHandle()
     const rows = db
       .prepare(
@@ -76,6 +87,7 @@ export const kbVecRepo = {
 
   /** 删除某知识库全部分块的向量索引 */
   deleteByKb(kbId: string): void {
+    if (!mapTableExists()) return
     const db = dbService.getHandle()
     const rows = db
       .prepare(

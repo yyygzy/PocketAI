@@ -236,7 +236,8 @@ export class McpManager extends EventEmitter {
       if (!record.url) throw new Error('HTTP 传输缺少 url')
       return new HttpJsonRpcClient({
         url: record.url,
-        requestTimeout: TOOL_CALL_TIMEOUT
+        requestTimeout: TOOL_CALL_TIMEOUT,
+        headers: record.headers ?? {}
       })
     }
 
@@ -344,14 +345,32 @@ export class McpManager extends EventEmitter {
         TOOL_CALL_TIMEOUT
       )
     } catch (e) {
-      // HTTP 传输无进程退出事件，连接级失败不会被 handleExit 感知；
-      // 若保持 running，UI 显示服务正常但后续调用必失败，需用户手动 restart。
-      // stdio 的进程死亡由 handleExit 收口、单次超时不代表服务不可用，故不联动。
-      // 业务级错误（McpBusinessError）是 server 正常响应，也不联动。
+      // HTTP 传输无进程退出事件，连接级失败不会被 handleExit 感知（stdio 由 handleExit 自动重启）。
+      // 先尝试透明恢复：重建 client + 握手 + 刷新 tools（restart），再原样重试一次；
+      // 重试仍失败才置 error 状态——保持「失败后需用户手动处理」的既有语义，但消除单次网络抖动误伤。
+      // 业务级错误（McpBusinessError）是 server 正常响应，不联动。
       if (entry.record.transport === 'http' && e instanceof McpTransportError) {
-        entry.status = 'error'
-        entry.lastError = errMsg(e)
-        this.emitStatus(id, 'error', entry.lastError)
+        log.warn(`HTTP 传输调用失败，尝试重连后重试一次: ${errMsg(e)}`)
+        try {
+          await this.restart(id)
+          // 注意：restart 内 doStart 会替换 runtimes map 里的 entry，必须重新取当前 entry
+          const cur = this.runtimes.get(id)
+          if (!cur?.client || cur.status !== 'running') {
+            throw new Error('重连后 MCP Server 未处于运行状态')
+          }
+          return await cur.client.request<unknown>(
+            'tools/call',
+            { name, arguments: args ?? {} },
+            TOOL_CALL_TIMEOUT
+          )
+        } catch (retryErr) {
+          // 同样作用于当前 entry（restart 失败时 doStart 已置 error 并 emit，这里兜底对齐）
+          const cur = this.runtimes.get(id) ?? entry
+          cur.status = 'error'
+          cur.lastError = errMsg(retryErr)
+          this.emitStatus(id, 'error', cur.lastError)
+          throw retryErr
+        }
       }
       throw e
     }

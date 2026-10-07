@@ -61,7 +61,8 @@ const baseRow = {
   sources: null,
   usage: null,
   reply_to_id: null,
-  starred: 0
+  starred: 0,
+  pinned: 0
 }
 
 describe('rowToRecord — DB 行映射为 MessageRecord', () => {
@@ -158,6 +159,14 @@ describe('rowToRecord — DB 行映射为 MessageRecord', () => {
     delete legacy.starred
     expect(rowToRecord(legacy as unknown as Parameters<typeof rowToRecord>[0]).starred).toBe(false)
   })
+
+  it('pinned 映射为 boolean（0→false，1→true，缺列→false）', () => {
+    expect(rowToRecord({ ...baseRow, pinned: 0 }).pinned).toBe(false)
+    expect(rowToRecord({ ...baseRow, pinned: 1 }).pinned).toBe(true)
+    const legacy = { ...baseRow } as Record<string, unknown>
+    delete legacy.pinned
+    expect(rowToRecord(legacy as unknown as Parameters<typeof rowToRecord>[0]).pinned).toBe(false)
+  })
 })
 
 describe('deleteBatch — 批量删除', () => {
@@ -204,6 +213,19 @@ describe('setStarred — 收藏标记写入', () => {
 
   it('starred=false → UPDATE starred=0', () => {
     messageRepo.setStarred('m2', false)
+    expect(state.lastParams).toEqual([0, 'm2'])
+  })
+})
+
+describe('setPinned — 置顶标记写入', () => {
+  it('pinned=true → UPDATE pinned=1', () => {
+    messageRepo.setPinned('m1', true)
+    expect(state.lastSql).toContain('UPDATE messages SET pinned=?')
+    expect(state.lastParams).toEqual([1, 'm1'])
+  })
+
+  it('pinned=false → UPDATE pinned=0', () => {
+    messageRepo.setPinned('m2', false)
     expect(state.lastParams).toEqual([0, 'm2'])
   })
 })

@@ -124,6 +124,8 @@ interface Props {
   onSetSystemPromptOverride?: (text: string | null) => void
   /** 消息右键「提醒我」：父级按 id 取正文并调 IPC 建提醒 */
   onRemind?: (messageId: string, fireAt: number) => void
+  /** 切换消息置顶（IPC 落库由父级负责） */
+  onTogglePin?: (id: string, pinned: boolean) => void
 }
 
 export const ChatView: React.FC<Props> = ({
@@ -159,7 +161,8 @@ export const ChatView: React.FC<Props> = ({
   onDraftCommit,
   systemPromptOverride,
   onSetSystemPromptOverride,
-  onRemind
+  onRemind,
+  onTogglePin
 }) => {
   const { t } = useI18n()
   // 被引用消息快速查找表（用于气泡顶部显示引用条）
@@ -371,6 +374,24 @@ export const ChatView: React.FC<Props> = ({
     return () => clearTimeout(timer)
   }, [focusMessageId, messages, renderedTurns, virtualizer])
 
+  /** 置顶横幅展开态（默认最多展示 3 条，超出折叠） */
+  const [pinsExpanded, setPinsExpanded] = useState(false)
+  /** 置顶列表从 messages 派生（与星标同源，本地 map 更新即同步） */
+  const pinnedList = useMemo(() => messages.filter((m) => m.pinned), [messages])
+  /** 置顶横幅点击定位：与搜索跳转同口径（滚动居中 + 高亮 2s） */
+  const jumpToPinned = useCallback(
+    (id: string) => {
+      const idx = renderedTurns.findIndex(
+        (t) => t.user?.id === id || t.replies.some((r) => r.id === id)
+      )
+      if (idx < 0) return
+      virtualizer.scrollToIndex(idx, { align: 'center' })
+      setHighlightMsgId(id)
+      setTimeout(() => setHighlightMsgId(null), 2000)
+    },
+    [renderedTurns, virtualizer]
+  )
+
   /** 批次标识：有 batchId 用 batchId，旧数据退化为下标 */
   const batchKeyOf = (batch: MessageRecord[], idx: number): string => batch[0]?.batchId ?? `legacy:${idx}`
 
@@ -480,6 +501,34 @@ export const ChatView: React.FC<Props> = ({
       setExportingImage(false)
     }
   }, [exportingImage, messages, assistantName, t])
+
+  /** 多选导出长图：复用同一渲染管线，按 selectedIds 顺序过滤 */
+  const handleExportSelectedImage = useCallback(async () => {
+    if (exportingImage || selectedIds.size === 0) return
+    const orderedIds = Array.from(selectedIds)
+    const slice: MessageRecord[] = []
+    for (const m of messages) {
+      if (orderedIds.includes(m.id)) slice.push(m)
+    }
+    const LIMIT = 500
+    const truncated = slice.length > LIMIT
+    const finalSlice = truncated ? slice.slice(0, LIMIT) : slice
+    setExportingImage(true)
+    try {
+      const fileName = `pocketai-selected-${fileTimestamp(Date.now())}.png`
+      await exportConversationAsPng({
+        messages: finalSlice,
+        truncated,
+        assistantName: assistantName ?? null,
+        fileName,
+        t
+      })
+    } catch (e) {
+      console.error('export selected image failed', e)
+    } finally {
+      setExportingImage(false)
+    }
+  }, [exportingImage, selectedIds, messages, assistantName, t])
 
   /** 长图按钮 pointerdown：有 PNG 缓存时预写拖拽临时文件（无缓存则本次不可拖，退化为点击导出） */
   const handleImageDragPointerDown = useCallback(() => {
@@ -705,6 +754,43 @@ export const ChatView: React.FC<Props> = ({
         </div>
       )}
 
+      {/* 置顶横幅：会话内钉住的关键消息（固定不随滚动，最多 3 条超出折叠） */}
+      {pinnedList && pinnedList.length > 0 && (
+        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] px-4 py-1.5">
+          <div className="max-w-5xl mx-auto flex flex-col gap-1">
+            {(pinsExpanded ? pinnedList : pinnedList.slice(0, 3)).map((m) => (
+              <div key={m.id} className="flex items-center gap-2 text-[11px] group/pin">
+                <button
+                  onClick={() => jumpToPinned(m.id)}
+                  className="flex-1 min-w-0 text-left flex items-center gap-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+                  title={m.content}
+                >
+                  <span className="shrink-0">📌</span>
+                  <span className="shrink-0">{m.role === 'user' ? t('chat.you') : t('chat.assistant')}:</span>
+                  <span className="truncate">{m.content.replace(/\s+/g, ' ').slice(0, 80)}</span>
+                </button>
+                <button
+                  onClick={() => onTogglePin?.(m.id, false)}
+                  title={t('chat.unpin')}
+                  aria-label={t('chat.unpin')}
+                  className="shrink-0 opacity-0 group-hover/pin:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-opacity"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {!pinsExpanded && pinnedList.length > 3 && (
+              <button
+                onClick={() => setPinsExpanded(true)}
+                className="self-start text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+              >
+                {t('chat.morePinned', { n: pinnedList.length - 3 })}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 批量操作栏（选中消息时显示） */}
       {selectedIds.size > 0 && (
         <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-hover-overlay)]">
@@ -735,6 +821,14 @@ export const ChatView: React.FC<Props> = ({
               {t('chatview.exportSelected')}
             </button>
           )}
+          <button
+            onClick={() => void handleExportSelectedImage()}
+            disabled={exportingImage}
+            title={t('chat.exportImageDrag')}
+            className="text-xs px-2 py-1 rounded text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors disabled:opacity-50"
+          >
+            {t('chatview.exportSelectedImage')}
+          </button>
           {onBatchToggleStar && (
             <button
               onClick={handleBatchStar}
@@ -859,6 +953,8 @@ export const ChatView: React.FC<Props> = ({
                         onForward={handleForward}
                         starred={turn.user.starred}
                         onToggleStar={onToggleStar}
+                        pinned={turn.user.pinned}
+                        onTogglePin={onTogglePin}
                         selectMode={selectedIds.size > 0}
                         onRemind={onRemind}
                       />
@@ -898,6 +994,8 @@ export const ChatView: React.FC<Props> = ({
                         onForward={handleForward}
                         starred={msg.starred}
                         onToggleStar={onToggleStar}
+                        pinned={msg.pinned}
+                        onTogglePin={onTogglePin}
                         selectMode={selectedIds.size > 0}
                         onRemind={onRemind}
                       />

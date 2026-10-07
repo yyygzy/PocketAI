@@ -138,6 +138,14 @@ const api = {
     ipcRenderer.invoke(IPC.ASSISTANT_DUPLICATE, id),
   setAssistantPinned: (id: string, pinned: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_SET_PINNED, id, pinned),
+  exportAssistants: (): Promise<
+    { ok: true; canceled: true } | { ok: true; path: string; count: number } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.ASSISTANT_EXPORT),
+  importAssistants: (): Promise<
+    | { ok: true; canceled: true }
+    | { ok: true; imported: number; overwritten: number; skipped: number; droppedKb: number; droppedSkills: number }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.ASSISTANT_IMPORT),
 
   // ---------- 用户记忆 ----------
   listMemories: (): Promise<UserMemoryRecord[]> => ipcRenderer.invoke(IPC.MEMORY_LIST),
@@ -278,6 +286,8 @@ const api = {
     ipcRenderer.invoke(IPC.MESSAGE_SET_STARRED, id, starred),
   listStarredMessages: (limit?: number): Promise<StarredMessageItem[]> =>
     ipcRenderer.invoke(IPC.MESSAGE_LIST_STARRED, limit),
+  setMessagePinned: (id: string, pinned: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.MESSAGE_SET_PINNED, id, pinned),
   forwardMessage: (input: {
     targetConvId: string | null
     sourceConvId: string | null
@@ -462,6 +472,13 @@ const api = {
     id: string
   ): Promise<{ ok: boolean; tools?: ToolSchema[]; error?: string }> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_LIST_TOOLS, id),
+  // 面板手动试运行：argsJson 为未解析 JSON 字符串，解析在主进程做
+  callMcpServerTool: (
+    id: string,
+    name: string,
+    argsJson: string
+  ): Promise<{ ok: boolean; content?: string; isError?: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.MCP_SERVER_CALL_TOOL, { serverId: id, toolName: name, argsJson }),
   getMcpRuntimes: (): Promise<McpServerRuntime[]> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_GET_RUNTIMES),
 
@@ -937,6 +954,19 @@ const api = {
     payload: ReminderCreatePayload
   ): Promise<{ ok: true; id: string; fireAt: number }> =>
     ipcRenderer.invoke(IPC.REMINDER_CREATE, payload),
+
+  // ---------- 终端 ----------
+  startTerminal: (): Promise<{ ok: boolean; sessionId?: number; error?: string }> =>
+    ipcRenderer.invoke(IPC.TERMINAL_START),
+  terminalInput: (data: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.TERMINAL_INPUT, { data }),
+  killTerminal: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.TERMINAL_KILL),
+  onTerminalOutput: (handler: (payload: { sessionId: number; stream: 'stdout' | 'stderr' | 'exit'; data: string }) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: { sessionId: number; stream: 'stdout' | 'stderr' | 'exit'; data: string }) => handler(data)
+    ipcRenderer.on(IPC.TERMINAL_OUTPUT, listener)
+    return () => ipcRenderer.removeListener(IPC.TERMINAL_OUTPUT, listener)
+  },
 
   // ---------- 平台管家 ----------
   getHealthReport: (): Promise<HealthReport> =>

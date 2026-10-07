@@ -276,6 +276,45 @@ describe('HttpJsonRpcClient — request', () => {
 
 // ---------- notify ----------
 
+describe('HttpJsonRpcClient — 自定义请求头', () => {
+  it('options.headers 注入 request 与 notify（如 Authorization）', async () => {
+    // 每次调用返回全新 Response，避免 body 被重复消费
+    fetchMock.mockImplementation(() => Promise.resolve(makeResponse({ body: rpcResult({ ok: true }) })))
+    const client = new HttpJsonRpcClient({
+      url: URL,
+      headers: { Authorization: 'Bearer tok', 'X-Tenant': 'acme' }
+    })
+    await client.request('ping')
+    client.notify('notifications/initialized')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    for (const call of fetchMock.mock.calls) {
+      const headers = (call[1] as { headers: Record<string, string> }).headers
+      expect(headers.Authorization).toBe('Bearer tok')
+      expect(headers['X-Tenant']).toBe('acme')
+    }
+  })
+
+  it('协议头后写优先：用户头不可覆盖 Content-Type/Accept', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(makeResponse({ body: rpcResult({}) })))
+    const client = new HttpJsonRpcClient({
+      url: URL,
+      headers: { 'Content-Type': 'text/plain', Accept: 'application/xml' }
+    })
+    await client.request('ping')
+    const headers = (fetchMock.mock.calls[0]![1] as { headers: Record<string, string> }).headers
+    expect(headers['Content-Type']).toBe('application/json')
+    expect(headers.Accept).toBe('text/event-stream')
+  })
+
+  it('未传 headers → 行为与既有默认一致（仅协议头）', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(makeResponse({ body: rpcResult({}) })))
+    const client = new HttpJsonRpcClient({ url: URL })
+    await client.request('ping')
+    const headers = (fetchMock.mock.calls[0]![1] as { headers: Record<string, string> }).headers
+    expect(headers).toEqual({ 'Content-Type': 'application/json', Accept: 'text/event-stream' })
+  })
+})
+
 describe('HttpJsonRpcClient — notify', () => {
   it('notify 立即 POST 无 id 通知', () => {
     fetchMock.mockResolvedValue(makeResponse({ body: null }))

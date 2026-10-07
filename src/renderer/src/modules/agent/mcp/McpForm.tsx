@@ -12,6 +12,7 @@ import { usePythonEnv } from './usePythonEnv'
 
 const ARGS_PLACEHOLDER = '["-y","@modelcontextprotocol/server-filesystem","/tmp"]'
 const ENV_PLACEHOLDER = '{"API_KEY":"xxx"}'
+const HEADERS_PLACEHOLDER = '{"Authorization":"Bearer xxx"}'
 
 interface Props {
   initial: Partial<McpServerRecord>
@@ -28,6 +29,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   const [argsText, setArgsText] = useState(JSON.stringify(initial.args ?? [], null, 2))
   const [envText, setEnvText] = useState(JSON.stringify(initial.env ?? {}, null, 2))
   const [url, setUrl] = useState(initial.url ?? '')
+  const [headersText, setHeadersText] = useState(JSON.stringify(initial.headers ?? {}, null, 2))
   const [enabled, setEnabled] = useState(initial.enabled !== false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -97,6 +99,17 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
       setError(t('agent.envFail', { e: errText(e) }))
       return
     }
+    // headers 仅 http 有意义（repo 对 stdio 恒归一化为 {}），仍统一走 JSON 对象解析
+    let headers: Record<string, string> = {}
+    try {
+      const parsed = JSON.parse(headersText)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        headers = Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v)]))
+      } else throw new Error(t('agent.headersObject'))
+    } catch (e) {
+      setError(t('agent.headersFail', { e: errText(e) }))
+      return
+    }
 
     setSaving(true)
     try {
@@ -109,6 +122,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         args: transport === 'stdio' ? args : [],
         env: transport === 'stdio' ? env : {},
         url: transport === 'http' ? url.trim() || null : null,
+        headers: transport === 'http' ? headers : {},
         // 仅 stdio+python 保留依赖列表；repo 层也会兜底归一化
         pythonPackages:
           transport === 'stdio' && runtime === 'python' ? packageLines : [],
@@ -345,11 +359,23 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
           </div>
         </>
       ) : (
-        <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">URL</label>
-          <input className="input font-mono text-xs" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/mcp" />
-          <p className="text-[11px] text-[var(--color-warning)] mt-1">{t('agent.f.httpWarn')}</p>
-        </div>
+        <>
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">URL</label>
+            <input className="input font-mono text-xs" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/mcp" />
+            <p className="text-[11px] text-[var(--color-warning)] mt-1">{t('agent.f.httpWarn')}</p>
+          </div>
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('agent.f.headers')}</label>
+            <textarea
+              className="input font-mono text-xs min-h-[64px]"
+              value={headersText}
+              onChange={(e) => setHeadersText(e.target.value)}
+              placeholder={HEADERS_PLACEHOLDER}
+              spellCheck={false}
+            />
+          </div>
+        </>
       )}
       <label className="flex items-center gap-2 text-xs">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />

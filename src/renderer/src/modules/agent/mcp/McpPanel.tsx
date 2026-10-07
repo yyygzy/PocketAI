@@ -12,7 +12,16 @@ import { useToast } from '../../../components/ToastProvider'
 import { StatusDot, MiniBtn } from '../ui'
 import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
+import { McpImportModal } from './McpImportModal'
 import { reportIpcError } from '../../../utils/ipc'
+
+/** 单个工具的试运行状态（key = `${serverId}:${toolName}`） */
+interface ToolRunState {
+  argsJson: string
+  running: boolean
+  result?: string
+  isError?: boolean
+}
 
 export const McpPanel: React.FC = () => {
   const { t } = useI18n()
@@ -24,6 +33,11 @@ export const McpPanel: React.FC = () => {
   const [notice, setNotice] = useState('')
   // 正在安装依赖的 serverId 集合（全局广播跟踪，用于禁用列表卡片上的删除按钮）
   const [installingIds, setInstallingIds] = useState<ReadonlySet<string>>(new Set())
+  // 工具列表展开状态（按 serverId）
+  const [expandedServers, setExpandedServers] = useState<Record<string, boolean>>({})
+  // 工具试运行状态（输入与结果都按工具维度暂存，切换不丢）
+  const [toolRuns, setToolRuns] = useState<Record<string, ToolRunState>>({})
+  const [importOpen, setImportOpen] = useState(false)
 
   const pip = usePipSource(setNotice)
 
@@ -57,6 +71,7 @@ export const McpPanel: React.FC = () => {
           args: base?.args ?? [],
           env: base?.env ?? {},
           url: base?.url ?? null,
+          headers: base?.headers ?? {},
           enabled: base?.enabled ?? false,
           createdAt: base?.createdAt ?? Date.now(),
           pythonPackages: base?.pythonPackages ?? [],
@@ -102,6 +117,24 @@ export const McpPanel: React.FC = () => {
   const runtimeOf = (id: string): McpServerRuntime | undefined =>
     runtimes.find((r) => r.id === id)
 
+  // 手动试运行：真实调用该工具（等价于 confirm 后执行），结果行内展示
+  const handleRunTool = async (serverId: string, toolName: string) => {
+    const key = `${serverId}:${toolName}`
+    const argsJson = toolRuns[key]?.argsJson ?? ''
+    setToolRuns((prev) => ({ ...prev, [key]: { ...prev[key], argsJson, running: true, result: undefined } }))
+    const r = await window.pocketai.callMcpServerTool(serverId, toolName, argsJson)
+    setToolRuns((prev) => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        argsJson,
+        running: false,
+        result: r.ok ? (r.content ?? '') : (r.error ?? t('common.unknownError')),
+        isError: r.ok ? r.isError : true
+      }
+    }))
+  }
+
   const handleStart = async (id: string) => {
     const r = await window.pocketai.startMcpServer(id)
     if (!r.ok) toast.error(t('agent.startFail', { e: r.error ?? t('common.unknownError') }))
@@ -131,12 +164,20 @@ export const McpPanel: React.FC = () => {
       <div className="w-72 shrink-0 flex flex-col">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold">MCP Servers</h3>
-          <button
-            onClick={() => setEditing({ name: '', transport: 'stdio', runtime: 'node', command: 'node', args: [], env: {} })}
-            className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
-          >
-            {t('agent.add')}
-          </button>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setImportOpen(true)}
+              className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
+            >
+              {t('agent.import')}
+            </button>
+            <button
+              onClick={() => setEditing({ name: '', transport: 'stdio', runtime: 'node', command: 'node', args: [], env: {} })}
+              className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
+            >
+              {t('agent.add')}
+            </button>
+          </div>
         </div>
         {/* pip 下载源：全局设置，Python 依赖安装时使用 */}
         <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2 space-y-1.5">
@@ -241,8 +282,80 @@ export const McpPanel: React.FC = () => {
                   </MiniBtn>
                 </div>
                 {rt && rt.tools.length > 0 && (
-                  <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                    {t('agent.nTools', { n: rt.tools.length })}
+                  <div className="mt-1">
+                    <button
+                      className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                      onClick={() =>
+                        setExpandedServers((prev) => ({ ...prev, [r.id]: !prev[r.id] }))
+                      }
+                    >
+                      {expandedServers[r.id] ? '▾' : '▸'} {t('agent.nTools', { n: rt.tools.length })}
+                    </button>
+                    {expandedServers[r.id] && (
+                      <div className="mt-1 space-y-1.5">
+                        {rt.tools.map((tool) => {
+                          const runKey = `${r.id}:${tool.name}`
+                          const run = toolRuns[runKey]
+                          return (
+                            <div
+                              key={tool.name}
+                              className="rounded border border-[var(--color-border)] p-1.5"
+                            >
+                              <div className="flex items-center gap-1">
+                                <span className="font-mono text-[10px] truncate" title={tool.name}>
+                                  {tool.name}
+                                </span>
+                                {tool.permission === 'auto' ? (
+                                  <span className="shrink-0 text-[9px] px-1 rounded bg-[var(--color-success-bg)] text-[var(--color-success)]">
+                                    {t('agent.permAuto')}
+                                  </span>
+                                ) : (
+                                  <span className="shrink-0 text-[9px] px-1 rounded bg-[var(--color-warning-bg)] text-[var(--color-warning)]">
+                                    {t('agent.permConfirm')}
+                                  </span>
+                                )}
+                              </div>
+                              {tool.description && (
+                                <p className="text-[10px] text-[var(--color-text-muted)] line-clamp-2 break-all">
+                                  {tool.description}
+                                </p>
+                              )}
+                              <textarea
+                                className="input font-mono text-[10px] mt-1 min-h-[36px] py-1"
+                                rows={2}
+                                spellCheck={false}
+                                placeholder={t('agent.toolArgsPh')}
+                                value={run?.argsJson ?? ''}
+                                onChange={(e) =>
+                                  setToolRuns((prev) => ({
+                                    ...prev,
+                                    [runKey]: { ...prev[runKey], argsJson: e.target.value, running: prev[runKey]?.running ?? false }
+                                  }))
+                                }
+                              />
+                              <div className="flex items-center gap-1 mt-1">
+                                <MiniBtn
+                                  disabled={run?.running || status !== 'running'}
+                                  title={t('agent.toolRunHint')}
+                                  onClick={() => void handleRunTool(r.id, tool.name)}
+                                >
+                                  {run?.running ? t('agent.toolRunning') : t('agent.toolRun')}
+                                </MiniBtn>
+                              </div>
+                              {run?.result !== undefined && (
+                                <pre
+                                  className={`mt-1 max-h-32 overflow-y-auto bg-[var(--color-input-bg)] rounded p-1.5 text-[10px] whitespace-pre-wrap break-all ${
+                                    run.isError ? 'text-[var(--color-danger)]' : ''
+                                  }`}
+                                >
+                                  {run.result}
+                                </pre>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
                 {rt?.lastError && (
@@ -297,6 +410,15 @@ export const McpPanel: React.FC = () => {
           </div>
         )}
       </div>
+
+      {importOpen && (
+        <McpImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={async () => {
+            await load()
+          }}
+        />
+      )}
     </div>
   )
 }

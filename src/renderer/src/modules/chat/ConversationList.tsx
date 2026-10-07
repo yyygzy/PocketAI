@@ -394,53 +394,61 @@ export const ConversationList: React.FC<Props> = ({
             )}
           </div>
         )}
-        <div className="flex gap-1">
-          {selectMode ? (
-            <>
-              <button
-                onClick={toggleSelectAll}
-                className="flex-1 text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)]"
-              >
-                {t('common.selectAll')}{allSelected ? ' ✓' : ''}
-              </button>
-              <button
-                onClick={exitSelectMode}
-                className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              >{t('common.cancel')}</button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={onNew}
-                className="flex-1 text-sm px-3 py-2 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 font-medium"
-              >
-                {t('chat.newConversation')}
-              </button>
-              {onBatchExport && (
-                <ExportMenu
-                  triggerTitle={t('chat.exportBatch')}
-                  triggerContent="📤"
-                  triggerClassName="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
-                  items={[
-                    { key: 'md', label: t('chat.exportBatchMd') },
-                    { key: 'html', label: t('chat.exportBatchHtml') },
-                    ...(onBatchExportSelected ? [{ key: 'multi', label: t('chat.exportMulti') }] : [])
-                  ]}
-                  onPick={(k) => {
-                    if (k === 'multi') {
-                      setSearch('')
-                      setSelectedIds([])
-                      setSelectMode(true)
-                    } else {
-                      onBatchExport(k as 'md' | 'html')
-                    }
-                  }}
-                />
-              )}
+        {/* 工具栏两行布局：主行（新对话+批量导出）/ 次行（导入·加密导入·收藏·建组），
+            避免单行塞 6 个 nowrap 按钮溢出窄栏（flex-1 被压扁致文字竖排） */}
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-1">
+            {selectMode ? (
+              <>
+                <button
+                  onClick={toggleSelectAll}
+                  className="flex-1 text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text)]"
+                >
+                  {t('common.selectAll')}{allSelected ? ' ✓' : ''}
+                </button>
+                <button
+                  onClick={exitSelectMode}
+                  className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >{t('common.cancel')}</button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={onNew}
+                  className="flex-1 text-sm px-3 py-2 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90 font-medium"
+                >
+                  {t('chat.newConversation')}
+                </button>
+                {onBatchExport && (
+                  <ExportMenu
+                    triggerTitle={t('chat.exportBatch')}
+                    triggerContent="📤"
+                    triggerClassName="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+                    items={[
+                      { key: 'md', label: t('chat.exportBatchMd') },
+                      { key: 'html', label: t('chat.exportBatchHtml') },
+                      ...(onBatchExportSelected ? [{ key: 'multi', label: t('chat.exportMulti') }] : [])
+                    ]}
+                    onPick={(k) => {
+                      if (k === 'multi') {
+                        setSearch('')
+                        setSelectedIds([])
+                        setSelectMode(true)
+                      } else {
+                        onBatchExport(k as 'md' | 'html')
+                      }
+                    }}
+                  />
+                )}
+              </>
+            )}
+          </div>
+          {!selectMode && (
+            <div className="flex gap-1 flex-wrap">
               {onImport && (
                 <button
                   onClick={onImport}
-                  className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+                  className="flex-1 text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
                   title={t('chat.import')}
                 >⬇ {t('chat.importShort')}</button>
               )}
@@ -467,7 +475,7 @@ export const ConversationList: React.FC<Props> = ({
                   aria-label={t('chat.groupNew')}
                 >📁＋</button>
               )}
-            </>
+            </div>
           )}
         </div>
         {isSearching && (

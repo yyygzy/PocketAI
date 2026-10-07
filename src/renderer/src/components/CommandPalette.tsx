@@ -18,7 +18,7 @@ const CONV_PREVIEW_LIMIT = 30
 
 /** 功能模块项（标题走 tab.* i18n；chat/agent 已在会话/助手区覆盖，此处不重复列） */
 const PALETTE_MODULES: ModuleId[] = [
-  'knowledge', 'skills', 'notes', 'files', 'translate', 'image', 'sandbox', 'steward', 'settings'
+  'knowledge', 'skills', 'notes', 'files', 'translate', 'image', 'sandbox', 'terminal', 'steward', 'settings'
 ]
 
 const MODULE_TITLE_KEY: Record<ModuleId, string> = {
@@ -31,6 +31,7 @@ const MODULE_TITLE_KEY: Record<ModuleId, string> = {
   translate: 'tab.translate',
   image: 'tab.image',
   sandbox: 'tab.sandbox',
+  terminal: 'tab.terminal',
   steward: 'tab.steward',
   settings: 'tab.settings'
 }

@@ -54,3 +54,9 @@ export const assistantSaveSchema = assistantRecordFull
 
 /** ASSISTANT_SET_PINNED 第二参 */
 export const booleanSchema = z.boolean()
+
+/** ASSISTANT_IMPORT 顶层 JSON 格式校验 */
+export const assistantImportSchema = z.object({
+  version: z.number().int().optional(),
+  assistants: z.array(z.record(z.string(), z.unknown())).min(1).max(500)
+})

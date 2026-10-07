@@ -203,6 +203,24 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
   return { decision: 'allow' }
 }
 
+/**
+ * 仅黑名单判定（deny 级）：毁灭性/不可逆命令永不执行。
+ * 供用户手动终端使用——用户即操作者，不需要 confirm 审批层，但仍硬拒 deny 规则。
+ * 返回 null=放行；否则返回稳定 reason code。
+ */
+export function classifyDenyOnly(command: string): string | null {
+  const raw = String(command ?? '')
+  if (!raw.trim()) return null
+  const cmd = process.platform === 'win32' ? raw.replace(/\^/g, '') : raw
+  for (const [re, reason] of DENY_RULES) {
+    if (re.test(cmd)) return reason
+  }
+  for (const re of ROOT_DELETE_RE) {
+    if (re.test(cmd)) return 'BLOCKED_ROOT_DELETE'
+  }
+  return null
+}
+
 // ---------- 执行 ----------
 interface ShellExecArgs {
   command?: unknown

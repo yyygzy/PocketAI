@@ -30,8 +30,9 @@ const mocks = vi.hoisted(() => ({
   repoList: [] as McpServerRecord[],
   envState: { status: 'none' } as { status: string },
   // 可注入的 fake 行为：每次调用都查当前值，便于测试挂起 / 抛错
+  // requestImpl 接收 (method, params, timeoutMs)，便于按 method 区分握手与 tools/call 行为
   spawnImpl: (async () => {}) as () => Promise<void>,
-  requestImpl: (async () => ({})) as () => Promise<unknown>,
+  requestImpl: (async () => ({})) as (...args: unknown[]) => Promise<unknown>,
   reset() {
     this.clients = []
     this.repoList = []
@@ -48,7 +49,7 @@ vi.mock('../src/main/mcp/json-rpc', () => ({
         opts,
         pid: 12345,
         spawn: vi.fn(() => mocks.spawnImpl()),
-        request: vi.fn(() => mocks.requestImpl()),
+        request: vi.fn((...args: unknown[]) => mocks.requestImpl(...args)),
         notify: vi.fn(),
         shutdown: vi.fn(async () => {}),
         callOnLog: opts.onLog as (s: 'stdout' | 'stderr', l: string) => void,
@@ -76,7 +77,7 @@ vi.mock('../src/main/mcp/http-transport', () => ({
         opts,
         pid: undefined as unknown as number, // http 无本地进程
         spawn: vi.fn(() => mocks.spawnImpl()),
-        request: vi.fn(() => mocks.requestImpl()),
+        request: vi.fn((...args: unknown[]) => mocks.requestImpl(...args)),
         notify: vi.fn(),
         shutdown: vi.fn(async () => {}),
         callOnLog: () => {},
@@ -156,6 +157,7 @@ function makeRecord(over: Partial<McpServerRecord> = {}): McpServerRecord {
     args: [],
     env: {},
     url: null,
+    headers: {},
     enabled: true,
     createdAt: 0,
     pythonPackages: [],
@@ -600,7 +602,7 @@ describe('McpManager — 稳定运行复位', () => {
   })
 })
 
-describe('McpManager — callTool 状态联动（HTTP 无 onExit 收口）', () => {
+describe('McpManager — callTool HTTP 断线自动重连（重试一次，仍失败才置 error）', () => {
   /** 取运行时 entry（测试辅助 cast） */
   function getEntry(): { status: string; lastError: string | null } {
     return (mgr as unknown as {
@@ -608,23 +610,44 @@ describe('McpManager — callTool 状态联动（HTTP 无 onExit 收口）', () 
     }).runtimes.get('srv1')!
   }
 
-  /** start 完成后让 fake client 的 tools/call 请求抛指定错误 */
-  async function mockCallFailure(err: unknown): Promise<void> {
-    const fake = mocks.clients[0]!
-    fake.request.mockImplementation(async (method: string) => {
-      if (method === 'tools/call') throw err
+  it('HTTP 传输级错误 → 自动重连 + 透明重试成功，状态保持 running', async () => {
+    mocks.repoList = [makeRecord({ transport: 'http', url: 'https://example.com/mcp' })]
+    mocks.requestImpl = async (method) =>
+      method === 'tools/list' ? { tools: [] } : method === 'initialize' ? { protocolVersion: 'x' } : { result: 'ok' }
+    await mgr.start('srv1')
+    expect(mocks.clients).toHaveLength(1)
+
+    // 仅旧 client 的 tools/call 失败（模拟连接断开）；重连后的新 client 走 requestImpl
+    mocks.clients[0]!.request.mockImplementation(async (method: string) => {
+      if (method === 'tools/call') throw new McpTransportError('network', 'fetch failed')
       throw new Error(`未预期的请求: ${method}`)
     })
-  }
 
-  it('HTTP 传输级错误 → status error + emit，后续调用被状态守门拒绝', async () => {
+    const out = await mgr.callTool('srv1', 'get_x', { a: 1 })
+    expect(out).toEqual({ result: 'ok' })
+    // 重连 = stop + start：新建第二个 client 并完整握手
+    expect(mocks.clients).toHaveLength(2)
+    expect(mocks.clients[0]!.shutdown).toHaveBeenCalled()
+    expect(getEntry().status).toBe('running')
+    // 重连期间 emit starting → running（初始启动 1 次 + 重连 1 次）
+    expect(events.filter((e) => e.status === 'starting')).toHaveLength(2)
+    expect(events.at(-1)?.status).toBe('running')
+    // 重试打在新 client 上，参数原样透传
+    expect(mocks.clients[1]!.request).toHaveBeenCalledWith('tools/call', { name: 'get_x', arguments: { a: 1 } }, 30_000)
+  })
+
+  it('HTTP 重连后重试仍失败 → status error + emit + throw', async () => {
     mocks.repoList = [makeRecord({ transport: 'http', url: 'https://example.com/mcp' })]
-    mocks.requestImpl = async () => ({ tools: [] })
+    mocks.requestImpl = async (method) => {
+      if (method === 'tools/call') throw new McpTransportError('network', 'fetch failed')
+      if (method === 'tools/list') return { tools: [] }
+      return { protocolVersion: 'x' }
+    }
     await mgr.start('srv1')
 
-    await mockCallFailure(new McpTransportError('network', 'fetch failed'))
     await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('fetch failed')
-
+    // 重连发生过（新 client 建立且握手成功），但重试的 tools/call 再次失败
+    expect(mocks.clients).toHaveLength(2)
     expect(getEntry().status).toBe('error')
     expect(getEntry().lastError).toBe('fetch failed')
     expect(events.at(-1)).toMatchObject({ status: 'error', lastError: 'fetch failed' })
@@ -633,23 +656,31 @@ describe('McpManager — callTool 状态联动（HTTP 无 onExit 收口）', () 
     await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('MCP Server 未运行')
   })
 
-  it('HTTP 非传输级错误（普通 Error，如工具执行失败）→ 保持 running', async () => {
+  it('HTTP 非传输级错误（普通 Error，如工具执行失败）→ 不重连，保持 running', async () => {
     mocks.repoList = [makeRecord({ transport: 'http', url: 'https://example.com/mcp' })]
-    mocks.requestImpl = async () => ({ tools: [] })
+    mocks.requestImpl = async (method) => {
+      if (method === 'tools/call') throw new Error('tool boom')
+      if (method === 'tools/list') return { tools: [] }
+      return { protocolVersion: 'x' }
+    }
     await mgr.start('srv1')
 
-    await mockCallFailure(new Error('tool boom'))
     await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('tool boom')
     expect(getEntry().status).toBe('running')
+    expect(mocks.clients).toHaveLength(1)
   })
 
-  it('stdio 即使抛 McpTransportError 也不联动（进程死亡由 handleExit 收口）', async () => {
+  it('stdio 即使抛 McpTransportError 也不重连（进程死亡由 handleExit 收口）', async () => {
     mocks.repoList = [makeRecord()]
-    mocks.requestImpl = async () => ({ tools: [] })
+    mocks.requestImpl = async (method) => {
+      if (method === 'tools/call') throw new McpTransportError('timeout', '慢请求')
+      if (method === 'tools/list') return { tools: [] }
+      return { protocolVersion: 'x' }
+    }
     await mgr.start('srv1')
 
-    await mockCallFailure(new McpTransportError('timeout', '慢请求'))
     await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('慢请求')
     expect(getEntry().status).toBe('running')
+    expect(mocks.clients).toHaveLength(1)
   })
 })

@@ -59,6 +59,21 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
     setToolPermissions((prev) => (prev.includes('*') ? prev.filter((x) => x !== '*') : ['*']))
   }
 
+  // 工具分组：内置 vs MCP
+  const builtinTools = tools.filter((t) => t.source !== 'mcp')
+  const mcpTools = tools.filter((t) => t.source === 'mcp')
+  const allowAll = toolPermissions.includes('*')
+
+  const selectGroup = (group: ToolSchema[]) => {
+    setToolPermissions((prev) => {
+      const next = prev.filter((id) => !group.some((t) => t.id === id))
+      return [...next, ...group.map((t) => t.id)]
+    })
+  }
+  const clearGroup = (group: ToolSchema[]) => {
+    setToolPermissions((prev) => prev.filter((id) => !group.some((t) => t.id === id)))
+  }
+
   const chipCls = (on: boolean) =>
     `text-[11px] px-2 py-1 rounded border ${
       on
@@ -211,30 +226,91 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
           {t('ae.toolsLabel')}
         </label>
         <div className="flex flex-wrap gap-1.5 mb-1">
-          <button onClick={toggleAllowAll} className={chipCls(toolPermissions.includes('*'))}>
+          <button onClick={toggleAllowAll} className={chipCls(allowAll)}>
             {t('ae.allowAll')}
           </button>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {tools.map((tl) => (
-            <button
-              key={tl.id}
-              onClick={() => toggleTool(tl.id)}
-              disabled={toolPermissions.includes('*')}
-              title={tl.description}
-              className={`${chipCls(toolPermissions.includes('*') || toolPermissions.includes(tl.id))} ${
-                toolPermissions.includes('*') ? 'opacity-60' : ''
-              }`}
-            >
-              {tl.source === 'mcp' ? '🔌' : '⚡'} {tl.name}
-            </button>
-          ))}
-          {tools.length === 0 && (
-            <p className="text-xs text-[var(--color-text-muted)]">
-              {t('ae.noTools')}
-            </p>
-          )}
-        </div>
+        {tools.length === 0 && (
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {t('ae.noTools')}
+          </p>
+        )}
+        {builtinTools.length > 0 && (
+          <div className="mb-2">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                ⚡ {t('ae.groupBuiltin')}
+              </span>
+              <button
+                onClick={() => selectGroup(builtinTools)}
+                disabled={allowAll}
+                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+              >
+                {t('ae.selectAll')}
+              </button>
+              <button
+                onClick={() => clearGroup(builtinTools)}
+                disabled={allowAll}
+                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+              >
+                {t('ae.clearAll')}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {builtinTools.map((tl) => (
+                <button
+                  key={tl.id}
+                  onClick={() => toggleTool(tl.id)}
+                  disabled={allowAll}
+                  title={tl.description}
+                  className={`${chipCls(allowAll || toolPermissions.includes(tl.id))} ${
+                    allowAll ? 'opacity-60' : ''
+                  }`}
+                >
+                  ⚡ {tl.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {mcpTools.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                🔌 {t('ae.groupMcp')}
+              </span>
+              <button
+                onClick={() => selectGroup(mcpTools)}
+                disabled={allowAll}
+                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+              >
+                {t('ae.selectAll')}
+              </button>
+              <button
+                onClick={() => clearGroup(mcpTools)}
+                disabled={allowAll}
+                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+              >
+                {t('ae.clearAll')}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {mcpTools.map((tl) => (
+                <button
+                  key={tl.id}
+                  onClick={() => toggleTool(tl.id)}
+                  disabled={allowAll}
+                  title={tl.description}
+                  className={`${chipCls(allowAll || toolPermissions.includes(tl.id))} ${
+                    allowAll ? 'opacity-60' : ''
+                  }`}
+                >
+                  🔌 {tl.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {error && <div className="text-xs text-[var(--color-danger)] bg-[var(--color-danger-bg)] px-3 py-2 rounded">{error}</div>}

@@ -31,7 +31,12 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
-  app: { quit: () => { mocks.quitCalls++ } }
+  app: {
+    quit: () => { mocks.quitCalls++ },
+    isPackaged: false,
+    getPath: () => '',
+    getAppPath: () => process.cwd()
+  }
 }))
 
 vi.mock('../src/main/mcp/manager', () => ({
@@ -70,6 +75,10 @@ vi.mock('../src/main/db/database', () => ({
   }
 }))
 
+vi.mock('../src/main/terminal/terminal-service', () => ({
+  killAllTerminals: () => { mocks.calls.push('killAllTerminals') }
+}))
+
 vi.mock('../src/main/logger', () => ({
   createLogger: () => ({ info: () => {}, warn: () => {}, debug: () => {}, error: () => {} })
 }))
@@ -95,10 +104,10 @@ describe('退出标志', () => {
 })
 
 describe('runCleanupChain 异步清理链', () => {
-  it('按序执行六步：abortPull → stopAll → cleanup → 两个 scheduler → close', async () => {
+  it('按序执行七步：abortPull → stopAll → cleanup → 两个 scheduler → killAllTerminals → close', async () => {
     await runCleanupChain()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
     ])
   })
 
@@ -106,7 +115,7 @@ describe('runCleanupChain 异步清理链', () => {
     mocks.stopAllError = new Error('MCP 停止失败')
     await expect(runCleanupChain()).resolves.toBeUndefined()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
     ])
   })
 
@@ -127,7 +136,7 @@ describe('runFallbackCleanup 同步兜底', () => {
   it('执行除 stopAll 外的全部步骤', () => {
     runFallbackCleanup()
     expect(mocks.calls).toEqual([
-      'abortPull', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'close'
+      'abortPull', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
     ])
   })
 

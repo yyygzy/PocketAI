@@ -11,6 +11,7 @@ import { fmtTokens, fmtCost } from '../../utils/token'
 import { formatDateTime } from '../../utils/time'
 import { writeClipboard } from '../../utils/clipboard'
 import { isTtsSupported, speak, stop, subscribeSpeak, stripSpeechText } from '../../utils/tts'
+import { SELECTION_ACTIONS, MAX_SELECTION_TEXT } from '../../utils/selection-actions'
 
 interface Props {
   role: 'user' | 'assistant'
@@ -50,6 +51,10 @@ interface Props {
   starred?: boolean
   /** 切换收藏星标 */
   onToggleStar?: (id: string, starred: boolean) => void
+  /** 会话内置顶状态（pinned 时常显 📌，不依赖 hover） */
+  pinned?: boolean
+  /** 切换消息置顶 */
+  onTogglePin?: (id: string, pinned: boolean) => void
   /** 多选模式：禁用右键菜单（与点选操作冲突） */
   selectMode?: boolean
   /** 基于本条消息创建定时提醒（右键「提醒我」；ChatModule 提供，Agent 侧不传） */
@@ -83,6 +88,8 @@ const MessageBubbleImpl: React.FC<Props> = ({
   onForward,
   starred,
   onToggleStar,
+  pinned,
+  onTogglePin,
   selectMode,
   onRemind
 }) => {
@@ -173,6 +180,17 @@ const MessageBubbleImpl: React.FC<Props> = ({
         onClick: () => setRemindMenu({ x: ctxMenu.x, y: ctxMenu.y })
       })
     if (onToggleStar) ctxItems.push({ key: 'star', label: starred ? t('chat.unstar') : t('chat.star'), onClick: () => onToggleStar(messageId, !starred) })
+    if (onTogglePin) ctxItems.push({ key: 'pin', label: pinned ? t('chat.unpin') : t('chat.pin'), onClick: () => onTogglePin(messageId, !pinned) })
+    // AI 快捷动作：复用划词浮条四动作（提示词/浮窗执行链路一致），非空正文才可用
+    if (content.trim()) {
+      for (const action of SELECTION_ACTIONS) {
+        ctxItems.push({
+          key: `ai-${action}`,
+          label: t(`popup.act.${action}`),
+          onClick: () => void window.pocketai.openSelectionPopup(content.slice(0, MAX_SELECTION_TEXT), action)
+        })
+      }
+    }
     if (onDelete) ctxItems.push({ key: 'del', label: t('common.delete'), danger: true, onClick: handleDelete })
   }
 
@@ -371,8 +389,8 @@ const MessageBubbleImpl: React.FC<Props> = ({
           <AttachmentGrid attachments={attachments} align="end" />
         )}
 
-        {/* 操作按钮：复制 / 引用 / 编辑 / 改参重跑 / 重新生成 / 删除 / 收藏星标（已收藏常显） */}
-        {selectable && (hovered || selected || starred || speaking) && !editing && (
+        {/* 操作按钮：复制 / 引用 / 编辑 / 改参重跑 / 重新生成 / 删除 / 收藏星标（已收藏常显）/ 置顶（已置顶常显） */}
+        {selectable && (hovered || selected || starred || pinned || speaking) && !editing && (
           <div className={`flex gap-1 mt-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
             {(hovered || selected) && (
               <>
@@ -481,6 +499,16 @@ const MessageBubbleImpl: React.FC<Props> = ({
                 className={`text-[11px] px-1.5 py-0.5 rounded transition-colors ${starred ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)]'}`}
               >
                 {starred ? '⭐' : '☆'}
+              </button>
+            )}
+            {onTogglePin && (
+              <button
+                onClick={() => onTogglePin(messageId, !pinned)}
+                title={pinned ? t('chat.unpin') : t('chat.pin')}
+                aria-label={pinned ? t('chat.unpin') : t('chat.pin')}
+                className={`text-[11px] px-1.5 py-0.5 rounded transition-colors ${pinned ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-accent)]'}`}
+              >
+                📌
               </button>
             )}
           </div>

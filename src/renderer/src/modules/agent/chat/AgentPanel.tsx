@@ -19,6 +19,8 @@ import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
 import { writeClipboard } from '../../../utils/clipboard'
 import { buildConversationHtml } from '../../../utils/export-html'
+import { buildReminderText } from '../../../utils/reminder-presets'
+import { formatDateTime } from '../../../utils/time'
 import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
 
 export const AgentPanel: React.FC = () => {
@@ -76,6 +78,22 @@ export const AgentPanel: React.FC = () => {
 
   // 切换会话后收起分步明细（明细数据由 hook 在切会话时清空，展开态同步复位）
   useEffect(() => { setStatsExpanded(false) }, [chat.conversationId])
+
+  // 消息右键「提醒我」：正文截取 200 字，带会话 id 落库；到点由系统通知（与 Chat 同链路）
+  const handleRemind = async (messageId: string, fireAt: number) => {
+    const msg = chat.messages.find((m) => m.id === messageId)
+    const text = msg ? buildReminderText(msg.text ?? '') : ''
+    if (!text) {
+      toast.error(t('reminder.menu.emptyText'))
+      return
+    }
+    try {
+      await window.pocketai.createReminder({ text, fireAt, conversationId: chat.conversationId ?? null })
+      toast.success(t('reminder.menu.created', { time: formatDateTime(fireAt) }))
+    } catch (e) {
+      toast.error(errText(e))
+    }
+  }
 
   const toggleStats = () => {
     const next = !statsExpanded
@@ -441,6 +459,7 @@ export const AgentPanel: React.FC = () => {
           onDeleteMessage={chat.running ? undefined : (id) => void chat.deleteMessage(id)}
           onRerunMessage={chat.running ? undefined : (id, text) => void chat.rerun(id, text)}
           onRegenerateMessage={chat.running ? undefined : (id) => chat.regenerate(id)}
+          onRemindMessage={chat.running ? undefined : (id, fireAt) => void handleRemind(id, fireAt)}
           focusIndex={activeHit?.index ?? null}
           highlightId={activeHit?.id ?? null}
         />

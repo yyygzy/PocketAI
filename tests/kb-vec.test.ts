@@ -19,6 +19,7 @@ vi.mock('../src/main/db/database', () => ({
 }))
 
 import { kbChunkRepo } from '../src/main/db/repositories/kb-chunk.repo'
+import { kbVecRepo } from '../src/main/db/repositories/kb-vec.repo'
 
 describe('kb-vec 向量索引（sqlite-vec）', () => {
   beforeAll(() => {
@@ -70,5 +71,22 @@ describe('kb-vec 向量索引（sqlite-vec）', () => {
     // 汽车那条（[0,0,1]）已被删，只剩 2 条
     expect(results).toHaveLength(2)
     expect(results.find((r) => r.content === '汽车有四个轮子')).toBeUndefined()
+  })
+})
+
+describe('全新库 kb_vec_map 不存在时清理路径不报错（回归：no such table）', () => {
+  it('DROP TABLE 后 deleteByDoc/deleteByKb/deleteByChunk 静默跳过，不抛错', () => {
+    realDb.exec('DROP TABLE IF EXISTS kb_vec_map')
+    expect(() => kbChunkRepo.deleteByDoc('d1')).not.toThrow()
+    expect(() => kbChunkRepo.deleteByKb('kb1')).not.toThrow()
+    expect(() => kbVecRepo.deleteByChunk('c1')).not.toThrow()
+  })
+
+  it('清理后 insert 仍能自愈建表并正常写入检索', () => {
+    kbChunkRepo.insertMany([
+      { docId: 'd3', kbId: 'kb2', sequence: 0, content: '守卫后写入', embedding: new Float32Array([1, 1, 0]) }
+    ])
+    const r = kbChunkRepo.knnSearch(new Float32Array([1, 1, 0]), ['kb2'], 1)
+    expect(r[0]?.content).toBe('守卫后写入')
   })
 })

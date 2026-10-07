@@ -7,8 +7,9 @@ import { pythonEnvService, getPipSource, setPipSource } from '../../mcp/python-e
 import { listPythonRuntimes, downloadPortablePython } from '../../python-runtime'
 import { broadcast } from '../broadcast'
 import { safeHandle, errMsg, argsSchema } from '../safe-handle'
-import { mcpServerSaveSchema, pythonPipSourceSchema } from '../../../shared/schemas/mcp'
+import { mcpServerSaveSchema, pythonPipSourceSchema, mcpCallToolSchema } from '../../../shared/schemas/mcp'
 import { idSchema } from '../../../shared/schemas/providers'
+import { stringifyMcpResult, mcpResultIsError } from '../../tools/registry'
 
 export function registerMcpHandlers(): void {
   safeHandle(IPC.MCP_SERVER_LIST, () => mcpServerRepo.list())
@@ -49,6 +50,26 @@ export function registerMcpHandlers(): void {
     ok: true as const,
     tools: await mcpManager.listTools(id)
   }), argsSchema(idSchema))
+  // 面板手动试运行：用户显式点击的调试动作，不走 assistant 权限链路。
+  // argsJson 解析失败/非对象视为用户输入问题，返回结构化错误供行内展示；
+  // callTool 抛错（未运行/传输失败）由 safeHandle 兜底转 { ok:false,error }。
+  safeHandle(IPC.MCP_SERVER_CALL_TOOL, async (_e, args: { serverId: string; toolName: string; argsJson: string }) => {
+    let parsed: unknown = {}
+    const text = args.argsJson.trim()
+    if (text) {
+      try {
+        parsed = JSON.parse(text)
+      } catch (e) {
+        return { ok: false as const, error: `参数 JSON 解析失败：${errMsg(e)}` }
+      }
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return { ok: false as const, error: '参数必须是 JSON 对象' }
+    }
+    const raw = await mcpManager.callTool(args.serverId, args.toolName, parsed as Record<string, unknown>)
+    // 复用 agent 链路同一套扁平化（含 256KB 截断），避免超大结果撑爆 IPC
+    return { ok: true as const, content: stringifyMcpResult(raw), isError: mcpResultIsError(raw) }
+  }, argsSchema(mcpCallToolSchema))
   safeHandle(IPC.MCP_SERVER_GET_RUNTIMES, () => mcpManager.listRuntimes())
 
   // ---------- Python MCP 依赖环境（venv / pip） ----------

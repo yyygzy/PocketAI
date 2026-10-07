@@ -182,6 +182,8 @@ export interface MessageRecord {
   replyToId?: string | null
   /** 收藏星标：用户标记的重要消息（旧数据为 false） */
   starred?: boolean
+  /** 会话内置顶：顶部横幅展示（旧数据为 false） */
+  pinned?: boolean
 }
 
 /** 收藏列表项（精简结构，侧边栏收藏视图预览用；按 createdAt 倒序） */
@@ -591,6 +593,8 @@ export interface McpServerRecord {
   args: string[] // stdio: 参数数组
   env: Record<string, string> // stdio: 环境变量
   url: string | null // http 传输
+  /** http 传输的自定义请求头（如 Authorization: Bearer xxx）；stdio 恒为 {} */
+  headers: Record<string, string>
   enabled: boolean
   createdAt: number
   /** runtime=python 时的 pip 依赖描述列表（每行一个，如 mcp-server-fetch==0.1.0）；其他 runtime 恒为 [] */
@@ -1366,6 +1370,7 @@ export type SidebarModuleId =
   | 'translate'
   | 'image'
   | 'sandbox'
+  | 'terminal'
   | 'steward'
   | 'settings'
 
@@ -1380,6 +1385,7 @@ export const DEFAULT_SIDEBAR_ORDER: SidebarModuleId[] = [
   'translate',
   'image',
   'sandbox',
+  'terminal',
   'steward',
   'settings'
 ]
@@ -1554,6 +1560,8 @@ export const IPC = {
   ASSISTANT_DELETE: 'assistant:delete',
   ASSISTANT_DUPLICATE: 'assistant:duplicate',
   ASSISTANT_SET_PINNED: 'assistant:set-pinned',
+  ASSISTANT_EXPORT: 'assistant:export', // 导出全部用户助手为 JSON
+  ASSISTANT_IMPORT: 'assistant:import', // 从 JSON 导入助手（同名覆盖）
 
   SKILL_LIST: 'skill:list',
   SKILL_GET: 'skill:get',
@@ -1618,6 +1626,7 @@ export const IPC = {
   MESSAGE_SET_STARRED: 'message:set-starred', // 收藏星标：标记/取消重要消息
   MESSAGE_LIST_STARRED: 'message:list-starred', // 收藏列表：跨会话统一查看（时间倒序）
   MESSAGE_FORWARD: 'message:forward', // 跨会话转发：插入一条不触发 AI 的消息（targetConvId=null 新建会话）
+  MESSAGE_SET_PINNED: 'message:set-pinned', // 消息置顶：会话内钉住关键消息
   USAGE_GET: 'usage:get', // 用量聚合汇总（token 用量按日/provider/模型）
   USAGE_CONVERSATIONS: 'usage:conversations', // 会话维度用量排行（标题/次数/token/费用）
   USAGE_ASSISTANTS: 'usage:assistants', // 助手维度用量排行（名称/次数/token/费用）
@@ -1686,9 +1695,17 @@ export const IPC = {
   MCP_SERVER_STOP: 'mcp-server:stop',
   MCP_SERVER_RESTART: 'mcp-server:restart',
   MCP_SERVER_LIST_TOOLS: 'mcp-server:list-tools',
+  // 手动试运行工具（面板调试用，等价于用户显式确认后执行，不走 assistant 权限链路）
+  MCP_SERVER_CALL_TOOL: 'mcp-server:call-tool',
   MCP_SERVER_GET_RUNTIMES: 'mcp-server:get-runtimes', // 一次性拉取所有运行时状态
   MCP_SERVER_STATUS_EVENT: 'mcp-server:status-event',
   MCP_SERVER_LOG_EVENT: 'mcp-server:log-event',
+
+  // ---------- 终端模块（用户手动交互式终端，非 Agent 工具） ----------
+  TERMINAL_START: 'terminal:start',
+  TERMINAL_INPUT: 'terminal:input',
+  TERMINAL_KILL: 'terminal:kill',
+  TERMINAL_OUTPUT: 'terminal:output', // 主进程 → 渲染端输出推送
 
   // ---------- 笔记 ----------
   NOTES_LIST: 'notes:list',

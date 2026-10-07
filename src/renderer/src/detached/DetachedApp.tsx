@@ -19,6 +19,7 @@ const MODULE_TITLES: Record<ModuleId, string> = {
   translate: 'tab.translate',
   image: 'tab.image',
   sandbox: 'tab.sandbox',
+  terminal: 'tab.terminal',
   steward: 'tab.steward',
   settings: 'tab.settings'
 }

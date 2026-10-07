@@ -16,11 +16,13 @@ interface McpServerRow {
   enabled: number
   created_at: number
   python_packages?: string | null // JSON 字符串数组（v16 起；旧库可能无此列）
+  headers?: string | null // JSON 对象字符串（v41 起；旧库可能无此列）
 }
 
 function rowToRecord(row: McpServerRow): McpServerRecord {
   let args: string[] = []
   let env: Record<string, string> = {}
+  let headers: Record<string, string> = {}
   let pythonPackages: string[] = []
   try {
     if (row.args) args = JSON.parse(row.args)
@@ -31,6 +33,19 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
     if (row.env) env = JSON.parse(row.env)
   } catch {
     env = {}
+  }
+  try {
+    if (row.headers) {
+      const parsed: unknown = JSON.parse(row.headers)
+      // 库内容可能被外部工具篡改为非对象 JSON：兜底 {}
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        headers = Object.fromEntries(
+          Object.entries(parsed).map(([k, v]) => [k, String(v)])
+        )
+      }
+    }
+  } catch {
+    headers = {}
   }
   try {
     if (row.python_packages) {
@@ -44,6 +59,8 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
   // pythonPackages 仅在 stdio + python 运行时下有意义，其余恒为 []
   const runtime = row.runtime ?? 'binary'
   if (row.transport !== 'stdio' || runtime !== 'python') pythonPackages = []
+  // headers 仅在 http 传输下有意义，stdio 恒为 {}
+  if (row.transport !== 'http') headers = {}
   return {
     id: row.id,
     name: row.name,
@@ -53,17 +70,19 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
     args,
     env,
     url: row.url,
+    headers,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
     pythonPackages
   }
 }
 
-/** 保存前归一化：pythonPackages 仅 stdio+python 保留，元素强制为去空白字符串并丢弃空行 */
+/** 保存前归一化：pythonPackages 仅 stdio+python 保留，元素强制为去空白字符串并丢弃空行；
+ *  headers 仅 http 保留，key/value 去空白并丢弃空 key */
 function normalizeInput(
   input: Partial<McpServerRecord> & { name: string },
   existing: McpServerRecord | null
-): { transport: McpTransport; runtime: McpRuntime; pythonPackages: string[] } {
+): { transport: McpTransport; runtime: McpRuntime; pythonPackages: string[]; headers: Record<string, string> } {
   const transport = input.transport ?? existing?.transport ?? 'stdio'
   const runtime = input.runtime ?? existing?.runtime ?? 'binary'
   const rawPkgs = input.pythonPackages ?? existing?.pythonPackages ?? []
@@ -71,7 +90,16 @@ function normalizeInput(
     transport === 'stdio' && runtime === 'python'
       ? rawPkgs.map((p) => String(p).trim()).filter(Boolean)
       : []
-  return { transport, runtime, pythonPackages }
+  const rawHeaders = input.headers ?? existing?.headers ?? {}
+  const headers =
+    transport === 'http'
+      ? Object.fromEntries(
+          Object.entries(rawHeaders)
+            .map(([k, v]) => [k.trim(), String(v)] as const)
+            .filter(([k]) => k.length > 0)
+        )
+      : {}
+  return { transport, runtime, pythonPackages, headers }
 }
 
 export const mcpServerRepo = {
@@ -95,12 +123,12 @@ export const mcpServerRepo = {
     const db = dbService.getHandle()
     const existing = input.id ? this.get(input.id) : null
     const id = input.id || randomUUID()
-    const { transport, runtime, pythonPackages } = normalizeInput(input, existing)
+    const { transport, runtime, pythonPackages, headers } = normalizeInput(input, existing)
 
     if (existing) {
       db.prepare(
         `UPDATE mcp_servers SET
-           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, enabled=?, python_packages=?
+           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, enabled=?, python_packages=?, headers=?
          WHERE id=?`
       ).run(
         input.name ?? existing.name,
@@ -112,14 +140,15 @@ export const mcpServerRepo = {
         input.url ?? existing.url,
         input.enabled !== undefined ? (input.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
         JSON.stringify(pythonPackages),
+        JSON.stringify(headers),
         id
       )
     } else {
       const now = Date.now()
       db.prepare(
         `INSERT INTO mcp_servers
-           (id, name, transport, runtime, command, args, env, url, enabled, created_at, python_packages)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, name, transport, runtime, command, args, env, url, enabled, created_at, python_packages, headers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -131,7 +160,8 @@ export const mcpServerRepo = {
         input.url ?? null,
         input.enabled !== false ? 1 : 0,
         now,
-        JSON.stringify(pythonPackages)
+        JSON.stringify(pythonPackages),
+        JSON.stringify(headers)
       )
     }
     return mustGet(() => this.get(id), 'MCP Server')

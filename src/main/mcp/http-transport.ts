@@ -30,6 +30,8 @@ export interface HttpTransportOptions {
   requestTimeout?: number
   /** SSE 单事件/响应体最大字节数，默认 32MB（与 stdio 对齐） */
   maxLineBytes?: number
+  /** 自定义请求头（如 Authorization）；协议头（Content-Type/Accept/Mcp-Session-Id）后写优先，不可被覆盖 */
+  headers?: Record<string, string>
 }
 
 /** 单条 SSE 事件的最大字节数（与 stdio NDJSON 上限对齐） */
@@ -134,6 +136,19 @@ export class HttpJsonRpcClient implements McpTransportClient {
 
   constructor(private readonly opts: HttpTransportOptions) {}
 
+  /** 组装请求头：自定义头在前，协议头后写优先（防用户头覆盖 Content-Type/Accept/会话 ID 破坏协议） */
+  private buildHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      ...(this.opts.headers ?? {}),
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream'
+    }
+    if (this.sessionId) {
+      headers['Mcp-Session-Id'] = this.sessionId
+    }
+    return headers
+  }
+
   /** http 传输无本地进程，pid 恒为 undefined */
   get pid(): number | undefined {
     return undefined
@@ -178,13 +193,7 @@ export class HttpJsonRpcClient implements McpTransportClient {
 
     return (async (): Promise<T> => {
       try {
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream'
-        }
-        if (this.sessionId) {
-          headers['Mcp-Session-Id'] = this.sessionId
-        }
+        const headers = this.buildHeaders()
 
         const res = await fetch(this.opts.url, {
           method: 'POST',
@@ -268,11 +277,7 @@ export class HttpJsonRpcClient implements McpTransportClient {
     const timer = setTimeout(() => controller.abort(), this.opts.requestTimeout ?? 30000)
     this.inflight.add(controller)
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream'
-    }
-    if (this.sessionId) headers['Mcp-Session-Id'] = this.sessionId
+    const headers = this.buildHeaders()
 
     fetch(this.opts.url, {
       method: 'POST',

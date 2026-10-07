@@ -77,6 +77,12 @@ export function registerMessageHandlers(): void {
     messageRepo.listStarred(limit),
     argsSchema(z.number().int().min(1).max(500).optional()))
 
+  // 消息置顶：会话内钉住关键消息（ChatView 顶部横幅从 messages 派生，无需单独查询通道）
+  safeHandle(IPC.MESSAGE_SET_PINNED, (_e, id: string, pinned: boolean) => {
+    messageRepo.setPinned(id, pinned)
+    return { ok: true }
+  }, argsSchema(idSchema, z.boolean()))
+
   // 跨会话转发：往目标会话插入一条不触发 AI 的消息；targetConvId=null 时先按源会话助手维度新建会话
   safeHandle(IPC.MESSAGE_FORWARD, (_e, input: {
     targetConvId: string | null
