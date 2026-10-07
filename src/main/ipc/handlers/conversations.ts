@@ -10,6 +10,7 @@ import { conversationRepo } from '../../db/repositories/conversation.repo'
 import { conversationGroupRepo } from '../../db/repositories/conversation-group.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
+import { deleteMessageAttachmentDocs } from '../../attachment/attachment-ingestion'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
 import { htmlToPdf } from '../../export/pdf'
 import { errMsg } from '../../error'
@@ -49,6 +50,11 @@ export function registerConversationHandlers(): void {
     conversationRepo.create({ assistantId, title }),
   conversationCreateArgsSchema)
   safeHandle(IPC.CONVERSATION_DELETE, (_e, id: string) => {
+    // 先清理该会话消息关联的附件文档（KB 向量索引），再删会话
+    const msgs = messageRepo.listByConversation(id)
+    for (const m of msgs) {
+      deleteMessageAttachmentDocs(m.id)
+    }
     conversationRepo.delete(id)
     clearSessionAllow(id) // 清会话级工具「总是允许」白名单
     return { ok: true }
@@ -59,6 +65,10 @@ export function registerConversationHandlers(): void {
     let ok = 0
     for (const id of safe) {
       try {
+        const msgs = messageRepo.listByConversation(id)
+        for (const m of msgs) {
+          deleteMessageAttachmentDocs(m.id)
+        }
         conversationRepo.delete(id)
         clearSessionAllow(id)
         ok++

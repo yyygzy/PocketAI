@@ -720,6 +720,8 @@ export interface AgentDoneEvent {
   traceStats?: AgentRunStats
   /** 知识库引用来源（RAG 检索命中的 chunk），仅最终回答无 tool_calls 时携带 */
   sources?: MessageSource[]
+  /** 本次运行是否实际调用了工具（用于零调用提示） */
+  usedTools?: boolean
 }
 
 /** Agent 流式文本增量（逐 token 推送） */

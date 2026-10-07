@@ -150,7 +150,7 @@ export const UsagePanel: React.FC = () => {
   }, [days, exporting, t, toast])
 
   const maxDaily = summary ? Math.max(...summary.daily.map((d) => d.totalTokens), 1) : 1
-  const maxProvider = summary && summary.byProvider.length > 0 ? summary.byProvider[0]!.totalTokens : 1
+  const maxDailyCost = summary ? Math.max(...summary.daily.map((d) => d.cost), 0) : 0
   const hasData = !!summary && summary.totals.requests > 0
 
   return (
@@ -268,55 +268,79 @@ export const UsagePanel: React.FC = () => {
             <span>{summary.daily[summary.daily.length - 1]?.date}</span>
           </div>
 
-          {/* Provider 排行 */}
+          {/* 费用趋势柱状图（有费用数据时展示） */}
+          {maxDailyCost > 0 && (
+            <>
+              <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('usage.costTrend')}</div>
+              <div className="flex items-end gap-[2px] h-20 mb-3" role="img" aria-label={t('usage.costTrend')}>
+                {summary.daily.map((d) => {
+                  const pct = Math.round((d.cost / maxDailyCost) * 100)
+                  return (
+                    <div
+                      key={d.date}
+                      className="flex-1 min-w-[3px] rounded-t bg-[var(--color-accent)] opacity-70 hover:opacity-100"
+                      style={{ height: `${Math.max(pct, d.cost > 0 ? 3 : 1)}%` }}
+                      title={`${d.date} · ${currencySymbol}${fmtCost(d.cost)}`}
+                    />
+                  )
+                })}
+              </div>
+              <div className="flex justify-between text-[10px] text-[var(--color-text-muted)] mb-4">
+                <span>{summary.daily[0]?.date}</span>
+                <span>{summary.daily[summary.daily.length - 1]?.date}</span>
+              </div>
+            </>
+          )}
+
+          {/* 按 Provider：环形图 + 列表 */}
           <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('usage.byProvider')}</div>
-          <div className="flex flex-col gap-1.5 mb-4">
-            {summary.byProvider.map((p) => (
-              <div key={p.provider}>
-                <div className="flex justify-between text-[11px] mb-0.5">
-                  <span className="text-[var(--color-text)] truncate">{p.provider}</span>
-                  <span className="text-[var(--color-text-muted)] shrink-0 ml-2">
+          <div className="flex gap-4 mb-4 items-start">
+            {/* 纯 CSS 环形图（conic-gradient） */}
+            <ProviderPie providers={summary.byProvider} />
+            <div className="flex-1 flex flex-col gap-1.5">
+              {summary.byProvider.map((p, idx) => (
+                <div key={p.provider} className="flex items-center gap-2">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ background: PROVIDER_COLORS[idx % PROVIDER_COLORS.length] }}
+                  />
+                  <span className="text-[11px] text-[var(--color-text)] truncate flex-1">{p.provider}</span>
+                  <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">
                     {p.cost > 0 && <span className="mr-1.5 text-[var(--color-accent)]">{currencySymbol}{fmtCost(p.cost)}</span>}
-                    {fmtTokens(p.totalTokens)} · {t('usage.requestCount', { count: p.requests })}
+                    {fmtTokens(p.totalTokens)}
                   </span>
                 </div>
-                <div className="h-1.5 rounded bg-[var(--color-sidebar)] overflow-hidden">
-                  <div
-                    className="h-full rounded bg-[var(--color-accent)] opacity-80"
-                    style={{ width: `${Math.max((p.totalTokens / maxProvider) * 100, 2)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
 
-          {/* 模型 Top10 */}
+          {/* 模型 Top10：水平条形图 + 表格 */}
           <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('usage.byModel')}</div>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-left text-[var(--color-text-muted)]">
-                <th className="py-1 pr-2 font-normal">{t('usage.model')}</th>
-                <th className="py-1 pr-2 font-normal text-right">{t('usage.requests')}</th>
-                <th className="py-1 pr-2 font-normal text-right">{t('usage.totalTokens')}</th>
-                <th className="py-1 font-normal text-right">{t('usage.cost')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.byModel.map((m) => (
-                <tr key={`${m.provider}::${m.model}`} className="border-t border-[var(--color-border)]">
-                  <td className="py-1.5 pr-2 truncate max-w-0">
-                    <span className="text-[var(--color-text)]">{m.model}</span>
-                    <span className="text-[10px] text-[var(--color-text-muted)] ml-1.5">{m.provider}</span>
-                  </td>
-                  <td className="py-1.5 pr-2 text-right text-[var(--color-text-muted)]">{m.requests}</td>
-                  <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(m.totalTokens)}</td>
-                  <td className="py-1.5 text-right font-mono text-[var(--color-accent)]">
+          <div className="flex flex-col gap-1.5 mb-4">
+            {summary.byModel.map((m) => {
+              const maxModelTokens = summary.byModel[0]!.totalTokens
+              const pct = Math.max((m.totalTokens / maxModelTokens) * 100, 2)
+              return (
+                <div key={`${m.provider}::${m.model}`} className="flex items-center gap-2">
+                  <span className="w-24 text-[11px] text-[var(--color-text)] truncate shrink-0" title={`${m.provider}/${m.model}`}>
+                    {m.model}
+                  </span>
+                  <div className="flex-1 h-4 rounded bg-[var(--color-sidebar)] overflow-hidden">
+                    <div
+                      className="h-full rounded bg-[var(--color-accent)] opacity-80"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className="w-20 text-[11px] text-right text-[var(--color-text-muted)] shrink-0">
+                    {fmtTokens(m.totalTokens)}
+                  </span>
+                  <span className="w-16 text-[11px] text-right text-[var(--color-accent)] shrink-0">
                     {m.cost > 0 ? `${currencySymbol}${fmtCost(m.cost)}` : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
 
           {/* 会话排行（Top20，随天数范围联动） */}
           {convUsage.length > 0 && (
@@ -722,6 +746,64 @@ const PriceEditor: React.FC<{
         <li>{t('usage.priceHintCache')}</li>
         <li>{t('usage.priceHintLocal')}</li>
       </ul>
+    </div>
+  )
+}
+
+/** Provider 饼图色板（与主题色协调的固定色组） */
+const PROVIDER_COLORS = [
+  'var(--color-accent)',
+  '#5b8def',
+  '#f59e0b',
+  '#10b981',
+  '#8b5cf6',
+  '#ec4899',
+  '#64748b'
+]
+
+/** Provider 环形图：纯 CSS conic-gradient 实现，Top5 直接展示，其余归「其他」 */
+const ProviderPie: React.FC<{
+  providers: UsageSummary['byProvider']
+}> = ({ providers }) => {
+  const { t } = useI18n()
+  if (providers.length === 0) return null
+  const total = providers.reduce((s, p) => s + p.totalTokens, 0)
+  if (total === 0) return null
+
+  // Top5 + 其他聚合
+  const top = providers.slice(0, 5)
+  const restTokens = providers.slice(5).reduce((s, p) => s + p.totalTokens, 0)
+  const segments: Array<{ label: string; tokens: number; color: string }> = top.map((p, i) => ({
+    label: p.provider,
+    tokens: p.totalTokens,
+    color: PROVIDER_COLORS[i % PROVIDER_COLORS.length]!
+  }))
+  if (restTokens > 0) {
+    segments.push({ label: t('usage.otherProviders'), tokens: restTokens, color: PROVIDER_COLORS[5]! })
+  }
+
+  // conic-gradient stops
+  let acc = 0
+  const stops = segments
+    .map((s) => {
+      const start = (acc / total) * 360
+      acc += s.tokens
+      const end = (acc / total) * 360
+      return `${s.color} ${start}deg ${end}deg`
+    })
+    .join(', ')
+
+  return (
+    <div className="shrink-0 flex flex-col items-center gap-1">
+      <div
+        className="w-20 h-20 rounded-full"
+        style={{ background: `conic-gradient(${stops})` }}
+        role="img"
+        aria-label={t('usage.byProvider')}
+      />
+      <div className="text-[10px] text-[var(--color-text-muted)]">
+        {segments.length > 5 ? t('usage.providerShare', { n: 5 }) : ''}
+      </div>
     </div>
   )
 }

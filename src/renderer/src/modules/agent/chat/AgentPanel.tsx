@@ -574,6 +574,21 @@ export const AgentPanel: React.FC = () => {
           </button>
         )}
 
+        {/* 零调用提示：有工具可用但模型未调用任何工具 */}
+        {chat.noToolCallNotice && !chat.running && (
+          <div className="mb-2 self-start w-full max-w-[640px] flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-bg)] text-xs">
+            <span className="shrink-0">⚠️</span>
+            <span className="flex-1 text-[var(--color-text)]">{t('agent.noToolCallNotice')}</span>
+            <button
+              onClick={() => chat.setNoToolCallNotice(false)}
+              className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              title={t('common.close')}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <AgentComposer
           running={chat.running}
           canSend={chat.canSend}

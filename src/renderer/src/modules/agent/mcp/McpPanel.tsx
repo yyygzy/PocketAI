@@ -13,6 +13,7 @@ import { StatusDot, MiniBtn } from '../ui'
 import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
 import { McpImportModal } from './McpImportModal'
+import { McpTemplatesModal } from './McpTemplatesModal'
 import { reportIpcError } from '../../../utils/ipc'
 
 /** 单个工具的试运行状态（key = `${serverId}:${toolName}`） */
@@ -38,6 +39,7 @@ export const McpPanel: React.FC = () => {
   // 工具试运行状态（输入与结果都按工具维度暂存，切换不丢）
   const [toolRuns, setToolRuns] = useState<Record<string, ToolRunState>>({})
   const [importOpen, setImportOpen] = useState(false)
+  const [templatesOpen, setTemplatesOpen] = useState(false)
 
   const pip = usePipSource(setNotice)
 
@@ -165,6 +167,12 @@ export const McpPanel: React.FC = () => {
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold">MCP Servers</h3>
           <div className="flex gap-1">
+            <button
+              onClick={() => setTemplatesOpen(true)}
+              className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
+            >
+              {t('agent.templates')}
+            </button>
             <button
               onClick={() => setImportOpen(true)}
               className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
@@ -415,6 +423,15 @@ export const McpPanel: React.FC = () => {
         <McpImportModal
           onClose={() => setImportOpen(false)}
           onImported={async () => {
+            await load()
+          }}
+        />
+      )}
+
+      {templatesOpen && (
+        <McpTemplatesModal
+          onClose={() => setTemplatesOpen(false)}
+          onCreated={async () => {
             await load()
           }}
         />

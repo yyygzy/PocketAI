@@ -788,6 +788,11 @@ const KbDetail: React.FC<{
                 <div className="text-sm truncate">{d.title || d.source}</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] truncate">
                   {d.sourceType} · {d.chunkCount} {t('kb.chunks')}
+                  {d.source.startsWith('msg_') && (
+                    <span className="ml-1.5 px-1 py-px rounded text-[10px] bg-[var(--color-accent)] bg-opacity-15 text-[var(--color-accent)]">
+                      {t('kb.fromAttachment')}
+                    </span>
+                  )}
                   {d.error && <span className="text-[var(--color-danger)]"> · {d.error}</span>}
                 </div>
               </div>

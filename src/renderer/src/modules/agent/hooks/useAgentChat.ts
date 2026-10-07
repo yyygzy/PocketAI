@@ -31,6 +31,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
   const [currentStep, setCurrentStep] = useState(0) // 当前运行正在执行的步数（running 时显示，结束后丢弃）
+  /** 零调用提示：本次运行有工具可用但模型未调用任何工具时显示 */
+  const [noToolCallNotice, setNoToolCallNotice] = useState(false)
   /** 运行中实时步骤条 chip 流（done/error/切会话清空；不打 messages-reducer，避免污染消息流） */
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [providerId, setProviderId] = useState('')
@@ -91,6 +93,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
     setLatestTraces(null)
     setTracesLoading(false)
     setLiveSteps([])
+    setNoToolCallNotice(false)
     if (!conversationId) {
       dispatch({ type: 'clear' })
       return
@@ -134,6 +137,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
         // 仅在事件仍归属当前会话时展示统计（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setRunStats(e.traceStats ?? null)
+          // 零调用提示：有工具可用但未调用任何工具
+          setNoToolCallNotice(e.usedTools === false)
           // 把知识库引用来源挂到最终回答卡片（流式结束即时显示，无需 reload）
           if (e.sources?.length) {
             dispatch({ type: 'setSources', messageId: e.finalMessageId, sources: e.sources })
@@ -373,6 +378,8 @@ export function useAgentChat(providers: ProviderRecord[]) {
     loadLatestTraces,
     currentStep,
     liveSteps,
+    noToolCallNotice,
+    setNoToolCallNotice,
     providerId,
     model,
     setModel,

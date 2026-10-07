@@ -22,6 +22,8 @@ import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
 import { errMsg, isAbortError } from '../error'
+import { createLogger } from '../logger'
+const logger = createLogger('chat-service')
 import { withProviderLimit } from './concurrency'
 import { agentEngine } from '../agent/engine'
 import { injectAttachments, appendTextAttachments, buildImageParts } from './context-attachments'
@@ -270,6 +272,13 @@ class ChatService {
 
       // 3.6 注入附件：图片→multimodal 格式，文本→追加到消息内容（kb 类型跳过）
       injectAttachments(messages, payload.attachments)
+
+      // 3.7 文本附件自动入库到知识库（语义检索增强）
+      if (payload.attachments && allKbIds.length > 0) {
+        void import('../attachment/attachment-ingestion')
+          .then((m) => m.ingestTextAttachmentsToKb(allKbIds[0]!, userMsg.id, payload.attachments!))
+          .catch((e) => logger.warn(`附件入库失败: ${errMsg(e)}`))
+      }
       const placeholders = targets.map((t) =>
         messageRepo.insert({
           conversationId,

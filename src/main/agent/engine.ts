@@ -40,6 +40,11 @@ import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
 import { createApproval } from './tool-approval'
 import { pickSafeParams } from './safe-params'
+import {
+  isToolsUnsupportedError,
+  extractTextToolCalls,
+  buildTextProtocolPrompt
+} from '../../shared/text-tool-protocol'
 
 const MAX_STEPS = 10
 const logger = createLogger('agent')
@@ -99,6 +104,10 @@ interface AgentRunContext {
   stepCount: number
   maxSteps: number // 步数预算上限（首次触顶重规划后 += REPLAN_EXTRA_STEPS）
   retriedEmpty: boolean // 空响应已重试过一次（本地小模型可能返回空 content + 空 tool_calls）
+  // 模型不支持原生 function calling 时自动降级的文本协议模式（ReAct 兜底）：
+  // 工具清单注入 system prompt，模型用 ```tool_call 围栏声明调用，引擎抽取后走原执行链
+  textProtocolMode: boolean
+  retriedBadCall: boolean // 文本协议下 tool_call 围栏 JSON 已纠错过一次（防无限重试）
   pendingAssistantMsgId: string // 当前轮 streaming 占位消息 id（写入终态后清空），供 catch 清理避免 UI 卡「思考中」
   finalContent: string
   finalMessageId: string
@@ -632,6 +641,13 @@ class AgentEngine {
     // 注入附件：图片→multimodal，文本→追加到用户消息
     injectAttachments(messages, payload.attachments)
 
+    // 文本附件自动入库到助手关联的知识库（语义检索增强）
+    if (payload.attachments && kbIds.length > 0) {
+      void import('../attachment/attachment-ingestion')
+        .then((m) => m.ingestTextAttachmentsToKb(kbIds[0]!, userMsg.id, payload.attachments!))
+        .catch((e) => logger.warn(`附件入库失败: ${errMsg(e)}`))
+    }
+
     // 允许调用的工具 id 集合
     const allowedToolIds = new Set<string>(
       toolPermissions.includes('*') ? ['*'] : toolPermissions
@@ -708,6 +724,8 @@ class AgentEngine {
       stepCount: 0,
       maxSteps: MAX_STEPS,
       retriedEmpty: false,
+      textProtocolMode: false,
+      retriedBadCall: false,
       pendingAssistantMsgId: '',
       finalContent: '',
       finalMessageId: '',
@@ -757,7 +775,8 @@ class AgentEngine {
         fullContent: ctx.finalContent,
         stepCount: ctx.stepCount,
         traceStats: safeTraceStats(requestId),
-        sources: ctx.sources.length > 0 ? ctx.sources : undefined
+        sources: ctx.sources.length > 0 ? ctx.sources : undefined,
+        usedTools: ctx.recentToolSignatures.length > 0
       }
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
       conversationRepo.touch(conversationId, { status: 'done' })
@@ -841,7 +860,8 @@ class AgentEngine {
       temperature: 0.7,
       ...pickSafeParams(defaultParams)
     }
-    if (tools.length > 0) {
+    // 文本协议模式下不传 tools（部分端点见 tools 即报错），改由 system prompt 内的协议承载
+    if (tools.length > 0 && !ctx.textProtocolMode) {
       chatParams.tools = tools
       chatParams.toolChoice = 'auto'
     }
@@ -892,6 +912,17 @@ class AgentEngine {
       } catch (e) {
         logger.debug(`streamChat 失败 step=${stepIndex}: ${errMsg(e)}`)
         if (isAbortError(e)) throw e
+        // 模型不支持原生工具调用（Ollama/LM Studio 等端点报 400）：标记切换文本协议模式
+        // 并结束重试循环，由下方切换重跑路径接管（每轮 run 至多切换一次）
+        if (
+          !ctx.textProtocolMode &&
+          tools.length > 0 &&
+          isToolsUnsupportedError(errMsg(e))
+        ) {
+          ctx.textProtocolMode = true
+          llmError = e
+          break
+        }
         const retryable =
           (e instanceof ProviderError && e.retryable) || !(e instanceof ProviderError)
         if (!retryable || attempt >= MAX_LLM_RETRIES) {
@@ -916,6 +947,39 @@ class AgentEngine {
 
     if (!result) {
       const e = llmError
+      // 刚切换到文本协议模式：注入协议提示词，本轮占位写成切换提示终态，重跑本步（不传 tools）
+      if (ctx.textProtocolMode && e && isToolsUnsupportedError(errMsg(e))) {
+        const sys = messages[0]
+        if (
+          sys &&
+          sys.role === 'system' &&
+          typeof sys.content === 'string' &&
+          !sys.content.includes('## 工具调用协议')
+        ) {
+          messages[0] = { ...sys, content: sys.content + buildTextProtocolPrompt(tools) }
+        }
+        const switchText = '（模型不支持原生工具调用，已切换文本协议模式，正在重试…）'
+        messageRepo.updateContent(assistantMsg.id, switchText, 'done')
+        ctx.pendingAssistantMsgId = ''
+        emit(IPC.AGENT_STEP_EVENT, {
+          requestId: ctx.requestId,
+          conversationId,
+          stepIndex,
+          type: 'thought',
+          text: switchText,
+          messageId: assistantMsg.id
+        })
+        safeTrace({
+          requestId: ctx.requestId,
+          conversationId,
+          stepIndex,
+          stepType: 'llm',
+          durationMs: Date.now() - stepStart,
+          status: 'error',
+          error: 'tools_unsupported_fallback'
+        })
+        return 'llm'
+      }
       const partial = accumulated || `_(LLM 调用失败: ${errMsg(e)})_`
       messageRepo.updateContent(assistantMsg.id, partial, 'error')
       emit(IPC.AGENT_STEP_EVENT, {
@@ -940,7 +1004,7 @@ class AgentEngine {
     }
 
     // 写入本步 assistant 文本
-    const toolCalls = result.toolCalls
+    let toolCalls = result.toolCalls
     const tokenUsage = result.usage?.totalTokens
     const rawText = result.content || ''
     logger.info(`[agent] step=${stepIndex} 进入后处理 toolCalls=${toolCalls?.length ?? 0}`)
@@ -948,6 +1012,51 @@ class AgentEngine {
     let stepText = truncated
       ? `${rawText}\n\n_（回答因达到 token 上限被截断，如需完整内容请继续追问）_`
       : rawText
+
+    // 文本协议模式：从回复文本抽取工具调用（模型不支持原生 function calling 的兜底）。
+    // 抽到调用 → 构造与原生同构的 toolCalls 复用整条执行链；坏围栏 → 纠错重试一次
+    if (ctx.textProtocolMode) {
+      const known = new Set(ctx.tools.map((tt) => tt.name))
+      const ext = extractTextToolCalls(stepText, known)
+      if (ext.calls.length > 0) {
+        toolCalls = ext.calls.map((c, i) => ({
+          id: `txt_${stepIndex}_${i}`,
+          type: 'function' as const,
+          function: { name: c.name, arguments: JSON.stringify(c.arguments) }
+        }))
+      } else if (ext.hasBadBlock && !ctx.retriedBadCall) {
+        // 围栏存在但内容不是合法 JSON：注入格式纠正提示重跑（只纠一次，防循环）
+        ctx.retriedBadCall = true
+        messageRepo.updateContent(assistantMsg.id, stepText, 'done')
+        ctx.pendingAssistantMsgId = ''
+        messages.push({ role: 'assistant', content: stepText })
+        messages.push({
+          role: 'user',
+          content:
+            '[系统提示] 你上一步输出的 tool_call 围栏内容不是合法 JSON 或缺少 name 字段。请重新输出，格式：```tool_call\n{"name": "工具名", "arguments": {"参数名": "值"}}\n```'
+        })
+        emit(IPC.AGENT_STEP_EVENT, {
+          requestId: ctx.requestId,
+          conversationId,
+          stepIndex,
+          type: 'thought',
+          text: stepText,
+          messageId: assistantMsg.id
+        })
+        safeTrace({
+          requestId: ctx.requestId,
+          conversationId,
+          stepIndex,
+          stepType: 'llm',
+          durationMs: Date.now() - stepStart,
+          status: 'error',
+          error: 'bad_tool_call_block'
+        })
+        return 'llm'
+      } else {
+        toolCalls = [] // 无工具调用 → 走最终回答路径
+      }
+    }
 
     // 空响应防御：本地小模型可能返回空 content + 空 tool_calls。
     // 首次：占位消息标记「重试中」并注入提示重跑一轮 llm；重试后仍空：写兜底文案正常结束。
@@ -1000,10 +1109,12 @@ class AgentEngine {
       messageRepo.updateToolCalls(assistantMsg.id, JSON.stringify(toolCalls))
       logger.info(`[agent] step=${stepIndex} toolCalls 写入完成`)
     }
+    // 文本协议模式剥离 tool_calls 结构（不支持 tools 的端点收到该字段可能报错），
+    // 模型改从上文 assistant 原文里的 tool_call 围栏感知自己的调用历史
     messages.push({
       role: 'assistant',
       content: stepText,
-      ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
+      ...(toolCalls && toolCalls.length > 0 && !ctx.textProtocolMode ? { tool_calls: toolCalls } : {})
     })
     logger.info(`[agent] step=${stepIndex} messages.push 完成`)
 
@@ -1218,12 +1329,21 @@ class AgentEngine {
       })
 
       const truncatedResult = compressToolResult(toolResult.content, MAX_TOOL_RESULT_CHARS)
-      messages.push({
-        role: 'tool',
-        content: truncatedResult,
-        tool_call_id: tc.id,
-        name: tc.function.name
-      })
+      if (ctx.textProtocolMode) {
+        // 文本协议模式：以 user 消息回填工具结果（role:'tool' 需要 tool_call_id，
+        // 对不支持 tools 的端点可能报错）
+        messages.push({
+          role: 'user',
+          content: `[工具结果] ${tc.function.name}\n${truncatedResult}\n请根据以上结果继续。`
+        })
+      } else {
+        messages.push({
+          role: 'tool',
+          content: truncatedResult,
+          tool_call_id: tc.id,
+          name: tc.function.name
+        })
+      }
 
       emit(IPC.AGENT_STEP_EVENT, {
         requestId,
