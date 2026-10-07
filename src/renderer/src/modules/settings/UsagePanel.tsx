@@ -35,6 +35,7 @@ export const UsagePanel: React.FC = () => {
   const [budgetEditing, setBudgetEditing] = useState(false)
   const [budgetDailyDraft, setBudgetDailyDraft] = useState('')
   const [budgetMonthlyDraft, setBudgetMonthlyDraft] = useState('')
+  const [budgetHardBlockDraft, setBudgetHardBlockDraft] = useState(false)
   const [budgetSaving, setBudgetSaving] = useState(false)
 
   const openDetail = useCallback(async (id: string, title: string) => {
@@ -102,7 +103,7 @@ export const UsagePanel: React.FC = () => {
     }
     setBudgetSaving(true)
     try {
-      const next = await window.pocketai.setUsageBudget(daily, monthly)
+      const next = await window.pocketai.setUsageBudget(daily, monthly, budgetHardBlockDraft)
       setBudget(next)
       setBudgetEditing(false)
       toast.success(t('usage.budgetSaved'))
@@ -111,7 +112,7 @@ export const UsagePanel: React.FC = () => {
     } finally {
       setBudgetSaving(false)
     }
-  }, [budgetDailyDraft, budgetMonthlyDraft, t, toast])
+  }, [budgetDailyDraft, budgetMonthlyDraft, budgetHardBlockDraft, t, toast])
 
   const reload = useCallback(() => load(days), [days, load])
 
@@ -189,6 +190,7 @@ export const UsagePanel: React.FC = () => {
                 if (!budgetEditing) {
                   setBudgetDailyDraft(budget.daily !== null ? String(budget.daily) : '')
                   setBudgetMonthlyDraft(budget.monthly !== null ? String(budget.monthly) : '')
+                  setBudgetHardBlockDraft(budget.hardBlock)
                 }
                 setBudgetEditing((v) => !v)
               }}
@@ -199,6 +201,7 @@ export const UsagePanel: React.FC = () => {
           <BudgetRow label={t('usage.budgetDaily')} limit={budget.daily} cost={budget.todayCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetDaily') })} />
           <BudgetRow label={t('usage.budgetMonthly')} limit={budget.monthly} cost={budget.monthCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetMonthly') })} />
           {budgetEditing && (
+            <>
             <div className="mt-2 flex items-center gap-2 text-[11px]">
               <span className="text-[var(--color-text-muted)] shrink-0">{t('usage.budgetDaily')}</span>
               <input
@@ -220,6 +223,16 @@ export const UsagePanel: React.FC = () => {
                 {t('usage.budgetSave')}
               </button>
             </div>
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={budgetHardBlockDraft}
+                onChange={(e) => setBudgetHardBlockDraft(e.target.checked)}
+                className="cursor-pointer"
+              />
+              <span>{t('usage.budgetHardBlock')}</span>
+            </label>
+            </>
           )}
         </div>
       )}

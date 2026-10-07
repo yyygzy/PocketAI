@@ -880,6 +880,8 @@ export const zh: Record<string, string> = {
   'usage.budgetSave': '保存预算',
   'usage.budgetSaved': '预算已保存',
   'usage.budgetExceeded': '已超{scope}（按本机单价估算）',
+  'usage.budgetHardBlock': '达到上限自动停发请求',
+  'usage.budgetBlocked': '已达到{scope}预算上限 ¥{limit}，已自动停发，请调整预算上限后再试',
   'usage.detailJumpHint': '点击跳转到会话内该条消息',
   'dh.total': '数据目录合计',
   'dh.db': '主数据库',

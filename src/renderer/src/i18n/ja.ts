@@ -827,6 +827,8 @@ export const ja: Record<string, string> = {
   'usage.budgetSave': '予算を保存',
   'usage.budgetSaved': '予算を保存しました',
   'usage.budgetExceeded': '{scope}を超過（ローカル単価で概算）',
+  'usage.budgetHardBlock': '上限到達時にリクエストを自動停止',
+  'usage.budgetBlocked': '{scope}予算上限 ¥{limit}に達しました。リクエストを自動停止しました。上限を調整してから再試行してください。',
   'usage.detailJumpHint': 'クリックで会話内のこのメッセージへ移動',
   'dh.total': 'データディレクトリ合計',
   'dh.db': 'メインデータベース',

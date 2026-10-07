@@ -70,6 +70,10 @@ vi.mock('../src/main/keep-awake', () => ({ acquireKeepAwake: () => {}, releaseKe
 vi.mock('../src/main/chat/concurrency', () => ({ withProviderLimit: (_p: unknown, fn: () => unknown) => fn() }))
 vi.mock('../src/main/agent/engine', () => ({ agentEngine: { abort: () => {}, run: async () => {} } }))
 vi.mock('../src/main/error', () => ({ errMsg: (e: unknown) => String(e), isAbortError: () => false }))
+vi.mock('../src/main/usage/usage-service', () => ({ usageService: { checkBudgetExceeded: () => null } }))
+vi.mock('../src/main/usage/pricing-config', () => ({ getUsagePricing: () => ({ prices: {} as Record<string, unknown> }) }))
+vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: { isUsageBudgetHardBlockEnabled: () => false } }))
+vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: { get: () => null } }))
 
 import { chatService } from '../src/main/chat/chat-service'
 

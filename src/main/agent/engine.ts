@@ -27,6 +27,7 @@ import { conversationRepo } from '../db/repositories/conversation.repo'
 import { runFirstMessageTitle } from '../conversation/title-gen'
 import { messageRepo } from '../db/repositories/message.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
+import { kbRepo } from '../db/repositories/kb.repo'
 import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
@@ -641,10 +642,18 @@ class AgentEngine {
     // 注入附件：图片→multimodal，文本→追加到用户消息
     injectAttachments(messages, payload.attachments)
 
-    // 文本附件自动入库到助手关联的知识库（语义检索增强）
+    // 附件自动入库到助手关联的所有知识库（文本直接入库，图片需 KB 配 OCR）
     if (payload.attachments && kbIds.length > 0) {
       void import('../attachment/attachment-ingestion')
-        .then((m) => m.ingestTextAttachmentsToKb(kbIds[0]!, userMsg.id, payload.attachments!))
+        .then(async (m) => {
+          for (const kbId of kbIds) {
+            const kb = kbRepo.get(kbId)
+            const ocrConfig = kb?.ocrProviderId && kb.ocrModel
+              ? { providerId: kb.ocrProviderId, model: kb.ocrModel }
+              : null
+            await m.ingestAttachmentsToKb(kbId, userMsg.id, payload.attachments!, ocrConfig)
+          }
+        })
         .catch((e) => logger.warn(`附件入库失败: ${errMsg(e)}`))
     }
 

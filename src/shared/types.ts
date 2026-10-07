@@ -303,6 +303,8 @@ export interface UsageBudgetStatus {
   monthly: number | null
   todayCost: number
   monthCost: number
+  /** 达到上限是否自动停发（硬阻断开关） */
+  hardBlock: boolean
 }
 
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */

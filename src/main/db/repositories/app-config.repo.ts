@@ -28,6 +28,7 @@ const KEYS = {
   CLOSE_TO_TRAY: 'close_to_tray', // '1'=关窗最小化到托盘而非退出；缺省=关
   USAGE_BUDGET_DAILY: 'usage_budget_daily', // 数字字符串（¥）；空/缺省=不限制
   USAGE_BUDGET_MONTHLY: 'usage_budget_monthly', // 同上
+  USAGE_BUDGET_HARD_BLOCK: 'usage_budget_hard_block', // '1'=达到上限自动停发；空/缺省=仅提醒
   NET_PROXY_URL: 'net_proxy_url', // 主进程 API 流量代理 URL（http/https）；空/缺省=直连
 } as const
 
@@ -257,6 +258,15 @@ export const appConfigRepo = {
 
   setUsageBudgetMonthly(v: number | null): void {
     this.set(KEYS.USAGE_BUDGET_MONTHLY, v && v > 0 ? String(v) : '')
+  },
+
+  /** 预算硬阻断：达到日/月上限时是否自动停发请求（缺省关闭=仅 toast 提醒） */
+  isUsageBudgetHardBlockEnabled(): boolean {
+    return this.get(KEYS.USAGE_BUDGET_HARD_BLOCK) === '1'
+  },
+
+  setUsageBudgetHardBlock(enabled: boolean): void {
+    this.set(KEYS.USAGE_BUDGET_HARD_BLOCK, enabled ? '1' : '')
   },
 
   // ---------- 网络代理（已 normalize 的 http/https URL；''=直连） ----------

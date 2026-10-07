@@ -880,6 +880,8 @@ export const en: Record<string, string> = {
   'usage.budgetSave': 'Save budget',
   'usage.budgetSaved': 'Budget saved',
   'usage.budgetExceeded': '{scope} exceeded (estimated by local pricing)',
+  'usage.budgetHardBlock': 'Auto-stop requests when limit reached',
+  'usage.budgetBlocked': '{scope} budget limit ¥{limit} reached, requests auto-stopped. Adjust the limit to continue.',
   'usage.detailJumpHint': 'Click to jump to this message in the conversation',
   'dh.total': 'Data directory total',
   'dh.db': 'Main database',

@@ -593,7 +593,17 @@ export const AgentPanel: React.FC = () => {
           running={chat.running}
           canSend={chat.canSend}
           att={att}
-          onSend={(text) => void chat.send(text, att.attachments)}
+          onSend={(text) => {
+            const p = chat.send(text, att.attachments)
+            if (p) p.catch((e) => {
+              const msg = errText(e)
+              const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
+              if (m) {
+                const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
+                toast.error(t('usage.budgetBlocked', { scope, limit: m[2]! }))
+              }
+            })
+          }}
           onAbort={chat.abort}
         />
       </div>

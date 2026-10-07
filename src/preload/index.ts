@@ -310,8 +310,8 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_MODELS),
   getUsageBudget: (): Promise<import('../shared/types').UsageBudgetStatus> =>
     ipcRenderer.invoke(IPC.USAGE_BUDGET_GET),
-  setUsageBudget: (daily: number | null, monthly: number | null): Promise<import('../shared/types').UsageBudgetStatus> =>
-    ipcRenderer.invoke(IPC.USAGE_BUDGET_SET, daily, monthly),
+  setUsageBudget: (daily: number | null, monthly: number | null, hardBlock?: boolean): Promise<import('../shared/types').UsageBudgetStatus> =>
+    ipcRenderer.invoke(IPC.USAGE_BUDGET_SET, daily, monthly, hardBlock),
   getUsageDetail: (days?: number, limit?: number, conversationId?: string, assistantId?: string | null): Promise<UsageDetailResult> =>
     ipcRenderer.invoke(IPC.USAGE_DETAIL_GET, days, limit, conversationId, assistantId),
   exportUsageCsv: (

@@ -310,8 +310,29 @@ class UsageService {
       daily: appConfigRepo.getUsageBudgetDaily(),
       monthly: appConfigRepo.getUsageBudgetMonthly(),
       todayCost: this.sumCostSince(dayStart, prices),
-      monthCost: this.sumCostSince(monthStart, prices)
+      monthCost: this.sumCostSince(monthStart, prices),
+      hardBlock: appConfigRepo.isUsageBudgetHardBlockEnabled()
     }
+  }
+
+  /**
+   * 检查预算是否超限（供硬阻断判断）。
+   * daily/monthly 任一已花 >= 上限即超限；null 上限=不限制，跳过。
+   * 返回超限详情或 null（未超限）。
+   */
+  checkBudgetExceeded(prices: Record<string, ModelPrice> = {}): {
+    scope: 'daily' | 'monthly'
+    cost: number
+    limit: number
+  } | null {
+    const status = this.getBudgetStatus(prices)
+    if (status.daily !== null && status.todayCost >= status.daily) {
+      return { scope: 'daily', cost: status.todayCost, limit: status.daily }
+    }
+    if (status.monthly !== null && status.monthCost >= status.monthly) {
+      return { scope: 'monthly', cost: status.monthCost, limit: status.monthly }
+    }
+    return null
   }
 
   /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */

@@ -27,6 +27,37 @@ export function imageMime(ext: string): string | null {
 }
 
 /**
+ * 识别图片 data URL（data:image/png;base64,...）中的文字。
+ * 失败（无 adapter/模型报错/空结果）抛错，由调用方定语义。
+ */
+export async function ocrImageDataUrl(
+  dataUrl: string,
+  providerId: string,
+  model: string
+): Promise<string> {
+  const adapter = providerManager.getAdapter(providerId)
+  if (!adapter) throw new Error(`OCR provider 不可用: ${providerId}`)
+
+  const result = await adapter.streamChat(
+    [
+      { role: 'system', content: OCR_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '识别这张图片中的全部文字' },
+          { type: 'image_url', image_url: { url: dataUrl } }
+        ]
+      }
+    ],
+    { model, temperature: 0, maxTokens: 4096 },
+    { onDelta: () => {} }
+  )
+  const text = result.content.trim()
+  if (!text) throw new Error('图片未识别到文字')
+  return text
+}
+
+/**
  * 识别图片文件中的文字。
  * 失败（无 adapter/超限/读取失败/模型报错/空结果）抛错，由调用方定语义。
  */
@@ -48,25 +79,6 @@ export async function ocrImageFile(
     throw new Error(`图片超过 ${Math.round(OCR_MAX_IMAGE_BYTES / 1024 / 1024)}MB 上限: ${path.basename(filePath)}`)
   }
 
-  const adapter = providerManager.getAdapter(providerId)
-  if (!adapter) throw new Error(`OCR provider 不可用: ${providerId}`)
-
   const dataUrl = `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`
-  const result = await adapter.streamChat(
-    [
-      { role: 'system', content: OCR_SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: '识别这张图片中的全部文字' },
-          { type: 'image_url', image_url: { url: dataUrl } }
-        ]
-      }
-    ],
-    { model, temperature: 0, maxTokens: 4096 },
-    { onDelta: () => {} }
-  )
-  const text = result.content.trim()
-  if (!text) throw new Error(`图片未识别到文字: ${path.basename(filePath)}`)
-  return text
+  return ocrImageDataUrl(dataUrl, providerId, model)
 }

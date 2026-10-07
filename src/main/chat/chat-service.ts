@@ -18,9 +18,13 @@ import { conversationRepo } from '../db/repositories/conversation.repo'
 import { runFirstMessageTitle } from '../conversation/title-gen'
 import { messageRepo } from '../db/repositories/message.repo'
 import { assistantRepo } from '../db/repositories/assistant.repo'
+import { kbRepo } from '../db/repositories/kb.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
+import { usageService } from '../usage/usage-service'
+import { getUsagePricing } from '../usage/pricing-config'
+import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
 const logger = createLogger('chat-service')
@@ -170,6 +174,8 @@ class ChatService {
     const { requestId, conversationId, content, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
 
+    this.assertBudget()
+
     // Agent 模式：委托给 AgentEngine 走 ReAct 循环
     if (payload.agentMode) {
       acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
@@ -273,10 +279,18 @@ class ChatService {
       // 3.6 注入附件：图片→multimodal 格式，文本→追加到消息内容（kb 类型跳过）
       injectAttachments(messages, payload.attachments)
 
-      // 3.7 文本附件自动入库到知识库（语义检索增强）
+      // 3.7 附件自动入库到所有关联知识库（文本直接入库，图片需 KB 配 OCR）
       if (payload.attachments && allKbIds.length > 0) {
         void import('../attachment/attachment-ingestion')
-          .then((m) => m.ingestTextAttachmentsToKb(allKbIds[0]!, userMsg.id, payload.attachments!))
+          .then(async (m) => {
+            for (const kbId of allKbIds) {
+              const kb = kbRepo.get(kbId)
+              const ocrConfig = kb?.ocrProviderId && kb.ocrModel
+                ? { providerId: kb.ocrProviderId, model: kb.ocrModel }
+                : null
+              await m.ingestAttachmentsToKb(kbId, userMsg.id, payload.attachments!, ocrConfig)
+            }
+          })
           .catch((e) => logger.warn(`附件入库失败: ${errMsg(e)}`))
       }
       const placeholders = targets.map((t) =>
@@ -323,6 +337,8 @@ class ChatService {
     return this.withConversationLock(payload.conversationId, async () => {
     const { requestId, conversationId, messageId, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
+
+    this.assertBudget()
 
     // 获取要重新生成的旧 assistant 消息（仅用于校验与取 parent）
     const oldMsg = messageRepo.getById(messageId)
@@ -395,6 +411,8 @@ class ChatService {
     const { requestId, conversationId, messageId, content, targets, assistantId } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
 
+    this.assertBudget()
+
     const userMsg = messageRepo.getById(messageId)
     if (!userMsg || userMsg.role !== 'user') {
       throw new Error('消息不存在或非用户消息')
@@ -460,6 +478,18 @@ class ChatService {
       releaseKeepAwake()
     }
     })
+  }
+
+  /**
+   * 预算硬阻断断言：开启后达到日/月上限即抛错（BUDGET_EXCEEDED:scope:limit:msg）。
+   * 未开启或未超限则无操作。
+   */
+  private assertBudget(): void {
+    if (!appConfigRepo.isUsageBudgetHardBlockEnabled()) return
+    const exceeded = usageService.checkBudgetExceeded(getUsagePricing().prices)
+    if (!exceeded) return
+    const scopeLabel = exceeded.scope === 'daily' ? '今日' : '本月'
+    throw new Error(`BUDGET_EXCEEDED:${exceeded.scope}:${exceeded.limit}:已达到${scopeLabel}预算上限 ¥${exceeded.limit}`)
   }
 
   private async runTarget(args: {

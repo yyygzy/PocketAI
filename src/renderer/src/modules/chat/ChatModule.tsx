@@ -810,8 +810,15 @@ export const ChatModule: React.FC = () => {
         replyToId: replyToId ?? null,
         kbRefs
       })
-      .catch(() => {
+      .catch((e) => {
         failStream(requestId, convId)
+        const msg = errText(e)
+        // 预算硬阻断：识别 BUDGET_EXCEEDED:scope:limit 前缀，用专门文案
+        const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
+        if (m) {
+          const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
+          toast.error(t('usage.budgetBlocked', { scope, limit: m[2]! }))
+        }
       })
     setReplyToMessage(null)
   }

@@ -827,6 +827,8 @@ export const ko: Record<string, string> = {
   'usage.budgetSave': '예산 저장',
   'usage.budgetSaved': '예산이 저장되었습니다',
   'usage.budgetExceeded': '{scope} 초과(로컬 단가로 추정)',
+  'usage.budgetHardBlock': '한도 도달 시 요청 자동 중지',
+  'usage.budgetBlocked': '{scope} 예산 한도 ¥{limit}에 도달했습니다. 요청이 자동 중지되었습니다. 한도를 조정한 후 다시 시도하세요.',
   'usage.detailJumpHint': '클릭하면 대화 내 해당 메시지로 이동',
   'dh.total': '데이터 디렉터리 합계',
   'dh.db': '메인 데이터베이스',
