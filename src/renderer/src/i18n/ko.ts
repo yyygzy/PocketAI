@@ -654,7 +654,7 @@ export const ko: Record<string, string> = {
   'agent.shell.policyConfirm': '매번 확인',
   'agent.shell.policyAutoSafe': '위험한 작업만 확인',
   'agent.shell.hintOff': '비활성화: 에이전트가 셸 명령을 실행할 수 없습니다',
-  'agent.shell.hintOn': '제한된 터미널(샌드박스 아님): 명령은 Moxia와 같은 권한으로 실행되며, 작업 공간은 시작 폴더일 뿐입니다(다른 경로에도 접근 가능). 블랙리스트 파괴 명령은 강제 거부; 대화형 프로그램 미지원; 어시스턴트 도구에서 shell_exec 활성화 필요',
+  'agent.shell.hintOn': '제한된 터미널(샌드박스 아님): 명령은 Moxia와 같은 권한으로 실행되고, 작업 공간은 시작 폴더일 뿐입니다. 블랙리스트 파괴 명령은 강제 거부, 대화형 미지원, 어시스턴트에서 shell_exec 활성화 필요',
   'agent.shell.needWorkspace': '터미널 명령을 활성화하기 전에 작업 공간 폴더를 선택하세요',
   'agent.websearch.title': '웹 검색',
   'agent.websearch.provider': '공급자',

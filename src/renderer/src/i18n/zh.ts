@@ -683,7 +683,7 @@ export const zh: Record<string, string> = {
   'agent.shell.policyConfirm': '逐条确认',
   'agent.shell.policyAutoSafe': '仅危险确认',
   'agent.shell.hintOff': '关闭中：Agent 无法执行 shell 命令',
-  'agent.shell.hintOn': '受限终端：命令以墨匣自身权限运行，不是沙箱；工作目录只是起始目录（命令仍可访问其他路径）；黑名单毁灭命令硬拒；不支持交互式程序；助手工具需勾选 shell_exec',
+  'agent.shell.hintOn': '受限终端·不是沙箱：命令以墨匣自身权限运行，工作目录只是起始目录；黑名单毁灭命令硬拒；不支持交互式程序；助手需勾选 shell_exec',
   'agent.shell.needWorkspace': '请先选择工作目录后再开启终端命令',
 
   // 联网搜索（web.search 工具）

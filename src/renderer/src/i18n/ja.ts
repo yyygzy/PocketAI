@@ -654,7 +654,7 @@ export const ja: Record<string, string> = {
   'agent.shell.policyConfirm': '毎回確認',
   'agent.shell.policyAutoSafe': '危険な操作のみ確認',
   'agent.shell.hintOff': '無効：エージェントはシェルコマンドを実行できません',
-  'agent.shell.hintOn': '制限付きターミナル（サンドボックスではない）：コマンドは Moxia と同じ権限で実行され、ワークスペースは開始ディレクトリにすぎません（他のパスにもアクセス可能）。ブラックリストの破壊的コマンドは強制拒否；対話型プログラムは非対応；アシスタントツールで shell_exec を有効化してください',
+  'agent.shell.hintOn': '制限付きターミナル（サンドボックスではない）：コマンドは Moxia と同じ権限で実行され、ワークスペースは開始ディレクトリにすぎません。ブラックリストの破壊コマンドは強制拒否、対話型は非対応、アシスタントで shell_exec を有効化してください',
   'agent.shell.needWorkspace': 'ターミナルコマンドを有効にする前にワークスペースフォルダを選択してください',
   'agent.websearch.title': 'ウェブ検索',
   'agent.websearch.provider': 'プロバイダー',

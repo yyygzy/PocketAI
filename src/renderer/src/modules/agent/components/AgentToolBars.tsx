@@ -80,7 +80,10 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
             <option value="auto-safe">{t('agent.shell.policyAutoSafe')}</option>
           </select>
         </label>
-        <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
+        <span
+          className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate"
+          title={shellConfig.enabled ? t('agent.shell.hintOn') : t('agent.shell.hintOff')}
+        >
           {shellConfig.enabled ? t('agent.shell.hintOn') : t('agent.shell.hintOff')}
         </span>
       </div>

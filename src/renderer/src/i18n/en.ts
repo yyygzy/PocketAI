@@ -683,7 +683,7 @@ export const en: Record<string, string> = {
   'agent.shell.policyConfirm': 'Confirm each',
   'agent.shell.policyAutoSafe': 'Confirm risky only',
   'agent.shell.hintOff': 'Disabled: the Agent cannot run shell commands',
-  'agent.shell.hintOn': 'Restricted terminal, not a sandbox: commands run with Moxia\'s own privileges, and the workspace is only the starting directory (a command can still reach other paths). Blacklisted destructive commands are hard-blocked; interactive programs are unsupported; enable shell_exec in the assistant tools',
+  'agent.shell.hintOn': 'Restricted terminal, not a sandbox: commands run with Moxia\'s own privileges and the workspace is only the starting directory. Deny-listed destructive commands are hard-blocked; interactive programs unsupported; enable shell_exec in the assistant',
   'agent.shell.needWorkspace': 'Choose a workspace folder before enabling shell commands',
 
   // Web search (web.search tool)
