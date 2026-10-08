@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { kbVecRepo } from './kb-vec.repo'
+import { buildFtsMatchQuery } from '../../knowledge/fts-query'
 import type { KbChunk, RetrievedChunk } from '../../../shared/types'
 
 export interface ChunkInsert {
@@ -221,11 +222,10 @@ export const kbChunkRepo = {
     ).get()
     if (!ftsExists) return []
 
-    // 构造 FTS5 MATCH 查询：对查询分词，用 OR 连接（宽松匹配）
-    // 用双引号包裹每个 token 避免特殊字符
-    const tokens = query.trim().split(/\s+/).filter(Boolean)
-    if (tokens.length === 0) return []
-    const matchExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ')
+    // 构造 FTS5 MATCH 查询：CJK 切成 3 字滑窗 OR、拉丁词整词匹配（SEC-18，见 knowledge/fts-query.ts）。
+    // 短 CJK 查询产不出词项时直接跳过 BM25（向量路覆盖），不要发一个恒空的 MATCH。
+    const matchExpr = buildFtsMatchQuery(query)
+    if (!matchExpr) return []
 
     const placeholders = kbIds.map(() => '?').join(',')
     const rows = db

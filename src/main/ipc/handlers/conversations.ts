@@ -11,6 +11,7 @@ import {
 } from '../../../shared/conversation-import-external'
 import { buildConversationMarkdown, safeFileName, dedupeFileNames } from '../../../shared/export-markdown'
 import { dbService } from '../../db/database'
+import { lockService } from '../../lock/lock'
 import { conversationRepo } from '../../db/repositories/conversation.repo'
 import { conversationGroupRepo } from '../../db/repositories/conversation-group.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
@@ -266,8 +267,11 @@ export function registerConversationHandlers(): void {
   })))
 
   // dragstart 是同步事件，只能走 send（不能用 invoke 等待返回值）；
-  // 安全关键：渲染端可传任意路径，必须校验归属拖拽临时目录，否则等于任意文件拖出泄露
+  // 安全关键：渲染端可传任意路径，必须校验归属拖拽临时目录，否则等于任意文件拖出泄露。
+  // SEC-22：锁网关只包装 ipcMain.handle，send 通道不在其覆盖内——这里显式补一道锁检查，
+  // 否则锁屏期仍能把先前生成的临时导出文件拖出去（内容含会话正文）。
   ipcMain.on(IPC.EXPORT_START_DRAG, (e, payload: unknown) => {
+    if (lockService.getStatus().state === 'locked') return
     const p = payload as { path?: unknown }
     if (typeof p?.path !== 'string' || !isDragTempPath(p.path)) return
     if (!fs.existsSync(p.path)) return

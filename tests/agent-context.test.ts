@@ -59,6 +59,8 @@ import {
   estimateTokens,
   cutToTokens,
   resolveAgentToolPermissions,
+  extractKbSearchSources,
+  mergeSources,
   wrapUntrusted,
   UNTRUSTED_START,
   UNTRUSTED_END
@@ -499,8 +501,7 @@ describe('wrapUntrusted — 外部内容定界（SEC-12）', () => {
     expect(wrapUntrusted('')).toBe(`${UNTRUSTED_START}\n\n${UNTRUSTED_END}`)
   })
 
-  it('buildContext 复原历史工具结果时加定界，且不改动传入记录', () => {
-    const history = [
+  it('buildContext 复原历史工具结果时加定界，且不改动传入记录', () => {    const history = [
       msg({ role: 'user', content: '查一下' }),
       msg({ role: 'assistant', content: '', toolCalls: toolCalls('c1') }),
       toolMsg('c1', 'web_fetch', '来自网页的正文')
@@ -513,5 +514,50 @@ describe('wrapUntrusted — 外部内容定界（SEC-12）', () => {
     // DB 侧原文不被污染：重放第二次仍是单层包裹（幂等由包装函数保证）
     expect(history[2]!.content).toContain('来自网页的正文')
     expect(history[2]!.content).not.toContain(UNTRUSTED_START)
+  })
+})
+
+describe('kb_search 引用来源归集（SEC-29）', () => {
+  it('解析工具结果里的片段为 MessageSource', () => {
+    const content = JSON.stringify({
+      query: '向量检索',
+      results: [
+        { docId: 'd1', chunkId: 'c1', docTitle: '设计文档', content: '片段一', score: 0.9 },
+        { docId: 'd2', chunkId: 'c2', docTitle: '手册', content: '片段二' }
+      ]
+    })
+    expect(extractKbSearchSources('kb_search', content)).toEqual([
+      { chunkId: 'c1', docId: 'd1', docTitle: '设计文档', content: '片段一' },
+      { chunkId: 'c2', docId: 'd2', docTitle: '手册', content: '片段二' }
+    ])
+  })
+
+  it('非 kb_search 工具、出错结果、畸形 JSON、缺字段都不产出来源', () => {
+    const ok = JSON.stringify({ results: [{ docId: 'd', chunkId: 'c', content: 'x' }] })
+    expect(extractKbSearchSources('web_search', ok)).toEqual([])
+    expect(extractKbSearchSources('kb_search', ok, true)).toEqual([])
+    expect(extractKbSearchSources('kb_search', 'not json')).toEqual([])
+    expect(extractKbSearchSources('kb_search', JSON.stringify({ note: '未检索到' }))).toEqual([])
+    expect(
+      extractKbSearchSources('kb_search', JSON.stringify({ results: [{ docId: 'd' }] }))
+    ).toEqual([])
+  })
+
+  it('合并按 chunkId 去重，首轮注入优先，总数封顶', () => {
+    const first = [{ chunkId: 'c1', docId: 'd1', docTitle: 'T1', content: 'a' }]
+    const merged = mergeSources(first, [
+      { chunkId: 'c1', docId: 'd1', docTitle: '改过的标题', content: 'a' },
+      { chunkId: 'c2', docId: 'd2', docTitle: 'T2', content: 'b' }
+    ])
+    expect(merged.map((s) => s.chunkId)).toEqual(['c1', 'c2'])
+    expect(merged[0]!.docTitle).toBe('T1')
+
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      chunkId: `x${i}`,
+      docId: 'd',
+      docTitle: 'T',
+      content: 'c'
+    }))
+    expect(mergeSources([], many)).toHaveLength(12)
   })
 })

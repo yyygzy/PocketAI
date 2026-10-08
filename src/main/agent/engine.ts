@@ -79,7 +79,7 @@ const LOOP_TIMEOUT_MS = 5 * 60 * 1000 // 5 分钟整体超时
 const TOOL_TIMEOUT_MS = 30_000 // 单个工具调用超时
 const MAX_CONTEXT_MESSAGES = 30 // 上下文窗口：最多保留最近 30 条消息（不含 system），防止 token 溢出
 const MAX_TOOL_RESULT_CHARS = 2000 // 工具结果在上下文中的最大字符数（截断防止撑爆 token 窗口）
-const SUMMARIZE_THRESHOLD = 35 // 历史消息超过此数时，对超出窗口的部分生成摘要
+const MAX_MESSAGE_SOURCES = 12 // 单条最终回答最多挂多少个引用来源
 const MAX_LLM_RETRIES = 2 // LLM 调用失败重试次数（网络抖动/429/5xx），不含首次
 const RETRY_BASE_DELAY_MS = 1000 // 重试退避基数（指数退避：1s → 2s）
 const MAX_REPEAT_TOOL_CALLS = 2 // 相同工具+参数连续调用次数阈值，超过则触发反思（防止死循环）
@@ -572,6 +572,51 @@ function buildApprovalDisplay(
   }
 }
 
+/**
+ * kb_search 工具结果 → 引用来源（SEC-29）。
+ * 首轮 {{knowledge}} 注入的命中已经进 sources，但多步推理中模型主动换关键词检索到的片段
+ * 此前被丢弃，导致「答案引用了资料、来源列表里却没有」——用户无法跳转核对。
+ * 结果形状由 tools/kb-search.ts 决定（{ query, results: [{docId, chunkId, docTitle, content}] }），
+ * 任何解析失败都退回空数组（工具结果本身仍照常回填给模型，不影响运行）。
+ */
+export function extractKbSearchSources(
+  toolName: string,
+  resultContent: string,
+  isError?: boolean
+): MessageSource[] {
+  if (toolName !== 'kb_search' || isError) return []
+  try {
+    const parsed = JSON.parse(resultContent) as { results?: unknown }
+    if (!Array.isArray(parsed?.results)) return []
+    const out: MessageSource[] = []
+    for (const item of parsed.results as Array<Record<string, unknown>>) {
+      const chunkId = typeof item?.chunkId === 'string' ? item.chunkId : ''
+      const docId = typeof item?.docId === 'string' ? item.docId : ''
+      if (!chunkId || !docId) continue
+      out.push({
+        chunkId,
+        docId,
+        docTitle: typeof item?.docTitle === 'string' ? item.docTitle : docId,
+        content: typeof item?.content === 'string' ? item.content : ''
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** 合并引用来源：按 chunkId 去重（首轮注入优先保留），总数封顶避免膨胀 */
+export function mergeSources(existing: MessageSource[], added: MessageSource[]): MessageSource[] {
+  const byId = new Map<string, MessageSource>()
+  for (const s of existing) byId.set(s.chunkId, s)
+  for (const s of added) {
+    if (byId.size >= MAX_MESSAGE_SOURCES) break
+    if (!byId.has(s.chunkId)) byId.set(s.chunkId, s)
+  }
+  return Array.from(byId.values())
+}
+
 class AgentEngine {
   private controllers = new Map<string, AbortController>()
 
@@ -672,12 +717,15 @@ class AgentEngine {
     const loopTimer = setTimeout(() => master.abort(), LOOP_TIMEOUT_MS)
 
     // 工作消息列表（ReAct 上下文）
-    // 上下文窗口：仅保留最近 MAX_CONTEXT_MESSAGES 条历史，防止 token 溢出
-    // 当历史超过 SUMMARIZE_THRESHOLD 条时，对超出窗口的早期消息生成文本摘要注入 system
+    // 上下文窗口：仅保留最近 MAX_CONTEXT_MESSAGES 条历史，防止 token 溢出；
+    // **凡是被窗口切掉的早期消息都要进摘要**（SEC-19）——此前摘要另用一个更高的
+    // 阈值（35），31~35 条历史会既被窗口裁掉又不被摘要，等于静默丢失用户上下文。
     const allHistory = messageRepo.listByConversation(conversationId)
     let summaryPrefix = ''
-    if (allHistory.length > SUMMARIZE_THRESHOLD) {
-      const earlyMsgs = allHistory.slice(0, allHistory.length - MAX_CONTEXT_MESSAGES)
+    const earlyMsgs = allHistory.length > MAX_CONTEXT_MESSAGES
+      ? allHistory.slice(0, allHistory.length - MAX_CONTEXT_MESSAGES)
+      : []
+    if (earlyMsgs.length > 0) {
       // 优先用 LLM 生成高质量摘要，失败/超时降级为规则摘要
       const summaryAdapter = providerManager.getAdapter(target.providerId)
       summaryPrefix = await summarizeHistoryWithLLM(
@@ -1417,6 +1465,8 @@ class AgentEngine {
       })
 
       const truncatedResult = compressToolResult(toolResult.content, MAX_TOOL_RESULT_CHARS)
+      // kb_search 命中并入引用来源（SEC-29），最终回答的 sources 才覆盖多步检索
+      ctx.sources = mergeSources(ctx.sources, extractKbSearchSources(tc.function.name, toolResult.content, toolResult.isError))
       if (ctx.textProtocolMode) {
         // 文本协议模式：以 user 消息回填工具结果（role:'tool' 需要 tool_call_id，
         // 对不支持 tools 的端点可能报错）
@@ -1527,7 +1577,6 @@ class AgentEngine {
         role: 'user',
         content: `已达到最大推理步数（${ctx.maxSteps} 步）。请基于上面已有的工具调用结果和对话信息，直接给出最终回答，不要再调用任何工具。`
       })
-
       const degradeAdapter = providerManager.getAdapter(target.providerId)
       const degradeParams: ChatParams = {
         model: target.model,
@@ -1597,7 +1646,7 @@ class AgentEngine {
         conversationId,
         error: aborted
           ? 'Agent 运行已中止'
-          : `已达最大推理步数（${MAX_STEPS}），且降级总结失败：${errMsg(e)}`
+          : `已达最大推理步数（${ctx.maxSteps}），且降级总结失败：${errMsg(e)}`
       })
       conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
       return false

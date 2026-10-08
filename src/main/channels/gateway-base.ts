@@ -130,6 +130,25 @@ export function safeError(err: unknown, method: string): string {
 }
 
 /** 按长度分片（优先在换行处切，避免硬切出现半句） */
+/**
+ * 网关回调地址合法性（SEC-23）：socket URL 来自平台服务端响应，可被中间人或
+ * 被攻陷的开放接口替换；而我们随后会在这条连接上带上 appKey / bot token / 订阅凭据，
+ * 因此只接受 wss（本机回环允许 ws，便于本地联调）。
+ */
+export function assertGatewaySocketUrl(raw: string, label: string): string {
+  let u: URL
+  try {
+    u = new URL(String(raw ?? ''))
+  } catch {
+    throw new Error(`${label} 返回的网关地址非法`)
+  }
+  const loopback = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1'
+  if (u.protocol !== 'wss:' && !(u.protocol === 'ws:' && loopback)) {
+    throw new Error(`${label} 网关地址协议不被允许：${u.protocol}`)
+  }
+  return u.toString()
+}
+
 export function splitMessage(text: string, limit: number): string[] {
   if (text.length <= limit) return [text]
   const chunks: string[] = []

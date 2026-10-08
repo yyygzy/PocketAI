@@ -21,6 +21,7 @@ import {
   IncomingMessage,
   StatusEmitter,
   safeError,
+  assertGatewaySocketUrl,
   sanitizeIncoming,
   splitMessage,
   sleep,
@@ -145,7 +146,10 @@ class DingtalkGateway implements IGateway {
   }
 
   private connect(url: string, appKey: string, appSecret: string, ctrl: AbortController): void {
-    const wsUrl = this.token ? `${url}?token=${encodeURIComponent(this.token)}` : url
+    // SEC-23：回调地址来自服务端响应，可被中间人/被攻陷的开放平台接口替换。
+    // 连接后会带上 appKey 与订阅凭据，故只接受 wss（本机回环例外，便于本地联调）。
+    const safeUrl = assertGatewaySocketUrl(url, '钉钉')
+    const wsUrl = this.token ? `${safeUrl}?token=${encodeURIComponent(this.token)}` : safeUrl
     const ws = new WebSocket(wsUrl)
     this.ws = ws
     const onAbort = (): void => {

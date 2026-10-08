@@ -14,6 +14,7 @@ import {
   IncomingMessage,
   StatusEmitter,
   safeError,
+  assertGatewaySocketUrl,
   sanitizeIncoming,
   splitMessage,
   sleep,
@@ -124,7 +125,8 @@ class SlackGateway implements IGateway {
   }
 
   private connect(url: string, botToken: string, ctrl: AbortController): void {
-    const ws = new WebSocket(url)
+    // SEC-23：apps.connections.open 返回的 socket URL 同样不可信，连上即带 bot token
+    const ws = new WebSocket(assertGatewaySocketUrl(url, 'Slack'))
     this.ws = ws
     const onAbort = (): void => {
       try {

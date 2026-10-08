@@ -23,6 +23,7 @@ import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
@@ -2291,9 +2292,9 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
                   {r.body ? (
                     <pre className="text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed font-sans">{r.body}</pre>
                   ) : null}
-                  {r.url && (
+                  {safeHttpHref(r.url) && (
                     <a
-                      href={r.url}
+                      href={safeHttpHref(r.url)!}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-block mt-1 text-[11px] text-[var(--color-accent)] hover:underline"
