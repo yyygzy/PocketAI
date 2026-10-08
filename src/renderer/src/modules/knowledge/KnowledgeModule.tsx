@@ -5,6 +5,7 @@ import type {
   KbDocument,
   KbChunk,
   RetrievedChunk,
+  RetrievalDiagnostics,
   ProviderRecord
 } from '../../../../shared/types'
 import { BUILTIN_EMBED_PROVIDER_ID, BUILTIN_EMBED_MODEL } from '../../../../shared/types'
@@ -875,10 +876,36 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
 }
 
 // ---------- 检索测试 ----------
+
+/** 匹配词高亮：按空格拆分查询词，逐个 split/join 包 mark（chunk 短文本，无性能问题） */
+function highlightQuery(content: string, query: string): React.ReactNode[] {
+  const terms = query.split(/\s+/).filter((s) => s.length > 0)
+  if (terms.length === 0) return [content]
+  let nodes: React.ReactNode[] = [content]
+  let key = 0
+  for (const term of terms) {
+    const next: React.ReactNode[] = []
+    for (const node of nodes) {
+      if (typeof node !== 'string') {
+        next.push(node)
+        continue
+      }
+      const parts = node.split(term)
+      parts.forEach((p, i) => {
+        if (p) next.push(p)
+        if (i < parts.length - 1) next.push(<mark key={key++} className="bg-[var(--color-accent)]/30 text-inherit rounded-sm">{term}</mark>)
+      })
+    }
+    nodes = next
+  }
+  return nodes
+}
+
 const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN }) => {
   const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<RetrievedChunk[] | null>(null)
+  const [diag, setDiag] = useState<RetrievalDiagnostics | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -887,9 +914,11 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
     setLoading(true)
     setError('')
     setResults(null)
+    setDiag(null)
     try {
-      const r = await window.pocketai.retrieveKb([kbId], query)
-      setResults(r.chunks)
+      const r = await window.pocketai.retrieveKbDebug([kbId], query)
+      setResults(r.result.chunks)
+      setDiag(r.diagnostics)
     } catch (e) {
       setError(errText(e))
     } finally {
@@ -913,6 +942,37 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
         </button>
       </div>
       {error && <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p>}
+      {/* 诊断摘要条：查询变体 + 生效策略 + 各路命中数 */}
+      {diag && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+          {diag.hydeUsed && (
+            <span className="px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">HyDE</span>
+          )}
+          {diag.rerankUsed && (
+            <span className="px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">Rerank</span>
+          )}
+          {diag.queryVariants.length > 1 && (
+            <span
+              className="px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]"
+              title={diag.queryVariants.join('\n')}
+            >
+              {t('kb.diagVariants', { n: diag.queryVariants.length })}
+            </span>
+          )}
+          <span className="text-[var(--color-text-muted)]">
+            {t('kb.diagHits', { v: diag.vectorHits, b: diag.bm25Hits, c: diag.candidateCount })}
+          </span>
+          {diag.timings && (
+            <span className="text-[var(--color-text-muted)]">
+              {t('kb.diagTime', {
+                s: diag.timings['searchMs'] ?? 0,
+                r: diag.timings['rerankMs'] ?? 0,
+                t: diag.timings['totalMs'] ?? 0
+              })}
+            </span>
+          )}
+        </div>
+      )}
       {results && (
         <div className="mt-2 space-y-2">
           {results.length === 0 && (
@@ -927,12 +987,21 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
                 <span className="text-[11px] text-[var(--color-accent)] truncate">
                   #{i + 1} {c.docTitle}
                 </span>
-                <span className="text-[10px] text-[var(--color-text-muted)]">
-                  score {c.score.toFixed(4)}
+                <span className="flex items-center gap-1 shrink-0">
+                  {/* 来源路徽标 */}
+                  {c.sources?.includes('vector') && (
+                    <span className="px-1 py-px rounded text-[9px] bg-[var(--color-accent)]/15 text-[var(--color-accent)]">{t('kb.srcVector')}</span>
+                  )}
+                  {c.sources?.includes('bm25') && (
+                    <span className="px-1 py-px rounded text-[9px] bg-[var(--color-warning-bg)] text-[var(--color-warning)]">{t('kb.srcBm25')}</span>
+                  )}
+                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                    score {c.score.toFixed(4)}
+                  </span>
                 </span>
               </div>
               <p className="text-xs text-[var(--color-text)] line-clamp-3 whitespace-pre-wrap">
-                {c.content}
+                {highlightQuery(c.content, query)}
               </p>
             </div>
           ))}

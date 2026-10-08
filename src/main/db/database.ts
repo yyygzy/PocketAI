@@ -695,6 +695,15 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE mcp_servers ADD COLUMN headers TEXT;
     `
+  },
+  {
+    // v42: 文本类文档（手工录入/消息附件）原文留存——source 存的是标题/msg_* 标记而非文件路径，
+    // 重建索引必须有原文（否则 ingestDocument 会把 source 当路径读文件必失败）；文件/URL 类恒 NULL
+    version: 42,
+    name: 'kb_document_raw_text',
+    up: `
+      ALTER TABLE kb_documents ADD COLUMN raw_text TEXT;
+    `
   }
 ]
 

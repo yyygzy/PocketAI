@@ -4,6 +4,11 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { IPC, type ConversationExportPayload } from '../../../shared/types'
+import {
+  detectExternalFormat,
+  parseChatGptExport,
+  parseClaudeJsonl
+} from '../../../shared/conversation-import-external'
 import { buildConversationMarkdown, safeFileName, dedupeFileNames } from '../../../shared/export-markdown'
 import { dbService } from '../../db/database'
 import { conversationRepo } from '../../db/repositories/conversation.repo'
@@ -477,6 +482,86 @@ export function registerConversationHandlers(): void {
     tx(payload.messages)
     return { ok: true, conversationId: newConv.id, messageCount: payload.messages.length }
   }, argsSchema(conversationExportPayloadSchema))
+
+  // ---------- 外部平台记录导入（ChatGPT conversations.json / Claude JSONL）----------
+  // 渲染端读好文本传入；格式不明/单会话失败均不阻断其余文件与会话。
+  safeHandle(
+    IPC.CONVERSATION_IMPORT_EXTERNAL,
+    async (_e, arg: { files: Array<{ name: string; text: string }> }) => {
+      const conversationCount = { n: 0 }
+      const messageCount = { n: 0 }
+      let skippedConversationCount = 0
+      const warnings: string[] = []
+      const addWarning = (w: string) => {
+        if (warnings.length < 5) warnings.push(w)
+      }
+      const handle = dbService.getHandle()
+
+      for (const file of arg.files) {
+        const format = detectExternalFormat(file.text)
+        if (!format) {
+          skippedConversationCount++
+          addWarning(`${file.name}: 无法识别的文件格式（支持 ChatGPT conversations.json 与 Claude JSONL）`)
+          continue
+        }
+        const baseName = file.name.replace(/\.[^.]+$/, '')
+        const parsed =
+          format === 'chatgpt'
+            ? parseChatGptExport(file.text)
+            : parseClaudeJsonl(file.text, baseName)
+        skippedConversationCount += parsed.skippedConversationCount
+        parsed.warnings.slice(0, 5).forEach((w) => addWarning(`${file.name}: ${w}`))
+
+        for (const conv of parsed.conversations) {
+          const suffix = conv.source === 'chatgpt' ? ' (ChatGPT 导入)' : ' (Claude 导入)'
+          try {
+            // 事务内建会话+写消息：失败整体回滚（better-sqlite3 transaction 抛错即 ROLLBACK），不留残会话
+            const result = handle.transaction(() => {
+              const newConv = conversationRepo.create({
+                assistantId: null,
+                title: conv.title + suffix,
+                titleDefault: false
+              })
+              const base = conv.createdAt ?? Date.now()
+              conv.messages.forEach((m, i) => {
+                handle.prepare(
+                  `INSERT INTO messages (id, conversation_id, role, content, provider, model, status, parent_id, created_at)
+                   VALUES (?, ?, ?, ?, NULL, ?, 'done', NULL, ?)`
+                ).run(randomUUID(), newConv.id, m.role, m.content, m.model ?? null, m.createdAt ?? base + i)
+              })
+              return conv.messages.length
+            })()
+            conversationCount.n++
+            messageCount.n += result
+          } catch (e) {
+            skippedConversationCount++
+            addWarning(`${conv.title}: 写入失败已跳过（${errMsg(e)}）`)
+          }
+        }
+      }
+
+      return {
+        ok: conversationCount.n > 0,
+        conversationCount: conversationCount.n,
+        messageCount: messageCount.n,
+        skippedConversationCount,
+        warnings
+      }
+    },
+    argsSchema(
+      z.object({
+        files: z
+          .array(
+            z.object({
+              name: z.string().min(1).max(255),
+              text: z.string().max(30 * 1024 * 1024)
+            })
+          )
+          .min(1)
+          .max(10)
+      })
+    )
+  )
   safeHandle(IPC.CONVERSATION_FORK, (_e, conversationId: string, messageId: string) => ({
     ok: true as const,
     conversation: conversationRepo.fork(conversationId, messageId)

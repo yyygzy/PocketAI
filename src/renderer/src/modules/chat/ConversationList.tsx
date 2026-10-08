@@ -28,6 +28,8 @@ interface Props {
   onSetArchived?: (id: string, archived: boolean) => void
   onImport?: () => void
   onImportEncrypted?: () => void
+  /** 外部平台记录（ChatGPT/Claude）导入 */
+  onImportExternal?: () => void
   /** 搜索结果点击：跳转定位到匹配消息（convId + messageId） */
   onSelectMessage?: (convId: string, messageId: string) => void
   /** 切换消息收藏星标（收藏列表内取消收藏复用） */
@@ -64,6 +66,7 @@ export const ConversationList: React.FC<Props> = ({
   onSetArchived,
   onImport,
   onImportEncrypted,
+  onImportExternal,
   onSelectMessage,
   onToggleStar,
   groups,
@@ -458,6 +461,13 @@ export const ConversationList: React.FC<Props> = ({
                   className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
                   title={t('chat.importEncrypted')}
                 >🔐 {t('chat.importEncryptedShort')}</button>
+              )}
+              {onImportExternal && (
+                <button
+                  onClick={onImportExternal}
+                  className="text-xs px-2 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] whitespace-nowrap"
+                  title={t('chat.importExternal')}
+                >🌐 {t('chat.importExternalShort')}</button>
               )}
               {onToggleStar && (
                 <button

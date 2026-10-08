@@ -89,6 +89,8 @@ export const AgentPanel: React.FC = () => {
     }
     try {
       await window.pocketai.createReminder({ text, fireAt, conversationId: chat.conversationId ?? null })
+      // 通知 Sidebar 角标即时刷新（创建无 IPC 广播，本地事件轻量通知）
+      window.dispatchEvent(new Event('pocketai:reminders-changed'))
       toast.success(t('reminder.menu.created', { time: formatDateTime(fireAt) }))
     } catch (e) {
       toast.error(errText(e))

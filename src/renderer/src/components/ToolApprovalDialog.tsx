@@ -6,6 +6,35 @@ import { useI18n } from '../i18n'
 import type { ToolApprovalRequestEvent } from '../../../shared/types'
 import { logIpcError } from '../utils/ipc'
 
+/** 按危险区间把命令切段，命中部分包危险色 span（区间已排序合并，下标对原始命令对齐） */
+function highlightSegments(
+  text: string,
+  ranges?: Array<{ start: number; end: number }>
+): React.ReactNode {
+  if (!ranges || ranges.length === 0) return text
+  const nodes: React.ReactNode[] = []
+  let pos = 0
+  ranges.forEach((r, i) => {
+    const s = Math.max(r.start, pos)
+    const e = Math.min(r.end, text.length)
+    if (s > pos) nodes.push(text.slice(pos, s))
+    if (e > s) {
+      nodes.push(
+        <span
+          key={i}
+          className="rounded-sm px-0.5 font-semibold"
+          style={{ color: 'var(--color-danger)', background: 'var(--color-danger-bg)' }}
+        >
+          {text.slice(s, e)}
+        </span>
+      )
+    }
+    pos = Math.max(pos, e)
+  })
+  if (pos < text.length) nodes.push(text.slice(pos))
+  return nodes
+}
+
 export const ToolApprovalDialog: React.FC = () => {
   const { t } = useI18n()
   const [queue, setQueue] = useState<ToolApprovalRequestEvent[]>([])
@@ -98,14 +127,38 @@ export const ToolApprovalDialog: React.FC = () => {
             </div>
           )}
 
-          <div>
-            <div className="text-xs text-[var(--color-text-muted)] mb-1">
-              {t('agent.approval.command')}
+          {/* MCP 等非 shell 工具：语义化字段预览替代裸 JSON */}
+          {current.fields && current.fields.length > 0 ? (
+            <div className="space-y-2">
+              {current.fields.map((f, i) => {
+                const fk = `agent.approval.field.${f.key}`
+                const fl = t(fk)
+                return (
+                  <div key={`${f.key}-${i}`}>
+                    <div className="text-xs text-[var(--color-text-muted)] mb-1">
+                      {fl === fk ? f.key : fl}
+                    </div>
+                    {f.mono ? (
+                      <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 font-mono text-xs leading-relaxed">
+                        {f.value}
+                      </pre>
+                    ) : (
+                      <div className="text-xs font-mono break-all text-[var(--color-text)]">{f.value}</div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
-            <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 font-mono text-xs leading-relaxed">
-              {current.command}
-            </pre>
-          </div>
+          ) : (
+            <div>
+              <div className="text-xs text-[var(--color-text-muted)] mb-1">
+                {t('agent.approval.command')}
+              </div>
+              <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 font-mono text-xs leading-relaxed">
+                {highlightSegments(current.command, current.highlights)}
+              </pre>
+            </div>
+          )}
 
           <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
             {t('agent.approval.warning')}

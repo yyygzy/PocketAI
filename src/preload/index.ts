@@ -10,6 +10,7 @@ import type {
   MessageRecord,
   StarredMessageItem,
   ConversationExportPayload,
+  ConversationExternalImportResult,
   MessageSearchResult,
   UsageSummary,
   UsageConversationItem,
@@ -65,6 +66,7 @@ import type {
   LockStateEvent,
   ReminderFiredPayload,
   ReminderCreatePayload,
+  ReminderRecord,
   OllamaRuntimeStatus,
   OllamaInstallEvent,
   OllamaPullEvent,
@@ -229,6 +231,11 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT_ENCRYPTED, password),
   importConversation: (payload: ConversationExportPayload): Promise<{ ok: boolean; conversationId?: string; messageCount?: number; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT, payload),
+  /** 外部平台记录导入（ChatGPT/Claude；渲染端读好文件文本传入，≤10 个文件） */
+  importExternalConversations: (
+    files: Array<{ name: string; text: string }>
+  ): Promise<ConversationExternalImportResult> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_IMPORT_EXTERNAL, { files }),
   forkConversation: (conversationId: string, messageId: string): Promise<{ ok: boolean; conversation?: ConversationRecord; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_FORK, conversationId, messageId),
   getSmartTitleEnabled: (): Promise<boolean> =>
@@ -327,6 +334,9 @@ const api = {
     ipcRenderer.invoke(IPC.DATA_HEALTH_KB_DEDUP, keepDocId),
   reindexKbDocs: (docIds: string[]): Promise<{ enqueued: number }> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_KB_REINDEX, docIds),
+  // 运行期性能事件上报（fire-and-forget；入慢操作环形缓冲，数据健康面板可见）
+  reportPerf: (label: string, ms: number): Promise<void> =>
+    ipcRenderer.invoke(IPC.PERF_EVENT, { label, ms }),
 
   // ---------- 聊天 ----------
   sendMessage: (payload: SendMessagePayload): Promise<void> =>
@@ -446,9 +456,15 @@ const api = {
     ipcRenderer.invoke(IPC.KB_CHUNK_LIST, docId),
   retrieveKb: (kbIds: string[], query: string): Promise<RetrievalResult> =>
     ipcRenderer.invoke(IPC.KB_RETRIEVE, kbIds, query),
+  retrieveKbDebug: (kbIds: string[], query: string): Promise<{ result: RetrievalResult; diagnostics: import('../shared/types').RetrievalDiagnostics }> =>
+    ipcRenderer.invoke(IPC.KB_RETRIEVE_DEBUG, kbIds, query),
 
   // ---------- MCP Server ----------
   listMcpServers: (): Promise<McpServerRecord[]> => ipcRenderer.invoke(IPC.MCP_SERVER_LIST),
+  /** 导出全部 MCP 配置（showSaveDialog；敏感值已脱敏；canceled 表示用户取消） */
+  exportMcpServers: (): Promise<
+    { ok: true; canceled: true } | { ok: true; path: string; count: number; redactedCount: number } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.MCP_SERVER_EXPORT),
   getMcpServer: (id: string): Promise<McpServerRecord | null> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_GET, id),
   saveMcpServer: (
@@ -954,6 +970,12 @@ const api = {
     payload: ReminderCreatePayload
   ): Promise<{ ok: true; id: string; fireAt: number }> =>
     ipcRenderer.invoke(IPC.REMINDER_CREATE, payload),
+  /** 待发提醒（pending，按触发时间升序，上限 50） */
+  listReminders: (): Promise<ReminderRecord[]> =>
+    ipcRenderer.invoke(IPC.REMINDER_LIST),
+  /** 取消待发提醒；返回 ok=false 表示已触发/不存在 */
+  cancelReminder: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.REMINDER_CANCEL, id),
 
   // ---------- 终端 ----------
   startTerminal: (): Promise<{ ok: boolean; sessionId?: number; error?: string }> =>

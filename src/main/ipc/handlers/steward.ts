@@ -7,6 +7,7 @@ import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
+import { recordPerf } from '../../steward/perf-probe'
 import { cleanOrphans, deduplicate, reindexDocs } from '../../knowledge/kb-health'
 import { idSchema } from '../../../shared/schemas/providers'
 import { safeHandle, argsSchema } from '../safe-handle'
@@ -55,4 +56,12 @@ export function registerStewardHandlers(): void {
   safeHandle(IPC.DATA_HEALTH_KB_CLEAN, () => cleanOrphans())
   safeHandle(IPC.DATA_HEALTH_KB_DEDUP, (_e, keepDocId: string) => deduplicate(keepDocId), argsSchema(idSchema))
   safeHandle(IPC.DATA_HEALTH_KB_REINDEX, (_e, docIds: string[]) => reindexDocs(docIds), argsSchema(idSchema.array()))
+  // 渲染端性能事件上报（longtask observer）：限长 schema + 环形缓冲天然防灌爆
+  safeHandle(
+    IPC.PERF_EVENT,
+    (_e, payload: { label: string; ms: number }) => {
+      recordPerf(payload.label, payload.ms)
+    },
+    argsSchema(z.object({ label: z.string().min(1).max(64), ms: z.number().finite().min(0).max(3_600_000) }))
+  )
 }

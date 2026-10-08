@@ -5,6 +5,7 @@ import type { ReminderRecord } from '../../../shared/types'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import {
   reminderCreateSchema,
+  reminderIdSchema,
   MAX_PENDING_REMINDERS,
   MAX_REMINDER_MINUTES
 } from '../../../shared/schemas/reminder'
@@ -22,4 +23,12 @@ export function registerReminderHandlers(): void {
     const rec: ReminderRecord = reminderRepo.create(arg.text.trim(), arg.fireAt, arg.conversationId ?? null)
     return { ok: true as const, id: rec.id, fireAt: rec.fireAt }
   }, argsSchema(reminderCreateSchema))
+
+  // 待发提醒列表（主窗口提醒中心；最多 50 条与 repo 默认上限一致）
+  safeHandle(IPC.REMINDER_LIST, async () => reminderRepo.listPending())
+
+  // 取消提醒：仅 pending 可撤，已触发/已取消返回 ok=false（弹窗侧据此重拉）
+  safeHandle(IPC.REMINDER_CANCEL, async (_e, id: string) => {
+    return { ok: reminderRepo.cancel(reminderIdSchema.parse(id)) }
+  }, argsSchema(reminderIdSchema))
 }

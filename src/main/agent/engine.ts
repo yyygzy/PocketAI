@@ -18,7 +18,8 @@ import type {
   ToolResult,
   ToolSchema,
   MessageRecord,
-  MessageSource
+  MessageSource,
+  ApprovalPreviewField
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import type { AdapterChatMessage, ChatParams } from '../providers/types'
@@ -36,6 +37,8 @@ import { ragService } from '../knowledge/rag'
 import { toolRegistry, badArgsError } from '../tools/registry'
 import type { ToolAgentContext } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
+import { findDangerRanges } from '../tools/shell-tools'
+import { buildToolPreviewFields } from '../../shared/tool-preview'
 import { injectAttachments, appendTextAttachments, buildImageParts } from '../chat/context-attachments'
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
@@ -480,13 +483,21 @@ export function compressToolResult(content: string, maxChars: number): string {
   return `${head}\n…（中间已省略，完整 ${content.length} 字符）\n${tail}`
 }
 
-/** 构造审批弹窗展示内容：shell_exec 给命令全文+解析后的执行目录；其它工具给参数 JSON。
+/** 构造审批弹窗展示内容：shell_exec 给命令全文+解析后的执行目录+危险片段区间；
+ *  MCP 工具给语义化字段预览；其余内置工具给参数 JSON 兜底。
  *  classification.reason 已由 classifyShellArgs 保留 classifyCommand 的具体危险原因，
  *  此处直接复用，不再重复调用 classifyCommand。 */
 function buildApprovalDisplay(
   tc: ToolCall,
   reason?: string
-): { command: string; cwd?: string; risk: 'danger' | 'custom'; reason?: string } {
+): {
+  command: string
+  cwd?: string
+  risk: 'danger' | 'custom'
+  reason?: string
+  fields?: ApprovalPreviewField[]
+  highlights?: Array<{ start: number; end: number }>
+} {
   let parsed: Record<string, unknown> = {}
   try {
     parsed = tc.function.arguments ? (JSON.parse(tc.function.arguments) as Record<string, unknown>) : {}
@@ -505,7 +516,13 @@ function buildApprovalDisplay(
     }
 
     const risk: 'danger' | 'custom' = reason?.startsWith('DANGEROUS_') ? 'danger' : 'custom'
-    return { command, cwd: cwdAbs, risk, reason }
+    return { command, cwd: cwdAbs, risk, reason, highlights: findDangerRanges(command) }
+  }
+
+  // MCP 工具：按参数名启发式生成语义化预览字段（路径解析复用工作目录守卫）
+  if (toolRegistry.getSchema(tc.function.name)?.source === 'mcp') {
+    const fields = buildToolPreviewFields(parsed, resolveWorkspacePath)
+    return { command: JSON.stringify(parsed), risk: 'custom', fields: fields ?? undefined }
   }
 
   return {
@@ -1289,7 +1306,9 @@ class AgentEngine {
               command: display.command,
               cwd: display.cwd,
               reason: display.reason ?? classification.reason ?? 'REQUIRES_CONFIRM',
-              risk: display.risk
+              risk: display.risk,
+              fields: display.fields,
+              highlights: display.highlights
             },
             emit,
             master.signal

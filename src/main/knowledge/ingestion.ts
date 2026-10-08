@@ -1,5 +1,6 @@
 // 入库流水线：解析 → 分块 → 向量化 → 存储
 // 失败不中断整个知识库，仅记录单文档错误
+// 性能埋点：各阶段耗时经 perf-probe 入环形缓冲（数据健康面板「最近慢操作」可见）
 import path from 'node:path'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
@@ -10,10 +11,22 @@ import { embedTexts } from './embedding'
 import { parseDocument } from './parsers'
 import { ocrImageFile } from './ocr'
 import { hashFile } from './sync-check'
+import { recordPerf, logPerfDebug } from '../steward/perf-probe'
 import type { KbDocument, KnowledgeBase } from '../../shared/types'
 import { errMsg } from '../error'
 import { mustGet } from '../db/must-get'
 import { z } from 'zod'
+
+/** 入库总耗时入慢操作缓冲的阈值（日志无条件记） */
+const SLOW_INGEST_MS = 500
+
+/** indexText 阶段耗时（私有回传，供 ingest 入口汇总埋点） */
+interface IndexTimings {
+  chunkMs: number
+  embedMs: number
+  storeMs: number
+  chunks: number
+}
 
 export class IngestionService {
   /**
@@ -30,6 +43,19 @@ export class IngestionService {
     const doc = kbDocRepo.get(docId)
     if (!doc) throw new Error('文档不存在')
 
+    // 文本类文档（手工录入/消息附件）的 source 是标题或 msg_* 标记而非文件路径，
+    // parseDocument 会把它当路径读文件必失败——分流到 ingestText 用留存原文重建。
+    // v42 前录入的文本没有 raw_text：给小白明确引导，而非抛底层 ENOENT。
+    if (doc.sourceType === 'txt') {
+      const rawText = kbDocRepo.getRawText(docId)
+      if (!rawText) {
+        const err = new Error('该文本录入于旧版本，原文未保存，无法重建，请删除后重新添加')
+        kbDocRepo.setStatus(docId, 'error', errMsg(err))
+        return mustGet(() => kbDocRepo.get(docId), '知识库文档')
+      }
+      return this.ingestText(kbId, docId, rawText, doc.title)
+    }
+
     try {
       // 重新索引时先清理旧分块
       kbChunkRepo.deleteByDoc(docId)
@@ -43,7 +69,9 @@ export class IngestionService {
       } catch {
         kbDocRepo.setContentHash(docId, null)
       }
+      const t0 = performance.now()
       const parsed = await parseForIngest(doc.source, doc.sourceType, kb)
+      const parseMs = performance.now() - t0
       if (!parsed.text.trim()) {
         throw new Error(
           doc.source.toLowerCase().endsWith('.pdf')
@@ -52,7 +80,12 @@ export class IngestionService {
         )
       }
 
-      await this.indexText(kb, docId, parsed.text)
+      const t1 = performance.now()
+      const it = await this.indexText(kb, docId, parsed.text)
+      const totalMs = parseMs + (performance.now() - t1)
+      const detail = `parse=${Math.round(parseMs)} chunk=${Math.round(it.chunkMs)} embed=${Math.round(it.embedMs)} store=${Math.round(it.storeMs)} chunks=${it.chunks} title=${doc.title}`
+      if (totalMs >= SLOW_INGEST_MS) recordPerf('kb.ingest', totalMs, detail)
+      else logPerfDebug('kb.ingest', totalMs, detail)
     } catch (err) {
       kbDocRepo.setStatus(docId, 'error', errMsg(err))
     }
@@ -72,21 +105,30 @@ export class IngestionService {
     }
 
     try {
+      // 留存原文：重建索引（KB_DOC_REINDEX/健康检查）统一走 ingestDocument，
+      // txt 类分流时靠它恢复（raw_text 独立于 chunks，deleteByDoc 不影响）
+      kbDocRepo.setRawText(docId, text)
       kbChunkRepo.deleteByDoc(docId)
-      await this.indexText(kb, docId, text)
+      const it = await this.indexText(kb, docId, text)
+      const totalMs = it.chunkMs + it.embedMs + it.storeMs
+      const detail = `chunk=${Math.round(it.chunkMs)} embed=${Math.round(it.embedMs)} store=${Math.round(it.storeMs)} chunks=${it.chunks}`
+      if (totalMs >= SLOW_INGEST_MS) recordPerf('kb.ingestText', totalMs, detail)
+      else logPerfDebug('kb.ingestText', totalMs, detail)
     } catch (err) {
       kbDocRepo.setStatus(docId, 'error', errMsg(err))
     }
     return mustGet(() => kbDocRepo.get(docId), '知识库文档')
   }
 
-  /** 分块 → 向量化 → 存储（解析后共用） */
-  private async indexText(kb: KnowledgeBase, docId: string, rawText: string): Promise<void> {
+  /** 分块 → 向量化 → 存储（解析后共用）；返回各阶段耗时供入口埋点 */
+  private async indexText(kb: KnowledgeBase, docId: string, rawText: string): Promise<IndexTimings> {
     // 2. 分块（Markdown 结构感知：按标题切节 + 标题链前缀）
+    const tc = performance.now()
     const chunkResults = chunkMarkdown(rawText, {
       chunkSize: kb.chunkSize,
       chunkOverlap: kb.chunkOverlap
     })
+    const chunkMs = performance.now() - tc
     if (chunkResults.length === 0) {
       throw new Error('分块后无有效内容')
     }
@@ -94,7 +136,9 @@ export class IngestionService {
     // 3. 向量化
     kbDocRepo.setStatus(docId, 'indexing')
     const texts = chunkResults.map((c) => c.content)
+    const te = performance.now()
     const vectors = await embedTexts(kb.embeddingProviderId!, kb.embeddingModel!, texts)
+    const embedMs = performance.now() - te
 
     // 首次入库确定维度并写回知识库
     if (kb.embeddingDim === null && vectors.length > 0) {
@@ -102,6 +146,7 @@ export class IngestionService {
     }
 
     // 4. 存储
+    const ts = performance.now()
     const chunks: ChunkInsert[] = chunkResults.map((c, i) => ({
       docId,
       kbId: kb.id,
@@ -110,8 +155,10 @@ export class IngestionService {
       embedding: vectors[i]!
     }))
     kbChunkRepo.insertMany(chunks)
+    const storeMs = performance.now() - ts
     kbDocRepo.setChunkCount(docId, chunks.length)
     kbDocRepo.setStatus(docId, 'ready')
+    return { chunkMs, embedMs, storeMs, chunks: chunks.length }
   }
 
   /** 批量入库（顺序执行，避免压垮 Embedding API） */

@@ -153,6 +153,44 @@ const CONFIRM_RULES: Array<[RegExp, string]> = [
   [/(?:~[\\/]|\$HOME\b|%(?:USERPROFILE|APPDATA|LOCALAPPDATA|SYSTEMROOT|WINDIR)%)/i, 'DANGEROUS_OUTSIDE']
 ]
 
+// ---------- 审批弹窗展示：危险片段高亮 ----------
+// 与 classifyCommand 的片段拆分判定相互独立：此处对整条命令做近似匹配收集命中区间，
+// 仅供审批弹窗标红展示；判定结论仍以 classifyCommand 的 reason 为准。
+// 注意不做 ^ 归一化：区间下标必须与弹窗展示的原始命令逐字符对齐。
+const MAX_HIGHLIGHT_RANGES = 20
+
+/** 收集命令中命中 CONFIRM_RULES 的字符区间（排序 + 合并重叠），纯函数可单测 */
+export function findDangerRanges(command: string): Array<{ start: number; end: number }> {
+  const cmd = String(command ?? '')
+  if (!cmd.trim()) return []
+  const ranges: Array<{ start: number; end: number }> = []
+  for (const [re] of CONFIRM_RULES) {
+    const flags = re.flags.includes('g') ? re.flags : re.flags + 'g'
+    const g = new RegExp(re.source, flags)
+    let m: RegExpExecArray | null
+    while ((m = g.exec(cmd)) !== null) {
+      if (m[0].length === 0) {
+        g.lastIndex++ // 防零宽匹配死循环
+        continue
+      }
+      ranges.push({ start: m.index, end: m.index + m[0].length })
+    }
+  }
+  if (ranges.length === 0) return []
+  ranges.sort((a, b) => a.start - b.start || a.end - b.end)
+  const merged: Array<{ start: number; end: number }> = []
+  for (const r of ranges) {
+    const last = merged[merged.length - 1]
+    if (last && r.start <= last.end) {
+      if (r.end > last.end) last.end = r.end
+    } else {
+      if (merged.length >= MAX_HIGHLIGHT_RANGES) break
+      merged.push({ ...r })
+    }
+  }
+  return merged
+}
+
 /** 提取命令中出现的盘符路径（C:\... / C:/...）；盘符前须为起始/分隔符，
  *  避免把 URL 里的 "http://"（末字母 p 恰好像盘符）误判为路径 */
 const WIN_ABS_PATH_RE = /(?:^|[\s"'`=(,;])([a-zA-Z]:[\\/][^\s"'`|&;<>]*)/g

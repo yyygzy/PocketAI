@@ -1,4 +1,6 @@
 // MCP Server IPC + Python 依赖环境（venv/pip）+ 便携 Python 运行时
+import { dialog, BrowserWindow } from 'electron'
+import fs from 'node:fs'
 import { IPC } from '../../../shared/types'
 import type { McpServerRecord, PythonPipSource } from '../../../shared/types'
 import { mcpServerRepo } from '../../db/repositories/mcp-server.repo'
@@ -10,9 +12,36 @@ import { safeHandle, errMsg, argsSchema } from '../safe-handle'
 import { mcpServerSaveSchema, pythonPipSourceSchema, mcpCallToolSchema } from '../../../shared/schemas/mcp'
 import { idSchema } from '../../../shared/schemas/providers'
 import { stringifyMcpResult, mcpResultIsError } from '../../tools/registry'
+import { buildMcpExportPayload } from '../../../shared/mcp-export'
+import { safeFileName } from '../../../shared/export-markdown'
 
 export function registerMcpHandlers(): void {
   safeHandle(IPC.MCP_SERVER_LIST, () => mcpServerRepo.list())
+
+  // 导出全部配置为标准 mcpServers JSON：默认脱敏 env/headers 中的密钥（U 盘易丢场景）
+  safeHandle(IPC.MCP_SERVER_EXPORT, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false as const, error: '窗口不可用' }
+    const records = mcpServerRepo.list()
+    if (records.length === 0) return { ok: false as const, error: '没有可导出的 MCP 配置' }
+    const payload = buildMcpExportPayload(records)
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      defaultPath: `${safeFileName('pocketai-mcp-servers')}.json`,
+      filters: [
+        { name: 'JSON', extensions: ['json'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePath) return { ok: true as const, canceled: true as const }
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8')
+    return {
+      ok: true as const,
+      path: filePath,
+      count: records.length,
+      redactedCount: payload.redactedCount
+    }
+  })
+
   safeHandle(IPC.MCP_SERVER_GET, (_e, id: string) => mcpServerRepo.get(id), argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_SAVE, (_e, record: Partial<McpServerRecord> & { name: string }) =>
     mcpServerRepo.save(record),

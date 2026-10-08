@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   chunkCounts: [] as Array<{ id: string; n: number }>,
   embedCalls: [] as number[],
   embedError: null as Error | null,
+  rawTexts: {} as Record<string, string>,
   reset() {
     this.kb = null
     this.doc = null
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => ({
     this.chunkCounts = []
     this.embedCalls = []
     this.embedError = null
+    this.rawTexts = {}
   }
 }))
 
@@ -51,7 +53,11 @@ vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
       }
     },
     setChunkCount: (id: string, n: number) => mocks.chunkCounts.push({ id, n }),
-    setContentHash: () => {}
+    setContentHash: () => {},
+    getRawText: (id: string) => mocks.rawTexts[id] ?? null,
+    setRawText: (id: string, text: string) => {
+      mocks.rawTexts[id] = text
+    }
   }
 }))
 vi.mock('../src/main/db/repositories/kb-chunk.repo', () => ({
@@ -107,13 +113,13 @@ function makeKb(over: Partial<KnowledgeBase> = {}): KnowledgeBase {
     ...over
   }
 }
-function makeDoc(source: string): KbDocument & { status: string; error: string | null } {
+function makeDoc(source: string, sourceType: KbDocument['sourceType'] = 'txt'): KbDocument & { status: string; error: string | null } {
   return {
     id: 'doc1',
     kbId: 'kb1',
     title: 'doc.txt',
     source,
-    sourceType: 'txt',
+    sourceType,
     status: 'pending',
     chunkCount: 0,
     error: null,
@@ -148,7 +154,7 @@ describe('IngestionService.ingestDocument — 入库状态机', () => {
 
   it('完整 happy path：parsing→indexing→ready，分块/向量/维度/计数全部落库', async () => {
     mocks.kb = makeKb()
-    mocks.doc = makeDoc(writeTmp('字'.repeat(200)))
+    mocks.doc = makeDoc(writeTmp('字'.repeat(200), 'doc.md'), 'md')
     const svc = new IngestionService()
     const result = await svc.ingestDocument('kb1', 'doc1')
 
@@ -178,7 +184,7 @@ describe('IngestionService.ingestDocument — 入库状态机', () => {
 
   it('已有维度的知识库不重复写回 embeddingDim', async () => {
     mocks.kb = makeKb({ embeddingDim: 1536 })
-    mocks.doc = makeDoc(writeTmp('x'.repeat(200)))
+    mocks.doc = makeDoc(writeTmp('x'.repeat(200), 'doc.md'), 'md')
     const svc = new IngestionService()
     await svc.ingestDocument('kb1', 'doc1')
     expect(mocks.dimSet).toEqual([])
@@ -186,7 +192,7 @@ describe('IngestionService.ingestDocument — 入库状态机', () => {
 
   it('解析后内容为空 → error 状态且消息落库，不调用向量化', async () => {
     mocks.kb = makeKb()
-    mocks.doc = makeDoc(writeTmp('   \n\t  '))
+    mocks.doc = makeDoc(writeTmp('   \n\t  ', 'doc.md'), 'md')
     const svc = new IngestionService()
     const result = await svc.ingestDocument('kb1', 'doc1')
 
@@ -198,7 +204,7 @@ describe('IngestionService.ingestDocument — 入库状态机', () => {
 
   it('向量化失败 → 错误被吞并落 error 状态，不写 ready（单文档失败不炸整库）', async () => {
     mocks.kb = makeKb()
-    mocks.doc = makeDoc(writeTmp('y'.repeat(200)))
+    mocks.doc = makeDoc(writeTmp('y'.repeat(200), 'doc.md'), 'md')
     mocks.embedError = new Error('Embedding API 503')
     const svc = new IngestionService()
     const result = await svc.ingestDocument('kb1', 'doc1')
@@ -213,22 +219,51 @@ describe('IngestionService.ingestDocument — 入库状态机', () => {
 describe('IngestionService.ingestText / ingestDocuments', () => {
   beforeEach(() => mocks.reset())
 
-  it('ingestText：手工文本跳过解析直接索引到 ready', async () => {
+  it('ingestText：手工文本跳过解析直接索引到 ready，并留存原文供重建', async () => {
     mocks.kb = makeKb()
     mocks.doc = makeDoc('manual://text')
     const svc = new IngestionService()
-    const result = await svc.ingestText('kb1', 'doc1', '手'.repeat(120), '手工文档')
+    const text = '手'.repeat(120)
+    const result = await svc.ingestText('kb1', 'doc1', text, '手工文档')
 
     expect(result.status).toBe('ready')
     // 直接文本不经过 parsing 状态
     expect(mocks.statuses).toEqual(['indexing', 'ready'])
     expect(mocks.inserted.length).toBeGreaterThan(1)
+    // 原文独立留存（重建索引分流用）
+    expect(mocks.rawTexts.doc1).toBe(text)
+  })
+
+  it('txt 文档重建索引：raw_text 存在时分流到 ingestText（不读 source 路径，无 parsing）', async () => {
+    mocks.kb = makeKb()
+    // source 是标题而非路径——若走 parseDocument 读文件必 ENOENT
+    mocks.doc = makeDoc('这是一条消息附件')
+    mocks.rawTexts.doc1 = '留存原文'.repeat(30)
+    const svc = new IngestionService()
+    const result = await svc.ingestDocument('kb1', 'doc1')
+
+    expect(result.status).toBe('ready')
+    expect(mocks.statuses).toEqual(['indexing', 'ready'])
+    expect(mocks.inserted.length).toBeGreaterThan(0)
+  })
+
+  it('txt 文档重建索引：v42 前存量无 raw_text → 落 error 引导文案，不抛错不向量化', async () => {
+    mocks.kb = makeKb()
+    mocks.doc = makeDoc('旧版手工文本')
+    const svc = new IngestionService()
+    const result = await svc.ingestDocument('kb1', 'doc1')
+
+    expect(result.status).toBe('error')
+    expect(result.error).toContain('旧版本')
+    expect(mocks.embedCalls).toEqual([])
+    expect(mocks.inserted).toEqual([])
+    expect(mocks.statuses).toEqual(['error'])
   })
 
   it('ingestDocuments：多文档顺序执行，结果顺序与入参一致', async () => {
     mocks.kb = makeKb()
     const docs = ['doc-a', 'doc-b', 'doc-c'].map((id, i) => ({
-      ...makeDoc(writeTmp(`文档${i}内容`.repeat(20))),
+      ...makeDoc(writeTmp(`文档${i}内容`.repeat(20), 'doc.md'), 'md'),
       id
     }))
     const svc = new IngestionService()

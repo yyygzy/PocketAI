@@ -127,5 +127,20 @@ describe('mcp-import', () => {
       }))
       expect(r.items[0]!.error).toContain('args')
     })
+
+    it('x-pocketai-python-packages 数组还原到 pythonPackages', () => {
+      const r = parseMcpServersJson(JSON.stringify({
+        mcpServers: { py: { command: 'uvx', 'x-pocketai-python-packages': ['mcp-server-fetch==0.1.0'] } }
+      }))
+      expect(r.items[0]!.draft?.pythonPackages).toEqual(['mcp-server-fetch==0.1.0'])
+    })
+
+    it('x-pocketai-python-packages 非数组时忽略并告警', () => {
+      const r = parseMcpServersJson(JSON.stringify({
+        mcpServers: { py: { command: 'uvx', 'x-pocketai-python-packages': 'oops' } }
+      }))
+      expect(r.items[0]!.draft?.pythonPackages).toEqual([])
+      expect(r.items[0]!.warning).toContain('x-pocketai-python-packages')
+    })
   })
 })

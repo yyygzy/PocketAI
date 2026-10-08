@@ -389,6 +389,20 @@ export interface DataHealthReport {
     /** 启动流程完成总耗时（最后一个阶段的累计毫秒） */
     totalMs: number
   }
+  /** 最近慢操作事件（环形缓冲快照） */
+  recentPerf: PerfEvent[]
+}
+
+/** 运行期慢事件 */
+export interface PerfEvent {
+  /** 事件标签（≤64 字符） */
+  label: string
+  /** 耗时毫秒 */
+  ms: number
+  /** 可选附加信息 */
+  detail?: string
+  /** 事件产生时刻时间戳 */
+  at: number
 }
 
 /** RAG 检索命中的知识库 chunk 引用来源 */
@@ -470,6 +484,21 @@ export interface ConversationExportPayload {
   assistant?: AssistantRecord | null
 }
 
+/** 外部记录导入入参：渲染端读好的文件文本（≤10 个，单个 ≤30MB 由 IPC schema 限） */
+export interface ConversationExternalImportPayload {
+  files: Array<{ name: string; text: string }>
+}
+
+/** 外部记录导入结果：单会话失败回滚不中断，整体统计回传 */
+export interface ConversationExternalImportResult {
+  ok: boolean
+  conversationCount: number
+  messageCount: number
+  skippedConversationCount: number
+  warnings: string[]
+  error?: string
+}
+
 /** 消息全局搜索结果（FTS 命中与 LIKE 兜底的统一形状） */
 export interface MessageSearchResult {
   messageId: string
@@ -548,11 +577,25 @@ export interface RetrievedChunk {
   docTitle: string
   content: string
   score: number
+  /** 命中来源路：向量检索 / BM25 全文检索（诊断模式才填充） */
+  sources?: Array<'vector' | 'bm25'>
 }
 
 export interface RetrievalResult {
   query: string
   chunks: RetrievedChunk[]
+}
+
+/** 检索诊断信息（检索测试面板用，聊天主链路不产出） */
+export interface RetrievalDiagnostics {
+  hydeUsed: boolean
+  queryVariants: string[]
+  vectorHits: number
+  bm25Hits: number
+  rerankUsed: boolean
+  candidateCount: number
+  /** 各阶段耗时毫秒：hyde/multiQuery/search/rerank/mmr/total */
+  timings?: Record<string, number>
 }
 
 // ---------- 工具 / Function Calling ----------
@@ -821,6 +864,15 @@ export interface SandboxFileMeta {
   isApp: boolean // true=迷你应用，false=普通沙箱产物
 }
 
+/** 工具审批弹窗语义化预览字段（构造见 src/shared/tool-preview.ts） */
+export interface ApprovalPreviewField {
+  /** i18n key 后缀：渲染端映射 agent.approval.field.<key>，缺失回退显示原始值 */
+  key: string
+  value: string
+  /** true=等宽 pre 块展示（代码/命令/长文本） */
+  mono?: boolean
+}
+
 /** 工具调用审批请求（主进程 → 渲染端全局弹窗） */
 export interface ToolApprovalRequestEvent {
   approvalId: string
@@ -835,6 +887,10 @@ export interface ToolApprovalRequestEvent {
   reason: string
   /** confirm=需用户确认；deny 不走弹窗（保留字段以备扩展） */
   risk?: 'danger' | 'custom'
+  /** 语义化预览字段（MCP 等非 shell 工具）；存在时渲染端替代 command 块展示 */
+  fields?: ApprovalPreviewField[]
+  /** shell 命令危险片段字符区间（对 command 下标），渲染端标红 */
+  highlights?: Array<{ start: number; end: number }>
 }
 
 export interface ToolApprovalResponsePayload {
@@ -1603,6 +1659,8 @@ export const IPC = {
   CONVERSATION_EXPORT_ENCRYPTED: 'conversation:export-enc',
   CONVERSATION_IMPORT_ENCRYPTED: 'conversation:import-enc',
   CONVERSATION_IMPORT: 'conversation:import',
+  /** 外部平台记录导入（ChatGPT conversations.json / Claude JSONL；渲染端读好文本传入） */
+  CONVERSATION_IMPORT_EXTERNAL: 'conversation:import-external',
   CONVERSATION_FORK: 'conversation:fork',
   CONVERSATION_SMART_TITLE_GET: 'conversation:smart-title-get',
   CONVERSATION_SMART_TITLE_SET: 'conversation:smart-title-set',
@@ -1672,6 +1730,7 @@ export const IPC = {
 
   KB_CHUNK_LIST: 'kb-chunk:list',
   KB_RETRIEVE: 'kb:retrieve',
+  KB_RETRIEVE_DEBUG: 'kb:retrieve-debug',
   KB_ASK: 'kb:ask',
   KB_ASK_ABORT: 'kb:ask-abort',
   KB_ASK_CHUNK_EVENT: 'kb-ask:chunk-event',
@@ -1690,11 +1749,16 @@ export const IPC = {
   KB_ASK_RETENTION_GET: 'kb-ask:retention-get',
   KB_ASK_RETENTION_SET: 'kb-ask:retention-set',
 
+  // 运行期性能事件（渲染端 → 主进程上报，入环形缓冲供数据健康面板展示）
+  PERF_EVENT: 'perf:event',
+
   // MCP Server
   MCP_SERVER_LIST: 'mcp-server:list',
   MCP_SERVER_GET: 'mcp-server:get',
   MCP_SERVER_SAVE: 'mcp-server:save',
   MCP_SERVER_DELETE: 'mcp-server:delete',
+  /** 导出全部 MCP 配置为标准 mcpServers JSON（敏感值默认脱敏，showSaveDialog 选路径） */
+  MCP_SERVER_EXPORT: 'mcp-server:export',
   MCP_SERVER_START: 'mcp-server:start',
   MCP_SERVER_STOP: 'mcp-server:stop',
   MCP_SERVER_RESTART: 'mcp-server:restart',
@@ -1916,6 +1980,10 @@ export const IPC = {
   REMINDER_FIRED: 'reminder:fired',
   /** 用户直建提醒（消息右键「提醒我」；Agent 工具走 reminder_set 不经此 IPC） */
   REMINDER_CREATE: 'reminder:create',
+  /** 待发提醒列表（主窗口提醒中心；Agent 工具的 list 走引擎不经此） */
+  REMINDER_LIST: 'reminder:list',
+  /** 取消待发提醒（仅 pending 可撤） */
+  REMINDER_CANCEL: 'reminder:cancel',
 
   // ---------- 平台管家 ----------
   HEALTH_REPORT: 'health:report',

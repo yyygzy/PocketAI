@@ -18,6 +18,8 @@ export interface McpTemplate {
   id: string
   /** 描述（i18n key） */
   desc: string
+  /** 场景分组（i18n key 后缀，渲染端按 agent.tplCat<Key> 翻译并分组展示） */
+  category: 'web' | 'file' | 'think' | 'auto'
   draft: Omit<McpImportDraft, 'enabled'>
   /** 需用户填写占位符的模板才声明；创建前渲染端按此渲染输入框 */
   placeholders?: McpTemplatePlaceholder[]
@@ -25,8 +27,41 @@ export interface McpTemplate {
 
 const TEMPLATES: McpTemplate[] = [
   {
+    id: 'fetch',
+    desc: 'agent.tplDescFetch',
+    category: 'web',
+    draft: {
+      name: 'fetch',
+      transport: 'stdio',
+      runtime: 'python',
+      command: 'python',
+      args: ['-m', 'mcp_server_fetch'],
+      env: {},
+      url: null,
+      headers: {},
+      pythonPackages: ['mcp-server-fetch']
+    }
+  },
+  {
+    id: 'puppeteer',
+    desc: 'agent.tplDescPuppeteer',
+    category: 'web',
+    draft: {
+      name: 'puppeteer',
+      transport: 'stdio',
+      runtime: 'node',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-puppeteer'],
+      env: {},
+      url: null,
+      headers: {},
+      pythonPackages: []
+    }
+  },
+  {
     id: 'filesystem',
     desc: 'agent.tplDescFilesystem',
+    category: 'file',
     draft: {
       name: 'filesystem',
       transport: 'stdio',
@@ -41,23 +76,43 @@ const TEMPLATES: McpTemplate[] = [
     placeholders: [{ key: 'dir', label: 'agent.tplPhDir' }]
   },
   {
-    id: 'fetch',
-    desc: 'agent.tplDescFetch',
+    id: 'git',
+    desc: 'agent.tplDescGit',
+    category: 'file',
     draft: {
-      name: 'fetch',
+      name: 'git',
       transport: 'stdio',
       runtime: 'python',
       command: 'python',
-      args: ['-m', 'mcp_server_fetch'],
+      args: ['-m', 'mcp_server_git', '{{repo}}'],
       env: {},
       url: null,
       headers: {},
-      pythonPackages: ['mcp-server-fetch']
-    }
+      pythonPackages: ['mcp-server-git']
+    },
+    placeholders: [{ key: 'repo', label: 'agent.tplPhRepo' }]
+  },
+  {
+    id: 'sqlite',
+    desc: 'agent.tplDescSqlite',
+    category: 'file',
+    draft: {
+      name: 'sqlite',
+      transport: 'stdio',
+      runtime: 'python',
+      command: 'python',
+      args: ['-m', 'mcp_server_sqlite', '--db-path', '{{db}}'],
+      env: {},
+      url: null,
+      headers: {},
+      pythonPackages: ['mcp-server-sqlite']
+    },
+    placeholders: [{ key: 'db', label: 'agent.tplPhDb' }]
   },
   {
     id: 'memory',
     desc: 'agent.tplDescMemory',
+    category: 'think',
     draft: {
       name: 'memory',
       transport: 'stdio',
@@ -71,23 +126,9 @@ const TEMPLATES: McpTemplate[] = [
     }
   },
   {
-    id: 'time',
-    desc: 'agent.tplDescTime',
-    draft: {
-      name: 'time',
-      transport: 'stdio',
-      runtime: 'python',
-      command: 'python',
-      args: ['-m', 'mcp_server_time'],
-      env: {},
-      url: null,
-      headers: {},
-      pythonPackages: ['mcp-server-time']
-    }
-  },
-  {
     id: 'sequential-thinking',
     desc: 'agent.tplDescSeq',
+    category: 'think',
     draft: {
       name: 'sequential-thinking',
       transport: 'stdio',
@@ -101,22 +142,25 @@ const TEMPLATES: McpTemplate[] = [
     }
   },
   {
-    id: 'git',
-    desc: 'agent.tplDescGit',
+    id: 'time',
+    desc: 'agent.tplDescTime',
+    category: 'auto',
     draft: {
-      name: 'git',
+      name: 'time',
       transport: 'stdio',
       runtime: 'python',
       command: 'python',
-      args: ['-m', 'mcp_server_git', '{{repo}}'],
+      args: ['-m', 'mcp_server_time'],
       env: {},
       url: null,
       headers: {},
-      pythonPackages: ['mcp-server-git']
-    },
-    placeholders: [{ key: 'repo', label: 'agent.tplPhRepo' }]
+      pythonPackages: ['mcp-server-time']
+    }
   }
 ]
+
+/** 场景分组固定展示顺序 */
+export const MCP_TEMPLATE_CATEGORIES = ['web', 'file', 'think', 'auto'] as const
 
 /** 读取全部内置模板（返回拷贝，防调用方误改常量） */
 export function listMcpTemplates(): McpTemplate[] {

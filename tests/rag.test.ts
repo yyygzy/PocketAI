@@ -2,13 +2,14 @@
 import { describe, it, expect, vi } from 'vitest'
 
 // mock rag.ts 的所有外部依赖，避免加载 portable/db
-vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: {} }))
+vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: { get: () => undefined } }))
 vi.mock('../src/main/db/repositories/kb-chunk.repo', () => ({ kbChunkRepo: {} }))
 vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({ kbDocRepo: {} }))
 vi.mock('../src/main/knowledge/embedding', () => ({ embedQuery: vi.fn() }))
 vi.mock('../src/main/providers/manager', () => ({
   providerManager: { getAdapter: () => null }
 }))
+vi.mock('../src/main/steward/perf-probe', () => ({ recordPerf: vi.fn(), logPerfDebug: vi.fn() }))
 
 import { rrfFuse, ragService } from '../src/main/knowledge/rag'
 import type { RetrievedChunk } from '../src/shared/types'
@@ -73,6 +74,26 @@ describe('rrfFuse — RRF 混合重排', () => {
     const cScore = result.find((x) => x.chunkId === 'c')!.score
     expect(bScore).toBeCloseTo(cScore)
   })
+
+  it('带 sourceTags 时 chunk.sources 记录命中路（双路命中合并）', () => {
+    const a = chunk('a')
+    const b = chunk('b')
+    const c = chunk('c')
+    // 向量路: a, b  BM25路: a, c
+    const result = rrfFuse([[a, b], [a, c]], ['vector', 'bm25'])
+    const ra = result.find((x) => x.chunkId === 'a')!
+    const rb = result.find((x) => x.chunkId === 'b')!
+    const rc = result.find((x) => x.chunkId === 'c')!
+    expect(ra.sources?.sort()).toEqual(['bm25', 'vector'])
+    expect(rb.sources).toEqual(['vector'])
+    expect(rc.sources).toEqual(['bm25'])
+  })
+
+  it('不传 sourceTags 时 sources 保持原值（向后兼容）', () => {
+    const a = chunk('a')
+    const result = rrfFuse([[a]])
+    expect(result[0]!.sources).toBeUndefined()
+  })
 })
 
 describe('buildContext — 知识上下文拼装', () => {
@@ -98,5 +119,17 @@ describe('buildContext — 知识上下文拼装', () => {
     expect(ctx).toContain('[2. B]\nc2')
     expect(ctx).toContain('---')
     expect(ctx.indexOf('[1. A]')).toBeLessThan(ctx.indexOf('[2. B]'))
+  })
+})
+
+describe('retrieveWithDiagnostics — 诊断模式带回 timings', () => {
+  it('空查询/空 KB 仍返回 timings 对象', async () => {
+    const res = await ragService.retrieveWithDiagnostics([], 'test')
+    expect(res.diagnostics.timings).toBeDefined()
+    expect(typeof res.diagnostics.timings!.totalMs).toBe('number')
+    expect(typeof res.diagnostics.timings!.searchMs).toBe('number')
+    expect(typeof res.diagnostics.timings!.rerankMs).toBe('number')
+    expect(typeof res.diagnostics.timings!.mmrMs).toBe('number')
+    expect(res.result.chunks).toEqual([])
   })
 })

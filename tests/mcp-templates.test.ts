@@ -15,9 +15,34 @@ describe('模板清单结构', () => {
   const templates = listMcpTemplates()
 
   it('预置模板非空且 name 唯一', () => {
-    expect(templates.length).toBeGreaterThanOrEqual(6)
+    expect(templates.length).toBeGreaterThanOrEqual(8)
     const names = templates.map((t) => t.draft.name)
     expect(new Set(names).size).toBe(names.length)
+  })
+
+  it('每个模板都有合法 category 且四个分组均非空', () => {
+    const cats = new Set(templates.map((t) => t.category))
+    expect(cats.has('web')).toBe(true)
+    expect(cats.has('file')).toBe(true)
+    expect(cats.has('think')).toBe(true)
+    expect(cats.has('auto')).toBe(true)
+    for (const t of templates) {
+      expect(['web', 'file', 'think', 'auto']).toContain(t.category)
+    }
+  })
+
+  it('新增 puppeteer/sqlite 模板结构正确', () => {
+    const puppeteer = templates.find((t) => t.id === 'puppeteer')!
+    expect(puppeteer.draft.runtime).toBe('node')
+    expect(puppeteer.draft.args).toEqual(['-y', '@modelcontextprotocol/server-puppeteer'])
+    expect(puppeteer.placeholders).toBeUndefined()
+    const sqlite = templates.find((t) => t.id === 'sqlite')!
+    expect(sqlite.draft.runtime).toBe('python')
+    expect(sqlite.draft.pythonPackages).toEqual(['mcp-server-sqlite'])
+    expect(sqlite.placeholders?.map((p) => p.key)).toEqual(['db'])
+    const inst = instantiateMcpTemplate(sqlite, { db: 'C:\\data\\app.db' })
+    expect(inst.error).toBeUndefined()
+    expect(inst.draft?.args).toEqual(['-m', 'mcp_server_sqlite', '--db-path', 'C:\\data\\app.db'])
   })
 
   it('transport 均为 stdio 且 url 为空', () => {

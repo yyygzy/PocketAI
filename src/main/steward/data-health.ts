@@ -18,6 +18,7 @@ import { loadWebDAVConfig } from '../backup/backup-service'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { errMsg } from '../error'
 import { getBootPerf } from './boot-perf'
+import { getRecentPerf } from './perf-probe'
 import { getKbIntegrityReport } from '../knowledge/kb-health'
 
 // ─── 纯函数：数据目录体积分类聚合 ────────────────────────────────
@@ -187,5 +188,8 @@ export function getDataHealthReport(): DataHealthReport {
   // 5. 本次启动各阶段耗时（内存埋点即时快照）
   const boot = getBootPerf()
 
-  return { sizes, kb, backup, tasks, boot }
+  // 6. 运行期慢操作（入库/检索/渲染长任务，环形缓冲快照）
+  const recentPerf = getRecentPerf()
+
+  return { sizes, kb, backup, tasks, boot, recentPerf }
 }

@@ -72,7 +72,7 @@ export const DataHealthPanel: React.FC = () => {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 
-  const { sizes, kb, backup, tasks, boot } = report
+  const { sizes, kb, backup, tasks, boot, recentPerf } = report
   const integrity = kb.integrity
   const integrityOk =
     integrity.orphanVectors === 0 &&
@@ -266,6 +266,28 @@ export const DataHealthPanel: React.FC = () => {
       <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
         {t('dh.boot.total', { ms: boot.totalMs })} · {t('dh.boot.hint')}
       </div>
+
+      {/* 最近慢操作（运行期埋点环形缓冲，见 src/main/steward/perf-probe.ts） */}
+      <div className="mt-4 mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.perf.title')}</div>
+      {recentPerf.length === 0 ? (
+        <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('dh.perf.empty')}</div>
+      ) : (
+        <div className="space-y-1 mb-2">
+          {recentPerf.slice(-10).reverse().map((p, i) => {
+            const lk = `dh.perf.label.${p.label}`
+            const ll = t(lk)
+            return (
+              <div key={`${p.at}-${i}`} title={p.detail ?? ''}>
+                <Row
+                  label={ll === lk ? p.label : ll}
+                  value={`${p.ms}ms · ${new Date(p.at).toLocaleTimeString()}`}
+                  warn={p.ms >= 3000}
+                />
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       <div className="mt-3 flex items-center gap-2">
         <button onClick={load} className="chip">{t('dh.refresh')}</button>

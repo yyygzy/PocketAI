@@ -100,6 +100,27 @@ export const kbDocRepo = {
       .run(hash, id)
   },
 
+  /**
+   * 文本类文档原文（v42 起；手工录入/消息附件）。
+   * 单独查询而非挂在 rowToRecord：list 全量携带大文本会拖垮库文档列表。
+   * 文件/URL 类与 v42 前录入的文本返回 null。
+   */
+  getRawText(id: string): string | null {
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT raw_text AS rawText FROM kb_documents WHERE id=?')
+      .get(id) as { rawText: string | null } | undefined
+    return row?.rawText ?? null
+  },
+
+  /** 保存文本类文档原文（重建索引时复用，独立于 chunks 生命周期） */
+  setRawText(id: string, text: string): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE kb_documents SET raw_text=? WHERE id=?')
+      .run(text, id)
+  },
+
   /** 文档级检索开关：enabled=false 临时排除出检索范围（不删除、不重索引） */
   setEnabled(id: string, enabled: boolean): void {
     dbService

@@ -39,6 +39,8 @@ vi.mock('../src/main/tools/fs-tools', () => ({
   getWorkspaceDir: () => '',
   resolveWorkspacePath: (p: string) => p
 }))
+// engine 的审批预览会拉起 shell-config → app-config → portable/electron 链；纯函数测试用不到，整体打桩
+vi.mock('../src/main/tools/shell-tools', () => ({ findDangerRanges: () => [] }))
 vi.mock('../src/main/assistant/skills', () => ({ buildSkillsContext: () => '' }))
 // engine 新增的智能标题编排会拉起 app-config/portable/electron 链；纯函数测试用不到，整体打桩
 vi.mock('../src/main/conversation/title-gen', () => ({ runFirstMessageTitle: () => {} }))

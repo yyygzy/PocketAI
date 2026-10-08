@@ -725,6 +725,39 @@ export const ChatModule: React.FC = () => {
     input.click()
   }
 
+  // 外部平台记录导入：多选 .json/.jsonl（ChatGPT conversations.json / Claude 导出），
+  // 渲染端读文本传主进程解析入库；格式不明/坏会话由主进程计数返回
+  const handleImportExternal = async () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json,.jsonl,application/json,application/x-ndjson'
+    input.multiple = true
+    input.onchange = async () => {
+      const fileList = input.files
+      if (!fileList || fileList.length === 0) return
+      try {
+        const files = await Promise.all(
+          Array.from(fileList).slice(0, 10).map(async (f) => ({ name: f.name, text: await f.text() }))
+        )
+        const r = await window.pocketai.importExternalConversations(files)
+        if (r.conversationCount > 0) {
+          toast.success(t('chat.importExternalOk', { c: r.conversationCount, m: r.messageCount }))
+          await reloadConversations()
+        }
+        if (r.skippedConversationCount > 0) {
+          toast.warning(t('chat.importExternalSkipped', { n: r.skippedConversationCount }))
+        }
+        if (r.warnings.length > 0) toast.error(r.warnings.join('\n'))
+        if (r.conversationCount === 0 && r.skippedConversationCount === 0) {
+          toast.error(t('chat.importFail', { e: t('chat.importExternalUnknown') }))
+        }
+      } catch (e) {
+        toast.error(t('chat.importFail', { e: errText(e) }))
+      }
+    }
+    input.click()
+  }
+
   // ---------- 加密导出/导入 ----------
   const [cryptoPrompt, setCryptoPrompt] = useState<null | { kind: 'export' | 'import'; id?: string }>(null)
   // 消息跨会话转发：待转发的消息（弹窗选择目标会话/新会话）
@@ -1158,6 +1191,8 @@ export const ChatModule: React.FC = () => {
     }
     try {
       await window.pocketai.createReminder({ text, fireAt, conversationId: currentConvId ?? null })
+      // 通知 Sidebar 角标即时刷新（创建无 IPC 广播，本地事件轻量通知）
+      window.dispatchEvent(new Event('pocketai:reminders-changed'))
       toast.success(t('reminder.menu.created', { time: formatDateTime(fireAt) }))
     } catch (e) {
       toast.error(errText(e))
@@ -1194,6 +1229,7 @@ export const ChatModule: React.FC = () => {
             onBatchDelete={handleBatchDeleteConv}
             onImport={handleImportConv}
             onImportEncrypted={handleImportEncrypted}
+            onImportExternal={() => void handleImportExternal()}
             onSelectMessage={handleSelectMessage}
             archivedConversations={archivedConversations}
             onTogglePin={handleTogglePin}

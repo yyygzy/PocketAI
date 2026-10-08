@@ -8,7 +8,11 @@ import { rerankChunks } from './reranker'
 import { generateHypotheticalDoc } from './hyde'
 import { generateMultiQueries } from './multi-query'
 import { mmrSelect } from './mmr'
-import type { RetrievedChunk, RetrievalResult } from '../../shared/types'
+import { recordPerf, logPerfDebug } from '../steward/perf-probe'
+import type { RetrievedChunk, RetrievalDiagnostics, RetrievalResult } from '../../shared/types'
+
+/** 检索总耗时入慢操作缓冲的阈值 */
+const SLOW_RETRIEVE_MS = 800
 
 export interface RetrieveOptions {
   topK?: number
@@ -18,31 +22,46 @@ export interface RetrieveOptions {
 /** RRF 融合参数：rank 越高权重越低，k 控制衰减 */
 const RRF_K = 60
 
+/** 检索来源路标识 */
+export type RetrievalSource = 'vector' | 'bm25'
+
 /**
  * Reciprocal Rank Fusion：将多路检索结果的排名融合为单一分数
  * score = Σ 1 / (k + rank_i)
+ * 每路可附带来源标识，融合后的 chunk.sources 记录命中过哪些路
  */
-export function rrfFuse(results: RetrievedChunk[][]): RetrievedChunk[] {
-  const map = new Map<string, { chunk: RetrievedChunk; score: number }>()
+export function rrfFuse(
+  results: RetrievedChunk[][],
+  sourceTags?: RetrievalSource[]
+): RetrievedChunk[] {
+  const map = new Map<string, { chunk: RetrievedChunk; score: number; sources: Set<RetrievalSource> }>()
 
-  for (const list of results) {
+  results.forEach((list, listIdx) => {
+    const tag = sourceTags?.[listIdx]
     list.forEach((chunk, idx) => {
       const rank = idx + 1
       const key = chunk.chunkId
-      const existing = map.get(key)
       const rrfScore = 1 / (RRF_K + rank)
+      const existing = map.get(key)
       if (existing) {
         existing.score += rrfScore
+        if (tag) existing.sources.add(tag)
       } else {
-        map.set(key, { chunk, score: rrfScore })
+        const sources = new Set<RetrievalSource>()
+        if (tag) sources.add(tag)
+        map.set(key, { chunk, score: rrfScore, sources })
       }
     })
-  }
+  })
 
   // 按融合分数降序
   return Array.from(map.values())
     .sort((a, b) => b.score - a.score)
-    .map((v) => ({ ...v.chunk, score: v.score }))
+    .map((v) => ({
+      ...v.chunk,
+      score: v.score,
+      sources: sourceTags ? Array.from(v.sources) : v.chunk.sources
+    }))
 }
 
 class RAGService {
@@ -55,8 +74,42 @@ class RAGService {
     query: string,
     opts: RetrieveOptions = {}
   ): Promise<RetrievalResult> {
+    return this.retrieveInternal(kbIds, query, opts, null)
+  }
+
+  /**
+   * 检索测试面板用：同 retrieve，但附带诊断信息（来源路标记/查询变体/各路命中数）。
+   * 与聊天主链路同一条检索逻辑，保证面板所见即实际注入效果。
+   */
+  async retrieveWithDiagnostics(
+    kbIds: string[],
+    query: string,
+    opts: RetrieveOptions = {}
+  ): Promise<{ result: RetrievalResult; diagnostics: RetrievalDiagnostics }> {
+    const diagnostics: RetrievalDiagnostics = {
+      hydeUsed: false,
+      queryVariants: [],
+      vectorHits: 0,
+      bm25Hits: 0,
+      rerankUsed: false,
+      candidateCount: 0
+    }
+    const result = await this.retrieveInternal(kbIds, query, opts, diagnostics)
+    return { result, diagnostics }
+  }
+
+  /** 检索核心：diag 非空时收集诊断信息 */
+  private async retrieveInternal(
+    kbIds: string[],
+    query: string,
+    opts: RetrieveOptions,
+    diag: RetrievalDiagnostics | null
+  ): Promise<RetrievalResult> {
     const topK = opts.topK ?? 20
     const topN = opts.topN ?? 5
+    const tTotal = performance.now()
+    let hydeMs = 0
+    let multiQueryMs = 0
     const all: RetrievedChunk[] = []
     let rerankProvider: string | null = null
     let rerankModel: string | null = null
@@ -84,22 +137,29 @@ class RAGService {
     }
 
     // HyDE：用假设文档做向量检索的 embedding，BM25 仍用原 query
+    const tHyde = performance.now()
     const hydeDoc = hydeProvider && hydeModel
       ? await generateHypotheticalDoc(query, hydeProvider, hydeModel)
       : null
+    hydeMs = performance.now() - tHyde
     const embedText = hydeDoc ?? query
+    if (diag) diag.hydeUsed = hydeDoc !== null
 
     // Multi-Query：LLM 改写出多个视角变体查询（失败降级为仅原 query）
+    const tMq = performance.now()
     const variants =
       multiQueryProvider && multiQueryModel
         ? (await generateMultiQueries(query, multiQueryProvider, multiQueryModel)) ?? []
         : []
+    multiQueryMs = performance.now() - tMq
     // 原 query 在前：向量路可用 HyDE 文本，变体只用自身
     const queryVariants: Array<{ q: string; useHyde: boolean }> = [
       { q: query, useHyde: true },
       ...variants.map((v) => ({ q: v, useHyde: false }))
     ]
+    if (diag) diag.queryVariants = queryVariants.map((v) => v.q)
 
+    const tSearch = performance.now()
     for (const kbId of kbIds) {
       const kb = kbRepo.get(kbId)
       if (!kb) continue
@@ -131,22 +191,35 @@ class RAGService {
         }
       }
 
-      // RRF 融合两路结果
-      const fused = rrfFuse([vectorResults, bm25Results])
+      if (diag) {
+        diag.vectorHits += vectorResults.length
+        diag.bm25Hits += bm25Results.length
+      }
+
+      // RRF 融合两路结果（带来源标记）
+      const fused = rrfFuse([vectorResults, bm25Results], ['vector', 'bm25'])
       all.push(...fused)
     }
 
     // 多 KB 合并后再次按融合分数排序
     all.sort((a, b) => b.score - a.score)
+    const searchMs = performance.now() - tSearch
 
     // 3. 重排序：取 topK 候选给 LLM rerank
     const candidates = all.slice(0, topK)
+    if (diag) {
+      diag.candidateCount = candidates.length
+      diag.rerankUsed = !!(rerankProvider && rerankModel)
+    }
+    const tRerank = performance.now()
     const reranked =
       rerankProvider && rerankModel
         ? await rerankChunks(query, candidates, rerankProvider, rerankModel)
         : candidates
+    const rerankMs = performance.now() - tRerank
 
     // 4. MMR 多样性选择：在相关性与去重之间权衡后取 topN
+    const tMmr = performance.now()
     let picked: RetrievedChunk[]
     try {
       const vecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
@@ -154,6 +227,7 @@ class RAGService {
     } catch {
       picked = reranked.slice(0, topN)
     }
+    const mmrMs = performance.now() - tMmr
 
     // 填充文档标题
     const titleCache = new Map<string, string>()
@@ -164,6 +238,21 @@ class RAGService {
       }
       c.docTitle = titleCache.get(c.docId) ?? c.docId
     }
+
+    // 性能埋点：主链路仅两次时间戳开销；超阈值入慢操作缓冲（数据健康面板可见）
+    const totalMs = performance.now() - tTotal
+    const timings = {
+      hydeMs: Math.round(hydeMs),
+      multiQueryMs: Math.round(multiQueryMs),
+      searchMs: Math.round(searchMs),
+      rerankMs: Math.round(rerankMs),
+      mmrMs: Math.round(mmrMs),
+      totalMs: Math.round(totalMs)
+    }
+    if (diag) diag.timings = timings
+    const detail = `kbs=${kbIds.length} search=${timings.searchMs} rerank=${timings.rerankMs} mmr=${timings.mmrMs} picked=${picked.length}`
+    if (totalMs >= SLOW_RETRIEVE_MS) recordPerf('kb.retrieve', totalMs, detail)
+    else logPerfDebug('kb.retrieve', totalMs, detail)
 
     return { query, chunks: picked }
   }

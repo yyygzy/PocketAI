@@ -7,10 +7,12 @@ import { SelectionToolbar } from './components/SelectionToolbar'
 import { CommandPalette } from './components/CommandPalette'
 import { ToastProvider } from './components/ToastProvider'
 import { ReminderListener } from './hooks/ReminderListener'
+import { RemindersModal } from './components/RemindersModal'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
 import { reportIpcError } from './utils/ipc'
+import { startLongTaskObserver } from './utils/longtask'
 import { useAppStore } from './store/app-store'
 
 export default function App() {
@@ -39,6 +41,8 @@ export default function App() {
 
   // 仅 UI 本地状态：锁屏密码输入
   const [collapsed, setCollapsed] = useState(false)
+  // 待发提醒中心（仅主窗口；独立窗口/浮窗不挂）
+  const [remindersOpen, setRemindersOpen] = useState(false)
   const [lockPwd, setLockPwd] = useState('')
   const [lockErr, setLockErr] = useState('')
 
@@ -49,6 +53,11 @@ export default function App() {
   useEffect(() => {
     touchModule(activeModule)
   }, [activeModule, touchModule])
+
+  // 渲染层长任务观测（实测定位界面卡顿；不支持的环境静默跳过）
+  useEffect(() => {
+    startLongTaskObserver()
+  }, [])
 
   // 锁屏加固：inert 掉遮罩之外的全部内容
   useEffect(() => {
@@ -174,6 +183,7 @@ export default function App() {
             onChange={handleModuleChange}
             collapsed={collapsed}
             onToggleCollapse={() => setCollapsed((c) => !c)}
+            onOpenReminders={() => setRemindersOpen(true)}
           />
           <div className="flex flex-col flex-1 min-w-0">
             <TabBar
@@ -193,6 +203,9 @@ export default function App() {
         </div>
 
         {!locked && <ToolApprovalDialog />}
+
+        {/* 待发提醒中心（⏰ 入口在 Sidebar） */}
+        {!locked && remindersOpen && <RemindersModal onClose={() => setRemindersOpen(false)} />}
 
         {/* 全局命令面板（Ctrl/⌘+P；锁屏不挂载，中枢亦拦截快捷键） */}
         {!locked && <CommandPalette />}

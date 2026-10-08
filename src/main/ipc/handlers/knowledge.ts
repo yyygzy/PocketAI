@@ -131,6 +131,10 @@ export function registerKnowledgeHandlers(): void {
   safeHandle(IPC.KB_RETRIEVE, async (_e, kbIds: string[], query: string) =>
     ragService.retrieve(kbIds, query),
   kbRetrieveArgsSchema)
+  // 检索诊断版：附带来源路/查询变体/命中数（检索测试面板用）
+  safeHandle(IPC.KB_RETRIEVE_DEBUG, async (_e, kbIds: string[], query: string) =>
+    ragService.retrieveWithDiagnostics(kbIds, query),
+  kbRetrieveArgsSchema)
 
   // ---------- KB 问答模式（选库即聊，流式生成） ----------
   const kbAskArgsSchema = z.object({

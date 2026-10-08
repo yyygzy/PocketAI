@@ -12,6 +12,8 @@ interface SidebarProps {
   onChange: (id: ModuleId) => void
   collapsed: boolean
   onToggleCollapse: () => void
+  /** 主窗口传入则显示「待发提醒」入口（独立窗口/浮窗不挂提醒中心） */
+  onOpenReminders?: () => void
 }
 
 const MODULE_IDS: ModuleId[] = ['chat', 'agent', 'skills', 'knowledge', 'files', 'notes', 'translate', 'image', 'sandbox', 'terminal', 'steward', 'settings']
@@ -34,7 +36,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   active,
   onChange,
   collapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  onOpenReminders
 }) => {
   const { t } = useI18n()
   // 用户自定义的模块顺序（app_config: sidebar.order）
@@ -42,6 +45,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 正在拖拽的模块 id
   const draggingIdRef = useRef<ModuleId | null>(null)
   const [draggingId, setDraggingId] = useState<ModuleId | null>(null)
+  // 待发提醒角标数（仅主窗口挂提醒中心时拉取；到点广播后刷新）
+  const [pendingReminders, setPendingReminders] = useState(0)
+
+  useEffect(() => {
+    if (!onOpenReminders) return
+    const refresh = () => {
+      window.pocketai
+        .listReminders()
+        .then((list) => setPendingReminders(list.length))
+        .catch(reportIpcError('sidebar.listReminders'))
+    }
+    refresh()
+    const off = window.pocketai.onReminderFired(() => refresh())
+    // 消息右键新建提醒后 ReminderMenu 派发的本地变更事件（无 IPC 广播，用 CustomEvent 轻量通知）
+    const onLocalChanged = () => refresh()
+    window.addEventListener('pocketai:reminders-changed', onLocalChanged)
+    return () => {
+      off()
+      window.removeEventListener('pocketai:reminders-changed', onLocalChanged)
+    }
+  }, [onOpenReminders])
 
   useEffect(() => {
     // 读取失败保持默认顺序，仅记诊断
@@ -154,6 +178,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         ))}
       </nav>
+
+      {/* 待发提醒中心（仅主窗口挂载） */}
+      {onOpenReminders && (
+        <button
+          onClick={onOpenReminders}
+          className="relative h-10 border-t border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors flex items-center justify-center gap-2 text-sm"
+          title={t('reminder.center.title')}
+          aria-label={t('reminder.center.title')}
+        >
+          <span className="text-base leading-none">⏰</span>
+          {!collapsed && <span>{t('reminder.center.entry')}</span>}
+          {pendingReminders > 0 && (
+            <span
+              className="absolute bg-[var(--color-accent)] text-white text-[9px] leading-none font-semibold rounded-full min-w-[15px] h-[15px] px-1 flex items-center justify-center"
+              style={collapsed ? { top: 4, right: 6 } : { top: 4, right: 10 }}
+            >
+              {pendingReminders > 99 ? '99+' : pendingReminders}
+            </span>
+          )}
+        </button>
+      )}
 
       {/* 主题 + 语言 */}
       <ThemeLangControls collapsed={collapsed} />

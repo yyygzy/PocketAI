@@ -119,8 +119,20 @@ function parseEntry(key: string, raw: unknown): McpImportItem {
     if (!e) return { key, error: 'env 必须是 JSON 对象' }
     env = e
   }
+  // PocketAI 扩展键：python 运行时 pip 包列表（自身导出 round-trip；标准客户端忽略此键）
+  let pythonPackages: string[] = []
+  let warning: string | undefined
+  const rawPkgs = (obj as Record<string, unknown>)['x-pocketai-python-packages']
+  if (rawPkgs !== undefined) {
+    if (Array.isArray(rawPkgs)) {
+      pythonPackages = rawPkgs.map(String)
+    } else {
+      warning = `${'x-pocketai-python-packages'} 必须是数组，已忽略`
+    }
+  }
   return {
     key,
+    warning,
     draft: {
       name: key,
       transport: 'stdio',
@@ -131,7 +143,7 @@ function parseEntry(key: string, raw: unknown): McpImportItem {
       url: null,
       headers: {},
       enabled: true,
-      pythonPackages: []
+      pythonPackages
     }
   }
 }

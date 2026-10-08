@@ -5,6 +5,7 @@ import { useToast } from '../../../components/ToastProvider'
 import {
   listMcpTemplates,
   instantiateMcpTemplate,
+  MCP_TEMPLATE_CATEGORIES,
   type McpTemplate
 } from '../../../../../shared/mcp-templates'
 import { errText } from '../../../utils/error'
@@ -82,8 +83,16 @@ export const McpTemplatesModal: React.FC<Props> = ({ onClose, onCreated }) => {
         </div>
         <div className="p-4 space-y-3 overflow-y-auto">
           <p className="text-[11px] text-[var(--color-text-muted)]">{t('agent.tplHint')}</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {templates.map((tpl) => {
+          {MCP_TEMPLATE_CATEGORIES.map((cat) => {
+            const group = templates.filter((tpl) => tpl.category === cat)
+            if (group.length === 0) return null
+            return (
+              <div key={cat}>
+                <h4 className="text-[11px] font-semibold text-[var(--color-text-muted)] mb-1.5">
+                  {t(`agent.tplCat${cat[0]!.toUpperCase()}${cat.slice(1)}`)}
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {group.map((tpl) => {
               const created = createdIds.has(tpl.id)
               const busy = creatingId === tpl.id
               return (
@@ -133,6 +142,9 @@ export const McpTemplatesModal: React.FC<Props> = ({ onClose, onCreated }) => {
               )
             })}
           </div>
+            </div>
+          )
+        })}
         </div>
         <div className="p-4 border-t border-[var(--color-border)] flex justify-end">
           <button className="btn-ghost" onClick={onClose}>

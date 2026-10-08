@@ -15,6 +15,7 @@ import { McpForm } from './McpForm'
 import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
 import { reportIpcError } from '../../../utils/ipc'
+import { errText } from '../../../utils/error'
 
 /** 单个工具的试运行状态（key = `${serverId}:${toolName}`） */
 interface ToolRunState {
@@ -160,6 +161,22 @@ export const McpPanel: React.FC = () => {
     await load()
   }
 
+  // 导出全部配置为脱敏 JSON（换机/备份；密钥项替换为 REDACTED，导入后需手填）
+  const handleExport = async () => {
+    try {
+      const r = await window.pocketai.exportMcpServers()
+      if ('canceled' in r) return
+      if (!r.ok) {
+        toast.error(r.error || t('common.unknownError'))
+        return
+      }
+      toast.success(t('agent.exportMcpDone', { n: r.count, path: r.path }))
+      if (r.redactedCount > 0) toast.warning(t('agent.exportMcpRedacted', { n: r.redactedCount }))
+    } catch (e) {
+      toast.error(errText(e))
+    }
+  }
+
   return (
     <div className="flex gap-4 h-full">
       {/* 左：列表 */}
@@ -172,6 +189,12 @@ export const McpPanel: React.FC = () => {
               className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
             >
               {t('agent.templates')}
+            </button>
+            <button
+              onClick={() => void handleExport()}
+              className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
+            >
+              {t('agent.exportMcp')}
             </button>
             <button
               onClick={() => setImportOpen(true)}
