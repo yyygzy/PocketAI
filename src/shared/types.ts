@@ -1598,7 +1598,9 @@ export interface BackupRestoreResult {
   /** 异机密码恢复成功：主密码已变为备份时密码，应提示用户重启 */
   passwordChanged?: boolean
   /** 选中的备份文件绝对路径：密码重试时回传，避免再次弹选择器（仅本地恢复） */
-  filePath?: string
+  /** 待重试备份的文件名（不含目录，仅供 UI 展示）+ 主进程签发的路径令牌（SEC-6，替代回传绝对路径） */
+  fileName?: string
+  restoreToken?: string
 }
 
 // ---------- 定时备份 ----------

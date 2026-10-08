@@ -808,7 +808,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   // 恢复密码弹窗：当前主密码解不开备份时，输入制作备份时的主密码重试（WebDAV/本地共用）
   type RestoreTarget =
     | { kind: 'webdav'; name: string }
-    | { kind: 'local'; name: string; filePath: string }
+    | { kind: 'local'; name: string; restoreToken: string }
   const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null)
   const [restorePwdValue, setRestorePwdValue] = useState('')
   const [restorePwdError, setRestorePwdError] = useState('')
@@ -826,9 +826,9 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       return
     }
     if (r.code === 'needBackupPassword' || r.code === 'badPassword' || r.code === 'legacyNoCross') {
-      // 本地恢复首次返回时携带选中文件路径，据此构造密码重试目标
+      // 本地恢复首次返回时携带主进程签发的令牌与文件名，据此构造密码重试目标（路径不进渲染层）
       const next: RestoreTarget | null =
-        target ?? (r.filePath ? { kind: 'local', name: r.filePath.split(/[\\/]/).pop() || r.filePath, filePath: r.filePath } : null)
+        target ?? (r.restoreToken ? { kind: 'local', name: r.fileName ?? r.restoreToken, restoreToken: r.restoreToken } : null)
       if (next) setRestoreTarget(next)
       setRestorePwdError(
         r.code === 'badPassword' ? t('bk.restoreBadPwd')
@@ -868,7 +868,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     try {
       const r = restoreTarget.kind === 'webdav'
         ? await window.pocketai.restoreWebDAVBackup(restoreTarget.name, pwd)
-        : await window.pocketai.restoreLocalBackup({ filePath: restoreTarget.filePath, backupPassword: pwd })
+        : await window.pocketai.restoreLocalBackup({ restoreToken: restoreTarget.restoreToken, backupPassword: pwd })
       handleRestoreResult(r, restoreTarget)
     } finally {
       setRestorePwdBusy(false)

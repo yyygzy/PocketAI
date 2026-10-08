@@ -16,18 +16,7 @@ import {
   resolveAssistantImportItem
 } from '../../../shared/assistant-port'
 import { errMsg } from '../../error'
-
-/** 同名覆盖确认的一次性凭据（TTL 5 分钟，用后即弃） */
-const IMPORT_CONFIRM_TTL_MS = 5 * 60 * 1000
-let pendingImportPath: { path: string; at: number } | null = null
-
-/** 确认第二次调用只接受上一次对话框选中的路径；过期或未走过对话框都返回 null */
-function takePendingImport(): string | null {
-  const held = pendingImportPath
-  pendingImportPath = null
-  if (!held) return null
-  return Date.now() - held.at > IMPORT_CONFIRM_TTL_MS ? null : held.path
-}
+import { issuePathToken, peekPathToken, dropPathToken } from '../dialog-path-token'
 
 export function registerAssistantHandlers(): void {
   safeHandle(IPC.ASSISTANT_LIST, () => assistantRepo.list())
@@ -69,16 +58,19 @@ export function registerAssistantHandlers(): void {
     return { ok: true, path: filePath, count: payload.assistants.length }
   })
 
-  // ---------- 导入：showOpenDialog → 逐条解析 → 同名覆盖（kb/skill 跨机失效过滤）----------
-  // 导入助手（同名覆盖需逐条确认，SEC-3）
+  // ---------- 导入：showOpenDialog → 逐条解析 → 同名需确认后覆盖（kb/skill 跨机失效过滤）----------
   //
-  // 两段式：首次调用只检测冲突并把**主进程对话框选中的路径**暂存为一次性凭据（TTL 5 分钟、用后即弃）；
-  // 用户确认后第二次调用带 confirmOverwrite，且只接受这条暂存路径。
-  // 不接受渲染端直接传入文件路径——那会退化成「读任意文件写进应用状态」（同类问题见台账 SEC-6）。
-  safeHandle(IPC.ASSISTANT_IMPORT, async (e, opts?: { confirmOverwrite?: boolean }) => {
-    const confirming = opts?.confirmOverwrite === true
-    let filePath = confirming ? takePendingImport() : null
-    if (!filePath) {
+  // 两段式（SEC-3 + SEC-6 同一手法）：首次调用只检测冲突，并把**主进程对话框选中的路径**
+  // 换成一次性令牌签发（dialog-path-token）；用户确认后第二次调用带该令牌，路径只在主进程解析。
+  // 渲染端传不进路径，也传不进「我已确认」之外的语义。
+  safeHandle(IPC.ASSISTANT_IMPORT, async (e, opts?: { confirmToken?: string }) => {
+    const confirmToken = typeof opts?.confirmToken === 'string' ? opts.confirmToken : ''
+    let filePath: string | null = null
+    if (confirmToken) {
+      filePath = peekPathToken(confirmToken)
+      // 令牌失效不回落成「重新弹框再静默覆盖」——那等于绕过用户的确认动作
+      if (!filePath) return { ok: false, error: '确认已过期，请重新选择文件导入' }
+    } else {
       const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
       if (!win) return { ok: false, error: '窗口不可用' }
       const { canceled, filePaths } = await dialog.showOpenDialog(win, {
@@ -91,6 +83,7 @@ export function registerAssistantHandlers(): void {
       if (canceled || !filePaths[0]) return { ok: true, canceled: true }
       filePath = filePaths[0]
     }
+    const confirming = confirmToken.length > 0
 
     let parsed: unknown
     try {
@@ -121,11 +114,12 @@ export function registerAssistantHandlers(): void {
       .filter((it) => it.existing && !it.existing.isBuiltin)
       .map((it) => it.resolved.draft.name)
     if (conflicts.length > 0 && !confirming) {
-      pendingImportPath = { path: filePath, at: Date.now() }
+      const token = issuePathToken(filePath)
       return {
         ok: true as const,
         needsConfirm: true as const,
         conflicts,
+        confirmToken: token,
         skipped,
         droppedTools: items.reduce((n, it) => n + it.resolved.droppedTools, 0)
       }
@@ -164,7 +158,7 @@ export function registerAssistantHandlers(): void {
         return { ok: false, error: errMsg(err, '导入失败') }
       }
     }
-    pendingImportPath = null
+    dropPathToken(confirmToken)
     return { ok: true, imported, overwritten, skipped, droppedKb, droppedSkills, droppedTools }
   })
 }

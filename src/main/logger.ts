@@ -3,13 +3,16 @@
 // - 级别：debug < info < warn < error
 //   开发（未打包）默认 debug，打包后默认 info；可用环境变量 MOXIA_LOG_LEVEL 覆盖
 // - 输出：控制台带级别标签与时间戳；打包后同步落盘 userData/logs/main.log
-//   文件超过 1MB 滚动一次（main.log → main.old.log），避免无限增长
+//   文件超过 1MB 时滚动（main.log → main.old.log），避免无限增长
+// - 落盘内容统一经 security/log-redact 处理：敏感键名的值替换为 [redacted]，
+//   超长字符串按长度截断（日志目录可能在便携盘上，见 SEC-14）
 // - 日志路径解析失败（如 electron 未就绪、测试环境打桩）时自动禁落盘，绝不抛错影响业务
 
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { inspect } from 'node:util'
+import { capLogString, redactLogValue } from './security/log-redact'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -79,12 +82,13 @@ function timestamp(): string {
 function formatArgs(args: unknown[]): string {
   return args
     .map((a) => {
-      if (typeof a === 'string') return a
-      if (a instanceof Error) return a.stack ?? `${a.name}: ${a.message}`
+      if (typeof a === 'string') return capLogString(a)
+      if (a instanceof Error) return capLogString(a.stack ?? `${a.name}: ${a.message}`)
       try {
-        return inspect(a, { depth: 4, breakLength: 120 })
+        // 结构体参数先按敏感键名脱敏 + 长串封顶再序列化（SEC-14，日志可能落在便携盘）
+        return inspect(redactLogValue(a), { depth: 4, breakLength: 120 })
       } catch {
-        return String(a)
+        return capLogString(String(a))
       }
     })
     .join(' ')

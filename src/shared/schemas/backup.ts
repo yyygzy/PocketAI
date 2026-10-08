@@ -27,3 +27,12 @@ export const mergeExecutePayloadSchema = z.object({
   strategy: z.enum(['local', 'cloud', 'newer']),
   backupPassword: z.string().min(1).optional()
 })
+
+/**
+ * 本地恢复入参（SEC-6）：只接受主进程签发的 restoreToken + 可选备份密码。
+ * 曾接受的 filePath 字段已移除——那让渲染端能用任意路径触发整库替换。
+ */
+export const backupRestoreArgsSchema = z.object({
+  restoreToken: z.string().min(1).max(64).optional(),
+  backupPassword: z.string().min(1).max(512).optional()
+})

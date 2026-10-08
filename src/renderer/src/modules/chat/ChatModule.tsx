@@ -1214,7 +1214,7 @@ export const ChatModule: React.FC = () => {
         danger: true
       })
       if (!ok) return
-      const again = await window.pocketai.importAssistants({ confirmOverwrite: true })
+      const again = await window.pocketai.importAssistants({ confirmToken: r.confirmToken })
       if (!again.ok) {
         toast.error(again.error)
         return

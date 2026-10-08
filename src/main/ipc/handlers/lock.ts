@@ -8,6 +8,7 @@ import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { broadcast } from '../broadcast'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { masterPasswordSchema } from '../../../shared/schemas/encryption'
+import { authRateLimiter, AUTH_BUCKET } from '../../crypto/auth-ratelimit'
 
 export function registerLockHandlers(): void {
   safeHandle(IPC.LOCK_GET_STATUS, () => lockService.getStatus())
@@ -17,9 +18,31 @@ export function registerLockHandlers(): void {
   })
   safeHandle(IPC.LOCK_UNLOCK, (_e, password?: string) => {
     // db 模式锁定时密钥已被清除、库已被关闭（见 index.ts 锁订阅），
-    // 内存比对不可用，只能用「重新派生 + 重开探针」验证密码
+    // 内存比对不可用，只能用「重新派生 + 重开探针」验证密码。
+    // 该探针就是主密码校验点，必须与 ENCRYPTION_UNLOCK 共用限流桶（SEC-10）：
+    // 本通道在锁网关白名单内，没有限流就等于在锁屏界面上提供无限次离线试密码。
     if (masterKeyManager.getMode() === 'db') {
-      if (!password) return { ok: false, error: '密码错误' }
+      const bucket = AUTH_BUCKET.UNLOCK
+      const gate = authRateLimiter.check(bucket)
+      if (!gate.allowed) {
+        return {
+          ok: false as const,
+          error: '尝试过于频繁，请稍后再试',
+          locked: true,
+          retryAfterMs: gate.retryAfterMs,
+          attempts: gate.attempts
+        }
+      }
+      if (!password) {
+        const v = authRateLimiter.fail(bucket)
+        return {
+          ok: false as const,
+          error: '密码错误',
+          locked: v.retryAfterMs > 0,
+          retryAfterMs: v.retryAfterMs,
+          attempts: v.attempts
+        }
+      }
       const salt = appConfigRepo.getMasterPasswordSalt()
       try {
         const key = masterKeyManager.setKey(password, salt ?? undefined)
@@ -28,8 +51,16 @@ export function registerLockHandlers(): void {
       } catch {
         masterKeyManager.clear()
         dbService.close()
-        return { ok: false, error: '密码错误' }
+        const v = authRateLimiter.fail(bucket)
+        return {
+          ok: false as const,
+          error: '密码错误',
+          locked: v.retryAfterMs > 0,
+          retryAfterMs: v.retryAfterMs,
+          attempts: v.attempts
+        }
       }
+      authRateLimiter.reset(bucket)
     }
     lockService.unlock()
     return { ok: true }

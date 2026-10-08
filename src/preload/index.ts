@@ -147,11 +147,11 @@ const api = {
     { ok: true; canceled: true } | { ok: true; path: string; count: number } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.ASSISTANT_EXPORT),
   importAssistants: (opts?: {
-    confirmOverwrite?: boolean
+    confirmToken?: string
   }): Promise<
     | { ok: true; canceled: true }
-    /** 存在同名覆盖：未写入任何数据，需 UI 确认后用 confirmOverwrite=true 再调一次 */
-    | { ok: true; needsConfirm: true; conflicts: string[]; skipped: number; droppedTools: number }
+    /** 存在同名覆盖：未写入任何数据，需用 confirmToken 再调一次才会覆盖 */
+    | { ok: true; needsConfirm: true; conflicts: string[]; confirmToken: string; skipped: number; droppedTools: number }
     | { ok: true; imported: number; overwritten: number; skipped: number; droppedKb: number; droppedSkills: number; droppedTools: number }
     | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.ASSISTANT_IMPORT, opts),
@@ -903,7 +903,7 @@ const api = {
   > =>
     ipcRenderer.invoke(IPC.BACKUP_LOCAL_ENCRYPTED),
   restoreLocalBackup: (
-    payload?: { filePath?: string; backupPassword?: string }
+    payload?: { restoreToken?: string; backupPassword?: string }
   ): Promise<import('../shared/types').BackupRestoreResult> =>
     ipcRenderer.invoke(IPC.BACKUP_LOCAL_RESTORE, payload),
   saveWebDAVConfig: (cfg: WebDAVConfig): Promise<{ ok: boolean }> =>

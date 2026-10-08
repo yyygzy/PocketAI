@@ -158,8 +158,10 @@ function collectAttachmentFiles(): { file: string; name: string }[] {
 async function createZipBuffer(): Promise<{ zip: Buffer; manifest: BackupManifest }> {
   // 1. 先 checkpoint
   checkpointDB()
+  // 整份 app.db 的副本落在宿主机临时目录，SEC-8：无论成功失败都必须在 finally 销毁
+  // （便携场景下把库留在 %TEMP% 等于把数据遗留在宿主机上）
+  const tmp = join(tmpdir(), `pocketai-backup-${Date.now()}`)
   try {
-    const tmp = join(tmpdir(), `pocketai-backup-${Date.now()}`)
     mkdirSync(tmp, { recursive: true })
 
     // 2. 复制 DB 到临时目录（避免打包锁住文件）
@@ -211,6 +213,13 @@ async function createZipBuffer(): Promise<{ zip: Buffer; manifest: BackupManifes
   } catch (e) {
     restoreJournalMode()
     throw e
+  } finally {
+    try {
+      rmSync(tmp, { recursive: true, force: true })
+    } catch (e) {
+      // 清理失败不毁掉已完成的备份，但必须留痕：残留副本正是本项要消除的问题
+      log.warn(`备份临时目录清理失败（残留 DB 副本）: ${tmp}:`, errMsg(e))
+    }
   }
 }
 

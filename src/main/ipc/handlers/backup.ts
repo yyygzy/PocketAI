@@ -9,9 +9,11 @@ import {
   webdavConfigSchema,
   backupSchedulePatchSchema,
   backupFilenameSchema,
-  mergeExecutePayloadSchema
+  mergeExecutePayloadSchema,
+  backupRestoreArgsSchema
 } from '../../../shared/schemas/backup'
 import { z } from 'zod'
+import { issuePathToken, peekPathToken, dropPathToken } from '../dialog-path-token'
 
 export function registerBackupHandlers(): void {
   safeHandle(IPC.BACKUP_LOCAL, async () => {
@@ -79,10 +81,12 @@ export function registerBackupHandlers(): void {
     if (!cfg) return []
     try { return await listWebDAVBackups(cfg) } catch { return [] }
   })
-  safeHandle(IPC.BACKUP_LOCAL_RESTORE, async (e, payload?: { filePath?: string; backupPassword?: string }) => {
+  // 本地恢复（SEC-6）：文件路径只能来自本进程对话框签发的令牌——
+  // 此前渲染端可直接回传绝对路径跳过选择器，注入一次即可用任意文件整库替换。
+  safeHandle(IPC.BACKUP_LOCAL_RESTORE, async (e, payload?: { restoreToken?: string; backupPassword?: string }) => {
     const { restoreFromLocalFile } = await import('../../backup/backup-service')
-    // 首次调用（无 filePath）由主进程弹文件选择器；密码重试回传 filePath 静默复用
-    let filePath = typeof payload?.filePath === 'string' ? payload.filePath.trim() : ''
+    let token = typeof payload?.restoreToken === 'string' ? payload.restoreToken : ''
+    let filePath = peekPathToken(token)
     if (!filePath) {
       const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
       if (!win) return { ok: false, error: '窗口不可用' }
@@ -95,16 +99,23 @@ export function registerBackupHandlers(): void {
       })
       if (canceled || !filePaths?.length) return { ok: true, canceled: true }
       filePath = filePaths[0]!
+      token = issuePathToken(filePath)
     }
     try {
       const r = await restoreFromLocalFile(filePath, { backupPassword: payload?.backupPassword || undefined })
-      // 让渲染层在密码重试时复用同一文件
-      if (!r.ok && r.code) return { ...r, filePath }
+      if (r.ok) {
+        dropPathToken(token)
+        return r
+      }
+      // 需密码/密码错误：同一份文件留给下次重试，只回令牌与文件名（不回路径）
+      if (r.code) return { ...r, restoreToken: token, fileName: path.basename(filePath) }
+      dropPathToken(token)
       return r
     } catch (e) {
+      dropPathToken(token)
       return { ok: false, error: errMsg(e, '本地恢复失败') }
     }
-  })
+  }, argsSchema(backupRestoreArgsSchema))
 
   safeHandle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: unknown, backupPassword?: unknown) => {
     const {
