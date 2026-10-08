@@ -4,17 +4,47 @@
 //  - sandbox:true 渲染进程无 Node 面（无 require / process / Node globals）
 //  - 禁弹窗（setWindowOpenHandler deny）与禁导航（will-navigate preventDefault），
 //    并在执行前校验仍处于初始 data: 空白页，防止代码把执行环境偷换到远程页面
+//  - **执行层禁网（SEC-17）**：窗口跑在独立的临时 partition 上，该 session 的
+//    onBeforeRequest 直接 cancel 一切非 data:/about: 请求。此前只靠 CSP 声明「无网络」，
+//    而 CSP 是经 onHeadersReceived 注入的——data: 文档没有响应头，拿不到 CSP，
+//    沙箱内 new Image().src / fetch 仍可作无审批外发通道
 //  - 代码经 JSON.stringify 作为纯字符串字面量传给页面内 AsyncFunction 构造器执行
 //    （语义与「异步 IIFE 函数体」一致：可用 return / await，且无任何结构逃逸面），
 //    结果在页面内先做 JSON 序列化（不可克隆对象不出沙箱）
 //  - 5s 超时：超时后 destroy 窗口并重建（防死循环与状态污染），下一次调用自动用新窗口
 //  - 支持 AbortSignal（Agent 中止时立即销毁窗口）
 //  - 结果截断 2000 字符（后缀计入预算）；并发调用经模块级队列串行执行
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, session } from 'electron'
 import { errMsg } from '../error'
 
 const EVAL_TIMEOUT_MS = 5_000
 const MAX_RESULT_CHARS = 2000
+/** 沙箱专用临时 partition（不加 persist: 前缀 = 内存态，不落盘、与主窗口 session 隔离） */
+const SANDBOX_PARTITION = 'pocketai-sandbox'
+
+/**
+ * 沙箱窗口允许的资源 URL（纯函数，导出供单测钉住）：
+ * 只放行自举用的 data: 空白页与 about:blank，其余（http/https/ws/file/blob:…）一律拒绝。
+ */
+export function isAllowedSandboxUrl(url: string): boolean {
+  const u = String(url ?? '')
+  return u.startsWith('data:') || u === 'about:blank' || u === ''
+}
+
+let networkGuardInstalled = false
+
+/** 给沙箱 partition 挂一次性网络守卫（幂等；partition 与窗口一一独立但 session 共享） */
+function ensureNetworkGuard(): void {
+  if (networkGuardInstalled) return
+  const ses = session.fromPartition(SANDBOX_PARTITION)
+  ses.webRequest.onBeforeRequest((details, callback) => {
+    callback(isAllowedSandboxUrl(details.url) ? { cancel: false } : { cancel: true })
+  })
+  // 双保险：沙箱不需要任何 Chromium 权限（媒体/通知/剪贴板等）
+  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+  ses.setPermissionCheckHandler(() => false)
+  networkGuardInstalled = true
+}
 
 let win: BrowserWindow | null = null
 let ready: Promise<void> | null = null
@@ -23,6 +53,8 @@ function ensureWindow(): { w: BrowserWindow; readyPromise: Promise<void> } {
   if (win && !win.isDestroyed() && ready) {
     return { w: win, readyPromise: ready }
   }
+  // 先装守卫再建窗口：确保窗口发起的第一次资源加载就被纳入拦截
+  ensureNetworkGuard()
   const w = new BrowserWindow({
     show: false,
     width: 1,
@@ -30,7 +62,9 @@ function ensureWindow(): { w: BrowserWindow; readyPromise: Promise<void> } {
     webPreferences: {
       sandbox: true,
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      // 独立 session 才能挂只属于沙箱的网络守卫（不影响主窗口的正常资源加载）
+      partition: SANDBOX_PARTITION
       // 无 preload：纯空白沙箱页
     }
   })

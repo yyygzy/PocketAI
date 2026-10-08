@@ -8,7 +8,28 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('electron', () => ({ BrowserWindow: class {} }))
 
-import { cut } from '../src/main/sandbox/js-eval-runner'
+import { cut, isAllowedSandboxUrl } from '../src/main/sandbox/js-eval-runner'
+
+describe('isAllowedSandboxUrl — 沙箱执行层禁网（SEC-17）', () => {
+  it('只放行自举用的 data: 空白页与 about:blank', () => {
+    expect(isAllowedSandboxUrl('data:text/html;charset=utf-8,%3Chtml%3E')).toBe(true)
+    expect(isAllowedSandboxUrl('about:blank')).toBe(true)
+  })
+
+  it('外发通道一律拒绝', () => {
+    for (const url of [
+      'https://evil.example/exfil?d=1',
+      'http://127.0.0.1:11434/api/version',
+      'ws://localhost:8080/socket',
+      'file:///C:/Users/x/secret.txt',
+      'blob:null/1234-5678',
+      '//evil.example/x',
+      'ftp://x/y'
+    ]) {
+      expect(isAllowedSandboxUrl(url), url).toBe(false)
+    }
+  })
+})
 
 describe('cut — 结果字符串截断', () => {
   it('长度 ≤ max → 原样返回', () => {

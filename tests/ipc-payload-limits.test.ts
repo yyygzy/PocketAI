@@ -340,11 +340,13 @@ describe('pythonPipSourceSchema', () => {
     expect(pythonPipSourceSchema.safeParse('tuna').success).toBe(true)
   })
 
-  it('http(s) 自定义镜像通过', () => {
+  it('自定义镜像：https 通过；http 仅本机回环例外（SEC-20 收紧）', () => {
     expect(pythonPipSourceSchema.safeParse('https://mirrors.aliyun.com/pypi/simple').success).toBe(
       true
     )
-    expect(pythonPipSourceSchema.safeParse('http://192.168.1.2:3141/simple').success).toBe(true)
+    expect(pythonPipSourceSchema.safeParse('http://localhost:3141/simple').success).toBe(true)
+    // 明文远端（含内网地址）一律拒：换源等于替换落进 venv 的 wheel 来源
+    expect(pythonPipSourceSchema.safeParse('http://192.168.1.2:3141/simple').success).toBe(false)
   })
 
   it('非 http(s) 协议 / 空串 / 畸形值拒绝', () => {

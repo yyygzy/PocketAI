@@ -118,8 +118,29 @@ export const mcpCallToolSchema = z.object({
 })
 
 /**
- * PYTHON_PIP_SOURCE_SET 入参：'official' | 'tuna' | 自定义 http(s) 镜像 URL。
- * 单一来源：python-env 服务层 pipSourceSchema 必须复用本 schema，禁止双侧各写一份。
+ * 自定义 pip 源的 URL 合法性（SEC-20）：必须 https，只有本机回环允许 http。
+ * 单一来源：主进程 python-env（setPipSource 走本 schema）与渲染端表单都用它，
+ * 避免「UI 放行、主进程拒绝」或反之的不一致。
+ * 为什么收紧：换源等于替换将要落进 venv 的 wheel 来源，而 MCP server 正用该 venv 启动——
+ * 明文 http 中继（或被劫持的 DNS）可静默投递任意包。
+ */
+const PIP_HTTP_EXCEPTION_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+export function isAllowedPipSourceUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(String(raw ?? ''))
+  } catch {
+    return false
+  }
+  if (u.protocol === 'https:') return true
+  if (u.protocol === 'http:') return PIP_HTTP_EXCEPTION_HOSTS.has(u.hostname)
+  return false
+}
+
+/**
+ * PYTHON_PIP_SOURCE_SET 入参：'official' | 'tuna' | 自定义 https 镜像 URL（本机回环 http 例外）。
+ * 单一来源：python-env 服务层必须复用本 schema，禁止双侧各写一份。
  */
 export const pythonPipSourceSchema = z.union([
   z.enum(['official', 'tuna']),
@@ -127,12 +148,5 @@ export const pythonPipSourceSchema = z.union([
     .string()
     .max(MCP_MAX_URL_CHARS)
     .url()
-    .refine((v) => {
-      try {
-        const u = new URL(v)
-        return u.protocol === 'http:' || u.protocol === 'https:'
-      } catch {
-        return false
-      }
-    }, '自定义 pip 源仅支持 http(s) 协议')
+    .refine(isAllowedPipSourceUrl, '自定义 pip 源必须是 https（本机回环 http 例外）')
 ])

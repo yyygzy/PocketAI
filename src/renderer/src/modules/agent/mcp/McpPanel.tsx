@@ -46,7 +46,7 @@ export const McpPanel: React.FC = () => {
   const [importOpen, setImportOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
 
-  const pip = usePipSource(setNotice)
+  const pip = usePipSource(setNotice, askConfirm)
 
   const load = useCallback(async () => {
     const [recs, runs] = await Promise.all([

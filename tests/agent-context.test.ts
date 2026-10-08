@@ -58,7 +58,10 @@ import {
   buildReplanPrompt,
   estimateTokens,
   cutToTokens,
-  resolveAgentToolPermissions
+  resolveAgentToolPermissions,
+  wrapUntrusted,
+  UNTRUSTED_START,
+  UNTRUSTED_END
 } from '../src/main/agent/engine'
 import {
   injectAttachments,
@@ -476,5 +479,39 @@ describe('resolveAgentToolPermissions — 工具授权语义（SEC-3）', () => 
     expect(resolveAgentToolPermissions([], { hasAssistant: false, isBuiltin: false })).toEqual(['*'])
     expect(resolveAgentToolPermissions(undefined, { hasAssistant: false, isBuiltin: false })).toEqual(['*'])
     expect(resolveAgentToolPermissions([], { hasAssistant: true, isBuiltin: true })).toEqual(['*'])
+  })
+})
+
+describe('wrapUntrusted — 外部内容定界（SEC-12）', () => {
+  it('包裹成定界段', () => {
+    const out = wrapUntrusted('页面正文')
+    expect(out.startsWith(UNTRUSTED_START)).toBe(true)
+    expect(out.endsWith(UNTRUSTED_END)).toBe(true)
+    expect(out).toContain('页面正文')
+  })
+
+  it('幂等：重复包裹不产生嵌套', () => {
+    const once = wrapUntrusted('x')
+    expect(wrapUntrusted(once)).toBe(once)
+  })
+
+  it('空内容也有稳定形状（不缺闭合标签）', () => {
+    expect(wrapUntrusted('')).toBe(`${UNTRUSTED_START}\n\n${UNTRUSTED_END}`)
+  })
+
+  it('buildContext 复原历史工具结果时加定界，且不改动传入记录', () => {
+    const history = [
+      msg({ role: 'user', content: '查一下' }),
+      msg({ role: 'assistant', content: '', toolCalls: toolCalls('c1') }),
+      toolMsg('c1', 'web_fetch', '来自网页的正文')
+    ]
+    const ctx = buildContext(history)
+    const toolEntry = ctx.find((m) => m.role === 'tool')
+    const toolContent = typeof toolEntry?.content === 'string' ? toolEntry.content : ''
+    expect(toolContent.startsWith(UNTRUSTED_START)).toBe(true)
+    expect(toolContent).toContain('来自网页的正文')
+    // DB 侧原文不被污染：重放第二次仍是单层包裹（幂等由包装函数保证）
+    expect(history[2]!.content).toContain('来自网页的正文')
+    expect(history[2]!.content).not.toContain(UNTRUSTED_START)
   })
 })

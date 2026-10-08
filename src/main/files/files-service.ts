@@ -1,9 +1,10 @@
 // 文件模块服务：数据目录（DATA_DIR）文件管理器
-// 安全边界：所有路径必须落在 DATA_DIR 内（resolve 后前缀校验，防路径穿越）
+// 安全边界：所有路径必须落在 DATA_DIR 内（resolve 后前缀校验 + 符号链接真实路径复核，防穿越/链接逃逸）
 import { dialog, shell, BrowserWindow } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { DATA_DIR } from '../portable'
+import { assertWithinWorkspaceByRealpath } from '../tools/fs-tools'
 import type { FileEntry, FileReadResult, FileOpResult } from '../../shared/types'
 import { errMsg } from '../error'
 import {
@@ -43,6 +44,9 @@ export function toAbs(relPath: string): string {
   if (abs !== DATA_DIR && !abs.startsWith(DATA_DIR + path.sep)) {
     throw new Error('路径超出数据目录范围')
   }
+  // SEC-15：与 Agent 工作目录同一套符号链接守卫——U 盘/共享目录里可以放指向外部的链接，
+  // 只按字符串前缀判断会让 FILE_READ / SAVE_AS / OPEN_EXTERNAL 跳出 DATA_DIR
+  assertWithinWorkspaceByRealpath(abs, DATA_DIR)
   return abs
 }
 

@@ -1,11 +1,16 @@
 // MCP 面板的 pip 下载源设置（全局，影响所有 Python MCP 依赖安装）
 import { useEffect, useState } from 'react'
 import type { PythonPipSource } from '../../../../../shared/types'
+import { isAllowedPipSourceUrl } from '../../../../../shared/schemas/mcp'
+import type { ConfirmOptions } from '../../../components/ConfirmDialog'
 import { useI18n } from '../../../i18n'
 import { reportIpcError } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 
-export function usePipSource(notify: (msg: string) => void) {
+export function usePipSource(
+  notify: (msg: string) => void,
+  confirm: (opts: ConfirmOptions) => Promise<boolean>
+) {
   const { t } = useI18n()
   const [pipSource, setPipSourceState] = useState<PythonPipSource>('official')
   const [pipCustomOpen, setPipCustomOpen] = useState(false)
@@ -42,16 +47,18 @@ export function usePipSource(notify: (msg: string) => void) {
 
   const saveCustomPipSource = async () => {
     const url = pipCustomUrl.trim()
-    let u: URL | null = null
-    try {
-      u = new URL(url)
-    } catch {
-      u = null
-    }
-    if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:') || !url) {
+    // 校验与主进程同一把尺（https，仅本机回环可 http）：SEC-20
+    if (!url || !isAllowedPipSourceUrl(url)) {
       setPipCustomError(t('agent.f.pipCustomInvalid'))
       return
     }
+    // 换源等于替换将落进 venv 的 wheel 来源，而 MCP server 就用这个 venv 启动 —— 必须二次确认
+    const ok = await confirm({
+      title: t('agent.f.pipSource'),
+      message: t('agent.pipSourceConfirm', { url }),
+      danger: true
+    })
+    if (!ok) return
     try {
       const r = await window.pocketai.setPythonPipSource(url)
       if (r.ok && r.source) {

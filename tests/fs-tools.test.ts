@@ -169,4 +169,12 @@ describe('assertWithinWorkspaceByRealpath — 符号链接逃逸防护', () => {
     mocks.realpathMap.set(WS, WS)
     expect(() => assertWithinWorkspaceByRealpath(path.join(sub, 'f.txt'), WS)).toThrow('路径校验失败')
   })
+
+  it('工作目录/数据目录本身不存在 → 放行（无从构造链接，交给 fs 自然报 ENOENT）', () => {
+    // files-service 的单测里 DATA_DIR 是被 mock 的假路径；此处保证守卫不会把
+    // 「目录尚未创建」变成所有文件操作统一报「路径校验失败」
+    const target = path.join(WS, 'sub', 'f.txt')
+    mocks.realpathMap.delete(WS)
+    expect(() => assertWithinWorkspaceByRealpath(target, WS)).not.toThrow()
+  })
 })

@@ -65,9 +65,16 @@ export function assertWithinWorkspaceByRealpath(targetAbs: string, wsAbs: string
   }
   if (!existing) return // 路径上无存在节点，无法构造 symlink 逃逸，放行
 
+  let realWs: string
+  try {
+    realWs = fs.realpathSync(wsAbs)
+  } catch {
+    // 工作目录/数据目录本身尚不存在：路径上没有任何既存节点可用来构造逃逸，
+    // 让后续 fs 操作以 ENOENT 自然失败比在这里硬报错更可诊断
+    return
+  }
   try {
     const realExisting = fs.realpathSync(existing)
-    const realWs = fs.realpathSync(wsAbs)
     if (realExisting !== realWs && !realExisting.startsWith(realWs + path.sep)) {
       throw new Error('路径超出工作目录范围（符号链接逃逸）')
     }

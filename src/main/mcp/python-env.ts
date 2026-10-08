@@ -21,13 +21,16 @@ import { z } from 'zod'
 import { MCP_EXTENSIONS_DIR } from '../portable'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { errMsg } from '../error'
-import { pythonPipSourceSchema } from '../../shared/schemas/mcp'
+import { createLogger } from '../logger'
+import { pythonPipSourceSchema, isAllowedPipSourceUrl } from '../../shared/schemas/mcp'
 import type {
   McpServerRecord,
   PythonEnvInstallEvent,
   PythonEnvState,
   PythonPipSource
 } from '../../shared/types'
+
+const log = createLogger('python-env')
 
 /** pip 安装整体超时 10 分钟（大包/弱网兜底） */
 const PIP_INSTALL_TIMEOUT = 10 * 60_000
@@ -307,11 +310,17 @@ function readMarker(id: string): EnvMarker | null {
 
 // ---------- pip 源（app_config 持久化） ----------
 
-/** 读取 pip 源设置：'official' | 'tuna' | 自定义 URL（缺省 official） */
+/**
+ * 读取 pip 源设置：'official' | 'tuna' | 自定义 URL（缺省 official）。
+ * 读侧同样校验（SEC-20）：规则收紧前存下的明文远端镜像、或被外部改写的配置行，
+ * 不能继续生效——回退 official 并留痕，比信任「写入时已校验」这个假设更可靠。
+ */
 export function getPipSource(): PythonPipSource {
   const raw = appConfigRepo.get(PIP_SOURCE_CONFIG_KEY)
+  if (!raw || raw === 'official') return 'official'
   if (raw === 'tuna') return 'tuna'
-  if (raw && raw !== 'official') return raw // 自定义 URL（写入时已校验）
+  if (isAllowedPipSourceUrl(raw)) return raw
+  log.warn(`pip 源配置不合规（需 https，本机回环 http 例外），已回退 official: ${raw}`)
   return 'official'
 }
 

@@ -144,6 +144,24 @@ const CONFIRM_RULES: Array<[RegExp, string]> = [
   [/\b(?:iex|invoke-expression)\b/i, 'DANGEROUS_PIPE_EXEC'],
   // PowerShell 编码命令
   [/-(?:enc|encodedcommand)\b/i, 'DANGEROUS_ENCODED'],
+  // ── SEC-9 绕过特征补全（此前这些在 auto-safe 下会被判 allow 直跑）──
+  // 解释器一行式/模块式执行：代码直接写在命令行里，静态特征无法判断意图
+  [/\b(?:python|python3|pypy|py)\b[^|&;\r\n]*\s-(?:c|m)\b/i, 'DANGEROUS_INTERPRETER_INLINE'],
+  [/\b(?:node|deno|bun|tsx)\b[^|&;\r\n]*\s-(?:e|r|eval|import)\b/i, 'DANGEROUS_INTERPRETER_INLINE'],
+  // deno/bun 的行内执行是子命令形式（无短横线）：deno eval "…" / bun eval
+  [/\b(?:deno|bun)\s+eval\b/i, 'DANGEROUS_INTERPRETER_INLINE'],
+  [/\b(?:perl|ruby|php)\b[^|&;\r\n]*\s-[erR]\b/i, 'DANGEROUS_INTERPRETER_INLINE'],
+  [/\b(?:powershell|pwsh)\b[^|&;\r\n]*\s-(?:c|e|f|command|execute-command|file)\b/i, 'DANGEROUS_INTERPRETER_INLINE'],
+  // Windows 执行宿主与解码落盘工具（脚本解释器之外常被用作间接执行）
+  [/\b(?:mshta|rundll32|regsvr32|cscript|wscript|msiexec|certutil)\b/i, 'DANGEROUS_EXEC_HOST'],
+  // 间接创建进程 / 持久化：计划任务、服务、WMI 方法调用、Start-Process
+  [/\bschtasks\b/i, 'DANGEROUS_PERSISTENCE'],
+  [/\bwmic\b[^|&;\r\n]*\bprocess\b[^|&;\r\n]*\bcall\b/i, 'DANGEROUS_PERSISTENCE'],
+  [/\bsc(?:\.exe)?\b[^|&;\r\n]*\b(?:create|start|config|delete)\b/i, 'DANGEROUS_PERSISTENCE'],
+  [/\bstart-process\b/i, 'DANGEROUS_PERSISTENCE'],
+  // 下载落盘（管道执行已被 DANGEROUS_PIPE_EXEC 覆盖，落盘后另行执行是绕过路径）
+  [/\b(?:curl|wget)\b[^|&;\r\n]*(?:-o|-O|--output(?:-document)?)\b/i, 'DANGEROUS_DOWNLOAD_WRITE'],
+  [/\b(?:iwr|invoke-webrequest|invoke-restmethod)\b[^|&;\r\n]*-out(?:file|path)\b/i, 'DANGEROUS_DOWNLOAD_WRITE'],
   // 提权动词
   [/\b(?:sudo|runas)\b/i, 'DANGEROUS_PRIVILEGE'],
   // 目录穿越：cd .. 、../ 、..\ 、a/../b、sub\..\..（前导允许 / 与 \；
