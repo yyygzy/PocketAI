@@ -28,7 +28,9 @@ import {
   encryptSecret,
   decryptSecret,
   encryptApiKeys,
-  decryptApiKeys
+  decryptApiKeys,
+  encryptSecretMap,
+  decryptSecretMap
 } from '../src/main/crypto/field-encrypt'
 
 describe('isCipherText — 密文前缀识别', () => {
@@ -124,5 +126,42 @@ describe('encryptApiKeys / decryptApiKeys — 字符串数组加解密', () => {
   it('非数组 JSON → 空数组', () => {
     expect(decryptApiKeys(JSON.stringify({ not: 'array' }))).toEqual([])
     expect(decryptApiKeys('not-json')).toEqual([])
+  })
+})
+
+describe('encryptSecretMap / decryptSecretMap — MCP env/headers 整列加密', () => {
+  it('往返一致（含特殊字符值）', () => {
+    const map = { Authorization: 'Bearer aB-1/2=3', PATH: '/usr/bin', EMPTY: '' }
+    const stored = encryptSecretMap(map)
+    expect(isCipherText(stored)).toBe(true)
+    expect(decryptSecretMap(stored)).toEqual(map)
+  })
+
+  it('空映射 / null → 空串存储，读回 {}', () => {
+    expect(encryptSecretMap({})).toBe('')
+    expect(encryptSecretMap(null)).toBe('')
+    expect(decryptSecretMap('')).toEqual({})
+    expect(decryptSecretMap(null)).toEqual({})
+  })
+
+  it('历史明文 JSON 向后兼容读回（迁移前写入的行仍可用）', () => {
+    expect(decryptSecretMap(JSON.stringify({ API_KEY: 'legacy-plain' }))).toEqual({
+      API_KEY: 'legacy-plain'
+    })
+  })
+
+  it('损坏密文 / 非对象 JSON / 垃圾值 → {}（fail closed，不炸启动路径）', () => {
+    expect(decryptSecretMap('v1:broken')).toEqual({})
+    expect(decryptSecretMap('not-json')).toEqual({})
+    expect(decryptSecretMap(JSON.stringify(['a', 'b']))).toEqual({})
+    expect(decryptSecretMap(JSON.stringify('scalar'))).toEqual({})
+  })
+
+  it('非字符串值统一转字符串（库内容被外部改写时的兜底）', () => {
+    expect(decryptSecretMap(JSON.stringify({ A: 1, B: true, C: null }))).toEqual({
+      A: '1',
+      B: 'true',
+      C: ''
+    })
   })
 })

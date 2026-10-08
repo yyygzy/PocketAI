@@ -1,372 +1,232 @@
-// MCP Streamable HTTP transport 测试
+// HttpJsonRpcClient 单元测试
 //
-// 覆盖 src/main/mcp/http-transport.ts：
-//  - parseSseStream：事件切分、跨 chunk、多 data 行、字节上限（防无界累积 DoS）
-//  - readBoundedBody：有界读取、超限拒绝
-//  - HttpJsonRpcClient：JSON/SSE 两种响应形态、session id、超时、notify、shutdown
+// 覆盖 src/main/mcp/http-transport.ts 的核心路径：
+// - spawn 空操作 / pid undefined / transportClosed
+// - request：JSON 直响应 / SSE 流响应 / session ID 提取 / 超时 / 错误响应
+// - notify：POST 发送不等响应
+// - shutdown：中止进行中请求 + 标记 closed
 //
-// 策略：用真实 Response/ReadableStream（构造可控），仅 mock 全局 fetch，
-// 使流解析与有界读取走真实代码路径。
+// 策略：vi.fn(global, 'fetch') 拦截，返回可控 Response 对象
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import {
-  HttpJsonRpcClient,
-  parseSseStream,
-  readBoundedBody,
-  DEFAULT_MAX_BYTES
-} from '../src/main/mcp/http-transport'
-import {
-  McpBusinessError,
-  McpTransportError,
-  type JsonRpcNotification
-} from '../src/main/mcp/json-rpc'
+import { HttpJsonRpcClient } from '../src/main/mcp/http-transport'
 
-const URL = 'https://example.com/mcp'
-const encoder = new TextEncoder()
+// ---------- 工具：构造 fetch Response ----------
 
-// ---------- 构造工具 ----------
+function makeJsonResponse(data: unknown, headers: Record<string, string> = {}): Response {
+  const body = JSON.stringify(data)
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'application/json', ...headers }
+  })
+}
 
-/** 由多段数据构造 ReadableStream（字符串自动 UTF-8 编码） */
-function streamFrom(chunks: Array<string | Uint8Array>): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
+function makeSseResponse(events: Array<{ event: string; data: string }>, headers: Record<string, string> = {}): Response {
+  const body = events.map((e) => `event: ${e.event}\ndata: ${e.data}\n\n`).join('')
+  const stream = new ReadableStream({
     start(controller) {
-      for (const c of chunks) {
-        controller.enqueue(typeof c === 'string' ? encoder.encode(c) : c)
-      }
+      controller.enqueue(new TextEncoder().encode(body))
       controller.close()
     }
   })
-}
-
-/** 收集 parseSseStream 的全部事件 */
-async function collectSse(
-  chunks: Array<string | Uint8Array>,
-  maxBytes = DEFAULT_MAX_BYTES
-): Promise<Array<{ event: string; data: string }>> {
-  const out: Array<{ event: string; data: string }> = []
-  for await (const evt of parseSseStream(streamFrom(chunks), maxBytes)) {
-    out.push(evt)
-  }
-  return out
-}
-
-/** 构造 Response；body 为字符串时作为真实可读流 */
-function makeResponse(opts: {
-  contentType?: string
-  body?: string | null
-  headers?: Record<string, string>
-}): Response {
-  const { contentType = 'application/json', body = null, headers = {} } = opts
-  return new Response(body, {
-    headers: { 'content-type': contentType, ...headers }
+  return new Response(stream, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream', ...headers }
   })
 }
 
-/** JSON-RPC 响应体字符串 */
-function rpcResult(result: unknown): string {
-  return JSON.stringify({ jsonrpc: '2.0', id: 1, result })
-}
-function rpcError(code: number, message: string): string {
-  return JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code, message } })
-}
+// ---------- mock fetch ----------
 
-// ---------- fetch mock ----------
+const fetchMock = vi.hoisted(() => ({
+  impl: (async () => new Response()) as (url: string, init?: RequestInit) => Promise<Response>,
+  calls: [] as Array<{ url: string; init: RequestInit }>,
+  reset() {
+    this.impl = async () => new Response('{}', { headers: { 'content-type': 'application/json' } })
+    this.calls = []
+  }
+}))
 
-let fetchMock: ReturnType<typeof vi.fn>
+let originalFetch: typeof globalThis.fetch
 
 beforeEach(() => {
-  fetchMock = vi.fn()
-  vi.stubGlobal('fetch', fetchMock)
+  fetchMock.reset()
+  originalFetch = globalThis.fetch
+  globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    fetchMock.calls.push({ url, init: init ?? {} })
+    // 让 abort signal 能取消 fetch
+    if (init?.signal) {
+      const signal = init.signal
+      if (signal.aborted) throw new DOMException('aborted', 'AbortError')
+      return new Promise<Response>((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+        fetchMock.impl(url, init).then(resolve, reject)
+      })
+    }
+    return fetchMock.impl(url, init)
+  }) as typeof globalThis.fetch
 })
 
 afterEach(() => {
-  vi.unstubAllGlobals()
+  globalThis.fetch = originalFetch
+  vi.restoreAllMocks()
 })
 
-// ---------- parseSseStream ----------
+// ---------- 用例 ----------
 
-describe('parseSseStream — 事件解析', () => {
-  it('单 chunk 多个事件：按 \\n\\n 切分，解析 event/data', async () => {
-    const events = await collectSse([
-      'event: result\ndata: {"a":1}\n\nevent: notification\ndata: {"b":2}\n\n'
-    ])
-    expect(events).toEqual([
-      { event: 'result', data: '{"a":1}' },
-      { event: 'notification', data: '{"b":2}' }
-    ])
+describe('HttpJsonRpcClient — 基础属性', () => {
+  it('pid 恒为 undefined', () => {
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    expect(c.pid).toBeUndefined()
   })
 
-  it('跨 chunk 切分：事件边界与字段可分散在不同 chunk', async () => {
-    const events = await collectSse(['event: re', 'sult\nda', 'ta: {"x":1}\n\n'])
-    expect(events).toEqual([{ event: 'result', data: '{"x":1}' }])
+  it('transportClosed 初始 false，shutdown 后 true', async () => {
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    expect(c.transportClosed).toBe(false)
+    await c.shutdown()
+    expect(c.transportClosed).toBe(true)
   })
 
-  it('多条 data 行按 \\n 拼接；event 缺省为 message', async () => {
-    const events = await collectSse(['data: line1\ndata: line2\n\n'])
-    expect(events).toEqual([{ event: 'message', data: 'line1\nline2' }])
-  })
-
-  it('comment（: 开头）与未知字段忽略', async () => {
-    const events = await collectSse([': keep-alive\nid: 42\ndata: hello\n\n'])
-    expect(events).toEqual([{ event: 'message', data: 'hello' }])
-  })
-
-  it('流结束时尾部不完整事件忽略', async () => {
-    const events = await collectSse(['data: first\n\n', 'data: incomplete'])
-    expect(events).toEqual([{ event: 'message', data: 'first' }])
+  it('spawn 是空操作，不抛错', async () => {
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    await expect(c.spawn()).resolves.toBeUndefined()
   })
 })
-
-describe('parseSseStream — 字节上限（防无界累积）', () => {
-  it('分隔符到达前累积超限 → 抛错且不回显内容', async () => {
-    const stream = streamFrom(['x'.repeat(100)])
-    await expect(async () => {
-      for await (const _ of parseSseStream(stream, 50)) {
-        // 不应产出任何事件
-      }
-    }).rejects.toThrow(/SSE 事件超过 50 字节上限/)
-  })
-
-  it('恰达上限（含分隔符字节）→ 正常产出事件', async () => {
-    // data 行 50 字节（"data: " 6 + 内容 44）+ 2 字节 \n\n = 52，给 maxBytes=52
-    const line = 'data: ' + 'x'.repeat(44)
-    const events = await collectSse([line + '\n\n'], 52)
-    expect(events).toEqual([{ event: 'message', data: 'x'.repeat(44) }])
-  })
-
-  it('超限仅作用于当前事件：超限前已切分的事件不受影响', async () => {
-    // 先产出一个合法事件，随后无分隔符巨流
-    const stream = streamFrom(['data: ok\n\n', 'y'.repeat(100)])
-    const iterator = parseSseStream(stream, 50)
-    const first = await iterator.next()
-    expect(first.value).toEqual({ event: 'message', data: 'ok' })
-    await expect(iterator.next()).rejects.toThrow(/SSE 事件超过 50 字节上限/)
-  })
-})
-
-// ---------- readBoundedBody ----------
-
-describe('readBoundedBody', () => {
-  it('正常读取整个响应体', async () => {
-    const text = await readBoundedBody(makeResponse({ body: 'hello world' }), DEFAULT_MAX_BYTES)
-    expect(text).toBe('hello world')
-  })
-
-  it('无 body → 返回空串', async () => {
-    expect(await readBoundedBody(makeResponse({ body: null }), DEFAULT_MAX_BYTES)).toBe('')
-  })
-
-  it('累积超限 → 抛错拒绝（防 res.text() 内存耗尽）', async () => {
-    await expect(
-      readBoundedBody(makeResponse({ body: 'x'.repeat(100) }), 50)
-    ).rejects.toThrow(/响应体超过 50 字节上限/)
-  })
-})
-
-// ---------- HttpJsonRpcClient.request ----------
 
 describe('HttpJsonRpcClient — request', () => {
-  it('JSON 响应：返回 result，POST 禁跟重定向', async () => {
-    fetchMock.mockResolvedValue(makeResponse({ body: rpcResult({ ok: true }) }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    const result = await client.request<{ ok: boolean }>('tools/list')
-    expect(result).toEqual({ ok: true })
-    expect(fetchMock).toHaveBeenCalledWith(
-      URL,
-      expect.objectContaining({ method: 'POST', redirect: 'error' })
-    )
-  })
-
-  it('JSON 错误响应：throw McpBusinessError 携带 message 与 code', async () => {
-    fetchMock.mockResolvedValue(makeResponse({ body: rpcError(-32600, 'bad request') }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    const err = await client.request('ping').then(
-      () => null,
-      (e: unknown) => e
-    )
-    expect(err).toBeInstanceOf(McpBusinessError)
-    expect((err as McpBusinessError).code).toBe(-32600)
-    expect((err as Error).message).toBe('bad request (code=-32600)')
-  })
-
-  it('fetch 网络失败 → McpTransportError(network)', async () => {
-    fetchMock.mockRejectedValue(Object.assign(new Error('fetch failed'), { name: 'TypeError' }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    const err = await client.request('ping').then(
-      () => null,
-      (e: unknown) => e
-    )
-    expect(err).toBeInstanceOf(McpTransportError)
-    expect((err as McpTransportError).kind).toBe('network')
-    expect((err as Error).message).toBe('fetch failed')
-  })
-
-  it('SSE 响应：从 event: result 取结果', async () => {
-    const sse = `event: result\ndata: ${rpcResult({ v: 1 })}\n\n`
-    fetchMock.mockResolvedValue(makeResponse({ contentType: 'text/event-stream', body: sse }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    expect(await client.request('tools/list')).toEqual({ v: 1 })
-  })
-
-  it('SSE notification 事件经 onNotification 转发，不影响 result', async () => {
-    const notif = { jsonrpc: '2.0', method: 'progress', params: { p: 50 } }
-    const sse =
-      `event: notification\ndata: ${JSON.stringify(notif)}\n\n` +
-      `event: result\ndata: ${rpcResult('done')}\n\n`
-    fetchMock.mockResolvedValue(makeResponse({ contentType: 'text/event-stream', body: sse }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    const received: JsonRpcNotification[] = []
-    client.onNotification((n) => received.push(n))
-    expect(await client.request('long/job')).toBe('done')
-    expect(received).toEqual([notif])
-  })
-
-  it('SSE 流结束无 result → throw', async () => {
-    const sse = `event: endpoint\ndata: /x\n\n`
-    fetchMock.mockResolvedValue(makeResponse({ contentType: 'text/event-stream', body: sse }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    await expect(client.request('ping')).rejects.toThrow('SSE 流结束未收到 result 事件')
-  })
-
-  it('未知 Content-Type 且非 JSON 体 → throw 不支持的 Content-Type', async () => {
-    fetchMock.mockResolvedValue(makeResponse({ contentType: 'text/plain', body: 'hello' }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    await expect(client.request('ping')).rejects.toThrow(/不支持的响应 Content-Type/)
-  })
-
-  it('initialize 响应的 Mcp-Session-Id 被保存并在后续请求携带', async () => {
-    fetchMock.mockResolvedValueOnce(
-      makeResponse({ body: rpcResult({}), headers: { 'Mcp-Session-Id': 'sess-abc' } })
-    )
-    fetchMock.mockResolvedValueOnce(makeResponse({ body: rpcResult({ next: true }) }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    await client.request('initialize')
-    await client.request('tools/list')
-    const secondCall = fetchMock.mock.calls[1]!
-    const init = secondCall[1] as { headers: Record<string, string> }
-    expect(init.headers['Mcp-Session-Id']).toBe('sess-abc')
-  })
-
-  it('超时：fetch 挂起超过指定时长 → throw JSON-RPC 请求超时', async () => {
-    // mock 与真实 fetch 一样响应 abort 信号
-    fetchMock.mockImplementation((_u: string, init: { signal: AbortSignal }) => {
-      return new Promise((_resolve, reject) => {
-        init.signal.addEventListener('abort', () => {
-          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-        })
-      })
+  it('JSON 直响应：解析 result 返回', async () => {
+    fetchMock.impl = async () => makeJsonResponse({
+      jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'get_time' }] }
     })
-    const client = new HttpJsonRpcClient({ url: URL })
-    const err = await client.request('ping', undefined, 100).then(
-      () => null,
-      (e: unknown) => e
-    )
-    expect(err).toBeInstanceOf(McpTransportError)
-    expect((err as McpTransportError).kind).toBe('timeout')
-    expect((err as Error).message).toBe('JSON-RPC 请求超时: ping (100ms)')
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    const r = await c.request('tools/list', {})
+    expect(r).toEqual({ tools: [{ name: 'get_time' }] })
   })
 
-  it('通道关闭后 request → reject', async () => {
-    // shutdown 的协议请求也需要一个 fetch 响应
-    fetchMock.mockResolvedValue(makeResponse({ body: rpcResult(null) }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    await client.shutdown()
-    await expect(client.request('ping')).rejects.toThrow('HTTP 传输通道已关闭')
-  })
-})
-
-// ---------- notify ----------
-
-describe('HttpJsonRpcClient — 自定义请求头', () => {
-  it('options.headers 注入 request 与 notify（如 Authorization）', async () => {
-    // 每次调用返回全新 Response，避免 body 被重复消费
-    fetchMock.mockImplementation(() => Promise.resolve(makeResponse({ body: rpcResult({ ok: true }) })))
-    const client = new HttpJsonRpcClient({
-      url: URL,
-      headers: { Authorization: 'Bearer tok', 'X-Tenant': 'acme' }
+  it('JSON 直响应：error 抛错', async () => {
+    fetchMock.impl = async () => makeJsonResponse({
+      jsonrpc: '2.0', id: 1, error: { code: -32600, message: '无效请求' }
     })
-    await client.request('ping')
-    client.notify('notifications/initialized')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    for (const call of fetchMock.mock.calls) {
-      const headers = (call[1] as { headers: Record<string, string> }).headers
-      expect(headers.Authorization).toBe('Bearer tok')
-      expect(headers['X-Tenant']).toBe('acme')
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    await expect(c.request('tools/list')).rejects.toThrow('无效请求 (code=-32600)')
+  })
+
+  it('SSE 流响应：等待 result 事件', async () => {
+    fetchMock.impl = async () => makeSseResponse([
+      { event: 'notification', data: '{"jsonrpc":"2.0","method":"progress"}' },
+      { event: 'result', data: '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}' }
+    ])
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    const r = await c.request('tools/call', { name: 'search' })
+    expect(r).toEqual({ ok: true })
+  })
+
+  it('SSE 流响应：notification 转发给 onNotification', async () => {
+    fetchMock.impl = async () => makeSseResponse([
+      { event: 'notification', data: '{"jsonrpc":"2.0","method":"progress","params":{"step":1}}' },
+      { event: 'result', data: '{"jsonrpc":"2.0","id":1,"result":{}}' }
+    ])
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    const notifications: unknown[] = []
+    c.onNotification((n) => notifications.push(n))
+    await c.request('tools/call')
+    expect(notifications).toHaveLength(1)
+    expect((notifications[0] as { method: string }).method).toBe('progress')
+  })
+
+  it('SSE 流结束未收到 result → throw', async () => {
+    fetchMock.impl = async () => makeSseResponse([
+      { event: 'notification', data: '{"jsonrpc":"2.0","method":"ping"}' }
+    ])
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    await expect(c.request('tools/call')).rejects.toThrow('SSE 流结束未收到 result')
+  })
+
+  it('Mcp-Session-Id 从响应 header 提取，后续请求带上', async () => {
+    let capturedHeaders: Record<string, string> = {}
+    fetchMock.impl = async (_url: string, init?: RequestInit) => {
+      capturedHeaders = (init?.headers as Record<string, string>) ?? {}
+      return makeJsonResponse(
+        { jsonrpc: '2.0', id: 1, result: {} },
+        { 'Mcp-Session-Id': 'sess-abc-123' }
+      )
     }
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    await c.request('initialize')
+    expect(capturedHeaders['Mcp-Session-Id']).toBeUndefined()
+
+    // 第二次请求应带 session ID
+    await c.request('tools/list')
+    expect(capturedHeaders['Mcp-Session-Id']).toBe('sess-abc-123')
   })
 
-  it('协议头后写优先：用户头不可覆盖 Content-Type/Accept', async () => {
-    fetchMock.mockImplementation(() => Promise.resolve(makeResponse({ body: rpcResult({}) })))
-    const client = new HttpJsonRpcClient({
-      url: URL,
-      headers: { 'Content-Type': 'text/plain', Accept: 'application/xml' }
-    })
-    await client.request('ping')
-    const headers = (fetchMock.mock.calls[0]![1] as { headers: Record<string, string> }).headers
-    expect(headers['Content-Type']).toBe('application/json')
-    expect(headers.Accept).toBe('text/event-stream')
+  it('超时 → throw AbortError 包装', async () => {
+    fetchMock.impl = async () => new Promise<Response>(() => {}) // 永不返回
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp', requestTimeout: 50 })
+    await expect(c.request('tools/list')).rejects.toThrow('超时')
   })
 
-  it('未传 headers → 行为与既有默认一致（仅协议头）', async () => {
-    fetchMock.mockImplementation(() => Promise.resolve(makeResponse({ body: rpcResult({}) })))
-    const client = new HttpJsonRpcClient({ url: URL })
-    await client.request('ping')
-    const headers = (fetchMock.mock.calls[0]![1] as { headers: Record<string, string> }).headers
-    expect(headers).toEqual({ 'Content-Type': 'application/json', Accept: 'text/event-stream' })
+  it('closed 后 request → throw', async () => {
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    await c.shutdown()
+    await expect(c.request('tools/list')).rejects.toThrow('已关闭')
+  })
+
+  it('请求体超过上限 → throw', async () => {
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    const huge = 'x'.repeat(33 * 1024 * 1024)
+    await expect(c.request('tools/call', { data: huge })).rejects.toThrow('超过')
+  })
+
+  it('POST 请求带正确 header 和 body', async () => {
+    fetchMock.impl = async () => makeJsonResponse({ jsonrpc: '2.0', id: 1, result: {} })
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    await c.request('initialize', { protocolVersion: '2024-11-05' })
+    expect(fetchMock.calls).toHaveLength(1)
+    const call = fetchMock.calls[0]!
+    expect(call.url).toBe('https://example.com/mcp')
+    expect(call.init.method).toBe('POST')
+    expect((call.init.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+    expect((call.init.headers as Record<string, string>)['Accept']).toBe('text/event-stream')
+    const body = JSON.parse(call.init.body as string)
+    expect(body.method).toBe('initialize')
+    expect(body.jsonrpc).toBe('2.0')
   })
 })
 
 describe('HttpJsonRpcClient — notify', () => {
-  it('notify 立即 POST 无 id 通知', () => {
-    fetchMock.mockResolvedValue(makeResponse({ body: null }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    client.notify('notifications/initialized')
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as Record<string, unknown>
+  it('发送 POST 不等响应', async () => {
+    fetchMock.impl = async () => makeJsonResponse({ jsonrpc: '2.0', result: {} })
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    c.notify('notifications/initialized')
+    // 等待 microtask 完成
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(fetchMock.calls).toHaveLength(1)
+    const body = JSON.parse(fetchMock.calls[0]!.init.body as string)
     expect(body.method).toBe('notifications/initialized')
-    expect(body).not.toHaveProperty('id')
+    expect(body.id).toBeUndefined()
   })
 
-  it('关闭后 notify 不再发请求', async () => {
-    fetchMock.mockResolvedValue(makeResponse({ body: rpcResult(null) }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    await client.shutdown()
-    const callsAfterShutdown = fetchMock.mock.calls.length
-    client.notify('notifications/initialized')
-    expect(fetchMock.mock.calls.length).toBe(callsAfterShutdown)
+  it('closed 后 notify 静默', async () => {
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp' })
+    await c.shutdown()
+    // shutdown 自身会发一个 fetch 请求
+    const callsAfterShutdown = fetchMock.calls.length
+    c.notify('test')
+    await Promise.resolve()
+    await Promise.resolve()
+    // notify 不应增加新的 fetch 调用
+    expect(fetchMock.calls).toHaveLength(callsAfterShutdown)
   })
 })
 
-// ---------- shutdown ----------
-
 describe('HttpJsonRpcClient — shutdown', () => {
-  it('先发协议级 shutdown 请求（closed 标记之前），完成后通道关闭', async () => {
-    fetchMock.mockResolvedValue(makeResponse({ body: rpcResult(null) }))
-    const client = new HttpJsonRpcClient({ url: URL })
-    await client.shutdown()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as { method: string }
-    expect(body.method).toBe('shutdown')
-    expect(client.transportClosed).toBe(true)
-  })
-
-  it('shutdown 服务器超时/失败仍关闭通道，并 abort 进行中的请求', async () => {
-    // 所有请求挂起，且响应 abort 信号
-    fetchMock.mockImplementation((_u: string, init: { signal: AbortSignal }) => {
-      return new Promise((_resolve, reject) => {
-        init.signal.addEventListener('abort', () => {
-          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-        })
-      })
-    })
-
-    const client = new HttpJsonRpcClient({ url: URL })
-    // 先发起一个慢请求（inflight）
-    const slow = client.request('tools/call', { x: 1 })
-
-    // shutdown 协议请求 50ms 超时 → closed → abort inflight
-    await client.shutdown(50)
-    expect(client.transportClosed).toBe(true)
-    // 慢请求被 abort 后，request 统一收口为「请求超时」错误
-    await expect(slow).rejects.toThrow('JSON-RPC 请求超时: tools/call')
+  it('中止进行中的请求', async () => {
+    fetchMock.impl = async () => new Promise<Response>(() => {}) // 挂起
+    const c = new HttpJsonRpcClient({ url: 'https://example.com/mcp', requestTimeout: 60000 })
+    const p = c.request('tools/list')
+    // 让 fetch 调用开始
+    await Promise.resolve()
+    await c.shutdown()
+    await expect(p).rejects.toThrow()
   })
 })

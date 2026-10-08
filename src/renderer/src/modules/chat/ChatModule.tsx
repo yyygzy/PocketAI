@@ -726,8 +726,15 @@ export const ChatModule: React.FC = () => {
   }
 
   // 外部平台记录导入：多选 .json/.jsonl（ChatGPT conversations.json / Claude 导出），
-  // 渲染端读文本传主进程解析入库；格式不明/坏会话由主进程计数返回
-  const handleImportExternal = async () => {
+  // 渲染端读文本后弹归属选择窗，确认时传主进程解析入库；格式不明/坏会话由主进程计数返回
+  const [importExternal, setImportExternal] = useState<
+    Array<{ name: string; text: string }> | null
+  >(null)
+  // 归属助手：'' = 自由会话；弹窗打开时默认当前助手
+  const [importOwnerId, setImportOwnerId] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
+
+  const handleImportExternal = () => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.json,.jsonl,application/json,application/x-ndjson'
@@ -739,23 +746,38 @@ export const ChatModule: React.FC = () => {
         const files = await Promise.all(
           Array.from(fileList).slice(0, 10).map(async (f) => ({ name: f.name, text: await f.text() }))
         )
-        const r = await window.pocketai.importExternalConversations(files)
-        if (r.conversationCount > 0) {
-          toast.success(t('chat.importExternalOk', { c: r.conversationCount, m: r.messageCount }))
-          await reloadConversations()
-        }
-        if (r.skippedConversationCount > 0) {
-          toast.warning(t('chat.importExternalSkipped', { n: r.skippedConversationCount }))
-        }
-        if (r.warnings.length > 0) toast.error(r.warnings.join('\n'))
-        if (r.conversationCount === 0 && r.skippedConversationCount === 0) {
-          toast.error(t('chat.importFail', { e: t('chat.importExternalUnknown') }))
-        }
+        setImportOwnerId(currentAssistantId === 'asst-default' ? '' : currentAssistantId)
+        setImportExternal(files)
       } catch (e) {
         toast.error(t('chat.importFail', { e: errText(e) }))
       }
     }
     input.click()
+  }
+
+  const confirmImportExternal = async () => {
+    const files = importExternal
+    if (!files || importBusy) return
+    setImportBusy(true)
+    try {
+      const r = await window.pocketai.importExternalConversations(files, importOwnerId || null)
+      if (r.conversationCount > 0) {
+        toast.success(t('chat.importExternalOk', { c: r.conversationCount, m: r.messageCount }))
+        await reloadConversations()
+      }
+      if (r.skippedConversationCount > 0) {
+        toast.warning(t('chat.importExternalSkipped', { n: r.skippedConversationCount }))
+      }
+      if (r.warnings.length > 0) toast.error(r.warnings.join('\n'))
+      if (r.conversationCount === 0 && r.skippedConversationCount === 0) {
+        toast.error(t('chat.importFail', { e: t('chat.importExternalUnknown') }))
+      }
+      setImportExternal(null)
+    } catch (e) {
+      toast.error(t('chat.importFail', { e: errText(e) }))
+    } finally {
+      setImportBusy(false)
+    }
   }
 
   // ---------- 加密导出/导入 ----------
@@ -1296,6 +1318,60 @@ export const ChatModule: React.FC = () => {
             setMarketDetailId(undefined)
           }}
         />
+      )}
+
+      {/* 外部导入归属选择窗：选好文件后确认归属助手再入库 */}
+      {importExternal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => { if (!importBusy) setImportExternal(null) }}
+        >
+          <div
+            className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-xl w-96 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold mb-1">{t('chat.importExternalTitle')}</h3>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">
+              {t('chat.importExternalFiles', { n: importExternal.length })}
+              <span className="block mt-1 truncate" title={importExternal.map((f) => f.name).join(', ')}>
+                {importExternal.slice(0, 3).map((f) => f.name).join(', ')}
+                {importExternal.length > 3 ? ` … +${importExternal.length - 3}` : ''}
+              </span>
+            </p>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+              {t('chat.importExternalOwner')}
+            </label>
+            <select
+              value={importOwnerId}
+              onChange={(e) => setImportOwnerId(e.target.value)}
+              disabled={importBusy}
+              className="w-full px-2 py-2 border border-[var(--color-border)] rounded bg-[var(--color-input-bg)] text-sm outline-none focus:border-[var(--color-accent)] mb-4"
+            >
+              <option value="">{t('chat.importExternalOwnerNone')}</option>
+              {assistants
+                .filter((a) => a.id !== 'asst-default')
+                .map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+            </select>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setImportExternal(null)}
+                disabled={importBusy}
+                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)] disabled:opacity-50"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => void confirmImportExternal()}
+                disabled={importBusy}
+                className="px-3 py-1.5 text-xs bg-[var(--color-accent)] text-white rounded disabled:opacity-50 hover:opacity-90"
+              >
+                {importBusy ? t('common.loading') : t('chat.importExternalShort')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 密码弹窗 — 加密导出/导入 */}

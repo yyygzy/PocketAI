@@ -42,6 +42,7 @@ import { migrateKvSecrets } from './crypto/secret-store'
 import { exportFieldCredentials, restoreFieldCredentials } from './crypto/credential-rotation'
 import { recoveryKeyManager } from './crypto/recovery-key'
 import { providerRepo } from './db/repositories/provider.repo'
+import { mcpServerRepo } from './db/repositories/mcp-server.repo'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { getHardwareInfo } from './steward/hardware'
 import { licenseService } from './license/license'
@@ -428,6 +429,7 @@ async function boot(): Promise<void> {
   try {
     migrateKvSecrets()
     providerRepo.migratePlaintextKeys()
+    mcpServerRepo.migratePlaintextSecrets()
   } catch (e) {
     cryptoLog.warn('凭据迁移失败（不阻塞启动）:', e)
   }

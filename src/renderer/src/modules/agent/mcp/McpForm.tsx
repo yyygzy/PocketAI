@@ -33,6 +33,29 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   const [enabled, setEnabled] = useState(initial.enabled !== false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  // env/headers 由主进程以掩码视图下发（••••+末 4 位）；点「显示密钥」才取回明文
+  const [secretsRevealed, setSecretsRevealed] = useState(false)
+  const savedSecretCount =
+    Object.keys(initial.env ?? {}).length + Object.keys(initial.headers ?? {}).length
+
+  const handleRevealSecrets = async () => {
+    if (!initial.id) {
+      setError(t('agent.saveFirstThenReveal'))
+      return
+    }
+    try {
+      const r = await window.pocketai.revealMcpSecrets(initial.id)
+      if (!r.ok) {
+        setError(r.error || t('common.unknownError'))
+        return
+      }
+      setEnvText(JSON.stringify(r.env ?? {}, null, 2))
+      setHeadersText(JSON.stringify(r.headers ?? {}, null, 2))
+      setSecretsRevealed(true)
+    } catch (e) {
+      setError(errText(e))
+    }
+  }
 
   // Python 运行时列表（仅 runtime=python 时使用）
   const [pyRuntimes, setPyRuntimes] = useState<PythonRuntime[]>([])
@@ -143,6 +166,17 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   }
 
   const { envState, envEvents, installing, envLogRef } = pyEnv
+
+  // 密钥为掩码视图时的提示与揭示入口（stdio 的 env 与 http 的 headers 共用）
+  const revealRow =
+    initial.id && savedSecretCount > 0 && !secretsRevealed ? (
+      <div className="flex items-center gap-2 mt-1">
+        <button onClick={handleRevealSecrets} className="chip chip-accent">
+          {t('agent.revealSecrets')}
+        </button>
+        <span className="text-[11px] text-[var(--color-text-muted)]">{t('agent.secretsMasked')}</span>
+      </div>
+    ) : null
 
   return (
     <div className="space-y-3 max-w-xl">
@@ -356,6 +390,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
               onChange={(e) => setEnvText(e.target.value)}
               placeholder={ENV_PLACEHOLDER}
             />
+            {revealRow}
           </div>
         </>
       ) : (
@@ -374,6 +409,7 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
               placeholder={HEADERS_PLACEHOLDER}
               spellCheck={false}
             />
+            {revealRow}
           </div>
         </>
       )}

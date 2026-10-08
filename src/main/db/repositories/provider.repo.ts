@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../../crypto/field-encrypt'
+import { restoreMaskedList } from '../../../shared/secret-mask'
 import type { ProviderRecord, ProviderType } from '../../../shared/types'
 import { createLogger } from '../../logger'
 import { errMsg } from '../../error'
@@ -75,7 +76,10 @@ export const providerRepo = {
     const createdAt = existing?.createdAt ?? input.createdAt ?? Date.now()
 
     // 字段加密：apiKeys → 密文
-    const apiKeysCipher = encryptApiKeys(input.apiKeys)
+    // 渲染层传来的是掩码视图（PROVIDER_LIST 不回明文），占位项按原值回填，
+    // 使「只改名称/模型列表」的保存不会把 ••••abcd 当真密钥写库。
+    const apiKeys = restoreMaskedList(input.apiKeys, existing?.apiKeys)
+    const apiKeysCipher = encryptApiKeys(apiKeys)
     const models = JSON.stringify(input.models)
     const enabled = input.enabled ? 1 : 0
 

@@ -86,6 +86,21 @@ export const conversationExportPayloadSchema = z.object({
   assistant: z.unknown().nullable().optional()
 })
 
+/** CONVERSATION_IMPORT_EXTERNAL 入参：files（渲染端读好的文本，1-10 个/单文件≤30MB）+ 可选归属助手 */
+export const conversationImportExternalArgsSchema = z.object({
+  files: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(255),
+        text: z.string().max(30 * 1024 * 1024)
+      })
+    )
+    .min(1)
+    .max(10),
+  /** 归属助手 id；null/缺省=自由会话（主进程再校验存在性，无效回落 null） */
+  assistantId: z.string().min(1).max(CONVERSATION_IMPORT_MAX_LABEL_CHARS).nullish()
+})
+
 /** CONVERSATION_LIST 可选参：(assistantId?, isAgent?, archivedOnly?) */
 export const conversationListArgsSchema = z.tuple([
   z.string().nullable().optional(),

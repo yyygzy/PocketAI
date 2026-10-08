@@ -117,6 +117,9 @@ const api = {
     ipcRenderer.invoke(IPC.PROVIDER_LIST),
   saveProvider: (record: ProviderRecord): Promise<ProviderRecord> =>
     ipcRenderer.invoke(IPC.PROVIDER_SAVE, record),
+  /** 按需揭示单个 Provider 的真实密钥（listProviders 为掩码视图） */
+  revealProviderKeys: (id: string): Promise<{ ok: boolean; apiKeys: string[] }> =>
+    ipcRenderer.invoke(IPC.PROVIDER_REVEAL_KEYS, id),
   deleteProvider: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.PROVIDER_DELETE, id),
   fetchModels: (id: string): Promise<string[]> =>
@@ -231,11 +234,12 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT_ENCRYPTED, password),
   importConversation: (payload: ConversationExportPayload): Promise<{ ok: boolean; conversationId?: string; messageCount?: number; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_IMPORT, payload),
-  /** 外部平台记录导入（ChatGPT/Claude；渲染端读好文件文本传入，≤10 个文件） */
+  /** 外部平台记录导入（ChatGPT/Claude；渲染端读好文件文本传入，≤10 个文件）；assistantId 指定归属助手，null=自由会话 */
   importExternalConversations: (
-    files: Array<{ name: string; text: string }>
+    files: Array<{ name: string; text: string }>,
+    assistantId?: string | null
   ): Promise<ConversationExternalImportResult> =>
-    ipcRenderer.invoke(IPC.CONVERSATION_IMPORT_EXTERNAL, { files }),
+    ipcRenderer.invoke(IPC.CONVERSATION_IMPORT_EXTERNAL, { files, assistantId: assistantId ?? null }),
   forkConversation: (conversationId: string, messageId: string): Promise<{ ok: boolean; conversation?: ConversationRecord; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_FORK, conversationId, messageId),
   getSmartTitleEnabled: (): Promise<boolean> =>
@@ -317,8 +321,8 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_MODELS),
   getUsageBudget: (): Promise<import('../shared/types').UsageBudgetStatus> =>
     ipcRenderer.invoke(IPC.USAGE_BUDGET_GET),
-  setUsageBudget: (daily: number | null, monthly: number | null, hardBlock?: boolean): Promise<import('../shared/types').UsageBudgetStatus> =>
-    ipcRenderer.invoke(IPC.USAGE_BUDGET_SET, daily, monthly, hardBlock),
+  setUsageBudget: (daily: number | null, monthly: number | null, hardBlock?: boolean, warn?: boolean): Promise<import('../shared/types').UsageBudgetStatus> =>
+    ipcRenderer.invoke(IPC.USAGE_BUDGET_SET, daily, monthly, hardBlock, warn),
   getUsageDetail: (days?: number, limit?: number, conversationId?: string, assistantId?: string | null): Promise<UsageDetailResult> =>
     ipcRenderer.invoke(IPC.USAGE_DETAIL_GET, days, limit, conversationId, assistantId),
   exportUsageCsv: (
@@ -444,6 +448,15 @@ const api = {
     ipcRenderer.invoke(IPC.KB_DOC_DELETE, docId),
   reindexKbDocument: (kbId: string, docId: string): Promise<KbDocument> =>
     ipcRenderer.invoke(IPC.KB_DOC_REINDEX, kbId, docId),
+  /** 读取 txt 文档原文供编辑（非 txt/旧版无原文返回 null） */
+  getKbDocText: (docId: string): Promise<{ title: string; text: string } | null> =>
+    ipcRenderer.invoke(IPC.KB_DOC_GET_TEXT, docId),
+  /** 编辑 txt 文档标题+原文（保存后后台自动重建索引） */
+  updateKbDocText: (docId: string, title: string, text: string): Promise<KbDocument> =>
+    ipcRenderer.invoke(IPC.KB_DOC_UPDATE_TEXT, docId, title, text),
+  /** 重命名文档标题（全部类型，不重建索引） */
+  renameKbDocument: (docId: string, title: string): Promise<KbDocument> =>
+    ipcRenderer.invoke(IPC.KB_DOC_RENAME, docId, title),
   checkKbUpdates: (kbId: string): Promise<{
     checked: number
     unchanged: number
@@ -467,6 +480,11 @@ const api = {
   > => ipcRenderer.invoke(IPC.MCP_SERVER_EXPORT),
   getMcpServer: (id: string): Promise<McpServerRecord | null> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_GET, id),
+  /** 按需揭示单个 Server 的 env/headers 真实值（列表与表单默认为掩码视图） */
+  revealMcpSecrets: (
+    id: string
+  ): Promise<{ ok: boolean; env?: Record<string, string>; headers?: Record<string, string>; error?: string }> =>
+    ipcRenderer.invoke(IPC.MCP_SERVER_REVEAL_SECRETS, id),
   saveMcpServer: (
     record: Partial<McpServerRecord> & { name: string }
   ): Promise<McpServerRecord> => ipcRenderer.invoke(IPC.MCP_SERVER_SAVE, record),
@@ -965,17 +983,36 @@ const api = {
     ipcRenderer.on(IPC.REMINDER_FIRED, listener)
     return () => ipcRenderer.removeListener(IPC.REMINDER_FIRED, listener)
   },
+  /** 预算 80% 软预警（主进程在每轮 usage 落库后检查，同一日/月周期只推一次） */
+  onUsageBudgetWarning: (handler: (e: import('../shared/types').BudgetWarnEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: import('../shared/types').BudgetWarnEvent) => handler(data)
+    ipcRenderer.on(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
+  },
   /** 消息右键「提醒我」直建一次性提醒 */
   createReminder: (
     payload: ReminderCreatePayload
   ): Promise<{ ok: true; id: string; fireAt: number }> =>
     ipcRenderer.invoke(IPC.REMINDER_CREATE, payload),
-  /** 待发提醒（pending，按触发时间升序，上限 50） */
-  listReminders: (): Promise<ReminderRecord[]> =>
-    ipcRenderer.invoke(IPC.REMINDER_LIST),
+  /** 提醒列表：scope 缺省/pending=待发（按触发时间升序），history=已触发/错过/取消（倒序），上限 50 */
+  listReminders: (scope?: 'pending' | 'history'): Promise<ReminderRecord[]> =>
+    ipcRenderer.invoke(IPC.REMINDER_LIST, scope),
   /** 取消待发提醒；返回 ok=false 表示已触发/不存在 */
   cancelReminder: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.REMINDER_CANCEL, id),
+  /** 重新安排历史提醒（missed/cancelled/fired 行回 pending，可选改循环规则） */
+  rescheduleReminder: (
+    payload: import('../shared/types').ReminderReschedulePayload
+  ): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.REMINDER_RESCHEDULE, payload),
+  /** 编辑 pending 提醒（改时间/文本/循环规则；repeatRule=null 清除变一次性） */
+  updateReminder: (
+    payload: import('../shared/types').ReminderUpdatePayload
+  ): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.REMINDER_UPDATE, payload),
+  /** 一键重新安排 missed 循环提醒（按原 rule 重算下次触发回 pending） */
+  rescheduleNextReminder: (
+    id: string
+  ): Promise<{ ok: boolean; fireAt?: number }> =>
+    ipcRenderer.invoke(IPC.REMINDER_RESCHEDULE_NEXT, id),
 
   // ---------- 终端 ----------
   startTerminal: (): Promise<{ ok: boolean; sessionId?: number; error?: string }> =>

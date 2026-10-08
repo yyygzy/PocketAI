@@ -704,6 +704,15 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE kb_documents ADD COLUMN raw_text TEXT;
     `
+  },
+  {
+    // v43: 循环提醒规则——NULL=一次性，JSON 字符串存 daily/weekly/monthly 规则。
+    // scheduler 到点先取此列，非空则 scheduleNext 重排 pending（不新建记录），空则正常 fired。
+    version: 43,
+    name: 'reminder_repeat_rule',
+    up: `
+      ALTER TABLE reminders ADD COLUMN repeat_rule TEXT;
+    `
   }
 ]
 

@@ -633,6 +633,9 @@ const KbDetail: React.FC<{
   // Electron 未实现 window.prompt（调用直接返回 null，不弹窗），
   // 添加 URL / 录入文本改用应用内弹窗 AddSourceDialog
   const [addSource, setAddSource] = useState<null | 'url' | 'text'>(null)
+  // 文档重命名（全部类型）/ txt 文档原文编辑
+  const [renameDoc, setRenameDoc] = useState<KbDocument | null>(null)
+  const [editDoc, setEditDoc] = useState<KbDocument | null>(null)
 
   const handleDeleteDoc = async (docId: string) => {
     if (!(await confirm({ message: t('kb.delDocConfirm'), danger: true }))) return
@@ -804,6 +807,24 @@ const KbDetail: React.FC<{
               >
                 {t('kb.chunks')}
               </button>
+              {d.sourceType === 'txt' && (
+                <button
+                  onClick={() => setEditDoc(d)}
+                  disabled={busy}
+                  className="btn-ghost text-[11px] disabled:opacity-50"
+                  title={t('kb.editText')}
+                >
+                  {t('kb.editText')}
+                </button>
+              )}
+              <button
+                onClick={() => setRenameDoc(d)}
+                disabled={busy}
+                className="btn-ghost text-[11px] disabled:opacity-50"
+                title={t('kb.rename')}
+              >
+                {t('kb.rename')}
+              </button>
               <button
                 onClick={() => handleReindex(d.id)}
                 disabled={busy}
@@ -849,6 +870,24 @@ const KbDetail: React.FC<{
           kbId={kb.id}
           mode={addSource}
           onClose={() => setAddSource(null)}
+          onDone={async () => { await refresh(); startPolling() }}
+        />
+      )}
+
+      {/* 文档重命名（不重建） */}
+      {renameDoc && (
+        <RenameDocDialog
+          doc={renameDoc}
+          onClose={() => setRenameDoc(null)}
+          onDone={async () => { await refresh() }}
+        />
+      )}
+
+      {/* txt 文档编辑标题+原文（保存后重建索引） */}
+      {editDoc && (
+        <EditTextDocDialog
+          doc={editDoc}
+          onClose={() => setEditDoc(null)}
           onDone={async () => { await refresh(); startPolling() }}
         />
       )}
@@ -1088,6 +1127,187 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: 
 }
 
 // ---------- 添加 URL / 录入文本（替代 Electron 不支持的 window.prompt） ----------
+const RenameDocDialog: React.FC<{
+  doc: KbDocument
+  onClose: () => void
+  onDone: () => Promise<void> | void
+}> = ({ doc, onClose, onDone }) => {
+  const { t } = useI18n()
+  const toast = useToast()
+  const [title, setTitle] = useState(doc.title)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async () => {
+    const trimmed = title.trim()
+    if (!trimmed || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      await window.pocketai.renameKbDocument(doc.id, trimmed)
+      toast.success(t('kb.renameOk'))
+      await onDone()
+      onClose()
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-modal-overlay)]"
+      onClick={onClose}
+    >
+      <div
+        className="w-[480px] bg-[var(--color-sidebar)] rounded-lg border border-[var(--color-border)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+          <h3 className="text-sm font-semibold">{t('kb.renameTitle')}</h3>
+          <button onClick={onClose} className="btn-ghost text-xs">
+            {t('common.close')}
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <Field label={t('kb.promptTitle')}>
+            <input
+              className="input w-full"
+              value={title}
+              autoFocus
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
+            />
+          </Field>
+          {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-[var(--color-border)]">
+          <button onClick={onClose} className="btn-ghost text-xs">
+            {t('common.cancel')}
+          </button>
+          <button onClick={submit} disabled={!title.trim() || busy} className="btn-accent text-xs disabled:opacity-50">
+            {t('common.save')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** txt 文档编辑：挂载时拉原文；v42 前无原文的旧文本返回 null，禁用提交并引导删除重加 */
+const EditTextDocDialog: React.FC<{
+  doc: KbDocument
+  onClose: () => void
+  onDone: () => Promise<void> | void
+}> = ({ doc, onClose, onDone }) => {
+  const { t } = useI18n()
+  const toast = useToast()
+  const [title, setTitle] = useState(doc.title)
+  const [text, setText] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [unavailable, setUnavailable] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await window.pocketai.getKbDocText(doc.id)
+        if (cancelled) return
+        if (!r) {
+          setUnavailable(true)
+        } else {
+          setTitle(r.title)
+          setText(r.text)
+        }
+      } catch (e) {
+        if (!cancelled) setError(errText(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [doc.id])
+
+  const submit = async () => {
+    const trimmedTitle = title.trim()
+    if (!trimmedTitle || !text.trim() || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      await window.pocketai.updateKbDocText(doc.id, trimmedTitle, text)
+      toast.success(t('kb.editOk'))
+      await onDone()
+      onClose()
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-modal-overlay)]"
+      onClick={onClose}
+    >
+      <div
+        className="w-[560px] max-h-[80vh] bg-[var(--color-sidebar)] rounded-lg border border-[var(--color-border)] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+          <h3 className="text-sm font-semibold">{t('kb.editTextTitle')}</h3>
+          <button onClick={onClose} className="btn-ghost text-xs">
+            {t('common.close')}
+          </button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          {unavailable ? (
+            <p className="text-xs text-[var(--color-danger)] py-2">{t('kb.editTextLegacy')}</p>
+          ) : (
+            <>
+              <Field label={t('kb.promptTitle')}>
+                <input
+                  className="input w-full"
+                  value={title}
+                  disabled={loading}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </Field>
+              <Field label={t('kb.promptText')}>
+                <textarea
+                  className="input w-full h-64 resize-y"
+                  value={loading ? '' : text}
+                  placeholder={loading ? t('common.loading') : ''}
+                  disabled={loading}
+                  onChange={(e) => setText(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+          {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-[var(--color-border)]">
+          <button onClick={onClose} className="btn-ghost text-xs">
+            {t('common.cancel')}
+          </button>
+          {!unavailable && (
+            <button
+              onClick={submit}
+              disabled={loading || !title.trim() || !text.trim() || busy}
+              className="btn-accent text-xs disabled:opacity-50"
+            >
+              {t('common.save')}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const AddSourceDialog: React.FC<{
   kbId: string
   mode: 'url' | 'text'

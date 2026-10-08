@@ -24,6 +24,7 @@ import { clearSessionAllow } from '../../agent/tool-approval'
 import {
   conversationExportPayloadSchema,
   conversationImportDataSchema,
+  conversationImportExternalArgsSchema,
   conversationListArgsSchema,
   conversationCreateArgsSchema,
   CONVERSATION_IMPORT_MAX_FILE_BYTES
@@ -487,7 +488,10 @@ export function registerConversationHandlers(): void {
   // 渲染端读好文本传入；格式不明/单会话失败均不阻断其余文件与会话。
   safeHandle(
     IPC.CONVERSATION_IMPORT_EXTERNAL,
-    async (_e, arg: { files: Array<{ name: string; text: string }> }) => {
+    async (
+      _e,
+      arg: z.infer<typeof conversationImportExternalArgsSchema>
+    ) => {
       const conversationCount = { n: 0 }
       const messageCount = { n: 0 }
       let skippedConversationCount = 0
@@ -496,6 +500,9 @@ export function registerConversationHandlers(): void {
         if (warnings.length < 5) warnings.push(w)
       }
       const handle = dbService.getHandle()
+      // 归属助手：一次判定；id 无效/助手已删除静默回落自由会话，不阻断导入
+      const ownerId =
+        arg.assistantId && assistantRepo.get(arg.assistantId) ? arg.assistantId : null
 
       for (const file of arg.files) {
         const format = detectExternalFormat(file.text)
@@ -518,7 +525,7 @@ export function registerConversationHandlers(): void {
             // 事务内建会话+写消息：失败整体回滚（better-sqlite3 transaction 抛错即 ROLLBACK），不留残会话
             const result = handle.transaction(() => {
               const newConv = conversationRepo.create({
-                assistantId: null,
+                assistantId: ownerId,
                 title: conv.title + suffix,
                 titleDefault: false
               })
@@ -548,19 +555,7 @@ export function registerConversationHandlers(): void {
         warnings
       }
     },
-    argsSchema(
-      z.object({
-        files: z
-          .array(
-            z.object({
-              name: z.string().min(1).max(255),
-              text: z.string().max(30 * 1024 * 1024)
-            })
-          )
-          .min(1)
-          .max(10)
-      })
-    )
+    argsSchema(conversationImportExternalArgsSchema)
   )
   safeHandle(IPC.CONVERSATION_FORK, (_e, conversationId: string, messageId: string) => ({
     ok: true as const,

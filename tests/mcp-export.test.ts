@@ -98,6 +98,34 @@ describe('mcp-export', () => {
     expect(r.mcpServers.remote!.headers!['X-Trace']).toBe('ok')
   })
 
+  it('值侧识别补位：键名不含敏感词但值是凭据（KEY_1 / X-Auth / GH_PAT 类）', () => {
+    const r = buildMcpExportPayload([
+      rec({
+        name: 'fs',
+        transport: 'stdio',
+        command: 'node',
+        env: {
+          KEY_1: 'sk-proj-ABCDEFGHIJKLMNOP1234',
+          GH_PAT: 'ghp_abcdefghijklmnopqrstuv',
+          PLAIN_CFG: 'production'
+        }
+      }),
+      rec({
+        name: 'remote',
+        transport: 'http',
+        url: 'https://example.com',
+        headers: { 'X-Auth': 'Bearer abcdef1234567890' }
+      })
+    ])
+    expect(r.redactedCount).toBe(3)
+    expect(r.mcpServers.fs!.env!.KEY_1).toBe(REDACTED_PLACEHOLDER)
+    expect(r.mcpServers.fs!.env!.GH_PAT).toBe(REDACTED_PLACEHOLDER)
+    expect(r.mcpServers.fs!.env!.PLAIN_CFG).toBe('production')
+    expect(r.mcpServers.remote!.headers!['X-Auth']).toBe(REDACTED_PLACEHOLDER)
+    // 清单标注「哪个服务的哪个键」被脱敏，供导入端提示补填
+    expect(r.redactedEntries).toEqual(['fs>KEY_1', 'fs>GH_PAT', 'remote>X-Auth'])
+  })
+
   it('redactSecrets:false 时原样导出', () => {
     const r = buildMcpExportPayload(
       [rec({ name: 'fs', transport: 'stdio', command: 'x', env: { API_KEY: 'real' } })],

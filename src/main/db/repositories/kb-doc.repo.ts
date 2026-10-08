@@ -121,6 +121,15 @@ export const kbDocRepo = {
       .run(text, id)
   },
 
+  /** 重命名文档标题（不触发重建：标题不进向量；source 保持不动，msg_* 级联清理依赖它） */
+  rename(id: string, title: string): KbDocument | null {
+    dbService
+      .getHandle()
+      .prepare('UPDATE kb_documents SET title=? WHERE id=?')
+      .run(title, id)
+    return this.get(id)
+  },
+
   /** 文档级检索开关：enabled=false 临时排除出检索范围（不删除、不重索引） */
   setEnabled(id: string, enabled: boolean): void {
     dbService

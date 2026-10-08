@@ -70,6 +70,22 @@ describe('reminderRepo — CRUD 与状态流转', () => {
     expect(() => reminderRepo.listByStatus('bogus' as never)).toThrow()
   })
 
+  it('listHistory：只查 fired/missed/cancelled 三态，按 fire_at 倒序，默认 50 条', () => {
+    allMock.mockImplementation(() => [{ ...row, status: 'fired' }])
+    const out = reminderRepo.listHistory()
+    expect(out).toHaveLength(1)
+    expect(out[0]!.status).toBe('fired')
+    const sql = String(prepareMock.mock.calls[0]![0])
+    expect(sql).toContain("status IN ('fired','missed','cancelled')")
+    expect(sql).toContain('ORDER BY fire_at DESC')
+    expect(allMock.mock.calls[0]![0]).toBe(50)
+  })
+
+  it('listHistory：自定义 limit 透传', () => {
+    reminderRepo.listHistory(100)
+    expect(allMock.mock.calls[0]![0]).toBe(100)
+  })
+
   it('markFired / markMissed：状态翻转', () => {
     reminderRepo.markFired('r1')
     expect(runMock.mock.calls[0]![0]).toBe('fired')
@@ -95,5 +111,102 @@ describe('reminderRepo — CRUD 与状态流转', () => {
     const rec = reminderRepo.get('r1')
     expect(rec?.status).toBe('pending')
     expect(rec?.conversationId).toBeNull()
+  })
+})
+
+describe('reminderRepo.update — 编辑 pending', () => {
+  it('空 fields → false，不查 DB', () => {
+    expect(reminderRepo.update('r1', {})).toBe(false)
+    expect(prepareMock).not.toHaveBeenCalled()
+  })
+
+  it('仅改 text：SET text=?, WHERE status=pending，返回 true', () => {
+    expect(reminderRepo.update('r1', { text: '新内容' })).toBe(true)
+    const sql = String(prepareMock.mock.calls[0]![0])
+    expect(sql).toContain('SET text=?')
+    expect(sql).toContain("status='pending'")
+    expect(runMock.mock.calls[0]![0]).toBe('新内容')
+    expect(runMock.mock.calls[0]![1]).toBe('r1')
+  })
+
+  it('仅改 fireAt：SET fire_at=?', () => {
+    expect(reminderRepo.update('r1', { fireAt: 9999 })).toBe(true)
+    const sql = String(prepareMock.mock.calls[0]![0])
+    expect(sql).toContain('fire_at=?')
+    expect(runMock.mock.calls[0]![0]).toBe(9999)
+  })
+
+  it('repeatRule=null：清除循环变一次性，SET repeat_rule=NULL', () => {
+    expect(reminderRepo.update('r1', { repeatRule: null })).toBe(true)
+    const sql = String(prepareMock.mock.calls[0]![0])
+    expect(sql).toContain('repeat_rule=?')
+    expect(runMock.mock.calls[0]![0]).toBeNull()
+  })
+
+  it('repeatRule=daily：写入 JSON 字符串', () => {
+    expect(reminderRepo.update('r1', { repeatRule: { kind: 'daily', intervalDays: 3 } })).toBe(true)
+    expect(runMock.mock.calls[0]![0]).toBe('{"kind":"daily","intervalDays":3}')
+  })
+
+  it('三字段合改：SET 三个字段', () => {
+    expect(
+      reminderRepo.update('r1', {
+        text: '合改',
+        fireAt: 12345,
+        repeatRule: { kind: 'weekly', weekdays: [1, 3] }
+      })
+    ).toBe(true)
+    const sql = String(prepareMock.mock.calls[0]![0])
+    expect(sql).toContain('text=?')
+    expect(sql).toContain('fire_at=?')
+    expect(sql).toContain('repeat_rule=?')
+    expect(runMock.mock.calls[0]![0]).toBe('合改')
+    expect(runMock.mock.calls[0]![1]).toBe(12345)
+    expect(runMock.mock.calls[0]![2]).toBe('{"kind":"weekly","weekdays":[1,3]}')
+    expect(runMock.mock.calls[0]![3]).toBe('r1')
+  })
+
+  it('changes=0（非 pending 行）→ false', () => {
+    runMock.mockImplementation(() => ({ changes: 0 }))
+    expect(reminderRepo.update('r1', { text: 'x' })).toBe(false)
+  })
+})
+
+describe('reminderRepo.rescheduleNext — 一键重新安排 missed 循环', () => {
+  it('记录不存在 → { ok: false }', () => {
+    getMock.mockImplementation(() => undefined)
+    expect(reminderRepo.rescheduleNext('r1')).toEqual({ ok: false })
+  })
+
+  it('一次性提醒（无 repeatRule）→ { ok: false }', () => {
+    getMock.mockImplementation(() => ({ ...row, repeat_rule: null, status: 'missed' }))
+    expect(reminderRepo.rescheduleNext('r1')).toEqual({ ok: false })
+  })
+
+  it('daily 循环：按 computeNextFireAt 重算 next（prevFireAt + intervalDays 天）', () => {
+    getMock.mockImplementation(() => ({
+      ...row,
+      fire_at: 1000,
+      status: 'missed',
+      repeat_rule: '{"kind":"daily","intervalDays":1}'
+    }))
+    const out = reminderRepo.rescheduleNext('r1')
+    expect(out.ok).toBe(true)
+    // 1000 + 1*86400000 = 86401000
+    expect(out.fireAt).toBe(86401000)
+    // reschedule 走 run：参数 (status='pending', fireAt, ruleJson, id)
+    expect(runMock.mock.calls[0]![0]).toBe('pending')
+    expect(runMock.mock.calls[0]![1]).toBe(86401000)
+    expect(runMock.mock.calls[0]![2]).toBe('{"kind":"daily","intervalDays":1}')
+    expect(runMock.mock.calls[0]![3]).toBe('r1')
+  })
+
+  it('reschedule 返回 false（changes=0）→ { ok: false }', () => {
+    getMock.mockImplementation(() => ({
+      ...row,
+      repeat_rule: '{"kind":"daily","intervalDays":1}'
+    }))
+    runMock.mockImplementation(() => ({ changes: 0 }))
+    expect(reminderRepo.rescheduleNext('r1')).toEqual({ ok: false })
   })
 })

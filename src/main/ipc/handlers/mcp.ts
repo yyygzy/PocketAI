@@ -12,11 +12,24 @@ import { safeHandle, errMsg, argsSchema } from '../safe-handle'
 import { mcpServerSaveSchema, pythonPipSourceSchema, mcpCallToolSchema } from '../../../shared/schemas/mcp'
 import { idSchema } from '../../../shared/schemas/providers'
 import { stringifyMcpResult, mcpResultIsError } from '../../tools/registry'
-import { buildMcpExportPayload } from '../../../shared/mcp-export'
+import { buildMcpExportPayload, REDACTED_KEYS_NOTE } from '../../../shared/mcp-export'
 import { safeFileName } from '../../../shared/export-markdown'
+import { maskSecretMap } from '../../../shared/secret-mask'
+import type { McpServerRuntime } from '../../../shared/types'
+
+// 凭据收口：env/headers 出 IPC 一律掩码（列表/表单/运行时状态都带完整 record）。
+// 需要查看或编辑真实值时由用户显式走 MCP_SERVER_REVEAL_SECRETS；
+// 保存时掩码占位按原值回填，见 mcp-server.repo.save。
+function maskMcpRecord(r: McpServerRecord): McpServerRecord {
+  return { ...r, env: maskSecretMap(r.env), headers: maskSecretMap(r.headers) }
+}
+
+function maskRuntime(rt: McpServerRuntime): McpServerRuntime {
+  return { ...rt, env: maskSecretMap(rt.env), headers: maskSecretMap(rt.headers) }
+}
 
 export function registerMcpHandlers(): void {
-  safeHandle(IPC.MCP_SERVER_LIST, () => mcpServerRepo.list())
+  safeHandle(IPC.MCP_SERVER_LIST, () => mcpServerRepo.list().map(maskMcpRecord))
 
   // 导出全部配置为标准 mcpServers JSON：默认脱敏 env/headers 中的密钥（U 盘易丢场景）
   safeHandle(IPC.MCP_SERVER_EXPORT, async (e) => {
@@ -33,7 +46,10 @@ export function registerMcpHandlers(): void {
       ]
     })
     if (canceled || !filePath) return { ok: true as const, canceled: true as const }
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8')
+    // 文件只写标准 mcpServers + 脱敏清单扩展键（redactedCount 等统计量不入文件）
+    const file: Record<string, unknown> = { mcpServers: payload.mcpServers }
+    if (payload.redactedEntries.length > 0) file[REDACTED_KEYS_NOTE] = payload.redactedEntries
+    fs.writeFileSync(filePath, JSON.stringify(file, null, 2), 'utf8')
     return {
       ok: true as const,
       path: filePath,
@@ -42,9 +58,18 @@ export function registerMcpHandlers(): void {
     }
   })
 
-  safeHandle(IPC.MCP_SERVER_GET, (_e, id: string) => mcpServerRepo.get(id), argsSchema(idSchema))
+  safeHandle(IPC.MCP_SERVER_GET, (_e, id: string) => {
+    const rec = mcpServerRepo.get(id)
+    return rec ? maskMcpRecord(rec) : null
+  }, argsSchema(idSchema))
+  // 显式揭示真实 env/headers（编辑/复制场景按需调用，单条查询）
+  safeHandle(IPC.MCP_SERVER_REVEAL_SECRETS, (_e, id: string) => {
+    const rec = mcpServerRepo.get(id)
+    if (!rec) return { ok: false as const, error: 'MCP Server 不存在' }
+    return { ok: true as const, env: rec.env, headers: rec.headers }
+  }, argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_SAVE, (_e, record: Partial<McpServerRecord> & { name: string }) =>
-    mcpServerRepo.save(record),
+    maskMcpRecord(mcpServerRepo.save(record)),
   argsSchema(mcpServerSaveSchema))
   safeHandle(IPC.MCP_SERVER_DELETE, async (_e, id: string) =>
     // 与安装整段（含前置 stop）共用 per-server 操作锁：安装/重装进行中删除一律拒绝，
@@ -65,7 +90,7 @@ export function registerMcpHandlers(): void {
   argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_START, async (_e, id: string) => ({
     ok: true as const,
-    runtime: await mcpManager.start(id)
+    runtime: maskRuntime(await mcpManager.start(id))
   }), argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_STOP, async (_e, id: string) => {
     await mcpManager.stop(id)
@@ -73,7 +98,7 @@ export function registerMcpHandlers(): void {
   }, argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_RESTART, async (_e, id: string) => ({
     ok: true as const,
-    runtime: await mcpManager.restart(id)
+    runtime: maskRuntime(await mcpManager.restart(id))
   }), argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_LIST_TOOLS, async (_e, id: string) => ({
     ok: true as const,
@@ -99,7 +124,7 @@ export function registerMcpHandlers(): void {
     // 复用 agent 链路同一套扁平化（含 256KB 截断），避免超大结果撑爆 IPC
     return { ok: true as const, content: stringifyMcpResult(raw), isError: mcpResultIsError(raw) }
   }, argsSchema(mcpCallToolSchema))
-  safeHandle(IPC.MCP_SERVER_GET_RUNTIMES, () => mcpManager.listRuntimes())
+  safeHandle(IPC.MCP_SERVER_GET_RUNTIMES, () => mcpManager.listRuntimes().map(maskRuntime))
 
   // ---------- Python MCP 依赖环境（venv / pip） ----------
   // 安装：仅显式按钮触发；过程经 PYTHON_ENV_EVENT 广播推送，最终状态在 invoke 返回

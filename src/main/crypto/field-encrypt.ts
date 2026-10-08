@@ -74,3 +74,29 @@ export function decryptApiKeys(stored: string | null | undefined): string[] {
     return []
   }
 }
+
+/**
+ * 加密字符串映射（MCP env / headers）→ v1:base64。
+ * 空映射存空串，避免为「无凭据」的行也产生一次密钥派生写入。
+ */
+export function encryptSecretMap(map: Record<string, string> | null | undefined): string {
+  const entries = Object.entries(map ?? {})
+  if (entries.length === 0) return ''
+  return encryptSecret(JSON.stringify(Object.fromEntries(entries)))
+}
+
+/** 解密字符串映射（向后兼容历史明文 JSON；失败 fail-closed 返回 {}） */
+export function decryptSecretMap(stored: string | null | undefined): Record<string, string> {
+  if (!stored) return {}
+  const plaintext = decryptSecret(stored)
+  if (!plaintext) return {}
+  try {
+    const v = JSON.parse(plaintext) as unknown
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+    const out: Record<string, string> = {}
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = String(val ?? '')
+    return out
+  } catch {
+    return {}
+  }
+}

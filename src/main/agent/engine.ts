@@ -23,6 +23,8 @@ import type {
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import type { AdapterChatMessage, ChatParams } from '../providers/types'
+import { recordChatStreamPerf } from '../steward/perf-probe'
+import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
 import { ProviderError } from '../providers/types'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { runFirstMessageTitle } from '../conversation/title-gen'
@@ -895,11 +897,19 @@ class AgentEngine {
     // 调用 LLM（带重试）
     let result: Awaited<ReturnType<typeof adapter.streamChat>> | undefined
     let llmError: unknown
+    // TTFT/整轮耗时实测（Iter-74）：每次 attempt 重置，仅成功 attempt 记录一次
+    let stepT0 = performance.now()
+    let stepTtft: number | undefined
+    const markStepTtft = (): void => {
+      if (stepTtft === undefined) stepTtft = performance.now() - stepT0
+    }
     for (let attempt = 0; attempt <= MAX_LLM_RETRIES; attempt++) {
       if (master.signal.aborted) throw new Error('Agent 运行已中止')
       if (attempt > 0) {
         accumulated = ''
         reasoningAccumulated = ''
+        stepT0 = performance.now()
+        stepTtft = undefined
         emit(IPC.AGENT_STEP_EVENT, {
           requestId: ctx.requestId,
           conversationId,
@@ -913,6 +923,7 @@ class AgentEngine {
         logger.info(`[agent] step=${stepIndex} 调用 streamChat...`)
         result = await adapter.streamChat(messages, chatParams, {
           onDelta: (delta) => {
+            markStepTtft()
             accumulated += delta
             emit(IPC.AGENT_CHUNK_EVENT, {
               requestId: ctx.requestId,
@@ -923,6 +934,7 @@ class AgentEngine {
             })
           },
           onReasoningDelta: (delta) => {
+            markStepTtft()
             reasoningAccumulated += delta
             emit(IPC.AGENT_CHUNK_EVENT, {
               requestId: ctx.requestId,
@@ -933,6 +945,13 @@ class AgentEngine {
               reasoning: true
             })
           }
+        })
+        recordChatStreamPerf({
+          kind: 'agent',
+          ttftMs: stepTtft,
+          totalMs: performance.now() - stepT0,
+          model: chatParams.model,
+          step: stepIndex
         })
         break
       } catch (e) {
@@ -1129,6 +1148,8 @@ class AgentEngine {
       result.usage
     )
     ctx.pendingAssistantMsgId = '' // 占位已写终态
+    // LLM 步 usage 落库后检查预算 80% 软预警（周期标记去重；内部全 try/catch 不影响 Agent）
+    checkAndBroadcastBudgetWarnings()
 
     if (toolCalls && toolCalls.length > 0) {
       logger.info(`[agent] step=${stepIndex} 写入 toolCalls`)

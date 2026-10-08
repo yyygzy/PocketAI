@@ -27,6 +27,8 @@ import { getUsagePricing } from '../usage/pricing-config'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
+import { recordChatStreamPerf, logPerfDebug } from '../steward/perf-probe'
+import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
 const logger = createLogger('chat-service')
 import { withProviderLimit } from './concurrency'
 import { agentEngine } from '../agent/engine'
@@ -506,7 +508,12 @@ class ChatService {
 
     let accumulated = ''
 
+    // TTFT/整轮耗时实测（Iter-74）：t0 含 withProviderLimit 排队 = 用户真实体感等待
+    const streamStart = performance.now()
+    let ttftMs: number | undefined
+
     const sendChunk = (delta: string): void => {
+      if (ttftMs === undefined) ttftMs = performance.now() - streamStart
       accumulated += delta
       const e: ChatChunkEvent = { requestId, targetIndex: index, messageId, delta }
       emit(IPC.CHAT_CHUNK_EVENT, e)
@@ -522,12 +529,22 @@ class ChatService {
         )
       })
 
+      recordChatStreamPerf({
+        kind: 'chat',
+        ttftMs,
+        totalMs: performance.now() - streamStart,
+        model: target.model
+      })
       const full = result.content
       messageRepo.updateContent(messageId, full, 'done', sources, result.usage)
+      // usage 落库后检查预算 80% 软预警（周期标记去重，多 target 只广播一次；内部全 try/catch）
+      checkAndBroadcastBudgetWarnings()
       const e: ChatDoneEvent = { requestId, targetIndex: index, messageId, fullContent: full, sources }
       emit(IPC.CHAT_DONE_EVENT, e)
     } catch (err) {
       const aborted = isAbortError(err)
+      // 中止/失败的耗时不进慢操作缓冲（无诊断意义），仅 debug 日志
+      logPerfDebug(`chat.${aborted ? 'aborted' : 'error'}`, performance.now() - streamStart, `model=${target.model}`)
       // 中止/出错时保留已流式生成的部分内容
       const partial = accumulated
       const finalContent = aborted

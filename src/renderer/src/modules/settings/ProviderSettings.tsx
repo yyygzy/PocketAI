@@ -41,6 +41,8 @@ export const ProviderSettings: React.FC = () => {
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [editing, setEditing] = useState<ProviderRecord | null>(null)
   const [keysText, setKeysText] = useState('')
+  // 密钥框当前是掩码视图还是已揭示的明文（主进程列表只回掩码，见 handlers/providers.ts）
+  const [keysRevealed, setKeysRevealed] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = useCallback(() => window.pocketai.listProviders().then(setProviders).catch(reportIpcError('providerSettings.list')), [])
@@ -52,7 +54,23 @@ export const ProviderSettings: React.FC = () => {
     const rec = p ? { ...p } : emptyProvider()
     setEditing(rec)
     setKeysText(rec.apiKeys.join('\n'))
+    setKeysRevealed(false)
     setNotice(null)
+  }
+
+  // 用户显式点击才取回明文：单条查询，不改变「列表不落明文」的默认
+  const handleRevealKeys = async () => {
+    if (!editing?.id) {
+      setNotice({ ok: false, text: t('provider.saveFirst') })
+      return
+    }
+    try {
+      const r = await window.pocketai.revealProviderKeys(editing.id)
+      setKeysText((r.apiKeys ?? []).join('\n'))
+      setKeysRevealed(true)
+    } catch (e) {
+      setNotice({ ok: false, text: errText(e) })
+    }
   }
 
   const handleSave = async () => {
@@ -72,6 +90,9 @@ export const ProviderSettings: React.FC = () => {
     setNotice({ ok: true, text: t('provider.saved', { name: saved.name }) })
     await load()
     setEditing(saved)
+    // 保存后回到掩码视图（saved.apiKeys 已是掩码），避免明文长期停留在表单里
+    setKeysText(saved.apiKeys.join('\n'))
+    setKeysRevealed(false)
   }
 
   const handleFetchModels = async () => {
@@ -209,6 +230,20 @@ export const ProviderSettings: React.FC = () => {
                 onChange={(e) => setKeysText(e.target.value)}
                 placeholder="sk-..."
               />
+              <div className="flex items-center gap-2 mt-1">
+                {editing.id && editing.apiKeys.length > 0 && !keysRevealed ? (
+                  <button
+                    onClick={handleRevealKeys}
+                    className="chip chip-accent"
+                    title={t('provider.revealHint')}
+                  >
+                    {t('provider.revealKeys')}
+                  </button>
+                ) : null}
+                {editing.apiKeys.length > 0 && !keysRevealed ? (
+                  <span className="text-[11px] text-[var(--color-text-muted)]">{t('provider.keysMasked')}</span>
+                ) : null}
+              </div>
             </Field>
 
             <Field label={t('provider.f.cached', { n: editing.models.length })}>

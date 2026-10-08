@@ -44,6 +44,8 @@ vi.mock('../src/main/tools/shell-tools', () => ({ findDangerRanges: () => [] }))
 vi.mock('../src/main/assistant/skills', () => ({ buildSkillsContext: () => '' }))
 // engine 新增的智能标题编排会拉起 app-config/portable/electron 链；纯函数测试用不到，整体打桩
 vi.mock('../src/main/conversation/title-gen', () => ({ runFirstMessageTitle: () => {} }))
+// engine 间接经 usage-service → app-config.repo → portable/electron 链；纯函数测试用不到，整体打桩
+vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: {} }))
 
 import type { MessageRecord, ChatAttachment, ToolCall, ToolResult } from '../src/shared/types'
 import type { AdapterChatMessage } from '../src/main/providers/types'

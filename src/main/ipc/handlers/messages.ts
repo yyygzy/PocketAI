@@ -141,12 +141,13 @@ export function registerMessageHandlers(): void {
   // 用量预算：读取状态（含今日/本月已花估算）；保存后返回最新状态
   safeHandle(IPC.USAGE_BUDGET_GET, () =>
     usageService.getBudgetStatus(getUsagePricing().prices))
-  safeHandle(IPC.USAGE_BUDGET_SET, (_e, daily: number | null, monthly: number | null, hardBlock?: boolean) => {
+  safeHandle(IPC.USAGE_BUDGET_SET, (_e, daily: number | null, monthly: number | null, hardBlock?: boolean, warn?: boolean) => {
     appConfigRepo.setUsageBudgetDaily(daily)
     appConfigRepo.setUsageBudgetMonthly(monthly)
     if (typeof hardBlock === 'boolean') appConfigRepo.setUsageBudgetHardBlock(hardBlock)
+    if (typeof warn === 'boolean') appConfigRepo.setUsageBudgetWarn(warn)
     return usageService.getBudgetStatus(getUsagePricing().prices)
-  }, argsSchema(z.number().min(0).nullable(), z.number().min(0).nullable(), z.boolean().optional()))
+  }, argsSchema(z.number().min(0).nullable(), z.number().min(0).nullable(), z.boolean().optional(), z.boolean().optional()))
 
   // 行级用量明细（CSV 导出，最近 N 天；超出 limit 置 truncated 让渲染端提示；
   // conversationId 非空只查该会话；assistantId 非 undefined 按助手过滤（null=自由会话））

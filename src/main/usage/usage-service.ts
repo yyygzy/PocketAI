@@ -3,7 +3,7 @@
 // 聚合在 JS 侧完成（行级数据量可控，且坏 JSON 容错/时区日切比 SQL JSON 函数更直观可控）
 import { dbService } from '../db/database'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageStats, UsageSummary } from '../../shared/types'
+import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageStats, UsageSummary, BudgetWarnEvent } from '../../shared/types'
 import { computeUsageCost, priceKey, roundCost } from '../../shared/usage-pricing'
 
 /** 聚合输入行（SQL 只拉必要列） */
@@ -21,6 +21,55 @@ export function localDateKey(ts: number): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+/** 本地月份键（YYYY-MM，预算月周期用） */
+export function localMonthKey(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** 预算软预警阈值：花费达到上限 80% 触发 */
+export const BUDGET_WARN_RATIO = 0.8
+
+/**
+ * 纯判定：本次检查新跨越 80% 阈值的预算周期（不含任何 IO，供单测）。
+ * 规则：总开关关 → 空；daily/monthly 独立判定；上限 null/≤0 跳过；
+ * 已弹过（warnedXxx）跳过；cost >= limit*0.8（边界含等号）才入选；顺序 daily 先。
+ */
+export function pickBudgetWarnings(
+  status: UsageBudgetStatus,
+  opts: { enabled: boolean; warnedDaily: boolean; warnedMonthly: boolean }
+): BudgetWarnEvent[] {
+  if (!opts.enabled) return []
+  const events: BudgetWarnEvent[] = []
+  if (
+    status.daily !== null &&
+    status.daily > 0 &&
+    !opts.warnedDaily &&
+    status.todayCost >= status.daily * BUDGET_WARN_RATIO
+  ) {
+    events.push({
+      scope: 'daily',
+      cost: status.todayCost,
+      limit: status.daily,
+      ratio: Math.round((status.todayCost / status.daily) * 10000) / 10000
+    })
+  }
+  if (
+    status.monthly !== null &&
+    status.monthly > 0 &&
+    !opts.warnedMonthly &&
+    status.monthCost >= status.monthly * BUDGET_WARN_RATIO
+  ) {
+    events.push({
+      scope: 'monthly',
+      cost: status.monthCost,
+      limit: status.monthly,
+      ratio: Math.round((status.monthCost / status.monthly) * 10000) / 10000
+    })
+  }
+  return events
 }
 
 /** 解析 usage JSON，坏数据/形状不符返回 null（不阻断聚合） */
@@ -311,8 +360,30 @@ class UsageService {
       monthly: appConfigRepo.getUsageBudgetMonthly(),
       todayCost: this.sumCostSince(dayStart, prices),
       monthCost: this.sumCostSince(monthStart, prices),
-      hardBlock: appConfigRepo.isUsageBudgetHardBlockEnabled()
+      hardBlock: appConfigRepo.isUsageBudgetHardBlockEnabled(),
+      warn: appConfigRepo.isUsageBudgetWarnEnabled()
     }
+  }
+
+  /**
+   * 消费一次软预警检查（每次 usage 落库后调用；全程同步，并发调用靠 KV 标记天然去重）：
+   * 新跨越 80% 的周期写「本周期已提醒」标记后返回事件；调用方负责广播。
+   * 周期键随日期/月份滚动，旧标记不清理（年累积量可忽略）。
+   */
+  consumeBudgetWarnings(prices: Record<string, ModelPrice> = {}): BudgetWarnEvent[] {
+    const now = Date.now()
+    const status = this.getBudgetStatus(prices)
+    const dayKey = localDateKey(now)
+    const monthKey = localMonthKey(now)
+    const events = pickBudgetWarnings(status, {
+      enabled: status.warn,
+      warnedDaily: appConfigRepo.isBudgetWarned('daily', dayKey),
+      warnedMonthly: appConfigRepo.isBudgetWarned('monthly', monthKey)
+    })
+    for (const ev of events) {
+      appConfigRepo.markBudgetWarned(ev.scope, ev.scope === 'daily' ? dayKey : monthKey)
+    }
+    return events
   }
 
   /**

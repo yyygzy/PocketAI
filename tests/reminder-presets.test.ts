@@ -48,15 +48,26 @@ describe('nextNineAm', () => {
 })
 
 describe('buildReminderPresets', () => {
-  it('4 个预设 key 完整且偏移正确（15m/1h/3h/next9am 均晚于 now 且 ≤30 天）', () => {
+  it('7 个预设 key 完整且偏移正确（15m/1h/3h/next9am + 三个循环均晚于 now 且 ≤30 天）', () => {
     const now = new Date(2026, 9, 3, 12, 0, 0).getTime()
     const ps = buildReminderPresets(now)
-    expect(ps.map((p) => p.key)).toEqual(['in15m', 'in1h', 'in3h', 'next9am'])
+    expect(ps.map((p) => p.key)).toEqual([
+      'in15m', 'in1h', 'in3h', 'next9am', 'every9am', 'everyMon9am', 'everyMonth1st'
+    ])
+    // 前 4 个一次性预设
     expect(ps[0]!.fireAt).toBe(now + 15 * MIN)
     expect(ps[1]!.fireAt).toBe(now + 60 * MIN)
     expect(ps[2]!.fireAt).toBe(now + 180 * MIN)
     const nine = new Date(ps[3]!.fireAt)
     expect(nine.getHours()).toBe(9)
+    // 三个循环预设带 repeatRule
+    expect(ps[4]!.repeatRule).toEqual({ kind: 'daily', intervalDays: 1 })
+    expect(ps[5]!.repeatRule).toEqual({ kind: 'weekly', weekdays: [1] })
+    expect(ps[6]!.repeatRule).toEqual({ kind: 'monthly', dayOfMonth: 1 })
+    // 循环 fireAt 与对应一次性起点一致（every9am=next9am；everyMon9am=下一周一 09:00；everyMonth1st=下月 1 号 09:00）
+    expect(ps[4]!.fireAt).toBe(ps[3]!.fireAt) // every9am 起点同 next9am
+    expect(new Date(ps[5]!.fireAt).getHours()).toBe(9)
+    expect(new Date(ps[6]!.fireAt).getHours()).toBe(9)
     for (const p of ps) {
       expect(p.fireAt).toBeGreaterThan(now)
       expect(p.fireAt).toBeLessThanOrEqual(now + MAX_REMINDER_MINUTES * MIN)

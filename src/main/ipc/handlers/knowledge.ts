@@ -22,6 +22,9 @@ import {
   kbSaveSchema,
   kbDocAddUrlArgsSchema,
   kbDocAddTextArgsSchema,
+  kbDocGetTextArgsSchema,
+  kbDocUpdateTextArgsSchema,
+  kbDocRenameArgsSchema,
   kbRetrieveArgsSchema
 } from '../../../shared/schemas/knowledge'
 import { idSchema } from '../../../shared/schemas/providers'
@@ -123,6 +126,43 @@ export function registerKnowledgeHandlers(): void {
     indexQueue.enqueue({ kbId, docId, kind: 'reindex' })
     return kbDocRepo.get(docId)
   }, argsSchema(idSchema, idSchema))
+
+  // ---------- 文档重命名 / txt 文档原文编辑 ----------
+  safeHandle(IPC.KB_DOC_GET_TEXT, (_e, docId: string) => {
+    const doc = kbDocRepo.get(docId)
+    if (!doc || doc.sourceType !== 'txt') return null
+    const text = kbDocRepo.getRawText(docId)
+    if (!text) return null // v42 前录入的文本无原文，UI 给删除重加引导
+    return { title: doc.title, text }
+  }, kbDocGetTextArgsSchema)
+
+  safeHandle(
+    IPC.KB_DOC_UPDATE_TEXT,
+    (_e, docId: string, title: string, text: string) => {
+      const doc = kbDocRepo.get(docId)
+      if (!doc) throw new Error('文档不存在')
+      if (doc.sourceType !== 'txt' || !kbDocRepo.getRawText(docId)) {
+        // 非 txt 不应走到（UI 无入口）；v42 前存量无原文无法编辑
+        throw new Error('该文本录入于旧版本，原文未保存，无法编辑，请删除后重新添加')
+      }
+      kbDocRepo.rename(docId, title)
+      kbDocRepo.setRawText(docId, text)
+      kbDocRepo.setStatus(docId, 'pending')
+      indexQueue.enqueue({ kbId: doc.kbId, docId, kind: 'text', payload: { text, title } })
+      return kbDocRepo.get(docId)
+    },
+    kbDocUpdateTextArgsSchema
+  )
+
+  safeHandle(
+    IPC.KB_DOC_RENAME,
+    (_e, docId: string, title: string) => {
+      const doc = kbDocRepo.rename(docId, title)
+      if (!doc) throw new Error('文档不存在')
+      return doc
+    },
+    kbDocRenameArgsSchema
+  )
 
   // ---------- 知识库分块 ----------
   safeHandle(IPC.KB_CHUNK_LIST, (_e, docId: string) => kbChunkRepo.listByDoc(docId), argsSchema(idSchema))

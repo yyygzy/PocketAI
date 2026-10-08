@@ -29,6 +29,9 @@ const KEYS = {
   USAGE_BUDGET_DAILY: 'usage_budget_daily', // 数字字符串（¥）；空/缺省=不限制
   USAGE_BUDGET_MONTHLY: 'usage_budget_monthly', // 同上
   USAGE_BUDGET_HARD_BLOCK: 'usage_budget_hard_block', // '1'=达到上限自动停发；空/缺省=仅提醒
+  USAGE_BUDGET_WARN: 'usage_budget_warn', // '0'=关闭 80% 软预警；'1'/缺省=开启（每周期 toast 一次）
+  USAGE_BUDGET_WARNED_DAILY_PREFIX: 'usage_budget_warned_daily_', // +YYYY-MM-DD：今日已弹软预警标记
+  USAGE_BUDGET_WARNED_MONTHLY_PREFIX: 'usage_budget_warned_monthly_', // +YYYY-MM：本月已弹标记
   NET_PROXY_URL: 'net_proxy_url', // 主进程 API 流量代理 URL（http/https）；空/缺省=直连
 } as const
 
@@ -267,6 +270,32 @@ export const appConfigRepo = {
 
   setUsageBudgetHardBlock(enabled: boolean): void {
     this.set(KEYS.USAGE_BUDGET_HARD_BLOCK, enabled ? '1' : '')
+  },
+
+  /** 预算 80% 软预警开关：缺省=开（对齐 hard_block「空/缺省=仅提醒」原设计），仅显式 '0' 关闭 */
+  isUsageBudgetWarnEnabled(): boolean {
+    return this.get(KEYS.USAGE_BUDGET_WARN) !== '0'
+  },
+
+  setUsageBudgetWarn(enabled: boolean): void {
+    this.set(KEYS.USAGE_BUDGET_WARN, enabled ? '1' : '0')
+  },
+
+  /** 本周期是否已弹过软预警（scope daily 传 YYYY-MM-DD，monthly 传 YYYY-MM） */
+  isBudgetWarned(scope: 'daily' | 'monthly', periodKey: string): boolean {
+    const prefix =
+      scope === 'daily'
+        ? KEYS.USAGE_BUDGET_WARNED_DAILY_PREFIX
+        : KEYS.USAGE_BUDGET_WARNED_MONTHLY_PREFIX
+    return this.get(prefix + periodKey) === '1'
+  },
+
+  markBudgetWarned(scope: 'daily' | 'monthly', periodKey: string): void {
+    const prefix =
+      scope === 'daily'
+        ? KEYS.USAGE_BUDGET_WARNED_DAILY_PREFIX
+        : KEYS.USAGE_BUDGET_WARNED_MONTHLY_PREFIX
+    this.set(prefix + periodKey, '1')
   },
 
   // ---------- 网络代理（已 normalize 的 http/https URL；''=直连） ----------

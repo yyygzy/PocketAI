@@ -13,7 +13,8 @@ const h = vi.hoisted(() => ({
   rows: [] as { provider: string | null; model: string | null; usage: string | null; created_at: number }[],
   daily: null as number | null,
   monthly: null as number | null,
-  hardBlock: false as boolean
+  hardBlock: false as boolean,
+  warn: true as boolean
 }))
 
 // mock dbService 所在模块（usage-service 顶部 import 链会加载 database.ts → electron）
@@ -38,7 +39,11 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
     setUsageBudgetDaily: (v: number | null) => { h.daily = v },
     setUsageBudgetMonthly: (v: number | null) => { h.monthly = v },
     isUsageBudgetHardBlockEnabled: () => h.hardBlock,
-    setUsageBudgetHardBlock: (v: boolean) => { h.hardBlock = v }
+    setUsageBudgetHardBlock: (v: boolean) => { h.hardBlock = v },
+    isUsageBudgetWarnEnabled: () => h.warn,
+    setUsageBudgetWarn: (v: boolean) => { h.warn = v },
+    isBudgetWarned: () => false,
+    markBudgetWarned: () => {}
   }
 }))
 

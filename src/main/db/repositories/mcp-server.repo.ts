@@ -1,8 +1,18 @@
 // MCP Server 数据访问
+//
+// env / headers 是凭据载体（stdio 环境变量、http Authorization 头），整列字段级加密落盘；
+// 出 IPC 一律掩码（见 handlers/mcp.ts），保存时按占位符回填原值，因此「只改命令不改密钥」
+// 的保存不会把掩码写成真实值。密钥轮换由 credential-rotation 走 exportAllSecrets/restoreAllSecrets。
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
+import { encryptSecretMap, decryptSecretMap, isCipherText } from '../../crypto/field-encrypt'
+import { restoreMaskedMap } from '../../../shared/secret-mask'
+import { createLogger } from '../../logger'
+import { errMsg } from '../../error'
 import type { McpServerRecord, McpTransport, McpRuntime } from '../../../shared/types'
+
+const log = createLogger('crypto')
 
 interface McpServerRow {
   id: string
@@ -29,24 +39,9 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
   } catch {
     args = []
   }
-  try {
-    if (row.env) env = JSON.parse(row.env)
-  } catch {
-    env = {}
-  }
-  try {
-    if (row.headers) {
-      const parsed: unknown = JSON.parse(row.headers)
-      // 库内容可能被外部工具篡改为非对象 JSON：兜底 {}
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        headers = Object.fromEntries(
-          Object.entries(parsed).map(([k, v]) => [k, String(v)])
-        )
-      }
-    }
-  } catch {
-    headers = {}
-  }
+  // env/headers 为字段级密文（v1:…）；decryptSecretMap 兼容历史明文 JSON 与损坏值（→ {}）
+  env = decryptSecretMap(row.env)
+  headers = decryptSecretMap(row.headers)
   try {
     if (row.python_packages) {
       const parsed: unknown = JSON.parse(row.python_packages)
@@ -123,7 +118,19 @@ export const mcpServerRepo = {
     const db = dbService.getHandle()
     const existing = input.id ? this.get(input.id) : null
     const id = input.id || randomUUID()
-    const { transport, runtime, pythonPackages, headers } = normalizeInput(input, existing)
+    // 渲染层提交的是掩码视图：占位值回填原值，未提交则沿用原值（新增记录无原值 → 丢弃占位）
+    const env =
+      input.env !== undefined ? restoreMaskedMap(input.env, existing?.env) : (existing?.env ?? {})
+    const headers =
+      input.headers !== undefined
+        ? restoreMaskedMap(input.headers, existing?.headers)
+        : undefined
+    const { transport, runtime, pythonPackages, headers: normalizedHeaders } = normalizeInput(
+      { ...input, env, headers },
+      existing
+    )
+    const envCipher = encryptSecretMap(env)
+    const headersCipher = encryptSecretMap(normalizedHeaders)
 
     if (existing) {
       db.prepare(
@@ -136,11 +143,11 @@ export const mcpServerRepo = {
         runtime,
         input.command ?? existing.command,
         JSON.stringify(input.args ?? existing.args),
-        JSON.stringify(input.env ?? existing.env),
+        envCipher,
         input.url ?? existing.url,
         input.enabled !== undefined ? (input.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
         JSON.stringify(pythonPackages),
-        JSON.stringify(headers),
+        headersCipher,
         id
       )
     } else {
@@ -156,12 +163,12 @@ export const mcpServerRepo = {
         runtime,
         input.command ?? null,
         JSON.stringify(input.args ?? []),
-        JSON.stringify(input.env ?? {}),
+        envCipher,
         input.url ?? null,
         input.enabled !== false ? 1 : 0,
         now,
         JSON.stringify(pythonPackages),
-        JSON.stringify(headers)
+        headersCipher
       )
     }
     return mustGet(() => this.get(id), 'MCP Server')
@@ -169,5 +176,61 @@ export const mcpServerRepo = {
 
   delete(id: string): void {
     dbService.getHandle().prepare('DELETE FROM mcp_servers WHERE id=?').run(id)
+  },
+
+  /**
+   * 历史明文 env/headers（JSON 明文、非 v1: 密文）→ 当前字段密钥密文的一次性升级（幂等）。
+   * 必须在字段密钥可用时调用（DB 打开且解锁完成后，见 index.ts 阶段 3）。
+   * 只动非密文列：已加密的行绝不经解密失败路径被回写空值（那才是真的丢数据）。
+   */
+  migratePlaintextSecrets(): void {
+    const db = dbService.getHandle()
+    const rows = db.prepare('SELECT id, env, headers FROM mcp_servers').all() as Pick<
+      McpServerRow,
+      'id' | 'env' | 'headers'
+    >[]
+    const stmtEnv = db.prepare('UPDATE mcp_servers SET env=? WHERE id=?')
+    const stmtHeaders = db.prepare('UPDATE mcp_servers SET headers=? WHERE id=?')
+    let upgraded = 0
+    for (const row of rows) {
+      if (row.env && !isCipherText(row.env)) {
+        stmtEnv.run(encryptSecretMap(decryptSecretMap(row.env)), row.id)
+        upgraded++
+      }
+      if (row.headers && !isCipherText(row.headers)) {
+        stmtHeaders.run(encryptSecretMap(decryptSecretMap(row.headers)), row.id)
+        upgraded++
+      }
+    }
+    if (upgraded > 0) log.info(`MCP Server env/headers 已升级为字段加密: ${upgraded} 列`)
+  },
+
+  /** 轮换前（旧字段密钥仍可用）：导出全部 env/headers 明文快照，仅进程内存 */
+  exportAllSecrets(): Record<string, { env: Record<string, string>; headers: Record<string, string> }> {
+    const snapshot: Record<string, { env: Record<string, string>; headers: Record<string, string> }> = {}
+    for (const row of this.list()) {
+      if (Object.keys(row.env).length > 0 || Object.keys(row.headers).length > 0) {
+        snapshot[row.id] = { env: row.env, headers: row.headers }
+      }
+    }
+    return snapshot
+  },
+
+  /**
+   * 轮换后（新字段密钥已生效）：用新密钥重加密并只改写 env/headers 两列。
+   * 行已删除则跳过（不复活配置）；单行失败仅告警，不影响其余凭据。
+   */
+  restoreAllSecrets(
+    snapshot: Record<string, { env: Record<string, string>; headers: Record<string, string> }>
+  ): void {
+    const db = dbService.getHandle()
+    const stmt = db.prepare('UPDATE mcp_servers SET env=?, headers=? WHERE id=?')
+    for (const [id, secrets] of Object.entries(snapshot)) {
+      try {
+        stmt.run(encryptSecretMap(secrets.env), encryptSecretMap(secrets.headers), id)
+      } catch (e) {
+        log.warn(`MCP 凭据轮换恢复失败 ${id}:`, errMsg(e))
+      }
+    }
   }
 }

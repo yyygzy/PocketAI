@@ -305,6 +305,19 @@ export interface UsageBudgetStatus {
   monthCost: number
   /** 达到上限是否自动停发（硬阻断开关） */
   hardBlock: boolean
+  /** 达到上限 80% 是否 toast 软预警（默认开） */
+  warn: boolean
+}
+
+/** 预算 80% 软预警事件（USAGE_BUDGET_WARNING_EVENT 载荷；同一周期只发一次） */
+export interface BudgetWarnEvent {
+  scope: 'daily' | 'monthly'
+  /** 当前周期已花估算费用 */
+  cost: number
+  /** 预算上限 */
+  limit: number
+  /** cost/limit（0~1+，保留 4 位） */
+  ratio: number
 }
 
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */
@@ -1118,7 +1131,13 @@ export interface AuthLockState {
 
 export type ReminderStatus = 'pending' | 'fired' | 'cancelled' | 'missed'
 
-/** 一次性提醒条目（reminder 工具创建，scheduler 到点触发） */
+/** 循环提醒规则（3 种 kind 覆盖日常场景，不做 cron 表达式） */
+export type ReminderRepeatRule =
+  | { kind: 'daily'; intervalDays: number }
+  | { kind: 'weekly'; weekdays: number[] }
+  | { kind: 'monthly'; dayOfMonth: number }
+
+/** 一次性/循环提醒条目（reminder 工具创建，scheduler 到点触发或重排下一次） */
 export interface ReminderRecord {
   id: string
   text: string
@@ -1127,6 +1146,8 @@ export interface ReminderRecord {
   status: ReminderStatus
   conversationId: string | null
   createdAt: number
+  /** 循环规则（无=一次性，到点 fired；有=到点重排为下次 pending） */
+  repeatRule?: ReminderRepeatRule
 }
 
 /** REMINDER_FIRED 广播载荷；missed>0 表示重启后补发的过期提醒汇总 */
@@ -1145,6 +1166,29 @@ export interface ReminderCreatePayload {
   fireAt: number
   /** 来源会话（可空） */
   conversationId?: string | null
+  /** 循环规则（可空，循环提醒首次触发时间仍受 30 天上限） */
+  repeatRule?: ReminderRepeatRule
+}
+
+/** REMINDER_RESCHEDULE 入参（提醒中心历史 tab missed/cancelled 行「重新安排」） */
+export interface ReminderReschedulePayload {
+  id: string
+  fireAt: number
+  repeatRule?: ReminderRepeatRule
+}
+
+/** REMINDER_UPDATE 入参（提醒中心 pending 行编辑：改时间/文本/规则）；
+ *  repeatRule: undefined=不改，null=清除变一次性，对象=改循环规则 */
+export interface ReminderUpdatePayload {
+  id: string
+  text?: string
+  fireAt?: number
+  repeatRule?: ReminderRepeatRule | null
+}
+
+/** REMINDER_RESCHEDULE_NEXT 入参（历史 tab missed 循环行「重新安排」一键重算回 pending） */
+export interface ReminderRescheduleNextPayload {
+  id: string
 }
 
 export interface UnlockPayload {
@@ -1613,6 +1657,8 @@ export const IPC = {
   PROVIDER_DELETE: 'provider:delete',
   PROVIDER_FETCH_MODELS: 'provider:fetch-models',
   PROVIDER_TEST: 'provider:test',
+  /** 按需揭示单个 Provider 的真实密钥（列表已改为掩码视图，编辑/复制时显式调用） */
+  PROVIDER_REVEAL_KEYS: 'provider:reveal-keys',
 
   ASSISTANT_LIST: 'assistant:list',
   ASSISTANT_GET: 'assistant:get',
@@ -1699,6 +1745,7 @@ export const IPC = {
   USAGE_EXPORT_CSV: 'usage:export-csv', // 用量明细 CSV 保存文件
   USAGE_BUDGET_GET: 'usage:budget-get', // 预算状态（今日/本月已花 + 已配置预算）
   USAGE_BUDGET_SET: 'usage:budget-set', // 保存预算（null=不限制）
+  USAGE_BUDGET_WARNING_EVENT: 'usage:budget-warning', // 主进程→渲染端：日/月预算达 80% 软预警（每周期一次）
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
@@ -1725,6 +1772,12 @@ export const IPC = {
   KB_DOC_ADD_TEXT: 'kb-doc:add-text',
   KB_DOC_DELETE: 'kb-doc:delete',
   KB_DOC_REINDEX: 'kb-doc:reindex',
+  /** 读取 txt 类文档原文供编辑（非 txt 或 v42 前无原文返回 null） */
+  KB_DOC_GET_TEXT: 'kb-doc:get-text',
+  /** 编辑 txt 类文档标题+原文（保存后自动重建索引） */
+  KB_DOC_UPDATE_TEXT: 'kb-doc:update-text',
+  /** 重命名任意类型文档标题（不重建索引） */
+  KB_DOC_RENAME: 'kb-doc:rename',
   KB_SYNC_CHECK: 'kb:sync-check',
   KB_DOC_SET_ENABLED: 'kb-doc:set-enabled',
 
@@ -1755,6 +1808,8 @@ export const IPC = {
   // MCP Server
   MCP_SERVER_LIST: 'mcp-server:list',
   MCP_SERVER_GET: 'mcp-server:get',
+  /** 按需揭示单个 Server 的 env/headers 真实值（列表已改为掩码视图） */
+  MCP_SERVER_REVEAL_SECRETS: 'mcp-server:reveal-secrets',
   MCP_SERVER_SAVE: 'mcp-server:save',
   MCP_SERVER_DELETE: 'mcp-server:delete',
   /** 导出全部 MCP 配置为标准 mcpServers JSON（敏感值默认脱敏，showSaveDialog 选路径） */
@@ -1984,6 +2039,12 @@ export const IPC = {
   REMINDER_LIST: 'reminder:list',
   /** 取消待发提醒（仅 pending 可撤） */
   REMINDER_CANCEL: 'reminder:cancel',
+  /** 重新安排历史提醒（missed/cancelled 行「重新安排」回 pending） */
+  REMINDER_RESCHEDULE: 'reminder:reschedule',
+  /** 编辑 pending 提醒（改时间/文本/循环规则） */
+  REMINDER_UPDATE: 'reminder:update',
+  /** 一键重新安排 missed 循环提醒（按原 rule 重算下次触发时间回 pending） */
+  REMINDER_RESCHEDULE_NEXT: 'reminder:reschedule-next',
 
   // ---------- 平台管家 ----------
   HEALTH_REPORT: 'health:report',

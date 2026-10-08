@@ -75,6 +75,24 @@ export const kbDocAddTextArgsSchema = z.tuple([
   z.string().min(1, '标题不能为空').max(KB_MAX_TITLE_CHARS)
 ])
 
+/** KB_DOC_GET_TEXT 入参：(docId) */
+export const kbDocGetTextArgsSchema = z.tuple([
+  z.string().min(1).max(KB_MAX_ID_CHARS)
+])
+
+/** KB_DOC_UPDATE_TEXT 入参：(docId, title, text) —— 编辑 txt 文档标题+原文 */
+export const kbDocUpdateTextArgsSchema = z.tuple([
+  z.string().min(1).max(KB_MAX_ID_CHARS),
+  z.string().min(1, '标题不能为空').max(KB_MAX_TITLE_CHARS),
+  z.string().min(1, '文本不能为空').max(KB_MAX_TEXT_CHARS)
+])
+
+/** KB_DOC_RENAME 入参：(docId, title) —— 仅改标题，全部文档类型可用 */
+export const kbDocRenameArgsSchema = z.tuple([
+  z.string().min(1).max(KB_MAX_ID_CHARS),
+  z.string().min(1, '标题不能为空').max(KB_MAX_TITLE_CHARS)
+])
+
 /** KB_RETRIEVE 入参：(kbIds, query) */
 export const kbRetrieveArgsSchema = z.tuple([
   z.array(z.string().min(1).max(KB_MAX_ID_CHARS)).max(KB_MAX_RETRIEVE_KBS),
