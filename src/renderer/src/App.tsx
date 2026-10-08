@@ -224,7 +224,7 @@ export default function App() {
             <div className="w-80 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-8 text-center shadow-2xl">
               <div className="mb-4 text-4xl">🔒</div>
               <h2 className="mb-2 text-xl font-semibold text-[var(--color-text)]">{t('lock.locked')}</h2>
-              <p className="mb-6 text-sm text-[var(--color-text-muted)]">{t('lock.protected')}</p>
+              <p className="mb-6 text-sm text-[var(--color-text-muted)]">{dbEncrypted ? t('lock.protected') : t('lock.plainModeNote')}</p>
               {dbEncrypted && (
                 <input
                   type="password"

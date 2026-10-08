@@ -14,6 +14,10 @@ import { errMsg } from '../error'
 const KEY_ENABLED = 'agent.calendar_enabled'
 const KEY_PATHS = 'agent.calendar_ics_paths'
 const MAX_PATHS = 10
+/** SEC-28：单个 .ics 的字节闸（路径数有 MAX_PATHS，单文件此前无界，恶意/异常导出可打爆内存） */
+const MAX_ICS_BYTES = 8 * 1024 * 1024
+/** SEC-28：unfold 后单行字符闸（续行可无限拼回上一行，单行本身也是全量物化） */
+const MAX_ICS_LINE_CHARS = 64 * 1024
 
 export function getCalendarConfig(): CalendarConfig {
   let paths: string[] = []
@@ -92,15 +96,24 @@ export function parseIcsDate(propValue: string, rawParams: string): { date: Date
   return { date: new Date(y, mo, d, h, mi, s), allDay: false }
 }
 
+/** 读取单个 .ics：先过字节闸再整读（超限直接抛，由调用方计入 readErrors） */
+export function readIcsContent(p: string): string {
+  if (fs.statSync(p).size > MAX_ICS_BYTES) {
+    throw new Error(`ICS 超过 ${Math.floor(MAX_ICS_BYTES / (1024 * 1024))}MB 上限，已跳过`)
+  }
+  return fs.readFileSync(p, 'utf8')
+}
+
 export function parseIcs(content: string): IcsEvent[] {
   // unfold：以空格/Tab 开头的续行拼回上一行（按行拆分需兼容 \r\n 与 \n）
   const rawLines = content.split(/\r\n|\n|\r/)
   const lines: string[] = []
   for (const line of rawLines) {
     if ((line.startsWith(' ') || line.startsWith('\t')) && lines.length > 0) {
-      lines[lines.length - 1] += line.slice(1)
+      // 续行无限拼接会把「一行」撑到任意长度，超过上限即丢弃后续部分
+      lines[lines.length - 1] = (lines[lines.length - 1] + line.slice(1)).slice(0, MAX_ICS_LINE_CHARS)
     } else {
-      lines.push(line)
+      lines.push(line.slice(0, MAX_ICS_LINE_CHARS))
     }
   }
 
@@ -212,7 +225,7 @@ export const calendarReadTool: BuiltinTool = {
     const errors: string[] = []
     for (const p of cfg.paths) {
       try {
-        const content = fs.readFileSync(p, 'utf8')
+        const content = readIcsContent(p)
         for (const ev of parseIcs(content)) all.push({ ...ev, source: p })
       } catch (e) {
         errors.push(`${p}: ${errMsg(e)}`)

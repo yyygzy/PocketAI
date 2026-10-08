@@ -1,5 +1,6 @@
 // Provider 适配器抽象接口（L2 模型抽象层）
 import type { ToolSchema, ToolCall } from '../../shared/types'
+import { ensureScheme } from '../../shared/url-policy'
 
 export interface MessageContentPart {
   type: 'text' | 'image_url'
@@ -68,12 +69,9 @@ export interface ProviderAdapter {
   embed(texts: string[], model: string): Promise<number[][]>
 }
 
-/** 规范化 base URL：去除末尾斜杠，自动补 /v1 */
+/** 规范化 base URL：去除末尾斜杠，缺协议按 https 优先补全，自动补 /v1 */
 export function normalizeBaseUrl(input: string): string {
-  let url = input.trim().replace(/\/+$/, '')
-  if (!/^https?:\/\//i.test(url)) {
-    url = 'http://' + url
-  }
+  let url = ensureScheme(input.trim().replace(/\/+$/, ''))
   // 已含版本号前缀则保留，否则补 /v1
   if (/\/v\d+$/.test(url)) return url
   return url + '/v1'

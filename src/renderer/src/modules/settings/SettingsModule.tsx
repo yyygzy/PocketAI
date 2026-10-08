@@ -28,6 +28,7 @@ import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
 import { modLabel } from '../../utils/shortcuts'
+import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 
 // ─── 键盘快捷键速查（只读，应用内固定快捷键） ────────────────────────────
 const ShortcutHelpPanel: React.FC = () => {
@@ -272,9 +273,10 @@ const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => 
     <div className="space-y-3">
       <StatusRow label={t('enc.dbEnc')} value={encrypted ? t('enc.enabled') : t('enc.disabled')} ok={encrypted} />
       <StatusRow label={t('enc.status')} value={unlocked ? t('enc.unlocked') : t('enc.locked')} ok={unlocked} />
-      <StatusRow label={t('enc.field')} value={t('enc.fieldValue')} ok />
+      <StatusRow label={t('enc.field')} value={encrypted ? t('enc.fieldValue') : t('enc.fieldValueNone')} ok={encrypted} />
 
-      <AutoLockRow />
+      {!encrypted && <p className="unlock-recovery-warn mb-2">{t('enc.noneWarn')}</p>}
+      <AutoLockRow encrypted={encrypted} />
 
       <div className="flex flex-wrap gap-2 pt-1">
         {!encrypted && <EnableEncryptionBtn onDone={onChange} setNotice={setNotice} />}
@@ -288,7 +290,7 @@ const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => 
       {notice && <Notice ok={notice.ok} text={notice.text} />}
 
       <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed pt-1">
-        {t('enc.hint')}
+        {encrypted ? t('enc.hint') : t('enc.hintNone')}
       </p>
     </div>
   )
@@ -305,7 +307,7 @@ const StatusRow: React.FC<{ label: string; value: string; ok?: boolean }> = ({ l
 // 自动锁屏超时选项（ms）；0=永不
 const AUTO_LOCK_OPTIONS = [0, 60_000, 300_000, 900_000, 1_800_000, 3_600_000]
 
-const AutoLockRow: React.FC = () => {
+const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
   const { t } = useI18n()
   const [value, setValue] = useState<number | null>(null)
   const { notice: saved, show: markSaved, clear: clearSaved } = useTransientNotice<boolean>(1500)
@@ -352,7 +354,7 @@ const AutoLockRow: React.FC = () => {
         </select>
         {saved && <span className="text-[11px] text-[var(--color-success)]">{t('enc.autoLockSaved')}</span>}
       </div>
-      <div className="text-[11px] text-[var(--color-text-muted)] pl-[4.5rem]">{t('enc.autoLockDesc')}</div>
+      <div className="text-[11px] text-[var(--color-text-muted)] pl-[4.5rem]">{encrypted ? t('enc.autoLockDesc') : t('enc.autoLockDescNone')}</div>
     </div>
   )
 }
@@ -371,7 +373,7 @@ const EnableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }>
 
   async function submit() {
     setLocalErr('')
-    if (pwd.length < 6) return setLocalErr(t('enc.pwdShort'))
+    if (pwd.length < NEW_MASTER_PASSWORD_MIN) return setLocalErr(t('enc.pwdShort'))
     if (pwd !== confirm) return setLocalErr(t('enc.pwdMismatch'))
     setBusy(true)
     try {
@@ -423,7 +425,7 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
 
   async function submit() {
     setLocalErr('')
-    if (newPwd.length < 6) return setLocalErr(t('enc.newShort'))
+    if (newPwd.length < NEW_MASTER_PASSWORD_MIN) return setLocalErr(t('enc.newShort'))
     if (newPwd !== confirm) return setLocalErr(t('enc.pwdMismatch'))
     if (oldPwd === newPwd) return setLocalErr(t('enc.oldNewSame'))
     setBusy(true)
@@ -915,7 +917,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     try {
       const r = await window.pocketai.mergeExecuteWebDAVBackup(mergeFilename, strategy, mergePwd || undefined)
       if (r.ok) {
-        showNotice(true, t('bk.mergeOk'))
+        showNotice(true, `${t('bk.mergeOk')} · ${t('bk.mergeCredNote')}`)
         setMergeOpen(false)
         await refreshList()
       } else if (r.code === 'badPassword' || r.code === 'legacyNoCross') {
@@ -1201,6 +1203,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
               <>
                 <p className="text-xs text-[var(--color-text-muted)] mb-3">
                   {t('bk.mergeDesc')}
+                  <span className="block mt-2 text-[var(--color-warning)]">{t('bk.mergeCredNote')}</span>
                 </p>
                 <div className="space-y-1.5 max-h-48 overflow-y-auto mb-3">
                   {mergeReport.tables.filter((tb) => tb.cloudOnly + tb.localOnly + tb.both > 0).map((tb) => (

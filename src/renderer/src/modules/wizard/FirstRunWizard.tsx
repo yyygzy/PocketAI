@@ -12,6 +12,7 @@ import { OllamaPanel } from '../../components/OllamaPanel'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
+import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 import { PROVIDER_PRESETS } from '../settings/ProviderSettings'
 import type {
   HardwareInfo,
@@ -204,7 +205,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
 
   async function enableEncryption() {
     setEncErr('')
-    if (pwd.length < 6) return setEncErr(t('unlock.pwdTooShort'))
+    if (pwd.length < NEW_MASTER_PASSWORD_MIN) return setEncErr(t('unlock.pwdTooShort'))
     if (pwd !== pwd2) return setEncErr(t('unlock.pwdMismatch'))
     setBusy(true)
     try {

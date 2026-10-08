@@ -195,7 +195,7 @@ const MIGRATIONS: Migration[] = [
         updated_at INTEGER NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS field_keys (
+      CREATE TABLE IF NOT EXISTS field_keys ( -- 未使用（SEC-26）：v5 设想的 per-field salt 表，代码从未读写；Drop 需同步 merge 的敏感表清单，保留不删
         id TEXT PRIMARY KEY,
         target_table TEXT NOT NULL,
         target_column TEXT NOT NULL,
@@ -203,7 +203,7 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL
       );
 
-      ALTER TABLE providers ADD COLUMN api_key_cipher TEXT;
+      ALTER TABLE providers ADD COLUMN api_key_cipher TEXT; -- 未使用（SEC-26）：真实列是 api_key_encrypted，此死列保留以兼容旧库 schema
     `
   },
   {

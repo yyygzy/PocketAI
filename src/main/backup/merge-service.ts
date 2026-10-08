@@ -92,6 +92,16 @@ const CLOUD_OVERWRITE_TABLES = [
   'knowledge_bases', 'kb_documents', 'kb_chunks'
 ]
 
+/**
+ * 配置表里的凭据列（字段级密文）：跨机合并时云端那份用源机主密钥加密，目标机
+ * decryptSecret/decryptApiKeys 一律 fail-closed 返回空 → 表现为「Key 凭空丢失」。
+ * 合并策略对这些列改为「本机已有行保留本机密文」，并在结果里明确告知不搬运凭据。
+ */
+const CREDENTIAL_COLUMNS: Record<string, string[]> = {
+  providers: ['api_key_encrypted'],
+  mcp_servers: ['env', 'headers']
+}
+
 /** 本地保留不动的表（不参与合并） */
 const LOCAL_KEEP_TABLES = [
   'app_config', 'field_keys', 'license_records', 'schema_migrations'
@@ -506,7 +516,12 @@ export function mergeTable(
 }
 
 /** 云端覆盖配置类表 */
-export function overwriteTable(localDb: Database.Database, cloudDb: Database.Database, table: string): number {
+export function overwriteTable(
+  localDb: Database.Database,
+  cloudDb: Database.Database,
+  table: string,
+  opts: { preserveColumns?: string[] } = {}
+): number {
   const cloudTbl = cloudDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)
   if (!cloudTbl) return 0
 
@@ -519,13 +534,29 @@ export function overwriteTable(localDb: Database.Database, cloudDb: Database.Dat
   const placeholders = columns.map(() => '?').join(', ')
   const colList = columns.join(', ')
 
+  // 凭据列（字段密文）跨机不可解：先按 id 快照本机值，覆盖写入时本机已有行保留本机密文
+  const preserve = (opts.preserveColumns ?? []).filter((c) => columns.includes(c))
+  const localSecrets = new Map<string, unknown[]>()
+  if (preserve.length > 0) {
+    const snapRows = localDb
+      .prepare(`SELECT id, ${preserve.join(', ')} FROM ${table}`)
+      .all() as Array<Record<string, unknown>>
+    for (const r of snapRows) localSecrets.set(String(r.id), preserve.map((c) => r[c] ?? null))
+  }
+
   let count = 0
   const tx = localDb.transaction(() => {
     localDb.prepare(`DELETE FROM ${table}`).run()
     if (cloudRows.length > 0) {
       const insertStmt = localDb.prepare(`INSERT INTO ${table} (${colList}) VALUES (${placeholders})`)
       for (const row of cloudRows) {
-        const vals = columns.map((c) => row[c] ?? null)
+        const savedSecrets = localSecrets.get(String(row.id))
+        const vals = columns.map((c) => {
+          const p = preserve.indexOf(c)
+          // 本机已有同 id 行：凭据列沿用本机密文（云端那份是用源机主密钥加的，本机解不开）
+          if (p < 0) return row[c] ?? null
+          return savedSecrets ? savedSecrets[p] : row[c] ?? null
+        })
         insertStmt.run(...vals)
         count++
       }
@@ -563,9 +594,11 @@ export async function executeMerge(
 
     // 2. 云端覆盖配置类表
     for (const table of CLOUD_OVERWRITE_TABLES) {
-      const n = overwriteTable(localDb, cloudDb, table)
-      if (n > 0) summaryParts.push(`${table}: ${n} 行(云端)`)
+      const n = overwriteTable(localDb, cloudDb, table, { preserveColumns: CREDENTIAL_COLUMNS[table] })
+      if (n > 0) summaryParts.push(CREDENTIAL_COLUMNS[table] ? `${table}: ${n} 行(云端，凭据列保留本机)` : `${table}: ${n} 行(云端)`)
     }
+
+    summaryParts.push('提示：跨机合并不搬运模型/服务凭据（Key、env、headers 仍是本机值或本机新行的云端密文），目标机请在「设置」重新填写')
 
     // 3. 附件合并
     const { ATTACHMENTS_DIR } = await import('../portable')

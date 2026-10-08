@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { errText } from '../../utils/error'
+import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 
 type UnlockMode = 'unlock' | 'setPassword' | 'recovery'
 
@@ -171,7 +172,7 @@ export function UnlockPage() {
         setError(t('unlock.enterRecovery'))
         return
       }
-      if (password.length < 6) {
+      if (password.length < NEW_MASTER_PASSWORD_MIN) {
         setError(t('unlock.pwdTooShort'))
         return
       }
@@ -205,7 +206,7 @@ export function UnlockPage() {
     }
 
     if (mode === 'setPassword') {
-      if (password.length < 6) {
+      if (password.length < NEW_MASTER_PASSWORD_MIN) {
         setError(t('unlock.pwdTooShort'))
         return
       }

@@ -330,13 +330,15 @@ describe('channels/preferences/encryption/license — 上限', () => {
     expect(uiPrefsPatchSchema.safeParse({ opacity: 0.8, customCss: 'body{}' }).success).toBe(true)
   })
 
-  it('密码 <6 或 >128 拒绝；恢复码 >64 拒绝', () => {
+  it('校验档 <6 / 新设档 <10 / >128 拒绝；恢复码 >64 拒绝', () => {
     expect(masterPasswordSchema.safeParse('12345').success).toBe(false)
     expect(masterPasswordSchema.safeParse('p'.repeat(129)).success).toBe(false)
     expect(masterPasswordSchema.safeParse('my-secret-pw').success).toBe(true)
     expect(recoveryCodeSchema.safeParse('r'.repeat(65)).success).toBe(false)
+    // 恢复码重置产生的是新密码，走新设档（SEC-32①：下限 10，校验档仍是 6）
+    expect(recoverPayloadSchema.safeParse({ code: 'ABCD-1234', newPassword: 'new-pw-6' }).success).toBe(false)
     expect(
-      recoverPayloadSchema.safeParse({ code: 'ABCD-1234', newPassword: 'new-pw-6' }).success
+      recoverPayloadSchema.safeParse({ code: 'ABCD-1234', newPassword: 'new-pw-1234' }).success
     ).toBe(true)
   })
 

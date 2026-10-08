@@ -3,6 +3,8 @@ import type { ProviderRecord, ProviderType } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+import { useConfirm } from '../../components/ConfirmDialog'
+import { isPlainRemoteHttp } from '../../../../shared/url-policy'
 
 export const PROVIDER_PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
   // ── 海外主流 ──
@@ -44,6 +46,7 @@ export const ProviderSettings: React.FC = () => {
   // 密钥框当前是掩码视图还是已揭示的明文（主进程列表只回掩码，见 handlers/providers.ts）
   const [keysRevealed, setKeysRevealed] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  const { confirm, dialog } = useConfirm()
 
   const load = useCallback(() => window.pocketai.listProviders().then(setProviders).catch(reportIpcError('providerSettings.list')), [])
   useEffect(() => {
@@ -79,8 +82,14 @@ export const ProviderSettings: React.FC = () => {
       setNotice({ ok: false, text: t('provider.nameUrlRequired') })
       return
     }
+    const baseUrl = editing.baseUrl.trim()
+    // 非回环 http 会把 API Key 与整段上下文裸奔在链路上，需用户显式确认后才落库
+    if (isPlainRemoteHttp(baseUrl) && !(await confirm({ message: t('provider.plainHttpWarn'), danger: true }))) {
+      return
+    }
     const toSave: ProviderRecord = {
       ...editing,
+      baseUrl,
       apiKeys: keysText
         .split('\n')
         .map((s) => s.trim())
@@ -261,6 +270,7 @@ export const ProviderSettings: React.FC = () => {
             </Field>
 
             {notice && <Notice ok={notice.ok} text={notice.text} />}
+            {dialog}
 
             <div className="flex gap-2 pt-2">
               <button onClick={handleSave} className="btn-primary">{t('common.save')}</button>

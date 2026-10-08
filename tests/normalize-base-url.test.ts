@@ -3,7 +3,7 @@
 // 覆盖 src/main/providers/types.ts 的 normalizeBaseUrl：
 // - trim 空白
 // - 去除末尾斜杠
-// - 无 http(s):// 前缀 → 补 http://
+// - 无 http(s):// 前缀 → 补 https://（SEC-16：回环地址例外补 http，保 Ollama / LM Studio）
 // - 无 /vN 版本后缀 → 补 /v1
 //
 // 策略：纯函数，无依赖，直接测试。
@@ -23,8 +23,13 @@ describe('normalizeBaseUrl — Base URL 标准化', () => {
     expect(normalizeBaseUrl('  https://api.example.com/v1  ')).toBe('https://api.example.com/v1')
   })
 
-  it('无协议 → 补 http://', () => {
-    expect(normalizeBaseUrl('api.example.com')).toBe('http://api.example.com/v1')
+  it('无协议 → 补 https://（SEC-16：不再默认明文带 Key）', () => {
+    expect(normalizeBaseUrl('api.example.com')).toBe('https://api.example.com/v1')
+  })
+
+  it('无协议的本地服务 → 仍补 http://（Ollama/LM Studio 惯例）', () => {
+    expect(normalizeBaseUrl('localhost:11434')).toBe('http://localhost:11434/v1')
+    expect(normalizeBaseUrl('127.0.0.1:1234/v1')).toBe('http://127.0.0.1:1234/v1')
   })
 
   it('无 /vN 后缀 → 补 /v1', () => {

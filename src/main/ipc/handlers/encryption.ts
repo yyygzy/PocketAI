@@ -18,6 +18,7 @@ import { createLogger } from '../../logger'
 import { safeHandle, errMsg, argsSchema, z } from '../safe-handle'
 import {
   masterPasswordSchema,
+  newMasterPasswordSchema,
   recoveryCodeSchema,
   recoverPayloadSchema
 } from '../../../shared/schemas/encryption'
@@ -119,7 +120,7 @@ export function registerEncryptionHandlers(): void {
   safeHandle(IPC.ENCRYPTION_SET_MASTER_PASSWORD, (_e, password: string) => {
     unlockCoordinator.submit({ setPassword: password })
     return { ok: true }
-  }, argsSchema(masterPasswordSchema))
+  }, argsSchema(newMasterPasswordSchema))
   safeHandle(IPC.ENCRYPTION_LOCK, () => {
     // 先进隐私锁状态机（同步触发 onStateChange → 清密钥 + 关库），
     // 使 IPC 网关与主窗口遮罩在加密锁期间同样生效
@@ -215,7 +216,7 @@ export function registerEncryptionHandlers(): void {
 
     log.info('密码轮换成功')
     return { ok: true, recoveryCode: newRecoveryCode }
-  }, argsSchema(masterPasswordSchema, masterPasswordSchema))
+  }, argsSchema(masterPasswordSchema, newMasterPasswordSchema))
   safeHandle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config
     const salt = appConfigRepo.getMasterPasswordSalt()
@@ -305,7 +306,7 @@ export function registerEncryptionHandlers(): void {
     }
     restoreFieldCredentials(fieldSnapshot)
     return { ok: true }
-  }, argsSchema(masterPasswordSchema))
+  }, argsSchema(newMasterPasswordSchema))
 
   // ---------- 恢复密钥 ----------
   safeHandle(IPC.ENCRYPTION_HAS_RECOVERY, () => recoveryKeyManager.hasRecovery())

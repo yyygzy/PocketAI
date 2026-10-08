@@ -8,7 +8,7 @@
 // - rangeWindow：时间窗口（today/tomorrow/this-week/upcoming/all）
 //
 // 策略：纯函数直接 import，无 mock。rangeWindow 依赖系统时间，断言结构与边界。
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // 被测纯函数不依赖 appConfigRepo，但模块顶层 import 会触发 DB→electron 链，
 // vitest 下 require('electron') 返回路径字符串，故 mock 掉避免初始化崩溃。
@@ -16,13 +16,20 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: { get: () => null, set: () => {}, delete: () => {} }
 }))
 
+// SEC-28 字节闸要观察 stat 大小与「是否真的读了文件」，node:fs 全部 mock
+vi.mock('node:fs', () => ({
+  default: { statSync: vi.fn(), readFileSync: vi.fn() }
+}))
+
 import {
   unescapeText,
   parseIcsDate,
   parseIcs,
+  readIcsContent,
   fmtLocal,
   rangeWindow
 } from '../src/main/tools/calendar-ics'
+import fs from 'node:fs'
 
 describe('unescapeText — iCalendar 文本反转义', () => {
   it('\\n → 换行', () => {
@@ -311,5 +318,52 @@ describe('rangeWindow — 时间窗口', () => {
     const w = rangeWindow('unknown-range')
     expect(w.label).toBe('全部')
     expect(w.to).toBeNull()
+  })
+})
+
+// SEC-28：.ics 是用户/第三方导出物，异常或恶意文件不应把主进程打爆
+describe('ICS 大小闸（SEC-28）', () => {
+  beforeEach(() => {
+    vi.mocked(fs.statSync).mockReset()
+    vi.mocked(fs.readFileSync).mockReset()
+  })
+
+  it('单文件超过 8MB → 抛错且不整读', () => {
+    vi.mocked(fs.statSync).mockReturnValue({ size: 9 * 1024 * 1024 } as never)
+    expect(() => readIcsContent('big.ics')).toThrow(/超过 8MB/)
+    expect(fs.statSync).toHaveBeenCalledWith('big.ics')
+    expect(fs.readFileSync).not.toHaveBeenCalled()
+  })
+
+  it('上限内 → 正常读出内容', () => {
+    vi.mocked(fs.statSync).mockReturnValue({ size: 2048 } as never)
+    vi.mocked(fs.readFileSync).mockReturnValue('BEGIN:VEVENT' as never)
+    expect(readIcsContent('ok.ics')).toBe('BEGIN:VEVENT')
+  })
+
+  it('续行无限拼接 → unfold 后的单行封顶在 64KB', () => {
+    const chunk = 'x'.repeat(1000)
+    const ics = [
+      'BEGIN:VEVENT',
+      'DTSTART:20260924T100000',
+      'SUMMARY:head',
+      ...Array.from({ length: 200 }, () => ` ${chunk}`),
+      'END:VEVENT'
+    ].join('\n')
+    const ev = parseIcs(ics)[0]!
+    expect(ev.summary.startsWith('head')).toBe(true)
+    expect(ev.summary.length).toBeLessThanOrEqual(64 * 1024)
+  })
+
+  it('单条无续行的超长行同样截断（DESCRIPTION 不无限增长）', () => {
+    const ics = [
+      'BEGIN:VEVENT',
+      'DTSTART:20260924T100000',
+      `DESCRIPTION:${'y'.repeat(200_000)}`,
+      'SUMMARY:s',
+      'END:VEVENT'
+    ].join('\n')
+    const ev = parseIcs(ics)[0]!
+    expect((ev.description ?? '').length).toBeLessThanOrEqual(64 * 1024)
   })
 })

@@ -221,6 +221,105 @@ describe('overwriteTable', () => {
   })
 })
 
+// SEC-30：配置表的凭据列是字段密文，跨机合并时云那份用源机主密钥加密、本机解不开。
+// overwriteTable 的 preserveColumns 让本机已有行的凭据列保持本机值，其余列照旧云端覆盖。
+const PROVIDER_SCHEMA = `
+  CREATE TABLE providers (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    api_key_encrypted TEXT
+  );
+`
+const MCP_SCHEMA = `
+  CREATE TABLE mcp_servers (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    env TEXT,
+    headers TEXT
+  );
+`
+
+function createSchemaDb(schema: string): Database.Database {
+  const db = new Database(':memory:')
+  db.exec(schema)
+  return db
+}
+
+function insertProvider(db: Database.Database, id: string, name: string, keyCipher: string) {
+  db.prepare('INSERT INTO providers (id, name, api_key_encrypted) VALUES (?, ?, ?)').run(id, name, keyCipher)
+}
+
+function getProvider(db: Database.Database, id: string): Record<string, unknown> | undefined {
+  return db.prepare('SELECT * FROM providers WHERE id=?').get(id) as Record<string, unknown> | undefined
+}
+
+function insertMcp(db: Database.Database, id: string, name: string, env: string, headers: string) {
+  db.prepare('INSERT INTO mcp_servers (id, name, env, headers) VALUES (?, ?, ?, ?)').run(id, name, env, headers)
+}
+
+function getMcp(db: Database.Database, id: string): Record<string, unknown> | undefined {
+  return db.prepare('SELECT * FROM mcp_servers WHERE id=?').get(id) as Record<string, unknown> | undefined
+}
+
+describe('overwriteTable 凭据列保留（SEC-30）', () => {
+  it('同 id 行：非凭据列取云端，凭据列保留本机密文', () => {
+    const local = createSchemaDb(PROVIDER_SCHEMA)
+    const cloud = createSchemaDb(PROVIDER_SCHEMA)
+    insertProvider(local, 'P1', 'local-name', 'v1:LOCAL-KEY')
+    insertProvider(cloud, 'P1', 'cloud-name', 'v1:OTHER-MACHINE-KEY')
+
+    const n = overwriteTable(local, cloud, 'providers', { preserveColumns: ['api_key_encrypted'] })
+    expect(n).toBe(1)
+    const row = getProvider(local, 'P1')
+    expect(row?.name).toBe('cloud-name')
+    expect(row?.api_key_encrypted).toBe('v1:LOCAL-KEY')
+  })
+
+  it('云端独有行：没有本机值可留 → 沿用云端凭据（同机合并仍可用）', () => {
+    const local = createSchemaDb(PROVIDER_SCHEMA)
+    const cloud = createSchemaDb(PROVIDER_SCHEMA)
+    insertProvider(cloud, 'P2', 'cloud-only', 'v1:CLOUD-KEY')
+
+    overwriteTable(local, cloud, 'providers', { preserveColumns: ['api_key_encrypted'] })
+    expect(getProvider(local, 'P2')?.api_key_encrypted).toBe('v1:CLOUD-KEY')
+  })
+
+  it('多凭据列（mcp_servers 的 env + headers）一起保留', () => {
+    const local = createSchemaDb(MCP_SCHEMA)
+    const cloud = createSchemaDb(MCP_SCHEMA)
+    insertMcp(local, 'M1', 'local-title', 'v1:LOCAL-ENV', 'v1:LOCAL-HEADERS')
+    insertMcp(cloud, 'M1', 'cloud-title', 'v1:CLOUD-ENV', 'v1:CLOUD-HEADERS')
+    insertMcp(cloud, 'M2', 'cloud-new', 'v1:CLOUD-ENV2', 'v1:CLOUD-HEADERS2')
+
+    const n = overwriteTable(local, cloud, 'mcp_servers', { preserveColumns: ['env', 'headers'] })
+    expect(n).toBe(2)
+    expect(getMcp(local, 'M1')).toMatchObject({ name: 'cloud-title', env: 'v1:LOCAL-ENV', headers: 'v1:LOCAL-HEADERS' })
+    expect(getMcp(local, 'M2')).toMatchObject({ env: 'v1:CLOUD-ENV2', headers: 'v1:CLOUD-HEADERS2' })
+  })
+
+  it('不传 preserveColumns → 凭据列照旧被云端覆盖（回归保护）', () => {
+    const local = createSchemaDb(PROVIDER_SCHEMA)
+    const cloud = createSchemaDb(PROVIDER_SCHEMA)
+    insertProvider(local, 'P1', 'local-name', 'v1:LOCAL-KEY')
+    insertProvider(cloud, 'P1', 'cloud-name', 'v1:CLOUD-KEY')
+
+    overwriteTable(local, cloud, 'providers')
+    expect(getProvider(local, 'P1')?.api_key_encrypted).toBe('v1:CLOUD-KEY')
+  })
+
+  it('云端库没有该凭据列（旧备份）→ 保留集为空，覆盖正常完成', () => {
+    const local = createSchemaDb(PROVIDER_SCHEMA)
+    const cloud = new Database(':memory:')
+    cloud.exec('CREATE TABLE providers (id TEXT PRIMARY KEY, name TEXT)')
+    cloud.prepare('INSERT INTO providers (id, name) VALUES (?, ?)').run('P1', 'cloud-name')
+    insertProvider(local, 'P1', 'local-name', 'v1:LOCAL-KEY')
+
+    const n = overwriteTable(local, cloud, 'providers', { preserveColumns: ['api_key_encrypted'] })
+    expect(n).toBe(1)
+    expect(getProvider(local, 'P1')?.name).toBe('cloud-name')
+  })
+})
+
 describe('恶意备份库列名收口（SQL 注入防御）', () => {
   it('mergeTable：云端表含注入型畸形列名 → 按本地白名单过滤后正常合并', () => {
     const local = createDb()
