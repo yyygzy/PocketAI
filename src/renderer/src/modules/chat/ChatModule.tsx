@@ -1188,20 +1188,43 @@ export const ChatModule: React.FC = () => {
   }, [toast, t])
 
   const handleImportAssistants = useCallback(async () => {
+    // 导入结果落地：刷新列表 + 摘要提示；工具授权一律不随导入生效（SEC-3），单独提示重勾
+    const applyResult = async (
+      r: { imported: number; overwritten: number; skipped: number; droppedKb: number; droppedSkills: number; droppedTools: number }
+    ) => {
+      await reloadAssistants()
+      toast.success(t('rail.importDone', { imported: r.imported, overwritten: r.overwritten, skipped: r.skipped }))
+      if (r.droppedKb > 0 || r.droppedSkills > 0) {
+        toast.error(t('rail.importDropped', { kb: r.droppedKb, skills: r.droppedSkills }))
+      }
+      if (r.droppedTools > 0) toast.warning(t('rail.importToolsDropped', { n: r.droppedTools }))
+    }
+
     const r = await window.pocketai.importAssistants()
     if (!r.ok) {
       toast.error(r.error)
       return
     }
     if ('canceled' in r && r.canceled) return
-    if ('imported' in r) {
-      await reloadAssistants()
-      toast.success(t('rail.importDone', { imported: r.imported, overwritten: r.overwritten, skipped: r.skipped }))
-      if (r.droppedKb > 0 || r.droppedSkills > 0) {
-        toast.error(t('rail.importDropped', { kb: r.droppedKb, skills: r.droppedSkills }))
+    // 同名覆盖需逐条确认（主进程只暂存对话框选中的路径，确认后同一份文件才会写入）
+    if ('needsConfirm' in r) {
+      const ok = await confirm({
+        title: t('rail.importConfirmTitle'),
+        message: `${t('rail.importConfirmBody', { names: r.conflicts.join('、') })}\n\n${t('rail.importToolsDropped', { n: r.droppedTools })}`,
+        danger: true
+      })
+      if (!ok) return
+      const again = await window.pocketai.importAssistants({ confirmOverwrite: true })
+      if (!again.ok) {
+        toast.error(again.error)
+        return
       }
+      if ('canceled' in again || 'needsConfirm' in again) return
+      await applyResult(again)
+      return
     }
-  }, [reloadAssistants, toast, t])
+    if ('imported' in r) await applyResult(r)
+  }, [confirm, reloadAssistants, toast, t])
 
   // 消息右键「提醒我」：正文截取 200 字，带会话 id 落库；到点由系统通知
   const handleRemind = useCallback(async (messageId: string, fireAt: number) => {

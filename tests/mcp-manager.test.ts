@@ -160,6 +160,7 @@ function makeRecord(over: Partial<McpServerRecord> = {}): McpServerRecord {
     headers: {},
     enabled: true,
     createdAt: 0,
+    trustReadOnly: false,
     pythonPackages: [],
     ...over
   }
@@ -330,9 +331,24 @@ describe('McpManager — start 成功路径', () => {
     const r = await mgr.start('srv1')
     expect(r.status).toBe('running')
     expect(r.tools).toHaveLength(2)
-    expect(r.tools[0]).toMatchObject({ id: 'mcp:srv1:get_user', name: 'get_user', permission: 'auto' })
-    expect(r.tools[1]).toMatchObject({ id: 'mcp:srv1:list_items', name: 'list_items', permission: 'auto' })
+    // SEC-5：未显式信任的 Server，只读命名也是 confirm（名字由 Server 自报）
+    expect(r.tools[0]).toMatchObject({ id: 'mcp:srv1:get_user', name: 'get_user', permission: 'confirm' })
+    expect(r.tools[1]).toMatchObject({ id: 'mcp:srv1:list_items', name: 'list_items', permission: 'confirm' })
     expect(events.map((e) => e.status)).toEqual(['starting', 'running'])
+  })
+
+  it('trustReadOnly=true → 只读命名降级为 auto（显式信任才生效）', async () => {
+    mocks.repoList = [makeRecord({ trustReadOnly: true })]
+    let reqIdx = 0
+    mocks.requestImpl = async () => {
+      reqIdx++
+      return reqIdx === 1
+        ? { protocolVersion: '2024-11-05' }
+        : { tools: [{ name: 'get_user' }, { name: 'do_thing' }] }
+    }
+    const r = await mgr.start('srv1')
+    expect(r.tools[0]).toMatchObject({ name: 'get_user', permission: 'auto' })
+    expect(r.tools[1]).toMatchObject({ name: 'do_thing', permission: 'confirm' })
   })
 
   it('spawn 失败 → status error，throw，client.shutdown 被调', async () => {

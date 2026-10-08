@@ -9,6 +9,8 @@ import type {
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
+import { useConfirm } from '../../../components/ConfirmDialog'
+import { formatMcpLaunch, mcpSecretKeyHint } from './mcp-launch'
 import { StatusDot, MiniBtn } from '../ui'
 import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
@@ -28,6 +30,8 @@ interface ToolRunState {
 export const McpPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
+  // 重命名解构：本组件仍有一处原生 confirm 调用（handleDelete），不要让 hook 的 confirm 遮蔽它
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm()
   const [records, setRecords] = useState<McpServerRecord[]>([])
   const [runtimes, setRuntimes] = useState<McpServerRuntime[]>([])
   const [editing, setEditing] = useState<Partial<McpServerRecord> | null>(null)
@@ -77,6 +81,7 @@ export const McpPanel: React.FC = () => {
           headers: base?.headers ?? {},
           enabled: base?.enabled ?? false,
           createdAt: base?.createdAt ?? Date.now(),
+          trustReadOnly: base?.trustReadOnly ?? false,
           pythonPackages: base?.pythonPackages ?? [],
           status: evt.status,
           tools: evt.tools ?? [],
@@ -138,7 +143,15 @@ export const McpPanel: React.FC = () => {
     }))
   }
 
+  // SEC-2：启动前把真正要执行的命令行摊开给用户看（导入/模板创建的记录只有在这里才落地成进程）
   const handleStart = async (id: string) => {
+    const rec = records.find((r) => r.id === id) ?? runtimes.find((r) => r.id === id) ?? null
+    const launch = formatMcpLaunch(rec)
+    const secretKeys = mcpSecretKeyHint(rec)
+    const message = secretKeys
+      ? `${t('agent.startConfirm', { cmd: launch })}\n\n${t('agent.startConfirmSecrets', { keys: secretKeys })}`
+      : t('agent.startConfirm', { cmd: launch })
+    if (!(await askConfirm({ title: t('common.start'), message, danger: true }))) return
     const r = await window.pocketai.startMcpServer(id)
     if (!r.ok) toast.error(t('agent.startFail', { e: r.error ?? t('common.unknownError') }))
   }
@@ -441,6 +454,8 @@ export const McpPanel: React.FC = () => {
           </div>
         )}
       </div>
+
+      {confirmDialog}
 
       {importOpen && (
         <McpImportModal

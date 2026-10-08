@@ -57,7 +57,8 @@ import {
   shouldSkipPlanning,
   buildReplanPrompt,
   estimateTokens,
-  cutToTokens
+  cutToTokens,
+  resolveAgentToolPermissions
 } from '../src/main/agent/engine'
 import {
   injectAttachments,
@@ -447,5 +448,33 @@ describe('cutToTokens — token 预算截断', () => {
   it('边界：预算 0 返回空串；预算 1 只剩省略号', () => {
     expect(cutToTokens('abc', 0)).toBe('')
     expect(cutToTokens('你好', 1)).toBe('…')
+  })
+})
+
+describe('resolveAgentToolPermissions — 工具授权语义（SEC-3）', () => {
+  it('助手显式配置原样生效（含显式 ["*"]）', () => {
+    expect(
+      resolveAgentToolPermissions(['kb.search', 'time.now'], { hasAssistant: true, isBuiltin: false })
+    ).toEqual(['kb.search', 'time.now'])
+    expect(
+      resolveAgentToolPermissions(['*'], { hasAssistant: true, isBuiltin: false })
+    ).toEqual(['*'])
+  })
+
+  it('用户助手空配置 = 无工具（导入的助手不再等于全授权）', () => {
+    expect(resolveAgentToolPermissions([], { hasAssistant: true, isBuiltin: false })).toEqual([])
+    expect(
+      resolveAgentToolPermissions(undefined, { hasAssistant: true, isBuiltin: false })
+    ).toEqual([])
+  })
+
+  it('助手 id 指向已被删除的助手 = 无工具（不因查不到记录而放开全部）', () => {
+    expect(resolveAgentToolPermissions(undefined, { hasAssistant: true, isBuiltin: false })).toEqual([])
+  })
+
+  it('保留旧的「空即全授权」：未选助手、以及内置助手', () => {
+    expect(resolveAgentToolPermissions([], { hasAssistant: false, isBuiltin: false })).toEqual(['*'])
+    expect(resolveAgentToolPermissions(undefined, { hasAssistant: false, isBuiltin: false })).toEqual(['*'])
+    expect(resolveAgentToolPermissions([], { hasAssistant: true, isBuiltin: true })).toEqual(['*'])
   })
 })

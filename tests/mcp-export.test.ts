@@ -18,6 +18,7 @@ function rec(partial: Partial<McpServerRecord> & Pick<McpServerRecord, 'name' | 
     headers: {},
     enabled: true,
     createdAt: 1700000000000,
+    trustReadOnly: false,
     pythonPackages: [],
     ...partial
   }

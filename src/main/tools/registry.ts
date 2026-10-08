@@ -9,6 +9,62 @@ import { mcpManager } from '../mcp/manager'
 import type { ToolSchema, ToolResult } from '../../shared/types'
 import { errMsg } from '../error'
 
+/** LLM 函数名合法形态（各 OpenAI 兼容端点普遍要求字母开头 + 字母数字下划线） */
+const LLM_FUNCTION_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+
+/** 把任意工具名清洗成合法函数字符名（非法字符转下划线，缺首字母补 m） */
+export function sanitizeFunctionName(raw: string): string {
+  const cleaned = String(raw ?? '').replace(/[^A-Za-z0-9_]/g, '_').slice(0, 64)
+  return /^[A-Za-z]/.test(cleaned) ? cleaned : `m_${cleaned}`.slice(0, 64)
+}
+
+/** 消歧前缀：取 serverId（UUID）去横线后前 8 位，确定性且不受 Server 改名影响 */
+function mcpNameScope(serverId: string): string {
+  const hex = String(serverId ?? '').replace(/[^0-9a-fA-F]/g, '')
+  return `m_${(hex.slice(0, 8) || 'srv').toLowerCase()}`
+}
+
+/** 在同名集合里取一个未占用名字（冲突时追加 _2/_3…） */
+function uniqueName(base: string, taken: Set<string>): string {
+  let candidate = base
+  let n = 2
+  while (taken.has(candidate)) {
+    candidate = `${base}_${n}`
+    n++
+  }
+  return candidate
+}
+
+/**
+ * 保证 MCP 工具的可调用名在「内置 + 已注册 MCP」范围内全局唯一，并符合 LLM 函数字符名约束。
+ *
+ * 为什么必须改名（SEC-4 根因）：授权按 id 过滤、而分类与执行按 name 查找（协议只给 name），
+ * 一旦 MCP server 工具与内置工具同名（如 fs_write），模型看到的是 Server 的描述，
+ * 实际命中的却是内置工具——等于用「未授权的工具」干活；两个 Server 同名工具也会互相遮蔽。
+ * 改名后的原工具名保留在 remoteName，调用 Server 时仍用原名，id 不变故助手授权不受影响。
+ */
+export function ensureUniqueToolNames(
+  builtinTools: ToolSchema[],
+  mcpTools: ToolSchema[]
+): ToolSchema[] {
+  const taken = new Set<string>(builtinTools.map((t) => t.name))
+  const out: ToolSchema[] = []
+  for (const t of mcpTools) {
+    const nameValid = LLM_FUNCTION_NAME_RE.test(t.name)
+    const aliasNeeded = !nameValid || taken.has(t.name)
+    if (!aliasNeeded) {
+      taken.add(t.name)
+      out.push(t)
+      continue
+    }
+    const base = `${mcpNameScope(t.mcpServerId ?? t.id)}_${sanitizeFunctionName(t.name)}`
+    const aliased = uniqueName(base, taken)
+    taken.add(aliased)
+    out.push({ ...t, name: aliased, remoteName: t.name })
+  }
+  return out
+}
+
 class ToolRegistry {
   /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
   private listBuiltinTools() {
@@ -31,9 +87,9 @@ class ToolRegistry {
     return tools
   }
 
-  /** 全部工具（内置 + MCP） */
+  /** 全部工具（内置 + MCP，MCP 名称已保证全局唯一） */
   listAll(): ToolSchema[] {
-    return [...this.listBuiltin(), ...this.listMcp()]
+    return [...this.listBuiltin(), ...ensureUniqueToolNames(this.listBuiltin(), this.listMcp())]
   }
 
   /** 按工具名查找 schema（内置 + MCP），未找到返回 undefined */
@@ -165,7 +221,12 @@ class ToolRegistry {
       if (!schema.mcpServerId) {
         return { toolCallId: '', name: toolName, content: '缺少 mcpServerId', isError: true }
       }
-      const raw = await mcpManager.callTool(schema.mcpServerId, schema.name, args)
+      // 改名后的工具对 Server 仍用原名（name 是给 LLM 看的唯一可调用名）
+      const raw = await mcpManager.callTool(
+        schema.mcpServerId,
+        schema.remoteName ?? schema.name,
+        args
+      )
       // MCP 返回 { content: [{ type, text }], isError? }，扁平化为字符串
       const content = stringifyMcpResult(raw)
       return { toolCallId: '', name: toolName, content, isError: mcpResultIsError(raw) }

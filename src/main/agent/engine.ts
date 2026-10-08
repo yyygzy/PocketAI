@@ -193,6 +193,22 @@ const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），�
 
 {{memory}}`
 
+/**
+ * 工具授权解析（纯函数，SEC-3）：
+ * - 助手显式配置了 toolPermissions → 原样生效（`['*']` 是显式的全授权声明）；
+ * - 空数组 = **不授权任何工具**；只有两种情形保留旧的「空即全授权」：
+ *   未选助手（平台默认 Agent 会话）与内置助手（避免升级后历史助手突然失去全部能力）。
+ * 曾经的无条件 `[] → ['*']` 让「拿到一个助手 JSON」等价于「拿到全授权 Agent（含 shell_exec）」。
+ */
+export function resolveAgentToolPermissions(
+  assistantPermissions: string[] | null | undefined,
+  opts: { hasAssistant: boolean; isBuiltin: boolean }
+): string[] {
+  const list = Array.isArray(assistantPermissions) ? assistantPermissions : []
+  if (list.length > 0) return list
+  return opts.hasAssistant && !opts.isBuiltin ? [] : ['*']
+}
+
 type EmitFn = (channel: string, data: unknown) => void
 
 /**
@@ -547,25 +563,23 @@ class AgentEngine {
 
     // 解析助手配置
     let effectivePrompt = ''
-    let toolPermissions: string[] = []
     let kbIds: string[] = []
     let skillIds: string[] = []
     let defaultParams: Record<string, unknown> | null = null
-    if (assistantId) {
-      const assistant = assistantRepo.get(assistantId)
-      effectivePrompt = assistant?.systemPrompt ?? ''
-      toolPermissions = assistant?.toolPermissions ?? []
-      kbIds = assistant?.knowledgeBaseIds ?? []
-      skillIds = assistant?.skillIds ?? []
-      defaultParams = assistant?.defaultParams ?? null
-    }
+    let assistant: ReturnType<typeof assistantRepo.get> = null
+    if (assistantId) assistant = assistantRepo.get(assistantId) ?? null
+    effectivePrompt = assistant?.systemPrompt ?? ''
+    kbIds = assistant?.knowledgeBaseIds ?? []
+    skillIds = assistant?.skillIds ?? []
+    defaultParams = assistant?.defaultParams ?? null
+    // 工具授权（含 SEC-3 的空数组语义收口）
+    const toolPermissions = resolveAgentToolPermissions(assistant?.toolPermissions, {
+      hasAssistant: !!assistantId,
+      isBuiltin: assistant?.isBuiltin ?? false
+    })
     // Agent 模式必须有系统提示词引导任务拆解与工具调用；助手未配置时用默认模板
     if (!effectivePrompt || !effectivePrompt.trim()) {
       effectivePrompt = DEFAULT_AGENT_PROMPT
-    }
-    // Agent 模式核心是工具调用：若助手未配置工具权限，默认启用全部内置 + MCP 工具
-    if (toolPermissions.length === 0) {
-      toolPermissions = ['*']
     }
 
     // 知识库检索注入
@@ -1332,7 +1346,9 @@ class AgentEngine {
               highlights: display.highlights
             },
             emit,
-            master.signal
+            master.signal,
+            // 参数指纹参与「总是允许」粒度（SEC-13）：同工具同参数才复用
+            tc.function.arguments
           )
           if (!approved) {
             results[i] = {

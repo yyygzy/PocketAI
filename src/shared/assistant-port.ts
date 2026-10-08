@@ -66,6 +66,8 @@ export interface AssistantImportResolved {
   /** 因目标库不存在而被丢弃的知识库/技能 id 数 */
   droppedKb: number
   droppedSkills: number
+  /** 导入文件里声明但被清空的教学工具授权数（SEC-3：导入不携带授权） */
+  droppedTools: number
 }
 
 const asStr = (v: unknown, max: number): string =>
@@ -95,6 +97,10 @@ export function resolveAssistantImportItem(
   const skillIds = asStrArray(o.skillIds)
   const keptKb = kbIds.filter((id) => existingKbIds.has(id))
   const keptSkills = skillIds.filter((id) => existingSkillIds.has(id))
+  // SEC-3：导入的助手一律不携带工具授权。文件里的 toolPermissions 可以是 ['*']
+  // （含 shell_exec / fs_write / js_eval），而系统提示词与描述同样随文件进来，
+  // 等于「拿到一个助手 JSON 就拿到一个全授权 Agent」。授权必须由用户在助手编辑器里逐条重勾。
+  const declaredTools = asStrArray(o.toolPermissions)
 
   return {
     draft: {
@@ -106,11 +112,12 @@ export function resolveAssistantImportItem(
       defaultProviderId: asStrOrNull(o.defaultProviderId, 64),
       defaultModel: asStrOrNull(o.defaultModel, 200),
       defaultParams: asParams(o.defaultParams),
-      toolPermissions: asStrArray(o.toolPermissions),
+      toolPermissions: [],
       skillIds: keptSkills,
       knowledgeBaseIds: keptKb
     },
     droppedKb: kbIds.length - keptKb.length,
-    droppedSkills: skillIds.length - keptSkills.length
+    droppedSkills: skillIds.length - keptSkills.length,
+    droppedTools: declaredTools.length
   }
 }

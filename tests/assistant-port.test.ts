@@ -75,6 +75,22 @@ describe('assistant-port', () => {
       expect(item!.droppedSkills).toBe(1)
     })
 
+    it('导入不携带工具授权：toolPermissions 清空并计入 droppedTools（SEC-3）', () => {
+      const item = resolveAssistantImportItem(
+        { name: 'A', toolPermissions: ['*', 'shell.exec', 'kb.search'] },
+        new Set(),
+        new Set()
+      )
+      expect(item!.draft.toolPermissions).toEqual([])
+      expect(item!.droppedTools).toBe(3)
+    })
+
+    it('未声明 toolPermissions 时 droppedTools 为 0', () => {
+      const item = resolveAssistantImportItem({ name: 'A' }, new Set(), new Set())
+      expect(item!.draft.toolPermissions).toEqual([])
+      expect(item!.droppedTools).toBe(0)
+    })
+
     it('should truncate long fields to max length', () => {
       const longName = 'x'.repeat(200)
       const longDesc = 'd'.repeat(600)

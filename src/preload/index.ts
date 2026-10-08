@@ -146,11 +146,15 @@ const api = {
   exportAssistants: (): Promise<
     { ok: true; canceled: true } | { ok: true; path: string; count: number } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.ASSISTANT_EXPORT),
-  importAssistants: (): Promise<
+  importAssistants: (opts?: {
+    confirmOverwrite?: boolean
+  }): Promise<
     | { ok: true; canceled: true }
-    | { ok: true; imported: number; overwritten: number; skipped: number; droppedKb: number; droppedSkills: number }
+    /** 存在同名覆盖：未写入任何数据，需 UI 确认后用 confirmOverwrite=true 再调一次 */
+    | { ok: true; needsConfirm: true; conflicts: string[]; skipped: number; droppedTools: number }
+    | { ok: true; imported: number; overwritten: number; skipped: number; droppedKb: number; droppedSkills: number; droppedTools: number }
     | { ok: false; error: string }
-  > => ipcRenderer.invoke(IPC.ASSISTANT_IMPORT),
+  > => ipcRenderer.invoke(IPC.ASSISTANT_IMPORT, opts),
 
   // ---------- 用户记忆 ----------
   listMemories: (): Promise<UserMemoryRecord[]> => ipcRenderer.invoke(IPC.MEMORY_LIST),

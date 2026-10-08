@@ -713,6 +713,15 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE reminders ADD COLUMN repeat_rule TEXT;
     `
+  },
+  {
+    // v44: SEC-5 —— MCP 工具默认需人工确认；每 Server 一个显式「只读信任」开关（默认 0=关）。
+    // 开启后该 Server 命中 get/list/read 等只读前缀的工具才免确认（工具名由 Server 自报，不可信）。
+    version: 44,
+    name: 'mcp_server_trust_readonly',
+    up: `
+      ALTER TABLE mcp_servers ADD COLUMN trust_read_only INTEGER NOT NULL DEFAULT 0;
+    `
   }
 ]
 

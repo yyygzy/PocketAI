@@ -31,6 +31,9 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   const [url, setUrl] = useState(initial.url ?? '')
   const [headersText, setHeadersText] = useState(JSON.stringify(initial.headers ?? {}, null, 2))
   const [enabled, setEnabled] = useState(initial.enabled !== false)
+  // SEC-5：MCP 工具默认每次调用都要人工确认；勾选「信任只读命名工具」后，
+  // get/list/read 等只读前缀才免确认（名字由 Server 自报，默认不信任）
+  const [trustReadOnly, setTrustReadOnly] = useState(initial.trustReadOnly ?? false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   // env/headers 由主进程以掩码视图下发（••••+末 4 位）；点「显示密钥」才取回明文
@@ -149,7 +152,8 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         // 仅 stdio+python 保留依赖列表；repo 层也会兜底归一化
         pythonPackages:
           transport === 'stdio' && runtime === 'python' ? packageLines : [],
-        enabled
+        enabled,
+        trustReadOnly
       })
       onSaved(saved)
       // 已存在的 server 保存后表单不会重挂（key 不变），依赖列表变化时必须主动重查，
@@ -413,10 +417,24 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
           </div>
         </>
       )}
-      <label className="flex items-center gap-2 text-xs">
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        {t('common.enable')}
-      </label>
+      <div className="space-y-2">
+        <label className="flex items-start gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={trustReadOnly}
+            onChange={(e) => setTrustReadOnly(e.target.checked)}
+          />
+          <span>
+            {t('agent.f.trustReadOnly')}
+            <span className="block text-[11px] text-[var(--color-text-muted)]">{t('agent.f.trustReadOnlyHint')}</span>
+          </span>
+        </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          {t('common.enable')}
+        </label>
+      </div>
       {error && <div className="text-xs text-[var(--color-danger)] bg-[var(--color-danger-bg)] px-3 py-2 rounded">{error}</div>}
       <div className="flex gap-2 pt-1">
         <button className="btn-primary" onClick={() => void handleSave()} disabled={saving}>

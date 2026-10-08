@@ -620,6 +620,11 @@ export interface ToolSchema {
   source: 'builtin' | 'mcp'
   permission?: 'auto' | 'confirm' | 'deny'
   mcpServerId?: string // source='mcp' 时所属的 MCP Server
+  /**
+   * source='mcp' 且 name 被改名时（与内置工具或另一 Server 重名、非法函数字符名）
+   * 传给 MCP Server 的原始工具名；未改名时缺省，调用方用 name。
+   */
+  remoteName?: string
   timeoutMs?: number // 单工具执行超时（毫秒），未配置时使用默认 30s
 }
 
@@ -655,6 +660,11 @@ export interface McpServerRecord {
   headers: Record<string, string>
   enabled: boolean
   createdAt: number
+  /**
+   * SEC-5：是否信任该 Server 的「只读命名」工具免确认。默认 false ⇒ 该 Server 的全部工具
+   * 每次调用都要人工确认（工具名与描述由 Server 自报，名字骗人即可绕过确认）。
+   */
+  trustReadOnly: boolean
   /** runtime=python 时的 pip 依赖描述列表（每行一个，如 mcp-server-fetch==0.1.0）；其他 runtime 恒为 [] */
   pythonPackages: string[]
 }

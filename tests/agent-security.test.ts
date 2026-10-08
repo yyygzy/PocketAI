@@ -82,26 +82,32 @@ describe('classifyCommand — shell 命令安全分类', () => {
   })
 })
 
-describe('classifyMcpToolPermission — MCP 工具权限分级', () => {
-  it('危险关键词 → confirm', () => {
-    expect(classifyMcpToolPermission('delete_file')).toBe('confirm')
-    expect(classifyMcpToolPermission('exec_command')).toBe('confirm')
-    expect(classifyMcpToolPermission('write_config')).toBe('confirm')
+describe('classifyMcpToolPermission — MCP 工具权限分级（SEC-5：默认全 confirm）', () => {
+  it('未显式信任的 Server：只读命名也 confirm（名字骗人绕过被堵死）', () => {
+    expect(classifyMcpToolPermission('get_user')).toBe('confirm')
+    expect(classifyMcpToolPermission('list_files')).toBe('confirm')
+    expect(classifyMcpToolPermission('search_web')).toBe('confirm')
   })
 
-  it('只读前缀 → auto', () => {
-    expect(classifyMcpToolPermission('get_user')).toBe('auto')
-    expect(classifyMcpToolPermission('list_files')).toBe('auto')
-    expect(classifyMcpToolPermission('search_web')).toBe('auto')
+  it('危险关键词 → confirm', () => {
+    expect(classifyMcpToolPermission('delete_file', true)).toBe('confirm')
+    expect(classifyMcpToolPermission('exec_command', true)).toBe('confirm')
+    expect(classifyMcpToolPermission('write_config', true)).toBe('confirm')
+  })
+
+  it('显式 trustReadOnly 后，只读前缀 → auto', () => {
+    expect(classifyMcpToolPermission('get_user', true)).toBe('auto')
+    expect(classifyMcpToolPermission('list_files', true)).toBe('auto')
+    expect(classifyMcpToolPermission('search_web', true)).toBe('auto')
   })
 
   it('未知语义 → confirm', () => {
-    expect(classifyMcpToolPermission('do_thing')).toBe('confirm')
-    expect(classifyMcpToolPermission('process_data')).toBe('confirm')
+    expect(classifyMcpToolPermission('do_thing', true)).toBe('confirm')
+    expect(classifyMcpToolPermission('process_data', true)).toBe('confirm')
   })
 
   it('只读前缀含危险词 → confirm（危险优先）', () => {
-    expect(classifyMcpToolPermission('get_delete_log')).toBe('confirm')
+    expect(classifyMcpToolPermission('get_delete_log', true)).toBe('confirm')
   })
 })
 

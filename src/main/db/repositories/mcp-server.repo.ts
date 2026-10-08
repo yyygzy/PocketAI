@@ -27,6 +27,7 @@ interface McpServerRow {
   created_at: number
   python_packages?: string | null // JSON 字符串数组（v16 起；旧库可能无此列）
   headers?: string | null // JSON 对象字符串（v41 起；旧库可能无此列）
+  trust_read_only?: number | null // 0/1（v44 起；旧库按未信任处理）
 }
 
 function rowToRecord(row: McpServerRow): McpServerRecord {
@@ -68,6 +69,8 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
     headers,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
+    // v44 前的旧库无此列 → 一律按「不信任」处理（SEC-5 的默认必须偏保守）
+    trustReadOnly: row.trust_read_only === 1,
     pythonPackages
   }
 }
@@ -131,11 +134,13 @@ export const mcpServerRepo = {
     )
     const envCipher = encryptSecretMap(env)
     const headersCipher = encryptSecretMap(normalizedHeaders)
+    const trustReadOnly =
+      input.trustReadOnly !== undefined ? (input.trustReadOnly ? 1 : 0) : existing?.trustReadOnly ? 1 : 0
 
     if (existing) {
       db.prepare(
         `UPDATE mcp_servers SET
-           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, enabled=?, python_packages=?, headers=?
+           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, enabled=?, python_packages=?, headers=?, trust_read_only=?
          WHERE id=?`
       ).run(
         input.name ?? existing.name,
@@ -148,14 +153,15 @@ export const mcpServerRepo = {
         input.enabled !== undefined ? (input.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
         JSON.stringify(pythonPackages),
         headersCipher,
+        trustReadOnly,
         id
       )
     } else {
       const now = Date.now()
       db.prepare(
         `INSERT INTO mcp_servers
-           (id, name, transport, runtime, command, args, env, url, enabled, created_at, python_packages, headers)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, name, transport, runtime, command, args, env, url, enabled, created_at, python_packages, headers, trust_read_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -168,7 +174,8 @@ export const mcpServerRepo = {
         input.enabled !== false ? 1 : 0,
         now,
         JSON.stringify(pythonPackages),
-        headersCipher
+        headersCipher,
+        trustReadOnly
       )
     }
     return mustGet(() => this.get(id), 'MCP Server')

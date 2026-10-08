@@ -49,9 +49,7 @@ export const MAX_MCP_TOOL_DESC_CHARS = 4096
 export const MAX_MCP_TOOL_SCHEMA_CHARS = 64 * 1024
 
 /**
- * MCP 工具默认权限分级（基于工具名语义启发式）。
- * 原则：保守默认 confirm，仅对明显只读的命名模式放行（auto），危险关键词强制 confirm。
- * 注意：工具名可由 MCP Server 任意指定，此分级仅作为默认值；最终以助手 toolPermissions 为准。
+ * 名称语义词表：仅在用户对该 Server 显式开启 trustReadOnly 后被用到（见 classifyMcpToolPermission）。
  */
 const MCP_READONLY_PREFIXES = [
   'get', 'list', 'read', 'search', 'find', 'fetch', 'query',
@@ -66,7 +64,16 @@ const MCP_DANGEROUS_KEYWORDS = [
   'move', 'rename', 'chmod', 'chown', 'sudo', 'eval'
 ]
 
-export function classifyMcpToolPermission(name: string): 'auto' | 'confirm' {
+/**
+ * MCP 工具权限分级（SEC-5）。
+ *
+ * 默认一律 `confirm`：工具名与描述都由 Server 自报，把执行类工具命名成 `get_status`
+ * 就能骗过任何按名字放行的规则，所以「名字看起来只读」不构成免确认的依据。
+ * 只有用户在 Server 上显式勾选「信任只读工具」（trustReadOnly）后，才沿用名称语义分级：
+ * 危险关键词 → confirm，只读前缀 → auto，其余未知语义 → confirm。
+ */
+export function classifyMcpToolPermission(name: string, trustReadOnly = false): 'auto' | 'confirm' {
+  if (!trustReadOnly) return 'confirm'
   const lower = (name ?? '').toLowerCase()
   // 危险关键词命中 → 必须人工确认
   if (MCP_DANGEROUS_KEYWORDS.some((kw) => lower.includes(kw))) return 'confirm'
@@ -197,7 +204,7 @@ export class McpManager extends EventEmitter {
 
       // 拉取工具列表（外部协议边界：形状/数量/字段大小全部收紧后才进入运行时）
       const toolsResult = await client.request<unknown>('tools/list', {}, INIT_TIMEOUT)
-      entry.tools = this.normalizeToolList(toolsResult, id)
+      entry.tools = this.normalizeToolList(toolsResult, id, entry.record.trustReadOnly)
       // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
       if (entry.status === 'stopped') {
         client.shutdown().catch((e) => log.warn('shutdown 失败（握手期停止）:', errMsg(e)))
@@ -383,7 +390,7 @@ export class McpManager extends EventEmitter {
   }
 
   /** tools/list 结果收口：非数组/超量直接拒绝（恶意/失控 server 不应静默降级为空/部分工具集） */
-  private normalizeToolList(raw: unknown, serverId: string): ToolSchema[] {
+  private normalizeToolList(raw: unknown, serverId: string, trustReadOnly: boolean): ToolSchema[] {
     const tools = (raw as { tools?: unknown } | null)?.tools
     if (!Array.isArray(tools)) {
       throw new Error('MCP Server 返回的工具列表格式非法（tools 不是数组），已拒绝启动')
@@ -391,11 +398,16 @@ export class McpManager extends EventEmitter {
     if (tools.length > MAX_MCP_TOOLS) {
       throw new Error(`MCP Server 声明了 ${tools.length} 个工具，超过上限 ${MAX_MCP_TOOLS}，已拒绝启动`)
     }
-    return tools.map((t, i) => this.normalizeMcpTool(t, i, serverId))
+    return tools.map((t, i) => this.normalizeMcpTool(t, i, serverId, trustReadOnly))
   }
 
   /** 把 MCP 协议返回的单个 tool 校验并转成统一 ToolSchema；非法名称/schema 直接拒绝启动 */
-  private normalizeMcpTool(raw: unknown, index: number, serverId: string): ToolSchema {
+  private normalizeMcpTool(
+    raw: unknown,
+    index: number,
+    serverId: string,
+    trustReadOnly: boolean
+  ): ToolSchema {
     const o = (raw && typeof raw === 'object' ? raw : {}) as McpRawTool
     const name = typeof o.name === 'string' ? o.name : ''
     if (!MCP_TOOL_NAME_RE.test(name)) {
@@ -421,11 +433,8 @@ export class McpManager extends EventEmitter {
       description,
       parameters,
       source: 'mcp',
-      // MCP 工具权限按名称分级：
-      //   - 命中危险关键词（写/删/执行类）→ confirm（必须人工确认）
-      //   - 命中只读前缀（get/list/read/...）→ auto（放行，减少常用工具摩擦）
-      //   - 其余未知语义 → confirm（保守默认，避免可疑工具直接执行）
-      permission: classifyMcpToolPermission(name),
+      // MCP 工具权限：未显式信任该 Server 时一律 confirm（见 classifyMcpToolPermission）
+      permission: classifyMcpToolPermission(name, trustReadOnly),
       mcpServerId: serverId
     }
   }

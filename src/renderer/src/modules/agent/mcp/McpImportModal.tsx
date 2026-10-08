@@ -3,6 +3,7 @@ import React, { useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
 import { parseMcpServersJson, type McpImportItem } from '../../../../../shared/mcp-import'
+import { formatMcpLaunch, mcpSecretKeyHint } from './mcp-launch'
 import { errText } from '../../../utils/error'
 
 interface Props {
@@ -93,16 +94,30 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
                   <div className="text-[11px] font-medium mb-1">
                     {t('agent.importOk', { n: parsed.ok.length })}
                   </div>
+                  {/* SEC-2：把导入后「点启动就会执行的命令」摊开，只显 key+transport 等于没预览 */}
+                  <div className="text-[10px] text-[var(--color-warning)] mb-1">
+                    {t('agent.importCmdHeader')}
+                  </div>
                   <div className="space-y-1">
                     {parsed.ok.map((item) => (
-                      <div key={item.key} className="flex items-center gap-1 text-[10px]">
-                        <span className="text-[var(--color-success)]">●</span>
-                        <span className="font-mono">{item.key}</span>
-                        <span className="text-[var(--color-text-muted)]">
-                          [{item.draft?.transport}]
-                        </span>
-                        {item.warning && (
-                          <span className="text-[var(--color-warning)]">({item.warning})</span>
+                      <div key={item.key} className="text-[10px]">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[var(--color-success)]">●</span>
+                          <span className="font-mono">{item.key}</span>
+                          <span className="text-[var(--color-text-muted)]">
+                            [{item.draft?.transport}]
+                          </span>
+                          {item.warning && (
+                            <span className="text-[var(--color-warning)]">({item.warning})</span>
+                          )}
+                        </div>
+                        <div className="font-mono text-[10px] text-[var(--color-text-muted)] break-all pl-4">
+                          {formatMcpLaunch(item.draft)}
+                        </div>
+                        {mcpSecretKeyHint(item.draft) && (
+                          <div className="text-[10px] text-[var(--color-text-muted)] pl-4">
+                            {t('agent.importSecretKeys', { keys: mcpSecretKeyHint(item.draft) })}
+                          </div>
                         )}
                       </div>
                     ))}
