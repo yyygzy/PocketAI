@@ -5,11 +5,13 @@
 // - 本模块从用户输入密码直接派生密钥，salt 内嵌导出文件，可跨机器恢复
 //
 // 格式：MOXENC1(7) + salt(16) + iv(12) + tag(16) + ciphertext
-// KDF: scryptSync(N=32768, r=8, p=1) → 32 字节 AES-256 key
+// KDF: scryptSync(N=2^15, r=8, p=1) → 32 字节 AES-256 key
+//      ⇒ 档位**永久钉在 KDF_LEGACY**：文件格式里没有档位字段，改一档等于
+//      让用户此前所有加密导出文件永久解不开（SEC-32② 的结论）
 // Cipher: AES-256-GCM
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { deriveKeySync } from './index'
+import { deriveKeySync, KDF_LEGACY } from './index'
 
 const MAGIC = 'MOXENC1'
 const SALT_LEN = 16
@@ -26,7 +28,7 @@ export function encryptWithPassword(password: string, plaintext: string): Buffer
   if (!password) throw new Error('密码不能为空')
   if (!plaintext) throw new Error('内容不能为空')
 
-  const { key, salt } = deriveKeySync(password)
+  const { key, salt } = deriveKeySync(password, undefined, KDF_LEGACY)
   const iv = randomBytes(IV_LEN)
   const cipher = createCipheriv('aes-256-gcm', key, iv)
   const ct = Buffer.concat([cipher.update(Buffer.from(plaintext, 'utf8')), cipher.final()])
@@ -52,7 +54,7 @@ export function decryptWithPassword(password: string, blob: Buffer): string {
   const tag = blob.subarray(offset, offset + TAG_LEN); offset += TAG_LEN
   const ct = blob.subarray(offset)
 
-  const { key } = deriveKeySync(password, salt)
+  const { key } = deriveKeySync(password, salt, KDF_LEGACY)
   try {
     const decipher = createDecipheriv('aes-256-gcm', key, iv)
     decipher.setAuthTag(tag)

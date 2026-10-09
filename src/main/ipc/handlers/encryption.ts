@@ -5,6 +5,7 @@ import { BrowserWindow, dialog, app } from 'electron'
 import { IPC } from '../../../shared/types'
 import { dbService } from '../../db/database'
 import { masterKeyManager } from '../../crypto/master-key'
+import { issueNewMasterKey, kdfStatus, verifyAndOpenMasterKey } from '../../crypto/master-password'
 import { exportFieldCredentials, restoreFieldCredentials } from '../../crypto/credential-rotation'
 import { recoveryKeyManager } from '../../crypto/recovery-key'
 import { clipboardGuard } from '../../crypto/clipboard-guard'
@@ -26,15 +27,22 @@ import {
 const log = createLogger('encryption')
 
 export function registerEncryptionHandlers(): void {
-  safeHandle(IPC.ENCRYPTION_GET_STATUS, () => ({
-    mode: masterKeyManager.getMode(),
-    unlocked: masterKeyManager.hasKey(),
-    // 用模式判断而非「是否有 key」：锁定清 key 后此字段必须仍为 true，
-    // 否则锁屏 UI 会误判为无密码模式，用户无法提交密码解锁
-    dbEncrypted: masterKeyManager.getMode() === 'db',
-    fieldEncrypted: masterKeyManager.hasKey(),
-    masterPasswordVerified: masterKeyManager.hasKey()
-  }))
+  safeHandle(IPC.ENCRYPTION_GET_STATUS, () => {
+    // 档位是给设置页看的「这条库用了多硬的派生」；无密码模式没有主密码派生可言。
+    // 是否已到现行档由主进程判定，渲染层不再复制一份阈值（两处常量会漂移）
+    const kdf = masterKeyManager.getMode() === 'db' ? kdfStatus() : null
+    return {
+      mode: masterKeyManager.getMode(),
+      unlocked: masterKeyManager.hasKey(),
+      // 用模式判断而非「是否有 key」：锁定清 key 后此字段必须仍为 true，
+      // 否则锁屏 UI 会误判为无密码模式，用户无法提交密码解锁
+      dbEncrypted: masterKeyManager.getMode() === 'db',
+      fieldEncrypted: masterKeyManager.hasKey(),
+      masterPasswordVerified: masterKeyManager.hasKey(),
+      kdfN: kdf?.N ?? null,
+      kdfAtCurrentTier: kdf?.atCurrent ?? false
+    }
+  })
   safeHandle(IPC.ENCRYPTION_AUTH_STATUS, () => {
     // 解锁窗挂载/刷新时拉取：渲染层不再自持计数，锁定态以主进程为准
     const now = Date.now()
@@ -63,12 +71,8 @@ export function registerEncryptionHandlers(): void {
       // 错误直接返回让解锁窗重试并计入限流（此前 boot 密码错误是原生弹框 + app.quit，
       // 应用每次退出，限流无从生效）。验证后关闭句柄，boot 仍按原状态机打开。
       if (!dbService.isOpen()) {
-        const preSalt = appConfigRepo.getMasterPasswordSalt()
-        const preKey = masterKeyManager.setKey(password, preSalt ?? undefined)
-        try {
-          dbService.open(preKey)
-          dbService.getHandle().prepare('SELECT 1').get()
-        } catch {
+        // 逐档派生 + 真正开库探测（档位记录缺失时自动回退试档，成功后固化档位）
+        if (!verifyAndOpenMasterKey(password)) {
           masterKeyManager.clear()
           dbService.close()
           const v = authRateLimiter.fail(AUTH_BUCKET.UNLOCK)
@@ -89,11 +93,8 @@ export function registerEncryptionHandlers(): void {
       return { ok: true as const }
     }
     // 运行时解锁（加密锁后重新打开 DB）
-    const salt = appConfigRepo.getMasterPasswordSalt()
     try {
-      const masterKey = masterKeyManager.setKey(password, salt ?? undefined)
-      dbService.open(masterKey)
-      dbService.getHandle().prepare('SELECT 1').get()
+      if (!verifyAndOpenMasterKey(password)) throw new Error('密码错误')
       // 关闭解锁窗口
       for (const win of BrowserWindow.getAllWindows()) {
         if (win.getTitle().includes('解锁') || win.getTitle().includes('Unlock')) {
@@ -153,19 +154,13 @@ export function registerEncryptionHandlers(): void {
     return { ok: true }
   })
   safeHandle(IPC.ENCRYPTION_CHANGE_PASSWORD, async (_e, oldPassword: string, newPassword: string) => {
-    // 密码轮换：用旧密码打开 → rekey → 更新 salt
-    const salt = appConfigRepo.getMasterPasswordSalt()
+    // 密码轮换：用旧密码按落盘档位打开 → rekey → 更新 salt 与档位
     // config.json 中的恢复包与 DB 开闭无关，rekey 前记录
     const hadRecovery = recoveryKeyManager.hasRecovery()
     // 保存当前正确密钥，验证失败时回滚
     const currentKey = masterKeyManager.getDbKey()
-    const oldKey = masterKeyManager.setKey(oldPassword, salt ?? undefined)
-    // 关闭 DB 并用旧密钥重新打开，真正校验旧密码
-    dbService.close()
-    try {
-      dbService.open(oldKey)
-      dbService.getHandle().prepare('SELECT 1').get()
-    } catch {
+    // 关闭 DB 并用旧密钥重新打开，真正校验旧密码（逐档重试，见 crypto/master-password.ts）
+    if (!verifyAndOpenMasterKey(oldPassword)) {
       // 旧密码错误，回滚到正确密钥
       dbService.close()
       if (currentKey) {
@@ -186,11 +181,9 @@ export function registerEncryptionHandlers(): void {
     } catch { /* 无配置或解密失败，忽略 */ }
     const fieldSnapshot = exportFieldCredentials()
 
-    // rekey
+    // rekey：新 salt + 现行档位成对落盘（改密即顺带升档）
     dbService.getHandle().pragma('journal_mode = DELETE')
-    const newSalt = masterKeyManager.generateSalt()
-    appConfigRepo.setMasterPasswordSalt(newSalt)
-    const newKey = masterKeyManager.setKey(newPassword, newSalt)
+    const newKey = issueNewMasterKey(newPassword)
     const hex = newKey.toString('hex')
     dbService.getHandle().pragma(`rekey = "x'${hex}'"`)
     // 重新打开
@@ -219,16 +212,10 @@ export function registerEncryptionHandlers(): void {
   }, argsSchema(masterPasswordSchema, newMasterPasswordSchema))
   safeHandle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config
-    const salt = appConfigRepo.getMasterPasswordSalt()
     // 保存当前密钥，验证失败时回滚
     const currentKey = masterKeyManager.getDbKey()
-    const derivedKey = masterKeyManager.setKey(password, salt ?? undefined)
-    // 关闭 DB 并用密钥重新打开，真正校验密码
-    dbService.close()
-    try {
-      dbService.open(derivedKey)
-      dbService.getHandle().prepare('SELECT 1').get()
-    } catch {
+    // 关闭 DB 并用密钥重新打开，真正校验密码（逐档重试）
+    if (!verifyAndOpenMasterKey(password)) {
       dbService.close()
       if (currentKey) {
         masterKeyManager.setRawKey(currentKey)
@@ -256,6 +243,7 @@ export function registerEncryptionHandlers(): void {
     appConfigRepo.setEncryptionMode('none')
     appConfigRepo.setHasMasterPassword(false)
     appConfigRepo.clearMasterPasswordSalt()
+    appConfigRepo.clearKdfParams() // 档位与 salt 成对：留下与库不符的标记会误导下次派生
     log.info('已禁用加密')
 
     // ⚠️ key 已切为 fixed，用 fixed key 重新加密 WebDAV 密码
@@ -286,9 +274,8 @@ export function registerEncryptionHandlers(): void {
     } catch { /* 忽略 */ }
     const fieldSnapshot = exportFieldCredentials()
 
-    const newSalt = masterKeyManager.generateSalt()
-    const masterKey = masterKeyManager.setKey(password, newSalt)  // ← key 切换为 master key
-    appConfigRepo.setMasterPasswordSalt(newSalt)
+    // 启用加密＝新设主密码：新 salt 与现行档位成对落盘
+    const masterKey = issueNewMasterKey(password)  // ← key 切换为 master key
     appConfigRepo.setEncryptionMode('db')
     appConfigRepo.setHasMasterPassword(true)
     dbService.enableEncryption(masterKey)
@@ -399,9 +386,8 @@ export function registerEncryptionHandlers(): void {
       // 4) rekey 为新密码
       try {
         dbService.getHandle().pragma('journal_mode = DELETE')
-        const newSalt = masterKeyManager.generateSalt()
-        appConfigRepo.setMasterPasswordSalt(newSalt)
-        const newKey = masterKeyManager.setKey(newPassword, newSalt)
+        // 恢复码重置出的也是新密码 → 一并落盘新 salt 与现行档位
+        const newKey = issueNewMasterKey(newPassword)
         const hex = newKey.toString('hex')
         dbService.getHandle().pragma(`rekey = "x'${hex}'"`)
         dbService.close()

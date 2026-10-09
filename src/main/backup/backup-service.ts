@@ -22,7 +22,7 @@ const archiver = require('archiver') as (format: string, options?: ArchiverOptio
 import unzipper from 'unzipper'
 import { dbService } from '../db/database'
 import { masterKeyManager } from '../crypto/master-key'
-import { deriveKeySync } from '../crypto/index'
+import { deriveKeySync, KDF_LEGACY, KDF_CURRENT, type KdfParams } from '../crypto/index'
 import { DB_PATH, ATTACHMENTS_DIR } from '../portable'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../crypto/field-encrypt'
 import { appConfigRepo, clearAppConfigCache } from '../db/repositories/app-config.repo'
@@ -96,6 +96,56 @@ function parseBackupEnvelope(blob: Buffer): BackupEnvelope {
 }
 
 /**
+ * 异机恢复用的 baseKey 候选档位（SEC-32②）
+ *
+ * 信封 PKBK2 里没有档位字段，而 baseKey 必须等于**源机当时的 DB key**，
+ * DB key 又由主密码档位决定 ⇒ 主密码升到 2^17 后，只按历史档派生会得到错的密钥，
+ * 表现为「备份做得出来、异机恢复说备份密码错」。这里按已知档位逐个试，
+ * 并用信封自身的 GCM tag 判定哪一档对（密码错时全部失败 ⇒ 仍报 badPassword）。
+ *
+ * 只记忆「哪个 masterSalt 用过哪一档且验证通过」，**不缓存密钥**：
+ * 每次调用仍实打实派生 + 认证（密码校验不被绕过），
+ * 只是省掉同一备份后续 blob 那次注定失败的旧档尝试（约 164ms/份附件）。
+ */
+const verifiedTierBySalt = new Map<string, KdfParams>()
+const VERIFIED_TIER_MAX = 8
+
+function candidateTiers(masterSalt: Buffer): KdfParams[] {
+  const known = verifiedTierBySalt.get(masterSalt.toString('hex'))
+  // 历史档优先：升档功能上线前的所有备份都用它（命中即一次成功）
+  const ordered: KdfParams[] = [KDF_LEGACY, KDF_CURRENT]
+  return known ? [known, ...ordered.filter((t) => t.N !== known.N)] : ordered
+}
+
+function rememberTier(masterSalt: Buffer, tier: KdfParams): void {
+  if (verifiedTierBySalt.size >= VERIFIED_TIER_MAX) verifiedTierBySalt.clear()
+  verifiedTierBySalt.set(masterSalt.toString('hex'), tier)
+}
+
+/** 逐档派生并用信封自身的 GCM tag 认证；全部失败返回 null（调用方按「备份密码错误」处理） */
+function openEnvelopeWithPassword(
+  env: BackupEnvelope,
+  password: string
+): { baseKey: Buffer; plain: Buffer } | null {
+  if (!env.masterSalt) return null
+  for (const tier of candidateTiers(env.masterSalt)) {
+    const baseKey = deriveKeySync(password, env.masterSalt, tier).key
+    try {
+      const encKey = createHash('sha256').update(baseKey).update(env.backupSalt).digest()
+      const d = createDecipheriv('aes-256-gcm', encKey, env.iv)
+      d.setAuthTag(env.tag)
+      // 认证与解密是同一次操作：把明文一并带出，调用方不必再解第二遍
+      const plain = Buffer.concat([d.update(env.ct), d.final()])
+      rememberTier(env.masterSalt, tier)
+      return { baseKey, plain }
+    } catch {
+      // 这一档不对（或密码确实错），试下一档
+    }
+  }
+  return null
+}
+
+/**
  * 从 v2 备份包与备份密码派生备份库的 DB key：scrypt(password, masterSalt)。
  * 异机恢复时用于解密外层包并打开还原后的 SQLCipher 库。
  */
@@ -104,7 +154,9 @@ export function deriveBackupDbKey(blob: Buffer, password: string): Buffer {
   if (env.version !== 2 || !env.masterSalt) {
     throw new BackupDecryptError('legacyNoCross', '旧版加密备份不携带主密码盐，无法在其他设备凭密码恢复')
   }
-  return deriveKeySync(password, env.masterSalt).key
+  const opened = openEnvelopeWithPassword(env, password)
+  if (!opened) throw new BackupDecryptError('badPassword', '备份密码错误')
+  return opened.baseKey
 }
 
 export interface BackupManifest {
@@ -251,24 +303,25 @@ export function decryptBackup(
   opts: { password?: string } = {}
 ): Buffer {
   const env = parseBackupEnvelope(blob)
-  let baseKey: Buffer | null
   if (opts.password !== undefined) {
-    // 异机恢复：凭备份密码 + 包内 masterSalt 派生备份库 DB key
+    // 异机恢复：凭备份密码 + 包内 masterSalt 派生备份库 DB key。
+    // 信封没有档位字段，故逐档试并用 GCM tag 自证（见 openEnvelopeWithPassword）；
+    // 只按历史档派生会让主密码升到 2^17 之后产出的备份在异机报「备份密码错误」。
     if (env.version !== 2 || !env.masterSalt) {
       throw new BackupDecryptError('legacyNoCross', '旧版加密备份不携带主密码盐，无法在其他设备凭密码恢复')
     }
-    baseKey = deriveKeySync(opts.password, env.masterSalt).key
-  } else {
-    // 同机恢复：直接使用当前会话 DB key
-    const masterKey = masterKeyManager.getDbKey()
-    baseKey = masterKey
-    if (!baseKey) {
-      // 仅解密方向保留固定密钥回退：兼容 none 模式下旧版本产出的 .enc.zip
-      try {
-        baseKey = masterKeyManager.getFieldKey()
-      } catch {
-        throw new BackupDecryptError('unavailable', '备份解密密钥不可用（应用已锁定）')
-      }
+    const opened = openEnvelopeWithPassword(env, opts.password)
+    if (!opened) throw new BackupDecryptError('badPassword', '备份密码错误')
+    return opened.plain
+  }
+  // 同机恢复：直接使用当前会话 DB key
+  let baseKey: Buffer | null = masterKeyManager.getDbKey()
+  if (!baseKey) {
+    // 仅解密方向保留固定密钥回退：兼容 none 模式下旧版本产出的 .enc.zip
+    try {
+      baseKey = masterKeyManager.getFieldKey()
+    } catch {
+      throw new BackupDecryptError('unavailable', '备份解密密钥不可用（应用已锁定）')
     }
   }
   const encKey = createHash('sha256').update(baseKey).update(salt).digest()
@@ -278,7 +331,6 @@ export function decryptBackup(
   try {
     return Buffer.concat([decipher.update(env.ct), decipher.final()])
   } catch {
-    if (opts.password !== undefined) throw new BackupDecryptError('badPassword', '备份密码错误')
     // 无密码（同机会话密钥）路径 GCM 失败：密钥与备份不匹配，调用方应提示输入备份密码
     throw new BackupDecryptError('needPassword', '备份加密密钥与当前主密码不匹配')
   }

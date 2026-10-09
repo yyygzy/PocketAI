@@ -14,7 +14,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import { deriveKeySync } from './index'
+import { deriveKeySync, KDF_LEGACY } from './index'
 
 const BLOB_PREFIX = 'rv1:'
 const SALT_LEN = 16
@@ -66,8 +66,10 @@ export function generateRecoveryCode(): string {
 /** 用恢复码派生密钥并加密 masterKey，落盘恢复包 */
 function wrapMasterKey(code: string, masterKey: Buffer): string {
   const salt = randomBytes(SALT_LEN)
-  // 恢复码高熵，仍走全应用唯一 scrypt 派生路径，防短码离线暴破
-  const wrapKey = deriveKeySync(code, salt).key
+  // 恢复码高熵，仍走全应用唯一 scrypt 派生路径，防短码离线暴破。
+  // ⚠️ 档位钉死 KDF_LEGACY：rv1: 包里没有档位字段，改一档会让用户已有的
+  // 恢复包全部失效——而它正是「忘密码」时的唯一救援通道（SEC-32②）
+  const wrapKey = deriveKeySync(code, salt, KDF_LEGACY).key
   const iv = randomBytes(IV_LEN)
   const cipher = createCipheriv('aes-256-gcm', wrapKey, iv)
   const ct = Buffer.concat([cipher.update(masterKey), cipher.final()])
@@ -85,7 +87,7 @@ function unwrapMasterKey(code: string, blob: string): Buffer | null {
     const iv = buf.subarray(SALT_LEN, SALT_LEN + IV_LEN)
     const tag = buf.subarray(buf.length - TAG_LEN)
     const ct = buf.subarray(SALT_LEN + IV_LEN, buf.length - TAG_LEN)
-    const wrapKey = deriveKeySync(code, salt).key
+    const wrapKey = deriveKeySync(code, salt, KDF_LEGACY).key
     const decipher = createDecipheriv('aes-256-gcm', wrapKey, iv)
     decipher.setAuthTag(tag)
     const pt = Buffer.concat([decipher.update(ct), decipher.final()])

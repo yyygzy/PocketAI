@@ -274,6 +274,12 @@ const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => 
       <StatusRow label={t('enc.dbEnc')} value={encrypted ? t('enc.enabled') : t('enc.disabled')} ok={encrypted} />
       <StatusRow label={t('enc.status')} value={unlocked ? t('enc.unlocked') : t('enc.locked')} ok={unlocked} />
       <StatusRow label={t('enc.field')} value={encrypted ? t('enc.fieldValue') : t('enc.fieldValueNone')} ok={encrypted} />
+      {encrypted && enc.kdfN != null && (
+        <StatusRow label={t('enc.kdf')} value={t('enc.kdfValue', { tier: Math.log2(enc.kdfN) })} ok={enc.kdfAtCurrentTier} />
+      )}
+      {encrypted && !enc.kdfAtCurrentTier && (
+        <p className="unlock-recovery-warn">{t('enc.kdfUpgradeHint')}</p>
+      )}
 
       {!encrypted && <p className="unlock-recovery-warn mb-2">{t('enc.noneWarn')}</p>}
       <AutoLockRow encrypted={encrypted} />

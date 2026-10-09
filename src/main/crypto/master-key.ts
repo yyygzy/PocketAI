@@ -15,7 +15,7 @@
 
 import { randomBytes } from 'node:crypto'
 import type { EncryptionMode } from '../db/database'
-import { deriveKeySync } from './index'
+import { deriveKeySync, KDF_LEGACY, type KdfParams } from './index'
 
 // 固定密钥（无密码模式下字段加密用的弱混淆密钥）
 // 仅用于非敏感场景（config.json 等），不是真正的安全保障：
@@ -42,9 +42,10 @@ class MasterKeyManager {
   /** 应用启动时调用，读取配置 */
   init(mode: EncryptionMode): void {
     this.mode = mode
-    // 无密码模式：设置固定密钥，直接解锁
+    // 无密码模式：设置固定密钥，直接解锁。
+    // 显式钉 KDF_LEGACY：none 模式下已落盘的 v1: 凭据全靠这把派生结果，改档位=全部作废
     if (mode === 'none') {
-      this.fixedFieldKey = deriveKeySync(FIXED_KEY_PASSWORD, FIXED_KEY_SALT).key
+      this.fixedFieldKey = deriveKeySync(FIXED_KEY_PASSWORD, FIXED_KEY_SALT, KDF_LEGACY).key
       this.unlocked = true
     }
     // 'db' 模式：等待解锁窗口传入密码后调用 setKey()
@@ -55,16 +56,16 @@ class MasterKeyManager {
    *  @param password 用户输入的主密码（空字符串 = 禁用加密）
    *  @param salt 已有的 salt（从 app-config 的 salt 双通道读，config.json 优先）；不传则新建
    */
-  setKey(password: string, salt?: Buffer): Buffer {
+  setKey(password: string, salt?: Buffer, params: KdfParams = KDF_LEGACY): Buffer {
     if (!password) {
       // 空密码 = 禁用加密（与 init('none') 一致地恢复固定字段密钥）
       this.masterKey = null
       this.mode = 'none'
-      this.fixedFieldKey = deriveKeySync(FIXED_KEY_PASSWORD, FIXED_KEY_SALT).key
+      this.fixedFieldKey = deriveKeySync(FIXED_KEY_PASSWORD, FIXED_KEY_SALT, KDF_LEGACY).key
       this.unlocked = true
       return Buffer.alloc(32)
     }
-    const keyMat = deriveKeySync(password, salt)
+    const keyMat = deriveKeySync(password, salt, params)
     this.masterKey = keyMat.key
     this.unlocked = true
     return this.masterKey

@@ -37,6 +37,7 @@ import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { masterKeyManager } from './crypto/master-key'
+import { issueNewMasterKey, verifyAndOpenMasterKey } from './crypto/master-password'
 import { unlockCoordinator } from './crypto/unlock-coordinator'
 import { migrateKvSecrets } from './crypto/secret-store'
 import { exportFieldCredentials, restoreFieldCredentials } from './crypto/credential-rotation'
@@ -363,35 +364,22 @@ async function boot(): Promise<void> {
     }
 
     if ('password' in result) {
-      // 解锁（验证已有密码）
-      const salt = appConfigRepo.getMasterPasswordSalt()
-      const masterKey = masterKeyManager.setKey(result.password, salt ?? undefined)
-
-      // 如果是加密 DB（之前没打开过），现在用密码打开
-      if (!openedPlaintext) {
-        dbService.open(masterKey)
-        dbService.runMigrations()
-      } else {
-        // DB 已无密码打开，现在重新打开为加密模式
-        dbService.close()
-        dbService.open(masterKey)
-      }
-
-      // 验证密码正确：跑一条简单 SQL
-      try {
-        dbService.getHandle().prepare('SELECT 1').get()
-        log.info('DB 解锁成功')
-      } catch (e) {
-        log.error('密码错误或 DB 损坏:', errMsg(e))
+      // 解锁（验证已有密码）：按落盘档位逐个派生并真正打开库
+      const opened = verifyAndOpenMasterKey(result.password)
+      if (!opened) {
+        masterKeyManager.clear()
+        log.error('密码错误或 DB 损坏（已试过全部已知 scrypt 档位）')
         dialog.showErrorBox('解锁失败', '密码错误或数据库已损坏')
         app.quit()
         return
       }
+      // verifyAndOpenMasterKey 成功时库已用正确档位打开
+      if (!dbService.isOpen()) dbService.open(masterKeyManager.getDbKey() ?? undefined)
+      if (!openedPlaintext) dbService.runMigrations()
+      log.info('DB 解锁成功')
     } else if ('setPassword' in result) {
       // 设置新密码（明文 DB 首次加密）
       const newPwd = result.setPassword
-      const salt = masterKeyManager.generateSalt()
-      appConfigRepo.setMasterPasswordSalt(salt)
 
       if (!openedPlaintext) {
         // 不应该走到这里（如果 DB 是加密的，用户应该走解锁流程）
@@ -403,7 +391,8 @@ async function boot(): Promise<void> {
       // 明文 DB → enableEncryption
       // 字段密钥将从固定混淆密钥切为主密码密钥：先在旧密钥下导出字段凭据
       const fieldSnapshot = exportFieldCredentials()
-      const masterKey = masterKeyManager.setKey(newPwd, salt)
+      // 新设密码：新 salt + 现行档位成对落盘（见 crypto/master-password.ts）
+      const masterKey = issueNewMasterKey(newPwd)
       dbService.enableEncryption(masterKey)
       appConfigRepo.setEncryptionMode('db')
       appConfigRepo.setHasMasterPassword(true)

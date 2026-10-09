@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dbService } from '../database'
 import { CONFIG_PATH } from '../../portable'
 import { errMsg } from '../../error'
+import { KDF_LEGACY, normalizeKdfParams, type KdfParams } from '../../crypto/index'
 
 export type EncryptionMode = 'none' | 'db'
 export type CipherType = 'sqlcipher' // 目前只支持 SQLCipher
@@ -18,6 +19,7 @@ const KEYS = {
   ENCRYPTION_MODE: 'encryption_mode',
   HAS_MASTER_PASSWORD: 'has_master_password',
   MASTER_PASSWORD_SALT: 'master_password_salt', // base64 编码
+  MASTER_KDF: 'master_kdf', // scrypt 档位 JSON（SEC-32②；主通道在 config.json，此处为回退副本）
   CIPHER_TYPE: 'cipher_type',
   AUTO_LOCK_TIMEOUT: 'auto_lock_timeout', // ms，0=永不
   LICENSE_PATH: 'license_path', // 默认 license.lic 的路径
@@ -94,6 +96,36 @@ function writeRecoveryBlobToConfigFile(blob: string | null): void {
   } catch (e) {
     throw new Error(`恢复密钥写入 config.json 失败: ${errMsg(e)}`)
   }
+}
+
+// ---------- 主密码 KDF 档位（SEC-32②） ----------
+//
+// 与 salt 完全同一个约束：DB 未解锁时也必须能读到，否则「要先知道档位才能派生、
+// 要派生才能开库」死锁。主通道 config.json 的 kdfParams，DB 内留一份回退副本
+// （config.json 被单独还原/删除时自愈）。
+// 读出的值必须过白名单 normalizeKdfParams：config.json 是明文可编辑文件，
+// 照搬一个巨大的 N 就能在同步的解锁路径上把主进程内存/时间打爆。
+
+function readKdfFromConfigFile(): unknown {
+  try {
+    if (!existsSync(CONFIG_PATH)) return null
+    const cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return cfg?.kdfParams ?? null
+  } catch {
+    return null
+  }
+}
+
+function writeKdfToConfigFile(params: KdfParams | null): void {
+  try {
+    let cfg: Record<string, unknown> = {}
+    if (existsSync(CONFIG_PATH)) {
+      try { cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) ?? {} } catch { /* 损坏则重建 */ }
+    }
+    if (params === null) delete cfg.kdfParams
+    else cfg.kdfParams = params
+    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
+  } catch { /* 写失败不阻塞主流程：DB 内仍有回退副本 */ }
 }
 
 // ---------- 内存读缓存 ----------
@@ -181,6 +213,38 @@ export const appConfigRepo = {
   clearMasterPasswordSalt(): void {
     writeSaltToConfigFile(null)
     try { this.delete(KEYS.MASTER_PASSWORD_SALT) } catch { /* DB 未开时忽略 */ }
+  },
+
+  /**
+   * 当前库的主密码派生档位（SEC-32②）。
+   * 无记录 / 记录畸形 / 档位不在白名单 ⇒ 一律 KDF_LEGACY，
+   * 保证升档功能上线前的所有库（以及被编辑过的 config.json）都按历史参数派生。
+   */
+  getKdfParams(): KdfParams {
+    const fromFile = normalizeKdfParams(readKdfFromConfigFile())
+    if (fromFile) return fromFile
+    try {
+      const raw = this.get(KEYS.MASTER_KDF)
+      const fromDb = raw ? normalizeKdfParams(JSON.parse(raw)) : null
+      if (fromDb) {
+        // 回填自愈：boot 预开库阶段与恢复流程只读文件通道，不能让它们扑空
+        writeKdfToConfigFile(fromDb)
+        return fromDb
+      }
+    } catch { /* DB 未开或 JSON 损坏 → 按历史档 */ }
+    return KDF_LEGACY
+  },
+
+  /** 落盘新档位：与 salt 一样双写（config.json 主通道 + DB 回退副本） */
+  setKdfParams(params: KdfParams): void {
+    writeKdfToConfigFile(params)
+    this.set(KEYS.MASTER_KDF, JSON.stringify(params))
+  },
+
+  /** 禁用加密时清掉档位记录（回到无密码模式，不留下与库不符的标记） */
+  clearKdfParams(): void {
+    writeKdfToConfigFile(null)
+    try { this.delete(KEYS.MASTER_KDF) } catch { /* DB 未开时忽略 */ }
   },
 
   // ---------- 恢复密钥包 ----------

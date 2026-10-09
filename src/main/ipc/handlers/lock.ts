@@ -2,9 +2,9 @@
 import { IPC } from '../../../shared/types'
 import { lockService } from '../../lock/lock'
 import { masterKeyManager } from '../../crypto/master-key'
+import { verifyAndOpenMasterKey } from '../../crypto/master-password'
 import { clipboardGuard } from '../../crypto/clipboard-guard'
 import { dbService } from '../../db/database'
-import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { broadcast } from '../broadcast'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { masterPasswordSchema } from '../../../shared/schemas/encryption'
@@ -43,11 +43,9 @@ export function registerLockHandlers(): void {
           attempts: v.attempts
         }
       }
-      const salt = appConfigRepo.getMasterPasswordSalt()
       try {
-        const key = masterKeyManager.setKey(password, salt ?? undefined)
-        dbService.open(key)
-        dbService.getHandle().prepare('SELECT 1').get()
+        // 逐档派生 + 真正开库探测（档位记录缺失时自动回退试档）
+        if (!verifyAndOpenMasterKey(password)) throw new Error('密码错误')
       } catch {
         masterKeyManager.clear()
         dbService.close()

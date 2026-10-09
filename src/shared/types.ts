@@ -1117,6 +1117,10 @@ export interface EncryptionStatus {
   fieldEncrypted: boolean
   /** 当前主密码是否已验证通过（解锁状态） */
   masterPasswordVerified: boolean
+  /** 库的主密码 scrypt 档位 N（SEC-32②）；无密码模式为 null */
+  kdfN: number | null
+  /** 该库是否已用现行档位（false ⇒ 改一次密码即自动升档） */
+  kdfAtCurrentTier: boolean
 }
 
 /** 主密码解锁 / 恢复码重置的统一返回：成功仅 ok；失败带错误与主进程限流信息 */
