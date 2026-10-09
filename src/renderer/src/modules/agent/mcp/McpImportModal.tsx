@@ -36,7 +36,7 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
     for (const item of parsed.ok) {
       if (!item.draft) continue
       try {
-        await window.pocketai.saveMcpServer({
+        const saved = await window.pocketai.saveMcpServer({
           name: item.draft.name,
           transport: item.draft.transport,
           runtime: item.draft.runtime,
@@ -48,6 +48,11 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
           enabled: item.draft.enabled,
           pythonPackages: item.draft.pythonPackages
         })
+        // 闸门拒绝（如未设主密码时的新密钥）走结构化失败，不是异常
+        if ('ok' in saved) {
+          warnings.push(`${item.key}: ${saved.error}`)
+          continue
+        }
         success++
         if (item.warning) warnings.push(`${item.key}: ${item.warning}`)
       } catch (e) {

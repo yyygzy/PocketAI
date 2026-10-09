@@ -14,6 +14,7 @@ import {
 } from '../../../shared/schemas/backup'
 import { z } from 'zod'
 import { issuePathToken, peekPathToken, dropPathToken } from '../dialog-path-token'
+import { isNoneMode, newSecretKeys, NONE_MODE_HINT } from '../../crypto/none-mode-gate'
 
 export function registerBackupHandlers(): void {
   safeHandle(IPC.BACKUP_LOCAL, async () => {
@@ -32,7 +33,16 @@ export function registerBackupHandlers(): void {
     }
   })
   safeHandle(IPC.BACKUP_WEBDAV_SAVE_CONFIG, async (_e, cfg: WebDAVConfigInput) => {
-    const { saveWebDAVConfig } = await import('../../backup/backup-service')
+    const { saveWebDAVConfig, loadWebDAVConfig } = await import('../../backup/backup-service')
+    // B2：备份口令是真正保护备份包的密钥，none 模式下只会用公开可复现的固定密钥混淆 → 拒绝新值。
+    // 与已存口令一致（UI 空着口令框只改地址/目录）照常保存；加密模式切换流程直连 service，不经此闸。
+    const prev = loadWebDAVConfig()?.passwordCipher ?? ''
+    if (isNoneMode() && newSecretKeys({ pwd: cfg.passwordCipher }, { pwd: prev }).length > 0) {
+      return {
+        ok: false as const,
+        error: `未设置主密码，备份口令不会被保存（它决定加密备份包能否被解开）。${NONE_MODE_HINT}`
+      }
+    }
     saveWebDAVConfig(cfg)
     return { ok: true }
   }, argsSchema(webdavConfigSchema))

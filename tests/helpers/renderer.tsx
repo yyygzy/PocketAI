@@ -27,6 +27,9 @@ function buildStub(): Record<string, unknown> {
         const impl = state.impls.get(prop)
         if (!impl) throw new Error(`未预置的 IPC 通道：window.pocketai.${prop}（用例里补上 mock，别让它静默返回 undefined）`)
         const out = impl(...args)
+        // 订阅类通道（如 onPythonEnvEvent）同步返回**卸载函数**，包装成 Promise 会让
+        // React 把 Promise 当 cleanup 调用而报错 ⇒ 函数原样放行
+        if (typeof out === 'function') return out
         // 真实 preload 走 ipcRenderer.invoke，永远返回 Promise；
         // 用例里常图省事写 `() => []`，而组件直接 .then() 就炸 ⇒ 这里统一包一层
         return out instanceof Promise ? out : Promise.resolve(out)

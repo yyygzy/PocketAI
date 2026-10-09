@@ -155,6 +155,12 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         enabled,
         trustReadOnly
       })
+      // 主进程闸门（如未设主密码时拒绝新密钥）以 { ok:false, error } 返回，
+      // 不是异常：必须就地展示并保持表单打开，否则用户会以为已保存
+      if ('ok' in saved) {
+        setError(saved.error)
+        return
+      }
       onSaved(saved)
       // 已存在的 server 保存后表单不会重挂（key 不变），依赖列表变化时必须主动重查，
       // 否则状态行仍显示旧的 ready，用户看不到 stale 提示

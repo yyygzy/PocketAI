@@ -44,7 +44,7 @@ export const McpTemplatesModal: React.FC<Props> = ({ onClose, onCreated }) => {
     }
     setCreatingId(tpl.id)
     try {
-      await window.pocketai.saveMcpServer({
+      const saved = await window.pocketai.saveMcpServer({
         name: inst.draft.name,
         transport: inst.draft.transport,
         runtime: inst.draft.runtime,
@@ -56,6 +56,11 @@ export const McpTemplatesModal: React.FC<Props> = ({ onClose, onCreated }) => {
         enabled: inst.draft.enabled,
         pythonPackages: inst.draft.pythonPackages
       })
+      // 闸门拒绝走结构化失败，不是异常
+      if ('ok' in saved) {
+        toast.error(saved.error)
+        return
+      }
       setCreatedIds((prev) => new Set(prev).add(tpl.id))
       toast.success(t('agent.tplCreateSuccess', { name: tpl.id }))
       await onCreated()

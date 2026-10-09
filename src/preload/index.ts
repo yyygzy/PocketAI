@@ -491,7 +491,7 @@ const api = {
     ipcRenderer.invoke(IPC.MCP_SERVER_REVEAL_SECRETS, id),
   saveMcpServer: (
     record: Partial<McpServerRecord> & { name: string }
-  ): Promise<McpServerRecord> => ipcRenderer.invoke(IPC.MCP_SERVER_SAVE, record),
+  ): Promise<McpServerRecord | { ok: false; error: string }> => ipcRenderer.invoke(IPC.MCP_SERVER_SAVE, record),
   deleteMcpServer: (
     id: string
   ): Promise<{ ok: boolean; warning?: string; error?: string }> =>
@@ -906,7 +906,7 @@ const api = {
     payload?: { restoreToken?: string; backupPassword?: string }
   ): Promise<import('../shared/types').BackupRestoreResult> =>
     ipcRenderer.invoke(IPC.BACKUP_LOCAL_RESTORE, payload),
-  saveWebDAVConfig: (cfg: WebDAVConfig): Promise<{ ok: boolean }> =>
+  saveWebDAVConfig: (cfg: WebDAVConfig): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg),
   loadWebDAVConfig: (): Promise<WebDAVConfig | null> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_LOAD_CONFIG),

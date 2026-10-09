@@ -735,7 +735,8 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   async function saveWD() {
     if (!wdUrl || !wdUser) return showNotice(false, t('bk.urlUserRequired'))
     const c: WebDAVConfig = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
-    await window.pocketai.saveWebDAVConfig(c)
+    const r = await window.pocketai.saveWebDAVConfig(c)
+    if (r.ok === false) return showNotice(false, r.error || t('common.unknownError'))
     setCfg(c); showNotice(true, t('bk.cfgSaved'))
   }
 

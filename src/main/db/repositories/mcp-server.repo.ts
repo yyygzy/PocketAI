@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
 import { encryptSecretMap, decryptSecretMap, isCipherText } from '../../crypto/field-encrypt'
+import { noneModeSecretBlock } from '../../crypto/none-mode-gate'
 import { restoreMaskedMap } from '../../../shared/secret-mask'
 import { createLogger } from '../../logger'
 import { errMsg } from '../../error'
@@ -132,6 +133,12 @@ export const mcpServerRepo = {
       { ...input, env, headers },
       existing
     )
+    // B2：明文模式下新密钥一律拒绝（掩码回填/改键名/删键都不触发），错误经 safeHandle 回 UI
+    const block = noneModeSecretBlock([
+      { field: 'env', next: env, existing: existing?.env },
+      { field: 'headers', next: normalizedHeaders, existing: existing?.headers }
+    ])
+    if (block) throw new Error(block)
     const envCipher = encryptSecretMap(env)
     const headersCipher = encryptSecretMap(normalizedHeaders)
     const trustReadOnly =
