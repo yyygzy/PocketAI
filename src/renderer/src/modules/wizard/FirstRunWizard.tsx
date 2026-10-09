@@ -517,27 +517,27 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
               {isPortable && (
                 <p className="unlock-recovery-warn mb-2 text-[11px]">{t('wizard.portableEncWarn')}</p>
               )}
-              {pwd.length === 0 ? (
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    className="input flex-1"
-                    value={pwd}
-                    onChange={(e) => setPwd(e.target.value)}
-                    placeholder={t('unlock.phNewPwd')}
-                    disabled={busy}
-                  />
-                  <input
-                    type="password"
-                    className="input flex-1"
-                    value={pwd2}
-                    onChange={(e) => setPwd2(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && void enableEncryption()}
-                    placeholder={t('unlock.phConfirm')}
-                    disabled={busy}
-                  />
-                </div>
-              ) : null}
+              {/* 两个框必须常驻：原先以 pwd.length === 0 为条件渲染，输一个字符就整块消失，
+                  确认框再也填不上 ⇒ pwd2 恒为空 ⇒ 永远「两次输入不一致」，向导里设不了主密码 */}
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  className="input flex-1"
+                  value={pwd}
+                  onChange={(e) => setPwd(e.target.value)}
+                  placeholder={t('unlock.phNewPwd')}
+                  disabled={busy}
+                />
+                <input
+                  type="password"
+                  className="input flex-1"
+                  value={pwd2}
+                  onChange={(e) => setPwd2(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void enableEncryption()}
+                  placeholder={t('unlock.phConfirm')}
+                  disabled={busy}
+                />
+              </div>
               {encErr && <div className="text-[11px] text-[var(--color-danger)] mt-2">{encErr}</div>}
               <div className="flex justify-end gap-2 mt-2">
                 {pwd.length > 0 && (
