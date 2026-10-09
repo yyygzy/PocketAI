@@ -1482,7 +1482,6 @@ export const ko: Record<string, string> = {
   'wizard.securitySubtitle': '모든 채팅, 메모, 지식베이스는 로컬에 저장됩니다. 마스터 비밀번호를 설정하면 데이터베이스는 AES-256-GCM으로 암호화됩니다.',
   'wizard.encDone': '암호화가 활성화됨',
   'wizard.encDoneHint': '나중에 "설정 → 개인정보 및 암호화"에서 복구 키 생성을 강력히 권장 — 비밀번호 분실 시 유일한 복구 수단입니다.',
-  'wizard.encHint': '10자 이상. 비밀번호를 분실하면 데이터를 읽을 수 없습니다. 반드시 보관하세요.',
   'wizard.encAlready': '마스터 비밀번호 암호화가 활성화됨. 데이터는 AES-256-GCM으로 보호됩니다.',
   'wizard.noRecoveryHint': '복구 키가 아직 생성되지 않음 — 비밀번호를 분실하면 데이터를 복구할 수 없습니다. "설정 → 개인정보 및 암호화"에서 생성하세요.',
   'wizard.encBtn': '암호화 활성화',

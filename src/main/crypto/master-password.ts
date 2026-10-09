@@ -26,6 +26,28 @@ export function kdfStatus(): { N: number; atCurrent: boolean } {
   return { N: params.N, atCurrent: params.N === KDF_CURRENT.N && params.r === KDF_CURRENT.r && params.p === KDF_CURRENT.p }
 }
 
+/**
+ * 派生新主密码的密钥，但**不落盘**（新 salt 与档位都不写）。
+ *
+ * 为什么必须拆开：改密/启用加密的库操作（SQLCipher `rekey`、`enableEncryption`）
+ * 可能抛错。若在此之前就把新 salt 写进 config.json 与 app_config，旧 salt 会被
+ * 就地覆盖——此后库里还是旧密钥、配置里却是新 salt，逐档重试也救不了（两档都用错盐），
+ * 用户会卡在「密码错误或数据库已损坏」且无法自愈。
+ * rekey 是单条原子 pragma：失败时库仍是旧密钥，所以正确顺序是
+ * 「内存里派生 → 库操作成功 → 才把 salt/档位/模式成对落盘」。
+ */
+export function prepareNewMasterKey(password: string): { key: Buffer; salt: Buffer; params: KdfParams } {
+  const salt = masterKeyManager.generateSalt()
+  const key = masterKeyManager.setKey(password, salt, KDF_CURRENT)
+  return { key, salt, params: KDF_CURRENT }
+}
+
+/** 库操作确认成功后，把 salt 与档位成对落盘（两者必须同时写，缺一即派生不匹配） */
+export function commitNewMasterKeyState(prepared: { salt: Buffer; params: KdfParams }): void {
+  appConfigRepo.setMasterPasswordSalt(prepared.salt)
+  appConfigRepo.setKdfParams(prepared.params)
+}
+
 /** 候选档位：落盘记录优先，其余已知档按「新→旧」补齐并去重 */
 export function kdfCandidates(): KdfParams[] {
   const recorded = appConfigRepo.getKdfParams()
@@ -59,14 +81,11 @@ export function verifyAndOpenMasterKey(password: string): KdfParams | null {
   return null
 }
 
-/**
- * 设置全新主密码（首次设密 / 启用加密 / 改密的新密码）：
- * 新 salt + KDF_CURRENT，并把 salt 与档位**成对**落盘，避免只写其一导致派生不匹配。
- * 调用方负责随后的 rekey / enableEncryption 等库操作。
- */
+/** 设置全新主密码的便捷封装：派生 + 立即落盘。
+ *  只用于**没有旧密钥可破坏**的场合（none 模式首次启用加密，库里还是明文）。
+ *  rekey 类操作请走 prepareNewMasterKey + 成功后 commitNewMasterKeyState。 */
 export function issueNewMasterKey(password: string): Buffer {
-  const salt = masterKeyManager.generateSalt()
-  appConfigRepo.setMasterPasswordSalt(salt)
-  appConfigRepo.setKdfParams(KDF_CURRENT)
-  return masterKeyManager.setKey(password, salt, KDF_CURRENT)
+  const prepared = prepareNewMasterKey(password)
+  commitNewMasterKeyState(prepared)
+  return prepared.key
 }

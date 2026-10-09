@@ -5,7 +5,7 @@ import { BrowserWindow, dialog, app } from 'electron'
 import { IPC } from '../../../shared/types'
 import { dbService } from '../../db/database'
 import { masterKeyManager } from '../../crypto/master-key'
-import { issueNewMasterKey, kdfStatus, verifyAndOpenMasterKey } from '../../crypto/master-password'
+import { commitNewMasterKeyState, kdfStatus, prepareNewMasterKey, verifyAndOpenMasterKey } from '../../crypto/master-password'
 import { exportFieldCredentials, restoreFieldCredentials } from '../../crypto/credential-rotation'
 import { recoveryKeyManager } from '../../crypto/recovery-key'
 import { clipboardGuard } from '../../crypto/clipboard-guard'
@@ -181,15 +181,32 @@ export function registerEncryptionHandlers(): void {
     } catch { /* 无配置或解密失败，忽略 */ }
     const fieldSnapshot = exportFieldCredentials()
 
-    // rekey：新 salt + 现行档位成对落盘（改密即顺带升档）
-    dbService.getHandle().pragma('journal_mode = DELETE')
-    const newKey = issueNewMasterKey(newPassword)
-    const hex = newKey.toString('hex')
-    dbService.getHandle().pragma(`rekey = "x'${hex}'"`)
-    // 重新打开
-    dbService.close()
-    dbService.open(newKey)
-    dbService.getHandle().pragma('journal_mode = WAL')
+    // rekey：先在内存里派生新密钥，库操作成功后才落盘 salt 与档位。
+    // 顺序很重要：rekey 若在 salt 被覆盖之后才抛错，库里还是旧密钥、配置里却是新 salt，
+    // 旧 salt 已被就地覆盖 ⇒ 逐档重试也用错盐，用户会卡在「密码错误」且无法自愈。
+    const prepared = prepareNewMasterKey(newPassword)
+    const newKey = prepared.key
+    try {
+      dbService.getHandle().pragma('journal_mode = DELETE')
+      const hex = newKey.toString('hex')
+      dbService.getHandle().pragma(`rekey = "x'${hex}'"`)
+      // 重新打开
+      dbService.close()
+      dbService.open(newKey)
+      dbService.getHandle().pragma('journal_mode = WAL')
+    } catch (e) {
+      // rekey 是单条原子 pragma，失败时库仍是旧密钥：只回滚内存与连接，配置一个字节都没写
+      log.error('密码轮换 rekey 失败，已回滚（旧密码仍可用）:', errMsg(e))
+      dbService.close()
+      if (currentKey) {
+        masterKeyManager.setRawKey(currentKey)
+        dbService.open(currentKey)
+      } else {
+        dbService.open()
+      }
+      return { ok: false, error: '改密失败：加密库重新密钥化未成功，旧密码仍然有效，请重试' }
+    }
+    commitNewMasterKeyState(prepared)
 
     // ⚠️ key 已切换，用新 key 重新加密 WebDAV 密码
     if (webDAVPassword && savedCfg) {
@@ -274,11 +291,22 @@ export function registerEncryptionHandlers(): void {
     } catch { /* 忽略 */ }
     const fieldSnapshot = exportFieldCredentials()
 
-    // 启用加密＝新设主密码：新 salt 与现行档位成对落盘
-    const masterKey = issueNewMasterKey(password)  // ← key 切换为 master key
+    // 启用加密＝新设主密码：内存派生 → enableEncryption 成功 → 才写 salt/档位/模式/标记。
+    // 反过来做会留下「config 说需要密码、库却还是明文」的状态：boot 会走 unlock 分支
+    // （has_master_password 已为真），逐档派生都打不开明文库，只能报「数据库已损坏」。
+    const prepared = prepareNewMasterKey(password)
+    try {
+      dbService.enableEncryption(prepared.key)
+    } catch (e) {
+      log.error('启用加密失败，已回滚为无密码模式:', errMsg(e))
+      dbService.close()
+      masterKeyManager.init('none')
+      dbService.open()
+      return { ok: false, error: '启用加密失败：数据库未能加密，密码未被保存' }
+    }
+    commitNewMasterKeyState(prepared)
     appConfigRepo.setEncryptionMode('db')
     appConfigRepo.setHasMasterPassword(true)
-    dbService.enableEncryption(masterKey)
     // 防御：清掉历史残留恢复包（其包裹的是过去的 masterKey，对新库无效且会误导）
     recoveryKeyManager.disableRecovery()
     log.info('已启用加密')
@@ -383,16 +411,17 @@ export function registerEncryptionHandlers(): void {
       } catch { /* 无配置或解密失败，忽略 */ }
       const fieldSnapshot = exportFieldCredentials()
 
-      // 4) rekey 为新密码
+      // 4) rekey 为新密码：内存派生 → 库操作成功后才落盘 salt/档位（理由同改密路径）
       try {
         dbService.getHandle().pragma('journal_mode = DELETE')
-        // 恢复码重置出的也是新密码 → 一并落盘新 salt 与现行档位
-        const newKey = issueNewMasterKey(newPassword)
+        const prepared = prepareNewMasterKey(newPassword)
+        const newKey = prepared.key
         const hex = newKey.toString('hex')
         dbService.getHandle().pragma(`rekey = "x'${hex}'"`)
         dbService.close()
         dbService.open(newKey)
         dbService.getHandle().pragma('journal_mode = WAL')
+        commitNewMasterKeyState(prepared)
 
         // 5) 新 key 下重加密凭据
         if (webDAVPassword && savedCfg) {

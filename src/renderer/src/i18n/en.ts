@@ -1556,7 +1556,6 @@ export const en: Record<string, string> = {
   'wizard.securitySubtitle': 'Chats, notes and knowledge bases are all stored locally. With a master password, the database is encrypted with AES-256-GCM.',
   'wizard.encDone': 'Encryption enabled',
   'wizard.encDoneHint': "We strongly recommend generating a recovery key later in Settings → Privacy & Encryption — it's the only way back if you forget the master password.",
-  'wizard.encHint': 'At least 10 characters. A forgotten password means unreadable data — keep it safe.',
   'wizard.encAlready': 'Master-password encryption is on; your data is protected with AES-256-GCM.',
   'wizard.noRecoveryHint': 'No recovery key yet — a forgotten password means unrecoverable data. Generate one in Settings → Privacy & Encryption.',
   'wizard.encBtn': 'Enable encryption',

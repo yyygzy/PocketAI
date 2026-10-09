@@ -1556,7 +1556,6 @@ export const zh: Record<string, string> = {
   'wizard.securitySubtitle': '所有对话、笔记、知识库都存在本地。设置主密码后，数据库将以 AES-256-GCM 加密存储。',
   'wizard.encDone': '加密已启用',
   'wizard.encDoneHint': '强烈建议稍后到「设置 → 隐私与加密」生成恢复密钥 —— 忘记主密码时它是唯一的找回通道。',
-  'wizard.encHint': '主密码至少 10 位。忘记密码将无法读取数据，请务必牢记。',
   'wizard.encAlready': '已启用主密码加密，数据受 AES-256-GCM 保护。',
   'wizard.noRecoveryHint': '尚未生成恢复密钥 —— 忘记主密码将无法找回数据，建议到「设置 → 隐私与加密」生成。',
   'wizard.encBtn': '启用加密',

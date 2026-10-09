@@ -1482,7 +1482,6 @@ export const ja: Record<string, string> = {
   'wizard.securitySubtitle': 'すべてのチャット、メモ、ナレッジベースはローカルに保存されます。マスターパスワードを設定すると、データベースは AES-256-GCM で暗号化されます。',
   'wizard.encDone': '暗号化は有効です',
   'wizard.encDoneHint': '後ほど「設定 → プライバシーと暗号化」で復旧キーを生成することを強く推奨 — パスワードを忘れた際の唯一の復旧手段です。',
-  'wizard.encHint': '10 文字以上。パスワードを忘れるとデータを読めなくなります。必ず保管してください。',
   'wizard.encAlready': 'マスターパスワード暗号化は有効です。データは AES-256-GCM で保護されています。',
   'wizard.noRecoveryHint': '復旧キーはまだ生成されていません — パスワードを忘れるとデータを復旧できません。「設定 → プライバシーと暗号化」で生成してください。',
   'wizard.encBtn': '暗号化を有効化',
