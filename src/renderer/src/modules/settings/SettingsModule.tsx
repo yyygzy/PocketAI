@@ -258,7 +258,7 @@ const Modal: React.FC<{ open: boolean; title: string; onClose: () => void; child
 
 // ─── 加密面板 ───────────────────────────────────────────────────
 
-const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => void }> = ({ enc, onChange }) => {
+export const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => void }> = ({ enc, onChange }) => {
   const { t } = useI18n()
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
 
