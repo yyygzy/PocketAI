@@ -195,8 +195,12 @@ export function registerEncryptionHandlers(): void {
       dbService.open(newKey)
       dbService.getHandle().pragma('journal_mode = WAL')
     } catch (e) {
-      // rekey 是单条原子 pragma，失败时库仍是旧密钥：只回滚内存与连接，配置一个字节都没写
-      log.error('密码轮换 rekey 失败，已回滚（旧密码仍可用）:', errMsg(e))
+      // 回滚时只处理内存与连接：配置一个字节都还没写，旧 salt 完好无损。
+      // ⚠️ 不宣称「库一定还是旧密钥」——本地实测（见台账第三节 27 条）未能造出「rekey 抛错」
+      // 的场景：畸形密钥字面量与 query_only 都被 SQLCipher 当作合法改密接受（不抛错、旧密钥随即失效），
+      // 因此真抛错（磁盘满/文件锁）时能否回滚到旧密钥并未证实。此处尽力做到的是
+      // 「失败时不留下比原状更糟的配置」，而非保证可恢复。
+      log.error('密码轮换 rekey 未成功，已停止提交配置（未写入 salt/档位）:', errMsg(e))
       dbService.close()
       if (currentKey) {
         masterKeyManager.setRawKey(currentKey)
@@ -204,7 +208,7 @@ export function registerEncryptionHandlers(): void {
       } else {
         dbService.open()
       }
-      return { ok: false, error: '改密失败：加密库重新密钥化未成功，旧密码仍然有效，请重试' }
+      return { ok: false, error: '改密未完成：新密码与盐值都未写入配置，旧密码与备份仍是你该试的路径；若库已打不开，请改用备份恢复' }
     }
     commitNewMasterKeyState(prepared)
 
@@ -298,11 +302,11 @@ export function registerEncryptionHandlers(): void {
     try {
       dbService.enableEncryption(prepared.key)
     } catch (e) {
-      log.error('启用加密失败，已回滚为无密码模式:', errMsg(e))
+      log.error('启用加密未成功，已退回无密码会话（未写入 salt/档位/模式/标记）:', errMsg(e))
       dbService.close()
       masterKeyManager.init('none')
       dbService.open()
-      return { ok: false, error: '启用加密失败：数据库未能加密，密码未被保存' }
+      return { ok: false, error: '启用加密未完成：盐值与加密标记均未写入配置，请重试；若库此后打不开，请用备份恢复' }
     }
     commitNewMasterKeyState(prepared)
     appConfigRepo.setEncryptionMode('db')
@@ -361,7 +365,8 @@ export function registerEncryptionHandlers(): void {
       const code = payload?.code?.trim() ?? ''
       const newPassword = payload?.newPassword ?? ''
       if (!code) return { ok: false, error: '请输入恢复密钥' }
-      if (newPassword.length < 6) return { ok: false, error: '新密码至少 6 位' }
+      // 新密码长度不在这里判：recoverPayloadSchema.newPassword 走 newMasterPasswordSchema（下限 10），
+      // 此处再写一个数字就会出现「schema 10 位、文案 6 位」这种自相矛盾的漏网检查
 
       if (masterKeyManager.getMode() !== 'db') {
         return { ok: false, error: '当前未启用主密码，无需恢复' }

@@ -169,7 +169,7 @@ describe('ENCRYPTION_ENABLE：明文库启用加密', () => {
     mocks.failEnable = true
     const r = (await call(IPC.ENCRYPTION_ENABLE, NEW_PW)) as { ok: boolean; error?: string }
     expect(r.ok).toBe(false)
-    expect(r.error).toContain('未能加密')
+    expect(r.error).toContain('未完成')
     expect(mocks.seq).not.toContain('setSalt')
     expect(mocks.seq).not.toContain('setKdf')
     expect(mocks.seq).not.toContain('setMode:db')
@@ -204,7 +204,7 @@ describe('ENCRYPTION_CHANGE_PASSWORD：改密 rekey 失败不得销毁旧 salt',
     mocks.failRekey = true
     const r = (await call(IPC.ENCRYPTION_CHANGE_PASSWORD, OLD_PW, NEW_PW)) as { ok: boolean; error?: string }
     expect(r.ok).toBe(false)
-    expect(r.error).toContain('旧密码仍然有效')
+    expect(r.error).toContain('未写入配置')
     expect(mocks.seq).not.toContain('setSalt')
     expect(mocks.seq).not.toContain('setKdf')
     expect(mocks.cfg.salt).toBe(saltBefore) // 旧盐没被覆盖 ⇒ 仍可继续用旧密码解锁
