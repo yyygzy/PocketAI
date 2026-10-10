@@ -33,22 +33,28 @@ export function registerBackupHandlers(): void {
     }
   })
   safeHandle(IPC.BACKUP_WEBDAV_SAVE_CONFIG, async (_e, cfg: WebDAVConfigInput) => {
-    const { saveWebDAVConfig, loadWebDAVConfig } = await import('../../backup/backup-service')
+    const { saveWebDAVConfig, loadWebDAVConfig, restoreWebDAVPassword } = await import('../../backup/backup-service')
+    // 先回填掩码，再判定：顺序反了会把「只改地址/目录」的保存当成改口令，
+    // none 模式下误拒、db 模式下把 '••••' 存成真口令（鉴权永久失败）
+    const resolved = restoreWebDAVPassword(cfg)
+    if (!resolved) {
+      return { ok: false as const, error: '口令栏是掩码占位，而本机还没有已存口令：请输入真实备份口令后再保存。' }
+    }
     // B2：备份口令是真正保护备份包的密钥，none 模式下只会用公开可复现的固定密钥混淆 → 拒绝新值。
     // 与已存口令一致（UI 空着口令框只改地址/目录）照常保存；加密模式切换流程直连 service，不经此闸。
     const prev = loadWebDAVConfig()?.passwordCipher ?? ''
-    if (isNoneMode() && newSecretKeys({ pwd: cfg.passwordCipher }, { pwd: prev }).length > 0) {
+    if (isNoneMode() && newSecretKeys({ pwd: resolved.passwordCipher }, { pwd: prev }).length > 0) {
       return {
         ok: false as const,
         error: `未设置主密码，备份口令不会被保存（它决定加密备份包能否被解开）。${NONE_MODE_HINT}`
       }
     }
-    saveWebDAVConfig(cfg)
+    saveWebDAVConfig(resolved)
     return { ok: true }
   }, argsSchema(webdavConfigSchema))
   safeHandle(IPC.BACKUP_WEBDAV_LOAD_CONFIG, async () => {
-    const { loadWebDAVConfig } = await import('../../backup/backup-service')
-    return loadWebDAVConfig()
+    const { loadWebDAVConfig, maskWebDAVConfig } = await import('../../backup/backup-service')
+    return maskWebDAVConfig(loadWebDAVConfig())
   })
   safeHandle(IPC.BACKUP_SCHEDULE_GET, () => getBackupSchedule())
   safeHandle(
@@ -58,8 +64,10 @@ export function registerBackupHandlers(): void {
     argsSchema(backupSchedulePatchSchema)
   )
   safeHandle(IPC.BACKUP_WEBDAV_TEST, async (_e, cfg: WebDAVConfigInput) => {
-    const { testWebDAV } = await import('../../backup/backup-service')
-    return testWebDAV(cfg)
+    const { testWebDAV, restoreWebDAVPassword } = await import('../../backup/backup-service')
+    const resolved = restoreWebDAVPassword(cfg)
+    if (!resolved) return { ok: false as const, message: '口令栏是掩码占位，而本机还没有已存口令：请输入真实备份口令后再测试。' }
+    return testWebDAV(resolved)
   }, argsSchema(webdavConfigSchema))
   safeHandle(IPC.BACKUP_WEBDAV_UPLOAD, async () => {
     const { loadWebDAVConfig, createWebDAVBackup } = await import('../../backup/backup-service')

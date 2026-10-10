@@ -45,6 +45,9 @@ vi.mock('../src/main/portable', () => ({ DATA_DIR: process.cwd() }))
 
 vi.mock('../src/main/backup/backup-service', () => ({
   saveWebDAVConfig: (cfg: WebDAVConfig) => { mocks.saved.push(cfg) },
+  // 本用例只测 B2 闸门；掩码回填与出 IPC 掩码由 tests/backup-webdav-mask.test.ts 覆盖
+  restoreWebDAVPassword: (cfg: WebDAVConfig) => cfg,
+  maskWebDAVConfig: (cfg: WebDAVConfig | null) => cfg,
   loadWebDAVConfig: (): WebDAVConfig | null =>
     mocks.hasCfg
       ? { url: 'https://dav.example.com', username: 'u', passwordCipher: mocks.stored, directory: '' }

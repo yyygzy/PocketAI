@@ -25,6 +25,7 @@ import { masterKeyManager } from '../crypto/master-key'
 import { deriveKeySync, KDF_LEGACY, KDF_CURRENT, type KdfParams } from '../crypto/index'
 import { DB_PATH, ATTACHMENTS_DIR } from '../portable'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../crypto/field-encrypt'
+import { isMaskedSecret, maskSecret } from '../../shared/secret-mask'
 import { appConfigRepo, clearAppConfigCache } from '../db/repositories/app-config.repo'
 import {
   testConnection, uploadBuffer, downloadFile, listFiles, deleteFile,
@@ -917,6 +918,26 @@ export async function restoreFromLocalFile(
 // ─── WebDAV 配置存取 ─────────────────────────────────────────────
 
 const CFG_KEY = 'webdav_config'
+
+/**
+ * 出 IPC 的掩码视图（SEC-35）：备份口令明文只在主进程用于 WebDAV 鉴权，
+ * 渲染层拿到的是 `••••`+末 4 位；它回传占位值即表示「未改动」，由 restoreWebDAVPassword 还原。
+ */
+export function maskWebDAVConfig(cfg: WebDAVConfig | null): WebDAVConfig | null {
+  return cfg ? { ...cfg, passwordCipher: maskSecret(cfg.passwordCipher) } : null
+}
+
+/**
+ * 入 IPC 的口令回填：掩码占位 → 本机已存明文口令。
+ * 是占位却没有已存口令时返回 null——照原样落盘存下的就是 '••••' 这串占位符，
+ * 之后每次鉴权都失败且 UI 看不出原因（同 SEC-30 的「掩码写成真实值」陷阱）。
+ */
+export function restoreWebDAVPassword(cfg: WebDAVConfig): WebDAVConfig | null {
+  if (!isMaskedSecret(cfg.passwordCipher)) return cfg
+  const stored = loadWebDAVConfig()?.passwordCipher
+  if (!stored) return null
+  return { ...cfg, passwordCipher: stored }
+}
 
 export function saveWebDAVConfig(raw: WebDAVConfig): void {
   webdavConfigSchema.parse(raw)
