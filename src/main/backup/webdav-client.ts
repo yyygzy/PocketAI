@@ -4,7 +4,7 @@
 // 注意：webdav 包是纯 ESM（"type":"module"），Electron 主进程构建输出为 CJS，
 // 不能用顶层 require()。这里用运行时动态 import() 按需加载，externalizeDepsPlugin
 // 会保留动态 import 语句，Node 在 CJS 中支持 import()。
-import type { WebDAVClient } from 'webdav'
+import type { WebDAVClient, WebDAVClientOptions } from 'webdav'
 
 export interface WebDAVCredentials {
   url: string           // https://cloud.example.com/remote.php/dav/files/username
@@ -21,15 +21,17 @@ export interface BackupFile {
   kind: 'full' | 'incremental' // 全量 zip 包 / 增量索引
 }
 
-/** createClient 参数子集（仅用到 basic 认证；authType 保留字符串兼容 digest 扩展） */
-interface WebdavCreateClientOptions {
-  authType: 'basic' | 'digest'
-  credentials: { username: string; password: string }
-}
-
-/** webdav 模块动态导入后的形状（包是纯 ESM，仅按需 import()） */
+/**
+ * webdav 模块动态导入后的形状（包是纯 ESM，仅按需 import()）。
+ * 选项类型一律取包自带的声明，不再手写子集：原来手写的
+ * `{ authType: 'basic', credentials: {...} }` 编译期没人校验，而包既不认 'basic'
+ * （枚举只有 auto/digest/none/password/token）、也不读 credentials
+ * （凭据必须是顶层 username/password）——两处一起错，等于每次调用都当场抛错。
+ */
 interface WebdavModule {
-  createClient: (url: string, opts?: WebdavCreateClientOptions) => WebDAVClient
+  createClient: (url: string, opts?: WebDAVClientOptions) => WebDAVClient
+  /** 认证类型的值在运行时从模块取：写死字符串会把漂移留给线上 */
+  AuthType: typeof import('webdav').AuthType
 }
 
 /** PROPFIND 目录条目（webdav FileStat 的用到字段子集） */
@@ -57,6 +59,11 @@ function loadWebdav() {
 // 1. webdav 包默认无任何超时 —— 挂死端点会让定时备份/恢复永久 pending
 // 2. getFileContents 把整个响应缓冲进内存且无上限（包类型里的
 //    maxContentLength/maxBodyLength 是死选项，运行时代码不读取）
+//
+// 另记一笔（SEC-36 修好认证构造之后才成立）：此前凭据从未真正发出，http 端点
+// 上也就没携带过口令；修好后 http WebDAV 会以 Basic(base64) 明文携带，与
+// SEC-16 的 provider baseUrl 属同一口径问题（内网 NAS 是合法场景，故仍不拦截，
+// 是否加提示语留给产品决定）。
 
 /** 轻请求（exists/PROPFIND/mkdir/delete）：20s */
 const TIMEOUT_LIGHT_MS = 20_000
@@ -108,13 +115,15 @@ async function buildClient(creds: WebDAVCredentials): Promise<WebDAVClient> {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`WebDAV 仅支持 http/https 协议（收到 ${parsed.protocol}）`)
   }
-  const { createClient } = await loadWebdav()
-  const opts: WebdavCreateClientOptions = {
-    authType: 'basic',
-    credentials: { username: creds.username, password: creds.password }
-  }
-  // 坚果云等特殊服务需要 digest
-  return createClient(creds.url, opts)
+  const { createClient, AuthType } = await loadWebdav()
+  // AuthType.Auto：先带 Basic 头发出；服务端若回 401 + `WWW-Authenticate: Digest`
+  // 由包自动改用 Digest 重发同一请求（坚果云等只认 digest，内网 NAS 多为 basic）。
+  // 凭据一律走顶层 username/password——包里不存在 credentials 这个选项。
+  return createClient(creds.url, {
+    username: creds.username,
+    password: creds.password,
+    authType: AuthType.Auto
+  })
 }
 
 // ─── 导出 API ────────────────────────────────────────────────────

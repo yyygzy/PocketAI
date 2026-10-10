@@ -20,6 +20,9 @@ const { mockGetDirectoryContents } = vi.hoisted(() => ({
 }))
 
 vi.mock('webdav', () => ({
+  // buildClient 现在从模块里取 AuthType.Auto（认证构造交由包判定 Basic/Digest），
+  // 桩必须一并给出，否则解构到 undefined
+  AuthType: { Auto: 'auto', Digest: 'digest', Password: 'password', Token: 'token', None: 'none' },
   createClient: () =>
     ({
       getDirectoryContents: mockGetDirectoryContents
