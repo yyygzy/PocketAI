@@ -170,3 +170,48 @@ function appendToFile(line: string): void {
     fileFailures++
   }
 }
+
+// ─── 日志尾部读取（跨会话慢事件统计用，见 steward/perf-history） ─────────
+
+/** 单次读取每个文件的字节上限：够覆盖最近的慢事件，又不至于把整块日志读进内存 */
+const MAX_TAIL_BYTES = 256 * 1024
+
+/**
+ * 读日志尾部若干行，按时间先后返回（先 main.old.log 再 main.log）。
+ * 只读尾部 maxBytes 字节，并丢弃首行（截断行）；文件缺失或不可读时返回空数组，绝不抛错。
+ * 供主进程内解析使用——日志原文可能含用户数据，不得直接下发渲染层。
+ */
+export function readLogTail(maxBytes = MAX_TAIL_BYTES): string[] {
+  const file = resolveLogFile()
+  if (!file) return []
+  const limit = Math.min(Math.max(1, maxBytes), MAX_TAIL_BYTES)
+  const lines: string[] = []
+  for (const logPath of [file.replace(/\.log$/, '.old.log'), file]) {
+    let chunk: string
+    let start = 0
+    try {
+      const size = fs.statSync(logPath).size
+      if (size === 0) continue
+      start = Math.max(0, size - limit)
+      const fd = fs.openSync(logPath, 'r')
+      try {
+        const buf = Buffer.alloc(size - start)
+        fs.readSync(fd, buf, 0, buf.length, start)
+        chunk = buf.toString('utf8')
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      continue // 文件不存在 / 无权限：跳过该来源
+    }
+    if (start > 0) {
+      const firstNewline = chunk.indexOf('\n')
+      if (firstNewline < 0) continue // 尾部只剩一条截断行，无完整行可用
+      chunk = chunk.slice(firstNewline + 1)
+    }
+    for (const line of chunk.split('\n')) {
+      if (line.trim() !== '') lines.push(line)
+    }
+  }
+  return lines
+}

@@ -119,3 +119,9 @@ export const conversationSetSystemPromptOverrideArgsSchema = z.tuple([
   z.string().min(1).max(64),
   z.string().max(100_000).nullable()
 ])
+
+/** CONVERSATION_SET_ASSISTANT 入参：会话 id + 目标助手 id（null=自由会话） */
+export const conversationSetAssistantArgsSchema = z.object({
+  id: z.string().min(1).max(64),
+  assistantId: z.string().min(1).max(64).nullable()
+})

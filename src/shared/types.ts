@@ -116,6 +116,12 @@ export interface UserMemoryRecord {
   updatedAt: number
 }
 
+/** CONVERSATION_SET_ASSISTANT 入参（改归属助手；null=自由会话。分组按助手过滤，移动会清组） */
+export interface ConversationSetAssistantPayload {
+  id: string
+  assistantId: string | null
+}
+
 export interface ConversationRecord {
   id: string
   assistantId: string | null
@@ -402,8 +408,10 @@ export interface DataHealthReport {
     /** 启动流程完成总耗时（最后一个阶段的累计毫秒） */
     totalMs: number
   }
-  /** 最近慢操作事件（环形缓冲快照） */
+  /** 最近慢操作事件（环形缓冲快照，仅本次会话） */
   recentPerf: PerfEvent[]
+  /** 跨会话慢事件聚合（从已落盘的 [perf] 日志行统计，只下发聚合结果） */
+  perfHistory: PerfSummary[]
 }
 
 /** 运行期慢事件 */
@@ -416,6 +424,29 @@ export interface PerfEvent {
   detail?: string
   /** 事件产生时刻时间戳 */
   at: number
+}
+
+/** 同一标签内按模型细分的统计（回答「哪个模型慢」） */
+export interface PerfModelStat {
+  model: string
+  count: number
+  p50Ms: number
+  maxMs: number
+}
+
+/** 跨会话慢事件按标签聚合结果 */
+export interface PerfSummary {
+  label: string
+  /** 参与统计的样本数 */
+  count: number
+  /** 中位数耗时（偶数样本取下中位数） */
+  p50Ms: number
+  /** 最大耗时 */
+  maxMs: number
+  /** 最近一次发生时刻，无时间戳时为 0 */
+  lastAt: number
+  /** 按模型细分（最多 3 个；detail 里没有 model= 的事件不占这一维） */
+  byModel: PerfModelStat[]
 }
 
 /** RAG 检索命中的知识库 chunk 引用来源 */
@@ -1735,6 +1766,7 @@ export const IPC = {
   CONVERSATION_GROUP_RENAME: 'conversation:group-rename',
   CONVERSATION_GROUP_DELETE: 'conversation:group-delete', // 解散组（组内会话回到未分组，不删内容）
   CONVERSATION_SET_GROUP: 'conversation:set-group', // 移动会话到组（groupId=null 移出）
+  CONVERSATION_SET_ASSISTANT: 'conversation:set-assistant', // 改归属助手（assistantId=null 回自由会话；同时清分组）
   CONVERSATION_SET_NOTE: 'conversation:set-note', // 设置会话备注（trim 空串存 NULL）
   CONVERSATION_SET_SYSTEM_PROMPT_OVERRIDE: 'conversation:set-system-prompt-override', // 设置会话级系统提示词覆盖（trim 空串存 NULL）
 

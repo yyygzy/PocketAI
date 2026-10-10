@@ -8,6 +8,8 @@ import { extractFirstHtmlBlock, type AgentMessage } from '../agent-shared'
 import { HtmlBlockActions } from './HtmlBlockActions'
 import { writeClipboard } from '../../../utils/clipboard'
 import { ReminderMenu } from '../../../components/ReminderMenu'
+// 与 Chat 侧同构的提醒回调：repeatRule 由预设浮层给出（循环预设才带，一次性为 undefined）
+type RemindHandler = (id: string, fireAt: number, repeatRule?: import('../../../../../shared/types').ReminderRepeatRule) => void
 
 const cardBtnClass = 'text-[10px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors'
 
@@ -145,7 +147,7 @@ const AgentMessageCardImpl: React.FC<{
   /** 重新生成（父级仅对最后一条 final 助手消息传入） */
   onRegenerate?: (id: string) => void
   /** 右键「提醒我」：父级按 id 取正文并调 IPC 建提醒（与 Chat 同链路） */
-  onRemind?: (id: string, fireAt: number) => void
+  onRemind?: RemindHandler
 }> = ({ m, onDelete, onRerun, onRegenerate, onRemind }) => {
   const { t } = useI18n()
   const [showReasoning, setShowReasoning] = useState(false)
@@ -239,9 +241,9 @@ const AgentMessageCardImpl: React.FC<{
     <ReminderMenu
       anchor={remindMenu}
       onClose={() => setRemindMenu(null)}
-      onPick={(fireAt) => {
+      onPick={(fireAt, repeatRule) => {
         setRemindMenu(null)
-        onRemind(m.id, fireAt)
+        onRemind(m.id, fireAt, repeatRule)
       }}
     />
   ) : null

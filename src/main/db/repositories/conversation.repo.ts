@@ -124,6 +124,18 @@ export const conversationRepo = {
     return mustGet(() => this.get(id), '会话')
   },
 
+  /**
+   * 改归属助手（assistantId=null=自由会话）。分组按助手维度过滤，跨助手移动必须清 group_id，
+   * 否则会话会挂在原助手的文件夹里、在新助手下列表看不见。不改标题/时间以外的内容字段。
+   */
+  setAssistant(id: string, assistantId: string | null): boolean {
+    const info = dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET assistant_id=?, group_id=NULL, updated_at=? WHERE id=?')
+      .run(assistantId, Date.now(), id)
+    return info.changes > 0
+  },
+
   /** 重命名标题同时视为定稿，后续不再自动命名 */
   rename(id: string, title: string): void {
     dbService

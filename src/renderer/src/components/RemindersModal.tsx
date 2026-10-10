@@ -5,6 +5,7 @@ import { useI18n } from '../i18n'
 import { useToast } from './ToastProvider'
 import { reportIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
+import { repeatRuleLabel } from '../../../shared/reminder-rule'
 import type { ReminderRecord, ReminderRepeatRule, ReminderStatus } from '../../../shared/types'
 
 interface Props {
@@ -13,9 +14,27 @@ interface Props {
 
 type Tab = 'pending' | 'history'
 
+/** 改期弹窗的默认时间：终态行的原时间必是过去，预填它等于预填一个必然报错的值 */
+function rescheduleDefaultFireAt(): number {
+  const d = new Date(Date.now() + 60 * 60_000)
+  d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0)
+  return d.getTime()
+}
+
 /** 完整本地时间（含年月日，跨天提醒看得清） */
 function formatFireAt(ms: number): string {
   return new Date(ms).toLocaleString()
+}
+
+/** 循环规则词条注入：徽标文案由调用方给语言，纯函数只管结构（见 src/shared/reminder-rule.ts） */
+function buildRuleWords(t: (key: string, params?: Record<string, string | number>) => string) {
+  return {
+    daily: (n: number) => t('reminder.center.ruleDaily', { interval: n }),
+    weekly: (days: string) => t('reminder.center.ruleWeekly', { days }),
+    monthly: (n: number) => t('reminder.center.ruleMonthly', { day: n }),
+    weekday: (n: number) => t(`reminder.center.weekday.${n}`),
+    separator: t('reminder.center.weekdaySep')
+  }
 }
 
 /** epoch ms → datetime-local input 值（YYYY-MM-DDTHH:mm，按本地时区） */
@@ -48,11 +67,16 @@ function statusBadgeClass(status: ReminderStatus): string {
 
 export const RemindersModal: React.FC<Props> = ({ onClose }) => {
   const { t } = useI18n()
+  const ruleWords = buildRuleWords(t)
   const toast = useToast()
   const [tab, setTab] = useState<Tab>('pending')
   const [items, setItems] = useState<ReminderRecord[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [editing, setEditing] = useState<ReminderRecord | null>(null)
+  // 弹窗有两种模式：pending 行编辑（update）与终态行改期（reschedule，把行拉回 pending）
+  const [editing, setEditing] = useState<{
+    record: ReminderRecord
+    mode: 'edit' | 'reschedule'
+  } | null>(null)
 
   const reload = useCallback(async (scope: Tab) => {
     try {
@@ -157,7 +181,9 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
             </p>
           ) : (
             <div className="space-y-1.5">
-              {items.map((r) => (
+              {items.map((r) => {
+                const ruleLabel = repeatRuleLabel(r.repeatRule, ruleWords)
+                return (
                 <div
                   key={r.id}
                   className="flex items-center gap-3 px-3 py-2 rounded bg-[var(--color-sidebar)] border border-[var(--color-border)]"
@@ -166,6 +192,11 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
                     <div className="text-sm truncate" title={r.text}>{r.text}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                       {formatFireAt(r.fireAt)}
+                      {ruleLabel && (
+                        <span className="ml-1.5 px-1 py-px rounded text-[10px] border border-[var(--color-border)]">
+                          {ruleLabel}
+                        </span>
+                      )}
                       {r.conversationId && (
                         <span className="ml-1.5 px-1 py-px rounded text-[10px] bg-[var(--color-accent)] bg-opacity-15 text-[var(--color-accent)]">
                           {t('reminder.center.fromChat')}
@@ -176,7 +207,7 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
                   {tab === 'pending' ? (
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => setEditing(r)}
+                        onClick={() => setEditing({ record: r, mode: 'edit' })}
                         disabled={busyId === r.id}
                         className="btn-ghost text-[11px] text-[var(--color-accent)] disabled:opacity-50"
                       >
@@ -192,6 +223,15 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
                     </div>
                   ) : (
                     <div className="flex items-center gap-1 shrink-0">
+                      {/* 终态行（fired/missed/cancelled）都能改期回 pending：后端 RESCHEDULE 早就能用，
+                          此前渲染端一个入口都没接 */}
+                      <button
+                        onClick={() => setEditing({ record: r, mode: 'reschedule' })}
+                        disabled={busyId === r.id}
+                        className="btn-ghost text-[11px] text-[var(--color-accent)] disabled:opacity-50"
+                      >
+                        {t('reminder.center.rescheduleAt')}
+                      </button>
                       {/* missed 循环提醒：一键重新安排（按原 rule 重算下次触发回 pending） */}
                       {r.status === 'missed' && r.repeatRule && (
                         <button
@@ -218,7 +258,8 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -227,7 +268,8 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
       {/* 编辑 pending 提醒：弹层改时间/文本/循环规则 */}
       {editing && (
         <EditReminderDialog
-          record={editing}
+          record={editing.record}
+          mode={editing.mode}
           onClose={() => setEditing(null)}
           onDone={async () => {
             await reload(tab)
@@ -242,13 +284,17 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
 // 编辑 pending 提醒弹窗：仿 RenameDocDialog overlay 模式；可改 text/fireAt/repeatRule
 const EditReminderDialog: React.FC<{
   record: ReminderRecord
+  /** edit=改 pending 行（走 UPDATE）；reschedule=终态行改期回 pending（走 RESCHEDULE，不动文本） */
+  mode: 'edit' | 'reschedule'
   onClose: () => void
   onDone: () => Promise<void> | void
-}> = ({ record, onClose, onDone }) => {
+}> = ({ record, mode, onClose, onDone }) => {
   const { t } = useI18n()
   const toast = useToast()
   const [text, setText] = useState(record.text)
-  const [fireAtLocal, setFireAtLocal] = useState(toDatetimeLocal(record.fireAt))
+  const [fireAtLocal, setFireAtLocal] = useState(
+    toDatetimeLocal(mode === 'reschedule' ? rescheduleDefaultFireAt() : record.fireAt)
+  )
   // repeatRule 编辑态：'none'=清除变一次性；'daily'/'weekly'/'monthly'=对应规则
   const initialKind = record.repeatRule?.kind ?? 'none'
   const [ruleKind, setRuleKind] = useState<'none' | 'daily' | 'weekly' | 'monthly'>(initialKind)
@@ -292,17 +338,26 @@ const EditReminderDialog: React.FC<{
         const dom = Math.max(1, Math.min(31, Math.floor(Number(dayOfMonth) || 1)))
         repeatRule = { kind: 'monthly', dayOfMonth: dom }
       }
-      const r = await window.pocketai.updateReminder({
-        id: record.id,
-        text: trimmed,
-        fireAt,
-        repeatRule
-      })
+      // RESCHEDULE 的 repeatRule 是 optional 且不接受 null（schema 会拒），一次性就不传该字段
+      const r =
+        mode === 'reschedule'
+          ? await window.pocketai.rescheduleReminder({
+              id: record.id,
+              fireAt,
+              ...(repeatRule ? { repeatRule } : {})
+            })
+          : await window.pocketai.updateReminder({
+              id: record.id,
+              text: trimmed,
+              fireAt,
+              repeatRule
+            })
       if (!r.ok) {
-        setError(t('reminder.center.editFail'))
+        // 时间范围这类校验只有主进程知道原因，优先显示它的原文
+        setError(r.error ?? t(mode === 'reschedule' ? 'reminder.center.rescheduleAtFail' : 'reminder.center.editFail'))
         return
       }
-      toast.success(t('reminder.center.editOk'))
+      toast.success(t(mode === 'reschedule' ? 'reminder.center.rescheduleAtOk' : 'reminder.center.editOk'))
       await onDone()
       onClose()
     } catch (e) {
@@ -328,7 +383,9 @@ const EditReminderDialog: React.FC<{
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-          <h3 className="text-sm font-semibold">{t('reminder.center.editTitle')}</h3>
+          <h3 className="text-sm font-semibold">
+            {t(mode === 'reschedule' ? 'reminder.center.rescheduleAtTitle' : 'reminder.center.editTitle')}
+          </h3>
           <button onClick={onClose} className="btn-ghost text-xs">
             {t('common.close')}
           </button>
@@ -338,14 +395,20 @@ const EditReminderDialog: React.FC<{
             <label className="block text-xs text-[var(--color-text-muted)] mb-1">
               {t('reminder.center.fieldText')}
             </label>
-            <textarea
-              className="input w-full resize-none"
-              rows={2}
-              maxLength={500}
-              value={text}
-              autoFocus
-              onChange={(e) => setText(e.target.value)}
-            />
+            {mode === 'reschedule' ? (
+              <div className="text-sm text-[var(--color-text)] break-words" title={record.text}>
+                {record.text}
+              </div>
+            ) : (
+              <textarea
+                className="input w-full resize-none"
+                rows={2}
+                maxLength={500}
+                value={text}
+                autoFocus
+                onChange={(e) => setText(e.target.value)}
+              />
+            )}
           </div>
           <div>
             <label className="block text-xs text-[var(--color-text-muted)] mb-1">

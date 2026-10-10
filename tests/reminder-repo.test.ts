@@ -14,7 +14,7 @@ vi.mock('../src/main/db/database', () => ({
   dbService: { getHandle: () => ({ prepare: prepareMock }) }
 }))
 
-import { reminderRepo } from '../src/main/db/repositories/reminder.repo'
+import { reminderRepo, computeNextFireAt } from '../src/main/db/repositories/reminder.repo'
 
 const row = {
   id: 'r1',
@@ -172,6 +172,38 @@ describe('reminderRepo.update — 编辑 pending', () => {
   })
 })
 
+describe('reminderRepo.reschedule — 终态行手动改期（历史 tab 的「改期」入口）', () => {
+  const SQL = "UPDATE reminders SET status=?, fire_at=?, repeat_rule=? WHERE id=?"
+
+  it('带规则改期：写回 pending + 新时间 + 规则 JSON', () => {
+    expect(reminderRepo.reschedule('r1', 5000, { kind: 'daily', intervalDays: 2 })).toBe(true)
+    expect(prepareMock.mock.calls[0]![0]).toBe(SQL)
+    expect(runMock.mock.calls[0]).toEqual(['pending', 5000, '{"kind":"daily","intervalDays":2}', 'r1'])
+  })
+
+  it('不传规则会把 repeat_rule 写成 NULL —— 调用方（改期弹窗）必须自己带上原规则', () => {
+    reminderRepo.reschedule('r1', 5000)
+    expect(runMock.mock.calls[0]![2]).toBeNull()
+  })
+
+  it('WHERE 只按 id、不带状态条件：这正是 fired/cancelled 行也能改回 pending 的原因', () => {
+    reminderRepo.reschedule('r1', 5000, { kind: 'monthly', dayOfMonth: 1 })
+    const sql = prepareMock.mock.calls[0]![0]
+    // SET 里当然有 status=?，要看的是 WHERE 段
+    expect(sql.split('WHERE')[1]!.trim()).toBe('id=?')
+  })
+
+  it('记录不存在（changes=0）→ false', () => {
+    runMock.mockImplementation(() => ({ changes: 0 }))
+    expect(reminderRepo.reschedule('nope', 5000)).toBe(false)
+  })
+
+  it('非法 id 走 schema 二道防线（抛错而不是拼进 SQL）', () => {
+    expect(() => reminderRepo.reschedule('', 5000)).toThrow()
+    expect(() => reminderRepo.reschedule('r1', 0)).not.toThrow()
+  })
+})
+
 describe('reminderRepo.rescheduleNext — 一键重新安排 missed 循环', () => {
   it('记录不存在 → { ok: false }', () => {
     getMock.mockImplementation(() => undefined)
@@ -208,5 +240,62 @@ describe('reminderRepo.rescheduleNext — 一键重新安排 missed 循环', () 
     }))
     runMock.mockImplementation(() => ({ changes: 0 }))
     expect(reminderRepo.rescheduleNext('r1')).toEqual({ ok: false })
+  })
+})
+
+describe('computeNextFireAt — monthly 月末回落', () => {
+  const day = (y: number, m: number, d: number, h = 9) => new Date(y, m, d, h, 0, 0, 0).getTime()
+
+  it('普通号数直接进下一个自然月的同一天', () => {
+    const next = computeNextFireAt(day(2026, 0, 15), { kind: 'monthly', dayOfMonth: 15 }, day(2026, 0, 15))
+    expect(new Date(next)).toEqual(new Date(2026, 1, 15, 9, 0, 0, 0))
+  })
+
+  it('31 号在短月回落到月末，但下个月仍回到 31 号（旧实现 min(day,28) 会从此卡在 28 号）', () => {
+    const rule = { kind: 'monthly', dayOfMonth: 31 } as const
+    const feb = computeNextFireAt(day(2026, 0, 31), rule, day(2026, 1, 1))
+    expect(new Date(feb).getDate()).toBe(28) // 2026 非闰年，2 月只到 28
+    const mar = computeNextFireAt(feb, rule, feb)
+    expect(new Date(mar).getMonth()).toBe(2)
+    expect(new Date(mar).getDate()).toBe(31) // 不能被粘在 28 号
+  })
+
+  it('闰年 2 月取 29 号', () => {
+    const next = computeNextFireAt(day(2024, 0, 31), { kind: 'monthly', dayOfMonth: 31 }, day(2024, 1, 1))
+    expect(new Date(next)).toEqual(new Date(2024, 1, 29, 9, 0, 0, 0))
+  })
+
+  it('30 号在 2 月回落、在 4 月也回落、其余月照旧', () => {
+    const rule = { kind: 'monthly', dayOfMonth: 30 } as const
+    expect(new Date(computeNextFireAt(day(2026, 0, 30), rule, day(2026, 1, 1))).getDate()).toBe(28)
+    const apr = computeNextFireAt(day(2026, 2, 30), rule, day(2026, 3, 1))
+    expect(new Date(apr)).toEqual(new Date(2026, 3, 30, 9, 0, 0, 0))
+  })
+
+  it('跨年进位（12 月的下一次是次年 1 月）', () => {
+    const next = computeNextFireAt(day(2026, 11, 10), { kind: 'monthly', dayOfMonth: 5 }, day(2026, 11, 20))
+    expect(new Date(next)).toEqual(new Date(2027, 0, 5, 9, 0, 0, 0))
+  })
+
+  it('时分秒沿用上一次触发的墙钟时间', () => {
+    const prev = new Date(2026, 0, 31, 21, 45, 30, 0).getTime()
+    const next = computeNextFireAt(prev, { kind: 'monthly', dayOfMonth: 15 }, prev)
+    const d = new Date(next)
+    expect([d.getHours(), d.getMinutes(), d.getSeconds()]).toEqual([21, 45, 30])
+  })
+
+  it('候选仍 ≤ now 时逐月递推（补录/长期休眠后醒来）', () => {
+    const rule = { kind: 'monthly', dayOfMonth: 31 } as const
+    const next = computeNextFireAt(day(2026, 0, 31), rule, day(2026, 5, 1))
+    const d = new Date(next)
+    expect(d.getTime()).toBeGreaterThan(day(2026, 5, 1))
+    expect([d.getMonth(), d.getDate()]).toEqual([5, 30]) // 6 月没有 31 号 → 6/30
+  })
+
+  it('now 远在未来也只递推 8 次就返回，不死循环', () => {
+    const far = day(2040, 0, 1)
+    const next = computeNextFireAt(day(2026, 0, 31), { kind: 'monthly', dayOfMonth: 31 }, far)
+    expect(Number.isFinite(next)).toBe(true)
+    expect(next).toBeLessThan(far + 2 * 86_400_000 * 31)
   })
 })

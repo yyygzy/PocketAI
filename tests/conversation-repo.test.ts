@@ -391,3 +391,31 @@ describe('setSystemPromptOverride — 会话级系统提示词覆盖', () => {
     expect(rec.systemPromptOverride).toBe('覆盖提示词')
   })
 })
+
+describe('conversationRepo.setAssistant — 改归属助手', () => {
+  it('移到某助手：写 assistant_id 并清 group_id（分组按助手过滤，留着旧组会话会隐身）', () => {
+    expect(conversationRepo.setAssistant('c1', 'a-2')).toBe(true)
+    expect(state.lastSql).toBe('UPDATE conversations SET assistant_id=?, group_id=NULL, updated_at=? WHERE id=?')
+    const params = state.lastParams
+    expect(params[0]).toBe('a-2')
+    expect(params[2]).toBe('c1')
+    expect(typeof params[1]).toBe('number')
+  })
+
+  it('null 归属写 NULL（自由会话），与 asst-default 在同一列表里等价', () => {
+    conversationRepo.setAssistant('c2', null)
+    expect(state.lastParams[0]).toBeNull()
+  })
+
+  it('会话不存在（changes=0）→ false，供 IPC 层报错', () => {
+    state.runChanges = 0
+    expect(conversationRepo.setAssistant('ghost', 'a-1')).toBe(false)
+  })
+
+  it('只动归属三件事，不碰标题/分组内容/状态', () => {
+    conversationRepo.setAssistant('c3', 'a-3')
+    expect(state.lastSql).not.toContain('title')
+    expect(state.lastSql).not.toContain('status')
+    expect(state.lastSql).toContain('group_id=NULL')
+  })
+})

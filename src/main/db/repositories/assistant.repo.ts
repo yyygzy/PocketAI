@@ -200,20 +200,22 @@ export const assistantRepo = {
       .run(pinned ? 1 : 0, id)
   },
 
+  /**
+   * 删除助手 = 只删这个配置项，**不动用户对话**（与 am.deleteConfirm「其历史会话仍会保留」一致）。
+   * 该助手下的会话回落到自由会话（assistant_id=NULL，与「asst-default」同列表可见），
+   * 并必须一起清 group_id：分组按 assistant_id 过滤，留着旧组会让会话落进
+   * 新归属永远渲染不到的文件夹里（ConversationList 的 groupViews 只画当前助手的组）。
+   */
   delete(id: string): void {
     const existing = this.get(id)
     if (!existing) return
     if (existing.isBuiltin) throw new Error('内置助手不可删除')
     const db = dbService.getHandle()
-    // 级联删除该助手下的对话及消息
-    const convIds = db
-      .prepare('SELECT id FROM conversations WHERE assistant_id=?')
-      .all(id) as { id: string }[]
-    for (const { id: cid } of convIds) {
-      db.prepare('DELETE FROM messages WHERE conversation_id=?').run(cid)
-      db.prepare('DELETE FROM messages_fts WHERE conversation_id=?').run(cid)
-      db.prepare('DELETE FROM conversations WHERE id=?').run(cid)
-    }
-    db.prepare('DELETE FROM assistants WHERE id=?').run(id)
+    const tx = db.transaction(() => {
+      db.prepare('UPDATE conversations SET assistant_id=NULL, group_id=NULL WHERE assistant_id=?').run(id)
+      db.prepare('DELETE FROM conversation_groups WHERE assistant_id=?').run(id)
+      db.prepare('DELETE FROM assistants WHERE id=?').run(id)
+    })
+    tx()
   }
 }

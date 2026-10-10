@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
-import type { ConversationRecord, ConversationGroupRecord, MessageSearchResult, StarredMessageItem } from '../../../../shared/types'
+import type { AssistantRecord, ConversationRecord, ConversationGroupRecord, MessageSearchResult, StarredMessageItem } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { EmptyState } from '../../components/EmptyState'
 import { MessageSearchResults, relTime } from '../../components/MessageSearchResults'
@@ -41,6 +41,10 @@ interface Props {
   onDeleteGroup?: (id: string) => void
   /** 拖拽/菜单移动会话到组；null=移出分组 */
   onMoveConv?: (convId: string, groupId: string | null) => void
+  /** 可选归属助手列表（改归属菜单项用；内置默认助手由父级过滤掉） */
+  assistants?: AssistantRecord[]
+  /** 改归属助手（assistantId=null 回自由会话；分组按助手过滤，移动会清组） */
+  onSetAssistant?: (convId: string, assistantId: string | null) => void
   /** 备注编辑 */
   onSetNote?: (convId: string, note: string | null) => void
   /** 嵌入到已有侧栏容器时，去掉自身宽度/边框/背景 */
@@ -74,6 +78,8 @@ export const ConversationList: React.FC<Props> = ({
   onRenameGroup,
   onDeleteGroup,
   onMoveConv,
+  assistants,
+  onSetAssistant,
   onSetNote,
   embedded
 }) => {
@@ -321,6 +327,8 @@ export const ConversationList: React.FC<Props> = ({
       onToggleSelect={() => toggleSelect(c.id)}
       groups={groups}
       onMoveConv={groupedMode ? onMoveConv : undefined}
+      assistants={assistants}
+      onSetAssistant={onSetAssistant}
       onSetNote={onSetNote}
       draggable={groupedMode && !selectMode}
     />
@@ -748,9 +756,12 @@ const ConvItem: React.FC<{
   /** 文件夹菜单项 + 移动回调；不给则不显示「移入分组」菜单 */
   groups?: ConversationGroupRecord[]
   onMoveConv?: (convId: string, groupId: string | null) => void
+  /** 改归属助手（不给则不显示该项） */
+  assistants?: AssistantRecord[]
+  onSetAssistant?: (convId: string, assistantId: string | null) => void
   /** 备注编辑回调；不给则不显示备注菜单项 */
   onSetNote?: (convId: string, note: string | null) => void
-}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportPdf, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive, indented, draggable, groups, onMoveConv, onSetNote }) => {
+}> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportPdf, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive, indented, draggable, groups, onMoveConv, assistants, onSetAssistant, onSetNote }) => {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -869,7 +880,15 @@ const ConvItem: React.FC<{
           {relTime(conv.updatedAt, t)}
         </span>
       )}
-      {(onTogglePin || onSetArchived || onRename || onMoveConv || onSetNote) && !editing && !noteEditing && !selectMode && (
+      {(onTogglePin ||
+        onSetArchived ||
+        onRename ||
+        onMoveConv ||
+        onSetNote ||
+        onSetAssistant) &&
+        !editing &&
+        !noteEditing &&
+        !selectMode && (
         <ExportMenu
           triggerTitle={t('chat.more')}
           triggerContent="⋯"
@@ -883,7 +902,24 @@ const ConvItem: React.FC<{
             ...(onMoveConv && groups
               ? groups.map((g) => ({ key: `grp:${g.id}`, label: `${conv.groupId === g.id ? '✓ ' : ''}📁 ${g.name}` }))
               : []),
-            ...(onMoveConv && conv.groupId ? [{ key: 'grp-out', label: `📂 ${t('chat.groupMoveOut')}` }] : [])
+            ...(onMoveConv && conv.groupId ? [{ key: 'grp-out', label: `📂 ${t('chat.groupMoveOut')}` }] : []),
+            // 改归属：自由会话 + 各助手（当前归属打 ✓）。默认助手与自由会话在同一列表里可见，
+            // 故不单列 asst-default，选「自由会话」即写 NULL（两者在查询里等价）
+            ...(onSetAssistant && assistants
+              ? [
+                {
+                  key: 'asst',
+                  label:
+                    `🚪 ${(conv.assistantId === null || conv.assistantId === 'asst-default' ? '✓ ' : '') + t('chat.moveToAssistantNone')}`
+                },
+                ...assistants
+                  .filter((a) => a.id !== 'asst-default')
+                  .map((a) => ({
+                    key: `asst:${a.id}`,
+                    label: `${conv.assistantId === a.id ? '✓ ' : ''}👤 ${a.name}`
+                  }))
+              ]
+              : [])
           ]}
           onPick={(k) => {
             if (k === 'pin') onTogglePin?.(conv.id, !conv.pinned)
@@ -892,6 +928,8 @@ const ConvItem: React.FC<{
             else if (k === 'note') setNoteEditing(true)
             else if (k === 'grp-out') onMoveConv?.(conv.id, null)
             else if (k.startsWith('grp:')) onMoveConv?.(conv.id, k.slice(4))
+            else if (k === 'asst') onSetAssistant?.(conv.id, null)
+            else if (k.startsWith('asst:')) onSetAssistant?.(conv.id, k.slice(5))
           }}
         />
       )}

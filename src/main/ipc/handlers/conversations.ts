@@ -27,6 +27,7 @@ import {
   conversationImportDataSchema,
   conversationImportExternalArgsSchema,
   conversationListArgsSchema,
+  conversationSetAssistantArgsSchema,
   conversationCreateArgsSchema,
   CONVERSATION_IMPORT_MAX_FILE_BYTES
 } from '../../../shared/schemas/conversations'
@@ -127,6 +128,19 @@ export function registerConversationHandlers(): void {
     conversationGroupRepo.delete(id)
     return { ok: true }
   }, argsSchema(idSchema))
+  // 改归属助手：目标必须是真实存在的助手（内置助手也算），null=自由会话。
+  // 静默回落会把“选错助手”变成“会话凭空消失”，这里宁可报错。
+  safeHandle(
+    IPC.CONVERSATION_SET_ASSISTANT,
+    (_e, arg: z.infer<typeof conversationSetAssistantArgsSchema>) => {
+      if (!conversationRepo.get(arg.id)) return { ok: false, error: '会话不存在' }
+      if (arg.assistantId !== null && !assistantRepo.get(arg.assistantId)) {
+        return { ok: false, error: '目标助手不存在' }
+      }
+      return { ok: conversationRepo.setAssistant(arg.id, arg.assistantId) }
+    },
+    argsSchema(conversationSetAssistantArgsSchema)
+  )
   safeHandle(IPC.CONVERSATION_SET_GROUP, (_e, convId: string, groupId: string | null) => {
     conversationGroupRepo.setConversationGroup(convId, groupId)
     return { ok: true }

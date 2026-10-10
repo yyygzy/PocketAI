@@ -19,6 +19,7 @@ import { getBackupSchedule } from '../backup/backup-scheduler'
 import { errMsg } from '../error'
 import { getBootPerf } from './boot-perf'
 import { getRecentPerf } from './perf-probe'
+import { getPerfHistory } from './perf-history'
 import { getKbIntegrityReport } from '../knowledge/kb-health'
 
 // ─── 纯函数：数据目录体积分类聚合 ────────────────────────────────
@@ -191,5 +192,8 @@ export function getDataHealthReport(): DataHealthReport {
   // 6. 运行期慢操作（入库/检索/渲染长任务，环形缓冲快照）
   const recentPerf = getRecentPerf()
 
-  return { sizes, kb, backup, tasks, boot, recentPerf }
+  // 7. 跨会话慢事件（从日志尾部聚合，只下发统计行）
+  const perfHistory = getPerfHistory()
+
+  return { sizes, kb, backup, tasks, boot, recentPerf, perfHistory }
 }

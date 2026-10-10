@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import type { ChatAttachment, MessageRecord, MessageSource, UsagePricing, UsageStats } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord, MessageSource, ReminderRepeatRule, UsagePricing, UsageStats } from '../../../../shared/types'
 import { computeUsageCost, priceKey } from '../../../../shared/usage-pricing'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
@@ -58,7 +58,7 @@ interface Props {
   /** 多选模式：禁用右键菜单（与点选操作冲突） */
   selectMode?: boolean
   /** 基于本条消息创建定时提醒（右键「提醒我」；ChatModule 提供，Agent 侧不传） */
-  onRemind?: (id: string, fireAt: number) => void
+  onRemind?: (id: string, fireAt: number, repeatRule?: ReminderRepeatRule) => void
 }
 
 /** React.memo：流式输出时只重渲染变化的消息，其余消息 props 不变即跳过（配合 ChatView 的 useCallback） */
@@ -551,9 +551,9 @@ const MessageBubbleImpl: React.FC<Props> = ({
         <ReminderMenu
           anchor={remindMenu}
           onClose={() => setRemindMenu(null)}
-          onPick={(fireAt) => {
+          onPick={(fireAt, repeatRule) => {
             setRemindMenu(null)
-            onRemind(messageId, fireAt)
+            onRemind(messageId, fireAt, repeatRule)
           }}
         />
       )}

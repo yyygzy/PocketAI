@@ -2,6 +2,7 @@
 // 滚底逻辑：流式追加时若用户在底部锚定区则自动跟滚；用户主动向上滚后停止跟滚（尊重阅读）
 import React, { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import type { ReminderRepeatRule } from '../../../../../shared/types'
 import { AgentMessageCard } from './AgentMessageCard'
 import { isNearBottom, shouldStickToBottom } from './virtual-list-utils'
 import { useI18n } from '../../../i18n'
@@ -23,7 +24,7 @@ export interface VirtualMessageListProps {
   /** 重新生成最后一条 final 助手回复（非流式时由父级传入） */
   onRegenerateMessage?: (id: string) => void
   /** 右键「提醒我」：按消息 id 取正文建提醒 */
-  onRemindMessage?: (id: string, fireAt: number) => void
+  onRemindMessage?: (id: string, fireAt: number, repeatRule?: ReminderRepeatRule) => void
   /** 搜索定位：需要滚动到的消息下标（变化时居中滚动） */
   focusIndex?: number | null
   /** 搜索定位：当前高亮的消息 id（外层卡片加 ring） */

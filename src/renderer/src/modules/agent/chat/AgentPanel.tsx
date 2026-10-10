@@ -1,6 +1,6 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
 import React, { useEffect, useRef, useState } from 'react'
-import type { ConversationRecord } from '../../../../../shared/types'
+import type { ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
@@ -80,7 +80,11 @@ export const AgentPanel: React.FC = () => {
   useEffect(() => { setStatsExpanded(false) }, [chat.conversationId])
 
   // 消息右键「提醒我」：正文截取 200 字，带会话 id 落库；到点由系统通知（与 Chat 同链路）
-  const handleRemind = async (messageId: string, fireAt: number) => {
+  const handleRemind = async (
+    messageId: string,
+    fireAt: number,
+    repeatRule?: ReminderRepeatRule
+  ) => {
     const msg = chat.messages.find((m) => m.id === messageId)
     const text = msg ? buildReminderText(msg.text ?? '') : ''
     if (!text) {
@@ -88,10 +92,19 @@ export const AgentPanel: React.FC = () => {
       return
     }
     try {
-      await window.pocketai.createReminder({ text, fireAt, conversationId: chat.conversationId ?? null })
+      await window.pocketai.createReminder({
+        text,
+        fireAt,
+        conversationId: chat.conversationId ?? null,
+        ...(repeatRule ? { repeatRule } : {})
+      })
       // 通知 Sidebar 角标即时刷新（创建无 IPC 广播，本地事件轻量通知）
       window.dispatchEvent(new Event('pocketai:reminders-changed'))
-      toast.success(t('reminder.menu.created', { time: formatDateTime(fireAt) }))
+      toast.success(
+        t(repeatRule ? 'reminder.menu.createdRepeat' : 'reminder.menu.created', {
+          time: formatDateTime(fireAt)
+        })
+      )
     } catch (e) {
       toast.error(errText(e))
     }
@@ -461,7 +474,9 @@ export const AgentPanel: React.FC = () => {
           onDeleteMessage={chat.running ? undefined : (id) => void chat.deleteMessage(id)}
           onRerunMessage={chat.running ? undefined : (id, text) => void chat.rerun(id, text)}
           onRegenerateMessage={chat.running ? undefined : (id) => chat.regenerate(id)}
-          onRemindMessage={chat.running ? undefined : (id, fireAt) => void handleRemind(id, fireAt)}
+          onRemindMessage={
+            chat.running ? undefined : (id, fireAt, repeatRule) => void handleRemind(id, fireAt, repeatRule)
+          }
           focusIndex={activeHit?.index ?? null}
           highlightId={activeHit?.id ?? null}
         />

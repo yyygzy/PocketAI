@@ -6,7 +6,8 @@ import type {
   ConversationGroupRecord,
   MessageRecord,
   ChatTarget,
-  ChatAttachment
+  ChatAttachment,
+  ReminderRepeatRule
 } from '../../../../shared/types'
 import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
@@ -1016,6 +1017,24 @@ export const ChatModule: React.FC = () => {
     }
   }, [patchConvGroup, reloadConversations, toast, t])
 
+  /** 改归属助手（null=自由会话）。主进程会一并清掉分组（组按助手过滤），所以移动后必重拉列表 */
+  const handleSetAssistant = useCallback(
+    async (convId: string, assistantId: string | null) => {
+      try {
+        const r = await window.pocketai.setConversationAssistant({ id: convId, assistantId })
+        if (!r.ok) {
+          toast.error(r.error ?? t('chat.moveToAssistantFail'))
+          void reloadConversations()
+          return
+        }
+        void reloadConversations()
+      } catch (e) {
+        toast.error(errText(e))
+      }
+    },
+    [reloadConversations, toast, t]
+  )
+
   /** 设置会话备注（乐观本地更新两列表，失败回滚由 reload 兜底） */
   const handleSetNote = useCallback(async (convId: string, note: string | null) => {
     const patch = (list: ConversationRecord[]) =>
@@ -1227,7 +1246,8 @@ export const ChatModule: React.FC = () => {
   }, [confirm, reloadAssistants, toast, t])
 
   // 消息右键「提醒我」：正文截取 200 字，带会话 id 落库；到点由系统通知
-  const handleRemind = useCallback(async (messageId: string, fireAt: number) => {
+  const handleRemind = useCallback(
+    async (messageId: string, fireAt: number, repeatRule?: ReminderRepeatRule) => {
     const msg = messages.find((m) => m.id === messageId)
     const text = msg ? buildReminderText(msg.content ?? '') : ''
     if (!text) {
@@ -1235,10 +1255,19 @@ export const ChatModule: React.FC = () => {
       return
     }
     try {
-      await window.pocketai.createReminder({ text, fireAt, conversationId: currentConvId ?? null })
+      await window.pocketai.createReminder({
+        text,
+        fireAt,
+        conversationId: currentConvId ?? null,
+        ...(repeatRule ? { repeatRule } : {})
+      })
       // 通知 Sidebar 角标即时刷新（创建无 IPC 广播，本地事件轻量通知）
       window.dispatchEvent(new Event('pocketai:reminders-changed'))
-      toast.success(t('reminder.menu.created', { time: formatDateTime(fireAt) }))
+      toast.success(
+        t(repeatRule ? 'reminder.menu.createdRepeat' : 'reminder.menu.created', {
+          time: formatDateTime(fireAt)
+        })
+      )
     } catch (e) {
       toast.error(errText(e))
     }
@@ -1285,6 +1314,8 @@ export const ChatModule: React.FC = () => {
             onRenameGroup={handleRenameGroup}
             onDeleteGroup={handleDeleteGroup}
             onMoveConv={handleMoveConv}
+            assistants={assistants}
+            onSetAssistant={handleSetAssistant}
             onSetNote={handleSetNote}
             embedded
           />

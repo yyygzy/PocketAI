@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, UsagePricing } from '../../../../shared/types'
+import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
@@ -123,7 +123,7 @@ interface Props {
   /** 设置/清除会话级系统提示词覆盖 */
   onSetSystemPromptOverride?: (text: string | null) => void
   /** 消息右键「提醒我」：父级按 id 取正文并调 IPC 建提醒 */
-  onRemind?: (messageId: string, fireAt: number) => void
+  onRemind?: (messageId: string, fireAt: number, repeatRule?: ReminderRepeatRule) => void
   /** 切换消息置顶（IPC 落库由父级负责） */
   onTogglePin?: (id: string, pinned: boolean) => void
 }

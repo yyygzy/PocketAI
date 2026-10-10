@@ -52,6 +52,22 @@ function rowToRecord(row: ReminderRow): ReminderRecord {
   }
 }
 
+/** 给定「年月可溢出」的月序号，取该月 dayOfMonth 号（超出月长则回落到月末）的时刻，时分秒沿用 base */
+function monthDayAt(year: number, monthIndex: number, dayOfMonth: number, base: Date): number {
+  const first = new Date(year, monthIndex, 1)
+  const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()
+  return new Date(
+    first.getFullYear(),
+    first.getMonth(),
+    Math.min(dayOfMonth, lastDay),
+    base.getHours(),
+    base.getMinutes(),
+    base.getSeconds(),
+    base.getMilliseconds()
+  ).getTime()
+}
+
+
 /** 计算下一次循环触发时间（epoch ms）：
  * - daily: prevFireAt + intervalDays 天
  * - weekly: 找 prevFireAt 之后的下一个匹配 weekday
@@ -72,36 +88,15 @@ export function computeNextFireAt(prevFireAt: number, rule: ReminderRepeatRule, 
     }
     return prevFireAt + 7 * 86_400_000
   }
-  // monthly: 下一自然月 dayOfMonth（不存在则取月末）
+  // monthly：下一个自然月的 dayOfMonth；该月没有这天就取当月最后一天（2 月 30 号→2 月末）
   const base = new Date(prevFireAt)
-  const y = base.getFullYear()
-  const m = base.getMonth()
-  const targetDay = Math.min(rule.dayOfMonth, 28) // 先取安全值
-  // 下一月 dayOfMonth；不存在则取该月最后一天
-  const nextMonth = new Date(y, m + 1, targetDay, base.getHours(), base.getMinutes(), base.getSeconds(), base.getMilliseconds())
-  // 若 dayOfMonth 超过下一月天数，Date 构造会溢出到下下月，回退到下一月最后一天
-  const expectedMonth = m + 1
-  if (nextMonth.getMonth() !== expectedMonth) {
-    // 溢出：回退到 expectedMonth 的最后一天
-    const lastDay = new Date(y, expectedMonth + 1, 0)
-    lastDay.setHours(base.getHours(), base.getMinutes(), base.getSeconds(), base.getMilliseconds())
-    return lastDay.getTime()
-  }
-  let result = nextMonth.getTime()
-  // 防御：若新时间仍 ≤ now（极端边界），继续递推（上限 8 次）
+  let monthCursor = base.getMonth() + 1 // 从下一个自然月开始找
+  let result = monthDayAt(base.getFullYear(), monthCursor, rule.dayOfMonth, base)
+  // 递推：跨月边界/DST 让候选仍 ≤ now 时继续往后一个月（上限 8 次防死循环）
   let guard = 0
   while (result <= now && guard < 8) {
-    const n = new Date(result)
-    const ny = n.getFullYear()
-    const nm = n.getMonth()
-    const nNext = new Date(ny, nm + 1, targetDay, n.getHours(), n.getMinutes(), n.getSeconds(), n.getMilliseconds())
-    if (nNext.getMonth() !== nm + 1) {
-      const lastDay = new Date(ny, nm + 2, 0)
-      lastDay.setHours(n.getHours(), n.getMinutes(), n.getSeconds(), n.getMilliseconds())
-      result = lastDay.getTime()
-    } else {
-      result = nNext.getTime()
-    }
+    monthCursor += 1
+    result = monthDayAt(base.getFullYear(), monthCursor, rule.dayOfMonth, base)
     guard++
   }
   return result

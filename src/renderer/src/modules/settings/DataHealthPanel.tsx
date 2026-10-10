@@ -72,7 +72,7 @@ export const DataHealthPanel: React.FC = () => {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 
-  const { sizes, kb, backup, tasks, boot, recentPerf } = report
+  const { sizes, kb, backup, tasks, boot, recentPerf, perfHistory } = report
   const integrity = kb.integrity
   const integrityOk =
     integrity.orphanVectors === 0 &&
@@ -289,6 +289,44 @@ export const DataHealthPanel: React.FC = () => {
         </div>
       )}
 
+      {/* 跨会话慢事件统计（读日志尾部聚合，见 src/main/steward/perf-history.ts） */}
+      <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.perf.histTitle')}</div>
+      {perfHistory.length === 0 ? (
+        <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('dh.perf.histEmpty')}</div>
+      ) : (
+        <div className="space-y-1 mb-2">
+          {perfHistory.map((h) => {
+            const lk = `dh.perf.label.${h.label}`
+            const ll = t(lk)
+            const last = h.lastAt > 0 ? new Date(h.lastAt).toLocaleString() : '-'
+            return (
+              <div key={h.label}>
+                <Row
+                  label={ll === lk ? h.label : ll}
+                  value={t('dh.perf.histRow', {
+                    count: h.count,
+                    p50: h.p50Ms,
+                    max: h.maxMs,
+                    last
+                  })}
+                  warn={h.maxMs >= 3000}
+                />
+                {/* 同一标签按模型拆开才答得出「哪个模型慢」——混在一起的峰值归因不到具体模型 */}
+                {h.byModel.map((m) => (
+                  <Row
+                    key={m.model}
+                    mono
+                    label={'· ' + m.model}
+                    value={t('dh.perf.histModel', { count: m.count, p50: m.p50Ms, max: m.maxMs })}
+                    warn={m.maxMs >= 3000}
+                  />
+                ))}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center gap-2">
         <button onClick={load} className="chip">{t('dh.refresh')}</button>
       </div>
@@ -318,9 +356,9 @@ const BarRow: React.FC<{ label: string; ratio: number; value: string }> = ({ lab
   </div>
 )
 
-const Row: React.FC<{ label: string; value: string; warn?: boolean }> = ({ label, value, warn }) => (
+const Row: React.FC<{ label: string; value: string; warn?: boolean; mono?: boolean }> = ({ label, value, warn, mono }) => (
   <div className="flex justify-between gap-4 text-sm">
-    <span className="text-[var(--color-text-muted)] truncate">{label}</span>
+    <span className={'text-[var(--color-text-muted)] truncate ' + (mono ? 'font-mono' : '')}>{label}</span>
     <span className={`text-right text-xs truncate ${warn ? 'text-[var(--color-warning)]' : 'text-[var(--color-text)]'}`} title={value}>
       {value}
     </span>

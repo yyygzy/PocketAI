@@ -266,7 +266,11 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_GROUP_RENAME, id, name),
   deleteConversationGroup: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_GROUP_DELETE, id),
-  setConversationGroup: (convId: string, groupId: string | null): Promise<{ ok: boolean }> =>
+  /** 改归属助手（assistantId=null=自由会话）；分组按助手过滤，移动会清组 */
+  setConversationAssistant: (
+    payload: import('../shared/types').ConversationSetAssistantPayload
+  ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke(IPC.CONVERSATION_SET_ASSISTANT, payload),
+    setConversationGroup: (convId: string, groupId: string | null): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_SET_GROUP, convId, groupId),
   setConversationNote: (convId: string, note: string | null): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_SET_NOTE, convId, note),
@@ -1007,11 +1011,11 @@ const api = {
   /** 重新安排历史提醒（missed/cancelled/fired 行回 pending，可选改循环规则） */
   rescheduleReminder: (
     payload: import('../shared/types').ReminderReschedulePayload
-  ): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.REMINDER_RESCHEDULE, payload),
+  ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke(IPC.REMINDER_RESCHEDULE, payload),
   /** 编辑 pending 提醒（改时间/文本/循环规则；repeatRule=null 清除变一次性） */
   updateReminder: (
     payload: import('../shared/types').ReminderUpdatePayload
-  ): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.REMINDER_UPDATE, payload),
+  ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke(IPC.REMINDER_UPDATE, payload),
   /** 一键重新安排 missed 循环提醒（按原 rule 重算下次触发回 pending） */
   rescheduleNextReminder: (
     id: string
