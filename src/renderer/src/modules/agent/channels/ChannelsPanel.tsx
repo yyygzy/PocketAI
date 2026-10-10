@@ -15,10 +15,13 @@ import { useToast } from '../../../components/ToastProvider'
 import { logIpcError, reportIpcError } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 import { StatusDot, MiniBtn } from '../ui'
+import { useConfirm } from '../../../components/ConfirmDialog'
+import { isUnprotectedMode } from '../../../utils/secret-consent'
 
 export const ChannelsPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const [activeType, setActiveType] = useState<ChannelType>('telegram')
   // 各网关配置缓存（按 type 分开）
   const [cfgs, setCfgs] = useState<Partial<Record<ChannelType, ChannelConfig>>>({})
@@ -98,6 +101,14 @@ export const ChannelsPanel: React.FC = () => {
     if (typeof patch.secondarySecret === 'string' && patch.secondarySecret.trim().length > 512) {
       toast.error(t('channel.secretTooLong'))
       return
+    }
+    // B3：新填的凭据在明文模式下只是固定密钥混淆 ⇒ 先让用户承认再保存
+    const submittingSecret =
+      (typeof patch.primarySecret === 'string' && patch.primarySecret.trim() !== '') ||
+      (typeof patch.secondarySecret === 'string' && patch.secondarySecret.trim() !== '')
+    if (submittingSecret && (await isUnprotectedMode())) {
+      const ok = await confirm({ message: t('secret.unprotectedWarn'), danger: true })
+      if (!ok) return
     }
     try {
       const next = await window.pocketai.setChannelConfig(activeType, patch)
@@ -372,6 +383,7 @@ export const ChannelsPanel: React.FC = () => {
           <div className="text-[11px] text-[var(--color-warning)]">{t('channel.agentModeRisk')}</div>
         )}
       </div>
+      {confirmDialog}
     </div>
   )
 }

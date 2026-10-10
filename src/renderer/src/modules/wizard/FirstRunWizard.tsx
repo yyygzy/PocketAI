@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { OllamaPanel } from '../../components/OllamaPanel'
-import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { logIpcError, reportIpcError, isIpcFail, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
@@ -25,7 +25,7 @@ import type {
 
 export type WizardVariant = 'full' | 'recheck'
 
-const FULL_STEPS = 3
+const FULL_STEPS = 4
 
 // 向导里优先展示的预设（按中文用户常用度排序）
 const WIZARD_PRESET_LABELS = ['DeepSeek', 'OpenAI', 'Anthropic Claude', 'Moonshot 月之暗面', 'Ollama', 'LM Studio']
@@ -49,6 +49,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [apiKey, setApiKey] = useState('')
   const [selectedAssistantId, setSelectedAssistantId] = useState<string | null>(null)
   const [setupErr, setSetupErr] = useState('')
+  // B1 闸门触发后开放「回安全步设主密码」的入口（配置步内专用）
+  const [jumpToSecurity, setJumpToSecurity] = useState(false)
   const [savedProviderId, setSavedProviderId] = useState<string | null>(null)
 
   // Step 2: Encryption state
@@ -123,6 +125,10 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             ...existing,
             apiKeys: [...existing.apiKeys, apiKey.trim()],
           })
+          if (isIpcFail(updated)) {
+            setSetupErr(ipcFailText(updated, t('common.unknownError')))
+            return
+          }
           providerId = updated.id
         } else {
           const newP = await window.pocketai.saveProvider({
@@ -135,6 +141,10 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             enabled: true,
             createdAt: Date.now(),
           })
+          if (isIpcFail(newP)) {
+            setSetupErr(ipcFailText(newP, t('common.unknownError')))
+            return
+          }
           providerId = newP.id
         }
       } else {
@@ -153,6 +163,10 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             enabled: true,
             createdAt: Date.now(),
           })
+          if (isIpcFail(newP)) {
+            setSetupErr(ipcFailText(newP, t('common.unknownError')))
+            return
+          }
           providerId = newP.id
         }
       }
@@ -224,7 +238,16 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     }
   }
 
-  async function handleNextStep1() {
+  async function handleSetupNext() {
+    // B1：主进程在明文模式下拒存任何新 API Key。这里先挡一道，是为了给出一条**当场能解决**的话
+    // （而不是等 IPC 报错），并开放回跳到安全步——此时还没发生任何写入，回跳不会造成 Key 重复追加
+    const needsMaster = encStatus?.mode !== 'db' && !encDone && !!selectedPreset?.needKey && !!apiKey.trim()
+    if (needsMaster) {
+      setSetupErr(t('wizard.keyNeedsMaster'))
+      setJumpToSecurity(true)
+      return
+    }
+    setJumpToSecurity(false)
     const ok = await saveProviderAndAssistant()
     if (ok) setStep((s) => s + 1)
   }
@@ -338,8 +361,75 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         </>
       )}
 
-      {/* ── Step 1: Quick Setup ── */}
+      {/* ── Step 1: 安全（放在填 Key 之前——B1 口径：未设主密码不保存任何新凭据） ── */}
       {step === 1 && (
+        <>
+          <h1 className="text-lg font-semibold text-[var(--color-text)] mb-1">
+            {t('wizard.secTitle')}
+          </h1>
+          <p className="text-[12px] text-[var(--color-text-muted)] leading-relaxed mb-4">
+            {t('wizard.secSubtitle')}
+          </p>
+          {/* 加密卡片（可选） */}
+          {encStatus?.mode === 'db' ? (
+            <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
+              ✅ {t('wizard.encAlready')}
+            </div>
+          ) : encDone ? (
+            <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
+              ✅ {t('wizard.encDone')}
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
+                {t('wizard.encDoneHint')}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-[var(--color-border)] p-3">
+              <div className="text-[12px] text-[var(--color-text)] font-medium mb-1">
+                🔐 {t('wizard.encOptionalTitle')}
+              </div>
+              <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-2">
+                {t('wizard.encOptionalHint')}
+              </p>
+              {isPortable && (
+                <p className="unlock-recovery-warn mb-2 text-[11px]">{t('wizard.portableEncWarn')}</p>
+              )}
+              {/* 两个框必须常驻：原先以 pwd.length === 0 为条件渲染，输一个字符就整块消失，
+                  确认框再也填不上 ⇒ pwd2 恒为空 ⇒ 永远「两次输入不一致」，向导里设不了主密码 */}
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  className="input flex-1"
+                  value={pwd}
+                  onChange={(e) => setPwd(e.target.value)}
+                  placeholder={t('unlock.phNewPwd')}
+                  disabled={busy}
+                />
+                <input
+                  type="password"
+                  className="input flex-1"
+                  value={pwd2}
+                  onChange={(e) => setPwd2(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void enableEncryption()}
+                  placeholder={t('unlock.phConfirm')}
+                  disabled={busy}
+                />
+              </div>
+              {encErr && <div className="text-[11px] text-[var(--color-danger)] mt-2">{encErr}</div>}
+              <div className="flex justify-end gap-2 mt-2">
+                {pwd.length > 0 && (
+                  <button className="btn-primary" disabled={busy} onClick={enableEncryption}>
+                    {busy ? t('common.processing') : t('wizard.encBtn')}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+        </>
+      )}
+
+      {/* ── Step 2: Quick Setup ── */}
+      {step === 2 && (
         <>
           <h1 className="text-lg font-semibold text-[var(--color-text)] mb-1">
             {t('wizard.setupTitle')}
@@ -408,7 +498,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                 type="button"
                 className="btn-ghost text-[11px] mt-2"
                 disabled={busy}
-                onClick={handleNextStep1}
+                onClick={handleSetupNext}
               >
                 {t('wizard.ollamaLater')}
               </button>
@@ -457,11 +547,16 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           </div>
 
           {setupErr && <div className="text-[11px] text-[var(--color-danger)] mt-2">{setupErr}</div>}
+          {jumpToSecurity && (
+            <button className="btn-ghost text-[11px] mt-2" onClick={() => setStep(1)}>
+              {t('wizard.goSetMaster')}
+            </button>
+          )}
         </>
       )}
 
-      {/* ── Step 2: Done + 加密可选 ── */}
-      {step === 2 && (
+      {/* ── Step 3: Done ── */}
+      {step === 3 && (
         <>
           <h1 className="text-lg font-semibold text-[var(--color-text)] mb-1">
             {t('wizard.doneTitle')}
@@ -494,58 +589,14 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             </div>
           </div>
 
-          {/* 加密卡片（可选） */}
-          {encStatus?.mode === 'db' ? (
-            <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
-              ✅ {t('wizard.encAlready')}
-            </div>
-          ) : encDone ? (
+          {/* 加密状态（设置主密码的入口已前移到 step 1） */}
+          {encStatus?.mode === 'db' || encDone ? (
             <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
               ✅ {t('wizard.encDone')}
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
-                {t('wizard.encDoneHint')}
-              </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-[var(--color-border)] p-3">
-              <div className="text-[12px] text-[var(--color-text)] font-medium mb-1">
-                🔐 {t('wizard.encOptionalTitle')}
-              </div>
-              <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-2">
-                {t('wizard.encOptionalHint')}
-              </p>
-              {isPortable && (
-                <p className="unlock-recovery-warn mb-2 text-[11px]">{t('wizard.portableEncWarn')}</p>
-              )}
-              {/* 两个框必须常驻：原先以 pwd.length === 0 为条件渲染，输一个字符就整块消失，
-                  确认框再也填不上 ⇒ pwd2 恒为空 ⇒ 永远「两次输入不一致」，向导里设不了主密码 */}
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  className="input flex-1"
-                  value={pwd}
-                  onChange={(e) => setPwd(e.target.value)}
-                  placeholder={t('unlock.phNewPwd')}
-                  disabled={busy}
-                />
-                <input
-                  type="password"
-                  className="input flex-1"
-                  value={pwd2}
-                  onChange={(e) => setPwd2(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void enableEncryption()}
-                  placeholder={t('unlock.phConfirm')}
-                  disabled={busy}
-                />
-              </div>
-              {encErr && <div className="text-[11px] text-[var(--color-danger)] mt-2">{encErr}</div>}
-              <div className="flex justify-end gap-2 mt-2">
-                {pwd.length > 0 && (
-                  <button className="btn-primary" disabled={busy} onClick={enableEncryption}>
-                    {busy ? t('common.processing') : t('wizard.encBtn')}
-                  </button>
-                )}
-              </div>
+            <div className="unlock-recovery-warn rounded-lg p-3 text-[11px] leading-relaxed">
+              ⚠️ {t('wizard.doneEncOff')}
             </div>
           )}
 
@@ -568,7 +619,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             <button
               className="btn-primary"
               disabled={busy}
-              onClick={step === 1 ? handleNextStep1 : () => setStep((s) => s + 1)}
+              onClick={step === 2 ? handleSetupNext : () => setStep((s) => s + 1)}
             >
               {t('wizard.next')}
             </button>

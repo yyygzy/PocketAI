@@ -720,6 +720,7 @@ export const en: Record<string, string> = {
   'channel.tokenClear': 'Clear',
   'channel.tokenClearTip': 'Clear the saved credential',
   'channel.secretTooLong': 'Credential is too long (max 512 characters); not saved',
+  'secret.unprotectedWarn': 'No master password is set: this credential would be obfuscated only with the fixed key published in the source code, so anyone with this data folder can recover it. Save it anyway?',
 
   // Telegram
   'channel.telegram.title': 'Telegram',
@@ -1585,6 +1586,11 @@ export const en: Record<string, string> = {
   'wizard.pickAssistant': 'Please choose an assistant',
   'wizard.apiKeyRequired': 'API key is required',
   'wizard.encOptionalTitle': 'Set a master password (recommended)',
+  'wizard.secTitle': '🔐 Set a master password first (recommended)',
+  'wizard.secSubtitle': 'The key derived from your master password protects both the database and every stored credential. You can skip it, but while none is set new API keys are not saved: the field-obfuscation key ships in the source code, so anyone holding this data folder can undo it.',
+  'wizard.keyNeedsMaster': 'No master password set, so the API key is not saved (without one it is only local obfuscation). Go back a step and set a master password to continue.',
+  'wizard.goSetMaster': 'Go back and set a master password',
+  'wizard.doneEncOff': 'No master password: the database stays plain text and values such as API keys are only locally obfuscated, which is not a security boundary. Set one under Settings - Data encryption soon.',
   'wizard.encOptionalHint': 'You can skip this, but skipping leaves zero-protection mode: the database is plaintext and API keys are only obfuscated with a fixed key (recoverable by anyone holding this machine\'s files). With a master password the whole database is AES-256-GCM encrypted and required at every start. You can enable it later in Settings → Privacy & encryption.',
   'wizard.portableEncWarn': '⚠️ We strongly recommend encryption on portable drives to protect data if the device is lost.',
   'wizard.summaryProvider': 'Provider',

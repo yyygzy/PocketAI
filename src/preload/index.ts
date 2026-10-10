@@ -115,7 +115,7 @@ const api = {
   // ---------- Provider ----------
   listProviders: (): Promise<ProviderRecord[]> =>
     ipcRenderer.invoke(IPC.PROVIDER_LIST),
-  saveProvider: (record: ProviderRecord): Promise<ProviderRecord> =>
+  saveProvider: (record: ProviderRecord): Promise<ProviderRecord | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.PROVIDER_SAVE, record),
   /** 按需揭示单个 Provider 的真实密钥（listProviders 为掩码视图） */
   revealProviderKeys: (id: string): Promise<{ ok: boolean; apiKeys: string[] }> =>

@@ -720,6 +720,7 @@ export const zh: Record<string, string> = {
   'channel.tokenClear': '清除',
   'channel.tokenClearTip': '清除已保存的凭据',
   'channel.secretTooLong': '凭据过长（上限 512 字符），未保存',
+  'secret.unprotectedWarn': '当前未设置主密码：这条凭据只会用源码中公开的固定密钥做本地混淆，拿到本机数据目录的人可以还原。确认仍要保存？',
 
   // Telegram
   'channel.telegram.title': 'Telegram',
@@ -1585,6 +1586,11 @@ export const zh: Record<string, string> = {
   'wizard.pickAssistant': '请选择一个助手',
   'wizard.apiKeyRequired': '需要填写 API Key',
   'wizard.encOptionalTitle': '设置主密码（推荐）',
+  'wizard.secTitle': '🔐 先设主密码（推荐）',
+  'wizard.secSubtitle': '主密码派生的真实密钥同时保护数据库与各项凭据。可以跳过，但未设主密码时新的 API Key 不会被保存：那把「字段加密」密钥随源码公开，拿到本机数据目录就能还原。',
+  'wizard.keyNeedsMaster': '未设置主密码，API Key 不会被保存（未设主密码时它只是本地混淆）。请回到上一步设置主密码后再继续。',
+  'wizard.goSetMaster': '← 回到上一步设置主密码',
+  'wizard.doneEncOff': '未设主密码：数据库为明文，API Key 等字段值只是本地混淆，不是安全边界。建议尽快到「设置 → 数据加密」设置主密码。',
   'wizard.encOptionalHint': '可跳过，但跳过即进入零安全模式：数据库为明文，API Key 等凭据只做固定密钥混淆（拿到本机文件即可还原）。设置主密码后整个数据库以 AES-256-GCM 加密，此后每次启动都需输入它。也可稍后在「设置 → 隐私与加密」开启。',
   'wizard.portableEncWarn': '⚠️ 便携盘上的敏感数据建议加密，防止设备丢失后被读取。',
   'wizard.summaryProvider': '模型供应商',

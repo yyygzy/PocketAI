@@ -5,11 +5,15 @@ import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../.
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
 import { reportIpcError } from '../../../utils/ipc'
+import { useConfirm } from '../../../components/ConfirmDialog'
+import { isUnprotectedMode } from '../../../utils/secret-consent'
 import { errText } from '../../../utils/error'
 
 export function useAgentToolConfigs() {
   const { t } = useI18n()
   const toast = useToast()
+  // B3：联网搜索 Key 不拦写入，但明文模式下保存新值要用户显式承认
+  const { confirm: confirmSecret, dialog: secretDialog } = useConfirm()
   const [workspaceDir, setWorkspaceDir] = useState('')
   const [shellConfig, setShellConfigState] = useState<ShellConfig>({ enabled: false, policy: 'confirm' })
   const [calConfig, setCalConfigState] = useState<CalendarConfig>({ enabled: false, paths: [] })
@@ -50,6 +54,9 @@ export function useAgentToolConfigs() {
       toast.error(t('agent.websearch.keyTooLong'))
       return
     }
+    if (typeof patch.apiKey === 'string' && patch.apiKey.trim() !== '' && (await isUnprotectedMode())) {
+      if (!(await confirmSecret({ message: t('secret.unprotectedWarn'), danger: true }))) return
+    }
     try {
       const next = await window.pocketai.setWebSearchConfig(patch)
       setWsConfigState(next)
@@ -89,6 +96,7 @@ export function useAgentToolConfigs() {
     pickWorkspace,
     patchShellConfig,
     patchWsConfig,
+    secretDialog,
     patchCalConfig,
     addIcs
   }

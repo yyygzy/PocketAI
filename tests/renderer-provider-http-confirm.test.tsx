@@ -69,3 +69,25 @@ describe('Provider 保存的明文 http 确认（SEC-16）', () => {
     expect(calledFns()).not.toContain('saveProvider')
   })
 })
+
+describe('主进程 B1 闸门在界面上的呈现（SEC-1 收口）', () => {
+  const GATE_MSG =
+    '未设置主密码，API Key 不会被保存（本次新增或改动 1 个）。请先在「设置 → 数据加密」中设置主密码后重试。'
+
+  it('拒存新 Key 时如实显示拒绝原因，且不能报「已保存」', async () => {
+    stubPocketai({
+      listProviders: () => [],
+      saveProvider: () => Promise.resolve({ ok: false, error: GATE_MSG })
+    })
+    mountWithProviders(<ProviderSettings />)
+    fireEvent.click(screen.getByText('+ 新增'))
+    const inputs = document.querySelectorAll('input')
+    fireEvent.change(inputs[0]!, { target: { value: '测试服务' } })
+    fireEvent.change(inputs[1]!, { target: { value: 'https://api.deepseek.com/v1' } })
+    fireEvent.click(screen.getByText('保存'))
+
+    expect(await screen.findByText(GATE_MSG)).toBeTruthy()
+    // 关键：拒绝不能被当成保存成功（provider.saved = 「已保存：{name}」）
+    expect(screen.queryByText(/已保存：/)).toBeNull()
+  })
+})

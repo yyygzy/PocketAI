@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
 import { encryptApiKeys, decryptApiKeys, isCipherText } from '../../crypto/field-encrypt'
+import { isNoneMode, newSecretValues, NONE_MODE_HINT } from '../../crypto/none-mode-gate'
 import { restoreMaskedList } from '../../../shared/secret-mask'
 import type { ProviderRecord, ProviderType } from '../../../shared/types'
 import { createLogger } from '../../logger'
@@ -79,6 +80,16 @@ export const providerRepo = {
     // 渲染层传来的是掩码视图（PROVIDER_LIST 不回明文），占位项按原值回填，
     // 使「只改名称/模型列表」的保存不会把 ••••abcd 当真密钥写库。
     const apiKeys = restoreMaskedList(input.apiKeys, existing?.apiKeys)
+    // B1：明文模式的字段密钥是源码公开的固定密钥 ⇒ 新 Key 一律拒存（沿用掩码原值、删 Key 不触发）。
+    // 只报数量不回显 Key。
+    if (isNoneMode()) {
+      const gained = newSecretValues(apiKeys, existing?.apiKeys ?? [])
+      if (gained.length > 0) {
+        throw new Error(
+          `未设置主密码，API Key 不会被保存（本次新增或改动 ${gained.length} 个）。${NONE_MODE_HINT}`
+        )
+      }
+    }
     const apiKeysCipher = encryptApiKeys(apiKeys)
     const models = JSON.stringify(input.models)
     const enabled = input.enabled ? 1 : 0

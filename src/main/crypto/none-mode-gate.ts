@@ -8,6 +8,8 @@
 // - 删除某个键、把同一个值挪到别的键下 → 没有新增密钥材料，放行；
 // - 历史明文迁移与主密码轮换走 repo 的 migratePlaintextSecrets / restoreAllSecrets，
 //   加密模式切换流程直接调 backup-service 的 saveWebDAVConfig，均不经过本闸。
+// 覆盖面：B2 的 MCP env/headers + 备份口令，与 B1 的 provider apiKeys（B1 口径，见下）。
+// 渠道/websearch 凭据**不走本闸**——它们服务无人值守场景，按 B3 只做渲染层显式确认。
 import { masterKeyManager } from './master-key'
 
 /** 引导语：两处拒绝文案共用，避免口径漂移 */
@@ -30,6 +32,18 @@ export function newSecretKeys(
   return Object.entries(next ?? {})
     .filter(([, v]) => v !== '' && !known.has(v))
     .map(([k]) => k)
+}
+
+/**
+ * 数组版（provider apiKeys）：同样按**值**判定。
+ * 渲染层提交的是掩码视图，`restoreMaskedList` 已把占位项还原成原值 ⇒ 沿用原值不算新增。
+ */
+export function newSecretValues(
+  next: readonly string[] | null | undefined,
+  existing: readonly string[] | null | undefined
+): string[] {
+  const known = new Set((existing ?? []).filter((v) => v !== ''))
+  return (next ?? []).filter((v) => v !== '' && !known.has(v))
 }
 
 /**

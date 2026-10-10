@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { ProviderRecord, ProviderType } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { reportIpcError } from '../../utils/ipc'
+import { reportIpcError, isIpcFail, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { isPlainRemoteHttp } from '../../../../shared/url-policy'
@@ -96,6 +96,11 @@ export const ProviderSettings: React.FC = () => {
         .filter(Boolean)
     }
     const saved = await window.pocketai.saveProvider(toSave)
+    // B1：未设主密码时主进程拒存新 Key（返回结构化失败，不是异常）
+    if (isIpcFail(saved)) {
+      setNotice({ ok: false, text: ipcFailText(saved, t('common.unknownError')) })
+      return
+    }
     setNotice({ ok: true, text: t('provider.saved', { name: saved.name }) })
     await load()
     setEditing(saved)

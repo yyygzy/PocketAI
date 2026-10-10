@@ -7,6 +7,21 @@
 // 边界：用户主动触发的操作（保存/生成/导入等）不要用本工具吞错——
 // 应在调用处 try/catch 后给 toast 或内联错误反馈。
 
+/**
+ * safeHandle 把 handler 抛出的异常转成 `{ ok:false, error }` **返回值**（不是 reject），
+ * 所以「返回记录的通道」（saveProvider / saveMcpServer 等）必须显式判别失败，
+ * 否则失败对象会被当成记录使用：表单照常关闭、列表里多出一条库里并不存在的记录。
+ * 成功返回的记录类型都不含 ok 字段，故 `'ok' in v` 即可判定。
+ */
+export function isIpcFail(v: unknown): v is { ok: false; error: string } {
+  return typeof v === 'object' && v !== null && 'ok' in v
+}
+
+/** 失败对象的错误文本（缺省时回落到通用文案） */
+export function ipcFailText(v: { error?: string }, fallback: string): string {
+  return v.error || fallback
+}
+
 /** 直接记录一条后台 IPC 失败诊断（try/catch 语句内使用） */
 export function logIpcError(label: string, e: unknown): void {
   console.warn(`[ipc] ${label} 失败:`, e instanceof Error ? e.message : e)

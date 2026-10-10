@@ -18,7 +18,8 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
     patchWsConfig,
     patchCalConfig,
     calConfig,
-    addIcs
+    addIcs,
+    secretDialog
   } = tools
 
   if (!expanded) {
@@ -146,6 +147,7 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
         <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
           {wsConfig.enabled ? t('agent.websearch.hintOn') : t('agent.websearch.hintOff')}
         </span>
+        {secretDialog}
       </div>
 
       {/* 本地日历（calendar.read）配置：添加 .ics 文件后 Agent 可读取日程 */}
