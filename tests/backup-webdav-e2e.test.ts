@@ -81,7 +81,7 @@ vi.mock('../src/main/logger', () => ({
 }))
 
 import { registerBackupHandlers } from '../src/main/ipc/handlers/backup'
-import { testWebDAV } from '../src/main/backup/backup-service'
+import { saveWebDAVConfig, testWebDAV } from '../src/main/backup/backup-service'
 
 // ─── 假 WebDAV 服务端 ────────────────────────────────────────────
 
@@ -315,5 +315,64 @@ describe('B17 none 模式的口令闸门在鉴权之前', () => {
     await call(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg(REAL_PWD))
     mocks.mode = 'none'
     expect((await submitUnchangedPassword('kept')).ok).toBe(true)
+  })
+})
+
+describe('SEC-37 非拉丁字符口令：只拦新写入，不回头锁死存量', () => {
+  const CJK_PWD = '中文口令-abc'
+  const ACCENT_PWD = 'café-crème-üñí'
+
+  it('Latin1 边界（é/ü/ñ）可用——证明划线是「能否编码」而不是「是否 ASCII」', async () => {
+    expect((await call<{ ok: boolean }>(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg(ACCENT_PWD))).ok).toBe(true)
+    expectedPwd = ACCENT_PWD // 假服务端只认同这条口令
+    const loaded = await call<WebDAVConfig>(IPC.BACKUP_WEBDAV_LOAD_CONFIG)
+    seen.length = 0
+    expect((await call<{ ok: boolean }>(IPC.BACKUP_WEBDAV_TEST, cfg(loaded.passwordCipher))).ok).toBe(true)
+    expect(seen.every((s) => s.password === ACCENT_PWD)).toBe(true)
+  })
+
+  it('新输入中文口令 → 拒绝、不落盘、且一个请求都不发（不再暴露英文 btoa 报错）', async () => {
+    await call(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg(REAL_PWD))
+    seen.length = 0
+    const r = await call<{ ok: boolean; error?: string }>(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg(CJK_PWD))
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('非拉丁字符')
+    expect(r.error).not.toContain('Latin1 range')
+    expect(seen.length).toBe(0)
+    // 存的仍是旧口令
+    const loaded = await call<WebDAVConfig>(IPC.BACKUP_WEBDAV_LOAD_CONFIG)
+    expect(loaded.passwordCipher).toBe(MASK)
+  })
+
+  it('测试连接同理：中文口令当场给出可读中文提示，不发请求', async () => {
+    const r = await call<{ ok: boolean; message?: string }>(IPC.BACKUP_WEBDAV_TEST, cfg(CJK_PWD))
+    expect(r.ok).toBe(false)
+    expect(r.message).toContain('非拉丁字符')
+    expect(seen.length).toBe(0)
+  })
+
+  it('历史存下的中文口令不锁死配置：只改目录仍可保存', async () => {
+    // 绕过 handler 直接写库，模拟 SEC-37 校验上线前已存在的配置
+    saveWebDAVConfig(cfg(CJK_PWD, 'old-dir'))
+    const loaded = await call<WebDAVConfig>(IPC.BACKUP_WEBDAV_LOAD_CONFIG)
+    expect(loaded.passwordCipher).toBe('••••' + CJK_PWD.slice(-4))
+
+    const r = await call<{ ok: boolean; error?: string }>(
+      IPC.BACKUP_WEBDAV_SAVE_CONFIG,
+      cfg(loaded.passwordCipher, 'new-dir')
+    )
+    expect(r.ok).toBe(true)
+    const after = await call<WebDAVConfig>(IPC.BACKUP_WEBDAV_LOAD_CONFIG)
+    expect(after.directory).toBe('new-dir')
+    expect(after.passwordCipher).toBe('••••' + CJK_PWD.slice(-4))
+  })
+
+  it('但这条存量配置测试连接时会被明白告知（不让人对着英文报错猜）', async () => {
+    saveWebDAVConfig(cfg(CJK_PWD, 'old-dir'))
+    const loaded = await call<WebDAVConfig>(IPC.BACKUP_WEBDAV_LOAD_CONFIG)
+    const r = await call<{ ok: boolean; message?: string }>(IPC.BACKUP_WEBDAV_TEST, cfg(loaded.passwordCipher))
+    expect(r.ok).toBe(false)
+    expect(r.message).toContain('非拉丁字符')
+    expect(seen.length).toBe(0)
   })
 })

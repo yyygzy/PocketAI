@@ -1523,6 +1523,7 @@ export const ko: Record<string, string> = {
   'bk.saveCfg': '구성 저장',
   'bk.testConn': '연결 테스트',
   'bk.urlUserRequired': 'URL과 사용자명은 필수입니다',
+  'bk.pwdLatin1': 'WebDAV 비밀번호는 라틴1 문자만 지원합니다(중국어·이모지 사용 불가). 클라우드에서 발급한 앱 전용 비밀번호를 사용해 주세요.',
   'bk.cfgSaved': 'WebDAV 구성이 저장됨',
   'bk.connecting': '연결 중…',
   'bk.connOk': '연결 성공',

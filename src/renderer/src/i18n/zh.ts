@@ -1600,6 +1600,7 @@ export const zh: Record<string, string> = {
   'bk.saveCfg': '保存配置',
   'bk.testConn': '测试连接',
   'bk.urlUserRequired': 'URL 和用户名必填',
+  'bk.pwdLatin1': 'WebDAV 密码不支持中文、emoji 等非拉丁字符，请改用云盘生成的应用专用密码',
   'bk.cfgSaved': '已保存 WebDAV 配置',
   'bk.connecting': '正在连接…',
   'bk.connOk': '连接成功',

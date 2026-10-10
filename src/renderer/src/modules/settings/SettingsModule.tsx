@@ -29,6 +29,7 @@ import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
 import { modLabel } from '../../utils/shortcuts'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
+import { isWebdavPasswordUsable } from '../../../../shared/schemas/backup'
 
 // ─── 键盘快捷键速查（只读，应用内固定快捷键） ────────────────────────────
 const ShortcutHelpPanel: React.FC = () => {
@@ -734,6 +735,8 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
 
   async function saveWD() {
     if (!wdUrl || !wdUser) return showNotice(false, t('bk.urlUserRequired'))
+    // 只校验用户真正输入过的口令：留空表示沿用已存值，主进程侧用同一把尺（shared 里那一个函数）
+    if (wdPwd && !isWebdavPasswordUsable(wdPwd)) return showNotice(false, t('bk.pwdLatin1'))
     const c: WebDAVConfig = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
     const r = await window.pocketai.saveWebDAVConfig(c)
     if (r.ok === false) return showNotice(false, r.error || t('common.unknownError'))
@@ -741,6 +744,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   }
 
   async function testWD() {
+    if (wdPwd && !isWebdavPasswordUsable(wdPwd)) return showNotice(false, t('bk.pwdLatin1'))
     const c: WebDAVConfig = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
     showNotice(true, t('bk.connecting'))
     const r = await window.pocketai.testWebDAV(c)

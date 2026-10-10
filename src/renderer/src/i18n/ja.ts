@@ -1523,6 +1523,7 @@ export const ja: Record<string, string> = {
   'bk.saveCfg': '設定を保存',
   'bk.testConn': '接続テスト',
   'bk.urlUserRequired': 'URL とユーザー名は必須です',
+  'bk.pwdLatin1': 'WebDAV のパスワードはラテン1文字までです（中国語や絵文字は使えません）。クラウド側で発行したアプリ用パスワードをご利用ください。',
   'bk.cfgSaved': 'WebDAV 設定を保存しました',
   'bk.connecting': '接続中…',
   'bk.connOk': '接続成功',
