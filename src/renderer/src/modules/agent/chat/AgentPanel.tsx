@@ -501,7 +501,7 @@ export const AgentPanel: React.FC = () => {
                       } ${isLast ? 'animate-pulse border-[var(--color-accent)] text-[var(--color-accent)]' : ''}`}
                     >
                       <span>{t(`agent.liveStep.${s.type}`)}</span>
-                      {s.toolName && <span className="text-[var(--color-primary)]">{s.toolName}</span>}
+                      {s.toolName && <span className="text-[var(--color-accent)]">{s.toolName}</span>}
                       <span className="opacity-60">#{s.stepIndex}</span>
                     </span>
                   )
@@ -569,7 +569,7 @@ export const AgentPanel: React.FC = () => {
                             {tr.status === 'error' ? '✕' : '✓'}
                           </span>
                           <span>{t(`agent.traceType.${tr.stepType}`)}</span>
-                          {tr.toolName && <span className="text-[var(--color-primary)]">{tr.toolName}</span>}
+                          {tr.toolName && <span className="text-[var(--color-accent)]">{tr.toolName}</span>}
                           <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
                           {stepTokens && <span className="text-[var(--color-text-muted)]">{stepTokens}</span>}
                         </div>
@@ -588,7 +588,7 @@ export const AgentPanel: React.FC = () => {
         {chat.interrupted && !chat.running && chat.canSend && (
           <button
             onClick={() => void chat.resume()}
-            className="mb-2 self-start text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+            className="mb-2 self-start text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-accent)] hover:bg-[var(--color-hover-overlay)] transition-colors"
           >
             {t('agent.resume')}
           </button>
@@ -648,7 +648,7 @@ export const AgentPanel: React.FC = () => {
               className="w-full px-3 py-2 border border-[var(--color-border)] rounded bg-[var(--color-input-bg)] text-sm outline-none focus:border-[var(--color-accent)]"
             />
             <div className="flex gap-2 mt-4 justify-end">
-              <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">{t('common.cancel')}</button>
+              <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover-overlay)]">{t('common.cancel')}</button>
               <button onClick={() => void confirmCrypto()} disabled={!cryptoPwd} className="px-3 py-1.5 text-xs bg-[var(--color-accent)] text-white rounded disabled:opacity-50 hover:opacity-90">
                 {cryptoPrompt.kind === 'export' ? t('chatview.export') : t('chatview.decryptImport')}
               </button>

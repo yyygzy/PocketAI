@@ -48,7 +48,7 @@ export const BranchCompare: React.FC<Props> = ({
               key={batch[0]?.id ?? `cmp-${bi}`}
               className={`rounded-lg border p-2 min-w-0 flex flex-col gap-1 transition-colors ${
                 active
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-bg)]'
+                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
                   : 'border-[var(--color-border)] bg-[var(--color-hover-overlay)]'
               }`}
             >

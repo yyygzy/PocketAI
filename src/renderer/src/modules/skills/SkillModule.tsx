@@ -359,7 +359,7 @@ const SkillForm: React.FC<{
               {templates.map((tpl) => (
                 <button
                   key={tpl.id}
-                  className="text-left p-3 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-hover)] transition-colors"
+                  className="text-left p-3 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)] transition-colors"
                   onClick={() => applyTemplate(tpl.shape)}
                 >
                   <div className="font-medium text-sm">{tpl.name}</div>

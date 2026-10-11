@@ -1094,13 +1094,13 @@ export const ChatView: React.FC<Props> = ({
             <div className="flex gap-2 mt-4 justify-end">
               <button
                 onClick={() => { setSysOverrideOpen(false); onSetSystemPromptOverride?.(null) }}
-                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)] text-[var(--color-text-muted)]"
+                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover-overlay)] text-[var(--color-text-muted)]"
               >
                 {t('chat.sysOverride.clear')}
               </button>
               <button
                 onClick={() => setSysOverrideOpen(false)}
-                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]"
+                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover-overlay)]"
               >
                 {t('common.cancel')}
               </button>

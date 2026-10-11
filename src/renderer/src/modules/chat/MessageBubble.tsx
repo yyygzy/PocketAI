@@ -589,7 +589,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
               <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">{t('chat.usageNoPrice')}</div>
             )}
             <div className="flex justify-end mt-4">
-              <button onClick={() => setUsageModal(false)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">
+              <button onClick={() => setUsageModal(false)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover-overlay)]">
                 {t('common.close')}
               </button>
             </div>

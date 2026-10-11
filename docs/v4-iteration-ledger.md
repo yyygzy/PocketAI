@@ -52,6 +52,27 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-100 清掉剩下 4 个 CSS 令牌漂移（20 处，含一个"白底白字"按钮）（已落地）
+
+- **范围**：V4-Iter-99 扫出但故意没动的那一批——`--color-hover`×9、`--color-primary`×8、`--color-bg-hover`×2、`--color-accent-bg`×1，全部无兜底 ⇒ 声明一直没生效。
+- **统计口径先自我纠一次**：本批开工时用「行内含 `--color-hover` 子串」重扫，得到 150 多处——**全是误报**：`--color-hover-overlay`（已定义、一直在生效）被前缀匹配算了进来。改回词法正则重扫，本批确认为 **20 处**（9+8+2+1），Iter-99 记的「5 个变量共 27 处无兜底引用」不变（27 = 本批 20 + 上批已修的 `--color-bg-elevated` 7）。教训：**变量名统计必须按词法匹配**，CSS 自定义属性名之间普遍互为前缀。
+- **逐处映射（不是补别名，是把引用改回真令牌）**：`--color-hover` / `--color-bg-hover` → `--color-hover-overlay`（全站悬停高亮本来就用这个半透明层，12 处）；`--color-primary` → `--color-accent`（7 处）；`--color-accent-bg` → `--color-accent-soft`（`BranchCompare.tsx:51` 选中态，与 `border-[--color-accent]` 配对）。**没有新增 `--color-primary` 之类的别名**：一个概念留两个名字，正是这次漂移的成因。
+- **顺带修出一个真 bug**：`UserMemoryPanel.tsx:95` 的记忆「添加」按钮原先是 `bg-[var(--color-primary)] text-white`——背景声明失效 ⇒ **透明底 + 白字**，在亮色主题下（卡片就是白的）文字等于看不见。按全站约定改成 `bg-[var(--color-accent)] text-[var(--color-on-accent)]`（31 处在用这套）。这是推导结论（未定义 var 使整条声明失效），真机是否如此仍归 B47 看。
+- **测试**：`tests/theme-css-vars.test.ts` 的 `KNOWN_DRIFT` 白名单**清空**，闸门从"只许变短"变成"零容忍"；重扫确认剩余无兜底未定义引用 = 0，且暗/亮两套变量名集合完全相等（各 35 个）。
+- **验证**：typecheck 0；vitest **246 文件 / 3071 用例**全绿；build 通过（`out/renderer` 里 `var(--color-hover-overlay)` 工具类已生成）。
+- **未实测**：本批**全是观感变化**（12 处突然出现悬停高亮、7 处文字/边框变强调色、1 处选中底色、1 个按钮从不可见变实心），必须真机两主题各过一遍 ⇒ 并入 **B47**。
+
+### V4-Iter-99 修「提示词片段弹层背景透明」，并给 CSS 令牌漂移装上 CI 闸门（已落地）
+
+- **现象**（用户截图）：Agent 输入框的 📝 提示词片段弹层是透明的，底下会话内容透上来，影响阅读。
+- **真因不是这一处**：`--color-bg-elevated` 被 7 处引用，但 `theme.css` 里**从来没定义过**它。CSS 对"未定义且无兜底值的 `var()`"是让**整条声明失效**（不是温和地回退成透明），所以 `bg-[var(--color-bg-elevated)]` 等于没写。顺手全量扫了一遍：**5 个变量属于这种漂移，共 27 处无兜底引用**——`--color-bg-elevated`×7（本次）、`--color-hover`×9、`--color-primary`×8、`--color-bg-hover`×2、`--color-accent-bg`×1；另有 `--font-mono`×2 带 `monospace` 兜底，属无害。
+- **本次只修透明这一类**：`theme.css` 两套主题各加 `--color-bg-elevated`（暗 `#262637`＝比卡片层 `#1e1e2e` 抬一档；亮 `#ffffff`＋边框＋`shadow-2xl` 表意"浮起"）。连带修好同类的另外 6 处：会话列表右键菜单（`ConversationList.tsx:1004`）、四处就地改名输入框（`ConversationList.tsx:552/597/835/860`、`SessionRail.tsx:419`）。
+- **没顺手改剩下 4 个**：`--color-primary` 修好＝8 处文字变成蓝色、`--color-hover` 修好＝9 处出现悬停高亮，都是**用户没要求的观感变化**，且只能靠眼睛验收 ⇒ 单独一批（§4.4 第 9 条）。
+- **CI 闸门**：新增 `tests/theme-css-vars.test.ts` 4 条——① 暗/亮两套变量名**完全对等**（漏一套＝另一主题下声明失效，正是本次这类）；② 回归点 `--color-bg-elevated` 两主题都有且值是不透明十六进制（`rgba(...)`/`transparent` 直接失败）；③ 无兜底的未定义变量**只许是** `KNOWN_DRIFT` 里那几个（新增即红）；④ `KNOWN_DRIFT` 每条仍在被引用、处数不得变多（修完不删条目也会红，防悬空）。带兜底的 `var(--x, y)` 明确不算 bug。
+- **闸门非空过已实测**：把 `--color-hover` 记录数改成 8、并删掉 `--color-accent-bg` 条目 → ③④ 两条转红并各自给出可操作提示（"请把条目从 KNOWN_DRIFT 删掉"/"引用处数变成 9（记录是 8）"），改回后 4 条复绿。
+- **验证**：typecheck 0；vitest **246 文件 / 3071 用例**全绿；build 通过，`out/renderer/assets/styles-*.css` 里 `--color-bg-elevated` 两条值都在（`#262637` / `#ffffff`）。
+- **未实测**：弹层观感本身仍只能真机看（jsdom 不解析 Tailwind 类，CI 证的是"令牌存在且不透明"，不是"渲染后不透") ⇒ 验收清单 **B47**。
+
 ### V4-Iter-98 Agent 分步明细拆出「输入 / 输出」（V4-Iter-97 的 c 项）（已落地）
 
 - **范围**：分步明细原先每步只有一个 `5,507 tokens`，答不出"贵在哪一步、贵在上文还是模型话多"。
@@ -1113,6 +1134,8 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-12（第二次） | V4-Iter-100 清掉剩下 4 个 CSS 令牌漂移（20 处，无兜底 ⇒ 声明一直没生效）：`--color-hover`×9 + `--color-bg-hover`×2 → `--color-hover-overlay`、`--color-primary`×8 → `--color-accent`、`--color-accent-bg`×1 → `--color-accent-soft`；**不新增别名**（一个概念两个名字正是漂移成因）。顺带修出真 bug：设置→记忆 的「添加」按钮是 `bg-[未定义] text-white` ⇒ 透明底白字，亮色主题下文字看不见，已按全站 31 处在用的 `bg-accent + text-on-accent` 约定收敛。闸门 `KNOWN_DRIFT` 清空 ⇒ 零容忍；重扫剩 0 处无兜底未定义引用、暗亮两套各 35 个变量名完全对等。另记一条方法论教训：本批开工时用子串重扫把 `--color-hover-overlay` 误算成 150+ 处，改回词法正则才是 20 处（台账原「27 处」统计不变）。详见 §二 V4-Iter-100 | typecheck 0 / vitest 246文件3071用例 / build 三端 |
+| 2026-10-12（第一次） | V4-Iter-99 修「提示词片段弹层背景透明」：真因是 `--color-bg-elevated` 被 7 处引用却从未在 `theme.css` 定义 ⇒ `var()` 无兜底时整条声明失效。两套主题各补一个不透明值（暗 #262637 / 亮 #ffffff），连带修好右键菜单 + 四处就地改名输入框。全量扫描另发现 4 个同类漂移（`--color-hover`×9、`--color-primary`×8、`--color-bg-hover`×2、`--color-accent-bg`×1，共 20 处），**因改动会当场改变观感、需真机过两主题，本批未动**（§4.4 第 9 条）。新增 `theme-css-vars` 4 条 CI 闸门（两主题变量名对等 / 浮层令牌必须不透明 / 无兜底未定义变量只许是 KNOWN_DRIFT / 条目数只许变短），并做非空过实测（改数字 + 删条目 → 两条转红并给出可操作提示）。另修掉台账 §4.5 一处自 `a8cfaa0` 起就存在的游离文本 `audit-45` 与未闭合的 `**`。详见 §二 V4-Iter-99 | typecheck 0 / vitest 246文件3071用例 / build + 产物 CSS 两主题值都在 |
 | 2026-10-11（同日第十六次） | V4-Iter-98 分步明细拆「输入 / 输出」。**先纠正上一条我自己的口径**：c 项不是"纯展示层、零风险"——逐步明细读 `agent_traces`，那表只有 `token_usage` 一个数，而 `messages.usage` 与 trace 行之间无可依赖关联（messages 无 request_id、Agent 每步 assistant 的 parent_id 都指向同一条用户消息）⇒ 只能加列。migration v46 加可空 `prompt_tokens`/`completion_tokens`（照 v21 给 messages 加 usage 的先例），engine 四处写入点直接取 provider 已解析的 usage，不做估算；改前先确认备份合并按「云库列 ∩ 本地列」取交集（`safeMergeColumns`），旧备份缺列不会报错。显示三分支抽成纯函数（拆分 / 退回合计 / 半残绝不出现 undefined / 工具步不占位），i18n 四语加 1 key。测试：真库 3 条（含**把表退回 v45 形状再跑迁移**的升级路径）+ 文案 4 条（真 zh 字典插值）+ repo fixture 2 条。详见 §二 V4-Iter-98 | typecheck 0 / vitest 245文件3067用例 / build 三端 + `out/main` 里 `agent_trace_usage_split` 计数 1 |
 | 2026-10-11（同日第十五次） | V4-Iter-97 Agent 每次调用少付一遍工具清单：真机问「查天气花 11,277 tokens 正常吗」，探针量出默认路径单次静态开销 = 提示词正文 1,533 + `{{tools}}` 文本清单 1,571 + 原生 `tools` JSON 2,065 ≈ 5,169，两步 LLM 即 ≈10,338 ⇒ 算术正常但 **92% 是每步重发的固定开销、工具清单发了两遍**。删 `DEFAULT_AGENT_PROMPT` 的「可用工具列表：{{tools}}」段，`toolsText` 改为模板真有占位才渲染；自定义助手写 `{{tools}}` 仍生效（不砍能力）。改前先证：文本协议兜底路径自己带清单（`buildTextProtocolPrompt`）、四类型共用一个适配器且 `body.tools` 只一处出口、SEC-12 禁令在正文里点名 MCP 工具描述。新增 `agent-prompt-tools.test.ts` 6 用例，并把 `{{tools}}` 加回去做**非空过实测**（2 红 4 绿）。详见 §二 V4-Iter-97 | typecheck 0 / vitest 243文件3058用例 / build 三端 + `out/main` 里「可用工具列表」计数 0 |
 | 2026-10-11（同日第十四次） | V4-Iter-96（§4.4 第 5 条）：外观面板进 CI，**假设证伪**——原以为要拆组件，实际 `AppearancePanel` 只依赖 useI18n + 本地 state，7 个 IPC 桩即可挂载，于是只加 `export` 不动结构。新增 `renderer-appearance-panel.test.tsx` 5 用例（显示持久化值 / 999 夹到 200 且全局同步 / 清空不写库 / 0 合法 / 失败连全局一起回滚）。写用例时自己错了一条断言（回滚目标应是面板加载值而非先手设的全局值），改测试不改行为。详见 §二 V4-Iter-96 | typecheck 0 / vitest 242文件3052用例 / build 三端 |
@@ -1260,14 +1283,16 @@
 1. ~~终态提醒行的手动改期~~ **已做（V4-Iter-81）**。
 2. ~~导入后改归属~~ **已做（V4-Iter-82）**，并顺带修掉同一处的文案/代码相反问题（删助手不再删会话）。
 3. ~~预设可选星期/号数~~ **已做（V4-Iter-83）**，并顺带修掉 monthly 重排卡在 28 号的既有 bug。
-4. **真机验收 B32–B35 + C5/C6**（本批四个功能的未实测项，成本几乎为零，只是把应用当日用两天）：尤其 B32/B33——调用记录跨重启与「脱敏发生在写库前」目前只有打桩 DB 的用例，真库里的字节没人看过。
+4. **真机验收一屏能全打完（须重启 dev 一次）**：**B44**（空名称→中文报错）、**B45**（Iter-97：工具调用仍正常 + 会话累计比 11,277 低约 1.5k/步）、**B46**（Iter-98：live 加密库跑 v46 迁移能解锁 + 分步显示「输入/输出」+ 老会话旧行退回合计）、**B47**（Iter-99：片段弹层/右键菜单/就地改名框有实底，两主题各看一次）、**B35**（折叠阈值观感，纯排版人眼）、**C5/C6**（需你在应用里填真实 TAVILY_API_KEY）。B32/B33 已改由真库用例覆盖（V4-Iter-91），不必再手点。
 5. ~~AppearancePanel 的渲染层用例~~ **已做（V4-Iter-96）**，且**假设被证伪**：不用拆组件，导出 + 7 个 IPC 桩就挂得上；补 5 条用例覆盖夹取/空值不写库/0 合法/失败回滚。
 6. **MCP 调用记录的第二步**：目前只有「按 server 过滤 + 清空」。缺的是从记录跳回那次 Agent 轮次（`agent_traces` 已有 step 维度，两表时间窗能对上是巧合不是外键）——先确认有没有人真用，再决定要不要加关联列。
+7. **「静默忽略 tools」的端点没有降级路径**（§4.5 实测条）：文本协议兜底只认 400 报错，Ollama 类端点不报错也不回 tool_calls ⇒ Agent 等于无工具。修法二选一：按「有工具却连续零调用」自动降级切文本协议，或给本地模型一个显式开关。**都要先定口径**（自动降级有误伤面：模型真不需要工具时也会被切协议），所以先摆着。
+8. **`'*'` 全量授权是 token 的第二大头**（V4-Iter-97 查账核出）：内置助手空 `toolPermissions` 保留 `'*'`（SEC-3 兼容语义），于是 13 个内置 + 所有 running MCP server 的工具每次都进 schema 两份变一份。收口方向是给「通用问答」这类内置助手配显式白名单，但这是产品口径 + 动 SEC-3 语义，**未开工**。
+9. ~~剩下 4 个 CSS 令牌漂移~~ **已做（V4-Iter-100）**：20 处全部改回真令牌（`--color-hover`/`--color-bg-hover`→`--color-hover-overlay`、`--color-primary`→`--color-accent`、`--color-accent-bg`→`--color-accent-soft`），`KNOWN_DRIFT` 白名单清空成零容忍；顺带修出记忆「添加」按钮的透明底白字。**观感变化待真机两主题过一遍（B47）**。
 
 ### 4.5 更正与误报
 
-- **V4-Iter-83 又核出一条既有 bug**（不属「推迟项」，但同源于这次复核动作）：`reminder.repo.ts` 的 monthly 重排先做 `Math.min(dayOfMonth, 28)`，使「月末回落」分支永远进不去 ⇒ 号数 29/30/31 的循环提醒从第二次起卡在每月 28 号，与 `schemas/reminder.ts` 注释承诺相反。它之所以长期隐形：预设写死 1 号、编辑弹窗填的大于 28 的号数没人核过第二次触发。结论同 §4.5 上一条一致——**复核必须连注释承诺与第二次触发的行为一起看。
-audit-45
+- **V4-Iter-83 又核出一条既有 bug**（不属「推迟项」，但同源于这次复核动作）：`reminder.repo.ts` 的 monthly 重排先做 `Math.min(dayOfMonth, 28)`，使「月末回落」分支永远进不去 ⇒ 号数 29/30/31 的循环提醒从第二次起卡在每月 28 号，与 `schemas/reminder.ts` 注释承诺相反。它之所以长期隐形：预设写死 1 号、编辑弹窗填的大于 28 的号数没人核过第二次触发。结论同 §4.5 上一条一致——**复核必须连注释承诺与第二次触发的行为一起看。**
 
 - **本轮做 §4.4 第 2 条时核出的更大一条**：`am.deleteConfirm` 承诺「其历史会话仍会保留」，而 `assistant.repo.ts` 的 `delete()` 实为级联删除该助手下的 conversations/messages/messages_fts——文案与代码相反且不可恢复。已按 V4-Iter-82 改行为收敛（文案不动，因为改完它就是对的）。盘点里「其实已存在/仍在推迟」两类都不覆盖这种**说反话**的条目，以后复核要连文案一起对。
 
@@ -1278,4 +1303,7 @@ audit-45
   ① ~~`INIT_TIMEOUT = 15_000` 对「npx 首次下载包」不够~~ **已修（V4-Iter-90）**：冷缓存实测装依赖 24.6s + 下载 3.2s，15s 必然误判；现 stdio 走 60s、http 守 15s，超时文案带下一步。puppeteer 拉 Chromium 的分钟级场景仍未解决（已标注）。
   ② ~~`handleExit` 把从未握手成功的退出也当崩溃自动重启~~ **已修（V4-Iter-89）**：现象是 404 被白跑 4 遍、`lastError` 报「已达自动重启上限」而非真实原因、reboot 异常被 `catch { void e }` 吞掉不入日志。现在按「曾进入 running 才重启」判定，未 running 的直接转 error 并带退出码 + 最后几行 stderr。
   同一轮的正向结论：**失败启动不留孤儿**（4 次尝试的三层进程链退出后全部消失）。
+
+- **Iter-97 的离线 A/B 探针证伪了我自己的 harness，也顺带核出一条既有缺口**（未修）：想在本机 Ollama 上对比「只发原生 schema」与「原生 + 文本清单」两种 prompt 的工具调用率，结果 12/12 全部无 `tool_calls`——**连只给一个 `time_now` 工具、用户明说"必须调用工具"都不发**（qwen2.5:3b-instruct，`/v1/chat/completions` 与原生 `/api/chat` 两条路都试了，均不报错也不回 tool_calls）。⇒ 该探针不能作为 Iter-97 的任何证据（结论仍压 B45 真机）。但实测暴露的真问题是：**文本协议兜底只在 `isToolsUnsupportedError` 命中（端点报 400）时切换，而 Ollama 这类"静默忽略 tools"的端点永远不触发** ⇒ Agent 在这类模型上等于无工具，只剩面板那条零调用提示。修法要么是按"有工具却连续零调用"降级切文本协议，要么是给本地模型显式开关——都属产品口径，未动。
+- **我自己写错的口径也记一条**：V4-Iter-97 收尾时把「展示层拆 prompt/completion」描述成"零风险、不用动持久化"，实际 `agent_traces` 只有一个 `token_usage`、与 `messages.usage` 无可依赖关联 ⇒ 必须加列。教训：**估工作量时，"只是显示"不构成证据**，得先确认数据在不在你要显示的那张表里。已在 V4-Iter-98 条目里更正。
 - §4.1 各条都重新 grep/Read 过实现位置；未复核的旧台账文字一律不作为结论写入本节。

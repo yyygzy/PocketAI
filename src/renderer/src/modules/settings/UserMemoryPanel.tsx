@@ -87,12 +87,12 @@ export const UserMemoryPanel: React.FC = () => {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && add()}
           placeholder={t('set.memoryPlaceholder')}
-          className="flex-1 text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+          className="flex-1 text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
         />
         <button
           onClick={add}
           disabled={busy || !draft.trim()}
-          className="text-xs px-3 py-1.5 rounded bg-[var(--color-primary)] text-white disabled:opacity-50"
+          className="text-xs px-3 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] disabled:opacity-50"
         >
           {t('common.add')}
         </button>
@@ -114,9 +114,9 @@ export const UserMemoryPanel: React.FC = () => {
                       if (e.key === 'Enter') saveEdit()
                       if (e.key === 'Escape') setEditingId(null)
                     }}
-                    className="flex-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                    className="flex-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
                   />
-                  <button onClick={saveEdit} disabled={busy || !editDraft.trim()} className="text-[var(--color-primary)] disabled:opacity-50 shrink-0">
+                  <button onClick={saveEdit} disabled={busy || !editDraft.trim()} className="text-[var(--color-accent)] disabled:opacity-50 shrink-0">
                     {t('common.save')}
                   </button>
                   <button onClick={() => setEditingId(null)} className="text-[var(--color-text-muted)] shrink-0">
@@ -126,7 +126,7 @@ export const UserMemoryPanel: React.FC = () => {
               ) : (
                 <>
                   <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{m.content}</span>
-                  <button onClick={() => startEdit(m)} className="text-[var(--color-text-muted)] hover:text-[var(--color-primary)] shrink-0">
+                  <button onClick={() => startEdit(m)} className="text-[var(--color-text-muted)] hover:text-[var(--color-accent)] shrink-0">
                     {t('common.edit')}
                   </button>
                   <button onClick={() => remove(m)} className="text-[var(--color-text-muted)] hover:text-red-500 shrink-0">

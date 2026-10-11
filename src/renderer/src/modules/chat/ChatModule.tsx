@@ -1412,7 +1412,7 @@ export const ChatModule: React.FC = () => {
               <button
                 onClick={() => setImportExternal(null)}
                 disabled={importBusy}
-                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)] disabled:opacity-50"
+                className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover-overlay)] disabled:opacity-50"
               >
                 {t('common.cancel')}
               </button>
@@ -1450,7 +1450,7 @@ export const ChatModule: React.FC = () => {
               className="w-full px-3 py-2 border border-[var(--color-border)] rounded bg-[var(--color-input-bg)] text-sm outline-none focus:border-[var(--color-accent)]"
             />
             <div className="flex gap-2 mt-4 justify-end">
-              <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">{t('common.cancel')}</button>
+              <button onClick={() => setCryptoPrompt(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover-overlay)]">{t('common.cancel')}</button>
               <button onClick={confirmCrypto} disabled={!cryptoPwd} className="px-3 py-1.5 text-xs bg-[var(--color-accent)] text-white rounded disabled:opacity-50 hover:opacity-90">
                 {cryptoPrompt.kind === 'export' ? t('chatview.export') : t('chatview.decryptImport')}
               </button>
@@ -1470,7 +1470,7 @@ export const ChatModule: React.FC = () => {
             <button
               onClick={() => void handleForwardPick(null)}
               disabled={forwarding}
-              className="w-full text-left px-3 py-2 mb-2 text-sm rounded border border-dashed border-[var(--color-border)] text-[var(--color-accent)] hover:bg-[var(--color-hover)] disabled:opacity-50"
+              className="w-full text-left px-3 py-2 mb-2 text-sm rounded border border-dashed border-[var(--color-border)] text-[var(--color-accent)] hover:bg-[var(--color-hover-overlay)] disabled:opacity-50"
             >
               ＋ {t('chat.forwardNew')}
             </button>
@@ -1480,7 +1480,7 @@ export const ChatModule: React.FC = () => {
                   key={c.id}
                   onClick={() => void handleForwardPick(c.id)}
                   disabled={forwarding}
-                  className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[var(--color-hover)] disabled:opacity-50 truncate"
+                  className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[var(--color-hover-overlay)] disabled:opacity-50 truncate"
                   title={c.title}
                 >
                   {c.pinned ? '📌 ' : ''}{c.title}
@@ -1488,7 +1488,7 @@ export const ChatModule: React.FC = () => {
               ))}
             </div>
             <div className="flex justify-end mt-3">
-              <button onClick={() => setForwardSource(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover)]">
+              <button onClick={() => setForwardSource(null)} className="px-3 py-1.5 text-xs border border-[var(--color-border)] rounded hover:bg-[var(--color-hover-overlay)]">
                 {t('common.cancel')}
               </button>
             </div>

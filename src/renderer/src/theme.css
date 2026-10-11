@@ -14,6 +14,8 @@
   /* ── 基础层级（暗 / Mocha）── */
   --color-bg: #11111b;              /* 最底层 Crust（unlock 页底） */
   --color-bg-secondary: #1e1e2e;   /* 卡片层 Base */
+  /* 浮层（弹层/右键菜单/就地改名输入框）：必须不透明，否则底下的会话内容会透上来影响阅读 */
+  --color-bg-elevated: #262637;
   --color-sidebar: #181825;        /* Mantle */
   --color-surface: #1e1e2e;        /* Base */
   --color-surface-hover: #262637;  /* 悬浮/高亮行 */
@@ -62,6 +64,8 @@ html.light {
   /* ── 基础层级（亮 / Latte）── */
   --color-bg: #dce0e8;              /* Crust */
   --color-bg-secondary: #ffffff;   /* 卡片用纯白，与页面底拉开层次 */
+  /* 浮层：白底 + 边框 + 阴影拉开层次（与卡片同色是刻意的，靠 shadow 表意"浮起"） */
+  --color-bg-elevated: #ffffff;
   --color-sidebar: #e6e9ef;        /* Mantle */
   --color-surface: #eff1f5;        /* Base */
   --color-surface-hover: #e6e9ef;  /* Mantle */
