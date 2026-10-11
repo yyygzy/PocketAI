@@ -267,7 +267,10 @@ export function safeMathEval(expr: string): number {
     const sandbox = Object.create(null) as Record<string, unknown>
     Object.assign(sandbox, MATH_ALLOWED)
     const context = vm.createContext(sandbox)
-    const result: unknown = vm.runInContext(`(${expr})`, context, { timeout: 100 })
+    // 超时是有界保险，不是主防线：防线是上面的字符白名单 + 标识符白名单（写不出循环，
+    // 幂运算也只是浮点，实测 9**9**9 用 1ms 溢出成 Infinity）。原来给 100ms，
+    // 结果机器一忙（全量跑批 240 worker）连合法表达式都会被墙钟超时误判成「求值失败」。
+    const result: unknown = vm.runInContext(`(${expr})`, context, { timeout: 1000 })
     if (typeof result !== 'number' || !Number.isFinite(result)) {
       throw new Error('结果不是有限数字')
     }

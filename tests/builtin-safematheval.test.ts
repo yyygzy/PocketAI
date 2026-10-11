@@ -103,4 +103,17 @@ describe('safeMathEval — 安全数学表达式求值', () => {
   it('空串 → 解析失败抛错', () => {
     expect(() => safeMathEval('')).toThrow()
   })
+
+  // ↓↓ 这两条钉的是「超时只是保险，不该误伤合法输入」（#42：100ms 墙钟在全量跑批时把
+  //    机器负载当成输入非法，让 1+2 这类表达式抛过错）
+  it('幂运算是浮点：2**10 正常求值，9**9**9 溢出后按「结果非有限」抛错而非靠超时兜', () => {
+    expect(safeMathEval('2**10')).toBe(1024)
+    expect(() => safeMathEval('9**9**9')).toThrow('结果不是有限数字')
+  })
+
+  it('500 字符内的合法长表达式照样算得出', () => {
+    const expr = Array.from({ length: 80 }, () => '1.5').join(' + ')
+    expect(expr.length).toBeLessThanOrEqual(500)
+    expect(safeMathEval(expr)).toBeCloseTo(120)
+  })
 })

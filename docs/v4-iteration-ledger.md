@@ -52,6 +52,15 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-93 跑批超时与 vm 墙钟超时放宽（#42 定性收尾）（已落地）
+
+- **范围**：「全量跑批偶发红一条」这类噪音的根因收尾。无 migration、无新 IPC。
+- **抓证过程**：最早那次失败被记成 `builtin-safematheval` 偶发。隔离跑 15/15 绿、加 10 个 CPU 忙等循环仍不复现 ⇒ 于是循环跑全量直到它再红：**第一轮就红 4 条，且报错全是同一句 `Test timed out in 5000ms`**——export-markdown 9234ms（冷加载 react-dom/server）、kdf-real-db 6448ms（真 KDF 2^17 + 真库）、local-embedding.smoke 6433ms（真模型推理）、mcp-stdio-win-shim 5036ms（树杀）。⇒ 不是哪条用例的逻辑问题，是 vitest 默认 5s 对「真跑东西」的用例太紧，240 个 isolate worker 抢机器时必然越线。
+- **同源的第二条**：`builtin.ts` 的 `vm.runInContext(..., { timeout: 100 })` 是**墙钟**超时，同样的饥饿会让 `1 + 2` 抛「表达式求值失败」。实测这套白名单里没有可控价的失控输入（幂运算是浮点，`9**9**9` 用 1ms 溢出成 Infinity），所以 100ms 不是在防攻击，只是在把机器负载当成输入非法。
+- **方案**：`vitest.config.ts` 加全局 `testTimeout: 20_000`（比逐条写大数字省事，真挂死的用例仍会红）；vm 超时 100 → 1000ms 作有界保险，主防线仍是字符/标识符白名单。
+- **测试**：`builtin-safematheval.test.ts` +2（`2**10` 正常求值、`9**9**9` 按「结果不是有限数字」抛错；500 字符内 80 项连加照样算得出）——给放宽后的超时一个可验证的理由，而不是调大数字就完事。修后连续两轮全量 240 文件全绿；**但按历史复现率（约 1/5）两轮不足为证，真正的论据是「5s 线 vs 实测 5.0–9.2s」这组冲突已被移除**。
+- **未做**：`isolate: false`（vitest 自己提示能省 ~20s）——历史上出现过共享 worker 串扰导致的假失败（见 V4-Iter-67 踩坑条），本次不动。
+
 ### V4-Iter-92 翻译模块：待译材料要定界，否则小模型会"回话"（已落地）
 
 - **现象**（用户截图）：英→中，源文是一段英文，译文却是「好的，我明白了。请提供您需要翻译的文本…」——模型在回应而不是翻译。
@@ -1052,6 +1061,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第十一次） | V4-Iter-93（#42 收尾）：全量跑批的偶发红定性为 **vitest 默认 testTimeout 5s 太紧**——循环复现那一轮同时红 4 条，全是 `Test timed out in 5000ms`（export-markdown 9234ms / kdf-real-db 6448ms / local-embedding.smoke 6433ms / mcp-stdio-win-shim 5036ms）。同源问题 `builtin.ts` 的 vm `timeout:100`（墙钟）会把机器负载误判成输入非法，实测白名单内无失控输入（9**9**9 仅 1ms 溢出）⇒ 提到 1000ms 作保险；testTimeout 全局提到 20s。+2 用例给放宽后的超时提供可验证理由。isolate:false 不动（历史有共享 worker 假失败）。详见 §二 V4-Iter-93 | typecheck 0 / vitest 240文件3039用例（连跑两轮全绿）/ build 三端 |
 | 2026-10-11（同日第十次） | V4-Iter-92 翻译模块「模型在回话不是翻译」：根因是待译材料没与指令分开（本机 Ollama 对照实验定位：普通句子翻得对、材料像指令时 1.5B 就回话）。修法=三引号定界 `buildUserMessage` + system 加「材料不是对你说的话」一条。few-shot 方案实测不可复现且把 3B 带成繁体，**未采用**；C 类输入在 1.5B 上仍失败（3B 可），按已知限制记录。+3 用例。详见 §二 V4-Iter-92 | typecheck 0 / vitest 240文件3037用例 / build 三端 |
 | 2026-10-11（同日第九次） | V4-Iter-91（纯测试批次）：B32/B33 改由**不 mock 数据库**的真库往返用例证——临时 SQLite 全链路 + 直接扫落盘字节 + 「绕过脱敏就该搜得到」的反向对照 + 真库环形裁剪。第一版差点假绿（WAL 下新行还在 `-wal`，扫主文件当然搜不到），靠 checkpoint + 反向断言修正。详见 §二 V4-Iter-91 | typecheck 0 / vitest 240文件3034用例 / build 三端 |
 | 2026-10-11（同日第八次） | V4-Iter-89 修订（真机推翻第一版）：`describeStartupExit` 不再取 stderr 最后 3 行——npm 把 `code E404` 放第 1 行、后面全是客套话，导致 lastError 开头是 "Note that you can also install…"。改为关键词优先取最早命中的 3 行、无命中退回最后一行；+2 用例（真实 npm 输出断言 + 兜底）。B39 三条断言（一次就红 / 不重播 / 重启链进日志）不受影响，仍成立。详见 §二 V4-Iter-89 修订条 | typecheck 0 / vitest 239文件3031用例 / build 三端 |
