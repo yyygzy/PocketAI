@@ -99,23 +99,31 @@ export function classifyMcpToolPermission(name: string, trustReadOnly = false): 
 }
 
 /**
- * 「启动即退出」的可读原因：退出码 + 最后几行 stderr。
+ * 「启动即退出」的可读原因：退出码 + 有诊断价值的 stderr 行。
  * 只给 `进程退出 (code=1)` 等于没给——真实原因（404 / 命令不存在 / 缺依赖）都在 stderr 里。
+ *
+ * 为什么不是「取最后几行」（真机实测推翻过第一版）：npm 把 `npm error code E404` 放在第 1 行，
+ * 后面跟着 "Note that you can also install from a tarball, folder, http url, or git url." 这类
+ * 客套话，纯取尾部正好把最有用的那行挤掉。所以按关键词挑**最早命中的几行**，一行都不命中才退回最后一行。
  * 每行先各自截断再脱敏，避免超长行把 redactStrings 拖爆（与调用记录同一把尺）。
  */
+const DIAGNOSTIC_RE = /error|exception|failed|denied|not found|enoent|eacces|cannot|无法|失败|超时/i
+const DIAGNOSTIC_LINES = 3
+
 export function describeStartupExit(
   code: number | null,
   signal: NodeJS.Signals | null,
   logBuffer: string[]
 ): string {
   const head = `进程启动后立即退出 (code=${code}, signal=${signal?.toString() ?? 'null'})`
-  const tail = logBuffer
+  const lines = logBuffer
     .filter((l) => l.startsWith('[stderr]'))
-    .slice(-3)
     .map((l) => l.slice('[stderr]'.length).trim().slice(0, 200))
     .filter(Boolean)
-  if (tail.length === 0) return head
-  return `${head}：${redactStrings(tail.join(' / ')).slice(0, MCP_CALL_ERROR_CHARS)}`
+  if (lines.length === 0) return head
+  const hits = lines.filter((l) => DIAGNOSTIC_RE.test(l)).slice(0, DIAGNOSTIC_LINES)
+  const picked = hits.length > 0 ? hits : lines.slice(-1)
+  return `${head}：${redactStrings(picked.join(' / ')).slice(0, MCP_CALL_ERROR_CHARS)}`
 }
 
 /**

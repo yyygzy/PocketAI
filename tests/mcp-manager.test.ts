@@ -575,21 +575,36 @@ describe('describeStartupExit — 启动即退出的原因文案', () => {
     expect(describeStartupExit(null, 'SIGKILL', ['[stdout] 无关行'])).toContain('signal=SIGKILL')
   })
 
-  it('带上最后几行 stderr（真实原因在这里），并做脱敏与长度收口', () => {
+  it('按关键词挑行：E404 那行必须在，npm 的客套话不该进来（真机推翻过纯取尾部）', () => {
     const buf = [
-      '[stderr] npm warn 忽略行',
       '[stderr] npm error code E404',
-      '[stderr] npm error 404 Not Found - @modelcontextprotocol/nope-xyz',
-      '[stderr] 最后一行 token=sk-abcdefghijklmnopqrstuvwxyz012345'
+      '[stderr] npm error 404 Not Found - GET https://registry.npmjs.org/nope-xyz - Not found',
+      '[stderr] npm error 404',
+      '[stderr] npm error 404 Note that you can also install from a',
+      '[stderr] npm error 404 tarball, folder, http url, or git url.',
+      '[stderr] npm error A complete log of this run can be found in: C:\\npm-cache\\_logs\\debug-0.log'
     ]
     const msg = describeStartupExit(1, null, buf)
-    expect(msg).toContain('E404')
+    expect(msg).toContain('npm error code E404')
     expect(msg).toContain('nope-xyz')
-    expect(msg).toContain('token=[redacted]')
-    expect(msg).not.toContain('sk-abcdefghijklmnop')
-    // 只取 stderr 的最后 3 行：更早的 warn 行不该进来
-    expect(msg).not.toContain('npm warn')
+    // 取的是最早命中的 3 行，而不是把客套话与日志路径那几行挤进来
+    expect(msg).not.toContain('Note that you can also install')
+    expect(msg).not.toContain('A complete log of this run')
     expect(msg.length).toBeLessThanOrEqual(120 + 300)
+  })
+
+  it('命中的行里照样脱敏；一行关键词都不命中时退回最后一行（不留空消息）', () => {
+    const redacted = describeStartupExit(1, null, [
+      '[stderr] 连接失败 token=sk-abcdefghijklmnopqrstuvwxyz012345'
+    ])
+    expect(redacted).toContain('失败')
+    expect(redacted).toContain('[redacted]')
+    expect(redacted).not.toContain('sk-abcdefghijklmnop')
+
+    const fallback = describeStartupExit(2, 'SIGTERM', ['[stderr] 一切平常', '[stderr] 最后一行输出'])
+    expect(fallback).toContain('signal=SIGTERM')
+    expect(fallback).toContain('最后一行输出')
+    expect(fallback).not.toContain('一切平常')
   })
 
   it('超长单行先各自截断，不把整坨巨串喂给脱敏正则', () => {

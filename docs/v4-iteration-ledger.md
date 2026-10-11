@@ -70,7 +70,8 @@
 - **方案**：`RuntimeEntry` 加 `everRan`——每次 `doStart` 新建 entry 时置 false（**不跨启动继承**，每次 spawn 都是新进程），握手成功进入 running 才置 true。`handleExit` 在重启判定前加 `!entry.everRan` 分支：直接转 error、`lastError = describeStartupExit(code, signal, entry.logBuffer)`、并 `log.warn` 一行（此前 reboot 的异常被 `catch { void e }` 吞掉，整条重启链在 main.log 里零记录）。catch 的守卫由 `status !== 'stopped'` 收紧为 `!== 'stopped' && !== 'error'`，不覆盖已记录的原因。`describeStartupExit` = 退出码 + 最后 3 行 stderr，每行先截 200 再走 `redactStrings`、总长收口到 `MCP_CALL_ERROR_CHARS`(300)。
 - **决策记录**：曾进入 running 的崩溃**保留**最多 3 次自动重启（偶发网络/资源问题的合理兜底，不能跟着一起砍）；stderr 尾部只进 `lastError`（面板与 IPC），不落库。
 - **测试**：`mcp-manager.test.ts` +7——`describeStartupExit` 3 条（无 stderr 只给退出码 / 取最后 3 行且 `sk-…` 被脱敏 / 超长单行先各自截断再脱敏），行为 3 条（启动即退出**不再 spawn 第二遍** + lastError 带 E404、catch 不重复 emit error、握手超时但进程还活着仍要转 error 的反向保护），另 1 条为原有用例覆盖的「曾 running 后崩溃仍重启」；新增 `mcp-stdio-crash.test.ts` **不 mock child_process**，真起一个「打一行 stderr 就以 code 1 退出」的 node 子进程，靠 attempts 文件行数断言只被拉起 1 次 ⇒ 重启风暴在真进程下也没回来。
-- **未实测**：应用里改错包名启动的新观感（一次就转红、错误文案带 404）落清单 **B39**。
+- **真机已确证（2026-10-11，清单 B39 打勾）**：重启 dev 后改错包名启动 ⇒ 一次就转红、卡片文案「进程启动后立即退出 (code=1, signal=null)：npm error 40…」、运行时日志里 404 只有一批（旧行为 4 批）、main.log 新增 `WARN [mcp] stdio 启动即退出，不自动重启: …`，进程采样 5 秒内已无任何 npx/cmd。**第一轮没重启 dev 时看到的仍是旧行为**——主进程改动必须重启才生效，这条要记着。
+- **修订（同一轮真机推翻第一版）**：第一版取 stderr **最后 3 行**，而 npm 把最有诊断价值的 `npm error code E404` 放在第 1 行、后面是 "Note that you can also install from a tarball, folder, http url, or git url." 与日志路径那几行客套话 ⇒ 真机那行 `WARN [mcp] stdio 启动即退出…` 开头竟是客套话。现改为关键词优先（`DIAGNOSTIC_RE`：error|exception|failed|denied|not found|enoent|eacces|cannot|无法|失败|超时）取**最早命中的 3 行**，一行都不命中才退回最后一行；每行仍先截 200 再脱敏、总长收口 300。两条用例：真实 npm 6 行输出断言 E404 在而「Note that…」/「A complete log…」不在；无关键词命中时退回最后一行。
 
 ### V4-Iter-88 Windows 上 npx 类 MCP server 从未起得来（`spawn npx ENOENT`）（已落地）
 
@@ -1033,6 +1034,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第八次） | V4-Iter-89 修订（真机推翻第一版）：`describeStartupExit` 不再取 stderr 最后 3 行——npm 把 `code E404` 放第 1 行、后面全是客套话，导致 lastError 开头是 "Note that you can also install…"。改为关键词优先取最早命中的 3 行、无命中退回最后一行；+2 用例（真实 npm 输出断言 + 兜底）。B39 三条断言（一次就红 / 不重播 / 重启链进日志）不受影响，仍成立。详见 §二 V4-Iter-89 修订条 | typecheck 0 / vitest 239文件3031用例 / build 三端 |
 | 2026-10-11（同日第七次） | V4-Iter-90 | stdio 握手超时按传输分层（`STDIO_INIT_TIMEOUT=60s`，http 守 15s）：先量出冷缓存下 server-memory 光装依赖就 24.6s+下载 3.2s，15s 必然误判；#40 之后失败路径靠进程退出即时 reject，放宽不拖慢报错。另加 `startupFailureHint` 把「超时」变成「可能要一两分钟，可稍后再点一次」。puppeteer 拉 Chromium 的分钟级场景本条不假装解决。+4 用例。详见 §二 V4-Iter-90 | typecheck 0 / vitest 239文件3030用例 / build 三端 |
 | 2026-10-11（同日第六次） | V4-Iter-89 | stdio「启动即退出」不再被当崩溃自动重启：`RuntimeEntry.everRan`（不跨启动继承）+ `handleExit` 的 `!everRan` 分支直接转 error，`lastError` 换成 `describeStartupExit`（退出码 + 最后 3 行 stderr，先各自截断再脱敏）；catch 不再覆盖已记录的 error；reboot 异常从 `void e` 改成 `log.warn`（重启链此前在 main.log 里完全静默）。曾 running 的崩溃保留 3 次重启。+7 用例，含一条不 mock child_process 的真进程 attempts 计数。详见 §二 V4-Iter-89 | typecheck 0 / vitest 239文件3026用例 / build 三端 |
 | 2026-10-11（同日第五次） | V4-Iter-88 | 修 Windows 上 `spawn npx ENOENT`：npm 的 npx 是 .cmd 垫片，CreateProcess 不认无扩展名、Node 又禁非 shell 起 .cmd ⇒ 所有 npx 类 MCP server 从未起得来（用户实测面板红字确认）。新增 `mcp/win-shim.ts`（按 PATH 实况判 exe/batch/unknown + 只给参数加引号、命令名不加 + 拒 `%`/换行），stdio 传输层据此分流到 `shell:true`，关闭改走 `taskkill /T /F` 防孤儿。补 14 纯函数用例 + 3 条**不 mock child_process** 的真起进程用例。**真机已确证**（memory 模板起得来、9 工具列出、停止后四层进程链 8856/15212/7064/11112 全部消失 ⇒ 清单 B36 打勾）。同轮顺带修 `McpPanel` 的「stderr 一律标红」（新增 `log-tone.ts` + 5 用例）。详见 §二 V4-Iter-88 | typecheck 0 / vitest 238文件3019用例 / build 三端 |
