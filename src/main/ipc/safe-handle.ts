@@ -33,6 +33,73 @@ export function argsSchema<T extends [z.ZodTypeAny, ...z.ZodTypeAny[]]>(...items
 }
 
 /**
+ * 常见字段名 → 中文标签。映射不到的**原样显示 key**（不猜、不编中文名），
+ * 因为猜错标签比显示英文 key 更容易误导用户。
+ */
+const ISSUE_FIELD_LABELS: Record<string, string> = {
+  name: '名称',
+  title: '标题',
+  type: '类型',
+  baseUrl: 'Base URL',
+  url: '地址',
+  apiKeys: 'API Key',
+  models: '模型',
+  model: '模型',
+  text: '文本',
+  content: '内容',
+  path: '路径',
+  id: 'ID',
+  enabled: '启用开关'
+}
+
+function fieldLabel(path: (string | number)[]): string {
+  const key = path.filter((p) => typeof p === 'string').join('.')
+  if (!key) return '参数'
+  return ISSUE_FIELD_LABELS[key] ?? key
+}
+
+/**
+ * zod issue → 一句中文。
+ * schema 里已经写过自定义文案（含非 ASCII 字符，例如「文本不能为空」）的原样保留；
+ * 只有 zod 默认英文文案才翻译。未知 code 回落到「不符合要求」而不是把英文甩给用户。
+ */
+export function describeIssue(issue: z.ZodIssue): string {
+  const msg = issue.message ?? ''
+  if (/[^\x00-\x7F]/.test(msg)) return msg
+  const label = fieldLabel(issue.path as (string | number)[])
+  switch (issue.code) {
+    case 'too_small':
+      return issue.origin === 'array'
+        ? `${label}至少需要 ${issue.minimum} 项`
+        : issue.origin === 'number'
+          ? `${label}不能小于 ${issue.minimum}`
+          : `${label}至少需要 ${issue.minimum} 个字符`
+    case 'too_big':
+      return issue.origin === 'array'
+        ? `${label}最多 ${issue.maximum} 项`
+        : issue.origin === 'number'
+          ? `${label}不能大于 ${issue.maximum}`
+          : `${label}过长，最多 ${issue.maximum} 个字符`
+    case 'invalid_type':
+      return `${label}类型不对（应为 ${issue.expected}）`
+    case 'invalid_value': {
+      // 枚举/字面量取值不合法（zod v4 的 code 是 invalid_value，v3 才叫 invalid_enum_value）
+      const values = (issue as { values?: unknown[] }).values
+      return Array.isArray(values) && values.length > 0
+        ? `${label}取值不在允许范围内（可选：${values.join(' / ')}）`
+        : `${label}取值不在允许范围内`
+    }
+    case 'unrecognized_keys':
+      return `包含不认识的字段：${issue.keys.join(', ')}`
+    case 'invalid_format':
+      // z.url()/z.email() 这类格式校验：默认文案是整句英文，只留字段名与「格式不正确」
+      return `${label}格式不正确`
+    default:
+      return `${label}不符合要求`
+  }
+}
+
+/**
  * 注册 IPC handler 并自动兜底：
  * 1) 若提供 argsSchema，先用 zod 校验位置参数，失败记 warn 并返回结构化错误，
  *    防止畸形/恶意参数穿透到主进程业务逻辑（纵深防御）；
@@ -50,9 +117,13 @@ export function safeHandle<A extends unknown[]>(
       if (argsSchema) {
         const result = argsSchema.safeParse(args)
         if (!result.success) {
-          const issues = result.error.issues.map((i) => i.message).join('; ')
-          log.warn(`${channel} 入参校验失败: ${issues}`)
-          return { ok: false as const, error: `invalid args: ${issues}` } satisfies IpcFail
+          // 日志留 path + code + 英文原文（排障要看真因），返回给界面的翻译成人话
+          const raw = result.error.issues
+            .map((i) => `${i.path.join('.') || '?'}: ${i.code} ${i.message}`)
+            .join('; ')
+          log.warn(`${channel} 入参校验失败: ${raw}`)
+          const friendly = result.error.issues.map(describeIssue).join('；')
+          return { ok: false as const, error: friendly } satisfies IpcFail
         }
         validated = result.data
       }

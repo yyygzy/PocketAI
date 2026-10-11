@@ -52,6 +52,26 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-95 IPC 入参校验错误改成中文人话（不再甩 zod 英文）（已落地）
+
+- **范围**：V4-Iter-94 顺带记下的那条。用户当时看到的是一句 `invalid args: Too small: expected string to have >=1 characters`——既不知道哪个字段，也不知道该怎么办。改在 `safeHandle` 一处，**全仓所有 IPC 通道一起受益**。
+- **方案**：新增 `describeIssue(issue)`：按 `code` + `origin` 组装中文（`too_small`/`too_big` 分字符串·数值·数组三种说法，`invalid_type` 带期望类型，`invalid_value` 列出可选值，`invalid_format` 说「格式不正确」，`unrecognized_keys` 列字段名，其余回落「不符合要求」）。三条口径：① schema 里**已写过自定义文案**（含非 ASCII，例如「文本不能为空」）的原样保留，不覆盖作者意图；② 字段名只映射一张小表（名称/类型/Base URL/API Key/模型…），**映射不到就显示原 key**，不猜中文名；③ `log.warn` 里保留 `path: code 英文原文`，界面给人话、日志留真因。
+- **踩坑（两次自我纠正）**：先按 zod v3 写了 `invalid_enum_value` 分支，typecheck 直接报「该 code 不存在」——本仓是 **zod v4**，枚举错误的 code 是 `invalid_value` 且字段叫 `values`；另外测试里我预设 `opacity` 会有中文标签，实际按②的口径它就是 `opacity`，改测试而不是扩表。
+- **测试**：`ipc-safe-handle.test.ts` +4（默认英文被翻译且不再带 `invalid args` 前缀、自定义中文原样保留、未映射字段显示原 key、`too_small/too_big` 按 origin 出话 + `invalid_value` + `invalid_format` + 未知 code 回落）。
+- **未实测**：应用里触发一次校验错误看文案（清单 **B44**：清空名称点保存）。
+
+### V4-Iter-94 修「新增模型服务商保存被 IPC 挡死」（zod 收紧时漏核调用方的回归）（已落地）
+
+- **现象**（用户截图）：设置 → 模型服务商 → + 新增，填智谱 GLM（`https://open.bigmodel.cn/api/paas/v4` + key）点保存，红条 `invalid args: Too small: expected string to have >=1 characters`。
+- **根因**：`providers.ts` 的 `providerRecordSchema.id` 带 `.min(1)`，而**新建路径发的就是 `id: ''`**——`ProviderSettings.emptyProvider()`（:30）与首启向导两处（`FirstRunWizard.tsx:135/157`）。`provider.repo.ts:76` 本来就按「空 id = 新建」实现（`existing?.id ?? (input.id || randomUUID())`，还会先按 type+baseUrl 去重），所以是**校验收紧在 repo 之前把合法路径挡了**。引入点：`eec774b`（zod 纵深防御那批）加 `.min(1)`，`7d666f1` 又补了上限。
+- **影响面**：不只是设置页——**首启向导配任何需要 key 的云服务商同样失败**，等于新装用户没法完成配置。
+- **为什么 CI 全绿**：向导与设置页的用例都 mock `window.pocketai`，IPC 入参 schema 在测试里根本没跑过；而 schema 侧此前没有一条"新建载荷必须能过校验"的用例。
+- **方案**：`id` 去掉 `.min(1)`、保留 `max(64)`，并在 schema 上写明这条口径与踩坑来源；其余必填/上限一律不动（name/type/baseUrl 长度/apiKeys 数组形状都照旧守）。
+- **顺带记录**：`safeHandle` 把 zod 原文拼成 `invalid args: <英文>` 抛给界面 —— **已修（V4-Iter-95）**，改为按 code/origin 组装中文，日志仍留英文原文。
+- **测试**：新增 `provider-save-schema.test.ts` 4 用例（空 id 放行 ×2 覆盖设置页与向导两种载荷、既有 id 放行、上限与其余必填仍拒），把「新建载荷能过 schema」这条钉进 CI。
+- **真机已确证（2026-10-11，清单 B43 打勾）**：主进程 19:29:17 重启后 `provider:save 入参校验失败` 从累计 15 次归零，且 19:31 出现 `model=glm-4.6` 的 agent.ttft 记录（5247/5405ms）⇒ 保存成功且真实跑通请求。
+  **过程教训**：19:12 那几次失败来自 **18:30 启动的旧主进程**——`electron-vite dev` 不热重启主进程，判版本要看进程创建时间或 `out/main` 产物内容，别拿旧进程的报错否定新修复。
+
 ### V4-Iter-93 跑批超时与 vm 墙钟超时放宽（#42 定性收尾）（已落地）
 
 - **范围**：「全量跑批偶发红一条」这类噪音的根因收尾。无 migration、无新 IPC。
@@ -1061,6 +1081,8 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第十三次） | V4-Iter-95：IPC 入参校验错误改成中文人话（`invalid args: Too small: expected string to have >=1 characters` → 「名称至少需要 1 个字符」这类）。改在 `safeHandle` 一处全通道受益：`describeIssue` 按 code+origin 组装，schema 自定义过的中文文案原样保留，字段名只映射小表、映射不到显示原 key，日志仍留 `path: code 英文`。两次自我纠正：本仓是 zod v4（枚举 code 是 `invalid_value` 不是 v3 的 `invalid_enum_value`）；未映射字段按口径显示原 key 而非扩表。+4 用例。详见 §二 V4-Iter-95 | typecheck 0 / vitest 241文件3047用例 / build 三端 |
+| 2026-10-11（同日第十二次） | V4-Iter-94：**新增模型服务商完全保存不了**（用户截图报 `invalid args: Too small: expected string to have >=1 characters`）。根因是 `providerRecordSchema.id` 的 `.min(1)` 挡掉了新建路径的 `id: ""`（设置页 emptyProvider + 首启向导两处），而 `provider.repo` 本来就按空 id 生成 UUID——收紧 zod 的 `eec774b` 漏核了调用方。影响面含首启向导，等于新装用户配不了云服务商。CI 全绿是因为向导/设置用例都 mock 了 `window.pocketai`，schema 从未被跑。修法：去掉 `.min(1)` 保留上限 + 新增 4 条 schema 用例。另记一条未修：`invalid args: <zod 英文原文>` 直接甩给中文界面。详见 §二 V4-Iter-94 | typecheck 0 / vitest 241文件3043用例 / build 三端 |
 | 2026-10-11（同日第十一次） | V4-Iter-93（#42 收尾）：全量跑批的偶发红定性为 **vitest 默认 testTimeout 5s 太紧**——循环复现那一轮同时红 4 条，全是 `Test timed out in 5000ms`（export-markdown 9234ms / kdf-real-db 6448ms / local-embedding.smoke 6433ms / mcp-stdio-win-shim 5036ms）。同源问题 `builtin.ts` 的 vm `timeout:100`（墙钟）会把机器负载误判成输入非法，实测白名单内无失控输入（9**9**9 仅 1ms 溢出）⇒ 提到 1000ms 作保险；testTimeout 全局提到 20s。+2 用例给放宽后的超时提供可验证理由。isolate:false 不动（历史有共享 worker 假失败）。详见 §二 V4-Iter-93 | typecheck 0 / vitest 240文件3039用例（连跑两轮全绿）/ build 三端 |
 | 2026-10-11（同日第十次） | V4-Iter-92 翻译模块「模型在回话不是翻译」：根因是待译材料没与指令分开（本机 Ollama 对照实验定位：普通句子翻得对、材料像指令时 1.5B 就回话）。修法=三引号定界 `buildUserMessage` + system 加「材料不是对你说的话」一条。few-shot 方案实测不可复现且把 3B 带成繁体，**未采用**；C 类输入在 1.5B 上仍失败（3B 可），按已知限制记录。+3 用例。详见 §二 V4-Iter-92 | typecheck 0 / vitest 240文件3037用例 / build 三端 |
 | 2026-10-11（同日第九次） | V4-Iter-91（纯测试批次）：B32/B33 改由**不 mock 数据库**的真库往返用例证——临时 SQLite 全链路 + 直接扫落盘字节 + 「绕过脱敏就该搜得到」的反向对照 + 真库环形裁剪。第一版差点假绿（WAL 下新行还在 `-wal`，扫主文件当然搜不到），靠 checkpoint + 反向断言修正。详见 §二 V4-Iter-91 | typecheck 0 / vitest 240文件3034用例 / build 三端 |

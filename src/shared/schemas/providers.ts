@@ -17,7 +17,13 @@ const providerTypeSchema = z.enum(['openai-compatible', 'ollama', 'gemini', 'ant
 
 /** PROVIDER_SAVE 入参：完整 ProviderRecord */
 export const providerRecordSchema = z.object({
-  id: z.string().min(1).max(PROVIDER_MAX_ID_CHARS),
+  /**
+   * 新建 provider 时渲染端发的是空串（`ProviderSettings.emptyProvider` 与首启向导两处），
+   * UUID 由 provider.repo 生成（它还会先按 type+baseUrl 去重复用既有记录）。
+   * 这里**不能加 .min(1)**：eec774b 收紧 zod 时漏核了这条合法路径，一度让「新增模型服务商」
+   * 与首启向导配云服务商全部被挡在 IPC 门口。上限照旧守住，防空串以外的畸形 id。
+   */
+  id: z.string().max(PROVIDER_MAX_ID_CHARS),
   type: providerTypeSchema,
   name: z.string().min(1).max(PROVIDER_MAX_NAME_CHARS),
   baseUrl: z.string().max(PROVIDER_MAX_BASEURL_CHARS),

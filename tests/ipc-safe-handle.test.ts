@@ -16,7 +16,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { safeHandle } from '../src/main/ipc/safe-handle'
+import { argsSchema, describeIssue, safeHandle } from '../src/main/ipc/safe-handle'
+import { z } from 'zod'
 
 const CH = 'test:channel'
 const eventStub = { sender: {} }
@@ -79,5 +80,50 @@ describe('safeHandle', () => {
   it('listener 返回 Promise：resolved 值透传', async () => {
     safeHandle(CH, async () => ({ ok: true as const, data: await Promise.resolve('ok') }))
     await expect(invoke()).resolves.toEqual({ ok: true, data: 'ok' })
+  })
+})
+
+describe('safeHandle — 入参校验文案（不再把 zod 英文甩给界面）', () => {
+  it('默认英文文案被翻译，且去掉 invalid args 前缀', async () => {
+    safeHandle(
+      CH,
+      () => ({ ok: true as const }),
+      argsSchema(z.object({ name: z.string().min(1), type: z.enum(['a', 'b']) }))
+    )
+    const r = (await invoke({ name: '', type: 'x' })) as { ok: false; error: string }
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('名称至少需要 1 个字符')
+    expect(r.error).toContain('类型取值不在允许范围内（可选：a / b）')
+    expect(r.error).not.toContain('Too small')
+    expect(r.error).not.toContain('invalid args')
+  })
+
+  it('schema 里自定义过的中文 message 原样保留', async () => {
+    safeHandle(CH, () => ({ ok: true as const }), argsSchema(z.string().min(1, '文本不能为空')))
+    const r = (await invoke('')) as { error: string }
+    expect(r.error).toBe('文本不能为空')
+  })
+
+  it('映射不到的字段名显示原 key（猜个中文名更容易误导）', async () => {
+    safeHandle(CH, () => ({ ok: true as const }), argsSchema(z.object({ weirdKey: z.string().max(3) })))
+    const r = (await invoke({ weirdKey: 'abcdef' })) as { error: string }
+    expect(r.error).toBe('weirdKey过长，最多 3 个字符')
+  })
+
+  it('数值/数组的 too_small·too_big 按 origin 出话；未知 code 回落通用文案', () => {
+    const issue = (o: Record<string, unknown>) => o as unknown as z.ZodIssue
+    expect(describeIssue(issue({ code: 'too_small', origin: 'number', minimum: 0, path: ['opacity'], message: 'Too small' }))).toBe(
+      'opacity不能小于 0' // 映射表里没有的字段保留原 key，不编中文名
+    )
+    expect(
+      describeIssue(issue({ code: 'too_big', origin: 'array', maximum: 50, path: ['apiKeys'], message: 'Too big' }))
+    ).toBe('API Key最多 50 项')
+    expect(describeIssue(issue({ code: 'custom', path: ['x'], message: 'some english detail' }))).toBe('x不符合要求')
+    expect(describeIssue(issue({ code: 'invalid_type', expected: 'string', path: [], message: 'Invalid input' }))).toBe(
+      '参数类型不对（应为 string）'
+    )
+    expect(describeIssue(issue({ code: 'invalid_format', format: 'url', path: ['baseUrl'], message: 'Invalid URL' }))).toBe(
+      'Base URL格式不正确'
+    )
   })
 })
