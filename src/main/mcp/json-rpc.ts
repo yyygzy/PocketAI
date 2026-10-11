@@ -12,6 +12,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { Readable } from 'node:stream'
 import { errMsg } from '../error'
+import { buildCmdShimLine, needsCmdShim } from './win-shim'
 
 /** 单条 NDJSON 消息/日志行的最大字节数（正常协议消息远小于此） */
 export const DEFAULT_MAX_LINE_BYTES = 32 * 1024 * 1024
@@ -173,6 +174,8 @@ export class StdioJsonRpcClient implements McpTransportClient {
   >()
   private emitter = new EventEmitter()
   private closed = false
+  /** 本次是否经 cmd.exe 起（Windows 批处理垫片）：决定关闭时要不要连进程树一起杀 */
+  private shimmed = false
 
   constructor(private readonly opts: StdioClientOptions) {}
 
@@ -190,11 +193,23 @@ export class StdioJsonRpcClient implements McpTransportClient {
     const { command, args = [], env, cwd } = this.opts
     // 用局部变量 proc 保持类型收窄，事件回调闭包内不需要 this.proc! 断言；
     // ChildProcessWithoutNullStreams 的 stdin/stdout/stderr 类型本身就是非 null 的 Writable
-    const proc = spawn(command, args, {
-      cwd,
-      env: { ...process.env, ...(env ?? {}) },
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    // Windows 的 npm/npx 一类是 .cmd 批处理：CreateProcess 不认（ENOENT），显式写 .cmd
+    // 又被 Node 的 shell 限制拒（EINVAL），只能把整条命令行交给 cmd.exe 解释（见 win-shim.ts）
+    this.shimmed = needsCmdShim(command)
+    const proc = (
+      this.shimmed
+        ? spawn(buildCmdShimLine(command, args), {
+            cwd,
+            env: { ...process.env, ...(env ?? {}) },
+            stdio: ['pipe', 'pipe', 'pipe'],
+            shell: true
+          })
+        : spawn(command, args, {
+            cwd,
+            env: { ...process.env, ...(env ?? {}) },
+            stdio: ['pipe', 'pipe', 'pipe']
+          })
+    ) as ChildProcessWithoutNullStreams
     this.proc = proc
 
     proc.on('exit', (code, signal) => {
@@ -344,23 +359,50 @@ export class StdioJsonRpcClient implements McpTransportClient {
     }
 
     if (!this.closed) {
-      try {
-        proc.kill('SIGTERM')
-      } catch {}
-      // 再给 500ms 退出，否则 SIGKILL
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          try {
-            proc.kill('SIGKILL')
-          } catch {}
-          resolve()
-        }, 500)
-        proc.once('exit', () => {
-          clearTimeout(timer)
-          resolve()
+      if (this.shimmed && process.platform === 'win32') {
+        // cmd.exe 只是壳，proc.kill 会留下真正的 server 当孤儿 ⇒ 连进程树一起杀
+        await this.killTree(proc.pid)
+      } else {
+        try {
+          proc.kill('SIGTERM')
+        } catch {}
+        // 再给 500ms 退出，否则 SIGKILL
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            try {
+              proc.kill('SIGKILL')
+            } catch {}
+            resolve()
+          }, 500)
+          proc.once('exit', () => {
+            clearTimeout(timer)
+            resolve()
+          })
         })
-      })
+      }
     }
+  }
+
+  /** taskkill /T /F 杀整棵进程树（与 python-env 的强杀同口径），最多等 2s */
+  private killTree(pid: number | undefined): Promise<void> {
+    if (!pid) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      let done = false
+      const fin = (): void => {
+        if (done) return
+        done = true
+        resolve()
+      }
+      try {
+        const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+        killer.on('error', fin)
+        killer.on('close', fin)
+      } catch {
+        fin()
+        return
+      }
+      setTimeout(fin, 2000)
+    })
   }
 
   private requestRaw(method: string, params: unknown, timeoutMs: number, proc: ChildProcessWithoutNullStreams): Promise<unknown> {

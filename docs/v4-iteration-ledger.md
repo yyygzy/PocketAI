@@ -52,6 +52,21 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-88 Windows 上 npx 类 MCP server 从未起得来（`spawn npx ENOENT`）（已落地）
+
+- **范围**：C5（真拉 `tavily-mcp`）的探针撞出来的**既有缺陷**，不是本批新功能。影响面是 `command: 'npx'` 的全部 node 类模板（fetch/puppeteer/filesystem/git/sqlite/memory/sequential-thinking + 本批新加的 tavily-search），以及任何用户手填或导入的 `npx`/`npm`/`yarn` 命令。
+- **实测证据**：本机 Node 22 / win32 三条——`spawn('npx', ['--version'])` → **ENOENT**；`spawn('npx.cmd', …)` → 同步抛 **EINVAL**（Node 20.12+/22 起非 shell 禁起 .bat/.cmd）；`spawn('npx --version', {shell:true})` → 正常输出。用户在应用里对 memory 模板点「启动」，面板红字 **`进程错误: spawn npx ENOENT`**，与代码完全对得上：`json-rpc.ts` 的 `spawn(command, args, { stdio })` 不带 shell，而 `manager.createClient` 只给 `runtime==='python'` 换解释器，node/binary 原样传。
+- **为什么 CI 全绿**：`mcp-manager.test` 与 json-rpc 的用例把 `child_process.spawn` 整体桩掉了，平台相关的进程创建路径从未被执行过。
+- **方案**：新建 `src/main/mcp/win-shim.ts`——
+  - `findCommandInPath` 按 PATH 实况判 `exe` / `batch` / `unknown`（先找 `<name>.exe`，再找 `.cmd`/`.bat`；都没有就返回 unknown 原样 spawn，让 ENOENT 如实冒出来，不做猜测式兜底）。⇒ `node` 是 node.exe 不包壳，`npx` 只有 .cmd 才包壳。
+  - `buildCmdShimLine`：参数逐个加 `"…"`、内嵌 `"` 翻倍；**命令名不含空格时不加引号**；含 `%` 或换行直接抛错（`%` 在引号内照样被 cmd 展开、换行会截断命令行，两者都没有安全写法，宁可报错也不悄悄改写用户配置）。
+  - `json-rpc.ts`：spawn 分流，垫片走 `spawn(line, { shell: true })`，其余保持原样；关闭时若这次走了垫片，`proc.kill` 只会杀掉 cmd.exe 壳、把真正的 server 留成孤儿 ⇒ 改走 `taskkill /pid <pid> /T /F`（与 `python-env.ts` 的强杀同口径），最多等 2s。
+- **实测口径表**（本机 cmd.exe 逐条跑过，不是照抄文档）：`echo "a b"` → 参数完整；`echo "x&whoami"` → 输出字面量不执行；`echo "x""&whoami"` → 不逃逸；`echo "%PATH%"` → **会展开**（故拒）；`"npx" "--version"` → 坏（npx.cmd 把参数当位置参数，node loader 报错）；`npx "--version"` → 好。
+- **决策记录**：不引入 cross-spawn 依赖（一条构造 + 一次真机验证，加依赖不划算）；不把模板改成写死 `npx.cmd`（那只是把 EINVAL 换成人看不懂的报错，且非 Windows 用户拿不到）；非 win32 行为零变化。
+- **测试**：`win-shim.test.ts` 14 用例（三类命名、PATH 判定的 exe 优先与 unknown、引号与 `&`/`"` 逃逸、`%` 与换行拒绝、命令名带空格）；`mcp-stdio-win-shim.test.ts` 3 用例**不 mock child_process**，真起一个 `.cmd` 垫片 + node 子进程：握手/tools/list/tools/call 全通且带空格参数精确到达、优雅退出、赖着不走的 server 关闭后真进程消失（证树杀生效）。非 win32 自动 skip。
+- **真机已确证（2026-10-11）**：应用里 memory 模板点启动 ⇒ 绿点 + 9 个工具全列出（`create_entities`/`create_relations`…），点停止 ⇒ 进程链四层全部消失。实测链形：`cmd.exe(/d /s /c "npx "-y" "@modelcontextprotocol/server-memory"") → node.exe(npx-cli.js) → cmd.exe(/d /s /c mcp-server-memory) → node.exe(…\server-memory\dist\index.js)`。**比设计时预估的深一层**（npx 内部还再起一次 cmd），所以「只杀壳会留三个孤儿」，`taskkill /T /F` 属必需；构造出的命令行被 cmd 正确解析（`-y` 与包名各成一个参数）。清单见 verify-checklist **B36**（已打勾）。剩下未实测只有 C5 的真 key 搜索。
+- **顺带（同一轮截图里核出的信号谎话）**：`McpPanel.tsx` 原来写的是 `l.stream === 'stderr' ? 'text-[var(--color-danger)]' : ''` —— **只看流不看内容**，而官方 MCP server 普遍把正常启动横幅写到 stderr ⇒ 「启动成功」在面板里长得和报错一模一样。新增 `modules/agent/mcp/log-tone.ts` 两级判定：stdout 不涂色；stderr 且**该 server 当前 status==='error'** 才 danger，其余 stderr 走 warning（运行时状态还没上报的刚 spawn 阶段也算警告，不能因为查不到状态就标红）。`tests/mcp-log-tone.test.ts` 5 用例钉住，含一条「running 的启动横幅最终 class 不含 danger」的回归钉。真机正向已确证（四次启动横幅均为琥珀色，清单 **B37** 打勾）；反向对照另补 `tests/renderer-mcp-log-color.test.tsx` 三条**挂载真组件**的接线用例（error+stderr→danger、running+stderr→warning 且不含 danger、stdout→无色），把「状态到底有没有传进 class」也从只能靠眼变成 CI 覆盖；清单 **B38** 只剩目视。顺带一条渲染口径：颜色每次渲染按当前状态重算，所以 server 转 error 时**已显示的历史 stderr 行会一起由琥珀转红**。
+
 ### V4-Iter-87 长代码块折叠阈值做成设置项（0 = 永不折叠）（已落地）
 
 - **范围**：§4.3 的一条推迟项（「代码块折叠阈值与展开态记忆」的前半）。阈值此前是 `utils/code-block.ts` 里写死的常量 20 行，长日志/长源码想看全文只能逐块点展开。无 migration（走既有 `app_config` KV），无新 IPC 通道（复用 UI_GET/SET_PREFS）。
@@ -998,6 +1013,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第五次） | V4-Iter-88 | 修 Windows 上 `spawn npx ENOENT`：npm 的 npx 是 .cmd 垫片，CreateProcess 不认无扩展名、Node 又禁非 shell 起 .cmd ⇒ 所有 npx 类 MCP server 从未起得来（用户实测面板红字确认）。新增 `mcp/win-shim.ts`（按 PATH 实况判 exe/batch/unknown + 只给参数加引号、命令名不加 + 拒 `%`/换行），stdio 传输层据此分流到 `shell:true`，关闭改走 `taskkill /T /F` 防孤儿。补 14 纯函数用例 + 3 条**不 mock child_process** 的真起进程用例。**真机已确证**（memory 模板起得来、9 工具列出、停止后四层进程链 8856/15212/7064/11112 全部消失 ⇒ 清单 B36 打勾）。同轮顺带修 `McpPanel` 的「stderr 一律标红」（新增 `log-tone.ts` + 5 用例）。详见 §二 V4-Iter-88 | typecheck 0 / vitest 238文件3019用例 / build 三端 |
 | 2026-10-11（同日第四次） | V4-Iter-87 | 长代码块折叠阈值做成设置项：`UiPreferences.codeCollapseLines` + KV `ui.code_collapse_lines`（0–200，**0=永不折叠**且不被当成缺省；越界走 schema 拒绝与 opacity 同口径）+ 渲染端 `code-collapse.ts`（模块级快照+订阅，main.tsx 启动拉取）+ Markdown 用 `useSyncExternalStore`（第三参 server snapshot，否则静态导出 renderToString 抛 Missing getServerSnapshot）+ `isCollapsible` 阈值≤0 返 false + 预览行 `min(12, threshold)` + 裁切改 `canCollapse && collapsed` + 外观面板数字输入（失焦/回车提交、失败回滚、空值不写库）。i18n +2×4 语。详见 §二 V4-Iter-87 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
 | 2026-10-11（同日第三次） | V4-Iter-86 | MCP 模板补一条带密钥的 `tavily-search`：`McpTemplatePlaceholder.secret`（渲染 password + 说明走字段加密/none 模式被 B2 闸门拒）+ 占位符来源扩到 env/headers 值（`placeholderSources` 扫描与替换共用防漂移，替换产新对象不污染模板常量）。mcp-templates.test 扩至 17 用例；i18n +2×4 语。真实 `npx tavily-mcp` 与真 key 未实测（见 verify-checklist）。详见 §二 V4-Iter-86 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
 | 2026-10-11（同日第二次） | V4-Iter-85 | MCP 工具调用日志落库 + 面板按 server 过滤（**推翻 Iter-65「明确不做」**）：migration v45 `mcp_call_log`+`idx_mcp_call_log_server`；`manager.callTool` 薄壳包 `invokeTool`，仅 `listenerCount('call')>0` 时构造预览，`isError===true` 记 ok:false，异常记完 re-throw，`onCall` 由 handlers 订阅写库（失败仅 warn）；repo 插入+裁剪同事务、每 server 环形 200、limit 脏值回落 200/封顶 1000；`mcp/call-summary.ts` 先脱敏后截断且脱敏限定 `max×4` 窗口（50k 返回曾拖爆测试超时），上限 80/500/1200/300；IPC LIST/CLEAR + preload + McpPanel「调用记录」区（下拉过滤/刷新/清空，试运行后自动刷新）。新增 mcp-call-summary 15、mcp-call-log-repo 10（打桩 DB）、mcp-manager +5。真实库跨重启往返未实测。详见 §二 V4-Iter-85 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
@@ -1146,4 +1162,5 @@ audit-45
 
 - 子代理盘点初稿称「MCP 场景模板仅 dir/repo/db 三条」——**误报**：`src/shared/mcp-templates.ts` 实有 8 条（fetch/puppeteer/filesystem/git/sqlite/memory/sequential-thinking/time，category 分 web/file/think/auto），本节的结论以复查后的「8 条模板、env 全空 ⇒ 确实没有需要密钥的模板」为准。
 - 同一初稿把「循环预设写死 09:00」列为「其实已存在」——只对了一半：时间点本批可选（`ReminderMenu.tsx` 的 time 输入），但**星期与号数仍写死**，已拆到 §4.2。
+- **C5 探针撞出的不是「推迟项没做」而是一条从未工作的路径**：Windows 上所有 `npx` 类 MCP server 起不来（`spawn npx ENOENT`，Iter-67 就进了模板表，台账从未声称在 Windows 上验证过，也就没人问过）。教训与 Iter-82/83 同一类，但方向不同——那两条是「注释/文案与行为相反」，这条是**「用例桩掉了 `child_process.spawn`，于是进程创建这一层从来没被测过」**：平台相关的起进程路径必须留一条不 mock 的用例（已按此补 `mcp-stdio-win-shim.test.ts`）。
 - §4.1 各条都重新 grep/Read 过实现位置；未复核的旧台账文字一律不作为结论写入本节。

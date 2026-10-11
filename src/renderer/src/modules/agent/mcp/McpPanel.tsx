@@ -12,6 +12,7 @@ import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
 import { useConfirm } from '../../../components/ConfirmDialog'
 import { formatMcpLaunch, mcpSecretKeyHint } from './mcp-launch'
+import { logLineTone, logToneClass } from './log-tone'
 import { StatusDot, MiniBtn } from '../ui'
 import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
@@ -512,7 +513,7 @@ export const McpPanel: React.FC = () => {
                 <p className="text-[var(--color-text-muted)]">{t('agent.noLogs')}</p>
               ) : (
                 logs.map((l, i) => (
-                  <div key={i} className={l.stream === 'stderr' ? 'text-[var(--color-danger)]' : ''}>
+                  <div key={i} className={logToneClass(logLineTone(l.stream, runtimeOf(l.serverId)?.status))}>
                     <span className="text-[var(--color-text-muted)]">
                       [{new Date(l.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}] [{l.serverId.slice(0, 6)}]
                     </span>{' '}
