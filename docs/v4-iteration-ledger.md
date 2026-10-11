@@ -52,6 +52,15 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-96 外观面板进 CI（§4.4 第 5 条：假设证伪，不用拆组件）（已落地）
+
+- **范围**：§4.4 第 5 条原本写「AppearancePanel 挂载要预置十几个 IPC 通道，要么拆组件、要么给它加只测外观段的导出」。
+- **先证伪**：读代码 + 直接试挂——`AppearancePanel` 只用 `useI18n` + 本地 state，**不碰 toast/confirm**，挂载只读 3 个通道（`getUiPrefs`/`getWindowBehavior`/`getReplyNotifyEnabled`）、写也只 4 个（`setUiPrefs`/`setLaunchAtLogin`/`setCloseToTray`/`setReplyNotifyEnabled`）。7 个桩就挂起来了 ⇒ **拆组件这个前提不成立**，只需 `export const AppearancePanel`（渲染路径零改动）。上一条 `renderer-mcp-log-color.test.tsx` 挂整个 McpPanel 也才用 7 个桩，本来就该先想到。
+- **测试**：新增 `tests/renderer-appearance-panel.test.tsx` 5 用例，钉的是 V4-Iter-87 当时唯一没进 CI 的那块（折叠阈值输入框）：① 挂载后显示持久化值而非常量默认；② 输 999 失焦 → 提交前夹到 200 且全局阈值同步；③ 清空失焦 → **一次都不写库**、还原显示；④ 填 0 是合法值（不被当成"没填"）；⑤ `setUiPrefs` 返回失败 → 输入框与全局阈值一起回滚并显示原因。
+- **写用例时自己错了一条**：第 ⑤ 条我一开始断言"回滚到 3"，实际回滚目标是**面板加载到的持久化值**（面板 state 才是输入框真源，我先手把全局设成 3 是应用里不会出现的状态）。改测试而不是改行为。
+- **附带收益**：`AppearancePanel` 从此有挂载点，后续字号/透明度/自定义 CSS 三块控件都能顺着补用例（本次没做，避免一次铺太大）。
+- **未做**：不拆组件、不动 SettingsModule 结构；B35 的真机目视仍然保留（CI 证的是行为，不是排版观感）。
+
 ### V4-Iter-95 IPC 入参校验错误改成中文人话（不再甩 zod 英文）（已落地）
 
 - **范围**：V4-Iter-94 顺带记下的那条。用户当时看到的是一句 `invalid args: Too small: expected string to have >=1 characters`——既不知道哪个字段，也不知道该怎么办。改在 `safeHandle` 一处，**全仓所有 IPC 通道一起受益**。
@@ -142,7 +151,7 @@
 - **决策记录**：不做「每个块单独记住展开态」（要新持久化格式，超出范围）；阈值走 JS 快照而非 CSS 变量（折叠是行为，不是样式）。
 - **踩坑**：① `useSyncExternalStore` 必须传第三个参数 server snapshot——静态导出走 `renderToString`，缺它直接抛 `Missing getServerSnapshot`；② 用例里改阈值必须包 `act()`，订阅者通知落在 React 批量更新之外，不包则 DOM 不重渲染、断言假绿。
 - **测试**：新增 `code-collapse-store.test` 7 用例（清洗含 0 合法、订阅/退订/同值不通知、快照函数稳定、启动拉取、偏好缺字段不被覆盖成 0、IPC 失败静默保当前值）、`renderer-code-collapse.test.tsx` 5 用例（18 行不折叠、30 行裁 12 行预览并可展开、阈值 0 完全不折叠、阈值 5 按 5 裁、挂载后改阈值即时重判且不再裁切）、`ui-preferences.test` +8（0 往返读写、脏 KV 回落默认、500/12.5/−1 被 schema 拒且不写库）、`code-block.test` +1（阈值 ≤0）。
-- **未实测**：设置页输入框无 UI 用例（AppearancePanel 挂载要整页 mock），主进程读写路径也只到 KV 层——真机改阈值看效果落 verify-checklist。
+- **未实测 → 已补（V4-Iter-96）**：当时以为 AppearancePanel 要整页 mock 才挂得上，实际 7 个 IPC 桩即可，已导出并补 5 条用例（夹取/空值不写库/0 合法/失败回滚）。真机目视（B35）仍保留，CI 证行为不证观感。
 
 ### V4-Iter-86 MCP 场景模板补一条带密钥的（tavily-search），占位符扩展到 env/headers（已落地）
 
@@ -1081,6 +1090,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第十四次） | V4-Iter-96（§4.4 第 5 条）：外观面板进 CI，**假设证伪**——原以为要拆组件，实际 `AppearancePanel` 只依赖 useI18n + 本地 state，7 个 IPC 桩即可挂载，于是只加 `export` 不动结构。新增 `renderer-appearance-panel.test.tsx` 5 用例（显示持久化值 / 999 夹到 200 且全局同步 / 清空不写库 / 0 合法 / 失败连全局一起回滚）。写用例时自己错了一条断言（回滚目标应是面板加载值而非先手设的全局值），改测试不改行为。详见 §二 V4-Iter-96 | typecheck 0 / vitest 242文件3052用例 / build 三端 |
 | 2026-10-11（同日第十三次） | V4-Iter-95：IPC 入参校验错误改成中文人话（`invalid args: Too small: expected string to have >=1 characters` → 「名称至少需要 1 个字符」这类）。改在 `safeHandle` 一处全通道受益：`describeIssue` 按 code+origin 组装，schema 自定义过的中文文案原样保留，字段名只映射小表、映射不到显示原 key，日志仍留 `path: code 英文`。两次自我纠正：本仓是 zod v4（枚举 code 是 `invalid_value` 不是 v3 的 `invalid_enum_value`）；未映射字段按口径显示原 key 而非扩表。+4 用例。详见 §二 V4-Iter-95 | typecheck 0 / vitest 241文件3047用例 / build 三端 |
 | 2026-10-11（同日第十二次） | V4-Iter-94：**新增模型服务商完全保存不了**（用户截图报 `invalid args: Too small: expected string to have >=1 characters`）。根因是 `providerRecordSchema.id` 的 `.min(1)` 挡掉了新建路径的 `id: ""`（设置页 emptyProvider + 首启向导两处），而 `provider.repo` 本来就按空 id 生成 UUID——收紧 zod 的 `eec774b` 漏核了调用方。影响面含首启向导，等于新装用户配不了云服务商。CI 全绿是因为向导/设置用例都 mock 了 `window.pocketai`，schema 从未被跑。修法：去掉 `.min(1)` 保留上限 + 新增 4 条 schema 用例。另记一条未修：`invalid args: <zod 英文原文>` 直接甩给中文界面。详见 §二 V4-Iter-94 | typecheck 0 / vitest 241文件3043用例 / build 三端 |
 | 2026-10-11（同日第十一次） | V4-Iter-93（#42 收尾）：全量跑批的偶发红定性为 **vitest 默认 testTimeout 5s 太紧**——循环复现那一轮同时红 4 条，全是 `Test timed out in 5000ms`（export-markdown 9234ms / kdf-real-db 6448ms / local-embedding.smoke 6433ms / mcp-stdio-win-shim 5036ms）。同源问题 `builtin.ts` 的 vm `timeout:100`（墙钟）会把机器负载误判成输入非法，实测白名单内无失控输入（9**9**9 仅 1ms 溢出）⇒ 提到 1000ms 作保险；testTimeout 全局提到 20s。+2 用例给放宽后的超时提供可验证理由。isolate:false 不动（历史有共享 worker 假失败）。详见 §二 V4-Iter-93 | typecheck 0 / vitest 240文件3039用例（连跑两轮全绿）/ build 三端 |
@@ -1226,7 +1236,7 @@
 2. ~~导入后改归属~~ **已做（V4-Iter-82）**，并顺带修掉同一处的文案/代码相反问题（删助手不再删会话）。
 3. ~~预设可选星期/号数~~ **已做（V4-Iter-83）**，并顺带修掉 monthly 重排卡在 28 号的既有 bug。
 4. **真机验收 B32–B35 + C5/C6**（本批四个功能的未实测项，成本几乎为零，只是把应用当日用两天）：尤其 B32/B33——调用记录跨重启与「脱敏发生在写库前」目前只有打桩 DB 的用例，真库里的字节没人看过。
-5. **AppearancePanel 的渲染层用例**：V4-Iter-87 的阈值输入框没进 CI（挂载整页要预置十几个 IPC 通道）。要么给它加一个只测外观段的导出，要么把外观控件拆成独立组件——拆组件成本比 mock 低。
+5. ~~AppearancePanel 的渲染层用例~~ **已做（V4-Iter-96）**，且**假设被证伪**：不用拆组件，导出 + 7 个 IPC 桩就挂得上；补 5 条用例覆盖夹取/空值不写库/0 合法/失败回滚。
 6. **MCP 调用记录的第二步**：目前只有「按 server 过滤 + 清空」。缺的是从记录跳回那次 Agent 轮次（`agent_traces` 已有 step 维度，两表时间窗能对上是巧合不是外键）——先确认有没有人真用，再决定要不要加关联列。
 
 ### 4.5 更正与误报

@@ -1859,7 +1859,9 @@ const NetworkPanel: React.FC = () => {
   )
 }
 
-const AppearancePanel: React.FC = () => {
+// 导出给用例直接挂载：它只依赖 useI18n + 本地 state，7 个 IPC 通道就能跑满，
+// 不必为了测外观控件把整个 SettingsModule 的依赖图都拉起来（V4-Iter-96）
+export const AppearancePanel: React.FC = () => {
   const { t } = useI18n()
   const [opacity, setOpacity] = useState(1)
   const [css, setCss] = useState('')
