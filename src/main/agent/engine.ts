@@ -122,7 +122,12 @@ interface AgentRunContext {
 }
 
 // Agent 默认系统提示词：任务拆解 + 主动工具调用 + ReAct 推理 + 错误恢复 + 记忆感知
-const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），具备多步推理和工具调用能力。请严格遵循以下工作流程：
+// 刻意不含 {{tools}}：原生 function calling 已把同一份工具清单作为 tools 字段发给模型，
+// 再注入一份文本等于每次调用多付一遍 schema（13 个内置工具实测 ≈1.5k token/次）。
+// 不支持 tools 字段的端点由文本协议兜底路径注入清单（见 buildTextProtocolPrompt）；
+// 自定义助手模板里显式写了 {{tools}} 的仍照常渲染（那是用户主动要求的）。
+// 导出供用例锁定「默认提示词不带文本工具清单」这一契约（V4-Iter-97）
+export const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），具备多步推理和工具调用能力。请严格遵循以下工作流程：
 
 ## 核心原则
 1. **主动使用工具**：当用户的问题需要获取实时信息、执行计算、读写文件、搜索内容时，**必须调用对应的工具**，不要凭记忆猜测。不确定时宁可调用工具确认。
@@ -192,9 +197,6 @@ const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent），�
 
 当前日期：{{date}}（{{weekday}}）
 当前时间：{{time}}
-
-可用工具列表：
-{{tools}}
 
 {{knowledge}}
 
@@ -668,9 +670,11 @@ class AgentEngine {
       }
     }
 
-    // 工具 schema 与 {{tools}}
+    // 工具 schema 与 {{tools}}（模板没写占位就不必渲染文本清单，见 DEFAULT_AGENT_PROMPT 上方说明）
     const tools = toolRegistry.filterByPermissions(toolPermissions)
-    const toolsText = toolRegistry.formatForPrompt(tools)
+    const toolsText = /\{\{\s*tools\s*\}\}/.test(effectivePrompt)
+      ? toolRegistry.formatForPrompt(tools)
+      : ''
 
     const skillsContext = buildSkillsContext(skillIds)
     const memoryContext = buildMemoryContext()
@@ -1136,6 +1140,9 @@ class AgentEngine {
     // 写入本步 assistant 文本
     let toolCalls = result.toolCalls
     const tokenUsage = result.usage?.totalTokens
+    // 输入/输出分开记：合计一个数答不出「贵在哪」（输入 = 本步重发的全部上下文）
+    const promptTokens = result.usage?.promptTokens
+    const completionTokens = result.usage?.completionTokens
     const rawText = result.content || ''
     logger.info(`[agent] step=${stepIndex} 进入后处理 toolCalls=${toolCalls?.length ?? 0}`)
     const truncated = result.finishReason === 'length' && (!toolCalls || toolCalls.length === 0)
@@ -1217,6 +1224,8 @@ class AgentEngine {
           stepType: 'llm',
           durationMs: Date.now() - stepStart,
           tokenUsage,
+          promptTokens,
+          completionTokens,
           status: 'error',
           error: 'empty_response'
         })
@@ -1281,6 +1290,8 @@ class AgentEngine {
         stepType: 'final',
         durationMs: Date.now() - stepStart,
         tokenUsage,
+        promptTokens,
+        completionTokens,
         status: 'success'
       })
       return 'final'
@@ -1295,6 +1306,8 @@ class AgentEngine {
       stepType: 'llm',
       durationMs: Date.now() - stepStart,
       tokenUsage,
+      promptTokens,
+      completionTokens,
       status: 'success'
     })
     logger.info(`[agent] step=${stepIndex} trace 写入完成，返回 tools`)
@@ -1626,6 +1639,8 @@ class AgentEngine {
         stepType: 'degrade',
         durationMs: Date.now() - stepStart,
         tokenUsage: degradeResult.usage?.totalTokens,
+        promptTokens: degradeResult.usage?.promptTokens,
+        completionTokens: degradeResult.usage?.completionTokens,
         status: 'success'
       })
       return true

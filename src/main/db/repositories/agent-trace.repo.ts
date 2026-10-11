@@ -29,6 +29,8 @@ interface AgentTraceRow {
   tool_name: string | null
   duration_ms: number | null
   token_usage: number | null
+  prompt_tokens: number | null
+  completion_tokens: number | null
   status: string
   error: string | null
   created_at: number
@@ -63,6 +65,8 @@ function rowToRecord(row: AgentTraceRow): AgentTraceRecord {
     toolName: row.tool_name ?? undefined,
     durationMs: row.duration_ms ?? undefined,
     tokenUsage: row.token_usage ?? undefined,
+    promptTokens: row.prompt_tokens ?? undefined,
+    completionTokens: row.completion_tokens ?? undefined,
     status: row.status as AgentTraceRecord['status'],
     error: row.error ?? undefined,
     createdAt: row.created_at
@@ -75,8 +79,8 @@ export const agentTraceRepo = {
     const id = randomUUID()
     const createdAt = Date.now()
     dbService.getHandle().prepare(
-      `INSERT INTO agent_traces (id, request_id, conversation_id, step_index, step_type, tool_name, duration_ms, token_usage, status, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO agent_traces (id, request_id, conversation_id, step_index, step_type, tool_name, duration_ms, token_usage, prompt_tokens, completion_tokens, status, error, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       rec.requestId,
@@ -86,6 +90,8 @@ export const agentTraceRepo = {
       rec.toolName ?? null,
       rec.durationMs ?? null,
       rec.tokenUsage ?? null,
+      rec.promptTokens ?? null,
+      rec.completionTokens ?? null,
       rec.status,
       rec.error ?? null,
       createdAt

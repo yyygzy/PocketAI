@@ -668,6 +668,7 @@ export const en: Record<string, string> = {
   'agent.searchNavHint': 'Enter for next, Shift+Enter for previous, Esc to close',
   'agent.runStats': '{steps} steps · {duration} · {tokens} tokens',
   'agent.runStatsDetail': 'View step-by-step details of this run',
+  'agent.stepTokens': 'input {in} / output {out} tokens',
   'agent.traceType.llm': 'LLM',
   'agent.traceType.tools': 'Tools',
   'agent.traceType.final': 'Final answer',

@@ -668,6 +668,7 @@ export const zh: Record<string, string> = {
   'agent.searchNavHint': 'Enter 下一个，Shift+Enter 上一个，Esc 关闭',
   'agent.runStats': '{steps} 步 · 耗时 {duration} · {tokens} tokens',
   'agent.runStatsDetail': '查看本次运行分步明细',
+  'agent.stepTokens': '输入 {in} / 输出 {out} tokens',
   'agent.traceType.llm': '思考',
   'agent.traceType.tools': '工具',
   'agent.traceType.final': '最终回答',

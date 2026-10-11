@@ -641,6 +641,7 @@ export const ko: Record<string, string> = {
   'agent.searchNavHint': 'Enter: 다음, Shift+Enter: 이전, Esc: 닫기',
   'agent.runStats': '{steps}단계 · 소요 시간 {duration} · {tokens}토큰',
   'agent.runStatsDetail': '이번 실행의 단계별 상세 보기',
+  'agent.stepTokens': '입력 {in} / 출력 {out}토큰',
   'agent.traceType.llm': '사고',
   'agent.traceType.tools': '도구',
   'agent.traceType.final': '최종 답변',

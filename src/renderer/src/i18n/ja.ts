@@ -641,6 +641,7 @@ export const ja: Record<string, string> = {
   'agent.searchNavHint': 'Enter で次へ、Shift+Enter で前へ、Esc で閉じる',
   'agent.runStats': '{steps}ステップ · 所要時間 {duration} · {tokens}トークン',
   'agent.runStatsDetail': 'この実行のステップ詳細を表示',
+  'agent.stepTokens': '入力 {in} / 出力 {out} トークン',
   'agent.traceType.llm': '思考',
   'agent.traceType.tools': 'ツール',
   'agent.traceType.final': '最終回答',

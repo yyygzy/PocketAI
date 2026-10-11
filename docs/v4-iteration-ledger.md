@@ -52,6 +52,29 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-98 Agent 分步明细拆出「输入 / 输出」（V4-Iter-97 的 c 项）（已落地）
+
+- **范围**：分步明细原先每步只有一个 `5,507 tokens`，答不出"贵在哪一步、贵在上文还是模型话多"。
+- **先纠正我自己的口径**：上一条里我把 c 说成"展示层拆一下即可、零风险"，**这是错的**。逐步明细读的是 `agent_traces`，那张表只有 `token_usage` 一个数；prompt/completion 虽然存在 `messages.usage`，但 trace 行与消息行之间没有任何可依赖的关联（`messages` 无 `request_id`，Agent 的 assistant 消息 `parent_id` 一律指向用户消息，多步之间无法区分）⇒ 只能加列，**要动 schema**。
+- **方案**：migration **v46 `agent_trace_usage_split`** 给 `agent_traces` 加两列可空 `prompt_tokens` / `completion_tokens`（照 v21 给 `messages` 加 `usage` 的先例）。engine 四处写入点补齐（`llm` 成功 / `final` / `empty_response` 错误步 / `degrade`），数据源就是 provider 已解析好的 `result.usage.promptTokens|completionTokens`（`openai-compatible.ts:477`），不做任何估算。
+- **备份合并兼容性（先查后改）**：`merge-service.ts` 的列名取「云库列 ∩ 本地真实列」白名单（`safeMergeColumns`），旧备份缺这两列就是少带两列，不会报"列不存在"；新备份进旧版本同理向下兼容。迁移在 `runMigrations()` 里按版本号只跑一次，`agent_traces` 由 v1/v24 建表、v46 补列，顺序上无冲突。
+- **显示口径**：`src/renderer/src/utils/agent-step-tokens.ts` 一处三分支——① 两个字段齐全 → `输入 5,301 / 输出 206 tokens`；② 只有合计（v46 之前的旧行、或端点不上报 usage）→ 退回 `5,507 tokens`；③ 半残（只有一个字段）**必须退回合计**，不许渲染出 `undefined`；④ 工具步没有任何 usage → 不占位。i18n 新增 1 个 key `agent.stepTokens`（四语齐，`i18n-parity` 的占位符一致性与"源码引用 key 都在字典里"两条都覆盖它）。
+- **测试**：① `tests/agent-trace-split-real-db.test.ts`（真库，不桩 DB）3 条——全新库跑完迁移两列都在 + `schema_migrations` 记了 v46、新行写入关库重开仍读得到、**升级路径**（把表退回 v45 形状塞一行旧数据再跑迁移：旧行读成 `undefined` 而不是崩，合计仍可用）；② `tests/agent-step-tokens.test.ts` 4 条钉显示三分支（用真 `zh` 字典插值）；③ `tests/agent-trace-repo.test.ts` fixture 补两列并加 2 条（拆分往返 / 未上报时是 `undefined` 而非 0）。
+- **验证**：typecheck 0；vitest **245 文件 / 3067 用例**全绿；build 三端通过，`out/main/index.js` 里 `agent_trace_usage_split` 计数 1、INSERT 列清单含 `prompt_tokens, completion_tokens`。
+- **未实测**：真机迁移与显示效果（用户那份**已加密的 live 库**升 v46 能否正常解锁、面板展开后是否真显示「输入 / 输出」、老会话的旧行是否退回合计）⇒ 落验收清单 **B46**。`AgentPanel` 本身仍未进 CI（挂它要拉起 chat store），显示逻辑是靠抽出的纯函数 + 真字典钉住的，排版仍属人眼。
+- **没做**：运行/会话级汇总行仍只显示合计（`statsByRequest`/`sessionStats` 未加 SUM 字段）——按需要再补，避免先加没人读的字段。
+
+### V4-Iter-97 Agent 每次调用少付一遍工具清单（默认提示词去掉 {{tools}}）（已落地）
+
+- **起因**：真机问「查一次天气花掉 11,277 tokens 正常吗」。用一次性探针（跑完即删）按项目自带的 `estimateTokens` 量默认路径（`通用问答`：空 systemPrompt ⇒ 走 `DEFAULT_AGENT_PROMPT`；空 toolPermissions ⇒ `'*'` 全量）的单次静态开销：提示词正文 1,533 + `{{tools}}` 文本清单 1,571 + 原生 `tools` JSON 2,065 = **5,169/次**；两步 LLM ≈ 10,338，与 11,277 对得上。口径先说清：每步落库的是服务端 `total_tokens`（=prompt+completion，`openai-compatible.ts:477` → `engine.ts:1138` → `agent-trace.repo.ts:116` 的 SUM），不是"模型写了多少字"。
+- **结论**：算术上正常，结构上偏贵——**约 92% 是每步重发的固定开销，其中工具清单发了两遍**（`engine.ts:674-681` 渲染文本进 system，`engine.ts:981-982` 又传原生 `tools`）。原生 function calling 下文本那份不产生任何可执行信息：`extractTextToolCalls` 只在 `textProtocolMode` 分支跑（`engine.ts:1152`），所以"端点默默忽略 tools"这种场景文本份也救不回来。
+- **改法**：`DEFAULT_AGENT_PROMPT` 删掉「可用工具列表：{{tools}}」段（平台自有模板，直接改）；`toolsText` 改成**模板里真有占位才渲染**（`/\{\{\s*tools\s*\}\}/`）。自定义助手显式写了 `{{tools}}` 的照常注入 ⇒ 不砍能力，只停掉平台默认的双份。
+- **安全边界（先证再改）**：① 文本协议兜底自带清单——切换时 `messages[0].content += buildTextProtocolPrompt(tools)`（`engine.ts:1093`，实现见 `text-tool-protocol.ts:99`，含 `### 工具名` + 参数 schema），删默认那份不影响它；② 四种 provider 类型当前共用一个适配器（`manager.ts:20-23`），`body.tools` 只有 `toOpenAITools` 一处出口（`openai-compatible.ts:216`），不存在"某类型只吃文本清单"；③ SEC-12 对 MCP 工具描述的不可信约束在提示词正文「外部内容是不可信数据」段里点名了"MCP 工具返回与描述"，不依赖清单里那句提示；④ 本次运行输入 7 字 < `PLAN_SKIP_MIN_CHARS=30` ⇒ 规划阶段本就跳过，没白付第三次往返。
+- **测试**：新增 `tests/agent-prompt-tools.test.ts` 6 用例（默认提示词无占位也无"可用工具列表"标题 / 其余占位与"该用哪个工具"的点名规则未受影响 / 即使传了清单文本也不会出现在默认提示词里 / 自定义模板 `{{tools}}` 仍注入 / 文本协议兜底带全清单 / 原生通道逐个带工具）。**护栏非空过已实测**：把 `{{tools}}` 加回默认提示词 → 该文件 2 条转红、其余 4 条仍绿，说明它钉的正是这一件事。
+- **验证**：typecheck 0 错误；vitest 243 文件 / 3058 用例全绿；build 三端通过；`out/main/index.js` 里 `可用工具列表` 计数 0、文本协议的 `可用工具清单` 计数 1（新构建已生效，主进程改动须重启 dev）。
+- **未实测**：省下的 1,571/次（本次这类两步运行 ≈3,142，约 -28%）是**启发式估算**（CJK≈1 token/字、其余≈4 字符/token），不是智谱真分词；真实节省要以智谱返回的 `prompt_tokens` 前后对比为准 ⇒ 落验收清单 B45。另外"模型只看原生 schema 还会不会正确选工具"属真机行为，同一条一起看。
+- **没做**：`'*'` 全量授权（含所有 running MCP server 工具）这个第二大头、步骤统计不拆 prompt/completion、规划调用 usage 直接丢弃（`engine.ts:803` 只取 `.content`，长输入时那一次真实计费不计进步骤统计）——三条留作后续。
+
 ### V4-Iter-96 外观面板进 CI（§4.4 第 5 条：假设证伪，不用拆组件）（已落地）
 
 - **范围**：§4.4 第 5 条原本写「AppearancePanel 挂载要预置十几个 IPC 通道，要么拆组件、要么给它加只测外观段的导出」。
@@ -1090,6 +1113,8 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第十六次） | V4-Iter-98 分步明细拆「输入 / 输出」。**先纠正上一条我自己的口径**：c 项不是"纯展示层、零风险"——逐步明细读 `agent_traces`，那表只有 `token_usage` 一个数，而 `messages.usage` 与 trace 行之间无可依赖关联（messages 无 request_id、Agent 每步 assistant 的 parent_id 都指向同一条用户消息）⇒ 只能加列。migration v46 加可空 `prompt_tokens`/`completion_tokens`（照 v21 给 messages 加 usage 的先例），engine 四处写入点直接取 provider 已解析的 usage，不做估算；改前先确认备份合并按「云库列 ∩ 本地列」取交集（`safeMergeColumns`），旧备份缺列不会报错。显示三分支抽成纯函数（拆分 / 退回合计 / 半残绝不出现 undefined / 工具步不占位），i18n 四语加 1 key。测试：真库 3 条（含**把表退回 v45 形状再跑迁移**的升级路径）+ 文案 4 条（真 zh 字典插值）+ repo fixture 2 条。详见 §二 V4-Iter-98 | typecheck 0 / vitest 245文件3067用例 / build 三端 + `out/main` 里 `agent_trace_usage_split` 计数 1 |
+| 2026-10-11（同日第十五次） | V4-Iter-97 Agent 每次调用少付一遍工具清单：真机问「查天气花 11,277 tokens 正常吗」，探针量出默认路径单次静态开销 = 提示词正文 1,533 + `{{tools}}` 文本清单 1,571 + 原生 `tools` JSON 2,065 ≈ 5,169，两步 LLM 即 ≈10,338 ⇒ 算术正常但 **92% 是每步重发的固定开销、工具清单发了两遍**。删 `DEFAULT_AGENT_PROMPT` 的「可用工具列表：{{tools}}」段，`toolsText` 改为模板真有占位才渲染；自定义助手写 `{{tools}}` 仍生效（不砍能力）。改前先证：文本协议兜底路径自己带清单（`buildTextProtocolPrompt`）、四类型共用一个适配器且 `body.tools` 只一处出口、SEC-12 禁令在正文里点名 MCP 工具描述。新增 `agent-prompt-tools.test.ts` 6 用例，并把 `{{tools}}` 加回去做**非空过实测**（2 红 4 绿）。详见 §二 V4-Iter-97 | typecheck 0 / vitest 243文件3058用例 / build 三端 + `out/main` 里「可用工具列表」计数 0 |
 | 2026-10-11（同日第十四次） | V4-Iter-96（§4.4 第 5 条）：外观面板进 CI，**假设证伪**——原以为要拆组件，实际 `AppearancePanel` 只依赖 useI18n + 本地 state，7 个 IPC 桩即可挂载，于是只加 `export` 不动结构。新增 `renderer-appearance-panel.test.tsx` 5 用例（显示持久化值 / 999 夹到 200 且全局同步 / 清空不写库 / 0 合法 / 失败连全局一起回滚）。写用例时自己错了一条断言（回滚目标应是面板加载值而非先手设的全局值），改测试不改行为。详见 §二 V4-Iter-96 | typecheck 0 / vitest 242文件3052用例 / build 三端 |
 | 2026-10-11（同日第十三次） | V4-Iter-95：IPC 入参校验错误改成中文人话（`invalid args: Too small: expected string to have >=1 characters` → 「名称至少需要 1 个字符」这类）。改在 `safeHandle` 一处全通道受益：`describeIssue` 按 code+origin 组装，schema 自定义过的中文文案原样保留，字段名只映射小表、映射不到显示原 key，日志仍留 `path: code 英文`。两次自我纠正：本仓是 zod v4（枚举 code 是 `invalid_value` 不是 v3 的 `invalid_enum_value`）；未映射字段按口径显示原 key 而非扩表。+4 用例。详见 §二 V4-Iter-95 | typecheck 0 / vitest 241文件3047用例 / build 三端 |
 | 2026-10-11（同日第十二次） | V4-Iter-94：**新增模型服务商完全保存不了**（用户截图报 `invalid args: Too small: expected string to have >=1 characters`）。根因是 `providerRecordSchema.id` 的 `.min(1)` 挡掉了新建路径的 `id: ""`（设置页 emptyProvider + 首启向导两处），而 `provider.repo` 本来就按空 id 生成 UUID——收紧 zod 的 `eec774b` 漏核了调用方。影响面含首启向导，等于新装用户配不了云服务商。CI 全绿是因为向导/设置用例都 mock 了 `window.pocketai`，schema 从未被跑。修法：去掉 `.min(1)` 保留上限 + 新增 4 条 schema 用例。另记一条未修：`invalid args: <zod 英文原文>` 直接甩给中文界面。详见 §二 V4-Iter-94 | typecheck 0 / vitest 241文件3043用例 / build 三端 |

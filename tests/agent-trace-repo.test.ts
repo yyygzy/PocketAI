@@ -19,6 +19,8 @@ mem.exec(`
     tool_name TEXT,
     duration_ms INTEGER,
     token_usage INTEGER,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
     status TEXT,
     error TEXT,
     created_at INTEGER
@@ -113,6 +115,34 @@ describe('agentTraceRepo.latestTracesByConversation', () => {
     const traces = agentTraceRepo.latestTracesByConversation('c1')
     expect(traces).toHaveLength(1)
     expect(traces[0]).toMatchObject({ requestId: 'new', stepType: 'degrade' })
+  })
+
+  it('输入/输出分开写入后原样读回（分步明细据此显示「输入 X / 输出 Y」）', () => {
+    agentTraceRepo.insert({
+      requestId: 'r1',
+      conversationId: 'c1',
+      stepIndex: 0,
+      stepType: 'llm',
+      durationMs: 10,
+      tokenUsage: 5507,
+      promptTokens: 5301,
+      completionTokens: 206,
+      status: 'success'
+    })
+    expect(agentTraceRepo.latestTracesByConversation('c1')[0]).toMatchObject({
+      tokenUsage: 5507,
+      promptTokens: 5301,
+      completionTokens: 206
+    })
+  })
+
+  it('未上报 usage 的步（含迁移前的旧行）→ 两个字段是 undefined 而不是 0', () => {
+    agentTraceRepo.insert({ requestId: 'r1', conversationId: 'c1', stepIndex: 0, stepType: 'tools', status: 'success' })
+    const tr = agentTraceRepo.latestTracesByConversation('c1')[0]!
+    expect(tr.promptTokens).toBeUndefined()
+    expect(tr.completionTokens).toBeUndefined()
+    // 渲染层的降级分支依赖「合计仍在」这条
+    expect(tr.tokenUsage).toBeUndefined()
   })
 })
 

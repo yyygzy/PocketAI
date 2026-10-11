@@ -832,6 +832,13 @@ export interface AgentTraceRecord {
   toolName?: string
   durationMs?: number
   tokenUsage?: number
+  /**
+   * 本步输入 token（= 每步重发的上下文：系统提示词 + 工具 schema + 历史）。
+   * provider 未上报 usage、或本次改动前的旧 trace 行为 undefined。
+   */
+  promptTokens?: number
+  /** 本步输出 token（思考模型的 reasoning 也计在这里） */
+  completionTokens?: number
   status: 'success' | 'error'
   error?: string
   createdAt: number

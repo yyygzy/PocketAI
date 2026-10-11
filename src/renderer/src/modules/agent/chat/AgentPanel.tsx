@@ -21,6 +21,7 @@ import { writeClipboard } from '../../../utils/clipboard'
 import { buildConversationHtml } from '../../../utils/export-html'
 import { buildReminderText } from '../../../utils/reminder-presets'
 import { formatDateTime } from '../../../utils/time'
+import { formatStepTokens } from '../../../utils/agent-step-tokens'
 import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
 
 export const AgentPanel: React.FC = () => {
@@ -557,25 +558,27 @@ export const AgentPanel: React.FC = () => {
                 {!chat.tracesLoading && (!chat.latestTraces || chat.latestTraces.length === 0) && (
                   <div className="text-xs text-[var(--color-text-muted)]">{t('agent.traceEmpty')}</div>
                 )}
-                {!chat.tracesLoading && chat.latestTraces?.map((tr, i) => (
-                  <div key={tr.id} className="text-xs leading-relaxed">
-                    <div className="flex flex-wrap items-baseline gap-x-1.5">
-                      <span className="text-[var(--color-text-muted)]">#{i + 1}</span>
-                      <span className={tr.status === 'error' ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'}>
-                        {tr.status === 'error' ? '✕' : '✓'}
-                      </span>
-                      <span>{t(`agent.traceType.${tr.stepType}`)}</span>
-                      {tr.toolName && <span className="text-[var(--color-primary)]">{tr.toolName}</span>}
-                      <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
-                      {typeof tr.tokenUsage === 'number' && (
-                        <span className="text-[var(--color-text-muted)]">{tr.tokenUsage.toLocaleString('en-US')} tokens</span>
-                      )}
-                    </div>
-                    {tr.error && (
-                      <div className="ml-4 text-[var(--color-danger)] whitespace-pre-wrap break-all">{tr.error}</div>
-                    )}
-                  </div>
-                ))}
+                {!chat.tracesLoading &&
+                  chat.latestTraces?.map((tr, i) => {
+                    const stepTokens = formatStepTokens(tr, t)
+                    return (
+                      <div key={tr.id} className="text-xs leading-relaxed">
+                        <div className="flex flex-wrap items-baseline gap-x-1.5">
+                          <span className="text-[var(--color-text-muted)]">#{i + 1}</span>
+                          <span className={tr.status === 'error' ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'}>
+                            {tr.status === 'error' ? '✕' : '✓'}
+                          </span>
+                          <span>{t(`agent.traceType.${tr.stepType}`)}</span>
+                          {tr.toolName && <span className="text-[var(--color-primary)]">{tr.toolName}</span>}
+                          <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
+                          {stepTokens && <span className="text-[var(--color-text-muted)]">{stepTokens}</span>}
+                        </div>
+                        {tr.error && (
+                          <div className="ml-4 text-[var(--color-danger)] whitespace-pre-wrap break-all">{tr.error}</div>
+                        )}
+                      </div>
+                    )
+                  })}
               </div>
             )}
           </div>

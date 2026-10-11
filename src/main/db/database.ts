@@ -743,6 +743,17 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_mcp_call_log_server ON mcp_call_log(server_id, created_at);
     `
+  },
+  {
+    // v46: Agent 分步明细拆出输入/输出。此前 trace 只有一个 total_tokens，
+    // 「一次查天气 11k tokens」答不出贵在哪——输入（每步重发的上下文）与输出必须分开看。
+    // 可空：旧行与不上报 usage 的端点留 NULL，读取侧按 undefined 降级为只显示合计。
+    version: 46,
+    name: 'agent_trace_usage_split',
+    up: `
+      ALTER TABLE agent_traces ADD COLUMN prompt_tokens INTEGER;
+      ALTER TABLE agent_traces ADD COLUMN completion_tokens INTEGER;
+    `
   }
 ]
 
