@@ -35,7 +35,7 @@ export function parseCodeProps(props: { className?: string; children?: ReactNode
   return { lang: m ? m[1]!.toLowerCase() : null, code }
 }
 
-/** 代码块超过此行数默认折叠（长日志/长源码不再刷屏） */
+/** 代码块超过此行数默认折叠（长日志/长源码不再刷屏）；可在设置页改阈值，0 = 永不折叠 */
 export const CODE_COLLAPSE_THRESHOLD = 20
 /** 折叠态露出的预览行数（CSS max-height 按 12 行 × 20px = 240px 裁切） */
 export const CODE_PREVIEW_LINES = 12
@@ -46,8 +46,9 @@ export function countCodeLines(code: string): number {
   return code.split('\n').length
 }
 
-/** 是否应默认折叠：行数严格大于阈值 */
+/** 是否应默认折叠：行数严格大于阈值；阈值 ≤ 0 表示「永不折叠」 */
 export function isCollapsible(code: string, threshold: number = CODE_COLLAPSE_THRESHOLD): boolean {
+  if (threshold <= 0) return false
   return countCodeLines(code) > threshold
 }
 

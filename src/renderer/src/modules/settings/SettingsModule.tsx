@@ -19,6 +19,8 @@ import { OllamaPanel } from '../../components/OllamaPanel'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
 import { applyChatFontSize, normalizeFontSize } from '../../chat-font'
+import { MAX_CODE_COLLAPSE_LINES, normalizeCodeCollapseLines, setCodeCollapseLines } from '../../code-collapse'
+import { CODE_COLLAPSE_THRESHOLD } from '../../utils/code-block'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
@@ -1868,6 +1870,9 @@ const AppearancePanel: React.FC = () => {
   const [closeToTray, setCloseToTray] = useState(false)
   // 聊天字号三档；回复完成系统通知开关
   const [chatFontSize, setChatFontSize] = useState<ChatFontSize>('medium')
+  // 长代码块折叠阈值（行；0 = 永不折叠）。input 用字符串，允许中途清空/半截数字
+  const [collapseLines, setCollapseLines] = useState(CODE_COLLAPSE_THRESHOLD)
+  const [collapseInput, setCollapseInput] = useState(String(CODE_COLLAPSE_THRESHOLD))
   const [replyNotify, setReplyNotify] = useState(true)
 
   useEffect(() => {
@@ -1876,6 +1881,9 @@ const AppearancePanel: React.FC = () => {
         setOpacity(r.data.opacity)
         setCss(r.data.customCss)
         setChatFontSize(normalizeFontSize(r.data.chatFontSize))
+        const lines = normalizeCodeCollapseLines(r.data.codeCollapseLines)
+        setCollapseLines(lines)
+        setCollapseInput(String(lines))
       }
       setLoaded(true)
     }).catch((e) => {
@@ -1924,6 +1932,33 @@ const AppearancePanel: React.FC = () => {
     } catch (e) {
       setChatFontSize(prev)
       applyChatFontSize(prev)
+      setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
+    }
+  }
+
+  // 折叠阈值：失焦/回车提交（输入中途不清 dirty 值）。本地先生效 -> 持久化，失败回滚
+  const commitCodeCollapse = async (raw: string): Promise<void> => {
+    const parsed = Number(raw)
+    if (raw.trim() === '' || !Number.isFinite(parsed)) {
+      setCollapseInput(String(collapseLines))
+      return
+    }
+    const next = Math.min(MAX_CODE_COLLAPSE_LINES, Math.max(0, Math.floor(parsed)))
+    const prev = collapseLines
+    setCollapseLines(next)
+    setCollapseInput(String(next))
+    setCodeCollapseLines(next)
+    try {
+      const r = await window.pocketai.setUiPrefs({ codeCollapseLines: next })
+      if (!r.ok) throw new Error(r.error ?? 'failed')
+      const saved = normalizeCodeCollapseLines(r.data?.codeCollapseLines)
+      setCollapseLines(saved)
+      setCollapseInput(String(saved))
+      setCodeCollapseLines(saved)
+    } catch (e) {
+      setCollapseLines(prev)
+      setCollapseInput(String(prev))
+      setCodeCollapseLines(prev)
       setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
     }
   }
@@ -2044,6 +2079,30 @@ const AppearancePanel: React.FC = () => {
           </div>
         </div>
         <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.fontSizeHint')}</p>
+      </div>
+
+      {/* 长代码块折叠阈值 */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label htmlFor="ui-code-collapse-lines" className="text-[var(--color-text)]">
+            {t('ui.codeCollapse')}
+          </label>
+          <input
+            id="ui-code-collapse-lines"
+            type="number"
+            min={0}
+            max={MAX_CODE_COLLAPSE_LINES}
+            step={1}
+            value={collapseInput}
+            onChange={(e) => setCollapseInput(e.target.value)}
+            onBlur={(e) => void commitCodeCollapse(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void commitCodeCollapse(e.currentTarget.value)
+            }}
+            className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] px-1.5 py-0.5 text-[11px] text-[var(--color-text)]"
+          />
+        </div>
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.codeCollapseHint')}</p>
       </div>
 
       {/* 回复完成系统通知 */}

@@ -7,7 +7,9 @@ import { z } from 'zod'
 export const uiPrefsPatchSchema = z.object({
   opacity: z.number().min(0.6).max(1).optional(),
   customCss: z.string().optional(),
-  chatFontSize: z.enum(['small', 'medium', 'large']).optional()
+  chatFontSize: z.enum(['small', 'medium', 'large']).optional(),
+  /** 代码块折叠阈值（行）：0 = 永不折叠，上限 200 防误填 */
+  codeCollapseLines: z.number().int().min(0).max(200).optional()
 })
 
 const sidebarModuleSchema = z.enum([

@@ -12,6 +12,7 @@ import type {
   ConversationExportPayload,
   ConversationExternalImportResult,
   MessageSearchResult,
+  McpCallLogRecord,
   UsageSummary,
   UsageConversationItem,
   UsageAssistantItem,
@@ -523,6 +524,16 @@ const api = {
     ipcRenderer.invoke(IPC.MCP_SERVER_CALL_TOOL, { serverId: id, toolName: name, argsJson }),
   getMcpRuntimes: (): Promise<McpServerRuntime[]> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_GET_RUNTIMES),
+  /** 工具调用记录（跨重启可查）；serverId 省略/null = 全部 */
+  listMcpCallLogs: (
+    serverId?: string | null,
+    limit?: number | null
+  ): Promise<{ ok: boolean; logs?: McpCallLogRecord[]; error?: string }> =>
+    ipcRenderer.invoke(IPC.MCP_CALL_LOG_LIST, serverId ?? null, limit ?? null),
+  clearMcpCallLogs: (
+    serverId?: string | null
+  ): Promise<{ ok: boolean; removed?: number; error?: string }> =>
+    ipcRenderer.invoke(IPC.MCP_CALL_LOG_CLEAR, serverId ?? null),
 
   onMcpStatus: (handler: (e: McpServerStatusEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: McpServerStatusEvent) => handler(data)

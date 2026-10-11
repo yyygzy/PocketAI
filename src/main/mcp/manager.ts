@@ -15,12 +15,14 @@ import { MCP_EXTENSIONS_DIR } from '../portable'
 import { errMsg } from '../error'
 import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
 import { createLogger } from '../logger'
+import { summarizeMcpArgs, summarizeMcpError, summarizeMcpResult } from './call-summary'
 import type {
   McpServerRecord,
   McpServerRuntime,
   McpServerStatus,
   McpServerStatusEvent,
   McpServerLogEvent,
+  McpCallEvent,
   ToolSchema
 } from '../../shared/types'
 
@@ -339,8 +341,43 @@ export class McpManager extends EventEmitter {
     return entry.tools
   }
 
-  /** 调用工具 */
-  async callTool(id: string, name: string, args: Record<string,unknown>): Promise<unknown> {
+  /**
+   * 调用工具（对外唯一入口）：包一层耗时/成败/预览的调用记录事件。
+   * 事件只在有人订阅时才构造预览文本（无订阅者时零开销），且写库失败绝不影响调用结果。
+   */
+  async callTool(id: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+    const t0 = Date.now()
+    if (this.listenerCount('call') === 0) return this.invokeTool(id, name, args)
+    try {
+      const raw = await this.invokeTool(id, name, args)
+      // isError 是 MCP 协议字段：server 正常响应但业务失败，也算调用失败
+      const bizError = !!raw && typeof raw === 'object' && (raw as { isError?: unknown }).isError === true
+      this.emit('call', {
+        serverId: id,
+        tool: name,
+        ok: !bizError,
+        durationMs: Date.now() - t0,
+        argsPreview: summarizeMcpArgs(args),
+        resultPreview: summarizeMcpResult(raw),
+        error: bizError ? 'server 返回 isError=true' : null
+      } satisfies McpCallEvent)
+      return raw
+    } catch (e) {
+      this.emit('call', {
+        serverId: id,
+        tool: name,
+        ok: false,
+        durationMs: Date.now() - t0,
+        argsPreview: summarizeMcpArgs(args),
+        resultPreview: null,
+        error: summarizeMcpError(e)
+      } satisfies McpCallEvent)
+      throw e
+    }
+  }
+
+  /** 真正的工具调用（含 HTTP 断线重连重试一次） */
+  async invokeTool(id: string, name: string, args: Record<string,unknown>): Promise<unknown> {
     const entry = this.runtimes.get(id)
     if (!entry || !entry.client || entry.status !== 'running') {
       throw new Error('MCP Server 未运行')
@@ -508,6 +545,12 @@ export class McpManager extends EventEmitter {
   onStatus(handler: (e: McpServerStatusEvent) => void): () => void {
     this.on('status', handler)
     return () => this.off('status', handler)
+  }
+
+  /** 订阅工具调用完成事件（供落库；manager 不直接碰调用记录的存储） */
+  onCall(handler: (e: McpCallEvent) => void): () => void {
+    this.on('call', handler)
+    return () => this.off('call', handler)
   }
 
   /** 订阅日志 */

@@ -8,6 +8,7 @@ import { I18nProvider } from './i18n'
 import { ToastProvider } from './components/ToastProvider'
 import { loadAndInjectCustomCss } from './custom-css'
 import { loadAndApplyChatFontSize } from './chat-font'
+import { loadCodeCollapseLines } from './code-collapse'
 import './styles.css'
 
 // 快捷浮窗与主窗口共用 index.html，用 hash 区分（#/popup），避免新增构建入口
@@ -27,6 +28,7 @@ const isDetached = detachedModule !== null
 // 先注入用户自定义 CSS / 应用聊天字号档位，再渲染（异步，可能有极短暂闪烁）
 loadAndInjectCustomCss()
 loadAndApplyChatFontSize()
+loadCodeCollapseLines()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

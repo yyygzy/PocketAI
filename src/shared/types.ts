@@ -449,6 +449,33 @@ export interface PerfSummary {
   byModel: PerfModelStat[]
 }
 
+/** MCP 工具调用记录（落库，跨重启可查；预览字段写入前已脱敏+截断） */
+export interface McpCallLogRecord {
+  id: number
+  serverId: string
+  tool: string
+  /** 调用是否成功（server 返回业务级错误也算失败） */
+  ok: boolean
+  durationMs: number
+  /** 入参预览（敏感键名替换 + 截断）；无入参时为 null */
+  argsPreview: string | null
+  /** 结果预览（截断）；失败时为 null */
+  resultPreview: string | null
+  /** 失败原因（成功为 null） */
+  error: string | null
+  createdAt: number
+}
+
+/** mcpManager 发出的调用事件（字段与落库记录同源，id/createdAt 由主进程补） */
+export interface McpCallEvent {
+  serverId: string
+  tool: string
+  ok: boolean
+  durationMs: number
+  argsPreview: string | null
+  resultPreview: string | null
+  error: string | null
+}
 /** RAG 检索命中的知识库 chunk 引用来源 */
 export interface MessageSource {
   chunkId: string
@@ -1550,6 +1577,8 @@ export interface UiPreferences {
   customCss: string
   /** 聊天正文字号档位；旧数据缺省按 medium */
   chatFontSize: ChatFontSize
+  /** 长代码块默认折叠阈值（行数）；0 = 永不折叠。旧数据缺省按 20 */
+  codeCollapseLines: number
 }
 
 // ---------- WebDAV 增量备份 ----------
@@ -1871,6 +1900,8 @@ export const IPC = {
   MCP_SERVER_GET_RUNTIMES: 'mcp-server:get-runtimes', // 一次性拉取所有运行时状态
   MCP_SERVER_STATUS_EVENT: 'mcp-server:status-event',
   MCP_SERVER_LOG_EVENT: 'mcp-server:log-event',
+  MCP_CALL_LOG_LIST: 'mcp:call-log-list', // 读历史调用记录（可按 server 过滤）
+  MCP_CALL_LOG_CLEAR: 'mcp:call-log-clear', // 清空调用记录（传 serverId 只清该 server）
 
   // ---------- 终端模块（用户手动交互式终端，非 Agent 工具） ----------
   TERMINAL_START: 'terminal:start',

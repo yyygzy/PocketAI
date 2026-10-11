@@ -150,3 +150,8 @@ export const pythonPipSourceSchema = z.union([
     .url()
     .refine(isAllowedPipSourceUrl, '自定义 pip 源必须是 https（本机回环 http 例外）')
 ])
+/** MCP_CALL_LOG_LIST / CLEAR 的 server 维度参数（null=不限/全清） */
+export const mcpCallLogServerIdSchema = z.string().min(1).max(64).nullish()
+
+/** MCP_CALL_LOG_LIST 第二参：条数上限 */
+export const mcpCallLogLimitSchema = z.number().int().min(1).max(1000).nullish()

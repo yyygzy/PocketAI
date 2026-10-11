@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import type { PluggableList } from 'unified'
 import remarkGfm from 'remark-gfm'
@@ -9,6 +9,7 @@ import { remarkCitations } from './remark-citations'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { parseCodeProps, countCodeLines, isCollapsible, CODE_PREVIEW_LINES, type ParsedCodeBlock } from '../../utils/code-block'
+import { codeCollapseLines, subscribeCodeCollapse } from '../../code-collapse'
 
 // katex 懒加载（主包瘦身 ~280KB）：rehype-katex + katex.min.css 均为动态 import，
 // 模块图不再静态包含。ready 前公式以原始 LaTeX 文本渲染，ready 后重渲染为公式；
@@ -56,22 +57,25 @@ const PRE_CLASS =
   'rounded-lg p-3 overflow-x-auto text-[13px] bg-[var(--hljs-bg)] text-[var(--hljs-text)]'
 
 /** 围栏代码块：右上角「复制」按钮（含已复制反馈），按钮定位于包裹层，不随横向滚动移位；
- *  超 20 行默认折叠（12 行预览 + 渐变遮罩 + 展开/收起条），流式中越过阈值不自动收起 */
+ *  超过设置项阈值（默认 20 行，0 = 永不折叠）默认折叠，12 行预览 + 渐变遮罩 + 展开/收起条，
+ *  流式中越过阈值不自动收起；改阈值会立刻让已挂载的块重新判定是否可折叠 */
 const CodeBlock: React.FC<{ block: ParsedCodeBlock; children: React.ReactNode }> = ({ block, children }) => {
   const { t } = useI18n()
   const { copied, copy } = useCopyFeedback()
   const label = copied ? t('common.copied') : t('common.copy')
   const lines = countCodeLines(block.code)
-  const canCollapse = isCollapsible(block.code)
-  // 初始折叠态只在挂载时计算：流式生成中越过 20 行不打断阅读，历史消息重挂即折叠
-  const [collapsed, setCollapsed] = useState(() => isCollapsible(block.code))
-  // 12 行 × 20px 行高 = 240px；overflow-y 裁切不影响 pre 自身的横向滚动条
-  const previewMaxHeight = CODE_PREVIEW_LINES * 20
+  // 第三个参数是 SSR 快照：静态导出走 renderToString，缺它会抛 Missing getServerSnapshot
+  const threshold = useSyncExternalStore(subscribeCodeCollapse, codeCollapseLines, codeCollapseLines)
+  const canCollapse = isCollapsible(block.code, threshold)
+  // 初始折叠态只在挂载时计算：流式生成中越过阈值不打断阅读，历史消息重挂即折叠
+  const [collapsed, setCollapsed] = useState(() => isCollapsible(block.code, codeCollapseLines()))
+  // 行高 20px；预览行数不超过阈值本身（阈值 5 行时不该露出 12 行）
+  const previewMaxHeight = Math.min(CODE_PREVIEW_LINES, threshold) * 20
   return (
     <div className="relative group my-2">
       <pre
-        className={`${PRE_CLASS} m-0 ${collapsed ? 'overflow-y-hidden' : ''}`}
-        style={collapsed ? { maxHeight: previewMaxHeight } : undefined}
+        className={`${PRE_CLASS} m-0 ${canCollapse && collapsed ? 'overflow-y-hidden' : ''}`}
+        style={canCollapse && collapsed ? { maxHeight: previewMaxHeight } : undefined}
       >
         {children}
       </pre>

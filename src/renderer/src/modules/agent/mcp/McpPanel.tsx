@@ -5,6 +5,7 @@ import type {
   McpServerRuntime,
   McpServerStatusEvent,
   McpServerLogEvent,
+  McpCallLogRecord,
   PythonPipSource
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
@@ -36,6 +37,9 @@ export const McpPanel: React.FC = () => {
   const [runtimes, setRuntimes] = useState<McpServerRuntime[]>([])
   const [editing, setEditing] = useState<Partial<McpServerRecord> | null>(null)
   const [logs, setLogs] = useState<McpServerLogEvent[]>([])
+  // 调用记录（落库，跨重启可查）与它的 server 过滤：''=全部
+  const [callLogs, setCallLogs] = useState<McpCallLogRecord[]>([])
+  const [callLogServer, setCallLogServer] = useState('')
   const [notice, setNotice] = useState('')
   // 正在安装依赖的 serverId 集合（全局广播跟踪，用于禁用列表卡片上的删除按钮）
   const [installingIds, setInstallingIds] = useState<ReadonlySet<string>>(new Set())
@@ -61,6 +65,26 @@ export const McpPanel: React.FC = () => {
     // load 内部无 try-catch，需挂 .catch 避免未处理 rejection
     void load().catch(reportIpcError('mcp.list'))
   }, [load])
+
+  const reloadCallLogs = useCallback(async () => {
+    const r = await window.pocketai.listMcpCallLogs(callLogServer || null)
+    if (r.ok) setCallLogs(r.logs ?? [])
+    else toast.error(r.error ?? t('common.unknownError'))
+  }, [callLogServer, toast, t])
+
+  useEffect(() => {
+    void reloadCallLogs().catch(reportIpcError('mcp.callLogList'))
+  }, [reloadCallLogs])
+
+  const handleClearCallLogs = async () => {
+    const r = await window.pocketai.clearMcpCallLogs(callLogServer || null)
+    if (r.ok) {
+      setCallLogs([])
+      toast.success(t('agent.callLogCleared'))
+    } else {
+      toast.error(r.error ?? t('common.unknownError'))
+    }
+  }
 
   // 订阅状态变化
   useEffect(() => {
@@ -141,6 +165,8 @@ export const McpPanel: React.FC = () => {
         isError: r.ok ? r.isError : true
       }
     }))
+    // 试运行本身就是一次调用：立刻刷新记录，用户不用点刷新就能看到成败与耗时
+    void reloadCallLogs().catch(reportIpcError('mcp.callLogList'))
   }
 
   // SEC-2：启动前把真正要执行的命令行摊开给用户看（导入/模板创建的记录只有在这里才落地成进程）
@@ -428,6 +454,50 @@ export const McpPanel: React.FC = () => {
           />
         ) : (
           <div className="flex flex-col h-full">
+            {/* 调用记录：进程日志只留在内存 200 行且刷新即清，这张表回答「刚才那次调用成没成、返了什么」 */}
+            <div className="mb-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <h4 className="text-xs font-semibold text-[var(--color-text)]">{t('agent.callLogTitle')}</h4>
+                <select
+                  className="ml-auto max-w-[45%] text-[11px] px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-input-bg)] outline-none"
+                  value={callLogServer}
+                  onChange={(e) => setCallLogServer(e.target.value)}
+                >
+                  <option value="">{t('agent.callLogAllServers')}</option>
+                  {records.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+                <MiniBtn onClick={() => void reloadCallLogs().catch(reportIpcError('mcp.callLogList'))}>
+                  {t('agent.callLogRefresh')}
+                </MiniBtn>
+                <MiniBtn onClick={() => void handleClearCallLogs().catch(reportIpcError('mcp.callLogClear'))}>
+                  {t('agent.clear')}
+                </MiniBtn>
+              </div>
+              <div className="max-h-40 overflow-y-auto bg-[var(--color-input-bg)] rounded p-2 font-mono text-[11px] leading-relaxed">
+                {callLogs.length === 0 ? (
+                  <p className="text-[var(--color-text-muted)]">{t('agent.callLogEmpty')}</p>
+                ) : (
+                  callLogs.map((l) => (
+                    <div
+                      key={l.id}
+                      className="truncate"
+                      title={[l.argsPreview, l.resultPreview].filter(Boolean).join(' / ')}
+                    >
+                      <span className="text-[var(--color-text-muted)]">
+                        [{new Date(l.createdAt).toLocaleTimeString('zh-CN', { hour12: false })}]
+                      </span>{' '}
+                      <span className={l.ok ? '' : 'text-[var(--color-danger)]'}>{l.tool}</span>{' '}
+                      <span className="text-[var(--color-text-muted)]">
+                        {l.ok ? `${l.durationMs}ms` : (l.error ?? t('common.unknownError'))}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold">{t('agent.logTitle')}</h3>
               <button

@@ -26,7 +26,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: mocks.appConfigRepo }))
 
-import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH } from '../src/main/ui-preferences'
+import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES } from '../src/main/ui-preferences'
 
 beforeEach(() => {
   mocks.store.clear()
@@ -130,5 +130,51 @@ describe('setUiPreferences — 保存偏好', () => {
     const result = setUiPreferences({ opacity: 0.7, customCss: 'x' })
     expect(result.opacity).toBe(0.7)
     expect(result.customCss).toBe('x')
+  })
+})
+
+describe('normalizeCodeCollapseLines — 折叠阈值清洗', () => {
+  it('缺省/空值 → 默认 20（未配置不等于永不折叠）', () => {
+    expect(normalizeCodeCollapseLines(null)).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+    expect(normalizeCodeCollapseLines(undefined)).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+    expect(normalizeCodeCollapseLines('')).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+    expect(normalizeCodeCollapseLines('abc')).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+    expect(normalizeCodeCollapseLines(-1)).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+    expect(normalizeCodeCollapseLines(NaN)).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+  })
+
+  it('0 是合法值（永不折叠），向下取整，超上限压到 200', () => {
+    expect(normalizeCodeCollapseLines(0)).toBe(0)
+    expect(normalizeCodeCollapseLines('0')).toBe(0)
+    expect(normalizeCodeCollapseLines('12.9')).toBe(12)
+    expect(normalizeCodeCollapseLines(999)).toBe(MAX_CODE_COLLAPSE_LINES)
+  })
+})
+
+describe('代码块折叠阈值持久化', () => {
+  it('未配置 → getUiPreferences 返回 20', () => {
+    expect(getUiPreferences().codeCollapseLines).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+  })
+
+  it('设 0 → 存「0」且读回 0（不被当成缺省值吞掉）', () => {
+    setUiPreferences({ codeCollapseLines: 0 })
+    expect(mocks.store.get('ui.code_collapse_lines')).toBe('0')
+    expect(getUiPreferences().codeCollapseLines).toBe(0)
+  })
+
+  it('超上限入参 → schema 直接拒绝（与 opacity 同口径，不静默改写用户意图）', () => {
+    expect(() => setUiPreferences({ codeCollapseLines: 500 })).toThrow()
+    expect(mocks.store.has('ui.code_collapse_lines')).toBe(false)
+  })
+
+  it('小数/负数按 schema 拒绝（int + min 0），不写库', () => {
+    expect(() => setUiPreferences({ codeCollapseLines: 12.5 })).toThrow()
+    expect(() => setUiPreferences({ codeCollapseLines: -1 })).toThrow()
+    expect(mocks.store.has('ui.code_collapse_lines')).toBe(false)
+  })
+
+  it('KV 被外部写脏 → 读回默认', () => {
+    mocks.store.set('ui.code_collapse_lines', 'not-a-number')
+    expect(getUiPreferences().codeCollapseLines).toBe(DEFAULT_CODE_COLLAPSE_LINES)
   })
 })

@@ -52,6 +52,38 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-87 长代码块折叠阈值做成设置项（0 = 永不折叠）（已落地）
+
+- **范围**：§4.3 的一条推迟项（「代码块折叠阈值与展开态记忆」的前半）。阈值此前是 `utils/code-block.ts` 里写死的常量 20 行，长日志/长源码想看全文只能逐块点展开。无 migration（走既有 `app_config` KV），无新 IPC 通道（复用 UI_GET/SET_PREFS）。
+- **方案**：`UiPreferences` +`codeCollapseLines`；`ui-preferences.ts` 加 KV `ui.code_collapse_lines` 与 `normalizeCodeCollapseLines`（向下取整、夹 0–200；**0 是合法值**，只有 null/空串/负数/NaN 才回落默认 20——用真值判断会把「永不折叠」读成 20，`Number(null)` 又是 0，所以缺省必须显式判 null/''）；`uiPrefsPatchSchema` 加 `int().min(0).max(200)`，越界与 opacity 同口径直接拒绝而非静默夹紧（渲染端提交前已夹好）；新建渲染端 `code-collapse.ts`（模块级快照 + 订阅集合 + `loadCodeCollapseLines()` 在 main.tsx 启动拉取）；`Markdown.tsx` CodeBlock 用 `useSyncExternalStore` 读阈值 ⇒ 改完对已挂载的代码块即时重判；`isCollapsible` 阈值 ≤0 返 false；预览行数改 `Math.min(CODE_PREVIEW_LINES, threshold)`（阈值 5 行时不该露出 12 行）；裁切条件改 `canCollapse && collapsed`（旧 collapsed state 在阈值改成 0 后若不再 gating，会把内容永久夹住且没有展开按钮）；外观面板数字输入失焦/回车提交，本地先生效→持久化→失败回滚，空串或非数字只还原不写库。i18n +2 key ×4 语。
+- **决策记录**：不做「每个块单独记住展开态」（要新持久化格式，超出范围）；阈值走 JS 快照而非 CSS 变量（折叠是行为，不是样式）。
+- **踩坑**：① `useSyncExternalStore` 必须传第三个参数 server snapshot——静态导出走 `renderToString`，缺它直接抛 `Missing getServerSnapshot`；② 用例里改阈值必须包 `act()`，订阅者通知落在 React 批量更新之外，不包则 DOM 不重渲染、断言假绿。
+- **测试**：新增 `code-collapse-store.test` 7 用例（清洗含 0 合法、订阅/退订/同值不通知、快照函数稳定、启动拉取、偏好缺字段不被覆盖成 0、IPC 失败静默保当前值）、`renderer-code-collapse.test.tsx` 5 用例（18 行不折叠、30 行裁 12 行预览并可展开、阈值 0 完全不折叠、阈值 5 按 5 裁、挂载后改阈值即时重判且不再裁切）、`ui-preferences.test` +8（0 往返读写、脏 KV 回落默认、500/12.5/−1 被 schema 拒且不写库）、`code-block.test` +1（阈值 ≤0）。
+- **未实测**：设置页输入框无 UI 用例（AppearancePanel 挂载要整页 mock），主进程读写路径也只到 KV 层——真机改阈值看效果落 verify-checklist。
+
+### V4-Iter-86 MCP 场景模板补一条带密钥的（tavily-search），占位符扩展到 env/headers（已落地）
+
+- **范围**：§4.3 的一条推迟项（「需要 API key 的 MCP 模板」）。原 8 条模板 env 全空 ⇒ 没有一条需要密钥，小白第一次遇到「API key 该放哪」只能手填 JSON。顺带把占位符替换从只扫 args/url 扩到 env/headers 的值。
+- **方案**：`McpTemplatePlaceholder` +`secret?`；新增 `placeholderSources()`（args + url + env 值 + headers 值）被 `templatePlaceholderKeys` 与 `instantiateMcpTemplate` 共用，扫描与替换同一份来源防两处漂移；替换 env/headers 时构造新对象（不改模板常量，避免 `listMcpTemplates` 返回的共享对象被上一次实例化污染）；新模板 `tavily-search`（`npx -y tavily-mcp`，`env.TAVILY_API_KEY = {{apiKey}}`，`secret: true`）；TemplatesModal 对 secret 占位符渲染 `type=password autoComplete=off` + `agent.tplSecretHint`。密钥落库仍走 `mcp-server.repo` 字段加密，none 模式由 B2 写入闸门拒绝——模板不新开豁免口，提示文案写明这一点。
+- **决策记录**：只加一条需要密钥的模板（tavily 有现成 npm 包、语义就是「搜索」），不批量塞各家 key 模板；不做预填鉴权头的 HTTP 模板（等真实需求）。
+- **测试**：`mcp-templates.test` 扩到 17 用例（env/headers 里的占位符被扫出、secret 标记保留、替换产出新对象且模板常量不被改写、tavily 结构过 `mcpServerSaveSchema`、声明漂移校验对 env 同样生效）；i18n +2 key ×4 语；`i18n-parity` 静态 key 扫描同步通过。
+- **未实测**：`tavily-mcp` 能否在用户机器上被 `npx` 拉起、真实 key 走通一次搜索——要联网与第三方账号，落人工验收。
+
+### V4-Iter-85 MCP 工具调用日志落库 + 面板按 server 过滤（已落地）
+
+- **范围**：**解除 §4.3 里 Iter-65 记的一条推迟**（当时同时写进 Iter-65「明确不做」）（当时记「不做 MCP 调用日志持久化、日志面板按 server 过滤」，`McpPanel.tsx` 运行时日志只有渲染端内存 `slice(-199)`，重启即清）。新增 migration v45 与 2 个 IPC 通道。
+- **方案**：表 `mcp_call_log`(server_id/tool/ok/duration_ms/args_preview/result_preview/error/created_at) + `idx_mcp_call_log_server(server_id, created_at)`；`manager.callTool` 改成薄壳包原 `invokeTool`，仅在 `listenerCount('call') > 0` 时构造预览文本（无订阅者零开销），`result.isError === true` 按业务失败记 ok:false（协议层正常返回、工具语义失败），异常路径记完再 re-throw；新增 `onCall()`，由 `handlers/mcp.ts` 订阅写库（manager 不碰存储），append 失败只 `log.warn` 不改变调用结果；`mcp-call-log.repo` 插入与裁剪同事务，每 server 环形保留 `KEEP_PER_SERVER=200`，`list` 的 limit 遇 NaN/非正回落默认 200（夹成 1 条会让人以为记录被删，比报错难查）、封顶 1000；预览走新建 `mcp/call-summary.ts`：**先脱敏再截断**，且脱敏只在前 `max×4` 窗口内做（一次 50k 字符的 MCP 返回曾让 `redactStrings` 跑满 vitest 5s 超时），上限单值 80 / args 500 / result 1200 / error 300；IPC `MCP_CALL_LOG_LIST|CLEAR` 带 `mcpCallLogServerIdSchema`/`mcpCallLogLimitSchema`，preload `listMcpCallLogs/clearMcpCallLogs`；面板加「调用记录」区（server 下拉 + 刷新/清空 + 行 `[时间] 工具 · 耗时`，失败标红，`title` 挂预览），试运行后自动刷新。
+- **决策记录**：与 `agent_traces` 分工——那张按 Agent 轮次记步骤耗时，这张按 server 记每次调用（面板试运行不经过 Agent 步骤）；只存脱敏截断后的预览，不存原始返回（大返回与密钥都不该进库）；不做全文搜索/时间范围筛选。
+- **踩坑**：「server 未运行/调用抛错」最初决定不记事件，复核后反了——失败那条恰恰最想回看，改为照常记 ok:false 并带 error 摘要。
+- **测试**：`mcp-call-summary` 15（key=value 与 Bearer、裸 sk/ghp/AIza 形态脱敏、先脱敏后截断不吞尾、窗口化后大字符串不再超时）、`mcp-call-log-repo` 10（往返、每 server 裁剪、按 server/全量、limit 兜底与封顶、clear 计数、脏 serverId 拒绝）、`mcp-manager` +5（有/无订阅者、isError 记失败、写库失败不影响返回、异常仍 re-throw）。**repo 用例是打桩 DB 句柄**，跨重启的真实库往返与不 mock MCP SDK 的端到端链路都未覆盖 ⇒ 人工验收。
+
+### V4-Iter-84 循环提醒重排接线的 CI 覆盖（纯测试批次）（已落地）
+
+- **范围**：Iter-83 的验收留尾。那一批修了 `computeNextFireAt` 的「29–31 号永久卡在 28」，但调度器「到点到底走 scheduleNext 还是 markFired」这条接线此前只靠真机验收。本条无产品代码改动。
+- **方案**：`tests/reminder-scheduler.test.ts` 扩到 12 用例。mock 策略是重点——`vi.mock(reminder.repo, importOriginal)` 保留**真实** `computeNextFireAt`、只桩 repo 的读写方法，另把 `dbService.getHandle` 桩成抛错，这样「算错一天」和「用例真碰了库」都会当场红。钉住：循环到点弹通知+广播+scheduleNext 且绝不 markFired；一次性才 markFired；每周多选在周三触发后要排到最近命中的日子；每月 31 号经 2 月末回到 3 月 31 号；重排抛错不中断后续条目也不误标 fired；启动恢复阶段过期循环项只标 missed、不自动重排。
+- **结论**：未发现新缺陷，Iter-83 的修在真实算法下按预期出边界日期。
+- **测试**：本文件 12 用例全绿。
+
 ### V4-Iter-83 提醒预设可选星期/号数（顺带修「每月 29–31 号卡在 28 号」）（已落地）
 
 - **范围**：§4.4 建议第 3 条。消息右键「提醒我」的三个循环项此前写死每 1 天 / 周一 / 1 号，想每周五或每月 15 号只能先建再进提醒中心改。无 migration、无新 IPC 通道。做的时候在 scheduler 里核出一个既有 bug，一并修掉。
@@ -966,6 +998,10 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第四次） | V4-Iter-87 | 长代码块折叠阈值做成设置项：`UiPreferences.codeCollapseLines` + KV `ui.code_collapse_lines`（0–200，**0=永不折叠**且不被当成缺省；越界走 schema 拒绝与 opacity 同口径）+ 渲染端 `code-collapse.ts`（模块级快照+订阅，main.tsx 启动拉取）+ Markdown 用 `useSyncExternalStore`（第三参 server snapshot，否则静态导出 renderToString 抛 Missing getServerSnapshot）+ `isCollapsible` 阈值≤0 返 false + 预览行 `min(12, threshold)` + 裁切改 `canCollapse && collapsed` + 外观面板数字输入（失焦/回车提交、失败回滚、空值不写库）。i18n +2×4 语。详见 §二 V4-Iter-87 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
+| 2026-10-11（同日第三次） | V4-Iter-86 | MCP 模板补一条带密钥的 `tavily-search`：`McpTemplatePlaceholder.secret`（渲染 password + 说明走字段加密/none 模式被 B2 闸门拒）+ 占位符来源扩到 env/headers 值（`placeholderSources` 扫描与替换共用防漂移，替换产新对象不污染模板常量）。mcp-templates.test 扩至 17 用例；i18n +2×4 语。真实 `npx tavily-mcp` 与真 key 未实测（见 verify-checklist）。详见 §二 V4-Iter-86 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
+| 2026-10-11（同日第二次） | V4-Iter-85 | MCP 工具调用日志落库 + 面板按 server 过滤（**推翻 Iter-65「明确不做」**）：migration v45 `mcp_call_log`+`idx_mcp_call_log_server`；`manager.callTool` 薄壳包 `invokeTool`，仅 `listenerCount('call')>0` 时构造预览，`isError===true` 记 ok:false，异常记完 re-throw，`onCall` 由 handlers 订阅写库（失败仅 warn）；repo 插入+裁剪同事务、每 server 环形 200、limit 脏值回落 200/封顶 1000；`mcp/call-summary.ts` 先脱敏后截断且脱敏限定 `max×4` 窗口（50k 返回曾拖爆测试超时），上限 80/500/1200/300；IPC LIST/CLEAR + preload + McpPanel「调用记录」区（下拉过滤/刷新/清空，试运行后自动刷新）。新增 mcp-call-summary 15、mcp-call-log-repo 10（打桩 DB）、mcp-manager +5。真实库跨重启往返未实测。详见 §二 V4-Iter-85 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
+| 2026-10-11 | V4-Iter-84 | 循环提醒重排接线补 CI（纯测试批次）：`reminder-scheduler.test` 扩至 12 用例，`vi.mock(reminder.repo, importOriginal)` 保留**真实** `computeNextFireAt`、只桩 repo 读写，并把 `dbService.getHandle` 桩成抛错（用例真碰库即红）。钉住循环到点走 scheduleNext 不 markFired、一次性才 markFired、每周多选取最近命中日、31 号经 2 月末回 3/31、重排抛错不中断后续、恢复阶段过期循环项只标 missed 不自动重排。未发现新缺陷。详见 §二 V4-Iter-84 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
 | 2026-10-10（同日第九次） | V4-Iter-83 | 提醒预设可选星期/号数（无 migration、无新 IPC）：调研校准——①核出既有 bug：computeNextFireAt 的 monthly 分支先做 Math.min(rule.dayOfMonth, 28)「取安全值」，使下面那段「溢出则回落当月月末」永远进不去 ⇒ 号数 29/30/31 的循环提醒从第二次起永久卡在每月 28 号，而 schemas/reminder.ts 注释承诺的是回退到月末；长期隐形的原因是预设写死 1 号、编辑弹窗填 >28 的号数没人核过第二次触发，本批一开放号数就会天天撞，故先修再开。②首触发（渲染端算）与重排（主进程算）必须同口径，否则「每月 31 号」会出现 12/31 → 1/28 错开一天：两边统一为 min(day, 当月天数)，且先跳回 1 号再加月（1/31 直接 +1 月会溢出到 3 月初）。③多选星期首触发取最近命中的日子而非第一个勾的。④标签不能再写死「每周一」：复用 V4-Iter-80 的 shared/reminder-rule.ts repeatRuleLabel 与 normalizeWeekdays（顺手消掉第二处星期实现），删除 reminder.menu.everyWeek/everyMonth 两个写死 key，everyDay 仅在间隔=1 时保留口语化「每天」。⑤取消最后一个勾选必须拦住：schema 要求 weekdays min(1)，清空会被静默回落成周一，用户以为「取消=不循环」实际仍每周一响。方案：reminder-presets 新增 PresetRuleConfig/DEFAULT_RULE_CONFIG/normalizeRuleConfig（间隔 1–365、号数 1–31、星期去重升序、全非法回落 [1]）/ruleFor/nextWeekdayAnyAt/daysInMonth/nextMonthDayAt（替换 nextMonthFirstAt），buildReminderPresets 加第三参；ReminderMenu 三个循环项右侧各加 ▸ 设置按钮（aria-label 循环设置、aria-expanded），展开为间隔天数 number / 7 个星期 toggle / 每月几号 number，标签随配置实时改写，展开时浮层贴底钳制 280→380；主进程 monthly 重写为 monthDayAt(年月可溢出, day, base) 并删掉 min(...,28) 预夹。i18n 四语 +1 key、−2 key。决策：月末回落而非逐月漂移；配置只作用于循环项；「取消全部星期」不当「变一次性」快捷；不迁移历史数据（下次触发自然回正）。不做：cron、每年 X 月 X 日预设、把星期/号数开放给 Agent 工具参数、统一抽时间计算库。行为变化需提醒：已存在的 29–31 号循环提醒下一次触发从 28 号变成该号（短月月末）。测试：reminder-presets 重写 30 用例、renderer-reminder-menu 7→14、reminder-repo +8（含旧实现必红的「下月回到 31 号」）| typecheck 0 / vitest 230 文件 2939 用例全绿（基线 230/2913，+26 用例）/ build 三端 |
 | 2026-10-10（同日第八次） | V4-Iter-82 | 删助手保留会话 + 会话改归属助手（无 migration，只改读写口径）：开工前撞到数据丢失级的文案与代码相反——am.deleteConfirm 承诺「其历史会话仍会保留」，而 assistant.repo.ts 的 delete() 先 SELECT 该助手会话再逐条 DELETE messages/messages_fts/conversations，删除路径无引用检查也无条数提示；按用户定调改行为不改文案：delete 改为事务内 UPDATE conversations SET assistant_id=NULL, group_id=NULL → DELETE conversation_groups WHERE assistant_id → DELETE assistants，不再删任何会话与消息。归属只被 buildConvListQuery（asst-default 与 NULL 同列表）和 conversation_groups.assistant_id 两处消费 ⇒ 改归属必须一起清 group_id：ConversationList 的 groupViews 只 map 当前助手的组、平铺区又过滤 !c.groupId，留着旧组会让会话在新助手下界面隐身（数据在、搜索仍命中）。conversations.assistant_id 是裸 TEXT 无 FK（解绑不撞约束）；用量按 c.assistant_id 聚合、NULL 早有自由会话桶，无需迁移。与 Iter-76 的不对称是刻意的：导入无效归属静默回落 null，单条改归属目标不存在直接报错（写进 handler 注释与用例名）。新增 CONVERSATION_SET_ASSISTANT 通道 + conversationSetAssistantArgsSchema（undefined 不放行，防漏传字段把会话搬去自由列表）+ repo.setAssistant（写 assistant_id、清 group_id、touch updated_at、changes>0 返布尔）+ handler 两道守卫（会话/目标助手不存在都 {ok:false} 且不写库）+ preload setConversationAssistant；UI 在会话行 ⋯ 菜单分组项后加「🚪 自由会话 / 👤 助手名」，当前归属打 ✓，asst-default 不单列；ChatModule 不做乐观更新、只在成功支重拉；i18n 四语 +2 key。不做：批量改归属、Agent 侧同入口、搬家带文件夹、校验 modelLabel 对新助手是否仍可用、删助手前先转移的两步流程。测试：assistant-repo-delete 6（旧实现下第一条即红）/ args 5 / handler 6（两守卫断言不写库）/ 菜单组件 5，conversation-repo +4。真机必验 B29（本批含唯一不可逆路径：删助手），先手动备份 | typecheck 0 / vitest 230 文件 2913 用例全绿（基线 226/2887，+4 文件 +26 用例）/ build 三端 |
 | 2026-10-10（同日第七次） | V4-Iter-81 | 终态提醒行手动改期：调研校准——REMINDER_RESCHEDULE 通道+handler+repo.reschedule+preload rescheduleReminder 全链路早已存在，**渲染端零调用**（Iter-77 只接了一键版）；两个真陷阱：repo.reschedule 不传 rule 会把 repeat_rule 写成 NULL（改期会静默把循环提醒降级成一次性）、reminderRescheduleSchema 的 repeatRule 是 optional 但不接受 null（与 UPDATE 的 nullable 不同，一次性行必须省略字段）。方案：EditReminderDialog 加 mode edit/reschedule 共用时间与循环控件、改期模式文本只读（RESCHEDULE 不改文案）并预填一小时后（旧时间必在过去，预填它等于预填一个必然被拒的值），历史 tab 三类终态行统一加「改期」入口、missed+循环 的一键重排保留；失败提示优先显示主进程原文，故 preload 两个写通道返回类型补 error?: string（safeHandle 本就返回 {ok:false,error}，类型此前把它抹平了）。决策：不给 RESCHEDULE 加 text、不并进一键重排、不放宽 30 天、不做本地时间预检（避免与主进程校验漂移）；不做改期改文案/终态行删除/批量重排。测试：reminder-repo +5（含 NULL 与 WHERE 段断言）、新增 renderer-reminders-modal-reschedule 6 用例；§4.2 与 §4.4 的第 1 条已标收口 | typecheck 0 / vitest 226 文件 2887 用例全绿（基线 225/2876，+1 文件 +11 用例）/ build 三端 |
@@ -1078,16 +1114,16 @@
 ### 4.3 仍在推迟（核实过确实没有）
 
 - 代理只覆盖 `globalThis.fetch`：`net/safe-fetch.ts` 全文 0 处 proxy 引用（走 http.ClientRequest），渲染进程与 stdio 子进程也不覆盖；socks5/PAC/域名分流/系统代理联动同样没有（`net/proxy.ts:39` 明确拒非 http(s)）——Iter-60。
-- 代码块折叠阈值与展开态记忆：`utils/code-block.ts:39` 常量 20、`Markdown.tsx` 的 useState 不持久——Iter-60。
+- ~~代码块折叠阈值~~ **已解除（V4-Iter-87）**：阈值进设置项（0=永不折叠）；**展开态记忆仍推迟**（`Markdown.tsx` 的 useState 依旧不持久，要新持久化格式才做）——Iter-60。
 - 用户自定义 `/` 指令：`utils/snippet-slash.ts:65 BUILTIN_SLASH_NAMES` 硬编码 6 条——Iter-61。
 - `@` 只扫当前会话附件（`utils/mention.ts:40`），不做全量文件管理器——Iter-61。
 - 置顶无独立查询通道/上限/拖拽；长图导出宽度写死 800（`utils/export-image.tsx:79`）——Iter-64。
-- MCP 工具级启停、调用日志持久化与按 server 过滤（`McpPanel.tsx:103` 只有内存 `slice(-199)`）、后台心跳退避重连——Iter-65。
+- ~~调用日志持久化与按 server 过滤~~ **已解除（V4-Iter-85）**：v45 表 + 面板「调用记录」区；同一行里的 **MCP 工具级启停、后台心跳退避重连仍推迟**——Iter-65。
 - 终端 confirm 审批层/多标签/PTY/xterm 渲染（`terminal/terminal-service.ts` 只有 deny 分类；package.json 无 node-pty、xterm）——Iter-66。
 - 模板静默创建（需填占位）、文本协议切换提示的 i18n：`agent/engine.ts:1091` 的「已切换文本协议模式…」是中文硬编码——Iter-67。
 - Agent 后台任务队列/断线重连（src/main/agent 无相关命中）——Iter-68。
 - 跨库附件去重、预算「申请放行」（`chat-service.ts:494` 直接抛 BUDGET_EXCEEDED）、本地 OCR（全仓无 tesseract）——Iter-69。
-- 检索日志持久化、需要 API key 的 MCP 模板（`shared/mcp-templates.ts` 现有 8 条模板的 `env` 全是空对象）——Iter-70。
+- ~~需要 API key 的 MCP 模板~~ **已解除（V4-Iter-86）**：加 `tavily-search`（env 带密钥占位符，共 9 条），同一行里的 **检索日志持久化仍推迟**——Iter-70。
 - worker 隔离（全仓无 worker_threads）、MCP schema-aware 表单（`shared/tool-preview.ts` 键名启发式）、渲染端组件级长任务定位（`utils/longtask.ts:26` 只报 duration）——Iter-71/74。
 - 提醒历史 TTL/删除/筛选分页、cron、删除提醒与历史行编辑（全仓无 `DELETE FROM reminders`；`schemas/reminder.ts` 只有三 kind）——Iter-75/77/79/80。
 - 「查看原始日志」入口：`readLogTail` 只被 `steward/perf-history.ts` 用，面板无原文出口（刻意为之，见 Iter-79 隐私口径）——Iter-79。
@@ -1097,6 +1133,9 @@
 1. ~~终态提醒行的手动改期~~ **已做（V4-Iter-81）**。
 2. ~~导入后改归属~~ **已做（V4-Iter-82）**，并顺带修掉同一处的文案/代码相反问题（删助手不再删会话）。
 3. ~~预设可选星期/号数~~ **已做（V4-Iter-83）**，并顺带修掉 monthly 重排卡在 28 号的既有 bug。
+4. **真机验收 B32–B35 + C5/C6**（本批四个功能的未实测项，成本几乎为零，只是把应用当日用两天）：尤其 B32/B33——调用记录跨重启与「脱敏发生在写库前」目前只有打桩 DB 的用例，真库里的字节没人看过。
+5. **AppearancePanel 的渲染层用例**：V4-Iter-87 的阈值输入框没进 CI（挂载整页要预置十几个 IPC 通道）。要么给它加一个只测外观段的导出，要么把外观控件拆成独立组件——拆组件成本比 mock 低。
+6. **MCP 调用记录的第二步**：目前只有「按 server 过滤 + 清空」。缺的是从记录跳回那次 Agent 轮次（`agent_traces` 已有 step 维度，两表时间窗能对上是巧合不是外键）——先确认有没有人真用，再决定要不要加关联列。
 
 ### 4.5 更正与误报
 

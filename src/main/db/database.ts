@@ -722,6 +722,27 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE mcp_servers ADD COLUMN trust_read_only INTEGER NOT NULL DEFAULT 0;
     `
+  },
+  {
+    // v45: MCP 工具调用记录落库。此前只有渲染端内存 200 行，刷新/重启即清，
+    // 「昨晚那次调用到底返了什么」答不出来。按 server 环形保留最近若干条（repo 写入后裁剪），
+    // 预览字段在写入前已脱敏 + 截断（见 src/main/mcp/call-summary.ts）。
+    version: 45,
+    name: 'mcp_call_log',
+    up: `
+      CREATE TABLE IF NOT EXISTS mcp_call_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        ok INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        args_preview TEXT,
+        result_preview TEXT,
+        error TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_call_log_server ON mcp_call_log(server_id, created_at);
+    `
   }
 ]
 

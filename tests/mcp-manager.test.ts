@@ -10,7 +10,7 @@
 // - status 事件用 onStatus 数组捕获断言触发顺序与字段
 // - stableTimer 用 vi.useFakeTimers 推进 STABLE_RUNNING_MS 验证 autoRestarts 复位
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import type { McpServerRecord, McpServerStatusEvent } from '../src/shared/types'
+import type { McpCallEvent, McpServerRecord, McpServerStatusEvent } from '../src/shared/types'
 
 // ---------- mock 工厂 ----------
 
@@ -698,5 +698,70 @@ describe('McpManager — callTool HTTP 断线自动重连（重试一次，仍�
     await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('慢请求')
     expect(getEntry().status).toBe('running')
     expect(mocks.clients).toHaveLength(1)
+  })
+})
+
+describe('McpManager — 调用记录事件（onCall）', () => {
+  beforeEach(async () => {
+    mocks.requestImpl = async () => ({ tools: [] })
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1')
+    // 启动完成后改 request 行为，区分 tools/call
+    mocks.requestImpl = async () => ({ content: [{ type: 'text', text: 'ok' }] })
+  })
+
+  it('成功调用 → 发一条 ok 事件，带耗时与入参/结果预览，返回值原样透出', async () => {
+    const calls: McpCallEvent[] = []
+    mgr.onCall((e) => calls.push(e))
+    const out = await mgr.callTool('srv1', 'fetch', { url: 'https://a.test' })
+    expect(out).toEqual({ content: [{ type: 'text', text: 'ok' }] })
+    expect(calls).toHaveLength(1)
+    const e = calls[0]!
+    expect(e.serverId).toBe('srv1')
+    expect(e.tool).toBe('fetch')
+    expect(e.ok).toBe(true)
+    expect(e.error).toBeNull()
+    expect(e.durationMs).toBeGreaterThanOrEqual(0)
+    expect(e.argsPreview).toContain('url=')
+    expect(e.resultPreview).toBe('ok')
+  })
+
+  it('server 正常响应但带 isError → 记为失败，结果照旧返回给调用方', async () => {
+    mocks.requestImpl = async () => ({ content: [{ type: 'text', text: '额度不足' }], isError: true })
+    const calls: McpCallEvent[] = []
+    mgr.onCall((e) => calls.push(e))
+    const out = await mgr.callTool('srv1', 'fetch', {})
+    expect(out).toMatchObject({ isError: true })
+    expect(calls[0]!.ok).toBe(false)
+    expect(calls[0]!.resultPreview).toBe('额度不足')
+  })
+
+  it('传输层抛错 → 记一条失败事件并把原异常继续抛出（不吞错）', async () => {
+    mocks.requestImpl = async () => {
+      throw new Error('connection reset')
+    }
+    const calls: McpCallEvent[] = []
+    mgr.onCall((e) => calls.push(e))
+    await expect(mgr.callTool('srv1', 'fetch', { a: 1 })).rejects.toThrow('connection reset')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.ok).toBe(false)
+    expect(calls[0]!.error).toContain('connection reset')
+  })
+
+  it('未运行的调用同样记一条失败事件（试运行最常见的错因就是它，不能静默）', async () => {
+    const calls: McpCallEvent[] = []
+    mgr.onCall((e) => calls.push(e))
+    await expect(mgr.callTool('nope', 'fetch', {})).rejects.toThrow('MCP Server 未运行')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.ok).toBe(false)
+    expect(calls[0]!.error).toContain('未运行')
+  })
+
+  it('取消订阅后不再收到事件（避免注册泄漏）', async () => {
+    const calls: McpCallEvent[] = []
+    const off = mgr.onCall((e) => calls.push(e))
+    off()
+    await mgr.callTool('srv1', 'fetch', {})
+    expect(calls).toHaveLength(0)
   })
 })

@@ -8,10 +8,12 @@
 import type { McpImportDraft } from './mcp-import'
 
 export interface McpTemplatePlaceholder {
-  /** draft.args/url 中的 {{key}} 占位符 */
+  /** draft.args / url / env / headers 值中的 {{key}} 占位符 */
   key: string
   /** 输入框标签（i18n key） */
   label: string
+  /** 密钥类输入：渲染成密码框，且提示会走字段加密（none 模式下会被写入闸门拦下） */
+  secret?: boolean
 }
 
 export interface McpTemplate {
@@ -110,6 +112,25 @@ const TEMPLATES: McpTemplate[] = [
     placeholders: [{ key: 'db', label: 'agent.tplPhDb' }]
   },
   {
+    // 需要 API key 的模板：值填进 env，保存时走 mcp-server.repo 的字段加密；
+    // 未设主密码（none 模式）会被 B2 写入闸门拒绝，这是既定口径而非本模板特例。
+    id: 'tavily-search',
+    desc: 'agent.tplDescTavily',
+    category: 'web',
+    draft: {
+      name: 'tavily-search',
+      transport: 'stdio',
+      runtime: 'node',
+      command: 'npx',
+      args: ['-y', 'tavily-mcp'],
+      env: { TAVILY_API_KEY: '{{apiKey}}' },
+      url: null,
+      headers: {},
+      pythonPackages: []
+    },
+    placeholders: [{ key: 'apiKey', label: 'agent.tplPhApiKey', secret: true }]
+  },
+  {
     id: 'memory',
     desc: 'agent.tplDescMemory',
     category: 'think',
@@ -173,17 +194,23 @@ export interface McpTemplateInstance {
   error?: string
 }
 
-/** 找出 draft.args/url 中实际出现的 {{key}} 占位符集合 */
+/** 找出 draft.args / url / env / headers 值中实际出现的 {{key}} 占位符集合 */
 export function templatePlaceholderKeys(t: McpTemplate): string[] {
   const keys: string[] = []
-  for (const arg of t.draft.args ?? []) {
-    for (const m of arg.matchAll(/\{\{(\w+)\}\}/g)) keys.push(m[1]!)
-  }
-  const url = t.draft.url
-  if (url) {
-    for (const m of url.matchAll(/\{\{(\w+)\}\}/g)) keys.push(m[1]!)
+  for (const text of placeholderSources(t)) {
+    for (const m of text.matchAll(/\{\{(\w+)\}\}/g)) keys.push(m[1]!)
   }
   return [...new Set(keys)]
+}
+
+/** 会被做占位符替换的所有字符串位置（扫描与替换共用同一份来源，防两处各写一份漂移） */
+function placeholderSources(t: McpTemplate): string[] {
+  return [
+    ...(t.draft.args ?? []),
+    ...(t.draft.url ? [t.draft.url] : []),
+    ...Object.values(t.draft.env ?? {}),
+    ...Object.values(t.draft.headers ?? {})
+  ]
 }
 
 /**
@@ -204,11 +231,18 @@ export function instantiateMcpTemplate(
     resolved[key] = v
   }
   const sub = (s: string): string => s.replace(/\{\{(\w+)\}\}/g, (_, k: string) => resolved[k] ?? '')
+  const subMap = (m?: Record<string, string> | null): Record<string, string> => {
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(m ?? {})) out[k] = sub(v)
+    return out
+  }
   return {
     draft: {
       ...t.draft,
       args: (t.draft.args ?? []).map(sub),
       url: t.draft.url ? sub(t.draft.url) : null,
+      env: subMap(t.draft.env),
+      headers: subMap(t.draft.headers),
       enabled: true
     }
   }

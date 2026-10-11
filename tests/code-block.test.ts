@@ -29,6 +29,11 @@ describe('isCollapsible', () => {
     expect(isCollapsible('a', 1)).toBe(false)
     expect(isCollapsible('')).toBe(false)
   })
+  it('阈值 0 或负数 = 永不折叠（设置项里的「不折叠」语义）', () => {
+    const long = Array.from({ length: 50 }, (_, i) => `L${i}`).join('\n')
+    expect(isCollapsible(long, 0)).toBe(false)
+    expect(isCollapsible(long, -1)).toBe(false)
+  })
   it('预览行数常量小于折叠阈值（保证折叠态有遮罩意义）', () => {
     expect(CODE_PREVIEW_LINES).toBeLessThan(CODE_COLLAPSE_THRESHOLD)
   })

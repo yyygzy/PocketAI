@@ -4,18 +4,28 @@ import fs from 'node:fs'
 import { IPC } from '../../../shared/types'
 import type { McpServerRecord, PythonPipSource } from '../../../shared/types'
 import { mcpServerRepo } from '../../db/repositories/mcp-server.repo'
+import { mcpCallLogRepo } from '../../db/repositories/mcp-call-log.repo'
+import { createLogger } from '../../logger'
 import { mcpManager } from '../../mcp/manager'
 import { pythonEnvService, getPipSource, setPipSource } from '../../mcp/python-env'
 import { listPythonRuntimes, downloadPortablePython } from '../../python-runtime'
 import { broadcast } from '../broadcast'
 import { safeHandle, errMsg, argsSchema } from '../safe-handle'
-import { mcpServerSaveSchema, pythonPipSourceSchema, mcpCallToolSchema } from '../../../shared/schemas/mcp'
+import {
+  mcpServerSaveSchema,
+  pythonPipSourceSchema,
+  mcpCallToolSchema,
+  mcpCallLogServerIdSchema,
+  mcpCallLogLimitSchema
+} from '../../../shared/schemas/mcp'
 import { idSchema } from '../../../shared/schemas/providers'
 import { stringifyMcpResult, mcpResultIsError } from '../../tools/registry'
 import { buildMcpExportPayload, REDACTED_KEYS_NOTE } from '../../../shared/mcp-export'
 import { safeFileName } from '../../../shared/export-markdown'
 import { maskSecretMap } from '../../../shared/secret-mask'
 import type { McpServerRuntime } from '../../../shared/types'
+
+const log = createLogger('mcp')
 
 // 凭据收口：env/headers 出 IPC 一律掩码（列表/表单/运行时状态都带完整 record）。
 // 需要查看或编辑真实值时由用户显式走 MCP_SERVER_REVEAL_SECRETS；
@@ -163,9 +173,33 @@ export function registerMcpHandlers(): void {
     return { ok: true as const, source: getPipSource() }
   }, argsSchema(pythonPipSourceSchema))
 
+  // 调用记录查询/清空（跨重启可查；serverId 省略或 null = 全部）
+  safeHandle(
+    IPC.MCP_CALL_LOG_LIST,
+    (_e, serverId?: string | null, limit?: number | null) => ({
+      ok: true as const,
+      logs: mcpCallLogRepo.list(serverId ?? null, limit ?? undefined)
+    }),
+    argsSchema(mcpCallLogServerIdSchema, mcpCallLogLimitSchema)
+  )
+  safeHandle(
+    IPC.MCP_CALL_LOG_CLEAR,
+    (_e, serverId?: string | null) => ({ ok: true as const, removed: mcpCallLogRepo.clear(serverId ?? null) }),
+    argsSchema(mcpCallLogServerIdSchema)
+  )
+
   // Python 运行时
   safeHandle(IPC.PYTHON_RUNTIME_LIST, () => listPythonRuntimes())
   safeHandle(IPC.PYTHON_RUNTIME_DOWNLOAD, async () => downloadPortablePython())
+
+  // 工具调用记录落库：写失败（锁屏关库等）只 warn，绝不影响调用本身
+  mcpManager.onCall((evt) => {
+    try {
+      mcpCallLogRepo.append(evt)
+    } catch (e) {
+      log.warn(`MCP 调用记录写入失败: ${errMsg(e)}`)
+    }
+  })
 
   // MCP 状态变化 / 日志事件 → 广播给所有窗口
   mcpManager.onStatus((evt) => broadcast(IPC.MCP_SERVER_STATUS_EVENT, evt))

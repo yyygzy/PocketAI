@@ -127,11 +127,18 @@ export const McpTemplatesModal: React.FC<Props> = ({ onClose, onCreated }) => {
                       </label>
                       <input
                         className="input font-mono text-[11px] py-1"
+                        type={p.secret ? 'password' : 'text'}
+                        autoComplete="off"
                         value={values[tpl.id]?.[p.key] ?? ''}
                         onChange={(e) => setValue(tpl.id, p.key, e.target.value)}
                         disabled={created}
                         spellCheck={false}
                       />
+                      {p.secret && (
+                        <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+                          {t('agent.tplSecretHint')}
+                        </p>
+                      )}
                     </div>
                   ))}
                   <div className="mt-auto pt-0.5">
