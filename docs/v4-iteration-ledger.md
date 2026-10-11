@@ -52,6 +52,14 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-91 MCP 调用记录的真库往返补测（纯测试批次）（已落地）
+
+- **范围**：用户不便操作 UI，B32/B33 这两条「只能真机」的验收改成 CI 可证。无产品代码改动。
+- **方案**：新增 `tests/mcp-call-log-real-db.test.ts`，**不 mock 数据库**——把 `portable` 的 `DATA_DIR`/`DB_PATH` 指到临时目录，`dbService.open()` + `runMigrations()` 开一份真 SQLite，走 `summarizeMcpArgs → mcpCallLogRepo.append → close → 重新 open → list` 全链路。三条用例：① 假密钥 `sk-…` 写进去后**整份 db 文件字节里搜不到原文**、能搜到 `[redacted]`，且关库重开仍读得到该行、按 server 过滤正确（证 B32 + B33 的存储层）；② **反向对照**：故意绕过脱敏写一行，同样的字节扫描就搜得到 ⇒ 证明①不是空库假绿；③ 环形裁剪在真库里也生效（205 条只留 200，留的是最近的）。
+- **踩坑（值得记）**：第一版只写「文件里搜不到密钥」这一条断言，**跑出来是绿的**——因为 WAL 模式下新行还在 `app.db-wal` 里，主文件根本没那行内容，断言是空真。加 `wal_checkpoint(TRUNCATE)` + 「同一份字节里必须搜得到 `create_entities`」的反向断言之后才真正成立。字节级断言必须自带"能失败"的证据。
+- **仍未覆盖**：不 mock MCP SDK/传输层的端到端（真实 server 调一次 → 落库）；面板显示层的肉眼确认（B32/B33 的 UI 半边）。
+- **测试**：3 用例，全套 240 文件 / 3034 用例绿。
+
 ### V4-Iter-90 stdio 握手超时按传输分层：npx 首次下载依赖不再被判死（已落地）
 
 - **范围**：#41。`INIT_TIMEOUT = 15_000` 对 stdio 太短——真机日志里 `13:17:56 WARN mcp-server:start 失败: JSON-RPC 请求超时: initialize (15000ms)` 就是修好 npx 之后**第一次**启动 memory 模板，第二次（包已进 `_npx` 缓存）才成功。
@@ -60,7 +68,7 @@
 - **方案**：`STDIO_INIT_TIMEOUT = 60_000`，`doStart` 按 `record.transport` 选（http 守 15s：远端本该秒回，放宽只会拖慢「地址或鉴权写错」的暴露）；`startupFailureHint()` 把超时文案变成可执行的下一步——`…（进程仍在运行：首次通过 npx 启动需现下载依赖，慢网络可能要一两分钟，可稍后再点一次启动）`，其它错误原样返回。
 - **已知未解决（诚实标注）**：puppeteer 那类模板首次启动会经 postinstall 拉 Chromium（上百 MB、分钟级），60s 仍不够。本条不假装解决，只保证用户看到的不再是一句无信息量的「超时」。彻底做法是启动前预热/进度回显，另立条目。
 - **测试**：`mcp-manager.test.ts` +4（stdio 的 initialize 与 tools/list 都收到 60000、http 仍是 15000、超时后 lastError 带下一步、`startupFailureHint` 只改超时不改其它）。
-- **未实测**：清掉 `%LocalAppData%\npm-cache\_npx` 后首次启动 memory 是否一次成功 ⇒ 清单 **B40**。
+- **真机已确证（2026-10-11，清单 B40 打勾）**：删掉 `_npx` 里 server-memory 那个 hash 目录后首次启动 ⇒ 约 10 秒一次成功、绿点 + 9 个工具列出、main.log 无新增失败行，进程命令行里重新出现该 hash 目录（确系重装）。**证据边界**：只清了 `_npx` 安装目录，`_cacache` 里的 tarball 仍在 ⇒ 未覆盖「全新机器一次都没下过包」那一档，其依据是离线实测 28s < 60s 超时窗。
 
 ### V4-Iter-89 stdio server「启动即退出」不再被当崩溃自动重启（已落地）
 
@@ -111,7 +119,7 @@
 - **方案**：表 `mcp_call_log`(server_id/tool/ok/duration_ms/args_preview/result_preview/error/created_at) + `idx_mcp_call_log_server(server_id, created_at)`；`manager.callTool` 改成薄壳包原 `invokeTool`，仅在 `listenerCount('call') > 0` 时构造预览文本（无订阅者零开销），`result.isError === true` 按业务失败记 ok:false（协议层正常返回、工具语义失败），异常路径记完再 re-throw；新增 `onCall()`，由 `handlers/mcp.ts` 订阅写库（manager 不碰存储），append 失败只 `log.warn` 不改变调用结果；`mcp-call-log.repo` 插入与裁剪同事务，每 server 环形保留 `KEEP_PER_SERVER=200`，`list` 的 limit 遇 NaN/非正回落默认 200（夹成 1 条会让人以为记录被删，比报错难查）、封顶 1000；预览走新建 `mcp/call-summary.ts`：**先脱敏再截断**，且脱敏只在前 `max×4` 窗口内做（一次 50k 字符的 MCP 返回曾让 `redactStrings` 跑满 vitest 5s 超时），上限单值 80 / args 500 / result 1200 / error 300；IPC `MCP_CALL_LOG_LIST|CLEAR` 带 `mcpCallLogServerIdSchema`/`mcpCallLogLimitSchema`，preload `listMcpCallLogs/clearMcpCallLogs`；面板加「调用记录」区（server 下拉 + 刷新/清空 + 行 `[时间] 工具 · 耗时`，失败标红，`title` 挂预览），试运行后自动刷新。
 - **决策记录**：与 `agent_traces` 分工——那张按 Agent 轮次记步骤耗时，这张按 server 记每次调用（面板试运行不经过 Agent 步骤）；只存脱敏截断后的预览，不存原始返回（大返回与密钥都不该进库）；不做全文搜索/时间范围筛选。
 - **踩坑**：「server 未运行/调用抛错」最初决定不记事件，复核后反了——失败那条恰恰最想回看，改为照常记 ok:false 并带 error 摘要。
-- **测试**：`mcp-call-summary` 15（key=value 与 Bearer、裸 sk/ghp/AIza 形态脱敏、先脱敏后截断不吞尾、窗口化后大字符串不再超时）、`mcp-call-log-repo` 10（往返、每 server 裁剪、按 server/全量、limit 兜底与封顶、clear 计数、脏 serverId 拒绝）、`mcp-manager` +5（有/无订阅者、isError 记失败、写库失败不影响返回、异常仍 re-throw）。**repo 用例是打桩 DB 句柄**，跨重启的真实库往返与不 mock MCP SDK 的端到端链路都未覆盖 ⇒ 人工验收。
+- **测试**：`mcp-call-summary` 15（key=value 与 Bearer、裸 sk/ghp/AIza 形态脱敏、先脱敏后截断不吞尾、窗口化后大字符串不再超时）、`mcp-call-log-repo` 10（往返、每 server 裁剪、按 server/全量、limit 兜底与封顶、clear 计数、脏 serverId 拒绝）、`mcp-manager` +5（有/无订阅者、isError 记失败、写库失败不影响返回、异常仍 re-throw）。**repo 用例是打桩 DB 句柄** ⇒ 真实库往返已由 **V4-Iter-91** 补上（含绕过脱敏的反向对照）；不 mock 传输层的端到端仍未做，面板显示层靠人工验收。
 
 ### V4-Iter-84 循环提醒重排接线的 CI 覆盖（纯测试批次）（已落地）
 
@@ -1034,6 +1042,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第九次） | V4-Iter-91（纯测试批次）：B32/B33 改由**不 mock 数据库**的真库往返用例证——临时 SQLite 全链路 + 直接扫落盘字节 + 「绕过脱敏就该搜得到」的反向对照 + 真库环形裁剪。第一版差点假绿（WAL 下新行还在 `-wal`，扫主文件当然搜不到），靠 checkpoint + 反向断言修正。详见 §二 V4-Iter-91 | typecheck 0 / vitest 240文件3034用例 / build 三端 |
 | 2026-10-11（同日第八次） | V4-Iter-89 修订（真机推翻第一版）：`describeStartupExit` 不再取 stderr 最后 3 行——npm 把 `code E404` 放第 1 行、后面全是客套话，导致 lastError 开头是 "Note that you can also install…"。改为关键词优先取最早命中的 3 行、无命中退回最后一行；+2 用例（真实 npm 输出断言 + 兜底）。B39 三条断言（一次就红 / 不重播 / 重启链进日志）不受影响，仍成立。详见 §二 V4-Iter-89 修订条 | typecheck 0 / vitest 239文件3031用例 / build 三端 |
 | 2026-10-11（同日第七次） | V4-Iter-90 | stdio 握手超时按传输分层（`STDIO_INIT_TIMEOUT=60s`，http 守 15s）：先量出冷缓存下 server-memory 光装依赖就 24.6s+下载 3.2s，15s 必然误判；#40 之后失败路径靠进程退出即时 reject，放宽不拖慢报错。另加 `startupFailureHint` 把「超时」变成「可能要一两分钟，可稍后再点一次」。puppeteer 拉 Chromium 的分钟级场景本条不假装解决。+4 用例。详见 §二 V4-Iter-90 | typecheck 0 / vitest 239文件3030用例 / build 三端 |
 | 2026-10-11（同日第六次） | V4-Iter-89 | stdio「启动即退出」不再被当崩溃自动重启：`RuntimeEntry.everRan`（不跨启动继承）+ `handleExit` 的 `!everRan` 分支直接转 error，`lastError` 换成 `describeStartupExit`（退出码 + 最后 3 行 stderr，先各自截断再脱敏）；catch 不再覆盖已记录的 error；reboot 异常从 `void e` 改成 `log.warn`（重启链此前在 main.log 里完全静默）。曾 running 的崩溃保留 3 次重启。+7 用例，含一条不 mock child_process 的真进程 attempts 计数。详见 §二 V4-Iter-89 | typecheck 0 / vitest 239文件3026用例 / build 三端 |
