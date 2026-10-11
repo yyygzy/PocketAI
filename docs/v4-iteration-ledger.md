@@ -52,6 +52,26 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-90 stdio 握手超时按传输分层：npx 首次下载依赖不再被判死（已落地）
+
+- **范围**：#41。`INIT_TIMEOUT = 15_000` 对 stdio 太短——真机日志里 `13:17:56 WARN mcp-server:start 失败: JSON-RPC 请求超时: initialize (15000ms)` 就是修好 npx 之后**第一次**启动 memory 模板，第二次（包已进 `_npx` 缓存）才成功。
+- **先量再改**：本机冷缓存实测 `@modelcontextprotocol/server-memory` —— tarball 下载 **3.2s** + 装依赖 **24.6s**（`npm pack` / `npm install --ignore-scripts` 各跑一次全新 cache，还没算 npx 自身解析与 lifecycle）。⇒ 15s 必然在「其实正在装」的时候判死。
+- **为什么放宽不拖慢失败**：#40 之后进程一退出，挂起的握手请求立刻被 reject 成「MCP 进程退出 (code=…)」，走的是 `describeStartupExit` 那条而不是超时。超时只 govern「进程活着但不说话」这一种。
+- **方案**：`STDIO_INIT_TIMEOUT = 60_000`，`doStart` 按 `record.transport` 选（http 守 15s：远端本该秒回，放宽只会拖慢「地址或鉴权写错」的暴露）；`startupFailureHint()` 把超时文案变成可执行的下一步——`…（进程仍在运行：首次通过 npx 启动需现下载依赖，慢网络可能要一两分钟，可稍后再点一次启动）`，其它错误原样返回。
+- **已知未解决（诚实标注）**：puppeteer 那类模板首次启动会经 postinstall 拉 Chromium（上百 MB、分钟级），60s 仍不够。本条不假装解决，只保证用户看到的不再是一句无信息量的「超时」。彻底做法是启动前预热/进度回显，另立条目。
+- **测试**：`mcp-manager.test.ts` +4（stdio 的 initialize 与 tools/list 都收到 60000、http 仍是 15000、超时后 lastError 带下一步、`startupFailureHint` 只改超时不改其它）。
+- **未实测**：清掉 `%LocalAppData%\npm-cache\_npx` 后首次启动 memory 是否一次成功 ⇒ 清单 **B40**。
+
+### V4-Iter-89 stdio server「启动即退出」不再被当崩溃自动重启（已落地）
+
+- **范围**：#40。B38 反向对照那一轮真机核出的第二条（记在 §4.5 ②）。无 migration、无新 IPC 通道。
+- **实测到的现象**：把 memory 的包名改成不存在的 → 面板挂着「启动中...」十几秒，运行时日志里同一份 404 **重播两批**（共 4 次 spawn），最后那句错误写的是「进程退出且已达自动重启上限」——真实原因（404 包不存在）只在日志里，不在错误文案里。
+- **根因**：`handleExit` 不区分「跑起来过又崩了」和「从没跑起来过」，一律走 `autoRestarts < MAX_AUTO_RESTART` 的重启分支；而且 `doStart` 的 catch 会无条件覆盖 `lastError`，把 `handleExit` 刚记下的原因冲掉。两处互相踩的时序是：子进程 exit 回调**同步**跑完（含重启判定），握手 promise 随后才 reject 进 catch。
+- **方案**：`RuntimeEntry` 加 `everRan`——每次 `doStart` 新建 entry 时置 false（**不跨启动继承**，每次 spawn 都是新进程），握手成功进入 running 才置 true。`handleExit` 在重启判定前加 `!entry.everRan` 分支：直接转 error、`lastError = describeStartupExit(code, signal, entry.logBuffer)`、并 `log.warn` 一行（此前 reboot 的异常被 `catch { void e }` 吞掉，整条重启链在 main.log 里零记录）。catch 的守卫由 `status !== 'stopped'` 收紧为 `!== 'stopped' && !== 'error'`，不覆盖已记录的原因。`describeStartupExit` = 退出码 + 最后 3 行 stderr，每行先截 200 再走 `redactStrings`、总长收口到 `MCP_CALL_ERROR_CHARS`(300)。
+- **决策记录**：曾进入 running 的崩溃**保留**最多 3 次自动重启（偶发网络/资源问题的合理兜底，不能跟着一起砍）；stderr 尾部只进 `lastError`（面板与 IPC），不落库。
+- **测试**：`mcp-manager.test.ts` +7——`describeStartupExit` 3 条（无 stderr 只给退出码 / 取最后 3 行且 `sk-…` 被脱敏 / 超长单行先各自截断再脱敏），行为 3 条（启动即退出**不再 spawn 第二遍** + lastError 带 E404、catch 不重复 emit error、握手超时但进程还活着仍要转 error 的反向保护），另 1 条为原有用例覆盖的「曾 running 后崩溃仍重启」；新增 `mcp-stdio-crash.test.ts` **不 mock child_process**，真起一个「打一行 stderr 就以 code 1 退出」的 node 子进程，靠 attempts 文件行数断言只被拉起 1 次 ⇒ 重启风暴在真进程下也没回来。
+- **未实测**：应用里改错包名启动的新观感（一次就转红、错误文案带 404）落清单 **B39**。
+
 ### V4-Iter-88 Windows 上 npx 类 MCP server 从未起得来（`spawn npx ENOENT`）（已落地）
 
 - **范围**：C5（真拉 `tavily-mcp`）的探针撞出来的**既有缺陷**，不是本批新功能。影响面是 `command: 'npx'` 的全部 node 类模板（fetch/puppeteer/filesystem/git/sqlite/memory/sequential-thinking + 本批新加的 tavily-search），以及任何用户手填或导入的 `npx`/`npm`/`yarn` 命令。
@@ -65,7 +85,7 @@
 - **决策记录**：不引入 cross-spawn 依赖（一条构造 + 一次真机验证，加依赖不划算）；不把模板改成写死 `npx.cmd`（那只是把 EINVAL 换成人看不懂的报错，且非 Windows 用户拿不到）；非 win32 行为零变化。
 - **测试**：`win-shim.test.ts` 14 用例（三类命名、PATH 判定的 exe 优先与 unknown、引号与 `&`/`"` 逃逸、`%` 与换行拒绝、命令名带空格）；`mcp-stdio-win-shim.test.ts` 3 用例**不 mock child_process**，真起一个 `.cmd` 垫片 + node 子进程：握手/tools/list/tools/call 全通且带空格参数精确到达、优雅退出、赖着不走的 server 关闭后真进程消失（证树杀生效）。非 win32 自动 skip。
 - **真机已确证（2026-10-11）**：应用里 memory 模板点启动 ⇒ 绿点 + 9 个工具全列出（`create_entities`/`create_relations`…），点停止 ⇒ 进程链四层全部消失。实测链形：`cmd.exe(/d /s /c "npx "-y" "@modelcontextprotocol/server-memory"") → node.exe(npx-cli.js) → cmd.exe(/d /s /c mcp-server-memory) → node.exe(…\server-memory\dist\index.js)`。**比设计时预估的深一层**（npx 内部还再起一次 cmd），所以「只杀壳会留三个孤儿」，`taskkill /T /F` 属必需；构造出的命令行被 cmd 正确解析（`-y` 与包名各成一个参数）。清单见 verify-checklist **B36**（已打勾）。剩下未实测只有 C5 的真 key 搜索。
-- **顺带（同一轮截图里核出的信号谎话）**：`McpPanel.tsx` 原来写的是 `l.stream === 'stderr' ? 'text-[var(--color-danger)]' : ''` —— **只看流不看内容**，而官方 MCP server 普遍把正常启动横幅写到 stderr ⇒ 「启动成功」在面板里长得和报错一模一样。新增 `modules/agent/mcp/log-tone.ts` 两级判定：stdout 不涂色；stderr 且**该 server 当前 status==='error'** 才 danger，其余 stderr 走 warning（运行时状态还没上报的刚 spawn 阶段也算警告，不能因为查不到状态就标红）。`tests/mcp-log-tone.test.ts` 5 用例钉住，含一条「running 的启动横幅最终 class 不含 danger」的回归钉。真机正向已确证（四次启动横幅均为琥珀色，清单 **B37** 打勾）；反向对照另补 `tests/renderer-mcp-log-color.test.tsx` 三条**挂载真组件**的接线用例（error+stderr→danger、running+stderr→warning 且不含 danger、stdout→无色），把「状态到底有没有传进 class」也从只能靠眼变成 CI 覆盖；清单 **B38** 只剩目视。顺带一条渲染口径：颜色每次渲染按当前状态重算，所以 server 转 error 时**已显示的历史 stderr 行会一起由琥珀转红**。
+- **顺带（同一轮截图里核出的信号谎话）**：`McpPanel.tsx` 原来写的是 `l.stream === 'stderr' ? 'text-[var(--color-danger)]' : ''` —— **只看流不看内容**，而官方 MCP server 普遍把正常启动横幅写到 stderr ⇒ 「启动成功」在面板里长得和报错一模一样。新增 `modules/agent/mcp/log-tone.ts` 两级判定：stdout 不涂色；stderr 且**该 server 当前 status==='error'** 才 danger，其余 stderr 走 warning（运行时状态还没上报的刚 spawn 阶段也算警告，不能因为查不到状态就标红）。`tests/mcp-log-tone.test.ts` 5 用例钉住，含一条「running 的启动横幅最终 class 不含 danger」的回归钉。真机正向已确证（四次启动横幅均为琥珀色，清单 **B37** 打勾）；反向对照另补 `tests/renderer-mcp-log-color.test.tsx` 三条**挂载真组件**的接线用例（error+stderr→danger、running+stderr→warning 且不含 danger、stdout→无色），把「状态到底有没有传进 class」也从只能靠眼变成 CI 覆盖；清单 **B38** 已打勾：改错包名启动，重试耗尽转 error 后那两批 `npm error 404` 整排由琥珀转红（颜色每次渲染按当前状态重算，这条得证）。顺带一条渲染口径：颜色每次渲染按当前状态重算，所以 server 转 error 时**已显示的历史 stderr 行会一起由琥珀转红**。
 
 ### V4-Iter-87 长代码块折叠阈值做成设置项（0 = 永不折叠）（已落地）
 
@@ -1013,6 +1033,8 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-11（同日第七次） | V4-Iter-90 | stdio 握手超时按传输分层（`STDIO_INIT_TIMEOUT=60s`，http 守 15s）：先量出冷缓存下 server-memory 光装依赖就 24.6s+下载 3.2s，15s 必然误判；#40 之后失败路径靠进程退出即时 reject，放宽不拖慢报错。另加 `startupFailureHint` 把「超时」变成「可能要一两分钟，可稍后再点一次」。puppeteer 拉 Chromium 的分钟级场景本条不假装解决。+4 用例。详见 §二 V4-Iter-90 | typecheck 0 / vitest 239文件3030用例 / build 三端 |
+| 2026-10-11（同日第六次） | V4-Iter-89 | stdio「启动即退出」不再被当崩溃自动重启：`RuntimeEntry.everRan`（不跨启动继承）+ `handleExit` 的 `!everRan` 分支直接转 error，`lastError` 换成 `describeStartupExit`（退出码 + 最后 3 行 stderr，先各自截断再脱敏）；catch 不再覆盖已记录的 error；reboot 异常从 `void e` 改成 `log.warn`（重启链此前在 main.log 里完全静默）。曾 running 的崩溃保留 3 次重启。+7 用例，含一条不 mock child_process 的真进程 attempts 计数。详见 §二 V4-Iter-89 | typecheck 0 / vitest 239文件3026用例 / build 三端 |
 | 2026-10-11（同日第五次） | V4-Iter-88 | 修 Windows 上 `spawn npx ENOENT`：npm 的 npx 是 .cmd 垫片，CreateProcess 不认无扩展名、Node 又禁非 shell 起 .cmd ⇒ 所有 npx 类 MCP server 从未起得来（用户实测面板红字确认）。新增 `mcp/win-shim.ts`（按 PATH 实况判 exe/batch/unknown + 只给参数加引号、命令名不加 + 拒 `%`/换行），stdio 传输层据此分流到 `shell:true`，关闭改走 `taskkill /T /F` 防孤儿。补 14 纯函数用例 + 3 条**不 mock child_process** 的真起进程用例。**真机已确证**（memory 模板起得来、9 工具列出、停止后四层进程链 8856/15212/7064/11112 全部消失 ⇒ 清单 B36 打勾）。同轮顺带修 `McpPanel` 的「stderr 一律标红」（新增 `log-tone.ts` + 5 用例）。详见 §二 V4-Iter-88 | typecheck 0 / vitest 238文件3019用例 / build 三端 |
 | 2026-10-11（同日第四次） | V4-Iter-87 | 长代码块折叠阈值做成设置项：`UiPreferences.codeCollapseLines` + KV `ui.code_collapse_lines`（0–200，**0=永不折叠**且不被当成缺省；越界走 schema 拒绝与 opacity 同口径）+ 渲染端 `code-collapse.ts`（模块级快照+订阅，main.tsx 启动拉取）+ Markdown 用 `useSyncExternalStore`（第三参 server snapshot，否则静态导出 renderToString 抛 Missing getServerSnapshot）+ `isCollapsible` 阈值≤0 返 false + 预览行 `min(12, threshold)` + 裁切改 `canCollapse && collapsed` + 外观面板数字输入（失焦/回车提交、失败回滚、空值不写库）。i18n +2×4 语。详见 §二 V4-Iter-87 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
 | 2026-10-11（同日第三次） | V4-Iter-86 | MCP 模板补一条带密钥的 `tavily-search`：`McpTemplatePlaceholder.secret`（渲染 password + 说明走字段加密/none 模式被 B2 闸门拒）+ 占位符来源扩到 env/headers 值（`placeholderSources` 扫描与替换共用防漂移，替换产新对象不污染模板常量）。mcp-templates.test 扩至 17 用例；i18n +2×4 语。真实 `npx tavily-mcp` 与真 key 未实测（见 verify-checklist）。详见 §二 V4-Iter-86 | typecheck 0 / vitest 234文件2994用例 / build 三端 |
@@ -1163,4 +1185,8 @@ audit-45
 - 子代理盘点初稿称「MCP 场景模板仅 dir/repo/db 三条」——**误报**：`src/shared/mcp-templates.ts` 实有 8 条（fetch/puppeteer/filesystem/git/sqlite/memory/sequential-thinking/time，category 分 web/file/think/auto），本节的结论以复查后的「8 条模板、env 全空 ⇒ 确实没有需要密钥的模板」为准。
 - 同一初稿把「循环预设写死 09:00」列为「其实已存在」——只对了一半：时间点本批可选（`ReminderMenu.tsx` 的 time 输入），但**星期与号数仍写死**，已拆到 §4.2。
 - **C5 探针撞出的不是「推迟项没做」而是一条从未工作的路径**：Windows 上所有 `npx` 类 MCP server 起不来（`spawn npx ENOENT`，Iter-67 就进了模板表，台账从未声称在 Windows 上验证过，也就没人问过）。教训与 Iter-82/83 同一类，但方向不同——那两条是「注释/文案与行为相反」，这条是**「用例桩掉了 `child_process.spawn`，于是进程创建这一层从来没被测过」**：平台相关的起进程路径必须留一条不 mock 的用例（已按此补 `mcp-stdio-win-shim.test.ts`）。
+- **B38 反向对照这一轮又核出两条既有问题**（都不是本批引入，都只有真机能看见）：
+  ① ~~`INIT_TIMEOUT = 15_000` 对「npx 首次下载包」不够~~ **已修（V4-Iter-90）**：冷缓存实测装依赖 24.6s + 下载 3.2s，15s 必然误判；现 stdio 走 60s、http 守 15s，超时文案带下一步。puppeteer 拉 Chromium 的分钟级场景仍未解决（已标注）。
+  ② ~~`handleExit` 把从未握手成功的退出也当崩溃自动重启~~ **已修（V4-Iter-89）**：现象是 404 被白跑 4 遍、`lastError` 报「已达自动重启上限」而非真实原因、reboot 异常被 `catch { void e }` 吞掉不入日志。现在按「曾进入 running 才重启」判定，未 running 的直接转 error 并带退出码 + 最后几行 stderr。
+  同一轮的正向结论：**失败启动不留孤儿**（4 次尝试的三层进程链退出后全部消失）。
 - §4.1 各条都重新 grep/Read 过实现位置；未复核的旧台账文字一律不作为结论写入本节。

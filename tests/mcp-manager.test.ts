@@ -136,7 +136,9 @@ vi.mock('../src/main/logger', () => ({
 // ---------- 导入被测 ----------
 
 import {
+  describeStartupExit,
   McpManager,
+  startupFailureHint,
   MAX_MCP_TOOLS,
   MAX_MCP_TOOL_DESC_CHARS,
   MAX_MCP_TOOL_SCHEMA_CHARS
@@ -564,6 +566,129 @@ describe('McpManager — handleExit 自动重启', () => {
     expect(events.at(-1)?.status).toBe('error')
     expect(events.at(-1)?.lastError).toContain('已达自动重启上限')
     expect(mocks.clients).toHaveLength(1)
+  })
+})
+
+describe('describeStartupExit — 启动即退出的原因文案', () => {
+  it('没有 stderr 行时只给退出码/信号', () => {
+    expect(describeStartupExit(1, null, [])).toBe('进程启动后立即退出 (code=1, signal=null)')
+    expect(describeStartupExit(null, 'SIGKILL', ['[stdout] 无关行'])).toContain('signal=SIGKILL')
+  })
+
+  it('带上最后几行 stderr（真实原因在这里），并做脱敏与长度收口', () => {
+    const buf = [
+      '[stderr] npm warn 忽略行',
+      '[stderr] npm error code E404',
+      '[stderr] npm error 404 Not Found - @modelcontextprotocol/nope-xyz',
+      '[stderr] 最后一行 token=sk-abcdefghijklmnopqrstuvwxyz012345'
+    ]
+    const msg = describeStartupExit(1, null, buf)
+    expect(msg).toContain('E404')
+    expect(msg).toContain('nope-xyz')
+    expect(msg).toContain('token=[redacted]')
+    expect(msg).not.toContain('sk-abcdefghijklmnop')
+    // 只取 stderr 的最后 3 行：更早的 warn 行不该进来
+    expect(msg).not.toContain('npm warn')
+    expect(msg.length).toBeLessThanOrEqual(120 + 300)
+  })
+
+  it('超长单行先各自截断，不把整坨巨串喂给脱敏正则', () => {
+    const huge = 'x'.repeat(200_000)
+    const msg = describeStartupExit(1, null, [`[stderr] ${huge}`])
+    expect(msg).not.toContain('x'.repeat(300))
+    expect(msg.length).toBeLessThan(600)
+  })
+})
+
+describe('McpManager — 启动即退出（从未 running 过）不自动重启', () => {
+  it('握手阶段进程就退出：直接 error，不再 spawn 第二遍', async () => {
+    mocks.requestImpl = async (method: unknown) => {
+      if (method === 'initialize') {
+        const c = mocks.clients[0]!
+        c.callOnLog('stderr', 'npm error code E404')
+        c.callOnLog('stderr', 'npm error 404 Not Found - @modelcontextprotocol/nope-xyz')
+        // 真实时序：子进程 exit 回调先同步跑完，握手 promise 随后才 reject
+        c.callOnExit(1, null)
+        throw new Error('MCP 进程退出 (code=1, signal=null)')
+      }
+      return { tools: [] }
+    }
+    mocks.repoList = [makeRecord()]
+    await expect(mgr.start('srv1')).rejects.toThrow('进程退出')
+    // 核心：必然失败的启动不再被当崩溃重播 4 遍
+    expect(mocks.clients).toHaveLength(1)
+    expect(events.some((e) => e.lastError?.includes('自动重启'))).toBe(false)
+    const last = events.at(-1)!
+    expect(last.status).toBe('error')
+    expect(last.lastError).toContain('进程启动后立即退出 (code=1')
+    expect(last.lastError).toContain('E404')
+  })
+
+  it('catch 不覆盖 handleExit 记下的原因（否则退化成没用的「进程退出」）', async () => {
+    mocks.requestImpl = async (method: unknown) => {
+      if (method === 'initialize') {
+        mocks.clients[0]!.callOnLog('stderr', 'npm error code E404')
+        mocks.clients[0]!.callOnExit(1, null)
+        throw new Error('MCP 进程退出 (code=1, signal=null)')
+      }
+      return { tools: [] }
+    }
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1').catch(() => undefined)
+    const errs = events.filter((e) => e.status === 'error')
+    expect(errs.length).toBe(1) // 只 emit 一次 error，catch 不重复覆盖
+    expect(errs[0]!.lastError).toContain('E404')
+  })
+
+  it('反向保护：握手超时但进程还活着，catch 仍要自己兜住转 error', async () => {
+    mocks.requestImpl = async (method: unknown) => {
+      if (method === 'initialize') throw new Error('JSON-RPC 请求超时: initialize (15000ms)')
+      return { tools: [] }
+    }
+    mocks.repoList = [makeRecord()]
+    await expect(mgr.start('srv1')).rejects.toThrow('超时')
+    const last = events.at(-1)!
+    expect(last.status).toBe('error')
+    expect(last.lastError).toContain('initialize')
+  })
+})
+
+describe('startupFailureHint — 超时要说下一步', () => {
+  it('只给「请求超时」加提示，其他原因原样返回', () => {
+    expect(startupFailureHint('JSON-RPC 请求超时: initialize (60000ms)')).toContain('可稍后再点一次启动')
+    expect(startupFailureHint('MCP 进程退出 (code=1, signal=null)')).toBe('MCP 进程退出 (code=1, signal=null)')
+  })
+})
+
+describe('McpManager — 握手超时按传输分层（#41：npx 首次下载依赖）', () => {
+  beforeEach(() => {
+    mocks.requestImpl = async () => ({ tools: [] })
+  })
+
+  it('stdio：initialize 与 tools/list 都拿到 60s（冷缓存装依赖本机实测 24.6s + 下载 3.2s）', async () => {
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1')
+    const timeouts = mocks.clients[0]!.request.mock.calls.map((c: unknown[]) => c[2])
+    expect(timeouts).toEqual([60_000, 60_000])
+  })
+
+  it('http：仍守 15s —— 远端本该秒回，放宽只会拖慢「地址或鉴权写错」的暴露', async () => {
+    mocks.repoList = [makeRecord({ transport: 'http', url: 'https://example.com/mcp', command: null })]
+    await mgr.start('srv1')
+    const timeouts = mocks.clients[0]!.request.mock.calls.map((c: unknown[]) => c[2])
+    expect(timeouts).toEqual([15_000, 15_000])
+  })
+
+  it('超时后 lastError 带下一步，而不是只有一句「超时」', async () => {
+    mocks.requestImpl = async (method: unknown) => {
+      if (method === 'initialize') throw new Error('JSON-RPC 请求超时: initialize (60000ms)')
+      return { tools: [] }
+    }
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1').catch(() => undefined)
+    const last = events.at(-1)!
+    expect(last.status).toBe('error')
+    expect(last.lastError).toContain('首次通过 npx 启动需现下载依赖')
   })
 })
 

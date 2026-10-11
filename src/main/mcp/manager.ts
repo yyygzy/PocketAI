@@ -15,7 +15,13 @@ import { MCP_EXTENSIONS_DIR } from '../portable'
 import { errMsg } from '../error'
 import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
 import { createLogger } from '../logger'
-import { summarizeMcpArgs, summarizeMcpError, summarizeMcpResult } from './call-summary'
+import {
+  MCP_CALL_ERROR_CHARS,
+  redactStrings,
+  summarizeMcpArgs,
+  summarizeMcpError,
+  summarizeMcpResult
+} from './call-summary'
 import type {
   McpServerRecord,
   McpServerRuntime,
@@ -37,8 +43,15 @@ interface McpRawTool {
 
 /** 工具调用超时 30s */
 const TOOL_CALL_TIMEOUT = 30_000
-/** 单次启动 initialize 握手超时 */
+/** 单次启动 initialize 握手超时（http：远端就该秒回，慢通常是地址或鉴权写错） */
 const INIT_TIMEOUT = 15_000
+/**
+ * stdio 握手超时。npx 类命令首次启动要现下载依赖：本机冷缓存实测
+ * `@modelcontextprotocol/server-memory` 光 tarball 3.2s + 装依赖 24.6s（还没算 npx 解析），
+ * 15s 必然在「其实正在装」的时候判死。失败路径不受影响——进程一退出，挂起的握手请求
+ * 立刻被 reject（见 json-rpc 的 exit 处理），放宽只影响「进程活着但不说话」这一种。
+ */
+const STDIO_INIT_TIMEOUT = 60_000
 /** 进程退出后自动重启最大次数 */
 const MAX_AUTO_RESTART = 3
 /** 单个 MCP Server 允许声明的最大工具数（防伪造海量工具撑爆广播/LLM 系统提示） */
@@ -85,6 +98,36 @@ export function classifyMcpToolPermission(name: string, trustReadOnly = false): 
   return 'confirm'
 }
 
+/**
+ * 「启动即退出」的可读原因：退出码 + 最后几行 stderr。
+ * 只给 `进程退出 (code=1)` 等于没给——真实原因（404 / 命令不存在 / 缺依赖）都在 stderr 里。
+ * 每行先各自截断再脱敏，避免超长行把 redactStrings 拖爆（与调用记录同一把尺）。
+ */
+export function describeStartupExit(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  logBuffer: string[]
+): string {
+  const head = `进程启动后立即退出 (code=${code}, signal=${signal?.toString() ?? 'null'})`
+  const tail = logBuffer
+    .filter((l) => l.startsWith('[stderr]'))
+    .slice(-3)
+    .map((l) => l.slice('[stderr]'.length).trim().slice(0, 200))
+    .filter(Boolean)
+  if (tail.length === 0) return head
+  return `${head}：${redactStrings(tail.join(' / ')).slice(0, MCP_CALL_ERROR_CHARS)}`
+}
+
+/**
+ * 握手超时的可读化：会走到「超时」说明进程还活着（真死了的话挂起的请求会被立刻 reject 成
+ * 「进程退出」），而那种情况几乎总是「首次通过 npx 启动正在下载依赖」。不给这句提示，
+ * 用户看到的就只有 `JSON-RPC 请求超时: initialize (60000ms)`，什么也决定不了。
+ */
+export function startupFailureHint(message: string): string {
+  if (!/请求超时/.test(message)) return message
+  return `${message}（进程仍在运行：首次通过 npx 启动需现下载依赖，慢网络可能要一两分钟，可稍后再点一次启动）`
+}
+
 interface RuntimeEntry {
   record: McpServerRecord
   client: McpTransportClient | null
@@ -95,6 +138,8 @@ interface RuntimeEntry {
   logBuffer: string[] // 最近的 stderr 日志（环形）
   startToken: number // 启动 token，用于异步竞争保护
   startPromise: Promise<McpServerRuntime> | null // 进行中的启动（并发去重，防重复 spawn 孤儿进程）
+  /** 本次进程是否曾经握手成功进入 running：只有「跑起来过又崩了」才值得自动重启 */
+  everRan: boolean
   stableTimer?: NodeJS.Timeout // 稳定运行 N 分钟后复位 autoRestarts 计数器
 }
 
@@ -179,10 +224,14 @@ export class McpManager extends EventEmitter {
       autoRestarts: existing?.autoRestarts ?? 0,
       logBuffer: existing?.logBuffer ?? [],
       startToken,
-      startPromise: null
+      startPromise: null,
+      // 不跨启动继承：每次 spawn 都是一个新进程，「这次跑起来过吗」必须从零算
+      everRan: false
     }
     this.runtimes.set(id, entry)
     this.emitStatus(id, 'starting')
+    // stdio 可能在「首次下载依赖」，握手给到 60s；http 保持 15s
+    const handshakeTimeout = record.transport === 'http' ? INIT_TIMEOUT : STDIO_INIT_TIMEOUT
 
     try {
       await client.spawn()
@@ -196,7 +245,7 @@ export class McpManager extends EventEmitter {
           capabilities: {},
           clientInfo: { name: 'PocketAI', version: '0.1.0' }
         },
-        INIT_TIMEOUT
+        handshakeTimeout
       )
       // 兼容 server 返回的 protocolVersion（v1 不强制校验版本一致性）
       void initResult
@@ -205,7 +254,7 @@ export class McpManager extends EventEmitter {
       client.notify('notifications/initialized')
 
       // 拉取工具列表（外部协议边界：形状/数量/字段大小全部收紧后才进入运行时）
-      const toolsResult = await client.request<unknown>('tools/list', {}, INIT_TIMEOUT)
+      const toolsResult = await client.request<unknown>('tools/list', {}, handshakeTimeout)
       entry.tools = this.normalizeToolList(toolsResult, id, entry.record.trustReadOnly)
       // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
       if (entry.status === 'stopped') {
@@ -213,6 +262,7 @@ export class McpManager extends EventEmitter {
         return this.toRuntime(record)
       }
       entry.status = 'running'
+      entry.everRan = true
       entry.lastError = null
       // 稳定运行 STABLE_RUNNING_MS 后复位自动重启计数（崩溃循环才会累计，稳定运行后清零）
       clearTimeout(entry.stableTimer)
@@ -225,10 +275,12 @@ export class McpManager extends EventEmitter {
       entry.client = null
       // 出错时关闭连接（如果已 spawn）
       client.shutdown().catch((e) => log.warn('shutdown 失败（启动异常清理）:', errMsg(e)))
-      // 已被 stop 标记的不再回 error（保持 stopped），但异常仍抛给等待方
-      if (entry.status !== 'stopped') {
+      // 已被 stop 标记的不再回 error（保持 stopped），但异常仍抛给等待方。
+      // 已是 error 也不覆盖：进程退出时 handleExit 先跑，那里带的是退出码 + stderr 尾部，
+      // 比这里被 reject 的握手错误更贴近真实原因。
+      if (entry.status !== 'stopped' && entry.status !== 'error') {
         entry.status = 'error'
-        entry.lastError = errMsg(e)
+        entry.lastError = startupFailureHint(errMsg(e))
         this.emitStatus(id, 'error', entry.lastError)
       }
       throw e
@@ -505,6 +557,16 @@ export class McpManager extends EventEmitter {
     clearTimeout(entry.stableTimer)
     entry.stableTimer = undefined
 
+    // 从未握手成功过的进程退出 = 配置/包本身有问题（404、命令不存在、缺依赖…）：
+    // 重启只会把同一份错误重播几遍，还会让 lastError 变成误导性的「已达自动重启上限」。
+    if (!entry.everRan) {
+      entry.status = 'error'
+      entry.lastError = describeStartupExit(code, signal, entry.logBuffer)
+      log.warn(`stdio 启动即退出，不自动重启: ${id} — ${entry.lastError}`)
+      this.emitStatus(id, 'error', entry.lastError)
+      return
+    }
+
     // 自动重启（最多 3 次）
     if (entry.autoRestarts < MAX_AUTO_RESTART) {
       entry.autoRestarts++
@@ -516,8 +578,8 @@ export class McpManager extends EventEmitter {
       const inflight = this.startingPromises.get(id)
       const reboot = () =>
         this.start(id).catch((e) => {
-          // 失败由 start 内部已 emit error
-          void e
+          // start 内部已 emit error；这里再落一行日志，否则重启链在 main.log 里完全静默
+          log.warn(`自动重启失败: ${id}`, errMsg(e))
         })
       if (inflight) void inflight.finally(reboot)
       else void reboot()
