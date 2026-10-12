@@ -29,17 +29,14 @@ export function useGlobalShortcuts(): void {
       if (!m) return
 
       switch (m.id) {
-        case 'tab': {
-          const tb = s.tabs[m.tabIndex! - 1]
-          if (!tb) return // 超出标签数：无动作
+        case 'module': {
+          // 按侧栏**可见顺序**绑定（用户可拖拽排序），与界面上看到的 ⌃n 角标一致
+          const id = s.sidebarOrder[m.moduleIndex! - 1]
+          if (!id) return // 超出侧栏项数：无动作
           e.preventDefault()
-          s.setActiveTabId(tb.id)
+          s.switchModule(id)
           break
         }
-        case 'closeTab':
-          e.preventDefault() // 防浏览器/Electron 默认关窗
-          s.closeTab(s.activeTabId)
-          break
         case 'openSettings':
           e.preventDefault()
           s.switchModule('settings')

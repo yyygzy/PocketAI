@@ -21,7 +21,8 @@ import { providerRecordSchema, idSchema } from '../src/shared/schemas/providers'
 import { websearchConfigSchema, calendarConfigSchema, toolApproveResponseSchema } from '../src/shared/schemas/agent'
 import { sandboxCreateSchema, sandboxUpdateMetaSchema } from '../src/shared/schemas/sandbox'
 import { channelSetConfigSchema } from '../src/shared/schemas/channels'
-import { uiPrefsPatchSchema } from '../src/shared/schemas/preferences'
+import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../src/shared/schemas/preferences'
+import { DEFAULT_SIDEBAR_ORDER, MAX_PINNED_SIDEBAR_MODULES } from '../src/shared/types'
 import { masterPasswordSchema, recoveryCodeSchema, recoverPayloadSchema } from '../src/shared/schemas/encryption'
 import { licenseCodeSchema, filePathSchema } from '../src/shared/schemas/license'
 
@@ -345,5 +346,36 @@ describe('channels/preferences/encryption/license — 上限', () => {
   it('licenseCode 超 4096 / filePath 超 1024 拒绝', () => {
     expect(licenseCodeSchema.safeParse('L'.repeat(4097)).success).toBe(false)
     expect(filePathSchema.safeParse('/'.repeat(1025)).success).toBe(false)
+  })
+})
+
+describe('侧栏导航 schema（顺序 / 固定）', () => {
+  // 这条是本轮的"反向对照"：这里曾手写 11 项枚举、漏掉 12 个模块里的 'terminal'，
+  // 于是**任何**合法顺序都被拒 ⇒ setSidebarOrder 永远失败并被前端回滚，侧栏拖拽排序从未生效。
+  it('默认顺序必须自通过（枚举与常量清单不许漂移）', () => {
+    expect(DEFAULT_SIDEBAR_ORDER).toHaveLength(12)
+    expect(sidebarOrderSchema.safeParse(DEFAULT_SIDEBAR_ORDER).success).toBe(true)
+    const reversed = [...DEFAULT_SIDEBAR_ORDER].reverse()
+    expect(sidebarOrderSchema.safeParse(reversed).success).toBe(true)
+  })
+
+  it('缺项 / 重复 / 含未知模块 → 拒', () => {
+    expect(sidebarOrderSchema.safeParse(DEFAULT_SIDEBAR_ORDER.slice(1)).success).toBe(false)
+    const dup = DEFAULT_SIDEBAR_ORDER.map((m, i) => (i === 0 ? DEFAULT_SIDEBAR_ORDER[1]! : m))
+    expect(sidebarOrderSchema.safeParse(dup).success).toBe(false)
+    expect(
+      sidebarOrderSchema.safeParse([...DEFAULT_SIDEBAR_ORDER.slice(1), 'nope']).success
+    ).toBe(false)
+  })
+
+  it('固定列表：子集通过，重复/未知/超上限拒', () => {
+    expect(sidebarPinnedSchema.safeParse(['chat', 'settings']).success).toBe(true)
+    expect(sidebarPinnedSchema.safeParse([]).success).toBe(true)
+    expect(sidebarPinnedSchema.safeParse(['chat', 'chat']).success).toBe(false)
+    expect(sidebarPinnedSchema.safeParse(['nope']).success).toBe(false)
+    expect(sidebarPinnedSchema.safeParse(DEFAULT_SIDEBAR_ORDER).success).toBe(false)
+    expect(
+      sidebarPinnedSchema.safeParse(DEFAULT_SIDEBAR_ORDER.slice(0, MAX_PINNED_SIDEBAR_MODULES + 1)).success
+    ).toBe(false)
   })
 })

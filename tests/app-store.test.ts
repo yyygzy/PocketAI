@@ -1,187 +1,163 @@
-// app-store 标签保活/休眠逻辑测试
+// app-store 导航逻辑测试（侧栏为唯一导航：保活 LRU / 固定豁免 / 顺序清洗）
 //
-// store 在 import 时即通过 zustand persist 实例化（默认读 localStorage），
-// vitest 为 node 环境：每个用例先 stub localStorage，再 vi.resetModules + 动态 import，
-// 保证 store 状态与持久化内容完全隔离。
-import { describe, it, expect, vi } from 'vitest'
-import type { useAppStore as UseAppStore } from '../src/renderer/src/store/app-store'
+// V4-Iter-112 起 store 不再管标签页，也不再走 zustand persist（固定列表与侧栏顺序都存 app_config），
+// 所以这里不需要 stub localStorage + 动态 import：直接 setState 复位即可。
+import { describe, it, expect, beforeEach } from 'vitest'
+import {
+  useAppStore,
+  evictMounted,
+  normalizePinnedModules,
+  normalizeSidebarOrder,
+  MAX_KEPT_MODULES,
+  MAX_PINNED_MODULES
+} from '../src/renderer/src/store/app-store'
+import { DEFAULT_SIDEBAR_ORDER } from '../src/shared/types'
+import type { ModuleId } from '../src/renderer/src/components/Sidebar'
 
-type StoreState = ReturnType<typeof UseAppStore.getState>
-type StoreModule = typeof import('../src/renderer/src/store/app-store')
-
-async function loadStore(initialStorage?: Record<string, string>): Promise<{
-  mod: StoreModule
-  state: StoreState
-}> {
-  const map = new Map<string, string>(Object.entries(initialStorage ?? {}))
-  const g = globalThis as unknown as { localStorage: Storage; window?: unknown }
-  g.localStorage = {
-    getItem: (k: string) => (map.has(k) ? map.get(k)! : null),
-    setItem: (k: string, v: string) => void map.set(k, v),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-    key: (i: number) => Array.from(map.keys())[i] ?? null,
-    get length() {
-      return map.size
-    }
-  } as Storage
-  // zustand persist 默认 storage factory 引用 window.localStorage；
-  // node 测试环境无 window，缺失时中间件会整体短路（无 hydrate/api.persist）
-  g.window = globalThis
-  vi.resetModules()
-  const mod = await import('../src/renderer/src/store/app-store')
-  // persist hydrate 经 thenable 微任务链完成（merge → setState）
-  await new Promise((r) => setTimeout(r, 0))
-  return { mod, state: mod.useAppStore.getState() }
+const FRESH = {
+  activeModule: 'chat' as ModuleId,
+  mountedModules: ['chat'] as ModuleId[],
+  busyModules: {} as Partial<Record<ModuleId, boolean>>,
+  pinnedModules: [] as ModuleId[],
+  sidebarOrder: [...DEFAULT_SIDEBAR_ORDER]
 }
 
-/** 模拟 App 的 effect：switchModule 后 touchModule（真实环境由 activeModule 变化驱动） */
-function goto(state: StoreState, id: 'settings' | 'knowledge' | 'files' | 'notes'): void {
-  state.switchModule(id, id)
-  state.touchModule(id)
+beforeEach(() => {
+  useAppStore.setState({ ...FRESH })
+})
+
+/** 模拟 App 的 effect：switchModule 之后 touchModule 记 LRU（真实环境由 activeModule 变化驱动） */
+function goto(id: ModuleId): void {
+  const s = useAppStore.getState()
+  s.switchModule(id)
+  s.touchModule(id)
 }
 
-describe('app-store 纯函数', () => {
-  it('evictMounted：未超阈值原样返回', async () => {
-    const { mod } = await loadStore()
-    expect(mod.evictMounted(['a', 'b'], { activeId: 'b', pinnedIds: [], busyIds: [], max: 4 })).toEqual(['a', 'b'])
+const mounted = () => useAppStore.getState().mountedModules
+
+describe('evictMounted — LRU 休眠淘汰', () => {
+  it('未超阈值原样返回', () => {
+    expect(evictMounted(['a', 'b'], { activeId: 'b', pinnedIds: [], busyIds: [], max: 4 })).toEqual(['a', 'b'])
   })
 
-  it('evictMounted：超阈值淘汰 LRU 尾部，active 即使在尾部也豁免', async () => {
-    const { mod } = await loadStore()
+  it('超阈值淘汰 LRU 尾部，active 即使在尾部也豁免', () => {
     // 头部最近访问；active 'e' 在最尾，扫描时跳过 e，先淘汰 d
-    expect(mod.evictMounted(['a', 'b', 'c', 'd', 'e'], { activeId: 'e', pinnedIds: [], busyIds: [], max: 4 }))
+    expect(evictMounted(['a', 'b', 'c', 'd', 'e'], { activeId: 'e', pinnedIds: [], busyIds: [], max: 4 }))
       .toEqual(['a', 'b', 'c', 'e'])
   })
 
-  it('evictMounted：pinned 与 busy 模块豁免，全部受保护时宁超阈值不淘汰', async () => {
-    const { mod } = await loadStore()
-    const mounted = ['a', 'b', 'c', 'd', 'e']
-    // d pinned、e busy、a active → 只能淘汰 b/c；但只需淘汰 1 个：尾部扫描 e 跳、d 跳、c 淘汰
-    expect(mod.evictMounted(mounted, { activeId: 'a', pinnedIds: ['d'], busyIds: ['e'], max: 4 }))
+  it('pinned 与 busy 模块豁免；全部受保护时宁超阈值不淘汰', () => {
+    // d pinned、e busy、a active → 只需淘汰 1 个：尾部扫描 e 跳、d 跳、c 淘汰
+    expect(evictMounted(['a', 'b', 'c', 'd', 'e'], { activeId: 'a', pinnedIds: ['d'], busyIds: ['e'], max: 4 }))
       .toEqual(['a', 'b', 'd', 'e'])
-    // 全部受保护 → 长度 5 原样保留（不中断流式优先于内存上限）
-    const allProtected = mod.evictMounted(
-      ['a', 'b', 'c', 'd', 'e'],
-      { activeId: 'a', pinnedIds: ['b', 'c'], busyIds: ['d', 'e'], max: 4 }
-    )
-    expect(allProtected).toHaveLength(5)
-  })
-
-  it('pinFirst：pinned 前置且保持组内相对顺序；无 pinned 原样返回', async () => {
-    const { mod } = await loadStore()
-    const tabs = [
-      { id: '1', title: 'a', moduleId: 'chat' },
-      { id: '2', title: 'b', moduleId: 'settings', pinned: true },
-      { id: '3', title: 'c', moduleId: 'files' }
-    ]
-    expect(mod.pinFirst(tabs).map((tb) => tb.id)).toEqual(['2', '1', '3'])
-    expect(mod.pinFirst([tabs[0]!, tabs[2]!]).map((tb) => tb.id)).toEqual(['1', '3'])
-  })
-
-  it('reconcileMounted：关闭标签后移除孤儿模块并保证活动模块在列', async () => {
-    const { mod } = await loadStore()
-    const tabs = [{ id: '1', title: 'chat', moduleId: 'chat' }]
-    // settings 已无标签 → 卸载；chat 提到头部
-    expect(mod.reconcileMounted(['settings', 'chat'], tabs, 'chat')).toEqual(['chat'])
+    expect(
+      evictMounted(['a', 'b', 'c', 'd', 'e'], { activeId: 'a', pinnedIds: ['b', 'c'], busyIds: ['d', 'e'], max: 4 })
+    ).toHaveLength(5)
   })
 })
 
-describe('app-store 保活 actions', () => {
-  it('touchModule：新模块插入 LRU 头部，重复 touch 只移到头部', async () => {
-    const { mod, state } = await loadStore()
-    goto(state, 'settings')
-    goto(state, 'knowledge')
-    expect(mod.useAppStore.getState().mountedModules).toEqual(['knowledge', 'settings', 'chat'])
-
-    state.touchModule('settings')
-    expect(mod.useAppStore.getState().mountedModules).toEqual(['settings', 'knowledge', 'chat'])
+describe('导航偏好清洗（库里可能是脏值）', () => {
+  it('normalizePinnedModules：剔非法模块 id、去重、截断到上限', () => {
+    expect(normalizePinnedModules(['chat', 'chat', 'nope', 42, 'settings'])).toEqual(['chat', 'settings'])
+    const many = DEFAULT_SIDEBAR_ORDER.slice(0, MAX_PINNED_MODULES + 2)
+    expect(normalizePinnedModules(many)).toHaveLength(MAX_PINNED_MODULES)
+    // 非数组（KV 被写坏）→ 空列表而不是抛
+    expect(normalizePinnedModules('chat')).toEqual([])
+    expect(normalizePinnedModules(null)).toEqual([])
   })
 
-  it('touchModule：挂载数超 MAX_KEPT_MODULES 时淘汰最久未访问模块', async () => {
-    const { mod, state } = await loadStore()
-    for (const id of ['settings', 'knowledge', 'files', 'notes'] as const) {
-      goto(state, id)
-    }
-    const mounted = mod.useAppStore.getState().mountedModules
-    expect(mounted).toHaveLength(mod.MAX_KEPT_MODULES)
-    expect(mounted).toEqual(['notes', 'files', 'knowledge', 'settings'])
-    expect(mounted).not.toContain('chat')
-  })
-
-  it('pinned 标签对应模块豁免休眠；togglePin 切换固定并前置', async () => {
-    const { mod, state } = await loadStore()
-    // 固定初始 chat 标签
-    const chatTabId = mod.useAppStore.getState().tabs[0]!.id
-    state.togglePin(chatTabId)
-    const pinned = mod.useAppStore.getState()
-    expect(pinned.tabs[0]!.pinned).toBe(true)
-
-    for (const id of ['settings', 'knowledge', 'files', 'notes'] as const) {
-      goto(state, id)
-    }
-    const mounted = mod.useAppStore.getState().mountedModules
-    // chat 虽最久未访问但 pinned 豁免；被淘汰的是 settings
-    expect(mounted).toContain('chat')
-    expect(mounted).not.toContain('settings')
-    expect(mounted).toHaveLength(mod.MAX_KEPT_MODULES)
-
-    // 取消固定：pinned 标志清除
-    state.togglePin(chatTabId)
-    expect(mod.useAppStore.getState().tabs.find((tb) => tb.id === chatTabId)!.pinned).toBeFalsy()
-  })
-
-  it('busy 模块豁免休眠；busy 解除后下一次更新补淘汰', async () => {
-    const { mod, state } = await loadStore()
-    // 让全部 5 个模块都处于保护态：chat busy + 依次切 4 个模块（各自 busy，最新者为 active）
-    state.setModuleBusy('chat', true)
-    for (const id of ['settings', 'knowledge', 'files', 'notes'] as const) {
-      goto(state, id)
-      state.setModuleBusy(id, true)
-    }
-    let mounted = mod.useAppStore.getState().mountedModules
-    expect(mounted).toHaveLength(5) // 全部受保护，宁超阈值不淘汰
-    expect(mounted).toContain('chat')
-
-    // 解除 chat busy → setModuleBusy 内补淘汰，最久未访问且不再受保护的 chat 出局
-    state.setModuleBusy('chat', false)
-    mounted = mod.useAppStore.getState().mountedModules
-    expect(mounted).toHaveLength(mod.MAX_KEPT_MODULES)
-    expect(mounted).not.toContain('chat')
-  })
-
-  it('closeTab：关闭模块最后一个标签时同步卸载其保活实例并切回活动模块', async () => {
-    const { mod, state } = await loadStore()
-    goto(state, 'settings') // mounted: settings, chat
-    expect(mod.useAppStore.getState().mountedModules).toContain('settings')
-
-    const settingsTab = mod.useAppStore.getState().tabs.find((tb) => tb.moduleId === 'settings')!
-    state.closeTab(settingsTab.id)
-    const after = mod.useAppStore.getState()
-    expect(after.mountedModules).toEqual(['chat'])
-    expect(after.activeModule).toBe('chat')
+  it('normalizeSidebarOrder：完整排列通过；缺项/重复/脏值整体回默认', () => {
+    const swapped = [...DEFAULT_SIDEBAR_ORDER]
+    swapped.reverse()
+    expect(normalizeSidebarOrder(swapped)).toEqual(swapped)
+    expect(normalizeSidebarOrder(swapped.slice(1))).toEqual(DEFAULT_SIDEBAR_ORDER)
+    // 同长度但含重复项（缺 chat、agent 出现两次）——只有去重那道检查挡得住
+    const dup = DEFAULT_SIDEBAR_ORDER.map((m, i) => (i === 0 ? DEFAULT_SIDEBAR_ORDER[1]! : m))
+    expect(dup).toHaveLength(DEFAULT_SIDEBAR_ORDER.length)
+    expect(normalizeSidebarOrder(dup)).toEqual(DEFAULT_SIDEBAR_ORDER)
+    expect(normalizeSidebarOrder([...DEFAULT_SIDEBAR_ORDER.slice(1), 'chat', 'chat'])).toEqual(DEFAULT_SIDEBAR_ORDER)
+    // 同长度但含非法项：过滤后变短，也必须整体回默认（不能让侧栏少一项还照常显示）
+    const withJunk = DEFAULT_SIDEBAR_ORDER.map((m, i) => (i === 0 ? 'nope' : m)) as unknown as string[]
+    expect(withJunk).toHaveLength(DEFAULT_SIDEBAR_ORDER.length)
+    expect(normalizeSidebarOrder(withJunk)).toEqual(DEFAULT_SIDEBAR_ORDER)
+    expect(normalizeSidebarOrder(undefined)).toEqual(DEFAULT_SIDEBAR_ORDER)
   })
 })
 
-describe('app-store persist merge', () => {
-  it('重启后恢复标签布局，mountedModules 仅挂载活动模块（保活态不持久化）', async () => {
-    // zustand persist 存储格式：{ state: partialize 结果, version }
-    const persisted = JSON.stringify({
-      state: {
-        tabs: [
-          { moduleId: 'settings', title: '设置', pinned: true },
-          { moduleId: 'chat', title: '新对话' }
-        ],
-        activeTabId: 1
-      },
-      version: 0
-    })
-    const { state } = await loadStore({ 'pocketai.tabs.v1': persisted })
-    expect(state.tabs).toHaveLength(2)
-    expect(state.activeModule).toBe('chat')
-    expect(state.mountedModules).toEqual(['chat'])
-    expect(state.busyModules).toEqual({})
-    // pinned 标志随标签恢复
-    expect(state.tabs.find((tb) => tb.moduleId === 'settings')!.pinned).toBe(true)
+describe('模块切换与保活', () => {
+  it('switchModule 只改活动模块，不再产生任何"标签"副作用', () => {
+    goto('settings')
+    goto('settings')
+    const s = useAppStore.getState()
+    expect(s.activeModule).toBe('settings')
+    // 同模块二次进入不该在保活列表里出现两份
+    expect(mounted().filter((m) => m === 'settings')).toHaveLength(1)
+  })
+
+  it('touchModule：新模块插入 LRU 头部，重复 touch 只移到头部', () => {
+    goto('settings')
+    goto('knowledge')
+    expect(mounted()).toEqual(['knowledge', 'settings', 'chat'])
+    useAppStore.getState().touchModule('settings')
+    expect(mounted()).toEqual(['settings', 'knowledge', 'chat'])
+  })
+
+  it('挂载数超 MAX_KEPT_MODULES 时淘汰最久未访问模块', () => {
+    for (const id of ['settings', 'knowledge', 'files', 'notes'] as const) goto(id)
+    expect(mounted()).toHaveLength(MAX_KEPT_MODULES)
+    expect(mounted()).toEqual(['notes', 'files', 'knowledge', 'settings'])
+    expect(mounted()).not.toContain('chat')
+  })
+
+  it('固定的模块豁免休眠；取消固定后补一次淘汰', () => {
+    useAppStore.getState().setPinnedModules(['chat'])
+    for (const id of ['settings', 'knowledge', 'files', 'notes'] as const) goto(id)
+    // chat 虽最久未访问但被固定豁免；被淘汰的是 settings
+    expect(mounted()).toContain('chat')
+    expect(mounted()).not.toContain('settings')
+    expect(mounted()).toHaveLength(MAX_KEPT_MODULES)
+
+    useAppStore.getState().toggleModulePinned('chat')
+    expect(useAppStore.getState().pinnedModules).toEqual([])
+    // 取消固定不会立刻把模块踢出去：保活集合没超上限就无需重排，
+    // 它会在下一次有模块进来时被 LRU 淘汰（"取消固定"是解除豁免，不是马上卸载）
+    expect(mounted()).toContain('chat')
+    goto('translate')
+    expect(mounted()).toHaveLength(MAX_KEPT_MODULES)
+    expect(mounted()).not.toContain('chat')
+  })
+
+  it('toggleModulePinned 超上限时按清洗规则截断（固定不进去就是固定不进去）', () => {
+    const five = DEFAULT_SIDEBAR_ORDER.slice(0, MAX_PINNED_MODULES + 1)
+    useAppStore.getState().setPinnedModules(five)
+    expect(useAppStore.getState().pinnedModules).toEqual(five.slice(0, MAX_PINNED_MODULES))
+    useAppStore.getState().toggleModulePinned(five[MAX_PINNED_MODULES]!)
+    const after = useAppStore.getState().pinnedModules
+    expect(after).toHaveLength(MAX_PINNED_MODULES)
+    expect(after).not.toContain(five[MAX_PINNED_MODULES])
+  })
+
+  it('busy 模块豁免休眠；busy 解除后下一次更新补淘汰', () => {
+    const s = () => useAppStore.getState()
+    s().setModuleBusy('chat', true)
+    for (const id of ['settings', 'knowledge', 'files', 'notes'] as const) {
+      goto(id)
+      s().setModuleBusy(id, true)
+    }
+    expect(mounted()).toHaveLength(5) // 全部受保护，宁超阈值不淘汰
+    expect(mounted()).toContain('chat')
+
+    s().setModuleBusy('chat', false)
+    expect(mounted()).toHaveLength(MAX_KEPT_MODULES)
+    expect(mounted()).not.toContain('chat')
+  })
+
+  it('侧栏顺序进 store（Ctrl+1..9 要按它绑定）', () => {
+    const s = useAppStore.getState()
+    const custom = [...DEFAULT_SIDEBAR_ORDER]
+    custom.splice(0, 0, custom.splice(3, 1)[0]!)
+    s.setSidebarOrder(custom)
+    expect(useAppStore.getState().sidebarOrder).toEqual(custom)
+    expect(useAppStore.getState().sidebarOrder[0]).toBe(custom[0])
   })
 })

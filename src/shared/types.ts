@@ -1574,6 +1574,30 @@ export const DEFAULT_SIDEBAR_ORDER: SidebarModuleId[] = [
   'settings'
 ]
 
+/**
+ * 可「固定不被休眠」的模块数上限（侧栏右键）。
+ * 放在 shared 是因为 IPC 入参 schema 与渲染层 store 都要用同一个数：
+ * 固定数一旦达到保活上限就等于全量豁免，LRU 失去意义，故上限取保活名额。
+ */
+export const MAX_PINNED_SIDEBAR_MODULES = 4
+
+/**
+ * 支持「弹出独立窗口」的模块（侧栏右键入口 + 渲染层路由 `#/detached?module=` 白名单共用）。
+ * terminal / steward / settings 不在列：前者依赖主窗口的审批与设备上下文，后两者是全局面板，
+ * 单独开窗没有意义。
+ */
+export const DETACHABLE_MODULE_IDS: SidebarModuleId[] = [
+  'chat',
+  'agent',
+  'skills',
+  'knowledge',
+  'files',
+  'notes',
+  'translate',
+  'image',
+  'sandbox'
+]
+
 // ---------- 界面偏好（透明度 / 自定义 CSS / 聊天字号） ----------
 /** 聊天正文字号档位：small 13px / medium 14px / large 16px */
 export type ChatFontSize = 'small' | 'medium' | 'large'
@@ -2049,9 +2073,11 @@ export const IPC = {
   NET_PROXY_GET: 'net:proxy-get', // 读取当前代理 URL（''=直连）
   NET_PROXY_SET: 'net:proxy-set', // 保存并立即应用代理（''=恢复直连）
 
-  // ---------- 侧栏模块顺序 ----------
+  // ---------- 侧栏模块顺序与固定 ----------
   SIDEBAR_GET_ORDER: 'sidebar:get-order',
   SIDEBAR_SET_ORDER: 'sidebar:set-order',
+  SIDEBAR_GET_PINNED: 'sidebar:get-pinned',
+  SIDEBAR_SET_PINNED: 'sidebar:set-pinned',
 
   // 工具（只读）
   TOOL_LIST_AVAILABLE: 'tool:list-available', // 列出所有可用工具（按助手机器权限可在外层过滤）

@@ -4,6 +4,8 @@ import App from './App'
 import { PopupApp } from './popup/PopupApp'
 import { DetachedApp } from './detached/DetachedApp'
 import type { ModuleId } from './components/Sidebar'
+import { DETACHABLE_MODULE_IDS } from '../../shared/types'
+import type { SidebarModuleId } from '../../shared/types'
 import { I18nProvider } from './i18n'
 import { ToastProvider } from './components/ToastProvider'
 import { loadAndInjectCustomCss } from './custom-css'
@@ -14,16 +16,17 @@ import './styles.css'
 // 快捷浮窗与主窗口共用 index.html，用 hash 区分（#/popup），避免新增构建入口
 const isPopup = window.location.hash.startsWith('#/popup')
 
-// 独立窗口（标签弹出）：#/detached?module=xxx，同样共用 index.html 入口
-const DETACHED_MODULE_IDS: readonly string[] = [
-  'chat', 'agent', 'skills', 'knowledge', 'files', 'notes', 'translate', 'image', 'sandbox'
-]
+// 独立窗口（从侧栏右键弹出）：#/detached?module=xxx，同样共用 index.html 入口
 let detachedModule: ModuleId | null = null
 if (window.location.hash.startsWith('#/detached')) {
   const m = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('module')
-  if (m && DETACHED_MODULE_IDS.includes(m)) detachedModule = m as ModuleId
+  if (m && DETACHABLE_MODULE_IDS.includes(m as SidebarModuleId)) detachedModule = m as ModuleId
 }
 const isDetached = detachedModule !== null
+
+// 标签页系统已下线（V4-Iter-112：标签从不携带实例状态，导航只剩侧栏），
+// 清掉它遗留在 localStorage 的布局键，不给后续版本留孤儿数据
+localStorage.removeItem('pocketai.tabs.v1')
 
 // 先注入用户自定义 CSS / 应用聊天字号档位，再渲染（异步，可能有极短暂闪烁）
 loadAndInjectCustomCss()

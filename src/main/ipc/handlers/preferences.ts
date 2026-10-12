@@ -1,16 +1,17 @@
 // 用户与界面偏好 IPC：首启向导、界面偏好（透明度/CSS）、侧栏模块顺序
 import { IPC } from '../../../shared/types'
 import type { UiPreferences, SidebarModuleId, WizardState } from '../../../shared/types'
-import { DEFAULT_SIDEBAR_ORDER } from '../../../shared/types'
+import { DEFAULT_SIDEBAR_ORDER, MAX_PINNED_SIDEBAR_MODULES } from '../../../shared/types'
 import { isPortableRuntime } from '../../portable'
 import { getMachineId } from '../../steward/machine'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { getUiPreferences, setUiPreferences } from '../../ui-preferences'
 import { isReplyNotifyEnabled, setReplyNotifyEnabled, showReplyNotification } from '../../notify/reply-notify'
 import { safeHandle, argsSchema, z } from '../safe-handle'
-import { uiPrefsPatchSchema, sidebarOrderSchema } from '../../../shared/schemas/preferences'
+import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../../../shared/schemas/preferences'
 
 const K_SIDEBAR_ORDER = 'sidebar.order'
+const K_SIDEBAR_PINNED = 'sidebar.pinned'
 const K_LAST_PROVIDER = 'wizard.last_provider_id'
 
 /** 读取侧栏顺序；配置缺失或非法时回退默认值 */
@@ -32,6 +33,27 @@ function readSidebarOrder(): SidebarModuleId[] {
     }
   }
   return [...DEFAULT_SIDEBAR_ORDER]
+}
+
+/**
+ * 读取「固定不被休眠」的模块列表（侧栏右键维护）。
+ * 存 app_config 而不是渲染层 localStorage：这是便携应用，导航偏好要跟着 U 盘走；
+ * 非法项/超上限一律按清洗后的结果返回（脏值不报错，与 readSidebarOrder 同口径）。
+ */
+function readSidebarPinned(): SidebarModuleId[] {
+  const raw = appConfigRepo.get(K_SIDEBAR_PINNED)
+  if (!raw) return []
+  let arr: unknown
+  try {
+    arr = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(arr)) return []
+  const valid = arr.filter(
+    (x): x is SidebarModuleId => typeof x === 'string' && DEFAULT_SIDEBAR_ORDER.includes(x as SidebarModuleId)
+  )
+  return [...new Set(valid)].slice(0, MAX_PINNED_SIDEBAR_MODULES)
 }
 
 export function registerPreferenceHandlers(): void {
@@ -87,6 +109,14 @@ export function registerPreferenceHandlers(): void {
     appConfigRepo.set(K_SIDEBAR_ORDER, JSON.stringify(order))
     return { ok: true as const, data: order }
   }, argsSchema(sidebarOrderSchema))
+
+  // ---------- 侧栏「固定不被休眠」 ----------
+  safeHandle(IPC.SIDEBAR_GET_PINNED, () => ({ ok: true as const, data: readSidebarPinned() }))
+  safeHandle(IPC.SIDEBAR_SET_PINNED, (_e, list: SidebarModuleId[]) => {
+    const clean = [...new Set(list)].slice(0, MAX_PINNED_SIDEBAR_MODULES)
+    appConfigRepo.set(K_SIDEBAR_PINNED, JSON.stringify(clean))
+    return { ok: true as const, data: clean }
+  }, argsSchema(sidebarPinnedSchema))
 
   // ---------- 向导上次保存的 provider（对话默认回填用） ----------
   safeHandle(IPC.WIZARD_GET_LAST_PROVIDER, () => ({

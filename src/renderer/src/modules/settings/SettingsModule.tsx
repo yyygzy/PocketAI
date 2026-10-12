@@ -38,8 +38,7 @@ const ShortcutHelpPanel: React.FC = () => {
   const { t } = useI18n()
   const mod = modLabel()
   const rows: Array<[string, string]> = [
-    [t('set.shortcuts.tab'), `${mod}+1 … ${mod}+9`],
-    [t('set.shortcuts.closeTab'), `${mod}+W`],
+    [t('set.shortcuts.module'), `${mod}+1 … ${mod}+9`],
     [t('set.shortcuts.settings'), `${mod}+,`],
     [t('set.shortcuts.lock'), `${mod}+L`],
     [t('set.shortcuts.newConv'), `${mod}+N`],

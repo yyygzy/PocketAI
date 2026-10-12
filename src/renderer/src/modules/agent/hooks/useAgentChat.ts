@@ -91,7 +91,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   )
 
   /**
-   * 「上次用在哪」：模块切走即被卸载（Workspace 条件渲染），助手与会话的选中态随之丢失。
+   * 「上次用在哪」：模块保活有上限（4 个，超出按 LRU 休眠卸载），加上重启与休眠后重挂，
+   * 助手与会话的选中态都会丢——模块内部状态不跨实例保存，切回来等于从零开始。
    * 这里从 ui 偏好读回（存 app_config，属合并时的 LOCAL_KEEP 表 ⇒ 不会被另一台机器搬来），
    * 之后每次真正确定选中项就写回。restoreRef 只用一次：切助手后不该再套旧会话。
    */

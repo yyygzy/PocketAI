@@ -66,6 +66,20 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-112 顶部标签栏下线：侧栏成唯一导航（已落地，真机待验）
+
+- **来源**：用户问「这个导航栏有必要存在吗」。调研结论是**它的前提就不成立**：策划书 §4.2 写「侧栏切模块，标签切实例」，但 `Tab` 只有 `{id,title,moduleId,pinned}`、从不携带实例状态，而 `Workspace` 按 **moduleId** 挂载组件 ⇒ 同一模块的两个标签渲染的是同一个界面、同一份会话；标签标题又永远等于模块名（无重命名入口）。于是 `+` 号是**假可供性**：看起来开了新会话，其实没有。用户选定「一步删栏 + popOut/固定进侧栏右键 + Ctrl+1..9 绑侧栏可见顺序」。
+- **删掉的东西**：`components/TabBar.tsx` 整文件；store 里的 `tabs/activeTabId/newTab/closeTab/reorderTabs/closeOthers/closeRight/togglePin/pinFirst/reconcileMounted/removeTabAfterPopOut`；**zustand persist 整体不再需要**（固定与顺序都存 app_config，随便携目录走），启动时清掉遗留的 `pocketai.tabs.v1`。`tabs` 这套 API 的调用面只有 `App.tsx` 一处，是这次能一次删干净的原因。
+- **侧栏接手**：顺序与固定列表进 store（`sidebarOrder`/`pinnedModules`，附 `normalizePinnedModules`/`normalizeSidebarOrder` 两个清洗纯函数——库里可能是脏值）；模块项右键菜单三行「打开此模块 / 在独立窗口打开 / 固定·取消固定」，只有 `DETACHABLE_MODULE_IDS`（terminal/steward/settings 不在列）出现弹出项；固定项显 📌；可见前 9 项右侧标 `⌃1…⌃9`，与快捷键同源（同一份 `sidebarOrder`）；顺序与固定**保存失败都回滚读库**，不让界面停在"看着排好了其实没存"。
+- **主进程**：新增 `SIDEBAR_GET_PINNED/SET_PINNED` + app_config key `sidebar.pinned` + `sidebarPinnedSchema`（子集、去重、上限 4=保活名额）；`DETACHABLE_MODULE_IDS` 从 `main.tsx` 局部常量抽到 `shared/types`，侧栏菜单与路由白名单共用一份；`MAX_PINNED_SIDEBAR_MODULES` 同在 shared，schema 与 store 用同一个数。
+- **快捷键**：`Ctrl/⌘+1..9` 从「切第 n 个标签」改绑「侧栏可见顺序第 n 项」（用户可拖拽排序 ⇒ 所见即所得）；`closeTab`/`Ctrl+W` 随标签下线；`filterShortcutForContext` 的 detached/popup 屏蔽项同步改名。设置页那张速查表里的两行谎言一起改：「切换到第 1~9 个标签」→「切换到侧栏第 1~9 个模块」，删掉 `Ctrl+W 关闭当前标签` 行。
+- **⚠️ 顺带撞出一条既有缺陷（不是本批引入）**：`sidebarModuleSchema` 手写枚举只有 11 项、漏了 `'terminal'`，而 `DEFAULT_SIDEBAR_ORDER` 有 12 个模块 ⇒ **任何**合法顺序都被 IPC 入参 schema 拒掉，`setSidebarOrder` 永远返回失败并被前端回滚——**侧栏拖拽排序从上线至今从未生效**。实测证据：`sidebarOrderSchema.safeParse(DEFAULT_SIDEBAR_ORDER).success === false`（一次性探针跑出来的，探针已删）。修法不是补一项了事，而是**让枚举派生自 `DEFAULT_SIDEBAR_ORDER`**（清单只有一份真相）+ 用例「默认顺序必须自通过 schema」当漂移闸门。
+- **收益可量**：归还常驻 36px 顶栏；渲染主包 `index-*.js` 1,368.85 → **1,355.50 kB（−13.35 kB）**（删组件 + 四语 8 个死 key）；导航状态从"标签 + 侧栏"两套收敛成一套。
+- **测试**：`tests/app-store.test.ts` 整文件重写（12 例：evictMounted 三条、两个清洗函数、`switchModule` 不再产生标签副作用、LRU 淘汰、固定豁免与"取消固定不立刻踢出"、上限截断、busy 补淘汰、顺序进 store）；`tests/shortcuts.test.ts` 改 4 处（含 **Ctrl+W 必须不命中**的反向对照，防它被静默复用成别的动作）；新增 `tests/renderer-sidebar-nav.test.tsx` 8 例（真挂载侧栏：顺序/角标、可弹出与不可弹出、固定进 store+落库+📌、取消固定、上限时按钮 disabled 且**一次都不写库**、落库失败回滚）；`tests/ipc-schema-limits.test.ts` +3 例（默认顺序自通过 / 缺项重复非法拒 / 固定列表上限）。合计 **257 文件 / 3150 用例**全绿；typecheck 0；build 三端通过。
+- **非空过实测**（五轮注入，全部反向还原）：去掉 `DETACHABLE` 判定 → 1 红；去掉固定落库失败的回滚 → 1 红；去掉 `pinFull` 的 disabled → 1 红；`relayout` 里 `pinnedIds` 传空 → 1 红；删掉 `normalizeSidebarOrder` 的"过滤后长度"检查 → **第一次 12 例全绿**，说明我那几条用例根本打不到这个分支（缺项/超长的输入早被第一道 `raw.length` 挡住了）。补一条"同长度但含非法项"的用例后重放该注入才转红。
+- **未做（留尾，如实记）**：① `Ctrl+W` 现在是**空键**——要恢复成"关闭窗口"得给主进程菜单加 role，本轮不做（不做的原因：关窗与托盘行为的口径不在这里改）；② 「真多实例标签」（Tab 带 instanceId、模块状态按实例归属）明确不做，需要并行会话请走独立窗口；③ 独立窗口的可发现性目前只有侧栏右键一处，折叠成图标栏时也一样。
+- **未实测**：真机看侧栏右键弹出/固定、⌃n 角标与实际快捷键是否一致、**拖拽排序这次是否真的存下来了**（改前它必失败）、顶栏归还后的版面 ⇒ 验收清单 **B53**。主进程 + 共享类型 + 渲染层都动了，**须重启 dev**。
+
 ### V4-Iter-111 会话累计 token 从消息流顶部挪到每条回答后面（已落地，观感待真机）
 
 - **来源**：用户截图——顶栏那条「本会话累计 1.6k」"放到最上面不方便看；可以放到每个答案的后面"。AskUserQuestion 选定「**每条都带累计到该条**」。
@@ -80,6 +94,8 @@
 ### V4-Iter-109 再点开 Agent 模块自动回到上次用的助手与会话（已落地，真机待验）
 
 - **来源**：用户反馈——切走再回来要重新选助手、重新点会话。根因不在数据而在生命周期：`Workspace` 对模块是**条件渲染**，切走即卸载，`useAgentChat` 里的 `assistantId/conversationId` 随之归零（会话列表 effect 只认"当前助手里最近一次"）。
+
+  > ⚠️ 本条的"根因"写错了，已在 V4-Iter-112 更正：`Workspace` 自 V4-Iter-16 起是**保活**（非活动模块只 `display:none`），只有超过 `MAX_KEPT_MODULES = 4` 才按 LRU 休眠卸载。功能仍成立（休眠/重启确实会丢选中态），但"切走即卸载"这句是错的，代码注释已同步改。
 - **锁定口径**（AskUserQuestion 选「助手 + 会话」）：只持久化**助手 + 会话**两个 id，**不持久化 Provider/模型选择**；不做"每个模块记住自己的选中态"这种通用机制。
 - **落地形态（不引入新持久化格式）**：复用界面偏好通道 `UI_GET_PREFS/UI_SET_PREFS`，新增两个 app_config KV——`ui.agent_assistant_id` / `ui.agent_conversation_id`（`src/main/ui-preferences.ts`，读写走 `normalizePreferenceId`：trim + 128 上限，非字符串脏值读回空串）。选它有个顺带的好处：`app_config` 在合并里属 `LOCAL_KEEP_TABLES` ⇒ **"上次用在哪"不会被另一台机器的备份搬过来**。preload 无需改动（`setUiPrefs(patch: Partial<UiPreferences>)` 天然带上新字段）。
 - **三段时序（这段是真容易写错的地方）**：
@@ -1455,4 +1471,9 @@
 
 - **Iter-97 的离线 A/B 探针证伪了我自己的 harness，也顺带核出一条既有缺口**（未修）：想在本机 Ollama 上对比「只发原生 schema」与「原生 + 文本清单」两种 prompt 的工具调用率，结果 12/12 全部无 `tool_calls`——**连只给一个 `time_now` 工具、用户明说"必须调用工具"都不发**（qwen2.5:3b-instruct，`/v1/chat/completions` 与原生 `/api/chat` 两条路都试了，均不报错也不回 tool_calls）。⇒ 该探针不能作为 Iter-97 的任何证据（结论仍压 B45 真机）。但实测暴露的真问题是：**文本协议兜底只在 `isToolsUnsupportedError` 命中（端点报 400）时切换，而 Ollama 这类"静默忽略 tools"的端点永远不触发** ⇒ Agent 在这类模型上等于无工具，只剩面板那条零调用提示。修法要么是按"有工具却连续零调用"降级切文本协议，要么是给本地模型显式开关——都属产品口径，未动。
 - **我自己写错的口径也记一条**：V4-Iter-97 收尾时把「展示层拆 prompt/completion」描述成"零风险、不用动持久化"，实际 `agent_traces` 只有一个 `token_usage`、与 `messages.usage` 无可依赖关联 ⇒ 必须加列。教训：**估工作量时，"只是显示"不构成证据**，得先确认数据在不在你要显示的那张表里。已在 V4-Iter-98 条目里更正。
+- **V4-Iter-112 撞出三条，都记在这里**：
+  ① **我自己写的"根因"是错的**：Iter-109 说「Workspace 对模块条件渲染、切走即卸载」，实际 V4-Iter-16 起就是保活（`display:none`），只有超过 `MAX_KEPT_MODULES=4` 才 LRU 休眠。功能结论没错（休眠/重启确实丢选中态），但根因描述错、且被写进了代码注释。教训：**引用自己几轮前写下的判断不算复核**，"根因"必须当场读那段渲染代码，注释里也一样。
+  ② **注入没红，第一反应应该是怀疑用例**：删掉 `normalizeSidebarOrder` 的"过滤后长度"检查后 12 条全绿——不是那段代码多余，而是我所有"非法输入"用例都在长度上就先被第一道守卫挡掉了，这条分支从来没被测过。补一条"同长度含非法项"才真正咬住。**"变异存活"和"测试通过"是同一件事的两种说法，前者才是判据。**
+  ③ **枚举与常量各写一份 = 静默废掉一个功能**：`sidebarModuleSchema` 手写 11 项漏了 `'terminal'`（`DEFAULT_SIDEBAR_ORDER` 有 12），任何合法顺序都被 IPC 入口拒掉，而前端把失败处理成"回滚到库里那份"——回滚后看起来和没拖动一样，于是**侧栏拖拽排序从上线至今没人发现它坏了**。修法是让 schema 派生自常量，并加一条通用闸门：**默认值必须自通过自己的 schema**（这类漂移只有自反测试能挡）。
+
 - §4.1 各条都重新 grep/Read 过实现位置；未复核的旧台账文字一律不作为结论写入本节。

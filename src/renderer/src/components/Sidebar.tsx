@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { logIpcError, reportIpcError } from '../utils/ipc'
 import { ThemeLangControls } from './ThemeLangControls'
+import { useToast } from './ToastProvider'
+import { useAppStore } from '../store/app-store'
+import { DETACHABLE_MODULE_IDS, MAX_PINNED_SIDEBAR_MODULES } from '../../../shared/types'
 import type { SidebarModuleId } from '../../../shared/types'
 import logoUrl from '../assets/logo-128.png'
 
@@ -16,7 +19,6 @@ interface SidebarProps {
   onOpenReminders?: () => void
 }
 
-const MODULE_IDS: ModuleId[] = ['chat', 'agent', 'skills', 'knowledge', 'files', 'notes', 'translate', 'image', 'sandbox', 'terminal', 'steward', 'settings']
 const MODULE_ICONS: Record<ModuleId, string> = {
   chat: '💬',
   agent: '🤖',
@@ -32,6 +34,9 @@ const MODULE_ICONS: Record<ModuleId, string> = {
   settings: '⚙️'
 }
 
+/** Ctrl+1..9 只绑可见顺序的前 9 项（与原标签快捷键的覆盖范围一致） */
+const SHORTCUT_SLOTS = 9
+
 export const Sidebar: React.FC<SidebarProps> = ({
   active,
   onChange,
@@ -40,11 +45,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenReminders
 }) => {
   const { t } = useI18n()
-  // 用户自定义的模块顺序（app_config: sidebar.order）
-  const [order, setOrder] = useState<ModuleId[]>(MODULE_IDS)
+  const toast = useToast()
+  // 顺序与「固定不被休眠」都在 app-store：快捷键要按可见顺序绑定，固定要参与 LRU 淘汰判定
+  const order = useAppStore((s) => s.sidebarOrder)
+  const setSidebarOrder = useAppStore((s) => s.setSidebarOrder)
+  const pinnedModules = useAppStore((s) => s.pinnedModules)
+  const setPinnedModules = useAppStore((s) => s.setPinnedModules)
+  const toggleModulePinned = useAppStore((s) => s.toggleModulePinned)
   // 正在拖拽的模块 id
   const draggingIdRef = useRef<ModuleId | null>(null)
   const [draggingId, setDraggingId] = useState<ModuleId | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; id: ModuleId } | null>(null)
   // 待发提醒角标数（仅主窗口挂提醒中心时拉取；到点广播后刷新）
   const [pendingReminders, setPendingReminders] = useState(0)
 
@@ -68,26 +79,48 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, [onOpenReminders])
 
   useEffect(() => {
-    // 读取失败保持默认顺序，仅记诊断
-    window.pocketai
-      .getSidebarOrder()
-      .then((r) => {
-        if (r.ok && r.data && r.data.length === MODULE_IDS.length) setOrder(r.data)
+    // 读取失败保持默认顺序/全未固定，仅记诊断（Promise.all 任一 reject 会整体失败，故整体 catch）
+    void Promise.all([window.pocketai.getSidebarOrder(), window.pocketai.getSidebarPinned()])
+      .then(([ord, pin]) => {
+        if (ord.ok && ord.data) setSidebarOrder(ord.data)
+        if (pin.ok && pin.data) setPinnedModules(pin.data)
       })
-      .catch(reportIpcError('sidebar.getOrder'))
-  }, [])
+      .catch(reportIpcError('sidebar.loadNav'))
+  }, [setSidebarOrder, setPinnedModules])
+
+  // 右键菜单：点击其他区域 / Esc / 再次右键 关闭
+  useEffect(() => {
+    if (!menu) return
+    const close = (): void => setMenu(null)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('contextmenu', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('contextmenu', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
 
   // 把 from 位置的模块移动到 to 位置（拖拽悬停时实时预览）
   const moveTo = (fromId: ModuleId, toId: ModuleId) => {
-    setOrder((prev) => {
-      const from = prev.indexOf(fromId)
-      const to = prev.indexOf(toId)
-      if (from < 0 || to < 0 || from === to) return prev
-      const next = [...prev]
-      next.splice(from, 1)
-      next.splice(to, 0, fromId)
-      return next
-    })
+    const from = order.indexOf(fromId)
+    const to = order.indexOf(toId)
+    if (from < 0 || to < 0 || from === to) return
+    const next = [...order]
+    next.splice(from, 1)
+    next.splice(to, 0, fromId)
+    setSidebarOrder(next)
+  }
+
+  const rollbackOrder = (): void => {
+    window.pocketai
+      .getSidebarOrder()
+      .then((x) => x.ok && x.data && setSidebarOrder(x.data))
+      .catch(reportIpcError('sidebar.rollbackOrder'))
   }
 
   const handleDrop = () => {
@@ -95,21 +128,48 @@ export const Sidebar: React.FC<SidebarProps> = ({
     draggingIdRef.current = null
     setDraggingId(null)
     if (!id) return
-    // 落库；失败（返回未持久化或 reject）则回滚到服务端顺序
-    const finalOrder = order
-    const rollback = () => {
-      window.pocketai
-        .getSidebarOrder()
-        .then((x) => x.ok && x.data && setOrder(x.data))
-        .catch(reportIpcError('sidebar.rollbackOrder'))
-    }
-    window.pocketai.setSidebarOrder(finalOrder).then((r) => {
-      if (!r.ok || !r.data) rollback()
-    }).catch((e) => {
-      logIpcError('sidebar.setOrder', e)
-      rollback()
-    })
+    // 落库；失败（返回未持久化或 reject）则回滚到库里那份，不让界面停在"看着排好了其实没存"
+    window.pocketai
+      .setSidebarOrder(order)
+      .then((r) => {
+        if (!r.ok || !r.data) rollbackOrder()
+      })
+      .catch((e) => {
+        logIpcError('sidebar.setOrder', e)
+        rollbackOrder()
+      })
   }
+
+  const popOut = (id: ModuleId): void => {
+    void window.pocketai
+      .openDetachedWindow(id)
+      .then((r) => {
+        if (r.ok === false) toast.error(r.error ?? t('sidebar.popOutFailed'))
+      })
+      .catch(reportIpcError('sidebar.popOut'))
+  }
+
+  const pinToggle = (id: ModuleId): void => {
+    toggleModulePinned(id)
+    const next = useAppStore.getState().pinnedModules
+    const rollback = (): void => {
+      window.pocketai
+        .getSidebarPinned()
+        .then((x) => x.ok && x.data && setPinnedModules(x.data))
+        .catch(reportIpcError('sidebar.rollbackPinned'))
+    }
+    window.pocketai
+      .setSidebarPinned(next)
+      .then((r) => {
+        if (!r.ok || !r.data) rollback()
+      })
+      .catch((e) => {
+        logIpcError('sidebar.setPinned', e)
+        rollback()
+      })
+  }
+
+  const pinFull = pinnedModules.length >= MAX_PINNED_SIDEBAR_MODULES
 
   return (
     <aside
@@ -122,61 +182,79 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {!collapsed && <span className="font-bold text-base">墨匣</span>}
       </div>
 
-      {/* 模块列表（可拖拽排序） */}
+      {/* 模块列表（拖拽排序；右键弹出独立窗口 / 固定不被休眠） */}
       <nav className="flex-1 py-2 overflow-y-auto">
-        {order.map((id) => (
-          <button
-            key={id}
-            draggable
-            onDragStart={(e) => {
-              draggingIdRef.current = id
-              setDraggingId(id)
-              e.dataTransfer.effectAllowed = 'move'
-              // Firefox 需要 setData 才会触发拖拽
-              try {
-                e.dataTransfer.setData('text/plain', id)
-              } catch {
-                /* 忽略 */
-              }
-            }}
-            onDragOver={(e) => {
-              e.preventDefault()
-              e.dataTransfer.dropEffect = 'move'
-              const fromId = draggingIdRef.current
-              if (fromId && fromId !== id) moveTo(fromId, id)
-            }}
-            onDrop={(e) => {
-              e.preventDefault()
-              handleDrop()
-            }}
-            onDragEnd={() => {
-              // 未在有效目标上松手时也要复位高亮
-              draggingIdRef.current = null
-              setDraggingId(null)
-            }}
-            onClick={() => onChange(id)}
-            title={t(`sidebar.${id}`)}
-            aria-label={t(`sidebar.${id}`)}
-            className={`relative w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors cursor-grab active:cursor-grabbing ${
-              draggingId === id ? 'opacity-40' : ''
-            } ${
-              active === id
-                ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-semibold'
-                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
-            }`}
-          >
-            {active === id && (
-              <span
-                className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-[var(--color-accent)]"
-                aria-hidden
-              />
-            )}
-            <span className={`text-lg shrink-0 ${active === id ? 'opacity-100' : 'opacity-80'}`}>
-              {MODULE_ICONS[id]}
-            </span>
-            {!collapsed && <span className="truncate">{t(`sidebar.${id}`)}</span>}
-          </button>
-        ))}
+        {order.map((id, i) => {
+          const pinned = pinnedModules.includes(id)
+          const label = t(`sidebar.${id}`)
+          return (
+            <button
+              key={id}
+              draggable
+              onDragStart={(e) => {
+                draggingIdRef.current = id
+                setDraggingId(id)
+                e.dataTransfer.effectAllowed = 'move'
+                // Firefox 需要 setData 才会触发拖拽
+                try {
+                  e.dataTransfer.setData('text/plain', id)
+                } catch {
+                  /* 忽略 */
+                }
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                const fromId = draggingIdRef.current
+                if (fromId && fromId !== id) moveTo(fromId, id)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                handleDrop()
+              }}
+              onDragEnd={() => {
+                // 未在有效目标上松手时也要复位高亮
+                draggingIdRef.current = null
+                setDraggingId(null)
+              }}
+              onClick={() => onChange(id)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setMenu({ x: e.clientX, y: e.clientY, id })
+              }}
+              title={collapsed ? (pinned ? `${label} · ${t('sidebar.pinnedSuffix')}` : label) : undefined}
+              aria-label={label}
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors cursor-grab active:cursor-grabbing ${
+                draggingId === id ? 'opacity-40' : ''
+              } ${
+                active === id
+                  ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-semibold'
+                  : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
+              }`}
+            >
+              {active === id && (
+                <span
+                  className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-[var(--color-accent)]"
+                  aria-hidden
+                />
+              )}
+              <span className={`text-lg shrink-0 ${active === id ? 'opacity-100' : 'opacity-80'}`}>
+                {MODULE_ICONS[id]}
+              </span>
+              {!collapsed && <span className="flex-1 text-left truncate">{label}</span>}
+              {/* 固定徽标：折叠成图标栏时靠它 + tooltip 表达"这个模块不会被休眠" */}
+              {pinned && (
+                <span className="shrink-0 text-[10px]" title={t('sidebar.pinnedSuffix')}>
+                  📌
+                </span>
+              )}
+              {!collapsed && i < SHORTCUT_SLOTS && (
+                <span className="shrink-0 text-[10px] opacity-60">⌃{i + 1}</span>
+              )}
+            </button>
+          )
+        })}
       </nav>
 
       {/* 待发提醒中心（仅主窗口挂载） */}
@@ -223,6 +301,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
       >
         {collapsed ? '›' : '‹'}
       </button>
+
+      {menu && (
+        <div
+          className="fixed z-[9000] min-w-[150px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-xs shadow-lg"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-hover-overlay)]"
+            onClick={() => {
+              onChange(menu.id)
+              setMenu(null)
+            }}
+          >
+            {t('sidebar.openHere')}
+          </button>
+          {DETACHABLE_MODULE_IDS.includes(menu.id) && (
+            <button
+              className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-hover-overlay)]"
+              onClick={() => {
+                popOut(menu.id)
+                setMenu(null)
+              }}
+            >
+              {t('sidebar.popOut')}
+            </button>
+          )}
+          <button
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-hover-overlay)] disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={!pinnedModules.includes(menu.id) && pinFull}
+            title={!pinnedModules.includes(menu.id) && pinFull ? t('sidebar.pinFull') : undefined}
+            onClick={() => {
+              pinToggle(menu.id)
+              setMenu(null)
+            }}
+          >
+            {pinnedModules.includes(menu.id) ? t('sidebar.unpin') : t('sidebar.pin')}
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

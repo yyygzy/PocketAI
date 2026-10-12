@@ -819,13 +819,19 @@ const api = {
   setProxyUrl: (url: string): Promise<string | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.NET_PROXY_SET, url),
 
-  // ---------- 侧栏模块顺序 ----------
+  // ---------- 侧栏模块顺序与固定 ----------
   getSidebarOrder: (): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>
     ipcRenderer.invoke(IPC.SIDEBAR_GET_ORDER),
   setSidebarOrder: (
     order: import('../shared/types').SidebarModuleId[]
   ): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>
     ipcRenderer.invoke(IPC.SIDEBAR_SET_ORDER, order),
+  getSidebarPinned: (): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>
+    ipcRenderer.invoke(IPC.SIDEBAR_GET_PINNED),
+  setSidebarPinned: (
+    list: import('../shared/types').SidebarModuleId[]
+  ): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>
+    ipcRenderer.invoke(IPC.SIDEBAR_SET_PINNED, list),
   onPopupPayload: (handler: (e: import('../shared/types').PopupPayload) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: import('../shared/types').PopupPayload) =>
       handler(data)

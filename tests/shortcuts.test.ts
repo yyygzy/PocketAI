@@ -18,10 +18,11 @@ describe('matchAppShortcut 修饰键组合', () => {
     expect(matchAppShortcut(key({ key: '/', ctrlKey: true }), { running: false })?.id).toBe('focusComposer')
   })
 
-  it('Ctrl+W / Ctrl+, / Ctrl+L 命中窗口类动作', () => {
-    expect(matchAppShortcut(key({ key: 'w', ctrlKey: true }), { running: false })).toEqual({ id: 'closeTab' })
+  it('Ctrl+, / Ctrl+L 命中窗口类动作；Ctrl+W 随标签页一起下线（反向对照：不再命中）', () => {
     expect(matchAppShortcut(key({ key: ',', ctrlKey: true }), { running: false })).toEqual({ id: 'openSettings' })
     expect(matchAppShortcut(key({ key: 'l', ctrlKey: true }), { running: false })).toEqual({ id: 'lock' })
+    // 标签页系统已删（V4-Iter-112）：Ctrl+W 必须是"未注册"，不能被静默复用成别的动作
+    expect(matchAppShortcut(key({ key: 'w', ctrlKey: true }), { running: false })).toBeNull()
   })
 
   it('Ctrl+P（⌘+P）命中全局命令面板', () => {
@@ -29,16 +30,16 @@ describe('matchAppShortcut 修饰键组合', () => {
     expect(matchAppShortcut(key({ key: 'P', metaKey: true }), { running: false })).toEqual({ id: 'commandPalette' })
   })
 
-  it('Ctrl+1~9 命中切标签并带序号；0 不命中', () => {
-    expect(matchAppShortcut(key({ key: '1', ctrlKey: true }), { running: false })).toEqual({ id: 'tab', tabIndex: 1 })
-    expect(matchAppShortcut(key({ key: '9', ctrlKey: true }), { running: false })).toEqual({ id: 'tab', tabIndex: 9 })
-    expect(matchAppShortcut(key({ key: '5', ctrlKey: true }), { running: false })).toEqual({ id: 'tab', tabIndex: 5 })
+  it('Ctrl+1~9 命中「切侧栏第 N 个模块」并带序号；0 不命中', () => {
+    expect(matchAppShortcut(key({ key: '1', ctrlKey: true }), { running: false })).toEqual({ id: 'module', moduleIndex: 1 })
+    expect(matchAppShortcut(key({ key: '9', ctrlKey: true }), { running: false })).toEqual({ id: 'module', moduleIndex: 9 })
+    expect(matchAppShortcut(key({ key: '5', ctrlKey: true }), { running: false })).toEqual({ id: 'module', moduleIndex: 5 })
     expect(matchAppShortcut(key({ key: '0', ctrlKey: true }), { running: false })).toBeNull()
   })
 
   it('Meta(⌘) 与 Ctrl 等价；key 大小写不敏感', () => {
     expect(matchAppShortcut(key({ key: 'N', metaKey: true }), { running: false })?.id).toBe('newConv')
-    expect(matchAppShortcut(key({ key: 'W', metaKey: true }), { running: false })?.id).toBe('closeTab')
+    expect(matchAppShortcut(key({ key: 'L', metaKey: true }), { running: false })?.id).toBe('lock')
   })
 
   it('Alt 组合一律不命中（Ctrl+Alt 同按也不行）', () => {
@@ -58,8 +59,8 @@ describe('matchAppShortcut 修饰键组合', () => {
   })
 
   it('修饰键组合在输入框聚焦时仍命中（中枢需接管 preventDefault）', () => {
-    const inInput = key({ key: 'w', ctrlKey: true, target: fakeEl('INPUT') as EventTarget })
-    expect(matchAppShortcut(inInput, { running: false })?.id).toBe('closeTab')
+    const inInput = key({ key: 'n', ctrlKey: true, target: fakeEl('INPUT') as EventTarget })
+    expect(matchAppShortcut(inInput, { running: false })?.id).toBe('newConv')
     const inTextarea = key({ key: 'l', ctrlKey: true, target: fakeEl('TEXTAREA') as EventTarget })
     expect(matchAppShortcut(inTextarea, { running: false })?.id).toBe('lock')
   })
@@ -109,14 +110,13 @@ describe('isEditableTarget', () => {
 describe('filterShortcutForContext', () => {
   const m = (id: AppShortcutMatch['id']): AppShortcutMatch => ({ id })
 
-  it('detached 放行会话类四动作 + lock；屏蔽 tab/closeTab/openSettings', () => {
+  it('detached 放行会话类四动作 + lock；屏蔽 module/openSettings', () => {
     expect(filterShortcutForContext(m('newConv'), 'detached')?.id).toBe('newConv')
     expect(filterShortcutForContext(m('focusSearch'), 'detached')?.id).toBe('focusSearch')
     expect(filterShortcutForContext(m('focusComposer'), 'detached')?.id).toBe('focusComposer')
     expect(filterShortcutForContext(m('abort'), 'detached')?.id).toBe('abort')
     expect(filterShortcutForContext(m('lock'), 'detached')?.id).toBe('lock')
-    expect(filterShortcutForContext(m('tab'), 'detached')).toBeNull()
-    expect(filterShortcutForContext(m('closeTab'), 'detached')).toBeNull()
+    expect(filterShortcutForContext(m('module'), 'detached')).toBeNull()
     expect(filterShortcutForContext(m('openSettings'), 'detached')).toBeNull()
     // 命令面板仅主窗：独立窗无模块切换，屏蔽
     expect(filterShortcutForContext(m('commandPalette'), 'detached')).toBeNull()
@@ -125,7 +125,7 @@ describe('filterShortcutForContext', () => {
   it('popup 仅放行 newConv；命令面板在浮窗也屏蔽', () => {
     expect(filterShortcutForContext(m('newConv'), 'popup')?.id).toBe('newConv')
     expect(filterShortcutForContext(m('abort'), 'popup')).toBeNull()
-    expect(filterShortcutForContext(m('tab'), 'popup')).toBeNull()
+    expect(filterShortcutForContext(m('module'), 'popup')).toBeNull()
     expect(filterShortcutForContext(m('lock'), 'popup')).toBeNull()
     expect(filterShortcutForContext(m('commandPalette'), 'popup')).toBeNull()
   })

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Sidebar, type ModuleId } from './components/Sidebar'
-import { TabBar } from './components/TabBar'
 import { Workspace } from './components/Workspace'
 import { LockOverlay } from './components/LockOverlay'
 import { ToolApprovalDialog } from './components/ToolApprovalDialog'
@@ -22,21 +21,12 @@ export default function App() {
 
   // 跨模块状态从全局 store 读取
   const activeModule = useAppStore((s) => s.activeModule)
-  const tabs = useAppStore((s) => s.tabs)
-  const activeTabId = useAppStore((s) => s.activeTabId)
   const locked = useAppStore((s) => s.locked)
   const dbEncrypted = useAppStore((s) => s.dbEncrypted)
   const wizard = useAppStore((s) => s.wizard)
 
   const switchModule = useAppStore((s) => s.switchModule)
-  const newTab = useAppStore((s) => s.newTab)
-  const closeTab = useAppStore((s) => s.closeTab)
-  const reorderTabs = useAppStore((s) => s.reorderTabs)
-  const closeOthers = useAppStore((s) => s.closeOthers)
-  const closeRight = useAppStore((s) => s.closeRight)
-  const togglePin = useAppStore((s) => s.togglePin)
   const touchModule = useAppStore((s) => s.touchModule)
-  const setActiveTabId = useAppStore((s) => s.setActiveTabId)
   const setLocked = useAppStore((s) => s.setLocked)
   const setDbEncrypted = useAppStore((s) => s.setDbEncrypted)
   const setWizard = useAppStore((s) => s.setWizard)
@@ -48,10 +38,9 @@ export default function App() {
   const [lockPwd, setLockPwd] = useState('')
   const [lockErr, setLockErr] = useState('')
 
-  const activeTab = tabs.find((tb) => tb.id === activeTabId)
   const contentRef = useRef<HTMLDivElement>(null)
 
-  // 标签/模块切换：更新保活 LRU（挂载新模块、超阈值时休眠最久未访问者）
+  // 模块切换：更新保活 LRU（挂载新模块、超阈值时休眠最久未访问者）
   useEffect(() => {
     touchModule(activeModule)
   }, [activeModule, touchModule])
@@ -111,36 +100,14 @@ export default function App() {
     }
   }, [])
 
-  // 应用内全局快捷键中枢（Ctrl+数字切标签 / Ctrl+W 关标签 / Ctrl+, 设置 / Ctrl+L 锁屏 / 会话类）
+  // 应用内全局快捷键中枢（Ctrl+数字切侧栏第 N 个模块 / Ctrl+, 设置 / Ctrl+L 锁屏 / 会话类）
   useGlobalShortcuts()
-
-  // 模块 → 标签标题（语言切换时随之更新）
-  const moduleTitle = useCallback(
-    (id: ModuleId): string => {
-      const map: Record<ModuleId, string> = {
-        chat: t('tab.newChat'),
-        agent: t('tab.newAgent'),
-        skills: t('tab.skills'),
-        knowledge: t('tab.knowledge'),
-        files: t('tab.files'),
-        notes: t('tab.notes'),
-        translate: t('tab.translate'),
-        image: t('tab.image'),
-        sandbox: t('tab.sandbox'),
-        terminal: t('tab.terminal'),
-        steward: t('tab.steward'),
-        settings: t('tab.settings')
-      }
-      return map[id]
-    },
-    [t]
-  )
 
   const handleModuleChange = useCallback(
     (id: ModuleId) => {
-      switchModule(id, moduleTitle(id))
+      switchModule(id)
     },
-    [switchModule, moduleTitle]
+    [switchModule]
   )
 
   // 允许其他模块通过 window 事件请求切换模块（如聊天「另存为笔记」跳到笔记页）
@@ -162,19 +129,6 @@ export default function App() {
     }
   }
 
-  const handleNewTab = () => newTab(moduleTitle(activeModule))
-
-  const handlePopOut = (id: string) => {
-    const tab = tabs.find((tb) => tb.id === id)
-    if (!tab) return
-    window.pocketai
-      .openDetachedWindow(tab.moduleId)
-      .then((r) => {
-        if (r.ok) closeTab(id)
-      })
-      .catch(reportIpcError('app.openDetached'))
-  }
-
   return (
     <ToastProvider>
       <ReminderListener />
@@ -188,20 +142,9 @@ export default function App() {
             onToggleCollapse={() => setCollapsed((c) => !c)}
             onOpenReminders={() => setRemindersOpen(true)}
           />
+          {/* 侧栏即唯一导航：模块内容区直接顶到窗口顶部（原 36px 标签栏已随标签页系统下线） */}
           <div className="flex flex-col flex-1 min-w-0">
-            <TabBar
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onSelect={setActiveTabId}
-              onClose={closeTab}
-              onNew={handleNewTab}
-              onReorder={reorderTabs}
-              onCloseOthers={closeOthers}
-              onCloseRight={closeRight}
-              onTogglePin={togglePin}
-              onPopOut={handlePopOut}
-            />
-            <Workspace activeModule={(activeTab?.moduleId as ModuleId) || activeModule} />
+            <Workspace activeModule={activeModule} />
           </div>
         </div>
 

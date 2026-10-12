@@ -1,5 +1,7 @@
 // 偏好设置 IPC 入参 schema
 import { z } from 'zod'
+import { DEFAULT_SIDEBAR_ORDER, MAX_PINNED_SIDEBAR_MODULES } from '../types'
+import type { SidebarModuleId } from '../types'
 
 /** UI_SET_PREFS 入参：Partial<UiPreferences>
  *  customCss 不在此设 max：服务层 setUiPreferences 统一截断到 MAX_CSS_LENGTH(200KB)，
@@ -15,15 +17,27 @@ export const uiPrefsPatchSchema = z.object({
   agentConversationId: z.string().max(128).optional()
 })
 
-const sidebarModuleSchema = z.enum([
-  'chat', 'agent', 'skills', 'knowledge', 'files',
-  'notes', 'translate', 'image', 'sandbox', 'steward', 'settings'
-])
+/**
+ * 模块清单只允许有一份真相：`DEFAULT_SIDEBAR_ORDER`。
+ * 这里曾手写 11 项枚举、漏掉 `'terminal'`（实际 12 个模块），后果是任何合法顺序都被
+ * schema 拒掉 ⇒ `setSidebarOrder` 永远返回失败并被前端回滚，**侧栏拖拽排序从未生效**。
+ * 派生自常量 + 下面那条「默认顺序必须自通过」的用例，一起防住第二次漂移。
+ */
+const sidebarModuleSchema = z.enum(
+  DEFAULT_SIDEBAR_ORDER as [SidebarModuleId, ...SidebarModuleId[]]
+)
 
 /** SIDEBAR_SET_ORDER 入参：必须是全部模块的一个排列 */
 export const sidebarOrderSchema = z
   .array(sidebarModuleSchema)
   .refine(
-    (arr) => arr.length === 11 && new Set(arr).size === 11,
+    (arr) =>
+      arr.length === DEFAULT_SIDEBAR_ORDER.length && new Set(arr).size === DEFAULT_SIDEBAR_ORDER.length,
     '侧栏顺序必须是全部模块的一个排列'
   )
+
+/** SIDEBAR_SET_PINNED 入参：固定不被休眠的模块子集（去重，数量不超过保活名额） */
+export const sidebarPinnedSchema = z
+  .array(sidebarModuleSchema)
+  .max(MAX_PINNED_SIDEBAR_MODULES)
+  .refine((arr) => new Set(arr).size === arr.length, '固定列表不能有重复模块')

@@ -11,8 +11,7 @@ export interface ShortcutKeyLike {
 }
 
 export type AppShortcutId =
-  | 'tab' // 切换第 N 个标签（tabIndex 为 1-9）
-  | 'closeTab'
+  | 'module' // 切换到侧栏可见顺序的第 N 项（moduleIndex 为 1-9）
   | 'openSettings'
   | 'lock'
   | 'newConv'
@@ -23,8 +22,8 @@ export type AppShortcutId =
 
 export interface AppShortcutMatch {
   id: AppShortcutId
-  /** id === 'tab' 时：标签序号（1-9） */
-  tabIndex?: number
+  /** id === 'module' 时：侧栏可见序号（1-9） */
+  moduleIndex?: number
 }
 
 /** 会话类动作（由中枢派发给当前活动的 chat / agent 实例） */
@@ -43,18 +42,17 @@ export function isEditableTarget(el: EventTarget | null | undefined): boolean {
 
 /**
  * 识别应用内快捷键：
- * - Ctrl/⌘+1~9 切标签；+W 关标签；+, 打开设置；+L 锁屏；+N 新建会话；+K 聚焦搜索；+/ 聚焦输入框
+ * - Ctrl/⌘+1~9 切侧栏第 N 个模块；+, 打开设置；+L 锁屏；+N 新建会话；+K 聚焦搜索；+/ 聚焦输入框
  * - Esc（无任何修饰键、焦点不在输入框、流式运行中）停止生成
  * 规则：Alt 组合一律不识别（避输入法/系统快捷键冲突）；Ctrl 与 Meta 等价（Win/Linux 与 Mac）。
+ * 原 Ctrl+W「关闭标签」随标签页系统一起下线（V4-Iter-112）；主进程菜单未绑该键，故它现在是空键。
  */
 export function matchAppShortcut(e: ShortcutKeyLike, ctx: { running: boolean }): AppShortcutMatch | null {
   const mod = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
   const key = e.key.toLowerCase()
   if (mod) {
-    if (key >= '1' && key <= '9') return { id: 'tab', tabIndex: Number(key) }
+    if (key >= '1' && key <= '9') return { id: 'module', moduleIndex: Number(key) }
     switch (key) {
-      case 'w':
-        return { id: 'closeTab' }
       case ',':
         return { id: 'openSettings' }
       case 'l':
@@ -92,12 +90,12 @@ export function modLabel(): string {
   return /mac/i.test(platform) ? '⌘' : 'Ctrl'
 }
 
-/** 非主窗口上下文：detached=独立窗（单模块无标签栏）、popup=快捷浮窗（简易问答） */
+/** 非主窗口上下文：detached=独立窗口（单模块、无侧栏）、popup=快捷浮窗（简易问答） */
 export type ShortcutContext = 'detached' | 'popup'
 
 /**
  * 按窗口上下文裁剪快捷键动作（纯函数）：
- * - detached：放行会话类四动作 + lock；屏蔽 tab/closeTab（无标签栏）与 openSettings（单模块无模块切换）
+ * - detached：放行会话类四动作 + lock；屏蔽 module/openSettings（单模块窗口没有侧栏可切）
  * - popup：仅放行 newConv（清空重开一轮问答）；其余由浮窗自身局部处理
  * 返回 null 表示该上下文不响应此动作。
  */
