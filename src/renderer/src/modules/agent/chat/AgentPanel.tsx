@@ -403,6 +403,8 @@ export const AgentPanel: React.FC = () => {
               onFetchModels={() => void fetchModels(chat.providerId)}
               workspaceDir={tools.workspaceDir}
               onPickWorkspace={() => void tools.pickWorkspace()}
+              textProtocolForced={chat.textProtocolForced}
+              onToggleTextProtocol={(on) => chat.setTextProtocol(on)}
             />
           </div>
           {/* 头部快捷：会话内搜索 */}
@@ -594,18 +596,35 @@ export const AgentPanel: React.FC = () => {
           </button>
         )}
 
-        {/* 零调用提示：有工具可用但模型未调用任何工具 */}
+        {/* 零调用提示：有工具可用但模型未调用任何工具。
+            两条"为什么"分开说：① 工具确实没给（MCP 被 '*' 挡下）；② 端点静默忽略 tools（建议改文本协议）。
+            两条不同时给——已知有工具被挡时，那条就是更可能的原因，再劝一次开关只会误导。 */}
         {chat.noToolCallNotice && !chat.running && (
-          <div className="mb-2 self-start w-full max-w-[640px] flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-bg)] text-xs">
-            <span className="shrink-0">⚠️</span>
-            <span className="flex-1 text-[var(--color-text)]">{t('agent.noToolCallNotice')}</span>
-            <button
-              onClick={() => chat.setNoToolCallNotice(false)}
-              className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              title={t('common.close')}
-            >
-              ✕
-            </button>
+          <div className="mb-2 self-start w-full max-w-[640px] rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-bg)] px-3 py-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="shrink-0">⚠️</span>
+              <span className="flex-1 text-[var(--color-text)]">{t('agent.noToolCallNotice')}</span>
+              <button
+                onClick={() => chat.setNoToolCallNotice(false)}
+                className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                title={t('common.close')}
+              >
+                ✕
+              </button>
+            </div>
+            {chat.mcpHeldBack > 0 && (
+              <p className="mt-1 pl-6 text-[var(--color-text-muted)]">
+                {t('agent.mcpHeldBackHint', { count: chat.mcpHeldBack })}
+              </p>
+            )}
+            {chat.mcpHeldBack === 0 && chat.providerId && chat.model && !chat.textProtocolForced && (
+              <button
+                onClick={() => chat.setTextProtocol(true)}
+                className="mt-1.5 pl-6 text-left text-[var(--color-accent)] hover:underline"
+              >
+                {t('agent.textProtocolSuggest')}
+              </button>
+            )}
           </div>
         )}
 

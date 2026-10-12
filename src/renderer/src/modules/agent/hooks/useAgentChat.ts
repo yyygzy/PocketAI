@@ -34,6 +34,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [currentStep, setCurrentStep] = useState(0) // 当前运行正在执行的步数（running 时显示，结束后丢弃）
   /** 零调用提示：本次运行有工具可用但模型未调用任何工具时显示 */
   const [noToolCallNotice, setNoToolCallNotice] = useState(false)
+  /** 本次运行被「'*' 只给内置」挡下的 MCP 工具数（随 DONE 事件回传，附在零调用提示里） */
+  const [mcpHeldBack, setMcpHeldBack] = useState(0)
+  /** 被用户点名「走文本协议」的模型键（`providerId::model`）；开关存 app_config，跨重启保留 */
+  const [textProtocolModels, setTextProtocolModels] = useState<string[]>([])
   /** 运行中实时步骤条 chip 流（done/error/切会话清空；不打 messages-reducer，避免污染消息流） */
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [providerId, setProviderId] = useState('')
@@ -46,6 +50,30 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const selectedProvider = useMemo(
     () => providers.find((p) => p.id === providerId),
     [providers, providerId]
+  )
+
+  // 文本协议开关的当前状态：清单在挂载时读一次，之后以 set 通道回传的最新值为准
+  useEffect(() => {
+    void window.pocketai
+      .getAgentTextProtocol()
+      .then((list) => setTextProtocolModels(Array.isArray(list) ? list : []))
+      .catch(reportIpcError('agent.getTextProtocol'))
+  }, [])
+
+  /** 当前选中的 provider+model 是否已被点名走文本协议 */
+  const textProtocolForced =
+    !!providerId && !!model && textProtocolModels.includes(`${providerId}::${model}`)
+
+  /** 开/关当前这台模型的文本协议（下一轮运行生效；不做本地乐观更新，以库里回传的清单为准） */
+  const setTextProtocol = useCallback(
+    (on: boolean) => {
+      if (!providerId || !model) return
+      void window.pocketai
+        .setAgentTextProtocol(providerId, model, on)
+        .then((list) => setTextProtocolModels(Array.isArray(list) ? list : []))
+        .catch(reportIpcError('agent.setTextProtocol'))
+    },
+    [providerId, model]
   )
 
   /**
@@ -217,6 +245,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setTracesLoading(false)
     setLiveSteps([])
     setNoToolCallNotice(false)
+    setMcpHeldBack(0)
     if (!conversationId) {
       dispatch({ type: 'clear' })
       return
@@ -262,6 +291,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           setRunStats(e.traceStats ?? null)
           // 零调用提示：有工具可用但未调用任何工具
           setNoToolCallNotice(e.usedTools === false)
+          setMcpHeldBack(e.mcpHeldBack ?? 0)
           // 把知识库引用来源挂到最终回答卡片（流式结束即时显示，无需 reload）
           if (e.sources?.length) {
             dispatch({ type: 'setSources', messageId: e.finalMessageId, sources: e.sources })
@@ -473,6 +503,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     liveSteps,
     noToolCallNotice,
     setNoToolCallNotice,
+    mcpHeldBack,
+    textProtocolForced,
+    setTextProtocol,
     providerId,
     model,
     setModel,

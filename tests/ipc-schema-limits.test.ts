@@ -18,7 +18,7 @@ import {
 import { translateRequestSchema, glossarySaveSchema } from '../src/shared/schemas/translate'
 import { imageGenerateSchema } from '../src/shared/schemas/images'
 import { providerRecordSchema, idSchema } from '../src/shared/schemas/providers'
-import { websearchConfigSchema, calendarConfigSchema, toolApproveResponseSchema } from '../src/shared/schemas/agent'
+import { websearchConfigSchema, calendarConfigSchema, toolApproveResponseSchema, textProtocolToggleSchema } from '../src/shared/schemas/agent'
 import { sandboxCreateSchema, sandboxUpdateMetaSchema } from '../src/shared/schemas/sandbox'
 import { channelSetConfigSchema } from '../src/shared/schemas/channels'
 import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../src/shared/schemas/preferences'
@@ -377,5 +377,25 @@ describe('侧栏导航 schema（顺序 / 固定）', () => {
     expect(
       sidebarPinnedSchema.safeParse(DEFAULT_SIDEBAR_ORDER.slice(0, MAX_PINNED_SIDEBAR_MODULES + 1)).success
     ).toBe(false)
+  })
+})
+
+describe('AGENT_SET_TEXT_PROTOCOL 入参（模型级文本协议开关）', () => {
+  it('正常开关请求通过', () => {
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p1', model: 'qwen2.5:3b', on: true }).success).toBe(true)
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p1', model: 'm', on: false }).success).toBe(true)
+  })
+
+  it('空 providerId/model 或缺 on 一律拒（不允许"关掉一个不存在的模型"这种半截请求）', () => {
+    expect(textProtocolToggleSchema.safeParse({ providerId: '', model: 'm', on: true }).success).toBe(false)
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p1', model: '', on: true }).success).toBe(false)
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p1', model: 'm' }).success).toBe(false)
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p1', model: 'm', on: 'yes' }).success).toBe(false)
+  })
+
+  it('超长 id/model 拒（providerId 64、model 128；与存储层的片段上限一致）', () => {
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p'.repeat(65), model: 'm', on: true }).success).toBe(false)
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p1', model: 'm'.repeat(129), on: true }).success).toBe(false)
+    expect(textProtocolToggleSchema.safeParse({ providerId: 'p1', model: 'm'.repeat(128), on: true }).success).toBe(true)
   })
 })

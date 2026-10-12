@@ -856,6 +856,11 @@ export interface AgentDoneEvent {
   sources?: MessageSource[]
   /** 本次运行是否实际调用了工具（用于零调用提示） */
   usedTools?: boolean
+  /**
+   * 本次因「'*' 只授权内置」而被挡在工具面外的 MCP 工具数（V4-Iter-110 的可观测性）。
+   * 只在 >0 时携带；渲染层附在零调用提示里，告诉用户"不是模型懒，是工具没给"。
+   */
+  mcpHeldBack?: number
 }
 
 /** Agent 流式文本增量（逐 token 推送） */
@@ -2034,6 +2039,8 @@ export const IPC = {
   AGENT_GET_LATEST_RUN_STATS: 'agent:get-latest-run-stats', // 会话最近一次运行统计（trace 聚合，只读）
   AGENT_GET_LATEST_RUN_TRACES: 'agent:get-latest-run-traces', // 会话最近一次运行分步明细（只读）
   AGENT_GET_SESSION_STATS: 'agent:get-session-stats', // 会话级累计统计（跨全部运行聚合，只读）
+  AGENT_GET_TEXT_PROTOCOL: 'agent:get-text-protocol', // 被点名走文本协议的模型清单（只读）
+  AGENT_SET_TEXT_PROTOCOL: 'agent:set-text-protocol', // 开/关某台模型的文本协议
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

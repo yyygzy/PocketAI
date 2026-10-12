@@ -47,7 +47,7 @@ vi.mock('../src/main/conversation/title-gen', () => ({ runFirstMessageTitle: () 
 // engine 间接经 usage-service → app-config.repo → portable/electron 链；纯函数测试用不到，整体打桩
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: {} }))
 
-import type { MessageRecord, ChatAttachment, ToolCall, ToolResult } from '../src/shared/types'
+import type { MessageRecord, ChatAttachment, ToolCall, ToolResult, ToolSchema } from '../src/shared/types'
 import type { AdapterChatMessage } from '../src/main/providers/types'
 import {
   buildContext,
@@ -59,6 +59,8 @@ import {
   estimateTokens,
   cutToTokens,
   resolveAgentToolPermissions,
+  ensureProtocolPrompt,
+  countMcpHeldBack,
   extractKbSearchSources,
   mergeSources,
   wrapUntrusted,
@@ -559,5 +561,65 @@ describe('kb_search 引用来源归集（SEC-29）', () => {
       content: 'c'
     }))
     expect(mergeSources([], many)).toHaveLength(12)
+  })
+})
+describe('ensureProtocolPrompt — 文本协议段注入（自动降级与显式开关共用）', () => {
+  const tool = (name: string): ToolSchema => ({
+    id: `builtin.${name}`,
+    name,
+    description: `工具 ${name}`,
+    parameters: { type: 'object', properties: {} },
+    source: 'builtin'
+  })
+  const sys = (content: string): AdapterChatMessage => ({ role: 'system', content })
+
+  it('注入一次即带协议段与工具清单', () => {
+    const messages = [sys('你是 Agent'), sys('不该被动')]
+    expect(ensureProtocolPrompt(messages, [tool('time_now')])).toBe(true)
+    expect(messages[0]!.content).toContain('## 工具调用协议')
+    expect(messages[0]!.content).toContain('time_now')
+    expect(messages[1]!.content).toBe('不该被动')
+  })
+
+  it('幂等：重复调用不再追加（重试循环每步都会调，重复注入会把这段固定开销翻倍）', () => {
+    const messages = [sys('你是 Agent')]
+    ensureProtocolPrompt(messages, [tool('time_now')])
+    const once = String(messages[0]!.content).length
+    expect(ensureProtocolPrompt(messages, [tool('time_now')])).toBe(false)
+    expect(String(messages[0]!.content).length).toBe(once)
+  })
+
+  it('首条不是 system（或 content 非字符串）时不注入也不报错', () => {
+    const noSys: AdapterChatMessage[] = [{ role: 'user', content: 'hi' }]
+    expect(ensureProtocolPrompt(noSys, [tool('time_now')])).toBe(false)
+    expect(noSys[0]!.content).toBe('hi')
+    const parts: AdapterChatMessage[] = [{ role: 'system', content: [{ type: 'text', text: '多模态段' } as never] }]
+    expect(ensureProtocolPrompt(parts, [tool('time_now')])).toBe(false)
+    const empty: AdapterChatMessage[] = []
+    expect(ensureProtocolPrompt(empty, [tool('time_now')])).toBe(false)
+  })
+})
+
+describe('countMcpHeldBack — 「*」收紧的可观测性', () => {
+  const builtin: ToolSchema = { id: 'fs.write', name: 'fs_write', description: '', parameters: {}, source: 'builtin' }
+  const mcpA: ToolSchema = { id: 'mcp:s1:read', name: 's1_read', description: '', parameters: {}, source: 'mcp' }
+  const mcpB: ToolSchema = { id: 'mcp:s2:search', name: 's2_search', description: '', parameters: {}, source: 'mcp' }
+  const all = [builtin, mcpA, mcpB]
+
+  it('「*」下所有 MCP 都算被挡（内置不计）', () => {
+    expect(countMcpHeldBack(['*'], all)).toBe(2)
+  })
+
+  it('已显式点名的 MCP 不算被挡', () => {
+    expect(countMcpHeldBack(['*', mcpA.id], all)).toBe(1)
+  })
+
+  it('非「*」授权一律返回 0（那是逐条勾选的语义，不存在"被规则挡下"）', () => {
+    expect(countMcpHeldBack([builtin.id], all)).toBe(0)
+    expect(countMcpHeldBack([], all)).toBe(0)
+  })
+
+  it('没有 MCP 工具时是 0，提示不该出现', () => {
+    expect(countMcpHeldBack(['*'], [builtin])).toBe(0)
   })
 })

@@ -35,3 +35,14 @@ export const toolApproveResponseSchema = z.object({
   approved: z.boolean(),
   alwaysAllow: z.boolean().optional()
 })
+
+/**
+ * AGENT_SET_TEXT_PROTOCOL 入参：点名某台模型走/不走文本协议（§4.4-⑦ 显式开关）。
+ * model 名与 providerId 同长度档：都远小于上限，超限只可能是脏输入或攻击面探测。
+ */
+export const textProtocolToggleSchema = z.object({
+  providerId: z.string().min(1).max(AGENT_MAX_ID_CHARS),
+  // 模型名不受 id 上限约束（带 registry/量化后缀的长名实测可超 64），单列一档 128
+  model: z.string().min(1).max(128),
+  on: z.boolean()
+})

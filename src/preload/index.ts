@@ -696,6 +696,12 @@ const api = {
   /** 会话级累计统计（跨全部运行：运行次数/总耗时/总 token）；无记录返回 null */
   getSessionStats: (conversationId: string): Promise<AgentSessionStats | null> =>
     ipcRenderer.invoke(IPC.AGENT_GET_SESSION_STATS, conversationId),
+  /** 被点名「走文本协议」的模型清单（元素形如 `providerId::model`） */
+  getAgentTextProtocol: (): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_TEXT_PROTOCOL),
+  /** 开/关某台模型的文本协议；返回最新清单（以库里为准，调用方不做乐观更新） */
+  setAgentTextProtocol: (providerId: string, model: string, on: boolean): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_TEXT_PROTOCOL, { providerId, model, on }),
 
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>

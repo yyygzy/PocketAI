@@ -58,6 +58,8 @@ function mount(opts: MountOpts = {}) {
     setUiPrefs: (patch: Record<string, unknown>) => ({ ok: true, data: patch }),
     listConversations: (assistantId: string, _agent: boolean, isArchived: boolean) =>
       (isArchived ? opts.archived?.[assistantId] : opts.conversations?.[assistantId]) ?? [],
+    getAgentTextProtocol: () => [],
+    setAgentTextProtocol: () => [],
     listMessages: () => [],
     getLatestRunStats: () => null,
     getSessionStats: () => null,

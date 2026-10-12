@@ -15,8 +15,10 @@ import {
   shellConfigSchema,
   websearchConfigSchema,
   calendarConfigSchema,
-  toolApproveResponseSchema
+  toolApproveResponseSchema,
+  textProtocolToggleSchema
 } from '../../../shared/schemas/agent'
+import { listTextProtocolModels, setTextProtocolModel } from '../../agent/text-protocol-prefs'
 import { idSchema } from '../../../shared/schemas/providers'
 
 const log = createLogger('agent')
@@ -116,6 +118,15 @@ export function registerAgentHandlers(): void {
   safeHandle(IPC.AGENT_GET_SESSION_STATS, (_e, conversationId: string) =>
     agentTraceRepo.sessionStatsByConversation(conversationId),
   argsSchema(idSchema))
+
+  // ---------- 模型级「走文本协议」显式开关（§4.4-⑦） ----------
+  safeHandle(IPC.AGENT_GET_TEXT_PROTOCOL, () => listTextProtocolModels())
+  safeHandle(
+    IPC.AGENT_SET_TEXT_PROTOCOL,
+    (_e, payload: { providerId: string; model: string; on: boolean }) =>
+      setTextProtocolModel(payload.providerId, payload.model, payload.on),
+    argsSchema(textProtocolToggleSchema)
+  )
 
   // 渲染端对工具审批弹窗的应答
   safeHandle(

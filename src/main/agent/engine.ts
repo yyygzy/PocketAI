@@ -51,6 +51,7 @@ import {
   extractTextToolCalls,
   buildTextProtocolPrompt
 } from '../../shared/text-tool-protocol'
+import { isTextProtocolForced } from './text-protocol-prefs'
 
 const MAX_STEPS = 10
 const logger = createLogger('agent')
@@ -217,6 +218,32 @@ export function resolveAgentToolPermissions(
   const list = Array.isArray(assistantPermissions) ? assistantPermissions : []
   if (list.length > 0) return list
   return opts.hasAssistant && !opts.isBuiltin ? [] : ['*']
+}
+
+/** 与 shared/text-tool-protocol 的注入段标题一致，用作"是否已注入"的幂等标记 */
+const PROTOCOL_MARKER = '## 工具调用协议'
+
+/**
+ * 幂等地把文本协议说明注入 system prompt——自动降级与用户显式开关共用这一条。
+ * 必须幂等：重试循环里每步都会调它，重复注入会把这段固定开销按步数翻倍。
+ * 返回是否发生了注入（调用方据此决定要不要写"已切换"提示）。
+ */
+export function ensureProtocolPrompt(messages: AdapterChatMessage[], tools: ToolSchema[]): boolean {
+  const sys = messages[0]
+  if (!sys || sys.role !== 'system' || typeof sys.content !== 'string') return false
+  if (sys.content.includes(PROTOCOL_MARKER)) return false
+  messages[0] = { ...sys, content: sys.content + buildTextProtocolPrompt(tools) }
+  return true
+}
+
+/**
+ * `'*'` 授权下被"只给内置"这条口径挡在外面的 MCP 工具数（V4-Iter-110 收紧的可观测性）。
+ * 收紧本身是静默的：用户看到的就是"模型不干活"，所以要把"有多少工具是被授权规则挡掉的"
+ * 算出来给他看——只在零调用时提示，避免每次运行都骚扰。
+ */
+export function countMcpHeldBack(permissions: string[], allTools: ToolSchema[]): number {
+  if (!permissions.includes('*')) return 0
+  return allTools.filter((t) => t.source === 'mcp' && !permissions.includes(t.id)).length
 }
 
 type EmitFn = (channel: string, data: unknown) => void
@@ -673,6 +700,13 @@ class AgentEngine {
 
     // 工具 schema 与 {{tools}}（模板没写占位就不必渲染文本清单，见 DEFAULT_AGENT_PROMPT 上方说明）
     const tools = toolRegistry.filterByPermissions(toolPermissions)
+    /**
+     * 用户点名为"走文本协议"的模型（§4.4-⑦）：首轮就不传 tools，改由 system prompt 里的协议段
+     * 承载工具清单。与"端点报 400 才自动降级"是两条独立入口，共用同一个注入 helper。
+     */
+    const forcedTextProtocol = tools.length > 0 && isTextProtocolForced(target.providerId, target.model)
+    /** 因「'*' 只给内置」而被挡下的 MCP 工具数，随 DONE 事件回传用于零调用提示 */
+    const mcpHeldBack = countMcpHeldBack(toolPermissions, toolRegistry.listAll())
     const toolsText = /\{\{\s*tools\s*\}\}/.test(effectivePrompt)
       ? toolRegistry.formatForPrompt(tools)
       : ''
@@ -843,7 +877,7 @@ class AgentEngine {
       stepCount: 0,
       maxSteps: MAX_STEPS,
       retriedEmpty: false,
-      textProtocolMode: false,
+      textProtocolMode: forcedTextProtocol,
       retriedBadCall: false,
       pendingAssistantMsgId: '',
       finalContent: '',
@@ -895,7 +929,8 @@ class AgentEngine {
         stepCount: ctx.stepCount,
         traceStats: safeTraceStats(requestId),
         sources: ctx.sources.length > 0 ? ctx.sources : undefined,
-        usedTools: ctx.recentToolSignatures.length > 0
+        usedTools: ctx.recentToolSignatures.length > 0,
+        mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined
       }
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
       conversationRepo.touch(conversationId, { status: 'done' })
@@ -984,6 +1019,8 @@ class AgentEngine {
       chatParams.tools = tools
       chatParams.toolChoice = 'auto'
     }
+    // 用户显式开启的文本协议：首轮就要有协议段（自动降级那条路是在报错后才补）
+    if (ctx.textProtocolMode && tools.length > 0) ensureProtocolPrompt(messages, tools)
 
     // 调用 LLM（带重试）
     let result: Awaited<ReturnType<typeof adapter.streamChat>> | undefined
@@ -1085,15 +1122,7 @@ class AgentEngine {
       const e = llmError
       // 刚切换到文本协议模式：注入协议提示词，本轮占位写成切换提示终态，重跑本步（不传 tools）
       if (ctx.textProtocolMode && e && isToolsUnsupportedError(errMsg(e))) {
-        const sys = messages[0]
-        if (
-          sys &&
-          sys.role === 'system' &&
-          typeof sys.content === 'string' &&
-          !sys.content.includes('## 工具调用协议')
-        ) {
-          messages[0] = { ...sys, content: sys.content + buildTextProtocolPrompt(tools) }
-        }
+        ensureProtocolPrompt(messages, tools)
         const switchText = '（模型不支持原生工具调用，已切换文本协议模式，正在重试…）'
         messageRepo.updateContent(assistantMsg.id, switchText, 'done')
         ctx.pendingAssistantMsgId = ''
