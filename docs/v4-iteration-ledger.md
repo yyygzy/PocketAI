@@ -52,6 +52,16 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-107 数据健康「向量库」死指标换成真实的向量索引规模（已落地）
+
+- **来源**：V4-Iter-106 定性出的那张恒为 `-` 的卡片，用户选定方向为「改成真实指标」而不是删掉。
+- **为什么原来是死的**：卡片读 `sizes.vectorDbBytes`，而它来自 `classifyDataEntry` 按 `vectors.db` 文件名分桶——**这个文件本版本从不产出**（向量在主库的 `kb_vec_map` + 按维度建的 `kb_vec_<dim>` vec0 虚表里，见 `kb-vec.repo.ts:23-34`），`VECTOR_DB_PATH` 全仓只有定义没有消费者。
+- **改成什么**：新探针 `getVectorIndexStats()`（`knowledge/kb-health.ts`，`COUNT(*) + GROUP_CONCAT(DISTINCT dim)`，表不存在/脏值一律容错）→ 报告字段 `kb.vectorIndex = { count, dims }` → 卡片文案 `formatVectorIndex()`（`utils/vector-index.ts`）。选"条数 + 维度"而不是"字节"，是因为它顺带能暴露真问题：**dims 出现两个值就说明库里混过两套 embedding 模型**，语义检索必漏一部分（与 `brokenDocs` 的 dim-mismatch 同源，一个给"看到什么"、一个给"哪篇坏了"）。
+- **同时清掉的死码**：`portable.ts` 的 `VECTOR_DB_PATH` 常量（原地留注释说明向量在哪）、`DataBucket` 的 `vectors` 桶、`sizes.vectorDbBytes` 字段、i18n 的 `dh.vectors`（四语）。**遗留的 vectors.db 若真存在于旧安装目录，现在归 `other` 桶**——体积不会从合计里凭空消失（`data-health.test.ts` 改断言钉住：`otherBytes = 510`）。
+- **测试**：`tests/kb-vector-index-stats.test.ts` 5 例（真库真表：表不存在 / 空表 / 单维度 3 条 / 1024+512 混存升序并列 / 脏 dim=0 与 'abc' 不进 dims 但计条数）；`tests/vector-index-card.test.ts` 4 例（真 `zh` 字典：未建立 / `1,240 条 · 1024 维` / `5 条 · 512/1024 维` / dims 空显示 `?`）。`i18n-parity` 顺带保证三个新 key 四语齐全且占位符一致。
+- **验证**：typecheck 0；vitest **253 文件 / 3105 用例**全绿（+2 文件 +9 用例）；build 三端通过，`out/main/index.js` 含 `kb_vec_map` 探针、新文案在 en/ja/ko 与 SettingsModule 分块内。
+- **未实测**：真机重启后数据健康那张卡应显示实际条数与维度（本机大概率是「未建立」或单维度），以及混合维度时是否一眼看得出来 ⇒ 验收清单 **B48**。
+
 ### V4-Iter-106 真机截图带出的两件事：调度器未开库时空跑（已修）+「向量库」是死指标（已定性）（部分落地）
 
 - **来源**：B44~B47 真机验收那轮的用户截图里带出两条计划外的事，用户要求都办。
@@ -1209,6 +1219,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-12（第十次） | V4-Iter-107 把数据健康那张恒为 `-` 的「向量库」卡换成真实指标（用户选定"改真指标"而非删卡）。根因：卡片读 `sizes.vectorDbBytes`，而它按 `vectors.db` 文件名分桶——**该文件本版本从不产出**（向量在主库 `kb_vec_map` + `kb_vec_<dim>`），`VECTOR_DB_PATH` 全仓无消费者。新探针 `getVectorIndexStats()`（COUNT + GROUP_CONCAT(DISTINCT dim)，表不存在/脏值容错）→ `kb.vectorIndex` → `formatVectorIndex()`；选"条数+维度"是因为 **dims 出现两个值即说明库里混过两套 embedding 模型**（与 dim-mismatch 同源，一个报"看到什么"一个报"哪篇坏了"）。顺带清死码：`VECTOR_DB_PATH`、`vectors` 桶、`vectorDbBytes`、四语 `dh.vectors`；**旧安装目录若真留有 vectors.db 现在归 `other`**，体积不从合计里消失（断言改成 otherBytes=510）。测试 +2 文件 9 例（真库真表 5 例 + 真字典文案 4 例），parity 闸门保证三个新 key 四语齐。详见 §二 V4-Iter-107 | typecheck 0 / vitest 253文件3105用例 / build 三端 |
 | 2026-10-12（第九次） | V4-Iter-106 办真机截图带出的两件事。**① 调度器未开库时空跑（已修）**：`tick()` 首行加 `if (!dbService.isOpen()) return`（不记失败也不刷 last_run_at，解锁后照常补跑），并给 `runTask` 的 `finally` 单独 try/catch——**finally 里抛错会顶掉任务真正的异常**，日志只剩无关的「tick 异常」而盖住真因。+2 用例（logger 桩改成收集 warn，才能断言"不该出现的那条"）；非空过实测：还原两处修复 → 两条各自转红、其余 17 条仍绿。**② 数据健康「向量库 -」定性为死指标（未改）**：向量其实在主库（`kb-vec.repo.ts:23-34` 懒建 `kb_vec_map` + `kb_vec_<dim>`），而 `VECTOR_DB_PATH` 全仓**只有定义没有消费者**（`git log -S` 只出现在 init 与策划书），`data-health.ts:37` 却按 `vectors.db` 文件名分桶 ⇒ 卡片恒为 `-`；「向量维度不匹配」是真问题（`ingestion.ts:145` 用首次入库的 `vectors[0].length` 写 dim，换过 embedding 模型后旧 chunk BLOB 长 ≠ 新 dim×4 ⇒ 该文档语义检索必漏），处置=点「重建索引」（用户数据动作，未代做）。详见 §二 V4-Iter-106 | typecheck 0 / vitest 251文件3096用例 / build 三端；未实测：重启 dev 后锁屏 10min 不再刷那两条 WARN |
 | 2026-10-12（第八次） | §4.4 三条产品口径经用户选定并写入：**⑦ 静默忽略 tools 的端点** → 模型级显式开关 + 在既有零调用提示里"检测到就建议"（不自动降级：分不清端点不支持与模型判断不需要工具）；**⑧ `'*'` 全授权** → 只把 **MCP 工具**摘出默认授权，13 个内置工具继续默认给；本轮核出的硬约束：**内置同步不覆盖 `tool_permissions`**（`assistant.repo.ts:97-108`）⇒ 靠 `extensions/assistants/*.json` 下发白名单对老用户完全无效，收紧必须走运行时按来源过滤。**⑥ MCP 记录跳回轮次** → 不做，并纠正台账旧述：Agent 走的 MCP 调用**早就在记录里**（`mcp.ts:196` 订阅 `mcpManager.onCall`），缺的只是关联键，而唯一用户不会用它跳回对话。另：本轮一次脚本编辑把 §4.4 第 6/7 条拼坏了（先算偏移后替换 ⇒ 偏移过期、7 被吞进 6 行尾），已按行重写并 assert 复原——**多行文档编辑必须行级定位，别用陈旧偏移**。 | 文档批次（无代码改动）|
 | 2026-10-12（第七次） | V4-Iter-105 B12 换源确认进 CI，**并改正清单一处写错的预期**：B12 原记「改成清华镜像要弹确认」，而 `choosePipSource` 对预设源是直接写入、只有自定义 URL 才二次确认——SEC-20 原文也是「切换**自定义源**前二次确认」⇒ 是清单错、不是代码缺功能，照清单修反而会给预设源加弹窗。新增 `renderer-pip-source-confirm` 7 例（`renderHook` 直接测 hook，不挂 McpPanel）：预设源零确认直写 / 自定义 https 弹 danger 确认且文案逐字等于字典插值并含 URL / **取消则一次都不写库** / 非回环 http 就地报错不弹不写 / 回环 http 放行仍走确认 / 主进程结构化 error 显示在输入框下。非空过实测：短路掉 confirm → 三条转红、其余四条仍绿；还原后 7 绿且 `git diff` 零残留。详见 §二 V4-Iter-105 | typecheck 0 / vitest 251文件3094用例 |

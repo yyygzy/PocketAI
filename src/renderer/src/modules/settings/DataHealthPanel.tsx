@@ -8,6 +8,7 @@ import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { reportIpcError } from '../../utils/ipc'
 import { formatBytes } from '../../utils/format'
+import { formatVectorIndex } from '../../utils/vector-index'
 
 const STATUSES: KbDocStatus[] = ['pending', 'parsing', 'indexing', 'ready', 'error']
 
@@ -87,7 +88,7 @@ export const DataHealthPanel: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
         <StatCard label={t('dh.total')} value={formatBytes(sizes.dataDirBytes)} />
         <StatCard label={t('dh.db')} value={formatBytes(sizes.dbBytes)} />
-        <StatCard label={t('dh.vectors')} value={formatBytes(sizes.vectorDbBytes)} />
+        <StatCard label={t('dh.vectorIndex')} value={formatVectorIndex(kb.vectorIndex, t)} />
         <StatCard label={t('dh.attachments')} value={formatBytes(sizes.attachmentsBytes)} />
       </div>
 

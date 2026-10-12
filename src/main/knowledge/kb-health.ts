@@ -1,8 +1,9 @@
 // 知识库数据健康：完整性探测与修复（Settings「数据健康」面板）
 //
 // 与 task-scheduler 的 kb_health_check（修「卡在中间态」的文档）分工：
-// 这里盯数据一致性 —— vectors.db 孤儿向量（删文档历史泄漏）、孤儿 chunk、
+// 这里盯数据一致性 —— 主库内 vec 虚表的孤儿向量（删文档历史泄漏）、孤儿 chunk、
 // 缺向量/维度不匹配文档、重复文档、知识库配置引用的 provider 失效。
+// （向量索引不在独立的 vectors.db：`kb_vec_map` 与按维度建的 `kb_vec_<dim>` 都在 app.db 里。）
 //
 // 探测全部只读；修复动作（清理/去重/重建索引）由 IPC 显式触发。
 // 纯函数（findDuplicateGroups / collectProviderIssues）单独导出供 tests 直测。
@@ -100,6 +101,30 @@ function tableExists(name: string): boolean {
     .getHandle()
     .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
     .get(name)
+}
+
+/**
+ * 向量索引的真实规模（数据健康卡片用）：条数 + 出现过的维度。
+ * dims 多于一个 = 库里混着不同 embedding 模型的向量，语义检索必漏其中一部分
+ * （与 brokenDocs 的 dim-mismatch 判定同源，这里给的是"看到什么"，那边给的是"哪篇坏了"）。
+ * 表不存在（从未写过向量）→ { count: 0, dims: [] }。
+ */
+export function getVectorIndexStats(): { count: number; dims: number[] } {
+  try {
+    if (!tableExists('kb_vec_map')) return { count: 0, dims: [] }
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT COUNT(*) AS n, GROUP_CONCAT(DISTINCT dim) AS dims FROM kb_vec_map')
+      .get() as { n: number; dims: string | null }
+    const dims = (row.dims ?? '')
+      .split(',')
+      .map((s) => Number(s))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .sort((a, b) => a - b)
+    return { count: Number(row.n) || 0, dims }
+  } catch {
+    return { count: 0, dims: [] }
+  }
 }
 
 /** 完整性探测（只读，逐项容错：单项失败按安全缺省值处理） */

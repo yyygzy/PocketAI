@@ -374,7 +374,6 @@ export interface DataHealthReport {
   sizes: {
     dataDirBytes: number
     dbBytes: number
-    vectorDbBytes: number
     attachmentsBytes: number
     extensionsBytes: number
     logsBytes: number
@@ -387,6 +386,8 @@ export interface DataHealthReport {
     errorDocs: { id: string; kbName: string; title: string; error: string | null; createdAt: number }[]
     /** 完整性探测（KB 数据健康，见 src/main/knowledge/kb-health.ts） */
     integrity: KbIntegrityReport
+    /** 向量索引真实规模（在主库里，不是独立文件）；dims >1 表示混用过不同 embedding 模型 */
+    vectorIndex: { count: number; dims: number[] }
   }
   /** WebDAV 云备份状态 */
   backup: {

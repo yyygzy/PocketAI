@@ -20,21 +20,21 @@ import { errMsg } from '../error'
 import { getBootPerf } from './boot-perf'
 import { getRecentPerf } from './perf-probe'
 import { getPerfHistory } from './perf-history'
-import { getKbIntegrityReport } from '../knowledge/kb-health'
+import { getKbIntegrityReport, getVectorIndexStats } from '../knowledge/kb-health'
 
 // ─── 纯函数：数据目录体积分类聚合 ────────────────────────────────
 
-export type DataBucket = 'db' | 'vectors' | 'attachments' | 'extensions' | 'logs' | 'other'
+export type DataBucket = 'db' | 'attachments' | 'extensions' | 'logs' | 'other'
 
 /**
  * 按 DATA_DIR 相对路径（统一 / 分隔）归类体积桶。
- * 根级 app.db / app.db-wal → db；vectors.db / vectors.db-wal → vectors；
- * 一级子目录 attachments/extensions/logs 下全部归对应桶；其余 → other。
+ * 根级 app.db / app.db-wal → db；一级子目录 attachments/extensions/logs 下全部归对应桶；其余 → other。
+ * 没有「向量库」桶：向量索引不是独立文件（`kb_vec_map` + `kb_vec_<dim>` 都在 app.db 里），
+ * 以前按 vectors.db 分桶，那张卡片因此恒为空——现改由 kb.vectorIndex 报真实条数与维度。
  */
 export function classifyDataEntry(rel: string): DataBucket {
   const norm = rel.replaceAll('\\', '/')
   if (norm === 'app.db' || norm === 'app.db-wal') return 'db'
-  if (norm === 'vectors.db' || norm === 'vectors.db-wal') return 'vectors'
   const top = norm.split('/')[0]
   if (top === 'attachments' || top === 'extensions' || top === 'logs') return top
   return 'other'
@@ -49,13 +49,12 @@ export interface DataSizeEntry {
 /** 体积条目按桶聚合 → DataHealthReport.sizes */
 export function aggregateDataSizes(entries: DataSizeEntry[]): DataHealthReport['sizes'] {
   const buckets: Record<DataBucket, number> = {
-    db: 0, vectors: 0, attachments: 0, extensions: 0, logs: 0, other: 0
+    db: 0, attachments: 0, extensions: 0, logs: 0, other: 0
   }
   for (const e of entries) buckets[classifyDataEntry(e.rel)] += e.bytes
   return {
     dataDirBytes: entries.reduce((s, e) => s + e.bytes, 0),
     dbBytes: buckets.db,
-    vectorDbBytes: buckets.vectors,
     attachmentsBytes: buckets.attachments,
     extensionsBytes: buckets.extensions,
     logsBytes: buckets.logs,
@@ -157,7 +156,8 @@ export function getDataHealthReport(): DataHealthReport {
     total: docs.length,
     byStatus: groupDocStatus(docs),
     errorDocs: topErrorDocs(docs, (kbId) => kbNameById.get(kbId) ?? '(未知库)'),
-    integrity
+    integrity,
+    vectorIndex: getVectorIndexStats()
   }
 
   // 3. 备份状态（未配置 WebDAV 时 schedule 仍可读，lastRunAt 为 null）

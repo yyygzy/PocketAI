@@ -32,7 +32,9 @@ export const APP_ROOT = process.env.POCKETAI_APP_ROOT
 /** 数据目录 = APP_ROOT/data（永远跟着应用走） */
 export const DATA_DIR = path.join(APP_ROOT, 'data')
 export const DB_PATH = path.join(DATA_DIR, 'app.db')
-export const VECTOR_DB_PATH = path.join(DATA_DIR, 'vectors.db')
+// 向量索引没有独立文件：kb_vec_map 与按维度建的 kb_vec_<dim> 虚表都在 app.db 里
+//（见 db/repositories/kb-vec.repo.ts）。这里曾有个 VECTOR_DB_PATH 常量，全仓无人使用，
+// 却支撑着数据健康的「向量库」体积桶 ⇒ 那张卡片恒为空，已按真实指标改写（V4-Iter-107）。
 export const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 export const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments')
 /**

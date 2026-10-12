@@ -30,8 +30,10 @@ describe('classifyDataEntry', () => {
   it('根级数据库文件（含 WAL）归类正确', () => {
     expect(classifyDataEntry('app.db')).toBe('db')
     expect(classifyDataEntry('app.db-wal')).toBe('db')
-    expect(classifyDataEntry('vectors.db')).toBe('vectors')
-    expect(classifyDataEntry('vectors.db-wal')).toBe('vectors')
+    // 向量索引不是独立文件（在主库的 kb_vec_map / kb_vec_<dim> 里），本版本从不产出 vectors.db；
+    // 万一旧安装目录里真有这么个文件，也必须计入 other 而不是从合计里消失
+    expect(classifyDataEntry('vectors.db')).toBe('other')
+    expect(classifyDataEntry('vectors.db-wal')).toBe('other')
   })
   it('一级子目录下全部归对应桶（含深层路径与反斜杠）', () => {
     expect(classifyDataEntry('attachments/a.png')).toBe('attachments')
@@ -57,11 +59,10 @@ describe('aggregateDataSizes', () => {
     ]
     const s = aggregateDataSizes(entries)
     expect(s.dbBytes).toBe(1200) // 含 WAL
-    expect(s.vectorDbBytes).toBe(500)
     expect(s.attachmentsBytes).toBe(300)
     expect(s.extensionsBytes).toBe(400)
     expect(s.logsBytes).toBe(50)
-    expect(s.otherBytes).toBe(10)
+    expect(s.otherBytes).toBe(510) // config.json 10 + 遗留 vectors.db 500
     expect(s.dataDirBytes).toBe(2460)
   })
   it('空目录全 0', () => {
