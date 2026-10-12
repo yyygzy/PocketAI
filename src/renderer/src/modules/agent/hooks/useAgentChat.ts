@@ -52,6 +52,28 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     [providers, providerId]
   )
 
+  // 服务商列表的镜像：让 applyLastModelOf 保持**稳定身份**——它一旦进了会话列表 effect 的依赖，
+  // providers 每次换引用都会重跑那个 effect，于是「切回 Agent 模块」就把用户正开着的会话
+  // 跳回「最近一条」（列表现在会在切回时重拉，见 useProviderData）。
+  const providersRef = useRef(providers)
+  providersRef.current = providers
+
+  /**
+   * 选中项必须跟着"当前服务商列表"走：列表会在切回本模块时重拉（设置里删了/停用了服务商、
+   * 或拉取模型后清单变了），而 providerId/model 是本地 state，不清就会留下
+   * 「canSend 为真、请求却发给一个不存在的服务商/模型」，且模型栏因选不到项而整块消失。
+   */
+  useEffect(() => {
+    if (!providerId) return
+    const p = providers.find((x) => x.id === providerId)
+    if (!p) {
+      setProviderId('')
+      setModel('')
+      return
+    }
+    if (model && p.models.length > 0 && !p.models.includes(model)) setModel('')
+  }, [providers, providerId, model])
+
   // 文本协议开关的当前状态：清单在挂载时读一次，之后以 set 通道回传的最新值为准
   useEffect(() => {
     void window.pocketai
@@ -90,7 +112,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       if (i > 0) {
         const pid = rest.slice(0, i)
         const mdl = rest.slice(i + 1)
-        const p = providers.find((x) => x.id === pid)
+        const p = providersRef.current.find((x) => x.id === pid)
         if (p) {
           setProviderId(pid)
           setModel(p.models.includes(mdl) ? mdl : '')
@@ -104,7 +126,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
             const m = msgs[k]
             if (!m) continue
             if (m.role === 'assistant' && m.provider && m.model) {
-              const p = providers.find((x) => x.id === m.provider)
+              const p = providersRef.current.find((x) => x.id === m.provider)
               if (p) {
                 setProviderId(m.provider)
                 setModel(p.models.includes(m.model) ? m.model : '')
@@ -115,7 +137,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         })
         .catch(reportIpcError('agent.restoreLastModel'))
     },
-    [providers]
+    []
   )
 
   /**
@@ -218,7 +240,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       if (chosenId) applyLastModelOf(chosenId, chosenLabel)
     }).catch(reportIpcError('agent.listConversations'))
     return () => { cancelled = true }
-  }, [assistantId, applyLastModelOf])
+  }, [assistantId])
 
   // 命令面板导航（同助手直接开会话；跨助手交助手切换 effect 消费 pending）
   useEffect(() => {
