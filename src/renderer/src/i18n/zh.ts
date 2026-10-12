@@ -1454,6 +1454,7 @@ export const zh: Record<string, string> = {
   'provider.keysMasked': '密钥已隐藏。新增请另起一行输入；保持 •••• 行不变即沿用原值',
   'provider.f.cached': '已缓存模型（{n}）',
   'provider.noCached': '暂无，点「拉取模型」',
+  'provider.removeModel': '从缓存中移除该模型（保存后生效）',
   'provider.fetch': '拉取模型',
   'provider.test': '测试连接',
 

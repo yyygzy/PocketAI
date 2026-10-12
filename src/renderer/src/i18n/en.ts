@@ -1454,6 +1454,7 @@ export const en: Record<string, string> = {
   'provider.keysMasked': 'Keys are hidden. Add new ones on a new line; leaving a •••• line untouched keeps the original value',
   'provider.f.cached': 'Cached models ({n})',
   'provider.noCached': 'None yet — click “Fetch models”',
+  'provider.removeModel': 'Remove this model from cache (applies on save)',
   'provider.fetch': 'Fetch models',
   'provider.test': 'Test connection',
 

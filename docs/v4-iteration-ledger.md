@@ -52,6 +52,19 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-108 修「点快捷预设残留上一条 provider 的 Key/模型」+ 已缓存模型可逐个移除（已落地）
+
+- **来源**：用户截图——左边选中「智谱 GLM」后点快捷预设，右侧成了 **名称=智谱 GLM、Base URL=火山方舟 ark、API Key=智谱的掩码 `••••st6I`、已缓存模型=智谱那 11 个**。
+- **不只是难看**：`ProviderSettings.tsx:200` 原来是 `name: editing.name || preset.label` + `...editing` 展开 ⇒ 换 URL 时**沿用同一条记录的 Key**。保存后就是"把 A 家的密钥发到 B 家的地址"，而用户以为自己在配 B。所以按凭据外泄的形状去修，不是按显示瑕疵去修。
+- **改法（语义选择）**：点预设 = **开始配一家新的**，不是"把当前这条改指向另一个端点"。`applyPreset()` 用 `emptyProvider()` 打底，只带预设的 type/baseUrl/name，并清空 `keysText`/`keysRevealed`/`notice` ⇒ `id=''`，保存走新增，**不会覆盖左边选中那条**。
+  - 代价与不做的部分：正在编辑的那条若有未保存改动，点预设会被丢弃且**不弹确认**（预设是显式的"重开一张表"动作，加确认反而每次点预设都要理一次）。
+- **已缓存模型逐个移除**：每个 chip 加 ✕（`aria-label` 带模型名，文案「从缓存中移除该模型（保存后生效）」四语 +1 key），`removeModel()` 只改 `editing.models` ⇒ **保存后才落库**，与表单其余字段同一生效时机；`id` 保留，所以这是"改这条"而不是新建。
+- **测试**：新增 `tests/renderer-provider-settings.test.tsx` 4 例（真挂载 + 真 `saveProvider` 参数断言）——① 选中已有 provider 后点预设：名称/URL 换成预设、**Key 框为空**、缓存模型走空态，且保存收到的 `id===''`/`apiKeys==[]`/`models==[]`；② **反向对照**：只点左边那条仍是完整回填（掩码 Key 与 2 个模型都在）⇒ 证明清空只发生在点预设；③ 点 ✕ 后 `models` 只剩一条且 `id` 仍是 `p-glm`；④ 全部移完走空态不留空 chip。
+  **非空过实测**：同时还原两处源码改动 → ①③ 转红、② 仍绿（各条钉的是不同侧面）。
+- **⚠️ 本轮我自己犯的一次破坏性操作**：做 mutation 还原时用了 `git checkout -- <该文件>`，而它带着本批**未提交**的改动 ⇒ 修复被一起抹掉，只能重写一遍（重写后 31+/9−、typecheck 0、4 例复绿）。教训：**还原"实验性改动"只能用反向 patch 或 Edit，绝不对含未提交工作的文件动 `git checkout/restore`**——这条与既有的"跑破坏性命令前先 `git status`"记忆同源，但这次是我在"还原自己的注入"这个看似无害的动作上栽的。
+- **验证**：typecheck 0；vitest **254 文件 / 3109 用例**全绿（+1 文件 +4 用例）；build 三端通过。
+- **未实测**：真机上点预设后表单是否真的干净、✕ 的视觉是否够小不抢戏 ⇒ 验收清单 **B49**（渲染层用例证的是 DOM 与 `saveProvider` 入参，不是观感）。
+
 ### V4-Iter-107 数据健康「向量库」死指标换成真实的向量索引规模（已落地）
 
 - **来源**：V4-Iter-106 定性出的那张恒为 `-` 的卡片，用户选定方向为「改成真实指标」而不是删掉。
@@ -1219,6 +1232,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-12（第十一次） | V4-Iter-108 修用户截图撞出的**凭据错发风险**：选中「智谱 GLM」后点快捷预设，右侧成了「名称=智谱 / Base URL=火山方舟 / Key=智谱的掩码 / 缓存模型=智谱那 11 个」——原代码 `name: editing.name || preset.label` + `...editing` 展开意味着换 URL 时**沿用同一条记录的 Key**，保存后就是把 A 家密钥发到 B 家地址。语义改为"点预设=开始配一家新的"：`applyPreset()` 以 `emptyProvider()` 打底、只带预设三字段并清空 Key/notice，`id=''` ⇒ 保存走新增、不覆盖选中那条。另加**已缓存模型逐个移除**（chip 上 ✕，`removeModel` 只改 `editing.models`、保留 id ⇒ 保存后生效）。测试 `renderer-provider-settings` 4 例（含反向对照"只点左边那条仍完整回填"，证明清空只发生在点预设）；非空过实测：还原两处源码 → ①③ 转红、② 仍绿。**并记我自己一次破坏性失误**：mutation 还原时对该文件用了 `git checkout --`，把本批未提交的修复一起抹掉，只能重写（重写后 31+/9−、4 例复绿）——还原实验性改动只能用反向 patch/Edit，**绝不对含未提交工作的文件动 git checkout/restore**。详见 §二 V4-Iter-108 | typecheck 0 / vitest 254文件3109用例 / build 三端 |
 | 2026-10-12（第十次） | V4-Iter-107 把数据健康那张恒为 `-` 的「向量库」卡换成真实指标（用户选定"改真指标"而非删卡）。根因：卡片读 `sizes.vectorDbBytes`，而它按 `vectors.db` 文件名分桶——**该文件本版本从不产出**（向量在主库 `kb_vec_map` + `kb_vec_<dim>`），`VECTOR_DB_PATH` 全仓无消费者。新探针 `getVectorIndexStats()`（COUNT + GROUP_CONCAT(DISTINCT dim)，表不存在/脏值容错）→ `kb.vectorIndex` → `formatVectorIndex()`；选"条数+维度"是因为 **dims 出现两个值即说明库里混过两套 embedding 模型**（与 dim-mismatch 同源，一个报"看到什么"一个报"哪篇坏了"）。顺带清死码：`VECTOR_DB_PATH`、`vectors` 桶、`vectorDbBytes`、四语 `dh.vectors`；**旧安装目录若真留有 vectors.db 现在归 `other`**，体积不从合计里消失（断言改成 otherBytes=510）。测试 +2 文件 9 例（真库真表 5 例 + 真字典文案 4 例），parity 闸门保证三个新 key 四语齐。详见 §二 V4-Iter-107 | typecheck 0 / vitest 253文件3105用例 / build 三端 |
 | 2026-10-12（第九次） | V4-Iter-106 办真机截图带出的两件事。**① 调度器未开库时空跑（已修）**：`tick()` 首行加 `if (!dbService.isOpen()) return`（不记失败也不刷 last_run_at，解锁后照常补跑），并给 `runTask` 的 `finally` 单独 try/catch——**finally 里抛错会顶掉任务真正的异常**，日志只剩无关的「tick 异常」而盖住真因。+2 用例（logger 桩改成收集 warn，才能断言"不该出现的那条"）；非空过实测：还原两处修复 → 两条各自转红、其余 17 条仍绿。**② 数据健康「向量库 -」定性为死指标（未改）**：向量其实在主库（`kb-vec.repo.ts:23-34` 懒建 `kb_vec_map` + `kb_vec_<dim>`），而 `VECTOR_DB_PATH` 全仓**只有定义没有消费者**（`git log -S` 只出现在 init 与策划书），`data-health.ts:37` 却按 `vectors.db` 文件名分桶 ⇒ 卡片恒为 `-`；「向量维度不匹配」是真问题（`ingestion.ts:145` 用首次入库的 `vectors[0].length` 写 dim，换过 embedding 模型后旧 chunk BLOB 长 ≠ 新 dim×4 ⇒ 该文档语义检索必漏），处置=点「重建索引」（用户数据动作，未代做）。详见 §二 V4-Iter-106 | typecheck 0 / vitest 251文件3096用例 / build 三端；未实测：重启 dev 后锁屏 10min 不再刷那两条 WARN |
 | 2026-10-12（第八次） | §4.4 三条产品口径经用户选定并写入：**⑦ 静默忽略 tools 的端点** → 模型级显式开关 + 在既有零调用提示里"检测到就建议"（不自动降级：分不清端点不支持与模型判断不需要工具）；**⑧ `'*'` 全授权** → 只把 **MCP 工具**摘出默认授权，13 个内置工具继续默认给；本轮核出的硬约束：**内置同步不覆盖 `tool_permissions`**（`assistant.repo.ts:97-108`）⇒ 靠 `extensions/assistants/*.json` 下发白名单对老用户完全无效，收紧必须走运行时按来源过滤。**⑥ MCP 记录跳回轮次** → 不做，并纠正台账旧述：Agent 走的 MCP 调用**早就在记录里**（`mcp.ts:196` 订阅 `mcpManager.onCall`），缺的只是关联键，而唯一用户不会用它跳回对话。另：本轮一次脚本编辑把 §4.4 第 6/7 条拼坏了（先算偏移后替换 ⇒ 偏移过期、7 被吞进 6 行尾），已按行重写并 assert 复原——**多行文档编辑必须行级定位，别用陈旧偏移**。 | 文档批次（无代码改动）|

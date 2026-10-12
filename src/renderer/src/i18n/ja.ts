@@ -1388,6 +1388,7 @@ export const ja: Record<string, string> = {
   'provider.keysMasked': 'キーは非表示です。改行して追加し、•••• の行はそのまま保存すると元の値を維持します',
   'provider.f.cached': 'キャッシュ済みモデル（{n}）',
   'provider.noCached': 'まだありません。「モデルを取得」をクリック',
+  'provider.removeModel': 'このモデルをキャッシュから削除（保存後に反映）',
   'provider.fetch': 'モデルを取得',
   'provider.test': '接続テスト',
   'ollama.title': 'ローカルモデルエンジン（Ollama）',

@@ -1388,6 +1388,7 @@ export const ko: Record<string, string> = {
   'provider.keysMasked': '키가 숨겨졌습니다. 새 줄에 입력해 추가하고, •••• 줄을 그대로 두면 원본 값이 유지됩니다',
   'provider.f.cached': '캐시된 모델 ({n})',
   'provider.noCached': '없음. "모델 조회"를 클릭하세요',
+  'provider.removeModel': '이 모델을 캐시에서 제거(저장 후 적용)',
   'provider.fetch': '모델 조회',
   'provider.test': '연결 테스트',
   'ollama.title': '로컬 모델 엔진 (Ollama)',

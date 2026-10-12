@@ -61,6 +61,23 @@ export const ProviderSettings: React.FC = () => {
     setNotice(null)
   }
 
+  /**
+   * 点快捷预设 = 开始配一家**新**服务商，而不是"把当前这条改指向另一个端点"。
+   * 沿用正在编辑的那条会留下 A 家的名字 + B 家的 URL + A 家的 Key 与模型，
+   * 保存后等于把 A 家的密钥发给 B 家（且用户以为自己在配 B）。
+   */
+  const applyPreset = (preset: (typeof PROVIDER_PRESETS)[number]) => {
+    setEditing({ ...emptyProvider(), type: preset.type, baseUrl: preset.baseUrl, name: preset.label })
+    setKeysText('')
+    setKeysRevealed(false)
+    setNotice(null)
+  }
+
+  /** 从缓存模型里摘掉一条（保存后才落库：与表单其余字段同一套生效时机） */
+  const removeModel = (m: string) => {
+    setEditing((cur) => (cur ? { ...cur, models: cur.models.filter((x) => x !== m) } : cur))
+  }
+
   // 用户显式点击才取回明文：单条查询，不改变「列表不落明文」的默认
   const handleRevealKeys = async () => {
     if (!editing?.id) {
@@ -192,14 +209,7 @@ export const ProviderSettings: React.FC = () => {
                 {PROVIDER_PRESETS.map((preset) => (
                   <button
                     key={preset.label}
-                    onClick={() =>
-                      setEditing({
-                        ...editing,
-                        type: preset.type,
-                        baseUrl: preset.baseUrl,
-                        name: editing.name || preset.label
-                      })
-                    }
+                    onClick={() => applyPreset(preset)}
                     className="text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)]"
                     title={preset.needKey ? t('provider.needKey') : t('provider.noKey')}
                   >
@@ -266,8 +276,20 @@ export const ProviderSettings: React.FC = () => {
                   <span className="text-xs text-[var(--color-text-muted)]">{t('provider.noCached')}</span>
                 ) : (
                   editing.models.map((m) => (
-                    <span key={m} className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] font-mono">
+                    <span
+                      key={m}
+                      className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] font-mono inline-flex items-center gap-1"
+                    >
                       {m}
+                      <button
+                        type="button"
+                        onClick={() => removeModel(m)}
+                        title={t('provider.removeModel')}
+                        aria-label={`${t('provider.removeModel')}: ${m}`}
+                        className="opacity-50 hover:opacity-100 leading-none"
+                      >
+                        ✕
+                      </button>
                     </span>
                   ))
                 )}
