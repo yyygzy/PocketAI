@@ -52,7 +52,7 @@ function mount(encMode: 'none' | 'db' = 'none') {
     startOllama: () => ({ ok: true }),
     stopOllama: () => ({ ok: true })
   })
-  mountWithProviders(<FirstRunWizard variant="full" onClose={() => {}} />)
+  return mountWithProviders(<FirstRunWizard variant="full" onClose={() => {}} />)
 }
 
 const next = () => fireEvent.click(screen.getByText('下一步'))
@@ -81,6 +81,20 @@ describe('向导步骤与措辞', () => {
     expect(screen.getByText(/设置主密码（推荐）/)).toBeTruthy()
     expect(screen.getByText(/零保护|明文/)).toBeTruthy()
     // 这一步还没有任何凭据输入口
+    expect(screen.queryByPlaceholderText(/API Key/)).toBeNull()
+  })
+
+  // B21 的"变成 4 步"这一半以前只能靠人数步骤点，这里钉住指示器数量
+  it('步骤指示是 4 个点，且第 1 步就是安全步（还没有 Key 输入口）', async () => {
+    const { container } = mount()
+    const dots = Array.from(container.querySelectorAll('span')).filter((el) =>
+      el.className.includes('h-1.5 rounded-full')
+    )
+    expect(dots).toHaveLength(4)
+    expect(screen.queryByPlaceholderText(/API Key/)).toBeNull()
+    next()
+    await screen.findByText(/先设主密码/)
+    // 安全步仍然没有凭据输入口（Key 要到第 2 步选完预设才出现，见下面那条用例）
     expect(screen.queryByPlaceholderText(/API Key/)).toBeNull()
   })
 
