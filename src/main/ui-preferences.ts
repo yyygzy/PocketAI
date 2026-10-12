@@ -15,6 +15,19 @@ const K_OPACITY = 'ui.opacity'
 const K_CUSTOM_CSS = 'ui.custom_css'
 const K_CHAT_FONT_SIZE = 'ui.chat_font_size'
 const K_CODE_COLLAPSE_LINES = 'ui.code_collapse_lines'
+// Agent 模块「上次用在哪」：助手 + 会话。存这里而不是 localStorage，是因为 app_config 属于
+// 合并时的 LOCAL_KEEP 表——换机合并不会把另一台机器的"上次会话"搬过来（那是会点错人的状态）
+const K_AGENT_ASSISTANT_ID = 'ui.agent_assistant_id'
+const K_AGENT_CONVERSATION_ID = 'ui.agent_conversation_id'
+
+/** 偏好里存的实体 id 上限（DB 用 UUID，36 字符；128 足够宽松又不致于塞进大内容） */
+export const MAX_PREFERENCE_ID_CHARS = 128
+
+/** id 类偏好：只保留去空白 + 限长；其余原样（空串=清除，由调用方决定语义） */
+function normalizePreferenceId(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  return v.trim().slice(0, MAX_PREFERENCE_ID_CHARS)
+}
 
 export const MIN_OPACITY = 0.6
 export const MAX_OPACITY = 1
@@ -57,7 +70,9 @@ export function getUiPreferences(): UiPreferences {
     opacity: Number.isFinite(raw) && raw > 0 ? clampOpacity(raw) : 1,
     customCss: appConfigRepo.get(K_CUSTOM_CSS) ?? '',
     chatFontSize: normalizeChatFontSize(appConfigRepo.get(K_CHAT_FONT_SIZE)),
-    codeCollapseLines: normalizeCodeCollapseLines(appConfigRepo.get(K_CODE_COLLAPSE_LINES))
+    codeCollapseLines: normalizeCodeCollapseLines(appConfigRepo.get(K_CODE_COLLAPSE_LINES)),
+    agentAssistantId: normalizePreferenceId(appConfigRepo.get(K_AGENT_ASSISTANT_ID)),
+    agentConversationId: normalizePreferenceId(appConfigRepo.get(K_AGENT_CONVERSATION_ID))
   }
 }
 
@@ -76,6 +91,12 @@ export function setUiPreferences(patch: Partial<UiPreferences>): UiPreferences {
   }
   if (patch.codeCollapseLines !== undefined) {
     appConfigRepo.set(K_CODE_COLLAPSE_LINES, String(normalizeCodeCollapseLines(patch.codeCollapseLines)))
+  }
+  if (patch.agentAssistantId !== undefined) {
+    appConfigRepo.set(K_AGENT_ASSISTANT_ID, normalizePreferenceId(patch.agentAssistantId))
+  }
+  if (patch.agentConversationId !== undefined) {
+    appConfigRepo.set(K_AGENT_CONVERSATION_ID, normalizePreferenceId(patch.agentConversationId))
   }
   const next = getUiPreferences()
   applyOpacityToMainWindows(next.opacity)

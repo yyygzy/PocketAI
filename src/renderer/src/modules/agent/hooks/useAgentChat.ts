@@ -7,17 +7,18 @@ import type {
   AgentSessionStats,
   AgentStepEvent,
   AgentTraceRecord,
+  AssistantRecord,
   ChatAttachment,
   MessageRecord,
   ProviderRecord
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
-import { reportIpcError } from '../../../utils/ipc'
+import { reportIpcError, logIpcError } from '../../../utils/ipc'
 import { findRerunSourceId, toAgentMessages, reduceLiveSteps, type AgentMessage, type LiveStep } from '../agent-shared'
 import { messagesReducer } from './messages-reducer'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../../utils/palette-nav'
 
-export function useAgentChat(providers: ProviderRecord[]) {
+export function useAgentChat(providers: ProviderRecord[], assistants?: AssistantRecord[]) {
   const { t } = useI18n()
   const [assistantId, setAssistantId] = useState('')
   const [conversations, setConversations] = useState<import('../../../../../shared/types').ConversationRecord[]>([])
@@ -47,6 +48,110 @@ export function useAgentChat(providers: ProviderRecord[]) {
     [providers, providerId]
   )
 
+  /**
+   * 回填某会话最后使用的 Provider/模型：会话记录的 modelLabel 优先
+   * （老会话/未带 label 时回落读消息列表，取最后一条 assistant 的 provider/model）。
+   * 点击历史与自动选中（含上次会话恢复）共用这一条，避免出现"会话回来了、模型下拉是空的"。
+   */
+  const applyLastModelOf = useCallback(
+    (id: string, label?: string | null) => {
+      // 格式："providerId:model" / 多目标 "pid1:m1 | pid2:m2" / Agent "agent:pid:model"
+      const first = (label ?? '').split('|')[0]?.trim() ?? ''
+      const rest = first.startsWith('agent:') ? first.slice(6) : first
+      const i = rest.indexOf(':')
+      if (i > 0) {
+        const pid = rest.slice(0, i)
+        const mdl = rest.slice(i + 1)
+        const p = providers.find((x) => x.id === pid)
+        if (p) {
+          setProviderId(pid)
+          setModel(p.models.includes(mdl) ? mdl : '')
+          return
+        }
+      }
+      void window.pocketai
+        .listMessages(id)
+        .then((msgs) => {
+          for (let k = msgs.length - 1; k >= 0; k--) {
+            const m = msgs[k]
+            if (!m) continue
+            if (m.role === 'assistant' && m.provider && m.model) {
+              const p = providers.find((x) => x.id === m.provider)
+              if (p) {
+                setProviderId(m.provider)
+                setModel(p.models.includes(m.model) ? m.model : '')
+              }
+              break
+            }
+          }
+        })
+        .catch(reportIpcError('agent.restoreLastModel'))
+    },
+    [providers]
+  )
+
+  /**
+   * 「上次用在哪」：模块切走即被卸载（Workspace 条件渲染），助手与会话的选中态随之丢失。
+   * 这里从 ui 偏好读回（存 app_config，属合并时的 LOCAL_KEEP 表 ⇒ 不会被另一台机器搬来），
+   * 之后每次真正确定选中项就写回。restoreRef 只用一次：切助手后不该再套旧会话。
+   */
+  const restoreRef = useRef<{ assistantId: string; conversationId: string } | null>(null)
+  const [restored, setRestored] = useState(false)
+
+  // 首屏 provider/助手还在路上（useProviderData 的 Promise.all 一次到货）；
+  // 空数组会被当成"没有存档目标"，所以等它们到齐再读存档、再允许写回。
+  const dataReady = providers.length > 0 || (assistants?.length ?? 0) > 0
+
+  useEffect(() => {
+    if (!dataReady) return
+    let cancelled = false
+    void window.pocketai
+      .getUiPrefs()
+      .then((p) => {
+        if (cancelled) return
+        const a = typeof p?.data?.agentAssistantId === 'string' ? p.data.agentAssistantId : ''
+        const c = typeof p?.data?.agentConversationId === 'string' ? p.data.agentConversationId : ''
+        restoreRef.current = { assistantId: a, conversationId: c }
+        if (a) setAssistantId(a)
+      })
+      .catch(reportIpcError('agent.getUiPrefs'))
+      .finally(() => {
+        if (!cancelled) setRestored(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dataReady])
+
+  useEffect(() => {
+    if (!restored) return
+    // 加载中间态（还没定下助手/会话）不写，否则会把上次的存档清掉
+    if (!assistantId || !conversationId) return
+    void window.pocketai
+      .setUiPrefs({ agentAssistantId: assistantId, agentConversationId: conversationId })
+      .then((r) => {
+        // 该通道成功也返回 {ok:true,data} 信封，不能用 isIpcFail 判别
+        if (r.ok === false) logIpcError('agent.setUiPrefs', r.error ?? 'failed')
+      })
+      .catch(reportIpcError('agent.setUiPrefs'))
+  }, [restored, assistantId, conversationId])
+
+  // 恢复来的助手必须仍然存在（助手可能被删除或被导入覆盖）；不在列表里就清回自由会话，
+  // 并把存档一起抹掉——否则每次进来都要重演一遍"选中一个不存在的助手"
+  useEffect(() => {
+    if (!restored || !assistants || assistants.length === 0) return
+    if (!assistantId || assistants.some((a) => a.id === assistantId)) return
+    setAssistantId('')
+    setConversationId(null)
+    restoreRef.current = null
+    void window.pocketai
+      .setUiPrefs({ agentAssistantId: '', agentConversationId: '' })
+      .then((r) => {
+        if (r.ok === false) logIpcError('agent.setUiPrefs', r.error ?? 'failed')
+      })
+      .catch(reportIpcError('agent.setUiPrefs'))
+  }, [restored, assistants, assistantId])
+
   // 助手切换 → 拉活跃+归档会话列表并自动选中最近一次（活跃列表已按置顶权重+updated_at DESC 排序）
   useEffect(() => {
     if (!assistantId) return
@@ -58,16 +163,33 @@ export function useAgentChat(providers: ProviderRecord[]) {
       if (cancelled) return
       setConversations(list)
       setArchivedConversations(archived)
-      // 命令面板跨助手跳来：pending 指定会话优先于「自动选最近」（助手不匹配保留 pending）
+      // 待恢复的会话必须属于这个助手，否则视为失效（被删/跨助手残留）
+      const want =
+        restoreRef.current && restoreRef.current.assistantId === assistantId
+          ? restoreRef.current.conversationId
+          : ''
+      const restoredHit = want ? list.find((x) => x.id === want) : undefined
+      restoreRef.current = null
+      // 命令面板跨助手跳来：pending 指定会话优先于「恢复上次」与「自动选最近」（助手不匹配保留 pending）
       const pending = consumePendingOpenConversation(true, assistantId)
+      const findConv = (id: string) => list.find((x) => x.id === id) ?? archived.find((x) => x.id === id)
+      let chosenId: string | null = null
+      let chosenLabel: string | null | undefined
       if (pending?.conversationId && pending.assistantId === assistantId) {
-        setConversationId(pending.conversationId)
-      } else {
-        setConversationId(list.length > 0 ? list[0]!.id : null)
+        chosenId = pending.conversationId
+        chosenLabel = findConv(chosenId)?.modelLabel
+      } else if (restoredHit) {
+        chosenId = restoredHit.id
+        chosenLabel = restoredHit.modelLabel
+      } else if (list.length > 0) {
+        chosenId = list[0]!.id
+        chosenLabel = list[0]!.modelLabel
       }
+      setConversationId(chosenId)
+      if (chosenId) applyLastModelOf(chosenId, chosenLabel)
     }).catch(reportIpcError('agent.listConversations'))
     return () => { cancelled = true }
-  }, [assistantId])
+  }, [assistantId, applyLastModelOf])
 
   // 命令面板导航（同助手直接开会话；跨助手交助手切换 effect 消费 pending）
   useEffect(() => {
@@ -235,37 +357,7 @@ export function useAgentChat(providers: ProviderRecord[]) {
   const selectConversation = (id: string) => {
     setConversationId(id)
     const c = conversations.find((x) => x.id === id) ?? archivedConversations.find((x) => x.id === id)
-    if (c?.modelLabel) {
-      // 格式："providerId:model" / 多目标 "pid1:m1 | pid2:m2" / Agent "agent:pid:model"
-      const first = c.modelLabel.split('|')[0]?.trim() ?? ''
-      const rest = first.startsWith('agent:') ? first.slice(6) : first
-      const i = rest.indexOf(':')
-      if (i > 0) {
-        const pid = rest.slice(0, i)
-        const mdl = rest.slice(i + 1)
-        const p = providers.find((x) => x.id === pid)
-        if (p) {
-          setProviderId(pid)
-          setModel(p.models.includes(mdl) ? mdl : '')
-          return
-        }
-      }
-    }
-    // 回退：取最后一条 assistant 消息的 provider/model
-    void window.pocketai.listMessages(id).then((msgs) => {
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i]
-        if (!m) continue
-        if (m.role === 'assistant' && m.provider && m.model) {
-          const p = providers.find((x) => x.id === m.provider)
-          if (p) {
-            setProviderId(m.provider)
-            setModel(p.models.includes(m.model) ? m.model : '')
-          }
-          break
-        }
-      }
-    }).catch(reportIpcError('agent.restoreLastModel'))
+    applyLastModelOf(id, c?.modelLabel)
   }
 
   /** 切换 Provider 时清空模型选择 */

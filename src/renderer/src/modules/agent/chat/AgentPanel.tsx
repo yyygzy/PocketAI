@@ -28,7 +28,7 @@ export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
   const { providers, assistants, fetchingModels, fetchModels } = useProviderData()
-  const chat = useAgentChat(providers)
+  const chat = useAgentChat(providers, assistants)
   // busy 上报：Agent 运行中豁免休眠，防止切走标签后被 LRU 卸载导致任务中断
   useEffect(() => {
     useAppStore.getState().setModuleBusy('agent', chat.running)

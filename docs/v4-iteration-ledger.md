@@ -52,6 +52,23 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-109 再点开 Agent 模块自动回到上次用的助手与会话（已落地，真机待验）
+
+- **来源**：用户反馈——切走再回来要重新选助手、重新点会话。根因不在数据而在生命周期：`Workspace` 对模块是**条件渲染**，切走即卸载，`useAgentChat` 里的 `assistantId/conversationId` 随之归零（会话列表 effect 只认"当前助手里最近一次"）。
+- **锁定口径**（AskUserQuestion 选「助手 + 会话」）：只持久化**助手 + 会话**两个 id，**不持久化 Provider/模型选择**；不做"每个模块记住自己的选中态"这种通用机制。
+- **落地形态（不引入新持久化格式）**：复用界面偏好通道 `UI_GET_PREFS/UI_SET_PREFS`，新增两个 app_config KV——`ui.agent_assistant_id` / `ui.agent_conversation_id`（`src/main/ui-preferences.ts`，读写走 `normalizePreferenceId`：trim + 128 上限，非字符串脏值读回空串）。选它有个顺带的好处：`app_config` 在合并里属 `LOCAL_KEEP_TABLES` ⇒ **"上次用在哪"不会被另一台机器的备份搬过来**。preload 无需改动（`setUiPrefs(patch: Partial<UiPreferences>)` 天然带上新字段）。
+- **三段时序（这段是真容易写错的地方）**：
+  ① **等数据到齐再读档**：`providers`/`assistants` 由 `useProviderData` 的 `Promise.all` 一次到货，挂载首帧是 `[]`。若在首帧就认定"没有存档"，用户自己选的助手会被抹掉 ⇒ 读档 effect 以 `dataReady`（两者任一非空）为门控，只跑一次。
+  ② **只在真确定选中项后写**：`assistantId && conversationId` 都非空才写回；中间态（新助手还没会话）一次都不写，否则每次进模块都把存档抹空。
+  ③ **恢复的助手必须还存在**：助手可能被删/被导入覆盖，不在列表里就清回未选中**并同步抹掉存档**，且 `restoreRef` 只用一次——切助手后不该再套旧助手的会话 id。
+  优先级：命令面板 pending > 存档命中（**且该会话必须在这个助手的活跃列表里**，被删/已归档则视为失效）> 最近一次。
+- **顺带超出锁定口径的一处（请复核）**：自动选中会话时也用 `applyLastModelOf()` 回填该会话**记录里**的 `modelLabel`。这是把 `selectConversation` 里既有的解析抽成共用函数（行为零变化），不是新增持久化；不回填的话会呈现"会话内容回来了、模型下拉是空的"，恰与用户抱怨的"还要重新选配置"是同一条。Provider/模型本身仍不跨会话记忆。
+- **测试**：新增 `tests/renderer-agent-restore-last-used.test.tsx` 7 例（`renderHook` 直接测 hook，不挂 AgentPanel——工具配置/附件/休眠豁免一堆无关桩）：① 存档命中 → 助手+会话+模型三者都回来，且**确实按该会话调过 `listMessages`**（不是只改了个 id）；② 存档会话已删 → 回落最近一条；③ 存档助手已删 → 清回未选中且**只写这一次**（`toEqual([{agentAssistantId:'',agentConversationId:''}])`）；④ 无存档对照 → 不自动选、不写库，用户选了之后才落档；⑤ 新助手零会话 → 中间态零写库；⑥ 存档会话属于另一助手 → 切助手不误套旧 id；⑦ 偏好通道 `{ok:false}` → 不恢复不写库、模块空态可用。`tests/ui-preferences.test.ts` +8 例（两个 key 的读写往返、**只传助手时会话字段不动**、空串=合法清除、入参 trim、读路径 128 限长、超 128 被 schema 拒绝且不写库、非字符串脏值读回空串）。
+- **两处自己踩到的口径错误（已更正，记在这里免得重犯）**：① 一开始按裸记录读 `getUiPrefs()` 的返回值（`p?.agentAssistantId`），**该通道返回的是 `{ok,data}` 信封** ⇒ typecheck 直接挡下，正确写法对齐 `SettingsModule.tsx:1982` 的 `r.ok && r.data`；② 写回时用 `isIpcFail(r)` 判失败——而 `isIpcFail` 的定义是 `'ok' in v`，**成功信封 `{ok:true,data}` 同样命中**，会把每次保存都记成失败 ⇒ 改用 `r.ok === false`。`utils/ipc.ts` 那句"成功返回的记录类型都不含 ok 字段"对信封类通道不适用。
+- **非空过实测**（三轮注入，全部用反向 patch/Edit 还原，未对含未提交改动的文件动 `git checkout`）：还原信封 unwrap → ①②③⑥ 转红；删掉"中间态不写"守卫 → ③④⑤⑦ 转红；删掉自动选中的模型回填 → ①② 转红（其余仍绿，各条钉不同侧面）；三次还原后 7 条全绿。
+- **验证**：typecheck 0；vitest **255 文件 / 3124 用例**全绿（+1 文件 +15 用例，改前 254/3109）；build 三端通过。
+- **未实测**：真机切走/切回是否真的停在上次会话、标题与内容同屏出现、以及删助手后再进来不残留 ⇒ 验收清单 **B50**。主进程（`ui-preferences.ts`）+ 共享类型都动了，**须重启 dev 才生效**。
+
 ### V4-Iter-108 修「点快捷预设残留上一条 provider 的 Key/模型」+ 已缓存模型可逐个移除（已落地）
 
 - **来源**：用户截图——左边选中「智谱 GLM」后点快捷预设，右侧成了 **名称=智谱 GLM、Base URL=火山方舟 ark、API Key=智谱的掩码 `••••st6I`、已缓存模型=智谱那 11 个**。

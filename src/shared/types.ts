@@ -1587,6 +1587,10 @@ export interface UiPreferences {
   chatFontSize: ChatFontSize
   /** 长代码块默认折叠阈值（行数）；0 = 永不折叠。旧数据缺省按 20 */
   codeCollapseLines: number
+  /** Agent 模块上次使用的助手 id（'' = 未记/自由会话） */
+  agentAssistantId: string
+  /** Agent 模块上次打开的会话 id（'' = 未记；恢复时还要校验它属于那个助手） */
+  agentConversationId: string
 }
 
 // ---------- WebDAV 增量备份 ----------

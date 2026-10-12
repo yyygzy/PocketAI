@@ -26,7 +26,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: mocks.appConfigRepo }))
 
-import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES } from '../src/main/ui-preferences'
+import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, MAX_PREFERENCE_ID_CHARS, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES } from '../src/main/ui-preferences'
 
 beforeEach(() => {
   mocks.store.clear()
@@ -133,7 +133,58 @@ describe('setUiPreferences — 保存偏好', () => {
   })
 })
 
+describe('Agent「上次用在哪」偏好（ui.agent_assistant_id / ui.agent_conversation_id）', () => {
+  it('未配置 → 两个 id 都是空串（空=没有存档，不是读取失败）', () => {
+    const p = getUiPreferences()
+    expect(p.agentAssistantId).toBe('')
+    expect(p.agentConversationId).toBe('')
+  })
+
+  it('写入后读回原值，键名落在 app_config（合并时属 LOCAL_KEEP 表，不会被另一台机器搬来）', () => {
+    setUiPreferences({ agentAssistantId: 'a-1', agentConversationId: 'c-2' })
+    expect(mocks.store.get('ui.agent_assistant_id')).toBe('a-1')
+    expect(mocks.store.get('ui.agent_conversation_id')).toBe('c-2')
+    const p = getUiPreferences()
+    expect(p.agentAssistantId).toBe('a-1')
+    expect(p.agentConversationId).toBe('c-2')
+  })
+
+  it('只传助手 → 会话字段不动（不能把另一半存档顺手清空）', () => {
+    setUiPreferences({ agentAssistantId: 'a-1', agentConversationId: 'c-2' })
+    setUiPreferences({ agentAssistantId: 'a-9' })
+    expect(mocks.store.get('ui.agent_conversation_id')).toBe('c-2')
+  })
+
+  it('空串是合法的「清除」，与「没传这个字段」区分得开', () => {
+    setUiPreferences({ agentAssistantId: 'a-1' })
+    setUiPreferences({ agentAssistantId: '' })
+    expect(mocks.store.get('ui.agent_assistant_id')).toBe('')
+    expect(getUiPreferences().agentAssistantId).toBe('')
+  })
+
+  it('入参去首尾空白；存档只放 id，不放内容', () => {
+    setUiPreferences({ agentAssistantId: '  a-1  ' })
+    expect(mocks.store.get('ui.agent_assistant_id')).toBe('a-1')
+  })
+
+  it('读路径也限长 128（KV 被别的写法拉进长串时不至于整份偏好变肥）', () => {
+    mocks.store.set('ui.agent_conversation_id', 'x'.repeat(MAX_PREFERENCE_ID_CHARS + 50))
+    expect(getUiPreferences().agentConversationId).toHaveLength(MAX_PREFERENCE_ID_CHARS)
+  })
+
+  it('超过 128 的入参被 schema 拒绝，不写库（与 opacity/折叠阈值同口径）', () => {
+    expect(() => setUiPreferences({ agentAssistantId: 'x'.repeat(200) })).toThrow()
+    expect(mocks.store.has('ui.agent_assistant_id')).toBe(false)
+  })
+
+  it('KV 被外部写脏（非字符串）→ 读回空串，不抛', () => {
+    mocks.store.set('ui.agent_assistant_id', 12345 as unknown as string)
+    expect(getUiPreferences().agentAssistantId).toBe('')
+  })
+})
+
 describe('normalizeCodeCollapseLines — 折叠阈值清洗', () => {
+
   it('缺省/空值 → 默认 20（未配置不等于永不折叠）', () => {
     expect(normalizeCodeCollapseLines(null)).toBe(DEFAULT_CODE_COLLAPSE_LINES)
     expect(normalizeCodeCollapseLines(undefined)).toBe(DEFAULT_CODE_COLLAPSE_LINES)
