@@ -123,9 +123,10 @@ class ToolRegistry {
   filterByPermissions(permissions: string[] | null | undefined): ToolSchema[] {
     if (!permissions || permissions.length === 0) return []
     const all = this.listAll()
-    if (permissions.includes('*')) return all.filter((t) => t.source === 'builtin')
+    // 判定只留 isToolAllowedBy 一处。这里曾为 '*' 单开分支（`return builtin`），
+    // 于是 `['*', 'mcp:srv:tool']` 里逐条点名的 MCP 工具也被丢掉——而提示语恰恰叫用户去勾选。
     const allowed = new Set(permissions)
-    return all.filter((t) => allowed.has(t.id))
+    return all.filter((t) => isToolAllowedBy(allowed, t))
   }
 
   /** 把 ToolSchema 数组格式化为可注入 SystemPrompt 的 {{tools}} 文本 */

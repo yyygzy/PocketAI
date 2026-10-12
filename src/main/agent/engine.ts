@@ -114,6 +114,12 @@ interface AgentRunContext {
   // 模型不支持原生 function calling 时自动降级的文本协议模式（ReAct 兜底）：
   // 工具清单注入 system prompt，模型用 ```tool_call 围栏声明调用，引擎抽取后走原执行链
   textProtocolMode: boolean
+  /**
+   * 文本协议模式的工具调用交接。协议模式刻意不把 `tool_calls` 挂回上下文消息（见 runLLMStep
+   * 的剥离注释：不支持 tools 的端点收到该字段会 400），而 runToolsStep 原先**只**从最后一条
+   * assistant 消息取调用 —— 两条各自成立，合起来就是"围栏抽出来了却永远不执行"。
+   */
+  pendingToolCalls: ToolCall[] | null
   retriedBadCall: boolean // 文本协议下 tool_call 围栏 JSON 已纠错过一次（防无限重试）
   pendingAssistantMsgId: string // 当前轮 streaming 占位消息 id（写入终态后清空），供 catch 清理避免 UI 卡「思考中」
   finalContent: string
@@ -234,6 +240,17 @@ export function ensureProtocolPrompt(messages: AdapterChatMessage[], tools: Tool
   if (sys.content.includes(PROTOCOL_MARKER)) return false
   messages[0] = { ...sys, content: sys.content + buildTextProtocolPrompt(tools) }
   return true
+}
+
+/**
+ * 文本协议模式下上下文里不该再出现 `tool_calls` 字段——那正是端点报 400 的东西。
+ * 本轮新产出的 assistant 消息已在推送处剥离，但**跨轮历史是 buildContext 从 DB 还原的**
+ * （那里 assistant.tool_calls 会被填回来），所以进入协议模式时要把整份上下文清一遍。
+ */
+export function stripToolCallsFromContext(messages: AdapterChatMessage[]): void {
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.tool_calls) delete m.tool_calls
+  }
 }
 
 /**
@@ -802,9 +819,10 @@ class AgentEngine {
 
     // 允许调用的工具 id 集合：`'*'` 原样交给注册表判定——它**只覆盖内置工具**，
     // MCP 工具必须有显式 id 才放行（口径与收紧理由见 registry.ts 的 isToolAllowedBy）
-    const allowedToolIds = new Set<string>(
-      toolPermissions.includes('*') ? ['*'] : toolPermissions
-    )
+    // 原样把授权表交给 isToolAllowedBy 判定：'*' 的含义（只覆盖内置）写在那一处的注释里。
+    // 这里曾把 '*' 之外的逐条 id 全丢掉（`includes('*') ? ['*'] : …`），于是 `*` 助手
+    // 即使点名勾上了某条 MCP 工具，发给模型的清单里有它、执行时却报 TOOL_NOT_ALLOWED。
+    const allowedToolIds = new Set<string>(toolPermissions)
 
     // 显式规划阶段（Plan-and-Execute）：
     // 首轮对话（无历史工具调用）先让 LLM 输出执行计划，注入 system prompt 引导后续执行。
@@ -859,6 +877,9 @@ class AgentEngine {
       })
     }
 
+    // 点名走文本协议的模型：先抹掉跨轮历史里还原回来的 assistant.tool_calls（见 helper 注释）
+    if (forcedTextProtocol) stripToolCallsFromContext(messages)
+
     // 状态机上下文：封装所有跨节点共享的可变状态
     const ctx: AgentRunContext = {
       requestId,
@@ -878,6 +899,7 @@ class AgentEngine {
       maxSteps: MAX_STEPS,
       retriedEmpty: false,
       textProtocolMode: forcedTextProtocol,
+      pendingToolCalls: null,
       retriedBadCall: false,
       pendingAssistantMsgId: '',
       finalContent: '',
@@ -1123,6 +1145,7 @@ class AgentEngine {
       // 刚切换到文本协议模式：注入协议提示词，本轮占位写成切换提示终态，重跑本步（不传 tools）
       if (ctx.textProtocolMode && e && isToolsUnsupportedError(errMsg(e))) {
         ensureProtocolPrompt(messages, tools)
+        stripToolCallsFromContext(messages)
         const switchText = '（模型不支持原生工具调用，已切换文本协议模式，正在重试…）'
         messageRepo.updateContent(assistantMsg.id, switchText, 'done')
         ctx.pendingAssistantMsgId = ''
@@ -1342,6 +1365,8 @@ class AgentEngine {
       status: 'success'
     })
     logger.info(`[agent] step=${stepIndex} trace 写入完成，返回 tools`)
+    // 文本协议：调用刻意不挂在上下文消息上，这里显式交接给 runToolsStep
+    ctx.pendingToolCalls = toolCalls && toolCalls.length > 0 ? toolCalls : null
     return 'tools'
   }
 
@@ -1357,9 +1382,11 @@ class AgentEngine {
     // 运行级上下文片段：透传给需要向渲染端发事件的内置工具（todo_write）
     const agentCtx: ToolAgentContext = { requestId, conversationId, emit, stepIndex }
 
-    // 获取上一步 LLM 返回的 tool_calls（从 messages 最后一条 assistant 消息取）
+    // 获取上一步 LLM 返回的 tool_calls（原生路径挂在 messages 最后一条 assistant 消息上；
+    // 文本协议路径刻意不挂，从 ctx.pendingToolCalls 取）
     const lastAssistant = messages[messages.length - 1]
-    const toolCalls = lastAssistant?.tool_calls
+    // 不必在这里清空：状态机只有 llm→tools→llm 一种走法，下一个 llm 步一定会重写 pendingToolCalls
+    const toolCalls = lastAssistant?.tool_calls ?? ctx.pendingToolCalls
     if (!toolCalls || toolCalls.length === 0) return 'llm'
 
     // 死循环检测：相同工具+参数连续调用超过阈值时，注入反思引导而非重复执行

@@ -51,6 +51,7 @@ import type { MessageRecord, ChatAttachment, ToolCall, ToolResult, ToolSchema } 
 import type { AdapterChatMessage } from '../src/main/providers/types'
 import {
   buildContext,
+  stripToolCallsFromContext,
   compressToolResult,
   computeToolSignature,
   buildHistorySummary,
@@ -165,6 +166,52 @@ describe('buildContext — 悬空 tool_calls 剥离', () => {
     ]
     const out = buildContext(history)
     expect(out[1]!.tool_calls).toBeUndefined()
+  })
+})
+
+
+describe('stripToolCallsFromContext — 进入文本协议时清空上下文里的 tool_calls', () => {
+  const hist = () =>
+    [
+      { id: 'u1', conversationId: 'c', role: 'user', content: '现在几点', status: 'done' },
+      {
+        id: 'a1',
+        conversationId: 'c',
+        role: 'assistant',
+        content: '我查一下',
+        status: 'done',
+        toolCalls: JSON.stringify([{ id: 'tc1', type: 'function', function: { name: 'time_now', arguments: '{}' } }])
+      },
+      { id: 't1', conversationId: 'c', role: 'tool', content: '{"toolCallId":"tc1","content":"18:00"}', status: 'done' }
+    ] as never
+
+  it('前置事实：buildContext 会把已应答的 assistant.tool_calls 还原回来', () => {
+    const out = buildContext(hist(), 'sys')
+    const asst = out.find((m) => m.role === 'assistant')!
+    expect(asst.tool_calls).toHaveLength(1)
+  })
+
+  it('抹掉之后：assistant 只剩文本，user/tool/system 一条不少（不支持 tools 的端点才不会继续 400）', () => {
+    const out = buildContext(hist(), 'sys')
+    stripToolCallsFromContext(out)
+    expect(out.every((m) => m.tool_calls === undefined)).toBe(true)
+    expect(out.filter((m) => m.role === 'assistant')).toHaveLength(1)
+    expect(out.filter((m) => m.role === 'tool')).toHaveLength(1)
+    expect(out[0]!.role).toBe('system')
+  })
+
+  it('没有 tool_calls 的上下文原样返回（幂等、不误删字段）', () => {
+    const msgs: AdapterChatMessage[] = [
+      { role: 'system', content: 's' },
+      { role: 'user', content: 'u' },
+      { role: 'assistant', content: 'a' }
+    ]
+    stripToolCallsFromContext(msgs)
+    expect(msgs).toEqual([
+      { role: 'system', content: 's' },
+      { role: 'user', content: 'u' },
+      { role: 'assistant', content: 'a' }
+    ])
   })
 })
 

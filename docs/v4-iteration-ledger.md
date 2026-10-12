@@ -66,6 +66,25 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-117 「你直接测试吧」逼出来的三条：勾了的 MCP 工具没进清单、进了清单也被执行闸门拒、文本协议抽到围栏却从不执行（已落地，真机待验）
+
+- **做法换了**：B54–B57 原本要靠真机点，但这台机的 MCP server 全起不来（`main.log` 里最后关于 mcp 的记录还是 10-11 的 `spawn npx ENOENT` / `initialize (15000ms)` / `code=1`）。改成自己造现场：真起一个 stdio MCP server 子进程、真临时库、本地真起 OpenAI 兼容端点，把清单里那几条在 CI 里跑一遍。两条缺陷都是这么撞出来的。
+- **① `'*'` 助手逐条勾上的 MCP 工具其实从来没放行**（`registry.ts` 的 `filterByPermissions`）：它为 `'*'` 单开了一条分支 `return all.filter(t => t.source === 'builtin')`，于是 `['*', 'mcp:srv:tool']` 里那条逐条点名的授权被同一条分支一起丢掉。后果正好和 Iter-113 的提示语相反：提示让用户「请到助手 → 工具权限逐个勾选」，照做了也没用——`countMcpHeldBack` 认为勾了就不算被挡（数字减一），工具却依旧不在发给模型的清单里。修法：判定收回 `isToolAllowedBy` 一处，删掉那条分支；`classify` / `execute` 本来就用它，现在三处口径只能有一个。
+  - 现有用例为什么没抓到：`tests/tool-name-collision.test.ts:180` 只喂了 `['*']` 与 `['mcp:srv-a:read_file']` 两种各一半的权限，唯一没测的就是两者合起来那种——而那正是内置助手的默认形态。
+- **② 文本协议模式下工具一次都没被执行过**（`engine.ts`）：协议模式刻意不把 `tool_calls` 挂回上下文里的 assistant 消息（不支持 tools 的端点收到会 400，`engine.ts:1284` 注释写得很清楚），而 `runToolsStep` 只从最后一条 assistant 消息取调用（`:1360`）。两个各自成立合起来等于：`extractTextToolCalls` 抽到的调用被写进 DB、记进 trace，然后没人执行；引擎空转到 MAX_STEPS，最后把那段 ```tool_call 围栏当最终回答返回给用户。**这不是 Iter-113 新开关独有的——更早的「端点报 400 自动降级」走的是同一条路，也一直是空的**；本机 1.5B 之前「就是不调工具」的结论里混进了引擎的账。
+  - 修法：`runLLMStep` 在返回 `'tools'` 前把抽到的调用放进 `ctx.pendingToolCalls`，`runToolsStep` 在原生字段缺失时读它；上下文消息继续保持不带 `tool_calls`。
+  - **中途加过一行「取用后立刻清空」，最后判定是冗余守卫、删掉了**：`runToolsStep` 只会返回 `'llm'`，而下一次进入 `'tools'` 之前 `runLLMStep` 必然重写这个槽位 ⇒ 清空没有任何可观测差别。处置沿用本批另一条冗余判断的口径：不给它编用例，而是把代码删薄，并在读取处留一行注释说明为什么不必清。
+- **③ 接上 ① 之后又挖出一处同族漏项**（`engine.ts:822`）：`allowedToolIds` 之前是 `new Set(toolPermissions.includes('*') ? ['*'] : toolPermissions)` —— 一旦有 `'*'`，逐条点名的 id 全被丢掉，于是 `classify` / `execute` 那两处 `isToolAllowedBy` 看到的是「只有 `*`」，MCP 工具直接 `TOOL_NOT_ALLOWED`。这条要 ① 修完才会现形（清单里有工具、模型真去调、执行时被拒），也就是「三处口径只写对了两处」：`filterByPermissions`（发给模型的清单）与 `allowedToolIds`（执行闸门）必须同源，缺一个都是骗人去勾选。修法：`new Set(toolPermissions)`，`'*'` 的语义完全交给 `isToolAllowedBy` 一处解释。
+  - 顺带补的第三条：进入协议模式时把跨轮历史里还原回来的 `assistant.tool_calls` 抹掉（`stripToolCallsFromContext`）。`buildContext` 会把上一轮已应答的工具调用还原回来，第二轮再发给不支持 tools 的端点就继续 400 —— 这是把执行接通之后才暴露出来的，不补等于把老 bug 挪了个位置。
+- **新增三个真环境用例**（都带 fixture / 真进程 / 真 HTTP 端点，不 mock）：
+  - `tests/agent-mcp-held-back.test.ts`（6 例，fixture `tests/fixtures/mcp-probe-server.cjs`）：真起 stdio 子进程 → 真 `initialize` / `tools/list` 握手 → 过 `normalizeToolList` 的协议收紧 → 进真 `toolRegistry`，再要求 `countMcpHeldBack(['*'], listAll()) === 3`（等于该 server 真实暴露的条数）、勾一条减一条、不用 `'*'` 恒 0、`['*' + 一条点名]` 必须真的出现在可用清单里，并真调用一次 `probe_alpha` 拿回暗号串。这就是 B54 那句「N 应等于工具条数」的可证形式。
+  - `tests/agent-mcp-tool-real-run.test.ts`（5 例）：把两样真的东西接成一条链——真 stdio MCP server + 真 `agentEngine.run` + 真本地端点。① 只给 `'*'`：发给端点的清单里一个 MCP 工具都没有，`done.mcpHeldBack === 3`；② 反向对照：不用 `'*'` 时这条提示不该出现（`mcpHeldBack` 为 undefined）；③ 点名一条：它出现在清单里 → 端点回原生 tool_calls → 引擎弹了确认（SEC-5 默认一律 confirm，测试里等价于用户点「允许」）→ 暗号真的从子进程取回来并进了最终回答，MCP 调用日志也落了库；④ 点名是逐条的：没点名的 `probe_gamma` 不在清单里、也拿不到它的返回值；⑤ 注册表算术：`'*'` + 点名 = 内置全给 + 只多那一条。
+  - `tests/agent-text-protocol-real-endpoint.test.ts`（6 例）：本地真起 OpenAI 兼容 SSE 端点（provider / assistant / conversation 全落临时库，真库真 fetch 真循环），验 ① 未点名 → 请求带 `tools`、system 无协议段、`usedTools=false`（端点回一段编的时间，就是 B55 的现场）；② 点名后 → 首轮不传 `tools`、协议段进 system、```tool_call 围栏真的执行 `time_now`、工具结果以 user 消息回填、`usedTools=true`；③ 关掉开关退回原生；④ 作用域是一台模型一个；⑤ 跨轮第二轮仍能执行；⑥ 端点改成见 tools 就 400 → 自动降级那条路现在也真的执行工具。
+- **变异实测（六轮，其中一轮教了东西）**：把判定还原成 `'*'` 分支 → 1 红；删 `runToolsStep` 里对 `pendingToolCalls` 的读取 → 3 红；把 `allowedToolIds` 还原成丢 id 的写法 → 1 红（红的正是那条端到端链）；删 `runLLMStep` 的交接赋值 → 红；删「用完即清」→ 全绿；把它误写成上一行的赋值形式 → **也全绿**（提交前 `git diff` 复查才抓到这次粘贴错误，见留尾）；删 `stripToolCallsFromContext` 在强制开关处的调用 → 1 红。**删自动降级处的那条调用：整文件跑全绿、单独跑那条用例却红** —— 查下来不是 transform 缓存，是那条断言依赖同一会话里前一条用例留下的历史，属于测试自身的顺序耦合。处置：把这条不变量挪回确定性位置（`buildContext` 会还原 `tool_calls` + `stripToolCallsFromContext` 抹掉它，两条单测守住），e2e 只留与顺序无关的行为断言。**断言会漂就说明它守的地方不对，别给它加「先跑一遍别的」的前置条件。**
+- **验证**：typecheck 0；vitest **265 文件 / 3219 用例**全绿（+3 文件 +20 例）；build 三端通过。engine 与 registry 都在主进程 ⇒ **须重启 dev**。
+- **留尾（如实）**：① 自动降级路径里那句 `stripToolCallsFromContext(messages)`（`engine.ts:1147`）现在只有 helper 的单测、没有守住这个调用点——想用它自己的 e2e 守会踩上面的顺序耦合，宁可标未测；② 「用完即清」那一行（现已删）没有任何可观测性：删掉不红，本批提交前自查还发现它被恢复脚本误写成了上一行的赋值形式、同样不红——是 `git diff` 抓到的，不是测试。**教训：变异/恢复之后要逐次核对 diff，不能只看测试回到绿。**③ B54 的提示行、B55 的徽标在界面上的实际呈现仍只有真机能看（e2e 证的是行为与数据，不是排版）；④ 主进程那句切换提示仍是中文硬编码（Iter-101 记过，未变）。
+- **口径影响**：Iter-113 的徽标从「能开、开了不生效」变成「开了真生效」；Iter-110 的收紧从「勾了也没用」（①③ 两处叠加）变成「勾了就能用」。这些以前只在文案层承诺过，现在有执行层证据。修的是「用户显式点名的那一条 MCP 工具被自己人拦掉」，`'*'` 依旧只覆盖内置 —— 授权口径没有放宽。
+
 ### V4-Iter-116 检查 Agent 模型列表查出两条：选中项从不校验、切回来会把会话跳走（已落地，真机待验）
 
 - **来源**：用户让「检查 Agent 模块模型列表」。逐条读 `useAgentChat` + `AgentModelBar` + `useProviderData` 后查出两条，都不是显示层的问题。
