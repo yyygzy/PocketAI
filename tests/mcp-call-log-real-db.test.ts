@@ -123,4 +123,36 @@ describe('MCP 调用记录真库往返（B32 / B33）', () => {
     expect(rows.some((r) => r.tool === 't204')).toBe(true)
     expect(rows.some((r) => r.tool === 't0')).toBe(false)
   })
+
+  it('按 server 清空只删自己那份（B34：另一个 server 的行必须原样还在）', () => {
+    dbService.open()
+    dbService.runMigrations()
+    const seed = (serverId: string, n: number): void => {
+      for (let i = 0; i < n; i++) {
+        mcpCallLogRepo.append({
+          serverId,
+          tool: `tool-${i}`,
+          ok: true,
+          durationMs: 1,
+          argsPreview: null,
+          resultPreview: null,
+          error: null
+        })
+      }
+    }
+    seed('srv-a', 3)
+    seed('srv-b', 5)
+
+    expect(mcpCallLogRepo.clear('srv-a')).toBe(3)
+    expect(mcpCallLogRepo.list('srv-a', 100)).toEqual([])
+    // 反向对照：没被点到的那个 server 不该被牵连
+    expect(mcpCallLogRepo.list('srv-b', 100)).toHaveLength(5)
+
+    // 选「全部」才动得到剩下的（面板上那是另一个选项）。
+    // 计数按当下实际行数断言：本文件前面几条用例还留着 srv-real-2 的环形样本。
+    const remaining = mcpCallLogRepo.list(undefined, 10_000).length
+    expect(remaining).toBeGreaterThan(5)
+    expect(mcpCallLogRepo.clear()).toBe(remaining)
+    expect(mcpCallLogRepo.list('srv-b', 100)).toEqual([])
+  })
 })

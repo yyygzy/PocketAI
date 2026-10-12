@@ -64,10 +64,19 @@ function readInitialLang(): Lang {
 
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [lang, setLangState] = useState<Lang>(readInitialLang)
+  // 懒加载字典到位后要有一次渲染，否则界面会停在 zh 兜底直到下一次无关重渲染
+  const [dictVersion, setDictVersion] = useState(0)
 
   // 初始语言为非 zh 时按需补载对应字典（加载完成前 t() 回退 zh）
   useEffect(() => {
-    if (lang !== 'zh' && !dicts[lang]) void ensureLang(lang)
+    if (lang === 'zh' || dicts[lang]) return
+    let alive = true
+    ensureLang(lang).then(() => {
+      if (alive) setDictVersion((n) => n + 1)
+    })
+    return () => {
+      alive = false
+    }
   }, [lang])
 
   const setLang = useCallback((next: Lang) => {
@@ -104,7 +113,11 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return str
   }, [lang])
 
-  const value = useMemo(() => ({ lang, setLang, toggleLang, t }), [lang, setLang, toggleLang, t])
+  const value = useMemo(
+    () => ({ lang, setLang, toggleLang, t }),
+    // dictVersion：字典迟到时换一次 context 身份，让所有 useI18n 的消费者重渲染
+    [lang, setLang, toggleLang, t, dictVersion] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }

@@ -566,6 +566,27 @@ export function overwriteTable(
   return count
 }
 
+/**
+ * 云端覆盖配置类表（executeMerge 的第 2 步，抽出来是为了能被真库用例直接打到：
+ * 「哪张表要保留凭据列」这条映射以前只出现在调用参数里，改错了没有任何测试会红）。
+ * 返回要并入 summary 的行文案。
+ */
+export function overwriteConfigTables(
+  localDb: Database.Database,
+  cloudDb: Database.Database
+): string[] {
+  const parts: string[] = []
+  for (const table of CLOUD_OVERWRITE_TABLES) {
+    const n = overwriteTable(localDb, cloudDb, table, { preserveColumns: CREDENTIAL_COLUMNS[table] })
+    if (n > 0) {
+      parts.push(
+        CREDENTIAL_COLUMNS[table] ? `${table}: ${n} 行(云端，凭据列保留本机)` : `${table}: ${n} 行(云端)`
+      )
+    }
+  }
+  return parts
+}
+
 /** 执行合并恢复 */
 export async function executeMerge(
   cfg: WebDAVConfig,
@@ -592,11 +613,8 @@ export async function executeMerge(
       }
     }
 
-    // 2. 云端覆盖配置类表
-    for (const table of CLOUD_OVERWRITE_TABLES) {
-      const n = overwriteTable(localDb, cloudDb, table, { preserveColumns: CREDENTIAL_COLUMNS[table] })
-      if (n > 0) summaryParts.push(CREDENTIAL_COLUMNS[table] ? `${table}: ${n} 行(云端，凭据列保留本机)` : `${table}: ${n} 行(云端)`)
-    }
+    // 2. 云端覆盖配置类表（凭据列按表保留本机值，见 overwriteConfigTables）
+    summaryParts.push(...overwriteConfigTables(localDb, cloudDb))
 
     summaryParts.push('提示：跨机合并不搬运模型/服务凭据（Key、env、headers 仍是本机值或本机新行的云端密文），目标机请在「设置」重新填写')
 

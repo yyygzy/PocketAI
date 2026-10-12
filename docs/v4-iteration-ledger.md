@@ -52,6 +52,60 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-105 B12 换源确认进 CI，并改正清单里一处**写错的预期**（已落地）
+
+- **动手前先对了口径**：B12 那行写的是「把 pip 源从官方改成**清华镜像** → 弹确认并列出目标 URL」。读 `usePipSource.choosePipSource` 发现预设源（official/tuna）是**直接写入、不弹确认**，只有自定义 URL 才二次确认；再对 SEC-20 原文——「UI **切换自定义源**前二次确认」。**⇒ 是清单写错，不是代码缺功能。** 若照清单去"修"，会给预设源平白加一层弹窗骚扰。用例因此钉的是真实行为（含"预设源不该被弹"这条反向断言）。
+- **用例**（`tests/renderer-pip-source-confirm.test.tsx` 7 例，`renderHook` 直接测 hook，不挂 McpPanel）：① 挂载读回已存自定义源会展开输入框并填原值；② 切预设源（清华）**直接写入且 `confirm` 零调用**；③ 存自定义 https 源 → 弹 `danger` 确认、文案**逐字等于**字典 `agent.pipSourceConfirm` 插值且含目标 URL、确认后才写库；④ **点取消一次都不写库**（换 wheel 来源必须是显式动作）；⑤ 非回环 http → 就地报错、不弹、不写、不 notify（与主进程同一把尺）；⑥ 回环 http 放行但仍走确认；⑦ 主进程返回结构化 error → 显示在输入框下方而非静默。
+- **测 hook 而非组件的理由写进文件头**：确认逻辑、URL 插值、"取消不写库"三件事全在 `usePipSource` 里，而 McpPanel 挂载要拉起 server 列表/运行时/模板一堆无关桩——按 V4-Iter-96 的教训（别为可测性先重构）。
+- **闸门非空过已实测**：把 `saveCustomPipSource` 里的 `await confirm(...)` 短路掉 → ③④⑥ 三条转红（②⑦仍绿，说明各条钉的是不同侧面）；还原后 7 条全绿，`git diff` 确认该文件零残留改动。
+- **验证**：typecheck 0；vitest **251 文件 / 3094 用例**全绿（+1 文件 +7 用例）。本批无源码净改动（mutation 已完全还原），故未重跑 build。
+- **仍未证**：弹窗在界面上的实际呈现（标题/危险色/按钮位置）——用例断言的是传给 `confirm` 的参数，不是渲染出来的对话框。⇒ 留 B12 真机那一眼。
+
+### V4-Iter-104 B9（跨机合并保留本机凭据）补真库用例，并把"哪张表要保留凭据列"抽成可测单元（已落地）
+
+- **为什么是这条**：V4-Iter-103 审计出的"剩下最大缺口"——SEC-30 的规则（合并时凭据列不跨机搬运）**在测试里零命中**（`grep tests/ LOCAL_KEEP|skipCred|凭据.*不跨机` 全无）。它坏掉的症状很难看：用户合并完备份，Provider 的 Key 变成源机主密钥加的密文，本机 `decryptSecret` 一律 fail-closed ⇒ 表现为"Key 凭空丢失"。
+- **先补接缝再补用例**：真正会静默坏掉的是 `executeMerge` 里那句 `overwriteTable(..., { preserveColumns: CREDENTIAL_COLUMNS[table] })`——它只是循环里的一行胶水，此前没有任何测试能打到。于是把第 2 步抽成导出的 `overwriteConfigTables(localDb, cloudDb): string[]`（`merge-service.ts:569`），`executeMerge` 改为 `summaryParts.push(...overwriteConfigTables(...))`，行为零变化。
+- **用例**（`tests/backup-merge-credentials-real-db.test.ts` 4 例，真 SQLite 不桩 DB）：
+  ① 本机已有的行——`name`/`base_url` 被云端覆盖（这就是"配置表云端覆盖"语义），但 `api_key_encrypted` 仍是本机那份；`mcp_servers.env` 同规则；汇总文案带"凭据列保留本机"。
+  ② 只在云端存在的行——没有本机值可留，落云端密文（合并不负责变出可用 Key，这条边界要写清楚）。
+  ③ **反向对照**：同一张表用 `overwriteTable` 不传 `preserveColumns` 再走一遍 ⇒ Key 确实被云端覆盖 ⇒ ① 不是恒真。
+  ④ 云库里不存在的表（skills/assistants）走同一通路返回 0 行、不进 summary、也不报错。
+  **云库结构不是手搓的**：先对本地库跑真迁移，再从 `sqlite_master` 取 `providers`/`mcp_servers` 的 DDL 建云库——本地加列时用例不会用三年前的结构假绿。
+- **闸门非空过已实测**：把 `overwriteConfigTables` 里那次 `preserveColumns` 传参删掉 → ① 立刻转红（`expected 'cloud-cipher-BBBB' to be 'local-cipher-AAAA'`），其余三条仍绿；改回后 4 条全绿。
+- **一处自己的排查失误**：build 后我先 `grep out/main/index.js` 搜不到"凭据列保留本机"，一度以为改动没进包；实际 merge-service 是**动态 import 的独立 chunk**（`backup.ts:173/186` 用 `await import`），串在 `out/main/chunks/merge-service-*.js` 里。教训：主包搜不到 ≠ 没打进产物，先看是不是懒加载分块。
+- **验证**：typecheck 0；vitest **250 文件 / 3087 用例**全绿；build 三端通过，chunk 内两处文案计数各 1。
+- **仍未证**：① 真实异机（两侧真用**不同主密钥**加解密）下的端到端表现——用例里是两串可辨识的假密文，证的是"按 id 保留本机列值"这条规则，不是真密码学；② 对话框黄字与提示在界面上的位置/排版。⇒ 清单 B9 改标"机制已进 CI"，真机部分并入 C 类（需要第二台机器或第二份实例）。
+
+### V4-Iter-103 清单审计轮：B20/B31 其实早已进 CI，B34 补真库用例后转绿（已落地）
+
+- **做法**：不再"猜哪条能转"，而是把 33 条未打勾的行逐条拿现有测试对号（`grep tests/` 找断言，不找文件名）。结果分三类：早已覆盖只是清单没标（B23 上一轮、本轮 B20/B31）、覆盖一半（B12）、真缺口（B34 补一条即闭合、B9 最大）。
+- **B20 → ✅ 零新代码**：校验线两侧在 `webdav-password-charset.test.ts`（Latin1 上界内可用 / 恰好越界一码位即拒 / 中文·emoji·组合记号拒 / 文案自带指路），而这一行最难证的**"不发出任何请求"**其实早就在 `backup-webdav-e2e.test.ts:334`（真发包假服务端：中文口令 → 拒绝、不落盘、零请求），`:325` 另证 `é/ü/ñ` 放行。
+- **B31 → ✅ 零新代码**：`renderer-reminder-menu.test.tsx` 17 例含"标签随规则实时变 / 多选星期 / **取消最后一个勾选不生效** / 号数越界夹进 1–31 / 每天改『每 N 天』"；徽标一致性在 `renderer-reminders-modal-rule.test.tsx`；**"31 号要跨月才看得全"由 `reminder-scheduler.test.ts:189` 钉**（2 月末 → 3 月 31 号，且 1/31 起算时 2 月落当月最后一天）——正是 Iter-83 那个"永久卡在 28 号"的验收点。
+- **B34 → 补一条真库用例后 ✅**：`mcp-call-log-real-db.test.ts` 第 4 例——两个 server 各塞行，`clear('srv-a')` 返回 3、A 查空、**B 的 5 行原样还在**（反向对照，防"清空"写成全表删），再 `clear()` 才动到 B。此前 `mcp-call-log-repo.test.ts` 只断言 SQL 形状与参数，没证过真数据不被牵连。
+- **写用例时自己错了一条**：全清那步我断言 `clear() === 5`，实际返回 206——本文件前面用例还留着 `srv-real-2` 的 200 条环形样本。改成按当下实际行数断言（`remaining`），**改测试不改行为**。
+- **两条"看着像缺口"的判定**：① **B12 只覆盖了一半**——`pip-source-schema.test.ts` 证的是"http 自定义源被表单拒"，而那一行还要的"**弹确认并列出目标 URL**"在 `tests/renderer-*` 里搜 pip 零命中 ⇒ 未进 CI；② **B9（合并保留本机凭据）是剩下最大缺口**——`grep tests/ LOCAL_KEEP|skipCred|凭据.*不跨机` 全无命中，SEC-30 那条"凭据列不跨机搬运"目前**没有任何用例**，它需要两份真 SQLite 走 merge-service，是可以照真库范式补的。
+- **验证**：typecheck 0；vitest **249 文件 / 3083 用例**全绿（+1 用例）。清单未打勾 36 → **33**（✅ 16 / 🔁 7）。
+
+### V4-Iter-102 B23/B26 转 CI，顺带修「切换语言后界面停在中文」的渲染时机 bug（已落地）
+
+- **范围**：继续从人工验收清单里挑能转 CI 的。先读现有覆盖再动手，结果一条是"早已覆盖、只是清单没标"，另一条才是真缺口——并且真缺口里藏着一个 bug。
+- **B23 不必新写**：`tests/renderer-reminder-menu.test.tsx` 已有 17 例，B23 那行要的**全部四条**都在（默认 09:00 渲染进四个定点项 / 改成 20:30 四项同步 / 清空回落 09:00 不产出脏时间 / 三个相对时长项不受时间点与规则影响）。⇒ 清单行改标"由 CI 证"，本批没为它加一行代码。
+- **B26 是真缺口 → 新增 `tests/renderer-i18n-no-key-leak.test.tsx` 4 例**：把浮层在 zh/en/ja/ko 各挂一次，扫**渲染后的文本**里有没有任何一把字典 key 露出来（`leakedKeys` 拿 `zh` 的全部 key 去 `includes`，正常文案不会长成 `xxx.yyy`）。每条先 `findByText(该语言的标题)` 当门禁——字典是动态 import 的，等不到译文就断言等于假绿。
+- **为什么 `i18n-parity` 抓不到这类**：parity 只保证"四本字典 key 集合一致"，管不到 ① 运行时字典**迟到**、② 组件里 `t(\`reminder.menu.${k}\`)` / `t(\`reminder.center.weekday.${n}\`)` 这种**动态拼 key** 拼出不存在的名字。新用例扫的是渲染结果，两类都兜得住。
+- **撞出的真 bug（已修）**：`I18nProvider` 里懒加载字典到位后**没有任何人触发重渲染**（effect 只 `void ensureLang(lang)`）。后果：切到 en/ja/ko 时 `setLangState` 先渲染一次（此时字典还没到 → `t()` 回退中文），字典到了也不再有下一次渲染 ⇒ **界面停在中文，直到某次无关重渲染**；首帧即非中文（重启后恢复语言）同理。修法：effect 里 `.then(() => setDictVersion((n) => n + 1))`，并把 `dictVersion` 放进 context 的 memo 依赖，让所有 `useI18n` 消费者重渲染。
+- **这条修复被用例反向钉住**：把 `setDictVersion(...)` 那行换成空操作 → en/ja/ko 三条立刻转红，报错正是"找不到 `Remind me` / `リマインド` / `알림 설정`"（即仍显示中文）；改回后 4 条全绿。
+- **验证**：typecheck 0；vitest **249 文件 / 3082 用例**全绿（+1 文件 +4 用例）；build 三端通过（本批动了渲染层源码）。
+- **仍未证**：切换语言后的**排版**（译文比中文长导致的溢出/换行）不在本用例职责内，属 A7 那条四语目视；jsdom 也量不出真实字体宽度。
+
+### V4-Iter-101 B13/B10 转真文件 CI，文本协议 i18n 这条**假设证伪**（部分落地）
+
+- **范围**：从 40 条未打勾的人工验收里挑"CI 真能替掉肉眼"的两条，外加一条我上一轮报小了的任务。
+- **B13 日志脱敏 → 真文件用例**：`log-redact.test.ts` 测的是纯函数（它特意独立成模块就是为了绕开 `logger.ts` 的 electron 依赖），于是"**logger 落盘那一行到底被处理过没有**"在 CI 里没人证过——和当初 B32/B33 同一形状。新增 `tests/logger-redact-on-disk.test.ts` 4 条：`configureLogDir` 指到临时目录、用真 logger 写、再把**磁盘文件当字符串**扫（结构化凭据不落明文且留 `[redacted]`、非敏感字段照常可读、超长串按 2000 上限截断并带原长、`readLogTail` 读的就是这份文件）。第 3 条是**反向对照**：同一文件里塞一条绕过脱敏的明文行，扫描必须搜得到——没这条，"搜不到"可能只是因为压根没写文件。牙齿也实测过：把假密钥挪到一个非敏感键名下，第 1 条立刻转红。
+- **B10 ICS 大小闸 → 真文件端到端**：既有 `calendar-ics.test.ts` 把 fs 整个桩掉测 `readIcsContent` 抛错，证的是"闸门函数"，没证"工具真把错误聚合进 `readErrors` 且其余日历照常返回"（`calendar-ics.ts:252` 那条聚合此前零覆盖）。新增 `tests/calendar-ics-real-file.test.ts` 3 条：临时目录真写 9MB + 真调 `calendarReadTool.execute()`，断言 `readErrors` 含「超过 8MB 上限，已跳过」且事件仍返回；第 2 条是对照（只给正常日历时 `readErrors` 必须缺席）；第 3 条钉"路径不存在也只报错、不整批失败"。
+- **文本协议切换提示的 i18n：我上一轮说"很小、四语补 key 即可"，这是错的**。主进程根本没有 i18n 通道：`MENU_SET_LANGUAGE`（`ipc/handlers/system.ts:16`）只拿 lang 重建原生菜单、**不持久语言**，全仓 `src/main` 没有任何字典与 `t()`。而那句提示是 `engine.ts` 在 emit 与 `messageRepo.updateContent` 落库时写死的中文——要四语化，要么新增"主进程可读的语言持久化 + 主进程字典"（新机制），要么改成发 key 让渲染层翻译（但同一段文字还要作为消息正文落库、参与搜索与导出，改协议面更大）。⇒ **本批不动**，§4.3 那条改记为"需要新机制，不是漏翻译"。
+- **验证**：typecheck 0；vitest **248 文件 / 3078 用例**全绿（+2 文件 +7 用例）。本批无源码改动，故未重跑 build。
+- **顺带核过、判定"不必转"的**：B11（js_eval 禁网）的策略层 `isAllowedSandboxUrl` 已有用例，剩下"守卫是否真挂在 partition 上"必须起 Electron，vitest 里做不到不 mock；B14（锁屏退避）的限流器数学与 UI 倒计时是两件事，转了也替不掉肉眼。
+
 ### V4-Iter-100 清掉剩下 4 个 CSS 令牌漂移（20 处，含一个"白底白字"按钮）（已落地）
 
 - **范围**：V4-Iter-99 扫出但故意没动的那一批——`--color-hover`×9、`--color-primary`×8、`--color-bg-hover`×2、`--color-accent-bg`×1，全部无兜底 ⇒ 声明一直没生效。
@@ -1134,6 +1188,12 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-12（第八次） | §4.4 三条产品口径经用户选定并写入：**⑦ 静默忽略 tools 的端点** → 模型级显式开关 + 在既有零调用提示里"检测到就建议"（不自动降级：分不清端点不支持与模型判断不需要工具）；**⑧ `'*'` 全授权** → 只把 **MCP 工具**摘出默认授权，13 个内置工具继续默认给；本轮核出的硬约束：**内置同步不覆盖 `tool_permissions`**（`assistant.repo.ts:97-108`）⇒ 靠 `extensions/assistants/*.json` 下发白名单对老用户完全无效，收紧必须走运行时按来源过滤。**⑥ MCP 记录跳回轮次** → 不做，并纠正台账旧述：Agent 走的 MCP 调用**早就在记录里**（`mcp.ts:196` 订阅 `mcpManager.onCall`），缺的只是关联键，而唯一用户不会用它跳回对话。另：本轮一次脚本编辑把 §4.4 第 6/7 条拼坏了（先算偏移后替换 ⇒ 偏移过期、7 被吞进 6 行尾），已按行重写并 assert 复原——**多行文档编辑必须行级定位，别用陈旧偏移**。 | 文档批次（无代码改动）|
+| 2026-10-12（第七次） | V4-Iter-105 B12 换源确认进 CI，**并改正清单一处写错的预期**：B12 原记「改成清华镜像要弹确认」，而 `choosePipSource` 对预设源是直接写入、只有自定义 URL 才二次确认——SEC-20 原文也是「切换**自定义源**前二次确认」⇒ 是清单错、不是代码缺功能，照清单修反而会给预设源加弹窗。新增 `renderer-pip-source-confirm` 7 例（`renderHook` 直接测 hook，不挂 McpPanel）：预设源零确认直写 / 自定义 https 弹 danger 确认且文案逐字等于字典插值并含 URL / **取消则一次都不写库** / 非回环 http 就地报错不弹不写 / 回环 http 放行仍走确认 / 主进程结构化 error 显示在输入框下。非空过实测：短路掉 confirm → 三条转红、其余四条仍绿；还原后 7 绿且 `git diff` 零残留。详见 §二 V4-Iter-105 | typecheck 0 / vitest 251文件3094用例 |
+| 2026-10-12（第六次） | V4-Iter-104 补上 B9（SEC-30 合并保留本机凭据）此前**测试零命中**的缺口：先把 `executeMerge` 第 2 步"哪张表要保留凭据列"那行胶水抽成导出的 `overwriteConfigTables`（行为零变化，但它此前打不到），再写 4 例真库用例（本机已有行 Key 不变 / 只在云端的行落云端密文 / **不传 preserveColumns 的对照组确实会被覆盖** / 云库缺表返回 0 不报错），云库结构从**跑完真迁移的本地库** `sqlite_master` 取 DDL 建，避免用旧结构假绿。非空过实测：删掉那次传参 → 第一条转红（`cloud-cipher-BBBB` ≠ `local-cipher-AAAA`）。另记一处自己的排查失误：build 后在主包搜不到该文案，实为 merge-service 走动态 import 分块（在 `out/main/chunks/` 里）——**主包搜不到 ≠ 没打进产物**。详见 §二 V4-Iter-104 | typecheck 0 / vitest 250文件3087用例 / build 三端 + chunk 内文案计数 1 |
+| 2026-10-12（第五次） | V4-Iter-103 清单审计轮：改用"逐条拿现有测试对号"而不是猜哪条能转。**B20、B31 核实为早已全部进 CI**（B20 含最难证的"拒绝时零请求"，在 `backup-webdav-e2e:334`；B31 含"31 号跨月"，在 `reminder-scheduler:189`）⇒ 零新代码，只把清单对齐事实；**B34 补一条真库用例**（两个 server 各塞行 → 只清 A、B 的 5 行必须还在 → 全清才动 B）后转绿，此前只有 SQL 形状断言。另给两条判定：**B12 只覆盖一半**（http 源被拒已测，"弹确认列出 URL"没测）、**B9 是剩下最大缺口**（合并保留本机凭据，测试里 `LOCAL_KEEP|skipCred` 零命中，可照真库范式补）。自己写错一条断言（把全清计数当成 5，实际含前面用例留下的 200 条）后按实际行数改测试、不改行为。详见 §二 V4-Iter-103 | typecheck 0 / vitest 249文件3083用例 |
+| 2026-10-12（第四次） | V4-Iter-102 继续 B 系列转 CI。**先读现有覆盖再动手**，于是一条没写代码、一条写了并且撞出 bug：**B23**——`renderer-reminder-menu.test.tsx` 的 17 例早已含该行全部四条（默认 09:00 / 改 20:30 同步 / 清空回落 / 相对项不受影响）⇒ 只把清单对齐事实；**B26**——真缺口，新增 `renderer-i18n-no-key-leak` 4 例（zh/en/ja/ko 各挂一次，扫渲染文本里露出的字典 key；先 `findByText` 该语言标题当门禁防假绿）。过程中修掉一个用户可见 bug：**`I18nProvider` 懒加载字典到位后不触发重渲染 ⇒ 切到 en/ja/ko 界面停在中文**，直到下一次无关渲染；修法是在 effect 里 `.then(() => setDictVersion(n=>n+1))` 并把 `dictVersion` 纳入 context memo 依赖。反向证据：删掉那一行，en/ja/ko 三条立刻转红（报"找不到 Remind me/リマインド/알림 설정"）。为什么 parity 抓不到：它只保证四本字典 key 一致，管不到动态拼 key 与运行时迟到。详见 §二 V4-Iter-102 | typecheck 0 / vitest 249文件3082用例 / build 三端 |
+| 2026-10-12（第三次） | V4-Iter-101 把两条人工验收转成真文件 CI：**B13 日志脱敏**（`logger-redact-on-disk` 4 例：真 logger 写临时目录→扫磁盘字节，结构化凭据不落明文、超长串截断带原长、`readLogTail` 同一通道，外加"绕过脱敏的明文行必须搜得到"这条反向对照；牙齿另测——把密钥挪到非敏感键名下立刻转红）；**B10 ICS 大小闸**（`calendar-ics-real-file` 3 例：真写 9MB 文件调真 `execute()`，钉住此前零覆盖的 `readErrors` 聚合，对照例保证不是恒真）。同时**证伪我自己报小的一条**：文本协议切换提示四语化不是"补 key 就行"——主进程无 i18n 通道（`system.ts:16` 只重建原生菜单、不持久语言，`src/main` 无字典/`t()`），且该句还要作为消息正文落库参与搜索导出 ⇒ 需新机制，已回写 §4.3。另核过 B11（策略层已测、守卫挂载须起 Electron）与 B14（限流数学与 UI 倒计时是两件事）判定不必转。详见 §二 V4-Iter-101 | typecheck 0 / vitest 248文件3078用例（+2文件+7用例）|
 | 2026-10-12（第二次） | V4-Iter-100 清掉剩下 4 个 CSS 令牌漂移（20 处，无兜底 ⇒ 声明一直没生效）：`--color-hover`×9 + `--color-bg-hover`×2 → `--color-hover-overlay`、`--color-primary`×8 → `--color-accent`、`--color-accent-bg`×1 → `--color-accent-soft`；**不新增别名**（一个概念两个名字正是漂移成因）。顺带修出真 bug：设置→记忆 的「添加」按钮是 `bg-[未定义] text-white` ⇒ 透明底白字，亮色主题下文字看不见，已按全站 31 处在用的 `bg-accent + text-on-accent` 约定收敛。闸门 `KNOWN_DRIFT` 清空 ⇒ 零容忍；重扫剩 0 处无兜底未定义引用、暗亮两套各 35 个变量名完全对等。另记一条方法论教训：本批开工时用子串重扫把 `--color-hover-overlay` 误算成 150+ 处，改回词法正则才是 20 处（台账原「27 处」统计不变）。详见 §二 V4-Iter-100 | typecheck 0 / vitest 246文件3071用例 / build 三端 |
 | 2026-10-12（第一次） | V4-Iter-99 修「提示词片段弹层背景透明」：真因是 `--color-bg-elevated` 被 7 处引用却从未在 `theme.css` 定义 ⇒ `var()` 无兜底时整条声明失效。两套主题各补一个不透明值（暗 #262637 / 亮 #ffffff），连带修好右键菜单 + 四处就地改名输入框。全量扫描另发现 4 个同类漂移（`--color-hover`×9、`--color-primary`×8、`--color-bg-hover`×2、`--color-accent-bg`×1，共 20 处），**因改动会当场改变观感、需真机过两主题，本批未动**（§4.4 第 9 条）。新增 `theme-css-vars` 4 条 CI 闸门（两主题变量名对等 / 浮层令牌必须不透明 / 无兜底未定义变量只许是 KNOWN_DRIFT / 条目数只许变短），并做非空过实测（改数字 + 删条目 → 两条转红并给出可操作提示）。另修掉台账 §4.5 一处自 `a8cfaa0` 起就存在的游离文本 `audit-45` 与未闭合的 `**`。详见 §二 V4-Iter-99 | typecheck 0 / vitest 246文件3071用例 / build + 产物 CSS 两主题值都在 |
 | 2026-10-11（同日第十六次） | V4-Iter-98 分步明细拆「输入 / 输出」。**先纠正上一条我自己的口径**：c 项不是"纯展示层、零风险"——逐步明细读 `agent_traces`，那表只有 `token_usage` 一个数，而 `messages.usage` 与 trace 行之间无可依赖关联（messages 无 request_id、Agent 每步 assistant 的 parent_id 都指向同一条用户消息）⇒ 只能加列。migration v46 加可空 `prompt_tokens`/`completion_tokens`（照 v21 给 messages 加 usage 的先例），engine 四处写入点直接取 provider 已解析的 usage，不做估算；改前先确认备份合并按「云库列 ∩ 本地列」取交集（`safeMergeColumns`），旧备份缺列不会报错。显示三分支抽成纯函数（拆分 / 退回合计 / 半残绝不出现 undefined / 工具步不占位），i18n 四语加 1 key。测试：真库 3 条（含**把表退回 v45 形状再跑迁移**的升级路径）+ 文案 4 条（真 zh 字典插值）+ repo fixture 2 条。详见 §二 V4-Iter-98 | typecheck 0 / vitest 245文件3067用例 / build 三端 + `out/main` 里 `agent_trace_usage_split` 计数 1 |
@@ -1270,7 +1330,7 @@
 - 置顶无独立查询通道/上限/拖拽；长图导出宽度写死 800（`utils/export-image.tsx:79`）——Iter-64。
 - ~~调用日志持久化与按 server 过滤~~ **已解除（V4-Iter-85）**：v45 表 + 面板「调用记录」区；同一行里的 **MCP 工具级启停、后台心跳退避重连仍推迟**——Iter-65。
 - 终端 confirm 审批层/多标签/PTY/xterm 渲染（`terminal/terminal-service.ts` 只有 deny 分类；package.json 无 node-pty、xterm）——Iter-66。
-- 模板静默创建（需填占位）、文本协议切换提示的 i18n：`agent/engine.ts:1091` 的「已切换文本协议模式…」是中文硬编码——Iter-67。
+- 模板静默创建（需填占位）、文本协议切换提示的 i18n：`agent/engine.ts` 的「已切换文本协议模式…」是中文硬编码——Iter-67。**V4-Iter-101 核过为什么不是小事**：主进程无 i18n 通道（`MENU_SET_LANGUAGE` 只重建原生菜单、不持久语言，`src/main` 无任何字典/`t()`），而该句还要作为消息正文落库并参与搜索/导出 ⇒ 四语化需要新机制（主进程语言持久化 + 字典，或改传 key 由渲染层翻译），不是"漏翻译"。
 - Agent 后台任务队列/断线重连（src/main/agent 无相关命中）——Iter-68。
 - 跨库附件去重、预算「申请放行」（`chat-service.ts:494` 直接抛 BUDGET_EXCEEDED）、本地 OCR（全仓无 tesseract）——Iter-69。
 - ~~需要 API key 的 MCP 模板~~ **已解除（V4-Iter-86）**：加 `tavily-search`（env 带密钥占位符，共 9 条），同一行里的 **检索日志持久化仍推迟**——Iter-70。
@@ -1285,9 +1345,9 @@
 3. ~~预设可选星期/号数~~ **已做（V4-Iter-83）**，并顺带修掉 monthly 重排卡在 28 号的既有 bug。
 4. **真机验收一屏能全打完（须重启 dev 一次）**：**B44**（空名称→中文报错）、**B45**（Iter-97：工具调用仍正常 + 会话累计比 11,277 低约 1.5k/步）、**B46**（Iter-98：live 加密库跑 v46 迁移能解锁 + 分步显示「输入/输出」+ 老会话旧行退回合计）、**B47**（Iter-99：片段弹层/右键菜单/就地改名框有实底，两主题各看一次）、**B35**（折叠阈值观感，纯排版人眼）、**C5/C6**（需你在应用里填真实 TAVILY_API_KEY）。B32/B33 已改由真库用例覆盖（V4-Iter-91），不必再手点。
 5. ~~AppearancePanel 的渲染层用例~~ **已做（V4-Iter-96）**，且**假设被证伪**：不用拆组件，导出 + 7 个 IPC 桩就挂得上；补 5 条用例覆盖夹取/空值不写库/0 合法/失败回滚。
-6. **MCP 调用记录的第二步**：目前只有「按 server 过滤 + 清空」。缺的是从记录跳回那次 Agent 轮次（`agent_traces` 已有 step 维度，两表时间窗能对上是巧合不是外键）——先确认有没有人真用，再决定要不要加关联列。
-7. **「静默忽略 tools」的端点没有降级路径**（§4.5 实测条）：文本协议兜底只认 400 报错，Ollama 类端点不报错也不回 tool_calls ⇒ Agent 等于无工具。修法二选一：按「有工具却连续零调用」自动降级切文本协议，或给本地模型一个显式开关。**都要先定口径**（自动降级有误伤面：模型真不需要工具时也会被切协议），所以先摆着。
-8. **`'*'` 全量授权是 token 的第二大头**（V4-Iter-97 查账核出）：内置助手空 `toolPermissions` 保留 `'*'`（SEC-3 兼容语义），于是 13 个内置 + 所有 running MCP server 的工具每次都进 schema 两份变一份。收口方向是给「通用问答」这类内置助手配显式白名单，但这是产品口径 + 动 SEC-3 语义，**未开工**。
+6. ~~MCP 调用记录跳回 Agent 轮次~~ **已决策：不做（2026-10-12）**。动手前核过两件事：① Agent 走的 MCP 调用**其实早就在记录里**（`ipc/handlers/mcp.ts:196` 订阅 `mcpManager.onCall`，Agent 路径 `tools/registry.ts:228` 同样经 `manager.callTool`），所以缺的不是"要不要记"而是一个关联键；② 真接起来是 `ctx.requestId` 穿 4 处 + migration + 面板跳转，而唯一用户不会从调用记录跳回对话 ⇒ 给不存在的需求做。时间窗近似明确否决（两表能对上属巧合）。
+7. **「静默忽略 tools」的端点没有降级路径**（§4.5 实测条）→ **已决策（2026-10-12）：模型级显式开关 + 检测到就建议**，默认不改变任何现有行为。理由：自动按"有工具却零调用"降级分不清「端点不支持」与「模型判断这轮不需要工具」，会给后者多跑一步、多花一次调用；而 Ollama 类端点是已知事实，不需要探测。落地形态：一个"该模型走文本协议"的开关（存 app_config KV，**不引入新持久化格式**）+ 在既有"零调用提示"里附一句建议打开，把判断权交给用户但给足信息。
+8. **`'*'` 全量授权是 token 的第二大头** → **已决策（2026-10-12）：只把 MCP 工具摘出默认授权**，13 个内置工具继续默认给。收益集中在最贵也最不可信的那部分（MCP 工具名与描述本就是外部内容，SEC-12 已这么认定）。**关键约束（本轮核出）**：`assistant.repo.ts:97-108` 的内置同步**故意不覆盖** `tool_permissions`（保留用户改动）⇒ 只改 `extensions/assistants/*.json` 对老用户完全无效，收紧必须走"运行时按来源过滤"或配一次性提示，不能靠数据文件下发。给 8 个内置助手配显式白名单留作后续精细化（存量无法区分"用户改过"与"从未改过"，列里存的就是 `[]`）。
 9. ~~剩下 4 个 CSS 令牌漂移~~ **已做（V4-Iter-100）**：20 处全部改回真令牌（`--color-hover`/`--color-bg-hover`→`--color-hover-overlay`、`--color-primary`→`--color-accent`、`--color-accent-bg`→`--color-accent-soft`），`KNOWN_DRIFT` 白名单清空成零容忍；顺带修出记忆「添加」按钮的透明底白字。**观感变化待真机两主题过一遍（B47）**。
 
 ### 4.5 更正与误报
