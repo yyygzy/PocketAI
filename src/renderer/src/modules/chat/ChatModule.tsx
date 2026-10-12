@@ -27,6 +27,7 @@ import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MA
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../utils/palette-nav'
 import { buildReminderText } from '../../utils/reminder-presets'
+import { pickDefaultProvider, hasUsableModel, isTargetStillValid } from '../../utils/provider-pick'
 import { formatDateTime } from '../../utils/time'
 
 function tempMessage(role: 'user' | 'assistant', content: string, model?: string): MessageRecord {
@@ -147,29 +148,50 @@ export const ChatModule: React.FC = () => {
     useAppStore.getState().setModuleBusy('chat', liveColumns !== null)
   }, [liveColumns])
 
-  // 初始加载（providers/assistants/conversations）；流式事件订阅已移入 useStreamSession
-  useEffect(() => {
-    // 同时拉取 provider 列表 + 向导上次保存的 provider id；
-    // 命中且仍 enabled 则优先回填该 provider，否则回退到第一个 enabled provider
-    Promise.all([
-      window.pocketai.listProviders(),
-      window.pocketai.getLastProvider()
-    ]).then(([list, lastRes]) => {
-      setProviders(list)
-      const lastId = lastRes.ok ? lastRes.data : undefined
-      const pick =
-        (lastId ? list.find((p) => p.id === lastId && p.enabled) : undefined) ??
-        list.filter((p) => p.enabled)[0]
-      if (pick) {
-        // 智能默认：跳过 embed/向量模型，选第一个对话模型
-        const chatModel =
-          pick.models.find((m) => !/^(bge[-_]|embed|gte[-_]|e5[-_]|minilm|nomic-embed)/i.test(m)) ??
-          pick.models[0] ??
-          ''
+  /**
+   * 拉服务商列表并回填默认目标。
+   * `'mount'` 无条件回填；`'reactivate'`（从设置等模块切回来）只在**当前选择已失效**时才重挑，
+   * 否则用户手动选的模型会被每次切回来打回去。
+   *
+   * 为什么必须重拉：模块是保活的（切走只 display:none），服务商列表以前只在挂载时拉一次 ⇒
+   * 去设置里「拉取模型」再回对话页，模型栏仍停在旧的（可能还是空的）列表上。
+   */
+  const targetsRef = useRef(targets)
+  targetsRef.current = targets
+  const loadProviders = useCallback((mode: 'mount' | 'reactivate') => {
+    void Promise.all([window.pocketai.listProviders(), window.pocketai.getLastProvider()])
+      .then(([list, lastRes]) => {
+        setProviders(list)
+        // 切回来时：当前选择仍然有效就不动（别把用户手选的模型打回去）；
+        // 空 model（上次那家没模型）算无效，拉完模型回来必须重挑
+        if (mode === 'reactivate' && isTargetStillValid(targetsRef.current[0], list)) return
+        const pick = pickDefaultProvider(list, lastRes.ok ? lastRes.data : undefined)
+        if (!pick) {
+          setTargets([])
+          return
+        }
+        // 挑到但没有模型列表：仍建一条 target（model 为空），让下拉显示「无模型，去拉取」
+        // 而不是整个下拉消失——空盒子比说实话的下拉更难懂
+        const chatModel = hasUsableModel(pick)
+          ? pick.models.find((m) => !/^(bge[-_]|embed|gte[-_]|e5[-_]|minilm|nomic-embed)/i.test(m)) ??
+            pick.models[0] ??
+            ''
+          : ''
         setTargets([{ providerId: pick.id, model: chatModel }])
-      }
-    }).catch(reportIpcError('chat.listProviders'))
+      })
+      .catch(reportIpcError('chat.listProviders'))
+  }, [])
 
+  const activeModule = useAppStore((s) => s.activeModule)
+  const firstProviderLoadRef = useRef(true)
+  useEffect(() => {
+    if (activeModule !== 'chat') return
+    loadProviders(firstProviderLoadRef.current ? 'mount' : 'reactivate')
+    firstProviderLoadRef.current = false
+  }, [activeModule, loadProviders])
+
+  // 初始加载（assistants/conversations）；流式事件订阅已移入 useStreamSession
+  useEffect(() => {
     window.pocketai.listAssistants().then((list) => {
       setAssistants(list)
       const def = list.find((a) => a.id === 'asst-default') ?? list[0]

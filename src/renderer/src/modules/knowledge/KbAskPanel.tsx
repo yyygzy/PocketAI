@@ -3,6 +3,7 @@
 // 模型选择记忆在 localStorage，默认第一个启用 provider。
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
+import { pickDefaultProvider } from '../../utils/provider-pick'
 import { useToast } from '../../components/ToastProvider'
 import { EmptyState } from '../../components/EmptyState'
 import { requestSourceJump } from './source-jump'
@@ -126,8 +127,8 @@ const KbAskPanel: React.FC<{
         if (!alive) return
         const enabled = ps.filter((p) => p.enabled)
         setProviders(enabled)
-        const remembered = enabled.find((p) => p.id === localStorage.getItem(PROVIDER_KEY))
-        const first = remembered ?? enabled[0]
+        // 与对话页同规则：记住的那家与回退项都要求「有模型」，否则自动挑一家能用的
+        const first = pickDefaultProvider(ps, localStorage.getItem(PROVIDER_KEY))
         if (first) {
           setProviderId(first.id)
           setModel(localStorage.getItem(modelKey(first.id)) || first.models[0] || '')

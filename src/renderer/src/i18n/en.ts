@@ -401,6 +401,7 @@ export const en: Record<string, string> = {
   'snippet.varTitle': 'Fill variables: {title}',
   'snippet.varPh': 'Enter value',
   'composer.noProvider': 'Configure a model provider in Settings first',
+  'composer.noModels': 'Your provider has no model list yet - open Settings > Model providers and click Fetch models',
   'ms.compare': '⚡ Compare ×{n}',
   'ms.single': 'Single',
   'ms.provider': 'Provider',
@@ -409,6 +410,7 @@ export const en: Record<string, string> = {
   'ms.addAllTitle': 'Add a model for parallel comparison',
   'ms.addCompare': '＋ Compare',
   'ms.notConfigured': 'Not configured',
+  'ms.noModels': '(no models - fetch them in Settings)',
   'ms.modelId': 'Model ID',
   'ms.exitCompare': 'Exit compare',
 

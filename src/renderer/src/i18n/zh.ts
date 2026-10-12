@@ -401,6 +401,7 @@ export const zh: Record<string, string> = {
   'snippet.varTitle': '填写变量：{title}',
   'snippet.varPh': '请输入变量值',
   'composer.noProvider': '请先在设置中配置模型服务商',
+  'composer.noModels': '服务商还没有模型列表：到「设置 → 模型服务商」点「拉取模型」',
   'ms.compare': '⚡ 对照 ×{n}',
   'ms.single': '单模型',
   'ms.provider': '服务商',
@@ -409,6 +410,7 @@ export const zh: Record<string, string> = {
   'ms.addAllTitle': '添加一个模型并行对照',
   'ms.addCompare': '＋ 对照',
   'ms.notConfigured': '未配置',
+  'ms.noModels': '（无模型，请到设置里拉取）',
   'ms.modelId': '模型 ID',
   'ms.exitCompare': '退出对照',
 

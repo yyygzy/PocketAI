@@ -12,6 +12,7 @@ import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
 import { cumulativeTokensByMessage } from '../../utils/usage-summary'
+import { hasUsableModel } from '../../utils/provider-pick'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
 import { exportConversationAsPng } from '../../utils/export-image'
 import { rangeBetween, mergeRange } from '../../utils/message-select'
@@ -458,6 +459,8 @@ export const ChatView: React.FC<Props> = ({
   }, [])
 
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
+  /** 服务商是有的、只是一家都没有模型列表：提示语必须说「去拉取模型」，不能说「去配置服务商」 */
+  const noModelsAtAll = providers.some((p) => p.enabled) && !providers.some((p) => hasUsableModel(p))
 
   /** 回到底部：滚到最后一轮并标记在底部（恢复流式跟滚） */
   const jumpToBottom = useCallback(() => {
@@ -1028,6 +1031,7 @@ export const ChatView: React.FC<Props> = ({
       <Composer
         streaming={streaming}
         canSend={canSend}
+        noModels={noModelsAtAll}
         onSend={onSend}
         onStop={onStop}
         replyTo={replyToMessage ?? null}

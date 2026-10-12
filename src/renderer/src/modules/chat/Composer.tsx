@@ -19,6 +19,8 @@ import type { ChatAttachment, KnowledgeBase, MessageRecord, PromptSnippetRecord 
 interface Props {
   streaming: boolean
   canSend: boolean
+  /** 服务商已配置但一家都没有模型列表：占位文案改说「去拉取模型」 */
+  noModels?: boolean
   onSend: (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => void
   onStop: () => void
   /** 当前待回复的引用消息（显示引用条） */
@@ -45,7 +47,7 @@ const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js'
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_TEXT_SIZE = 2 * 1024 * 1024 // 2MB
 
-export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit, messages = [], kbs = [] }) => {
+export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit, messages = [], kbs = [] }) => {
   const { t } = useI18n()
   const [text, setText] = useState(draft ?? '')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
@@ -609,7 +611,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, onSend, onStop, 
             }}
             onKeyDown={handleKeyDown}
             rows={1}
-            placeholder={canSend ? t('composer.ph') : t('composer.noProvider')}
+            placeholder={canSend ? t('composer.ph') : noModels ? t('composer.noModels') : t('composer.noProvider')}
             className="flex-1 bg-transparent resize-none outline-none text-[var(--chat-font-size)] leading-relaxed px-2 py-1.5 max-h-[200px]"
           />
 

@@ -3,6 +3,7 @@
 // 事件按 requestId 过滤；本组件只负责 state 映射与渲染。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
+import { pickDefaultProvider } from '../utils/provider-pick'
 import { Markdown } from '../modules/chat/Markdown'
 import { AttachmentGrid } from '../components/AttachmentGrid'
 import { useToast } from '../components/ToastProvider'
@@ -90,7 +91,7 @@ export const PopupApp: React.FC = () => {
       setProviders(enabled)
       setProviderId((cur) => {
         if (cur && enabled.some((p) => p.id === cur)) return cur
-        return enabled[0]?.id ?? ''
+        return pickDefaultProvider(ps)?.id ?? ''
       })
     }).catch(reportIpcError('popup.listProviders'))
     window.pocketai.listAssistants().then((as_) => {

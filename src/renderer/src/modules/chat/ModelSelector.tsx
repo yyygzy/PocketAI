@@ -4,6 +4,7 @@
 import React from 'react'
 import type { ProviderRecord, ChatTarget } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { hasUsableModel } from '../../utils/provider-pick'
 
 interface Props {
   providers: ProviderRecord[]
@@ -30,7 +31,9 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
 
   const addTarget = () => {
     const base = enabled[0]
-    if (!base) return
+    // 一家模型都没有时不新增 target：多出来的只会是一个空下拉 + 空 model 的目标，
+    // 除了让 canSend 更不可能成立之外没有任何作用
+    if (!base || !hasUsableModel(base)) return
     const used = new Set(targets.map((t) => `${t.providerId}:${t.model}`))
     const candidate = base.models.find((m) => !used.has(`${base.id}:${m}`))
     onChange([...targets, { providerId: base.id, model: candidate ?? base.models[0] ?? '' }])
@@ -67,7 +70,11 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
             disabled={disabled}
             onChange={(e) => handleCombinedChange(i, e.target.value)}
           >
-            {enabled.length === 0 && <option value="">{t('ms.notConfigured')}</option>}
+            {/* 下拉里一个可选项都没有时必须有话说：区分"没配服务商"与
+                "配了但模型列表是空的"（后者去拉模型，不是再配一家） */}
+            {options.length === 0 && (
+              <option value="">{enabled.length === 0 ? t('ms.notConfigured') : t('ms.noModels')}</option>
+            )}
             {options.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
