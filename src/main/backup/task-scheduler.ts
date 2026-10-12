@@ -7,6 +7,7 @@
 //   - kb_health_check：知识库健康检查，修复卡在 pending/parsing/indexing 的文档
 //   - backup_verify：备份完整性校验，下载最新备份并校验 sha256
 
+import { dbService } from '../db/database'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { createLogger } from '../logger'
@@ -114,11 +115,20 @@ async function runTask(task: TaskDef): Promise<void> {
   } catch (e) {
     log.warn(`定时任务失败: ${task.name} - ${errMsg(e)}`)
   } finally {
-    setLastRun(task.key, at)
+    try {
+      setLastRun(task.key, at)
+    } catch (e) {
+      // 任务跑一半时用户锁屏（库随之关闭）→ 时间戳写不回。这里只 warn：
+      // finally 里抛错会顶掉任务真正的异常，日志上就只剩「Database not opened」而看不到原本出了什么事
+      log.warn(`定时任务时间戳写入失败: ${task.name} - ${errMsg(e)}`)
+    }
   }
 }
 
 export async function tick(): Promise<void> {
+  // 锁屏与未解锁期间库是关着的，任何任务都只会撞 "Database not opened"：
+  // 整轮直接跳过——不记失败、也不刷新 last_run_at，解锁后的下一个 tick 照常补跑到点的任务
+  if (!dbService.isOpen()) return
   try {
     const now = Date.now()
     for (const task of tasks) {

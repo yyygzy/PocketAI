@@ -30,6 +30,10 @@ const mocks = vi.hoisted(() => ({
   downloadCalls: 0,
   decryptCalls: 0,
   listBackupsError: null as Error | null,
+  // 库是否处于打开态（锁屏/未解锁时为 false）与捕获到的 warn 文案
+  dbOpen: true,
+  setThrows: false,
+  warns: [] as string[],
   reset() {
     this.config.clear()
     this.docs = []
@@ -42,13 +46,21 @@ const mocks = vi.hoisted(() => ({
     this.downloadCalls = 0
     this.decryptCalls = 0
     this.listBackupsError = null
+    this.dbOpen = true
+    this.setThrows = false
+    this.warns = []
   }
+}))
+
+vi.mock('../src/main/db/database', () => ({
+  dbService: { isOpen: () => mocks.dbOpen }
 }))
 
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: {
     get: (key: string) => mocks.config.get(key) ?? null,
     set: (key: string, value: string) => {
+      if (mocks.setThrows) throw new Error('Database not opened')
       mocks.config.set(key, value)
     }
   }
@@ -86,7 +98,14 @@ vi.mock('../src/main/backup/webdav-client', () => ({
 }))
 
 vi.mock('../src/main/logger', () => ({
-  createLogger: () => ({ info: () => {}, warn: () => {}, debug: () => {}, error: () => {} })
+  createLogger: () => ({
+    info: () => {},
+    warn: (...args: unknown[]) => {
+      mocks.warns.push(args.map(String).join(' '))
+    },
+    debug: () => {},
+    error: () => {}
+  })
 }))
 
 beforeEach(() => mocks.reset())
@@ -135,6 +154,32 @@ describe('tick 到点判定', () => {
     await expect(tick()).resolves.toBeUndefined()
     // kb 健康检查不受影响，正常补跑完成
     expect(Number(mocks.config.get('task.kb_health_check.last_run_at'))).toBeGreaterThan(0)
+  })
+})
+
+// ---------- 库关闭（锁屏 / 未解锁）时的行为 ----------
+
+describe('库未开时不撞库', () => {
+  it('整轮跳过：不跑任务、不写 last_run_at、也不产生任何 warn（此前每 10 分钟刷两条 WARN）', async () => {
+    mocks.dbOpen = false
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [{ name: 'pocketai-full-20260927.zip' }]
+    await expect(tick()).resolves.toBeUndefined()
+    expect(mocks.downloadCalls).toBe(0)
+    expect(mocks.config.size).toBe(0)
+    expect(mocks.warns).toEqual([])
+  })
+
+  it('任务跑一半库被关（写不回时间戳）：只 warn 写入失败，不顶掉任务原本的报错、不外溢', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [{ name: 'pocketai-inc-20260927.json' }]
+    mocks.downloadRaw = Buffer.from(JSON.stringify({ kind: 'inc' })) // 缺 db.sha256 → 任务抛错
+    mocks.setThrows = true // 收尾写 last_run_at 时库已关
+    await expect(tick()).resolves.toBeUndefined()
+    expect(mocks.warns.some((w) => w.includes('定时任务失败: 备份完整性校验'))).toBe(true)
+    expect(mocks.warns.some((w) => w.includes('时间戳写入失败'))).toBe(true)
+    // 关键：finally 抛错不再冒到 tick 顶层，日志不会被一条无关的「tick 异常」盖住真因
+    expect(mocks.warns.some((w) => w.includes('tick 异常'))).toBe(false)
   })
 })
 

@@ -52,6 +52,27 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-106 真机截图带出的两件事：调度器未开库时空跑（已修）+「向量库」是死指标（已定性）（部分落地）
+
+- **来源**：B44~B47 真机验收那轮的用户截图里带出两条计划外的事，用户要求都办。
+
+**① 定时任务在未解锁/锁屏期间撞库（已修，主进程改动须重启 dev）**
+
+- 现象：`07:25:56 WARN 定时任务失败: 知识库健康检查 - Database not opened` 与同秒的 `WARN task-scheduler tick 异常: Database not opened`。
+- 根因是两层：`tick()` 每 10 分钟无条件跑，而锁屏/未解锁时库是关着的（`lock → dbService.close()`）；更麻烦的是 `runTask` 的 `finally { setLastRun(...) }` 也会抛——**finally 里抛错会顶掉任务真正的异常**，日志上只剩一条无关的「tick 异常」，真因被盖掉。
+- 修法：`tick()` 首行 `if (!dbService.isOpen()) return`（不记失败、**也不刷新 last_run_at** ⇒ 解锁后的下一个 tick 照常补跑到点任务）；`finally` 里的写入单独 try/catch 只 warn。
+- 测试：`tests/task-scheduler.test.ts` +2 例——整轮跳过（零下载、零 last_run_at、**零 warn**）；跑一半库关闭（任务原报错与「时间戳写入失败」都在，且**不出现**「tick 异常」）。为此把 logger 桩从空函数改成**收集 warn 文案**，否则"不该出现的那条"根本没法断言。
+- 非空过实测：同时还原两处修复 → 两条新用例各自转红（`expected 1 to be +0` / `expected false to be true`），其余 17 条仍绿；改回后 19 条全绿。
+
+**② 数据健康「向量库 -」与知识库「向量维度不匹配」**
+
+- **「向量库」是死指标，不是数据丢了**：向量实际存在**主库**（`kb-vec.repo.ts:23-34` 在 `dbService.getHandle()` 上懒建 `kb_vec_map` 与 `kb_vec_<dim>` vec0 虚表）；而 `portable.ts:35` 的 `VECTOR_DB_PATH` **全仓只有定义、没有任何消费者**（`git log -S` 显示它只出现在 init 与策划书两个早期提交），`data-health.ts:37` 却按 `vectors.db` 文件名分桶 ⇒ 卡片永远 `-`。台账早前"孤儿向量留在 vectors.db"的措辞同属过时。
+- **「维度不匹配」是真的**：`embedding_dim` 由首次入库时 `vectors[0].length` 写回（`ingestion.ts:145`），此后换过 embedding 模型再入库，旧 chunk 的 BLOB 长度就对不上新 dim ⇒ `kb-health.ts:162` 按 `length(embedding) != embedding_dim * 4` 判 dim-mismatch，**该文档在语义检索路上必漏**。面板同时显示"就绪 1"并不矛盾（done 只代表分块+嵌入完成，不代表维度一致）。处置=点「重建索引」（会重跑 embedding，属用户数据动作，未代做）。
+- **未做**：把「向量库」卡片改成真实指标（数 `kb_vec_map` 行数/维度分布）或直接删掉——显示口径改动，等点头。
+
+- **验证**：typecheck 0；vitest **251 文件 / 3096 用例**全绿；build 三端通过，`out/main/index.js` 含新守卫。
+- **未实测**：真机重启后锁屏 10 分钟以上，`main.log` 不再出现那两条 WARN（主进程改动须重启 dev 才生效）。
+
 ### V4-Iter-105 B12 换源确认进 CI，并改正清单里一处**写错的预期**（已落地）
 
 - **动手前先对了口径**：B12 那行写的是「把 pip 源从官方改成**清华镜像** → 弹确认并列出目标 URL」。读 `usePipSource.choosePipSource` 发现预设源（official/tuna）是**直接写入、不弹确认**，只有自定义 URL 才二次确认；再对 SEC-20 原文——「UI **切换自定义源**前二次确认」。**⇒ 是清单写错，不是代码缺功能。** 若照清单去"修"，会给预设源平白加一层弹窗骚扰。用例因此钉的是真实行为（含"预设源不该被弹"这条反向断言）。
@@ -1188,6 +1209,7 @@
 
 | 日期 | 批次 | 内容 | 验证 |
 |------|------|------|------|
+| 2026-10-12（第九次） | V4-Iter-106 办真机截图带出的两件事。**① 调度器未开库时空跑（已修）**：`tick()` 首行加 `if (!dbService.isOpen()) return`（不记失败也不刷 last_run_at，解锁后照常补跑），并给 `runTask` 的 `finally` 单独 try/catch——**finally 里抛错会顶掉任务真正的异常**，日志只剩无关的「tick 异常」而盖住真因。+2 用例（logger 桩改成收集 warn，才能断言"不该出现的那条"）；非空过实测：还原两处修复 → 两条各自转红、其余 17 条仍绿。**② 数据健康「向量库 -」定性为死指标（未改）**：向量其实在主库（`kb-vec.repo.ts:23-34` 懒建 `kb_vec_map` + `kb_vec_<dim>`），而 `VECTOR_DB_PATH` 全仓**只有定义没有消费者**（`git log -S` 只出现在 init 与策划书），`data-health.ts:37` 却按 `vectors.db` 文件名分桶 ⇒ 卡片恒为 `-`；「向量维度不匹配」是真问题（`ingestion.ts:145` 用首次入库的 `vectors[0].length` 写 dim，换过 embedding 模型后旧 chunk BLOB 长 ≠ 新 dim×4 ⇒ 该文档语义检索必漏），处置=点「重建索引」（用户数据动作，未代做）。详见 §二 V4-Iter-106 | typecheck 0 / vitest 251文件3096用例 / build 三端；未实测：重启 dev 后锁屏 10min 不再刷那两条 WARN |
 | 2026-10-12（第八次） | §4.4 三条产品口径经用户选定并写入：**⑦ 静默忽略 tools 的端点** → 模型级显式开关 + 在既有零调用提示里"检测到就建议"（不自动降级：分不清端点不支持与模型判断不需要工具）；**⑧ `'*'` 全授权** → 只把 **MCP 工具**摘出默认授权，13 个内置工具继续默认给；本轮核出的硬约束：**内置同步不覆盖 `tool_permissions`**（`assistant.repo.ts:97-108`）⇒ 靠 `extensions/assistants/*.json` 下发白名单对老用户完全无效，收紧必须走运行时按来源过滤。**⑥ MCP 记录跳回轮次** → 不做，并纠正台账旧述：Agent 走的 MCP 调用**早就在记录里**（`mcp.ts:196` 订阅 `mcpManager.onCall`），缺的只是关联键，而唯一用户不会用它跳回对话。另：本轮一次脚本编辑把 §4.4 第 6/7 条拼坏了（先算偏移后替换 ⇒ 偏移过期、7 被吞进 6 行尾），已按行重写并 assert 复原——**多行文档编辑必须行级定位，别用陈旧偏移**。 | 文档批次（无代码改动）|
 | 2026-10-12（第七次） | V4-Iter-105 B12 换源确认进 CI，**并改正清单一处写错的预期**：B12 原记「改成清华镜像要弹确认」，而 `choosePipSource` 对预设源是直接写入、只有自定义 URL 才二次确认——SEC-20 原文也是「切换**自定义源**前二次确认」⇒ 是清单错、不是代码缺功能，照清单修反而会给预设源加弹窗。新增 `renderer-pip-source-confirm` 7 例（`renderHook` 直接测 hook，不挂 McpPanel）：预设源零确认直写 / 自定义 https 弹 danger 确认且文案逐字等于字典插值并含 URL / **取消则一次都不写库** / 非回环 http 就地报错不弹不写 / 回环 http 放行仍走确认 / 主进程结构化 error 显示在输入框下。非空过实测：短路掉 confirm → 三条转红、其余四条仍绿；还原后 7 绿且 `git diff` 零残留。详见 §二 V4-Iter-105 | typecheck 0 / vitest 251文件3094用例 |
 | 2026-10-12（第六次） | V4-Iter-104 补上 B9（SEC-30 合并保留本机凭据）此前**测试零命中**的缺口：先把 `executeMerge` 第 2 步"哪张表要保留凭据列"那行胶水抽成导出的 `overwriteConfigTables`（行为零变化，但它此前打不到），再写 4 例真库用例（本机已有行 Key 不变 / 只在云端的行落云端密文 / **不传 preserveColumns 的对照组确实会被覆盖** / 云库缺表返回 0 不报错），云库结构从**跑完真迁移的本地库** `sqlite_master` 取 DDL 建，避免用旧结构假绿。非空过实测：删掉那次传参 → 第一条转红（`cloud-cipher-BBBB` ≠ `local-cipher-AAAA`）。另记一处自己的排查失误：build 后在主包搜不到该文案，实为 merge-service 走动态 import 分块（在 `out/main/chunks/` 里）——**主包搜不到 ≠ 没打进产物**。详见 §二 V4-Iter-104 | typecheck 0 / vitest 250文件3087用例 / build 三端 + chunk 内文案计数 1 |
