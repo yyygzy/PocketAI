@@ -66,6 +66,17 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-111 会话累计 token 从消息流顶部挪到每条回答后面（已落地，观感待真机）
+
+- **来源**：用户截图——顶栏那条「本会话累计 1.6k」"放到最上面不方便看；可以放到每个答案的后面"。AskUserQuestion 选定「**每条都带累计到该条**」。
+- **改法**：`usage-summary.ts` 新增 `cumulativeTokensByMessage()`（按消息顺序做前缀和，口径与 `sumMessagesUsage` 完全一致：含分支重跑的每一批、无 usage 的老消息自然不计）；`ChatView` 删掉消息流顶部那条独立 chip（连同只为它存在的 `sessionUsageHint`/`sessionCostText` 计算），改传 `sessionTokensUpTo`；`MessageBubble` 在既有的「1.2k tokens ¥0.02」后追加「· 累计 4.8k」。
+- **显示规则（这条是本次唯一的产品判断）**：累计**严格大于**本条自身时才显示 ⇒ 第一条回答不会出现"1.2k · 累计 1.2k"这种废话；流式中/无 usage/user 气泡整行本就不显示，累计也不会提前跳。
+- **不留死键**：复用 `chatview.sessionUsage`，四语文案由「本会话累计 {tokens}」改为「累计 {tokens}」（旧文案在每条回答的语境里太长）。
+- **测试**：`tests/usage-summary.test.ts` +4 例（前缀和逐条、user/无 usage 不进表也不推进、空会话、**反向对照：最后一条累计 == `sumMessagesUsage().totalTokens`**）；新增 `tests/renderer-message-bubble-usage-line.test.tsx` 5 例（真挂载 MessageBubble：带累计、累计=本条不显示、不传累计不出现占位、流式中无用量行、user 气泡无用量行）。
+- **非空过实测**：去掉「累计 > 本条」门槛 → 「首条不重复」转红；前缀和把 user 消息也算进去 → 2 条转红；还原后全绿。
+- **验证**：typecheck 0；vitest **256 文件 / 3138 用例**全绿（+1 文件 +9 用例）；build 三端通过。
+- **未实测**：每条回答后多几个字是否影响阅读节奏（纯观感）⇒ 验收清单 **B52**。
+
 ### V4-Iter-109 再点开 Agent 模块自动回到上次用的助手与会话（已落地，真机待验）
 
 - **来源**：用户反馈——切走再回来要重新选助手、重新点会话。根因不在数据而在生命周期：`Workspace` 对模块是**条件渲染**，切走即卸载，`useAgentChat` 里的 `assistantId/conversationId` 随之归零（会话列表 effect 只认"当前助手里最近一次"）。

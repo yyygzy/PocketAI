@@ -1,16 +1,17 @@
-// 会话级用量汇总纯函数测试（ChatView 会话累计用量条）
+// 会话级用量汇总纯函数测试（每条回答后面的「本条 X · 累计 Y」与顶部账单口径）
 import { describe, it, expect } from 'vitest'
 import type { MessageRecord, UsagePricing, UsageStats } from '../src/shared/types'
-import { sumMessagesUsage } from '../src/renderer/src/utils/usage-summary'
+import { cumulativeTokensByMessage, sumMessagesUsage } from '../src/renderer/src/utils/usage-summary'
 
 function msg(partial: {
+  id?: string
   role?: 'user' | 'assistant'
   usage?: UsageStats | null
   provider?: string | null
   model?: string | null
 }): MessageRecord {
   return {
-    id: 'm',
+    id: partial.id ?? 'm',
     conversationId: 'c',
     role: partial.role ?? 'assistant',
     content: '',
@@ -104,5 +105,44 @@ describe('sumMessagesUsage — 费用', () => {
     )
     expect(s.totalTokens).toBe(1000)
     expect(s.cost).toBe(0)
+  })
+})
+describe('cumulativeTokensByMessage — 每条回答的「累计到本条」', () => {
+  it('按列表顺序做前缀和（第 n 条 = 前 n 条之和）', () => {
+    const m = cumulativeTokensByMessage([
+      msg({ id: 'a1', usage: u(100, 0) }),
+      msg({ id: 'a2', usage: u(150, 50) }),
+      msg({ id: 'a3', usage: u(200, 100) })
+    ])
+    expect(m.get('a1')).toBe(100)
+    expect(m.get('a2')).toBe(300)
+    expect(m.get('a3')).toBe(600)
+  })
+
+  it('user 消息与没有 usage 的消息既不进表、也不推进累计', () => {
+    const m = cumulativeTokensByMessage([
+      msg({ id: 'u1', role: 'user', usage: u(999, 999) }),
+      msg({ id: 'a1', usage: u(100, 200) }),
+      msg({ id: 'a2', usage: null }),
+      msg({ id: 'a3', usage: u(10, 20) })
+    ])
+    expect(m.has('u1')).toBe(false)
+    expect(m.has('a2')).toBe(false)
+    expect(m.get('a1')).toBe(300)
+    expect(m.get('a3')).toBe(330)
+  })
+
+  it('空会话 → 空表（调用方按缺省不显示累计）', () => {
+    expect(cumulativeTokensByMessage([]).size).toBe(0)
+  })
+
+  it('口径反向对照：最后一条的累计 == sumMessagesUsage 的总量（两处数字必须能对上）', () => {
+    const list = [
+      msg({ id: 'u1', role: 'user', usage: u(500, 500) }),
+      msg({ id: 'a1', usage: u(100, 200, 50) }),
+      msg({ id: 'a2', usage: u(10, 20) })
+    ]
+    const m = cumulativeTokensByMessage(list)
+    expect(m.get('a2')).toBe(sumMessagesUsage(list).totalTokens)
   })
 })

@@ -321,7 +321,7 @@ export const en: Record<string, string> = {
   'chatview.tokenLine': '{tokens} tokens',
   'chatview.tokenHint': 'Input {prompt} · Output {completion}',
   'chatview.tokenCachedHint': '{cached} cached',
-  'chatview.sessionUsage': 'Session total {tokens}',
+  'chatview.sessionUsage': 'total {tokens}',
   'chatview.viewSource': 'View source',
   'chatview.roleUser': 'User',
   'chatview.roleAssistant': 'Assistant',

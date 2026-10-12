@@ -304,7 +304,7 @@ export const ko: Record<string, string> = {
   'chatview.tokenLine': '{tokens} 토큰',
   'chatview.tokenHint': '입력 {prompt} · 출력 {completion}',
   'chatview.tokenCachedHint': '캐시 {cached}',
-  'chatview.sessionUsage': '이 대화 총 {tokens}',
+  'chatview.sessionUsage': '누적 {tokens}',
   'chatview.viewSource': '원문 보기',
   'chatview.roleUser': '사용자',
   'chatview.roleAssistant': '어시스턴트',

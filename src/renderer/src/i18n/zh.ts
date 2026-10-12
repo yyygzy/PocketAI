@@ -321,7 +321,7 @@ export const zh: Record<string, string> = {
   'chatview.tokenLine': '{tokens} tokens',
   'chatview.tokenHint': '输入 {prompt} · 输出 {completion}',
   'chatview.tokenCachedHint': '缓存命中 {cached}',
-  'chatview.sessionUsage': '本会话累计 {tokens}',
+  'chatview.sessionUsage': '累计 {tokens}',
   'chatview.viewSource': '查看原文',
   'chatview.roleUser': '用户',
   'chatview.roleAssistant': '助手',

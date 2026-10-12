@@ -41,3 +41,21 @@ export function sumMessagesUsage(
   sum.cost = roundCost(sum.cost)
   return sum
 }
+
+/**
+ * 每条 assistant 消息「到本条为止的会话累计 token」（按消息列表顺序前缀和）。
+ *
+ * 为什么单独算：累计口径与 `sumMessagesUsage` 完全一致（含分支重跑的每一批），只是**截到某一条**，
+ * 这样每个回答后面能就地看到"到目前为止花了多少"，不必滚回消息流顶部。
+ * 无 usage 的消息（user、流式中、老数据）不推进累计，也不进表 ⇒ 调用方按 `get(id)` 缺省即不显示。
+ */
+export function cumulativeTokensByMessage(messages: MessageRecord[]): Map<string, number> {
+  const out = new Map<string, number>()
+  let running = 0
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !m.usage) continue
+    running += m.usage.totalTokens || 0
+    out.set(m.id, running)
+  }
+  return out
+}

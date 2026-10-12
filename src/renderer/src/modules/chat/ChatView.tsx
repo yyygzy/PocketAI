@@ -11,8 +11,7 @@ import { ChatConfigBar } from './ChatConfigBar'
 import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
-import { sumMessagesUsage } from '../../utils/usage-summary'
-import { fmtTokens, fmtCost } from '../../utils/token'
+import { cumulativeTokensByMessage } from '../../utils/usage-summary'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
 import { exportConversationAsPng } from '../../utils/export-image'
 import { rangeBetween, mergeRange } from '../../utils/message-select'
@@ -637,22 +636,8 @@ export const ChatView: React.FC<Props> = ({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [searchOpen, openSearch, closeSearch, gotoMatch])
 
-  // 本会话累计用量（账单口径：含分支重跑全部批次；旧消息无 usage 自然不计）
-  const sessionUsage = useMemo(() => sumMessagesUsage(messages, pricing), [messages, pricing])
-  const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
-  const sessionCostText = fmtCost(sessionUsage.cost)
-  const sessionUsageHint = [
-    t('chatview.tokenHint', {
-      prompt: sessionUsage.promptTokens,
-      completion: sessionUsage.completionTokens
-    }),
-    sessionUsage.cachedTokens > 0
-      ? t('chatview.tokenCachedHint', { cached: sessionUsage.cachedTokens })
-      : '',
-    sessionCostText ? `${currencySymbol}${sessionCostText}` : ''
-  ]
-    .filter(Boolean)
-    .join('\n')
+  // 每条回答「到本条为止的会话累计 token」（账单口径与 sumMessagesUsage 一致，含分支重跑全部批次）
+  const sessionUpTo = useMemo(() => cumulativeTokensByMessage(messages), [messages])
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
@@ -855,23 +840,6 @@ export const ChatView: React.FC<Props> = ({
       {/* 消息流（虚拟化：每轮一个虚拟项，只渲染可视区 + overscan） */}
       <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative">
         <div className="max-w-5xl mx-auto px-4 py-5">
-          {/* 本会话累计用量条（随消息流滚动，hover 看输入/输出/缓存明细） */}
-          {renderedTurns.length > 0 && sessionUsage.totalTokens > 0 && (
-            <div
-              title={sessionUsageHint}
-              className="flex justify-end mb-3 text-[11px] text-[var(--color-text-muted)] font-mono cursor-default"
-            >
-              <span className="px-2 py-0.5 rounded-full bg-[var(--color-hover-overlay)]">
-                {t('chatview.sessionUsage', { tokens: fmtTokens(sessionUsage.totalTokens) })}
-                {sessionCostText && (
-                  <span className="ml-1.5 text-[var(--color-accent)]">
-                    {currencySymbol}
-                    {sessionCostText}
-                  </span>
-                )}
-              </span>
-            </div>
-          )}
           {renderedTurns.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-72 text-center px-6">
               <div className="text-4xl mb-3">🎒</div>
@@ -979,6 +947,7 @@ export const ChatView: React.FC<Props> = ({
                         createdAt={msg.createdAt}
                         sources={msg.sources ?? undefined}
                         usage={msg.usage ?? null}
+                        sessionTokensUpTo={sessionUpTo.get(msg.id) ?? null}
                         provider={msg.provider ?? null}
                         pricing={pricing}
                         replyTo={replyPreview(msg.replyToId)}

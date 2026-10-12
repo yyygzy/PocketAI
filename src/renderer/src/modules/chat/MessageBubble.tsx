@@ -59,6 +59,11 @@ interface Props {
   selectMode?: boolean
   /** 基于本条消息创建定时提醒（右键「提醒我」；ChatModule 提供，Agent 侧不传） */
   onRemind?: (id: string, fireAt: number, repeatRule?: ReminderRepeatRule) => void
+  /**
+   * 到本条为止的会话累计 token（前缀和，见 `usage-summary.ts` 的 `cumulativeTokensByMessage`）。
+   * 只在 assistant 气泡上生效；小于等于本条自身用量时不显示（首条回答"累计=本条"，说了等于没说）。
+   */
+  sessionTokensUpTo?: number | null
 }
 
 /** React.memo：流式输出时只重渲染变化的消息，其余消息 props 不变即跳过（配合 ChatView 的 useCallback） */
@@ -88,6 +93,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
   onForward,
   starred,
   onToggleStar,
+  sessionTokensUpTo,
   pinned,
   onTogglePin,
   selectMode,
@@ -381,6 +387,12 @@ const MessageBubbleImpl: React.FC<Props> = ({
           >
             {t('chatview.tokenLine', { tokens: fmtTokens(usage.totalTokens) })}
             {costText && <span className="ml-1.5 text-[var(--color-accent)]">{currencySymbol}{costText}</span>}
+            {/* 会话累计就地跟着每条回答（原来在消息流顶部一条独立 chip，往上翻才看得到） */}
+            {!!sessionTokensUpTo && sessionTokensUpTo > usage.totalTokens && (
+              <span className="ml-1.5 opacity-70">
+                · {t('chatview.sessionUsage', { tokens: fmtTokens(sessionTokensUpTo) })}
+              </span>
+            )}
           </div>
         )}
 

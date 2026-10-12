@@ -304,7 +304,7 @@ export const ja: Record<string, string> = {
   'chatview.tokenLine': '{tokens} トークン',
   'chatview.tokenHint': '入力 {prompt} · 出力 {completion}',
   'chatview.tokenCachedHint': 'キャッシュ {cached}',
-  'chatview.sessionUsage': 'この会話の合計 {tokens}',
+  'chatview.sessionUsage': '合計 {tokens}',
   'chatview.viewSource': '原文を見る',
   'chatview.roleUser': 'ユーザー',
   'chatview.roleAssistant': 'アシスタント',
