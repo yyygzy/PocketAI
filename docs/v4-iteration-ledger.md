@@ -52,6 +52,20 @@
 - **踩坑**：①AdapterChatMessage.content 是 string|MessageContentPart[] 联合类型，includes 参数交叉为 `string & MessageContentPart` 需先 typeof 收窄；②vitest --no-isolate 模式 8 文件 66 用例假失败（共享 worker 全局状态串扰，与本批改动无关），isolate 复跑全绿定位为环境噪音。
 - **测试**：新建 mcp-templates.test 10 用例（结构完整性含 mcpServerSaveSchema IPC 入口校验/替换/enabled/缺值/空白值/声明漂移/无占位直出/拷贝隔离）、text-tool-protocol.test 16 用例（错误文案匹配与不误判/围栏单块多块坏块缺 name/arguments 容错/宽松兜底命中与不命中/普通 JSON 不误判/buildTextProtocolPrompt 内容与空清单）；i18n 四语 17 key（agent.templates+agent.tpl*）。
 
+### V4-Iter-110 §4.4-⑧ 落地：`'*'` 只代表「全部内置工具」，MCP 一律逐条显式授权（已落地，真机待验）
+
+- **锁定口径**（2026-10-12 决策，见记忆「产品口径 2026-10-12」第 1 条）：13 个内置工具继续默认给（危险动作另有 classify 的 confirm/deny 分级），**只把 MCP 摘出默认授权**；收益集中在"最贵又最不可信"那一档（MCP 工具名与描述本就是外部内容，SEC-12 已这么认定）。
+- **为什么必须走运行时**：`assistant.repo.ts` 的 `upsertBuiltin` 对已存在的内置助手**故意不覆盖** `tool_permissions` ⇒ 改 `extensions/assistants/*.json` 对老用户完全无效。所以收口点选在注册表，不碰任何存量数据。
+- **落点（单一真源）**：新增导出的纯函数 `isToolAllowedBy(allowed, schema)`（`src/main/tools/registry.ts:68`）——`'*'` 只对 `source==='builtin'` 成立；三处判定点全部改走它：`filterByPermissions`（发给模型的工具面）、`classify`（审批分档）、`execute`（执行前 id 复核）。**engine 零行为改动**（`allowedToolIds` 仍原样带 `'*'`，只补了注释），因为把例外写在 engine 里等于把同一条规则抄两遍。
+- **为什么不在 engine 展开成内置 id 一次**：那样 `'*'` 仍是一个能绕过逐 id 校验的魔法值，classify/execute 各自还得记一条例外；来源判定与工具定义同源，放注册表最不容易腐坏。
+- **UI 跟着说实话**（`AssistantEditor.tsx`）：勾了「允许全部内置」后，MCP 那一组**不再显示为选中态、也不再被禁用**（原来 `allowAll` 会把两组 chip 全点亮并禁用，等于界面在承诺一个已经不给的权限）；组头下加一行 `ae.mcpNotInAll` 说明。四语文案：`ae.allowAll` 由「允许全部 (\*)」改为「允许全部内置 (\*)」，新增 `ae.mcpNotInAll`。
+- **⚠️ 这是一次用户可见的行为收紧**：此前靠 `'*'` 用 MCP 的助手（含 9 个内置助手里 `tool_permissions=[]` 的那 7 个）从此**拿不到任何 MCP 工具**，要到「助手 → 工具权限」里逐个勾选。台账如实写在这里，别当成回归。
+- **测试**：`tests/tool-name-collision.test.ts` +5 例（现 17 例）——① `isToolAllowedBy` 四象限（`'*'` 命中内置/不命中 MCP、显式 id 两类都命中、显式 MCP id 不命中内置）；② 工具面：`filterByPermissions(['*'])` 只剩内置那一条，**反向对照**显式点名的 MCP 仍在；③ 审批闸门 `'*'` 下 MCP 直接 `deny`（不是降级成 confirm）；④ 执行闸门 `'*'` 下 MCP 报越权且**一次都不 callTool**（`mocks.calls` 为空）；⑤ 内置在 `'*'` 下分类与执行照旧（既有行为不变）。
+- **闸门独立性已实测**：只还原 `filterByPermissions` → 仅 ② 转红；只还原 `isToolAllowedBy` → ①③④ 三条转红。⇒ 两道闸门各自被钉住，不存在"一条用例覆盖三处"的假安全感。
+- **验证**：typecheck 0；vitest **256 文件 / 3138 用例**全绿；build 三端通过。
+- **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
+- **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
+
 ### V4-Iter-109 再点开 Agent 模块自动回到上次用的助手与会话（已落地，真机待验）
 
 - **来源**：用户反馈——切走再回来要重新选助手、重新点会话。根因不在数据而在生命周期：`Workspace` 对模块是**条件渲染**，切走即卸载，`useAgentChat` 里的 `assistantId/conversationId` 随之归零（会话列表 effect 只认"当前助手里最近一次"）。
@@ -1411,7 +1425,7 @@
 5. ~~AppearancePanel 的渲染层用例~~ **已做（V4-Iter-96）**，且**假设被证伪**：不用拆组件，导出 + 7 个 IPC 桩就挂得上；补 5 条用例覆盖夹取/空值不写库/0 合法/失败回滚。
 6. ~~MCP 调用记录跳回 Agent 轮次~~ **已决策：不做（2026-10-12）**。动手前核过两件事：① Agent 走的 MCP 调用**其实早就在记录里**（`ipc/handlers/mcp.ts:196` 订阅 `mcpManager.onCall`，Agent 路径 `tools/registry.ts:228` 同样经 `manager.callTool`），所以缺的不是"要不要记"而是一个关联键；② 真接起来是 `ctx.requestId` 穿 4 处 + migration + 面板跳转，而唯一用户不会从调用记录跳回对话 ⇒ 给不存在的需求做。时间窗近似明确否决（两表能对上属巧合）。
 7. **「静默忽略 tools」的端点没有降级路径**（§4.5 实测条）→ **已决策（2026-10-12）：模型级显式开关 + 检测到就建议**，默认不改变任何现有行为。理由：自动按"有工具却零调用"降级分不清「端点不支持」与「模型判断这轮不需要工具」，会给后者多跑一步、多花一次调用；而 Ollama 类端点是已知事实，不需要探测。落地形态：一个"该模型走文本协议"的开关（存 app_config KV，**不引入新持久化格式**）+ 在既有"零调用提示"里附一句建议打开，把判断权交给用户但给足信息。
-8. **`'*'` 全量授权是 token 的第二大头** → **已决策（2026-10-12）：只把 MCP 工具摘出默认授权**，13 个内置工具继续默认给。收益集中在最贵也最不可信的那部分（MCP 工具名与描述本就是外部内容，SEC-12 已这么认定）。**关键约束（本轮核出）**：`assistant.repo.ts:97-108` 的内置同步**故意不覆盖** `tool_permissions`（保留用户改动）⇒ 只改 `extensions/assistants/*.json` 对老用户完全无效，收紧必须走"运行时按来源过滤"或配一次性提示，不能靠数据文件下发。给 8 个内置助手配显式白名单留作后续精细化（存量无法区分"用户改过"与"从未改过"，列里存的就是 `[]`）。
+8. ~~**`'*'` 全量授权是 token 的第二大头**~~ **已决策并落地（2026-10-12，V4-Iter-110）：只把 MCP 工具摘出默认授权**，13 个内置工具继续默认给。收益集中在最贵也最不可信的那部分（MCP 工具名与描述本就是外部内容，SEC-12 已这么认定）。**关键约束（本轮核出）**：`assistant.repo.ts:97-108` 的内置同步**故意不覆盖** `tool_permissions`（保留用户改动）⇒ 只改 `extensions/assistants/*.json` 对老用户完全无效，收紧必须走"运行时按来源过滤"或配一次性提示，不能靠数据文件下发。给 8 个内置助手配显式白名单留作后续精细化（存量无法区分"用户改过"与"从未改过"，列里存的就是 `[]`）。
 9. ~~剩下 4 个 CSS 令牌漂移~~ **已做（V4-Iter-100）**：20 处全部改回真令牌（`--color-hover`/`--color-bg-hover`→`--color-hover-overlay`、`--color-primary`→`--color-accent`、`--color-accent-bg`→`--color-accent-soft`），`KNOWN_DRIFT` 白名单清空成零容忍；顺带修出记忆「添加」按钮的透明底白字。**观感变化待真机两主题过一遍（B47）**。
 
 ### 4.5 更正与误报

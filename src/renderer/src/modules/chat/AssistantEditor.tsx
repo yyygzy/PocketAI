@@ -281,29 +281,26 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
               </span>
               <button
                 onClick={() => selectGroup(mcpTools)}
-                disabled={allowAll}
-                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
               >
                 {t('ae.selectAll')}
               </button>
               <button
                 onClick={() => clearGroup(mcpTools)}
-                disabled={allowAll}
-                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+                className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
               >
                 {t('ae.clearAll')}
               </button>
             </div>
+            {/* 允许全部(*) 不覆盖 MCP，所以这一组始终可点、勾选态只按显式 id 显示 */}
+            <p className="text-[10px] text-[var(--color-text-muted)] mb-1">{t('ae.mcpNotInAll')}</p>
             <div className="flex flex-wrap gap-1.5">
               {mcpTools.map((tl) => (
                 <button
                   key={tl.id}
                   onClick={() => toggleTool(tl.id)}
-                  disabled={allowAll}
                   title={tl.description}
-                  className={`${chipCls(allowAll || toolPermissions.includes(tl.id))} ${
-                    allowAll ? 'opacity-60' : ''
-                  }`}
+                  className={chipCls(toolPermissions.includes(tl.id))}
                 >
                   🔌 {tl.name}
                 </button>

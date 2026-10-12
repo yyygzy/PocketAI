@@ -204,7 +204,8 @@ export const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent
 
 /**
  * 工具授权解析（纯函数，SEC-3）：
- * - 助手显式配置了 toolPermissions → 原样生效（`['*']` 是显式的全授权声明）；
+ * - 助手显式配置了 toolPermissions → 原样生效（`['*']` 是显式的全授权声明，
+ *   但**只覆盖内置工具**，MCP 工具仍需逐条 id —— 见 `tools/registry.ts` 的 `isToolAllowedBy`）；
  * - 空数组 = **不授权任何工具**；只有两种情形保留旧的「空即全授权」：
  *   未选助手（平台默认 Agent 会话）与内置助手（避免升级后历史助手突然失去全部能力）。
  * 曾经的无条件 `[] → ['*']` 让「拿到一个助手 JSON」等价于「拿到全授权 Agent（含 shell_exec）」。
@@ -765,7 +766,8 @@ class AgentEngine {
         .catch((e) => logger.warn(`附件入库失败: ${errMsg(e)}`))
     }
 
-    // 允许调用的工具 id 集合
+    // 允许调用的工具 id 集合：`'*'` 原样交给注册表判定——它**只覆盖内置工具**，
+    // MCP 工具必须有显式 id 才放行（口径与收紧理由见 registry.ts 的 isToolAllowedBy）
     const allowedToolIds = new Set<string>(
       toolPermissions.includes('*') ? ['*'] : toolPermissions
     )

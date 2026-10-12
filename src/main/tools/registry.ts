@@ -65,6 +65,24 @@ export function ensureUniqueToolNames(
   return out
 }
 
+/**
+ * `'*'`（全授权声明）到底给什么：**只给内置工具**。
+ *
+ * 口径见 §4.4-⑧（2026-10-12 定）：内置 13 个工具继续默认授权（危险动作另有 classify 的
+ * confirm/deny 分级），MCP 工具必须逐条 id 显式勾选——工具名与描述本就是外部内容（SEC-12），
+ * 而它们是唯一"既最贵又最不可信"的一档。
+ *
+ * 为什么收口在注册表而不是只在 engine 展开一次：`filterByPermissions`（发给模型的工具面）、
+ * `classify`（审批分档）、`execute`（执行前的 id 复核）是三处独立判定点，任何一处漏掉例外
+ * 都会让 `'*'` 重新变成"MCP 也可用"；来源与工具定义同源，写在这里最不容易腐坏。
+ * 同一条也解释了为什么不能靠改 `extensions/assistants/*.json` 下发：`upsertBuiltin` 对已存在的
+ * 内置助手**故意不覆盖** `tool_permissions`（保留用户改动），数据文件只影响新装/重置。
+ */
+export function isToolAllowedBy(allowed: Set<string>, schema: ToolSchema): boolean {
+  if (allowed.has(schema.id)) return true
+  return allowed.has('*') && schema.source === 'builtin'
+}
+
 class ToolRegistry {
   /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
   private listBuiltinTools() {
@@ -100,12 +118,12 @@ class ToolRegistry {
   /**
    * 按助手权限过滤出可用工具。
    * toolPermissions 为空时返回空数组（保守策略，避免给普通助手加工具）。
-   * 显式 "*" 表示允许全部。
+   * 显式 "*" 表示允许全部**内置**工具（MCP 工具需逐条 id 授权，见 isToolAllowedBy）。
    */
   filterByPermissions(permissions: string[] | null | undefined): ToolSchema[] {
-    const all = this.listAll()
     if (!permissions || permissions.length === 0) return []
-    if (permissions.includes('*')) return all
+    const all = this.listAll()
+    if (permissions.includes('*')) return all.filter((t) => t.source === 'builtin')
     const allowed = new Set(permissions)
     return all.filter((t) => allowed.has(t.id))
   }
@@ -143,7 +161,7 @@ class ToolRegistry {
     const all = this.listAll()
     const schema = all.find((t) => t.name === toolName)
     if (!schema) return { decision: 'deny', reason: 'UNKNOWN_TOOL' }
-    if (!allowedToolIds.has('*') && !allowedToolIds.has(schema.id)) {
+    if (!isToolAllowedBy(allowedToolIds, schema)) {
       return { decision: 'deny', reason: 'TOOL_NOT_ALLOWED' }
     }
 
@@ -188,7 +206,7 @@ class ToolRegistry {
     if (!schema) {
       return { toolCallId: '', name: toolName, content: `未知工具: ${toolName}`, isError: true }
     }
-    if (!allowedToolIds.has('*') && !allowedToolIds.has(schema.id)) {
+    if (!isToolAllowedBy(allowedToolIds, schema)) {
       return {
         toolCallId: '',
         name: toolName,

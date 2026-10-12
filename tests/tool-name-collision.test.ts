@@ -71,7 +71,7 @@ vi.mock('../src/main/mcp/manager', () => ({
   }
 }))
 
-import { toolRegistry, ensureUniqueToolNames, sanitizeFunctionName } from '../src/main/tools/registry'
+import { toolRegistry, ensureUniqueToolNames, sanitizeFunctionName, isToolAllowedBy } from '../src/main/tools/registry'
 
 const LLM_FUNCTION_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
 
@@ -164,5 +164,45 @@ describe('classify / execute — 名字解析后的实际落点', () => {
     expect(aliased.name).toMatch(LLM_FUNCTION_NAME_RE)
     await toolRegistry.execute(aliased.name, '{}', new Set([aliased.id]))
     expect(mocks.calls).toEqual([{ serverId: 'srv-c', toolName: '2bad-name' }])
+  })
+})
+describe('`*` 的边界——只给内置，MCP 必须逐条显式授权（§4.4-⑧）', () => {
+  it('isToolAllowedBy：`*` 命中内置、不命中 MCP；显式 id 两类都命中', () => {
+    const star = new Set(['*'])
+    expect(isToolAllowedBy(star, BUILTIN_FS_WRITE)).toBe(true)
+    expect(isToolAllowedBy(star, mcpTool('srv-a', 'read_file'))).toBe(false)
+    const explicit = new Set(['mcp:srv-a:read_file'])
+    expect(isToolAllowedBy(explicit, mcpTool('srv-a', 'read_file'))).toBe(true)
+    expect(isToolAllowedBy(explicit, BUILTIN_FS_WRITE)).toBe(false)
+  })
+
+  it('发给模型的工具面：`*` 只剩内置那一条（本文件注入 1 内置 + 4 MCP）', () => {
+    const listed = toolRegistry.filterByPermissions(['*'])
+    expect(listed.map((x) => x.id)).toEqual(['fs.write'])
+    // 反向对照：显式点名的 MCP 仍在工具面上，说明收紧只作用在 `*` 这一档
+    const explicit = toolRegistry.filterByPermissions(['mcp:srv-a:read_file'])
+    expect(explicit.map((x) => x.id)).toEqual(['mcp:srv-a:read_file'])
+  })
+
+  it('审批闸门：`*` 下 MCP 工具直接 deny（不是"降级成 confirm"）', () => {
+    const aliased = toolRegistry.listAll().find((x) => x.id === 'mcp:srv-evil:fs_write')!
+    expect(toolRegistry.classify(aliased.name, '{}', new Set(['*']))).toEqual({
+      decision: 'deny',
+      reason: 'TOOL_NOT_ALLOWED'
+    })
+  })
+
+  it('执行闸门：`*` 下 MCP 工具报越权且**一次都不 callTool**', async () => {
+    const aliased = toolRegistry.listAll().find((x) => x.id === 'mcp:srv-a:read_file')!
+    const r = await toolRegistry.execute(aliased.name, '{}', new Set(['*']))
+    expect(r.isError).toBe(true)
+    expect(r.content).toContain('不在允许列表')
+    expect(mocks.calls).toEqual([])
+  })
+
+  it('内置工具在 `*` 下的既有行为不变（分类与执行都照常放行）', async () => {
+    expect(toolRegistry.classify('fs_write', '{}', new Set(['*']))).toEqual({ decision: 'allow' })
+    const r = await toolRegistry.execute('fs_write', '{}', new Set(['*']))
+    expect(r.content).toBe('BUILTIN_RAN')
   })
 })
