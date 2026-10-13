@@ -282,7 +282,7 @@ export const DataHealthPanel: React.FC = () => {
                 <Row
                   label={ll === lk ? p.label : ll}
                   value={`${p.ms}ms · ${new Date(p.at).toLocaleTimeString()}`}
-                  warn={p.ms >= 3000}
+                  warn={p.ms >= 3000 || p.label === 'kb.degrade'}
                 />
               </div>
             )
@@ -310,7 +310,7 @@ export const DataHealthPanel: React.FC = () => {
                     max: h.maxMs,
                     last
                   })}
-                  warn={h.maxMs >= 3000}
+                  warn={h.maxMs >= 3000 || h.label === 'kb.degrade'}
                 />
                 {/* 同一标签按模型拆开才答得出「哪个模型慢」——混在一起的峰值归因不到具体模型 */}
                 {h.byModel.map((m) => (

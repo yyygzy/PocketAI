@@ -9,7 +9,9 @@ import { generateHypotheticalDoc } from './hyde'
 import { generateMultiQueries } from './multi-query'
 import { mmrSelect } from './mmr'
 import { recordPerf, logPerfDebug } from '../steward/perf-probe'
-import type { RetrievedChunk, RetrievalDiagnostics, RetrievalResult } from '../../shared/types'
+import { noteRetrievalDegradation } from './retrieval-degrade'
+import { errMsg } from '../error'
+import type { RetrievalDegradation, RetrievedChunk, RetrievalDiagnostics, RetrievalResult } from '../../shared/types'
 
 /** 检索总耗时入慢操作缓冲的阈值 */
 const SLOW_RETRIEVE_MS = 800
@@ -99,7 +101,8 @@ class RAGService {
       vectorHits: 0,
       bm25Hits: 0,
       rerankUsed: false,
-      candidateCount: 0
+      candidateCount: 0,
+      degradations: []
     }
     const result = await this.retrieveInternal(kbIds, query, opts, diagnostics)
     return { result, diagnostics }
@@ -143,6 +146,19 @@ class RAGService {
     const maxTopK = opts.topK ?? maxOf(kbs.map(topKOf), DEFAULT_TOP_K)
     const topN = opts.topN ?? maxOf(kbs.map((kb) => kb.topN), DEFAULT_TOP_N)
 
+    /**
+     * 某一路没跑成：进诊断（面板当场可见），同时记 WARN + perf 事件（不跑测试面板也看得见）。
+     * 同一库同一路的重复失败只上一条——一次检索最多 4 个查询变体，全失败时不该刷出 4 行。
+     */
+    const degradedKeys = new Set<string>()
+    const degrade = (d: RetrievalDegradation, ms = 0): void => {
+      const key = `${d.stage}|${d.kbId ?? ''}|${d.reason}`
+      if (degradedKeys.has(key)) return
+      degradedKeys.add(key)
+      diag?.degradations.push(d)
+      noteRetrievalDegradation(d, ms)
+    }
+
     // 取第一个配置了 hyde/rerank/multiQuery 的 KB（同一会话内统一）
     for (const kb of kbs) {
       if (!hydeProvider && kb.hydeProviderId && kb.hydeModel) {
@@ -167,6 +183,12 @@ class RAGService {
     hydeMs = performance.now() - tHyde
     const embedText = hydeDoc ?? query
     if (diag) diag.hydeUsed = hydeDoc !== null
+    if (hydeProvider && hydeModel && hydeDoc === null) {
+      degrade(
+        { stage: 'hyde', reason: '配了 HyDE 却没拿到假设文档（模型调用失败或输出为空），向量路退回用原查询做 embedding' },
+        hydeMs
+      )
+    }
 
     // Multi-Query：LLM 改写出多个视角变体查询（失败降级为仅原 query）
     const tMq = performance.now()
@@ -175,6 +197,12 @@ class RAGService {
         ? (await generateMultiQueries(query, multiQueryProvider, multiQueryModel)) ?? []
         : []
     multiQueryMs = performance.now() - tMq
+    if (multiQueryProvider && multiQueryModel && variants.length === 0) {
+      degrade(
+        { stage: 'multiQuery', reason: '配了 Multi-Query 却没拿到任何变体（调用失败或解析为空），本轮只用原查询' },
+        multiQueryMs
+      )
+    }
     // 原 query 在前：向量路可用 HyDE 文本，变体只用自身
     const queryVariants: Array<{ q: string; useHyde: boolean }> = [
       { q: query, useHyde: true },
@@ -194,6 +222,7 @@ class RAGService {
       for (const { q, useHyde } of queryVariants) {
         // 1. 向量检索（原 query 在 HyDE 开启时用假设文档 embedding）
         if (kb.embeddingProviderId && kb.embeddingModel) {
+          const tVec = performance.now()
           try {
             const qVec = await embedQuery(
               kb.embeddingProviderId,
@@ -201,16 +230,25 @@ class RAGService {
               useHyde ? embedText : q
             )
             vectorResults.push(...kbChunkRepo.knnSearch(qVec, [kbId], topK))
-          } catch {
-            // 向量化失败不阻断，仅跳过该查询的向量检索
+          } catch (e) {
+            // 向量化失败不阻断，仅跳过该查询的向量检索 —— 但「少了向量这一路」必须留痕
+            degrade(
+              { stage: 'vector', kbId, reason: `向量化或向量检索失败：${errMsg(e, '未知错误')}` },
+              performance.now() - tVec
+            )
           }
         }
 
         // 2. BM25 全文检索
+        const tFts = performance.now()
         try {
           bm25Results.push(...kbChunkRepo.bm25Search(q, [kbId], topK))
-        } catch {
-          // FTS 检索失败不阻断
+        } catch (e) {
+          // FTS 检索失败不阻断（SEC-18 那次「BM25 恒 0 命中」就是被这种静默埋住的）
+          degrade(
+            { stage: 'bm25', kbId, reason: `全文检索失败：${errMsg(e, '未知错误')}` },
+            performance.now() - tFts
+          )
         }
       }
 
@@ -237,7 +275,10 @@ class RAGService {
     const tRerank = performance.now()
     const reranked =
       rerankProvider && rerankModel
-        ? await rerankChunks(query, candidates, rerankProvider, rerankModel)
+        ? await rerankChunks(query, candidates, rerankProvider, rerankModel, (reason) =>
+            // 重排没跑成 ⇒ 顺序仍是 RRF 的，注入质量悄悄掉一档，必须留痕
+            degrade({ stage: 'rerank', reason }, performance.now() - tRerank)
+          )
         : candidates
     const rerankMs = performance.now() - tRerank
 
@@ -247,7 +288,12 @@ class RAGService {
     try {
       const vecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
       picked = mmrSelect(reranked, vecs, topN)
-    } catch {
+    } catch (e) {
+      // 多样性选择要读每条 chunk 的向量，取不到就退回分数序 —— 但去重效果没了，得留痕
+      degrade(
+        { stage: 'mmr', reason: `向量多样性计算失败，退回按融合分数直接取前 ${topN} 条：${errMsg(e, '未知错误')}` },
+        performance.now() - tMmr
+      )
       picked = reranked.slice(0, topN)
     }
     const mmrMs = performance.now() - tMmr

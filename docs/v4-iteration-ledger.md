@@ -66,6 +66,40 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-125 知识库 A3：检索降级从此留痕（已落地，真机待验）
+
+- **来源**：A1/A2 之后的第三条「做好的没接线」——不是缺功能，是失败被吞掉。`rag.ts` 的向量路与 FTS 路是空 catch，
+  HyDE / Multi-Query 失败只回 `null`，重排解析不出分照原序返回，MMR 取不到向量就 `slice` ⇒ 六处一起构成
+  「少了一路召回，界面上零痕迹」。SEC-18 那次「BM25 恒 0 命中」正是被这种静默埋住的。
+- **改法（只加痕迹，不改任何检索行为）**：新增 `src/main/knowledge/retrieval-degrade.ts::noteRetrievalDegradation()`，
+  一条降级同时做两件事：(a) 写 WARN 进 main.log（`[kb] 检索降级: stage=vector kb=… reason=…`，与 MCP 启动失败同一口径）；
+  (b) 以 label `kb.degrade` 入 perf 环形缓冲 ⇒ 数据健康面板的「最近慢操作」与「跨会话慢事件统计」**自动**多出一行可数的降级。
+  **不新建表**：日志本来就是持久层，`src/shared/perf-lines.ts` 已按 label 聚合——这也是对「检索日志持久化刻意不做」那条旧决定的翻案，
+  成本已被 MCP 调用日志与性能面板摊薄。
+- **rag.ts 六个点**全部接上；`RetrievalDiagnostics` 加 `degradations` 字段 ⇒ 检索测试面板出现红色徽标「本次检索有 N 路降级」，
+  悬停逐条列 `stage(kbId)：原因`。
+- **两处口径值得记**：
+  1. **配置缺失不算降级**：库没配 embedding 模型不报（那是设置状态，每次都报会把面板刷脏并淹没真故障），只有「配了却没跑成」才记；
+  2. **同类去重**：一次检索最多 4 个查询变体，同一库同一路全挂只留一条（键为 `stage|kbId|reason`）。
+- **reranker 的口子**：`rerankChunks` 加第 5 个可选参数 `onDegrade`——以前「没有 adapter」「模型调用失败」「输出解析不出分」
+  与「重排后恰好还是这个顺序」在外部**完全无法区分**（三条都返回原数组）。只有一条候选时不算降级。
+- **调用点**：`chat-service.ts` / `agent/engine.ts` 的整次检索 catch 也记 `stage=retrieve`（「这一轮压根没注入资料」比少一路更严重）。
+  **KB 问答不改**：它本来就把失败 emit 成 `KB_ASK_ERROR_EVENT` 给用户看了，再记一遍是重复。
+- **测试**：新增 `tests/rag-degrade-observable.test.ts` 9 例——用的是**真 perf-probe**（`clearPerfEvents` / `getRecentPerf` 断言），
+  不是 mock 自证：六路各自留痕、反向对照「全健康时 `degradations` 是空的」「没配 HyDE 不报降级」、去重只 1 条、
+  且**降级不阻断另一路**（向量挂掉仍有 BM25 结果）。`tests/reranker.test.ts` +5 例（三条降级原因逐字、正常打分不报、单条候选不报）；
+  `tests/chat-kb-refs.test.ts` +1、`tests/agent-kb-sources-real-db.test.ts` +1（真引擎真库里 retrieve 抛错仍跑完并记下降级）。
+  **七轮变异实测**：向量路退回空 catch ⇒ 2 红；FTS 路 ⇒ 1 红；HyDE 不报 ⇒ 1 红；去掉同类去重 ⇒ 1 红；
+  重排解析失败不报原因 ⇒ 1 红；对话侧 stage 写错 ⇒ 1 红；Agent 侧 stage 写错 ⇒ 1 红。
+- **边界（别当成已证）**：
+  - 面板那一半**没有 DOM 用例**：`KnowledgeModule` 太大、没有挂载先例，「红色徽标是否真出现在检索测试面板」「数据健康那行是否显示成中文」
+    只能肉眼 ⇒ 验收清单 **B63**。
+  - perf 环形缓冲是**内存态**（100 条 FIFO）⇒ 重启后面板「最近慢操作」会空，跨会话统计靠日志尾部聚合仍然数得到；
+    日志 1MB 滚动，更老的降级随 `main.old.log` 淡出。
+  - 本轮给的是「知道少了哪一路」，不是「少了这一路答案差多少」——质量对照仍需阈值（B4）与评测集，别把可观测当成效果。
+- **校验**：typecheck 0；vitest **271 文件 / 3270 用例**全绿（+1 文件 +16 例）；build 三端通过。
+  主进程与渲染层都动 ⇒ **须重启 dev**（渲染层那半边 `Ctrl+R` 即可）。
+
 ### V4-Iter-124 知识库 A2 的界面半边：Agent 卡片第一次有「跳转到原文」入口（已落地，真机待验）
 
 - **范围**：用户在 A2 交付后的三个下一步里点了 ②。承接关系是硬的：A2 只补齐了数据，

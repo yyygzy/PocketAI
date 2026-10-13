@@ -33,12 +33,18 @@ vi.mock('../src/main/logger', () => ({
 }))
 
 /** 检索桩：每次 retrieve 依序吐出队列里的一批 chunk（首轮注入一次、每次 kb_search 一次） */
-const R = vi.hoisted(() => ({ queue: [] as unknown[][], calls: [] as string[][] }))
+const R = vi.hoisted(() => ({
+  queue: [] as unknown[][],
+  calls: [] as string[][],
+  throwOnRetrieve: false
+}))
 
 vi.mock('../src/main/knowledge/rag', () => ({
   ragService: {
     retrieve: async (kbIds: string[]) => {
       R.calls.push(kbIds)
+      // 整次检索失败（真库里常见：embedding 服务商被删/停用）——Agent 不许因此中断
+      if (R.throwOnRetrieve) throw new Error('embedding 服务商不存在')
       return { query: 'q', chunks: R.queue.shift() ?? [] }
     },
     buildContext: (chunks: unknown[]) => (chunks.length > 0 ? `[知识上下文 ${chunks.length} 段]` : '')
@@ -51,6 +57,7 @@ import { assistantRepo } from '../src/main/db/repositories/assistant.repo'
 import { conversationRepo } from '../src/main/db/repositories/conversation.repo'
 import { messageRepo } from '../src/main/db/repositories/message.repo'
 import { agentEngine } from '../src/main/agent/engine'
+import { clearPerfEvents, getRecentPerf } from '../src/main/steward/perf-probe'
 import { IPC, type AgentDoneEvent, type MessageSource } from '../src/shared/types'
 
 const MODEL = 'fake-kb-model'
@@ -197,7 +204,9 @@ function finalSources(): MessageSource[] {
 beforeEach(() => {
   R.queue = []
   R.calls = []
+  R.throwOnRetrieve = false
   endpointMode = 'answer'
+  clearPerfEvents()
 })
 
 describe('A2：Agent 引用来源带 kbId/seq（跳转原文的前提）', () => {
@@ -251,5 +260,21 @@ describe('A2：Agent 引用来源带 kbId/seq（跳转原文的前提）', () =>
     expect(hit?.seq).toBe(12)
     // kb_search 的正文是给模型看的截断摘要，来源里记的应是它实际返回的内容（不是原文全量）
     expect(hit?.content).toContain('片段 c9 正文')
+  })
+
+  it('整次检索抛错 ⇒ Agent 照常跑完，但记一条 stage=retrieve 的降级（A3：不再静默空注入）', async () => {
+    R.throwOnRetrieve = true
+    const done = await run('退款政策是什么')
+    expect(done).not.toBeNull()
+    // 没注入任何资料，模型仍给出了终答（旧行为也是不阻断，只是当时什么痕迹都没有）
+    expect(done!.fullContent).toContain('7 天内可退款')
+    expect(finalSources()).toEqual([])
+    const details = getRecentPerf()
+      .filter((e) => e.label === 'kb.degrade')
+      .map((e) => e.detail ?? '')
+    expect(details).toHaveLength(1)
+    expect(details[0]).toContain('stage=retrieve')
+    expect(details[0]).toContain('Agent 侧知识库检索整次失败')
+    expect(details[0]).toContain('embedding 服务商不存在')
   })
 })

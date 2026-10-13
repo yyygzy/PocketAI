@@ -23,6 +23,7 @@ import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
 import { chunksToSources } from '../../shared/kb-sources'
+import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { usageService } from '../usage/usage-service'
 import { getUsagePricing } from '../usage/pricing-config'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
@@ -216,6 +217,7 @@ class ChatService {
     let sources: MessageSource[] = []
     let extraSystemPrompt: string | null = null
     if (shouldRetrieve && allKbIds.length > 0) {
+      const tKb = performance.now()
       try {
         const result = await ragService.retrieve(allKbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
@@ -224,8 +226,15 @@ class ChatService {
         if (!effectivePrompt.includes('{{knowledge}}') && knowledgeContext) {
           extraSystemPrompt = `以下是与用户问题相关的知识库内容：\n\n${knowledgeContext}`
         }
-      } catch {
-        // 检索失败不阻断对话，仅跳过知识注入
+      } catch (e) {
+        // 检索失败不阻断对话，仅跳过知识注入 —— 但「这一轮压根没注入资料」不能悄悄过去（A3）
+        noteRetrievalDegradation(
+          {
+            stage: 'retrieve',
+            reason: `对话侧知识库检索整次失败，本轮未注入任何资料：${errMsg(e, '未知错误')}`
+          },
+          performance.now() - tKb
+        )
       }
     }
 

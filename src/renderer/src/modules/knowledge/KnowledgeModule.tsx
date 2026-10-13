@@ -984,6 +984,15 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
       {/* 诊断摘要条：查询变体 + 生效策略 + 各路命中数 */}
       {diag && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+          {/* 降级徽标：这一路没跑成时别再让用户以为「命中数就是全部召回」 */}
+          {diag.degradations.length > 0 && (
+            <span
+              className="px-1.5 py-0.5 rounded bg-[var(--color-danger)]/15 text-[var(--color-danger)]"
+              title={diag.degradations.map((d) => `${d.stage}${d.kbId ? `(${d.kbId})` : ''}：${d.reason}`).join('\n')}
+            >
+              {t('kb.diagDegraded', { n: diag.degradations.length })}
+            </span>
+          )}
           {diag.hydeUsed && (
             <span className="px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">HyDE</span>
           )}

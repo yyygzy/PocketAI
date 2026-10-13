@@ -12,9 +12,19 @@ const { state } = vi.hoisted(() => ({
   state: {
     retrieveCalls: [] as { kbIds: string[]; query: string }[],
     retrieveResult: { chunks: [] as unknown[] },
+    retrieveError: null as string | null,
+    degradeNotes: [] as Array<{ stage: string; reason: string }>,
     insertedMessages: [] as { role: string; content: string }[],
     runTargetMessages: null as unknown
   }
+}))
+
+// 降级记账打桩：只关心「整次检索失败有没有被说出来」，不去动真 perf 环形缓冲
+vi.mock('../src/main/knowledge/retrieval-degrade', () => ({
+  noteRetrievalDegradation: (d: { stage: string; reason: string }) => {
+    state.degradeNotes.push({ stage: d.stage, reason: d.reason })
+  },
+  KB_DEGRADE_PERF_LABEL: 'kb.degrade'
 }))
 
 vi.mock('../src/main/db/database', () => ({
@@ -60,6 +70,7 @@ vi.mock('../src/main/knowledge/rag', () => ({
   ragService: {
     retrieve: async (kbIds: string[], query: string) => {
       state.retrieveCalls.push({ kbIds, query })
+      if (state.retrieveError) throw new Error(state.retrieveError)
       return state.retrieveResult
     },
     buildContext: (chunks: unknown[]) => chunks.length > 0 ? '[知识库上下文]' : ''
@@ -80,6 +91,8 @@ import { chatService } from '../src/main/chat/chat-service'
 beforeEach(() => {
   state.retrieveCalls = []
   state.retrieveResult = { chunks: [] }
+  state.retrieveError = null
+  state.degradeNotes = []
   state.insertedMessages = []
 })
 
@@ -119,5 +132,19 @@ describe('chat-service kbRefs 合并检索', () => {
     await chatService.send({ ...basePayload, kbRefs: ['kbX'] } as any, () => {}).catch(() => {})
     expect(state.retrieveCalls).toHaveLength(1)
     // system 消息 unshift 到 messages 数组是内部逻辑，这里验证检索被调用即可
+  })
+
+  it('整次检索抛错 ⇒ 对话照常进行，但记一条 stage=retrieve 的降级（不再静默跳过注入）', async () => {
+    state.retrieveError = 'embedding 服务连不上'
+    await chatService.send({ ...basePayload, kbRefs: ['kbX'] } as any, () => {}).catch(() => {})
+    expect(state.retrieveCalls).toHaveLength(1)
+    expect(state.degradeNotes).toHaveLength(1)
+    expect(state.degradeNotes[0]!.stage).toBe('retrieve')
+    expect(state.degradeNotes[0]!.reason).toContain('embedding 服务连不上')
+    // 反向对照：检索成功时不该有降级记录
+    state.retrieveError = null
+    state.degradeNotes = []
+    await chatService.send({ ...basePayload, kbRefs: ['kbX'] } as any, () => {}).catch(() => {})
+    expect(state.degradeNotes).toEqual([])
   })
 })

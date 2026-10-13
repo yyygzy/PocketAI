@@ -37,6 +37,7 @@ import { buildSkillsContext } from '../assistant/skills'
 import { buildMemoryContext } from '../assistant/memory'
 import { ragService } from '../knowledge/rag'
 import { chunksToSources } from '../../shared/kb-sources'
+import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { toolRegistry, badArgsError } from '../tools/registry'
 import type { ToolAgentContext } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
@@ -706,12 +707,20 @@ class AgentEngine {
     let knowledgeContext = ''
     let sources: MessageSource[] = []
     if (effectivePrompt.includes('{{knowledge}}') && kbIds.length > 0) {
+      const tKb = performance.now()
       try {
         const result = await ragService.retrieve(kbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
         sources = chunksToSources(result.chunks)
-      } catch {
-        // 检索失败不阻断
+      } catch (e) {
+        // 检索失败不阻断 Agent，但这一轮是「带着空资料库在答题」，必须留痕（A3）
+        noteRetrievalDegradation(
+          {
+            stage: 'retrieve',
+            reason: `Agent 侧知识库检索整次失败，本轮未注入任何资料：${errMsg(e, '未知错误')}`
+          },
+          performance.now() - tKb
+        )
       }
     }
 

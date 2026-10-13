@@ -1,6 +1,7 @@
 // RAG 检索重排序：用 LLM 对候选 chunk 做相关性打分，重排后取 topN
 // 失败/无配置时降级返回原顺序（不阻断检索）
 import { providerManager } from '../providers/manager'
+import { errMsg } from '../error'
 import type { RetrievedChunk } from '../../shared/types'
 
 /** 单个候选片段送给 LLM 的最大字符数（控制 prompt 体积） */
@@ -41,17 +42,24 @@ export function parseRerankScores(text: string, count: number): number[] | null 
 /**
  * LLM-based rerank：调 LLM 对候选 chunks 打相关性分，按分数降序重排。
  * 任何异常（无 adapter、调用失败、解析失败）均降级返回原数组。
+ * @param onDegrade 降级原因回调（A3：以前「模型调用失败」「输出解析不出分」「没有 adapter」
+ *   与「重排后恰好还是这个顺序」在外部完全无法区分，于是注入质量掉一档没人知道）
  */
 export async function rerankChunks(
   query: string,
   chunks: RetrievedChunk[],
   providerId: string,
-  model: string
+  model: string,
+  onDegrade?: (reason: string) => void
 ): Promise<RetrievedChunk[]> {
+  // 只有一条候选时无需重排，这不算降级
   if (chunks.length <= 1) return chunks
 
   const adapter = providerManager.getAdapter(providerId)
-  if (!adapter) return chunks
+  if (!adapter) {
+    onDegrade?.(`找不到服务商 adapter：${providerId}`)
+    return chunks
+  }
 
   const candidatesText = chunks
     .map((c, i) => `[${i + 1}] ${c.content.slice(0, MAX_CHUNK_CHARS)}`)
@@ -70,12 +78,16 @@ export async function rerankChunks(
     )
 
     const scores = parseRerankScores(result.content, chunks.length)
-    if (!scores) return chunks
+    if (!scores) {
+      onDegrade?.('模型输出的评分 JSON 解析不出任何非零分，顺序退回 RRF 融合序')
+      return chunks
+    }
 
     const scored = chunks.map((c, i) => ({ chunk: c, score: scores[i] ?? 0 }))
     scored.sort((a, b) => b.score - a.score)
     return scored.map((s) => ({ ...s.chunk, score: s.score }))
-  } catch {
+  } catch (e) {
+    onDegrade?.(`重排调用失败：${errMsg(e, '未知错误')}`)
     return chunks
   }
 }
