@@ -7,9 +7,9 @@ vi.mock('../src/main/providers/manager', () => ({ providerManager: {} }))
 
 import {
   buildAskMessages,
-  chunksToSources,
   KB_ASK_MAX_HISTORY
 } from '../src/main/knowledge/ask-service'
+import { chunksToSources } from '../src/shared/kb-sources'
 
 describe('buildAskMessages — 问答消息拼装', () => {
   it('无历史：system(上下文) + user(问题)', () => {

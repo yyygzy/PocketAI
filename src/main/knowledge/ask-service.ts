@@ -4,9 +4,10 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import { ragService } from './rag'
+import { chunksToSources } from '../../shared/kb-sources'
 import { providerManager } from '../providers/manager'
 import type { AdapterChatMessage } from '../providers/types'
-import type { KbAskChunkEvent, KbAskDoneEvent, KbAskErrorEvent, KbAskMessage, MessageSource, RetrievedChunk } from '../../shared/types'
+import type { KbAskChunkEvent, KbAskDoneEvent, KbAskErrorEvent, KbAskMessage, MessageSource } from '../../shared/types'
 import { IPC } from '../../shared/types'
 
 /** 追问历史最多携带条数（超出截断最早的） */
@@ -34,18 +35,6 @@ export function buildAskMessages(
   }
   msgs.push({ role: 'user', content: question })
   return msgs
-}
-
-/** RetrievedChunk → MessageSource（与聊天引用溯源同构） */
-export function chunksToSources(chunks: RetrievedChunk[]): MessageSource[] {
-  return chunks.map((c) => ({
-    chunkId: c.chunkId,
-    docId: c.docId,
-    docTitle: c.docTitle,
-    content: c.content,
-    kbId: c.kbId,
-    seq: c.seq
-  }))
 }
 
 type EmitFn = (channel: string, payload: unknown) => void

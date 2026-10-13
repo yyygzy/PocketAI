@@ -66,6 +66,33 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-123 知识库 A2：Agent 的引用来源第一次带齐 kbId/seq（已落地，真机待验）
+
+- **来源**：A1 之后接着做的第二条。用户口径「继续实现 A2，补全 sources 的 kbId/seq」。
+- **事实**：同一个「检索结果 → 消息来源」的映射在项目里被手抄了两份，**少抄两个字段的那份是 Agent**：
+  `chat-service.ts:221` 写的是六字段（含 `kbId`/`seq`），`agent/engine.ts:707` 只写四字段。
+  而渲染层给「跳转到原文」的条件正是 `s.kbId && s.seq !== undefined`（`MessageBubble.tsx:358`、`KbAskPanel.tsx:628`）
+  ⇒ Agent 的回答「有来源列表、点不动」。第二条路也漏：`kb_search` 工具命中的片段经 SEC-29 的
+  `extractKbSearchSources` 并入 sources，但 `tools/kb-search.ts` 返回的 JSON 里**根本没有** kbId/seq，解析端无从带出。
+- **改法**：抽 `src/shared/kb-sources.ts::chunksToSources()` 一份映射，三条注入路（聊天 / Agent 首轮 / KB 问答）都改用它；
+  `kb-search.ts` 的结果补 `kbId`/`seq`，`extractKbSearchSources` 有就带、没有就不写这两个键（老形状仍解析成功、不报错）。
+- **为什么放 `src/shared/` 而不是 `knowledge/rag.ts`**：调用方的测试普遍把 `knowledge/rag` 整模块打桩（现存 6 个文件 mock 它）。
+  把一个纯映射寄居在被桩掉的模块里，「桩没给这个导出」会变成 `undefined`，缺陷在 CI 里伪装成通过。
+- **代价（如实）**：`kb_search` 的工具结果 JSON 每条多约 40 字符（UUID + 序号），`top_k` 上限 8 时约 +100 token，且会留在后续步的上下文里。
+  选它的理由：`chunkId`/`docId` 这两份模型同样用不到的元数据早就在里面（SEC-29 就是靠这份 JSON 归集来源）；
+  另一条「按 chunkId 回库捞元数据」的路要多一个 repo 方法 + 一次 DB 读 + 一个真库用例。**没选它，不是没想到。**
+- **测试**：新增 `tests/agent-kb-sources-real-db.test.ts` 3 例（**真库 + 真引擎 + 真本地 SSE 端点**，只把 `ragService.retrieve` 打桩）：
+  ① 首轮注入两条 ⇒ **落库的 `messages.sources`** 与 `AGENT_DONE` 事件都逐字段带 kbId/seq（含「别只修落库不修上报」）；
+  ② `seq=0` 不被当成「没有 seq」丢掉；③ 模型主动 `kb_search` 命中的片段并入后同样带。
+  另 `tests/agent-context.test.ts` +1 例（解析端：有就带、老形状不写键），`tests/kb-search-tool.test.ts` 那条从 `toMatchObject`
+  收紧成整对象 `toEqual`（原来会放过缺字段）。**三轮变异实测**：首轮注入退回四字段内联 map ⇒ 2 红；
+  `kb-search.ts` 去掉 `kbId` ⇒ 1 红；`extractKbSearchSources` 不读 `kbId` ⇒ 1 红。
+- **边界（别当成已证）**：本轮只补齐了**数据**。Agent 消息卡片（`AgentMessageCard.tsx:347-372`）至今没有「跳转到原文」的按钮
+  ——聊天气泡有、Agent 没有。所以改完之后用户在 Agent 里**仍然点不动**，只是跳转所需的数据已经就位；
+  补那个入口要不要做、是不是与 Chat 同一套交互，需要先定范围（未擅自扩）。
+  另外 `messageRepo` 里**历史消息**仍是缺字段的旧数据，不会因本轮改动回填。
+- **校验**：typecheck 0；vitest **269 文件 / 3247 用例**全绿（+1 文件 +4 例）；build 三端通过。主进程改动 ⇒ **须重启 dev**。
+
 ### V4-Iter-122 知识库 A1：每库的 topK/topN 第一次真的接到检索层（已落地，真机待验）
 
 - **来源**：用户问「知识库模块增强还有哪些可做」。先派 Explore 盘一遍现状，再回读源码逐条验证（8 项里核了 5 项，都成立），本条是其中影响最大、代价最小的一条。
@@ -75,7 +102,7 @@
 - **顺带**：`kbRepo.get` 原先每个库要调两次（配置循环 + 检索循环），现在一次取齐 `kbs` 复用；行为不变（含 kbIds 有重复时的重复检索）。
 - **测试**：新增 `tests/rag-per-kb-config.test.ts` 6 例（单库两路都收到 7 / 最终 3 条；**topN 调小到 2 不许被默认抬回**；多库各用自己的 topK 且 topN 取最大；显式 opts 覆盖；库记录脏值回落 20/5；库不存在不炸且返回空）。**三轮变异实测**：忽略库自己的 topK → 2 红；`max(默认, 配置)` → 3 红；多库 topN 改取最小 → 1 红。
 - **校验**：typecheck 0；vitest **268 文件 / 3243 用例**全绿（+1 文件 +6 例）；build 三端通过。改的是主进程检索层 ⇒ **须重启 dev** 才生效。
-- **边界（别当成已证）**：这条只证明「配置传到了检索调用」，**没证明检索质量变好** —— 那需要真 embedding + 真库的对照集，而 A3（检索日志/降级可观测）还没做，现在没有能量化召回变化的数据。A2（Agent 引用缺 kbId/seq）、A3、B4（相似度阈值）尚未开始。
+- **边界（别当成已证）**：这条只证明「配置传到了检索调用」，**没证明检索质量变好** —— 那需要真 embedding + 真库的对照集，而 A3（检索日志/降级可观测）还没做，现在没有能量化召回变化的数据。A2（Agent 引用缺 kbId/seq）已做，见 **V4-Iter-123**；A3（检索降级可观测）、B4（相似度阈值）尚未开始。
 
 ### V4-Iter-121 测试卫生与清单表格：一次「跑一遍看有没有遗漏」扫出的三件事（已落地）
 

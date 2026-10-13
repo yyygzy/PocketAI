@@ -81,21 +81,24 @@ describe('kb_search 工具', () => {
     expect(retrieveMock).toHaveBeenLastCalledWith(['kb1'], 'q', { topN: 4 })
   })
 
-  it('结果映射：docTitle/docId/chunkId 透传，分数四舍五入到 4 位', async () => {
+  it('结果映射：docTitle/docId/chunkId/kbId/seq 逐个透传，分数四舍五入到 4 位', async () => {
     retrieveMock.mockResolvedValue({
       query: 'q',
-      chunks: [makeChunk({ score: 0.123456 })]
+      chunks: [makeChunk({ score: 0.123456, seq: 7, kbId: 'kb42' })]
     })
     const out = await kbSearchTool.execute({ query: 'q' }, { kbIds: ['kb1'] })
     const parsed = JSON.parse(out) as {
       query: string
-      results: Array<{ docTitle: string; docId: string; chunkId: string; content: string; score: number }>
+      results: Array<Record<string, unknown>>
     }
     expect(parsed.query).toBe('q')
-    expect(parsed.results[0]).toMatchObject({
+    // 整对象等值：kbId/seq 是给引用溯源跳转用的，漏一个用例就红（不再用 toMatchObject 放过缺字段）
+    expect(parsed.results[0]).toEqual({
       docTitle: '产品手册',
       docId: 'd1',
       chunkId: 'c1',
+      kbId: 'kb42',
+      seq: 7,
       content: '这是文档片段内容',
       score: 0.1235
     })

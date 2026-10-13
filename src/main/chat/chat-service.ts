@@ -22,6 +22,7 @@ import { kbRepo } from '../db/repositories/kb.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
 import { ragService } from '../knowledge/rag'
+import { chunksToSources } from '../../shared/kb-sources'
 import { usageService } from '../usage/usage-service'
 import { getUsagePricing } from '../usage/pricing-config'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
@@ -218,14 +219,7 @@ class ChatService {
       try {
         const result = await ragService.retrieve(allKbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
-        sources = result.chunks.map((c) => ({
-          chunkId: c.chunkId,
-          docId: c.docId,
-          docTitle: c.docTitle,
-          content: c.content,
-          kbId: c.kbId,
-          seq: c.seq
-        }))
+        sources = chunksToSources(result.chunks)
         // 模板不含 {{knowledge}} 但用户显式 @ 引用了知识库 → 追加为独立 system 消息
         if (!effectivePrompt.includes('{{knowledge}}') && knowledgeContext) {
           extraSystemPrompt = `以下是与用户问题相关的知识库内容：\n\n${knowledgeContext}`

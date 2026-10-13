@@ -581,6 +581,20 @@ describe('kb_search 引用来源归集（SEC-29）', () => {
     ])
   })
 
+  it('工具结果里的 kbId/seq 原样带进来源（缺了就没有跳转入口）', () => {
+    const content = JSON.stringify({
+      results: [
+        { docId: 'd1', chunkId: 'c1', kbId: 'kbA', seq: 0, docTitle: 'T', content: 'x' },
+        { docId: 'd2', chunkId: 'c2', docTitle: 'T', content: 'y' }
+      ]
+    })
+    const out = extractKbSearchSources('kb_search', content)
+    // seq=0 是真序号，不能被"值为假"当成缺字段
+    expect(out[0]).toEqual({ chunkId: 'c1', docId: 'd1', docTitle: 'T', content: 'x', kbId: 'kbA', seq: 0 })
+    // 老形状（无 kbId/seq）仍解析成功，只是不写这两个键
+    expect(out[1]).toEqual({ chunkId: 'c2', docId: 'd2', docTitle: 'T', content: 'y' })
+  })
+
   it('非 kb_search 工具、出错结果、畸形 JSON、缺字段都不产出来源', () => {
     const ok = JSON.stringify({ results: [{ docId: 'd', chunkId: 'c', content: 'x' }] })
     expect(extractKbSearchSources('web_search', ok)).toEqual([])

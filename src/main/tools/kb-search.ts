@@ -60,10 +60,14 @@ export const kbSearchTool: BuiltinTool = {
       return JSON.stringify({ query, results: [], note: '知识库中未检索到相关内容' })
     }
 
+    // kbId/seq 是给引用溯源跳转用的（Agent 卡片/聊天气泡据此定位原文分块），模型用不到，
+    // 但 chunkId/docId 同理已在其中——沿用 SEC-29 的既有形状，不再另开一条元数据回捞路。
     const results = chunks.map((c) => ({
       docTitle: c.docTitle,
       docId: c.docId,
       chunkId: c.chunkId,
+      kbId: c.kbId,
+      seq: c.seq,
       content: cut(c.content, MAX_CHUNK_CHARS),
       score: Math.round(c.score * 10000) / 10000
     }))

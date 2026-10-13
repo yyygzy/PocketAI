@@ -36,6 +36,7 @@ import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
 import { buildMemoryContext } from '../assistant/memory'
 import { ragService } from '../knowledge/rag'
+import { chunksToSources } from '../../shared/kb-sources'
 import { toolRegistry, badArgsError } from '../tools/registry'
 import type { ToolAgentContext } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
@@ -623,7 +624,7 @@ function buildApprovalDisplay(
  * kb_search 工具结果 → 引用来源（SEC-29）。
  * 首轮 {{knowledge}} 注入的命中已经进 sources，但多步推理中模型主动换关键词检索到的片段
  * 此前被丢弃，导致「答案引用了资料、来源列表里却没有」——用户无法跳转核对。
- * 结果形状由 tools/kb-search.ts 决定（{ query, results: [{docId, chunkId, docTitle, content}] }），
+ * 结果形状由 tools/kb-search.ts 决定（{ query, results: [{docId, chunkId, kbId, seq, docTitle, content}] }），
  * 任何解析失败都退回空数组（工具结果本身仍照常回填给模型，不影响运行）。
  */
 export function extractKbSearchSources(
@@ -640,12 +641,16 @@ export function extractKbSearchSources(
       const chunkId = typeof item?.chunkId === 'string' ? item.chunkId : ''
       const docId = typeof item?.docId === 'string' ? item.docId : ''
       if (!chunkId || !docId) continue
-      out.push({
+      const source: MessageSource = {
         chunkId,
         docId,
         docTitle: typeof item?.docTitle === 'string' ? item.docTitle : docId,
         content: typeof item?.content === 'string' ? item.content : ''
-      })
+      }
+      // 跳转原文的条件是 kbId 与 seq 都在（缺一个渲染层就不给入口）；老结果没这两个字段时不写
+      if (typeof item?.kbId === 'string' && item.kbId) source.kbId = item.kbId
+      if (typeof item?.seq === 'number' && Number.isFinite(item.seq)) source.seq = item.seq
+      out.push(source)
     }
     return out
   } catch {
@@ -704,12 +709,7 @@ class AgentEngine {
       try {
         const result = await ragService.retrieve(kbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
-        sources = result.chunks.map((c) => ({
-          chunkId: c.chunkId,
-          docId: c.docId,
-          docTitle: c.docTitle,
-          content: c.content
-        }))
+        sources = chunksToSources(result.chunks)
       } catch {
         // 检索失败不阻断
       }
