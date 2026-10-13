@@ -36,12 +36,14 @@ export const AgentModelBar: React.FC<Props> = ({
 }) => {
   const { t } = useI18n()
   return (
-    <div className="flex items-center gap-2 mb-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-2 py-1">
+    <div className="flex items-center gap-2 flex-wrap mb-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-2 py-1">
       <span className="text-xs font-semibold text-[var(--color-text-muted)] shrink-0">
         {t('agent.modelConfig')}
       </span>
+      {/* min-w 不是装饰：这一栏里徽标与工作目录都是 shrink-0，窗口一窄，
+          两个 flex-1 的下拉会被压到 0 宽（选中值完全看不见）。宁可换行，不许塌陷。 */}
       <select
-        className="select-mini flex-1 min-w-0"
+        className="select-mini flex-1 min-w-[120px]"
         value={providerId}
         onChange={(e) => onProviderChange(e.target.value)}
       >
@@ -52,7 +54,7 @@ export const AgentModelBar: React.FC<Props> = ({
       </select>
       {selectedProvider && selectedProvider.models.length > 0 ? (
         <select
-          className="select-mini flex-1 min-w-0"
+          className="select-mini flex-1 min-w-[120px]"
           value={model}
           onChange={(e) => onModelChange(e.target.value)}
         >
@@ -63,7 +65,7 @@ export const AgentModelBar: React.FC<Props> = ({
         </select>
       ) : selectedProvider ? (
         <>
-          <span className="text-xs text-[var(--color-text-muted)] flex-1 min-w-0 truncate">
+          <span className="text-xs text-[var(--color-text-muted)] flex-1 min-w-[120px] truncate">
             {t('agent.noModelsHint')}
           </span>
           <button

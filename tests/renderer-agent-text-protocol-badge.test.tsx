@@ -75,6 +75,18 @@ describe('模型栏上的「文本协议」徽标', () => {
     expect(on).toHaveBeenCalledWith(false)
   })
 
+  it('窄窗口塌陷的防回归桩：这一栏必须能换行，两个下拉必须有最小宽度', () => {
+    // jsdom 没有排版引擎，量不出像素，所以这里只能钉住**约束本身还在**：
+    // 徽标与工作目录都是 shrink-0，一旦下拉丢掉 min-width 又允许压缩，
+    // 窗口变窄时它们就会被压成 0 宽（2026-10-13 真机截图正是这个现象）。
+    mountBar()
+    const bar = screen.getByText(zh['agent.modelConfig']).parentElement!
+    expect(bar.className).toContain('flex-wrap')
+    for (const sel of Array.from(bar.querySelectorAll('select'))) {
+      expect(sel.className).toMatch(/min-w-\[\d+px\]/)
+    }
+  })
+
   it('还没选到模型时不出现开关（作用域是 provider+model，没有目标就不该给一个能点的开关）', () => {
     mountBar({ model: '' })
     expect(screen.queryByText(zh['agent.textProtocol'])).toBeNull()
