@@ -648,7 +648,7 @@ export const zh: Record<string, string> = {
   'agent.textProtocolHint': '该模型不返回原生工具调用时改用它：把工具当文本清单说明（下一轮生效）',
   'agent.textProtocolOnHint': '点击关闭，恢复原生工具调用',
   'agent.textProtocolSuggest': '这台模型似乎从不发起工具调用？改用文本协议（下一轮生效）',
-  'agent.mcpHeldBackHint': '本次有 {count} 个 MCP 工具未授权：「允许全部内置」不含 MCP，请到「助手 → 工具权限」逐个勾选。',
+  'agent.mcpHeldBackHint': '本次有 {count} 个 MCP 工具未授权：「允许全部内置」不含 MCP。内置助手请先在「🧩 市场」点「复制为我的助手」，再到编辑里的「🔌 MCP 工具」逐个勾选。',
   'agent.rerun': '重新运行',
   'agent.regenerate': '重新生成',
   'agent.jumpToBottom': '回到底部',

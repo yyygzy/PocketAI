@@ -621,7 +621,7 @@ export const ko: Record<string, string> = {
   'agent.textProtocolHint': '이 모델이 네이티브 도구 호출을 반환하지 않을 때 사용: 도구를 텍스트 목록으로 설명합니다 (다음 실행부터 적용)',
   'agent.textProtocolOnHint': '클릭하면 꺼지고 네이티브 도구 호출로 돌아갑니다',
   'agent.textProtocolSuggest': '이 모델은 도구를 호출하지 않는 것 같습니다. 텍스트 프로토콜로 전환할까요? (다음 실행부터 적용)',
-  'agent.mcpHeldBackHint': '이번 실행에서 MCP 도구 {count}개가 미허용 상태입니다: "내장 모두 허용"에는 MCP가 포함되지 않으니 "어시스턴트 > 도구 권한"에서 개별 허용하세요.',
+  'agent.mcpHeldBackHint': '이번 실행에서 MCP 도구 {count}개가 미허용 상태입니다("내장 모두 허용"에는 MCP가 포함되지 않음). 내장 어시스턴트는 먼저 "🧩 마켓"에서 "내 어시스턴트로 복사"한 뒤 편집 창의 "🔌 MCP 도구"에서 개별 허용하세요.',
   'agent.rerun': '다시 실행',
   'agent.regenerate': '다시 생성',
   'agent.jumpToBottom': '맨 아래로',

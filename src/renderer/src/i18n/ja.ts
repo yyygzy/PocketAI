@@ -621,7 +621,7 @@ export const ja: Record<string, string> = {
   'agent.textProtocolHint': 'このモデルがネイティブのツール呼び出しを返さない場合に使用：ツールをテキスト一覧として説明します（次回の実行から反映）',
   'agent.textProtocolOnHint': 'クリックで無効化し、ネイティブのツール呼び出しに戻します',
   'agent.textProtocolSuggest': 'このモデルはツールを呼び出さないようです。テキストプロトコルに切り替えますか？（次回の実行から反映）',
-  'agent.mcpHeldBackHint': '今回 {count} 個の MCP ツールが未認証です：「内蔵をすべて許可」に MCP は含まれません。「アシスタント > ツール権限」で個別に許可してください。',
+  'agent.mcpHeldBackHint': '今回 {count} 個の MCP ツールが未認証です（「内蔵をすべて許可」に MCP は含まれません）。内蔵アシスタントはまず「🧩 マーケット」で「マイアシスタントにコピー」し、編集画面の「🔌 MCP ツール」で個別に許可してください。',
   'agent.rerun': '再実行',
   'agent.regenerate': '再生成',
   'agent.jumpToBottom': '一番下へ',

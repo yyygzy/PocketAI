@@ -73,6 +73,17 @@ describe('零调用提示（ZeroToolCallNotice）', () => {
     expect(screen.queryByText(zh['agent.textProtocolSuggest'])).toBeNull()
   })
 
+  it('提示语指的是**真能点到的路径**：内置助手要先「复制为我的助手」', () => {
+    // 这条不是文案审美，是口径：Iter-110 之后 `'*'` 不含 MCP，而内置助手在数据层就被
+    // `assistant.repo.ts:128` 硬挡（不可编辑，只能复制）。上一版提示语让人去「助手 → 工具权限」
+    // 逐个勾选——对内置助手那是条不存在的路，等于把用户支到一个找不到的地方。
+    const hint = zh['agent.mcpHeldBackHint']
+    expect(hint).toContain('{count}')
+    expect(hint).toContain(zh['am.copy'])
+    expect(hint).toContain(zh['ae.groupMcp'])
+    expect(hint).not.toContain('助手 → 工具权限')
+  })
+
   it('✕ 真的能关掉（常驻骚扰没有出口是不允许的）', () => {
     const { onClose } = mountNotice()
     fireEvent.click(screen.getByText('✕'))

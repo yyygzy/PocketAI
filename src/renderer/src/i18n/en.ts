@@ -648,7 +648,7 @@ export const en: Record<string, string> = {
   'agent.textProtocolHint': 'Use when this model never returns native tool calls: tools are described as text instead (takes effect next run)',
   'agent.textProtocolOnHint': 'Click to turn it off and restore native tool calls',
   'agent.textProtocolSuggest': 'This model never seems to call tools? Switch it to the text protocol (takes effect next run)',
-  'agent.mcpHeldBackHint': '{count} MCP tool(s) were not authorized in this run: "allow all built-in" excludes MCP - tick them one by one under Assistant > Tool permissions.',
+  'agent.mcpHeldBackHint': '{count} MCP tool(s) were not authorized in this run: "allow all built-in" excludes MCP. Built-in assistants must first be copied via "🧩 Market" > "Copy to my assistants", then ticked one by one under "🔌 MCP Tools" in the editor.',
   'agent.rerun': 'Rerun',
   'agent.regenerate': 'Regenerate',
   'agent.jumpToBottom': 'Back to bottom',
