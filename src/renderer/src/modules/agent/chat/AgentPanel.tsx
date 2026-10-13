@@ -13,6 +13,7 @@ import { AgentToolBars } from '../components/AgentToolBars'
 import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
 import { AgentSearchBar } from '../components/AgentSearchBar'
+import { ZeroToolCallNotice } from '../components/ZeroToolCallNotice'
 import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { useAppStore } from '../../../store/app-store'
@@ -596,36 +597,16 @@ export const AgentPanel: React.FC = () => {
           </button>
         )}
 
-        {/* 零调用提示：有工具可用但模型未调用任何工具。
-            两条"为什么"分开说：① 工具确实没给（MCP 被 '*' 挡下）；② 端点静默忽略 tools（建议改文本协议）。
-            两条不同时给——已知有工具被挡时，那条就是更可能的原因，再劝一次开关只会误导。 */}
+        {/* 零调用提示：有工具可用但模型未调用任何工具（两条「为什么」互斥，见组件内注释） */}
         {chat.noToolCallNotice && !chat.running && (
-          <div className="mb-2 self-start w-full max-w-[640px] rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-bg)] px-3 py-2 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="shrink-0">⚠️</span>
-              <span className="flex-1 text-[var(--color-text)]">{t('agent.noToolCallNotice')}</span>
-              <button
-                onClick={() => chat.setNoToolCallNotice(false)}
-                className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                title={t('common.close')}
-              >
-                ✕
-              </button>
-            </div>
-            {chat.mcpHeldBack > 0 && (
-              <p className="mt-1 pl-6 text-[var(--color-text-muted)]">
-                {t('agent.mcpHeldBackHint', { count: chat.mcpHeldBack })}
-              </p>
-            )}
-            {chat.mcpHeldBack === 0 && chat.providerId && chat.model && !chat.textProtocolForced && (
-              <button
-                onClick={() => chat.setTextProtocol(true)}
-                className="mt-1.5 pl-6 text-left text-[var(--color-accent)] hover:underline"
-              >
-                {t('agent.textProtocolSuggest')}
-              </button>
-            )}
-          </div>
+          <ZeroToolCallNotice
+            mcpHeldBack={chat.mcpHeldBack}
+            providerId={chat.providerId}
+            model={chat.model}
+            textProtocolForced={chat.textProtocolForced}
+            onClose={() => chat.setNoToolCallNotice(false)}
+            onEnableTextProtocol={() => void chat.setTextProtocol(true)}
+          />
         )}
 
         <AgentComposer

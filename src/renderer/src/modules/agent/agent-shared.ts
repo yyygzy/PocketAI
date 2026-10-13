@@ -225,6 +225,23 @@ export function extractFirstHtmlBlock(text: string): string | null {
   return m ? m[1] ?? null : null
 }
 
+/**
+ * 零调用提示里那两条「为什么」的互斥规则（V4-Iter-113 定的口径，抽出来才能被断言）。
+ * 已知有 MCP 工具被 `'*'` 挡下时只说这件事——那时更可能的原因是授权而不是端点，
+ * 同屏再劝一次「改用文本协议」会把人带偏；反过来，没有工具被挡时才值得建议开开关。
+ */
+export function zeroCallNoticeFlags(s: {
+  mcpHeldBack: number
+  providerId: string
+  model: string
+  textProtocolForced: boolean
+}): { showHeldBack: boolean; showSuggest: boolean } {
+  return {
+    showHeldBack: s.mcpHeldBack > 0,
+    showSuggest: s.mcpHeldBack === 0 && !!s.providerId && !!s.model && !s.textProtocolForced
+  }
+}
+
 /** DB MessageRecord[] → Agent 对话视图的 AgentMessage[]（tool 消息拆 call/result 两张卡） */
 export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
   const out: AgentMessage[] = []
