@@ -15,9 +15,16 @@ import type { RetrievedChunk, RetrievalDiagnostics, RetrievalResult } from '../.
 const SLOW_RETRIEVE_MS = 800
 
 export interface RetrieveOptions {
+  /** 显式指定召回深度；不传则用**每个库自己的 topK**（历史上这里恒取默认 20，
+   *  设置页的每库 topK/topN 从未生效过 —— 见 V4-Iter-122） */
   topK?: number
+  /** 显式指定最终注入条数；不传则取各库 topN 的最大值 */
   topN?: number
 }
+
+/** 兜底值：仅用于「一个库都没选」或库记录缺字段时，正常路径下每库都有自己的配置 */
+const DEFAULT_TOP_K = 20
+const DEFAULT_TOP_N = 5
 
 /** RRF 融合参数：rank 越高权重越低，k 控制衰减 */
 const RRF_K = 60
@@ -105,8 +112,6 @@ class RAGService {
     opts: RetrieveOptions,
     diag: RetrievalDiagnostics | null
   ): Promise<RetrievalResult> {
-    const topK = opts.topK ?? 20
-    const topN = opts.topN ?? 5
     const tTotal = performance.now()
     let hydeMs = 0
     let multiQueryMs = 0
@@ -118,10 +123,28 @@ class RAGService {
     let multiQueryProvider: string | null = null
     let multiQueryModel: string | null = null
 
+    // 一次取齐库配置（原先每个库要 get 两次）；不存在的库跳过，与旧行为一致
+    const kbs = kbIds
+      .map((id) => kbRepo.get(id))
+      .filter((kb): kb is NonNullable<typeof kb> => !!kb)
+
+    /**
+     * 每库各用自己的召回深度（opts 显式传入时优先，供检索测试面板临时试参数）；
+     * 最终注入条数取各库 topN 的**最大值**——多库是"每库各取再全局融合"的口径，
+     * 取最小值会让某个库把 topN 调大而不生效，跟没接线一样。
+     * 兜底常量只在「一个库都没解析到」时参与：拿 max(默认, 配置) 会把用户调小的值
+     * 又抬回默认（topN=3 变 5），等于换个方式不接线。
+     */
+    const topKOf = (kb: (typeof kbs)[number]): number => opts.topK ?? kb.topK ?? DEFAULT_TOP_K
+    const maxOf = (values: Array<number | undefined>, fallback: number): number => {
+      const nums = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0)
+      return nums.length ? Math.max(...nums) : fallback
+    }
+    const maxTopK = opts.topK ?? maxOf(kbs.map(topKOf), DEFAULT_TOP_K)
+    const topN = opts.topN ?? maxOf(kbs.map((kb) => kb.topN), DEFAULT_TOP_N)
+
     // 取第一个配置了 hyde/rerank/multiQuery 的 KB（同一会话内统一）
-    for (const kbId of kbIds) {
-      const kb = kbRepo.get(kbId)
-      if (!kb) continue
+    for (const kb of kbs) {
       if (!hydeProvider && kb.hydeProviderId && kb.hydeModel) {
         hydeProvider = kb.hydeProviderId
         hydeModel = kb.hydeModel
@@ -160,9 +183,9 @@ class RAGService {
     if (diag) diag.queryVariants = queryVariants.map((v) => v.q)
 
     const tSearch = performance.now()
-    for (const kbId of kbIds) {
-      const kb = kbRepo.get(kbId)
-      if (!kb) continue
+    for (const kb of kbs) {
+      const kbId = kb.id
+      const topK = topKOf(kb)
 
       // 收集全部查询的双路检索结果（原 query + 变体），统一 RRF 融合
       const vectorResults: RetrievedChunk[] = []
@@ -205,8 +228,8 @@ class RAGService {
     all.sort((a, b) => b.score - a.score)
     const searchMs = performance.now() - tSearch
 
-    // 3. 重排序：取 topK 候选给 LLM rerank
-    const candidates = all.slice(0, topK)
+    // 3. 重排序：取候选给 LLM rerank（深度用各库 topK 的最大值，不让某个库的配置缩水）
+    const candidates = all.slice(0, maxTopK)
     if (diag) {
       diag.candidateCount = candidates.length
       diag.rerankUsed = !!(rerankProvider && rerankModel)
