@@ -597,6 +597,9 @@ export interface KnowledgeBase {
   chunkOverlap: number
   topK: number
   topN: number
+  /** 相似度阈值（0–1，0=不过滤）：与检索用查询向量的余弦相似度低于它就不注入。
+   *  绝对值随 embedding 模型而变，不能横向比较——用「检索测试」面板试出来再定。 */
+  minScore: number
   /** RAG 重排序 LLM provider（空则跳过 rerank，仅用 RRF） */
   rerankProviderId: string | null
   rerankModel: string | null
@@ -661,7 +664,7 @@ export interface RetrievalResult {
 /** 一次检索里没跑成的某一路（A3 可观测性：降级不再全静默） */
 export interface RetrievalDegradation {
   /** 哪一路：向量 / BM25 全文 / HyDE / Multi-Query / 重排 / MMR / 整次检索（调用点兜底） */
-  stage: 'vector' | 'bm25' | 'hyde' | 'multiQuery' | 'rerank' | 'mmr' | 'retrieve'
+  stage: 'vector' | 'bm25' | 'hyde' | 'multiQuery' | 'rerank' | 'mmr' | 'threshold' | 'retrieve'
   /** 发生在哪个库（整次检索级缺省） */
   kbId?: string
   /** 人话原因，直接取自错误信息或固定文案 */
@@ -676,6 +679,8 @@ export interface RetrievalDiagnostics {
   bm25Hits: number
   rerankUsed: boolean
   candidateCount: number
+  /** 相似度阈值（每库 min_score）滤掉了多少条；0 = 没滤过（未配置或无查询向量可比） */
+  filteredByThreshold: number
   /** 本次检索没跑成的路（空数组=一切正常）；主链路不产出，但同样会记一条 WARN 日志 */
   degradations: RetrievalDegradation[]
   /** 各阶段耗时毫秒：hyde/multiQuery/search/rerank/mmr/total */

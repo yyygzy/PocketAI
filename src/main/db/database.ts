@@ -754,6 +754,16 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE agent_traces ADD COLUMN prompt_tokens INTEGER;
       ALTER TABLE agent_traces ADD COLUMN completion_tokens INTEGER;
     `
+  },
+  {
+    // v47: 知识库相似度阈值（增强 B4）。此前「注入哪几条」完全由排名决定——融合后 topN 里
+    // 照样混着与问题无关的片段，而「注入越多越容易被材料带偏」在本机小模型上尤其致命。
+    // REAL 不是 INTEGER：0.32 这种量级才有区分度；DEFAULT 0 = 不过滤，旧库行为一字不变。
+    version: 47,
+    name: 'kb_min_score',
+    up: `
+      ALTER TABLE knowledge_bases ADD COLUMN min_score REAL NOT NULL DEFAULT 0;
+    `
   }
 ]
 

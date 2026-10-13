@@ -98,6 +98,7 @@ function makeKb(over: Partial<KnowledgeBase> = {}): KnowledgeBase {
     chunkSize: 50,
     chunkOverlap: 10,
     topK: 20,
+    minScore: 0,
     topN: 5,
     rerankProviderId: null,
     rerankModel: null,

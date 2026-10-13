@@ -45,6 +45,8 @@ const knowledgeBaseFull = z.object({
   chunkOverlap: z.number().int().nonnegative().max(KB_MAX_CHUNK_OVERLAP),
   topK: z.number().int().positive().max(KB_MAX_TOP),
   topN: z.number().int().positive().max(KB_MAX_TOP),
+  /** 相似度阈值：0=不过滤；上限 1 是因为它按余弦相似度比（0.32 这种量级才有区分度） */
+  minScore: z.number().min(0).max(1),
   rerankProviderId: z.string().max(KB_MAX_ID_CHARS).nullable(),
   rerankModel: z.string().max(KB_MAX_MODEL_CHARS).nullable(),
   hydeProviderId: z.string().max(KB_MAX_ID_CHARS).nullable(),

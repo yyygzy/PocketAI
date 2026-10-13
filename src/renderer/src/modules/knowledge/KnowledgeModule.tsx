@@ -181,6 +181,7 @@ const KbForm: React.FC<{
   const [chunkOverlap, setChunkOverlap] = useState(kb?.chunkOverlap ?? 200)
   const [topK, setTopK] = useState(kb?.topK ?? 20)
   const [topN, setTopN] = useState(kb?.topN ?? 5)
+  const [minScore, setMinScore] = useState(kb?.minScore ?? 0)
   const [rerankProviderId, setRerankProviderId] = useState(kb?.rerankProviderId ?? '')
   const [rerankModel, setRerankModel] = useState(kb?.rerankModel ?? '')
   const [hydeProviderId, setHydeProviderId] = useState(kb?.hydeProviderId ?? '')
@@ -221,6 +222,7 @@ const KbForm: React.FC<{
         chunkOverlap,
         topK,
         topN,
+        minScore,
         rerankProviderId: rerankProviderId || null,
         rerankModel: rerankModel || null,
         hydeProviderId: hydeProviderId || null,
@@ -512,7 +514,21 @@ const KbForm: React.FC<{
             onChange={(e) => setTopN(Number(e.target.value))}
           />
         </Field>
+        <Field label={t('kb.minScore')}>
+          <input
+            type="number"
+            className="input"
+            step="0.05"
+            min="0"
+            max="1"
+            value={minScore}
+            onChange={(e) => setMinScore(Number(e.target.value))}
+          />
+        </Field>
       </div>
+
+      {/* 阈值的绝对值随 embedding 模型而变：0.3 在 A 模型上算相关，在 B 模型上可能全是噪声 */}
+      <p className="text-xs text-[var(--color-text-muted)]">{t('kb.minScoreHint')}</p>
 
       {kb?.embeddingDim !== undefined && kb?.embeddingDim !== null && (
         <p className="text-xs text-[var(--color-text-muted)]">
@@ -1010,6 +1026,12 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
           <span className="text-[var(--color-text-muted)]">
             {t('kb.diagHits', { v: diag.vectorHits, b: diag.bm25Hits, c: diag.candidateCount })}
           </span>
+          {/* 阈值滤掉了多少条：这是 B4 唯一能被量化的地方，不说出来就等于「悄悄少注入」 */}
+          {diag.filteredByThreshold > 0 && (
+            <span className="px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">
+              {t('kb.diagFiltered', { n: diag.filteredByThreshold })}
+            </span>
+          )}
           {diag.timings && (
             <span className="text-[var(--color-text-muted)]">
               {t('kb.diagTime', {

@@ -36,6 +36,7 @@ const baseRow = {
   chunk_overlap: 200,
   top_k: 20,
   top_n: 5,
+  min_score: 0.35,
   rerank_provider_id: null,
   rerank_model: null,
   hyde_provider_id: null,
@@ -56,6 +57,7 @@ describe('rowToRecord — DB 行映射为 KnowledgeBase', () => {
     expect(kb.chunkOverlap).toBe(200)
     expect(kb.topK).toBe(20)
     expect(kb.topN).toBe(5)
+    expect(kb.minScore).toBe(0.35)
     expect(kb.createdAt).toBe(100)
   })
 

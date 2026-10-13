@@ -74,7 +74,7 @@ describe('agent_traces 输入/输出列（v46）', () => {
       .prepare('SELECT name FROM schema_migrations WHERE version = ?')
       .get(46) as { name: string } | undefined
     expect(row?.name).toBe('agent_trace_usage_split')
-    expect(LATEST_SCHEMA_VERSION).toBe(46)
+    expect(LATEST_SCHEMA_VERSION).toBe(47)
   })
 
   it('新行写入后原样读回，关库重开仍在（真的落到了磁盘）', () => {
@@ -104,7 +104,9 @@ describe('agent_traces 输入/输出列（v46）', () => {
        VALUES ('legacy-1', 'r-old', 'c-legacy', 0, 'llm', 1000, 4321, 'success', 1)`
     )
     // 退回"还没跑过 v46"的状态
-    db.exec('DELETE FROM schema_migrations WHERE version >= 46')
+    // 只退回**本条被测迁移**（v46）。写成 `>= 46` 会把后面的迁移也退回未执行状态，
+    // 而 ALTER TABLE ADD COLUMN 不可重入 ⇒ v47 重跑就撞 duplicate column（2026-10-13 加 min_score 时真炸过一次）。
+    db.exec('DELETE FROM schema_migrations WHERE version = 46')
 
     dbService.runMigrations()
 

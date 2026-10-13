@@ -15,6 +15,7 @@ interface KbRow {
   chunk_overlap: number
   top_k: number
   top_n: number
+  min_score: number
   rerank_provider_id: string | null
   rerank_model: string | null
   hyde_provider_id: string | null
@@ -51,6 +52,7 @@ export function rowToRecord(row: KbRow): KnowledgeBase {
     chunkOverlap: row.chunk_overlap,
     topK: row.top_k,
     topN: row.top_n,
+    minScore: row.min_score,
     rerankProviderId: row.rerank_provider_id,
     rerankModel: row.rerank_model,
     hydeProviderId: row.hyde_provider_id,
@@ -91,7 +93,7 @@ export const kbRepo = {
       db.prepare(
         `UPDATE knowledge_bases SET
            name=?, description=?, embedding_provider_id=?, embedding_model=?,
-           embedding_dim=?, chunk_size=?, chunk_overlap=?, top_k=?, top_n=?,
+           embedding_dim=?, chunk_size=?, chunk_overlap=?, top_k=?, top_n=?, min_score=?,
            rerank_provider_id=?, rerank_model=?, hyde_provider_id=?, hyde_model=?,
            multiquery_provider_id=?, multiquery_model=?, ocr_provider_id=?, ocr_model=?
          WHERE id=?`
@@ -105,6 +107,8 @@ export const kbRepo = {
         input.chunkOverlap ?? existing.chunkOverlap,
         input.topK ?? existing.topK,
         input.topN ?? existing.topN,
+        // 0 是合法值（=不过滤），?? 只在 undefined/null 时回退到旧值，不会被当成"没填"
+        input.minScore ?? existing.minScore,
         input.rerankProviderId ?? existing.rerankProviderId,
         input.rerankModel ?? existing.rerankModel,
         input.hydeProviderId ?? existing.hydeProviderId,
@@ -120,10 +124,10 @@ export const kbRepo = {
       db.prepare(
         `INSERT INTO knowledge_bases
            (id, name, description, embedding_provider_id, embedding_model, embedding_dim,
-            chunk_size, chunk_overlap, top_k, top_n, rerank_provider_id, rerank_model,
+            chunk_size, chunk_overlap, top_k, top_n, min_score, rerank_provider_id, rerank_model,
             hyde_provider_id, hyde_model, multiquery_provider_id, multiquery_model,
             ocr_provider_id, ocr_model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -135,6 +139,7 @@ export const kbRepo = {
         input.chunkOverlap ?? 200,
         input.topK ?? 20,
         input.topN ?? 5,
+        input.minScore ?? 0,
         input.rerankProviderId ?? null,
         input.rerankModel ?? null,
         input.hydeProviderId ?? null,

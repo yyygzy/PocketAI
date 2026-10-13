@@ -122,6 +122,7 @@ describe('collectProviderIssues', () => {
     chunkOverlap: 200,
     topK: 20,
     topN: 5,
+    minScore: 0,
     rerankProviderId: null,
     rerankModel: null,
     hydeProviderId: null,

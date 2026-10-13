@@ -1,7 +1,7 @@
 // RAG 检索服务：query → 向量化 + BM25 双路 → 混合重排 → 拼装 context
 // v2 增强：向量检索 + BM25 全文检索，用 RRF（Reciprocal Rank Fusion）融合
 import { kbRepo } from '../db/repositories/kb.repo'
-import { kbChunkRepo } from '../db/repositories/kb-chunk.repo'
+import { kbChunkRepo, cosineSimilarity } from '../db/repositories/kb-chunk.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { embedQuery } from './embedding'
 import { rerankChunks } from './reranker'
@@ -102,6 +102,7 @@ class RAGService {
       bm25Hits: 0,
       rerankUsed: false,
       candidateCount: 0,
+      filteredByThreshold: 0,
       degradations: []
     }
     const result = await this.retrieveInternal(kbIds, query, opts, diagnostics)
@@ -145,6 +146,15 @@ class RAGService {
     }
     const maxTopK = opts.topK ?? maxOf(kbs.map(topKOf), DEFAULT_TOP_K)
     const topN = opts.topN ?? maxOf(kbs.map((kb) => kb.topN), DEFAULT_TOP_N)
+    /**
+     * 相似度阈值（B4）按**每个库自己的** min_score 判定：一个库调严不该把别的库的资料滤掉。
+     * 尺度只认「与检索用查询向量的余弦相似度」——融合分（RRF，0.01~0.03 量级）与 rerank 分（0~1）
+     * 不可横向比较，拿它们当阈值会把设置页变成一个没人能读懂的输入框。
+     */
+    const minScoreOf = (kbId: string): number => {
+      const v = kbs.find((k) => k.id === kbId)?.minScore
+      return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
+    }
 
     /**
      * 某一路没跑成：进诊断（面板当场可见），同时记 WARN + perf 事件（不跑测试面板也看得见）。
@@ -211,6 +221,9 @@ class RAGService {
     if (diag) diag.queryVariants = queryVariants.map((v) => v.q)
 
     const tSearch = performance.now()
+    /** 相似度阈值要比的「检索用查询向量」：复用向量路第一次成功的结果，不为过滤再打一次 embedding API。
+     *  HyDE 开着时它是假设文档的向量——阈值含义始终是「与本次检索实际用的向量有多像」 */
+    let refVec: Float32Array | null = null
     for (const kb of kbs) {
       const kbId = kb.id
       const topK = topKOf(kb)
@@ -229,6 +242,7 @@ class RAGService {
               kb.embeddingModel,
               useHyde ? embedText : q
             )
+            if (!refVec) refVec = qVec
             vectorResults.push(...kbChunkRepo.knnSearch(qVec, [kbId], topK))
           } catch (e) {
             // 向量化失败不阻断，仅跳过该查询的向量检索 —— 但「少了向量这一路」必须留痕
@@ -282,19 +296,56 @@ class RAGService {
         : candidates
     const rerankMs = performance.now() - tRerank
 
-    // 4. MMR 多样性选择：在相关性与去重之间权衡后取 topN
+    // 4. 相似度阈值过滤（B4）：不相关的候选在进入多样性选择之前就剔掉，
+    //    否则阈值调高只会把「无关片段换成另一批无关片段」——MMR 会把它们又选回来。
+    let pool = reranked
+    let loadedVecs: Map<string, Float32Array> | null = null
+    let filteredByThreshold = 0
+    if (reranked.some((c) => minScoreOf(c.kbId) > 0)) {
+      const qVec = refVec
+      if (!qVec) {
+        // 向量路一次都没成（库没配 embedding 或全失败）⇒ 没法算相似度，如实说明，别当成 0 分全滤光
+        degrade({
+          stage: 'threshold',
+          reason: '没有可用的查询向量（该库未配置 embedding 或向量路失败），本轮跳过相似度阈值过滤'
+        })
+      } else {
+        try {
+          loadedVecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
+          const kept = reranked.filter((c) => {
+            const limit = minScoreOf(c.kbId)
+            if (limit <= 0) return true
+            const v = loadedVecs?.get(c.chunkId)
+            // 取不到向量（老数据没 embed、维度与查询向量不符）时不判它不相关 —— 保留，别默默丢资料
+            if (!v || v.length !== qVec.length) return true
+            return cosineSimilarity(qVec, v) >= limit
+          })
+          filteredByThreshold = reranked.length - kept.length
+          pool = kept
+        } catch (e) {
+          degrade({
+            stage: 'threshold',
+            reason: `读取候选向量失败，本轮跳过相似度阈值过滤：${errMsg(e, '未知错误')}`
+          })
+        }
+      }
+    }
+    if (diag) diag.filteredByThreshold = filteredByThreshold
+
+    // 5. MMR 多样性选择：在相关性与去重之间权衡后取 topN
     const tMmr = performance.now()
     let picked: RetrievedChunk[]
     try {
-      const vecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
-      picked = mmrSelect(reranked, vecs, topN)
+      // 上面按阈值筛时已经读过一轮向量，复用同一份，不多打一次 DB
+      const vecs = loadedVecs ?? kbChunkRepo.loadEmbeddingsByIds(pool.map((c) => c.chunkId))
+      picked = mmrSelect(pool, vecs, topN)
     } catch (e) {
       // 多样性选择要读每条 chunk 的向量，取不到就退回分数序 —— 但去重效果没了，得留痕
       degrade(
         { stage: 'mmr', reason: `向量多样性计算失败，退回按融合分数直接取前 ${topN} 条：${errMsg(e, '未知错误')}` },
         performance.now() - tMmr
       )
-      picked = reranked.slice(0, topN)
+      picked = pool.slice(0, topN)
     }
     const mmrMs = performance.now() - tMmr
 
@@ -319,7 +370,8 @@ class RAGService {
       totalMs: Math.round(totalMs)
     }
     if (diag) diag.timings = timings
-    const detail = `kbs=${kbIds.length} search=${timings.searchMs} rerank=${timings.rerankMs} mmr=${timings.mmrMs} picked=${picked.length}`
+    const detail = `kbs=${kbIds.length} search=${timings.searchMs} rerank=${timings.rerankMs} mmr=${timings.mmrMs} picked=${picked.length}` +
+      (filteredByThreshold > 0 ? ` filtered=${filteredByThreshold}` : '')
     if (totalMs >= SLOW_RETRIEVE_MS) recordPerf('kb.retrieve', totalMs, detail)
     else logPerfDebug('kb.retrieve', totalMs, detail)
 
