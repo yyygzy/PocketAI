@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "kbId": "kb-example",
+  "name": "示例：产品手册检索评测",
+  "cases": [
+    {
+      "id": "refund-days",
+      "query": "退款期限是几天",
+      "expected": [{ "docId": "doc-refund-policy" }],
+      "note": "文档级期望：该文档任一分块进前 k 就算召回"
+    },
+    {
+      "id": "fresh-food",
+      "query": "生鲜类能不能退",
+      "expected": [{ "docId": "doc-refund-policy", "seq": 2 }],
+      "note": "分块级期望：只有第 3 块写了生鲜例外，别的块进来不算"
+    },
+    {
+      "id": "invoice",
+      "query": "发票抬头填错了怎么改",
+      "expected": [{ "docId": "doc-invoice" }, { "docId": "doc-faq", "seq": 0 }],
+      "note": "多目标：recall@k 是命中比例，firstRank 取最靠前的那个"
+    }
+  ]
+}
