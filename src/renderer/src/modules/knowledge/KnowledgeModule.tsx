@@ -12,6 +12,7 @@ import { BUILTIN_EMBED_PROVIDER_ID, BUILTIN_EMBED_MODEL } from '../../../../shar
 import KbAskPanel from './KbAskPanel'
 import { KbAskRoam } from './KbAskRoam'
 import { consumePendingSourceJump, KB_SOURCE_JUMP_EVENT } from './source-jump'
+import { similarityStats, fmtSim } from './sim-stats'
 import { consumePendingKb, OPEN_KB_EVENT } from '../../utils/palette-nav'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
@@ -981,6 +982,9 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
     }
   }
 
+  // 相似度分布（阈值该调到多少的唯一依据）：results 一换就重算，纯函数无副作用
+  const stats = results ? similarityStats(results.map((c) => c.similarity)) : null
+
   return (
     <div>
       <h4 className="text-sm font-semibold mb-2">{t('kb.retrievalTest')}</h4>
@@ -1048,6 +1052,17 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
           {results.length === 0 && (
             <p className="text-xs text-[var(--color-text-muted)]">{t('kb.noMatch')}</p>
           )}
+          {/* 相似度分布：设阈值的人真正要的是「断层在哪」，不是排名分（RRF 分是名次量级，看不出内容相关性） */}
+          {stats && (
+            <p className="text-[10px] text-[var(--color-text-muted)]" title={t('kb.simStatsHint')}>
+              {t('kb.simStats', {
+                n: stats.count,
+                min: fmtSim(stats.min),
+                med: fmtSim(stats.median),
+                max: fmtSim(stats.max)
+              })}
+            </p>
+          )}
           {results.map((c, i) => (
             <div
               key={c.chunkId}
@@ -1064,6 +1079,12 @@ const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN })
                   )}
                   {c.sources?.includes('bm25') && (
                     <span className="px-1 py-px rounded text-[9px] bg-[var(--color-warning-bg)] text-[var(--color-warning)]">{t('kb.srcBm25')}</span>
+                  )}
+                  {/* 与本次检索所用查询向量的余弦相似度（阈值就是按它判的；算不出来的片段不显示，别给个假数） */}
+                  {c.similarity !== undefined && (
+                    <span className="text-[10px] text-[var(--color-text-muted)]" title={t('kb.simValueHint')}>
+                      {t('kb.simValue', { v: fmtSim(c.similarity) })}
+                    </span>
                   )}
                   <span className="text-[10px] text-[var(--color-text-muted)]">
                     score {c.score.toFixed(4)}

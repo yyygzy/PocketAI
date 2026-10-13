@@ -654,6 +654,12 @@ export interface RetrievedChunk {
   score: number
   /** 命中来源路：向量检索 / BM25 全文检索（诊断模式才填充） */
   sources?: Array<'vector' | 'bm25'>
+  /**
+   * 与本次检索所用查询向量的余弦相似度（-1~1）。
+   * 只在「检索测试面板（诊断）」或「该库设了相似度阈值」时才算——主链路无阈值时不算，
+   * 免得每次检索多读一遍候选向量。没向量或维度不符的候选不带这个字段。
+   */
+  similarity?: number
 }
 
 export interface RetrievalResult {

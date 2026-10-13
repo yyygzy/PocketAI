@@ -296,39 +296,50 @@ class RAGService {
         : candidates
     const rerankMs = performance.now() - tRerank
 
-    // 4. 相似度阈值过滤（B4）：不相关的候选在进入多样性选择之前就剔掉，
-    //    否则阈值调高只会把「无关片段换成另一批无关片段」——MMR 会把它们又选回来。
-    let pool = reranked
+    // 4. 相似度：阈值判定要用它，检索测试面板也要它来回答「阈值该调到多少」。
+    //    只在「诊断模式」或「有库设了阈值」时才算——否则等于给主链路每次检索多读一遍候选向量，纯开销。
+    const qVec = refVec
+    const hasThreshold = reranked.some((c) => minScoreOf(c.kbId) > 0)
+    const wantSim = diag !== null || hasThreshold
     let loadedVecs: Map<string, Float32Array> | null = null
+    let pool = reranked
     let filteredByThreshold = 0
-    if (reranked.some((c) => minScoreOf(c.kbId) > 0)) {
-      const qVec = refVec
-      if (!qVec) {
-        // 向量路一次都没成（库没配 embedding 或全失败）⇒ 没法算相似度，如实说明，别当成 0 分全滤光
-        degrade({
-          stage: 'threshold',
-          reason: '没有可用的查询向量（该库未配置 embedding 或向量路失败），本轮跳过相似度阈值过滤'
+    if (wantSim && qVec) {
+      try {
+        loadedVecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
+        const base = qVec
+        const vecs = loadedVecs
+        pool = reranked.map((c) => {
+          const v = vecs.get(c.chunkId)
+          // 维度不符（换过 embedding 模型的旧向量）就没有可比相似度：宁可不显示，也不报个错数
+          return v && v.length === base.length ? { ...c, similarity: cosineSimilarity(base, v) } : c
         })
-      } else {
-        try {
-          loadedVecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
-          const kept = reranked.filter((c) => {
+        if (hasThreshold) {
+          // 过滤必须在 MMR 之前：放在后面，多样性会把刚滤掉的又选回来
+          const kept = pool.filter((c) => {
             const limit = minScoreOf(c.kbId)
             if (limit <= 0) return true
-            const v = loadedVecs?.get(c.chunkId)
-            // 取不到向量（老数据没 embed、维度与查询向量不符）时不判它不相关 —— 保留，别默默丢资料
-            if (!v || v.length !== qVec.length) return true
-            return cosineSimilarity(qVec, v) >= limit
+            // 算不出相似度（老数据没 embed、维度不符）时不判它不相关 —— 保留，别默默丢资料
+            if (c.similarity === undefined) return true
+            return c.similarity >= limit
           })
-          filteredByThreshold = reranked.length - kept.length
+          filteredByThreshold = pool.length - kept.length
           pool = kept
-        } catch (e) {
-          degrade({
-            stage: 'threshold',
-            reason: `读取候选向量失败，本轮跳过相似度阈值过滤：${errMsg(e, '未知错误')}`
-          })
         }
+      } catch (e) {
+        degrade({
+          stage: 'threshold',
+          reason: hasThreshold
+            ? `读取候选向量失败，本轮跳过相似度阈值过滤：${errMsg(e, '未知错误')}`
+            : `读取候选向量失败，本次诊断不显示相似度：${errMsg(e, '未知错误')}`
+        })
       }
+    } else if (hasThreshold) {
+      // 向量路一次都没成（库没配 embedding 或全失败）⇒ 没法算相似度，如实说明，别当成 0 分全滤光
+      degrade({
+        stage: 'threshold',
+        reason: '没有可用的查询向量（该库未配置 embedding 或向量路失败），本轮跳过相似度阈值过滤'
+      })
     }
     if (diag) diag.filteredByThreshold = filteredByThreshold
 

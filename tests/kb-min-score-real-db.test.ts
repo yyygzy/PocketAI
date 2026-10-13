@@ -189,3 +189,67 @@ describe('检索时按「每库自己的阈值」过滤', () => {
     expect(diagnostics.bm25Hits).toBeGreaterThan(0)
   })
 })
+
+describe('A5：相似度本身要能被显示出来', () => {
+  it('诊断模式**即使没设阈值**也要算出相似度（面板靠它回答「阈值该调到多少」）', async () => {
+    // kbB 的 min_score=0：这条专门盯「算不算」与「过滤过不过滤」是两件事，
+    // 少算一次就等于面板永远显示不出来
+    const { result } = await ragService.retrieveWithDiagnostics(['kbB'], '退款政策')
+    expect(result.chunks).toHaveLength(2)
+    expect(result.chunks.every((c) => typeof c.similarity === 'number')).toBe(true)
+    expect(result.chunks.find((c) => c.chunkId === 'kbB-par')?.similarity).toBeCloseTo(1, 5)
+    expect(result.chunks.find((c) => c.chunkId === 'kbB-orth')?.similarity).toBeCloseTo(0, 5)
+  })
+
+  it('诊断模式（检索测试面板）：命中的片段带上与查询向量的余弦相似度', async () => {
+    const { result } = await ragService.retrieveWithDiagnostics(['kbA'], '退款政策')
+    const par = result.chunks.find((c) => c.chunkId === 'kbA-par')
+    expect(par?.similarity).toBeCloseTo(1, 5)
+  })
+
+  it('反向对照：主链路（非诊断）且没设阈值 ⇒ 不算相似度（不为面板多读一遍向量）', async () => {
+    kbRepo.save({
+      id: 'kbE',
+      name: 'kbE',
+      embeddingProviderId: 'p1',
+      embeddingModel: 'm1',
+      topK: 10,
+      topN: 5,
+      minScore: 0
+    })
+    const doc = kbDocRepo.insert({ kbId: 'kbE', source: 'e.txt', sourceType: 'txt', title: 'E 文档' })
+    kbChunkRepo.insertMany([
+      { id: 'kbE-par', docId: doc.id, kbId: 'kbE', sequence: 0, content: '与问题同向的段落', embedding: new Float32Array([1, 0, 0]) }
+    ])
+    const { chunks } = await ragService.retrieve(['kbE'], '退款政策')
+    expect(chunks.length).toBeGreaterThan(0)
+    expect(chunks.every((c) => c.similarity === undefined)).toBe(true)
+  })
+
+  it('算不出相似度的候选（维度与查询向量不符）不带这个字段，也不会被阈值滤掉', async () => {
+    kbRepo.save({
+      id: 'kbF',
+      name: 'kbF',
+      embeddingProviderId: 'p1',
+      embeddingModel: 'm1',
+      topK: 10,
+      topN: 5,
+      minScore: 0.5
+    })
+    const doc = kbDocRepo.insert({ kbId: 'kbF', source: 'f.txt', sourceType: 'txt', title: 'F 文档' })
+    dbService
+      .getHandle()
+      .prepare(
+        `INSERT INTO kb_chunks (id, doc_id, kb_id, sequence, content, embedding, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run('kbF-dim2', doc.id, 'kbF', 0, '二维向量的段落', float32ToBuffer(new Float32Array([1, 0])), Date.now())
+
+    const { result, diagnostics } = await ragService.retrieveWithDiagnostics(['kbF'], '二维向量的段落')
+    const hit = result.chunks.find((c) => c.chunkId === 'kbF-dim2')
+    expect(hit).toBeDefined()
+    expect(hit?.similarity).toBeUndefined()
+    expect(diagnostics.filteredByThreshold).toBe(0)
+    expect(diagnostics.degradations.map((d) => d.stage)).not.toContain('threshold')
+  })
+})
