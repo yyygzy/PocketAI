@@ -1,7 +1,7 @@
 // 入库流水线编排测试：解析 → 分块 → 向量化 → 状态推进 → 存储，以及异常路径
 // 通过 mock 三个 repo 与 embedding 模块（真实 chunker + 真实 parser 跑临时文件），
 // 验证 IngestionService 的状态机、重新索引清理、错误不抛出而落库等关键行为。
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -128,8 +128,11 @@ function makeDoc(source: string, sourceType: KbDocument['sourceType'] = 'txt'): 
     createdAt: 0
   }
 }
+/** 真 parser 要读真文件：每个用例开一个临时目录，跑完由文件末尾的 afterAll 统一删 */
+const tmpDirs: string[] = []
 function writeTmp(content: string, name = 'doc.txt'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pocketai-ingest-'))
+  tmpDirs.push(dir)
   const p = path.join(dir, name)
   fs.writeFileSync(p, content, 'utf8')
   return p
@@ -280,4 +283,10 @@ describe('IngestionService.ingestText / ingestDocuments', () => {
     // 每份文档都先清理旧分块
     expect(mocks.deletedByDoc).toEqual(['doc-a', 'doc-b', 'doc-c'])
   })
+})
+
+afterAll(() => {
+  // 以前这些临时目录没人删：全量跑一次就在 %TEMP% 留几十个（2026-10-13 实测累计 4697 个
+  // pocketai-ingest-*）。用例本身不读它们的内容，跨用例也无共享，删掉不影响任何断言。
+  for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
 })
