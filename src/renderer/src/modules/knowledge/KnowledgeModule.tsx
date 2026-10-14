@@ -13,6 +13,8 @@ import KbAskPanel from './KbAskPanel'
 import { KbAskRoam } from './KbAskRoam'
 import { consumePendingSourceJump, KB_SOURCE_JUMP_EVENT } from './source-jump'
 import { similarityStats, fmtSim } from './sim-stats'
+import { DocBatchBar } from './DocBatchBar'
+import { cullStale, selectByMode, toggleSelected } from './doc-batch'
 import { consumePendingKb, OPEN_KB_EVENT } from '../../utils/palette-nav'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
@@ -569,7 +571,22 @@ const KbDetail: React.FC<{
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
   const [busy, setBusy] = useState(false)
   const [askMode, setAskMode] = useState(false)
+  /** 批量模式：行首那个复选框在批量模式下表示「选中要处理」，平时表示「参与检索」 */
+  const [batchMode, setBatchMode] = useState(false)
+  const [selected, setSelected] = useState<string[]>([])
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 列表刷新后把已不存在的选中项丢掉（刚批量删完、或数据健康那边把重复收掉了），
+  // 否则「已选 N 篇」数的是幽灵，动作还会发给不存在的 id
+  useEffect(() => {
+    setSelected((s) => (s.length === 0 ? s : cullStale(s, docs)))
+  }, [docs])
+
+  // 切库绝不带旧选择：跨库残留会误删另一个库的文档
+  useEffect(() => {
+    setBatchMode(false)
+    setSelected([])
+  }, [kb.id])
 
   // 跨库漫游跳转：切到问答 tab（KbAskPanel 挂载/保活后自行消费 askJumpId）
   useEffect(() => {
@@ -689,6 +706,67 @@ const KbDetail: React.FC<{
     }
   }
 
+  /** 批量重建（「重试全部失败」也走它）：复用数据健康那条批量入队通道，一次 IPC 而不是逐篇排队 */
+  const handleBatchReindex = async (ids: string[]) => {
+    if (ids.length === 0) return
+    setBusy(true)
+    try {
+      const r = await window.pocketai.reindexKbDocs(ids)
+      setSelected([])
+      await refresh()
+      startPolling()
+      // 队列只认库里还存在的文档：入队数少于选中的篇数就如实报差值，不假装全成功
+      toast.info(t('kb.batchDone', { n: r.enqueued, m: ids.length - r.enqueued }))
+    } catch (e) {
+      toast.error(errText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 批量启用/停用：逐条走既有开关通道，失败几条就如实报几条，不假装全成功 */
+  const handleBatchSetEnabled = async (ids: string[], enabled: boolean) => {
+    if (ids.length === 0) return
+    setBusy(true)
+    let failed = 0
+    try {
+      for (const id of ids) {
+        try {
+          await window.pocketai.setKbDocEnabled(kb.id, id, enabled)
+        } catch {
+          failed++
+        }
+      }
+      setSelected([])
+      await refresh()
+      toast.info(t('kb.batchDone', { n: ids.length - failed, m: failed }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 批量删除：不可逆，先确认；逐条删，失败的如实报数（部分删除是真实可能发生的） */
+  const handleBatchDelete = async (ids: string[]) => {
+    if (ids.length === 0) return
+    if (!(await confirm({ message: t('kb.batchDeleteConfirm', { n: ids.length }), danger: true }))) return
+    setBusy(true)
+    let failed = 0
+    try {
+      for (const id of ids) {
+        try {
+          await window.pocketai.deleteKbDocument(id)
+        } catch {
+          failed++
+        }
+      }
+      setSelected([])
+      await refresh()
+      toast.info(t('kb.batchDone', { n: ids.length - failed, m: failed }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleDeleteKb = async () => {
     if (!(await confirm({ message: t('kb.delKbConfirm', { name: kb.name }), danger: true }))) return
     await window.pocketai.deleteKnowledgeBase(kb.id)
@@ -800,6 +878,25 @@ const KbDetail: React.FC<{
           </div>
         </div>
 
+        <div className="mb-2">
+          <DocBatchBar
+            docs={docs}
+            batchMode={batchMode}
+            selected={selected}
+            busy={busy}
+            onEnter={() => setBatchMode(true)}
+            onExit={() => {
+              setBatchMode(false)
+              setSelected([])
+            }}
+            onSelectMode={(mode) => setSelected(selectByMode(docs, mode))}
+            onClear={() => setSelected([])}
+            onReindex={handleBatchReindex}
+            onSetEnabled={handleBatchSetEnabled}
+            onDelete={handleBatchDelete}
+          />
+        </div>
+
         <div className="space-y-1">
           {docs.length === 0 && (
             <p className="text-xs text-[var(--color-text-muted)] py-4 text-center">
@@ -811,14 +908,19 @@ const KbDetail: React.FC<{
               key={d.id}
               className={`flex items-center gap-3 px-3 py-2 rounded bg-[var(--color-sidebar)] border border-[var(--color-border)]${d.enabled ? '' : ' opacity-60'}`}
             >
+              {/* 同一个复选框两种语义：批量模式下是「选中要处理」，平时是「参与检索」。
+                  批量模式里启用态仍由整行灰显（opacity-60）交代，不靠这个勾。 */}
               <input
                 type="checkbox"
-                checked={d.enabled}
-                onChange={() => void handleToggleDoc(d.id, !d.enabled)}
+                checked={batchMode ? selected.includes(d.id) : d.enabled}
+                onChange={() => {
+                  if (batchMode) setSelected((s) => toggleSelected(s, d.id))
+                  else void handleToggleDoc(d.id, !d.enabled)
+                }}
                 disabled={busy}
                 className="shrink-0 cursor-pointer"
-                title={d.enabled ? t('kb.docEnabled') : t('kb.docDisabled')}
-                aria-label={d.enabled ? t('kb.docEnabled') : t('kb.docDisabled')}
+                title={batchMode ? t('kb.batchPick') : d.enabled ? t('kb.docEnabled') : t('kb.docDisabled')}
+                aria-label={batchMode ? t('kb.batchPick') : d.enabled ? t('kb.docEnabled') : t('kb.docDisabled')}
               />
               <StatusBadge status={d.status} />
               <div className="flex-1 min-w-0">
