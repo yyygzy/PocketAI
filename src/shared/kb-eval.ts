@@ -216,3 +216,54 @@ export function summarizeEval(set: KbEvalSet, run: Record<string, RankedHit[]>, 
     perCase
   }
 }
+
+// ---------- 运行器的输出契约（主进程算，渲染层只排版）----------
+
+/** 本次检索实际返回的片段（带 docId/seq/标题）：让用户能照着真 id 去改下一版卷子 */
+export interface KbEvalReturned {
+  docId: string
+  seq: number
+  title: string
+}
+
+export interface KbEvalRow {
+  caseId: string
+  query: string
+  expected: number
+  matched: number
+  firstRank: number | null
+  recallAtK: number
+  /** 没进前 k 名的期望目标 */
+  missing: KbEvalTarget[]
+  returned: KbEvalReturned[]
+}
+
+export interface KbEvalMetrics {
+  k: number
+  cases: number
+  missedCases: number
+  recallAtK: number
+  mrr: number
+  medianRank: number | null
+}
+
+export interface KbEvalRunResult {
+  /** 卷子里的名字（不是界面上选的库） */
+  name: string
+  kbId: string
+  fileName: string
+  metrics: KbEvalMetrics
+  rows: KbEvalRow[]
+  /** 期望引用了库里已不存在的文档 ⇒ 这份分数是在坏卷子上算的 */
+  stale: Array<{ caseId: string; docId: string }>
+  /** 期望引用的文档存在但被停用了（不参与检索）——不是失效，但一定漏 */
+  disabledTargets: Array<{ caseId: string; docId: string; title: string }>
+  /** 跑这份卷子前就该知道的坏消息（如：该库没配 embedding，向量路不参与） */
+  warnings: string[]
+  elapsedMs: number
+}
+
+/** 指标从 EvalSummary 摘出来（去掉 perCase——逐条明细在 rows 里给，别在同一份载荷里出现两遍） */
+export function toEvalMetrics(s: EvalSummary): KbEvalMetrics {
+  return { k: s.k, cases: s.cases, missedCases: s.missedCases, recallAtK: s.recallAtK, mrr: s.mrr, medianRank: s.medianRank }
+}

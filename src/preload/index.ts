@@ -1,6 +1,7 @@
 // preload：安全桥，只暴露白名单 API
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
+import type { KbEvalRunResult } from '../shared/kb-eval'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -480,6 +481,12 @@ const api = {
   }> => ipcRenderer.invoke(IPC.KB_SYNC_CHECK, kbId),
   setKbDocEnabled: (kbId: string, docId: string, enabled: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.KB_DOC_SET_ENABLED, kbId, docId, enabled),
+  /** 选一份评测集 JSON；返回主进程签发的路径令牌（SEC-6），渲染层拿不到绝对路径 */
+  pickKbEvalSet: (): Promise<{ token: string; fileName: string } | null> =>
+    ipcRenderer.invoke(IPC.KB_EVAL_PICK),
+  /** 按卷子逐条跑真检索打分；k 不传 = 用该库自己的 topN */
+  runKbEval: (kbId: string, token: string, k?: number): Promise<KbEvalRunResult> =>
+    ipcRenderer.invoke(IPC.KB_EVAL_RUN, kbId, token, k),
 
   listKbChunks: (docId: string): Promise<KbChunk[]> =>
     ipcRenderer.invoke(IPC.KB_CHUNK_LIST, docId),

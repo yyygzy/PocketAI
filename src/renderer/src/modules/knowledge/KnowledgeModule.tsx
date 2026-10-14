@@ -14,6 +14,7 @@ import { KbAskRoam } from './KbAskRoam'
 import { consumePendingSourceJump, KB_SOURCE_JUMP_EVENT } from './source-jump'
 import { similarityStats, fmtSim } from './sim-stats'
 import { DocBatchBar } from './DocBatchBar'
+import { KbEvalPanel } from './KbEvalPanel'
 import { cullStale, selectByMode, toggleSelected } from './doc-batch'
 import { consumePendingKb, OPEN_KB_EVENT } from '../../utils/palette-nav'
 import { useI18n } from '../../i18n'
@@ -980,6 +981,8 @@ const KbDetail: React.FC<{
 
       {/* 检索测试 */}
       <RetrievalTest kbId={kb.id} topN={kb.topN} />
+      {/* 检索评测集：同一套检索，换一份卷子看指标 */}
+      <KbEvalPanel kbId={kb.id} />
       </div>
 
       {/* KB 问答（问答 tab；key 保证切库重挂载，会话状态不跨库串数据） */}

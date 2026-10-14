@@ -16,6 +16,8 @@ import { getKbAskRetention, setKbAskRetention } from '../../knowledge/ask-retent
 import { checkKbFileUpdates } from '../../knowledge/sync-check'
 import { scanFolderFiles } from '../../knowledge/folder-scan'
 import { planFileIngest } from '../../knowledge/dedupe'
+import { kbEvalFileName, runKbEvalSet, KB_EVAL_MAX_K } from '../../knowledge/kb-eval-runner'
+import { issuePathToken, peekPathToken } from '../dialog-path-token'
 import { detectSourceType } from '../../knowledge/parsers'
 import { assertCanCreateKb } from '../../license/license'
 import { safeHandle, argsSchema } from '../safe-handle'
@@ -337,6 +339,30 @@ export function registerKnowledgeHandlers(): void {
 
   // ---------- 增量同步：检测 file 文档源文件变更 ----------
   safeHandle(IPC.KB_SYNC_CHECK, (_e, kbId: string) => checkKbFileUpdates(kbId), argsSchema(idSchema))
+
+  // ---------- 评测集：选卷子 + 逐条跑真检索打分 ----------
+  // 只把「用户刚在对话框里选中的路径」换成主进程签发的一次性令牌交给渲染层（SEC-6 同一套路子）：
+  // 这条通道若接受渲染端传来的绝对路径，就等于让任意脚本用选中的文件让主进程读盘。
+  safeHandle(IPC.KB_EVAL_PICK, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+    const r = await dialog.showOpenDialog(win!, {
+      title: '选择评测集（JSON）',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (r.canceled || !r.filePaths[0]) return null
+    return { token: issuePathToken(r.filePaths[0]!), fileName: kbEvalFileName(r.filePaths[0]!) }
+  })
+
+  safeHandle(
+    IPC.KB_EVAL_RUN,
+    (_e, kbId: string, token: string, k?: number) => {
+      const filePath = peekPathToken(token)
+      if (!filePath) throw new Error('评测集的选择已过期，请重新选择文件')
+      return runKbEvalSet({ kbId, filePath, fileName: kbEvalFileName(filePath), k })
+    },
+    argsSchema(idSchema, z.string().min(1).max(64), z.number().int().min(1).max(KB_EVAL_MAX_K).optional())
+  )
 
   // ---------- 文档级检索开关 ----------
   safeHandle(

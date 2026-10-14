@@ -1920,6 +1920,10 @@ export const IPC = {
   /** 重命名任意类型文档标题（不重建索引） */
   KB_DOC_RENAME: 'kb-doc:rename',
   KB_SYNC_CHECK: 'kb:sync-check',
+  /** 选一份评测集 JSON（返回 SEC-6 的对话框路径令牌 + 文件名，渲染层拿不到绝对路径） */
+  KB_EVAL_PICK: 'kb:eval-pick',
+  /** 按令牌指到的卷子逐条跑真检索，返回 recall@k / MRR / 漏召回与失效清单 */
+  KB_EVAL_RUN: 'kb:eval-run',
   KB_DOC_SET_ENABLED: 'kb-doc:set-enabled',
 
   KB_CHUNK_LIST: 'kb-chunk:list',
