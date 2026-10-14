@@ -957,7 +957,9 @@ function highlightQuery(content: string, query: string): React.ReactNode[] {
   return nodes
 }
 
-const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN }) => {
+// 导出仅为可测：整模块没有挂载先例（依赖太多），而这个子组件只吃 kbId/topN + 一条 IPC，
+// 挂得起——界面断言（降级徽标、阈值滤掉条数、sim 数值）就靠它搬进 CI。
+export const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, topN }) => {
   const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<RetrievedChunk[] | null>(null)
