@@ -78,6 +78,40 @@ export const kbDocRepo = {
     return mustGet(() => this.get(id), '知识库文档')
   },
 
+  /**
+   * 这批来源（本地文件路径 / URL）里，这个库**已经存在**的是哪些。
+   * 重复入库的入口闸门用：库里没有任何唯一约束，同一路径再导一次就是两份文档、两遍 embedding。
+   */
+  existingSources(kbId: string, sources: string[]): Set<string> {
+    if (sources.length === 0) return new Set()
+    const placeholders = sources.map(() => '?').join(',')
+    const rows = dbService
+      .getHandle()
+      .prepare(`SELECT source FROM kb_documents WHERE kb_id=? AND source IN (${placeholders})`)
+      .all(kbId, ...sources) as Array<{ source: string | null }>
+    return new Set(rows.map((r) => r.source).filter((s): s is string => !!s))
+  },
+
+  /** 这个库已经索引过的内容指纹（源文件被改名或复制成两份时靠它拦） */
+  existingHashes(kbId: string, hashes: string[]): Set<string> {
+    if (hashes.length === 0) return new Set()
+    const placeholders = hashes.map(() => '?').join(',')
+    const rows = dbService
+      .getHandle()
+      .prepare(`SELECT content_hash FROM kb_documents WHERE kb_id=? AND content_hash IN (${placeholders})`)
+      .all(kbId, ...hashes) as Array<{ content_hash: string | null }>
+    return new Set(rows.map((r) => r.content_hash).filter((h): h is string => !!h))
+  },
+
+  /** 按 (库, 来源) 取回已存在的那篇文档（重复添加时把它原样回给前端，不再建第二份） */
+  findBySource(kbId: string, source: string): KbDocument | null {
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT * FROM kb_documents WHERE kb_id=? AND source=? ORDER BY created_at ASC LIMIT 1')
+      .get(kbId, source) as KbDocRow | undefined
+    return row ? rowToRecord(row) : null
+  },
+
   setStatus(id: string, status: KbDocStatus, error?: string | null): void {
     dbService
       .getHandle()

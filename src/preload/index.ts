@@ -445,11 +445,18 @@ const api = {
 
   listKbDocuments: (kbId: string): Promise<KbDocument[]> =>
     ipcRenderer.invoke(IPC.KB_DOC_LIST, kbId),
-  addKbFiles: (kbId: string): Promise<KbDocument[]> =>
+  addKbFiles: (
+    kbId: string
+  ): Promise<{ docs: KbDocument[]; skippedSameSource: number; skippedSameContent: number }> =>
     ipcRenderer.invoke(IPC.KB_DOC_ADD_FILE, kbId),
-  addKbFolder: (kbId: string): Promise<{ docs: KbDocument[]; skippedCount: number; truncated: boolean }> =>
-    ipcRenderer.invoke(IPC.KB_DOC_ADD_FOLDER, kbId),
-  addKbUrl: (kbId: string, url: string, title?: string): Promise<KbDocument | null> =>
+  addKbFolder: (kbId: string): Promise<{
+    docs: KbDocument[]
+    skippedCount: number
+    truncated: boolean
+    skippedSameSource: number
+    skippedSameContent: number
+  }> => ipcRenderer.invoke(IPC.KB_DOC_ADD_FOLDER, kbId),
+  addKbUrl: (kbId: string, url: string, title?: string): Promise<{ doc: KbDocument | null; duplicated: boolean }> =>
     ipcRenderer.invoke(IPC.KB_DOC_ADD_URL, kbId, url, title),
   addKbText: (kbId: string, text: string, title: string): Promise<KbDocument | null> =>
     ipcRenderer.invoke(IPC.KB_DOC_ADD_TEXT, kbId, text, title),

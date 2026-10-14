@@ -1336,6 +1336,8 @@ export const ko: Record<string, string> = {
   'kb.docDisabled': '검색에서 제외됨(체크하면 복원)',
   'kb.folderNoMatch': '이 폴더에서 지원되는 문서를 찾을 수 없습니다(md/txt/pdf/docx/xlsx/html 등)',
   'kb.folderTruncated': '파일 수가 1회 가져오기 한도를 초과하여 처음 {n}개를 가져왔습니다. 나머지는 나누어 가져오세요',
+  'kb.addSkipped': '{n}개를 가져오고 중복 {d}개를 건너뛰었습니다(같은 경로 {p}개, 내용 동일 {c}개)',
+  'kb.dupUrl': '이 URL은 이미 지식 베이스에 있어 다시 가져오지 않았습니다',
   'kb.addUrl': 'URL 추가',
   'kb.addText': '텍스트 추가',
   'kb.noDocs': '문서가 없습니다. 파일을 업로드하거나 URL/텍스트를 추가하여 인제스트를 시작하세요',

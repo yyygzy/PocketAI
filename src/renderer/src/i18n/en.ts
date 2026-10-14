@@ -1400,6 +1400,8 @@ export const en: Record<string, string> = {
   'kb.docDisabled': 'Excluded from retrieval (check to restore)',
   'kb.folderNoMatch': 'No supported documents found in this folder (md/txt/pdf/docx/xlsx/html, etc.)',
   'kb.folderTruncated': 'File count exceeded the per-import limit; imported the first {n}. Import the rest in batches',
+  'kb.addSkipped': 'Imported {n}, skipped {d} duplicates ({p} same path, {c} identical content)',
+  'kb.dupUrl': 'This URL is already in the knowledge base; it was not fetched again',
   'kb.addUrl': 'Add URL',
   'kb.addText': 'Add text',
   'kb.noDocs': 'No documents yet. Upload files or add URL/text to start ingestion.',

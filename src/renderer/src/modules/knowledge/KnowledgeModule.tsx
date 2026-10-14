@@ -619,10 +619,24 @@ const KbDetail: React.FC<{
     }
   }
 
+  /** 被拦下的重复来源要说出来：只说「导入了几篇」等于把跳过的那半藏起来 */
+  const toastSkippedDuplicates = (r: {
+    docs: unknown[]
+    skippedSameSource: number
+    skippedSameContent: number
+  }) => {
+    const d = r.skippedSameSource + r.skippedSameContent
+    if (d === 0) return
+    toast.info(
+      t('kb.addSkipped', { n: r.docs.length, d, p: r.skippedSameSource, c: r.skippedSameContent })
+    )
+  }
+
   const handleAddFiles = async () => {
     setBusy(true)
     try {
-      await window.pocketai.addKbFiles(kb.id)
+      const r = await window.pocketai.addKbFiles(kb.id)
+      toastSkippedDuplicates(r)
       await refresh()
       startPolling()
     } finally {
@@ -635,11 +649,13 @@ const KbDetail: React.FC<{
     setBusy(true)
     try {
       const r = await window.pocketai.addKbFolder(kb.id)
-      if (r.docs.length === 0) {
+      // 「没有可导入的文件」只在真的是空命中时说——全被判重复的情况由下面那句交代
+      if (r.docs.length === 0 && r.skippedSameSource + r.skippedSameContent === 0) {
         toast.warning(t('kb.folderNoMatch'))
       } else if (r.truncated) {
         toast.warning(t('kb.folderTruncated', { n: r.docs.length }))
       }
+      toastSkippedDuplicates(r)
       await refresh()
       startPolling()
     } finally {
@@ -1369,6 +1385,7 @@ const AddSourceDialog: React.FC<{
   onDone: () => Promise<void> | void
 }> = ({ kbId, mode, onClose, onDone }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [text, setText] = useState('')
@@ -1383,7 +1400,9 @@ const AddSourceDialog: React.FC<{
     setError('')
     try {
       if (mode === 'url') {
-        await window.pocketai.addKbUrl(kbId, url.trim())
+        const r = await window.pocketai.addKbUrl(kbId, url.trim())
+        // 同一网址不会再抓一遍：说清楚，别让用户以为点了没反应
+        if (r.duplicated) toast.info(t('kb.dupUrl'))
       } else {
         await window.pocketai.addKbText(kbId, text, title.trim())
       }

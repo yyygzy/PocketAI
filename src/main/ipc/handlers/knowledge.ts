@@ -15,6 +15,7 @@ import { kbAskService } from '../../knowledge/ask-service'
 import { getKbAskRetention, setKbAskRetention } from '../../knowledge/ask-retention-config'
 import { checkKbFileUpdates } from '../../knowledge/sync-check'
 import { scanFolderFiles } from '../../knowledge/folder-scan'
+import { planFileIngest } from '../../knowledge/dedupe'
 import { detectSourceType } from '../../knowledge/parsers'
 import { assertCanCreateKb } from '../../license/license'
 import { safeHandle, argsSchema } from '../safe-handle'
@@ -60,9 +61,13 @@ export function registerKnowledgeHandlers(): void {
         { name: '所有文件', extensions: ['*'] }
       ]
     })
-    if (result.canceled || result.filePaths.length === 0) return []
+    if (result.canceled || result.filePaths.length === 0) {
+      return { docs: [], skippedSameSource: 0, skippedSameContent: 0 }
+    }
 
-    const docs = result.filePaths.map((p) => {
+    // 重复的拦在这里（同路径 / 同内容指纹），解析与 embedding 一次都不花
+    const plan = await planFileIngest(kbId, result.filePaths)
+    const docs = plan.accepted.map((p) => {
       const sourceType = detectSourceType(p)
       return kbDocRepo.insert({ kbId, source: p, sourceType, title: p })
     })
@@ -70,7 +75,11 @@ export function registerKnowledgeHandlers(): void {
     for (const doc of docs) {
       indexQueue.enqueue({ kbId, docId: doc.id, kind: 'file' })
     }
-    return docs
+    return {
+      docs,
+      skippedSameSource: plan.skippedSameSource,
+      skippedSameContent: plan.skippedSameContent
+    }
   }, argsSchema(idSchema))
 
   safeHandle(IPC.KB_DOC_ADD_FOLDER, async (e, kbId: string) => {
@@ -80,7 +89,7 @@ export function registerKnowledgeHandlers(): void {
       properties: ['openDirectory']
     })
     if (result.canceled || result.filePaths.length === 0) {
-      return { docs: [], skippedCount: 0, truncated: false }
+      return { docs: [], skippedCount: 0, truncated: false, skippedSameSource: 0, skippedSameContent: 0 }
     }
 
     // 递归扫描：按扩展名过滤，跳过隐藏目录/node_modules/符号链接，单文件 50MB、单次 500 个上限
@@ -88,7 +97,9 @@ export function registerKnowledgeHandlers(): void {
     const kb = kbRepo.get(kbId)
     const includeImages = !!(kb?.ocrProviderId && kb?.ocrModel)
     const scan = scanFolderFiles(result.filePaths[0]!, includeImages)
-    const docs = scan.files.map((p) => {
+    // 同一个文件夹被反复导入是最常见的重复来源：先按路径、再按内容指纹拦一道
+    const plan = await planFileIngest(kbId, scan.files)
+    const docs = plan.accepted.map((p) => {
       const sourceType = detectSourceType(p)
       return kbDocRepo.insert({ kbId, source: p, sourceType, title: p })
     })
@@ -96,13 +107,22 @@ export function registerKnowledgeHandlers(): void {
     for (const doc of docs) {
       indexQueue.enqueue({ kbId, docId: doc.id, kind: 'file' })
     }
-    return { docs, skippedCount: scan.skippedCount, truncated: scan.truncated }
+    return {
+      docs,
+      skippedCount: scan.skippedCount,
+      truncated: scan.truncated,
+      skippedSameSource: plan.skippedSameSource,
+      skippedSameContent: plan.skippedSameContent
+    }
   }, argsSchema(idSchema))
 
   safeHandle(IPC.KB_DOC_ADD_URL, async (_e, kbId: string, url: string, title?: string) => {
+    // 同一网址重复添加：不再建第二份、不再抓第二遍，把已有那篇回给前端并如实标注
+    const dup = kbDocRepo.findBySource(kbId, url)
+    if (dup) return { doc: dup, duplicated: true }
     const doc = kbDocRepo.insert({ kbId, source: url, sourceType: 'url', title: title || url })
     indexQueue.enqueue({ kbId, docId: doc.id, kind: 'url' })
-    return doc
+    return { doc, duplicated: false }
   }, kbDocAddUrlArgsSchema)
 
   safeHandle(

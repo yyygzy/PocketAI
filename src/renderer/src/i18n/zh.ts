@@ -1400,6 +1400,8 @@ export const zh: Record<string, string> = {
   'kb.docDisabled': '已排除出检索（勾选可恢复）',
   'kb.folderNoMatch': '该文件夹中未找到支持的文档（md/txt/pdf/docx/xlsx/html 等）',
   'kb.folderTruncated': '文件数量超出单次导入上限，已导入前 {n} 个，请分批导入剩余文件',
+  'kb.addSkipped': '导入 {n} 篇，跳过 {d} 篇重复（同路径 {p}、内容相同 {c}）',
+  'kb.dupUrl': '该网址已经在知识库里了，没有重复抓取',
   'kb.addUrl': '添加 URL',
   'kb.addText': '录入文本',
   'kb.noDocs': '暂无文档，上传文件或添加 URL/文本开始入库',

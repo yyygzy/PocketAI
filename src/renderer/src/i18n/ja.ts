@@ -1336,6 +1336,8 @@ export const ja: Record<string, string> = {
   'kb.docDisabled': '検索から除外中（チェックで復元）',
   'kb.folderNoMatch': 'このフォルダに対応ドキュメントが見つかりません（md/txt/pdf/docx/xlsx/html など）',
   'kb.folderTruncated': 'ファイル数が 1 回のインポート上限を超えたため、先頭の {n} 件をインポートしました。残りは分割してインポートしてください',
+  'kb.addSkipped': '{n} 件をインポートし、{d} 件の重複をスキップしました（同一パス {p} 件、内容一致 {c} 件）',
+  'kb.dupUrl': 'この URL はすでにナレッジベースにあるため、再取得しませんでした',
   'kb.addUrl': 'URL を追加',
   'kb.addText': 'テキストを追加',
   'kb.noDocs': 'ドキュメントはまだありません。ファイルをアップロードするか URL/テキストを追加してインジェストを開始してください',
