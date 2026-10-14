@@ -556,6 +556,12 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    // Windows 任务栏按钮按「AppUserModelID」归组，没设的话进程在系统眼里就是 electron.exe，
+    // 于是**无视每个窗口都设好的 icon**、直接显示 Electron 的原子图标
+    // （标题栏用的是窗口图标所以看着是对的，任务栏才是这个症状；dev 与 portable 版都会中）。
+    // 值与 package.json 的 build.appId 一致：安装版可与快捷方式同组复用其图标，
+    // dev 下没有对应快捷方式时 Windows 退回用窗口图标，两种情况都是紫色墨匣徽标。
+    if (process.platform === 'win32') app.setAppUserModelId('ai.pocket.desktop')
     // 生产环境 CSP 必须在任何窗口创建前安装（解锁窗在 boot() 内创建）
     installContentSecurityPolicy()
     // 权限收口同理：默认拒绝 Chromium 所有权限（摄像头/麦克风/定位/通知/剪贴板等）

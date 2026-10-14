@@ -66,6 +66,43 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-132 Windows 任务栏图标：补上 `setAppUserModelId`，但实测证明 **dev 模式修不好**（安装版才是正解）
+
+- **现场**：用户两张截图——标题栏是紫色墨匣徽标（对），任务栏按钮却是 Electron 的原子图标（错），
+  并说「图标选择不对；界面里的是要使用的图标」。
+- **先把"图错/文件缺"这条排掉**（不猜，逐个核）：`build/icon/icon.ico` 里 6 帧（16/32/48/64/128/256）
+  全是那枚紫色徽标，与界面在用的 `src/renderer/src/assets/logo-128.png` **md5 相同**；
+  主窗、解锁窗、独立窗三处都设了 `icon`。⇒ **图标资产与窗口设置都没问题，不是"选错了图"。**
+- **根因**：全项目从未调用 `app.setAppUserModelId()`。Windows 的任务栏按 **AppUserModelID** 归组，
+  没设时进程在系统眼里就是 `electron.exe` ⇒ 任务栏**无视窗口 icon**，显示宿主程序图标；
+  而标题栏用的正是窗口 icon——所以那两张截图恰好把这个分工画出来了。dev 与 portable 版都会中招。
+- **改法**：`app.whenReady()` 最前面（任何窗口创建之前）加
+  `if (process.platform === 'win32') app.setAppUserModelId('ai.pocket.desktop')`，
+  值取 `package.json` 的 `build.appId`：安装版与 NSIS 快捷方式同组、复用其图标；
+  dev 下没有对应快捷方式时 Windows 退回用窗口图标。两种情况都是那枚紫色徽标。
+- **顺带记一条没修的隐患（未证）**：`appIconPath()` 指向 `app.getAppPath()/build/icon/...`，
+  而 electron-builder 的 `files` 只收 `out/`、`package.json`、`extensions/`、`node_modules/`
+  ⇒ **打包后的 asar 里没有 `build/`**，安装版这个路径大概指向不存在的文件。
+  现在没露脸是因为 Windows 会退回 exe 自带图标（安装版 exe 图标由 `win.icon` 打包时嵌入，是对的）。
+  要证实得跑一次打包，我没跑；真出问题时的修法是把图标挪进 `out/` 或改用 `process.resourcesPath`。
+- **实测纠正（重启 dev 后自己量的，不是猜的）**：这条改动**没有修好 dev 的任务栏图标**。三条证据：
+  1. 产物里确有该调用（`out/main/index.js` 内 `setAppUserModelId("ai.pocket.desktop")`），
+     进程启动时间 11:09:48 晚于重建时间 11:09:48 ⇒ 代码确实在跑；
+  2. 用 Win32 `SHGetPropertyStoreForWindow` 读主窗口的 `PKEY_AppUserModel_ID` ⇒ **空**；
+  3. 用 UIAutomation 枚举任务栏按钮 ⇒ 我们这个窗口被归成 **「Electron - 1 个运行窗口」**（图标就是 electron.exe 的原子图），
+     而同一台机器上 **「Qoder CN - 1 个运行窗口」** 显示正常——差别在于它是**安装版**，开始菜单里有带 AUMID 的快捷方式。
+  ⇒ 机制是：`app.setAppUserModelId()` 设的是**进程级** ID，Electron 44 没有逐窗口的 AUMID API（`setAppUserModelId` 只挂在 `App` 上）；
+  Windows 11 任务栏按钮要显示应用自己的图标，得让这个 AUMID **对应到一个已注册的快捷方式**（NSIS 安装时正是这么写的），
+  否则回落到宿主 exe 的图标。dev 下没有快捷方式，所以任务栏仍是原子图——**这不是图标资产错了，是 dev 的机制限制**。
+- **那这行代码留不留？留。** 它是安装版的必要条件之一（应用声明的 AUMID 要与快捷方式一致，Windows 才会把按钮与该快捷方式
+  归组并复用其图标/名称），也影响通知归属；只是**不能宣称它修好了 dev 的观感**。
+- **下一步该做的**（未做）：要确认安装版任务栏图标对不对，得跑一次 `npm run build:win` 打包并装一次；
+  顺带验证台账里那条未证隐患（asar 里没打 `build/` ⇒ 安装版 `appIconPath()` 指向不存在的文件）。
+  dev 侧若一定要好看，可行做法是给 dev 也建一个带 AUMID 的开始菜单快捷方式（PowerShell 的 WScript.Shell 不支持写 AUMID，
+  要走 shell 属性存储，属另一件事）。
+- **校验**：typecheck 0；build 三端通过；改动一处、无新依赖、无新资源。
+  **主进程改动 ⇒ 须重启 dev**，肉眼确认见验收清单 **B66**。
+
 ### V4-Iter-131 CI 提速：fake 子进程补上「被 kill 会 exit」，json-rpc 从 36s 降到 1.8s（已落地）
 
 - **触发**：用户让查「全量从 62–68s 涨到 105s 是不是性能回归」。按文件归因（`--reporter=json` 拿每文件耗时）：
