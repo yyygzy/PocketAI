@@ -73,6 +73,36 @@ export function rrfFuse(
     }))
 }
 
+/**
+ * 按每库自己的重排配置分组重排：一组一次 LLM 调用，且只重排属于该组的候选。
+ *
+ * 每组只取重排给出的**顺序**，分数回填该组原本的融合分——LLM 重排分（0~1）与 RRF 融合分
+ * （0.01~0.03）不是一个尺度，而没配重排的库只有融合分；拿重排分跨组排序会让配了重排的库
+ * 把前排整片占走，那是另一种「一个库的配置污染别的库」。
+ * 只有一个组且它覆盖全部库时（单库是常态），组的候选就是整个候选表，顺序与整体重排逐条一致。
+ */
+async function rerankPerKbConfig(
+  query: string,
+  candidates: RetrievedChunk[],
+  groups: Map<string, { providerId: string; model: string; kbIds: string[] }>,
+  onDegrade: (kbIds: string, reason: string) => void
+): Promise<RetrievedChunk[]> {
+  if (groups.size === 0) return candidates
+  const covered = new Set([...groups.values()].flatMap((g) => g.kbIds))
+  const out: RetrievedChunk[] = []
+  for (const g of groups.values()) {
+    const inGroup = candidates.filter((c) => g.kbIds.includes(c.kbId))
+    if (inGroup.length === 0) continue
+    // candidates 已按融合分降序 ⇒ 下标 i 就是该组第 i 名原本的分数
+    const origScores = inGroup.map((c) => c.score)
+    const reordered = await rerankChunks(query, inGroup, g.providerId, g.model, (reason) =>
+      onDegrade(g.kbIds.join('+'), reason)
+    )
+    out.push(...reordered.map((c, i) => ({ ...c, score: origScores[i] ?? c.score })))
+  }
+  return [...out, ...candidates.filter((c) => !covered.has(c.kbId))].sort((a, b) => b.score - a.score)
+}
+
 class RAGService {
   /**
    * 多知识库混合检索：每个 KB 分别执行向量检索 + BM25 全文检索，
@@ -120,12 +150,6 @@ class RAGService {
     let hydeMs = 0
     let multiQueryMs = 0
     const all: RetrievedChunk[] = []
-    let rerankProvider: string | null = null
-    let rerankModel: string | null = null
-    let hydeProvider: string | null = null
-    let hydeModel: string | null = null
-    let multiQueryProvider: string | null = null
-    let multiQueryModel: string | null = null
 
     // 一次取齐库配置（原先每个库要 get 两次）；不存在的库跳过，与旧行为一致
     const kbs = kbIds
@@ -155,6 +179,16 @@ class RAGService {
       const v = kbs.find((k) => k.id === kbId)?.minScore
       return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
     }
+    /** 重排配置同样按库收集，同一 (provider, model) 归一组；没配重排的库不参与 */
+    const rerankGroups = new Map<string, { providerId: string; model: string; kbIds: string[] }>()
+    for (const kb of kbs) {
+      const providerId = kb.rerankProviderId
+      const model = kb.rerankModel
+      if (!providerId || !model) continue
+      const g = rerankGroups.get(`${providerId}|${model}`)
+      if (g) g.kbIds.push(kb.id)
+      else rerankGroups.set(`${providerId}|${model}`, { providerId, model, kbIds: [kb.id] })
+    }
 
     /**
      * 某一路没跑成：进诊断（面板当场可见），同时记 WARN + perf 事件（不跑测试面板也看得见）。
@@ -169,62 +203,83 @@ class RAGService {
       noteRetrievalDegradation(d, ms)
     }
 
-    // 取第一个配置了 hyde/rerank/multiQuery 的 KB（同一会话内统一）
+    /**
+     * HyDE / Multi-Query 同样是**每库自己的**配置，按库解析、按 (provider, model) 去重执行：
+     * 同一套配置本次检索只调一次 LLM（多库共用配置不多花一次调用），没配的库也不会被别的库带着跑。
+     * 以前取的是「第一个配了的库」的配置服务全部库 ⇒ 排在后面的库形同没配，而没开 HyDE 的库
+     * 会被拿假设文档做 embedding、没开 Multi-Query 的库会被塞进额外变体——与 V4-Iter-122 的 topK 同一类。
+     */
+    const cacheOnce = <T>(cache: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> => {
+      let p = cache.get(key)
+      if (!p) {
+        p = run()
+        cache.set(key, p)
+      }
+      return p
+    }
+    const hydeDocs = new Map<string, Promise<string | null>>()
+    const variantLists = new Map<string, Promise<string[] | null>>()
+    /** 每库一份查询计划：向量路用 embedText（该库的 HyDE 文档或原查询），BM25 只用 q */
+    const jobs: Array<{
+      kb: (typeof kbs)[number]
+      embedText: string
+      queryVariants: Array<{ q: string; useHyde: boolean }>
+    }> = []
+
+    let anyHyde = false
     for (const kb of kbs) {
-      if (!hydeProvider && kb.hydeProviderId && kb.hydeModel) {
-        hydeProvider = kb.hydeProviderId
-        hydeModel = kb.hydeModel
+      const hydeProviderId = kb.hydeProviderId
+      const hydeModel = kb.hydeModel
+      const tHyde = performance.now()
+      const hydeDoc = hydeProviderId && hydeModel
+        ? await cacheOnce(hydeDocs, `${hydeProviderId}|${hydeModel}`, () =>
+            generateHypotheticalDoc(query, hydeProviderId, hydeModel))
+        : null
+      const hydeSpent = performance.now() - tHyde
+      hydeMs += hydeSpent
+      if (hydeProviderId && hydeModel && hydeDoc === null) {
+        // 该库配了却没拿到假设文档：向量路退回原查询，这是降级不是正常态
+        degrade(
+          { stage: 'hyde', kbId: kb.id, reason: '配了 HyDE 却没拿到假设文档（模型调用失败或输出为空），向量路退回用原查询做 embedding' },
+          hydeSpent
+        )
       }
-      if (!rerankProvider && kb.rerankProviderId && kb.rerankModel) {
-        rerankProvider = kb.rerankProviderId
-        rerankModel = kb.rerankModel
-      }
-      if (!multiQueryProvider && kb.multiQueryProviderId && kb.multiQueryModel) {
-        multiQueryProvider = kb.multiQueryProviderId
-        multiQueryModel = kb.multiQueryModel
-      }
-    }
+      if (hydeDoc) anyHyde = true
 
-    // HyDE：用假设文档做向量检索的 embedding，BM25 仍用原 query
-    const tHyde = performance.now()
-    const hydeDoc = hydeProvider && hydeModel
-      ? await generateHypotheticalDoc(query, hydeProvider, hydeModel)
-      : null
-    hydeMs = performance.now() - tHyde
-    const embedText = hydeDoc ?? query
-    if (diag) diag.hydeUsed = hydeDoc !== null
-    if (hydeProvider && hydeModel && hydeDoc === null) {
-      degrade(
-        { stage: 'hyde', reason: '配了 HyDE 却没拿到假设文档（模型调用失败或输出为空），向量路退回用原查询做 embedding' },
-        hydeMs
-      )
-    }
-
-    // Multi-Query：LLM 改写出多个视角变体查询（失败降级为仅原 query）
-    const tMq = performance.now()
-    const variants =
-      multiQueryProvider && multiQueryModel
-        ? (await generateMultiQueries(query, multiQueryProvider, multiQueryModel)) ?? []
+      const mqProviderId = kb.multiQueryProviderId
+      const mqModel = kb.multiQueryModel
+      const tMq = performance.now()
+      const variants = mqProviderId && mqModel
+        ? (await cacheOnce(variantLists, `${mqProviderId}|${mqModel}`, () =>
+            generateMultiQueries(query, mqProviderId, mqModel))) ?? []
         : []
-    multiQueryMs = performance.now() - tMq
-    if (multiQueryProvider && multiQueryModel && variants.length === 0) {
-      degrade(
-        { stage: 'multiQuery', reason: '配了 Multi-Query 却没拿到任何变体（调用失败或解析为空），本轮只用原查询' },
-        multiQueryMs
-      )
+      const mqSpent = performance.now() - tMq
+      multiQueryMs += mqSpent
+      if (mqProviderId && mqModel && variants.length === 0) {
+        degrade(
+          { stage: 'multiQuery', kbId: kb.id, reason: '配了 Multi-Query 却没拿到任何变体（调用失败或解析为空），本轮只用原查询' },
+          mqSpent
+        )
+      }
+
+      // 原 query 在前：向量路可用该库自己的 HyDE 文本，变体只用自身
+      jobs.push({
+        kb,
+        embedText: hydeDoc ?? query,
+        queryVariants: [{ q: query, useHyde: hydeDoc !== null }, ...variants.map((v) => ({ q: v, useHyde: false }))]
+      })
     }
-    // 原 query 在前：向量路可用 HyDE 文本，变体只用自身
-    const queryVariants: Array<{ q: string; useHyde: boolean }> = [
-      { q: query, useHyde: true },
-      ...variants.map((v) => ({ q: v, useHyde: false }))
-    ]
-    if (diag) diag.queryVariants = queryVariants.map((v) => v.q)
+    if (diag) {
+      diag.hydeUsed = anyHyde
+      // 各库的变体可以不同：面板列的是「本次检索实际用过的查询」
+      diag.queryVariants = [...new Set(jobs.flatMap((j) => j.queryVariants.map((v) => v.q)))]
+    }
 
     const tSearch = performance.now()
     /** 相似度阈值要比的「检索用查询向量」：复用向量路第一次成功的结果，不为过滤再打一次 embedding API。
      *  HyDE 开着时它是假设文档的向量——阈值含义始终是「与本次检索实际用的向量有多像」 */
     let refVec: Float32Array | null = null
-    for (const kb of kbs) {
+    for (const { kb, embedText, queryVariants } of jobs) {
       const kbId = kb.id
       const topK = topKOf(kb)
 
@@ -284,16 +339,13 @@ class RAGService {
     const candidates = all.slice(0, maxTopK)
     if (diag) {
       diag.candidateCount = candidates.length
-      diag.rerankUsed = !!(rerankProvider && rerankModel)
+      diag.rerankUsed = rerankGroups.size > 0
     }
     const tRerank = performance.now()
-    const reranked =
-      rerankProvider && rerankModel
-        ? await rerankChunks(query, candidates, rerankProvider, rerankModel, (reason) =>
-            // 重排没跑成 ⇒ 顺序仍是 RRF 的，注入质量悄悄掉一档，必须留痕
-            degrade({ stage: 'rerank', reason }, performance.now() - tRerank)
-          )
-        : candidates
+    const reranked = await rerankPerKbConfig(query, candidates, rerankGroups, (kbIds, reason) =>
+      // 重排没跑成 ⇒ 该组顺序仍是 RRF 的，注入质量悄悄掉一档，必须留痕
+      degrade({ stage: 'rerank', kbId: kbIds, reason }, performance.now() - tRerank)
+    )
     const rerankMs = performance.now() - tRerank
 
     // 4. 相似度：阈值判定要用它，检索测试面板也要它来回答「阈值该调到多少」。
