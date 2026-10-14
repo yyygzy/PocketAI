@@ -66,6 +66,41 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-138 把 `KbDetail` 真挂起来：136 那句"挂不起来"是假设，被证伪
+
+- **起因**：用户说「你直接测试」，而我上一批把 B69/B70 的一半判成"只有肉眼"，写的理由是
+  「`KbDetail` 挂着 confirm / toast / 十几条 IPC，在 jsdom 里挂不起来」。**那是我没去试的合理化说法，不是证据。**
+  本轮实测：`useConfirm`（`components/ConfirmDialog.tsx:84`）是**自包含 hook，不需要 Provider**，
+  而 `{dialog}` 就渲染在 `KbDetail` 自己的 return 里（`KnowledgeModule.tsx:1033`）⇒ 确认框是能点出来的。
+- **做法**：把 `KbDetail` 导出（与 129 导出 `RetrievalTest` 同一个先例与理由），
+  用现成的 `mountWithProviders` + 失败即抛的 `stubPocketai`（缺哪个通道当场报出来）真挂载。
+  挂载实际需要预置的通道一共 11 条（`listKbDocuments / deleteKbDocument / setKbDocEnabled / reindexKbDocs /
+  reindexKbDocument / listProviders / listKbAskSessions / getKbAskRetention / onKbAsk{Chunk,Done,Error} / reportPerf`）——
+  比"十几条 IPC"少，而且三条订阅类必须返回卸载函数（`helpers/renderer.tsx` 里已记过这个坑）。
+- **新增 11 例，钉的全是"接线"而不是"纯函数"**：
+  ① 平时复选框 `checked=enabled`，停用那条的 `aria-label` 是另一句；
+  ② **反向对照**：平时全场不该出现「选中此文档」这个语义；进批量后四个复选框全换成它且一条都不预选；
+  ③ 勾上→「已选 1 篇」，再点→回到 0（取消勾选不许只加不减）；
+  ④ 点批量删除先出确认框，**点「取消」⇒ `deleteKbDocument` 一次都不发**（用 `pocketaiCalls()` 断时序）；
+  ⑤ 确认后逐条走既有单篇删除通道（**本轮没新增批量删除 IPC**，id 集合与顺序可断言），选择清空；
+  ⑥ 部分失败如实报差值（3 成功 / 1 失败）；⑦ 「重试全部失败（2）」只把两条 `error` 的 id 交给 `reindexKbDocs`；
+  ⑧ `enqueued` 少于选中数时报的是真实差值；⑨ 停用/启用的 `enabled` 参数不写反；
+  ⑩ 切库回到「批量操作」入口且不带着上一库的选择；⑪ 列表刷新后「已选 4 篇」自动降到 3（幽灵选择被 `cullStale` 出清）。
+- **两条我自己写坏的用例，留着当教训**：
+  ① 想换 `kb` 重渲染时用了 `render` 返回的 `rerender` ⇒ **Provider 被甩掉，`useToast` 直接崩**；
+  要连包装层一起重挂才行。
+  ② 「重建」这个文案在批量条和每一行都有，`getAllByText(zh['kb.reindex'])[0]` 拿到的是**批量条那个**，
+  点它会清空选择、正好把要测的 cull 抹掉 ⇒ 现在一律在批量条容器里 `within(bar)` 查按钮，行内按钮显式取下标并写明原因。
+- **变异实测（8 轮，两个源文件每轮 sha256 还原）**：复选框语义换错 → 3 红；删除不弹确认 → 3 红；
+  「重试全部失败」改成交选中的 → 2 红；入队不足也报全成功 → 1 红；切库不清批量模式 → 1 红；
+  刷新不出清幽灵 → 1 红；停用/启用布尔传反 → 1 红；
+  **`busy` 不拦动作在本文件存活**——它由 136 那份 `renderer-kb-doc-batch` 钉住（两个文件一起跑该轮转红 1 条），
+  归属写清楚，不假装是本文件的牙。
+- **顺带纠正文档**：136 台账里"在 jsdom 里挂不起来"那句已就地标注证伪（不改历史行的写法，只在原条目上更正）。
+- **校验**：typecheck 0；vitest **283 文件 / 3403 用例**全绿；build 三端通过。
+- **仍然只有肉眼（B70 剩下的部分）**：整行灰显与配色、确认弹窗的排版、批量条在窄窗口的换行、
+  以及"真 IPC 在真库上的时序"（CI 里是桩）。**渲染层改动 ⇒ 用户侧刷新即可，不必重启 dev**。
+
 ### V4-Iter-137 评测集运行器接上真检索，并给出界面入口（128 那份"没接线"的数据结构到此闭合）
 
 - **补的是哪一段**：V4-Iter-128 只做了卷子结构与判分纯函数，模块甚至没被任何地方 import。
@@ -122,9 +157,12 @@
 - **两条状态不变量**：① 切库清空选择并退出批量（跨库残留的选中会误删另一个库的文档）；
   ② 列表每次刷新都用 `cullStale` 把已不存在的选中项出清——否则批量删完「已选 N 篇」会数着幽灵，
   动作还会发给不存在的 id。
-- **为什么拆文件**（可测性）：`KbDetail` 挂着 confirm / toast / 十几条 IPC，在 jsdom 里挂不起来。
+- **为什么拆文件**（可测性）：当时判断 `KbDetail` 挂着 confirm / toast / 十几条 IPC，在 jsdom 里挂不起来，
   于是决策收进 `src/renderer/src/modules/knowledge/doc-batch.ts`（4 个纯函数），
   展示收进 `DocBatchBar.tsx`（只吃 props 与回调）——与 `ZeroToolCallNotice` / `sim-stats` 同一套路子。
+  ⚠️ **那句"挂不起来"下一批被证伪（V4-Iter-138）**：`useConfirm` 是自包含 hook、`{dialog}` 就渲染在 `KbDetail`
+  自己的 return 里，真挂载完全做得到，"确认之前不许动手"这类接线已搬进 CI。
+  拆文件本身仍然值（纯函数好测），但**别把"我嫌麻烦"写成"挂不起来"**——这是一句逃避验证的合理化说法。
 - **i18n**：13 条新 key × 四语（`kb.batch*`），复用 `kb.reindex` 与 `common.delete`；由 i18n-parity 用例守四本对等。
 - **测试**：新增 `tests/renderer-kb-doc-batch.test.tsx` **12 例**——纯函数 4 例（失败判定只认 `error`、
   勾选/取消、幽灵出清、全选与全选失败项与列表同序）+ 挂载 8 例（非批量模式没有计数与动作、

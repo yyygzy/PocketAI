@@ -555,7 +555,9 @@ const KbForm: React.FC<{
 }
 
 // ---------- 知识库详情：文档 + 检索测试 ----------
-const KbDetail: React.FC<{
+// 导出仅为了能在用例里真挂载（同下面的 RetrievalTest）：批量模式的行首复选框换语义、
+// 删除前的确认、切库清选择这些"接线"是组件内部行为，不导出就只能靠肉眼。
+export const KbDetail: React.FC<{
   kb: KnowledgeBase
   onChanged: () => void
   jumpFocus?: { docId: string; seq: number } | null
