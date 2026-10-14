@@ -14,8 +14,16 @@ class FakeChild {
   stdout = new PassThrough()
   stderr = new PassThrough()
   pid = 12345
+  /**
+   * 真进程被 kill 之后一定会发 exit；fake 不发就等于让 shutdown 白等完
+   * 500ms 的「等退出」窗口（13 例 × 每例 afterEach ≈3.5s ⇒ 全量慢 36s 的主因）。
+   * 下一拍再发，顺序与真实进程一致：kill 先返回，exit 事件随后到。
+   */
+  kill = vi.fn(() => {
+    setTimeout(() => this.emit('exit', 0, 'SIGTERM'), 0)
+    return true
+  })
   private listeners = new Map<string, Array<(...args: unknown[]) => void>>()
-  kill = vi.fn()
 
   on(event: string, handler: (...args: unknown[]) => void): this {
     if (!this.listeners.has(event)) this.listeners.set(event, [])
@@ -67,8 +75,10 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  // 强制清理，避免 pending timer 漏到后续用例
-  await client.shutdown().catch(() => {})
+  // 强制清理，避免 pending timer 漏到后续用例。
+  // 传 50 而不是吃默认的 3000ms：这里的目的是收尾，不是验「无人应答时的优雅关闭要等 3 秒」——
+  // 那一件事由下面「超时后 reject」那条用例专门测。
+  await client.shutdown(50).catch(() => {})
 })
 
 function currentChild(): FakeChild {
