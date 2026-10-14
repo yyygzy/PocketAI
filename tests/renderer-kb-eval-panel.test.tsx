@@ -159,6 +159,16 @@ describe('评测集面板', () => {
     expect(screen.queryByText('50.0%')).toBeNull()
   })
 
+  it('真合同：safeHandle 把异常转成**返回值** {ok:false,error}（不 reject）⇒ 界面必须说出原因', async () => {
+    pickKbEvalSet.mockResolvedValue({ token: 'tk', fileName: 'set.json' })
+    runKbEval.mockResolvedValue({ ok: false, error: '评测集格式不符：cases.0.expected — 至少一条' })
+    mount()
+    fireEvent.click(screen.getByText(zh['kb.evalPick']))
+    await waitFor(() => expect(screen.getByText('set.json')).toBeTruthy())
+    fireEvent.click(screen.getByText(zh['kb.evalRun']))
+    await waitFor(() => expect(screen.getByText(/评测集格式不符/)).toBeTruthy())
+  })
+
   it('反向对照：对话框被取消（返回 null）时不报错、也不显示文件名', async () => {
     pickKbEvalSet.mockResolvedValue(null)
     mount()

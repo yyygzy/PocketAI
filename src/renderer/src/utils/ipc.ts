@@ -17,6 +17,16 @@ export function isIpcFail(v: unknown): v is { ok: false; error: string } {
   return typeof v === 'object' && v !== null && 'ok' in v
 }
 
+/**
+ * 只认 `ok === false` 的判别。**有些通道成功时也带 ok**——
+ * `KB_DOC_DELETE` / `KB_DOC_SET_ENABLED` / 问答会话那几条都 `return { ok: true }`，
+ * 对它们用 isIpcFail 会把成功读成失败（V4-Iter-139 由真桥层用例照出来）。
+ * 拿不准就用这个：它只在"明确说了失败"时才成立。
+ */
+export function hasIpcFailed(v: unknown): v is { ok: false; error?: string } {
+  return typeof v === 'object' && v !== null && (v as { ok?: unknown }).ok === false
+}
+
 /** 失败对象的错误文本（缺省时回落到通用文案） */
 export function ipcFailText(v: { error?: string }, fallback: string): string {
   return v.error || fallback

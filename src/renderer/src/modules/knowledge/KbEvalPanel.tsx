@@ -6,6 +6,7 @@
 // 一题一次真检索（慢是设计如此）、以及**卷子坏了的时候分数不能单独看**（失效/停用与指标同屏）。
 import React, { useState } from 'react'
 import { useI18n } from '../../i18n'
+import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import type { KbEvalRunResult } from '../../../../shared/kb-eval'
 
@@ -28,6 +29,11 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
     try {
       const r = await window.pocketai.pickKbEvalSet()
       if (!r) return // 用户取消：不清掉已有结果，也不报错
+      // safeHandle 的失败是**返回值**（{ok:false,error}），不判它就会被当成"选好了"
+      if (hasIpcFailed(r)) {
+        setError(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       setFile(r)
       setError('')
     } catch (e) {
@@ -45,7 +51,14 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
       const raw = kText.trim()
       // 只在用户确实填了个数时传 k；空值要让主进程去用这个库自己的 topN
       const k = raw === '' ? undefined : Math.min(K_MAX, Math.max(K_MIN, Number(raw) || K_MIN))
-      setResult(await window.pocketai.runKbEval(kbId, file.token, k))
+      const r = await window.pocketai.runKbEval(kbId, file.token, k)
+      // 坏卷子 / 选错库 / 令牌过期都从这里以返回值的形式回来：把原因显示出来，并清掉上一份分数
+      if (hasIpcFailed(r)) {
+        setError(ipcFailText(r, t('common.unknownError')))
+        setResult(null)
+        return
+      }
+      setResult(r)
     } catch (e) {
       setError(errText(e))
       setResult(null)

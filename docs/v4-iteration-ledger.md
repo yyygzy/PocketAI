@@ -66,6 +66,37 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-139 真桥层往返（preload ⇄ 主进程 handler）自证，并修掉我自己在 135/136/137 埋的一批"失败被当成功"
+
+- **为什么要这一层**：此前所有用例要么"组件里调桩"，要么"主进程里调 handler"，**中间的桥没人走**——
+  通道常量指错、位置参数顺序错、返回值形状改了渲染层没跟上，两类测试都不会红。
+  做法：一个 `vi.mock('electron')` 同时假扮两侧（`ipcMain.handle` 收集、`ipcRenderer.invoke` 直投给收集到的 handler、
+  `contextBridge.exposeInMainWorld` 把 preload 的 api 抓出来），再配真临时库 + 真 dialog 脚本 + 真 SEC-6 令牌。
+- **一次就撞出真 bug（我自己前三天埋的）**：`safeHandle` 的失败是**返回值 `{ok:false,error}`，不是 reject**，
+  而我 135/136/137 新增的渲染层调用点一律用 `try/catch` 等 reject ⇒ 真失败时：
+  ① 评测面板点了「运行」**什么都不显示**，连坏卷子那句中文原因都到不了用户眼前；
+  ② 批量删除里失败的几条**被算成成功**（会报「已处理 4 篇，失败 0 篇」）；
+  ③ 添加文件失败时把失败对象当结果读，`r.docs.length` 直接 TypeError。
+  而现成的 `isIpcFail`（判 `'ok' in v`）在这里**也不能直接用**：`KB_DOC_DELETE` / `KB_DOC_SET_ENABLED`
+  成功时返回 `{ok:true}` ⇒ 我第一次的修法把成功读成了失败，是桥层用例把它照红的（见下）。
+- **改法**：新增 `hasIpcFailed(v)`（只认 `ok === false`），七个调用点全换成它（批量重建、批量删除逐条、
+  批量停用逐条、添加文件、导入文件夹、添加网址、录入文本、评测面板选文件与运行）；
+  `isIpcFail` 保留但在注释里写明边界与这条误判史。失败文案统一走既有 `ipcFailText` + `common.unknownError`，**没有新增 i18n key**。
+- **桥层用例**（`tests/ipc-kb-bridge-real-db.test.ts` 9 例）：preload 暴露的方法齐全；
+  `listKbDocuments`/`setKbDocEnabled` 真往返；`saveKnowledgeBase` 带 `minScore` 落库再读回（migration v47 走完整条桥）；
+  同一文件经桥层加两次 ⇒ 第二次 `docs:[]` + `skippedSameSource:1`；同一网址第二次 `duplicated:true`；
+  **SEC-6 令牌往返**（真 pick 出来的令牌能跑通 `runKbEval`，伪造令牌得到的是 `{ok:false,error:/已过期/}`）；
+  `checkKbUpdates` 给出真 `changed` 判定；**成功也是值**（停用/删除返回 `{ok:true}`，正是 `'ok' in v` 会误读的形状）；
+  `reindexKbDocs` 的 `enqueued` 是真实数（不存在的 id 被跳过）。
+- **变异实测（8 轮，四个文件每轮 sha256 核对还原）**：批量删除/停用/重建/添加文件/评测运行各处"不判失败" → 分别 1 红；
+  判别退回 `ok in v` 语义 → **2 红**（证明 `{ok:true}` 这条边界真的被守着）；
+  **preload 把 `kbId` 与 `token` 顺序写反 → 1 红**；**选卷子的通道指错 → 1 红**（这两条只有桥层用例抓得到）。
+  其中「批量停用不判失败」第一轮**存活** ⇒ 补一条按真实结果计数（不是数调用次数）的用例后才转红。
+- **仍未覆盖（诚实边界）**：这里的 `ipcRenderer` 是假的直投，**真实 Electron 进程里 `contextBridge` 的结构化克隆**
+  （函数丢失、`undefined` 参数变 `null` 之类）测不到 ⇒ B71 的"k 留空"那条仍要在真机确认；
+  真库真 embedding 跑整份卷子的耗时也仍未测（本轮替掉的还是 `embedQuery`）。
+- **校验**：typecheck 0；vitest **284 文件 / 3417 用例**全绿；build 三端通过。渲染层 + 注释为主，**dev 刷新即可**。
+
 ### V4-Iter-138 把 `KbDetail` 真挂起来：136 那句"挂不起来"是假设，被证伪
 
 - **起因**：用户说「你直接测试」，而我上一批把 B69/B70 的一半判成"只有肉眼"，写的理由是

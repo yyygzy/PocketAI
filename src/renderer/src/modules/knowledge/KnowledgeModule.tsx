@@ -19,7 +19,7 @@ import { cullStale, selectByMode, toggleSelected } from './doc-batch'
 import { consumePendingKb, OPEN_KB_EVENT } from '../../utils/palette-nav'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 
@@ -656,7 +656,8 @@ export const KbDetail: React.FC<{
     setBusy(true)
     try {
       const r = await window.pocketai.addKbFiles(kb.id)
-      toastSkippedDuplicates(r)
+      if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
+      else toastSkippedDuplicates(r)
       await refresh()
       startPolling()
     } finally {
@@ -669,6 +670,11 @@ export const KbDetail: React.FC<{
     setBusy(true)
     try {
       const r = await window.pocketai.addKbFolder(kb.id)
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        await refresh()
+        return
+      }
       // 「没有可导入的文件」只在真的是空命中时说——全被判重复的情况由下面那句交代
       if (r.docs.length === 0 && r.skippedSameSource + r.skippedSameContent === 0) {
         toast.warning(t('kb.folderNoMatch'))
@@ -715,6 +721,11 @@ export const KbDetail: React.FC<{
     setBusy(true)
     try {
       const r = await window.pocketai.reindexKbDocs(ids)
+      // safeHandle 的失败是返回值不是 reject：不判它就会把一次没入队的操作报成"已处理"
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       setSelected([])
       await refresh()
       startPolling()
@@ -735,7 +746,8 @@ export const KbDetail: React.FC<{
     try {
       for (const id of ids) {
         try {
-          await window.pocketai.setKbDocEnabled(kb.id, id, enabled)
+          const r = await window.pocketai.setKbDocEnabled(kb.id, id, enabled)
+          if (hasIpcFailed(r)) failed++
         } catch {
           failed++
         }
@@ -757,7 +769,8 @@ export const KbDetail: React.FC<{
     try {
       for (const id of ids) {
         try {
-          await window.pocketai.deleteKbDocument(id)
+          const r = await window.pocketai.deleteKbDocument(id)
+          if (hasIpcFailed(r)) failed++
         } catch {
           failed++
         }
@@ -1508,10 +1521,18 @@ const AddSourceDialog: React.FC<{
     try {
       if (mode === 'url') {
         const r = await window.pocketai.addKbUrl(kbId, url.trim())
+        if (hasIpcFailed(r)) {
+          setError(ipcFailText(r, t('common.unknownError')))
+          return
+        }
         // 同一网址不会再抓一遍：说清楚，别让用户以为点了没反应
         if (r.duplicated) toast.info(t('kb.dupUrl'))
       } else {
-        await window.pocketai.addKbText(kbId, text, title.trim())
+        const r = await window.pocketai.addKbText(kbId, text, title.trim())
+        if (hasIpcFailed(r)) {
+          setError(ipcFailText(r, t('common.unknownError')))
+          return
+        }
       }
       await onDone()
       onClose()

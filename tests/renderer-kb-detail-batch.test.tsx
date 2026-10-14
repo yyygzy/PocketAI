@@ -75,6 +75,7 @@ const listKbDocuments = vi.fn()
 const deleteKbDocument = vi.fn()
 const setKbDocEnabled = vi.fn()
 const reindexKbDocs = vi.fn()
+const addKbFiles = vi.fn()
 
 function mountDetail(props: { kbId?: string; onChanged?: () => void } = {}): void {
   mountWithProviders(
@@ -112,6 +113,7 @@ beforeEach(() => {
     setKbDocEnabled,
     reindexKbDocs,
     reindexKbDocument: vi.fn(async () => ({ ok: true })),
+    addKbFiles: addKbFiles.mockResolvedValue({ docs: [], skippedSameSource: 0, skippedSameContent: 0 }),
     listProviders: vi.fn(async () => []),
     listKbAskSessions: vi.fn(async () => []),
     getKbAskRetention: vi.fn(async () => ({ keepCount: 0, keepDays: 0 })),
@@ -250,6 +252,49 @@ describe('批量动作接到哪条通道', () => {
     fireEvent.click(batchButton(4, zh['kb.batchEnable']))
     await waitFor(() => expect(setKbDocEnabled).toHaveBeenCalledTimes(8))
     expect(setKbDocEnabled.mock.calls[4]!.slice(1)).toEqual(['d1', true])
+  })
+})
+
+describe('safeHandle 的合同：失败是返回值，不是 reject', async () => {
+  it('删除通道逐条返回 {ok:false} ⇒ 一篇都不算成功', async () => {
+    deleteKbDocument.mockResolvedValue({ ok: false, error: '数据库被锁' })
+    mountDetail()
+    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy())
+    await enterBatch()
+    fireEvent.click(batchButton(0, zh['kb.batchSelectAll']))
+    fireEvent.click(batchButton(4, zh['common.delete']))
+    await waitFor(() => expect(screen.getByText(zh['kb.batchDeleteConfirm'].replace('{n}', '4'))).toBeTruthy())
+    fireEvent.click(screen.getByText(zh['common.confirm']))
+    await waitFor(() => expect(screen.getByText(zh['kb.batchDone'].replace('{n}', '0').replace('{m}', '4'))).toBeTruthy())
+  })
+
+  it('停用里有几条被拒 ⇒「已处理 n 篇，失败 m 篇」按真实结果计，不看调用次数', async () => {
+    setKbDocEnabled.mockImplementation(async (_kb: unknown, id: string) =>
+      id === 'd2' ? { ok: false, error: '数据库被锁' } : { ok: true })
+    mountDetail()
+    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy())
+    await enterBatch()
+    fireEvent.click(batchButton(0, zh['kb.batchSelectAll']))
+    fireEvent.click(batchButton(4, zh['kb.batchDisable']))
+    await waitFor(() => expect(screen.getByText(zh['kb.batchDone'].replace('{n}', '3').replace('{m}', '1'))).toBeTruthy())
+  })
+
+  it('批量重建通道返回 {ok:false} ⇒ 说错误，不许报"已处理 2 篇"', async () => {
+    reindexKbDocs.mockResolvedValue({ ok: false, error: '知识库不存在' })
+    mountDetail()
+    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy())
+    await enterBatch()
+    fireEvent.click(batchButton(0, zh['kb.batchRetryErrors'].replace('{n}', '2')))
+    await waitFor(() => expect(screen.getByText(/知识库不存在/)).toBeTruthy())
+    expect(screen.queryByText(zh['kb.batchDone'].replace('{n}', '2').replace('{m}', '0'))).toBeNull()
+  })
+
+  it('添加文件通道失败（返回结构化失败）⇒ 要报错，不许当场崩或静默', async () => {
+    addKbFiles.mockResolvedValue({ ok: false, error: '没有权限' })
+    mountDetail()
+    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy())
+    fireEvent.click(screen.getByText(zh['kb.upload']))
+    await waitFor(() => expect(screen.getByText(/没有权限/)).toBeTruthy())
   })
 })
 
