@@ -108,7 +108,8 @@ export const kbVecRepo = {
 
   /**
    * 向量 KNN 检索（sqlite-vec，距离为欧氏距离，越小越近）。
-   * 返回的 score 转换为相似度：1 / (1 + distance)，与纯 JS 余弦分数语义一致（越大越相关）。
+   * 返回的 score 是 `1 / (1 + distance)`，只保证「越大越近」；它**不是** JS 路那个余弦分数——
+   * 向量都是单位长度时两者才同序（距离² = 2 − 2·cos），未归一化的向量下名次可能不同（见 kb-chunk.repo 的 knnSearch）。
    */
   search(
     query: Float32Array,

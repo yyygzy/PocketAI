@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { kbVecRepo } from './kb-vec.repo'
 import { buildFtsMatchQuery } from '../../knowledge/fts-query'
+import { recordPerf, logPerfDebug } from '../../steward/perf-probe'
 import type { KbChunk, RetrievedChunk } from '../../../shared/types'
 
 export interface ChunkInsert {
@@ -14,14 +15,6 @@ export interface ChunkInsert {
   sequence: number
   content: string
   embedding: Float32Array
-}
-
-export interface IndexedChunk {
-  id: string
-  docId: string
-  kbId: string
-  content: string
-  embedding: Float32Array | null
 }
 
 export interface ChunkRow {
@@ -56,6 +49,98 @@ function rowToChunk(row: ChunkRow): KbChunk {
     content: row.content,
     createdAt: row.created_at
   }
+}
+
+/**
+ * JS 兜底 KNN 扫描行数到这个量级就记一条 perf 事件（数据健康面板可见）。
+ * 定标依据是实测外推：2 万块（512 维）时旧形状峰值 +51MB / ~150ms，6 万块 +165MB / ~490ms
+ * ——真实数据攒够后再复核（同 B27 的口径）。
+ */
+const JS_KNN_REPORT_ROWS = 5000
+
+/**
+ * 有界 top-K 有序插入：只留分数最高的 `cap` 条，`top` 始终按分数降序。
+ * 每条最多前移 cap 位 ⇒ 耗时与库大小无关，内存只有 cap 条。
+ */
+function pushTopK<T extends { score: number }>(top: T[], item: T, cap: number): void {
+  if (top.length >= cap && item.score <= top[top.length - 1]!.score) return
+  let i = top.length
+  top.push(item)
+  while (i > 0 && top[i - 1]!.score < item.score) {
+    top[i] = top[i - 1]!
+    i--
+  }
+  top[i] = item
+  if (top.length > cap) top.pop()
+}
+
+/**
+ * 纯 JS 余弦 KNN（sqlite-vec 不可用时的兜底路）。
+ *
+ * 刻意**不**把整表读进数组：512 维一行就是 2KB BLOB，实测旧形状（`.all()` 连正文一起捞）
+ * 在 2 万块时让主进程峰值多要 ~51MB、6 万块 ~165MB，而一次检索要按「查询变体数 × 库数」
+ * 重复这么多遍（Multi-Query 最多 4 个变体 ⇒ 单库最多 5 遍），卡的正是主进程。
+ * 改成游标流式 + 只留 topK 条，峰值与库大小无关；正文等胜出后按 id 回填一次。
+ */
+function jsCosineKnn(query: Float32Array, kbIds: string[], topK: number): RetrievedChunk[] {
+  // 库里存着脏值（topK=0）时不能进 pushTopK——它要比较第 cap 名，cap=0 时根本没有那一条。
+  // 旧形状那时返回 slice(0,0)=空，这里保持同样的空结果而不是报错。
+  if (topK <= 0) return []
+  const db = dbService.getHandle()
+  const placeholders = kbIds.map(() => '?').join(',')
+  const t0 = performance.now()
+  const top: Array<{ chunkId: string; docId: string; kbId: string; seq: number; score: number }> = []
+  let scanned = 0
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.doc_id, c.kb_id, c.sequence, c.embedding
+       FROM kb_chunks c
+       WHERE c.kb_id IN (${placeholders}) AND c.embedding IS NOT NULL
+         AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)`
+    )
+    .iterate(...kbIds) as IterableIterator<{
+      id: string
+      doc_id: string
+      kb_id: string
+      sequence: number
+      embedding: Buffer | null
+    }>
+  try {
+    for (const r of rows) {
+      scanned++
+      const vec = bufferToFloat32(r.embedding)
+      // 维度不符（换过 embedding 模型的旧向量）不参与比较，与 vec 路只查同维度表的行为一致
+      if (!vec || vec.length !== query.length) continue
+      pushTopK(
+        top,
+        { chunkId: r.id, docId: r.doc_id, kbId: r.kb_id, seq: r.sequence, score: cosineSimilarity(query, vec) },
+        topK
+      )
+    }
+  } finally {
+    // 迭代没走完（中途抛错）也必须关掉游标，否则语句一直占着连接
+    rows.return?.()
+  }
+  const ms = performance.now() - t0
+  const detail = `rows=${scanned} kbs=${kbIds.length} topK=${topK} hits=${top.length}`
+  if (scanned >= JS_KNN_REPORT_ROWS) recordPerf('kb.knn.js', ms, detail)
+  else logPerfDebug('kb.knn.js', ms, detail)
+
+  if (top.length === 0) return []
+  const ids = top.map((t) => t.chunkId)
+  const contents = db
+    .prepare(`SELECT id, content FROM kb_chunks WHERE id IN (${ids.map(() => '?').join(',')})`)
+    .all(...ids) as Array<{ id: string; content: string }>
+  const contentById = new Map(contents.map((c) => [c.id, c.content]))
+  return top.map((t) => ({
+    chunkId: t.chunkId,
+    docId: t.docId,
+    kbId: t.kbId,
+    seq: t.seq,
+    docTitle: '', // 由调用方 join 文档标题
+    content: contentById.get(t.chunkId) ?? '',
+    score: t.score
+  }))
 }
 
 export const kbChunkRepo = {
@@ -108,21 +193,6 @@ export const kbChunkRepo = {
     dbService.getHandle().prepare('DELETE FROM kb_chunks WHERE kb_id=?').run(kbId)
   },
 
-  /** 加载某知识库全部已索引分块（含向量），用于 KNN 检索 */
-  loadIndexed(kbId: string): IndexedChunk[] {
-    const rows = dbService
-      .getHandle()
-      .prepare('SELECT * FROM kb_chunks WHERE kb_id=? AND embedding IS NOT NULL')
-      .all(kbId) as ChunkRow[]
-    return rows.map((r) => ({
-      id: r.id,
-      docId: r.doc_id,
-      kbId: r.kb_id,
-      content: r.content,
-      embedding: bufferToFloat32(r.embedding)
-    }))
-  },
-
   /** 按分块 id 批量加载向量（用于 MMR 多样性重排）；无向量的 id 不出现在结果中 */
   loadEmbeddingsByIds(ids: string[]): Map<string, Float32Array> {
     const result = new Map<string, Float32Array>()
@@ -142,7 +212,11 @@ export const kbChunkRepo = {
   },
 
   /**
-   * 余弦相似度 KNN 检索
+   * 向量 KNN 检索：sqlite-vec 可用则走原生索引，否则走**有界**的纯 JS 余弦扫描。
+   *
+   * ⚠️ 两条路的 `score` 不是同一把尺子：vec 路是 `1/(1+欧氏距离)`，JS 路是余弦相似度。
+   * 向量是单位长度时两者同序（距离²=2−2·cos），**未归一化的向量下排序可能不同**，
+   * 换 embedding 模型或旧数据没重索引时尤其要留意。检索层的相似度阈值与此无关（在 rag 里按余弦另算）。
    * @param query 查询向量
    * @param kbIds 在这些知识库中检索
    * @param topK 返回前 K 条
@@ -169,36 +243,8 @@ export const kbChunkRepo = {
       }))
     }
 
-    const db = dbService.getHandle()
-
-    // 收集候选分块（多 KB 合并检索）
-    const placeholders = kbIds.map(() => '?').join(',')
-    const rows = db
-      .prepare(
-        `SELECT c.id, c.doc_id, c.kb_id, c.sequence, c.content, c.embedding
-         FROM kb_chunks c
-         WHERE c.kb_id IN (${placeholders}) AND c.embedding IS NOT NULL
-           AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)`
-      )
-      .all(...kbIds) as ChunkRow[]
-
-    const scored: RetrievedChunk[] = []
-    for (const r of rows) {
-      const vec = bufferToFloat32(r.embedding)
-      if (!vec || vec.length !== query.length) continue
-      const score = cosineSimilarity(query, vec)
-      scored.push({
-        chunkId: r.id,
-        docId: r.doc_id,
-        kbId: r.kb_id,
-        seq: r.sequence,
-        docTitle: '', // 由调用方 join 文档标题
-        content: r.content,
-        score
-      })
-    }
-    scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, topK)
+    // sqlite-vec 不可用 ⇒ 游标流式的纯 JS 余弦兜底（见 jsCosineKnn 的内存说明）
+    return jsCosineKnn(query, kbIds, topK)
   },
 
   /**
