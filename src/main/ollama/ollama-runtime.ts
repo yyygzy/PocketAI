@@ -17,6 +17,12 @@ import { errMsg } from '../error'
 import { safeFetch } from '../net/safe-fetch'
 import { createLogger } from '../logger'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
+import {
+  parseOllamaPs,
+  parseOllamaTags,
+  type OllamaLoadedModel,
+  type OllamaModelDetail
+} from '../../shared/ollama-models'
 import type {
   OllamaRuntimeStatus,
   OllamaInstallEvent,
@@ -124,10 +130,23 @@ async function getApiVersion(): Promise<string | null> {
   return v?.version ?? null
 }
 
+async function listApiModelDetails(): Promise<OllamaModelDetail[]> {
+  const r = await apiGetJson<unknown>('/api/tags')
+  return parseOllamaTags(r)
+}
+
 async function listApiModels(): Promise<string[]> {
-  const r = await apiGetJson<{ models?: Array<{ name?: string }> }>('/api/tags')
-  if (!r?.models) return []
-  return r.models.map((m) => m.name).filter((n): n is string => typeof n === 'string')
+  // 名字列表走同一份解析，避免出现"一处只读 name、一处读全量"的两条真相
+  return (await listApiModelDetails()).map((m) => m.name)
+}
+
+/**
+ * /api/ps 的账面驻留。sizeVramBytes 是 Ollama 自己的记账，**不等于 nvidia-smi 实占**：
+ * V-0 里 ps 曾报三个模型同驻（合计恰等于显存总量），而真生成时后者把前者顶掉。
+ */
+async function listLoadedModels(): Promise<OllamaLoadedModel[]> {
+  const r = await apiGetJson<unknown>('/api/ps')
+  return parseOllamaPs(r)
 }
 
 // ---------- 便携 serve 进程 ----------
@@ -493,6 +512,10 @@ export const ollamaRuntime = {
   start: startServe,
   stop: stopServe,
   listModels: listApiModels,
+  /** 模型明细（含体积与 digest）——容量判据与判据缓存失效键的输入，V4-Iter-140 */
+  listModelDetails: listApiModelDetails,
+  /** /api/ps 的账面驻留（不等于实占，见 shared/ollama-models 注释） */
+  listLoadedModels,
   pullModel,
   abortPull,
   /** 应用退出时调用：只清理本平台启动的 serve */

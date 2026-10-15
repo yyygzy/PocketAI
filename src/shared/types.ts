@@ -14,6 +14,11 @@ export interface MemoryInfo {
 export interface GpuInfo {
   name: string
   memory?: number // bytes
+  /**
+   * 实占显存（bytes）。只有 NVIDIA 且 nvidia-smi 在场时取得到；其他平台/无驱动为 undefined。
+   * Mac 的统一内存不是显存，故意留空而不填估算值（V4-Iter-140）。
+   */
+  usedMemory?: number
   driver?: string // 驱动版本
   cuda: boolean
   mps: boolean

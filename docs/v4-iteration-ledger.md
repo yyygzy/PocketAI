@@ -66,6 +66,22 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-140 本地容量判据底座：显存实占与模型体积进采集层（只出判据，不改任何调用点）
+
+- **为什么先做这一层**：`docs/agent-multi-role-plan.md` 里"按硬件环境启动合适的 agent 方案"要成立，判据输入必须先在主进程拿得到。此前 `ollama-runtime.ts:128` 读 `/api/tags` 只留 `name`——**体积与量化拿到就丢**；`steward/hardware.ts` 的 GPU 只有总量（WMI `AdapterRAM` / 注册表 `qwMemorySize`），**没有"当前已用"**；`/api/ps` 全仓没有读者。
+- **采集层三处改动**：① 新增 `src/shared/ollama-models.ts`——`parseOllamaTags` 保留 `sizeBytes/digest/parameterSize/quantizationLevel`，`parseOllamaPs` 保留 `size_vram/expires_at`。纯函数不放 `ollama-runtime.ts`，因为那个模块依赖 electron/portable、测试里整块被打桩（同 V4-Iter-123 那条）。② `ollama-runtime.ts` 的 `listModels` 改走同一份解析（一处真相，避免"名字一条路、体积另一条路"），新增 `listModelDetails` / `listLoadedModels` 并挂进 `ollamaRuntime` 导出对象。③ `hardware.ts` 新增 `nvidia-smi --query-gpu=name,memory.total,memory.used` 的**实占**采集，拆成两个纯函数 `parseNvidiaSmiCsv` + `applyNvidiaRows`，`GpuInfo` 加 `usedMemory?: number`（字节）。
+- **三条刻意的"不填"**（都配了反向对照，属诚实边界而非风格洁癖）：解不出"已用"时**不写 0**（把 `null` 当 0 等于谎报"显存全空闲"）；名字对不上时**绝不按数组顺序硬配**（WMI 与 nvidia-smi 的多卡顺序不保证一致，只有"单卡对单卡"才兜底）；Mac 分支根本不接（统一内存不是显存，留空比填估算值诚实）。
+- **判据层 `src/main/agent/local-capacity.ts`**：`planLocalCapacity({ totalVramMiB, numCtxSetByApp })` → `{ maxConcurrentChatSlots, allowChatEmbedOverlap, rolesMayUseDistinctModels, measured, reasons }`。
+  - **只有表、没有公式**：目前仅一行实测（≤4096MiB，本机 GTX 1050 Ti / Ollama 0.33.1）；其余一律 `measured: false` + 理由码 `no-measurement-for-bucket`。**输入里刻意不接受权重体积与 `/api/ps` 驻留条数**，因为 V-0 已证两者都不能用于放宽：3b + bge-m3 权重合计 2.7GiB < 4GiB 仍被逐；ps 曾报三个同驻、合计恰等于显存总量，而真生成时互相顶掉。
+  - 大档（6/12/24GiB）**不因"显存多"而放宽**——那正是方案初稿犯过的错（把一次驱逐当成容量本质）。要放宽必须先补第二台机器的实测行。
+  - `reasons` 用码不用中文（`chat-embed-exclusive` / `distinct-models-need-small-ctx` / `concurrency-buys-nothing-measured` …），界面按码出文案，避免"测试解析中文"那种脆弱断言。
+- **测试**：新增 `tests/local-capacity.test.ts` 10 例、`tests/ollama-models.test.ts` 8 例、`tests/hardware-nvidia-usage.test.ts` 17 例（含 **`getGpus` 接线 3 例**：整块打桩 `node:child_process`，让"函数写对了但没被调用"这种形状必须转红；一条"nvidia-smi 命令失败"的用例先断 `gpus.length > 0`，否则空数组上的 `every` 是恒真空断言）。fixture 全部取自今天探针的真实输出（`NVIDIA GeForce GTX 1050 Ti, 4096, 2041`、tags 里 1,929,912,432B 等），不是手搓理想形状——第一版我把 WMI 桩写成原始属性名 `Name/AdapterRAM`，而 `GPU_PS_SCRIPT` 实际输出小写 `name/memory`，接线用例当场红。
+- **八轮变异实测全部转红**：去掉 attach 接线 → 1 红；把解不出的已用当 0 → 2 红；按顺序硬配 nvidia 行 → 1 红；`size` 偷偷收字符串 → 1 红；不跳过无 `name` 条目 → 1 红；大档当实测档放行 → 2 红；脏值（0/负/NaN）当有效显存 → 2 红；跨模型角色无条件放行 → 1 红。每轮 sha256 核对复原，`git status` 零残留。
+- **验证**：typecheck 0；vitest **287 文件 / 3451 例**全绿（+1 skipped 是 Mac-only 那条）；build 三端 exit=0。
+- **行为影响**：零。没有任何调用点读这些判据——第一个消费者是 V4-Iter-141 的槽位调度。唯一新增的系统调用是 `nvidia-smi`，且只在采集到 cuda 卡时才试（3s 超时，失败即当未测得）。
+- **顺带记两条尾巴**：`kb.*` perf 标签仍不带 `provider/model`（`rag.ts:438` 等）——留给 141，因为那时它才成为判据输入；`/api/ps` 的账面值与实占之间的差（V-0 里那次"三个同驻"）已写进 `OllamaLoadedModel` 的注释，防止后来者拿它当显存真相。
+- **未实测** ⇒ 验收清单 **B72**：非 NVIDIA 驱动的 Windows 机器上 `nvidia-smi` 的真实失败形状（我按 ENOENT/超时处理，未在真机验证）；多卡机器上 WMI 与 nvidia-smi 的名字一致率。主进程改动，**须重启 dev**。
+
 ### V4-Iter-139 真桥层往返（preload ⇄ 主进程 handler）自证，并修掉我自己在 135/136/137 埋的一批"失败被当成功"
 
 - **为什么要这一层**：此前所有用例要么"组件里调桩"，要么"主进程里调 handler"，**中间的桥没人走**——

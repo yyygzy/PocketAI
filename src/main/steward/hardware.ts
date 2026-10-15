@@ -103,10 +103,100 @@ function getGpusWin32(): GpuInfo[] {
     }))
 }
 
+// ─── 实占显存（V4-Iter-140）────────────────────────────────────────
+//
+// 为什么不能从 WMI 拿：Win32_VideoController 只有总量，没有"当前已用"。
+// 为什么只认 nvidia-smi：它是唯一能在无驱动之外给出**实占**的本地命令；
+// AMD/Mac/CPU-only 一律留 undefined（判据据此退回保守档），**不填估算值**——
+// 填了就会被当成测得的事实，这正是 V-0 之前我犯过的错。
+const NVIDIA_SMI_ARGS = ['--query-gpu=name,memory.total,memory.used', '--format=csv,noheader,nounits']
+
+export interface NvidiaSmiRow {
+  name: string
+  /** MiB；解析不出数字时为 null（不许当 0） */
+  totalMiB: number | null
+  usedMiB: number | null
+}
+
+/** nvidia-smi 的 CSV 输出解析（纯函数，用例直接喂真实输出当 fixture） */
+export function parseNvidiaSmiCsv(text: string | null | undefined): NvidiaSmiRow[] {
+  const out: NvidiaSmiRow[] = []
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(',').map((p) => p.trim())
+    const name = parts[0] ?? ''
+    if (!name) continue
+    // nounits 出来是 "4096" / "0"；某些驱动会带 " MiB" 后缀，剥掉非数字再解
+    const toMiB = (v: string | undefined): number | null => {
+      const digits = String(v ?? '').replace(/[^\d.]/g, '')
+      if (!digits) return null
+      const n = Number(digits)
+      return Number.isFinite(n) && n >= 0 ? Math.round(n) : null
+    }
+    out.push({ name, totalMiB: toMiB(parts[1]), usedMiB: toMiB(parts[2]) })
+  }
+  return out
+}
+
+function queryNvidiaSmi(): NvidiaSmiRow[] {
+  if (process.platform === 'darwin') return []
+  // Windows 下 System32 里是 nvidia-smi.exe；先试带扩展名，PATH 解析失败再试裸名
+  const exes = process.platform === 'win32' ? ['nvidia-smi.exe', 'nvidia-smi'] : ['nvidia-smi']
+  for (const exe of exes) {
+    try {
+      const out = execFileSync(exe, NVIDIA_SMI_ARGS, { encoding: 'utf8', timeout: 3000 })
+      const rows = parseNvidiaSmiCsv(out)
+      if (rows.length > 0) return rows
+    } catch {
+      // 命令不存在 / 驱动不在场：当作"未测得"，交由调用方退回保守档
+    }
+  }
+  return []
+}
+
+const normalizeGpuName = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim()
+
+/**
+ * 把 nvidia-smi 的行挂到 WMI/lspci 采到的 GPU 上（纯函数：用例直接喂两张表，不用起进程）。
+ * 匹配不上一律不挂 —— **绝不按数组顺序硬配**，多卡机器上两边顺序并不保证一致。
+ */
+export function applyNvidiaRows(gpus: GpuInfo[], rows: NvidiaSmiRow[]): GpuInfo[] {
+  if (rows.length === 0) return gpus
+  return gpus.map((g) => {
+    if (!g.cuda) return g
+    const target = normalizeGpuName(g.name)
+    const row =
+      rows.find((r) => normalizeGpuName(r.name) === target) ??
+      (gpus.length === 1 && rows.length === 1 ? rows[0] : undefined)
+    if (!row) return g
+    if (row.usedMiB === null) {
+      // 解不出"已用"就什么都不写 —— 把 null 当 0 等于谎报"显存全空闲"
+      const total = g.memory ?? (row.totalMiB === null ? undefined : row.totalMiB * 1048576)
+      return total === undefined || total === g.memory ? g : { ...g, memory: total }
+    }
+    return {
+      ...g,
+      usedMemory: row.usedMiB * 1048576,
+      // WMI 那边偶有 AdapterRAM 缺失/溢出的卡，nvidia-smi 的总量补得上就顺手补，补不上维持原值
+      memory: g.memory ?? (row.totalMiB === null ? undefined : row.totalMiB * 1048576)
+    }
+  })
+}
+
+/**
+ * 只有 NVIDIA 卡在场才去探测：核显机器不必为一条注定失败的命令付进程创建开销。
+ * Mac 走不到这里——统一内存不等于显存，留空比填估算值诚实。
+ */
+function attachUsedMemory(gpus: GpuInfo[]): GpuInfo[] {
+  if (!gpus.some((g) => g.cuda)) return gpus
+  return applyNvidiaRows(gpus, queryNvidiaSmi())
+}
+
 function getGpus(): GpuInfo[] {
   try {
     if (process.platform === 'win32') {
-      return getGpusWin32()
+      return attachUsedMemory(getGpusWin32())
     }
     if (process.platform === 'darwin') {
       const out = execSync('system_profiler SPDisplaysDataType', { encoding: 'utf8' })
@@ -124,7 +214,8 @@ function getGpus(): GpuInfo[] {
     for (const line of out.trim().split('\n')) {
       if (line) gpus.push({ name: line.trim(), cuda: /nvidia/i.test(line), mps: false })
     }
-    return gpus
+    // lspci 的名字与 nvidia-smi 不同形，单卡时靠"一对一"兜底；多卡对不上就不填（见 applyNvidiaRows）
+    return attachUsedMemory(gpus)
   } catch {
     return []
   }
