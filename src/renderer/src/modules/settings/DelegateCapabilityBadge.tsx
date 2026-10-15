@@ -30,13 +30,36 @@ export const DelegateCapabilityBadge: React.FC<{
   /** 这台正在探测中（按钮要禁用，避免连点打满本地模型） */
   probing: boolean
   onProbe: () => void
-}> = ({ entry, probing, onProbe }) => {
+  /** 决策③：开/关这台模型的顺序委派（默认关） */
+  onToggleDelegation: (on: boolean) => void
+}> = ({ entry, probing, onProbe, onToggleDelegation }) => {
   const { t } = useI18n()
   const cap = entry?.capability ?? 'unknown'
   const hasVerdict = !!entry && entry.capability !== 'unknown'
+  // 只有"判定是可当管控者且未过期"才允许开（与主进程 setDelegationEnabled 的前置条件同源）
+  const canEnable = !!entry && entry.capability === 'native_tools_ok' && !entry.stale
+  const blockedReason = !entry
+    ? t('provider.capDelegationNeedsProbe')
+    : entry.stale
+      ? t('provider.capDelegationStale')
+      : t('provider.capDelegationNeedsProbe')
 
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      {entry && (
+        <label
+          className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]"
+          title={canEnable ? t('provider.capDelegationHint') : blockedReason}
+        >
+          <input
+            type="checkbox"
+            checked={!!entry.delegationEnabled}
+            disabled={!canEnable}
+            onChange={(e) => onToggleDelegation(e.target.checked)}
+          />
+          {t('provider.capAllowDelegation')}
+        </label>
+      )}
       {entry && (
         <span
           data-capability={entry.capability}

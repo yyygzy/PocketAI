@@ -1511,6 +1511,12 @@ export const en: Record<string, string> = {
   'provider.capUnknownReason': 'Some runs failed or too few samples; previous verdict kept',
   'provider.capStale': '(model updated; re-probe)',
   'provider.capHint': 'Asks the model to delegate a task to a sub-agent and checks for a native tool call; 3/3 runs required before it counts as able to orchestrate',
+  'provider.capAllowDelegation': 'Allow sequential delegation',
+  'provider.capDelegationHint': 'If on, this agent may hand sub-tasks to sub-agents (each run has an LLM-call cap; off by default)',
+  'provider.capDelegationNeedsProbe': 'Probe first — it must come back as “Can orchestrate” before this can be enabled',
+  'provider.capDelegationStale': 'Model changed; re-probe before enabling',
+  'provider.capDelegationOn': 'Sequential delegation enabled for this model',
+  'provider.capDelegationOff': 'Sequential delegation disabled for this model',
   'provider.capSaveFirst': 'Save this provider first, then probe whether it can delegate',
 
   // ── Ollama portable runtime ──

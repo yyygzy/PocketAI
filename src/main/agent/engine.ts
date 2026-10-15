@@ -54,14 +54,33 @@ import {
   buildTextProtocolPrompt
 } from '../../shared/text-tool-protocol'
 import { isTextProtocolForced } from './text-protocol-prefs'
+import { isDelegationEnabledFor } from './delegate-prefs'
+import {
+  budgetExhausted,
+  canOpenChild,
+  childToolSurface,
+  DELEGATE_TOOL_NAME,
+  formatDelegationResult,
+  newRunBudget,
+  parseDelegateArgs,
+  type RunBudget
+} from '../../shared/delegation-rules'
+import { planChildRun } from './delegation'
 
 const MAX_STEPS = 10
 const logger = createLogger('agent')
 
+/**
+ * 每个 requestId 的"父运行是谁"（144 委派树归因）。
+ * 为什么是一张表而不是让 12 个 safeTrace 调用点各自传：漏一处就等于那类步骤静默失去归因，
+ * 而这类"漏接线"在 CI 里几乎看不出来（V4-Iter-141 同族教训）。run() 开头登记、finally 清理。
+ */
+const traceParents = new Map<string, string | null>()
+
 /** 安全写入 trace，防止 DB 问题阻塞主流程 */
 function safeTrace(rec: Parameters<typeof agentTraceRepo.insert>[0]): void {
   try {
-    agentTraceRepo.insert(rec)
+    agentTraceRepo.insert({ ...rec, parentRequestId: traceParents.get(rec.requestId) ?? null })
   } catch (e) {
     logger.warn(`[agent] trace 写入失败: ${errMsg(e)}`)
   }
@@ -97,6 +116,14 @@ type AgentState = 'llm' | 'tools' | 'final'
 interface AgentRunContext {
   requestId: string
   conversationId: string
+  /** 144：子 run 沿用父的助手（权限与提示词同源），委派时按它建子会话 */
+  assistantId: string | null
+  /** 144：委派出来的子 run 指回的父 request；用户自己发起的运行是 null */
+  parentRequestId: string | null
+  /** 144：整棵编排树共享的 LLM 调用预算（子 run 拿的是同一个对象引用） */
+  budget: RunBudget
+  /** 144：这一轮是不是子 run（子级不再看见 delegate_task，也不许再往下派） */
+  asChild: boolean
   target: ChatTarget
   messages: AdapterChatMessage[]
   master: AbortController
@@ -677,10 +704,23 @@ class AgentEngine {
     this.controllers.get(requestId)?.abort()
   }
 
-  async run(payload: SendMessagePayload, emit: EmitFn): Promise<void> {
+  /**
+   * `internal` 只给主进程内部用（144 的子 run）：渲染层经 IPC 传不进来，
+   * 因为 `chat:send` 的入参走 zod 且是**非严格对象**——未声明的键会被剥掉，
+   * 所以外部伪造不了 `asChild` / `budget`（这条是 94 那批"schema 与调用方实际载荷"教训的反向用法）。
+   */
+  async run(
+    payload: SendMessagePayload,
+    emit: EmitFn,
+    internal?: { parentRequestId?: string; budget?: RunBudget; asChild?: boolean }
+  ): Promise<void> {
     const { requestId, conversationId, content, assistantId, targets, unattended } = payload
     if (!targets || targets.length === 0) throw new Error('未选择模型')
     const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
+    const asChild = internal?.asChild === true
+    const parentRequestId = internal?.parentRequestId ?? null
+    const budget = internal?.budget ?? newRunBudget()
+    traceParents.set(requestId, parentRequestId)
 
     // 解析助手配置
     let effectivePrompt = ''
@@ -725,7 +765,18 @@ class AgentEngine {
     }
 
     // 工具 schema 与 {{tools}}（模板没写占位就不必渲染文本清单，见 DEFAULT_AGENT_PROMPT 上方说明）
-    const tools = toolRegistry.filterByPermissions(toolPermissions)
+    /**
+     * 工具面 —— 144 的委派开关就落在这**一处**（口径同源，见 delegate-prefs 的注释）：
+     *  · 父 run：只有用户点名允许这台模型委派（决策③：默认关）才留着 `delegate_task`；
+     *    开关没开就**根本不进清单**，而不是"看得见但执行被拒"（那是 V4-Iter-118 那轮的形状）。
+     *  · 子 run：面 = 父同款筛法的结果，再减去 `delegate_task` 与 confirm/deny 类工具 ——
+     *    "子级授权 ⊆ 父级"因此是结构性成立的，不需要再去读一遍助手的 tool_permissions。
+     */
+    const surface = toolRegistry.filterByPermissions(toolPermissions)
+    const delegationEnabled = !asChild && isDelegationEnabledFor(target.providerId, target.model)
+    const tools = asChild
+      ? childToolSurface(surface)
+      : surface.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
     /**
      * 用户点名为"走文本协议"的模型（§4.4-⑦）：首轮就不传 tools，改由 system prompt 里的协议段
      * 承载工具清单。与"端点报 400 才自动降级"是两条独立入口，共用同一个注入 helper。
@@ -831,7 +882,9 @@ class AgentEngine {
     // 原样把授权表交给 isToolAllowedBy 判定：'*' 的含义（只覆盖内置）写在那一处的注释里。
     // 这里曾把 '*' 之外的逐条 id 全丢掉（`includes('*') ? ['*'] : …`），于是 `*` 助手
     // 即使点名勾上了某条 MCP 工具，发给模型的清单里有它、执行时却报 TOOL_NOT_ALLOWED。
-    const allowedToolIds = new Set<string>(toolPermissions)
+    // 子 run 例外：授权必须**物化成具体 id**（父面筛出来的那几条），不许带着 '*' 往下传——
+    // 否则"子级不得扩张"这条只能靠注释保证（方案 §144 硬规矩①）。
+    const allowedToolIds = asChild ? new Set<string>(tools.map((t) => t.id)) : new Set<string>(toolPermissions)
 
     // 显式规划阶段（Plan-and-Execute）：
     // 首轮对话（无历史工具调用）先让 LLM 输出执行计划，注入 system prompt 引导后续执行。
@@ -893,6 +946,10 @@ class AgentEngine {
     const ctx: AgentRunContext = {
       requestId,
       conversationId,
+      assistantId: assistantId ?? null,
+      parentRequestId,
+      budget,
+      asChild,
       target,
       messages,
       master,
@@ -930,6 +987,16 @@ class AgentEngine {
           replanned = true
           this.runReplanStep(ctx)
           continue
+        }
+        /**
+         * 预算闸（方案 §144：本轮编排的总 LLM 调用数）。**只掐子 run**，不掐父 run——
+         * 父 run 一直由 maxSteps/重规划管着，把它也纳入新闸门等于给既有单代理路径引入回归
+         * （同 140 那条纪律："不把没数据实现成变慢"）。子 run 触顶就带着已做到的步骤进降级收敛，
+         * 而不是抛错让整次编排失败：宁可拿到半份结果，也不要用户等了一场空。
+         */
+        if (ctx.asChild && budgetExhausted(ctx.budget)) {
+          logger.warn(`[agent] 委派预算触顶（${ctx.budget.used}/${ctx.budget.max}），子 run 提前收敛`)
+          break
         }
 
         ctx.stepCount++
@@ -994,6 +1061,9 @@ class AgentEngine {
     } finally {
       clearTimeout(loopTimer)
       this.controllers.delete(requestId)
+      // 归因表必须跟着清理：漏了它，同一个 requestId 的残留会把以后某轮的 trace
+      // 挂到别的父运行上（归因错比没归因更难查）
+      traceParents.delete(requestId)
     }
   }
 
@@ -1007,6 +1077,9 @@ class AgentEngine {
   private async runLLMStep(ctx: AgentRunContext, stepIndex: number): Promise<AgentState> {
     const { conversationId, target, messages, master, userMsg, tools, defaultParams, sources, emit } = ctx
     const stepStart = Date.now()
+    // 预算按"整棵编排树共享一个计数器"消费（父与所有子用的是同一个对象引用）。
+    // 记在 LLM 步入口而不是结束时：触顶那一轮不该再发出去。
+    ctx.budget.used++
 
     // 创建本轮 assistant 占位消息
     const assistantMsg = messageRepo.insert({
@@ -1458,6 +1531,16 @@ class AgentEngine {
         toolCall: tc
       })
 
+      /**
+       * 委派不是"执行一个工具"，而是"再跑一轮"：所以在分类与执行之前就按名字截走。
+       * 位置刻意在 `emit(tool_call)` **之后**：分步明细里要看得见"派了谁、去做什么"，
+       * 而 registry.execute 永远碰不到它（delegate-tool.ts 里那条 execute 只是纵深防御）。
+       */
+      if (tc.function.name === DELEGATE_TOOL_NAME) {
+        results[i] = await this.runDelegationStep(ctx, tc)
+        continue
+      }
+
       if (classification.decision === 'deny') {
         // BAD_ARGS（参数 JSON 解析失败）走富文本错误，命中下方修正引导注入；
         // 其余 deny 原因按安全策略拒绝处理。
@@ -1736,6 +1819,86 @@ class AgentEngine {
   }
 
   // ─── 原有辅助方法 ──────────────────────────────────────────────
+
+  /**
+   * 执行一次委派（144 的顺序形态：父等子做完再继续）。
+   *
+   * 失败一律回成 `isError` 的工具结果而**不抛出**：抛出去会让整轮运行进 error 分支，
+   * 可"某个子代理没做好"本来是父代理该看见并改道的信息，不是系统崩溃（父完全可以换个角色再派、
+   * 或自己把活干完）。预算与开关两条闸门都在这里再判一次——与工具面筛除是**同一个谓辞**
+   * （`isDelegationEnabledFor` / `delegation.ts` 的预算函数），不是第二份口径。
+   */
+  private async runDelegationStep(ctx: AgentRunContext, tc: ToolCall): Promise<ToolResult> {
+    const fail = (content: string): ToolResult => ({
+      toolCallId: tc.id,
+      name: tc.function.name,
+      content,
+      isError: true
+    })
+
+    let args: Record<string, unknown>
+    try {
+      args = JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>
+    } catch {
+      return fail(badArgsError(tc.function.arguments, 'JSON 格式非法（委派参数必须是 {"role","task"}）'))
+    }
+    const parsed = parseDelegateArgs(args)
+    if (!parsed.ok) return fail(`DELEGATE_BAD_ARGS: ${parsed.error}`)
+
+    if (!isDelegationEnabledFor(ctx.target.providerId, ctx.target.model)) {
+      // 清单里本来不该有它；走到这里说明模型凭空调了这个名字（或开关刚被关掉）
+      return fail('DELEGATION_DISABLED: 这台模型未被允许委派，请在「设置 → 模型服务商」打开「允许顺序委派」')
+    }
+    if (!canOpenChild(ctx.budget)) {
+      return fail(`DELEGATE_CHILD_LIMIT: 本轮编排最多开 ${ctx.budget.maxChildren} 条子会话，已用满`)
+    }
+    if (budgetExhausted(ctx.budget)) {
+      return fail(`DELEGATE_BUDGET_EXHAUSTED: 本轮模型调用预算已用尽（${ctx.budget.used}/${ctx.budget.max}）`)
+    }
+
+    const { childConversationId, payload } = planChildRun({
+      parentConversationId: ctx.conversationId,
+      assistantId: ctx.assistantId,
+      role: parsed.role,
+      task: parsed.task,
+      target: ctx.target
+    })
+    ctx.budget.children++
+
+    // 子 run 的事件不外发：144 只让用户看见"父派了谁、拿回什么"（角色标签与子步展开是 146 的界面项），
+    // 而 useAgentChat 第一行就按 requestId 过滤，转发过来也只会静默丢掉。
+    // 最终回答从 emit 里接 —— run() 没有返回值，DONE/ERROR 就是它既有的出口。
+    let finalContent = ''
+    let childError = ''
+    const childEmit: EmitFn = (channel, data) => {
+      const evt = data as { requestId?: string; fullContent?: string; error?: string }
+      if (evt.requestId !== payload.requestId) return
+      if (channel === IPC.AGENT_DONE_EVENT) finalContent = evt.fullContent ?? ''
+      else if (channel === IPC.AGENT_ERROR_EVENT) childError = evt.error ?? '子代理运行失败'
+    }
+
+    // 父中止 ⇒ 子立即中止。不接这一条就会留下"父已经没了还在跑"的孤儿子 run，
+    // 而它占的正是本机那张卡的显存（M5/M6 那两条实测说的就是这个代价）。
+    const onParentAbort = (): void => {
+      this.abort(payload.requestId)
+    }
+    ctx.master.signal.addEventListener('abort', onParentAbort)
+    try {
+      await this.run(payload, childEmit, { parentRequestId: ctx.requestId, budget: ctx.budget, asChild: true })
+    } catch (e) {
+      return fail(`子代理（${parsed.role}）运行失败：${errMsg(e)}`)
+    } finally {
+      ctx.master.signal.removeEventListener('abort', onParentAbort)
+    }
+
+    if (childError) return fail(`子代理（${parsed.role}）失败：${childError}`)
+    if (!finalContent.trim()) return fail(`子代理（${parsed.role}）没有产出内容`)
+    return {
+      toolCallId: tc.id,
+      name: tc.function.name,
+      content: formatDelegationResult({ role: parsed.role, childConversationId, content: finalContent })
+    }
+  }
 
   private async executeWithTimeout(
     tc: ToolCall,

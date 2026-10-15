@@ -127,15 +127,29 @@ V-0 跑完后补一条口径修正（写在这里以免有人再按初稿理解�
 - 验收：**B77**（🔶 CI 已证结构与升级路径 —— `agent-role-lineage-migration-real-db.test.ts` 8 例，含"旧行读成 NULL 而不是崩"
   与"父会话统计不被子运行污染"两条反向对照；**真机那半只能你验**：SQLCipher 老库升 v48 后应用照常启动、旧会话与分步明细一字不变）。
 
-### V4-Iter-144 `delegate_task` 内置工具 + 子 run（顺序形态）
-- 落点：新增内置工具（注册进 `src/main/tools/registry.ts`）；执行分支在 `engine.ts:1441-1525` 处 fork：**直调 `agentEngine.run`，绕开 `chat-service.ts:174` 的会话锁**（同会话走 `send` 必自锁死：`withConversationLock` 把 agent 分支整个包住）。
-- 子 run 三条硬规矩：① 工具白名单 ⊆ 父授权（继承 `resolveAgentToolPermissions` `engine.ts:222-229`，禁止子级出现 `'*'` 扩张）；② `kbIds` ⊆ 父 `kbIds`；③ `unattended: true`，且**派发前**就把 `confirm` 类工具从子清单里剔除——M7/源码都表明让它撞闸只会得到一句 `工具 X 需人工确认，但当前为无人值守场景，请在桌面端操作`（`engine.ts:1478-1485`）塞回上下文，用户既看不到弹窗也没得到结果。
-- **143 落地后留给 144 的三条**（v48 只建了列，这三条都是写入/呈现侧，别再当"以后再说"）：
-  ① 创建子会话时必须写 `parent_conversation_id` + `role_key`，且**会话列表默认只取 `parent_conversation_id IS NULL`**（否则委派一跑，用户的会话列表被机器会话灌满）；
-  ② 删除父会话时对子会话的级联口径要显式定（建议：随父删，且删除确认里带上"含 N 个子会话"）；
-  ③ 会话导出/导入**不带** lineage——`conversationRecordSchema` 是非严格对象，新字段会被静默剥掉；144 若想让导入保住归属，要显式改 schema，不能以为"列在库里就会跟着走"。
-- 预算闸：父 `MAX_STEPS=10` + 触顶 `+5`（`engine.ts:58/80`）本身不管总量 ⇒ 新增"本轮总 LLM 调用数 ≤ N"，N 由 140 判据给（入门档建议 3 角色 × 5 步 = 15 次，按 M7 热态 1.34s/次 ⇒ 单编排 ≥ 20s，必须先让用户看见这个预估）。
-- 验收：B78（CI：真桥层 + 真库，钉"子级拿不到父级没有的工具/库""confirm 类不进子清单""父不锁死：子 run 期间同会话可再发消息"）、B79（CI：预算闸触顶时的降级文案与 trace 行数）。
+### V4-Iter-144 `delegate_task` 内置工具 + 子 run（顺序形态）——已落地 2026-10-15
+- **落地状态与两处偏离**：机制已进真链（`tests/agent-delegation-real-chain.test.ts` 15 例、十二轮变异各 1–9 红）。
+  ① 决策③ 的开关落点从"146 的判据屏"改成**142 已有的那屏**（设置 → 模型服务商 → 徽标旁「允许顺序委派」），
+  因为开关必须与判定同屏才讲得清"探到 ≠ 打开"；判据屏到 146 做汇总。
+  ② 本批**不转发子 run 的每一步**到界面（父只看得到一次 `delegate_task` 调用与结果）——角色标签与跳进子会话留给 146。
+- **纯规则住在 `shared/delegation-rules.ts`**：工具注册表也要用这些常量，而建子会话要碰库；两者同文件会把 electron 链
+  传染给所有引用内置工具的测试（当场红两个文件）。规则与建会话因此分家。
+- **预算只掐子 run**：`DELEGATION_MAX_LLM_CALLS = 15`（3 角色 × 5 步，M7 1.34s/次 + 142 实测 8.5–18.4s/3 发），
+  父 run 继续由 `maxSteps` + 重规划管——新闸门不给既有路径引入回归。子会话数上限 3。
+- 验收：**B78 🔶**（CI 已证 ⊆/不递归/confirm 摘除/独立会话看不到父上下文/归因/列表过滤/级联删除/触顶收敛/中止传播；
+  真机只剩观感与真实耗时体感）、**B79 ✅（CI）**（含一条空断言被补上对照组的过程，见台账 144）。
+- **145 的入口条件（本批刻意没做）**：跨模型角色要 `rolesMayUseDistinctModels` **且**这些角色都不走 embedding 检索链（M10）；
+  本批 `planChildRun` 固定沿用父的 provider+model，改这一处即可接上。
+
+- **施工图怎么落地的（保留原判断，标注成不成立/改成什么）**：
+  · fork 点确实在执行分支，但**按工具名截走**（`runToolsStep` 里 `name === 'delegate_task'` 就进 `runDelegationStep`），
+    而不是给 registry 加一条能跑的实现——委派不是"执行一个工具"而是"再跑一轮"；registry 那条 execute 只回一句明确失败。
+  · "同会话直调 `send` 会自锁死"成立：`withConversationLock` 按 conversationId 串、Agent 分支整块被包住，
+    所以独立会话（不同 id）直调 `agentEngine.run` 不碰父锁；父 run 期间同会话再发消息仍是**排队**而不是丢。
+  · 三条硬规矩：⊆ 靠"用父已筛好的面再裁"结构性成立；`kbIds` 因同一个助手而**天然相等**（没有扩张路径；将来若允许子换助手要另判）；
+    `unattended: true` + 派发前摘掉 confirm 类，双道。
+  · 143 留给 144 的三条：① 写 lineage + 列表默认过滤 ✅；② 删父级联 ✅（确认文案带条数没做——删除入口在会话侧栏，146 一起改）；
+    ③ 导出/导入仍**不带** lineage（`conversationRecordSchema` 非严格会静默剥字段），这条**留给以后显式改 schema**，不许以为"列在库里就会跟着走"。
 
 ### V4-Iter-145 角色并发（只在容量判据允许时开）
 - 落点：141 的槽位 + 144 的子 run。判据按 V-0 改成两条合取：`rolesMayUseDistinctModels` **且**「这些角色都不走 embedding 检索链」——前者在 4GB 机上 ctx≤2048 时其实成立（M3 更正后），后者不成立（M10：一走检索就互相顶出）。只写前一条会把低配档错判成"可以开"。

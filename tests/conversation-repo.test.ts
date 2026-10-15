@@ -261,6 +261,25 @@ describe('buildConvListQuery — 列表过滤/排序条件', () => {
     expect(state.lastSql).toContain('EXISTS(SELECT 1 FROM conversation_drafts d WHERE d.conversation_id = c.id) AS has_draft')
     expect(list[0]!.hasDraft).toBe(true)
   })
+
+  // 144：委派一跑就会多出几条机器会话，列表默认必须看不见它们
+  it('默认排除子代理会话；includeSubSessions 才带出（正向 + 反向对照）', () => {
+    expect(buildConvListQuery({}).where).toContain('parent_conversation_id IS NULL')
+    expect(buildConvListQuery({ archivedOnly: true }).where).toContain('parent_conversation_id IS NULL')
+    expect(buildConvListQuery({ includeSubSessions: true }).where).not.toContain('parent_conversation_id')
+    // 逃生口是 opts 传进来的，不是把默认改掉
+    expect(buildConvListQuery({ includeSubSessions: false }).where).toContain('parent_conversation_id IS NULL')
+  })
+
+  it('create() 写 lineage：空串按"没有父"处理（存空串会永远匹配不上 IS NULL）', () => {
+    conversationRepo.create({ title: '子会话', parentConversationId: 'p1', roleKey: 'researcher' })
+    expect(state.lastSql).toContain('parent_conversation_id, role_key')
+    expect(state.lastParams).toEqual(expect.arrayContaining(['p1', 'researcher']))
+    conversationRepo.create({ title: '用户会话', parentConversationId: '   ', roleKey: '' })
+    // INSERT 的绑定值末尾两位就是 parent/role
+    const tail = state.lastParams.slice(-2)
+    expect(tail).toEqual([null, null])
+  })
 })
 
 describe('conversationRepo 草稿读写（getDraft/setDraft）', () => {

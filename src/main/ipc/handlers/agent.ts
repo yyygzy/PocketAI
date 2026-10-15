@@ -17,10 +17,11 @@ import {
   calendarConfigSchema,
   toolApproveResponseSchema,
   textProtocolToggleSchema,
-  delegateProbeSchema
+  delegateProbeSchema,
+  delegateToggleSchema
 } from '../../../shared/schemas/agent'
 import { listTextProtocolModels, setTextProtocolModel } from '../../agent/text-protocol-prefs'
-import { listDelegateCapabilitiesWithStaleness, probeDelegateCapability } from '../../agent/delegate-capability'
+import { listDelegateCapabilitiesWithStaleness, probeDelegateCapability, setDelegationEnabled } from '../../agent/delegate-capability'
 import { idSchema } from '../../../shared/schemas/providers'
 
 const log = createLogger('agent')
@@ -138,6 +139,15 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string }) =>
       probeDelegateCapability(payload.providerId, payload.model),
     argsSchema(delegateProbeSchema)
+  )
+  // 决策③（2026-10-15 用户选定：一律不开、手动控制）：开/关某台模型的顺序委派。
+  // 前置条件（判定必须是"可当管控者"且未过期、不得同时开着文本协议）只在主进程这一处判，
+  // 渲染层拿到拒绝原因就照实说——不许界面先点亮开关再让引擎偷偷不认。
+  safeHandle(
+    IPC.AGENT_SET_DELEGATE_ENABLED,
+    (_e, payload: { providerId: string; model: string; on: boolean }) =>
+      setDelegationEnabled(payload.providerId, payload.model, payload.on),
+    argsSchema(delegateToggleSchema)
   )
 
   // 渲染端对工具审批弹窗的应答

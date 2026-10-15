@@ -1511,6 +1511,12 @@ export const zh: Record<string, string> = {
   'provider.capUnknownReason': '有请求失败或样本不足，未改写此前的判定',
   'provider.capStale': '（模型已更新，建议重探）',
   'provider.capHint': '问一句「把任务派给子代理」，看这台模型是否真的发起结构化委派；只探原生工具调用路径，3 次全成才算可当管控者',
+  'provider.capAllowDelegation': '允许顺序委派',
+  'provider.capDelegationHint': '开启后，Agent 可把子任务派给子代理（每次编排有 LLM 调用上限，默认关闭）',
+  'provider.capDelegationNeedsProbe': '要先探测并判定为「可当管控者」才能开启',
+  'provider.capDelegationStale': '模型已更新，请先重探再开启',
+  'provider.capDelegationOn': '已允许这台模型顺序委派',
+  'provider.capDelegationOff': '已关闭这台模型的顺序委派',
   'provider.capSaveFirst': '请先保存这个服务商，再探测它能不能派活',
 
   // ── Ollama 便携运行时 ──

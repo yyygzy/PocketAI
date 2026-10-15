@@ -62,12 +62,19 @@ export interface ConvListArgs {
   isAgent?: boolean
   /** true=只取归档；false/undefined=只取活跃（默认） */
   archivedOnly?: boolean
+  /**
+   * 是否带出子代理会话（144：委派出去的子 run 各占一条独立会话）。
+   * **默认 false**：委派一跑就多出几条机器会话，用户的会话列表会被灌满；
+   * 需要看子会话时显式传 true（或按 id 直取 `get()`，那条不受这里影响）。
+   */
+  includeSubSessions?: boolean
 }
 
 export function buildConvListQuery(args: ConvListArgs): { where: string; vals: unknown[]; orderBy: string } {
   const conds: string[] = []
   const vals: unknown[] = []
   conds.push(args.archivedOnly ? 'archived = 1' : 'archived = 0')
+  if (!args.includeSubSessions) conds.push('parent_conversation_id IS NULL')
   if (args.assistantId === 'asst-default') {
     conds.push("(assistant_id = 'asst-default' OR assistant_id IS NULL)")
   } else if (args.assistantId) {
@@ -86,10 +93,20 @@ export function buildConvListQuery(args: ConvListArgs): { where: string; vals: u
 }
 
 export const conversationRepo = {
-  /** 列出会话；assistantId 给定时按助手归集；isAgent 控制是否只列 Agent 会话；archivedOnly 切换归档区。
+  /** 列出会话；assistantId 给定时按助手归集；isAgent 控制是否只列 Agent 会话；archivedOnly 切换归档区；
+   *  includeSubSessions 默认 false ⇒ 子代理会话不进列表（见 ConvListArgs 上的说明）。
    *  单条 SQL 关联子查询带出最新一条消息预览（80 字符、换行折叠为空格），避免逐会话 N+1 查询 */
-  list(assistantId?: string, isAgent?: boolean, opts: { archivedOnly?: boolean } = {}): ConversationRecord[] {
-    const { where, vals, orderBy } = buildConvListQuery({ assistantId, isAgent, archivedOnly: opts.archivedOnly })
+  list(
+    assistantId?: string,
+    isAgent?: boolean,
+    opts: { archivedOnly?: boolean; includeSubSessions?: boolean } = {}
+  ): ConversationRecord[] {
+    const { where, vals, orderBy } = buildConvListQuery({
+      assistantId,
+      isAgent,
+      archivedOnly: opts.archivedOnly,
+      includeSubSessions: opts.includeSubSessions
+    })
     const rows = dbService
       .getHandle()
       .prepare(
@@ -115,19 +132,68 @@ export const conversationRepo = {
     return row ? rowToRecord(row) : null
   },
 
-  create(input: { assistantId?: string | null; title?: string; modelLabel?: string; titleDefault?: boolean } = {}): ConversationRecord {
+  create(
+    input: {
+      assistantId?: string | null
+      title?: string
+      modelLabel?: string
+      titleDefault?: boolean
+      /** 144：子代理会话的父会话 id；空串按"没有父"处理（存出空串会永远匹配不上） */
+      parentConversationId?: string | null
+      /** 144：子代理角色（researcher/writer/reviewer…）；用户自己的会话不传 */
+      roleKey?: string | null
+    } = {}
+  ): ConversationRecord {
     const now = Date.now()
     const id = randomUUID()
     // 新建会话默认标题仍是占位（titleDefault=1）；导入/恢复的会话传 false 视为已定稿
     const titleDefault = input.titleDefault === false ? 0 : 1
+    const parent = input.parentConversationId?.trim() || null
+    const role = input.roleKey?.trim() || null
     dbService
       .getHandle()
       .prepare(
-        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default)
-         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?)`
+        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default, parent_conversation_id, role_key)
+         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?, ?, ?)`
       )
-      .run(id, input.assistantId ?? null, input.title ?? '新对话', input.modelLabel ?? null, now, now, titleDefault)
+      .run(
+        id,
+        input.assistantId ?? null,
+        input.title ?? '新对话',
+        input.modelLabel ?? null,
+        now,
+        now,
+        titleDefault,
+        parent,
+        role
+      )
     return mustGet(() => this.get(id), '会话')
+  },
+
+  /** 直接子会话 id（144：删父前用它的条数写确认文案，级联删除也走它） */
+  childIds(parentId: string): string[] {
+    return (
+      dbService
+        .getHandle()
+        .prepare('SELECT id FROM conversations WHERE parent_conversation_id=?')
+        .all(parentId) as Array<{ id: string }>
+    ).map((r) => r.id)
+  },
+
+  /**
+   * 整棵子树的会话 id（不含自己）。逐层展开而不是递归 CTE：委派树最多两三层，
+   * 而循环里每层一次查询在 SQLite 侧更好核对（也避免旧版 SQLite 不支持 WITH RECURSIVE 的坑）。
+   */
+  descendantIds(rootId: string): string[] {
+    const out: string[] = []
+    let frontier = this.childIds(rootId)
+    while (frontier.length > 0) {
+      out.push(...frontier)
+      const next: string[] = []
+      for (const id of frontier) next.push(...this.childIds(id))
+      frontier = next
+    }
+    return out
   },
 
   /**
@@ -212,13 +278,18 @@ export const conversationRepo = {
 
   delete(id: string): void {
     const db = dbService.getHandle()
+    // 先取子树：删掉父会话时，委派出去的子代理会话不能变成孤儿（它们不在列表里，
+    // 留着的后果是"看不见却占着库、还计入会话统计"）。级联口径已在方案 §144 记档。
+    const doomed = [id, ...this.descendantIds(id)]
     const tx = db.transaction(() => {
-      // 级联删除消息（FTS 触发器自动同步）
-      db.prepare('DELETE FROM messages WHERE conversation_id=?').run(id)
-      db.prepare('DELETE FROM messages_fts WHERE conversation_id=?').run(id)
-      // 级联删除未发送草稿
-      db.prepare('DELETE FROM conversation_drafts WHERE conversation_id=?').run(id)
-      db.prepare('DELETE FROM conversations WHERE id=?').run(id)
+      for (const cid of doomed) {
+        // 级联删除消息（FTS 触发器自动同步）
+        db.prepare('DELETE FROM messages WHERE conversation_id=?').run(cid)
+        db.prepare('DELETE FROM messages_fts WHERE conversation_id=?').run(cid)
+        // 级联删除未发送草稿
+        db.prepare('DELETE FROM conversation_drafts WHERE conversation_id=?').run(cid)
+        db.prepare('DELETE FROM conversations WHERE id=?').run(cid)
+      }
     })
     tx()
   },

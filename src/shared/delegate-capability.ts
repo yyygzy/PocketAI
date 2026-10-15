@@ -166,6 +166,12 @@ export interface DelegateProbeResult {
 /** 列表视图：多带一个 stale（本地模型镜像换了摘要 ⇒ 旧结论过期） */
 export interface DelegateCapabilityView extends DelegateCapabilityEntry {
   stale: boolean
+  /**
+   * 决策③（默认关、手动开）：这台模型是否被用户点名允许顺序委派。
+   * 判定与开关是两件事——`native_tools_ok` 只说明"派得出活"，开不开由用户决定，
+   * 所以未开启的可当管控者模型这一位是 false，界面不许把它显示成"已启用"。
+   */
+  delegationEnabled: boolean
 }
 
 export const MAX_DELEGATE_ENTRIES = 200

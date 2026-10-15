@@ -15,6 +15,7 @@ import { ollamaRuntime } from '../ollama/ollama-runtime'
 import { errMsg } from '../error'
 import { createLogger } from '../logger'
 import { isTextProtocolForced } from './text-protocol-prefs'
+import { addOrRemoveDelegationEnabled, listDelegationEnabledModels } from './delegate-prefs'
 import {
   DELEGATE_PROBE,
   MIN_PROBE_RUNS,
@@ -185,7 +186,52 @@ export async function listDelegateCapabilitiesWithStaleness(): Promise<DelegateC
       details = []
     }
   }
-  return entries.map((e) => ({ ...e, stale: isDelegateEntryStale(e, localProviders, details) }))
+  return entries.map((e) => ({
+    ...e,
+    stale: isDelegateEntryStale(e, localProviders, details),
+    delegationEnabled: listDelegationEnabledModels().includes(delegateKey(e.providerId, e.model))
+  }))
+}
+
+/**
+ * 开/关某台模型的「允许顺序委派」（决策③：默认关，用户点名才开）。
+ *
+ * 这里是**唯一**写这份开关的地方，所以两条前置条件也只在这里判一次：
+ *  ① 探针必须判出 `native_tools_ok`，且结论**未过期**（本地镜像换了 digest 就得重探——
+ *     拿着旧结论开新权限，等于允许一台今天不一定派得出活的模型去开子 run）；
+ *  ② 该模型没有被设为「走文本协议」——文本协议下原生工具调用路径根本不成立，
+ *     而委派靠的就是那条路径（决策①：围栏那条路实测不可靠，已定论不放宽）。
+ * 引擎侧只读 `delegate-prefs.isDelegationEnabledFor`，不再重复判能力（同一份口径只写一处）。
+ */
+export function setDelegationEnabled(
+  providerId: string,
+  model: string,
+  on: boolean
+): { ok: boolean; error: string | null; models: string[] } {
+  const current = listDelegationEnabledModels()
+  const refuse = (error: string) => ({ ok: false as const, error, models: current })
+
+  if (on) {
+    if (isTextProtocolForced(providerId, model)) {
+      return refuse('这台模型已被设为「走文本协议」，而委派靠的是原生工具调用路径 ⇒ 请先关掉该开关再开启委派')
+    }
+    const entry = listDelegateCapabilities().find((e) => e.key === delegateKey(providerId, model))
+    if (!entry) {
+      return refuse('这台模型还没探测过能否派活 ⇒ 请先点「探测能否派活」，判定为「可当管控者」才允许开启委派')
+    }
+    if (entry.capability !== 'native_tools_ok') {
+      return refuse(
+        `这台模型的判定是「${entry.capability}」（${entry.nativeHits}/${entry.samples} 命中），不是「可当管控者」⇒ 不开启委派`
+      )
+    }
+  }
+
+  return { ok: true, error: null, models: addOrRemoveDelegationEnabled(providerId, model, on) }
+}
+
+/** 当前被点名允许委派的模型键（只读；引擎的判定入口在 delegate-prefs） */
+export function listDelegationEnabled(): string[] {
+  return listDelegationEnabledModels()
 }
 
 export const __probeToolForTest = PROBE_TOOL

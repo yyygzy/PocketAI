@@ -723,6 +723,13 @@ const api = {
   /** 对一台模型跑一次委派探针（默认 3 发真请求，走原生 tools 路径）；失败原因在 error 里 */
   probeDelegateCapability: (providerId: string, model: string): Promise<DelegateProbeResult> =>
     ipcRenderer.invoke(IPC.AGENT_PROBE_DELEGATE_CAP, { providerId, model }),
+  /** 决策③：点名允许/取消某台模型做顺序委派。前置条件在主进程判，拒绝原因照实回传 */
+  setAgentDelegateEnabled: (
+    providerId: string,
+    model: string,
+    on: boolean
+  ): Promise<{ ok: boolean; error: string | null; models: string[] }> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_DELEGATE_ENABLED, { providerId, model, on }),
 
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>

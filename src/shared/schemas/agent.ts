@@ -42,6 +42,13 @@ export const delegateProbeSchema = z.object({
   model: z.string().min(1).max(128)
 })
 
+/** AGENT_SET_DELEGATE_ENABLED 入参（决策③：默认关，用户点名某台模型才允许顺序委派） */
+export const delegateToggleSchema = z.object({
+  providerId: z.string().min(1).max(AGENT_MAX_ID_CHARS),
+  model: z.string().min(1).max(128),
+  on: z.boolean()
+})
+
 /**
  * AGENT_SET_TEXT_PROTOCOL 入参：点名某台模型走/不走文本协议（§4.4-⑦ 显式开关）。
  * model 名与 providerId 同长度档：都远小于上限，超限只可能是脏输入或攻击面探测。

@@ -99,6 +99,31 @@ export const ProviderSettings: React.FC = () => {
     }
   }
 
+  /**
+   * 开/关这台模型的顺序委派（决策③：默认关，用户点名才开）。
+   * 前置条件（必须是"可当管控者"且未过期、不得开着文本协议）只在主进程判一次，
+   * 这里照实显示拒绝原因——不许界面先把勾打上再让引擎偷偷不认。
+   */
+  const toggleDelegation = async (model: string, on: boolean): Promise<void> => {
+    const pid = editing?.id ?? ''
+    if (!pid) {
+      setNotice({ ok: false, text: t('provider.capSaveFirst') })
+      return
+    }
+    try {
+      const r = await window.pocketai.setAgentDelegateEnabled(pid, model, on)
+      // 业务拒绝与 safeHandle 失败同一个形状（ok:false + error），一条分支就够
+      if (hasIpcFailed(r)) {
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      } else {
+        setNotice({ ok: true, text: on ? t('provider.capDelegationOn') : t('provider.capDelegationOff') })
+        await loadCaps()
+      }
+    } catch (e) {
+      setNotice({ ok: false, text: errText(e) })
+    }
+  }
+
   const startEdit = (p: ProviderRecord | null) => {
     const rec = p ? { ...p } : emptyProvider()
     setEditing(rec)
@@ -342,6 +367,9 @@ export const ProviderSettings: React.FC = () => {
                           probing={probingKey === delegateKey(editing.id, m)}
                           onProbe={() => {
                             void probeModel(m)
+                          }}
+                          onToggleDelegation={(on) => {
+                            void toggleDelegation(m, on)
                           }}
                         />
                       )}

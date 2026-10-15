@@ -66,6 +66,56 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-144 `delegate_task` + 独立会话子 run（顺序形态，决策②③落地）
+
+- **两个决策怎么变成代码**：② 子代理用独立会话 ⇒ 每次委派建一条 `parent_conversation_id` + `role_key` 的会话，子 run 在里面跑，
+  它的 trace 带 `parent_request_id`；③ 一律不开、手动控制 ⇒ 新增模型级开关 `agent.delegate_enabled_models`（**默认关**），
+  只有当那台模型被 142 判为「可当管控者」且结论未过期时才点得亮。
+- **新文件**：`src/shared/delegation-rules.ts`（纯规则：角色枚举、预算、`childToolSurface`、`parseDelegateArgs`）、
+  `src/main/agent/delegation.ts`（只留"建子会话 + 组 payload"）、`src/main/agent/delegate-prefs.ts`（开关的存储与唯一读点）、
+  `src/main/tools/delegate-tool.ts`（工具形状）。引擎侧：`run()` 多了第三个**内部**参数 `internal`（子 run 用），
+  `runToolsStep` 按名字截走委派，新增 `runDelegationStep` 执行一次子 run。
+- **口径只写一处**（118/117 那族的正面做法）："能不能派活"只在 142 的落库判一次；"开没开"只在 `isDelegationEnabledFor` 判一次——
+  **筛工具面**与**执行闸门**调的是同一个函数；开开关的前置条件（判定 + 未过期 + 没开文本协议）只在 `setDelegationEnabled` 一处 enforced。
+  `internal` 之所以伪造不了：`chat:send` 的入参走 zod 且是非严格对象，未声明的键被静默剥掉（94 那批教训的反向用法）。
+- **三条硬规矩的落地形状**：① **子级授权 ⊆ 父级是结构性的**——子清单由父"已筛好的可见面"再裁，不重读助手权限；
+  且子级**物化成具体 id**，不许把 `'*'` 往下传（M5 变异专治这条：带 `'*'` 时子代理能调到被摘掉的 confirm 工具）。
+  ② **不递归**——`childToolSurface` 摘掉 `delegate_task` 本身（能递归就能绕过预算）。
+  ③ **confirm/deny 不进子清单**，同时子 run `unattended: true` 作第二道：模型凭记忆调它 ⇒ 闸门回 `TOOL_NOT_ALLOWED`，
+  而不是挂起等一个永远不会来的确认框。
+- **开关没开就不是"看得见但被拒"**：`delegate_task` **根本不进清单**（先例是 `getShellTools()` 的条件注册，不是 MCP 那条被挡路径）。
+  模型凭空调用时执行侧照实回 `DELEGATION_DISABLED` 并留下一条工具消息，父代理看得见、改得了道。
+- **预算闸只掐子 run，不掐父 run**（`DELEGATION_MAX_LLM_CALLS = 15` = 3 角色 × 5 步，依据 M7 热态 1.34s/次 + 142 的 8.5–18.4s 实测）。
+  父 run 一直由 `maxSteps` + 重规划管着，把它纳进新闸门等于给既有单代理路径引入回归（140 那条"不把没数据实现成变慢"）。
+  触顶时子 run 带着已做到的步骤进降级收敛，而不是抛错让整次编排空手而归。
+- **父中止传播**：在 `ctx.master.signal` 上挂 `abort → this.abort(childRequestId)`。
+  不接这一条会留下"父已经没了、子还在跑"的孤儿，而它占的正是本机那张卡的显存——M5/M6 全部的意义。
+- **列表默认过滤**：`buildConvListQuery` 默认加 `parent_conversation_id IS NULL`，`list()` 留 `includeSubSessions` 逃生口；
+  `delete(父)` 级联删整棵子树（`descendantIds` 逐层展开，不用递归 CTE）。
+  已知副作用没处理（记档）：子会话也会被 `runFirstMessageTitle` 起一次标题，多花一次模型调用，145/146 再收。
+- **归因写入用一张表而不是 12 个调用点**：`traceParents: Map<requestId, parent|null>`，`safeTrace` 统一填，`finally` 清。
+  逐个调用点传 = 漏一处就静默失去归因（141 同族），而且这种漏在 CI 里几乎看不出来。
+- **三条踩出来的，全都是我自己的用例/接线问题**：
+  ① **纯规则与建子会话本来在一个文件里** ⇒ 工具注册表被拖着把 `conversationRepo → dbService → portable → electron` 链拉进
+  `builtin-tools.test.ts` / `builtin-safematheval.test.ts`，两个文件当场加载失败（`app.isPackaged` undefined）⇒ 拆成
+  `shared/delegation-rules.ts` + `main/agent/delegation.ts`。这是 123 那条"纯函数的家要中立"的又一种形态：**宿主模块的依赖会顺着 import 传染**。
+  ② 假端点第一版没把**元数据类请求**（首轮标题升级、任务规划）摘出去——它们不带 tools 却按"父请求"吃了脚本回复，
+  于是真循环里模型拿到的是最终回答、整条链一个工具都没调、断言一片空红。**假红也是 harness 的故障**。
+  ③ 预算那条只写 `llmSteps ≤ 2`，**把预算闸整段删掉照样绿**（那次子 run 本来就只走 2 步）⇒ 补"预算充足时确实多走几步（> 2）"
+  的对照组，M6 才转红。同族规矩：任何"不存在/不会发生"型断言都要配一条"存在/会发生"的对照。
+- **测试**：新增 `tests/agent-delegation-real-chain.test.ts` 15 例（真引擎循环 + 真 HTTP 端点 + 真临时库：子清单 ⊆ 父清单、
+  不含 delegate_task、confirm 类被摘掉且调用被闸门拒、**子的请求里看不到父任务那句话**、归因、列表过滤、删父级联、
+  预算与子会话数触顶、父中止传播、registry 那条路走到它必须明确失败）；
+  `conversation-repo.test.ts` +2 例（默认过滤 + `create` 写 lineage 含"空串按没有父处理"）；
+  `builtin-tools.test.ts` 的"含 13 个工具"改为 14，并注明这是**有意的绊线**（加内置工具会抬高每个助手 `'*'` 的可见面）。
+- **十二轮变异全部转红**：清单筛除 2 / 执行侧开关 1 / 子清单不摘 delegate 2 / 子清单不摘 confirm 4 / 子级带 `'*'` 1 /
+  预算闸 1（补对照组之后）/ 子会话数上限 1 / trace 不写父 3 / 删父不级联 2 / 列表不过滤 2 / 开关不判前置 9 / 父中止不传播 1。
+  每轮恢复后逐文件字节比对。
+- **验证**：typecheck 0；vitest **295 文件 / 3547 例**全绿（+1 skipped 是 140 那条 Mac-only）；build 三端 exit=0。
+- **未实测** ⇒ **B78 🔶**：勾开关的观感与禁用态说明、一次委派在你这台机器上的真实耗时体感；
+  **子代理的每一步目前不进界面**（父只看得到一次 `delegate_task` 与它的结果）——角色标签与跳进子会话是 146 的界面项。
+  **B79 ✅（CI）**。跨模型角色是 145（要 `rolesMayUseDistinctModels` 且这些角色都不走检索链，M10），本轮刻意没做。
+
 ### V4-Iter-143 角色归因迁移（v48）：三列各就各位，角色的家从 traces 改到 conversations
 
 - **前置**：用户 2026-10-15 选定**决策②——子代理用独立会话**。143 只做"给数据留位置"（写入方在 144），零行为变化。
