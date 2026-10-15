@@ -16,9 +16,11 @@ import {
   websearchConfigSchema,
   calendarConfigSchema,
   toolApproveResponseSchema,
-  textProtocolToggleSchema
+  textProtocolToggleSchema,
+  delegateProbeSchema
 } from '../../../shared/schemas/agent'
 import { listTextProtocolModels, setTextProtocolModel } from '../../agent/text-protocol-prefs'
+import { listDelegateCapabilitiesWithStaleness, probeDelegateCapability } from '../../agent/delegate-capability'
 import { idSchema } from '../../../shared/schemas/providers'
 
 const log = createLogger('agent')
@@ -126,6 +128,16 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string; on: boolean }) =>
       setTextProtocolModel(payload.providerId, payload.model, payload.on),
     argsSchema(textProtocolToggleSchema)
+  )
+
+  // ---------- 委派能力探针（V4-Iter-142）----------
+  // 清单只读；探测会发真请求（默认 3 发），所以只允许用户在设置页点名触发
+  safeHandle(IPC.AGENT_LIST_DELEGATE_CAPS, () => listDelegateCapabilitiesWithStaleness())
+  safeHandle(
+    IPC.AGENT_PROBE_DELEGATE_CAP,
+    (_e, payload: { providerId: string; model: string }) =>
+      probeDelegateCapability(payload.providerId, payload.model),
+    argsSchema(delegateProbeSchema)
   )
 
   // 渲染端对工具审批弹窗的应答

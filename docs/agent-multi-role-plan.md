@@ -96,11 +96,22 @@ V-0 跑完后补一条口径修正（写在这里以免有人再按初稿理解�
 - 还掉方案里的一条尾巴：慢等待埋点 `local.slot.wait` 的 detail **带模型名与 lane/kind**（此前 `kb.*` 标签不带 provider/model，跨模型时看不出谁慢）。
 - 验收：**B73**（🔶 CI 半边已进 —— 真 `node:http` 服务端 + 真适配器，断服务端观察到的并发峰值与起跑顺序，19 例、十轮变异 2/1/1/1/1/6/2/4/5/1 红；剩真机体感与面板文案）、**B74**（⬜ 大显存档"升级后应完全无变化"，我这台 4GiB 证不了那一侧）。
 
-### V4-Iter-142 能力探针与三态徽标
-- 落点：`src/main/agent/delegate-capability.ts`（纯函数判卷）+ 一次真实请求（走 `providerManager.getAdapter().streamChat`，带 `tools`，同 M7 形状）；结果写 `app_config`；设置页 → 模型服务商处显示 `可委派 / 只会写围栏 / 不派活`。
-- 硬规矩：探针**不许**在文本协议模式下跑（M8 证过那条路会假阴性）；探针失败按 `hasIpcFailed` 那套"失败是返回值"的合同处理（V4-Iter-139 教训），不许把失败当"不支持"。
-- 判卷口径：至少 3 次重复，全过才记 `native_tools_ok`（M7 里 3b 是 4/4，但单次不足以定论；稳定性本身列为待测 V-1）。
-- 验收：B75（CI：判卷纯函数三态 + 反向对照"文本协议结果不得判成 ok"）、B76（真机：本机三个模型应分别落 `ok / fence_only / no_delegation`，这是探针自证）。
+### V4-Iter-142 能力探针与三态徽标（已落地，2026-10-15）
+- **实际落点**：判卷与请求体在 `src/shared/delegate-capability.ts`（零依赖纯函数），发真请求 + 落库 + 失效核对在 `src/main/agent/delegate-capability.ts`，
+  呈现抽成 `src/renderer/src/modules/settings/DelegateCapabilityBadge.tsx` 挂在设置页「已缓存模型」那一行；两条 IPC 通道 `agent:list-delegate-caps` / `agent:probe-delegate-cap`。
+  判卷没放进主进程那个模块，是因为它要碰 `providerManager` / `ollamaRuntime` / `appConfigRepo`（123 那条"纯函数别住在被打桩的模块里"）。
+- **判卷口径四条**（比施工图更严，出处都是实测）：只探原生 tools（M8）；**3 发全成才算 `native_tools_ok`**，2/3 记 `no_delegation`；
+  任一请求失败 ⇒ `unknown` **且不落库**（不拿"没结论"覆盖上一轮判定）；被设为「走文本协议」的模型**直接拒探、零请求**。
+  `fence_only` 按决策①的定论当**诊断态**处理——界面文案写"只会写围栏（当前用不了）"，并留一条反向对照钉住界线：
+  同一串文本喂给引擎严格解析器 `extractTextToolCalls` 仍抽不到 ⇒ 探针的宽松匹配不等于引擎放宽了。
+- **失效键**：本地 ollama 的镜像 `digest`；**同名命中优先于同族命中**（本机同装 3b/7b 时按前缀取第一条会拿错摘要）；
+  取不到当前摘要（serve 没起 / 模型已删）只说"无法核对"，不下"已过期"。
+- **落库形状沿用 51**：单键 `agent.delegate_capability` = JSON 数组（≤200 条），不建新表；脏项**整条丢弃**，不补默认结论。
+- **验收**：B75（🔶 CI 五层已进——判卷 16 + 真发包 9 + staleness 接线 6 + 真桥层 6 + 措辞 7 + 设置页接线 3，八轮变异 2/2/1/1/1/1/2/1 红；剩排版与真 Electron 克隆肉眼）、
+  B76（🔶 **数据侧已自证**：真 Ollama 走真产品路径 ⇒ `3b-instruct = native_tools_ok 3/3`、`coder-1.5b = fence_only 0/3`、`1.5b-instruct = no_delegation 0/3`，
+  9 发 23.2s；UI 里点出来的按钮态与文案仍要肉眼）。
+- **一条给 143–147 的输入**：这台机器上"能当管控者"的只有 `qwen2.5:3b-instruct` 一台，且探测代价是秒到十几秒级 ⇒
+  判据屏不许默认批量探，委派形态默认只在**已判定新鲜**的模型上开。
 
 ### V4-Iter-143 角色归因迁移（先给数据留位置）
 - 落点：`agent_traces`（`src/main/db/database.ts:72-84`，只有 request_id/conversation_id/step_index）加 `parent_request_id`、`role_key`；`agent-trace.repo.ts:82` 写入；`latestRequestId`（`:40-56`）保持只认最近一轮的语义不动。

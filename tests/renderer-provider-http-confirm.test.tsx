@@ -19,7 +19,9 @@ const saved = {
 function mount(baseUrl: string) {
   stubPocketai({
     listProviders: () => [],
-    saveProvider: () => Promise.resolve({ ...saved, baseUrl })
+    saveProvider: () => Promise.resolve({ ...saved, baseUrl }),
+    // V4-Iter-142：编辑态一挂载就读委派能力清单，共享桩不给实现会按设计抛错
+    listDelegateCapabilities: () => []
   })
   mountWithProviders(<ProviderSettings />)
   fireEvent.click(screen.getByText('+ 新增'))
@@ -77,7 +79,8 @@ describe('主进程 B1 闸门在界面上的呈现（SEC-1 收口）', () => {
   it('拒存新 Key 时如实显示拒绝原因，且不能报「已保存」', async () => {
     stubPocketai({
       listProviders: () => [],
-      saveProvider: () => Promise.resolve({ ok: false, error: GATE_MSG })
+      saveProvider: () => Promise.resolve({ ok: false, error: GATE_MSG }),
+      listDelegateCapabilities: () => []
     })
     mountWithProviders(<ProviderSettings />)
     fireEvent.click(screen.getByText('+ 新增'))

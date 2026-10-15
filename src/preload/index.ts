@@ -2,6 +2,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
 import type { KbEvalRunResult } from '../shared/kb-eval'
+import type { DelegateCapabilityView, DelegateProbeResult } from '../shared/delegate-capability'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -716,6 +717,12 @@ const api = {
   /** 开/关某台模型的文本协议；返回最新清单（以库里为准，调用方不做乐观更新） */
   setAgentTextProtocol: (providerId: string, model: string, on: boolean): Promise<string[]> =>
     ipcRenderer.invoke(IPC.AGENT_SET_TEXT_PROTOCOL, { providerId, model, on }),
+  /** 已判出的"这台模型当得了管控者吗"清单（带 stale：本地镜像换了就该重探） */
+  listDelegateCapabilities: (): Promise<DelegateCapabilityView[]> =>
+    ipcRenderer.invoke(IPC.AGENT_LIST_DELEGATE_CAPS),
+  /** 对一台模型跑一次委派探针（默认 3 发真请求，走原生 tools 路径）；失败原因在 error 里 */
+  probeDelegateCapability: (providerId: string, model: string): Promise<DelegateProbeResult> =>
+    ipcRenderer.invoke(IPC.AGENT_PROBE_DELEGATE_CAP, { providerId, model }),
 
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>

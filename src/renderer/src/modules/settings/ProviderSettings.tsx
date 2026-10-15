@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { ProviderRecord, ProviderType } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { reportIpcError, isIpcFail, ipcFailText } from '../../utils/ipc'
+import { reportIpcError, isIpcFail, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { isPlainRemoteHttp } from '../../../../shared/url-policy'
+import { delegateKey, type DelegateCapabilityView } from '../../../../shared/delegate-capability'
+import { DelegateCapabilityBadge, DELEGATE_CAPABILITY_LABEL_KEY } from './DelegateCapabilityBadge'
 
 export const PROVIDER_PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
   // ── 海外主流 ──
@@ -47,11 +49,55 @@ export const ProviderSettings: React.FC = () => {
   const [keysRevealed, setKeysRevealed] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const { confirm, dialog } = useConfirm()
+  // 委派能力判定（V4-Iter-142）：providerId::model → 判定；probingKey 记哪一台正在探
+  const [caps, setCaps] = useState<Record<string, DelegateCapabilityView>>({})
+  const [probingKey, setProbingKey] = useState('')
 
   const load = useCallback(() => window.pocketai.listProviders().then(setProviders).catch(reportIpcError('providerSettings.list')), [])
   useEffect(() => {
     load()
   }, [load])
+
+  const loadCaps = useCallback(
+    () =>
+      window.pocketai
+        .listDelegateCapabilities()
+        .then((list) => setCaps(Object.fromEntries(list.map((e) => [e.key, e]))))
+        .catch(reportIpcError('providerSettings.listDelegateCaps')),
+    []
+  )
+  useEffect(() => {
+    loadCaps()
+  }, [loadCaps])
+
+  /**
+   * 探一台模型（默认 3 发真请求，只走原生 tools 路径）。
+   * error 不为空时**不许**写成"这台不行"——那可能是连不上或样本不足，判定保持原样（见探针侧的同一条规矩）。
+   */
+  const probeModel = async (model: string): Promise<void> => {
+    const pid = editing?.id ?? ''
+    if (!pid) {
+      setNotice({ ok: false, text: t('provider.capSaveFirst') })
+      return
+    }
+    const key = delegateKey(pid, model)
+    setProbingKey(key)
+    try {
+      const r = await window.pocketai.probeDelegateCapability(pid, model)
+      if (hasIpcFailed(r)) {
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      } else if (r.error) {
+        setNotice({ ok: false, text: r.error })
+      } else {
+        setNotice({ ok: true, text: `${model}：${t(DELEGATE_CAPABILITY_LABEL_KEY[r.entry.capability])}` })
+      }
+      await loadCaps()
+    } catch (e) {
+      setNotice({ ok: false, text: errText(e) })
+    } finally {
+      setProbingKey('')
+    }
+  }
 
   const startEdit = (p: ProviderRecord | null) => {
     const rec = p ? { ...p } : emptyProvider()
@@ -290,6 +336,15 @@ export const ProviderSettings: React.FC = () => {
                       >
                         ✕
                       </button>
+                      {editing.id && (
+                        <DelegateCapabilityBadge
+                          entry={caps[delegateKey(editing.id, m)]}
+                          probing={probingKey === delegateKey(editing.id, m)}
+                          onProbe={() => {
+                            void probeModel(m)
+                          }}
+                        />
+                      )}
                     </span>
                   ))
                 )}

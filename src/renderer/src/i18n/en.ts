@@ -1502,6 +1502,16 @@ export const en: Record<string, string> = {
   'provider.removeModel': 'Remove this model from cache (applies on save)',
   'provider.fetch': 'Fetch models',
   'provider.test': 'Test connection',
+  'provider.capProbe': 'Probe delegation',
+  'provider.capProbing': 'Probing…',
+  'provider.capNative': 'Can orchestrate',
+  'provider.capFence': 'Fence-only (unusable today)',
+  'provider.capNone': 'Never delegates (answers itself)',
+  'provider.capUnknown': 'Probe incomplete',
+  'provider.capUnknownReason': 'Some runs failed or too few samples; previous verdict kept',
+  'provider.capStale': '(model updated; re-probe)',
+  'provider.capHint': 'Asks the model to delegate a task to a sub-agent and checks for a native tool call; 3/3 runs required before it counts as able to orchestrate',
+  'provider.capSaveFirst': 'Save this provider first, then probe whether it can delegate',
 
   // ── Ollama portable runtime ──
   'ollama.title': 'Local Model Engine (Ollama)',

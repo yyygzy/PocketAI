@@ -1502,6 +1502,16 @@ export const zh: Record<string, string> = {
   'provider.removeModel': '从缓存中移除该模型（保存后生效）',
   'provider.fetch': '拉取模型',
   'provider.test': '测试连接',
+  'provider.capProbe': '探测能否派活',
+  'provider.capProbing': '探测中…',
+  'provider.capNative': '可当管控者',
+  'provider.capFence': '只会写围栏（当前用不了）',
+  'provider.capNone': '不会派活（会自己作答）',
+  'provider.capUnknown': '探测未完成',
+  'provider.capUnknownReason': '有请求失败或样本不足，未改写此前的判定',
+  'provider.capStale': '（模型已更新，建议重探）',
+  'provider.capHint': '问一句「把任务派给子代理」，看这台模型是否真的发起结构化委派；只探原生工具调用路径，3 次全成才算可当管控者',
+  'provider.capSaveFirst': '请先保存这个服务商，再探测它能不能派活',
 
   // ── Ollama 便携运行时 ──
   'ollama.title': '本地模型引擎（Ollama）',

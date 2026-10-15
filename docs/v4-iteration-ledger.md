@@ -66,6 +66,40 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-142 委派能力探针：三态判定 + 设置页徽标，判卷口径直接吃决策①的实测结论
+
+- **范围**：`docs/agent-multi-role-plan.md` 的 142 项——"这台模型当得了中心管控者吗"**只能实测**（能力轴与容量轴正交：入门档+有能力可以开顺序委派，旗舰档+无能力一律不开管控者）。验收 **B75**（CI）/ **B76**（本机三模型自证）。
+- **两个新模块，边界按 V4-Iter-123 那条纪律切**：
+  - `src/shared/delegate-capability.ts`（零依赖纯函数）——`judgeDelegateProbe` 三态 + unknown 兜底、`DELEGATE_PROBE` 请求体（探针工具名 / 角色枚举 / task 长度下限都从这里出，免得"探的"和"判的"两码事）、`replyToProbeSample`、`normalizeDelegateEntries`、`findModelDigest` / `isDelegateEntryStale`。
+  - `src/main/agent/delegate-capability.ts`——真发请求 + 落库 + 失效核对（要碰 `providerManager` / `ollamaRuntime` / `appConfigRepo`，所以判卷不能住在这儿）。
+- **四条判卷口径，出处全是本机实测而不是推理**：
+  1. **只探原生 tools 路径**（M8：同一批模型改走"把协议写进提示词"后全部 0/3，连 3b 都从"4/4 会派活"退化成自己写汇报）。被设为「走文本协议」的模型**直接拒探、一个请求都不发**——拿文本协议的结果当能力结论方向是反的（会把"其实会派活"报成"不会"）。
+  2. **任一请求失败 ⇒ `unknown` 且不落库**。`unknown` 是"没结论"，拿它覆盖上一轮的 `native_tools_ok` 等于把已知信息丢掉：用户会看到"没探过"，而真相只是这台今天连不上。
+  3. **3 发全成才算 `native_tools_ok`**（M7 里 3b 是 4/4；2/3 记 `no_delegation`——"偶尔会"不能记成"会"）。
+  4. **`fence_only` 是诊断态、不是可用态**。决策①已定论**不放宽**围栏标签（50 例实测：放宽只把 coder-1.5b 从 25% 抬到 50%，仍够不到管控者）。探针里的宽松围栏匹配只为给出这一态，界面文案直说"当前用不了"；配了一条反向对照——同一串文本喂给引擎的严格解析器 `extractTextToolCalls` 仍然抽不到，两边不是一套规则，谁也不许"顺手改成另一套"。
+- **存储沿用"不建新表"的口径**（同 51 的文本协议开关）：单键 `agent.delegate_capability` = JSON 数组（≤200 条、新的排前），键 `providerId::model` 复用 `delegateKey`。`normalizeDelegateEntries` 对脏项**整条丢弃**而不是补默认值——把"没探过"写成"不派活"是最坏的一种脏。
+- **界面**：设置 → 模型服务商 → 已缓存模型那一行挂 `DelegateCapabilityBadge`（三态 + 没探过 + 已过期 + 探测中），点「探测能否派活」逐台点名触发（清单只读、探测发真请求，所以不给自动跑）。zh/en/ja/ko 四语同批补齐。
+- **一条 139 式的新形状**：这条通道**成功时返回 `{entry, error}`，压根没有 `ok` 字段**，失败时才由 `safeHandle` 变成 `{ok:false,error}`。判失败的谓辞必须按通道真实契约写 ⇒ 调用点用 139 定下的 `hasIpcFailed`（只认 `ok === false`），并补了真跨桥用例（`tests/ipc-agent-delegate-bridge.test.ts`）——组件用例 + 主进程用例各绿一半曾经就是这一族的藏身处。
+- **失效（stale）走 digest**：本地 ollama 才有镜像摘要可当失效键；**同名命中优先于同族命中**（本机同时装 3b 与 7b 时，只按冒号前缀取第一条会拿错摘要——这是抽纯函数时才暴露出来的）；取不到当前摘要（serve 没起 / 模型已删）⇒ 只说"无法核对"，不下"已过期"的结论。
+- **测试 5 个新文件 / 44 例 + 既有设置页 +3 例**：
+  - `delegate-capability-judge.test.ts` 16 例（三态表 + unknown 三个来源 + 围栏宽松匹配与引擎严格解析的界线 + 落盘清洗）；
+  - `delegate-capability-probe-real.test.ts` 9 例（**真临时库 + 真适配器 + 真 HTTP 端点**，断"发出去的每条请求都带 tools"、失败保留旧判定、文本协议拒探时零请求、探针工具 `deny` 且不在注册表里）；
+  - `delegate-capability-staleness-wiring.test.ts` 6 例（整块打桩 `ollama-runtime`，只证"主进程真去查了当前 tags"这一层）；
+  - `ipc-agent-delegate-bridge.test.ts` 6 例（真 preload ⇄ 真 handler ⇄ 真库：通道指错、参数顺序错、成功形状被误判成失败、schema 在桥上真的跑、**设置页实际构造的载荷必须过 schema**）；
+  - `renderer-delegate-capability-badge.test.tsx` 7 例（措辞纪律：fence_only 不许写成"能用"、unknown 不许摆分数）。
+- **八轮变异实测全部转红**：拿掉探针通道入参 schema 2 / 失败也落库 2 / 不拦文本协议 1 / "有过一次就算会派活" 1 / 取不到摘要就断言已过期 1 / 同族命中优先于同名 1 / 主进程不查当前 tags 2 / 样本不足也出结论 1。恢复后逐文件字节比对，零残留。
+- **两条自己写坏后改对的**：
+  ① `schemas/agent.ts` 里插新 schema 时把 `textProtocolToggleSchema` 的文档注释顶到了新块上方（注释与代码错位），已复原；
+  ② **变异脚本按 basename 命名备份** ⇒ `src/main/agent/delegate-capability.ts` 与 `src/shared/delegate-capability.ts` 同名互相覆盖，一轮"恢复"把主进程那份写成了 shared 的内容。靠会话内已读过的原文整份复原，之后备份改用**完整路径**命名，且每轮恢复后做逐文件字节比对（未跟踪文件 `git diff` 根本看不见，只核对 diff 不够）。
+- **全量回归里冒出来的新失败**：新增的调用点撞上共享桩"未预置 IPC 通道就抛错"的设计（两个既有组件用例当场红 11 例）。补桩之后顺手把"设置页真的按模型逐个挂徽标""判定按 `providerId::model` 取而不是按模型名全局取"两条**接线**断言加进 `renderer-provider-settings.test.tsx`——此前只有孤立的徽标用例，证不到挂没挂上。
+
+- **本机自证（B76 的数据侧，真 Ollama + 真产品路径）**：临时库 + 真 `providerManager` 适配器 + 真 `/v1/chat/completions`，三台模型各 3 发 ⇒
+  `qwen2.5:3b-instruct` = `native_tools_ok 3/3`、`qwen2.5-coder:1.5b` = `fence_only 0/3`、`qwen2.5:1.5b-instruct` = `no_delegation 0/3`；
+  三台都取到真 digest、探完立刻核对 `stale=false`。**9 发共 23.2s（含三次冷启动）** ⇒ 一次探测是"几秒到十几秒"的量级，这坐实了"只允许用户点名触发、不做自动批量探"。
+  跑完删除临时用例（它依赖本机 serve 与那三个模型，留在 CI 里只会假红）。
+- **验证**：typecheck 0；vitest **293 文件 / 3522 例**全绿（+1 skipped 是 140 那条 Mac-only）；build 三端 exit=0。
+- **未实测** ⇒ **B75 / B76 的界面那一半**：徽标排版与配色、"探测中…"禁用态连点、真 Electron 里 `contextBridge` 结构化克隆后 `{entry, error}` 是否原样到渲染层。主进程改动，**须重启 dev**。
+
 ### V4-Iter-141 本地推理槽位：错峰调度收在适配器出口，未实测档不套槽
 
 - **施工图先被自己推翻**：方案写的是"把 4+4+1+2 = 11 个调用点各自包一层"。回读后两条理由否掉它：① 本地推理流量最终只从 `openai-compatible.ts` 的三条端点出去（`/chat/completions`、`/embeddings`、`/images/generations`），一处闸门覆盖全部；② 那份清单本身还漏了 `ask-service.ts:82` 与 `translate-service.ts:140` —— 实测是 **12 处 streamChat + 2 处 embed**。逐个包 = 漏一个就静默失效，正是 V4-Iter-139 那类形状。

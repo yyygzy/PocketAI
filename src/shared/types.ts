@@ -2073,6 +2073,8 @@ export const IPC = {
   AGENT_GET_SESSION_STATS: 'agent:get-session-stats', // 会话级累计统计（跨全部运行聚合，只读）
   AGENT_GET_TEXT_PROTOCOL: 'agent:get-text-protocol', // 被点名走文本协议的模型清单（只读）
   AGENT_SET_TEXT_PROTOCOL: 'agent:set-text-protocol', // 开/关某台模型的文本协议
+  AGENT_LIST_DELEGATE_CAPS: 'agent:list-delegate-caps', // 已判出的"能不能当管控者"清单（只读，带 stale）
+  AGENT_PROBE_DELEGATE_CAP: 'agent:probe-delegate-cap', // 对一台模型跑一次委派探针（会发真请求，用户点出来的）
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

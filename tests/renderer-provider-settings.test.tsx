@@ -5,8 +5,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
-import { mountWithProviders, stubPocketai } from './helpers/renderer'
+import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { ProviderSettings } from '../src/renderer/src/modules/settings/ProviderSettings'
+import { zh } from '../src/renderer/src/i18n/zh'
 import type { ProviderRecord } from '../src/shared/types'
 
 const GLM: ProviderRecord = {
@@ -34,7 +35,10 @@ beforeEach(() => {
     deleteProvider: () => ({ ok: true }),
     revealProviderKeys: () => ({ apiKeys: ['sk-real-looking-key'] }),
     fetchModels: () => [],
-    testProvider: () => ({ ok: true })
+    testProvider: () => ({ ok: true }),
+    // V4-Iter-142：编辑态一挂载就会读判定清单 ⇒ 必须预置，否则共享桩按设计抛错
+    listDelegateCapabilities: () => [],
+    probeDelegateCapability: () => ({ entry: { capability: 'unknown' }, error: null })
   })
 })
 
@@ -101,5 +105,60 @@ describe('已缓存模型逐个移除', () => {
     fireEvent.click(screen.getByLabelText('从缓存中移除该模型（保存后生效）: glm-5'))
     await waitFor(() => expect(screen.getByText('已缓存模型（0）')).toBeTruthy())
     expect(screen.getByText('暂无，点「拉取模型」')).toBeTruthy()
+  })
+})
+
+// V4-Iter-142 的接线半边：徽标组件自己那 7 例证明不了"设置页真的挂上了它、真的按模型逐个挂"
+const verdictFor = (providerId: string, model: string) => ({
+  key: `${providerId}::${model}`,
+  providerId,
+  model,
+  capability: 'native_tools_ok' as const,
+  samples: 3,
+  nativeHits: 3,
+  digest: '',
+  checkedAt: 1,
+  stale: false
+})
+
+describe('委派能力入口挂在缓存模型那一行', () => {
+  it('两条模型 ⇒ 两个探测入口；点第二条交出去的是 (providerId, model) 这一对', async () => {
+    await openGlm()
+    const buttons = screen.getAllByText(zh['provider.capProbe'])
+    expect(buttons).toHaveLength(2)
+    fireEvent.click(buttons[1]!)
+    const call = pocketaiCalls().find((c) => c.fn === 'probeDelegateCapability')
+    expect(call?.args).toEqual(['p-glm', 'glm-5'])
+  })
+
+  it('同 provider 的判定显示在对应那一行（含 3/3 计数据）', async () => {
+    stubPocketai({
+      listProviders: () => [GLM],
+      saveProvider: (r) => r,
+      deleteProvider: () => ({ ok: true }),
+      revealProviderKeys: () => ({ apiKeys: [] }),
+      fetchModels: () => [],
+      testProvider: () => ({ ok: true }),
+      listDelegateCapabilities: () => [verdictFor('p-glm', 'glm-4.6')],
+      probeDelegateCapability: () => ({ entry: verdictFor('p-glm', 'glm-4.6'), error: null })
+    })
+    await openGlm()
+    expect(screen.getAllByText(zh['provider.capNative'])).toHaveLength(1)
+    expect(screen.getByText(/3\/3/)).toBeTruthy()
+  })
+
+  it('反向对照：另一家 provider 的同名判定不许串到这里（键是 providerId::model，不是模型名）', async () => {
+    stubPocketai({
+      listProviders: () => [GLM],
+      saveProvider: (r) => r,
+      deleteProvider: () => ({ ok: true }),
+      revealProviderKeys: () => ({ apiKeys: [] }),
+      fetchModels: () => [],
+      testProvider: () => ({ ok: true }),
+      listDelegateCapabilities: () => [verdictFor('other', 'glm-4.6')],
+      probeDelegateCapability: () => ({ entry: verdictFor('other', 'glm-4.6'), error: null })
+    })
+    await openGlm()
+    expect(screen.queryByText(zh['provider.capNative'])).toBeNull()
   })
 })
