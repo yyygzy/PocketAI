@@ -24,6 +24,8 @@ interface AgentTraceRow {
   id: string
   request_id: string
   conversation_id: string
+  /** v48：控制器那一次 request；NULL=这一行不是委派出来的子运行 */
+  parent_request_id?: string | null
   step_index: number
   step_type: string
   tool_name: string | null
@@ -60,6 +62,7 @@ function rowToRecord(row: AgentTraceRow): AgentTraceRecord {
     id: row.id,
     requestId: row.request_id,
     conversationId: row.conversation_id,
+    parentRequestId: row.parent_request_id ?? null,
     stepIndex: row.step_index,
     stepType: row.step_type as AgentTraceRecord['stepType'],
     toolName: row.tool_name ?? undefined,
@@ -79,12 +82,13 @@ export const agentTraceRepo = {
     const id = randomUUID()
     const createdAt = Date.now()
     dbService.getHandle().prepare(
-      `INSERT INTO agent_traces (id, request_id, conversation_id, step_index, step_type, tool_name, duration_ms, token_usage, prompt_tokens, completion_tokens, status, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO agent_traces (id, request_id, conversation_id, parent_request_id, step_index, step_type, tool_name, duration_ms, token_usage, prompt_tokens, completion_tokens, status, error, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       rec.requestId,
       rec.conversationId,
+      rec.parentRequestId ?? null,
       rec.stepIndex,
       rec.stepType,
       rec.toolName ?? null,

@@ -14,6 +14,7 @@ mem.exec(`
     id TEXT PRIMARY KEY,
     request_id TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
+    parent_request_id TEXT,
     step_index INTEGER NOT NULL,
     step_type TEXT NOT NULL,
     tool_name TEXT,

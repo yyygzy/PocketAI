@@ -66,6 +66,39 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-143 角色归因迁移（v48）：三列各就各位，角色的家从 traces 改到 conversations
+
+- **前置**：用户 2026-10-15 选定**决策②——子代理用独立会话**。143 只做"给数据留位置"（写入方在 144），零行为变化。
+- **落点**：migration `v48 / agent_role_lineage` 三条可空 TEXT 列 —— `conversations.parent_conversation_id`（子会话挂哪个父会话）、
+  `conversations.role_key`（这条会话承担的角色）、`agent_traces.parent_request_id`（我的父运行是谁）。
+  读取映射补进 `conversation.repo.ts` / `agent-trace.repo.ts` 的 `rowToRecord`，`agentTraceRepo.insert` 开始写第三列。
+- **⚠️ 改掉了方案初稿的一处形状**（不是随手改，是决策②逼出来的）：初稿写的是给 `agent_traces` 加 `role_key`。
+  独立会话意味着"一个子会话 = 一个角色的一摊活"，所以角色只有 `conversations.role_key` 一个家；
+  trace 上再放一份＝同一份口径写两处 —— 正是 V4-Iter-117 那族"改一处等于把缺陷挪个地方"。
+  而 `parent_request_id` 不能省：**没有独立的 runs 表**，traces 是唯一能承载"父运行是谁"的地方，
+  成本轴（146）要按整棵编排树 SUM 耗时/token，靠会话归属聚合不到单次 request 这一层。
+- **迁移纪律三条**（v46/v47 的血账，每条都做了变异实测证明有牙）：`ALTER TABLE ADD COLUMN` 不可重入 ⇒
+  退回未执行**只退 `version = 48` 这一条**（退成 `>= 46` 一轮，6 条红）；新用例**不断言 `LATEST_SCHEMA_VERSION` 是当前号**；
+  只 `PRAGMA table_info` 验列存在/类型/可空/默认值（顺带钉住 `dflt_value` 是 NULL —— 旧行必须是 NULL 而不是空串）。
+- **升级路径用例的做法**：不手抄旧 DDL（抄一份三年前的结构＝假绿），而是从 `sqlite_master` 取**真**建表语句、剥掉这三列后重建，
+  **把原有行搬回、索引重建**，再只退 v48 一条让迁移原地补列 ⇒ 验的是"老用户升上来"这条真实路径。
+- **两条自己写坏后改对的**：
+  ① 第一版 `DROP TABLE` 把旧数据一起删了 ⇒ "旧行读成 null 而不是崩"那条**其实什么都没验**（绿灯的假证据）。
+  补成"读行 → 重建 → 搬回"后，再用变异轮（把搬回删掉 → 1 红）证明这条断言真的有牙；
+  ② SQLite 把 `ADD COLUMN` 回写进 `sqlite_master` 的形态是**追加在右括号之前**（`..., role_key TEXT)`），不是表体里的一行，
+  第一版按"整行 + 缩进"匹配不中，当场红（红得对，是用例错不是代码错）。
+- **顺手拆掉一处我早先埋的地雷**：`tests/agent-trace-split-real-db.test.ts` 里那句 `expect(LATEST_SCHEMA_VERSION).toBe(47)`
+  等于给"下一次加迁移"预埋一处必改测试（10-13 加 v47 时真的因此红过）。删掉该断言与随之无用的 import，只留"schema_migrations 记了 v46 这个名字"。
+- **本轮刻意没动的**（144 创建子会话时才需要，先记在方案里别丢）：会话列表按 `parent_conversation_id IS NULL` 隐藏子会话、
+  删除父会话时对子会话的级联口径、会话导出/导入是否携带 lineage（`conversationRecordSchema` 是非严格对象，新字段会被静默剥掉）。
+- **测试**：新增 `tests/agent-role-lineage-migration-real-db.test.ts` 8 例（结构 + PRAGMA 语义 + 升级路径 + 重复跑不崩 +
+  归属/角色往返含关库重开 + trace 父 id 往返含"没传必须是 NULL"的反向对照 + 父会话统计不被子运行污染 + `latestRequestId` 语义不变），
+  `tests/agent-trace-repo.test.ts` 的手搓 fixture 同步补列（否则 `insert` 立刻报 no such column —— 这条不是假绿，是它真的有牙）。
+  六轮变异实测 4/6/2/1/1/1 红，每轮恢复后逐文件字节比对。
+- **验证**：typecheck 0；vitest **294 文件 / 3530 例**全绿（+1 skipped 是 140 那条 Mac-only）；build 三端 exit=0。
+- **未实测** ⇒ 验收清单 **B77**：CI 侧结构与往返已证；真机侧只剩"你那份**加密**老库升上来后应用照常启动、旧会话与 Agent 分步明细一字不变"——
+  这条只能你跑（我不索要口令）。
+
 ### V4-Iter-142 委派能力探针：三态判定 + 设置页徽标，判卷口径直接吃决策①的实测结论
 
 - **范围**：`docs/agent-multi-role-plan.md` 的 142 项——"这台模型当得了中心管控者吗"**只能实测**（能力轴与容量轴正交：入门档+有能力可以开顺序委派，旗舰档+无能力一律不开管控者）。验收 **B75**（CI）/ **B76**（本机三模型自证）。

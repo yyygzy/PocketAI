@@ -116,14 +116,24 @@ V-0 跑完后补一条口径修正（写在这里以免有人再按初稿理解�
 - **一条给 143–147 的输入**：这台机器上"能当管控者"的只有 `qwen2.5:3b-instruct` 一台，且探测代价是秒到十几秒级 ⇒
   判据屏不许默认批量探，委派形态默认只在**已判定新鲜**的模型上开。
 
-### V4-Iter-143 角色归因迁移（先给数据留位置）
-- 落点：`agent_traces`（`src/main/db/database.ts:72-84`，只有 request_id/conversation_id/step_index）加 `parent_request_id`、`role_key`；`agent-trace.repo.ts:82` 写入；`latestRequestId`（`:40-56`）保持只认最近一轮的语义不动。
-- 迁移纪律（v46 血账）：`ALTER TABLE ADD COLUMN` 不可重入；退回未执行**只退被测那一条**；新用例**不断言** `LATEST_SCHEMA_VERSION`，只 `PRAGMA table_info` 验列存在/类型/默认值（注意 PRAGMA 给的是文本默认值）。
-- 验收：B77（CI：真库迁移往返 + 旧行 `NULL` 仍渲染）。
+### V4-Iter-143 角色归因迁移（已落地 2026-10-15，migration v48）
+- **决策② 已由用户选定：子代理用独立会话**。三列因此各就各位：`conversations.parent_conversation_id`（子会话归属）、
+  `conversations.role_key`（**角色归会话**）、`agent_traces.parent_request_id`（父运行是谁）。
+- **本节改掉了本方案初稿的一处形状**：初稿把 `role_key` 放在 `agent_traces` 上，那是决策②未定时的写法；
+  独立会话之后角色天然只有 `conversations` 一个家，两处都放＝同一份口径写两处（117 那族）。
+  `parent_request_id` 保留且不能省：**没有 runs 表**，traces 是唯一能回答"我的父运行是谁"的地方，成本轴（146）按整棵编排树聚合要用它。
+- 迁移纪律三条都做了变异实测（漏一条 ALTER → 4 红；把"只退被测那一条"退成 `>= 46` → 6 红，正是 v47 真炸的形状；
+  读取映射漏认新列 → 2 红；没传父 id 落成空串 → 1 红；会话漏 `role_key` → 1 红；升级路径不搬回旧数据 → 1 红）。
+- 验收：**B77**（🔶 CI 已证结构与升级路径 —— `agent-role-lineage-migration-real-db.test.ts` 8 例，含"旧行读成 NULL 而不是崩"
+  与"父会话统计不被子运行污染"两条反向对照；**真机那半只能你验**：SQLCipher 老库升 v48 后应用照常启动、旧会话与分步明细一字不变）。
 
 ### V4-Iter-144 `delegate_task` 内置工具 + 子 run（顺序形态）
 - 落点：新增内置工具（注册进 `src/main/tools/registry.ts`）；执行分支在 `engine.ts:1441-1525` 处 fork：**直调 `agentEngine.run`，绕开 `chat-service.ts:174` 的会话锁**（同会话走 `send` 必自锁死：`withConversationLock` 把 agent 分支整个包住）。
 - 子 run 三条硬规矩：① 工具白名单 ⊆ 父授权（继承 `resolveAgentToolPermissions` `engine.ts:222-229`，禁止子级出现 `'*'` 扩张）；② `kbIds` ⊆ 父 `kbIds`；③ `unattended: true`，且**派发前**就把 `confirm` 类工具从子清单里剔除——M7/源码都表明让它撞闸只会得到一句 `工具 X 需人工确认，但当前为无人值守场景，请在桌面端操作`（`engine.ts:1478-1485`）塞回上下文，用户既看不到弹窗也没得到结果。
+- **143 落地后留给 144 的三条**（v48 只建了列，这三条都是写入/呈现侧，别再当"以后再说"）：
+  ① 创建子会话时必须写 `parent_conversation_id` + `role_key`，且**会话列表默认只取 `parent_conversation_id IS NULL`**（否则委派一跑，用户的会话列表被机器会话灌满）；
+  ② 删除父会话时对子会话的级联口径要显式定（建议：随父删，且删除确认里带上"含 N 个子会话"）；
+  ③ 会话导出/导入**不带** lineage——`conversationRecordSchema` 是非严格对象，新字段会被静默剥掉；144 若想让导入保住归属，要显式改 schema，不能以为"列在库里就会跟着走"。
 - 预算闸：父 `MAX_STEPS=10` + 触顶 `+5`（`engine.ts:58/80`）本身不管总量 ⇒ 新增"本轮总 LLM 调用数 ≤ N"，N 由 140 判据给（入门档建议 3 角色 × 5 步 = 15 次，按 M7 热态 1.34s/次 ⇒ 单编排 ≥ 20s，必须先让用户看见这个预估）。
 - 验收：B78（CI：真桥层 + 真库，钉"子级拿不到父级没有的工具/库""confirm 类不进子清单""父不锁死：子 run 期间同会话可再发消息"）、B79（CI：预算闸触顶时的降级文案与 trace 行数）。
 

@@ -27,6 +27,10 @@ interface ConversationRow {
   note?: string | null
   /** v39：系统提示词覆盖；NULL=使用助手默认 */
   system_prompt_override?: string | null
+  /** v48：子代理会话的父会话 id；NULL=用户自己的会话 */
+  parent_conversation_id?: string | null
+  /** v48：本会话承担的角色；NULL=无角色（用户会话） */
+  role_key?: string | null
 }
 
 export function rowToRecord(row: ConversationRow): ConversationRecord {
@@ -46,7 +50,9 @@ export function rowToRecord(row: ConversationRow): ConversationRecord {
     hasDraft: !!row.has_draft,
     groupId: row.group_id ?? null,
     note: row.note ?? null,
-    systemPromptOverride: row.system_prompt_override ?? null
+    systemPromptOverride: row.system_prompt_override ?? null,
+    parentConversationId: row.parent_conversation_id ?? null,
+    roleKey: row.role_key ?? null
   }
 }
 

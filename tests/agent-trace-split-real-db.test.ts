@@ -24,7 +24,7 @@ vi.mock('../src/main/logger', () => ({
   createLogger: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} })
 }))
 
-import { dbService, LATEST_SCHEMA_VERSION } from '../src/main/db/database'
+import { dbService } from '../src/main/db/database'
 import { agentTraceRepo } from '../src/main/db/repositories/agent-trace.repo'
 
 /** v46 之前 agent_traces 的形状（逐字取自 migration v1/v24 的 DDL） */
@@ -74,7 +74,8 @@ describe('agent_traces 输入/输出列（v46）', () => {
       .prepare('SELECT name FROM schema_migrations WHERE version = ?')
       .get(46) as { name: string } | undefined
     expect(row?.name).toBe('agent_trace_usage_split')
-    expect(LATEST_SCHEMA_VERSION).toBe(47)
+    // 不再断言 LATEST_SCHEMA_VERSION == 某个号：那等于给下一次加迁移预埋一处必改测试
+    //（2026-10-13 加 v47 时真的因此红过；同一条口径已写进 kb-min-score-real-db.test.ts:96）
   })
 
   it('新行写入后原样读回，关库重开仍在（真的落到了磁盘）', () => {

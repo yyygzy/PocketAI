@@ -764,6 +764,26 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE knowledge_bases ADD COLUMN min_score REAL NOT NULL DEFAULT 0;
     `
+  },
+  {
+    // v48: 多角色编排的归因位（docs/agent-multi-role-plan.md 的 143；写入方在 144）。
+    //
+    // **决策② 用户 2026-10-15 选定「子代理用独立会话」**，于是这三列的家这样分，不是随手加的：
+    //  · `conversations.parent_conversation_id` —— 子会话挂在哪个父会话下（列表隐藏、删除级联、追溯都走它）；
+    //  · `conversations.role_key` —— **角色归会话**：独立会话意味着"一个子会话就是一个角色的一摊活"，
+    //    所以角色只有这一个家。方案初稿写的是加在 `agent_traces` 上，那是决策②没定时的形状；
+    //    两处都放＝同一份口径写两处（V4-Iter-117 那族"改一处等于把 bug 挪个地方"），故撤掉 trace 侧的 role_key。
+    //  · `agent_traces.parent_request_id` —— 子运行的每一步指回**控制器那一次 request**。
+    //    成本轴（146）要回答"这次编排一共花了多少 token"，靠会话归属聚合不到单次 request 这一层，
+    //    而 traces 是这里唯一能承载"我的父运行是谁"的地方（没有独立的 runs 表）。
+    // 三列都可空：旧行与所有现网会话读成 NULL ⇒ 渲染层按"没有父/没有角色"降级，行为一字不变。
+    version: 48,
+    name: 'agent_role_lineage',
+    up: `
+      ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT;
+      ALTER TABLE conversations ADD COLUMN role_key TEXT;
+      ALTER TABLE agent_traces ADD COLUMN parent_request_id TEXT;
+    `
   }
 ]
 

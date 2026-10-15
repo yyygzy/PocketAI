@@ -153,6 +153,13 @@ export interface ConversationRecord {
   note?: string | null
   /** v39：会话级系统提示词覆盖；null=使用助手默认 */
   systemPromptOverride?: string | null
+  /**
+   * v48：子代理会话的父会话 id（决策②：子代理用独立会话）。
+   * null = 用户自己的会话；非 null 时这条会话是某次委派开出来的。
+   */
+  parentConversationId?: string | null
+  /** v48：这条会话承担的角色（归会话不归 trace——独立会话意味着一会话一角色）；null=无角色 */
+  roleKey?: string | null
 }
 
 /** 会话分组文件夹（按助手维度归集） */
@@ -856,6 +863,12 @@ export interface AgentTraceRecord {
   id: string
   requestId: string
   conversationId: string
+  /**
+   * v48：控制器那一次 request。
+   * undefined = 这一行属于用户自己发起的运行；非 undefined 时它是某次委派的子运行的一步，
+   * 成本/耗时按整棵编排树聚合就靠这一列（角色在 conversations.role_key 上，不在这里重复）。
+   */
+  parentRequestId?: string | null
   stepIndex: number
   stepType: 'llm' | 'tools' | 'final' | 'degrade' | 'replan'
   toolName?: string
