@@ -66,6 +66,24 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-141 本地推理槽位：错峰调度收在适配器出口，未实测档不套槽
+
+- **施工图先被自己推翻**：方案写的是"把 4+4+1+2 = 11 个调用点各自包一层"。回读后两条理由否掉它：① 本地推理流量最终只从 `openai-compatible.ts` 的三条端点出去（`/chat/completions`、`/embeddings`、`/images/generations`），一处闸门覆盖全部；② 那份清单本身还漏了 `ask-service.ts:82` 与 `translate-service.ts:140` —— 实测是 **12 处 streamChat + 2 处 embed**。逐个包 = 漏一个就静默失效，正是 V4-Iter-139 那类形状。
+- **新模块 `src/main/providers/local-slot.ts`**：`withLocalSlot({ baseUrl, lane, label, signal }, fn)`。队列按 **origin（host:port）** 分 —— 多条 provider 记录指的是同一张卡就必须共排队；局域网另一台机器的显存不该让本机排队。三条实测决定直接写进注释与用例：M10（对话与 embedding 共用一条队）、M6（并发不比串行快 ⇒ 槽 = 1 不亏吞吐）、M5（后台一条 embed 把生成拖慢 +64% ⇒ 排队买的是"可解释"，不是更快）。
+- **"谁在提这个请求"用 AsyncLocalStorage 传**，不给 12 个调用点各加一个参数：`runInSlotKind('background', ...)` 只接在两处任务边界（`index-queue.ts:59` 每个索引任务、`title-gen.ts:67` 自动标题升级），适配器出口读当前作用域。漏标的后果只是"优先级不对"，漏闸门的后果是"静默没有错峰"，所以闸门本身做成"不标也过闸（默认前台）"。
+- **两条行为按用户 2026-10-15 选定实现**：① **未实测档（>4GiB 或显存采不到）不套槽** —— 今天什么样还是什么样，不把"我们没有数据"实现成"用户变慢"；② **后台等待超过 60s 升级为前台同级**（`BACKGROUND_PROMOTE_MS`），防"前台一直在聊 ⇒ 索引永不推进"。
+- 另外三条取舍：重入保护（外层已持有槽时内层不再排队 —— 容量 1 时二次排队就是自锁）；等待期间取消 ⇒ 立刻退出队列（点「停止」不该继续占着排队位，更不该几十秒后才起跑）；`listModels` **故意不过闸**（元数据请求排在一次生成后面只会冻住设置页，换不到任何显存收益）。
+- **composition root 接线**（`src/main/index.ts`）：`configureLocalSlot({ readVramMiB: () => largestCudaVramMiB(getHardwareInfo().gpus), recordWait: (ms, detail) => recordPerf(SLOT_WAIT_PERF_LABEL, ms, detail) })`。
+  为什么是注入而不是 local-slot 自己 import hardware：**本批一开始就是静态 import，结果三个测试文件（`openai-compatible` / `agent-prompt-tools` / `index-queue`）当场加载失败** —— 链条是 `hardware → logger → electron`，而它们没 mock electron。忘记接线的后果是"不套槽"（静默且无害），所以补一条 scan 用例钉住 `index.ts` 必须调用 `configureLocalSlot`，同时钉 `local-slot.ts` 里不许出现 hardware / perf-probe / electron 的 import。
+- 顺带还掉方案里的一条尾巴：**慢等待埋点的 detail 带模型名与 lane/kind**（此前 `kb.*` 标签不带 provider/model，跨模型时看不出谁慢）。
+- **测试**：新增 `tests/local-slot-real-request.test.ts` 19 例 —— 真起 `node:http` 假本地推理服务 + 真适配器，断的是**服务端观察到的并发峰值与起跑顺序**，不是"函数被调用过"；`tests/local-capacity.test.ts` +5 例（`largestCudaVramMiB` 的 bytes→MiB：本机真实值 4293918720 ⇒ 4095MiB，单位写混就静默翻档）。
+  两条是自己写坏后改对的：① 假服务回 `b64_json:""`，被适配器判成"既无 b64_json 也无 url"，图像用例先红在闸门之前；② `peak/starts` 是服务自身的累计量 ⇒ 共用一个 server 会让上一条用例的在飞请求混进这一条的观察窗口（一次红 4 条），改成每条用例各起一个 server。
+- **十轮变异实测全部转红**：未实测档也套槽 2 / 取消不出队 1 / 去掉重入保护 1 / 优先级不看 kind 1 / 去掉饿死升级 1 / 全局一把锁不分 origin 6 / 慢等待不记 2 / 失败不归还槽 4 / embed+image 绕过闸门 5 / composition root 接成常量 1。每轮 sha256 核对复原，`git status` 零残留。
+  **第一轮里"交棒后再复查一次取消"怎么改都不红**：`pickNext` 里 splice 与 resolve 是同步连做的 —— 取消要么还在队列（走 reject），要么已经交棒（由内层 fetch 的 signal 抛），不存在中间态。按既有纪律**删掉这条冗余守卫**而不是给它编一条断言，并把这段判断写进注释。
+- **验证**：typecheck 0；vitest **288 文件 / 3475 例**全绿（+1 skipped 是 140 那条 Mac-only 用例）；build 三端 exit=0。
+- **更正一条我写进方案的事实**：`index-queue.ts:39 isIdle()` 并非"零调用者" —— `tests/index-queue.test.ts` 用它等队列排空。生产侧确实没人拿它让路，但本轮的让路改由槽位优先级承担，队列不再自查（也避免出现"两个裁判"）。
+- **未实测** ⇒ 验收清单 **B73 / B74**：真机上"聊天期间灌索引"是否真的不再互相顶出显存、`agent.total` 的可见变化，以及没设 `keep_alive` 时 Ollama 的驻留行为（本轮没动 keep_alive，让位卸载仍是显式选项）。主进程改动，**须重启 dev**。
+
 ### V4-Iter-140 本地容量判据底座：显存实占与模型体积进采集层（只出判据，不改任何调用点）
 
 - **为什么先做这一层**：`docs/agent-multi-role-plan.md` 里"按硬件环境启动合适的 agent 方案"要成立，判据输入必须先在主进程拿得到。此前 `ollama-runtime.ts:128` 读 `/api/tags` 只留 `name`——**体积与量化拿到就丢**；`steward/hardware.ts` 的 GPU 只有总量（WMI `AdapterRAM` / 注册表 `qwMemorySize`），**没有"当前已用"**；`/api/ps` 全仓没有读者。

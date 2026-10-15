@@ -7,7 +7,7 @@
 // 两条都靠"输入里根本没有这些字段"来守：所以还要钉住**同档内不同总量给出同一决策**，
 // 否则将来有人补一条 `total - weights > 0` 的"顺手优化"，本文件必须转红。
 import { describe, it, expect } from 'vitest'
-import { planLocalCapacity } from '../src/main/agent/local-capacity'
+import { largestCudaVramMiB, planLocalCapacity } from '../src/main/agent/local-capacity'
 
 describe('planLocalCapacity —— 实测档（≤4GiB，本机唯一测过的一档）', () => {
   it('4096MiB：并发槽 1、embed 不与对话并行、未设 ctx 时不给跨模型角色', () => {
@@ -96,5 +96,38 @@ describe('planLocalCapacity —— 判据形状本身', () => {
     const d = planLocalCapacity({ totalVramMiB: 4096 })
     expect(d.reasons.length).toBeGreaterThan(0)
     expect(new Set(d.reasons).size).toBe(d.reasons.length)
+  })
+})
+
+describe('largestCudaVramMiB —— bytes→MiB 的换算（写混就静默翻档，V-0 的实测边界正挂在这上面）', () => {
+  it('本机真实值：4293918720 bytes ⇒ 4095MiB（仍属实测档）', () => {
+    expect(largestCudaVramMiB([{ cuda: true, memory: 4293918720 }])).toBe(4095)
+  })
+
+  it('整 4GiB ⇒ 4096；12GiB ⇒ 12288（跨档边界）', () => {
+    expect(largestCudaVramMiB([{ cuda: true, memory: 4096 * 1048576 }])).toBe(4096)
+    expect(largestCudaVramMiB([{ cuda: true, memory: 12288 * 1048576 }])).toBe(12288)
+  })
+
+  it('多卡取最大的一块，核显与脏值不参与', () => {
+    expect(
+      largestCudaVramMiB([
+        { cuda: false, memory: 2147483648 },
+        { cuda: true, memory: 4294967296 },
+        { cuda: true, memory: 17179869184 },
+        { cuda: true }
+      ])
+    ).toBe(16384)
+  })
+
+  it('没有 cuda / 全是脏值 ⇒ null（不是 0，判据据此走"采不到"分支）', () => {
+    for (const gpus of [[], [{ cuda: false, memory: 100 }], [{ cuda: true, memory: 0 }], [{ cuda: true, memory: -1 }], [{ cuda: true, memory: Number.NaN }], [{ cuda: true, memory: '4096' as unknown as number }]]) {
+      expect(largestCudaVramMiB(gpus)).toBeNull()
+    }
+  })
+
+  it('换算结果直接喂判据：4GiB 是实测档，8GiB 是未实测档', () => {
+    expect(planLocalCapacity({ totalVramMiB: largestCudaVramMiB([{ cuda: true, memory: 4 * 1073741824 }])!, numCtxSetByApp: false }).measured).toBe(true)
+    expect(planLocalCapacity({ totalVramMiB: largestCudaVramMiB([{ cuda: true, memory: 8 * 1073741824 }])!, numCtxSetByApp: false }).measured).toBe(false)
   })
 })

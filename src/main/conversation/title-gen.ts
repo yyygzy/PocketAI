@@ -11,6 +11,7 @@ import { broadcast } from '../ipc/broadcast'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
 import { isSmartTitleEnabled } from './title-config'
+import { runInSlotKind } from '../providers/local-slot'
 import {
   PLACEHOLDER_TITLE,
   TITLE_MAX_TOKENS,
@@ -62,10 +63,13 @@ async function upgradeTitleWithLlm(args: FirstMessageTitleArgs, fallback: string
   const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
   try {
     const adapter = providerManager.getAdapter(args.providerId)
-    const result = await adapter.streamChat(
-      [{ role: 'user', content: buildTitlePrompt(args.userContent) }],
-      { model: args.model, signal: controller.signal, maxTokens: TITLE_MAX_TOKENS, temperature: 0.3 },
-      { onDelta: () => {} }
+    // 标题升级是后台任务（调用方 void 触发、失败静默）⇒ 让路给前台对话，不抢小卡的显存
+    const result = await runInSlotKind('background', () =>
+      adapter.streamChat(
+        [{ role: 'user', content: buildTitlePrompt(args.userContent) }],
+        { model: args.model, signal: controller.signal, maxTokens: TITLE_MAX_TOKENS, temperature: 0.3 },
+        { onDelta: () => {} }
+      )
     )
     const title = sanitizeTitle(result.content ?? '', fallback)
     if (title && title !== fallback) {

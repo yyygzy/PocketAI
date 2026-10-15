@@ -46,6 +46,9 @@ import { providerRepo } from './db/repositories/provider.repo'
 import { mcpServerRepo } from './db/repositories/mcp-server.repo'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { getHardwareInfo } from './steward/hardware'
+import { configureLocalSlot, SLOT_WAIT_PERF_LABEL } from './providers/local-slot'
+import { largestCudaVramMiB } from './agent/local-capacity'
+import { recordPerf } from './steward/perf-probe'
 import { licenseService } from './license/license'
 import { initUpdateManager } from './update-manager'
 import { buildAppMenu } from './menu'
@@ -577,6 +580,15 @@ if (!gotLock) {
       } catch (err) {
         log.warn('启动硬件检测失败:', err)
       }
+    })
+
+    // 本地推理槽位的接线（V4-Iter-141）：容量判据读硬件快照、慢等待进 perf 面板。
+    // 这两件事必须在 composition root 做 —— local-slot 自己不 import hardware/perf-probe，
+    // 否则任何用到适配器的测试都被 electron 依赖链拖挂（本批就是这么撞出来的）。
+    // 忘记接的后果是不套槽（与今天一致），所以 CI 有一条 scan 用例钉这行调用存在。
+    configureLocalSlot({
+      readVramMiB: () => largestCudaVramMiB(getHardwareInfo().gpus),
+      recordWait: (ms, detail) => recordPerf(SLOT_WAIT_PERF_LABEL, ms, detail)
     })
     boot().catch((err) => {
       log.error('启动失败:', err)

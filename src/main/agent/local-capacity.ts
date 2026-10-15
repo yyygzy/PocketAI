@@ -50,6 +50,25 @@ export interface LocalCapacityDecision {
   reasons: CapacityReasonCode[]
 }
 
+/** 一 MiB 的字节数。换算必须有名有姓：bytes/MiB 写混会把"实测档"翻成"未实测档"（静默失去错峰） */
+export const MIB_BYTES = 1048576
+
+/**
+ * 从 GPU 快照里取**最大的一块 cuda 显存**（bytes → MiB）。
+ * 非 NVIDIA / 采不到 / 脏值 ⇒ null（判据据此走"未实测"分支，而不是猜一个数）。
+ * 多卡取最大：本地推理今天只会落在一块卡上，取最大是"最宽松但仍在实测范围内"的选择。
+ */
+export function largestCudaVramMiB(gpus: ReadonlyArray<{ cuda: boolean; memory?: number }>): number | null {
+  let best = 0
+  for (const g of gpus ?? []) {
+    if (!g?.cuda) continue
+    const m = g.memory
+    if (typeof m !== 'number' || !Number.isFinite(m) || m <= 0) continue
+    if (m > best) best = m
+  }
+  return best > 0 ? Math.round(best / MIB_BYTES) : null
+}
+
 /** 4GiB 及以下：目前唯一在本机测过的档（GTX 1050 Ti 4096MiB / Ollama 0.33.1） */
 const MEASURED_MAX_VRAM_MIB = 4096
 

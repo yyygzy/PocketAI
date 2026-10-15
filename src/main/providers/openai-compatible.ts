@@ -11,6 +11,7 @@ import {
   type ProviderAdapter
 } from './types'
 import type { ToolCall, ToolSchema } from '../../shared/types'
+import { withLocalSlot } from './local-slot'
 import { errMsg, isAbortError } from '../error'
 
 /** 所有携带 Bearer API Key 的请求统一使用的 fetch 选项片段。
@@ -169,6 +170,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     return headers
   }
 
+  /** 拉取模型列表：**故意不过槽**——它是设置页的元数据请求，
+   *  让"列表刷新"排在一次正在进行的生成为后面，只会把界面冻住，换不到任何显存收益。 */
   async listModels(): Promise<string[]> {
     const errors: string[] = []
     // listModels 最多尝试所有 key 一次
@@ -199,7 +202,23 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     throw new ProviderError(`获取模型列表失败: ${errors.join('; ') || '无可用 Key'}`)
   }
 
+  /**
+   * 闸门放在出口而不是那 12 个调用点（V4-Iter-141）：本地回环请求按容量判据排队，
+   * 云地址与"未实测档"原样放行——一行时序都不改。
+   * signal 一并交给闸门：等待期间取消也要能退出，否则取消掉的调用会把槽一直占着。
+   */
   async streamChat(
+    messages: AdapterChatMessage[],
+    params: ChatParams,
+    handlers: ChatStreamHandlers
+  ): Promise<ChatStreamResult> {
+    return withLocalSlot(
+      { baseUrl: this.baseUrl, lane: 'chat', label: params.model, signal: params.signal },
+      () => this.streamChatInner(messages, params, handlers)
+    )
+  }
+
+  private async streamChatInner(
     messages: AdapterChatMessage[],
     params: ChatParams,
     handlers: ChatStreamHandlers
@@ -371,6 +390,14 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
 
   /** 批量向量化（OpenAI 兼容 /v1/embeddings） */
   async embed(texts: string[], model: string): Promise<number[][]> {
+    // 同一道闸门：批量向量化（后台索引）与查询向量化（前台检索）都从这里出去，
+    // 谁在提这个请求由 runInSlotKind 的作用域决定，不由调用点自觉决定
+    return withLocalSlot({ baseUrl: this.baseUrl, lane: 'embedding', label: model }, () =>
+      this.embedInner(texts, model)
+    )
+  }
+
+  private async embedInner(texts: string[], model: string): Promise<number[][]> {
     const errors: string[] = []
     for (let attempt = 0; attempt < Math.max(1, this.apiKeys.length); attempt++) {
       const key = this.nextKey()
@@ -406,6 +433,18 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   /** 图像生成（OpenAI Images 兼容 /v1/images/generations，n 固定 1）。
    *  兼容两种响应形态：data[0].b64_json（直接返回）与 data[0].url（由调用方下载）。 */
   async generateImages(params: {
+    model: string
+    prompt: string
+    size: string
+    signal?: AbortSignal
+  }): Promise<{ b64?: string; url?: string }> {
+    return withLocalSlot(
+      { baseUrl: this.baseUrl, lane: 'image', label: params.model, signal: params.signal },
+      () => this.generateImagesInner(params)
+    )
+  }
+
+  private async generateImagesInner(params: {
     model: string
     prompt: string
     size: string

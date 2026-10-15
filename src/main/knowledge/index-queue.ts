@@ -4,6 +4,7 @@ import { ingestionService } from './ingestion'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
+import { runInSlotKind } from '../providers/local-slot'
 
 const log = createLogger('index-queue')
 
@@ -52,17 +53,22 @@ export class IndexQueue {
     while (this.queue.length > 0) {
       const task = this.queue.shift()!
       try {
-        if (task.kind === 'text') {
-          await ingestionService.ingestText(
-            task.kbId,
-            task.docId,
-            task.payload?.text ?? '',
-            task.payload?.title ?? ''
-          )
-        } else {
-          // file / url / reindex 统一走 ingestDocument
-          await ingestionService.ingestDocument(task.kbId, task.docId)
-        }
+        // 后台作用域一路透传到 provider 出口（V4-Iter-141）：索引的批量向量化/OCR 都算后台任务，
+        // 由 local-slot 在前台在场时排队让路。**不在这里问 isIdle**——让路是槽位的职责，
+        // 队列自己再判一次会出现"两个裁判"（同 139 那批口径散落的教训）。
+        await runInSlotKind('background', async () => {
+          if (task.kind === 'text') {
+            await ingestionService.ingestText(
+              task.kbId,
+              task.docId,
+              task.payload?.text ?? '',
+              task.payload?.title ?? ''
+            )
+          } else {
+            // file / url / reindex 统一走 ingestDocument
+            await ingestionService.ingestDocument(task.kbId, task.docId)
+          }
+        })
       } catch (e) {
         // ingestion 内部已设置 error 状态，这里仅记录日志
         log.warn(`索引任务失败: doc=${task.docId} ${errMsg(e)}`)

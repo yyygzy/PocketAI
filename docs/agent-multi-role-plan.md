@@ -75,19 +75,26 @@ V-0 跑完后补一条口径修正（写在这里以免有人再按初稿理解�
 - 为什么单独成迭代：这一层是全系列唯一能"零风险先落"的部分，且**纯函数住在中立模块**（不寄居在常被整体 `vi.mock` 的 `rag.ts`/`engine.ts`，同既有教训）。
 - 边界：不改任何调用点；`usedMiB` 采不到就是 `null`，判据退回保守档。
 - 验收：B72（CI：判据表逐档对号 + 两条反向对照——"权重相加放得下"不得判成可同驻（M10 的形状）、`/api/ps` 的条数不得当成显存真相（A1 §7 三同挂 vs A2 生成态驱逐就是这个坑））。
+- **✅ 已落地**：采集层与判据表见台账 V4-Iter-140；`largestCudaVramMiB`（bytes→MiB 的有名换算，写混就静默翻档）在 141 里被 composition root 用掉。
 
-### V4-Iter-141 本地槽位调度（错峰主体）
-- 落点：把 `src/main/chat/concurrency.ts` 的 `withProviderLimit`（现容量 2、唯一使用者 `chat-service.ts:526`）扩成 `withLocalSlot(kind, providerId, model)`：`kind ∈ {foreground, retrieval, background}`；按 140 的判据给容量。
-- **接线清单（回读后补全，漏一处就等于 139 那种"没接线"缺陷重演）**：
-  - agent 侧 4 处 `streamChat`：`engine.ts:392`（历史压缩）、`:856`（规划）、`:1083`（主循环）、`:1670`（步数耗尽兜底）。原调研只点了 `:1083`。
-  - 检索链 4 处：`knowledge/reranker.ts:71`、`knowledge/hyde.ts:22`、`knowledge/multi-query.ts:53`、`knowledge/ocr.ts:41`。
-  - 标题：`conversation/title-gen.ts:65`。
-  - embedding **不是** `streamChat`：`knowledge/embedding.ts:31`（批量，走 `adapter.embed` → `/v1/embeddings`）与 `:56`（查询）。⇒ 它和 chat 是两条端点；M10 更直接：**在 4GB 机上 embed 一到就把对话模型顶出去**（2.7GB < 4GB 仍被逐），所以"槽位按端点分"不是洁癖而是硬约束。卸载也一样不对称——M4 记的是两次实测结论相反（`/api/generate keep_alive:0` 有时卸得掉 embedding 模型、有时卸不掉），**唯一稳定的是按加载它的那条端点去卸**（`/api/embed keep_alive:0` 两次都清空）。
-- 让路：`knowledge/index-queue.ts:39 isIdle()` 现在零调用者 ⇒ 后台任务出队前先问前台槽是否空闲；**只在空闲期跑**，不做 kill 式抢占（前台 run 内部会调 `kb_search`，误判"空闲"会自锁）。
-- 让位卸载：默认**不**主动 `keep_alive:0`（冷启动代价实测：M7 5.2s、M10 3045ms）；仅在"后台大批量索引 + 前台长时间无请求"时由用户显式开，且**必须按端点成对卸载**（chat 走 generate、embed 走 embed），否则留下卸不掉的驻留反而更挤。
-- 边界与回滚：判据拿不到 ⇒ 沿用今天的容量 2，行为不变。云 provider 不受本地槽位约束（只有 `type==='ollama'`/回环 baseUrl 这条判据参与的才走）。
-- **140 落地后新增的一条硬约束**：`getHardwareInfo()` 的快照是**启动时采一次并缓存**（`hardware.ts:285-297`，只有用户点「重新检测」才刷新）⇒ 里面的 `usedMemory` 是启动瞬间的读数，**不能当实时空闲显存用**。141 若要做"当前是否有前台请求在场"的判定，必须走自己的运行时状态（或实时读 `/api/ps`），不许拿这张缓存的快照当事实。
-- 验收：B73（CI：假时钟下排队顺序与并发数；M5 的 +64% 互拖用一条"检索链与索引不得同槽"断言守住）、B74（🔶 真机：4GB 机上聊天期间灌索引，看 `agent.total` 变化——数字只有真机可看）。
+### V4-Iter-141 本地槽位调度（错峰主体）—— ✅ 已落地，施工图与本节初稿不同
+
+- **初稿的施工图被自己推翻**：原写"把 `withProviderLimit` 扩成 `withLocalSlot(kind, providerId, model)`，在 11 个调用点各自包一层"。回读后两条理由否掉：
+  ① 本地推理流量最终只从 `openai-compatible.ts` 的三条端点出去（`/chat/completions`、`/embeddings`、`/images/generations`），**一处闸门覆盖全部**；
+  ② 那份清单本身还是不全 —— 实测调用点是 **12 处 `streamChat` + 2 处 `embed`**，初稿漏了 `ask-service.ts:82`（知识库问答）与 `translate-service.ts:140`（翻译）。
+  逐个包 = 漏一个就静默失效（正是 V4-Iter-139 那类形状），所以改成收口在适配器出口。
+- **实现**：`src/main/providers/local-slot.ts` 的 `withLocalSlot({ baseUrl, lane, label, signal }, fn)`；队列按 **origin（host:port）** 分 —— 同机多条 provider 记录指的是同一张卡 ⇒ 共排队；不同 host 各自一条队（局域网另一台机器的显存不该让本机等）。
+- **"谁在提请求"靠 AsyncLocalStorage 传，不靠调用点自觉**：`runInSlotKind('background', ...)` 只接在两处任务边界 —— `index-queue.ts:59`（每个索引任务，覆盖批量 embedding 与 OCR）与 `title-gen.ts:67`（自动标题）。理由是"我在替后台干活"是**任务级**事实，只有队列知道；把它当参数透传到 12 个调用点最容易漏、也最难证明没漏。漏标的后果只是"优先级不对"，漏闸门的后果是"静默没有错峰" ⇒ 闸门本身做成"不标也过闸（默认前台）"。
+- **两条决定（用户 2026-10-15 选定，实现与用例都按它走）**：
+  ① **未实测档不套槽** —— `>4GiB` 或显存采不到 ⇒ 一行时序都不改（不把"我们没有数据"实现成"用户变慢"）；
+  ② **后台等待超过 60s 升级为前台同级**（`BACKGROUND_PROMOTE_MS`）—— 防"前台一直在聊 ⇒ 索引永不推进"。
+- 另外三条取舍：重入保护（外层已持有槽时内层不再排队，容量 1 时二次排队就是自锁）；等待期间取消 ⇒ 立刻退出队列（点「停止」不该继续占排队位）；`listModels` **故意不过闸**（元数据请求排在一次生成后面只会冻住设置页，换不到任何显存收益）。
+- **端点差异这条初稿说对了**：embedding 不是 `streamChat`，走 `adapter.embed` → `/v1/embeddings`（`embedding.ts:31` 批量 / `:56` 查询）。M10 才是低配机的真实硬约束（4GiB 上 embed 一到就把对话模型顶出去，之后一步付 3045ms 冷启动）⇒ 实现让 chat 与 embedding **共用一条队**，而不是各排各的队。
+- **`isIdle()` 那句是错话，已更正**：`index-queue.ts:39` 并非"零调用者" —— `tests/index-queue.test.ts` 用它等队列排空。生产侧确实没人拿它让路，而本轮的让路改由**槽位优先级**承担；队列不再自查，以免出现"两个裁判"（前台 run 内部会调 `kb_search`，队列自查还会误判"空闲"）。
+- **让位卸载本轮没动**：不设 `keep_alive`、不主动卸载（M7 冷启动 5.2s、M10 3045ms 是实测代价）。M4 那条"`/api/generate keep_alive:0` 能否卸 embedding 模型"两次实测结论相反 ⇒ 属未收敛；将来要做让位卸载必须按加载端点成对卸（`/api/embed keep_alive:0` 两次都清空）。
+- **依赖方向的教训（本批撞的）**：一开始让 `local-slot` 静态 import `steward/hardware`，链条 `hardware → logger → electron` 当场把三个测试文件拖到加载失败 ⇒ 改成 **composition root 注入**（`index.ts` 调 `configureLocalSlot({ readVramMiB, recordWait })`），并加 scan 用例钉住"必须接线 + `local-slot.ts` 不许出现 hardware / perf-probe / electron 的 import"。忘记接线的后果是"不套槽"（静默且无害），所以只能靠 CI，不能靠记性。
+- 还掉方案里的一条尾巴：慢等待埋点 `local.slot.wait` 的 detail **带模型名与 lane/kind**（此前 `kb.*` 标签不带 provider/model，跨模型时看不出谁慢）。
+- 验收：**B73**（🔶 CI 半边已进 —— 真 `node:http` 服务端 + 真适配器，断服务端观察到的并发峰值与起跑顺序，19 例、十轮变异 2/1/1/1/1/6/2/4/5/1 红；剩真机体感与面板文案）、**B74**（⬜ 大显存档"升级后应完全无变化"，我这台 4GiB 证不了那一侧）。
 
 ### V4-Iter-142 能力探针与三态徽标
 - 落点：`src/main/agent/delegate-capability.ts`（纯函数判卷）+ 一次真实请求（走 `providerManager.getAdapter().streamChat`，带 `tools`，同 M7 形状）；结果写 `app_config`；设置页 → 模型服务商处显示 `可委派 / 只会写围栏 / 不派活`。
