@@ -191,8 +191,23 @@ export function configureLocalSlot(next: SlotDeps): void {
 let promoteMs = BACKGROUND_PROMOTE_MS
 let nowFn: () => number = Date.now
 
+/**
+ * 测试缝：整份替换判据。存在的理由不是"方便"，而是**今天真硬件到不了那一支**——
+ * `rolesMayUseDistinctModels` 需要应用显式设小 num_ctx（全仓零命中），所以跨模型角色那条路
+ * 在实机上永远是关的；没有这个缝，145 的"放行时会发出第二次推理"就没法被证，
+ * 而"只测拒绝半边"的用例删掉放行分支照样全绿（144 的 M5 就是这么撞出来的）。
+ * 生产代码不许调它（`resetLocalSlotsForTest` 会清，用例之间不残留）。
+ */
+let decisionOverride: (() => LocalCapacityDecision) | null = null
+
+export function setSlotDecisionForTest(fn: (() => LocalCapacityDecision) | null): void {
+  decisionOverride = fn
+  queues.clear()
+}
+
 /** 容量判据的唯一来源；每次请求现取，避免把启动瞬间的显存快照当永久事实 */
 export function slotDecision(): LocalCapacityDecision {
+  if (decisionOverride) return decisionOverride()
   let vramMiB: number | null = null
   try {
     vramMiB = deps.readVramMiB()
@@ -216,6 +231,7 @@ export function setSlotClockForTest(fn: (() => number) | null): void {
 export function resetLocalSlotsForTest(): void {
   queues.clear()
   deps = { readVramMiB: () => null }
+  decisionOverride = null
   setSlotPromoteMsForTest(BACKGROUND_PROMOTE_MS)
   setSlotClockForTest(null)
 }

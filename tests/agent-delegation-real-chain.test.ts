@@ -247,7 +247,27 @@ function delegateToolMsg(convId: string): string {
   return msg ? String(msg.content) : ''
 }
 
-function resetScript(): void {
+/**
+ * 清账前先把**上一个用例的迟到请求**放干。
+ * B79 那条"一条子请求都不发"会偶红（本轮 145 的三遍全量里红过，单独跑这个文件也复现得出），
+ * 根因不在委派链：子会话一进门就 fire-and-forget 发一条**后台标题升级**
+ * （`title-gen.ts` 的 `void upgradeTitleWithLlm`，自带 controller、父中止也拦不住它），
+ * 载荷里带着角色开场白 ⇒ 被 `isChild` 认成"子的推理"。它在**上一个**用例发出、在**下一个**用例归零之后才落到服务端。
+ * 所以 `reqs = []` 与"只记窗口边界"都挡不住（迟到那条是在归零之后 append 进来的）；
+ * 唯一稳的是"等到不再有新请求到达再清"（连续 3 拍 20ms 静默，上限 1.5s）。
+ */
+async function resetScript(): Promise<void> {
+  const t0 = Date.now()
+  let last = reqs.length
+  let quiet = 0
+  while (quiet < 3 && Date.now() - t0 < 1500) {
+    await new Promise((r) => setTimeout(r, 20))
+    if (reqs.length === last) quiet++
+    else {
+      quiet = 0
+      last = reqs.length
+    }
+  }
   reqs = []
   script.parentDelegations = 1
   script.childToolSteps = 1
@@ -335,8 +355,11 @@ describe('委派规则本身（纯函数，链外也要能单独断言）', () =
 })
 
 describe('委派真链（开关打开后）', () => {
-  beforeEach(() => {
-    resetScript()
+  // resetScript 现在是 async（清账前要放干迟到请求）：**这里必须 await**——
+  // `beforeEach(() => { resetScript() })` 会把那个 promise 丢掉，清账就跑在测试体中间，
+  // 把 `script.parentDelegations` 之类的设置**在测试进行中原样重置回去**，一次红 6 条（本批踩过）。
+  beforeEach(async () => {
+    await resetScript()
     seedVerdict('native_tools_ok')
     expect(setDelegationEnabled(providerId, MODEL, true).ok).toBe(true)
   })
@@ -443,6 +466,11 @@ describe('委派真链（开关打开后）', () => {
     )
     expect(delegateToolMsg(conv)).toContain('DELEGATE_BUDGET_EXHAUSTED')
     expect(reqs.filter((r) => r.isChild)).toHaveLength(0)
+    // 第二条证据与请求计数无关，因此不受任何迟到请求的干扰：这一轮**压根没建子会话**
+    // （建会话是发请求之前的最后一步，见 engine 的 prepareDelegation）
+    expect(
+      conversationRepo.list(undefined, undefined, { includeSubSessions: true }).filter((c) => c.parentConversationId === conv)
+    ).toHaveLength(0)
   })
 
   it('子会话数用满 ⇒ 拒绝且一条子会话都不建；子 run 一进门发现触顶就不再烧调用', async () => {

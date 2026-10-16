@@ -80,7 +80,7 @@ const CONSERVATIVE: Omit<LocalCapacityDecision, 'reasons'> = {
   measured: false
 }
 
-function dedupeReasons(list: CapacityReasonCode[]): CapacityReasonCode[] {
+function dedupeReasons<T extends string>(list: T[]): T[] {
   return list.filter((r, i) => list.indexOf(r) === i)
 }
 
@@ -118,4 +118,70 @@ export function planLocalCapacity(input: LocalCapacityInput): LocalCapacityDecis
     measured: true,
     reasons: dedupeReasons(reasons)
   }
+}
+
+// ---------- 145：跨模型角色与角色并发（在 140 的判据之上再加一条合取） ----------
+
+/** 角色相关判据的理由码（界面/日志按码出文案，同上面的纪律） */
+export type RoleReasonCode =
+  /** 两条合取都成立：小 ctx 实测过同驻，且这些角色都不碰 embedding 检索链 */
+  | 'distinct-roles-allowed'
+  /** 第一条不成立：这一档没有"跨模型同驻"的实测数据（或应用没设小 ctx） */
+  | 'distinct-roles-not-measured'
+  /** 第二条不成立：角色要走检索链 ⇒ 一 embed 一把对话模型顶出去（M10 实测），跨模型同驻在这里翻车 */
+  | 'retrieval-chain-exclusive'
+  /** 有一条子 run 落在本地回环端点 ⇒ 这一轮整体按串行走（M6 并发买不到东西 + 141 的前台槽本就 =1） */
+  | 'local-serial-measured'
+
+export interface DistinctRoleVerdict {
+  allowed: boolean
+  reasons: RoleReasonCode[]
+}
+
+/**
+ * 「这条编排能不能给不同角色配不同模型」——**两条合取，一条都不能省**（方案 §145 更正过初稿）：
+ *  ① `decision.rolesMayUseDistinctModels`：V-0 实测 3b+coder 在 ctx≤2048 时确实同驻（3149MiB），
+ *     但应用从不设 `num_ctx` ⇒ 今天恒 false；
+ *  ② **这些角色都不走 embedding 检索链**：同驻被逐的那次实测就是"一个 embed 进来把对话模型顶出去"
+ *     （M10），只写 ① 会把低配档错判成"可以开"。
+ * 只做合取、不做算术：还是不许拿"总显存减权重减 KV > 0"当放行理由。
+ */
+export function mayAssignDistinctModelRole(
+  decision: LocalCapacityDecision,
+  opts: { childUsesRetrieval: boolean }
+): DistinctRoleVerdict {
+  const reasons: RoleReasonCode[] = []
+  if (!decision.rolesMayUseDistinctModels) reasons.push('distinct-roles-not-measured')
+  if (opts.childUsesRetrieval) reasons.push('retrieval-chain-exclusive')
+  if (reasons.length > 0) return { allowed: false, reasons: dedupeReasons(reasons) }
+  return { allowed: true, reasons: ['distinct-roles-allowed'] }
+}
+
+export interface RoleConcurrencyPlan {
+  /** 同一轮编排里的多条子 run 是否可以并行发起 */
+  parallel: boolean
+  /** 同时在飞的最多条数（>=1） */
+  maxParallel: number
+  reasons: RoleReasonCode[]
+}
+
+/**
+ * 「多条子 run 是并行还是串行」——按用户 2026-10-16 选定：**云并行、本地串行**。
+ * 理由不是"云更快"而是本地并行**换不到东西**：M6 实测跨模型并发 7597ms vs 串行 8283ms（差 686ms 属噪声），
+ * 而 141 的前台槽在 ≤4GiB 档就是 1 ⇒ 本地就算并发发出，也会在闸门排队，只会把"谁在等"变模糊。
+ * 只要有一条子 run 落在本地回环端点上，这一轮就整体按串行走（不做半并行：一半在等一半在跑，
+ * 预算与耗时更难解释）。
+ */
+export function planRoleConcurrency(opts: {
+  /** 每条子 run 用的是哪家端点（true = 本地回环） */
+  endpointsLocal: boolean[]
+  requested: number
+}): RoleConcurrencyPlan {
+  const reasons: RoleReasonCode[] = []
+  const requested = Math.max(1, opts.requested)
+  if (opts.endpointsLocal.some((local) => local)) {
+    reasons.push('local-serial-measured')
+    return { parallel: false, maxParallel: 1, reasons }
+  }
+  return { parallel: requested > 1, maxParallel: requested, reasons }
 }

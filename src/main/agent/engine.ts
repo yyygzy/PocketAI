@@ -22,6 +22,7 @@ import type {
   ApprovalPreviewField
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
+import { slotDecision } from '../providers/local-slot'
 import type { AdapterChatMessage, ChatParams } from '../providers/types'
 import { recordChatStreamPerf } from '../steward/perf-probe'
 import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
@@ -63,9 +64,12 @@ import {
   formatDelegationResult,
   newRunBudget,
   parseDelegateArgs,
+  withDelegateModelParam,
+  type DelegateRole,
   type RunBudget
 } from '../../shared/delegation-rules'
-import { planChildRun } from './delegation'
+import { listRoleModelOptions, planChildRun, resolveChildTarget, type ChildRunPlan } from './delegation'
+import { mayAssignDistinctModelRole, planRoleConcurrency } from './local-capacity'
 
 const MAX_STEPS = 10
 const logger = createLogger('agent')
@@ -124,6 +128,12 @@ interface AgentRunContext {
   budget: RunBudget
   /** 144：这一轮是不是子 run（子级不再看见 delegate_task，也不许再往下派） */
   asChild: boolean
+  /**
+   * 145：这条编排会不会走 embedding 检索链（助手绑了知识库，或工具面里有 kb_search）。
+   * 它是"跨模型角色"的第二条合取——子 run 继承父的工具面与助手，所以这个事实**在父 run 就能定**，
+   * 不必等到委派时再猜。低配档被逐的那次实测正是"一个 embed 进来把对话模型顶出去"（M10）。
+   */
+  childUsesRetrieval: boolean
   target: ChatTarget
   messages: AdapterChatMessage[]
   master: AbortController
@@ -155,6 +165,22 @@ interface AgentRunContext {
   finalMessageId: string
   lastAssistantMsgId: string // 上一步 LLM 产出的 assistant 消息 DB id，供 tool 消息 parentId 引用
   recentToolSignatures: string[] // 最近几步工具调用签名，用于检测死循环（相同工具+参数重复调用）
+}
+
+/**
+ * 一次已备妥、**还没发出任何请求**的子 run（145 把"判定"与"发起"拆成两半，才能把 B80 证成
+ * "判据没过 ⇒ 第二台端点收到 0 次请求"，而不是"界面上看着像被拦住了"）。
+ */
+interface PreparedDelegation {
+  tc: ToolCall
+  role: DelegateRole
+  /** 子 run 实际落点（可能与父不同模型/不同 provider） */
+  target: ChatTarget
+  /** 是否真的换了模型（同模型时 145 的跨模型判据不适用） */
+  distinct: boolean
+  /** 落点是否本地回环端点 ⇒ 这一批子 run 整体按串行走 */
+  endpointLocal: boolean
+  plan: ChildRunPlan
 }
 
 // Agent 默认系统提示词：任务拆解 + 主动工具调用 + ReAct 推理 + 错误恢复 + 记忆感知
@@ -774,9 +800,26 @@ class AgentEngine {
      */
     const surface = toolRegistry.filterByPermissions(toolPermissions)
     const delegationEnabled = !asChild && isDelegationEnabledFor(target.providerId, target.model)
-    const tools = asChild
+    const baseTools = asChild
       ? childToolSurface(surface)
       : surface.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
+    /**
+     * 145：「这个角色可以换一台模型」= **两条合取**（判据在 `local-capacity.ts`，容量唯一来源是 `slotDecision()`）：
+     *  ① 小 ctx 下实测过跨模型同驻；② 这条编排不走 embedding 检索链。
+     * 没过就把 `model` 参数**从 schema 里省掉**（模型看不见 ⇒ 不会填），而不是"看得见但被拒"
+     * ——那是 118 那轮的形状。今天 ① 恒为 false（应用从不设 num_ctx），所以这一支在这台机器上关着。
+     */
+    const childUsesRetrieval = kbIds.length > 0 || baseTools.some((t) => t.name === 'kb_search')
+    const distinctRolesAllowed =
+      delegationEnabled &&
+      mayAssignDistinctModelRole(slotDecision(), { childUsesRetrieval }).allowed
+    const tools = distinctRolesAllowed
+      ? baseTools.map((t) =>
+          t.name === DELEGATE_TOOL_NAME
+            ? withDelegateModelParam(t, listRoleModelOptions(target.providerId))
+            : t
+        )
+      : baseTools
     /**
      * 用户点名为"走文本协议"的模型（§4.4-⑦）：首轮就不传 tools，改由 system prompt 里的协议段
      * 承载工具清单。与"端点报 400 才自动降级"是两条独立入口，共用同一个注入 helper。
@@ -950,6 +993,7 @@ class AgentEngine {
       parentRequestId,
       budget,
       asChild,
+      childUsesRetrieval,
       target,
       messages,
       master,
@@ -1517,6 +1561,12 @@ class AgentEngine {
 
     const results: ToolResult[] = new Array(toolCalls.length)
     const allowTasks: Promise<void>[] = []
+    /**
+     * 145：同一轮里的多条子 run 先**全部备妥**（所有闸门都在备妥这一步，一次请求都不发），
+     * 再按并发判据决定怎么发出去。两趟而不是一趟边备边发，是因为"能不能并行"取决于
+     * 这一批里**有没有**任何一条落在本地端点上——边发就定了不了性。
+     */
+    const pendingDelegations: { idx: number; prepared: PreparedDelegation }[] = []
 
     for (let i = 0; i < toolCalls.length; i++) {
       if (master.signal.aborted) throw new Error('Agent 运行已中止')
@@ -1537,7 +1587,12 @@ class AgentEngine {
        * 而 registry.execute 永远碰不到它（delegate-tool.ts 里那条 execute 只是纵深防御）。
        */
       if (tc.function.name === DELEGATE_TOOL_NAME) {
-        results[i] = await this.runDelegationStep(ctx, tc)
+        const prepared = this.prepareDelegation(ctx, tc)
+        if ('result' in prepared) {
+          results[i] = prepared.result
+          continue
+        }
+        pendingDelegations.push({ idx: i, prepared: prepared.plan })
         continue
       }
 
@@ -1602,6 +1657,28 @@ class AgentEngine {
             results[idx] = r
           })
         )
+      }
+    }
+
+    /**
+     * 子 run 的发起方式（145，用户 2026-10-16 选定"云并行、本地串行"）：判据在
+     * `planRoleConcurrency`，理由是 M6 实测"跨模型并发不比串行快"而 141 的本地前台槽本就 =1，
+     * 本地并行只会把"谁在等"变模糊。并行那一路复用 `allowTasks`：与同轮的普通工具**一起**收口，
+     * 不额外加一层 await（否则父的其它工具会被子 run 白等一段）。
+     */
+    if (pendingDelegations.length > 0) {
+      const concurrency = planRoleConcurrency({
+        endpointsLocal: pendingDelegations.map((p) => p.prepared.endpointLocal),
+        requested: pendingDelegations.length
+      })
+      if (concurrency.parallel) {
+        for (const p of pendingDelegations) {
+          allowTasks.push(this.runPreparedDelegation(ctx, p.prepared).then((r) => { results[p.idx] = r }))
+        }
+      } else {
+        for (const p of pendingDelegations) {
+          results[p.idx] = await this.runPreparedDelegation(ctx, p.prepared)
+        }
       }
     }
 
@@ -1821,19 +1898,20 @@ class AgentEngine {
   // ─── 原有辅助方法 ──────────────────────────────────────────────
 
   /**
-   * 执行一次委派（144 的顺序形态：父等子做完再继续）。
+   * 备妥一次委派：**把所有闸门排在发请求之前**，所以判据没过时物理上发不出第二次推理
+   * （B80 就是钉这条，不接受"界面置灰了"当证据）。
    *
    * 失败一律回成 `isError` 的工具结果而**不抛出**：抛出去会让整轮运行进 error 分支，
    * 可"某个子代理没做好"本来是父代理该看见并改道的信息，不是系统崩溃（父完全可以换个角色再派、
    * 或自己把活干完）。预算与开关两条闸门都在这里再判一次——与工具面筛除是**同一个谓辞**
-   * （`isDelegationEnabledFor` / `delegation.ts` 的预算函数），不是第二份口径。
+   * （`isDelegationEnabledFor` / `delegation.ts` 的预算函数 / `mayAssignDistinctModelRole`），不是第二份口径。
    */
-  private async runDelegationStep(ctx: AgentRunContext, tc: ToolCall): Promise<ToolResult> {
-    const fail = (content: string): ToolResult => ({
-      toolCallId: tc.id,
-      name: tc.function.name,
-      content,
-      isError: true
+  private prepareDelegation(
+    ctx: AgentRunContext,
+    tc: ToolCall
+  ): { result: ToolResult } | { plan: PreparedDelegation } {
+    const fail = (content: string): { result: ToolResult } => ({
+      result: { toolCallId: tc.id, name: tc.function.name, content, isError: true }
     })
 
     let args: Record<string, unknown>
@@ -1849,6 +1927,25 @@ class AgentEngine {
       // 清单里本来不该有它；走到这里说明模型凭空调了这个名字（或开关刚被关掉）
       return fail('DELEGATION_DISABLED: 这台模型未被允许委派，请在「设置 → 模型服务商」打开「允许顺序委派」')
     }
+
+    /**
+     * 跨模型角色（145）：只有**真的**要求换模型时才过合取判据，省略 model 就是 144 的同模型形态。
+     * 拒的时候按码出话（不解析中文），并把"怎么办"写在同一句里：这条失败是回给模型的，
+     * 它看得到就能改成省略 model 重派；用户看到的则是分步明细里的这条工具结果。
+     */
+    if (parsed.model) {
+      const verdict = mayAssignDistinctModelRole(slotDecision(), { childUsesRetrieval: ctx.childUsesRetrieval })
+      if (!verdict.allowed) {
+        return fail(
+          `DELEGATE_DISTINCT_BLOCKED: ${verdict.reasons.join(' / ')}。` +
+            '这台机器没有"多个模型同驻"的实测依据（或这条编排要走检索链），' +
+            '请省略 model 参数、让角色沿用当前模型顺序执行。'
+        )
+      }
+    }
+    const resolved = resolveChildTarget(ctx.target, parsed.model)
+    if (!resolved.ok) return fail(`DELEGATE_BAD_TARGET: ${resolved.error}`)
+
     if (!canOpenChild(ctx.budget)) {
       return fail(`DELEGATE_CHILD_LIMIT: 本轮编排最多开 ${ctx.budget.maxChildren} 条子会话，已用满`)
     }
@@ -1856,14 +1953,39 @@ class AgentEngine {
       return fail(`DELEGATE_BUDGET_EXHAUSTED: 本轮模型调用预算已用尽（${ctx.budget.used}/${ctx.budget.max}）`)
     }
 
-    const { childConversationId, payload } = planChildRun({
+    const plan = planChildRun({
       parentConversationId: ctx.conversationId,
       assistantId: ctx.assistantId,
       role: parsed.role,
       task: parsed.task,
-      target: ctx.target
+      target: resolved.target
     })
     ctx.budget.children++
+    return {
+      plan: {
+        tc,
+        role: parsed.role,
+        target: resolved.target,
+        distinct: resolved.distinct,
+        endpointLocal: resolved.endpointLocal,
+        plan
+      }
+    }
+  }
+
+  /**
+   * 把备妥的子 run 发出去（144 的顺序形态由调用方"一条条 await"实现，145 的并行形态由
+   * 同一批 promise 交给 `Promise.all` 实现——这里只管一条，不管几条之间怎么排）。
+   */
+  private async runPreparedDelegation(ctx: AgentRunContext, prepared: PreparedDelegation): Promise<ToolResult> {
+    const { tc, role, plan } = prepared
+    const { childConversationId, payload } = plan
+    const fail = (content: string): ToolResult => ({
+      toolCallId: tc.id,
+      name: tc.function.name,
+      content,
+      isError: true
+    })
 
     // 子 run 的事件不外发：144 只让用户看见"父派了谁、拿回什么"（角色标签与子步展开是 146 的界面项），
     // 而 useAgentChat 第一行就按 requestId 过滤，转发过来也只会静默丢掉。
@@ -1886,17 +2008,17 @@ class AgentEngine {
     try {
       await this.run(payload, childEmit, { parentRequestId: ctx.requestId, budget: ctx.budget, asChild: true })
     } catch (e) {
-      return fail(`子代理（${parsed.role}）运行失败：${errMsg(e)}`)
+      return fail(`子代理（${role}）运行失败：${errMsg(e)}`)
     } finally {
       ctx.master.signal.removeEventListener('abort', onParentAbort)
     }
 
-    if (childError) return fail(`子代理（${parsed.role}）失败：${childError}`)
-    if (!finalContent.trim()) return fail(`子代理（${parsed.role}）没有产出内容`)
+    if (childError) return fail(`子代理（${role}）失败：${childError}`)
+    if (!finalContent.trim()) return fail(`子代理（${role}）没有产出内容`)
     return {
       toolCallId: tc.id,
       name: tc.function.name,
-      content: formatDelegationResult({ role: parsed.role, childConversationId, content: finalContent })
+      content: formatDelegationResult({ role, childConversationId, content: finalContent })
     }
   }
 

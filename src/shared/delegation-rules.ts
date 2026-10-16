@@ -29,6 +29,16 @@ export function isDelegateRole(v: unknown): v is DelegateRole {
 /** 任务描述上限：委派不是"把整篇文档塞过去"，超上限直接拒（截断会让子代理答非所问） */
 export const DELEGATE_TASK_MAX_CHARS = 4000
 
+/** model 参数长度上限（与文本协议键的单个片段上限同量级；模型名实测远小于此） */
+export const DELEGATE_MODEL_MAX_CHARS = 128
+
+/**
+ * 写进 schema 的候选模型条数上限。这只是**给模型的提示**，放行与否由主进程对着 provider
+ * 表判定（`resolveChildTarget`），所以截断不会让合法值被拒；截断的理由是清单本身要进每一轮请求的
+ * tools 载荷 —— 一次上百个模型名是纯 token 开销（见 agent-token-cost 台账那条静态开销实测）。
+ */
+export const DELEGATE_MODEL_ENUM_MAX_ITEMS = 40
+
 /**
  * 一轮编排的 LLM 调用总数上限：**3 角色 × 5 步 = 15**。
  * 本机 4GiB 实测下来这已是"最坏 ≥20 秒、带冷启动更多"的量级；再高就成了用户看不见的长时间占用。
@@ -69,11 +79,16 @@ export function canOpenChild(b: RunBudget): boolean {
   return b.children < b.maxChildren
 }
 
-export type DelegateArgs = { ok: true; role: DelegateRole; task: string } | { ok: false; error: string }
+export type DelegateArgs =
+  | { ok: true; role: DelegateRole; task: string; model: string | null }
+  | { ok: false; error: string }
 
 /**
  * 参数校验。**不许在这里做"宽容纠正"**（比如角色写错就默认给 researcher）：
  * 派错人比派失败更难发现——父代理会以为"研究做完了"，而实际跑的是另一个人设。
+ * 同理 `model` 在这里**只校验形状、不校验合法性**（这台 provider 到底有没有这个模型，
+ * 是主进程 `resolveChildTarget` 对着表判的事）：这里宽容接受非法名字不等于放行，
+ * 但在这里查表会让纯规则模块碰库，正是 144 分家要避免的那条。
  */
 export function parseDelegateArgs(args: Record<string, unknown>): DelegateArgs {
   const role = args.role
@@ -88,12 +103,63 @@ export function parseDelegateArgs(args: Record<string, unknown>): DelegateArgs {
   if (task.length > DELEGATE_TASK_MAX_CHARS) {
     return { ok: false, error: `task 超过 ${DELEGATE_TASK_MAX_CHARS} 字上限（当前 ${task.length}）` }
   }
-  return { ok: true, role, task }
+  // model 省略 = 沿用父的端点与模型（144 的形态，今天唯一放得开的形态）
+  const rawModel = args.model
+  if (rawModel !== undefined && rawModel !== null && rawModel !== '') {
+    if (typeof rawModel !== 'string') {
+      return { ok: false, error: 'model 必须是字符串（形如 "qwen2.5:3b-instruct" 或 "providerId::模型名"）' }
+    }
+    const model = rawModel.trim()
+    if (model.length > DELEGATE_MODEL_MAX_CHARS) {
+      return { ok: false, error: `model 超过 ${DELEGATE_MODEL_MAX_CHARS} 字上限（当前 ${model.length}）` }
+    }
+    return { ok: true, role, task, model }
+  }
+  return { ok: true, role, task, model: null }
 }
 
 export interface DelegateToolLike {
   name: string
   permission?: 'auto' | 'confirm' | 'deny'
+}
+
+/** schema 交换所需的最小形状（`ToolSchema` 的这三项；不 import 类型是为了保住本模块的零依赖） */
+export interface DelegateModelSchemaLike {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+/**
+ * 把 `delegate_task` 的 schema 换成"带 model 参数"的那一份（V4-Iter-145，**只在容量判据放行跨模型角色时**调用）。
+ * 三条刻意的做法：
+ *  · **返回浅拷贝，绝不原地改**：传进来的是注册表里那个对象引用，原地加一个键就会污染所有
+ *    没开跨模型角色的会话——那是 118 那族"看不见的共享状态"的形状。
+ *  · `enum` 只是**给模型的提示**：放行与否由主进程对着 provider 表判（`resolveChildTarget`），
+ *    所以超出上限被截断的模型名仍可能被合法使用，而 enum 里的名字也不会因此被当成保证。
+ *  · 原 `parameters` 的 `additionalProperties: false` 一并保留：新键必须显式进 properties。
+ */
+export function withDelegateModelParam<T extends DelegateModelSchemaLike>(tool: T, modelOptions: string[]): T {
+  const options = modelOptions.slice(0, DELEGATE_MODEL_ENUM_MAX_ITEMS)
+  const parameters = { ...(tool.parameters ?? {}) }
+  const properties = { ...((parameters.properties as Record<string, unknown> | undefined) ?? {}) }
+  properties.model = {
+    type: 'string',
+    ...(options.length > 0 ? { enum: options } : {}),
+    description:
+      '可选：让这个角色用另一台模型跑。省略就沿用你现在的模型。' +
+      (options.length > 0
+        ? `可选值：${options.join(' / ')}${modelOptions.length > options.length ? `（另有 ${modelOptions.length - options.length} 个未列出，仍可原样填写）` : ''}`
+        : '形如 "模型名" 或 "providerId::模型名"')
+  }
+  parameters.properties = properties
+  return {
+    ...tool,
+    description:
+      tool.description +
+      ' 需要让某个角色用别的模型时，在 model 里填模型名；不确定就留空（留空=沿用当前模型）。',
+    parameters
+  }
 }
 
 /**

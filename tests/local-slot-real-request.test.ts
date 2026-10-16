@@ -136,7 +136,31 @@ async function startFakeLocalServer(): Promise<FakeServer> {
   }
 }
 
-const settle = (ms = 80) => new Promise((r) => setTimeout(r, ms))
+/** 固定 sleep：只用于"该什么都不发生"的反向对照（等待本身不是它要证的东西） */
+const settle = async (ms = 80): Promise<void> => {
+  // 先等到「至少一条请求真的落到了服务端」再留一拍。固定 sleep 在全量跑批（296 个 worker 抢机器）里
+  // 会两头不靠：80ms 内一条都没发出时，`srv.peak` 读到 0，而它该是 1（V4-Iter-145 的三遍全量撞到一次）。
+  // 只等「有到达」这一件所有并发断言共同的前提，不等排队方——那条永远不会到达。
+  const t0 = Date.now()
+  while (srv.starts.length === 0 && Date.now() - t0 < 4000) await new Promise((r) => setTimeout(r, 20))
+  await new Promise((r) => setTimeout(r, ms))
+}
+
+/**
+ * 等到"第一路已经落到服务端、第二路已在闸门里排队"。
+ * 这三个用例原来用 `settle()`（固定 80ms）——全量跑批 296 个 worker 抢机器时，
+ * 两条 fetch 可能都还没发出，`srv.peak` 读到 0 就红了（V4-Iter-145 的三遍全量里撞到一次）。
+ * 判据是"观察窗口等到事件"而不是"睡一觉赌它发生了"：同 [[feedback-verification-probes-uncontaminated]]。
+ */
+async function settleQueued(): Promise<void> {
+  const t0 = Date.now()
+  while (Date.now() - t0 < 4000) {
+    const waiting = localSlotSnapshot()[0]?.waiting ?? 0
+    if (srv.starts.length >= 1 && waiting >= 1) return
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  throw new Error(`等不到"一路在飞 + 一路排队"（starts=${srv.starts.length}，peak=${srv.peak}）`)
+}
 
 // 每条用例各起一个假服务：peak/starts/holds 都是服务自身的累计量，
 // 共用一个 server 会让上一条用例的在飞请求混进这一条的观察窗口（第一次跑就是这么红的）
@@ -165,7 +189,7 @@ describe('实测档（≤4GiB：本机唯一真测过的卡）', () => {
   it('两路对话并发时服务端观察到的并发峰值是 1（串行不亏，M6）', async () => {
     const a = chat('m-first')
     const b = chat('m-second')
-    await settle()
+    await settleQueued()
     expect(srv.peak).toBe(1)
     expect(localSlotSnapshot()[0]!.waiting).toBe(1)
     const stop = srv.drain()
@@ -178,7 +202,7 @@ describe('实测档（≤4GiB：本机唯一真测过的卡）', () => {
   it('对话与 embedding 共用同一条队（M10：小卡上两者不同驻）', async () => {
     const a = chat('c1')
     const b = embed('e1')
-    await settle()
+    await settleQueued()
     expect(srv.peak).toBe(1)
     const stop = srv.drain()
     await Promise.all([a, b])
@@ -189,7 +213,7 @@ describe('实测档（≤4GiB：本机唯一真测过的卡）', () => {
   it('图像生成也走同一道闸门（漏一条端点就等于没接线）', async () => {
     const a = chat('c2')
     const b = adapter().generateImages({ model: 'img1', prompt: 'x', size: '512x512' })
-    await settle()
+    await settleQueued()
     expect(srv.peak).toBe(1)
     const stop = srv.drain()
     await Promise.all([a, b])
