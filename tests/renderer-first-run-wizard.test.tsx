@@ -283,3 +283,73 @@ describe('147 完成页探针：只在点名时发，失败不阻塞完成', () 
     expect(probeCalls()).toHaveLength(0)
   })
 })
+
+// ---------- V4-Iter-151：保存前现取清单，不许拿挂载时的陈旧快照决定"要不要新建" ----------
+
+/**
+ * 现场：向导 step 2 里那个 OllamaPanel 拉完模型后，主进程已经建好/追加了这条 provider
+ * （`ipc/handlers/ollama.ts:52`），而向导的清单是**挂载时**读的那一份 ⇒ 旧代码在这里判"没有"，
+ * 发一份 `models: []` 的"新建"载荷，把刚拉到的那台清空（`providerRepo.save` 按 (type,baseUrl) 去重命中同一行）。
+ * 这两条用例一个证根因修好、一个证"新建"这条路没被一起砍掉。
+ */
+describe('151 保存前重新取 provider 清单', () => {
+  const ollama = {
+    id: 'p-ollama',
+    type: 'ollama',
+    name: 'Ollama（本地模型）',
+    baseUrl: 'http://localhost:11434/v1',
+    apiKeys: [],
+    models: ['qwen2.5:3b-instruct'],
+    enabled: true,
+    createdAt: 1
+  }
+
+  async function walkWith(over: Record<string, unknown>) {
+    const view = mount('none', over)
+    next()
+    next()
+    fireEvent.click(await screen.findByText(/^Ollama$/))
+    next()
+    await screen.findByText(/一切就绪/)
+    return view
+  }
+
+  it('挂载时清单为空、保存时那条已存在 ⇒ 不再发"新建"载荷，且完成页那一格出现', async () => {
+    let listCalls = 0
+    const { container } = await walkWith({
+      // 第一次 = 挂载时的快照（还没有）；第二次 = 保存前现取（用户刚在向导里拉完模型）
+      listProviders: () => (++listCalls === 1 ? [] : [ollama]),
+      probeDelegateCapability: () => ({ entry: { capability: 'native_tools_ok' }, error: null })
+    })
+    expect(listCalls, '保存前必须再取一次清单').toBeGreaterThanOrEqual(2)
+    expect(calledFns(), '这条已存在 ⇒ 该走 existing 分支，不该发 models:[] 的新建载荷').not.toContain('saveProvider')
+    // 顺带解掉 147 那条可达性缺口：向导里拉完模型的人，第一次就能看到那一格
+    const block = container.querySelector('[data-probe-block]')
+    expect(block, 'savedProvider 带着缓存模型 ⇒ 完成页那一格该出现').toBeTruthy()
+    expect(block!.textContent).toContain('qwen2.5:3b-instruct')
+  })
+
+  it('反向对照：清单两次都空 ⇒ 照旧新建一条（修根因不能把"新建"这条路一起砍掉）', async () => {
+    const { container } = await walkWith({ listProviders: () => [] })
+    expect(calledFns()).toContain('saveProvider')
+    expect(container.querySelector('[data-probe-block]'), '新建的那条没有缓存模型 ⇒ 那一格不出现').toBeNull()
+  })
+
+  it('取清单失败时退回挂载时那一份，不卡住用户（向导是首启必经路）', async () => {
+    let n = 0
+    const view = mount('none', {
+      listProviders: () => {
+        n += 1
+        if (n === 1) return []
+        throw new Error('IPC 挂了')
+      }
+    })
+    next()
+    next()
+    fireEvent.click(await screen.findByText(/^Ollama$/))
+    next()
+    await waitFor(() => expect(calledFns()).toContain('saveProvider'))
+    await screen.findByText(/一切就绪/)
+    expect(view.container.querySelector('h1')).toBeTruthy()
+  })
+})

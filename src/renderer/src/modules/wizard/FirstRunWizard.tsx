@@ -125,9 +125,21 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     setBusy(true)
     try {
       // 1. 保存 provider
+      //   决定"要不要新建"之前**现取一次清单**：挂载时那份快照会过期——这一步之前用户可能刚在
+      //   OllamaPanel 里拉完模型，而拉取成功会由主进程建好/追加这条 provider（`ipc/handlers/ollama.ts:52`）。
+      //   拿旧快照判"没有"就会发一份 `models: []` 的"新建"载荷，把刚拉到的那台清空（V4-Iter-151 的根因）。
+      //   取失败不致命：退回挂载时那一份继续走（向导是首启必经路，不许因为一次清单刷新失败把用户卡在这儿），
+      //   repo 侧另有一道守护兜底（`provider.repo.ts` 的 foundByDedupe 那条）。
+      let latest = providers
+      try {
+        latest = await window.pocketai.listProviders()
+      } catch (e) {
+        logIpcError('wizard.listProviders.refresh', e)
+      }
+      setProviders(latest)
       let saved: ProviderRecord
       if (selectedPreset.needKey) {
-        const existing = providers.find((p) => p.baseUrl === selectedPreset.baseUrl)
+        const existing = latest.find((p) => p.baseUrl === selectedPreset.baseUrl)
         if (existing) {
           // 已有同 baseUrl 的 provider，追加新 key
           const updated = await window.pocketai.saveProvider({
@@ -158,7 +170,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         }
       } else {
         // 本地 provider（Ollama/LM Studio）— 只要 ensure 存在
-        const existing = providers.find((p) => p.baseUrl === selectedPreset.baseUrl)
+        const existing = latest.find((p) => p.baseUrl === selectedPreset.baseUrl)
         if (existing) {
           saved = existing
         } else {

@@ -65,13 +65,19 @@ export const providerRepo = {
   save(input: Omit<ProviderRecord, 'createdAt'> & { createdAt?: number }): ProviderRecord {
     const db = dbService.getHandle()
     let existing = input.id ? this.get(input.id) : null
+    // 命中方式必须分清（151）：带 id 命中 = 调用方就是在改这一条；只有 (type, baseUrl) 命中 =
+    // 调用方以为自己在"新建"（向导/设置页都是发空 id 走这条去重）。
+    let foundByDedupe = false
     // 新建（空 id）时按 (type, baseUrl) 去重：已存在同类型+同地址的 provider 则更新它，
     // 避免向导/设置多次保存同一 baseUrl 产生重复条目（如多个 Ollama localhost:11434）。
     if (!existing) {
       const dup = db
         .prepare('SELECT * FROM providers WHERE type=? AND base_url=? LIMIT 1')
         .get(input.type, input.baseUrl) as ProviderRow | undefined
-      if (dup) existing = rowToRecord(dup)
+      if (dup) {
+        existing = rowToRecord(dup)
+        foundByDedupe = true
+      }
     }
     const id = existing?.id ?? (input.id || randomUUID())
     const createdAt = existing?.createdAt ?? input.createdAt ?? Date.now()
@@ -91,7 +97,15 @@ export const providerRepo = {
       }
     }
     const apiKeysCipher = encryptApiKeys(apiKeys)
-    const models = JSON.stringify(input.models)
+    // models 的两种"空"必须分开（V4-Iter-151，向导里真撞出来的）：
+    //  · 带 id 的保存里 `[]` 是**用户自己删到零**（设置页逐个 ✕，V4-Iter-115 那条合法路径）⇒ 照写；
+    //  · 不带 id 的保存靠 (type,baseUrl) 命中旧行时，调用方**以为自己在新建**，那份 `[]` 只是表单默认值，
+    //    它不代表"把这台已缓存的模型清单清空"⇒ 保留旧值。
+    //  真覆盖成"没模型"是危险的：对话页会因挑不到有模型的 provider 而整栏空掉。
+    //  判据只有一条、不看长度以外的事：见上面 `foundByDedupe` 的注释。要清空请带 id。
+    const models = JSON.stringify(
+      foundByDedupe && input.models.length === 0 ? existing!.models : input.models
+    )
     const enabled = input.enabled ? 1 : 0
 
     if (existing) {
