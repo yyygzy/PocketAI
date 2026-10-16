@@ -16,6 +16,7 @@ import { UserMemoryPanel } from './UserMemoryPanel'
 import { UsagePanel } from './UsagePanel'
 import { DataHealthPanel } from './DataHealthPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
+import { LocalJudgementPanel } from './LocalJudgementPanel'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
 import { applyChatFontSize, normalizeFontSize } from '../../chat-font'
@@ -160,6 +161,13 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.localModel')}</h3>
           <OllamaPanel />
+        </div>
+
+        {/* 本机判据（V4-Iter-146）：紧跟「本地模型」——这块屏解释的正是"这台机器被允许怎么跑"，
+            放在服务商那屏旁边会被读成"某台模型的属性"，而它一半是硬件、一半是助手级事实 */}
+        <div className="mt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.localJudgement')}</h3>
+          <LocalJudgementPanel />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">

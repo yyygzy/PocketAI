@@ -1909,6 +1909,10 @@ export const IPC = {
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
   DATA_HEALTH_KB_REINDEX: 'dataHealth:kb-reindex', // 缺向量/维度不匹配文档一键重建索引
+  // 本机判据屏（V4-Iter-146）：只读汇总"判据 + 现采显存 + 槽位现状 + 各模型委派判定"。
+  // 单独一条通道而不是塞进 DATA_HEALTH_GET：这份数据的存在理由是"测得 vs 保守默认"要分开显示，
+  // 与数据健康的体量口径无关，混在一屏里反而会把两种来源档糊成同一种"看起来是事实"的数。
+  LOCAL_JUDGEMENT_GET: 'localJudgement:get',
 
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',

@@ -118,6 +118,19 @@ export function parseDelegateArgs(args: Record<string, unknown>): DelegateArgs {
   return { ok: true, role, task, model: null }
 }
 
+/** 委派工具面里代表"会走 embedding 检索链"的那把工具（名字逐字等于 kb-search.ts 的 schema.name） */
+export const KB_SEARCH_TOOL_NAME = 'kb_search'
+
+/**
+ * 「这条编排会不会走 embedding 检索链」——145 跨模型角色的第二条合取的唯一算法。
+ * 刻意只认这两件事（助手绑了知识库 / 工具面里有 kb_search），**不做任何显存算术**：
+ * 判据的理由是 M10 实测"一个 embed 进来把对话模型顶出去"，不是"放不下"。
+ * 引擎筛工具面时与 146 的判据屏调的是同一个函数——两处各写一份迟早会漂。
+ */
+export function surfaceUsesRetrieval(tools: ReadonlyArray<{ name: string }>, kbIds: ReadonlyArray<string>): boolean {
+  return kbIds.length > 0 || tools.some((t) => t.name === KB_SEARCH_TOOL_NAME)
+}
+
 export interface DelegateToolLike {
   name: string
   permission?: 'auto' | 'confirm' | 'deny'

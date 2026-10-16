@@ -64,6 +64,7 @@ import {
   formatDelegationResult,
   newRunBudget,
   parseDelegateArgs,
+  surfaceUsesRetrieval,
   withDelegateModelParam,
   type DelegateRole,
   type RunBudget
@@ -809,7 +810,7 @@ class AgentEngine {
      * 没过就把 `model` 参数**从 schema 里省掉**（模型看不见 ⇒ 不会填），而不是"看得见但被拒"
      * ——那是 118 那轮的形状。今天 ① 恒为 false（应用从不设 num_ctx），所以这一支在这台机器上关着。
      */
-    const childUsesRetrieval = kbIds.length > 0 || baseTools.some((t) => t.name === 'kb_search')
+    const childUsesRetrieval = surfaceUsesRetrieval(baseTools, kbIds)
     const distinctRolesAllowed =
       delegationEnabled &&
       mayAssignDistinctModelRole(slotDecision(), { childUsesRetrieval }).allowed

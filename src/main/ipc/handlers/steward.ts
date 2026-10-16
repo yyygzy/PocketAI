@@ -7,6 +7,7 @@ import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
+import { computeLocalJudgements } from '../../steward/local-judgement'
 import { recordPerf } from '../../steward/perf-probe'
 import { cleanOrphans, deduplicate, reindexDocs } from '../../knowledge/kb-health'
 import { idSchema } from '../../../shared/schemas/providers'
@@ -52,6 +53,10 @@ export function registerStewardHandlers(): void {
     argsSchema(z.object({ content: z.string().min(1).max(REPORT_MAX_CHARS) }))
   )
   safeHandle(IPC.DATA_HEALTH_GET, () => getDataHealthReport())
+  // 本机判据屏（V4-Iter-146）：现采一次显存是**异步**的，这条通道因此是 async；
+  // 失败不降级成空报告——空报告会与"这台机器真的采不到"混成一回事（safeHandle 把失败转成
+  // {ok:false,error} 返回值，渲染层按 hasIpcFailed 判，不许把失败画成数据）。
+  safeHandle(IPC.LOCAL_JUDGEMENT_GET, async () => computeLocalJudgements())
   // KB 数据健康修复动作（探测只读走 DATA_HEALTH_GET 的 kb.integrity）
   safeHandle(IPC.DATA_HEALTH_KB_CLEAN, () => cleanOrphans())
   safeHandle(IPC.DATA_HEALTH_KB_DEDUP, (_e, keepDocId: string) => deduplicate(keepDocId), argsSchema(idSchema))

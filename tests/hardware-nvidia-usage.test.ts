@@ -16,10 +16,16 @@ const WMI_JSON = JSON.stringify([
 ])
 const LSPCI_LINE = '01:00.0 VGA compatible controller: NVIDIA Corporation GP107 [GeForce GTX 1050 Ti]'
 
-const childProcessMock = vi.hoisted(() => ({ execSync: vi.fn(), execFileSync: vi.fn() }))
+const childProcessMock = vi.hoisted(() => ({
+  execSync: vi.fn(),
+  execFileSync: vi.fn(),
+  // 146 的异步现采纳了 execFile：本文件桩的是**整个** node:child_process，
+  // 少一个导出就会让"模块加载期就取用它"的代码在 import 阶段当场红（第一版就是这样撞的）。
+  execFile: vi.fn(),
+}))
 vi.mock('node:child_process', () => childProcessMock)
 
-import { applyNvidiaRows, parseNvidiaSmiCsv, refreshHardwareInfo } from '../src/main/steward/hardware'
+import { applyNvidiaRows, parseNvidiaSmiCsv, readGpuMemoryLive, refreshHardwareInfo } from '../src/main/steward/hardware'
 import type { GpuInfo } from '../src/shared/types'
 
 const GPU_1050TI: GpuInfo = {
@@ -174,5 +180,33 @@ describe('getGpus 接线：采集确实把实占挂上了', () => {
     const hw = refreshHardwareInfo()
     expect(hw.gpus.length).toBeGreaterThan(0)
     expect(hw.gpus.every((g) => g.usedMemory === undefined)).toBe(true)
+  })
+})
+
+describe('readGpuMemoryLive（146 判据屏的异步现采）', () => {
+  it('命令报错 ⇒ 交回空数组，**不许**填一个 0 当作"全空闲"', async () => {
+    childProcessMock.execFile.mockImplementation((_e: unknown, _a: unknown, _o: unknown, cb: (err: unknown, out?: string) => void) =>
+      cb(new Error('ENOENT: 没有 nvidia-smi'), '')
+    )
+    expect(await readGpuMemoryLive()).toEqual([])
+    // Windows 上先试 nvidia-smi.exe 再试裸名；只试一次就放弃是另一种错法
+    expect(childProcessMock.execFile.mock.calls.length).toBeGreaterThanOrEqual(1)
+    childProcessMock.execFile.mockReset()
+  })
+
+  it('正常输出 ⇒ total/used 原样交出去（这一份只供观察，不参与判据）', async () => {
+    childProcessMock.execFile.mockImplementation((_e: unknown, _a: unknown, _o: unknown, cb: (err: unknown, out?: string) => void) =>
+      cb(null, 'NVIDIA GeForce GTX 1050 Ti, 4096, 3149')
+    )
+    expect(await readGpuMemoryLive()).toEqual([
+      { name: 'NVIDIA GeForce GTX 1050 Ti', totalMiB: 4096, usedMiB: 3149 }
+    ])
+    childProcessMock.execFile.mockReset()
+  })
+
+  it('输出是空串（驱动刚掉）⇒ 也交回空数组，而不是解析出一行脏数据', async () => {
+    childProcessMock.execFile.mockImplementation((_e: unknown, _a: unknown, _o: unknown, cb: (err: unknown, out?: string) => void) => cb(null, ''))
+    expect(await readGpuMemoryLive()).toEqual([])
+    childProcessMock.execFile.mockReset()
   })
 })

@@ -1,6 +1,7 @@
 // preload：安全桥，只暴露白名单 API
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
+import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateProbeResult } from '../shared/delegate-capability'
 import type {
@@ -342,6 +343,9 @@ const api = {
     ipcRenderer.invoke(IPC.USAGE_EXPORT_CSV, payload),
   getDataHealth: (): Promise<DataHealthReport> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_GET),
+  // 本机判据屏（V4-Iter-146）：只读汇总，一次进来会现采一次显存（异步，不占事件循环）
+  getLocalJudgement: (): Promise<LocalJudgementReport> =>
+    ipcRenderer.invoke(IPC.LOCAL_JUDGEMENT_GET),
   // KB 数据健康修复动作（探测只读随 getDataHealth 返回）
   cleanKbOrphans: (): Promise<{ removedVectors: number; removedChunks: number }> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_KB_CLEAN),

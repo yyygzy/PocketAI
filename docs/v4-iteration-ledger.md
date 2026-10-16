@@ -66,6 +66,57 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-146 本机判据屏 + 渲染层根错误边界
+
+- **四条用户选定（2026-10-16）**：① 判据屏的"已用显存"= **加实时 nvidia-smi 读数 + 界面上标出采集时刻**（并明确它**不参与判据**）；
+  ② error boundary 只做**根一层**（不引模块级、不做自动重试）；③ 角色标签**推迟**到下一批（连带"子的每一步要不要外显"这条未决问题）；
+  ④ 删除确认带子会话数**本批不做**；⑤ `local.slot.wait` 那行**不加** perf label 文案——判据屏与慢操作面板的口径不同，不为了好看并轨。
+- **三块新代码，各自只干一件事**：
+  · `src/shared/local-judgement.ts`（零依赖）：报告的**形状** + 把判据摊成行的纯函数。这里重复声明了 `CapacityDecisionView`
+    而不是 import 主进程类型（shared 不许反向依赖 main）——**重复的是形状，不是口径**：取值仍只有 `planLocalCapacity` 一个出处。
+  · `src/main/steward/local-judgement.ts`：`computeLocalJudgements()` 只做汇总，**不新写任何判断**——
+    容量取自 `capacitySnapshot()`（与 141 闸门**同一次读取**）、检索链取自引擎那**同一个** `surfaceUsesRetrieval`、
+    委派判定直接复用 142 的 `listDelegateCapabilitiesWithStaleness`。任何"这里再算一遍"都是第二份口径。
+  · `LocalJudgementPanel.tsx`：按行渲染 + **每行一个来源档徽标**（测得 / 保守默认 / 没读到）。
+- **本屏没有"可同驻 N 台模型"这一行**，行的 id 是一张封闭清单（用例钉住）：140 的实测证伪过"总显存 − 权重 − KV"那类算术，
+  所以只要没有实测行，就不许出现看起来像结论的派生数。
+- **实时读数为什么单开一条异步路**：`getHardwareInfo()` 那条是 `execFileSync`（最坏 3s）。boot 付一次无所谓，
+  "进设置页就采一次"是用户随时会做的事，卡住的是一整条推理流 + 所有 IPC ⇒ `readGpuMemoryLive()` 走 `execFile` 异步版。
+- **真实例量到的东西（2026-10-16，独立实例 + CDP，见 B82）**：
+  · 启动快照的总量是 **4095 MiB**（WMI/注册表换算），同一张卡的 nvidia-smi 现采是 **4096 MiB / used 0**（模型冷掉时）与 **used 3149**（热着时）
+    ⇒ 同屏两个"测得"值本来就差 1 MiB 且时刻不同 —— 这正是"总量标启动快照、实占标采集时刻"要分开画的第一手证据。
+  · 判据：`measured: true`，码 `measured-bucket / chat-embed-exclusive / concurrency-buys-nothing-measured / distinct-models-need-small-ctx`；
+    跨模型角色那行合并前后是 13 行 → 6 行（8 个内置助手的判定逐字相同，`allowed=false`），真实例读到的原文：「跨模型角色（8 个助手取值相同） 不允许 测得 没有「多模型同驻」的实测依据 走检索链时跨模型同驻会翻车 跨模型同驻只在显式设小上下文时才成立 这条编排会走向量检索」；容器 `max-w-xl` 实测 576px，面板与文档横向溢出都是 0（窗口 1188px）。
+  · 通道成功返回体**没有 `ok` 字段**（`hasOk: false`）⇒ 界面判失败只能走 `hasIpcFailed`。
+- **根边界**：`AppErrorBoundary` 挂在 `main.tsx` 的 `I18nProvider` **之内**（兜底文案能走四语字典），
+  代价是 i18n 自身崩了兜不住——这条取舍写在这里，不假装全覆盖。兜底屏显示**错误首行 + 「重新加载界面」**，不自动重试渲染。
+- **四条踩出来的**：
+  ① **模块顶层取用打桩依赖也会炸**：第一版在 `hardware.ts` 顶层写了 `promisify(execFile)`，
+     `tests/hardware-nvidia-usage.test.ts` 整模块桩掉了 `node:child_process` 且只给了 `execSync/execFileSync` ⇒ 该文件在 **import 阶段**就红。
+     改成"函数体内才用 `execFile`"后正常，并给这条异步现采补了三条用例（命令报错 ⇒ 交回空数组，**不许填 0**）。
+  ② **我自己的 CSS 令牌写法被仓库自己的用例拦住**：新组件用了不存在的 `--color-bg-hover` 与 `--color-bg-subtle`，
+     `theme-css-vars` 那条"新增即失败"当场红 ⇒ 换回 `--color-hover-overlay` / `--color-bg-secondary` 并去掉给已定义令牌乱加的兜底色。
+     记这条是因为它证明**这类纪律靠用例守比我靠记忆可靠**。
+  ③ **真实例的崩溃路径可以真验**：CDP 改不动 `window.pocketai.*`（contextBridge 暴露的属性不可重定义），
+     于是改成"在源码里注入一次真 render 抛错 + 走真 HMR"：注入后整屏从 `#root` 有 2 个子节点变成 1 个**可读兜底屏**
+     （标题 + 错误首行 + 重载按钮），撤掉注入并重载后回到正常 6 行 ⇒ 144 那次"拉取模型失败把整屏抹白"的形状从此不再可能。
+     改完做字节比对还原（144 那次 `git checkout --` 抹掉未提交工作的教训，还原只允许反向写回）。
+  ④ **一块屏上 8 行一模一样的判定是噪音**：分组前先跑真实例数到 13 行（8 个内置助手的判定逐字相同），
+     改成"取值相同的一组助手出一行 + 数量进文案 + 名单进 title"后是 6 行。用例钉的是分组本身（两个助手同判定 ⇒ 一行；不同 ⇒ 两组各说各的码）。
+- **已知未做 / 未修**（别当成已完成）：分步明细里的角色标签；子的每一步是否外显（**前置缺陷**：
+  `useAgentChat` 的 chunk 处理器不按 requestId 过滤，转发子的流过去会串台）；单条删除的二次确认；
+  渲染层没有崩溃上报通道（兜底屏只把错误显示出来 + `console.error`，库里查不到）。
+- **测试**：新增 5 个文件共 48 例——`local-judgement-rows.test.ts`（18，含"四本字典逐码对号"与"行 id 封闭清单"）、
+  `local-judgement-compute-real.test.ts`（9，真库 + 注入现采：现采值改了判据一个字都不变、总量与闸门同源、只读无副作用）、
+  `ipc-local-judgement-bridge.test.ts`（3，真 preload 往返 + 真失败形状）、
+  `renderer-local-judgement-panel.test.tsx`（12）与 `renderer-app-error-boundary.test.tsx`（6，含挂载位置 scan）。数字是这样散的：18 + 9 + 3 + 12 + 6 = 48。
+  **变异 8 条全部转红**（N1 把保守默认画成测得 / N2 判据的总量改从现采取 / N3 不判失败形状 / N4 抓到错仍渲染子树 /
+  N5 撤掉边界 / N6 检索链不逐助手算 / N7 引擎不走共享谓辞 / N8 现采失败时填 0）；
+  其中 N8 第一版"仍然全绿"是因为**变异没在被测路径上**（那条用例注入了现采函数）⇒ 补了异步现采自己的三条用例才咬住。
+- 全量：typecheck 0 / vitest **301 文件 3628 用例** / build 三端。验收 **B81 ✅（CI）**、**B82 🔶**（可测的那半已自证，只剩配色与措辞观感）。
+
+
+
 ### V4-Iter-145 角色落点与角色并发（跨模型角色的两条合取 + 云并行、本地串行）
 
 - **两条用户选定（2026-10-16）**：① 「哪个角色用哪台模型」由**控制器在 `delegate_task` 里带 `model` 参数**决定

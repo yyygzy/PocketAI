@@ -8,6 +8,7 @@ import { DETACHABLE_MODULE_IDS } from '../../shared/types'
 import type { SidebarModuleId } from '../../shared/types'
 import { I18nProvider } from './i18n'
 import { ToastProvider } from './components/ToastProvider'
+import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { loadAndInjectCustomCss } from './custom-css'
 import { loadAndApplyChatFontSize } from './chat-font'
 import { loadCodeCollapseLines } from './code-collapse'
@@ -36,15 +37,21 @@ loadCodeCollapseLines()
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <I18nProvider>
-      {isPopup ? (
-        <ToastProvider>
-          <PopupApp />
-        </ToastProvider>
-      ) : isDetached ? (
-        <DetachedApp moduleId={detachedModule!} />
-      ) : (
-        <App />
-      )}
+      {/* 根错误边界（V4-Iter-146）：本仓此前没有任何边界，任何一个组件 render 抛错都会让
+          React 把整棵 root 卸载 ⇒ 全站白屏（144 的自测就这么撞到过一次）。
+          刻意放在 I18nProvider **里面**：兜底屏的文案要走四语字典。代价是 i18n 自身崩了兜不住，
+          这条取舍写进台账，不假装全覆盖。 */}
+      <AppErrorBoundary>
+        {isPopup ? (
+          <ToastProvider>
+            <PopupApp />
+          </ToastProvider>
+        ) : isDetached ? (
+          <DetachedApp moduleId={detachedModule!} />
+        ) : (
+          <App />
+        )}
+      </AppErrorBoundary>
     </I18nProvider>
   </React.StrictMode>
 )

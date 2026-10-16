@@ -205,9 +205,13 @@ export function setSlotDecisionForTest(fn: (() => LocalCapacityDecision) | null)
   queues.clear()
 }
 
-/** 容量判据的唯一来源；每次请求现取，避免把启动瞬间的显存快照当永久事实 */
-export function slotDecision(): LocalCapacityDecision {
-  if (decisionOverride) return decisionOverride()
+/**
+ * 容量判据的唯一来源；每次请求现取，避免把启动瞬间的显存快照当永久事实。
+ * `capacitySnapshot()` 是本模块内部实现，闸门只关心决策；**判据屏要同时报"用的哪个总量"，
+ * 所以那边调 `capacitySnapshot()`**——总量与决策必须来自同一次读取，不能各读各的（否则界面上
+ * 说的总量与闸门实际据以判定的总量可能不是同一个数，那正是 118 那族"两处口径"的形状）。
+ */
+export function capacitySnapshot(): { totalVramMiB: number | null; decision: LocalCapacityDecision } {
   let vramMiB: number | null = null
   try {
     vramMiB = deps.readVramMiB()
@@ -216,8 +220,14 @@ export function slotDecision(): LocalCapacityDecision {
     // 而不是让一次采集异常把整条推理链路拒掉
     vramMiB = null
   }
+  // 测试缝（decisionOverride）只替换决策，**总量仍然如实报**——否则判据屏会出现"总量采不到但判据是实测档"这种自相矛盾
+  if (decisionOverride) return { totalVramMiB: vramMiB, decision: decisionOverride() }
   // numCtxSetByApp 恒 false：全仓没有一处设置过 num_ctx（V-0 的实测边界正挂在这上面）
-  return planLocalCapacity({ totalVramMiB: vramMiB, numCtxSetByApp: false })
+  return { totalVramMiB: vramMiB, decision: planLocalCapacity({ totalVramMiB: vramMiB, numCtxSetByApp: false }) }
+}
+
+export function slotDecision(): LocalCapacityDecision {
+  return capacitySnapshot().decision
 }
 
 export function setSlotPromoteMsForTest(ms: number): void {

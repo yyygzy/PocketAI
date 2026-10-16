@@ -5,7 +5,7 @@
 // 故从注册表 HardwareInformation.qwMemorySize 读取真实显存。
 import os from 'node:os'
 import fs from 'node:fs'
-import { execSync, execFileSync } from 'node:child_process'
+import { execSync, execFileSync, execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import type { HardwareInfo, GpuInfo, DiskInfo } from '../../shared/types'
 import { APP_ROOT } from '../portable'
@@ -151,6 +151,30 @@ function queryNvidiaSmi(): NvidiaSmiRow[] {
     } catch {
       // 命令不存在 / 驱动不在场：当作"未测得"，交由调用方退回保守档
     }
+  }
+  return []
+}
+
+/**
+ * **异步**现采一次显存实占（V4-Iter-146 判据屏用；boot 那条走上面的同步版）。
+ *
+ * 为什么要单开一条异步的：`execFileSync` 最坏 3s 会把主进程事件循环钉住。boot 阶段付一次无所谓，
+ * 但"进设置页那一屏就采一次"是用户随时会做的事，卡住的是一整条推理流 + 所有 IPC + 窗口消息。
+ * 采不到（无独显 / 驱动不在 / Mac / 超时）一律返回空数组 ⇒ 界面画"采不到"，
+ * **不许填估算值**（填了就会被当成测得的事实，这正是 V-0 之前犯过的错，见上面注释）。
+ */
+export async function readGpuMemoryLive(): Promise<NvidiaSmiRow[]> {
+  if (process.platform === 'darwin') return []
+  const exes = process.platform === 'win32' ? ['nvidia-smi.exe', 'nvidia-smi'] : ['nvidia-smi']
+  for (const exe of exes) {
+    // execFile **只在真要采的时候取**：本仓有整模块打桩 `node:child_process` 的用例
+    // （hardware-nvidia-usage 只给了 execFileSync），模块顶层留一个 `promisify(execFile)`
+    // 就会在 import 阶段因为"mock 里没这个导出"而炸掉那个文件。
+    const stdout = await new Promise<string | null>((resolve) => {
+      execFile(exe, NVIDIA_SMI_ARGS, { encoding: 'utf8', timeout: 3000 }, (err, out) => resolve(err ? null : String(out)))
+    })
+    const rows = parseNvidiaSmiCsv(stdout)
+    if (rows.length > 0) return rows
   }
   return []
 }
