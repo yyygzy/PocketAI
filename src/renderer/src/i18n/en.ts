@@ -1517,7 +1517,7 @@ export const en: Record<string, string> = {
   'provider.capUnknown': 'Probe incomplete',
   'provider.capUnknownReason': 'Some runs failed or too few samples; previous verdict kept',
   'provider.capStale': '(model updated; re-probe)',
-  'provider.capHint': 'Asks the model to delegate a task to a sub-agent and checks for a native tool call; 3/3 runs required before it counts as able to orchestrate',
+  'provider.capHint': 'Gives it a job only a sub-agent can finish and forbids answering directly; it looks for a native tool call, and 3/3 runs must succeed to be judged "Can orchestrate"',
   'provider.capAllowDelegation': 'Allow sequential delegation',
   'provider.capDelegationHint': 'If on, this agent may hand sub-tasks to sub-agents (each run has an LLM-call cap; off by default)',
   'provider.capDelegationNeedsProbe': 'Probe first — it must come back as “Can orchestrate” before this can be enabled',
@@ -1526,7 +1526,7 @@ export const en: Record<string, string> = {
   'provider.capDelegationOff': 'Sequential delegation disabled for this model',
   'provider.capSaveFirst': 'Save this provider first, then probe whether it can delegate',
   // ── Delegation failures (V4-Iter-152: the main process returns codes, the sentences live here) ──
-  'delegate.failTextProtocol': 'This model is set to "text protocol", while both the probe and delegation need the native tool-call path ⇒ turn that switch off first',
+  'delegate.failTextProtocol': 'This model is set to "Text protocol", while both the probe and delegation need the native tool-call path ⇒ turn that switch off first',
   'delegate.failIncomplete': 'Probe did not finish: {failed}/{total} requests failed - the previous verdict is kept',
   'delegate.failNeverProbed': 'This model has never been probed ⇒ click "{btn}" first; only a "Can orchestrate" verdict lets you turn delegation on',
   'delegate.failNotCapable': 'This model was judged "{capability}" ({hits}/{samples} hits), not "Can orchestrate" ⇒ delegation stays off',
@@ -1759,13 +1759,13 @@ export const en: Record<string, string> = {
   'wizard.summarySkillsAuto': 'First 3 enabled automatically',
   // ── First-run wizard: optional probe on the Done step (V4-Iter-147) ──
   'wizard.probeTitle': 'One extra check: can this model delegate work?',
-  'wizard.probeHint': 'Sends 3 real requests to it (about 10s on a local model) and only looks at the native tool-call path. Skipping changes nothing; you can probe later under Settings - Model providers.',
+  'wizard.probeHint': 'Sends 3 real requests to it (about 10s on a local model) and only looks at the native tool-call path. Skipping changes nothing; you can probe later under Settings → Model Providers.',
   'wizard.probeModelLabel': 'Model to probe',
   'wizard.probeBtn': 'Probe',
   'wizard.probeRunning': 'Probing…',
   'wizard.probeLater': 'Later',
   'wizard.probeVerdict': 'Verdict: {label}',
-  'wizard.probeNotEnabled': 'Probing OK does not turn delegation on: the switch is still per-model under Settings - Model providers.',
+  'wizard.probeNotEnabled': 'Probing OK does not turn delegation on: the switch is still per-model under Settings → Model Providers.',
   'wizard.probeFailed': 'No verdict this time: {e}',
 
   // ── Settings: backup ──

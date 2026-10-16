@@ -1517,7 +1517,7 @@ export const zh: Record<string, string> = {
   'provider.capUnknown': '探测未完成',
   'provider.capUnknownReason': '有请求失败或样本不足，未改写此前的判定',
   'provider.capStale': '（模型已更新，建议重探）',
-  'provider.capHint': '问一句「把任务派给子代理」，看这台模型是否真的发起结构化委派；只探原生工具调用路径，3 次全成才算可当管控者',
+  'provider.capHint': '给它一件只有派给子代理才做得完的差事，并明令不许直接作答；只看它是否真的发起原生工具调用，3 次全成才算「可当管控者」',
   'provider.capAllowDelegation': '允许顺序委派',
   'provider.capDelegationHint': '开启后，Agent 可把子任务派给子代理（每次编排有 LLM 调用上限，默认关闭）',
   'provider.capDelegationNeedsProbe': '要先探测并判定为「可当管控者」才能开启',
@@ -1526,7 +1526,7 @@ export const zh: Record<string, string> = {
   'provider.capDelegationOff': '已关闭这台模型的顺序委派',
   'provider.capSaveFirst': '请先保存这个服务商，再探测它能不能派活',
   // ── 委派这一路的失败话术（V4-Iter-152：主进程只回码，句子在这儿按语言拼）──
-  'delegate.failTextProtocol': '这台模型已被设为「走文本协议」，而探针与委派靠的都是原生工具调用路径 ⇒ 请先关掉那个开关',
+  'delegate.failTextProtocol': '这台模型已被设为「文本协议」，而探针与委派靠的都是原生工具调用路径 ⇒ 请先关掉那个开关',
   'delegate.failIncomplete': '探测未跑完：{failed}/{total} 次请求失败，此前的判定保持不变',
   'delegate.failNeverProbed': '这台模型还没探测过能否派活 ⇒ 请先点「{btn}」，判定为「可当管控者」才允许开启委派',
   'delegate.failNotCapable': '这台模型的判定是「{capability}」（{hits}/{samples} 命中），不是「可当管控者」⇒ 不开启委派',
