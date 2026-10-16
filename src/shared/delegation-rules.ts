@@ -65,8 +65,18 @@ export interface RunBudget {
   maxChildren: number
 }
 
-export function newRunBudget(): RunBudget {
-  return { used: 0, max: DELEGATION_MAX_LLM_CALLS, children: 0, maxChildren: DELEGATION_MAX_CHILDREN }
+/**
+ * 一轮编排的预算。
+ * `limits` 由主进程按档算好后传进来（147：实测低配档收到 2/10）；**不传就是全局默认**，
+ * 也就是 144/145 一直用的那两个常量——共享层不 import 主进程，所以这里只收结构。
+ */
+export function newRunBudget(limits?: { maxChildren: number; maxLlmCalls: number }): RunBudget {
+  return {
+    used: 0,
+    max: limits?.maxLlmCalls ?? DELEGATION_MAX_LLM_CALLS,
+    children: 0,
+    maxChildren: limits?.maxChildren ?? DELEGATION_MAX_CHILDREN
+  }
 }
 
 /** 预算是否已见底（用 `>=`：触顶那一轮不该再发出去） */

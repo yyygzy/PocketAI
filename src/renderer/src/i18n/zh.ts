@@ -1752,6 +1752,16 @@ export const zh: Record<string, string> = {
   'wizard.summaryAssistant': '默认助手',
   'wizard.summarySkills': '内置技能',
   'wizard.summarySkillsAuto': '自动启用前 3 个',
+  // ── 首启向导：完成页的可选探针（V4-Iter-147）──
+  'wizard.probeTitle': '顺手测一下：这台模型能不能「派活」',
+  'wizard.probeHint': '会向它发 3 次真请求（本地模型约 10 秒），只考察原生工具调用路径。跳过不影响使用，之后也能在「设置 → 模型服务商」里再测。',
+  'wizard.probeModelLabel': '要测的模型',
+  'wizard.probeBtn': '测一下',
+  'wizard.probeRunning': '探测中…',
+  'wizard.probeLater': '以后再说',
+  'wizard.probeVerdict': '判定：{label}',
+  'wizard.probeNotEnabled': '探到能派活 ≠ 已打开：委派开关仍要在「设置 → 模型服务商」里逐台点名才生效。',
+  'wizard.probeFailed': '这次没测出结论：{e}',
 
   // ── 设置：备份 ──
   'bk.webdavTitle': 'WebDAV 同步（坚果云 / Nextcloud / ownCloud）',

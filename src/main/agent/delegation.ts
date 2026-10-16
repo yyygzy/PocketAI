@@ -67,6 +67,11 @@ function endpointIsLocal(baseUrl: string | undefined): boolean {
   return isLocalInferenceBaseUrl(baseUrl)
 }
 
+/** 按 provider id 问同一句话（147：预算按档收缩只对**落在本机**的编排生效，引擎在起预算时就要问） */
+export function providerEndpointLocal(providerId: string): boolean {
+  return endpointIsLocal(providerRepo.get(providerId)?.baseUrl)
+}
+
 interface ModelAddress {
   providerId: string
   model: string

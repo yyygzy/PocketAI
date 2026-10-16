@@ -39,6 +39,7 @@ import { delegateTaskTool } from '../src/main/tools/delegate-tool'
 import { agentEngine } from '../src/main/agent/engine'
 import { setDelegationEnabled } from '../src/main/agent/delegate-capability'
 import { setTextProtocolModel } from '../src/main/agent/text-protocol-prefs'
+import { configureLocalSlot, resetLocalSlotsForTest } from '../src/main/providers/local-slot'
 import {
   budgetExhausted,
   canOpenChild,
@@ -134,6 +135,11 @@ async function waitFor(predicate: () => boolean, ms = 8000): Promise<void> {
 }
 
 beforeAll(async () => {
+  // 147 起的显式 guard：本文件测的是 144 的委派规则，必须与"这台机器有多少显存"无关。
+  // 今天靠的是 `local-slot.ts:179` 的默认 deps（`readVramMiB: () => null` ⇒ unknown 档 ⇒ 3/15），
+  // 但那是**隐式**依赖——接线一旦搬进测试（本机是 4096MiB 的实测档 ⇒ 上限变成 2/10），
+  // "派三条"这类用例会在我机红、在 CI 绿。写在这儿，谁改谁看得见。
+  configureLocalSlot({ readVramMiB: () => null })
   fs.rmSync(P.dir, { recursive: true, force: true })
   fs.mkdirSync(P.dir, { recursive: true })
   dbService.open()
@@ -197,6 +203,8 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  // 147：`beforeAll` 里接的 `configureLocalSlot` 改的是**模块级 deps**，不清会漏给同一 worker 的下一个文件
+  resetLocalSlotsForTest()
   // 先放行所有挂住的响应，再关服务：否则 close() 等一个永不结束的 SSE
   pending.splice(0).forEach((release) => release('收尾放行'))
   await new Promise<void>((r) => server.close(() => r()))

@@ -69,9 +69,9 @@ import {
   type DelegateRole,
   type RunBudget
 } from '../../shared/delegation-rules'
-import { listRoleModelOptions, planChildRun, resolveChildTarget, type ChildRunPlan } from './delegation'
+import { listRoleModelOptions, planChildRun, providerEndpointLocal, resolveChildTarget, type ChildRunPlan } from './delegation'
 import { retrievalHitsLocalEndpoint } from './role-facts'
-import { mayAssignDistinctModelRole, planRoleConcurrency } from './local-capacity'
+import { delegationLimitsOf, mayAssignDistinctModelRole, planRoleConcurrency } from './local-capacity'
 
 const MAX_STEPS = 10
 const logger = createLogger('agent')
@@ -753,7 +753,8 @@ class AgentEngine {
     const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
     const asChild = internal?.asChild === true
     const parentRequestId = internal?.parentRequestId ?? null
-    const budget = internal?.budget ?? newRunBudget()
+    // 预算不在这里建：它要按档收缩（147），而档位要等容量判据算出来 ⇒ 见下面 `capacity` 那一处。
+    // 子 run 一律用父传下来的同一个对象，所以"这轮最坏花多久"整棵树只算一次。
     traceParents.set(requestId, parentRequestId)
 
     // 解析助手配置
@@ -832,6 +833,15 @@ class AgentEngine {
     const roleModelOptions = delegationEnabled
       ? listRoleModelOptions(target.providerId, (c) => roleAllows(c))
       : []
+    /**
+     * 147：一轮编排的上限按档给。只有**父真的落在本机**时才算本机那一档（实测低配 2 子 / 10 次，
+     * 依据是 M7 热态 1.34s/次 + M8 冷启动 3045ms 的实测耗时）；云端父走全局默认——
+     * 拿这张卡的显存档去限一台云端模型的编排长度，是 150 刚清掉的那类"判据找错对象"。
+     * 子 run 继承同一个对象（下面 ctx.budget），所以整棵树只算这一次。
+     */
+    const budget =
+      internal?.budget ??
+      newRunBudget(delegationLimitsOf(capacity.bucket, providerEndpointLocal(target.providerId)))
     const tools =
       roleModelOptions.length > 0
         ? baseTools.map((t) =>
@@ -1976,7 +1986,7 @@ class AgentEngine {
     }
 
     if (!canOpenChild(ctx.budget)) {
-      return fail(`DELEGATE_CHILD_LIMIT: 本轮编排最多开 ${ctx.budget.maxChildren} 条子会话，已用满`)
+      return fail(`DELEGATE_CHILD_LIMIT: 本轮编排最多开 ${ctx.budget.maxChildren} 条子会话（这台机器所在档的默认上限），已用满`)
     }
     if (budgetExhausted(ctx.budget)) {
       return fail(`DELEGATE_BUDGET_EXHAUSTED: 本轮模型调用预算已用尽（${ctx.budget.used}/${ctx.budget.max}）`)

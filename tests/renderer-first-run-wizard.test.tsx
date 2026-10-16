@@ -9,7 +9,7 @@
 //    设完密码即可继续；选本地模型（不需要 Key）则不受影响。
 import { describe, it, expect } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
-import { mountWithProviders, stubPocketai, calledFns } from './helpers/renderer'
+import { mountWithProviders, stubPocketai, calledFns, pocketaiCalls } from './helpers/renderer'
 import { FirstRunWizard } from '../src/renderer/src/modules/wizard/FirstRunWizard'
 
 const hardware = {
@@ -25,7 +25,7 @@ const builtinAssistant = {
 const copiedAssistant = { ...builtinAssistant, id: 'a-copy', isBuiltin: false }
 
 /** encMode 可变：设完主密码后组件会自行把状态标成 db，但 stub 也要能提供初值 */
-function mount(encMode: 'none' | 'db' = 'none') {
+function mount(encMode: 'none' | 'db' = 'none', over: Record<string, unknown> = {}) {
   stubPocketai({
     getHardwareInfo: () => hardware,
     getEncryptionStatus: () => ({
@@ -50,7 +50,9 @@ function mount(encMode: 'none' | 'db' = 'none') {
     getOllamaMirror: () => ({ ok: true, mirror: '' }),
     setOllamaMirror: () => ({ ok: true }),
     startOllama: () => ({ ok: true }),
-    stopOllama: () => ({ ok: true })
+    stopOllama: () => ({ ok: true }),
+    // 147 那组要替 provider 清单与探针通道，其余用例不传 ⇒ 原样
+    ...over
   })
   return mountWithProviders(<FirstRunWizard variant="full" onClose={() => {}} />)
 }
@@ -166,5 +168,118 @@ describe('B1 前置拦截：明文模式下不 put 新 Key', () => {
     fireEvent.click(await screen.findByText(/Ollama/))
     next()
     await waitFor(() => expect(calledFns()).toContain('saveProvider'))
+  })
+})
+
+// ---------- V4-Iter-147：完成页那一格可选探针 ----------
+
+/**
+ * 走的是 `saved = existing` 那条分支（`FirstRunWizard.tsx:161-163`：本地预设且已有同 baseUrl 的记录时
+ * 根本不调 `saveProvider`）⇒ 探针候选来自那条记录的 `models`，而现有那 6 条用例的 stub 一个都不用改。
+ *
+ * 这一组要钉的两条硬东西：
+ *  · **挂载时不许自动发探针**——探针是 3 发真请求、跑在用户的显存上，"可选"必须可选到；
+ *  · 判定 ≠ 开关（决策③：默认关、逐台在设置页点名）⇒ 这一屏不能出现任何"已开启"的口气。
+ */
+describe('147 完成页探针：只在点名时发，失败不阻塞完成', () => {
+  const ollama = {
+    id: 'p-ollama',
+    type: 'ollama',
+    name: 'Ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    apiKeys: [],
+    models: ['m-a', 'm-b'],
+    enabled: true,
+    createdAt: 1
+  }
+  const probeCalls = () => pocketaiCalls().filter((c) => c.fn === 'probeDelegateCapability')
+  const okProbe = () => ({ entry: { capability: 'native_tools_ok' }, error: null })
+
+  /** 一路点到完成页（step 3）；返回 render 结果好查 data 属性 */
+  async function toDone(over: Record<string, unknown> = {}) {
+    const view = mount('none', { listProviders: () => [ollama], probeDelegateCapability: okProbe, ...over })
+    next()
+    next()
+    fireEvent.click(await screen.findByText(/^Ollama$/))
+    next()
+    await screen.findByText(/一切就绪/)
+    return view
+  }
+
+  it('走到完成页就把选择摆出来，但一次探针都不发', async () => {
+    const { container } = await toDone()
+    expect(container.querySelector('[data-probe-block]')).toBeTruthy()
+    expect(probeCalls(), '探针是 3 发真请求，跑在用户显存上 ⇒ 不许挂载时自动跑').toHaveLength(0)
+  })
+
+  it('点「测一下」⇒ 恰好一发，参数是这家 provider 与清单里那台', async () => {
+    const { container } = await toDone()
+    fireEvent.click(screen.getByText('测一下'))
+    await waitFor(() => expect(probeCalls()).toHaveLength(1))
+    expect(probeCalls()[0]!.args).toEqual(['p-ollama', 'm-a'])
+
+    // 换一家再点：第二发的参数必须跟着 select 走（默认那发只证明"发了"，不证明"发对了"）
+    const sel = container.querySelector('[data-probe-block] select') as HTMLSelectElement
+    fireEvent.change(sel, { target: { value: 'm-b' } })
+    fireEvent.click(screen.getByText('测一下'))
+    await waitFor(() => expect(probeCalls()).toHaveLength(2))
+    expect(probeCalls()[1]!.args).toEqual(['p-ollama', 'm-b'])
+  })
+
+  it('判定行说的是"能派活"，不是"已打开"（决策③：开关在设置页逐台点名）', async () => {
+    const { container } = await toDone()
+    fireEvent.click(screen.getByText('测一下'))
+    const verdict = await waitFor(() => {
+      const el = container.querySelector('[data-probe-verdict]')
+      expect(el).toBeTruthy()
+      return el!
+    })
+    expect(verdict.textContent).toContain('可当管控者')
+    expect(verdict.textContent).toContain('≠ 已打开')
+    expect(container.textContent, '这一屏不许给出任何"已经开了"的口气').not.toMatch(/已开启|已启用委派/)
+  })
+
+  it('探测没跑完 ⇒ 说"没测出结论"、不出判定行，而「开始使用」照样点得动（失败不阻塞）', async () => {
+    const { container } = await toDone({
+      probeDelegateCapability: () => ({ entry: { capability: 'unknown' }, error: '探测未跑完：1/3 次请求失败' })
+    })
+    fireEvent.click(screen.getByText('测一下'))
+    const err = await waitFor(() => {
+      const el = container.querySelector('[data-probe-error]')
+      expect(el).toBeTruthy()
+      return el!
+    })
+    expect(err.textContent).toContain('这次没测出结论')
+    expect(container.querySelector('[data-probe-verdict]'), '没结论就不该画判定').toBeNull()
+
+    fireEvent.click(screen.getByText('开始使用'))
+    await waitFor(() => expect(calledFns()).toContain('completeWizard'))
+  })
+
+  it('IPC 层直接拒绝（{ok:false}）也走同一句"没测出结论"，而不是抛到界面上', async () => {
+    const { container } = await toDone({
+      probeDelegateCapability: () => ({ ok: false, error: 'provider 不存在' })
+    })
+    fireEvent.click(screen.getByText('测一下'))
+    const err = await waitFor(() => {
+      const el = container.querySelector('[data-probe-error]')
+      expect(el).toBeTruthy()
+      return el!
+    })
+    expect(err.textContent).toContain('provider 不存在')
+    expect(probeCalls()).toHaveLength(1)
+  })
+
+  it('这家没有缓存模型 ⇒ 那一格压根不出现（不摆一个点了必错的按钮）', async () => {
+    const { container } = await toDone({ listProviders: () => [{ ...ollama, models: [] }] })
+    expect(container.querySelector('[data-probe-block]')).toBeNull()
+    expect(probeCalls()).toHaveLength(0)
+  })
+
+  it('点「以后再说」⇒ 整块收起，且不发探针', async () => {
+    const { container } = await toDone()
+    fireEvent.click(screen.getByText('以后再说'))
+    await waitFor(() => expect(container.querySelector('[data-probe-block]')).toBeNull())
+    expect(probeCalls()).toHaveLength(0)
   })
 })

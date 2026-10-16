@@ -1752,6 +1752,16 @@ export const en: Record<string, string> = {
   'wizard.summaryAssistant': 'Default assistant',
   'wizard.summarySkills': 'Builtin skills',
   'wizard.summarySkillsAuto': 'First 3 enabled automatically',
+  // ── First-run wizard: optional probe on the Done step (V4-Iter-147) ──
+  'wizard.probeTitle': 'One extra check: can this model delegate work?',
+  'wizard.probeHint': 'Sends 3 real requests to it (about 10s on a local model) and only looks at the native tool-call path. Skipping changes nothing; you can probe later under Settings - Model providers.',
+  'wizard.probeModelLabel': 'Model to probe',
+  'wizard.probeBtn': 'Probe',
+  'wizard.probeRunning': 'Probing…',
+  'wizard.probeLater': 'Later',
+  'wizard.probeVerdict': 'Verdict: {label}',
+  'wizard.probeNotEnabled': 'Probing OK does not turn delegation on: the switch is still per-model under Settings - Model providers.',
+  'wizard.probeFailed': 'No verdict this time: {e}',
 
   // ── Settings: backup ──
   'bk.webdavTitle': 'WebDAV sync (Nextcloud / ownCloud / etc.)',

@@ -9,11 +9,13 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { OllamaPanel } from '../../components/OllamaPanel'
-import { logIpcError, reportIpcError, isIpcFail, ipcFailText } from '../../utils/ipc'
+import { logIpcError, reportIpcError, isIpcFail, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 import { PROVIDER_PRESETS } from '../settings/ProviderSettings'
+import { DELEGATE_CAPABILITY_LABEL_KEY } from '../settings/DelegateCapabilityBadge'
+import type { DelegateProbeResult } from '../../../../shared/delegate-capability'
 import type {
   HardwareInfo,
   ModelRecommendation,
@@ -51,7 +53,14 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [setupErr, setSetupErr] = useState('')
   // B1 闸门触发后开放「回安全步设主密码」的入口（配置步内专用）
   const [jumpToSecurity, setJumpToSecurity] = useState(false)
-  const [savedProviderId, setSavedProviderId] = useState<string | null>(null)
+  // 存下的整条 provider 记录（147 起完成页的可选探针要用它的 models；只存 id 会看不出有没有缓存模型）
+  const [savedProvider, setSavedProvider] = useState<ProviderRecord | null>(null)
+  // 首启探针（V4-Iter-147）：可选、可跳过、失败不阻塞完成
+  const [probeModel, setProbeModel] = useState('')
+  const [probing, setProbing] = useState(false)
+  const [probeOut, setProbeOut] = useState<DelegateProbeResult | null>(null)
+  const [probeErr, setProbeErr] = useState('')
+  const [probeSkipped, setProbeSkipped] = useState(false)
 
   // Step 2: Encryption state
   const [pwd, setPwd] = useState('')
@@ -116,7 +125,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     setBusy(true)
     try {
       // 1. 保存 provider
-      let providerId: string
+      let saved: ProviderRecord
       if (selectedPreset.needKey) {
         const existing = providers.find((p) => p.baseUrl === selectedPreset.baseUrl)
         if (existing) {
@@ -129,7 +138,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             setSetupErr(ipcFailText(updated, t('common.unknownError')))
             return
           }
-          providerId = updated.id
+          saved = updated
         } else {
           const newP = await window.pocketai.saveProvider({
             id: '',
@@ -145,13 +154,13 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             setSetupErr(ipcFailText(newP, t('common.unknownError')))
             return
           }
-          providerId = newP.id
+          saved = newP
         }
       } else {
         // 本地 provider（Ollama/LM Studio）— 只要 ensure 存在
         const existing = providers.find((p) => p.baseUrl === selectedPreset.baseUrl)
         if (existing) {
-          providerId = existing.id
+          saved = existing
         } else {
           const newP = await window.pocketai.saveProvider({
             id: '',
@@ -167,10 +176,11 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             setSetupErr(ipcFailText(newP, t('common.unknownError')))
             return
           }
-          providerId = newP.id
+          saved = newP
         }
       }
-      setSavedProviderId(providerId)
+      setSavedProvider(saved)
+      const providerId = saved.id
       // 记录向导选中的 provider，供 ChatModule 初始化回填默认对话模型
       window.pocketai.setLastProvider(providerId).catch(reportIpcError('wizard.setLastProvider'))
 
@@ -235,6 +245,41 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       setEncErr(errText(e, t('enc.fail')))
     } finally {
       setBusy(false)
+    }
+  }
+
+  /**
+   * 探针候选 = 这家 provider **已缓存**的模型。一家都没有 ⇒ 完成页整块不出现
+   * （向导里不自动「拉取模型」，那是用户的事；缺数据时宁可不给这一格，也不摆个点了必错的按钮）。
+   */
+  const probeCandidates = (savedProvider?.models ?? []).filter((m) => typeof m === 'string' && m.trim() !== '')
+  // 当前要测的那台按派生值走（候选换了就回落第一条），不为此再写一个 effect
+  const activeProbeModel = probeCandidates.includes(probeModel) ? probeModel : (probeCandidates[0] ?? '')
+
+  /**
+   * 首启跑一次 142 探针（V4-Iter-147，用户 2026-10-16 选定"可选、可跳过、失败不阻塞"）。
+   * 三条口径写在这儿而不是文案里：
+   *  · **只在用户点名时发请求**（探针是 3 发真推理，跑在用户显存上，不许在挂载时自动跑）；
+   *  · 失败只落 `probeErr`，不碰 `busy` ⇒ 「完成 / 跳过」始终可点，这就是"不阻塞"的实现方式；
+   *  · `error` 不为空时**不许**写成"这台不行"（探针侧有传输失败就不下结论、也不改写旧判定），
+   *    所以这里照实说"这次没测出结论"。
+   */
+  async function runProbe(): Promise<void> {
+    if (!savedProvider || !activeProbeModel) return
+    setProbing(true)
+    setProbeErr('')
+    try {
+      const r = await window.pocketai.probeDelegateCapability(savedProvider.id, activeProbeModel)
+      // 探针成功载荷是 {entry, error}，没有 ok ⇒ 必须用 hasIpcFailed（isIpcFail 会把成功读成失败，同 139）
+      if (hasIpcFailed(r)) setProbeErr(ipcFailText(r, t('common.unknownError')))
+      else {
+        setProbeOut(r)
+        if (r.error) setProbeErr(r.error)
+      }
+    } catch (e) {
+      setProbeErr(errText(e, t('common.unknownError')))
+    } finally {
+      setProbing(false)
     }
   }
 
@@ -567,12 +612,10 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
 
           {/* 配置摘要 */}
           <div className="rounded-lg border border-[var(--color-border)] p-3 text-[11px] space-y-1.5 mb-4">
-            {savedProviderId && (
+            {savedProvider && (
               <div className="flex items-center gap-2">
                 <span className="text-[var(--color-text-muted)]">{t('wizard.summaryProvider')}:</span>
-                <span className="font-mono text-[var(--color-success)]">
-                  ✓ {providers.find((p) => p.id === savedProviderId)?.name ?? ''}
-                </span>
+                <span className="font-mono text-[var(--color-success)]">✓ {savedProvider.name}</span>
               </div>
             )}
             {selectedAssistantId && (
@@ -604,6 +647,58 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           {!encDone && encStatus?.mode !== 'db' && (
             <div className="rounded-lg bg-[var(--color-hover-overlay)] p-3 text-[11px] text-[var(--color-text-muted)] leading-relaxed mt-3">
               {t('wizard.doneTips')}
+            </div>
+          )}
+
+          {/*
+            首启探针（V4-Iter-147）：放在完成页**最末**——这一页的主信息是"配好了 + 加密状态"，
+            这一格是顺手的可选项，不许挤在它前面。整块只在有缓存模型时出现，点「以后再说」就收起。
+          */}
+          {probeCandidates.length > 0 && !probeSkipped && (
+            <div className="rounded-lg border border-[var(--color-border)] p-3 mt-3" data-probe-block>
+              <div className="text-[12px] text-[var(--color-text)] font-medium mb-1">🧪 {t('wizard.probeTitle')}</div>
+              <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-2">
+                {t('wizard.probeHint')}
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {probeCandidates.length > 1 ? (
+                  <label className="text-[11px] text-[var(--color-text-muted)]">
+                    {t('wizard.probeModelLabel')}
+                    <select
+                      className="select-mini ml-2"
+                      value={activeProbeModel}
+                      disabled={probing}
+                      onChange={(e) => setProbeModel(e.target.value)}
+                    >
+                      {probeCandidates.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <span className="text-[11px] font-mono text-[var(--color-text)]">{activeProbeModel}</span>
+                )}
+                <button className="btn-primary text-[11px]" disabled={probing || busy} onClick={runProbe}>
+                  {probing ? t('wizard.probeRunning') : t('wizard.probeBtn')}
+                </button>
+                <button className="btn-ghost text-[11px]" disabled={probing} onClick={() => setProbeSkipped(true)}>
+                  {t('wizard.probeLater')}
+                </button>
+              </div>
+              {probeErr && (
+                <div className="text-[11px] text-[var(--color-danger)] mt-2 leading-relaxed" data-probe-error>
+                  {t('wizard.probeFailed', { e: probeErr })}
+                </div>
+              )}
+              {probeOut && !probeErr && (
+                <div className="text-[11px] text-[var(--color-text)] mt-2 leading-relaxed" data-probe-verdict>
+                  {t('wizard.probeVerdict', { label: t(DELEGATE_CAPABILITY_LABEL_KEY[probeOut.entry.capability]) })}
+                  {/* 判定与开关是两件事（决策③：默认关、逐台点名）。这一句不许省，也不许写成"已开启" */}
+                  <div className="text-[var(--color-text-muted)] mt-1">{t('wizard.probeNotEnabled')}</div>
+                </div>
+              )}
             </div>
           )}
         </>

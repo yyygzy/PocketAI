@@ -60,7 +60,13 @@ import {
   ROLE_BRIEF,
   withDelegateModelParam
 } from '../src/shared/delegation-rules'
-import { isLocalInferenceBaseUrl, resetLocalSlotsForTest, setSlotDecisionForTest } from '../src/main/providers/local-slot'
+import {
+  configureLocalSlot,
+  isLocalInferenceBaseUrl,
+  resetLocalSlotsForTest,
+  setSlotDecisionForTest
+} from '../src/main/providers/local-slot'
+import { agentTraceRepo } from '../src/main/db/repositories/agent-trace.repo'
 import { IPC, BUILTIN_EMBED_PROVIDER_ID, type AgentDoneEvent, type ChatTarget } from '../src/shared/types'
 
 const CHILD_BRIEFS = Object.values(ROLE_BRIEF).map((b) => b.slice(0, 11))
@@ -527,6 +533,9 @@ function allowDistinctRoles(): void {
     allowChatEmbedOverlap: false,
     rolesMayUseDistinctModels: true,
     measured: false,
+    // 档名要给：147 起 `bucket` 决定编排上限。这里刻意用未实测档（⇒ 逐字等于全局默认 3/15），
+    // 让这个文件继续只测 145 的跨模型路由；上限本身由 B83 那两条用例管。
+    bucket: 'main-6g',
     reasons: []
   }))
 }
@@ -849,4 +858,176 @@ describe('145 真链：云并行、本地串行（并发峰值由端点数出来
     expect(kidsOf(conv)).toHaveLength(0)
     expect(childReqs('remote'), '被拒的一批不该有任何子在飞').toHaveLength(0)
   })
+})
+
+// ---------- V4-Iter-147：这一档的编排上限真的进到这一轮（B83 的另一半） ----------
+
+/**
+ * 上面那些用例注入的是**决策本身**（`setSlotDecisionForTest`），走的是 `local-slot.ts:224` 的
+ * `decisionOverride` 那条短路——它连"显存数 → 认档"这一步都跳过了，所以拿来测 147 的表等于只测表。
+ * 这一组改从**输入端**接：`configureLocalSlot({ readVramMiB })` ⇒ 让 `capacitySnapshot()` 现算，
+ * 于是「总量 → `capacityBucketOf` → `delegationLimitsOf` → `newRunBudget` → 闸门」整条线都被踩到。
+ *
+ * 一个必须注意的副作用：`entry-4g` 是 `measured:true` ⇒ 141 的槽位闸门这回**真的会套槽**，
+ * 所以这一组的 `script.hold` 一律为空（挂住等第二条在飞的那些用例留在上面那组里，它们注入的是
+ * `measured:false` 的决策，本来就不排队）。
+ */
+describe('147 真链：显存档 → 本轮编排上限（子会话条数与 LLM 调用数）', () => {
+  beforeEach(resetScript)
+  afterEach(() => {
+    // deps 也要清：`configureLocalSlot` 改的是模块级 deps，不清会漏给下一个用例
+    resetLocalSlotsForTest()
+  })
+
+  const threeDelegates = () =>
+    [DELEGATE_ROLES[0], DELEGATE_ROLES[1], DELEGATE_ROLES[2]].map((role, i) => ({
+      role,
+      task: `${CHILD_TASK}-${String.fromCharCode(65 + i)}`
+    }))
+
+  /** 跑一趟父在 `providerId` 上的委派，显存档由 vramMiB 决定（null = 采不到） */
+  async function runWithVram(input: {
+    vramMiB: number | null
+    providerId: string
+    model: string
+    requestId: string
+    delegates: Array<{ role: (typeof DELEGATE_ROLES)[number]; task: string }>
+    childToolSteps?: number
+  }): Promise<string> {
+    configureLocalSlot({ readVramMiB: () => input.vramMiB })
+    enableDelegation(input.providerId, input.model)
+    script.childToolSteps = input.childToolSteps ?? 0
+    script.hold = null
+    script.parentDelegates = input.delegates
+    const conv = freshParent(assistantNoKbId)
+    await runParent({
+      conversationId: conv,
+      requestId: input.requestId,
+      assistant: assistantNoKbId,
+      target: { providerId: input.providerId, model: input.model }
+    })
+    return conv
+  }
+
+  /** 整棵编排树烧掉的 LLM 步数（父 + 每个子会话的 llm trace） */
+  function llmStepsOf(conv: string): number {
+    const kids = kidsOf(conv)
+    return [conv, ...kids.map((k) => k.id)].reduce(
+      (n, cid) => n + agentTraceRepo.listByConversation(cid).filter((t) => t.stepType === 'llm').length,
+      0
+    )
+  }
+
+  /**
+   * 三条委派 = 三条工具消息，`delegateToolMsg` 只回**第一条**（那是成功的那条），
+   * 被上限拒掉的是第三条 ⇒ 这里必须看全量，否则用例会因为"取错了消息"而假绿。
+   */
+  function allToolMsgs(conv: string): string {
+    return messageRepo
+      .listByConversation(conv)
+      .filter((m) => m.role === 'tool')
+      .map((m) => String(m.content))
+      .join('\n')
+  }
+
+  it('4096MiB（实测档）⇒ 第三条子会话被拒，且话术说的是"这台机器所在档的默认上限"', async () => {
+    const conv = await runWithVram({
+      vramMiB: 4096,
+      providerId: localProviderId,
+      model: LOCAL_MODEL,
+      requestId: 'req-147-entry-3',
+      delegates: threeDelegates()
+    })
+    const msg = allToolMsgs(conv)
+    expect(msg).toContain('DELEGATE_CHILD_LIMIT')
+    // 数字与出处都在话术里：界面不许写死 3，也不许把这条上限说成"编排规则"
+    expect(msg).toContain('最多开 2 条')
+    expect(msg).toContain('这台机器所在档的默认上限')
+    expect(kidsOf(conv), '上限 2 ⇒ 只建两条子会话').toHaveLength(2)
+  })
+
+  /**
+   * 反证（144 的 M5 那条教训：没有对照组，"上限生效"就只是"注入了个小数字"）。
+   * 同一份脚本、同一台端点，只差 6144 这个数 ⇒ 三条都建得出来。
+   */
+  it('6144MiB（未实测档）⇒ 同一批三条委派全部落地，没有一条被上限挡掉', async () => {
+    const conv = await runWithVram({
+      vramMiB: 6144,
+      providerId: localProviderId,
+      model: LOCAL_MODEL,
+      requestId: 'req-147-main-3',
+      delegates: threeDelegates()
+    })
+    expect(delegateToolMsg(conv)).not.toContain('DELEGATE_CHILD_LIMIT')
+    expect(kidsOf(conv)).toHaveLength(3)
+  })
+
+  /**
+   * 147 唯一一条"放宽"方向的前提：`delegationLimitsOf(bucket, false)` 恒给全局默认。
+   * 判据找错对象是 150 那轮记过的老错——本机那张卡上什么都没那么轻，凭什么限云端编排的长度。
+   */
+  it('父在云端点时 4096MiB 不管用：三条照建（上限只对本机落点生效）', async () => {
+    const conv = await runWithVram({
+      vramMiB: 4096,
+      providerId: remoteProviderId,
+      model: REMOTE_MODEL,
+      requestId: 'req-147-cloud-3',
+      delegates: threeDelegates()
+    })
+    expect(delegateToolMsg(conv)).not.toContain('DELEGATE_CHILD_LIMIT')
+    expect(kidsOf(conv)).toHaveLength(3)
+  })
+
+  it('采不到显存 ⇒ unknown 档 = 全局默认（不猜一个"低配"，也不猜"高配"）', async () => {
+    const conv = await runWithVram({
+      vramMiB: null,
+      providerId: localProviderId,
+      model: LOCAL_MODEL,
+      requestId: 'req-147-unknown-3',
+      delegates: threeDelegates()
+    })
+    expect(kidsOf(conv)).toHaveLength(3)
+  })
+
+  /**
+   * `maxLlmCalls` 那一半只能从**子 run 的入口收敛**观（`engine.ts:1070`）：
+   * 父侧那句 `DELEGATE_BUDGET_EXHAUSTED`（`:1991`）排在子会话数闸门（`:1988`）之后，
+   * 低配档下 2 条先响 ⇒ 在 147 的这一档里根本印不出「（N/10）」，拿它当证据就是空断言。
+   * 所以这里断的是"整棵树烧到 10 就停"，对照组同一脚本在 6144 下明显烧得更多。
+   */
+  it('4096MiB ⇒ LLM 调用数封顶在 10；6144MiB ⇒ 同一脚本烧得更多', async () => {
+    const low = await runWithVram({
+      vramMiB: 4096,
+      providerId: localProviderId,
+      model: LOCAL_MODEL,
+      requestId: 'req-147-entry-budget',
+      delegates: [
+        { role: DELEGATE_ROLES[0], task: `${CHILD_TASK}-A` },
+        { role: DELEGATE_ROLES[1], task: `${CHILD_TASK}-B` }
+      ],
+      // 端点脚本本身"永远还有下一步可做"，好让封顶只可能来自预算而不是脚本耗尽
+      childToolSteps: 40
+    })
+    const lowSteps = llmStepsOf(low)
+    // 实测恰为 10 = 这一档的 maxLlmCalls（`engine.ts:1155` 记在 LLM 步入口 ⇒ 触顶那一轮不再发出去）
+    expect(lowSteps, '实测档该在 10 这一档收住').toBeLessThanOrEqual(10)
+
+    const high = await runWithVram({
+      vramMiB: 6144,
+      providerId: localProviderId,
+      model: LOCAL_MODEL,
+      requestId: 'req-147-main-budget',
+      delegates: [
+        { role: DELEGATE_ROLES[0], task: `${CHILD_TASK}-A` },
+        { role: DELEGATE_ROLES[1], task: `${CHILD_TASK}-B` }
+      ],
+      childToolSteps: 40
+    })
+    const highSteps = llmStepsOf(high)
+    expect(highSteps, '同一份脚本在未实测档（=全局 15）下必须烧得更多，否则上面那条封顶是空断言').toBeGreaterThan(
+      lowSteps
+    )
+    // 实测 15 = 全局默认（同一份脚本、同一台端点，差别只来自那个显存数）
+    expect(highSteps).toBeLessThanOrEqual(15)
+  }, 30000)
 })

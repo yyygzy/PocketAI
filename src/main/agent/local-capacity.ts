@@ -47,6 +47,11 @@ export interface LocalCapacityDecision {
   rolesMayUseDistinctModels: boolean
   /** true = 结论来自实测表；false = 来自保守默认（界面必须把这两种状态分开显示，别把默认画成事实） */
   measured: boolean
+  /**
+   * 这一行落在哪个档（V4-Iter-147）。界面与日志按它出话，不再自己比数值——
+   * 比数值就等于把"哪一档"这件事抄第二遍，抄的人迟早和表里不一致。
+   */
+  bucket: CapacityBucket
   reasons: CapacityReasonCode[]
 }
 
@@ -72,8 +77,75 @@ export function largestCudaVramMiB(gpus: ReadonlyArray<{ cuda: boolean; memory?:
 /** 4GiB 及以下：目前唯一在本机测过的档（GTX 1050 Ti 4096MiB / Ollama 0.33.1） */
 const MEASURED_MAX_VRAM_MIB = 4096
 
+/**
+ * 档位名（V4-Iter-147）。
+ * ⚠️ 分界数值与 `steward/model-recommend.ts` 的 ≥6/≥12/≥24 巧合相同，**语义完全不同**：
+ *  那边回答"这台机器该拉哪个模型"，这边回答"这台机器上一次编排该开多大"。
+ *  两张表各自注明自己，不许互相 import、更不许拿对方的结论给自己背书（同一数字两种含义是最难查的漂移）。
+ */
+export type CapacityBucket = 'entry-4g' | 'main-6g' | 'high-12g' | 'flagship-24g' | 'unknown'
+
+/** 一轮编排的上限（子会话条数 / LLM 调用次数） */
+export interface DelegationLimits {
+  maxChildren: number
+  maxLlmCalls: number
+}
+
+/**
+ * 全局默认 = 144/145 一直用的那两个常量（`DELEGATION_MAX_CHILDREN` / `DELEGATION_MAX_LLM_CALLS`）。
+ * 未实测的档一律走它：**不发明值**（140 的纪律），既不因"显存看起来多"放宽，也无依据收紧。
+ */
+export const GLOBAL_DELEGATION_LIMITS: DelegationLimits = { maxChildren: 3, maxLlmCalls: 15 }
+
+interface BucketRow {
+  bucket: CapacityBucket
+  /** 这一档的容量结论有没有实测数据（只有 entry-4g 是 true） */
+  measured: boolean
+  /** 这一档的编排上限（每行自己写死数字，将来实测改一行；逐项对号由 B83 钉） */
+  limits: DelegationLimits
+  /** 收紧的理由码（界面上的拒绝话术与日志按它出话，不解析中文） */
+  reason: string
+}
+
+/**
+ * 四档默认表。**只有实测档改了值**，其余三档与"采不到"都逐字等于全局默认——
+ * 这不是偷懒，是 140 立的口径：没测过的档不许发明结论（放宽会撒谎，凭空收紧也会）。
+ * entry 档收到 2/10 的依据是**实测耗时**（M7 热态单次委派 1.34s、M8 被顶出后一次冷启动 3045ms）
+ * 而不是"显存放不下 3 个角色"——那个说法早被 M3 证伪（ctx≤2048 时两个 chat 模型确实同驻）。
+ * 导出只为让 B83 那条"逐项对号"用例能把整张表写成一个字面量；生产代码请走 `delegationLimitsOf`。
+ */
+export const BUCKETS: Record<CapacityBucket, BucketRow> = {
+  'entry-4g': {
+    bucket: 'entry-4g',
+    measured: true,
+    limits: { maxChildren: 2, maxLlmCalls: 10 },
+    reason: 'delegation-shrunk-on-measured-slow-bucket'
+  },
+  'main-6g': { bucket: 'main-6g', measured: false, limits: GLOBAL_DELEGATION_LIMITS, reason: 'no-measurement-for-bucket' },
+  'high-12g': { bucket: 'high-12g', measured: false, limits: GLOBAL_DELEGATION_LIMITS, reason: 'no-measurement-for-bucket' },
+  'flagship-24g': { bucket: 'flagship-24g', measured: false, limits: GLOBAL_DELEGATION_LIMITS, reason: 'no-measurement-for-bucket' },
+  unknown: { bucket: 'unknown', measured: false, limits: GLOBAL_DELEGATION_LIMITS, reason: 'vram-unknown' }
+}
+
+/** 按总显存认档（采不到 ⇒ unknown） */
+export function capacityBucketOf(totalVramMiB: number | null): CapacityBucket {
+  if (totalVramMiB === null || !Number.isFinite(totalVramMiB) || totalVramMiB <= 0) return 'unknown'
+  if (totalVramMiB <= MEASURED_MAX_VRAM_MIB) return 'entry-4g'
+  if (totalVramMiB < 12288) return 'main-6g'
+  if (totalVramMiB < 24576) return 'high-12g'
+  return 'flagship-24g'
+}
+
+/**
+ * 这一档的编排上限。**只在父真的落在本机时生效**（150 同一条口径）：
+ * 父在云端时这张卡上跑的只有检索链那几路辅助调用，拿本机的显存档去限它的编排长度是第二次找错对象。
+ */
+export function delegationLimitsOf(bucket: CapacityBucket, endpointLocal: boolean): DelegationLimits {
+  return endpointLocal ? BUCKETS[bucket].limits : GLOBAL_DELEGATION_LIMITS
+}
+
 /** 采不到或没测过的档一律走这份保守默认 */
-const CONSERVATIVE: Omit<LocalCapacityDecision, 'reasons'> = {
+const CONSERVATIVE: Omit<LocalCapacityDecision, 'reasons' | 'bucket'> = {
   maxConcurrentChatSlots: 1,
   allowChatEmbedOverlap: false,
   rolesMayUseDistinctModels: false,
@@ -91,18 +163,21 @@ function dedupeReasons<T extends string>(list: T[]): T[] {
  */
 export function planLocalCapacity(input: LocalCapacityInput): LocalCapacityDecision {
   const total = input.totalVramMiB
+  const bucket = capacityBucketOf(total)
 
-  if (total === null || !Number.isFinite(total) || total <= 0) {
+  if (bucket === 'unknown') {
     return {
       ...CONSERVATIVE,
+      bucket,
       reasons: dedupeReasons(['vram-unknown', 'chat-embed-exclusive', 'concurrency-buys-nothing-measured'])
     }
   }
 
-  if (total > MEASURED_MAX_VRAM_MIB) {
+  if (bucket !== 'entry-4g') {
     // 更大的卡今天没有实测数据。不许因为"显存多"就放宽 —— 那正是初稿把一次驱逐当容量本质的错法。
     return {
       ...CONSERVATIVE,
+      bucket,
       reasons: dedupeReasons(['no-measurement-for-bucket', 'chat-embed-exclusive', 'concurrency-buys-nothing-measured'])
     }
   }
@@ -116,6 +191,7 @@ export function planLocalCapacity(input: LocalCapacityInput): LocalCapacityDecis
     // 小 ctx 实测过同驻（3149MiB）才允许跨模型角色；未设 ctx 时按默认 4096 的实测结果走 ⇒ 不放行
     rolesMayUseDistinctModels: !!input.numCtxSetByApp,
     measured: true,
+    bucket,
     reasons: dedupeReasons(reasons)
   }
 }
