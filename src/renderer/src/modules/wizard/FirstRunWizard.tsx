@@ -14,7 +14,7 @@ import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 import { PROVIDER_PRESETS } from '../settings/ProviderSettings'
-import { DELEGATE_CAPABILITY_LABEL_KEY } from '../settings/DelegateCapabilityBadge'
+import { DELEGATE_CAPABILITY_LABEL_KEY, delegateNoticeText } from '../settings/DelegateCapabilityBadge'
 import type { DelegateProbeResult } from '../../../../shared/delegate-capability'
 import type {
   HardwareInfo,
@@ -286,7 +286,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       if (hasIpcFailed(r)) setProbeErr(ipcFailText(r, t('common.unknownError')))
       else {
         setProbeOut(r)
-        if (r.error) setProbeErr(r.error)
+        // 152：`r.error` 是**码 + 数**（不是中文句子），句子在这儿按当前语言拼——
+        // 这一格在首启、面向新用户，中英夹排比设置页更容易撞上（147 的真机自测就是这么发现的）
+        if (r.error) setProbeErr(delegateNoticeText(t, r.error, t('common.unknownError')))
       }
     } catch (e) {
       setProbeErr(errText(e, t('common.unknownError')))

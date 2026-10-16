@@ -6,7 +6,8 @@
 // 一条措辞纪律（决策①的结论）：**fence_only 不是"能用"**。模型自发写 ```json 围栏而引擎只认
 // ```tool_call，实测放宽解析也只到 50% —— 所以这一态的话必须直说"当前用不了"，不许写成"勉强可用"。
 import React from 'react'
-import type { DelegateCapabilityView } from '../../../../shared/delegate-capability'
+import type { DelegateCapability, DelegateCapabilityView, DelegateFailure } from '../../../../shared/delegate-capability'
+import { delegateFailureText } from '../../../../shared/delegate-capability'
 import { useI18n } from '../../i18n'
 
 /** 三态文案键：设置页探测完也要用同一份，别两处各写一句话 */
@@ -16,6 +17,29 @@ export const DELEGATE_CAPABILITY_LABEL_KEY = {
   no_delegation: 'provider.capNone',
   unknown: 'provider.capUnknown'
 } as const
+
+/**
+ * 把"委派这一路回给界面的失败"翻成当前界面的那句话（V4-Iter-152）。
+ * 两条来源要分开，不许混着显示：
+ *  · **业务拒绝**（拒探 / 开启委派被挡 / 探测没跑完）= 一个码 + 几个数 ⇒ 走话术表；
+ *  · **IPC 层拒绝**（`safeHandle` 的参数校验、抛出的异常）= 技术性字符串 ⇒ 照原样给（与 `ipcFailText` 同一口径），
+ *    把它翻译成四语反而是把 zod 的报错话术变成第二份 UI 文案。
+ * `params.capability` 再走一次标签映射：`fence_only` 这类是**内部枚举值**，直接插进句子等于让用户读标识符。
+ */
+export function delegateNoticeText(
+  t: (key: string, params?: Record<string, string | number>) => string,
+  error: DelegateFailure | string | null | undefined,
+  fallback: string
+): string {
+  if (error === null || error === undefined) return fallback
+  if (typeof error === 'string') return error || fallback
+  const params: Record<string, string | number> = { ...(error.params ?? {}) }
+  const cap = params.capability
+  if (typeof cap === 'string' && cap in DELEGATE_CAPABILITY_LABEL_KEY) {
+    params.capability = t(DELEGATE_CAPABILITY_LABEL_KEY[cap as DelegateCapability])
+  }
+  return delegateFailureText(t, { ...error, params }, fallback)
+}
 
 const TONE = {
   native_tools_ok: 'text-[var(--color-success,#2e7d32)]',

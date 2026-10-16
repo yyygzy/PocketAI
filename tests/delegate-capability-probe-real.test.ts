@@ -194,7 +194,8 @@ describe('两条硬规矩（失败不许当结论、文本协议不许探）', (
     mode = 'fail'
     const bad = await probeDelegateCapability(providerId, MODEL, 3)
     expect(bad.entry.capability).toBe('unknown')
-    expect(bad.error, '全失败要给出人话原因').toContain('失败')
+    // 152：没跑完只回码 + 数（中文句子中 ko 界面就成中英夹排）；具体几个失败要在参数里，别把信息丢了
+    expect(bad.error).toEqual({ code: 'probe_incomplete', params: { failed: 3, total: 3 } })
     expect(bodies).toHaveLength(3) // 确实发过 3 次，不是没试
     expect(
       listDelegateCapabilities().find((e) => e.model === MODEL)?.capability,
@@ -237,7 +238,7 @@ describe('两条硬规矩（失败不许当结论、文本协议不许探）', (
     }).id
     const r = await probeDelegateCapability(p2, 'partial-model', 3)
     expect(r.entry.capability).toBe('unknown')
-    expect(r.error).toContain('1/3')
+    expect(r.error).toEqual({ code: 'probe_incomplete', params: { failed: 1, total: 3 } })
     expect(listDelegateCapabilities().some((e) => e.model === 'partial-model')).toBe(false)
     await new Promise<void>((res2) => srv2.close(() => res2()))
     mode = prevMode
@@ -248,7 +249,7 @@ describe('两条硬规矩（失败不许当结论、文本协议不许探）', (
     bodies = []
     const r = await probeDelegateCapability(providerId, MODEL, 3)
     expect(r.entry.capability).toBe('unknown')
-    expect(r.error).toContain('文本协议')
+    expect(r.error).toEqual({ code: 'text_protocol_forced' })
     expect(bodies).toHaveLength(0)
     setTextProtocolModel(providerId, MODEL, false)
   })

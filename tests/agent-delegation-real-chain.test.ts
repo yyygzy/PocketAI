@@ -300,7 +300,8 @@ describe('委派开关（决策③：默认关，用户点名才开）', () => {
     appConfigRepo.set('agent.delegate_capability', '')
     const denied = setDelegationEnabled(providerId, MODEL, true)
     expect(denied.ok).toBe(false)
-    expect(denied.error).toContain('还没探测')
+    // 152：拒绝只回**码**（句子在界面按语言拼）⇒ 这里断的是契约形状，不再是某句中文
+    expect(denied.error).toEqual({ code: 'never_probed' })
 
     const conv = freshParent()
     await runParent(conv, 'req-off-1')
@@ -315,7 +316,8 @@ describe('委派开关（决策③：默认关，用户点名才开）', () => {
     seedVerdict('fence_only', 0)
     const r = setDelegationEnabled(providerId, MODEL, true)
     expect(r.ok).toBe(false)
-    expect(r.error).toContain('fence_only')
+    // 数与判定值放 params（枚举值原样给，界面再映射成自己语言的标签），句子不在主进程拼
+    expect(r.error).toEqual({ code: 'not_capable', params: { capability: 'fence_only', hits: 0, samples: 3 } })
   })
 
   it('开着文本协议 ⇒ 即便判定是可当管控者也不许开（委派靠的就是原生工具那条路）', () => {
@@ -323,7 +325,7 @@ describe('委派开关（决策③：默认关，用户点名才开）', () => {
     setTextProtocolModel(providerId, MODEL, true)
     const r = setDelegationEnabled(providerId, MODEL, true)
     expect(r.ok).toBe(false)
-    expect(r.error).toContain('文本协议')
+    expect(r.error).toEqual({ code: 'text_protocol_forced' })
     setTextProtocolModel(providerId, MODEL, false)
   })
 

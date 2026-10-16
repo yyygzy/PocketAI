@@ -26,6 +26,7 @@ import {
   normalizeDelegateEntries,
   replyToProbeSample,
   type DelegateCapabilityView,
+  type DelegateFailure,
   type DelegateProbeResult,
   type DelegateCapabilityEntry,
   type ProbeReply
@@ -97,7 +98,9 @@ export async function probeDelegateCapability(
   runs: number = MIN_PROBE_RUNS
 ): Promise<ProbeOutcome> {
   if (isTextProtocolForced(providerId, model)) {
-    const why = '这台模型已被设为「走文本协议」，探针考察的是原生工具调用路径，结果不会可信 ⇒ 请先关掉该开关再探测'
+    // 界面要的是码不是中文句子（V4-Iter-152）：这条链终点是四语界面，句子在那儿会中英夹排。
+    // 详细的中文说明留给日志——读日志的人是开发者，不受界面语言影响。
+    log.warn(`拒探 ${delegateKey(providerId, model)}：这台模型已被设为「走文本协议」，而探针考察的是原生工具调用路径 ⇒ 结果不可信`)
     return {
       entry: {
         key: delegateKey(providerId, model),
@@ -109,7 +112,7 @@ export async function probeDelegateCapability(
         digest: '',
         checkedAt: Date.now()
       },
-      error: why
+      error: { code: 'text_protocol_forced' }
     }
   }
 
@@ -163,10 +166,13 @@ export async function probeDelegateCapability(
   }
   // **任何一次请求失败都不落库**：unknown 是一个"没结论"的结论，
   // 拿它覆盖上一轮的 native_tools_ok 等于把已知信息丢掉（用户会看到"没探过"，其实只是这台今天连不上）。
-  const error =
+  const error: DelegateFailure | null =
     transportErrors > 0
-      ? `探测未跑完：${transportErrors}/${total} 次请求失败，保留此前的判定（有失败就不下结论，也不写 unknown 覆盖）`
+      ? { code: 'probe_incomplete', params: { failed: transportErrors, total } }
       : null
+  if (transportErrors > 0) {
+    log.warn(`探测未跑完 ${delegateKey(providerId, model)}：${transportErrors}/${total} 次请求失败 ⇒ 保留此前的判定（有失败就不下结论，也不写 unknown 覆盖）`)
+  }
   if (transportErrors === 0) saveEntry(entry)
 
   return { entry, error }
@@ -207,22 +213,28 @@ export function setDelegationEnabled(
   providerId: string,
   model: string,
   on: boolean
-): { ok: boolean; error: string | null; models: string[] } {
+): { ok: boolean; error: DelegateFailure | null; models: string[] } {
   const current = listDelegationEnabledModels()
-  const refuse = (error: string) => ({ ok: false as const, error, models: current })
+  // 拒绝也只回码（V4-Iter-152）：这三句的终点是设置页那行提示，四语界面下中文句子会中英夹排。
+  // 「为什么被拒」的具体数字/判定值放 params，由界面插进自己语言的句子；详细中文留日志。
+  const refuse = (error: DelegateFailure) => {
+    log.warn(`拒绝开启委派 ${delegateKey(providerId, model)}：${error.code}${error.params ? ' ' + JSON.stringify(error.params) : ''}`)
+    return { ok: false as const, error, models: current }
+  }
 
   if (on) {
     if (isTextProtocolForced(providerId, model)) {
-      return refuse('这台模型已被设为「走文本协议」，而委派靠的是原生工具调用路径 ⇒ 请先关掉该开关再开启委派')
+      return refuse({ code: 'text_protocol_forced' })
     }
     const entry = listDelegateCapabilities().find((e) => e.key === delegateKey(providerId, model))
     if (!entry) {
-      return refuse('这台模型还没探测过能否派活 ⇒ 请先点「探测能否派活」，判定为「可当管控者」才允许开启委派')
+      return refuse({ code: 'never_probed' })
     }
     if (entry.capability !== 'native_tools_ok') {
-      return refuse(
-        `这台模型的判定是「${entry.capability}」（${entry.nativeHits}/${entry.samples} 命中），不是「可当管控者」⇒ 不开启委派`
-      )
+      return refuse({
+        code: 'not_capable',
+        params: { capability: entry.capability, hits: entry.nativeHits, samples: entry.samples }
+      })
     }
   }
 

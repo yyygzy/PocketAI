@@ -6,7 +6,7 @@ import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { isPlainRemoteHttp } from '../../../../shared/url-policy'
 import { delegateKey, type DelegateCapabilityView } from '../../../../shared/delegate-capability'
-import { DelegateCapabilityBadge, DELEGATE_CAPABILITY_LABEL_KEY } from './DelegateCapabilityBadge'
+import { DelegateCapabilityBadge, DELEGATE_CAPABILITY_LABEL_KEY, delegateNoticeText } from './DelegateCapabilityBadge'
 
 export const PROVIDER_PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
   // ── 海外主流 ──
@@ -87,7 +87,8 @@ export const ProviderSettings: React.FC = () => {
       if (hasIpcFailed(r)) {
         setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
       } else if (r.error) {
-        setNotice({ ok: false, text: r.error })
+        // 152：主进程回的是**码**（拒探 / 探测没跑完），句子由这里按当前语言拼
+        setNotice({ ok: false, text: delegateNoticeText(t, r.error, t('common.unknownError')) })
       } else {
         setNotice({ ok: true, text: `${model}：${t(DELEGATE_CAPABILITY_LABEL_KEY[r.entry.capability])}` })
       }
@@ -112,9 +113,10 @@ export const ProviderSettings: React.FC = () => {
     }
     try {
       const r = await window.pocketai.setAgentDelegateEnabled(pid, model, on)
-      // 业务拒绝与 safeHandle 失败同一个形状（ok:false + error），一条分支就够
-      if (hasIpcFailed(r)) {
-        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      // 业务拒绝与 safeHandle 失败仍是同一个形状（`ok:false` + error），一条分支就够（139 那条教训没变）；
+      // 152 起两者只有 error 的**类型**不同：业务拒绝是码、IPC 层拒绝是字符串 ⇒ 分流交给 delegateNoticeText
+      if (!r.ok) {
+        setNotice({ ok: false, text: delegateNoticeText(t, r.error, t('common.unknownError')) })
       } else {
         setNotice({ ok: true, text: on ? t('provider.capDelegationOn') : t('provider.capDelegationOff') })
         await loadCaps()

@@ -157,10 +157,57 @@ export interface DelegateCapabilityEntry {
   checkedAt: number
 }
 
-/** 一次探测的返回：判定 + 探测本身出错的原因（null = 正常出结论）。界面不许把 error 当"不支持" */
+/**
+ * 回给界面的失败**码**（V4-Iter-152）。
+ * 为什么不是中文句子：这条链的终点是设置页的提示行与首启向导完成页那一格，四语界面拿到中文句子就会中英夹排
+ * （147/151 的真机自测就是这么撞到的）。主进程知道"为什么失败"，界面知道"该用哪种语言说" ⇒ 中间只传码与数。
+ * 日志侧照旧写中文（给人看的是主进程日志，不是用户界面）。
+ */
+export type DelegateFailureCode =
+  /** 这台被设为「走文本协议」：探针考察的是原生工具调用路径，结果不可信 ⇒ 拒探 */
+  | 'text_protocol_forced'
+  /** 探测没跑完：有请求失败 ⇒ 不下结论、也不改写此前判定（参数只有数，没有散文） */
+  | 'probe_incomplete'
+  /** 这台还没探过 ⇒ 开不了委派 */
+  | 'never_probed'
+  /** 判定不是「可当管控者」⇒ 开不了委派（参数带那台的判定与计数据） */
+  | 'not_capable'
+
+export interface DelegateFailure {
+  code: DelegateFailureCode
+  /** 只放**数与枚举值**（界面插进自己的文案里），不许放整句中文 */
+  params?: Record<string, string | number>
+}
+
+/**
+ * 码 → 文案键：一张表管两个消费方（设置页的提示行 + 首启完成页那一格），
+ * 免得同一件事在两处各写一句话术——那正是本仓一路在避免的第二份口径。
+ * 键是**动态取的**，`i18n-parity` 那条只扫字面 `t('a.b')` 的用例扫不到 ⇒ 由 `tests/delegate-failure-text.test.ts`
+ * 逐条拿这张表反查四本字典（同 `agent.role.*` 那三条的处理办法）。
+ */
+export const DELEGATE_FAILURE_KEYS: Record<DelegateFailureCode, string> = {
+  text_protocol_forced: 'delegate.failTextProtocol',
+  probe_incomplete: 'delegate.failIncomplete',
+  never_probed: 'delegate.failNeverProbed',
+  not_capable: 'delegate.failNotCapable'
+}
+
+/** 把码翻成当前界面的那句话（未知码 ⇒ 回落通用文案，绝不回落中文句子） */
+export function delegateFailureText(
+  t: (key: string, params?: Record<string, string | number>) => string,
+  failure: DelegateFailure | null | undefined,
+  fallback: string
+): string {
+  if (!failure) return fallback
+  const key = DELEGATE_FAILURE_KEYS[failure.code as DelegateFailureCode]
+  if (!key) return fallback
+  return t(key, failure.params ?? {})
+}
+
+/** 一次探测的返回：判定 + 探测本身出错的那条码（null = 正常出结论）。界面不许把失败码读成"这台不行" */
 export interface DelegateProbeResult {
   entry: DelegateCapabilityEntry
-  error: string | null
+  error: DelegateFailure | null
 }
 
 /** 列表视图：多带一个 stale（本地模型镜像换了摘要 ⇒ 旧结论过期） */

@@ -1525,6 +1525,11 @@ export const en: Record<string, string> = {
   'provider.capDelegationOn': 'Sequential delegation enabled for this model',
   'provider.capDelegationOff': 'Sequential delegation disabled for this model',
   'provider.capSaveFirst': 'Save this provider first, then probe whether it can delegate',
+  // ── Delegation failures (V4-Iter-152: the main process returns codes, the sentences live here) ──
+  'delegate.failTextProtocol': 'This model is set to "text protocol", while both the probe and delegation need the native tool-call path ⇒ turn that switch off first',
+  'delegate.failIncomplete': 'Probe did not finish: {failed}/{total} requests failed - the previous verdict is kept',
+  'delegate.failNeverProbed': 'This model has never been probed ⇒ click "Probe" first; only a "Can orchestrate" verdict lets you turn delegation on',
+  'delegate.failNotCapable': 'This model was judged "{capability}" ({hits}/{samples} hits), not "Can orchestrate" ⇒ delegation stays off',
 
   // ── Ollama portable runtime ──
   'ollama.title': 'Local Model Engine (Ollama)',

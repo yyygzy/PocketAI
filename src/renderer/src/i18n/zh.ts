@@ -1525,6 +1525,11 @@ export const zh: Record<string, string> = {
   'provider.capDelegationOn': '已允许这台模型顺序委派',
   'provider.capDelegationOff': '已关闭这台模型的顺序委派',
   'provider.capSaveFirst': '请先保存这个服务商，再探测它能不能派活',
+  // ── 委派这一路的失败话术（V4-Iter-152：主进程只回码，句子在这儿按语言拼）──
+  'delegate.failTextProtocol': '这台模型已被设为「走文本协议」，而探针与委派靠的都是原生工具调用路径 ⇒ 请先关掉那个开关',
+  'delegate.failIncomplete': '探测未跑完：{failed}/{total} 次请求失败，此前的判定保持不变',
+  'delegate.failNeverProbed': '这台模型还没探测过能否派活 ⇒ 请先点「探测能否派活」，判定为「可当管控者」才允许开启委派',
+  'delegate.failNotCapable': '这台模型的判定是「{capability}」（{hits}/{samples} 命中），不是「可当管控者」⇒ 不开启委派',
 
   // ── Ollama 便携运行时 ──
   'ollama.title': '本地模型引擎（Ollama）',

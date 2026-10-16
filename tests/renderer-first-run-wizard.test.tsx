@@ -241,7 +241,8 @@ describe('147 完成页探针：只在点名时发，失败不阻塞完成', () 
 
   it('探测没跑完 ⇒ 说"没测出结论"、不出判定行，而「开始使用」照样点得动（失败不阻塞）', async () => {
     const { container } = await toDone({
-      probeDelegateCapability: () => ({ entry: { capability: 'unknown' }, error: '探测未跑完：1/3 次请求失败' })
+      // 152 起主进程回的是码 + 数，句子由界面按当前语言拼
+      probeDelegateCapability: () => ({ entry: { capability: 'unknown' }, error: { code: 'probe_incomplete', params: { failed: 1, total: 3 } } })
     })
     fireEvent.click(screen.getByText('测一下'))
     const err = await waitFor(() => {
@@ -250,6 +251,8 @@ describe('147 完成页探针：只在点名时发，失败不阻塞完成', () 
       return el!
     })
     expect(err.textContent).toContain('这次没测出结论')
+    // 数没丢：1/3 是这条拒绝的全部信息量
+    expect(err.textContent).toContain('1/3')
     expect(container.querySelector('[data-probe-verdict]'), '没结论就不该画判定').toBeNull()
 
     fireEvent.click(screen.getByText('开始使用'))

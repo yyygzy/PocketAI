@@ -1459,6 +1459,11 @@ export const ja: Record<string, string> = {
   'provider.capDelegationOn': 'このモデルの順序委譲を許可しました',
   'provider.capDelegationOff': 'このモデルの順序委譲を解除しました',
   'provider.capSaveFirst': 'まずこのプロバイダーを保存してから、委任できるか判定します',
+  // ── 委派まわりの失敗（V4-Iter-152：メインプロセスはコードだけ返し、文はここで言語ごとに組む）──
+  'delegate.failTextProtocol': 'このモデルは「テキストプロトコル」に設定されていますが、判定も委派もネイティブのツール呼び出し経路が必要 ⇒ まずそのスイッチをオフにしてください',
+  'delegate.failIncomplete': '判定が完走しませんでした：{failed}/{total} 回のリクエスト失敗、以前の判定はそのまま維持されます',
+  'delegate.failNeverProbed': 'このモデルはまだ「委任できるか」を判定していません ⇒ まず「判定する」を押してください。「管理役が可能」と判定されたモデルだけが委派を有効にできます',
+  'delegate.failNotCapable': 'このモデルの判定は「{capability}」（{hits}/{samples} ヒット）で「管理役が可能」ではない ⇒ 委派は有効になりません',
   'ollama.title': 'ローカルモデルエンジン（Ollama）',
   'ollama.desc': 'インストール不要のポータブル Ollama をアプリフォルダにダウンロード。モデルデータはプラットフォームフォルダ内に保存され、USB メモリで持ち運べます。',
   'ollama.install': 'ポータブル Ollama をダウンロード（約 1.4GB）',

@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
 import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
-import type { DelegateCapabilityView, DelegateProbeResult } from '../shared/delegate-capability'
+import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -727,12 +727,12 @@ const api = {
   /** 对一台模型跑一次委派探针（默认 3 发真请求，走原生 tools 路径）；失败原因在 error 里 */
   probeDelegateCapability: (providerId: string, model: string): Promise<DelegateProbeResult> =>
     ipcRenderer.invoke(IPC.AGENT_PROBE_DELEGATE_CAP, { providerId, model }),
-  /** 决策③：点名允许/取消某台模型做顺序委派。前置条件在主进程判，拒绝原因照实回传 */
+  /** 决策③：点名允许/取消某台模型做顺序委派。前置条件在主进程判，拒绝**只回码**（152），句子由界面按语言拼 */
   setAgentDelegateEnabled: (
     providerId: string,
     model: string,
     on: boolean
-  ): Promise<{ ok: boolean; error: string | null; models: string[] }> =>
+  ): Promise<{ ok: boolean; error: DelegateFailure | string | null; models: string[] }> =>
     ipcRenderer.invoke(IPC.AGENT_SET_DELEGATE_ENABLED, { providerId, model, on }),
 
   // ---------- License 授权 ----------
