@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   DELEGATE_FAILURE_KEYS,
+  FAILURE_QUOTED_BUTTON_KEYS,
   delegateFailureText,
   type DelegateFailure,
   type DelegateFailureCode
@@ -101,5 +102,63 @@ describe('delegateNoticeText：两种失败来源要分流', () => {
   it('不是枚举值的 params 原样透传（映射只认那四个能力值）', () => {
     const f: DelegateFailure = { code: 'probe_incomplete', params: { failed: 2, total: 4 } }
     expect(delegateNoticeText(tOf('zh'), f, 'FB')).toContain('2/4')
+  })
+})
+
+/**
+ * 152 把中文句子换成码之后，界面上还剩一处**手抄**：`delegate.failNeverProbed` 里要点名那颗按钮，
+ * 而按钮的名字是抄在句子中的。152 落地时四语只有 zh 抄对了（「探测能否派活」）——
+ * en 写 "Probe"（真名 'Probe delegation'）、ja 写「判定する」、ko 写「판정하기」，**后两个在界面上根本不存在**。
+ * 修法不是把那三个词改对，而是句子从那颗按钮自己用的键**现取**（`FAILURE_QUOTED_BUTTON_KEYS`）。
+ */
+describe('指路的按钮名从按钮自己现取（V4-Iter-153）', () => {
+  it('要指路的那几条码，四本字典都得出 {btn} 占位符（谁把它抄回成整词就红）', () => {
+    const codes = Object.keys(FAILURE_QUOTED_BUTTON_KEYS) as DelegateFailureCode[]
+    expect(codes).toEqual(['never_probed'])
+    for (const code of codes) {
+      const key = DELEGATE_FAILURE_KEYS[code]
+      for (const [lang, dict] of Object.entries(DICTS)) {
+        expect((dict as Record<string, string>)[key], `${lang}.${key} 没带 {btn}`).toContain('{btn}')
+      }
+    }
+  })
+
+  it('成品句里那颗按钮 = 该语言自己的 provider.capProbe（不是另一本字典的名字）', () => {
+    for (const lang of Object.keys(DICTS) as Lang[]) {
+      const dict = DICTS[lang] as Record<string, string>
+      const text = delegateFailureText(tOf(lang), { code: 'never_probed' }, 'FB')
+      expect(dict['provider.capProbe'], `${lang} 的按钮文案是空的`).not.toBe('')
+      expect(text, `${lang} 成品句没带上真按钮名：${text}`).toContain(dict['provider.capProbe'])
+      expect(text, `${lang} 成品句漏了插值`).not.toContain('{btn}')
+    }
+  })
+
+  it('同一句里引到的判定名 = 该语言自己的 provider.capNative（这条仍是手抄，所以更要钉）', () => {
+    const cases: DelegateFailure[] = [{ code: 'never_probed' }, { code: 'not_capable', params: { capability: 'fence_only', hits: 0, samples: 3 } }]
+    for (const lang of Object.keys(DICTS) as Lang[]) {
+      const dict = DICTS[lang] as Record<string, string>
+      for (const f of cases) {
+        const text = delegateNoticeText(tOf(lang), f, 'FB')
+        expect(text, `${lang} 的 ${f.code} 没引到 provider.capNative 的原文：${text}`).toContain(dict['provider.capNative'])
+      }
+    }
+  })
+})
+
+/**
+ * ja 这一簇原先三个词并存：委派 6 处（中文词，日语几乎不用）／委任 5 处／委譲 6 处 ⇒ 用户会当成三个功能。
+ * 用户 2026-10-17 选定「委任」，范围只划在模型服务商 + 委派失败话术这一簇（判据屏 judgement.* 不动）。
+ */
+describe('ja 委派这一簇的用词统一（V4-Iter-153）', () => {
+  it('provider.cap* 与 delegate.fail* 里不再出现「委派」「委譲」', () => {
+    const keys = Object.keys(ja).filter((k) => k.startsWith('provider.cap') || k.startsWith('delegate.fail'))
+    // 防空转：筛出来必须是这一簇的全部（少于 15 条就是筛选条件写坏了）
+    expect(keys.length, `筛到的键太少：${keys.join(', ')}`).toBeGreaterThanOrEqual(15)
+    for (const k of keys) expect(ja[k], `ja.${k}`).not.toMatch(/委派|委譲/)
+  })
+
+  it('判据屏按用户选定保持原样（这条钉子守着"范围只到这一簇"这个决定，别顺手改掉）', () => {
+    expect(ja['judgement.delegation']).toContain('委譲')
+    expect(ja['judgement.note.delegation-on']).toContain('委譲')
   })
 })

@@ -192,6 +192,16 @@ export const DELEGATE_FAILURE_KEYS: Record<DelegateFailureCode, string> = {
   not_capable: 'delegate.failNotCapable'
 }
 
+/**
+ * 句子要指路"去点那颗按钮"时，按钮的**名字从它自己的键现取**，不许在话术里手抄（V4-Iter-153）。
+ * 手抄一定会漂：152 那四本字典里只有 zh 抄对了（「探测能否派活」），en 写成 "Probe"（真名 'Probe delegation'）、
+ * ja 写「判定する」、ko 写「판정하기」——**后两个名字在界面上根本不存在**，用户照着句子去找就找不到。
+ * 插进 `{btn}`；四本字典都得出这个占位符（`i18n-parity` 那条核占位符集合一致 + 本模块的用例逐语核成品句含真名）。
+ */
+export const FAILURE_QUOTED_BUTTON_KEYS: Partial<Record<DelegateFailureCode, string>> = {
+  never_probed: 'provider.capProbe'
+}
+
 /** 把码翻成当前界面的那句话（未知码 ⇒ 回落通用文案，绝不回落中文句子） */
 export function delegateFailureText(
   t: (key: string, params?: Record<string, string | number>) => string,
@@ -201,7 +211,11 @@ export function delegateFailureText(
   if (!failure) return fallback
   const key = DELEGATE_FAILURE_KEYS[failure.code as DelegateFailureCode]
   if (!key) return fallback
-  return t(key, failure.params ?? {})
+  const params: Record<string, string | number> = { ...(failure.params ?? {}) }
+  const buttonKey = FAILURE_QUOTED_BUTTON_KEYS[failure.code as DelegateFailureCode]
+  // 主进程给的话里已经有 btn 就尊重它（现在没有；留着是为了将来某条拒绝要指的不是默认那颗按钮时不必改这里）
+  if (buttonKey && params.btn === undefined) params.btn = t(buttonKey)
+  return t(key, params)
 }
 
 /** 一次探测的返回：判定 + 探测本身出错的那条码（null = 正常出结论）。界面不许把失败码读成"这台不行" */

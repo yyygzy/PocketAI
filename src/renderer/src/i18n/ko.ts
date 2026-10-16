@@ -1462,7 +1462,7 @@ export const ko: Record<string, string> = {
   // ── 위임 관련 실패 (V4-Iter-152: 메인 프로세스는 코드만 돌려보내고, 문장은 여기서 언어별로 조립) ──
   'delegate.failTextProtocol': '이 모델은 「텍스트 프로토콜」로 설정되어 있지만 판정도 위임도 네이티브 도구 호출 경로를 씁니다 ⇒ 먼저 그 스위치를 꺼 주세요',
   'delegate.failIncomplete': '판정을 끝내지 못했습니다: {failed}/{total}회 요청 실패, 이전 판정은 그대로 유지됩니다',
-  'delegate.failNeverProbed': '이 모델은 아직 위임 가능 여부를 판정하지 않았습니다 ⇒ 「판정하기」를 먼저 누르세요. 「관리자 역할 가능」으로 판정된 모델만 위임을 켤 수 있습니다',
+  'delegate.failNeverProbed': '이 모델은 아직 위임 가능 여부를 판정하지 않았습니다 ⇒ 「{btn}」를 먼저 누르세요. 「관리자 역할 가능」으로 판정된 모델만 위임을 켤 수 있습니다',
   'delegate.failNotCapable': '이 모델의 판정은 「{capability}」 ({hits}/{samples} 회 적중)이며 「관리자 역할 가능」이 아닙니다 ⇒ 위임이 켜지지 않습니다',
   'ollama.title': '로컬 모델 엔진 (Ollama)',
   'ollama.desc': '설치 불필요 포터블 Ollama를 앱 폴더에 다운로드. 모델 데이터는 플랫폼 폴더에 저장되며 USB로 휴대 가능합니다.',
