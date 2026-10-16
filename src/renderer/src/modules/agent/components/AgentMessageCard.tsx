@@ -4,7 +4,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { CopyButton } from '../../../components/CopyButton'
 import { AttachmentGrid } from '../../../components/AttachmentGrid'
-import { extractFirstHtmlBlock, type AgentMessage } from '../agent-shared'
+import { extractFirstHtmlBlock, delegateRoleLabel, type AgentMessage } from '../agent-shared'
+import { readDelegateRoleForDisplay } from '../../../../../shared/delegation-rules'
 import { HtmlBlockActions } from './HtmlBlockActions'
 import { writeClipboard } from '../../../utils/clipboard'
 import { ReminderMenu } from '../../../components/ReminderMenu'
@@ -262,9 +263,21 @@ const AgentMessageCardImpl: React.FC<{
   }
 
   if (m.role === 'tool' && m.toolCall) {
+    // 委派那一步额外挂角色标签：从**已在这里的参数 JSON** 现读，不是新字段（理由见 readDelegateRoleForDisplay）
+    const delegateRole = readDelegateRoleForDisplay(m.toolCall.function.name, m.toolCall.function.arguments)
     return (
       <div className="text-xs px-3 py-2 rounded border border-[var(--color-info-bg)] bg-[var(--color-info-bg)]" onContextMenu={handleCtx}>
-        <div className="text-[var(--color-info)] font-mono">{t('agent.callTool', { name: m.toolCall.function.name })}</div>
+        <div className="text-[var(--color-info)] font-mono">
+          {t('agent.callTool', { name: m.toolCall.function.name })}
+          {delegateRole && (
+            <span
+              data-delegate-role={delegateRole}
+              className="ml-1.5 px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-accent)] text-[10px] font-sans"
+            >
+              {delegateRoleLabel(t, delegateRole)}
+            </span>
+          )}
+        </div>
         <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all">
           {m.toolCall.function.arguments}
         </pre>

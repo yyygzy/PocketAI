@@ -118,6 +118,31 @@ export function parseDelegateArgs(args: Record<string, unknown>): DelegateArgs {
   return { ok: true, role, task, model: null }
 }
 
+/**
+ * 界面标签用的**宽容**读取：不是委派、JSON 非法、role 不在三值内 ⇒ null（不显示标签）。
+ * 与 `parseDelegateArgs` 的严格刻意相反：那一份要给模型纠错话，必须报错；这一份只是
+ * 告诉用户"这一步派的是谁"，把模型写的原始字符串搬上界面等于渲染不可信内容，
+ * 所以只认 `DELEGATE_ROLES` 这三值、其余一律当作"没有可说的"。
+ * 为什么从参数里现读而不新增事件字段：`toolCall.function.arguments` 在**live 事件与历史加载
+ * 两条路上都已经在**（`toAgentMessages` 从 DB tool 消息里还原 arguments），加字段就得给
+ * agent_traces 迁移一列，而一步里可能有两条委派（145 的并行形态）——一列装不下。
+ */
+export function readDelegateRoleForDisplay(
+  toolName: string | undefined,
+  argsJson: string | undefined
+): DelegateRole | null {
+  if (toolName !== DELEGATE_TOOL_NAME) return null
+  let raw: unknown
+  try {
+    raw = JSON.parse(argsJson ?? '') as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (typeof raw !== 'object' || raw === null) return null
+  const role = (raw as Record<string, unknown>).role
+  return isDelegateRole(role) ? role : null
+}
+
 /** 委派工具面里代表"会走 embedding 检索链"的那把工具（名字逐字等于 kb-search.ts 的 schema.name） */
 export const KB_SEARCH_TOOL_NAME = 'kb_search'
 

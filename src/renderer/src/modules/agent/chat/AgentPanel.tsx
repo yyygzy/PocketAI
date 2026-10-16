@@ -14,7 +14,7 @@ import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
 import { AgentSearchBar } from '../components/AgentSearchBar'
 import { ZeroToolCallNotice } from '../components/ZeroToolCallNotice'
-import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages } from '../agent-shared'
+import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages, delegateRoleLabel } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
@@ -504,7 +504,14 @@ export const AgentPanel: React.FC = () => {
                       } ${isLast ? 'animate-pulse border-[var(--color-accent)] text-[var(--color-accent)]' : ''}`}
                     >
                       <span>{t(`agent.liveStep.${s.type}`)}</span>
-                      {s.toolName && <span className="text-[var(--color-accent)]">{s.toolName}</span>}
+                      {/* 委派那一步用角色标签替掉裸工具名：delegate_task 对用户不如"派了谁"有用 */}
+                      {s.role ? (
+                        <span className="text-[var(--color-accent)]" data-delegate-role={s.role}>
+                          {delegateRoleLabel(t, s.role)}
+                        </span>
+                      ) : (
+                        s.toolName && <span className="text-[var(--color-accent)]">{s.toolName}</span>
+                      )}
                       <span className="opacity-60">#{s.stepIndex}</span>
                     </span>
                   )

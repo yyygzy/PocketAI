@@ -911,6 +911,8 @@ export interface AgentChunkEvent {
   stepIndex: number
   messageId: string
   delta: string
+  /** 这一段是思考增量（引擎在 onReasoningDelta 里带 true，正文段不带这个键） */
+  reasoning?: boolean
 }
 
 export interface AgentErrorEvent {

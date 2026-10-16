@@ -2,10 +2,12 @@
 import { describe, expect, it } from 'vitest'
 import { reduceLiveSteps, LIVE_STEPS_MAX, type LiveStep } from '../src/renderer/src/modules/agent/agent-shared'
 
-const ev = (stepIndex: number, type: string, toolName?: string) => ({
+const ev = (stepIndex: number, type: string, toolName?: string, args?: string, callId = 'tc1') => ({
   stepIndex,
   type,
-  toolCall: toolName ? { id: 'tc1', type: 'function' as const, function: { name: toolName, arguments: '{}' } } : undefined
+  toolCall: toolName
+    ? { id: callId, type: 'function' as const, function: { name: toolName, arguments: args ?? '{}' } }
+    : undefined
 })
 
 describe('reduceLiveSteps', () => {
@@ -15,9 +17,9 @@ describe('reduceLiveSteps', () => {
     steps = reduceLiveSteps(steps, ev(1, 'tool_call', 'shell_exec'))
     steps = reduceLiveSteps(steps, ev(1, 'tool_result'))
     expect(steps).toEqual([
-      { stepIndex: 1, type: 'thought', toolName: undefined },
-      { stepIndex: 1, type: 'tool_call', toolName: 'shell_exec' },
-      { stepIndex: 1, type: 'tool_result', toolName: undefined }
+      { stepIndex: 1, type: 'thought', toolName: undefined, role: undefined, callId: undefined },
+      { stepIndex: 1, type: 'tool_call', toolName: 'shell_exec', role: undefined, callId: 'tc1' },
+      { stepIndex: 1, type: 'tool_result', toolName: undefined, role: undefined, callId: undefined }
     ])
   })
 
@@ -35,6 +37,17 @@ describe('reduceLiveSteps', () => {
     expect(steps).toHaveLength(1)
     // 同 index 不同类型不覆盖
     steps = reduceLiveSteps(steps, ev(1, 'tool_call', 'x'))
+    expect(steps).toHaveLength(2)
+  })
+
+  it('同一步里的两条**不同调用**各留一条 chip（145 的并行委派；按 callId 去重，不按"同步骤同类型"）', () => {
+    let steps: LiveStep[] = []
+    steps = reduceLiveSteps(steps, ev(2, 'tool_call', 'delegate_task', '{"role":"researcher","task":"a"}', 'call_a'))
+    steps = reduceLiveSteps(steps, ev(2, 'tool_call', 'delegate_task', '{"role":"writer","task":"b"}', 'call_b'))
+    expect(steps).toHaveLength(2)
+    expect(steps.map((s) => s.role)).toEqual(['researcher', 'writer'])
+    // 反向对照：同一个 callId 再来一次（重试/重复 emit）仍然只留一条
+    steps = reduceLiveSteps(steps, ev(2, 'tool_call', 'delegate_task', '{"role":"writer","task":"b"}', 'call_b'))
     expect(steps).toHaveLength(2)
   })
 

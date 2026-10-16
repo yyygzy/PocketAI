@@ -1,5 +1,6 @@
 // Agent 模块共享：类型、常量与纯函数（MCP 面板 / Agent 对话 / Channels 共用）
 import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult, MessageSource } from '../../../../shared/types'
+import { readDelegateRoleForDisplay, type DelegateRole } from '../../../../shared/delegation-rules'
 import type { SlashCommand } from '../../utils/snippet-slash'
 
 export type Tab = 'agent' | 'servers' | 'channels'
@@ -44,15 +45,40 @@ export interface LiveStep {
   type: 'thought' | 'tool_call' | 'tool_result' | 'replan' | 'error'
   /** tool_call 步骤的工具名 */
   toolName?: string
+  /**
+   * 这一步是委派时派出去的角色（148）。只有 tool_call 会有：tool_result 的
+   * `ToolResult.arguments` 在委派那条路上是空的（引擎只在持久化时才补 arguments），
+   * 给结果卡打标签会做成"live 有、刷新后也有、但内容不同"的两张脸。
+   */
+  role?: DelegateRole
+  /**
+   * 去重键的一部分（148）：同一步里可以真有两条调用（145 的并行委派，云端点在今天就到得了），
+   * 只按 stepIndex+type 去重会把第二条**连角色一起吞掉**。thought 的"占位→正式"两条都没有它，
+   * 所以那条去重照旧成立。
+   */
+  callId?: string
 }
 
 /** chip 流最大保留长度（防超长运行撑爆 UI；超出丢最旧） */
 export const LIVE_STEPS_MAX = 50
 
 /**
+ * 角色标签的取词（三条字面量 `t()` 调用，不是查表）。
+ * 写成字面量是因为 i18n 对等用例只扫源码里的 `t('key')` 字面量：
+ * `t('agent.role.' + role)` 拼出来的动态 key 它抓不到，漏一门翻译就只会白屏出一个裸 key
+ * （146 的 `judgement.reason.${code}` 踩过同一坑，那边的处置是补一份逐码字典用例）。
+ * 这里能三行写完，就直接写三行。
+ */
+export function delegateRoleLabel(t: (key: string) => string, role: DelegateRole): string {
+  if (role === 'researcher') return t('agent.role.researcher')
+  if (role === 'writer') return t('agent.role.writer')
+  return t('agent.role.reviewer')
+}
+
+/**
  * liveSteps 归约（纯函数，可单测）：把 step 事件追加到 chip 流。
  * - 不在白名单的类型（user/todo/final）返回原数组（引用不变，不触发重渲染）
- * - 同一 stepIndex 的 thought 占位→正式更新会去重为一条（同 index 同类型覆盖）
+ * - 同一 stepIndex 的 thought 占位→正式更新会去重为一条（同 index 同类型同 callId 覆盖）
  * - 超出 LIVE_STEPS_MAX 丢最旧
  */
 export function reduceLiveSteps(prev: LiveStep[], event: { stepIndex: number; type: string; toolCall?: ToolCall }): LiveStep[] {
@@ -61,10 +87,16 @@ export function reduceLiveSteps(prev: LiveStep[], event: { stepIndex: number; ty
   const step: LiveStep = {
     stepIndex: event.stepIndex,
     type: t,
-    toolName: t === 'tool_call' ? event.toolCall?.function?.name : undefined
+    toolName: t === 'tool_call' ? event.toolCall?.function?.name : undefined,
+    role: t === 'tool_call'
+      ? readDelegateRoleForDisplay(event.toolCall?.function?.name, event.toolCall?.function?.arguments) ?? undefined
+      : undefined,
+    callId: t === 'tool_call' ? event.toolCall?.id : undefined
   }
-  // 同 stepIndex 同类型覆盖（thought 先 emit 占位再 emit 正式文本，chip 只留一条）
-  const dupIdx = prev.findIndex((s) => s.stepIndex === step.stepIndex && s.type === step.type)
+  // 同 stepIndex 同类型同 callId 覆盖（thought 先 emit 占位再 emit 正式文本，chip 只留一条）
+  const dupIdx = prev.findIndex(
+    (s) => s.stepIndex === step.stepIndex && s.type === step.type && s.callId === step.callId
+  )
   const next = dupIdx >= 0
     ? prev.map((s, i) => (i === dupIdx ? step : s))
     : [...prev, step]

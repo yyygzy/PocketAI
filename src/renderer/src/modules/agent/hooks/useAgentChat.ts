@@ -1,6 +1,7 @@
 // Agent 对话核心：助手/会话/消息流（reducer）/运行状态/Provider·模型选择/发送与中止
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type {
+  AgentChunkEvent,
   AgentDoneEvent,
   AgentErrorEvent,
   AgentRunStats,
@@ -286,30 +287,45 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     }).catch(reportIpcError('agent.getSessionStats'))
   }, [conversationId])
 
-  // 订阅 Agent 流式事件（仅处理当前 requestId 的事件）
+  // 订阅 Agent 流式事件（归属见下面两条判据）
   useEffect(() => {
     const offs: Array<() => void> = []
+    /**
+     * 两条归属判据，各挡一种真实串台（两种形状都在 tests/agent-event-attribution 里挂了用例）：
+     *  · `requestId` —— 中止后立刻重发：上一轮的**迟到 chunk** 会写进同一会话里那张已定稿的
+     *    旧卡（reducer 按 messageId 找卡片，旧卡还留在 messages 里 ⇒ 只有 requestId 挡得住）；
+     *  · `conversationId` —— 运行中切会话：上一轮的 tool 卡会被 append 进**当前看着的**那条会话，
+     *    而这些卡没有 DB 记录，切走再切回才"消失"，用户看到的就是凭空多出来的消息。
+     * `running` 只按 requestId 判，不加会话条件：它是模块级的"有没有运行在跑"总闸，
+     * 会话一参与就把迟到 DONE 丢掉，用户切过去就再也解不开输入框。
+     */
+    const fromThisRun = (requestId: string): boolean => requestId === requestIdRef.current
+    const thisRunShownNow = (e: { requestId: string; conversationId: string }): boolean =>
+      fromThisRun(e.requestId) && e.conversationId === conversationIdRef.current
+
     offs.push(
       window.pocketai.onAgentStep((e: AgentStepEvent) => {
-        if (e.requestId !== requestIdRef.current) return
+        if (!thisRunShownNow(e)) return
         setCurrentStep(e.stepIndex)
         setLiveSteps((prev) => reduceLiveSteps(prev, e))
         dispatch({ type: 'step', event: e, unknownErrorText: t('agent.unknownError') })
       })
     )
     offs.push(
-      window.pocketai.onAgentChunk((e: { messageId: string; delta: string; reasoning?: boolean }) => {
+      window.pocketai.onAgentChunk((e: AgentChunkEvent) => {
+        if (!fromThisRun(e.requestId)) return
         dispatch({ type: 'chunk', messageId: e.messageId, delta: e.delta, reasoning: e.reasoning })
       })
     )
     offs.push(
       window.pocketai.onAgentDone((e: AgentDoneEvent) => {
+        if (!fromThisRun(e.requestId)) return
         setRunning(false)
-        setInterrupted(false)
         setCurrentStep(0)
         setLiveSteps([])
-        // 仅在事件仍归属当前会话时展示统计（切会话后迟到的 DONE 不覆盖）
+        // 仅在事件仍归属当前会话时展示统计与复位（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
+          setInterrupted(false)
           setRunStats(e.traceStats ?? null)
           // 零调用提示：有工具可用但未调用任何工具
           setNoToolCallNotice(e.usedTools === false)
@@ -326,11 +342,13 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       })
     )
     offs.push(
-      window.pocketai.onAgentError((_e: AgentErrorEvent) => {
+      window.pocketai.onAgentError((e: AgentErrorEvent) => {
+        if (!fromThisRun(e.requestId)) return
         setRunning(false)
-        setInterrupted(true)
         setCurrentStep(0)
         setLiveSteps([])
+        // 「可断点恢复」是按会话讲的：正在看别的会话时不该被上一轮的失败点亮
+        if (e.conversationId === conversationIdRef.current) setInterrupted(true)
       })
     )
     // 智能标题后台生成完成：就地更新活跃/归档两个列表（done 后 reload 为兜底）

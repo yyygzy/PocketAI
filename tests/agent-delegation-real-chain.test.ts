@@ -44,14 +44,16 @@ import {
   canOpenChild,
   childToolSurface,
   DELEGATE_ROLES,
+  DELEGATE_TOOL_NAME,
   DELEGATION_MAX_CHILDREN,
   DELEGATION_MAX_LLM_CALLS,
   newRunBudget,
   parseDelegateArgs,
+  readDelegateRoleForDisplay,
   type RunBudget
 } from '../src/shared/delegation-rules'
 import type { DelegateCapabilityEntry } from '../src/shared/delegate-capability'
-import { IPC, type AgentDoneEvent } from '../src/shared/types'
+import { IPC, type AgentDoneEvent, type AgentStepEvent } from '../src/shared/types'
 
 const MODEL = 'chain-model'
 const CHILD_MARK = '你是资料检索子代理'
@@ -74,6 +76,11 @@ interface Req {
 }
 
 let reqs: Req[] = []
+/**
+ * 父 run 发到窗口的那批 step 事件（148 的角色标签原料）。
+ * 子 run 的事件走 `childEmit` 被吞掉 ⇒ 这里只可能收到父的，正是"用户在分步明细里看到什么"。
+ */
+let stepEvents: AgentStepEvent[] = []
 /** 父 run 前 N 次要委派；子 run 前 N 步要调工具（之后一律给最终回答） */
 const script = { parentDelegations: 1, childToolSteps: 1, holdChild: false, childBlockedCall: false }
 /** 挂住的子请求（abort 测试用）：close 前一律放行，否则 server.close() 会卡在一个永不结束的响应上 */
@@ -222,8 +229,11 @@ function freshParent(): string {
 
 function runParent(conversationId: string, requestId: string): Promise<AgentDoneEvent | null> {
   let done: AgentDoneEvent | null = null
+  // 父 run 发到窗口的那批 step 事件（子 run 的走 childEmit，被吞掉 ⇒ 这里只可能收到父的）
+  stepEvents.length = 0
   const emit = (channel: string, data: unknown): void => {
     if (channel === IPC.AGENT_DONE_EVENT) done = data as AgentDoneEvent
+    else if (channel === IPC.AGENT_STEP_EVENT) stepEvents.push(data as AgentStepEvent)
   }
   return agentEngine
     .run(
@@ -560,5 +570,55 @@ describe('委派真链（开关打开后）', () => {
     expect(kidsBefore).toBeGreaterThanOrEqual(0)
     expect(conversationRepo.list(undefined, undefined, { includeSubSessions: true }).filter((c) => c.parentConversationId === conv)).toHaveLength(0)
     for (const t of agentTraceRepo.listByRequest('req-plain-1')) expect(t.parentRequestId).toBeNull()
+  })
+})
+
+/**
+ * 148 的角色标签不新增事件字段，是**从 tool_call 的参数 JSON 现读**的。
+ * 那这条路的原料必须用真引擎发出来的事件来证：手搓一个 `{role:'writer'}` 的 toolCall 对象
+ * 证得了纯函数，证不到"引擎实际发给窗口的那一步里 arguments 是齐的、且只有委派带得出角色"。
+ */
+describe('角色标签的原料来自真 step 事件（V4-Iter-148 / B84）', () => {
+  beforeEach(async () => {
+    await resetScript()
+    seedVerdict('native_tools_ok')
+    expect(setDelegationEnabled(providerId, MODEL, true).ok).toBe(true)
+  })
+
+  it('只有 delegate_task 的 tool_call 读得出角色；标签与子会话的 roleKey 同源；结果步读不出', async () => {
+    const conv = freshParent()
+    await runParent(conv, 'req-label-1')
+
+    const roleOf = (e: AgentStepEvent): string | null =>
+      readDelegateRoleForDisplay(e.toolCall?.function.name, e.toolCall?.function.arguments)
+    const labelled = stepEvents.filter((e) => roleOf(e) !== null)
+    expect(labelled.length, '父的 tool_call 一个角色都读不出 ⇒ 界面上永远不会有标签').toBeGreaterThan(0)
+    for (const e of labelled) {
+      expect(e.type).toBe('tool_call')
+      expect(e.toolCall!.function.name, '非委派的调用读不出角色，读出来了就是认错人').toBe(DELEGATE_TOOL_NAME)
+    }
+    expect(labelled.map((e) => roleOf(e))).toEqual(['researcher'])
+
+    // 界面写的角色与数据层归因（143 的 roleKey）不能是两套口径
+    const kid = conversationRepo
+      .list(undefined, undefined, { includeSubSessions: true })
+      .find((c) => c.parentConversationId === conv)!
+    expect(kid.roleKey).toBe('researcher')
+
+    // 结果步读不出：引擎只在持久化那份 JSON 里补 `arguments`，live 的 ToolResult 没有 ⇒ 标签只打调用步
+    const results = stepEvents.filter((e) => e.type === 'tool_result')
+    expect(results.length, '这一轮没收到 tool_result 事件 ⇒ 下面那条断言是空的').toBeGreaterThan(0)
+    for (const e of results) expect(readDelegateRoleForDisplay(e.toolResult!.name, e.toolResult!.arguments)).toBeNull()
+  })
+
+  it('被拒的委派也留得下原料：一次子的请求都没发，标签照样读得出"派的是谁"', async () => {
+    expect(setDelegationEnabled(providerId, MODEL, false).ok).toBe(true)
+    const conv = freshParent()
+    await runParent(conv, 'req-label-refused')
+    expect(reqs.filter((r) => r.isChild), '开关关了就不该有子的推理请求').toHaveLength(0)
+    expect(delegateToolMsg(conv)).toContain('DELEGATION_DISABLED')
+    const call = stepEvents.find((e) => e.type === 'tool_call')!
+    expect(call, '被拒前也没 emit tool_call ⇒ 分步明细里看不见这一步').toBeDefined()
+    expect(readDelegateRoleForDisplay(call.toolCall!.function.name, call.toolCall!.function.arguments)).toBe('researcher')
   })
 })
