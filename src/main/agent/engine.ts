@@ -70,6 +70,7 @@ import {
   type RunBudget
 } from '../../shared/delegation-rules'
 import { listRoleModelOptions, planChildRun, resolveChildTarget, type ChildRunPlan } from './delegation'
+import { retrievalHitsLocalEndpoint } from './role-facts'
 import { mayAssignDistinctModelRole, planRoleConcurrency } from './local-capacity'
 
 const MAX_STEPS = 10
@@ -135,6 +136,12 @@ interface AgentRunContext {
    * 不必等到委派时再猜。低配档被逐的那次实测正是"一个 embed 进来把对话模型顶出去"（M10）。
    */
   childUsesRetrieval: boolean
+  /**
+   * 150：检索链里的那台 embedding **会不会落在本机推理端点**（`role-facts.ts` 算的）。
+   * 第二条合取要的是这个，不是上面那个——内置那路 embedding 走 CPU、云端 embedding 不碰这张卡，
+   * 拿 M10 当它们的理由就是撒谎。两个事实分开存，是为了让"走了检索链但不吃显存"这一格可断言。
+   */
+  retrievalHitsLocalEndpoint: boolean
   target: ChatTarget
   messages: AdapterChatMessage[]
   master: AbortController
@@ -805,22 +812,32 @@ class AgentEngine {
       ? childToolSurface(surface)
       : surface.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
     /**
-     * 145：「这个角色可以换一台模型」= **两条合取**（判据在 `local-capacity.ts`，容量唯一来源是 `slotDecision()`）：
-     *  ① 小 ctx 下实测过跨模型同驻；② 这条编排不走 embedding 检索链。
-     * 没过就把 `model` 参数**从 schema 里省掉**（模型看不见 ⇒ 不会填），而不是"看得见但被拒"
-     * ——那是 118 那轮的形状。今天 ① 恒为 false（应用从不设 num_ctx），所以这一支在这台机器上关着。
+     * 145 定的两条合取，150 按用户选定（A2 + 一起细化）收到"**子对这机显存的实际占用**"上：
+     *  ① 容量档只管**落在本地端点**的候选——"两个本地模型能否同驻"对云子没有对象（M3/M10 说的都是这张卡）；
+     *  ② 检索链那条只在 embedding 真的落到本地推理端点时才拦（内置那路是 CPU onnxruntime、云端 embedding 不碰这张卡）。
+     * 清单只列放得开的落点：一个都没有时 `model` 参数**不进 schema**（模型看不见 ⇒ 不会填），
+     * 保持 144 那条"没放不开就不给看"的形状，而不是"看得见但被拒"（118 那轮）。
+     * 今天父在本地时本地候选仍过不了 ①（应用从不设 num_ctx），但**云端候选第一次真的可达**。
      */
     const childUsesRetrieval = surfaceUsesRetrieval(baseTools, kbIds)
-    const distinctRolesAllowed =
-      delegationEnabled &&
-      mayAssignDistinctModelRole(slotDecision(), { childUsesRetrieval }).allowed
-    const tools = distinctRolesAllowed
-      ? baseTools.map((t) =>
-          t.name === DELEGATE_TOOL_NAME
-            ? withDelegateModelParam(t, listRoleModelOptions(target.providerId))
-            : t
-        )
-      : baseTools
+    // 局部变量与导入的函数**不能同名**（同名会自引用进 TDZ，`const x = x(...)` 当场炸）
+    const hitsLocalEmbeddingEndpoint = retrievalHitsLocalEndpoint(kbIds)
+    const capacity = slotDecision()
+    const roleAllows = (candidate: { endpointLocal: boolean }): boolean =>
+      mayAssignDistinctModelRole(capacity, {
+        childEndpointLocal: candidate.endpointLocal,
+        childUsesRetrieval,
+        retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint
+      }).allowed
+    const roleModelOptions = delegationEnabled
+      ? listRoleModelOptions(target.providerId, (c) => roleAllows(c))
+      : []
+    const tools =
+      roleModelOptions.length > 0
+        ? baseTools.map((t) =>
+            t.name === DELEGATE_TOOL_NAME ? withDelegateModelParam(t, roleModelOptions) : t
+          )
+        : baseTools
     /**
      * 用户点名为"走文本协议"的模型（§4.4-⑦）：首轮就不传 tools，改由 system prompt 里的协议段
      * 承载工具清单。与"端点报 400 才自动降级"是两条独立入口，共用同一个注入 helper。
@@ -995,6 +1012,7 @@ class AgentEngine {
       budget,
       asChild,
       childUsesRetrieval,
+      retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint,
       target,
       messages,
       master,
@@ -1930,22 +1948,32 @@ class AgentEngine {
     }
 
     /**
-     * 跨模型角色（145）：只有**真的**要求换模型时才过合取判据，省略 model 就是 144 的同模型形态。
+     * 先解析落点、再判合取（150 换的顺序）：新口径下"放不放得开"取决于**这一次真的落在本地还是云上**，
+     * 而那只由解析出来才知道。换序不破坏 145 那条"闸门排在发请求之前"——`resolveChildTarget` 只读 provider 表。
+     */
+    const resolved = resolveChildTarget(ctx.target, parsed.model)
+    if (!resolved.ok) return fail(`DELEGATE_BAD_TARGET: ${resolved.error}`)
+
+    /**
+     * 跨模型角色：只有**真的**换了模型时才过合取判据，省略 model 就是 144 的同模型形态（`distinct=false`）。
      * 拒的时候按码出话（不解析中文），并把"怎么办"写在同一句里：这条失败是回给模型的，
      * 它看得到就能改成省略 model 重派；用户看到的则是分步明细里的这条工具结果。
      */
-    if (parsed.model) {
-      const verdict = mayAssignDistinctModelRole(slotDecision(), { childUsesRetrieval: ctx.childUsesRetrieval })
+    if (resolved.distinct) {
+      const verdict = mayAssignDistinctModelRole(slotDecision(), {
+        childEndpointLocal: resolved.endpointLocal,
+        childUsesRetrieval: ctx.childUsesRetrieval,
+        retrievalHitsLocalEndpoint: ctx.retrievalHitsLocalEndpoint
+      })
       if (!verdict.allowed) {
-        return fail(
-          `DELEGATE_DISTINCT_BLOCKED: ${verdict.reasons.join(' / ')}。` +
-            '这台机器没有"多个模型同驻"的实测依据（或这条编排要走检索链），' +
-            '请省略 model 参数、让角色沿用当前模型顺序执行。'
-        )
+        // 两条码给的是两种不同的"下一步"：本地落点没过 ⇒ 换一个云端模型名；检索链没过 ⇒ 换模型名也没用，
+        // 得先让这条编排不碰 embedding（不许在这里含糊成一句"这台机器不行"）
+        const next = verdict.reasons.includes('retrieval-chain-exclusive')
+          ? '这条编排的检索链会把 embedding 压进本机显存（实测会顶掉正在用的对话模型），换任何落点都躲不开——'
+          : '这一档没有"多个本地模型同驻"的实测依据，改填一个**云端**模型名或省略 model 让角色沿用当前模型——'
+        return fail(`DELEGATE_DISTINCT_BLOCKED: ${verdict.reasons.join(' / ')}。${next}请省略 model 参数、让角色沿用当前模型顺序执行。`)
       }
     }
-    const resolved = resolveChildTarget(ctx.target, parsed.model)
-    if (!resolved.ok) return fail(`DELEGATE_BAD_TARGET: ${resolved.error}`)
 
     if (!canOpenChild(ctx.budget)) {
       return fail(`DELEGATE_CHILD_LIMIT: 本轮编排最多开 ${ctx.budget.maxChildren} 条子会话，已用满`)

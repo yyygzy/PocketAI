@@ -93,9 +93,17 @@ function enabledModelAddresses(): ModelAddress[] {
  * 给 schema 的候选清单：**精确匹配，不做家族匹配**（同 142 那条 digest 教训——`qwen2.5:3b` 与
  * `qwen2.5:3b-instruct` 是两台模型，让它们互相顶替会把"没测过的端点"当成"测过的"）。
  * 同名模型挂在多家下时，裸名会歧义 ⇒ 这一条改用 `providerId::model` 全名，保证清单里每一项都能直接填。
+ *
+ * `allow` 是 150 加的第二道形：清单**只列当时放得开的落点**（用户选定 A2）。理由不是省事——
+ * 144/145 定的形状是"放不开就让模型看不见这个参数"，而新口径下"放不放得开"依候选落在本地还是云上而不同，
+ * 于是这句话只能逐候选回答。把全部候选都列出来再逐次拒，就退回了 118 那轮"看得见但被拒"的形状。
+ * 逐次放行的那道闸门（`prepareDelegation`）照旧保留，它是纵深，不是清单的替代品。
  */
-export function listRoleModelOptions(parentProviderId: string): string[] {
-  const addresses = enabledModelAddresses()
+export function listRoleModelOptions(
+  parentProviderId: string,
+  allow: (candidate: { providerId: string; model: string; endpointLocal: boolean }) => boolean
+): string[] {
+  const addresses = enabledModelAddresses().filter(allow)
   const bareCount = new Map<string, number>()
   for (const a of addresses) bareCount.set(a.model, (bareCount.get(a.model) ?? 0) + 1)
   const labels = addresses.map((a) => ({

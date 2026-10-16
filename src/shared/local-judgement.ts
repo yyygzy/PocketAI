@@ -18,11 +18,12 @@ export interface CapacityDecisionView {
   reasons: string[]
 }
 
-/** 与 `mayAssignDistinctModelRole` 的返回同形 */
-export interface DistinctRoleVerdictView {
-  allowed: boolean
-  reasons: string[]
-}
+/**
+ * 跨模型角色的取值（150 起不是一个布尔）：新口径下"放不放得开"取决于子落在哪，
+ * 而这一屏是在"每次委派之前"看的，没有"这一次"可言 ⇒ 只能把两种落点各判一次再摊成三态。
+ * 与 `main/agent/local-capacity.ts` 的 `DistinctRoleScope` 同形（这里重复的是形状，取值仍只有那一个出处）。
+ */
+export type DistinctRoleScopeView = 'not-allowed' | 'cloud-only' | 'any-endpoint'
 
 /** 判据屏的数据：一次采集的**全部事实来源**，界面不再自己取任何数 */
 export interface LocalJudgementReport {
@@ -36,10 +37,18 @@ export interface LocalJudgementReport {
   /** 141 的槽位现状（观察用）。空数组 = 本机此刻没有本地推理队列，**不等于"测得不会排队"** */
   slots: Array<{ origin: string; busy: number; waiting: number; capacity: number }>
   /**
-   * 跨模型角色的第二条合取按**助手**算：绑了知识库、或工具面允许 `kb_search` ⇒ 这条编排走检索链。
-   * 一个助手一行，因为"这次编排走不走检索"是助手级事实，不是机器级事实。
+   * 跨模型角色按**助手**算的一行事实（150）：
+   *  · `childUsesRetrieval` —— 这条编排会不会走检索链（绑了库 / 工具面有 kb_search）；
+   *  · `retrievalHitsLocalEndpoint` —— 那条检索链的 embedding 会不会落到本机推理端点（第二条合取真正判的是它）；
+   *  · `scope` —— 两种落点各判一次后的取值；`reasons` 是拦下来的那些码。
    */
-  roleVerdicts: Array<{ assistantName: string; childUsesRetrieval: boolean; verdict: DistinctRoleVerdictView }>
+  roleVerdicts: Array<{
+    assistantName: string
+    childUsesRetrieval: boolean
+    retrievalHitsLocalEndpoint: boolean
+    scope: DistinctRoleScopeView
+    reasons: string[]
+  }>
   /** 每台被判定过的模型的委派能力（复用 142 的视图，不另判一次） */
   delegations: Array<{
     key: string
@@ -85,23 +94,26 @@ const BUCKET_CODES = ['measured-bucket', 'no-measurement-for-bucket', 'vram-unkn
  */
 interface RoleGroup {
   names: string[]
-  allowed: boolean
+  scope: DistinctRoleScopeView
   reasons: string[]
   childUsesRetrieval: boolean
+  retrievalHitsLocalEndpoint: boolean
 }
 
 function groupRoleVerdicts(report: LocalJudgementReport): RoleGroup[] {
   const byKey = new Map<string, RoleGroup>()
   for (const v of report.roleVerdicts) {
-    const key = `${v.verdict.allowed}|${v.childUsesRetrieval}|${v.verdict.reasons.join(',')}`
+    // 分组键带上两条检索链事实：只有 scope 相同就并组，会把"不碰库"与"碰库但不吃显存"画成同一行
+    const key = `${v.scope}|${v.childUsesRetrieval}|${v.retrievalHitsLocalEndpoint}|${v.reasons.join(',')}`
     const g = byKey.get(key)
     if (g) g.names.push(v.assistantName)
     else
       byKey.set(key, {
         names: [v.assistantName],
-        allowed: v.verdict.allowed,
-        reasons: v.verdict.reasons,
-        childUsesRetrieval: v.childUsesRetrieval
+        scope: v.scope,
+        reasons: v.reasons,
+        childUsesRetrieval: v.childUsesRetrieval,
+        retrievalHitsLocalEndpoint: v.retrievalHitsLocalEndpoint
       })
   }
   return [...byKey.values()]
@@ -170,10 +182,25 @@ export function buildLocalJudgementRows(report: LocalJudgementReport): Judgement
       // 组标识取"组里第一个助手的名字"：单助手时行 id 与逐个助手时完全一致，用例不必跟着换
       id: `distinct-roles:${g.names[0]}`,
       labelKey: 'judgement.distinctRoles',
-      valueKey: g.allowed ? 'judgement.value.allowed' : 'judgement.value.blocked',
+      /**
+       * 150：这一行的取值是**三态**（落点无关地允许 / 只允许云端落点 / 不允许），不再是"允许/不允许"。
+       * 三个键在这里写成字面量而不是拼出来——界面的静态映射（`DISTINCT_SCOPE_KEY`）与逐键字典用例
+       * 都依赖"键看得见"（146 的 `judgement.reason.${码}` 就是拼出来才漏扫的）。
+       */
+      valueKey:
+        g.scope === 'any-endpoint'
+          ? 'judgement.value.distinctScope.any'
+          : g.scope === 'cloud-only'
+            ? 'judgement.value.distinctScope.cloud-only'
+            : 'judgement.value.distinctScope.none',
       params: { count: g.names.length, names: g.names.join('、') },
       sourceCode: d.measured ? 'measured' : 'no-measurement',
-      noteKey: g.childUsesRetrieval ? 'judgement.note.retrieval-chain' : undefined,
+      // 两条检索链事实分开说：只说"会走向量检索"会把"其实不吃这张卡"那一格也说成拦的理由
+      noteKey: g.retrievalHitsLocalEndpoint
+        ? 'judgement.note.retrieval-hits-local-embedding'
+        : g.childUsesRetrieval
+          ? 'judgement.note.retrieval-chain'
+          : undefined,
       // 合取的"哪一条没过"逐码列出来（145 的用例就是钉这两条各自能否掉）
       reasonCodes: reasons
     })

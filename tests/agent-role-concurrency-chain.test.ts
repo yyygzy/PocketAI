@@ -40,6 +40,7 @@ import { assistantRepo } from '../src/main/db/repositories/assistant.repo'
 import { conversationRepo } from '../src/main/db/repositories/conversation.repo'
 import { messageRepo } from '../src/main/db/repositories/message.repo'
 import { appConfigRepo } from '../src/main/db/repositories/app-config.repo'
+import { kbRepo } from '../src/main/db/repositories/kb.repo'
 import { delegateTaskTool } from '../src/main/tools/delegate-tool'
 import { agentEngine } from '../src/main/agent/engine'
 import { setDelegationEnabled } from '../src/main/agent/delegate-capability'
@@ -60,7 +61,7 @@ import {
   withDelegateModelParam
 } from '../src/shared/delegation-rules'
 import { isLocalInferenceBaseUrl, resetLocalSlotsForTest, setSlotDecisionForTest } from '../src/main/providers/local-slot'
-import { IPC, type AgentDoneEvent, type ChatTarget } from '../src/shared/types'
+import { IPC, BUILTIN_EMBED_PROVIDER_ID, type AgentDoneEvent, type ChatTarget } from '../src/shared/types'
 
 const CHILD_BRIEFS = Object.values(ROLE_BRIEF).map((b) => b.slice(0, 11))
 const PARENT_TASK = '父任务-写汇报'
@@ -68,30 +69,63 @@ const CHILD_TASK = '子任务-取证'
 
 // ---------- 判据表（纯函数，链外先钉住口径） ----------
 
-describe('跨模型角色的两条合取（mayAssignDistinctModelRole）', () => {
-  it('今天真硬件到不了放行档：≤4GiB / >4GiB / 采不到，三条都判"不跨模型"', () => {
+describe('跨模型角色的两条合取（mayAssignDistinctModelRole，150 起按"子的实际占用"判）', () => {
+  /** 默认 = 本地子、不碰检索（= 145 那套里最严的一格），各用例只改自己要的那一条 */
+  const facts = (over: Partial<{ childEndpointLocal: boolean; childUsesRetrieval: boolean; retrievalHitsLocalEndpoint: boolean }> = {}) => ({
+    childEndpointLocal: true,
+    childUsesRetrieval: false,
+    retrievalHitsLocalEndpoint: false,
+    ...over
+  })
+
+  it('今天真硬件到不了"本地落点放行"档：≤4GiB / >4GiB / 采不到，本地子一律不放', () => {
     for (const vram of [4096, 8192, null]) {
       const d = planLocalCapacity({ totalVramMiB: vram })
       expect(d.rolesMayUseDistinctModels, `显存 ${vram} 不该放行跨模型`).toBe(false)
-      expect(mayAssignDistinctModelRole(d, { childUsesRetrieval: false }).allowed).toBe(false)
+      expect(mayAssignDistinctModelRole(d, facts()).allowed).toBe(false)
     }
+  })
+
+  /**
+   * 150 用户选定（A2）的那条口径：容量判据说的是"两个本地模型能否同驻"，
+   * 子落在云端时这张卡上什么都没有 ⇒ 拿它拦"本地父 + 云的子"是判据找错了对象。
+   */
+  it('云子不受容量档管：同一份 4GiB 判定，childEndpointLocal=false ⇒ 放行', () => {
+    const d = planLocalCapacity({ totalVramMiB: 4096 })
+    const v = mayAssignDistinctModelRole(d, facts({ childEndpointLocal: false }))
+    expect(v.allowed, '云子不占本机显存，①对它没有对象').toBe(true)
+    expect(v.reasons).toEqual(['distinct-roles-allowed'])
+    // 反向对照：把这条前提写坏（云子也照判）时，上面那格会红——所以两格都得在
+    expect(mayAssignDistinctModelRole(d, facts({ childEndpointLocal: true })).allowed).toBe(false)
   })
 
   it('①可以被子推上去（应用显式设小 ctx 那一档实测过同驻），但 ②单独就能否掉', () => {
     const withSmallCtx = planLocalCapacity({ totalVramMiB: 4096, numCtxSetByApp: true })
     expect(withSmallCtx.rolesMayUseDistinctModels, '小 ctx 那一档是实测过同驻的（3b+coder 3149MiB）').toBe(true)
     // 反向对照：只写 ① 时这一格会错判成"可以开"——低配的真实硬约束是"一个 embed 把对话模型顶出去"
-    const blocked = mayAssignDistinctModelRole(withSmallCtx, { childUsesRetrieval: true })
+    const blocked = mayAssignDistinctModelRole(withSmallCtx, facts({ childUsesRetrieval: true, retrievalHitsLocalEndpoint: true }))
     expect(blocked.allowed).toBe(false)
     expect(blocked.reasons).toEqual(['retrieval-chain-exclusive'])
-    expect(mayAssignDistinctModelRole(withSmallCtx, { childUsesRetrieval: false })).toEqual({
+    expect(mayAssignDistinctModelRole(withSmallCtx, facts())).toEqual({
       allowed: true,
       reasons: ['distinct-roles-allowed']
     })
   })
 
+  /**
+   * 150 用户选定的"一起细化"：拦的理由是 M10（本机 GPU 被 embed 顶掉），
+   * 内置那路 embedding 走 onnxruntime 的 CPU、云端 embedding 不碰这张卡 ⇒ 不能再拿它当理由。
+   */
+  it('走检索链但 embedding 不落本机端点 ⇒ 第二条不再拦', () => {
+    const withSmallCtx = planLocalCapacity({ totalVramMiB: 4096, numCtxSetByApp: true })
+    const v = mayAssignDistinctModelRole(withSmallCtx, facts({ childUsesRetrieval: true, retrievalHitsLocalEndpoint: false }))
+    expect(v.allowed, 'kb_search 检索的是内置 CPU 那路（或压根没绑库）时，M10 不适用').toBe(true)
+    // 反向对照：同一份事实只把落点改成本地 ⇒ 立刻拦
+    expect(mayAssignDistinctModelRole(withSmallCtx, facts({ childUsesRetrieval: true, retrievalHitsLocalEndpoint: true })).allowed).toBe(false)
+  })
+
   it('两条都不过 ⇒ 两个码都说出来（界面按码出文案，不许只报第一条）', () => {
-    const v = mayAssignDistinctModelRole(planLocalCapacity({ totalVramMiB: 4096 }), { childUsesRetrieval: true })
+    const v = mayAssignDistinctModelRole(planLocalCapacity({ totalVramMiB: 4096 }), facts({ childUsesRetrieval: true, retrievalHitsLocalEndpoint: true }))
     expect(v.allowed).toBe(false)
     expect(v.reasons).toEqual(['distinct-roles-not-measured', 'retrieval-chain-exclusive'])
   })
@@ -160,6 +194,8 @@ interface Req {
   server: string
   tools: string[]
   delegateParams: string[]
+  /** 150：`model` 参数里给的候选清单（A2 的口径是"只列放得开的落点"，所以这份枚举本身就是要断言的东西） */
+  delegateModelEnum: string[]
   isChild: boolean
   isMeta: boolean
 }
@@ -229,6 +265,10 @@ function classify(server: string, body: Record<string, unknown>): Req {
     server,
     tools: names,
     delegateParams: Object.keys(delegate?.function?.parameters?.properties ?? {}),
+    delegateModelEnum: (() => {
+      const m = (delegate?.function?.parameters?.properties ?? {}).model as { enum?: unknown } | undefined
+      return Array.isArray(m?.enum) ? m.enum.map((x) => String(x)) : []
+    })(),
     isChild: CHILD_BRIEFS.some((b) => text.includes(b)),
     isMeta: names.length === 0
   }
@@ -333,10 +373,15 @@ let remoteBaseUrl = ''
 /** 父（本地）与子（云）两台落点；'remote-model' 这个名字全局唯一，所以候选清单里它是裸名 */
 let localProviderId = ''
 let remoteProviderId = ''
+/** 第二台**本地**落点：150 之后"清单只剩云端候选"要有它才证得到（填另一台本地模型仍该被拒） */
+let local2ProviderId = ''
 let assistantId = ''
 let assistantNoKbId = ''
+let assistantLocalEmbedKbId = ''
+let assistantCpuEmbedKbId = ''
 const LOCAL_MODEL = 'local-model'
 const REMOTE_MODEL = 'remote-model'
+const LOCAL2_MODEL = 'local-other-model'
 
 async function waitFor(predicate: () => boolean, ms = 12000): Promise<void> {
   const t0 = Date.now()
@@ -393,6 +438,49 @@ beforeAll(async () => {
     systemPrompt: '你是主控代理，按任务需要调用工具。',
     toolPermissions: ['agent.delegate', 'time.now'],
     knowledgeBaseIds: [],
+    skillIds: []
+  }).id
+  /**
+   * 第二台**本地**落点（不用起服务：它只该在闸门处被拒掉，一次请求都不该发出去）。
+   * 150 之后"清单里只剩云端候选"这句话要有反面对象才证得到。
+   */
+  local2ProviderId = providerRepo.save({
+    id: '',
+    type: 'openai-compatible',
+    name: '链测-第二台本地端点',
+    baseUrl: 'http://localhost:1/v1',
+    apiKeys: [],
+    models: [LOCAL2_MODEL],
+    enabled: true,
+    createdAt: Date.now()
+  }).id
+  /**
+   * 150 细化的第二条合取要两种 embedding 落点各一个真库：
+   *  · 指向本地端点的 ⇒ 真的会吃这张卡 ⇒ 该拦；
+   *  · 内置那路（onnxruntime CPU）的 ⇒ 不碰这张卡 ⇒ 不该再拿 M10 当理由。
+   */
+  const kbLocalEmbed = kbRepo.save({
+    name: '本地 embedding 库',
+    embeddingProviderId: localProviderId,
+    embeddingModel: 'embed-x'
+  }).id
+  const kbCpuEmbed = kbRepo.save({
+    name: '内置 CPU embedding 库',
+    embeddingProviderId: BUILTIN_EMBED_PROVIDER_ID,
+    embeddingModel: 'bge-small-zh-v1.5'
+  }).id
+  assistantLocalEmbedKbId = assistantRepo.save({
+    name: '链测助手（绑本地 embedding 库）',
+    systemPrompt: '你是主控代理，按任务需要调用工具。',
+    toolPermissions: ['agent.delegate', 'time.now'],
+    knowledgeBaseIds: [kbLocalEmbed],
+    skillIds: []
+  }).id
+  assistantCpuEmbedKbId = assistantRepo.save({
+    name: '链测助手（绑内置 CPU 库）',
+    systemPrompt: '你是主控代理，按任务需要调用工具。',
+    toolPermissions: ['agent.delegate', 'time.now'],
+    knowledgeBaseIds: [kbCpuEmbed],
     skillIds: []
   }).id
 })
@@ -560,48 +648,122 @@ describe('resolveChildTarget：控制器点名的模型要能在 provider 表里
   })
 
   it('候选清单：父的模型排最前，歧义名用全名（每一项都能直接填进 model）', () => {
-    const opts = listRoleModelOptions(localProviderId)
+    const opts = listRoleModelOptions(localProviderId, () => true)
     expect(opts[0]).toBe(LOCAL_MODEL)
     expect(opts).toContain(REMOTE_MODEL)
     expect(opts).toContain(`${otherId}::shared-model`)
     expect(opts, '歧义裸名不许出现在清单里').not.toContain('shared-model')
     expect(opts, '停用 provider 的模型不该进清单').not.toContain('gone-model')
   })
+
+  /**
+   * 150（用户选定 A2）：清单 = 当时放得开的落点。今天父在本地时 ① 恒不过 ⇒ 只剩云端候选，
+   * 而"model 参数进不进 schema"看的就是这张清单空不空——所以这一格钉的是"清单本身会筛"，
+   * 不是"引擎会不会筛"（后者由真链那两组用例钉）。
+   */
+  it('150：清单按落点筛；全放不开时交回空清单', () => {
+    const onlyCloud = listRoleModelOptions(localProviderId, (c) => !c.endpointLocal)
+    expect(onlyCloud).toContain(REMOTE_MODEL)
+    expect(onlyCloud, '本地候选过不了容量档时不该出现在清单里').not.toContain(LOCAL_MODEL)
+    expect(listRoleModelOptions(localProviderId, () => false)).toEqual([])
+  })
 })
 
 // ---------- 真链 ----------
 
-describe('145 真链：判据没过 ⇒ 第二台端点收到 0 次请求', () => {
+/**
+ * 150 把这条 describe 的前提换掉了：① 没过**不再等于整条路关死**——它管的是"两个本地模型能否同驻"，
+ * 子落在云端时这张卡上什么都没有。所以这里两组各证一头：该拦的仍然一次请求都不发，该放的真的发出去了。
+ */
+describe('150 真链：①没过 ⇒ 清单只剩云端候选；落云端放行、落本地仍拒', () => {
   beforeEach(resetScript)
 
-  it('①没过（今天真硬件的常态）⇒ 清单里没有 model 参数，云端点一次请求都没收到，也不建子会话', async () => {
+  it('父在本地、①没过：model 参数照给，但枚举里只有云端候选（本地那台的名字不在里面）', async () => {
     enableDelegation(localProviderId, LOCAL_MODEL)
     script.parentDelegates = [{ role: DELEGATE_ROLES[0], task: CHILD_TASK, model: REMOTE_MODEL }]
     const conv = freshParent(assistantNoKbId)
-    await runParent({ conversationId: conv, requestId: 'req-145-blocked', assistant: assistantNoKbId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
+    await runParent({ conversationId: conv, requestId: 'req-150-enum', assistant: assistantNoKbId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
 
     const parentReq = log.find((r) => !r.isChild && !r.isMeta)!
     expect(parentReq.tools).toContain('delegate_task')
-    expect(parentReq.delegateParams, '判据没过 ⇒ model 这个参数压根不该发出去').not.toContain('model')
-    expect(delegateToolMsg(conv)).toContain('DELEGATE_DISTINCT_BLOCKED')
-    expect(delegateToolMsg(conv)).toContain('distinct-roles-not-measured')
-    expect(remoteReqs(), 'B80：被拦在发请求之前，云端点的计数必须是 0').toHaveLength(0)
-    expect(kidsOf(conv)).toHaveLength(0)
+    expect(parentReq.delegateParams, '有云端候选可派 ⇒ model 参数该给').toContain('model')
+    expect(parentReq.delegateModelEnum).toContain(REMOTE_MODEL)
+    expect(parentReq.delegateModelEnum, '本地候选过不了①，不该出现在清单里让模型去填').not.toContain(LOCAL2_MODEL)
+    expect(parentReq.delegateModelEnum, '裸名与 providerId::全名两种写法都不该给').not.toContain(`${local2ProviderId}::${LOCAL2_MODEL}`)
+    expect(parentReq.delegateModelEnum).not.toContain(LOCAL_MODEL)
   })
 
-  it('①放行但这条编排走检索链 ⇒ 仍然拦住（第二条合取不是装饰）', async () => {
-    allowDistinctRoles()
+  it('填了另一台**本地**模型 ⇒ 仍然拒，且一次请求都不发、不建子会话（闸门还在发请求之前）', async () => {
+    enableDelegation(localProviderId, LOCAL_MODEL)
+    script.parentDelegates = [{ role: DELEGATE_ROLES[0], task: CHILD_TASK, model: LOCAL2_MODEL }]
+    const conv = freshParent(assistantNoKbId)
+    await runParent({ conversationId: conv, requestId: 'req-150-local2', assistant: assistantNoKbId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
+
+    expect(delegateToolMsg(conv)).toContain('DELEGATE_DISTINCT_BLOCKED')
+    expect(delegateToolMsg(conv)).toContain('distinct-roles-not-measured')
+    expect(kidsOf(conv), '被拦在备妥阶段 ⇒ 一条子会话都不该有').toHaveLength(0)
+    expect(remoteReqs()).toHaveLength(0)
+  })
+
+  it('填的是**云端**模型 ⇒ 放行：云端点真的收到子的推理请求，子会话记的就是那台模型', async () => {
     enableDelegation(localProviderId, LOCAL_MODEL)
     script.parentDelegates = [{ role: DELEGATE_ROLES[0], task: CHILD_TASK, model: REMOTE_MODEL }]
-    const conv = freshParent(assistantId) // '*' 面里有 kb_search ⇒ 检索链成立
-    await runParent({ conversationId: conv, requestId: 'req-145-kb', assistant: assistantId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
+    const conv = freshParent(assistantNoKbId)
+    await runParent({ conversationId: conv, requestId: 'req-150-cloud-ok', assistant: assistantNoKbId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
+
+    expect(remoteReqs(), '这条就是本批改动的正脸：云子不占本机显存 ⇒ 该发出去').not.toHaveLength(0)
+    const kids = kidsOf(conv)
+    expect(kids).toHaveLength(1)
+    expect(kids[0]!.modelLabel).toContain(REMOTE_MODEL)
+    expect(kids[0]!.roleKey).toBe(DELEGATE_ROLES[0])
+  })
+})
+
+/**
+ * 第二条合取的细化（150 用户选定"一起细化"）：拦的理由是 M10"一个 embed 把对话模型顶出去"，
+ * 那是本机 GPU 的事 ⇒ 只有 embedding 真落在本地端点时才成立。两种落点各一个真库，两格都不许省。
+ */
+describe('150 真链：第二条合取按 embedding 落点判', () => {
+  beforeEach(resetScript)
+
+  it('面里有 kb_search 但**没绑库** ⇒ 第二条不拦（kb_search 检索不到东西，压根不会加载 embedding）', async () => {
+    // 这一格守的是"工具面 ≠ 会吃显存"：把②写成"面里有 kb_search 就拦"的旧口径，它会红
+    enableDelegation(localProviderId, LOCAL_MODEL)
+    script.parentDelegates = [{ role: DELEGATE_ROLES[0], task: CHILD_TASK, model: REMOTE_MODEL }]
+    const conv = freshParent(assistantId)
+    await runParent({ conversationId: conv, requestId: 'req-150-kbsearch-no-kb', assistant: assistantId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
 
     const parentReq = log.find((r) => !r.isChild && !r.isMeta)!
     expect(parentReq.tools, '全授权面应当含 kb_search，否则这条用例在空转').toContain('kb_search')
-    expect(parentReq.delegateParams).not.toContain('model')
+    expect(parentReq.delegateParams).toContain('model')
+    expect(delegateToolMsg(conv)).not.toContain('DELEGATE_DISTINCT_BLOCKED')
+    expect(kidsOf(conv)).toHaveLength(1)
+  })
+
+  it('①放行 + 助手绑的是**本地端点 embedding** 的库 ⇒ 两种落点都拦：model 参数压根不进清单', async () => {
+    allowDistinctRoles()
+    enableDelegation(localProviderId, LOCAL_MODEL)
+    script.parentDelegates = [{ role: DELEGATE_ROLES[0], task: CHILD_TASK, model: REMOTE_MODEL }]
+    const conv = freshParent(assistantLocalEmbedKbId)
+    await runParent({ conversationId: conv, requestId: 'req-150-kb-local', assistant: assistantLocalEmbedKbId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
+
+    const parentReq = log.find((r) => !r.isChild && !r.isMeta)!
+    expect(parentReq.delegateParams, '②对两种落点都成立 ⇒ 清单该整个撤掉').not.toContain('model')
     expect(delegateToolMsg(conv)).toContain('retrieval-chain-exclusive')
     expect(remoteReqs()).toHaveLength(0)
     expect(kidsOf(conv)).toHaveLength(0)
+  })
+
+  it('①没过 + 助手绑的是**内置 CPU embedding** 的库 ⇒ 第二条不再拦，云子照发（细化不是装饰）', async () => {
+    enableDelegation(localProviderId, LOCAL_MODEL)
+    script.parentDelegates = [{ role: DELEGATE_ROLES[0], task: CHILD_TASK, model: REMOTE_MODEL }]
+    const conv = freshParent(assistantCpuEmbedKbId)
+    await runParent({ conversationId: conv, requestId: 'req-150-kb-cpu', assistant: assistantCpuEmbedKbId, target: { providerId: localProviderId, model: LOCAL_MODEL } })
+
+    const parentReq = log.find((r) => !r.isChild && !r.isMeta)!
+    expect(parentReq.delegateParams, '绑了库≠吃显存；内置那路是 onnxruntime CPU').toContain('model')
+    expect(delegateToolMsg(conv)).not.toContain('DELEGATE_DISTINCT_BLOCKED')
+    expect(kidsOf(conv)).toHaveLength(1)
   })
 })
 

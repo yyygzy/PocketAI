@@ -156,6 +156,30 @@ export function surfaceUsesRetrieval(tools: ReadonlyArray<{ name: string }>, kbI
   return kbIds.length > 0 || tools.some((t) => t.name === KB_SEARCH_TOOL_NAME)
 }
 
+/**
+ * 「这条编排的检索链会不会把 embedding 模型压进本机推理端点」——150 细化第二条合取用的唯一算法。
+ *
+ * 三条判据都来自读得到的事实，没有一条是猜的：
+ *  · 库没配 `embeddingProviderId` ⇒ 向量那一路根本不发（`rag.ts` 里那段 if），只剩 BM25 ⇒ 不吃显存；
+ *  · 内置那路 embedding 是 onnxruntime 的 **CPU** 推理（`local-embedding.ts` 建 pipeline 时没指定设备）⇒ 不吃显存；
+ *  · provider 不在"本地端点"名单里 ⇒ 那是别人家的机器 ⇒ 不吃本机显存。
+ * 剩下的唯一不确定：本地端点（Ollama / LM Studio）到底把这台 embedding 跑在 GPU 还是 CPU——应用判不出来，
+ * 所以**按可能吃显存处理**（保守方向 = 拦）。要放宽它得先有"这台 embedding 在 CPU 上跑"的可采证据。
+ *
+ * 为什么纯函数住这里而不是引擎里：判据屏与引擎要算的是同一件事，两处各写一份迟早漂移
+ * （与 `surfaceUsesRetrieval` 同一条理由，也同住在 `shared/delegation-rules.ts`）。
+ */
+export function retrievalEmbeddingHitsLocalEndpoint(
+  kbs: ReadonlyArray<{ embeddingProviderId?: string | null }>,
+  opts: { builtinEmbedProviderId: string; localProviderIds: ReadonlySet<string> }
+): boolean {
+  return kbs.some((kb) => {
+    const pid = kb.embeddingProviderId
+    if (!pid || pid === opts.builtinEmbedProviderId) return false
+    return opts.localProviderIds.has(pid)
+  })
+}
+
 export interface DelegateToolLike {
   name: string
   permission?: 'auto' | 'confirm' | 'deny'

@@ -10,7 +10,7 @@ import {
   type JudgementRow,
   type LocalJudgementReport
 } from '../src/shared/local-judgement'
-import { planLocalCapacity, mayAssignDistinctModelRole } from '../src/main/agent/local-capacity'
+import { planLocalCapacity, distinctRoleScope } from '../src/main/agent/local-capacity'
 import { zh } from '../src/renderer/src/i18n/zh'
 import { en } from '../src/renderer/src/i18n/en'
 import { ja } from '../src/renderer/src/i18n/ja'
@@ -18,19 +18,28 @@ import { ko } from '../src/renderer/src/i18n/ko'
 
 const DICTS: Array<[string, Record<string, string>]> = [['zh', zh], ['en', en], ['ja', ja], ['ko', ko]]
 
+/**
+ * 150：一行的角色事实 = 对**两种落点**各判一次（走 `distinctRoleScope`，与主进程同一个算法）。
+ * 用例不许在这里手拼 scope——拼出来的话，"云子不受容量档管"这条口径就只在被测代码之外存在了。
+ */
+const roleVerdict = (
+  assistantName: string,
+  capacity: ReturnType<typeof planLocalCapacity>,
+  facts: { childUsesRetrieval?: boolean; retrievalHitsLocalEndpoint?: boolean } = {}
+) => {
+  const childUsesRetrieval = facts.childUsesRetrieval ?? false
+  const retrievalHitsLocalEndpoint = facts.retrievalHitsLocalEndpoint ?? false
+  const { scope, reasons } = distinctRoleScope(capacity, { childUsesRetrieval, retrievalHitsLocalEndpoint })
+  return { assistantName, childUsesRetrieval, retrievalHitsLocalEndpoint, scope, reasons }
+}
+
 const report = (over: Partial<LocalJudgementReport> = {}): LocalJudgementReport => ({
   collectedAt: 1_700_000_000_000,
   totalVramMiB: 4096,
   capacity: planLocalCapacity({ totalVramMiB: 4096 }),
   liveVram: { available: true, rows: [{ name: 'GTX 1050 Ti', totalMiB: 4096, usedMiB: 3149 }] },
   slots: [],
-  roleVerdicts: [
-    {
-      assistantName: '不碰知识库的助手',
-      childUsesRetrieval: false,
-      verdict: mayAssignDistinctModelRole(planLocalCapacity({ totalVramMiB: 4096 }), { childUsesRetrieval: false })
-    }
-  ],
+  roleVerdicts: [roleVerdict('不碰知识库的助手', planLocalCapacity({ totalVramMiB: 4096 }))],
   delegations: [],
   ...over
 })
@@ -88,15 +97,20 @@ describe('现采显存：只作观察', () => {
   })
 })
 
-describe('跨模型角色的两条合取：哪一条没过就说什么', () => {
+describe('跨模型角色的两条合取：哪一条没过就说什么（150 起按落点摊成三态）', () => {
+  const smallCtx = planLocalCapacity({ totalVramMiB: 4096, numCtxSetByApp: true })
 
-  it('①没过（应用从不设 num_ctx）⇒ distinct-roles-not-measured + 那句"要显式设小上下文"', () => {
+  it('①没过（应用从不设 num_ctx）+ 不碰检索 ⇒ 取值是"只允许云端落点"，码仍是那两条', () => {
     const rows = buildLocalJudgementRows(report())
-    const codes = row(rows, 'distinct-roles:不碰知识库的助手').reasonCodes
+    const r = row(rows, 'distinct-roles:不碰知识库的助手')
+    // 这一格是 150 的新事实：容量档没过**不再把整条路关死**——云子不占这张卡，判据对它没有对象
+    expect(r.valueKey).toBe('judgement.value.distinctScope.cloud-only')
+    const codes = r.reasonCodes
     expect(codes).toContain('distinct-roles-not-measured')
     expect(codes).toContain('distinct-models-need-small-ctx')
     // 角色判定自己带过的码，容量判定又补一句时**不许重复出现**（149 加了分隔符后重复会连着显示两遍）
     expect(new Set(codes).size, `码重复了：${codes.join(' / ')}`).toBe(codes.length)
+    expect(r.noteKey, '不碰检索就不该有那条注').toBeUndefined()
   })
 
   it('角色判定里已经带着 small-ctx 时，合并后仍只有一条', () => {
@@ -106,7 +120,9 @@ describe('跨模型角色的两条合取：哪一条没过就说什么', () => {
           {
             assistantName: '两条都写着的助手',
             childUsesRetrieval: false,
-            verdict: { allowed: false, reasons: ['distinct-roles-not-measured', 'distinct-models-need-small-ctx'] }
+            retrievalHitsLocalEndpoint: false,
+            scope: 'not-allowed' as const,
+            reasons: ['distinct-roles-not-measured', 'distinct-models-need-small-ctx']
           }
         ]
       })
@@ -117,43 +133,49 @@ describe('跨模型角色的两条合取：哪一条没过就说什么', () => {
     ])
   })
 
-  it('①过了但走检索链 ⇒ 只报 retrieval-chain-exclusive（第二条单独就能否掉）', () => {
-    const smallCtx = planLocalCapacity({ totalVramMiB: 4096, numCtxSetByApp: true })
+  it('①过了 + 检索链的 embedding 落本地端点 ⇒ 第二条单独否掉，注说的是"压进本机显存"', () => {
     const rows = buildLocalJudgementRows(
       report({
         capacity: smallCtx,
-        roleVerdicts: [
-          {
-            assistantName: '绑了知识库的助手',
-            childUsesRetrieval: true,
-            verdict: mayAssignDistinctModelRole(smallCtx, { childUsesRetrieval: true })
-          }
-        ]
+        roleVerdicts: [roleVerdict('绑了本地 embedding 库的助手', smallCtx, { childUsesRetrieval: true, retrievalHitsLocalEndpoint: true })]
       })
     )
-    const r = row(rows, 'distinct-roles:绑了知识库的助手')
+    const r = row(rows, 'distinct-roles:绑了本地 embedding 库的助手')
     expect(r.reasonCodes).toEqual(['retrieval-chain-exclusive'])
-    expect(r.noteKey).toBe('judgement.note.retrieval-chain')
-    expect(r.valueKey).toBe('judgement.value.blocked')
+    expect(r.noteKey).toBe('judgement.note.retrieval-hits-local-embedding')
+    expect(r.valueKey).toBe('judgement.value.distinctScope.none')
   })
 
-  it('两条都过 ⇒ allowed，且码里说的是"两条合取都成立"', () => {
-    const smallCtx = planLocalCapacity({ totalVramMiB: 4096, numCtxSetByApp: true })
+  it('①过了 + 走检索链但 embedding **不落本地**（内置 CPU / 云端）⇒ 第二条不再拦', () => {
     const rows = buildLocalJudgementRows(
       report({
         capacity: smallCtx,
-        roleVerdicts: [
-          {
-            assistantName: '不碰知识库的助手',
-            childUsesRetrieval: false,
-            verdict: mayAssignDistinctModelRole(smallCtx, { childUsesRetrieval: false })
-          }
-        ]
+        roleVerdicts: [roleVerdict('用内置 CPU embedding 的助手', smallCtx, { childUsesRetrieval: true, retrievalHitsLocalEndpoint: false })]
       })
     )
-    const r = row(rows, 'distinct-roles:不碰知识库的助手')
-    expect(r.valueKey).toBe('judgement.value.allowed')
+    const r = row(rows, 'distinct-roles:用内置 CPU embedding 的助手')
     expect(r.reasonCodes).toEqual(['distinct-roles-allowed'])
+    // 注仍要说"这条编排会走向量检索"——那是事实，只是它不再是拦的理由
+    expect(r.noteKey).toBe('judgement.note.retrieval-chain')
+    expect(r.valueKey).toBe('judgement.value.distinctScope.any')
+  })
+
+  it('两条都过 ⇒ 取值"本地与云端落点都行"', () => {
+    const rows = buildLocalJudgementRows(
+      report({ capacity: smallCtx, roleVerdicts: [roleVerdict('不碰知识库的助手', smallCtx)] })
+    )
+    const r = row(rows, 'distinct-roles:不碰知识库的助手')
+    expect(r.valueKey).toBe('judgement.value.distinctScope.any')
+    expect(r.reasonCodes).toEqual(['distinct-roles-allowed'])
+  })
+
+  it('反向对照：①没过**且** embedding 落本地 ⇒ 两条码都在、取值退回"不允许"（细化没把该拦的放掉）', () => {
+    const rows = buildLocalJudgementRows(
+      report({ roleVerdicts: [roleVerdict('低配又碰本地 embedding', planLocalCapacity({ totalVramMiB: 4096 }), { childUsesRetrieval: true, retrievalHitsLocalEndpoint: true })] })
+    )
+    const r = row(rows, 'distinct-roles:低配又碰本地 embedding')
+    expect(r.valueKey).toBe('judgement.value.distinctScope.none')
+    expect(r.reasonCodes).toEqual(['distinct-roles-not-measured', 'retrieval-chain-exclusive', 'distinct-models-need-small-ctx'])
   })
 })
 
@@ -161,21 +183,17 @@ describe('跨模型角色按"取值相同的一组助手"出行（真实例里 9
   const smallCtx = planLocalCapacity({ totalVramMiB: 4096, numCtxSetByApp: true })
 
   it('两个助手同判定 ⇒ 只一行，并说清是几个、是哪几个', () => {
-    const verdict = mayAssignDistinctModelRole(smallCtx, { childUsesRetrieval: false })
     const rows = buildLocalJudgementRows(
       report({
         capacity: smallCtx,
-        roleVerdicts: [
-          { assistantName: '甲', childUsesRetrieval: false, verdict },
-          { assistantName: '乙', childUsesRetrieval: false, verdict }
-        ]
+        roleVerdicts: [roleVerdict('甲', smallCtx), roleVerdict('乙', smallCtx)]
       })
     )
     const group = rows.filter((r) => r.id.startsWith('distinct-roles:'))
     expect(group).toHaveLength(1)
     expect(group[0]!.id).toBe('distinct-roles:甲')
     expect(group[0]!.params).toMatchObject({ count: 2, names: '甲、乙' })
-    expect(group[0]!.valueKey).toBe('judgement.value.allowed')
+    expect(group[0]!.valueKey).toBe('judgement.value.distinctScope.any')
   })
 
   it('判定不同 ⇒ 一行一组，两组的码各说各的（分组不许把 ② 抹平成 ①）', () => {
@@ -183,16 +201,34 @@ describe('跨模型角色按"取值相同的一组助手"出行（真实例里 9
       report({
         capacity: smallCtx,
         roleVerdicts: [
-          { assistantName: '不碰知识库', childUsesRetrieval: false, verdict: mayAssignDistinctModelRole(smallCtx, { childUsesRetrieval: false }) },
-          { assistantName: '绑了知识库', childUsesRetrieval: true, verdict: mayAssignDistinctModelRole(smallCtx, { childUsesRetrieval: true }) }
+          roleVerdict('不碰知识库', smallCtx),
+          roleVerdict('绑了本地 embedding 库', smallCtx, { childUsesRetrieval: true, retrievalHitsLocalEndpoint: true })
         ]
       })
     )
     const groups = rows.filter((r) => r.id.startsWith('distinct-roles:'))
     expect(groups).toHaveLength(2)
     expect(groups.map((g) => [g.id, g.valueKey, g.reasonCodes])).toEqual([
-      ['distinct-roles:不碰知识库', 'judgement.value.allowed', ['distinct-roles-allowed']],
-      ['distinct-roles:绑了知识库', 'judgement.value.blocked', ['retrieval-chain-exclusive']]
+      ['distinct-roles:不碰知识库', 'judgement.value.distinctScope.any', ['distinct-roles-allowed']],
+      ['distinct-roles:绑了本地 embedding 库', 'judgement.value.distinctScope.none', ['retrieval-chain-exclusive']]
+    ])
+  })
+
+  it('150：同样"走检索链"但 embedding 落点不同 ⇒ 两组不许并成一行（并了就把差别抹平）', () => {
+    const rows = buildLocalJudgementRows(
+      report({
+        capacity: smallCtx,
+        roleVerdicts: [
+          roleVerdict('本地 embedding', smallCtx, { childUsesRetrieval: true, retrievalHitsLocalEndpoint: true }),
+          roleVerdict('内置 CPU embedding', smallCtx, { childUsesRetrieval: true, retrievalHitsLocalEndpoint: false })
+        ]
+      })
+    )
+    const groups = rows.filter((r) => r.id.startsWith('distinct-roles:'))
+    expect(groups).toHaveLength(2)
+    expect(groups.map((g) => g.valueKey)).toEqual([
+      'judgement.value.distinctScope.none',
+      'judgement.value.distinctScope.any'
     ])
   })
 })
@@ -256,8 +292,10 @@ describe('四语字典逐码对号（动态拼 key 的死角，parity 扫不到�
         slots: [{ origin: 'o1', busy: 1, waiting: 1, capacity: 1 }],
         delegations: [{ key: 'k', model: 'm', capability: 'fence_only', samples: 3, nativeHits: 0, stale: true, delegationEnabled: false }],
         roleVerdicts: [
-          { assistantName: 'A', childUsesRetrieval: true, verdict: mayAssignDistinctModelRole(smallCtx, { childUsesRetrieval: true }) },
-          { assistantName: 'B', childUsesRetrieval: false, verdict: mayAssignDistinctModelRole(smallCtx, { childUsesRetrieval: false }) }
+          // 三个 scope 取值 + 两条检索链注都要在这一堆行里各出现一次，四本字典才有得对号
+          roleVerdict('A', smallCtx, { childUsesRetrieval: true, retrievalHitsLocalEndpoint: true }),
+          roleVerdict('B', smallCtx, { childUsesRetrieval: true, retrievalHitsLocalEndpoint: false }),
+          roleVerdict('C', smallCtx)
         ]
       })
     )

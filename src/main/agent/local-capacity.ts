@@ -139,22 +139,56 @@ export interface DistinctRoleVerdict {
 }
 
 /**
- * 「这条编排能不能给不同角色配不同模型」——**两条合取，一条都不能省**（方案 §145 更正过初稿）：
- *  ① `decision.rolesMayUseDistinctModels`：V-0 实测 3b+coder 在 ctx≤2048 时确实同驻（3149MiB），
- *     但应用从不设 `num_ctx` ⇒ 今天恒 false；
- *  ② **这些角色都不走 embedding 检索链**：同驻被逐的那次实测就是"一个 embed 进来把对话模型顶出去"
- *     （M10），只写 ① 会把低配档错判成"可以开"。
+ * 「这条编排能不能给不同角色配不同模型」——**两条合取，一条都不能省**（方案 §145 更正过初稿，
+ * §150 按用户选定把两条都收到"实际占不占这台机器的显存"上）：
+ *  ① **子的落点吃本机显存时**才要过容量档：V-0 实测 3b+coder 在 ctx≤2048 时确实同驻（3149MiB），
+ *     但应用从不设 `num_ctx` ⇒ 今天恒 false。
+ *     为什么加这个前提（150 的口径，用户选定 A2）：这条判据说的是"两个本地模型能否同驻"，
+ *     子跑在云端时本机显存增量为 0，拿它去拦"本地父 + 云的子"是**判据找错了对象**——
+ *     145 当时就记下过这条误判。
+ *  ② **检索链会把 embedding 压进本机端点时**才拦：M10 实测"一个 embed 进来把对话模型顶出去"，
+ *     那是本机 GPU 的事。内置那路 embedding 是 onnxruntime 的 CPU 推理（`local-embedding.ts` 未指定设备），
+ *     云端 embedding 也不碰这张卡 ⇒ 拿 M10 当它们的理由就是撒谎（150 用户选定"一起细化"）。
+ *     仍保守的一处：本地端点的 embedding 究竟跑在 GPU 还是 CPU 判不出来 ⇒ 按"可能吃显存"处理。
  * 只做合取、不做算术：还是不许拿"总显存减权重减 KV > 0"当放行理由。
  */
+export interface DistinctRoleInputs {
+  /** 这一次（或这一候选）子 run 的落点是否吃本机显存——与 145 的 `endpointIsLocal` 同一个判法 */
+  childEndpointLocal: boolean
+  /** 这条编排会不会走检索链（助手绑了库 / 工具面里有 kb_search）：`surfaceUsesRetrieval` 的产物 */
+  childUsesRetrieval: boolean
+  /** 检索链里的 embedding 是否会落到本机推理端点：`retrievalEmbeddingHitsLocalEndpoint` 的产物 */
+  retrievalHitsLocalEndpoint: boolean
+}
+
 export function mayAssignDistinctModelRole(
   decision: LocalCapacityDecision,
-  opts: { childUsesRetrieval: boolean }
+  opts: DistinctRoleInputs
 ): DistinctRoleVerdict {
   const reasons: RoleReasonCode[] = []
-  if (!decision.rolesMayUseDistinctModels) reasons.push('distinct-roles-not-measured')
-  if (opts.childUsesRetrieval) reasons.push('retrieval-chain-exclusive')
+  if (opts.childEndpointLocal && !decision.rolesMayUseDistinctModels) reasons.push('distinct-roles-not-measured')
+  if (opts.childUsesRetrieval && opts.retrievalHitsLocalEndpoint) reasons.push('retrieval-chain-exclusive')
   if (reasons.length > 0) return { allowed: false, reasons: dedupeReasons(reasons) }
   return { allowed: true, reasons: ['distinct-roles-allowed'] }
+}
+
+/**
+ * 「跨模型角色在这条编排上放到哪一档落点」——判据屏那一行的取值。
+ * 为什么不是一个布尔：**新口径下答案取决于子落在哪**（本地子仍受容量档管，云子不受），
+ * 而那一屏是"每次委派之前"看的，没有"这一次"可言 ⇒ 只能把两种落点各判一次再摊开。
+ * 这里不调任何新判断，就是对 `mayAssignDistinctModelRole` 调两次（本地 / 非本地）——
+ * 自己再算一遍就是第二份口径（146 立的那条纪律）。
+ */
+export type DistinctRoleScope = 'not-allowed' | 'cloud-only' | 'any-endpoint'
+
+export function distinctRoleScope(
+  decision: LocalCapacityDecision,
+  opts: Omit<DistinctRoleInputs, 'childEndpointLocal'>
+): { scope: DistinctRoleScope; reasons: RoleReasonCode[]; local: DistinctRoleVerdict; cloud: DistinctRoleVerdict } {
+  const local = mayAssignDistinctModelRole(decision, { ...opts, childEndpointLocal: true })
+  const cloud = mayAssignDistinctModelRole(decision, { ...opts, childEndpointLocal: false })
+  const scope: DistinctRoleScope = local.allowed ? 'any-endpoint' : cloud.allowed ? 'cloud-only' : 'not-allowed'
+  return { scope, reasons: dedupeReasons([...local.reasons, ...cloud.reasons]), local, cloud }
 }
 
 export interface RoleConcurrencyPlan {

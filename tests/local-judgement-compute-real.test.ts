@@ -30,6 +30,9 @@ vi.mock('../src/main/logger', () => ({
 import { dbService } from '../src/main/db/database'
 import { assistantRepo } from '../src/main/db/repositories/assistant.repo'
 import { appConfigRepo } from '../src/main/db/repositories/app-config.repo'
+import { providerRepo } from '../src/main/db/repositories/provider.repo'
+import { kbRepo } from '../src/main/db/repositories/kb.repo'
+import { BUILTIN_EMBED_PROVIDER_ID } from '../src/shared/types'
 import { computeLocalJudgements } from '../src/main/steward/local-judgement'
 import { configureLocalSlot, resetLocalSlotsForTest } from '../src/main/providers/local-slot'
 
@@ -52,6 +55,40 @@ beforeAll(() => {
     systemPrompt: 'x',
     toolPermissions: ['time.now', 'agent.delegate'],
     knowledgeBaseIds: [],
+    skillIds: []
+  }).id
+  /**
+   * 150：第二条合取现在判的是"检索链的 embedding 落不落在本机端点"，
+   * 这句话只能拿真库 + 真 provider 行来证（打桩就变成"我在测自己的桩"）。
+   */
+  const localEmbed = providerRepo.save({
+    id: '',
+    type: 'ollama',
+    name: '本地 embedding 端点',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    apiKeys: [],
+    models: ['bge-m3'],
+    enabled: true,
+    createdAt: Date.now()
+  }).id
+  const kbLocal = kbRepo.save({ name: '带本地 embedding 的库', embeddingProviderId: localEmbed, embeddingModel: 'bge-m3' }).id
+  const kbCpu = kbRepo.save({
+    name: '内置 CPU embedding 的库',
+    embeddingProviderId: BUILTIN_EMBED_PROVIDER_ID,
+    embeddingModel: 'bge-small-zh-v1.5'
+  }).id
+  assistantRepo.save({
+    name: '绑本地 embedding 库的助手',
+    systemPrompt: 'x',
+    toolPermissions: ['time.now'],
+    knowledgeBaseIds: [kbLocal],
+    skillIds: []
+  }).id
+  assistantRepo.save({
+    name: '绑内置 CPU 库的助手',
+    systemPrompt: 'x',
+    toolPermissions: ['time.now'],
+    knowledgeBaseIds: [kbCpu],
     skillIds: []
   }).id
 })
@@ -120,18 +157,37 @@ describe('总量与闸门同源、现采不进判据', () => {
   })
 })
 
-describe('第二条合取按助手算', () => {
-  it('同一个报告里：星号助手算「走检索链」，只给两把内置工具的不算', async () => {
+describe('第二条合取按助手算（150 起还要看 embedding 落在哪）', () => {
+  it('四种助手各算自己的：走不走检索链、embedding 落不落本机、由此得出的三态取值', async () => {
     configureLocalSlot({ readVramMiB: () => 4096 })
     const r = await computeLocalJudgements({ readLiveVram: liveOk })
     const byName = new Map(r.roleVerdicts.map((v) => [v.assistantName, v]))
-    expect(r.roleVerdicts.map((v) => v.assistantName).sort()).toEqual(['不碰知识库的助手', '全授权助手'])
-    expect(byName.get('全授权助手')!.childUsesRetrieval).toBe(true)
-    expect(byName.get('不碰知识库的助手')!.childUsesRetrieval).toBe(false)
-    // 今天 ① 恒不过 ⇒ 两个助手的跨模型角色都是"关"，但**理由码不一样**
-    expect(byName.get('全授权助手')!.verdict.reasons).toContain('retrieval-chain-exclusive')
-    expect(byName.get('不碰知识库的助手')!.verdict.reasons).toContain('distinct-roles-not-measured')
-    expect(byName.get('全授权助手')!.verdict.allowed).toBe(false)
+    expect(r.roleVerdicts).toHaveLength(4)
+
+    const full = byName.get('全授权助手')!
+    expect(full.childUsesRetrieval, "'*' 面里有 kb_search ⇒ 算走检索链").toBe(true)
+    expect(full.retrievalHitsLocalEndpoint, '没绑库 ⇒ kb_search 检索不到任何东西，也就不可能加载 embedding').toBe(false)
+
+    const none = byName.get('不碰知识库的助手')!
+    expect(none.childUsesRetrieval).toBe(false)
+    expect(none.retrievalHitsLocalEndpoint).toBe(false)
+
+    const local = byName.get('绑本地 embedding 库的助手')!
+    expect(local.childUsesRetrieval).toBe(true)
+    expect(local.retrievalHitsLocalEndpoint, '库的 embedding 指向本机 Ollama ⇒ 这条才真的吃显存').toBe(true)
+    // 两条合取各拦各的：①（4GiB 默认档没过）与②都在 ⇒ 任何落点都不放
+    expect(local.reasons).toContain('retrieval-chain-exclusive')
+    expect(local.scope).toBe('not-allowed')
+
+    const cpu = byName.get('绑内置 CPU 库的助手')!
+    expect(cpu.childUsesRetrieval, '绑了库，检索链照走').toBe(true)
+    expect(cpu.retrievalHitsLocalEndpoint, '内置那路是 onnxruntime CPU 推理 ⇒ 不占这张卡').toBe(false)
+    expect(cpu.reasons, '不该再拿 M10 当它的理由').not.toContain('retrieval-chain-exclusive')
+    // 今天 ① 恒不过 ⇒ ①只关本地落点：云子不占本机显存，所以是"只允许云端落点"而不是"关死"
+    expect(cpu.reasons).toContain('distinct-roles-not-measured')
+    expect(cpu.scope).toBe('cloud-only')
+    expect(none.scope).toBe('cloud-only')
+    expect(full.scope).toBe('cloud-only')
   })
 })
 

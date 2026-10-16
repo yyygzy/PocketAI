@@ -24,7 +24,9 @@ const baseReport = (over: Partial<LocalJudgementReport> = {}): LocalJudgementRep
     {
       assistantName: '不碰知识库的助手',
       childUsesRetrieval: false,
-      verdict: { allowed: false, reasons: ['distinct-roles-not-measured'] }
+      retrievalHitsLocalEndpoint: false,
+      scope: 'cloud-only',
+      reasons: ['distinct-roles-not-measured']
     }
   ],
   delegations: [
@@ -153,12 +155,15 @@ describe('字典完整性（动态拼 key 的兜底网）', () => {
         liveVram: { available: false, rows: [] },
         slots: [{ origin: '127.0.0.1:11434', busy: 1, waiting: 1, capacity: 1 }],
         roleVerdicts: [
-          { assistantName: 'A', childUsesRetrieval: false, verdict: { allowed: true, reasons: ['distinct-roles-allowed'] } },
-          { assistantName: 'B', childUsesRetrieval: true, verdict: { allowed: false, reasons: ['retrieval-chain-exclusive'] } },
+          { assistantName: 'A', childUsesRetrieval: false, retrievalHitsLocalEndpoint: false, scope: 'any-endpoint' as const, reasons: ['distinct-roles-allowed'] },
+          { assistantName: 'B', childUsesRetrieval: true, retrievalHitsLocalEndpoint: true, scope: 'not-allowed' as const, reasons: ['retrieval-chain-exclusive'] },
+          { assistantName: 'C', childUsesRetrieval: true, retrievalHitsLocalEndpoint: false, scope: 'cloud-only' as const, reasons: ['distinct-roles-not-measured'] },
           {
-            assistantName: 'C',
+            assistantName: 'D',
             childUsesRetrieval: false,
-            verdict: { allowed: false, reasons: ['distinct-roles-not-measured', 'distinct-models-need-small-ctx'] }
+            retrievalHitsLocalEndpoint: false,
+            scope: 'cloud-only' as const,
+            reasons: ['distinct-roles-not-measured', 'distinct-models-need-small-ctx']
           }
         ],
         delegations: (['native_tools_ok', 'fence_only', 'no_delegation', 'unknown'] as const).map((cap) => ({
@@ -184,7 +189,7 @@ describe('字典完整性（动态拼 key 的兜底网）', () => {
         Promise.resolve(
           baseReport({
             // 一个字典里不存在的码（模拟判据以后新增码但文案没跟上）
-            roleVerdicts: [{ assistantName: 'Z', childUsesRetrieval: false, verdict: { allowed: false, reasons: ['brand-new-code'] } }]
+            roleVerdicts: [{ assistantName: 'Z', childUsesRetrieval: false, retrievalHitsLocalEndpoint: false, scope: 'cloud-only', reasons: ['brand-new-code'] }]
           })
         )
     })
@@ -274,7 +279,15 @@ describe('原因码之间有显式分隔符', () => {
       getLocalJudgement: () =>
         Promise.resolve(
           baseReport({
-            roleVerdicts: [{ assistantName: 'A', childUsesRetrieval: false, verdict: { allowed: false, reasons } }]
+            roleVerdicts: [
+              {
+                assistantName: 'A',
+                childUsesRetrieval: false,
+                retrievalHitsLocalEndpoint: false,
+                scope: 'cloud-only' as const,
+                reasons
+              }
+            ]
           })
         )
     })

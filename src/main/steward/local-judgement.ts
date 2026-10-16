@@ -11,7 +11,8 @@
 import { assistantRepo } from '../db/repositories/assistant.repo'
 import { toolRegistry } from '../tools/registry'
 import { capacitySnapshot, localSlotSnapshot } from '../providers/local-slot'
-import { mayAssignDistinctModelRole } from '../agent/local-capacity'
+import { distinctRoleScope } from '../agent/local-capacity'
+import { retrievalHitsLocalEndpoint } from '../agent/role-facts'
 import { resolveAgentToolPermissions } from '../agent/engine'
 import { listDelegateCapabilitiesWithStaleness } from '../agent/delegate-capability'
 import { surfaceUsesRetrieval } from '../../shared/delegation-rules'
@@ -34,18 +35,29 @@ export async function computeLocalJudgements(deps: LocalJudgementDeps = {}): Pro
   const readLive = deps.readLiveVram ?? readGpuMemoryLive
   const now = deps.now ?? (() => Date.now())
 
-  // 第二条合取按助手算：与引擎筛工具面时同一个谓辞（kbIds 或工具面里有 kb_search）
+  // 两条合取的输入按助手算：检索链用引擎那**同一个** `surfaceUsesRetrieval`，
+  // "embedding 是否落本机端点"用引擎那**同一个** `retrievalHitsLocalEndpoint`（150 细化的第二条）。
+  // 取值不调新判断，就是对 `distinctRoleScope` 问一次——它内部把两种落点各判一次，仍是同一个算法。
   const roleVerdicts = assistantRepo.list().map((a) => {
     const permissions = resolveAgentToolPermissions(a.toolPermissions, {
       hasAssistant: true,
       isBuiltin: a.isBuiltin ?? false
     })
     const surface = toolRegistry.filterByPermissions(permissions)
-    const childUsesRetrieval = surfaceUsesRetrieval(surface, a.knowledgeBaseIds ?? [])
+    const kbIds = a.knowledgeBaseIds ?? []
+    const childUsesRetrieval = surfaceUsesRetrieval(surface, kbIds)
+    // 局部变量不许与导入的函数同名（`const x = x(...)` 是自引用，TDZ 当场炸）
+    const hitsLocalEmbeddingEndpoint = retrievalHitsLocalEndpoint(kbIds)
+    const { scope, reasons } = distinctRoleScope(decision, {
+      childUsesRetrieval,
+      retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint
+    })
     return {
       assistantName: a.name,
       childUsesRetrieval,
-      verdict: mayAssignDistinctModelRole(decision, { childUsesRetrieval })
+      retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint,
+      scope,
+      reasons
     }
   })
 
