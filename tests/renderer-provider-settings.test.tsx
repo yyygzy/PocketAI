@@ -108,6 +108,53 @@ describe('已缓存模型逐个移除', () => {
   })
 })
 
+// B78 的真 Electron 自测撞出来的一族：safeHandle 的失败是**返回值**，不是 rejection。
+// 拉取模型失败那次当场把整个应用渲染成白屏（editing.models 被换成 {ok:false,error} 后 map 炸），
+// 另两条是静默假成功（显示密钥失败仍翻成"已显示"、删不掉仍报"已删除"）。
+describe('IPC 失败必须被当失败（不是 rejection，也不许当成功）', () => {
+  const withStubs = (over: Record<string, (...a: unknown[]) => unknown>) =>
+    stubPocketai({
+      listProviders: () => [GLM],
+      saveProvider: (r) => r,
+      deleteProvider: () => ({ ok: true }),
+      revealProviderKeys: () => ({ ok: true, apiKeys: ['sk-明文'] }),
+      fetchModels: () => ['glm-4.6', 'glm-5'],
+      testProvider: () => ({ ok: true }),
+      listDelegateCapabilities: () => [],
+      probeDelegateCapability: () => ({ entry: { capability: 'unknown' }, error: null }),
+      setAgentDelegateEnabled: () => ({ ok: true, error: null, models: [] }),
+      ...over
+    })
+
+  it('拉取模型返回 {ok:false} ⇒ 报失败，且界面不白屏、原缓存模型还在', async () => {
+    withStubs({ fetchModels: () => ({ ok: false, error: '获取模型列表失败: fetch failed' }) })
+    await openGlm()
+    fireEvent.click(screen.getByRole('button', { name: '拉取模型' }))
+    expect(await screen.findByText(/拉取失败/)).toBeTruthy()
+    // 白屏的反证：这一句在旧代码里已经拿不到了（render 抛错后整棵树没了）
+    expect(screen.getByText('已缓存模型（2）')).toBeTruthy()
+    expect(screen.getByText('glm-4.6')).toBeTruthy()
+  })
+
+  it('显示密钥失败 ⇒ 不许把输入框清空并翻成"已显示"（那是静默假成功）', async () => {
+    withStubs({ revealProviderKeys: () => ({ ok: false, error: '隐私锁未解锁' }) })
+    await openGlm()
+    const before = keyBox().value
+    fireEvent.click(screen.getByText(zh['provider.revealKeys']))
+    expect(await screen.findByText('隐私锁未解锁')).toBeTruthy()
+    expect(keyBox().value).toBe(before)
+  })
+
+  it('删除失败 ⇒ 不许报「已删除」，也不许清空编辑态', async () => {
+    withStubs({ deleteProvider: () => ({ ok: false, error: '该服务商仍被助手引用' }) })
+    await openGlm()
+    fireEvent.click(screen.getByText(zh['common.delete']))
+    expect(await screen.findByText('该服务商仍被助手引用')).toBeTruthy()
+    expect(screen.queryByText(zh['provider.deleted'])).toBeNull()
+    expect(screen.getByText('我的 GLM 账号')).toBeTruthy()
+  })
+})
+
 // V4-Iter-142 的接线半边：徽标组件自己那 7 例证明不了"设置页真的挂上了它、真的按模型逐个挂"
 const verdictFor = (providerId: string, model: string) => ({
   key: `${providerId}::${model}`,

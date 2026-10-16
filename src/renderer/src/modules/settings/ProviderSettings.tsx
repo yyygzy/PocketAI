@@ -157,6 +157,12 @@ export const ProviderSettings: React.FC = () => {
     }
     try {
       const r = await window.pocketai.revealProviderKeys(editing.id)
+      // 同一条合同：失败是 {ok:false}。旧写法会把失败当成"取到了空密钥"，
+      // 结果是明文框显示为空并翻成"已显示"状态——**静默假成功**比报错更难查。
+      if (hasIpcFailed(r)) {
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+        return
+      }
       setKeysText((r.apiKeys ?? []).join('\n'))
       setKeysRevealed(true)
     } catch (e) {
@@ -205,6 +211,14 @@ export const ProviderSettings: React.FC = () => {
     setNotice({ ok: true, text: t('provider.fetching') })
     try {
       const models = await window.pocketai.fetchModels(editing.id)
+      // safeHandle 的失败是**返回值不是 rejection**：这条通道成功时返回 string[]，失败时是 {ok:false,error}。
+      // 不判形状就把对象写进 editing.models，下一帧 `editing.models.map()` 直接抛 ⇒ **整个应用白屏**
+      // （B78 真 Electron 自测就是这么撞到的：一个"拉取模型失败"把界面抹平了）。
+      if (!Array.isArray(models)) {
+        const why = hasIpcFailed(models) ? ipcFailText(models, t('common.unknownError')) : t('common.unknownError')
+        setNotice({ ok: false, text: t('provider.fetchFail', { e: why }) })
+        return
+      }
       setEditing({ ...editing, models })
       setNotice({ ok: true, text: t('provider.fetchOk', { n: models.length }) })
       await load()
@@ -222,7 +236,12 @@ export const ProviderSettings: React.FC = () => {
 
   const handleDelete = async () => {
     if (!editing?.id) return
-    await window.pocketai.deleteProvider(editing.id)
+    const r = await window.pocketai.deleteProvider(editing.id)
+    // 旧写法 await 完就当成功：删不掉也报「已删除」并清空编辑态（139 那一族的第三种形状）
+    if (hasIpcFailed(r)) {
+      setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      return
+    }
     setEditing(null)
     setNotice({ ok: true, text: t('provider.deleted') })
     await load()

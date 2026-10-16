@@ -55,7 +55,12 @@ export const DelegateCapabilityBadge: React.FC<{
             type="checkbox"
             checked={!!entry.delegationEnabled}
             disabled={!canEnable}
-            onChange={(e) => onToggleDelegation(e.target.checked)}
+            // disabled 交给浏览器拦是不可靠的（jsdom 里点击照样进 onChange），而这条勾下去就是
+            // 一次真授权：所以点不动的那种情况在组件里也**直接 return**（主进程还会再判一次前置条件）。
+            onChange={(e) => {
+              if (!canEnable) return
+              onToggleDelegation(e.target.checked)
+            }}
           />
           {t('provider.capAllowDelegation')}
         </label>

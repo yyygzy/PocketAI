@@ -27,11 +27,67 @@ const entry = (over: Partial<DelegateCapabilityView>): DelegateCapabilityView =>
 
 function mountBadge(props: Partial<React.ComponentProps<typeof DelegateCapabilityBadge>> = {}) {
   const onProbe = props.onProbe ?? vi.fn()
+  const onToggleDelegation = props.onToggleDelegation ?? vi.fn()
   mountWithProviders(
-    <DelegateCapabilityBadge entry={'entry' in props ? props.entry : entry({})} probing={props.probing ?? false} onProbe={onProbe} />
+    <DelegateCapabilityBadge
+      entry={'entry' in props ? props.entry : entry({})}
+      probing={props.probing ?? false}
+      onProbe={onProbe}
+      onToggleDelegation={onToggleDelegation}
+    />
   )
   return onProbe
 }
+
+/** 那个「允许顺序委派」勾选框（决策③：默认关，只有判定=可当管控者且未过期才允许点亮） */
+function checkbox(): HTMLInputElement | null {
+  return document.querySelector('input[type=checkbox]')
+}
+
+describe('委派开关（决策③）在徽标里的形状', () => {
+  const box = () => {
+    const el = checkbox()
+    expect(el, '有判定的那一行应当出现开关').not.toBeNull()
+    return el as HTMLInputElement
+  }
+
+  it('判定=可当管控者 ⇒ 开关可点；勾上把 true 交出去（取消交 false）', () => {
+    const onToggle = vi.fn()
+    mountBadge({ entry: entry({ capability: 'native_tools_ok', delegationEnabled: false }), onToggleDelegation: onToggle })
+    const el = box()
+    expect(el.disabled).toBe(false)
+    expect(el.checked).toBe(false)
+    fireEvent.click(el)
+    expect(onToggle).toHaveBeenCalledWith(true)
+  })
+
+  it('已开启时回显 checked=true（读的是 IPC 清单，不是本地乐观态）', () => {
+    mountBadge({ entry: entry({ capability: 'native_tools_ok', delegationEnabled: true }) })
+    expect(box().checked).toBe(true)
+  })
+
+  it('判定不是可当管控者 ⇒ 点不动，且说明写清"要先探测…"', () => {
+    const onToggle = vi.fn()
+    mountBadge({ entry: entry({ capability: 'fence_only', delegationEnabled: false, nativeHits: 0 }), onToggleDelegation: onToggle })
+    const el = box()
+    expect(el.disabled).toBe(true)
+    fireEvent.click(el)
+    expect(onToggle).not.toHaveBeenCalled()
+    expect(el.closest('label')?.getAttribute('title')).toContain('要先探测')
+  })
+
+  it('结论已过期 ⇒ 同样点不动，提示改成"重探后再开"', () => {
+    mountBadge({ entry: entry({ capability: 'native_tools_ok', stale: true }) })
+    const el = box()
+    expect(el.disabled).toBe(true)
+    expect(el.closest('label')?.getAttribute('title')).toContain('模型已更新')
+  })
+
+  it('没探过 ⇒ 连开关都不出现（顺序由界面自己强制，不靠事后拒绝）', () => {
+    mountBadge({ entry: null })
+    expect(checkbox()).toBeNull()
+  })
+})
 
 describe('DelegateCapabilityBadge', () => {
   it('native_tools_ok：文案与 3/3 同时在场，点「探测」把回调传出去', () => {
