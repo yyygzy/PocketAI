@@ -4,7 +4,9 @@
 // 而不是"页面里出现了某个词"——后者会因为另一行恰好也有同样的词而空过。
 // 最后一条"不泄漏字典 key"是动态拼 key 的兜底网：`judgement.reason.${码}` 这种写法 parity 用例扫不到（Iter-102 就漏过）。
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
+import { cleanup } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { LocalJudgementPanel } from '../src/renderer/src/modules/settings/LocalJudgementPanel'
@@ -36,9 +38,9 @@ function mount(report: LocalJudgementReport | { ok: false; error: string }): voi
   mountWithProviders(<LocalJudgementPanel />)
 }
 
-/** 某一行的来源徽标文本（按 data-row-id 找，不按整页文本找） */
+/** 某一行的来源徽标**文字**（按 data-row-id 找，不按整页文本找；文字与记号是两个节点，见组件注释） */
 function sourceBadge(container: HTMLElement, rowId: string): string {
-  const el = container.querySelector(`[data-row-id="${rowId}"] [data-source-code]`)
+  const el = container.querySelector(`[data-row-id="${rowId}"] [data-source-code] [data-source-label]`)
   if (!el) throw new Error(`没有这一行或这行没有来源徽标：${rowId}`)
   return String(el.textContent ?? '')
 }
@@ -177,7 +179,6 @@ describe('字典完整性（动态拼 key 的兜底网）', () => {
   })
 
   it('字典没这一码时退回显示码本身，而不是吐一个 key 字符串', async () => {
-    const spy = vi.fn()
     stubPocketai({
       getLocalJudgement: () =>
         Promise.resolve(
@@ -192,6 +193,128 @@ describe('字典完整性（动态拼 key 的兜底网）', () => {
     const el = document.querySelector('[data-reason-code="brand-new-code"]')!
     expect(el.textContent).toBe('brand-new-code')
     expect(el.textContent).not.toContain('judgement.reason.')
-    spy()
+  })
+})
+
+/**
+ * V4-Iter-149：真机截图上"测得 / 没读到"都是灰族、第一眼分不开，四条码只靠 gap 并排读起来像一句长句。
+ * 这一组钉的是"区分通道不止颜色一条、且每条都在"——jsdom 没有排版引擎，它**不证明肉眼分得开**，
+ * 那半留给 B86（同一批已用真 Electron 实例看过）。
+ */
+describe('来源档要第一眼分得开（记号 + 填充 + 边框样式三条冗余通道）', () => {
+  const badgeOf = (rowId: string): Element | null => document.querySelector(`[data-row-id="${rowId}"] [data-source-code]`)
+
+  const mountWith = async (report: LocalJudgementReport, rowId: string) => {
+    // 一个用例里要换三份报告看三档 ⇒ 必须先卸载：helpers 的 cleanup 只在 afterEach 跑，
+    // 不卸就会读到上一份报告留下的那一行（第一版就是这么红的）
+    cleanup()
+    stubPocketai({ getLocalJudgement: () => Promise.resolve(report) })
+    mountWithProviders(<LocalJudgementPanel />)
+    await waitFor(() => expect(document.querySelector(`[data-row-id="${rowId}"]`)).toBeTruthy())
+  }
+
+  it('三档各画自己的记号，且三个记号互不相同', async () => {
+    await mountWith(baseReport(), 'chat-slots')
+    const measured = badgeOf('chat-slots')!.querySelector('[data-source-glyph]')!
+    expect(measured.textContent).toBe('●')
+    expect(measured.getAttribute('data-source-glyph')).toBe('measured')
+
+    await mountWith(
+      baseReport({ totalVramMiB: 12288, capacity: planLocalCapacity({ totalVramMiB: 12288 }) }),
+      'chat-slots'
+    )
+    const conservative = badgeOf('chat-slots')!.querySelector('[data-source-glyph]')!
+    expect(conservative.getAttribute('data-source-glyph')).toBe('no-measurement')
+
+    await mountWith(baseReport({ slots: [] }), 'slot-queue')
+    const none = badgeOf('slot-queue')!.querySelector('[data-source-glyph]')!
+    expect(none.getAttribute('data-source-glyph')).toBe('unavailable')
+
+    const glyphs = [measured.textContent, conservative.textContent, none.textContent]
+    expect(new Set(glyphs).size).toBe(3)
+    // 记号不许借用"已验证"那类语义符号（✓/✔）——保守默认看起来像绿灯正是这块屏要防的
+    expect(glyphs.join('')).not.toMatch(/[✓✔☑]/)
+  })
+
+  it('非颜色通道也各自不同：前两档有填充、没读到那档是虚线框且无填充', async () => {
+    await mountWith(baseReport(), 'chat-slots')
+    const measured = String(badgeOf('chat-slots')!.getAttribute('class'))
+    await mountWith(
+      baseReport({ totalVramMiB: 12288, capacity: planLocalCapacity({ totalVramMiB: 12288 }) }),
+      'chat-slots'
+    )
+    const conservative = String(badgeOf('chat-slots')!.getAttribute('class'))
+    await mountWith(baseReport(), 'slot-queue')
+    const none = String(badgeOf('slot-queue')!.getAttribute('class'))
+
+    expect(measured).toContain('bg-[')
+    expect(conservative).toContain('bg-[')
+    expect(none).toContain('border-dashed')
+    expect(none).not.toContain('bg-[')
+    // 反向对照：三档的 class 不是同一串（写成同一串就等于只靠文字分）
+    expect(new Set([measured, conservative, none]).size).toBe(3)
+  })
+
+  it('保守默认那档走琥珀色，全组件不引绿色令牌', async () => {
+    await mountWith(
+      baseReport({ totalVramMiB: 12288, capacity: planLocalCapacity({ totalVramMiB: 12288 }) }),
+      'chat-slots'
+    )
+    expect(String(badgeOf('chat-slots')!.getAttribute('class'))).toContain('--color-warning')
+    // 整份组件源码扫（?raw 在 vitest 里能拿，但类型上是个洞 ⇒ 直接读文件）
+    const src = readFileSync('src/renderer/src/modules/settings/LocalJudgementPanel.tsx', 'utf8')
+    expect(src).not.toContain('--color-success')
+  })
+})
+
+describe('原因码之间有显式分隔符', () => {
+  const mountReasons = async (reasons: string[]) => {
+    cleanup()
+    stubPocketai({
+      getLocalJudgement: () =>
+        Promise.resolve(
+          baseReport({
+            roleVerdicts: [{ assistantName: 'A', childUsesRetrieval: false, verdict: { allowed: false, reasons } }]
+          })
+        )
+    })
+    mountWithProviders(<LocalJudgementPanel />)
+    await waitFor(() => expect(document.querySelector('[data-row-id="distinct-roles:A"]')).toBeTruthy())
+    return document.querySelector('[data-row-id="distinct-roles:A"]')!
+  }
+
+  it('两条码 ⇒ 一个分隔符，且夹在两码之间', async () => {
+    const row = await mountReasons(['distinct-roles-not-measured', 'distinct-models-need-small-ctx'])
+    expect(row.querySelectorAll('[data-reason-code]').length).toBe(2)
+    const seps = row.querySelectorAll('[data-reason-sep]')
+    expect(seps.length).toBe(1)
+    expect(seps[0]!.previousElementSibling!.hasAttribute('data-reason-code')).toBe(true)
+    expect(seps[0]!.nextElementSibling!.hasAttribute('data-reason-code')).toBe(true)
+  })
+
+  it('一条码 ⇒ 一个都不加（反向对照：不是无条件塞符号）；四条重复码 ⇒ 去重后三个', async () => {
+    // 单码那条刻意选 retrieval-chain-exclusive：它不触发"容量判定再补一句 small-ctx"那条合并，
+    // 否则这一格测的就不是"一条码不加符号"而是合并行为了（上面那格专门钉合并 + 去重）
+    const one = await mountReasons(['retrieval-chain-exclusive'])
+    expect(one.querySelectorAll('[data-reason-code]').length).toBe(1)
+    expect(one.querySelectorAll('[data-reason-sep]').length).toBe(0)
+    const four = await mountReasons([
+      'distinct-roles-not-measured',
+      'retrieval-chain-exclusive',
+      'distinct-models-need-small-ctx',
+      'local-serial-measured'
+    ])
+    expect(four.querySelectorAll('[data-reason-code]').length).toBe(4)
+    expect(four.querySelectorAll('[data-reason-sep]').length).toBe(3)
+  })
+
+  it('分隔符不混进码的文本里（码文本仍逐字等于字典那一条）', async () => {
+    const row = await mountReasons(['distinct-roles-not-measured', 'distinct-models-need-small-ctx'])
+    const codes = [...row.querySelectorAll('[data-reason-code]')]
+    expect(codes.map((c) => c.textContent)).toEqual([
+      zh['judgement.reason.distinct-roles-not-measured'],
+      zh['judgement.reason.distinct-models-need-small-ctx']
+    ])
+    for (const c of codes) expect(c.textContent).not.toContain('·')
   })
 })

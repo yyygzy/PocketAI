@@ -95,6 +95,26 @@ describe('跨模型角色的两条合取：哪一条没过就说什么', () => {
     const codes = row(rows, 'distinct-roles:不碰知识库的助手').reasonCodes
     expect(codes).toContain('distinct-roles-not-measured')
     expect(codes).toContain('distinct-models-need-small-ctx')
+    // 角色判定自己带过的码，容量判定又补一句时**不许重复出现**（149 加了分隔符后重复会连着显示两遍）
+    expect(new Set(codes).size, `码重复了：${codes.join(' / ')}`).toBe(codes.length)
+  })
+
+  it('角色判定里已经带着 small-ctx 时，合并后仍只有一条', () => {
+    const rows = buildLocalJudgementRows(
+      report({
+        roleVerdicts: [
+          {
+            assistantName: '两条都写着的助手',
+            childUsesRetrieval: false,
+            verdict: { allowed: false, reasons: ['distinct-roles-not-measured', 'distinct-models-need-small-ctx'] }
+          }
+        ]
+      })
+    )
+    expect(row(rows, 'distinct-roles:两条都写着的助手').reasonCodes).toEqual([
+      'distinct-roles-not-measured',
+      'distinct-models-need-small-ctx'
+    ])
   })
 
   it('①过了但走检索链 ⇒ 只报 retrieval-chain-exclusive（第二条单独就能否掉）', () => {

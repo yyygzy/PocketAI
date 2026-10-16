@@ -6,7 +6,7 @@
 //  · 界面上出现的数字全部来自主进程送来的报告，**这里不做任何计算**——
 //    尤其不做"总显存减一减还能放几台"那种算术（140 的实测把这条算术证伪过：2.7GiB < 4GiB 仍被逐）；
 //  · 显存实占是**这一刻**的读数 ⇒ 顶部显示采集时刻，并写明它不参与判据（用户 2026-10-16 选定）。
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import {
@@ -25,11 +25,21 @@ const SOURCE_KEY: Record<JudgementSourceCode, string> = {
 /**
  * 配色也按码给，不按值给：**不给绿色**。
  * "绿色 = 已验证可用"是这张屏最不能传达的误导——保守默认档看起来像绿灯，用户就会以为放宽过了。
+ *
+ * 三档要**第一眼就分得开**，所以不只靠字色（真机截图上"测得 / 没读到"都是灰族，分不出来）：
+ * 填充、边框样式、记号三条冗余通道一起给。记号用同族隐喻——实心=有数据、三角=保守、空心=没数据；
+ * 刻意不用 ✓：那个符号读起来像"已验证可用"，正是上面那条纪律要挡的误读。
  */
 const SOURCE_TONE: Record<JudgementSourceCode, string> = {
-  measured: 'text-[var(--color-text)]',
-  'no-measurement': 'text-[var(--color-warning)]',
-  unavailable: 'text-[var(--color-text-muted)]'
+  measured: 'bg-[var(--color-inline-code-bg)] border-[var(--color-border)] text-[var(--color-text)]',
+  'no-measurement': 'bg-[var(--color-warning-bg)] border-[var(--color-border)] text-[var(--color-warning)]',
+  unavailable: 'border-dashed border-[var(--color-border)] text-[var(--color-text-muted)]'
+}
+
+const SOURCE_GLYPH: Record<JudgementSourceCode, string> = {
+  measured: '●',
+  'no-measurement': '▲',
+  unavailable: '○'
 }
 
 /** 判定取值是动态拼 key 的高危区（102 那轮就是这么漏的）：这里用静态映射，四语字典缺一个 key 用例就会红 */
@@ -58,17 +68,33 @@ function JudgementRowView({ row }: { row: JudgementRow }): React.JSX.Element {
         </span>
       </div>
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span className={`text-[10px] ${SOURCE_TONE[row.sourceCode]}`} data-source-code={row.sourceCode}>
-          {t(SOURCE_KEY[row.sourceCode])}
+        <span
+          className={`text-[10px] leading-none px-1.5 py-1 rounded border ${SOURCE_TONE[row.sourceCode]}`}
+          data-source-code={row.sourceCode}
+        >
+          {/* 记号与文字分开标注：用例钉的是"三档记号互不相同"，不是"页面上有某个字符"；
+              文字单独一个节点，是为了让"这行写的是哪一档"这类断言不必把记号一起比进去 */}
+          <span aria-hidden data-source-glyph={row.sourceCode} className="mr-1">
+            {SOURCE_GLYPH[row.sourceCode]}
+          </span>
+          <span data-source-label>{t(SOURCE_KEY[row.sourceCode])}</span>
         </span>
-        {row.reasonCodes.map((code) => {
+        {row.reasonCodes.map((code, i) => {
           // 理由码逐字来自判据；字典没这一码时**原样显示码**（比吐出一个 key 字符串更好读，也不会被误当成文案）
           const key = `judgement.reason.${code}`
           const text = t(key)
           return (
-            <span key={code} className="text-[10px] opacity-70" data-reason-code={code}>
-              {text === key ? code : text}
-            </span>
+            <Fragment key={code}>
+              {/* 四条码只靠 gap 并排，读起来像一句被截断的长句（真机截图上就是这么含混）⇒ 显式分隔符 */}
+              {i > 0 && (
+                <span aria-hidden data-reason-sep className="text-[10px] opacity-40">
+                  ·
+                </span>
+              )}
+              <span className="text-[10px] opacity-70" data-reason-code={code}>
+                {text === key ? code : text}
+              </span>
+            </Fragment>
           )
         })}
         {row.noteKey && (

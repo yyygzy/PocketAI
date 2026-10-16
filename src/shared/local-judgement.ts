@@ -159,10 +159,13 @@ export function buildLocalJudgementRows(report: LocalJudgementReport): Judgement
 
 
   for (const g of groupRoleVerdicts(report)) {
-    const reasons =
+    const merged =
       g.reasons.includes('distinct-roles-not-measured') && d.reasons.includes('distinct-models-need-small-ctx')
         ? [...g.reasons, 'distinct-models-need-small-ctx']
         : g.reasons
+    // 去重：这条码既可能已经在角色判定里、也可能由容量判定补一句（两处各说一遍）。
+    // 146 那版没加分隔符时重复被空格吞掉看不出来，149 加了「·」之后同一句会连着出现两次 ⇒ 先收敛再画。
+    const reasons = merged.filter((r, i) => merged.indexOf(r) === i)
     rows.push({
       // 组标识取"组里第一个助手的名字"：单助手时行 id 与逐个助手时完全一致，用例不必跟着换
       id: `distinct-roles:${g.names[0]}`,
