@@ -80,6 +80,30 @@ describe('码 → 键 → 四语文案', () => {
   })
 })
 
+describe('本簇的"几发成了"只有一个说法（V4-Iter-155）', () => {
+  /**
+   * 155 之前 ja 一句写「ヒット」、另一句写「成功」；ko 一句「적중」、一句「성공」——
+   * 同一个计数在同一个屏上有两个名字，用户会以为是两件事。（别处的「캐시 적중」「初回ヒット」是
+   * "缓存命中 / 检索排名"那个 hit，与本簇无关，所以不在本条断言范围内。）
+   */
+  it('ja 用「成功」、ko 用「성공」，且本簇里不再出现「ヒット」「적중」「完走」', () => {
+    const forLang: Array<{ lang: Lang; word: string; banned: string[] }> = [
+      { lang: 'ja', word: '成功', banned: ['ヒット', '完走', '命中'] },
+      { lang: 'ko', word: '성공', banned: ['적중'] }
+    ]
+    for (const { lang, word, banned } of forLang) {
+      const d = DICTS[lang] as unknown as Record<string, string>
+      const keys = Object.keys(d).filter((k) => k.startsWith('provider.cap') || k.startsWith('delegate.fail'))
+      expect(keys.length, `${lang} 筛到的键太少`).toBeGreaterThanOrEqual(12)
+      // 计数那两处（悬停说明 + 判定不符的拒绝）必须用同一个词
+      expect(d['provider.capHint'], `${lang} capHint 没用「${word}」`).toContain(word)
+      expect(d['delegate.failNotCapable'], `${lang} failNotCapable 没用「${word}」`).toContain(word)
+      for (const k of keys)
+        for (const b of banned) expect(d[k], `${lang}.${k} 还留着「${b}」`).not.toContain(b)
+    }
+  })
+})
+
 describe('delegateNoticeText：两种失败来源要分流', () => {
   it('IPC 层拒绝（字符串）照原样给，不去话术表里瞎找', () => {
     expect(delegateNoticeText(tOf('en'), 'invalid args: expected string', 'FB')).toBe('invalid args: expected string')
