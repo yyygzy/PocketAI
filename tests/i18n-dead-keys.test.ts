@@ -28,28 +28,13 @@ const I18N = path.join(ROOT, 'src', 'renderer', 'src', 'i18n')
  * `wizard.modelTitle` 不在表里——它就是 158 我误改那把，本批已从四本字典删除。
  */
 const KNOWN_UNREFERENCED: Array<{ key: string; tier: 'A' | 'B'; zh: string }> = [
-  { key: 'common.none', tier: 'A', zh: '（无）' },
-  { key: 'ms.single', tier: 'A', zh: '单模型' },
-  { key: 'ms.provider', tier: 'A', zh: '服务商' },
-  { key: 'ms.model', tier: 'A', zh: '模型' },
-  { key: 'ms.addCompare', tier: 'A', zh: '＋ 对照' },
-  { key: 'ms.modelId', tier: 'A', zh: '模型 ID' },
-  { key: 'am.deleteBtn', tier: 'A', zh: '删除' },
-  { key: 'usage.requestCount', tier: 'A', zh: '{count} 次' },
-  { key: 'dh.integrity.brokenDocs', tier: 'A', zh: '需重建索引的文档' },
-  { key: 'dh.integrity.duplicates', tier: 'A', zh: '重复文档' },
-  { key: 'dh.integrity.providerIssues', tier: 'A', zh: '失效的模型配置' },
-  { key: 'skill.market.editHint', tier: 'A', zh: '请到左侧技能页编辑该副本' },
-  { key: 'mention.kbAttached', tier: 'A', zh: '已引用知识库：{name}' },
-  { key: 'mention.kbLimit', tier: 'A', zh: '最多引用 {n} 个知识库' },
-  { key: 'terminal.outputTruncated', tier: 'A', zh: '输出过长已截断…' },
-  { key: 'agent.approval.autoRejectHint', tier: 'B', zh: '5 分钟无操作将自动拒绝' },
-  { key: 'ollama.running', tier: 'B', zh: '运行中' },
-  { key: 'wizard.installed', tier: 'B', zh: '已安装' },
-  { key: 'wizard.securityTitle', tier: 'B', zh: '🔐 保护你的数据' },
-  { key: 'wizard.securitySubtitle', tier: 'B', zh: '所有对话、笔记、知识库都存在本地。设置主密码后，数据库将以 AES-256-GCM 加密存储。' },
-  { key: 'wizard.noRecoveryHint', tier: 'B', zh: '尚未生成恢复密钥 —— 建议到「设置 → 隐私与加密」生成。' },
-  { key: 'wizard.gotoSettings', tier: 'B', zh: '前往模型设置' }
+  // 160 判完并删了 16 把（都有活键接替，证据在台账 V4-Iter-160），`agent.approval.autoRejectHint` 则接回了弹窗；
+  // 下面这 5 把**没找到接替者**——要么对应的提示真的不再出现、要么换了别的呈现方式，属产品判断，所以留在字典里等处置
+  { key: 'common.none', tier: 'B', zh: '（无）' },
+  { key: 'skill.market.editHint', tier: 'B', zh: '请到左侧技能页编辑该副本' },
+  { key: 'terminal.outputTruncated', tier: 'B', zh: '输出过长已截断…' },
+  { key: 'mention.kbAttached', tier: 'B', zh: '已引用知识库：{name}' },
+  { key: 'mention.kbLimit', tier: 'B', zh: '最多引用 {n} 个知识库' }
 ]
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -109,7 +94,7 @@ describe('字典键必须有人引用', () => {
   })
 
   it('清单不是摆设：每条都仍在实际结果里、且四本字典都还留着这把键', () => {
-    expect(KNOWN_UNREFERENCED.length).toBeGreaterThan(15)
+    expect(KNOWN_UNREFERENCED.length, '清单清空了不等于闸门还在——留一把真的没被引用的键做样本').toBeGreaterThan(3)
     for (const lang of ['zh', 'en', 'ja', 'ko'] as const) {
       const t = fs.readFileSync(path.join(I18N, `${lang}.ts`), 'utf8')
       for (const e of KNOWN_UNREFERENCED) {

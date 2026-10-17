@@ -61,7 +61,10 @@ const PROSE_QUOTES: Partial<Record<Lang, string[]>> = {
 /** 只扫这一簇：委派徽标 / 委派失败话术 / 首启那一格 / 文本协议开关 */
 const CLUSTER = ['provider.cap', 'delegate.fail', 'wizard.probe', 'agent.textProtocol',
   // 156：模型推荐那 60 条也进扫描范围（它们以前在主进程里，压根不在字典的射程内）
-  'modelRec.']
+  'modelRec.',
+  // 160：对话页那句「点哪里」也进来——它写的「＋ 对照」只存在于死键 ms.addCompare 里，
+  // 而那颗按钮早已收纳成图标（ModelSelector.tsx:98-105，title=ms.addAllTitle）⇒ 属于"照着找不到"
+  'chatview.']
 const QUOTE_PAT = /「([^」]{1,40})」|“([^”]{1,40})”|"([^"]{1,40})"/g
 
 const labelsOf = (d: Dict): string[] => LABEL_KEYS.map((k) => d[k]).filter((v): v is string => typeof v === 'string' && v !== '')

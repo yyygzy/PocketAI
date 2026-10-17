@@ -66,6 +66,21 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-160 死键判定收口：删 16 / 接回 1 / 修一处指路错名，并**当场逮到自己第二次犯同样的错**
+
+- **范围**（用户批准 ①–⑤）：把 159 留下的 22 把未引用键逐条判掉；判据是"**有没有活键接替它**"——找得到的就删，找不到的不敢删（那可能是功能缺口，不是文案整洁问题）。
+- **删掉 16 把**（四语共 64 行），每条都有接替者的 file:line 证据：
+  `wizard.securityTitle`/`Subtitle` → `wizard.secTitle`/`secSubtitle`；`wizard.noRecoveryHint` → **`wizard.encDoneHint`**（内容更完整：「强烈建议稍后到「设置 → 隐私与加密」生成恢复密钥…」）；`wizard.installed` → `steward.installed`（`StewardModule.tsx:406`）；`wizard.gotoSettings` → `wizard.goSetMaster` + 向导选服务商那步；`usage.requestCount` → `usage.requests`（`UsagePanel.tsx:264,382,434`）；`ollama.running` → `steward.ollamaRunning`；`am.deleteBtn` → `common.delete`；`dh.integrity.brokenDocs`/`duplicates`/`providerIssues` → **数据仍显示、节标题在改版后去掉了**（列头 `dh.errorDocs`、行内 `dh.integrity.dupCount`/`dedup`）；`ms.single`/`provider`/`model`/`modelId`/`addCompare` → 对照入口已收纳成图标（`ModelSelector.tsx:98-105`，悬停名 `ms.addAllTitle`）。
+- **留下 5 把**交回用户（`common.none`、`skill.market.editHint`、`terminal.outputTruncated`、`mention.kbAttached`、`mention.kbLimit`）：**没找到接替者 ⇒ 要么提示真的不再出现、要么换了呈现方式**，属产品判断。死键清单同步收缩成这 5 条，"清单 == 实际未引用集合"那条断言继续守着。
+- **接回 1 把**（`agent.approval.autoRejectHint`）：这不是改名遗留，是**提示缺失**——`tool-approval.ts` 真有 5 分钟定时器（`APPROVAL_TIMEOUT_MS`、`setTimeout(() => settle(false))`），但界面上只有过期之后的 `agent.approval.expired`，事前没有任何地方说"放着不点会自动拒绝"（只有渠道侧 `channel.agentModeRisk` 提过一次）。加进弹窗警告下方；同时把 `APPROVAL_TIMEOUT_MS` 导出，配 `tests/renderer-tool-approval-hint.test.tsx` 两例：① **真挂载 + 反向对照**（空队列时那句不许出现，有 pending 事件才出现）；② **数字同源**（四语文案里必须含 `APPROVAL_TIMEOUT_MS / 60000` 那个数，改代码不改文案就红）。
+- **修一处指路错名**：`chatview.hint` 四语都在教用户点**「＋ 对照」**，而那颗按钮早已是图标（旧名唯一残留在死键 `ms.addCompare` 里，删掉它之后这句就彻底指向不存在的东西）。改成"点 ＋ 图标"，并把 `chatview.` 纳入 154 那道扫描簇（E1 变异：把旧名写回去 ⇒ 立刻红）。
+- **顺带纠正我自己两条断言**：
+  ① 159 交付时我说"死键会蒙混 154 那道对账"——**错了**。`i18n-quoted-labels` 判的是"等于 `LABEL_KEYS` 白名单里某条 label"，不是"等于任意字典值"；被蒙混的是我临时写的那把 python 尺（它拿全字典值当合法集）。真正的缺口是 **`chatview.` 压根不在扫描簇里**。
+  ② 我这轮新写的 hint 用了方位词「**右侧**的 ＋ 图标」，实测（1188px 视口）那颗按钮在 **x=456–484（约 38%）**、hint 自己在 x=651 ⇒ **方位词也是未证实的承诺**，已去掉，四语只说"点 ＋ 图标"。**同一个错在同一批里犯第二次**：第一次是引不存在的名字，第二次是引没量过的位置。
+- **真机（先 build 再读屏）**：四语对话页读到最终 hint 原文、图标按钮在屏（`aria-label` 逐字 = 该语 `ms.addAllTitle`，`svg:true`、无文字 ⇒ "＋ 图标"名副其实）、旧名残留 0、横向溢出 `[0,0]`。探针的一个匹配瑕疵如实记：ko 侧栏「채팅」不在我的导航正则里 ⇒ `ko NAV NOT_FOUND`，读数仍成功是因为 ChatModule 保活（B90 那条）。
+- **变异 E1–E5**：E1 hint 改回「＋ 对照」⇒ 1 红（红在扫描簇那条）；E2 已删的键加回字典不接引用 ⇒ 1 红；E3 从弹窗摘掉那句 ⇒ **2 红**（死键那条 + 真挂载那条）；E4 超时改 10 分钟而文案没跟 ⇒ 1 红（数字同源那条）；E5 什么都不改 ⇒ 12 例全绿。恢复后逐文件字节比对为真。
+- 全量：typecheck 0 / vitest **311 文件 3747 用例**（+1 文件 +2 例）/ build 三端。验收 **B95 收窄成"5 把待确认"**（其余已处置）。
+
 ### V4-Iter-159 收回 158 的 E9，并立第二道闸：**字典里不许有没人引用的键**
 
 - **怎么撞出来的**：我去做 B94 要求自己"实地走过"的那一步——**grep `wizard.modelTitle` 在源码里的引用**。结果：四本字典各有一行，`src/` 里**零引用**，也没有 `wizard.${` 这类动态拼键。也就是说 158 的 E9 改的是**一个不渲染的串**，而 B94 的第 ④ 条还让用户去首启向导里找一个**不存在的标题**。CI 当时全绿。

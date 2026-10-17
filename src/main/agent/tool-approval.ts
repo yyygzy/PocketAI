@@ -22,7 +22,8 @@ interface PendingApproval {
   allowKey?: string
 }
 
-const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
+/** 审批等待上限：超时无操作按拒绝收敛。四语那句提示里写的分钟数由用例与此常量对账（不许两边各写一遍） */
+export const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 /** 单会话「总是允许」的条目上限，防无限增长 */
 const SESSION_ALLOW_MAX = 50
 

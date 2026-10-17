@@ -163,6 +163,10 @@ export const ToolApprovalDialog: React.FC = () => {
           <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
             {t('agent.approval.warning')}
           </p>
+          {/* 过期机制的事前说明：不写就等于让用户只看得见「已过期」而不知道为什么（APPROVAL_TIMEOUT_MS） */}
+          <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+            {t('agent.approval.autoRejectHint')}
+          </p>
         </div>
 
         {/* 操作区（允许键不做 autofocus，防止回车误放行） */}
