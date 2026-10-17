@@ -7,7 +7,6 @@
 // 剩下只有肉眼的：整行的灰显观感、复选框换语义后的排版、以及确认弹窗真的弹在删除前 ⇒ 校验清单 B70。
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
-import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { DocBatchBar, type DocBatchBarProps } from '../src/renderer/src/modules/knowledge/DocBatchBar'
 import { cullStale, errorDocIds, selectByMode, toggleSelected } from '../src/renderer/src/modules/knowledge/doc-batch'

@@ -4,7 +4,7 @@
 // 上一批修好了「循环预设其实建成一次性提醒」的链路 bug，但列表里循环与一次性长得一样，
 // 用户无法确认自己建的到底是不是循环。这里钉住：pending 行渲染出规则徽标，且切到历史
 // 重新拉取后徽标仍在（reload 走的是不同 scope 的返回数据）。
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, calledFns } from './helpers/renderer'
 import { RemindersModal } from '../src/renderer/src/components/RemindersModal'

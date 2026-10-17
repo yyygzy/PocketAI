@@ -6,7 +6,6 @@
 // 剩下真正只有肉眼的：徽标的配色、宽度挤压、输入框排版——那些留在校验清单里。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { RetrievalTest } from '../src/renderer/src/modules/knowledge/KnowledgeModule'
 import { zh } from '../src/renderer/src/i18n/zh'

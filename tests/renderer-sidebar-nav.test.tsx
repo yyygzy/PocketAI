@@ -7,7 +7,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import React from 'react'
 import { stubPocketai, pocketaiCalls, mountWithProviders } from './helpers/renderer'
 import { Sidebar } from '../src/renderer/src/components/Sidebar'
 import { useAppStore } from '../src/renderer/src/store/app-store'

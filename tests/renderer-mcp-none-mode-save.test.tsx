@@ -6,7 +6,6 @@
 // 用例钉住两点：拒绝文案要显示出来、拒绝时不得走成功回调；以及判定权确实在主进程。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import React from 'react'
 import type { McpServerRecord } from '../src/shared/types'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { McpForm } from '../src/renderer/src/modules/agent/mcp/McpForm'
@@ -14,7 +13,7 @@ import { McpForm } from '../src/renderer/src/modules/agent/mcp/McpForm'
 const BLOCK_MSG =
   '未设置主密码，新密钥不会被保存（env：API_KEY）。请先在「设置 → 数据加密」中设置主密码后重试。'
 
-let onSaved: ReturnType<typeof vi.fn>
+let onSaved: (rec: McpServerRecord) => void
 
 function mount(initial: Partial<McpServerRecord>): void {
   mountWithProviders(<McpForm initial={initial} onCancel={() => {}} onSaved={onSaved} />)

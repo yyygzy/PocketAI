@@ -1,5 +1,5 @@
 // 中文文案字典（扁平 key，与 en.ts 结构完全一致）
-export const zh: Record<string, string> = {
+export const zh = {
   // ── 通用 ──
   'common.save': '保存',
   'common.cancel': '取消',
@@ -2114,4 +2114,4 @@ export const zh: Record<string, string> = {
   'ae.groupMcp': 'MCP 工具',
   'ae.selectAll': '全选',
   'ae.clearAll': '清空'
-}
+} satisfies Record<string, string>

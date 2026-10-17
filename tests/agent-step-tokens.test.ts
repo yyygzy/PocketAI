@@ -7,8 +7,9 @@ import { zh } from '../src/renderer/src/i18n/zh'
 import { formatStepTokens } from '../src/renderer/src/utils/agent-step-tokens'
 import type { AgentTraceRecord } from '../src/shared/types'
 
+const ZH = zh as Record<string, string>
 const t = (key: string, vars?: Record<string, string | number>): string =>
-  zh[key]!.replace(/\{(\w+)\}/g, (_, k: string) => String(vars?.[k] ?? ''))
+  ZH[key]!.replace(/\{(\w+)\}/g, (_, k: string) => String(vars?.[k] ?? ''))
 
 const trace = (patch: Partial<AgentTraceRecord>): AgentTraceRecord => ({
   id: 't1',

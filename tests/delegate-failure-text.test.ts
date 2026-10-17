@@ -178,7 +178,8 @@ describe('ja 委派这一簇的用词统一（V4-Iter-153）', () => {
     const keys = Object.keys(ja).filter((k) => k.startsWith('provider.cap') || k.startsWith('delegate.fail'))
     // 防空转：筛出来必须是这一簇的全部（少于 15 条就是筛选条件写坏了）
     expect(keys.length, `筛到的键太少：${keys.join(', ')}`).toBeGreaterThanOrEqual(15)
-    for (const k of keys) expect(ja[k], `ja.${k}`).not.toMatch(/委派|委譲/)
+    const JA = ja as Record<string, string>
+    for (const k of keys) expect(JA[k], `ja.${k}`).not.toMatch(/委派|委譲/)
   })
 
   it('判据屏按用户选定保持原样（这条钉子守着"范围只到这一簇"这个决定，别顺手改掉）', () => {

@@ -7,7 +7,7 @@
 // ③ user 气泡永不显示。
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent } from '@testing-library/react'
 import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { MessageBubble } from '../src/renderer/src/modules/chat/MessageBubble'

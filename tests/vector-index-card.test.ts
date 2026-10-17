@@ -3,8 +3,9 @@ import { describe, it, expect } from 'vitest'
 import { zh } from '../src/renderer/src/i18n/zh'
 import { formatVectorIndex } from '../src/renderer/src/utils/vector-index'
 
+const ZH = zh as Record<string, string>
 const t = (key: string, vars?: Record<string, string | number>): string =>
-  (zh[key] ?? key).replace(/\{(\w+)\}/g, (_, k: string) => String(vars?.[k] ?? ''))
+  (ZH[key] ?? key).replace(/\{(\w+)\}/g, (_, k: string) => String(vars?.[k] ?? ''))
 
 describe('formatVectorIndex', () => {
   it('从未建索引 → 「未建立」（不是 0 条、也不是 -）', () => {

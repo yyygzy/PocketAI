@@ -1,5 +1,5 @@
 // English dictionary (flat keys, identical structure to zh.ts)
-export const en: Record<string, string> = {
+export const en = {
   // ── Common ──
   'common.save': 'Save',
   'common.cancel': 'Cancel',
@@ -2114,4 +2114,4 @@ export const en: Record<string, string> = {
   'ae.groupMcp': 'MCP Tools',
   'ae.selectAll': 'Select All',
   'ae.clearAll': 'Clear'
-}
+} satisfies Record<string, string>

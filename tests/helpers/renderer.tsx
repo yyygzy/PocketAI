@@ -9,7 +9,12 @@ import { cleanup, render } from '@testing-library/react'
 import { I18nProvider } from '../../src/renderer/src/i18n'
 import { ToastProvider } from '../../src/renderer/src/components/ToastProvider'
 
-type Impl = (...args: unknown[]) => unknown
+/**
+ * 桩的入参故意放宽成 `any[]`：每条真实通道有自己的入参类型，而 `(...args: unknown[]) => unknown`
+ * 会因参数逆变把 `(patch: Record<string, unknown>) => …` 这类实现全判成不兼容（V4-Iter-178 现查出 32 处）。
+ * **返回值仍锁 `unknown`**——桩返回什么，调用方必须自己判形状（`hasIpcFailed` 那族断言就靠这个）。
+ */
+type Impl = (...args: any[]) => unknown
 
 const state = {
   impls: new Map<string, Impl>(),

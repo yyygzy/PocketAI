@@ -7,7 +7,7 @@
 // 1) 可见文本的**开头**就得是核心结论（截断后仍然说真话）；
 // 2) 完整文案挂在 title 上（悬停可见），且与字典逐字相同。
 import { describe, it, expect, vi } from 'vitest'
-import { screen, fireEvent } from '@testing-library/react'
+import { fireEvent } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
 import type { AgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'

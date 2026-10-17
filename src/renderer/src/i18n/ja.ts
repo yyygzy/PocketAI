@@ -1,5 +1,5 @@
 // 日本語辞書（フラットキー、zh.ts と構造一致）
-export const ja: Record<string, string> = {
+export const ja = {
   'common.save': '保存',
   'common.cancel': 'キャンセル',
   'common.delete': '削除',
@@ -2026,4 +2026,4 @@ export const ja: Record<string, string> = {
   'ae.groupMcp': 'MCP ツール',
   'ae.selectAll': 'すべて選択',
   'ae.clearAll': 'クリア'
-}
+} satisfies Record<string, string>

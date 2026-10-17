@@ -1,5 +1,5 @@
 // 한국어 사전 (플랫 키, zh.ts와 구조 일치)
-export const ko: Record<string, string> = {
+export const ko = {
   'common.save': '저장',
   'common.cancel': '취소',
   'common.delete': '삭제',
@@ -2026,4 +2026,4 @@ export const ko: Record<string, string> = {
   'ae.groupMcp': 'MCP 도구',
   'ae.selectAll': '모두 선택',
   'ae.clearAll': '모두 해제'
-}
+} satisfies Record<string, string>

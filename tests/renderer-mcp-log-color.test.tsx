@@ -12,7 +12,7 @@ import type {
   McpServerLogEvent,
   McpServerRuntime,
   McpServerStatus
-} from '../../shared/types'
+} from '../src/shared/types'
 
 const SERVER_ID = 's1'
 

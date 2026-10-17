@@ -10,7 +10,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import React from 'react'
 import { stubPocketai, mountWithProviders, pocketaiCalls } from './helpers/renderer'
 import { UnlockPage } from '../src/renderer/src/modules/unlock/UnlockPage'
 import { zh } from '../src/renderer/src/i18n/zh'

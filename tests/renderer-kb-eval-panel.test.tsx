@@ -6,7 +6,6 @@
 // ② 指标/失效/停用/警告四组信息必须同时在场，只把 recall 摆出来就是在一个坏卷子上报喜。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { KbEvalPanel } from '../src/renderer/src/modules/knowledge/KbEvalPanel'
 import { zh } from '../src/renderer/src/i18n/zh'

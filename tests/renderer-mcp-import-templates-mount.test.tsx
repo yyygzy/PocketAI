@@ -4,7 +4,7 @@
 // 解析/实例化早有 CI（mcp-import.test / mcp-templates.test），但**用户看到的结果计数**没人证：
 // ① 导入时闸门拒了其中一条 ⇒ 成功数不能虚增、被拒那条要出现在警告里；
 // ② 模板创建失败 ⇒ 那张卡不许标成"已创建"（否则用户以为有了，实际没有）。
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { McpImportModal } from '../src/renderer/src/modules/agent/mcp/McpImportModal'
@@ -39,7 +39,7 @@ describe('① 批量导入：闸门拒绝的那条计入警告，成功数不虚
     fireEvent.click(screen.getByText(zh['agent.importConfirm']))
     // 关键断言：成功的只有 1 个（改前这里是"导入 2 个"，第二条其实被主进程挡了）
     expect(await screen.findByText(zh['agent.importSuccess'].replace('{n}', '1'))).toBeTruthy()
-    expect(screen.getByText(/未设置主密码/)).toBeTruthy().toBeTruthy()
+    expect(screen.getByText(/未设置主密码/)).toBeTruthy()
     expect(saveCalls()).toBe(2)
   })
 

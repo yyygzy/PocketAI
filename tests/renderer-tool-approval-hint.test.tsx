@@ -19,8 +19,6 @@ import { zh } from '../src/renderer/src/i18n/zh'
 import { en } from '../src/renderer/src/i18n/en'
 import { ja } from '../src/renderer/src/i18n/ja'
 import { ko } from '../src/renderer/src/i18n/ko'
-import { ja } from '../src/renderer/src/i18n/ja'
-import { ko } from '../src/renderer/src/i18n/ko'
 
 let fire: ((evt: unknown) => void) | null = null
 

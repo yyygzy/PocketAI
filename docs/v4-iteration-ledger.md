@@ -66,6 +66,23 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-178 把 `tests/**/*.tsx` 补进 typecheck 范围：**261 处错误，清出四条真缺陷**（src 运行时代码零改动）
+
+- **来由**：177 收尾时现查 `tsconfig.json:27` 的 include 是 `["src/**/*.ts","src/**/*.tsx","tests/**/*.ts","electron.vite.config.ts"]`——**没有 `tests/**/*.tsx`** ⇒ 60 多个渲染层挂载用例从来没被 `npm run typecheck` 检查过。两条旁证：我在 `.tsx` 里少传一个必填参数 tsc 一声不响；`report()` 桩里躺着一个 V4-Iter-107 就删掉的 `vectorDbBytes`。
+- **补上之后一次性量到 261 条错误**。先做两处系统性改动把量级压下来，其余逐条清：
+  ① **四本字典从 `: Record<string, string>` 改成 `satisfies Record<string, string>`** ⇒ 键成为字面量属性，取值不再被 `noUncheckedIndexedAccess` 判成 `string | undefined`：**−192 条**（`zh['a.b']` 这类在测试里满天飞）。附带好处：**字典键拼错现在在测试里也编译不过**。
+  ② `tests/helpers/renderer.tsx` 的 `type Impl = (...args: unknown[]) => unknown` 改成 `(...args: any[]) => unknown`：**−32 条**（TS2322 全来自参数逆变——`(patch: Record<string, unknown>) => …` 塞不进 `unknown[]`）。**返回值仍然锁 `unknown`**：形状判断留给调用方，正是 `hasIpcFailed` 那族断言的意义，这条不放松。
+  ③ 剩下 39 条逐类清：14 个 `noUnusedLocals`（多是 `import React`——`jsx: react-jsx` 下不需要）、6 个 `saved[0]` 的 possibly-undefined、4 个"用变量索引字面量字典"的显式 cast（①的副作用）、以及下面四条真缺陷。
+- **本批的价值是这四条，不是消除噪音**：
+  1. `tests/renderer-mcp-log-color.test.tsx` 写的是 `import type { McpServerLogEvent, … } from '../../shared/types'`——**这个路径根本不存在**（应为 `../src/shared/types`）。因为是 type-only import，esbuild 直接剥掉 ⇒ **运行期永远不会红**，那文件的三个类型一直是空引用。
+  2. `tests/renderer-mcp-import-templates-mount.test.tsx:42`（172 我刚写的那份）一行里连写两个断言：`expect(...).toBeTruthy().toBeTruthy()`，第二个在类型上不存在（TS 认为第一个返回 `void`）。
+  3. `tests/renderer-tool-approval-hint.test.tsx` 把 `ja`/`ko` **各 import 了两遍**（TS2300 重复标识符）。
+  4. `tests/renderer-delegate-capability-badge.test.tsx` 的 `entry()` **从来没给必填的 `delegationEnabled`**（`DelegateCapabilityView` 上那一列是"用户是否点名允许委派"）⇒ 运行期一直是 `undefined`、被当假值用 ⇒ "未开启"这一位从来没被类型检查过。补成显式 `false` 后用例仍全绿 ⇒ 之前是**巧合正确**。
+  另两条同族小坑：`renderer-i18n-no-key-leak.test.tsx` 拿 `expect(title).toBeTruthy()` 当"字典里有没有这个键"的门禁，但类型不会因此收窄 ⇒ 改成 `if (!title) throw`；`renderer-model-selector-empty.test.tsx` 的 `mount(..., onChange = () => {})` 把回调签名写丢了，测试里 `(next) => seen.push(next)` 从来没被类型约束过。
+- **口径与影响面**：只动 `tsconfig.json`、四本字典的**声明形式**、测试与 helper ⇒ **`src/` 运行时代码零改动**（字典的值一字未动，bundle 里还是同一个对象字面量）。以后新写 `.tsx` 用例会被 tsc 管住，172 那三个新文件也在本批补了账。
+- 验证：typecheck **0（范围已含 `tests/**/*.tsx`）** / vitest **322 文件全绿**（用例数不变，只改类型与上面那几条缺陷）。
+- **过程账**：清到最后一处才看清，`getAllByLabelText(dict['x'])[1]` 里"取字典值"和"索引查询结果"是**两个独立的 possibly-undefined**，第一版只 guard 了后者 ⇒ 还剩 1 条错误。规矩：每一层的值各自要有门禁，别指望一个 guard 顺带收窄两处。
+
 ### V4-Iter-177 「数据目录合计」里 99.6% 是 Chromium 缓存：把档案树摘出去，顺手把面板打开的 600ms 变成 1.2ms
 
 - **来由**：用户选 ①（治 `getDataHealth()` 的 cold 2,334ms / warm 592ms）。动手前先量了一遍，发现**卡顿和"这个数字读不出我的数据有多大"是同一个根因**：

@@ -44,12 +44,16 @@ describe('ReminderMenu 四语无 key 泄漏', () => {
       mountWithProviders(<ReminderMenu anchor={{ x: 120, y: 80 }} onPick={() => {}} onClose={() => {}} />)
       // 门禁：等到该语言的标题出现（字典是动态加载的，等不到就说明这条没有效力）
       const title = dict['reminder.menu.remindMe']
+      if (!title) throw new Error(`${lang} 字典里没有 reminder.menu.remindMe`)
       expect(title).toBeTruthy()
       await screen.findByText(title, { exact: false })
 
       // 展开「每周」那条的设置条，逼出 reminder.center.weekday.* 这组动态 key
-      const caret = screen.getAllByLabelText(dict['reminder.menu.rule'])[1]
-      expect(caret, `${lang} 找不到循环设置按钮`).toBeTruthy()
+      const ruleLabel = dict['reminder.menu.rule']
+      if (!ruleLabel) throw new Error(`${lang} 字典里没有 reminder.menu.rule`)
+      const caret = screen.getAllByLabelText(ruleLabel)[1]
+      if (!caret) throw new Error(`${lang} 找不到循环设置按钮`)
+      expect(caret).toBeTruthy()
       await fireEvent.click(caret)
 
       const text = document.body.textContent ?? ''

@@ -70,10 +70,10 @@ describe('快捷预设不得残留上一条的信息', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saved).toHaveLength(1))
-    expect(saved[0].id).toBe('') // 不覆盖左边选中那条
-    expect(saved[0].apiKeys).toEqual([])
-    expect(saved[0].models).toEqual([])
-    expect(saved[0].baseUrl).toBe('https://ark.cn-beijing.volces.com/api/v3')
+    expect(saved[0]!.id).toBe('') // 不覆盖左边选中那条
+    expect(saved[0]!.apiKeys).toEqual([])
+    expect(saved[0]!.models).toEqual([])
+    expect(saved[0]!.baseUrl).toBe('https://ark.cn-beijing.volces.com/api/v3')
   })
 
   it('反向对照：直接点左边那条仍是完整回填（清空只发生在点预设时）', async () => {
@@ -95,8 +95,8 @@ describe('已缓存模型逐个移除', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saved).toHaveLength(1))
-    expect(saved[0].id).toBe('p-glm') // 这是"改这条"，不是新建
-    expect(saved[0].models).toEqual(['glm-5'])
+    expect(saved[0]!.id).toBe('p-glm') // 这是"改这条"，不是新建
+    expect(saved[0]!.models).toEqual(['glm-5'])
   })
 
   it('全部移完 → 显示空态而不是留一排空 chip', async () => {

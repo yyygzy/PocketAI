@@ -8,7 +8,7 @@
 // 测 hook 而不是整个 McpPanel：确认逻辑、URL 插值、"取消就不写库"这三件事都在
 // `usePipSource` 里，而 McpPanel 挂载要拉起 server 列表/运行时/模板等一堆无关桩。
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import React from 'react'
 import { stubPocketai, pocketaiCalls } from './helpers/renderer'

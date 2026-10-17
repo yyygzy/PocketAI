@@ -6,7 +6,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
-import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { ModelSelector } from '../src/renderer/src/modules/chat/ModelSelector'
 import { zh } from '../src/renderer/src/i18n/zh'
@@ -15,7 +14,7 @@ import type { ChatTarget, ProviderRecord } from '../src/shared/types'
 const provider = (id: string, models: string[], enabled = true): ProviderRecord =>
   ({ id, name: id.toUpperCase(), enabled, models }) as unknown as ProviderRecord
 
-function mount(providers: ProviderRecord[], targets: ChatTarget[], onChange = () => {}) {
+function mount(providers: ProviderRecord[], targets: ChatTarget[], onChange: (next: ChatTarget[]) => void = () => {}) {
   return mountWithProviders(
     <ModelSelector providers={providers} targets={targets} onChange={onChange} />
   )

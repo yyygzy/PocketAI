@@ -8,7 +8,6 @@
 // 就关不掉了。所以「常驻在模型栏」与「两条为什么互斥」是同一份契约的两半，一起测。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
-import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AgentModelBar } from '../src/renderer/src/modules/agent/components/AgentModelBar'
 import { zeroCallNoticeFlags } from '../src/renderer/src/modules/agent/agent-shared'

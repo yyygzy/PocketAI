@@ -69,7 +69,7 @@ describe('i18n 字典对等', () => {
     const mismatches: string[] = []
     for (const name of names) {
       for (const k of Object.keys(zh)) {
-        const a = placeholders(zh[k]!).join(',')
+        const a = placeholders((zh as Record<string, string>)[k]!).join(',')
         const b = placeholders(dicts[name]![k] ?? '').join(',')
         if (a !== b) mismatches.push(`${name}.${k}: zh{${a}} ${name}{${b}}`)
       }

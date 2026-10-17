@@ -22,6 +22,7 @@ const entry = (over: Partial<DelegateCapabilityView>): DelegateCapabilityView =>
   digest: '',
   checkedAt: 1,
   stale: false,
+  delegationEnabled: false,
   ...over
 })
 

@@ -10,7 +10,6 @@
 // 以及一条反向对照：A2 之前落库的老数据没有这两个字段，那时**不该**出现一个点了没反应的按钮。
 import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
-import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AgentMessageCard } from '../src/renderer/src/modules/agent/components/AgentMessageCard'
 import { zh } from '../src/renderer/src/i18n/zh'
