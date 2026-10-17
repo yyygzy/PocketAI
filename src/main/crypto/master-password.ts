@@ -60,25 +60,33 @@ export function kdfCandidates(): KdfParams[] {
  */
 export function verifyAndOpenMasterKey(password: string): KdfParams | null {
   const salt = appConfigRepo.getMasterPasswordSalt()
-  for (const params of kdfCandidates()) {
-    masterKeyManager.setKey(password, salt ?? undefined, params)
-    try {
-      dbService.close()
-      dbService.open(masterKeyManager.getDbKey() ?? undefined)
-      dbService.getHandle().prepare('SELECT 1').get()
-      const recorded = appConfigRepo.getKdfParams()
-      if (recorded.N !== params.N || recorded.r !== params.r || recorded.p !== params.p) {
-        // marker 缺失或与库不符：学一次就固化，后续不必再逐档重试
-        log.info(`档位记录与库不符，已按实际生效档位固化：scrypt N=${params.N}`)
-        appConfigRepo.setKdfParams(params)
+  const t0 = performance.now()
+  // 计时裹住整个「派生 + 真正开库」的过程，成功与全部失败两条出口都要打一行：
+  // 启动走它（index.ts），锁屏后解锁也走它（ipc/handlers/lock.ts:48），只在这里埋才两条路都有数。
+  // 标签用中文是刻意的——shared/perf-lines.ts 的 PERF_RE 只认 [\w.:-]+，于是不进「跨会话慢事件统计」。
+  try {
+    for (const params of kdfCandidates()) {
+      masterKeyManager.setKey(password, salt ?? undefined, params)
+      try {
+        dbService.close()
+        dbService.open(masterKeyManager.getDbKey() ?? undefined)
+        dbService.getHandle().prepare('SELECT 1').get()
+        const recorded = appConfigRepo.getKdfParams()
+        if (recorded.N !== params.N || recorded.r !== params.r || recorded.p !== params.p) {
+          // marker 缺失或与库不符：学一次就固化，后续不必再逐档重试
+          log.info(`档位记录与库不符，已按实际生效档位固化：scrypt N=${params.N}`)
+          appConfigRepo.setKdfParams(params)
+        }
+        return params
+      } catch {
+        // 这一档不对：换下一档。最后一档也失败时保持 DB 关闭
       }
-      return params
-    } catch {
-      // 这一档不对：换下一档。最后一档也失败时保持 DB 关闭
     }
+    dbService.close()
+    return null
+  } finally {
+    log.info(`[perf] 主密钥派生与开库（不含输入等待）: ${Math.round(performance.now() - t0)}ms`)
   }
-  dbService.close()
-  return null
 }
 
 /** 设置全新主密码的便捷封装：派生 + 立即落盘。

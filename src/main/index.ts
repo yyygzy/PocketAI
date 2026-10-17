@@ -369,7 +369,7 @@ async function boot(): Promise<void> {
 
     if ('password' in result) {
       // 解锁（验证已有密码）：按落盘档位逐个派生并真正打开库
-      const kdfT0 = performance.now()
+      // 这一段的耗时（scrypt 派生 + 真正开库）由函数自己打 [perf] 行——启动与锁屏后解锁两条路都经过它
       const opened = verifyAndOpenMasterKey(result.password)
       if (!opened) {
         masterKeyManager.clear()
@@ -378,9 +378,6 @@ async function boot(): Promise<void> {
         app.quit()
         return
       }
-      // bootMark('unlock') 那一条含用户输入等待，量不出档位差；这一行只裹住 verifyAndOpenMasterKey。
-      // 标签故意用中文：shared/perf-lines.ts 的 PERF_RE 只认 [\w.:-]+，于是它不进「跨会话慢事件统计」。
-      log.info(`[perf] 主密钥派生与开库（不含输入等待）: ${Math.round(performance.now() - kdfT0)}ms`)
       // verifyAndOpenMasterKey 成功时库已用正确档位打开
       if (!dbService.isOpen()) dbService.open(masterKeyManager.getDbKey() ?? undefined)
       if (!openedPlaintext) dbService.runMigrations()
