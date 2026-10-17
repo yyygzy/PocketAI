@@ -966,6 +966,7 @@ export const zh = {
   'dh.other': '其他',
   'dh.browserCache': '浏览器缓存',
   'dh.browserCacheValue': '{bytes} · {count} 个文件',
+  'dh.browserCache.open': '打开数据目录',
   'dh.traces': 'Agent 分步明细',
   'dh.traces.value': '{rows} 步 · 同一会话最多 {max} 步',
   'dh.kbStatus': '知识库索引状态',

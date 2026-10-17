@@ -57,6 +57,9 @@ function report(
 
 /** 记录 getDataHealth 每次被调用时 refresh 传了什么（V4-Iter-177：只有「刷新」按钮该传 true） */
 const refreshArgs: boolean[] = []
+/** 「打开数据目录」那颗按钮的桩（V4-Iter-179） */
+let openDirCalls = 0
+let openDirResult: { ok: boolean; error?: string } = { ok: true }
 
 async function mount(
   perfHistory: PerfSummary[],
@@ -65,7 +68,12 @@ async function mount(
   sizesOver: Partial<DataHealthReport['sizes']> = {}
 ): Promise<void> {
   refreshArgs.length = 0
+  openDirCalls = 0
   stubPocketai({
+    openDataFolder: () => {
+      openDirCalls++
+      return openDirResult
+    },
     getDataHealth: (refresh?: boolean) => {
       refreshArgs.push(refresh === true)
       return report(perfHistory, kbOver, tracesOver, sizesOver)
@@ -180,5 +188,23 @@ describe('数据健康面板 · 浏览器缓存单列（V4-Iter-177）', () => {
     expect(refreshArgs).toEqual([false])
     fireEvent.click(screen.getByText('刷新'))
     await waitFor(() => expect(refreshArgs).toEqual([false, true]))
+  })
+})
+
+// —— V4-Iter-179：缓存那一格旁边的「打开数据目录」 ——
+describe('数据健康面板 · 打开数据目录（V4-Iter-179）', () => {
+  it('点一次发一次通道；成功时不许冒出错误 toast', async () => {
+    openDirResult = { ok: true }
+    await mount([])
+    fireEvent.click(screen.getByText('打开数据目录'))
+    await waitFor(() => expect(openDirCalls).toBe(1))
+    expect(screen.queryByText(/操作失败/)).toBeNull()
+  })
+
+  it('主进程报失败时必须弹出具体的那句话说给用户（不能"点了没反应"）', async () => {
+    openDirResult = { ok: false, error: '无法打开此位置' }
+    await mount([])
+    fireEvent.click(screen.getByText('打开数据目录'))
+    expect(await screen.findByText('操作失败：无法打开此位置')).toBeTruthy()
   })
 })

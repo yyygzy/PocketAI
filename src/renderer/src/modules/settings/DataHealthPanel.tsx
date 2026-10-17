@@ -6,7 +6,7 @@ import type { DataHealthReport, KbDocStatus, KbDuplicateGroup } from '../../../.
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
-import { reportIpcError } from '../../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { formatBytes } from '../../utils/format'
 import { formatVectorIndex } from '../../utils/vector-index'
 import { formatTraceLedger } from '../../utils/trace-ledger'
@@ -71,6 +71,20 @@ export const DataHealthPanel: React.FC = () => {
     })
   }
 
+  /**
+   * 「浏览器缓存」那一格旁的只读跳转（打开数据目录本身，不接收任何路径入参）。
+   * 这是用户主动点的操作 ⇒ 失败必须弹 toast，不许用 reportIpcError 咽成"点了没反应"（utils/ipc 的边界注释）。
+   */
+  const onOpenDir = async () => {
+    setBusy(true)
+    try {
+      const r = await window.pocketai.openDataFolder()
+      if (hasIpcFailed(r)) toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!report) {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
@@ -107,6 +121,7 @@ export const DataHealthPanel: React.FC = () => {
             count: sizes.browserCacheFiles.toLocaleString('en-US')
           })}
         />
+        <button onClick={onOpenDir} disabled={busy} className="chip">{t('dh.browserCache.open')}</button>
       </div>
 
       {/* Agent 运行账本的规模（探测见 agent-trace.repo.countForHealth；为什么报这两个数见台账 V4-Iter-173） */}

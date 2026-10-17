@@ -66,6 +66,15 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-179 缓存那一格旁边给一颗「打开数据目录」：只做只读跳转，删除仍然不做
+
+- **来由**：177 把「浏览器缓存 764 MB · 21,179 个文件」摆到界面上之后，下一个问题必然是"那在哪儿、我自己能不能看一眼"。用户在三个选项里点了③：**只给跳转，不给删除**。删除的风险不是"实现麻烦"而是运行时文件锁（Chromium 正开着这些文件）与误删，要做也得单独设计。
+- **形状**：新通道 `dataHealth:open-dir` **不接收任何路径入参**（要开的就是 `DATA_DIR` 本身），比复用 `files-service` 的 `openPath(relPath)` 更窄——少一处路径校验面 ⇒ 也少一处将来被绕过的可能。`shell.openPath` 的约定是"成功返回空串、非空就是错误文本"，handler 翻成 `{ok:true}` / `{ok:false,error}`（**不把失败画成成功**，这是本仓 139 之后一条硬规矩）。
+- **一条被用例抓住的实现错**：面板第一版写的是 `toast.error(ipcFailText(r, t('common.unknownError')))`，也就是把裸错误文本直接甩给用户；而全站约定是 `toast.error(t('common.opFailed', { msg }))`（`SettingsModule` / `UsagePanel` 都是这一句）。用例断言按**约定**写 ⇒ 当场红，改成 `t('common.opFailed', { msg: ipcFailText(...) })` 才过。记这条是因为它再次说明：**断言要照约定写，照实现写就抓不到"不一致"**。
+- **四语**：新 `dh.browserCache.open`「打开数据目录」/ 'Open data folder' / 「データフォルダを開く」/ '데이터 폴더 열기'。用词先反查过：`打开` 12 处、`Open` 7 处、`開く` 6 处、`열기` 7 处 ⇒ 都是既有动词，不是造词。
+- **用例**：`tests/ipc-data-health-bridge.test.ts` +2 例（真 preload api + 真注册 handler + 桩 `shell.openPath`，钉成功/失败两种形状）、`tests/renderer-data-health-perf.test.tsx` +2 例（点一次发一次通道且成功时不许冒出错误 toast；失败必须把「操作失败：无法打开此位置」原样说给用户）。**变异 M1–M4**（handler 咽掉错误 / 按钮不发通道 / 失败不弹 toast / 面板自己造一个成功）⇒ 1/2/1/2 红，恢复后逐文件读回一致。
+- 验证：typecheck 0（范围已含 `.tsx`）/ vitest **322 文件全绿** / build 三端（main 4.49s、preload 126ms、renderer 18.82s）。B100 那行已把这颗按钮的期望写进去（真机未读）。
+
 ### V4-Iter-178 把 `tests/**/*.tsx` 补进 typecheck 范围：**261 处错误，清出四条真缺陷**（src 运行时代码零改动）
 
 - **来由**：177 收尾时现查 `tsconfig.json:27` 的 include 是 `["src/**/*.ts","src/**/*.tsx","tests/**/*.ts","electron.vite.config.ts"]`——**没有 `tests/**/*.tsx`** ⇒ 60 多个渲染层挂载用例从来没被 `npm run typecheck` 检查过。两条旁证：我在 `.tsx` 里少传一个必填参数 tsc 一声不响；`report()` 桩里躺着一个 V4-Iter-107 就删掉的 `vectorDbBytes`。

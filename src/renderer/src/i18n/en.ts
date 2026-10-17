@@ -966,6 +966,7 @@ export const en = {
   'dh.other': 'Other',
   'dh.browserCache': 'Browser cache',
   'dh.browserCacheValue': '{bytes} · {count} files',
+  'dh.browserCache.open': 'Open data folder',
   'dh.traces': 'Agent step details',
   'dh.traces.value': '{rows} steps · max {max} in one conversation',
   'dh.kbStatus': 'Knowledge base index status',

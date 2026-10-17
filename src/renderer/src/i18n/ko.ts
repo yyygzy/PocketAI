@@ -913,6 +913,7 @@ export const ko = {
   'dh.other': '기타',
   'dh.browserCache': '브라우저 캐시',
   'dh.browserCacheValue': '{bytes} · {count}개',
+  'dh.browserCache.open': '데이터 폴더 열기',
   'dh.traces': 'Agent 단계 상세',
   'dh.traces.value': '{rows}단계 · 한 세션 최대 {max}단계',
   'dh.kbStatus': '지식 베이스 인덱스 상태',

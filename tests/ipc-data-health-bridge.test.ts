@@ -6,7 +6,11 @@
 // 所以这里真跨一次：真 preload 暴露的 api + 真注册的 handler。
 import { describe, it, expect, vi } from 'vitest'
 
-const H = vi.hoisted(() => ({ handlers: new Map<string, (e: unknown, ...a: unknown[]) => unknown>(), api: null as unknown }))
+const H = vi.hoisted(() => ({
+  handlers: new Map<string, (e: unknown, ...a: unknown[]) => unknown>(),
+  api: null as unknown,
+  openPathResult: ''
+}))
 
 const seen: Array<{ refresh: boolean }> = []
 vi.mock('../src/main/steward/data-health', () => ({
@@ -42,6 +46,7 @@ vi.mock('electron', () => ({
   },
   contextBridge: { exposeInMainWorld: (_n: string, api: unknown) => { H.api = api } },
   dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showSaveDialog: async () => ({ canceled: true, filePath: '' }) },
+  shell: { openPath: async () => H.openPathResult },
   BrowserWindow: class {
     static fromWebContents() { return undefined }
     static getAllWindows() { return [] }
@@ -75,5 +80,27 @@ describe('dataHealth:get 的 refresh 参数', () => {
     const r = await getDataHealth()(true)
     expect(seen).toEqual([{ refresh: true }])
     expect(r.sizes.browserCacheFiles).toBe(3)
+  })
+})
+
+// 「打开数据目录」那颗按钮：shell.openPath 的约定是**成功返回空串、非空就是错误文本**，
+// 这一跳把"失败"翻译成人话的责任在 handler，所以两边都要钉（把失败画成成功 = 用户只看到点了没反应）。
+describe('dataHealth:open-dir 的成败形状', () => {
+  const openDataFolder = async () => {
+    const fn = (H.api as Record<string, unknown>).openDataFolder
+    if (typeof fn !== 'function') throw new Error('preload 没暴露 openDataFolder')
+    return (fn as () => Promise<{ ok: boolean; error?: string }>)()
+  }
+
+  it('openPath 返回空串 ⇒ {ok:true}，且不带 error', async () => {
+    registerStewardHandlers()
+    H.openPathResult = ''
+    expect(await openDataFolder()).toEqual({ ok: true })
+  })
+
+  it('openPath 返回错误文本 ⇒ 原样报成 {ok:false,error}（不许咽成成功）', async () => {
+    registerStewardHandlers()
+    H.openPathResult = '无法打开此位置'
+    expect(await openDataFolder()).toEqual({ ok: false, error: '无法打开此位置' })
   })
 })

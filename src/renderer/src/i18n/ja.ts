@@ -913,6 +913,7 @@ export const ja = {
   'dh.other': 'その他',
   'dh.browserCache': 'ブラウザキャッシュ',
   'dh.browserCacheValue': '{bytes} · {count} 件',
+  'dh.browserCache.open': 'データフォルダを開く',
   'dh.traces': 'Agent ステップ詳細',
   'dh.traces.value': '{rows} ステップ · 同一会話で最大 {max} ステップ',
   'dh.kbStatus': 'ナレッジベースインデックス状態',

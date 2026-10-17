@@ -1,8 +1,9 @@
 // 平台管家 IPC：健康报告/清理/VACUUM、模型推荐、安全审计、故障诊断、数据健康度
 import fs from 'node:fs'
-import { BrowserWindow, dialog } from 'electron'
+import { BrowserWindow, dialog, shell } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../../shared/types'
+import { DATA_DIR } from '../../portable'
 import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
@@ -53,6 +54,12 @@ export function registerStewardHandlers(): void {
     argsSchema(z.object({ content: z.string().min(1).max(REPORT_MAX_CHARS) }))
   )
   safeHandle(IPC.DATA_HEALTH_GET, (_e, refresh?: boolean) => getDataHealthReport({ refresh: !!refresh }))
+  // 「浏览器缓存」那一格旁边的跳转：不接收任何路径入参（要开的就是数据目录本身），
+  // shell.openPath 成功返回空串、非空就是错误文本 ⇒ 失败要如实报，不许静默"看起来点了没反应"。
+  safeHandle(IPC.DATA_HEALTH_OPEN_DIR, async () => {
+    const err = await shell.openPath(DATA_DIR)
+    return err ? { ok: false as const, error: err } : { ok: true as const }
+  })
   // 本机判据屏（V4-Iter-146）：现采一次显存是**异步**的，这条通道因此是 async；
   // 失败不降级成空报告——空报告会与"这台机器真的采不到"混成一回事（safeHandle 把失败转成
   // {ok:false,error} 返回值，渲染层按 hasIpcFailed 判，不许把失败画成数据）。
