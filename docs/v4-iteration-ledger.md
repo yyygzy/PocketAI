@@ -66,6 +66,26 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-181 清单最后三条 ⬜ 改写成可执行观察项：A6 进 CI、B7 有一行数得出的毫秒、B66 用现成 asar 证掉那条隐患（**⬜ 归零**）
+
+- **来由**：用户在两个候选里点了 ③——把 A6／B7／B66 从"归眼睛"改写成"有判据、有命令、有现数"。三条卡住的原因各不相同，所以先各自查清"为什么原来是 ⬜"，再决定这一批做什么：
+  | 条 | 原来卡在哪（现查） | 本批做了什么 | 现在的状态 |
+  |---|---|---|---|
+  | A6 | 那句说明的键 `enc.autoLockDescNone`（`zh.ts:1707`）在 `tests/` 里 **0 引用**，而清单第 33 行却写着"A5/A6 由 `renderer-lock-overlay.test.tsx` 断言" | `tests/renderer-encryption-panel.test.tsx` +3 例（真挂载 `EncryptionPanel`） | **⬜→✅（CI）** |
+  | B7 | 「比升档前慢约 0.5 秒（0.16s→0.7s 量级）」抄自 `crypto/index.ts` 头注释的 164/705ms，**应用里没有任何一行能数出这个数**：`bootMark('unlock')` 的 label 自己写着「含用户输入等待」 | 新增一行只裹 `verifyAndOpenMasterKey` 的 `[perf]` 日志 ＋ 现测两档基线 | **⬜→🔶** |
+  | B66 | 正题要安装版；台账 132 还留了一条**未证**的 asar 隐患 | 用现成产物把那条隐患证完 ＋ `tests/win-aumid-appid.test.ts` 2 例 | **⬜→🔶** |
+- **B7 的数怎么来的**（不是估的）：一次性探针用**真函数真库**——`deriveKeySync(密码, salt, 档位)` 与 `database.ts:851-862` 那几步 pragma ＋ `SELECT 1`，临时库建在 `data/tmp-*`（用后即删，没碰 `data/app.db`），各 3 次：
+  派生 2^17 = **557.4 / 599.3 / 600.6 ms**；派生 2^15 = **141.2 / 141.8 / 138.1 ms**；整步（派生＋开库）= **556.2–579.8** 对 **139.6–143.9 ms** ⇒ 升档多出的约 **420ms** 全在 scrypt 那一步；只开库不派生 = **3.1–5.0 ms**，明文库对照同量级 ⇒ 这条也顺手回答了"SQLCipher 开库是不是大头"：**不是**。据此把 `crypto/index.ts` 里三处旧注释（164ms / 705ms / 「解锁约 +0.54s」）改成现测值，并在 B7 那行写明**别拿 `bootMark` 比档**（本轮从 `main.log` 现读的三次是 14713 / 1105873 / 17653 ms，全是人敲键盘的等待）。
+- **新日志那一行为什么标签是中文**：`src/shared/perf-lines.ts:12` 的 `PERF_RE` 只认 `[\w.:-]+`，用 ASCII 标签会被吸进数据健康屏的「跨会话慢事件统计」——而一次解锁的 KDF 成本不是健康问题（177 已为同类数字定过这个口径）。标签用中文 ⇒ 它只留在日志里，读它的人是自己去 `main.log` 找。**这是有意的，不是抄现成 label 省事。**
+- **B66 为什么不必重跑打包**：`npx asar list dist/win-unpacked/resources/app.asar`（那次打包留在 `dist/` 里，2026-10-07）⇒ **20789 行条目、`/build` 目录 0 条**；`dist/builder-debug.yml` 是那次打包自己吐出的解析结果，`firstOrDefaultFilePatterns` **第一条**就是 `!build{,/**/*}`；再加一条同源核对：`git diff 5ec484d HEAD -- package.json` 只加了两条 devDependencies ⇒ `build` 块与 HEAD 一字不差。三条拼起来：**安装版 `appIconPath()`（`src/main/index.ts:31-35`）指向的是 asar 里不存在的文件**——132 那句"大概"今天可以去掉。
+- **本批撞出的两处指路错（文档侧价值，与 154/161 同族）**：
+  ① 清单第 33 行把 A6 记给 lock-overlay 那份用例——那句从写下那天起就是错的，因为它假设"遮罩副标题 = 自动锁屏说明"，而这是两把键（`lock.plainModeNote` 对 `enc.autoLockDescNone`）。已改成 A5 归 lock-overlay，并写明 A6 到本批才真的进 CI。
+  ② `index.ts` 的注释写着「dev 下没有对应快捷方式时 Windows 退回用窗口图标，两种情况都是紫色墨匣徽标」，而 132 实测的正是**dev 下任务栏仍是 electron 原子图**（`SHGetPropertyStoreForWindow` 读到 `PKEY_AppUserModel_ID` 为空）⇒ 注释与自家台账的实测直接矛盾，按实测重写。同族第三处：132 的"下一步"让人跑 `npm run build:win`，**这条 script 不存在**（`package.json` 里是 `dist` / `dist:nsis` / `dist:portable`），已在清单里点名纠正。
+- **A6 那三例的形状**：期望文案一律写 `zh['enc.autoLockDescNone']` 这种**从字典取**的形式，不抄字符串；第三例断言那句的 `parentElement` 里同时含 `zh['enc.autoLock']` 与一个 `<select>` ⇒ 钉住"它挂在自动锁屏那一格下面"，而不是全站某处的尾注。**变异 MU-a**（三元改成恒定 none 版）⇒ 1 红（db 态那条），另两条在"恒定 none"下本来就该绿，如实记下。
+- **测试与变异**：新增 `tests/win-aumid-appid.test.ts` 2 例 ＋ `renderer-encryption-panel.test.tsx` 3 例。MU-b（字面量加一个后缀）⇒ 1 红；MU-c（去掉 `win32` 闸门）⇒ 1 红；恢复后 `md5sum -c` 三处全 OK。
+- **没做 / 边界**：① **那行 `[perf]` 还从未在真机出现过**——它在主进程，须重启 dev 才生效，本轮用户没让重启，所以 B7 只到 🔶；我能证的只有"产物里确有这句"（`out/main/index.js` 现查命中 1 处）。② A6 没做 en/ja/ko 三语挂载（那句在别语下会不会溢出，仍归 A7）。③ B66 剩下的那一格只有装过安装版才看得见，而打包**我没跑**：`dist` 系列会先跑 `fetch-embedding-model.mjs`（模型四件已在本地，24MB，幂等跳过），但 electron-builder 缓存里**没有** `winCodeSign`，首次跑可能还要联网——这两条都写进清单当前置，不当已证。④ `appIconPath()` 在安装版指向不存在文件这件事**只记录不修**：往 `files` 加 `build/icon/*` 或改走 `process.resourcesPath`，两者都要重跑打包才看得见效果，属独立批次（且现在没有任何用户可见症状，Windows 那侧的回落行为我没测）。⑤ 探针脚本 `tests/tmp-b7-measure.test.ts` 已删（数字进台账），`data/tmp/` 自清。
+- 验证：typecheck **0**；全量 vitest **323 文件 / 3860 passed + 1 skipped**（本批 +1 文件、+5 例）；build 三端过。清单现数：**总 109 行，✅ 62 / 🔶 46 / 🔁 1 / ⬜ 0**——**⬜ 自本批起归零**，剩下 47 条（🔶 46 ＋ 🔁 1）都要真环境或眼睛。
+
 ### V4-Iter-180 B100 真机闭环：那颗 memo 真的把面板打开从 ~620ms 压到 7ms，界面上四个数与现测对得上（代码零改动）
 
 - **来由**：用户选「先重启 dev 跑 B100，把三个新数读回来再提交」。**口令全程由用户自己输**，我只事后核对日志行（新实例 22:37:53 起，22:38:12 `DB 解锁成功`）。清场同 176：按 CommandLine 认出整棵树（node 13680 → electron 10732 + 3 子）后 `taskkill /T /F`，`remaining=0`。
@@ -1464,6 +1484,7 @@
   顺带验证台账里那条未证隐患（asar 里没打 `build/` ⇒ 安装版 `appIconPath()` 指向不存在的文件）。
   dev 侧若一定要好看，可行做法是给 dev 也建一个带 AUMID 的开始菜单快捷方式（PowerShell 的 WScript.Shell 不支持写 AUMID，
   要走 shell 属性存储，属另一件事）。
+- **⚠️ 2026-10-17 V4-Iter-181 追加两条纠正**：① 上面"下一步该做的"写的是 `npm run build:win`，**这条 script 在 `package.json` 里不存在**（实为 `dist` / `dist:nsis` / `dist:portable`）；② 本条留的那句"未证隐患"（asar 里没打 `build/`）**已经证完了**，且不必重跑打包：`npx asar list dist/win-unpacked/resources/app.asar` ⇒ 20789 行条目、`/build` 0 条，`builder-debug.yml` 的第一条 pattern 就是 `!build{,/**/*}`，而那次打包以来的 `build` 块一字未动 ⇒ 安装版 `appIconPath()` 确实指向 asar 内不存在的文件。"Windows 于是退回 exe 自带图标"仍没测，属 Electron 行为。
 - **校验**：typecheck 0；build 三端通过；改动一处、无新依赖、无新资源。
   **主进程改动 ⇒ 须重启 dev**，肉眼确认见验收清单 **B66**。
 

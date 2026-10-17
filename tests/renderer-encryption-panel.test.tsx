@@ -98,3 +98,25 @@ describe('none 模式底部尾注 enc.hintNone（V4-Iter-172 补）', () => {
     expect(screen.queryByText(zh['enc.hintNone'])).toBeNull()
   })
 })
+
+// —— V4-Iter-181：清单 A6 那一行此前全仓 tests 里 0 引用（现查 grep autoLockDesc 只命中渲染点）——
+describe('自动锁屏那行的说明（清单 A6）', () => {
+  it('无主密码：逐字出现「不需要任何凭据即可继续」，且不出现「需输入主密码解锁」', () => {
+    mount(none)
+    expect(screen.getByText(zh['enc.autoLockDescNone'])).toBeTruthy()
+    expect(screen.queryByText(zh['enc.autoLockDesc'])).toBeNull()
+  })
+
+  it('有主密码：只剩「需输入主密码解锁」那句，none 版不再出现', () => {
+    mount(dbAt(131072))
+    expect(screen.getByText(zh['enc.autoLockDesc'])).toBeTruthy()
+    expect(screen.queryByText(zh['enc.autoLockDescNone'])).toBeNull()
+  })
+
+  it('位置：说明挂在「自动锁屏」选择框同一格里，不是别处的尾注', () => {
+    mount(none)
+    const cell = screen.getByText(zh['enc.autoLockDescNone']).parentElement!
+    expect(cell.textContent).toContain(zh['enc.autoLock'])
+    expect(cell.querySelector('select')).toBeTruthy()
+  })
+})

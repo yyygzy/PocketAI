@@ -369,6 +369,7 @@ async function boot(): Promise<void> {
 
     if ('password' in result) {
       // 解锁（验证已有密码）：按落盘档位逐个派生并真正打开库
+      const kdfT0 = performance.now()
       const opened = verifyAndOpenMasterKey(result.password)
       if (!opened) {
         masterKeyManager.clear()
@@ -377,6 +378,9 @@ async function boot(): Promise<void> {
         app.quit()
         return
       }
+      // bootMark('unlock') 那一条含用户输入等待，量不出档位差；这一行只裹住 verifyAndOpenMasterKey。
+      // 标签故意用中文：shared/perf-lines.ts 的 PERF_RE 只认 [\w.:-]+，于是它不进「跨会话慢事件统计」。
+      log.info(`[perf] 主密钥派生与开库（不含输入等待）: ${Math.round(performance.now() - kdfT0)}ms`)
       // verifyAndOpenMasterKey 成功时库已用正确档位打开
       if (!dbService.isOpen()) dbService.open(masterKeyManager.getDbKey() ?? undefined)
       if (!openedPlaintext) dbService.runMigrations()
@@ -564,7 +568,9 @@ if (!gotLock) {
     // 于是**无视每个窗口都设好的 icon**、直接显示 Electron 的原子图标
     // （标题栏用的是窗口图标所以看着是对的，任务栏才是这个症状；dev 与 portable 版都会中）。
     // 值与 package.json 的 build.appId 一致：安装版可与快捷方式同组复用其图标，
-    // dev 下没有对应快捷方式时 Windows 退回用窗口图标，两种情况都是紫色墨匣徽标。
+    // ⚠️ 这一行修不好 dev：V4-Iter-132 重启 dev 后实测——主窗口的 PKEY_AppUserModel_ID 仍为空，
+    // 任务栏按钮仍归成「Electron - 1 个运行窗口」。Windows 11 要这个 AUMID 对应到一个**已注册的
+    // 快捷方式**才换图标，dev 没有快捷方式；安装版由 NSIS 写快捷方式，才是这行的用武之地。
     if (process.platform === 'win32') app.setAppUserModelId('ai.pocket.desktop')
     // 生产环境 CSP 必须在任何窗口创建前安装（解锁窗在 boot() 内创建）
     installContentSecurityPolicy()
