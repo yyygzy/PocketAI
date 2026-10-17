@@ -208,7 +208,16 @@ export const agentTraceRepo = {
     return rows.map(rowToRecord)
   },
 
-  /** 清理指定 requestId 的 trace */
+  /**
+   * 清理指定 requestId 的 trace。
+   *
+   * **全仓只有两条路径会删 trace**：这里（「重新运行」把上一次那几步清掉）与
+   * `conversationRepo.delete()`（166 补的，按子树连带删）。
+   * 刻意**没有**"清扫孤儿行"的迁移：166 之前删会话会留下没有主人的 trace，那些行按
+   * 2026-10-17 用户定的口径**保留**——`agent_traces` 是成本审计账本（`messages` 删了就没有
+   * 任何地方能还原"那次编排烧了多少 token"，用量明细本来就是 messages 的派生视图），
+   * 所以"看见孤儿行就想收一收"是错的方向。要改这个口径先改这段注释与台账 V4-Iter-167。
+   */
   deleteByRequest(requestId: string): void {
     dbService.getHandle().prepare('DELETE FROM agent_traces WHERE request_id = ?').run(requestId)
   }
