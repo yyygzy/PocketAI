@@ -4,7 +4,8 @@
 // 这块只能在真实应用里点出来才看得见，所以用整份报告打桩钉住渲染契约：
 // 主进程只下发 PerfSummary（日志原文不过 IPC），面板负责把 label 翻成可读名。
 import { describe, it, expect } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { formatBytes } from '../src/renderer/src/utils/format'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { DataHealthPanel } from '../src/renderer/src/modules/settings/DataHealthPanel'
 import type { DataHealthReport, PerfSummary } from '../src/shared/types'
@@ -22,17 +23,20 @@ const summary = (over: Partial<PerfSummary> = {}): PerfSummary => ({
 function report(
   perfHistory: PerfSummary[],
   kbOver: Partial<DataHealthReport['kb']> = {},
-  tracesOver: Partial<DataHealthReport['traces']> = {}
+  tracesOver: Partial<DataHealthReport['traces']> = {},
+  sizesOver: Partial<DataHealthReport['sizes']> = {}
 ): DataHealthReport {
   return {
     sizes: {
-      dataDirBytes: 20 * 1024 * 1024,
+      userDataBytes: 20 * 1024 * 1024,
       dbBytes: 8 * 1024 * 1024,
-      vectorDbBytes: 4 * 1024 * 1024,
       attachmentsBytes: 2 * 1024 * 1024,
       extensionsBytes: 1 * 1024 * 1024,
       logsBytes: 512 * 1024,
-      otherBytes: 0
+      otherBytes: 0,
+      browserCacheBytes: 801 * 1024 * 1024,
+      browserCacheFiles: 21103,
+      ...sizesOver
     },
     traces: { rows: 12340, maxRowsInOneConversation: 1200, ...tracesOver },
     kb: {
@@ -51,13 +55,21 @@ function report(
   }
 }
 
+/** 记录 getDataHealth 每次被调用时 refresh 传了什么（V4-Iter-177：只有「刷新」按钮该传 true） */
+const refreshArgs: boolean[] = []
+
 async function mount(
   perfHistory: PerfSummary[],
   kbOver: Partial<DataHealthReport['kb']> = {},
-  tracesOver: Partial<DataHealthReport['traces']> = {}
+  tracesOver: Partial<DataHealthReport['traces']> = {},
+  sizesOver: Partial<DataHealthReport['sizes']> = {}
 ): Promise<void> {
+  refreshArgs.length = 0
   stubPocketai({
-    getDataHealth: () => report(perfHistory, kbOver, tracesOver),
+    getDataHealth: (refresh?: boolean) => {
+      refreshArgs.push(refresh === true)
+      return report(perfHistory, kbOver, tracesOver, sizesOver)
+    },
     cleanKbOrphans: () => ({ removedVectors: 0, removedChunks: 0 }),
     reindexKbDocs: () => ({ enqueued: 0 }),
     deduplicateKbDocs: () => ({ removed: 0 })
@@ -145,5 +157,28 @@ describe('数据健康面板 · Agent 分步明细（V4-Iter-174）', () => {
     await mount([], {}, { rows: 0, maxRowsInOneConversation: 500 })
     expect(screen.getByText('暂无分步明细')).toBeTruthy()
     expect(screen.queryByText(/500/)).toBeNull()
+  })
+})
+
+// —— V4-Iter-177：浏览器缓存不进合计、且只有「刷新」才重算 ——
+describe('数据健康面板 · 浏览器缓存单列（V4-Iter-177）', () => {
+  it('「浏览器缓存」那一行逐字显示字节 + 文件数', async () => {
+    await mount([], {}, {}, { browserCacheBytes: 801 * 1024 * 1024, browserCacheFiles: 21103 })
+    expect(screen.getByText('浏览器缓存')).toBeTruthy()
+    expect(screen.getByText(`${formatBytes(801 * 1024 * 1024)} · 21,103 个文件`)).toBeTruthy()
+  })
+
+  it('合计读 userDataBytes，不掺缓存字节（缓存并进合计就该红）', async () => {
+    await mount([], {}, {}, { userDataBytes: 20 * 1024 * 1024, browserCacheBytes: 801 * 1024 * 1024 })
+    const card = screen.getByText('数据合计').parentElement
+    expect(card?.textContent).toContain(formatBytes(20 * 1024 * 1024))
+    expect(card?.textContent).not.toContain(formatBytes(821 * 1024 * 1024))
+  })
+
+  it('只有那颗「刷新」按钮把 refresh=true 传给主进程；挂载那一次传 false', async () => {
+    await mount([])
+    expect(refreshArgs).toEqual([false])
+    fireEvent.click(screen.getByText('刷新'))
+    await waitFor(() => expect(refreshArgs).toEqual([false, true]))
   })
 })

@@ -24,8 +24,9 @@ export const DataHealthPanel: React.FC = () => {
   const [report, setReport] = useState<DataHealthReport | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(() => {
-    window.pocketai.getDataHealth().then(setReport).catch(reportIpcError('dataHealth.get'))
+  /** @param refresh 只有面板那颗「刷新」按钮会传 true：连浏览器缓存那一格也重算（V4-Iter-177） */
+  const load = useCallback((refresh = false) => {
+    window.pocketai.getDataHealth(refresh).then(setReport).catch(reportIpcError('dataHealth.get'))
   }, [])
 
   useEffect(() => {
@@ -87,7 +88,7 @@ export const DataHealthPanel: React.FC = () => {
     <div>
       {/* 体积汇总卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-        <StatCard label={t('dh.total')} value={formatBytes(sizes.dataDirBytes)} />
+        <StatCard label={t('dh.total')} value={formatBytes(sizes.userDataBytes)} />
         <StatCard label={t('dh.db')} value={formatBytes(sizes.dbBytes)} />
         <StatCard label={t('dh.vectorIndex')} value={formatVectorIndex(kb.vectorIndex, t)} />
         <StatCard label={t('dh.attachments')} value={formatBytes(sizes.attachmentsBytes)} />
@@ -95,9 +96,17 @@ export const DataHealthPanel: React.FC = () => {
 
       {/* 体积明细行 */}
       <div className="mb-4 space-y-1">
-        <BarRow label={t('dh.extensions')} ratio={sizes.dataDirBytes > 0 ? sizes.extensionsBytes / sizes.dataDirBytes : 0} value={formatBytes(sizes.extensionsBytes)} />
-        <BarRow label={t('dh.logs')} ratio={sizes.dataDirBytes > 0 ? sizes.logsBytes / sizes.dataDirBytes : 0} value={formatBytes(sizes.logsBytes)} />
-        <BarRow label={t('dh.other')} ratio={sizes.dataDirBytes > 0 ? sizes.otherBytes / sizes.dataDirBytes : 0} value={formatBytes(sizes.otherBytes)} />
+        <BarRow label={t('dh.extensions')} ratio={sizes.userDataBytes > 0 ? sizes.extensionsBytes / sizes.userDataBytes : 0} value={formatBytes(sizes.extensionsBytes)} />
+        <BarRow label={t('dh.logs')} ratio={sizes.userDataBytes > 0 ? sizes.logsBytes / sizes.userDataBytes : 0} value={formatBytes(sizes.logsBytes)} />
+        <BarRow label={t('dh.other')} ratio={sizes.userDataBytes > 0 ? sizes.otherBytes / sizes.userDataBytes : 0} value={formatBytes(sizes.otherBytes)} />
+        {/* 浏览器缓存：Electron 自己的档案树，不进上面那颗「合计」，按「刷新」才重算（V4-Iter-177） */}
+        <Row
+          label={t('dh.browserCache')}
+          value={t('dh.browserCacheValue', {
+            bytes: formatBytes(sizes.browserCacheBytes),
+            count: sizes.browserCacheFiles.toLocaleString('en-US')
+          })}
+        />
       </div>
 
       {/* Agent 运行账本的规模（探测见 agent-trace.repo.countForHealth；为什么报这两个数见台账 V4-Iter-173） */}
@@ -335,7 +344,7 @@ export const DataHealthPanel: React.FC = () => {
       )}
 
       <div className="mt-3 flex items-center gap-2">
-        <button onClick={load} className="chip">{t('dh.refresh')}</button>
+        <button onClick={() => load(true)} className="chip">{t('dh.refresh')}</button>
       </div>
       {dialog}
     </div>

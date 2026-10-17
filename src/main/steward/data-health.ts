@@ -10,6 +10,7 @@
 import { readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { DataHealthReport, KbDocStatus, KbDocument, KbIntegrityReport } from '../../shared/types'
+import { isBrowserProfilePath } from '../../shared/data-dirs'
 import { DATA_DIR } from '../portable'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
@@ -25,17 +26,22 @@ import { getKbIntegrityReport, getVectorIndexStats } from '../knowledge/kb-healt
 
 // ─── 纯函数：数据目录体积分类聚合 ────────────────────────────────
 
-export type DataBucket = 'db' | 'attachments' | 'extensions' | 'logs' | 'other'
+export type DataBucket = 'db' | 'attachments' | 'extensions' | 'logs' | 'browserCache' | 'other'
 
 /**
  * 按 DATA_DIR 相对路径（统一 / 分隔）归类体积桶。
  * 根级 app.db / app.db-wal → db；一级子目录 attachments/extensions/logs 下全部归对应桶；其余 → other。
  * 没有「向量库」桶：向量索引不是独立文件（`kb_vec_map` + `kb_vec_<dim>` 都在 app.db 里），
  * 以前按 vectors.db 分桶，那张卡片因此恒为空——现改由 kb.vectorIndex 报真实条数与维度。
+ *
+ * `browserCache` 是 V4-Iter-177 加的：`userdata/` + `session/` 是 Electron 自己的 Chromium
+ * 档案树（Cache/Code Cache/GPUCache/blob_storage…），本机实测 21,103 个文件 / 801 MB，
+ * 而真正属于用户的数据资产只有几 MB。**它不进合计**（面板单独一格如实显示）。
  */
 export function classifyDataEntry(rel: string): DataBucket {
   const norm = rel.replaceAll('\\', '/')
   if (norm === 'app.db' || norm === 'app.db-wal') return 'db'
+  if (isBrowserProfilePath(norm)) return 'browserCache'
   const top = norm.split('/')[0]
   if (top === 'attachments' || top === 'extensions' || top === 'logs') return top
   return 'other'
@@ -47,19 +53,26 @@ export interface DataSizeEntry {
   bytes: number
 }
 
-/** 体积条目按桶聚合 → DataHealthReport.sizes */
+/** 体积条目按桶聚合 → DataHealthReport.sizes（合计只算用户数据，浏览器缓存单列） */
 export function aggregateDataSizes(entries: DataSizeEntry[]): DataHealthReport['sizes'] {
   const buckets: Record<DataBucket, number> = {
-    db: 0, attachments: 0, extensions: 0, logs: 0, other: 0
+    db: 0, attachments: 0, extensions: 0, logs: 0, browserCache: 0, other: 0
   }
-  for (const e of entries) buckets[classifyDataEntry(e.rel)] += e.bytes
+  let cacheFiles = 0
+  for (const e of entries) {
+    const b = classifyDataEntry(e.rel)
+    buckets[b] += e.bytes
+    if (b === 'browserCache') cacheFiles++
+  }
   return {
-    dataDirBytes: entries.reduce((s, e) => s + e.bytes, 0),
+    userDataBytes: buckets.db + buckets.attachments + buckets.extensions + buckets.logs + buckets.other,
     dbBytes: buckets.db,
     attachmentsBytes: buckets.attachments,
     extensionsBytes: buckets.extensions,
     logsBytes: buckets.logs,
-    otherBytes: buckets.other
+    otherBytes: buckets.other,
+    browserCacheBytes: buckets.browserCache,
+    browserCacheFiles: cacheFiles
   }
 }
 
@@ -99,8 +112,14 @@ export function topErrorDocs(
 
 // ─── fs 探测：数据目录递归体积 ──────────────────────────────────
 
-/** 递归收集目录下全部文件的相对路径与体积；单项 stat 失败忽略 */
-function walkDataDir(dir: string, base: string, out: DataSizeEntry[]): void {
+/**
+ * 递归收集目录下全部文件的相对路径与体积；单项 stat 失败忽略。
+ *
+ * `mode` 是 V4-Iter-177 的性能接缝：`skipProfile` 用于每次都要新鲜的"用户数据"明细
+ * （一个文件都不 stat 那两棵 Chromium 档案树），`onlyProfile` 只走档案树、结果由上层按进程缓存。
+ * 判据用**相对路径的首段**，所以子项（`userdata/Cache/...`）在两种模式下都会被同一棵树带走。
+ */
+function walkEntries(dir: string, base: string, out: DataSizeEntry[], mode: 'skipProfile' | 'onlyProfile'): void {
   let items: import('node:fs').Dirent[]
   try {
     items = readdirSync(dir, { withFileTypes: true })
@@ -109,17 +128,46 @@ function walkDataDir(dir: string, base: string, out: DataSizeEntry[]): void {
   }
   for (const it of items) {
     const full = path.join(dir, it.name)
+    const rel = path.relative(base, full).replaceAll('\\', '/')
+    const profile = isBrowserProfilePath(rel)
+    if (mode === 'skipProfile' && profile) continue
+    if (mode === 'onlyProfile' && !profile) continue
     if (it.isDirectory()) {
-      walkDataDir(full, base, out)
+      walkEntries(full, base, out, mode)
     } else if (it.isFile()) {
       try {
-        out.push({
-          rel: path.relative(base, full).replaceAll('\\', '/'),
-          bytes: statSync(full).size
-        })
+        out.push({ rel, bytes: statSync(full).size })
       } catch { /* 竞态删除/权限 → 跳过该文件 */ }
     }
   }
+}
+
+/** 用户数据明细（不含浏览器档案树）——每次都现走，附件/日志这类会变的量必须新鲜 */
+export function collectUserDataEntries(): DataSizeEntry[] {
+  const out: DataSizeEntry[] = []
+  walkEntries(DATA_DIR, DATA_DIR, out, 'skipProfile')
+  return out
+}
+
+export interface BrowserCacheStats {
+  bytes: number
+  files: number
+}
+
+/**
+ * 浏览器档案树（userdata/ + session/）的体积与文件数：**同一进程内只数一遍**。
+ * 本机实测 21,103 个文件 / 801 MB，递归 stat 约 569ms（冷 692ms），而它不是用户的数据资产，
+ * 变动也不该被当成"面板里那个数变了" ⇒ 只在按「刷新」时重算（不新增持久化，重启后重新数一遍）。
+ */
+let browserCacheMemo: BrowserCacheStats | null = null
+
+export function getBrowserCacheStats(refresh: boolean): BrowserCacheStats {
+  if (refresh || !browserCacheMemo) {
+    const out: DataSizeEntry[] = []
+    walkEntries(DATA_DIR, DATA_DIR, out, 'onlyProfile')
+    browserCacheMemo = { bytes: out.reduce((s, e) => s + e.bytes, 0), files: out.length }
+  }
+  return browserCacheMemo
 }
 
 // ─── 报告聚合 ────────────────────────────────────────────────────
@@ -133,12 +181,17 @@ function readLastRun(key: string): number | null {
   }
 }
 
-/** 聚合数据健康度报告（DB 未解锁时 kb/backup/tasks 探测会抛错，由 safeHandle 兜底） */
-export function getDataHealthReport(): DataHealthReport {
-  // 1. 体量：一次全目录递归，按桶分类
-  const entries: DataSizeEntry[] = []
-  walkDataDir(DATA_DIR, DATA_DIR, entries)
-  const sizes = aggregateDataSizes(entries)
+/** 聚合数据健康度报告（DB 未解锁时 kb/backup/tasks 探测会抛错，由 safeHandle 兜底）
+ *  @param opts.refresh 面板上那颗「刷新」按钮：只影响浏览器缓存那一格是否重算（V4-Iter-177） */
+export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealthReport {
+  // 1. 体量：用户数据每次现走；浏览器档案树按进程缓存（21,103 个文件实测约 569ms）
+  const agg = aggregateDataSizes(collectUserDataEntries())
+  const cache = getBrowserCacheStats(!!opts.refresh)
+  const sizes: DataHealthReport['sizes'] = {
+    ...agg,
+    browserCacheBytes: cache.bytes,
+    browserCacheFiles: cache.files
+  }
 
   // 1b. Agent 运行账本（agent_traces）规模：总行数 + 单个会话最多行数。
   //     后者贵一些（200,000 行实测 16 ms，要逐行数），所以只在这一屏被打开时算一次。

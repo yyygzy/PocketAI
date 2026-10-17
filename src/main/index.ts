@@ -24,6 +24,7 @@
 import { app, BrowserWindow, dialog, powerMonitor } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { SESSION_DATA_DIR_NAME, USER_DATA_DIR_NAME } from '../shared/data-dirs'
 
 /** 应用图标路径：Windows 用 .ico（含 16/32/48/256 多尺寸，任务栏显示更清晰），
  *  其他平台用 256px png */
@@ -307,8 +308,8 @@ async function boot(): Promise<void> {
   bootMark('dirs', '目录/日志初始化')
 
   // ensureDirs 之后才设置路径：此时 DATA_DIR 一定是合法目录
-  app.setPath('userData', path.join(DATA_DIR, 'userdata'))
-  app.setPath('sessionData', path.join(DATA_DIR, 'session'))
+  app.setPath('userData', path.join(DATA_DIR, USER_DATA_DIR_NAME))
+  app.setPath('sessionData', path.join(DATA_DIR, SESSION_DATA_DIR_NAME))
 
   // IPC 必须在任何窗口（含解锁窗）创建/加载前就位：
   // 解锁窗挂载即会调用 encryption:unlock / menu:set-language 等通道，
@@ -519,7 +520,7 @@ async function boot(): Promise<void> {
 // Electron 的 process singleton lock 文件位于 userData 目录下，
 // 若不提前设置，会落到 %APPDATA%/<app-name>/lockfile，
 // 在沙箱/受限环境下写入被拒导致启动失败。提前锚定到便携 data 目录。
-const userDataDir = path.join(DATA_DIR, 'userdata')
+const userDataDir = path.join(DATA_DIR, USER_DATA_DIR_NAME)
 fs.mkdirSync(userDataDir, { recursive: true })
 app.setPath('userData', userDataDir)
 

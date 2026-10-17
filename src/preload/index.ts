@@ -341,8 +341,9 @@ const api = {
     payload: { days: number; content: string }
   ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.USAGE_EXPORT_CSV, payload),
-  getDataHealth: (): Promise<DataHealthReport> =>
-    ipcRenderer.invoke(IPC.DATA_HEALTH_GET),
+  // refresh=true：连浏览器缓存那一格也重算（面板那颗「刷新」按钮；平时走进程内缓存，V4-Iter-177）
+  getDataHealth: (refresh = false): Promise<DataHealthReport> =>
+    ipcRenderer.invoke(IPC.DATA_HEALTH_GET, refresh),
   // 本机判据屏（V4-Iter-146）：只读汇总，一次进来会现采一次显存（异步，不占事件循环）
   getLocalJudgement: (): Promise<LocalJudgementReport> =>
     ipcRenderer.invoke(IPC.LOCAL_JUDGEMENT_GET),

@@ -52,7 +52,7 @@ export function registerStewardHandlers(): void {
     },
     argsSchema(z.object({ content: z.string().min(1).max(REPORT_MAX_CHARS) }))
   )
-  safeHandle(IPC.DATA_HEALTH_GET, () => getDataHealthReport())
+  safeHandle(IPC.DATA_HEALTH_GET, (_e, refresh?: boolean) => getDataHealthReport({ refresh: !!refresh }))
   // 本机判据屏（V4-Iter-146）：现采一次显存是**异步**的，这条通道因此是 async；
   // 失败不降级成空报告——空报告会与"这台机器真的采不到"混成一回事（safeHandle 把失败转成
   // {ok:false,error} 返回值，渲染层按 hasIpcFailed 判，不许把失败画成数据）。

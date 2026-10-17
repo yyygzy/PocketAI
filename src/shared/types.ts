@@ -390,14 +390,24 @@ export interface KbIntegrityReport {
 
 /** 数据健康度报告（Settings「数据健康」面板）：数据体量 / 知识库索引状态 / 备份与维护任务 */
 export interface DataHealthReport {
-  /** 数据目录体积明细（字节）；dbBytes 含 WAL，dataDirBytes 为全目录递归合计 */
+  /**
+   * 体量明细（字节）。`userDataBytes` 是**面板上那颗「合计」**：不含浏览器档案树。
+   *
+   * 为什么要把 `userdata/` + `session/` 摘出去：那是 Electron 自己的 Chromium 档案树
+   * （Cache/Code Cache/GPUCache/blob_storage…），本机实测 21,103 个文件 / 801 MB，
+   * 而真正的用户数据资产只有几 MB——它们既让"合计"读起来不像"我的数据有多大"，
+   * 也是这份报告 cold 2,334ms / warm 592ms 的全部来源（递归 stat 那两棵树 569ms）。
+   * 单列一格如实显示，但**不进合计**；面板按「刷新」才会重算那一格（台账 V4-Iter-177）。
+   */
   sizes: {
-    dataDirBytes: number
+    userDataBytes: number
     dbBytes: number
     attachmentsBytes: number
     extensionsBytes: number
     logsBytes: number
     otherBytes: number
+    browserCacheBytes: number
+    browserCacheFiles: number
   }
   /**
    * Agent 运行账本（`agent_traces`）的规模：总行数 + 单个会话最多多少行。

@@ -40,6 +40,14 @@ describe('classifyDataEntry', () => {
     expect(classifyDataEntry('extensions\\mcp\\venv\\py.exe')).toBe('extensions')
     expect(classifyDataEntry('logs/boot/2026-09-29.log')).toBe('logs')
   })
+  it('Electron 的档案树归 browserCache（userdata/ 与 session/ 两棵）', () => {
+    expect(classifyDataEntry('userdata/Cache/index')).toBe('browserCache')
+    expect(classifyDataEntry('userdata\\Code Cache\\x')).toBe('browserCache')
+    expect(classifyDataEntry('session/Session/three')).toBe('browserCache')
+    // 反向对照：判据是相对路径首段，业务目录里恰好有个叫 userdata 的子目录不该被误分类
+    expect(classifyDataEntry('attachments/userdata/notcache')).toBe('attachments')
+    expect(classifyDataEntry('runtime/userdata/x')).toBe('other')
+  })
   it('其余归 other（含根级散文件与未知子目录）', () => {
     expect(classifyDataEntry('config.json')).toBe('other')
     expect(classifyDataEntry('runtime/python/python.exe')).toBe('other')
@@ -47,7 +55,7 @@ describe('classifyDataEntry', () => {
 })
 
 describe('aggregateDataSizes', () => {
-  it('按桶聚合，dataDirBytes 为全量合计', () => {
+  it('按桶聚合，userDataBytes 只算用户数据（浏览器档案树不进合计）', () => {
     const entries: DataSizeEntry[] = [
       { rel: 'app.db', bytes: 1000 },
       { rel: 'app.db-wal', bytes: 200 },
@@ -55,7 +63,9 @@ describe('aggregateDataSizes', () => {
       { rel: 'attachments/a.png', bytes: 300 },
       { rel: 'extensions/mcp/x', bytes: 400 },
       { rel: 'logs/a.log', bytes: 50 },
-      { rel: 'config.json', bytes: 10 }
+      { rel: 'config.json', bytes: 10 },
+      { rel: 'userdata/Cache/index', bytes: 9000 },
+      { rel: 'session/Code Cache/blob', bytes: 1000 }
     ]
     const s = aggregateDataSizes(entries)
     expect(s.dbBytes).toBe(1200) // 含 WAL
@@ -63,13 +73,17 @@ describe('aggregateDataSizes', () => {
     expect(s.extensionsBytes).toBe(400)
     expect(s.logsBytes).toBe(50)
     expect(s.otherBytes).toBe(510) // config.json 10 + 遗留 vectors.db 500
-    expect(s.dataDirBytes).toBe(2460)
+    expect(s.userDataBytes).toBe(2460)
+    expect(s.browserCacheBytes).toBe(10000)
+    expect(s.browserCacheFiles).toBe(2)
   })
   it('空目录全 0', () => {
     const s = aggregateDataSizes([])
-    expect(s.dataDirBytes).toBe(0)
+    expect(s.userDataBytes).toBe(0)
     expect(s.dbBytes).toBe(0)
     expect(s.otherBytes).toBe(0)
+    expect(s.browserCacheBytes).toBe(0)
+    expect(s.browserCacheFiles).toBe(0)
   })
 })
 

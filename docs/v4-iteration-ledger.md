@@ -66,6 +66,44 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-177 「数据目录合计」里 99.6% 是 Chromium 缓存：把档案树摘出去，顺手把面板打开的 600ms 变成 1.2ms
+
+- **来由**：用户选 ①（治 `getDataHealth()` 的 cold 2,334ms / warm 592ms）。动手前先量了一遍，发现**卡顿和"这个数字读不出我的数据有多大"是同一个根因**：
+  | 递归对象 | 文件数 | 字节 | 耗时（本机现测 3 次） |
+  |---|---|---|---|
+  | 改前：一次走完全目录 | 21,204 | 805,352,468 | 698.7 / 614.2 / 583.6 ms |
+  | 改后：只走用户数据（跳过档案树） | **25** | **4,457,511** | **1.2 / 1.2 / 1.2 ms** |
+  | 改后：只走档案树（`userdata/` + `session/`） | 21,179 | 800,894,957 | 658.8 / 583.2 / 577.7 ms |
+  这两棵是 Electron 自己的 Chromium 档案树（一层子项就是 `Cache/`、`Code Cache/`、`DawnGraphiteCache/`、`blob_storage/`、`DIPS`），
+  占 801/805 MB、21,103/21,127 个文件，而因为 `classifyDataEntry()` 只认 `attachments/extensions/logs`，它们**全被算进「其他」那一格**。
+- **口径由用户定**（AskUserQuestion 三档，选「剔除，并单独显示一格」）。**我上一条选项里有一半说错了，这里纠正**：
+  "不再递归那两棵树 ⇒ 600ms 掉到近 0"对**合计**成立，对**要显示缓存体积**这件事不成立——要报 801 MB 就必须数它。
+  所以本批实际做的是两件事：① 合计/占比条**只算用户数据**（1.2 ms，每次现走）；② 档案树那一格**同进程只数一遍**，
+  只有面板那颗「刷新」按钮传 `refresh=true` 才重算 ⇒ 首次仍要 ~580ms（诚实记账：这 580ms 省不掉，除非不报这个数），之后每次打开都是 1.2ms。
+- **代码落点**：
+  - 新 `src/shared/data-dirs.ts`（零依赖）：`USER_DATA_DIR_NAME` / `SESSION_DATA_DIR_NAME` / `isBrowserProfilePath(rel)`（判据取相对路径**首段**）。
+    `src/main/index.ts` 三处 `path.join(DATA_DIR, 'userdata' | 'session')` 改用它 ⇒ **名字只有一个出处**，将来改名不会两边不一致。
+  - `data-health.ts`：`DataBucket` 加 `browserCache`；`aggregateDataSizes` 返回 `userDataBytes`（不含缓存）+ `browserCacheBytes` + `browserCacheFiles`；
+    递归拆成 `collectUserDataEntries()`（skipProfile，每次现走）与 `getBrowserCacheStats(refresh)`（onlyProfile + 进程内 memo）；
+    `getDataHealthReport({ refresh })` 把两半拼起来。
+  - IPC/preload/面板：`DATA_HEALTH_GET` 收一个可选 boolean；preload 默认 `false`；`onClick={() => load(true)}`（原来写的是 `onClick={load}`，会把 MouseEvent 当第一个参数传进去——现在显式传）。
+  - 四语：新 `dh.browserCache`「浏览器缓存」/`dh.browserCacheValue`「{bytes} · {count} 个文件」（en files／ja 件／ko 개，各自沿用本屏已有的量词写法）；
+    **`dh.total` 从「数据目录合计」改成「数据合计」**（en 'Data total'／ja 'データ合計'／ko '데이터 합계'）——摘掉缓存之后，"目录合计"这四个字就成了界面在承诺一件代码里不再做的事。
+    用词反查：`缓存/cache/キャッシュ/캐시` 各 10 处 ✓、`合计` 3 处 ✓；`浏览器/ブラウザ/브라우저` 各仅 1 处（唯一一次出现在工具模板描述里）⇒ **本批把这三个词拿去组新复合词，是"沿用惯例"里最弱的一档，观感归你判**。
+- **用例 +2 文件 +13 例**：`tests/data-health-sizes-real-fs.test.ts` **7 例**（真临时目录：明细里不许出现档案树、嵌套的 `attachments/userdata/` 才是正确反向对照、memo 与 refresh 各自一条、报告两半拼起来）；
+  `tests/ipc-data-health-bridge.test.ts` **2 例**（真 preload 暴露的 api + 真注册的 handler，钉 `refresh` 这一跳——少写一处既不编译错也不让面板用例红）；
+  `tests/data-health.test.ts` +1（档案树分类 + 反向）并改写聚合那两条；`tests/renderer-data-health-perf.test.tsx` +3（那一行逐字、合计不掺缓存、只有刷新传 true）。
+- **变异 M1–M7**（一轮一处、`finally` 恢复、恢复后逐文件读回比对）：M1 取消 browserCache 分类 ⇒ 2 红；M2 缓存并回合计 ⇒ 1 红；M3 明细不再跳过档案树 ⇒ 2 红；M4 memo 失效（每次重数）⇒ 2 红；M5 报告不透传 refresh ⇒ 2 红；M6 刷新按钮传 false ⇒ 1 红；M7 preload 丢参数 ⇒ 1 红。
+  **两条第一轮没咬住的**：① M3 的锚点当时还不存在（我写的是三元一行式 `mode === 'skipProfile' ? profile : !profile`，脚本按规矩**跳过而不是猜**，改成两行显式判据后才有靶子）；
+  ② M5 第一次**存活**——因为 ⑥ 之前我已经用 `getBrowserCacheStats(true)` 把 memo 刷成新值，报告即便忽略 refresh 也拿得到同一个数 ⇒ 改成"⑤ 带 refresh 的报告必须现算、⑥ 不带的必须不动"两条互相对照才咬住。
+- **这是用户可见的口径变化，别当回归改回去**：这台机器上「合计」会从 768 MB 变成 **4.25 MB**（4,457,511 字节：主库 3,100,672 + 日志 549,607 + 根级散文件 807,232），
+  「其他」那格从 764 MB 变成 **0.77 MB**，同时多出一行「浏览器缓存 764 MB · 21,179 个文件」。
+  验收 **B100**（🔶：CI 证了形状与接线，真机没读——须重启 dev）。清单现数（脚本数 `^\| [AB]\d+ \| `）：**总 109 行，✅ 60 / 🔶 45 / ⬜ 3 / 🔁 1**，未收口 **47 → 48**。**没做**：清理缓存的入口（要另立批次，且删 Chromium 缓存涉及运行时文件锁，不能顺手）。
+- **顺带现查到一条仓库级的类型盲区（证据 `tsconfig.json:27`）**：`include` 是 `["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "electron.vite.config.ts"]`——
+  **没有 `tests/**/*.tsx`** ⇒ 全部渲染层挂载用例（60+ 个 `.tsx`）**从来没被 `npm run typecheck` 检查过**。本轮我自己在 `.tsx` 里少传一个必填参数（`mount()`）也没报错，是靠运行期 `perfHistory.length` 抛错才发现的；
+  另一个旁证：`report()` 那份桩里躺着一个 107 就删掉的字段 `vectorDbBytes`，如果 `.tsx` 在检查范围内，多余属性早就让 typecheck 红了。⇒ 单独成一批（178）：把 include 补上、清掉暴露出来的错误。
+- 全量：typecheck 0 / vitest **322 文件 3851 用例**（+2 文件 +13 例）/ build 三端（main 4.53s、preload 87ms、renderer 18.93s）。`out/` 已重写 ⇒ B100 要看须重启 dev。
+
 ### V4-Iter-176 B99 真机闭环：你那两个数第一次被读到（`rows=128`、`同一会话最多 65`），四语都没被 `truncate` 吃掉（代码零改动）
 
 - **来由**：用户选「先重启 dev 跑 B99，把你库里那两个数读回来再提交」。**我没有索取也没有看过主密码**——解锁窗由用户在自己的窗口里输入，我只事后核对日志里那行 `DB 解锁成功`。
