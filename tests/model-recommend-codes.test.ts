@@ -176,3 +176,76 @@ describe('⑤ 并列分隔符一套到底（ja）', () => {
     expect(withMiddleDot.length, 'ja 的 modelRec 里一个「・」都没有 ⇒ 规则退化成只查斜杠').toBeGreaterThanOrEqual(5)
   })
 })
+
+// ── 183：B93 剩下那 55 条逐条判完后，把"抄错模板"这一族变成能数的规则 ──────────
+// 起因是这一轮量出的四处形状问题，全都是"从 zh/ja 的模板顺手抄过去"：
+//   ko 用全角括号（）14 条——而 ko.ts 其它 247 处括号一处不用全角；
+//   ko 混用日语中黑「・」2 条与韩语间隔号「·」；ko 另有 2 条把 " / " 当分隔符（同本其它地方用「/」不空格）；
+//   en 有 3 条把半角 " - " 当破折号，而 en.ts 其余用 " — "。
+// 这些都能数 ⇒ 不该只靠这一轮人肉扫一遍就过去。
+describe('⑧ 括号／破折号／中黑按各语自己的惯例（ko／en，zh·ja 作反向对照）', () => {
+  const values = (lang: Lang): Array<[string, string]> =>
+    (Object.entries(DICTS[lang] as Record<string, string>) as Array<[string, string]>).filter(([k]) => k.startsWith('modelRec.'))
+
+  it('ko 不许出现全角括号与日语中黑（那是 zh/ja 的排版，不是韩语的）', () => {
+    const bad = values('ko')
+      .filter(([, v]) => /\uff08|\uff09|\u30fb/.test(v))
+      .map(([k]) => k)
+    expect(bad, `ko 里这些条还带全角括号或「・」：${bad.join(', ')}`).toEqual([])
+  })
+
+  it('反向对照：全角括号在 zh/ja 的这 60 条里确实大量在用 ⇒ 上一条不是全站禁令', () => {
+    expect(values('zh').filter(([, v]) => v.includes('\uff08')).length).toBeGreaterThanOrEqual(10)
+    expect(values('ja').filter(([, v]) => v.includes('\uff08')).length).toBeGreaterThanOrEqual(10)
+  })
+
+  it('正向对照：ko 改用半角 " (" 与「·」之后确实还在用 ⇒ 第一条不是恒真', () => {
+    expect(values('ko').filter(([, v]) => v.includes(' (')).length, 'ko 的 modelRec 里一处半角括号都没有 ⇒ 规则空转').toBeGreaterThanOrEqual(5)
+    expect(values('ko').filter(([, v]) => v.includes('\u00b7')).length, 'ko 里用间隔号的条目太少 ⇒ 中黑那条规则空转').toBeGreaterThanOrEqual(3)
+  })
+
+  it('ko 的 " / " 只许出现在白名单（与 ⑤ 同一把尺子，白名单也不许腐烂）', () => {
+    const SLASH_OK = ['modelRec.warn.no_gpu_accel']
+    const hits = values('ko')
+      .filter(([, v]) => v.includes(' / '))
+      .map(([k]) => k)
+      .sort()
+    expect(hits, `ko 里把 " / " 当分隔符用了：${hits.join(', ')}`).toEqual(SLASH_OK)
+    for (const k of SLASH_OK) {
+      expect((DICTS.ko as Record<string, string>)[k], `白名单里的 ${k} 已不含 " / " ⇒ 白名单该删`).toContain(' / ')
+    }
+  })
+
+  it('en 不许把半角 " - " 当破折号；同族必须真的在用 " — "', () => {
+    const bad = values('en')
+      .filter(([, v]) => v.includes(' - '))
+      .map(([k]) => k)
+    expect(bad, `en 里这些条用了 " - "：${bad.join(', ')}`).toEqual([])
+    expect(values('en').filter(([, v]) => v.includes(' \u2014 ')).length, 'en 的 modelRec 里没有 em dash ⇒ 只查连字符等于没查').toBeGreaterThanOrEqual(3)
+  })
+})
+
+// 183 的另一条：ko 曾把 `저사양`（= `tier.low` 的韩语名）拿去说"低内存机器"，
+// 于是同一屏上「低配置」和「低内存」是同一个词。可数，所以钉成规则。
+// zh 不在规则内：`reason.llama32_1b_last_resort` 的「最低配置」本身就**包含**「低配置」，
+// 那是子串撞车不是概念撞车——而最后那条断言本身就证明这把尺子抓得到东西。
+describe('⑨ tier 名不许被借去指别的概念（ko／ja／en）', () => {
+  for (const lang of ['ko', 'ja', 'en'] as Lang[]) {
+    it(`${lang}：非 tier 的取值里不许出现任何 tier 名`, () => {
+      const dict = DICTS[lang] as Record<string, string>
+      const entries = Object.entries(dict).filter(([k]) => k.startsWith('modelRec.'))
+      const tiers = entries.filter(([k]) => k.startsWith('modelRec.tier.'))
+      const others = entries.filter(([k]) => !k.startsWith('modelRec.tier.'))
+      const bad: string[] = []
+      for (const [tk, tv] of tiers) {
+        for (const [ok, ov] of others) if (ov.includes(tv)) bad.push(`${ok} 含 ${tk} 的值「${tv}」`)
+      }
+      expect(bad, bad.join('；')).toEqual([])
+    })
+  }
+
+  it('zh 已知一处子串撞车（最低配置 ⊇ 低配置）⇒ 规则的范围是划出来的，不是没想到', () => {
+    const dict = DICTS.zh as Record<string, string>
+    expect(dict['modelRec.reason.llama32_1b_last_resort']).toContain(dict['modelRec.tier.low'])
+  })
+})
