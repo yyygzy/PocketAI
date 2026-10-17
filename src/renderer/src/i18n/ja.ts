@@ -911,6 +911,8 @@ export const ja: Record<string, string> = {
   'dh.extensions': '拡張（MCP/venv）',
   'dh.logs': 'ログ',
   'dh.other': 'その他',
+  'dh.traces': 'Agent ステップ詳細',
+  'dh.traces.value': '{rows} ステップ · 同一会話で最大 {max} ステップ',
   'dh.kbStatus': 'ナレッジベースインデックス状態',
   'dh.kbTotal': '全 {count} 件',
   'dh.noKbDocs': 'ナレッジベースのドキュメントはありません',

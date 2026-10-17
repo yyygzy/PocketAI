@@ -209,6 +209,38 @@ export const agentTraceRepo = {
   },
 
   /**
+   * 数据健康面板用的两个规模数（V4-Iter-174）。
+   *
+   * 为什么是这两个而不是别的：173 那轮实测里，`rows` 决定这张表的体积与「没有索引时」的读取成本，
+   * 而 `maxRowsInOneConversation` 才是复合索引 `(conversation_id, created_at)` 那条收益的自变量
+   * （同一张 200,000 行的表，把某一个会话堆到 50,000 行时只建单列要多花 20–48 ms）。
+   * 用户界面上原先**任何一处都不报这两个数**（`health.ts` 只数 messages/conversations/kb_chunks），
+   * 所以那批毫秒数落不到真实库上——这一格就是那个观察口。
+   *
+   * 两条都走 v49 那支复合索引（覆盖索引扫，`GROUP BY` 不需要临时 B 树），但**成本不对称**，
+   * 本机合成 200,000 行实测：`COUNT(*)` **0.10 ms**，而那条按会话取 max 的 **16.2 ms**
+   * （它必须逐行数，不随行数变平；最坏"全表都在一个会话里"也还是 14.5 ms）。
+   * 一次面板加载多付约 19 ms —— 比这块面板自己那行慢事件的 3000 ms 告警线低两个量级，
+   * 且只在用户点开「数据健康」或按刷新时跑一次，所以不做缓存（缓存要新增持久化格式）。
+   */
+  countForHealth(): { rows: number; maxRowsInOneConversation: number } {
+    try {
+      const db = dbService.getHandle()
+      const rows = (db.prepare('SELECT COUNT(*) AS n FROM agent_traces').get() as { n: number }).n
+      const max = db.prepare(
+        `SELECT MAX(n) AS n FROM (SELECT COUNT(*) AS n FROM agent_traces GROUP BY conversation_id)`
+      ).get() as { n: number | null }
+      return { rows, maxRowsInOneConversation: max?.n ?? 0 }
+    } catch (e) {
+      if (isTableMissingError(e)) {
+        warnTableMissingOnce()
+        return { rows: 0, maxRowsInOneConversation: 0 }
+      }
+      throw e
+    }
+  },
+
+  /**
    * 清理指定 requestId 的 trace。
    *
    * **全仓只有两条路径会删 trace**：这里（「重新运行」把上一次那几步清掉）与

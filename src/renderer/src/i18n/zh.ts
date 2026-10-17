@@ -964,6 +964,8 @@ export const zh: Record<string, string> = {
   'dh.extensions': '扩展（MCP/venv）',
   'dh.logs': '日志',
   'dh.other': '其他',
+  'dh.traces': 'Agent 分步明细',
+  'dh.traces.value': '{rows} 步 · 同一会话最多 {max} 步',
   'dh.kbStatus': '知识库索引状态',
   'dh.kbTotal': '共 {count} 篇文档',
   'dh.noKbDocs': '暂无知识库文档',

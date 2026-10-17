@@ -14,6 +14,7 @@ import { DATA_DIR } from '../portable'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
+import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
 import { loadWebDAVConfig } from '../backup/backup-service'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { errMsg } from '../error'
@@ -139,6 +140,10 @@ export function getDataHealthReport(): DataHealthReport {
   walkDataDir(DATA_DIR, DATA_DIR, entries)
   const sizes = aggregateDataSizes(entries)
 
+  // 1b. Agent 运行账本（agent_traces）规模：总行数 + 单个会话最多行数。
+  //     后者贵一些（200,000 行实测 16 ms，要逐行数），所以只在这一屏被打开时算一次。
+  const traces = agentTraceRepo.countForHealth()
+
   // 2. 知识库索引状态 + 完整性探测（探测整体容错：失败按全空处理，不阻断报告）
   const docs = kbDocRepo.listAll()
   const kbNameById = new Map(kbRepo.list().map((k) => [k.id, k.name]))
@@ -195,5 +200,5 @@ export function getDataHealthReport(): DataHealthReport {
   // 7. 跨会话慢事件（从日志尾部聚合，只下发统计行）
   const perfHistory = getPerfHistory()
 
-  return { sizes, kb, backup, tasks, boot, recentPerf, perfHistory }
+  return { sizes, traces, kb, backup, tasks, boot, recentPerf, perfHistory }
 }

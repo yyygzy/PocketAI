@@ -19,7 +19,11 @@ const summary = (over: Partial<PerfSummary> = {}): PerfSummary => ({
   ...over
 })
 
-function report(perfHistory: PerfSummary[], kbOver: Partial<DataHealthReport['kb']> = {}): DataHealthReport {
+function report(
+  perfHistory: PerfSummary[],
+  kbOver: Partial<DataHealthReport['kb']> = {},
+  tracesOver: Partial<DataHealthReport['traces']> = {}
+): DataHealthReport {
   return {
     sizes: {
       dataDirBytes: 20 * 1024 * 1024,
@@ -30,6 +34,7 @@ function report(perfHistory: PerfSummary[], kbOver: Partial<DataHealthReport['kb
       logsBytes: 512 * 1024,
       otherBytes: 0
     },
+    traces: { rows: 12340, maxRowsInOneConversation: 1200, ...tracesOver },
     kb: {
       total: 2,
       byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 2, error: 0 },
@@ -46,9 +51,13 @@ function report(perfHistory: PerfSummary[], kbOver: Partial<DataHealthReport['kb
   }
 }
 
-async function mount(perfHistory: PerfSummary[], kbOver: Partial<DataHealthReport['kb']> = {}): Promise<void> {
+async function mount(
+  perfHistory: PerfSummary[],
+  kbOver: Partial<DataHealthReport['kb']> = {},
+  tracesOver: Partial<DataHealthReport['traces']> = {}
+): Promise<void> {
   stubPocketai({
-    getDataHealth: () => report(perfHistory, kbOver),
+    getDataHealth: () => report(perfHistory, kbOver, tracesOver),
     cleanKbOrphans: () => ({ removedVectors: 0, removedChunks: 0 }),
     reindexKbDocs: () => ({ enqueued: 0 }),
     deduplicateKbDocs: () => ({ removed: 0 })
@@ -113,5 +122,28 @@ describe('数据健康面板 · 向量索引卡片（V4-Iter-172 补）', () => 
     await mount([], { vectorIndex: { count: 0, dims: [1024] } })
     expect(screen.getByText('未建立')).toBeTruthy()
     expect(screen.queryByText(/0 条/)).toBeNull()
+  })
+})
+
+// —— V4-Iter-174：Agent 运行账本的规模那一行 ——
+// 173 那批毫秒数要落到真实库上，靠的就是这两个数出现在界面上；所以这里钉的是
+// 「面板确实把报告里的 traces 渲染出来了、而且两个数各归各的位置」。
+describe('数据健康面板 · Agent 分步明细（V4-Iter-174）', () => {
+  it('标签 +「12,340 步 · 同一会话最多 1,200 步」逐字出现（两个数取自两个字段）', async () => {
+    await mount([], {}, { rows: 12340, maxRowsInOneConversation: 1200 })
+    expect(screen.getByText('Agent 分步明细')).toBeTruthy()
+    expect(screen.getByText('12,340 步 · 同一会话最多 1,200 步')).toBeTruthy()
+  })
+
+  it('一行都没跑过时复用 Agent 面板那句「暂无分步明细」，不摆 0 步', async () => {
+    await mount([], {}, { rows: 0, maxRowsInOneConversation: 0 })
+    expect(screen.getByText('暂无分步明细')).toBeTruthy()
+    expect(screen.queryByText(/0 步/)).toBeNull()
+  })
+
+  it('rows=0 但 max 非 0（库里被清空过）也走空态——判据是行数，与向量那张卡同形', async () => {
+    await mount([], {}, { rows: 0, maxRowsInOneConversation: 500 })
+    expect(screen.getByText('暂无分步明细')).toBeTruthy()
+    expect(screen.queryByText(/500/)).toBeNull()
   })
 })

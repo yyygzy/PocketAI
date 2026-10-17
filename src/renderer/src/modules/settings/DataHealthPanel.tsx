@@ -9,6 +9,7 @@ import { useConfirm } from '../../components/ConfirmDialog'
 import { reportIpcError } from '../../utils/ipc'
 import { formatBytes } from '../../utils/format'
 import { formatVectorIndex } from '../../utils/vector-index'
+import { formatTraceLedger } from '../../utils/trace-ledger'
 
 const STATUSES: KbDocStatus[] = ['pending', 'parsing', 'indexing', 'ready', 'error']
 
@@ -73,7 +74,7 @@ export const DataHealthPanel: React.FC = () => {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 
-  const { sizes, kb, backup, tasks, boot, recentPerf, perfHistory } = report
+  const { sizes, traces, kb, backup, tasks, boot, recentPerf, perfHistory } = report
   const integrity = kb.integrity
   const integrityOk =
     integrity.orphanVectors === 0 &&
@@ -97,6 +98,11 @@ export const DataHealthPanel: React.FC = () => {
         <BarRow label={t('dh.extensions')} ratio={sizes.dataDirBytes > 0 ? sizes.extensionsBytes / sizes.dataDirBytes : 0} value={formatBytes(sizes.extensionsBytes)} />
         <BarRow label={t('dh.logs')} ratio={sizes.dataDirBytes > 0 ? sizes.logsBytes / sizes.dataDirBytes : 0} value={formatBytes(sizes.logsBytes)} />
         <BarRow label={t('dh.other')} ratio={sizes.dataDirBytes > 0 ? sizes.otherBytes / sizes.dataDirBytes : 0} value={formatBytes(sizes.otherBytes)} />
+      </div>
+
+      {/* Agent 运行账本的规模（探测见 agent-trace.repo.countForHealth；为什么报这两个数见台账 V4-Iter-173） */}
+      <div className="mb-4 space-y-1">
+        <Row label={t('dh.traces')} value={formatTraceLedger(traces, t)} />
       </div>
 
       {/* 知识库索引状态 */}

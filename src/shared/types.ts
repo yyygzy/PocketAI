@@ -399,6 +399,12 @@ export interface DataHealthReport {
     logsBytes: number
     otherBytes: number
   }
+  /**
+   * Agent 运行账本（`agent_traces`）的规模：总行数 + 单个会话最多多少行。
+   * 后一个不是凑的：复合索引 `(conversation_id, created_at)` 的收益自变量是**单个会话的行数**，
+   * 不是整张表多大（2026-10-17 合成实测，台账 V4-Iter-173）——没有这两个数，那批毫秒数落不到真实库上。
+   */
+  traces: { rows: number; maxRowsInOneConversation: number }
   /** 知识库文档索引状态分布 + 失败文档清单（最多 10 条，创建时间倒序） */
   kb: {
     total: number

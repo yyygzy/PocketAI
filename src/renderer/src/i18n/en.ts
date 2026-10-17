@@ -964,6 +964,8 @@ export const en: Record<string, string> = {
   'dh.extensions': 'Extensions (MCP/venv)',
   'dh.logs': 'Logs',
   'dh.other': 'Other',
+  'dh.traces': 'Agent step details',
+  'dh.traces.value': '{rows} steps · max {max} in one conversation',
   'dh.kbStatus': 'Knowledge base index status',
   'dh.kbTotal': '{count} documents',
   'dh.noKbDocs': 'No knowledge base documents',

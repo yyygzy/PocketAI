@@ -911,6 +911,8 @@ export const ko: Record<string, string> = {
   'dh.extensions': '확장(MCP/venv)',
   'dh.logs': '로그',
   'dh.other': '기타',
+  'dh.traces': 'Agent 단계 상세',
+  'dh.traces.value': '{rows}단계 · 한 세션 최대 {max}단계',
   'dh.kbStatus': '지식 베이스 인덱스 상태',
   'dh.kbTotal': '총 {count}개 문서',
   'dh.noKbDocs': '지식 베이스 문서가 없습니다',
