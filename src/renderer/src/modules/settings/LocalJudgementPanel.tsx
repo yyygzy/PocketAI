@@ -29,11 +29,16 @@ const SOURCE_KEY: Record<JudgementSourceCode, string> = {
  * 三档要**第一眼就分得开**，所以不只靠字色（真机截图上"测得 / 没读到"都是灰族，分不出来）：
  * 填充、边框样式、记号三条冗余通道一起给。记号用同族隐喻——实心=有数据、三角=保守、空心=没数据；
  * 刻意不用 ✓：那个符号读起来像"已验证可用"，正是上面那条纪律要挡的误读。
+ *
+ * 165：字色另外过了一道 WCAG 小字线（10px ⇒ 4.5:1）。改前真机量到「没读到 ○」亮 3.07 / 暗 2.47、
+ * 「保守默认 ▲」亮 1.90（那一档本机根本不出现，所以一直没人撞见），只有「测得 ●」两主题都过。
+ * ⇒ 这两档改走 `--color-text-weak` / `--color-warning-strong`（改后亮 4.86 / 5.18、暗 6.81 / 6.85），
+ * 数值由 `tests/judgement-badge-contrast.test.ts` 直接从 `theme.css` 算，不靠我抄。
  */
 const SOURCE_TONE: Record<JudgementSourceCode, string> = {
   measured: 'bg-[var(--color-inline-code-bg)] border-[var(--color-border)] text-[var(--color-text)]',
-  'no-measurement': 'bg-[var(--color-warning-bg)] border-[var(--color-border)] text-[var(--color-warning)]',
-  unavailable: 'border-dashed border-[var(--color-border)] text-[var(--color-text-muted)]'
+  'no-measurement': 'bg-[var(--color-warning-bg)] border-[var(--color-border)] text-[var(--color-warning-strong)]',
+  unavailable: 'border-dashed border-[var(--color-border)] text-[var(--color-text-weak)]'
 }
 
 const SOURCE_GLYPH: Record<JudgementSourceCode, string> = {

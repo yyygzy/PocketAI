@@ -26,6 +26,11 @@
   /* ── 文字 ── */
   --color-text: #cdd6f4;           /* Text */
   --color-text-muted: #6c7086;     /* Overlay0 */
+  /* 徽标那一档"比正文次一级但仍要读得清"的颜色：muted 在小字上只有 2.47:1（WCAG 小字要 4.5），
+     所以判据屏那三档徽标单独用它，不动 muted（muted 还管着大段的解释文字） */
+  --color-text-weak: #bac2de;      /* Subtext1 */
+  /* 琥珀色在小字 + 半透明琥珀底上只有 6.85:1（暗色够用），亮色侧同族只有 1.90:1 ⇒ 亮色另给一支深的 */
+  --color-warning-strong: #f9e2af;
 
   /* ── 半透明覆盖 ── */
   --color-hover-overlay: rgba(255, 255, 255, 0.05);
@@ -76,6 +81,11 @@ html.light {
   /* ── 文字 ── */
   --color-text: #4c4f69;           /* Text */
   --color-text-muted: #7c7f93;     /* Overlay0 */
+  /* 见暗色那一段的注释：判据屏的三档徽标要"次一级但读得清"，muted 在 10px 字上只有 3.07:1 */
+  --color-text-weak: #5c5f77;      /* Subtext1 */
+  /* 亮色侧琥珀文字配 10% 琥珀底只有 1.90:1 ⇒ 徽标用这支压深的（实测 5.18:1）；
+     刻意不改 --color-warning 本身：它还管着横幅、警示条那些大字号的场合 */
+  --color-warning-strong: #7a4f00;
 
   /* ── 半透明覆盖 ── */
   --color-hover-overlay: rgba(0, 0, 0, 0.04);

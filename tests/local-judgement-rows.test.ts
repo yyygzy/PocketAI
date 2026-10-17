@@ -100,7 +100,7 @@ describe('现采显存：只作观察', () => {
 describe('跨模型角色的两条合取：哪一条没过就说什么（150 起按落点摊成三态）', () => {
   const smallCtx = planLocalCapacity({ totalVramMiB: 4096, numCtxSetByApp: true })
 
-  it('①没过（应用从不设 num_ctx）+ 不碰检索 ⇒ 取值是"只允许云端落点"，码仍是那两条', () => {
+  it('①没过（应用从不设 num_ctx）+ 不碰检索 ⇒ 取值是 cloud-only（界面上那句 164 起写「只能跑在云端」），码仍是那两条', () => {
     const rows = buildLocalJudgementRows(report())
     const r = row(rows, 'distinct-roles:不碰知识库的助手')
     // 这一格是 150 的新事实：容量档没过**不再把整条路关死**——云子不占这张卡，判据对它没有对象

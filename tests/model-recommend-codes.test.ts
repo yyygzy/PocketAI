@@ -145,3 +145,34 @@ describe('④ 清单不许漂', () => {
     expect(total).toBe(60)
   })
 })
+
+// 165：并列分隔符在同一本字典里只能有一套说法（ja 用「・」）。
+// 起因是我自己译的两条用了「 / 」（常駐 / 超即応、極小 VRAM / CPU），而同本的 `cpu_entry` 写的是「CPU のみ・メモリ…」。
+// 白名单只放**产品名里本来就带斜杠**的那一条，并写明理由——不加白名单的话这条规则会在下次遇到 "CUDA / MPS" 时被整条关掉。
+describe('⑤ 并列分隔符一套到底（ja）', () => {
+  const SLASH_OK = { 'modelRec.warn.no_gpu_accel': 'CUDA / MPS GPU 是产品名并列，不是本规则管的分隔符' }
+
+  it('ja 的 modelRec 取值里 " / " 只许出现在白名单那几条', () => {
+    const dict = DICTS.ja as Record<string, string>
+    const hits = Object.keys(dict)
+      .filter((k) => {
+        const v = dict[k]
+        return k.startsWith('modelRec.') && typeof v === 'string' && v.includes(' / ')
+      })
+      .sort()
+    expect(hits, `这些条把「 / 」当并列分隔符用了：${hits.join(', ')}`).toEqual(Object.keys(SLASH_OK).sort())
+  })
+
+  it('正向对照：白名单不许是空集合（否则上一条恒真），且「・」确实在用', () => {
+    expect(Object.keys(SLASH_OK).length).toBeGreaterThan(0)
+    const dict = DICTS.ja as Record<string, string>
+    for (const k of Object.keys(SLASH_OK)) {
+      expect(dict[k], `白名单里的 ${k} 已经不含 " / " 了，白名单该删`).toContain(' / ')
+    }
+    const withMiddleDot = Object.keys(dict).filter((k) => {
+      const v = dict[k]
+      return k.startsWith('modelRec.') && typeof v === 'string' && v.includes('・')
+    })
+    expect(withMiddleDot.length, 'ja 的 modelRec 里一个「・」都没有 ⇒ 规则退化成只查斜杠').toBeGreaterThanOrEqual(5)
+  })
+})

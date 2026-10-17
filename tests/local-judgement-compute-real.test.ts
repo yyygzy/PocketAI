@@ -183,7 +183,7 @@ describe('第二条合取按助手算（150 起还要看 embedding 落在哪）'
     expect(cpu.childUsesRetrieval, '绑了库，检索链照走').toBe(true)
     expect(cpu.retrievalHitsLocalEndpoint, '内置那路是 onnxruntime CPU 推理 ⇒ 不占这张卡').toBe(false)
     expect(cpu.reasons, '不该再拿 M10 当它的理由').not.toContain('retrieval-chain-exclusive')
-    // 今天 ① 恒不过 ⇒ ①只关本地落点：云子不占本机显存，所以是"只允许云端落点"而不是"关死"
+    // 今天 ① 恒不过 ⇒ ①只关本地落点：云子不占本机显存，所以取值是 cloud-only（界面 164 起写「只能跑在云端」）而不是"关死"
     expect(cpu.reasons).toContain('distinct-roles-not-measured')
     expect(cpu.scope).toBe('cloud-only')
     expect(none.scope).toBe('cloud-only')

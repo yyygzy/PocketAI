@@ -184,6 +184,8 @@ export function buildLocalJudgementRows(report: LocalJudgementReport): Judgement
       labelKey: 'judgement.distinctRoles',
       /**
        * 150：这一行的取值是**三态**（落点无关地允许 / 只允许云端落点 / 不允许），不再是"允许/不允许"。
+       * 164：界面上那三个值改成各自语言的自然说法（zh「允许（本地、云端都能跑）／只能跑在云端／不允许」），
+       *       "落点"这个行话不再出现在任何一本字典的取值里，只在本文件当解释用——三态的**形状**没变，变的只是措辞。
        * 三个键在这里写成字面量而不是拼出来——界面的静态映射（`DISTINCT_SCOPE_KEY`）与逐键字典用例
        * 都依赖"键看得见"（146 的 `judgement.reason.${码}` 就是拼出来才漏扫的）。
        */
