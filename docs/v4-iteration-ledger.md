@@ -66,6 +66,25 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-162 B88 真机闭环（本地父 + 云的子，**代码零改动**）：这一趟通了，并量出「耗时是整棵树的、token 不是」
+
+- **为什么这批没有代码**：用户 2026-10-17 选了「重启 dev 带调试端口」，让我直接驱动**他那个已配好云端 key 的实例**（不重填凭据、不看解锁窗）。B88 要证的端到端在 CI 里造不出来（要真的 4GiB 本地推理 + 真的云端账号）。
+- **起法与一条环境事实**：`npm run dev -- --remoteDebuggingPort=9223`（electron-vite 的**一等选项**，`node_modules/electron-vite/dist/cli.js:46-47` 把它写进 `REMOTE_DEBUGGING_PORT`，`chunks/lib-ClgyQuZx.js:207-209` 在 dev 里拼成 `--remote-debugging-port`）。第一次起时**秒退（exit 0）**——不是崩，是 `src/main/index.ts:526` 的单实例锁：旧实例还活着 ⇒ 新实例拿不到锁就退出。**新增一条口径**：用户 dev 在跑时，清场只按"我的命令行匹配 `C:\\PocketAI`"精确挑进程，绝不通杀 electron（renderer/gpu/utility 子进程也在命令行里带这个路径，所以一条过滤器就够）。
+- **动过的两个开关**（都在用户实例的真实库里，改前值如实记）：`ollama-local::qwen2.5:3b-instruct`
+  · 「走文本协议」**改前是开着**（`getAgentTextProtocol()` 返回 `["ollama-local::qwen2.5:3b-instruct"]`）⇒ 我关掉。理由不是嫌它碍事：142/152 那条闸门写明**文本协议被强制的模型不允许委派**，而本机 10-15 实测 3b 走文本协议 0/3、走原生 tools 4/4；
+  · 「允许顺序委派」**改前是关**（`delegationEnabled:false`，判定仍是 `native_tools_ok 3/3`、`stale:false`）⇒ 我勾上。⇒ **这两条现在还是改后的状态，要不要拨回去归用户。**
+- **判据那半读到的**（`getLocalJudgement()`）：容量 `bucket:'entry-4g'`、`maxConcurrentChatSlots:1`、`rolesMayUseDistinctModels:false`，但 9 个助手的 `roleVerdicts[].scope` 全是 **`cloud-only`**（原因码 `distinct-roles-not-measured` + `distinct-roles-allowed`）——跨模型角色**不是被一律关掉**，而是"只放云端落点"。界面上那一行逐字：**「跨模型角色（9 个助手取值相同）｜只允许云端落点｜●测得｜没有「多模型同驻」的实测依据 · 跨模型角色的两条合取都成立 · 跨模型同驻只在显式设小上下文时才成立」**，「显存实占采于 13:10:53」那行随刷新走。
+- **那趟编排（真链路，逐个数）**：助手 `asst-coder`、父落点 `ollama-local / qwen2.5:3b-instruct`、任务里点名"必须派一次、`model` 填 glm-4.6"。
+  · 父 3 步：`llm` 33.3s（in **3117** / out 75）→ `tools:delegate_task` 38.8s → `final` 21.9s（in **3435** / out 109）；
+  · 控制器发出的参数逐字 `{"role":"reviewer","model":"glm-4.6","task":"请审阅这段方案…"}` ⇒ **`model` 这个可选参数被 3b 正确填上，且填的是清单里那条云端落点**；
+  · 子会话 `27dc5731-7580-…`：`provider=969b26b5…（智谱 GLM）/ model=glm-4.6`、1 步 `final` 19.2s（in 2639 / out 458）、标题带「你是审校子代理…」＝`role_key=reviewer`、trace 的 `parent_request_id` 指回父的 request（尾号 319405）；
+  · 父拿到的工具结果逐字以「【子代理 reviewer 的回答（独立会话 27dc5731）】」开头，最终答复三条结论。**没有**出现 `DELEGATE_DISTINCT_BLOCKED`／`DELEGATE_BAD_TARGET`，也没有审批弹窗（`agent.delegate` 是 `permission:'auto'`）。
+- **界面上量到的**（CDP 走真事件路径，非 jsdom）：卡片带 `data-delegate-role="reviewer"`、文案逐字「子代理 · 审校」、`getBoundingClientRect()` 宽高都 >0（真的看得见）；分步明细里 `✅ 工具结果: delegate_task`、`输入 3,117 / 输出 75`、`输入 3,435 / 输出 109` 逐条在场；标题行「3 步 · 耗时 94.0s · 6,736 tokens」。子会话**不出现在列表里**（`conversationRepo.list` 默认 `includeSubSessions` 关，与 144/145 的口径一致）。
+- **⚠️ 撞出一条未修的说法（这批只记不改）**：**耗时是整棵编排树的，token 不是**。`agent-trace.repo.ts:138-141 latestStatsByConversation → statsByRequest`，SQL 是 `WHERE request_id = ?`（`:123-128`）⇒ 子的 3,097 tokens 不在 `6,736` 里（整棵树实际烧了 **9,833**）。耗时那条反而是全的，因为父的 `tools` 步 38.8s 物理上包住了子 run ⇒ **"94.0s 是全程、6,736 只是父自己那两份"** 这种混搭比两个都不含更容易骗人。而 v48 加 `parent_request_id` 时 `types.ts:875-878` 写的就是"成本/耗时按整棵编排树聚合**就靠这一列**"——**这一列一直在写、一直没人读**（全仓只有 `engine.ts:89` 塞值、`agent-trace.repo.ts:65` 读回记录，没有任何 SQL 按它聚合）。**不是全 blind**：`usage_records` 那侧是全的（子的 3,097 在「用量统计」里逐条看得见），少的是 Agent 面板那两个数与"会话累计"。
+- **顺带把 M14 那个估算校准了**（157 记的是 `estimateTokens` 给的 3,851 裸 / 4,469 全）：真 tokenizer 报的是**每步 prompt 3,117 / 3,435**，用户自己那趟是 3,553→3,889 递增 ⇒ **`estimateTokens` 对以中文为主的上下文高估约 15–20%**。M14 的结论方向不变（静态开销仍是四千级、低配跨模型角色仍没有算术出口），但下一批要算账就该用实测这几个数当输入。
+- **边界（别当已验）**：a) 我**点名要求**委派（任务里写了"必须派、model 填 glm-4.6"），所以这趟证的是"参数填对了能落地、闸门不误拦"，**不是**"3b 会自发想到委派"——那条 B85 已经在独立实例里量过；b) B88 的另一半「『只允许云端落点』这句话读不读得懂」是观感，仍归用户；c) 我没做"摘掉 150 那道合取再跑一遍看它拦"（那半由 CI 与 B87 的形状用例钉着）；d) 聚合那处发现**没动代码**，要不要动、动成什么口径（只算父 / 整棵树 / 两栏都给）等用户定；e) 会话「三条问题：使用localStorage存密码…」留在用户真实库里，可删。
+- **全量**：本批**零源码改动** ⇒ 未跑 typecheck/vitest/build（与 157 同口径）；读的屏都是 161 之后 `out/` 与新 dev 的一致产物，探针脚本自清。
+
 ### V4-Iter-161 B95 收口：最后 5 把死键逐条判完（git 考古代替猜测），并把终端那句"输出被裁"接回
 
 - **为什么单独一批**：160 留下 5 把"没找到接替者"的键说"归用户定"——其实**还有一条我能查的路：git 考古**。判据不是"我想不出它有什么用"，而是"它的调用点曾经存在吗、是哪次提交拿走的"。查完 5 把全部有了结论，一个都不需要留给猜测。
