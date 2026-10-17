@@ -288,6 +288,11 @@ export const conversationRepo = {
         db.prepare('DELETE FROM messages_fts WHERE conversation_id=?').run(cid)
         // 级联删除未发送草稿
         db.prepare('DELETE FROM conversation_drafts WHERE conversation_id=?').run(cid)
+        // 级联删除分步明细（V4-Iter-166）：`agent_traces` 没有指向 conversations 的外键，
+        // 以前删完会话它的行还在，`getLatestRunTraces(已删会话 id)` 照样读得出来——
+        // 正是上面那句注释要避免的"看不见却占着库"，只是当时只数了子会话，没数到 trace 这一层。
+        // 用量明细不用管：它本来就是 `messages JOIN conversations` 的派生视图，消息没了它就没了。
+        db.prepare('DELETE FROM agent_traces WHERE conversation_id=?').run(cid)
         db.prepare('DELETE FROM conversations WHERE id=?').run(cid)
       }
     })
@@ -320,9 +325,13 @@ export const conversationRepo = {
   },
 
   /**
-   * 空会话守卫删除：仅删除「自动标题 + 未置顶 + 0 消息 + 0 草稿」的行。
+   * 空会话守卫删除：仅删除「自动标题 + 未置顶 + 0 消息 + 0 草稿 + 0 分步明细」的行。
    * 守卫保证无消息/无草稿，无需走 delete() 的事务级联；返回是否真的删到。
    * 切会话时由渲染端对前一个会话调用，防止点「新对话」未发消息即切走堆积空壳。
+   *
+   * 166 多加一条 `0 分步明细`：把消息逐条删光的 Agent 会话也是"0 消息"，但它有过真实编排，
+   * 让自动清扫顺手带走就会又留一批没人认领的 trace（这条路径没有 doomed 列表可级联）。
+   * 有历史的交给界面上的显式删除（那条走 delete()，会连带 trace）。
    */
   deleteIfEmpty(id: string): boolean {
     const res = dbService
@@ -331,15 +340,16 @@ export const conversationRepo = {
         `DELETE FROM conversations
          WHERE id=? AND title_default=1 AND pinned=0
            AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
-           AND NOT EXISTS (SELECT 1 FROM conversation_drafts WHERE conversation_id = conversations.id)`
-      )
-      .run(id) as { changes: number }
+           AND NOT EXISTS (SELECT 1 FROM conversation_drafts WHERE conversation_id = conversations.id)
+           AND NOT EXISTS (SELECT 1 FROM agent_traces WHERE conversation_id = conversations.id)`
+      ).run(id) as { changes: number }
     return res.changes > 0
   },
 
   /**
    * 全局清扫空会话（启动时调用）：活跃/归档区一并清理——
    * 0 内容 + 自动标题 + 未置顶的归档空行同样是垃圾；返回删除条数。
+   * 与 `deleteIfEmpty` 同一道守卫（含 `0 分步明细`），两条路径的口径不许漂。
    */
   cleanupEmptyConversations(): number {
     const res = dbService
@@ -348,9 +358,9 @@ export const conversationRepo = {
         `DELETE FROM conversations
          WHERE title_default=1 AND pinned=0
            AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
-           AND NOT EXISTS (SELECT 1 FROM conversation_drafts WHERE conversation_id = conversations.id)`
-      )
-      .run() as { changes: number }
+           AND NOT EXISTS (SELECT 1 FROM conversation_drafts WHERE conversation_id = conversations.id)
+           AND NOT EXISTS (SELECT 1 FROM agent_traces WHERE conversation_id = conversations.id)`
+      ).run() as { changes: number }
     return res.changes
   },
 
