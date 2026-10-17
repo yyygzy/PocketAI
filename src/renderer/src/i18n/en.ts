@@ -676,6 +676,9 @@ export const en: Record<string, string> = {
   'agent.searchNavHint': 'Enter for next, Shift+Enter for previous, Esc to close',
   'agent.runStats': '{steps} steps · {duration} · {tokens} tokens',
   'agent.runStatsDetail': 'View step-by-step details of this run',
+  'agent.runStatsChildren': '· incl. {n} subagent run(s)',
+  'agent.runStatsSemantics':
+    'Tokens here already include the subagent runs (their steps are not in the list below); steps and duration count only this trunk - the time a subagent spends is already inside the step that called it',
   'agent.stepTokens': 'input {in} / output {out} tokens',
   'agent.traceType.llm': 'LLM',
   'agent.traceType.tools': 'Tools',

@@ -649,6 +649,9 @@ export const ko: Record<string, string> = {
   'agent.searchNavHint': 'Enter: 다음, Shift+Enter: 이전, Esc: 닫기',
   'agent.runStats': '{steps}단계 · 소요 시간 {duration} · {tokens}토큰',
   'agent.runStatsDetail': '이번 실행의 단계별 상세 보기',
+  'agent.runStatsChildren': '· 하위 에이전트 {n}회 포함',
+  'agent.runStatsSemantics':
+    '여기 토큰에는 하위 에이전트 실행도 이미 포함됩니다(그 단계는 아래 상세에 나오지 않음). 단계 수와 소요 시간은 본 실행만 계산합니다 - 하위 에이전트의 시간은 그것을 호출한 단계에 이미 들어가 있기 때문입니다',
   'agent.stepTokens': '입력 {in} / 출력 {out}토큰',
   'agent.traceType.llm': '사고',
   'agent.traceType.tools': '도구',

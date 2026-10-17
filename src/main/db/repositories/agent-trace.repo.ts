@@ -119,18 +119,37 @@ export const agentTraceRepo = {
     return rows.map(rowToRecord)
   },
 
-  /** 统计某次请求的总耗时与平均 token */
-  statsByRequest(requestId: string): { totalDurationMs: number; totalTokens: number; stepCount: number } {
+  /**
+   * 一次运行的汇总：**token 按整棵编排树算，步数与耗时只算主干**（V4-Iter-163，用户选定口径）。
+   *
+   * 这条不对称是刻意的，两处都有实测依据：
+   *  · 耗时**不许**加子 run——父那一步 `tools:delegate_task` 的 `duration_ms` 物理上已经包住了整段子运行
+   *    （162 实测：父 3 步 33.3 + 38.8 + 21.9 = 94.0s 就是全程墙钟，而子的 19.2s 就藏在那 38.8s 里；再加一遍会虚报成 113s）。
+   *  · token **必须**加子 run——子的每一步挂在子会话自己那次 request 上，只按 `request_id = ?` 聚合就会少报
+   *    （162 实测：界面写 6,736，这趟编排实际烧了 9,833，差的正是云端那台子代理的 3,097）。
+   * v48 加 `parent_request_id` 时注释写的是"成本按整棵编排树聚合就靠这一列"，但列一直在写、没人读 ⇒ 本轮接上。
+   *
+   * 一层就够：子级工具面被 `childToolSurface()` 摘掉了 `delegate_task`，套娃在结构上不存在，所以这里
+   * 不需要递归求和（`WHERE request_id = ? OR parent_request_id = ?` 就是整棵树）。
+   *
+   * `childRuns` 为 0 时给 **undefined 而不是 0**：界面上"有没有子代理"要一句话说得清，
+   * 而既有那些逐键 `toEqual` 的断言不该被一个新字段打破（vitest 的比较里 undefined 键视同不存在）。
+   */
+  statsByRequest(requestId: string): AgentRunStats {
     const row = dbService.getHandle().prepare(
-      `SELECT COALESCE(SUM(duration_ms), 0) AS total_duration,
+      `SELECT COALESCE(SUM(CASE WHEN request_id = ? THEN duration_ms ELSE 0 END), 0) AS total_duration,
               COALESCE(SUM(token_usage), 0) AS total_tokens,
-              COUNT(*) AS step_count
-       FROM agent_traces WHERE request_id = ?`
-    ).get(requestId) as { total_duration: number; total_tokens: number; step_count: number } | undefined
+              COALESCE(SUM(CASE WHEN request_id = ? THEN 1 ELSE 0 END), 0) AS step_count,
+              COUNT(DISTINCT CASE WHEN request_id <> ? THEN request_id END) AS child_runs
+       FROM agent_traces WHERE request_id = ? OR parent_request_id = ?`
+    ).get(requestId, requestId, requestId, requestId, requestId) as {
+      total_duration: number; total_tokens: number; step_count: number; child_runs: number
+    } | undefined
     return {
       totalDurationMs: row?.total_duration ?? 0,
       totalTokens: row?.total_tokens ?? 0,
-      stepCount: row?.step_count ?? 0
+      stepCount: row?.step_count ?? 0,
+      ...(row && row.child_runs > 0 ? { childRuns: row.child_runs } : {})
     }
   },
 
@@ -142,20 +161,33 @@ export const agentTraceRepo = {
     return stats.stepCount === 0 ? null : stats
   },
 
-  /** 会话级累计统计（跨全部运行：运行次数/总耗时/总 token）；无 trace 返回 null */
+  /**
+   * 会话级累计统计（跨全部运行）。口径与 `statsByRequest` 同一条：**主干算次数与耗时，token 含子 run**。
+   * 主干那半边用 `conversation_id = ?` 认而不是 `parent_request_id IS NULL`：本会话自己的每一步都属于主干
+   * （只有子运行的步才带父 id），这样**直接把一个子会话进来查时行为不变**（143 那条"子会话账本独立可见"
+   * 的用例还在，它查的就是子会话）。
+   * 没有索引可依赖：`agent_traces` 从来没给 `request_id`/`parent_request_id` 建过索引，
+   * 改前那句 `WHERE request_id = ?` 本来就是全表扫 ⇒ 这一版没有引入新的量级（台账里记着"要加索引是另一件事"）。
+   */
   sessionStatsByConversation(conversationId: string): AgentSessionStats | null {
     try {
       const row = dbService.getHandle().prepare(
-        `SELECT COUNT(DISTINCT request_id) AS run_count,
-                COALESCE(SUM(duration_ms), 0) AS total_duration,
-                COALESCE(SUM(token_usage), 0) AS total_tokens
-         FROM agent_traces WHERE conversation_id = ?`
-      ).get(conversationId) as { run_count: number; total_duration: number; total_tokens: number } | undefined
+        `SELECT COALESCE(SUM(CASE WHEN conversation_id = ? THEN duration_ms ELSE 0 END), 0) AS total_duration,
+                COALESCE(SUM(token_usage), 0) AS total_tokens,
+                COUNT(DISTINCT CASE WHEN conversation_id = ? THEN request_id END) AS run_count,
+                COUNT(DISTINCT CASE WHEN conversation_id <> ? THEN request_id END) AS child_runs
+         FROM agent_traces
+         WHERE conversation_id = ?
+            OR parent_request_id IN (SELECT request_id FROM agent_traces WHERE conversation_id = ?)`
+      ).get(conversationId, conversationId, conversationId, conversationId, conversationId) as {
+        run_count: number; total_duration: number; total_tokens: number; child_runs: number
+      } | undefined
       if (!row || row.run_count === 0) return null
       return {
         runCount: row.run_count,
         totalDurationMs: row.total_duration,
-        totalTokens: row.total_tokens
+        totalTokens: row.total_tokens,
+        ...(row.child_runs > 0 ? { childRuns: row.child_runs } : {})
       }
     } catch (e) {
       if (isTableMissingError(e)) {

@@ -12,6 +12,7 @@ import { IPC } from '../../shared/types'
 import type {
   SendMessagePayload,
   AgentDoneEvent,
+  AgentRunStats,
   AgentErrorEvent,
   ChatTarget,
   ToolCall,
@@ -92,8 +93,8 @@ function safeTrace(rec: Parameters<typeof agentTraceRepo.insert>[0]): void {
   }
 }
 
-/** 安全获取 trace 统计，表不存在时返回默认值 */
-function safeTraceStats(requestId: string): { totalDurationMs: number; totalTokens: number; stepCount: number } {
+/** 安全获取 trace 统计，表不存在时返回默认值（口径见 `AgentRunStats`：token 含子 run，步数/耗时算主干） */
+function safeTraceStats(requestId: string): AgentRunStats {
   try {
     return agentTraceRepo.statsByRequest(requestId)
   } catch (e) {

@@ -676,6 +676,9 @@ export const zh: Record<string, string> = {
   'agent.searchNavHint': 'Enter 下一个，Shift+Enter 上一个，Esc 关闭',
   'agent.runStats': '{steps} 步 · 耗时 {duration} · {tokens} tokens',
   'agent.runStatsDetail': '查看本次运行分步明细',
+  'agent.runStatsChildren': '· 含 {n} 次子代理',
+  'agent.runStatsSemantics':
+    '这里的 tokens 已把子代理那一趟算进来（子代理跑的步骤列在下面的明细之外）；步数与耗时只算这条主干——子代理花的时间本来就包在调用它的那一步里',
   'agent.stepTokens': '输入 {in} / 输出 {out} tokens',
   'agent.traceType.llm': '思考',
   'agent.traceType.tools': '工具',

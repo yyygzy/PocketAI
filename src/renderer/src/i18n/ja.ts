@@ -649,6 +649,9 @@ export const ja: Record<string, string> = {
   'agent.searchNavHint': 'Enter で次へ、Shift+Enter で前へ、Esc で閉じる',
   'agent.runStats': '{steps}ステップ · 所要時間 {duration} · {tokens}トークン',
   'agent.runStatsDetail': 'この実行のステップ詳細を表示',
+  'agent.runStatsChildren': '· サブエージェント {n} 件含む',
+  'agent.runStatsSemantics':
+    'このトークン数にはサブエージェントの実行も含まれています（そのステップは下の明細には出ません）。ステップ数と所要時間は本体の実行だけで数えています - サブエージェントの時間はそれを呼び出したステップに既に含まれるため',
   'agent.stepTokens': '入力 {in} / 出力 {out} トークン',
   'agent.traceType.llm': '思考',
   'agent.traceType.tools': 'ツール',

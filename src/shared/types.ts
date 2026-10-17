@@ -852,18 +852,27 @@ export interface AgentStepEvent {
   done?: boolean // 是否为最后一步
 }
 
-/** 一次 Agent 运行的汇总统计（DONE 事件携带，渲染层展示本次运行成本） */
+/**
+ * 一次 Agent 运行的汇总统计（DONE 事件携带，渲染层展示本次运行成本）。
+ *
+ * **口径（V4-Iter-163，用户 2026-10-17 选定）**：`totalTokens` 按**整棵编排树**算（父 + 直接子），
+ * `totalDurationMs` 与 `stepCount` 只算**主干**——父那一步 `delegate_task` 的耗时已经包住了整段子运行，
+ * 再加一遍会把墙钟虚报；而子的 token 不加上就是少报成本（162 实测：界面 6,736 / 真烧 9,833）。
+ * `childRuns` 只在 >0 时给（界面上"含几次子代理"要有依据可说，而子会话的步骤不在这份明细里）。
+ */
 export interface AgentRunStats {
   totalDurationMs: number
   totalTokens: number
   stepCount: number
+  childRuns?: number
 }
 
-/** 会话级累计统计（跨该会话全部运行聚合，刷新后仍可恢复） */
+/** 会话级累计统计（跨该会话全部运行聚合，刷新后仍可恢复）；口径同上：次数与耗时算主干，token 含子 run */
 export interface AgentSessionStats {
-  runCount: number          // 运行次数 = DISTINCT request_id
-  totalDurationMs: number   // 全部运行耗时之和
-  totalTokens: number       // 全部运行 token 之和
+  runCount: number          // 运行次数 = 主干的 DISTINCT request_id（子 run 不另计一次"运行"）
+  totalDurationMs: number   // 主干全部运行耗时之和
+  totalTokens: number       // 全部运行 token 之和（含子 run）
+  childRuns?: number
 }
 
 /** Agent 单步执行轨迹（agent_traces 表一行，渲染层分步明细用） */

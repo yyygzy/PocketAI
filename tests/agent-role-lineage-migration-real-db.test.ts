@@ -186,15 +186,23 @@ describe('读写往返（144 的写入方要用到的语义，现在就钉住）
     expect(conversationRepo.get(childConv)!.roleKey).toBeNull()
   })
 
-  it('父会话的会话级统计不被子运行计入（独立会话的代价就是账本天然分开；这条是 146 成本轴的底座）', () => {
+  it('父会话的会话级统计：**token 要含子 run，次数与耗时仍只算主干**（146 的口径由 162 实测反转，见 V4-Iter-163）', () => {
+    // 这一条原来钉的是「子运行不计入父的账」（理由是"独立会话的代价就是账本分开"）。
+    // 162 在真机上量到：界面写「耗时 94.0s · 6,736 tokens」，而这趟编排实际烧了 9,833 ——
+    // 少报的那 3,097 全在子会话自己那次 request 上。用户 2026-10-17 选定按整棵树算成本，故就地反转。
     const before = agentTraceRepo.sessionStatsByConversation(PARENT_CONV)!
     const childConv = conversationRepo.create({ title: '子会话：审校', assistantId: 'a1' }).id
     agentTraceRepo.insert({ requestId: 'r-child2', conversationId: childConv, parentRequestId: 'r-parent', stepIndex: 0, stepType: 'llm', durationMs: 99999, tokenUsage: 88888, status: 'success' })
 
     const after = agentTraceRepo.sessionStatsByConversation(PARENT_CONV)!
-    expect(after).toEqual(before)
-    // 子会话自己那摊账独立可见
-    expect(agentTraceRepo.sessionStatsByConversation(childConv)).toMatchObject({ runCount: 1, totalTokens: 88888 })
+    expect(after.totalTokens).toBe(before.totalTokens + 88888)
+    // 反向对照（这三条就是"反转不等于全反转"）：次数与耗时不许跟着涨——
+    // 子 run 的时间物理上包在父那一步 `delegate_task` 里，再加一遍会把墙钟虚报；用户也只发起了一次运行
+    expect(after.runCount).toBe(before.runCount)
+    expect(after.totalDurationMs).toBe(before.totalDurationMs)
+    expect(after.childRuns, '含几次子代理要能被界面说出来').toBe(1)
+    // 子会话自己那摊账独立可见（143 那半边不变；也是"直接拿子会话来查时不退化成 0"的那条兜底）
+    expect(agentTraceRepo.sessionStatsByConversation(childConv)).toMatchObject({ runCount: 1, totalTokens: 88888, totalDurationMs: 99999 })
   })
 
   it('latestRequestId 仍只认"最近一次运行"：带父的行不改变取法（这一列不参与排序/过滤）', () => {

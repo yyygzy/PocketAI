@@ -527,7 +527,11 @@ export const AgentPanel: React.FC = () => {
             <button
               onClick={toggleStats}
               className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-              title={t('agent.runStatsDetail')}
+              title={
+                chat.runStats.childRuns
+                  ? `${t('agent.runStatsDetail')} · ${t('agent.runStatsSemantics')}`
+                  : t('agent.runStatsDetail')
+              }
               aria-expanded={statsExpanded}
             >
               <span className="w-3 inline-block">{statsExpanded ? '▾' : '▸'}</span>
@@ -538,13 +542,20 @@ export const AgentPanel: React.FC = () => {
                   tokens: chat.runStats.totalTokens.toLocaleString('en-US')
                 })}
               </span>
+              {/* 子代理那几步不在下面这份明细里（它们挂在子会话上），所以数字比明细大要有话说 */}
+              {chat.runStats.childRuns ? (
+                <span>{t('agent.runStatsChildren', { n: chat.runStats.childRuns })}</span>
+              ) : null}
             </button>
 
             {statsExpanded && (
               <div className="mt-1 ml-4 max-h-72 overflow-y-auto border border-[var(--color-border)] rounded p-2 space-y-1 bg-[var(--color-bg-secondary)]">
                 {/* 头部：会话累计统计（左） + 复制 JSON 按钮（右） */}
                 <div className="flex items-center justify-between gap-2 pb-1 border-b border-[var(--color-border)]">
-                  <div className="text-xs text-[var(--color-text-muted)]">
+                  <div
+                    className="text-xs text-[var(--color-text-muted)]"
+                    title={chat.sessionStats?.childRuns ? t('agent.runStatsSemantics') : undefined}
+                  >
                     {chat.sessionStats
                       ? t('agent.sessionStats', {
                           runs: chat.sessionStats.runCount,
@@ -552,6 +563,9 @@ export const AgentPanel: React.FC = () => {
                           tokens: chat.sessionStats.totalTokens.toLocaleString('en-US')
                         })
                       : t('agent.traceDetail')}
+                    {chat.sessionStats?.childRuns ? (
+                      <span>{t('agent.runStatsChildren', { n: chat.sessionStats.childRuns })}</span>
+                    ) : null}
                   </div>
                   <button
                     onClick={handleCopyTraces}
