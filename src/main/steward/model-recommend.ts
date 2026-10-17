@@ -3,8 +3,22 @@
 // 根据硬件画像（内存 / GPU 显存 / CUDA / MPS / 磁盘剩余）给出本地模型档位建议，
 // 并探测本机 Ollama（http://localhost:11434/api/tags）中已安装的模型。
 // 纯规则实现，零外部依赖；在线模型仅给文字建议，不做任何下载。
+//
+// V4-Iter-156：这里**只出码 + 参数**，一句界面文案都不写（码表在 `shared/model-rec-codes.ts`）。
+// 以前这张表的 60 条中文串（8 档位名 + 11 句硬件总结 + 3 个标签值 + 32 条推荐语 + 4 条告警
+// + 2 条在线建议）直接进 IPC 返回值 ⇒ en / ja / ko 界面读到整句中文，而档位名与硬件总结
+// 还显示在**首启向导**那一屏（`FirstRunWizard.tsx:362,416`）——新用户第一眼就是中英夹排。
 
 import type { HardwareInfo, ModelPick, ModelRecommendation } from '../../shared/types'
+import type {
+  ModelOnlineHintCode,
+  ModelPickTagCode,
+  ModelReasonCode,
+  ModelSummaryCode,
+  ModelTierCode,
+  ModelWarnCode
+} from '../../shared/model-rec-codes'
+import { isLowEndTier } from '../../shared/model-rec-codes'
 import { getHardwareInfo } from './hardware'
 
 const GB = 1024 * 1024 * 1024
@@ -41,12 +55,30 @@ export function isInstalled(installed: string[], name: string): boolean {
   })
 }
 
+/**
+ * 知识库向量模型那条推荐由 `recommendModels` 追加，**不在硬件分支表里** ⇒
+ * 单列出来给用例（`tests/model-recommend-codes.test.ts`）并进"实际产出的码"，
+ * 免得测试用正则扫源码来猜它存在（那种断言一改写法就假绿）。
+ */
+export const KB_EMBED_MODEL_ID = 'bge-m3'
+export const KB_EMBED_REASON: ModelReasonCode = 'bge_m3_kb'
+export const KB_EMBED_TAG: ModelPickTagCode = 'embedding'
+
 interface TierRule {
-  tier: string
-  summary: string
-  picks: Array<{ id: string; reason: string }>
+  tier: ModelTierCode
+  summary: ModelSummaryCode
+  /** 总结句的插值：GPU 名只有主进程知道；显存阈值是分支常量 ⇒ 写在字典文案里，不当参数漂 */
+  summaryParams: Record<string, string | number>
+  picks: Array<{ id: string; reason: ModelReasonCode }>
 }
 
+/**
+ * 硬件 → 档位建议。**同一个码可以在多个分支复用，但只在文案真的相同时**
+ * （例：`llama32_3b_general`「轻量通用备选」出现在 NVIDIA 入门档与 CPU 8GB 档，
+ * 而 Apple Silicon 那句"高质量日常对话"与 NVIDIA 那句"高质量日常对话备选，速度与质量平衡"
+ * 不是一句 ⇒ 分开两个码）。`tests/model-recommend-codes.test.ts` 逐分支跑这张表核对码清单，
+ * 加档位/加推荐而漏登记时用例红，而不是界面上出现裸码。
+ */
 export function pickByHardware(hw: HardwareInfo): TierRule {
   const memGB = hw.memory.total / GB
   const nvidia = hw.gpus.find((g) => g.cuda)
@@ -57,44 +89,48 @@ export function pickByHardware(hw: HardwareInfo): TierRule {
   if (nvidia) {
     if (vramGB >= 24) {
       return {
-        tier: '旗舰',
-        summary: `检测到 ${nvidia.name}（显存 ≥24GB），可流畅运行 32B 量化模型，复杂推理建议尝试 DeepSeek-R1。`,
+        tier: 'flagship',
+        summary: 'nv_flagship',
+        summaryParams: { gpu: nvidia.name },
         picks: [
-          { id: 'qwen2.5:32b-instruct-q4_K_M', reason: '32B 量化首选，综合能力强，24GB 显存可全程 GPU' },
-          { id: 'deepseek-r1:14b', reason: '推理专精模型，适合代码/数学/复杂分析' },
-          { id: 'qwen2.5:14b-instruct-q5_K_M', reason: '高质量日常对话备选，速度与质量平衡' }
+          { id: 'qwen2.5:32b-instruct-q4_K_M', reason: 'qwen32b_24g' },
+          { id: 'deepseek-r1:14b', reason: 'deepseek_r1_14b_reasoning' },
+          { id: 'qwen2.5:14b-instruct-q5_K_M', reason: 'qwen14b_q5_daily' }
         ]
       }
     }
     if (vramGB >= 12) {
       return {
-        tier: '高性能',
-        summary: `检测到 ${nvidia.name}（显存 ≥12GB），14B 量化模型可全程 GPU，体验接近云端。`,
+        tier: 'high',
+        summary: 'nv_high',
+        summaryParams: { gpu: nvidia.name },
         picks: [
-          { id: 'qwen2.5:14b-instruct-q5_K_M', reason: '14B 首选，长文理解与指令遵循表现优秀' },
-          { id: 'deepseek-r1:7b', reason: '轻量推理模型，复杂任务可开启思维链' },
-          { id: 'qwen2.5:7b-instruct', reason: '追求速度时的日常对话备选' }
+          { id: 'qwen2.5:14b-instruct-q5_K_M', reason: 'qwen14b_q5_longctx' },
+          { id: 'deepseek-r1:7b', reason: 'deepseek_r1_7b_thinking' },
+          { id: 'qwen2.5:7b-instruct', reason: 'qwen7b_speed_daily' }
         ]
       }
     }
     if (vramGB >= 6) {
       return {
-        tier: '主流',
-        summary: `检测到 ${nvidia.name}（显存约 ${Math.round(vramGB)}GB），7B 量化模型可全程 GPU，性价比最高的档位。`,
+        tier: 'mainstream',
+        summary: 'nv_mainstream',
+        summaryParams: { gpu: nvidia.name, vram: Math.round(vramGB) },
         picks: [
-          { id: 'qwen2.5:7b-instruct-q4_K_M', reason: '7B 量化首选，6GB+ 显存流畅运行' },
-          { id: 'llama3.1:8b-instruct-q4_K_M', reason: '英文场景与通用能力备选' },
-          { id: 'deepseek-r1:1.5b', reason: '极速推理小模型，适合简单分析任务' }
+          { id: 'qwen2.5:7b-instruct-q4_K_M', reason: 'qwen7b_q4_6g' },
+          { id: 'llama3.1:8b-instruct-q4_K_M', reason: 'llama31_8b_english' },
+          { id: 'deepseek-r1:1.5b', reason: 'deepseek_r1_15b_fast' }
         ]
       }
     }
     return {
-      tier: '入门',
-      summary: `检测到 ${nvidia.name} 但显存偏小（<6GB 或未识别），建议 3B 级量化模型，部分层可卸载到 GPU。`,
+      tier: 'entry',
+      summary: 'nv_entry',
+      summaryParams: { gpu: nvidia.name },
       picks: [
-        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: '3B 量化，小显存友好，中文表现好' },
-        { id: 'llama3.2:3b-instruct-q4_K_M', reason: '轻量通用备选' },
-        { id: 'qwen2.5:1.5b', reason: '极低显存/纯 CPU 应急选择' }
+        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: 'qwen3b_q4_lowvram' },
+        { id: 'llama3.2:3b-instruct-q4_K_M', reason: 'llama32_3b_general' },
+        { id: 'qwen2.5:1.5b', reason: 'qwen15b_emergency' }
       ]
     }
   }
@@ -103,33 +139,36 @@ export function pickByHardware(hw: HardwareInfo): TierRule {
   if (hasMps) {
     if (memGB >= 32) {
       return {
-        tier: '旗舰',
-        summary: 'Apple Silicon（统一内存 ≥32GB），Metal 加速可运行 32B 量化模型。',
+        tier: 'flagship',
+        summary: 'mps_flagship',
+        summaryParams: {},
         picks: [
-          { id: 'qwen2.5:32b-instruct-q4_K_M', reason: '32B 量化，Metal 加速' },
-          { id: 'qwen2.5:14b-instruct-q5_K_M', reason: '高质量日常对话' },
-          { id: 'deepseek-r1:14b', reason: '推理专精备选' }
+          { id: 'qwen2.5:32b-instruct-q4_K_M', reason: 'qwen32b_mps' },
+          { id: 'qwen2.5:14b-instruct-q5_K_M', reason: 'qwen14b_daily_mps' },
+          { id: 'deepseek-r1:14b', reason: 'deepseek_r1_14b_alt' }
         ]
       }
     }
     if (memGB >= 16) {
       return {
-        tier: '高性能',
-        summary: 'Apple Silicon（统一内存 ≥16GB），14B 量化模型体验良好。',
+        tier: 'high',
+        summary: 'mps_high',
+        summaryParams: {},
         picks: [
-          { id: 'qwen2.5:14b-instruct-q4_K_M', reason: '14B 量化首选，Metal 加速' },
-          { id: 'qwen2.5:7b-instruct', reason: '速度优先备选' },
-          { id: 'deepseek-r1:7b', reason: '轻量推理模型' }
+          { id: 'qwen2.5:14b-instruct-q4_K_M', reason: 'qwen14b_q4_mps' },
+          { id: 'qwen2.5:7b-instruct', reason: 'qwen7b_speed_alt' },
+          { id: 'deepseek-r1:7b', reason: 'deepseek_r1_7b_light' }
         ]
       }
     }
     return {
-      tier: '主流',
-      summary: 'Apple Silicon（统一内存 <16GB），建议 7B 及以下量化模型。',
+      tier: 'mainstream',
+      summary: 'mps_mainstream',
+      summaryParams: {},
       picks: [
-        { id: 'qwen2.5:7b-instruct-q4_K_M', reason: '7B 量化首选，Mac 8GB 也可运行' },
-        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: '更流畅的轻量选择' },
-        { id: 'llama3.2:3b', reason: '英文轻量备选' }
+        { id: 'qwen2.5:7b-instruct-q4_K_M', reason: 'qwen7b_q4_mac8g' },
+        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: 'qwen3b_q4_smooth' },
+        { id: 'llama3.2:3b', reason: 'llama32_3b_english_light' }
       ]
     }
   }
@@ -137,44 +176,48 @@ export function pickByHardware(hw: HardwareInfo): TierRule {
   // 3) 纯 CPU（含未识别到 GPU 的情况）
   if (memGB >= 32) {
     return {
-      tier: '高性能（CPU）',
-      summary: '未检测到独立 GPU，但内存充足（≥32GB）：可跑 14B 量化（速度偏慢），日常推荐 7B。',
+      tier: 'high_cpu',
+      summary: 'cpu_high',
+      summaryParams: {},
       picks: [
-        { id: 'qwen2.5:7b-instruct-q4_K_M', reason: 'CPU 日常首选，速度与质量平衡' },
-        { id: 'qwen2.5:14b-instruct-q4_K_M', reason: '耐心等待可换更高质量（建议配 SSD）' },
-        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: '追求响应速度时使用' }
+        { id: 'qwen2.5:7b-instruct-q4_K_M', reason: 'qwen7b_q4_cpu_primary' },
+        { id: 'qwen2.5:14b-instruct-q4_K_M', reason: 'qwen14b_q4_cpu_patience' },
+        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: 'qwen3b_q4_cpu_speed' }
       ]
     }
   }
   if (memGB >= 16) {
     return {
-      tier: '主流（CPU）',
-      summary: '纯 CPU 环境、内存 16GB 左右：7B 量化模型可正常使用，3B 级更流畅。',
+      tier: 'mainstream_cpu',
+      summary: 'cpu_mainstream',
+      summaryParams: {},
       picks: [
-        { id: 'qwen2.5:7b-instruct-q4_K_M', reason: 'CPU 首选 7B 量化' },
-        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: '更快的轻量备选' },
-        { id: 'llama3.2:3b', reason: '英文轻量备选' }
+        { id: 'qwen2.5:7b-instruct-q4_K_M', reason: 'qwen7b_q4_cpu_pick' },
+        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: 'qwen3b_cpu_faster' },
+        { id: 'llama3.2:3b', reason: 'llama32_3b_english_light' }
       ]
     }
   }
   if (memGB >= 8) {
     return {
-      tier: '入门（CPU）',
-      summary: '纯 CPU 环境、内存 8–16GB：建议 3B 级量化模型，复杂任务请使用在线模型。',
+      tier: 'entry_cpu',
+      summary: 'cpu_entry',
+      summaryParams: {},
       picks: [
-        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: '3B 量化，低内存机器首选' },
-        { id: 'llama3.2:3b-instruct-q4_K_M', reason: '轻量通用备选' },
-        { id: 'qwen2.5:1.5b', reason: '后台常驻/极速响应场景' }
+        { id: 'qwen2.5:3b-instruct-q4_K_M', reason: 'qwen3b_q4_lowmem_primary' },
+        { id: 'llama3.2:3b-instruct-q4_K_M', reason: 'llama32_3b_general' },
+        { id: 'qwen2.5:1.5b', reason: 'qwen15b_background' }
       ]
     }
   }
   return {
-    tier: '低配置',
-    summary: '内存低于 8GB 且无可用 GPU：仅推荐 1.5B–3B 小模型，强烈建议搭配在线模型使用。',
+    tier: 'low',
+    summary: 'cpu_low',
+    summaryParams: {},
     picks: [
-      { id: 'qwen2.5:1.5b', reason: '超轻量，老旧设备也能运行' },
-      { id: 'llama3.2:1b', reason: '最低配置应急选择' },
-      { id: 'qwen2.5:3b-instruct-q4_K_M', reason: '内存允许时可尝试 3B' }
+      { id: 'qwen2.5:1.5b', reason: 'qwen15b_ultra_light' },
+      { id: 'llama3.2:1b', reason: 'llama32_1b_last_resort' },
+      { id: 'qwen2.5:3b-instruct-q4_K_M', reason: 'qwen3b_try_if_ram' }
     ]
   }
 }
@@ -186,37 +229,35 @@ export async function recommendModels(): Promise<ModelRecommendation> {
 
   const localPicks: ModelPick[] = rule.picks.map((p, i) => ({
     id: p.id,
-    tag: i === 0 ? '首选' : '备选',
+    tag: i === 0 ? 'primary' : 'alternate',
     reason: p.reason,
     installed: isInstalled(ollama.models, p.id)
   }))
 
   // 知识库向量模型建议（轻量、CPU 可跑）
   const embedPick: ModelPick = {
-    id: 'bge-m3',
-    tag: '向量',
-    reason: '知识库 Embedding 推荐：多语言、1024 维，CPU 也能跑；已安装 nomic-embed-text 可继续使用',
+    id: KB_EMBED_MODEL_ID,
+    tag: KB_EMBED_TAG,
+    reason: KB_EMBED_REASON,
     installed: isInstalled(ollama.models, 'bge-m3') || isInstalled(ollama.models, 'nomic-embed-text')
   }
   localPicks.push(embedPick)
 
-  const warnings: string[] = []
+  const warnings: ModelWarnCode[] = []
   const memGB = hw.memory.total / GB
-  if (memGB < 8) warnings.push('内存低于 8GB，运行本地模型可能影响其他应用，建议优先使用在线模型')
-  if (!hw.gpus.some((g) => g.cuda || g.mps)) warnings.push('未检测到 CUDA / MPS GPU，本地推理将使用 CPU，速度较慢')
-  if (hw.disk.freeSpace != null && hw.disk.freeSpace < 10 * GB) {
-    warnings.push('磁盘剩余空间不足 10GB，拉取模型前请先清理空间（7B 量化约需 5GB）')
-  }
-  if (!ollama.running) warnings.push('未检测到运行中的 Ollama 服务：安装并启动 Ollama 后即可拉取上述模型')
+  if (memGB < 8) warnings.push('mem_lt8')
+  if (!hw.gpus.some((g) => g.cuda || g.mps)) warnings.push('no_gpu_accel')
+  if (hw.disk.freeSpace != null && hw.disk.freeSpace < 10 * GB) warnings.push('disk_lt10g')
+  if (!ollama.running) warnings.push('no_ollama')
 
-  const lowEnd = /入门|低配/.test(rule.tier)
-  const onlineHint = lowEnd
-    ? '本机算力有限：建议在「设置 → 模型提供商」配置在线 API（如 DeepSeek、通义千问、OpenAI 兼容接口），复杂任务走云端。'
-    : '本地模型可覆盖日常对话；超长文本、复杂推理或多模态任务可随时切换到在线模型。'
+  // 低配档换另一句在线建议。156 之前这里是对**中文档位名**做正则（`/入门|低配/`），
+  // 换措辞就会静默选错句子 ⇒ 现在按码判断言（`isLowEndTier`）。
+  const onlineHint: ModelOnlineHintCode = isLowEndTier(rule.tier) ? 'low_end' : 'general'
 
   return {
     tier: rule.tier,
     summary: rule.summary,
+    summaryParams: rule.summaryParams,
     localPicks,
     onlineHint,
     ollamaRunning: ollama.running,

@@ -14,6 +14,7 @@ import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 import { PROVIDER_PRESETS } from '../settings/ProviderSettings'
+import { modelRecKey } from '../../../../shared/model-rec-codes'
 import { DELEGATE_CAPABILITY_LABEL_KEY, delegateNoticeText } from '../settings/DelegateCapabilityBadge'
 import type { DelegateProbeResult } from '../../../../shared/delegate-capability'
 import type {
@@ -359,8 +360,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         {hardwareSummary}
         {recommendation && (
           <div className="mt-3 rounded-lg border border-[var(--color-border)] p-3 text-[12px]">
-            <span className="text-[var(--color-accent)] font-medium">{recommendation.tier}</span>
-            <span className="text-[var(--color-text-muted)]"> — {recommendation.summary}</span>
+            <span className="text-[var(--color-accent)] font-medium">{t(modelRecKey('tier', recommendation.tier))}</span>
+            <span className="text-[var(--color-text-muted)]"> — {t(modelRecKey('summary', recommendation.summary), recommendation.summaryParams)}</span>
           </div>
         )}
         <div className="flex justify-end gap-2 mt-5">
@@ -413,8 +414,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           )}
           {recommendation && (
             <div className="mt-3 rounded-lg border border-[var(--color-border)] p-3 text-[12px]">
-              <span className="text-[var(--color-accent)] font-medium">{recommendation.tier}</span>
-              <span className="text-[var(--color-text-muted)]"> — {recommendation.summary}</span>
+              <span className="text-[var(--color-accent)] font-medium">{t(modelRecKey('tier', recommendation.tier))}</span>
+              <span className="text-[var(--color-text-muted)]"> — {t(modelRecKey('summary', recommendation.summary), recommendation.summaryParams)}</span>
             </div>
           )}
         </>

@@ -3,6 +3,8 @@
 // 覆盖 src/main/steward/model-recommend.ts 的两个纯函数：
 // - isInstalled：Ollama 已安装模型匹配（精确 tag / name: 前缀同模型不同量化）
 // - pickByHardware：按硬件画像（NVIDIA 显存 / Apple MPS 内存 / 纯 CPU 内存）分档推荐
+//   V4-Iter-156 起它**只出码**（tier / summary / reason 都是码，配 summaryParams），界面文案住四语字典 ⇒
+//   本文件断的是码；「每个码四语都有文案」由 tests/model-recommend-codes.test.ts 守。
 //
 // 策略：纯函数无运行时依赖，mock ./hardware 避免 getHardwareInfo 触发硬件探测。
 import { describe, it, expect, vi } from 'vitest'
@@ -68,31 +70,31 @@ describe('pickByHardware — 硬件分档推荐', () => {
 
     it('显存 ≥24GB → 旗舰档', () => {
       const r = pickByHardware(nvidia(24))
-      expect(r.tier).toBe('旗舰')
+      expect(r.tier).toBe('flagship')
       expect(r.picks[0]!.id).toBe('qwen2.5:32b-instruct-q4_K_M')
     })
 
     it('显存 ≥12GB 且 <24GB → 高性能档', () => {
       const r = pickByHardware(nvidia(16))
-      expect(r.tier).toBe('高性能')
+      expect(r.tier).toBe('high')
       expect(r.picks[0]!.id).toBe('qwen2.5:14b-instruct-q5_K_M')
     })
 
     it('显存 ≥6GB 且 <12GB → 主流档', () => {
       const r = pickByHardware(nvidia(8))
-      expect(r.tier).toBe('主流')
+      expect(r.tier).toBe('mainstream')
       expect(r.picks[0]!.id).toBe('qwen2.5:7b-instruct-q4_K_M')
     })
 
     it('显存 <6GB → 入门档', () => {
       const r = pickByHardware(nvidia(4))
-      expect(r.tier).toBe('入门')
+      expect(r.tier).toBe('entry')
       expect(r.picks[0]!.id).toBe('qwen2.5:3b-instruct-q4_K_M')
     })
 
     it('显存未识别（memory undefined）→ 入门档', () => {
       const r = pickByHardware(hw({ gpus: [{ name: 'RTX', cuda: true, mps: false }] }))
-      expect(r.tier).toBe('入门')
+      expect(r.tier).toBe('entry')
     })
   })
 
@@ -104,17 +106,17 @@ describe('pickByHardware — 硬件分档推荐', () => {
 
     it('内存 ≥32GB → 旗舰档', () => {
       const r = pickByHardware(mps(32))
-      expect(r.tier).toBe('旗舰')
+      expect(r.tier).toBe('flagship')
     })
 
     it('内存 ≥16GB 且 <32GB → 高性能档', () => {
       const r = pickByHardware(mps(16))
-      expect(r.tier).toBe('高性能')
+      expect(r.tier).toBe('high')
     })
 
     it('内存 <16GB → 主流档', () => {
       const r = pickByHardware(mps(8))
-      expect(r.tier).toBe('主流')
+      expect(r.tier).toBe('mainstream')
     })
   })
 
@@ -126,22 +128,22 @@ describe('pickByHardware — 硬件分档推荐', () => {
 
     it('内存 ≥32GB → 高性能（CPU）', () => {
       const r = pickByHardware(cpu(32))
-      expect(r.tier).toBe('高性能（CPU）')
+      expect(r.tier).toBe('high_cpu')
     })
 
     it('内存 ≥16GB 且 <32GB → 主流（CPU）', () => {
       const r = pickByHardware(cpu(16))
-      expect(r.tier).toBe('主流（CPU）')
+      expect(r.tier).toBe('mainstream_cpu')
     })
 
     it('内存 ≥8GB 且 <16GB → 入门（CPU）', () => {
       const r = pickByHardware(cpu(8))
-      expect(r.tier).toBe('入门（CPU）')
+      expect(r.tier).toBe('entry_cpu')
     })
 
     it('内存 <8GB → 低配置', () => {
       const r = pickByHardware(cpu(4))
-      expect(r.tier).toBe('低配置')
+      expect(r.tier).toBe('low')
     })
   })
 
@@ -154,7 +156,7 @@ describe('pickByHardware — 硬件分档推荐', () => {
           { name: 'Apple', cuda: false, mps: true }
         ]
       }))
-      expect(r.tier).toBe('旗舰')
+      expect(r.tier).toBe('flagship')
     })
 
     it('有 MPS 无 NVIDIA → 走 MPS 分支', () => {
@@ -162,7 +164,7 @@ describe('pickByHardware — 硬件分档推荐', () => {
         memory: { total: 8 * GB, free: 4 * GB },
         gpus: [{ name: 'Apple M2', cuda: false, mps: true }]
       }))
-      expect(r.tier).toBe('主流')
+      expect(r.tier).toBe('mainstream')
     })
   })
 

@@ -10,6 +10,7 @@ import type {
   HealthReport,
   ModelRecommendation
 } from '../../../shared/types'
+import type { ModelRecKind } from '../../../shared/model-rec-codes'
 import { formatBytes } from './format'
 
 export interface DiagnosticReportData {
@@ -66,6 +67,11 @@ export interface ReportLabels {
   no: string
   diskTypes: Record<'ssd' | 'hdd' | 'usb' | 'unknown', string>
   // 推荐字段
+  /**
+   * 按码取推荐文案（V4-Iter-156）。`steward:model-recommend` 只回码 + 参数，
+   * 而报告其余各节本来就全走 L——② 这节以前直接抄 `r.tier` / `p.reason` ⇒ en/ja/ko 的报告里整行中文。
+   */
+  rec: (kind: ModelRecKind, code: string, params?: Record<string, string | number>) => string
   ollamaRunning: string
   ollamaStopped: string
   installedModels: string
@@ -161,19 +167,19 @@ export function buildDiagnosticReport(d: DiagnosticReportData, L: ReportLabels):
   if (d.recommendation) {
     const r = d.recommendation
     const body = [
-      r.tier,
-      r.summary,
+      L.rec('tier', r.tier),
+      L.rec('summary', r.summary, r.summaryParams),
       '',
       kv('Ollama', r.ollamaRunning ? L.ollamaRunning : L.ollamaStopped),
       kv(L.installedModels, r.installedModels.length ? r.installedModels.join(', ') : '-'),
       ''
     ]
     r.localPicks.forEach((p) => {
-      body.push(`[${p.tag}] ${p.id} ${p.installed ? '✅' : ''}`.trimEnd())
-      body.push(`    ${p.reason}`)
+      body.push(`[${L.rec('tag', p.tag)}] ${p.id} ${p.installed ? '✅' : ''}`.trimEnd())
+      body.push(`    ${L.rec('reason', p.reason)}`)
     })
-    body.push('', `${L.onlineHint}: ${r.onlineHint}`)
-    if (r.warnings.length) body.push('', `${L.warnings}:`, ...r.warnings.map((w) => `⚠️ ${w}`))
+    body.push('', `${L.onlineHint}: ${L.rec('onlineHint', r.onlineHint)}`)
+    if (r.warnings.length) body.push('', `${L.warnings}:`, ...r.warnings.map((w) => `⚠️ ${L.rec('warn', w)}`))
     lines.push(section(`② ${L.recommendationSection}`, body))
   } else {
     lines.push(section(`② ${L.recommendationSection}`, [L.notAvailable]))

@@ -1,4 +1,12 @@
 // 共享类型定义（主进程 / preload / 渲染进程共用）
+import type {
+  ModelOnlineHintCode,
+  ModelPickTagCode,
+  ModelReasonCode,
+  ModelSummaryCode,
+  ModelTierCode,
+  ModelWarnCode
+} from './model-rec-codes'
 
 // ---------- 硬件信息 ----------
 export interface CpuInfo {
@@ -1371,24 +1379,32 @@ export interface WizardState {
 export interface ModelPick {
   /** Ollama 模型 tag，如 qwen2.5:7b-instruct-q4_K_M */
   id: string
-  /** '首选' | '备选' | '向量' */
-  tag: string
-  reason: string
+  /**
+   * 码：'primary' | 'alternate' | 'embedding'（V4-Iter-156）。
+   * 以前是中文「首选/备选/向量」，而 `OllamaPanel.tsx:132,133` 直接拿它做**过滤判断** ⇒
+   * 逻辑挂在措辞上；改成码之后由类型系统守。界面按 `t('modelRec.tag.'+tag)` 取文案。
+   */
+  tag: ModelPickTagCode
+  /** 码，界面按 `t('modelRec.reason.'+reason)` 取文案（156 起主进程不再返回整句） */
+  reason: ModelReasonCode
   /** 是否已在本机 Ollama 中安装 */
   installed: boolean
 }
 
 export interface ModelRecommendation {
-  /** 档位：入门 / 主流 / 高性能 / 旗舰（含 CPU 后缀） */
-  tier: string
-  /** 硬件画像一句话总结 */
-  summary: string
+  /** 档位码（入门/主流/…，含 CPU 变体）：`modelRec.tier.*` */
+  tier: ModelTierCode
+  /** 硬件画像总结的码：`modelRec.summary.*`，插值走 summaryParams */
+  summary: ModelSummaryCode
+  /** 总结句里的参数（GPU 名只有主进程知道；量化阈值是分支常量，写在字典文案里） */
+  summaryParams: Record<string, string | number>
   localPicks: ModelPick[]
-  /** 在线模型使用建议 */
-  onlineHint: string
+  /** 在线模型使用建议的码：`modelRec.onlineHint.*`（低配档与非低配档各一句） */
+  onlineHint: ModelOnlineHintCode
   ollamaRunning: boolean
   installedModels: string[]
-  warnings: string[]
+  /** 告警的码：`modelRec.warn.*` */
+  warnings: ModelWarnCode[]
 }
 
 // ---------- 平台管家：安全检测 / 故障诊断 ----------

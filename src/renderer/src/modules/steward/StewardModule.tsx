@@ -11,6 +11,7 @@ import type {
 import { useI18n } from '../../i18n'
 import { logIpcError, reportIpcError } from '../../utils/ipc'
 import { formatBytes } from '../../utils/format'
+import { modelRecKey } from '../../../../shared/model-rec-codes'
 import { buildDiagnosticReport, type ReportLabels } from '../../utils/diagnostic-report'
 import { useToast } from '../../components/ToastProvider'
 import { useOllamaPull, pickPullState } from '../../hooks/useOllamaPull'
@@ -197,6 +198,7 @@ export const StewardModule: React.FC = () => {
         ollamaRunning: t('steward.ollamaRunning'),
         ollamaStopped: t('steward.ollamaStopped'),
         installedModels: t('steward.reportInstalledModels'),
+        rec: (kind, code, params) => t(modelRecKey(kind, code), params),
         onlineHint: t('steward.reportOnlineHint'),
         warnings: t('steward.reportWarnings'),
         integrity: t('steward.integrity'),
@@ -367,7 +369,7 @@ export const StewardModule: React.FC = () => {
         <Section title={t('steward.modelRec')}>
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-[var(--color-accent)] text-[var(--color-on-accent)]">
-              {recommendation.tier}
+              {t(modelRecKey('tier', recommendation.tier))}
             </span>
             <span className={`text-[11px] px-2 py-0.5 rounded-full ${
               recommendation.ollamaRunning
@@ -382,7 +384,9 @@ export const StewardModule: React.FC = () => {
               </span>
             )}
           </div>
-          <p className="text-xs text-[var(--color-text-muted)] mb-3 leading-relaxed">{recommendation.summary}</p>
+          <p className="text-xs text-[var(--color-text-muted)] mb-3 leading-relaxed">
+            {t(modelRecKey('summary', recommendation.summary), recommendation.summaryParams)}
+          </p>
           <div className="space-y-2">
             {recommendation.localPicks.map((p) => {
               const pullState = pickPullState({
@@ -395,14 +399,16 @@ export const StewardModule: React.FC = () => {
                 <div key={p.id} className="rounded-lg border border-[var(--color-border)] p-2.5">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-overlay">
-                      {p.tag}
+                      {t(modelRecKey('tag', p.tag))}
                     </span>
                     <span className="font-mono text-xs">{p.id}</span>
                     {p.installed && (
                       <span className="text-[10px] text-[var(--color-success)]">{t('steward.installed')}</span>
                     )}
                   </div>
-                  <p className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">{p.reason}</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
+                    {t(modelRecKey('reason', p.reason))}
+                  </p>
                   {pullState === 'pulling' && pullEvt ? (
                     <div className="mt-2 space-y-1">
                       <div className="h-1.5 rounded bg-[var(--color-hover-overlay)] overflow-hidden">
@@ -428,7 +434,7 @@ export const StewardModule: React.FC = () => {
                       <button
                         className="text-[10px] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] disabled:opacity-50"
                         disabled={pullState !== 'pullable'}
-                        title={pullState === 'disabled' ? t('steward.pullNeedRunning') : p.reason}
+                        title={pullState === 'disabled' ? t('steward.pullNeedRunning') : t(modelRecKey('reason', p.reason))}
                         onClick={() => void pullModel(p.id)}
                       >
                         ⬇️ {t('ollama.pullBtn')}
@@ -439,11 +445,11 @@ export const StewardModule: React.FC = () => {
               )
             })}
           </div>
-          <p className="text-[11px] text-[var(--color-text-muted)] mt-3 leading-relaxed">☁️ {recommendation.onlineHint}</p>
+          <p className="text-[11px] text-[var(--color-text-muted)] mt-3 leading-relaxed">☁️ {t(modelRecKey('onlineHint', recommendation.onlineHint))}</p>
           {recommendation.warnings.length > 0 && (
             <div className="mt-2 space-y-1">
               {recommendation.warnings.map((w, i) => (
-                <p key={i} className="text-[11px] text-[var(--color-warning)]">⚠️ {w}</p>
+                <p key={i} className="text-[11px] text-[var(--color-warning)]">⚠️ {t(modelRecKey('warn', w))}</p>
               ))}
             </div>
           )}

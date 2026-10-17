@@ -47,6 +47,18 @@ const L: ReportLabels = {
   removable: 'Removable',
   yes: 'Yes',
   no: 'No',
+  /**
+   * 156 起 `steward:model-recommend` 只回码 ⇒ 报告这一节按码取文案。
+   * 这里给一张**测试专用的假字典**：断言"报告里出现的是解析后的文本"，
+   * 而下面那条 not.toMatch(裸码) 断言才是重点——解析器没接上时，报告里会露出 `cpu_mainstream` 这种码。
+   */
+  rec: (kind, code, params) => {
+    const text = REC_TEXT[`${kind}.${code}`] ?? `?${kind}.${code}?`
+    return Object.entries(params ?? {}).reduce(
+      (acc, [k, v]) => acc.replaceAll(`{${k}}`, String(v)),
+      text
+    )
+  },
   diskTypes: { ssd: 'SSD', hdd: 'HDD', usb: 'USB', unknown: 'Unknown' },
   ollamaRunning: 'Running',
   ollamaStopped: 'Stopped',
@@ -64,6 +76,19 @@ const L: ReportLabels = {
   statusOk: 'OK',
   statusWarn: 'Warn',
   statusDanger: 'Danger'
+}
+
+/** 码 → 报告文本（只放本用例用到的几条） */
+const REC_TEXT: Record<string, string> = {
+  'tier.mainstream_cpu': 'Mainstream (CPU)',
+  'summary.cpu_mainstream': 'CPU only, about 16GB RAM: 7B quantized is usable, 3B is smoother.',
+  'summary.nv_flagship': 'Detected {gpu} (VRAM >=24GB).',
+  'tag.primary': 'Top pick',
+  'tag.alternate': 'Alternate',
+  'reason.qwen7b_q4_cpu_pick': '7B quantized top pick on CPU',
+  'reason.llama31_8b_english': 'Alternate for English and general ability',
+  'onlineHint.general': 'Local models cover daily chat.',
+  'warn.mem_lt8': 'Under 8GB RAM: prefer online models'
 }
 
 const hardware: HardwareInfo = {
@@ -97,16 +122,17 @@ const health: HealthReport = {
 }
 
 const recommendation: ModelRecommendation = {
-  tier: '主流',
-  summary: '适合 7B-14B 量化模型',
+  tier: 'mainstream_cpu',
+  summary: 'cpu_mainstream',
+  summaryParams: {},
   localPicks: [
-    { id: 'qwen2.5:7b-instruct-q4_K_M', tag: '首选', reason: '平衡速度与质量', installed: true },
-    { id: 'llama3.1:8b', tag: '备选', reason: '英文表现好', installed: false }
+    { id: 'qwen2.5:7b-instruct-q4_K_M', tag: 'primary', reason: 'qwen7b_q4_cpu_pick', installed: true },
+    { id: 'llama3.1:8b', tag: 'alternate', reason: 'llama31_8b_english', installed: false }
   ],
-  onlineHint: '重度任务用云端大模型',
+  onlineHint: 'general',
   ollamaRunning: true,
   installedModels: ['qwen2.5:7b', 'nomic-embed-text'],
-  warnings: ['显存 8GB，32B 模型会吃力']
+  warnings: ['mem_lt8']
 }
 
 const audit: AuditResult = {
@@ -161,8 +187,13 @@ describe('buildDiagnosticReport — 全量数据', () => {
     expect(report).toContain('qwen2.5:7b-instruct-q4_K_M')
     expect(report).toContain('llama3.1:8b')
     expect(report).toContain(L.installedModels + ': qwen2.5:7b, nomic-embed-text')
-    expect(report).toContain('重度任务用云端大模型')
-    expect(report).toContain('显存 8GB')
+    expect(report).toContain('Mainstream (CPU)')
+    expect(report).toContain('[Top pick] qwen2.5:7b-instruct-q4_K_M ✅')
+    expect(report).toContain('7B quantized top pick on CPU')
+    expect(report).toContain('Local models cover daily chat.')
+    expect(report).toContain('Under 8GB RAM: prefer online models')
+    // 解析器一旦没接上，报告里会露出裸码 —— 这条比"含文案"更硬
+    expect(report).not.toMatch(/mainstream_cpu|cpu_mainstream|qwen7b_q4_cpu_pick|mem_lt8/)
   })
 
   it('③ 数据健康：完整性正常 + 各计数与附件占用', () => {

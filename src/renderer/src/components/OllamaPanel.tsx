@@ -6,6 +6,7 @@ import type {
   OllamaInstallEvent,
   ModelRecommendation
 } from '../../../shared/types'
+import { modelRecKey } from '../../../shared/model-rec-codes'
 import { useI18n } from '../i18n'
 import { reportIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
@@ -128,9 +129,10 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     return t('ollama.stageDone')
   }
 
-  // 推荐里排除纯向量模型单独标注，其余作为对话模型快捷拉取
-  const chatPicks = (rec?.localPicks ?? []).filter((p) => p.tag !== '向量').slice(0, 3)
-  const embedPick = (rec?.localPicks ?? []).find((p) => p.tag === '向量')
+  // 推荐里排除纯向量模型单独标注，其余作为对话模型快捷拉取。
+  // 156 起 tag 是**码**（'embedding'）而不是中文「向量」——这里以前是拿界面文案做逻辑判断
+  const chatPicks = (rec?.localPicks ?? []).filter((p) => p.tag !== 'embedding').slice(0, 3)
+  const embedPick = (rec?.localPicks ?? []).find((p) => p.tag === 'embedding')
 
   /** 发起拉取并清掉上一次的完成提示（hook 不管调用方的 notice） */
   const doPull = (model: string): Promise<boolean> => {
@@ -263,13 +265,13 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
           {/* 推荐模型快捷按钮 */}
           {chatPicks.length > 0 && (
             <div>
-              <div className="text-[10px] text-[var(--color-text-muted)] mb-1">{rec?.tier ? `（${rec.tier}）${t('ollama.recommend')}` : t('ollama.recommend')}</div>
+              <div className="text-[10px] text-[var(--color-text-muted)] mb-1">{rec?.tier ? `（${t(modelRecKey('tier', rec.tier))}）${t('ollama.recommend')}` : t('ollama.recommend')}</div>
               <div className="flex flex-wrap gap-1.5">
                 {chatPicks.map((p) => (
                   <button
                     key={p.id}
                     disabled={!!pulling || p.installed}
-                    title={p.reason}
+                    title={t(modelRecKey('reason', p.reason))}
                     onClick={() => void doPull(p.id)}
                     className={`text-[10px] px-2 py-1 rounded border font-mono ${
                       p.installed
@@ -284,7 +286,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
                 {embedPick && (
                   <button
                     disabled={!!pulling || embedPick.installed}
-                    title={embedPick.reason}
+                    title={t(modelRecKey('reason', embedPick.reason))}
                     onClick={() => void doPull(embedPick.id)}
                     className={`text-[10px] px-2 py-1 rounded border font-mono ${
                       embedPick.installed

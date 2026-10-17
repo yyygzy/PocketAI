@@ -47,7 +47,9 @@ const QUOTED_LABELS: Record<string, string[]> = {
   'delegate.failNotCapable': ['provider.capNative'],
   // 路径型引用：两段各是一条 label
   'wizard.probeHint': ['sidebar.settings', 'provider.title'],
-  'wizard.probeNotEnabled': ['sidebar.settings', 'provider.title']
+  'wizard.probeNotEnabled': ['sidebar.settings', 'provider.title'],
+  // 156 新搬进字典的那句也引了栏位名（原来它是主进程里的中文整句，写着「模型提供商」这个不存在的名字）
+  'modelRec.onlineHint.low_end': ['sidebar.settings', 'provider.title']
 }
 
 /** ② 例外：口语强调，**不是**界面名字，所以不登记进 ①（每条都得写明为什么） */
@@ -57,7 +59,9 @@ const PROSE_QUOTES: Partial<Record<Lang, string[]>> = {
 }
 
 /** 只扫这一簇：委派徽标 / 委派失败话术 / 首启那一格 / 文本协议开关 */
-const CLUSTER = ['provider.cap', 'delegate.fail', 'wizard.probe', 'agent.textProtocol']
+const CLUSTER = ['provider.cap', 'delegate.fail', 'wizard.probe', 'agent.textProtocol',
+  // 156：模型推荐那 60 条也进扫描范围（它们以前在主进程里，压根不在字典的射程内）
+  'modelRec.']
 const QUOTE_PAT = /「([^」]{1,40})」|“([^”]{1,40})”|"([^"]{1,40})"/g
 
 const labelsOf = (d: Dict): string[] => LABEL_KEYS.map((k) => d[k]).filter((v): v is string => typeof v === 'string' && v !== '')
@@ -84,7 +88,7 @@ describe('①登记过的引用：句子含该语言自己的那条 label 原文
       expect(labelKeys.length, `${textKey} 没登记任何 label`).toBeGreaterThan(0)
       for (const lk of labelKeys) expect(lk, `${textKey} 引了自己？`).not.toBe(textKey)
     }
-    expect(Object.keys(QUOTED_LABELS).length).toBeGreaterThanOrEqual(7)
+    expect(Object.keys(QUOTED_LABELS).length).toBeGreaterThanOrEqual(8)
   })
 
   it('capHint 里被引号包起来的**只能**是真判定名（探针没问过那句话，别把它写成"问一句…"）', () => {
