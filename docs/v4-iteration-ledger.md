@@ -66,6 +66,28 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-172 把 171 摊出的九条"零覆盖"补齐：**+3 份测试文件、+37 例**（三处源码只是"让被测得到"）
+
+- **来由**：171 对账时现查出九处"用户会看到、`tests/` 里 0 引用"的点。这一批就是那九条，一条不落。
+- **源码只动了三处，且都不是行为**：① `ensureNetworkGuard` 加 `export`（逻辑一字不动，为了让用例能拿到**真注册进去的那个回调**）；② `reminderCreatedToastKey(repeatRule)` 抽成 `reminder-presets.ts` 的纯函数，对话与 Agent 两处调用点各自的手抄三元改用它（V4-Iter-117 那族"抄两份 ⇒ 改一处等于把 bug 挪个地方"）；③ `renderer-data-health-perf.test.tsx` 里那份 `report()` 桩**原本就没给 `kb.vectorIndex`**（类型是必填）⇒ 顺手补上并支持 `kbOver` 覆盖。
+- **九条各自的落点**：
+  | 零覆盖 | 补在哪 | 例数 |
+  |---|---|---|
+  | `enc.hintNone` 尾注 | `renderer-encryption-panel.test.tsx`（none 逐字 + 不与「已加密」同屏 + db 反向） | +2 |
+  | 空名称的本地闸门 `provider.nameUrlRequired` | `renderer-provider-settings.test.tsx`（拦且 `saveProvider` 零调用 / 只填 URL 也拦 / 填满才发） | +3 |
+  | `DataHealthPanel` 向量索引那一行 | `renderer-data-health-perf.test.tsx`（`1,240 条 · 1024 维`、混维 `512/1024`、`count=0 且 dims 非空` 仍「未建立」） | +3 |
+  | 点用量那行弹详情 + 气泡里的 `¥` | `renderer-message-bubble-usage-line.test.tsx`（`¥3.60`、无 pricing 时零货币符号、弹出「用量详情」含输入价/输出价、title 含「点击查看用量详情」） | +4 |
+  | 侧栏真实拖拽排序 | `renderer-sidebar-nav.test.tsx`（拖完 store 变 + 落库载荷=改后那份且不丢项、`{ok:false}` ⇒ 回滚、只 dragStart/dragEnd ⇒ 零写库） | +3 |
+  | `AssistantEditor` 从未被挂载 | 新文件 `renderer-assistant-editor-tool-groups.test.tsx`（`ae.mcpNotInAll` 逐字、allowAll 下 MCP 不点亮且可点而内置禁用、点一条自己变选中、无 MCP 时不摆解释、逐条勾上显示选中） | 6 |
+  | `McpImportModal` / `McpTemplatesModal` 从未被挂载 | 新文件 `renderer-mcp-import-templates-mount.test.tsx`（一条被闸门挡下 ⇒ toast 只能说"成功导入 1 个"且警告带原因、全成功时不出现警告条、空列表时按钮 disabled、占位符没填零调用、被拒不标「已创建」而真存了才标） | 6 |
+  | js_eval 的 `webRequest` cancel 接线 | 新文件 `js-eval-network-guard-registration.test.ts`（整块打桩 electron session：外发一律 `cancel:true`、只放行 `data:`/`about:blank`、幂等、两个权限 handler 给 false、与 `isAllowedSandboxUrl` 同源） | 6 |
+  | `reminder.menu.createdRepeat` 的 toast 分支 | `reminder-presets.test.ts`（选键两条、四语两键齐备且都带 `{time}` 且互不相同、zh 真含「循环」/en 真含 "recurring"、**源码里不许再留手抄三元**） | +4 |
+- **变异闸门 M1–M9**（一轮一处、`finally` 恢复、恢复后**逐文件字节比对全一致**）：M1 MCP 组也随 allowAll 点亮 ⇒ 2 红；M2 导入时把闸门拒绝也算成功 ⇒ 1 红；M3 模板被拒也标「已创建」⇒ 1 红；M4 守卫永不 cancel ⇒ 2 红；M5 toast 选键退化成永远一次性那句 ⇒ 1 红；M6 撤掉侧栏回滚 ⇒ 1 红；M7 `enc.hintNone` 在 db 模式也说 ⇒ 1 红；M8 撤掉空名称本地闸门 ⇒ 2 红；M9 向量卡不读 `kb.vectorIndex` ⇒ 3 红。**九个都有牙，没有"写了不红"的**。
+- **两条自己撞出来的过程账**：① 第一版侧栏变异锚点按 10 空格缩进写 ⇒ 命中 0 次，脚本按规矩**跳过而不是猜**，单独补跑一轮（实际 8 空格）才确认 M6 有效；② `report()` 那个桩缺 `kb.vectorIndex` 时，「未建立」那条会**靠默认值假绿** ⇒ 改成 `count:0 但 dims 非空`，让断言只能由被测代码满足（与"空集合上的断言一律视为可疑"同一条规矩）。
+- **清单一并改正**：`B11`、`B19` 因此 **🔶 → ✅（CI）**（B11 剩下的只是"Chromium 遵不遵守 cancel"，不是我们的代码）；`A1 B24 B44 B48 B51 B52 B53` 各行补上"哪半进 CI 了、还剩什么"的具体一句。未收口 **50 → 48**（现数：`✅ 59 / 🔶 44 / ⬜ 3 / 🔁 1`，总 107 行）。
+- **③ 那 13 行的结论**：`B60 B62 B63 B64 B67 B68 B69 B70 B71 B72 B73 B77 B78` 我逐条回读了引用的断言（只打 `it(`/`expect(` 行）——**它们的标记本来就是 🔶 且行内对 CI 的引用与实读一致，所以一行没改**。代理说的"可收窄"在这 13 行上是措辞层面的，不是错标；为了"动过点什么"去改写它们只会制造 diff 噪音。
+- 全量：typecheck 0 / vitest **318 文件 3812 用例**（+3 文件 +37 例）/ build 三端。
+
 ### V4-Iter-171 清单对账第二批：**16 行的标记从"看着完全没测"改成"机制已 CI、只剩写清的那半"**（代码零改动，未收口数不变）
 
 - **接 169 的未完成部分**：上一轮我只落地了亲自回读过断言的那些行，剩下 28 行标着"代理说可收窄"没动。这批把其中 **17 行**逐条回读（脚本只摊 `it(` / `expect(` 那几行，读断言不读标题），改 **16 行标记**：`A1 A2` 🔁→🔶、`A7 B8 B11 B15 B17 B19 B24 B28 B47 B48 B51 B52 B53` ⬜→🔶、`B27` ⬜→🔁（本质不可一次收口），`B66` 留 ⬜ 但补一句"为什么这台机器证不了"。

@@ -20,7 +20,7 @@ import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
 import { writeClipboard } from '../../../utils/clipboard'
 import { buildConversationHtml } from '../../../utils/export-html'
-import { buildReminderText } from '../../../utils/reminder-presets'
+import { buildReminderText, reminderCreatedToastKey } from '../../../utils/reminder-presets'
 import { formatDateTime } from '../../../utils/time'
 import { formatStepTokens } from '../../../utils/agent-step-tokens'
 import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
@@ -103,7 +103,7 @@ export const AgentPanel: React.FC = () => {
       // 通知 Sidebar 角标即时刷新（创建无 IPC 广播，本地事件轻量通知）
       window.dispatchEvent(new Event('pocketai:reminders-changed'))
       toast.success(
-        t(repeatRule ? 'reminder.menu.createdRepeat' : 'reminder.menu.created', {
+        t(reminderCreatedToastKey(repeatRule), {
           time: formatDateTime(fireAt)
         })
       )

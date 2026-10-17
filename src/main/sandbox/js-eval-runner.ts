@@ -33,8 +33,12 @@ export function isAllowedSandboxUrl(url: string): boolean {
 
 let networkGuardInstalled = false
 
-/** 给沙箱 partition 挂一次性网络守卫（幂等；partition 与窗口一一独立但 session 共享） */
-function ensureNetworkGuard(): void {
+/**
+ * 给沙箱 partition 挂一次性网络守卫（幂等；partition 与窗口一一独立但 session 共享）。
+ * 导出只为让用例能拿到**真注册进去的那个回调**去喂 URL——
+ * 此前 `isAllowedSandboxUrl` 有 6 例，但"webRequest 真的被挂上、cancel 真的回给 Chromium"零覆盖。
+ */
+export function ensureNetworkGuard(): void {
   if (networkGuardInstalled) return
   const ses = session.fromPartition(SANDBOX_PARTITION)
   ses.webRequest.onBeforeRequest((details, callback) => {

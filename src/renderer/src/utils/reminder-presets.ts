@@ -214,3 +214,12 @@ export function buildReminderText(content: string): string {
     .trim()
     .slice(0, 200)
 }
+/**
+ * 创建成功的 toast 用哪把字典键：循环提醒与一次性提醒是**两句话**
+ * （「已设置循环提醒：… 起」vs「已设置提醒：…」），Agent 与对话两处调用点共用本函数，
+ * 别再各抄一遍三元（V4-Iter-117 那族"改一处等于把 bug 挪个地方"）。
+ */
+export function reminderCreatedToastKey(repeatRule?: ReminderRepeatRule | null):
+  'reminder.menu.createdRepeat' | 'reminder.menu.created' {
+  return repeatRule ? 'reminder.menu.createdRepeat' : 'reminder.menu.created'
+}

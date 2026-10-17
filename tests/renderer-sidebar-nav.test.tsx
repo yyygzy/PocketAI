@@ -6,7 +6,7 @@
 // ③ 固定要落库，落库失败必须回滚——不能停在"看着固定了其实没存"。
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { stubPocketai, pocketaiCalls, mountWithProviders } from './helpers/renderer'
 import { Sidebar } from '../src/renderer/src/components/Sidebar'
@@ -19,6 +19,10 @@ interface Opts {
   pinned?: string[]
   /** 保存固定列表的返回（默认成功并回显） */
   setPinnedResult?: (list: string[]) => { ok: boolean; data?: string[]; error?: string }
+  /** 保存顺序的返回（默认成功并回显）；给 {ok:false} 就能验回滚 */
+  setOrderResult?: (list: string[]) => { ok: boolean; data?: string[]; error?: string }
+  /** getSidebarOrder 的返回（默认与 order 一致；回滚场景要给它「库里那份」） */
+  getOrderResult?: (list: string[]) => { ok: boolean; data?: string[] }
 }
 
 function mount(opts: Opts = {}) {
@@ -27,11 +31,13 @@ function mount(opts: Opts = {}) {
   stubPocketai({
     listReminders: () => [],
     onReminderFired: () => () => {},
-    getSidebarOrder: () => ({ ok: true, data: order }),
     getSidebarPinned: () => ({ ok: true, data: pinned }),
     setSidebarPinned: (list: string[]) =>
       opts.setPinnedResult ? opts.setPinnedResult(list) : { ok: true, data: list },
-    setSidebarOrder: (list: string[]) => ({ ok: true, data: list }),
+    setSidebarOrder: (list: string[]) =>
+      opts.setOrderResult ? opts.setOrderResult(list) : { ok: true, data: list },
+    getSidebarOrder: () =>
+      opts.getOrderResult ? opts.getOrderResult(order) : { ok: true, data: order },
     openDetachedWindow: () => ({ ok: true })
   })
   return mountWithProviders(
@@ -135,5 +141,94 @@ describe('右键菜单：固定不被休眠', () => {
     expect(ipcArgsOf('getSidebarPinned').length).toBeGreaterThan(1)
     expect(useAppStore.getState().pinnedModules).toEqual([])
     expect(screen.queryByText('📌')).toBeNull()
+  })
+})
+// —— V4-Iter-172：B53 对账现查的那条零覆盖 ——
+// 侧栏的拖拽排序此前只有 store/schema 层被钉过，**真实的 drop 处理没人动过**；
+// 而 V4-Iter-112 的教训正是"schema 漏一项 ⇒ 拖拽从上线起就坏了没人发现"。
+// 这里从 DOM 上真拖一次：钉"移动生效 + 落库载荷是改后那份 + 落库失败必须回滚"。
+describe('侧栏真拖拽排序（V4-Iter-172 补）', () => {
+  const dt = (): Record<string, unknown> => ({
+    setData: () => {}, getData: () => '', clearData: () => {}, setDragImage: () => {},
+    effectAllowed: '', dropEffect: '', types: []
+  })
+  const orderOf = (): string[] => useAppStore.getState().sidebarOrder
+
+  function dragTo(fromLabel: string, toLabel: string): void {
+    const from = screen.getByLabelText(fromLabel)
+    const to = screen.getByLabelText(toLabel)
+    fireEvent.dragStart(from, { dataTransfer: dt() })
+    fireEvent.dragOver(to, { dataTransfer: dt() })
+    fireEvent.drop(to)
+    fireEvent.dragEnd(from)
+  }
+
+  it('把「知识库」拖到「对话」前面 ⇒ 界面顺序立刻变，且落库发的是改后那份', async () => {
+    const saved: string[][] = []
+    stubPocketai({
+      listReminders: () => [],
+      onReminderFired: () => () => {},
+      getSidebarOrder: () => ({ ok: true, data: [...DEFAULT_SIDEBAR_ORDER] }),
+      getSidebarPinned: () => ({ ok: true, data: [] }),
+      setSidebarPinned: (l: string[]) => ({ ok: true, data: l }),
+      setSidebarOrder: (l: string[]) => {
+        saved.push(l as string[])
+        return { ok: true, data: l }
+      },
+      openDetachedWindow: () => ({ ok: true })
+    })
+    mountWithProviders(
+      <Sidebar active="chat" onChange={() => {}} collapsed={false} onToggleCollapse={() => {}} onOpenReminders={() => {}} />
+    )
+    await screen.findByLabelText('知识库')
+    const before = orderOf()
+    expect(before[0]).toBe('chat')
+    dragTo('知识库', '对话')
+    const after = orderOf()
+    expect(after.slice(0, 2)).toEqual(['knowledge', 'chat'])
+    await waitFor(() => expect(saved.length).toBeGreaterThan(0))
+    expect(saved[saved.length - 1]).toEqual(after)
+    // 只是换位，不许丢项或造出重复
+    expect([...after].sort()).toEqual([...before].sort())
+  })
+
+  it('落库失败 ⇒ 回滚到库里那份，界面不停在"看着排好了其实没存"', async () => {
+    stubPocketai({
+      listReminders: () => [],
+      onReminderFired: () => () => {},
+      getSidebarOrder: () => ({ ok: true, data: [...DEFAULT_SIDEBAR_ORDER] }),
+      getSidebarPinned: () => ({ ok: true, data: [] }),
+      setSidebarPinned: (l: string[]) => ({ ok: true, data: l }),
+      setSidebarOrder: () => ({ ok: false, error: '保存失败' }),
+      openDetachedWindow: () => ({ ok: true })
+    })
+    mountWithProviders(
+      <Sidebar active="chat" onChange={() => {}} collapsed={false} onToggleCollapse={() => {}} onOpenReminders={() => {}} />
+    )
+    await screen.findByLabelText('知识库')
+    dragTo('知识库', '对话')
+    expect(orderOf()).toEqual(['knowledge', 'chat', ...DEFAULT_SIDEBAR_ORDER.filter((x) => x !== 'knowledge' && x !== 'chat')])
+    await waitFor(() => expect(orderOf()).toEqual([...DEFAULT_SIDEBAR_ORDER]), { timeout: 2000 })
+  })
+
+  it('反向对照：只按下不落到别的项上（dragEnd 前没 drop）⇒ 一次都不写库', async () => {
+    const callsBefore = pocketaiCalls().filter((c) => c.fn === 'setSidebarOrder').length
+    stubPocketai({
+      listReminders: () => [],
+      onReminderFired: () => () => {},
+      getSidebarOrder: () => ({ ok: true, data: [...DEFAULT_SIDEBAR_ORDER] }),
+      getSidebarPinned: () => ({ ok: true, data: [] }),
+      setSidebarPinned: (l: string[]) => ({ ok: true, data: l }),
+      setSidebarOrder: (l: string[]) => ({ ok: true, data: l }),
+      openDetachedWindow: () => ({ ok: true })
+    })
+    mountWithProviders(
+      <Sidebar active="chat" onChange={() => {}} collapsed={false} onToggleCollapse={() => {}} onOpenReminders={() => {}} />
+    )
+    await screen.findByLabelText('知识库')
+    fireEvent.dragStart(screen.getByLabelText('知识库'), { dataTransfer: dt() })
+    fireEvent.dragEnd(screen.getByLabelText('知识库'))
+    expect(orderOf()).toEqual([...DEFAULT_SIDEBAR_ORDER])
+    expect(pocketaiCalls().filter((c) => c.fn === 'setSidebarOrder').length).toBe(callsBefore)
   })
 })

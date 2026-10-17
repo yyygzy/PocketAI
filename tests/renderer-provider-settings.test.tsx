@@ -209,3 +209,38 @@ describe('委派能力入口挂在缓存模型那一行', () => {
     expect(screen.queryByText(zh['provider.capNative'])).toBeNull()
   })
 })
+// —— V4-Iter-172：B44 对账时现查的缺口 ——
+// 名称留空点保存时，用户看到的是**渲染端本地**那句「名称与 Base URL 不能为空」
+// （IPC 根本不发，所以 IPC 层的中文校验报错在这个入口撞不到）。此前 provider.nameUrlRequired 全仓 0 引用。
+describe('名称/URL 留空被本地先拦（V4-Iter-172 补）', () => {
+  const savedCalls = (): number => pocketaiCalls().filter((c) => c.fn === 'saveProvider').length
+
+  it('点「+ 新增」后直接保存 ⇒ 就地出那句本地提示，一次 saveProvider 都不发', async () => {
+    mountWithProviders(<ProviderSettings />)
+    fireEvent.click(await screen.findByText(zh['provider.add']))
+    fireEvent.click(screen.getByText(zh['common.save']))
+    expect(await screen.findByText(zh['provider.nameUrlRequired'])).toBeTruthy()
+    expect(savedCalls()).toBe(0)
+  })
+
+  it('只有名称没填（URL 填了）同样要拦——两个字段是"都要有"不是"有一个"', async () => {
+    mountWithProviders(<ProviderSettings />)
+    fireEvent.click(await screen.findByText(zh['provider.add']))
+    const url = (screen.getByText('Base URL').parentElement as HTMLElement).querySelector('input') as HTMLInputElement
+    fireEvent.change(url, { target: { value: 'https://example.com/v1' } })
+    fireEvent.click(screen.getByText(zh['common.save']))
+    expect(await screen.findByText(zh['provider.nameUrlRequired'])).toBeTruthy()
+    expect(savedCalls()).toBe(0)
+  })
+
+  it('反向对照：名称与 Base URL 都填上，同一条保存就会发出去（拦的是空值不是保存本身）', async () => {
+    mountWithProviders(<ProviderSettings />)
+    fireEvent.click(await screen.findByText(zh['provider.add']))
+    fireEvent.change(nameInput(), { target: { value: '新的一家' } })
+    const url = (screen.getByText('Base URL').parentElement as HTMLElement).querySelector('input') as HTMLInputElement
+    fireEvent.change(url, { target: { value: 'https://example.com/v1' } })
+    fireEvent.click(screen.getByText(zh['common.save']))
+    await waitFor(() => expect(savedCalls()).toBe(1))
+    expect(screen.queryByText(zh['provider.nameUrlRequired'])).toBeNull()
+  })
+})

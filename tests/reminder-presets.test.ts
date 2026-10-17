@@ -13,10 +13,16 @@ import {
   daysInMonth,
   buildReminderPresets,
   buildReminderText,
+  reminderCreatedToastKey,
   DEFAULT_PRESET_MINUTE,
   DEFAULT_RULE_CONFIG
 } from '../src/renderer/src/utils/reminder-presets'
 import { MAX_REMINDER_MINUTES } from '../src/shared/schemas/reminder'
+import { readFileSync } from 'node:fs'
+import { zh } from '../src/renderer/src/i18n/zh'
+import { en } from '../src/renderer/src/i18n/en'
+import { ja } from '../src/renderer/src/i18n/ja'
+import { ko } from '../src/renderer/src/i18n/ko'
 
 const MIN = 60_000
 
@@ -278,5 +284,47 @@ describe('buildReminderText', () => {
   })
   it('纯空白返回空串（供调用方提示无文本）', () => {
     expect(buildReminderText('   \n\t')).toBe('')
+  })
+})
+// —— V4-Iter-172：B24 对账现查的那条零覆盖 ——
+// 「已设置循环提醒：… 起」这句 toast 此前全仓 tests 里 0 引用；而对话与 Agent 两处调用点
+// 还各自手抄了一遍三元 ⇒ 正是 V4-Iter-117 那族"改一处等于把 bug 挪个地方"的形状。
+describe('创建提醒的 toast 选键（reminderCreatedToastKey）', () => {
+  it('带循环规则与一次性是**两句话**，各按自己的键走', () => {
+    expect(reminderCreatedToastKey(null)).toBe('reminder.menu.created')
+    expect(reminderCreatedToastKey(undefined)).toBe('reminder.menu.created')
+    expect(reminderCreatedToastKey({ kind: 'daily', intervalDays: 1 })).toBe('reminder.menu.createdRepeat')
+    expect(reminderCreatedToastKey({ kind: 'monthly', dayOfMonth: 31 })).toBe('reminder.menu.createdRepeat')
+  })
+
+  it('两把键在四本字典里都在、都带 {time} 插值、且两句互不相同', () => {
+    for (const raw of [zh, en, ja, ko]) {
+      const dict = raw as Record<string, string>
+      const one = dict['reminder.menu.created'] ?? ''
+      const rep = dict['reminder.menu.createdRepeat'] ?? ''
+      expect(one, '一次性那句不能缺').toBeTruthy()
+      expect(rep, '循环那句不能缺').toBeTruthy()
+      expect(rep).toContain('{time}')
+      expect(one).toContain('{time}')
+      expect(rep).not.toBe(one)
+    }
+  })
+
+  it('循环那句真的说了"循环"这件事（别让它在某语里退化成同一句话）', () => {
+    const zhRep = (zh as Record<string, string>)['reminder.menu.createdRepeat'] ?? ''
+    const enRep = (en as Record<string, string>)['reminder.menu.createdRepeat'] ?? ''
+    expect(zhRep).toContain('循环')
+    expect(enRep.toLowerCase()).toContain('recurring')
+  })
+
+  it('两处调用点都走这个函数，源码里不再留手抄的三元', () => {
+    for (const f of [
+      'src/renderer/src/modules/chat/ChatModule.tsx',
+      'src/renderer/src/modules/agent/chat/AgentPanel.tsx'
+    ]) {
+      const src = readFileSync(f, 'utf8') as string
+      expect(src, f + ' 应当改用 reminderCreatedToastKey').toContain('t(reminderCreatedToastKey(repeatRule)')
+      expect(src, f + " 里不许再留手抄的三元").not.toContain("repeatRule ? 'reminder.menu.createdRepeat'")
+    }
   })
 })

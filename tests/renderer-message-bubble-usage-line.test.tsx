@@ -7,7 +7,7 @@
 // ③ user 气泡永不显示。
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { MessageBubble } from '../src/renderer/src/modules/chat/MessageBubble'
@@ -72,5 +72,37 @@ describe('每条回答后的累计用量', () => {
   it('user 气泡永不显示用量行', () => {
     mount({ role: 'user', sessionTokensUpTo: 4800 })
     expect(screen.queryByText(/tokens/)).toBeNull()
+  })
+})
+// —— V4-Iter-172：B52 对账现查的两条零覆盖 ——
+// ① 那行字**点下去要弹用量详情**（此前只测了显示规则，没人点过）；
+// ② 配了本机单价时**费用要出现在气泡里**（该文件此前 `¥` 0 命中）。
+describe('点那行弹详情 + 费用出现在气泡（V4-Iter-172 补）', () => {
+  // 单价按「每 100 万 token」计：1000 输入 ×2000 + 200 输出 ×8000 ⇒ 3.60 元
+  const PRICING = { currency: 'CNY' as const, prices: { 'deepseek::deepseek-chat': { input: 2000, output: 8000 } } }
+
+  it('给了 provider/model/pricing ⇒ 同一行里出现 ¥3.60', () => {
+    mount({ provider: 'deepseek', model: 'deepseek-chat', pricing: PRICING })
+    expect(screen.getByText(/¥3\.60/)).toBeTruthy()
+  })
+
+  it('反向对照：没有 pricing 时不出现任何货币符号（只显示 token 数）', () => {
+    mount()
+    const line = screen.getByText(/tokens/)
+    expect(line.textContent).not.toContain('¥')
+    expect(line.textContent).not.toContain('$')
+  })
+
+  it('点那行 ⇒ 用量详情浮层出现，里面是分项（输入/输出/单价）而不是一句话', async () => {
+    mount({ provider: 'deepseek', model: 'deepseek-chat', pricing: PRICING })
+    fireEvent.click(screen.getByText(/tokens/))
+    expect(await screen.findByText(zh['chat.usageDetail'])).toBeTruthy()
+    expect(screen.getByText(zh['usage.priceInput'])).toBeTruthy()
+    expect(screen.getByText(zh['usage.priceOutput'])).toBeTruthy()
+  })
+
+  it('悬停那行的 title 明说"点击查看用量详情"（可点这件事要有线索）', () => {
+    mount()
+    expect(screen.getByText(/tokens/).getAttribute('title')).toContain(zh['chat.usageDetailHint'])
   })
 })

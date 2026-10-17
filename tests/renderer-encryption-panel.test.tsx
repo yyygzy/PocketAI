@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, calledFns } from './helpers/renderer'
 import { EncryptionPanel } from '../src/renderer/src/modules/settings/SettingsModule'
+import { zh } from '../src/renderer/src/i18n/zh'
 import type { EncryptionStatus } from '../src/shared/types'
 
 const none: EncryptionStatus = {
@@ -80,5 +81,20 @@ describe('新设主密码下限（SEC-32①）', () => {
     fireEvent.change(inputs[1]!, { target: { value: '1234567890' } })
     fireEvent.click(screen.getByText('确认'))
     await waitFor(() => expect(calledFns()).toContain('enableEncryption'))
+  })
+})
+// —— V4-Iter-172：清单对账补的零覆盖 ——
+// enc.hintNone 这句尾注在 none 模式下天天出现在屏上，此前全仓 tests 里 0 引用。
+describe('none 模式底部尾注 enc.hintNone（V4-Iter-172 补）', () => {
+  it('无主密码时逐字出现那句"字段加密与锁定只反映本地混淆和界面遮挡"', () => {
+    mount(none)
+    expect(screen.getByText(zh['enc.hintNone'])).toBeTruthy()
+    // 这句存在的全部意义是"别让人以为已加密"，所以它必须与「已加密」字样互斥
+    expect(screen.queryByText(/已加密/)).toBeNull()
+  })
+
+  it('反向对照：db 模式下这句尾注不出现（那时它反而吓人）', () => {
+    mount(dbAt(131072))
+    expect(screen.queryByText(zh['enc.hintNone'])).toBeNull()
   })
 })

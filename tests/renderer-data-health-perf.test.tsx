@@ -19,7 +19,7 @@ const summary = (over: Partial<PerfSummary> = {}): PerfSummary => ({
   ...over
 })
 
-function report(perfHistory: PerfSummary[]): DataHealthReport {
+function report(perfHistory: PerfSummary[], kbOver: Partial<DataHealthReport['kb']> = {}): DataHealthReport {
   return {
     sizes: {
       dataDirBytes: 20 * 1024 * 1024,
@@ -34,7 +34,9 @@ function report(perfHistory: PerfSummary[]): DataHealthReport {
       total: 2,
       byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 2, error: 0 },
       errorDocs: [],
-      integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] }
+      integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] },
+      vectorIndex: { count: 0, dims: [] },
+      ...kbOver
     },
     backup: { configured: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
     tasks: { kbHealthCheckLastRunAt: null, backupVerifyLastRunAt: null },
@@ -44,9 +46,9 @@ function report(perfHistory: PerfSummary[]): DataHealthReport {
   }
 }
 
-async function mount(perfHistory: PerfSummary[]): Promise<void> {
+async function mount(perfHistory: PerfSummary[], kbOver: Partial<DataHealthReport['kb']> = {}): Promise<void> {
   stubPocketai({
-    getDataHealth: () => report(perfHistory),
+    getDataHealth: () => report(perfHistory, kbOver),
     cleanKbOrphans: () => ({ removedVectors: 0, removedChunks: 0 }),
     reindexKbDocs: () => ({ enqueued: 0 }),
     deduplicateKbDocs: () => ({ removed: 0 })
@@ -90,5 +92,26 @@ it('模型细分渲染成子行（哪个模型慢要一眼看得见）', async (
   it('lastAt 为 0（日志行没时间戳）时显示 -，不输出 1970', async () => {
     await mount([summary({ lastAt: 0 })])
     expect(screen.getByText(/· 最近 -$/)).toBeTruthy()
+  })
+})
+// —— V4-Iter-172：B48 对账现查的缺口 ——
+// 向量索引那张卡的**数据源**（真库 5 例）与**文案函数**（4 例）早有 CI，
+// 但 DataHealthPanel 上那一行本身没有任何挂载用例 ⇒ "卡片到底显示了什么"没人证。
+describe('数据健康面板 · 向量索引卡片（V4-Iter-172 补）', () => {
+  it('真规模走 kb.vectorIndex：「1,240 条 · 1024 维」逐字出现', async () => {
+    await mount([], { vectorIndex: { count: 1240, dims: [1024] } })
+    expect(screen.getByText('向量索引')).toBeTruthy()
+    expect(screen.getByText('1,240 条 · 1024 维')).toBeTruthy()
+  })
+
+  it('混过两套 embedding 模型 ⇒ 维度并列（这是 dim-mismatch 的现场证据，不许压成一个数）', async () => {
+    await mount([], { vectorIndex: { count: 5, dims: [512, 1024] } })
+    expect(screen.getByText('5 条 · 512/1024 维')).toBeTruthy()
+  })
+
+  it('从未建索引显示「未建立」，不是 0 条也不是历史的 "-"（dims 有值也一样，条数才是判据）', async () => {
+    await mount([], { vectorIndex: { count: 0, dims: [1024] } })
+    expect(screen.getByText('未建立')).toBeTruthy()
+    expect(screen.queryByText(/0 条/)).toBeNull()
   })
 })
