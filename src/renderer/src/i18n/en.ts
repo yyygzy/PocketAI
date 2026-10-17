@@ -1772,7 +1772,6 @@ export const en: Record<string, string> = {
   'wizard.free': 'free',
   'wizard.removable': 'Removable disk',
   'wizard.portableNote': '⚠️ Running from a removable disk: your data travels with the drive. Set a master password to keep it safe if the device is lost.',
-  'wizard.modelTitle': '🤖 Recommended model tier',
   'wizard.installed': 'Installed',
   'wizard.securityTitle': '🔐 Protect your data',
   'wizard.securitySubtitle': 'Chats, notes and knowledge bases are all stored locally. With a master password, the database is encrypted with AES-256-GCM.',

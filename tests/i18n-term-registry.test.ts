@@ -25,7 +25,7 @@ const LANGS: Lang[] = ['zh', 'en', 'ja', 'ko']
 /** 扫描范围：只在这三个前缀里取值 */
 const MODEL_REC = 'modelRec.'
 const JUDGEMENT = 'judgement.'
-const WIZARD_MODEL = 'wizard.model'
+// 注意：158 曾把 `wizard.modelTitle`（向导标题）算进范围，159 查明那是一把死键（无组件引用）并已删除
 
 interface Term {
   concept: string
@@ -42,7 +42,7 @@ interface Term {
 const TERMS: Term[] = [
   {
     concept: '模型档位（推荐那一栏与向导标题里的"档"）',
-    scope: [MODEL_REC, WIZARD_MODEL],
+    scope: [MODEL_REC],
     canonical: { zh: '档位', en: 'tier', ja: 'クラス', ko: '등급' },
     banned: {
       // ①「帯域／구간」是下面 VRAM 分桶那个词的专属，不许拿来当"档位"
@@ -151,7 +151,7 @@ describe('②③ 用词只有一处', () => {
 
   it('本批判掉的写法不许回来（逐条禁词，附理由）', () => {
     for (const { lang, needle, why } of BANNED_COPY) {
-      const rows = inScope(lang, [MODEL_REC, JUDGEMENT, WIZARD_MODEL]).filter(([, v]) => v.includes(needle))
+      const rows = inScope(lang, [MODEL_REC, JUDGEMENT]).filter(([, v]) => v.includes(needle))
       expect(rows.map(([k]) => k), `${lang} 里「${needle}」又出现了（理由：${why}）`).toEqual([])
     }
   })

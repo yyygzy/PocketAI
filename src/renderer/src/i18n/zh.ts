@@ -1772,7 +1772,6 @@ export const zh: Record<string, string> = {
   'wizard.free': '剩余',
   'wizard.removable': '可移动磁盘',
   'wizard.portableNote': '⚠️ 当前运行在可移动磁盘上：数据随盘走，换电脑更灵活，但请务必设置主密码加密，防止设备丢失后数据被读取。',
-  'wizard.modelTitle': '🤖 为你推荐的模型档位',
   'wizard.installed': '已安装',
   'wizard.securityTitle': '🔐 保护你的数据',
   'wizard.securitySubtitle': '所有对话、笔记、知识库都存在本地。设置主密码后，数据库将以 AES-256-GCM 加密存储。',

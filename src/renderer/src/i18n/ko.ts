@@ -1698,7 +1698,6 @@ export const ko: Record<string, string> = {
   'wizard.free': '여유',
   'wizard.removable': '이동식 디스크',
   'wizard.portableNote': '⚠️ 이동식 디스크에서 실행 중: 데이터는 디스크와 함께 이동합니다. 기기 분실 시 데이터 보호를 위해 마스터 비밀번호 설정을 강력히 권장합니다.',
-  'wizard.modelTitle': '🤖 추천 모델 등급',
   'wizard.installed': '설치됨',
   'wizard.securityTitle': '🔐 데이터 보호',
   'wizard.securitySubtitle': '모든 채팅, 메모, 지식베이스는 로컬에 저장됩니다. 마스터 비밀번호를 설정하면 데이터베이스는 AES-256-GCM으로 암호화됩니다.',

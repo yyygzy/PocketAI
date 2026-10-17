@@ -1698,7 +1698,6 @@ export const ja: Record<string, string> = {
   'wizard.free': '空き',
   'wizard.removable': 'リムーバブルディスク',
   'wizard.portableNote': '⚠️ リムーバブルディスク上で実行中：データはディスクと共に移動します。デバイス紛失時のデータ保護のため、マスターパスワードを設定することを強く推奨します。',
-  'wizard.modelTitle': '🤖 推奨モデルのクラス',
   'wizard.installed': 'インストール済み',
   'wizard.securityTitle': '🔐 データを保護',
   'wizard.securitySubtitle': 'すべてのチャット、メモ、ナレッジベースはローカルに保存されます。マスターパスワードを設定すると、データベースは AES-256-GCM で暗号化されます。',
