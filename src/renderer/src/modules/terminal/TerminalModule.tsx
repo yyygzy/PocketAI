@@ -4,6 +4,16 @@ import { useI18n } from '../../i18n'
 const MAX_OUTPUT = 50000
 const KEEP_OUTPUT = 40000
 
+/**
+ * 终端缓冲追加：超过 MAX_OUTPUT 就丢最旧的一段，并回报 clipped。
+ * 回报是必须的——不告诉用户"上面被裁掉了"，屏上看着就像全量。
+ */
+export function appendOutput(prev: string, chunk: string): { text: string; clipped: boolean } {
+  const next = prev + chunk
+  if (next.length <= MAX_OUTPUT) return { text: next, clipped: false }
+  return { text: next.slice(-KEEP_OUTPUT), clipped: true }
+}
+
 export function stripAnsi(input: string): string {
   // eslint-disable-next-line no-control-regex
   return input.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
@@ -17,6 +27,7 @@ export const TerminalModule: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [clipped, setClipped] = useState(false)
   const preRef = useRef<HTMLPreElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -39,11 +50,12 @@ export const TerminalModule: React.FC = () => {
           setRunning(false)
         }
         setOutput((prev) => {
-          const next = prev + payload.data
-          if (next.length > MAX_OUTPUT) {
-            return next.slice(-KEEP_OUTPUT)
+          const r = appendOutput(prev, payload.data)
+          if (r.clipped) {
+            // 只在第一次置位：更新函数可能被重复调用，state 幂等设 true 没有副作用
+            setClipped(true)
           }
-          return next
+          return r.text
         })
       })
     }
@@ -108,6 +120,7 @@ export const TerminalModule: React.FC = () => {
         className="flex-1 min-h-0 overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs font-mono whitespace-pre-wrap break-all"
       >
         {stripAnsi(output)}
+        {clipped && <p className="text-[var(--color-text-muted)] italic">{t('terminal.outputTruncated')}</p>}
         {error && (
           <span className="text-red-400">{error}</span>
         )}

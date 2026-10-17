@@ -23,7 +23,6 @@ export const zh: Record<string, string> = {
   'common.restart': '重启',
   'common.enable': '启用',
   'common.add': '添加',
-  'common.none': '（无）',
   'common.unknownError': '未知错误',
   'common.docs': '篇文档',
   'common.image': '图片',
@@ -1332,7 +1331,6 @@ export const zh: Record<string, string> = {
   'skill.market.missingFields': '技能缺少名称或内容字段',
   'skill.market.exportDone': '已导出',
   'skill.market.exportFailed': '导出失败',
-  'skill.market.editHint': '请到左侧技能页编辑该副本',
   'skill.market.builtinHint': '内置技能内容不可直接修改；「复制为我的技能」后即可编辑副本。',
   'skill.market.tabLocal': '本地',
   'skill.market.tabOnline': '在线',
@@ -2096,8 +2094,6 @@ export const zh: Record<string, string> = {
   'mention.newFile': '选择新文件',
   'mention.knowledge': '知识库',
   'mention.noMatch': '没有匹配的文件或知识库',
-  'mention.kbAttached': '已引用知识库：{name}',
-  'mention.kbLimit': '最多引用 {n} 个知识库',
 
   // ── 终端模块 ──
   'terminal.inputPlaceholder': '输入命令，Enter 发送，↑↓ 历史',

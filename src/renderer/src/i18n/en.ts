@@ -23,7 +23,6 @@ export const en: Record<string, string> = {
   'common.restart': 'Restart',
   'common.enable': 'Enabled',
   'common.add': 'Add',
-  'common.none': '(None)',
   'common.unknownError': 'Unknown error',
   'common.docs': 'documents',
   'common.image': 'Image',
@@ -1332,7 +1331,6 @@ export const en: Record<string, string> = {
   'skill.market.missingFields': 'The skill is missing a name or content field',
   'skill.market.exportDone': 'Exported',
   'skill.market.exportFailed': 'Export failed',
-  'skill.market.editHint': 'Edit this copy in the skill page on the left',
   'skill.market.builtinHint': 'Built-in skill content is read-only. Duplicate it as yours to edit a copy.',
   'skill.market.tabLocal': 'Local',
   'skill.market.tabOnline': 'Online',
@@ -2096,8 +2094,6 @@ export const en: Record<string, string> = {
   'mention.newFile': 'Select new file',
   'mention.knowledge': 'Knowledge base',
   'mention.noMatch': 'No matching file or knowledge base',
-  'mention.kbAttached': 'Referenced knowledge base: {name}',
-  'mention.kbLimit': 'Up to {n} knowledge bases',
 
   // ── 终端模块 ──
   'terminal.inputPlaceholder': 'Enter command, Enter to send, ↑↓ for history',

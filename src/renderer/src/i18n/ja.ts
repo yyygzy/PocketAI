@@ -22,7 +22,6 @@ export const ja: Record<string, string> = {
   'common.restart': '再起動',
   'common.enable': '有効',
   'common.add': '追加',
-  'common.none': '（なし）',
   'common.unknownError': '不明なエラー',
   'common.docs': '件のドキュメント',
   'common.image': '画像',
@@ -1270,7 +1269,6 @@ export const ja: Record<string, string> = {
   'skill.market.missingFields': 'スキルに名前または内容フィールドがありません',
   'skill.market.exportDone': 'エクスポートしました',
   'skill.market.exportFailed': 'エクスポートに失敗しました',
-  'skill.market.editHint': '左側のスキルページでこの複製を編集してください',
   'skill.market.builtinHint': 'ビルトインスキルの内容は直接変更できません。「マイスキルとして複製」すると編集可能です。',
   'skill.market.tabLocal': 'ローカル',
   'skill.market.tabOnline': 'オンライン',
@@ -2008,8 +2006,6 @@ export const ja: Record<string, string> = {
   'mention.newFile': '新しいファイルを選択',
   'mention.knowledge': 'ナレッジベース',
   'mention.noMatch': '該当するファイルやナレッジベースがありません',
-  'mention.kbAttached': 'ナレッジベースを参照しました：{name}',
-  'mention.kbLimit': '最大 {n} 個のナレッジベースまで',
 
   // ── ターミナルモジュール ──
   'terminal.inputPlaceholder': 'コマンドを入力、Enter で送信、↑↓ で履歴',

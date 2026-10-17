@@ -27,15 +27,29 @@ const I18N = path.join(ROOT, 'src', 'renderer', 'src', 'i18n')
  *  B = 需要人确认"这块提示是不是真的不再出现"（如向导的安全提示、@ 提及的上限提示）
  * `wizard.modelTitle` 不在表里——它就是 158 我误改那把，本批已从四本字典删除。
  */
-const KNOWN_UNREFERENCED: Array<{ key: string; tier: 'A' | 'B'; zh: string }> = [
-  // 160 判完并删了 16 把（都有活键接替，证据在台账 V4-Iter-160），`agent.approval.autoRejectHint` 则接回了弹窗；
-  // 下面这 5 把**没找到接替者**——要么对应的提示真的不再出现、要么换了别的呈现方式，属产品判断，所以留在字典里等处置
-  { key: 'common.none', tier: 'B', zh: '（无）' },
-  { key: 'skill.market.editHint', tier: 'B', zh: '请到左侧技能页编辑该副本' },
-  { key: 'terminal.outputTruncated', tier: 'B', zh: '输出过长已截断…' },
-  { key: 'mention.kbAttached', tier: 'B', zh: '已引用知识库：{name}' },
-  { key: 'mention.kbLimit', tier: 'B', zh: '最多引用 {n} 个知识库' }
+// 160 把 159 普查出的 22 把逐条判完，清单因此清空：
+//  · 16 把有活键接替 ⇒ 删（`wizard.noRecoveryHint`→`wizard.encDoneHint`、`usage.requestCount`→`usage.requests`、
+//    `dh.integrity.*` 三把是改版后去掉节标题而数据仍显示、`ms.*` 五把因对照入口收纳成图标…证据逐条在台账 V4-Iter-160）；
+//  · `agent.approval.autoRejectHint` 与 `terminal.outputTruncated` 不是遗留而是**提示缺失** ⇒ 接回（弹窗 / 终端）；
+//  · 剩下 4 把（`common.none`、`skill.market.editHint`、`mention.kbAttached`、`mention.kbLimit`）经 git 考古是
+//    "从未接线"或"所指的按钮已在 96e4fed 被移除" ⇒ 删。
+// **空清单不等于闸门失效**：第一条用例里"一把假键必须被判死"的负面对照守着扫描器本身，
+// 下面 DISPOSED 那条守着"删掉的键不许悄悄回来"。
+const KNOWN_UNREFERENCED: string[] = []
+
+/** 159→160 期间处置掉的键：字典里再出现它们 = 有人绕过了判定（要么接回引用，要么彻底别留） */
+const DISPOSED = [
+  'wizard.modelTitle', 'common.none', 'skill.market.editHint', 'mention.kbAttached', 'mention.kbLimit',
+  'ms.single', 'ms.provider', 'ms.model', 'ms.modelId', 'ms.addCompare', 'am.deleteBtn', 'usage.requestCount',
+  'ollama.running', 'dh.integrity.brokenDocs', 'dh.integrity.duplicates', 'dh.integrity.providerIssues',
+  'wizard.installed', 'wizard.securityTitle', 'wizard.securitySubtitle', 'wizard.noRecoveryHint', 'wizard.gotoSettings'
 ]
+
+/**
+ * 已知盲区：主断言扫不到它们（源码里有 `t(`chat.${x}`)` 这类拼法 ⇒ 整族免检），但手工核对过确实没人引用。
+ * 单独钉一条"至今无字面引用"，谁接回去了就得把这条挪走——注释不能代替事实。
+ */
+const KNOWN_BLIND_SPOT = ['chat.export', 'chat.exportImage']
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of fs.readdirSync(dir)) {
@@ -90,27 +104,26 @@ describe('字典键必须有人引用', () => {
     expect(
       [...unreferenced].sort(),
       `实际未引用：${unreferenced.join(', ')}`
-    ).toEqual(KNOWN_UNREFERENCED.map((x) => x.key).sort())
+    ).toEqual([...KNOWN_UNREFERENCED].sort())
   })
 
-  it('清单不是摆设：每条都仍在实际结果里、且四本字典都还留着这把键', () => {
-    expect(KNOWN_UNREFERENCED.length, '清单清空了不等于闸门还在——留一把真的没被引用的键做样本').toBeGreaterThan(3)
+  it('处置过的键不许悄悄回到字典（回来只有两种正当方式：接回引用，或从 DISPOSED 里删名并说明理由）', () => {
+    expect(DISPOSED.length).toBeGreaterThanOrEqual(20)
     for (const lang of ['zh', 'en', 'ja', 'ko'] as const) {
-      const t = fs.readFileSync(path.join(I18N, `${lang}.ts`), 'utf8')
-      for (const e of KNOWN_UNREFERENCED) {
-        expect(unreferenced, `清单里的 ${e.key} 已被接回引用 ⇒ 该从清单删掉`).toContain(e.key)
-        expect(t.includes(`'${e.key}':`), `${lang} 里 ${e.key} 不见了，但清单没同步`).toBe(true)
+      const dict = fs.readFileSync(path.join(I18N, `${lang}.ts`), 'utf8')
+      for (const k of DISPOSED) {
+        const back = dict.includes(`'${k}':`)
+        const wired = blob.includes(`'${k}'`)
+        expect(back && !wired, `${lang} 把 ${k} 加回了字典却没接任何引用 ⇒ 绕过了 160 的判定`).toBe(false)
       }
-      expect(t.includes("'wizard.modelTitle':"), `${lang} 还留着 158 误改的那把死键`).toBe(false)
     }
   })
 
-  it('zh 文本对得上清单（防止清单写的是另一把键）', () => {
-    for (const e of KNOWN_UNREFERENCED) {
-      const line = zhText.split('\n').find((l) => l.trim().startsWith(`'${e.key}':`))
-      expect(line, `字典里没有 ${e.key}`).toBeTruthy()
-      if (e.zh.length > 20) continue // 长句只记了省略版，不逐字比
-      expect(line, `${e.key} 的 zh 文本与清单不符：${line}`).toContain(e.zh)
+  it('盲区名单：这些键至今仍无字面引用（接回去了就把它从名单里挪走，注释不算事实）', () => {
+    expect(KNOWN_BLIND_SPOT.length).toBeGreaterThan(0)
+    for (const k of KNOWN_BLIND_SPOT) {
+      expect(dictKeys, `${k} 已从字典删除 => 这条盲区记录该一并删掉`).toContain(k)
+      expect(blob.includes(`'${k}'`), `${k} 已被接回引用 => 该归主断言管，不再算盲区`).toBe(false)
     }
   })
 })

@@ -22,7 +22,6 @@ export const ko: Record<string, string> = {
   'common.restart': '다시 시작',
   'common.enable': '활성화됨',
   'common.add': '추가',
-  'common.none': '(없음)',
   'common.unknownError': '알 수 없는 오류',
   'common.docs': '개의 문서',
   'common.image': '이미지',
@@ -1270,7 +1269,6 @@ export const ko: Record<string, string> = {
   'skill.market.missingFields': '스킬에 이름 또는 내용 필드가 없습니다',
   'skill.market.exportDone': '내보내기 완료',
   'skill.market.exportFailed': '내보내기 실패',
-  'skill.market.editHint': '왼쪽 스킬 페이지에서 이 사본을 편집하세요',
   'skill.market.builtinHint': '내장 스킬 내용은 직접 수정할 수 없습니다. "내 스킬로 복제"하면 편집 가능합니다.',
   'skill.market.tabLocal': '로컬',
   'skill.market.tabOnline': '온라인',
@@ -2008,8 +2006,6 @@ export const ko: Record<string, string> = {
   'mention.newFile': '새 파일 선택',
   'mention.knowledge': '지식베이스',
   'mention.noMatch': '일치하는 파일이나 지식베이스 없음',
-  'mention.kbAttached': '지식베이스 참조됨: {name}',
-  'mention.kbLimit': '최대 {n}개 지식베이스',
 
   // ── 터미널 모듈 ──
   'terminal.inputPlaceholder': '명령 입력, Enter로 전송, ↑↓ 이력',
