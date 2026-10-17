@@ -784,6 +784,33 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE conversations ADD COLUMN role_key TEXT;
       ALTER TABLE agent_traces ADD COLUMN parent_request_id TEXT;
     `
+  },
+  {
+    // v49: 给 `agent_traces` 的三张查询脸补索引（V4-Iter-168）。
+    //
+    // 为什么现在加：这张表从建表起就只有主键，**每一次按 request/会话的读取都是全表扫**。
+    // 探针实测（本机、每形状 300 次取中位数）：5,000 行时 0.39–0.65 ms/次，50,000 行时 4.6–7.8 ms/次
+    // ⇒ 随行数线性涨，而这恰恰是全库增长最快的表（编排每落一步一行）。今天没人觉得慢，
+    // 但 163 与 166 又各自新增了一类按条件的读法（`parent_request_id = ?` 的树聚合、
+    // `conversation_id = ?` 的级联删除），所以趁它小的时候加，比以后带着锁去补容易得多。
+    //
+    // 三张索引各自对着一个真实查询形状，不加"以后可能用得上"的：
+    //  · `request_id` —— listByRequest / statsByRequest / latestTracesByConversation（面板展开分步明细）
+    //  · `(conversation_id, created_at)` —— listByConversation / latestRequestId / sessionStats / 166 的级联删除。
+    //    带第二列不只是"顺手"：那两条读取都带 `ORDER BY created_at DESC`，只建单列时计划里还剩
+    //    一句 `USE TEMP B-TREE FOR ORDER BY`（50,000 行实测 latestRequestId 0.171→0.080 ms；
+    //    5,000 行时这点差落在噪声里 ⇒ 这条收益要到库大起来才看得见，如实记）。
+    //  · `parent_request_id` —— 163 的整棵编排树聚合
+    // 写侧代价同样量过（WAL、autocommit 逐行插 2,000 条）：0.084 → 0.189 ms/行，
+    // 而一步 LLM 调用是几百 ms 量级；库文件 50,000 行时 3.7 → 6.1 MB。
+    // `IF NOT EXISTS` 是必须的：老库可能已有同名索引（幂等重跑，同 v46/v48 那条规矩）。
+    version: 49,
+    name: 'agent_traces_indexes',
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_agent_traces_request ON agent_traces(request_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_traces_conversation ON agent_traces(conversation_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_agent_traces_parent_request ON agent_traces(parent_request_id);
+    `
   }
 ]
 

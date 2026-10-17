@@ -75,9 +75,16 @@ function rewindToBeforeV48(): void {
       )
       for (const r of rows) stmt.run(...kept.map((k) => r[k] as string | number | null))
     }
-    for (const i of idx) db.exec(i.sql)
+    // 重放索引时要跳过"引用了被去掉那几列"的索引：v49 给 parent_request_id 建了索引，
+    // 而这里模拟的是 v47/v48 之前的库，那会儿既没有这些列也没有这些索引（照原样重放会 `no such column`）。
+    for (const i of idx) {
+      if (names.some((n) => i.sql.includes(n))) continue
+      db.exec(i.sql)
+    }
   }
-  db.exec('DELETE FROM schema_migrations WHERE version = 48')
+  // 退回时把 v48 与 v49 两条记录一起清：v49 建的索引之一依赖 v48 的列，
+  // 只退 v48 会让 runMigrations() 因为"v49 已跑过"而跳过它 ⇒ 测出来的是半成品库。
+  db.exec('DELETE FROM schema_migrations WHERE version IN (48, 49)')
 }
 
 let PARENT_CONV = ''
