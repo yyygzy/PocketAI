@@ -968,7 +968,7 @@ export const en = {
   'dh.browserCacheValue': '{bytes} · {count} files',
   'dh.browserCache.open': 'Open data folder',
   'dh.browserCache.clear': 'Clear HTTP cache',
-  'dh.browserCache.clearConfirm': 'This clears the browser HTTP cache (currently {bytes}). Web pages will re-download resources on next visit; chats, knowledge base, credentials and settings are untouched. Code cache is not covered.',
+  'dh.browserCache.clearConfirm': 'This clears the browser HTTP cache ({bytes} as shown on this panel). Web pages will re-download resources on next visit; chats, knowledge base, credentials and settings are untouched. Code cache is not covered.',
   'dh.browserCache.clearDone': 'Cleared: {before} → {after}',
   'dh.traces': 'Agent step details',
   'dh.traces.value': '{rows} steps · max {max} in one conversation',

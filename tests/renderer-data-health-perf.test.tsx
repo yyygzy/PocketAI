@@ -8,6 +8,10 @@ import { screen, waitFor, fireEvent } from '@testing-library/react'
 import { formatBytes } from '../src/renderer/src/utils/format'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { DataHealthPanel } from '../src/renderer/src/modules/settings/DataHealthPanel'
+import { zh } from '../src/renderer/src/i18n/zh'
+import { en } from '../src/renderer/src/i18n/en'
+import { ja } from '../src/renderer/src/i18n/ja'
+import { ko } from '../src/renderer/src/i18n/ko'
 import type { DataHealthReport, PerfSummary } from '../src/shared/types'
 
 const summary = (over: Partial<PerfSummary> = {}): PerfSummary => ({
@@ -262,5 +266,42 @@ describe('数据健康面板 · 清理 HTTP 缓存（V4-Iter-189）', () => {
     fireEvent.click(screen.getByText('清理 HTTP 缓存'))
     const msg = await screen.findByText(/代码缓存不在清理范围内/)
     expect(msg.textContent).toContain('对话、知识库、凭据与设置都不受影响')
+  })
+})
+
+// —— V4-Iter-191：确认框那个数要说清是"面板上显示的"，不是"此刻磁盘上的"（190 实测两处一起落后 183 MB） ——
+describe('清理确认框 · 数字口径的措辞（V4-Iter-191）', () => {
+  const CONFIRM = {
+    zh: zh['dh.browserCache.clearConfirm'],
+    en: en['dh.browserCache.clearConfirm'],
+    ja: ja['dh.browserCache.clearConfirm'],
+    ko: ko['dh.browserCache.clearConfirm']
+  }
+  // [该语的正字, 该语里"此刻"那类词（禁止再出现）, 该语的能力边界那句]
+  const EXPECT: Record<keyof typeof CONFIRM, [string, string, string]> = {
+    zh: ['面板显示 {bytes}', '当前', '代码缓存不在清理范围内'],
+    en: ['{bytes} as shown on this panel', 'currently', 'Code cache is not covered'],
+    ja: ['パネル表示の {bytes}', '現在', 'コードキャッシュは対象外'],
+    ko: ['패널에 표시된 {bytes}', '현재', '코드 캐시는 대상이 아닙니다']
+  }
+
+  for (const lang of ['zh', 'en', 'ja', 'ko'] as const) {
+    it(`${lang}：写「${EXPECT[lang][0]}」，且不再用「${EXPECT[lang][1]}」这种此刻口径`, () => {
+      const v = CONFIRM[lang]
+      expect(v).toContain(EXPECT[lang][0])
+      expect(v).not.toContain(EXPECT[lang][1])
+      expect(v).toContain(EXPECT[lang][2])
+    })
+  }
+
+  it('渲染出来的那句与那一格是同一个数（两处都读同一份 memo，界面上不许各数一次）', async () => {
+    clearCacheResult = { ok: true, beforeBytes: 584_000_000, afterBytes: 61_000_000 }
+    await mount([], {}, {}, { browserCacheBytes: 584_000_000, browserCacheFiles: 7486 })
+    const n = formatBytes(584_000_000)
+    fireEvent.click(screen.getByText('清理 HTTP 缓存'))
+    const msg = await screen.findByText(/面板显示/)
+    expect(msg.textContent).toContain(n)
+    // 那一格与确认框各出现一次同一个数 ⇒ 证明它们同源，而不是两处各自现数
+    expect((document.body.textContent || '').split(n).length - 1).toBeGreaterThanOrEqual(2)
   })
 })

@@ -968,7 +968,7 @@ export const zh = {
   'dh.browserCacheValue': '{bytes} · {count} 个文件',
   'dh.browserCache.open': '打开数据目录',
   'dh.browserCache.clear': '清理 HTTP 缓存',
-  'dh.browserCache.clearConfirm': '将清理浏览器 HTTP 缓存（当前 {bytes}）。网页下次打开会重新下载资源；对话、知识库、凭据与设置都不受影响，代码缓存不在清理范围内。',
+  'dh.browserCache.clearConfirm': '将清理浏览器 HTTP 缓存（面板显示 {bytes}）。网页下次打开会重新下载资源；对话、知识库、凭据与设置都不受影响，代码缓存不在清理范围内。',
   'dh.browserCache.clearDone': '已清理：{before} → {after}',
   'dh.traces': 'Agent 分步明细',
   'dh.traces.value': '{rows} 步 · 同一会话最多 {max} 步',
