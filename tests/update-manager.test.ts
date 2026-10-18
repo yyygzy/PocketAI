@@ -172,6 +172,49 @@ describe('init 与状态查询', () => {
   })
 })
 
+// ---------- 启动延迟检查的句柄（V4-Iter-200）----------
+
+describe('启动延迟检查可撤', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mocks.isPackaged = true
+    mocks.autoEnabled = true
+  })
+  afterEach(() => {
+    updateManager.cancelStartupCheck()
+    mocks.autoEnabled = false // 别让它在外层 afterEach 的第二次 init 里再排一发
+    vi.useRealTimers()
+  })
+
+  it('正向对照：打包态＋开关开 ⇒ init 后 5s 到点检查一次', async () => {
+    updateManager.init()
+    expect(mocks.checkCalls).toBe(0)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(mocks.checkCalls).toBe(1)
+  })
+
+  it('5s 内 cancelStartupCheck ⇒ 那一发不再发出（退出链就是靠这条撤掉它）', async () => {
+    updateManager.init()
+    updateManager.cancelStartupCheck()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(mocks.checkCalls).toBe(0)
+  })
+
+  it('5s 内把自动更新关掉 ⇒ 那发延迟检查作废（用户刚明确表过态）', async () => {
+    updateManager.init()
+    await updateManager.setAutoUpdate(false)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(mocks.checkCalls).toBe(0)
+  })
+
+  it('dev 环境 init：根本不排这一发（撤与不撤都不该有检查）', async () => {
+    mocks.isPackaged = false
+    updateManager.init()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(mocks.checkCalls).toBe(0)
+  })
+})
+
 // ---------- check ----------
 
 describe('check 检查更新', () => {

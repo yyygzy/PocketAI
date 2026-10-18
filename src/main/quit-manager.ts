@@ -4,6 +4,7 @@ import { mcpManager } from './mcp/manager'
 import { ollamaRuntime } from './ollama/ollama-runtime'
 import { stopBackupScheduler } from './backup/backup-scheduler'
 import { stopTaskScheduler } from './backup/task-scheduler'
+import { updateManager } from './update-manager'
 import { stopReminderScheduler } from './reminder/scheduler'
 import { killAllTerminals } from './terminal/terminal-service'
 import { dbService } from './db/database'
@@ -30,7 +31,8 @@ export function beginQuit(): void {
 /**
  * 异步清理链（before-quit 调用）。
  * 按顺序停止所有子进程，确保 app.exit() 之前真正执行完毕。
- * 顺序：abortPull → await mcpManager.stopAll → ollamaRuntime.cleanup → 三个 scheduler（backup/task/reminder）→ db
+ * 顺序：abortPull → await mcpManager.stopAll → ollamaRuntime.cleanup → 撤更新器延迟检查
+ *      → 三个 scheduler（backup/task/reminder）→ killAllTerminals → db
  */
 // V4-Iter-197：`quiting` 表示「别再弹确认框」，它不等于「清理链跑过了」。两个含义共用一个标志
 // 的后果是：托盘退出与关窗确认这两条路径在 before-quit 第一行就被挡回，唯一 await
@@ -90,6 +92,8 @@ export async function runCleanupChain(): Promise<void> {
   } catch (err) {
     log.warn('ollamaRuntime.cleanup 异常:', err)
   }
+  // 更新器那发启动延迟检查（V4-Iter-200）：清理链跑到一半时不该再发出网络检查
+  try { updateManager.cancelStartupCheck() } catch { /* ignore */ }
   try { stopBackupScheduler() } catch { /* ignore */ }
   try { stopTaskScheduler() } catch { /* ignore */ }
   // 提醒调度器（V4-Iter-199）：30s tick 会读库，跟另外两个调度器一样停在 close 之前
@@ -103,6 +107,8 @@ export async function runCleanupChain(): Promise<void> {
 export function runFallbackCleanup(): void {
   try { ollamaRuntime.abortPull() } catch { /* ignore */ }
   try { ollamaRuntime.cleanup() } catch { /* ignore */ }
+  // 更新器那发启动延迟检查（V4-Iter-200）：清理链跑到一半时不该再发出网络检查
+  try { updateManager.cancelStartupCheck() } catch { /* ignore */ }
   try { stopBackupScheduler() } catch { /* ignore */ }
   try { stopTaskScheduler() } catch { /* ignore */ }
   // 提醒调度器（V4-Iter-199）：30s tick 会读库，跟另外两个调度器一样停在 close 之前

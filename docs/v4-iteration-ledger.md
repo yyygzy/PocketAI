@@ -66,6 +66,18 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-200 到点时那件事早就结束了：PDF 的超时计时器与更新器的启动延迟检查
+
+- **来由**：199 结尾我列的同族三条，用户回一句「继续」⇒ 本批做其中两条真缺陷，第三条判为**误报**（见下）。
+- **① PDF 导出的超时计时器在成功路径上不会撤**（`export/pdf.ts:78-98`）：`Promise.race` 里那发 `setTimeout` 是**内联构造、句柄丢弃**的，成功导出后它仍会在 `PDF_TIMEOUT_MS`（60s）到点，执行 `destroyWindow()` ⇒ 把模块级**池化窗口**拆掉。单看一次没事（下次调用重建，注释就是这么写的），真正的问题在串扰：**那 60 秒里正在跑的下一次导出会被中途 destroy**，而 `htmlToPdf` 是模块级串行队列共享单窗口。修法：`let timeoutTimer` 存句柄，函数已有的 `finally`（原本只删临时 HTML）里补 `clearTimeout`。
+- **② 更新器的启动延迟检查没有句柄**（`update-manager.ts:58`）：打包态且自动更新开着时，`init()` 排一发 5 秒后的 `check()`，句柄丢弃 ⇒ 清理链跑到一半时它会发出一次网络检查（`autoDownload` 开着的话还会顺带起下载），紧接着 `app.exit(0)`。修法：字段 `startupCheckTimer` ＋ 新增 `cancelStartupCheck()`，**两个撤点**：退出链（`quit-manager.ts`，清理链与 `runFallbackCleanup` 都加，位置在 `stopBackupScheduler` 之前）与 `setAutoUpdate()`（用户刚明确表过态：关＝不该再检查，开＝那里已经立即查过一次）。
+- **③ discord 那条是误报，纠正我自己**：199 我把 `channels/discord-gateway.ts:219` 的 op 9 重连 `setTimeout(() => this.identify(token), 2000)` 列为"无人取消"。回读后不成立——`identify()` 第一行就是 `if (!this.ws || this.ws.readyState !== this.ws.OPEN) return`，而 `stop()` 里 `this.ws = null` ⇒ 停掉之后那发 retry 是**空转**，不会把连接复活。顺带发现的是**另一族**问题（不修，记档）：若那 2 秒里 socket 恰好关了，这次 invalid-session 的重新 identify 就**永久丢了**，网关停在未就绪态直到用户手动重连——形状是"到点时没人管它"，不是"到点时对象已不存在"。
+- **用例**：新 `tests/export-pdf-timeout.test.ts` **5 例**——真 `htmlToPdf` 入口 ＋ 真计时器 ＋ 只桩窗口：成功路径跑完再过 60 秒 `destroy` 计数仍为 0；**反向对照**把 `printToPDF` 换成永不 settle ⇒ 60 秒到点确实销毁并报逐字 `PDF 转换超时（60s）`（证明第一条不是空真）；两次导出复用同一扇窗口（`created` 仍为 1）；临时 HTML 用完即删；形状扫描守住 `timeoutTimer = setTimeout(` 与 `clearTimeout(timeoutTimer)` 成对。`tests/update-manager.test.ts` 22⇒26（正向对照：5s 到点确实检查一次／`cancelStartupCheck()` 后不检查／`setAutoUpdate(false)` 作废那发／dev 环境根本不排这一发）。`tests/quit-manager.test.ts` 顺序改判九步（`… cleanup → cancelStartupCheck → 三个 scheduler → killAllTerminals → close`），兜底那条同步。
+- **变异各有牙**：M200a（删 `clearTimeout`）⇒ 红；M200b（两条链都拿掉撤延迟检查）⇒ 红；M200c（`setAutoUpdate` 里不撤）⇒ 红；恢复后三文件 md5 与基线一致。
+- **真机没做，理由**：① 要看的是 60 秒后**不该发生**的销毁，而改前的表现是"下次导出重建窗口"这种不报错的形状，钉不住；② 那一发延迟检查只在**打包态**生效（dev 里 `init()` 直接 return），我这边没有安装包可跑（B66 那个缺口）。所以本批证据是 CI 真计时器 ＋ 变异；"点了退出还能退"仍由 **B105** 兜，本批新增的 **B108** 给的是打包/安装态下的观察口径。
+- **没做**：`check()`/`download()` **正在进行中**时退出链不撤——那是 electron-updater 自有状态与 `busy` 锁，硬撤可能留下半下载；本批只撤"还没开始"的那一发。另：退出链里根本没有"停渠道网关"这一步（`channel-service.ts:110` 那个 `stop()` 是用户手动停的入口），影响只是套接字随进程硬关，要不要补一步归下一批说。
+- **验证**：typecheck 0；全量 vitest **330 文件 / 3942 通过 + 1 跳过**（本批 +9 例）；build ✓（25.56s）。
+
 ### V4-Iter-199 调度器生命周期收尾：`init` 都接了，`stop` 只接了一半
 
 - **来由**：审计线索里"启而未停"那一族，用户点选 A。两条：① `backup-scheduler.ts:206` 的首次 tick 用 `setTimeout(() => void tick(), 30_000)` 但**句柄直接丢弃**，`stopBackupScheduler()` 只清 interval ⇒ 30 秒内退出时那一发仍会跑；② 清理链与兜底链都停了 backup／task 两个调度器，**唯独没停提醒调度器**（`stopReminderScheduler()` 一直存在，但只有测试在调它）。

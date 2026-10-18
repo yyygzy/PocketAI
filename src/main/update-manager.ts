@@ -40,6 +40,9 @@ class UpdateManager extends EventEmitter {
   /** 自动更新开关（持久化于 app_config，默认关闭） */
   private autoUpdateEnabled = false
 
+  /** 启动后延迟检查的计时器句柄（V4-Iter-200）：退出链与"关掉自动更新"都要能撤掉它 */
+  private startupCheckTimer: NodeJS.Timeout | null = null
+
   // ── 初始化（主进程启动时调用一次）────────────────────────────────
   init(): void {
     // 读取开关并应用（默认关闭：不自动检查、不自动下载）
@@ -55,7 +58,8 @@ class UpdateManager extends EventEmitter {
 
     // 开启自动更新：启动后延迟检查一次（自动下载由 autoDownload 标志接管）
     if (this.autoUpdateEnabled) {
-      setTimeout(() => {
+      this.startupCheckTimer = setTimeout(() => {
+        this.startupCheckTimer = null
         this.check().catch((e) => log.warn('启动延迟 check 失败:', errMsg(e)))
       }, 5000)
     }
@@ -114,6 +118,14 @@ class UpdateManager extends EventEmitter {
     }
   }
 
+  /** 撤掉启动后那次延迟检查（V4-Iter-200：清理链跑到一半时不该再发出网络检查） */
+  cancelStartupCheck(): void {
+    if (this.startupCheckTimer) {
+      clearTimeout(this.startupCheckTimer)
+      this.startupCheckTimer = null
+    }
+  }
+
   // ── 查询当前状态（IPC 直接返回，不用事件）───────────────────────
   getStatusSnapshot(): Pick<UpdateEvent, 'status' | 'newVersion' | 'progress' | 'error'> {
     return {
@@ -150,6 +162,9 @@ class UpdateManager extends EventEmitter {
       return { ok: false, error: errMsg(e) }
     }
     this.applyAutoUpdateFlags()
+
+    // 用户刚明确表过态 ⇒ 那发启动延迟检查作废：关＝不该再检查，开＝下面已经立即查了一次
+    this.cancelStartupCheck()
 
     // 开启时立即检查一次（仅打包环境）；关闭时不打断进行中的流程
     if (this.autoUpdateEnabled && app.isPackaged && !this.busy) {

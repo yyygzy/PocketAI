@@ -55,6 +55,7 @@ async function doHtmlToPdf(html: string): Promise<Uint8Array> {
   )
   fs.writeFileSync(tmpPath, src, 'utf8')
 
+  let timeoutTimer: NodeJS.Timeout | undefined
   try {
     const w = ensureWindow()
     if (!ready) {
@@ -78,13 +79,13 @@ async function doHtmlToPdf(html: string): Promise<Uint8Array> {
           '<div style="font-size:8px;width:100%;text-align:center;color:#667085;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>',
         margins: { top: 0.4, bottom: 0.5, left: 0.4, right: 0.4 }
       })),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => {
+      new Promise<never>((_, reject) => {
+        timeoutTimer = setTimeout(() => {
           // 超时销毁窗口：防 printToPDF 挂死卡死整个队列；下次调用重建
           destroyWindow()
           reject(new Error(`PDF 转换超时（${PDF_TIMEOUT_MS / 1000}s）`))
         }, PDF_TIMEOUT_MS)
-      )
+      })
     ])
     return pdf
   } catch (err) {
@@ -92,6 +93,9 @@ async function doHtmlToPdf(html: string): Promise<Uint8Array> {
     destroyWindow()
     throw new Error(`PDF 转换失败: ${errMsg(err)}`)
   } finally {
+    // 撤掉那发超时计时器：不撤的话**成功路径**也会在 60 秒后把池化窗口拆掉，
+    // 而那 60 秒里正跑着的下一次导出会被中途 destroy（V4-Iter-200）
+    if (timeoutTimer) clearTimeout(timeoutTimer)
     try {
       fs.unlinkSync(tmpPath)
     } catch {
