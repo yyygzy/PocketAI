@@ -471,4 +471,22 @@ describe('initBackupScheduler / stopBackupScheduler', () => {
     expect(setIntervalSpy).toHaveBeenCalledTimes(2)
     expect(setTimeoutSpy).toHaveBeenCalledTimes(2)
   })
+
+  it('stop 之后那发 30s 首次 tick 不再跑（199：句柄丢了 ⇒ 清理链跑完仍起一整轮备份，上传停在半路）', async () => {
+    vi.useFakeTimers()
+    mocks.config.set('backup.schedule_enabled', '1')
+    mocks.config.set('backup.schedule_interval_hours', '24')
+    mocks.dbMode = 'none'
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backupResult = { filename: 'b.zip', size: 1, encrypted: true }
+    initBackupScheduler()
+    stopBackupScheduler()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(mocks.backupCalls).toBe(0)
+    // 正向对照：同一时间轴上不 stop 就会跑（否则上面那句是空真）
+    initBackupScheduler()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(mocks.backupCalls).toBe(1)
+    vi.useRealTimers()
+  })
 })

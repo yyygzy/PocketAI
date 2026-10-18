@@ -72,6 +72,10 @@ vi.mock('../src/main/backup/task-scheduler', () => ({
   stopTaskScheduler: () => { mocks.calls.push('stopTaskScheduler') }
 }))
 
+vi.mock('../src/main/reminder/scheduler', () => ({
+  stopReminderScheduler: () => { mocks.calls.push('stopReminderScheduler') }
+}))
+
 vi.mock('../src/main/db/database', () => ({
   dbService: {
     close: () => {
@@ -110,10 +114,10 @@ describe('退出标志', () => {
 })
 
 describe('runCleanupChain 异步清理链', () => {
-  it('按序执行七步：abortPull → stopAll → cleanup → 两个 scheduler → killAllTerminals → close', async () => {
+  it('按序执行八步：abortPull → stopAll → cleanup → 三个 scheduler → killAllTerminals → close', async () => {
     await runCleanupChain()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'close'
     ])
   })
 
@@ -121,7 +125,7 @@ describe('runCleanupChain 异步清理链', () => {
     mocks.stopAllError = new Error('MCP 停止失败')
     await expect(runCleanupChain()).resolves.toBeUndefined()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'close'
     ])
   })
 
@@ -136,13 +140,22 @@ describe('runCleanupChain 异步清理链', () => {
     await expect(runCleanupChain()).resolves.toBeUndefined()
     expect(mocks.calls).toContain('close')
   })
+
+  it('三个 scheduler 都排在 close 之前（199：提醒调度器的 30s tick 会读库，晚了就撞 "Database not opened"）', async () => {
+    await runCleanupChain()
+    const closeAt = mocks.calls.indexOf('close')
+    for (const s of ['stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler']) {
+      expect(mocks.calls.indexOf(s)).toBeGreaterThanOrEqual(0)
+      expect(mocks.calls.indexOf(s)).toBeLessThan(closeAt)
+    }
+  })
 })
 
 describe('runFallbackCleanup 同步兜底', () => {
   it('兜底也试一次停 MCP（197：链没跑到的路径别把子进程留在后台）', () => {
     runFallbackCleanup()
     expect(mocks.calls).toEqual([
-      'abortPull', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'stopAll', 'close'
+      'abortPull', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'stopAll', 'close'
     ])
   })
 
@@ -158,7 +171,7 @@ describe('runCleanupOnce（197：幂等 ＋ 总时限）', () => {
     expect(await runCleanupOnce(2000)).toBe('done')
     expect(isCleanupDone()).toBe(true)
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'close'
     ])
     const n = mocks.calls.length
     expect(await runCleanupOnce(2000)).toBe('done')

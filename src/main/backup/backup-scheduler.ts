@@ -52,6 +52,7 @@ const DEFAULT_INTERVAL_HOURS = 24
 const MAX_RETENTION = 100
 
 let timer: NodeJS.Timeout | null = null
+let bootDelay: NodeJS.Timeout | null = null
 let running = false
 
 /**
@@ -202,12 +203,18 @@ export async function tick(): Promise<void> {
 /** 应用启动后调用（DB 已解锁、IPC 已注册） */
 export function initBackupScheduler(): void {
   if (timer) return
-  // 启动 30 秒后做首次检查（错过的间隔可补备份），之后每 10 分钟轮询
-  setTimeout(() => void tick(), 30 * 1000)
+  // 启动 30 秒后做首次检查（错过的间隔可补备份），之后每 10 分钟轮询。
+  // 句柄要存下来（V4-Iter-199）：丢了它，30 秒内退出时 stop 挡不住这一发首次 tick——
+  // 清理链已经关库、紧接着 app.exit(0) 硬退 ⇒ 上传停在半路，远端留一个"看着是最新"的截断包。
+  bootDelay = setTimeout(() => void tick(), 30 * 1000)
   timer = setInterval(() => void tick(), TICK_MS)
 }
 
 export function stopBackupScheduler(): void {
+  if (bootDelay) {
+    clearTimeout(bootDelay)
+    bootDelay = null
+  }
   if (timer) {
     clearInterval(timer)
     timer = null

@@ -66,6 +66,19 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-199 调度器生命周期收尾：`init` 都接了，`stop` 只接了一半
+
+- **来由**：审计线索里"启而未停"那一族，用户点选 A。两条：① `backup-scheduler.ts:206` 的首次 tick 用 `setTimeout(() => void tick(), 30_000)` 但**句柄直接丢弃**，`stopBackupScheduler()` 只清 interval ⇒ 30 秒内退出时那一发仍会跑；② 清理链与兜底链都停了 backup／task 两个调度器，**唯独没停提醒调度器**（`stopReminderScheduler()` 一直存在，但只有测试在调它）。
+- **为什么 ① 要紧**：链跑完就 `app.exit(0)` 硬退 ⇒ 那一发 tick 起的整轮备份被掐在半路。本地那半是安全的（zip 在内存里拼好后 `writeFileSync`，`backup-service.ts:349`），**远端那半不是**：上传走 `putFileContents` 的分块传输，掐了就留一个"名字看着是最新备份"的截断包——而 `backup_verify` 校验的正是 `backups[0]`（`task-scheduler.ts:72`），坏包会以"最新"的身份躺在列表第一位，等到真要恢复时才暴露。
+- **为什么 ② 要紧**：提醒调度器的 tick 每 30s 读一次库；排在 `dbService.close()` 之后就等于"关库后再去撞一次"，靠的是 `tick()` 里那条 `catch` 兜住（`scheduler.ts:44-46`）。**跟另外两个调度器停在一起**才是它该有的形状，不该依赖一条容错分支。
+- **修法**：`backup-scheduler.ts` 加 `let bootDelay` 存首次 tick 的句柄，`stopBackupScheduler()` 先 `clearTimeout` 再清 interval（与 `task-scheduler.ts:150,154-158` 早就有的写法拉平）；`quit-manager.ts` 在 `stopTaskScheduler()` 之后补 `stopReminderScheduler()`，**清理链与 `runFallbackCleanup` 两条路径都补**（同步 `clearInterval` 在兜底路径里同样有效），头部那行顺序注释也从含糊的 `scheduler` 改成点名三个。
+- **用例**：`tests/backup-scheduler.test.ts` 31⇒32——新增"stop 之后那发 30s 首次 tick 不再跑"，**带正向对照**（同一时间轴上不 stop 就会跑一次），否则"没调用"可能只是配置没到位；`tests/quit-manager.test.ts` 11⇒12——三条顺序断言从七步改成八步（`… stopBackupScheduler → stopTaskScheduler → stopReminderScheduler → killAllTerminals → close`），兜底那条同步更新，另加一条"三个 scheduler 都排在 `close` 之前"的位置判据（把本批的**理由**写成断言，而不是只钉一个顺序）。
+- **变异各有牙**：M199a（删掉 `clearTimeout(bootDelay)` 那三行）⇒ 红；M199b（两条链里都拿掉停提醒调度器）⇒ 红；恢复后两文件 md5 与基线一致。
+- **真机这一半我没做，理由写明**：要让它可观测，需要"已配好 WebDAV ＋ 已到点"的形状——而 none 模式下 WebDAV 口令的新写入是被有意拦掉的（SEC-1 B2），绕过去只能手改加密 KV，那就不是用户的真实路径了；触发真退出又要托盘或原生确认框，CDP 驱动不了（`Stop-Process` 是硬杀，根本不走 `before-quit`）。所以可观测面只有退出本身：链是否正常跑完挂在 **B105**，备份那一半挂 **B107**（用户那边真配了 WebDAV 才可构造）。
+- **顺带把这一族扫干净（未做，留给下一批）**：`export/pdf.ts:82` 的超时竞速**成功路径没 clear 计时器** ⇒ 导出成功 60 秒后仍会 `destroyWindow()` 拆掉那扇池化窗口（若那 60 秒内正有下一次导出在用它，会被中途销毁）；`update-manager.ts:58` 启动后 5s 的延迟检查同样没有句柄可停（与 backup 那发同一个形状）；`channels/discord-gateway.ts:219` 的 op 9 重连 retry 无人取消，而 channels 的"停"在退出链里根本没有对应步骤。
+- **没做**：`lockService.init()` 起的 `checkTimer`（10s 一次空闲检查，`lock/lock.ts:31`）仍不在链里——它有现成的 `destroy()` 但没人调；与提醒调度器同类但更小（不读库、不出网）。要不要一并停，说一句就做。
+- **验证**：typecheck 0；全量 vitest **329 文件 / 3933 通过 + 1 跳过**（本批 +2 例）；build ✓（22.18s）。
+
 ### V4-Iter-198 锁屏期间不该有东西写在锁屏上：提醒调度器的通知补一道锁判据（整轮暂缓，不是丢弃）
 
 - **来由**：审计剩下的线索之一，用户点选 A。`src/main/reminder/scheduler.ts:20-22` 到点就 `new Notification({ title: 'PocketAI 提醒', body: r.text })`，而隐私锁保护的是**应用自己的界面**（`lock/lock.ts:5-13` 的口径：渲染层遮罩 + `lock/ipc-gate.ts` 拦 invoke）——Windows 的通知中心与锁屏界面是遮罩管不到的第二块屏幕，提醒正文就是明文。
