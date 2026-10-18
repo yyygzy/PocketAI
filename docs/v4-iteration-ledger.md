@@ -66,6 +66,18 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-203 B103 真机闭环：195 的两趟在独立实例里跑通了，顺带纠正我对流程的一处误解（代码零改动）
+
+- **来由**：用户一句「开始 B103」。跑法：`POCKETAI_APP_ROOT=data/tmp/root-103` 的独立实例 ＋ **我自己造的测试口令**（不是任何真实凭据，也不看你的解锁窗）＋ 渲染层 CDP 走产品自己的通道，主进程 `--inspect` 走真 `app.quit()`（201 那条技法）。
+- **先纠正我自己对流程的理解**：第一趟按"先存 Key、再启用加密"写，结果 `saveProvider` 返回 `{"ok":false,"error":"未设置主密码，API Key 不会被保存（本次新增或改动 1 个）…"}`。**这不是缺陷**，是 SEC-1 的 B1 有意拦截（`provider.repo.ts:95`）——与 B2（MCP env/headers、WebDAV 备份口令）同一族。所以 B103 的正确顺序只能是"**先启用加密，再存 Key**"，清单里那句"新增/修改 Key 并保存"要在加密开着的状态下做。
+- **②（启用后不重启当场存 Key）读数**：`enableEncryption` → `{ok:true}`，**当场** `getEncryptionStatus` = `{mode:'db', dbEncrypted:true, unlocked:true, kdfN:131072, kdfAtCurrentTier:true}`（改前这里 `mode` 仍是 `none`，正是 195② 的病根）；紧接着带两把 Key 的 `saveProvider` 返回的是**掩码记录** `apiKeys: ["••••ch-A","••••ch-B"]` 而不是 `{ok:false}` ⇒ 保存被接受了，且掩码说明 SEC-7 没有退化。
+- **①（禁用后重启，凭据还在）读数**：`disableEncryption` → `{ok:true}` → 状态回 `{mode:'none', dbEncrypted:false}` → **真退出**（`16:47:34 INFO [quit] before-quit → 异步清理链开始` 与同秒的 `清理链完成`）→ 重启 → `revealProviderKeys` = `["sk-scratch-A","sk-scratch-B"]`，`listProviders` 里仍是掩码。scratch 的 `main.log` 里 `解密失败／密文` 命中 **0 行**、ERROR **0 行**——改前的症状恰好是那行 warn ＋ 解出来的空串。
+- **③（锁定再解锁）读数**：再启用 → `lockEncryption` 后状态 `{mode:'db', unlocked:false, fieldEncrypted:false, masterPasswordVerified:false}`（密钥确实清了）→ 锁定期间 `provider:list` 逐字被挡回 `Error invoking remote method 'provider:list': Error: APP_LOCKED`（`lock/ipc-gate.ts` 那道网关顺带被证实仍在生效）→ `unlockEncryption` `{ok:true}` → 揭示回两把原值。
+- **反向对照在哪**：不重跑"改前二进制"。那半由 195 当时的变异承担——删掉 `init('none')` 里的 `masterKey = null` ⇒ 用例红在 `expected '' to be 'sk-real-looking-api-key'`，也就是本批真机读到的那两把原值在改前会变成空串。真机这趟证的是**同一条因果在真库真重启下成立**，不是另起一套证据。
+- **边界**：全程在 scratch 实例；你的 `data/app.db` 仍是 08:33:11／3,100,672 B，9223 那台没动，收尾只剩你那 4 个 electron 进程。
+- **仍开着的那半句**：B103 里"历史上已被这套逻辑写坏的凭据不迁移"没变——**如果你以前禁用过加密**，那些 Key 仍需在界面里重填一次；这台机上你的库我没读、也没法替你判断有没有这种历史。
+- **清单影响**：**B103 从 🔶 转 ✅**。
+
 ### V4-Iter-202 在途 shell_exec 的进程树在退出时没人管：补登记、进退出链，并把判据做成能证伪心跳的形状
 
 - **来由**：201 结尾留下的那条（"真孤儿要落在 `detached: true` 那一族"），用户点选 A。回读确认形状：`shell-tools.ts:360` 是 `detached: !isWin` ⇒ **POSIX 上 shell_exec 的子进程是独立进程组，主进程退出时 OS 不会代收**；而退出链里 `killAllTerminals` 只遍历 pty 会话（`terminal/terminal-service.ts:104-106`），在途 shell 命令**不在任何登记表里**。后果是"Agent 正在跑命令 → 用户退出应用"在 macOS/Linux 上留下一棵活着的进程树——那可能是编译、下载、格式化这类带副作用的命令。Windows 侧 201 已实测随父进程被收，所以本机不是这条的可观测面。
