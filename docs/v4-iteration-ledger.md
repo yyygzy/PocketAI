@@ -66,6 +66,50 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-186 「启动解锁跑两趟 scrypt」的设计批：推荐只去掉第二次**派生**、保留那次 close（代码零改动）
+
+- **来由**：用户选 ①。185 记下现象后，这一批回答"能不能并成一趟、代价是什么"。**本批不改一行代码**——理由是下面第二条：动它要同时碰 SEC-10 的限流语义，得先对齐再动手。
+- **现状（全部现查，行号本轮核对过）**：
+  - `encryption.ts:69-93` boot 分支：`unlockCoordinator.isWaiting()` 为真且 `!dbService.isOpen()` 时，**先在 handler 内 `verifyAndOpenMasterKey(password)` 预验证**，
+    失败就 `clear()` + `close()` + `authRateLimiter.fail(UNLOCK)` 并回 `{ok:false,error:'密码错误',retryAfterMs,attempts}`；**成功后 `dbService.close()`**（`:87`）再 `submit({password})`。
+  - `index.ts:363` boot 拿到载荷后，`:373` **再调一次** `verifyAndOpenMasterKey(result.password)`，`:382` `if (!dbService.isOpen()) dbService.open(...)`，`:383` `runMigrations()`。
+  - 注释把预验证的动机写得很硬：**旧行为是"密码错 ⇒ 原生弹框 + `app.quit`"，应用每次都退出，限流桶根本计不到数**（SEC-10）。所以预验证不是便利，是限流能生效的前提。
+  - 本机实测（185）：`[kdf] [perf]` 两行 **714ms + 703ms**，`[db] sqlite-vec 已加载` 也因此**打了两次**（两次 `open()` 各加载一次扩展）。
+- **一条承重论证先立住：交接"验过了"这个事实，不扩大攻击面。** `unlockCoordinator.submit` 全仓只有两处调用（`encryption.ts:92` 与 `:122`，都在主进程 handler 内），
+  `cancel()` 只有 `index.ts:230`（解锁窗关闭）一处，`waitForUnlock()` 只有 `index.ts:363` 一处——**渲染层拿不到 coordinator**。
+  所以载荷里多一个 `preverified: true` 只能由主进程自己写，不构成"渲染进程可自称已验证"的新通道。这条不成立的话，下面的方案就得整个否掉。
+- **四个候选，推荐 A**：
+  | 方案 | 做法 | 判断 |
+  |---|---|---|
+  | **A（推荐）** | 预验证成功后，`submit({ password, preverified: true })`；boot 见到 `preverified` **且 `masterKeyManager.hasKey()` 为真**时，跳过第二次 `verifyAndOpenMasterKey`，直接走 `:382` 的 `open()` + `runMigrations()` | 省一次 703ms 派生 + 一次 `loadExtension`；`close()` 保留，boot 仍是"本次会话由谁打开库"的唯一所有者；限流、重试、档位自愈全在预验证里发生过，语义一字不动 |
+  | B | 反过来去掉预验证，让 boot 验一次并把错误回给解锁窗 | **否**：错误回传要新做一条主进程→解锁窗的通道，而"窗口令错要能重试并计数"正是预验证存在的理由——等于把 SEC-10 的修法倒回去 |
+  | C | 预验证改成"只派生不开库"，靠库内一个用主密钥加密的哨兵判对错 | **否**：派生本身证不了密码对不对（要靠 SQLCipher 的页 HMAC），要证就得加**新持久化格式**，存量库还要迁移——与既定口径（不引入新持久化格式）直接撞车 |
+  | E | A 再加一步：预验证成功后**不** `close()`，boot 连 `open()` 都省 | **不做**：`index.ts:226-233` 的"窗关 = 放弃"与 boot 中途 return（`if (!result) return`）都存在，留下"库已打开但 boot 没走完"的形态；省下的只是一次 `open()`（vec 加载），风险不对等 |
+- **A 必须守住的清单（少一条就不该合）**：① SEC-10 限流的三条出口不变（错密码 `fail` 计数、锁定态回 `{locked:true, retryAfterMs}`、成功 `reset`）；
+  ② 解锁窗在密码错时仍能重试、**不** `app.quit`；③ 档位自愈仍发生在预验证里（B8 那句「档位记录与库不符，已按实际生效档位固化」不搬家）；
+  ④ **异常态不变**：`dbService.isOpen()` 为真时（config 标了口令但库能明文打开，`encryption.ts:89-90`）载荷**不许**带 `preverified`，boot 仍自己验；
+  ⑤ boot 的兜底分支保留：`preverified` 为真但 `hasKey()` 为假（中间被 `clear()` 过）⇒ **回退到"自己验一趟"**，不能让令牌与实际状态脱钩；
+  ⑥ 口令载荷不过 IPC（coordinator 只在主进程内），也不落盘。
+- **现有覆盖为零（现查，不是推测）**：`tests/unlock-coordinator.test.ts` 只测协调器自身的 wait/submit/cancel 语义；
+  `tests/encryption-state-commit-order.test.ts:110` 把 coordinator 打桩成 **`isWaiting: () => false`** ⇒
+  **`ENCRYPTION_UNLOCK` 的 boot 分支（含这次要改的那几行）没有任何用例走到过**。所以 A 动手时必须自带用例，否则改的是一段没人看过的代码。
+- **实现批要配的用例形状**（先写下来，免得改完再补"看起来对"的断言）：
+  1. **调用计数**当证据：整块打桩 `electron` + 桩 `dbService`/`masterKeyManager`，走真 `registerEncryptionHandlers` 的 boot 分支，
+     断言 `verifyAndOpenMasterKey` **被调 1 次**（预验证）且 coordinator 收到的载荷带 `preverified:true`——"少了第二次派生"只能这样证，读日志不算；
+  2. 反向对照：预验证失败 ⇒ **不许** `submit`（boot 仍在等）、`fail` 计数 +1、回 `{ok:false}`；
+  3. 异常态：`dbService.isOpen()` 为真时载荷**不带** `preverified`；
+  4. 兜底：`preverified:true` 但 `hasKey()` 为假 ⇒ boot 回退自己验一趟（变异"把回退条件删掉"必须红）；
+  5. 真机判据（改完重启 dev 量，前后各 2–3 次，别拿单次比）：`main.log` 里 `[kdf] [perf]` 从每次启动 **2 行变 1 行**、
+     `[db] sqlite-vec 已加载` 同步 **2 → 1**、`bootMark('unlock')` 与"敲完回车到主窗出现"的间隔下降约 **0.7s**；
+     密码**故意输错**一次仍要看到"重试而不是退出"，并计数递增。
+- **收益要说小**：省的是 0.7s 的一次派生（本机两趟是 714 / 703ms），只在"启动解锁"这一条路上；
+  每天开几次应用的人能感觉到，但它**不改**任何安全强度——别在文案里写成"性能优化了很多"。
+- **没做 / 未证**：本批零代码改动，故不跑 tsc/vitest/build；A 的真实收益（尤其是"少一次 `loadExtension`"会不会影响首次渲染）没测；
+  `hasKey()` 作为兜底判据是否足够（还有没有别的路径会在预验证后清钥而不关窗）只做了调用点枚举（`grep masterKeyManager.clear`），没做穷举时序；
+  异常态那条分支（config 有口令但库能明文开）在本机不可达，与 B8/B9 同一类"要第二台机器/造状态"的缺口。
+
+
+
 ### V4-Iter-185 B7 的锁屏读数拿到了，顺带发现"启动解锁"其实打两行：一次启动跑两趟 scrypt（代码零改动）
 
 - **来由**：用户选「① 我再重启一次，把锁屏后解锁那趟的真读数也拿回来」。清场同 184（命令行认树 `node 9168 → electron 15836`，`taskkill /T /F` 后按命令行复查没误杀），
