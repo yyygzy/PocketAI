@@ -70,6 +70,8 @@ export function registerEncryptionHandlers(): void {
       // 正常加密 boot 时 DB 尚未打开：先在 handler 内预验证密码——
       // 错误直接返回让解锁窗重试并计入限流（此前 boot 密码错误是原生弹框 + app.quit，
       // 应用每次退出，限流无从生效）。验证后关闭句柄，boot 仍按原状态机打开。
+      // 令牌只在这一次真验过之后发（V4-Iter-187）：boot 见令牌 + 内存里真有密钥才跳过第二趟派生
+      let preverified = false
       if (!dbService.isOpen()) {
         // 逐档派生 + 真正开库探测（档位记录缺失时自动回退试档，成功后固化档位）
         if (!verifyAndOpenMasterKey(password)) {
@@ -85,11 +87,12 @@ export function registerEncryptionHandlers(): void {
           }
         }
         dbService.close()
+        preverified = true
       }
       // dbService 已打开（config 标记有密码但库可明文打开的异常态）：
-      // 不在此预验证，维持原 boot 流程（错误时弹框退出）
+      // 不在此预验证，也不发令牌，维持原 boot 流程（错误时弹框退出）
       authRateLimiter.reset(AUTH_BUCKET.UNLOCK)
-      unlockCoordinator.submit({ password })
+      unlockCoordinator.submit(preverified ? { password, preverified: true } : { password })
       return { ok: true as const }
     }
     // 运行时解锁（加密锁后重新打开 DB）

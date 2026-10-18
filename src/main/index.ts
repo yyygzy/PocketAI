@@ -39,7 +39,7 @@ import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { masterKeyManager } from './crypto/master-key'
 import { issueNewMasterKey, verifyAndOpenMasterKey } from './crypto/master-password'
-import { unlockCoordinator } from './crypto/unlock-coordinator'
+import { bootNeedsReverify, unlockCoordinator } from './crypto/unlock-coordinator'
 import { migrateKvSecrets } from './crypto/secret-store'
 import { exportFieldCredentials, restoreFieldCredentials } from './crypto/credential-rotation'
 import { recoveryKeyManager } from './crypto/recovery-key'
@@ -369,16 +369,19 @@ async function boot(): Promise<void> {
 
     if ('password' in result) {
       // 解锁（验证已有密码）：按落盘档位逐个派生并真正打开库
-      // 这一段的耗时（scrypt 派生 + 真正开库）由函数自己打 [perf] 行——启动与锁屏后解锁两条路都经过它
-      const opened = verifyAndOpenMasterKey(result.password)
-      if (!opened) {
-        masterKeyManager.clear()
-        log.error('密码错误或 DB 损坏（已试过全部已知 scrypt 档位）')
-        dialog.showErrorBox('解锁失败', '密码错误或数据库已损坏')
-        app.quit()
-        return
+      // 这一段的耗时（scrypt 派生 + 真正开库）由函数自己打 [perf] 行——启动与锁屏后解锁两条路都经过它。
+      // handler 预验证过（令牌 + 内存里确有密钥）时跳过第二趟；两个条件缺一就回退成自己验一趟（V4-Iter-187）
+      if (bootNeedsReverify(result, masterKeyManager.hasKey())) {
+        const opened = verifyAndOpenMasterKey(result.password)
+        if (!opened) {
+          masterKeyManager.clear()
+          log.error('密码错误或 DB 损坏（已试过全部已知 scrypt 档位）')
+          dialog.showErrorBox('解锁失败', '密码错误或数据库已损坏')
+          app.quit()
+          return
+        }
       }
-      // verifyAndOpenMasterKey 成功时库已用正确档位打开
+      // 走到这里：库要么刚被本趟验开，要么被 handler 预验过（那次已 close）——下面这一次 open 是完整路径（含向量扩展）
       if (!dbService.isOpen()) dbService.open(masterKeyManager.getDbKey() ?? undefined)
       if (!openedPlaintext) dbService.runMigrations()
       log.info('DB 解锁成功')

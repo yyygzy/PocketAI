@@ -11,10 +11,28 @@
 
 import { EventEmitter } from 'node:events'
 
+export interface UnlockPasswordPayload {
+  password: string
+  /** handler 已在同一趟 boot 里预验证过这把口令（见 ipc/handlers/encryption.ts 的 boot 分支） */
+  preverified?: true
+}
+
 type UnlockResult =
-  | { password: string }       // 已加密 DB 的解锁
+  | UnlockPasswordPayload      // 已加密 DB 的解锁
   | { setPassword: string }    // 明文 DB 首次设置密码
   | null                       // 用户关闭了窗口（放弃）
+
+/**
+ * boot 拿到解锁载荷后，要不要**再验一趟**（一趟 = 一次 scrypt 派生 + 真正开库，本机约 0.7 秒）。
+ *
+ * 两个条件同时成立才不验：handler 给了 `preverified` 令牌，且那把派生出来的密钥此刻还在内存里。
+ * 令牌必须与实际状态一起判——中途 `masterKeyManager.clear()` 过（锁屏流程插进来等）就回退成"boot 自己再验一趟"，
+ * 不能让"声称验过"与"到底有没有可用密钥"脱钩。
+ * 异常态（config 标了口令、库却能明文打开）走的是**不带令牌**的 submit，因此永远回退：那条路上 boot 是唯一的验证点。
+ */
+export function bootNeedsReverify(result: UnlockPasswordPayload, hasMasterKey: boolean): boolean {
+  return !(result.preverified === true && hasMasterKey)
+}
 
 export class UnlockCoordinator extends EventEmitter {
   private waiting = false

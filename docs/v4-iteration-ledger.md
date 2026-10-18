@@ -66,6 +66,51 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-187 方案 A 落地：启动解锁从两趟派生并成一趟（实测 1417ms → 786ms），而设计里我自己那条"vec 也会少一次"被实测否掉
+
+- **来由**：用户「继续做实现批，按方案 A 落地」。改动三处 + 新增一份用例，全部照 §186 的判据走。
+- **改了什么**：
+  - `src/main/crypto/unlock-coordinator.ts`：载荷类型拆出 `UnlockPasswordPayload`（多一个 `preverified?: true`），
+    并新增**零依赖纯函数** `bootNeedsReverify(result, hasMasterKey)` —— `!(result.preverified === true && hasMasterKey)`。
+    放这里而不是 index.ts：入口模块没法挂用例（推广十五那条"纯规则的家里只准放零依赖代码"）。
+  - `ipc/handlers/encryption.ts`：boot 分支加 `let preverified = false`，**只有真预验证成功**才置真；
+    `submit(preverified ? { password, preverified: true } : { password })` ⇒ 异常态（库已能明文打开那条支路）不带令牌。
+    `dbService.close()` 一字未动（§186 里"保留 close"的那条判断）。
+  - `src/main/index.ts:374`：`if (bootNeedsReverify(result, masterKeyManager.hasKey())) { 第二趟 verifyAndOpenMasterKey }`，
+    兜底与失败分支原样保留（`preverified` 与"内存里到底有没有密钥"**分开判**，任一不成立就回退重验）。
+- **真机（重启一次，口令由用户自己输）**：
+  | | 改前（185 量到） | 改后（本轮 08:33:26） |
+  |---|---|---|
+  | `[kdf] [perf]` 行数 | **2 行** | **1 行** |
+  | 派生总耗时 | 714 + 703 = **1417ms** | **786ms** |
+  | `[db] sqlite-vec 已加载` | 2 次 | **仍是 2 次** |
+  省下的约 **630ms** 就是第二次派生。解锁后 `DB 解锁成功`、本轮**零 ERROR**、`getEncryptionStatus()` 回 `{mode:db, unlocked:true, kdfN:131072}`，
+  数据健康真读回 `traces {rows:128, maxRowsInOneConversation:65}`（与 B99/B100 一字不变 ⇒ 没碰数据）。
+- **设计里被实测否掉的那半条（留档，不删原文）**：§186 我把真机判据写成「`[kdf]` 与 `[db] sqlite-vec` 两类行数**都**从 2 变 1」，
+  并把"少一次 `loadExtension`"记成收益之一。**实测只中了前半**：`[kdf]` 2→1，vec 仍 2→2。
+  错因是我把"少一趟派生"顺手当成"少一次开库"——vec 是在 `dbService.open()` 里加载的，而 A **刻意保留**了 handler 预验证后的那次
+  `close()`（正是 §186 拒绝方案 E 的理由），boot 随后仍要 open 一次 ⇒ 两次 open、两次加载。
+  ⇒ 本批的真实收益只有一项：**省掉第二次 scrypt 派生（~0.63s）**；开库次数没变，"要不要把两次 open 也并掉"是 §186 里 E 那条独立问题，本批不动。
+- **用例与变异**：新增 `tests/unlock-boot-preverify.test.ts` **10 例**——① `bootNeedsReverify` 三态（令牌+持钥／令牌但已 clear／无令牌）；
+  ② handler boot 分支五态（成功：`verifyAndOpenMasterKey` **调用次数 == 1** 且 submit 载荷逐字等于 `{password, preverified:true}` 且 seq == `verify→close→rateReset`；
+  失败：不 submit、计 fail、不回令牌；异常态：不动库、载荷不带 `preverified`；限流挡住：连预验证都不发生；运行时解锁：走另一支路、仍验一趟不 submit）；
+  ③ 两条 scan 钉接线（`index.ts` 必须有 `bootNeedsReverify(result, masterKeyManager.hasKey())` 且**那次兜底 `verifyAndOpenMasterKey` 不许消失**；
+  `encryption.ts` 必须是三元发法）。**变异 MU1–MU6 ⇒ 1／1／2／1／2／1 红**（不发令牌、boot 恒重验、判据恒不重验、预验证后不 close、无条件发令牌、兜底整段删掉），
+  恢复后三个文件 `md5sum -c` 全 OK。
+- **两条自己踩的纪律（都是复发，更要记）**：
+  ① 新用例第一次跑 **8 红**，两处都是我的探针坏：把 `unlock-coordinator` **整模块** `vi.mock` 掉，连带把待测的纯函数
+     `bootNeedsReverify` 抹成 `undefined`（推广十.1 同一形状，这次坑的是我自己刚写的文件），改成 `importOriginal` 只换那个单例；
+     以及 `safeHandle` 的返回是 **Promise**（成功也是）而我没 `await` ⇒ 五条齐刷刷 `expected undefined to be true`（推广十二那条的近亲）。
+  ② 变异脚本第一轮六条全报 `NO SUMMARY`——ANSI 转义让"Tests ..."那行匹配不上（141 就记过一次），剥掉转义才读到红数。
+  ⇒ 又一次印证：**"红了"和"红得对"要分开核**，汇总行读不到时先怀疑解析而不是怀疑被测代码。
+- **没做 / 边界**：① 改后只有**一个**样本（要 2–3 个得再重启，没再要用户输第二次口令；改前那两个样本是同机同档同一台实例）；
+  ② 锁屏后解锁那一路本轮**没重测**——本批没改那条支路，CI case「运行时解锁」钉的是它"仍验一趟、不 submit"；
+  ③ 密码**故意输错**的真机重试没测（会吃掉用户实例的限流额度，故意不做），由 CI 那条失败用例覆盖；
+  ④ vec 两次加载照上，未合并。
+- 验证：typecheck **0**；全量 vitest **324 文件 / 3879 passed + 1 skipped**（本批 +1 文件、+10 例）；build 三端（main 4.37s、preload 101ms、renderer 17.53s）。
+
+
+
 ### V4-Iter-186 「启动解锁跑两趟 scrypt」的设计批：推荐只去掉第二次**派生**、保留那次 close（代码零改动）
 
 - **来由**：用户选 ①。185 记下现象后，这一批回答"能不能并成一趟、代价是什么"。**本批不改一行代码**——理由是下面第二条：动它要同时碰 SEC-10 的限流语义，得先对齐再动手。
@@ -102,6 +147,7 @@
   5. 真机判据（改完重启 dev 量，前后各 2–3 次，别拿单次比）：`main.log` 里 `[kdf] [perf]` 从每次启动 **2 行变 1 行**、
      `[db] sqlite-vec 已加载` 同步 **2 → 1**、`bootMark('unlock')` 与"敲完回车到主窗出现"的间隔下降约 **0.7s**；
      密码**故意输错**一次仍要看到"重试而不是退出"，并计数递增。
+   ⚠️ **这条判据的后半句被 187 实测否掉了**：`[kdf]` 确实 2 行→1 行，但 `[db] sqlite-vec 已加载` **仍是 2 次** —— 我把「少一趟派生」顺手当成「少一次开库」，而 A 方案刻意保留了那次 `close()`，boot 仍要 open 一次。写设计时该先把「几次 open」与「几次派生」分两栏数。
 - **收益要说小**：省的是 0.7s 的一次派生（本机两趟是 714 / 703ms），只在"启动解锁"这一条路上；
   每天开几次应用的人能感觉到，但它**不改**任何安全强度——别在文案里写成"性能优化了很多"。
 - **没做 / 未证**：本批零代码改动，故不跑 tsc/vitest/build；A 的真实收益（尤其是"少一次 `loadExtension`"会不会影响首次渲染）没测；
