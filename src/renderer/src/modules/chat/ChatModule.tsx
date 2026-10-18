@@ -18,7 +18,7 @@ import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { chatSendFailureText, hasIpcFailed, reportIpcError, type IpcFailureInput } from '../../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError, type IpcFailureInput } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
@@ -588,6 +588,11 @@ export const ChatModule: React.FC = () => {
   const handleBatchDeleteConv = async (ids: string[]) => {
     try {
       const r = await window.pocketai.deleteConversations(ids)
+      // 失败不判就会 toast「已删除 undefined 条」（reloadConversations 之后列表其实没变）
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+        return
+      }
       if (currentConvId && ids.includes(currentConvId)) {
         setCurrentConvId(null)
         setMessages([])
@@ -1004,6 +1009,11 @@ export const ChatModule: React.FC = () => {
   const handleCreateGroup = useCallback(async (name: string): Promise<boolean> => {
     try {
       const g = await window.pocketai.createConversationGroup(currentAssistantId, name)
+      // 不判就会把失败对象当分组记录塞进列表并 return true（调用方据此关弹窗）⇒ 幻影分组
+      if (hasIpcFailed(g)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(g, t('common.unknownError')) }))
+        return false
+      }
       setGroups((prev) => [...prev, g])
       return true
     } catch (e) {
@@ -1103,6 +1113,11 @@ export const ChatModule: React.FC = () => {
         content: src.content,
         model: src.model ?? null
       })
+      // 失败不判 ⇒ 关选择窗、报「已转发」，再用 undefined 的 convId/messageId 去定位消息
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+        return
+      }
       setForwardSource(null)
       toast.success(t('chat.forwarded'))
       await reloadConversations()
@@ -1216,6 +1231,11 @@ export const ChatModule: React.FC = () => {
     if (!msg) return
     try {
       const note = await window.pocketai.createNoteFromMessage({ content: msg.content ?? '' })
+      // 不判就切到笔记模块并拿 undefined 的 id 去开笔记 ⇒ 哪儿也没开，还零提示
+      if (hasIpcFailed(note)) {
+        toast.error(t('chatview.saveNoteFailed', { msg: ipcFailText(note, t('common.unknownError')) }))
+        return
+      }
       window.dispatchEvent(new CustomEvent('pocketai:switch-module', { detail: { moduleId: 'notes' } }))
       window.dispatchEvent(new CustomEvent('pocketai:open-note', { detail: { id: note.id } }))
     } catch (e) {

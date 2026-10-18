@@ -7,7 +7,7 @@ import type {
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { errText } from '../../../utils/error'
-import { logIpcError } from '../../../utils/ipc'
+import { logIpcError, hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 import { usePythonEnv } from './usePythonEnv'
 
 const ARGS_PLACEHOLDER = '["-y","@modelcontextprotocol/server-filesystem","/tmp"]'
@@ -236,6 +236,12 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
                       setPyDownloading(true)
                       try {
                         const rt = await window.pocketai.downloadPortablePython()
+                        // 失败不判就会往运行时下拉里插一条 {name/path 全 undefined} 的假选项，
+                        // 并把 command 写成 undefined（§215）
+                        if (hasIpcFailed(rt)) {
+                          setError(ipcFailText(rt, t('common.unknownError')))
+                          return
+                        }
                         setPyRuntimes((prev) => [rt, ...prev])
                         setCommand(rt.path)
                       } catch (e) {

@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../../hooks/useGlobalShortcuts'
@@ -94,12 +95,18 @@ export const AgentPanel: React.FC = () => {
       return
     }
     try {
-      await window.pocketai.createReminder({
+      const r = await window.pocketai.createReminder({
         text,
         fireAt,
         conversationId: chat.conversationId ?? null,
         ...(repeatRule ? { repeatRule } : {})
       })
+      // 时间在过去／超 30 天／条数超上限时 reminders.ts 是 throw ⇒ safeHandle 转成 {ok:false}，
+      // 不判就是"绿 toast 说已设置提醒"而提醒根本没建（§215）
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       // 通知 Sidebar 角标即时刷新（创建无 IPC 广播，本地事件轻量通知）
       window.dispatchEvent(new Event('pocketai:reminders-changed'))
       toast.success(

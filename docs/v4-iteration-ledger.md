@@ -66,6 +66,23 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-215 会话与 Agent 面收口：11 个点不再把失败当凭据，删会话的两个入口形状从此一致
+
+- **来由**：§213 批次表里的第二批（用户"提交 214，然后开工 215"）。范围＝§212 定级表 T2/T3 里落在会话与 Agent 面的 11 个点。
+- **改的 11 个点／4 个文件**（一律 `hasIpcFailed(结果)` ⇒ 弹提示 ⇒ 不写成功态）：
+  - `useAgentChat.ts` 五处：`newConversation`（原来把失败对象当会话 prepend 进列表、并把 `conversationId` 设成 undefined）、`deleteConversation`（**库里还在的会话被本地 filter 掉**）、`renameConversation`（界面显示新标题而库里没改）、`setConversationPinned`／`setConversationArchived`（原来失败也照样白跑一趟 `reloadConversations`）。这一文件里抽了个本文件内的 `failOp(r)`（判失败＋弹 `agent.unknownError` 兜底＋返回是否失败），五处共用；
+  - `ChatModule.tsx` 四处：批删（"已删除 undefined 条"）、`createConversationGroup`（幻影分组 ＋ `return true` 让调用方关弹窗）、`forwardMessage`（"已转发" ＋ 用 undefined 的 `convId/messageId` 去定位）、`createNoteFromMessage`（切到笔记模块却开不出笔记、零提示）；
+  - `AgentPanel.tsx:97 createReminder`（时间在过去／超 30 天／超条数时 `reminders.ts` 是 throw ⇒ 被 safeHandle 转成 `{ok:false}`，原来仍弹绿 toast「已设置提醒」）；
+  - `McpForm.tsx:238 downloadPortablePython`（假运行时条目进下拉、`command` 被写成 undefined）。
+- **顺带收掉 §212 那条对比结论**：删会话在对话页是"await ＋ reloadConversations 自纠"、在 Agent 页是"await ＋ 本地 filter"——两者对失败的后果不同，且都没判。现在两边都**先判失败再动列表**，形状一致（用例里钉了一条显式对比）。
+- **用例**：新 `tests/ipc-failure-chat-agent-215.test.tsx` **19 例**＝① 真挂 `useAgentChat` 行为 5 例（新建失败／删除失败／删除成功反向对照／重命名失败／归档失败且断"不再白跑 reload"）；② 形状闸门 11＋3 例（按「await 锚点 → 成功态锚点」切区域，必须含判据、必须 `return`/`else` 守住、必须有反馈面；另有"正好 11 点"数量自检与 **`failOp` 助手本体**的定义检查）。**只有闸门、没有行为用例的**：`ChatModule` 四处、`AgentPanel` 一处、`McpForm` 一处（真挂载要拉起整个聊天面板／MCP 表单）。
+- **两处我自己写的闸门被自己的形状打到（都记下来，因为它们就是这类闸门的固有坑）**：
+  ① `failOp(await ...)` 这种把判据套在 await 外面的写法会让"从 await 往后切区域"漏掉 `failOp(` ⇒ 五个点全假红；改成与其它各点一致的"先接住再判"（形状统一也更可读），而不是把正则放宽了事。
+  ② 放宽成允许 `failOp(` 之后，等于把判据搬进助手、闸门就不再有牙 ⇒ 补一条专门检查助手本体的用例（必须含 `hasIpcFailed(r)`、必须 `toast.error(`、必须 `return true`/`return false`），M215b 正是打在这条上。
+- **变异 M215a–g 七条各有牙**（跑完字节级还原、基线重跑绿）：a 摘掉删会话的判据 ⇒ `expected [] to deeply equal [ 'c1' ]`（列表被本地清空）；**b 把 `failOp` 改成永假 ⇒ `expected [ undefined, 'c1' ] to deeply equal [ 'c1' ]`，这条读数是"幻影会话"机制的直接复现**；c–g 批删／转发／建分组／另存笔记／建提醒／下 Python 运行时的判据换永假条件 ⇒ 各自闸门红。
+- **验证**：typecheck 0；全量 vitest **339 文件 / 4060 通过 + 1 跳过**（＋1 文件／＋19 例）；build ✓（21.23s）。清单新增 **B114（✅ CI）**。**未实测真机**：11 条都要主进程真抛错才可见（删会话失败要动库约束、建提醒失败要构造越界时间），我没有可点的复现路径 ⇒ 清单行内写明"只有 CI"。失败文案仍是主进程中文书（同 §214 那条限制）。你的 `app.db` 与 9223 那台未碰。
+- **剩余**：§212 表里的 T2/T3 还剩 13 点（设置／技能／沙箱／图片面）归 216；形状闸门（217）等全部清完后落地。
+
 ### V4-Iter-214 T1 崩溃族收口：16 个 await 点不再把 `{ok:false}` 当数据用，两条 TypeError 白屏的机制被复现进 CI
 
 - **来由**：§213 定下的批次（用户"按推荐的流程走"）。范围＝§212 那份定级表里的 T1 崩溃档 ＋ 同文件里的其它档（按文件切，保证每个文件只被一批动过）。

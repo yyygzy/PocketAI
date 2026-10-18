@@ -14,7 +14,7 @@ import type {
   ProviderRecord
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
-import { chatSendFailureText, hasIpcFailed, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 import { useToast } from '../../../components/ToastProvider'
 import { findRerunSourceId, toAgentMessages, reduceLiveSteps, type AgentMessage, type LiveStep } from '../agent-shared'
@@ -365,16 +365,26 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     return () => offs.forEach((off) => off())
   }, [t])
 
+  // safeHandle 把失败转成 resolve 的 {ok:false}：这一族里不判就是"界面多出一条库里没有的会话"
+  // 或"库里还在的会话从列表消失"（对话页的同一操作靠 reloadConversations 自纠，两个入口形状不同，§215 收敛）
+  const failOp = (r: unknown): boolean => {
+    if (!hasIpcFailed(r)) return false
+    toast.error(ipcFailText(r, t('agent.unknownError')))
+    return true
+  }
+
   const newConversation = async () => {
     if (!assistantId) return
     const c = await window.pocketai.createConversation(assistantId)
+    if (failOp(c)) return
     setConversations((prev) => [c, ...prev])
     setConversationId(c.id)
   }
 
   // 删除历史会话（与对话页行为一致：无二次确认）
   const deleteConversation = async (id: string) => {
-    await window.pocketai.deleteConversation(id)
+    const r = await window.pocketai.deleteConversation(id)
+    if (failOp(r)) return
     setConversations((prev) => prev.filter((c) => c.id !== id))
     setArchivedConversations((prev) => prev.filter((c) => c.id !== id))
     if (conversationId === id) setConversationId(null)
@@ -382,7 +392,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
 
   // 重命名会话（本地同步更新两列表，无需整表刷新）
   const renameConversation = async (id: string, title: string) => {
-    await window.pocketai.renameConversation(id, title)
+    const r = await window.pocketai.renameConversation(id, title)
+    if (failOp(r)) return
     const patch = (c: { id: string }) => (c.id === id ? { title } : {})
     setConversations((prev) => prev.map((c) => ({ ...c, ...patch(c) })))
     setArchivedConversations((prev) => prev.map((c) => ({ ...c, ...patch(c) })))
@@ -390,13 +401,15 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
 
   // 置顶/取消置顶：重新拉取保证排序权重生效
   const toggleConversationPinned = async (id: string, pinned: boolean) => {
-    await window.pocketai.setConversationPinned(id, pinned)
+    const r = await window.pocketai.setConversationPinned(id, pinned)
+    if (failOp(r)) return
     await reloadConversations()
   }
 
   // 归档/取消归档：重新拉取活跃与归档两列表
   const setConversationArchivedState = async (id: string, archived: boolean) => {
-    await window.pocketai.setConversationArchived(id, archived)
+    const r = await window.pocketai.setConversationArchived(id, archived)
+    if (failOp(r)) return
     await reloadConversations()
   }
 
