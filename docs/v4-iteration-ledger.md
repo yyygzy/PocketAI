@@ -66,6 +66,16 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-202 在途 shell_exec 的进程树在退出时没人管：补登记、进退出链，并把判据做成能证伪心跳的形状
+
+- **来由**：201 结尾留下的那条（"真孤儿要落在 `detached: true` 那一族"），用户点选 A。回读确认形状：`shell-tools.ts:360` 是 `detached: !isWin` ⇒ **POSIX 上 shell_exec 的子进程是独立进程组，主进程退出时 OS 不会代收**；而退出链里 `killAllTerminals` 只遍历 pty 会话（`terminal/terminal-service.ts:104-106`），在途 shell 命令**不在任何登记表里**。后果是"Agent 正在跑命令 → 用户退出应用"在 macOS/Linux 上留下一棵活着的进程树——那可能是编译、下载、格式化这类带副作用的命令。Windows 侧 201 已实测随父进程被收，所以本机不是这条的可观测面。
+- **修法**：`shell-tools.ts` 加模块级 `liveShellJobs: Set<number>`（spawn 后登记，`exit`／`error` 各自摘掉）＋ `killInFlightShellJobs()`（复用已有的 `killProcessTree`，Windows 走 `taskkill /T /F`、POSIX 走 `-pid` 杀整组）＋ `inFlightShellJobCount()`。`quit-manager.ts` 在 `killAllTerminals()` 之后调一次，**清理链与兜底链两条路径都调**；计数只在 `> 0` 时 `log.warn`，正常退出不刷日志。
+- **判据这次做错过一次，改后的形状值得记**：第一版断言用退出码（`exitCode !== 0 || signal !== null`），真跑**失败**——实测读数 `{"exitCode":0,"signal":null,"durationMs":182}`：Windows 上 `taskkill /T /F` 之后 cmd 壳回 0，退出码在这里**没有信息量**。改成 **OS 级心跳判据**：命令是 `node hb.js`（活着就每 200ms 往 `hb.txt` 追加一个字节），杀掉之后量两次文件大小，**必须不再增长** ⇒ 证明的不是"壳退出了"而是"树里已经没有活进程"。配套变异 **M202c：把 `taskkill` 的 `/T` 摘掉**（只杀壳、故意留孙进程）⇒ 心跳继续长 ⇒ 用例红。这正是 201 里"数进程数不可归因"的那个缺口，现在在 CI 侧可归因了。
+- **用例**：新 `tests/shell-tools-inflight-quit.test.ts` **3 例**（真 spawn、真杀、真文件心跳；只桩 `appConfigRepo` 的 KV，注册条件走真 `getShellTools()`）——① 工具确实注册；② 长跑期间计数为 1、`killInFlightShellJobs()` 返回 1、心跳停止增长、计数归 0；③ **正向对照**：命令自然结束后登记自己摘掉，此时 `kill` 返回 **0**（防"谎报杀了几个"）。`tests/quit-manager.test.ts` 顺序改判十步，位置判据扩成"三个 scheduler 与在途 shell 的杀都排在 `close` 之前"。
+- **变异四条各有牙**：M202a（不登记 pid）⇒ 红；M202b（不摘登记 ⇒ 计数永久虚高）⇒ 红；M202c（`/T` 摘掉，孙进程成孤儿）⇒ 红；M202d（两条链都拿掉这一步）⇒ 红。恢复后两文件 md5 与基线一致；M202c 故意造的孤儿按命令行 `*hb.js*` 当场收掉，跑完整机无残留。
+- **没做**：`update/asar-patcher.ts:229/237` 与 `mcp/python-env.ts:229` 的 `detached: true` 是**故意的**（改文件用的重启脚本必须活过应用、taskkill 自身），不动；用户点「停止」那条路径早就有 `killProcessTree`（`abortSignal`，`shell-tools.ts:373-378`），本批补的是"没人按停止就退出"；MCP 的 stdio server 仍是非 detached（201 实测随父收），它有自己的 `stopAll`，没并进这张登记表。
+- **验证**：typecheck 0；全量 vitest **331 文件 / 3945 通过 + 1 跳过**（本批 +3 例）；build ✓（24.28s）。真机：POSIX 才有差，本机（win32）不可判 ⇒ 清单 **B109**。
+
 ### V4-Iter-201 B105 真机闭环：真 `app.quit()` 第一次被我驱动起来了，而"改前会留 MCP 孤儿"这个前提本机不成立（代码零改动）
 
 - **来由**：用户一句「验证 B105 退出后 MCP 残留情况」。本批**零代码改动**，是把 197 的真机那一半补上，顺带纠正 197 自己的因果。

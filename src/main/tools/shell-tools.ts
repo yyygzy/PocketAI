@@ -329,6 +329,30 @@ function killProcessTree(pid: number): void {
   }
 }
 
+/** 在途 shell 子进程的 pid 登记（V4-Iter-202）。
+ *  POSIX 那一支 spawn 时带 `detached: true`（独立进程组，便于整组杀）⇒ 主进程退出时 OS 不会代收，
+ *  而退出链原本只有 killAllTerminals（pty 会话），在途 shell_exec 没人管。
+ *  Windows 那支不 detached，实测随父进程被收，所以这里是补 POSIX 的账。 */
+const liveShellJobs = new Set<number>()
+
+/** 当前在途 shell 子进程数（退出链的日志与用例都读它） */
+export function inFlightShellJobCount(): number {
+  return liveShellJobs.size
+}
+
+/** 杀掉全部在途 shell 子进程（退出链调用），返回本次处理的数量 */
+export function killInFlightShellJobs(): number {
+  const pids = [...liveShellJobs]
+  for (const pid of pids) {
+    try {
+      killProcessTree(pid)
+    } catch {
+      /* 已退出 */
+    }
+  }
+  return pids.length
+}
+
 /** 执行单条 shell 命令（异步，不阻塞主进程）。
  *  abortSignal 触发时立即杀整个进程树（用户点「停止」时不留孤儿进程）。 */
 function runCommand(
@@ -361,6 +385,16 @@ function runCommand(
       env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe']
     })
+
+    const jobPid = child.pid
+    if (jobPid) {
+      liveShellJobs.add(jobPid)
+      const forget = (): void => {
+        if (jobPid) liveShellJobs.delete(jobPid)
+      }
+      child.once('exit', forget)
+      child.once('error', forget)
+    }
 
     // 超时定时器独立于外部 Promise 竞态：即使外层 30s race 放弃本 Promise，
     // 到点仍会杀进程树，避免孤儿长驻进程。

@@ -7,6 +7,7 @@ import { stopTaskScheduler } from './backup/task-scheduler'
 import { updateManager } from './update-manager'
 import { stopReminderScheduler } from './reminder/scheduler'
 import { killAllTerminals } from './terminal/terminal-service'
+import { killInFlightShellJobs } from './tools/shell-tools'
 import { dbService } from './db/database'
 import { createLogger } from './logger'
 
@@ -32,7 +33,7 @@ export function beginQuit(): void {
  * 异步清理链（before-quit 调用）。
  * 按顺序停止所有子进程，确保 app.exit() 之前真正执行完毕。
  * 顺序：abortPull → await mcpManager.stopAll → ollamaRuntime.cleanup → 撤更新器延迟检查
- *      → 三个 scheduler（backup/task/reminder）→ killAllTerminals → db
+ *      → 三个 scheduler（backup/task/reminder）→ killAllTerminals ＋ 在途 shell 子进程 → db
  */
 // V4-Iter-197：`quiting` 表示「别再弹确认框」，它不等于「清理链跑过了」。两个含义共用一个标志
 // 的后果是：托盘退出与关窗确认这两条路径在 before-quit 第一行就被挡回，唯一 await
@@ -99,6 +100,12 @@ export async function runCleanupChain(): Promise<void> {
   // 提醒调度器（V4-Iter-199）：30s tick 会读库，跟另外两个调度器一样停在 close 之前
   try { stopReminderScheduler() } catch { /* ignore */ }
   try { killAllTerminals() } catch { /* ignore */ }
+  // 在途 shell_exec 的子进程（V4-Iter-202）：POSIX 那一支是 detached 进程组，主进程退出时 OS 不代收。
+  // 计数只在真有事时出声，免得每次正常退出都刷一条
+  try {
+    const n = killInFlightShellJobs()
+    if (n > 0) log.warn(`退出链：杀掉 ${n} 个在途 shell 子进程`)
+  } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
   log.info('清理链完成')
 }
@@ -114,6 +121,12 @@ export function runFallbackCleanup(): void {
   // 提醒调度器（V4-Iter-199）：30s tick 会读库，跟另外两个调度器一样停在 close 之前
   try { stopReminderScheduler() } catch { /* ignore */ }
   try { killAllTerminals() } catch { /* ignore */ }
+  // 在途 shell_exec 的子进程（V4-Iter-202）：POSIX 那一支是 detached 进程组，主进程退出时 OS 不代收。
+  // 计数只在真有事时出声，免得每次正常退出都刷一条
+  try {
+    const n = killInFlightShellJobs()
+    if (n > 0) log.warn(`退出链：杀掉 ${n} 个在途 shell 子进程`)
+  } catch { /* ignore */ }
   // 197：兜底路径也试一次停 MCP（fire-and-forget，进程可能马上就退了，但比不试好）
   try {
     void mcpManager.stopAll().catch(() => { /* ignore */ })
