@@ -66,6 +66,24 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-212 「把 preload 改成 reject」这件事，三条承重假设全被实测打掉（src 零改动）
+
+- **来由**：用户看完 §211 那条"注释与行为相反"后说"把 preload 改成 reject"。按我自己的规矩（动手前先证伪承重假设，含我自己的修复计划），先跑三条实测再决定怎么落地。三条都跑完了，**结论是这句话不能按字面执行**。
+- **实测①：包装器不能按名字表来。** `src/preload/index.ts` 的 api 对象里 **315 个方法返回 `Promise<…>`、29 个不返回**：`getPaths`／`runMigrations`／`checkIntegrity`／`startExportDrag` ＋ 24 个 `on*` 订阅方法（返回 unsubscribe **同步函数**）。若无脑 `async (...a) => unwrap(await v(...a))`，订阅类会把句柄变成 Promise ⇒ `const off = window.pocketai.onChatChunk(…); off()` 当场炸（196 之前就为这个在测试桩里专门留了"函数原样放行"那条注释）。⇒ 包装只能按**运行时 thenable 判定**，不能按名单，也不能按 `on` 前缀（`getPaths` 这些也在内）。
+- **实测②（决定性）：`{ok:false}` 不是 safeHandle 的形状，它同时是 51 个通道的"设计内业务返回值"。** 扫 `src/main/ipc/handlers/*.ts` 得到 **51 个通道在 handler 体内 `return { ok:false … }`**，其中最能说明问题的三条：
+  - `ENCRYPTION_UNLOCK`／`LOCK_UNLOCK` 返回 `{ ok:false, error:'尝试过于频繁…', locked:true, retryAfterMs }`——**限流状态就挂在这个形状上**；
+  - `BACKUP_WEBDAV_RESTORE`／`_MERGE_SCAN` 返回 `{ ok:false, code:'needBackupPassword' | 'badPassword' | 'legacyNoCross', error }`，而 `SettingsModule.tsx:856/948/1194/1207` **正是按 `r.code` 分支弹出"请输入备份口令"的界面**；
+  - `MCP_SERVER_CALL_TOOL` 的 `{ok:false,error:'参数 JSON 解析失败…'}` 是给 Agent 回灌的工具结果，不是异常。
+  ⇒ 一刀切 `ok===false → throw` 会当场退化锁屏限流提示与 WebDAV 恢复输口令这两条真实功能。可行形状只剩**打标记**：`safeHandle` 的两处失败产出（catch 与 `argFail`）带一个不可混淆的标记，preload **只对带标记的抛**，带 `code` 的设计内返回值原样流过。
+- **实测③：边界只运 `message`，自定义字段一律过不去。** 这条我先前判断"不能猜、要实测"，现在有了读数（临时给 preload 加三个探针方法 → build → 真 Electron 里从主 world 读，读完还原、md5 与基线一致）：
+  - preload 里 `throw` 一个带 `ipcCode`/`ipcArgs`/`ipcFail` 且 `name='IpcError'` 的 Error，主 world 收到的是 **`ctor:'Error'`、`name:'Error'`、`ownKeys:['stack','message']`**——**`name` 被打回、三个自定义字段全丢**；async 抛出那一支同样只剩 `message`。
+  - `ipcRenderer.invoke` 被拒时 message 还会被 Electron 包一层：`Error invoking remote method 'nope:not-registered': Error: No handler registered for …`。
+  - **踩到的探针坑记一条**：本想完全不碰产品代码，用 CDP 钻进 `Electron Isolated Context` 注入 `contextBridge.exposeInMainWorld`——`sandbox: true` 下注入代码里没有 `require`（逐字 `PROBE_SETUP_FAILED: require is not defined`），这条路不通，只能临时改产品文件再还原。
+  ⇒ 直接后果：**209 那两个独立字段在 reject 面上不存在**。任何要靠界面识别的信息必须写进 `message` 字符串。
+- **所以 ②③ 合起来把设计逼成一句话**：reject 面上的失败**只能靠字符串约定**（`CODE:中文说明`，就是 206 已经立着、`ipcFailureText` 已经在解析的那个形状）。这不等于 209 被推翻——209 的字段是为"同一根字符串还被 158 个 `r.error` 显示点直接摆出来"才分开的；一旦改走 reject，**那 158 个点里没有 `r` 可读了**，受害者换成 **143 处 `errText(…)`（分布在 35 个文件）**：它们今天显示 provider／网络异常文本，改后会显示带 `CODE:` 头的串。⇒ 下一批必须先量"这 143 处里有多少真的会收到 safeHandle 抛出的失败"，再决定 `message` 里放纯人话、还是放「回码＋人话」信封并给 `errText` 配一个统一的 `ipcErrText(e, t)`。
+- **顺带量到的改造收益（这才是用户要这条改造的理由）**：39 个排查点位中 **28 处所在函数体已经有 `catch`** ⇒ 标记化 reject 之后这 28 处**自动接住**（含 T1 崩溃族的大头：`UsagePanel:695`、`FilesModule:26`、`ConversationList:176`、`KnowledgeModule:625/1407`、`AgentPanel:97`、`ChatModule:1099/590`、`SandboxModule:97`…）；**11 处没有 catch**（`useAgentToolConfigs:37`、`useAgentChat:370/377/385`、`DataHealthPanel:54/60/69`、`SettingsModule:646/2014`、`StewardModule:111`、`SkillMarket:117`）reject 后仍会变 unhandled rejection，**这部分无论选哪条路都得逐点修**。⇒ 逐点修与契约改造不是二选一，改造能省掉 28 处、省不掉 11 处。
+- **本批代码零改动**：`src/preload/index.ts` 只有临时探针，读完后 `git checkout --` 还原，**md5 与基线逐字相同（`1d36745bce316a84fff127467c29352d`）**；build 只为跑探针，探针还原后不影响交付物。**未证**：② 的 51 个通道里"设计内 ok:false"与渲染层分支的一一对应关系（只抽了 3 条硬证据）；③ 那 143 处 `errText` 里会被新 reject 命中的数量。这两项归下一批。
+
 ### V4-Iter-211 术语表「添加失败也把输入清空」：注释承诺的那件事，从此真的成立
 
 - **来由**：同一轮清单里的 ③。§209 从代码里推出这条（`submit()` 的注释写「失败保留用户输入并提示」，而 `handleAddTerm` 的失败是 **return 不是 throw** ⇒ submit 照常往下走 `setSrc('')/setTgt('')`），§210 在同一条动作上把它读成了实据（两语都读到输入框长度 0／0）。
