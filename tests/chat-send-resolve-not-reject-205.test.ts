@@ -158,7 +158,7 @@ describe('反向对照：同步段的失败确实从返回值面走', () => {
   it('targets 为空 ⇒ send() reject（safeHandle 会把它转成 {ok:false}）', async () => {
     const evts: Array<{ ch: string }> = []
     const p = chatService.send({ ...payload(SLOW_MODEL, 'req-empty'), targets: [] }, (ch) => evts.push({ ch }))
-    await expect(p).rejects.toThrow(/未选择模型/)
+    await expect(p).rejects.toThrow(/^CHAT_NO_TARGET:/)
     // 一个事件都没发：它根本没进入流式期
     expect(evts.length).toBe(0)
   })

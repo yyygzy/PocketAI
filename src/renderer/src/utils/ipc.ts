@@ -33,20 +33,39 @@ export function ipcFailText(v: { error?: string }, fallback: string): string {
 }
 
 /**
+ * 发起类通道的失败回码 → 四语 key（V4-Iter-206）。
+ * main 侧的形状是 `CODE:中文说明`（沿用 BUDGET_EXCEEDED 已有的写法）：
+ * 中文尾段留给日志与 IM 回复面，界面**只认回码**，否则英/日/韩界面会夹一句中文。
+ * 新增回码必须同时在这里登记，否则 `chat-failure-codes-206.test.ts` 的对账闸门会红。
+ */
+export const CHAT_FAIL_TEXT_KEYS: Record<string, string> = {
+  CHAT_NO_TARGET: 'chat.errNoTarget',
+  CHAT_MSG_NOT_ASSISTANT: 'chat.errMsgNotAssistant',
+  CHAT_MSG_NOT_USER: 'chat.errMsgNotUser'
+}
+
+/**
  * chat 发起类通道（send／regenerate／resend，Agent 与 Popup 同源）的失败文案。
- * 预算硬阻断在 main 侧抛的是带标记的错误串（`BUDGET_EXCEEDED:scope:limit:` 后跟中文原文），
- * 这里只取前面的回码，按 scope 换四语专门文案——后面的中文不进界面。
+ * 预算硬阻断回码带 scope 与金额，单独换 `usage.budgetBlocked`；其余登记过的回码查表；
+ * **没登记的原样透出**（provider／网络的报错不是我们能翻译的，宁可给原文也不要咽掉）。
  * 回码只从这条链来：`assertBudget()` 在 send/regenerate/resend 的同步段抛出，
- * 被 safeHandle 转成返回值（流式期的 CHAT_ERROR_EVENT 是 provider 报错，不带这个标记）。
+ * 被 safeHandle 转成返回值（流式期的 CHAT_ERROR_EVENT 是 provider 报错，不带这些标记）。
  */
 export function chatSendFailureText(
   msg: string,
   t: (key: string, params?: Record<string, string | number>) => string
 ): string {
-  const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
-  if (!m) return msg
-  const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
-  return t('usage.budgetBlocked', { scope, limit: m[2]! })
+  const code = /^([A-Z][A-Z0-9_]*):/.exec(msg)?.[1]
+  if (code === 'BUDGET_EXCEEDED') {
+    const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+)/)
+    if (m) {
+      const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
+      return t('usage.budgetBlocked', { scope, limit: m[2]! })
+    }
+  }
+  const key = code ? CHAT_FAIL_TEXT_KEYS[code] : undefined
+  if (key) return t(key)
+  return msg
 }
 
 /** 直接记录一条后台 IPC 失败诊断（try/catch 语句内使用） */

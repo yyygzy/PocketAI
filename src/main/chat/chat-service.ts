@@ -176,7 +176,7 @@ class ChatService {
   async send(payload: SendMessagePayload, emit: EmitFn): Promise<void> {
     return this.withConversationLock(payload.conversationId, async () => {
     const { requestId, conversationId, content, targets, assistantId } = payload
-    if (!targets || targets.length === 0) throw new Error('未选择模型')
+    if (!targets || targets.length === 0) throw new Error('CHAT_NO_TARGET:未选择模型')
 
     this.assertBudget()
 
@@ -341,14 +341,14 @@ class ChatService {
   async regenerate(payload: RegeneratePayload, emit: EmitFn): Promise<void> {
     return this.withConversationLock(payload.conversationId, async () => {
     const { requestId, conversationId, messageId, targets, assistantId } = payload
-    if (!targets || targets.length === 0) throw new Error('未选择模型')
+    if (!targets || targets.length === 0) throw new Error('CHAT_NO_TARGET:未选择模型')
 
     this.assertBudget()
 
     // 获取要重新生成的旧 assistant 消息（仅用于校验与取 parent）
     const oldMsg = messageRepo.getById(messageId)
     if (!oldMsg || oldMsg.role !== 'assistant') {
-      throw new Error('消息不存在或非助手消息')
+      throw new Error('CHAT_MSG_NOT_ASSISTANT:消息不存在或非助手消息')
     }
 
     // 解析 SystemPrompt：会话级覆盖 > 助手模板 > 空
@@ -414,13 +414,13 @@ class ChatService {
   async resend(payload: ResendPayload, emit: EmitFn): Promise<void> {
     return this.withConversationLock(payload.conversationId, async () => {
     const { requestId, conversationId, messageId, content, targets, assistantId } = payload
-    if (!targets || targets.length === 0) throw new Error('未选择模型')
+    if (!targets || targets.length === 0) throw new Error('CHAT_NO_TARGET:未选择模型')
 
     this.assertBudget()
 
     const userMsg = messageRepo.getById(messageId)
     if (!userMsg || userMsg.role !== 'user') {
-      throw new Error('消息不存在或非用户消息')
+      throw new Error('CHAT_MSG_NOT_USER:消息不存在或非用户消息')
     }
 
     // 如果提供了新内容，更新用户消息（旧回复保留为分支，可切换查看）

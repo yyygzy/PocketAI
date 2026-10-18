@@ -66,6 +66,18 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-206 chat 发起族的失败原文改回码＋四语话术：界面上不再中英夹拼，中文尾段留给日志与 IM
+
+- **来由**：用户选「提交 ＋ ② ＋ ③ 连着做」的第 ③ 批。204 把四个入口的失败接上面之后，B104 行里我留了一句"归你判"：主进程抛的是中文原文（`未选择模型`、`消息不存在或非用户消息`…），英／日／韩界面会夹一句中文。本批按 152／153 的既有口径收掉——**回码进代码，话术进字典**。
+- **约定形状**：main 侧抛 `CODE:中文说明`（沿用 `BUDGET_EXCEEDED:scope:limit:` 已在用的写法，**中文尾段保留**，因为 `channel-service.ts:221` 的 IM 回复面和 `main.log` 的 WARN 读的都是这句话，砍掉会让另一侧变难读）；渲染层 `chatSendFailureText` 只认冒号前的回码换四语，**没登记的原样透出**（provider／网络的报错不是我们能翻译的，宁可给原文也不咽掉）。改动落点：`chat-service.ts:179/344/417` → `CHAT_NO_TARGET`，`:351` → `CHAT_MSG_NOT_ASSISTANT`，`:423` → `CHAT_MSG_NOT_USER`，`engine.ts:753` 同步（Agent 模式那条守卫是它自己的一份，容易漏）。
+- **四语新 key**：`chat.errNoTarget`／`chat.errMsgNotAssistant`／`chat.errMsgNotUser`（插在 `chat.importFail` 之后，四本同一位置）。话术里**不点名任何控件**——我只验过 Agent 页的下拉占位是「选择助手…／选择 Provider…」，对话页那台的占位文案没实地读过，所以写成「还没有可发送的模型，请先选择模型再发送」这种不指方位的说法（「指路文案必须实地走过」那条的复发预防）。en 用 em-dash 分句，ja／ko 各按本机语序，没留中文。
+- **对账闸门**（新 `tests/chat-failure-codes-206.test.ts` 8 例）：这类"两侧各有一份名单"的东西一定会漂移，所以**双向**断言——① 扫 `src/main/**` 里 `new Error('CODE:…')` 形状的回码，每一个要么在 `CHAT_FAIL_TEXT_KEYS` 登记、要么在 `NOT_LOCALIZED` 白名单里**写明理由**（`APP_LOCKED` 走 reject 面不是返回值面，理由写在名单注释里）；② 登记表里的码 main 侧必须真会抛（防"界面准备了一句永不出现的话"）；③ 每个映射 key 在四本字典都非空、不以回码开头、字典文本里不回显 `CHAT_NO_TARGET` 这类串。**这条闸门一跑就抓到一条既有漏网**：`GLOSSARY_TERM_EMPTY`（`translate.ts:50`）从没被登记过——顺出见下面"线索"。
+- **真机复核（build 后，独立实例 `data/tmp/root-205` ＋ 我自己写的假 SSE 端点）**：预算硬阻断那条文案**一字未变** `已达到每日预算上限 ¥0.5，已自动停发，请调整上限后再试`，`raw:false`（`BUDGET_EXCEEDED`／`CHAT_NO_TARGET` 都没进 DOM），无「停止生成」残留、输入框可用 ⇒  reordered 之后的解析（先取头码再特判 budget）在真 main ＋ 真字典 ＋ 真界面上成立。三个新码的界面文本没走真机：`未选择模型` 在对话页被 `validTargets.length === 0` 本地先挡、Agent 页被 `!providerId || !model` 挡，`消息不存在` 需要库里的消息被删——**这三条只有 CI 证据**（jsdom 真挂载读到的就是字典串）。
+- **线索（本批没修，回读证实过形状）**：`TranslateModule.tsx:311` 是 196 那一族的又一个落点——`const term = await window.pocketai.saveGlossaryTerm(...)` 之后**直接 `setGlossary((prev) => [...prev, term])`**，不判 `isIpcFail`；preload 的类型 `Promise<GlossaryTerm>`（`preload/index.ts:661`）也只写成功分支。今天撞不到是因为 `:310` 自己先 `if (!s || !tgt) return` 把空输入挡了，`GLOSSARY_TERM_EMPTY` 因此到不了界面——但那是"两道各自独立的本地防御"，不是契约。要修就是判返回值 ＋ 类型补失败分支 ＋ 这个码登记进四语。另两条同批顺出的：`chat-service.ts:329` 的 `allFailed` 恒 false（`runTarget` 从不 reject，见 §205），以及 `utils/error.ts:7` 的兜底默认值仍是硬编码中文。
+- **变异三条各有牙**（恢复后两文件 md5 与基线一致）：M206a 从 `CHAT_FAIL_TEXT_KEYS` 删掉 `CHAT_MSG_NOT_USER`（main 仍在抛）⇒ 漂移闸门红 ＋ 映射用例红；M206b 把 chat-service 那三处前缀摘掉退回纯中文 ⇒ 「三个新码各有出处」红 ＋ 205 那条 `rejects.toThrow(/^CHAT_NO_TARGET:/)` 红；M206c 把渲染层查表那行改成常量 undefined ⇒ 映射用例红 ＋ Agent 页真挂载那条红（它现在断的是字典串且**显式断 `queryByText('CHAT_NO_TARGET')` 为 null**）。
+- **验证**：typecheck 0；全量 vitest **335 文件 / 3980 通过 + 1 跳过**（本批 +1 文件 / +9 例，另把 204 的两条用例改成按新串断言）；build ✓（24.65s）；i18n 五门（parity／dead-keys／quoted-labels／term-registry／no-key-leak）全绿。你的 `data/app.db` 仍是 08:33:11／3,100,672 B，9223 那台没动，我的实例与假端点都已收掉。
+- **清单影响**：**B104 行里那句"归你判的口径"收口**（原文已进四语，界面不再夹拼；仍透出原文的只剩 provider／网络这类我们无法翻译的报错）。
+
 ### V4-Iter-205 类型撒谎的那层没编译器兜底：preload 三条发起通道改说实话，`void 回值` 交给形状闸门，顺带把「中止会不会报错」这条契约钉住
 
 - **来由**：204 交付后我列的下一步里有 ②「把 preload 的类型补成带失败分支，从根上不让 `void r` 写得出来」。动手前先证这句我自己说的话——**类型做不到**。`tsconfig` 开着 `noUnusedParameters`，而 `void r` 恰恰算"用了形参"；仓库里 eslint 根本没接进 CI（`package.json` 的 scripts 里没有 lint）。所以本批把"根上不让"落成两件事：**类型不再撒谎**（读者看得见失败分支）＋ **一条形状闸门**（`void 回值` 这种写法在 CI 里红）。

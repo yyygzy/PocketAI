@@ -46,8 +46,16 @@ describe('回码 → 界面文案（全项目只翻译这一次）', () => {
     expect(s).toContain('88.00')
   })
 
-  it('非回码原样透出（把普通报错咽成空串是不允许的）', () => {
-    expect(chatSendFailureText('未选择模型', dictT)).toBe('未选择模型')
+  it('登记过的回码换四语，冒号后的中文说明不进界面（V4-Iter-206）', () => {
+    expect(chatSendFailureText('CHAT_NO_TARGET:未选择模型', dictT)).toBe(zh['chat.errNoTarget'])
+    expect(chatSendFailureText('CHAT_MSG_NOT_ASSISTANT:消息不存在或非助手消息', dictT)).toBe(zh['chat.errMsgNotAssistant'])
+    expect(chatSendFailureText('CHAT_MSG_NOT_USER:消息不存在或非用户消息', dictT)).toBe(zh['chat.errMsgNotUser'])
+    expect(chatSendFailureText('CHAT_NO_TARGET:未选择模型', dictT)).not.toContain('未选择模型')
+  })
+
+  it('没登记的（provider／网络报错）原样透出——把普通报错咽成空串是不允许的', () => {
+    const raw = '请求失败: connect ECONNREFUSED 127.0.0.1:11434'
+    expect(chatSendFailureText(raw, dictT)).toBe(raw)
   })
 
   it('四语把 scope 拼进 budgetBlocked 后不许出现叠词（真机露出过「已达到每日预算预算上限」）', () => {
@@ -119,7 +127,7 @@ describe('Agent 页发起失败：运行态停下 ＋ toast 给文案', () => {
   })
 
   it('浮动 promise 那两条入口（resume／截断重跑）也接得住：同一条收口', async () => {
-    sendReturn = () => ({ ok: false, error: '未选择模型' })
+    sendReturn = () => ({ ok: false, error: 'CHAT_NO_TARGET:未选择模型' })
     const { result } = renderHook(() => useAgentChat(PROVIDERS, ASSISTANTS), { wrapper: HookProviders })
     act(() => result.current.setAssistantId('a1'))
     await waitFor(() => expect(result.current.conversationId).toBe('c1'))
@@ -130,7 +138,8 @@ describe('Agent 页发起失败：运行态停下 ＋ toast 给文案', () => {
       void result.current.resume()
     })
     expect(result.current.running).toBe(false)
-    expect(screen.getByText('未选择模型')).toBeTruthy()
+    expect(screen.getByText(zh['chat.errNoTarget'])).toBeTruthy()
+    expect(screen.queryByText('CHAT_NO_TARGET')).toBeNull()
   })
 })
 

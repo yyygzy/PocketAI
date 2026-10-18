@@ -750,7 +750,7 @@ class AgentEngine {
     internal?: { parentRequestId?: string; budget?: RunBudget; asChild?: boolean }
   ): Promise<void> {
     const { requestId, conversationId, content, assistantId, targets, unattended } = payload
-    if (!targets || targets.length === 0) throw new Error('未选择模型')
+    if (!targets || targets.length === 0) throw new Error('CHAT_NO_TARGET:未选择模型')
     const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
     const asChild = internal?.asChild === true
     const parentRequestId = internal?.parentRequestId ?? null
