@@ -66,6 +66,17 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-211 术语表「添加失败也把输入清空」：注释承诺的那件事，从此真的成立
+
+- **来由**：同一轮清单里的 ③。§209 从代码里推出这条（`submit()` 的注释写「失败保留用户输入并提示」，而 `handleAddTerm` 的失败是 **return 不是 throw** ⇒ submit 照常往下走 `setSrc('')/setTgt('')`），§210 在同一条动作上把它读成了实据（两语都读到输入框长度 0／0）。
+- **修法（就一个布尔）**：`handleAddTerm` 返回 `Promise<boolean>`（空输入／`isIpcFail(term)` ⇒ `false`，成功 append ⇒ `true`），`GlossaryPanel` 的 `onAdd` 契约同步改成 `Promise<boolean>`，submit 里 **`if (!(await onAdd(src, tgt))) return`** 排在任何清空之前。没有改成"失败就 throw"：`submit` 的 catch 只会给一句通用 `translate.glossary.addFail`，抛出去反而把 208 那条已经到手的四语原文丢掉；reject 那一支（桥异常）仍走原来那句内联提示，两条路各留各的。
+- **用例**：新 `tests/glossary-add-failure-211.test.tsx` **7 例**，真挂载 `TranslateModule`（走 `tests/helpers/renderer.tsx` 的桩底座，未预置的通道一律抛）：失败三形状（zod 自定义文案／209 的 `ipcCode` 形状且界面是 en／reject）各钉"输入仍是用户打的那两个词"，其中 en 那条还断 `toast` 不含 `IPC_ARG_INVALID`、不含 `sourceTerm=`、不含中文「过长」；正向对照两条（成功 ⇒ 两个框变空＋列表出现该行＋无 toast；库里已有词条 ⇒ 失败那一趟既不挤掉它也不多出第二行）。另两条**源码闸门**：`await onAdd(` 必须排在 `setSrc('')` 之前、`onAdd` 的声明必须是 `Promise<boolean>`。
+- **两条探针坑是我自己的，记下来**：① 第一版用同步 `getByRole` 找 `Glossary (0)` 那颗按钮 ⇒ 红在 `Unable to find`，原因是**非 zh 的字典是懒加载的**（`i18n/index.tsx`：加载完成前 `t()` 回退 zh），CI 里第一次挂载时界面还停在中文。改成 `findByRole` 并在 helper 上写了这句原因。② 我先用 `document.querySelectorAll('.group')` 数术语行，读到 9 —— `.group` 这个 class 侧栏也在用，那不是判据；改读面板 `innerText`。
+- **变异实测（三条各有牙，且红因各对自己那一半）**：M211a submit 不再看返回值（回到改前形状）⇒ 两条"输入保留"断言红在 `expected '' to be '人工智能'` / `expected '' to be 'xxx…'`，顺序闸门同时红；M211b 失败那支不再 `return false` ⇒ 输入被清＋列表那两条红（失败对象被 append 成词条）；M211c `onAdd` 契约退回 `Promise<void>` ⇒ 类型契约闸门红。恢复后 `TranslateModule.tsx` 字节与基线一致。
+- **真机前后读数（同一台干净实例 `data/tmp/root-210`、同一个动作：源词贴 201 个 `x`、译法填 1 个字、点「添加」）**：改前（§210）两个输入框长度是 **0／0**；改后 **201／1**，toast 仍是逐字 `sourceTerm过长，最多 200 个字符`（一句未变），面板 `innerText` = `术语表管理 · 人工智能=Artificial Intelligence · = · 添加` ⇒ 既有条款仍在、没有假词条。**这条不是"CI 里绿了"而是同一个动作两态对比。**
+- **验证**：typecheck 0；全量 vitest **337 文件 / 4016 通过 + 1 跳过**（＋1 文件／＋7 例）；build ✓（22.04s）。清单新增 **B112（✅，CI 7 例＋真机前后读数）**。收尾按端口 9229 收我自己那棵树（只剩一条 TIME_WAIT），你的 9223 未动、`data/app.db` 仍是 08:33:11／3,100,672 B。
+- **同族还剩什么**：`isIpcFail`／`hasIpcFailed` 的判别目前靠人记，137 处 `toast.error` 里仍有一批直接显示 `error` 而不换四语（那是 §209 的量测结果，属另一条口径）；`utils/error.ts:7` 那句硬编码中文兜底仍未接字典。
+
 ### V4-Iter-210 B111 真机闭环：EN 那句与中文对照那句都逐字读到，顺带把 209 记的那条"失败清空输入"读成实据（src 零改动）
 
 - **来由**：用户把下一步清单整段选回来，① 提交 209（`6d062d6`，本地现领先远端 6）＋ ② 真机跑 B111 ＋ ③ 修 GlossaryPanel（另起 §211）；④ B106／B108 不在我这边。

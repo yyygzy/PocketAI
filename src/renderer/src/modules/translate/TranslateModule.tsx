@@ -305,19 +305,22 @@ export const TranslateModule: React.FC = () => {
   }, [t])
 
   // ---------- 术语表操作 ----------
+  // 返回值是"有没有真的加上"：safeHandle 把失败转成** resolve 的 {ok:false} **，
+  // 面板那边只 catch 得住 reject ⇒ 不把这个布尔传出去，失败路径会照常清空输入框（V4-Iter-211）。
   const handleAddTerm = useCallback(
-    async (sourceTerm: string, targetTermInput: string) => {
+    async (sourceTerm: string, targetTermInput: string): Promise<boolean> => {
       const s = sourceTerm.trim()
       const tgt = targetTermInput.trim()
-      if (!s || !tgt) return
+      if (!s || !tgt) return false
       const term = await window.pocketai.saveGlossaryTerm({ sourceTerm: s, targetTerm: tgt })
       // 记录型通道：safeHandle 把抛错转成 `{ok:false,error}` **返回值**而不是 rejection。
       // 不判就是把一个失败对象当词条 append 进列表——列表多出一行库里并不存在的词条。
       if (isIpcFail(term)) {
         toast.error(ipcFailureText(term, t) || t('common.unknownError'))
-        return
+        return false
       }
       setGlossary((prev) => [...prev, term])
+      return true
     },
     [t, toast]
   )
@@ -570,7 +573,7 @@ export const TranslateModule: React.FC = () => {
 /** 术语表管理弹层：条目增删，遮罩点击关闭 */
 const GlossaryPanel: React.FC<{
   terms: GlossaryTerm[]
-  onAdd: (sourceTerm: string, targetTerm: string) => Promise<void> | void
+  onAdd: (sourceTerm: string, targetTerm: string) => Promise<boolean>
   onDelete: (id: string) => Promise<void> | void
   onClose: () => void
 }> = ({ terms, onAdd, onDelete, onClose }) => {
@@ -585,7 +588,7 @@ const GlossaryPanel: React.FC<{
   const submit = async () => {
     if (!canAdd) return
     try {
-      await onAdd(src, tgt)
+      if (!(await onAdd(src, tgt))) return
       setSrc('')
       setTgt('')
       setAddErr('')
