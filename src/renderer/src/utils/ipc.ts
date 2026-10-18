@@ -45,14 +45,84 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   GLOSSARY_TERM_EMPTY: 'translate.glossaryTermEmpty'
 }
 
-/** 通用查表：登记过的回码换四语，没登记的**原样透出**（provider／网络的报错不翻译，也不许咽掉） */
-export function ipcFailureText(
-  msg: string,
-  t: (key: string, params?: Record<string, string | number>) => string
-): string {
-  const code = /^([A-Z][A-Z0-9_]*):/.exec(msg)?.[1]
+/**
+ * `safeHandle` 入参校验失败对象上那两个可选字段（主进程 `argFail()` 产出）。
+ * **拼进 `error` 是不行的**：渲染层有 137 处 `toast.error(…)`、21 处 `ipcFailText(…)` 直接显示这根串，
+ * 走本文件翻译的只有 4 个调用点（chat 三条链／Agent／浮窗／术语表，共 6 条链）。
+ * 把回码塞进 `error` 会让这 158 个显示点（两类有重叠）从中文退化成 `IPC_ARG_INVALID:…` —— 那是净倒退。
+ * 所以回码独立成字段：走翻译的调用点读它，其余调用点照旧只看 `error`。
+ */
+const ARG_CODE = 'IPC_ARG_INVALID'
+export type IpcFailureInput = string | { error?: string; ipcCode?: string; ipcArgs?: string }
+
+/** `too_small|array` 这类「code:origin」→ 句式 key；主进程只对这三种 origin 编码 */
+const ARG_SHAPE_KEYS: Record<string, string> = {
+  'too_small|string': 'ipc.argTooSmallChar',
+  'too_small|number': 'ipc.argTooSmallNumber',
+  'too_small|array': 'ipc.argTooSmallItems',
+  'too_big|string': 'ipc.argTooBigChar',
+  'too_big|number': 'ipc.argTooBigNumber',
+  'too_big|array': 'ipc.argTooBigItems'
+}
+
+/** 主进程 ISSUE_FIELD_LABELS 里有的字段名（清单由 `ipc-arg-invalid-209.test.ts` 双向对账） */
+const ARG_FIELD_KEYS = new Set([
+  'name',
+  'title',
+  'type',
+  'baseUrl',
+  'url',
+  'apiKeys',
+  'models',
+  'model',
+  'text',
+  'content',
+  'path',
+  'id',
+  'enabled'
+])
+
+type Translator = (key: string, params?: Record<string, string | number>) => string
+
+/**
+ * `ipcArgs=<path=code=origin=bound>|…` → 四语。
+ * 任何解析不出来的形状（没见过的 code／origin、字段名不在清单里…）**一律回落到 `error` 那句中文**：
+ * 宁可夹一句中文，也不能把用户的报错解析成半截话或空串。
+ */
+function argInvalidText(spec: string, tail: string, t: Translator): string {
+  const out: string[] = []
+  for (const token of spec.split('|')) {
+    const [path, code, origin, bound] = token.split('=')
+    if (!path || !code) return tail
+    const field = path === '?' ? t('ipc.argUnnamed') : ARG_FIELD_KEYS.has(path) ? t(`ipc.field.${path}`) : path
+    if (code === 'too_small' || code === 'too_big') {
+      const key = ARG_SHAPE_KEYS[`${code}|${origin ?? ''}`]
+      if (!key) return tail
+      out.push(t(key, { field, n: bound ?? '' }))
+    } else if (code === 'invalid_type') {
+      out.push(t('ipc.argType', { field, expected: bound ?? '' }))
+    } else if (code === 'invalid_format') {
+      out.push(t('ipc.argFormat', { field }))
+    } else {
+      return tail
+    }
+  }
+  return out.join('；')
+}
+
+/**
+ * 失败对象／回码串 → 界面文案。登记过的回码换四语，没登记的**原样透出**
+ * （provider／网络的报错不翻译，也不许咽掉）。入参给对象时读 `ipcCode`/`ipcArgs`，
+ * 给字符串时只认 `CODE:说明` 那种形状——两条路都解析不出来就显示 `error`。
+ */
+export function ipcFailureText(msg: IpcFailureInput, t: Translator): string {
+  const text = typeof msg === 'string' ? msg : msg.error ?? ''
+  if (typeof msg !== 'string' && msg.ipcCode === ARG_CODE && msg.ipcArgs) {
+    return argInvalidText(msg.ipcArgs, text, t)
+  }
+  const code = /^([A-Z][A-Z0-9_]*):/.exec(text)?.[1]
   const key = code ? IPC_FAIL_TEXT_KEYS[code] : undefined
-  return key ? t(key) : msg
+  return key ? t(key) : text
 }
 
 /**
@@ -62,10 +132,11 @@ export function ipcFailureText(
  * 被 safeHandle 转成返回值（流式期的 CHAT_ERROR_EVENT 是 provider 报错，不带这些标记）。
  */
 export function chatSendFailureText(
-  msg: string,
+  msg: IpcFailureInput,
   t: (key: string, params?: Record<string, string | number>) => string
 ): string {
-  const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+)/)
+  const text = typeof msg === 'string' ? msg : msg.error ?? ''
+  const m = text.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+)/)
   if (m) {
     const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
     return t('usage.budgetBlocked', { scope, limit: m[2]! })

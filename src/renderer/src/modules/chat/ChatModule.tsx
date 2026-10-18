@@ -18,7 +18,7 @@ import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, reportIpcError, type IpcFailureInput } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
@@ -852,10 +852,10 @@ export const ChatModule: React.FC = () => {
    * safeHandle 把 handler 抛错转成 **{ok:false} 返回值**而不是 rejection ⇒ 只挂 .catch 等于没接失败：
    * 「未选择模型」与 BUDGET_EXCEEDED 预算硬阻断原先就是这么被咽掉的（转圈不消失、专门文案永不显示）。
    */
-  const onChatSendFailed = (requestId: string, convId: string, msg: string): void => {
+  const onChatSendFailed = (requestId: string, convId: string, msg: IpcFailureInput): void => {
     failStream(requestId, convId)
-    const text = chatSendFailureText(msg, t)
-    if (text) toast.error(text)
+    const text = chatSendFailureText(msg, t) || t('common.unknownError')
+    toast.error(text)
   }
 
   const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => {
@@ -900,7 +900,7 @@ export const ChatModule: React.FC = () => {
         kbRefs
       })
       .then((r) => {
-        if (hasIpcFailed(r)) onChatSendFailed(requestId, convId, ipcFailText(r, t('common.unknownError')))
+        if (hasIpcFailed(r)) onChatSendFailed(requestId, convId, r)
       })
       .catch((e) => onChatSendFailed(requestId, convId, errText(e)))
     setReplyToMessage(null)
@@ -1160,7 +1160,7 @@ export const ChatModule: React.FC = () => {
         targets: validTargets
       })
       .then((r) => {
-        if (hasIpcFailed(r)) onChatSendFailed(requestId, currentConvId, ipcFailText(r, t('common.unknownError')))
+        if (hasIpcFailed(r)) onChatSendFailed(requestId, currentConvId, r)
       })
       .catch((e) => onChatSendFailed(requestId, currentConvId, errText(e)))
   }, [targets, currentConvId, currentAssistantId, messages, isStreaming, beginStream, focusNewBranch, failStream])
@@ -1190,7 +1190,7 @@ export const ChatModule: React.FC = () => {
         targets: validTargets
       })
       .then((r) => {
-        if (hasIpcFailed(r)) onChatSendFailed(requestId, currentConvId, ipcFailText(r, t('common.unknownError')))
+        if (hasIpcFailed(r)) onChatSendFailed(requestId, currentConvId, r)
       })
       .catch((e) => onChatSendFailed(requestId, currentConvId, errText(e)))
   }, [targets, currentConvId, currentAssistantId, isStreaming, beginStream, focusNewBranch, failStream])

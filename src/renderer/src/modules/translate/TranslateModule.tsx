@@ -314,7 +314,7 @@ export const TranslateModule: React.FC = () => {
       // 记录型通道：safeHandle 把抛错转成 `{ok:false,error}` **返回值**而不是 rejection。
       // 不判就是把一个失败对象当词条 append 进列表——列表多出一行库里并不存在的词条。
       if (isIpcFail(term)) {
-        toast.error(ipcFailureText(term.error || t('common.unknownError'), t))
+        toast.error(ipcFailureText(term, t) || t('common.unknownError'))
         return
       }
       setGlossary((prev) => [...prev, term])

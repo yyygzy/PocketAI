@@ -1,5 +1,29 @@
 // 中文文案字典（扁平 key，与 en.ts 结构完全一致）
 export const zh = {
+  // ── 入参校验回码（V4-Iter-209：safeHandle 的 zod 报错换四语；解析不出来时回落到中文尾段）──
+  'ipc.argUnnamed': '参数',
+  'ipc.argTooSmallChar': '{field}至少需要 {n} 个字符',
+  'ipc.argTooSmallNumber': '{field}不能小于 {n}',
+  'ipc.argTooSmallItems': '{field}至少需要 {n} 项',
+  'ipc.argTooBigChar': '{field}过长，最多 {n} 个字符',
+  'ipc.argTooBigNumber': '{field}不能大于 {n}',
+  'ipc.argTooBigItems': '{field}最多 {n} 项',
+  'ipc.argType': '{field}类型不对（应为 {expected}）',
+  'ipc.argFormat': '{field}格式不正确',
+  'ipc.field.name': '名称',
+  'ipc.field.title': '标题',
+  'ipc.field.type': '类型',
+  'ipc.field.baseUrl': 'Base URL',
+  'ipc.field.url': '地址',
+  'ipc.field.apiKeys': 'API Key',
+  'ipc.field.models': '模型',
+  'ipc.field.model': '模型',
+  'ipc.field.text': '文本',
+  'ipc.field.content': '内容',
+  'ipc.field.path': '路径',
+  'ipc.field.id': 'ID',
+  'ipc.field.enabled': '启用开关',
+
   // ── 通用 ──
   'common.save': '保存',
   'common.cancel': '取消',

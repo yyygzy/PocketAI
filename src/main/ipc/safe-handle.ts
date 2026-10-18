@@ -100,6 +100,54 @@ export function describeIssue(issue: z.ZodIssue): string {
 }
 
 /**
+ * 单条 issue → 回码段 `path=code=origin=bound`；编不出**无损**码的返回空串，整条回落中文。
+ * 三件事必须满足：
+ * - code 在白名单里（too_small／too_big／invalid_type／invalid_format）。
+ *   `invalid_value` 故意不编码——它的「（可选：a / b）」那份清单不在回码里，翻译一次就丢；
+ *   `unrecognized_keys`／`custom` 同理。
+ * - schema 没自定义过文案（判据与 `describeIssue` 同一把尺子：消息含非 ASCII 就算自定义）——
+ *   否则渲染层会拿通用句式覆盖作者措辞（「文本不能为空」≠「文本至少需要 1 个字符」）。
+ * - 字段名与边界值都是 ASCII 且不含分隔符。
+ */
+function issueToken(issue: z.ZodIssue): string {
+  const msg = issue.message ?? ''
+  if (/[^\x00-\x7F]/.test(msg)) return ''
+  const code = issue.code
+  const i = issue as { origin?: string; minimum?: number; maximum?: number; expected?: string; path: (string | number)[] }
+  let origin = ''
+  let bound = ''
+  if (code === 'too_small' || code === 'too_big') {
+    origin = i.origin ?? ''
+    if (!['string', 'number', 'array'].includes(origin)) return ''
+    bound = String(code === 'too_small' ? i.minimum : i.maximum)
+  } else if (code === 'invalid_type') {
+    bound = i.expected ?? ''
+  } else if (code !== 'invalid_format') {
+    return ''
+  }
+  const path = i.path.filter((p) => typeof p === 'string').join('.') || '?'
+  const token = `${path}=${code}=${origin}=${bound}`
+  // 形状收死：四段 ASCII（`=` 分段、`|` 分条）；任何意外字符都宁可不编码
+  return /^[A-Za-z0-9_.?-]+=[a-z_]+=[a-z]*=[A-Za-z0-9_]*$/.test(token) ? token : ''
+}
+
+/**
+ * zod issues → 给界面的失败对象（V4-Iter-209）。
+ *
+ * `error` **永远是那句人话**：渲染层 137 处 `toast.error(…)`＋21 处 `ipcFailText(…)` 直接显示这根串，
+ * 走 `ipcFailureText` 翻译的只有 4 个调用点。把回码拼进这根字符串会让那 158 个显示点从中文退化成回码
+ * （那是净倒退）。所以回码另开两个字段：`ipcCode='IPC_ARG_INVALID'` ＋ `ipcArgs=<path=code=origin=bound>|…`，
+ * 走翻译的调用点读它、其余照旧显示中文。只要有一条 issue 编不出无损码（自定义文案最常见），
+ * 就整条不给回码字段，避免界面只翻译了半截。
+ */
+export function argFail(issues: z.ZodIssue[]): IpcFail | (IpcFail & { ipcCode: string; ipcArgs: string }) {
+  const friendly = issues.map(describeIssue).join('；')
+  const tokens = issues.map(issueToken)
+  if (tokens.some((x) => !x)) return { ok: false as const, error: friendly }
+  return { ok: false as const, error: friendly, ipcCode: 'IPC_ARG_INVALID', ipcArgs: tokens.join('|') }
+}
+
+/**
  * 注册 IPC handler 并自动兜底：
  * 1) 若提供 argsSchema，先用 zod 校验位置参数，失败记 warn 并返回结构化错误，
  *    防止畸形/恶意参数穿透到主进程业务逻辑（纵深防御）；
@@ -122,8 +170,7 @@ export function safeHandle<A extends unknown[]>(
             .map((i) => `${i.path.join('.') || '?'}: ${i.code} ${i.message}`)
             .join('; ')
           log.warn(`${channel} 入参校验失败: ${raw}`)
-          const friendly = result.error.issues.map(describeIssue).join('；')
-          return { ok: false as const, error: friendly } satisfies IpcFail
+          return argFail(result.error.issues) satisfies IpcFail
         }
         validated = result.data
       }

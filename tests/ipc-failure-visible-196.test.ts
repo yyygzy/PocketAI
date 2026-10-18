@@ -98,8 +98,11 @@ describe('chat 发起类通道：五个入口逐个核对（V4-Iter-204）', () 
       // 区域不许溢出到下一条链：否则"隔壁的 guard"会把漏判的那条照绿（就是 196 闸门当时的失效方式）
       expect(region).not.toContain('window.pocketai')
       expect(region).toContain('hasIpcFailed(r)')
-      expect(region).toContain('ipcFailText(r')
-      expect(region).toContain(handler)
+      // V4-Iter-209：交接的是**整个失败对象**——先抽 `ipcFailText(r, …)` 就把 ipcCode/ipcArgs 丢了，回码永不生效
+      expect(region, `${chan} 必须把失败对象 r 交给 ${handler}`).toMatch(
+        new RegExp(`${handler.replace(/[()]/g, '\\$&')}[^\\n]*\\br\\)`)
+      )
+      expect(region).not.toContain('ipcFailText(r')
     })
   }
 

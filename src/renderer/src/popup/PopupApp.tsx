@@ -7,7 +7,7 @@ import { pickDefaultProvider } from '../utils/provider-pick'
 import { Markdown } from '../modules/chat/Markdown'
 import { AttachmentGrid } from '../components/AttachmentGrid'
 import { useToast } from '../components/ToastProvider'
-import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError } from '../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, reportIpcError, type IpcFailureInput } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useCopyFeedback } from '../hooks/useCopyFeedback'
 import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../modules/agent/agent-shared'
@@ -279,7 +279,7 @@ export const PopupApp: React.FC = () => {
       ])
       // safeHandle 把 chat:send 的抛错转成 {ok:false} **返回值**：不判返回值就等于没失败过。
       // 浮窗原先是裸 promise（then/catch 都没挂），预算硬阻断时只剩一个永不消失的空气泡（V4-Iter-204）。
-      const failSend = (msg: string): void => {
+      const failSend = (msg: IpcFailureInput): void => {
         requestIdRef.current = null
         setStreaming(false)
         setMessages((ms) => {
@@ -287,7 +287,7 @@ export const PopupApp: React.FC = () => {
           if (next.length) {
             const last = next[next.length - 1]!
             if (last.role === 'assistant') {
-              next[next.length - 1] = { role: 'assistant', content: chatSendFailureText(msg, t), error: true }
+              next[next.length - 1] = { role: 'assistant', content: chatSendFailureText(msg, t) || t('common.unknownError'), error: true }
             }
           }
           return next
@@ -303,7 +303,7 @@ export const PopupApp: React.FC = () => {
           targets: [{ providerId, model }]
         })
         .then((r) => {
-          if (hasIpcFailed(r)) failSend(ipcFailText(r, t('common.unknownError')))
+          if (hasIpcFailed(r)) failSend(r)
         })
         .catch((e) => failSend(errText(e)))
     },

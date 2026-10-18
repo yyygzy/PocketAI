@@ -1,5 +1,29 @@
 // English dictionary (flat keys, identical structure to zh.ts)
 export const en = {
+  // ── IPC argument validation codes (V4-Iter-209) ──
+  'ipc.argUnnamed': 'parameter',
+  'ipc.argTooSmallChar': '{field} needs at least {n} characters',
+  'ipc.argTooSmallNumber': '{field} cannot be less than {n}',
+  'ipc.argTooSmallItems': '{field} needs at least {n} items',
+  'ipc.argTooBigChar': '{field} is too long — max {n} characters',
+  'ipc.argTooBigNumber': '{field} cannot be greater than {n}',
+  'ipc.argTooBigItems': '{field} allows at most {n} items',
+  'ipc.argType': '{field} has the wrong type (expected {expected})',
+  'ipc.argFormat': '{field} is not in the right format',
+  'ipc.field.name': 'Name',
+  'ipc.field.title': 'Title',
+  'ipc.field.type': 'Type',
+  'ipc.field.baseUrl': 'Base URL',
+  'ipc.field.url': 'URL',
+  'ipc.field.apiKeys': 'API Key',
+  'ipc.field.models': 'Models',
+  'ipc.field.model': 'Model',
+  'ipc.field.text': 'Text',
+  'ipc.field.content': 'Content',
+  'ipc.field.path': 'Path',
+  'ipc.field.id': 'ID',
+  'ipc.field.enabled': 'Enabled switch',
+
   // ── Common ──
   'common.save': 'Save',
   'common.cancel': 'Cancel',

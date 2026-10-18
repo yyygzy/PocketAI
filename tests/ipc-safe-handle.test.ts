@@ -106,8 +106,12 @@ describe('safeHandle — 入参校验文案（不再把 zod 英文甩给界面�
 
   it('映射不到的字段名显示原 key（猜个中文名更容易误导）', async () => {
     safeHandle(CH, () => ({ ok: true as const }), argsSchema(z.object({ weirdKey: z.string().max(3) })))
-    const r = (await invoke({ weirdKey: 'abcdef' })) as { error: string }
+    const r = (await invoke({ weirdKey: 'abcdef' })) as { error: string; ipcCode?: string; ipcArgs?: string }
+    // V4-Iter-209 之后回码另开字段：error 永远是那句人话（137 处 toast.error＋21 处 ipcFailText 直接显示它，不许退化成回码），
+    // ipcCode/ipcArgs 只给走 ipcFailureText 的那 5 处换四语用。
     expect(r.error).toBe('weirdKey过长，最多 3 个字符')
+    expect(r.ipcCode).toBe('IPC_ARG_INVALID')
+    expect(r.ipcArgs).toBe('weirdKey=too_big=string=3')
   })
 
   it('数值/数组的 too_small·too_big 按 origin 出话；未知 code 回落通用文案', () => {
