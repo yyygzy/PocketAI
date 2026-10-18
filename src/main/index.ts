@@ -69,6 +69,7 @@ import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, type MarkedBrowserWindow
 import { isQuitting, beginQuit, runCleanupChain, runFallbackCleanup } from './quit-manager'
 import { createLogger, configureLogDir } from './logger'
 import { bootMark } from './steward/boot-perf'
+import { sweepStaleProfileCaches } from './steward/stale-cache-sweep'
 import { errMsg } from './error'
 
 // 模块标签分散（boot/db/crypto/provider/license/quit/assistants/skills），按需各取一个 logger
@@ -516,6 +517,9 @@ async function boot(): Promise<void> {
   powerMonitor.on('lock-screen', () => lockService.lock('os-sleep'))
   powerMonitor.on('unlock-screen', () => { /* 保持锁定，等用户在应用内解锁 */ })
   bootMark('schedulers', '锁/备份/任务/提醒调度器启动完成')
+  // 遗留浏览器缓存清扫（V4-Iter-193）：只删"7 天内没被写过"的那两棵缓存子树，闸门保证被删的不是当前
+  // 运行时在用的那一棵，所以不必抢在解锁窗之前；放在这里是为了不往启动关键路径上加 IO。失败绝不影响启动。
+  void sweepStaleProfileCaches().catch((e) => log.warn('遗留浏览器缓存清扫异常（不影响启动）:', errMsg(e)))
 }
 
 // ─── 单实例锁 ───────────────────────────────────────────────────
