@@ -144,8 +144,10 @@ describe('流式期的失败不进返回值面', () => {
     await new Promise((r) => setTimeout(r, 200))
     chatService.abort('req-abort')
     await expect(p).resolves.toBeUndefined()
-    // 中止的出口是事件面（done 带部分正文 或 error），不是 promise 失败
-    expect(evts.some((e) => e.ch === IPC.CHAT_DONE_EVENT || e.ch === IPC.CHAT_ERROR_EVENT)).toBe(true)
+    // 中止必须被认成"中止"（走 CHAT_DONE 那条），不能被记成一次请求失败——
+    // 真机同一动作的库行是 `status=aborted` ＋ 正文保留 34 段（台账 §207），这里钉的是同一件事。
+    expect(evts.some((e) => e.ch === IPC.CHAT_DONE_EVENT)).toBe(true)
+    expect(evts.some((e) => e.ch === IPC.CHAT_ERROR_EVENT)).toBe(false)
     expect(streaming).toBe(false)
   })
 
