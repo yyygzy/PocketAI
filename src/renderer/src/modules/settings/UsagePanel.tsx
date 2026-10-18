@@ -6,7 +6,7 @@ import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversati
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
-import { reportIpcError } from '../../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { requestUsageJump } from './usage-jump'
 import { fmtTokens, fmtCost } from '../../utils/token'
 import { buildUsageCsv } from '../../utils/usage-csv'
@@ -45,7 +45,9 @@ export const UsagePanel: React.FC = () => {
     setDetailItems([])
     try {
       const r = await window.pocketai.getUsageDetail(days, EXPORT_LIMIT, id)
-      setDetailItems(r.items)
+      // safeHandle 的失败是 resolve 的 {ok:false}：不判就 setDetailItems(对象.items=undefined) ⇒ 550 行 .map 崩
+      if (hasIpcFailed(r)) toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+      else setDetailItems(r.items)
     } catch (e) {
       reportIpcError('usage.detail')(e)
     } finally {
@@ -60,7 +62,9 @@ export const UsagePanel: React.FC = () => {
     setDetailItems([])
     try {
       const r = await window.pocketai.getUsageDetail(days, EXPORT_LIMIT, undefined, assistantId)
-      setDetailItems(r.items)
+      // safeHandle 的失败是 resolve 的 {ok:false}：不判就 setDetailItems(对象.items=undefined) ⇒ 550 行 .map 崩
+      if (hasIpcFailed(r)) toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+      else setDetailItems(r.items)
     } catch (e) {
       reportIpcError('usage.detail')(e)
     } finally {
@@ -105,6 +109,11 @@ export const UsagePanel: React.FC = () => {
     setBudgetSaving(true)
     try {
       const next = await window.pocketai.setUsageBudget(daily, monthly, budgetHardBlockDraft, budgetWarnDraft)
+      // 失败 ⇒ 不写 budget、不关编辑态（§214：今天会把 limit/cost 显示成「未设置」并报「已保存」）
+      if (hasIpcFailed(next)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(next, t('common.unknownError')) }))
+        return
+      }
       setBudget(next)
       setBudgetEditing(false)
       toast.success(t('usage.budgetSaved'))
@@ -693,6 +702,12 @@ const PriceEditor: React.FC<{
     setSaving(true)
     try {
       const next = await window.pocketai.setUsagePricing({ currency, prices })
+      // 失败走既有的 onError（它会 toast「操作失败：…」并**留着编辑态与草稿**）；
+      // 不判就是"先报已保存、再用 {ok:false} 渲染 ⇒ 636 行 Object.keys(pricing.prices) 崩"（§214）
+      if (hasIpcFailed(next)) {
+        onError(new Error(ipcFailText(next, t('common.unknownError'))))
+        return
+      }
       setDrafts({})
       onSaved(next)
     } catch (e) {

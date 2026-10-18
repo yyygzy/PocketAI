@@ -3,7 +3,8 @@ import type { AssistantRecord, ConversationRecord, ConversationGroupRecord, Mess
 import { useI18n } from '../../i18n'
 import { EmptyState } from '../../components/EmptyState'
 import { MessageSearchResults, relTime } from '../../components/MessageSearchResults'
-import { logIpcError } from '../../utils/ipc'
+import { logIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { useToast } from '../../components/ToastProvider'
 import { formatDateTime } from '../../utils/time'
 
 interface Props {
@@ -84,6 +85,7 @@ export const ConversationList: React.FC<Props> = ({
   embedded
 }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<MessageSearchResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -174,6 +176,14 @@ export const ConversationList: React.FC<Props> = ({
       setOffset(0)
       try {
         const r = await window.pocketai.searchMessages(search.trim(), null, dateRange, 0)
+        // safeHandle 的失败是 resolve 的 {ok:false}：不判就 setResults(对象)，
+        // MessageSearchResults.tsx:62 的 `results.length === 0` 为假、67 行 for…of 抛 TypeError ⇒ 侧栏崩
+        if (hasIpcFailed(r)) {
+          setResults([])
+          setHasMore(false)
+          toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+          return
+        }
         setResults(r)
         setHasMore(r.length === PAGE)
       } catch (e) {
@@ -193,6 +203,11 @@ export const ConversationList: React.FC<Props> = ({
     try {
       const next = offset + PAGE
       const r = await window.pocketai.searchMessages(search.trim(), null, dateRange, next)
+      // 失败 ⇒ 保住已有结果、offset 不前进（否则那一页永远丢），并给出提示；不展开失败对象
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+        return
+      }
       setResults((prev) => [...prev, ...r])
       setOffset(next)
       setHasMore(r.length === PAGE)

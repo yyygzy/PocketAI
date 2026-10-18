@@ -66,6 +66,26 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-214 T1 崩溃族收口：16 个 await 点不再把 `{ok:false}` 当数据用，两条 TypeError 白屏的机制被复现进 CI
+
+- **来由**：§213 定下的批次（用户"按推荐的流程走"）。范围＝§212 那份定级表里的 T1 崩溃档 ＋ 同文件里的其它档（按文件切，保证每个文件只被一批动过）。
+- **改的 16 个点／6 个文件**（一律 `hasIpcFailed(结果)` ⇒ 给可见反馈 ⇒ 不写脏 state）：
+  - `UsagePanel.tsx`：`getUsageDetail` 两处（失败保住旧明细，不再 `setDetailItems(undefined)`）、`setUsageBudget`（不关编辑态、不抹掉 limit）、`setUsagePricing`（**改走既有的 `onError`**：编辑器留着、草稿不丢， toast 文案仍是那句「操作失败：…」）；
+  - `useAgentToolConfigs.ts`：`pickAgentWorkspaceDir` ＋ 三个 `patch*Config`（配置 state 与 Key 草稿都不再被失败对象覆盖）；
+  - `FilesModule.tsx:26`：`listFiles` 失败 ⇒ 空列表 ＋ `showNotice`；
+  - `KnowledgeModule.tsx`：`saveKnowledgeBase`（失败不关表单）、`listKbDocuments` 轮询（失败 ⇒ 停轮询、保住旧列表；原来 `list?.some` 抛错会让那发轮询既不停也不刷新）、`getKbDocText`（原来 `if (!r)` 挡不住真值对象，标题与正文被抹成 undefined）；
+  - `ConversationList.tsx`／`SessionRail.tsx` 各两处 `searchMessages`（首屏失败 ⇒ 清结果并提示；loadMore 失败 ⇒ **保住已有结果且 offset 不前进**，否则那一页永远丢）。
+- **可见反馈的口径**：一律取 IPC 的 `error` 字段（`ipcFailText`），不写死中文；这些串今天还是主进程的中文书（`窗口不可用`、`搜索索引不可用`…），**四语化不在本批**（那是 §206/§209 那一族的延伸，需要逐通道回码化）。
+- **用例**：新 `tests/ipc-failure-t1-214.test.tsx` **25 例**＝① 真挂载行为 7 例（`useAgentToolConfigs` 两条含反向对照、`ConversationList` 搜索失败＋成功对照、`FilesModule` 失败＋成功对照）；② 形状闸门 16＋2 例：按 `[await 锚点 → 写 state 锚点]` 切区域，区域里必须出现 `hasIpcFailed`、必须有可见反馈（`toast.error`/`setError`/`showNotice`/`onError`）、必须守住写点（`return` **或** `else` 都算），另有一条"正好 16 个点"的数量自检。
+  **哪几处只有闸门、没有行为用例**：`UsagePanel` 四处 ＋ `KnowledgeModule` 三处 ＋ `SessionRail` 两处——真挂载要把整个面板的 IPC 桩补齐，成本不值，闸门覆盖它们的判据形状，行为面**未在 CI 演过**。
+- **两条我自己踩出来的工具坑（都写进用例注释）**：
+  ① 闸门第一版没剥注释，`getKbDocText` 上方**我自己写的注释里正好含 `setText(r.text)`** 这个锚点串 ⇒ `indexOf` 命中注释、判据被排在"写点"之后，假红。修法是扫描前先剥掉整行注释（`readCode`）。
+  ② 判据严格性两版（宽松／收紧的 ok 正则）跑同一批点位，「两者都没有」的名单不变 ⇒ §213 那个 16 是稳的；而 §213 里我按"最小箭头函数体"找 catch 的框法会漏框（`ChatModule:695`、`FirstRunWizard:207` 两条假阳）——本批的闸门改用 `[锚点 → 锚点]` 区域，正是为了不再依赖函数体框法。
+- **变异 M214a–e 五条各有牙**（跑完字节级还原、基线重跑绿）：a 摘掉 `listFiles` 守卫 ⇒ **`TypeError: entries.map is not a function`**（这就是原白屏机制，现在 CI 里能演出来）；c 摘掉搜索守卫 ⇒ **`TypeError: results is not iterable`** ＋ 提示断言红；b `pickAgentWorkspaceDir` 守卫摘掉 ⇒ `expected { ok: false, … } to be ''`；d 用量面板两处判据换成永假条件 ⇒ 两条闸门红；e 轮询只判 null ⇒ 闸门红。**a 与 c 的红因是渲染期 TypeError 而不是断言不满足**，这一点让 §212 那句"会崩"从读码推断升级为可复现证据。
+- **CRLF 一处**：`UsagePanel.tsx` 是 w/crlf，多行锚点用不了 ⇒ 全部单行锚点插入，改完用脚本把该文件行尾统一回 CRLF（885 行 CRLF、0 裸 LF），`git ls-files --eol` 仍是 `i/lf w/crlf`。
+- **中途一次自我纠正**：`KnowledgeModule:219` 那次编辑我把 `catch` 整块删掉了（旧字符串选宽了），当场读回原状并补成正确形状（本条目里如实记着，别让它变成"从没发生过"）。
+- **验证**：typecheck 0；全量 vitest **338 文件 / 4041 通过 + 1 跳过**（＋1 文件／＋25 例）；build ✓（21.65s）。**未实测真机**：这 16 条都需要主进程真的抛错才可见，我没有给你可点的复现路径（硬造一条就等于指一条没走过的路），所以清单 **B113 标成 ✅（CI）并写明"无真机复现"**。你的 `data/app.db` 与 9223 那台本批未碰。
+
 ### V4-Iter-213 reject 改造的成本我把两边都数完了：改造省不下逐点修，逐点修能拿到它八成的好处（src 零改动）
 
 - **来由**：§212 三条实测后我给的推荐是"先数两件事再定方案"，用户按推荐走。这两件是：① 改成 reject 会有多少点从"静默的错误状态"变成 **unhandled rejection**；② 有多少通道**同时**存在设计内 `ok:false` 与 safeHandle 可打标记的失败（一个通道的失败分裂成两个面）。

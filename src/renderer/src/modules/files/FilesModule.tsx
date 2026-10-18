@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileEntry, FileReadResult } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
-import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { logIpcError, reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -24,14 +24,22 @@ export const FilesModule: React.FC = () => {
     setLoading(true)
     try {
       const list = await window.pocketai.listFiles(dir)
-      setEntries(list)
+      // safeHandle 把失败转成 **resolve 的 {ok:false}**：不判就 setEntries(对象)，
+      // 下面 `entries.length === 0` 为假、`entries.map` 抛 TypeError ⇒ 整屏错误边界（§214）。
+      // 触发路径是真的：files-service.ts:65 的 statSync 没包 try，目录被外部删掉就会走到这里。
+      if (hasIpcFailed(list)) {
+        showNotice({ ok: false, text: t('common.opFailed', { msg: ipcFailText(list, t('common.unknownError')) }) })
+        setEntries([])
+      } else {
+        setEntries(list)
+      }
     } catch (e) {
       logIpcError('files.listFiles', e)
       setEntries([])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t, showNotice])
 
   useEffect(() => {
     load(relDir)

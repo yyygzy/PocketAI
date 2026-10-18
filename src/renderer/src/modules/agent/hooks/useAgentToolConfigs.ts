@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
-import { reportIpcError } from '../../../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 import { useConfirm } from '../../../components/ConfirmDialog'
 import { isUnprotectedMode } from '../../../utils/secret-consent'
 import { errText } from '../../../utils/error'
@@ -35,12 +35,23 @@ export function useAgentToolConfigs() {
 
   const pickWorkspace = async () => {
     const dir = await window.pocketai.pickAgentWorkspaceDir()
+    // preload 声明的是 string，但 safeHandle 的失败是 **resolve 的 {ok:false}**（§205 记过这层类型撒谎）；
+    // 不判就把失败对象塞进 workspaceDir，消费方 `AgentModelBar.tsx:102` 对它做 .split ⇒ 整屏崩
+    if (hasIpcFailed(dir)) {
+      toast.error(ipcFailText(dir, t('common.unknownError')))
+      return
+    }
     setWorkspaceDir(dir)
   }
 
   const patchShellConfig = async (patch: Partial<ShellConfig>) => {
     try {
-      setShellConfigState(await window.pocketai.setShellConfig(patch))
+      const next = await window.pocketai.setShellConfig(patch)
+      if (hasIpcFailed(next)) {
+        toast.error(ipcFailText(next, t('common.unknownError')))
+        return
+      }
+      setShellConfigState(next)
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
     }
@@ -59,6 +70,11 @@ export function useAgentToolConfigs() {
     }
     try {
       const next = await window.pocketai.setWebSearchConfig(patch)
+      // 失败时**先 return**：既不能把 {ok:false} 当配置写进 state，也不能清掉用户刚粘贴的 Key 草稿
+      if (hasIpcFailed(next)) {
+        toast.error(ipcFailText(next, t('common.unknownError')))
+        return
+      }
       setWsConfigState(next)
       if (patch.apiKey !== undefined) setWsKeyDraft('')
     } catch (e) {
@@ -68,7 +84,12 @@ export function useAgentToolConfigs() {
 
   const patchCalConfig = async (patch: Partial<Pick<CalendarConfig, 'enabled' | 'paths'>>) => {
     try {
-      setCalConfigState(await window.pocketai.setCalendarConfig(patch))
+      const next = await window.pocketai.setCalendarConfig(patch)
+      if (hasIpcFailed(next)) {
+        toast.error(ipcFailText(next, t('common.unknownError')))
+        return
+      }
+      setCalConfigState(next)
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
     }

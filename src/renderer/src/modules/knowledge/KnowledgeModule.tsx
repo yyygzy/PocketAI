@@ -236,6 +236,12 @@ const KbForm: React.FC<{
         ocrProviderId: ocrProviderId || null,
         ocrModel: ocrModel || null
       })
+      // safeHandle 的失败是 resolve 的 {ok:false}：不判就 onSaved(失败对象) ⇒ 表单照常关、
+      // 调用方拿 kb.id(undefined) 切详情视图（§214）
+      if (hasIpcFailed(saved)) {
+        setError(ipcFailText(saved, t('common.unknownError')))
+        return
+      }
       onSaved(saved)
     } catch (e) {
       setError(errText(e))
@@ -623,8 +629,14 @@ export const KbDetail: React.FC<{
     stopPolling()
     pollingRef.current = setInterval(async () => {
       const list = await window.pocketai.listKbDocuments(kb.id).catch(() => null)
-      if (list) setDocs(list)
-      const hasIndexing = list?.some((d) => d.status === 'pending' || d.status === 'parsing' || d.status === 'indexing')
+      // `.catch` 只接得住 reject：safeHandle 的失败是 **resolve 的 {ok:false}**。
+      // 不判就 setDocs(对象) ⇒ 下面 docs.map 崩；而 list?.some 抛错还会让这发轮询既不停也不刷新（§214）
+      if (!list || hasIpcFailed(list)) {
+        stopPolling()
+        return
+      }
+      setDocs(list)
+      const hasIndexing = list.some((d) => d.status === 'pending' || d.status === 'parsing' || d.status === 'indexing')
       if (!hasIndexing) {
         stopPolling()
         onChanged()
@@ -1408,6 +1420,10 @@ const EditTextDocDialog: React.FC<{
         if (cancelled) return
         if (!r) {
           setUnavailable(true)
+        } else if (hasIpcFailed(r)) {
+          // 失败对象过不了 `if (!r)`（它是真值），不单独判就会 setTitle(r.title)/setText(r.text)
+          // 把标题与正文抹成 undefined，提交时 text.trim() 再抛一次（§214）
+          setError(ipcFailText(r, t('common.unknownError')))
         } else {
           setTitle(r.title)
           setText(r.text)

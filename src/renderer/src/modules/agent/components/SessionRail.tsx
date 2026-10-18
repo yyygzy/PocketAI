@@ -4,7 +4,8 @@ import type { AssistantRecord, ConversationRecord, MessageSearchResult } from '.
 import { useI18n } from '../../../i18n'
 import { MessageSearchResults } from '../../../components/MessageSearchResults'
 import { ExportMenu } from '../../chat/ConversationList'
-import { logIpcError } from '../../../utils/ipc'
+import { logIpcError, hasIpcFailed, ipcFailText } from '../../../utils/ipc'
+import { useToast } from '../../../components/ToastProvider'
 
 interface Props {
   assistants: AssistantRecord[]
@@ -57,6 +58,7 @@ export const SessionRail: React.FC<Props> = ({
   onSelectMessage
 }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [search, setSearch] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   // 多选导出模式：与搜索态互斥；选中集合用数组保序（导出按列表显示顺序）
@@ -113,6 +115,13 @@ export const SessionRail: React.FC<Props> = ({
       setOffset(0)
       try {
         const r = await window.pocketai.searchMessages(keyword, assistantId || undefined, undefined, 0)
+        // 同 §214 那一族：safeHandle 的失败是 resolve 的 {ok:false}，不判就 setResults(对象) ⇒ for…of 崩
+        if (hasIpcFailed(r)) {
+          setResults([])
+          setHasMore(false)
+          toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+          return
+        }
         setResults(r)
         setHasMore(r.length === PAGE)
       } catch (e) {
@@ -132,6 +141,11 @@ export const SessionRail: React.FC<Props> = ({
     try {
       const next = offset + PAGE
       const r = await window.pocketai.searchMessages(keyword, assistantId || undefined, undefined, next)
+      // 失败 ⇒ 保住已有结果、offset 不前进，不把失败对象展开进数组
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+        return
+      }
       setResults((prev) => [...prev, ...r])
       setOffset(next)
       setHasMore(r.length === PAGE)
