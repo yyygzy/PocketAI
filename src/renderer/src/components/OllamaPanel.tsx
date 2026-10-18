@@ -8,7 +8,7 @@ import type {
 } from '../../../shared/types'
 import { modelRecKey } from '../../../shared/model-rec-codes'
 import { useI18n } from '../i18n'
-import { reportIpcError } from '../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useTransientNotice } from '../hooks/useTransientNotice'
 import { useOllamaPull } from '../hooks/useOllamaPull'
@@ -79,6 +79,11 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     setInstallEvt({ stage: 'download', percent: 0 })
     try {
       const finalStatus = await window.pocketai.installOllama()
+      // 失败不判就 setStatus(失败对象) ⇒ platformSupported 变 undefined：ollama.unsupported 那句亮起来、两组按钮消失，err 永不置位（§216）
+      if (hasIpcFailed(finalStatus)) {
+        setErr(ipcFailText(finalStatus, t('ollama.installFailed')))
+        return
+      }
       setStatus(finalStatus)
       // 安装成功后自动启动
       setStarting(true)

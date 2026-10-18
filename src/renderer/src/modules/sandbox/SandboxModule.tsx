@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import type { SandboxFileMeta } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
-import { reportIpcError } from '../../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 
 const PREVIEW_CSP =
@@ -95,6 +95,11 @@ export const SandboxModule: React.FC = () => {
     setBusy(true)
     try {
       const meta = await window.pocketai.createSandboxFile(newName, newHtml)
+      // 失败不判就清空用户写的 HTML、关掉表单、弹「已创建并打开预览」，再拿 undefined 的 id 去开预览（§216）
+      if (hasIpcFailed(meta)) {
+        setToast(ipcFailText(meta, t('common.unknownError')))
+        return
+      }
       setNewName('')
       setNewHtml('')
       setCreating(false)

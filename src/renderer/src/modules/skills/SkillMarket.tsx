@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
-import { reportIpcError } from '../../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useConfirm } from '../../components/ConfirmDialog'
 
 interface Props {
@@ -121,6 +121,11 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
         content: s.content,
         enabled: true
       })
+      // 失败不判就是绿色「已创建可编辑副本」＋随后空白详情（copy.id 是 undefined）（§216）
+      if (hasIpcFailed(copy)) {
+        flash(false, ipcFailText(copy, t('common.unknownError')))
+        return
+      }
       setSkills(await onChanged())
       setView({ mode: 'detail', id: copy.id })
       flash(true, t('skill.market.duplicated'))

@@ -4,6 +4,7 @@ import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
 import { requestSandboxOpenApps } from '../../sandbox/SandboxModule'
 import { errText } from '../../../utils/error'
+import { hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 
 export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock }) => {
   const { t } = useI18n()
@@ -18,7 +19,12 @@ export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock })
 
   const saveToSandbox = async () => {
     try {
-      await window.pocketai.createSandboxFile(t('sandbox.agentDefaultName'), htmlBlock)
+      const saved = await window.pocketai.createSandboxFile(t('sandbox.agentDefaultName'), htmlBlock)
+      // 失败不判就把按钮置成「✓ 已存入沙箱」并 disabled ⇒ 既没存成也再也点不动（§216）
+      if (hasIpcFailed(saved)) {
+        toast.error(ipcFailText(saved, t('common.unknownError')))
+        return
+      }
       setSavedToSandbox(true)
     } catch (err) {
       toast.error(errText(err))
@@ -36,11 +42,16 @@ export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock })
     if (installBusy) return
     setInstallBusy(true)
     try {
-      await window.pocketai.createSandboxFile(appName, htmlBlock, {
+      const installed = await window.pocketai.createSandboxFile(appName, htmlBlock, {
         icon: appIcon,
         description: appDesc,
         isApp: true
       })
+      // 失败不判就是"安装表单关掉、按钮打勾、跳过去的应用库是空的"（§216）
+      if (hasIpcFailed(installed)) {
+        toast.error(ipcFailText(installed, t('common.unknownError')))
+        return
+      }
       setInstallingApp(false)
       setSavedToSandbox(true)
       // 跳转沙箱模块并直接落到应用库视图

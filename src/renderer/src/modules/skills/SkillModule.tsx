@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { reportIpcError } from '../../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { SkillMarket } from './SkillMarket'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -293,6 +293,11 @@ const SkillForm: React.FC<{
         description: description.trim(),
         content
       })
+      // 失败不判就 onSaved(失败对象) ⇒ 表单关掉、正在写的技能内容丢掉，列表里也没有它（§216）
+      if (hasIpcFailed(saved)) {
+        setError(ipcFailText(saved, t('common.unknownError')))
+        return
+      }
       onSaved(saved)
     } catch (e) {
       setError(errText(e))

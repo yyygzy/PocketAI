@@ -66,6 +66,28 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-216 设置／技能／沙箱／图片面收口：14 个点不再把失败当"做成了的凭据"，而我的形状闸门在这一批被自己的行尾骗过一次
+
+- **来由**：§213 批次表的第三批（用户「提交 215，然后开工 216」）。范围＝§212 定级表里 T2/T3 落在设置／技能／沙箱／图片面的点。
+- **落地 14 点／9 个文件，比 §213 写的那个"13"多一条**：`StewardModule.tsx:113 runVacuum()` 与 `:119 getHealthReport()` 在同一条 `try` 里，各写一处 state、各有各的谎（前者谎报回收量、后者把整块健康报告换成字段全 undefined 的对象），按 await 点计数就是两条。
+- **改的 14 个点**（一律 `hasIpcFailed(结果)` ⇒ 可见反馈 ⇒ 不写成功态；反馈文案取 IPC 的 `error` 字段，兜底串一律走字典）：
+  - `DataHealthPanel.tsx:65/72/82`（`cleanKbOrphans`／`reindexKbDocs`／`deduplicateKbDocs`）：改前 `runAction` 是无条件 `toast.success(await fn())` ⇒ 绿 toast 逐字说「已清理 undefined 条孤儿向量、undefined 条孤儿分块」，随后 `load()` 刷新报告，界面看起来真做完了。这条不是"少个提示"，是**报了一个可数的假数字**。
+  - `SettingsModule.tsx:648 disableRecoveryKey`：仍走 `setNotice({ok:true, text:'恢复密钥已删除'})` 而码还在库里（这正是 §213 数出的"两者都没有落点"的 16 处之一）。
+  - `SettingsModule.tsx:2021 resetCss`：改前**先** `setCss('')` 再 await ⇒ 失败时输入框已空、`injectCustomCss('')` 没跑 ⇒ **旧 CSS 仍在生效**，而 `r.ok` 为假时整块 if 跳过、连提示都没有。改后失败 ⇒ 回填 `prevCss` ＋ `ipcFailText`，成功才清并注入（顺序本身就是这条的语义）。
+  - `StewardModule.tsx:113/119`：`setVacuumBytes(失败对象)` 过的是 `vacuumBytes !== null` 这道显示条件，`formatBytes(非有限值)` 返回 `'-'` ⇒ 界面显示「VACUUM 回收 -」，像真跑过；`setHealth(失败对象)` ⇒ `String(health.totalConversations)` 变 `undefined`，而 `health.orphanMessages > 0` 对 undefined 为假 ⇒ 那两行反而显示「✅ 0」。
+  - `OllamaPanel.tsx:83 installOllama`：`setStatus(失败对象)` 后 `platformSupported` 是 undefined ⇒ `:165` 那句 `ollama.unsupported` 亮起来、`:191/:208` 两组按钮（安装／启动）都消失，`setErr` 永不置位（失败走的是 resolve，catch 接不到）。
+  - `SkillModule.tsx:297`／`SkillMarket.tsx:125`（都调 `saveSkill`）：前者 `onSaved(失败对象)` ⇒ 表单关掉、正在写的技能内容丢掉、列表里没有它；后者先绿「已创建可编辑副本」再 `setView({mode:'detail', id: copy.id})` ⇒ 详情面空白。
+  - `SandboxModule.tsx:99`：清空用户写的 `newName/newHtml`、关掉创建表单、弹「已创建并打开预览」，再拿 undefined 的 id 去开预览。
+  - `HtmlBlockActions.tsx:24/51`：`setSavedToSandbox(true)` ⇒ 那颗按钮变成「✓ 已存入沙箱」并 `disabled`——**既没存成也再也点不动**；第二处还关掉安装表单并跳到应用库（那边是空的）。
+  - `AttachmentGrid.tsx:47`：`setCopied(true)` ⇒ 灯箱那颗按钮显示「✓ 已复制」而剪贴板没写进去（`images.ts:45` 的 `throw new Error('图片解码失败')` 与 `clipboard.write` 的抛错都被 safeHandle 转成返回值）。
+- **用例**：新 `tests/ipc-failure-settings-tier-216.test.tsx` **29 例**＝① 真挂载 `HtmlBlockActions` 一对（失败 ⇒ 按钮仍是「▶ 在沙箱运行」且 `disabled:false`、`[role=status]` 逐字给原因；**反向对照**成功 ⇒ 「✓ 已存入沙箱」＋`disabled:true`＋toast 面板为空）；② 形状闸门 14 例（按「await 锚点 → 成功态锚点」切区域：必须含判据、必须 `return`/`else` 守住写点、必须有反馈面）＋ 数量自检（正好 14 点／9 文件，文件名单由点位表导出，不留两份会漂移的清单）＋ `runAction` 契约（`Promise<string | null>` 且 `if (text !== null) toast.success`）＋ **`failAction` 助手本体**（同 §215 那条教训：允许 `failAction(` 进判据就必须单独钉它本体）＋ "9 个文件都出现 `ipcFailText(`"；③ **9 例前置判据**：这 9 个文件不许有孤立 CR。
+- **闸门在这一批被我自己骗过一次，而且骗的是它的新缺口**（按规矩单列）：给 `OllamaPanel.tsx` 插入守卫的那次写入用了**孤立 CR** 行尾。JS 里 CR 是合法行结束符，所以 `//` 注释到 CR 为止、**运行期守卫是生效的**，typecheck 与 build 也全过；坏在两处工具链——`git ls-files --eol` 把该文件判成 `w/-text`（以后这一块 `git diff` 不再给任何审阅面），而闸门 `readCode` 按 `\n` 切行 ⇒ 守卫和它上面那句 `//` 注释被并成同一行，"区域里出现 `hasIpcFailed`"就绿了。**这条假绿是被实测出来的，不是我猜的**：同一份变异文本用旧滤镜（只滤整行注释）算出区域长度 129、判据命中 True；用新滤镜（按引号状态剥行尾注释，`https://` 不算注释）算出 24、命中 False。修法两半：CR 全量转 LF（CR 计数 5→0）＋ `readCode` 换成引号感知，再把"不许有孤立 CR"本身钉成用例（③ 那 9 例）。
+- **另外三条我自己的账**：① 新用例里 4 处 `ZH['…']` 在 `noUncheckedIndexedAccess` 下是 `string | undefined` ⇒ 沿用 §211 已有的 `L(key)` 取字典写法，而不是到处贴 `!`；② 一次 Edit 吃掉了 `resetCss` 与 `if (!loaded)` 之间的空行，回读补正；③ 这批写下的注释里引的界面文案有 8 处不是逐字（「已保存」实为「✓ 已存入沙箱」、「已释放 -」实为「VACUUM 回收 -」、「已创建」实为「已创建并打开预览」等）——按"文案逐字取代码"的口径全部回字典改定，用例标题同步。
+- **变异 M216 共 17 条，全部有牙**（跑完字节级还原、基线 29/29 重跑绿）：14 个点各摘掉自己的守卫 ⇒ DHP 三处／S1／S2／W1／W2／H2 各红 1（自己的区域闸门）；O1／K1／K2／B1／A1 红 2（区域 ＋ "该文件必须还有 `ipcFailText(`"——单守卫文件删掉后整条失败面消失，这条覆盖用例顺带咬住，红得有道理）；**H1 红 2 里有一条是真挂载行为用例**（⇒ 那个点的证据不只有闸门）。辅助三条：M15 把守卫写进行尾注释 ⇒ 红 2（就是上面那个缺口的试金石）；M16 把 `failAction` 改成永假 ⇒ 只红在助手本体那条（证明"抽出去"没被搬进闸门口袋）；M17 `runAction` 退回无条件 `toast.success(await fn())` ⇒ 红在契约那条。
+- **验证**：typecheck 0；全量 vitest **340 文件 / 4089 通过 + 1 跳过**（＋1 文件／＋29 例）；build ✓（三端 5.41s／104ms／24.68s）。清单新增 **B115（✅ CI，无真机复现）**。
+- **未实测／未做**：① 14 个点里只有 `HtmlBlockActions` 那两处有行为用例，其余 12 点只有闸门（真挂载要拉起整个设置页／管家页／Ollama 面板／技能表单／沙箱模块／灯箱）；② **无真机复现路径**——这 14 条都要主进程真抛错才可见，硬造就得改库或删文件，那不是用户的路径，所以我没在清单里指一条现成的动作给你，只给了两处"没被改坏"的对照；③ 反馈文案仍是主进程中文书（四语化要逐通道回码，属 §206／§209 那一族的延伸）；④ **顺出来没动的一条**：`SettingsModule.tsx:2013 saveCss` 的失败分支写的是 `r.error ?? t('common.unknownError')`——直接把 `error` 摆出来而不是走 `ipcFailText`，那是"158 个直接显示 `error` 的点"那一族（209 刻意保留的形状），不是本批的"把失败当成功凭据"。你的 `app.db` 与 9223 那台未碰。
+- **剩余**：§212 表里 T1／T2／T3 三档逐点清完（214＝16 点、215＝11 点、216＝14 点）⇒ 217 落形状闸门（267 点权威清单、**豁免名单必须为空**）。
+
 ### V4-Iter-215 会话与 Agent 面收口：11 个点不再把失败当凭据，删会话的两个入口形状从此一致
 
 - **来由**：§213 批次表里的第二批（用户"提交 214，然后开工 215"）。范围＝§212 定级表 T2/T3 里落在会话与 Agent 面的 11 个点。

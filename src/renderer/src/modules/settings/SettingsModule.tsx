@@ -24,7 +24,7 @@ import { MAX_CODE_COLLAPSE_LINES, normalizeCodeCollapseLines, setCodeCollapseLin
 import { CODE_COLLAPSE_THRESHOLD } from '../../utils/code-block'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
-import { hasIpcFailed, logIpcError, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
@@ -643,7 +643,12 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
 
   async function remove() {
     if (!(await confirm({ message: t('enc.recoveryRemoveConfirm'), danger: true }))) return
-    await window.pocketai.disableRecoveryKey()
+    const r = await window.pocketai.disableRecoveryKey()
+    // 不判就会 setNotice({ok:true,...})：说「恢复密钥已删除」而码还在库里（§216）
+    if (hasIpcFailed(r)) {
+      setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      return
+    }
     void refresh()
     setNotice({ ok: true, text: t('enc.recoveryRemoved') })
   }
@@ -2010,12 +2015,17 @@ export const AppearancePanel: React.FC = () => {
   }
 
   const resetCss = async () => {
-    setCss('')
+    const prevCss = css
     const r = await window.pocketai.setUiPrefs({ customCss: '' })
-    if (r.ok && r.data) {
-      injectCustomCss('')
-      setNotice({ ok: true, text: t('ui.saved') })
+    // 改前是先清 CSS、再静默失败：输入框空了而旧样式还在生效，也没有任何提示（§216）
+    if (!r.ok || !r.data) {
+      setCss(prevCss)
+      setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      return
     }
+    setCss('')
+    injectCustomCss('')
+    setNotice({ ok: true, text: t('ui.saved') })
   }
 
   if (!loaded) {

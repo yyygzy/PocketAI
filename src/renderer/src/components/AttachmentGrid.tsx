@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react'
 import type { ChatAttachment } from '../../../shared/types'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastProvider'
+import { hasIpcFailed, ipcFailText } from '../utils/ipc'
 
 interface Props {
   attachments: ChatAttachment[]
@@ -40,7 +41,13 @@ export const ImageLightbox: React.FC<{ src: string; name?: string; onClose: () =
     if (busy) return
     setBusy(true)
     try {
-      await window.pocketai.writeImageClipboard(src)
+      const res = await window.pocketai.writeImageClipboard(src)
+      // images.ts:45 的「图片解码失败」与 clipboard.write 的抛错都被 safeHandle 转成返回值，
+      // 不判就会把那颗按钮显示成「✓ 已复制」而剪贴板什么都没写进去（§216）
+      if (hasIpcFailed(res)) {
+        toast.error(ipcFailText(res, t('lightbox.copyFailed')))
+        return
+      }
       setCopied(true)
       setTimeout(() => setCopied(false), 1200)
     } catch {

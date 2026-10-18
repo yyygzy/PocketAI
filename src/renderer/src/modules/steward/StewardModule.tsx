@@ -9,7 +9,7 @@ import type {
   CheckLevel
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { logIpcError, reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { formatBytes } from '../../utils/format'
 import { modelRecKey } from '../../../../shared/model-rec-codes'
 import { buildDiagnosticReport, type ReportLabels } from '../../utils/diagnostic-report'
@@ -109,8 +109,17 @@ export const StewardModule: React.FC = () => {
     setCleaning(true)
     try {
       const bytes = await window.pocketai.runVacuum()
+      // 失败不判就 setVacuumBytes({ok:false}) ⇒ 非有限值走 formatBytes 的 '-' ⇒ 界面显示「VACUUM 回收 -」，像真跑过（§216）
+      if (hasIpcFailed(bytes)) {
+        toast.error(ipcFailText(bytes, t('common.unknownError')))
+        return
+      }
       setVacuumBytes(bytes)
       const report = await window.pocketai.getHealthReport()
+      if (hasIpcFailed(report)) {
+        toast.error(ipcFailText(report, t('common.unknownError')))
+        return
+      }
       setHealth(report)
     } finally {
       setCleaning(false)

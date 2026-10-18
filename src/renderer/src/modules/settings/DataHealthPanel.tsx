@@ -24,6 +24,13 @@ export const DataHealthPanel: React.FC = () => {
   const [report, setReport] = useState<DataHealthReport | null>(null)
   const [busy, setBusy] = useState(false)
 
+  /** safeHandle 的失败是 resolve 的 `{ok:false}`：弹错并告诉调用方"这次没做成"（返回 true＝失败已处理） */
+  const failAction = (r: unknown): boolean => {
+    if (!hasIpcFailed(r)) return false
+    toast.error(ipcFailText(r, t('common.unknownError')))
+    return true
+  }
+
   /** @param refresh 只有面板那颗「刷新」按钮会传 true：连浏览器缓存那一格也重算（V4-Iter-177） */
   const load = useCallback((refresh = false) => {
     window.pocketai.getDataHealth(refresh).then(setReport).catch(reportIpcError('dataHealth.get'))
@@ -33,12 +40,15 @@ export const DataHealthPanel: React.FC = () => {
     load()
   }, [load])
 
-  /** 修复动作统一包装：执行 → 成功提示 → 刷新报告；失败由 reportIpcError 兜底 */
+  /** 修复动作统一包装：执行 → 成功提示 → 刷新报告；fn 返回 null 表示"这次没做成"（失败提示由 fn 自己弹） */
   const runAction = useCallback(
-    async (tag: string, fn: () => Promise<string>) => {
+    async (tag: string, fn: () => Promise<string | null>) => {
       setBusy(true)
       try {
-        toast.success(await fn())
+        // 原先是无条件 `toast.success(await fn())`：safeHandle 的失败是 resolve 的 `{ok:false}`，
+        // 于是绿色提示会说「已清理 undefined 条孤儿向量、undefined 条孤儿分块」，而实际一条都没动（§216）
+        const text = await fn()
+        if (text !== null) toast.success(text)
         load()
       } catch (e) {
         reportIpcError(tag)(e)
@@ -52,12 +62,14 @@ export const DataHealthPanel: React.FC = () => {
   const onClean = () =>
     runAction('dataHealth.kbClean', async () => {
       const r = await window.pocketai.cleanKbOrphans()
+      if (failAction(r)) return null
       return t('dh.integrity.cleanDone', { vectors: r.removedVectors, chunks: r.removedChunks })
     })
 
   const onReindex = () =>
     runAction('dataHealth.kbReindex', async () => {
       const r = await window.pocketai.reindexKbDocs(report!.kb.integrity.brokenDocs.map((d) => d.id))
+      if (failAction(r)) return null
       return t('dh.integrity.reindexDone', { count: r.enqueued })
     })
 
@@ -67,6 +79,7 @@ export const DataHealthPanel: React.FC = () => {
     if (!(await confirm({ message: t('dh.integrity.dedupConfirm', { count: removeCount }), danger: true }))) return
     runAction('dataHealth.kbDedup', async () => {
       const r = await window.pocketai.deduplicateKbDocs(group.docs[0]!.id)
+      if (failAction(r)) return null
       return t('dh.integrity.dedupDone', { count: r.removed })
     })
   }
