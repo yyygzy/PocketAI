@@ -38,7 +38,7 @@ import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { masterKeyManager } from './crypto/master-key'
-import { issueNewMasterKey, verifyAndOpenMasterKey } from './crypto/master-password'
+import { commitNewMasterKeyState, prepareNewMasterKey, verifyAndOpenMasterKey } from './crypto/master-password'
 import { bootNeedsReverify, unlockCoordinator } from './crypto/unlock-coordinator'
 import { migrateKvSecrets } from './crypto/secret-store'
 import { exportFieldCredentials, restoreFieldCredentials } from './crypto/credential-rotation'
@@ -401,8 +401,13 @@ async function boot(): Promise<void> {
       // 字段密钥将从固定混淆密钥切为主密码密钥：先在旧密钥下导出字段凭据
       const fieldSnapshot = exportFieldCredentials()
       // 新设密码：新 salt + 现行档位成对落盘（见 crypto/master-password.ts）
-      const masterKey = issueNewMasterKey(newPwd)
-      dbService.enableEncryption(masterKey)
+      // 新设密码的顺序是刻意的（V4-Iter-195，对齐 SEC-33 那条写序）：内存派生 → **库真的加密成功**
+      // → 才把 salt/档位成对落盘、并把内存里的 mode 定成 db。反过来（先落 salt 再加密）一旦
+      // enableEncryption 抛错，就留下「配置里有盐、库里是明文」的组合：下次启动拿这把盐派生去解明文库
+      // 必然失败，只能报「数据库已损坏」。模式同步在 commitNewMasterKeyState 里一并做掉。
+      const prepared = prepareNewMasterKey(newPwd)
+      dbService.enableEncryption(prepared.key)
+      commitNewMasterKeyState(prepared)
       appConfigRepo.setEncryptionMode('db')
       appConfigRepo.setHasMasterPassword(true)
       // 新库不应携带任何历史恢复包

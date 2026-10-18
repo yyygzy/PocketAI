@@ -45,6 +45,10 @@ class MasterKeyManager {
     // 无密码模式：设置固定密钥，直接解锁。
     // 显式钉 KDF_LEGACY：none 模式下已落盘的 v1: 凭据全靠这把派生结果，改档位=全部作废
     if (mode === 'none') {
+      // V4-Iter-195：切到无密码模式必须把 masterKey 一起清掉。留着它，getFieldKey() 就会继续
+      // 返回旧主密钥（下面优先取 masterKey）——禁用加密时 restoreFieldCredentials 于是用**旧密钥**重加密
+      // 落盘，而下次启动是按固定密钥解的 ⇒ 全部字段凭据 fail-closed 成空串（界面上像「Key 全没了」）。
+      this.masterKey = null
       this.fixedFieldKey = deriveKeySync(FIXED_KEY_PASSWORD, FIXED_KEY_SALT, KDF_LEGACY).key
       this.unlocked = true
     }

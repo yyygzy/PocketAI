@@ -66,6 +66,17 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-195 凭据族两条：`init('none')` 不清 masterKey、启用加密后整个会话仍当明文模式
+
+- **来由**：审计第 ① 条，两条都是"数据完好但功能不对"，且都只有读源码＋看写序才能发现，CI 里原本一条都不红。
+- **① 禁用加密把全部字段凭据变成读不出**：`encryption.ts` 的禁用流程是 `rekey ''` → `close` → `masterKeyManager.init('none')` → `open` → `restoreFieldCredentials(snapshot)`，而 `init()` 原本**只设 `mode`/`fixedFieldKey`，不清 `masterKey`**；`getFieldKey()` 又是"有 masterKey 就用它" ⇒ 重加密用的是**旧主密钥**，下次启动（新进程里根本没有旧 masterKey）按固定密钥解 ⇒ `field-encrypt.decryptSecret` 走 catch，**每条凭据读成空串**（日志有 `字段密文解密失败` 的 warn，界面上像"Key 全丢了"）。修法就一行：`init('none')` 里 `this.masterKey = null`。
+- **② 启用加密后整个会话仍被当明文模式**：`setKey()` 不动 `mode`（只有 `init`/`setRawKey` 会），而 `prepareNewMasterKey → enableEncryption → commitNewMasterKeyState` 这条链里没人把模式定成 `db` ⇒ 同一会话内 `isNoneMode()` 继续为真：**当场保存新 API Key 会被 B1 拒**（文案还说"未设置主密码"），**隐私锁触发时不清密钥**（`index.ts` 的 `onStateChange` 按 `getMode()` 判）。修法在收口处：`commitNewMasterKeyState(prepared)` 顺带 `masterKeyManager.setRawKey(prepared.key)`，三个调用点（设置页启用、改密、恢复码重置）一次全覆盖。
+- **顺带对齐 SEC-33 的写序**：`boot()` 的"首次设密码加密明文库"原来是 `issueNewMasterKey()`（**内部就落了 salt/档位**）再 `enableEncryption` —— 抛错时留下"配置有盐、库是明文"的组合；现在改成 `prepareNewMasterKey → enableEncryption(prepared.key) → commitNewMasterKeyState`，与设置页那条路同源。`issueNewMasterKey` 因此没有生产调用者，**删掉**，它的三条用例改写到两步版本上（含新加的"commit 同步 mode"一条）。
+- **用例**：新增 `tests/crypto-master-key-mode-sync.test.ts` **3 例**（真 master-key ＋ 真 field-encrypt，只 mock 配置与库）——禁用趟：`setKey → init('none') → 重加密 → 模拟重启（clear ＋ init('none')）` 后必须仍解得开；**反面对照**：拿旧主密钥封的密文在固定密钥下必然 `''`；启用趟：`commit` 后 `getMode()==='db'` 且 salt/档位仍成对落盘。`tests/encryption-state-commit-order.test.ts` 的桩加了"每条用例复位 mode"，因为 commit 现在会写模式（不复位就会把上一条的 `db` 漏到下一条）。
+- **变异有过一次"没有牙"的教训**：第一版用例只写 `init('none')` 再解，M（把 `this.masterKey = null` 删掉）**不红**——因为它没模拟"重启后的新进程"。加上 `clear() ＋ init('none')` 之后，同一处变异 ⇒ 红在 `expected '' to be 'sk-real-looking-api-key'`，正是用户会看到的那句。⇒ 又一次印证 [[feedback-verification-probes-uncontaminated]]：判据要选"系统答不出的问法"，否则绿是假的。
+- **真机那一半归用户**：禁用/启用加密都要输主密码，我不碰；验证步骤写在清单 **B103**。
+- **验证**：typecheck 0；全量 vitest **328 文件 / 3921 通过 + 1 跳过**（本批 +3＋3 例）。
+
 ### V4-Iter-194 全项目审计第一轮：先修掉 193 自己的两条缺陷——休眠不等于遗留、部分失败不许谎报字节
 
 - **来由**：用户要求"审计项目代码，包括但不限于 bug／错误／效率／代码质量／运行架构／设计优化／尾巴"。四路并行审计（IPC／DB＋加密／渲染层＋i18n／生命周期＋子进程）回来后我逐条回读源码核实。**第一条要修的是我上一批自己写的代码**：`audit-life` 指出 193 的闸门只看 mtime，而候选就是 `userdata`/`session` 两棵**当前在用**的树。

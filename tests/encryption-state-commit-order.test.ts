@@ -149,6 +149,9 @@ beforeEach(() => {
   mocks.cfg.kdf = { N: 32768, r: 8, p: 1 }
   mocks.cfg.mode = 'none'
   mocks.cfg.hasPw = false
+  // 桩里的 mode/masterKey 是模块级状态：commit 现在会 setRawKey(mode='db') ⇒ 每条用例前必须复位
+  masterKeyManager.clear()
+  ;(masterKeyManager as unknown as { __setMode: (m: 'none' | 'db') => void }).__setMode('none')
   registerEncryptionHandlers()
 })
 

@@ -51,7 +51,7 @@ vi.mock('../src/main/db/database', () => ({
 
 import { deriveKeySync, KDF_CURRENT, KDF_LEGACY } from '../src/main/crypto/index'
 import { masterKeyManager } from '../src/main/crypto/master-key'
-import { issueNewMasterKey, kdfCandidates, kdfStatus, verifyAndOpenMasterKey } from '../src/main/crypto/master-password'
+import { commitNewMasterKeyState, kdfCandidates, kdfStatus, prepareNewMasterKey, verifyAndOpenMasterKey } from '../src/main/crypto/master-password'
 
 const PW = 'a-long-master-passphrase'
 
@@ -63,6 +63,8 @@ beforeEach(() => {
   db.openCalls = 0
   db.isOpen = false
   masterKeyManager.clear()
+  // 195 起 commitNewMasterKeyState 会同步模式 ⇒ 每条用例都得从明文态起步，否则上一条的 'db' 漏下来
+  masterKeyManager.setKey('')
 })
 
 describe('kdfCandidates', () => {
@@ -114,27 +116,38 @@ describe('verifyAndOpenMasterKey', () => {
   })
 })
 
-describe('issueNewMasterKey（新设/改密/恢复码重置共用）', () => {
-  it('salt 与档位成对落盘，且返回的密钥确实是现行档派生的', () => {
-    const key = issueNewMasterKey(PW)
+describe('新设主密码的两步（prepare → 库操作 → commit）', () => {
+  it('salt 与档位成对落盘，且密钥确实是这组 salt＋现行档派生的', () => {
+    const prepared = prepareNewMasterKey(PW)
+    commitNewMasterKeyState(prepared)
     expect(store.kdf).toEqual(KDF_CURRENT)
     expect(store.salt).not.toBeNull()
     expect(store.salt!.length).toBe(16)
-    expect(key.equals(deriveKeySync(PW, store.salt!, KDF_CURRENT).key)).toBe(true)
+    expect(prepared.key.equals(deriveKeySync(PW, store.salt!, KDF_CURRENT).key)).toBe(true)
+  })
+
+  it('★ commit 同时把内存里的模式定成 db（195：不同步则 isNoneMode 仍判明文，当场存新 Key 被 B1 拒、隐私锁不清钥）', () => {
+    expect(masterKeyManager.getMode()).toBe('none')
+    commitNewMasterKeyState(prepareNewMasterKey(PW))
+    expect(masterKeyManager.getMode()).toBe('db')
+    expect(masterKeyManager.isDbEncrypted()).toBe(true)
   })
 
   it('落盘档位可被 kdfStatus 读出（设置页显示链路）', () => {
-    issueNewMasterKey(PW)
+    commitNewMasterKeyState(prepareNewMasterKey(PW))
     expect(kdfStatus()).toEqual({ N: KDF_CURRENT.N, atCurrent: true })
     store.kdf = KDF_LEGACY
     expect(kdfStatus()).toEqual({ N: KDF_LEGACY.N, atCurrent: false })
   })
 
   it('新 salt 每次不同（同一密码两次设密得到不同密钥）', () => {
-    const k1 = issueNewMasterKey(PW)
-    const s1 = store.salt
-    const k2 = issueNewMasterKey(PW)
-    expect(s1!.equals(store.salt!)).toBe(false)
-    expect(k1.equals(k2)).toBe(false)
+    const first = prepareNewMasterKey(PW)
+    commitNewMasterKeyState(first)
+    const s1 = store.salt!
+    const second = prepareNewMasterKey(PW)
+    commitNewMasterKeyState(second)
+    expect(s1.equals(store.salt!)).toBe(false)
+    expect(first.key.equals(second.key)).toBe(false)
   })
 })
+

@@ -42,10 +42,16 @@ export function prepareNewMasterKey(password: string): { key: Buffer; salt: Buff
   return { key, salt, params: KDF_CURRENT }
 }
 
-/** 库操作确认成功后，把 salt 与档位成对落盘（两者必须同时写，缺一即派生不匹配） */
-export function commitNewMasterKeyState(prepared: { salt: Buffer; params: KdfParams }): void {
+/**
+ * 库操作确认成功后收尾：salt 与档位成对落盘（缺一即派生不匹配），并把内存里的模式同步成 'db'。
+ * 不同步的后果（V4-Iter-195 实测确认）：配置说这库加密了，而 masterKeyManager.getMode() 仍是 'none'
+ * ⇒ isNoneMode() 继续按明文处理——当场保存新 API Key 被 B1 拒（文案还说「未设置主密码」），
+ * 隐私锁触发时也不会清密钥（index.ts 的 onStateChange 按 mode 判），要等下次重启才对。
+ */
+export function commitNewMasterKeyState(prepared: { key?: Buffer; salt: Buffer; params: KdfParams }): void {
   appConfigRepo.setMasterPasswordSalt(prepared.salt)
   appConfigRepo.setKdfParams(prepared.params)
+  if (prepared.key) masterKeyManager.setRawKey(prepared.key)
 }
 
 /** 候选档位：落盘记录优先，其余已知档按「新→旧」补齐并去重 */
@@ -89,11 +95,3 @@ export function verifyAndOpenMasterKey(password: string): KdfParams | null {
   }
 }
 
-/** 设置全新主密码的便捷封装：派生 + 立即落盘。
- *  只用于**没有旧密钥可破坏**的场合（none 模式首次启用加密，库里还是明文）。
- *  rekey 类操作请走 prepareNewMasterKey + 成功后 commitNewMasterKeyState。 */
-export function issueNewMasterKey(password: string): Buffer {
-  const prepared = prepareNewMasterKey(password)
-  commitNewMasterKeyState(prepared)
-  return prepared.key
-}
