@@ -635,15 +635,8 @@ export const AgentPanel: React.FC = () => {
           canSend={chat.canSend}
           att={att}
           onSend={(text) => {
-            const p = chat.send(text, att.attachments)
-            if (p) p.catch((e) => {
-              const msg = errText(e)
-              const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
-              if (m) {
-                const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
-                toast.error(t('usage.budgetBlocked', { scope, limit: m[2]! }))
-              }
-            })
+            // 失败收口在 useAgentChat.send 里（返回值＋reject 两条都会落到同一个 toast）
+            void chat.send(text, att.attachments)
           }}
           onAbort={chat.abort}
         />

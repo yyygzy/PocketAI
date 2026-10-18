@@ -900,7 +900,7 @@ export const ja = {
   'usage.budgetWarnToast': '予算通知: {scope}の推定費用 ¥{cost} が上限 ¥{limit} の {pct}% に達しました',
   'usage.scopeDaily': '今日',
   'usage.scopeMonthly': '今月',
-  'usage.budgetBlocked': '{scope}予算上限 ¥{limit}に達しました。リクエストを自動停止しました。上限を調整してから再試行してください。',
+  'usage.budgetBlocked': '{scope}上限 ¥{limit}に達しました。リクエストを自動停止しました。上限を調整してから再試行してください。',
   'usage.detailJumpHint': 'クリックで会話内のこのメッセージへ移動',
   'dh.total': 'データ合計',
   'dh.db': 'メインデータベース',

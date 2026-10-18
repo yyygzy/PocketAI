@@ -18,7 +18,7 @@ import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
@@ -854,13 +854,8 @@ export const ChatModule: React.FC = () => {
    */
   const onChatSendFailed = (requestId: string, convId: string, msg: string): void => {
     failStream(requestId, convId)
-    const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
-    if (m) {
-      const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
-      toast.error(t('usage.budgetBlocked', { scope, limit: m[2]! }))
-    } else if (msg) {
-      toast.error(msg)
-    }
+    const text = chatSendFailureText(msg, t)
+    if (text) toast.error(text)
   }
 
   const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => {
@@ -905,7 +900,7 @@ export const ChatModule: React.FC = () => {
         kbRefs
       })
       .then((r) => {
-        void r
+        if (hasIpcFailed(r)) onChatSendFailed(requestId, convId, ipcFailText(r, t('common.unknownError')))
       })
       .catch((e) => onChatSendFailed(requestId, convId, errText(e)))
     setReplyToMessage(null)

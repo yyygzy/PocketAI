@@ -10,9 +10,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import React from 'react'
-import { stubPocketai, pocketaiCalls } from './helpers/renderer'
-import { I18nProvider } from '../src/renderer/src/i18n'
+import { stubPocketai, pocketaiCalls, HookProviders } from './helpers/renderer'
 import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
 import type {
   AssistantRecord,
@@ -70,7 +68,7 @@ function mount(opts: MountOpts = {}) {
     onConversationTitle: () => () => {}
   })
   const { result } = renderHook(() => useAgentChat(PROVIDERS, opts.assistants ?? [assistant('a1')]), {
-    wrapper: ({ children }: { children: React.ReactNode }) => <I18nProvider>{children}</I18nProvider>
+    wrapper: HookProviders
   })
   return result
 }

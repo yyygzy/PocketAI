@@ -953,7 +953,7 @@ export const en = {
   'usage.budgetWarnToast': 'Budget alert: estimated {scope} spend ¥{cost} has reached {pct}% of the ¥{limit} limit',
   'usage.scopeDaily': "today's",
   'usage.scopeMonthly': "this month's",
-  'usage.budgetBlocked': '{scope} budget limit ¥{limit} reached, requests auto-stopped. Adjust the limit to continue.',
+  'usage.budgetBlocked': '{scope} limit ¥{limit} reached, requests auto-stopped. Adjust the limit to continue.',
   'usage.detailJumpHint': 'Click to jump to this message in the conversation',
   'dh.total': 'Data total',
   'dh.db': 'Main database',

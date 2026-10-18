@@ -10,8 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import React from 'react'
-import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
-import { I18nProvider } from '../src/renderer/src/i18n'
+import { mountWithProviders, stubPocketai, pocketaiCalls, HookProviders } from './helpers/renderer'
 import { ZeroToolCallNotice } from '../src/renderer/src/modules/agent/components/ZeroToolCallNotice'
 import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
 import { zh } from '../src/renderer/src/i18n/zh'
@@ -122,7 +121,7 @@ describe('B55④：开关作用域在 hook 状态里是一台模型一个', () =
       onConversationTitle: () => () => {}
     })
     const { result } = renderHook(() => useAgentChat(PROVIDERS, assistants), {
-      wrapper: ({ children }: { children: React.ReactNode }) => <I18nProvider>{children}</I18nProvider>
+      wrapper: HookProviders
     })
     return result
   }

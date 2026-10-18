@@ -8,9 +8,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import React from 'react'
-import { stubPocketai } from './helpers/renderer'
-import { I18nProvider } from '../src/renderer/src/i18n'
+import { stubPocketai, HookProviders } from './helpers/renderer'
 import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
 import type { AssistantRecord, ConversationRecord, ProviderRecord } from '../src/shared/types'
 
@@ -55,7 +53,7 @@ function mount() {
     onConversationTitle: () => () => {}
   })
   return renderHook(() => useAgentChat(providers, [assistant('a1')]), {
-    wrapper: ({ children }: { children: React.ReactNode }) => <I18nProvider>{children}</I18nProvider>
+    wrapper: HookProviders
   })
 }
 

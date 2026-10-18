@@ -953,7 +953,7 @@ export const zh = {
   'usage.budgetWarnToast': '预算提醒：{scope}估算花费 ¥{cost}，已达上限 ¥{limit} 的 {pct}%',
   'usage.scopeDaily': '今日',
   'usage.scopeMonthly': '本月',
-  'usage.budgetBlocked': '已达到{scope}预算上限 ¥{limit}，已自动停发，请调整预算上限后再试',
+  'usage.budgetBlocked': '已达到{scope}上限 ¥{limit}，已自动停发，请调整上限后再试',
   'usage.detailJumpHint': '点击跳转到会话内该条消息',
   'dh.total': '数据合计',
   'dh.db': '主数据库',

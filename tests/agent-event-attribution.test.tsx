@@ -12,9 +12,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import React from 'react'
-import { stubPocketai, pocketaiCalls } from './helpers/renderer'
-import { I18nProvider } from '../src/renderer/src/i18n'
+import { stubPocketai, pocketaiCalls, HookProviders } from './helpers/renderer'
 import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
 import type {
   AgentChunkEvent,
@@ -68,7 +66,7 @@ async function mountRunning(): Promise<{
   requestId: () => string
 }> {
   const { result } = renderHook(() => useAgentChat(PROVIDERS, ASSISTANTS), {
-    wrapper: ({ children }: { children: React.ReactNode }) => <I18nProvider>{children}</I18nProvider>
+    wrapper: HookProviders
   })
   act(() => result.current.setAssistantId('a1'))
   await waitFor(() => expect(result.current.conversationId).toBe(CONV))

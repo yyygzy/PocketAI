@@ -32,6 +32,23 @@ export function ipcFailText(v: { error?: string }, fallback: string): string {
   return v.error || fallback
 }
 
+/**
+ * chat 发起类通道（send／regenerate／resend，Agent 与 Popup 同源）的失败文案。
+ * 预算硬阻断在 main 侧抛的是带标记的错误串（`BUDGET_EXCEEDED:scope:limit:` 后跟中文原文），
+ * 这里只取前面的回码，按 scope 换四语专门文案——后面的中文不进界面。
+ * 回码只从这条链来：`assertBudget()` 在 send/regenerate/resend 的同步段抛出，
+ * 被 safeHandle 转成返回值（流式期的 CHAT_ERROR_EVENT 是 provider 报错，不带这个标记）。
+ */
+export function chatSendFailureText(
+  msg: string,
+  t: (key: string, params?: Record<string, string | number>) => string
+): string {
+  const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
+  if (!m) return msg
+  const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
+  return t('usage.budgetBlocked', { scope, limit: m[2]! })
+}
+
 /** 直接记录一条后台 IPC 失败诊断（try/catch 语句内使用） */
 export function logIpcError(label: string, e: unknown): void {
   console.warn(`[ipc] ${label} 失败:`, e instanceof Error ? e.message : e)

@@ -62,13 +62,18 @@ export function calledFns(): string[] {
   return state.calls.map((c) => c.fn)
 }
 
-/** 包上渲染层通用 Provider（i18n + Toast）后渲染；组件挂在 Modal/遮罩里也能查到 */
-export function mountWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
-  return render(
+/** 渲染层通用 Provider 组合（i18n + Toast）：组件挂载和 renderHook 的 wrapper 都用它 */
+export function HookProviders({ children }: { children: React.ReactNode }): React.ReactElement {
+  return (
     <I18nProvider>
-      <ToastProvider>{ui}</ToastProvider>
+      <ToastProvider>{children}</ToastProvider>
     </I18nProvider>
   )
+}
+
+/** 包上渲染层通用 Provider（i18n + Toast）后渲染；组件挂在 Modal/遮罩里也能查到 */
+export function mountWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
+  return render(<HookProviders>{ui}</HookProviders>)
 }
 
 afterEach(() => {

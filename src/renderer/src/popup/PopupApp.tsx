@@ -7,7 +7,7 @@ import { pickDefaultProvider } from '../utils/provider-pick'
 import { Markdown } from '../modules/chat/Markdown'
 import { AttachmentGrid } from '../components/AttachmentGrid'
 import { useToast } from '../components/ToastProvider'
-import { reportIpcError } from '../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useCopyFeedback } from '../hooks/useCopyFeedback'
 import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../modules/agent/agent-shared'
@@ -277,14 +277,35 @@ export const PopupApp: React.FC = () => {
         { role: 'user', content, attachments: sentAtts.length > 0 ? sentAtts : undefined },
         { role: 'assistant', content: '' }
       ])
-      window.pocketai.sendMessage({
-        requestId: rid,
-        conversationId: convId,
-        assistantId: assistant?.id ?? null,
-        content,
-        attachments: sentAtts.length > 0 ? sentAtts : undefined,
-        targets: [{ providerId, model }]
-      })
+      // safeHandle 把 chat:send 的抛错转成 {ok:false} **返回值**：不判返回值就等于没失败过。
+      // 浮窗原先是裸 promise（then/catch 都没挂），预算硬阻断时只剩一个永不消失的空气泡（V4-Iter-204）。
+      const failSend = (msg: string): void => {
+        requestIdRef.current = null
+        setStreaming(false)
+        setMessages((ms) => {
+          const next = [...ms]
+          if (next.length) {
+            const last = next[next.length - 1]!
+            if (last.role === 'assistant') {
+              next[next.length - 1] = { role: 'assistant', content: chatSendFailureText(msg, t), error: true }
+            }
+          }
+          return next
+        })
+      }
+      window.pocketai
+        .sendMessage({
+          requestId: rid,
+          conversationId: convId,
+          assistantId: assistant?.id ?? null,
+          content,
+          attachments: sentAtts.length > 0 ? sentAtts : undefined,
+          targets: [{ providerId, model }]
+        })
+        .then((r) => {
+          if (hasIpcFailed(r)) failSend(ipcFailText(r, t('common.unknownError')))
+        })
+        .catch((e) => failSend(errText(e)))
     },
     [streaming, providerId, model, conversationId, assistant, attachments, t]
   )

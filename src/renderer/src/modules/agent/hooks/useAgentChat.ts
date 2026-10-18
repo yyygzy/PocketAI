@@ -14,13 +14,16 @@ import type {
   ProviderRecord
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
-import { reportIpcError, logIpcError } from '../../../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
+import { errText } from '../../../utils/error'
+import { useToast } from '../../../components/ToastProvider'
 import { findRerunSourceId, toAgentMessages, reduceLiveSteps, type AgentMessage, type LiveStep } from '../agent-shared'
 import { messagesReducer } from './messages-reducer'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../../utils/palette-nav'
 
 export function useAgentChat(providers: ProviderRecord[], assistants?: AssistantRecord[]) {
   const { t } = useI18n()
+  const toast = useToast()
   const [assistantId, setAssistantId] = useState('')
   const [conversations, setConversations] = useState<import('../../../../../shared/types').ConversationRecord[]>([])
   const [archivedConversations, setArchivedConversations] = useState<import('../../../../../shared/types').ConversationRecord[]>([])
@@ -472,16 +475,29 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setLatestTraces(null) // 旧分步明细失效，下次展开重新拉取
     setCurrentStep(0)
 
-    return window.pocketai.sendMessage({
-      requestId,
-      conversationId,
-      assistantId: assistantId || null,
-      content,
-      targets: [{ providerId, model }],
-      agentMode: true,
-      attachments: attachments.length > 0 ? attachments : undefined,
-      kbRefs: attachments.filter((a) => a.type === 'kb').map((a) => a.kbId).filter(Boolean) as string[]
-    })
+    // safeHandle 把 chat:send 的抛错转成 {ok:false} **返回值**而不是 rejection，
+    // 而 resume/rerun 这两个内部入口拿的是浮动 promise ⇒ 收口必须放在 send 里，四个入口才都接得住（V4-Iter-204）。
+    const fail = (msg: string): void => {
+      setRunning(false)
+      setCurrentStep(0)
+      setLiveSteps([])
+      toast.error(chatSendFailureText(msg, t))
+    }
+    return window.pocketai
+      .sendMessage({
+        requestId,
+        conversationId,
+        assistantId: assistantId || null,
+        content,
+        targets: [{ providerId, model }],
+        agentMode: true,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        kbRefs: attachments.filter((a) => a.type === 'kb').map((a) => a.kbId).filter(Boolean) as string[]
+      })
+      .then((r) => {
+        if (hasIpcFailed(r)) fail(ipcFailText(r, t('agent.unknownError')))
+      })
+      .catch((e) => fail(errText(e, t('agent.unknownError'))))
   }
 
   const abort = () => {

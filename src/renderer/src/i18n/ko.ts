@@ -900,7 +900,7 @@ export const ko = {
   'usage.budgetWarnToast': '예산 알림: {scope} 예상 비용 ¥{cost}이(가) 한도 ¥{limit}의 {pct}%에 도달했습니다',
   'usage.scopeDaily': '오늘',
   'usage.scopeMonthly': '이번 달',
-  'usage.budgetBlocked': '{scope} 예산 한도 ¥{limit}에 도달했습니다. 요청이 자동 중지되었습니다. 한도를 조정한 후 다시 시도하세요.',
+  'usage.budgetBlocked': '{scope} 한도 ¥{limit}에 도달했습니다. 요청이 자동 중지되었습니다. 한도를 조정한 후 다시 시도하세요.',
   'usage.detailJumpHint': '클릭하면 대화 내 해당 메시지로 이동',
   'dh.total': '데이터 합계',
   'dh.db': '메인 데이터베이스',
