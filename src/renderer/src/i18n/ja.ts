@@ -1943,6 +1943,7 @@ export const ja = {
   'translate.errEmpty': '翻訳するテキストを入力してください',
   'translate.errNoProvider': '有効なモデルプロバイダーがありません。設定で追加して有効化してください。',
   'translate.errNoModel': '翻訳に使用するモデルを選択してください',
+  'translate.glossaryTermEmpty': '用語の原文と訳語の両方が必要です',
   'translate.errRequest': '翻訳に失敗：{e}',
   'translate.lang.auto': '言語を検出',
   'translate.lang.zh': '中国語',

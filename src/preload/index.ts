@@ -658,7 +658,7 @@ const api = {
   saveGlossaryTerm: (input: {
     sourceTerm: string
     targetTerm: string
-  }): Promise<GlossaryTerm> => ipcRenderer.invoke(IPC.GLOSSARY_SAVE, input),
+  }): Promise<GlossaryTerm | { ok: false; error: string }> => ipcRenderer.invoke(IPC.GLOSSARY_SAVE, input),
   deleteGlossaryTerm: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.GLOSSARY_DELETE, id),
 

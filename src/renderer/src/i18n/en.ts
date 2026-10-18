@@ -2029,6 +2029,7 @@ export const en = {
   'translate.errEmpty': 'Please enter text to translate',
   'translate.errNoProvider': 'No enabled model provider. Please add and enable one in Settings first.',
   'translate.errNoModel': 'Please select a model for translation',
+  'translate.glossaryTermEmpty': 'Both the source term and its translation are required',
   'translate.errRequest': 'Translation failed: {e}',
   'translate.lang.auto': 'Detect language',
   'translate.lang.zh': 'Chinese',

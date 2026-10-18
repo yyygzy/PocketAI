@@ -66,6 +66,14 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-208 术语表那条"把失败对象当词条"的旧形状补齐：登记表扩成全局一张、例外名单清零，顺带量到真正可达的那句中文是 zod 写的
+
+- **来由**：用户选中下一步清单，其中 ③ 是 206 顺出来的那条线索——`TranslateModule.tsx:311` 拿到 `saveGlossaryTerm` 的结果后**直接 append**，既不判 `isIpcFail`，preload 的 `Promise<GlossaryTerm>` 也只写成功分支（196 那一族的第五个落点）。本批把它补齐，并把 206 那张"例外名单"清零。
+- **改动**（四处，都是一行的形状）：`utils/ipc.ts` 的 `CHAT_FAIL_TEXT_KEYS` 改名成全局一张 `IPC_FAIL_TEXT_KEYS`，抽出通用查表 `ipcFailureText(msg, t)`（登记过→换四语，没登记→原样透出），`chatSendFailureText` 只留预算那档特例后转调它；`translate.ts:50` 的抛错改成 `GLOSSARY_TERM_EMPTY:术语表词条不能为空`；`preload/index.ts:661` 类型补失败分支；`TranslateModule.handleAddTerm` 判 `isIpcFail(term)` ⇒ `toast.error(ipcFailureText(...))` 并 **return**（不再把失败对象塞进列表），依赖数组补 `[t, toast]`，该模块此前没有 toast，按全应用"用户主动操作失败要可见"的约定用 toast 而不是复用它给翻译运行用的 `errorMsg`。
+- **例外名单清零之后闸门才有牙**：`tests/chat-failure-codes-206.test.ts` 原来靠一张 `NOT_LOCALIZED` 名单放过 `APP_LOCKED` 与 `GLOSSARY_TERM_EMPTY`。208 把名单**删掉**（改成一段注释说明为什么不碰 `APP_LOCKED`）——留着它，"往里塞一行"就比"写一句四语"便宜，闸门会慢慢变成摆设。同时扫描器收窄成只抓 `CODE:说明` 这个形状（原来的正则把裸 `new Error('APP_LOCKED')` 也算进来，那是我把"它不在网内"的机制记错了，第一次跑就红了这一条）。用例数 8 → 11：新增 glossary 回码的映射、`TranslateModule` 调用点区域判据（含**顺序判据**：`isIpcFail` 必须排在 `setGlossary` 之前）、preload 那一行的类型判据。
+- **真机量到一件我知道但没写准的事**：直接拿 CDP 调 `saveGlossaryTerm({sourceTerm:'  ', targetTerm:''})`，返回的是 **`{"ok":false,"error":"译法不能为空"}`**，不是 `GLOSSARY_TERM_EMPTY:…`——因为 `argsSchema(glossarySaveSchema)` 的 zod 校验先拦（`shared/schemas/translate.ts:33` 的自定义消息）。也就是说那个回码在界面上**两层守卫之后**（UI 自己 trim ＋ zod），本批修的是契约而不是可观测行为；写在这里以免它被读成"用户从此能看到这句新话术"。反过来它也说明**真正可达的那句中文化缺口在 safeHandle 的 zod 报错面**（各通道的 `min(1, '…')` 中文消息），那一族 196 起就有用例逐字钉着，要动得先定"校验消息也回码化"的口径 ⇒ 仍是归用户判的那一条，本批没碰。
+- **验证**：typecheck 0；全量 vitest **335 文件 / 3983 通过 + 1 跳过**（本批 +3 例）；build ✓（19.49s）；i18n 五门全绿（四语各加 `translate.glossaryTermEmpty`，插在 `translate.errNoModel` 之后）。**未实测**：术语表新增失败的红 toast——上面那条已说明它在真机上走不到，只有 CI 证据；收尾时我的实例与假端点都已按端口收掉，你的 `data/app.db` 仍是 08:33:11／3,100,672 B。
+
 ### V4-Iter-207 B110 真机闭环：中止与端点 500 都只报一次、不冒 toast，顺带把我自己那条"Electron 侧把 abort 错认成失败"的猜想证伪了
 
 - **来由**：用户把下一步清单整段选回来，我按 ②（补 B110 真机）＋ ③（修 `TranslateModule` 一族，另起 §208）连着做；① push 与 ④ 那两格不在我这边。本批**代码零改动**，改的是一条用例的判据强度 ＋ 清单读数。

@@ -47,7 +47,7 @@ export function registerTranslateHandlers(): void {
     (_e, input: { sourceTerm?: string; targetTerm?: string }) => {
       const sourceTerm = String(input?.sourceTerm ?? '').trim()
       const targetTerm = String(input?.targetTerm ?? '').trim()
-      if (!sourceTerm || !targetTerm) throw new Error('GLOSSARY_TERM_EMPTY')
+      if (!sourceTerm || !targetTerm) throw new Error('GLOSSARY_TERM_EMPTY:术语表词条不能为空')
       return translationRepo.glossaryAdd({ sourceTerm, targetTerm })
     },
     argsSchema(glossarySaveSchema)

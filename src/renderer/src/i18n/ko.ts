@@ -1943,6 +1943,7 @@ export const ko = {
   'translate.errEmpty': '번역할 텍스트를 입력하세요',
   'translate.errNoProvider': '활성화된 모델 공급자가 없습니다. 설정에서 추가 후 활성화하세요.',
   'translate.errNoModel': '번역에 사용할 모델을 선택하세요',
+  'translate.glossaryTermEmpty': '원문 용어와 번역 용어를 모두 입력해야 합니다',
   'translate.errRequest': '번역 실패: {e}',
   'translate.lang.auto': '언어 감지',
   'translate.lang.zh': '중국어',

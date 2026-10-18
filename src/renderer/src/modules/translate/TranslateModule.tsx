@@ -14,8 +14,9 @@ import type {
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
-import { reportIpcError } from '../../utils/ipc'
+import { ipcFailureText, isIpcFail, reportIpcError } from '../../utils/ipc'
 import { useConfirm } from '../../components/ConfirmDialog'
+import { useToast } from '../../components/ToastProvider'
 
 /** 源语言候选（含自动检测） */
 const SOURCE_LANGS: TranslateLang[] = [
@@ -57,6 +58,7 @@ const fmtTime = (ms: number) => {
 
 export const TranslateModule: React.FC = () => {
   const { t } = useI18n()
+  const toast = useToast()
 
   // ---------- 配置 ----------
   const [providers, setProviders] = useState<ProviderRecord[]>([])
@@ -309,9 +311,15 @@ export const TranslateModule: React.FC = () => {
       const tgt = targetTermInput.trim()
       if (!s || !tgt) return
       const term = await window.pocketai.saveGlossaryTerm({ sourceTerm: s, targetTerm: tgt })
+      // 记录型通道：safeHandle 把抛错转成 `{ok:false,error}` **返回值**而不是 rejection。
+      // 不判就是把一个失败对象当词条 append 进列表——列表多出一行库里并不存在的词条。
+      if (isIpcFail(term)) {
+        toast.error(ipcFailureText(term.error || t('common.unknownError'), t))
+        return
+      }
       setGlossary((prev) => [...prev, term])
     },
-    []
+    [t, toast]
   )
 
   const handleDeleteTerm = useCallback(async (id: string) => {

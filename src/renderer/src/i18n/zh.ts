@@ -2029,6 +2029,7 @@ export const zh = {
   'translate.errEmpty': '请输入要翻译的文本',
   'translate.errNoProvider': '尚未配置可用的模型服务商，请先到「设置」中添加并启用',
   'translate.errNoModel': '请选择翻译使用的模型',
+  'translate.glossaryTermEmpty': '术语表的原文与译文都不能为空',
   'translate.errRequest': '翻译失败：{e}',
   'translate.lang.auto': '自动检测',
   'translate.lang.zh': '中文',
