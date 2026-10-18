@@ -4,7 +4,7 @@
 import React, { useState } from 'react'
 import type { AssistantRecord, KnowledgeBase, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { reportIpcError } from '../../utils/ipc'
+import { ipcFailText, isIpcFail, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useToast } from '../../components/ToastProvider'
 
@@ -38,6 +38,11 @@ export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }
     const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
     try {
       const saved = await window.pocketai.saveAssistant({ ...assistant, [field]: next })
+      // 196：{ok:false} 是**返回值**不是异常 ⇒ 以前超限/校验失败会被当成「已更新」渲染出去
+      if (isIpcFail(saved)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(saved, t('common.unknownError')) }))
+        return
+      }
       onAssistantUpdated(saved)
     } catch (e) {
       toast.error(t('common.opFailed', { msg: errText(e) }))

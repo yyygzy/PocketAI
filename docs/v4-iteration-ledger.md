@@ -66,6 +66,21 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-196 失败被咽那一族：safeHandle 把抛错转成**返回值**，四处 `only .catch` 的调用点等于没接失败
+
+- **来由**：审计第 ② 条。`safe-handle.ts:133-135` 的契约是"抛错 ⇒ 解析成 `{ok:false,error}`"，好处是不再有未处理 rejection，代价是**所有只挂 `.catch` 的调用点静默失败**。我回读确认了四处（含审计没点到的 `ChatConfigBar`）。
+- **四处改判返回值**（都用现成的 `isIpcFail`／`hasIpcFailed`＋`ipcFailText`，不新增机制）：
+  | 位置 | 之前 | 现在 |
+  |---|---|---|
+  | `ChatModule.tsx` send | `.catch` 里 `failStream` ＋ 预算文案 ⇒ 永不触发：达到日/月预算后发消息**转圈不消失**、`usage.budgetBlocked` 永不显示（`chat-service.ts:179/497` 是抛 `Error`） | 新增 `onChatSendFailed(requestId, convId, msg)` 统一收口，`.then` 判 `{ok:false}`、`.catch` 兜异常；三条通道（send／regenerate／resend）共用 |
+  | `AssistantEditor.tsx` | 助手数量超限时 `assertCanCreateAssistant` 抛错 ⇒ `{ok:false}` 被当记录传给 `onSaved` ⇒ **闪一句「已保存」而什么都没存** | 判失败走 `setError`，`preload` 的 `saveAssistant` 契约补成 `AssistantRecord \| {ok:false;error}` |
+  | `ChatConfigBar.tsx` | 勾选技能/知识库的即时保存同样把失败当成功渲染 | 同上，弹 `common.opFailed` |
+  | `backup.ts` WebDAV 列 | `catch { return [] }` ⇒ 界面显示「没有备份」，而 `SettingsModule.tsx` 的 `bk.listFail`（四语都在字典里）**从此没有触发路径** | 失败回 `{ok:false,error}` 并 `log.warn` 原文；未配置 WebDAV 仍返回 `[]`（反向对照钉住这条没被顺手改坏） |
+- **顺带**：`preload/index.ts` 两个通道的返回类型现在如实带失败分支——类型撒谎是这类 bug 能长期活着的土壤（`tsc` 之所以看不见，是因为 handler 返回 `unknown`、preload 手写声明）。
+- **用例与变异**：新增 `tests/ipc-failure-visible-196.test.ts` **7 例**（真注册 handler 走真 `safeHandle`：列失败 ⇒ `{ok:false,error}` 且原文带回；未配置 ⇒ `[]`；四处调用点各钉一条"判了失败形状"；preload 契约两条）；变异 **M196a**（把 WebDAV 列改回 `return []`）⇒ 1 红、**M196b**（摘掉 ChatModule 的 `hasIpcFailed` 判定）⇒ 1 红，恢复后逐字节比对 OK。
+- **一条我自己的操作失误，记在这里**：第一次做 M196a 时锚点 `'    } catch (e) {'` 命中了**另一个** handler（本地加密备份那处，注释写着"none 模式不产出假加密包"），把它改成了 `return []`；发现后按 `git diff` 的原文逐字修回，现 diff 只剩本批该改的内容。教训：变异锚点必须唯一，改前先 `count`、改后必须 `md5sum -c`，别等绿了再说"应该没事"。
+- **行为变化要如实挂着**：chat 三条通道现在会把**所有**失败原文弹成 toast（以前只有预算那条有文案，而且实际也弹不出来），其中含主进程中文原文 ⇒ 四语界面上会夹中文（同 152/153 那一族），要不要一并搬进字典等用户判；真机验证需要真凭据跑一轮 ⇒ 清单 **B104**。
+
 ### V4-Iter-195 凭据族两条：`init('none')` 不清 masterKey、启用加密后整个会话仍当明文模式
 
 - **来由**：审计第 ① 条，两条都是"数据完好但功能不对"，且都只有读源码＋看写序才能发现，CI 里原本一条都不红。

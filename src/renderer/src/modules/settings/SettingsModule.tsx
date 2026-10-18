@@ -24,7 +24,7 @@ import { MAX_CODE_COLLAPSE_LINES, normalizeCodeCollapseLines, setCodeCollapseLin
 import { CODE_COLLAPSE_THRESHOLD } from '../../utils/code-block'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
-import { logIpcError, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
@@ -809,6 +809,11 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     setListLoading(true)
     try {
       const items = await window.pocketai.listWebDAVBackups()
+      // 196：失败是 {ok:false} 返回值 ⇒ 判返回值才走得到那句「获取远程备份列表失败」
+      if (hasIpcFailed(items)) {
+        setNotice({ ok: false, text: t('bk.listFail') })
+        return
+      }
       setWebdavList(items)
     } catch {
       setNotice({ ok: false, text: t('bk.listFail') })

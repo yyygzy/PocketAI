@@ -140,7 +140,7 @@ const api = {
     ipcRenderer.invoke(IPC.ASSISTANT_GET, id),
   saveAssistant: (
     record: Partial<AssistantRecord> & { name: string }
-  ): Promise<AssistantRecord> => ipcRenderer.invoke(IPC.ASSISTANT_SAVE, record),
+  ): Promise<AssistantRecord | { ok: false; error: string }> => ipcRenderer.invoke(IPC.ASSISTANT_SAVE, record),
   deleteAssistant: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_DELETE, id),
   duplicateAssistant: (id: string): Promise<AssistantRecord> =>
@@ -981,7 +981,7 @@ const api = {
   uploadIncrementalBackup: (): Promise<
     import('../shared/types').IncrementalBackupResult & { ok?: boolean; error?: string }
   > => ipcRenderer.invoke(IPC.BACKUP_WEBDAV_UPLOAD_INCREMENTAL),
-  listWebDAVBackups: (): Promise<WebDAVBackupFile[]> =>
+  listWebDAVBackups: (): Promise<WebDAVBackupFile[] | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_LIST),
   restoreWebDAVBackup: (
     filename: string,

@@ -16,6 +16,9 @@ import {
 } from '../../../shared/schemas/backup'
 import { z } from 'zod'
 import { issuePathToken, peekPathToken, dropPathToken } from '../dialog-path-token'
+import { createLogger } from '../../logger'
+
+const log = createLogger('backup')
 import { isNoneMode, newSecretKeys, NONE_MODE_HINT } from '../../crypto/none-mode-gate'
 
 export function registerBackupHandlers(): void {
@@ -110,7 +113,14 @@ export function registerBackupHandlers(): void {
     const { loadWebDAVConfig, listWebDAVBackups } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return []
-    try { return await listWebDAVBackups(cfg) } catch { return [] }
+    // 196：列表拉不到就说拉不到。咽成 [] 会让界面显示「没有备份」，而 SettingsModule 那句
+    // bk.listFail 从此没有触发路径（safeHandle 的抛错转 {ok:false} 也走不到渲染层的 catch）。
+    try {
+      return await listWebDAVBackups(cfg)
+    } catch (e) {
+      log.warn('WebDAV 备份列表获取失败:', errMsg(e))
+      return { ok: false as const, error: errMsg(e) }
+    }
   })
   // 本地恢复（SEC-6）：文件路径只能来自本进程对话框签发的令牌——
   // 此前渲染端可直接回传绝对路径跳过选择器，注入一次即可用任意文件整库替换。

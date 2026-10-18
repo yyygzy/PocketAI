@@ -18,7 +18,7 @@ import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
@@ -847,6 +847,22 @@ export const ChatModule: React.FC = () => {
     setTargets(next)
   }
 
+  /**
+   * chat 三条通道（send／regenerate／resend）的失败收口（V4-Iter-196）。
+   * safeHandle 把 handler 抛错转成 **{ok:false} 返回值**而不是 rejection ⇒ 只挂 .catch 等于没接失败：
+   * 「未选择模型」与 BUDGET_EXCEEDED 预算硬阻断原先就是这么被咽掉的（转圈不消失、专门文案永不显示）。
+   */
+  const onChatSendFailed = (requestId: string, convId: string, msg: string): void => {
+    failStream(requestId, convId)
+    const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
+    if (m) {
+      const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
+      toast.error(t('usage.budgetBlocked', { scope, limit: m[2]! }))
+    } else if (msg) {
+      toast.error(msg)
+    }
+  }
+
   const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => {
     if (isStreaming()) return
     const validTargets = targets.filter((t) => t.providerId && t.model)
@@ -888,16 +904,10 @@ export const ChatModule: React.FC = () => {
         replyToId: replyToId ?? null,
         kbRefs
       })
-      .catch((e) => {
-        failStream(requestId, convId)
-        const msg = errText(e)
-        // 预算硬阻断：识别 BUDGET_EXCEEDED:scope:limit 前缀，用专门文案
-        const m = msg.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+):/)
-        if (m) {
-          const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
-          toast.error(t('usage.budgetBlocked', { scope, limit: m[2]! }))
-        }
+      .then((r) => {
+        void r
       })
+      .catch((e) => onChatSendFailed(requestId, convId, errText(e)))
     setReplyToMessage(null)
   }
 
@@ -1154,9 +1164,10 @@ export const ChatModule: React.FC = () => {
         messageId,
         targets: validTargets
       })
-      .catch(() => {
-        failStream(requestId, currentConvId)
+      .then((r) => {
+        if (hasIpcFailed(r)) onChatSendFailed(requestId, currentConvId, ipcFailText(r, t('common.unknownError')))
       })
+      .catch((e) => onChatSendFailed(requestId, currentConvId, errText(e)))
   }, [targets, currentConvId, currentAssistantId, messages, isStreaming, beginStream, focusNewBranch, failStream])
 
   /** 改参重跑 / 编辑用户消息后重发：旧回复保留为分支，追加新批次 */
@@ -1183,9 +1194,10 @@ export const ChatModule: React.FC = () => {
         content: newContent,
         targets: validTargets
       })
-      .catch(() => {
-        failStream(requestId, currentConvId)
+      .then((r) => {
+        if (hasIpcFailed(r)) onChatSendFailed(requestId, currentConvId, ipcFailText(r, t('common.unknownError')))
       })
+      .catch((e) => onChatSendFailed(requestId, currentConvId, errText(e)))
   }, [targets, currentConvId, currentAssistantId, isStreaming, beginStream, focusNewBranch, failStream])
 
   /** 消息分支：从指定消息分叉出新会话并立即跳转 */

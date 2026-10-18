@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord, KnowledgeBase, ToolSchema, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { reportIpcError } from '../../utils/ipc'
+import { isIpcFail, ipcFailText, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 
 interface Props {
@@ -101,6 +101,12 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
         skillIds,
         toolPermissions
       })
+      // 196：safeHandle 把「助手数量超限」这类抛错转成 {ok:false} 返回值，不是 rejection
+      // ⇒ 只挂 catch 会照常走 onSaved，界面闪一句「已保存」而实际什么都没存。
+      if (isIpcFail(saved)) {
+        setError(ipcFailText(saved, t('common.unknownError')))
+        return
+      }
       onSaved(saved)
     } catch (e) {
       setError(errText(e))
