@@ -66,6 +66,22 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-213 reject 改造的成本我把两边都数完了：改造省不下逐点修，逐点修能拿到它八成的好处（src 零改动）
+
+- **来由**：§212 三条实测后我给的推荐是"先数两件事再定方案"，用户按推荐走。这两件是：① 改成 reject 会有多少点从"静默的错误状态"变成 **unhandled rejection**；② 有多少通道**同时**存在设计内 `ok:false` 与 safeHandle 可打标记的失败（一个通道的失败分裂成两个面）。
+- **① 267 个 await 调用点的三分类**（口径：preload 里声明 `Promise<…>` 且对应通道走 `safeHandle`）：
+  - **186 处已经在判返回值**（`isIpcFail`／`hasIpcFailed`／`x.ok`／`'ok' in x`／`res.canceled`）。⇒ 改 reject 后这些判据**全部变 dead code，提示得搬进 catch**——这才是改造的真实工作量，不是我先前说的"143 处 `errText`"。
+  - **63 处只靠 try/catch**（没判返回值）⇒ 改造后白拿，这正是用户想要的那部分收益。
+  - **16 处两者都没有**（逐点回读确认）：`ChannelsPanel:128 stopChannel`、`useAgentChat:370/377/393/399`、`useAgentToolConfigs:37`、`McpPanel:186 stopMcpServer`、`AssistantMarket:55/62`、`SandboxModule:67 listSandboxFiles`、`SettingsModule:646 disableRecoveryKey`、`SkillModule:23/45/51`、`TranslateModule:295 deleteTranslation`／`:329 deleteGlossaryTerm`。⇒ **这 16 处无论选哪条路都得逐点修**，改造并不替我们免掉它。
+  - 判据严格性的敏感性也测了：宽松正则 186／收紧正则 181，差额 5 处只是从"判了"挪到"有 catch"，**「两者都没有」在两种口径下都是同一批** ⇒ 这个数是稳的。
+- **② 混合面通道 = 37 个（占 303 个 safeHandle 通道的 12%）**：既有 `argsSchema`（能产带标记失败）又在 handler 体内 `return { ok:false … }`（设计内业务失败）。典型是 `ENCRYPTION_UNLOCK`／`LOCK_UNLOCK`（设计内＝密码错、限流 `{locked:true, retryAfterMs}`；带标记＝zod 入参失败或 handler 内抛 bug）、`BACKUP_WEBDAV_RESTORE`／`_MERGE_SCAN`／`_SAVE_CONFIG`／`_TEST`（设计内＝`code:'needBackupPassword'…`）、`MCP_SERVER_CALL_TOOL`、`SIDEBAR_SET_ORDER`、6 条 `CONVERSATION_EXPORT_*`。⇒ 改造后**同一通道的失败要走两个面接**，这 37 个通道每个都要判断"这次失败该走 catch 还是走 `r.code`"，是 §212 那条"只能打标记"结论附带付的代价。
+- **两条我自己被打回的判断（按规矩单列）**：
+  - 18 处里有 **2 处是扫描器假阳**：`ChatModule:695 listConversations` 与 `FirstRunWizard:207 duplicateAssistant` 其实都在 `try…catch` 内——因为我按"最小箭头函数体"找 catch，catch 在体外侧就框漏。改用 try 块真实范围重判后是 **16 处**真无落点。教训与 196 那次同一型：**区域切窄了，判据就会假阳**。
+  - 我上一轮把 reject 的代价说成"要动 143 处 `errText`"。数完才知道量级错得在哪：`errText` 是 catch 面的显示点，而改造真正要动的是**那 186 个已经在判返回值的点**（判据失效＋提示搬家）。
+- **所以我的推荐（数字支持它，不是口味）**：**先逐点修，reject 改造暂不做；把改造的主要动机用闸门批拿走。** 理由三条：① 逐点修的 16 处与 T1 崩溃族在两条路线下都要做，改造**省不下**；② 改造的净收益只有 63 处，代价是 186 处判据重写 ＋ 37 个混合面通道分裂 ＋ 196/204/205/208/211 五批用例返工；③ 用户真正想要的"以后别静默"，用 §212 已备好的权威清单做一道 **CI 形状闸门**（await safeHandle 的 Promise 通道 ⇒ 所在区域必须出现失败判据或 try/catch，**豁免名单必须为空**）就能拿到，成本是一批测试、零运行期风险。
+- **批次计划据此改写**：214＝T1 崩溃族（6 文件 16 点，含同文件里的其它档）；215＝会话与 Agent 面（9 点）；216＝设置／技能／沙箱／图片面（13 点）；217＝形状闸门（含上面那份 267 点分类器逻辑，带正向对照证明它有牙）。**reject 改造留在台账里当"已量过、暂不做"的选项**，未来若 186 这个数字因为别的重构变小，可以再重新评估。
+- **验证**：本批不动 `src/`、不动 `tests/` ⇒ 不需要 typecheck/vitest/build；台账与清单回写后跑 `tests/trace-ledger-format.test.ts`（17 例）确认台账格式仍绿。量测脚本 `data/tmp/scan213.mjs`／`recheck18.mjs` 在 gitignored 目录下，用完删。**未证**：186 处"已判返回值"里有多少判的是**设计内** ok:false（那部分本来就不该搬进 catch），这一层要逐点读，归 214–216 执行时确认。
+
 ### V4-Iter-212 「把 preload 改成 reject」这件事，三条承重假设全被实测打掉（src 零改动）
 
 - **来由**：用户看完 §211 那条"注释与行为相反"后说"把 preload 改成 reject"。按我自己的规矩（动手前先证伪承重假设，含我自己的修复计划），先跑三条实测再决定怎么落地。三条都跑完了，**结论是这句话不能按字面执行**。
