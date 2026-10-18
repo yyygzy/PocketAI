@@ -66,6 +66,17 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-201 B105 真机闭环：真 `app.quit()` 第一次被我驱动起来了，而"改前会留 MCP 孤儿"这个前提本机不成立（代码零改动）
+
+- **来由**：用户一句「验证 B105 退出后 MCP 残留情况」。本批**零代码改动**，是把 197 的真机那一半补上，顺带纠正 197 自己的因果。
+- **怎么做到真退出（这条最值得记）**：我给主进程加 `--inspect=127.0.0.1:9229`，在 inspector 上下文里 `typeof require` 是 `undefined`、`process.getBuiltinModule('electron')` 返回 `undefined`，但 **`process.mainModule.require('electron').app.quit()` 可用** ⇒ 不必碰托盘，也不必弹那个原生确认框（`index.ts:269` 的 `showMessageBox`），就能完整触发 `before-quit`。我在 199/200 两轮都写过"真退出我驱动不了"，那是没试够的合理化说法。
+- **造的形状**：自己写一支**不守规矩**的 stdio server（答 `initialize`／`tools/list`，但**不理 `shutdown`、吃掉 SIGTERM 与 SIGINT、不随 stdin 关闭退出），经产品自己的通道 `saveMcpServer` ＋ `startMcpServer` 起起来（child PID 6784、status `running`、1 个工具）。顺带一条观察：**`enabled: true` 的 server 不会在 boot 时自动起**，必须手动 start——清单里"起几个 stdio 型 MCP server"那句因此是对的。
+- **结果（197 的行为真机成立）**：`15:41:13 INFO [quit] before-quit → 异步清理链开始` → `15:41:16 INFO [quit] 清理链完成`，**3 秒**跑完 ⇒ 内含 `shutdown` 3s 超时（server 不理）→ `SIGTERM`（被吃）→ 500ms → **SIGKILL**，也就是最狠那一档被真正走到，且远在 10 秒总时限内；零 ERROR 行；20 秒后命令行含 `stubborn` 的进程数 0，我那 4 个 electron 全部退出，剩下的 4 个是用户 9223 那一棵（`Get-CimInstance` 逐条核过命令行）。
+- **但要如实削弱我自己 197 的因果**：`退出后不再有 MCP 子进程残留` 这句在本机**不可归因给清理链**——三种父进程死法都数不到残留：① 真 `app.quit()`（0）；② `taskkill /PID <main> /F` 硬杀主进程（8 秒后 0）；③ 纯 node 父进程 spawn 同一支 server 后 `process.exit()`，并把 `stdio` 设成 `'ignore'` 以排除"管道 EOF 让它自己退出"（child 6184，父死后 7 秒仍 0）。⇒ 这台 Windows 会把**非 detached 的子进程随父进程一起收掉**。真要制造孤儿得落在 `detached: true` 那一族：`tools/shell-tools.ts:306`（Agent 的 shell 命令）、`update/asar-patcher.ts:229/237`（重启脚本）、`mcp/python-env.ts:229`（那是强杀用的 taskkill 自身）——而它们都不在 `mcpManager.stopAll()` 的职责里。
+- **那 197 白修了吗：没有**，三条理由记在这儿以免下次误读：① 优雅停机（server 自己应答 `shutdown`、flush 完再退）与"指望 OS 兜底"不是同一件事，`python`／`node` 型 server 有落盘副作用时差别就出来了；② shim 型（`json-rpc.ts:362` 那句"cmd.exe 只是壳，`proc.kill` 会留下真正的 server 当孤儿"）在别的机器/形态下可能真留孤儿，本批的 stdio-`node` 形状覆盖不到它；③ 链不跑时**跳过的不只是 stopAll**，还有 `abortPull`、两个 scheduler、`killAllTerminals`、`dbService.close()` —— 那几步才是 197 不可替代的部分（`killAllTerminals` 恰好管的就是 `shell-tools` 那一族）。
+- **清单影响**：**B105 从 🔶 转 ✅**，判据写成"链跑完 ＋ 退出后 0 残留"，并把"残留这一半在本机不可归因（含 ③ 那个纯 node 对照）"直接写进行内，不让下一个人把它当成已证的因果。
+- **下一步该验的那条**：真要查孤儿，对象应是 `shell-tools.ts:306` 那批 `detached: true` 的 shell 子进程在"工具被中断／应用退出（链里的 `killAllTerminals`）"时收不收得掉——那才是与 OS 兜底无关的场景。
+
 ### V4-Iter-200 到点时那件事早就结束了：PDF 的超时计时器与更新器的启动延迟检查
 
 - **来由**：199 结尾我列的同族三条，用户回一句「继续」⇒ 本批做其中两条真缺陷，第三条判为**误报**（见下）。
