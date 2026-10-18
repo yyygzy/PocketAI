@@ -8,6 +8,7 @@ import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
+import { clearBrowserHttpCache } from '../../steward/cache-clean'
 import { computeLocalJudgements } from '../../steward/local-judgement'
 import { recordPerf } from '../../steward/perf-probe'
 import { cleanOrphans, deduplicate, reindexDocs } from '../../knowledge/kb-health'
@@ -60,6 +61,9 @@ export function registerStewardHandlers(): void {
     const err = await shell.openPath(DATA_DIR)
     return err ? { ok: false as const, error: err } : { ok: true as const }
   })
+  // 清 HTTP 缓存（V4-Iter-189）：与上一条同处「浏览器缓存」那一格，同样**不接收任何路径入参**；
+  // 只调 session.clearCache()（Chromium 自己淘汰），失败原样回报——不许把没做成的清理画成释放了空间。
+  safeHandle(IPC.DATA_HEALTH_CLEAR_CACHE, () => clearBrowserHttpCache())
   // 本机判据屏（V4-Iter-146）：现采一次显存是**异步**的，这条通道因此是 async；
   // 失败不降级成空报告——空报告会与"这台机器真的采不到"混成一回事（safeHandle 把失败转成
   // {ok:false,error} 返回值，渲染层按 hasIpcFailed 判，不许把失败画成数据）。

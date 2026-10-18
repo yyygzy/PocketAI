@@ -1950,6 +1950,7 @@ export const IPC = {
   USAGE_BUDGET_WARNING_EVENT: 'usage:budget-warning', // 主进程→渲染端：日/月预算达 80% 软预警（每周期一次）
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
   DATA_HEALTH_OPEN_DIR: 'dataHealth:open-dir', // 在系统文件管理器里打开数据目录（「浏览器缓存」那一格旁的只读跳转）
+  DATA_HEALTH_CLEAR_CACHE: 'dataHealth:clear-cache', // 清 default session 的 HTTP 缓存（同那一格旁的显式动作；不做文件系统删除，见 cache-clean.ts）
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
   DATA_HEALTH_KB_REINDEX: 'dataHealth:kb-reindex', // 缺向量/维度不匹配文档一键重建索引

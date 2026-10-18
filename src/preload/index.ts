@@ -346,6 +346,8 @@ const api = {
     ipcRenderer.invoke(IPC.DATA_HEALTH_GET, refresh),
   openDataFolder: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_OPEN_DIR),
+  clearBrowserCache: (): Promise<{ ok: boolean; beforeBytes: number; afterBytes: number; error?: string }> =>
+    ipcRenderer.invoke(IPC.DATA_HEALTH_CLEAR_CACHE),
   // 本机判据屏（V4-Iter-146）：只读汇总，一次进来会现采一次显存（异步，不占事件循环）
   getLocalJudgement: (): Promise<LocalJudgementReport> =>
     ipcRenderer.invoke(IPC.LOCAL_JUDGEMENT_GET),

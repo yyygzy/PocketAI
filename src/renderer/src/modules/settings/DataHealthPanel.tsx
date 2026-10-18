@@ -85,6 +85,31 @@ export const DataHealthPanel: React.FC = () => {
     }
   }
 
+  /**
+   * 清 HTTP 缓存（V4-Iter-189）：落点是"用户按下这颗按钮才动"，不自动、也不在退出时顺手做——
+   * 台账 V4-Iter-182 给的理由是一条产品口径：缓存对 USB 冷启动与离线场景是资产不是垃圾。
+   * 失败必须弹 toast 且不许显示「已清理」；成功要把前后两个数一起给出来，让人看得见它到底清掉了多少。
+   */
+  const onClearCache = async () => {
+    const shown = report ? formatBytes(report.sizes.browserCacheBytes) : formatBytes(0)
+    if (!(await confirm({ message: t('dh.browserCache.clearConfirm', { bytes: shown }), danger: true }))) return
+    setBusy(true)
+    try {
+      const r = await window.pocketai.clearBrowserCache()
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+      } else {
+        toast.success(t('dh.browserCache.clearDone', { before: formatBytes(r.beforeBytes), after: formatBytes(r.afterBytes) }))
+      }
+      load()
+    } catch (e) {
+      reportIpcError('dataHealth.clearBrowserCache')(e)
+      load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!report) {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
@@ -121,7 +146,10 @@ export const DataHealthPanel: React.FC = () => {
             count: sizes.browserCacheFiles.toLocaleString('en-US')
           })}
         />
-        <button onClick={onOpenDir} disabled={busy} className="chip">{t('dh.browserCache.open')}</button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onOpenDir} disabled={busy} className="chip">{t('dh.browserCache.open')}</button>
+          <button onClick={onClearCache} disabled={busy} className="chip">{t('dh.browserCache.clear')}</button>
+        </div>
       </div>
 
       {/* Agent 运行账本的规模（探测见 agent-trace.repo.countForHealth；为什么报这两个数见台账 V4-Iter-173） */}

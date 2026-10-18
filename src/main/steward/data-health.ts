@@ -161,6 +161,26 @@ export interface BrowserCacheStats {
  */
 let browserCacheMemo: BrowserCacheStats | null = null
 
+/**
+ * 两棵档案树各自的体积与文件数（现走、不走 memo）。
+ * 存在的唯一理由是对账「清完 HTTP 缓存到底哪棵掉了」——`getBrowserCacheStats` 给的是合计，
+ * 而 userdata/ 与 session/ 分别归谁这件事我们没从 Electron 文档里查到定论（台账 V4-Iter-182 列的未证问题之一），
+ * 所以不写推测，用一次真实清理的量去回答。
+ */
+export function browserCacheTreeBreakdown(): Array<{ tree: string; bytes: number; files: number }> {
+  const entries: DataSizeEntry[] = []
+  walkEntries(DATA_DIR, DATA_DIR, entries, 'onlyProfile')
+  const byTree = new Map<string, { bytes: number; files: number }>()
+  for (const e of entries) {
+    const tree = e.rel.split('/')[0] ?? e.rel
+    const cur = byTree.get(tree) ?? { bytes: 0, files: 0 }
+    cur.bytes += e.bytes
+    cur.files += 1
+    byTree.set(tree, cur)
+  }
+  return [...byTree.entries()].map(([tree, v]) => ({ tree, ...v })).sort((a, b) => a.tree.localeCompare(b.tree))
+}
+
 export function getBrowserCacheStats(refresh: boolean): BrowserCacheStats {
   if (refresh || !browserCacheMemo) {
     const out: DataSizeEntry[] = []

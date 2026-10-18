@@ -61,6 +61,14 @@ const refreshArgs: boolean[] = []
 let openDirCalls = 0
 let openDirResult: { ok: boolean; error?: string } = { ok: true }
 
+/** 「清理 HTTP 缓存」那颗按钮的桩（V4-Iter-189） */
+let clearCacheCalls = 0
+let clearCacheResult: { ok: boolean; beforeBytes: number; afterBytes: number; error?: string } = {
+  ok: true,
+  beforeBytes: 584_000_000,
+  afterBytes: 61_000_000
+}
+
 async function mount(
   perfHistory: PerfSummary[],
   kbOver: Partial<DataHealthReport['kb']> = {},
@@ -69,10 +77,15 @@ async function mount(
 ): Promise<void> {
   refreshArgs.length = 0
   openDirCalls = 0
+  clearCacheCalls = 0
   stubPocketai({
     openDataFolder: () => {
       openDirCalls++
       return openDirResult
+    },
+    clearBrowserCache: () => {
+      clearCacheCalls++
+      return clearCacheResult
     },
     getDataHealth: (refresh?: boolean) => {
       refreshArgs.push(refresh === true)
@@ -206,5 +219,48 @@ describe('数据健康面板 · 打开数据目录（V4-Iter-179）', () => {
     await mount([])
     fireEvent.click(screen.getByText('打开数据目录'))
     expect(await screen.findByText('操作失败：无法打开此位置')).toBeTruthy()
+  })
+})
+
+// —— V4-Iter-189：缓存那一格旁的「清理 HTTP 缓存」（显式动作，先确认再动手）——
+describe('数据健康面板 · 清理 HTTP 缓存（V4-Iter-189）', () => {
+  const CACHE_SIZES = { browserCacheBytes: 584_000_000, browserCacheFiles: 7486 }
+
+  it('确认框没点确认 ⇒ 一次都不发通道（这是删除类动作，默认不许执行）', async () => {
+    clearCacheResult = { ok: true, beforeBytes: 584_000_000, afterBytes: 61_000_000 }
+    await mount([], {}, {}, CACHE_SIZES)
+    fireEvent.click(screen.getByText('清理 HTTP 缓存'))
+    // 判据要挑「只有确认框里才有」那句：/HTTP 缓存/ 会同时命中那颗按钮，findByText 因多个元素直接抛错
+    expect(await screen.findByText(/代码缓存不在清理范围内/)).toBeTruthy()
+    fireEvent.click(screen.getByText('取消'))
+    await waitFor(() => expect(clearCacheCalls).toBe(0))
+    expect(screen.queryByText(/已清理/)).toBeNull()
+  })
+
+  it('确认后：发一次通道，并把「前 → 后」两个数一起显示出来', async () => {
+    clearCacheResult = { ok: true, beforeBytes: 584_000_000, afterBytes: 61_000_000 }
+    await mount([], {}, {}, CACHE_SIZES)
+    fireEvent.click(screen.getByText('清理 HTTP 缓存'))
+    fireEvent.click(await screen.findByText('确认'))
+    const toast = await screen.findByText(/已清理：/)
+    expect(toast.textContent).toContain('→')
+    expect(clearCacheCalls).toBe(1)
+    expect(screen.queryByText(/操作失败/)).toBeNull()
+  })
+
+  it('主进程报失败 ⇒ 弹具体原因，且绝不显示「已清理」（不许把没做成的清理画成释放了空间）', async () => {
+    clearCacheResult = { ok: false, beforeBytes: 584_000_000, afterBytes: 584_000_000, error: '磁盘正被占用' }
+    await mount([], {}, {}, CACHE_SIZES)
+    fireEvent.click(screen.getByText('清理 HTTP 缓存'))
+    fireEvent.click(await screen.findByText('确认'))
+    expect(await screen.findByText('操作失败：磁盘正被占用')).toBeTruthy()
+    expect(screen.queryByText(/已清理/)).toBeNull()
+  })
+
+  it('确认文案里承诺的是「代码缓存不在范围内」——别让人以为档案树会被清空', async () => {
+    await mount([], {}, {}, CACHE_SIZES)
+    fireEvent.click(screen.getByText('清理 HTTP 缓存'))
+    const msg = await screen.findByText(/代码缓存不在清理范围内/)
+    expect(msg.textContent).toContain('对话、知识库、凭据与设置都不受影响')
   })
 })

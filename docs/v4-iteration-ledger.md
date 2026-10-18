@@ -66,6 +66,44 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-189 缓存清理实现批（落点 C）：面板那颗「清理 HTTP 缓存」——独立实例里一次点掉 1.5 MB、第二次归零，并量出那 249 MB 是本批碰不到的遗留树
+
+- **来由**：用户选 ②「回到 182 的缓存清理实现批（落点 C，那颗按钮的量级是几百 MB，收益实在得多）」。182 定的三落点里 C＝只有用户按按钮时才动，A（退出时无条件清）与 B（开关＋阈值）**本批仍不实现**，理由沿用 182 那句"缓存对 USB 冷启动与离线场景是资产不是垃圾"。
+- **改了什么**（净增 124 行产品＋用例，另两份新文件 47／126 行）：
+  | 位置 | 内容 |
+  |---|---|
+  | `src/shared/types.ts:1953` | 新通道 `DATA_HEALTH_CLEAR_CACHE: 'dataHealth:clear-cache'` |
+  | `src/main/steward/cache-clean.ts`（新增） | `clearBrowserHttpCache()`：`await session.defaultSession.clearCache()`，前后各以 `getBrowserCacheStats(true)` 现数一次；抛错时 `log.warn` 并回 `{ok:false,beforeBytes,afterBytes,error}`（**不 throw**，让界面说清是哪句话失败）；成功后把 `browserCacheTreeBreakdown()` 逐树写进日志 |
+  | `src/main/steward/data-health.ts:170-182` | 新导出 `browserCacheTreeBreakdown()`：同一次 `onlyProfile` 遍历按档案树顶层第一段分组，返回每棵树的 `{tree,bytes,files}` |
+  | `src/main/ipc/handlers/steward.ts:66` | `safeHandle(IPC.DATA_HEALTH_CLEAR_CACHE, () => clearBrowserHttpCache())`——**没有 `argsSchema`，因为这条通道零入参**（与 179 那条「打开数据目录」同一口径：少一处校验面），有用例扫这一行 |
+  | `src/preload/index.ts:349-350` | `clearBrowserCache()` |
+  | `DataHealthPanel.tsx:93-111` 与 `:151` | `onClearCache`：显式 `confirm(danger)` → 通道 → 失败弹「操作失败：…」、成功弹「已清理：{before} → {after}」→ `load()`；那一格下方两颗 chip（打开数据目录／清理 HTTP 缓存） |
+  | i18n ×4 | 三把新键 `dh.browserCache.clear` / `.clearConfirm` / `.clearDone`（zh:970-972、en:970-972、ja:917-919、ko:917-919） |
+- **确认框那句必须写清能力边界**（这是 182 那条"Code Cache 不归 `clearCache()` 管"落到界面上的唯一位置）。zh 逐字：`将清理浏览器 HTTP 缓存（当前 {bytes}）。网页下次打开会重新下载资源；对话、知识库、凭据与设置都不受影响，代码缓存不在清理范围内。` `{bytes}` 取的是**面板此刻显示的那个数**（`report.sizes.browserCacheBytes`），不是新读一次——用户点之前看到什么，确认框里就写什么，两处不许打架。
+- **182 警告的那条坑（memo 不清就"点了没反应"）落在这儿**：清理函数自己两次 `refresh=true`，面板随后 `load()` 走 memo ⇒ 界面必然显示清理后的数。用例把这条钉成 `statsArgs == [true, true]`（`tests/ipc-browser-cache-clear.test.ts`），不是靠"看起来会刷新"。
+- **清理前的基线（本批不改代码就能量到的那一半，而且是两套实现互相核对）**：
+  - 跑着的 dev 经 CDP `getDataHealth(true)` → **817,808,764 B / 21,862 个文件**（779.9 MB）；同一时刻一次性 Python 只读遍历（`data/tmp/tree-189.py`，只走 `userdata`/`session` 两棵树，`app.db` 未碰）独立数一遍 → **字节数与文件数与应用侧一字不差**。这是 177 那套"两套实现对照"的第一次**全等**（180 那轮只对了四个数的量级）。
+  - 182 只给了"跨两棵树合并"的顶层目录口径；本批按**分树**拆开，因为 182 的未证问题②要的正是这个：
+    | 树 | `Cache/` | `Code Cache/` | 整棵树遍历耗时 |
+    |---|---|---|---|
+    | `userdata` | 350,242,878 B（**334.0 MB**）／4,460 个 | 127,888,343 B（122.0 MB）／9,801 个 | 1,369.4 ms |
+    | `session` | 261,406,892 B（**249.3 MB**）／3,018 个 | 69,932,626 B（66.7 MB）／4,476 个 | 723.2 ms |
+    | 两树合计 | **583.3 MB／7,478 个**（占 779.9 MB 的 **74.8%**） | **188.7 MB／14,277 个** | |
+  - ⇒ **判据就此成形**：点一次之后看 `分树 …` 那两行，掉 ~334 MB 是清了 `userdata`、掉 ~249 MB 是清了 `session`、两行都不掉就是"API 返回成功但磁盘没动"——182 明令不许拿 API 的成功当证据，这条现在是可数的。**（写下这条之后，②那一条实测把它否了：`session` 那一棵根本不在 `clearCache()` 的范围内，见下面「覆盖哪一棵」那条。）**
+- **用例与变异**：新增 `tests/ipc-browser-cache-clear.test.ts` 4 例（成功形状＋memo 失效／失败回 `ok:false` 且带原文／源码扫 `session.defaultSession.clearCache()` 且禁 `rmSync`、`rm(`、`rimraf`、`unlinkSync`、`node:fs`／注册行不含 `argsSchema`）；`tests/renderer-data-health-perf.test.tsx` +4 例（取消 ⇒ 通道零调用；确认 ⇒ 一次调用且 toast 含「已清理：」与「→」；失败 ⇒ 出现「操作失败：…」且**不**出现「已清理」；确认文案含"代码缓存不在清理范围内"）。变异 MA–MD：**MA** 失败被画成成功 ⇒ 1 红、**MB** 清完不再现数 ⇒ 1 红、**MC** 面板不确认就动手 ⇒ 4 红、**MD** 换成 `clearStorageData()` ⇒ 3 红；恢复后 `md5sum -c` 四处全 OK。
+- **两条实现期的口径决定**：① 面板不写"释放空间/可回收"这类承诺，只报前后两个数——因为 `Code Cache` 那 188.7 MB 与 14,277 个文件本批**没有任何清理路径**（要动它就得回到 fs 删除，182 已明确不做）；② `分树` 那几行日志只在清理时写，不进数据健康报告、不上界面——它是给下次读日志的人答②用的，界面已经有那一格的真数。
+- **验证**：typecheck 0；vitest **325 文件 / 3887 通过 + 1 跳过**；build 三端 ✓（3.95s／87ms／19.64s）。
+- **182 的三个未证问题：①②已证（在独立实例里），③只证了一半**。跑着的 dev 里点不动（现查 `window.pocketai.clearBrowserCache` 是 **undefined**，CDP 读出 `{"clear":"undefined","open":"function","get":"function"}`），所以我**没有等重启**，改用 B89/B96 那套独立实例法把这一半自己证掉：`POCKETAI_APP_ROOT=data/tmp/root-189` ＋ `--remote-debugging-port=9224` 起一个 `npx electron .`（跑的是 `npm run build` 刚产出的 `out/`，含本批代码；用户那台 9223 实例全程没动、数据也一行没碰），CDP 驱动「跳过向导」→ 设置 → 数据健康 → 那颗按钮，读完结果按 PID 精确关掉实例并删掉 scratch 根目录。**全程没有向用户索取口令**（scratch 是全新明文库）。
+  - **机制在真 Electron 上跑通**：`clearBrowserCache` 现查是 `function`；那一格现显示 `浏览器缓存5.6 MB · 68 个文件`；点按钮弹出确认框，那句逐字是 `将清理浏览器 HTTP 缓存（当前 5.6 MB）。网页下次打开会重新下载资源；对话、知识库、凭据与设置都不受影响，代码缓存不在清理范围内。`（**框里的数与那一格是同一个数**，实现取的就是 `report.sizes.browserCacheBytes`）；先点「取消」⇒ 那一格纹丝不动；再点一次并「确认」⇒ toast `已清理：5.6 MB → 4.1 MB`，那一格立刻变成 `浏览器缓存4.1 MB · 67 个文件`（**没按刷新**），随后 `getDataHealth(false)` 4 ms 返回 4,295,148 B / 67 个 ⇒ **182 警告的那条 memo 坑在真应用里确认没踩**。两颗 chip 并排可见未截断（y=339，「打开数据目录」x=220/w=78、「清理 HTTP 缓存」x=306/w=88，均 enabled）。scratch 实例日志零 ERROR 行。
+  - **①「磁盘立刻掉多少」＝真的掉，而且是 API 造成的**：`浏览器 HTTP 缓存清理：5832556 B / 68 个 → 4295148 B / 67 个` ⇒ 一次点掉 **1,537,408 B**（1.47 MB）。**反向对照**：同一个实例紧接着再点一次 ⇒ `4295680 B / 67 个 → 4295680 B / 67 个`，**变化恰好为 0**（两次之间那棵树自己涨了 532 B，说明"没掉"不是遍历抖动的抵消）。⇒ 不是"API 成功但磁盘不动"，Chromium 的 blockfile 是**即时截断**释放的（点完再看那一棵，`Cache_Data/` 里 `data_0`…`data_3` 与 `index` 五个文件**还在**，缩的是内容不是清单——所以"清了多少"只能看字节，看文件数会误判）。
+  - **②「覆盖哪一棵」＝只覆盖 `userdata`，而这条改动了我交付时的预期**（新档案根下）：`session: 451968 B / 1 个` 与 `userdata: 3843180 B / 66 个`——全新实例的 `data/session` 整棵树**只有 `Dictionaries` 一个文件**（spellcheck 词典，正是 `app.setPath('sessionData')` 现在唯一还在写的东西），HTTP 缓存实际落在 `userdata/Cache/Cache_Data/{data_0..data_3,index}`。⇒ `defaultSession.clearCache()` 的能力范围**就是 userdata 那一棵**。
+    再看用户那台的两棵树 mtime（一次性只读遍历，`app.db` 未碰）：`userdata/Cache` 最旧 2026-09-28 18:23、最新 2026-10-18 09:16（**活的**）；`session/Cache` 全部落在 **2026-09-17 13:55 ～ 2026-09-27 15:04** 之间、`session/Dictionaries` 也是 09-17 那个时间戳，而 `session/Code Cache` 同样停在 09-27 15:04 ⇒ **那 249.3 MB＋66.7 MB 是三周前遗留的另一棵 profile 根**（时间线正好卡在 `ba0517a` 2026-09-27 15:11 把 electron 44.4.3→44.4.5 那次升级前后，但**我没有证到因果**，只证到"此后没人再往那棵树写"）。
+    **据此修正本批交付时的预期**：那颗按钮在这台机上一次能清的是 **~334 MB（userdata 那棵的 `Cache/`）**，不是 182 按合并口径算的 583 MB；`session` 那 249 MB **本批这条路碰不到**，要清只能回到文件系统删除——179/182 已定"不做删除"，所以**不动**，是否另立一批清遗留树归用户判。上面那条"掉 ~249 MB 就是清了 session"的判据**写下后当场被自己的实测否掉**，按 187/188 的同一口径如实留着。
+    **没测到的半边**：独立实例从没跑过 js_eval 的沙箱分区（`session.fromPartition('pocketai-sandbox')`，`js-eval-runner.ts:43`），所以"分区会话会不会也往 `sessionData` 写缓存"没有证；本机 mtime 说 `data/session` 三周没被写过 ⇒ 至少此刻它不是活的。
+  - **③「清理时仍有 webContents 活着」只证了一半**：清理是在主窗口活着、renderer 正在被 CDP 驱动的情况下做的，之后界面继续可用、零 ERROR；但**浮窗与 Agent 浏览器同时在线**那种组合没造出来（需要真凭据跑一轮 Agent），仍挂在 B101。
+- **清单落点**：新增 **B101（🔶）**——机制、取消路径、前后两个数、memo 失效都已在真 Electron 独立实例上验过，🔶 只剩"在用户那份 334 MB 真缓存上点一次"这一半（须重启 dev ＋ 用户自己输口令），行内把上面那套判据抄过去；B100 的 ⑤ 那句「应有一颗按钮」就地改成两颗（189 起了第二颗）。
+- **一条流程账（本批把上一批的结论纠正了）**：`npm run dev` 那个实例**不会**因为主进程改动而自动重启（本批通道在活实例里查不到就是证据），但**这不等于必须麻烦用户重开**——动 `src/main/**` 的批次，只要先用 `npm run build` 把 `out/` 刷新，就能用 `POCKETAI_APP_ROOT` 指到 scratch 根目录、`npx electron .` 起一个独立实例（走 `loadFile(out/renderer/index.html)`，不抢 dev 的 5173），自己把机制证完。184/185/187 那几轮"真机＝等用户输口令"的口径**只对"要读用户那份数据的那一半"成立**。⇒ 从此的分工：**机制/形状/日志 = 独立实例自己证；量级/观感 = 留给用户那次重启**，交付时把两半分开写清楚，别再笼统说"没法真机"。
+
 ### V4-Iter-188 把 vec 两次加载也并掉？量完决定不做——一次重开只值 3–5ms（口径型批次，代码零改动）
 
 - **来由**：用户选「把 vec 两次加载也并掉」（就是 §186 里我标为"不做"的方案 E：预验证成功后不 `close()`，让 boot 的 `if (!dbService.isOpen())` 跳过第二次 `open()`）。
