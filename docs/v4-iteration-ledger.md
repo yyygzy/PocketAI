@@ -66,6 +66,17 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-210 B111 真机闭环：EN 那句与中文对照那句都逐字读到，顺带把 209 记的那条"失败清空输入"读成实据（src 零改动）
+
+- **来由**：用户把下一步清单整段选回来，① 提交 209（`6d062d6`，本地现领先远端 6）＋ ② 真机跑 B111 ＋ ③ 修 GlossaryPanel（另起 §211）；④ B106／B108 不在我这边。
+- **怎么跑的**：`POCKETAI_APP_ROOT=data/tmp/root-210` 的干净实例（空 root ⇒ 无口令、none 模式，`userData` 随 `DATA_DIR` 一起落进 scratch root ⇒ 界面语言存在 `localStorage['pocketai.lang']` 也是各自一份，不会碰到你实例的语言），`--remote-debugging-port=9229`，全程 CDP 驱动真界面（点按钮、写真输入框、点「添加」、读 `[role=status]`）。
+- **读数（两句都是逐字相等，不是"看起来像"）**：EN 界面贴一条 201 字的术语点 `Add` ⇒ toast 面板 `[role=status]` = `sourceTerm is too long — max 200 characters`；切回中文同样动作 ⇒ `sourceTerm过长，最多 200 个字符`。**两条都与 §209 那条 CI 用例的期望串逐字一致**（含那个 em dash），也就是说 main 的 `ipcArgs` 经真 IPC 边界（结构化克隆）到渲染层、再经真字典渲染成界面语言这条链在真机上成立。
+- **正向对照（成功路径没被我改坏）**：填一对合法术语（`人工智能` = `Artificial Intelligence`）点「添加」⇒ `[role=status]` 为**空数组**、列表出现 `人工智能=Artificial Intelligence`、输入框清空（成功本来就该清）。**反向对照**：两次失败那趟读到的输入框长度都是 `[0, 0]` ⇒ §209 记的那条"失败也清空输入"不是我从代码里推的，是真机两语都成立 ⇒ 归 §211 修。
+- **主进程留痕**：`root-210/data/logs/main.log:16` 与 `:17` 各一条 `WARN [ipc] glossary:save 入参校验失败: 0.sourceTerm: too_big Too big: expected string to have <=200 characters`（日志仍是 path＋code＋英文原文，界面才是四语；这正是 209 把回码与文案分开的意义）。
+- **我在 B111 里写的方位与数字全部实地走过**：侧栏那颗语言按钮的文字就是 `EN`（`ThemeLangControls` 用 `LANGS[].native`，`en` 的 native 是 `EN`、title 才是 `English`）；翻译模块那颗是 `Glossary (0)`／中文「术语表（0）」（`translate.glossary.manage` 带条目数）；面板标题 `Glossary`；两个术语输入框实测 `maxLength=-1`（无上限）⇒ 201 字确实贴得进去，这条验收对用户成立。
+- **仍未证（不写成结论）**：ja／ko 那两句界面读数——机制同一条、CI 里 en/ja/ko 三条都在，但真机我只读了 en 与 zh；以及"同一门槛在别的通道上"（别的通道压根没有 argsSchema，见 §209 那条可达面）。
+- **验证**：本批不动 `src/` ⇒ 不重新 build；全量 vitest 与 typecheck 与 §209 交付时同基线（**336 文件 / 4009 通过 + 1 跳过**）。**清单 B111 从 🔶 转 ✅**（两句读数与探针细节写进行内）。收尾只按端口 9229 收到我那棵树（PID 21424 及三个子进程），你的 9223 那台未动、`data/app.db` 仍是 08:33:11／3,100,672 B。
+
 ### V4-Iter-209 入参校验的中文消息回码化：回码开在独立字段上而不是拼进 `error`，因为量过"谁会读这根字符串"之后，拼串是一次净倒退
 
 - **来由**：用户一句「真做 ②」——② 就是 §208 尾巴上我自己挂着的那条"要动得先定口径"的事：safeHandle 的 zod 校验消息也回码化＋四语。
