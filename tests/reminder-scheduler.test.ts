@@ -1,9 +1,10 @@
-// reminder scheduler 单元测试：到期触发 / 重启 missed 恢复 / 锁屏 DB 关闭容错
+// reminder scheduler 单元测试：到期触发 / 重启 missed 恢复 / 锁屏 DB 关闭容错 / 锁屏期间整轮暂缓
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const {
   notificationShowMock, notificationCtorMock, broadcastMock,
-  listDueMock, markFiredMock, markMissedMock, scheduleNextMock
+  listDueMock, markFiredMock, markMissedMock, scheduleNextMock,
+  logInfoMock, logDebugMock
 } =
   vi.hoisted(() => ({
     notificationShowMock: vi.fn(),
@@ -12,7 +13,9 @@ const {
     listDueMock: vi.fn<() => unknown[]>(() => []),
     markFiredMock: vi.fn(),
     markMissedMock: vi.fn(),
-    scheduleNextMock: vi.fn()
+    scheduleNextMock: vi.fn(),
+    logInfoMock: vi.fn(),
+    logDebugMock: vi.fn()
   }))
 
 vi.mock('electron', () => ({
@@ -30,6 +33,15 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('../src/main/ipc/broadcast', () => ({ broadcast: broadcastMock }))
+// 日志只收句柄：那两句"暂缓/补发"的判据要在用例里读，不该往控制台刷
+vi.mock('../src/main/logger', () => ({
+  createLogger: () => ({
+    debug: logDebugMock,
+    info: logInfoMock,
+    warn: vi.fn(),
+    error: vi.fn()
+  })
+}))
 // DB 句柄整体打桩：调度器用例只该看到方法调用，真碰库就是接线错了
 vi.mock('../src/main/db/database', () => ({
   dbService: {
@@ -56,9 +68,12 @@ vi.mock('../src/main/db/repositories/reminder.repo', async (importOriginal) => {
 import { initReminderScheduler, stopReminderScheduler } from '../src/main/reminder/scheduler'
 
 import { computeNextFireAt } from '../src/main/db/repositories/reminder.repo'
+// 真状态机：闸门判的就是它，桩掉等于没测（用例里只调 lock/unlock，不起 init 的定时器）
+import { lockService } from '../src/main/lock/lock'
 
 beforeEach(() => {
   vi.useFakeTimers()
+  lockService.unlock()
   scheduleNextMock.mockClear()
   notificationShowMock.mockClear()
   notificationCtorMock.mockClear()
@@ -67,11 +82,14 @@ beforeEach(() => {
   markMissedMock.mockClear()
   scheduleNextMock.mockClear()
   listDueMock.mockClear()
+  logInfoMock.mockClear()
+  logDebugMock.mockClear()
   listDueMock.mockImplementation(() => [])
 })
 
 afterEach(() => {
   stopReminderScheduler()
+  lockService.unlock()
   vi.useRealTimers()
 })
 
@@ -222,5 +240,52 @@ describe('循环提醒的重排接线（fireOne 的 repeatRule 分支）', () =>
     expect(markMissedMock).toHaveBeenCalledWith('m1')
     expect(scheduleNextMock).not.toHaveBeenCalled()
     expect(notificationShowMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('锁屏期间整轮暂缓（V4-Iter-198）', () => {
+  it('锁定中到点：不弹通知、不广播、不标 fired、不重排，并记一条「暂缓 N 条」', () => {
+    initReminderScheduler()
+    lockService.lock('manual')
+    listDueMock.mockImplementation(() => [
+      { id: 'l1', text: '吃药', fireAt: 1 },
+      { id: 'l2', text: '喝水', fireAt: 2, repeatRule: { kind: 'daily', intervalDays: 1 } }
+    ])
+    vi.advanceTimersByTime(30_000)
+    expect(notificationCtorMock).not.toHaveBeenCalled()
+    expect(broadcastMock).not.toHaveBeenCalled()
+    expect(markFiredMock).not.toHaveBeenCalled()
+    expect(scheduleNextMock).not.toHaveBeenCalled()
+    expect(logInfoMock).toHaveBeenCalledWith('锁屏期间暂缓 2 条提醒（解锁后补发）')
+  })
+
+  it('解锁后的下一个 tick 补发同一条：通知与 fired 都照常（暂缓不是丢弃）', () => {
+    initReminderScheduler()
+    lockService.lock('manual')
+    listDueMock.mockImplementation(() => [{ id: 'l3', text: '取快递', fireAt: 5 }])
+    vi.advanceTimersByTime(30_000)
+    expect(notificationShowMock).not.toHaveBeenCalled()
+    lockService.unlock()
+    vi.advanceTimersByTime(30_000)
+    expect(notificationCtorMock).toHaveBeenCalledWith({ title: 'PocketAI 提醒', body: '取快递' })
+    expect(markFiredMock).toHaveBeenCalledWith('l3')
+  })
+
+  it('反向对照：锁屏但没有到期项 ⇒ 不写那句「暂缓」（否则日志在承诺没发生的事）', () => {
+    initReminderScheduler()
+    lockService.lock('manual')
+    listDueMock.mockImplementation(() => [])
+    vi.advanceTimersByTime(30_000)
+    const deferred = logInfoMock.mock.calls.flat().filter((a) => String(a).includes('暂缓'))
+    expect(deferred).toEqual([])
+  })
+
+  it('启动恢复不受闸门影响：过期仍标 missed（这条路径本来就不弹通知，missed 由用户从历史 tab 决定）', () => {
+    lockService.lock('manual')
+    listDueMock.mockImplementation(() => [{ id: 'l4', text: 'x', fireAt: 1 }])
+    initReminderScheduler()
+    expect(markMissedMock).toHaveBeenCalledWith('l4')
+    expect(broadcastMock).toHaveBeenCalledWith('reminder:fired', { missed: 1 })
+    expect(notificationCtorMock).not.toHaveBeenCalled()
   })
 })

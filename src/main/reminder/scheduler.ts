@@ -1,10 +1,12 @@
 // 定时提醒调度器：30s tick 扫描到期提醒，到点系统通知 + 广播渲染端
 // 循环提醒到点先 scheduleNext 重排为下次 pending（不新建记录），一次性提醒才 markFired
+// 锁屏期间整轮暂缓（判据见 notify/lock-quiet.ts）：不弹通知也不改状态，解锁后下个 tick 补发
 // 不复用 task-scheduler（10 分钟周期 tick）——提醒需要分钟级精度
 import { Notification } from 'electron'
 import { IPC } from '../../shared/types'
 import type { ReminderFiredPayload, ReminderRecord } from '../../shared/types'
 import { reminderRepo, computeNextFireAt } from '../db/repositories/reminder.repo'
+import { shouldSuppressNotification } from '../notify/lock-quiet'
 import { broadcast } from '../ipc/broadcast'
 import { createLogger } from '../logger'
 
@@ -43,6 +45,13 @@ function tick(): void {
   } catch (e) {
     // DB 关闭（隐私锁 db 模式锁屏时关库）：本轮跳过，解锁后下个 tick 会补触发
     log.debug('扫描到期提醒失败（可能已锁屏）', e)
+    return
+  }
+  if (due.length === 0) return
+  // 锁屏时整轮暂缓：记录仍是 pending，解锁后的下一个 tick 照常补发（不弹通知、也不标 fired）。
+  // db 模式本来就撞在上面的"库关着"，这一条挡的是另外两种模式——库开着、通知却会写在锁屏上。
+  if (shouldSuppressNotification()) {
+    log.info(`锁屏期间暂缓 ${due.length} 条提醒（解锁后补发）`)
     return
   }
   for (const r of due) fireOne(r)

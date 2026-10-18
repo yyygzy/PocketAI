@@ -66,6 +66,20 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-198 锁屏期间不该有东西写在锁屏上：提醒调度器的通知补一道锁判据（整轮暂缓，不是丢弃）
+
+- **来由**：审计剩下的线索之一，用户点选 A。`src/main/reminder/scheduler.ts:20-22` 到点就 `new Notification({ title: 'PocketAI 提醒', body: r.text })`，而隐私锁保护的是**应用自己的界面**（`lock/lock.ts:5-13` 的口径：渲染层遮罩 + `lock/ipc-gate.ts` 拦 invoke）——Windows 的通知中心与锁屏界面是遮罩管不到的第二块屏幕，提醒正文就是明文。
+- **先纠正我自己给选项时的一句话**（写在这里免得下批照抄）：我说"两处都不判锁"，回读加真机实测证明**回复通知那条路径本来就在锁外**：`notify:reply-show` 不在 `LOCK_IPC_WHITELIST`（`ipc-gate.ts:17-26`），锁屏时 `window.pocketai.showReplyNotification(...)` 直接 reject，真机日志逐字 `Error invoking remote method 'notify:reply-show': Error: APP_LOCKED`。⇒ **真正在漏的只有提醒**（它由主进程自己发起，根本不经 IPC）。所以本批是"提醒补闸门 ＋ 回复通知改成自己判锁"，不是修两条泄漏。
+- **修法**：新增 `src/main/notify/lock-quiet.ts` —— 全项目唯一的"锁屏就不许把内容交给 OS 通知面"判据，取自与 `ipc-gate.ts` 同一处（`lockService.getStatus().state === 'locked'`）。`reminder/scheduler.ts` 的 `tick()` 在 `listDue` 之后判，**整轮暂缓**：通知、广播、`markFired`/`scheduleNext` 一起推迟，因为这三件是一个语义包——只压通知而把状态写掉，等于把提醒静默吃掉。记录仍是 `pending`（`reminder.repo.ts:161` 的 `status='pending' AND fire_at<=now`）⇒ 解锁后的下一个 30s tick 照常补发，`fireAt` 保持原值。
+- **两道判据的分工**：db 模式锁屏时库是关着的，`listDue` 抛错走原有的 debug 分支（`scheduler.ts:44-46`）——198 补的是**另外两种模式**（库开着、通知照弹）那一档。判在 `listDue` 之后还让那句日志只在"真有事被挡"时出现（反向对照用例钉住：没有到期项时不许写"暂缓 0 条"）。
+- **不对称是刻意的**：回复通知＝**丢掉不补发**（通知唯一的用处是"叫你回来"，回复本来就写在会话里，解锁后再弹一条陈旧 toast 只是噪音）；提醒＝**暂缓后补发**（它承诺的是"到点提醒我"）。两种语义各有一条用例。
+- **用例（`tests/reminder-scheduler.test.ts` 12 ⇒ 16）**：锁屏整轮暂缓（不弹／不广播／不 fired／不重排 ＋ 日志逐字 `锁屏期间暂缓 2 条提醒（解锁后补发）`）、解锁后下一个 tick 补发同一条、反向对照（无到期项 ⇒ 不写那句）、启动恢复不受闸门影响（`recoverMissed` 照常标 missed——它本来就不弹通知，且 missed 的处置归用户从历史 tab 决定）。该文件补了 `createLogger` 桩，否则"暂缓"那句判据只能靠控制台肉眼看。新增 `tests/notify-lock-quiet.test.ts` **6 例**：解锁时构造并 show、锁屏时**一个 `Notification` 都不构造**（不是"构造了不 show"）、锁屏丢掉的那条不在解锁后补发（断言 ctor 只收到第二次那条）、判据函数三态，加两条形状扫描：`src/main` 里构造系统通知的文件**恰好是这两个**（新增第三个通知点必须先过锁屏判据才会红），且每个通知点都自己引用 `lock-quiet`。
+- **变异各有牙**：M198a 删提醒闸门 ⇒ 红；M198b 删回复通知闸门 ⇒ 红；M198d 删掉"没有到期项就别说暂缓"这一档 ⇒ 红；恢复后两文件 md5 与基线一致。
+- **真机（独立实例 `data/tmp/root-198` ＋ 9224，档位 `mode: none` ⇒ 锁屏时库开着，正是漏口形状）**：`14:30:26 定时提醒调度器已启动（30s tick）` → `14:31:26 锁屏期间暂缓 1 条提醒（解锁后补发）` → 解锁 → `14:31:56 提醒已触发: e092d8c1…`；库里那条 `status=fired` 且 `fireAt` 仍是原值 `1792305067274` ⇒ **暂缓确实不是丢弃**；锁屏期间 `getLockStatus()` 为 `locked`、`notify:reply-show` 被 `APP_LOCKED` 挡回（上面那条纠正的实测依据）；零 ERROR 行。清场按 9224 精确杀自己的实例，收尾剩 4 个 electron 全是用户 9223 那一棵；`data/app.db` 仍 08:33:11／3,100,672 B。
+- **只有肉眼能看的那一半**：Windows 有没有真把 toast 弹出来，我在无头侧看不到。证明链是"闸门在 `new Notification` 之前 return（CI 断 ctor 未被调用）＋ 真机日志出现那句暂缓"。用户在锁屏状态下建一条到期提醒即可肉眼复核 ⇒ 清单 **B106**。
+- **没做**：① 设置页 `set.replyNotifyHint` 那句没动——它承诺的是"最小化或失焦时弹"，没承诺锁屏时弹，所以不加"锁屏不弹"也属实；要加是口径扩张，说一句就做。② 暂缓期间界面上没有任何"有 N 条提醒被押着"的提示（解锁后只看到 fired 记录）。③ 顺带观察到 `task-scheduler` 在锁屏期间照常跑后台任务（它判 `dbService.isOpen()`，mode=none 时库开着，`backup_verify` 会走网络）——按 `lock.ts` 的口径（隐私锁管 UI 可见性）不算缺陷，记在这里免得下次当成新发现。
+- **验证**：typecheck 0；全量 vitest **329 文件 / 3931 通过 + 1 跳过**（本批 +10 例）；build ✓（24.36s）。
+
 ### V4-Iter-197 退出链的守卫用错标志：`quiting` 只表示"别再弹确认框"，却把清理链整个跳过（MCP 子进程成孤儿）
 
 - **来由**：审计第 ③ 条，我回读源码确认：`index.ts` 的 `before-quit` 第一行是 `if (isQuitting()) return`，而 `requestQuit()`（托盘/菜单「退出墨匣」）与 `beginQuit()`（关窗确认「退出」）**都先置 `quiting = true` 再 `app.quit()`** ⇒ 走到 `before-quit` 时该标志已为真，链直接被跳过；链里唯一 `await mcpManager.stopAll()` 的那一步从不执行，而 `runFallbackCleanup()`（will-quit 兜底）原本不含 stopAll ⇒ MCP stdio 子进程留在后台。

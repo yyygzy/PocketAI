@@ -2,10 +2,12 @@
 //
 // - 开关存 appConfig KV（缺省开启），与 title-config 同构
 // - 通知统一由主进程发出（Electron Notification，Windows toast 经 AppUserModel）
+// - 锁屏期间不弹：正文是回复摘要，弹出去就落在通知中心/锁屏界面上（判据见 ./lock-quiet.ts）
 // - 点击通知聚焦并还原主窗口；任何失败静默，绝不阻断对话
 import { BrowserWindow, Notification } from 'electron'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { MAIN_WINDOW_MARKER, type MarkedBrowserWindow } from '../ui-preferences'
+import { shouldSuppressNotification } from './lock-quiet'
 import { createLogger } from '../logger'
 
 const log = createLogger('reply-notify')
@@ -37,6 +39,10 @@ function findMainWindow(): BrowserWindow | null {
  */
 export function showReplyNotification(title: string, body: string): void {
   try {
+    if (shouldSuppressNotification()) {
+      log.info('锁屏期间未弹回复通知')
+      return
+    }
     if (!Notification.isSupported()) return
     const n = new Notification({ title, body })
     n.on('click', () => {
