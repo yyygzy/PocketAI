@@ -363,11 +363,14 @@ const api = {
     ipcRenderer.invoke(IPC.PERF_EVENT, { label, ms }),
 
   // ---------- 聊天 ----------
-  sendMessage: (payload: SendMessagePayload): Promise<void> =>
+  // 成功侧确实没有值（`chatService.send()` 是 `Promise<void>`），但 safeHandle 会把抛错转成
+  // `{ok:false,error}` **返回值**：类型只写 `Promise<void>` 就是在教调用方"这个值不用看"
+  // ——`ChatModule` 那句 `.then((r) => { void r })` 就是这么写出来的（V4-Iter-196 的漏点，204 才抓到）。
+  sendMessage: (payload: SendMessagePayload): Promise<void | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.CHAT_SEND, payload),
-  regenerateMessage: (payload: RegeneratePayload): Promise<void> =>
+  regenerateMessage: (payload: RegeneratePayload): Promise<void | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.CHAT_REGENERATE, payload),
-  resendMessage: (payload: ResendPayload): Promise<void> =>
+  resendMessage: (payload: ResendPayload): Promise<void | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.CHAT_RESEND, payload),
   abortChat: (requestId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CHAT_ABORT, requestId),

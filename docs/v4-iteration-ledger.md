@@ -66,6 +66,17 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-205 类型撒谎的那层没编译器兜底：preload 三条发起通道改说实话，`void 回值` 交给形状闸门，顺带把「中止会不会报错」这条契约钉住
+
+- **来由**：204 交付后我列的下一步里有 ②「把 preload 的类型补成带失败分支，从根上不让 `void r` 写得出来」。动手前先证这句我自己说的话——**类型做不到**。`tsconfig` 开着 `noUnusedParameters`，而 `void r` 恰恰算"用了形参"；仓库里 eslint 根本没接进 CI（`package.json` 的 scripts 里没有 lint）。所以本批把"根上不让"落成两件事：**类型不再撒谎**（读者看得见失败分支）＋ **一条形状闸门**（`void 回值` 这种写法在 CI 里红）。
+- **类型**：`preload/index.ts:366/368/370` 三条发起通道由 `Promise<void>` 改成 `Promise<void | { ok: false; error: string }>`——成功侧确实是 `undefined`（`chatService.send()` 就是 `Promise<void>`），失败侧是 safeHandle 的返回值，这与 196 给 `saveAssistant`／`listWebDAVBackups` 补失败分支是同一口径。全文件 `Promise<void>` 现在只剩 `reportPerf` 一条（真 fire-and-forget，失败只在主进程留日志），这一条由用例钉着，防止将来又冒出第四、第五条"看起来不用看返回值"的通道。
+- **形状闸门**（新 `tests/ipc-result-not-voided-205.test.ts`，6 例）：扫全渲染层 `.ts/.tsx`（先剥注释行，因为注释里举反例是讲历史），抓两种形状——块体 `.then((r) => { void r })` 与表达式体 `.then((r) => void r)`；块体用花括号配对取出回调体再查 `void <形参名>`。**自带正向对照**：一份内联 fixture 里两种形状各命中一次、而 `if (hasIpcFailed(r))` 和 `void reloadConversations()`（void 的是另一个调用）都不许命中 ⇒ 证明扫描器有牙，不是恒真断言。逐通道判 preload 用的是"取出那一行再断言"，而不是文件级 `toContain`——这正是 204 学到的那个失效方式。
+- **契约闸门**（新 `tests/chat-send-resolve-not-reject-205.test.ts`，6 例，真 HTTP 端点＋真库，不 mock fetch/adapter）：204 让四个入口开始**对返回值报错**，那就必须确认"用户点停止生成／端点回 500"不会也从返回值面冒出来，否则正常中止会配一条错误 toast。三条面分开钉：① 端点 500 ⇒ `send()` resolve ＋ `CHAT_ERROR_EVENT` 恰好一次；② 真在中途 abort（慢速 SSE 写满 40 段、每 80ms 一段，收到第一段 delta 后才叫停）⇒ `send()` 不 reject，中止的出口是事件面；③ **反向对照**：`targets: []` 的同步段失败仍 reject（`未选择模型`）且一个事件都没发 ⇒ 两条面确实不是一条路。另加 `regenerate`／`resend` 两条 500 用例（`Promise.allSettled` 在这个文件里出现三次：315／390／465，只钉第一处管不到另外两条链），以及一条 `keep-awake` 引用计数配平（两条面收尾在同一个 `finally`）。
+- **三条变异实测，其中一条把我自己的模型打回来了**：M205a（主发送链退回 `void r`）⇒ 形状闸门＋区域闸门双红；M205b/c（regenerate／resend 的类型退回裸 `void`）⇒ 各红自己那一条 ＋ "只剩 reportPerf" 那条红（证明逐通道判据各管各的）；M205d 我本想证"`Promise.allSettled` 是那条保命的腿"，实测**不是**：只把 315 换成 `Promise.all` ⇒ 红，但红因是 `TypeError: Cannot read properties of undefined (reading 'status')`——下一行 `results.every((r) => r.status === 'rejected')` 读的是 settled 结果数组，`all` 给它的是值数组；只给 `runTarget` 的 catch 加 `throw err` ⇒ **绿**（`allSettled` 收着了）；两条腿一起撤 ⇒ 红。结论：**第一道防线是 `runTarget` 的 catch 不外抛（`chat-service.ts:547-575`），`allSettled` 是第二道**，我的用例覆盖的是"组合失效"这一格，这也正是 UI 真正会感知的形状。
+- **顺出来的一条线索（没追、没改）**：既然 `runTarget` 永远不 reject，`chat-service.ts:329` 的 `allFailed` 就恒为 false ⇒ `conversationRepo.touch(…, { status: 'error' })` 这一档从这条路径到不了。会话 `status` 在渲染层只被 `ChatView.tsx:336` 原样带下去，有没有界面后果我没查 ⇒ 记成线索，不当缺陷修。
+- **真机这一格我没跑到，如实写**：起了 `POCKETAI_APP_ROOT=data/tmp/root-205` 的干净实例＋本地假 SSE 端点，两趟探针都没进到"生成中"状态——第一趟 `saveProvider` 之后没 reload，模型下拉里还没有新 provider；第二趟对话页选到了模型但回车后 `stop:false`、正文气泡 0，Agent 页则停在"没有会话"那一步（`send()` 在 `!conversationId` 就 return）。⇒ "中止不报错"目前只有 CI 证据（真端点真库真适配器），没有真机读数；要补的话就是清单 **B110**。
+- **验证**：typecheck 0；全量 vitest **334 文件 / 3971 通过 + 1 跳过**（本批 +2 文件 / +12 例）；build ✓（23.57s）。行为面：本批只有类型与用例，**渲染层源码零改动**，你那台 dev 不用重启也不会看到任何变化。
+
 ### V4-Iter-204 B104 真机①抓到 196 的漏点：主发送链把 `{ok:false}` 咽掉了，四个入口与那条叠词文案一起收口
 
 - **来由**：用户一句「继续 B104」。②（助手超限）与 ③（WebDAV 列失败）第一次就过；**① 失败**——scratch 实例 `main.log` 有 `2026-10-18 17:21:09 WARN [ipc] chat:send 失败: BUDGET_EXCEEDED:daily:0.5:已达到今日预算上限 ¥0.5`，而界面每 400ms 采一次、采满 20 次全是 `budget:[]`，转圈也没停。也就是说 196 那条「预算硬阻断要给专门文案」在真机上**从未成立过**。
