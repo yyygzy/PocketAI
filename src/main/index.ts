@@ -66,7 +66,7 @@ import { initBackupScheduler } from './backup/backup-scheduler'
 import { initTaskScheduler } from './backup/task-scheduler'
 import { initReminderScheduler } from './reminder/scheduler'
 import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, type MarkedBrowserWindow } from './ui-preferences'
-import { isQuitting, beginQuit, runCleanupChain, runFallbackCleanup } from './quit-manager'
+import { beginQuit, isCleanupDone, isQuitting, runCleanupOnce, runFallbackCleanup } from './quit-manager'
 import { createLogger, configureLogDir } from './logger'
 import { bootMark } from './steward/boot-perf'
 import { sweepStaleProfileCaches } from './steward/stale-cache-sweep'
@@ -616,12 +616,12 @@ if (!gotLock) {
 }
 
 app.on('before-quit', (e) => {
-  if (isQuitting()) return // 已在执行清理链中，不再拦截
+  // 197：这里判的必须是「链跑完没有」，不是「谁发起的退出」——isQuitting() 只表示别再弹确认框，
+  // 拿它当守卫会让托盘退出与关窗确认两条路径整个跳过清理链（MCP 子进程成孤儿）。
+  if (isCleanupDone()) return
   e.preventDefault()
-  ;(async () => {
-    await runCleanupChain()
-    app.exit(0)
-  })()
+  // 第一次拦截：把异步链跑完（或等到超时放行）再硬退。第二次 before-quit 由上面的判据放行。
+  void runCleanupOnce().then(() => app.exit(0))
 })
 
 app.on('window-all-closed', () => {

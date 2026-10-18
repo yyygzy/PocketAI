@@ -3,7 +3,8 @@
 // 覆盖 src/main/quit-manager.ts：
 // - isQuitting / requestQuit / beginQuit：标志位与 app.quit 触发
 // - runCleanupChain：六步清理按序执行；各步抛错不中断后续
-// - runFallbackCleanup：同步兜底全步骤（不含 stopAll）
+// - runFallbackCleanup：同步兜底全步骤（197 起也试一次 stopAll）// - runFallbackCleanup：同步兜底全步骤（不含 stopAll）
+// - runCleanupOnce：幂等 + 总时限（超时放行退出，不让清理把退出钉住）
 //
 // 策略：vi.mock electron app 与五个依赖，用 calls 数组记录调用顺序
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -12,18 +13,22 @@ import {
   requestQuit,
   beginQuit,
   runCleanupChain,
+  isCleanupDone,
+  runCleanupOnce,
   runFallbackCleanup
 } from '../src/main/quit-manager'
 
 const mocks = vi.hoisted(() => ({
   calls: [] as string[],
   stopAllError: null as Error | null,
+  stopAllHang: false,
   cleanupError: null as Error | null,
   closeError: null as Error | null,
   quitCalls: 0,
   reset() {
     this.calls = []
     this.stopAllError = null
+    this.stopAllHang = false
     this.cleanupError = null
     this.closeError = null
     this.quitCalls = 0
@@ -43,6 +48,7 @@ vi.mock('../src/main/mcp/manager', () => ({
   mcpManager: {
     stopAll: async () => {
       mocks.calls.push('stopAll')
+      if (mocks.stopAllHang) await new Promise(() => { /* 永不 resolve：模拟子进程不应答 */ })
       if (mocks.stopAllError) throw mocks.stopAllError
     }
   }
@@ -133,10 +139,10 @@ describe('runCleanupChain 异步清理链', () => {
 })
 
 describe('runFallbackCleanup 同步兜底', () => {
-  it('执行除 stopAll 外的全部步骤', () => {
+  it('兜底也试一次停 MCP（197：链没跑到的路径别把子进程留在后台）', () => {
     runFallbackCleanup()
     expect(mocks.calls).toEqual([
-      'abortPull', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
+      'abortPull', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'stopAll', 'close'
     ])
   })
 
@@ -144,5 +150,28 @@ describe('runFallbackCleanup 同步兜底', () => {
     mocks.cleanupError = new Error('x')
     mocks.closeError = new Error('y')
     expect(() => runFallbackCleanup()).not.toThrow()
+  })
+})
+
+describe('runCleanupOnce（197：幂等 ＋ 总时限）', () => {
+  it('跑完整条链后置位 isCleanupDone，第二次调用不再跑', async () => {
+    expect(await runCleanupOnce(2000)).toBe('done')
+    expect(isCleanupDone()).toBe(true)
+    expect(mocks.calls).toEqual([
+      'abortPull', 'stopAll', 'cleanup', 'stopBackupScheduler', 'stopTaskScheduler', 'killAllTerminals', 'close'
+    ])
+    const n = mocks.calls.length
+    expect(await runCleanupOnce(2000)).toBe('done')
+    expect(mocks.calls.length).toBe(n)
+  })
+
+  it('stopAll 永不应答 ⇒ 超时返回 timeout，退出流程不被清理链钉住', async () => {
+    vi.resetModules()
+    mocks.reset()
+    mocks.stopAllHang = true
+    const mod = await import('../src/main/quit-manager')
+    expect(await mod.runCleanupOnce(30)).toBe('timeout')
+    expect(mod.isCleanupDone()).toBe(false)
+    expect(mocks.calls).toContain('stopAll')
   })
 })

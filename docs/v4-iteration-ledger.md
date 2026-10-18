@@ -66,6 +66,15 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-197 退出链的守卫用错标志：`quiting` 只表示"别再弹确认框"，却把清理链整个跳过（MCP 子进程成孤儿）
+
+- **来由**：审计第 ③ 条，我回读源码确认：`index.ts` 的 `before-quit` 第一行是 `if (isQuitting()) return`，而 `requestQuit()`（托盘/菜单「退出墨匣」）与 `beginQuit()`（关窗确认「退出」）**都先置 `quiting = true` 再 `app.quit()`** ⇒ 走到 `before-quit` 时该标志已为真，链直接被跳过；链里唯一 `await mcpManager.stopAll()` 的那一步从不执行，而 `runFallbackCleanup()`（will-quit 兜底）原本不含 stopAll ⇒ MCP stdio 子进程留在后台。
+- **修法**：`quit-manager.ts` 拆出两个标志——`quiting`（弹窗语义，不动）与 `chainStarted`/`chainDone`（链语义），新增 `isCleanupDone()` 与 `runCleanupOnce(timeoutMs = 10s)`；`before-quit` 改为 `if (isCleanupDone()) return` ＋ `void runCleanupOnce().then(() => app.exit(0))`。另外 `runFallbackCleanup()` 也补一次 `void mcpManager.stopAll().catch(...)`（fire-and-forget，兜底路径聊胜于无）。
+- **总时限是刻意的**：链里任何一步挂住（最典型是 `stopAll` 等子进程应答）都不能把退出钉死——那比不清理更糟，用户只会看到"点了退出没反应"。超时按"放行退出"处理，日志写 `清理链超过 10000ms 未完成，按超时放行退出`；返回 `'timeout'` 时 `isCleanupDone()` 仍为 false，但调用方照常 `app.exit(0)`。
+- **用例（`tests/quit-manager.test.ts` 7 ⇒ 11 例）**：跑完整链的顺序 `abortPull → stopAll → cleanup → 两个 scheduler → killAllTerminals → close`、`isCleanupDone()` 置位、第二次 `runCleanupOnce()` 不再跑（`mocks.calls.length` 不变）；**超时用例**用 `vi.resetModules()` 另起一份模块状态，让 `stopAll` 返回永不 settle 的 promise ⇒ `runCleanupOnce(30)` 得 `'timeout'` 且 `isCleanupDone() === false`。兜底那条用例的名字与期望同时改（197 起它**该**试一次 stopAll，原来那句"执行除 stopAll 外的全部步骤"是把缺陷写成了断言）。
+- **没做**：链里各步仍无分别的计时（要看谁慢了一步得加日志）；`app.exit(0)` 与 `will-quit` 的先后仍是 Electron 的既有行为，我没重排。
+- **验证**：typecheck 0；全量 vitest **328 文件 / 3921 通过 + 1 跳过**；真机那一半（退出后 `Get-CimInstance` 数残留 electron）归用户，见清单 **B105**。
+
 ### V4-Iter-196 失败被咽那一族：safeHandle 把抛错转成**返回值**，四处 `only .catch` 的调用点等于没接失败
 
 - **来由**：审计第 ② 条。`safe-handle.ts:133-135` 的契约是"抛错 ⇒ 解析成 `{ok:false,error}`"，好处是不再有未处理 rejection，代价是**所有只挂 `.catch` 的调用点静默失败**。我回读确认了四处（含审计没点到的 `ChatConfigBar`）。
