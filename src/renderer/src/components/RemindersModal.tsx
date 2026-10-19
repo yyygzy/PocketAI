@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastProvider'
-import { reportIpcError } from '../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText } from '../utils/ipc'
+import { LoadFailNotice } from './LoadFailNotice'
 import { errText } from '../utils/error'
 import { repeatRuleLabel } from '../../../shared/reminder-rule'
 import type { ReminderRecord, ReminderRepeatRule, ReminderStatus } from '../../../shared/types'
@@ -71,6 +72,8 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
   const toast = useToast()
   const [tab, setTab] = useState<Tab>('pending')
   const [items, setItems] = useState<ReminderRecord[] | null>(null)
+  // §222 同一口径：读不到就明说，别把列表长期挂在「加载中…」上
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   // 弹窗有两种模式：pending 行编辑（update）与终态行改期（reschedule，把行拉回 pending）
   const [editing, setEditing] = useState<{
@@ -80,11 +83,19 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
 
   const reload = useCallback(async (scope: Tab) => {
     try {
-      setItems(await window.pocketai.listReminders(scope))
+      // §223：`setItems(await listReminders())` 把失败对象直接写进列表 state ⇒
+      // 下面 `items.length === 0` 为假、`items.map` 当场 TypeError（提醒中心整个打不开）。
+      // §222 那个面在这里正好用上：读不到就明说读不到，别顶着「加载中…」
+      const list = await window.pocketai.listReminders(scope)
+      if (hasIpcFailed(list)) {
+        setLoadErr(ipcFailText(list, t('common.unknownError')))
+        return
+      }
+      setItems(list)
     } catch (e) {
       reportIpcError('reminder.list')(e)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     setItems(null)
@@ -174,7 +185,11 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
 
         <div className="p-3 overflow-y-auto flex-1">
           {items === null ? (
-            <p className="text-xs text-[var(--color-text-muted)] py-6 text-center">{t('common.loading')}</p>
+            loadErr ? (
+              <LoadFailNotice msg={loadErr} />
+            ) : (
+              <p className="text-xs text-[var(--color-text-muted)] py-6 text-center">{t('common.loading')}</p>
+            )
           ) : items.length === 0 ? (
             <p className="text-xs text-[var(--color-text-muted)] py-6 text-center">
               {t(tab === 'pending' ? 'reminder.center.empty' : 'reminder.center.historyEmpty')}

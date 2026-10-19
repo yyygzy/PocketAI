@@ -180,6 +180,9 @@ export const PopupApp: React.FC = () => {
     setFetchingModels(true)
     try {
       const models = await window.pocketai.fetchModels(providerId)
+      // §223：不判就把失败对象写进 provider.models（V4-Iter-115 那个空盒子形状），
+      // 且 `models.length > 0` 为假 ⇒ 看起来像"这个服务商没有模型"。浮窗内按既有口径保持静默，但不动 state
+      if (hasIpcFailed(models)) return
       setProviders((ps) => ps.map((p) => (p.id === providerId ? { ...p, models } : p)))
       if (models.length > 0) setModel(models[0]!)
     } catch {

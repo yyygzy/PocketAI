@@ -450,7 +450,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     const target = messagesRef.current.find((m) => m.id === id)
     dispatch({ type: 'delete', id })
     if (target?.dbId) {
-      await window.pocketai.deleteMessage(target.dbId).catch(reportIpcError('agent.deleteMessage'))
+      // §223：本地 dispatch 已经把那条从视图里拿掉了，`.catch(reportIpcError)` 又接不到 resolve 的失败
+      // ⇒ "删掉了"而库里还在，重开会话它又回来，且一句 explanation 都没有。失败要说出来（与同文件 failOp 同口径）
+      const r = await window.pocketai.deleteMessage(target.dbId).catch(reportIpcError('agent.deleteMessage'))
+      failOp(r)
     }
   }, [])
 

@@ -343,6 +343,12 @@ const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
     clearSaved()
     try {
       const r = await window.pocketai.setAutoLockTimeout(ms)
+      // §223：`r?.ok` 只问成功面；失败对象上 `ok` 是 false ⇒ 走"什么都不做"，于是"设上了但没落库"
+      // 这一发连一句痕都没有（下面那句 catch 只接真抛错）。按原注释的意图补上留痕
+      if (hasIpcFailed(r)) {
+        logIpcError('settings.setAutoLockTimeout', new Error(ipcFailText(r, t('common.unknownError'))))
+        return
+      }
       if (r?.ok) {
         markSaved(true)
       }

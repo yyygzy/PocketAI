@@ -88,7 +88,15 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   const loadPyRuntimes = useCallback(async () => {
     setPyLoading(true)
     try {
-      setPyRuntimes(await window.pocketai.listPythonRuntimes())
+      const rts = await window.pocketai.listPythonRuntimes()
+      // §223：失败对象写进 pyRuntimes ⇒ 下拉里那些 `r.path`／`r.version` 全是 undefined，
+      // 用户看到的是"一个空名字的可选项"而不是"读不到"。与下面 catch 同口径：留痕＋退回空清单
+      if (hasIpcFailed(rts)) {
+        logIpcError('mcp.listPythonRuntimes', new Error(ipcFailText(rts, t('common.unknownError'))))
+        setPyRuntimes([])
+        return
+      }
+      setPyRuntimes(rts)
     } catch (e) {
       logIpcError('mcp.listPythonRuntimes', e)
       setPyRuntimes([])

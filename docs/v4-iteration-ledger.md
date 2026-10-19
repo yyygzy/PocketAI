@@ -66,6 +66,24 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-223 闸门又拆了两处自己的盲区——顺带发现它一直在把没判的点读成"判过了"
+
+- **来由**：用户「① 提交 221；② 开工 222；③ 把 `.catch(() => {})` 那一族按同法收口」三条整段选中。③ 落到动手时先做了一件更根本的事：**把"同法"要用的两根口径补进闸门**，结果在补的过程中抓到闸门自己的一处假绿。
+- **新档 `value-use`（await 面）**：结果**没绑变量却被当值用**——`setItems(await f())`、`(await f()).mode`、`if (!(await f()))`、`convs ?? (await f())`。以前这一族必然被 `try…catch` 一档放行：await 往上找绑定变量时先撞上 `CallExpression` ⇒ `bound = null` ⇒ 分类只看"有没有包着 catch"。而 catch 接不到 resolve 的失败，于是：`items.map`／`.filter` 当场 TypeError（**提醒中心整个打不开**、Python 运行时下拉塞进空条目、星标面板红一块），`!` 那一形更把**真值的失败对象**读成"开关是开的"（读不到回复通知设置时反倒去发通知）。修法统一成仓库里既有的形状：**先接住、再判**。
+- **链根统一成 `chainRootMethod`**：`await X().catch(h)`（217 起草时只认 `await window.pocketai.X()` 那一种形状 ⇒ **整条不被扫**）与 `const p = window.pocketai.X(); p.then(cb)`（§221 明文写成"这一版不追"的口径边界）。两边都不是抽象缺口——`KbAskPanel.refreshSessions` 与 `KbAskRoam` 就是"绑变量再 `.then(setState)`"的真实实例，`useAgentChat.deleteMessage` 与两处向导／轮询读就是尾链形状。于是补上识别，边界从"不追"改成"追"。
+- **实测到的假绿只有一条**：真值判那条式子写成 `if\s*\(\s*!?name` —**没要求右括号** ⇒ `if (list.length === 0)` 被读成"判了 list"。收紧为 `if (name)`／`if (!name)` 之后当场多逼出 **8 个点**（6 个 await 侧 data-ignored ＋ 2 个 `.then` 侧）。
+  我一度还加了第二处"加固"（判据匹配改跑在**字符串抹白**的文本上，怕 `reportIpcError('chat.listMessages')` 这种日志标签把名为 `list` 的变量顶成"已判"）——**变异 M223c 第一版证明它零效果**：改回读原文本，全量用例仍绿（`\blist\b` 咬不动 `'chat.listThings'`，后面紧跟大写就没有词边界）⇒ 那三处改动全部撤掉。**没有证据的加固不进闸门**：它只会让下一个读代码的人以为这里有过故事。
+- **落点清单（新可见 20 点，改了 19；`KnowledgeModule:631` 本来就判对了）**：
+  崩溃形 4 处 `setX(await …)` ⇒ `RemindersModal:83`、`SnippetButton:51`、`McpForm:91`、`ConversationList:356`（各用该文件已有的那张脸：`LoadFailNotice`／`common.opFailed` toast／`logIpcError`＋退回空清单）；
+  真值读反 1 处 ⇒ `ChatModule:130`（读不到开关时不再发系统通知，与函数上那句"开关关闭/异常一律静默"对齐）；
+  取字段 1 处 ⇒ `secret-consent.ts:9`（B3 的"读不到按不必打扰"口径不变，但 resolve 面现在**留痕**——这条判定决定要不要弹凭据确认，静默错过不可审计）；
+  其余 13 处 data／value 混用或尾链新见 ⇒ `ChatModule:724` 批量导出（原来 TypeError 被 catch 念成"…is not a function"）、`ChatModule:383/556`（后台清理与预算检查，按既有口径只留痕不弹提示）、`OllamaPanel:105`（启动失败原来被咽成"重新读一次"）、`ChannelsPanel:48`（失败对象进 cfgs ⇒ 消费方 `?? 默认值` 拦不住）、`KnowledgeModule:827`、`SettingsModule:345`、`PopupApp:182`（不再把 `{ok:false}` 写进 `provider.models`，即 V4-Iter-115 那个空盒子的上游）、`FirstRunWizard:212/232`（复制内置助手失败时不再拿 `undefined` 当 id 往下写库；顺手启用内置技能读不到就跳过）、`useAgentChat:453`（删一条消息失败从此说话）、`KbAskPanel:82`＋`KbAskRoam:23`（绑变量的 `.then(setState)` 两处）。
+- **行为用例**：新 `tests/ipc-failure-behavior-223.test.tsx` **7 例**——提醒中心（失败 ⇒ 不崩 ＋ 明说「读不到：库被占用」＋「加载中…」不在场；反向 ⇒ 列表就是那一条）、`isUnprotectedMode`（resolve 面 ⇒ 结论仍是"不必打扰"但 `console.warn` 里留痕；反向 ⇒ mode=db 时不留痕）、`deleteMessage`（失败 ⇒ toast 逐字给原因；成功 ⇒ 零提示；真抛错那一面仍由 `.catch` 留痕——**三条并排才看得出这是两条不同的路**）。桩的一处口径：**测 reject 面要用拒绝的 Promise**，同步 `throw` 会绕过 `.catch`，等于用例自己造一条界面上不存在的路。
+- **闸门 30 → 34 例**：`value-use` 一档三根桩（当实参／真值判／取字段）、真值判收紧一根、尾链一根、绑变量 `.then` 两根（含三元）；⑤ 的主判据仍**没有豁免名单**，读数改成 **await 面 278 点（判 232 ＋ 经同文件助手 3 ＋ 只包 catch 43 ＋ 三档不合格 0）**、`.then` 面 123 点全判。
+- **变异 M223a–h 八条全部有牙、按字节复原**：a 拆 `value-use` 档、b 退回宽松真值判、c 拆三元识别、d 拆绑变量识别、e 拆尾链剥除 ⇒ 各红自己那根桩；f／g／h 把三处真实修复改回旧形状 ⇒ 红在对应行为用例。
+- **验证**：typecheck 0；全量 vitest **346 文件 / 4161 通过 + 1 跳过**；`npm run build` ✓（4.20s／82ms／16.97s）。清单新增 **B122（✅ CI；失败面无手动复现路径）**。
+- **未做／未证**：① **16 处 `.catch(() => {})` 咽真抛错那一族还没动**（用户 ③ 的原题；实测它与本轮两档不同族——那 16 处处理的是 reject 面，其中若干处注释已声明"设计上静默"，要逐点判"谁会 reject"再决定，故另起一批）；② `deleteMessage` 失败后视图仍停留在"已删"（要一个 reducer 的 restore 动作才谈得上回滚，本批只保证说出来）；③ 提醒中心之外那几处读失败仍是"停在上一份／首屏就是「加载中…」"，§222 那句未修项对它们还成立（`SettingsModule` 的加密／许可证／更新／划词浮窗四处未接）；④ **无真机复现、只有 CI**——19 点全部要主进程真抛错才可见；⑤ 新增判定辅助函数请沿用闸门认识的那 15 个名字（`failAction`／`failOp`／`logIpcError`／`toast.error`／`setNotice`…），自造新名字会被判成不合格。
+
 ### V4-Iter-222 「读不到」终于有了一句自己的话：四块面板、一个组件、四语一个键——外加三行我自己写的死代码被变异撤掉
 
 - **来由**：用户「① 提交 221；② 开工 222＝给『读不到 vs 还在加载』补一个真提示面；③ 把 `.catch(() => {})` 那一族收口」（整段选中＝三条全接）。本批是 ②。

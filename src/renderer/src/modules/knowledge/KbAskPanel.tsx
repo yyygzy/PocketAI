@@ -79,7 +79,12 @@ const KbAskPanel: React.FC<{
     const p = k
       ? window.pocketai.searchKbAskSessions(kb.id, k)
       : window.pocketai.listKbAskSessions(kb.id)
-    p.then(setSessionList)
+    p
+      .then((r) => {
+        // §223：`p` 是绑到变量的 Promise（217/221 的闸门以前看不见这一形），`.then(setSessionList)`
+        // 会把 `{ok:false}` 写进列表 state ⇒ 「历史（N）」那个数字变空、点进去 `.map` 崩
+        if (!hasIpcFailed(r)) setSessionList(r)
+      })
       .catch(() => {}) // 留痕属增强能力，列表加载失败不打断问答
   }
 

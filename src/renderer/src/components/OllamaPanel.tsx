@@ -103,6 +103,13 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       // 安装成功后自动启动
       setStarting(true)
       const r = await window.pocketai.startOllama()
+      // §223：`if (r.status)` 只看成功字段，失败对象上它是 undefined ⇒ 掉进 else 的 refresh()，
+      // "启动失败"被咽成"重新读一次状态"。先判失败，把原因交给这块面板已有的错误行（setErr）
+      if (hasIpcFailed(r)) {
+        setErr(ipcFailText(r, t('common.unknownError')))
+        refresh()
+        return
+      }
       if (r.status) setStatus(r.status)
       else refresh()
     } catch (e) {

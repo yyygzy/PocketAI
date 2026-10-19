@@ -21,6 +21,20 @@
 //   · 读 `r.data`／`r.list` 不算判据：那正是"把失败当数据"。判据只认失败面字段（`ok`/`error`/`code`/`canceled`/`locked`）
 //     与仓库里那几个判据函数。
 //
+// §223 在这两面上又各收了一档，并修了这根闸门**自己的两处假绿**（方向都是"把没判的点读成判了"）：
+//   · await 面新档 `value-use`：结果没绑变量却被当值用（`setX(await f())`、`(await f()).mode`、
+//     `if (!(await f()))`、`convs ?? (await f())`）——以前绑定失败 ⇒ bound 为 null ⇒ 只看"有没有包 try…catch"，
+//     于是这一族全绿；可 catch 接不到 resolve 的失败，`.map`／`.length` 当场崩，`!` 那一形更把真值的失败对象读成"开启"。
+//   · 链根统一成 `chainRootMethod`：`await X().catch(h)`（以前整条看不见）与 `const p = X(); p.then(cb)`
+//     （§221 明文"不追"，但仓库里有两处真实实例）现在都在口径内。
+//   · 唯一的假绿根因：真值判那条式子 `if\s*\(\s*!?name` **不要求右括号** ⇒ `if (list.length === 0)` 被读成
+//     "判了 list"。收紧成 `if (name)`／`if (!name)` 之后当场多逼出 8 个点（其中 6 个 data-ignored）。
+//     另有一版曾加"字符串抹白"（怕日志标签里的通道名被当成判据），M223c 证明它**零可观测效果**
+//     （`list` 咬不动 `'chat.listThings'`，后面紧跟大写不算词边界）⇒ 撤掉，不留没有证据的加固。
+//   共 20 个点因此进入视野（15 个由两档新判据逼出、5 个由链根识别补上，其中 1 个本来就判对了），当场清完 19 个。
+//   改后读数：await 面 **278 点**（判 232 ＋ 经同文件助手 3 ＋ 只包 catch 43 ＋ 当数据用 0 ＋ 当值用 0 ＋ 裸奔 0）、
+//   `.then` 面 **123 点全部判过**，两面无豁免名单。
+//
 // §221 把同一条闸门扩到 **`.then(...)` 那条面**（`window.pocketai.X(...).then(cb)`，同样只认走 safeHandle 的通道）。
 // 开局量到 121 个点，其中 92 个不合格（52 个 `.then(setX)`、35 个回调里把结果当数据读、5 个回调根本不接结果），
 // 分 28 文件／55 通道，**没有一个落在"设计内 `ok:false`"的那 51 条通道上**（§212 数过的那批），
@@ -102,7 +116,11 @@ export function safeHandleChannels(sources: string[]): Set<string> {
 const JUDGE_FUNCS = ['hasIpcFailed', 'isIpcFail', 'ipcFailText', 'ipcFailureText', 'chatSendFailureText', 'reportIpcError', 'logIpcError', 'errText', 'failOp', 'failAction', 'unwrapIpc', 'toast.error', 'setNotice', 'setError', 'setErr']
 const esc = (s: string): string => s.replace(/[$()*+.?[\\\]^{|}]/g, '\\$&')
 const JUDGE_ALT = JUDGE_FUNCS.map(esc).join('|')
-/** 只认失败面字段；`x.data` 这种"当数据用"绝不算判过 */
+/**
+ * 只认失败面字段；`x.data` 这种"当数据用"绝不算判过。
+ * §223 收紧了真值判那一式：`if\s*\(\s*!?name` 不要求右括号 ⇒ `if (list.length === 0)` 会被读成"判了 list"，
+ * 这是本闸门唯一一处**实测到的假绿**（收紧后当场多逼出 8 个点）。改成 `if (name)`／`if (!name)` 才算。
+ */
 const judgeFor = (name: string): RegExp =>
   new RegExp(
     [
@@ -110,7 +128,7 @@ const judgeFor = (name: string): RegExp =>
       `\\b${esc(name)}\\.ok\\b`,
       `'ok'\\s+in\\s*${esc(name)}\\b`,
       `\\b${esc(name)}\\.(?:error|code|canceled|locked)\\b`,
-      `if\\s*\\(\\s*!?${esc(name)}\\b`,
+      `if\\s*\\(\\s*!?${esc(name)}\\s*\\)`,
       `\\b${esc(name)}\\s*(&&|\\?\\?|===|!==)`,
     ].join('|'),
   )
@@ -118,7 +136,7 @@ const judgeFor = (name: string): RegExp =>
 const isFnNode = (n: ts.Node): boolean =>
   ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)
 
-export type SiteKind = 'judged' | 'judged-via-helper' | 'try-catch' | 'data-ignored' | 'naked'
+export type SiteKind = 'judged' | 'judged-via-helper' | 'try-catch' | 'data-ignored' | 'value-use' | 'naked'
 export interface Site {
   rel: string
   line: number
@@ -128,6 +146,7 @@ export interface Site {
   kind: SiteKind
   via?: string
   dataUse?: string
+  valueUse?: string
 }
 
 /** 一个文件里的 await 点分类（渲染层与内联桩共用这一份逻辑，桩才有资格说"扫描器有牙"） */
@@ -167,10 +186,9 @@ export function classifySource(rel: string, rawSrc: string, methods: Map<string,
   const out: Site[] = []
   walk(ast, (n) => {
     if (!ts.isAwaitExpression(n) || !ts.isCallExpression(n.expression)) return
-    const pa = n.expression.expression
-    if (!ts.isPropertyAccessExpression(pa)) return
-    if (!ts.isPropertyAccessExpression(pa.expression) || pa.expression.name.text !== 'pocketai') return
-    const method = pa.name.text
+    // §223：`await X().catch(h)` 这类尾链以前整条看不见（只认 `await window.pocketai.X()` 那一种形状）
+    const method = chainRootMethod(n.expression)
+    if (!method) return
     const chan = methods.get(method)
     if (!chan || !safeChans.has(chan)) return
     const fn = ancestor(n, isFnNode)
@@ -219,12 +237,54 @@ export function classifySource(rel: string, rawSrc: string, methods: Map<string,
       }
       scan(fn)
     }
+    // §223 那一档：结果**没绑变量却被当值用**——`setX(await f())`、`(await f()).mode`、`if (!(await f()))`、
+    // `a ?? (await f())`。这一族以前被 `try…catch` 一档放行（绑定失败 ⇒ bound 为 null ⇒ 只看包不包着），
+    // 但 catch 接不到 resolve 的失败，界面照样把 `{ok:false}` 当数据读：`.map`／`.length` 当场崩，
+    // 或者（`!` 那一形）因为失败对象是**真值**而走错分支。修法只有一种：先接住再判（§215 起仓库里统一的那个形状）。
+    let valueUse: string | null = null
+    if (bound === null) {
+      let up2: ts.Node = n
+      while (up2 && up2 !== fn) {
+        const d = parents.get(up2)
+        if (!d) break
+        if (ts.isCallExpression(d)) {
+          // `(await f())(x)` 是把结果当函数用；`hasIpcFailed(await f())` 这类判据函数算看见失败
+          const calleeName = ts.isPropertyAccessExpression(d.expression) ? d.expression.name.text : ts.isIdentifier(d.expression) ? d.expression.text : ''
+          if (d.expression !== up2 && !JUDGE_FUNCS.includes(calleeName)) valueUse = `${calleeName || '调用'}(… await …) 作为实参`
+          break
+        }
+        if (ts.isPropertyAccessExpression(d) || ts.isElementAccessExpression(d)) {
+          valueUse = ts.isPropertyAccessExpression(d) ? `取字段 .${d.name.text}` : '按下标取'
+          break
+        }
+        if (ts.isReturnStatement(d)) { valueUse = '被 return'; break }
+        if (ts.isBinaryExpression(d)) { valueUse = `参与运算（${d.operatorToken.getText(ast).trim()}）`; break }
+        if (ts.isConditionalExpression(d) || ts.isTemplateExpression(d) || ts.isArrayLiteralExpression(d) || ts.isObjectLiteralExpression(d) || ts.isSpreadElement(d) || ts.isShorthandPropertyAssignment(d)) {
+          valueUse = '被写进结构／三元'
+          break
+        }
+        if (ts.isPrefixUnaryExpression(d) && d.operator === ts.SyntaxKind.ExclamationToken) { valueUse = '只按真值判（失败对象是真值）'; up2 = d; continue }
+        if (ts.isIfStatement(d) || ts.isWhileStatement(d) || ts.isDoStatement(d)) { valueUse = '只按真值判（失败对象是真值）'; break }
+        if (ts.isExpressionStatement(d) || ts.isVariableDeclaration(d)) break // 语句级 fire-and-forget／已在上面绑过
+        up2 = d
+      }
+    }
     // ts.TryStatement 没有 block 属性（block 只是 children）⇒ 认"TryStatement 的 Block 子节点且不是 finallyBlock"
     const tryBlock = fn ? ancestor(n, (p) => ts.isBlock(p) && !!p.parent && ts.isTryStatement(p.parent) && p.parent.finallyBlock !== p) : null
     const caught = !!(tryBlock && tryBlock.parent && (tryBlock.parent as ts.TryStatement).catchClause)
     const line = ast.getLineAndCharacterOfPosition(n.getStart(ast)).line + 1
-    const kind: SiteKind = judgedDirect ? 'judged' : via ? 'judged-via-helper' : dataUse ? 'data-ignored' : caught ? 'try-catch' : 'naked'
-    out.push({ rel, line, method, chan, bound, kind, via: via ?? undefined, dataUse: dataUse ?? undefined })
+    const kind: SiteKind = judgedDirect
+      ? 'judged'
+      : via
+        ? 'judged-via-helper'
+        : dataUse
+          ? 'data-ignored'
+          : valueUse
+            ? 'value-use'
+            : caught
+              ? 'try-catch'
+              : 'naked'
+    out.push({ rel, line, method, chan, bound, kind, via: via ?? undefined, dataUse: dataUse ?? undefined, valueUse: valueUse ?? undefined })
   })
   return out
 }
@@ -241,26 +301,34 @@ export interface ThenSite {
   detail?: string
 }
 
-/** `.then`／`.catch`／`.finally` 往下剥，直到落到真正的 `window.pocketai.X(...)`；只回方法名（链根的通道才是判据对象） */
-function thenChainRoot(call: ts.CallExpression, parents: Map<ts.Node, ts.Node>): string | null {
-  const head = call.expression
-  if (!ts.isPropertyAccessExpression(head)) return null
-  let node: ts.Node = head.expression
-  while (ts.isCallExpression(node)) {
-    const callee = node.expression
+/**
+ * §223：链根解析——从一条 `.then`／`.catch`／`.finally` 链的**接收者**往下剥，回到真正的
+ * `window.pocketai.X(...)`。两面共用这一份，因为盲区是同一个：
+ * `await window.pocketai.X().catch(h)`（217 起草时只认 `pa.expression` 正好是 `window.pocketai` 的形状）
+ * 以前**整条不被看见**，`const p = window.pocketai.X(); p.then(cb)` 同样看不见。
+ */
+function chainRootMethod(node: ts.Node | undefined): string | null {
+  let cur: ts.Node | undefined = node
+  while (cur && ts.isCallExpression(cur)) {
+    const callee = cur.expression
     if (!ts.isPropertyAccessExpression(callee)) return null
     const nm = callee.name.text
     if (nm === 'then' || nm === 'catch' || nm === 'finally') {
-      node = callee.expression
+      cur = callee.expression
       continue
     }
     const recv = callee.expression
     if (ts.isPropertyAccessExpression(recv) && recv.name.text === 'pocketai') return nm
     return null
   }
-  // 也可能是 `const p = window.pocketai.foo()` 之后 `p.then(...)`——这一版**不**跟（口径见 ④ 的最后一根桩）
-  void parents
   return null
+}
+
+/** `.then`／`.catch`／`.finally` 往下剥，直到落到真正的 `window.pocketai.X(...)`；只回方法名（链根的通道才是判据对象） */
+function thenChainRoot(call: ts.CallExpression): string | null {
+  const head = call.expression
+  if (!ts.isPropertyAccessExpression(head)) return null
+  return chainRootMethod(head.expression)
 }
 
 /**
@@ -293,12 +361,31 @@ export function classifyThenSource(rel: string, rawSrc: string, methods: Map<str
     if (ts.isFunctionDeclaration(n) && n.name) register(n.name.text, n)
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && isFnNode(n.initializer)) register(n.name.text, n.initializer)
   })
+  // §223：把"先绑到变量、再链"的 Promise 也认出来（`const p = k ? window.pocketai.a() : window.pocketai.b()`
+  // 之后 `p.then(setX)`）——221 当时把这条写成"不追"的口径边界，仓库里其实有真实实例（KbAsk 两处）
+  const promiseBinds = new Map<string, string>()
+  const methodsIn = (node: ts.Node | undefined): string[] => {
+    if (!node) return []
+    const one = chainRootMethod(node)
+    if (one) return [one]
+    if (ts.isConditionalExpression(node)) return [...methodsIn(node.whenTrue), ...methodsIn(node.whenFalse)]
+    if (ts.isParenthesizedExpression(node)) return methodsIn(node.expression)
+    return []
+  }
+  walk(ast, (n) => {
+    if (!ts.isVariableDeclaration(n) || !ts.isIdentifier(n.name) || !n.initializer) return
+    const ms = methodsIn(n.initializer)
+    if (ms.length) promiseBinds.set(n.name.text, ms[0]!)
+  })
 
   const out: ThenSite[] = []
   walk(ast, (n) => {
     if (!ts.isCallExpression(n) || !ts.isPropertyAccessExpression(n.expression)) return
     if (n.expression.name.text !== 'then') return
-    const method = thenChainRoot(n, parents)
+    const method = thenChainRoot(n) ?? (() => {
+      const head = n.expression
+      return ts.isPropertyAccessExpression(head) && ts.isIdentifier(head.expression) ? promiseBinds.get(head.expression.text) ?? null : null
+    })()
     if (!method) return
     const chan = methods.get(method)
     if (!chan || !safeChans.has(chan)) return
@@ -343,8 +430,8 @@ const METHODS = preloadMethods(read('src/preload/index.ts'))
 const SAFE = safeHandleChannels(filesIn('src/main').map(read))
 const RENDERER = filesIn('src/renderer/src')
 const SITES = RENDERER.flatMap((rel) => classifySource(rel, read(rel), METHODS, SAFE))
-/** 不合格的两档：什么都没接（naked），以及包在 catch 里却把结果当数据用（data-ignored） */
-const unsafe = SITES.filter((s) => s.kind === 'naked' || s.kind === 'data-ignored')
+/** 不合格的三档：什么都没接（naked）、包在 catch 里却把结果当数据用（data-ignored）、结果没绑变量却被当值用（value-use） */
+const unsafe = SITES.filter((s) => s.kind === 'naked' || s.kind === 'data-ignored' || s.kind === 'value-use')
 const THEN_SITES = RENDERER.flatMap((rel) => classifyThenSource(rel, read(rel), METHODS, SAFE))
 /** `.then` 面不合格的三档（这一面没有"被 try 包着算合格"这一说） */
 const thenUnsafe = THEN_SITES.filter((s) => s.kind === 'fn-handoff' || s.kind === 'data-ignored' || s.kind === 'dropped')
@@ -446,12 +533,39 @@ describe('② 分类器自己要有牙：五种形状的内联桩', () => {
     expect(run('  await window.pocketai.bar()')).toEqual([])
     expect(classifySource('z.ts', 'export const f = async () => { await somethingElse.foo() }', M, S)).toEqual([])
   })
+  it('§223 新档：结果没绑变量却被当值用 ⇒ value-use（这类点以前被 try…catch 一档放行）', () => {
+    const [asArg] = run('  try {\n    setItems(await window.pocketai.foo())\n  } catch (e) {\n    reportIpcError(e)\n  }\n')
+    expect(asArg!.kind).toBe('value-use')
+    expect(asArg!.valueUse).toContain('作为实参')
+    const [negated] = run('  if (!(await window.pocketai.foo())) return')
+    expect(negated!.kind).toBe('value-use')
+    expect(negated!.valueUse).toContain('真值判')
+    const [field] = run('  const n = (await window.pocketai.foo()).items\n  setX(n)')
+    expect(field!.kind).toBe('value-use')
+    expect(field!.valueUse).toBe('取字段 .items')
+  })
+  it('§223 控制项：日志标签里的通道名不算判据（判据式子要的词边界咬不动「chat.listThings」这种串）', () => {
+    const [s] = run('  const list = await window.pocketai.foo()\n  logIpcError(\'chat.listThings\', e)\n  setX(list.items)\n')
+    expect(s!.kind).toBe('data-ignored')
+  })
+  it('§223 假绿修复②：真值判要求整个条件就是那个变量（`if (list.length === 0)` 不是"判了 list"）', () => {
+    const [s] = run('  const list = await window.pocketai.foo()\n  if (list.length === 0) return\n  setX(list)\n')
+    expect(s!.kind).toBe('data-ignored')
+  })
+  it('§223：`await X().catch(h)` 这条尾链现在看得见（以前整条不被扫到）', () => {
+    const [s] = run('  const list = await window.pocketai.foo().catch(() => null)\n  setX(list.items)\n')
+    expect(s!.method).toBe('foo')
+    expect(s!.kind).toBe('data-ignored')
+    // 结果没被当值用（纯 fire-and-forget）时仍按 try…catch 口径放行
+    const [ok] = run('  try {\n    await window.pocketai.foo().catch(reportIpcError(\'x\'))\n  } catch (e) {\n    reportIpcError(e)\n  }\n')
+    expect(ok!.kind).toBe('try-catch')
+  })
 })
 
-describe('③ 主判据：既没判也没包围 catch、以及"catch 里把结果当数据用"，两档都必须为 0', () => {
+describe('③ 主判据：既没判也没包围 catch、"catch 里把结果当数据用"、"结果被当值用却没判"，三档都必须为 0', () => {
   it('每个 await safeHandle 通道的点要么判了失败面，要么只是被 try…catch 包着且没把结果当数据用', () => {
-    const list = unsafe.map((s) => `${s.rel}:${s.line} ${s.method}（${s.kind === 'naked' ? '什么都没接' : `当数据用：${s.dataUse}`}）`)
-    expect(list, `这些点的失败既不被判、又被当成数据读：\n${list.join('\n')}`).toEqual([])
+    const list = unsafe.map((s) => `${s.rel}:${s.line} ${s.method}（${s.kind === 'naked' ? '什么都没接' : s.kind === 'value-use' ? `当值用：${s.valueUse}` : `当数据用：${s.dataUse}`}）`)
+    expect(list, `这些点的失败既不被判、又被当成数据／值读：\n${list.join('\n')}`).toEqual([])
   })
 })
 
@@ -529,9 +643,14 @@ describe('④ `.then` 面的分类器同样要有牙：§221 那三处口径差�
     expect(s!.method).toBe('foo')
     expect(s!.kind).toBe('data-ignored')
   })
-  it('不走 safeHandle 的通道不归本闸门管；`const p = foo(); p.then(setX)` 这一版不追（口径边界，写明白而不是留成暗坑）', () => {
+  it('不走 safeHandle 的通道不归本闸门管；`const p = foo(); p.then(setX)` 现在也追（§221 写成"不追"，§223 因仓库里有真实实例补上）', () => {
     expect(run('  window.pocketai.bar().then(setX)')).toEqual([])
-    expect(run('  const p = window.pocketai.foo()\n  p.then(setX)')).toEqual([])
+    const [bound] = run('  const p = window.pocketai.foo()\n  p.then(setX)')
+    expect(bound!.kind).toBe('fn-handoff')
+    expect(bound!.method).toBe('foo')
+    // 三元两支各自一条通道：认第一支（两支都走 safeHandle 时判据形状是同一份）
+    const [cond] = run('  const p = k ? window.pocketai.foo() : window.pocketai.foo()\n  p.then((v) => setX(v.items))')
+    expect(cond!.kind).toBe('data-ignored')
   })
 })
 

@@ -825,6 +825,12 @@ export const KbDetail: React.FC<{
     setBusy(true)
     try {
       const r = await window.pocketai.checkKbUpdates(kb.id)
+      // §223：不判就 `r.issues.filter(...)` ⇒ 失败对象上 issues 是 undefined，TypeError 被 catch 念成
+      // 「…is not a function」而不是真原因（这颗按钮是用户主动点的，必须说人话）
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       const changed = r.issues.filter((i) => i.kind === 'changed')
       const missing = r.issues.filter((i) => i.kind === 'missing')
       if (r.issues.length === 0) {

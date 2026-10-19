@@ -353,7 +353,15 @@ export const ConversationList: React.FC<Props> = ({
   const loadStarred = async () => {
     setStarredLoading(true)
     try {
-      setStarredItems(await window.pocketai.listStarredMessages(200))
+      const starred = await window.pocketai.listStarredMessages(200)
+      // §223：失败对象写进 starredItems ⇒ 星标面板那句 `starredItems.map` 当场 TypeError（面板整块红）；
+      // 与下面 catch 同口径：留痕＋退回空清单
+      if (hasIpcFailed(starred)) {
+        logIpcError('chat.listStarredMessages', new Error(ipcFailText(starred, t('common.unknownError'))))
+        setStarredItems([])
+        return
+      }
+      setStarredItems(starred)
     } catch (e) {
       logIpcError('chat.listStarredMessages', e)
       setStarredItems([])

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastProvider'
 import { errText } from '../utils/error'
+import { hasIpcFailed, ipcFailText } from '../utils/ipc'
 import { applyTemplateVars, extractTemplateVars } from '../utils/snippet-template'
 import type { PromptSnippetRecord } from '../../../shared/types'
 
@@ -48,7 +49,14 @@ export const SnippetButton: React.FC<Props> = ({ onInsert, disabled }) => {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      setSnippets(await window.pocketai.listPromptSnippets())
+      const list = await window.pocketai.listPromptSnippets()
+      // §223：`setSnippets(await …)` 把失败对象写进列表 state ⇒ 菜单重建时那句 `.map`／`.filter` 当场崩；
+      // 这一发是用户点按钮拉起的，按旁边那个 catch 的同一口径说出来并保持原列表
+      if (hasIpcFailed(list)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(list, t('common.unknownError')) }))
+        return
+      }
+      setSnippets(list)
     } catch (e) {
       toast.error(t('common.opFailed', { msg: errText(e) }))
     } finally {

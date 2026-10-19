@@ -210,6 +210,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         let target = assistant
         if (assistant.isBuiltin) {
           target = await window.pocketai.duplicateAssistant(assistant.id)
+          // §223：不判就把失败对象当助手用 ⇒ `target.id` 是 undefined，向导后面几步
+          // （saveAssistant／setAssistantPinned）拿着假 id 写库，助手列表还被塞进一条 `{ok:false}`
+          if (hasIpcFailed(target)) throw new Error(ipcFailText(target, t('common.unknownError')))
           effectiveAssistantId = target.id
           setSelectedAssistantId(target.id)
           // 把副本加入本地列表，供后续摘要展示
@@ -230,7 +233,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
 
       // 4. 自动启用前 3 个内置 skill（轻量，让新用户开箱有技能）
       const skills = await window.pocketai.listSkills().catch(() => [])
-      const builtinSkills = skills.filter((s) => s.isBuiltin).slice(0, 3)
+      // §223：`listSkills()` 回 `{ok:false}` 时（`.catch` 只接得住真 reject），`skills.filter` 当场 TypeError
+      // ⇒ 被下面那个 catch 念成"…is not a function"。这一步只是"顺手启用内置技能"，读不到就跳过，不打断首启
+      const builtinSkills = hasIpcFailed(skills) ? [] : skills.filter((s) => s.isBuiltin).slice(0, 3)
       for (const sk of builtinSkills) {
         if (!sk.enabled) {
           await window.pocketai.saveSkill({ ...sk, enabled: true })

@@ -18,7 +18,7 @@ import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError, type IpcFailureInput } from '../../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcError, type IpcFailureInput } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
@@ -127,7 +127,10 @@ export const ChatModule: React.FC = () => {
       if (!document.hidden && document.hasFocus()) return
       void (async () => {
         try {
-          if (!(await window.pocketai.getReplyNotifyEnabled())) return
+          // §223：`!(await getReplyNotifyEnabled())` 挡不住失败——失败对象 `{ok:false}` 是**真值**，
+          // 于是"读不到开关"反倒去发通知，正好违反上面那句"开关关闭/异常一律静默"。先判失败再判值
+          const enabled = await window.pocketai.getReplyNotifyEnabled()
+          if (hasIpcFailed(enabled) || !enabled) return
           const conv = conversations.find((c) => c.id === convId)
           const asst = assistants.find((a) => a.id === (conv?.assistantId ?? currentAssistantId))
           const title = asst?.name || 'PocketAI'
@@ -383,6 +386,12 @@ export const ChatModule: React.FC = () => {
     window.pocketai
       .deleteConversationIfEmpty(id)
       .then((r) => {
+        // §223：`if (!r.deleted)` 只看成功字段，失败时它会掉进"没删"那一支什么都不说——这是切会话时的
+        // 后台清理，按既有口径不弹提示，但失败要留痕（旁边那个 .catch 就是这个待遇）
+        if (hasIpcFailed(r)) {
+          logIpcError('chat.deleteConversationIfEmpty', new Error(ipcFailText(r, t('common.unknownError'))))
+          return
+        }
         if (!r.deleted) return
         setConversations((prev) => prev.filter((c) => c.id !== id))
         setArchivedConversations((prev) => prev.filter((c) => c.id !== id))
@@ -554,6 +563,12 @@ export const ChatModule: React.FC = () => {
   // 用量预算启动提醒：今日/本月估算费用超预算时提示（进入聊天模块时检查一次）
   useEffect(() => {
     window.pocketai.getUsageBudget().then((b) => {
+      // §223：失败对象上 b.daily 是 undefined ⇒ 两道比较自己为假 ⇒ 既不提醒也不说读不到；
+      // 这里按"预算检查不打断聊天"的既有口径留痕即可
+      if (hasIpcFailed(b)) {
+        logIpcError('chat.getUsageBudget', new Error(ipcFailText(b, t('common.unknownError'))))
+        return
+      }
       if (b.daily !== null && b.daily > 0 && b.todayCost > b.daily) {
         toast.warning(t('usage.budgetExceeded', { scope: t('usage.budgetDaily') }))
       } else if (b.monthly !== null && b.monthly > 0 && b.monthCost > b.monthly) {
@@ -722,6 +737,12 @@ export const ChatModule: React.FC = () => {
     batchBusyRef.current = true
     try {
       const list = convs ?? (await window.pocketai.listConversations(assistantIdRef.current, false))
+      // §223：没走多选分支时 list 就是这条通道的返回值；失败对象上 `list.length` 是 undefined ⇒
+      // 不等于 0 ⇒ 继续往下拿 `.map` 当场 TypeError，被 catch 念成一句"…is not a function"而不是原因
+      if (!convs && hasIpcFailed(list)) {
+        toast.error(t('chat.exportFail', { e: ipcFailText(list, t('common.unknownError')) }))
+        return
+      }
       if (list.length === 0) {
         toast.info(t('chat.exportBatchEmpty'))
         return

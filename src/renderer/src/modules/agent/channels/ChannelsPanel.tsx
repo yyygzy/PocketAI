@@ -45,7 +45,14 @@ export const ChannelsPanel: React.FC = () => {
     const next: Partial<Record<ChannelType, ChannelConfig>> = {}
     for (const type of CHANNEL_TYPES) {
       try {
-        next[type] = await window.pocketai.getChannelConfig(type)
+        const c = await window.pocketai.getChannelConfig(type)
+        // §223：不判就把 `{ok:false}` 塞进 cfgs ⇒ 消费方那句 `cfgs[activeType] ?? 默认值` 拦不住（它是真值），
+        // 于是开关面板读的是失败对象的字段。跳过这一条，让它退回默认值，并把原因留痕
+        if (hasIpcFailed(c)) {
+          logIpcError(`channels.getConfig:${type}`, new Error(ipcFailText(c, t('common.unknownError'))))
+          continue
+        }
+        next[type] = c
       } catch (e) {
         logIpcError(`channels.getConfig:${type}`, e)
       }
