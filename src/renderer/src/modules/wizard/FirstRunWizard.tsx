@@ -74,11 +74,12 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     window.pocketai
       .getHardwareInfo(false)
       .then((hw) => {
+        if (hasIpcFailed(hw)) return
         setHardware(hw)
         setIsPortable(hw.disk.removable)
       })
       .catch(reportIpcError('wizard.getHardwareInfo'))
-    window.pocketai.getEncryptionStatus().then(setEncStatus).catch(reportIpcError('wizard.getEncryptionStatus'))
+    window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEncStatus(v) }).catch(reportIpcError('wizard.getEncryptionStatus'))
     // 模型推荐含一次 Ollama 端口探测，较轻，后台加载
     window.pocketai
       .recommendModels()
@@ -88,8 +89,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       .catch(reportIpcError('wizard.recommendModels'))
 
     // 加载已有 provider + assistant（向导 Step 1 用）
-    window.pocketai.listProviders().then(setProviders).catch(reportIpcError('wizard.listProviders'))
+    window.pocketai.listProviders().then((v) => { if (!hasIpcFailed(v)) setProviders(v) }).catch(reportIpcError('wizard.listProviders'))
     window.pocketai.listAssistants().then((list) => {
+      if (hasIpcFailed(list)) return
       setAssistants(list)
       // 默认选中第一个内置助手
       const firstBuiltin = list.find((a) => a.isBuiltin)

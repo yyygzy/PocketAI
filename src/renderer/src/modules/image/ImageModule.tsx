@@ -17,7 +17,7 @@ import { IMAGE_SIZES } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
-import { reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
 import { useConfirm } from '../../components/ConfirmDialog'
 
 const MAX_PROMPT_CHARS = 4000
@@ -83,11 +83,12 @@ export const ImageModule: React.FC = () => {
   // ---------- 初始加载 ----------
   useEffect(() => {
     window.pocketai.listProviders().then((list) => {
+      if (hasIpcFailed(list)) return
       setProviders(list)
       const first = list.find((p) => p.enabled)
       if (first) setProviderId(first.id)
     }).catch(reportIpcError('image.listProviders'))
-    window.pocketai.listImages().then(setGallery).catch(reportIpcError('image.listImages'))
+    window.pocketai.listImages().then((v) => { if (!hasIpcFailed(v)) setGallery(v) }).catch(reportIpcError('image.listImages'))
     return () => {
       // 离开模块时中止进行中的生成；卸载路径上的失败无感知必要，静默
       if (runningRef.current && requestIdRef.current) {
@@ -181,7 +182,7 @@ export const ImageModule: React.FC = () => {
           }
         })
         .catch(reportIpcError('image.getLatestFile'))
-      window.pocketai.listImages().then(setGallery).catch(reportIpcError('image.refreshGallery'))
+      window.pocketai.listImages().then((v) => { if (!hasIpcFailed(v)) setGallery(v) }).catch(reportIpcError('image.refreshGallery'))
     } else if (res.aborted) {
       flash(false, t('image.aborted'))
     } else {

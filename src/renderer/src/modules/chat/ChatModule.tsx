@@ -107,11 +107,11 @@ export const ChatModule: React.FC = () => {
   }, [])
 
   const loadMessages = useCallback((convId: string) => {
-    return window.pocketai.listMessages(convId).then(setMessages).catch(reportIpcError('chat.listMessages'))
+    return window.pocketai.listMessages(convId).then((v) => { if (!hasIpcFailed(v)) setMessages(v) }).catch(reportIpcError('chat.listMessages'))
   }, [])
 
   const reloadAssistants = useCallback(() => {
-    return window.pocketai.listAssistants().then(setAssistants).catch(reportIpcError('chat.listAssistants'))
+    return window.pocketai.listAssistants().then((v) => { if (!hasIpcFailed(v)) setAssistants(v) }).catch(reportIpcError('chat.listAssistants'))
   }, [])
 
   // 流式会话收口：6 个流式 ref + liveColumns + focusBranch + 事件订阅全部内聚于 hook
@@ -193,11 +193,16 @@ export const ChatModule: React.FC = () => {
   // 初始加载（assistants/conversations）；流式事件订阅已移入 useStreamSession
   useEffect(() => {
     window.pocketai.listAssistants().then((list) => {
-      setAssistants(list)
-      const def = list.find((a) => a.id === 'asst-default') ?? list[0]
-      if (def) {
-        assistantIdRef.current = def.id
-        setCurrentAssistantId(def.id)
+      // §221：这里不能整条早退——尾巴那句「清扫空壳会话 → reloadConversations」是会话列表唯一的入口，
+      // 助手清单读失败时它照样得跑，所以只把"当数据用"的那半圈进判据里
+      if (hasIpcFailed(list)) toast.error(ipcFailText(list, t('common.unknownError')))
+      else {
+        setAssistants(list)
+        const def = list.find((a) => a.id === 'asst-default') ?? list[0]
+        if (def) {
+          assistantIdRef.current = def.id
+          setCurrentAssistantId(def.id)
+        }
       }
       // 先清扫历史版本/崩溃前遗留的空壳会话，再拉列表自动选中（清扫失败不阻断加载）
       window.pocketai
@@ -262,6 +267,7 @@ export const ChatModule: React.FC = () => {
 
       // 回退：最后一条 assistant 消息的 provider/model（异步，需防覆盖）
       window.pocketai.listMessages(conv.id).then((msgs) => {
+        if (hasIpcFailed(msgs)) return
         for (let i = msgs.length - 1; i >= 0; i--) {
           const m = msgs[i]
           if (!m) continue
@@ -280,7 +286,10 @@ export const ChatModule: React.FC = () => {
     const has = text.trim().length > 0
     window.pocketai
       .setConversationDraft(convId, has ? text : '')
-      .then(() => {
+      .then((r) => {
+        // §221：草稿是后台自动落的，失败不弹提示（每敲一句就重试会刷屏），但**列表上的 📝 是"已存"的凭据**，
+        // 没存成就不许点亮——所以本地补丁要判过才跑
+        if (hasIpcFailed(r)) return
         // 本地同步列表标记，避免等下次 reload
         const patch = (list: ConversationRecord[]) =>
           list.some((c) => c.id === convId && !!c.hasDraft !== has)
@@ -334,7 +343,7 @@ export const ChatModule: React.FC = () => {
     draftTextRef.current = ''
     window.pocketai
       .getConversationDraft(currentConvId)
-      .then((d) => { if (!cancelled) { setActiveDraft(d); draftTextRef.current = d } })
+      .then((d) => { if (hasIpcFailed(d)) return; if (!cancelled) { setActiveDraft(d); draftTextRef.current = d } })
       .catch((e) => { if (!cancelled) reportIpcError('chat.getConversationDraft')(e) })
     return () => { cancelled = true }
   }, [currentConvId])

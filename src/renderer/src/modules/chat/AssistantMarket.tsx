@@ -28,7 +28,7 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
   const [view, setView] = useState<View>(initialDetailId ? { mode: 'detail', id: initialDetailId } : { mode: 'grid' })
   const { notice: toast, show: flash } = useTransientNotice<string>(2000)
 
-  const load = () => window.pocketai.listAssistants().then(setAssistants).catch(reportIpcError('assistantMarket.list'))
+  const load = () => window.pocketai.listAssistants().then((v) => { if (!hasIpcFailed(v)) setAssistants(v) }).catch(reportIpcError('assistantMarket.list'))
   useEffect(() => {
     load()
   }, [])

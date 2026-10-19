@@ -4,7 +4,7 @@
 import React, { useState } from 'react'
 import type { AssistantRecord, KnowledgeBase, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { ipcFailText, isIpcFail, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, isIpcFail, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useToast } from '../../components/ToastProvider'
 
@@ -26,9 +26,9 @@ export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }
   const toggleSection = async (s: Exclude<Section, null>) => {
     setSection((prev) => (prev === s ? null : s))
     if (s === 'skills' && skills === null) {
-      window.pocketai.listSkills().then(setSkills).catch(reportIpcError('chatConfig.listSkills'))
+      window.pocketai.listSkills().then((v) => { if (!hasIpcFailed(v)) setSkills(v) }).catch(reportIpcError('chatConfig.listSkills'))
     } else if (s === 'kb' && kbs === null) {
-      window.pocketai.listKnowledgeBases().then(setKbs).catch(reportIpcError('chatConfig.listKnowledgeBases'))
+      window.pocketai.listKnowledgeBases().then((v) => { if (!hasIpcFailed(v)) setKbs(v) }).catch(reportIpcError('chatConfig.listKnowledgeBases'))
     }
   }
 

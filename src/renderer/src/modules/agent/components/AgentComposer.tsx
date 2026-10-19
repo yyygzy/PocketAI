@@ -16,6 +16,7 @@ import {
 import { getMentionQuery, filterMentionKbs } from '../../../utils/mention'
 import { extractTemplateVars } from '../../../utils/snippet-template'
 import type { KnowledgeBase, PromptSnippetRecord } from '../../../../../shared/types'
+import { hasIpcFailed } from '../../../utils/ipc'
 
 interface Props {
   running: boolean
@@ -99,7 +100,10 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
       kbsRef.current = [] // 占位防并发重复拉取
       window.pocketai.listKnowledgeBases()
         .then((list) => {
-          kbsRef.current = list
+          // §221：失败不能把 `{ok:false}` 写进 ref（读它的那句 `.map` 崩）。
+          // 也**不能**清回 null——这根 effect 的依赖 `mentionInfo` 是每次渲染新建的对象，
+          // 清 null 就变成"每次渲染重拉一趟"（真挂载用例里量到过：输入框卡死在转圈）
+          if (!hasIpcFailed(list)) kbsRef.current = list
         })
         .catch(() => {})
     }
@@ -115,7 +119,8 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
     if (trigger && snippetsRef.current === null) {
       window.pocketai.listPromptSnippets()
         .then((list) => {
-          snippetsRef.current = list
+          // §221：失败不写进 ref（读它的那句 `.map` 崩）；ref 保持 null ⇒ 下次进触发态自己会重拉
+          if (!hasIpcFailed(list)) snippetsRef.current = list
           setSnippetsReady((n) => n + 1)
         })
         .catch(() => {})

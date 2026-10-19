@@ -19,6 +19,15 @@ const EXPORT_LIMIT = 10000
 export const UsagePanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
+  /**
+   * §221：`.then(...)` 面上的失败是 resolve 出来的 `{ok:false}`——写进 state 就是"把失败对象当数据"，
+   * 读它的那句解构／`.map` 当场崩。这里沿用闸门认识的 `failAction` 形状：说出来，并交回"这次没读到"。
+   */
+  const failAction = (r: unknown): boolean => {
+    if (!hasIpcFailed(r)) return false
+    toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+    return true
+  }
   const [days, setDays] = useState<number>(30)
   const [summary, setSummary] = useState<UsageSummary | null>(null)
   const [convUsage, setConvUsage] = useState<UsageConversationItem[]>([])
@@ -75,9 +84,10 @@ export const UsagePanel: React.FC = () => {
   const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
 
   const load = useCallback((d: number) => {
-    window.pocketai.getUsageSummary(d).then(setSummary).catch(reportIpcError('usage.get'))
-    window.pocketai.getUsageConversations(d, 20).then(setConvUsage).catch(reportIpcError('usage.conversations'))
-    window.pocketai.getUsageAssistants(d, 10).then(setAsstUsage).catch(reportIpcError('usage.assistants'))
+    window.pocketai.getUsageSummary(d).then((r) => { if (!failAction(r)) setSummary(r) }).catch(reportIpcError('usage.get'))
+    window.pocketai.getUsageConversations(d, 20).then((r) => { if (!failAction(r)) setConvUsage(r) }).catch(reportIpcError('usage.conversations'))
+    window.pocketai.getUsageAssistants(d, 10).then((r) => { if (!failAction(r)) setAsstUsage(r) }).catch(reportIpcError('usage.assistants'))
+    // deps 与文件里 openDetail 那两条同口径（toast/t 只用于报错，不必进依赖）
   }, [])
 
   useEffect(() => {
@@ -85,11 +95,11 @@ export const UsagePanel: React.FC = () => {
   }, [load, days])
 
   useEffect(() => {
-    window.pocketai.getUsagePricing().then(setPricing).catch(reportIpcError('usage.pricingGet'))
+    window.pocketai.getUsagePricing().then((r) => { if (!failAction(r)) setPricing(r) }).catch(reportIpcError('usage.pricingGet'))
   }, [])
 
   useEffect(() => {
-    window.pocketai.getUsageBudget().then(setBudget).catch(reportIpcError('usage.budgetGet'))
+    window.pocketai.getUsageBudget().then((r) => { if (!failAction(r)) setBudget(r) }).catch(reportIpcError('usage.budgetGet'))
   }, [])
 
   /** 保存预算：空=不限制（存 null）；非法数字拦截 */
@@ -628,7 +638,8 @@ const PriceEditor: React.FC<{
 
   useEffect(() => {
     window.pocketai.listUsageModels()
-      .then(setModels)
+      // §221：失败对象写进 models ⇒ 下面 `models ?? []` 拦不住（它是真值），priceKey(...)／rows 那圈按数组用就崩
+      .then((r) => { if (hasIpcFailed(r)) onError(new Error(ipcFailText(r, t('common.unknownError')))); else setModels(r) })
       .catch((e) => onError(e))
   }, [onError])
 

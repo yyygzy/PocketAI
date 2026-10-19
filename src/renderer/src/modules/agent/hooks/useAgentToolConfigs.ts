@@ -27,10 +27,10 @@ export function useAgentToolConfigs() {
   const [wsKeyDraft, setWsKeyDraft] = useState('')
 
   useEffect(() => {
-    window.pocketai.getAgentWorkspaceDir().then(setWorkspaceDir).catch(reportIpcError('agent.getWorkspaceDir'))
-    window.pocketai.getShellConfig().then(setShellConfigState).catch(reportIpcError('agent.getShellConfig'))
-    window.pocketai.getWebSearchConfig().then(setWsConfigState).catch(reportIpcError('agent.getWebSearchConfig'))
-    window.pocketai.getCalendarConfig().then(setCalConfigState).catch(reportIpcError('agent.getCalendarConfig'))
+    window.pocketai.getAgentWorkspaceDir().then((v) => { if (!hasIpcFailed(v)) setWorkspaceDir(v) }).catch(reportIpcError('agent.getWorkspaceDir'))
+    window.pocketai.getShellConfig().then((v) => { if (!hasIpcFailed(v)) setShellConfigState(v) }).catch(reportIpcError('agent.getShellConfig'))
+    window.pocketai.getWebSearchConfig().then((v) => { if (!hasIpcFailed(v)) setWsConfigState(v) }).catch(reportIpcError('agent.getWebSearchConfig'))
+    window.pocketai.getCalendarConfig().then((v) => { if (!hasIpcFailed(v)) setCalConfigState(v) }).catch(reportIpcError('agent.getCalendarConfig'))
   }, [])
 
   const pickWorkspace = async () => {

@@ -34,8 +34,8 @@ export const ChannelsPanel: React.FC = () => {
 
   useEffect(() => {
     void loadAllConfigs()
-    window.pocketai.listProviders().then((ps) => setProviders(ps.filter((p) => p.enabled))).catch(reportIpcError('channels.listProviders'))
-    window.pocketai.listAssistants().then(setAssistants).catch(reportIpcError('channels.listAssistants'))
+    window.pocketai.listProviders().then((ps) => { if (!hasIpcFailed(ps)) setProviders(ps.filter((p) => p.enabled)) }).catch(reportIpcError('channels.listProviders'))
+    window.pocketai.listAssistants().then((v) => { if (!hasIpcFailed(v)) setAssistants(v) }).catch(reportIpcError('channels.listAssistants'))
     return window.pocketai.onChannelStatus((evt) =>
       setStatuses((prev) => ({ ...prev, [evt.type]: evt }))
     )

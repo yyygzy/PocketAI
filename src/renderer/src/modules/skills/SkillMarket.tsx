@@ -48,7 +48,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
 
   const flash = useCallback((ok: boolean, text: string) => showToast({ ok, text }), [showToast])
 
-  const load = useCallback(() => window.pocketai.listSkills().then(setSkills).catch(reportIpcError('skills.list')), [])
+  const load = useCallback(() => window.pocketai.listSkills().then((v) => { if (!hasIpcFailed(v)) setSkills(v) }).catch(reportIpcError('skills.list')), [])
 
   const fetchRemote = useCallback(
     async (url: string) => {

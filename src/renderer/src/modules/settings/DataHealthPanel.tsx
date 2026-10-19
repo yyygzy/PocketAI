@@ -33,7 +33,15 @@ export const DataHealthPanel: React.FC = () => {
 
   /** @param refresh 只有面板那颗「刷新」按钮会传 true：连浏览器缓存那一格也重算（V4-Iter-177） */
   const load = useCallback((refresh = false) => {
-    window.pocketai.getDataHealth(refresh).then(setReport).catch(reportIpcError('dataHealth.get'))
+    // §221：失败对象写进 report ⇒ 下面那句 `if (!report)` 拦不住，紧跟着解构 report.sizes 当场崩。
+    // 判过之后停在上一份报告（首次就是「加载中…」），原因由这句 toast 说
+    window.pocketai
+      .getDataHealth(refresh)
+      .then((r) => {
+        if (failAction(r)) return
+        setReport(r)
+      })
+      .catch(reportIpcError('dataHealth.get'))
   }, [])
 
   useEffect(() => {

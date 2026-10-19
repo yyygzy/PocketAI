@@ -2,7 +2,7 @@
 // 点击动作携带文本唤起浮窗单例并自动执行。输入框/可编辑区内划词不弹（属编辑行为）。
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
-import { reportIpcError } from '../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../utils/ipc'
 import type { SelectionAction } from '../../../shared/types'
 import {
   SELECTION_ACTIONS,
@@ -61,7 +61,7 @@ export const SelectionToolbar: React.FC = () => {
   const refreshEnabled = useCallback(() => {
     window.pocketai
       .getPopupConfig()
-      .then((cfg) => setEnabled(cfg.selectionEnabled))
+      .then((cfg) => { if (!hasIpcFailed(cfg)) setEnabled(cfg.selectionEnabled) })
       .catch(() => setEnabled(false))
   }, [])
   useEffect(() => {

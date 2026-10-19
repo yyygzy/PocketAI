@@ -14,7 +14,7 @@ import type {
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
-import { ipcFailureText, isIpcFail, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailureText, isIpcFail, reportIpcError } from '../../utils/ipc'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
 
@@ -113,6 +113,7 @@ export const TranslateModule: React.FC = () => {
   // ---------- 初始加载 ----------
   useEffect(() => {
     window.pocketai.listProviders().then((list) => {
+      if (hasIpcFailed(list)) return
       setProviders(list)
       const first = list.find((p) => p.enabled)
       if (first) {
@@ -120,8 +121,8 @@ export const TranslateModule: React.FC = () => {
         if (first.models[0]) setModel(first.models[0])
       }
     }).catch(reportIpcError('translate.listProviders'))
-    window.pocketai.listTranslations().then(setHistory).catch(reportIpcError('translate.listTranslations'))
-    window.pocketai.listGlossary().then(setGlossary).catch(reportIpcError('translate.listGlossary'))
+    window.pocketai.listTranslations().then((v) => { if (!hasIpcFailed(v)) setHistory(v) }).catch(reportIpcError('translate.listTranslations'))
+    window.pocketai.listGlossary().then((v) => { if (!hasIpcFailed(v)) setGlossary(v) }).catch(reportIpcError('translate.listGlossary'))
   }, [])
 
   // ---------- 流式增量订阅（rAF 合批） ----------
@@ -152,7 +153,7 @@ export const TranslateModule: React.FC = () => {
   }, [])
 
   const reloadHistory = useCallback(() => {
-    window.pocketai.listTranslations().then(setHistory).catch(reportIpcError('translate.reloadHistory'))
+    window.pocketai.listTranslations().then((v) => { if (!hasIpcFailed(v)) setHistory(v) }).catch(reportIpcError('translate.reloadHistory'))
   }, [])
 
   // ---------- 发起翻译 ----------

@@ -20,6 +20,7 @@ import type {
   ProviderRecord
 } from '../../../../shared/types'
 import { errText } from '../../utils/error'
+import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
 
 const PROVIDER_KEY = 'kbask.providerId'
 const modelKey = (p: string) => `kbask.model.${p}`
@@ -103,15 +104,22 @@ const KbAskPanel: React.FC<{
   }, [kb.id])
 
   useEffect(() => {
-    window.pocketai.getKbAskRetention().then(setRetention).catch(() => {})
+    window.pocketai.getKbAskRetention().then((v) => { if (!hasIpcFailed(v)) setRetention(v) }).catch(() => {})
   }, [])
 
   /** 保存保留策略：切换即生效，下次保存会话时顺手清理 */
   const saveRetention = (next: KbAskRetention) => {
+    const prev = retention
     setRetention(next)
     window.pocketai
       .setKbAskRetention(next)
-      .then(() => {
+      .then((r) => {
+        // §221：开关已经本地拨过去了，失败不判就是"界面说已保存、库里没变"（196 那一族的同形）
+        if (hasIpcFailed(r)) {
+          setRetention(prev)
+          toast.error(ipcFailText(r, t('common.unknownError')))
+          return
+        }
         toast.success(t('kb.askRetentionSaved'))
         refreshSessions()
       })
@@ -124,6 +132,7 @@ const KbAskPanel: React.FC<{
     window.pocketai
       .listProviders()
       .then((ps) => {
+        if (hasIpcFailed(ps)) return
         if (!alive) return
         const enabled = ps.filter((p) => p.enabled)
         setProviders(enabled)
@@ -173,7 +182,11 @@ const KbAskPanel: React.FC<{
         createdAt: createdAt || Date.now(),
         updatedAt: Date.now()
       })
-      .then(() => refreshSessions())
+      .then((r) => {
+        // §221：留痕失败仍按上面那句注释保持静默（不打断问答），但不能替它确认"存好了"——不刷新历史清单
+        if (hasIpcFailed(r)) return
+        refreshSessions()
+      })
       .catch(() => {})
   }
   // 经 ref 转发：一次性挂载的流式订阅闭包始终调用最新实现（拿到最新 provider/model/sessionId）
@@ -324,7 +337,12 @@ const KbAskPanel: React.FC<{
   const removeSession = (id: string) => {
     window.pocketai
       .deleteKbAskSession(id)
-      .then(() => {
+      .then((r) => {
+        // §221：删除是用户点的那一下——失败要说话，而且不能刷新／回新对话态（那等于替他确认「已删除」）
+        if (hasIpcFailed(r)) {
+          toast.error(ipcFailText(r, t('common.unknownError')))
+          return
+        }
         refreshSessions()
         if (id === sessionId) startNewSession()
       })
@@ -344,7 +362,14 @@ const KbAskPanel: React.FC<{
     if (!title) return
     window.pocketai
       .renameKbAskSession(id, title)
-      .then(() => refreshSessions())
+      .then((r) => {
+        // §221：失败要说话——不判就什么也不发生，用户以为标题改上了
+        if (hasIpcFailed(r)) {
+          toast.error(ipcFailText(r, t('common.unknownError')))
+          return
+        }
+        refreshSessions()
+      })
       .catch((e) => toast.error(errText(e)))
   }
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
-import { logIpcError, reportIpcError } from '../utils/ipc'
+import { hasIpcFailed, logIpcError, reportIpcError } from '../utils/ipc'
 import { ThemeLangControls } from './ThemeLangControls'
 import { useToast } from './ToastProvider'
 import { useAppStore } from '../store/app-store'
@@ -64,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const refresh = () => {
       window.pocketai
         .listReminders()
-        .then((list) => setPendingReminders(list.length))
+        .then((list) => { if (!hasIpcFailed(list)) setPendingReminders(list.length) })
         .catch(reportIpcError('sidebar.listReminders'))
     }
     refresh()

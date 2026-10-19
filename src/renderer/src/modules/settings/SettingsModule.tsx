@@ -74,7 +74,7 @@ const ConversationSettingsPanel: React.FC = () => {
   const [enabled, setEnabled] = useState<boolean | null>(null)
 
   useEffect(() => {
-    window.pocketai.getSmartTitleEnabled().then(setEnabled).catch(reportIpcError('settings.getSmartTitle'))
+    window.pocketai.getSmartTitleEnabled().then((v) => { if (!hasIpcFailed(v)) setEnabled(v) }).catch(reportIpcError('settings.getSmartTitle'))
   }, [])
 
   const toggle = async () => {
@@ -126,22 +126,22 @@ export const SettingsModule: React.FC = () => {
   const [updateStatus, setUpdateStatus] = useState<UpdateEvent>({ status: 'idle' })
 
   useEffect(() => {
-    window.pocketai.getPaths().then(setPaths).catch(reportIpcError('settings.getPaths'))
-    window.pocketai.getEncryptionStatus().then(setEnc).catch(reportIpcError('settings.getEncryptionStatus'))
-    window.pocketai.getLicenseStatus().then(setLic).catch(reportIpcError('settings.getLicenseStatus'))
-    window.pocketai.getUpdateInfo().then(setUpdateInfo).catch(reportIpcError('settings.getUpdateInfo'))
+    window.pocketai.getPaths().then((v) => { if (!hasIpcFailed(v)) setPaths(v) }).catch(reportIpcError('settings.getPaths'))
+    window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEnc(v) }).catch(reportIpcError('settings.getEncryptionStatus'))
+    window.pocketai.getLicenseStatus().then((v) => { if (!hasIpcFailed(v)) setLic(v) }).catch(reportIpcError('settings.getLicenseStatus'))
+    window.pocketai.getUpdateInfo().then((v) => { if (!hasIpcFailed(v)) setUpdateInfo(v) }).catch(reportIpcError('settings.getUpdateInfo'))
     // 监听主进程推送的更新状态事件
     const unsub = window.pocketai.onUpdateEvent((data) => {
       setUpdateStatus(data)
     })
     // 锁屏遮罩不卸载本模块：解锁后 masterPasswordVerified 会变化，需重新拉取
     const offLock = window.pocketai.onLockStateChange(() => {
-      window.pocketai.getEncryptionStatus().then(setEnc).catch(reportIpcError('settings.onUnlock.getEncryptionStatus'))
+      window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEnc(v) }).catch(reportIpcError('settings.onUnlock.getEncryptionStatus'))
     })
     return () => { unsub(); offLock() }
   }, [])
 
-  const refreshEnc = () => window.pocketai.getEncryptionStatus().then(setEnc).catch(reportIpcError('settings.refreshEnc'))
+  const refreshEnc = () => window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEnc(v) }).catch(reportIpcError('settings.refreshEnc'))
 
   return (
     <div className="flex flex-col h-full">
@@ -217,7 +217,7 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
-          <LicensePanel lic={lic} onChange={() => window.pocketai.getLicenseStatus().then(setLic).catch(reportIpcError('license.refreshStatus'))} />
+          <LicensePanel lic={lic} onChange={() => window.pocketai.getLicenseStatus().then((v) => { if (!hasIpcFailed(v)) setLic(v) }).catch(reportIpcError('license.refreshStatus'))} />
         </div>
       </div>
 
@@ -331,7 +331,7 @@ const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
   useEffect(() => {
     window.pocketai
       .getLockStatus()
-      .then((s) => setValue(s.autoLockTimeout ?? 0))
+      .then((s) => { if (!hasIpcFailed(s)) setValue(s.autoLockTimeout ?? 0) })
       .catch(() => setValue(0))
   }, [])
 
@@ -619,7 +619,7 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
   const [busy, setBusy] = useState(false)
   const [shownCode, setShownCode] = useState('')
 
-  const refresh = useCallback(() => window.pocketai.hasRecoveryKey().then(setHasKey).catch(reportIpcError('settings.hasRecoveryKey')), [])
+  const refresh = useCallback(() => window.pocketai.hasRecoveryKey().then((v) => { if (!hasIpcFailed(v)) setHasKey(v) }).catch(reportIpcError('settings.hasRecoveryKey')), [])
   useEffect(() => {
     void refresh()
   }, [refresh])
@@ -730,7 +730,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
         setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
       }
     }).catch(reportIpcError('settings.loadWebDAVConfig'))
-    window.pocketai.getBackupSchedule().then(setSchedule).catch(reportIpcError('settings.refreshSchedule')).catch(reportIpcError('settings.getBackupSchedule'))
+    window.pocketai.getBackupSchedule().then((v) => { if (!hasIpcFailed(v)) setSchedule(v) }).catch(reportIpcError('settings.refreshSchedule')).catch(reportIpcError('settings.getBackupSchedule'))
   }, [])
 
   const intervalLabel = (h: number): string => {
@@ -797,7 +797,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     if (r.ok === false) { showNotice(false, t('bk.uploadFail', { e: r.error ?? t('common.unknownError') })); return }
     showNotice(true, t('bk.uploaded', { name: r.filename ?? '' }))
     await refreshList()
-    window.pocketai.getBackupSchedule().then(setSchedule).catch(reportIpcError('settings.refreshSchedule'))
+    window.pocketai.getBackupSchedule().then((v) => { if (!hasIpcFailed(v)) setSchedule(v) }).catch(reportIpcError('settings.refreshSchedule'))
   }
 
   async function doIncrementalUpload() {
@@ -817,7 +817,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       })
     )
     await refreshList()
-    window.pocketai.getBackupSchedule().then(setSchedule).catch(reportIpcError('settings.refreshSchedule'))
+    window.pocketai.getBackupSchedule().then((v) => { if (!hasIpcFailed(v)) setSchedule(v) }).catch(reportIpcError('settings.refreshSchedule'))
   }
 
   const refreshList = useCallback(async () => {
@@ -1396,7 +1396,7 @@ const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }
   const [offlineOpen, setOfflineOpen] = useState(false)
 
   useEffect(() => {
-    window.pocketai.getLicenseFingerprint().then(setFingerprint).catch((e) => {
+    window.pocketai.getLicenseFingerprint().then((v) => { if (!hasIpcFailed(v)) setFingerprint(v) }).catch((e) => {
       logIpcError('license.getFingerprint', e)
       setFingerprint(null)
     })
@@ -1651,7 +1651,7 @@ const PopupPanel: React.FC = () => {
 
   useEffect(() => {
     // 失败时降级为「全关 + 空快捷键」，避免 cfg 永远 null 导致面板卡 loading
-    window.pocketai.getPopupConfig().then(setCfg).catch((e) => {
+    window.pocketai.getPopupConfig().then((v) => { if (!hasIpcFailed(v)) setCfg(v) }).catch((e) => {
       logIpcError('settings.getPopupConfig', e)
       setCfg({ quickEnabled: false, selectionEnabled: false, quickAccelerator: '', selectionAccelerator: '' })
     })
@@ -1838,7 +1838,13 @@ const NetworkPanel: React.FC = () => {
 
   useEffect(() => {
     window.pocketai.getProxyUrl()
-      .then((v) => { setProxyUrl(v); setLoaded(true) })
+      .then((v) => {
+        // §221：两个半边都要——把失败对象填进输入框是谎报，整条早退又会让面板永远停在「加载中」
+        //（下面那个 .catch 本来就是"记一句然后照样 loaded"）
+        if (hasIpcFailed(v)) logIpcError('settings.getProxyUrl', new Error(ipcFailText(v, t('common.unknownError'))))
+        else setProxyUrl(v)
+        setLoaded(true)
+      })
       .catch((e) => {
         logIpcError('settings.getProxyUrl', e)
         setLoaded(true)
@@ -1930,6 +1936,7 @@ export const AppearancePanel: React.FC = () => {
       setLoaded(true)
     })
     window.pocketai.getWindowBehavior().then((r) => {
+      if (hasIpcFailed(r)) return
       setLaunchAtLogin(r.launchAtLogin)
       setCloseToTray(r.closeToTray)
     }).catch((e) => logIpcError('settings.getWindowBehavior', e))

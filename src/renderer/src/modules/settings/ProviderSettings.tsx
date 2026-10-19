@@ -53,7 +53,7 @@ export const ProviderSettings: React.FC = () => {
   const [caps, setCaps] = useState<Record<string, DelegateCapabilityView>>({})
   const [probingKey, setProbingKey] = useState('')
 
-  const load = useCallback(() => window.pocketai.listProviders().then(setProviders).catch(reportIpcError('providerSettings.list')), [])
+  const load = useCallback(() => window.pocketai.listProviders().then((v) => { if (!hasIpcFailed(v)) setProviders(v) }).catch(reportIpcError('providerSettings.list')), [])
   useEffect(() => {
     load()
   }, [load])
@@ -62,7 +62,7 @@ export const ProviderSettings: React.FC = () => {
     () =>
       window.pocketai
         .listDelegateCapabilities()
-        .then((list) => setCaps(Object.fromEntries(list.map((e) => [e.key, e]))))
+        .then((list) => { if (!hasIpcFailed(list)) setCaps(Object.fromEntries(list.map((e) => [e.key, e]))) })
         .catch(reportIpcError('providerSettings.listDelegateCaps')),
     []
   )

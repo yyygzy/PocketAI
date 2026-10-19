@@ -87,6 +87,7 @@ export const PopupApp: React.FC = () => {
   // ─── 初始化：Provider / 助手 / payload ────────────────────────────
   useEffect(() => {
     window.pocketai.listProviders().then((ps) => {
+      if (hasIpcFailed(ps)) return
       const enabled = ps.filter((p) => p.enabled)
       setProviders(enabled)
       setProviderId((cur) => {
@@ -95,9 +96,10 @@ export const PopupApp: React.FC = () => {
       })
     }).catch(reportIpcError('popup.listProviders'))
     window.pocketai.listAssistants().then((as_) => {
+      if (hasIpcFailed(as_)) return
       setAssistant(as_.find((a) => a.isBuiltin && /通用问答/.test(a.name)) ?? as_[0] ?? null)
     }).catch(reportIpcError('popup.listAssistants'))
-    void window.pocketai.getPopupPayload().then(applyPayload).catch(reportIpcError('popup.getPayload'))
+    void window.pocketai.getPopupPayload().then((v) => { if (!hasIpcFailed(v)) applyPayload(v) }).catch(reportIpcError('popup.getPayload'))
     const unsub = window.pocketai.onPopupPayload(applyPayload)
     return unsub
   }, [applyPayload])

@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { Notice } from './ProviderSettings'
-import { reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 
 export const UserMemoryPanel: React.FC = () => {
@@ -20,7 +20,7 @@ export const UserMemoryPanel: React.FC = () => {
   const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(2500)
 
   const refresh = useCallback(() => {
-    window.pocketai.listMemories().then(setItems).catch(reportIpcError('memory.list'))
+    window.pocketai.listMemories().then((v) => { if (!hasIpcFailed(v)) setItems(v) }).catch(reportIpcError('memory.list'))
   }, [])
 
   useEffect(() => {

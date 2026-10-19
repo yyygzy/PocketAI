@@ -35,7 +35,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const refresh = useCallback(() => {
-    window.pocketai.getOllamaStatus().then(setStatus).catch(reportIpcError('ollama.getStatus'))
+    window.pocketai.getOllamaStatus().then((v) => { if (!hasIpcFailed(v)) setStatus(v) }).catch(reportIpcError('ollama.getStatus'))
   }, [])
 
   // 模型拉取（进度事件/中止/成功刷新）与管家推荐卡片共用同一 hook

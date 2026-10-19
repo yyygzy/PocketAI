@@ -16,6 +16,7 @@ import { hasUsableModel } from '../../utils/provider-pick'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
 import { exportConversationAsPng } from '../../utils/export-image'
 import { rangeBetween, mergeRange } from '../../utils/message-select'
+import { hasIpcFailed } from '../../utils/ipc'
 
 interface Turn {
   user: MessageRecord | null
@@ -218,7 +219,7 @@ export const ChatView: React.FC<Props> = ({
   /** 本机单价配置：气泡 token 微展示命中单价时附带估算费用；拉取失败静默只显示 token */
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
   useEffect(() => {
-    window.pocketai.getUsagePricing().then(setPricing).catch(() => {})
+    window.pocketai.getUsagePricing().then((v) => { if (!hasIpcFailed(v)) setPricing(v) }).catch(() => {})
   }, [])
 
   // 分支聚焦：重新生成/编辑重发完成后自动切到新分支

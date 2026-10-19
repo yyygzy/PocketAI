@@ -82,7 +82,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   useEffect(() => {
     void window.pocketai
       .getAgentTextProtocol()
-      .then((list) => setTextProtocolModels(Array.isArray(list) ? list : []))
+      .then((list) => { if (!hasIpcFailed(list)) setTextProtocolModels(Array.isArray(list) ? list : []) })
       .catch(reportIpcError('agent.getTextProtocol'))
   }, [])
 
@@ -96,7 +96,15 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       if (!providerId || !model) return
       void window.pocketai
         .setAgentTextProtocol(providerId, model, on)
-        .then((list) => setTextProtocolModels(Array.isArray(list) ? list : []))
+        .then((list) => {
+          // §221：这是用户点的那一下，失败必须说话。原来那句 `Array.isArray(list) ? list : []`
+          // 会把 `{ok:false}` 咽成空清单 ⇒ 按钮自己变回「文本协议」，看起来像"关掉了"
+          if (hasIpcFailed(list)) {
+            toast.error(ipcFailText(list, t('agent.unknownError')))
+            return
+          }
+          setTextProtocolModels(Array.isArray(list) ? list : [])
+        })
         .catch(reportIpcError('agent.setTextProtocol'))
     },
     [providerId, model]
@@ -126,6 +134,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       void window.pocketai
         .listMessages(id)
         .then((msgs) => {
+          if (hasIpcFailed(msgs)) return
           for (let k = msgs.length - 1; k >= 0; k--) {
             const m = msgs[k]
             if (!m) continue
@@ -163,6 +172,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     void window.pocketai
       .getUiPrefs()
       .then((p) => {
+        if (hasIpcFailed(p)) return
         if (cancelled) return
         const a = typeof p?.data?.agentAssistantId === 'string' ? p.data.agentAssistantId : ''
         const c = typeof p?.data?.agentConversationId === 'string' ? p.data.agentConversationId : ''
@@ -277,15 +287,18 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       return
     }
     void window.pocketai.listMessages(conversationId).then((dbMsgs: MessageRecord[]) => {
+      if (hasIpcFailed(dbMsgs)) return
       dispatch({ type: 'load', messages: toAgentMessages(dbMsgs) })
     }).catch(reportIpcError('agent.listMessages'))
     // 恢复该会话最近一次运行统计（trace 持久化，刷新/切回仍可见）；
     // 快速切会话时用 ref 丢弃迟到响应，避免旧会话统计覆盖当前会话
     void window.pocketai.getLatestRunStats(conversationId).then((stats) => {
+      if (hasIpcFailed(stats)) return
       if (conversationIdRef.current === conversationId) setRunStats(stats)
     }).catch(reportIpcError('agent.getLatestRunStats'))
     // 加载会话累计统计（跨全部运行聚合）
     void window.pocketai.getSessionStats(conversationId).then((stats) => {
+      if (hasIpcFailed(stats)) return
       if (conversationIdRef.current === conversationId) setSessionStats(stats)
     }).catch(reportIpcError('agent.getSessionStats'))
   }, [conversationId])
@@ -339,6 +352,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           }
           // 运行结束后刷新会话累计统计（本次运行已入库）
           void window.pocketai.getSessionStats(e.conversationId).then((stats) => {
+            if (hasIpcFailed(stats)) return
             if (conversationIdRef.current === e.conversationId) setSessionStats(stats)
           }).catch(reportIpcError('agent.getSessionStats'))
         }
@@ -461,8 +475,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     if (!convId) return
     setTracesLoading(true)
     void window.pocketai.getLatestRunTraces(convId).then((traces) => {
+      // §221：失败只跳过"写数据"这一半，setTracesLoading(false) 照跑（与下面那个 .catch 同形）；
+      // 整条早退会把统计条永久卡在加载态
       if (conversationIdRef.current === convId) {
-        setLatestTraces(traces)
+        if (!hasIpcFailed(traces)) setLatestTraces(traces)
         setTracesLoading(false)
       }
     }).catch((e) => {

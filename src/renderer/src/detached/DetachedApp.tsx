@@ -6,7 +6,7 @@ import { SelectionToolbar } from '../components/SelectionToolbar'
 import { LockOverlay } from '../components/LockOverlay'
 import type { ModuleId } from '../components/Sidebar'
 import { useI18n } from '../i18n'
-import { reportIpcError } from '../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../utils/ipc'
 import { matchAppShortcut, filterShortcutForContext, type ConversationShortcutAction } from '../utils/shortcuts'
 import { APP_SHORTCUT_EVENT, type AppShortcutEventDetail } from '../hooks/useGlobalShortcuts'
 
@@ -35,8 +35,8 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
 
   // 锁屏状态与主窗口联动（锁屏事件广播到所有窗口）
   useEffect(() => {
-    window.pocketai.getEncryptionStatus().then((s) => setDbEncrypted(s.dbEncrypted)).catch(reportIpcError('detached.getEncryptionStatus'))
-    window.pocketai.getLockStatus().then((s) => setLocked(s.state === 'locked')).catch(reportIpcError('detached.getLockStatus'))
+    window.pocketai.getEncryptionStatus().then((s) => { if (!hasIpcFailed(s)) setDbEncrypted(s.dbEncrypted) }).catch(reportIpcError('detached.getEncryptionStatus'))
+    window.pocketai.getLockStatus().then((s) => { if (!hasIpcFailed(s)) setLocked(s.state === 'locked') }).catch(reportIpcError('detached.getLockStatus'))
     return window.pocketai.onLockStateChange((e) => {
       setLocked(e.state === 'locked')
       setLockPwd('')

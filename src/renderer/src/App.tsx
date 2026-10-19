@@ -12,7 +12,7 @@ import { RemindersModal } from './components/RemindersModal'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
-import { reportIpcError } from './utils/ipc'
+import { hasIpcFailed, reportIpcError } from './utils/ipc'
 import { startLongTaskObserver } from './utils/longtask'
 import { useAppStore } from './store/app-store'
 
@@ -60,8 +60,8 @@ export default function App() {
 
   // 隐私锁：监听状态变化
   useEffect(() => {
-    window.pocketai.getEncryptionStatus().then((s) => setDbEncrypted(s.dbEncrypted)).catch(reportIpcError('app.getEncryptionStatus'))
-    window.pocketai.getLockStatus().then((s) => setLocked(s.state === 'locked')).catch(reportIpcError('app.getLockStatus'))
+    window.pocketai.getEncryptionStatus().then((s) => { if (!hasIpcFailed(s)) setDbEncrypted(s.dbEncrypted) }).catch(reportIpcError('app.getEncryptionStatus'))
+    window.pocketai.getLockStatus().then((s) => { if (!hasIpcFailed(s)) setLocked(s.state === 'locked') }).catch(reportIpcError('app.getLockStatus'))
     const off = window.pocketai.onLockStateChange((e) => {
       setLocked(e.state === 'locked')
       setLockPwd('')

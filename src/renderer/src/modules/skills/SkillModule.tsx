@@ -272,7 +272,7 @@ const SkillForm: React.FC<{
 
   // 加载模板列表（后台刷新，失败仅记诊断日志，保持空列表不影响 UI）
   useEffect(() => {
-    window.pocketai.getSkillTemplates().then(setTemplates).catch(reportIpcError('skills.getTemplates'))
+    window.pocketai.getSkillTemplates().then((v) => { if (!hasIpcFailed(v)) setTemplates(v) }).catch(reportIpcError('skills.getTemplates'))
   }, [])
 
   // 实时校验（防抖 500ms）

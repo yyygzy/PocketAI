@@ -33,7 +33,7 @@ export const KnowledgeModule: React.FC = () => {
   /** 跨库漫游跳转目标会话 id（KbDetail 消费后清空） */
   const [askJumpId, setAskJumpId] = useState<string | null>(null)
 
-  const load = useCallback(() => window.pocketai.listKnowledgeBases().then(setKbs).catch(reportIpcError('kb.list')), [])
+  const load = useCallback(() => window.pocketai.listKnowledgeBases().then((v) => { if (!hasIpcFailed(v)) setKbs(v) }).catch(reportIpcError('kb.list')), [])
   useEffect(() => {
     load()
   }, [load])
@@ -197,7 +197,7 @@ const KbForm: React.FC<{
   const [error, setError] = useState('')
 
   useEffect(() => {
-    window.pocketai.listProviders().then((ps) => setProviders(ps.filter((p) => p.enabled))).catch(reportIpcError('kb.listProviders'))
+    window.pocketai.listProviders().then((ps) => { if (!hasIpcFailed(ps)) setProviders(ps.filter((p) => p.enabled)) }).catch(reportIpcError('kb.listProviders'))
   }, [])
 
   const selectedProvider = providers.find((p) => p.id === providerId)
@@ -602,7 +602,7 @@ export const KbDetail: React.FC<{
     if (askJumpId) setAskMode(true)
   }, [askJumpId])
 
-  const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id).then(setDocs).catch(reportIpcError('kb.listDocuments')), [kb.id])
+  const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id).then((v) => { if (!hasIpcFailed(v)) setDocs(v) }).catch(reportIpcError('kb.listDocuments')), [kb.id])
   useEffect(() => {
     loadDocs()
     return () => stopPolling()
@@ -1284,7 +1284,7 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: 
   useEffect(() => {
     window.pocketai
       .listKbChunks(doc.id)
-      .then(setChunks)
+      .then((v) => { if (!hasIpcFailed(v)) setChunks(v) })
       .catch(reportIpcError('kb.listChunks'))
       .finally(() => setLoading(false))
   }, [doc.id])
