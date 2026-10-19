@@ -7,7 +7,7 @@
 // 3) 新设口令闸门与主进程同源：9 位本地拦下且**不发 IPC**，10 位才发；
 // 4) 明文模式下填了 Key 点「下一步」不会被送去保存（也就能避免用户看到一条迟到的拒绝），
 //    设完密码即可继续；选本地模型（不需要 Key）则不受影响。
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, calledFns, pocketaiCalls } from './helpers/renderer'
 import { FirstRunWizard } from '../src/renderer/src/modules/wizard/FirstRunWizard'
@@ -354,5 +354,34 @@ describe('151 保存前重新取 provider 清单', () => {
     await waitFor(() => expect(calledFns()).toContain('saveProvider'))
     await screen.findByText(/一切就绪/)
     expect(view.container.querySelector('h1')).toBeTruthy()
+  })
+
+  /**
+   * 上一条的孪生形状，走的是另一条面：safeHandle 把 handler 抛错转成 **resolve 的 `{ok:false}`**，
+   * 于是那条 catch 根本不会进（V4-Iter-219）。改前的形状是把失败对象当清单继续用 ⇒
+   * 下一步 `latest.find` TypeError 被外层 catch 接住 ⇒ 用户停在快速配置步，看到一句看不懂的报错。
+   */
+  it('清单刷新回 {ok:false}（不抛错）⇒ 同样退回挂载那一份并走完，且留下日志', async () => {
+    const warns: string[] = []
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...a) => { warns.push(a.map(String).join(' ')) })
+    let n = 0
+    const view = mount('none', {
+      listProviders: () => {
+        n += 1
+        // 第一次＝挂载时快照（已有这条本地 provider）；第二次＝保存前现取 ⇒ 回失败对象
+        if (n === 1) return [ollama]
+        return { ok: false, error: '库被占用' }
+      }
+    })
+    next()
+    next()
+    fireEvent.click(await screen.findByText(/^Ollama$/))
+    next()
+    await screen.findByText(/一切就绪/)
+    expect(n, '保存前确实又取了一次清单').toBeGreaterThanOrEqual(2)
+    expect(calledFns(), '退回的那一份里有这条 ⇒ 该走 existing 分支而不是发新建载荷').not.toContain('saveProvider')
+    expect(view.container.querySelector('h1'), '完成页那一步要渲染出来（不是停在配置步）').toBeTruthy()
+    spy.mockRestore()
+    expect(warns.some((w) => w.includes('wizard.listProviders.refresh') && w.includes('库被占用')), warns.join('\n')).toBe(true)
   })
 })
