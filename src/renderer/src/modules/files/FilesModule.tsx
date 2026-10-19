@@ -107,6 +107,11 @@ export const FilesModule: React.FC = () => {
   const handleOpenPreview = async (e: FileEntry) => {
     try {
       const result = await window.pocketai.readFile(e.relPath)
+      // §219：失败对象被当成文件内容开进预览面板 ⇒ 面板显示一个空／怪文件而不说读不了
+      if (hasIpcFailed(result)) {
+        flash(false, ipcFailText(result, t('fm.opFailed')))
+        return
+      }
       setPreview({ entry: e, result })
     } catch (err) {
       flash(false, errText(err, t('fm.opFailed')))

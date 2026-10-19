@@ -1,7 +1,7 @@
 // Provider / Assistant 基础数据加载与模型列表手动拉取
 import { useCallback, useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord } from '../../../../../shared/types'
-import { reportIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../../../utils/ipc'
 import { useAppStore } from '../../../store/app-store'
 
 export function useProviderData() {
@@ -34,6 +34,8 @@ export function useProviderData() {
     setFetchingModels(true)
     try {
       const models = await window.pocketai.fetchModels(providerId)
+      // §219：这一条的『失败静默』是写在注释里的既有决定，但静默不等于可以把 `{ok:false}` 当成模型列表写进 provider.models——下游 `.includes`／`.map` 会当场坏（V4-Iter-115 那条空盒子形状）
+      if (hasIpcFailed(models)) return
       setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, models } : p)))
     } catch {
       // 拉取失败静默（Provider 配置问题在设置页有完整报错）

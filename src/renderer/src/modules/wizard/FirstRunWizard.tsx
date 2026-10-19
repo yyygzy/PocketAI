@@ -133,7 +133,10 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       //   repo 侧另有一道守护兜底（`provider.repo.ts` 的 foundByDedupe 那条）。
       let latest = providers
       try {
-        latest = await window.pocketai.listProviders()
+        const refreshed = await window.pocketai.listProviders()
+        // §219：这条 try…catch 早就在，但 catch 只管真抛错；失败对象若被赋给 latest，下一步 `latest.find` 直接 TypeError，向导（首启必经路）就卡死
+        if (!hasIpcFailed(refreshed)) latest = refreshed
+        else logIpcError('wizard.listProviders.refresh', new Error(ipcFailText(refreshed, t('common.unknownError'))))
       } catch (e) {
         logIpcError('wizard.listProviders.refresh', e)
       }

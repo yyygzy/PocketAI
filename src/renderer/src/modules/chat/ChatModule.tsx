@@ -486,6 +486,11 @@ export const ChatModule: React.FC = () => {
     try {
       const title = currentAssistant?.name || t('chat.newConversation')
       const conv = await window.pocketai.createConversation(currentAssistantId, title)
+      // §219：失败不判就照常清草稿＋setCurrentConvId(undefined)＋setMessages([]) ⇒ 当前会话在界面上被抹掉，而库里其实一条都没建
+      if (hasIpcFailed(conv)) {
+        toast.error(ipcFailText(conv, t('common.unknownError')))
+        return
+      }
       userEditedTargetsRef.current = false // 新对话允许模型回填
       setActiveDraft('')
       draftTextRef.current = ''
@@ -649,6 +654,11 @@ export const ChatModule: React.FC = () => {
         return
       }
       const msgs = await window.pocketai.listMessages(id)
+      // §219：失败对象不是数组，buildConversationHtml 里的 .map 抛 TypeError，被下面那个 catch 接住后用户看到的是 msgs.map is not a function 这种看不懂的账
+      if (hasIpcFailed(msgs)) {
+        toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
+        return
+      }
       const assistantName = conv.assistantId
         ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
         : null
@@ -674,6 +684,11 @@ export const ChatModule: React.FC = () => {
         return
       }
       const msgs = await window.pocketai.listMessages(id)
+      // §219：失败对象不是数组，buildConversationHtml 里的 .map 抛 TypeError，被下面那个 catch 接住后用户看到的是 msgs.map is not a function 这种看不懂的账
+      if (hasIpcFailed(msgs)) {
+        toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
+        return
+      }
       const assistantName = conv.assistantId
         ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
         : null

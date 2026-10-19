@@ -54,6 +54,11 @@ export const ChannelsPanel: React.FC = () => {
     // 同步状态快照
     try {
       const snap = await window.pocketai.listChannelStatus()
+      // §219：失败对象不是快照 ⇒ Object.entries 会端出 ['ok',false]／['error',…] 当渠道类型用，而真正的网关状态被显示成「已停止」
+      if (hasIpcFailed(snap)) {
+        logIpcError('channels.listStatus', new Error(ipcFailText(snap, t('common.unknownError'))))
+        return
+      }
       const ss: Partial<Record<ChannelType, ChannelStatusEvent>> = {}
       for (const [type, s] of Object.entries(snap)) {
         ss[type as ChannelType] = { type: type as ChannelType, status: s.status as ChannelStatusEvent['status'], lastError: s.lastError }
@@ -112,6 +117,11 @@ export const ChannelsPanel: React.FC = () => {
     }
     try {
       const next = await window.pocketai.setChannelConfig(activeType, patch)
+      // §219：失败不判就把 `{ok:false}` 写成本渠道的配置 ⇒ 表单显示的是库里没有的配置
+      if (hasIpcFailed(next)) {
+        toast.error(ipcFailText(next, t('common.unknownError')))
+        return
+      }
       setCfgs((prev) => ({ ...prev, [activeType]: next }))
       if (patch.primarySecret !== undefined) setPrimaryDraft('')
       if (patch.secondarySecret !== undefined) setSecondaryDraft('')

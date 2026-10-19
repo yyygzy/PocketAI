@@ -1933,13 +1933,25 @@ export const AppearancePanel: React.FC = () => {
       setLaunchAtLogin(r.launchAtLogin)
       setCloseToTray(r.closeToTray)
     }).catch((e) => logIpcError('settings.getWindowBehavior', e))
-    window.pocketai.getReplyNotifyEnabled().then(setReplyNotify).catch(() => setReplyNotify(true))
+    // §219：`.then(setReplyNotify)` 会把 `{ok:false}` 这个真值直接当成已开启显示；读不到时宁可保持默认开，与旁边那个 .catch 同一个口径
+    window.pocketai
+      .getReplyNotifyEnabled()
+      .then((v) => {
+        if (!hasIpcFailed(v)) setReplyNotify(v)
+      })
+      .catch(() => setReplyNotify(true))
   }, [])
 
   const toggleLaunchAtLogin = async (next: boolean) => {
     setLaunchAtLogin(next)
     try {
       const r = await window.pocketai.setLaunchAtLogin(next)
+      // §219：失败是 resolve ⇒ 走不到那个 catch；`r.launchAtLogin` 是 undefined，开关被抹成没值且没有任何提示
+      if (hasIpcFailed(r)) {
+        setLaunchAtLogin(!next)
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+        return
+      }
       setLaunchAtLogin(r.launchAtLogin)
     } catch (e) {
       setLaunchAtLogin(!next)
@@ -1951,6 +1963,11 @@ export const AppearancePanel: React.FC = () => {
     setCloseToTray(next)
     try {
       const r = await window.pocketai.setCloseToTray(next)
+      if (hasIpcFailed(r)) {
+        setCloseToTray(!next)
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+        return
+      }
       setCloseToTray(r.closeToTray)
     } catch (e) {
       setCloseToTray(!next)
@@ -2005,6 +2022,11 @@ export const AppearancePanel: React.FC = () => {
     setReplyNotify(next)
     try {
       const enabled = await window.pocketai.setReplyNotifyEnabled(next)
+      if (hasIpcFailed(enabled)) {
+        setReplyNotify(!next)
+        setNotice({ ok: false, text: ipcFailText(enabled, t('common.unknownError')) })
+        return
+      }
       setReplyNotify(enabled)
     } catch (e) {
       setReplyNotify(!next)

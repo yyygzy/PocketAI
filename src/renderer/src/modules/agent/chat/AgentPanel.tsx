@@ -213,6 +213,11 @@ export const AgentPanel: React.FC = () => {
         return
       }
       const msgs = await window.pocketai.listMessages(id)
+      // §219：失败对象不是数组，buildConversationHtml 里的 .map 抛 TypeError，被下面那个 catch 接住后用户看到的是 msgs.map is not a function 这种看不懂的账
+      if (hasIpcFailed(msgs)) {
+        toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
+        return
+      }
       const assistantName = chat.assistantId
         ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
         : null
@@ -238,6 +243,11 @@ export const AgentPanel: React.FC = () => {
         return
       }
       const msgs = await window.pocketai.listMessages(id)
+      // §219：失败对象不是数组，buildConversationHtml 里的 .map 抛 TypeError，被下面那个 catch 接住后用户看到的是 msgs.map is not a function 这种看不懂的账
+      if (hasIpcFailed(msgs)) {
+        toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
+        return
+      }
       const assistantName = chat.assistantId
         ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
         : null

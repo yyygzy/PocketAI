@@ -1132,6 +1132,11 @@ export const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, 
     setDiag(null)
     try {
       const r = await window.pocketai.retrieveKbDebug([kbId], query)
+      // §219：不判就在失败对象上读 `r.result.chunks` ⇒ TypeError 被下面那个 catch 接住，界面显示的是「Cannot read properties of undefined」而不是主进程给的原因
+      if (hasIpcFailed(r)) {
+        setError(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       setResults(r.result.chunks)
       setDiag(r.diagnostics)
     } catch (e) {

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { errText } from '../../utils/error'
+import { hasIpcFailed } from '../../utils/ipc'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 
 type UnlockMode = 'unlock' | 'setPassword' | 'recovery'
@@ -67,6 +68,8 @@ export function UnlockPage() {
     }
     try {
       const s = await window.pocketai.getAuthLockState()
+      // §219：不判就往下算 ⇒ ms 变 0，界面显示现在可以试，而它可能正被锁着（下面那句注释的『不阻断』是刻意的，但『不阻断』不等于谎报没锁）
+      if (hasIpcFailed(s)) return
       const ms = (m === 'recovery' ? s.recover : s.unlock)?.retryAfterMs ?? 0
       if (ms > 0) {
         setLockedUntil(Date.now() + ms)

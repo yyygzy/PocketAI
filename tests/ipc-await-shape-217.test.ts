@@ -11,10 +11,13 @@
 //   ③ 判据可以被搬进同文件的助手（§215 的 `failOp`、§217 回读时遇到的 `handleRestoreResult`）——
 //      那要求"变量→形参→助手本体"这条链能跟着走，AST 才走得动。
 //
-// 口径的两条刻意选择（都不是疏忽，写清楚免得后来人当成漏洞）：
+// 口径的三条刻意选择（都不是疏忽，写清楚免得后来人当成漏洞）：
 //   · **try…catch 算合格**，哪怕 catch 是空的：safeHandle 的失败根本不会被 catch 接到，"包着"只是"这一发既不崩也不谎报"
 //     的既有形状（§213 数的 63 处"只有 catch"就是这一档，把它们全逼成判据是几十个点的产品改动，不属于"闸门"这批）。
 //     闸门单独把「同函数别处的 catch」挑出来算**不合格**——那连包着都算不上，是对讲机的错觉（本批开局有 3 处，已清零）。
+//   · 但 catch **护不住"把结果当数据读"**（§219 加的一档）：`setX(r.items)`、`build(r)`、`{ ...p, models }`、`return r`
+//     这些读法在失败时读到的是 `{ok:false,error}` 的字段，界面照样谎报，所以判据没读过失败面的点一旦被当数据用就红，
+//     不管它在不在 try 里。仓库里这一档开局 17 处，已在 §219 全部清完。
 //   · 读 `r.data`／`r.list` 不算判据：那正是"把失败当数据"。判据只认失败面字段（`ok`/`error`/`code`/`canceled`/`locked`）
 //     与仓库里那几个判据函数。
 import fs from 'node:fs'
@@ -110,7 +113,7 @@ const judgeFor = (name: string): RegExp =>
 const isFnNode = (n: ts.Node): boolean =>
   ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)
 
-export type SiteKind = 'judged' | 'judged-via-helper' | 'try-catch' | 'naked'
+export type SiteKind = 'judged' | 'judged-via-helper' | 'try-catch' | 'data-ignored' | 'naked'
 export interface Site {
   rel: string
   line: number
@@ -119,6 +122,7 @@ export interface Site {
   bound: string | null
   kind: SiteKind
   via?: string
+  dataUse?: string
 }
 
 /** 一个文件里的 await 点分类（渲染层与内联桩共用这一份逻辑，桩才有资格说"扫描器有牙"） */
@@ -188,12 +192,34 @@ export function classifySource(rel: string, rawSrc: string, methods: Map<string,
         if (pname && judgeFor(pname).test(loc.body)) { via = mm[1]!; break }
       }
     }
+    // §219 那一档：结果被当数据读（取字段／当实参／写进结构／被 return），却从没读过它的失败面
+    // ⇒ 即使整条被 try…catch 包着也不算合格：catch 接不到 resolve 的失败，界面照样谎报。
+    let dataUse: string | null = null
+    if (bound !== null && !judgedDirect && !via && fn) {
+      const scan = (node: ts.Node): void => {
+        if (dataUse) return
+        if (ts.isIdentifier(node) && node.text === bound) {
+          const p = parents.get(node)
+          if (p) {
+            if (ts.isVariableDeclaration(p) && p.name === node) {
+              // 声明自己不算"读"
+            } else if (ts.isPropertyAccessExpression(p) && p.expression === node) dataUse = `${bound}.${p.name.text}`
+            else if (ts.isCallExpression(p) && p.expression !== node) dataUse = `${bound} 作为实参`
+            else if (ts.isShorthandPropertyAssignment(p) || ts.isSpreadElement(p) || ts.isArrayLiteralExpression(p) || ts.isObjectLiteralExpression(p)) dataUse = `${bound} 被写进结构`
+            else if (ts.isBinaryExpression(p) && p.left !== node) dataUse = `${bound} 被交出去`
+            else if (ts.isReturnStatement(p)) dataUse = `${bound} 被 return`
+          }
+        }
+        node.forEachChild(scan)
+      }
+      scan(fn)
+    }
     // ts.TryStatement 没有 block 属性（block 只是 children）⇒ 认"TryStatement 的 Block 子节点且不是 finallyBlock"
     const tryBlock = fn ? ancestor(n, (p) => ts.isBlock(p) && !!p.parent && ts.isTryStatement(p.parent) && p.parent.finallyBlock !== p) : null
     const caught = !!(tryBlock && tryBlock.parent && (tryBlock.parent as ts.TryStatement).catchClause)
     const line = ast.getLineAndCharacterOfPosition(n.getStart(ast)).line + 1
-    const kind: SiteKind = judgedDirect ? 'judged' : via ? 'judged-via-helper' : caught ? 'try-catch' : 'naked'
-    out.push({ rel, line, method, chan, bound, kind, via: via ?? undefined })
+    const kind: SiteKind = judgedDirect ? 'judged' : via ? 'judged-via-helper' : dataUse ? 'data-ignored' : caught ? 'try-catch' : 'naked'
+    out.push({ rel, line, method, chan, bound, kind, via: via ?? undefined, dataUse: dataUse ?? undefined })
   })
   return out
 }
@@ -203,7 +229,8 @@ const METHODS = preloadMethods(read('src/preload/index.ts'))
 const SAFE = safeHandleChannels(filesIn('src/main').map(read))
 const RENDERER = filesIn('src/renderer/src')
 const SITES = RENDERER.flatMap((rel) => classifySource(rel, read(rel), METHODS, SAFE))
-const naked = SITES.filter((s) => s.kind === 'naked')
+/** 不合格的两档：什么都没接（naked），以及包在 catch 里却把结果当数据用（data-ignored） */
+const unsafe = SITES.filter((s) => s.kind === 'naked' || s.kind === 'data-ignored')
 
 describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下面的 0 就是空转）', () => {
   it('preload 方法→通道 与 safeHandle 注册两侧都对得上', () => {
@@ -217,9 +244,9 @@ describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下
     expect(SITES.length).toBeGreaterThanOrEqual(250)
     const judged = SITES.filter((s) => s.kind === 'judged' || s.kind === 'judged-via-helper').length
     const caught = SITES.filter((s) => s.kind === 'try-catch').length
-    expect(judged, '判返回值的点').toBeGreaterThanOrEqual(180)
-    expect(caught, 'try/catch 包着的点').toBeGreaterThanOrEqual(50)
-    expect(judged + caught + naked.length).toBe(SITES.length)
+    expect(judged, '判返回值的点').toBeGreaterThanOrEqual(200)
+    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(40)
+    expect(judged + caught + unsafe.length).toBe(SITES.length)
   })
 })
 
@@ -236,9 +263,27 @@ describe('② 分类器自己要有牙：五种形状的内联桩', () => {
     const [s] = run('  await window.pocketai.foo()')
     expect(s!.kind).toBe('naked')
   })
-  it('把结果直接写进 state ⇒ 仍然不算判过（`r.data`／`setX(r)` 不是失败面）', () => {
+  it('把结果直接写进 state ⇒ 不算判过，且归到 data-ignored 那一档（§219）', () => {
     const [s] = run('  const r = await window.pocketai.foo()\n  setX(r.items)\n')
+    expect(s!.kind).toBe('data-ignored')
+    expect(s!.dataUse).toBe('r.items')
+  })
+  it('包在 try…catch 里也不行：catch 接不到 resolve 的失败，把结果当数据读照样谎报（§219 立这一档的理由）', () => {
+    const [s] = run('  try {\n    const r = await window.pocketai.foo()\n    setX(r.items)\n  } catch (e) {\n    reportIpcError(e)\n  }\n')
+    expect(s!.kind).toBe('data-ignored')
+  })
+  it('绑了变量但从没读过它 ⇒ 归 naked，不是 data-ignored（声明本身不该被当成"读"）', () => {
+    const [s] = run('  const r = await window.pocketai.foo()\n  setBusy(false)\n')
     expect(s!.kind).toBe('naked')
+    expect(s!.dataUse).toBeUndefined()
+  })
+  it('口径边界：结果没绑定、只是 fire-and-forget ⇒ 包着 catch 仍算 try-catch（这一档不由本闸门逼）', () => {
+    const [s] = run('  try {\n    await window.pocketai.foo()\n  } catch (e) {\n    reportIpcError(e)\n  }\n')
+    expect(s!.kind).toBe('try-catch')
+  })
+  it('判过之后再把结果当数据用 ⇒ 合格（这条挡住"判据加了还不许读字段"的过度收紧）', () => {
+    const [s] = run('  const r = await window.pocketai.foo()\n  if (hasIpcFailed(r)) return\n  setX(r.items)\n')
+    expect(s!.kind).toBe('judged')
   })
   it('包围的 try…catch 算合格；只有 finally 的不算（catch 根本不在这一发外面）', () => {
     const wrapped = run('  try {\n    await window.pocketai.foo()\n  } catch (e) { /* 静默 */ }\n')[0]!.kind
@@ -278,10 +323,10 @@ describe('② 分类器自己要有牙：五种形状的内联桩', () => {
   })
 })
 
-describe('③ 主判据：裸奔为 0，且没有豁免名单', () => {
-  it('每个 await safeHandle 通道的点都判了返回值或被自己的 try…catch 包着', () => {
-    const list = naked.map((s) => `${s.rel}:${s.line} ${s.method}（bound=${s.bound ?? '未绑定'}）`)
-    expect(list, `这些点的失败既不被判也没有包围它的 catch：\n${list.join('\n')}`).toEqual([])
+describe('③ 主判据：既没判也没包围 catch、以及"catch 里把结果当数据用"，两档都必须为 0', () => {
+  it('每个 await safeHandle 通道的点要么判了失败面，要么只是被 try…catch 包着且没把结果当数据用', () => {
+    const list = unsafe.map((s) => `${s.rel}:${s.line} ${s.method}（${s.kind === 'naked' ? '什么都没接' : `当数据用：${s.dataUse}`}）`)
+    expect(list, `这些点的失败既不被判、又被当成数据读：\n${list.join('\n')}`).toEqual([])
   })
 })
 

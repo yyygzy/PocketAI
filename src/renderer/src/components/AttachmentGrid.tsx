@@ -62,6 +62,11 @@ export const ImageLightbox: React.FC<{ src: string; name?: string; onClose: () =
     setBusy(true)
     try {
       const r = await window.pocketai.saveDataUrlImage(src, name)
+      // §219：`'path' in r` 只认成功形状；失败是 resolve 的 `{ok:false}` ⇒ 点了「另存为」什么都不发生
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('lightbox.saveFailed')))
+        return
+      }
       if ('path' in r) toast.success(t('lightbox.saved'))
     } catch {
       toast.error(t('lightbox.saveFailed'))

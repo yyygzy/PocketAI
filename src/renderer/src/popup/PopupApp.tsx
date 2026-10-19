@@ -7,7 +7,7 @@ import { pickDefaultProvider } from '../utils/provider-pick'
 import { Markdown } from '../modules/chat/Markdown'
 import { AttachmentGrid } from '../components/AttachmentGrid'
 import { useToast } from '../components/ToastProvider'
-import { chatSendFailureText, hasIpcFailed, reportIpcError, type IpcFailureInput } from '../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError, type IpcFailureInput } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useCopyFeedback } from '../hooks/useCopyFeedback'
 import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../modules/agent/agent-shared'
@@ -257,6 +257,11 @@ export const PopupApp: React.FC = () => {
         if (!convId) {
           if (!assistant) return
           const conv = await window.pocketai.createConversation(assistant.id)
+          // §219：失败不判就带着 undefined 的 convId 往下发消息（下面那个 catch 接不到 resolve 的失败）
+          if (hasIpcFailed(conv)) {
+            setMessages((ms) => [...ms, { role: 'assistant', content: ipcFailText(conv, t('common.unknownError')), error: true }])
+            return
+          }
           convId = conv.id
           setConversationId(convId)
         }
