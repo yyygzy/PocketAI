@@ -6,6 +6,7 @@ import type { DataHealthReport, KbDocStatus, KbDuplicateGroup } from '../../../.
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { formatBytes } from '../../utils/format'
 import { formatVectorIndex } from '../../utils/vector-index'
@@ -22,6 +23,7 @@ export const DataHealthPanel: React.FC = () => {
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
   const [report, setReport] = useState<DataHealthReport | null>(null)
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   /** safeHandle 的失败是 resolve 的 `{ok:false}`：弹错并告诉调用方"这次没做成"（返回 true＝失败已处理） */
@@ -34,15 +36,22 @@ export const DataHealthPanel: React.FC = () => {
   /** @param refresh 只有面板那颗「刷新」按钮会传 true：连浏览器缓存那一格也重算（V4-Iter-177） */
   const load = useCallback((refresh = false) => {
     // §221：失败对象写进 report ⇒ 下面那句 `if (!report)` 拦不住，紧跟着解构 report.sizes 当场崩。
-    // 判过之后停在上一份报告（首次就是「加载中…」），原因由这句 toast 说
+    // §222：光弹一条 toast 不够——本体从此停在「加载中…」，把"这次没读到"说成"还在加载"，
+    // 所以原因同时落到常驻那句（LoadFailNotice）上
     window.pocketai
       .getDataHealth(refresh)
       .then((r) => {
-        if (failAction(r)) return
+        if (hasIpcFailed(r)) {
+          const msg = ipcFailText(r, t('common.unknownError'))
+          toast.error(msg)
+          setLoadErr(msg)
+          return
+        }
+        setLoadErr(null)
         setReport(r)
       })
       .catch(reportIpcError('dataHealth.get'))
-  }, [])
+  }, [t, toast])
 
   useEffect(() => {
     load()
@@ -132,6 +141,8 @@ export const DataHealthPanel: React.FC = () => {
   }
 
   if (!report) {
+    // §222：读失败与还没读到是两件事——前者要把原因留在界面上（toast 会消失，而这块本体一直挂着「加载中…」）
+    if (loadErr) return <LoadFailNotice msg={loadErr} />
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 

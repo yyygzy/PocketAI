@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { requestUsageJump } from './usage-jump'
@@ -22,14 +23,20 @@ export const UsagePanel: React.FC = () => {
   /**
    * §221：`.then(...)` 面上的失败是 resolve 出来的 `{ok:false}`——写进 state 就是"把失败对象当数据"，
    * 读它的那句解构／`.map` 当场崩。这里沿用闸门认识的 `failAction` 形状：说出来，并交回"这次没读到"。
+   * §222 多加一件事：@param inline 只有汇总那一读会传——它决定整张面板是「加载中…」还是有内容，
+   * 光一条会消失的 toast 等于把"读不到"长期谎称成"还在加载"，所以原因同时留一份给常驻那句。
    */
-  const failAction = (r: unknown): boolean => {
+  const failAction = (r: unknown, inline?: (msg: string) => void): boolean => {
     if (!hasIpcFailed(r)) return false
-    toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+    const msg = ipcFailText(r, t('common.unknownError'))
+    toast.error(t('common.opFailed', { msg }))
+    if (inline) inline(msg)
     return true
   }
   const [days, setDays] = useState<number>(30)
   const [summary, setSummary] = useState<UsageSummary | null>(null)
+  // §222：汇总那一读的失败原因（null=没失败过）——它决定本体显示「读不到：原因」还是「加载中…」
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [convUsage, setConvUsage] = useState<UsageConversationItem[]>([])
   const [asstUsage, setAsstUsage] = useState<UsageAssistantItem[]>([])
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
@@ -84,7 +91,10 @@ export const UsagePanel: React.FC = () => {
   const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
 
   const load = useCallback((d: number) => {
-    window.pocketai.getUsageSummary(d).then((r) => { if (!failAction(r)) setSummary(r) }).catch(reportIpcError('usage.get'))
+    window.pocketai.getUsageSummary(d).then((r) => {
+      if (failAction(r, setLoadErr)) return
+      setSummary(r)
+    }).catch(reportIpcError('usage.get'))
     window.pocketai.getUsageConversations(d, 20).then((r) => { if (!failAction(r)) setConvUsage(r) }).catch(reportIpcError('usage.conversations'))
     window.pocketai.getUsageAssistants(d, 10).then((r) => { if (!failAction(r)) setAsstUsage(r) }).catch(reportIpcError('usage.assistants'))
     // deps 与文件里 openDetail 那两条同口径（toast/t 只用于报错，不必进依赖）
@@ -273,7 +283,11 @@ export const UsagePanel: React.FC = () => {
       )}
 
       {!summary ? (
-        <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
+        loadErr ? (
+          <LoadFailNotice msg={loadErr} />
+        ) : (
+          <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
+        )
       ) : summary.totals.requests === 0 ? (
         <div className="text-xs text-[var(--color-text-muted)] py-3">{t('usage.noData')}</div>
       ) : (
@@ -632,6 +646,8 @@ const PriceEditor: React.FC<{
 }> = ({ pricing, onSaved, onError }) => {
   const { t } = useI18n()
   const [models, setModels] = useState<UsageModelItem[] | null>(null)
+  // §222：与汇总那一读同一口径——表格里那一格也不许把"读不到"长期写成「加载中…」
+  const [modelsErr, setModelsErr] = useState<string | null>(null)
   const [currency, setCurrency] = useState<UsagePricing['currency']>(pricing.currency)
   const [drafts, setDrafts] = useState<Record<string, { input: string; cache: string; output: string }>>({})
   const [saving, setSaving] = useState(false)
@@ -639,7 +655,16 @@ const PriceEditor: React.FC<{
   useEffect(() => {
     window.pocketai.listUsageModels()
       // §221：失败对象写进 models ⇒ 下面 `models ?? []` 拦不住（它是真值），priceKey(...)／rows 那圈按数组用就崩
-      .then((r) => { if (hasIpcFailed(r)) onError(new Error(ipcFailText(r, t('common.unknownError')))); else setModels(r) })
+      // §222：onError 那条 toast 会消失，而这一格一直显示「加载中…」⇒ 原因同时留给常驻那句
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          const msg = ipcFailText(r, t('common.unknownError'))
+          setModelsErr(msg)
+          onError(new Error(msg))
+          return
+        }
+        setModels(r)
+      })
       .catch((e) => onError(e))
   }, [onError])
 
@@ -759,7 +784,11 @@ const PriceEditor: React.FC<{
           </thead>
           <tbody>
             {models === null ? (
-              <tr><td colSpan={4} className="py-3 px-2 text-[var(--color-text-muted)]">{t('common.loading')}</td></tr>
+              <tr>
+                <td colSpan={4} className="py-3 px-2 text-[var(--color-text-muted)]">
+                  {modelsErr ? <LoadFailNotice msg={modelsErr} /> : t('common.loading')}
+                </td>
+              </tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={4} className="py-3 px-2 text-[var(--color-text-muted)]">{t('usage.priceNoModels')}</td></tr>
             ) : (

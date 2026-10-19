@@ -8,6 +8,7 @@ import type {
 } from '../../../shared/types'
 import { modelRecKey } from '../../../shared/model-rec-codes'
 import { useI18n } from '../i18n'
+import { LoadFailNotice } from './LoadFailNotice'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useTransientNotice } from '../hooks/useTransientNotice'
@@ -21,6 +22,9 @@ function formatMB(bytes: number | null | undefined): string {
 export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { t } = useI18n()
   const [status, setStatus] = useState<OllamaRuntimeStatus | null>(null)
+  // §222：这一次没读到状态的原因（null=没失败过）。这块不弹 toast——面板每 8s 轮询一次，
+  // 失败若说话就会刷屏，而"什么都不显示"又读成"没装 Ollama"，所以留一句常驻的
+  const [statusErr, setStatusErr] = useState<string | null>(null)
   const [installEvt, setInstallEvt] = useState<OllamaInstallEvent | null>(null)
   const [installing, setInstalling] = useState(false)
   const [err, setErr] = useState('')
@@ -35,8 +39,19 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const refresh = useCallback(() => {
-    window.pocketai.getOllamaStatus().then((v) => { if (!hasIpcFailed(v)) setStatus(v) }).catch(reportIpcError('ollama.getStatus'))
-  }, [])
+    window.pocketai
+      .getOllamaStatus()
+      .then((v) => {
+        // §221：失败对象写进 status ⇒ 下面那一圈 `status.platformSupported` 全变 undefined，
+        // 面板显示成"本平台不支持"；§222：读不到要有常驻那句（轮询 8s 一次，不弹 toast）
+        if (hasIpcFailed(v)) {
+          setStatusErr(ipcFailText(v, t('common.unknownError')))
+          return
+        }
+        setStatus(v)
+      })
+      .catch(reportIpcError('ollama.getStatus'))
+  }, [t])
 
   // 模型拉取（进度事件/中止/成功刷新）与管家推荐卡片共用同一 hook
   const { pulling, pullEvt, error: pullError, pull, abort: abortPull } = useOllamaPull({
@@ -160,6 +175,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       </div>
 
       <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('ollama.desc')}</p>
+
+      {/* §222：一次都没读到过 ⇒ 明说"读不到"，别整块不渲染（那看着像"没装"） */}
+      {!status && statusErr && <LoadFailNotice msg={statusErr} />}
 
       {/* 平台不支持 */}
       {status && !status.platformSupported && (

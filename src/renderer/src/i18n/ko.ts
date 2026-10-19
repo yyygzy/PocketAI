@@ -33,6 +33,7 @@ export const ko = {
   'common.saving': '저장 중…',
   'common.processing': '처리 중…',
   'common.loading': '불러오는 중…',
+  'common.loadFailed': '읽을 수 없습니다: {msg}',
   // ── 루트 오류 경계(V4-Iter-146): 렌더링 중 예외가 날 때의 읽을 수 있는 대체 화면 ──
   'crash.title': '화면 렌더링 중 오류',
   'crash.hint': '렌더링 중 발생한 예외이며, 데이터 문제는 아닙니다. 아래 오류 줄을 개발자에게 붙여넣으면 됩니다.',

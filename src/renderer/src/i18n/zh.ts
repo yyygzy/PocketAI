@@ -34,6 +34,7 @@ export const zh = {
   'common.saving': '保存中…',
   'common.processing': '处理中…',
   'common.loading': '加载中…',
+  'common.loadFailed': '读不到：{msg}',
   // ── 根错误边界（V4-Iter-146）：任何组件 render 抛错时给的可读兜底屏 ──
   'crash.title': '界面出错了',
   'crash.hint': '这是渲染过程中抛出的异常，不是你的数据出了问题。下面那行错误信息可以直接贴给开发者。',

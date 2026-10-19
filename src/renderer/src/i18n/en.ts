@@ -34,6 +34,7 @@ export const en = {
   'common.saving': 'Saving…',
   'common.processing': 'Processing…',
   'common.loading': 'Loading…',
+  'common.loadFailed': 'Cannot load: {msg}',
   // ── Root error boundary (V4-Iter-146): readable fallback when a component throws while rendering ──
   'crash.title': 'The interface hit an error',
   'crash.hint': 'This came from an exception while rendering - your data is not the problem. Paste the line below to the developer.',
