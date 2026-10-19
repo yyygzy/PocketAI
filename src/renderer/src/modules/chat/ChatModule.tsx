@@ -883,6 +883,11 @@ export const ChatModule: React.FC = () => {
     let convId = currentConvId
     if (!convId) {
       const c = await window.pocketai.createConversation(currentAssistantId)
+      // §217：失败 ⇒ c.id 是 undefined，原来仍把 setCurrentConvId(undefined)＋往下 beginStream/sendMessage，会话列不出来、消息发给不存在的会话
+      if (hasIpcFailed(c)) {
+        toast.error(ipcFailText(c, t('common.unknownError')))
+        return
+      }
       convId = c.id
       setCurrentConvId(convId)
       await reloadConversations()

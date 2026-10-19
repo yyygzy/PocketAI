@@ -1,0 +1,301 @@
+// V4-Iter-217：IPC 返回值面的形状闸门（全渲染层，**没有豁免名单**）。
+//
+// 背景：`safeHandle` 把主进程抛错与 zod 入参校验失败都转成 **resolve 的 `{ok:false,error}`**（§196）。
+// 于是「只挂 .catch」等于没接失败：轻则静默，重则把失败对象当数据写进 state（§214 那两条 TypeError 白屏）。
+// 214／215／216 按档逐点修完之后，这一批把"以后别静默"从人工对账换成 CI：
+// **每个 `await window.pocketai.X(...)`（X 对应的通道走 safeHandle）都必须要么判返回值、要么被自己的 try…catch 包着。**
+//
+// 为什么用 TypeScript 的 AST 而不是正则扫行：
+//   ① 判据可能写在包围块的任意深度（函数体里），正则的"区域"必须靠括号配对，而 JS 的括号在字符串／模板／JSX 里都会出现；
+//   ② §216 实测过一次：按 `\n` 切行的扫描器会被**孤立 CR 行尾**骗（运行期没事、切行把守卫并进上一行的注释里）；
+//   ③ 判据可以被搬进同文件的助手（§215 的 `failOp`、§217 回读时遇到的 `handleRestoreResult`）——
+//      那要求"变量→形参→助手本体"这条链能跟着走，AST 才走得动。
+//
+// 口径的两条刻意选择（都不是疏忽，写清楚免得后来人当成漏洞）：
+//   · **try…catch 算合格**，哪怕 catch 是空的：safeHandle 的失败根本不会被 catch 接到，"包着"只是"这一发既不崩也不谎报"
+//     的既有形状（§213 数的 63 处"只有 catch"就是这一档，把它们全逼成判据是几十个点的产品改动，不属于"闸门"这批）。
+//     闸门单独把「同函数别处的 catch」挑出来算**不合格**——那连包着都算不上，是对讲机的错觉（本批开局有 3 处，已清零）。
+//   · 读 `r.data`／`r.list` 不算判据：那正是"把失败当数据"。判据只认失败面字段（`ok`/`error`/`code`/`canceled`/`locked`）
+//     与仓库里那几个判据函数。
+import fs from 'node:fs'
+import path from 'node:path'
+import { describe, it, expect } from 'vitest'
+import ts from 'typescript'
+
+const ROOT = path.resolve(__dirname, '..')
+const read = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), 'utf-8')
+
+/** 注释替换成等长空白：偏移不变，`getText()` 里就不会藏着注释（§214／§216 两次都是注释把闸门喂绿的） */
+function blankComments(src: string, rel: string): string {
+  const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.ESNext, true, rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
+  const out = src.split('')
+  const fill = (a: number, b: number) => {
+    for (let i = a; i < b && i < out.length; i++) if (out[i] !== '\n') out[i] = ' '
+  }
+  const visit = (node: ts.Node): void => {
+    for (const c of [...(ts.getLeadingCommentRanges(src, node.pos) ?? []), ...(ts.getTrailingCommentRanges(src, node.end) ?? [])]) fill(c.pos, c.end)
+    node.forEachChild(visit)
+  }
+  sf.statements.forEach(visit)
+  return out.join('')
+}
+
+const walk = (node: ts.Node, fn: (n: ts.Node) => void): void => {
+  fn(node)
+  ts.forEachChild(node, (c) => walk(c, fn))
+}
+const filesIn = (dir: string): string[] => {
+  const out: string[] = []
+  for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = path.posix.join(dir.split(path.sep).join('/'), e.name)
+    if (e.isDirectory()) out.push(...filesIn(rel))
+    else if (/\.tsx?$/.test(e.name)) out.push(rel)
+  }
+  return out.sort()
+}
+const chanNameOf = (arg: ts.Expression | undefined): string | null =>
+  !arg ? null : ts.isPropertyAccessExpression(arg) ? arg.name.text : ts.isStringLiteral(arg) ? arg.text : null
+
+/** preload：`foo: (…) => ipcRenderer.invoke(IPC.CONST, …)` ⇒ 方法名 → 通道常量 */
+export function preloadMethods(src: string): Map<string, string> {
+  const ast = ts.createSourceFile('preload.ts', src, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS)
+  const map = new Map<string, string>()
+  walk(ast, (n) => {
+    if (!ts.isPropertyAssignment(n) || !ts.isIdentifier(n.name)) return
+    let chan: string | null = null
+    const find = (node: ts.Node): void => {
+      if (chan) return
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'invoke') {
+        chan = chanNameOf(node.arguments[0])
+      }
+      node.forEachChild(find)
+    }
+    find(n.initializer)
+    if (chan) map.set(n.name.text, chan)
+  })
+  return map
+}
+
+/** 主进程：哪些常量是 `safeHandle(IPC.CONST, …)` 注册的（`ipcMain.handle` 只有 safe-handle.ts 那一处） */
+export function safeHandleChannels(sources: string[]): Set<string> {
+  const set = new Set<string>()
+  for (const src of sources) {
+    const ast = ts.createSourceFile('h.ts', src, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS)
+    walk(ast, (n) => {
+      if (!ts.isCallExpression(n)) return
+      const callee = ts.isIdentifier(n.expression) ? n.expression.text : ts.isPropertyAccessExpression(n.expression) ? n.expression.name.text : ''
+      const c = chanNameOf(n.arguments[0])
+      if (c && callee === 'safeHandle') set.add(c)
+    })
+  }
+  return set
+}
+
+const JUDGE_FUNCS = ['hasIpcFailed', 'isIpcFail', 'ipcFailText', 'ipcFailureText', 'chatSendFailureText', 'reportIpcError', 'logIpcError', 'errText', 'failOp', 'failAction', 'unwrapIpc', 'toast.error', 'setNotice', 'setError', 'setErr']
+const esc = (s: string): string => s.replace(/[$()*+.?[\\\]^{|}]/g, '\\$&')
+const JUDGE_ALT = JUDGE_FUNCS.map(esc).join('|')
+/** 只认失败面字段；`x.data` 这种"当数据用"绝不算判过 */
+const judgeFor = (name: string): RegExp =>
+  new RegExp(
+    [
+      `(?:${JUDGE_ALT})\\s*\\([^)]{0,80}?\\b${esc(name)}\\b`,
+      `\\b${esc(name)}\\.ok\\b`,
+      `'ok'\\s+in\\s*${esc(name)}\\b`,
+      `\\b${esc(name)}\\.(?:error|code|canceled|locked)\\b`,
+      `if\\s*\\(\\s*!?${esc(name)}\\b`,
+      `\\b${esc(name)}\\s*(&&|\\?\\?|===|!==)`,
+    ].join('|'),
+  )
+
+const isFnNode = (n: ts.Node): boolean =>
+  ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)
+
+export type SiteKind = 'judged' | 'judged-via-helper' | 'try-catch' | 'naked'
+export interface Site {
+  rel: string
+  line: number
+  method: string
+  chan: string
+  bound: string | null
+  kind: SiteKind
+  via?: string
+}
+
+/** 一个文件里的 await 点分类（渲染层与内联桩共用这一份逻辑，桩才有资格说"扫描器有牙"） */
+export function classifySource(rel: string, rawSrc: string, methods: Map<string, string>, safeChans: Set<string>): Site[] {
+  const clean = blankComments(rawSrc, rel)
+  const ast = ts.createSourceFile(rel, clean, ts.ScriptTarget.ESNext, true, rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
+  const parents = new Map<ts.Node, ts.Node>()
+  const link = (n: ts.Node): void => {
+    n.forEachChild((c) => {
+      parents.set(c, n)
+      link(c)
+    })
+  }
+  link(ast)
+  const ancestor = (n: ts.Node, pred: (p: ts.Node) => boolean): ts.Node | null => {
+    let p = parents.get(n)
+    while (p) {
+      if (pred(p)) return p
+      p = parents.get(p)
+    }
+    return null
+  }
+  const locals = new Map<string, { params: string[]; body: string }>()
+  const register = (name: string, node: ts.Node): void => {
+    const fn = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) ? node : null
+    if (!fn) return
+    locals.set(name, {
+      params: fn.parameters.map((p) => (ts.isIdentifier(p.name) ? p.name.text : '')),
+      body: fn.body ? fn.body.getFullText(ast) : '',
+    })
+  }
+  walk(ast, (n) => {
+    if (ts.isFunctionDeclaration(n) && n.name) register(n.name.text, n)
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && isFnNode(n.initializer)) register(n.name.text, n.initializer)
+  })
+
+  const out: Site[] = []
+  walk(ast, (n) => {
+    if (!ts.isAwaitExpression(n) || !ts.isCallExpression(n.expression)) return
+    const pa = n.expression.expression
+    if (!ts.isPropertyAccessExpression(pa)) return
+    if (!ts.isPropertyAccessExpression(pa.expression) || pa.expression.name.text !== 'pocketai') return
+    const method = pa.name.text
+    const chan = methods.get(method)
+    if (!chan || !safeChans.has(chan)) return
+    const fn = ancestor(n, isFnNode)
+    const fnText = fn ? fn.getFullText(ast) : ''
+    let bound: string | null = null
+    let up: ts.Node = n
+    while (up && up !== fn) {
+      const d = parents.get(up)
+      if (!d) break
+      if (ts.isVariableDeclaration(d) && ts.isIdentifier(d.name)) { bound = d.name.text; break }
+      if (ts.isBinaryExpression(d) && d.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(d.left)) { bound = d.left.text; break }
+      if (ts.isExpressionStatement(d) || ts.isReturnStatement(d) || ts.isCallExpression(d) || ts.isPropertyAccessExpression(d)) break
+      up = d
+    }
+    const judgedDirect = bound !== null && judgeFor(bound).test(fnText)
+    let via: string | null = null
+    if (bound !== null && !judgedDirect) {
+      for (const mm of fnText.matchAll(/\b([A-Za-z0-9_]+)\(([^)]{0,120})\)/g)) {
+        const loc = locals.get(mm[1]!)
+        if (!loc) continue
+        const idx = mm[2]!.split(',').findIndex((a) => a.trim() === bound || a.trim() === `!${bound}`)
+        if (idx < 0) continue
+        const pname = loc.params[idx]
+        if (pname && judgeFor(pname).test(loc.body)) { via = mm[1]!; break }
+      }
+    }
+    // ts.TryStatement 没有 block 属性（block 只是 children）⇒ 认"TryStatement 的 Block 子节点且不是 finallyBlock"
+    const tryBlock = fn ? ancestor(n, (p) => ts.isBlock(p) && !!p.parent && ts.isTryStatement(p.parent) && p.parent.finallyBlock !== p) : null
+    const caught = !!(tryBlock && tryBlock.parent && (tryBlock.parent as ts.TryStatement).catchClause)
+    const line = ast.getLineAndCharacterOfPosition(n.getStart(ast)).line + 1
+    const kind: SiteKind = judgedDirect ? 'judged' : via ? 'judged-via-helper' : caught ? 'try-catch' : 'naked'
+    out.push({ rel, line, method, chan, bound, kind, via: via ?? undefined })
+  })
+  return out
+}
+
+// ---------- 宇宙：通道两侧 ＋ 渲染层全部文件 ----------
+const METHODS = preloadMethods(read('src/preload/index.ts'))
+const SAFE = safeHandleChannels(filesIn('src/main').map(read))
+const RENDERER = filesIn('src/renderer/src')
+const SITES = RENDERER.flatMap((rel) => classifySource(rel, read(rel), METHODS, SAFE))
+const naked = SITES.filter((s) => s.kind === 'naked')
+
+describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下面的 0 就是空转）', () => {
+  it('preload 方法→通道 与 safeHandle 注册两侧都对得上', () => {
+    expect(METHODS.size).toBeGreaterThanOrEqual(300)
+    expect(SAFE.size).toBeGreaterThanOrEqual(300)
+    const orphan = [...METHODS.entries()].filter(([, c]) => !SAFE.has(c)).map(([m, c]) => `${m}→${c}`)
+    expect(orphan, `preload 里有方法指向没走 safeHandle 的通道：${orphan.join(', ')}`).toEqual([])
+  })
+
+  it('渲染层的 await 点数落在预期量级（掉一半就是扫描器瞎了，不是代码变干净了）', () => {
+    expect(SITES.length).toBeGreaterThanOrEqual(250)
+    const judged = SITES.filter((s) => s.kind === 'judged' || s.kind === 'judged-via-helper').length
+    const caught = SITES.filter((s) => s.kind === 'try-catch').length
+    expect(judged, '判返回值的点').toBeGreaterThanOrEqual(180)
+    expect(caught, 'try/catch 包着的点').toBeGreaterThanOrEqual(50)
+    expect(judged + caught + naked.length).toBe(SITES.length)
+  })
+})
+
+describe('② 分类器自己要有牙：五种形状的内联桩', () => {
+  const M = new Map([['foo', 'X_FOO'], ['bar', 'X_BAR']])
+  const S = new Set(['X_FOO'])
+  const run = (body: string): Site[] => classifySource('x.tsx', `export const C = () => {\n${body}\n}\n`, M, S)
+
+  it('正向对照：判了返回值的点是合格的（不是"全都算过"）', () => {
+    const [s] = run('  const r = await window.pocketai.foo()\n  if (hasIpcFailed(r)) return\n')
+    expect(s!.kind).toBe('judged')
+  })
+  it('裸 await（结果既不绑也不判、也没有 try）⇒ naked', () => {
+    const [s] = run('  await window.pocketai.foo()')
+    expect(s!.kind).toBe('naked')
+  })
+  it('把结果直接写进 state ⇒ 仍然不算判过（`r.data`／`setX(r)` 不是失败面）', () => {
+    const [s] = run('  const r = await window.pocketai.foo()\n  setX(r.items)\n')
+    expect(s!.kind).toBe('naked')
+  })
+  it('包围的 try…catch 算合格；只有 finally 的不算（catch 根本不在这一发外面）', () => {
+    const wrapped = run('  try {\n    await window.pocketai.foo()\n  } catch (e) { /* 静默 */ }\n')[0]!.kind
+    const finallyOnly = run('  try {\n    await window.pocketai.foo()\n  } finally {\n    setBusy(false)\n  }\n')[0]!.kind
+    expect(wrapped).toBe('try-catch')
+    expect(finallyOnly).toBe('naked')
+  })
+  it('await 落在 finally 块里 ⇒ 不算被 catch 保护（catch 在它之前就跑完了）', () => {
+    const [s] = run(
+      '  try {\n    setBusy(true)\n  } catch (e) {\n    reportIpcError(e)\n  } finally {\n    await window.pocketai.foo()\n  }\n',
+    )
+    expect(s!.kind).toBe('naked')
+  })
+  it('判据被搬进同文件的助手 ⇒ 跟着形参走到助手本体（§215 的 failOp、§217 的 handleRestoreResult）', () => {
+    const src = [
+      'function handleRes(r: unknown): void {',
+      '  if (hasIpcFailed(r)) setError(String(r))',
+      '}',
+      'export const C = () => {',
+      '  const go = async () => {',
+      '    const r = await window.pocketai.foo()',
+      '    handleRes(r)',
+      '  }',
+      '}',
+    ].join('\n')
+    const [s] = classifySource('y.ts', src, M, S)
+    expect(s!.kind).toBe('judged-via-helper')
+    expect(s!.via).toBe('handleRes')
+  })
+  it('守卫只写在注释里 ⇒ 不算（§216 那次假绿的直接形状）', () => {
+    const [s] = run('  const r = await window.pocketai.foo()  // if (hasIpcFailed(r)) { toast.error(r.error); return }')
+    expect(s!.kind).toBe('naked')
+  })
+  it('不走 safeHandle 的通道不归本闸门管（口径边界，防它将来吞掉一切 await）', () => {
+    expect(run('  await window.pocketai.bar()')).toEqual([])
+    expect(classifySource('z.ts', 'export const f = async () => { await somethingElse.foo() }', M, S)).toEqual([])
+  })
+})
+
+describe('③ 主判据：裸奔为 0，且没有豁免名单', () => {
+  it('每个 await safeHandle 通道的点都判了返回值或被自己的 try…catch 包着', () => {
+    const list = naked.map((s) => `${s.rel}:${s.line} ${s.method}（bound=${s.bound ?? '未绑定'}）`)
+    expect(list, `这些点的失败既不被判也没有包围它的 catch：\n${list.join('\n')}`).toEqual([])
+  })
+})
+
+describe('④ 闸门看得见行的前提：渲染层与 preload 没有孤立 CR', () => {
+  // §216：JS 里 CR 是合法行结束符 ⇒ 运行期与 tsc 都不报错，但 git 把该文件判成 binary（以后这块 diff 没有审阅面），
+  // 而任何按 `\n` 切行的扫描器会把守卫并进上一行的注释里。这里覆盖闸门扫描的全部文件，因为它一坏，本闸门的"看得见"就整体失效。
+  const scan = [...RENDERER, 'src/preload/index.ts']
+  const offenders = scan.filter((rel) => {
+    const b = fs.readFileSync(path.join(ROOT, rel))
+    for (let i = 0; i < b.length; i++) if (b[i] === 0x0d && b[i + 1] !== 0x0a) return true
+    return b.includes(0x00)
+  })
+  it(`扫了 ${scan.length} 个文件，没有一个含孤立 CR／NUL`, () => {
+    expect(scan.length).toBeGreaterThanOrEqual(140)
+    expect(offenders, `这些文件会被 git 判成 binary：${offenders.join(', ')}`).toEqual([])
+  })
+})

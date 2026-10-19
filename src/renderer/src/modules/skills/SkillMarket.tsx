@@ -106,10 +106,15 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   // ---------- 本地技能操作 ----------
   const handleToggle = useCallback(
     async (s: SkillRecord) => {
-      await window.pocketai.saveSkill({ id: s.id, name: s.name, enabled: !s.enabled })
+      const r = await window.pocketai.saveSkill({ id: s.id, name: s.name, enabled: !s.enabled })
+      // §217：失败不判就照常拉一次列表并把「已创建副本」之外的一切当成成功 ⇒ 开关弹回去也没有原因
+      if (hasIpcFailed(r)) {
+        flash(false, ipcFailText(r, t('common.unknownError')))
+        return
+      }
       setSkills(await onChanged())
     },
-    [onChanged]
+    [onChanged, t, flash]
   )
 
   const handleDuplicate = useCallback(
@@ -165,11 +170,15 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   const handleDelete = useCallback(
     async (s: SkillRecord) => {
       if (!(await confirm({ message: t('skill.deleteConfirm', { name: s.name }), danger: true }))) return
-      await window.pocketai.deleteSkill(s.id)
+      const r = await window.pocketai.deleteSkill(s.id)
+      if (hasIpcFailed(r)) {
+        flash(false, ipcFailText(r, t('common.unknownError')))
+        return
+      }
       setSkills(await onChanged())
       setView({ mode: 'grid' })
     },
-    [t, onChanged]
+    [t, onChanged, flash]
   )
 
   // ---------- 在线技能操作 ----------

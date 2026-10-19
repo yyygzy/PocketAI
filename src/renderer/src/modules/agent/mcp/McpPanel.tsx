@@ -18,7 +18,7 @@ import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
 import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
-import { reportIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 
 /** 单个工具的试运行状态（key = `${serverId}:${toolName}`） */
@@ -183,7 +183,9 @@ export const McpPanel: React.FC = () => {
     if (!r.ok) toast.error(t('agent.startFail', { e: r.error ?? t('common.unknownError') }))
   }
   const handleStop = async (id: string) => {
-    await window.pocketai.stopMcpServer(id)
+    const r = await window.pocketai.stopMcpServer(id)
+    // §217：同文件 handleStart/handleRestart 都判了 `!r.ok`，只有停这一条没判 ⇒ 服务没停也报不出原因
+    if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
   }
   const handleRestart = async (id: string) => {
     const r = await window.pocketai.restartMcpServer(id)

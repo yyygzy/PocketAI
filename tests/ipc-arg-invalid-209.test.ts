@@ -193,7 +193,7 @@ describe('渲染层的回落必须安全（不抛、不留半截回码、不泄�
   })
 })
 
-describe('5 个走翻译的调用点：接线形状闸门', () => {
+describe('走翻译那几个文件的调用点：接线形状闸门', () => {
   const files = [
     '../src/renderer/src/modules/chat/ChatModule.tsx',
     '../src/renderer/src/modules/agent/hooks/useAgentChat.ts',
@@ -210,9 +210,11 @@ describe('5 个走翻译的调用点：接线形状闸门', () => {
     }
   }
 
-  it('正好四处在调这两个 helper（少一处＝闸门空转，多一处＝没登记）', () => {
-    expect(sites.length).toBe(4)
-    expect(sites.map((s) => s.arg).sort()).toEqual(['msg', 'msg', 'msg', 'term'])
+  it('正好七处在调这两个 helper（少一处＝闸门空转，多一处＝没登记）', () => {
+    // 4 → 7：V4-Iter-217 给 TranslateModule 的删除翻译／清空历史／删除术语表词条三处补上了失败判定，
+    // 用的是本文件立的同一个收口 helper（而不是 ipcFailText），这样将来这些通道回码化时界面不用再改。
+    expect(sites.length).toBe(7)
+    expect(sites.map((s) => s.arg).sort()).toEqual(['msg', 'msg', 'msg', 'r', 'r', 'r', 'term'])
   })
 
   it('每处都带 `|| t(…)` 兜底（error 为空时不许弹一句空 toast）', () => {

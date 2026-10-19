@@ -1,9 +1,10 @@
 // 技能管理模块：技能列表 / 创建编辑 / 启用开关 / 删除 / 市场（浏览/搜索/复制/导入导出）
 // 技能 = 可复用提示词片段，关联到助手后自动注入 SystemPrompt
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
 import { SkillMarket } from './SkillMarket'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -16,14 +17,23 @@ export const SkillModule: React.FC = () => {
   const [mode, setMode] = useState<'detail' | 'create' | 'edit'>('detail')
   const [marketOpen, setMarketOpen] = useState(false)
   const [keyword, setKeyword] = useState('')
+  const toast = useToast()
 
   // 返回最新列表供调用方复用：市场内写操作后市场与本页共享同一次 listSkills 结果，
   // 避免市场自刷 + 本页 onChanged 双查
+  // 最后一次真正拉到的列表：拉失败时交回它，而不是把 undefined 交给调用方（onChanged 的返回值会被 setSkills 用）
+  const lastList = useRef<SkillRecord[]>([])
   const load = useCallback(async () => {
     const list = await window.pocketai.listSkills()
+    // §217：失败对象不是数组 ⇒ skills.filter/find 当场 TypeError
+    if (hasIpcFailed(list)) {
+      toast.error(ipcFailText(list, t('common.unknownError')))
+      return lastList.current
+    }
+    lastList.current = list
     setSkills(list)
     return list
-  }, [])
+  }, [t, toast])
   useEffect(() => {
     // 打开技能页时自动同步内置（支持开发时热更新 + 生产环境首次载入）
     window.pocketai.syncSkills().catch(reportIpcError('skills.syncBuiltin'))
@@ -42,13 +52,21 @@ export const SkillModule: React.FC = () => {
   const selected = skills.find((s) => s.id === selectedId) ?? null
 
   const toggleEnabled = async (s: SkillRecord) => {
-    await window.pocketai.saveSkill({ id: s.id, name: s.name, enabled: !s.enabled })
+    const r = await window.pocketai.saveSkill({ id: s.id, name: s.name, enabled: !s.enabled })
+    if (hasIpcFailed(r)) {
+      toast.error(ipcFailText(r, t('common.unknownError')))
+      return
+    }
     load()
   }
 
   const handleDelete = async (s: SkillRecord) => {
     if (!(await confirm({ message: t('skill.deleteConfirm', { name: s.name }), danger: true }))) return
-    await window.pocketai.deleteSkill(s.id)
+    const r = await window.pocketai.deleteSkill(s.id)
+    if (hasIpcFailed(r)) {
+      toast.error(ipcFailText(r, t('common.unknownError')))
+      return
+    }
     if (selectedId === s.id) {
       setSelectedId(null)
       setMode('detail')

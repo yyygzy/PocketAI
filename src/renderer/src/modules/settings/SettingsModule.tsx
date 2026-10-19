@@ -742,6 +742,11 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
 
   async function saveSchedule(patch: { enabled?: boolean; intervalHours?: number; retentionCount?: number }) {
     const next = await window.pocketai.setBackupSchedule(patch)
+    // §217：失败对象没有 enabled/intervalHours ⇒ 面板把「定时备份」显示成一个不存在的计划
+    if (hasIpcFailed(next)) {
+      showNotice(false, ipcFailText(next, t('common.unknownError')))
+      return
+    }
     setSchedule(next)
   }
 
@@ -768,6 +773,11 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   async function doLocalBackup() {
     showNotice(true, t('bk.packing'))
     const r = await window.pocketai.createLocalBackup()
+    // §217：r.size 是 undefined ⇒ 绿色提示逐字说「已打包 NaN MB」，而一个字节都没写
+    if (hasIpcFailed(r)) {
+      showNotice(false, ipcFailText(r, t('common.unknownError')))
+      return
+    }
     showNotice(true, t('bk.localDone', { size: (r.size / 1024).toFixed(1) }))
   }
   async function doEncBackup() {
@@ -910,7 +920,12 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
 
   async function doDelete(filename: string) {
     if (!(await confirm({ message: t('bk.deleteConfirm', { name: filename }), danger: true }))) return
-    await window.pocketai.deleteWebDAVBackup(filename)
+    const r = await window.pocketai.deleteWebDAVBackup(filename)
+    // §217：失败也照常刷新＋弹「已删除」，远程那个备份还在
+    if (hasIpcFailed(r)) {
+      showNotice(false, ipcFailText(r, t('common.unknownError')))
+      return
+    }
     await refreshList()
     showNotice(true, t('bk.deleted'))
   }
@@ -1410,7 +1425,11 @@ const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }
 
   const handleClear = async () => {
     if (!(await confirm({ message: t('lic.clearConfirm'), danger: true }))) return
-    await window.pocketai.clearLicense()
+    const r = await window.pocketai.clearLicense()
+    if (hasIpcFailed(r)) {
+      setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      return
+    }
     setNotice({ ok: true, text: t('lic.cleared') })
     onChange()
   }

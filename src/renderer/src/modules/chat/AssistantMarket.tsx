@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { AssistantEditor } from './AssistantEditor'
-import { reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 
@@ -52,14 +52,23 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
 
   const handleDelete = async (id: string) => {
     if (!confirm(t('am.deleteConfirm'))) return
-    await window.pocketai.deleteAssistant(id)
+    const r = await window.pocketai.deleteAssistant(id)
+    // §217：失败不判就照常 reload＋关详情 ⇒ 看起来删掉了，而库里还在（会话仍挂着它）
+    if (hasIpcFailed(r)) {
+      flash(ipcFailText(r, t('common.unknownError')))
+      return
+    }
     await load()
     onChanged()
     setView({ mode: 'grid' })
   }
 
   const handleTogglePin = async (a: AssistantRecord) => {
-    await window.pocketai.setAssistantPinned(a.id, !a.isPinned)
+    const r = await window.pocketai.setAssistantPinned(a.id, !a.isPinned)
+    if (hasIpcFailed(r)) {
+      flash(ipcFailText(r, t('common.unknownError')))
+      return
+    }
     await load()
   }
 

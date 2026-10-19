@@ -710,7 +710,12 @@ export const KbDetail: React.FC<{
 
   const handleDeleteDoc = async (docId: string) => {
     if (!(await confirm({ message: t('kb.delDocConfirm'), danger: true }))) return
-    await window.pocketai.deleteKbDocument(docId)
+    const r = await window.pocketai.deleteKbDocument(docId)
+    // §217：失败不判就照常 refresh ⇒ 那条文档只是刷没了
+    if (hasIpcFailed(r)) {
+      toast.error(ipcFailText(r, t('common.unknownError')))
+      return
+    }
     await refresh()
   }
 
@@ -797,7 +802,11 @@ export const KbDetail: React.FC<{
 
   const handleDeleteKb = async () => {
     if (!(await confirm({ message: t('kb.delKbConfirm', { name: kb.name }), danger: true }))) return
-    await window.pocketai.deleteKnowledgeBase(kb.id)
+    const r = await window.pocketai.deleteKnowledgeBase(kb.id)
+    if (hasIpcFailed(r)) {
+      toast.error(ipcFailText(r, t('common.unknownError')))
+      return
+    }
     onChanged()
   }
 

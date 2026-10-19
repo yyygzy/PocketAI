@@ -292,17 +292,26 @@ export const TranslateModule: React.FC = () => {
   const handleDeleteHistory = useCallback(
     async (e: React.MouseEvent, id: string) => {
       e.stopPropagation()
-      await window.pocketai.deleteTranslation(id)
+      const r = await window.pocketai.deleteTranslation(id)
+      // §217：失败不判就本地过滤掉 ⇒ 那条只是看不见了，切回模块又回来
+      if (isIpcFail(r)) {
+        toast.error(ipcFailureText(r, t) || t('common.unknownError'))
+        return
+      }
       setHistory((prev) => prev.filter((h) => h.id !== id))
     },
-    []
+    [t, toast]
   )
 
   const handleClearHistory = useCallback(async () => {
     if (!(await confirm({ message: t('translate.history.clearConfirm'), danger: true }))) return
-    await window.pocketai.clearTranslations()
+    const r = await window.pocketai.clearTranslations()
+    if (isIpcFail(r)) {
+      toast.error(ipcFailureText(r, t) || t('common.unknownError'))
+      return
+    }
     setHistory([])
-  }, [t])
+  }, [t, toast])
 
   // ---------- 术语表操作 ----------
   // 返回值是"有没有真的加上"：safeHandle 把失败转成** resolve 的 {ok:false} **，
@@ -326,9 +335,13 @@ export const TranslateModule: React.FC = () => {
   )
 
   const handleDeleteTerm = useCallback(async (id: string) => {
-    await window.pocketai.deleteGlossaryTerm(id)
+    const r = await window.pocketai.deleteGlossaryTerm(id)
+    if (isIpcFail(r)) {
+      toast.error(ipcFailureText(r, t) || t('common.unknownError'))
+      return
+    }
     setGlossary((prev) => prev.filter((g) => g.id !== id))
-  }, [])
+  }, [t, toast])
 
   const running = runState === 'running'
   const longText = sourceText.length > 50_000

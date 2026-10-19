@@ -64,8 +64,15 @@ export const SandboxModule: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    setFiles(await window.pocketai.listSandboxFiles())
-  }, [])
+    const list = await window.pocketai.listSandboxFiles()
+    // §217：失败对象不是数组，直接写进 files 就是「进沙箱页那一刻白屏」；调用方那个 .catch 接不住 resolve
+    if (hasIpcFailed(list)) {
+      setToast(ipcFailText(list, t('common.unknownError')))
+      setFiles([])
+      return
+    }
+    setFiles(list)
+  }, [t, setToast])
 
   useEffect(() => {
     // load 内部无 try-catch，需挂 .catch 避免未处理 rejection

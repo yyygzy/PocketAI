@@ -12,7 +12,7 @@ import type {
 import { CHANNEL_TYPES } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
-import { logIpcError, reportIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 import { StatusDot, MiniBtn } from '../ui'
 import { useConfirm } from '../../../components/ConfirmDialog'
@@ -125,7 +125,9 @@ export const ChannelsPanel: React.FC = () => {
     if (!r.ok) toast.error(r.error ?? t('common.unknownError'))
   }
   const handleStop = async () => {
-    await window.pocketai.stopChannel(activeType)
+    const r = await window.pocketai.stopChannel(activeType)
+    // §217：safeHandle 的失败是 resolve 的 `{ok:false}`，这一条既没判也没 catch ⇒ 停没停下来界面看不出来
+    if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
   }
 
   // 切换 tab 时清空凭据草稿

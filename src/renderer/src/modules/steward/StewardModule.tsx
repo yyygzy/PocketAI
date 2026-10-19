@@ -93,8 +93,17 @@ export const StewardModule: React.FC = () => {
     setCleaning(true)
     try {
       const result = await window.pocketai.runCleanup()
+      // §217：这条 try 只有 finally ⇒ 失败对象既不被 catch 也照样写进 state，清理面板报的是假数字
+      if (hasIpcFailed(result)) {
+        toast.error(ipcFailText(result, t('common.unknownError')))
+        return
+      }
       setCleanupResult(result)
       const report = await window.pocketai.getHealthReport()
+      if (hasIpcFailed(report)) {
+        toast.error(ipcFailText(report, t('common.unknownError')))
+        return
+      }
       setHealth(report)
       // 静默刷新诊断结果（孤儿数据可能已被清除）
       window.pocketai.runDiagnose().then((r) => {
