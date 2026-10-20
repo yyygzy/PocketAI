@@ -18,6 +18,11 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: { get: () => null, set: () => {}, delete: () => {} }
 }))
 
+// §231 后 fs-tools 还会经 agent/file-snapshots 拉进 portable（顶层算 APP_ROOT 要用 app.isPackaged）
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+
 import { classifyCommand, findDangerRanges } from '../src/main/tools/shell-tools'
 
 const WS = 'C:\\agent-workspace'

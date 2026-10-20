@@ -66,6 +66,27 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-231 `fs_write` 的 diff + accept + 还原：改用户磁盘的那条路从此要点一次头
+
+- **来由**：用户问「按主流 agent 解决方案还需要做哪些改进」→ 三路只读探查 + 联网核对，核对后 §231 排第一；用户「开始改造」，并在两条口径里选定「**diff + accept，并留还原**」。
+- **为什么它是第一条（是"不对称"，不是"更安全"这种口号）**：`fs_write` 一直是 `permission: 'auto'` 直接 `writeFileSync` 覆盖（`fs-tools.ts:195,204`），而全仓 `src/main/tools/*.ts` grep `diff`／`undo`／`backup` 零命中；**同一工具面里的 `shell_exec` 早有 `classifyCommand` 三档**（`shell-tools.ts:220-259`）。也就是说"覆盖一个文件"比"跑一条命令"更松。
+- **做了什么（四件，一件不落）**：
+  ① 纯函数行级 diff：新增 `src/shared/fs-diff.ts`（LCS 对齐、超过 800 行退成朴素两栏并带 `coarse`、展示 200 行截断并带 `totalRows`）。**末尾换行单独占一行**：结尾带 \n 的串与不带的那一串只差一个换行符，行级 diff 会把它们判成"没有变化"，而那是真改动——判据要问的是"内容会不会变"。
+  ② `fs_write` 升 `confirm`，审批载荷交四格（相对路径／完整路径／变更规模／diff 文本）；`reason` 一律**只回码**（`FS_WRITE_NEW`／`FS_WRITE_OVERWRITE`／`FS_WRITE_OVERWRITE_UNREADABLE`／`FS_WRITE_PATH_OUTSIDE`），句子在四语字典（沿用 §152／§156 那套）。预览与路径守卫同处一份（`buildFsWritePreview` 在 `fs-tools.ts`）——两处各写一份"什么算工作目录内"迟早漂移。
+  ③ 落盘前快照：新增 `src/main/agent/file-snapshots.ts`，落在 `DATA_DIR/agent-file-snapshots`（一份一个 JSON，只存**相对**路径 + 旧内容 + 我们写进去的那份），单份 2 MiB 上限、总 100 份按 mtime 淘汰。**旧内容读不出（过大或含 NUL）时干脆不存**：存一份空串再"还原"，等于把用户的二进制文件清成空——那比不能还原糟得多，所以那一档改成"如实标 `notRestorable`、界面上不出现按钮"。
+  ④ 「还原到写入前」：IPC `AGENT_RESTORE_FILE_WRITE` + preload 类型带失败分支（§205 口径）+ `FsWriteActions` 挂在结果卡上。三条拒绝都是**必须**的，不是防御性编程：快照用过即废（不然内容在两版之间来回跳）、当前内容 ≠ 我们写的那份（说明写入之后**别人又改过**，这时还原等于吞掉那段改动，必须让人看见而不是替人决定）、路径落不回当前工作目录（换过目录，绝对路径不作数）。
+- **一条设计后果，写在这里而不是藏在 diff 里**：**子 run（无人值守）从此拿不到 `fs_write`**——`childToolSurface` 摘掉 confirm 类工具（`delegation-rules.ts:242-244`），且 `unattended` 撞 confirm 一律明确失败。这条已用真链用例钉住（chain ③：不弹窗、结果里是那句"需人工确认"、磁盘不动）。
+- **覆盖面限定（联网核对后收窄，不许承诺过头）**：快照只盖得住 `fs_write` 这一条路，`shell_exec` 改出来的文件进不了还原。对照的那几家也一样（它们的 checkpoint 官方就写明不跟踪 bash 改的文件），所以这不是偷工，但**文案不许写"这一轮改动都能撤销"**。
+- **用例**：三份新文件 **33 例**。`tests/fs-write-restore-231.test.ts` 20 例（真 fs + 真快照目录 + `POCKETAI_APP_ROOT` 指到 `data/tmp-231/`，纯 diff 五例、快照存储五例、真 `fs_write` 七例、预览四档与四语对账三例）；`tests/agent-fs-write-approval-chain-231.test.ts` 3 例（真 SQLite + 真引擎循环 + 真本地 SSE 端点，形状复用 §117 那套 harness）；`tests/renderer-agent-fs-write-231.test.tsx` 10 例（真挂载 `AgentMessageCard`，含两条反向对照）。
+- **变异 M231-1…7 全部有牙**（基线 33 例 0 红，跑完按字节复原 sha256 一致）：1 档位退回 auto（4 红）／2 摘掉"又被改过就不还原"的守卫（1 红）／3 不跳过"旧内容读不出"那一档（1 红）／4 末尾换行那行不进 diff（9 红）／5 快照 2 MiB 上限失效（1 红）／6 卡片不再按工具名挂按钮（1 红）／7 还原失败不判（1 红）。
+- **本轮自己撞出来的三条，都记下来**：
+  ① **M6 第一版存活**：我的反向对照写的是"别的工具的结果卡上没有按钮"，但那条 content 里本来就**没有** `snapshotId` 字段 ⇒ 判据在字段形状上巧合成立，把挂载条件改成"到处都挂"也全绿。改成「别的工具**返回了** `snapshotId` 也不许挂」（MCP server 可以返回任意 JSON）才有牙。**"测试通过"和"变异被杀"是同一件事的两种说法，后者才是判据**（与 §112② 同族）。
+  ② 三个既有用例（`fs-tools.test.ts`／`shell-tools.test.ts`／`shell-tools-inflight-quit.test.ts`）当场崩在 `portable.ts` 的 `app.isPackaged`：fs-tools 现在按正当依赖把 portable 拉进 import 图。**补最小 `app` 桩，而不是为了回避依赖去绕开它**——快照落在应用数据目录是产品事实。
+  ③ 真链用例一开始报 `FS_WRITE_PATH_OUTSIDE`：我拿正斜杠拼工作目录，撞上 `resolveWorkspacePath` 的 `abs.startsWith(ws + path.sep)` 前缀比对。生产里目录来自原生对话框（本机分隔符）不受影响，但**这条判据对分隔符敏感**，值得记一笔。同一轮还确认了一件事：消息表里的工具结果是**信封**（`toolCallId`／`name`／`arguments`／`content`／`isError`），内层才是工具自己的 JSON，而渲染层 `agent-shared.ts:312-317` 已经把信封解开——所以卡片拿到的是内层。**不回读这一处，"还原按钮"会在真机上永远不出现而 CI 全绿**。
+- **用户可见变化**：Agent 写文件前会弹一次确认，里面是「相对路径／完整路径／+N −M／逐行 diff」；批准后结果卡上多一个「还原到写入前」，点下去回到写入前那份（那一笔是新建则删除该文件）。多行超 800 行时标 `~`（未逐行对齐），展示超 200 行时标 `⋯`（截断），两个符号的含义写在字段标签里。
+- **验证**：typecheck 0、vitest **357 文件 / 4282 通过 + 1 跳过**（+3 文件／+33 例）、`npm run build` ✓（main 5.02s／preload 96ms／renderer 19.8s）。
+- **未做／未证**：① 弹窗里的 diff 目前是纯文本 `+`／`-`，**没有行级着色**——要着色得给 `ToolApprovalRequestEvent` 加一根轴，留观感轮；② **快照目录没进数据健康屏的体积口径**：最坏 100 份 × 2 MiB ≈ 200 MiB，现在没人报这个数（与 §177／§189 那套体积口径对不上，是个已知尾巴）；③ 四格排版、按钮观感、ja／ko 两句措辞**无真机复现、只有 CI**；④ 每次写都要点一次是用户选定的口径，存量会话的体感没测；⑤ 「还原」只在**当前内容仍等于我们写进去的那份**时才可用，这条不变量对用户的解释只在拒绝话术里，界面上没有预告（要做的话是给按钮加 title，未做）。
+
 ### V4-Iter-230 文档列表那一读：判了失败面、然后什么都不做——闸门看不见这一档
 
 - **来由**：用户「开 230 修 loadDocs」。这是 §229 收口时点名的"同族下一处"。

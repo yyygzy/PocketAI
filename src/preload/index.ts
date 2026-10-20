@@ -742,6 +742,15 @@ const api = {
     on: boolean
   ): Promise<{ ok: boolean; error: DelegateFailure | string | null; models: string[] }> =>
     ipcRenderer.invoke(IPC.AGENT_SET_DELEGATE_ENABLED, { providerId, model, on }),
+  /**
+   * §231「还原到写入前」：一条写操作一次机会，快照用过即废。
+   * 类型带失败分支（与 205 那一族同口径）——写成 `Promise<{path: string}>` 就等于让界面以为它不会失败。
+   */
+  restoreFileWrite: (
+    snapshotId: string
+  ): Promise<
+    { ok: true; path: string; bytes: number; removed: boolean } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.AGENT_RESTORE_FILE_WRITE, snapshotId),
 
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>

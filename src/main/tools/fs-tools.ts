@@ -5,7 +5,16 @@
 import path from 'node:path'
 import fs from 'node:fs'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
+import {
+  captureSnapshot,
+  defaultSnapshotRoot,
+  readSnapshot,
+  markConsumed,
+  MAX_SNAPSHOT_BYTES
+} from '../agent/file-snapshots'
 import type { BuiltinTool } from './builtin'
+import type { ApprovalPreviewField } from '../../shared/types'
+import { buildFileDiff, diffToText } from '../../shared/fs-diff'
 import { errMsg } from '../error'
 
 const WORKSPACE_KEY = 'agent.workspace_dir'
@@ -181,7 +190,7 @@ const fsWriteTool: BuiltinTool = {
     id: 'fs.write',
     name: 'fs_write',
     description:
-      '在 Agent 工作目录内写入/覆盖文本文件（UTF-8，父目录不存在时自动创建）。参数：path (string)，content (string)。',
+      '在 Agent 工作目录内写入/覆盖文本文件（UTF-8，父目录不存在时自动创建）。**会先请你确认改动内容**。参数：path (string)，content (string)。',
     parameters: {
       type: 'object',
       properties: {
@@ -192,7 +201,10 @@ const fsWriteTool: BuiltinTool = {
       additionalProperties: false
     },
     source: 'builtin',
-    permission: 'auto'
+    // §231：从 auto 升成 confirm。理由不是"更安全"一句话——同一工具面里 shell_exec 早就要人批，
+    // 而覆盖用户磁盘上的文件反倒不批，这是不对称。子 run（无人值守）会因此**拿不到 fs_write**
+    // （`childToolSurface` 摘 confirm 类），这条后果记在台账 V4-Iter-231。
+    permission: 'confirm'
   },
   async execute(args) {
     const rel = String(args?.path ?? '')
@@ -200,13 +212,134 @@ const fsWriteTool: BuiltinTool = {
     const content = typeof args?.content === 'string' ? args.content : ''
     const abs = resolveWorkspacePath(rel)
     fs.mkdirSync(path.dirname(abs), { recursive: true })
-    const existed = fs.existsSync(abs) && fs.statSync(abs).isFile()
+    const prev = readPrevText(abs)
+    const created = prev === null
+    // 旧内容不是可显示的文本（过大或含 NUL）时**干脆不留快照**：
+    // 存一份空串再"还原"，等于把用户的二进制文件清成空——那比不能还原糟得多。
+    const snap =
+      prev === TOO_LARGE_OR_BINARY
+        ? null
+        : captureSnapshot(defaultSnapshotRoot(), {
+            relPath: relativeWorkspacePath(abs),
+            prevExists: !created,
+            prevContent: typeof prev === 'string' ? prev : '',
+            wroteContent: content
+          })
     fs.writeFileSync(abs, content, 'utf-8')
     return JSON.stringify({
       path: rel,
       bytes: Buffer.byteLength(content, 'utf-8'),
-      created: !existed
+      created,
+      // 拿不到快照时如实说"这一笔不可还原"，界面就不出现「还原」按钮
+      snapshotId: snap?.id ?? null,
+      notRestorable: snap ? undefined : 'PREV_NOT_TEXT'
     })
+  }
+}
+
+/** 快照读不到旧内容时用的哨兵（区分"文件不存在"与"太大/二进制所以没留"） */
+const TOO_LARGE_OR_BINARY = Symbol('too-large-or-binary')
+/**
+ * 读旧内容用于快照：仅文本、仅 `MAX_SNAPSHOT_BYTES` 以内。
+ * 返回 null=文件不存在；返回哨兵=存在但不肯存（二进制或过大），调用方据此报告"不可还原"。
+ */
+function readPrevText(abs: string): string | typeof TOO_LARGE_OR_BINARY | null {
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null
+  const size = fs.statSync(abs).size
+  if (size > MAX_SNAPSHOT_BYTES) return TOO_LARGE_OR_BINARY
+  const buf = fs.readFileSync(abs)
+  if (buf.includes(0)) return TOO_LARGE_OR_BINARY
+  return buf.toString('utf-8')
+}
+
+/** 存进快照的相对路径：由绝对路径反推，保证还原时按当时的工作目录再解析一次能指回同一文件 */
+function relativeWorkspacePath(abs: string): string {
+  const ws = getWorkspaceDir()
+  const rel = path.relative(ws, abs).replace(/\\/g, '/')
+  return rel === '' ? '.' : rel
+}
+
+export interface FileWriteRestoreResult {
+  path: string
+  bytes: number
+  /** true=这一笔原本是在新建文件，还原即删除 */
+  removed: boolean
+}
+
+/**
+ * 「还原到写入前」。三条拒绝都是**必须**的，不是防御性编程：
+ *  · 快照已被用过 ⇒ 再点一次会把内容倒回去造成来回跳，直接拒；
+ *  · 当前内容与"我们写进去的那份"不一致 ⇒ 说明写入之后**别人（或你）又改过**，
+ *    这时候还原等于吞掉那一段改动，必须让人看见而不是替你做决定；
+ *  · 路径落不回当前工作目录 ⇒ 工作目录被换过，绝对路径不作数（快照只存相对路径）。
+ */
+export function restoreFileWrite(id: string): FileWriteRestoreResult {
+  const root = defaultSnapshotRoot()
+  const snap = readSnapshot(root, id)
+  if (!snap) throw new Error('SNAPSHOT_NOT_FOUND')
+  if (snap.consumedAt !== null) throw new Error('SNAPSHOT_CONSUMED')
+  const abs = resolveWorkspacePath(snap.relPath)
+  const current = readPrevText(abs)
+  if (typeof current === 'symbol') throw new Error('CURRENT_NOT_TEXT')
+  if (current !== snap.wroteContent) throw new Error('SNAPSHOT_DIVERGED')
+  if (!snap.prevExists) {
+    fs.rmSync(abs)
+    markConsumed(root, id)
+    return { path: snap.relPath, bytes: 0, removed: true }
+  }
+  fs.writeFileSync(abs, snap.prevContent, 'utf-8')
+  markConsumed(root, id)
+  return { path: snap.relPath, bytes: Buffer.byteLength(snap.prevContent, 'utf-8'), removed: false }
+}
+
+/** 审批弹窗上「这一笔会把什么改成什么」的预览（V4-Iter-231）；reason 一律回码，文案在四语字典 */
+export interface FsWritePreview {
+  fields: ApprovalPreviewField[]
+  reason: string
+  abs: string | null
+}
+
+/**
+ * 路径守卫**在这里也走一次**：审批弹窗拿到的绝对路径必须是解析过的，
+ * 不能把模型写的原始 `path` 直接显示成"要去这里改"——`../` 与绝对路径都在 `resolveWorkspacePath` 里判。
+ * 这一函数不许抛：弹窗正在等一份能看的东西，判不出来就退回"路径可疑"那一档。
+ */
+export function buildFsWritePreview(relPath: string, content: string): FsWritePreview {
+  let abs: string | null = null
+  try {
+    abs = resolveWorkspacePath(relPath)
+  } catch {
+    return {
+      abs: null,
+      reason: 'FS_WRITE_PATH_OUTSIDE',
+      fields: [{ key: 'fs_write_path', value: relPath || '(empty)' }]
+    }
+  }
+  const prev = readPrevText(abs)
+  if (prev === TOO_LARGE_OR_BINARY) {
+    // 旧内容不是可显示的文本（>2 MiB 或含 NUL）：只报新增规模，不假装做过 diff
+    return {
+      abs,
+      reason: 'FS_WRITE_OVERWRITE_UNREADABLE',
+      fields: [
+        { key: 'fs_write_path', value: relPath },
+        { key: 'fs_write_abs', value: abs },
+        { key: 'fs_write_stats', value: `+${content.split('\n').length}` }
+      ]
+    }
+  }
+  const diff = buildFileDiff(prev, content)
+  const flags = `${diff.coarse ? ' ~' : ''}${diff.truncated ? ' ⋯' : ''}`
+  const body = diffToText(diff.rows) + (diff.truncated ? `\n⋯ ${diff.rows.length}/${diff.totalRows}` : '')
+  return {
+    abs,
+    reason: diff.prevExists ? 'FS_WRITE_OVERWRITE' : 'FS_WRITE_NEW',
+    fields: [
+      { key: 'fs_write_path', value: relPath },
+      { key: 'fs_write_abs', value: abs },
+      { key: 'fs_write_stats', value: `+${diff.added} -${diff.removed}${flags}` },
+      { key: 'fs_write_diff', value: body, mono: true }
+    ]
   }
 }
 

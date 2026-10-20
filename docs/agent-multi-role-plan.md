@@ -305,3 +305,86 @@ V-0 跑完后补一条口径修正（写在这里以免有人再按初稿理解�
    - **第三种形状（记档，未处理）**：真实样例里出现过 `tool_call {\n "name": "kb_search", "arguments": {...} }`——没有 ``` 围栏、只有前导词 + 裸 JSON。两条正则都抓不到，而现有兜底要求整段 `startsWith('{')`（`:78`）也抓不到。若将来要救这类模型，必须新增这第三形状，并配自己的反向对照。
 2. **子代理要不要独立会话**：绕锁直调 `agentEngine.run` 最省，但会话归属与 trace 呈现要定规矩（现有口径：Agent 只记助手 + 会话，不做记录跳转）。
 3. **低配机默认开不开"顺序委派"**：M7 显示本机只有 3b 能当管控者（1.5b 一档 0/4）⇒ 是"探测到有能力才开"，还是"入门档一律不开、由用户在判据屏手动开"。
+
+---
+
+## 7. 改造流水账（2026-10-20 定，§231 起；**本轮只登记，未动工**）
+
+来由：用户问「agent 模块与主流 agent 方案比还差什么」→ 三路只读探查（循环机制／能力载体／可见性与评测）+ 逐行回读 + **联网核对一版**。台账最后一条是 V4-Iter-230（提交 `533b1cc`），以下编号只占位，开工一条才进 `docs/v4-iteration-ledger.md` 一条。
+
+**本节与 §1–§6 的关系**：§140–§183 那批解决的是"多角色在这台 4GiB 机器上算不算是真的"；本节解决的是"单次 run 的产物安全、过程可见、以及有没有一条跑出来的数字"。两条线共用 141 的槽位、142 的探针、163 的整棵树聚合。
+
+### §231 `fs_write` 的 diff 与 accept（回退面）——**已落地 V4-Iter-231**（2026-10-20，未提交）
+
+- **来由**：`fs_write` 是 `permission: 'auto'`（`src/main/tools/fs-tools.ts:195`），执行体直接 `fs.writeFileSync` 覆盖（`:204`）；全仓 `src/main/tools/*.ts` grep `diff`／`undo`／`backup` 零命中。同一工具面里 `shell_exec` 有三档分类器与确认（`classifyCommand`，`src/main/tools/shell-tools.ts:220-259`：deny／confirm／allow）⇒ **覆盖文件比跑命令更松**，这是不对称，不是取舍。
+- **落点**：`fs-tools.ts`（改档位 + 交 diff 载荷）、`src/main/agent/tool-approval.ts`（复用既有 confirm 链，不新造弹窗）、`src/renderer/src/components/ToolApprovalDialog.tsx`（渲染那一屏）。
+- **判据（要能咬）**：① 未批准时磁盘字节不变（真 fs，不 mock）；② 批准后内容与 `content` 一致；③「本会话总是允许」只放过**同 path 同内容指纹**（`toolArgsFingerprint` `tool-approval.ts:48-57`、`toolAllowKey` `:61`、会话上限 `SESSION_ALLOW_MAX = 50` `:28`）；④ 变异：diff 计算恒返空数组必须转红。
+- **覆盖面口径（联网核对后限死）**：Claude Code 的 checkpoint 官方就不管三处——bash 改的文件、后台子代理的编辑、外部系统（数据库／API／部署）。本条只盖 `fs_write`，`shell_exec` 改的东西进不了快照。**文案不许写"这一轮改动都能撤销"**。
+- **口径已定（用户 2026-10-20 选定）**：走 (A) 的加强版——升 `confirm` + 审批里看 diff + 落盘前留快照 + 卡上「还原到写入前」。代价照实承担：存量会话每次写都要点一次，体感未测（记在台账 §231 未证段）。
+
+### §232 大结果卸载 + 窗口按 token 预算 + trace 补列
+
+- **来由**（三件同轴，故并一批）：
+  ① 工具结果一律压到 2000 字符（`engine.ts:110`，`compressToolResult` `:607-624`：数组只留前 3 项、对象按 key 收窄），砍掉的部分**不可回读**——现文案已经会告诉模型"完整 N 字符"，却不给拿到那 N 字符的路径；
+  ② 跨轮窗口是**条数**（`MAX_CONTEXT_MESSAGES = 30`，`engine.ts:109`），被切掉的早期消息**全部**只以 LLM 摘要存在（`:908-931`，失败才降级规则摘要）⇒ 工具返回里的 ID、权限约束、用户否定条件一旦没进摘要就永久丢失；
+  ③ `agent_traces` 建表只有 step_index／step_type／tool_name／duration／token／status／error（`src/main/db/database.ts:72-84`，后补 prompt/completion tokens 与 parent_request_id），**不存参数、不存返回、不存模型** ⇒ "第 4 步传了什么才失败"这类问题现在答不了。
+- **主流口径（联网核对到的方向，数字不引为事实）**：单次工具响应过大就写文件、上下文只留路径 + 前几行预览；窗口超阈值时把"完整内容已在磁盘"的早期调用截成指针；只有卸载腾不出空间才退到摘要；且"摘要不应是唯一事实来源"。
+- **落点**：`engine.ts`（截断改卸载——已有 `fs_list`／`fs_read`，不需要新工具）、`agent-trace.repo.ts` + `database.ts`（三列走既有迁移号段）。
+- **判据**：① 一条超长工具返回在上下文里是"路径 + 预览"，路径下文件真存在且字节完整；② 该内容在后续步能被 `fs_read` 取回（正向对照）；③ 对着一个失败 run 能从库里复现"第几步、什么参数、返回什么"；④ 变异：卸载阈值写反（=0）必须红。
+- **风险**：卸载目录要进现有清理口径（V4-Iter-193/194 那把"活根之下不删 + 目录及直接子目录 mtime 超 7 天 + 先改名再逐文件删"的闸门），否则新增一棵没人清的树；trace 补列是**写放大**，先按 §174 的规模观察口量一遍再定留存策略。
+- **依赖**：本条是"续航"那条的前置——参数与返回不落库，续跑就无从定位中断点；§235 的子会话视图要展示每步参数同样要用这三列。
+
+### §233 Agent 评测集底座
+
+- **来由**：`tests/` 只有 `kb-eval*`（V4-Iter-137 那套），**agent 层没有任何"跑一批任务看通过率"的机制**（docs 里 grep 评测集／通过率／回归任务 与 agent 同现零命中）。⇒ 本节里所有关于 agent 的判断都来自读码，一条都不是跑出来的。底座其实齐了：142 的能力探针、`agent_traces`、163 的整棵树 token 聚合，缺的只是任务集与判分。
+- **落点**：仿 `tests/kb-eval-runner-real-db.test.ts` 的形状另起一份；任务集放 gitignored `data/`。
+- **判据（核对到的三条硬口径）**：① **判分看环境状态**（工作目录里的文件、库里的行），不看聊天文本——"很多 agent 的真实结果存在环境里而不是聊天框里"；② 同一任务跑 k 次，`pass@1` 与 `pass^k` 一起报（本机 3B 的既有样本量太小：委派 4/4、文本协议 0/3，单次通过率没有意义）；③ 高分 capability eval 毕业成 regression suite，改 prompt／模型／harness／工具就整套重跑。
+- **风险**：本机 4GiB 跑一批是几十分钟量级（记忆：`agent.ttft` 中位 7457ms、prefill≈2.4ms/token）⇒ 评测集分档，低配只跑冒烟，全量留云端。**LLM-as-judge 若用必须先人工校准**，否则只是换个地方说谎。
+- **前置**：先定任务集再写 runner，否则判分会写成"按实现写的断言"（§217/§230 那两轮的旧病）。
+
+### §234 运行中排队消息
+
+- **来由**：`send` 在 `running` 时直接 return（`src/renderer/src/modules/agent/hooks/useAgentChat.ts:493-494`），输入框与附件 disabled（`components/AgentComposer.tsx:367,377`）。主流标配是两键：入队 / 立即插队。**这条不是加分项，是标配缺失。**
+- **落点**：`useAgentChat.ts`（队列 state）+ `AgentComposer.tsx`（两键与队列条）+ `engine.ts`（只在**步与步之间**消费）。
+- **判据**：① 队列消息在下一步的上下文里出现（DB 消息行 + 请求载荷两处独立证据）；② 点"立即"不等于 abort（run 状态仍 running）；③ 负例：run 结束后队列仍有残留必须红。
+- **风险**：插队点只能落步边界，否则与 `master.signal` 中止、审批 await（`engine.ts:1655`）互相打断 ⇒ 要写成明确不变量。
+
+### §235 子会话可见（把 §144/§148 的最后一公里接上）
+
+- **来由**：`includeSubSessions` 在**生产代码零调用**（`src/main/db/repositories/conversation.repo.ts:77` 默认加 `parent_conversation_id IS NULL`；全仓只有 3 个测试文件传 `true`）⇒ 用户看得见角色标签（`AgentPanel.tsx:526-527` 实时、`AgentMessageCard.tsx:267-277` 持久）和 `tool_result` 文本里那 8 位截断子会话 id（`src/shared/delegation-rules.ts:247-248`），**点不开**。144/145/148/150/163 那一整批能力的入口是断的。
+- **落点**：那 8 位 id 改成入口 + 一条子会话只读视图。
+- **判据**：真机 CDP 走真事件路径（沿用 B88 那套）：点开子会话能看到它自己的分步；且**父的 token 汇总口径不变**——163 那把尺子不能被这条污染，要正向对照。
+
+### §236 SKILL.md 三层渐进披露 + 读 MCP 注解做二次分级
+
+- **来由**：`SkillRecord` 有 name／description／icon／content（`src/shared/types.ts:113-122`），但**没有资源位**（无 `scripts`／`references`／`assets` 的承载），且 `formatSkill` 把 description 与 content **一起**拼进注入块（`src/main/assistant/skills.ts:6-7`）、`buildSkillsContext` 对助手绑定的每个技能**全量**格式化后一次性进上下文（`:15-20` → `engine.ts:863`）⇒ 缺的不是元数据，是**分层加载**：启动即常驻的和触发后才该出现的付同一份 token。导入侧的 frontmatter 白名单只收 `name／description／icon／title／version／author／tags／category`（`src/main/skills/skill-parser.ts:26`），上游技能包里的 `allowed-tools`／`compatibility` 一类字段会被拒，脚本与参考文件无处安放 ⇒ **装不了社区技能包**（这是互操作性缺口，不只是开销问题）。另：`src/main/mcp/*.ts` grep `annotations`／`readOnlyHint`／`destructiveHint` **零命中**，分级靠工具名前缀词表（`src/main/mcp/manager.ts:69-99`）。
+- **主流口径（联网核对到的方向）**：SKILL.md 已是开放标准——一个目录含 `SKILL.md`（frontmatter 的 name/description + 正文）与可选的 `scripts`／`references`／`assets`，三层按需加载（元数据常驻、正文触发才读、资源再下一层），且不止一家官方文档明说自己的技能构建在这套标准之上。⇒ 本节改的是**分层与互操作**，不是"技能要不要存在"。
+- **判据**：① 装一份上游 SKILL.md 目录能直接被识别（互操作正向对照）；② 未触发的技能正文**不进请求载荷**（拿单步静态基线 3851／满配 4469 tok 量前后差）；③ 注解只降级到 confirm，**不许**把 `readOnlyHint` 直接当 auto（规范明说注解不可作唯一安全依据；我们现在"默认全 confirm"比规范要求的更保守，这一点别改坏）。
+- **风险**：注入形状变了会动到 V4-Iter-154 那套"文案里引的界面名字对账"和四语；新增 `load_skill` 类工具要进权限表并与 `'*'` 语义同源。
+
+### §237 备用 target 换一次 + 溢出提示（从"模型路由"降级来的窄做法）
+
+- **来由**：通用 router 在单机本地优先**不划算**——核对到的不适用条件写得很直接：只用单一模型且选择稳定、量小 ⇒ 多一跳延迟 + 新故障点不值。现状是 `targets[0]` 写死（`engine.ts:754`）、重试只对同一端点（`MAX_LLM_RETRIES = 2`，`engine.ts:112-113`）。
+- **只做两件**：① 同 target 重试仍失败后，按用户预设的备用 target 换**一次**，并在界面明说换了谁；② 上下文溢出时提示可换长上下文模型。
+- **判据**：换 target 必须留下可归因的一行——不许让用户以为还是那台模型在答。这与 §222/§226 那族"读不到别说成还在加载"是同一条诚实口径。
+
+### 联网核对后改了口径的五条（留档，防止按初稿开工）
+
+1. **A 项（回退）加覆盖面限定**：初稿写成"加快照就能撤销"，核对到 Claude Code 官方列了三处不管（bash 改的、后台子代理改的、外部系统）⇒ §231 的验收口径收窄。
+2. **C 项（插话）从加分项升成标配缺失**：两键（入队／立即）是现有产品的明写功能。
+3. **D 项（续航）拿到标准形状**：快照 + 同一 thread_id + resume 值交回中断点，硬规则含"恢复时节点从头重跑 ⇒ 中断前副作用要幂等"。我们审批是进程内 await（`createApproval`，`tool-approval.ts:97`，超时 `APPROVAL_TIMEOUT_MS = 5 * 60 * 1000` `:26`），弹窗挂着时崩了连"停在哪个工具"都没存 ⇒ 排在 §232 之后。
+4. **E 项（模型路由）降级**：通用 router 不做，收成 §237 两件窄事。
+5. **G 项从"较小的"升成该做**：截断 vs 卸载是有损与可回读的区别，摘要作为唯一事实来源是信息保真问题 ⇒ 并入 §232。
+
+### 明确排在后面、暂不登记的
+
+- **MCP OAuth 2.1**（受保护资源元数据 + PKCE + resource 参数；2026-07-28 版规范把 DCR 换 CIMD）：现状只有 stdio + Streamable HTTP，密钥走 env／自定义 Authorization 头并字段级加密。**无远程 server 需求前不动**——这是协议面不是产品面，做了没人验收。
+- **记忆的自动提炼与作用域**（`src/main/assistant/memory.ts:5-9` 全局一份 50 条、写侧只有模型主动 `memory_save`）：形状确实扁，但在 §232 的窗口口径改掉之前动它，两处会互相顶。
+
+### 本节里仍是二手、开工前必须回源现数的
+
+登记时逐条回源核过行号的（可当一手）：`fs-tools.ts:195,204`、`shell-tools.ts:220-259`、`tool-approval.ts:26,28,48-57,61,97`、`SkillRecord` `types.ts:113-122`、`skill-parser.ts:26`、`skills.ts:6-7,15-20`、`manager.ts:69-99`、`engine.ts:110,112-113,607-624,785,863,908-931,961-999,1655`、`conversation.repo.ts:77`、`database.ts:72-84`、`useAgentChat.ts:493-494`、`AgentComposer.tsx:367,377`、`AgentPanel.tsx:526-527`、`AgentMessageCard.tsx:267-277`、`memory.ts:5-9`。
+
+**仍属二手、开工前必须自己 grep 一遍的三条**：① MCP 侧「无 OAuth 流程」（我只确认了 stdio／Streamable HTTP 两条传输在 `mcp/manager.ts`，没读完整个授权路径）；② 「没有独立产物面板」——我列过 `modules/agent/components/` 九个组件、里面确无此类面板，但没排除它挂在别处；③ **80% 预算预警是否把 Agent 的 token 计入**——`BudgetWarningListener` 挂在 `App.tsx`（全局），但它的读数来源是否覆盖整棵编排树（§163 的口径）没查。
+
+联网材料多为文档与二手博客，其中出现的"19.9 个百分点""压缩 67% 后延迟反升"这类数字**只取方向，不写进台账当事实**；搜索结果里的"泄露源码"类镜像站描述未据此下任何结论。

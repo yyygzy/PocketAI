@@ -42,7 +42,7 @@ import { chunksToSources } from '../../shared/kb-sources'
 import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { toolRegistry, badArgsError } from '../tools/registry'
 import type { ToolAgentContext } from '../tools/builtin'
-import { getWorkspaceDir, resolveWorkspacePath } from '../tools/fs-tools'
+import { getWorkspaceDir, resolveWorkspacePath, buildFsWritePreview } from '../tools/fs-tools'
 import { findDangerRanges } from '../tools/shell-tools'
 import { buildToolPreviewFields } from '../../shared/tool-preview'
 import { injectAttachments, appendTextAttachments, buildImageParts } from '../chat/context-attachments'
@@ -669,6 +669,13 @@ function buildApprovalDisplay(
 
     const risk: 'danger' | 'custom' = reason?.startsWith('DANGEROUS_') ? 'danger' : 'custom'
     return { command, cwd: cwdAbs, risk, reason, highlights: findDangerRanges(command) }
+  }
+
+  // fs_write（§231）：落盘之前把"这一笔会改成什么"摊开。预览与路径守卫都在 fs-tools（那里已有工作目录判据），
+  // 这一层只做搬运——两处各写一份"什么算工作目录内"迟早漂移。
+  if (tc.function.name === 'fs_write') {
+    const preview = buildFsWritePreview(String(parsed.path ?? ''), typeof parsed.content === 'string' ? parsed.content : '')
+    return { command: String(parsed.path ?? ''), risk: 'custom', reason: preview.reason, fields: preview.fields }
   }
 
   // MCP 工具：按参数名启发式生成语义化预览字段（路径解析复用工作目录守卫）

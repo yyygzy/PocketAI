@@ -15,6 +15,11 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => {
   }
 })
 
+// §231 后 fs-tools 会经 agent/file-snapshots 拉进 portable（顶层算 APP_ROOT 要用 app.isPackaged）
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+
 import { getShellTools, inFlightShellJobCount, killInFlightShellJobs } from '../src/main/tools/shell-tools'
 import * as repoMod from '../src/main/db/repositories/app-config.repo'
 const repo = repoMod as unknown as { __kv: Map<string, string> }

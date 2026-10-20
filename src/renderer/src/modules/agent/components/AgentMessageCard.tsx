@@ -7,6 +7,7 @@ import { AttachmentGrid } from '../../../components/AttachmentGrid'
 import { extractFirstHtmlBlock, delegateRoleLabel, type AgentMessage } from '../agent-shared'
 import { readDelegateRoleForDisplay } from '../../../../../shared/delegation-rules'
 import { HtmlBlockActions } from './HtmlBlockActions'
+import { FsWriteActions } from './FsWriteActions'
 import { writeClipboard } from '../../../utils/clipboard'
 import { ReminderMenu } from '../../../components/ReminderMenu'
 import { requestSourceJump } from '../../knowledge/source-jump'
@@ -296,6 +297,8 @@ const AgentMessageCardImpl: React.FC<{
         <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
           {m.toolResult.content}
         </pre>
+        {/* §231：fs_write 的结果带快照 id 时给「还原到写入前」；没留快照时只说一句为什么，不出现坏按钮 */}
+        {m.toolResult.name === 'fs_write' && !m.isError && <FsWriteActions resultContent={m.toolResult.content} />}
         <CardActions copyText={m.toolResult.content} onDelete={del} />
         {ctxMenuNode}
       </div>

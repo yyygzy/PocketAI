@@ -3,7 +3,7 @@ import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import { chatService } from '../../chat/chat-service'
 import { toolRegistry } from '../../tools/registry'
-import { getWorkspaceDir, setWorkspaceDir } from '../../tools/fs-tools'
+import { getWorkspaceDir, setWorkspaceDir, restoreFileWrite } from '../../tools/fs-tools'
 import { getShellConfig, setShellConfig } from '../../tools/shell-config'
 import { getWebSearchConfig, setWebSearchConfig } from '../../tools/websearch-config'
 import { getCalendarConfig, setCalendarConfig } from '../../tools/calendar-ics'
@@ -148,6 +148,15 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string; on: boolean }) =>
       setDelegationEnabled(payload.providerId, payload.model, payload.on),
     argsSchema(delegateToggleSchema)
+  )
+
+  // §231「还原到写入前」：一条写操作一次还原机会（快照用过即废）。
+  // 拒绝原因全部从 restoreFileWrite 抛出，由 safeHandle 转成 {ok:false,error}——
+  // 这里不自己包 try/catch：把错误咽掉就等于让"没还原"长得像"还原成功了"。
+  safeHandle(
+    IPC.AGENT_RESTORE_FILE_WRITE,
+    (_e, snapshotId: string) => ({ ok: true as const, ...restoreFileWrite(snapshotId) }),
+    argsSchema(idSchema)
   )
 
   // 渲染端对工具审批弹窗的应答

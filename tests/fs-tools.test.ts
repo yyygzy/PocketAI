@@ -37,6 +37,12 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: mocks.appConfigRepo
 }))
 
+// V4-Iter-231 起 fs-tools 多了一条 import：agent/file-snapshots → portable（顶层算 APP_ROOT 要用 app.isPackaged）。
+// 快照根目录是**产品事实**（写在应用数据目录下），所以不绕开这条依赖，只给 portable 需要的最小 `app` 桩。
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+
 vi.mock('node:fs', () => ({
   ...mocks.fs,
   default: mocks.fs
