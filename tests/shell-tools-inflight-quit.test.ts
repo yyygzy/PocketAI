@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 vi.mock('../src/main/db/repositories/app-config.repo', () => {
   const kv = new Map<string, string>()
@@ -71,20 +72,46 @@ async function waitFile(file: string, ms = 8000): Promise<boolean> {
   return false
 }
 
-/** 等到字节数连续 quietMs 不再变化（上限 timeoutMs）——「树里没人了」的可观测判据 */
-async function waitFileQuiet(file: string, quietMs = 600, timeoutMs = 8000): Promise<boolean> {
-  const until = Date.now() + timeoutMs
-  let last = fs.existsSync(file) ? fs.statSync(file).size : -1
-  let since = Date.now()
+/**
+ * 还有谁在写这个心跳文件 —— 直接问操作系统，不去看文件字节增长。
+ * 为什么换：V4-Iter-240 那版的判据是「600ms 内字节数不变」，本质是在赌调度：满载机器上一次
+ * taskkill 的生效可以慢过 600ms，于是判据把「杀得慢」读成了「没杀掉」（当时红的正是两条）。
+ * 这个查询回答另一件事：此刻还有没有活着的、命令行里带着我这个唯一文件名的进程。
+ * 注意：只过滤 node.exe（本用例的心跳就是 node），换别的被测进程时这个 Name 要跟着改。
+ */
+function liveHeartbeatPids(fileName: string): number[] {
+  const ps =
+    "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | " +
+    "Where-Object { $_.CommandLine -like '*" + fileName + "*' } | Select-Object -ExpandProperty ProcessId"
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf-8' })
+  return out
+    .split(/\r?\n/)
+    .map((x) => Number(x.trim()))
+    .filter((x) => Number.isInteger(x) && x > 0)
+}
+
+/** 等到一个心跳进程都查不到（有界；等的是状态，不是「文件安静了一会儿」） */
+async function waitNoHeartbeat(fileName: string, ms = 8000): Promise<{ ok: boolean; pids: number[] }> {
+  const until = Date.now() + ms
+  let pids: number[] = []
   while (Date.now() < until) {
-    await wait(100)
-    const now = fs.existsSync(file) ? fs.statSync(file).size : -1
-    if (now !== last) {
-      last = now
-      since = Date.now()
-    } else if (Date.now() - since >= quietMs) return true
+    pids = liveHeartbeatPids(fileName)
+    if (pids.length === 0) return { ok: true, pids }
+    await wait(250)
   }
-  return false
+  return { ok: false, pids }
+}
+
+/** 反向对照用的"看得见"：判据说「查不到」之前，先证明这条查询查得到活着的 */
+async function waitHeartbeatSeen(fileName: string, ms = 8000): Promise<number[]> {
+  const until = Date.now() + ms
+  let pids: number[] = []
+  while (Date.now() < until) {
+    pids = liveHeartbeatPids(fileName)
+    if (pids.length > 0) return pids
+    await wait(250)
+  }
+  return pids
 }
 
 async function waitCount(target: number, ms = 3000): Promise<boolean> {
@@ -104,7 +131,7 @@ async function waitCount(target: number, ms = 3000): Promise<boolean> {
  */
 afterEach(async () => {
   killInFlightShellJobs()
-  await waitCount(0, 4000)
+  await waitCount(0, 8000)
 })
 
 const shellTool = () => {
@@ -118,7 +145,7 @@ describe('在途 shell 子进程的退出登记', () => {
     expect(shellTool().schema.name).toBe('shell_exec')
   })
 
-  it('长跑命令期间登记在案；kill 之后整棵树停止心跳（孙进程不是孤儿）', { timeout: 20_000 }, async () => {
+  it('长跑命令期间登记在案；kill 之后整棵树停止心跳（孙进程不是孤儿）', { timeout: 45_000 }, async () => {
     const p = shellTool().execute({ command: `node hb.js ${path.basename(HB)}`, timeoutMs: 20000 })
     expect(await waitCount(1)).toBe(true)
     // 等它真的开始写：上一次就是在这里假红的——固定 700ms 撞上慢启动，文件还没被创建
@@ -128,11 +155,12 @@ describe('在途 shell 子进程的退出登记', () => {
     expect(killInFlightShellJobs()).toBe(1)
     await p // 命令壳应随即结束（不等到 8s/20s）
     expect(await waitCount(0)).toBe(true)
-    // 心跳静默 ⇒ 树里已经没有活进程（不写死「900ms 内没长」，那是在赌调度）
-    expect(await waitFileQuiet(HB), 'kill 之后心跳还在长 ⇒ 树里有漏网的').toBe(true)
+    // 判据：查不到任何还在写这个心跳文件的进程（不再拿「字节数安静了一会儿」当证据）
+    const quiet = await waitNoHeartbeat(path.basename(HB))
+    expect(quiet.pids, 'kill 之后仍有心跳进程活着：' + quiet.pids.join(',')).toEqual([])
   })
 
-  it('正向对照：命令自然结束后登记自己摘掉，此时 kill 返回 0（不谎报"杀了几个"）', { timeout: 20_000 }, async () => {
+  it('正向对照：命令自然结束后登记自己摘掉，此时 kill 返回 0（不谎报"杀了几个"）', { timeout: 45_000 }, async () => {
     const raw = await shellTool().execute({ command: 'node -e "setTimeout(()=>{},200)"', timeoutMs: 10000 })
     const res = JSON.parse(raw) as { exitCode: number | null }
     expect(res.exitCode).toBe(0)
@@ -145,19 +173,23 @@ describe('在途 shell 子进程的退出登记', () => {
 // 前面每条用例都自己 kill 了，登记表本来就空，你删掉兜底它照样全绿。
 // 所以这里**故意留一个在途 job 不自己杀**，让下一条去读兜底的结果。
 describe('用例被砍在中间时，兜底必须收干净（§240 的那三件事）', () => {
-  it('故意留下一发在跑的心跳：既不 await 也不 kill，交给 afterEach', { timeout: 20_000 }, async () => {
+  it('故意留下一发在跑的心跳：既不 await 也不 kill，交给 afterEach', { timeout: 45_000 }, async () => {
     void shellTool()
       .execute({ command: `node hb.js ${path.basename(LEAK_HB)}`, timeoutMs: 20000 })
       .catch(() => { /* 被兜底杀掉时壳会带回错误串，这条用例不关心 */ })
     // 等到它确实登记上——这一步保证下一条**不是空真**（没登记上就归零，等于什么都没测）
     expect(await waitCount(1, 4000)).toBe(true)
+    // 反向对照：这一会儿进程明明是活的——查询要是返回空，就得在这里露馅，而不是让下一条的
+    // 「查不到」变成假绿（`liveHeartbeatPids` 写坏了也会一路绿灯）
+    expect((await waitHeartbeatSeen(path.basename(LEAK_HB))).length).toBeGreaterThan(0)
   })
 
-  it('上一条之后：登记表已归零，且心跳文件不再增长（杀的是整棵树，不只是解注册）', { timeout: 20_000 }, async () => {
+  it('上一条之后：登记表已归零，且查不到还在写心跳的进程（杀的是整棵树，不只是解注册）', { timeout: 45_000 }, async () => {
     expect(inFlightShellJobCount()).toBe(0)
     // 只看本条用例自己那一个心跳文件：上一条迟到的子进程写的是它自己的字，染不到这里
     expect(fs.existsSync(LEAK_HB) ? fs.statSync(LEAK_HB).size : 0).toBeGreaterThan(0)
-    expect(await waitFileQuiet(LEAK_HB), 'afterEach 兜底没把树杀干净').toBe(true)
+    const quiet = await waitNoHeartbeat(path.basename(LEAK_HB))
+    expect(quiet.pids, 'afterEach 兜底没把树杀干净，还活着：' + quiet.pids.join(',')).toEqual([])
   })
 })
 
