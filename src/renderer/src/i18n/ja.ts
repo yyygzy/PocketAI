@@ -35,6 +35,7 @@ export const ja = {
   'common.loading': '読み込み中…',
   'common.loadFailed': '読み込めません：{msg}',
   'common.loadFailedDefaults': '{what}を読み込めません：{msg}（表示は既定値です）',
+  'common.loadFailedOff': '{what}を読み込めません：{msg}（今回はオフとして扱います）',
   // ── ルートエラー境界（V4-Iter-146）：レンダリング中に例外が出たときの可読フォールバック ──
   'crash.title': '画面の描画でエラーが出ました',
   'crash.hint': '描画中に例外が発生しただけで、データの問題ではありません。下のエラー行を開発者に貼り付けると速いです。',

@@ -344,13 +344,26 @@ const AUTO_LOCK_OPTIONS = [0, 60_000, 300_000, 900_000, 1_800_000, 3_600_000]
 const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
   const { t } = useI18n()
   const [value, setValue] = useState<number | null>(null)
+  // §227：读失败时 select 显示的是 AUTO_LOCK_OPTIONS 的第一档「永不」，而那正是未配置时的默认值
+  //（app-config.repo.ts:265 是 `v ? Number(v) : 0`）⇒ 这句"显示的是默认值"说得出，但必须说出来
+  const [readErr, setReadErr] = useState<string | null>(null)
   const { notice: saved, show: markSaved, clear: clearSaved } = useTransientNotice<boolean>(1500)
 
   useEffect(() => {
     window.pocketai
       .getLockStatus()
-      .then((s) => { if (!hasIpcFailed(s)) setValue(s.autoLockTimeout ?? 0) })
-      .catch(() => setValue(0))
+      .then((s) => {
+        if (hasIpcFailed(s)) {
+          setReadErr(ipcFailText(s, t('common.unknownError')))
+          return
+        }
+        setValue(s.autoLockTimeout ?? 0)
+      })
+      .catch((e: unknown) => {
+        // §227：原来这一支直接把 0 写回 state——那是把"没读到"演成"读到的是永不"，还顺手解除了 disabled
+        setReadErr(errText(e, t('common.unknownError')))
+        logIpcError('settings.getLockStatus', e)
+      })
   }, [])
 
   const label = (ms: number) =>
@@ -378,6 +391,7 @@ const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
 
   return (
     <div className="space-y-1">
+      {readErr && <ShowingDefaultsNotice what={t('enc.autoLock')} msg={readErr} />}
       <div className="flex items-center gap-2 text-xs">
         <span className="text-[var(--color-text-muted)] w-16">{t('enc.autoLock')}</span>
         <select

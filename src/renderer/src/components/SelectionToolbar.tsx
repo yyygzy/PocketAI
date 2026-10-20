@@ -2,7 +2,8 @@
 // 点击动作携带文本唤起浮窗单例并自动执行。输入框/可编辑区内划词不弹（属编辑行为）。
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
-import { hasIpcFailed, reportIpcError } from '../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../utils/ipc'
+import { errText } from '../utils/error'
 import type { SelectionAction } from '../../../shared/types'
 import {
   SELECTION_ACTIONS,
@@ -55,14 +56,29 @@ export const SelectionToolbar: React.FC = () => {
   const [bar, setBar] = useState<BarState | null>(null)
   const [pos, setPos] = useState<Pos | null>(null)
   const [enabled, setEnabled] = useState(false)
+  // §227：读不到时这条浮条**不出现**，而"不出现"和"你自己关了"在界面上长得一模一样；
+  // 且这一项的应用默认是**开**（popup.ts:43 `!== '0'`）⇒ 不能说"显示的是默认值"，只能说"暂时按关闭处理"
+  const [readErr, setReadErr] = useState<string | null>(null)
   const barRef = useRef<HTMLDivElement>(null)
 
   // 开关：挂载拉一次，窗口重新聚焦时刷新（设置页改开关回来即生效）
   const refreshEnabled = useCallback(() => {
     window.pocketai
       .getPopupConfig()
-      .then((cfg) => { if (!hasIpcFailed(cfg)) setEnabled(cfg.selectionEnabled) })
-      .catch(() => setEnabled(false))
+      .then((cfg) => {
+        if (hasIpcFailed(cfg)) {
+          // §227：这一支不再动那颗开关——显示与否由 readErr 一处决定；实测把"降级成关"那句拆掉全量仍绿
+          //（与 §226 那颗 setReplyNotify(true) 同一个毛病：一句没有可观察后果的降级，留着只会让人以为已经处理过）
+          setReadErr(ipcFailText(cfg, t('common.unknownError')))
+          return
+        }
+        setReadErr(null)
+        setEnabled(cfg.selectionEnabled)
+      })
+      .catch((e: unknown) => {
+        setReadErr(errText(e, t('common.unknownError')))
+        logIpcError('selection.getPopupConfig', e)
+      })
   }, [])
   useEffect(() => {
     refreshEnabled()
@@ -78,18 +94,20 @@ export const SelectionToolbar: React.FC = () => {
   // 选区变化后延迟一帧读取（mouseup/keyup 时浏览器尚未最终化选区的兜底）
   const scheduleUpdate = useCallback(
     (e: Event) => {
-      if (!enabled) return
+      if (!enabled && !readErr) return
       setTimeout(() => {
         const next = readSelection(e)
+        // §227：pos 每次选区变化都要清空重算——它是浮条渲染的门闩（见下面 useLayoutEffect 的注释）
         setBar(next)
-        if (!next) setPos(null)
+        setPos(null)
       }, 0)
     },
-    [enabled]
+    [enabled, readErr]
   )
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled && !readErr) {
+      // readErr 时仍然装监听：那句「读不到」要在用户真的选词、也就是这条浮条本该出现的那一刻说
       hide()
       return
     }
@@ -132,7 +150,7 @@ export const SelectionToolbar: React.FC = () => {
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('blur', onBlur)
     }
-  }, [enabled, scheduleUpdate, hide])
+  }, [enabled, readErr, scheduleUpdate, hide])
 
   // 浮条渲染后按实际尺寸夹取定位（优先选区上方，空间不足翻下方）
   useLayoutEffect(() => {
@@ -160,31 +178,44 @@ export const SelectionToolbar: React.FC = () => {
     hide()
   }
 
-  if (!bar || !pos) return null
+  if (!bar) return null
 
   return (
     <div
       ref={barRef}
       className="fixed z-[9000] flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] px-1 py-0.5 select-none"
       style={{
-        left: pos.left,
-        top: pos.top,
+        // §227：浮条的精确位置要等它**渲染出来**量完尺寸才算得出（下面那个 useLayoutEffect），
+        // 所以门不能再要求 pos 已有值——那样两者互锁：没 pos 不渲染 ⇒ 量不到尺寸 ⇒ 永远没有 pos。
+        // 第一帧先按选区粗位摆出并隐藏，量完那一帧再显形。
+        left: pos?.left ?? bar.rect.left,
+        top: pos?.top ?? bar.rect.top,
+        visibility: pos ? undefined : 'hidden',
         background: 'var(--color-surface)',
         boxShadow: '0 6px 20px rgba(0,0,0,.22)'
       }}
       // 阻止 mousedown 失焦导致选区被清空、点击落空
       onMouseDown={(e) => e.preventDefault()}
     >
-      {SELECTION_ACTIONS.map((a) => (
-        <button
-          key={a}
-          className="btn-ghost !px-2 !py-1 text-xs whitespace-nowrap"
-          onClick={() => runAction(a)}
-          title={t(`popup.act.${a}`)}
+      {readErr ? (
+        <span
+          role="alert"
+          className="px-2 py-1 text-xs leading-relaxed text-[var(--color-danger)] max-w-[min(28rem,80vw)]"
         >
-          {t(`popup.act.${a}`)}
-        </button>
-      ))}
+          {t('common.loadFailedOff', { what: t('popup.selectionTitle'), msg: readErr })}
+        </span>
+      ) : (
+        SELECTION_ACTIONS.map((a) => (
+          <button
+            key={a}
+            className="btn-ghost !px-2 !py-1 text-xs whitespace-nowrap"
+            onClick={() => runAction(a)}
+            title={t(`popup.act.${a}`)}
+          >
+            {t(`popup.act.${a}`)}
+          </button>
+        ))
+      )}
     </div>
   )
 }
