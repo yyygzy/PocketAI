@@ -57,6 +57,8 @@ import {
   buildTextProtocolPrompt
 } from '../../shared/text-tool-protocol'
 import { isTextProtocolForced } from './text-protocol-prefs'
+import { getModelContextWindow } from './model-window-prefs'
+import { DEFAULT_MESSAGES_WHEN_WINDOW_UNSET } from '../../shared/model-window'
 import { isDelegationEnabledFor } from './delegate-prefs'
 import {
   budgetExhausted,
@@ -137,7 +139,31 @@ function safeTraceStats(requestId: string): AgentRunStats {
 const REPLAN_EXTRA_STEPS = 5 // 首次超步数时重规划一次，追加的步数预算
 const LOOP_TIMEOUT_MS = 5 * 60 * 1000 // 5 分钟整体超时
 const TOOL_TIMEOUT_MS = 30_000 // 单个工具调用超时
-const MAX_CONTEXT_MESSAGES = 30 // 上下文窗口：最多保留最近 30 条消息（不含 system），防止 token 溢出
+const MAX_CONTEXT_MESSAGES = DEFAULT_MESSAGES_WHEN_WINDOW_UNSET // 未声明上下文窗口时的既有口径：最近 30 条（不含 system）
+/**
+ * 声明了窗口时的条数硬上限（V4-Iter-234）。为什么放开还要留一条上限：
+ * token 预算放开的是"比 30 条更多"，不是"无限"——一条 200 轮的老会话按预算可能全塞得下，
+ * 但那已经不是"最近的上下文"而是把整本日志重发一遍。
+ */
+const MAX_CONTEXT_MESSAGES_CEILING = 120
+/**
+ * 主推理步请求的输出预算（engine 里那一发 streamChat 的 maxTokens 用它）。
+ * 窗口算术要把这一段先扣掉才算得准，所以**请求侧与预算侧共用这一个数**——
+ * 两处各写一个 4096，将来改一处就会让"发出去多少"与"预留多少"漂移。
+ */
+const AGENT_OUTPUT_RESERVE_TOKENS = 4096
+/**
+ * 早期对话摘要为窗口预留的量：规则摘要的上限是 HISTORY_TOTAL_TOKENS=1200，
+ * LLM 摘要那一条走 maxTokens=800、且提示词写"不超过 300 字"。取 1500 覆盖两者，
+ * 因为预留算少了就等于答应带历史却装不下——宁可先扣。
+ */
+const CONTEXT_SUMMARY_RESERVE_TOKENS = 1500
+/**
+ * 图片的估算额度：**不按 base64 长度估**。视觉 token 与字节数不成比例（一张 1MB 的图
+ * base64 后是百万级字符，按 estimateTokens 会把整段历史挤光），本仓没有实测过真实视觉
+ * token 数，未实测前给一个固定额度，并把它单独放出来好让日后一次实测能一处改掉。
+ */
+const IMAGE_TOKEN_ESTIMATE = 1024
 const MAX_TOOL_RESULT_CHARS = 2000 // 工具结果在上下文中的最大字符数（截断防止撑爆 token 窗口）
 const MAX_MESSAGE_SOURCES = 12 // 单条最终回答最多挂多少个引用来源
 const MAX_LLM_RETRIES = 2 // LLM 调用失败重试次数（网络抖动/429/5xx），不含首次
@@ -605,6 +631,119 @@ function findLastAssistantWithToolCallId(
   return null
 }
 
+// ─── 上下文窗口：按 token 预算裁历史（V4-Iter-234）─────────────────
+// 为什么不再只看条数：一条工具结果在上下文里最多 2000 字符（≈500–2500 token），
+// 而一条闲聊只有一二十 token——"30 条"既可能早就超过小窗口模型的容量，也可能把
+// 200k 上下文的云模型白白卡住。换成按 token 预算裁，缺的那个输入由用户在模型栏里给。
+
+/** 一条要发出去的消息估多少 token：文本按 estimateTokens，图片按固定额度，工具调用按参数串。 */
+export function estimateAdapterMessageTokens(m: AdapterChatMessage): number {
+  let n = 0
+  if (typeof m.content === 'string') n += estimateTokens(m.content)
+  else if (Array.isArray(m.content)) {
+    for (const part of m.content) {
+      if (part.type === 'text') n += estimateTokens(part.text ?? '')
+      else n += IMAGE_TOKEN_ESTIMATE
+    }
+  }
+  for (const tc of m.tool_calls ?? []) {
+    n += estimateTokens(`${tc.function?.name ?? ''}${tc.function?.arguments ?? ''}`)
+  }
+  return n
+}
+
+/**
+ * 按"轮"分组：一条 user 消息起头，后面跟着同一轮的 assistant／tool 记录。
+ * 为什么必须按轮裁而不是按条裁：buildContext 会剥掉"没有对应用户消息的 assistant"
+ * 和"找不到对应 assistant.tool_calls 的 tool 消息"，从中间切开一轮，轻则那一轮的工具
+ * 结果整段蒸发（模型看不到自己查到的东西），重则端点因悬空 tool_calls 报 400。
+ * 首条 user 之前的记录（若有）自成一组，保证不静默丢。
+ */
+export function groupHistoryByTurn(history: MessageRecord[]): MessageRecord[][] {
+  const groups: MessageRecord[][] = []
+  for (const m of history) {
+    if (m.role === 'user' || groups.length === 0) groups.push([m])
+    else groups[groups.length - 1]!.push(m)
+  }
+  return groups
+}
+
+/** 一组（一轮）发出去的估算量：拿 buildContext 的真实产物量，免得"估的"与"发的"两套逻辑。 */
+function estimateGroupTokens(group: MessageRecord[]): number {
+  let n = 0
+  for (const m of buildContext(group)) n += estimateAdapterMessageTokens(m)
+  return n
+}
+
+export interface HistoryWindowPlan {
+  /** 进上下文的那一段（历史顺序不变） */
+  windowed: MessageRecord[]
+  /** 被窗口切掉的那一段——**必须进摘要**（SEC-19 那条对齐规矩） */
+  early: MessageRecord[]
+  /** 这一轮用的是哪一种口径：界面看得见、也进日志 */
+  source: 'declared' | 'default'
+  /** 给历史留出的 token 数；未声明窗口时为 null（没有预算这个概念） */
+  budgetTokens: number | null
+  /** 实际估算的历史量，用于排障时对照预算 */
+  historyTokens: number
+  /** 预算 ≤ 0：固定开销（提示词＋工具面＋输出预留＋摘要预留）已经超过声明的窗口 */
+  noRoom: boolean
+}
+
+/**
+ * 决定这一轮带多少历史。两条分支刻意分开写：
+ * 未声明窗口⇒**与改动前的切片逐条相同**（这条要能被单独证明，否则"没设过的用户行为变了"
+ * 这种话没人能反驳）；声明了⇒从最新一轮往回装，装不下就停，并保证至少带最新一轮。
+ */
+export function planHistoryWindow(opts: {
+  allHistory: MessageRecord[]
+  systemPrompt: string
+  tools: ToolSchema[]
+  declaredTokens: number | null
+}): HistoryWindowPlan {
+  const { allHistory, systemPrompt, tools, declaredTokens } = opts
+  if (!declaredTokens) {
+    const over = allHistory.length > MAX_CONTEXT_MESSAGES
+    return {
+      windowed: over ? allHistory.slice(-MAX_CONTEXT_MESSAGES) : allHistory,
+      early: over ? allHistory.slice(0, allHistory.length - MAX_CONTEXT_MESSAGES) : [],
+      source: 'default',
+      budgetTokens: null,
+      historyTokens: 0,
+      noRoom: false
+    }
+  }
+  const staticTokens = estimateTokens(systemPrompt) + estimateTokens(JSON.stringify(tools ?? []))
+  const budget =
+    declaredTokens -
+    staticTokens -
+    AGENT_OUTPUT_RESERVE_TOKENS -
+    CONTEXT_SUMMARY_RESERVE_TOKENS
+  const groups = groupHistoryByTurn(allHistory)
+  const kept: MessageRecord[][] = []
+  let historyTokens = 0
+  let records = 0
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (records >= MAX_CONTEXT_MESSAGES_CEILING) break
+    const g = groups[i]!
+    const tokens = estimateGroupTokens(g)
+    // 第一组无条件带上：那是用户这一轮的问题，预算再紧也不能把问题本身裁掉
+    if (kept.length > 0 && historyTokens + tokens > budget) break
+    kept.unshift(g)
+    historyTokens += tokens
+    records += g.length
+  }
+  const windowed = kept.flat()
+  return {
+    windowed,
+    early: allHistory.slice(0, allHistory.length - windowed.length),
+    source: 'declared',
+    budgetTokens: budget,
+    historyTokens,
+    noRoom: budget <= 0
+  }
+}
+
 /** 计算一组 tool_calls 的确定性签名（按工具名排序后拼接 name:arguments），
  *  用于检测死循环：相同工具+相同参数重复调用。 */
 export function computeToolSignature(toolCalls: ToolCall[]): string {
@@ -956,29 +1095,36 @@ class AgentEngine {
     const loopTimer = setTimeout(() => master.abort(), LOOP_TIMEOUT_MS)
 
     // 工作消息列表（ReAct 上下文）
-    // 上下文窗口：仅保留最近 MAX_CONTEXT_MESSAGES 条历史，防止 token 溢出；
-    // **凡是被窗口切掉的早期消息都要进摘要**（SEC-19）——此前摘要另用一个更高的
-    // 阈值（35），31~35 条历史会既被窗口裁掉又不被摘要，等于静默丢失用户上下文。
+    // 上下文窗口（V4-Iter-234）：声明过窗口的模型按 token 预算裁，没声明的照旧按 30 条。
+    // 凡是被窗口切掉的早期消息都要进摘要（SEC-19）——这条规矩由规划器返回的 early 承载，
+    // 不再靠"两个阈值凑巧对齐"。
     const allHistory = messageRepo.listByConversation(conversationId)
+    const declaredWindow = getModelContextWindow(target.providerId, target.model)
+    const windowPlan = planHistoryWindow({
+      allHistory,
+      systemPrompt: renderedPrompt,
+      tools,
+      declaredTokens: declaredWindow
+    })
+    // 装不下时只进日志（口径与停止/卸载类同档，界面那一句写在设置数的当下说，见模型栏）
+    if (windowPlan.noRoom) {
+      logger.warn(
+        `[agent] 声明窗口 ${declaredWindow} 装不下固定开销，历史只带最近一轮（预算 ${windowPlan.budgetTokens}）`
+      )
+    }
     let summaryPrefix = ''
-    const earlyMsgs = allHistory.length > MAX_CONTEXT_MESSAGES
-      ? allHistory.slice(0, allHistory.length - MAX_CONTEXT_MESSAGES)
-      : []
-    if (earlyMsgs.length > 0) {
+    if (windowPlan.early.length > 0) {
       // 优先用 LLM 生成高质量摘要，失败/超时降级为规则摘要
       const summaryAdapter = providerManager.getAdapter(target.providerId)
       summaryPrefix = await summarizeHistoryWithLLM(
-        earlyMsgs,
+        windowPlan.early,
         summaryAdapter,
         target.model,
         master.signal
       )
     }
-    const windowedHistory = allHistory.length > MAX_CONTEXT_MESSAGES
-      ? allHistory.slice(-MAX_CONTEXT_MESSAGES)
-      : allHistory
     const messages = buildContext(
-      windowedHistory,
+      windowPlan.windowed,
       summaryPrefix ? `${renderedPrompt}\n\n## 对话摘要（早期对话的精简记忆）\n${summaryPrefix}` : renderedPrompt
     )
 
@@ -1240,7 +1386,7 @@ class AgentEngine {
     const chatParams: ChatParams = {
       model: target.model,
       signal: master.signal,
-      maxTokens: 4096,
+      maxTokens: AGENT_OUTPUT_RESERVE_TOKENS,
       temperature: 0.7,
       ...pickSafeParams(defaultParams)
     }

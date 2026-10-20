@@ -59,3 +59,15 @@ export const textProtocolToggleSchema = z.object({
   model: z.string().min(1).max(128),
   on: z.boolean()
 })
+
+/**
+ * AGENT_SET_MODEL_WINDOW 入参（V4-Iter-234）：设/清一台模型的上下文窗口。
+ * `tokens: null` 表示清除（回到"未设"），所以这不是普通 toggle，值域校验留给服务层
+ * （整数、512–4,000,000）；这里只挡类型与 id 形状。服务层拒绝时**只回码**，
+ * 句子由界面按语言拼（口径同 §152 的委派开关）。
+ */
+export const modelWindowSetSchema = z.object({
+  providerId: z.string().min(1).max(AGENT_MAX_ID_CHARS),
+  model: z.string().min(1).max(128),
+  tokens: z.number().int().nullable()
+})

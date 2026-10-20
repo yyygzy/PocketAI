@@ -729,6 +729,16 @@ const api = {
   /** 开/关某台模型的文本协议；返回最新清单（以库里为准，调用方不做乐观更新） */
   setAgentTextProtocol: (providerId: string, model: string, on: boolean): Promise<string[]> =>
     ipcRenderer.invoke(IPC.AGENT_SET_TEXT_PROTOCOL, { providerId, model, on }),
+  /** §234：每台模型声明的上下文窗口（键 `providerId::model`，值为 token 数）。失败分支是 {ok:false} */
+  getModelContextWindows: (): Promise<Record<string, number> | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_MODEL_WINDOWS),
+  /** §234：设/清一台模型的上下文窗口（tokens=null 为清除）；回传最新表＋拒绝码，调用方不做乐观更新 */
+  setModelContextWindow: (
+    providerId: string,
+    model: string,
+    tokens: number | null
+  ): Promise<{ windows: Record<string, number>; rejected?: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_MODEL_WINDOW, { providerId, model, tokens }),
   /** 已判出的"这台模型当得了管控者吗"清单（带 stale：本地镜像换了就该重探） */
   listDelegateCapabilities: (): Promise<DelegateCapabilityView[]> =>
     ipcRenderer.invoke(IPC.AGENT_LIST_DELEGATE_CAPS),

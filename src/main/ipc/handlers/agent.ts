@@ -17,10 +17,15 @@ import {
   calendarConfigSchema,
   toolApproveResponseSchema,
   textProtocolToggleSchema,
+  modelWindowSetSchema,
   delegateProbeSchema,
   delegateToggleSchema
 } from '../../../shared/schemas/agent'
 import { listTextProtocolModels, setTextProtocolModel } from '../../agent/text-protocol-prefs'
+import {
+  listModelContextWindows,
+  setModelContextWindow
+} from '../../agent/model-window-prefs'
 import { listDelegateCapabilitiesWithStaleness, probeDelegateCapability, setDelegationEnabled } from '../../agent/delegate-capability'
 import { idSchema } from '../../../shared/schemas/providers'
 
@@ -129,6 +134,16 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string; on: boolean }) =>
       setTextProtocolModel(payload.providerId, payload.model, payload.on),
     argsSchema(textProtocolToggleSchema)
+  )
+
+  // ---------- 每台模型可选的上下文窗口（V4-Iter-234）----------
+  // 只存「这台模型能装多少」这一个输入；每轮带多少历史由引擎按它算，见 planHistoryWindow。
+  safeHandle(IPC.AGENT_GET_MODEL_WINDOWS, () => listModelContextWindows())
+  safeHandle(
+    IPC.AGENT_SET_MODEL_WINDOW,
+    (_e, payload: { providerId: string; model: string; tokens: number | null }) =>
+      setModelContextWindow(payload.providerId, payload.model, payload.tokens),
+    argsSchema(modelWindowSetSchema)
   )
 
   // ---------- 委派能力探针（V4-Iter-142）----------

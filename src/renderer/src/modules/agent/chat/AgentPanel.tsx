@@ -423,6 +423,9 @@ export const AgentPanel: React.FC = () => {
               onPickWorkspace={() => void tools.pickWorkspace()}
               textProtocolForced={chat.textProtocolForced}
               onToggleTextProtocol={(on) => chat.setTextProtocol(on)}
+              contextWindowTokens={chat.contextWindowTokens}
+              contextWindowUnread={chat.contextWindowUnread}
+              onSetContextWindow={(tokens) => chat.setContextWindow(tokens)}
             />
           </div>
           {/* 头部快捷：会话内搜索 */}

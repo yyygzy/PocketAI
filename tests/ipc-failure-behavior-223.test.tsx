@@ -96,6 +96,9 @@ describe('③ Agent 页删一条消息：库里没删掉，界面不能什么都
     getLatestRunStats: () => null,
     getSessionStats: () => null,
     getAgentTextProtocol: () => [],
+    // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
+    getModelContextWindows: () => ({}),
+    setModelContextWindow: () => ({ windows: {} }),
     onAgentStep: () => () => { /* 订阅卸载函数 */ },
     onAgentChunk: () => () => { /* 同上 */ },
     onAgentDone: () => () => { /* 同上 */ },

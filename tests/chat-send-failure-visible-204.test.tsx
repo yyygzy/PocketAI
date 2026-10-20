@@ -91,6 +91,9 @@ describe('Agent 页发起失败：运行态停下 ＋ toast 给文案', () => {
       getLatestRunStats: () => null,
       getSessionStats: () => null,
       getAgentTextProtocol: () => [],
+      // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
+      getModelContextWindows: () => ({}),
+      setModelContextWindow: () => ({ windows: {} }),
       sendMessage: () => sendReturn(),
       abortAgent: () => ({ ok: true }),
       onAgentStep: () => () => {},

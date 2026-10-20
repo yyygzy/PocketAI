@@ -14,6 +14,11 @@ import type {
   ProviderRecord
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import {
+  MODEL_WINDOW_MAX_TOKENS,
+  MODEL_WINDOW_MIN_TOKENS,
+  modelWindowKey
+} from '../../../../../shared/model-window'
 import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 import { useToast } from '../../../components/ToastProvider'
@@ -42,6 +47,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [mcpHeldBack, setMcpHeldBack] = useState(0)
   /** 被用户点名「走文本协议」的模型键（`providerId::model`）；开关存 app_config，跨重启保留 */
   const [textProtocolModels, setTextProtocolModels] = useState<string[]>([])
+  /** §234：每台模型声明的上下文窗口（键同上，值是 token 数）。表里没有=未设=按 30 条 */
+  const [modelWindows, setModelWindows] = useState<Record<string, number>>({})
+  /** 那一读失败过：界面不许把"没读到"演成"没有一台模型设过窗口"（§222 那一族） */
+  const [modelWindowsUnread, setModelWindowsUnread] = useState<string | null>(null)
   /** 运行中实时步骤条 chip 流（done/error/切会话清空；不打 messages-reducer，避免污染消息流） */
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [providerId, setProviderId] = useState('')
@@ -89,6 +98,60 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   /** 当前选中的 provider+model 是否已被点名走文本协议 */
   const textProtocolForced =
     !!providerId && !!model && textProtocolModels.includes(`${providerId}::${model}`)
+
+  // §234：每台模型的上下文窗口表，挂载读一次，之后以 set 通道回传的最新值为准
+  useEffect(() => {
+    void window.pocketai
+      .getModelContextWindows()
+      .then((res) => {
+        if (hasIpcFailed(res)) {
+          // 读不到不许咽成空表——空表在界面上和"没有一台模型设过窗口"长得一模一样
+          setModelWindowsUnread(ipcFailText(res, t('agent.unknownError')))
+          return
+        }
+        setModelWindowsUnread(null)
+        setModelWindows(res)
+      })
+      .catch(reportIpcError('agent.getModelContextWindows'))
+  }, [t])
+
+  /** 当前选中模型声明的窗口；null=未设（引擎那一侧退回"最近 30 条"的旧口径） */
+  const contextWindowTokens =
+    providerId && model ? modelWindows[modelWindowKey(providerId, model)] ?? null : null
+
+  /**
+   * 设/清当前这台模型的窗口（下一轮运行生效）。
+   * 三条失败面各说各的：IPC 失败⇒原因；服务层回码拒绝⇒那句"这个数不行"（数字取自共享常量，
+   * 不手抄）；两者都不做本地乐观更新——表以库里回传的为准。
+   */
+  const setContextWindow = useCallback(
+    (tokens: number | null) => {
+      if (!providerId || !model) return
+      void window.pocketai
+        .setModelContextWindow(providerId, model, tokens)
+        .then((res) => {
+          if (hasIpcFailed(res)) {
+            toast.error(ipcFailText(res, t('agent.unknownError')))
+            return
+          }
+          if (res.rejected) {
+            toast.error(
+              res.rejected === 'MODEL_WINDOW_INVALID_VALUE'
+                ? t('agent.window.rejected.MODEL_WINDOW_INVALID_VALUE', {
+                    min: MODEL_WINDOW_MIN_TOKENS,
+                    max: MODEL_WINDOW_MAX_TOKENS
+                  })
+                : t('agent.window.rejected.MODEL_WINDOW_INVALID_ID')
+            )
+            return
+          }
+          setModelWindows(res.windows)
+          setModelWindowsUnread(null)
+        })
+        .catch(reportIpcError('agent.setModelContextWindow'))
+    },
+    [providerId, model, toast, t]
+  )
 
   /** 开/关当前这台模型的文本协议（下一轮运行生效；不做本地乐观更新，以库里回传的清单为准） */
   const setTextProtocol = useCallback(
@@ -594,6 +657,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     mcpHeldBack,
     textProtocolForced,
     setTextProtocol,
+    contextWindowTokens,
+    contextWindowUnread: modelWindowsUnread,
+    setContextWindow,
     providerId,
     model,
     setModel,

@@ -108,6 +108,9 @@ describe('B55④：开关作用域在 hook 状态里是一台模型一个', () =
       getLatestRunStats: () => null,
       getSessionStats: () => null,
       getAgentTextProtocol: () => forced,
+      // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
+      getModelContextWindows: () => ({}),
+      setModelContextWindow: () => ({ windows: {} }),
       // 通道签名是**三个位置参数**（providerId, model, on），回传库里最新的清单（不做乐观更新）
       setAgentTextProtocol: (pid: string, mdl: string, on: boolean) => {
         const key = `${pid}::${mdl}`

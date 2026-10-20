@@ -100,6 +100,9 @@ beforeEach(() => {
     getLatestRunStats: () => null,
     getSessionStats: () => null,
     getAgentTextProtocol: () => [],
+    // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
+    getModelContextWindows: () => ({}),
+    setModelContextWindow: () => ({ windows: {} }),
     sendMessage: () => ({ ok: true }),
     abortAgent: () => ({ ok: true }),
     onAgentStep: sub(h.step),
