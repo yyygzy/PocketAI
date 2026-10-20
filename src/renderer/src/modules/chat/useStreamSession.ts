@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatTarget } from '../../../../shared/types'
 import type { CompareColumn } from './ComparisonColumns'
 import type { FocusBranch } from './ChatView'
+import { reportIpcError } from '../../utils/ipc'
 
 /**
  * 流式会话 hook：收口 ChatModule 中散落的 6 个流式 ref（requestId/finalized/
@@ -173,8 +174,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
 
   const abort = useCallback(() => {
     if (requestIdRef.current) {
-      // 中止操作允许静默失败：用户主动停止流式，reject 不影响 UI
-      window.pocketai.abortChat(requestIdRef.current).catch(() => {})
+      // §224：不打断界面是对的，但「没停下来」是要紧事（流还在跑、token 还在烧），得留痕
+      window.pocketai.abortChat(requestIdRef.current).catch(reportIpcError('chat.abortChat'))
     }
   }, [])
 

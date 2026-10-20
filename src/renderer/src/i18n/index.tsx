@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { zh } from './zh'
+import { logIpcError } from '../utils/ipc'
 
 export type Lang = 'zh' | 'en' | 'ja' | 'ko'
 
@@ -97,9 +98,11 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 语言变化 → 通知主进程重建应用菜单（中/英文）
   useEffect(() => {
-    // invoke 是异步拒绝，try/catch 捕获不到，必须 .catch 兜底：
-    // 解锁窗/浮窗等页面挂载即触发，极端早于主进程注册时静默忽略即可
-    window.pocketai?.setAppLanguage?.(lang)?.catch?.(() => { /* 主进程未就绪时忽略 */ })
+    // invoke 是异步拒绝，try/catch 捕获不到，必须 .catch 兜底：解锁窗/浮窗挂载可能早于主进程注册，
+    // 那一句 reject 是设计内的（§224 之前整条吞掉）；除此以外说明菜单语言真没同步，留痕
+    window.pocketai?.setAppLanguage?.(lang)?.catch?.((e: unknown) => {
+      if (!/No handler registered/.test(String(e))) logIpcError('i18n.setAppLanguage', e)
+    })
   }, [lang])
 
   const t = useCallback((key: string, params?: Record<string, string | number>) => {

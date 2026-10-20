@@ -359,7 +359,7 @@ export const ChatModule: React.FC = () => {
         draftTimerRef.current = undefined
         const id = currentConvRef.current
         if (id && draftTextRef.current.trim()) {
-          void window.pocketai.setConversationDraft(id, draftTextRef.current).catch(() => {})
+          void window.pocketai.setConversationDraft(id, draftTextRef.current).catch(reportIpcError('chat.setConversationDraft'))
         }
       }
     }
@@ -574,7 +574,7 @@ export const ChatModule: React.FC = () => {
       } else if (b.monthly !== null && b.monthly > 0 && b.monthCost > b.monthly) {
         toast.warning(t('usage.budgetExceeded', { scope: t('usage.budgetMonthly') }))
       }
-    }).catch(() => { /* 预算状态不可达不阻断聊天 */ })
+    }).catch(reportIpcError('chat.getUsageBudget'))
   }, [toast, t])
 
   // 智能标题后台生成完成：就地更新活跃/归档两个列表（流式结束后的 reload 为兜底）

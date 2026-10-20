@@ -362,8 +362,8 @@ export const PopupApp: React.FC = () => {
         stop()
         return
       }
-      // 关窗失败无影响（合理静默）
-      void window.pocketai.hidePopup().catch(() => {})
+      // 关窗失败无影响：界面静默，但留痕（§224）
+      void window.pocketai.hidePopup().catch(reportIpcError('popup.hidePopup'))
     } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
       // Ctrl/⌘+N：清空重开一轮问答（浮窗内局部快捷键，filterShortcutForContext popup 同款语义）
       e.preventDefault()
@@ -414,7 +414,7 @@ export const PopupApp: React.FC = () => {
           <button
             className="btn-ghost !px-2 !py-0.5 text-xs"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            onClick={() => void window.pocketai.hidePopup().catch(() => {})} // 关窗失败无影响（合理静默）
+            onClick={() => void window.pocketai.hidePopup().catch(reportIpcError('popup.hidePopup'))} // 关窗失败无影响，留痕即可
             title={t('popup.close')}
           >
             ✕

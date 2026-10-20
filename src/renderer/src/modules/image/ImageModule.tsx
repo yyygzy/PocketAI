@@ -90,9 +90,9 @@ export const ImageModule: React.FC = () => {
     }).catch(reportIpcError('image.listProviders'))
     window.pocketai.listImages().then((v) => { if (!hasIpcFailed(v)) setGallery(v) }).catch(reportIpcError('image.listImages'))
     return () => {
-      // 离开模块时中止进行中的生成；卸载路径上的失败无感知必要，静默
+      // 离开模块时中止进行中的生成；卸载路径上的失败不必打扰用户，但要留痕（§224）
       if (runningRef.current && requestIdRef.current) {
-        window.pocketai.abortImage(requestIdRef.current).catch(() => { /* 卸载中止，失败无影响 */ })
+        window.pocketai.abortImage(requestIdRef.current).catch(reportIpcError('image.abortImage'))
       }
     }
   }, [])
@@ -191,7 +191,7 @@ export const ImageModule: React.FC = () => {
   }, [enabledProviders.length, providerId, model, prompt, size, flash, t])
 
   const handleStop = useCallback(() => {
-    if (requestIdRef.current) window.pocketai.abortImage(requestIdRef.current).catch(() => { /* 用户主动中止，尽力而为 */ })
+    if (requestIdRef.current) window.pocketai.abortImage(requestIdRef.current).catch(reportIpcError('image.abortImage'))
   }, [])
 
   // ---------- 历史操作 ----------

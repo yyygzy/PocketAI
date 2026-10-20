@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
+import { reportIpcError } from '../../utils/ipc'
 
 const MAX_OUTPUT = 50000
 const KEEP_OUTPUT = 40000
@@ -65,7 +66,7 @@ export const TerminalModule: React.FC = () => {
     return () => {
       mounted = false
       if (unsub) unsub()
-      window.pocketai.killTerminal().catch(() => { /* ignore */ })
+      window.pocketai.killTerminal().catch(reportIpcError('terminal.killTerminal'))
     }
   }, [t])
 
@@ -78,7 +79,7 @@ export const TerminalModule: React.FC = () => {
 
   const sendInput = (data: string) => {
     if (!running) return
-    window.pocketai.terminalInput(data).catch(() => { /* ignore */ })
+    window.pocketai.terminalInput(data).catch(reportIpcError('terminal.terminalInput'))
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

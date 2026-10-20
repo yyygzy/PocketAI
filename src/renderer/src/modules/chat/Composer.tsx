@@ -15,7 +15,7 @@ import {
 } from '../../utils/snippet-slash'
 import { getMentionQuery, filterMentionKbs, filterMentionFiles } from '../../utils/mention'
 import type { ChatAttachment, KnowledgeBase, MessageRecord, PromptSnippetRecord } from '../../../../shared/types'
-import { hasIpcFailed } from '../../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
 
 interface Props {
   streaming: boolean
@@ -141,7 +141,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
           // 清 null 就变成"每次渲染重拉一趟"（真挂载用例里量到过：输入框直接卡死在转圈）
           if (!hasIpcFailed(list)) kbsRef.current = list
         })
-        .catch(() => {})
+        .catch(reportIpcError('chat.listKnowledgeBases'))
     }
   }, [mentionInfo])
 
@@ -160,7 +160,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
           if (!hasIpcFailed(list)) snippetsRef.current = list
           setSnippetsReady((n) => n + 1)
         })
-        .catch(() => {})
+        .catch(reportIpcError('chat.listPromptSnippets'))
     }
   }, [triggerInfo])
 

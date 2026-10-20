@@ -16,7 +16,7 @@ import { hasUsableModel } from '../../utils/provider-pick'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
 import { exportConversationAsPng } from '../../utils/export-image'
 import { rangeBetween, mergeRange } from '../../utils/message-select'
-import { hasIpcFailed } from '../../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
 
 interface Turn {
   user: MessageRecord | null
@@ -219,7 +219,7 @@ export const ChatView: React.FC<Props> = ({
   /** 本机单价配置：气泡 token 微展示命中单价时附带估算费用；拉取失败静默只显示 token */
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
   useEffect(() => {
-    window.pocketai.getUsagePricing().then((v) => { if (!hasIpcFailed(v)) setPricing(v) }).catch(() => {})
+    window.pocketai.getUsagePricing().then((v) => { if (!hasIpcFailed(v)) setPricing(v) }).catch(reportIpcError('chat.getUsagePricing'))
   }, [])
 
   // 分支聚焦：重新生成/编辑重发完成后自动切到新分支
@@ -542,7 +542,7 @@ export const ChatView: React.FC<Props> = ({
     if (!base64) return
     void window.pocketai.prepareExportDrag({ defaultName: cache.fileName, ext: 'png', content: base64 })
       .then((r) => { if (r.ok && r.path) dragPathRef.current = r.path })
-      .catch(() => {})
+      .catch(reportIpcError('chat.prepareExportDrag'))
   }, [messages])
 
   /** dragstart 同步消费预写路径；未就绪（预写未完成/失败）则取消本次拖拽，不影响点击导出 */
@@ -561,7 +561,7 @@ export const ChatView: React.FC<Props> = ({
     if (!onPrepareMessagesDrag) return
     void onPrepareMessagesDrag(Array.from(selectedIds))
       .then((p) => { dragPathRef.current = p })
-      .catch(() => {})
+      .catch(reportIpcError('chat.prepareMessagesDrag'))
   }, [onPrepareMessagesDrag, selectedIds])
 
   // 会话内搜索命中列表（按消息顺序）

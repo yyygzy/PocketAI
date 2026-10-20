@@ -20,7 +20,7 @@ import type {
   ProviderRecord
 } from '../../../../shared/types'
 import { errText } from '../../utils/error'
-import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
 
 const PROVIDER_KEY = 'kbask.providerId'
 const modelKey = (p: string) => `kbask.model.${p}`
@@ -85,7 +85,7 @@ const KbAskPanel: React.FC<{
         // 会把 `{ok:false}` 写进列表 state ⇒ 「历史（N）」那个数字变空、点进去 `.map` 崩
         if (!hasIpcFailed(r)) setSessionList(r)
       })
-      .catch(() => {}) // 留痕属增强能力，列表加载失败不打断问答
+      .catch(reportIpcError('kb.searchKbAskSessions')) // 增强能力：读不到不打断问答，但留痕
   }
 
   /** 搜索输入：200ms 防抖后查询 */
@@ -109,7 +109,7 @@ const KbAskPanel: React.FC<{
   }, [kb.id])
 
   useEffect(() => {
-    window.pocketai.getKbAskRetention().then((v) => { if (!hasIpcFailed(v)) setRetention(v) }).catch(() => {})
+    window.pocketai.getKbAskRetention().then((v) => { if (!hasIpcFailed(v)) setRetention(v) }).catch(reportIpcError('kb.getKbAskRetention'))
   }, [])
 
   /** 保存保留策略：切换即生效，下次保存会话时顺手清理 */
@@ -128,7 +128,10 @@ const KbAskPanel: React.FC<{
         toast.success(t('kb.askRetentionSaved'))
         refreshSessions()
       })
-      .catch(() => {})
+      .catch((e) => {
+        setRetention(prev)
+        toast.error(errText(e))
+      })
   }
 
   // 加载启用的 provider + 记忆的模型选择；默认第一个 provider 的第一个模型（小白零配置）
@@ -192,7 +195,7 @@ const KbAskPanel: React.FC<{
         if (hasIpcFailed(r)) return
         refreshSessions()
       })
-      .catch(() => {})
+      .catch(reportIpcError('kb.saveKbAskSession'))
   }
   // 经 ref 转发：一次性挂载的流式订阅闭包始终调用最新实现（拿到最新 provider/model/sessionId）
   const persistRef = useRef(persistSession)

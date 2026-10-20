@@ -332,22 +332,39 @@ function thenChainRoot(call: ts.CallExpression): string | null {
 }
 
 /**
- * 一个文件里 `window.pocketai.X(...).then(cb)` 的分类。与 await 面有三处**刻意的不同**：
- *   ① try…catch／后面挂的 `.catch()` 都不算合格——失败是 resolve 值，catch 永远接不到它；
- *   ② 整条结果交给具名函数（`.then(setX)`）算不合格：那次赋值不看 `ok`，`{ok:false}` 就直接进了 state；
- *   ③ 回调不接结果（`.then(() => 收尾)`）算不合格：成功与失败走同一条路，正是 §211 那族"失败还照样收尾"。
+ * §224：链根识别的最后一格。`chainRootMethod` 只会一路剥 `.then/.catch/.finally` 的**调用**，
+ * 碰到 `const p = X(); p.then(cb).catch(noop)` 时它停在 `p.then(cb)` 上认不出——于是 `.catch` 面
+ * 看不见 `KbAskRoam` 那一处（`.then` 面能看见，因为它只隔一层）。这里把"剥到标识符就查 promiseBinds"补全，
+ * 两面共用同一个入口。
  */
-export function classifyThenSource(rel: string, rawSrc: string, methods: Map<string, string>, safeChans: Set<string>): ThenSite[] {
+function rootOf(call: ts.CallExpression, binds: Map<string, string>): string | null {
+  const byChain = thenChainRoot(call)
+  if (byChain) return byChain
+  let cur: ts.Node = call
+  while (ts.isCallExpression(cur) && ts.isPropertyAccessExpression(cur.expression)) {
+    const nm = cur.expression.name.text
+    if (nm !== 'then' && nm !== 'catch' && nm !== 'finally') break
+    cur = cur.expression.expression
+  }
+  return ts.isIdentifier(cur) ? binds.get(cur.text) ?? null : null
+}
+
+/**
+ * 一个文件的三张索引，`.then` 面与 `.catch` 面共用：
+ *   · `locals`——同文件的具名函数（判据可能被搬进去，§215 的 `failOp`／§217 的 `handleRestoreResult`）
+ *   · `promiseBinds`——"先绑到变量、再链"的 Promise（`const p = k ? window.pocketai.a() : window.pocketai.b()`）
+ *     §221 当时把这条写成"不追"的口径边界，仓库里其实有真实实例（KbAsk 两处），§223 补上
+ * 注释先抹白（偏移不变），否则守卫写在注释里也能把闸门喂绿（§216 那次假绿的直接形状）。
+ */
+interface FileIndex {
+  ast: ts.SourceFile
+  locals: Map<string, { params: string[]; body: string }>
+  promiseBinds: Map<string, string>
+}
+
+function indexFile(rel: string, rawSrc: string): FileIndex {
   const clean = blankComments(rawSrc, rel)
   const ast = ts.createSourceFile(rel, clean, ts.ScriptTarget.ESNext, true, rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
-  const parents = new Map<ts.Node, ts.Node>()
-  const link = (n: ts.Node): void => {
-    n.forEachChild((c) => {
-      parents.set(c, n)
-      link(c)
-    })
-  }
-  link(ast)
   const locals = new Map<string, { params: string[]; body: string }>()
   const register = (name: string, node: ts.Node): void => {
     if (!isFnNode(node)) return
@@ -361,8 +378,6 @@ export function classifyThenSource(rel: string, rawSrc: string, methods: Map<str
     if (ts.isFunctionDeclaration(n) && n.name) register(n.name.text, n)
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && isFnNode(n.initializer)) register(n.name.text, n.initializer)
   })
-  // §223：把"先绑到变量、再链"的 Promise 也认出来（`const p = k ? window.pocketai.a() : window.pocketai.b()`
-  // 之后 `p.then(setX)`）——221 当时把这条写成"不追"的口径边界，仓库里其实有真实实例（KbAsk 两处）
   const promiseBinds = new Map<string, string>()
   const methodsIn = (node: ts.Node | undefined): string[] => {
     if (!node) return []
@@ -377,15 +392,23 @@ export function classifyThenSource(rel: string, rawSrc: string, methods: Map<str
     const ms = methodsIn(n.initializer)
     if (ms.length) promiseBinds.set(n.name.text, ms[0]!)
   })
+  return { ast, locals, promiseBinds }
+}
+
+/**
+ * 一个文件里 `window.pocketai.X(...).then(cb)` 的分类。与 await 面有三处**刻意的不同**：
+ *   ① try…catch／后面挂的 `.catch()` 都不算合格——失败是 resolve 值，catch 永远接不到它；
+ *   ② 整条结果交给具名函数（`.then(setX)`）算不合格：那次赋值不看 `ok`，`{ok:false}` 就直接进了 state；
+ *   ③ 回调不接结果（`.then(() => 收尾)`）算不合格：成功与失败走同一条路，正是 §211 那族"失败还照样收尾"。
+ */
+export function classifyThenSource(rel: string, rawSrc: string, methods: Map<string, string>, safeChans: Set<string>): ThenSite[] {
+  const { ast, locals, promiseBinds } = indexFile(rel, rawSrc)
 
   const out: ThenSite[] = []
   walk(ast, (n) => {
     if (!ts.isCallExpression(n) || !ts.isPropertyAccessExpression(n.expression)) return
     if (n.expression.name.text !== 'then') return
-    const method = thenChainRoot(n) ?? (() => {
-      const head = n.expression
-      return ts.isPropertyAccessExpression(head) && ts.isIdentifier(head.expression) ? promiseBinds.get(head.expression.text) ?? null : null
-    })()
+    const method = rootOf(n, promiseBinds)
     if (!method) return
     const chan = methods.get(method)
     if (!chan || !safeChans.has(chan)) return
@@ -425,6 +448,69 @@ export function classifyThenSource(rel: string, rawSrc: string, methods: Map<str
   return out
 }
 
+// ---------- §224 第三面：`.catch(…)` 这个处理函数本身是不是空的 ----------
+export type CatchKind = 'void-catch' | 'other-value' | 'handled'
+export interface CatchSite {
+  rel: string
+  line: number
+  method: string
+  chan: string
+  kind: CatchKind
+  detail?: string
+}
+
+/** 处理函数是不是"什么也不做"：`() => {}`、`() => { /* 注释 *\/ }`、绑到一个空函数上 */
+function isEmptyHandler(node: ts.Node | undefined, locals: Map<string, { params: string[]; body: string }>): boolean {
+  if (!node) return true // `.catch()`：连处理函数都没有
+  if (ts.isIdentifier(node)) {
+    const loc = locals.get(node.text)
+    if (loc) return /^\s*\{[\s]*\}$/.test(loc.body.trim())
+    return false // 绑到看不见的东西上（跨文件 import）⇒ 不猜
+  }
+  if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) return false
+  const b = node.body
+  if (!ts.isBlock(b)) return false // 表达式体（`() => toast.error(e)`）里一定有动作
+  return b.statements.length === 0
+}
+
+/**
+ * 渲染层每一条挂在 safeHandle 通道链根的 `.catch(…)`。这一面问的不是"失败判没判"（那是 `.then`／await 两面），
+ * 而是**"真抛错那一面有没有被人接住"**：`.catch(() => {})` 是这一族唯一的出口，空体就意味着
+ * 成功回调自己抛的 TypeError、preload 同步抛错、通道没注册这三类真故障**一点痕迹都不留**。
+ * §217 的"try…catch 算合格"管的是 await 面（那里 catch 接不到 resolve 的失败，包着只是"不崩"），
+ * 与这一面不冲突：这里判的是 catch 自己。
+ */
+export function classifyCatchSource(rel: string, rawSrc: string, methods: Map<string, string>, safeChans: Set<string>): CatchSite[] {
+  const { ast, locals, promiseBinds } = indexFile(rel, rawSrc)
+  const out: CatchSite[] = []
+  walk(ast, (n) => {
+    if (!ts.isCallExpression(n) || !ts.isPropertyAccessExpression(n.expression)) return
+    if (n.expression.name.text !== 'catch') return
+    const method = rootOf(n, promiseBinds)
+    if (!method) return
+    const chan = methods.get(method)
+    if (!chan || !safeChans.has(chan)) return
+    const line = ast.getLineAndCharacterOfPosition(n.getStart(ast)).line + 1
+    const base = { rel, line, method, chan }
+    if (isEmptyHandler(n.arguments[0], locals)) {
+      out.push({ ...base, kind: 'void-catch', detail: n.arguments[0] ? n.arguments[0].getText(ast) : '(无处理函数)' })
+      return
+    }
+    // 返回一个值的 catch（`() => null`／`() => []`）：真抛错被换成一个"看起来正常"的默认值，是 §196 那条
+    // "列表读失败不许当成空集"的近邻形状。本批只把它量出来，不算不合格（口径要单独定，别顺手混进这一族）
+    const h = n.arguments[0]
+    if (h && (ts.isArrowFunction(h) || ts.isFunctionExpression(h)) && !ts.isBlock(h.body)) {
+      const t = h.body.getText(ast).trim()
+      if (/^(null|undefined|\[\]|\{\}|''|false|void 0)$/.test(t)) {
+        out.push({ ...base, kind: 'other-value', detail: `() => ${t}` })
+        return
+      }
+    }
+    out.push({ ...base, kind: 'handled' })
+  })
+  return out
+}
+
 // ---------- 宇宙：通道两侧 ＋ 渲染层全部文件 ----------
 const METHODS = preloadMethods(read('src/preload/index.ts'))
 const SAFE = safeHandleChannels(filesIn('src/main').map(read))
@@ -435,6 +521,10 @@ const unsafe = SITES.filter((s) => s.kind === 'naked' || s.kind === 'data-ignore
 const THEN_SITES = RENDERER.flatMap((rel) => classifyThenSource(rel, read(rel), METHODS, SAFE))
 /** `.then` 面不合格的三档（这一面没有"被 try 包着算合格"这一说） */
 const thenUnsafe = THEN_SITES.filter((s) => s.kind === 'fn-handoff' || s.kind === 'data-ignored' || s.kind === 'dropped')
+/** §224 第三面：挂在 safeHandle 通道链根上的每一条 `.catch(…)` */
+const CATCH_SITES = RENDERER.flatMap((rel) => classifyCatchSource(rel, read(rel), METHODS, SAFE))
+const voidCatch = CATCH_SITES.filter((s) => s.kind === 'void-catch')
+const otherValue = CATCH_SITES.filter((s) => s.kind === 'other-value')
 
 
 describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下面的 0 就是空转）', () => {
@@ -459,6 +549,13 @@ describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下
     const judged = THEN_SITES.filter((s) => s.kind === 'judged' || s.kind === 'judged-via-helper').length
     expect(judged, '回调里判了失败面的 .then 点').toBeGreaterThanOrEqual(100)
     expect(judged + thenUnsafe.length).toBe(THEN_SITES.length)
+  })
+
+  it('§224 第三面的量级自检：`.catch` 点数 ≥140、接住 reject 面的 ≥120、三档之和＝全部', () => {
+    expect(CATCH_SITES.length).toBeGreaterThanOrEqual(140)
+    const handled = CATCH_SITES.filter((s) => s.kind === 'handled').length
+    expect(handled, '接住了 reject 面的 `.catch`').toBeGreaterThanOrEqual(120)
+    expect(handled + voidCatch.length + otherValue.length).toBe(CATCH_SITES.length)
   })
 })
 
@@ -661,7 +758,61 @@ describe('⑤ 主判据（`.then` 面）：三档不合格都必须为 0', () =>
   })
 })
 
-describe('⑥ 闸门看得见行的前提：渲染层与 preload 没有孤立 CR', () => {
+describe('⑥ `.catch` 面的分类器要有牙：空体＝把真抛错咽下去（§224 新立的第三面）', () => {
+  const M = new Map([['foo', 'X_FOO'], ['bar', 'X_BAR']])
+  const S = new Set(['X_FOO'])
+  const run = (body: string): CatchSite[] => classifyCatchSource('x.tsx', `export const C = () => {\n${body}\n}\n`, M, S)
+
+  it('正向对照：`reportIpcError(…)` 与真的写状态的处理器都算接住', () => {
+    expect(run('  window.pocketai.foo().catch(reportIpcError(\'x\'))')[0]!.kind).toBe('handled')
+    expect(run('  window.pocketai.foo().then((r) => setX(r)).catch((e) => { setErr(String(e)); reload() })')[0]!.kind).toBe('handled')
+  })
+  it('空箭头体 ⇒ void-catch；只写注释的空体同样 ⇒ void-catch（§216 那一课在 catch 面重演）', () => {
+    expect(run('  window.pocketai.foo().catch(() => {})')[0]!.kind).toBe('void-catch')
+    expect(run('  window.pocketai.foo().catch(() => { /* 卸载中止，失败无影响 */ })')[0]!.kind).toBe('void-catch')
+    expect(run('  window.pocketai.foo().catch(function () {})')[0]!.kind).toBe('void-catch')
+  })
+  it('连处理函数都没有（`.catch()`）⇒ void-catch', () => {
+    expect(run('  window.pocketai.foo().catch()')[0]!.kind).toBe('void-catch')
+  })
+  it('两面互不掩护：`.then` 判过失败面，后面挂空 catch 照样红（判据管 resolve 面，catch 管 reject 面）', () => {
+    const [c] = run('  window.pocketai.foo().then((r) => { if (hasIpcFailed(r)) return }).catch(() => {})')
+    expect(c!.kind).toBe('void-catch')
+  })
+  it('具名空函数：`.catch(noop)` 且 noop 在本文件登记过 ⇒ 跟着走，仍是 void-catch', () => {
+    const [s] = run('  const noop = () => {}\n  window.pocketai.foo().catch(noop)')
+    expect(s!.kind).toBe('void-catch')
+    expect(s!.detail).toBe('noop')
+  })
+  it('口径边界：处理函数是 import 进来的、本文件读不到实现 ⇒ 不猜（认成 handled）', () => {
+    expect(run('  window.pocketai.foo().catch(silentHandler)')[0]!.kind).toBe('handled')
+  })
+  it('§224 的链根补全：`const p = X(); p.then(cb).catch(noop)` 这一头以前整条看不见（KbAskRoam 就是这一处）', () => {
+    const [s] = run('  const p = window.pocketai.foo()\n  p.then((r) => setX(r)).catch(() => {})')
+    expect(s!.method).toBe('foo')
+    expect(s!.kind).toBe('void-catch')
+    const [cond] = run('  const p = k ? window.pocketai.foo() : window.pocketai.foo()\n  p.then(cb).catch(() => {})')
+    expect(cond!.kind).toBe('void-catch')
+  })
+  it('`() => null`／`() => []` 归第三档 other-value：把真抛错换成一个"看起来正常"的默认值（本批只量，不混进 void-catch）', () => {
+    const [s] = run('  window.pocketai.foo().then((r) => setX(r)).catch(() => null)')
+    expect(s!.kind).toBe('other-value')
+    expect(s!.detail).toBe('() => null')
+  })
+  it('不走 safeHandle 的通道不归这一面管（与 await／.then 两面同口径）', () => {
+    expect(run('  window.pocketai.bar().catch(() => {})')).toEqual([])
+    expect(run('  somethingElse.foo().catch(() => {})')).toEqual([])
+  })
+})
+
+describe('⑦ 主判据（`.catch` 面）：空体必须为 0，且没有豁免名单', () => {
+  it('挂在 safeHandle 链根上的每个 `.catch` 都得真接住 reject 面', () => {
+    const list = voidCatch.map((s) => `${s.rel}:${s.line} ${s.method}（处理函数＝${s.detail ?? ''}）`)
+    expect(list, `这些 catch 把真抛错咽掉了：\n${list.join('\n')}`).toEqual([])
+  })
+})
+
+describe('⑧ 闸门看得见行的前提：渲染层与 preload 没有孤立 CR', () => {
   // §216：JS 里 CR 是合法行结束符 ⇒ 运行期与 tsc 都不报错，但 git 把该文件判成 binary（以后这块 diff 没有审阅面），
   // 而任何按 `\n` 切行的扫描器会把守卫并进上一行的注释里。这里覆盖闸门扫描的全部文件，因为它一坏，本闸门的"看得见"就整体失效。
   const scan = [...RENDERER, 'src/preload/index.ts']

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KbAskRoamItem } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { hasIpcFailed } from '../../utils/ipc'
+import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
 import { fmtSessionTime } from './KbAskPanel'
 
 const ROAM_LIMIT = 200
@@ -23,7 +23,7 @@ export const KbAskRoam: React.FC<{
       : window.pocketai.listAllKbAskSessions(ROAM_LIMIT)
     // §223：与 KbAskPanel 同形——`p` 是绑到变量的 Promise，`.then(setItems)` 会把 `{ok:false}`
     // 写进列表 state ⇒ 下面 `items.length === 0` 为假、`items.map` 当场 TypeError
-    p.then((r) => { if (!hasIpcFailed(r)) setItems(r) }).catch(() => {}) // 漫游属增强能力，加载失败静默
+    p.then((r) => { if (!hasIpcFailed(r)) setItems(r) }).catch(reportIpcError('kb.searchAllKbAskSessions')) // 增强能力：读不到不打断漫游，但留痕
   }
 
   useEffect(() => {
