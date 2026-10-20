@@ -35,6 +35,7 @@ export const zh = {
   'common.processing': '处理中…',
   'common.loading': '加载中…',
   'common.loadFailed': '读不到：{msg}',
+  'common.loadFailedDefaults': '{what}读不到：{msg}（当前显示的是默认值）',
   // ── 根错误边界（V4-Iter-146）：任何组件 render 抛错时给的可读兜底屏 ──
   'crash.title': '界面出错了',
   'crash.hint': '这是渲染过程中抛出的异常，不是你的数据出了问题。下面那行错误信息可以直接贴给开发者。',
@@ -1108,6 +1109,7 @@ export const zh = {
   'set.replyNotifyHint': '窗口最小化或切到其他应用时，助手回复完成（或失败）后弹出系统通知，点击通知返回应用。',
   'set.network': '🌐 网络',
   'set.proxySave': '保存',
+  'set.proxyUrlLabel': '代理地址',
   'set.proxySaved': '代理设置已保存并立即生效',
   'set.proxyInvalid': '代理地址无效',
   'set.proxyHint': '为主进程网络请求（模型对话、Embedding、MCP、联网校验等）设置 HTTP 代理，需形如 http://127.0.0.1:7890（仅支持 http/https，暂不支持 socks5）。localhost 与 127.0.0.1 始终直连；留空保存即恢复直连。运行环境与模型下载类流量暂不走代理。',

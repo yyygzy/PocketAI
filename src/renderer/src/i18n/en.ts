@@ -35,6 +35,7 @@ export const en = {
   'common.processing': 'Processing…',
   'common.loading': 'Loading…',
   'common.loadFailed': 'Cannot load: {msg}',
+  'common.loadFailedDefaults': 'Cannot load {what}: {msg} (the values shown are defaults)',
   // ── Root error boundary (V4-Iter-146): readable fallback when a component throws while rendering ──
   'crash.title': 'The interface hit an error',
   'crash.hint': 'This came from an exception while rendering - your data is not the problem. Paste the line below to the developer.',
@@ -1108,6 +1109,7 @@ export const en = {
   'set.replyNotifyHint': 'When the window is minimized or another app is focused, show a system notification when the assistant finishes (or fails). Click it to return to the app.',
   'set.network': '🌐 Network',
   'set.proxySave': 'Save',
+  'set.proxyUrlLabel': 'Proxy address',
   'set.proxySaved': 'Proxy saved and applied now',
   'set.proxyInvalid': 'Invalid proxy URL',
   'set.proxyHint': 'Use an HTTP proxy for main-process requests (chat, embeddings, MCP, online checks). Format: http://127.0.0.1:7890 (http/https only; socks5 is not supported). localhost and 127.0.0.1 always connect directly; save an empty field to restore direct connection. Runtime/model downloads are not proxied yet.',

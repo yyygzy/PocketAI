@@ -34,6 +34,7 @@ export const ja = {
   'common.processing': '処理中…',
   'common.loading': '読み込み中…',
   'common.loadFailed': '読み込めません：{msg}',
+  'common.loadFailedDefaults': '{what}を読み込めません：{msg}（表示は既定値です）',
   // ── ルートエラー境界（V4-Iter-146）：レンダリング中に例外が出たときの可読フォールバック ──
   'crash.title': '画面の描画でエラーが出ました',
   'crash.hint': '描画中に例外が発生しただけで、データの問題ではありません。下のエラー行を開発者に貼り付けると速いです。',
@@ -1053,6 +1054,7 @@ export const ja = {
   'set.replyNotifyHint': 'ウィンドウを最小化中、または他アプリにフォーカス中に、アシスタントの返信完了（または失敗）をシステム通知します。通知をクリックするとアプリに戻ります。',
   'set.network': '🌐 ネットワーク',
   'set.proxySave': '保存',
+  'set.proxyUrlLabel': 'プロキシアドレス',
   'set.proxySaved': 'プロキシ設定を保存し即時適用しました',
   'set.proxyInvalid': 'プロキシアドレスが無効です',
   'set.proxyHint': 'メインプロセスの通信（チャット、Embedding、MCP、オンライン認証など）で使う HTTP プロキシ。形式は http://127.0.0.1:7890（http/https のみ、socks5 非対応）。localhost と 127.0.0.1 は常に直接接続。空欄で保存すると直接接続に戻ります。ランタイム・モデルのダウンロード通信は対象外です。',

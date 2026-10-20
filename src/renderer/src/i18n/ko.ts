@@ -34,6 +34,7 @@ export const ko = {
   'common.processing': '처리 중…',
   'common.loading': '불러오는 중…',
   'common.loadFailed': '읽을 수 없습니다: {msg}',
+  'common.loadFailedDefaults': '{what} 읽기를 실패했습니다: {msg} (표시된 값은 기본값)',
   // ── 루트 오류 경계(V4-Iter-146): 렌더링 중 예외가 날 때의 읽을 수 있는 대체 화면 ──
   'crash.title': '화면 렌더링 중 오류',
   'crash.hint': '렌더링 중 발생한 예외이며, 데이터 문제는 아닙니다. 아래 오류 줄을 개발자에게 붙여넣으면 됩니다.',
@@ -1053,6 +1054,7 @@ export const ko = {
   'set.replyNotifyHint': '창이 최소화되어 있거나 다른 앱에 포커스된 동안, 어시스턴트 답변 완료(또는 실패) 시 시스템 알림을 표시합니다. 알림을 클릭하면 앱으로 돌아갑니다.',
   'set.network': '🌐 네트워크',
   'set.proxySave': '저장',
+  'set.proxyUrlLabel': '프록시 주소',
   'set.proxySaved': '프록시 설정이 저장되어 즉시 적용되었습니다',
   'set.proxyInvalid': '프록시 주소가 올바르지 않습니다',
   'set.proxyHint': '메인 프로세스 네트워크 요청(채팅, 임베딩, MCP, 온라인 인증 등)에 사용할 HTTP 프록시. 형식: http://127.0.0.1:7890 (http/https만 지원, socks5 미지원). localhost와 127.0.0.1은 항상 직접 연결되며, 빈 값으로 저장하면 직접 연결로 복귀합니다. 런타임 및 모델 다운로드 트래픽은 아직 프록시를 거치지 않습니다.',

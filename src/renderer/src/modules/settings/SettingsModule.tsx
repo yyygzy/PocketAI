@@ -29,6 +29,7 @@ import { errText } from '../../utils/error'
 import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
 import { modLabel } from '../../utils/shortcuts'
@@ -1861,10 +1862,11 @@ export const PopupPanel: React.FC = () => {
 
 // 网络面板：主进程 API 流量代理（http/https）。留空=直连；保存后立即应用，
 // 回环地址（localhost/127.0.0.1）始终直连。非法地址主进程返回错误且不写库。
-const NetworkPanel: React.FC = () => {
+export const NetworkPanel: React.FC = () => {
   const { t } = useI18n()
   const [proxyUrl, setProxyUrl] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [readErr, setReadErr] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -1873,11 +1875,16 @@ const NetworkPanel: React.FC = () => {
       .then((v) => {
         // §221：两个半边都要——把失败对象填进输入框是谎报，整条早退又会让面板永远停在「加载中」
         //（下面那个 .catch 本来就是"记一句然后照样 loaded"）
-        if (hasIpcFailed(v)) logIpcError('settings.getProxyUrl', new Error(ipcFailText(v, t('common.unknownError'))))
-        else setProxyUrl(v)
+        // §226：门照样解除是对的，但空输入框会被读成"你没配代理"——那恰好是失败时要显示的默认值，得说出来
+        if (hasIpcFailed(v)) {
+          const msg = ipcFailText(v, t('common.unknownError'))
+          setReadErr(msg)
+          logIpcError('settings.getProxyUrl', new Error(msg))
+        } else setProxyUrl(v)
         setLoaded(true)
       })
       .catch((e) => {
+        setReadErr(errText(e, t('common.unknownError')))
         logIpcError('settings.getProxyUrl', e)
         setLoaded(true)
       })
@@ -1907,6 +1914,7 @@ const NetworkPanel: React.FC = () => {
 
   return (
     <div className="space-y-2 text-xs">
+      {readErr && <ShowingDefaultsNotice what={t('set.proxyUrlLabel')} msg={readErr} />}
       <div className="flex gap-2">
         <input
           type="text"
@@ -1950,10 +1958,17 @@ export const AppearancePanel: React.FC = () => {
   const [collapseLines, setCollapseLines] = useState(CODE_COLLAPSE_THRESHOLD)
   const [collapseInput, setCollapseInput] = useState(String(CODE_COLLAPSE_THRESHOLD))
   const [replyNotify, setReplyNotify] = useState(true)
+  // §226：这一页是**三发彼此独立的读**（界面偏好／窗口行为／回复通知）；谁没读到就只有谁那几项是默认值，
+  // 混成一句会把成功读到的那几项也说成默认值 ⇒ 三个原因各说各的
+  const [uiErr, setUiErr] = useState<string | null>(null)
+  const [behaviorErr, setBehaviorErr] = useState<string | null>(null)
+  const [notifyErr, setNotifyErr] = useState<string | null>(null)
 
   useEffect(() => {
     window.pocketai.getUiPrefs().then((r) => {
-      if (r.ok && r.data) {
+      if (!r.ok || !r.data) {
+        setUiErr(ipcFailText(r, t('common.unknownError')))
+      } else {
         setOpacity(r.data.opacity)
         setCss(r.data.customCss)
         setChatFontSize(normalizeFontSize(r.data.chatFontSize))
@@ -1963,22 +1978,38 @@ export const AppearancePanel: React.FC = () => {
       }
       setLoaded(true)
     }).catch((e) => {
-      // 失败也要解除 loading 门，否则面板永远转圈
+      // 失败也要解除 loading 门，否则面板永远转圈；解除之后屏上是初始值，所以要配一句「显示的是默认值」（§226）
+      setUiErr(errText(e, t('common.unknownError')))
       logIpcError('settings.getUiPrefs', e)
       setLoaded(true)
     })
     window.pocketai.getWindowBehavior().then((r) => {
-      if (hasIpcFailed(r)) return
+      if (hasIpcFailed(r)) {
+        setBehaviorErr(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       setLaunchAtLogin(r.launchAtLogin)
       setCloseToTray(r.closeToTray)
-    }).catch((e) => logIpcError('settings.getWindowBehavior', e))
+    }).catch((e) => {
+      setBehaviorErr(errText(e, t('common.unknownError')))
+      logIpcError('settings.getWindowBehavior', e)
+    })
     // §219：`.then(setReplyNotify)` 会把 `{ok:false}` 这个真值直接当成已开启显示；读不到时宁可保持默认开，与旁边那个 .catch 同一个口径
     window.pocketai
       .getReplyNotifyEnabled()
       .then((v) => {
-        if (!hasIpcFailed(v)) setReplyNotify(v)
+        if (hasIpcFailed(v)) {
+          setNotifyErr(ipcFailText(v, t('common.unknownError')))
+          return
+        }
+        setReplyNotify(v)
       })
-      .catch(() => setReplyNotify(true))
+      .catch((e) => {
+        // 读不到就保持默认「开」（不擅自关掉用户可能开着的通知），但这件事得说出来：那一发 `.catch(() => setReplyNotify(true))`
+        // 本来就是无操作，初值已经是 true ⇒ 它唯一的实质作用是别把这次失败当成"已读到"（§226）
+        setNotifyErr(errText(e, t('common.unknownError')))
+        logIpcError('settings.getReplyNotifyEnabled', e)
+      })
   }, [])
 
   const toggleLaunchAtLogin = async (next: boolean) => {
@@ -2114,6 +2145,9 @@ export const AppearancePanel: React.FC = () => {
 
   return (
     <div className="space-y-4 text-xs">
+      {uiErr && (
+        <ShowingDefaultsNotice what={[t('ui.opacity'), t('ui.fontSize'), t('ui.codeCollapse'), t('ui.customCss')].join(' / ')} msg={uiErr} />
+      )}
       {/* 窗口透明度 */}
       <div>
         <div className="flex items-center justify-between mb-1">
@@ -2136,6 +2170,7 @@ export const AppearancePanel: React.FC = () => {
 
       {/* 窗口行为：开机自启 / 关窗最小化到托盘 */}
       <div className="space-y-2">
+        {behaviorErr && <ShowingDefaultsNotice what={[t('ui.launchAtLogin'), t('ui.closeToTray')].join(' / ')} msg={behaviorErr} />}
         <div>
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -2211,6 +2246,7 @@ export const AppearancePanel: React.FC = () => {
 
       {/* 回复完成系统通知 */}
       <div>
+        {notifyErr && <ShowingDefaultsNotice what={t('set.replyNotify')} msg={notifyErr} />}
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
