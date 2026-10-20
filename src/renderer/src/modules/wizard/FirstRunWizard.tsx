@@ -52,6 +52,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [apiKey, setApiKey] = useState('')
   const [selectedAssistantId, setSelectedAssistantId] = useState<string | null>(null)
   const [setupErr, setSetupErr] = useState('')
+  // §229：完成页那句「内置技能: ✓ 自动启用前 3 个」原本是**无条件渲染**的，
+  // 而启用这一步在读不到技能列表时会被整步跳过 ⇒ 那一句就在替用户撒谎。这一步的结果要留下，完成页按结果说。
+  const [skillOutcome, setSkillOutcome] = useState<{ state: 'enabled' | 'skipped' | 'failed'; msg?: string } | null>(null)
   // B1 闸门触发后开放「回安全步设主密码」的入口（配置步内专用）
   const [jumpToSecurity, setJumpToSecurity] = useState(false)
   // 存下的整条 provider 记录（147 起完成页的可选探针要用它的 models；只存 id 会看不出有没有缓存模型）
@@ -232,14 +235,30 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       await window.pocketai.setAssistantPinned(effectiveAssistantId, true)
 
       // 4. 自动启用前 3 个内置 skill（轻量，让新用户开箱有技能）
-      const skills = await window.pocketai.listSkills().catch(() => [])
-      // §223：`listSkills()` 回 `{ok:false}` 时（`.catch` 只接得住真 reject），`skills.filter` 当场 TypeError
-      // ⇒ 被下面那个 catch 念成"…is not a function"。这一步只是"顺手启用内置技能"，读不到就跳过，不打断首启
-      const builtinSkills = hasIpcFailed(skills) ? [] : skills.filter((s) => s.isBuiltin).slice(0, 3)
-      for (const sk of builtinSkills) {
-        if (!sk.enabled) {
-          await window.pocketai.saveSkill({ ...sk, enabled: true })
+      // §229：这一步读不到不该打断首启（模型与助手都已经存好），但必须把结果留给完成页——
+      // 原本是 `.catch(() => [])` 再加完成页那句无条件的 ✓，等于把"没读到"演成"没有内置技能要启用"
+      let skillReject: string | null = null
+      const skills = await window.pocketai.listSkills().catch((e: unknown) => {
+        skillReject = errText(e, t('common.unknownError'))
+        logIpcError('wizard.listSkills', e)
+        return null
+      })
+      if (!skills || hasIpcFailed(skills)) {
+        setSkillOutcome({
+          state: 'failed',
+          msg: skillReject ?? (skills ? ipcFailText(skills, t('common.unknownError')) : t('common.unknownError'))
+        })
+      } else {
+        // §223 那条 TypeError 的防法从"吞成空表"换成"判过再用"
+        const builtinSkills = skills.filter((s) => s.isBuiltin).slice(0, 3)
+        for (const sk of builtinSkills) {
+          if (!sk.enabled) {
+            await window.pocketai.saveSkill({ ...sk, enabled: true })
+          }
         }
+        // 一个内置技能都没有（`extensions/skills` 目录缺失时主进程就回空表）：
+        // 「自动启用前 3 个」同样不能说 ⇒ 标成 skipped，完成页那一行整条不显示
+        setSkillOutcome({ state: builtinSkills.length > 0 ? 'enabled' : 'skipped' })
       }
     } catch (e) {
       setSetupErr(errText(e, t('common.unknownError')))
@@ -651,10 +670,22 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                 </span>
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
-              <span className="text-[var(--color-success)]">✓ {t('wizard.summarySkillsAuto')}</span>
-            </div>
+            {skillOutcome?.state === 'enabled' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
+                <span className="text-[var(--color-success)]">✓ {t('wizard.summarySkillsAuto')}</span>
+              </div>
+            )}
+            {/* §229：这一步没读到 ⇒ 那一格说「读不到：原因」；读到了但一个内置技能都没有 ⇒ 整行不显示。
+                两种都不许留着那句 ✓「自动启用前 3 个」（它原本是 unconditional 的） */}
+            {skillOutcome?.state === 'failed' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
+                <span className="text-[var(--color-danger)]">
+                  {t('common.loadFailed', { msg: skillOutcome.msg ?? t('common.unknownError') })}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* 加密状态（设置主密码的入口已前移到 step 1） */}

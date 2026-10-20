@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { logIpcError, reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 import { modelRecKey } from '../../../../shared/model-rec-codes'
 import { buildDiagnosticReport, type ReportLabels } from '../../utils/diagnostic-report'
@@ -160,11 +161,24 @@ export const StewardModule: React.FC = () => {
   const handleExport = async () => {
     setExporting(true)
     try {
+      // §229：第三发原本是 `.catch(() => null)`，连痕都没留，报告里那行就退化成 `-`——
+      // 一份拿去远程求助的纯文本说"版本未知"却不说是为什么未知；两个兄弟各自都有留痕。
+      let versionReject: string | null = null
       const [auditRes, diagnoseRes, updateInfo] = await Promise.all([
         window.pocketai.runAudit().catch((e) => { logIpcError('steward.export.audit', e); return null }),
         window.pocketai.runDiagnose().catch((e) => { logIpcError('steward.export.diagnose', e); return null }),
-        window.pocketai.getUpdateInfo().catch(() => null)
+        window.pocketai.getUpdateInfo().catch((e: unknown) => {
+          versionReject = errText(e, t('common.unknownError'))
+          logIpcError('steward.export.updateInfo', e)
+          return null
+        })
       ])
+      // 读到就报版本号；没读到就把「读不到：原因」写进报告（那是一份纯文本，没有界面脸可挂）
+      const appVersion = updateInfo && !hasIpcFailed(updateInfo)
+        ? updateInfo.currentVersion
+        : t('common.loadFailed', {
+            msg: updateInfo ? ipcFailText(updateInfo, t('common.unknownError')) : versionReject ?? t('common.unknownError')
+          })
       const nextAudit = auditRes?.ok && auditRes.data ? auditRes.data : audit
       const nextDiagnose = diagnoseRes?.ok && diagnoseRes.data ? diagnoseRes.data : diagnose
       if (auditRes?.ok && auditRes.data) setAudit(auditRes.data)
@@ -235,7 +249,7 @@ export const StewardModule: React.FC = () => {
       const content = buildDiagnosticReport(
         {
           generatedAt: Date.now(),
-          appVersion: updateInfo?.currentVersion ?? '',
+          appVersion,
           hardware,
           integrity,
           health,

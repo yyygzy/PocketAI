@@ -19,7 +19,7 @@ import { cullStale, selectByMode, toggleSelected } from './doc-batch'
 import { consumePendingKb, OPEN_KB_EVENT } from '../../utils/palette-nav'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 
@@ -628,11 +628,21 @@ export const KbDetail: React.FC<{
   const startPolling = () => {
     stopPolling()
     pollingRef.current = setInterval(async () => {
-      const list = await window.pocketai.listKbDocuments(kb.id).catch(() => null)
+      // §229：这一发的 `.catch(() => null)` 是"把真抛错换成一个看起来正常的默认值"那一族的第三档——
+      // 停轮询本身是对的（继续轮只会每 2s 再失败一次），但停下之后屏上留着旧状态、一句不说，
+      // 用户看的就是"文档还在解析中"而实际上我们已经不晓得了。两个失败面都要说话＋留痕。
+      let rejectMsg: string | null = null
+      const list = await window.pocketai.listKbDocuments(kb.id).catch((e: unknown) => {
+        rejectMsg = errText(e, t('common.unknownError'))
+        logIpcError('kb.pollDocuments', e)
+        return null
+      })
       // `.catch` 只接得住 reject：safeHandle 的失败是 **resolve 的 {ok:false}**。
       // 不判就 setDocs(对象) ⇒ 下面 docs.map 崩；而 list?.some 抛错还会让这发轮询既不停也不刷新（§214）
       if (!list || hasIpcFailed(list)) {
+        const msg = rejectMsg ?? (list ? ipcFailText(list, t('common.unknownError')) : t('common.unknownError'))
         stopPolling()
+        toast.error(t('common.refreshFailed', { msg }))
         return
       }
       setDocs(list)

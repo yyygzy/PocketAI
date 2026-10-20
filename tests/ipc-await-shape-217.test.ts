@@ -810,6 +810,13 @@ describe('⑦ 主判据（`.catch` 面）：空体必须为 0，且没有豁免�
     const list = voidCatch.map((s) => `${s.rel}:${s.line} ${s.method}（处理函数＝${s.detail ?? ''}）`)
     expect(list, `这些 catch 把真抛错咽掉了：\n${list.join('\n')}`).toEqual([])
   })
+  it('§229 起第三档也必须为 0：把真抛错换成一个"看起来正常"的默认值，比空体更难发现', () => {
+    // 这一档以前有 3 处（`KnowledgeModule:631` 轮询、`StewardModule:166` 导出报告的版本行、
+    // `FirstRunWizard:235` 首启那一步＋完成页那句无条件 ✓）。§229 把它们逐个接上了脸，
+    // 于是这里从"只量"升成"闸门"——**这一族的桩在 ⑥ 里，档位本身仍有牙**。
+    const list = otherValue.map((s) => `${s.rel}:${s.line} ${s.method}（处理函数＝${s.detail ?? ''}）`)
+    expect(list, `这些 catch 把真抛错换成了一个看起来正常的默认值：\n${list.join('\n')}`).toEqual([])
+  })
 })
 
 describe('⑧ 闸门看得见行的前提：渲染层与 preload 没有孤立 CR', () => {

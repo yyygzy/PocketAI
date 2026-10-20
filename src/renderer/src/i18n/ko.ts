@@ -36,6 +36,7 @@ export const ko = {
   'common.loadFailed': '읽을 수 없습니다: {msg}',
   'common.loadFailedDefaults': '{what} 읽기를 실패했습니다: {msg} (표시된 값은 기본값)',
   'common.loadFailedOff': '{what} 읽기를 실패했습니다: {msg} (이번에는 꺼진 상태로 처리합니다)',
+  'common.refreshFailed': '새로고침 실패: {msg} (화면에는 이전 성공 시점의 내용이 남아 있습니다)',
   // ── 루트 오류 경계(V4-Iter-146): 렌더링 중 예외가 날 때의 읽을 수 있는 대체 화면 ──
   'crash.title': '화면 렌더링 중 오류',
   'crash.hint': '렌더링 중 발생한 예외이며, 데이터 문제는 아닙니다. 아래 오류 줄을 개발자에게 붙여넣으면 됩니다.',
