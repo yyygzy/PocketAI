@@ -27,7 +27,7 @@ function mount(enc: EncryptionStatus) {
     setAutoLockTimeout: () => ({ ok: true }),
     enableEncryption: () => ({ ok: true })
   })
-  mountWithProviders(<EncryptionPanel enc={enc} onChange={() => {}} />)
+  mountWithProviders(<EncryptionPanel enc={enc} err={null} onChange={() => {}} />)
 }
 
 describe('none 模式的诚实呈现（SEC-1 B2）', () => {

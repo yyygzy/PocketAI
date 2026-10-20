@@ -28,6 +28,7 @@ import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../ut
 import { errText } from '../../utils/error'
 import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
 import { modLabel } from '../../utils/shortcuts'
@@ -124,12 +125,26 @@ export const SettingsModule: React.FC = () => {
   const [lic, setLic] = useState<LicenseStatus | null>(null)
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateStatus, setUpdateStatus] = useState<UpdateEvent>({ status: 'idle' })
+  // §225：加密／许可证／更新这三块面板的数据都在本页挂载时一次拉走，读失败的原因得跟着数据一起交下去。
+  // 不交的话，面板自己的门是 `if (!x) return 加载中…`，于是"这次没读到"被长期说成"还在加载"（§222 立的那一面）。
+  const [encErr, setEncErr] = useState<string | null>(null)
+  const [licErr, setLicErr] = useState<string | null>(null)
+  const [updErr, setUpdErr] = useState<string | null>(null)
 
   useEffect(() => {
     window.pocketai.getPaths().then((v) => { if (!hasIpcFailed(v)) setPaths(v) }).catch(reportIpcError('settings.getPaths'))
-    window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEnc(v) }).catch(reportIpcError('settings.getEncryptionStatus'))
-    window.pocketai.getLicenseStatus().then((v) => { if (!hasIpcFailed(v)) setLic(v) }).catch(reportIpcError('settings.getLicenseStatus'))
-    window.pocketai.getUpdateInfo().then((v) => { if (!hasIpcFailed(v)) setUpdateInfo(v) }).catch(reportIpcError('settings.getUpdateInfo'))
+    window.pocketai.getEncryptionStatus().then((v) => {
+      if (hasIpcFailed(v)) { setEncErr(ipcFailText(v, t('common.unknownError'))); return }
+      setEnc(v)
+    }).catch((e) => { setEncErr(errText(e, t('common.unknownError'))); logIpcError('settings.getEncryptionStatus', e) })
+    window.pocketai.getLicenseStatus().then((v) => {
+      if (hasIpcFailed(v)) { setLicErr(ipcFailText(v, t('common.unknownError'))); return }
+      setLic(v)
+    }).catch((e) => { setLicErr(errText(e, t('common.unknownError'))); logIpcError('settings.getLicenseStatus', e) })
+    window.pocketai.getUpdateInfo().then((v) => {
+      if (hasIpcFailed(v)) { setUpdErr(ipcFailText(v, t('common.unknownError'))); return }
+      setUpdateInfo(v)
+    }).catch((e) => { setUpdErr(errText(e, t('common.unknownError'))); logIpcError('settings.getUpdateInfo', e) })
     // 监听主进程推送的更新状态事件
     const unsub = window.pocketai.onUpdateEvent((data) => {
       setUpdateStatus(data)
@@ -172,7 +187,7 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.encryption')}</h3>
-          <EncryptionPanel enc={enc} onChange={refreshEnc} />
+          <EncryptionPanel enc={enc} err={encErr} onChange={refreshEnc} />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
@@ -182,7 +197,7 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.update')}</h3>
-          <UpdatePanel info={updateInfo} status={updateStatus} />
+          <UpdatePanel info={updateInfo} err={updErr} status={updateStatus} />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
@@ -217,7 +232,7 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
-          <LicensePanel lic={lic} onChange={() => window.pocketai.getLicenseStatus().then((v) => { if (!hasIpcFailed(v)) setLic(v) }).catch(reportIpcError('license.refreshStatus'))} />
+          <LicensePanel lic={lic} err={licErr} onChange={() => window.pocketai.getLicenseStatus().then((v) => { if (!hasIpcFailed(v)) setLic(v) }).catch(reportIpcError('license.refreshStatus'))} />
         </div>
       </div>
 
@@ -268,11 +283,13 @@ const Modal: React.FC<{ open: boolean; title: string; onClose: () => void; child
 
 // ─── 加密面板 ───────────────────────────────────────────────────
 
-export const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; onChange: () => void }> = ({ enc, onChange }) => {
+export const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; err: string | null; onChange: () => void }> = ({ enc, err, onChange }) => {
   const { t } = useI18n()
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
 
   if (!enc) {
+    // §225：读失败与还没读到是两件事（§222 那一面在这里的落点）
+    if (err) return <LoadFailNotice msg={err} />
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 
@@ -1382,7 +1399,7 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
 
 // ─── License 面板 ────────────────────────────────────────────────
 
-const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }> = ({ lic, onChange }) => {
+export const LicensePanel: React.FC<{ lic: LicenseStatus | null; err: string | null; onChange: () => void }> = ({ lic, err, onChange }) => {
   const { t, lang } = useI18n()
   const { confirm, dialog } = useConfirm()
   const locale = lang === 'en' ? 'en-US' : 'zh-CN'
@@ -1409,6 +1426,8 @@ const LicensePanel: React.FC<{ lic: LicenseStatus | null; onChange: () => void }
   }, [])
 
   if (!lic) {
+    // §225：许可证读不到时不许一直报"加载中"——激活状态、到期日、指纹全都建在这份数据上
+    if (err) return <LoadFailNotice msg={err} />
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 
@@ -1646,9 +1665,12 @@ function eventToAccelerator(e: React.KeyboardEvent): string | null {
   return key ? [...mods, key].join('+') : ''
 }
 
-const PopupPanel: React.FC = () => {
+export const PopupPanel: React.FC = () => {
   const { t } = useI18n()
   const [cfg, setCfg] = useState<PopupConfig | null>(null)
+  // §225：读失败的原因。以前 reject 面降级成「全关 + 空快捷键」当配置显示——那是把默认值当已保存的事实
+  //（§196 那一族），而且这时候拨一颗开关就会把整份配置按默认值写回去
+  const [cfgErr, setCfgErr] = useState<string | null>(null)
   // 正在捕获哪一个快捷键；candidate 为已捕获到的组合
   const [capturing, setCapturing] = useState<'quick' | 'selection' | null>(null)
   const [candidate, setCandidate] = useState('')
@@ -1656,14 +1678,18 @@ const PopupPanel: React.FC = () => {
   const [saveErr, setSaveErr] = useState('')
 
   useEffect(() => {
-    // 失败时降级为「全关 + 空快捷键」，避免 cfg 永远 null 导致面板卡 loading
-    window.pocketai.getPopupConfig().then((v) => { if (!hasIpcFailed(v)) setCfg(v) }).catch((e) => {
+    // §225：两条失败面都要落到那句「读不到」上——resolve 的 `{ok:false}` 走 then，真抛错走 catch
+    window.pocketai.getPopupConfig().then((v) => {
+      if (hasIpcFailed(v)) { setCfgErr(ipcFailText(v, t('common.unknownError'))); return }
+      setCfg(v)
+    }).catch((e) => {
+      setCfgErr(errText(e, t('common.unknownError')))
       logIpcError('settings.getPopupConfig', e)
-      setCfg({ quickEnabled: false, selectionEnabled: false, quickAccelerator: '', selectionAccelerator: '' })
     })
   }, [])
 
   if (!cfg) {
+    if (cfgErr) return <LoadFailNotice msg={cfgErr} />
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 
@@ -2238,7 +2264,7 @@ export const AppearancePanel: React.FC = () => {
 
 // ─── 更新面板 ────────────────────────────────────────────────────
 
-const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = ({ info, status }) => {
+export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null; status: UpdateEvent }> = ({ info, err, status }) => {
   const { t } = useI18n()
   const { confirm, dialog } = useConfirm()
   const [busy, setBusy] = useState(false)
@@ -2278,6 +2304,8 @@ const UpdatePanel: React.FC<{ info: UpdateInfo | null; status: UpdateEvent }> = 
   }
 
   if (!info) {
+    // §225：更新信息读不到 ⇒ 说清"读不到"，而不是一直"加载中"（这一块的"当前版本／检查更新"全建在 info 上）
+    if (err) return <LoadFailNotice msg={err} />
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 
