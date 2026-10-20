@@ -22,6 +22,7 @@ import { useToast } from '../../components/ToastProvider'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 
 export const KnowledgeModule: React.FC = () => {
   const { t } = useI18n()
@@ -576,6 +577,10 @@ export const KbDetail: React.FC<{
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
   const [docs, setDocs] = useState<KbDocument[]>([])
+  // §230：以前那一读失败是**静默**的（`if (!hasIpcFailed(v)) setDocs(v)`）——列表停在空数组，
+  // 而界面上那句写的是「暂无文档，上传文件或添加 URL/文本开始入库」：把"没读到"说成"库里没有"。
+  // 脸按有没有数据分：一条都没有 ⇒ 替代那句空态（§222）；已有数据 ⇒ 停在上一份并说清（复用 §229 那句）
+  const [readErr, setReadErr] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
   const [busy, setBusy] = useState(false)
@@ -602,7 +607,19 @@ export const KbDetail: React.FC<{
     if (askJumpId) setAskMode(true)
   }, [askJumpId])
 
-  const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id).then((v) => { if (!hasIpcFailed(v)) setDocs(v) }).catch(reportIpcError('kb.listDocuments')), [kb.id])
+  const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id)
+    .then((v) => {
+      if (hasIpcFailed(v)) {
+        setReadErr(ipcFailText(v, t('common.unknownError')))
+        return
+      }
+      setReadErr(null)
+      setDocs(v)
+    })
+    .catch((e: unknown) => {
+      setReadErr(errText(e, t('common.unknownError')))
+      logIpcError('kb.listDocuments', e)
+    }), [kb.id])
   useEffect(() => {
     loadDocs()
     return () => stopPolling()
@@ -951,7 +968,15 @@ export const KbDetail: React.FC<{
         </div>
 
         <div className="space-y-1">
-          {docs.length === 0 && (
+          {/* §230：一条数据都没有又读不到 ⇒ 那句「暂无文档」是假话，换成「读不到：原因」；
+              手里有数据时刷新失败 ⇒ 本体留着（用户还能照着行操作），另挂一句交代它停在上一份 */}
+          {readErr && docs.length === 0 && <LoadFailNotice msg={readErr} />}
+          {readErr && docs.length > 0 && (
+            <div role="alert" className="text-xs px-3 py-2 rounded bg-[var(--color-danger-bg)] text-[var(--color-danger)]">
+              {t('common.refreshFailed', { msg: readErr })}
+            </div>
+          )}
+          {docs.length === 0 && !readErr && (
             <p className="text-xs text-[var(--color-text-muted)] py-4 text-center">
               {t('kb.noDocs')}
             </p>
