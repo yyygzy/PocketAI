@@ -35,6 +35,10 @@ interface AgentTraceRow {
   completion_tokens: number | null
   status: string
   error: string | null
+  /** v50（V4-Iter-232）：入参／返回值／这一步实际用的模型，都可空（旧行 NULL） */
+  tool_args?: string | null
+  tool_result?: string | null
+  model?: string | null
   created_at: number
 }
 
@@ -72,6 +76,9 @@ function rowToRecord(row: AgentTraceRow): AgentTraceRecord {
     completionTokens: row.completion_tokens ?? undefined,
     status: row.status as AgentTraceRecord['status'],
     error: row.error ?? undefined,
+    toolArgs: row.tool_args ?? undefined,
+    toolResult: row.tool_result ?? undefined,
+    model: row.model ?? undefined,
     createdAt: row.created_at
   }
 }
@@ -82,8 +89,8 @@ export const agentTraceRepo = {
     const id = randomUUID()
     const createdAt = Date.now()
     dbService.getHandle().prepare(
-      `INSERT INTO agent_traces (id, request_id, conversation_id, parent_request_id, step_index, step_type, tool_name, duration_ms, token_usage, prompt_tokens, completion_tokens, status, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO agent_traces (id, request_id, conversation_id, parent_request_id, step_index, step_type, tool_name, duration_ms, token_usage, prompt_tokens, completion_tokens, status, error, tool_args, tool_result, model, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       rec.requestId,
@@ -98,6 +105,9 @@ export const agentTraceRepo = {
       rec.completionTokens ?? null,
       rec.status,
       rec.error ?? null,
+      rec.toolArgs ?? null,
+      rec.toolResult ?? null,
+      rec.model ?? null,
       createdAt
     )
     return { ...rec, id, createdAt }

@@ -16,6 +16,7 @@ import type { BuiltinTool } from './builtin'
 import type { ApprovalPreviewField } from '../../shared/types'
 import { buildFileDiff, diffToText } from '../../shared/fs-diff'
 import { errMsg } from '../error'
+import { OFFLOAD_PREFIX, defaultOffloadRoot, resolveOffloadPath } from '../agent/tool-output-offload'
 
 const WORKSPACE_KEY = 'agent.workspace_dir'
 const READ_LIMIT_BYTES = 256 * 1024 // 文本读取上限，超出截断
@@ -38,6 +39,10 @@ export function setWorkspaceDir(dir: string): void {
 export function resolveWorkspacePath(relPath: string): string {
   const ws = getWorkspaceDir()
   if (!ws) throw new Error('未设置 Agent 工作目录，请先在 Agent 页选择工作目录')
+  // `@outputs/` 是卸载引用的**保留前缀**，只有 fs_read 认它。
+  // 不在这里挡掉的话：模型写出来的文件落在 `<工作目录>/@outputs/…`，而读的时候读的是应用数据目录里那一份
+  // ——两条路各走各的，比直接拒绝难查得多。代价是工作目录里不能再用这个名字，注释与报错都要说清楚。
+  if (relPath.startsWith(OFFLOAD_PREFIX)) throw new Error(`保留前缀 ${OFFLOAD_PREFIX} 只能用于 fs_read 回读工具输出`)
   const norm = path.posix
     .normalize((relPath ?? '').replace(/\\/g, '/'))
     .replace(/^\/+|\/+$/g, '')
@@ -146,11 +151,13 @@ const fsReadTool: BuiltinTool = {
     id: 'fs.read',
     name: 'fs_read',
     description:
-      '读取 Agent 工作目录下的文本文件（UTF-8，最大 256KB，超出截断；二进制文件会被拒绝）。参数：path (string)。',
+      '读取文本文件（UTF-8，最大 256KB，超出截断；二进制文件会被拒绝）。两种路径：相对 Agent 工作目录的路径；' +
+      '或以 `@outputs/` 开头的**工具输出引用**（别的工具返回太长时系统会把全文存到那里，并在返回里给出这个引用）。' +
+      '参数：path (string)。',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: '相对工作目录的文件路径' }
+        path: { type: 'string', description: '相对工作目录的文件路径，或 @outputs/... 形式的工具输出引用' }
       },
       required: ['path'],
       additionalProperties: false
@@ -161,7 +168,12 @@ const fsReadTool: BuiltinTool = {
   async execute(args) {
     const rel = String(args?.path ?? '')
     if (!rel) throw new Error('path 不能为空')
-    const abs = resolveWorkspacePath(rel)
+    // §232：`@outputs/…` 是**卸载引用**（工具返回太长时落进应用数据目录的那份全文）。
+    // 只有 fs_read 认这个前缀——fs_write/fs_list 不认，所以模型写不进这一层、也看不见别人的输出目录，
+    // 它只是"这一段我留了一份可以回读"的那个回读口。
+    const abs = rel.startsWith(OFFLOAD_PREFIX)
+      ? resolveOffloadPath(defaultOffloadRoot(), rel)
+      : resolveWorkspacePath(rel)
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       throw new Error(`文件不存在: ${rel}`)
     }

@@ -916,6 +916,20 @@ export interface AgentTraceRecord {
   completionTokens?: number
   status: 'success' | 'error'
   error?: string
+  /**
+   * v50（V4-Iter-232）：这一步的**入参原文**（多个工具调用时按调用顺序用换行分隔，每段带工具名）。
+   * 只在 `stepType='tools'` 那一类步骤上有值；写入端按 `TRACE_TEXT_MAX_CHARS` 截断并留一句"完整 N 字符"，
+   * 所以这一列是**可诊断的线索**，不是"存档的副本"——真要看全文，那一步的返回值在卸载文件里（同批）。
+   */
+  toolArgs?: string
+  /** v50：这一步的**返回值原文**（同上，截断口径一致；错误结果也照存，那正是最该看的一种） */
+  toolResult?: string
+  /**
+   * v50：跑这一步的那台模型。
+   * 为什么不能由会话上那一个 `model` 推出来：跨模型角色（§145／§150）之后子运行可以换模型，
+   * 而整棵编排树的成本／耗时聚合（§163）本来就跨多个 request ⇒ "哪一步用了哪台"只能逐步记。
+   */
+  model?: string
   createdAt: number
 }
 

@@ -24,6 +24,9 @@ mem.exec(`
     completion_tokens INTEGER,
     status TEXT,
     error TEXT,
+    tool_args TEXT,
+    tool_result TEXT,
+    model TEXT,
     created_at INTEGER
   )
 `)

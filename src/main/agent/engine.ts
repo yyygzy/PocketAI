@@ -50,6 +50,7 @@ import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
 import { createApproval } from './tool-approval'
 import { pickSafeParams } from './safe-params'
+import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot } from './tool-output-offload'
 import {
   isToolsUnsupportedError,
   extractTextToolCalls,
@@ -84,10 +85,40 @@ const logger = createLogger('agent')
  */
 const traceParents = new Map<string, string | null>()
 
+/**
+ * 每个 requestId 实际跑在哪台模型上（v50，V4-Iter-232）。
+ * 理由与上面那张表同源：**一处登记胜过 12 个调用点各自传**——漏一处就等于那类步骤静默没有归因。
+ * 跨模型角色（§145／§150）之后这一步不能由"会话上的那个 model"推出来：子运行可以换模型。
+ */
+const traceModels = new Map<string, string>()
+
+/**
+ * trace 里入参／返回值的存写上限（v50）。
+ * 为什么不是"全存"：这张表是全库增长最快的一张（编排每落一步一行，§168 实测 50k 行 3.7→6.1 MB），
+ * 而一次工具返回值能到几百 KB（shell 输出上限 32 KB、fs 读 256 KB、MCP 256 KB）。
+ * 为什么不是"只存前 N 字符不吭声"：那等于把"这是一份副本"撒了谎——所以尾部固定带一句"完整 N 字符"，
+ * 全文在卸载文件里（同批的 `ToolOutputOffload`），这一列只是**可诊断的线索**。
+ */
+export const TRACE_TEXT_MAX_CHARS = 4000
+
+/** 换行符写成一个常量：这几段是 python 批处理进文件的，字符串字面量里放转义序列容易被工具吃掉 */
+const NL = String.fromCharCode(10)
+
+/** 截断并如实带上原始长度（空串与 undefined 都不写，避免把"没有"存成"空字符串"） */
+export function capTraceText(value: string | null | undefined, maxChars = TRACE_TEXT_MAX_CHARS): string | undefined {
+  if (!value) return undefined
+  if (value.length <= maxChars) return value
+  return `${value.slice(0, maxChars)}\n…（此处截断，完整 ${value.length} 字符）`
+}
+
 /** 安全写入 trace，防止 DB 问题阻塞主流程 */
 function safeTrace(rec: Parameters<typeof agentTraceRepo.insert>[0]): void {
   try {
-    agentTraceRepo.insert({ ...rec, parentRequestId: traceParents.get(rec.requestId) ?? null })
+    agentTraceRepo.insert({
+      ...rec,
+      parentRequestId: traceParents.get(rec.requestId) ?? null,
+      model: rec.model ?? traceModels.get(rec.requestId)
+    })
   } catch (e) {
     logger.warn(`[agent] trace 写入失败: ${errMsg(e)}`)
   }
@@ -545,7 +576,7 @@ export function buildContext(history: MessageRecord[], systemPrompt?: string): A
         // 若没找到对应的 assistant.tool_calls，跳过该 tool 消息（避免 LLM API 报错）
         if (!lastAssistant) continue
         // 压缩恢复的历史工具结果（同样给定界：DB 里存的是原文，包装只发生在进上下文时）
-        const truncated = wrapUntrusted(compressToolResult(tr.content, MAX_TOOL_RESULT_CHARS))
+        const truncated = wrapUntrusted(contextToolResult(m.id, typeof tr.content === 'string' ? tr.content : String(tr.content ?? '')))
         out.push({
           role: 'tool',
           content: truncated,
@@ -604,6 +635,18 @@ export function wrapUntrusted(content: string): string {
  *  - JSON 对象：保留所有键名 + 前几行值
  *  - 纯文本：保留首段 + 末段
  */
+/**
+ * 进上下文的那一份工具结果（V4-Iter-232）：过阈值就**落文件 + 只留预览**，不过阈值照旧截断。
+ * 为什么两处都用它（本轮新结果 + 跨轮重建历史）：原来两处各自调 `compressToolResult`，
+ * 于是“砍掉的那一段模型再也拿不回来”在同一轮里发生两次。键取那条工具结果的 DB 消息 id，
+ * 所以跨轮重建不会反复重写同一份全文。
+ */
+export function contextToolResult(messageKey: string, content: string): string {
+  const off = offloadToolOutput(defaultOffloadRoot(), messageKey, content)
+  if (off) return compressToolResult(buildOffloadPreview(content, off.ref), MAX_TOOL_RESULT_CHARS)
+  return compressToolResult(content, MAX_TOOL_RESULT_CHARS)
+}
+
 export function compressToolResult(content: string, maxChars: number): string {
   if (content.length <= maxChars) return content
   // 尝试 JSON 结构化压缩
@@ -764,6 +807,7 @@ class AgentEngine {
     // 预算不在这里建：它要按档收缩（147），而档位要等容量判据算出来 ⇒ 见下面 `capacity` 那一处。
     // 子 run 一律用父传下来的同一个对象，所以"这轮最坏花多久"整棵树只算一次。
     traceParents.set(requestId, parentRequestId)
+    traceModels.set(requestId, target.model)
 
     // 解析助手配置
     let effectivePrompt = ''
@@ -1145,6 +1189,7 @@ class AgentEngine {
       // 归因表必须跟着清理：漏了它，同一个 requestId 的残留会把以后某轮的 trace
       // 挂到别的父运行上（归因错比没归因更难查）
       traceParents.delete(requestId)
+      traceModels.delete(requestId)
     }
   }
 
@@ -1581,7 +1626,9 @@ class AgentEngine {
         toolName: toolList,
         durationMs: Date.now() - stepStart,
         status: 'error',
-        error: `重复工具调用已拦截：${signature}`
+        error: `重复工具调用已拦截：${signature}`,
+        // 签名本身就是「工具名 + 参数」，这一列存下来才能回答"它反复传的是哪一串"
+        toolArgs: capTraceText(signature)
       })
       return 'llm'
     }
@@ -1741,7 +1788,7 @@ class AgentEngine {
         status: 'done'
       })
 
-      const truncatedResult = compressToolResult(toolResult.content, MAX_TOOL_RESULT_CHARS)
+      const truncatedResult = contextToolResult(toolMsg.id, toolResult.content)
       // kb_search 命中并入引用来源（SEC-29），最终回答的 sources 才覆盖多步检索
       ctx.sources = mergeSources(ctx.sources, extractKbSearchSources(tc.function.name, toolResult.content, toolResult.isError))
       if (ctx.textProtocolMode) {
@@ -1792,7 +1839,15 @@ class AgentEngine {
       toolName: toolNames,
       durationMs: Date.now() - stepStart,
       status: hasError ? 'error' : 'success',
-      error: hasError ? results.find((r) => r?.isError)?.content : undefined
+      error: hasError ? results.find((r) => r?.isError)?.content : undefined,
+      // v50：这一步"做了什么、得到什么"。截断口径见 capTraceText——
+      // 这一列是可诊断的线索，全文在卸载文件里（同一批），别把它当存档副本
+      toolArgs: capTraceText(
+        toolCalls.map((tc) => `${tc.function.name} ${tc.function.arguments ?? ''}`).join(NL)
+      ),
+      toolResult: capTraceText(
+        results.map((r) => `${r?.name ?? ''} ${r?.isError ? 'ERROR' : 'OK'} ${r?.content ?? ''}`).join(NL)
+      )
     })
 
     return 'llm'

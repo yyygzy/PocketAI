@@ -7,6 +7,11 @@
 //  3) 不支持 tools 字段的端点走文本协议，那份清单由 buildTextProtocolPrompt 独立补齐
 //     （删掉文本份不会让兜底路径看不到工具）。
 // engine.ts 顶层 import 重依赖，按 agent-context.test.ts 的既有做法整体打桩后再取常量。
+// §232 起引擎会经 agent/tool-output-offload 拉进 portable（顶层算 APP_ROOT 要用 app.isPackaged）
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+
 import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../src/main/db/database', () => ({ dbService: { getHandle: () => ({}) } }))

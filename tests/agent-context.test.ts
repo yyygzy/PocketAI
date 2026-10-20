@@ -10,6 +10,11 @@
 //
 // 策略：engine.ts 顶层 import 重依赖（providerManager/dbService/ragService/toolRegistry 等），
 // 全部 mock 掉避免模块加载初始化；被测函数本身均为纯函数。
+// §232 起引擎会经 agent/tool-output-offload 拉进 portable（顶层算 APP_ROOT 要用 app.isPackaged）
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+
 import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../src/main/db/database', () => ({ dbService: { getHandle: () => ({}) } }))

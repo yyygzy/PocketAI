@@ -819,6 +819,29 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_agent_traces_conversation ON agent_traces(conversation_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_agent_traces_parent_request ON agent_traces(parent_request_id);
     `
+  },
+  {
+    // v50: 给 `agent_traces` 补上「这一步到底做了什么」的三列（V4-Iter-232）。
+    //
+    // 为什么非加不可：这张表从建表起只有 step_type／tool_name／耗时／token／status／error，
+    // 于是**参数与返回值一个都没落**。后果不是"调试不方便"，是两件事做不了：
+    //  ① 事后诊断——"第 4 步失败了"这句话里没有参数，用户和我们都只能靠猜；
+    //  ② 断点续跑——主流 harness 的恢复形状是"快照 + 从中断点重放"，而重放要知道当时传了什么；
+    //     现在审批弹窗挂在半路时进程崩了，连"停在哪个工具的哪一次调用"都没存（§231 的台账里记着这条）。
+    // 顺带把 `model` 落进每一行：跨模型角色（§145／§150）之后，"这一步是哪台模型跑的"
+    // 不再能由会话上的那一个 `model` 推出来（子运行可以换模型），而委派的整棵树聚合正需要它。
+    //
+    // 三列都可空且默认 NULL ⇒ 老库行为不变（旧行照旧读得出）；写入端**必须自己截断**
+    // （上限见 `agent/engine.ts` 的 TRACE_TEXT_MAX_CHARS），库这一层不兜——兜了就没人管体积了。
+    // 体积是有代价的：v49 那批实测每行 18–150 字节量级，加上这两列最多能到 2×TRACE_TEXT_MAX_CHARS
+    // ≈ 8 KB/行，所以卸载／截断上限要跟着数据健康屏那个观察口一起看（台账 §232 的"未做"段）。
+    version: 50,
+    name: 'agent_trace_step_payload',
+    up: `
+      ALTER TABLE agent_traces ADD COLUMN tool_args TEXT;
+      ALTER TABLE agent_traces ADD COLUMN tool_result TEXT;
+      ALTER TABLE agent_traces ADD COLUMN model TEXT;
+    `
   }
 ]
 

@@ -122,7 +122,9 @@ describe('v49：agent_traces 的三张索引', () => {
     expect(planOf(SHAPES[0]!.sql, SHAPES[0]!.args)).toContain('USING INDEX')
   })
 
-  it('版本号确实推进到 v49（诊断模块那句"库结构是否落后"依赖它）', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(49)
+  // 这一条断言的是**当前最新迁移号**，不是 v49 本身：每加一条迁移都要跟着动（v50 = trace 三列，V4-Iter-232）。
+  // 诊断模块那句「库结构是否落后」拿它当尺子，所以它必须等于迁移表的末尾，而不是等于本文件测的那批索引。
+  it('版本号确实推进到当前最新一条迁移（诊断模块那句"库结构是否落后"依赖它）', () => {
+    expect(LATEST_SCHEMA_VERSION).toBe(50)
   })
 })
