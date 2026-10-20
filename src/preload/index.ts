@@ -1040,7 +1040,8 @@ const api = {
     ipcRenderer.invoke(IPC.LOCK_LOCK),
   unlock: (password?: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.LOCK_UNLOCK, password),
-  setAutoLockTimeout: (timeoutMs: number): Promise<{ ok: boolean }> =>
+  // §228：这一发现在会真落库 ⇒ 类型带上失败分支（safeHandle 把写失败转成 {ok:false,error}）
+  setAutoLockTimeout: (timeoutMs: number): Promise<{ ok: true } | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.LOCK_SET_AUTO_TIMEOUT, timeoutMs),
   markActive: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.LOCK_MARK_ACTIVE),

@@ -5,6 +5,7 @@ import { masterKeyManager } from '../../crypto/master-key'
 import { verifyAndOpenMasterKey } from '../../crypto/master-password'
 import { clipboardGuard } from '../../crypto/clipboard-guard'
 import { dbService } from '../../db/database'
+import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { broadcast } from '../broadcast'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { masterPasswordSchema } from '../../../shared/schemas/encryption'
@@ -64,6 +65,11 @@ export function registerLockHandlers(): void {
     return { ok: true }
   }, argsSchema(masterPasswordSchema.optional()))
   safeHandle(IPC.LOCK_SET_AUTO_TIMEOUT, (_e, timeoutMs: number) => {
+    // §228：这一发过去**只改内存、从不落库**（appConfigRepo.setAutoLockTimeout 一直零调用点），
+    // 于是设了 5 分钟、重启后回到「永不」。顺序是先落库再改内存：反过来会造出"内存已改、盘上没改"
+    // 的那一半——正是这次要修的 bug 的新版本。写失败（这条通道在锁屏白名单里，db 模式锁屏时库是关着的）
+    // 就抛，交给 safeHandle 转成 {ok:false}，由界面说失败并回滚那颗下拉。
+    appConfigRepo.setAutoLockTimeout(timeoutMs)
     lockService.setAutoTimeout(timeoutMs)
     return { ok: true }
   }, argsSchema(z.number().int().nonnegative()))

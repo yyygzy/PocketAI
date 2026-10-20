@@ -510,6 +510,10 @@ async function boot(): Promise<void> {
     masterKeyManager.clear()
     dbService.close()
   })
+  // §228：把自动锁那一档从库里读回来。过去写入侧只改内存、启动也没有这一步 ⇒ 设了 5 分钟、
+  // 重启就回到「永不」。走到这里库一定开着：阶段 2 两条分支（验密码／设新密码）走完才往下，
+  // 而用户关掉解锁窗口时 boot 早已 return（lockService.init() 也不会跑）。
+  lockService.setAutoTimeout(appConfigRepo.getAutoLockTimeout())
   lockService.init()
   // 定时 WebDAV 备份调度器（内部自行判断开关/锁屏状态）
   initBackupScheduler()

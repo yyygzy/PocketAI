@@ -347,6 +347,10 @@ const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
   // §227：读失败时 select 显示的是 AUTO_LOCK_OPTIONS 的第一档「永不」，而那正是未配置时的默认值
   //（app-config.repo.ts:265 是 `v ? Number(v) : 0`）⇒ 这句"显示的是默认值"说得出，但必须说出来
   const [readErr, setReadErr] = useState<string | null>(null)
+  // §228：这颗下拉是"先乐观拨状态再写库"的形状，而这一发现在真的要落库（过去只改内存）
+  // ⇒ 留住上一次读到的真值好回滚；写失败必须说话（§224 那一族的第三形状）
+  const lastKnown = useRef(0)
+  const [writeErr, setWriteErr] = useState<string | null>(null)
   const { notice: saved, show: markSaved, clear: clearSaved } = useTransientNotice<boolean>(1500)
 
   useEffect(() => {
@@ -357,7 +361,8 @@ const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
           setReadErr(ipcFailText(s, t('common.unknownError')))
           return
         }
-        setValue(s.autoLockTimeout ?? 0)
+        lastKnown.current = s.autoLockTimeout ?? 0
+        setValue(lastKnown.current)
       })
       .catch((e: unknown) => {
         // §227：原来这一支直接把 0 写回 state——那是把"没读到"演成"读到的是永不"，还顺手解除了 disabled
@@ -372,19 +377,26 @@ const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
   async function change(ms: number) {
     setValue(ms)
     clearSaved()
+    setWriteErr(null)
     try {
       const r = await window.pocketai.setAutoLockTimeout(ms)
-      // §223：`r?.ok` 只问成功面；失败对象上 `ok` 是 false ⇒ 走"什么都不做"，于是"设上了但没落库"
-      // 这一发连一句痕都没有（下面那句 catch 只接真抛错）。按原注释的意图补上留痕
+      // §228：这一发现在要落库（过去只改内存 ⇒ 设了 5 分钟、重启回到「永不」）。落库会真失败：
+      // 这条通道在锁屏白名单里，而 db 模式锁屏时库是关着的。失败就回滚到上一次读到的真值——
+      // 屏上留着新值就是"看着已生效、重启才发现没存上"，比不告诉用户更糟
       if (hasIpcFailed(r)) {
-        logIpcError('settings.setAutoLockTimeout', new Error(ipcFailText(r, t('common.unknownError'))))
+        const msg = ipcFailText(r, t('common.unknownError'))
+        setWriteErr(msg)
+        setValue(lastKnown.current)
+        logIpcError('settings.setAutoLockTimeout', new Error(msg))
         return
       }
       if (r?.ok) {
+        lastKnown.current = ms
         markSaved(true)
       }
     } catch (e) {
-      // 设计意图：保持所选值，下次打开设置页会回读真实状态；失败必须留痕
+      setWriteErr(errText(e, t('common.unknownError')))
+      setValue(lastKnown.current)
       logIpcError('settings.setAutoLockTimeout', e)
     }
   }
@@ -408,6 +420,7 @@ const AutoLockRow: React.FC<{ encrypted: boolean }> = ({ encrypted }) => {
         </select>
         {saved && <span className="text-[11px] text-[var(--color-success)]">{t('enc.autoLockSaved')}</span>}
       </div>
+      {writeErr && <Notice ok={false} text={t('common.opFailed', { msg: writeErr })} />}
       <div className="text-[11px] text-[var(--color-text-muted)] pl-[4.5rem]">{encrypted ? t('enc.autoLockDesc') : t('enc.autoLockDescNone')}</div>
     </div>
   )

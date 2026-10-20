@@ -214,7 +214,7 @@ describe('③ 两处的接线（源码区域断言：两条失败面都要落进
   const read = (rel: string): string =>
     fs.readFileSync(path.resolve(__dirname, '../', rel), 'utf-8').replace(/\r\n/g, '\n')
 
-  it('AutoLockRow 那一发：两条失败面都写 readErr，成功分支只把读到的值交出去（这一发只在挂载时读一次）', () => {
+  it('AutoLockRow 那一发：两条失败面都写 readErr，成功分支把读到的值交出去（§228 起还记住它好回滚）', () => {
     const src = read('src/renderer/src/modules/settings/SettingsModule.tsx')
     const from = 'window.pocketai' + NL + '      .getLockStatus()' + NL + '      .then((s) => {'
     const to = 'const label = (ms: number) =>'
@@ -223,7 +223,8 @@ describe('③ 两处的接线（源码区域断言：两条失败面都要落进
     const r = src.slice(src.indexOf(from), src.indexOf(to))
     expect(r).toContain('setReadErr(ipcFailText(s, t(\'common.unknownError\')))')
     expect(r).toContain('setReadErr(errText(e, t(\'common.unknownError\')))')
-    expect(r).toContain('setValue(s.autoLockTimeout ?? 0)')
+    expect(r).toContain('lastKnown.current = s.autoLockTimeout ?? 0')
+    expect(r).toContain('setValue(lastKnown.current)')
     // 这一发里 setValue 只许出现一次：只有"读到了"那一支才有权写值（原写法在 catch 里也调了一次）
     expect(r.split('setValue(').length - 1, 'setValue 的调用次数不对').toBe(1)
     expect(r).toContain('logIpcError(\'settings.getLockStatus\', e)')

@@ -70,7 +70,9 @@ export class LockService extends EventEmitter {
 
   /** 设置自动锁屏超时（ms），0=永不自动锁 */
   setAutoTimeout(timeoutMs: number): void {
-    this.autoLockTimeout = Math.max(0, timeoutMs)
+    // §228：这一档现在会从库里读回来（`auto_lock_timeout` 是一根字符串），
+    // 坏值（NaN／负数／空）一律归到「永不」——不能让 NaN 进到 `checkAutoLock` 的比较里
+    this.autoLockTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0
   }
 
   /** 应用隐藏时调用（BrowserWindow 'hide' / 'minimize'） */
