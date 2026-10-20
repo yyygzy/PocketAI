@@ -66,6 +66,22 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-239 真机自查的启动闸门：一次「独立实例其实没独立」的事故，与三条前置
+
+- **编号为什么跳到 239**：235–238 已被 `docs/agent-multi-role-plan.md` 第 7 节流水账占用（238 是上一轮刚从 §234 改号来的），按「编号不重排」只能取 239。
+- **事故本体（2026-10-20 19:14）**：跑 B132 要用 `POCKETAI_APP_ROOT` 起独立实例，我把命令写成 `powershell.exe -Command "$env:POCKETAI_APP_ROOT='…'; Start-Process …"`——**bash 先一步把 `$env:…` 当成自己的变量吃掉了**，PowerShell 收到的是一句空赋值 ⇒ 环境变量从未生效。铁证是进程命令行：`--user-data-dir="C:\PocketAI\data\userdata"`，而 `data/tmp/root-234` 里连一个文件都没生成。
+- **后果（逐条取自 `data/logs/main.log`，不是推测）**：19:14:46 `已弹出解锁窗口（屏幕置顶），请输入主密码`；19:15:28 `主密钥派生与开库（不含输入等待）: 2224ms` 与 `DB 解锁成功` ⇒ **有人往我起的那个窗口里输了真主密码**（不是我索取的，我也没看到／记下那个口令，但窗是我起的——这条责任在我）。随后完整 boot 跑完：`凭据迁移 + provider 去重`、`内置助手同步完成: 8 个`、`内置技能同步完成: 11 个`、`定时提醒调度器已启动`。⇒ **真实 `data/app.db` 被一个开发中的代码版本打开并写过**：`app.db-wal`／`app.db-shm` 时间戳 19:15，`app.db` 本体仍是 18:03（没 checkpoint）。被碰的只有 `app.db-wal`／`-shm`／`logs/main.log`／`data/userdata/*`；没有新的备份副本，也没有别的文件被写。
+- **发现即收手**：按命令行精确匹配 `C:\PocketAI\node_modules\electron*` 杀掉自己起的那 4 个进程（9468／7876／21176／15392），收完 `electron.exe` 计数为 **0**；**没有通杀 electron**，当时你的 dev 实例没在跑，所以没碰到别的东西。**B132 一格都没读到**（还没进主界面就停了）。
+- **一件我拒绝去证实的事**：v50 那三条 `ALTER TABLE agent_traces ADD COLUMN` 是否已经在你的库上执行。开库会跑迁移，所以"最坏情况是执行了"；但**证实要读库**，而 `data/app.db` 按约定是不可读的用户数据。方向上那是向后兼容的加列，也正是你用新代码启动时本来就要发生的一次——我不把它说成"无事发生"，也不替你去读它。
+- **三条硬规矩（同时写进 `docs/verify-checklist.md` 的「怎么跑」）**：① 起实例只走 `node scripts/ui-verify-launch.mjs --root data/tmp/root-XXX --port N`，**不再在 shell 里拼环境变量**（由脚本写进 child 的 env）；② root 必须落在 `<仓库>/data/` 之下，且**里面不许有 `app.db`／`app.db-wal`／`app.db-shm`**——空 root = none 模式 = 走首启向导，**压根不弹解锁窗**，不给真人往错窗口里输密码的机会；③ 起完 20s 内读不到 `<root>/data/userdata/DevToolsActivePort` ⇒ 判定 root 没生效，**脚本自己杀掉进程并退出 2**，不做任何后续操作。
+- **落点**：新 `scripts/ui-verify-launch.mjs`（`preflight()` 是纯判定，CLI 只是它的一张脸：`--dry-run` 只判不起）＋ `scripts/ui-verify-launch.d.mts`（`.mjs` 不进 tsc，用例要 import 它就得给一份类型面）。
+- **用例 15 例**（`tests/ui-verify-launch-preflight-239.test.ts`）：真实 `data` 本身／仓库外（绝对路径与 `..`）／没给 root ⇒ 三种都拒；`app.db`／`-wal`／`-shm` **各按各的文件名**被拒，而且用 0 字节的空文件也照样拒（⇒ 证明只看存在性、绝不读内容）；只有 `userdata`／`logs` 的 root ⇒ 放行（**反向对照**：判据不是"这目录被用过"）；端口五档负例＋两个边界值。
+- **实测输出（逐字，跑在最终版代码上）**：`拒绝：root 必须在 C:\PocketAI\data **之下**（真实 data 目录本身也不行）：拿到 C:\PocketAI\data`；`拒绝：scratch root 里已有 app.db / app.db-wal / app.db-shm：那可能是一份真库（会弹解锁窗）。换一个空 root，或先自己确认它是你哪次留下的`；空 root 的 `--dry-run` 打全 `POCKETAI_APP_ROOT`／`DATA_DIR` 两行后 `exit=0`。
+- **变异 G1…G5，其中 G1 第一版存活——它教的东西比结论多**：第一版 G1 打的是 `abs !== realData && abs.startsWith(realData + path.sep)` 里的**前那一支**，15 例全绿。原因是那半句是**死码**：`data` 本身已经被 `startsWith(data + sep)` 挡在门外。删掉死码、只留真在起作用的那一条，再打同一条（`if (!abs.startsWith(...))` → `if (false)`）转红 3 条。⇒ **一条判据只有一条真活着，就别在代码里写两条**，否则变异打在有牙的那条上会全绿——与 §230 那条 N3（`/非法|超出/` 让两道守卫互为替补）同一根轴：**断言要打到"该由谁拒"**。其余四条：G2 仓库外也算 root（3 红）／G3 只挡 `app.db`（2 红）／G4 端口松成"是数字就行"（3 红）／G5 没给 root 不拒（1 红）。
+- **验证**：typecheck 0、vitest **366 文件 / 4386 通过 + 2 失败 + 1 跳过**（本批 +1 文件／+15 例；那两条红**不是本批带出来的**，见下面那条单独定性）。**`src/` 零改动**（只动 `scripts/` 与 `tests/`）⇒ 不重新 build。
+- **那两条红的定性（复现过，不是"环境噪音"这种故事）**：文件是既有的 `tests/shell-tools-inflight-quit.test.ts`（V4-Iter-202）。今天两次全量（机器负载高，635s／712s，基线 78–105s）都在同一处红，单跑 3/3 绿。**决定性复现**：给同一个文件加 `--testTimeout=1000`（人为把超时压进它自然耗不到的区间），打出的正是**同样那两条**红，报的第一手原因是 `Error: Test timed out in 1000ms`——用例被砍在 `await wait(900)` 那一拍上，此时那发 `node hb.js` 从没被 kill：① 它在登记表里仍算在途 ⇒ 下一条"自然结束"的 `inFlightShellJobCount() === 0` 连带红；② 它继续每 200ms 往 `data/tmp/shell-jobs/hb.txt` 追加，今天两次把孤儿留在机器上让我去查（这正是 V4-Iter-232 记的那条"用可观测副作用当判据的用例，失败时会留下继续产生副作用的进程"）。⇒ **默认 5s 的 testTimeout 对这条用例太紧**（它最慢的那条路是 700ms＋900ms＋taskkill 的实际耗时），且**失败路径没有兜底清理**。修法留给 **§240**：本文件单独放宽超时 + `afterAll` 里 `killInFlightShellJobs()` 与心跳文件清理（保证"被砍的用例不留孤儿"），不动产品代码。
+- **未做／未证**：① **B132（以及 B130／B131）真机仍未跑**——重跑必须走上面那条脚本、且 root 是空的那一个；② 你那台库的完整性与 schema 版本**我没有查**（要查需要你点头，且只碰元数据不碰内容）；③ `preflight` 不管"端口是否被别的实例占着"（那由 root 里的 `DevToolsActivePort` 反证）；④ 脚本只认 Windows 的 `node_modules/electron/dist/electron.exe`，非 win 平台没验。
+
 ### V4-Iter-234 每轮带多少历史，改成按 token 预算裁（前置输入进模型栏）
 
 - **来由**：§232 登记时把这条一起写了，做到第三件之前先被证伪拆出来（缺的输入是「每台模型能装多少」）；本批先把那个输入做出来，再把尺子从「30 条」换成 token 预算。方向由用户在流水账里点名（「② 开工 §234」），两个口径由 AskUserQuestion 收口：**双向放开**（大窗口模型可以带超过 30 条，另设硬上限）、**本批不下发 num_ctx**（本地端点仍按它自己的配置服务，界面要如实说）。
