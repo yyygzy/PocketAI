@@ -172,6 +172,17 @@ export type DelegateFailureCode =
   | 'never_probed'
   /** 判定不是「可当管控者」⇒ 开不了委派（参数带那台的判定与计数据） */
   | 'not_capable'
+  /**
+   * §246 某一发请求**排到槽之后**在飞的时间超过上限（端点收了连接不回话）。
+   * 与 `probe_incomplete` 分开是有必要的：那一码是"请求出错了"，这一码是"根本没等到响应"，
+   * 用户要做的事不同（前者看端点日志、后者多半该换一台或查网络）。
+   * 计时**不含排队**——本地那张卡被占住时排队是设计（M5／M6），把它说成"这台不回话"就是误导。
+   */
+  | 'probe_timeout'
+  /** §246 用户自己点了「停止探针」⇒ 不下结论、也不改写此前判定 */
+  | 'probe_aborted'
+  /** §246 同一台已经有一发在探（两发叠在同一台模型上只会互相拖慢，§244 真机就是这么把它挂住的） */
+  | 'probe_running'
 
 export interface DelegateFailure {
   code: DelegateFailureCode
@@ -189,7 +200,10 @@ export const DELEGATE_FAILURE_KEYS: Record<DelegateFailureCode, string> = {
   text_protocol_forced: 'delegate.failTextProtocol',
   probe_incomplete: 'delegate.failIncomplete',
   never_probed: 'delegate.failNeverProbed',
-  not_capable: 'delegate.failNotCapable'
+  not_capable: 'delegate.failNotCapable',
+  probe_timeout: 'delegate.failProbeTimeout',
+  probe_aborted: 'delegate.failProbeAborted',
+  probe_running: 'delegate.failProbeRunning'
 }
 
 /**

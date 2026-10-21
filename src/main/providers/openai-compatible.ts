@@ -213,7 +213,13 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     handlers: ChatStreamHandlers
   ): Promise<ChatStreamResult> {
     return withLocalSlot(
-      { baseUrl: this.baseUrl, lane: 'chat', label: params.model, signal: params.signal },
+      {
+        baseUrl: this.baseUrl,
+        lane: 'chat',
+        label: params.model,
+        signal: params.signal,
+        onStart: params.onSlotStart
+      },
       () => this.streamChatInner(messages, params, handlers)
     )
   }

@@ -244,3 +244,82 @@ describe('名称/URL 留空被本地先拦（V4-Iter-172 补）', () => {
     expect(screen.queryByText(zh['provider.nameUrlRequired'])).toBeNull()
   })
 })
+
+// ---------- V4-Iter-246：探测中给一条退路 ----------
+// 为什么这两条挂在设置页而不是徽标用例里：徽标那几例只证"probing 时这颗键在不在"，
+// 证不到设置页把 (providerId, model) 这一对**交给谁**。§244 真机上挂住的那两发要的正是
+// "停的就是这一台这一发"——交错台子等于什么都没停，而界面照样会显示"已停止"那种假话。
+describe('探测中那颗「停止」（V4-Iter-246）', () => {
+  const base = (): Record<string, (...a: unknown[]) => unknown> => ({
+    listProviders: () => [GLM],
+    saveProvider: (r) => r,
+    deleteProvider: () => ({ ok: true }),
+    revealProviderKeys: () => ({ apiKeys: [] }),
+    fetchModels: () => [],
+    testProvider: () => ({ ok: true }),
+    listDelegateCapabilities: () => [],
+    setAgentDelegateEnabled: () => ({ ok: true, error: null, models: [] })
+  })
+
+  /** 让那一发停在"正在飞"的状态：探针的 promise 由用例自己决定什么时候、带着什么回来 */
+  function pendingProbe(abortResult: unknown): { resolve: (v: unknown) => void } {
+    let resolve!: (v: unknown) => void
+    const promise = new Promise<unknown>((r) => {
+      resolve = r
+    })
+    stubPocketai({
+      ...base(),
+      probeDelegateCapability: () => promise,
+      abortDelegateProbe: () => abortResult
+    })
+    return { resolve }
+  }
+
+  /** 点第二条模型（glm-5）那行的探测 —— 台子必须是这一台，模型必须是这一个 */
+  async function startProbe(): Promise<void> {
+    await openGlm()
+    fireEvent.click(screen.getAllByText(zh['provider.capProbe'])[1]!)
+  }
+
+  it('点「停止探针」交出去的是这一台这一发；那一发回来后按当前语言说"判定保持不变"', async () => {
+    const { resolve } = pendingProbe({ stopped: true })
+    await startProbe()
+    fireEvent.click(await screen.findByTestId('probe-stop'))
+    const call = pocketaiCalls().find((c) => c.fn === 'abortDelegateProbe')
+    expect(call?.args).toEqual(['p-glm', 'glm-5'])
+
+    resolve({ entry: verdictFor('p-glm', 'glm-5'), error: { code: 'probe_aborted' } })
+    expect(await screen.findByText(/判定保持不变/)).toBeTruthy()
+    // 被停掉的那一发不许翻成"这台不行"
+    expect(screen.queryByText(/不派活|不可当管控者/)).toBeNull()
+  })
+
+  it('反向对照：没有探测在跑时，界面上根本没有那颗键', async () => {
+    stubPocketai({
+      ...base(),
+      probeDelegateCapability: () => ({ entry: verdictFor('p-glm', 'glm-5'), error: null }),
+      abortDelegateProbe: () => ({ stopped: false })
+    })
+    await openGlm()
+    expect(screen.queryByTestId('probe-stop')).toBeNull()
+  })
+
+  it('主进程回 stopped:false ⇒ 说"此刻没有正在跑的探测"，不许假装已停止', async () => {
+    const { resolve } = pendingProbe({ stopped: false })
+    await startProbe()
+    fireEvent.click(await screen.findByTestId('probe-stop'))
+    expect(await screen.findByText(/此刻没有正在跑的探测/)).toBeTruthy()
+    expect(screen.queryByText(/已停止/)).toBeNull()
+    resolve({ entry: verdictFor('p-glm', 'glm-5'), error: null })
+    await waitFor(() => expect(screen.queryByTestId('probe-stop')).toBeNull())
+  })
+
+  it('那一读本身失败（{ok:false}）⇒ 报的是失败原文，不是那句"没有正在跑的探测"', async () => {
+    const { resolve } = pendingProbe({ ok: false, error: '隐私锁未解锁' })
+    await startProbe()
+    fireEvent.click(await screen.findByTestId('probe-stop'))
+    expect(await screen.findByText('隐私锁未解锁')).toBeTruthy()
+    expect(screen.queryByText(/此刻没有正在跑的探测/)).toBeNull()
+    resolve({ entry: verdictFor('p-glm', 'glm-5'), error: null })
+  })
+})

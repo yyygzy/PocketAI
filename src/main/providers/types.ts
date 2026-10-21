@@ -23,6 +23,8 @@ export interface ChatParams {
   signal?: AbortSignal
   tools?: ToolSchema[] // function calling：传入则模型可决定调用工具
   toolChoice?: 'auto' | 'none' | 'required' // 工具调用策略，默认 'auto'
+  /** §246 本地槽位排到了、请求开始往外发的那一刻回调一次（探针用它起超时，见 local-slot 的注释） */
+  onSlotStart?: () => void
 }
 
 export interface ChatStreamHandlers {

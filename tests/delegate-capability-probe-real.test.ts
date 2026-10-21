@@ -3,7 +3,7 @@
 // 为什么这条必须真发包：探针的全部价值是"探的就是引擎将来会走的那条路"。
 // 把 adapter 打桩就只能证明判卷函数没写错（那半边在 delegate-capability-judge 里测），
 // 证不到"发出去的请求真的带 tools""失败时真的没改写旧判定""被设为文本协议的模型真的没发请求"。
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -33,13 +33,22 @@ import { setTextProtocolModel } from '../src/main/agent/text-protocol-prefs'
 import { toolRegistry } from '../src/main/tools/registry'
 import {
   __probeToolForTest,
+  abortDelegateProbe,
+  currentProbeSampleTimeoutMs,
   listDelegateCapabilities,
   listDelegateCapabilitiesWithStaleness,
-  probeDelegateCapability
+  probeDelegateCapability,
+  setProbeSampleTimeoutForTest
 } from '../src/main/agent/delegate-capability'
+import {
+  localSlotSnapshot,
+  resetLocalSlotsForTest,
+  setSlotDecisionForTest,
+  withLocalSlot
+} from '../src/main/providers/local-slot'
 import { DELEGATE_PROBE_TOOL } from '../src/shared/delegate-capability'
 
-type EndpointMode = 'native' | 'fence' | 'chat' | 'fail'
+type EndpointMode = 'native' | 'fence' | 'chat' | 'fail' | 'silent'
 
 let mode: EndpointMode = 'native'
 let bodies: Record<string, unknown>[] = []
@@ -57,6 +66,11 @@ function sse(res: http.ServerResponse, deltas: unknown[], finish: string): void 
 }
 
 function replyByMode(res: http.ServerResponse): void {
+  if (mode === 'silent') {
+    // §246 的真实形状（2026-10-21 真机）：端点收了连接、把请求体读完了，然后就是不回话——
+    // 那两发探针各挂了 7 分钟以上，日志里连一条失败都没有。这里刻意什么都不写，让对端去掐。
+    return
+  }
   if (mode === 'native') {
     sse(
       res,
@@ -143,6 +157,8 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  // §246 的 silent 档会留下"服务端一直开着"的连接，close() 会等它们
+  server.closeAllConnections()
   await new Promise<void>((r) => server.close(() => r()))
   dbService.close()
   fs.rmSync(P.dir, { recursive: true, force: true })
@@ -280,5 +296,136 @@ describe('app_config 落盘形状', () => {
     expect(listDelegateCapabilities()).toEqual([])
     appConfigRepo.set('agent.delegate_capability', '[{"providerId":"p"}]')
     expect(listDelegateCapabilities()).toEqual([])
+  })
+})
+
+// ---------- V4-Iter-246：超时的钟只计"请求在飞"那一段，并给界面一个停止 ----------
+// 为什么这四条值得跑真链：这一批的缺陷形状是**两个不同的事实共用一根钟**——
+// 本地那张卡被占住时排队是设计（M5／M6），端点收了连接不回话才是故障。把排队算进超时，
+// 界面就会指着一条好模型说"它不回话"；不排队（默认未实测档）又永远撞不到那条路，
+// 所以判据必须同时有"占着槽"与"端点装死"两条真链，让两种假说算出不同的数。
+function origin(): string {
+  return new URL(baseUrl).host
+}
+
+/** 等状态，不等时长（CI 上排队要多久取决于负载，固定 sleep 只会同时制造假绿和假红） */
+async function until(fn: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 800; i++) {
+    if (fn()) return
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  throw new Error(`等不到：${what}｜槽位现状 ${JSON.stringify(localSlotSnapshot())}`)
+}
+
+function slotState(): { busy: number; waiting: number } {
+  const s = localSlotSnapshot().find((x) => x.origin === origin())
+  return { busy: s?.busy ?? 0, waiting: s?.waiting ?? 0 }
+}
+
+/** 先拿一个已知结论，好在"没跑完"那几条里判它有没有被冲掉 */
+async function seedVerdict(): Promise<void> {
+  mode = 'native'
+  expect((await probeDelegateCapability(providerId, MODEL, 3)).error).toBeNull()
+  expect(listDelegateCapabilities().find((e) => e.model === MODEL)?.capability).toBe('native_tools_ok')
+}
+
+describe('超时计在飞那一段、停止不留结论（V4-Iter-246）', () => {
+  afterEach(() => {
+    setProbeSampleTimeoutForTest(null)
+    setSlotDecisionForTest(null)
+    resetLocalSlotsForTest()
+    mode = 'native'
+  })
+
+  it('缝接的是真值：不设就是 60 秒，设了当场读得回来（不是设了个没人读的数）', () => {
+    expect(currentProbeSampleTimeoutMs()).toBe(60_000)
+    setProbeSampleTimeoutForTest(700)
+    expect(currentProbeSampleTimeoutMs()).toBe(700)
+    setProbeSampleTimeoutForTest(null)
+    expect(currentProbeSampleTimeoutMs()).toBe(60_000)
+  })
+
+  it('槽位被用户另一条生成占着 ⇒ 排队那 1.5 秒（>整发预算 700ms）不算这台不回话，整探照旧绿', async () => {
+    bodies = []
+    // 实测档才会套槽（未实测档一行时序都不改，也就永远撞不到这条路）
+    setSlotDecisionForTest(() => ({
+      maxConcurrentChatSlots: 1,
+      allowChatEmbedOverlap: false,
+      rolesMayUseDistinctModels: false,
+      measured: true,
+      bucket: 'entry-4g',
+      reasons: []
+    }))
+    setProbeSampleTimeoutForTest(700)
+
+    let release!: () => void
+    const hold = new Promise<void>((r) => {
+      release = r
+    })
+    const held = withLocalSlot({ baseUrl, lane: 'chat', label: '用户正在等的那一条' }, () => hold)
+    await until(() => slotState().busy >= 1, '闸门把那张卡占住了')
+
+    const probe = probeDelegateCapability(providerId, MODEL, 3)
+    await until(() => slotState().waiting >= 1, '探针那一发确实排在队里')
+    // 让"排队"这一段真的长过单发预算：钟若在入队时就武装，这里必然超时红
+    await new Promise((r) => setTimeout(r, 1500))
+    release()
+
+    const r = await probe
+    expect(r.error, '排队不等于端点不回话').toBeNull()
+    expect(r.entry.capability).toBe('native_tools_ok')
+    expect(bodies).toHaveLength(3)
+    await held
+  })
+
+  it('端点收了连接不回话 ⇒ 等满 700ms 中止这一发，回 probe_timeout（第几发/共几发/几秒），旧判定不动', async () => {
+    await seedVerdict()
+    bodies = []
+    mode = 'silent'
+    setProbeSampleTimeoutForTest(700)
+
+    const r = await probeDelegateCapability(providerId, MODEL, 3)
+    // sec 只给数、句子在字典里（152 那条口径）：Math.round(700/1000)=1
+    expect(r.error).toEqual({ code: 'probe_timeout', params: { failed: 1, total: 3, sec: 1 } })
+    expect(bodies).toHaveLength(1) // 端点装死就别再问第二发，用户已经在等
+    expect(
+      listDelegateCapabilities().find((e) => e.model === MODEL)?.capability,
+      '没跑完不是结论，不许把已知的 native_tools_ok 冲成 unknown'
+    ).toBe('native_tools_ok')
+  })
+
+  it('用户点停止 ⇒ 掐掉在飞那一发并收住整探，回 probe_aborted，旧判定不动', async () => {
+    await seedVerdict()
+    bodies = []
+    mode = 'silent'
+    setProbeSampleTimeoutForTest(30_000) // 让它绝不自走超时，只能被人停
+
+    const probe = probeDelegateCapability(providerId, MODEL, 3)
+    await until(() => bodies.length === 1, '第一发真的发出去了')
+    expect(abortDelegateProbe(providerId, MODEL)).toBe(true)
+
+    const r = await probe
+    expect(r.error).toEqual({ code: 'probe_aborted' })
+    expect(bodies).toHaveLength(1) // "停止"是就此收住，不是把剩下两发也跑完
+    expect(listDelegateCapabilities().find((e) => e.model === MODEL)?.capability).toBe('native_tools_ok')
+  })
+
+  it('同一台不许叠两发 ⇒ 第二发立刻回 probe_running 且一个请求都不发；停了第一发后那台又空得下来', async () => {
+    bodies = []
+    mode = 'silent'
+    setProbeSampleTimeoutForTest(30_000)
+
+    const first = probeDelegateCapability(providerId, MODEL, 3)
+    await until(() => bodies.length === 1, '第一发在飞')
+
+    const second = await probeDelegateCapability(providerId, MODEL, 3)
+    expect(second.error).toEqual({ code: 'probe_running' })
+    expect(second.entry.capability).toBe('unknown')
+    expect(bodies, '叠上去的那一发不该把请求真打出去').toHaveLength(1)
+
+    expect(abortDelegateProbe(providerId, MODEL)).toBe(true)
+    expect((await first).error).toEqual({ code: 'probe_aborted' })
+    // 跑完/停完就没有"正在跑的探测"了——界面那句"此刻没有正在跑的探测"读的是这个 false
+    expect(abortDelegateProbe(providerId, MODEL)).toBe(false)
   })
 })

@@ -38,7 +38,12 @@ import {
   readAgentEvalReport,
   runAgentEvalSuite
 } from '../../agent/eval/suite'
-import { listDelegateCapabilitiesWithStaleness, probeDelegateCapability, setDelegationEnabled } from '../../agent/delegate-capability'
+import {
+  abortDelegateProbe,
+  listDelegateCapabilitiesWithStaleness,
+  probeDelegateCapability,
+  setDelegationEnabled
+} from '../../agent/delegate-capability'
 import { idSchema } from '../../../shared/schemas/providers'
 
 const log = createLogger('agent')
@@ -201,6 +206,15 @@ export function registerAgentHandlers(): void {
     IPC.AGENT_PROBE_DELEGATE_CAP,
     (_e, payload: { providerId: string; model: string }) =>
       probeDelegateCapability(payload.providerId, payload.model),
+    argsSchema(delegateProbeSchema)
+  )
+  // §246：停止正在跑的那一发。加这颗键的理由不是「多一个操作」，是那发**可能永远不回来**——
+  // 2026-10-21 真机上云端那台的探针两发各自挂了 7 分钟以上，界面那颗按钮一直转、什么都停不掉。
+  safeHandle(
+    IPC.AGENT_ABORT_DELEGATE_PROBE,
+    (_e, payload: { providerId: string; model: string }) => ({
+      stopped: abortDelegateProbe(payload.providerId, payload.model)
+    }),
     argsSchema(delegateProbeSchema)
   )
   // 决策③（2026-10-15 用户选定：一律不开、手动控制）：开/关某台模型的顺序委派。

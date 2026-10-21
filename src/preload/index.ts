@@ -791,6 +791,12 @@ const api = {
   /** 已判出的"这台模型当得了管控者吗"清单（带 stale：本地镜像换了就该重探） */
   listDelegateCapabilities: (): Promise<DelegateCapabilityView[]> =>
     ipcRenderer.invoke(IPC.AGENT_LIST_DELEGATE_CAPS),
+  /** §246 停止正在跑的那一发；`stopped:false` = 这一台此刻没在探（没什么可停） */
+  abortDelegateProbe: (
+    providerId: string,
+    model: string
+  ): Promise<{ stopped: boolean } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_ABORT_DELEGATE_PROBE, { providerId, model }),
   /** 对一台模型跑一次委派探针（默认 3 发真请求，走原生 tools 路径）；失败原因在 error 里 */
   probeDelegateCapability: (providerId: string, model: string): Promise<DelegateProbeResult> =>
     ipcRenderer.invoke(IPC.AGENT_PROBE_DELEGATE_CAP, { providerId, model }),

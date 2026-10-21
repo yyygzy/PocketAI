@@ -54,9 +54,11 @@ export const DelegateCapabilityBadge: React.FC<{
   /** 这台正在探测中（按钮要禁用，避免连点打满本地模型） */
   probing: boolean
   onProbe: () => void
+  /** §246：探测中那颗「停止探针」按下去走这里（主进程那一发被中止，返回码 `probe_aborted`） */
+  onStopProbe: () => void
   /** 决策③：开/关这台模型的顺序委派（默认关） */
   onToggleDelegation: (on: boolean) => void
-}> = ({ entry, probing, onProbe, onToggleDelegation }) => {
+}> = ({ entry, probing, onProbe, onStopProbe, onToggleDelegation }) => {
   const { t } = useI18n()
   const cap = entry?.capability ?? 'unknown'
   const hasVerdict = !!entry && entry.capability !== 'unknown'
@@ -114,6 +116,18 @@ export const DelegateCapabilityBadge: React.FC<{
       >
         {probing ? t('provider.capProbing') : t('provider.capProbe')}
       </button>
+      {/* §246：那一发可能永远不回来 ⇒ 探测中给一条退路。放在同一格里，不另起一行（这排本来就是徽标＋两颗小键） */}
+      {probing && (
+        <button
+          type="button"
+          data-testid="probe-stop"
+          onClick={onStopProbe}
+          title={t('provider.stopProbeHint')}
+          className="text-[10px] px-1 py-0.5 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:opacity-80 leading-none"
+        >
+          {t('provider.stopProbe')}
+        </button>
+      )}
     </span>
   )
 }

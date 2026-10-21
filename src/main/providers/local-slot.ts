@@ -263,6 +263,13 @@ export interface SlotRequest {
   label: string
   /** 调用方的取消信号：排队期间点「停止」要能退出队列，而不是几十秒后才起跑 */
   signal?: AbortSignal
+  /**
+   * §246：**排到槽、请求真要发出去的那一刻**回调一次。
+   * 存在的理由不是方便，是探针需要一个"排队已经结束"的事实——它要给用户一个超时，
+   * 而超时只能计在**请求在飞的那一段**：本地那张卡正被别的生成占着时，排队是本来的设计（M5／M6），
+   * 把排队也算成"这台模型不回话"就是把用户误导成另一件事。
+   */
+  onStart?: () => void
 }
 
 /**
@@ -270,13 +277,19 @@ export interface SlotRequest {
  * 非回环 / 拿不到判据 / 未实测档 ⇒ 一行时序都不改。
  */
 export async function withLocalSlot<T>(req: SlotRequest, fn: () => Promise<T>): Promise<T> {
-  if (!isLocalInferenceBaseUrl(req.baseUrl)) return fn()
-  if (heldStore.getStore()) return fn() // 重入：外层已持有槽，内层不再排队
+  // §246：四条"根本不排队"的路也要报一声——回调的语义是"请求现在开始发"，不是"排到槽了"。
+  // 漏掉任何一条，调用方的超时在那条路上就永远不会武装（比不排队更糟：它会永远挂着）。
+  const start = (): Promise<T> => {
+    req.onStart?.()
+    return fn()
+  }
+  if (!isLocalInferenceBaseUrl(req.baseUrl)) return start()
+  if (heldStore.getStore()) return start() // 重入：外层已持有槽，内层不再排队
   const decision = slotDecision()
-  if (!shouldQueueLocal(decision)) return fn()
+  if (!shouldQueueLocal(decision)) return start()
   // 判据允许重叠时 embedding 不占对话槽。今天没有任何实测档给 true；
   // 留这一条是为了"将来放宽只改判据表，不用改闸门"（见方案 §4 V-2 的第二台机器）
-  if (req.lane === 'embedding' && decision.allowChatEmbedOverlap) return fn()
+  if (req.lane === 'embedding' && decision.allowChatEmbedOverlap) return start()
 
   const origin = originOf(req.baseUrl)
   const queue = queueFor(origin, decision.maxConcurrentChatSlots)
@@ -287,7 +300,10 @@ export async function withLocalSlot<T>(req: SlotRequest, fn: () => Promise<T>): 
     deps.recordWait?.(waited, `${req.lane}/${currentSlotKind()} model=${req.label} origin=${origin}`)
   }
   try {
-    return await heldStore.run(true, fn)
+    return await heldStore.run(true, () => {
+      req.onStart?.()
+      return fn()
+    })
   } finally {
     queue.release()
   }

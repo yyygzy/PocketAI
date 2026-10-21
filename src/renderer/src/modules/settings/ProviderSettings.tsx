@@ -101,6 +101,26 @@ export const ProviderSettings: React.FC = () => {
   }
 
   /**
+   * §246：停掉这一台正在跑的那一发。两种结果都要有脸：
+   *  · `stopped:false` = 主进程说没这一发（比如另一扇窗口里它已经跑完）⇒ 不许假装「已停止」；
+   *  · 停成功时那一发的 promise 会带着 `probe_aborted` 回来，句子由 probeModel 那条分支按当前语言拼。
+   */
+  const stopProbe = async (model: string): Promise<void> => {
+    const pid = editing?.id ?? ''
+    if (!pid) return
+    try {
+      const r = await window.pocketai.abortDelegateProbe(pid, model)
+      if (hasIpcFailed(r)) {
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+        return
+      }
+      if (!r.stopped) setNotice({ ok: false, text: t('provider.probeNothingToStop') })
+    } catch (e) {
+      setNotice({ ok: false, text: errText(e) })
+    }
+  }
+
+  /**
    * 开/关这台模型的顺序委派（决策③：默认关，用户点名才开）。
    * 前置条件（必须是"可当管控者"且未过期、不得开着文本协议）只在主进程判一次，
    * 这里照实显示拒绝原因——不许界面先把勾打上再让引擎偷偷不认。
@@ -388,6 +408,9 @@ export const ProviderSettings: React.FC = () => {
                           probing={probingKey === delegateKey(editing.id, m)}
                           onProbe={() => {
                             void probeModel(m)
+                          }}
+                          onStopProbe={() => {
+                            void stopProbe(m)
                           }}
                           onToggleDelegation={(on) => {
                             void toggleDelegation(m, on)

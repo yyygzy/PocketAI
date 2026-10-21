@@ -121,6 +121,8 @@ const nativeSse = (res: http.ServerResponse): void => {
 }
 
 let MODEL = ''
+/** 这个模型名会让假端点延迟回话——桥上要证的是"那一发还在飞的时候停得掉"，端点秒回就停不到任何东西 */
+const SLOW_MODEL = 'slow-probe-model'
 
 beforeAll(async () => {
   fs.rmSync(P.dir, { recursive: true, force: true })
@@ -140,6 +142,13 @@ beforeAll(async () => {
         body = {}
       }
       bodies.push(body)
+      if (body.model === SLOW_MODEL) {
+        // 延迟 400ms 再回：够桥层把「停止」送进去，又不至于把用例拖慢
+        setTimeout(() => {
+          if (!res.destroyed) nativeSse(res)
+        }, 400).unref?.()
+        return
+      }
       nativeSse(res)
     })
   })
@@ -161,6 +170,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  server.closeAllConnections()
   await new Promise<void>((r) => server.close(() => r()))
   try {
     dbService.close()
@@ -230,6 +240,52 @@ describe('preload ⇄ 主进程：委派能力两个通道真的接上了', () =
   it('清单通道不发消息：只读判定时探针端点零请求', async () => {
     bodies = []
     await call('listDelegateCapabilities')
+    expect(bodies).toHaveLength(0)
+  })
+})
+
+// ---------- V4-Iter-246：停止探针那根通道 ----------
+// 为什么这根通道值得单独跨一次桥：它的返回值 `{stopped}` 既没有 `ok` 字段、又天生带一个
+// 长得像失败的 `false`。渲染层那句「此刻没有正在跑的探测」全靠 `stopped:false` 说得出——
+// 只要 `hasIpcFailed` 把它读成失败（那是 139 那一族的判据形状），界面上就会换一句话。
+describe('preload ⇄ 主进程：停止探针（V4-Iter-246）', () => {
+  async function until(fn: () => boolean, what: string): Promise<void> {
+    for (let i = 0; i < 800; i++) {
+      if (fn()) return
+      await new Promise((r) => setTimeout(r, 2))
+    }
+    throw new Error(`等不到：${what}`)
+  }
+
+  it('preload 暴露了方法，主进程也注册了这根通道（通道名拼错在这里红，不会等到界面上点了没反应）', () => {
+    expect(typeof has('abortDelegateProbe')).toBe('function')
+    expect(H.handlers.has('agent:abort-delegate-probe')).toBe(true)
+  })
+
+  it('那一发还在飞 ⇒ 跨桥停得掉：stopped:true，探针带 probe_aborted 收住且不再问第二发', async () => {
+    bodies = []
+    const inFlight = call('probeDelegateCapability', providerId, SLOW_MODEL)
+    await until(() => bodies.length === 1, '那一发真的进了端点')
+
+    const stop = await call('abortDelegateProbe', providerId, SLOW_MODEL)
+    expect(stop).toEqual({ stopped: true })
+
+    const r = await inFlight
+    expect(r.error).toEqual({ code: 'probe_aborted' })
+    expect(bodies, '停了以后不该把剩下两发也跑完').toHaveLength(1)
+  })
+
+  it('反向对照：这一台没在探 ⇒ stopped:false，而这个 false 不许被读成 IPC 失败', async () => {
+    const r = await call('abortDelegateProbe', providerId, MODEL)
+    expect(r).toEqual({ stopped: false })
+    expect(hasIpcFailed(r)).toBe(false)
+  })
+
+  it('入参 schema 同样管这根通道：空 providerId 被挡，且一发都没碰', async () => {
+    bodies = []
+    const bad = await call('abortDelegateProbe', '', MODEL)
+    expect(bad.ok).toBe(false)
+    expect(String(bad.error)).toContain('providerId')
     expect(bodies).toHaveLength(0)
   })
 })

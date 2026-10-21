@@ -36,12 +36,20 @@ const tOf = (lang: Lang) => (key: string, params?: Record<string, string | numbe
 }
 
 describe('码 → 键 → 四语文案', () => {
-  it('四条码都在，且没有哪条码复用同一句文案', () => {
-    expect(CODES.sort()).toEqual(['never_probed', 'not_capable', 'probe_incomplete', 'text_protocol_forced'])
+  it('七条码都在，且没有哪条码复用同一句文案', () => {
+    expect(CODES.sort()).toEqual([
+      'never_probed',
+      'not_capable',
+      'probe_aborted',
+      'probe_incomplete',
+      'probe_running',
+      'probe_timeout',
+      'text_protocol_forced'
+    ])
     for (const [lang, dict] of Object.entries(DICTS)) {
       const values = CODES.map((c) => (dict as Record<string, string>)[DELEGATE_FAILURE_KEYS[c]])
       for (const v of values) expect(String(v), `${lang} 有空文案`).not.toBe('')
-      expect(new Set(values).size, `${lang} 四条码的话术雷同`).toBe(CODES.length)
+      expect(new Set(values).size, `${lang} 七条码的话术雷同`).toBe(CODES.length)
     }
   })
 
@@ -49,6 +57,10 @@ describe('码 → 键 → 四语文案', () => {
     const cases: DelegateFailure[] = [
       { code: 'text_protocol_forced' },
       { code: 'probe_incomplete', params: { failed: 3, total: 3 } },
+      // §246 的三条新码也走同一张表：漏一条就是"ko 界面夹中文"那个形状复发
+      { code: 'probe_timeout', params: { failed: 1, total: 3, sec: 60 } },
+      { code: 'probe_aborted' },
+      { code: 'probe_running' },
       { code: 'never_probed' },
       { code: 'not_capable', params: { capability: 'fence_only', hits: 0, samples: 3 } }
     ]
@@ -66,6 +78,18 @@ describe('码 → 键 → 四语文案', () => {
     expect(text).toContain('1/3')
     const zhText = delegateFailureText(tOf('zh'), { code: 'not_capable', params: { capability: 'fence_only', hits: 0, samples: 3 } }, 'FB')
     expect(zhText).toContain('0/3')
+  })
+
+  // §246：超时那一句要同时报"第几发、共几发、等了几秒"——少一个数，用户就没法判断该换端点还是该等
+  it('probe_timeout 的三个数在四语都插得进去，且句子里不留占位符', () => {
+    for (const lang of Object.keys(DICTS) as Lang[]) {
+      const text = delegateFailureText(tOf(lang), { code: 'probe_timeout', params: { failed: 2, total: 3, sec: 60 } }, 'FB')
+      expect(text, `${lang} 回落了通用文案（键没登记？）`).not.toBe('FB')
+      expect(text, `${lang} 少了第几发`).toContain('2')
+      expect(text, `${lang} 少了共几发`).toContain('3')
+      expect(text, `${lang} 少了等了多少秒`).toContain('60')
+      expect(text, `${lang} 占位符没插完：${text}`).not.toMatch(/\{[a-z]+\}/)
+    }
   })
 
   it('不认识的码 ⇒ 回落通用文案，绝不回落某句中文', () => {

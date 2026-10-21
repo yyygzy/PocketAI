@@ -33,6 +33,7 @@ function mountBadge(props: Partial<React.ComponentProps<typeof DelegateCapabilit
     <DelegateCapabilityBadge
       entry={'entry' in props ? props.entry : entry({})}
       probing={props.probing ?? false}
+      onStopProbe={props.onStopProbe ?? (() => undefined)}
       onProbe={onProbe}
       onToggleDelegation={onToggleDelegation}
     />
@@ -139,5 +140,21 @@ describe('DelegateCapabilityBadge', () => {
     expect(btn?.disabled).toBe(true)
     fireEvent.click(btn!)
     expect(onProbe).not.toHaveBeenCalled()
+  })
+
+  // §246：那一发可能永远不回来（真机挂过 7 分钟）⇒ 探测中那一格必须有第二条路
+  it('探测中那一格给一颗「停止」：文案取自字典，点它把中止权交出去', () => {
+    const onStop = vi.fn()
+    mountBadge({ probing: true, onStopProbe: onStop })
+    const stop = screen.getByTestId('probe-stop')
+    expect(stop.textContent).toBe(zh['provider.stopProbe'])
+    expect(stop.getAttribute('title')).toBe(zh['provider.stopProbeHint'])
+    fireEvent.click(stop)
+    expect(onStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('反向对照：不在探测时那颗「停止」不存在（它不是常驻按钮）', () => {
+    mountBadge({ entry: entry({ capability: 'native_tools_ok' }) })
+    expect(screen.queryByTestId('probe-stop')).toBeNull()
   })
 })

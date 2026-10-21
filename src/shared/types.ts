@@ -2195,6 +2195,7 @@ export const IPC = {
   AGENT_SET_TEXT_PROTOCOL: 'agent:set-text-protocol', // 开/关某台模型的文本协议
   AGENT_LIST_DELEGATE_CAPS: 'agent:list-delegate-caps', // 已判出的"能不能当管控者"清单（只读，带 stale）
   AGENT_PROBE_DELEGATE_CAP: 'agent:probe-delegate-cap', // 对一台模型跑一次委派探针（会发真请求，用户点出来的）
+  AGENT_ABORT_DELEGATE_PROBE: 'agent:abort-delegate-probe', // §246：停止正在跑的那一发探针（不下结论、不改写判定）
   AGENT_SET_DELEGATE_ENABLED: 'agent:set-delegate-enabled', // 决策③：点名允许某台模型顺序委派（默认关）
   AGENT_RESTORE_FILE_WRITE: 'agent:restore-file-write', // §231：把一次 fs_write 还原到写入前（按快照 id）
   AGENT_GET_MODEL_WINDOWS: 'agent:get-model-windows', // §234：每台模型声明的上下文窗口（token），只读
