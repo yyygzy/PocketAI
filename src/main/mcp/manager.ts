@@ -29,16 +29,35 @@ import type {
   McpServerStatusEvent,
   McpServerLogEvent,
   McpCallEvent,
+  McpToolAnnotations,
   ToolSchema
 } from '../../shared/types'
 
 const MCP_PROTOCOL_VERSION = '2024-11-05'
+
+/**
+ * 收窄 Server 自报的 annotations：五个已知布尔 + 一个 title，其余（类型不对、未知键、嵌套）一律丢掉。
+ * 这是外部边界：不假设形状，也不把没收进白名单的东西带给渲染层。
+ */
+export function normalizeMcpAnnotations(raw: unknown): McpToolAnnotations | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const o = raw as Record<string, unknown>
+  const out: McpToolAnnotations = {}
+  const boolKeys = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'] as const
+  for (const k of boolKeys) {
+    if (typeof o[k] === 'boolean') out[k] = o[k]
+  }
+  if (typeof o.title === 'string' && o.title.trim()) out.title = o.title.trim().slice(0, 120)
+  return Object.keys(out).length > 0 ? out : undefined
+}
 
 /** MCP tools/list 返回的原始工具形状（外部协议边界，字段不保证类型，取用前收窄） */
 interface McpRawTool {
   name?: unknown
   description?: unknown
   inputSchema?: unknown
+  /** §236：Server 自报的注解。以前这个字段在边界上被直接丢掉——现在收回来，但**只用于把工具判得更保守** */
+  annotations?: unknown
 }
 
 /** 工具调用超时 30s */
@@ -87,8 +106,20 @@ const MCP_DANGEROUS_KEYWORDS = [
  * 只有用户在 Server 上显式勾选「信任只读工具」（trustReadOnly）后，才沿用名称语义分级：
  * 危险关键词 → confirm，只读前缀 → auto，其余未知语义 → confirm。
  */
-export function classifyMcpToolPermission(name: string, trustReadOnly = false): 'auto' | 'confirm' {
+/**
+ * §236 二次分级：注解**只会让一个工具更保守**，永远不会替它打开 auto。
+ * 规范写明 annotations 不可作为安全依据（Server 自报），这里就照办：
+ *  · `destructiveHint`／`openWorldHint` 为 true ⇒ 即便 trustReadOnly 且名字像只读，也留 confirm；
+ *  · `readOnlyHint: true` 单独出现 ⇒ 什么都不做（它不许把工具升成 auto——升 auto 的只有词表那一档）。
+ * 也就是说这批新代码只可能让"免确认"变少，不会变多。
+ */
+export function classifyMcpToolPermission(
+  name: string,
+  trustReadOnly = false,
+  annotations?: McpToolAnnotations
+): 'auto' | 'confirm' {
   if (!trustReadOnly) return 'confirm'
+  if (annotations?.destructiveHint === true || annotations?.openWorldHint === true) return 'confirm'
   const lower = (name ?? '').toLowerCase()
   // 危险关键词命中 → 必须人工确认
   if (MCP_DANGEROUS_KEYWORDS.some((kw) => lower.includes(kw))) return 'confirm'
@@ -524,6 +555,7 @@ export class McpManager extends EventEmitter {
       }
       parameters = o.inputSchema as Record<string, unknown>
     }
+    const annotations = normalizeMcpAnnotations(o.annotations)
     return {
       id: `mcp:${serverId}:${name}`,
       name,
@@ -531,7 +563,8 @@ export class McpManager extends EventEmitter {
       parameters,
       source: 'mcp',
       // MCP 工具权限：未显式信任该 Server 时一律 confirm（见 classifyMcpToolPermission）
-      permission: classifyMcpToolPermission(name, trustReadOnly),
+      permission: classifyMcpToolPermission(name, trustReadOnly, annotations),
+      ...(annotations ? { mcpAnnotations: annotations } : {}),
       mcpServerId: serverId
     }
   }

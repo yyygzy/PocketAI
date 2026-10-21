@@ -28,6 +28,7 @@ const baseSkill = (over: Partial<SkillRecord> = {}): SkillRecord => ({
   name: '翻译助手',
   description: '专业翻译',
   icon: '🌐',
+  resident: true,
   content: '你是一个翻译助手',
   enabled: true,
   isBuiltin: false,

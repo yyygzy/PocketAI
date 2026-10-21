@@ -23,6 +23,8 @@ const skillRecordFull = z.object({
   icon: z.string().max(SKILL_MAX_ICON_CHARS),
   content: z.string().max(SKILL_MAX_CONTENT_CHARS),
   enabled: z.boolean(),
+  /** §236：正文要不要常驻 system prompt（缺省=今天的 true） */
+  resident: z.boolean(),
   isBuiltin: z.boolean(),
   createdAt: z.number().int().nonnegative()
 })

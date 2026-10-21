@@ -116,6 +116,8 @@ export interface SkillRecord {
   description: string
   icon: string // emoji
   content: string // 注入 SystemPrompt 的提示词片段
+  /** §236：true=正文常驻 system prompt（老行为）；false=只留名字与用途，正文靠 load_skill 按需取 */
+  resident: boolean
   enabled: boolean
   isBuiltin: boolean
   createdAt: number
@@ -743,7 +745,22 @@ export interface ToolSchema {
    * 传给 MCP Server 的原始工具名；未改名时缺省，调用方用 name。
    */
   remoteName?: string
+  /**
+   * source='mcp'：Server 在 tools/list 里自己声明的注解（原样收回来，不做类型承诺）。
+   * 只用来两件事——**不让名字词表把一个自称 destructive 的工具升成 auto**、以及界面显示
+   * 「这个 server 说了什么」。规范写明注解不可作为安全依据，所以它**永远不会**单独将工具升到 auto。
+   */
+  mcpAnnotations?: McpToolAnnotations
   timeoutMs?: number // 单工具执行超时（毫秒），未配置时使用默认 30s
+}
+
+/** MCP 工具注解（协议里的 annotations，五个布尔 + 一个展示名） */
+export interface McpToolAnnotations {
+  title?: string
+  readOnlyHint?: boolean
+  destructiveHint?: boolean
+  idempotentHint?: boolean
+  openWorldHint?: boolean
 }
 
 export interface ToolCall {
@@ -1894,6 +1911,8 @@ export const IPC = {
   SKILL_FETCH_INDEX: 'skill:fetch-index',
   SKILL_IMPORT_URL: 'skill:import-url',
   SKILL_VALIDATE: 'skill:validate',
+  SKILL_IMPORT_FOLDER: 'skill:import-folder', // §236：选一个 SKILL.md 技能目录导入（连资源文件一起快照进来）
+  SKILL_LIST_FILES: 'skill:list-files', // §236：某个技能自带哪些文件
   SKILL_TEMPLATES: 'skill:templates',
 
   MEMORY_LIST: 'memory:list',

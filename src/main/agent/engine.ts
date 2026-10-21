@@ -210,6 +210,8 @@ interface AgentRunContext {
   sources: MessageSource[]
   /** 当前助手绑定的知识库 id 列表，按次运行透传给 kb_search 工具 */
   kbIds: string[]
+  /** §236：这次运行绑定的技能 id——load_skill 唯一的可读范围，与 buildSkillsContext 同一个来源 */
+  skillIds: string[]
   emit: <T>(channel: string, payload: T) => void
   unattended: boolean
   // 运行时可变状态
@@ -1050,7 +1052,11 @@ class AgentEngine {
       ? toolRegistry.formatForPrompt(tools)
       : ''
 
-    const skillsContext = buildSkillsContext(skillIds)
+    // §236：按需档只有在模型真拿得到 load_skill 时才是实话 ⇒ 判据取自**这次实际生效的工具面**，
+    // 不是取自「这是 Agent 运行」（助手没授权这颗工具时，技能照旧全文注入）
+    const skillsContext = buildSkillsContext(skillIds, {
+      loadToolAvailable: tools.some((t) => t.id === 'skill.load')
+    })
     const memoryContext = buildMemoryContext()
     const renderedPrompt = renderPrompt(effectivePrompt, {
       knowledge: knowledgeContext,
@@ -1230,6 +1236,7 @@ class AgentEngine {
       defaultParams: defaultParams ?? {},
       sources,
       kbIds,
+      skillIds,
       emit,
       unattended: unattended ?? false,
       stepCount: 0,
@@ -1730,7 +1737,7 @@ class AgentEngine {
    * 返回下一个状态：'llm'。
    */
   private async runToolsStep(ctx: AgentRunContext, stepIndex: number): Promise<AgentState> {
-    const { conversationId, messages, master, allowedToolIds, emit, unattended, requestId, kbIds } = ctx
+    const { conversationId, messages, master, allowedToolIds, emit, unattended, requestId, kbIds, skillIds } = ctx
     const stepStart = Date.now()
     logger.info(`[agent] step=${stepIndex} 进入 runToolsStep, messages=${messages.length}`)
     // 运行级上下文片段：透传给需要向渲染端发事件的内置工具（todo_write）
@@ -1877,13 +1884,13 @@ class AgentEngine {
               isError: true
             }
           } else {
-            results[i] = await this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, agentCtx)
+            results[i] = await this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, skillIds, agentCtx)
           }
         }
       } else {
         const idx = i
         allowTasks.push(
-          this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, agentCtx).then((r) => {
+          this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, skillIds, agentCtx).then((r) => {
             results[idx] = r
           })
         )
@@ -2275,6 +2282,7 @@ class AgentEngine {
     allowedToolIds: Set<string>,
     signal: AbortSignal,
     kbIds?: string[],
+    skillIds?: string[],
     agent?: ToolAgentContext
   ): Promise<ToolResult> {
     // 子控制器：超时或 Agent 中止时主动 abort，让底层工具（shell 进程树、MCP 请求、
@@ -2288,6 +2296,7 @@ class AgentEngine {
       allowedToolIds,
       subController.signal,
       kbIds,
+      skillIds,
       agent
     )
     // 按工具 schema 配置的 timeoutMs 决定超时；未配置时使用默认 30s。

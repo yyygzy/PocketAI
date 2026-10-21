@@ -372,12 +372,14 @@ V-0 跑完后补一条口径修正（写在这里以免有人再按初稿理解�
 - **落地与初稿的三处出入（照 §234 的规矩如实记）**：① 入口不是「把那 8 位 id 变成可点文本」——它是消息正文里的普通字符串，改成可点要动渲染与转义；实际落的是**分步明细那一行**（用同源的解析函数按前缀在直接子会话里找唯一命中）＋会话级那一格。② 只读判据来自一次 `conversation:get`（读 `parent_conversationId`），不是导航状态——命令面板那条路绕过一切入口。③ 只读那一档**整块不渲染输入区**，而不是给一个禁用的框（禁用框不吭声，用户只知道发不出去）。
 - **还欠着的**：真机 B133 未跑（横幅排版、卡片上那几个改动入口在只读视图里出没出现——jsdom 的虚拟列表一条卡片都不渲染，CI 断不到）；子会话仍不进侧栏（§144 口径未动）；消息卡片里那串 8 位 id 仍是纯文本，没做成链接。
 
-### §236 SKILL.md 三层渐进披露 + 读 MCP 注解做二次分级
+### §236 SKILL.md 三层渐进披露 + 读 MCP 注解做二次分级——**已落地 V4-Iter-236**（2026-10-21，待提交）；第三层的"资源"落在应用自己的树，不是工作目录
 
 - **来由**：`SkillRecord` 有 name／description／icon／content（`src/shared/types.ts:113-122`），但**没有资源位**（无 `scripts`／`references`／`assets` 的承载），且 `formatSkill` 把 description 与 content **一起**拼进注入块（`src/main/assistant/skills.ts:6-7`）、`buildSkillsContext` 对助手绑定的每个技能**全量**格式化后一次性进上下文（`:15-20` → `engine.ts:863`）⇒ 缺的不是元数据，是**分层加载**：启动即常驻的和触发后才该出现的付同一份 token。导入侧的 frontmatter 白名单只收 `name／description／icon／title／version／author／tags／category`（`src/main/skills/skill-parser.ts:26`），上游技能包里的 `allowed-tools`／`compatibility` 一类字段会被拒，脚本与参考文件无处安放 ⇒ **装不了社区技能包**（这是互操作性缺口，不只是开销问题）。另：`src/main/mcp/*.ts` grep `annotations`／`readOnlyHint`／`destructiveHint` **零命中**，分级靠工具名前缀词表（`src/main/mcp/manager.ts:69-99`）。
 - **主流口径（联网核对到的方向）**：SKILL.md 已是开放标准——一个目录含 `SKILL.md`（frontmatter 的 name/description + 正文）与可选的 `scripts`／`references`／`assets`，三层按需加载（元数据常驻、正文触发才读、资源再下一层），且不止一家官方文档明说自己的技能构建在这套标准之上。⇒ 本节改的是**分层与互操作**，不是"技能要不要存在"。
 - **判据**：① 装一份上游 SKILL.md 目录能直接被识别（互操作正向对照）；② 未触发的技能正文**不进请求载荷**（拿单步静态基线 3851／满配 4469 tok 量前后差）；③ 注解只降级到 confirm，**不许**把 `readOnlyHint` 直接当 auto（规范明说注解不可作唯一安全依据；我们现在"默认全 confirm"比规范要求的更保守，这一点别改坏）。
 - **风险**：注入形状变了会动到 V4-Iter-154 那套"文案里引的界面名字对账"和四语；新增 `load_skill` 类工具要进权限表并与 `'*'` 语义同源。
+- **落地时对初稿的三处更正（照 §234 的规矩如实记）**：① frontmatter 未知键**不是"被拒"**，是静默丢掉——真阻断上游包的是 8KB 正文上限与没有资源位；现在未知键不阻断导入、不入库不注入，但在校验与导入返回里列出"这些字段本应用不执行"。② 三层不是一次做完的形状：常驻/按需是一列 `resident`（默认常驻），资源文件是 `<DATA_DIR>/skills/<id>/` 的一棵目录树，两者都靠同一颗 `load_skill` 取（正文＝不传 path，资源＝传 path）。③ 判据③按规范落地成"注解只收紧不放开"：`readOnlyHint` 绝不升 auto（我们现在默认全 confirm 比规范更保守，没动）。
+
 ### §237 备用 target 换一次 + 溢出提示（从"模型路由"降级来的窄做法）
 
 - **来由**：通用 router 在单机本地优先**不划算**——核对到的不适用条件写得很直接：只用单一模型且选择稳定、量小 ⇒ 多一跳延迟 + 新故障点不值。现状是 `targets[0]` 写死（`engine.ts:754`）、重试只对同一端点（`MAX_LLM_RETRIES = 2`，`engine.ts:112-113`）。

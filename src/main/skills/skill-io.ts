@@ -14,6 +14,7 @@ import { errMsg } from '../error'
 import { skillRepo } from '../db/repositories/skill.repo'
 import type { SkillRecord } from '../../shared/types'
 import { parseSkillText, type SkillShape } from './skill-parser'
+import { installSkillFiles, readSkillFolder, rollbackSkillFiles } from './skill-files'
 import { safeFetch } from '../net/safe-fetch'
 import { skillShapeSchema } from '../../shared/schemas/skills'
 
@@ -31,15 +32,19 @@ export function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 40) || 'skill'
 }
 
-/** 把 SkillShape 保存为自定义技能（不传 id → 自动生成 UUID；isBuiltin=false） */
-export function saveShapeAsSkill(shape: SkillShape): SkillRecord {
+/**
+ * 把 SkillShape 保存为自定义技能（不传 id → 自动生成 UUID；isBuiltin=false）。
+ * `resident` 不给就是 true——导入的默认形状必须等于今天的行为，按需档是用户/超长逼出来的例外。
+ */
+export function saveShapeAsSkill(shape: SkillShape, opts: { resident?: boolean } = {}): SkillRecord {
   skillShapeSchema.parse(shape)
   return skillRepo.save({
     name: shape.name,
     description: shape.description,
     icon: shape.icon,
     content: shape.content,
-    enabled: true
+    enabled: true,
+    resident: opts.resident ?? true
   })
 }
 
@@ -100,6 +105,7 @@ export async function importSkill(
 
     const raw = fs.readFileSync(file, 'utf8')
     const { shape, error } = parseSkillText(raw)
+    // （解析签名多了一个 ignoredKeys，这里不解构它：单文件导入本来就没有资源，未知键只在目录导入里报）
     if (!shape) {
       // 兼容旧格式：非标准 pocketai-skill 的 JSON 也给个明确错误
       if (error === '缺少 name 字段' || error === '缺少 content 字段') {
@@ -112,6 +118,77 @@ export async function importSkill(
     const nameDuplicated = skillRepo.list().some((s) => s.name === shape.name)
     const skill = saveShapeAsSkill(shape)
     return { ok: true, skill, nameDuplicated }
+  } catch (e) {
+    return { ok: false, error: errMsg(e) }
+  }
+}
+
+/**
+ * 目录导入（§236 第三层的地基）：选一个含 `SKILL.md` 的目录，正文进 content 那一列，
+ * `scripts／references／assets` 复制成 `<DATA_DIR>/skills/<新技能 id>/` 下的一份**快照**。
+ *
+ * 三条不是随手定的口径：
+ *  · 复制而不是引用原路径——技能要被 `load_skill` 按 id 读，指着用户机器上随时会动的目录就等于不可复现；
+ *  · 正文超常驻上限（8KB）**不判失败，降成按需**并在返回里说为什么——一份 12KB 的上游技能本来就是按需形状；
+ *  · 资源装不进去时把这份技能删干净（不留半份）：技能在列表里、文件不在，`load_skill` 只会一直报"没这条文件"。
+ */
+export async function importSkillFolder(win: BrowserWindow): Promise<{
+  ok: boolean
+  canceled?: boolean
+  skill?: SkillRecord
+  copied?: string[]
+  skipped?: Array<{ path: string; reason: string }>
+  ignoredKeys?: string[]
+  /** 正文超常驻上限被降成按需的那一句（界面据此解释为什么开关是关的） */
+  forcedOnDemand?: boolean
+  nameDuplicated?: boolean
+  error?: string
+}> {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory', 'createDirectory'],
+      title: '选择技能目录（需含 SKILL.md）'
+    })
+    if (canceled || filePaths.length === 0) return { ok: true, canceled: true }
+
+    const read = readSkillFolder(filePaths[0]!)
+    if (read.error) return { ok: false, error: read.error }
+    if (Buffer.byteLength(read.entryText, 'utf8') > MAX_IMPORT_BYTES) {
+      return { ok: false, error: 'ENTRY_TOO_LARGE' }
+    }
+
+    // 先按常驻档试，超了再按按需档收：这两道都读 validate 的同一份上限，不在界面重抄数字
+    const residentTry = parseSkillText(read.entryText, true)
+    const useResident = residentTry.shape !== null
+    const parsed = useResident ? residentTry : parseSkillText(read.entryText, false)
+    const shape = parsed.shape
+    if (!shape) {
+      // 按需档还装不下才是真失败；把两次尝试里更"接近能装"的那句报出来
+      return { ok: false, error: parsed.error || residentTry.error }
+    }
+
+    const skill = saveShapeAsSkill(shape, { resident: useResident })
+    let copied: string[] = []
+    let skipped = read.skipped
+    try {
+      const inst = installSkillFiles(skill.id, read.files)
+      copied = inst.copied
+      skipped = read.skipped.concat(inst.skipped)
+    } catch (e) {
+      const cleanup = rollbackSkillFiles(skill.id)
+      skillRepo.delete(skill.id)
+      return { ok: false, error: cleanup ? `${errMsg(e)}；残留清理也失败：${cleanup}` : errMsg(e) }
+    }
+    const nameDuplicated = skillRepo.list().some((s) => s.name === shape.name && s.id !== skill.id)
+    return {
+      ok: true,
+      skill,
+      copied,
+      skipped,
+      ignoredKeys: parsed.ignoredKeys,
+      forcedOnDemand: !useResident,
+      nameDuplicated
+    }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }

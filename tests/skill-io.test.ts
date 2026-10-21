@@ -26,6 +26,13 @@ const mocks = vi.hoisted(() => {
 vi.mock('electron', () => ({ dialog: { showSaveDialog: async () => ({}), showOpenDialog: async () => ({}) } }))
 vi.mock('../src/main/db/repositories/skill.repo', () => ({ skillRepo: mocks.skillRepo }))
 vi.mock('../src/main/skills/skill-parser', () => ({ parseSkillText: () => ({ shape: null, error: '' }) }))
+// §236：skill-io 现在也 import skill-files（它真会碰 portable → electron app），
+// 这份用例只管单文件与远程导入，把目录那一层整个桩掉
+vi.mock('../src/main/skills/skill-files', () => ({
+  readSkillFolder: () => ({ entryText: '', files: [], skipped: [] }),
+  installSkillFiles: () => ({ entryText: '', copied: [], skipped: [], totalBytes: 0 }),
+  rollbackSkillFiles: () => ''
+}))
 vi.mock('../src/main/net/safe-fetch', () => ({ safeFetch: async () => ({ status: 200, body: Buffer.alloc(0) }) }))
 
 import { safeFileName, saveShapeAsSkill } from '../src/main/skills/skill-io'

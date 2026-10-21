@@ -11,6 +11,8 @@ interface SkillRow {
   icon: string | null
   content: string | null
   enabled: number
+  /** v51：1=正文常驻 system prompt；0=只留名字与用途，正文靠 load_skill 取。缺列（老库）按 1 读 */
+  resident?: number | null
   is_builtin: number
   created_at: number
 }
@@ -23,13 +25,15 @@ export function rowToRecord(row: SkillRow): SkillRecord {
     icon: row.icon ?? '⚡',
     content: row.content ?? '',
     enabled: row.enabled === 1,
+    // 缺列/NULL 都按常驻读：老库升上来行为不变，"没读到"不许演成"用户关过"
+    resident: row.resident !== 0,
     isBuiltin: row.is_builtin === 1,
     createdAt: row.created_at
   }
 }
 
 /** 内置 JSON 文件载入后的结构 */
-export type BuiltinSkill = Omit<SkillRecord, 'isBuiltin' | 'createdAt' | 'enabled'>
+export type BuiltinSkill = Omit<SkillRecord, 'isBuiltin' | 'createdAt' | 'enabled' | 'resident'>
 
 export const skillRepo = {
   list(): SkillRecord[] {
@@ -81,9 +85,12 @@ export const skillRepo = {
     const id = input.id && this.get(input.id) ? input.id : randomUUID()
     const existing = this.get(id)
     if (existing?.isBuiltin) {
-      // 内置技能内容锁定，只同步开关状态
+      // 内置技能内容锁定，只同步两个开关：启不启用、要不要常驻（§236 的常驻是用户偏好，不是内容）
       if (input.enabled !== undefined && input.enabled !== existing.enabled) {
         this.setEnabled(id, input.enabled)
+      }
+      if (input.resident !== undefined && input.resident !== existing.resident) {
+        this.setResident(id, input.resident)
       }
       return mustGet(() => this.get(id), '技能')
     }
@@ -95,24 +102,36 @@ export const skillRepo = {
       icon: input.icon ?? existing?.icon ?? '⚡',
       content: input.content ?? existing?.content ?? '',
       enabled: input.enabled ?? existing?.enabled ?? true,
+      resident: input.resident ?? existing?.resident ?? true,
       isBuiltin: false,
       createdAt: existing?.createdAt ?? Date.now()
     }
 
     if (existing) {
       db.prepare(
-        `UPDATE skills SET name=?, description=?, icon=?, content=?, enabled=? WHERE id=?`
-      ).run(record.name, record.description, record.icon, record.content, record.enabled ? 1 : 0, id)
+        `UPDATE skills SET name=?, description=?, icon=?, content=?, enabled=?, resident=? WHERE id=?`
+      ).run(
+        record.name, record.description, record.icon, record.content,
+        record.enabled ? 1 : 0, record.resident ? 1 : 0, id
+      )
     } else {
       db.prepare(
-        `INSERT INTO skills (id, name, description, icon, content, enabled, is_builtin, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?)`
+        `INSERT INTO skills (id, name, description, icon, content, enabled, resident, is_builtin, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`
       ).run(
         record.id, record.name, record.description, record.icon, record.content,
-        record.enabled ? 1 : 0, record.createdAt
+        record.enabled ? 1 : 0, record.resident ? 1 : 0, record.createdAt
       )
     }
     return mustGet(() => this.get(id), '技能')
+  },
+
+  /** 常驻开关（§236）：只动这一列，内容一个字不碰 */
+  setResident(id: string, resident: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE skills SET resident=? WHERE id=?')
+      .run(resident ? 1 : 0, id)
   },
 
   setEnabled(id: string, enabled: boolean): void {

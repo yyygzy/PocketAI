@@ -3,7 +3,8 @@ import { BrowserWindow } from 'electron'
 import { IPC } from '../../../shared/types'
 import type { SkillRecord } from '../../../shared/types'
 import { skillRepo } from '../../db/repositories/skill.repo'
-import { exportSkill, importSkill } from '../../skills/skill-io'
+import { exportSkill, importSkill, importSkillFolder } from '../../skills/skill-io'
+import { listSkillFiles, removeSkillFiles } from '../../skills/skill-files'
 import { syncBuiltinSkills } from '../../assistant/builtin'
 import { validateSkillText, SKILL_TEMPLATES } from '../../skills/skill-parser'
 import { safeHandle, argsSchema, z } from '../safe-handle'
@@ -18,7 +19,9 @@ export function registerSkillHandlers(): void {
   argsSchema(skillSaveSchema))
   safeHandle(IPC.SKILL_DELETE, (_e, id: string) => {
     skillRepo.delete(id)
-    return { ok: true }
+    // §236：删技能连它自带的文件一起删（路径由 id 推出，删不掉不拦这次删除）
+    const filesRemoved = removeSkillFiles(id)
+    return { ok: true, filesRemoved }
   }, argsSchema(idSchema))
 
   // 技能市场：导出/导入（文件对话框在主进程弹出）
@@ -32,6 +35,17 @@ export function registerSkillHandlers(): void {
     if (!win) return { ok: false, error: '窗口不可用' }
     return importSkill(win)
   })
+  // §236：目录导入（SKILL.md + 资源快照）与"这条技能带了哪些文件"
+  safeHandle(IPC.SKILL_IMPORT_FOLDER, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: '窗口不可用' }
+    return importSkillFolder(win)
+  })
+  safeHandle(IPC.SKILL_LIST_FILES, (_e, id: string) => {
+    // 技能不存在时不给文件列表：那串 id 是渲染层从列表里拿的，拿不到就说明它已经不在了
+    if (!skillRepo.get(String(id ?? ''))) return { ok: false, error: 'SKILL_NOT_FOUND' }
+    return { ok: true, files: listSkillFiles(String(id ?? '')) }
+  }, argsSchema(idSchema))
   safeHandle(IPC.SKILL_SYNC, () => {
     return syncBuiltinSkills()
   })

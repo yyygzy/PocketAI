@@ -9,6 +9,7 @@ import type {
   PythonPipSource
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { describeMcpAnnotations } from '../../../../../shared/mcp-annotations'
 import { useToast } from '../../../components/ToastProvider'
 import { useConfirm } from '../../../components/ConfirmDialog'
 import { formatMcpLaunch, mcpSecretKeyHint } from './mcp-launch'
@@ -378,6 +379,17 @@ export const McpPanel: React.FC = () => {
                                 <span className="font-mono text-[10px] truncate" title={tool.name}>
                                   {tool.name}
                                 </span>
+                                {tool.mcpAnnotations && (
+                                  <span
+                                    data-testid={`mcp-annotations-${tool.name}`}
+                                    className="shrink-0 text-[9px] px-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+                                    title={t('agent.mcpAnnotationsUntrusted')}
+                                  >
+                                    {t('agent.mcpAnnotations') +
+                                      ': ' +
+                                      describeMcpAnnotations(tool.mcpAnnotations)}
+                                  </span>
+                                )}
                                 {tool.permission === 'auto' ? (
                                   <span className="shrink-0 text-[9px] px-1 rounded bg-[var(--color-success-bg)] text-[var(--color-success)]">
                                     {t('agent.permAuto')}

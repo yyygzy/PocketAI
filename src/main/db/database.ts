@@ -842,6 +842,17 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE agent_traces ADD COLUMN tool_result TEXT;
       ALTER TABLE agent_traces ADD COLUMN model TEXT;
     `
+  },
+  {
+    // §236 第三层的地基：技能正文之外的东西落 <DATA_DIR>/skills/<id>/（路径由 id 推出，不占列），
+    // 库里只需要回答一件事——这条技能的正文要不要常驻。默认 1 = 今天的行为，
+    // 老库升上来一个字节都不用改；把它做成一列而不是拍个全局开关，是因为"哪些技能该常驻"
+    // 只有用户知道（本机小模型很可能不去调 load_skill，默认关掉等于把技能废掉）。
+    version: 51,
+    name: 'skill_resident',
+    up: `
+      ALTER TABLE skills ADD COLUMN resident INTEGER NOT NULL DEFAULT 1;
+    `
   }
 ]
 

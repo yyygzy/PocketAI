@@ -3,8 +3,10 @@
 // 设计：
 //  - 不引 gray-matter / js-yaml，手写轻量解析（只支持标量字段 string/number/boolean）
 //  - 两种输入都输出 SkillShape { name, description?, icon?, content }
-//  - 严格 schema 校验：只接受白名单字段，拒绝任意注入
-//  - content 上限 8KB，防超长提示词灌爆 prompt
+//  - frontmatter 只把白名单字段落进结构；**未知键不阻断导入**（那是上游技能包的一部分，
+//    拦在入口等于对互操作说不），但也**不入库、不注入**——收进 ignoredKeys，交给界面说一句「这些字段本应用不执行」
+//  - 两道正文上限：常驻 8KB（它整段进 system prompt，是注入面，闸必须紧）；
+//    按需 32KB（§236 存得下、由 load_skill 一次取一段，不进每次请求的固定开销）
 import type { BuiltinSkill } from '../db/repositories/skill.repo'
 
 /** 解析后的统一技能形状（skillRepo.save 接受的子集） */
@@ -20,7 +22,10 @@ export interface SkillShape {
   category?: string
 }
 
-const MAX_CONTENT_BYTES = 8 * 1024
+/** 常驻技能的正文上限：它整段进 system prompt */
+export const MAX_RESIDENT_CONTENT_BYTES = 8 * 1024
+/** 按需技能的正文上限：存得下、由 load_skill 一次取一段 */
+export const MAX_STORED_CONTENT_BYTES = 32 * 1024
 
 /** 合法 frontmatter key（白名单，拒绝任意字段注入） */
 const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'icon', 'title', 'version', 'author', 'tags', 'category'])
@@ -53,45 +58,58 @@ function splitFrontmatter(md: string): { frontmatter: string | null; body: strin
   return { frontmatter, body }
 }
 
-/** 解析 YAML frontmatter 为 Record（仅标量，且 key 必须在白名单内） */
-function parseFrontmatter(text: string): Record<string, string> {
+/** 解析 YAML frontmatter：白名单内的进 known，白名单外的进 ignored（原样报出来，不判成"非法"） */
+function parseFrontmatter(text: string): { known: Record<string, string>; ignored: string[] } {
   const out: Record<string, string> = {}
+  const ignored: string[] = []
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trimEnd()
     if (!line || line.startsWith('#')) continue
     const colonIdx = line.indexOf(':')
     if (colonIdx === -1) continue
     const key = line.slice(0, colonIdx).trim()
-    if (!ALLOWED_FRONTMATTER_KEYS.has(key)) continue
+    if (!key) continue
+    if (!ALLOWED_FRONTMATTER_KEYS.has(key)) {
+      if (!ignored.includes(key)) ignored.push(key)
+      continue
+    }
     const val = parseScalar(line.slice(colonIdx + 1))
     if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
       out[key] = String(val).trim()
     }
   }
-  return out
+  return { known: out, ignored }
 }
 
-/** 校验 SkillShape，返回错误信息（空串=合法） */
-function validate(shape: SkillShape): string {
+/** 校验 SkillShape，返回错误信息（空串=合法）。resident=false（按需档）走宽一档的正文上限 */
+function validate(shape: SkillShape, resident = true): string {
   if (!shape.name || !shape.name.trim()) return '缺少 name 字段'
   if (shape.name.length > 80) return 'name 过长（上限 80 字符）'
   if (!shape.content || !shape.content.trim()) return '缺少 content 字段'
-  if (Buffer.byteLength(shape.content, 'utf8') > MAX_CONTENT_BYTES) {
-    return `content 过长（上限 ${MAX_CONTENT_BYTES / 1024}KB）`
+  const cap = resident ? MAX_RESIDENT_CONTENT_BYTES : MAX_STORED_CONTENT_BYTES
+  if (Buffer.byteLength(shape.content, 'utf8') > cap) {
+    return `content 过长（上限 ${cap / 1024}KB）`
   }
   if (shape.icon && shape.icon.length > 4) return 'icon 过长（上限 4 字符）'
   return ''
 }
 
+/** 解析结果：形状 + 一句错误 + frontmatter 里那些本应用不执行的键（§236 互操作面） */
+export interface SkillParseResult {
+  shape: SkillShape | null
+  error: string
+  ignoredKeys: string[]
+}
+
 /** 从 JSON 字符串解析 */
-export function parseSkillJson(text: string): { shape: SkillShape | null; error: string } {
+export function parseSkillJson(text: string): SkillParseResult {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
-    return { shape: null, error: 'JSON 解析失败' }
+    return { shape: null, error: 'JSON 解析失败', ignoredKeys: [] }
   }
-  if (!parsed || typeof parsed !== 'object') return { shape: null, error: '不是合法对象' }
+  if (!parsed || typeof parsed !== 'object') return { shape: null, error: '不是合法对象', ignoredKeys: [] }
 
   // 支持两种格式：
   // A) PocketAI 标准：{ format:'pocketai-skill', skill:{ name, description, icon, content } }
@@ -115,16 +133,19 @@ export function parseSkillJson(text: string): { shape: SkillShape | null; error:
       : undefined
   }
   const err = validate(shape)
-  if (err) return { shape: null, error: err }
-  return { shape, error: '' }
+  if (err) return { shape: null, error: err, ignoredKeys: [] }
+  return { shape, error: '', ignoredKeys: [] }
 }
 
 /** 从 Markdown 字符串解析（可选 YAML frontmatter + 正文 = content） */
-export function parseSkillMarkdown(text: string): { shape: SkillShape | null; error: string } {
+export function parseSkillMarkdown(text: string, resident = true): SkillParseResult {
   const { frontmatter, body } = splitFrontmatter(text)
   let fm: Record<string, string> = {}
+  let ignoredKeys: string[] = []
   if (frontmatter) {
-    fm = parseFrontmatter(frontmatter)
+    const parsed = parseFrontmatter(frontmatter)
+    fm = parsed.known
+    ignoredKeys = parsed.ignored
   }
 
   // frontmatter 里 title 兼容 name
@@ -141,18 +162,18 @@ export function parseSkillMarkdown(text: string): { shape: SkillShape | null; er
     : undefined
 
   const shape: SkillShape = { name, description, icon, content, version, author, tags, category }
-  const err = validate(shape)
-  if (err) return { shape: null, error: err }
-  return { shape, error: '' }
+  const err = validate(shape, resident)
+  if (err) return { shape: null, error: err, ignoredKeys }
+  return { shape, error: '', ignoredKeys }
 }
 
 /** 自动检测格式（JSON vs Markdown）并解析 */
-export function parseSkillText(text: string): { shape: SkillShape | null; error: string } {
+export function parseSkillText(text: string, resident = true): SkillParseResult {
   const trimmed = text.trimStart()
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     return parseSkillJson(text)
   }
-  return parseSkillMarkdown(text)
+  return parseSkillMarkdown(text, resident)
 }
 
 /** 转成 BuiltinSkill（供 skillRepo.upsertBuiltin 使用） */
@@ -225,13 +246,16 @@ export interface SkillValidationResult {
 /** 校验技能文本，返回详细结果（含警告，如缺少 description 等） */
 export function validateSkillText(text: string): SkillValidationResult {
   const warnings: string[] = []
-  const { shape, error } = parseSkillText(text)
+  const { shape, error, ignoredKeys } = parseSkillText(text)
   if (!shape || error) {
     return { ok: false, error, warnings }
   }
   if (!shape.description) warnings.push('缺少 description，建议补充技能用途说明')
   if (shape.content.length < 20) warnings.push('content 过短，可能无法有效引导模型')
   if (shape.icon === '⚡') warnings.push('未设置 icon，使用默认 ⚡')
+  // §236 互操作面：上游技能包常见的 allowed-tools / compatibility 这类字段不阻断导入，
+  // 但也不能默默吃掉——校验那一屏要列出"这些字段本应用不执行"，用户才知道自己装的东西少了一半功能
+  if (ignoredKeys.length > 0) warnings.push(`这些字段本应用不执行：${ignoredKeys.join(', ')}`)
   return { ok: true, warnings, shape }
 }
 

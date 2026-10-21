@@ -49,6 +49,9 @@ export interface ToolExecuteContext {
   signal?: AbortSignal
   /** 当前 Agent 运行绑定的知识库 id 列表（kb_search 用，引擎按次运行透传） */
   kbIds?: string[]
+  /** §236：当前 Agent 运行绑定的技能 id 列表（load_skill 用）——没有它这颗工具读不到任何技能，
+   *  判据是「这次运行绑了哪些」，不是「库里有哪些」 */
+  skillIds?: string[]
   /** 当前 Agent 运行标识与事件出口（todo_write 用） */
   agent?: ToolAgentContext
 }

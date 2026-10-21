@@ -60,6 +60,15 @@ export const SkillModule: React.FC = () => {
     load()
   }
 
+  const toggleResident = async (s: SkillRecord) => {
+    const r = await window.pocketai.saveSkill({ id: s.id, name: s.name, resident: !s.resident })
+    if (hasIpcFailed(r)) {
+      toast.error(ipcFailText(r, t('common.unknownError')))
+      return
+    }
+    load()
+  }
+
   const handleDelete = async (s: SkillRecord) => {
     if (!(await confirm({ message: t('skill.deleteConfirm', { name: s.name }), danger: true }))) return
     const r = await window.pocketai.deleteSkill(s.id)
@@ -163,6 +172,7 @@ export const SkillModule: React.FC = () => {
             skill={selected}
             onEdit={() => setMode('edit')}
             onToggle={() => toggleEnabled(selected)}
+            onToggleResident={() => void toggleResident(selected)}
             onDelete={() => handleDelete(selected)}
           />
         ) : (
@@ -182,13 +192,74 @@ export const SkillModule: React.FC = () => {
   )
 }
 
+/**
+ * 技能自带的文件（§236 第三层）。三张脸分开：读不到／确实没有／有清单。
+ * "读不到"演成"没有"是这一族的老毛病（§222／§226），所以这里宁可多一句。
+ */
+const SkillFilesPanel: React.FC<{ skillId: string }> = ({ skillId }) => {
+  const { t } = useI18n()
+  const [files, setFiles] = useState<Array<{ path: string; size: number }> | null>(null)
+  const [unread, setUnread] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setFiles(null)
+    setUnread(null)
+    void window.pocketai
+      .listSkillFiles(skillId)
+      .then((r) => {
+        if (cancelled) return
+        if (hasIpcFailed(r) || r.ok !== true) {
+          setUnread(ipcFailText(r, t('skill.filesUnread')))
+          return
+        }
+        setFiles(r.files)
+      })
+      .catch((e) => {
+        reportIpcError('skills.listFiles')(e)
+        if (!cancelled) setUnread(errText(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [skillId, t])
+
+  return (
+    <div>
+      <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('skill.files')}</label>
+      {unread && (
+        <div data-testid="skill-files-unread" className="text-xs text-[var(--color-danger)]" title={unread}>
+          {t('skill.filesUnread')}
+        </div>
+      )}
+      {!unread && files === null && <div className="text-xs">{t('common.loading')}</div>}
+      {!unread && files !== null && files.length === 0 && (
+        <div data-testid="skill-files-empty" className="text-xs text-[var(--color-text-muted)]">
+          {t('skill.filesEmpty')}
+        </div>
+      )}
+      {!unread && files !== null && files.length > 0 && (
+        <ul data-testid="skill-files-list" className="text-xs space-y-0.5">
+          {files.map((f) => (
+            <li key={f.path} className="font-mono">
+              {f.path} <span className="text-[var(--color-text-muted)]">({f.size})</span>
+            </li>
+          ))}
+          <li className="text-[var(--color-text-muted)] mt-1">{t('skill.filesHint')}</li>
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ---------- 技能详情 ----------
 const SkillDetail: React.FC<{
   skill: SkillRecord
   onEdit: () => void
   onToggle: () => void
+  onToggleResident: () => void
   onDelete: () => void
-}> = ({ skill, onEdit, onToggle, onDelete }) => {
+}> = ({ skill, onEdit, onToggle, onToggleResident, onDelete }) => {
   const { t } = useI18n()
   return (
     <div className="max-w-2xl space-y-4">
@@ -226,6 +297,26 @@ const SkillDetail: React.FC<{
           {skill.content}
         </pre>
       </div>
+
+      {/* §236：常驻 vs 按需。默认常驻=今天的行为；关到按需后正文不再每次请求都带，模型要用时调 load_skill */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span
+          data-testid="skill-resident-badge"
+          className={`text-[11px] px-2 py-1 rounded ${
+            skill.resident
+              ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+              : 'bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)]'
+          }`}
+        >
+          {skill.resident ? t('skill.residentOn') : t('skill.residentOff')}
+        </span>
+        <button className="btn-ghost" onClick={onToggleResident}>
+          {skill.resident ? t('skill.makeOnDemand') : t('skill.makeResident')}
+        </button>
+        <span className="text-xs text-[var(--color-text-muted)]">{t('skill.residentHint')}</span>
+      </div>
+
+      <SkillFilesPanel skillId={skill.id} />
 
       <div className="flex gap-2">
         <button className="btn-ghost" onClick={onToggle}>

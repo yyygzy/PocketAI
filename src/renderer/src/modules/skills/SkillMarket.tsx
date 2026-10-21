@@ -167,6 +167,29 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
     }
   }, [flash, t, onChanged])
 
+  /** §236：导入一个上游 SKILL.md 技能目录（正文进库，scripts/references 复制成这份技能的快照） */
+  const handleImportFolder = useCallback(async () => {
+    const r = await window.pocketai.importSkillFolder()
+    if (r.ok && r.canceled) return
+    if (r.ok && r.skill) {
+      setSkills(await onChanged())
+      setView({ mode: 'detail', id: r.skill.id })
+      const notes: string[] = [
+        r.forcedOnDemand ? t('skill.market.forcedOnDemand') : '',
+        (r.ignoredKeys ?? []).length > 0 ? t('skill.market.ignoredKeys').replace('{keys}', r.ignoredKeys!.join('、')) : '',
+        (r.skipped ?? []).length > 0 ? t('skill.market.skippedFiles').replace('{n}', String(r.skipped!.length)) : ''
+      ].filter(Boolean)
+      flash(true, [t('skill.market.importFolderDone'), ...notes].filter(Boolean).join(' '))
+      return
+    }
+    const keyMap: Record<string, string> = {
+      NO_SKILL_MD: 'skill.market.noSkillMd',
+      NOT_A_DIRECTORY: 'skill.market.notADirectory',
+      ENTRY_TOO_LARGE: 'skill.market.entryTooLarge'
+    }
+    flash(false, t(keyMap[r.error ?? ''] ?? 'skill.market.importFailed'))
+  }, [flash, t, onChanged])
+
   const handleDelete = useCallback(
     async (s: SkillRecord) => {
       if (!(await confirm({ message: t('skill.deleteConfirm', { name: s.name }), danger: true }))) return
@@ -258,9 +281,19 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
           </div>
           <div className="flex items-center gap-2">
             {view.mode === 'grid' && tab === 'local' && (
-              <button className="btn-primary text-xs" onClick={handleImport}>
-                {t('skill.market.import')}
-              </button>
+              <>
+                <button className="btn-primary text-xs" onClick={handleImport}>
+                  {t('skill.market.import')}
+                </button>
+                {/* §236：上游 SKILL.md 技能包是按目录发的，只给单文件入口等于装不了 */}
+                <button
+                  className="btn-ghost text-xs"
+                  data-testid="skill-import-folder"
+                  onClick={handleImportFolder}
+                >
+                  {t('skill.market.importFolder')}
+                </button>
+              </>
             )}
             {view.mode === 'grid' && tab === 'online' && (
               <button

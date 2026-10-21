@@ -4,6 +4,7 @@
 import { BUILTIN_TOOLS } from './builtin'
 import type { ToolAgentContext, ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
+import { getSkillTools } from './skill-tools'
 import { getShellTools } from './shell-tools'
 import { mcpManager } from '../mcp/manager'
 import type { ToolSchema, ToolResult } from '../../shared/types'
@@ -86,7 +87,7 @@ export function isToolAllowedBy(allowed: Set<string>, schema: ToolSchema): boole
 class ToolRegistry {
   /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
   private listBuiltinTools() {
-    return [...BUILTIN_TOOLS, ...getFsTools(), ...getShellTools()]
+    return [...BUILTIN_TOOLS, ...getFsTools(), ...getShellTools(), ...getSkillTools()]
   }
 
   /** 列出所有内置工具的 schema */
@@ -200,6 +201,7 @@ class ToolRegistry {
     allowedToolIds: Set<string>,
     signal?: AbortSignal,
     kbIds?: string[],
+    skillIds?: string[],
     agent?: ToolAgentContext
   ): Promise<ToolResult> {
     const all = this.listAll()
@@ -236,7 +238,7 @@ class ToolRegistry {
         if (!builtin) {
           return { toolCallId: '', name: toolName, content: '内置工具未注册', isError: true }
         }
-        const content = await builtin.execute(args, { signal, kbIds, agent })
+        const content = await builtin.execute(args, { signal, kbIds, skillIds, agent })
         return { toolCallId: '', name: toolName, content }
       }
       // MCP 工具

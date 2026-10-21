@@ -175,7 +175,8 @@ const api = {
     ipcRenderer.invoke(IPC.SKILL_GET, id),
   saveSkill: (record: Partial<SkillRecord> & { name: string }): Promise<SkillRecord> =>
     ipcRenderer.invoke(IPC.SKILL_SAVE, record),
-  deleteSkill: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.SKILL_DELETE, id),
+  deleteSkill: (id: string): Promise<{ ok: boolean; filesRemoved?: boolean }> =>
+    ipcRenderer.invoke(IPC.SKILL_DELETE, id),
   exportSkill: (
     id: string
   ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
@@ -187,6 +188,24 @@ const api = {
     nameDuplicated?: boolean
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT),
+  /* §236：目录导入与「这条技能带了哪些文件」。两个返回类型都带失败分支（safeHandle 把抛错转成返回值）。 */
+  importSkillFolder: (): Promise<
+    | {
+        ok: boolean
+        canceled?: boolean
+        skill?: SkillRecord
+        copied?: string[]
+        skipped?: Array<{ path: string; reason: string }>
+        ignoredKeys?: string[]
+        forcedOnDemand?: boolean
+        nameDuplicated?: boolean
+        error?: string
+      }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.SKILL_IMPORT_FOLDER),
+  listSkillFiles: (id: string): Promise<
+    { ok: true; files: Array<{ path: string; size: number }> } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.SKILL_LIST_FILES, id),
   syncSkills: (): Promise<{ count: number; errors: string[] }> =>
     ipcRenderer.invoke(IPC.SKILL_SYNC),
   fetchSkillIndex: (
