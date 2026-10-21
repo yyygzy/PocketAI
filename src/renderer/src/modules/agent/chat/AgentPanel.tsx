@@ -11,6 +11,7 @@ import { useAgentToolConfigs } from '../hooks/useAgentToolConfigs'
 import { useAttachments } from '../hooks/useAttachments'
 import { SessionRail } from '../components/SessionRail'
 import { AgentModelBar } from '../components/AgentModelBar'
+import { AgentEvalPanel } from './AgentEvalPanel'
 import { AgentToolBars } from '../components/AgentToolBars'
 import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
@@ -47,6 +48,8 @@ export const AgentPanel: React.FC = () => {
 
   // ---------- 会话内消息搜索 ----------
   const [searchOpen, setSearchOpen] = useState(false)
+  // 评测集那一屏（V4-Iter-242）：默认收起。里面每一发都真花钱，所以不给它自动读、也不自动跑
+  const [evalOpen, setEvalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchActive, setSearchActive] = useState(0)
   const searchHits = React.useMemo(
@@ -458,6 +461,20 @@ export const AgentPanel: React.FC = () => {
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
           </button>
+          {/* 头部快捷：评测集（V4-Iter-242）——"通过率"这句话要能在界面上跑出来，不能只在测试里 */}
+          <button
+            onClick={() => setEvalOpen((v) => !v)}
+            data-testid="agent-eval-toggle"
+            aria-pressed={evalOpen}
+            title={t('agent.eval.title')}
+            className={`shrink-0 mt-0.5 h-7 px-2 rounded-lg text-[11px] transition-colors ${
+              evalOpen
+                ? 'bg-[var(--color-hover-overlay)] text-[var(--color-accent)]'
+                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            {t('agent.eval.title')}
+          </button>
           {/* 头部快捷：复制全文 Markdown / 导出 .md 文件（侧栏收起时也可用） */}
           <button
             onClick={() => void handleCopyAsMarkdown()}
@@ -538,6 +555,16 @@ export const AgentPanel: React.FC = () => {
               {t('agent.retryRead')}
             </button>
           </div>
+        )}
+
+        {/* 评测集（V4-Iter-242）：跑的是模型栏当前这台，切换会话不影响这一屏——它评的是模型与编排，不是这条对话 */}
+        {evalOpen && (
+          <AgentEvalPanel
+            providerId={chat.providerId}
+            model={chat.model}
+            targetLabel={`${providers.find((p) => p.id === chat.providerId)?.name ?? chat.providerId} · ${chat.model}`}
+            onClose={() => setEvalOpen(false)}
+          />
         )}
 
         {/* 消息流（虚拟化：只渲染可视区，避免长对话 DOM 线性增长） */}

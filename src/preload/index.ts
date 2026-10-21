@@ -3,6 +3,11 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
 import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
+import type {
+  AgentEvalProgressEvent,
+  AgentEvalReportEntry,
+  AgentEvalRunResult
+} from '../shared/agent-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
 import type {
   ProviderRecord,
@@ -806,6 +811,27 @@ const api = {
     { ok: true; path: string; bytes: number; removed: boolean } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.AGENT_RESTORE_FILE_WRITE, snapshotId),
 
+  // ---------- Agent 评测集（V4-Iter-242）----------
+  /**
+   * 跑一趟评测：分钟级、花额度，所以每一发都靠 `onAgentEvalProgress` 往外推。
+   * 类型必须带失败分支——"这已经在跑了""现在有 Agent 运行没停"这两档界面要拿得到，
+   * 写成 `Promise<AgentEvalRunResult>` 就是让界面以为它不会失败（205 那一族的口径）。
+   */
+  runAgentEval: (
+    payload: { providerId: string; model: string; tier?: 'smoke' | 'full'; k?: number }
+  ): Promise<AgentEvalRunResult | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_EVAL_RUN, payload),
+  /** 喊停：正在跑的那发被打断、剩下的发不再开。`stopped:false` ＝当下没有评测在跑（不是失败） */
+  stopAgentEval: (): Promise<{ stopped: boolean } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_EVAL_STOP),
+  /** 落盘报告的清单（按时间倒序，最多 20 份）：每次点开都重跑一遍要花额度，所以旧数字要能读回来 */
+  listAgentEvalReports: (): Promise<AgentEvalReportEntry[] | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_EVAL_REPORTS),
+  readAgentEvalReport: (
+    fileName: string
+  ): Promise<{ text: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_EVAL_READ_REPORT, fileName),
+
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>
     ipcRenderer.invoke(IPC.LICENSE_ACTIVATE, code),
@@ -969,6 +995,12 @@ const api = {
     const listener = (_e: IpcRendererEvent, data: AgentErrorEvent) => handler(data)
     ipcRenderer.on(IPC.AGENT_ERROR_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.AGENT_ERROR_EVENT, listener)
+  },
+  /** 评测逐发进度（V4-Iter-242）：跑一趟是分钟级，没有这一栏界面就只能干等，等成"看起来卡死" */
+  onAgentEvalProgress: (handler: (e: AgentEvalProgressEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: AgentEvalProgressEvent) => handler(data)
+    ipcRenderer.on(IPC.AGENT_EVAL_PROGRESS_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.AGENT_EVAL_PROGRESS_EVENT, listener)
   },
 
   // ---------- License 授权 ----------

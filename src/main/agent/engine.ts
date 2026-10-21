@@ -965,6 +965,15 @@ class AgentEngine {
   }
 
   /**
+   * 有没有还在跑的 run（主干与子都算）。评测入口用它拦一道：
+   * Agent 的工作目录是 `app_config` 里那一个全局键，评测一头发一发地切它，
+   * 与用户的普通运行同时跑就是抢同一个目录——两边的产物都会串。
+   */
+  hasActiveRun(): boolean {
+    return this.controllers.size > 0
+  }
+
+  /**
    * `internal` 只给主进程内部用（144 的子 run）：渲染层经 IPC 传不进来，
    * 因为 `chat:send` 的入参走 zod 且是**非严格对象**——未声明的键会被剥掉，
    * 所以外部伪造不了 `asChild` / `budget`（这条是 94 那批"schema 与调用方实际载荷"教训的反向用法）。

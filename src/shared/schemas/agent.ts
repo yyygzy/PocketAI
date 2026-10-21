@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import { CHAT_MAX_CONTENT_CHARS } from './chat'
 import { FALLBACK_MAX_PART_CHARS } from '../fallback-target'
+import { AGENT_EVAL_MAX_K } from '../agent-eval'
 
 const AGENT_MAX_APIKEY_CHARS = 256
 const AGENT_MAX_PATH_CHARS = 1024
@@ -107,3 +108,27 @@ export const modelWindowSetSchema = z.object({
   model: z.string().min(1).max(128),
   tokens: z.number().int().nullable()
 })
+
+/**
+ * AGENT_EVAL_RUN 入参（V4-Iter-242）：跑一趟评测集。
+ * `k` 的上限不是随手拍的：Agent 一发是十几秒到几十秒、还直接花额度，
+ * 所以卡在 `AGENT_EVAL_MAX_K`（检索评测那个 50 在这儿完全不适用）。
+ * 档位只认 `smoke`/`full` 两个字面值——写成别的（包括"all"）都在这儿挡掉，
+ * 因为服务层是 `tier === 'full' ? 全量 : 冒烟`，一个宽松的字符串会被静默读成冒烟。
+ */
+export const evalRunSchema = z.object({
+  providerId: z.string().min(1).max(AGENT_MAX_ID_CHARS),
+  model: z.string().min(1).max(128),
+  tier: z.enum(['smoke', 'full']).optional(),
+  k: z.number().int().min(1).max(AGENT_EVAL_MAX_K).optional()
+})
+
+/**
+ * AGENT_EVAL_READ_REPORT 入参：只接受清单里那种**裸文件名**（形状闸在这儿，
+ * "是不是真有其文件"留在服务层）。斜杠／反斜杠／`..` 一律挡：这是评测目录的读面，不是任意文件读面。
+ */
+export const evalReportNameSchema = z
+  .string()
+  .min(4)
+  .max(128)
+  .regex(/^[^/\\]+\.md$/, '报告名只能是一个 .md 文件名')

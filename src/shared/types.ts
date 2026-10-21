@@ -2201,6 +2201,12 @@ export const IPC = {
   AGENT_SET_MODEL_WINDOW: 'agent:set-model-window', // §234：设/清一台模型的上下文窗口，回传最新表
   AGENT_GET_FALLBACKS: 'agent:get-fallbacks', // §237：每台模型的备用 target（`providerId::model` → 一台），只读
   AGENT_SET_FALLBACK: 'agent:set-fallback', // §237：设/清某台模型的备用，回传最新表
+  // V4-Iter-242：评测集从"只有测试能调"变成"界面上点得开"。跑一趟是分钟级，所以进度单独成一条事件通道。
+  AGENT_EVAL_RUN: 'agent:eval-run', // 跑一批任务（串行，每任务 k 次）；回结果＋报告路径
+  AGENT_EVAL_STOP: 'agent:eval-stop', // 喊停：正在跑的那发 abort，剩下的发不再开
+  AGENT_EVAL_REPORTS: 'agent:eval-reports', // 落盘报告的清单（按时间倒序）
+  AGENT_EVAL_READ_REPORT: 'agent:eval-read-report', // 读其中一份全文（只认清单里那种文件名形状）
+  AGENT_EVAL_PROGRESS_EVENT: 'agent:eval-progress', // 逐发进度
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

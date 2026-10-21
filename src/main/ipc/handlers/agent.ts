@@ -21,6 +21,8 @@ import {
   modelWindowSetSchema,
   interjectSchema,
   fallbackSetSchema,
+  evalRunSchema,
+  evalReportNameSchema,
   delegateProbeSchema,
   delegateToggleSchema
 } from '../../../shared/schemas/agent'
@@ -30,10 +32,25 @@ import {
   setModelContextWindow
 } from '../../agent/model-window-prefs'
 import { listFallbackTargets, setFallbackTarget } from '../../agent/fallback-target-prefs'
+import {
+  assertCanStartEval,
+  listAgentEvalReports,
+  readAgentEvalReport,
+  runAgentEvalSuite
+} from '../../agent/eval/suite'
 import { listDelegateCapabilitiesWithStaleness, probeDelegateCapability, setDelegationEnabled } from '../../agent/delegate-capability'
 import { idSchema } from '../../../shared/schemas/providers'
 
 const log = createLogger('agent')
+
+/** 正在跑的那趟评测（最多一趟）。`null` ＝没有 */
+interface EvalState {
+  /** 正在跑的那一发的 requestId：「停下」靠它打断，慢的那发不该让人再等几十秒 */
+  currentRequestId: string | null
+  /** 已喊停：剩下的发不再开 */
+  stopped: boolean
+}
+let activeEval: EvalState | null = null
 
 export function registerAgentHandlers(): void {
   // ---------- 工具 ----------
@@ -203,6 +220,55 @@ export function registerAgentHandlers(): void {
     IPC.AGENT_RESTORE_FILE_WRITE,
     (_e, snapshotId: string) => ({ ok: true as const, ...restoreFileWrite(snapshotId) }),
     argsSchema(idSchema)
+  )
+
+  // ---------- Agent 评测集（V4-Iter-242）----------
+  // 跑一趟是分钟级、还直接花额度，所以这一条只允许用户在界面上点名触发（口径同上面的委派探针）。
+  // 三个模块级状态不是随手放的：评测会**一头发一发地切全局工作目录**（§233 撞出来的那条），
+  // 所以"同时只许一趟"必须在入口挡；「停下」要能打断正在跑的那发，所以得记住它的 requestId。
+  safeHandle(
+    IPC.AGENT_EVAL_RUN,
+    (e, payload: { providerId: string; model: string; tier?: 'smoke' | 'full'; k?: number }) => {
+      if (activeEval) throw new Error('EVAL_ALREADY_RUNNING:已经有一趟评测在跑了')
+      assertCanStartEval()
+      const state: EvalState = { currentRequestId: null, stopped: false }
+      activeEval = state
+      const wc = e.sender
+      return runAgentEvalSuite({
+        providerId: payload.providerId,
+        model: payload.model,
+        tier: payload.tier,
+        k: payload.k,
+        // 进度只推回**发起这一趟的那个窗口**：多窗口时不该让别的界面长出别人的进度
+        onProgress: (event) => {
+          if (!wc.isDestroyed()) wc.send(IPC.AGENT_EVAL_PROGRESS_EVENT, event)
+        },
+        onAttemptStarted: (requestId) => {
+          state.currentRequestId = requestId
+        },
+        stopped: () => state.stopped
+      }).finally(() => {
+        if (activeEval === state) activeEval = null
+      })
+    },
+    argsSchema(evalRunSchema)
+  )
+
+  // 「停下」：正在跑的那发被打断，剩下的发不再开。没有在跑的评测时这不是失败，是一次"没东西可停"的读数，
+  // 所以回 `{ stopped: false }` 而不是抛回码——界面拿到它就只是把按钮归位。
+  safeHandle(IPC.AGENT_EVAL_STOP, () => {
+    const state = activeEval
+    if (!state) return { stopped: false as const }
+    state.stopped = true
+    if (state.currentRequestId) agentEngine.abort(state.currentRequestId)
+    return { stopped: true as const }
+  })
+
+  safeHandle(IPC.AGENT_EVAL_REPORTS, () => listAgentEvalReports())
+  safeHandle(
+    IPC.AGENT_EVAL_READ_REPORT,
+    (_e, fileName: string) => ({ text: readAgentEvalReport(fileName) }),
+    argsSchema(evalReportNameSchema)
   )
 
   // 渲染端对工具审批弹窗的应答

@@ -14,6 +14,19 @@
 //  ③ **没跑起来 ≠ 通过，也 ≠ 失败得悄悄**。判分器抛错、证据缺失、跑了 0 次，都必须成为报告里可见的一档。
 import fs from 'node:fs'
 import path from 'node:path'
+import type {
+  AgentEvalAttemptOutcome,
+  AgentEvalInterjectionFact,
+  AgentEvalSuiteReport,
+  AgentEvalTaskReport,
+  AgentEvalTier
+} from '../../../shared/agent-eval'
+
+/** 聚合口径这几个类型现在住在 shared（界面要读同一份），这儿只是旧名字的同源别名 */
+export type EvalTier = AgentEvalTier
+export type AttemptOutcome = AgentEvalAttemptOutcome
+export type TaskReport = AgentEvalTaskReport
+export type SuiteReport = AgentEvalSuiteReport
 
 /** 一次运行的现场快照：由 runner 负责采集（工作目录 + 引擎步骤 + 最终回答） */
 export interface EvalEvidence {
@@ -23,9 +36,13 @@ export interface EvalEvidence {
   toolSteps: Array<{ name: string; args: string }>
   /** 最终回答文本 */
   finalText: string
+  /**
+   * 这一发的插话现场（V4-Iter-242）。**只有任务本身要求插话时才有**：
+   * 判据要能分开"没插"／"插了没被收下"／"收下但没办"，这三种在报告里是三件事，
+   * 都写成"没过"就等于把 §238 那条通道的问题算到模型头上。
+   */
+  interjection?: AgentEvalInterjectionFact
 }
-
-export type EvalTier = 'smoke' | 'full'
 
 export interface EvalTask {
   id: string
@@ -37,6 +54,12 @@ export interface EvalTask {
   setup?: Record<string, string>
   /** 允许的最大步数；超了判 fail——"绕了 30 步终于对"在编排里是缺陷不是成绩 */
   maxSteps?: number
+  /**
+   * 运行中插一句（V4-Iter-242，把 §238 那条通道变成有数字的行为）。
+   * `afterToolCalls`：看到第几个工具调用之后插——必须等运行**已经进了一步**，
+   * 否则插在任何步边界之前，那句话就只是首条提示的一部分，测不到"运行中被收下"这件事。
+   */
+  interject?: { afterToolCalls: number; text: string }
   judge: (e: EvalEvidence) => { pass: boolean; why: string }
 }
 
@@ -85,7 +108,9 @@ export const AGENT_EVAL_TASKS: EvalTask[] = [
     title: '用工具算完再把结果写进文件',
     prompt: '读 nums.txt 里的两个整数（各一行），相乘后把结果写进 out.txt。',
     setup: { 'nums.txt': '127\n89\n' },
-    maxSteps: 6,
+    // 2026-10-21 那趟真机第一次读数：这台云模型实测走 7 步（读→算→写→收尾），旧的 6 步把它判成了"绕远"。
+    // 8＝留一次试错的余量；它与下面那条插话任务的差值，就是"要不要多办一件事"的形状差。
+    maxSteps: 8,
     judge: (e) => {
       const got = file(e, 'out.txt')
       if (got === undefined) return { pass: false, why: 'out.txt 不存在' }
@@ -131,6 +156,49 @@ export const AGENT_EVAL_TASKS: EvalTask[] = [
     judge: (e) => (e.toolSteps.some((s) => s.name === 'todo_write')
       ? { pass: true, why: '用过 todo_write' }
       : { pass: false, why: '没有建立任务清单（这一步用户在界面上就看不见进度）' })
+  },
+  {
+    // V4-Iter-242：§238 那条插队通道第一次有数字。判据仍然只看环境——"它说它听见了"不是证据。
+    id: 'interject-followup',
+    tier: 'smoke',
+    title: '运行中被插话时，那句新要求也要办到',
+    prompt: '在工作目录里创建 notes/quiet.md，内容只写一行：MILO-4。只要这一个文件，别写别的。',
+    interject: { afterToolCalls: 1, text: '另外把 MILO-4 也写进 notes/echo.md，一行就行。' },
+    // 同一趟实测 7–9 步：插话那条结构上就要多办一件事、多一轮，拿未插话那条的预算量它等于尺子错位（用户选定放宽到 12）。
+    maxSteps: 12,
+    judge: (e) => {
+      const quiet = file(e, 'notes/quiet.md')
+      if (quiet === undefined || !quiet.includes('MILO-4')) {
+        return { pass: false, why: '原本那件（notes/quiet.md 含 MILO-4）没办成，插话不救这个' }
+      }
+      const fact = e.interjection
+      if (!fact?.asked) return { pass: false, why: '这一发没有插话（对照组不许算进插话那格）' }
+      if (!fact.accepted) return { pass: false, why: '插的那句没被这轮运行收下（通道坏了，不是模型没听懂）' }
+      const echo = file(e, 'notes/echo.md')
+      if (echo === undefined) return { pass: false, why: '插话已被收下，但 notes/echo.md 没出现（那句新要求没办）' }
+      return echo.includes('MILO-4')
+        ? { pass: true, why: '原本那件与插话那件都办成了' }
+        : { pass: false, why: `notes/echo.md 存在但没标记（实得 ${JSON.stringify(echo.slice(0, 40))}）` }
+    }
+  },
+  {
+    // 上一条的反向对照，独立成一条任务：同一份提示、**不插话**，看那台模型会不会自己写出 echo.md。
+    // 没有这条，上面那个"过"就分不清是"听了插话"还是"反正它两个都写"。
+    id: 'interject-ghost',
+    tier: 'full',
+    title: '没人插话时，不该凭空多做那件插话里才提的事',
+    prompt: '在工作目录里创建 notes/quiet.md，内容只写一行：MILO-4。只要这一个文件，别写别的。',
+    // 这条还在全量档，2026-10-21 那趟真机没跑到它 ⇒ 旧的 6 步仍是拍的：不动它，也不假装它被校准过（下次跑全量档一并定）。
+    maxSteps: 6,
+    judge: (e) => {
+      const quiet = file(e, 'notes/quiet.md')
+      if (quiet === undefined || !quiet.includes('MILO-4')) {
+        return { pass: false, why: '原本那件没办成（这条测的是"多做"，但少做同样不算过）' }
+      }
+      return file(e, 'notes/echo.md') === undefined
+        ? { pass: true, why: '只做了被要求的那件' }
+        : { pass: false, why: '没人让它写 notes/echo.md，它写了——上一条那个"过"就不是插话的功劳' }
+    }
   }
 ]
 
@@ -142,13 +210,20 @@ export function smokeTasks(tasks: EvalTask[] = AGENT_EVAL_TASKS): EvalTask[] {
 /**
  * 按工作目录里的实际内容采一份证据。
  * 采集与判分分开是有意的：runner 换实现（真引擎／桩）时，判据不许跟着漂。
+ * `interjection` 是这一发插话现场的**事实**（谁要求的、被没被收下），由 runner 填——
+ * 判分器自己不去猜"有没有插过话"，那等于把 runner 的实现细节写进判据。
  */
-export function collectEvidence(workspaceDir: string, toolSteps: Array<{ name: string; args: string }>, finalText: string): EvalEvidence {
+export function collectEvidence(
+  workspaceDir: string,
+  toolSteps: Array<{ name: string; args: string }>,
+  finalText: string,
+  interjection?: AgentEvalInterjectionFact
+): EvalEvidence {
   const files: Record<string, string> = {}
   if (fs.existsSync(workspaceDir)) {
     walk(workspaceDir, workspaceDir, files)
   }
-  return { workspaceFiles: files, toolSteps, finalText }
+  return { workspaceFiles: files, toolSteps, finalText, interjection }
 }
 
 function walk(root: string, dir: string, out: Record<string, string>): void {
@@ -167,43 +242,6 @@ function walk(root: string, dir: string, out: Record<string, string>): void {
       // 读不到的文件在证据里缺席，判据自然判不过——这比记一个"读错了"更诚实
     }
   }
-}
-
-/** 一次尝试的结果：`ran=false` 专门留给"根本没跑起来"，不许与"跑了但没过"混成一档 */
-export interface AttemptOutcome {
-  ran: boolean
-  pass: boolean
-  steps?: number
-  why?: string
-}
-
-export interface TaskReport {
-  id: string
-  tier: EvalTier
-  attempts: number
-  passed: number
-  /** 至少一次跑起来的尝试里，通过的比例 */
-  passAt1: number
-  /** k 次全过 ⇒ 1；有任何一次没过 ⇒ 0 */
-  passAllK: number
-  notRan: number
-  maxSteps?: number
-  /** 超步数的那几次（"绕了很久终于对"要能被单独看见，不能算成通过） */
-  stepOverruns: number
-  reasons: string[]
-}
-
-export interface SuiteReport {
-  perTask: TaskReport[]
-  /** 报了几个任务、每个任务跑了几次 */
-  tasks: number
-  k: number
-  /** 全过（passAllK=1）的任务数：这才是"可靠性"那一个数 */
-  reliable: number
-  /** 至少一次通过的任务数：与上一行并列报，别只报好看的那个 */
-  everPassed: number
-  /** 一次都没跑起来的任务数（环境/接线坏了，与"模型不行"是两件事） */
-  deadTasks: number
 }
 
 /**

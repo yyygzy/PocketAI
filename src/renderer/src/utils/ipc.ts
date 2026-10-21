@@ -44,7 +44,11 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   CHAT_MSG_NOT_USER: 'chat.errMsgNotUser',
   GLOSSARY_TERM_EMPTY: 'translate.glossaryTermEmpty',
   // 插队赶在运行结束之后（V4-Iter-238）：那句中文留给日志，界面只说"没被收下、还在条上"
-  RUN_NOT_FOUND: 'agent.interjectRunEnded'
+  RUN_NOT_FOUND: 'agent.interjectRunEnded',
+  // 评测那一趟的三道入口闸（V4-Iter-242）：都是"现在不能开这一趟"，不是"跑坏了"
+  EVAL_ALREADY_RUNNING: 'agent.eval.alreadyRunning',
+  EVAL_RUN_BUSY: 'agent.eval.busy',
+  EVAL_REPORT_NOT_FOUND: 'agent.eval.reportMissing'
 }
 
 /**
