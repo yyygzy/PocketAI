@@ -766,6 +766,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           setMcpHeldBack(e.mcpHeldBack ?? 0)
           // §237：引擎那一侧算出来的"这一轮带不下更多历史"上屏（只在 true 时点亮）
           setHistoryTight(e.historyTight === true)
+          // §245：子会话是**这一轮跑出来的**，而 `subSessions` 原来只在进入会话时读一次 ⇒
+          // 委派跑完当场两处入口都不出现，要切走再回来才看见（2026-10-21 真机 B133 撞出来的）。
+          // 只在"这一轮就是当前看着的这条会话"时重读：别的会话的 DONE 不该动这里的列表。
+          loadSubSessionReads()
           // 把知识库引用来源挂到最终回答卡片（流式结束即时显示，无需 reload）
           if (e.sources?.length) {
             dispatch({ type: 'setSources', messageId: e.finalMessageId, sources: e.sources })
@@ -787,7 +791,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         // 中止/出错：插队中的项归回队列，但**不**自动发下一条（用户要停下来看，见 settleQueueAfterRun ②）
         settleQueueAfterRun(e.conversationId, false)
         // 「可断点恢复」是按会话讲的：正在看别的会话时不该被上一轮的失败点亮
-        if (e.conversationId === conversationIdRef.current) setInterrupted(true)
+        if (e.conversationId === conversationIdRef.current) {
+          setInterrupted(true)
+          // §245 同一件事的失败面：委派跑了一半才炸，已经建出来的子会话当场就该看得见
+          loadSubSessionReads()
+        }
       })
     )
     // 智能标题后台生成完成：就地更新活跃/归档两个列表（done 后 reload 为兜底）
@@ -799,7 +807,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       })
     )
     return () => offs.forEach((off) => off())
-  }, [t])
+    // §245：`loadSubSessionReads` 本身只随 `t` 变（useCallback([t])），加进来不改变重订阅的时机——
+    // 但少了它，切语言后这里闭包到的还是旧那份取词函数，"读不到子代理会话"那句会停在旧语言
+  }, [t, loadSubSessionReads])
 
   // safeHandle 把失败转成 resolve 的 {ok:false}：这一族里不判就是"界面多出一条库里没有的会话"
   // 或"库里还在的会话从列表消失"（对话页的同一操作靠 reloadConversations 自纠，两个入口形状不同，§215 收敛）
