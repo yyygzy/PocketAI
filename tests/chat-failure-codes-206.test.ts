@@ -165,3 +165,123 @@ describe('调用点接住了这条约定（V4-Iter-208）', () => {
     expect(line).toContain('Promise<GlossaryTerm | { ok: false; error: string }>')
   })
 })
+
+// ---------- V4-Iter-247：回码的 throw 站点必须从 IPC 入口可达 ----------
+// 为什么这一面值得钉：`CODE:中文说明` 这套契约成立的唯一前提是**那次 throw 真发生在 safeHandle 的
+// 调用栈里**（`safe-handle.ts` 把抛错转成 `{ok:false,ipcCode}`）。回码若抛在一个没有任何 IPC 入口
+// import 得到的文件里，它就是"死码"——闸门会因为它已登记而一直绿，界面上却永远读不到那句
+// （§243 的"既没登记、也读不到"是它的兄弟形态：那次是没登记，这次是登记了但没人能触发）。
+//
+// 扫描器自己的两条坑都在本批实测踩过，写在这里免得下次重犯：
+//  · 捕获组写成 `[^;{}]*?` 会把 `import {\n a\n} from 'x'` 这种多行形态**整条漏掉**——
+//    我第一版就这么把 17 个文件（含 `agent/file-snapshots.ts`、`agent/eval/suite.ts`）判成闭包外，
+//    连带把 3 个码误报成孤儿。正解 `[^;]*?`：本仓 TS 不写分号，非贪婪下最近的 `from` 就是本条语句的。
+//  · 只按"同一行里 import … from"扫，同样漏多行形态。
+// `import type` 那类**不算边**：它在编译期被擦掉，把"只被类型引用"当成"运行时会被 require 到"
+// 就是把判据写松一档（放宽后的名单今天与严版一致——这条也在下面断言里核一次，不靠嘴说）。
+const MAIN_ROOT = path.resolve(__dirname, '../src/main')
+const SRC_ROOT = path.resolve(__dirname, '../src')
+const VALUE_IMPORT_RE = /^\s*import\s+(?!type\s)[^;]*?\sfrom\s*['"]([^'"]+)['"]/gm
+const TYPE_IMPORT_RE = /^\s*import\s+type\s+[^;]*?\sfrom\s*['"]([^'"]+)['"]/gm
+const EXPORT_FROM_RE = /^\s*export\s+(?:\*|\{[^{}]*\})\s*from\s*['"]([^'"]+)['"]/gm
+const BARE_IMPORT_RE = /^\s*import\s*['"]([^'"]+)['"]/gm
+
+const walkTs = (dir: string, out: string[] = []): string[] => {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name)
+    if (ent.isDirectory()) walkTs(p, out)
+    else if (ent.name.endsWith('.ts')) out.push(p)
+  }
+  return out
+}
+
+function resolveSpecifier(spec: string, importer: string): string | null {
+  if (!spec.startsWith('./') && !spec.startsWith('../')) return null
+  const base = path.resolve(path.dirname(importer), spec)
+  for (const c of [base + '.ts', base + '.tsx', path.join(base, 'index.ts')]) {
+    if (fs.existsSync(c)) return c
+  }
+  return null
+}
+
+/**
+ * 闭包的根＝**所有 IPC handler 文件**，不加 `src/main/index.ts`、也不加 preload。
+ * 理由不是省事：这条契约讲的是"抛出去的错误有没有人接"，而接错误的那次 `safeHandle` 注册就发生在这些文件里。
+ * 把 boot 入口也当根，等于承认"只要应用起得来就算可达"——那是比契约松一档的口径（boot 期抛的错根本不经过
+ * `safeHandle`，界面读不到那句）。257 个文件（handler 根）／258（再多算 preload 与 boot）两种根今天的
+ * 孤儿名单都是空的，所以按严的那条写。
+ */
+function ipcEntryRoots(): string[] {
+  const handlersDir = path.join(MAIN_ROOT, 'ipc', 'handlers')
+  return fs
+    .readdirSync(handlersDir)
+    .filter((f) => f.endsWith('.ts'))
+    .map((f) => path.join(handlersDir, f))
+}
+
+function ipcClosure(opts: { includeTypeOnly?: boolean; roots?: string[] } = {}): Set<string> {
+  const seen = new Set<string>()
+  const stack = [...(opts.roots ?? ipcEntryRoots())]
+  while (stack.length > 0) {
+    const cur = stack.pop()!
+    if (seen.has(cur) || !fs.existsSync(cur)) continue
+    seen.add(cur)
+    const src = fs.readFileSync(cur, 'utf-8').replace(/\r\n/g, '\n')
+    const specs = [
+      ...Array.from(src.matchAll(VALUE_IMPORT_RE), (m) => m[1]!),
+      ...Array.from(src.matchAll(EXPORT_FROM_RE), (m) => m[1]!),
+      ...Array.from(src.matchAll(BARE_IMPORT_RE), (m) => m[1]!)
+    ]
+    // 动态 import() 也算一条边：它运行时确实会把模块拉起来（`merge-service` 就是这么被用到的）
+    specs.push(...Array.from(src.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g), (m) => m[1]!))
+    if (opts.includeTypeOnly) specs.push(...Array.from(src.matchAll(TYPE_IMPORT_RE), (m) => m[1]!))
+    for (const sp of specs) {
+      const r = resolveSpecifier(sp, cur)
+      if (r) stack.push(r)
+    }
+  }
+  return seen
+}
+
+function unreachableCodes(reach: Set<string>): string[] {
+  const out: string[] = []
+  for (const [code, files] of codesInMain()) {
+    const abs = files.map((f) => path.join(MAIN_ROOT, f.replace(/\//g, path.sep)))
+    if (!abs.some((a) => reach.has(a))) out.push(`${code}（throw 站点：${files.join(', ')}）`)
+  }
+  return out
+}
+
+describe('回码的 throw 站点从 IPC 入口可达（V4-Iter-247）', () => {
+  const strict = ipcClosure()
+
+  it('每个回码都有一个"能被某个 safeHandle 的调用栈走到"的出处；不可达＝这句四语文案永远读不到', () => {
+    expect(unreachableCodes(strict), '回码抛在没人 import 得到的文件里 = 死码，界面永远撞不到').toEqual([])
+  })
+
+  it('放宽一档（把编译期会擦掉的 import type 也算边）名单不变——两种口径都得是空的', () => {
+    expect(unreachableCodes(ipcClosure({ includeTypeOnly: true }))).toEqual([])
+  })
+
+  it('扫描器不是空转：① 多行 import 的文件收得到 ② 闭包确实有边界（不是"全都可达"）', () => {
+    // ① 这两个只能靠**多行** import 收到；第一版单行／`[^;{}]` 正则把它们漏成了孤儿码
+    for (const f of ['agent/file-snapshots.ts', 'agent/eval/suite.ts', 'mcp/json-rpc.ts']) {
+      expect(strict.has(path.join(MAIN_ROOT, f.replace(/\//g, path.sep))), `闭包里应当有 ${f}`).toBe(true)
+    }
+    // ② 反向对照：真有一批文件在闭包外。若哪天扫描器写成"返回全部文件"，这一条必须红
+    const all = walkTs(path.join(SRC_ROOT, 'main')).concat(walkTs(path.join(SRC_ROOT, 'shared')))
+    expect(strict.size, '闭包不该等于整个 src/main＋src/shared').toBeLessThan(all.length)
+    expect(strict.has(path.join(MAIN_ROOT, 'types', 'better-sqlite3-multiple-ciphers.d.ts')), 'd.ts 不是运行期模块').toBe(false)
+    // ③ 边界名单要**看得懂**：落在 src/main 里的那些闭包外文件，都不该同时是回码的出处
+    const outside = all
+      .filter((p) => !strict.has(p))
+      .map((p) => path.relative(MAIN_ROOT, p).split(path.sep).join('/'))
+      .filter((rel) => !rel.startsWith('../')) // src/shared 下的不在回码扫描范围内，别拿它凑数
+    const withCodes = new Set<string>()
+    for (const files of codesInMain().values()) for (const f of files) withCodes.add(f)
+    for (const rel of outside) {
+      expect(withCodes.has(rel), `闭包外的 ${rel} 不该同时是回码的出处`).toBe(false)
+    }
+    expect(outside.length, '闭包外名单空了＝扫描器八成把整个 src/main 都收进来了').toBeGreaterThan(0)
+  })
+})
