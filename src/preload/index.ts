@@ -770,6 +770,19 @@ const api = {
     tokens: number | null
   ): Promise<{ windows: Record<string, number>; rejected?: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SET_MODEL_WINDOW, { providerId, model, tokens }),
+  // §237：每台模型的备用 target（`providerId::model` → 一台）。表里没有的那台＝没设过＝一句都不换。
+  getFallbackTargets: (): Promise<
+    Record<string, { providerId: string; model: string }> | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.AGENT_GET_FALLBACKS),
+  /** 设/清某台模型的备用（target=null 为清除）；回传最新表＋拒绝码，调用方不做乐观更新 */
+  setFallbackTarget: (
+    providerId: string,
+    model: string,
+    target: { providerId: string; model: string } | null
+  ): Promise<
+    | { targets: Record<string, { providerId: string; model: string }>; rejected?: string }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.AGENT_SET_FALLBACK, { providerId, model, target }),
   /** 已判出的"这台模型当得了管控者吗"清单（带 stale：本地镜像换了就该重探） */
   listDelegateCapabilities: (): Promise<DelegateCapabilityView[]> =>
     ipcRenderer.invoke(IPC.AGENT_LIST_DELEGATE_CAPS),

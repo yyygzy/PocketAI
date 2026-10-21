@@ -20,6 +20,7 @@ import {
   MODEL_WINDOW_MIN_TOKENS,
   modelWindowKey
 } from '../../../../../shared/model-window'
+import { fallbackTargetKey, type FallbackTarget } from '../../../../../shared/fallback-target'
 import { chatSendFailureText, hasIpcFailed, ipcFailText, ipcFailureText, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 import { useToast } from '../../../components/ToastProvider'
@@ -88,6 +89,14 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [modelWindows, setModelWindows] = useState<Record<string, number>>({})
   /** 那一读失败过：界面不许把"没读到"演成"没有一台模型设过窗口"（§222 那一族） */
   const [modelWindowsUnread, setModelWindowsUnread] = useState<string | null>(null)
+  /** §237：每台模型的备用 target 表（`providerId::model` → 一台）；表里没那台＝没设过＝引擎一句都不换 */
+  const [fallbackTargets, setFallbackTargets] = useState<Record<string, FallbackTarget>>({})
+  const [fallbackUnread, setFallbackUnread] = useState<string | null>(null)
+  /**
+   * §237：这一轮的固定开销已超过**声明过的**窗口，历史只带了最近一问（引擎那侧 `windowPlan.noRoom`）。
+   * 只在 DONE 带 true 时点亮，切会话／起新一轮都清掉——它是"这一轮"的事实，不是会话的属性。
+   */
+  const [historyTight, setHistoryTight] = useState(false)
   /** 运行中实时步骤条 chip 流（done/error/切会话清空；不打 messages-reducer，避免污染消息流） */
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [providerId, setProviderId] = useState('')
@@ -310,6 +319,71 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           setModelWindowsUnread(null)
         })
         .catch(reportIpcError('agent.setModelContextWindow'))
+    },
+    [providerId, model, toast, t]
+  )
+
+  // ---------- §237：每台模型的备用 target ----------
+  // 挂载读一次，之后以 set 通道回传的最新表为准（口径同上面那颗窗口：不做本地乐观更新）。
+  useEffect(() => {
+    void window.pocketai
+      .getFallbackTargets()
+      .then((res) => {
+        // 读不到不许咽成空表——空表在界面上和"没有一台模型设过备用"长得一模一样
+        if (hasIpcFailed(res)) {
+          setFallbackUnread(ipcFailText(res, t('agent.unknownError')))
+          return
+        }
+        setFallbackUnread(null)
+        setFallbackTargets(res)
+      })
+      .catch(reportIpcError('agent.getFallbackTargets'))
+  }, [t])
+
+  /** 当前选中那台模型的备用；null=没设过 */
+  const fallbackTarget =
+    providerId && model ? fallbackTargets[fallbackTargetKey(providerId, model)] ?? null : null
+
+  /**
+   * 备用**设过但那台已经不在这个实例里**：provider 不在清单／被停用，或它的模型清单里没这个名字
+   * （§151 那类清单漂移会造出这一格）。判据与引擎那处逐字同一条（enabled ＋ models.includes），
+   * 差别只是界面拿得到列表，能把它说出来；引擎那侧选择不换、只留日志。
+   */
+  const fallbackMissing = (() => {
+    if (!fallbackTarget) return false
+    const p = providers.find((x) => x.id === fallbackTarget.providerId)
+    return !p || !p.enabled || !p.models.includes(fallbackTarget.model)
+  })()
+
+  /**
+   * 设/清当前这台模型的备用（下一轮运行生效）。
+   * 三档失败各说各的：IPC 失败⇒原因；服务层回码拒绝⇒那句四语（"指向自己"与"这台不行"是两回事）；
+   * 都不做本地乐观更新。
+   */
+  const setFallback = useCallback(
+    (target: FallbackTarget | null) => {
+      if (!providerId || !model) return
+      void window.pocketai
+        .setFallbackTarget(providerId, model, target)
+        .then((res) => {
+          if (hasIpcFailed(res)) {
+            toast.error(ipcFailText(res, t('agent.unknownError')))
+            return
+          }
+          if (res.rejected) {
+            toast.error(
+              t(
+                res.rejected === 'FALLBACK_IS_SELF'
+                  ? 'agent.fallback.rejected.FALLBACK_IS_SELF'
+                  : 'agent.fallback.rejected.FALLBACK_INVALID_ID'
+              )
+            )
+            return
+          }
+          setFallbackTargets(res.targets)
+          setFallbackUnread(null)
+        })
+        .catch(reportIpcError('agent.setFallbackTarget'))
     },
     [providerId, model, toast, t]
   )
@@ -608,6 +682,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setLiveSteps([])
     setNoToolCallNotice(false)
     setMcpHeldBack(0)
+    // §237：那句"这一轮带不下更多历史"是**那一轮**的事实，切会话不该把它带过去
+    setHistoryTight(false)
     if (!conversationId) {
       dispatch({ type: 'clear' })
       return
@@ -684,6 +760,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           // 零调用提示：有工具可用但未调用任何工具
           setNoToolCallNotice(e.usedTools === false)
           setMcpHeldBack(e.mcpHeldBack ?? 0)
+          // §237：引擎那一侧算出来的"这一轮带不下更多历史"上屏（只在 true 时点亮）
+          setHistoryTight(e.historyTight === true)
           // 把知识库引用来源挂到最终回答卡片（流式结束即时显示，无需 reload）
           if (e.sources?.length) {
             dispatch({ type: 'setSources', messageId: e.finalMessageId, sources: e.sources })
@@ -855,6 +933,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setInterrupted(false)
     setRunStats(null) // 新一轮运行：清除上轮统计，待 DONE 事件更新
     setLatestTraces(null) // 旧分步明细失效，下次展开重新拉取
+    setHistoryTight(false) // 上一轮那句"带不下更多历史"不作数：这一轮的窗口判据还没算出来
     setCurrentStep(0)
 
     // safeHandle 把 chat:send 的抛错转成 {ok:false} **返回值**而不是 rejection，
@@ -951,6 +1030,12 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     contextWindowTokens,
     contextWindowUnread: modelWindowsUnread,
     setContextWindow,
+    fallbackTarget,
+    fallbackMissing,
+    fallbackUnread,
+    setFallback,
+    historyTight,
+    dismissHistoryTight: () => setHistoryTight(false),
     providerId,
     model,
     setModel,

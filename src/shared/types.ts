@@ -982,6 +982,12 @@ export interface AgentDoneEvent {
    * 只在 >0 时携带；渲染层附在零调用提示里，告诉用户"不是模型懒，是工具没给"。
    */
   mcpHeldBack?: number
+  /**
+   * 这一轮的固定开销（system＋工具清单＋技能＋记忆）已经超过这台模型**声明过的**窗口，
+   * 历史只带了最近一问（V4-Iter-237 把 §234 那句只进日志的实话搬上屏）。
+   * 只在 true 时携带；没声明过窗口的模型永远不带——那把尺子量不了它，猜出来的句子不能说。
+   */
+  historyTight?: boolean
 }
 
 /** Agent 流式文本增量（逐 token 推送） */
@@ -2193,6 +2199,8 @@ export const IPC = {
   AGENT_RESTORE_FILE_WRITE: 'agent:restore-file-write', // §231：把一次 fs_write 还原到写入前（按快照 id）
   AGENT_GET_MODEL_WINDOWS: 'agent:get-model-windows', // §234：每台模型声明的上下文窗口（token），只读
   AGENT_SET_MODEL_WINDOW: 'agent:set-model-window', // §234：设/清一台模型的上下文窗口，回传最新表
+  AGENT_GET_FALLBACKS: 'agent:get-fallbacks', // §237：每台模型的备用 target（`providerId::model` → 一台），只读
+  AGENT_SET_FALLBACK: 'agent:set-fallback', // §237：设/清某台模型的备用，回传最新表
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

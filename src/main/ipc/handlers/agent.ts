@@ -20,6 +20,7 @@ import {
   textProtocolToggleSchema,
   modelWindowSetSchema,
   interjectSchema,
+  fallbackSetSchema,
   delegateProbeSchema,
   delegateToggleSchema
 } from '../../../shared/schemas/agent'
@@ -28,6 +29,7 @@ import {
   listModelContextWindows,
   setModelContextWindow
 } from '../../agent/model-window-prefs'
+import { listFallbackTargets, setFallbackTarget } from '../../agent/fallback-target-prefs'
 import { listDelegateCapabilitiesWithStaleness, probeDelegateCapability, setDelegationEnabled } from '../../agent/delegate-capability'
 import { idSchema } from '../../../shared/schemas/providers'
 
@@ -162,6 +164,17 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string; tokens: number | null }) =>
       setModelContextWindow(payload.providerId, payload.model, payload.tokens),
     argsSchema(modelWindowSetSchema)
+  )
+
+  // ---------- 每台模型可选的「备用 target」（V4-Iter-237）----------
+  // 只有一个输入：这台模型重试耗尽后换哪一台。**引擎只在主干 run 换一次**（见 engine.ts 那一处注释），
+  // 服务层拒绝时同样只回码，句子由界面按语言拼（口径同上面那颗窗口开关）。
+  safeHandle(IPC.AGENT_GET_FALLBACKS, () => listFallbackTargets())
+  safeHandle(
+    IPC.AGENT_SET_FALLBACK,
+    (_e, payload: { providerId: string; model: string; target: { providerId: string; model: string } | null }) =>
+      setFallbackTarget(payload.providerId, payload.model, payload.target),
+    argsSchema(fallbackSetSchema)
   )
 
   // ---------- 委派能力探针（V4-Iter-142）----------

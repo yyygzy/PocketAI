@@ -58,6 +58,8 @@ import {
 } from '../../shared/text-tool-protocol'
 import { isTextProtocolForced } from './text-protocol-prefs'
 import { getModelContextWindow } from './model-window-prefs'
+import { getFallbackTarget } from './fallback-target-prefs'
+import { providerRepo } from '../db/repositories/provider.repo'
 import { DEFAULT_MESSAGES_WHEN_WINDOW_UNSET } from '../../shared/model-window'
 import { isDelegationEnabledFor } from './delegate-prefs'
 import {
@@ -201,6 +203,11 @@ interface AgentRunContext {
    */
   retrievalHitsLocalEndpoint: boolean
   target: ChatTarget
+  /**
+   * §237：这一轮已经用过那唯一一次"换备用"没有。**只许换一次**，所以这个事实必须挂在 run 上，
+   * 而不是靠"备用表和主表不一样"去推断。子 run 一律不看备用（角色归因与容量算术都按那台模型算）。
+   */
+  fallbackTried: boolean
   messages: AdapterChatMessage[]
   master: AbortController
   userMsg: MessageRecord
@@ -1257,6 +1264,7 @@ class AgentEngine {
       childUsesRetrieval,
       retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint,
       target,
+      fallbackTried: false,
       messages,
       master,
       userMsg,
@@ -1337,7 +1345,10 @@ class AgentEngine {
         traceStats: safeTraceStats(requestId),
         sources: ctx.sources.length > 0 ? ctx.sources : undefined,
         usedTools: ctx.recentToolSignatures.length > 0,
-        mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined
+        mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined,
+        // §237：§234 那条只进日志的实话上屏。判据是**我们自己那把尺子**算出来的（声明过窗口
+        // 且固定开销已把它吃光）——没声明过的模型量不了，就不带这个标记，不猜一句话给用户。
+        historyTight: windowPlan.noRoom ? true : undefined
       }
       emit(IPC.AGENT_DONE_EVENT, doneEvt)
       conversationRepo.touch(conversationId, { status: 'done' })
@@ -1443,6 +1454,7 @@ class AgentEngine {
     // 调用 LLM（带重试）
     let result: Awaited<ReturnType<typeof adapter.streamChat>> | undefined
     let llmError: unknown
+    let retryExhausted = false
     // TTFT/整轮耗时实测（Iter-74）：每次 attempt 重置，仅成功 attempt 记录一次
     let stepT0 = performance.now()
     let stepTtft: number | undefined
@@ -1517,6 +1529,12 @@ class AgentEngine {
         const retryable =
           (e instanceof ProviderError && e.retryable) || !(e instanceof ProviderError)
         if (!retryable || attempt >= MAX_LLM_RETRIES) {
+          /**
+           * 「重试跑完了」与「这类错重试没意义」是两档（§237 用户选定只认前者）：
+           * 401／400 那一类第一发就 break，换台机器救不了根因，还会把"你没配 Key"
+           * 演成"另一台答完了"——那是把失败藏起来，不是兜住失败。
+           */
+          retryExhausted = retryable && attempt >= MAX_LLM_RETRIES
           llmError = e
           break
         }
@@ -1563,6 +1581,58 @@ class AgentEngine {
           error: 'tools_unsupported_fallback'
         })
         return 'llm'
+      }
+      // ── §237：这台把重试跑完了仍未答上来 ⇒ 按用户预设换**一次**备用 ──────────
+      // 三条限制都是刻意的，后来人别"顺手放宽"：
+      //  · 只在 `retryExhausted` 那一档换（不可重试的错误换台也没用，见上面那处注释）；
+      //  · 只在主干 run 换——子 run 的模型是角色归因的一部分，§145／§150 那套显存算术也按它算；
+      //  · 一次都不许多换（`fallbackTried`）。两次机会就成了一条链，链就是路由，
+      //    而"单机本地优先要不要路由"在 §237 的来由里已经判过：不划算。
+      // 换完是**重跑这一步**（与文本协议切换同一条形状：占位写成终态、return 'llm'），
+      // 所以这一发多消耗一步预算——用户等的是"答案",不是"步数"，把它演成免费的才是撒谎。
+      if (!ctx.fallbackTried && !ctx.asChild && retryExhausted) {
+        const fb = getFallbackTarget(target.providerId, target.model)
+        if (fb) {
+          // 备用那台**现在还在吗**：provider 被删／禁用，或模型清单里没这个名字（§151 那类清单漂移）
+          // ⇒ 不换。这里不许"先换了再说"：那会把一次可诊断的失败换成另一台机器上的陌生报错。
+          const rec = providerRepo.get(fb.providerId)
+          const usable = !!rec && rec.enabled && rec.models.includes(fb.model)
+          if (usable) {
+            ctx.fallbackTried = true
+            // 先记失败那一行（带着**旧**模型归因），再把这一轮的归因换到新那台：
+            // 顺序反过来就等于让那一次失败冒充是新机器错的（判据：换 target 必须留下可归因的一行）
+            safeTrace({
+              requestId: ctx.requestId,
+              conversationId,
+              stepIndex,
+              stepType: 'llm',
+              durationMs: Date.now() - stepStart,
+              status: 'error',
+              error: `fallback_swap:${errMsg(llmError)}`,
+              model: target.model
+            })
+            ctx.target = { providerId: fb.providerId, model: fb.model }
+            traceModels.set(ctx.requestId, fb.model)
+            // 会话上那行"最近使用"也要跟着换：否则切走再回来，标题栏还写着那台失败的模型
+            conversationRepo.touch(conversationId, { modelLabel: `agent:${fb.providerId}:${fb.model}` })
+            const swapText = `（${target.model} 连续重试仍未答上来，已换到 ${fb.model} 再试一次）`
+            messageRepo.updateContent(assistantMsg.id, swapText, 'done')
+            ctx.pendingAssistantMsgId = ''
+            emit(IPC.AGENT_STEP_EVENT, {
+              requestId: ctx.requestId,
+              conversationId,
+              stepIndex,
+              type: 'thought',
+              text: swapText,
+              messageId: assistantMsg.id
+            })
+            logger.warn(`[agent] step=${stepIndex} 换备用 target：${target.providerId}/${target.model} → ${fb.providerId}/${fb.model}`)
+            return 'llm'
+          }
+          // 失效的备用不静默：日志留一行，界面上那句"备用那台不在了"由模型栏说
+          // （它能分清"没设过"与"设了但那台没了"，引擎分不清）
+          logger.warn(`[agent] 备用 ${fb.providerId}/${fb.model} 不可用（provider 不存在／已禁用／模型清单里没有），本轮不换`)
+        }
       }
       const partial = accumulated || `_(LLM 调用失败: ${errMsg(e)})_`
       messageRepo.updateContent(assistantMsg.id, partial, 'error')

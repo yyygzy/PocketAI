@@ -2,6 +2,7 @@
 // apiKey 落库、paths 是本地 .ics 文件读取面，带宽松资源上限。
 import { z } from 'zod'
 import { CHAT_MAX_CONTENT_CHARS } from './chat'
+import { FALLBACK_MAX_PART_CHARS } from '../fallback-target'
 
 const AGENT_MAX_APIKEY_CHARS = 256
 const AGENT_MAX_PATH_CHARS = 1024
@@ -75,6 +76,24 @@ export const textProtocolToggleSchema = z.object({
   // 模型名不受 id 上限约束（带 registry/量化后缀的长名实测可超 64），单列一档 128
   model: z.string().min(1).max(128),
   on: z.boolean()
+})
+
+/**
+ * AGENT_SET_FALLBACK 入参（V4-Iter-237）：设／清某台模型的备用 target。
+ * `target: null` 表示清除（回到"没备用"），判据同 §234 那颗窗口：类型与形状在这儿挡，
+ * "指向自己"这类语义拒绝留在服务层（它才知道现有表里是谁）。id 长度与 `FALLBACK_MAX_PART_CHARS` 同档。
+ */
+const fallbackPartSchema = z
+  .string()
+  .min(1)
+  .max(FALLBACK_MAX_PART_CHARS, `标识过长（上限 ${FALLBACK_MAX_PART_CHARS} 字符）`)
+
+export const fallbackSetSchema = z.object({
+  providerId: fallbackPartSchema,
+  model: fallbackPartSchema,
+  target: z
+    .object({ providerId: fallbackPartSchema, model: fallbackPartSchema })
+    .nullable()
 })
 
 /**

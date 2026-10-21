@@ -434,6 +434,10 @@ export const AgentPanel: React.FC = () => {
               contextWindowTokens={chat.contextWindowTokens}
               contextWindowUnread={chat.contextWindowUnread}
               onSetContextWindow={(tokens) => chat.setContextWindow(tokens)}
+              fallbackTarget={chat.fallbackTarget}
+              fallbackMissing={chat.fallbackMissing}
+              fallbackUnread={chat.fallbackUnread}
+              onSetFallback={(target) => chat.setFallback(target)}
             />
           </div>
           {/* 头部快捷：会话内搜索 */}
@@ -829,6 +833,25 @@ export const AgentPanel: React.FC = () => {
             onClose={() => chat.setNoToolCallNotice(false)}
             onEnableTextProtocol={() => void chat.setTextProtocol(true)}
           />
+        )}
+
+        {/* §237：这一轮的历史被裁到只带最近一问。判据是**我们自己那把尺子**算出来的
+            （声明过窗口、且固定开销已把它吃光）——没声明过的模型量不了，就一句都不说，不猜。 */}
+        {chat.historyTight && !chat.running && (
+          <div
+            className="mb-2 flex items-start gap-2 text-xs rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] px-3 py-2"
+            data-testid="history-tight-notice"
+          >
+            <span className="flex-1 leading-snug">{t('agent.historyTightHint')}</span>
+            <button
+              onClick={chat.dismissHistoryTight}
+              className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              aria-label={t('common.close')}
+              data-testid="history-tight-close"
+            >
+              ×
+            </button>
+          </div>
         )}
 
         {/* 只读那一档**不渲染**输入区，而不是渲染一个禁用框：禁用框不吭声，用户只知道"发不出去"；

@@ -76,6 +76,9 @@ beforeEach(() => {
     getSessionStats: () => null,
     getAgentTextProtocol: () => [],
     getModelContextWindows: () => ({}),
+    // §237：挂载时要读这张备用表（桩给空表＝没有一台设过备用）
+    getFallbackTargets: () => ({}),
+    setFallbackTarget: () => ({ targets: {} }),
     getConversation: () => null,
     listChildConversations: () => [],
     setModelContextWindow: () => ({ windows: {} }),
@@ -382,6 +385,9 @@ function stubPanel(): Record<string, (...args: any[]) => unknown> {
     getLatestRunTraces: () => [],
     getAgentTextProtocol: () => [],
     getModelContextWindows: () => ({}),
+    // §237：挂载时要读这张备用表（桩给空表＝没有一台设过备用）
+    getFallbackTargets: () => ({}),
+    setFallbackTarget: () => ({ targets: {} }),
     getConversation: () => null,
     listChildConversations: () => [],
     getAgentWorkspaceDir: () => '',

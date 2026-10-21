@@ -159,6 +159,9 @@ describe('hook 侧：那一读与那一写都各有两条失败面', () => {
       getSessionStats: () => null,
       getAgentTextProtocol: () => [],
       getModelContextWindows: () => windows,
+      // §237：挂载时要读这张备用表（桩给空表＝没有一台设过备用）
+      getFallbackTargets: () => ({}),
+      setFallbackTarget: () => ({ targets: {} }),
       getConversation: () => null,
       listChildConversations: () => [],
       setModelContextWindow: (_p: string, _m: string, tokens: number | null) => setReturn(tokens),

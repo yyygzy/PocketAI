@@ -105,6 +105,9 @@ function stubBase(): Record<string, (...args: any[]) => unknown> {
     getLatestRunTraces: () => tracesFor,
     getAgentTextProtocol: () => [],
     getModelContextWindows: () => ({}),
+    // §237：挂载时要读这张备用表（桩给空表＝没有一台设过备用）
+    getFallbackTargets: () => ({}),
+    setFallbackTarget: () => ({ targets: {} }),
     getConversation: (id: string) => {
       identityReads.push(id)
       return records[id] ?? null

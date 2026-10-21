@@ -41,6 +41,9 @@ function mount() {
     getAgentTextProtocol: () => [],
     // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
     getModelContextWindows: () => ({}),
+    // §237：挂载时要读这张备用表（桩给空表＝没有一台设过备用）
+    getFallbackTargets: () => ({}),
+    setFallbackTarget: () => ({ targets: {} }),
     getConversation: () => null,
     listChildConversations: () => [],
     setModelContextWindow: () => ({ windows: {} }),

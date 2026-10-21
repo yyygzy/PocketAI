@@ -7,6 +7,7 @@ import {
   MODEL_WINDOW_MIN_TOKENS
 } from '../../../../../shared/model-window'
 import { useI18n } from '../../../i18n'
+import type { FallbackTarget } from '../../../../../shared/fallback-target'
 
 interface Props {
   providers: ProviderRecord[]
@@ -29,6 +30,15 @@ interface Props {
   contextWindowUnread?: string | null
   /** 设/清当前模型的窗口（null=清除）；不传则不出现这个控件 */
   onSetContextWindow?: (tokens: number | null) => void
+  /**
+   * §237：这台模型的备用 target。三种"没有"要分开说：没设过／读不到／设了但那台已经不在这个实例里
+   * （provider 被删或停用、模型清单漂移）——把第三种演成第一种，用户会以为"没兜底"，其实是"兜底指向了一个不存在的"。
+   */
+  fallbackTarget?: FallbackTarget | null
+  fallbackMissing?: boolean
+  fallbackUnread?: string | null
+  /** 设/清当前模型的备用（null=清除）；不传则不出现这个控件 */
+  onSetFallback?: (target: FallbackTarget | null) => void
 }
 
 export const AgentModelBar: React.FC<Props> = ({
@@ -46,7 +56,11 @@ export const AgentModelBar: React.FC<Props> = ({
   onToggleTextProtocol,
   contextWindowTokens,
   contextWindowUnread,
-  onSetContextWindow
+  onSetContextWindow,
+  fallbackTarget,
+  fallbackMissing,
+  fallbackUnread,
+  onSetFallback
 }) => {
   const { t } = useI18n()
   // §234 的小编辑器：打开时把当前值灌进草稿（不打开就不建这个 state 的内容）
@@ -54,6 +68,23 @@ export const AgentModelBar: React.FC<Props> = ({
   const [windowDraft, setWindowDraft] = useState('')
   const draftNumber = windowDraft.trim() === '' ? Number.NaN : Number(windowDraft)
   const draftValid = Number.isInteger(draftNumber)
+  // §237 的备用编辑器：草稿是一对 provider＋模型，两个都选了才能保存
+  const [fallbackOpen, setFallbackOpen] = useState(false)
+  const [fallbackDraftProvider, setFallbackDraftProvider] = useState('')
+  const [fallbackDraftModel, setFallbackDraftModel] = useState('')
+  /** 能当备用的候选：排除当前这台自己（换成自己＝一次没换的"换"，比没有更误导） */
+  const fallbackOptions = providers
+    .filter((p) => p.enabled)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      models: p.models.filter((m) => !(p.id === providerId && m === model))
+    }))
+    .filter((p) => p.models.length > 0)
+  const draftFallbackValid = !!fallbackDraftProvider && !!fallbackDraftModel
+  const fallbackProviderName = fallbackTarget
+    ? providers.find((p) => p.id === fallbackTarget.providerId)?.name ?? fallbackTarget.providerId
+    : ''
   return (
     <div className="flex items-center gap-2 flex-wrap mb-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-2 py-1">
       <span className="text-xs font-semibold text-[var(--color-text-muted)] shrink-0">
@@ -180,6 +211,107 @@ export const AgentModelBar: React.FC<Props> = ({
           </span>
           <span className="basis-full text-[10px] text-[var(--color-text-muted)] leading-snug">
             {t('agent.windowNotNumCtx')}
+          </span>
+        </div>
+      )}
+      {/* 模型级「备用 target」（§237）：同一台重试耗尽后允许换的那一台。
+          徽标有四张脸，逐张说实话——没设过／读不到／设了但那台不在了／设了。
+          把"读不到"或"那台没了"演成"没设过"，就是把一个坏掉的兜底说成没有兜底（§222 那一族同一条轴）。 */}
+      {onSetFallback && providerId && model && (
+        <button
+          className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+            fallbackTarget && !fallbackMissing
+              ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+              : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]'
+          }`}
+          title={
+            fallbackUnread
+              ? `${t('agent.fallbackUnread')} — ${fallbackUnread}`
+              : t('agent.fallbackHint')
+          }
+          data-testid="agent-fallback-badge"
+          onClick={() => {
+            setFallbackDraftProvider(
+              fallbackTarget && providers.some((p) => p.id === fallbackTarget.providerId)
+                ? fallbackTarget.providerId
+                : ''
+            )
+            setFallbackDraftModel(fallbackTarget?.model ?? '')
+            setFallbackOpen((v) => !v)
+          }}
+        >
+          {fallbackUnread
+            ? t('agent.fallbackReadFail')
+            : !fallbackTarget
+              ? t('agent.fallbackUnset')
+              : fallbackMissing
+                ? t('agent.fallbackMissing', { model: fallbackTarget.model })
+                : t('agent.fallbackValue', { name: fallbackProviderName, model: fallbackTarget.model })}
+        </button>
+      )}
+      {fallbackOpen && onSetFallback && (
+        <div
+          className="basis-full flex flex-wrap items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] px-2 py-1.5"
+          data-testid="agent-fallback-editor"
+        >
+          <span className="text-[10px] font-semibold text-[var(--color-text-muted)] shrink-0">
+            {t('agent.fallback')}
+          </span>
+          <select
+            className="select-mini w-[150px]"
+            aria-label={t('agent.fallbackProvider')}
+            value={fallbackDraftProvider}
+            onChange={(e) => {
+              setFallbackDraftProvider(e.target.value)
+              setFallbackDraftModel('')
+            }}
+          >
+            <option value="">{t('agent.selectProvider')}</option>
+            {fallbackOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <select
+            className="select-mini w-[170px]"
+            aria-label={t('agent.fallbackModel')}
+            value={fallbackDraftModel}
+            disabled={!fallbackDraftProvider}
+            onChange={(e) => setFallbackDraftModel(e.target.value)}
+          >
+            <option value="">{t('agent.selectModel')}</option>
+            {(fallbackOptions.find((p) => p.id === fallbackDraftProvider)?.models ?? []).map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          {/* 两个都没选就不让保存：宁可让按钮灰着，也不要发一次"清除"或一条空备用出去 */}
+          <button
+            className="btn-ghost text-xs shrink-0"
+            disabled={!draftFallbackValid}
+            data-testid="agent-fallback-save"
+            onClick={() => {
+              if (!draftFallbackValid) return
+              onSetFallback({ providerId: fallbackDraftProvider, model: fallbackDraftModel })
+              setFallbackOpen(false)
+            }}
+          >
+            {t('common.save')}
+          </button>
+          <button
+            className="btn-ghost text-xs shrink-0"
+            data-testid="agent-fallback-clear"
+            onClick={() => {
+              onSetFallback(null)
+              setFallbackOpen(false)
+            }}
+          >
+            {t('agent.fallbackClear')}
+          </button>
+          <span className="basis-full text-[10px] text-[var(--color-text-muted)] leading-snug">
+            {t('agent.fallbackEditorTip')}
           </span>
         </div>
       )}
