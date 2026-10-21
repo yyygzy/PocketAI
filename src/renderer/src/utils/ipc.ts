@@ -42,7 +42,9 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   CHAT_NO_TARGET: 'chat.errNoTarget',
   CHAT_MSG_NOT_ASSISTANT: 'chat.errMsgNotAssistant',
   CHAT_MSG_NOT_USER: 'chat.errMsgNotUser',
-  GLOSSARY_TERM_EMPTY: 'translate.glossaryTermEmpty'
+  GLOSSARY_TERM_EMPTY: 'translate.glossaryTermEmpty',
+  // 插队赶在运行结束之后（V4-Iter-238）：那句中文留给日志，界面只说"没被收下、还在条上"
+  RUN_NOT_FOUND: 'agent.interjectRunEnded'
 }
 
 /**

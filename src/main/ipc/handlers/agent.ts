@@ -2,6 +2,7 @@
 import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import { chatService } from '../../chat/chat-service'
+import { agentEngine } from '../../agent/engine'
 import { toolRegistry } from '../../tools/registry'
 import { getWorkspaceDir, setWorkspaceDir, restoreFileWrite } from '../../tools/fs-tools'
 import { getShellConfig, setShellConfig } from '../../tools/shell-config'
@@ -18,6 +19,7 @@ import {
   toolApproveResponseSchema,
   textProtocolToggleSchema,
   modelWindowSetSchema,
+  interjectSchema,
   delegateProbeSchema,
   delegateToggleSchema
 } from '../../../shared/schemas/agent'
@@ -42,6 +44,22 @@ export function registerAgentHandlers(): void {
     chatService.abort(requestId)
     return { ok: true }
   }, argsSchema(idSchema))
+
+  // 运行中插队（V4-Iter-238）：把一句话交给正在跑的主干 run，由它在**步与步之间**收下。
+  // 这不是 abort 的轻量版：两者互不相干，插队不会中止、也不会打断当前那一步。
+  // 收不下（运行已结束／不是主干 run）就抛 RUN_NOT_FOUND，由 safeHandle 转成 {ok:false,error}——
+  // 与上面「还原到写入前」同一条规矩：拒绝原因只在一处产出，这里不自己包 try/catch。
+  // 渲染层接住它把消息退回队列等正常发送；这里不许"看起来成功"，否则用户那句话在两处都不存在。
+  safeHandle(
+    IPC.AGENT_INTERJECT,
+    (_e, payload: { requestId: string; clientRef: string; text: string }) => {
+      if (!agentEngine.interject(payload.requestId, payload.clientRef, payload.text)) {
+        throw new Error('RUN_NOT_FOUND:这轮运行已经结束，消息会回到队列等自动发送')
+      }
+      return { ok: true as const }
+    },
+    argsSchema(interjectSchema)
+  )
 
   // Agent 工作目录（fs_list/fs_read/fs_write 的安全边界）
   safeHandle(IPC.AGENT_GET_WORKSPACE_DIR, () => getWorkspaceDir())

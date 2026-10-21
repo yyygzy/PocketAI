@@ -20,12 +20,34 @@ import {
   MODEL_WINDOW_MIN_TOKENS,
   modelWindowKey
 } from '../../../../../shared/model-window'
-import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, ipcFailureText, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 import { useToast } from '../../../components/ToastProvider'
 import { findRerunSourceId, toAgentMessages, reduceLiveSteps, type AgentMessage, type LiveStep } from '../agent-shared'
 import { messagesReducer } from './messages-reducer'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../../utils/palette-nav'
+
+/**
+ * 运行中排队的一条消息（V4-Iter-238）。
+ * 只在渲染层内存里，**不落库、不进 store**：刷新页面就没了。这是有意的——
+ * 排队项既不是消息也不是任务，把它持久化就得引入第三种存储形状，而它的全部价值在"这一轮跑完接着说"。
+ */
+export interface AgentQueueItem {
+  /** 渲染层生成的本地 id，随插队请求交给引擎，再原样回到 step 事件里（对账用） */
+  clientRef: string
+  /** 排队项属于哪条会话：切会话不丢，切回来还在条上 */
+  conversationId: string
+  text: string
+  /**
+   * true = 已经交给引擎、等它在下个步边界收下。
+   * 只有 `interject` 事件能把它消掉；运行结束（DONE/ERROR）时还挂着的一律视为**没送到**，
+   * 退回排队等自动发送——宁可重发一次，也不能让用户那句话凭空消失。
+   */
+  interjecting: boolean
+}
+
+/** 排队条上限：再多就不是"补一句"而是"批量灌"了，那种场景应该等运行结束再发 */
+export const MAX_QUEUE_ITEMS = 20
 
 export function useAgentChat(providers: ProviderRecord[], assistants?: AssistantRecord[]) {
   const { t } = useI18n()
@@ -74,6 +96,130 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   // 事件订阅闭包内读取当前会话（effect 仅依赖 [t]，不能直接用 conversationId state）
   const conversationIdRef = useRef<string | null>(null)
   conversationIdRef.current = conversationId
+
+  /**
+   * 运行中排队消息（V4-Iter-238）。三个 ref 是同一件事的三个侧面——事件回调只有**首帧闭包**，
+   * 读 state 会读到过期值，而过期值在这条链上会直接造成重复消息：
+   *  · `runningRef`：`send()` 里的 `running` 挡板改用 ref，否则 DONE 回调里刚发起来的新一轮
+   *    会被上一次渲染的 `running=true` 挡回去（自动发送静默失效）；
+   *  · `queueRef`：队列的同步镜像，所有写入都走 `writeQueue`，让同一次回调里的"先归位再自动发"看得见；
+   *  · `sendRef`/`canStartRunRef`：DONE 回调要发下一条，而 send 的入参（模型/会话）必须取当前渲染的值。
+   */
+  const [queue, setQueue] = useState<AgentQueueItem[]>([])
+  const queueRef = useRef<AgentQueueItem[]>(queue)
+  const runningRef = useRef(false)
+  const sendRef = useRef<(text: string, attachments: ChatAttachment[]) => void>(() => {})
+  const canStartRunRef = useRef<() => boolean>(() => false)
+
+  /** running 的唯一写入口：ref 与 state 同步走，回调里读 runningRef 才拿得到"此刻" */
+  const setRunningNow = (v: boolean): void => {
+    runningRef.current = v
+    setRunning(v)
+  }
+
+  /** 队列的唯一写入口：ref 与 state 同步走，同一次回调里"先归位再自动发"才看得见新列表 */
+  const writeQueue = (next: AgentQueueItem[]): void => {
+    queueRef.current = next
+    setQueue(next)
+  }
+
+  /**
+   * 把一句话放进**当前会话**的排队条。返回本地 clientRef，空串表示没放进去（文本为空／没有会话／条满）。
+   * 条满要说出来：按下入队的人以为那句话已经在路上，静默丢掉等于骗人。
+   */
+  const pushQueueItem = (text: string, interjecting: boolean): string => {
+    const content = text.trim()
+    const convId = conversationIdRef.current
+    if (!content || !convId) return ''
+    const forThisConv = queueRef.current.filter((q) => q.conversationId === convId)
+    if (forThisConv.length >= MAX_QUEUE_ITEMS) {
+      toast.error(t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }))
+      return ''
+    }
+    const clientRef = `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    writeQueue([...queueRef.current, { clientRef, conversationId: convId, text: content, interjecting }])
+    return clientRef
+  }
+
+  /** 「入队」：等这一轮跑完自动发出（中止/出错时不自动发，见 settleQueueAfterRun） */
+  const enqueueText = (text: string): void => {
+    pushQueueItem(text, false)
+  }
+
+  /**
+   * 把一条排队项交给正在运行的主干 run（引擎只在下个步边界收下）。
+   * 这里"成功"只等于"引擎接了这条请求"，**不等于**它已进这一轮：真正的凭据是随后那条
+   * 带同一个 clientRef 的 `interject` 事件。所以成功分支什么都不做——
+   * 划掉排队项由事件负责，运行结束时还挂着的一律按"没送到"归回队列。
+   */
+  const requestInterject = (clientRef: string, text: string): void => {
+    const backToQueue = (msg?: IpcFailureInput): void => {
+      writeQueue(queueRef.current.map((q) => (q.clientRef === clientRef ? { ...q, interjecting: false } : q)))
+      if (msg) toast.error(ipcFailureText(msg, t) || t('agent.unknownError'))
+    }
+    const requestId = requestIdRef.current
+    // 还没有 requestId（发送请求本身尚在路上）：归回队列等自动发送，不报错误
+    if (!requestId) {
+      backToQueue()
+      return
+    }
+    void window.pocketai
+      .interjectAgent({ requestId, clientRef, text })
+      .then((r) => {
+        if (hasIpcFailed(r)) backToQueue(r)
+      })
+      .catch((e) => {
+        reportIpcError('agent.interjectAgent')(e)
+        backToQueue()
+      })
+  }
+
+  /** 「立即插队」：先进条（看得见），再交给引擎；接不住就留在条上当普通排队项 */
+  const interjectText = (text: string): void => {
+    const content = text.trim()
+    const clientRef = pushQueueItem(content, true)
+    if (!clientRef) return
+    requestInterject(clientRef, content)
+  }
+
+  /** 撤掉一条还没发出去的排队消息（只动内存，DB 里从来没有它） */
+  const dropQueued = (clientRef: string): void => {
+    writeQueue(queueRef.current.filter((q) => q.clientRef !== clientRef))
+  }
+
+  /** 排队条上的「发送」：运行中就插队，空闲时当成一条正常消息发出去 */
+  const sendQueuedNow = (clientRef: string): void => {
+    const item = queueRef.current.find((q) => q.clientRef === clientRef)
+    if (!item || item.interjecting) return
+    if (runningRef.current) {
+      writeQueue(queueRef.current.map((q) => ({ ...q, interjecting: q.clientRef === clientRef ? true : q.interjecting })))
+      requestInterject(clientRef, item.text)
+      return
+    }
+    if (!canStartRunRef.current()) return
+    writeQueue(queueRef.current.filter((q) => q.clientRef !== clientRef))
+    sendRef.current(item.text, [])
+  }
+
+  /**
+   * 一轮结束后的收尾（V4-Iter-238），两件事：
+   *  ① 还挂着"已交给引擎"的项归回排队——没收到 `interject` 事件就是没落库。
+   *     不归回的话它会永远停在"插队中"，既不上屏也不自动发，用户那句话就消失了；
+   *  ② 只有**正常跑完**且当前正看着这条会话时才自动发出下一条。中止/出错不自动发：
+   *     按停止就是要停下来看结果，紧跟一条自动发送等于没停；而后台会话的排队项要等用户切回来
+   *     再发——`send` 发的是"当前看着的会话"，在后台回调里发就是把话塞进别的会话。
+   */
+  const settleQueueAfterRun = (convId: string, autoSend: boolean): void => {
+    const settled = queueRef.current.map((q) =>
+      q.conversationId === convId && q.interjecting ? { ...q, interjecting: false } : q
+    )
+    writeQueue(settled)
+    if (!autoSend) return
+    const next = settled.find((q) => q.conversationId === convId && !q.interjecting)
+    if (!next || !canStartRunRef.current()) return
+    writeQueue(settled.filter((q) => q.clientRef !== next.clientRef))
+    sendRef.current(next.text, [])
+  }
 
   const selectedProvider = useMemo(
     () => providers.find((p) => p.id === providerId),
@@ -501,6 +647,16 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
 
     offs.push(
       window.pocketai.onAgentStep((e: AgentStepEvent) => {
+        /**
+         * 插队对账（V4-Iter-238）放在会话判据**之前**：clientRef 是全局唯一的本地 id，
+         * 这句话已经被引擎落库这件事与"用户现在看着哪条会话"无关。
+         * 若按 thisRunShownNow 把关，切走会话时这条对账会被丢掉，运行结束就会把同句话
+         * 当成"没送到"再发一遍——库里凭空多一条重复消息。
+         */
+        if (e.type === 'interject' && e.clientRef && fromThisRun(e.requestId)) {
+          const rest = queueRef.current.filter((q) => q.clientRef !== e.clientRef)
+          if (rest.length !== queueRef.current.length) writeQueue(rest)
+        }
         if (!thisRunShownNow(e)) return
         setCurrentStep(e.stepIndex)
         setLiveSteps((prev) => reduceLiveSteps(prev, e))
@@ -516,9 +672,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     offs.push(
       window.pocketai.onAgentDone((e: AgentDoneEvent) => {
         if (!fromThisRun(e.requestId)) return
-        setRunning(false)
+        setRunningNow(false)
         setCurrentStep(0)
         setLiveSteps([])
+        // 排队条收尾：见 settleQueueAfterRun。自动发送只在正看着这条会话时发生
+        settleQueueAfterRun(e.conversationId, e.conversationId === conversationIdRef.current)
         // 仅在事件仍归属当前会话时展示统计与复位（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setInterrupted(false)
@@ -541,9 +699,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     offs.push(
       window.pocketai.onAgentError((e: AgentErrorEvent) => {
         if (!fromThisRun(e.requestId)) return
-        setRunning(false)
+        setRunningNow(false)
         setCurrentStep(0)
         setLiveSteps([])
+        // 中止/出错：插队中的项归回队列，但**不**自动发下一条（用户要停下来看，见 settleQueueAfterRun ②）
+        settleQueueAfterRun(e.conversationId, false)
         // 「可断点恢复」是按会话讲的：正在看别的会话时不该被上一轮的失败点亮
         if (e.conversationId === conversationIdRef.current) setInterrupted(true)
       })
@@ -670,9 +830,19 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     })
   }, [])
 
+  /**
+   * 能不能起一轮新运行。**判据与下面 send 的挡板逐字一致**，且走 runningRef 而不是 running state：
+   * DONE 回调里刚 setRunningNow(false) 之后马上要发下一条排队消息，那一帧的 `running` 还是 true，
+   * 用 state 判会让自动发送静默失效（消息留在条上，看起来像"没反应"）。
+   * send 自己不复用它，是因为这里的函数式判断不 narrowing `conversationId: string | null`，
+   * 复用会把 null 塞进 IPC 载荷——两处判据靠注释同轴，改一处要改两处。
+   */
+  const canStartRun = (): boolean => !!providerId && !!model && !!conversationId && !runningRef.current
+  canStartRunRef.current = canStartRun
+
   const send = (text: string, attachments: ChatAttachment[]) => {
     const content = text.trim()
-    if (!content || !providerId || !model || !conversationId || running) return
+    if (!content || !providerId || !model || !conversationId || runningRef.current) return
     const requestId = `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     requestIdRef.current = requestId
 
@@ -681,7 +851,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       type: 'append',
       message: { id: `u_${Date.now()}`, role: 'user', text: content, attachments: [...attachments] }
     })
-    setRunning(true)
+    setRunningNow(true)
     setInterrupted(false)
     setRunStats(null) // 新一轮运行：清除上轮统计，待 DONE 事件更新
     setLatestTraces(null) // 旧分步明细失效，下次展开重新拉取
@@ -690,7 +860,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     // safeHandle 把 chat:send 的抛错转成 {ok:false} **返回值**而不是 rejection，
     // 而 resume/rerun 这两个内部入口拿的是浮动 promise ⇒ 收口必须放在 send 里，四个入口才都接得住（V4-Iter-204）。
     const fail = (msg: IpcFailureInput): void => {
-      setRunning(false)
+      setRunningNow(false)
       setCurrentStep(0)
       setLiveSteps([])
       toast.error(chatSendFailureText(msg, t) || t('agent.unknownError'))
@@ -711,10 +881,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       })
       .catch((e) => fail(errText(e, t('agent.unknownError'))))
   }
+  sendRef.current = send
 
   const abort = () => {
     if (requestIdRef.current) window.pocketai.abortAgent(requestIdRef.current)
-    setRunning(false)
+    setRunningNow(false)
   }
 
   /** 断点恢复：中止/出错后一键续跑（消息历史已在 DB，LLM 基于完整上下文继续） */
@@ -752,6 +923,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     const sourceId = findRerunSourceId(messagesRef.current, assistantId)
     if (sourceId) void rerun(sourceId)
   }
+
+  /** 排队条只展示当前会话的项（别的会话的项留在内存里，切回去还在条上） */
+  const visibleQueue = queue.filter((q) => q.conversationId === conversationId)
 
   return {
     assistantId,
@@ -800,6 +974,12 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     retrySubSessionReads: loadSubSessionReads,
     changeProvider,
     send,
+    queue: visibleQueue,
+    queueFull: visibleQueue.length >= MAX_QUEUE_ITEMS,
+    enqueueText,
+    interjectText,
+    dropQueued,
+    sendQueuedNow,
     abort,
     resume,
     rerun,

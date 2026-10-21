@@ -713,6 +713,14 @@ const api = {
   // ---------- Work Agent ----------
   abortAgent: (requestId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.AGENT_ABORT, requestId),
+  // 运行中插队（V4-Iter-238）：ok:false 表示这轮运行已经收不到（结束/不是主干），
+  // 界面据此把消息退回队列而不是当成"发出去了"
+  interjectAgent: (payload: {
+    requestId: string
+    clientRef: string
+    text: string
+  }): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_INTERJECT, payload),
   getAgentWorkspaceDir: (): Promise<string> =>
     ipcRenderer.invoke(IPC.AGENT_GET_WORKSPACE_DIR),
   pickAgentWorkspaceDir: (): Promise<string> =>

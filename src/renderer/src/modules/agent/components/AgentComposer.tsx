@@ -6,6 +6,8 @@ import { SlashMenu } from '../../../components/SlashMenu'
 import { MentionMenu, type MentionItem } from '../../../components/MentionMenu'
 import { SnippetVarsDialog } from '../../../components/SnippetVarsDialog'
 import type { useAttachments } from '../hooks/useAttachments'
+import { MAX_QUEUE_ITEMS, type AgentQueueItem } from '../hooks/useAgentChat'
+import { useToast } from '../../../components/ToastProvider'
 import {
   getSnippetTrigger,
   snippetToCommand,
@@ -24,10 +26,34 @@ interface Props {
   att: ReturnType<typeof useAttachments>
   onSend: (text: string) => void
   onAbort: () => void
+  /**
+   * 运行中排队条（V4-Iter-238）。渲染层内存里的待发消息，**只带文字**：
+   * 附件走的是"这一轮"的入库与注入链（attachment-ingestion 要知道 message id），
+   * 排队项还没有 id，硬塞会变成"附件在界面上但没人读它"。
+   */
+  queue: AgentQueueItem[]
+  queueFull: boolean
+  onQueue: (text: string) => void
+  onInterject: (text: string) => void
+  onDropQueued: (clientRef: string) => void
+  onSendQueuedNow: (clientRef: string) => void
 }
 
-export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, onAbort }) => {
+export const AgentComposer: React.FC<Props> = ({
+  running,
+  canSend,
+  att,
+  onSend,
+  onAbort,
+  queue,
+  queueFull,
+  onQueue,
+  onInterject,
+  onDropQueued,
+  onSendQueuedNow
+}) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [input, setInput] = useState('')
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
@@ -177,9 +203,48 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
     [filtered, triggerInfo, replaceTriggerRange]
   )
 
+  /**
+   * 运行中要交出去的一句话（入队与插队共用一条判据）。
+   * 排队项只带文字：附件的入库链要等 message id（这一轮才有），带进条里就是"看起来发出去了、
+   * 其实没人读它"。所以这里拦下并说清楚，不偷偷丢掉用户挑好的文件。
+   */
+  const takeQueueText = (): string => {
+    const text = input.trim()
+    if (!text) return ''
+    if (attachments.length > 0) {
+      toast.error(t('agent.queue.textOnly'))
+      return ''
+    }
+    return text
+  }
+
+  const doQueue = () => {
+    const text = takeQueueText()
+    if (!text || !canSend) return
+    onQueue(text)
+    setInput('')
+    setSlashDismissed(false)
+    setVarSnippet(null)
+  }
+
+  const doInterject = () => {
+    const text = takeQueueText()
+    if (!text || !canSend) return
+    onInterject(text)
+    setInput('')
+    setSlashDismissed(false)
+    setVarSnippet(null)
+  }
+
   const doSend = () => {
     const text = input.trim()
-    if ((!text && attachments.length === 0) || !canSend || running) return
+    if ((!text && attachments.length === 0) || !canSend) return
+    // 运行中的 Enter 与「入队」按钮同一条路（V4-Iter-238）：输入框不再被禁用，
+    // 但这句话不会插进正在跑的那一轮，除非按「立即插队」
+    if (running) {
+      doQueue()
+      return
+    }
     onSend(text)
     setInput('')
     setSlashDismissed(false)
@@ -292,6 +357,52 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
 
   return (
     <>
+      {/* 运行中排队条（V4-Iter-238）：条上每一项都还没进正在跑的这一轮 */}
+      {queue.length > 0 && (
+        <div className="pt-2" data-testid="agent-queue-bar">
+          <div className="text-[11px] text-[var(--color-text-muted)] mb-1">{t('agent.queue.barTitle')}</div>
+          <ul className="flex flex-col gap-1">
+            {queue.map((q) => (
+              <li
+                key={q.clientRef}
+                className="flex items-center gap-2 text-xs bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg px-2 py-1"
+              >
+                <span className="flex-1 truncate" title={q.text}>
+                  {q.text}
+                </span>
+                {q.interjecting ? (
+                  // 已经交给引擎、等它在下个步边界收下；此时撤回按钮要禁用——
+                  // 那句话随时可能落库，让条项消失而卡片出现是正常顺序，撤回反而会说谎
+                  <span
+                    className="shrink-0 text-[var(--color-text-muted)]"
+                    data-testid={`agent-queue-state-${q.clientRef}`}
+                  >
+                    {t('agent.queue.interjecting')}
+                  </span>
+                ) : (
+                  <button
+                    className="btn-ghost text-xs shrink-0"
+                    onClick={() => onSendQueuedNow(q.clientRef)}
+                    data-testid={`agent-queue-send-${q.clientRef}`}
+                  >
+                    {running ? t('agent.queue.interject') : t('common.send')}
+                  </button>
+                )}
+                <button
+                  onClick={() => onDropQueued(q.clientRef)}
+                  disabled={q.interjecting}
+                  title={t('agent.queue.drop')}
+                  className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-40"
+                  data-testid={`agent-queue-drop-${q.clientRef}`}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* 附件预览 */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-2">
@@ -357,8 +468,9 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
         <input {...fileInputProps} />
         <button
           onClick={openPicker}
-          title={t('common.attachFile')}
-          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+          disabled={running}
+          title={running ? t('agent.queue.textOnly') : t('common.attachFile')}
+          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors disabled:opacity-40"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -372,12 +484,33 @@ export const AgentComposer: React.FC<Props> = ({ running, canSend, att, onSend, 
           value={input}
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={t('agent.inputPh')}
+          placeholder={running ? t('agent.inputPhRunning') : t('agent.inputPh')}
           title={t('agent.composerTitle')}
-          disabled={running}
         />
         {running ? (
-          <button className="btn-ghost" onClick={onAbort}>{t('common.stop')}</button>
+          // 运行中三键（V4-Iter-238）：停止是原来的那颗；入队等本轮结束自动发；立即插队交给引擎，
+          // 由它在**下一个步边界**收下（不是打断当前这一步）
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              className="btn-ghost"
+              onClick={doQueue}
+              disabled={!input.trim() || queueFull}
+              title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.enqueueTitle')}
+              data-testid="agent-queue-enqueue"
+            >
+              {t('agent.queue.enqueue')}
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={doInterject}
+              disabled={!input.trim() || queueFull}
+              title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.interjectTitle')}
+              data-testid="agent-queue-interject"
+            >
+              {t('agent.queue.interject')}
+            </button>
+            <button className="btn-ghost" onClick={onAbort}>{t('common.stop')}</button>
+          </div>
         ) : (
           <button
             className="btn-primary"

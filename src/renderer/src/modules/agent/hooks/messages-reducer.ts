@@ -50,6 +50,20 @@ export function messagesReducer(prev: AgentMessage[], action: MessagesAction): A
         }
         return prev
       }
+      if (e.type === 'interject' && e.messageId) {
+        // 运行中插队（V4-Iter-238）：这句话是引擎在步边界落库的，渲染层没有本地占位卡可回填，
+        // 所以整张卡在这里新建。别和上面 'user' 那一支合并——那支的语义是"回填已有卡"。
+        return [
+          ...prev,
+          {
+            id: e.messageId,
+            role: 'user',
+            text: e.text ?? '',
+            stepIndex: e.stepIndex,
+            dbId: e.messageId
+          }
+        ]
+      }
       if (e.type === 'thought' || e.type === 'final') {
         const idx = prev.findIndex((m) => m.id === e.messageId)
         if (idx !== -1) {

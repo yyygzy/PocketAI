@@ -1,6 +1,7 @@
 // Work Agent IPC 入参 schema
 // apiKey 落库、paths 是本地 .ics 文件读取面，带宽松资源上限。
 import { z } from 'zod'
+import { CHAT_MAX_CONTENT_CHARS } from './chat'
 
 const AGENT_MAX_APIKEY_CHARS = 256
 const AGENT_MAX_PATH_CHARS = 1024
@@ -47,6 +48,22 @@ export const delegateToggleSchema = z.object({
   providerId: z.string().min(1).max(AGENT_MAX_ID_CHARS),
   model: z.string().min(1).max(128),
   on: z.boolean()
+})
+
+/**
+ * AGENT_INTERJECT 入参（V4-Iter-238）：运行中插队的一句话。
+ * `clientRef` 是渲染层给排队项的本地 id（引擎原样回进 step 事件，界面据此知道哪条已被收下）；
+ * 与 requestId 同长度档。文本上限与 CHAT_SEND 的 content 同一档——它落的是同一张 messages 表，
+ * 另立一个数就会出现「正常发送能过、插队被拒」。
+ * 只有空白不算内容：引擎会原样落库并进上下文，空串只会让模型多一条没有信息量的 user 消息。
+ */
+export const interjectSchema = z.object({
+  requestId: z.string().min(1).max(AGENT_MAX_ID_CHARS),
+  clientRef: z.string().min(1).max(AGENT_MAX_ID_CHARS),
+  text: z
+    .string()
+    .max(CHAT_MAX_CONTENT_CHARS, `插队内容过长（上限 ${CHAT_MAX_CONTENT_CHARS} 字符）`)
+    .refine((s) => s.trim().length > 0, '插队内容不能为空')
 })
 
 /**

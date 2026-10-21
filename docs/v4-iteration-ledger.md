@@ -66,6 +66,31 @@
 - **未做（留 §4.4）**：运行时"本次有 N 个 MCP 工具被 `'*'` 挡下"的一次性提示——形态大概是 `AGENT_DONE` 事件加一个 `mcpHeldBack` 计数、渲染层挂在既有零调用提示里。本轮只做编辑页那句静态说明，因为把它做对要动事件契约。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-238 运行中终于能说话了：一句「入队」等本轮结束自动发，一句「立即插队」由它在步边界收下（已落地，待提交）
+
+- **来由**：用户选中下一步清单里的「③开工 §238」（plan 流水账原登记为 §234，编号改口见 §234 那一节）。痛点是既有形状：`send` 在 `running` 时直接 return，输入框与附件整块 disabled ⇒ Agent 一跑十几步期间，用户想到"它跑偏了""再补一句"只能按停止或干等。主流两键（入队／立即插队）在这里是**标配缺失**，不是加分项。
+- **三条口径写死在注释里，因为它们是行为而不只是实现**：
+  ① **插队点只有一个：`state === 'llm'` 的循环顶部**（`engine.ts:1314` 那一个调用点，消费在 `drainInterjections` `engine.ts:2056`）。这不是保守，是消息顺序的硬约束——`runLLMStep` 会把带 `tool_calls` 的 assistant 消息推进上下文（`engine.ts:1705`），紧随的 `runToolsStep` 才补 `role:'tool'` 的应答；在那中间插一条 user 消息，发给模型的就是「assistant 说要调工具、没人应答、中间冒出一句人话」，严格 OpenAI 兼容端按畸形请求拒（400），整轮失败。所以点「立即」**不打断当前那一步**，最快也要那一步结束后才生效。
+  ② **只有正常跑完（DONE）才自动发下一条**；中止/出错（ERROR）只把"插队中"归回队列不自动发——按停止就是要停下来看结果，紧跟一条自动发送等于没停。而且自动发送只发给**正看着的那条会话**（`send` 发的是当前会话，在后台回调里发等于把话塞进别的会话）。
+  ③ 排队项**只在渲染层内存里**（不持久化，刷新即失）、**只带文字**（附件的入库链要等 message id，而那一轮才有 id；带附件按入队会被拦下并说清楚，输入与已挑的附件都不动）。
+- **改动**：
+  - 契约：`IPC.AGENT_INTERJECT`（`src/shared/types.ts:2171`）＋ `interjectSchema`（`src/shared/schemas/agent.ts`：requestId／clientRef／text，文本上限与 `CHAT_MAX_CONTENT_CHARS` 同档——同一张 messages 表另立一个数就会出现「正常发送能过、插队被拒」，另加「全空白不算内容」）；`AgentStepType` 多 `'interject'`、`AgentStepEvent` 多 `clientRef?`；preload `interjectAgent`（类型带失败分支）。
+  - 引擎：`interjections` 收件箱**只给主干 run 注册**（`engine.ts:1129`；子 run 不给——用户没有子的 requestId，且插进一次委派会把子代理的任务线打断在半步），`finally` 随 `traceParents` 一起清（`engine.ts:1380`，漏了它就是把下一轮同名 requestId 的插队接到这一轮上）；`interject()` 接不住返 false；`drainInterjections` 整批取空后**同时**落 messages 表的用户行、推 `ctx.messages`、发带 `messageId`＋`clientRef` 的事件——落库与进上下文缺一就是撒谎（只进上下文 ⇒ 切走再回来这句话查不到；只落库 ⇒ 模型这一轮没看见，界面却显示已发出）。
+  - IPC：handler 按 §231 在同一文件里已立的规矩 **throw `RUN_NOT_FOUND:…`** 交给 `safeHandle` 转返回值，不在 handler 里自己包 try/catch。
+  - 渲染层：`useAgentChat` 加排队条状态（按会话分开，切走不丢），条目只有三种归宿——被 `interject` 事件按 `clientRef` 确认（换成用户卡，`messages-reducer.ts` 新建那张卡而不是回填）、运行结束归回队列、用户自己取消；`send` 的 running 挡板改走 `runningRef`（DONE 回调那一帧 `running` state 还是 true，用 state 判会让自动发送**静默失效**）。`AgentComposer` 在 running 时不再禁用输入，改三键（入队／立即插队／停止），Enter 等于入队。
+  - 四语 11 把新键（`agent.inputPhRunning` ＋ `agent.queue.*` 10 把）；回码 `RUN_NOT_FOUND` 进 `IPC_FAIL_TEXT_KEYS`（`agent.interjectRunEnded`）。
+- **闸门动了两个数，都是它按设计变红之后如实登记**：§209 的"走翻译的调用点"**7 → 8**（新增 `useAgentChat` 那句 `ipcFailureText(msg, t) || t('agent.unknownError')`）；§206 的回码登记表多一把 `RUN_NOT_FOUND`——第一版我把拒绝写成 `return {ok:false, error:'RUN_NOT_FOUND:…'}`，而 §206 的扫描器只认 `new Error('CODE:说明')` 这个形状，于是它当场判"界面准备了一句 main 永远不会抛的话"。**红的是我的实现不合既有约定，不是闸门太严**。
+- **两条自己写坏被当场抓出来的**：① 真挂载那组第一条红在"点了一颗 disabled 的发送键"——模型选择是挂载后异步回填的，用例抢跑了；判据改成先等那颗按钮可点。② 空白文本那条第一版断的是"库里没有内容为空的行"⇒ 红，因为引擎在流式期本来就有一条**空的 assistant 占位行**，抓错了对象；改成只数 user 行。这条红还连带把 `abort` 与 `await finished` 两行跳过，留下一个 unhandled rejection 与 afterAll 超时——**清理路径的用例必须自己也能收尾**，旧账又应验一次。
+- **一条现状（不是缺陷，写在这里免得被读成已四语化）**：zod 的自定义 refine（"插队内容不能为空"）**不进 `IPC_ARG_INVALID` 编码**，按 §209 的口径原样透出那句中文 ⇒ 它在英/日/韩界面就是一句中文。structural 那两类（缺字段、requestId 空串）走四语。
+- **用例**：新 3 份 **35 例**。
+  - `tests/agent-interject-chain-238.test.ts` **6 例**＝真 SQLite ＋ 真引擎循环 ＋ 真本地 SSE 端点。判据取两处**互相独立**的证据：发给端点的那一份载荷（模型真看得见）与 messages 表的用户行（切走再回来还在），各挡一种半截实现；顺序不变量单独断（插队句必须排在 tool 应答之后，且是那一次请求的最后一条）；另有"同一步边界两条按到达顺序连着进"、"最后一次主步之后交进来的那句不消费、不落库、不发事件"、"运行结束后同 requestId 不再收"、"陌生 requestId 拒"、"子 run 不收件箱"。
+  - `tests/agent-interject-ipc-238.test.ts` **6 例**＝真跨桥（preload → handler → zod → 引擎）：用挂着不回话的端点造出"真的正在运行"，`{ok:true}` 那一刻库里还没有那句话；RUN_NOT_FOUND 是**返回值而不是 reject**；空白被挡。
+  - `tests/renderer-agent-queue-238.test.tsx` **23 例**＝真 hook ＋ 真挂载 `AgentPanel`。每条"消掉条目"都配一条"不该消却不消"：`clientRef` 换成别人的就不算确认、条上空的时 DONE 不许凭空起第二轮、**切到别的会话时对账仍要生效**（否则运行结束会把同一句话再发一遍＝库里两条重复）、中止后不自动发但条上那条能手动发、条满 20 条不再进并说出原因、取消不发任何 IPC、空白不进条。真挂载 5 例覆盖三键齐／输入框可用／占位符换句／附件按钮关／Enter 分流／带附件被拦。
+- **变异 M238a–f ＋ R1–R11 共 17 条全部有牙、无存活**（每条跑完按字节复原并 assert 与原文相同）：a/b 分别打「只进上下文不落库」与「只落库不进上下文」两半；c 把消费点搬到循环顶部（打的就是步边界那条不变量）；d/e 打收件箱的生命周期与归属；f 打事件里的 `clientRef`。渲染层 11 条里 R4/R5 是两条对账判据的反向（不看 clientRef、按会话归属把关），R6 打回"用 running state"（自动发送静默失效），R8 打回"输入框禁用"，R9 打"带附件也允许入队"（那会变成偷偷丢附件）。
+- **验证**：typecheck 0；`npm run build` 一次通过（最后一档 renderer 18.38s，前三段没单独留数字）；全量 vitest **377 文件 / 4502 通过 + 1 跳过**（102.10s；相对 §236 交付时的 374 文件／4467 例，＋3 文件／＋35 例，全在本批新文件里）。
+- **未实测（真机）**：⇒ 验收清单 **B135**。**无真机复现、只有 CI**——插队的实际生效时延（本地小模型一步十几秒，那句话最快也要到下一步开始才进上下文，而"插队中"这一档界面没有任何进度读数）、排队条的观感与长句截断、ja／ko 措辞、中止后条目留在条上的观感。
+- **留给下一批**：① 小模型面对中途多出一条 user 消息会不会跑偏——这是能力问题，该进 §233b 的评测集，不在本批；② 排队项要不要带附件；③「插队中」要不要给一个"当前这一步还在跑"的可读状态。
+
 ### V4-Iter-236 技能有了第三层（落盘 + 常驻开关 + `load_skill`）；MCP 注解第一次被收进来，但只许收紧
 
 - **来由**：§236 登记的是两半。技能那半边：`skills` 表只有 `content` 一列 TEXT，注入形状是"启用几棵就整段拼几棵"（`buildSkillsContext` 全量常驻），而 SKILL.md 那一族的标准形状是三层（元数据常驻／正文触发才读／资源再下一层）⇒ 上游技能包既装不进来，也在替用户付他没用的 token。MCP 那半边：`tools/list` 里的 `annotations` **在边界上被直接丢掉**（`McpRawTool` 只声明三个字段），分级只剩工具名前缀词表一条路。

@@ -843,6 +843,12 @@ export const AgentPanel: React.FC = () => {
               void chat.send(text, att.attachments)
             }}
             onAbort={chat.abort}
+            queue={chat.queue}
+            queueFull={chat.queueFull}
+            onQueue={chat.enqueueText}
+            onInterject={chat.interjectText}
+            onDropQueued={chat.dropQueued}
+            onSendQueuedNow={chat.sendQueuedNow}
           />
         )}
       </div>

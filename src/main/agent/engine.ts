@@ -923,8 +923,35 @@ export function mergeSources(existing: MessageSource[], added: MessageSource[]):
   return Array.from(byId.values())
 }
 
+/** 运行中插队的一条待消费消息（V4-Iter-238） */
+interface PendingInterjection {
+  clientRef: string
+  text: string
+}
+
 class AgentEngine {
   private controllers = new Map<string, AbortController>()
+
+  /**
+   * 运行中插队的收件箱（V4-Iter-238）：**只给主干 run 开**。
+   *  · 键是 requestId，运行结束（finally）必删——留着它，同一个 requestId 的残句会被
+   *    下一轮复用同名 id 的运行吃掉（与 traceParents 同一条纪律）；
+   *  · 子 run 不注册：用户没有子的 requestId，且插进一次委派会把子代理的任务线打断在半步；
+   *  · 只在 `state === 'llm'` 的循环顶部取空（见 run() 里的注释）——取空而不是逐条取，
+   *    是为了让同一步边界到的多条插队按到达顺序连着进上下文。
+   */
+  private interjections = new Map<string, PendingInterjection[]>()
+
+  /**
+   * 把一句话交给正在运行的主干 run。返回 false = 没有这个运行（已结束 / 不是主干 / 还没注册上），
+   * 调用方（渲染层）据此把那条消息退回队列，等本轮结束后正常发送——不丢消息是这条通道的底线。
+   */
+  interject(requestId: string, clientRef: string, text: string): boolean {
+    const box = this.interjections.get(requestId)
+    if (!box) return false
+    box.push({ clientRef, text: text.trim() })
+    return true
+  }
 
   abort(requestId: string): void {
     this.controllers.get(requestId)?.abort()
@@ -1098,6 +1125,8 @@ class AgentEngine {
     // 主控制器
     const master = new AbortController()
     this.controllers.set(requestId, master)
+    // 插队收件箱只给主干开（子 run 不接插队，理由见 interjections 的注释）
+    if (!asChild) this.interjections.set(requestId, [])
     const loopTimer = setTimeout(() => master.abort(), LOOP_TIMEOUT_MS)
 
     // 工作消息列表（ReAct 上下文）
@@ -1281,6 +1310,8 @@ class AgentEngine {
         const stepIndex = ctx.stepCount
 
         if (state === 'llm') {
+          // 步与步之间的唯一安全插入点：见 drainInterjections 上方那条消息顺序约束
+          this.drainInterjections(ctx)
           state = await this.runLLMStep(ctx, stepIndex)
         } else {
           state = await this.runToolsStep(ctx, stepIndex)
@@ -1343,6 +1374,10 @@ class AgentEngine {
       // 挂到别的父运行上（归因错比没归因更难查）
       traceParents.delete(requestId)
       traceModels.delete(requestId)
+      // 插队收件箱同一条纪律（238）：运行已经不再消费它，留着就是把"下一轮同名 requestId"
+      // 的插队接到这一轮上。渲染层不需要知道这件事——它只按 clientRef 对账，
+      // 没被对上的那条会在 DONE/ERROR 后回到队列等正常发送。
+      this.interjections.delete(requestId)
     }
   }
 
@@ -2004,6 +2039,44 @@ class AgentEngine {
     })
 
     return 'llm'
+  }
+
+  /**
+   * 取空插队收件箱，把用户运行中补的话变成这一轮上下文的一部分（V4-Iter-238）。
+   *
+   * 调用点只有一个：**`state === 'llm'` 的循环顶部**。这不是保守，是消息顺序的硬约束——
+   * runLLMStep 会先把带 `tool_calls` 的 assistant 消息推进 messages，紧随其后的 runToolsStep
+   * 才补上 `role: 'tool'` 的应答；在那两条之间插一条 user 消息，发给模型的就是
+   * 「assistant 说要调工具，没人应答，中间冒出一句人话」，OpenAI 兼容端点按畸形请求拒（400），
+   * 整轮失败。所以宁可让用户等半步，也不能把插话放到半步中间。
+   *
+   * 落库与进上下文是两件事，缺一就撒谎：只进上下文 ⇒ 切开会话再回来这句话查不到；
+   * 只落库 ⇒ 模型这一轮根本看不见用户插的话，而界面已经显示它发出去了。
+   */
+  private drainInterjections(ctx: AgentRunContext): void {
+    const box = this.interjections.get(ctx.requestId)
+    if (!box || box.length === 0) return
+    // 整批取空：同一步边界到达的多条插队按到达顺序连着进上下文，之后不再重复消费
+    const pending = box.splice(0, box.length)
+    for (const item of pending) {
+      const msg = messageRepo.insert({
+        conversationId: ctx.conversationId,
+        role: 'user',
+        content: item.text,
+        status: 'done'
+      })
+      ctx.messages.push({ role: 'user', content: item.text })
+      // clientRef 是渲染层那条排队消息的本地 id：它靠这个事件知道自己真的被收下了
+      ctx.emit(IPC.AGENT_STEP_EVENT, {
+        requestId: ctx.requestId,
+        conversationId: ctx.conversationId,
+        stepIndex: ctx.stepCount,
+        type: 'interject',
+        text: item.text,
+        messageId: msg.id,
+        clientRef: item.clientRef
+      })
+    }
   }
 
   /**

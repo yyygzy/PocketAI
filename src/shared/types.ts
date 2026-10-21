@@ -863,7 +863,17 @@ export interface McpServerLogEvent {
 }
 
 // ---------- Work Agent ----------
-export type AgentStepType = 'thought' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'todo' | 'replan' | 'user'
+export type AgentStepType =
+  | 'thought'
+  | 'tool_call'
+  | 'tool_result'
+  | 'final'
+  | 'error'
+  | 'todo'
+  | 'replan'
+  | 'user'
+  /** 运行中插队（V4-Iter-238）：引擎在步与步之间收下并落库，渲染端据此把排队项换成用户卡 */
+  | 'interject'
 
 /** 任务清单条目（todo_write 工具维护，渲染端步骤化 checklist 展示） */
 export interface TodoItem {
@@ -883,6 +893,12 @@ export interface AgentStepEvent {
   error?: string
   messageId?: string // 持久化到 DB 的消息 ID（assistant/tool 消息）
   done?: boolean // 是否为最后一步
+  /**
+   * 插队事件（type='interject'）专用：渲染层排队项的本地 id。
+   * 它不是 DB 字段，只用来把「已落库」这件事对回那条排队中的消息
+   * （会话切走了也算对回——归属看 requestId，与卡片显示的两条判据不同）。
+   */
+  clientRef?: string
 }
 
 /**
@@ -2152,6 +2168,7 @@ export const IPC = {
   // Work Agent
   AGENT_RUN: 'agent:run',
   AGENT_ABORT: 'agent:abort',
+  AGENT_INTERJECT: 'agent:interject', // 运行中插队：只在主干 run 的步边界被消费
   AGENT_STEP_EVENT: 'agent:step-event',
   AGENT_CHUNK_EVENT: 'agent:chunk-event', // 流式 thought 文本增量
   AGENT_DONE_EVENT: 'agent:done-event',
