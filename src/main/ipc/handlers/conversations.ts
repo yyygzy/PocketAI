@@ -46,6 +46,10 @@ export function registerConversationHandlers(): void {
   safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean, archivedOnly?: boolean) =>
     conversationRepo.list(assistantId, isAgent, { archivedOnly }),
   conversationListArgsSchema)
+  // §235：两条只读通道。渲染层不能靠「这条会话在不在列表里」推身份（列表按构造就滤掉子会话），
+  // 也不能靠「用户是怎么点进来的」——命令面板那条路会绕过一切导航状态，只读判据得来自数据本身。
+  safeHandle(IPC.CONVERSATION_GET, (_e, id: string) => conversationRepo.get(String(id ?? '')), argsSchema(idSchema))
+  safeHandle(IPC.CONVERSATION_LIST_CHILDREN, (_e, id: string) => conversationRepo.listChildren(String(id ?? '')), argsSchema(idSchema))
   safeHandle(IPC.CONVERSATION_SET_PINNED, (_e, id: string, pinned: boolean) => {
     conversationRepo.setPinned(String(id ?? ''), pinned)
     return { ok: true }

@@ -1,6 +1,7 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
 import React, { useEffect, useRef, useState } from 'react'
 import type { ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
+import { isDelegateRole, parseDelegationResultChildPrefixes } from '../../../../../shared/delegation-rules'
 import { useI18n } from '../../../i18n'
 import { hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 import { useProviderData } from '../hooks/useProviderData'
@@ -39,6 +40,10 @@ export const AgentPanel: React.FC = () => {
   const att = useAttachments()
   const [railOpen, setRailOpen] = useState(true)
   const [statsExpanded, setStatsExpanded] = useState(false)
+  /** §235：「子代理会话」那一格（本会话派出去过哪几趟） */
+  const [subRunsOpen, setSubRunsOpen] = useState(false)
+  /** 分步明细里逐条展开「入参／返回」（键=trace 行 id，天然唯一，切会话不用清） */
+  const [traceIoOpen, setTraceIoOpen] = useState<Record<string, boolean>>({})
 
   // ---------- 会话内消息搜索 ----------
   const [searchOpen, setSearchOpen] = useState(false)
@@ -57,6 +62,8 @@ export const AgentPanel: React.FC = () => {
     setSearchOpen(false)
     setSearchQuery('')
     setSearchActive(0)
+    // §235：那一格的内容是"这条会话派出去过哪几趟"，切会话后旧展开态没意义（列表还在读）
+    setSubRunsOpen(false)
   }, [chat.conversationId])
 
   const openSearch = () => {
@@ -132,8 +139,9 @@ export const AgentPanel: React.FC = () => {
     else toast.error(t('agent.copyFailed'))
   }
 
-  // 当前会话标题（用于复制 Markdown 的一级标题）
+  // 当前会话标题（用于复制 Markdown 的一级标题）；子代理会话不在侧栏列表里，身份来自那条记录本身
   const currentTitle =
+    chat.subSession?.title?.trim() ||
     chat.conversations.find((c) => c.id === chat.conversationId)?.title?.trim() ||
     t('agent.copyMdDefaultTitle')
   const hasMessages = chat.messages.length > 0
@@ -489,17 +497,60 @@ export const AgentPanel: React.FC = () => {
           />
         )}
 
+        {/* §235：正看着的是某趟子代理的独立会话——身份是读出来的（见 useAgentChat 那三态），
+            横幅替掉"这条会话为什么不能发消息"的猜测，返回按钮回派出它的那一条 */}
+        {chat.subSession && (
+          <div
+            data-testid="sub-session-banner"
+            className="mb-2 self-start w-full max-w-[640px] flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-muted)]"
+          >
+            <span className="text-[var(--color-accent)]" data-sub-session-role={chat.subSession.roleKey ?? ''}>
+              {chat.subSession.roleKey && isDelegateRole(chat.subSession.roleKey)
+                ? delegateRoleLabel(t, chat.subSession.roleKey)
+                : chat.subSession.title}
+            </span>
+            <span>{t('agent.subSessionNote')}</span>
+            <button
+              onClick={chat.backToParentConversation}
+              data-testid="sub-session-back"
+              className="px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-text-muted)] transition-colors"
+            >
+              {t('agent.backToParent')}
+            </button>
+          </div>
+        )}
+        {/* 身份读不到：不演成"这条会话能发"，也不演成"还在加载"——明说一句并给一次重试（§222 那一族） */}
+        {chat.identityUnread && (
+          <div
+            data-testid="sub-session-unread"
+            className="mb-2 self-start w-full max-w-[640px] flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 rounded border border-[var(--color-danger)] text-xs text-[var(--color-danger)]"
+          >
+            <span title={chat.identityUnread}>{t('agent.identityUnread')}</span>
+            <button
+              onClick={chat.retrySubSessionReads}
+              data-testid="sub-session-retry"
+              className="px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:text-[var(--color-text)] transition-colors"
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
+
         {/* 消息流（虚拟化：只渲染可视区，避免长对话 DOM 线性增长） */}
         <VirtualMessageList
           messages={chat.messages}
           running={chat.running}
           conversationId={chat.conversationId}
           emptyHint={t('agent.emptyHint')}
-          onDeleteMessage={chat.running ? undefined : (id) => void chat.deleteMessage(id)}
-          onRerunMessage={chat.running ? undefined : (id, text) => void chat.rerun(id, text)}
-          onRegenerateMessage={chat.running ? undefined : (id) => chat.regenerate(id)}
+          onDeleteMessage={chat.running || chat.subSessionReadonly ? undefined : (id) => void chat.deleteMessage(id)}
+          onRerunMessage={chat.running || chat.subSessionReadonly ? undefined : (id, text) => void chat.rerun(id, text)}
+          onRegenerateMessage={
+            chat.running || chat.subSessionReadonly ? undefined : (id) => chat.regenerate(id)
+          }
           onRemindMessage={
-            chat.running ? undefined : (id, fireAt, repeatRule) => void handleRemind(id, fireAt, repeatRule)
+            chat.running || chat.subSessionReadonly
+              ? undefined
+              : (id, fireAt, repeatRule) => void handleRemind(id, fireAt, repeatRule)
           }
           focusIndex={activeHit?.index ?? null}
           highlightId={activeHit?.id ?? null}
@@ -605,20 +656,97 @@ export const AgentPanel: React.FC = () => {
                 {!chat.tracesLoading &&
                   chat.latestTraces?.map((tr, i) => {
                     const stepTokens = formatStepTokens(tr, t)
+                    const ioOpen = traceIoOpen[tr.id] ?? false
+                    // 这一步派出去的那几趟子会话：拿返回值头部里的 8 位前缀去直接子会话中找命中。
+                    // 一个前缀命中 0 个或 ≥2 个都不给入口（宁可不给，也不赌是哪一趟），列表那一格照样能翻；
+                    // 同一步并行委派好几趟时，每个唯一命中各给一个按钮
+                    const kids = parseDelegationResultChildPrefixes(tr.toolResult)
+                      .map((p) => chat.subSessions.filter((s) => s.id.slice(0, 8) === p))
+                      .filter((list) => list.length === 1)
+                      .map((list) => list[0] as ConversationRecord)
+                    const hasIo = !!(tr.toolArgs || tr.toolResult || tr.model)
+                    const rowClass = 'flex flex-wrap items-baseline gap-x-1.5'
+                    const line = (
+                      <>
+                        <span className="text-[var(--color-text-muted)]">#{i + 1}</span>
+                        <span className={tr.status === 'error' ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'}>
+                          {tr.status === 'error' ? '✕' : '✓'}
+                        </span>
+                        <span>{t(`agent.traceType.${tr.stepType}`)}</span>
+                        {tr.toolName && <span className="text-[var(--color-accent)]">{tr.toolName}</span>}
+                        <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
+                        {stepTokens && <span className="text-[var(--color-text-muted)]">{stepTokens}</span>}
+                      </>
+                    )
                     return (
                       <div key={tr.id} className="text-xs leading-relaxed">
-                        <div className="flex flex-wrap items-baseline gap-x-1.5">
-                          <span className="text-[var(--color-text-muted)]">#{i + 1}</span>
-                          <span className={tr.status === 'error' ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'}>
-                            {tr.status === 'error' ? '✕' : '✓'}
-                          </span>
-                          <span>{t(`agent.traceType.${tr.stepType}`)}</span>
-                          {tr.toolName && <span className="text-[var(--color-accent)]">{tr.toolName}</span>}
-                          <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
-                          {stepTokens && <span className="text-[var(--color-text-muted)]">{stepTokens}</span>}
-                        </div>
+                        {/* 整行就是开关（▸/▾ 与上面那条统计头同一个动作语言）；只有真有东西可展开时它才是按钮 */}
+                        {hasIo ? (
+                          <button
+                            type="button"
+                            onClick={() => setTraceIoOpen((p) => ({ ...p, [tr.id]: !ioOpen }))}
+                            aria-expanded={ioOpen}
+                            data-testid={`trace-io-${tr.id}`}
+                            title={t('agent.traceIo')}
+                            className={`${rowClass} w-full text-left hover:opacity-70 transition-opacity`}
+                          >
+                            <span className="w-3 inline-block text-[var(--color-text-muted)]">
+                              {ioOpen ? '▾' : '▸'}
+                            </span>
+                            {line}
+                          </button>
+                        ) : (
+                          <div className={rowClass}>{line}</div>
+                        )}
                         {tr.error && (
                           <div className="ml-4 text-[var(--color-danger)] whitespace-pre-wrap break-all">{tr.error}</div>
+                        )}
+                        {/* 子会话入口单独一行：嵌进整行按钮里会把点击搞糊（点开子会话不该顺手收起这一行） */}
+                        {kids.length > 0 && (
+                          <div className="ml-4 mt-0.5 flex flex-wrap gap-x-1.5">
+                            {kids.map((k) => (
+                              <button
+                                key={k.id}
+                                onClick={() => chat.openSubSession(k.id)}
+                                data-testid={`trace-open-sub-${tr.id}`}
+                                className="px-1 py-0.5 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:opacity-80 transition-opacity"
+                              >
+                                {t('agent.openSubSession')}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {hasIo && ioOpen && (
+                          <div className="ml-4 mt-1 space-y-1">
+                            {tr.model && (
+                              <div data-testid="trace-model" className="text-[var(--color-text-muted)]">
+                                {t('agent.traceModel')}：{tr.model}
+                              </div>
+                            )}
+                            {tr.toolArgs && (
+                              <div
+                                data-testid="trace-args"
+                                className="max-h-40 overflow-y-auto px-1.5 py-1 rounded border border-[var(--color-border)] whitespace-pre-wrap break-all"
+                              >
+                                {t('agent.traceArgs')}：{tr.toolArgs}
+                              </div>
+                            )}
+                            {tr.toolResult && (
+                              <div
+                                data-testid="trace-result"
+                                className="max-h-40 overflow-y-auto px-1.5 py-1 rounded border border-[var(--color-border)] whitespace-pre-wrap break-all"
+                              >
+                                {t('agent.traceResult')}：{tr.toolResult}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!hasIo && (
+                          // 这三列是 v50 才有的：旧行留 NULL。空白会被读成"这一步什么都没传"，
+                          // 所以要说"没记录"，不能演成"没有"（§222 那一族）
+                          <div data-testid="trace-no-io" className="ml-4 text-[var(--color-text-muted)]">
+                            {t('agent.traceNoIo')}
+                          </div>
                         )}
                       </div>
                     )
@@ -628,8 +756,61 @@ export const AgentPanel: React.FC = () => {
           </div>
         )}
 
-        {/* 断点恢复：上次运行中止/出错时显示「继续执行」入口 */}
-        {chat.interrupted && !chat.running && chat.canSend && (
+        {/* §235：委派跑完只在父的统计里留一个数字，过程一直打不开。这一格是那条入口。
+            口径写死在这里：**本会话的全部直接子会话**（父子链接在会话行上，trace 才带运行号，
+            所以这里不冒充"本次运行的那几个"） */}
+        {chat.subSessionsUnread && (
+          // 读不到这一句**不藏在折叠态后面**：折叠起来就等于没说过（§222 那一族）
+          <div
+            data-testid="sub-sessions-unread"
+            className="mb-2 self-start w-full max-w-[640px] flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 rounded border border-[var(--color-danger)] text-xs text-[var(--color-danger)]"
+          >
+            <span title={chat.subSessionsUnread}>{t('agent.subSessionsUnread')}</span>
+            <button
+              onClick={chat.retrySubSessionReads}
+              data-testid="sub-sessions-retry"
+              className="px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:text-[var(--color-text)] transition-colors"
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
+        {chat.subSessions.length > 0 && (
+          <div className="mb-2 self-start w-full max-w-[640px]">
+            <button
+              onClick={() => setSubRunsOpen((v) => !v)}
+              aria-expanded={subRunsOpen}
+              data-testid="sub-sessions-toggle"
+              className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+            >
+              <span className="w-3 inline-block">{subRunsOpen ? '▾' : '▸'}</span>
+              <span>{t('agent.subSessions', { n: chat.subSessions.length })}</span>
+            </button>
+            {subRunsOpen && (
+              <div className="mt-1 ml-4 max-h-48 overflow-y-auto border border-[var(--color-border)] rounded p-2 space-y-1 bg-[var(--color-bg-secondary)]">
+                {chat.subSessions.map((k) => (
+                  <div key={k.id} className="flex flex-wrap items-baseline gap-x-1.5 text-xs">
+                    <span data-testid={`sub-session-title-${k.id}`}>
+                      {k.roleKey && isDelegateRole(k.roleKey) ? delegateRoleLabel(t, k.roleKey) : k.title}
+                    </span>
+                    <span className="text-[var(--color-text-muted)]">{formatDateTime(k.createdAt)}</span>
+                    {k.modelLabel && <span className="text-[var(--color-text-muted)]">{k.modelLabel}</span>}
+                    <button
+                      onClick={() => chat.openSubSession(k.id)}
+                      data-testid={`sub-session-open-${k.id}`}
+                      className="px-1.5 py-0.5 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:opacity-80 transition-opacity"
+                    >
+                      {t('agent.openSubSession')}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 断点恢复：上次运行中止/出错时显示「继续执行」入口（子会话/读不到身份时不给：那是往机器会话里写） */}
+        {chat.interrupted && !chat.running && chat.canSend && !chat.subSessionReadonly && (
           <button
             onClick={() => void chat.resume()}
             className="mb-2 self-start text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-accent)] hover:bg-[var(--color-hover-overlay)] transition-colors"
@@ -650,16 +831,20 @@ export const AgentPanel: React.FC = () => {
           />
         )}
 
-        <AgentComposer
-          running={chat.running}
-          canSend={chat.canSend}
-          att={att}
-          onSend={(text) => {
-            // 失败收口在 useAgentChat.send 里（返回值＋reject 两条都会落到同一个 toast）
-            void chat.send(text, att.attachments)
-          }}
-          onAbort={chat.abort}
-        />
+        {/* 只读那一档**不渲染**输入区，而不是渲染一个禁用框：禁用框不吭声，用户只知道"发不出去"；
+            上面那条横幅/读不到的句子已经把为什么说了，这里就不再重复一句（同一条判据只说一次） */}
+        {!chat.subSessionReadonly && (
+          <AgentComposer
+            running={chat.running}
+            canSend={chat.canSend}
+            att={att}
+            onSend={(text) => {
+              // 失败收口在 useAgentChat.send 里（返回值＋reject 两条都会落到同一个 toast）
+              void chat.send(text, att.attachments)
+            }}
+            onAbort={chat.abort}
+          />
+        )}
       </div>
 
       {/* 密码弹窗 — 加密导出/解密导入（对齐 Chat 模块样式） */}

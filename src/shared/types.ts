@@ -1902,6 +1902,8 @@ export const IPC = {
   MEMORY_DELETE: 'memory:delete',
 
   CONVERSATION_LIST: 'conversation:list',
+  CONVERSATION_GET: 'conversation:get', // 单条会话：渲染层按 id 判「这是不是子代理会话」（§235）
+  CONVERSATION_LIST_CHILDREN: 'conversation:listChildren', // 直接子会话：委派过程的入口（§235）
   CONVERSATION_SET_PINNED: 'conversation:set-pinned',
   CONVERSATION_SET_ARCHIVED: 'conversation:set-archived',
   CONVERSATION_CREATE: 'conversation:create',

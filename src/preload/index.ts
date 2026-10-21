@@ -205,6 +205,10 @@ const api = {
   // ---------- 会话 ----------
   listConversations: (assistantId?: string, isAgent?: boolean, archivedOnly?: boolean): Promise<ConversationRecord[]> =>
     ipcRenderer.invoke(IPC.CONVERSATION_LIST, assistantId, isAgent, archivedOnly),
+  getConversation: (id: string): Promise<ConversationRecord | null | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_GET, id),
+  listChildConversations: (id: string): Promise<ConversationRecord[] | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_LIST_CHILDREN, id),
   setConversationPinned: (id: string, pinned: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_SET_PINNED, id, pinned),
   setConversationArchived: (id: string, archived: boolean): Promise<{ ok: boolean }> =>

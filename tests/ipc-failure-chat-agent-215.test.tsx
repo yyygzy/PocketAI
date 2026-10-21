@@ -29,6 +29,8 @@ const baseStubs = (over: Record<string, (...a: any[]) => unknown> = {}): Record<
   getAgentTextProtocol: () => [],
   // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
   getModelContextWindows: () => ({}),
+  getConversation: () => null,
+  listChildConversations: () => [],
   setModelContextWindow: () => ({ windows: {} }),
   sendMessage: () => ({ ok: true }),
   abortAgent: () => OK,

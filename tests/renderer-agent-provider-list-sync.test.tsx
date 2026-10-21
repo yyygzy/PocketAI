@@ -41,6 +41,8 @@ function mount() {
     getAgentTextProtocol: () => [],
     // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
     getModelContextWindows: () => ({}),
+    getConversation: () => null,
+    listChildConversations: () => [],
     setModelContextWindow: () => ({ windows: {} }),
     setAgentTextProtocol: () => [],
     // 列表头部是「最近一条」c2，存档指向 c1：切回来若误重跑列表 effect 就会跳到 c2

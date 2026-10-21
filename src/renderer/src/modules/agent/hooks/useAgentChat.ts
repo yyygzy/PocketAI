@@ -10,6 +10,7 @@ import type {
   AgentTraceRecord,
   AssistantRecord,
   ChatAttachment,
+  ConversationRecord,
   MessageRecord,
   ProviderRecord
 } from '../../../../../shared/types'
@@ -40,6 +41,20 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [sessionStats, setSessionStats] = useState<AgentSessionStats | null>(null) // 当前会话累计统计（跨全部运行）
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
+  /**
+   * §235：当前这条会话的身份读数。三种状态各有脸：
+   *  · `loading` —— 还没读到（新路径才走这一档：命令面板/恢复）⇒ 与今天一样能发；
+   *  · `ok` 且 record 带父 ⇒ 这是**子代理会话**，只读；
+   *  · `failed` —— 读不到身份 ⇒ 也按只读处理，并说清楚为什么。宁可输入框暂时消失，
+   *    也不让人把消息发进一条机器会话：那种 run 的步骤不进父的 token 汇总（§163 口径），
+   *    发出去的钱与产物都看不见。
+   */
+  const [subSessionIdentity, setSubSessionIdentity] = useState<
+    { state: 'loading' } | { state: 'ok'; record: ConversationRecord | null } | { state: 'failed'; reason: string }
+  >({ state: 'loading' })
+  /** 当前会话的直接子会话（「子代理会话」那格列表；读失败时保持空，另有一句 unread 的话） */
+  const [subSessions, setSubSessions] = useState<ConversationRecord[]>([])
+  const [subSessionsUnread, setSubSessionsUnread] = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState(0) // 当前运行正在执行的步数（running 时显示，结束后丢弃）
   /** 零调用提示：本次运行有工具可用但模型未调用任何工具时显示 */
   const [noToolCallNotice, setNoToolCallNotice] = useState(false)
@@ -335,6 +350,108 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     return () => window.removeEventListener(OPEN_CONVERSATION_EVENT, handler)
   }, [assistantId])
 
+
+  /**
+   * §235 两件事各读各的：这条会话的身份（是不是某次委派出来的）、它自己派出去过哪几趟。
+   * 为什么读数据而不是记「用户从哪儿点进来的」：命令面板那条路（`OPEN_CONVERSATION_EVENT`）会绕过
+   * 一切导航状态，只靠入口判「能不能发」迟早漏一条；而父 id 本来就是 conversations 表上的一列。
+   * 两条读各自失败各自说一句，不合并成一句"读不到"（失败面不同，接管也不同）。
+   */
+  const loadSubSessionReads = useCallback(() => {
+    const convId = conversationIdRef.current
+    if (!convId) {
+      setSubSessionIdentity({ state: 'ok', record: null })
+      setSubSessions([])
+      setSubSessionsUnread(null)
+      return
+    }
+    void window.pocketai
+      .getConversation(convId)
+      .then((rec) => {
+        if (conversationIdRef.current !== convId) return
+        if (hasIpcFailed(rec)) {
+          setSubSessionIdentity({ state: 'failed', reason: ipcFailText(rec, t('agent.unknownError')) })
+          return
+        }
+        setSubSessionIdentity({ state: 'ok', record: rec ?? null })
+      })
+      .catch((e) => {
+        // reject 那一半也要有脸：只 report 不接管会把身份永久卡在 loading
+        reportIpcError('agent.getConversation')(e)
+        if (conversationIdRef.current === convId) setSubSessionIdentity({ state: 'failed', reason: errText(e) })
+      })
+    void window.pocketai
+      .listChildConversations(convId)
+      .then((list) => {
+        if (conversationIdRef.current !== convId) return
+        if (hasIpcFailed(list)) {
+          // 读不到不能咽成空列表——空列表在界面上和"这条会话没派过子代理"长得一模一样（§222 那一族）
+          setSubSessionsUnread(ipcFailText(list, t('agent.unknownError')))
+          return
+        }
+        setSubSessionsUnread(null)
+        setSubSessions(Array.isArray(list) ? list : [])
+      })
+      .catch((e) => {
+        reportIpcError('agent.listChildConversations')(e)
+        if (conversationIdRef.current === convId) setSubSessionsUnread(errText(e))
+      })
+  }, [t])
+
+  /**
+   * 「这一笔身份我在点下去的那一刻就已经知道了」（点开子会话／返回上一级各写一次）。
+   * 为什么不只写 state：换会话那条 effect 会把身份复位成 `loading`，而**只读判据不含 loading**——
+   * 于是点开的下一帧输入框会闪回来一下（发得快的人真按得下去）。ref 让那次复位认得这次跳转。
+   */
+  const knownIdentityRef = useRef<{ id: string; record: ConversationRecord | null } | null>(null)
+
+  // 换会话就重读这两件事（独立成一条 effect：语言切换只让取词函数变，不该把消息与统计重拉一遍）
+  useEffect(() => {
+    const known = knownIdentityRef.current
+    knownIdentityRef.current = null
+    setSubSessionIdentity(
+      known && known.id === conversationId ? { state: 'ok', record: known.record } : { state: 'loading' }
+    )
+    setSubSessions([])
+    setSubSessionsUnread(null)
+    loadSubSessionReads()
+  }, [conversationId, loadSubSessionReads])
+
+  /** 正在看的子代理会话（null=不是子会话或还没读到） */
+  const subSession = subSessionIdentity.state === 'ok' && subSessionIdentity.record?.parentConversationId
+    ? subSessionIdentity.record
+    : null
+  /** 身份读不到的那句话（界面据此显示只读条＋重试，而不是假装这条会话能发） */
+  const identityUnread = subSessionIdentity.state === 'failed' ? subSessionIdentity.reason : null
+  /**
+   * 只读判据（一处派生，六处接管：输入区整块、卡片上的删除／截断重跑／重新生成／右键提醒、断点恢复那条）。
+   * `loading` 不在内：那一档只出现在"没有任何本地线索"的入口，且和用户敲下回车之间是几毫秒，
+   * 把它算进去会让每次切会话都闪一次输入框。
+   */
+  const subSessionReadonly =
+    subSessionIdentity.state === 'failed' || (subSessionIdentity.state === 'ok' && !!subSessionIdentity.record?.parentConversationId)
+
+  /** 打开某趟子代理的独立会话：本地已有那条记录，直接写进身份，避免"先能输入再变只读"的那一帧 */
+  const openSubSession = (id: string) => {
+    const rec = subSessions.find((x) => x.id === id) ?? null
+    setConversationId(id)
+    if (rec) {
+      knownIdentityRef.current = { id, record: rec }
+      setSubSessionIdentity({ state: 'ok', record: rec })
+    }
+    applyLastModelOf(id, rec?.modelLabel)
+  }
+
+  /** 回到派出它的那条会话（父一定在会话列表里，模型选择照 selectConversation 同一条路回填） */
+  const backToParentConversation = () => {
+    const parentId = subSession?.parentConversationId
+    if (!parentId) return
+    const c = conversations.find((x) => x.id === parentId) ?? archivedConversations.find((x) => x.id === parentId) ?? null
+    setConversationId(parentId)
+    knownIdentityRef.current = { id: parentId, record: c }
+    setSubSessionIdentity({ state: 'ok', record: c })
+    applyLastModelOf(parentId, c?.modelLabel)
+  }
 
   useEffect(() => {
     setInterrupted(false)
@@ -673,6 +790,14 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     reloadConversations,
     deleteMessage,
     selectConversation,
+    subSession,
+    identityUnread,
+    subSessionReadonly,
+    subSessions,
+    subSessionsUnread,
+    openSubSession,
+    backToParentConversation,
+    retrySubSessionReads: loadSubSessionReads,
     changeProvider,
     send,
     abort,

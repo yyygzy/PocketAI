@@ -247,3 +247,22 @@ export function childToolSurface<T extends DelegateToolLike>(parentTools: T[]): 
 export function formatDelegationResult(input: { role: DelegateRole; childConversationId: string; content: string }): string {
   return `【子代理 ${input.role} 的回答（独立会话 ${input.childConversationId.slice(0, 8)}）】\n${input.content}`
 }
+
+/**
+ * 把上面那句头部里的 8 位前缀读回来（§235：分步明细里那一行要能点开对应子会话）。
+ * 为什么写成一对而不是让渲染层正则手抄这句中文：头部文案一改，手抄的那条就静默匹配不上，
+ * 而"匹配不上"在界面上长得和"这一步没有子代理"一模一样（V4-Iter-153 同族教训）。
+ * 全局扫描而不是只取第一条：同一步可以并行委派好几趟，它们的返回值拼在同一行 trace 里。
+ * 只认前缀不认全 id 是有意为之——上下文里本来就只有 8 位；渲染层用它去直接子会话里找唯一命中。
+ */
+const DELEGATION_CHILD_PREFIX_RE = /【子代理 [^】]*?（独立会话 ([0-9a-f]{8})）】/g
+
+/** 返回这段文本里出现过的子会话 id 前缀（去重、按出现顺序） */
+export function parseDelegationResultChildPrefixes(text: string | null | undefined): string[] {
+  if (!text) return []
+  const out: string[] = []
+  for (const m of text.matchAll(DELEGATION_CHILD_PREFIX_RE)) {
+    if (m[1] && !out.includes(m[1])) out.push(m[1])
+  }
+  return out
+}

@@ -181,6 +181,22 @@ export const conversationRepo = {
   },
 
   /**
+   * 直接子会话的整条记录（按创建先后）。§235：界面要把"委派出去了哪几趟"列出来并打开其中一趟。
+   * 只取**直接**子级，不拉整棵树：孙级在子会话视图里用同一个入口再展开一层，
+   * 这样每一层看到的都是"我自己派出去的那几趟"，而不是被拍平的一堆。
+   * 空串父 id 返回空表（`create` 把空串归一成 NULL，所以它永远匹配不上任何行）——不是"列出所有顶层会话"。
+   */
+  listChildren(parentId: string): ConversationRecord[] {
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        'SELECT * FROM conversations WHERE parent_conversation_id = ? ORDER BY created_at ASC, rowid ASC'
+      )
+      .all(parentId) as ConversationRow[]
+    return rows.map(rowToRecord)
+  },
+
+  /**
    * 整棵子树的会话 id（不含自己）。逐层展开而不是递归 CTE：委派树最多两三层，
    * 而循环里每层一次查询在 SQLite 侧更好核对（也避免旧版 SQLite 不支持 WITH RECURSIVE 的坑）。
    */
