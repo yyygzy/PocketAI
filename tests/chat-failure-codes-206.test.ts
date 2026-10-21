@@ -18,28 +18,46 @@ import { ko } from '../src/renderer/src/i18n/ko'
 const read = (rel: string): string => fs.readFileSync(path.resolve(__dirname, rel), 'utf-8')
 
 /**
- * 只抓 `CODE:中文说明` 这个形状（蛇形大写 ＋ 紧跟冒号）。
- * 故意不管的裸码：`lock/ipc-gate.ts:42` 的 `new Error('APP_LOCKED')`——它不带说明段、
- * 走的是网关 reject（渲染层拿到的是 `Error invoking remote method …: Error: APP_LOCKED`），
- * 不在这条"回码必须有话术"的网上；要收它得先决定 reject 面怎么本地化，那是另一件事。
+ * `CODE:中文说明` 这个形状（蛇形大写 ＋ 紧跟冒号）。
+ * V4-Iter-243：下面还有一条 BARE_CODE_PAT——真机点"还原到写入前"时撞出三个**光秃秃**的
+ * `SNAPSHOT_*` 码，它们从这条闸门的缝里漏了出去（正则要求冒号，没冒号就什么都看不见），
+ * 于是界面把 `SNAPSHOT_DIVERGED` 直接弹给了用户。裸码从此也算回码，例外只留下面那一条。
  */
 const CODE_PAT = /new Error\(\s*[`'"]([A-Z][A-Z0-9_]{2,}):/g
+/** 光秃秃的大写码：整串就是一个回码，不带说明段 */
+const BARE_CODE_PAT = /new Error\(\s*[`'"]([A-Z][A-Z0-9_]{2,})[`'"]\s*\)/g
 
+/**
+ * 唯一在册例外，且**钉死它的出处与形态**：`lock/ipc-gate.ts` 的锁网关 reject——
+ * 它包在 safeHandle 外面，渲染层拿到的是 `Error invoking remote method …: Error: APP_LOCKED`
+ * 整串，不在这条"回码必须有话术"的网上；要收它得先决定 reject 面怎么本地化，那是另一件事。
+ * 想再加例外就得先回答这个问题，所以这里断言"它还在原处、还是这条 throw"，不许漂移。
+ */
+const BARE_EXCEPTIONS: ReadonlyArray<{ code: string; file: string; line: string }> = [
+  {
+    code: 'APP_LOCKED',
+    file: 'lock/ipc-gate.ts',
+    line: "throw new Error('APP_LOCKED')"
+  }
+]
 
 function codesInMain(): Map<string, string[]> {
   const root = path.resolve(__dirname, '../src/main')
   const out = new Map<string, string[]>()
+  const add = (code: string, rel: string): void => {
+    const arr = out.get(code) ?? []
+    if (!arr.includes(rel)) arr.push(rel)
+    out.set(code, arr)
+  }
   const walk = (dir: string): void => {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, ent.name)
       if (ent.isDirectory()) walk(p)
       else if (ent.name.endsWith('.ts')) {
         const src = read(p)
-        for (const m of src.matchAll(CODE_PAT)) {
-          const arr = out.get(m[1]!) ?? []
-          arr.push(path.relative(root, p))
-          out.set(m[1]!, arr)
-        }
+        const rel = path.relative(root, p).replace(/\\/g, '/')
+        for (const m of src.matchAll(CODE_PAT)) add(m[1]!, rel)
+        for (const m of src.matchAll(BARE_CODE_PAT)) add(m[1]!, rel)
       }
     }
   }
@@ -50,14 +68,27 @@ function codesInMain(): Map<string, string[]> {
 describe('主进程回码 ↔ 渲染层登记表 双向对账', () => {
   const found = codesInMain()
 
-  it('main 里每个 `CODE:说明` 形状的回码都登记了四语（白名单已在 208 清零）', () => {
+  it('main 里每个回码（带说明的与光秃秃的）都登记了四语（白名单已在 208 清零）', () => {
     const unregistered: string[] = []
     for (const code of found.keys()) {
       if (code === 'BUDGET_EXCEEDED') continue // 特例：带 scope 与金额，走 usage.budgetBlocked
+      if (BARE_EXCEPTIONS.some((e) => e.code === code)) continue
       if (IPC_FAIL_TEXT_KEYS[code]) continue
       unregistered.push(`${code}（${found.get(code)!.join(', ')}）`)
     }
     expect(unregistered, `新回码必须先在 IPC_FAIL_TEXT_KEYS 登记话术`).toEqual([])
+  })
+
+  it('裸码例外只有那一条，且它还钉在原处（V4-Iter-243 把这条缝补上后新加的钉子）', () => {
+    expect(BARE_EXCEPTIONS.map((e) => e.code).sort()).toEqual(['APP_LOCKED'])
+    for (const e of BARE_EXCEPTIONS) {
+      const src = read(`../src/main/${e.file}`).replace(/\r\n/g, '\n')
+      expect(src.split('\n').some((l) => l.trim() === e.line), `${e.file} 里找不到 ${e.line}`).toBe(true)
+      // 它也真的会被扫到——否则"例外"就成了给一个不存在的码开的空白支票
+      expect(found.get(e.code) ?? [], e.code).toContain(e.file)
+    }
+    // 反向对照：带 `:说明` 的形状不会被这条例外放过（BUDGET_EXCEEDED 也不在例外名单里）
+    expect(BARE_EXCEPTIONS.some((e) => e.code === 'SNAPSHOT_DIVERGED')).toBe(false)
   })
 
   it('登记表里的回码，main 侧真的会抛出来（防"界面准备了一句永不出现的话"）', () => {
@@ -71,6 +102,16 @@ describe('主进程回码 ↔ 渲染层登记表 双向对账', () => {
       expect(found.get(code)!.join(','), code).toContain('chat-service.ts')
     }
     expect(found.get('GLOSSARY_TERM_EMPTY')!.join(',')).toContain('translate.ts')
+  })
+
+  it('V4-Iter-243 那五个补上话术的码，出处对账（证明扩形后的闸门真看得见这两个文件）', () => {
+    for (const code of ['SNAPSHOT_ID_INVALID']) {
+      expect(found.get(code)!.join(','), code).toContain('file-snapshots.ts')
+    }
+    for (const code of ['SNAPSHOT_NOT_FOUND', 'SNAPSHOT_CONSUMED', 'SNAPSHOT_DIVERGED', 'CURRENT_NOT_TEXT']) {
+      expect(found.has(code), code).toBe(true)
+    }
+    expect(found.get('SNAPSHOT_NOT_FOUND')!.join(',')).toContain('fs-tools.ts')
   })
 
   it('GLOSSARY_TERM_EMPTY 到界面是四语句子，回码与中文尾段都不进界面（V4-Iter-208）', () => {

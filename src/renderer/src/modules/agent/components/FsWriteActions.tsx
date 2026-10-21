@@ -10,7 +10,7 @@ import React, { useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
 import { errText } from '../../../utils/error'
-import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailureText, logIpcError } from '../../../utils/ipc'
 
 interface FsWriteResult {
   path?: unknown
@@ -63,7 +63,8 @@ export const FsWriteActions: React.FC<{ resultContent: string }> = ({ resultCont
       const res = await window.pocketai.restoreFileWrite(snapshotId)
       if (hasIpcFailed(res)) {
         // 还原失败时按钮必须还能再点（除了"已被用过"那一档由主进程拒绝），否则用户只剩一句提示
-        toast.error(ipcFailText(res, t('common.unknownError')))
+        // 走字典而不是 ipcFailText：还原被拒时用户要的是一句能懂的话，不是 SNAPSHOT_DIVERGED
+        toast.error(ipcFailureText(res, t))
         return
       }
       setDone(res.removed ? 'removed' : 'restored')

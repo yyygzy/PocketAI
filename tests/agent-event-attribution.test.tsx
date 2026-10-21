@@ -277,3 +277,84 @@ describe('DONE / ERROR：总闸按 requestId，会话级的展示按 conversatio
     expect(result.current.interrupted).toBe(false)
   })
 })
+
+// V4-Iter-243：零调用提示的证据面。
+// §242 真机那一趟同一台模型**上一轮调了工具、这一轮没调**，而旧判据只看本轮的
+// `usedTools === false` 就弹出那句「建议换用 7b 及以上模型」——拿一轮的信号断言这台模型的行为。
+// 现在要整条会话都没有工具卡才亮。两条用例互为对照：只把条件改回"看本轮"，第一条必红。
+describe('零调用提示：证据是整条会话，不是这一轮', () => {
+  it('本轮没调工具，但这条会话此前调过 ⇒ 不亮（"这台模型似乎从不"这句没有证据）', async () => {
+    const { result, requestId } = await mountRunning()
+    // 消息流里先有一张 tool 卡（走真 step 事件，不直接塞 messages）：它就是"这条会话用过工具"的证据
+    act(() => {
+      h.step[0]!({
+        requestId: requestId(),
+        conversationId: CONV,
+        stepIndex: 1,
+        type: 'tool_call',
+        toolCall: { id: 'call-1', type: 'function', function: { name: 'fs_read', arguments: '{}' } }
+      })
+    })
+    expect(result.current.messages.some((m) => m.role === 'tool')).toBe(true)
+    act(() => {
+      h.done[0]!({
+        requestId: requestId(),
+        conversationId: CONV,
+        finalMessageId: 'x',
+        fullContent: '',
+        stepCount: 2,
+        usedTools: false
+      })
+    })
+    expect(result.current.noToolCallNotice).toBe(false)
+  })
+
+  it('正向对照：整条会话都没有工具卡、本轮也没调 ⇒ 亮（条件收紧不能把它收紧成恒不亮）', async () => {
+    const { result, requestId } = await mountRunning()
+    expect(result.current.messages.some((m) => m.role === 'tool')).toBe(false)
+    act(() => {
+      h.done[0]!({
+        requestId: requestId(),
+        conversationId: CONV,
+        finalMessageId: 'x',
+        fullContent: '',
+        stepCount: 1,
+        usedTools: false
+      })
+    })
+    expect(result.current.noToolCallNotice).toBe(true)
+  })
+
+  it('本轮真的调了工具 ⇒ 不亮（这一档不依赖会话证据，别和上面两条混成一条）', async () => {
+    const { result, requestId } = await mountRunning()
+    act(() => {
+      h.done[0]!({
+        requestId: requestId(),
+        conversationId: CONV,
+        finalMessageId: 'x',
+        fullContent: '',
+        stepCount: 3,
+        usedTools: true
+      })
+    })
+    expect(result.current.noToolCallNotice).toBe(false)
+  })
+
+  it('切到另一条会话后提示复位（上一轮的"没调"不该跟到新一轮）', async () => {
+    const { result, requestId } = await mountRunning()
+    act(() => {
+      h.done[0]!({
+        requestId: requestId(),
+        conversationId: CONV,
+        finalMessageId: 'x',
+        fullContent: '',
+        stepCount: 1,
+        usedTools: false
+      })
+    })
+    expect(result.current.noToolCallNotice).toBe(true)
+    act(() => result.current.selectConversation('c9'))
+    await waitFor(() => expect(result.current.conversationId).toBe('c9'))
+    expect(result.current.noToolCallNotice).toBe(false)
+  })
+})

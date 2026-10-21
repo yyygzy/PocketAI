@@ -36,7 +36,7 @@ export function defaultSnapshotRoot(): string {
 
 function snapshotFile(root: string, id: string): string {
   // id 由 randomUUID 生成；仍把非白名单字符挡掉，避免这个函数被别处拿用户输入直接调用
-  if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('SNAPSHOT_ID_INVALID')
+  if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('SNAPSHOT_ID_INVALID:快照编号形状不对')
   return path.join(root, `${id}.json`)
 }
 
@@ -81,7 +81,7 @@ export function readSnapshot(root: string, id: string): FileSnapshot | null {
 
 export function markConsumed(root: string, id: string): FileSnapshot {
   const record = readSnapshot(root, id)
-  if (!record) throw new Error('SNAPSHOT_NOT_FOUND')
+  if (!record) throw new Error('SNAPSHOT_NOT_FOUND:找不到这一笔写入的快照')
   const next: FileSnapshot = { ...record, consumedAt: Date.now() }
   fs.writeFileSync(snapshotFile(root, id), JSON.stringify(next), 'utf-8')
   return next

@@ -148,3 +148,38 @@ describe('③ 没留快照那一档要说为什么', () => {
     expect(statuses().join('|')).not.toContain(NOT_RESTORABLE)
   })
 })
+
+// V4-Iter-243：§242 真机点「还原到写入前」时屏幕上出现的是 `SNAPSHOT_DIVERGED` 这种码——
+// 那五个码原本是光秃秃的 `new Error('SNAPSHOT_*')`，不带 `:说明`，从 §206 那道闸门的缝里漏了出去。
+// 判据取向：**五条拒绝各出一语**（撞成一张脸就看不出为什么被拒），且码本身不进界面。
+describe('④ 还原被拒：每一档各出一句能懂的话', () => {
+  const wrote = JSON.stringify({ path: 'a.md', bytes: 6, created: false, snapshotId: SNAP })
+  const refusals: Array<[string, string]> = [
+    ['SNAPSHOT_NOT_FOUND:找不到这一笔写入的快照', 'agent.fsWrite.errNotFound'],
+    ['SNAPSHOT_CONSUMED:这份快照已经用过了', 'agent.fsWrite.errConsumed'],
+    ['SNAPSHOT_DIVERGED:这笔写入之后文件又被改过', 'agent.fsWrite.errDiverged'],
+    ['CURRENT_NOT_TEXT:当前内容不是可读文本（过大或二进制）', 'agent.fsWrite.errNotText'],
+    ['SNAPSHOT_ID_INVALID:快照编号形状不对', 'agent.fsWrite.errIdInvalid']
+  ]
+
+  for (const [error, key] of refusals) {
+    it(`${error.split(':')[0]} ⇒ 屏幕上只有 ${L(key)}`, async () => {
+      mountCard(resultMsg('fs_write', wrote), { ok: false, error })
+      fireEvent.click(screen.getByText(RESTORE))
+      await waitFor(() => expect(statuses()).toContain(L(key)), { timeout: 6000 })
+      expect(statuses().join('|')).not.toContain(error.split(':')[0]!)
+      expect(screen.queryByText(`✓ ${RESTORED}`)).toBeNull()
+    })
+  }
+
+  it('五句彼此不同（撞成一张脸＝"无论为什么被拒都同一句"，用户不知道该做什么）', () => {
+    const texts = refusals.map(([, key]) => L(key))
+    expect(new Set(texts).size).toBe(texts.length)
+  })
+
+  it('反向对照：没登记的回码仍按原文交出（这一跳是查表换话术，不是"永远换一句"）', async () => {
+    mountCard(resultMsg('fs_write', wrote), { ok: false, error: 'FUTURE_CODE:还没登记的说明' })
+    fireEvent.click(screen.getByText(RESTORE))
+    await waitFor(() => expect(statuses()).toContain('FUTURE_CODE:还没登记的说明'), { timeout: 6000 })
+  })
+})

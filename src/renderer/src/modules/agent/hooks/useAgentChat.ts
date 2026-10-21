@@ -757,8 +757,12 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         if (e.conversationId === conversationIdRef.current) {
           setInterrupted(false)
           setRunStats(e.traceStats ?? null)
-          // 零调用提示：有工具可用但未调用任何工具
-          setNoToolCallNotice(e.usedTools === false)
+          // 零调用提示：本轮有工具可用却一次都没调用**且整条会话都没有过工具卡**才亮——
+          // 只凭本轮就建议换模型，等于拿一轮的信号断言这台模型的行为（§242 真机读数里
+          // 同一台模型上一轮调了、这一轮没调，那句「似乎从不」就是这么被撑破的）。
+          setNoToolCallNotice(
+            e.usedTools === false && !messagesRef.current.some((m) => m.role === 'tool')
+          )
           setMcpHeldBack(e.mcpHeldBack ?? 0)
           // §237：引擎那一侧算出来的"这一轮带不下更多历史"上屏（只在 true 时点亮）
           setHistoryTight(e.historyTight === true)

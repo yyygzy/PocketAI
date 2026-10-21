@@ -288,12 +288,12 @@ export interface FileWriteRestoreResult {
 export function restoreFileWrite(id: string): FileWriteRestoreResult {
   const root = defaultSnapshotRoot()
   const snap = readSnapshot(root, id)
-  if (!snap) throw new Error('SNAPSHOT_NOT_FOUND')
-  if (snap.consumedAt !== null) throw new Error('SNAPSHOT_CONSUMED')
+  if (!snap) throw new Error('SNAPSHOT_NOT_FOUND:找不到这一笔写入的快照')
+  if (snap.consumedAt !== null) throw new Error('SNAPSHOT_CONSUMED:这份快照已经用过了')
   const abs = resolveWorkspacePath(snap.relPath)
   const current = readPrevText(abs)
-  if (typeof current === 'symbol') throw new Error('CURRENT_NOT_TEXT')
-  if (current !== snap.wroteContent) throw new Error('SNAPSHOT_DIVERGED')
+  if (typeof current === 'symbol') throw new Error('CURRENT_NOT_TEXT:当前内容不是可读文本（过大或二进制）')
+  if (current !== snap.wroteContent) throw new Error('SNAPSHOT_DIVERGED:这笔写入之后文件又被改过')
   if (!snap.prevExists) {
     fs.rmSync(abs)
     markConsumed(root, id)
