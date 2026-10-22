@@ -26,7 +26,8 @@ function reportTimestamp(): string {
 }
 
 export function registerStewardHandlers(): void {
-  safeHandle(IPC.HEALTH_REPORT, () => healthService.report())
+  // §258：改信封——同 system.ts 那两条的理由（裸值标注挡不住 safeHandle 的解析式失败对象）
+  safeHandle(IPC.HEALTH_REPORT, () => ({ ok: true as const, data: healthService.report() }))
   safeHandle(IPC.HEALTH_CLEANUP, () => healthService.cleanup())
   safeHandle(IPC.HEALTH_VACUUM, () => healthService.vacuum())
   safeHandle(IPC.STEWARD_MODEL_RECOMMEND, async () => ({

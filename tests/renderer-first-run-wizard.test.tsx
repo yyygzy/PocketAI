@@ -31,7 +31,8 @@ const copiedAssistant = { ...builtinAssistant, id: 'a-copy', isBuiltin: false }
 /** encMode 可变：设完主密码后组件会自行把状态标成 db，但 stub 也要能提供初值 */
 function mount(encMode: 'none' | 'db' = 'none', over: Record<string, unknown> = {}) {
   stubPocketai({
-    getHardwareInfo: () => hardware,
+    // §258：这一发裸值通道改信封（外层 ok 是"读到没读到"，data 才是硬件画像）
+    getHardwareInfo: () => ({ ok: true, data: hardware }),
     getEncryptionStatus: () => ({
       mode: encMode, unlocked: true, dbEncrypted: encMode === 'db', fieldEncrypted: true,
       masterPasswordVerified: true, kdfN: encMode === 'db' ? 131072 : null, kdfAtCurrentTier: true
@@ -461,5 +462,35 @@ describe('§256 向导里两发读的失败面：一句「读不到」，但不�
     expect(count(/if \(!hasIpcFailed\(v\)\) setProviders\(v\)/g), '快照那处只剩设计内那一条').toBe(1)
     expect(SRC).toContain('// §256 复核：这份 provider 快照')
     expect(SRC).toContain('// §256 复核：这一发失败只进 console＝设计内静默')
+  })
+})
+
+/**
+ * §258：向导这一发的失败面从"只有一句 return"改成上屏。
+ * 以前 `if (hasIpcFailed(hw)) return` 被闸门算作接管（"失败侧至少没把对象当数据用"），
+ * 但界面上硬件摘要**永远停在「加载中…」**——把"没读到"谎称成"还在读"（§222 抓过的那一族）。
+ */
+describe('§258 硬件画像那一发：读不到就说读不到，不许停在「加载中…」', () => {
+  const failed = (msg: string): string => zh['common.loadFailed']!.replace('{msg}', msg)
+  const alerts = (): string[] => screen.queryAllByRole('alert').map((e) => (e.textContent ?? '').trim())
+
+  it('getHardwareInfo 回 {ok:false} ⇒ 那一块换成「读不到：原因」，那句「加载中…」不再挂着', async () => {
+    mount('none', { getHardwareInfo: () => ({ ok: false, error: 'HW_PROBE:探测超时' }) })
+    await waitFor(() => expect(alerts()).toContain(failed('HW_PROBE:探测超时')))
+    expect(screen.queryByText(zh['common.loading']!)).toBeNull()
+  })
+
+  it('反向对照：读到画像 ⇒ 没有那句、也不停在「加载中…」', async () => {
+    // 底座桩的 recommendModels 是 `{ok:false}`（§256 的用例要的），这一条要零 alert 就得把它也给成读到的
+    mount('none', { recommendModels: () => ({ ok: true, data: RECO }) })
+    // 那行的 label 与 value 在同一个元素里（textContent 是「CPUX × 8」）⇒ 按整屏文本断，不用 queryByText
+    await waitFor(() => expect(document.body.textContent ?? '').toMatch(/X × 8/))
+    expect(alerts()).toEqual([])
+    expect(screen.queryByText(zh['common.loading']!)).toBeNull()
+  })
+
+  it('reject 面（Promise 被拒）⇒ 同一张脸，原因是抛出来的原文', async () => {
+    mount('none', { getHardwareInfo: () => Promise.reject(new Error('硬件通道炸了')) })
+    await waitFor(() => expect(alerts()).toContain(failed('硬件通道炸了')))
   })
 })

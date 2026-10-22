@@ -107,15 +107,19 @@ describe('① 知识库轮询读不到：停轮询是对的，但必须说出来
 describe('② 导出报告：没读到的版本号要写「读不到：原因」，不是一个 `-`', () => {
   const stubs = (over: Record<string, unknown>): void => {
     stubPocketai({
+      // §258：这三发裸值通道改信封 ⇒ 桩跟着换形状（外层 ok 是"读到没读到"，data 才是业务对象）
       getHardwareInfo: () => ({
-        os: { platform: 'win32', release: '10.0' },
-        cpu: { model: 'X', cores: 8 },
-        memory: { total: 16 * 1024 ** 3, free: 8 * 1024 ** 3 },
-        gpus: [],
-        disk: { type: 'SSD', freeSpace: 1024 ** 3, removable: false }
+        ok: true,
+        data: {
+          os: { platform: 'win32', release: '10.0' },
+          cpu: { model: 'X', cores: 8 },
+          memory: { total: 16 * 1024 ** 3, free: 8 * 1024 ** 3 },
+          gpus: [],
+          disk: { type: 'SSD', freeSpace: 1024 ** 3, removable: false }
+        }
       }),
-      checkIntegrity: () => ({ ok: true, details: '' }),
-      getHealthReport: () => ({ totalBytes: 0, sections: [], items: [], byCategory: [] }),
+      checkIntegrity: () => ({ ok: true, data: { ok: true, details: '' } }),
+      getHealthReport: () => ({ ok: true, data: { totalBytes: 0, sections: [], items: [], byCategory: [] } }),
       recommendModels: () => ({ ok: false }),
       listProviders: () => [],
       runAudit: () => ({ ok: true, data: { score: 80, checks: [] } }),
@@ -176,7 +180,7 @@ const builtinSkill = { id: 's1', name: '内置一', isBuiltin: true, enabled: fa
 
 function mountWizard(over: Record<string, unknown>): void {
   stubPocketai({
-    getHardwareInfo: () => wizardHardware,
+    getHardwareInfo: () => ({ ok: true, data: wizardHardware }),
     getEncryptionStatus: () => ({ mode: 'none', unlocked: true, dbEncrypted: false, fieldEncrypted: true, masterPasswordVerified: true, kdfN: null, kdfAtCurrentTier: true }),
     recommendModels: () => ({ ok: false }),
     listProviders: () => [ollamaProvider],

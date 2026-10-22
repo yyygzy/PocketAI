@@ -359,3 +359,26 @@ describe('分步明细那一读的三态', () => {
     expect(screen.queryByTestId('traces-unread')).toBeNull()
   })
 })
+
+/**
+ * §258：`setUiPrefs` 那两发**写**失败过去只进 console（§257 登记为设计内）。口径改成
+ * "面板常驻一句、下一次写成功即收回"——它的后果不在当场（下次启动不会回到这里），
+ * 而那一发在挂载恢复后也会重放一次同值写入 ⇒ 弹 toast 会撞在启动那一下，所以断"这句在界面上"、断"没有 toast"。
+ */
+describe('把这次的选择存回去那一发：写失败要在界面上说，不是一条会消失的 toast', () => {
+  it('setUiPrefs 回 {ok:false} ⇒ 那句常驻（role=alert），原因是通道原文，且没有 toast', async () => {
+    stubPocketai({ ...stubBase(), setUiPrefs: () => ({ ok: false, error: 'PREF_BUSY:设置库被占用' }) })
+    await mountReady()
+    const line = await screen.findByText(/PREF_BUSY:设置库被占用/)
+    expect(line.closest('[role="alert"]'), '常驻那句走的是 alert（toast 用的是 status）').not.toBeNull()
+    expect(line.textContent).toContain(zh['agent.prefsNotSaved']!.split('{msg}')[0])
+    expect(screen.queryAllByRole('status').map((e) => e.textContent ?? '').join(' '))
+      .not.toContain('PREF_BUSY')
+  })
+
+  it('反向对照：写成功 ⇒ 那句一次都不出现', async () => {
+    await mountReady()
+    await new Promise((r) => setTimeout(r, 60))
+    expect(screen.queryByText(/agent\.prefsNotSaved|没能记住/)).toBeNull()
+  })
+})

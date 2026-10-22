@@ -49,6 +49,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   // 模型推荐读不到 ⇒ 那一行硬件档位整行消失，看着像这台机器没有画像。
   const [encFail, setEncFail] = useState<{ error?: string } | null>(null)
   const [recFail, setRecFail] = useState<{ error?: string } | null>(null)
+  // §258：这一发以前失败侧只有一句 `return`（闸门把它算作接管，屏上却什么都没说的桶）
+  const [hwFail, setHwFail] = useState<{ error?: string } | null>(null)
   const [isPortable, setIsPortable] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -84,11 +86,18 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     window.pocketai
       .getHardwareInfo(false)
       .then((hw) => {
-        if (hasIpcFailed(hw)) return
-        setHardware(hw)
-        setIsPortable(hw.disk.removable)
+        if (hasIpcFailed(hw) || !hw.data) {
+          setHwFail(hw)
+          return
+        }
+        setHwFail(null)
+        setHardware(hw.data)
+        setIsPortable(hw.data.disk.removable)
       })
-      .catch(reportIpcError('wizard.getHardwareInfo'))
+      .catch((e: unknown) => {
+        setHwFail({ error: errText(e, '') })
+        logIpcError('wizard.getHardwareInfo', e)
+      })
     window.pocketai.getEncryptionStatus().then((v) => {
       if (hasIpcFailed(v)) {
         setEncFail(v)
@@ -412,6 +421,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           .join(' · ')}
       />
     </div>
+  ) : hwFail ? (
+    // §258：这一发读不到时以前永远停在「加载中…」——把"没读到"演成"还在读"
+    <LoadFailNotice msg={ipcFailText(hwFail, t('common.unknownError'))} />
   ) : (
     <div className="text-[12px] text-[var(--color-text-muted)] py-4 text-center">
       {t('common.loading')}

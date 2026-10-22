@@ -505,6 +505,14 @@ export const AgentPanel: React.FC = () => {
           </button>
         </div>
 
+        {/* §258：这一发是**写**（把当前助手／会话存回 ui_prefs）。失败不当场崩、后果在下次启动，
+            所以不弹 toast（会撞在启动那一下），改在这里常驻一句；下一次写成功就收回。 */}
+        {chat.uiPrefsUnread && (
+          <div role="alert" className="px-2 py-1 text-[11px] leading-snug text-[var(--color-warning)]">
+            {t('agent.prefsNotSaved', { msg: chat.uiPrefsUnread })}
+          </div>
+        )}
+
         <AgentToolBars tools={tools} />
 
         {/* 会话内消息搜索栏 */}

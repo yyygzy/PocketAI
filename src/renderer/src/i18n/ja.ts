@@ -779,6 +779,7 @@ export const ja = {
   'agent.backToParent': '親会話に戻る',
   'agent.identityUnread': '会話の属性情報を読めないため、今はメッセージを送れません。',
   'agent.retryRead': '再試行',
+  'agent.prefsNotSaved': 'いま選んだアシスタントと会話を記憶できませんでした。次回起動時はここに戻りません：{msg}',
   'agent.traceCopied': 'ステップ詳細をクリップボードにコピーしました',
   'agent.copyFailed': 'コピーに失敗しました。手動で選択してください',
   'agent.noModelsHint': 'このプロバイダーのモデルリストはまだ取得されていません',

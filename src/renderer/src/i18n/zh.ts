@@ -806,6 +806,7 @@ export const zh = {
   'agent.backToParent': '返回上一级',
   'agent.identityUnread': '读不到这条会话的身份，暂时不能往里发消息。',
   'agent.retryRead': '重试',
+  'agent.prefsNotSaved': '这次选的助手与会话没能记住，下次启动不会回到这里：{msg}',
   'agent.traceCopied': '已复制分步明细到剪贴板',
   'agent.copyFailed': '复制失败，请手动选择文本',
   'agent.noModelsHint': '该 Provider 尚未拉取模型列表',

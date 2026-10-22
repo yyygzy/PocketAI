@@ -779,6 +779,7 @@ export const ko = {
   'agent.backToParent': '상위 대화로 돌아가기',
   'agent.identityUnread': '대화 정보를 읽을 수 없어 지금은 메시지를 보낼 수 없습니다.',
   'agent.retryRead': '재시도',
+  'agent.prefsNotSaved': '방금 선택한 어시스턴트와 대화를 저장하지 못했습니다. 다음 시작 시 이곳으로 돌아오지 않습니다: {msg}',
   'agent.traceCopied': '단계 상세를 클립보드에 복사했습니다',
   'agent.copyFailed': '복사 실패, 수동으로 텍스트를 선택하세요',
   'agent.noModelsHint': '이 공급자의 모델 목록이 아직 조회되지 않았습니다',

@@ -113,13 +113,17 @@ import type {
 
 const api = {
   // ---------- 系统 ----------
-  getHardwareInfo: (force?: boolean): Promise<HardwareInfo> =>
+  // §258：这三发原来标成裸值（`Promise<HardwareInfo>` 等），可 safeHandle 失败时送来的是 `{ok:false,error}`
+  // ⇒ 失败对象过得了类型、过得了 `if (hw)`。改成信封后调用点必须判（同 :1210 的 recommendModels 口径）。
+  getHardwareInfo: (force?: boolean): Promise<{ ok: boolean; data?: HardwareInfo; error?: string }> =>
     ipcRenderer.invoke(IPC.SYSTEM_HARDWARE_INFO, force),
   getPaths: () => ipcRenderer.invoke(IPC.APP_GET_PATHS),
   setAppLanguage: (lang: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.MENU_SET_LANGUAGE, lang),
   runMigrations: () => ipcRenderer.invoke(IPC.DB_RUN_MIGRATIONS),
-  checkIntegrity: () => ipcRenderer.invoke(IPC.DB_INTEGRITY_CHECK),
+  // `data` 才是库完整性结论（`{ok,details}`），外层 `ok` 只说"这一发读到了吗"
+  checkIntegrity: (): Promise<{ ok: boolean; data?: { ok: boolean; details: string }; error?: string }> =>
+    ipcRenderer.invoke(IPC.DB_INTEGRITY_CHECK),
 
   // ---------- Provider ----------
   listProviders: (): Promise<ProviderRecord[]> =>
@@ -1201,7 +1205,8 @@ const api = {
   },
 
   // ---------- 平台管家 ----------
-  getHealthReport: (): Promise<HealthReport> =>
+  // §258：同 getHardwareInfo／checkIntegrity 改信封
+  getHealthReport: (): Promise<{ ok: boolean; data?: HealthReport; error?: string }> =>
     ipcRenderer.invoke(IPC.HEALTH_REPORT),
   runCleanup: (): Promise<CleanupResult> =>
     ipcRenderer.invoke(IPC.HEALTH_CLEANUP),

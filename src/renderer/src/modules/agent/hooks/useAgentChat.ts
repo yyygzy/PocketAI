@@ -504,6 +504,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     }
   }, [dataReady])
 
+  // §258：这两发是**写**（把「当前选中的助手／会话」存回 ui_prefs），失败过去只进 console。
+  // 后果不当场可见：下次启动不会回到这里。口径＝不弹 toast（会撞在启动那一下），
+  // 但在面板挂一行常驻的「没能记住」，写成功就收回。
+  const [uiPrefsUnread, setUiPrefsUnread] = useState<string | null>(null)
+
   useEffect(() => {
     if (!restored) return
     // 加载中间态（还没定下助手/会话）不写，否则会把上次的存档清掉
@@ -512,10 +517,18 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       .setUiPrefs({ agentAssistantId: assistantId, agentConversationId: conversationId })
       .then((r) => {
         // 该通道成功也返回 {ok:true,data} 信封，不能用 isIpcFail 判别
-        if (r.ok === false) logIpcError('agent.setUiPrefs', r.error ?? 'failed')
+        if (r.ok === false) {
+          logIpcError('agent.setUiPrefs', r.error ?? 'failed')
+          setUiPrefsUnread(ipcFailText(r, t('common.unknownError')))
+          return
+        }
+        setUiPrefsUnread(null)
       })
-      .catch(reportIpcError('agent.setUiPrefs'))
-  }, [restored, assistantId, conversationId])
+      .catch((e: unknown) => {
+        logIpcError('agent.setUiPrefs', e)
+        setUiPrefsUnread(errText(e, t('common.unknownError')))
+      })
+  }, [restored, assistantId, conversationId, t])
 
   // 恢复来的助手必须仍然存在（助手可能被删除或被导入覆盖）；不在列表里就清回自由会话，
   // 并把存档一起抹掉——否则每次进来都要重演一遍"选中一个不存在的助手"
@@ -528,10 +541,18 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     void window.pocketai
       .setUiPrefs({ agentAssistantId: '', agentConversationId: '' })
       .then((r) => {
-        if (r.ok === false) logIpcError('agent.setUiPrefs', r.error ?? 'failed')
+        if (r.ok === false) {
+          logIpcError('agent.setUiPrefs', r.error ?? 'failed')
+          setUiPrefsUnread(ipcFailText(r, t('common.unknownError')))
+          return
+        }
+        setUiPrefsUnread(null)
       })
-      .catch(reportIpcError('agent.setUiPrefs'))
-  }, [restored, assistants, assistantId])
+      .catch((e: unknown) => {
+        logIpcError('agent.setUiPrefs', e)
+        setUiPrefsUnread(errText(e, t('common.unknownError')))
+      })
+  }, [restored, assistants, assistantId, t])
 
   // 助手切换 → 拉活跃+归档会话列表并自动选中最近一次（活跃列表已按置顶权重+updated_at DESC 排序）
   useEffect(() => {
@@ -1070,6 +1091,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     mcpHeldBack,
     textProtocolForced,
     textProtocolUnread,
+    uiPrefsUnread,
     setTextProtocol,
     contextWindowTokens,
     contextWindowUnread: modelWindowsUnread,

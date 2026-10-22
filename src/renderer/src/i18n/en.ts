@@ -806,6 +806,7 @@ export const en = {
   'agent.backToParent': 'Back to parent',
   'agent.identityUnread': 'Session identity could not be read, so sending is off for now.',
   'agent.retryRead': 'Retry',
+  'agent.prefsNotSaved': 'Could not save the assistant and conversation you just picked — next start will not return here: {msg}',
   'agent.traceCopied': 'Step details copied to clipboard',
   'agent.copyFailed': 'Copy failed, please select text manually',
   'agent.noModelsHint': 'No models fetched for this provider yet',

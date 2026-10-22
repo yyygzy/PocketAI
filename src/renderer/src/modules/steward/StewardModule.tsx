@@ -31,6 +31,13 @@ export const StewardModule: React.FC = () => {
   const [hardware, setHardware] = useState<HardwareInfo | null>(null)
   const [integrity, setIntegrity] = useState<{ ok: boolean; details: string } | null>(null)
   const [health, setHealth] = useState<HealthReport | null>(null)
+  // §258：这三发原本是裸值通道 ⇒ safeHandle 的失败对象 `{ok:false,error}` 是 truthy，
+  // 而老写法只判那个变量的真值就把它当硬件快照用了 ⇒ 这一屏 render 当场 TypeError（整站进崩溃兜底屏）、
+  // 完整性那行显示「❌ undefined」（＝谎报数据库损坏）、健康报告把"没读到"演成「✅ 0」孤儿。
+  // 现在通道是信封、每发各留一句原因；成功时把原因收回（不留 §256 那种"陈旧谎报"）。
+  const [hwFail, setHwFail] = useState<string | null>(null)
+  const [integFail, setIntegFail] = useState<string | null>(null)
+  const [healthFail, setHealthFail] = useState<string | null>(null)
   const [recommendation, setRecommendation] = useState<ModelRecommendation | null>(null)
   // §255：这一读失败时以前是"整块不出现"，用户分不清是没读到还是这台机器不该有
   const [recErr, setRecErr] = useState<string | null>(null)
@@ -80,21 +87,43 @@ export const StewardModule: React.FC = () => {
 
   const load = useCallback(async (force = false) => {
     setRefreshing(true)
+    const unknown = t('common.unknownError')
     try {
+      // reject 面也归一成信封失败 ⇒ 下面每一发只有一条判据（`data: undefined` 是让两支同形状）
+      const fail = (e: unknown) => ({ ok: false, data: undefined, error: errText(e, unknown) })
       const [hw, integ, healthReport] = await Promise.all([
-        window.pocketai.getHardwareInfo(force).catch((e) => { logIpcError('steward.getHardwareInfo', e); return null }),
-        window.pocketai.checkIntegrity().catch((e) => { logIpcError('steward.checkIntegrity', e); return null }),
-        window.pocketai.getHealthReport().catch((e) => { logIpcError('steward.getHealthReport', e); return null })
+        window.pocketai.getHardwareInfo(force).catch((e) => { logIpcError('steward.getHardwareInfo', e); return fail(e) }),
+        window.pocketai.checkIntegrity().catch((e) => { logIpcError('steward.checkIntegrity', e); return fail(e) }),
+        window.pocketai.getHealthReport().catch((e) => { logIpcError('steward.getHealthReport', e); return fail(e) })
       ])
-      if (hw) setHardware(hw)
-      if (integ) setIntegrity(integ)
-      if (healthReport) setHealth(healthReport)
+      // 三发各自接管：读不到 ⇒ 这一块摆原因（旧快照一并清掉，不拿上一份冒充这一份）
+      if (hasIpcFailed(hw) || !hw.data) {
+        setHardware(null)
+        setHwFail(ipcFailText(hw, unknown))
+      } else {
+        setHwFail(null)
+        setHardware(hw.data)
+      }
+      if (hasIpcFailed(integ) || !integ.data) {
+        setIntegrity(null)
+        setIntegFail(ipcFailText(integ, unknown))
+      } else {
+        setIntegFail(null)
+        setIntegrity(integ.data)
+      }
+      if (hasIpcFailed(healthReport) || !healthReport.data) {
+        setHealth(null)
+        setHealthFail(ipcFailText(healthReport, unknown))
+      } else {
+        setHealthFail(null)
+        setHealth(healthReport.data)
+      }
       refreshRecommendation()
       if (force) setManualCheckedAt(Date.now())
     } finally {
       setRefreshing(false)
     }
-  }, [refreshRecommendation])
+  }, [refreshRecommendation, t])
 
   // 仅在挂载时读取一次快照，不设定时器、不在每次点击时重新采集
   useEffect(() => {
@@ -112,11 +141,13 @@ export const StewardModule: React.FC = () => {
       }
       setCleanupResult(result)
       const report = await window.pocketai.getHealthReport()
-      if (hasIpcFailed(report)) {
+      // §258：通道改信封 ⇒ 数据在 `report.data`；没带数据也算读不到（不许拿旧快照冒充刚清理完的状态）
+      if (hasIpcFailed(report) || !report.data) {
         toast.error(ipcFailText(report, t('common.unknownError')))
         return
       }
-      setHealth(report)
+      setHealthFail(null)
+      setHealth(report.data)
       // 静默刷新诊断结果（孤儿数据可能已被清除）
       // §255 复核：这一发是"顺带更新"，上一份诊断仍在屏上、清理本身已经 toast 过 ⇒ 设计内静默，
       // 但闸门的单条 if 视角看不见这段注释，所以它仍留在 CAP 名单里计数（同 §251 的 995／1450 两档）
@@ -139,11 +170,13 @@ export const StewardModule: React.FC = () => {
       }
       setVacuumBytes(bytes)
       const report = await window.pocketai.getHealthReport()
-      if (hasIpcFailed(report)) {
+      // §258：同 handleCleanup——判失败面也判"没有数据"
+      if (hasIpcFailed(report) || !report.data) {
         toast.error(ipcFailText(report, t('common.unknownError')))
         return
       }
-      setHealth(report)
+      setHealthFail(null)
+      setHealth(report.data)
     } finally {
       setCleaning(false)
     }
@@ -355,12 +388,23 @@ export const StewardModule: React.FC = () => {
         </div>
       </div>
 
-      {integrity && (
+      {(integrity || integFail) && (
         <Section title={t('steward.integrity')}>
-          <Row
-            label="integrity_check"
-            value={integrity.ok ? '✅ ok' : `❌ ${integrity.details}`}
-          />
+          {/* 两档互斥：读不到时 integrity 已被清空，不会同时摆 */}
+          {integFail && <LoadFailNotice msg={integFail} />}
+          {integrity && (
+            <Row
+              label="integrity_check"
+              value={integrity.ok ? '✅ ok' : `❌ ${integrity.details}`}
+            />
+          )}
+        </Section>
+      )}
+
+      {/* §258：读不到时这一整块不出现＝用户分不清"这台机器没有画像"还是"没读到"⇒ 同一块位置摆原因 */}
+      {hwFail && (
+        <Section title={t('steward.system')}>
+          <LoadFailNotice msg={hwFail} />
         </Section>
       )}
 
@@ -516,6 +560,12 @@ export const StewardModule: React.FC = () => {
       )}
 
       {/* 数据健康报告 */}
+      {healthFail && (
+        <Section title={t('steward.dataHealth')}>
+          <LoadFailNotice msg={healthFail} />
+        </Section>
+      )}
+
       {health && (
         <Section title={t('steward.dataHealth')}>
           <Row label={t('steward.totalConv')} value={String(health.totalConversations)} />

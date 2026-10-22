@@ -54,7 +54,7 @@ const SITES: Array<[string, string, string]> = [
   ['../src/renderer/src/modules/settings/SettingsModule.tsx', 'disableRecoveryKey()', "t('enc.recoveryRemoved')"],
   ['../src/renderer/src/modules/settings/SettingsModule.tsx', "setUiPrefs({ customCss: '' })", "setCss('')"],
   ['../src/renderer/src/modules/steward/StewardModule.tsx', 'runVacuum()', 'setVacuumBytes(bytes)'],
-  ['../src/renderer/src/modules/steward/StewardModule.tsx', 'setVacuumBytes(bytes)\n      const report = await window.pocketai.getHealthReport()', 'setHealth(report)'],
+  ['../src/renderer/src/modules/steward/StewardModule.tsx', 'setVacuumBytes(bytes)\n      const report = await window.pocketai.getHealthReport()', 'setHealth(report.data)'],
   ['../src/renderer/src/components/OllamaPanel.tsx', 'installOllama()', 'setStatus(finalStatus)'],
   ['../src/renderer/src/modules/skills/SkillModule.tsx', 'const saved = await window.pocketai.saveSkill({', 'onSaved(saved)'],
   ['../src/renderer/src/modules/skills/SkillMarket.tsx', 'const copy = await window.pocketai.saveSkill({', "flash(true, t('skill.market.duplicated'"],

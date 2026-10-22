@@ -38,13 +38,28 @@ const AUDIT: AuditResult = { score: 88, checks: [{ id: 'PROBE-CHECK', label: 'PR
 
 type Impl = (...a: unknown[]) => unknown
 
+// §258 把这三发裸值通道改成了信封（preload 的类型撒谎让管家页在真失败时崩），桩跟着换形状：
+// 给 `null` 会让 `hw.data` 读不动；给 `{ok:true,data:null}` 会被判成"读到了空快照"⇒ 整套断言落在错的形状上。
+const hardwareSample = {
+  os: { platform: 'win32', release: '10.0', arch: 'x64', hostname: 'BOX' },
+  cpu: { model: 'X', cores: 8 },
+  memory: { total: 16 * 1024 ** 3, free: 8 * 1024 ** 3 },
+  gpus: [],
+  disk: { type: 'SSD', freeSpace: 1024 ** 3, removable: false }
+}
+const healthSample = {
+  totalConversations: 3,
+  totalMessages: 12,
+  kbCount: 1,
+  totalAttachmentsBytes: 0,
+  orphanMessages: 0,
+  orphanChunks: 0
+}
+
 const baseStubs = (over: Record<string, Impl> = {}): Record<string, Impl> => ({
-  // preload 的形状是混的：这几发返回**裸值**（不是 {ok,data} 信封），只有 recommendModels 这类
-  // 显式带判定面的才带信封 ⇒ 桩必须照 `src/preload/index.ts:116/122/1204/1210` 的签名给，
-  // 否则 `{ok:true,data:null}` 会被当成真快照往下渲染（我第一次就栽在这）
-  getHardwareInfo: () => null,
-  checkIntegrity: () => null,
-  getHealthReport: () => null,
+  getHardwareInfo: () => ({ ok: true, data: hardwareSample }),
+  checkIntegrity: () => ({ ok: true, data: { ok: true, details: 'ok' } }),
+  getHealthReport: () => ({ ok: true, data: healthSample }),
   getUpdateInfo: () => ({ isPackaged: false, currentVersion: '0.9.9', autoUpdateEnabled: false }),
   onOllamaPullEvent: () => () => {},
   ...over

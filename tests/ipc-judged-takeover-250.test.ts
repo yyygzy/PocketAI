@@ -188,11 +188,10 @@ const ALL = filesIn(RENDERER_DIR)
 const SITES = ALL.flatMap((rel) => scanSource(rel, blankComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'))))
 /** 读数类静默点：失败侧什么都没做，或只进 console */
 const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
-const SILENT_READ_CAP = 44
+const SILENT_READ_CAP = 42
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
-  'src/renderer/src/modules/agent/hooks/useAgentChat.ts',
   'src/renderer/src/modules/chat/AssistantEditor.tsx',
   'src/renderer/src/modules/settings/SettingsModule.tsx',
   'src/renderer/src/modules/image/ImageModule.tsx'
@@ -223,11 +222,12 @@ const SILENT_PER_FILE: Record<string, number> = {
   //    而保存前那发现取失败只进 console 是**故意不卡住首启必经路**。
   'src/renderer/src/modules/image/ImageModule.tsx': 1,
   'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 2,
-  // §257：这一簇没有设计内静默——`useAgentToolConfigs` 四发读全部收口（清零），
-  // `useAgentChat` 剩的两条是 `setUiPrefs` 那两发**写**失败只进 console（停止类同族，界面上"存住了"与"没存住"仍分不开），
-  // 那是产品决策未定（要不要弹），本批不顺手改。
+  // §257：这一簇没有设计内静默——`useAgentToolConfigs` 四发读全部收口（清零）。
+  // §258 把 `useAgentChat` 也归零：`setUiPrefs` 那两发**写**失败过去只进 console（§257 留的产品决策），
+  // 口径定了——不弹 toast（那发在挂载恢复后也会重放一次同值写入，会撞在启动那一下），
+  // 改成 Agent 面板常驻一句「这次选的助手与会话没能记住」，写成功即收回。
   'src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts': 0,
-  'src/renderer/src/modules/agent/hooks/useAgentChat.ts': 2
+  'src/renderer/src/modules/agent/hooks/useAgentChat.ts': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -280,7 +280,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
   })
 
   it('真仓不是空转：判定式总数与分桶守恒（谁漏了一类就会在这里红）', () => {
-    expect(SITES.length, '判定式总数（并种写法后是 343）').toBeGreaterThan(300)
+    expect(SITES.length, '判定式总数（§258 现数 345；这条数随写法归并/拆分而变，不是不变量，引用前现查）').toBeGreaterThan(300)
     const by: Record<string, number> = { none: 0, console: 0, 'takes-over': 0, helper: 0, fallthrough: 0 }
     for (const s of SITES) by[s.side] = (by[s.side] ?? 0) + 1
     expect(Object.values(by).reduce((a, b) => a + b, 0), '分桶必须等于总数').toBe(SITES.length)
@@ -294,7 +294,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250~§257 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
+  it('§250~§258 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
