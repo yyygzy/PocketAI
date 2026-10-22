@@ -19,7 +19,7 @@ import { cullStale, selectByMode, toggleSelected } from './doc-batch'
 import { consumePendingKb, OPEN_KB_EVENT } from '../../utils/palette-nav'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
-import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
@@ -33,8 +33,27 @@ export const KnowledgeModule: React.FC = () => {
   const [jumpFocus, setJumpFocus] = useState<{ docId: string; seq: number } | null>(null)
   /** 跨库漫游跳转目标会话 id（KbDetail 消费后清空） */
   const [askJumpId, setAskJumpId] = useState<string | null>(null)
+  // §254：这一读失败时以前只剩空态那句「还没有知识库」，把"没读到"演成"真没有"（闸门第四面）
+  const [kbsErr, setKbsErr] = useState<string | null>(null)
 
-  const load = useCallback(() => window.pocketai.listKnowledgeBases().then((v) => { if (!hasIpcFailed(v)) setKbs(v) }).catch(reportIpcError('kb.list')), [])
+  const load = useCallback(
+    () =>
+      window.pocketai
+        .listKnowledgeBases()
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setKbsErr(ipcFailText(v, t('common.unknownError')))
+            return
+          }
+          setKbsErr(null)
+          setKbs(v)
+        })
+        .catch((e: unknown) => {
+          setKbsErr(errText(e, t('common.unknownError')))
+          logIpcError('kb.list', e)
+        }),
+    [t]
+  )
   useEffect(() => {
     load()
   }, [load])
@@ -107,7 +126,8 @@ export const KnowledgeModule: React.FC = () => {
           </div>
         </div>
         <div className="space-y-1 overflow-y-auto">
-          {kbs.length === 0 && (
+          {kbsErr && <LoadFailNotice msg={kbsErr} />}
+          {kbs.length === 0 && !kbsErr && (
             <p className="text-xs text-[var(--color-text-muted)]">{t('kb.empty')}</p>
           )}
           {kbs.map((k) => (
@@ -198,7 +218,19 @@ const KbForm: React.FC<{
   const [error, setError] = useState('')
 
   useEffect(() => {
-    window.pocketai.listProviders().then((ps) => { if (!hasIpcFailed(ps)) setProviders(ps.filter((p) => p.enabled)) }).catch(reportIpcError('kb.listProviders'))
+    window.pocketai
+      .listProviders()
+      .then((ps) => {
+        if (hasIpcFailed(ps)) {
+          setError(t('common.loadFailed', { msg: ipcFailText(ps, t('common.unknownError')) }))
+          return
+        }
+        setProviders(ps.filter((p) => p.enabled))
+      })
+      .catch((e: unknown) => {
+        setError(t('common.loadFailed', { msg: errText(e) }))
+        logIpcError('kb.listProviders', e)
+      })
   }, [])
 
   const selectedProvider = providers.find((p) => p.id === providerId)
@@ -1321,12 +1353,24 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: 
   const [loading, setLoading] = useState(true)
   /** 来源跳转命中的分块高亮（短暂闪烁后恢复） */
   const [hlSeq, setHlSeq] = useState<number | null>(null)
+  // §254：读不到 ≠「这个文档没有分块」——那句空态得让位给原因
+  const [chunkErr, setChunkErr] = useState<string | null>(null)
 
   useEffect(() => {
     window.pocketai
       .listKbChunks(doc.id)
-      .then((v) => { if (!hasIpcFailed(v)) setChunks(v) })
-      .catch(reportIpcError('kb.listChunks'))
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setChunkErr(ipcFailText(v, t('common.unknownError')))
+          return
+        }
+        setChunkErr(null)
+        setChunks(v)
+      })
+      .catch((e: unknown) => {
+        setChunkErr(errText(e, t('common.unknownError')))
+        logIpcError('kb.listChunks', e)
+      })
       .finally(() => setLoading(false))
   }, [doc.id])
 
@@ -1358,7 +1402,8 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: 
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {loading && <p className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</p>}
-          {!loading && chunks.length === 0 && (
+          {chunkErr && <LoadFailNotice msg={chunkErr} />}
+          {!loading && chunks.length === 0 && !chunkErr && (
             <p className="text-xs text-[var(--color-text-muted)]">{t('kb.noChunks')}</p>
           )}
           {chunks.map((c) => (

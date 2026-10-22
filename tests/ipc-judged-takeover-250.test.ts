@@ -72,6 +72,10 @@ function classifySide(node: ts.Statement | ts.Block | undefined): { side: Site['
       } else if (ts.isBinaryExpression(e) && /=/.test(e.operatorToken.getText()) && e.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsToken && e.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) {
         effect = true
         onlyConsole = false
+      } else if (ts.isPostfixUnaryExpression(e) || ts.isPrefixUnaryExpression(e)) {
+        // `failed++` 这类局部计数喂的是后面的聚合提示（「成功 N 失败 M」），算写了状态——§250 的分桶把它读成「什么都没做」是假阳
+        effect = true
+        onlyConsole = false
       }
     }
     if (ts.isVariableStatement(n)) {
@@ -184,7 +188,7 @@ const ALL = filesIn(RENDERER_DIR)
 const SITES = ALL.flatMap((rel) => scanSource(rel, blankComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'))))
 /** 读数类静默点：失败侧什么都没做，或只进 console */
 const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
-const SILENT_READ_CAP = 64
+const SILENT_READ_CAP = 58
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
@@ -207,7 +211,8 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/detached/DetachedApp.tsx': 0,
   'src/renderer/src/components/Sidebar.tsx': 2,
   'src/renderer/src/modules/chat/ChatModule.tsx': 1,
-  'src/renderer/src/modules/settings/SettingsModule.tsx': 2
+  'src/renderer/src/modules/settings/SettingsModule.tsx': 2,
+  'src/renderer/src/modules/knowledge/KnowledgeModule.tsx': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -226,11 +231,12 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
       if (!r3.ok) setErr(r3.error)
       if (r4.ok) { setR(r4); return }
       setErr(r4.error)
+      if (hasIpcFailed(r7)) failed++
       if (r5.ok) { setR(r5); return }
     `
     const got = scanSource('fake.ts', fake)
     const at = (v: string) => got.find((s) => s.v === v)
-    expect(got.map((s) => s.v).sort(), '十条判定式都该被收到').toEqual(['a', 'b', 'c', 'd', 'e', 'r1', 'r2', 'r3', 'r4', 'r5'])
+    expect(got.map((s) => s.v).sort(), '十一条判定式都该被收到（`.ok` 是数组字段的两种不算）').toEqual(['a', 'b', 'c', 'd', 'e', 'r1', 'r2', 'r3', 'r4', 'r5', 'r7'])
     expect(at('a')?.side).toBe('takes-over')
     expect(at('a')?.negated).toBe(false)
     expect(at('b')?.negated, '!hasIpcFailed 是反判').toBe(true)
@@ -245,6 +251,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(at('r3'), '!x.ok ⇒ 失败侧是 then').toMatchObject({ negated: false, side: 'takes-over' })
     expect(at('r4'), '成功侧以 return 收尾且 if 之后还有语句 ⇒ 那段就是失败路径，不算静默').toMatchObject({ side: 'fallthrough' })
     expect(at('r5'), '同形但 if 之后一句都没有 ⇒ 仍是静默（这条不给 r4 打掩护）').toMatchObject({ side: 'none' })
+    expect(at('r7'), '失败侧只有 `failed++` ⇒ 那是聚合提示的计数，算接管').toMatchObject({ negated: false, side: 'takes-over' })
     expect(at('b'), '行号可得（红因要指得到位置）').toMatchObject({ line: 4 })
   })
 
@@ -272,7 +279,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250／§251 收口的五处不再静默（App／DetachedApp／Sidebar 角标／ChatModule 消息／SettingsModule 设置类九处）', () => {
+  it('§250／§251／§254 收口的六处不再静默（App／DetachedApp／Sidebar 角标／ChatModule 消息／SettingsModule 九处／KnowledgeModule 三处）', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
