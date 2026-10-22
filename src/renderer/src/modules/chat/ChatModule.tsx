@@ -13,6 +13,7 @@ import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
 import { ConversationList } from './ConversationList'
 import { ChatView } from './ChatView'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useStreamSession } from './useStreamSession'
 import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
@@ -55,6 +56,8 @@ export const ChatModule: React.FC = () => {
   const [archivedConversations, setArchivedConversations] = useState<ConversationRecord[]>([])
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
+  // 消息那一读失败的原因（V4-Iter-250）：不写这句，屏上留着的是上一条会话或空列表，两种都像「这里没消息」
+  const [msgsReadErr, setMsgsReadErr] = useState<string | null>(null)
   const [replyToMessage, setReplyToMessage] = useState<MessageRecord | null>(null)
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [marketOpen, setMarketOpen] = useState(false)
@@ -106,9 +109,21 @@ export const ChatModule: React.FC = () => {
     })
   }, [])
 
-  const loadMessages = useCallback((convId: string) => {
-    return window.pocketai.listMessages(convId).then((v) => { if (!hasIpcFailed(v)) setMessages(v) }).catch(reportIpcError('chat.listMessages'))
-  }, [])
+  const loadMessages = useCallback(
+    (convId: string) =>
+      window.pocketai
+        .listMessages(convId)
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setMsgsReadErr(ipcFailText(v, t('common.unknownError')))
+            return
+          }
+          setMsgsReadErr(null)
+          setMessages(v)
+        })
+        .catch(reportIpcError('chat.listMessages')),
+    [t]
+  )
 
   const reloadAssistants = useCallback(() => {
     return window.pocketai.listAssistants().then((v) => { if (!hasIpcFailed(v)) setAssistants(v) }).catch(reportIpcError('chat.listAssistants'))
@@ -1421,6 +1436,7 @@ export const ChatModule: React.FC = () => {
         </div>
       </div>
 
+      {msgsReadErr && <LoadFailNotice msg={msgsReadErr} />}
       <ChatView
         providers={providers}
         targets={targets}

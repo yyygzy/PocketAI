@@ -6,7 +6,8 @@ import { SelectionToolbar } from '../components/SelectionToolbar'
 import { LockOverlay } from '../components/LockOverlay'
 import type { ModuleId } from '../components/Sidebar'
 import { useI18n } from '../i18n'
-import { hasIpcFailed, reportIpcError } from '../utils/ipc'
+import { hasIpcFailed, reportIpcError, ipcFailText } from '../utils/ipc'
+import { ShowingDefaultsNotice } from '../components/ShowingDefaultsNotice'
 import { matchAppShortcut, filterShortcutForContext, type ConversationShortcutAction } from '../utils/shortcuts'
 import { APP_SHORTCUT_EVENT, type AppShortcutEventDetail } from '../hooks/useGlobalShortcuts'
 
@@ -31,13 +32,37 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
   const [dbEncrypted, setDbEncrypted] = useState(false)
   const [lockPwd, setLockPwd] = useState('')
   const [lockErr, setLockErr] = useState('')
+  // 挂载那两发读的失败原因（V4-Iter-250）：读不到 ≠ 「没加密、没锁」，与主窗口 App.tsx 同一口径
+  const [encReadErr, setEncReadErr] = useState<string | null>(null)
+  const [lockReadErr, setLockReadErr] = useState<string | null>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
   // 锁屏状态与主窗口联动（锁屏事件广播到所有窗口）
   useEffect(() => {
-    window.pocketai.getEncryptionStatus().then((s) => { if (!hasIpcFailed(s)) setDbEncrypted(s.dbEncrypted) }).catch(reportIpcError('detached.getEncryptionStatus'))
-    window.pocketai.getLockStatus().then((s) => { if (!hasIpcFailed(s)) setLocked(s.state === 'locked') }).catch(reportIpcError('detached.getLockStatus'))
+    window.pocketai
+      .getEncryptionStatus()
+      .then((s) => {
+        if (hasIpcFailed(s)) {
+          setEncReadErr(ipcFailText(s, t('common.unknownError')))
+          return
+        }
+        setEncReadErr(null)
+        setDbEncrypted(s.dbEncrypted)
+      })
+      .catch(reportIpcError('detached.getEncryptionStatus'))
+    window.pocketai
+      .getLockStatus()
+      .then((s) => {
+        if (hasIpcFailed(s)) {
+          setLockReadErr(ipcFailText(s, t('common.unknownError')))
+          return
+        }
+        setLockReadErr(null)
+        setLocked(s.state === 'locked')
+      })
+      .catch(reportIpcError('detached.getLockStatus'))
     return window.pocketai.onLockStateChange((e) => {
+      setLockReadErr(null)
       setLocked(e.state === 'locked')
       setLockPwd('')
       setLockErr('')
@@ -108,6 +133,12 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
         ref={contentRef}
         className="h-screen w-screen flex flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]"
       >
+        {(encReadErr || lockReadErr) && (
+          <div className="px-3 pt-2 space-y-1">
+            {encReadErr && <ShowingDefaultsNotice what={t('enc.dbEnc')} msg={encReadErr} />}
+            {lockReadErr && <ShowingDefaultsNotice what={t('enc.lockState')} msg={lockReadErr} />}
+          </div>
+        )}
         <Workspace activeModule={moduleId} />
         {!locked && <SelectionToolbar />}
 

@@ -57,14 +57,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [draggingId, setDraggingId] = useState<ModuleId | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; id: ModuleId } | null>(null)
   // 待发提醒角标数（仅主窗口挂提醒中心时拉取；到点广播后刷新）
-  const [pendingReminders, setPendingReminders] = useState(0)
+  // null = 这一发读没拿到（V4-Iter-250）：0 会被读成「没有待发提醒」，所以角标分三态
+  const [pendingReminders, setPendingReminders] = useState<number | null>(0)
 
   useEffect(() => {
     if (!onOpenReminders) return
     const refresh = () => {
       window.pocketai
         .listReminders()
-        .then((list) => { if (!hasIpcFailed(list)) setPendingReminders(list.length) })
+        .then((list) => {
+          if (hasIpcFailed(list)) {
+            setPendingReminders(null)
+            return
+          }
+          setPendingReminders(list.length)
+        })
         .catch(reportIpcError('sidebar.listReminders'))
     }
     refresh()
@@ -267,12 +274,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <span className="text-base leading-none">⏰</span>
           {!collapsed && <span>{t('reminder.center.entry')}</span>}
-          {pendingReminders > 0 && (
+          {(pendingReminders === null || pendingReminders > 0) && (
             <span
               className="absolute bg-[var(--color-accent)] text-white text-[9px] leading-none font-semibold rounded-full min-w-[15px] h-[15px] px-1 flex items-center justify-center"
               style={collapsed ? { top: 4, right: 6 } : { top: 4, right: 10 }}
+              title={pendingReminders === null ? t('reminder.center.pendingUnread') : undefined}
             >
-              {pendingReminders > 99 ? '99+' : pendingReminders}
+              {pendingReminders === null ? '?' : pendingReminders > 99 ? '99+' : pendingReminders}
             </span>
           )}
         </button>

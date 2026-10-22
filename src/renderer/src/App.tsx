@@ -12,7 +12,8 @@ import { RemindersModal } from './components/RemindersModal'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
-import { hasIpcFailed, reportIpcError } from './utils/ipc'
+import { hasIpcFailed, reportIpcError, ipcFailText } from './utils/ipc'
+import { ShowingDefaultsNotice } from './components/ShowingDefaultsNotice'
 import { startLongTaskObserver } from './utils/longtask'
 import { useAppStore } from './store/app-store'
 
@@ -37,6 +38,9 @@ export default function App() {
   const [remindersOpen, setRemindersOpen] = useState(false)
   const [lockPwd, setLockPwd] = useState('')
   const [lockErr, setLockErr] = useState('')
+  // 挂载那两发读的失败原因（V4-Iter-250）：读不到 ≠ "没加密、没锁"，得在屏上说得出
+  const [encReadErr, setEncReadErr] = useState<string | null>(null)
+  const [lockReadErr, setLockReadErr] = useState<string | null>(null)
 
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -60,15 +64,38 @@ export default function App() {
 
   // 隐私锁：监听状态变化
   useEffect(() => {
-    window.pocketai.getEncryptionStatus().then((s) => { if (!hasIpcFailed(s)) setDbEncrypted(s.dbEncrypted) }).catch(reportIpcError('app.getEncryptionStatus'))
-    window.pocketai.getLockStatus().then((s) => { if (!hasIpcFailed(s)) setLocked(s.state === 'locked') }).catch(reportIpcError('app.getLockStatus'))
+    // 这两发读只在挂载时跑一次、没有重试路径 ⇒ 失败不能只进 console：
+    // 默认值是 dbEncrypted=false／locked=false，静默失败＝界面把"读不到"演成"没加密、没锁"。
+    window.pocketai
+      .getEncryptionStatus()
+      .then((s) => {
+        if (hasIpcFailed(s)) {
+          setEncReadErr(ipcFailText(s, t('common.unknownError')))
+          return
+        }
+        setEncReadErr(null)
+        setDbEncrypted(s.dbEncrypted)
+      })
+      .catch(reportIpcError('app.getEncryptionStatus'))
+    window.pocketai
+      .getLockStatus()
+      .then((s) => {
+        if (hasIpcFailed(s)) {
+          setLockReadErr(ipcFailText(s, t('common.unknownError')))
+          return
+        }
+        setLockReadErr(null)
+        setLocked(s.state === 'locked')
+      })
+      .catch(reportIpcError('app.getLockStatus'))
     const off = window.pocketai.onLockStateChange((e) => {
+      setLockReadErr(null)
       setLocked(e.state === 'locked')
       setLockPwd('')
       setLockErr('')
     })
     return off
-  }, [setDbEncrypted, setLocked])
+  }, [setDbEncrypted, setLocked, t])
 
   // 首启向导 / 换电脑检测
   useEffect(() => {
@@ -144,6 +171,12 @@ export default function App() {
           />
           {/* 侧栏即唯一导航：模块内容区直接顶到窗口顶部（原 36px 标签栏已随标签页系统下线） */}
           <div className="flex flex-col flex-1 min-w-0">
+            {(encReadErr || lockReadErr) && (
+              <div className="px-3 pt-2 space-y-1">
+                {encReadErr && <ShowingDefaultsNotice what={t('enc.dbEnc')} msg={encReadErr} />}
+                {lockReadErr && <ShowingDefaultsNotice what={t('enc.lockState')} msg={lockReadErr} />}
+              </div>
+            )}
             <Workspace activeModule={activeModule} />
           </div>
         </div>
