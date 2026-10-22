@@ -201,6 +201,7 @@ export const zh = {
   'unlock.enterApp': '我已保存，进入应用',
   'unlock.showPwd': '显示密码',
   'unlock.hidePwd': '隐藏密码',
+  'unlock.lockStateUnread': '锁定状态读不到：{msg}（下面按钮按未锁定显示，提交时主进程仍会拦）',
   'unlock.tooManyAttempts': '尝试次数过多，请等待 {s} 秒后再试',
 
   // ── 对话模块：会话列表/导入导出 ──
@@ -249,6 +250,7 @@ export const zh = {
   'chat.unstar': '取消收藏',
   'chat.starredList': '收藏的消息',
   'chat.starredEmpty': '暂无收藏消息，hover 消息点 ☆ 收藏',
+  'chat.draftBlock': '这条会话的草稿',
   'chat.draftHint': '有未发送的草稿',
   'chat.groupNew': '新建文件夹',
   'chat.groupNamePh': '文件夹名称',
@@ -799,6 +801,8 @@ export const zh = {
   'agent.liveStep.replan': '重规划',
   'agent.liveStep.error': '错误',
   'agent.sessionStats': '会话累计：{runs} 次运行 · 耗时 {duration} · {tokens} tokens',
+  'agent.runStatsBlock': '本次运行统计',
+  'agent.sessionStatsBlock': '会话累计统计',
   'agent.traceDetail': '分步明细',
   'agent.copyTraceJson': '复制 JSON',
   'agent.traceIo': '入参／返回',

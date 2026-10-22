@@ -27,6 +27,11 @@ const NAMED = (what: string, msg: string): string => L('common.loadFailedNamed')
 const alerts = (): string[] => screen.queryAllByRole('alert').map((e) => (e.textContent ?? '').trim())
 const bodyText = (): string => document.body.textContent ?? ''
 
+/** 挂载级等待的预算：`waitFor` 默认只给 1s，满载整批时 AgentPanel 那条链（服务商+助手→ui_prefs→会话列表选中）排不完。
+ * 2026-10-22 §264 那趟全量（22:38 起，401 文件）红的就是这一族的第三条反向对照（单跑 497ms、满载 2230ms 后超时），
+ * 单跑这 12 例全绿⇒判据不变、只把预算给到 8s（与 §235 的 `mountReady` 同一条改法，见台账 §261 那条教训）。 */
+const MOUNT_BUDGET = { timeout: 8000, interval: 50 }
+
 type Impl = (...a: any[]) => unknown
 const GLM = { id: 'glm', name: '智谱 GLM', enabled: true, models: ['glm-4.6'] } as unknown as ProviderRecord
 const OFF = { id: 'off', name: '停用那家', enabled: false, models: [] } as unknown as ProviderRecord
@@ -175,7 +180,7 @@ describe('② AgentPanel 真挂载：两句各点各的名，屏上仍有内容'
       listAssistants: () => ({ ok: false, error: 'ASST:助手读不到' })
     }))
     mountWithProviders(<AgentPanel />)
-    await waitFor(() => expect(alerts()).toContain(NAMED('服务商列表', 'PROV:服务商读不到')))
+    await waitFor(() => expect(alerts()).toContain(NAMED('服务商列表', 'PROV:服务商读不到')), MOUNT_BUDGET)
     expect(alerts()).toContain(NAMED('助手列表', 'ASST:助手读不到'))
     // 这一条才是本批的立项理由：以前 assistants 是失败对象 ⇒ .map TypeError ⇒ 整屏一个字都不剩
     expect(bodyText().length, '屏上仍有内容（探针实测旧形状是 0）').toBeGreaterThan(0)
@@ -185,7 +190,7 @@ describe('② AgentPanel 真挂载：两句各点各的名，屏上仍有内容'
   it('只助手那发读不到 ⇒ 服务商照常出现在模型栏，且不说「服务商列表读不到」', async () => {
     stubPocketai(stubBase({ listAssistants: () => ({ ok: false, error: 'ASST:助手读不到' }) }))
     mountWithProviders(<AgentPanel />)
-    await waitFor(() => expect(alerts()).toContain(NAMED('助手列表', 'ASST:助手读不到')))
+    await waitFor(() => expect(alerts()).toContain(NAMED('助手列表', 'ASST:助手读不到')), MOUNT_BUDGET)
     expect(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim())).toContain('智谱 GLM')
     expect(alerts().join(' ')).not.toContain('服务商列表读不到')
   })
@@ -193,7 +198,7 @@ describe('② AgentPanel 真挂载：两句各点各的名，屏上仍有内容'
   it('反向对照：两发都读到 ⇒ 屏上一句「读不到」都没有', async () => {
     stubPocketai(stubBase())
     mountWithProviders(<AgentPanel />)
-    await waitFor(() => expect(screen.getAllByText('父会话').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getAllByText('父会话').length).toBeGreaterThan(0), MOUNT_BUDGET)
     expect(alerts()).toEqual([])
   })
 })

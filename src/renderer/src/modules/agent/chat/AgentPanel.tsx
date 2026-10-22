@@ -646,6 +646,45 @@ export const AgentPanel: React.FC = () => {
         )}
 
         {/* 本次运行统计：步数/耗时/token，点击展开分步明细；新一轮运行/切会话时复位 */}
+        {/* §264 第五面：那一读没读到⇒这块**整块不出现**（既不是 0 也不是"这轮没跑"，但用户看不出差别）。
+            说一句＋一次重试（§257 那颗 `agent.retryRead` 同一条路：这一发本来就能重拉）。 */}
+        {!chat.running && !chat.runStats && chat.runStatsUnread && (
+          <div role="alert" className="mb-2 self-start flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-danger)]">
+            <span>
+              {t('common.loadFailedNamed', {
+                what: t('agent.runStatsBlock'),
+                msg: ipcFailText(chat.runStatsUnread, t('common.unknownError'))
+              })}
+            </span>
+            <button
+              data-testid="run-stats-retry"
+              onClick={() => { if (chat.conversationId) chat.loadRunStats(chat.conversationId) }}
+              className="px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:text-[var(--color-text)] transition-colors"
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
+        {/* §264：累计那一读是独立一发——本次那块整块不出现时它也得说话
+            （原先这句长在展开明细里，跟着 runStats 一起消失＝替另一发也闭了嘴） */}
+        {!chat.running && chat.sessionStatsUnread && (
+          <div role="alert" className="mb-2 self-start flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-danger)]">
+            <span>
+              {t('common.loadFailedNamed', {
+                what: t('agent.sessionStatsBlock'),
+                msg: ipcFailText(chat.sessionStatsUnread, t('common.unknownError'))
+              })}
+            </span>
+            <button
+              data-testid="session-stats-retry"
+              onClick={() => { if (chat.conversationId) chat.loadSessionStats(chat.conversationId) }}
+              className="px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:text-[var(--color-text)] transition-colors"
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
+
         {!chat.running && chat.runStats && (
           <div className="mb-2 self-start w-full max-w-[640px]">
             <button

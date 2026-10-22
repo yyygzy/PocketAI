@@ -6,7 +6,7 @@
 //
 // 重构说明：原 4 步（欢迎→模型→加密→完成）合并为 3 步，把 provider + API key + assistant
 // 聚合到单页「快速配置」，加密降级为完成页的可选卡片，目标新用户 3 分钟内跑通。
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
@@ -57,6 +57,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   // Step 1: Quick Setup state
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
+  /** 助手清单那一读失败的原因（§264 第五面）：读不到时那块摆的是「加载中…」＝把没读到谎称成还在读 */
+  const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
   const [selectedPreset, setSelectedPreset] = useState<{ type: ProviderType; baseUrl: string; label: string; needKey: boolean } | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [selectedAssistantId, setSelectedAssistantId] = useState<string | null>(null)
@@ -80,6 +82,29 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [pwd2, setPwd2] = useState('')
   const [encDone, setEncDone] = useState(false)
   const [encErr, setEncErr] = useState('')
+
+  /**
+   * §264 第五面（收 `wizard.listAssistants` 那一发）：旧写法失败侧只有一句 `return`，`assistants` 停在 `[]`，
+   * 而那一格摆的是「加载中…」（`common.loading`）——把"没读到"谎称成"还在读"（§222 抓过的同一件事）。
+   * 现在：那一格换成「助手列表读不到：原因」＋一次重试（这一发本来就能重拉），读到即收回、才替用户挑内置助手。
+   */
+  const loadAssistants = useCallback(() => {
+    setAssistantsUnread(null)
+    window.pocketai.listAssistants().then((list) => {
+      if (hasIpcFailed(list)) {
+        setAssistantsUnread({ error: list.error })
+        return
+      }
+      setAssistants(list)
+      // 默认选中第一个内置助手（只有真读到才替用户挑）
+      const firstBuiltin = list.find((a) => a.isBuiltin)
+      if (firstBuiltin) setSelectedAssistantId(firstBuiltin.id)
+    }).catch((e: unknown) => {
+      // reject 面同一张脸（旧写法 `.catch(reportIpcError(...))`＝只进 console）
+      setAssistantsUnread({ error: errText(e, '') })
+      logIpcError('wizard.listAssistants', e)
+    })
+  }, [])
 
   useEffect(() => {
     // 硬件画像 boot 时主进程已采集并缓存，这里只读快照（force=false，秒回）
@@ -130,13 +155,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     // 保存前还会现取一次（下面那段），两道都失败才退回这份空快照，而 repo 侧另有 foundByDedupe 兜底
     // （`provider.repo.ts`，`tests/provider-save-models-preserve.test.ts` 守着）⇒ 判设计内静默、继续计数，不为清零改产品码。
     window.pocketai.listProviders().then((v) => { if (!hasIpcFailed(v)) setProviders(v) }).catch(reportIpcError('wizard.listProviders'))
-    window.pocketai.listAssistants().then((list) => {
-      if (hasIpcFailed(list)) return
-      setAssistants(list)
-      // 默认选中第一个内置助手
-      const firstBuiltin = list.find((a) => a.isBuiltin)
-      if (firstBuiltin) setSelectedAssistantId(firstBuiltin.id)
-    }).catch(reportIpcError('wizard.listAssistants'))
+    loadAssistants()
   }, [])
 
   async function finish() {
@@ -644,7 +663,14 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             <label className="text-[12px] text-[var(--color-text)] font-medium block mb-2">
               {t('wizard.assistantLabel')}
             </label>
-            {builtinAssistants.length === 0 ? (
+            {assistantsUnread ? (
+              <div className="flex flex-wrap items-center gap-2 py-2">
+                <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+                <button className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--color-border)]" onClick={loadAssistants}>
+                  {t('agent.retryRead')}
+                </button>
+              </div>
+            ) : builtinAssistants.length === 0 ? (
               <div className="text-[11px] text-[var(--color-text-muted)] py-2 text-center">
                 {t('common.loading')}
               </div>

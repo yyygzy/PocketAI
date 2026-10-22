@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { errText } from '../../utils/error'
-import { hasIpcFailed } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 
 type UnlockMode = 'unlock' | 'setPassword' | 'recovery'
@@ -42,6 +42,8 @@ export function UnlockPage() {
   const [showPwd, setShowPwd] = useState(false)
   const [lockedUntil, setLockedUntil] = useState(0) // 0 = 未锁定；否则退避结束时间戳
   const [remainingMs, setRemainingMs] = useState(0)
+  /** 锁定状态那一读失败的原因（§264 第五面）：读不到时 `lockedUntil` 停在 0＝"可以试"，这句要说出来 */
+  const [lockUnread, setLockUnread] = useState<{ error?: string } | null>(null)
 
   useEffect(() => {
     if (!lockedUntil) return
@@ -69,7 +71,13 @@ export function UnlockPage() {
     try {
       const s = await window.pocketai.getAuthLockState()
       // §219：不判就往下算 ⇒ ms 变 0，界面显示现在可以试，而它可能正被锁着（下面那句注释的『不阻断』是刻意的，但『不阻断』不等于谎报没锁）
-      if (hasIpcFailed(s)) return
+      // §264 第五面：判了、也只 `return` 同样不够——`lockedUntil` 停在初值 0，主按钮就写着「进入应用」，
+      // 等于替这次失败报了"没锁"。不阻断（不拦用户输入）与说实话是两件事，现在两件都做。
+      if (hasIpcFailed(s)) {
+        setLockUnread({ error: s.error })
+        return
+      }
+      setLockUnread(null)
       const ms = (m === 'recovery' ? s.recover : s.unlock)?.retryAfterMs ?? 0
       if (ms > 0) {
         setLockedUntil(Date.now() + ms)
@@ -78,8 +86,10 @@ export function UnlockPage() {
         setLockedUntil(0)
         setRemainingMs(0)
       }
-    } catch {
-      // 状态拉取失败不阻断解锁流程（主进程仍会在提交时强制拦截）
+    } catch (e: unknown) {
+      // 状态拉取失败不阻断解锁流程（主进程仍会在提交时强制拦截），但那句话要说，也要留痕
+      setLockUnread({ error: errText(e, '') })
+      logIpcError('unlock.getAuthLockState', e)
     }
   }, [])
 
@@ -90,13 +100,28 @@ export function UnlockPage() {
     if (r.retryAfterMs && r.retryAfterMs > 0) {
       setLockedUntil(Date.now() + r.retryAfterMs)
       setRemainingMs(r.retryAfterMs)
+      // §264：主进程亲口说"锁到什么时候"——那比"读不到"新，那句要退场（§256 陈旧谎报要收回）
+      setLockUnread(null)
     }
   }
 
   function clearLock() {
     setLockedUntil(0)
     setRemainingMs(0)
+    setLockUnread(null)
   }
+
+  /**
+   * §264 第五面：这一发读不到时屏上留下的是"未锁定"（主按钮写着「进入应用」／「解锁」），
+   * 属于"替这次失败报了个安全方向的反话"。不阻断输入照旧（主进程提交时仍会拦），但那句要常驻，
+   * 旁边给一次重试——这一发本来就有现成的重拉路（`syncLockState`）。
+   */
+  const lockNotice = lockUnread && (
+    <div role="alert" className="unlock-error">
+      {t('unlock.lockStateUnread', { msg: ipcFailText(lockUnread, t('common.unknownError')) })}
+      <button type="button" onClick={() => void syncLockState(mode)}>{t('agent.retryRead')}</button>
+    </div>
+  )
 
   // 密码输入框 + 显隐按钮（unlock/setPassword/recovery 三处复用）
   const renderPwd = (opts: {
@@ -280,6 +305,7 @@ export function UnlockPage() {
           {copied && <p className="unlock-recovery-warn">{t('enc.clipboardAutoClear', { s: 30 })}</p>}
           <p className="unlock-recovery-warn">{t('unlock.recoveryWarn')}</p>
           {error && <div className="unlock-error">{error}</div>}
+          {lockNotice}
           <button className="unlock-btn" onClick={finishAfterRecovery} disabled={busy || remainingMs > 0}>
             {remainingMs > 0
               ? t('unlock.tooManyAttempts', { s: Math.ceil(remainingMs / 1000) })
@@ -374,6 +400,7 @@ export function UnlockPage() {
         )}
 
         {error && <div className="unlock-error">{error}</div>}
+        {lockNotice}
 
         <button className="unlock-btn" onClick={handleSubmit} disabled={busy || remainingMs > 0}>
           {remainingMs > 0

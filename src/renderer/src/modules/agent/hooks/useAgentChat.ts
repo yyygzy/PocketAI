@@ -69,6 +69,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [interrupted, setInterrupted] = useState(false) // 上次运行被中止/出错（可断点恢复）
   const [runStats, setRunStats] = useState<AgentRunStats | null>(null) // 当前会话最近一次运行统计（trace 持久化，切回/刷新后恢复）
   const [sessionStats, setSessionStats] = useState<AgentSessionStats | null>(null) // 当前会话累计统计（跨全部运行）
+  // §264 第五面：这两发读过去失败侧只有一句 `return`——不摆假数字（复位后整块不出现／落到「分步明细」标题），
+  // 但也没说"这次没读到"，于是那一轮看着像"没有统计这回事"。原因各挂自己那一发（§259 逐发点名）。
+  const [runStatsUnread, setRunStatsUnread] = useState<{ error?: string } | null>(null)
+  const [sessionStatsUnread, setSessionStatsUnread] = useState<{ error?: string } | null>(null)
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
   // §257：这一读失败时以前与「本次运行确实没有明细」长得一模一样（`agent.traceEmpty`），
@@ -757,10 +761,50 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     applyLastModelOf(parentId, c?.modelLabel)
   }
 
+  /**
+   * §264 第五面：这两发读收口成"判了也说话"。两条守卫按 §260 那条纪律走**先判归属再判失败**——
+   * 迟到那发的失败不许在已切过去的会话屏上留一句"读不到"（成功支本来就是这么挡的，失败支过去根本没挡）。
+   * 每次重新拉取先收回上一句（§256 陈旧谎报），读到即清，reject 面与 resolve 的失败对象同一张脸。
+   */
+  const loadRunStats = useCallback((id: string) => {
+    setRunStatsUnread(null)
+    void window.pocketai.getLatestRunStats(id).then((stats) => {
+      if (conversationIdRef.current !== id) return
+      if (hasIpcFailed(stats)) {
+        setRunStatsUnread({ error: stats.error })
+        return
+      }
+      setRunStats(stats)
+    }).catch((e: unknown) => {
+      if (conversationIdRef.current !== id) return
+      setRunStatsUnread({ error: errText(e, '') })
+      logIpcError('agent.getLatestRunStats', e)
+    })
+  }, [])
+
+  /** 会话累计统计（跨全部运行）——同上一条的形状，独立一句，一发挂掉不许把另一发说成不可信 */
+  const loadSessionStats = useCallback((id: string) => {
+    setSessionStatsUnread(null)
+    void window.pocketai.getSessionStats(id).then((stats) => {
+      if (conversationIdRef.current !== id) return
+      if (hasIpcFailed(stats)) {
+        setSessionStatsUnread({ error: stats.error })
+        return
+      }
+      setSessionStats(stats)
+    }).catch((e: unknown) => {
+      if (conversationIdRef.current !== id) return
+      setSessionStatsUnread({ error: errText(e, '') })
+      logIpcError('agent.getSessionStats', e)
+    })
+  }, [])
+
   useEffect(() => {
     setInterrupted(false)
     setRunStats(null)
     setSessionStats(null)
+    setRunStatsUnread(null)
+    setSessionStatsUnread(null)
     setLatestTraces(null)
     setLatestTracesUnread(null)
     setTracesLoading(false)
@@ -777,18 +821,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       if (hasIpcFailed(dbMsgs)) return
       dispatch({ type: 'load', messages: toAgentMessages(dbMsgs) })
     }).catch(reportIpcError('agent.listMessages'))
-    // 恢复该会话最近一次运行统计（trace 持久化，刷新/切回仍可见）；
-    // 快速切会话时用 ref 丢弃迟到响应，避免旧会话统计覆盖当前会话
-    void window.pocketai.getLatestRunStats(conversationId).then((stats) => {
-      if (hasIpcFailed(stats)) return
-      if (conversationIdRef.current === conversationId) setRunStats(stats)
-    }).catch(reportIpcError('agent.getLatestRunStats'))
-    // 加载会话累计统计（跨全部运行聚合）
-    void window.pocketai.getSessionStats(conversationId).then((stats) => {
-      if (hasIpcFailed(stats)) return
-      if (conversationIdRef.current === conversationId) setSessionStats(stats)
-    }).catch(reportIpcError('agent.getSessionStats'))
-  }, [conversationId])
+    // 恢复该会话最近一次运行统计（trace 持久化，刷新/切回仍可见）＋加载会话累计统计（跨全部运行聚合）
+    // ——§264：两发各自一条路（`loadRunStats`／`loadSessionStats`），界面侧各挂一句、各给一次重试
+    loadRunStats(conversationId)
+    loadSessionStats(conversationId)
+  }, [conversationId, loadRunStats, loadSessionStats])
 
   // 订阅 Agent 流式事件（归属见下面两条判据）
   useEffect(() => {
@@ -860,10 +897,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
             dispatch({ type: 'setSources', messageId: e.finalMessageId, sources: e.sources })
           }
           // 运行结束后刷新会话累计统计（本次运行已入库）
-          void window.pocketai.getSessionStats(e.conversationId).then((stats) => {
-            if (hasIpcFailed(stats)) return
-            if (conversationIdRef.current === e.conversationId) setSessionStats(stats)
-          }).catch(reportIpcError('agent.getSessionStats'))
+          // 运行结束后刷新会话累计统计（本次运行已入库）——§264：走与挂载同一条路，失败同样上屏＋可重试
+          loadSessionStats(e.conversationId)
         }
       })
     )
@@ -1142,7 +1177,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     running,
     interrupted,
     runStats,
+    runStatsUnread,
     sessionStats,
+    sessionStatsUnread,
+    loadRunStats,
+    loadSessionStats,
     latestTraces,
     latestTracesUnread,
     tracesLoading,

@@ -64,6 +64,8 @@ export const ChatModule: React.FC = () => {
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
   /** 当前会话已加载的草稿文本（切会话同步清空，异步加载后回填） */
   const [activeDraft, setActiveDraft] = useState('')
+  /** 草稿那一读失败的原因（§264 第五面）：读不到时输入框是空的，但那不是"这条没存过草稿" */
+  const [draftUnread, setDraftUnread] = useState<{ error?: string } | null>(null)
 
   const assistantIdRef = useRef('asst-default')
   const currentConvRef = useRef<string | null>(null)
@@ -338,8 +340,29 @@ export const ChatModule: React.FC = () => {
 
   // 会话切换统一加载草稿（手动切换/新对话/初始自动选中/搜索跳转全覆盖）；
   // 同步清空防旧会话文本闪现，异步加载完成后回填；cancelled 守卫防快速连切竞态
+  const loadDraft = useCallback((id: string): void => {
+    setDraftUnread(null)
+    window.pocketai
+      .getConversationDraft(id)
+      .then((d) => {
+        // §264 第五面：过去这一支只有一句 `return`——输入框停在清空后的空值，
+        // 于是"这次没读到"长成"这条会话没有草稿"（草稿是 📝 那行的凭据，看不见不等于没存）。
+        if (hasIpcFailed(d)) {
+          setDraftUnread({ error: d.error })
+          return
+        }
+        if (currentConvRef.current !== id) return
+        setActiveDraft(d)
+        draftTextRef.current = d
+      })
+      .catch((e: unknown) => {
+        if (currentConvRef.current !== id) return
+        setDraftUnread({ error: errText(e, '') })
+        logIpcError('chat.getConversationDraft', e)
+      })
+  }, [currentConvRef])
+
   useEffect(() => {
-    let cancelled = false
     if (!currentConvId) {
       setActiveDraft('')
       draftTextRef.current = ''
@@ -347,12 +370,10 @@ export const ChatModule: React.FC = () => {
     }
     setActiveDraft('')
     draftTextRef.current = ''
-    window.pocketai
-      .getConversationDraft(currentConvId)
-      .then((d) => { if (hasIpcFailed(d)) return; if (!cancelled) { setActiveDraft(d); draftTextRef.current = d } })
-      .catch((e) => { if (!cancelled) reportIpcError('chat.getConversationDraft')(e) })
-    return () => { cancelled = true }
-  }, [currentConvId])
+    loadDraft(currentConvId)
+    // §264：旧写法这里靠 `cancelled` 挡迟到响应；换成"这一发是不是还给当前会话"同一个判据（currentConvRef），
+    // 失败支过去根本没挡——不挡就是把上一条会话的"读不到"留在新会话的屏上。
+  }, [currentConvId, loadDraft])
 
   // 关闭/卸载：取消待发防抖，尽力把最后一次击键落库（invoke 不 await；崩溃窗口仅 600ms）
   useEffect(() => {
@@ -1428,6 +1449,19 @@ export const ChatModule: React.FC = () => {
       </div>
 
       {msgsReadErr && <LoadFailNotice msg={msgsReadErr} />}
+      {/* §264 第五面：草稿那一读没读到⇒输入框是空的，看起来像"这条会话没存过草稿"（📝 那行的凭据）。
+          说一句＋一次重试；这一处与 ChatModule 其余几发一样，全仓不挂载⇒**只有源码级判据**。 */}
+      {draftUnread && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice what={t('chat.draftBlock')} msg={ipcFailText(draftUnread, t('common.unknownError'))} />
+          <button
+            className="text-xs px-1.5 py-0.5 rounded border border-[var(--color-border)]"
+            onClick={() => { if (currentConvId) loadDraft(currentConvId) }}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
       <ChatView
         providers={providers}
         targets={targets}

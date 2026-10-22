@@ -201,6 +201,7 @@ export const en = {
   'unlock.enterApp': "I've saved it — enter app",
   'unlock.showPwd': 'Show password',
   'unlock.hidePwd': 'Hide password',
+  'unlock.lockStateUnread': 'Lock state unavailable: {msg} (the button below shows it as unlocked; the main process still enforces the lock on submit)',
   'unlock.tooManyAttempts': 'Too many attempts. Please wait {s}s before retrying.',
 
   // ── Chat: list / import / export ──
@@ -249,6 +250,7 @@ export const en = {
   'chat.unstar': 'Unstar',
   'chat.starredList': 'Starred messages',
   'chat.starredEmpty': 'No starred messages yet. Hover a message and click ☆.',
+  'chat.draftBlock': 'draft',
   'chat.draftHint': 'Has an unsent draft',
   'chat.groupNew': 'New folder',
   'chat.groupNamePh': 'Folder name',
@@ -799,6 +801,8 @@ export const en = {
   'agent.liveStep.replan': 'Replan',
   'agent.liveStep.error': 'Error',
   'agent.sessionStats': 'Session total: {runs} runs · {duration} · {tokens} tokens',
+  'agent.runStatsBlock': 'run statistics',
+  'agent.sessionStatsBlock': 'session totals',
   'agent.traceDetail': 'Step details',
   'agent.copyTraceJson': 'Copy JSON',
   'agent.traceIo': 'Input / output',

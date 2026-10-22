@@ -23,8 +23,9 @@
 //   · 计数**按文件**不按行号（行号会漂），等式 ratchet：多了红（有人把收口改回只 return），少了也红（收口了没撤登记）。
 //
 // 本批实测数（`node data/tmp/scan-263.mjs`，与本文件同一套判据）：
-//   开批 19 处 → 收口六处（绘图页／翻译页／知识库问答／浮窗三发）→ **现数 13**；
-//   fail-closed 对照桶 **3** 处（19≠3 ⇒ 这条轴真的把两类分开，不是恒返回一个桶）。
+//   开批 19 处 → §263 收口六处（绘图页／翻译页／知识库问答／浮窗三发）⇒ 13 → **§264 再收六处**
+//   （锁状态／本次运行统计／会话累计统计／运行后刷新那一发／草稿读／向导助手清单）⇒ **现数 7**；
+//   fail-closed 对照桶 **3** 处（7≠3 ⇒ 这条轴真的把两类分开，不是恒返回一个桶）。
 //   修掉的判据假阳 4 处（三处 SettingsModule 的 `return showNotice(...)`／`throw` 交给会说话的 catch，
 //   一处 FirstRunWizard 同形）——**先修判据再定名单**，否则名单里四条是噪音。
 // @vitest-environment node
@@ -207,51 +208,49 @@ const FAIL_CLOSED = SITES.filter((s) => !s.successWrites)
 
 /**
  * 等式 ratchet：收口一处就把它从这里减一格（改了产品码不改名单会红，反向也一样）。
- * 13 条逐条回读过，理由写在下面那份注释里；**其中六条是"下一簇该收"，七条各有既有决定托底**。
+ * §263 开批 19 → 收六处清单读 ⇒ 13；§264 再收六处（锁状态／两发统计／草稿／向导助手清单）⇒**现数 7**。
+ * 7 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
  */
-const JUMP_LIE_CAP = 13
+const JUMP_LIE_CAP = 7
 
 const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 首启向导／换电脑检测那一发：读不到就**不弹**（不会弹一个假向导），屏上没有假数字。
   // 属于"少做一件事"而不是"报一个假状态"⇒ 登记；若要收，是一句「启动检测没读到」，口径待决策。
   'src/renderer/src/App.tsx': 1,
-  // :460 从历史消息回填 provider/model（读不到⇒模型栏不预选，不摆假模型）；
-  // :498 `getUiPrefs` 挂载恢复（读不到⇒用默认助手——这是 §226「当前显示的是默认值」那一族的候选，
-  //      但与 §258 那句写失败同屏，两句怎么共存是**没定的口径**）；
-  // :783／:788／:864 三发统计（读不到⇒停在上一份或 0，「本次 0 token」这类假健康**最该收**，
-  //      分步明细那屏 §257 已经有一颗重试键可复用）⇒ 这一文件的五条都是**待收**，下一簇首选。
-  'src/renderer/src/modules/agent/hooks/useAgentChat.ts': 5,
+  // §264 收掉了那三发统计（本次运行／会话累计／运行后刷新——现在各挂一句＋一颗重试）。剩下两条：
+  // :460 从历史消息回填 provider/model（读不到⇒模型栏不预选，**不摆假模型**，也是"少做一件事"）；
+  // `getUiPrefs` 挂载恢复（读不到⇒用默认助手）——这正是 §226「当前显示的是默认值」那一族，
+  //   但 §258 已在同一屏挂了那句写失败（「这次选的助手与会话没能记住」），**两句怎么共存是没定的口径**
+  //   ⇒ 待决策，不为清零瞎改（同 §255／§256 处理"闸门看不见理由"那两处：登记，不改产品码迁就扫描器）。
+  'src/renderer/src/modules/agent/hooks/useAgentChat.ts': 2,
   // `fetchModels`：既有决定（源码注释在位）——「拉取失败静默，Provider 配置问题在设置页有完整报错」。
   // 设计内，与 §256 判掉的那三处同类：本屏不摆假数字（模型列表保持上一份），只少一次刷新。
   'src/renderer/src/modules/agent/hooks/useProviderData.ts': 1,
-  // :136 回复通知开关（§223 明写「开关关闭／异常一律静默」——不发通知是 fail-safe 方向）；
-  // :276 对话页那侧的 provider/model 回填（同 useAgentChat:460）；
-  // :298 草稿**写**失败（§221：📝 不点亮就是它的可见出口，设计内）；
-  // :352 草稿**读**失败 ⇒ 输入框空＝"这条没有草稿"，而库里可能还有 ⇒ **会谎报，待收**。
-  'src/renderer/src/modules/chat/ChatModule.tsx': 4,
-  // `getAuthLockState`：读不到⇒`lockedUntil` 停在 0，界面于是说「现在可以试」，而它可能正被锁着。
-  // 注释自己就写了「『不阻断』不等于谎报没锁」（§219）⇒ 安全面，**最该收的一条**。
-  'src/renderer/src/modules/unlock/UnlockPage.tsx': 1,
-  // 向导 Step 1 的助手清单：读不到⇒下拉里"没有助手"。与 §256 在本文件判掉的两处不同——那两处
-  // 一份快照没有渲染消费者，这一份**有**（选助手那步）⇒ 待收。
-  'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 1
+  // §264 收掉了草稿那一读（那句现在挂在输入区上方＋可重试）。剩三条：
+  // 回复通知开关（§223 明写「开关关闭／异常一律静默」——不发通知是 fail-safe 方向）；
+  // 对话页那侧的 provider/model 回填（同 useAgentChat 那条，不摆假模型）；
+  // 草稿**写**失败（§221 设计内：📝 不点亮就是它的可见出口，本地补丁不跑就是说实话）。
+  'src/renderer/src/modules/chat/ChatModule.tsx': 3
 }
 
 /** 正向对照：这些文件必须**真的出现在名单里**（防"扫描器恒返回空"这种假绿，§250 同一条） */
 const STILL_JUMP_SILENT_PROOF = [
   'src/renderer/src/App.tsx',
   'src/renderer/src/modules/agent/hooks/useAgentChat.ts',
-  'src/renderer/src/modules/chat/ChatModule.tsx',
-  'src/renderer/src/modules/unlock/UnlockPage.tsx',
-  'src/renderer/src/modules/wizard/FirstRunWizard.tsx'
+  'src/renderer/src/modules/agent/hooks/useProviderData.ts',
+  'src/renderer/src/modules/chat/ChatModule.tsx'
 ]
 
-/** 本批收口的那六处：它们的文件必须**不在**名单里（改回只 return 就会红） */
+/** 已收口的那些文件：必须**不在**名单里（改回只 `return` 就会红） */
 const FIXED_THIS_BATCH = [
+  // §263：挂载那一发服务商／助手／模型清单读
   'src/renderer/src/modules/image/ImageModule.tsx',
   'src/renderer/src/modules/translate/TranslateModule.tsx',
   'src/renderer/src/modules/knowledge/KbAskPanel.tsx',
-  'src/renderer/src/popup/PopupApp.tsx'
+  'src/renderer/src/popup/PopupApp.tsx',
+  // §264：锁状态／两发统计／草稿／向导助手清单
+  'src/renderer/src/modules/unlock/UnlockPage.tsx',
+  'src/renderer/src/modules/wizard/FirstRunWizard.tsx'
 ]
 
 const run = (code: string): JumpSite[] => scanSource('probe.tsx', blankComments(code))
@@ -300,7 +299,7 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     expect(LIE.length + FAIL_CLOSED.length, '总数＝判过失败面且只跳的那批').toBe(SITES.length)
   })
 
-  it('等式 ratchet：目标桶 13 处（§263 开批 19，本批收口六处）', () => {
+  it('等式 ratchet：目标桶 7 处（§263 开批 19→13，§264 再收六处→7）', () => {
     expect(LIE.length, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(JUMP_LIE_CAP)
   })
 
@@ -342,5 +341,32 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     for (const f of FILES) {
       expect(count(read(f), /\.catch\(reportIpcError\('(image|translate|kbAsk|popup)\.(listProviders|listAssistants)'\)\)/g), `${f} 不该再有裸交出去那一形`).toBe(0)
     }
+  })
+
+  it('§264 那六处的形状也数得出（锁状态／两发统计／草稿／向导助手清单，含"迟到两路都挡"）', () => {
+    const read = (rel: string): string =>
+      blankComments(fs.readFileSync(path.resolve(ROOT, rel), 'utf8').replace(/\r\n/g, '\n'))
+    const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
+    const STATS = 'src/renderer/src/modules/agent/hooks/useAgentChat.ts'
+    const UNLOCK = 'src/renderer/src/modules/unlock/UnlockPage.tsx'
+    const CHAT = 'src/renderer/src/modules/chat/ChatModule.tsx'
+    const WIZ = 'src/renderer/src/modules/wizard/FirstRunWizard.tsx'
+    const stats = read(STATS)
+    // 每发两路（resolve 的失败对象＋reject）各写自己那份 unread；统计是两发⇒四路
+    expect(count(stats, /setRunStatsUnread\(\{ error: /g), '本次运行统计两路').toBe(2)
+    expect(count(stats, /setSessionStatsUnread\(\{ error: /g), '会话累计统计两路').toBe(2)
+    // §260 那条"要不要写"的守卫现在**成功路与失败路都有**——旧会话的失败不许在已切过去的屏上留一句"读不到"
+    expect(count(stats, /if \(conversationIdRef\.current !== id\) return/g), '两发×两路各挡一次迟到').toBe(4)
+    expect(count(read(UNLOCK), /setLockUnread\(\{ error: /g), '锁状态两路').toBe(2)
+    expect(count(read(CHAT), /setDraftUnread\(\{ error: /g), '草稿读两路').toBe(2)
+    expect(count(read(WIZ), /setAssistantsUnread\(\{ error: /g), '向导助手清单两路').toBe(2)
+    // 三处收口的 reject 不许再裸交出去（旧形：`.catch(reportIpcError('通道名'))`／空 `catch {}`）
+    expect(count(stats, /\.catch\(reportIpcError\('agent\.(getLatestRunStats|getSessionStats)'\)\)/g), '统计那两发的裸交出去归零').toBe(0)
+    expect(count(read(CHAT), /\.catch\(\(e\) => \{ if \(!cancelled\) reportIpcError\('chat\.getConversationDraft'\)/g), '草稿那发的"只留痕"归零').toBe(0)
+    expect(count(read(WIZ), /\.catch\(reportIpcError\('wizard\.listAssistants'\)\)/g), '向导助手那发同理').toBe(0)
+    // 锁状态那处旧写法是**空 catch**（连留痕都没有），必须不再出现
+    expect(count(read(UNLOCK), /\} catch \{\n\s+\/\/ 状态拉取失败不阻断/g), '空 catch 那一形归零').toBe(0)
+    // 界面侧：锁状态那句带降级说明（"下面按钮按未锁定显示"），不是一句孤零零的"读不到"
+    expect(read(UNLOCK)).toContain("t('unlock.lockStateUnread'")
   })
 })
