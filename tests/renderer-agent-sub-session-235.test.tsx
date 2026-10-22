@@ -382,3 +382,39 @@ describe('把这次的选择存回去那一发：写失败要在界面上说，�
     expect(screen.queryByText(/agent\.prefsNotSaved|没能记住/)).toBeNull()
   })
 })
+
+/**
+ * §259：探针实测过——`listConversations` 回 `{ok:false}` 时那份失败对象被当数组写进 state，
+ * `AgentPanel.tsx:148` 的 `chat.conversations.find` 当场 TypeError ⇒ 整屏一个字都不剩（真应用里＝整站崩溃屏）。
+ * 现在两发各自点名，且活跃那半读到就照常列表（归档那半失败不该连带把会话也变没）。
+ */
+describe('会话栏那两发列表读：失败对象绝不进 state', () => {
+  it('两发都读不到 ⇒ 这一屏仍有内容，两句各点各的名，「还没有会话」让位', async () => {
+    stubPocketai({
+      ...stubBase(),
+      listConversations: (_a: string, _isAgent: boolean, archivedOnly?: boolean) => ({
+        ok: false, error: archivedOnly ? 'CONV_ARCH:归档读不到' : 'CONV_LIST:列表读不到'
+      })
+    })
+    mountWithProviders(<AgentPanel />)
+    const active = await screen.findByText(/CONV_LIST:列表读不到/)
+    expect(active.textContent).toContain(zh['agent.sessionsList']!)
+    expect(screen.getByText(/CONV_ARCH:归档读不到/).textContent).toContain(zh['agent.archivedList']!)
+    expect(screen.queryByText(zh['agent.noSessions']!)).toBeNull()
+    // 立项理由那条：整屏空白（map／find TypeError）不许回来
+    expect((document.body.textContent ?? '').length).toBeGreaterThan(40)
+  })
+
+  it('反向对照：只挂归档那发 ⇒ 活跃会话照列，且不说"会话列表读不到"', async () => {
+    stubPocketai({
+      ...stubBase(),
+      listConversations: (_a: string, _isAgent: boolean, archivedOnly?: boolean) =>
+        archivedOnly ? { ok: false, error: 'CONV_ARCH:归档读不到' } : [PARENT]
+    })
+    mountWithProviders(<AgentPanel />)
+    await screen.findByText('父会话')
+    expect(screen.getByText(/CONV_ARCH:归档读不到/)).toBeTruthy()
+    expect(screen.queryByText(/CONV_LIST/)).toBeNull()
+    expect(screen.queryByText(zh['agent.noSessions']!)).toBeNull()
+  })
+})

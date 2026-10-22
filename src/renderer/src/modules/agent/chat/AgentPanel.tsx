@@ -390,6 +390,8 @@ export const AgentPanel: React.FC = () => {
           assistantId={chat.assistantId}
           onAssistantChange={chat.setAssistantId}
           conversations={chat.conversations}
+          conversationsUnread={chat.conversationsUnread}
+          archivedUnread={chat.archivedUnread}
           conversationId={chat.conversationId}
           onSelect={chat.selectConversation}
           onNew={() => void chat.newConversation()}

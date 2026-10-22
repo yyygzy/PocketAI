@@ -56,6 +56,13 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [assistantId, setAssistantId] = useState('')
   const [conversations, setConversations] = useState<import('../../../../../shared/types').ConversationRecord[]>([])
   const [archivedConversations, setArchivedConversations] = useState<import('../../../../../shared/types').ConversationRecord[]>([])
+  // §259：这两发列表读失败时屏上摆的是**上一份列表**（切换助手那发是空列表＋「还没有会话」）——
+  // 而失败对象 `{ok:false,error}` 一旦被当数组写进来，`SessionRail` 的 `.map` 与 `AgentPanel:148` 的 `.find` 当场 TypeError。
+  // 状态按 §256 那档写法留 `{error}`、在渲染时才拼句子，这样这两个 effect 的依赖里不用加 `t`
+  // （加了 `t`，换语言会让助手 effect 重跑一次，并把选中会话跳回「最近一条」——那是另一条回归）。
+  // 两句分开：活跃与归档是两发读，各自的失败各自点名（§257 的逐发点名口径）。
+  const [conversationsUnread, setConversationsUnread] = useState<{ error?: string } | null>(null)
+  const [archivedUnread, setArchivedUnread] = useState<{ error?: string } | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, dispatch] = useReducer(messagesReducer, [] as AgentMessage[])
   const [running, setRunning] = useState(false)
@@ -556,15 +563,44 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
 
   // 助手切换 → 拉活跃+归档会话列表并自动选中最近一次（活跃列表已按置顶权重+updated_at DESC 排序）
   useEffect(() => {
-    if (!assistantId) return
+    if (!assistantId) {
+      // 没有助手＝没有列表可读，那两句"读不到"也不该留在屏上
+      setConversationsUnread(null)
+      setArchivedUnread(null)
+      return
+    }
     let cancelled = false
     void Promise.all([
       window.pocketai.listConversations(assistantId, true, false),
       window.pocketai.listConversations(assistantId, true, true)
     ]).then(([list, archived]) => {
       if (cancelled) return
-      setConversations(list)
-      setArchivedConversations(archived)
+      // §259：这两发各判各的、各说各的（§257 的逐发点名口径）——活跃读到而归档没读到，
+      // 不该把读到的那份也一起扔了，更不该让失败对象进 state（下面每一句 `list.find` 与
+      // `SessionRail` 的 `.map`、`AgentPanel:148` 的 `.find` 都会当场 TypeError，探针实测：整屏一个字都不剩）。
+      // 切换助手这一发**必须清空各自那一份**：上一份列表属于别的助手，留着比清空更会骗人。
+      if (hasIpcFailed(list) || !Array.isArray(list)) {
+        setConversations([])
+        setConversationsUnread({ error: hasIpcFailed(list) ? list.error : undefined })
+      } else {
+        setConversationsUnread(null)
+        setConversations(list)
+      }
+      if (hasIpcFailed(archived) || !Array.isArray(archived)) {
+        setArchivedConversations([])
+        setArchivedUnread({ error: hasIpcFailed(archived) ? archived.error : undefined })
+      } else {
+        setArchivedUnread(null)
+        setArchivedConversations(archived)
+      }
+      // 选会话要在两份数组上找：活跃那半没读到就到此为止；只挂归档那半时**照常选**
+      // （findConv 只是给"命令面板指定 id／恢复上次"补 modelLabel，拿不到就当未设过——
+      //  为它取消用户已选中的会话，比少一条标签更伤）
+      if (!Array.isArray(list)) {
+        setConversationId(null)
+        return
+      }
+      const archivedArr = Array.isArray(archived) ? archived : []
       // 待恢复的会话必须属于这个助手，否则视为失效（被删/跨助手残留）
       const want =
         restoreRef.current && restoreRef.current.assistantId === assistantId
@@ -574,7 +610,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       restoreRef.current = null
       // 命令面板跨助手跳来：pending 指定会话优先于「恢复上次」与「自动选最近」（助手不匹配保留 pending）
       const pending = consumePendingOpenConversation(true, assistantId)
-      const findConv = (id: string) => list.find((x) => x.id === id) ?? archived.find((x) => x.id === id)
+      const findConv = (id: string) => list.find((x) => x.id === id) ?? archivedArr.find((x) => x.id === id)
       let chosenId: string | null = null
       let chosenLabel: string | null | undefined
       if (pending?.conversationId && pending.assistantId === assistantId) {
@@ -589,7 +625,16 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       }
       setConversationId(chosenId)
       if (chosenId) applyLastModelOf(chosenId, chosenLabel)
-    }).catch(reportIpcError('agent.listConversations'))
+    }).catch((e: unknown) => {
+      // reject 面走同一张脸：两份都清空＋那两句挂上
+      if (cancelled) return
+      setConversations([])
+      setArchivedConversations([])
+      setConversationId(null)
+      setConversationsUnread({ error: errText(e, '') })
+      setArchivedUnread({ error: errText(e, '') })
+      logIpcError('agent.listConversations', e)
+    })
     return () => { cancelled = true }
   }, [assistantId])
 
@@ -907,10 +952,26 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         window.pocketai.listConversations(assistantId, true, false),
         window.pocketai.listConversations(assistantId, true, true)
       ])
-      setConversations(list)
-      setArchivedConversations(archived)
+      // §259：这一发是"刷新"（置顶／归档／导入之后），与切换助手那一发不同——**上一份是同一个助手的列表**，
+      // 清空反而会把"刚归档完这一条"变成"整列消失"。所以：失败的那半保持上一份＋点名说读不到（§222 的口径），
+      // 成功的那半照常写。两半都必须判——失败对象 `{ok:false,error}` 是 truthy，写进去之后
+      // `SessionRail` 的 `.map` 与 `AgentPanel:148` 的 `.find` 当场 TypeError（探针实测）。
+      if (hasIpcFailed(list) || !Array.isArray(list)) {
+        setConversationsUnread({ error: hasIpcFailed(list) ? list.error : undefined })
+      } else {
+        setConversationsUnread(null)
+        setConversations(list)
+      }
+      if (hasIpcFailed(archived) || !Array.isArray(archived)) {
+        setArchivedUnread({ error: hasIpcFailed(archived) ? archived.error : undefined })
+      } else {
+        setArchivedUnread(null)
+        setArchivedConversations(archived)
+      }
     } catch (e) {
-      reportIpcError('agent.reloadConversations')(e)
+      setConversationsUnread({ error: errText(e, '') })
+      setArchivedUnread({ error: errText(e, '') })
+      logIpcError('agent.reloadConversations', e)
     }
   }, [assistantId])
 
@@ -1074,6 +1135,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setAssistantId,
     conversations,
     archivedConversations,
+    conversationsUnread,
+    archivedUnread,
     conversationId,
     messages,
     running,

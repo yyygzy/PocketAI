@@ -19,7 +19,8 @@ import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
 import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
-import { hasIpcFailed, ipcFailText, reportIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
+import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { errText } from '../../../utils/error'
 
 /** 单个工具的试运行状态（key = `${serverId}:${toolName}`） */
@@ -43,6 +44,11 @@ export const McpPanel: React.FC = () => {
   const [callLogs, setCallLogs] = useState<McpCallLogRecord[]>([])
   const [callLogServer, setCallLogServer] = useState('')
   const [notice, setNotice] = useState('')
+  // §259：这两发是裸值列表通道 ⇒ safeHandle 的失败 `{ok:false,error}` 是 truthy，
+  // 一旦被当数组写进来，下面 `records.map` 当场 TypeError（探针实测：这一屏一个字都不剩）。
+  // 两句分开：清单与运行状态是两发读，各自的失败各自点名（§257 的逐发点名口径）。
+  const [serversUnread, setServersUnread] = useState<{ error?: string } | null>(null)
+  const [runtimeUnread, setRuntimeUnread] = useState<{ error?: string } | null>(null)
   // 正在安装依赖的 serverId 集合（全局广播跟踪，用于禁用列表卡片上的删除按钮）
   const [installingIds, setInstallingIds] = useState<ReadonlySet<string>>(new Set())
   // 工具列表展开状态（按 serverId）
@@ -59,13 +65,29 @@ export const McpPanel: React.FC = () => {
       window.pocketai.listMcpServers(),
       window.pocketai.getMcpRuntimes()
     ])
-    setRecords(recs)
-    setRuntimes(runs)
+    // 两发各判各的：清单读到而运行状态没读到，清单照常列出（状态那半单独点名，见 runtimeUnread）
+    if (hasIpcFailed(recs) || !Array.isArray(recs)) {
+      setServersUnread({ error: hasIpcFailed(recs) ? recs.error : undefined })
+    } else {
+      setServersUnread(null)
+      setRecords(recs)
+    }
+    if (hasIpcFailed(runs) || !Array.isArray(runs)) {
+      setRuntimeUnread({ error: hasIpcFailed(runs) ? runs.error : undefined })
+    } else {
+      setRuntimeUnread(null)
+      setRuntimes(runs)
+    }
   }, [])
 
   useEffect(() => {
-    // load 内部无 try-catch，需挂 .catch 避免未处理 rejection
-    void load().catch(reportIpcError('mcp.list'))
+    // load 内部无 try-catch，需挂 .catch 避免未处理 rejection；reject 面两半同一句原因
+    void load().catch((e: unknown) => {
+      const msg = errText(e, '')
+      setServersUnread({ error: msg })
+      setRuntimeUnread({ error: msg })
+      logIpcError('mcp.list', e)
+    })
   }, [load])
 
   const reloadCallLogs = useCallback(async () => {
@@ -292,8 +314,16 @@ export const McpPanel: React.FC = () => {
             </button>
           </div>
         )}
+        {/* §259：运行状态那发读不到⇒卡片上的状态点与「启动／停止」按钮摆的是默认值（未启动），要先把这半句说出来 */}
+        {runtimeUnread && (
+          <div role="alert" className="text-xs mb-2 leading-relaxed text-[var(--color-danger)]">
+            {t('agent.runtimeUnread', { msg: ipcFailText(runtimeUnread, t('common.unknownError')) })}
+          </div>
+        )}
         <div className="space-y-1 overflow-y-auto">
-          {records.length === 0 && (
+          {/* 清单那发读不到 ⇒ 那句占在「尚未配置」那一格的位置上（空态让位，§254 同一手法） */}
+          {serversUnread && <LoadFailNotice what={t('agent.mcpServersList')} msg={ipcFailText(serversUnread, t('common.unknownError'))} />}
+          {!serversUnread && records.length === 0 && (
             <p className="text-xs text-[var(--color-text-muted)]">
               {t('agent.noServers')}
             </p>

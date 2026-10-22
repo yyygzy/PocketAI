@@ -280,7 +280,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
   })
 
   it('真仓不是空转：判定式总数与分桶守恒（谁漏了一类就会在这里红）', () => {
-    expect(SITES.length, '判定式总数（§258 现数 345；这条数随写法归并/拆分而变，不是不变量，引用前现查）').toBeGreaterThan(300)
+    expect(SITES.length, '判定式总数（§259 现数 351；这条数随写法归并/拆分而变，不是不变量，引用前现查）').toBeGreaterThan(300)
     const by: Record<string, number> = { none: 0, console: 0, 'takes-over': 0, helper: 0, fallthrough: 0 }
     for (const s of SITES) by[s.side] = (by[s.side] ?? 0) + 1
     expect(Object.values(by).reduce((a, b) => a + b, 0), '分桶必须等于总数').toBe(SITES.length)

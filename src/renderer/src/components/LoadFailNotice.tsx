@@ -10,14 +10,16 @@
 import React from 'react'
 import { useI18n } from '../i18n'
 
-export const LoadFailNotice: React.FC<{ msg: string }> = ({ msg }) => {
+export const LoadFailNotice: React.FC<{ msg: string; what?: string }> = ({ msg, what }) => {
   const { t } = useI18n()
   return (
     <div
       role="alert"
       className="text-xs px-3 py-2 rounded bg-[var(--color-danger-bg)] text-[var(--color-danger)] leading-relaxed"
     >
-      {t('common.loadFailed', { msg })}
+      {/* §259：一块屏里可能只有**一部分**数据来自失败的那一发（会话栏的活跃与归档、MCP 的清单与运行状态），
+          点名是哪一格读不到，才不会把读到的那半也说成不可信（§257 的逐发点名口径）。 */}
+      {what ? t('common.loadFailedNamed', { what, msg }) : t('common.loadFailed', { msg })}
     </div>
   )
 }

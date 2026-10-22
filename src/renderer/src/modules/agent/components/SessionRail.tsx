@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import type { AssistantRecord, ConversationRecord, MessageSearchResult } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { MessageSearchResults } from '../../../components/MessageSearchResults'
+import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { ExportMenu } from '../../chat/ConversationList'
 import { logIpcError, hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 import { useToast } from '../../../components/ToastProvider'
@@ -12,6 +13,10 @@ interface Props {
   assistantId: string
   onAssistantChange: (id: string) => void
   conversations: ConversationRecord[]
+  /** §259：这两发各自失败各自点名——活跃那份失败时列表是**上一份**（刷新）或**空**（切助手），
+      两种都不许演成「还没有会话」⇒ 那句要有地方站；归档那份同理（那一区本来只在有条目时才出现） */
+  conversationsUnread?: { error?: string } | null
+  archivedUnread?: { error?: string } | null
   conversationId: string | null
   onSelect: (id: string) => void
   onNew: () => void
@@ -39,6 +44,8 @@ export const SessionRail: React.FC<Props> = ({
   assistantId,
   onAssistantChange,
   conversations,
+  conversationsUnread,
+  archivedUnread,
   conversationId,
   onSelect,
   onNew,
@@ -278,7 +285,11 @@ export const SessionRail: React.FC<Props> = ({
           />
         ) : (
           <>
-            {conversations.length === 0 && (
+            {/* §259：读不到时那句要占在「还没有会话」那一格的位置上——空态让位（§254 同一手法） */}
+            {conversationsUnread && (
+              <LoadFailNotice what={t('agent.sessionsList')} msg={ipcFailText(conversationsUnread, t('common.unknownError'))} />
+            )}
+            {!conversationsUnread && conversations.length === 0 && (
               <p className="text-[11px] text-[var(--color-text-muted)] px-0.5">
                 {t('agent.noSessions')}
               </p>
@@ -302,7 +313,10 @@ export const SessionRail: React.FC<Props> = ({
                 onToggleSelect={() => toggleSelect(c.id)}
               />
             ))}
-            {!!archivedConversations?.length && (
+            {archivedUnread && (
+              <LoadFailNotice what={t('agent.archivedList')} msg={ipcFailText(archivedUnread, t('common.unknownError'))} />
+            )}
+            {!archivedUnread && !!archivedConversations?.length && (
               <div className="pt-1">
                 <button
                   type="button"
