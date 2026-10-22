@@ -42,6 +42,8 @@ export const ImageModule: React.FC = () => {
 
   // ---------- 配置 ----------
   const [providers, setProviders] = useState<ProviderRecord[]>([])
+  /** 服务商清单那一读失败的原因（§263 第五面）：`error` 为空＝拿到了但形状不对 */
+  const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const [size, setSize] = useState<ImageSize>('1024x1024')
@@ -92,11 +94,21 @@ export const ImageModule: React.FC = () => {
   // ---------- 初始加载 ----------
   useEffect(() => {
     window.pocketai.listProviders().then((list) => {
-      if (hasIpcFailed(list)) return
+      // §263 第五面：这一支过去只有一句 `return`——第四面算它"接管了"（流程停了），
+      // 但 `providers` 停在 `[]`，下拉里摆的是「还没有可用的服务商」（`image.noProvider`）⇒ 把"读不到"演成"一家都没有"。
+      if (hasIpcFailed(list)) {
+        setProvidersUnread({ error: list.error })
+        return
+      }
+      setProvidersUnread(null)
       setProviders(list)
       const first = list.find((p) => p.enabled)
       if (first) setProviderId(first.id)
-    }).catch(reportIpcError('image.listProviders'))
+    }).catch((e: unknown) => {
+      // reject 面同一张脸（旧写法 `.catch(reportIpcError(...))`＝只进 console）
+      setProvidersUnread({ error: errText(e, '') })
+      logIpcError('image.listProviders', e)
+    })
     window.pocketai.listImages().then((v) => {
       if (hasIpcFailed(v)) {
         setGalleryFail(v)
@@ -279,6 +291,10 @@ export const ImageModule: React.FC = () => {
     <div ref={rootRef} className="flex flex-col h-full gap-3 overflow-y-auto">
       {/* ---------- 生成配置区 ---------- */}
       <div className="rounded-lg border border-[var(--color-border)] p-3 flex flex-col gap-2">
+        {/* §263：那一读失败时下拉是空的，但那不是"没有服务商"——这句话要上屏（§222 那张脸，逐发点名 §259） */}
+        {providersUnread && (
+          <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <select
             className="input text-xs py-1 w-auto"
@@ -290,7 +306,7 @@ export const ImageModule: React.FC = () => {
               setModel(p?.models[0] ?? '')
             }}
           >
-            {enabledProviders.length === 0 && <option value="">{t('image.noProvider')}</option>}
+            {enabledProviders.length === 0 && !providersUnread && <option value="">{t('image.noProvider')}</option>}
             {enabledProviders.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}

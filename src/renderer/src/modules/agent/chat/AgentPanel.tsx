@@ -511,10 +511,10 @@ export const AgentPanel: React.FC = () => {
         {/* §261：服务商与助手这两发**读**失败各说各的（§257／§259 的逐发点名）。
             放在这一栏而不是 SessionRail 里：侧栏收起时藏在折叠后面的那句等于没说（§257 同一条口径）。 */}
         {providersUnread && (
-          <LoadFailNotice what={t('agent.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+          <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
         )}
         {assistantsUnread && (
-          <LoadFailNotice what={t('agent.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+          <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
         )}
 
         {/* §258：这一发是**写**（把当前助手／会话存回 ui_prefs）。失败不当场崩、后果在下次启动，

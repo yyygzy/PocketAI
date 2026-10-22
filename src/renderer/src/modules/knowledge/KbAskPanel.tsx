@@ -20,7 +20,8 @@ import type {
   ProviderRecord
 } from '../../../../shared/types'
 import { errText } from '../../utils/error'
-import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 
 const PROVIDER_KEY = 'kbask.providerId'
 const modelKey = (p: string) => `kbask.model.${p}`
@@ -45,6 +46,8 @@ const KbAskPanel: React.FC<{
   const toast = useToast()
 
   const [providers, setProviders] = useState<ProviderRecord[]>([])
+  /** 服务商清单那一读失败的原因（§263 第五面） */
+  const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const [msgs, setMsgs] = useState<KbAskMessage[]>([])
@@ -140,8 +143,14 @@ const KbAskPanel: React.FC<{
     window.pocketai
       .listProviders()
       .then((ps) => {
-        if (hasIpcFailed(ps)) return
+        // §263 第五面：过去这一支只有一句 `return`，`providers` 停在 `[]` ⇒ 下拉里只剩「请选择」，
+        // 把"读不到"演成"你自己还没选"。
+        if (hasIpcFailed(ps)) {
+          setProvidersUnread({ error: ps.error })
+          return
+        }
         if (!alive) return
+        setProvidersUnread(null)
         const enabled = ps.filter((p) => p.enabled)
         setProviders(enabled)
         // 与对话页同规则：记住的那家与回退项都要求「有模型」，否则自动挑一家能用的
@@ -151,7 +160,11 @@ const KbAskPanel: React.FC<{
           setModel(localStorage.getItem(modelKey(first.id)) || first.models[0] || '')
         }
       })
-      .catch((e) => toast.error(errText(e)))
+      .catch((e: unknown) => {
+        // reject 面同一张脸（旧写法是一条会消失的 toast）
+        setProvidersUnread({ error: errText(e, '') })
+        logIpcError('kbAsk.listProviders', e)
+      })
     return () => {
       alive = false
     }
@@ -419,6 +432,9 @@ const KbAskPanel: React.FC<{
   return (
     <div className="flex flex-col h-[520px]">
       {/* 模型选择：provider + model，记忆上次选择 */}
+      {providersUnread && (
+        <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+      )}
       <div className="flex gap-2 mb-3">
         <select className="input text-xs flex-1" value={providerId} onChange={(e) => selectProvider(e.target.value)}>
           <option value="">{t('kb.pleaseSelect')}</option>

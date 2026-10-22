@@ -7,7 +7,8 @@ import { pickDefaultProvider } from '../utils/provider-pick'
 import { Markdown } from '../modules/chat/Markdown'
 import { AttachmentGrid } from '../components/AttachmentGrid'
 import { useToast } from '../components/ToastProvider'
-import { chatSendFailureText, hasIpcFailed, ipcFailText, reportIpcError, type IpcFailureInput } from '../utils/ipc'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcError, type IpcFailureInput } from '../utils/ipc'
+import { LoadFailNotice } from '../components/LoadFailNotice'
 import { errText } from '../utils/error'
 import { useCopyFeedback } from '../hooks/useCopyFeedback'
 import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../modules/agent/agent-shared'
@@ -43,6 +44,13 @@ export const PopupApp: React.FC = () => {
   const [mode, setMode] = useState<'quick' | 'selection'>('quick')
   const [selection, setSelection] = useState('')
   const [providers, setProviders] = useState<ProviderRecord[]>([])
+  // §263 第五面：这三发读过去的失败侧只有一句 `return`（第四面算"接管"，因为流程停了），
+  // 而屏上留下的是初值——「一家服务商都没有」、发送键按下去毫无反应（`assistant` 停在 null，
+  // `handleSend` 第一句就 `if (!assistant) return`）、点「拉取模型」后下拉仍是空的。
+  // 三份原因各挂自己那一发（§257 逐发点名：合并会把读到的那半也说成不可信）。
+  const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
+  const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
+  const [modelsUnread, setModelsUnread] = useState<{ error?: string } | null>(null)
   const [providerId, setProviderId] = useState(() => localStorage.getItem(LS_PROVIDER) || '')
   const [model, setModel] = useState(() => localStorage.getItem(LS_MODEL) || '')
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -87,18 +95,32 @@ export const PopupApp: React.FC = () => {
   // ─── 初始化：Provider / 助手 / payload ────────────────────────────
   useEffect(() => {
     window.pocketai.listProviders().then((ps) => {
-      if (hasIpcFailed(ps)) return
+      if (hasIpcFailed(ps)) {
+        setProvidersUnread({ error: ps.error })
+        return
+      }
+      setProvidersUnread(null)
       const enabled = ps.filter((p) => p.enabled)
       setProviders(enabled)
       setProviderId((cur) => {
         if (cur && enabled.some((p) => p.id === cur)) return cur
         return pickDefaultProvider(ps)?.id ?? ''
       })
-    }).catch(reportIpcError('popup.listProviders'))
+    }).catch((e: unknown) => {
+      setProvidersUnread({ error: errText(e, '') })
+      logIpcError('popup.listProviders', e)
+    })
     window.pocketai.listAssistants().then((as_) => {
-      if (hasIpcFailed(as_)) return
+      if (hasIpcFailed(as_)) {
+        setAssistantsUnread({ error: as_.error })
+        return
+      }
+      setAssistantsUnread(null)
       setAssistant(as_.find((a) => a.isBuiltin && /通用问答/.test(a.name)) ?? as_[0] ?? null)
-    }).catch(reportIpcError('popup.listAssistants'))
+    }).catch((e: unknown) => {
+      setAssistantsUnread({ error: errText(e, '') })
+      logIpcError('popup.listAssistants', e)
+    })
     void window.pocketai.getPopupPayload().then((v) => { if (!hasIpcFailed(v)) applyPayload(v) }).catch(reportIpcError('popup.getPayload'))
     const unsub = window.pocketai.onPopupPayload(applyPayload)
     return unsub
@@ -182,11 +204,18 @@ export const PopupApp: React.FC = () => {
       const models = await window.pocketai.fetchModels(providerId)
       // §223：不判就把失败对象写进 provider.models（V4-Iter-115 那个空盒子形状），
       // 且 `models.length > 0` 为假 ⇒ 看起来像"这个服务商没有模型"。浮窗内按既有口径保持静默，但不动 state
-      if (hasIpcFailed(models)) return
+      if (hasIpcFailed(models)) {
+        // §263 第五面：旧写法只 `return`——按钮回到可点、下拉仍是空的，看着像"这家服务商没有模型"
+        setModelsUnread({ error: models.error })
+        return
+      }
+      setModelsUnread(null)
       setProviders((ps) => ps.map((p) => (p.id === providerId ? { ...p, models } : p)))
       if (models.length > 0) setModel(models[0]!)
-    } catch {
-      // 拉取失败在主窗口设置页有完整报错，浮窗内静默
+    } catch (e: unknown) {
+      // 同一张脸：原因常驻在浮窗里，不只留一句 console（主窗口设置页仍有完整报错，但那是另一扇窗）
+      setModelsUnread({ error: errText(e, '') })
+      logIpcError('popup.fetchModels', e)
     } finally {
       setFetchingModels(false)
     }
@@ -421,6 +450,21 @@ export const PopupApp: React.FC = () => {
           </button>
         </div>
 
+        {/* §263：三句各挂自己那一发，只有真挂掉的那条才出现（窄窗里最多叠三行） */}
+        {(providersUnread || assistantsUnread || modelsUnread) && (
+          <div className="flex flex-col gap-1 px-3 pb-2 shrink-0">
+            {providersUnread && (
+              <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+            )}
+            {assistantsUnread && (
+              <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+            )}
+            {modelsUnread && (
+              <LoadFailNotice what={t('common.modelsList')} msg={ipcFailText(modelsUnread, t('common.unknownError'))} />
+            )}
+          </div>
+        )}
+
         {/* 模型选择行 */}
         <div
           className="flex items-center gap-1.5 px-3 pb-2 shrink-0"
@@ -431,7 +475,7 @@ export const PopupApp: React.FC = () => {
             value={providerId}
             onChange={(e) => { setProviderId(e.target.value); setModel('') }}
           >
-            {providers.length === 0 && <option value="">{t('popup.noProvider')}</option>}
+            {providers.length === 0 && !providersUnread && <option value="">{t('popup.noProvider')}</option>}
             {providers.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}

@@ -14,7 +14,9 @@ import type {
 } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
-import { hasIpcFailed, ipcFailureText, isIpcFail, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailureText, ipcFailText, isIpcFail, logIpcError, reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
 
@@ -62,6 +64,8 @@ export const TranslateModule: React.FC = () => {
 
   // ---------- 配置 ----------
   const [providers, setProviders] = useState<ProviderRecord[]>([])
+  /** 服务商清单那一读失败的原因（§263 第五面）：`error` 为空＝拿到了但形状不对 */
+  const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const [sourceLang, setSourceLang] = useState<TranslateLang>('auto')
@@ -113,14 +117,23 @@ export const TranslateModule: React.FC = () => {
   // ---------- 初始加载 ----------
   useEffect(() => {
     window.pocketai.listProviders().then((list) => {
-      if (hasIpcFailed(list)) return
+      // §263 第五面：过去这一支只有一句 `return`，`providers` 停在 `[]` ⇒ 下拉里摆「还没有可用的服务商」，
+      // 把"读不到"演成"一家都没有"（另两发的 `!hasIpcFailed` 反判是"保持上一份"，不在这一面里）。
+      if (hasIpcFailed(list)) {
+        setProvidersUnread({ error: list.error })
+        return
+      }
+      setProvidersUnread(null)
       setProviders(list)
       const first = list.find((p) => p.enabled)
       if (first) {
         setProviderId(first.id)
         if (first.models[0]) setModel(first.models[0])
       }
-    }).catch(reportIpcError('translate.listProviders'))
+    }).catch((e: unknown) => {
+      setProvidersUnread({ error: errText(e, '') })
+      logIpcError('translate.listProviders', e)
+    })
     window.pocketai.listTranslations().then((v) => { if (!hasIpcFailed(v)) setHistory(v) }).catch(reportIpcError('translate.listTranslations'))
     window.pocketai.listGlossary().then((v) => { if (!hasIpcFailed(v)) setGlossary(v) }).catch(reportIpcError('translate.listGlossary'))
   }, [])
@@ -434,6 +447,10 @@ export const TranslateModule: React.FC = () => {
 
           <span className="w-px h-4 bg-[var(--color-border)] mx-1" />
 
+          {/* §263：服务商那一读没读到就直接说，别让它长成"一家都没有" */}
+          {providersUnread && (
+            <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+          )}
           <select
             className="input text-xs py-1 w-auto max-w-[9rem]"
             value={providerId}
@@ -443,7 +460,7 @@ export const TranslateModule: React.FC = () => {
               setModel(p?.models[0] ?? '')
             }}
           >
-            {enabledProviders.length === 0 && !disabledSelectedProvider && (
+            {enabledProviders.length === 0 && !disabledSelectedProvider && !providersUnread && (
               <option value="">{t('translate.noProvider')}</option>
             )}
             {enabledProviders.map((p) => (

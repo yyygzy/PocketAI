@@ -221,8 +221,8 @@ describe('③ 接线计数', () => {
 
   it('那两句真传到 AgentPanel，且挂在收起态也看得见的位置', () => {
     expect(count(PANEL, /providersUnread, assistantsUnread/g), '从 hook 解构出来').toBe(1)
-    expect(count(PANEL, /<LoadFailNotice what=\{t\('agent\.providersList'\)}/g)).toBe(1)
-    expect(count(PANEL, /<LoadFailNotice what=\{t\('agent\.assistantsList'\)}/g)).toBe(1)
+    expect(count(PANEL, /<LoadFailNotice what=\{t\('common\.providersList'\)}/g)).toBe(1)
+    expect(count(PANEL, /<LoadFailNotice what=\{t\('common\.assistantsList'\)}/g)).toBe(1)
     const bar = PANEL.indexOf('<AgentToolBars tools={tools} />')
     const notice = PANEL.indexOf('providersUnread && (')
     expect(notice, '两句在工具栏之前（侧栏收起也在场）').toBeGreaterThan(-1)
