@@ -10,6 +10,7 @@ import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail
 import { useAgentToolConfigs } from '../hooks/useAgentToolConfigs'
 import { useAttachments } from '../hooks/useAttachments'
 import { SessionRail } from '../components/SessionRail'
+import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { AgentModelBar } from '../components/AgentModelBar'
 import { AgentEvalPanel } from './AgentEvalPanel'
 import { AgentToolBars } from '../components/AgentToolBars'
@@ -31,7 +32,7 @@ import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MA
 export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
-  const { providers, assistants, fetchingModels, fetchModels } = useProviderData()
+  const { providers, assistants, providersUnread, assistantsUnread, fetchingModels, fetchModels } = useProviderData()
   const chat = useAgentChat(providers, assistants)
   // busy 上报：Agent 运行中豁免休眠，防止切走标签后被 LRU 卸载导致任务中断
   useEffect(() => {
@@ -506,6 +507,15 @@ export const AgentPanel: React.FC = () => {
             </svg>
           </button>
         </div>
+
+        {/* §261：服务商与助手这两发**读**失败各说各的（§257／§259 的逐发点名）。
+            放在这一栏而不是 SessionRail 里：侧栏收起时藏在折叠后面的那句等于没说（§257 同一条口径）。 */}
+        {providersUnread && (
+          <LoadFailNotice what={t('agent.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+        )}
+        {assistantsUnread && (
+          <LoadFailNotice what={t('agent.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+        )}
 
         {/* §258：这一发是**写**（把当前助手／会话存回 ui_prefs）。失败不当场崩、后果在下次启动，
             所以不弹 toast（会撞在启动那一下），改在这里常驻一句；下一次写成功就收回。 */}

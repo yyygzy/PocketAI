@@ -140,10 +140,15 @@ beforeEach(() => {
   stubPocketai(stubBase())
 })
 
-/** 挂载并等到"会话已选中、本次运行统计已到货"那一帧（分步明细那格就挂在这条线上） */
+/** 挂载并等到"会话已选中、本次运行统计已到货"那一帧（分步明细那格就挂在这条线上）
+ *
+ * 这条链要四跳异步才到那一帧：服务商+助手 → ui_prefs 恢复 → 会话列表里选中 c1 → 本次运行统计到货。
+ * `waitFor` 默认只给 1s：满载时（2026-10-22 实测同一棵树 446.70s 与 300.15s 两趟各红在这里，
+ * 单跑与两文件并跑三次全绿）四跳排不完，红的是"没等到那一帧"而不是逻辑。
+ * 判据不变（仍是以看见那一格为终止条件，不是固定 sleep），只把预算给到 8s——真挂死的用例照样会红。 */
 async function mountReady() {
   mountWithProviders(<AgentPanel />)
-  await waitFor(() => expect(screen.getByTitle(zh['agent.runStatsDetail'])).toBeTruthy())
+  await waitFor(() => expect(screen.getByTitle(zh['agent.runStatsDetail'])).toBeTruthy(), { timeout: 8000, interval: 50 })
 }
 
 /** 展开分步明细 */

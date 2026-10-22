@@ -814,6 +814,8 @@ export const en = {
   'agent.mcpServersList': 'MCP server list',
   'agent.sessionsList': 'conversation list',
   'agent.archivedList': 'archived conversations',
+  'agent.providersList': 'provider list',
+  'agent.assistantsList': 'assistant list',
   'agent.prefsNotSaved': 'Could not save the assistant and conversation you just picked — next start will not return here: {msg}',
   'agent.traceCopied': 'Step details copied to clipboard',
   'agent.copyFailed': 'Copy failed, please select text manually',

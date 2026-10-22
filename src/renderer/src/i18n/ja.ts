@@ -787,6 +787,8 @@ export const ja = {
   'agent.mcpServersList': 'MCP サーバー一覧',
   'agent.sessionsList': '会話一覧',
   'agent.archivedList': 'アーカイブ済みの会話',
+  'agent.providersList': 'プロバイダー一覧',
+  'agent.assistantsList': 'アシスタント一覧',
   'agent.prefsNotSaved': 'いま選んだアシスタントと会話を記憶できませんでした。次回起動時はここに戻りません：{msg}',
   'agent.traceCopied': 'ステップ詳細をクリップボードにコピーしました',
   'agent.copyFailed': 'コピーに失敗しました。手動で選択してください',

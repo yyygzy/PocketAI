@@ -814,6 +814,8 @@ export const zh = {
   'agent.mcpServersList': 'MCP 服务器列表',
   'agent.sessionsList': '会话列表',
   'agent.archivedList': '归档会话',
+  'agent.providersList': '服务商列表',
+  'agent.assistantsList': '助手列表',
   'agent.prefsNotSaved': '这次选的助手与会话没能记住，下次启动不会回到这里：{msg}',
   'agent.traceCopied': '已复制分步明细到剪贴板',
   'agent.copyFailed': '复制失败，请手动选择文本',
