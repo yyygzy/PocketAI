@@ -4,7 +4,7 @@
 // CI 里怎么跑真：真 SQLite + 真 `agentEngine.run` + 真本地 SSE 端点（一个照本宣科的假模型）+ 真工作目录读写。
 // 假模型只用来把"任务被办成 / 办歪 / 端点根本没连上"三种现场喂给判分器——**测的是 runner 与判分，不是模型能力**，
 // 所以这里的通过数不代表产品质量（那要真机那一趟，见台账 §233 的"未做"段）。
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
@@ -124,8 +124,19 @@ afterAll(async () => {
   fs.rmSync(P.dir, { recursive: true, force: true })
 })
 
+/** 这一份文件每跑一次建 6 个工作目录；此前只建不删，%TEMP% 里攒过 144 个（V4-Iter-248） */
+const workspaces: string[] = []
+
+afterEach(() => {
+  while (workspaces.length > 0) {
+    const d = workspaces.pop()
+    if (d) fs.rmSync(d, { recursive: true, force: true })
+  }
+})
+
 function freshWorkspace(): string {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pocketai-233-ws-'))
+  workspaces.push(d)
   return d
 }
 
