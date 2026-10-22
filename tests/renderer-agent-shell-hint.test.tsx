@@ -26,6 +26,9 @@ function mount(enabled: boolean) {
     patchWsConfig: () => {},
     patchCalConfig: () => {},
     calConfig: { enabled: false, paths: [] },
+    // §257：hook 多了一项"哪一发没读到"的账。这份夹具是靠 `as unknown as` 造的还是原来那份形状，
+    // 缺了它会当场 TypeError（不是假绿），但补上它才能让这条用例只管终端提示本身。
+    toolUnread: { workspace: null, shell: null, webSearch: null, calendar: null },
     addIcs: () => {}
   } as unknown as AgentToolConfigs
   mountWithProviders(<AgentToolBars tools={tools} />)

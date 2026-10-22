@@ -431,8 +431,10 @@ export const AgentPanel: React.FC = () => {
               fetchingModels={fetchingModels}
               onFetchModels={() => void fetchModels(chat.providerId)}
               workspaceDir={tools.workspaceDir}
+              workspaceUnread={tools.toolUnread.workspace}
               onPickWorkspace={() => void tools.pickWorkspace()}
               textProtocolForced={chat.textProtocolForced}
+              textProtocolUnread={chat.textProtocolUnread}
               onToggleTextProtocol={(on) => chat.setTextProtocol(on)}
               contextWindowTokens={chat.contextWindowTokens}
               contextWindowUnread={chat.contextWindowUnread}
@@ -681,7 +683,23 @@ export const AgentPanel: React.FC = () => {
                 {chat.tracesLoading && (
                   <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
                 )}
-                {!chat.tracesLoading && (!chat.latestTraces || chat.latestTraces.length === 0) && (
+                {/* §257：那一读失败时以前直接落到「暂无分步明细」＝把没读到演成确实没有；三态分开，并给一次重试 */}
+                {!chat.tracesLoading && chat.latestTracesUnread && (
+                  <div
+                    data-testid="traces-unread"
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-danger)]"
+                  >
+                    <span title={chat.latestTracesUnread}>{t('common.loadFailed', { msg: chat.latestTracesUnread })}</span>
+                    <button
+                      data-testid="traces-retry"
+                      onClick={chat.loadLatestTraces}
+                      className="px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:text-[var(--color-text)] transition-colors"
+                    >
+                      {t('agent.retryRead')}
+                    </button>
+                  </div>
+                )}
+                {!chat.tracesLoading && !chat.latestTracesUnread && (!chat.latestTraces || chat.latestTraces.length === 0) && (
                   <div className="text-xs text-[var(--color-text-muted)]">{t('agent.traceEmpty')}</div>
                 )}
                 {!chat.tracesLoading &&

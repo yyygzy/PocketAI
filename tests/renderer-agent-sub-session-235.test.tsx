@@ -322,3 +322,40 @@ describe('分步明细里的入参／返回／模型', () => {
     expect(screen.getAllByTestId('trace-open-sub-dlv4')).toHaveLength(2)
   })
 })
+
+/**
+ * §257：分步明细那一读的三态。
+ * 这一读以前只有两态——加载中 与「暂无分步明细」，而 `{ok:false}` 走的是后者：
+ * 一次失败被演成"这次运行确实没留下步骤"（`agent.traceEmpty` 那句就替它撒了谎）。
+ * 现在读到空清单才说「暂无」，读不到说「读不到：原因」并给一次重试（§235 那条"那几发读没有自动重试"在这里给了）。
+ */
+describe('分步明细那一读的三态', () => {
+  it('读不到 ⇒ 那句「暂无分步明细」让位给「读不到：原因」；点重试读到之后明细回来', async () => {
+    let n = 0
+    stubPocketai({
+      ...stubBase(),
+      getLatestRunTraces: () => {
+        n += 1
+        return n === 1 ? { ok: false, error: 'TRACE:库被占用' } : tracesFor
+      }
+    })
+    await mountReady()
+    fireEvent.click(screen.getByTitle(zh['agent.runStatsDetail']))
+    const line = await screen.findByTestId('traces-unread')
+    expect(line.textContent).toContain(zh['common.loadFailed']!.replace('{msg}', 'TRACE:库被占用'))
+    expect(screen.queryByText(zh['agent.traceEmpty'])).toBeNull()
+
+    fireEvent.click(screen.getByTestId('traces-retry'))
+    await waitFor(() => expect(screen.getByText(zh['agent.traceType.tools'])).toBeTruthy())
+    expect(screen.queryByTestId('traces-unread')).toBeNull()
+    expect(n, '重试确实又发了那一发读').toBeGreaterThanOrEqual(2)
+  })
+
+  it('反向对照：读到空清单 ⇒ 才是那句「暂无分步明细」，且不出现「读不到」', async () => {
+    tracesFor = []
+    await mountReady()
+    fireEvent.click(screen.getByTitle(zh['agent.runStatsDetail']))
+    await waitFor(() => expect(screen.getByText(zh['agent.traceEmpty'])).toBeTruthy())
+    expect(screen.queryByTestId('traces-unread')).toBeNull()
+  })
+})

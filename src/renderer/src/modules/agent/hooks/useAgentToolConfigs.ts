@@ -1,10 +1,10 @@
 // Agent 工具开关配置：工作目录 / shell 策略 / 联网搜索 / 本地日历
 // 所有变更立即持久化，以后端回写为准（含值域兜底）
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
-import { reportIpcError, hasIpcFailed, ipcFailText } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { useConfirm } from '../../../components/ConfirmDialog'
 import { isUnprotectedMode } from '../../../utils/secret-consent'
 import { errText } from '../../../utils/error'
@@ -25,13 +25,49 @@ export function useAgentToolConfigs() {
   })
   /** 联网搜索 Key 输入框（不回显已存 Key，仅新输入时生效） */
   const [wsKeyDraft, setWsKeyDraft] = useState('')
+  // §257：这四发挂载读的失败面以前是「屏上摆着默认值」——工作目录演成"你没设"（还顺手把终端命令置灰）、
+  // 三个开关演成"都是关的"，看着像读数。每一发各存自己的原因，屏上按面点名（§226 的口径）。
+  const [toolUnread, setToolUnread] = useState<{ workspace: string | null; shell: string | null; webSearch: string | null; calendar: string | null }>(
+    { workspace: null, shell: null, webSearch: null, calendar: null }
+  )
+  const markUnread = useCallback((key: 'workspace' | 'shell' | 'webSearch' | 'calendar', msg: string | null) => {
+    setToolUnread((prev) => (prev[key] === msg ? prev : { ...prev, [key]: msg }))
+  }, [])
 
   useEffect(() => {
-    window.pocketai.getAgentWorkspaceDir().then((v) => { if (!hasIpcFailed(v)) setWorkspaceDir(v) }).catch(reportIpcError('agent.getWorkspaceDir'))
-    window.pocketai.getShellConfig().then((v) => { if (!hasIpcFailed(v)) setShellConfigState(v) }).catch(reportIpcError('agent.getShellConfig'))
-    window.pocketai.getWebSearchConfig().then((v) => { if (!hasIpcFailed(v)) setWsConfigState(v) }).catch(reportIpcError('agent.getWebSearchConfig'))
-    window.pocketai.getCalendarConfig().then((v) => { if (!hasIpcFailed(v)) setCalConfigState(v) }).catch(reportIpcError('agent.getCalendarConfig'))
-  }, [])
+    window.pocketai.getAgentWorkspaceDir().then((v) => {
+      if (hasIpcFailed(v)) {
+        markUnread('workspace', ipcFailText(v, t('agent.unknownError')))
+        return
+      }
+      markUnread('workspace', null)
+      setWorkspaceDir(v)
+    }).catch((e: unknown) => { markUnread('workspace', errText(e, t('agent.unknownError'))); logIpcError('agent.getWorkspaceDir', e) })
+    window.pocketai.getShellConfig().then((v) => {
+      if (hasIpcFailed(v)) {
+        markUnread('shell', ipcFailText(v, t('agent.unknownError')))
+        return
+      }
+      markUnread('shell', null)
+      setShellConfigState(v)
+    }).catch((e: unknown) => { markUnread('shell', errText(e, t('agent.unknownError'))); logIpcError('agent.getShellConfig', e) })
+    window.pocketai.getWebSearchConfig().then((v) => {
+      if (hasIpcFailed(v)) {
+        markUnread('webSearch', ipcFailText(v, t('agent.unknownError')))
+        return
+      }
+      markUnread('webSearch', null)
+      setWsConfigState(v)
+    }).catch((e: unknown) => { markUnread('webSearch', errText(e, t('agent.unknownError'))); logIpcError('agent.getWebSearchConfig', e) })
+    window.pocketai.getCalendarConfig().then((v) => {
+      if (hasIpcFailed(v)) {
+        markUnread('calendar', ipcFailText(v, t('agent.unknownError')))
+        return
+      }
+      markUnread('calendar', null)
+      setCalConfigState(v)
+    }).catch((e: unknown) => { markUnread('calendar', errText(e, t('agent.unknownError'))); logIpcError('agent.getCalendarConfig', e) })
+  }, [t, markUnread])
 
   const pickWorkspace = async () => {
     const dir = await window.pocketai.pickAgentWorkspaceDir()
@@ -41,6 +77,7 @@ export function useAgentToolConfigs() {
       toast.error(ipcFailText(dir, t('common.unknownError')))
       return
     }
+    markUnread('workspace', null)
     setWorkspaceDir(dir)
   }
 
@@ -51,6 +88,7 @@ export function useAgentToolConfigs() {
         toast.error(ipcFailText(next, t('common.unknownError')))
         return
       }
+      markUnread('shell', null)
       setShellConfigState(next)
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
@@ -75,6 +113,7 @@ export function useAgentToolConfigs() {
         toast.error(ipcFailText(next, t('common.unknownError')))
         return
       }
+      markUnread('webSearch', null)
       setWsConfigState(next)
       if (patch.apiKey !== undefined) setWsKeyDraft('')
     } catch (e) {
@@ -89,6 +128,7 @@ export function useAgentToolConfigs() {
         toast.error(ipcFailText(next, t('common.unknownError')))
         return
       }
+      markUnread('calendar', null)
       setCalConfigState(next)
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
@@ -113,6 +153,7 @@ export function useAgentToolConfigs() {
     calConfig,
     wsConfig,
     wsKeyDraft,
+    toolUnread,
     setWsKeyDraft,
     pickWorkspace,
     patchShellConfig,

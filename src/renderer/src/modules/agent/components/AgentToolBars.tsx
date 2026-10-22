@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import type { ShellConfig, WebSearchConfig } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import type { AgentToolConfigs } from '../hooks/useAgentToolConfigs'
 
 export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) => {
@@ -19,8 +20,19 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
     patchCalConfig,
     calConfig,
     addIcs,
-    secretDialog
+    secretDialog,
+    toolUnread
   } = tools
+
+  // §257：三发配置读失败时这里摆的是各自的默认值（开关全是"关"），收起态那一行连图标都不显示，
+  // 看着就像"这台机器三个工具都没开"。哪一发没读到就点名哪一发（§226 的口径：不冒充读数）。
+  const unreadBars = (
+    <>
+      {toolUnread.shell && <ShowingDefaultsNotice what={t('agent.shell.enable')} msg={toolUnread.shell} />}
+      {toolUnread.webSearch && <ShowingDefaultsNotice what={t('agent.websearch.title')} msg={toolUnread.webSearch} />}
+      {toolUnread.calendar && <ShowingDefaultsNotice what={t('agent.calendar.title')} msg={toolUnread.calendar} />}
+    </>
+  )
 
   if (!expanded) {
     // 收起态：单行摘要，点击展开
@@ -30,20 +42,24 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
       calConfig.enabled ? '📅' : null
     ].filter(Boolean).join(' ') || t('agent.toolConfig')
     return (
-      <button
-        onClick={() => setExpanded(true)}
-        className="mt-1 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-0.5 self-start"
-        title={t('agent.expand')}
-      >
-        <span>▸</span>
-        <span>{t('agent.toolConfig')}</span>
-        <span className="opacity-70">{summary}</span>
-      </button>
+      <>
+        {unreadBars}
+        <button
+          onClick={() => setExpanded(true)}
+          className="mt-1 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-0.5 self-start"
+          title={t('agent.expand')}
+        >
+          <span>▸</span>
+          <span>{t('agent.toolConfig')}</span>
+          <span className="opacity-70">{summary}</span>
+        </button>
+      </>
     )
   }
 
   return (
     <>
+      {unreadBars}
       <button
         onClick={() => setExpanded(false)}
         className="mt-1 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-0.5 self-start"
@@ -57,7 +73,13 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
         className={`mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs ${
           workspaceDir ? '' : 'opacity-40 pointer-events-none'
         }`}
-        title={workspaceDir ? undefined : t('agent.shell.needWorkspace')}
+        title={
+          workspaceDir
+            ? undefined
+            : toolUnread.workspace
+              ? t('agent.workspaceUnread')
+              : t('agent.shell.needWorkspace')
+        }
       >
         <label className="flex items-center gap-1.5 cursor-pointer select-none font-medium">
           <input

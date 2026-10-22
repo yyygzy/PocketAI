@@ -690,6 +690,8 @@ export const zh = {
   'agent.noToolCallNotice': '当前模型未使用可用工具，建议换用 7b 及以上模型以获得更好效果',
   'agent.textProtocol': '文本协议',
   'agent.textProtocolOn': '文本协议已启用',
+  'agent.textProtocolReadFail': '文本协议取不到',
+  'agent.textProtocolUnread': '读不到这台模型是否走文本协议，这里按未启用显示',
   'agent.textProtocolHint': '该模型不返回原生工具调用时改用它：把工具当文本清单说明（下一轮生效）',
   'agent.textProtocolOnHint': '点击关闭，恢复原生工具调用',
   'agent.textProtocolSuggest': '这台模型似乎从不发起工具调用？改用文本协议（下一轮生效）',
@@ -810,6 +812,8 @@ export const zh = {
   'agent.fetchModels': '拉取模型',
   'agent.fetching': '拉取中…',
   'agent.workspaceNone': '未设置',
+  'agent.workspaceReadFail': '工作目录取不到',
+  'agent.workspaceUnread': '读不到已设置的工作目录，这里按未设置显示',
   'agent.workspacePickTip': '选择 Agent 可读写的授权目录（fs_list / fs_read / fs_write 仅在此目录内生效）',
 
   // 终端命令（shell_exec）策略

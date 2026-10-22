@@ -690,6 +690,8 @@ export const en = {
   'agent.noToolCallNotice': 'The model did not use any available tools. Switch to a 7B+ model for better results.',
   'agent.textProtocol': 'Text protocol',
   'agent.textProtocolOn': 'Text protocol on',
+  'agent.textProtocolReadFail': 'Text protocol unread',
+  'agent.textProtocolUnread': "Couldn't read whether this model uses the text protocol; shown here as off",
   'agent.textProtocolHint': 'Use when this model never returns native tool calls: tools are described as text instead (takes effect next run)',
   'agent.textProtocolOnHint': 'Click to turn it off and restore native tool calls',
   'agent.textProtocolSuggest': 'This model never seems to call tools? Switch it to the text protocol (takes effect next run)',
@@ -810,6 +812,8 @@ export const en = {
   'agent.fetchModels': 'Fetch models',
   'agent.fetching': 'Fetching…',
   'agent.workspaceNone': 'Not set',
+  'agent.workspaceReadFail': 'Workspace unread',
+  'agent.workspaceUnread': "Couldn't read the configured workspace; shown here as not set",
   'agent.workspacePickTip': 'Pick the folder the Agent may read/write (fs_list / fs_read / fs_write only work inside it)',
 
   // Shell command (shell_exec) policy

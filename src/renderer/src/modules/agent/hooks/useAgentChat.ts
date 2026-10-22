@@ -64,6 +64,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [sessionStats, setSessionStats] = useState<AgentSessionStats | null>(null) // 当前会话累计统计（跨全部运行）
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
+  // §257：这一读失败时以前与「本次运行确实没有明细」长得一模一样（`agent.traceEmpty`），
+  // 屏上那句「暂无分步明细」就在替一次失败说话。分三态：加载中／读不到／确实没有。
+  const [latestTracesUnread, setLatestTracesUnread] = useState<string | null>(null)
   /**
    * §235：当前这条会话的身份读数。三种状态各有脸：
    *  · `loading` —— 还没读到（新路径才走这一档：命令面板/恢复）⇒ 与今天一样能发；
@@ -85,6 +88,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [mcpHeldBack, setMcpHeldBack] = useState(0)
   /** 被用户点名「走文本协议」的模型键（`providerId::model`）；开关存 app_config，跨重启保留 */
   const [textProtocolModels, setTextProtocolModels] = useState<string[]>([])
+  // §257：这发读失败时徽标会显示「文本协议」（＝没走），与"读到了但没走"同一张脸；
+  // 抄 §234 那颗窗口徽标的第三态，让"取不到"自己说自己是取不到。
+  const [textProtocolUnread, setTextProtocolUnread] = useState<string | null>(null)
   /** §234：每台模型声明的上下文窗口（键同上，值是 token 数）。表里没有=未设=按 30 条 */
   const [modelWindows, setModelWindows] = useState<Record<string, number>>({})
   /** 那一读失败过：界面不许把"没读到"演成"没有一台模型设过窗口"（§222 那一族） */
@@ -261,9 +267,19 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   useEffect(() => {
     void window.pocketai
       .getAgentTextProtocol()
-      .then((list) => { if (!hasIpcFailed(list)) setTextProtocolModels(Array.isArray(list) ? list : []) })
-      .catch(reportIpcError('agent.getTextProtocol'))
-  }, [])
+      .then((list) => {
+        if (hasIpcFailed(list)) {
+          setTextProtocolUnread(ipcFailText(list, t('agent.unknownError')))
+          return
+        }
+        setTextProtocolUnread(null)
+        setTextProtocolModels(Array.isArray(list) ? list : [])
+      })
+      .catch((e: unknown) => {
+        setTextProtocolUnread(errText(e, t('agent.unknownError')))
+        logIpcError('agent.getTextProtocol', e)
+      })
+  }, [t])
 
   /** 当前选中的 provider+model 是否已被点名走文本协议 */
   const textProtocolForced =
@@ -402,6 +418,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
             return
           }
           setTextProtocolModels(Array.isArray(list) ? list : [])
+          // 这一发 set 通道回传的就是最新清单 ⇒ 挂载那次"取不到"到此作废（§256 那两条陈旧谎报的同一课）
+          setTextProtocolUnread(null)
         })
         .catch(reportIpcError('agent.setTextProtocol'))
     },
@@ -678,6 +696,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setRunStats(null)
     setSessionStats(null)
     setLatestTraces(null)
+    setLatestTracesUnread(null)
     setTracesLoading(false)
     setLiveSteps([])
     setNoToolCallNotice(false)
@@ -909,18 +928,26 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     const convId = conversationIdRef.current
     if (!convId) return
     setTracesLoading(true)
+    setLatestTracesUnread(null)
     void window.pocketai.getLatestRunTraces(convId).then((traces) => {
       // §221：失败只跳过"写数据"这一半，setTracesLoading(false) 照跑（与下面那个 .catch 同形）；
       // 整条早退会把统计条永久卡在加载态
       if (conversationIdRef.current === convId) {
-        if (!hasIpcFailed(traces)) setLatestTraces(traces)
+        if (hasIpcFailed(traces)) {
+          setLatestTracesUnread(ipcFailText(traces, t('agent.unknownError')))
+        } else {
+          setLatestTraces(traces)
+        }
         setTracesLoading(false)
       }
-    }).catch((e) => {
-      reportIpcError('agent.getLatestRunTraces')(e)
-      if (conversationIdRef.current === convId) setTracesLoading(false)
+    }).catch((e: unknown) => {
+      logIpcError('agent.getLatestRunTraces', e)
+      if (conversationIdRef.current === convId) {
+        setLatestTracesUnread(errText(e, t('agent.unknownError')))
+        setTracesLoading(false)
+      }
     })
-  }, [])
+  }, [t])
 
   /**
    * 能不能起一轮新运行。**判据与下面 send 的挡板逐字一致**，且走 runningRef 而不是 running state：
@@ -947,6 +974,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setInterrupted(false)
     setRunStats(null) // 新一轮运行：清除上轮统计，待 DONE 事件更新
     setLatestTraces(null) // 旧分步明细失效，下次展开重新拉取
+    setLatestTracesUnread(null) // 上一轮那次"取不到"也不作数：这一轮还没读过
     setHistoryTight(false) // 上一轮那句"带不下更多历史"不作数：这一轮的窗口判据还没算出来
     setCurrentStep(0)
 
@@ -1032,6 +1060,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     runStats,
     sessionStats,
     latestTraces,
+    latestTracesUnread,
     tracesLoading,
     loadLatestTraces,
     currentStep,
@@ -1040,6 +1069,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setNoToolCallNotice,
     mcpHeldBack,
     textProtocolForced,
+    textProtocolUnread,
     setTextProtocol,
     contextWindowTokens,
     contextWindowUnread: modelWindowsUnread,

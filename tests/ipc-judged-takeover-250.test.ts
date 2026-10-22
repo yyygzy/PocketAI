@@ -188,10 +188,11 @@ const ALL = filesIn(RENDERER_DIR)
 const SITES = ALL.flatMap((rel) => scanSource(rel, blankComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'))))
 /** 读数类静默点：失败侧什么都没做，或只进 console */
 const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
-const SILENT_READ_CAP = 50
+const SILENT_READ_CAP = 44
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
+  'src/renderer/src/modules/agent/hooks/useAgentChat.ts',
   'src/renderer/src/modules/chat/AssistantEditor.tsx',
   'src/renderer/src/modules/settings/SettingsModule.tsx',
   'src/renderer/src/modules/image/ImageModule.tsx'
@@ -221,7 +222,12 @@ const SILENT_PER_FILE: Record<string, number> = {
   //  · FirstRunWizard：挂载那份 provider 快照无任何渲染消费者，保存前会现取一次，两道都失败还有 repo 的 foundByDedupe 兜底；
   //    而保存前那发现取失败只进 console 是**故意不卡住首启必经路**。
   'src/renderer/src/modules/image/ImageModule.tsx': 1,
-  'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 2
+  'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 2,
+  // §257：这一簇没有设计内静默——`useAgentToolConfigs` 四发读全部收口（清零），
+  // `useAgentChat` 剩的两条是 `setUiPrefs` 那两发**写**失败只进 console（停止类同族，界面上"存住了"与"没存住"仍分不开），
+  // 那是产品决策未定（要不要弹），本批不顺手改。
+  'src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts': 0,
+  'src/renderer/src/modules/agent/hooks/useAgentChat.ts': 2
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -288,7 +294,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250~§256 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
+  it('§250~§257 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
