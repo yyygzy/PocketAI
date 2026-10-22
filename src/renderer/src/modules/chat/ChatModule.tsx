@@ -3,7 +3,6 @@ import type {
   ProviderRecord,
   AssistantRecord,
   ConversationRecord,
-  ConversationGroupRecord,
   MessageRecord,
   ChatTarget,
   ChatAttachment,
@@ -15,6 +14,7 @@ import { ConversationList } from './ConversationList'
 import { ChatView } from './ChatView'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useStreamSession } from './useStreamSession'
+import { useConversationLists } from './useConversationLists'
 import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
@@ -52,8 +52,6 @@ export const ChatModule: React.FC = () => {
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [currentAssistantId, setCurrentAssistantId] = useState<string>('asst-default')
-  const [conversations, setConversations] = useState<ConversationRecord[]>([])
-  const [archivedConversations, setArchivedConversations] = useState<ConversationRecord[]>([])
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
   // 消息那一读失败的原因（V4-Iter-250）：不写这句，屏上留着的是上一条会话或空列表，两种都像「这里没消息」
@@ -66,12 +64,23 @@ export const ChatModule: React.FC = () => {
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
   /** 当前会话已加载的草稿文本（切会话同步清空，异步加载后回填） */
   const [activeDraft, setActiveDraft] = useState('')
-  /** 当前助手维度的分组文件夹（随 reloadConversations 一并拉取） */
-  const [groups, setGroups] = useState<ConversationGroupRecord[]>([])
 
   const assistantIdRef = useRef('asst-default')
   const currentConvRef = useRef<string | null>(null)
   currentConvRef.current = currentConvId
+  // §260：会话／归档／分组这三发读连同「失败对象绝不进 state」的收口一起抽到 hook 里
+  const {
+    conversations,
+    setConversations,
+    archivedConversations,
+    setArchivedConversations,
+    groups,
+    setGroups,
+    conversationsUnread,
+    archivedUnread,
+    groupsUnread,
+    reloadConversations
+  } = useConversationLists({ assistantIdRef, currentConvRef, onAutoSelect: setCurrentConvId })
   // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
   const userEditedTargetsRef = useRef(false)
   // 草稿防抖句柄 + 最新文本镜像（卸载/关闭时尽力落库）
@@ -82,32 +91,11 @@ export const ChatModule: React.FC = () => {
   useEffect(() => { messagesRef.current = messages }, [messages])
   const convIndexRef = useRef<Map<string, ConversationRecord>>(new Map())
   useEffect(() => {
+    // 这句展开就是 §260 的立项判据：失败对象写进那两份列表时它是 `is not iterable`（hook 保证只写数组）
     const idx = new Map<string, ConversationRecord>()
     for (const c of [...conversations, ...archivedConversations]) idx.set(c.id, c)
     convIndexRef.current = idx
   }, [conversations, archivedConversations])
-
-  const reloadConversations = useCallback((autoSelect = false) => {
-    const aid = assistantIdRef.current
-    return Promise.all([
-      window.pocketai.listConversations(aid, false, false),
-      window.pocketai.listConversations(aid, false, true),
-      window.pocketai.listConversationGroups(aid)
-    ]).then(([list, archived, groupList]) => {
-      setConversations(list)
-      setArchivedConversations(archived)
-      setGroups(groupList)
-      // 自动选中最近一次使用的会话（列表已按置顶权重+updated_at DESC 排序）
-      if (autoSelect && list.length > 0 && !currentConvRef.current) {
-        const first = list[0]!
-        setCurrentConvId(first.id)
-      }
-      return list
-    }).catch((e) => {
-      reportIpcError('chat.listConversations')(e)
-      return []
-    })
-  }, [])
 
   const loadMessages = useCallback(
     (convId: string) =>
@@ -1403,6 +1391,7 @@ export const ChatModule: React.FC = () => {
         <div className="flex-1 min-h-0 flex flex-col">
           <ConversationList
             conversations={conversations}
+            conversationsUnread={conversationsUnread}
             currentId={currentConvId}
             onSelect={handleSelectConv}
             onNew={handleNewConv}
@@ -1420,10 +1409,12 @@ export const ChatModule: React.FC = () => {
             onImportExternal={() => void handleImportExternal()}
             onSelectMessage={handleSelectMessage}
             archivedConversations={archivedConversations}
+            archivedUnread={archivedUnread}
             onTogglePin={handleTogglePin}
             onSetArchived={handleSetArchived}
             onToggleStar={handleToggleStar}
             groups={groups}
+            groupsUnread={groupsUnread}
             onCreateGroup={handleCreateGroup}
             onRenameGroup={handleRenameGroup}
             onDeleteGroup={handleDeleteGroup}

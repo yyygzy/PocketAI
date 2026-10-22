@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import type { AssistantRecord, ConversationRecord, ConversationGroupRecord, MessageSearchResult, StarredMessageItem } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { EmptyState } from '../../components/EmptyState'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { MessageSearchResults, relTime } from '../../components/MessageSearchResults'
 import { logIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useToast } from '../../components/ToastProvider'
@@ -9,6 +10,8 @@ import { formatDateTime } from '../../utils/time'
 
 interface Props {
   conversations: ConversationRecord[]
+  /** 活跃列表那一发没读到（§260）：`error` 为空＝拿到了但不是数组 */
+  conversationsUnread?: { error?: string } | null
   currentId: string | null
   onSelect: (id: string) => void
   onNew: () => void
@@ -25,6 +28,8 @@ interface Props {
   onBatchDelete?: (ids: string[]) => void
   /** 归档区会话（底部折叠展示） */
   archivedConversations?: ConversationRecord[]
+  /** 归档那一发没读到（§260） */
+  archivedUnread?: { error?: string } | null
   onTogglePin?: (id: string, pinned: boolean) => void
   onSetArchived?: (id: string, archived: boolean) => void
   onImport?: () => void
@@ -37,6 +42,8 @@ interface Props {
   onToggleStar?: (id: string, starred: boolean) => void
   /** 分组文件夹（当前助手维度；仅普通列表态分区，搜索/多选/过滤态平铺） */
   groups?: ConversationGroupRecord[]
+  /** 分组那一发没读到（§260：读不到时组会整块不见，那句要说清是「没读到」而不是「你没建过组」） */
+  groupsUnread?: { error?: string } | null
   onCreateGroup?: (name: string) => Promise<boolean> | boolean
   onRenameGroup?: (id: string, name: string) => void
   onDeleteGroup?: (id: string) => void
@@ -54,6 +61,7 @@ interface Props {
 
 export const ConversationList: React.FC<Props> = ({
   conversations,
+  conversationsUnread,
   currentId,
   onSelect,
   onNew,
@@ -67,6 +75,7 @@ export const ConversationList: React.FC<Props> = ({
   onBatchExportSelected,
   onBatchDelete,
   archivedConversations,
+  archivedUnread,
   onTogglePin,
   onSetArchived,
   onImport,
@@ -75,6 +84,7 @@ export const ConversationList: React.FC<Props> = ({
   onSelectMessage,
   onToggleStar,
   groups,
+  groupsUnread,
   onCreateGroup,
   onRenameGroup,
   onDeleteGroup,
@@ -566,6 +576,27 @@ export const ConversationList: React.FC<Props> = ({
           />
         ) : (
           <>
+            {/* §260：三份读各说各的（§257／§259 的逐发点名口径）——活跃读到而归档没读到，
+                不该把读到的那份也说成不可信；点不出名的整屏「读不到」更会把半屏好数据冤枉掉 */}
+            {conversationsUnread && (
+              <LoadFailNotice
+                what={t('chat.conversationsList')}
+                msg={ipcFailText(conversationsUnread, t('common.unknownError'))}
+              />
+            )}
+            {archivedUnread && (
+              <LoadFailNotice
+                what={t('chat.archivedList')}
+                msg={ipcFailText(archivedUnread, t('common.unknownError'))}
+              />
+            )}
+            {groupsUnread && (
+              <LoadFailNotice
+                what={t('chat.groupsList')}
+                msg={ipcFailText(groupsUnread, t('common.unknownError'))}
+              />
+            )}
+
             {/* 新建文件夹内联输入行 */}
             {creatingGroup && (
               <div className="flex items-center gap-1 px-2 py-1.5 mb-0.5 rounded bg-[var(--color-hover-overlay)]">
@@ -588,7 +619,7 @@ export const ConversationList: React.FC<Props> = ({
 
             {groupedMode ? (
               <>
-                {topConversations.length === 0 && groupViews.length === 0 && (
+                {!conversationsUnread && topConversations.length === 0 && groupViews.length === 0 && (
                   <EmptyState
                     className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2"
                     message={t('chat.noConversations')}
@@ -677,7 +708,7 @@ export const ConversationList: React.FC<Props> = ({
               </>
             ) : (
               <>
-                {filteredConversations.length === 0 && (
+                {!conversationsUnread && filteredConversations.length === 0 && (
                   <EmptyState
                     className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2"
                     message={convFilter.trim() ? t('chat.noFilteredConversations') : t('chat.noConversations')}
