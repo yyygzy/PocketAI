@@ -97,10 +97,12 @@ describe('① 两发各判各的：一发失败不许带走另一发', () => {
 
   it('只服务商那发失败 ⇒ 助手照常写进去（这条就是"带走"那一档的牙）＋只点服务商那句', async () => {
     const { result } = run({ listProviders: () => ({ ok: false, error: 'PROV:服务商读不到' }) })
-    await waitFor(() => expect(result.current.assistantsUnread).toBeNull())
-    expect(result.current.assistants).toEqual([A1])
+    // 等的是"状态真的翻了"那一条：assistantsUnread 初始就是 null，拿它当 Witnesses 会在 IPC 到货前就通过
+    // （满载实测过：那一秒里 assistants 还是 []）
+    await waitFor(() => expect(result.current.assistants).toEqual([A1]))
     expect(result.current.providers).toEqual([])
     expect(result.current.providersUnread).toEqual({ error: 'PROV:服务商读不到' })
+    expect(result.current.assistantsUnread).toBeNull()
   })
 
   it('只助手那发失败 ⇒ 服务商清单照常（含只留 enabled 那道过滤），失败对象绝不进 assistants', async () => {

@@ -88,7 +88,24 @@ export const SandboxModule: React.FC = () => {
   }, [])
 
   const openPreview = async (id: string) => {
-    const r = await window.pocketai.getSandboxFile(id)
+    // §262：这一发有**四种**到货——内容、null（文件真没了）、失败对象（safeHandle 的 resolve，§196）、reject。
+    // 旧写法 `if (r)` 把失败对象当第一种：`preview.meta.isApp` 当场抛 `Cannot read properties of undefined`，
+    // 整屏被 React 卸载（探针实测 body 为空＝真应用里的整站崩溃屏）。
+    // 两条失败路走同一张脸（reject 先归一成失败对象，顺手消掉旧代码里那个未处理 rejection）：
+    // 原因进本模块既有的 toast（这一族其它失败都是它，不另立新脸）＋清掉上一份预览
+    // （屏上还摆着别的文件内容，比空白更会骗人，§256 那条"陈旧谎报要收回"）。
+    let r: { meta: SandboxFileMeta; html: string } | null | { ok: false; error?: string }
+    try {
+      r = await window.pocketai.getSandboxFile(id)
+    } catch (e) {
+      r = { ok: false, error: errText(e, t('common.unknownError')) }
+    }
+    if (hasIpcFailed(r)) {
+      setToast(ipcFailText(r, t('common.unknownError')))
+      setPreview(null)
+      setSelectedId(id)
+      return
+    }
     if (r) {
       setPreview(r)
       setSelectedId(id)

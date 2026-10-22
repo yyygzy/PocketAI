@@ -840,13 +840,16 @@ const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168]
 /** 全量备份保留份数选项：0=不自动清理 */
 const RETENTION_OPTIONS = [0, 3, 5, 10, 20, 30]
 
-const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
+/** 导出只为给用例真挂载（§262 起 WebDAV 配置那一读的行为判据）；运行期仍只由 SettingsModule 渲染 */
+export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   const { t, lang } = useI18n()
   const { confirm, dialog } = useConfirm()
   // 加密备份唯一闸门是主进程 masterKeyManager.getDbKey()：
   // 仅 db 模式且已解锁（主密码已验证）时可用；none 模式与锁屏期间禁用
   const encrypted = !!enc?.dbEncrypted && !!enc?.masterPasswordVerified
   const [cfg, setCfg] = useState<WebDAVConfig | null>(null)
+  /** 配置文件那一读失败的原因（§262）：`error` 为空＝拿到了但形状不对 */
+  const [wdCfgUnread, setWdCfgUnread] = useState<{ error?: string } | null>(null)
   const [schedule, setSchedule] = useState<BackupScheduleStatus | null>(null)
   const [webdavList, setWebdavList] = useState<WebDAVBackupFile[]>([])
   const [listLoading, setListLoading] = useState(false)
@@ -866,11 +869,23 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
 
   useEffect(() => {
     window.pocketai.loadWebDAVConfig().then((c) => {
-      if (c) {
-        setCfg(c)
-        setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
+      // §262：这一发有三种到货——配置、null（真的还没配过）、失败对象（safeHandle 的 resolve，§196）。
+      // 旧写法 `if (c)` 把第三种当第一种：cfg 是 `{ok:false}` 也是真值 ⇒ 「同步状态卡＋上传/增量/刷新」
+      // 那一整块照常摆出来（探针实测屏上有「⬆️ 上传备份」「同步状态」「已同步」），四个输入框从 controlled
+      // 变 uncontrolled（React 当场警告，URL 框成空串）——把"配置文件读不到"演成"你配过了，只是还没备份"。
+      if (hasIpcFailed(c)) {
+        setWdCfgUnread({ error: c.error })
+        return
       }
-    }).catch(reportIpcError('settings.loadWebDAVConfig'))
+      setWdCfgUnread(null)
+      if (!c) return
+      setCfg(c)
+      setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
+    }).catch((e: unknown) => {
+      // reject 面（配置那台机器真抛了）：同一句，不让它只进 console
+      setWdCfgUnread({ error: errText(e, '') })
+      logIpcError('settings.loadWebDAVConfig', e)
+    })
     void loadSchedule()
   }, [])
 
@@ -1152,6 +1167,9 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       {/* WebDAV 配置 */}
       <div>
         <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('bk.webdavTitle')}</div>
+        {/* §262：读不到时表单是空的，但那不是"还没配"——这一句把两种空分开头（§222 那张脸）。
+            cfg 一旦到手（用户存了新的）这句就退场，不留陈旧谎报。 */}
+        {!cfg && wdCfgUnread && <div className="mb-2"><LoadFailNotice msg={ipcFailText(wdCfgUnread, t('common.unknownError'))} /></div>}
         <div className="grid grid-cols-2 gap-2">
           <Field label="URL"><input className="input" placeholder="https://dav.example.com/..." value={wdUrl} onChange={e => setWdUrl(e.target.value)} /></Field>
           <Field label={t('bk.user')}><input className="input" value={wdUser} onChange={e => setWdUser(e.target.value)} /></Field>
