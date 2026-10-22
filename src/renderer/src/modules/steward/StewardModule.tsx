@@ -15,6 +15,7 @@ import { formatBytes } from '../../utils/format'
 import { modelRecKey } from '../../../../shared/model-rec-codes'
 import { buildDiagnosticReport, type ReportLabels } from '../../utils/diagnostic-report'
 import { useToast } from '../../components/ToastProvider'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useOllamaPull, pickPullState } from '../../hooks/useOllamaPull'
 
 const LEVEL_ICON: Record<CheckLevel, string> = { ok: '✅', warn: '⚠️', danger: '❌' }
@@ -31,6 +32,8 @@ export const StewardModule: React.FC = () => {
   const [integrity, setIntegrity] = useState<{ ok: boolean; details: string } | null>(null)
   const [health, setHealth] = useState<HealthReport | null>(null)
   const [recommendation, setRecommendation] = useState<ModelRecommendation | null>(null)
+  // §255：这一读失败时以前是"整块不出现"，用户分不清是没读到还是这台机器不该有
+  const [recErr, setRecErr] = useState<string | null>(null)
   const [audit, setAudit] = useState<AuditResult | null>(null)
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null)
   const [checking, setChecking] = useState<'audit' | 'diagnose' | null>(null)
@@ -53,10 +56,18 @@ export const StewardModule: React.FC = () => {
     window.pocketai
       .recommendModels()
       .then((r) => {
-        if (r.ok && r.data) setRecommendation(r.data)
+        if (!r.ok || !r.data) {
+          setRecErr(ipcFailText(r, t('common.unknownError')))
+          return
+        }
+        setRecErr(null)
+        setRecommendation(r.data)
       })
-      .catch(reportIpcError('steward.recommendModels'))
-  }, [])
+      .catch((e: unknown) => {
+        setRecErr(errText(e, t('common.unknownError')))
+        logIpcError('steward.recommendModels', e)
+      })
+  }, [t])
 
   // 拉取推荐模型：成功后重拉推荐刷新 installed 标记并 toast，失败 toast 展示错误
   const { pulling, pullEvt, pull: pullModel, abort: abortPull } = useOllamaPull({
@@ -107,6 +118,8 @@ export const StewardModule: React.FC = () => {
       }
       setHealth(report)
       // 静默刷新诊断结果（孤儿数据可能已被清除）
+      // §255 复核：这一发是"顺带更新"，上一份诊断仍在屏上、清理本身已经 toast 过 ⇒ 设计内静默，
+      // 但闸门的单条 if 视角看不见这段注释，所以它仍留在 CAP 名单里计数（同 §251 的 995／1450 两档）
       window.pocketai.runDiagnose().then((r) => {
         if (r.ok && r.data) setDiagnose(r.data)
       }).catch(reportIpcError('steward.runDiagnose'))
@@ -140,7 +153,12 @@ export const StewardModule: React.FC = () => {
     setChecking('audit')
     try {
       const r = await window.pocketai.runAudit()
-      if (r.ok && r.data) setAudit(r.data)
+      // §255：这颗键是用户按的，失败却只把 checking 收掉——屏上什么都不说，看着像"点了没反应"
+      if (!r.ok || !r.data) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      setAudit(r.data)
     } finally {
       setChecking(null)
     }
@@ -150,7 +168,11 @@ export const StewardModule: React.FC = () => {
     setChecking('diagnose')
     try {
       const r = await window.pocketai.runDiagnose()
-      if (r.ok && r.data) setDiagnose(r.data)
+      if (!r.ok || !r.data) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      setDiagnose(r.data)
     } finally {
       setChecking(null)
     }
@@ -397,6 +419,11 @@ export const StewardModule: React.FC = () => {
       )}
 
       {/* 模型推荐（硬件画像） */}
+      {!recommendation && recErr && (
+        <Section title={t('steward.modelRec')}>
+          <LoadFailNotice msg={recErr} />
+        </Section>
+      )}
       {recommendation && (
         <Section title={t('steward.modelRec')}>
           <div className="flex flex-wrap items-center gap-2 mb-2">

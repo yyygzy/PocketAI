@@ -188,7 +188,7 @@ const ALL = filesIn(RENDERER_DIR)
 const SITES = ALL.flatMap((rel) => scanSource(rel, blankComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'))))
 /** 读数类静默点：失败侧什么都没做，或只进 console */
 const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
-const SILENT_READ_CAP = 58
+const SILENT_READ_CAP = 55
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
@@ -212,7 +212,10 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/components/Sidebar.tsx': 2,
   'src/renderer/src/modules/chat/ChatModule.tsx': 1,
   'src/renderer/src/modules/settings/SettingsModule.tsx': 2,
-  'src/renderer/src/modules/knowledge/KnowledgeModule.tsx': 0
+  'src/renderer/src/modules/knowledge/KnowledgeModule.tsx': 0,
+  // §255 复核后留下的一条：清理后那发"顺带刷新诊断"是设计内静默（上一份诊断还在屏上、清理本身已 toast），
+  // 但闸门的单条 if 视角看不见那行注释 ⇒ 继续计数，不为了清零去改产品码
+  'src/renderer/src/modules/steward/StewardModule.tsx': 1
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -279,7 +282,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250／§251／§254 收口的六处不再静默（App／DetachedApp／Sidebar 角标／ChatModule 消息／SettingsModule 九处／KnowledgeModule 三处）', () => {
+  it('§250~§255 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
