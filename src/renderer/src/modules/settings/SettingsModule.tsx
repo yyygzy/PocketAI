@@ -74,10 +74,25 @@ const ConversationSettingsPanel: React.FC = () => {
   const { t } = useI18n()
   // null=尚未加载，避免开关初始闪烁
   const [enabled, setEnabled] = useState<boolean | null>(null)
+  // §251：这一读失败时开关只是 disabled（屏上像"还在加载"），所以原因要落到界面上（闸门第四面的判据）
+  const [titleErr, setTitleErr] = useState<string | null>(null)
 
   useEffect(() => {
-    window.pocketai.getSmartTitleEnabled().then((v) => { if (!hasIpcFailed(v)) setEnabled(v) }).catch(reportIpcError('settings.getSmartTitle'))
-  }, [])
+    window.pocketai
+      .getSmartTitleEnabled()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setTitleErr(ipcFailText(v, t('common.unknownError')))
+          return
+        }
+        setTitleErr(null)
+        setEnabled(v)
+      })
+      .catch((e: unknown) => {
+        setTitleErr(errText(e, t('common.unknownError')))
+        logIpcError('settings.getSmartTitle', e)
+      })
+  }, [t])
 
   const toggle = async () => {
     const next = !enabled
@@ -114,6 +129,7 @@ const ConversationSettingsPanel: React.FC = () => {
             />
           </button>
         </div>
+        {titleErr && <LoadFailNotice msg={titleErr} />}
       </div>
     </div>
   )
@@ -130,10 +146,24 @@ export const SettingsModule: React.FC = () => {
   // 不交的话，面板自己的门是 `if (!x) return 加载中…`，于是"这次没读到"被长期说成"还在加载"（§222 立的那一面）。
   const [encErr, setEncErr] = useState<string | null>(null)
   const [licErr, setLicErr] = useState<string | null>(null)
+  const [pathsErr, setPathsErr] = useState<string | null>(null)
   const [updErr, setUpdErr] = useState<string | null>(null)
 
   useEffect(() => {
-    window.pocketai.getPaths().then((v) => { if (!hasIpcFailed(v)) setPaths(v) }).catch(reportIpcError('settings.getPaths'))
+    window.pocketai
+      .getPaths()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setPathsErr(ipcFailText(v, t('common.unknownError')))
+          return
+        }
+        setPathsErr(null)
+        setPaths(v)
+      })
+      .catch((e: unknown) => {
+        setPathsErr(errText(e, t('common.unknownError')))
+        logIpcError('settings.getPaths', e)
+      })
     window.pocketai.getEncryptionStatus().then((v) => {
       if (hasIpcFailed(v)) { setEncErr(ipcFailText(v, t('common.unknownError'))); return }
       setEnc(v)
@@ -152,12 +182,39 @@ export const SettingsModule: React.FC = () => {
     })
     // 锁屏遮罩不卸载本模块：解锁后 masterPasswordVerified 会变化，需重新拉取
     const offLock = window.pocketai.onLockStateChange(() => {
-      window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEnc(v) }).catch(reportIpcError('settings.onUnlock.getEncryptionStatus'))
+      window.pocketai
+        .getEncryptionStatus()
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setEncErr(ipcFailText(v, t('common.unknownError')))
+            return
+          }
+          setEncErr(null)
+          setEnc(v)
+        })
+        .catch((e: unknown) => {
+          setEncErr(errText(e, t('common.unknownError')))
+          logIpcError('settings.onUnlock.getEncryptionStatus', e)
+        })
     })
     return () => { unsub(); offLock() }
   }, [])
 
-  const refreshEnc = () => window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEnc(v) }).catch(reportIpcError('settings.refreshEnc'))
+  const refreshEnc = () =>
+    window.pocketai
+      .getEncryptionStatus()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setEncErr(ipcFailText(v, t('common.unknownError')))
+          return
+        }
+        setEncErr(null)
+        setEnc(v)
+      })
+      .catch((e: unknown) => {
+        setEncErr(errText(e, t('common.unknownError')))
+        logIpcError('settings.refreshEnc', e)
+      })
 
   return (
     <div className="flex flex-col h-full">
@@ -233,10 +290,30 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
-          <LicensePanel lic={lic} err={licErr} onChange={() => window.pocketai.getLicenseStatus().then((v) => { if (!hasIpcFailed(v)) setLic(v) }).catch(reportIpcError('license.refreshStatus'))} />
+          <LicensePanel lic={lic} err={licErr} onChange={() =>
+            window.pocketai
+              .getLicenseStatus()
+              .then((v) => {
+                if (hasIpcFailed(v)) {
+                  setLicErr(ipcFailText(v, t('common.unknownError')))
+                  return
+                }
+                setLicErr(null)
+                setLic(v)
+              })
+              .catch((e: unknown) => {
+                setLicErr(errText(e, t('common.unknownError')))
+                logIpcError('license.refreshStatus', e)
+              })} />
         </div>
       </div>
 
+      {!paths && pathsErr && (
+        <div className="shrink-0 border-t border-[var(--color-border)] pt-3 mt-3">
+          <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-2">{t('set.paths')}</h3>
+          <LoadFailNotice msg={pathsErr} />
+        </div>
+      )}
       {paths && (
         <div className="shrink-0 border-t border-[var(--color-border)] pt-3 mt-3">
           <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-2">{t('set.paths')}</h3>
@@ -670,7 +747,20 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
   const [busy, setBusy] = useState(false)
   const [shownCode, setShownCode] = useState('')
 
-  const refresh = useCallback(() => window.pocketai.hasRecoveryKey().then((v) => { if (!hasIpcFailed(v)) setHasKey(v) }).catch(reportIpcError('settings.hasRecoveryKey')), [])
+  const refresh = useCallback(
+    () =>
+      window.pocketai
+        .hasRecoveryKey()
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setNotice({ ok: false, text: ipcFailText(v, t('common.unknownError')) })
+            return
+          }
+          setHasKey(v)
+        })
+        .catch(reportIpcError('settings.hasRecoveryKey')),
+    [t]
+  )
   useEffect(() => {
     void refresh()
   }, [refresh])
@@ -781,8 +871,30 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
         setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
       }
     }).catch(reportIpcError('settings.loadWebDAVConfig'))
-    window.pocketai.getBackupSchedule().then((v) => { if (!hasIpcFailed(v)) setSchedule(v) }).catch(reportIpcError('settings.refreshSchedule')).catch(reportIpcError('settings.getBackupSchedule'))
+    void loadSchedule()
   }, [])
+
+  // §251：三处 getBackupSchedule（进面板、上传后、保存后）共用同一条接管——失败时那一块整块消失，
+  // 用户会以为"没有定时备份这回事"，所以把原因落在备份计划区上方
+  const [schedErr, setSchedErr] = useState<string | null>(null)
+  const loadSchedule = useCallback(
+    () =>
+      window.pocketai
+        .getBackupSchedule()
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setSchedErr(ipcFailText(v, t('common.unknownError')))
+            return
+          }
+          setSchedErr(null)
+          setSchedule(v)
+        })
+        .catch((e: unknown) => {
+          setSchedErr(errText(e, t('common.unknownError')))
+          logIpcError('settings.getBackupSchedule', e)
+        }),
+    [t]
+  )
 
   const intervalLabel = (h: number): string => {
     if (lang === 'en') {
@@ -848,7 +960,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
     if (r.ok === false) { showNotice(false, t('bk.uploadFail', { e: r.error ?? t('common.unknownError') })); return }
     showNotice(true, t('bk.uploaded', { name: r.filename ?? '' }))
     await refreshList()
-    window.pocketai.getBackupSchedule().then((v) => { if (!hasIpcFailed(v)) setSchedule(v) }).catch(reportIpcError('settings.refreshSchedule'))
+    await loadSchedule()
   }
 
   async function doIncrementalUpload() {
@@ -868,7 +980,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       })
     )
     await refreshList()
-    window.pocketai.getBackupSchedule().then((v) => { if (!hasIpcFailed(v)) setSchedule(v) }).catch(reportIpcError('settings.refreshSchedule'))
+    await loadSchedule()
   }
 
   const refreshList = useCallback(async () => {
@@ -1113,6 +1225,7 @@ const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
       )}
 
       {/* 定时备份（需先保存 WebDAV 配置） */}
+      {!schedule && schedErr && <LoadFailNotice msg={schedErr} />}
       {cfg && schedule && (
         <div className="rounded-lg border border-[var(--color-border)] p-3">
           <label className="flex items-center gap-2 cursor-pointer">

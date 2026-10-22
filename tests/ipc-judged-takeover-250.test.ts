@@ -42,7 +42,7 @@ interface Site {
   negated: boolean
   hasElse: boolean
   /** 失败侧的分类 */
-  side: 'none' | 'console' | 'takes-over' | 'helper'
+  side: 'none' | 'console' | 'takes-over' | 'helper' | 'fallthrough'
   /** 失败侧只调了哪个助手 */
   helper?: string
   /** 失败侧原文（红因用） */
@@ -96,8 +96,8 @@ function judged(cond: string): { v: string; negated: boolean } | null {
     [/!\s*(?:hasIpcFailed|isIpcFail)\(\s*([A-Za-z_$][\w$]*)/, true],
     [/(?:hasIpcFailed|isIpcFail)\(\s*([A-Za-z_$][\w$]*)/, false],
     [/([A-Za-z_$][\w$]*)\s*\.\s*ok\s*(?:===|!==)\s*(?:true|false)|(?:true|false)\s*(?:===|!==)\s*([A-Za-z_$][\w$]*)\s*\.\s*ok/, null],
-    [/!\s*([A-Za-z_$][\w$]*)\s*\.\s*ok\b(?! *[!=]=)/, false],
-    [/([A-Za-z_$][\w$]*)\s*\.\s*ok\b(?! *[!=]=)/, true]
+    [/!\s*([A-Za-z_$][\w$]*)\s*\.\s*ok\b(?! *[!=.])(?! *[!=]=)/, false],
+    [/([A-Za-z_$][\w$]*)\s*\.\s*ok\b(?! *[!=.])(?! *[!=]=)/, true]
   ]
   for (const [re, neg] of forms) {
     const m = cond.match(new RegExp(re.source, re.flags))
@@ -116,6 +116,13 @@ function judged(cond: string): { v: string; negated: boolean } | null {
   return null
 }
 
+/** 分支最后一句是不是跳（return/throw/break/continue）——决定 if 之后的代码归谁 */
+function endsWithJump(node: ts.Statement | ts.Block): boolean {
+  const stmts = ts.isBlock(node) ? Array.from(node.statements) : [node]
+  const last = stmts[stmts.length - 1]
+  return !!last && (ts.isReturnStatement(last) || ts.isThrowStatement(last))
+}
+
 function scanSource(file: string, code: string): Site[] {
   const src = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true)
   const out: Site[] = []
@@ -128,7 +135,15 @@ function scanSource(file: string, code: string): Site[] {
         const failNode = negated ? node.elseStatement : node.thenStatement
         const cls = classifySide(failNode ?? undefined)
         const helperName = cls.helper
-        const side = cls.side
+        let side = cls.side
+        // §251 撞出来的假阳：`if (r.ok) { …成功那套…; return }` 后面那段**本身就是失败路径**（916 下面正挨着
+        // `r.code === 'needBackupPassword'` 的分派）。识别条件三条都要成立：成功侧以 return/throw 收尾、
+        // if 之后同段还有语句、且这是反判。否则仍按静默算。
+        if (side === 'none' && negated && !node.elseStatement && endsWithJump(node.thenStatement)) {
+          const blk = node.parent && (ts.isBlock(node.parent) || ts.isSourceFile(node.parent)) ? (node.parent as ts.Block | ts.SourceFile) : null
+          const after = blk ? blk.statements.length - blk.statements.indexOf(node) - 1 : 0
+          if (after > 0) side = 'fallthrough'
+        }
         out.push({
           file,
           line: ts.getLineAndCharacterOfPosition(src, node.getStart(src)).line + 1,
@@ -169,7 +184,7 @@ const ALL = filesIn(RENDERER_DIR)
 const SITES = ALL.flatMap((rel) => scanSource(rel, blankComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'))))
 /** 读数类静默点：失败侧什么都没做，或只进 console */
 const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
-const SILENT_READ_CAP = 84
+const SILENT_READ_CAP = 64
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
@@ -179,14 +194,20 @@ const STILL_SILENT_PROOF = [
 ]
 
 /**
- * 本批收口的四个文件里"仍静默"的处数（收口前实测：App 2、DetachedApp 2、Sidebar 2、ChatModule 2）。
- * 按文件计数而不是按行号——行号会漂；Sidebar 那两条是 `.ok` 裸真值的读（本批没动，见 CAP 的口径说明）。
+ * 逐文件钉"仍静默"的处数（§250 收四处：App 2→0、DetachedApp 2→0、Sidebar 2、ChatModule 1；
+ * §251 收 SettingsModule 那簇 11→2）。按文件计数而不是按行号——行号会漂。
+ * Sidebar 剩的两条与 SettingsModule 剩的两条都是 `.ok` 裸真值那一档：
+ * SettingsModule 那两条人工看过——`setMergePwd` 那发的失败由上一行 `setMergeReport(r)` 承担，
+ * 指纹那发界面上本来就写着「无法读取」（`lic.fpUnavailable`）。闸门的"单条 if"视角看不见这两种出口，
+ * 所以**不改产品码去迁就扫描器，也不加"看上一行/看初始值"的规矩**（那会把接管判据扩成数据流分析），
+ * 就让它们留在名单里计数——下一批若要清，先从名单里读这两条，别当缺陷盲改。
  */
 const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/App.tsx': 0,
   'src/renderer/src/detached/DetachedApp.tsx': 0,
   'src/renderer/src/components/Sidebar.tsx': 2,
-  'src/renderer/src/modules/chat/ChatModule.tsx': 1
+  'src/renderer/src/modules/chat/ChatModule.tsx': 1,
+  'src/renderer/src/modules/settings/SettingsModule.tsx': 2
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -203,10 +224,13 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
       if (r1.ok === false) setErr(r1.error)
       if (r2.ok) setR(r2)
       if (!r3.ok) setErr(r3.error)
+      if (r4.ok) { setR(r4); return }
+      setErr(r4.error)
+      if (r5.ok) { setR(r5); return }
     `
     const got = scanSource('fake.ts', fake)
     const at = (v: string) => got.find((s) => s.v === v)
-    expect(got.map((s) => s.v).sort(), '八条判定式都该被收到').toEqual(['a', 'b', 'c', 'd', 'e', 'r1', 'r2', 'r3'])
+    expect(got.map((s) => s.v).sort(), '十条判定式都该被收到').toEqual(['a', 'b', 'c', 'd', 'e', 'r1', 'r2', 'r3', 'r4', 'r5'])
     expect(at('a')?.side).toBe('takes-over')
     expect(at('a')?.negated).toBe(false)
     expect(at('b')?.negated, '!hasIpcFailed 是反判').toBe(true)
@@ -219,6 +243,8 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(at('r1'), 'x.ok === false ⇒ 失败侧就是 then').toMatchObject({ negated: false, side: 'takes-over' })
     expect(at('r2'), 'x.ok（裸真值）⇒ 成功侧是 then，失败侧是 else；没 else 就是静默').toMatchObject({ negated: true, side: 'none' })
     expect(at('r3'), '!x.ok ⇒ 失败侧是 then').toMatchObject({ negated: false, side: 'takes-over' })
+    expect(at('r4'), '成功侧以 return 收尾且 if 之后还有语句 ⇒ 那段就是失败路径，不算静默').toMatchObject({ side: 'fallthrough' })
+    expect(at('r5'), '同形但 if 之后一句都没有 ⇒ 仍是静默（这条不给 r4 打掩护）').toMatchObject({ side: 'none' })
     expect(at('b'), '行号可得（红因要指得到位置）').toMatchObject({ line: 4 })
   })
 
@@ -232,10 +258,11 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
   })
 
   it('真仓不是空转：判定式总数与分桶守恒（谁漏了一类就会在这里红）', () => {
-    expect(SITES.length, '判定式总数（开局量到 224）').toBeGreaterThan(200)
-    const by = { none: 0, console: 0, 'takes-over': 0, helper: 0 }
-    for (const s of SITES) by[s.side]++
-    expect(by.none + by.console + by['takes-over'] + by.helper, '分桶必须等于总数').toBe(SITES.length)
+    expect(SITES.length, '判定式总数（并种写法后是 343）').toBeGreaterThan(300)
+    const by: Record<string, number> = { none: 0, console: 0, 'takes-over': 0, helper: 0, fallthrough: 0 }
+    for (const s of SITES) by[s.side] = (by[s.side] ?? 0) + 1
+    expect(Object.values(by).reduce((a, b) => a + b, 0), '分桶必须等于总数').toBe(SITES.length)
+    expect(by.fallthrough, '落下去就是失败路径那一档（§251 新认的形状）不是空的').toBeGreaterThan(0)
     expect(by['takes-over'], '大多数点确实是接管的（否则这把尺子量错了）').toBeGreaterThan(100)
   })
 
@@ -245,7 +272,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250 收口的四处不再静默（App／DetachedApp／Sidebar 角标／ChatModule 消息）', () => {
+  it('§250／§251 收口的五处不再静默（App／DetachedApp／Sidebar 角标／ChatModule 消息／SettingsModule 设置类九处）', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
