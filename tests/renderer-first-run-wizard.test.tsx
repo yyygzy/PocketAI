@@ -8,9 +8,13 @@
 // 4) 明文模式下填了 Key 点「下一步」不会被送去保存（也就能避免用户看到一条迟到的拒绝），
 //    设完密码即可继续；选本地模型（不需要 Key）则不受影响。
 import { describe, it, expect, vi } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, calledFns, pocketaiCalls } from './helpers/renderer'
 import { FirstRunWizard } from '../src/renderer/src/modules/wizard/FirstRunWizard'
+import { zh } from '../src/renderer/src/i18n/zh'
+import type { ModelRecommendation } from '../src/shared/types'
 
 const hardware = {
   cpu: { model: 'X', cores: 8 },
@@ -383,5 +387,79 @@ describe('151 保存前重新取 provider 清单', () => {
     expect(view.container.querySelector('h1'), '完成页那一步要渲染出来（不是停在配置步）').toBeTruthy()
     spy.mockRestore()
     expect(warns.some((w) => w.includes('wizard.listProviders.refresh') && w.includes('库被占用')), warns.join('\n')).toBe(true)
+  })
+})
+
+/**
+ * §256 这两发挂载读的失败面。
+ * 上面那批用例一直把 `recommendModels` 桩成 `{ ok: false }`（因为向导不关心推荐），
+ * 于是"读不到"这一档从本批起是真的会渲染东西了——正因如此，反向对照必须显式给一份读到的推荐，
+ * 否则"那句读不到常驻"与"根本没这一行"两种写法在旧用例里都绿（§222 那条纪律）。
+ */
+const RECO: ModelRecommendation = {
+  tier: 'entry',
+  summary: 'cpu_low',
+  summaryParams: {},
+  localPicks: [],
+  onlineHint: 'low_end',
+  ollamaRunning: false,
+  installedModels: [],
+  warnings: []
+}
+const T = (key: string): string => (zh as unknown as Record<string, string>)[key]!
+const failedLine = (msg: string): string => T('common.loadFailed').replace('{msg}', msg)
+const defaultsLine = (what: string, msg: string): string =>
+  T('common.loadFailedDefaults').replace('{what}', what).replace('{msg}', msg)
+
+describe('§256 向导里两发读的失败面：一句「读不到」，但不把必经路卡死', () => {
+  it('加密状态读不到 ⇒ 说的是「当前显示的是默认值」，而设密码那张表单照常在场', async () => {
+    mount('none', { getEncryptionStatus: () => ({ ok: false, error: 'ENC_LOCK:库被占用' }) })
+    next()
+    await screen.findByText(new RegExp(failedLine('ENC_LOCK:库被占用')))
+    const alert = screen.queryAllByRole('alert').map((e) => e.textContent ?? '')
+    expect(alert.join(' ')).toContain(defaultsLine(T('enc.dbEnc'), 'ENC_LOCK:库被占用'))
+    // 这一句只是说实话，不接管流程：表单还在，用户仍能走下去
+    expect(screen.queryByText(/设置主密码（推荐）/)).toBeTruthy()
+  })
+
+  it('模型推荐读不到 ⇒ 那一行硬件档位换成「读不到：原因」，不再整行消失', async () => {
+    mount('db', { recommendModels: () => ({ ok: false, error: 'OLLAMA_DOWN:探测失败' }) })
+    await screen.findByText(new RegExp(failedLine('OLLAMA_DOWN:探测失败')))
+    expect(screen.queryByText(T('modelRec.tier.entry'))).toBeNull()
+  })
+
+  it('反向对照：读到推荐 ⇒ 档位那一行照常渲染，且一个 alert 都不许有', async () => {
+    mount('db', { recommendModels: () => ({ ok: true, data: RECO }) })
+    await screen.findByText(T('modelRec.tier.entry'))
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
+    // 同一句话在重检页与欢迎页共用一份定义 ⇒ 这一屏只该有一份渲染（第三份可漂＝有人又抄了一遍）
+    const summaries = Array.from(document.querySelectorAll('span')).filter((el) => (el.textContent ?? '').includes(T('modelRec.summary.cpu_low')))
+    expect(summaries).toHaveLength(1)
+  })
+
+  it('当场把主密码设好之后，那句「读不到」必须收回（不许挂在「已设置」旁边）', async () => {
+    mount('none', { getEncryptionStatus: () => ({ ok: false, error: 'ENC_LOCK:库被占用' }) })
+    next()
+    await screen.findByText(new RegExp(failedLine('ENC_LOCK:库被占用')))
+    const inputs = document.querySelectorAll('input[type=password]')
+    fireEvent.change(inputs[0]!, { target: { value: 'PASSWORD-12345' } })
+    fireEvent.change(inputs[1]!, { target: { value: 'PASSWORD-12345' } })
+    fireEvent.click(screen.getByText('启用加密'))
+    await waitFor(() => expect(screen.queryAllByRole('alert')).toHaveLength(0))
+  })
+
+  it('接线计数：新落点数得出、旧写法归零，两条设计内静默仍带着理由注释', () => {
+    const SRC = fs
+      .readFileSync(path.resolve(__dirname, '../src/renderer/src/modules/wizard/FirstRunWizard.tsx'), 'utf-8')
+      .replace(/\r\n/g, '\n')
+    const count = (re: RegExp): number => (SRC.match(re) ?? []).length
+    expect(count(/setEncFail\(/g), '加密状态：失败＋挂载清位＋reject＋当场设好密码后再清一次').toBe(4)
+    expect(count(/setRecFail\(/g), '推荐：失败＋清位＋reject').toBe(3)
+    expect(count(/if \(!hasIpcFailed\(v\)\) setEncStatus\(v\)/g), '旧写法归零').toBe(0)
+    expect(count(/if \(r\.ok && r\.data\) setRecommendation\(r\.data\)/g), '旧写法归零').toBe(0)
+    expect(count(/recSummary/g), '档位那一行：一处定义＋两处渲染').toBe(3)
+    expect(count(/if \(!hasIpcFailed\(v\)\) setProviders\(v\)/g), '快照那处只剩设计内那一条').toBe(1)
+    expect(SRC).toContain('// §256 复核：这份 provider 快照')
+    expect(SRC).toContain('// §256 复核：这一发失败只进 console＝设计内静默')
   })
 })

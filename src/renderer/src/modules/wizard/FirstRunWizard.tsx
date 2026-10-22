@@ -9,6 +9,8 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { OllamaPanel } from '../../components/OllamaPanel'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
 import { logIpcError, reportIpcError, isIpcFail, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
@@ -42,6 +44,11 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [hardware, setHardware] = useState<HardwareInfo | null>(null)
   const [recommendation, setRecommendation] = useState<ModelRecommendation | null>(null)
   const [encStatus, setEncStatus] = useState<EncryptionStatus | null>(null)
+  // §256：这两发挂载读的失败面以前是「什么都不显示」——
+  // 加密状态读不到 ⇒ 照常摆出「设主密码」那张表单（屏上没说这不是你当前的状态）；
+  // 模型推荐读不到 ⇒ 那一行硬件档位整行消失，看着像这台机器没有画像。
+  const [encFail, setEncFail] = useState<{ error?: string } | null>(null)
+  const [recFail, setRecFail] = useState<{ error?: string } | null>(null)
   const [isPortable, setIsPortable] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -82,16 +89,37 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         setIsPortable(hw.disk.removable)
       })
       .catch(reportIpcError('wizard.getHardwareInfo'))
-    window.pocketai.getEncryptionStatus().then((v) => { if (!hasIpcFailed(v)) setEncStatus(v) }).catch(reportIpcError('wizard.getEncryptionStatus'))
+    window.pocketai.getEncryptionStatus().then((v) => {
+      if (hasIpcFailed(v)) {
+        setEncFail(v)
+        return
+      }
+      setEncFail(null)
+      setEncStatus(v)
+    }).catch((e: unknown) => {
+      setEncFail({ error: errText(e, '') })
+      logIpcError('wizard.getEncryptionStatus', e)
+    })
     // 模型推荐含一次 Ollama 端口探测，较轻，后台加载
     window.pocketai
       .recommendModels()
       .then((r) => {
-        if (r.ok && r.data) setRecommendation(r.data)
+        if (!r.ok || !r.data) {
+          setRecFail(r)
+          return
+        }
+        setRecFail(null)
+        setRecommendation(r.data)
       })
-      .catch(reportIpcError('wizard.recommendModels'))
+      .catch((e: unknown) => {
+        setRecFail({ error: errText(e, '') })
+        logIpcError('wizard.recommendModels', e)
+      })
 
     // 加载已有 provider + assistant（向导 Step 1 用）
+    // §256 复核：这份 provider 快照**没有任何渲染消费者**，只在保存那步用来判「已有同 baseUrl 就追加 key」；
+    // 保存前还会现取一次（下面那段），两道都失败才退回这份空快照，而 repo 侧另有 foundByDedupe 兜底
+    // （`provider.repo.ts`，`tests/provider-save-models-preserve.test.ts` 守着）⇒ 判设计内静默、继续计数，不为清零改产品码。
     window.pocketai.listProviders().then((v) => { if (!hasIpcFailed(v)) setProviders(v) }).catch(reportIpcError('wizard.listProviders'))
     window.pocketai.listAssistants().then((list) => {
       if (hasIpcFailed(list)) return
@@ -139,6 +167,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       let latest = providers
       try {
         const refreshed = await window.pocketai.listProviders()
+        // §256 复核：这一发失败只进 console＝设计内静默——向导是首启必经路，一次清单刷新失败不许把用户卡在这儿，
+        // 且此刻屏上是「保存中」而不是读数屏；真用旧快照判错由 repo 的 foundByDedupe 兜底（同上面那条）。
         // §219：这条 try…catch 早就在，但 catch 只管真抛错；失败对象若被赋给 latest，下一步 `latest.find` 直接 TypeError，向导（首启必经路）就卡死
         if (!hasIpcFailed(refreshed)) latest = refreshed
         else logIpcError('wizard.listProviders.refresh', new Error(ipcFailText(refreshed, t('common.unknownError'))))
@@ -283,6 +313,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       setEncDone(true)
       setPwd(''); setPwd2('')
       setEncStatus({ ...(encStatus ?? { mode: 'none' as const }), mode: 'db' } as EncryptionStatus)
+      // 这一发读现在有了**当场知道**的状态 ⇒ 「读不到」那句必须收回（不然它会挂在「已设置」旁边）
+      setEncFail(null)
     } catch (e) {
       setEncErr(errText(e, t('enc.fail')))
     } finally {
@@ -342,6 +374,16 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   }
 
   // ─── 硬件摘要（step0 / recheck 共用） ───
+  // 硬件档位那一行在重检页与欢迎页各渲染一次 ⇒ 句式只在这一处定义（§256 补失败档时没第三份可抄）
+  const recSummary = recommendation ? (
+    <div className="mt-3 rounded-lg border border-[var(--color-border)] p-3 text-[12px]">
+      <span className="text-[var(--color-accent)] font-medium">{t(modelRecKey('tier', recommendation.tier))}</span>
+      <span className="text-[var(--color-text-muted)]"> — {t(modelRecKey('summary', recommendation.summary), recommendation.summaryParams)}</span>
+    </div>
+  ) : recFail ? (
+    <LoadFailNotice msg={ipcFailText(recFail, t('common.unknownError'))} />
+  ) : null
+
   const hardwareSummary = hardware ? (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
       <Summary label={t('wizard.cpu')} value={`${hardware.cpu.model} × ${hardware.cpu.cores}`} />
@@ -387,12 +429,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           {t('wizard.recheckSubtitle')}
         </p>
         {hardwareSummary}
-        {recommendation && (
-          <div className="mt-3 rounded-lg border border-[var(--color-border)] p-3 text-[12px]">
-            <span className="text-[var(--color-accent)] font-medium">{t(modelRecKey('tier', recommendation.tier))}</span>
-            <span className="text-[var(--color-text-muted)]"> — {t(modelRecKey('summary', recommendation.summary), recommendation.summaryParams)}</span>
-          </div>
-        )}
+        {recSummary}
         <div className="flex justify-end gap-2 mt-5">
           <button className="btn-primary" disabled={busy} onClick={finish}>
             {t('wizard.recheckDone')}
@@ -441,12 +478,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           {isPortable && (
             <p className="unlock-recovery-warn mt-3">{t('wizard.portableNote')}</p>
           )}
-          {recommendation && (
-            <div className="mt-3 rounded-lg border border-[var(--color-border)] p-3 text-[12px]">
-              <span className="text-[var(--color-accent)] font-medium">{t(modelRecKey('tier', recommendation.tier))}</span>
-              <span className="text-[var(--color-text-muted)]"> — {t(modelRecKey('summary', recommendation.summary), recommendation.summaryParams)}</span>
-            </div>
-          )}
+          {recSummary}
         </>
       )}
 
@@ -460,6 +492,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             {t('wizard.secSubtitle')}
           </p>
           {/* 加密卡片（可选） */}
+          {encFail && <ShowingDefaultsNotice what={t('enc.dbEnc')} msg={ipcFailText(encFail, t('common.unknownError'))} />}
           {encStatus?.mode === 'db' ? (
             <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
               ✅ {t('wizard.encAlready')}

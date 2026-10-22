@@ -17,7 +17,9 @@ import { IMAGE_SIZES } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
-import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 
 const MAX_PROMPT_CHARS = 4000
@@ -65,6 +67,13 @@ export const ImageModule: React.FC = () => {
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  // §256：这三发读的失败面以前各自被演成别的东西——画廊演成「还没有生成记录」、
+  // 预览演成「文件已不存在」、最新结果演成永远转着的「加载中」。
+  // 存的是失败对象本身（不是整句），因为这句话要在渲染时才拿 `t` 取兜底文案——
+  // 挂载那条 effect 的 cleanup 会中止进行中的生成，不能为了加一个 `t` 依赖而让它重跑。
+  const [galleryFail, setGalleryFail] = useState<{ error?: string } | null>(null)
+  const [previewFail, setPreviewFail] = useState<{ error?: string } | null>(null)
+  const [latestFail, setLatestFail] = useState<{ error?: string } | null>(null)
 
   const enabledProviders = useMemo(() => providers.filter((p) => p.enabled), [providers])
   const activeProvider = useMemo(
@@ -88,7 +97,17 @@ export const ImageModule: React.FC = () => {
       const first = list.find((p) => p.enabled)
       if (first) setProviderId(first.id)
     }).catch(reportIpcError('image.listProviders'))
-    window.pocketai.listImages().then((v) => { if (!hasIpcFailed(v)) setGallery(v) }).catch(reportIpcError('image.listImages'))
+    window.pocketai.listImages().then((v) => {
+      if (hasIpcFailed(v)) {
+        setGalleryFail(v)
+        return
+      }
+      setGalleryFail(null)
+      setGallery(v)
+    }).catch((e: unknown) => {
+      setGalleryFail({ error: errText(e, '') })
+      logIpcError('image.listImages', e)
+    })
     return () => {
       // 离开模块时中止进行中的生成；卸载路径上的失败不必打扰用户，但要留痕（§224）
       if (runningRef.current && requestIdRef.current) {
@@ -101,17 +120,29 @@ export const ImageModule: React.FC = () => {
   useEffect(() => {
     if (!previewId) {
       setPreviewDataUrl(null)
+      setPreviewFail(null)
       return
     }
     let alive = true
     setPreviewLoading(true)
     setPreviewDataUrl(null)
+    setPreviewFail(null)
     window.pocketai
       .getImageFile(previewId)
       .then((r) => {
-        if (alive && r.ok && r.dataUrl) setPreviewDataUrl(r.dataUrl)
+        if (!alive) return
+        if (r.ok && r.dataUrl) {
+          setPreviewDataUrl(r.dataUrl)
+          return
+        }
+        // 「成功但没带回文件」不是「读不到」⇒ 这一档留给渲染那边那句「文件已不存在」说
+        if (hasIpcFailed(r)) setPreviewFail(r)
       })
-      .catch(reportIpcError('image.getPreviewFile'))
+      .catch((e: unknown) => {
+        if (!alive) return
+        setPreviewFail({ error: errText(e, '') })
+        logIpcError('image.getPreviewFile', e)
+      })
       .finally(() => {
         if (alive) setPreviewLoading(false)
       })
@@ -173,15 +204,25 @@ export const ImageModule: React.FC = () => {
       setLatestDuration(res.durationMs)
       latestIdRef.current = res.record.id
       setLatestDataUrl(null)
+      setLatestFail(null)
       // 懒加载最新结果大图（校验仍是最新的那次生成，防串图）
       window.pocketai
         .getImageFile(res.record.id)
         .then((r) => {
-          if (latestIdRef.current === res.record.id && r.ok && r.dataUrl) {
+          if (latestIdRef.current !== res.record.id) return
+          if (r.ok && r.dataUrl) {
             setLatestDataUrl(r.dataUrl)
+            return
           }
+          if (hasIpcFailed(r)) setLatestFail(r)
         })
-        .catch(reportIpcError('image.getLatestFile'))
+        .catch((e: unknown) => {
+          if (latestIdRef.current !== res.record.id) return
+          setLatestFail({ error: errText(e, '') })
+          logIpcError('image.getLatestFile', e)
+        })
+      // §256 复核：这一发是生成成功之后的「顺带刷新画廊」——那张图与耗时已经在最新结果区摆着、flash 也说了「生成完成」，
+      // 画廊只是索引少了这一条。判成设计内静默（同 §255 那发诊断刷新），闸门的单条 if 视角看不见这段理由 ⇒ 继续计数，不为清零改产品码。
       window.pocketai.listImages().then((v) => { if (!hasIpcFailed(v)) setGallery(v) }).catch(reportIpcError('image.refreshGallery'))
     } else if (res.aborted) {
       flash(false, t('image.aborted'))
@@ -345,6 +386,8 @@ export const ImageModule: React.FC = () => {
               className="max-h-[46vh] max-w-full rounded border border-[var(--color-border)] cursor-zoom-in"
               onClick={() => setPreviewId(latest.id)}
             />
+          ) : latestFail ? (
+            <LoadFailNotice msg={ipcFailText(latestFail, t('common.unknownError'))} />
           ) : (
             <div className="h-24 flex items-center justify-center text-xs text-[var(--color-text-muted)]">
               {t('common.loading')}
@@ -357,9 +400,12 @@ export const ImageModule: React.FC = () => {
       <div className="flex-1 min-h-0">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-medium">{t('image.gallery')}</span>
-          <span className="text-[11px] text-[var(--color-text-muted)]">{gallery.length}</span>
+          {/* §256：读不到时不报 0——0 会被读成「确实一张都没有」，同 §250 那颗角标的 `?`。
+              只在屏上空着的时候说这句：清单一旦到货（生成后那发顺带刷新也会写它）就不该再挂着"读不到"。 */}
+          <span className="text-[11px] text-[var(--color-text-muted)]">{gallery.length === 0 && galleryFail ? '?' : gallery.length}</span>
         </div>
-        {gallery.length === 0 ? (
+        {gallery.length === 0 && galleryFail && <LoadFailNotice msg={ipcFailText(galleryFail, t('common.unknownError'))} />}
+        {gallery.length === 0 && !galleryFail ? (
           <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
             <div className="text-3xl mb-2">{THUMB_MISSING_ICON}</div>
             <p className="text-xs text-[var(--color-text-muted)]">{t('image.empty')}</p>
@@ -419,6 +465,8 @@ export const ImageModule: React.FC = () => {
             <div className="flex-1 overflow-auto min-h-0 flex items-center justify-center">
               {previewLoading ? (
                 <div className="text-xs text-[var(--color-text-muted)] py-8">{t('common.loading')}</div>
+              ) : previewFail ? (
+                <LoadFailNotice msg={ipcFailText(previewFail, t('common.unknownError'))} />
               ) : previewDataUrl ? (
                 <img
                   src={previewDataUrl}
