@@ -1,7 +1,7 @@
 // KB 问答面板：知识库详情页内「选库即聊」——自动检索拼上下文，流式回答带编号引用。
 // 问答会话落库留痕（渲染端全量 upsert 单写路径），可从历史列表回看与继续追问；
 // 模型选择记忆在 localStorage，默认第一个启用 provider。
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { pickDefaultProvider } from '../../utils/provider-pick'
 import { useToast } from '../../components/ToastProvider'
@@ -22,6 +22,7 @@ import type {
 import { errText } from '../../utils/error'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
 
 const PROVIDER_KEY = 'kbask.providerId'
 const modelKey = (p: string) => `kbask.model.${p}`
@@ -75,6 +76,16 @@ const KbAskPanel: React.FC<{
   // 自动清理保留策略（双 0 = 关闭）；展开配置行
   const [retention, setRetention] = useState<KbAskRetention>({ keepCount: 0, keepDays: 0 })
   const [showRetention, setShowRetention] = useState(false)
+  /**
+   * §272：这一族的两个失败面。改前都只有一句 `if (!hasIpcFailed(v)) 写 state`＝什么都不做——
+   *  · 历史清单：面板摆「暂无历史会话」，而那颗按钮上的 `（{n}）` 跟着报 0；
+   *  · 保留策略：`retention` 停在字面量 `{0,0}`（＝"关闭"），那两个下拉照旧可编辑，
+   *    用户在这份假基线上改一下就把它存进库——这正是 §226 那一族「读不到，这里显示的是默认值」，
+   *    所以那句用 `ShowingDefaultsNotice`，不用 §222 的 `LoadFailNotice`（那是整块没内容时才用）。
+   * 历史那一发的出路在 :467（再点「历史」那一格就重拉）⇒ 不造键；策略那一发全文件只有挂载一处读⇒配一颗键。
+   */
+  const [sessionsUnread, setSessionsUnread] = useState<{ error?: string } | null>(null)
+  const [retentionUnread, setRetentionUnread] = useState<{ error?: string } | null>(null)
 
   /** 拉取本库历史会话列表（仅元数据，更新时间倒序）；有关键词时走搜索 */
   const refreshSessions = (kw = searchKeyword) => {
@@ -84,11 +95,22 @@ const KbAskPanel: React.FC<{
       : window.pocketai.listKbAskSessions(kb.id)
     p
       .then((r) => {
-        // §223：`p` 是绑到变量的 Promise（217/221 的闸门以前看不见这一形），`.then(setSessionList)`
-        // 会把 `{ok:false}` 写进列表 state ⇒ 「历史（N）」那个数字变空、点进去 `.map` 崩
-        if (!hasIpcFailed(r)) setSessionList(r)
+        // §223 那条老坑还在：`p` 是绑到变量的 Promise，把 `{ok:false}` 写进列表 state ⇒ 点进去 `.map` 崩。
+        // §272 补的是另一半：改前失败侧只有一句"什么都不写"⇒「暂无历史会话」替通道故障说话，
+        // 而那颗按钮上的 `（{n}）` 会跟着报 0。这一发的出路是现成的——按钮 onClick 里
+        // `if (!showHistory) refreshSessions()`：再点那一格就是重拉 ⇒ 按 §268 口径**不造重试键**。
+        if (hasIpcFailed(r)) {
+          setSessionsUnread({ error: r.error })
+          return
+        }
+        setSessionsUnread(null)
+        setSessionList(r)
       })
-      .catch(reportIpcError('kb.searchKbAskSessions')) // 增强能力：读不到不打断问答，但留痕
+      .catch((e: unknown) => {
+        // reject 面同一张脸（旧写法是一条会消失的 toast，而 toast 看不见就等于没说）
+        setSessionsUnread({ error: errText(e, '') })
+        logIpcError('kb.searchKbAskSessions', e)
+      })
   }
 
   /** 搜索输入：200ms 防抖后查询 */
@@ -111,9 +133,26 @@ const KbAskPanel: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kb.id])
 
-  useEffect(() => {
-    window.pocketai.getKbAskRetention().then((v) => { if (!hasIpcFailed(v)) setRetention(v) }).catch(reportIpcError('kb.getKbAskRetention'))
+  const loadRetention = useCallback(() => {
+    window.pocketai
+      .getKbAskRetention()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setRetentionUnread({ error: v.error })
+          return
+        }
+        setRetentionUnread(null)
+        setRetention(v)
+      })
+      .catch((e: unknown) => {
+        setRetentionUnread({ error: errText(e, '') })
+        logIpcError('kb.getKbAskRetention', e)
+      })
   }, [])
+
+  useEffect(() => {
+    loadRetention()
+  }, [loadRetention])
 
   /** 保存保留策略：切换即生效，下次保存会话时顺手清理 */
   const saveRetention = (next: KbAskRetention) => {
@@ -478,7 +517,8 @@ const KbAskPanel: React.FC<{
               : ' border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]'
           }`}
         >
-          {t('kb.askHistory')}（{sessionList.length}）
+          {/* §272：读不到就**不报条数**（§269 同一条：挂着"历史（0）"就是把通道故障演成"你一条都没有"） */}
+          {sessionsUnread ? t('kb.askHistory') : `${t('kb.askHistory')}（${sessionList.length}）`}
         </button>
         <button onClick={startNewSession} className="btn-ghost text-xs">
           {t('kb.askNewSession')}
@@ -527,6 +567,24 @@ const KbAskPanel: React.FC<{
           >
             {t('kb.askRetention')}
           </button>
+          {/* §272：这一发读不到时那两个下拉照旧摆着字面量 `{0,0}`（＝自动清理关闭）且可编辑——
+              说的是"这里显示的是默认值"（§226 那一族），不是"没东西可显示"，所以用 ShowingDefaultsNotice。
+              这一发全文件只有挂载一处读（那颗「自动清理」按钮只展开行，不重读）⇒ 配一颗重试键；键在 alert 盒子外面（§268）。 */}
+          {retentionUnread && (
+            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <ShowingDefaultsNotice
+                what={t('kb.askRetention')}
+                msg={ipcFailText(retentionUnread, t('common.unknownError'))}
+              />
+              <button
+                data-testid="kb-ask-retention-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={loadRetention}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           {showRetention && (
             <div className="flex items-center gap-2 mb-1 text-xs text-[var(--color-text-muted)]">
               <span>{t('kb.askRetentionCount')}</span>
@@ -555,7 +613,12 @@ const KbAskPanel: React.FC<{
               </select>
             </div>
           )}
-          {sessionList.length === 0 && (
+          {/* §272：这一发不造重试键——那颗「历史」按钮的 onClick 里就有 `if (!showHistory) refreshSessions()`，
+              再点那一格就是重拉（§268 口径）。但那张「暂无历史会话」的脸得让位，同一时刻只说一件事。 */}
+          {sessionsUnread && (
+            <LoadFailNotice what={t('kb.askHistory')} msg={ipcFailText(sessionsUnread, t('common.unknownError'))} />
+          )}
+          {sessionList.length === 0 && !sessionsUnread && (
             <p className="text-xs text-[var(--color-text-muted)] py-3 text-center">
               {searchKeyword.trim() ? t('kb.askSearchEmpty') : t('kb.askNoSessions')}
             </p>

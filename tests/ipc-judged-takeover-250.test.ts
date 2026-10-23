@@ -193,13 +193,15 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 // §270：33 → 30（收掉助手编辑器那三发：知识库／工具／技能——**三份不同数据，各挂一句、各给一颗键**，与 §269 的"并一张脸"相反）
 // §271：30 → 26（收掉服务商那一族四发：渠道面板的服务商／助手两发＋设置页的服务商／委派能力判定两发。
 //  跨两屏、四份不同数据 ⇒ 仍是"各挂一句、各给一颗键"那一族；两屏都没有"再点一下就重拉"的天然出口，故键不是多余机关）
-const SILENT_READ_CAP = 26
+// §272：26 → 23（收掉知识库问答那两屏三发：本库历史清单／自动清理保留策略／跨库漫游清单。
+//  **这一簇只给两颗键**——历史那一发现查有天然出口（那颗「历史」按钮的 onClick 里 `if (!showHistory) refreshSessions()`），
+//  按 §268 口径不造机关；策略那一发的脸是 §226 的第二形态「这里显示的是默认值」，不是 §222 的"整块没内容"）
+const SILENT_READ_CAP = 23
 
 const STILL_SILENT_PROOF = [
-  // §271 起换成这一份：ChannelsPanel 那两发已收干，再当"仍静默"的对照就是假证
   'src/renderer/src/modules/chat/ChatView.tsx',
-  // §270 起换成这一份：AssistantEditor 那三发已收干，再当"仍静默"的对照就是假证
-  'src/renderer/src/modules/knowledge/KbAskPanel.tsx',
+  // §272 起换成这一份：KbAskPanel 那两发已收干，再当"仍静默"的对照就是假证
+  'src/renderer/src/modules/chat/AssistantMarket.tsx',
   'src/renderer/src/modules/settings/SettingsModule.tsx',
   'src/renderer/src/modules/image/ImageModule.tsx'
 ]
@@ -262,7 +264,14 @@ const SILENT_PER_FILE: Record<string, number> = {
   // §271：设置页那两发（服务商清单／委派能力判定）收口（清零）。前者让左栏摆「尚未配置，点击「新增」」，
   // 后者让每行模型后面那枚徽标整块不出现（库里其实存着判定）。那颗「探测能否派活」是三发真请求、不是重读清单，
   // 所以它不是这两发的出口 ⇒ 各配一颗自己的键
-  'src/renderer/src/modules/settings/ProviderSettings.tsx': 0
+  'src/renderer/src/modules/settings/ProviderSettings.tsx': 0,
+  // §272：知识库问答面板那两发收口（清零）。历史清单那一发的出路是现成的——
+  // 那颗「历史」按钮 onClick 里就有 `if (!showHistory) refreshSessions()`（现 :506，行号会漂、判据数的是那行本身）⇒ **不造重试键**；
+  // 保留策略那一发只有挂载一处读，脸是 §226 的第二形态（那两个下拉照旧可编辑）⇒ 配一颗键
+  'src/renderer/src/modules/knowledge/KbAskPanel.tsx': 0,
+  // §272：跨库漫游那一发收口（清零）。它的"自发重发"是搜索框打字（防抖 200ms），
+  // 那不是"想看列表"的人本来要做的动作 ⇒ 按 §268 判据配一颗键
+  'src/renderer/src/modules/knowledge/KbAskRoam.tsx': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -315,7 +324,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
   })
 
   it('真仓不是空转：判定式总数与分桶守恒（谁漏了一类就会在这里红）', () => {
-    expect(SITES.length, '判定式总数（现查 362。这条数随写法归并/拆分而变、不是不变量，引用前现查：§266 那批 362、§267 加了三发各判一次成 363、§268 现查仍 363，§269 把翻译页"同一份数据的两次取"并成一根 loader ⇒ 少一条回到 362；§270 那批没单独现查（台账当时随全量一起跑，这条 message 未更新），§271 现查仍 362——两批都是"判真值"改成"判失败对象"的同数换形）').toBeGreaterThan(300)
+    expect(SITES.length, '判定式总数（现查 362。这条数随写法归并/拆分而变、不是不变量，引用前现查：§266 那批 362、§267 加了三发各判一次成 363、§268 现查仍 363，§269 把翻译页"同一份数据的两次取"并成一根 loader ⇒ 少一条回到 362；§270 那批没单独现查（台账当时随全量一起跑，这条 message 未更新），§271、§272 现查都仍 362——三批都是"判真值"换成"判失败对象"的同数换形，接管桶从 307 涨到 310、静默桶从 26 掉到 23）').toBeGreaterThan(300)
     const by: Record<string, number> = { none: 0, console: 0, 'takes-over': 0, helper: 0, fallthrough: 0 }
     for (const s of SITES) by[s.side] = (by[s.side] ?? 0) + 1
     expect(Object.values(by).reduce((a, b) => a + b, 0), '分桶必须等于总数').toBe(SITES.length)
@@ -329,7 +338,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250~§271 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
+  it('§250~§272 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
@@ -554,6 +563,70 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
       expect(s.includes(`'common.capabilityVerdicts'`), `${dict} 缺 common.capabilityVerdicts`).toBe(true)
       expect(s.split(`'common.capabilityVerdicts'`).length - 1, `${dict} 里这个键只许出现一次`).toBe(1)
       expect(s.includes(`'common.providerList'`), `${dict} 不许为服务商另开一名`).toBe(false)
+    }
+  })
+
+  it('§272 那三发的形状数得出（两屏三份数据、两句两种脸、键该有 2 不该有 3、天然出口那行必须在场）', () => {
+    const read = (rel: string): string =>
+      fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
+    const panel = read('src/renderer/src/modules/knowledge/KbAskPanel.tsx')
+    const roam = read('src/renderer/src/modules/knowledge/KbAskRoam.tsx')
+    const inPanel = (re: RegExp): number => (panel.match(re) ?? []).length
+    const inRoam = (re: RegExp): number => (roam.match(re) ?? []).length
+
+    // ① 三发各两条失败路写原因（resolve 的失败对象／reject），读到即收回
+    expect(inPanel(/set(?:Sessions|Retention)Unread\(\{ error: /g), '面板：两发 × 两条失败路').toBe(4)
+    expect(inPanel(/set(?:Sessions|Retention)Unread\(null\)/g), '面板：读到即收回').toBe(2)
+    expect(inRoam(/setItemsUnread\(\{ error: /g), '漫游：两条失败路').toBe(2)
+    expect(inRoam(/setItemsUnread\(null\)/g), '漫游：读到即收回').toBe(1)
+    // 这一族不再把 reject 裸交给助手（数的是**调用**，import 那半截不算）；面板里剩的那一条是 §221 故意留的
+    // "会话持久化失败只留痕"，不是这一批的漏收
+    expect(inPanel(/reportIpcError\(/g), '面板只许剩 §221 那一条调用').toBe(1)
+    expect(inRoam(/reportIpcError/g), '漫游连那一形都不留').toBe(0)
+    // 一根 loader 只发一个通道
+    for (const ch of ['listKbAskSessions', 'searchKbAskSessions', 'getKbAskRetention']) {
+      expect(inPanel(new RegExp('window\\.pocketai\\s*\\.' + ch + '\\(', 'g')), `面板：${ch} 只许一处发`).toBe(1)
+    }
+    for (const ch of ['listAllKbAskSessions', 'searchAllKbAskSessions']) {
+      expect(inRoam(new RegExp('window\\.pocketai\\s*\\.' + ch + '\\(', 'g')), `漫游：${ch} 只许一处发`).toBe(1)
+    }
+
+    // ② 三句真挂得出去：渲染条件与所点名词成对；**两张不同的脸不许混**——
+    //    面板里那份没内容的用 §222 的 LoadFailNotice，那份"停在字面量默认且可编辑"的用 §226 的 ShowingDefaultsNotice
+    expect(inPanel(/\{sessionsUnread && \(\s*\n\s*<LoadFailNotice what=\{t\('kb\.askHistory'\)/g), '面板那句历史').toBe(1)
+    expect(inPanel(/\{retentionUnread && \(\s*\n\s*<div[\s\S]{0,160}?<ShowingDefaultsNotice\s*\n\s*what=\{t\('kb\.askRetention'\)/g), '面板那句策略（第二形态）').toBe(1)
+    expect(inRoam(/\{itemsUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('kb\.roamTitle'\)/g), '漫游那句').toBe(1)
+    expect(inPanel(/<ShowingDefaultsNotice/g), '第二形态只用在这一发上').toBe(1)
+    expect(inRoam(/<ShowingDefaultsNotice/g), '漫游那份是真没内容，不许套第二形态').toBe(0)
+
+    // ③ 键的两头钉：策略与漫游各一颗（这两发都没有"点一下就重发"的出口），
+    //    而历史那一颗**不许存在**——它的出口是那行 `if (!showHistory) refreshSessions()`
+    expect(inPanel(/"kb-ask-retention-retry"/g), '策略那颗').toBe(1)
+    expect(inRoam(/"kb-ask-roam-retry"/g), '漫游那颗').toBe(1)
+    expect(inPanel(/kb-ask-sessions-retry/g), '历史那一发不造机关').toBe(0)
+    expect(inPanel(/agent\.retryRead/g), '面板一句一颗').toBe(1)
+    expect(inRoam(/agent\.retryRead/g), '漫游一句一颗').toBe(1)
+    // "不造键"的前提是那行代码还在；哪天它被改掉，这条就得红（而不是让那句变成没出路的话）
+    expect(inPanel(/^ {12}if \(!showHistory\) refreshSessions\(\)$/gm), '展开历史面板就是重拉这一发').toBe(1)
+
+    // ④ 让位与不报数：两张「真的没有」的脸各只留一处；那颗按钮读不到就**不报条数**（§269 同一条）
+    expect(inPanel(/\{sessionList\.length === 0 && !sessionsUnread && \(/g), '历史空态让位').toBe(1)
+    expect(inPanel(/t\('kb\.askNoSessions'\)/g), '那张空态只许出现一次').toBe(1)
+    expect(inPanel(/（\$\{sessionList\.length\}）/g), '按钮上的条数只许出现在"读到了"那一支').toBe(1)
+    // 钉**条件式本身**（§266 的 Z7 手法）：只数那个 token 会放过"两支都报数"的写法
+    expect(inPanel(/\{sessionsUnread \? t\('kb\.askHistory'\) : `\$\{t\('kb\.askHistory'\)\}（\$\{sessionList\.length\}）`\}/g), '不报数只发生在读不到那一支').toBe(1)
+    expect(inRoam(/\{items\.length === 0 && !itemsUnread \? \(/g), '漫游空态让位').toBe(1)
+    expect(inRoam(/t\('kb\.roamEmpty'\)/g), '那张空态只许出现一次').toBe(1)
+
+    // ⑤ 名词零新增：三句都复用屏上标题，四本字典都不许为这一批另开键
+    for (const dict of ['zh', 'en', 'ja', 'ko']) {
+      const s = read(`src/renderer/src/i18n/${dict}.ts`)
+      for (const banned of [`'common.kbAskSessionsList'`, `'common.kbAskRetention'`, `'common.kbRoamList'`]) {
+        expect(s.includes(banned), `${dict} 不许另开与屏上标题重复的名词 ${banned}`).toBe(false)
+      }
+      for (const reused of [`'kb.askHistory'`, `'kb.askRetention'`, `'kb.roamTitle'`]) {
+        expect(s.includes(reused), `${dict} 缺屏上标题 ${reused}（三句都靠它点名）`).toBe(true)
+      }
     }
   })
 })
