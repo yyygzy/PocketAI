@@ -6,6 +6,7 @@
 import { logIpcError } from './utils/ipc'
 
 const STYLE_ID = 'pocketai-custom-css'
+let loadError: string | null = null
 
 /** 用给定 CSS 覆盖注入的样式；空字符串则移除节点 */
 export function injectCustomCss(css: string): void {
@@ -24,13 +25,23 @@ export function injectCustomCss(css: string): void {
   document.head.appendChild(style)
 }
 
+/** 启动时偏好读取失败时的错误信息（供 App.tsx 展示兜底提示） */
+export function getCustomCssLoadError(): string | null {
+  return loadError
+}
+
 /** 启动时拉取并注入（失败静默，不影响正常启动） */
 export async function loadAndInjectCustomCss(): Promise<void> {
   try {
     const r = await window.pocketai.getUiPrefs()
-    if (r.ok && r.data) injectCustomCss(r.data.customCss)
+    if (r.ok && r.data) {
+      injectCustomCss(r.data.customCss)
+      loadError = null
+    } else {
+      loadError = r.error ?? 'failed'
+    }
   } catch (e) {
     logIpcError('loadAndInjectCustomCss', e)
-    /* 忽略：偏好读取失败不应阻断启动 */
+    loadError = String(e)
   }
 }

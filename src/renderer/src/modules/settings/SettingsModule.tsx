@@ -1572,17 +1572,27 @@ export const LicensePanel: React.FC<{ lic: LicenseStatus | null; err: string | n
   const [onlineCode, setOnlineCode] = useState('')
   // 本机硬盘指纹：在线激活自动附带；离线激活时发给卖家签发绑定 license
   const [fingerprint, setFingerprint] = useState<string | null>(null)
+  // §278：指纹那一读失败时不许把"读不到"演成"没有指纹"——单独挂一句
+  const [fingerprintUnread, setFingerprintUnread] = useState<string | null>(null)
   // 指纹复制反馈（2s；含剪贴板降级与定时器清理）
   const { copied: fpCopied, copy: copyFingerprint } = useCopyFeedback(2000)
   // 离线激活折叠区
   const [offlineOpen, setOfflineOpen] = useState(false)
 
   useEffect(() => {
-    window.pocketai.getLicenseFingerprint().then((v) => { if (!hasIpcFailed(v)) setFingerprint(v) }).catch((e) => {
+    window.pocketai.getLicenseFingerprint().then((v) => {
+      if (hasIpcFailed(v)) {
+        setFingerprintUnread(ipcFailText(v, t('common.unknownError')))
+        return
+      }
+      setFingerprintUnread(null)
+      setFingerprint(v)
+    }).catch((e) => {
       logIpcError('license.getFingerprint', e)
+      setFingerprintUnread(ipcFailText({ error: String(e) }, t('common.unknownError')))
       setFingerprint(null)
     })
-  }, [])
+  }, [t])
 
   if (!lic) {
     // §225：许可证读不到时不许一直报"加载中"——激活状态、到期日、指纹全都建在这份数据上
@@ -1714,6 +1724,7 @@ export const LicensePanel: React.FC<{ lic: LicenseStatus | null; err: string | n
 
           {/* 本机硬盘指纹：离线激活时发给卖家 */}
           <div className="space-y-1.5">
+            {fingerprintUnread && <ShowingDefaultsNotice what={t('lic.fpLabel')} msg={fingerprintUnread} />}
             <StatusRow
               label={t('lic.fpLabel')}
               value={fingerprint ?? t('lic.fpUnavailable')}

@@ -211,7 +211,7 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 //  前两行的失败侧（`!r.ok`）靠第三行接管，但扫描器对复合条件 `r.ok && ...` 的 fallthrough 不识别。
 //  改成 error-first：`if (!r.ok) { ... return }` / `if (r.canceled) return` / `if (r.skill) { ... }`，
 //  行为不变，扫描器能识别。但扫描器仍找到 14 处设计内或待收的静默读 ⇒ CAP 维持 14）
-const SILENT_READ_CAP = 14
+const SILENT_READ_CAP = 10
 
 const STILL_SILENT_PROOF = [
   // §276 起换成这两份：ChatModule 与 ChatView 那两发已收干，再当"仍静默"的对照就是假证
@@ -230,6 +230,10 @@ const STILL_SILENT_PROOF = [
  */
 const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/App.tsx': 0,
+  // §278：启动时那三发 UI 偏好读（字体／折叠／自定义 CSS）失败状态供 App 组件读取并显示通知
+  'src/renderer/src/chat-font.ts': 0,
+  'src/renderer/src/code-collapse.ts': 0,
+  'src/renderer/src/custom-css.ts': 0,
   'src/renderer/src/detached/DetachedApp.tsx': 0,
   // §275：侧栏那两发初始读（顺序／固定模块）收口（各挂一句、各给一颗键）；
   // 但 rollbackOrder 与 rollbackPinned 那两发仍是"反判无 else"（写失败后回滚读也失败时不再额外提示，
@@ -243,7 +247,7 @@ const SILENT_PER_FILE: Record<string, number> = {
   // §260：对话页那三发列表读（会话／归档／分组）从 ChatModule 抽到这个 hook 后全部收口（清零）。
   // ChatModule 自己剩的那 1 处是 `reloadAssistants`（:117 反判无 else，助手清单那一读），与本簇无关。
   'src/renderer/src/modules/chat/useConversationLists.ts': 0,
-  'src/renderer/src/modules/settings/SettingsModule.tsx': 2,
+  'src/renderer/src/modules/settings/SettingsModule.tsx': 1,
   'src/renderer/src/modules/knowledge/KnowledgeModule.tsx': 0,
   // §255 复核后留下的一条：清理后那发"顺带刷新诊断"是设计内静默（清理本身已有可见回执、上一份诊断也可能仍在屏上），
   // ——§268 按实测改口：原话写的是"清理已 toast"，实际成功面走的是 `cleanupResult` 那块绿色结果面板（:142 写／:682 渲染）；
@@ -312,7 +316,7 @@ const SILENT_PER_FILE: Record<string, number> = {
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
 
-describe('§250~§277 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
+describe('§250~§278 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
   it('扫描器自证：六种判据写法各归对桶（极性写反整面就废）', () => {
     const fake = `
       const a = await f()
@@ -371,7 +375,7 @@ describe('§250~§277 第四面＋第五面：判了失败面还得接管它（�
   it('反向对照：仍静默的那几份文件必须真的在名单里（恒返回空的坏扫描器会在这里红）', () => {
     const files = new Set(SILENT.map((s) => s.file))
     for (const f of STILL_SILENT_PROOF) expect(files.has(f), `${f} 应当还有静默点`).toBe(true)
-    expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
+    expect(SILENT.length, '静默名单非空').toBeGreaterThan(9)
   })
 
   it('§250~§274 逐批收口后，这几份文件的剩余静默数与登记相符', () => {

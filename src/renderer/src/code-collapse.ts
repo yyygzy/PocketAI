@@ -11,6 +11,7 @@ export const MAX_CODE_COLLAPSE_LINES = 200
 
 let threshold = CODE_COLLAPSE_THRESHOLD
 const listeners = new Set<() => void>()
+let loadError: string | null = null
 
 /** 脏值回落默认 20 行；0 是合法值（永不折叠），负数 / NaN / 非数字才回落 */
 export function normalizeCodeCollapseLines(v: unknown): number {
@@ -40,13 +41,23 @@ export function subscribeCodeCollapse(listener: () => void): () => void {
   }
 }
 
+/** 启动时偏好读取失败时的错误信息（供 App.tsx 展示兜底提示） */
+export function getCodeCollapseLoadError(): string | null {
+  return loadError
+}
+
 /** 启动时拉取偏好（失败静默，沿用常量默认 20 行） */
 export async function loadCodeCollapseLines(): Promise<void> {
   try {
     const r = await window.pocketai.getUiPrefs()
-    if (r.ok && r.data) setCodeCollapseLines(r.data.codeCollapseLines)
+    if (r.ok && r.data) {
+      setCodeCollapseLines(r.data.codeCollapseLines)
+      loadError = null
+    } else {
+      loadError = r.error ?? 'failed'
+    }
   } catch (e) {
     logIpcError('loadCodeCollapseLines', e)
-    /* 忽略：偏好读取失败不应阻断启动 */
+    loadError = String(e)
   }
 }

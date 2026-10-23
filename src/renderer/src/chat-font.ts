@@ -28,13 +28,24 @@ export function applyChatFontSize(size: unknown): void {
   document.documentElement.style.setProperty(CHAT_FONT_VAR, `${FONT_SIZE_PX[key]}px`)
 }
 
-/** 启动时拉取偏好并应用（失败静默，沿用 CSS 缺省 14px） */
+// §278：失败状态供 App 组件读取并显示通知
+let loadError: string | null = null
+export function getChatFontLoadError(): string | null {
+  return loadError
+}
+
+/** 启动时拉取偏好并应用（失败时记录错误信息，供 App 组件显示通知） */
 export async function loadAndApplyChatFontSize(): Promise<void> {
   try {
     const r = await window.pocketai.getUiPrefs()
-    if (r.ok && r.data) applyChatFontSize(r.data.chatFontSize)
+    if (r.ok && r.data) {
+      applyChatFontSize(r.data.chatFontSize)
+      loadError = null
+    } else {
+      loadError = r.error ?? 'failed'
+    }
   } catch (e) {
     logIpcError('loadAndApplyChatFontSize', e)
-    /* 忽略：偏好读取失败不应阻断启动 */
+    loadError = String(e)
   }
 }

@@ -16,6 +16,9 @@ import { hasIpcFailed, reportIpcError, ipcFailText } from './utils/ipc'
 import { ShowingDefaultsNotice } from './components/ShowingDefaultsNotice'
 import { startLongTaskObserver } from './utils/longtask'
 import { useAppStore } from './store/app-store'
+import { getChatFontLoadError } from './chat-font'
+import { getCodeCollapseLoadError } from './code-collapse'
+import { getCustomCssLoadError } from './custom-css'
 
 export default function App() {
   const { t } = useI18n()
@@ -41,6 +44,10 @@ export default function App() {
   // 挂载那两发读的失败原因（V4-Iter-250）：读不到 ≠ "没加密、没锁"，得在屏上说得出
   const [encReadErr, setEncReadErr] = useState<string | null>(null)
   const [lockReadErr, setLockReadErr] = useState<string | null>(null)
+  // §278：启动时那三发 UI 偏好读（字体／折叠／自定义 CSS）失败时不许把"读不到"演成"没设过"
+  const [chatFontUnread, setChatFontUnread] = useState<string | null>(null)
+  const [codeCollapseUnread, setCodeCollapseUnread] = useState<string | null>(null)
+  const [customCssUnread, setCustomCssUnread] = useState<string | null>(null)
 
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -52,6 +59,17 @@ export default function App() {
   // 渲染层长任务观测（实测定位界面卡顿；不支持的环境静默跳过）
   useEffect(() => {
     startLongTaskObserver()
+  }, [])
+
+  // §278：启动时那三发 UI 偏好读（字体／折叠／自定义 CSS）失败时要在屏上说得出
+  // main.tsx 顶层已经读过一次并应用到 DOM，这里只读模块记录的失败状态，不重复拉 IPC
+  useEffect(() => {
+    const chatErr = getChatFontLoadError()
+    const collapseErr = getCodeCollapseLoadError()
+    const cssErr = getCustomCssLoadError()
+    setChatFontUnread(chatErr)
+    setCodeCollapseUnread(collapseErr)
+    setCustomCssUnread(cssErr)
   }, [])
 
   // 锁屏加固：inert 掉遮罩之外的全部内容
@@ -171,10 +189,13 @@ export default function App() {
           />
           {/* 侧栏即唯一导航：模块内容区直接顶到窗口顶部（原 36px 标签栏已随标签页系统下线） */}
           <div className="flex flex-col flex-1 min-w-0">
-            {(encReadErr || lockReadErr) && (
+            {(encReadErr || lockReadErr || chatFontUnread || codeCollapseUnread || customCssUnread) && (
               <div className="px-3 pt-2 space-y-1">
                 {encReadErr && <ShowingDefaultsNotice what={t('enc.dbEnc')} msg={encReadErr} />}
                 {lockReadErr && <ShowingDefaultsNotice what={t('enc.lockState')} msg={lockReadErr} />}
+                {chatFontUnread && <ShowingDefaultsNotice what={t('ui.fontSize')} msg={chatFontUnread} />}
+                {codeCollapseUnread && <ShowingDefaultsNotice what={t('ui.codeCollapse')} msg={codeCollapseUnread} />}
+                {customCssUnread && <ShowingDefaultsNotice what={t('ui.customCss')} msg={customCssUnread} />}
               </div>
             )}
             <Workspace activeModule={activeModule} />
