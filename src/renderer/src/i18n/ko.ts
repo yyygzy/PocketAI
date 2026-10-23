@@ -38,6 +38,7 @@ export const ko = {
   'common.providersList': '프로바이더 목록',
   'common.assistantsList': '어시스턴트 목록',
   'common.modelsList': '모델 목록',
+  'common.stopNotSent': '정지 명령이 메인 프로세스로 전달되지 않았습니다: {msg} (이 실행은 아직 이어지고 있을 수 있습니다. 정지를 다시 보낼 수 있습니다)',
   'common.loadFailedDefaults': '{what} 읽기를 실패했습니다: {msg} (표시된 값은 기본값)',
   'common.loadFailedOff': '{what} 읽기를 실패했습니다: {msg} (이번에는 꺼진 상태로 처리합니다)',
   'common.refreshFailed': '새로고침 실패: {msg} (화면에는 이전 성공 시점의 내용이 남아 있습니다)',

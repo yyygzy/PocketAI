@@ -51,6 +51,9 @@ export const PopupApp: React.FC = () => {
   const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
   const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
   const [modelsUnread, setModelsUnread] = useState<{ error?: string } | null>(null)
+  // §265 第六面：按「停止」那一发过去是裸发，紧接着一句就把界面改成"已停"；
+  // `safeHandle` 下主进程的失败是已 resolve 的 `{ok:false}`，`.catch` 根本不会经过。
+  const [stopUnread, setStopUnread] = useState<{ error?: string; requestId?: string } | null>(null)
   const [providerId, setProviderId] = useState(() => localStorage.getItem(LS_PROVIDER) || '')
   const [model, setModel] = useState(() => localStorage.getItem(LS_MODEL) || '')
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -308,6 +311,7 @@ export const PopupApp: React.FC = () => {
       const rid = `popup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       const sentAtts = attachments
       requestIdRef.current = rid
+      setStopUnread(null) // §265：上一发"停止没送到"不作数，这一发是新的一轮（陈旧谎报要自己退场）
       setStreaming(true)
       setInput('')
       setAttachments([])
@@ -349,8 +353,30 @@ export const PopupApp: React.FC = () => {
     [streaming, providerId, model, conversationId, assistant, attachments, t]
   )
 
+  /** 送一次停止并判结果：`{ok:false}` 与 reject **同一张脸**；连 requestId 一起记住，"再送一次"才有对象 */
+  const sendAbort = (id: string): void => {
+    window.pocketai
+      .abortChat(id)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setStopUnread({ error: r.error, requestId: id })
+          return
+        }
+        setStopUnread(null)
+      })
+      .catch((e: unknown) => {
+        setStopUnread({ error: errText(e, ''), requestId: id })
+        logIpcError('popup.abortChat', e)
+      })
+  }
+
+  /**
+   * §265 第六面：过去这里是裸发（结果整块丢）＋两句把界面改成"已停"。
+   * 现在判它：送不到就单说一句，并给一颗"再送一次"——浮窗收起后停止键就没了，这句得有自己的出口。
+   * **界面复位这条一点没动**（不阻断：照常回到可输入态）。
+   */
   const stop = () => {
-    if (requestIdRef.current) window.pocketai.abortChat(requestIdRef.current)
+    if (requestIdRef.current) sendAbort(requestIdRef.current)
     requestIdRef.current = null
     setStreaming(false)
   }
@@ -462,6 +488,20 @@ export const PopupApp: React.FC = () => {
             {modelsUnread && (
               <LoadFailNotice what={t('common.modelsList')} msg={ipcFailText(modelsUnread, t('common.unknownError'))} />
             )}
+          </div>
+        )}
+
+        {/* §265：这句**独立一块**——不许跟着上面三发读的出现与否一起消失（一句话不能长在别人的判据里，§264 同一条） */}
+        {stopUnread && (
+          <div role="alert" className="flex items-center gap-2 px-3 pb-2 shrink-0 text-xs text-[var(--color-danger)]">
+            <span className="flex-1">{t('common.stopNotSent', { msg: ipcFailText(stopUnread, t('common.unknownError')) })}</span>
+            <button
+              data-testid="popup-stop-retry"
+              onClick={() => { if (stopUnread.requestId) sendAbort(stopUnread.requestId) }}
+              className="btn-ghost !px-2 !py-0.5 text-xs"
+            >
+              {t('agent.retryRead')}
+            </button>
           </div>
         )}
 

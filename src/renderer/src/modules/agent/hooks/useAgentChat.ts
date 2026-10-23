@@ -73,6 +73,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   // 但也没说"这次没读到"，于是那一轮看着像"没有统计这回事"。原因各挂自己那一发（§259 逐发点名）。
   const [runStatsUnread, setRunStatsUnread] = useState<{ error?: string } | null>(null)
   const [sessionStatsUnread, setSessionStatsUnread] = useState<{ error?: string } | null>(null)
+  // §265 第六面：按「停止」时这一发的结果过去整个丢，而下一句就把界面改成"已停"——
+  // `safeHandle` 下主进程的失败是**已 resolve 的 `{ok:false}`**，连 `.catch` 都不经过。
+  const [stopUnread, setStopUnread] = useState<{ error?: string; requestId?: string } | null>(null)
   const [latestTraces, setLatestTraces] = useState<AgentTraceRecord[] | null>(null) // 最近一次运行分步明细（null=未懒加载）
   const [tracesLoading, setTracesLoading] = useState(false)
   // §257：这一读失败时以前与「本次运行确实没有明细」长得一模一样（`agent.traceEmpty`），
@@ -1093,6 +1096,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setLatestTraces(null) // 旧分步明细失效，下次展开重新拉取
     setLatestTracesUnread(null) // 上一轮那次"取不到"也不作数：这一轮还没读过
     setHistoryTight(false) // 上一轮那句"带不下更多历史"不作数：这一轮的窗口判据还没算出来
+    setStopUnread(null) // §265：上一发"停止没送到"不作数——这一轮还没按过停止（陈旧谎报要自己退场，§256）
     setCurrentStep(0)
 
     // safeHandle 把 chat:send 的抛错转成 {ok:false} **返回值**而不是 rejection，
@@ -1121,9 +1125,37 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   }
   sendRef.current = send
 
+  /** 送一次停止并判结果：`{ok:false}` 与 reject **同一张脸**，都写进 `stopUnread`（连 requestId 一起记住，才谈得上再送一次） */
+  const sendAbort = (id: string): void => {
+    window.pocketai
+      .abortAgent(id)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setStopUnread({ error: r.error, requestId: id })
+          return
+        }
+        setStopUnread(null)
+      })
+      .catch((e: unknown) => {
+        setStopUnread({ error: errText(e, ''), requestId: id })
+        logIpcError('agent.abortAgent', e)
+      })
+  }
+
+  /**
+   * §265 第六面：这一发过去是裸发（结果整块丢），下一句 `setRunningNow(false)` 却已经把界面改成"已停"——
+   * 主进程收不到停止指令时，那一轮还在跑、token 还在烧，屏上却没有任何一句话。
+   * 现在判它：送不到就说一句（**不阻断这条一点没动**——按钮照常立刻回到发送态，界面上另给一次"再送"的机会）。
+   * `.catch` 挡的是通道级 reject（`safeHandle` 下的处理器失败走的是 resolve 那条）。
+   */
   const abort = () => {
-    if (requestIdRef.current) window.pocketai.abortAgent(requestIdRef.current)
+    if (requestIdRef.current) sendAbort(requestIdRef.current)
     setRunningNow(false)
+  }
+
+  /** 再送一次停止：界面已经回到未运行态，"停止"那颗键已经不在了，这句得有自己的出口 */
+  const retryStop = (): void => {
+    if (stopUnread?.requestId) sendAbort(stopUnread.requestId)
   }
 
   /** 断点恢复：中止/出错后一键续跑（消息历史已在 DB，LLM 基于完整上下文继续） */
@@ -1178,6 +1210,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     interrupted,
     runStats,
     runStatsUnread,
+    stopUnread,
+    retryStop,
     sessionStats,
     sessionStatsUnread,
     loadRunStats,

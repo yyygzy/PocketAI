@@ -404,7 +404,9 @@ const api = {
     ipcRenderer.invoke(IPC.CHAT_REGENERATE, payload),
   resendMessage: (payload: ResendPayload): Promise<void | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.CHAT_RESEND, payload),
-  abortChat: (requestId: string): Promise<{ ok: boolean }> =>
+  // §265：类型诚实化（照 §258 那三发的写法）——`safeHandle` 会把失败以**已 resolve 的 `{ok:false,error}`** 送回来，
+  // 原来标成 `Promise<{ ok: boolean }>` 就是在告诉调用方"不会失败"，于是没人判它，而界面下一句已经改成"已停"。
+  abortChat: (requestId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.CHAT_ABORT, requestId),
 
   onChatChunk: (handler: (e: ChatChunkEvent) => void): (() => void) => {
@@ -720,7 +722,8 @@ const api = {
   listAvailableTools: (): Promise<ToolSchema[]> => ipcRenderer.invoke(IPC.TOOL_LIST_AVAILABLE),
 
   // ---------- Work Agent ----------
-  abortAgent: (requestId: string): Promise<{ ok: boolean }> =>
+  // §265：同 abortChat——类型不许再说"不会失败"（这一发的结果过去连 `.catch` 都没有，界面已经替它说"已停"）
+  abortAgent: (requestId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_ABORT, requestId),
   // 运行中插队（V4-Iter-238）：ok:false 表示这轮运行已经收不到（结束/不是主干），
   // 界面据此把消息退回队列而不是当成"发出去了"

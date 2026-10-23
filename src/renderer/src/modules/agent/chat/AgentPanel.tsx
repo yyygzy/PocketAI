@@ -645,6 +645,23 @@ export const AgentPanel: React.FC = () => {
           </div>
         )}
 
+        {/* §265 第六面：按了「停止」而指令没送到主进程时，界面已经回到未运行态，那一轮却可能还在跑。
+            这句独立成一行（不挂在统计那两发之下），并给一颗"再送一次"——停止键此时已经不在了，这句得有自己的出口。 */}
+        {chat.stopUnread && (
+          <div role="alert" className="mb-2 self-start flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-danger)]">
+            <span>
+              {t('common.stopNotSent', { msg: ipcFailText(chat.stopUnread, t('common.unknownError')) })}
+            </span>
+            <button
+              data-testid="stop-retry"
+              onClick={chat.retryStop}
+              className="px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:text-[var(--color-text)] transition-colors"
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
+
         {/* 本次运行统计：步数/耗时/token，点击展开分步明细；新一轮运行/切会话时复位 */}
         {/* §264 第五面：那一读没读到⇒这块**整块不出现**（既不是 0 也不是"这轮没跑"，但用户看不出差别）。
             说一句＋一次重试（§257 那颗 `agent.retryRead` 同一条路：这一发本来就能重拉）。 */}

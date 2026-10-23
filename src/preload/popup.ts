@@ -60,7 +60,8 @@ const api: PopupApiShape = {
     ipcRenderer.invoke(IPC.CONVERSATION_CREATE, assistantId, title),
   sendMessage: (payload: SendMessagePayload): Promise<void> =>
     ipcRenderer.invoke(IPC.CHAT_SEND, payload),
-  abortChat: (requestId: string): Promise<{ ok: boolean }> =>
+  // §265：与 index.ts 同步——失败是以已 resolve 的 `{ok:false,error}` 回来的，类型不许说"不会失败"
+  abortChat: (requestId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.CHAT_ABORT, requestId),
 
   onChatChunk: (handler: (e: ChatChunkEvent) => void): (() => void) => {
