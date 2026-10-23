@@ -91,9 +91,13 @@ export const TranslateModule: React.FC = () => {
 
   // ---------- 历史 ----------
   const [history, setHistory] = useState<TranslationRecord[]>([])
+  /** §269：历史那一读的两发（挂载与"翻译成功后刷新"）共用这一张脸——它们是同一份屏上数据，不是两发各挂一句 */
+  const [historyUnread, setHistoryUnread] = useState<{ error?: string } | null>(null)
 
   // ---------- 术语表 ----------
   const [glossary, setGlossary] = useState<GlossaryTerm[]>([])
+  /** §269：术语表读不到时，「术语表（0 条）」那颗按钮与面板里的「还没有术语条目」都会把通道故障演成"你一个都没录" */
+  const [glossaryUnread, setGlossaryUnread] = useState<{ error?: string } | null>(null)
   const [glossaryEnabled, setGlossaryEnabled] = useState(false)
   const [glossaryOpen, setGlossaryOpen] = useState(false)
 
@@ -117,11 +121,48 @@ export const TranslateModule: React.FC = () => {
     return list
   }, [activeProvider, model])
 
+  // ---------- 清单两发读（§269）：两条失败路各写原因、读到即收回；失败侧保持上一份 ----------
+  /**
+   * 历史那一读有**两个调用点**（挂载与「翻译成功后刷新」），共用同一张脸：
+   * 它们写的是同一份屏上数据，分两句就成了"同一件事说两遍"，而不是"一发挂掉不替另一发闭嘴"。
+   */
+  const loadHistory = useCallback(() => {
+    window.pocketai.listTranslations()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setHistoryUnread({ error: v.error })
+          return
+        }
+        setHistoryUnread(null)
+        setHistory(v)
+      })
+      .catch((e: unknown) => {
+        setHistoryUnread({ error: errText(e, '') })
+        logIpcError('translate.listTranslations', e)
+      })
+  }, [])
+
+  const loadGlossary = useCallback(() => {
+    window.pocketai.listGlossary()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setGlossaryUnread({ error: v.error })
+          return
+        }
+        setGlossaryUnread(null)
+        setGlossary(v)
+      })
+      .catch((e: unknown) => {
+        setGlossaryUnread({ error: errText(e, '') })
+        logIpcError('translate.listGlossary', e)
+      })
+  }, [])
+
   // ---------- 初始加载 ----------
   useEffect(() => {
     window.pocketai.listProviders().then((list) => {
       // §263 第五面：过去这一支只有一句 `return`，`providers` 停在 `[]` ⇒ 下拉里摆「还没有可用的服务商」，
-      // 把"读不到"演成"一家都没有"（另两发的 `!hasIpcFailed` 反判是"保持上一份"，不在这一面里）。
+      // 把"读不到"演成"一家都没有"（那两发清单读在 §269 收了口，见上面的 loadHistory／loadGlossary）。
       if (hasIpcFailed(list)) {
         setProvidersUnread({ error: list.error })
         return
@@ -137,8 +178,10 @@ export const TranslateModule: React.FC = () => {
       setProvidersUnread({ error: errText(e, '') })
       logIpcError('translate.listProviders', e)
     })
-    window.pocketai.listTranslations().then((v) => { if (!hasIpcFailed(v)) setHistory(v) }).catch(reportIpcError('translate.listTranslations'))
-    window.pocketai.listGlossary().then((v) => { if (!hasIpcFailed(v)) setGlossary(v) }).catch(reportIpcError('translate.listGlossary'))
+    loadHistory()
+    loadGlossary()
+    // 三发都是挂载那一次的读；两根 loader 是 useCallback([]) ⇒ 依赖恒稳
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ---------- 流式增量订阅（rAF 合批） ----------
@@ -168,9 +211,9 @@ export const TranslateModule: React.FC = () => {
     }
   }, [])
 
-  const reloadHistory = useCallback(() => {
-    window.pocketai.listTranslations().then((v) => { if (!hasIpcFailed(v)) setHistory(v) }).catch(reportIpcError('translate.reloadHistory'))
-  }, [])
+  /** §269：翻译成功后刷新历史——过去这一支 `if (!hasIpcFailed(v)) setHistory(v)` 失败时什么都不做，
+   *  屏上留着**上一份**历史且零字（"刚翻完那条没进列表"看着像"没翻成"）。现在同一张脸，说话即可 */
+  const reloadHistory = loadHistory
 
   // ---------- 发起翻译 ----------
   const handleTranslate = useCallback(async () => {
@@ -377,6 +420,29 @@ export const TranslateModule: React.FC = () => {
   }, [t, toast])
 
   const running = runState === 'running'
+  /**
+   * §269：术语表那一读失败时那一句＋那颗重试键——**遮罩内外共用同一份**（源码里只此一处），
+   * 面板打开时挂进面板、关闭时挂进工具条 ⇒ 同一时刻只有一句、只有一颗键。
+   * 键放在 alert 盒子外面（§268 的口径：盒子里的话会被算进句子的 textContent）。
+   */
+  const glossaryFailLine = glossaryUnread ? (
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span role="alert" className="text-[11px] text-[var(--color-danger)]">
+        {t('common.loadFailedNamed', {
+          what: t('common.glossaryList'),
+          msg: ipcFailText(glossaryUnread, t('common.unknownError'))
+        })}
+      </span>
+      <button
+        data-testid="translate-glossary-retry"
+        className="text-[11px] underline text-[var(--color-text-muted)]"
+        onClick={loadGlossary}
+      >
+        {t('agent.retryRead')}
+      </button>
+    </span>
+  ) : null
+
   const longText = sourceText.length > 50_000
 
   return (
@@ -394,7 +460,20 @@ export const TranslateModule: React.FC = () => {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {history.length === 0 ? (
+          {/* §269：那句挂在历史本来要上屏的地方；重试键放在 alert 盒子**外面**（§268 的口径：盒子里的话会被算进句子的 textContent） */}
+          {historyUnread && (
+            <div className="px-3 py-2 flex flex-col gap-1.5">
+              <LoadFailNotice what={t('translate.history.title')} msg={ipcFailText(historyUnread, t('common.unknownError'))} />
+              <button
+                data-testid="translate-history-retry"
+                className="self-start text-xs underline text-[var(--color-text-muted)]"
+                onClick={loadHistory}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
+          {history.length === 0 && !historyUnread ? (
             <div className="p-4 text-xs text-center text-[var(--color-text-muted)]">
               {t('translate.history.empty')}
             </div>
@@ -533,8 +612,10 @@ export const TranslateModule: React.FC = () => {
             className="btn-ghost text-[11px] py-1"
             onClick={() => setGlossaryOpen(true)}
           >
-            {t('translate.glossary.manage', { n: glossary.length })}
+            {/* §269：读不到就**不许报条数**——「术语表（0 条）」是把通道故障演成"你一个都没录"的那张嘴 */}
+            {glossaryUnread ? t('translate.glossary.title') : t('translate.glossary.manage', { n: glossary.length })}
           </button>
+          {!glossaryOpen && glossaryFailLine}
         </div>
 
         {/* 双栏文本区 */}
@@ -617,6 +698,7 @@ export const TranslateModule: React.FC = () => {
       {glossaryOpen && (
         <GlossaryPanel
           terms={glossary}
+          failLine={glossaryFailLine}
           onAdd={handleAddTerm}
           onDelete={handleDeleteTerm}
           onClose={() => setGlossaryOpen(false)}
@@ -631,10 +713,12 @@ export const TranslateModule: React.FC = () => {
 /** 术语表管理弹层：条目增删，遮罩点击关闭 */
 const GlossaryPanel: React.FC<{
   terms: GlossaryTerm[]
+  /** §269：那一读失败时这块的「还没有术语条目」是第二张谎脸 ⇒ 让位给父级那份失败句（同一时刻只有一句、一颗键） */
+  failLine: React.ReactNode
   onAdd: (sourceTerm: string, targetTerm: string) => Promise<boolean>
   onDelete: (id: string) => Promise<void> | void
   onClose: () => void
-}> = ({ terms, onAdd, onDelete, onClose }) => {
+}> = ({ terms, failLine, onAdd, onDelete, onClose }) => {
   const { t } = useI18n()
   const [src, setSrc] = useState('')
   const [tgt, setTgt] = useState('')
@@ -672,10 +756,14 @@ const GlossaryPanel: React.FC<{
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          {/* §269：这一块的「还没有术语条目」在通道故障时是第二张谎脸 ⇒ 让位给**同一份**失败句（遮罩外那份此时收掉了，
+              同一时刻屏上只有一句、一颗键；不再造第二颗机关——§268 那条"两头钉"的口径：该有机关的数量要数得出，不该有的地方要为 0） */}
           {terms.length === 0 ? (
-            <p className="text-xs text-center text-[var(--color-text-muted)] py-6">
-              {t('translate.glossary.empty')}
-            </p>
+            failLine ?? (
+              <p className="text-xs text-center text-[var(--color-text-muted)] py-6">
+                {t('translate.glossary.empty')}
+              </p>
+            )
           ) : (
             terms.map((g) => (
               <div

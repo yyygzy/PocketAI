@@ -189,7 +189,8 @@ const SITES = ALL.flatMap((rel) => scanSource(rel, blankComments(fs.readFileSync
 /** 读数类静默点：失败侧什么都没做，或只进 console */
 const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 // §268：42 → 36（收掉输入框那圈六发惰性读：ChatConfigBar 的技能／知识库、Composer 与 AgentComposer 的知识库／片段）
-const SILENT_READ_CAP = 36
+// §269：36 → 33（收掉翻译页余下三发：历史那两发并成一根 loader＋一句一键，术语表一句一键）
+const SILENT_READ_CAP = 33
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
@@ -241,7 +242,11 @@ const SILENT_PER_FILE: Record<string, number> = {
   // 片段与上下文中枢那几发的出口是"再点／再进一次触发态"自己会重拉——各屏的出口形状不同，理由写在各文件注释里）
   'src/renderer/src/modules/chat/ChatConfigBar.tsx': 0,
   'src/renderer/src/modules/chat/Composer.tsx': 0,
-  'src/renderer/src/modules/agent/components/AgentComposer.tsx': 0
+  'src/renderer/src/modules/agent/components/AgentComposer.tsx': 0,
+  // §269：翻译页余下那三发（挂载读历史／翻译成功后刷新历史／挂载读术语表）收口（清零）。
+  // 两发历史**并成一根 loader、共用一张脸**（同一份数据的两次取不该说两遍），术语表那句与那颗键是同一份 JSX，
+  // 遮罩内外二选一渲染 ⇒ 同一时刻只一句、一键。
+  'src/renderer/src/modules/translate/TranslateModule.tsx': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -294,7 +299,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
   })
 
   it('真仓不是空转：判定式总数与分桶守恒（谁漏了一类就会在这里红）', () => {
-    expect(SITES.length, '判定式总数（§268 现查仍 363——这一批把六发惰性读的失败侧从"什么都不做"改成"写状态＋说一句"，判定式本身没增没减；§266／§267 各加过的那几次仍在。这条数随写法归并/拆分而变，不是不变量，引用前现查）').toBeGreaterThan(300)
+    expect(SITES.length, '判定式总数（现查 362。这条数随写法归并/拆分而变、不是不变量，引用前现查：§266 那批 362、§267 加了三发各判一次成 363、§268 现查仍 363，本批把翻译页"同一份数据的两次取"并成一根 loader ⇒ 少一条）').toBeGreaterThan(300)
     const by: Record<string, number> = { none: 0, console: 0, 'takes-over': 0, helper: 0, fallthrough: 0 }
     for (const s of SITES) by[s.side] = (by[s.side] ?? 0) + 1
     expect(Object.values(by).reduce((a, b) => a + b, 0), '分桶必须等于总数').toBe(SITES.length)
@@ -308,7 +313,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250~§268 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
+  it('§250~§269 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
@@ -389,6 +394,48 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
       for (const key of ['common.skillsList', 'common.kbList', 'common.snippetList']) {
         expect(src.includes(`'${key}'`), `${dict} 缺 ${key}`).toBe(true)
       }
+    }
+  })
+  it('§269 那三发的形状数得出（两发并一根 loader、两张谎脸都让位、键同一时刻只一颗、名词不重复开键）', () => {
+    const src = fs
+      .readFileSync(path.join(ROOT, 'src/renderer/src/modules/translate/TranslateModule.tsx'), 'utf8')
+      .replace(/\r\n/g, '\n')
+    const count = (re: RegExp): number => (src.match(re) ?? []).length
+
+    // 两条失败路各写一次原因（resolve 的失败对象／reject），读到即收回
+    expect(count(/set(?:History|Glossary)Unread\(\{ error: /g), '历史与术语表各两条失败路').toBe(4)
+    expect(count(/set(?:History|Glossary)Unread\(null\)/g), '读到即收回，两处').toBe(2)
+    // 旧写法（裸交给 reportIpcError）在这三发上归零；§266 那颗卸载清理留下的那一条不许被"顺手修好"
+    expect(count(/\.catch\(reportIpcError\('translate\.(?:listTranslations|listGlossary|reloadHistory)/g), '那三发不再有那一形').toBe(0)
+    expect(count(/reportIpcError\('translate\.abortTranslate'/g), '卸载清理那一发仍只留痕（§266 定的，本批没动）').toBe(1)
+
+    // 第三发（翻译成功后刷新）并进同一根 loader ⇒ 同一份数据只一张脸，不说两遍
+    expect(count(/const reloadHistory = loadHistory/g), '刷新那一发共用历史那张脸').toBe(1)
+    expect(count(/window\.pocketai\.listTranslations\(\)/g), 'listTranslations 全文件只许一处发（两发并一根）').toBe(1)
+
+    // 那句真挂得出去：盯**渲染条件本身**（§266 的 Z7 教训——只数文案会放过把守卫换成 `false &&` 那种写法）
+    expect(count(/\{historyUnread && \(\s*<div[\s\S]{0,240}?what=\{t\('translate\.history\.title'\)/g), '历史那句挂在渲染条件里').toBe(1)
+    expect(count(/const glossaryFailLine = glossaryUnread \? \([\s\S]{0,240}?common\.glossaryList/g), '术语表那句挂在条件本身里').toBe(1)
+
+    // 两处谎脸都换掉：「还没有翻译记录」与「术语表（0 条）」都不许在失败时继续摆
+    expect(count(/history\.length === 0 && !historyUnread/g), '历史空态让位').toBe(1)
+    expect(count(/glossaryUnread \? t\('translate\.glossary\.title'\) : t\('translate\.glossary\.manage'/g), '读不到就不报条数').toBe(1)
+    expect(count(/failLine \?\? \(/g), '面板里那块空态让位给同一份失败句').toBe(1)
+
+    // 键按"同一时刻只一颗"配：遮罩内外共用**同一份 JSX** ⇒ 源码里各只一处，且工具条那份带 !glossaryOpen 守卫
+    expect(count(/data-testid="translate-history-retry"/g), '历史那颗键').toBe(1)
+    expect(count(/data-testid="translate-glossary-retry"/g), '术语表那颗键——面板与工具条共用一份，不造第二颗').toBe(1)
+    expect(count(/\{!glossaryOpen && glossaryFailLine\}/g), '面板打开时工具条那份收掉（同一时刻只一句）').toBe(1)
+
+    // alert 的总数：§266 那颗停止那句＋本批术语表那句（历史那句走 LoadFailNotice 组件，不在本文件的字面量里）
+    expect(count(/role="alert"/g), '本文件里自己写 role="alert" 的只该有这两处').toBe(2)
+    expect(count(/<LoadFailNotice/g), '两块读不到共用组件：服务商（§263）与历史（本批）').toBe(2)
+
+    // 名词只留一份键：历史复用屏上标题，术语表用新加的 common.glossaryList（不许再开一份重复键）
+    for (const dict of ['zh', 'en', 'ja', 'ko']) {
+      const s = fs.readFileSync(path.join(ROOT, `src/renderer/src/i18n/${dict}.ts`), 'utf8')
+      expect(s.includes(`'common.glossaryList'`), `${dict} 缺 common.glossaryList`).toBe(true)
+      expect(s.includes(`'common.translationHistory'`), `${dict} 多开了一份与 translate.history.title 重复的键`).toBe(false)
     }
   })
 })
