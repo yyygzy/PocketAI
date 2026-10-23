@@ -43,6 +43,7 @@ export const en = {
   'common.kbList': 'knowledge base list',
   'common.snippetList': 'snippet list',
   'common.glossaryList': 'glossary',
+  'common.toolsList': 'tool list',
   'common.stopNotSent': "Stop command didn't reach the main process: {msg} (this run may still be going)",
   'common.loadFailedDefaults': 'Cannot load {what}: {msg} (the values shown are defaults)',
   'common.loadFailedOff': 'Cannot load {what}: {msg} (treated as off for now)',

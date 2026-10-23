@@ -42,6 +42,7 @@ export const ko = {
   'common.kbList': '지식 베이스 목록',
   'common.snippetList': '스니펫 목록',
   'common.glossaryList': '용어집',
+  'common.toolsList': '도구 목록',
   'common.stopNotSent': '정지 명령이 메인 프로세스로 전달되지 않았습니다: {msg} (이 실행은 아직 이어지고 있을 수 있습니다)',
   'common.loadFailedDefaults': '{what} 읽기를 실패했습니다: {msg} (표시된 값은 기본값)',
   'common.loadFailedOff': '{what} 읽기를 실패했습니다: {msg} (이번에는 꺼진 상태로 처리합니다)',

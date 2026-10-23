@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord, KnowledgeBase, ToolSchema, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { hasIpcFailed, isIpcFail, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, isIpcFail, ipcFailText, logIpcError } from '../../utils/ipc'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 
 interface Props {
@@ -28,14 +29,91 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [tools, setTools] = useState<ToolSchema[]>([])
   const [skills, setSkills] = useState<SkillRecord[]>([])
+  /**
+   * §270：这三发清单读失败时过去什么都不做 ⇒ 三块勾选区各摆「尚未创建知识库／暂无可用技能／暂无可用工具」，
+   * 把通道故障演成"这台没配"——而这里是新建／编辑助手的必经屏。三份是**不同数据**，各挂一句（§268 口径，
+   * 不是 §269 那种"同一份数据两次取并一张脸"）。
+   */
+  const [kbsUnread, setKbsUnread] = useState<{ error?: string } | null>(null)
+  const [toolsUnread, setToolsUnread] = useState<{ error?: string } | null>(null)
+  const [skillsUnread, setSkillsUnread] = useState<{ error?: string } | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    window.pocketai.listKnowledgeBases().then((v) => { if (!hasIpcFailed(v)) setKbs(v) }).catch(reportIpcError('assistantEditor.listKbs'))
-    window.pocketai.listAvailableTools().then((v) => { if (!hasIpcFailed(v)) setTools(v) }).catch(reportIpcError('assistantEditor.listTools'))
-    window.pocketai.listSkills().then((v) => { if (!hasIpcFailed(v)) setSkills(v) }).catch(reportIpcError('assistantEditor.listSkills'))
+  // ---------- 三份清单读（§270）：两条失败路各写原因、读到即收回；失败侧保持上一份 ----------
+  /**
+   * 三发都在挂载读，**只有关掉编辑器再开才会重拉**——那要丢掉正在填的名称、SystemPrompt 与已勾的选项，
+   * 出口代价大到等于没出口 ⇒ 按 §268 的判据每发各配一颗重试键（各点各的发，不是一把键重发三份）。
+   */
+  const loadKbs = useCallback(() => {
+    window.pocketai.listKnowledgeBases()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setKbsUnread({ error: v.error })
+          return
+        }
+        setKbsUnread(null)
+        setKbs(v)
+      })
+      .catch((e: unknown) => {
+        setKbsUnread({ error: errText(e, '') })
+        logIpcError('assistantEditor.listKbs', e)
+      })
   }, [])
+
+  const loadTools = useCallback(() => {
+    window.pocketai.listAvailableTools()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setToolsUnread({ error: v.error })
+          return
+        }
+        setToolsUnread(null)
+        setTools(v)
+      })
+      .catch((e: unknown) => {
+        setToolsUnread({ error: errText(e, '') })
+        logIpcError('assistantEditor.listTools', e)
+      })
+  }, [])
+
+  const loadSkills = useCallback(() => {
+    window.pocketai.listSkills()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setSkillsUnread({ error: v.error })
+          return
+        }
+        setSkillsUnread(null)
+        setSkills(v)
+      })
+      .catch((e: unknown) => {
+        setSkillsUnread({ error: errText(e, '') })
+        logIpcError('assistantEditor.listSkills', e)
+      })
+  }, [])
+
+  useEffect(() => {
+    loadKbs()
+    loadTools()
+    loadSkills()
+    // 三发都是挂载那一次的读；三根 loader 都是 useCallback([]) ⇒ 依赖恒稳
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** §270：三份清单共用那句一键的形状。键放在 alert 盒子**外面**（§268：盒子里的话会被算进句子的 textContent） */
+  const listFailLine = (what: string, fail: { error?: string }, testid: string, retry: () => void): React.ReactNode => (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <LoadFailNotice what={what} msg={ipcFailText(fail, t('common.unknownError'))} />
+      <button
+        data-testid={testid}
+        className="text-xs underline text-[var(--color-text-muted)]"
+        onClick={retry}
+      >
+        {t('agent.retryRead')}
+      </button>
+    </div>
+  )
 
   const enabledProviders = providers.filter((p) => p.enabled)
   const provider = enabledProviders.find((p) => p.id === providerId)
@@ -184,7 +262,9 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
         <label className="block text-xs text-[var(--color-text-muted)] mb-1">
           {t('ae.kbLabel')}
         </label>
-        {kbs.length === 0 ? (
+        {kbsUnread ? (
+          listFailLine(t('common.kbList'), kbsUnread, 'assistant-editor-kbs-retry', loadKbs)
+        ) : kbs.length === 0 ? (
           <p className="text-xs text-[var(--color-text-muted)]">
             {t('ae.noKb')}
           </p>
@@ -207,7 +287,9 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
         <label className="block text-xs text-[var(--color-text-muted)] mb-1">
           {t('ae.skillsLabel')}
         </label>
-        {skills.length === 0 ? (
+        {skillsUnread ? (
+          listFailLine(t('common.skillsList'), skillsUnread, 'assistant-editor-skills-retry', loadSkills)
+        ) : skills.length === 0 ? (
           <p className="text-xs text-[var(--color-text-muted)]">
             {t('ae.noSkills')}
           </p>
@@ -236,10 +318,14 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
             {t('ae.allowAll')}
           </button>
         </div>
-        {tools.length === 0 && (
-          <p className="text-xs text-[var(--color-text-muted)]">
-            {t('ae.noTools')}
-          </p>
+        {toolsUnread ? (
+          listFailLine(t('common.toolsList'), toolsUnread, 'assistant-editor-tools-retry', loadTools)
+        ) : (
+          tools.length === 0 && (
+            <p className="text-xs text-[var(--color-text-muted)]">
+              {t('ae.noTools')}
+            </p>
+          )
         )}
         {builtinTools.length > 0 && (
           <div className="mb-2">

@@ -190,11 +190,13 @@ const SITES = ALL.flatMap((rel) => scanSource(rel, blankComments(fs.readFileSync
 const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 // §268：42 → 36（收掉输入框那圈六发惰性读：ChatConfigBar 的技能／知识库、Composer 与 AgentComposer 的知识库／片段）
 // §269：36 → 33（收掉翻译页余下三发：历史那两发并成一根 loader＋一句一键，术语表一句一键）
-const SILENT_READ_CAP = 33
+// §270：33 → 30（收掉助手编辑器那三发：知识库／工具／技能——**三份不同数据，各挂一句、各给一颗键**，与 §269 的"并一张脸"相反）
+const SILENT_READ_CAP = 30
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
-  'src/renderer/src/modules/chat/AssistantEditor.tsx',
+  // §270 起换成这一份：AssistantEditor 那三发已收干，再当"仍静默"的对照就是假证
+  'src/renderer/src/modules/knowledge/KbAskPanel.tsx',
   'src/renderer/src/modules/settings/SettingsModule.tsx',
   'src/renderer/src/modules/image/ImageModule.tsx'
 ]
@@ -242,6 +244,9 @@ const SILENT_PER_FILE: Record<string, number> = {
   // 片段与上下文中枢那几发的出口是"再点／再进一次触发态"自己会重拉——各屏的出口形状不同，理由写在各文件注释里）
   'src/renderer/src/modules/chat/ChatConfigBar.tsx': 0,
   'src/renderer/src/modules/chat/Composer.tsx': 0,
+  // §270：助手编辑器那三发清单读收口（清零）。三份不同数据各挂一句、各给一颗键——
+  // 这一屏"重开编辑器再拉"要丢掉整个表单，出口代价大到等于没出口，所以键不是多余机关
+  'src/renderer/src/modules/chat/AssistantEditor.tsx': 0,
   'src/renderer/src/modules/agent/components/AgentComposer.tsx': 0,
   // §269：翻译页余下那三发（挂载读历史／翻译成功后刷新历史／挂载读术语表）收口（清零）。
   // 两发历史**并成一根 loader、共用一张脸**（同一份数据的两次取不该说两遍），术语表那句与那颗键是同一份 JSX，
@@ -299,7 +304,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
   })
 
   it('真仓不是空转：判定式总数与分桶守恒（谁漏了一类就会在这里红）', () => {
-    expect(SITES.length, '判定式总数（现查 362。这条数随写法归并/拆分而变、不是不变量，引用前现查：§266 那批 362、§267 加了三发各判一次成 363、§268 现查仍 363，本批把翻译页"同一份数据的两次取"并成一根 loader ⇒ 少一条）').toBeGreaterThan(300)
+    expect(SITES.length, '判定式总数（现查 362。这条数随写法归并/拆分而变、不是不变量，引用前现查：§266 那批 362、§267 加了三发各判一次成 363、§268 现查仍 363，本批把翻译页"同一份数据的两次取"并成一根 loader ⇒ 少一条）')
     const by: Record<string, number> = { none: 0, console: 0, 'takes-over': 0, helper: 0, fallthrough: 0 }
     for (const s of SITES) by[s.side] = (by[s.side] ?? 0) + 1
     expect(Object.values(by).reduce((a, b) => a + b, 0), '分桶必须等于总数').toBe(SITES.length)
@@ -313,7 +318,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250~§269 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
+  it('§250~§270 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
@@ -436,6 +441,48 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
       const s = fs.readFileSync(path.join(ROOT, `src/renderer/src/i18n/${dict}.ts`), 'utf8')
       expect(s.includes(`'common.glossaryList'`), `${dict} 缺 common.glossaryList`).toBe(true)
       expect(s.includes(`'common.translationHistory'`), `${dict} 多开了一份与 translate.history.title 重复的键`).toBe(false)
+    }
+  })
+  it('§270 那三发的形状数得出（三份不同数据各一句一键、一处 loader 一通道、三张谎脸各只留一处、名词不重复开）', () => {
+    const src = fs
+      .readFileSync(path.join(ROOT, 'src/renderer/src/modules/chat/AssistantEditor.tsx'), 'utf8')
+      .replace(/\r\n/g, '\n')
+    const count = (re: RegExp): number => (src.match(re) ?? []).length
+
+    // 三条清单各两条失败路写原因（resolve 的失败对象／reject），读到即收回
+    expect(count(/set(?:Kbs|Tools|Skills)Unread\(\{ error: /g), '三发 × 两条失败路').toBe(6)
+    expect(count(/set(?:Kbs|Tools|Skills)Unread\(null\)/g), '读到即收回三处').toBe(3)
+    // 旧写法（裸交给 reportIpcError）在这份文件里彻底不见——§265 已证它对 safeHandle 的失败是死代码
+    expect(count(/reportIpcError/g), '这一族不再留那一形').toBe(0)
+    // 一根 loader 只发一个通道（三份数据没被并成一把梭）
+    expect(count(/useCallback\(\(\) => \{/g), '三根 loader').toBe(3)
+    for (const ch of ['listKnowledgeBases', 'listAvailableTools', 'listSkills']) {
+      expect(count(new RegExp('window\\.pocketai\\.' + ch + '\\(\\)', 'g')), `${ch} 全文件只许一处发`).toBe(1)
+    }
+
+    // 三句真挂得出去：盯**渲染条件与所点名词成对**（§266 的 Z7 教训——数文案 token 会放过把守卫换成 `false &&` 那种写法）
+    expect(count(/\{kbsUnread \? \(\s*\n\s*listFailLine\(t\('common\.kbList'\)/g), '知识库那句').toBe(1)
+    expect(count(/\{skillsUnread \? \(\s*\n\s*listFailLine\(t\('common\.skillsList'\)/g), '技能那句').toBe(1)
+    expect(count(/\{toolsUnread \? \(\s*\n\s*listFailLine\(t\('common\.toolsList'\)/g), '工具那句').toBe(1)
+
+    // 三颗重试键各一颗（这一屏的出口代价＝丢掉整个表单，故不是多余机关；三处调用点各传自己的 testid 与 loader）
+    expect(count(/'assistant-editor-kbs-retry'/g), '知识库那颗').toBe(1)
+    expect(count(/'assistant-editor-tools-retry'/g), '工具那颗').toBe(1)
+    expect(count(/'assistant-editor-skills-retry'/g), '技能那颗').toBe(1)
+    // 键在 alert 盒子外面：工厂里 LoadFailNotice 在前、按钮在后
+    expect(count(/const listFailLine[\s\S]{0,340}?<LoadFailNotice[\s\S]{0,240}?data-testid=\{testid\}/g), '那句在前、那颗键在后').toBe(1)
+
+    // 三张「真的没有」的脸各只留一处（失败时它们让位，见行为用例；这里钉的是"别在别处再摆一份"）
+    expect(count(/t\('ae\.no(?:Kb|Skills|Tools)'\)/g), '三份空态各一处').toBe(3)
+    // 「不阻断」照旧：失败时那颗「全部允许」仍挂在自己的位置上，不被那句吃掉
+    expect(count(/<button onClick=\{toggleAllowAll\}/g), '那颗键不随失败消失').toBe(1)
+
+    // 名词不重复开：两份复用 §268 的 common.*，只新增一份 common.toolsList；四语都要有
+    expect(count(/ae\.(?:kbList|skillsList|toolsList)/g), '不许为本批另开一套重复名词').toBe(0)
+    for (const dict of ['zh', 'en', 'ja', 'ko']) {
+      const s = fs.readFileSync(path.join(ROOT, `src/renderer/src/i18n/${dict}.ts`), 'utf8')
+      expect(s.includes(`'common.toolsList'`), `${dict} 缺 common.toolsList`).toBe(true)
+      expect(s.split(`'common.toolsList'`).length - 1, `${dict} 里这个键只许出现一次`).toBe(1)
     }
   })
 })
