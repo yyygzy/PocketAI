@@ -191,10 +191,13 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 // §268：42 → 36（收掉输入框那圈六发惰性读：ChatConfigBar 的技能／知识库、Composer 与 AgentComposer 的知识库／片段）
 // §269：36 → 33（收掉翻译页余下三发：历史那两发并成一根 loader＋一句一键，术语表一句一键）
 // §270：33 → 30（收掉助手编辑器那三发：知识库／工具／技能——**三份不同数据，各挂一句、各给一颗键**，与 §269 的"并一张脸"相反）
-const SILENT_READ_CAP = 30
+// §271：30 → 26（收掉服务商那一族四发：渠道面板的服务商／助手两发＋设置页的服务商／委派能力判定两发。
+//  跨两屏、四份不同数据 ⇒ 仍是"各挂一句、各给一颗键"那一族；两屏都没有"再点一下就重拉"的天然出口，故键不是多余机关）
+const SILENT_READ_CAP = 26
 
 const STILL_SILENT_PROOF = [
-  'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
+  // §271 起换成这一份：ChannelsPanel 那两发已收干，再当"仍静默"的对照就是假证
+  'src/renderer/src/modules/chat/ChatView.tsx',
   // §270 起换成这一份：AssistantEditor 那三发已收干，再当"仍静默"的对照就是假证
   'src/renderer/src/modules/knowledge/KbAskPanel.tsx',
   'src/renderer/src/modules/settings/SettingsModule.tsx',
@@ -251,7 +254,15 @@ const SILENT_PER_FILE: Record<string, number> = {
   // §269：翻译页余下那三发（挂载读历史／翻译成功后刷新历史／挂载读术语表）收口（清零）。
   // 两发历史**并成一根 loader、共用一张脸**（同一份数据的两次取不该说两遍），术语表那句与那颗键是同一份 JSX，
   // 遮罩内外二选一渲染 ⇒ 同一时刻只一句、一键。
-  'src/renderer/src/modules/translate/TranslateModule.tsx': 0
+  'src/renderer/src/modules/translate/TranslateModule.tsx': 0,
+  // §271：渠道面板挂载那两发（服务商／助手）收口（清零）。两发过去失败侧只写 state 的判真值写法
+  // ⇒ 两枚下拉只剩占位项（「未绑定助手」／「请选择服务商」），把通道故障演成"你一个都没建"；
+  // 而且服务商那发失败还会连带让下面「模型」下拉整块不出现 ⇒ 那句必须自己点明是哪一格
+  'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx': 0,
+  // §271：设置页那两发（服务商清单／委派能力判定）收口（清零）。前者让左栏摆「尚未配置，点击「新增」」，
+  // 后者让每行模型后面那枚徽标整块不出现（库里其实存着判定）。那颗「探测能否派活」是三发真请求、不是重读清单，
+  // 所以它不是这两发的出口 ⇒ 各配一颗自己的键
+  'src/renderer/src/modules/settings/ProviderSettings.tsx': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -304,7 +315,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
   })
 
   it('真仓不是空转：判定式总数与分桶守恒（谁漏了一类就会在这里红）', () => {
-    expect(SITES.length, '判定式总数（现查 362。这条数随写法归并/拆分而变、不是不变量，引用前现查：§266 那批 362、§267 加了三发各判一次成 363、§268 现查仍 363，本批把翻译页"同一份数据的两次取"并成一根 loader ⇒ 少一条）')
+    expect(SITES.length, '判定式总数（现查 362。这条数随写法归并/拆分而变、不是不变量，引用前现查：§266 那批 362、§267 加了三发各判一次成 363、§268 现查仍 363，§269 把翻译页"同一份数据的两次取"并成一根 loader ⇒ 少一条回到 362；§270 那批没单独现查（台账当时随全量一起跑，这条 message 未更新），§271 现查仍 362——两批都是"判真值"改成"判失败对象"的同数换形）').toBeGreaterThan(300)
     const by: Record<string, number> = { none: 0, console: 0, 'takes-over': 0, helper: 0, fallthrough: 0 }
     for (const s of SITES) by[s.side] = (by[s.side] ?? 0) + 1
     expect(Object.values(by).reduce((a, b) => a + b, 0), '分桶必须等于总数').toBe(SITES.length)
@@ -318,7 +329,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250~§270 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
+  it('§250~§271 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
@@ -483,6 +494,66 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
       const s = fs.readFileSync(path.join(ROOT, `src/renderer/src/i18n/${dict}.ts`), 'utf8')
       expect(s.includes(`'common.toolsList'`), `${dict} 缺 common.toolsList`).toBe(true)
       expect(s.split(`'common.toolsList'`).length - 1, `${dict} 里这个键只许出现一次`).toBe(1)
+    }
+  })
+
+  it('§271 那四发的形状数得出（跨两屏、四份数据各一句一键、一发失败不许替另一发闭嘴、空态让位、键不多造）', () => {
+    const read = (rel: string): string =>
+      fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
+    const ch = read('src/renderer/src/modules/agent/channels/ChannelsPanel.tsx')
+    const ps = read('src/renderer/src/modules/settings/ProviderSettings.tsx')
+    const inCh = (re: RegExp): number => (ch.match(re) ?? []).length
+    const inPs = (re: RegExp): number => (ps.match(re) ?? []).length
+
+    // ① 四发各两条失败路写原因（resolve 的失败对象／reject），读到即收回
+    expect(inCh(/set(?:Providers|Assistants)Unread\(\{ error: /g), '渠道面板：两发 × 两条失败路').toBe(4)
+    expect(inCh(/set(?:Providers|Assistants)Unread\(null\)/g), '渠道面板：读到即收回').toBe(2)
+    expect(inPs(/set(?:Providers|Caps)Unread\(\{ error: /g), '设置页：两发 × 两条失败路').toBe(4)
+    expect(inPs(/set(?:Providers|Caps)Unread\(null\)/g), '设置页：读到即收回').toBe(2)
+    // §265 已证：safeHandle 把 throw 变成 resolve 的 `{ok:false}` ⇒ 裸 catch 助手是死代码，这两份文件里彻底不见
+    expect(inCh(/reportIpcError/g), '渠道面板不留那一形').toBe(0)
+    expect(inPs(/reportIpcError/g), '设置页不留那一形').toBe(0)
+    // 一根 loader 只发一个通道（四份数据没被并成一把梭，也没在同屏再发第二遍）
+    // 注意设置页那两根是 Prettier 折行的链式写法 ⇒ `\s*` 要吃掉换行与缩进
+    const sends = (src: string, ch: string): number =>
+      (src.match(new RegExp('window\\.pocketai\\s*\\.' + ch + '\\(\\)', 'g')) ?? []).length
+    expect(sends(ch, 'listProviders'), '渠道面板：服务商一发').toBe(1)
+    expect(sends(ch, 'listAssistants'), '渠道面板：助手一发').toBe(1)
+    expect(sends(ps, 'listProviders'), '设置页：服务商一发').toBe(1)
+    expect(sends(ps, 'listDelegateCapabilities'), '设置页：能力判定一发').toBe(1)
+
+    // ② 四句真挂得出去：盯**渲染条件与所点名词成对**（§266 的 Z7 教训——只数文案 token 会放过 `false &&` 那种写法）
+    expect(inCh(/\{providersUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.providersList'\)/g), '渠道面板那句服务商').toBe(1)
+    expect(inCh(/\{assistantsUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.assistantsList'\)/g), '渠道面板那句助手').toBe(1)
+    expect(inPs(/\{providersUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.providersList'\)/g), '设置页那句服务商').toBe(1)
+    expect(inPs(/\{capsUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.capabilityVerdicts'\)/g), '设置页那句能力判定').toBe(1)
+
+    // ③ 一发挂掉不许替另一发闭嘴：四个渲染条件都是自己的 state，没有 `||` 把两发并成一句
+    expect(inCh(/(?:providers|assistants)Unread \|\|/g), '渠道面板：两发各说各的').toBe(0)
+    expect(inPs(/(?:providers|caps)Unread \|\|/g), '设置页：两发各说各的').toBe(0)
+
+    // ④ 四颗键各一颗，且**不多造**（这两屏的出口形状：渠道面板切网关类型不会重拉这两份清单；
+    //    设置页那颗「探测能否派活」是三发真请求、不是重读清单 ⇒ 不能拿它当这一发的出口）
+    expect(inCh(/"channels-(?:providers|assistants)-retry"/g), '渠道面板两颗').toBe(2)
+    expect(inPs(/"provider-settings-(?:providers|caps)-retry"/g), '设置页两颗').toBe(2)
+    expect(inCh(/agent\.retryRead/g), '渠道面板：一句一颗').toBe(2)
+    expect(inPs(/agent\.retryRead/g), '设置页：一句一颗').toBe(2)
+    // 「探测能否派活」长在子组件里，父屏那句吃不到它——这里钉的是"父屏的失败 state 不参与那颗键的渲染条件"
+    expect(inPs(/!capsUnread/g), '能力判定读不到时不许把每行那颗探测键一起收掉').toBe(0)
+    expect(read('src/renderer/src/modules/settings/DelegateCapabilityBadge.tsx').includes(`t('provider.capProbe')`), '那颗探测键仍在子组件里').toBe(true)
+
+    // ⑤ 让位的那张谎脸只留一处：设置页空态在失败时收掉（渠道面板没有「你一个都没建」那种空态文案，
+    //    它的谎长在 `<option value="">` 占位项上——那不是整块空态，改不了它，也不该改）
+    expect(inPs(/\{providers\.length === 0 && !providersUnread && \(\s*\n\s*<p className="text-xs text-\[var\(--color-text-muted\)\]">\{t\('provider\.empty'\)\}/g), '空态让位那处').toBe(1)
+    expect(inPs(/\bprovidersUnread\b/g), '服务商那份 state 只出现在：声明／那句的条件／那句的措辞／让位那一处').toBe(4)
+    expect(inPs(/\bcapsUnread\b/g), '能力判定那份 state 只出现在：声明／那句的条件／那句的措辞').toBe(3)
+
+    // ⑥ 名词不重复开：三份复用既有 common.*，只新增 common.capabilityVerdicts 一份，四语都要有
+    for (const dict of ['zh', 'en', 'ja', 'ko']) {
+      const s = read(`src/renderer/src/i18n/${dict}.ts`)
+      expect(s.includes(`'common.capabilityVerdicts'`), `${dict} 缺 common.capabilityVerdicts`).toBe(true)
+      expect(s.split(`'common.capabilityVerdicts'`).length - 1, `${dict} 里这个键只许出现一次`).toBe(1)
+      expect(s.includes(`'common.providerList'`), `${dict} 不许为服务商另开一名`).toBe(false)
     }
   })
 })

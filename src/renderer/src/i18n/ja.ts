@@ -43,6 +43,7 @@ export const ja = {
   'common.snippetList': 'スニペット一覧',
   'common.glossaryList': '用語集',
   'common.toolsList': 'ツール一覧',
+  'common.capabilityVerdicts': '委譲能力の判定',
   'common.stopNotSent': '停止指示をメインプロセスに送れませんでした：{msg}（この実行は続いている可能性があります）',
   'common.loadFailedDefaults': '{what}を読み込めません：{msg}（表示は既定値です）',
   'common.loadFailedOff': '{what}を読み込めません：{msg}（今回はオフとして扱います）',

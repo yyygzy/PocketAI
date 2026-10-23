@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { ProviderRecord, ProviderType } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { reportIpcError, isIpcFail, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { isIpcFail, hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { isPlainRemoteHttp } from '../../../../shared/url-policy'
@@ -52,8 +53,33 @@ export const ProviderSettings: React.FC = () => {
   // 委派能力判定（V4-Iter-142）：providerId::model → 判定；probingKey 记哪一台正在探
   const [caps, setCaps] = useState<Record<string, DelegateCapabilityView>>({})
   const [probingKey, setProbingKey] = useState('')
+  /**
+   * §271：两发挂载读的失败面。改前都是 `if (!hasIpcFailed(v)) 写 state`＝失败什么都不做——
+   * 服务商那发让左栏摆「尚未配置，点击「新增」」（把通道故障演成"你一台都没配"），
+   * 能力判定那发让每行模型后面那枚徽标整块不出现（演成"这台从没探过"，尽管判定早就存在库里）。
+   * 这一屏没有任何"再点一下就重拉"的出口（保存／删台／取模型那几条会顺带重拉，但那是做完别的事之后）⇒ 各配一颗键。
+   */
+  const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
+  const [capsUnread, setCapsUnread] = useState<{ error?: string } | null>(null)
 
-  const load = useCallback(() => window.pocketai.listProviders().then((v) => { if (!hasIpcFailed(v)) setProviders(v) }).catch(reportIpcError('providerSettings.list')), [])
+  const load = useCallback(
+    () =>
+      window.pocketai
+        .listProviders()
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setProvidersUnread({ error: v.error })
+            return
+          }
+          setProvidersUnread(null)
+          setProviders(v)
+        })
+        .catch((e: unknown) => {
+          setProvidersUnread({ error: errText(e, '') })
+          logIpcError('providerSettings.list', e)
+        }),
+    []
+  )
   useEffect(() => {
     load()
   }, [load])
@@ -62,8 +88,18 @@ export const ProviderSettings: React.FC = () => {
     () =>
       window.pocketai
         .listDelegateCapabilities()
-        .then((list) => { if (!hasIpcFailed(list)) setCaps(Object.fromEntries(list.map((e) => [e.key, e]))) })
-        .catch(reportIpcError('providerSettings.listDelegateCaps')),
+        .then((list) => {
+          if (hasIpcFailed(list)) {
+            setCapsUnread({ error: list.error })
+            return
+          }
+          setCapsUnread(null)
+          setCaps(Object.fromEntries(list.map((e) => [e.key, e])))
+        })
+        .catch((e: unknown) => {
+          setCapsUnread({ error: errText(e, '') })
+          logIpcError('providerSettings.listDelegateCaps', e)
+        }),
     []
   )
   useEffect(() => {
@@ -283,7 +319,20 @@ export const ProviderSettings: React.FC = () => {
           </button>
         </div>
         <div className="space-y-1 overflow-y-auto">
-          {providers.length === 0 && (
+          {/* §271：读不到就不摆「尚未配置，点击「新增」」那张脸（它说的正是"你一台都没配"） */}
+          {providersUnread && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+              <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+              <button
+                data-testid="provider-settings-providers-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={() => void load()}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
+          {providers.length === 0 && !providersUnread && (
             <p className="text-xs text-[var(--color-text-muted)]">{t('provider.empty')}</p>
           )}
           {providers.map((p) => (
@@ -383,6 +432,20 @@ export const ProviderSettings: React.FC = () => {
             </Field>
 
             <Field label={t('provider.f.cached', { n: editing.models.length })}>
+              {/* §271：那一读失败时每行模型后面那枚徽标整块不出现＝把"读不到判定"演成"这台从没探过"（判定其实存在库里）。
+                  那颗「探测能否派活」不是这一发的出口（它是三发真请求，不是重读清单）⇒ 这里给一颗自己的键 */}
+              {capsUnread && (
+                <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <LoadFailNotice what={t('common.capabilityVerdicts')} msg={ipcFailText(capsUnread, t('common.unknownError'))} />
+                  <button
+                    data-testid="provider-settings-caps-retry"
+                    className="text-xs underline text-[var(--color-text-muted)]"
+                    onClick={loadCaps}
+                  >
+                    {t('agent.retryRead')}
+                  </button>
+                </div>
+              )}
               <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto p-2 rounded bg-[var(--color-input-bg)] border border-[var(--color-border)]">
                 {editing.models.length === 0 ? (
                   <span className="text-xs text-[var(--color-text-muted)]">{t('provider.noCached')}</span>

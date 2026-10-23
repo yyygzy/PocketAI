@@ -1,7 +1,7 @@
 // Channels（IM Bot 网关：多网关）
 // 5 个网关：Telegram / 飞书 / 钉钉 / Slack / Discord，全部主动拉取消息
 // 凭据明文仅存主进程，渲染端只拿 hasPrimary/hasSecondary 标记（不回显）
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -12,7 +12,8 @@ import type {
 import { CHANNEL_TYPES } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
-import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
+import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { errText } from '../../../utils/error'
 import { StatusDot, MiniBtn } from '../ui'
 import { useConfirm } from '../../../components/ConfirmDialog'
@@ -31,14 +32,55 @@ export const ChannelsPanel: React.FC = () => {
   const [secondaryDraft, setSecondaryDraft] = useState('')
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
+  /**
+   * §271：这两发都在挂载读，失败侧过去只有 `if (!hasIpcFailed(v)) 写 state`＝什么都不做
+   * ⇒ 两枚下拉里只剩占位项（「未绑定助手」「请选择服务商」），把通道故障演成"你一个助手／服务商都没建"。
+   * 这一屏没有任何天然重发点（切网关类型不会重拉这两份清单）⇒ 各配一颗重试键（§268 口径）。
+   */
+  const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
+  const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
+
+  const loadProviders = useCallback(() => {
+    window.pocketai.listProviders()
+      .then((ps) => {
+        if (hasIpcFailed(ps)) {
+          setProvidersUnread({ error: ps.error })
+          return
+        }
+        setProvidersUnread(null)
+        setProviders(ps.filter((p) => p.enabled))
+      })
+      .catch((e: unknown) => {
+        setProvidersUnread({ error: errText(e, '') })
+        logIpcError('channels.listProviders', e)
+      })
+  }, [])
+
+  const loadAssistants = useCallback(() => {
+    window.pocketai.listAssistants()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setAssistantsUnread({ error: v.error })
+          return
+        }
+        setAssistantsUnread(null)
+        setAssistants(v)
+      })
+      .catch((e: unknown) => {
+        setAssistantsUnread({ error: errText(e, '') })
+        logIpcError('channels.listAssistants', e)
+      })
+  }, [])
 
   useEffect(() => {
     void loadAllConfigs()
-    window.pocketai.listProviders().then((ps) => { if (!hasIpcFailed(ps)) setProviders(ps.filter((p) => p.enabled)) }).catch(reportIpcError('channels.listProviders'))
-    window.pocketai.listAssistants().then((v) => { if (!hasIpcFailed(v)) setAssistants(v) }).catch(reportIpcError('channels.listAssistants'))
+    loadProviders()
+    loadAssistants()
     return window.pocketai.onChannelStatus((evt) =>
       setStatuses((prev) => ({ ...prev, [evt.type]: evt }))
     )
+    // 三发都是挂载那一次的读；两根 loader 是 useCallback([]) ⇒ 依赖恒稳
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadAllConfigs = async (): Promise<void> => {
@@ -356,6 +398,19 @@ export const ChannelsPanel: React.FC = () => {
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
+          {/* §271：读不到就说读不到——「未绑定助手」那一项不是"你没有助手"的证据。键在 alert 盒子外面（§268） */}
+          {assistantsUnread && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+              <button
+                data-testid="channels-assistants-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={loadAssistants}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
         </div>
         <div>
           <div className="text-xs text-[var(--color-text-muted)] mb-1">{t('channel.model')}</div>
@@ -369,6 +424,19 @@ export const ChannelsPanel: React.FC = () => {
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
+          {/* §271：这一发失败还会连带让下面那枚「模型」下拉整块不出现（`selectedProvider` 只能是 null）⇒ 那句要自己说清楚是哪一格读不到 */}
+          {providersUnread && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+              <button
+                data-testid="channels-providers-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={loadProviders}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
         </div>
       </div>
       {selectedProvider && (
