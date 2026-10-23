@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { AssistantEditor } from './AssistantEditor'
-import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 
@@ -28,10 +29,31 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
   const [view, setView] = useState<View>(initialDetailId ? { mode: 'detail', id: initialDetailId } : { mode: 'grid' })
   const { notice: toast, show: flash } = useTransientNotice<string>(2000)
 
-  const load = () => window.pocketai.listAssistants().then((v) => { if (!hasIpcFailed(v)) setAssistants(v) }).catch(reportIpcError('assistantMarket.list'))
+  /**
+   * §273：这一发读失败时，市场网格整片空白（这一屏连「真的没有」那句都没有）⇒ 把通道故障演成"一个助手都没有"。
+   * 出路只有"关掉市场再开一次"，而市场里可能正在编辑／详情视图里看东西，按 §268 判据算"代价大到等于没出口"⇒ 配一颗重试键。
+   */
+  const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
+
+  const load = useCallback(() => {
+    window.pocketai
+      .listAssistants()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setAssistantsUnread({ error: v.error })
+          return
+        }
+        setAssistantsUnread(null)
+        setAssistants(v)
+      })
+      .catch((e: unknown) => {
+        setAssistantsUnread({ error: errText(e, '') })
+        logIpcError('assistantMarket.list', e)
+      })
+  }, [])
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
   const current = view.mode === 'detail' || view.mode === 'edit'
     ? assistants.find((a) => a.id === view.id) ?? null
@@ -114,6 +136,20 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
 
         {/* 内容 */}
         <div className="flex-1 overflow-y-auto p-5">
+          {/* §273：读不到就说读不到——这一片空白不是"你一个助手都没建"（这一屏原本连「真的没有」那句话都没有）。
+              键在 alert 盒子外面（§268），那句的 textContent 才是纯句子。 */}
+          {view.mode === 'grid' && assistantsUnread && (
+            <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+              <button
+                data-testid="assistant-market-assistants-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={load}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           {view.mode === 'grid' && (
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
               {assistants.map((a) => (

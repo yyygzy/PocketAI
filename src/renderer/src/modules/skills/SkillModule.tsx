@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { reportIpcError, hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
 import { SkillMarket } from './SkillMarket'
@@ -361,10 +362,34 @@ const SkillForm: React.FC<{
   const [showTemplates, setShowTemplates] = useState(false)
   const [templates, setTemplates] = useState<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>>([])
 
-  // 加载模板列表（后台刷新，失败仅记诊断日志，保持空列表不影响 UI）
-  useEffect(() => {
-    window.pocketai.getSkillTemplates().then((v) => { if (!hasIpcFailed(v)) setTemplates(v) }).catch(reportIpcError('skills.getTemplates'))
+  /**
+   * §273：改前这里的注释写着「失败仅记诊断日志，保持空列表不影响 UI」——**这条是错的**，回读 JSX 后改口：
+   * 模板入口那一整块的条件是 `!skill && templates.length > 0`，失败时列表停在 `[]`
+   * ⇒ 新建技能表单里那颗「+ 从模板创建」**整颗消失**＝把"模板读不到"演成"没有模板可用"，
+   * 而且抹掉的是入口本身，用户连试都没法试。这一发只有挂载一处读 ⇒ 配一颗重试键，那句挂在入口原位。
+   */
+  const [templatesUnread, setTemplatesUnread] = useState<{ error?: string } | null>(null)
+
+  const loadTemplates = useCallback(() => {
+    window.pocketai
+      .getSkillTemplates()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setTemplatesUnread({ error: v.error })
+          return
+        }
+        setTemplatesUnread(null)
+        setTemplates(v)
+      })
+      .catch((e: unknown) => {
+        setTemplatesUnread({ error: errText(e, '') })
+        logIpcError('skills.getTemplates', e)
+      })
   }, [])
+
+  useEffect(() => {
+    loadTemplates()
+  }, [loadTemplates])
 
   // 实时校验（防抖 500ms）
   useEffect(() => {
@@ -463,7 +488,22 @@ const SkillForm: React.FC<{
       )}
 
       {/* 模板选择 */}
-      {!skill && templates.length > 0 && (
+      {!skill && templatesUnread && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice
+            what={t('common.skillTemplatesList')}
+            msg={ipcFailText(templatesUnread, t('common.unknownError'))}
+          />
+          <button
+            data-testid="skill-form-templates-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={loadTemplates}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
+      {!skill && !templatesUnread && templates.length > 0 && (
         <div>
           <button className="btn-ghost text-xs" onClick={() => setShowTemplates(!showTemplates)}>
             {showTemplates ? '− 收起模板' : '+ 从模板创建'}

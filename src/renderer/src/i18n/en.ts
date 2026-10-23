@@ -45,6 +45,7 @@ export const en = {
   'common.glossaryList': 'glossary',
   'common.toolsList': 'tool list',
   'common.capabilityVerdicts': 'delegation capability verdicts',
+  'common.skillTemplatesList': 'skill template list',
   'common.stopNotSent': "Stop command didn't reach the main process: {msg} (this run may still be going)",
   'common.loadFailedDefaults': 'Cannot load {what}: {msg} (the values shown are defaults)',
   'common.loadFailedOff': 'Cannot load {what}: {msg} (treated as off for now)',

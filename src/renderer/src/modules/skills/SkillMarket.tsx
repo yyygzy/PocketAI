@@ -8,7 +8,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
-import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 
 interface Props {
@@ -48,7 +50,31 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
 
   const flash = useCallback((ok: boolean, text: string) => showToast({ ok, text }), [showToast])
 
-  const load = useCallback(() => window.pocketai.listSkills().then((v) => { if (!hasIpcFailed(v)) setSkills(v) }).catch(reportIpcError('skills.list')), [])
+  /**
+   * §273：本地那一 tab 的清单读。改前失败侧是 `if (!hasIpcFailed(v)) setSkills(v)`＝什么都不做，
+   * 屏上摆「还没有任何技能，点击「导入」或新建一个吧」——把通道故障演成"你一个技能都没装"，
+   * 而这句话正好指着市场里那两颗导入键，用户会照着做第二次错的事。
+   * 这一发的出路只有"关掉整个市场再开"（`load()` 全文件只在挂载调一次，导入／启停走的是 onChanged），
+   * 按 §268 判据等于没出口 ⇒ 配一颗重试键。
+   */
+  const [skillsUnread, setSkillsUnread] = useState<{ error?: string } | null>(null)
+
+  const load = useCallback(() => {
+    window.pocketai
+      .listSkills()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setSkillsUnread({ error: v.error })
+          return
+        }
+        setSkillsUnread(null)
+        setSkills(v)
+      })
+      .catch((e: unknown) => {
+        setSkillsUnread({ error: errText(e, '') })
+        logIpcError('skills.list', e)
+      })
+  }, [])
 
   const fetchRemote = useCallback(
     async (url: string) => {
@@ -382,17 +408,32 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
             filtered.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <div className="text-3xl mb-2">{tab === 'online' ? '🌐' : '🛒'}</div>
-                <p className="text-sm text-[var(--color-text-muted)]">
-                  {tab === 'online'
-                    ? remoteLoading
-                      ? t('skill.market.loading')
-                      : remoteError
-                        ? remoteError
-                        : t('skill.market.onlineEmpty')
-                    : skills.length === 0
-                      ? t('skill.market.empty')
-                      : t('skill.market.noMatch')}
-                </p>
+                {/* §273：本地那份读不到时，「还没有任何技能…」这张脸让位（同一时刻只说一件事，§262 口径） */}
+                {!(tab === 'local' && skillsUnread) && (
+                  <p className="text-sm text-[var(--color-text-muted)]">
+                    {tab === 'online'
+                      ? remoteLoading
+                        ? t('skill.market.loading')
+                        : remoteError
+                          ? remoteError
+                          : t('skill.market.onlineEmpty')
+                      : skills.length === 0
+                        ? t('skill.market.empty')
+                        : t('skill.market.noMatch')}
+                  </p>
+                )}
+                {tab === 'local' && skillsUnread && (
+                  <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+                    <LoadFailNotice what={t('common.skillsList')} msg={ipcFailText(skillsUnread, t('common.unknownError'))} />
+                    <button
+                      data-testid="skill-market-skills-retry"
+                      className="text-xs underline text-[var(--color-text-muted)]"
+                      onClick={load}
+                    >
+                      {t('agent.retryRead')}
+                    </button>
+                  </div>
+                )}
               </div>
             ) : tab === 'local' ? (
               // 本地网格

@@ -6,7 +6,8 @@ import { useI18n } from '../../i18n'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { Notice } from './ProviderSettings'
-import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 
 export const UserMemoryPanel: React.FC = () => {
@@ -19,8 +20,28 @@ export const UserMemoryPanel: React.FC = () => {
   const { confirm, dialog } = useConfirm()
   const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(2500)
 
+  /**
+   * §273：改前失败侧是 `if (!hasIpcFailed(v)) setItems(v)`＝什么都不做 ⇒ 屏上摆「暂无记忆」，
+   * 把通道故障演成"Agent 一条都没记住、你也没手动加过"。这一发的自发重发只在 add／改／删成功之后（`refresh()`），
+   * 那是"做完别的事"而不是"想看列表"⇒ 按 §268 判据配一颗重试键。
+   */
+  const [itemsUnread, setItemsUnread] = useState<{ error?: string } | null>(null)
+
   const refresh = useCallback(() => {
-    window.pocketai.listMemories().then((v) => { if (!hasIpcFailed(v)) setItems(v) }).catch(reportIpcError('memory.list'))
+    window.pocketai
+      .listMemories()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setItemsUnread({ error: v.error })
+          return
+        }
+        setItemsUnread(null)
+        setItems(v)
+      })
+      .catch((e: unknown) => {
+        setItemsUnread({ error: errText(e, '') })
+        logIpcError('memory.list', e)
+      })
   }, [])
 
   useEffect(() => {
@@ -98,7 +119,19 @@ export const UserMemoryPanel: React.FC = () => {
         </button>
       </div>
 
-      {items.length === 0 ? (
+      {itemsUnread && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice what={t('set.memory')} msg={ipcFailText(itemsUnread, t('common.unknownError'))} />
+          <button
+            data-testid="user-memory-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={refresh}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
+      {items.length === 0 && !itemsUnread ? (
         <p className="text-xs text-[var(--color-text-muted)]">{t('set.memoryEmpty')}</p>
       ) : (
         <ul className="space-y-1.5">

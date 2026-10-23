@@ -45,6 +45,7 @@ export const zh = {
   'common.glossaryList': '术语表',
   'common.toolsList': '工具清单',
   'common.capabilityVerdicts': '委派能力判定',
+  'common.skillTemplatesList': '技能模板清单',
   'common.stopNotSent': '停止指令没送到主进程：{msg}（这一发可能还在继续）',
   'common.loadFailedDefaults': '{what}读不到：{msg}（当前显示的是默认值）',
   'common.loadFailedOff': '{what}读不到：{msg}（暂时按关闭处理）',
