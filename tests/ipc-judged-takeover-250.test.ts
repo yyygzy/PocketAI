@@ -211,7 +211,7 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 //  前两行的失败侧（`!r.ok`）靠第三行接管，但扫描器对复合条件 `r.ok && ...` 的 fallthrough 不识别。
 //  改成 error-first：`if (!r.ok) { ... return }` / `if (r.canceled) return` / `if (r.skill) { ... }`，
 //  行为不变，扫描器能识别。但扫描器仍找到 14 处设计内或待收的静默读 ⇒ CAP 维持 14）
-const SILENT_READ_CAP = 10
+const SILENT_READ_CAP = 8
 
 const STILL_SILENT_PROOF = [
   // §276 起换成这两份：ChatModule 与 ChatView 那两发已收干，再当"仍静默"的对照就是假证
@@ -311,12 +311,18 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/modules/agent/mcp/usePipSource.ts': 0,
   // §275：浮窗 payload 那一发收口（清零）。失败时界面停在初值（「暂无可用模型服务」），
   // 把"读不到"演成"你一个服务商都没配"；脸是 §222 的"整块没内容"⇒ 配 LoadFailNotice
-  'src/renderer/src/popup/PopupApp.tsx': 0
+  'src/renderer/src/popup/PopupApp.tsx': 0,
+  // §279：提醒中心取消那一颗按钮收口（清零）。改前 `if (r.ok)` 失败侧什么都不做 ⇒ 用户点了「取消」没反应；
+  // 加 else 分支 toast.error（与同组件 :143 的 rescheduleNextReminder 同形）
+  'src/renderer/src/components/RemindersModal.tsx': 0,
+  // §279：片段导出那一颗按钮收口（清零）。改前 `if (res.ok && res.path)` 失败侧什么都不做 ⇒ 用户点了「导出」没反应；
+  // 加 else 分支 toast.error（与同组件 :178 的 importPromptSnippets 同形）
+  'src/renderer/src/components/SnippetButton.tsx': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
 
-describe('§250~§278 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
+describe('§250~§279 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
   it('扫描器自证：六种判据写法各归对桶（极性写反整面就废）', () => {
     const fake = `
       const a = await f()
@@ -375,7 +381,7 @@ describe('§250~§278 第四面＋第五面：判了失败面还得接管它（�
   it('反向对照：仍静默的那几份文件必须真的在名单里（恒返回空的坏扫描器会在这里红）', () => {
     const files = new Set(SILENT.map((s) => s.file))
     for (const f of STILL_SILENT_PROOF) expect(files.has(f), `${f} 应当还有静默点`).toBe(true)
-    expect(SILENT.length, '静默名单非空').toBeGreaterThan(9)
+    expect(SILENT.length, '静默名单非空').toBeGreaterThan(7)
   })
 
   it('§250~§274 逐批收口后，这几份文件的剩余静默数与登记相符', () => {

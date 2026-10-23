@@ -166,6 +166,7 @@ export const SnippetButton: React.FC<Props> = ({ onInsert, disabled }) => {
     try {
       const res = await window.pocketai.exportPromptSnippets()
       if (res.ok && res.path) toast.success(t('snippet.exported', { path: res.path }))
+      else if (!res.ok) toast.error(t('snippet.exportFailed', { msg: res.error ?? 'unknown' }))
     } catch (e) {
       toast.error(t('common.opFailed', { msg: errText(e) }))
     }

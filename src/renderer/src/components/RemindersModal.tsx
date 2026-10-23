@@ -122,6 +122,8 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
       if (r.ok) {
         toast.success(t('reminder.center.cancelOk'))
         notifyChanged()
+      } else {
+        toast.error(t('reminder.center.cancelFail'))
       }
       await reload(tab)
     } catch (e) {
