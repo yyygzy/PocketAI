@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatTarget } from '../../../../shared/types'
 import type { CompareColumn } from './ComparisonColumns'
 import type { FocusBranch } from './ChatView'
-import { reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, logIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 /**
  * 流式会话 hook：收口 ChatModule 中散落的 6 个流式 ref（requestId/finalized/
@@ -58,11 +59,16 @@ export interface UseStreamSessionApi {
   focusNewBranch: (turnKey: string, batchId: string) => void
   /** 中止当前流式 */
   abort: () => void
+  /** §266：停止指令没送到主进程时的原因（界面挂一句；流式落定或新一轮开始即收回） */
+  stopUnread: { error?: string } | null
 }
 
 export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessionApi {
   const [liveColumns, setLiveColumns] = useState<CompareColumn[] | null>(null)
   const [focusBranch, setFocusBranch] = useState<FocusBranch | null>(null)
+  /** §266 第六面：按「停止」那一发的结果过去只交给 `.catch(reportIpcError(...))`——
+   *  而 abort 走 safeHandle，失败是**已 resolve 的 `{ok:false}`**，那条 catch 不会经过 ⇒ 屏上零字，流却还在跑。 */
+  const [stopUnread, setStopUnread] = useState<{ error?: string } | null>(null)
 
   const requestIdRef = useRef<string | null>(null)
   const finalizedRef = useRef(false)
@@ -115,6 +121,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     function finalize() {
       if (finalizedRef.current) return
       finalizedRef.current = true
+      setStopUnread(null) // §266：这一轮已经落定，那句"可能还在继续"到点了就作废（不留成新的谎）
       const convId = streamingConvRef.current
       // 成败汇总同步通知（失焦系统通知用）；缺记录按 error 保守处理
       if (convId) {
@@ -144,6 +151,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     if (requestIdRef.current) return null // 正在流式中
     const requestId = crypto.randomUUID()
     requestIdRef.current = requestId
+    setStopUnread(null) // §266：新一轮流式，上一发"停止没送到"不再作数（陈旧谎报要自己退场，§256）
     finalizedRef.current = false
     totalColumnsRef.current = targets.length
     settledCountRef.current = 0
@@ -172,11 +180,27 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     setFocusBranch({ turnKey, batchId, nonce: ++focusNonceRef.current })
   }, [])
 
+  /**
+   * §266 第六面：§224 那句注释早就写着「没停下来是要紧事（流还在跑、token 还在烧），得留痕」——
+   * 但留痕只留进了 console：abort 走 safeHandle，失败是**已 resolve 的 `{ok:false}`**，那条 `.catch(reportIpcError)` 根本不经过。
+   * 现在判它并说一句（不打断界面这条没动：流自己收尾，停止键也还在，再按一次就是重发）。
+   */
   const abort = useCallback(() => {
-    if (requestIdRef.current) {
-      // §224：不打断界面是对的，但「没停下来」是要紧事（流还在跑、token 还在烧），得留痕
-      window.pocketai.abortChat(requestIdRef.current).catch(reportIpcError('chat.abortChat'))
-    }
+    const id = requestIdRef.current
+    if (!id) return
+    window.pocketai
+      .abortChat(id)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setStopUnread({ error: r.error })
+          return
+        }
+        setStopUnread(null)
+      })
+      .catch((e: unknown) => {
+        setStopUnread({ error: errText(e, '') })
+        logIpcError('chat.abortChat', e)
+      })
   }, [])
 
   return {
@@ -186,6 +210,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     beginStream,
     failStream,
     focusNewBranch,
-    abort
+    abort,
+    stopUnread
   }
 }

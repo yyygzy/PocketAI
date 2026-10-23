@@ -16,7 +16,7 @@
 //  严版第一刀砍掉一条假阳：`OllamaPanel.tsx:144` 的 `stopTimerRef.current = null` 是**定时器句柄**，
 //  不是"在跑"这件事的状态；把它算成"自述已停"就成假阳（宽松版留着这条，用来暴露判据自己）。
 //  本批收掉目标桶那两处（`useAgentChat.ts` 的 abortAgent、`PopupApp.tsx` 的 abortChat）⇒ 目标桶归零；
-//  静默桶 7 处一条没动，逐条登记在下面。
+//  静默桶开批 7 处一条没动，逐条登记在下面（**§266 已收掉其中三颗真按钮 ⇒ 现数 4**，登记同步调小）。
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -123,20 +123,20 @@ const JUDGED = SITES.filter((s) => s.judged)
 /**
  * 等式 ratchet：
  *  · 目标桶收口后**必须为 0**——谁把 `setStreaming(false)` 放回一个不判结果的停止旁边就红；
- *  · 静默桶 7 处（本批一条没收，逐文件登记在下面；收一处就减一格，新增也红）。
+ *  · 静默桶 §265 开批 7 → §266 收掉三颗真按钮（`useStreamSession`／翻译页／绘图页的 handleStop）⇒ **现数 4**，
+ *    逐文件登记在下面（收一处减一格，新增也红）。
  */
 const LIE_CAP = 0
-const SILENT_CAP = 7
+const SILENT_CAP = 4
 
 const SILENT_PER_FILE: Record<string, number> = {
-  // 卸载清理路径上的中止：屏都已经没了，没有可谎报的对象；失败留痕在 console 是设计内（注释自己写着）。
-  // 要不要给个"离开时没停住"的提示＝待决策（用户看不见那一屏，说话没有落点）。
-  'src/renderer/src/modules/translate/TranslateModule.tsx': 2,
-  'src/renderer/src/modules/image/ImageModule.tsx': 2,
-  // 停止键那三处：不判结果、界面也不自述已停（等 DONE／ERROR 事件自己收尾）⇒ 点了没反应，待收。
-  // 与 §263 那五处同一档"待收"，本批先只收谎报那一档（立面的第一批）。
-  'src/renderer/src/modules/chat/useStreamSession.ts': 1,
+  // §266 收掉了这两份的 handleStop（停止键那发），剩下的这一发是**卸载清理路径**上的中止：
+  // 屏都已经没了，没有可谎报的对象；失败留痕在 console 是设计内（注释自己写着）。
+  // 要不要给个「离开时没停住」的提示＝待决策（用户看不见那一屏，说话没有落点）。
+  'src/renderer/src/modules/translate/TranslateModule.tsx': 1,
+  'src/renderer/src/modules/image/ImageModule.tsx': 1,
   // 拉模型那颗 ✕：`pulling` 由 `pullOllamaModel` 自己 settle 收尾，abort 失败时进度条继续走＝没自述已停。
+  // 与上面两处的区别只在于它是**用户点的键**——下一批收它时要判：那句挂在哪个屏（进度条那一行还在场）。
   'src/renderer/src/hooks/useOllamaPull.ts': 1,
   // 停止 ollama 服务：await 的结果整个丢，但 800ms 后 `refresh()` 从主进程回读真状态 ⇒ 不摆在"已停"上。
   'src/renderer/src/components/OllamaPanel.tsx': 1
@@ -181,7 +181,7 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
     expect(SILENT.length, '静默桶必须非空').toBeGreaterThan(0)
   })
 
-  it(`等式 ratchet：目标桶 ${LIE_CAP} 处（§265 开批 2 → 收两处）、静默桶 ${SILENT_CAP} 处`, () => {
+  it(`等式 ratchet：目标桶 ${LIE_CAP} 处（§265 开批 2 → 收两处）、静默桶 ${SILENT_CAP} 处（§266 再收三颗真按钮 7→4）`, () => {
     expect(LIE, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} ${s.ch}() ⇒ ${s.body}`).join('\n')}`).toHaveLength(LIE_CAP)
     expect(
       SILENT,
@@ -197,11 +197,17 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
     expect(registered, '登记表总数必须等于 CAP').toBe(SILENT_CAP)
   })
 
-  it('正向对照：本批收口的两处与既有五处正解，都必须在"判过了"那一桶里', () => {
+  it('正向对照：本批与 §266 收口的五处＋既有五处正解，都必须在"判过了"那一桶里', () => {
     const judgedFiles = JUDGED.map((s) => s.file)
     for (const f of [
+      // §265 收的两处（谎报已停那一档）
       'src/renderer/src/modules/agent/hooks/useAgentChat.ts',
       'src/renderer/src/popup/PopupApp.tsx',
+      // §266 收的三颗真按钮（点了没反应那一档）
+      'src/renderer/src/modules/chat/useStreamSession.ts',
+      'src/renderer/src/modules/translate/TranslateModule.tsx',
+      'src/renderer/src/modules/image/ImageModule.tsx',
+      // 立面之前就已是正解的那五处
       'src/renderer/src/modules/settings/ProviderSettings.tsx',
       'src/renderer/src/modules/agent/chat/AgentEvalPanel.tsx',
       'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
@@ -238,5 +244,40 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
     expect(count(PRELOAD, /abortAgent: \(requestId: string\): Promise<\{ ok: boolean; error\?: string \}>/g), 'preload 类型带失败分支').toBe(1)
     expect(count(PRELOAD, /abortChat: \(requestId: string\): Promise<\{ ok: boolean; error\?: string \}>/g), 'abortChat 同').toBe(1)
     expect(count(read('src/preload/popup.ts'), /abortChat: \(requestId: string\): Promise<\{ ok: boolean; error\?: string \}>/g), '浮窗那份也同').toBe(1)
+  })
+
+  it('§266 那三颗真按钮的形状数得出（两路各写一次 unread、开新一轮即收回、只进 console 那一形归零、不新增重试键）', () => {
+    const read = (rel: string): string =>
+      fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
+    const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
+    const HOOK = read('src/renderer/src/modules/chat/useStreamSession.ts')
+    const TR = read('src/renderer/src/modules/translate/TranslateModule.tsx')
+    const IMG = read('src/renderer/src/modules/image/ImageModule.tsx')
+    const NULL_CLEAR: Record<string, number> = { useStreamSession: 3, TranslateModule: 2, ImageModule: 2 }
+    for (const [f, src] of [['useStreamSession', HOOK], ['TranslateModule', TR], ['ImageModule', IMG]] as const) {
+      expect(count(src, /setStopUnread\(\{ error: /g), `${f}：resolve 的失败对象与 reject 各写一次`).toBe(2)
+      // 对话页那处多一处：hook 的 finalize 也要收回（那一轮落定后"还在继续"就是新的谎）
+      expect(count(src, /setStopUnread\(null\)/g), `${f}：开新一轮／落成功／落定各收回`).toBe(NULL_CLEAR[f])
+    }
+    // 旧写法：把 reject 裸交给 reportIpcError（而 safeHandle 的失败连这条都走不到）
+    expect(count(HOOK, /\.catch\(reportIpcError\('chat\.abortChat'\)\)/g), '对话页那颗停止不许再有这一形').toBe(0)
+    // 翻译／绘图各剩 **1** 处：那是**卸载清理**路径上的中止（静默桶里登记为设计内，本批没动），
+    // 按钮那发的这一形已归零 ⇒ 数字要按"剩几条"断言，不是"归零"（否则等于把登记表里的理由读漏了）
+    expect(count(TR, /\.catch\(reportIpcError\('translate\.abortTranslate'\)\)/g), '翻译页只剩卸载那一发').toBe(1)
+    expect(count(IMG, /\.catch\(reportIpcError\('image\.abortImage'\)\)/g), '绘图页只剩卸载那一发').toBe(1)
+    // 这三处**不配重试键**：流式／生成期间那颗「停止」本来就还在，再按一次就是重发（§266 的口径决定）
+    expect(count(HOOK, /retryStop|再送一次/g), '对话页不自造重试出口').toBe(0)
+    expect(count(TR, /retryStop/g), '翻译页同').toBe(0)
+    expect(count(IMG, /retryStop/g), '绘图页同').toBe(0)
+    // 那句真挂得出去：三处各自渲染（ChatModule 全仓不挂载⇒那一处只有源码级判据，hook 侧有行为用例）
+    // ⚠ 计数要盯"挂在渲染条件里"，不是"文案出现在文件里"：Z7 第一版把条件换成 `false &&` 仍能骗过按文案的计数（实测漏杀后收紧）
+    expect(count(read('src/renderer/src/modules/chat/ChatModule.tsx'), /\{stopUnread && \(\s*<div role="alert"[\s\S]{0,160}common\.stopNotSent/g), '对话页那句真挂在渲染树里（那一处只有源码级判据）').toBe(1)
+    expect(count(TR, /\{stopUnread && \(\s*<span role="alert"[\s\S]{0,160}common\.stopNotSent/g), '翻译页那句挂在 running 分支里').toBe(1)
+    expect(count(IMG, /\{stopUnread && \(\s*<span role="alert"[\s\S]{0,160}common\.stopNotSent/g), '绘图页同').toBe(1)
+    // 句子只说后果、不指出路（出路各屏自己给）——§266 把 §265 那句里的"可再送一次停止"拿掉了
+    for (const dict of ['zh', 'en', 'ja', 'ko']) {
+      const line = read(`src/renderer/src/i18n/${dict}.ts`).split('\n').find((l) => l.includes("'common.stopNotSent'")) ?? ''
+      expect(line, `${dict} 那句不再承诺一个具体的出路`).not.toMatch(/再送一次|再按一次|send it again|もう一度|다시/)
+    }
   })
 })

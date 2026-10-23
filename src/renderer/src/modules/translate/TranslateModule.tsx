@@ -66,6 +66,9 @@ export const TranslateModule: React.FC = () => {
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   /** 服务商清单那一读失败的原因（§263 第五面）：`error` 为空＝拿到了但形状不对 */
   const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
+  /** §266 第六面：停止那一发过去只有 `.catch(reportIpcError(...))`——abort 走 safeHandle，失败是已 resolve 的 `{ok:false}`，
+   *  那条 catch 不会经过 ⇒「按了停止、这一发还在跑」屏上零字。停止键此时仍在，补一句即可 */
+  const [stopUnread, setStopUnread] = useState<{ error?: string } | null>(null)
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const [sourceLang, setSourceLang] = useState<TranslateLang>('auto')
@@ -193,6 +196,7 @@ export const TranslateModule: React.FC = () => {
     const requestId = `tr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     requestIdRef.current = requestId
     runningRef.current = true
+    setStopUnread(null) // §266：新一轮翻译，上一发"停止没送到"不再作数（陈旧谎报要自己退场，§256）
     setRunState('running')
     // 清掉上一轮残留的合批缓冲，避免旧 chunk 拼到新译文
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
@@ -243,8 +247,23 @@ export const TranslateModule: React.FC = () => {
     t
   ])
 
+  /** §266：停止指令送没送到要说一句（两条失败路同一张脸；成功即收回）。不打断界面——runState 由那一发的 resolve 收尾 */
   const handleStop = useCallback(() => {
-    if (requestIdRef.current) window.pocketai.abortTranslate(requestIdRef.current).catch(reportIpcError('translate.abortTranslate'))
+    const id = requestIdRef.current
+    if (!id) return
+    window.pocketai
+      .abortTranslate(id)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setStopUnread({ error: r.error })
+          return
+        }
+        setStopUnread(null)
+      })
+      .catch((e: unknown) => {
+        setStopUnread({ error: errText(e, '') })
+        logIpcError('translate.abortTranslate', e)
+      })
   }, [])
 
   // ---------- 语言互换 ----------
@@ -552,12 +571,20 @@ export const TranslateModule: React.FC = () => {
         {/* 操作行 */}
         <div className="flex items-center gap-2">
           {running ? (
-            <button
-              className="text-xs py-1.5 px-4 rounded-md border border-[var(--color-danger)] text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] transition-colors"
-              onClick={handleStop}
-            >
-              {t('translate.stop')}
-            </button>
+            <>
+              <button
+                className="text-xs py-1.5 px-4 rounded-md border border-[var(--color-danger)] text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] transition-colors"
+                onClick={handleStop}
+              >
+                {t('translate.stop')}
+              </button>
+              {/* §266：只在 running 为真时在场——这句说的就是"这一发可能还在继续"，那一发结束后再挂着它就是新的谎 */}
+              {stopUnread && (
+                <span role="alert" className="text-xs text-[var(--color-danger)]">
+                  {t('common.stopNotSent', { msg: ipcFailText(stopUnread, t('common.unknownError')) })}
+                </span>
+              )}
+            </>
           ) : (
             <button
               className="btn-primary text-xs py-1.5 px-4"

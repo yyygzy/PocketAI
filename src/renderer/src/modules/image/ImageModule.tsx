@@ -51,6 +51,9 @@ export const ImageModule: React.FC = () => {
 
   // ---------- 请求状态 ----------
   const [running, setRunning] = useState(false)
+  // §266 第六面：这一发过去只有 `.catch(reportIpcError(...))`——而 abort 走 safeHandle，失败是**已 resolve 的 `{ok:false}`**，
+  // 那条 catch 根本不会经过 ⇒ 「按了停止、那一发还在跑」在屏上不留一个字。停止键此时仍在（running 没被动过），补一句就够，不再多加一颗键。
+  const [stopUnread, setStopUnread] = useState<{ error?: string } | null>(null)
   const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(2600)
   const requestIdRef = useRef<string | null>(null)
   const runningRef = useRef(false)
@@ -194,6 +197,7 @@ export const ImageModule: React.FC = () => {
     }
 
     setRunning(true)
+    setStopUnread(null) // §266：这是新一轮生成，上一发"停止没送到"不再作数（陈旧谎报要自己退场，§256）
     runningRef.current = true
     const requestId = `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     requestIdRef.current = requestId
@@ -243,8 +247,23 @@ export const ImageModule: React.FC = () => {
     }
   }, [enabledProviders.length, providerId, model, prompt, size, flash, t])
 
+  /** §266：停止指令送没送到，屏上要说一句（两条失败路同一张脸；成功即收回）。不打断界面——running 由那一发的 resolve 收尾 */
   const handleStop = useCallback(() => {
-    if (requestIdRef.current) window.pocketai.abortImage(requestIdRef.current).catch(reportIpcError('image.abortImage'))
+    const id = requestIdRef.current
+    if (!id) return
+    window.pocketai
+      .abortImage(id)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setStopUnread({ error: r.error })
+          return
+        }
+        setStopUnread(null)
+      })
+      .catch((e: unknown) => {
+        setStopUnread({ error: errText(e, '') })
+        logIpcError('image.abortImage', e)
+      })
   }, [])
 
   // ---------- 历史操作 ----------
@@ -362,9 +381,17 @@ export const ImageModule: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           {running ? (
-            <button className="btn-ghost text-xs" onClick={handleStop}>
-              ⏹ {t('image.stop')}
-            </button>
+            <>
+              <button className="btn-ghost text-xs" onClick={handleStop}>
+                ⏹ {t('image.stop')}
+              </button>
+              {/* §266：这句只在 running 为真时在场——它说的就是"这一发可能还在继续"，运行结束后再挂着它就是新的谎 */}
+              {stopUnread && (
+                <span role="alert" className="text-xs text-[var(--color-danger)]">
+                  {t('common.stopNotSent', { msg: ipcFailText(stopUnread, t('common.unknownError')) })}
+                </span>
+              )}
+            </>
           ) : (
             <button className="btn-primary text-xs" onClick={handleGenerate} disabled={!canGenerate}>
               🎨 {t('image.generate')}

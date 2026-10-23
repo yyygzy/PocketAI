@@ -38,7 +38,7 @@ export const ja = {
   'common.providersList': 'プロバイダー一覧',
   'common.assistantsList': 'アシスタント一覧',
   'common.modelsList': 'モデル一覧',
-  'common.stopNotSent': '停止指示をメインプロセスに送れませんでした：{msg}（この実行は続いている可能性があります。停止をもう一度送れます）',
+  'common.stopNotSent': '停止指示をメインプロセスに送れませんでした：{msg}（この実行は続いている可能性があります）',
   'common.loadFailedDefaults': '{what}を読み込めません：{msg}（表示は既定値です）',
   'common.loadFailedOff': '{what}を読み込めません：{msg}（今回はオフとして扱います）',
   'common.refreshFailed': '更新に失敗しました：{msg}（表示は直前の成功時のままです）',

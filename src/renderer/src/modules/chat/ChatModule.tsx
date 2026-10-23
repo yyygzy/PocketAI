@@ -122,7 +122,7 @@ export const ChatModule: React.FC = () => {
   // 流式会话收口：6 个流式 ref + liveColumns + focusBranch + 事件订阅全部内聚于 hook
   // 解构取稳定回调（useCallback []），避免以对象形式入 useCallback 依赖致其每渲染重建
   const {
-    liveColumns, focusBranch, isStreaming, beginStream, failStream, focusNewBranch, abort
+    liveColumns, focusBranch, isStreaming, beginStream, failStream, focusNewBranch, abort, stopUnread
   } = useStreamSession({
     loadMessages,
     reloadConversations,
@@ -1460,6 +1460,14 @@ export const ChatModule: React.FC = () => {
           >
             {t('agent.retryRead')}
           </button>
+        </div>
+      )}
+      {/* §266 第六面：「停止」没送到主进程⇒流还在跑、token 还在烧，屏上却零字（旧写法那条 `.catch` 对 safeHandle 的
+          失败对象是死代码）。这一处**不再配一颗重试键**：流式期间 Composer 里那颗「停止」本来就还在，再按一次就是重发；
+          句子也随流式落定自己作废（hook 的 finalize）。ChatModule 全仓不挂载⇒这句同样**只有源码级判据**，hook 那侧有行为用例。 */}
+      {stopUnread && (
+        <div role="alert" className="text-xs text-[var(--color-danger)]">
+          {t('common.stopNotSent', { msg: ipcFailText(stopUnread, t('common.unknownError')) })}
         </div>
       )}
       <ChatView

@@ -39,7 +39,7 @@ export const zh = {
   'common.providersList': '服务商列表',
   'common.assistantsList': '助手列表',
   'common.modelsList': '模型清单',
-  'common.stopNotSent': '停止指令没送到主进程：{msg}（这一发可能还在继续，可再送一次停止）',
+  'common.stopNotSent': '停止指令没送到主进程：{msg}（这一发可能还在继续）',
   'common.loadFailedDefaults': '{what}读不到：{msg}（当前显示的是默认值）',
   'common.loadFailedOff': '{what}读不到：{msg}（暂时按关闭处理）',
   'common.refreshFailed': '刷新失败：{msg}（界面停在上一份）',

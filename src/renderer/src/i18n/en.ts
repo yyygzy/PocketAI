@@ -39,7 +39,7 @@ export const en = {
   'common.providersList': 'provider list',
   'common.assistantsList': 'assistant list',
   'common.modelsList': 'model list',
-  'common.stopNotSent': "Stop command didn't reach the main process: {msg} (this run may still be going; you can send it again)",
+  'common.stopNotSent': "Stop command didn't reach the main process: {msg} (this run may still be going)",
   'common.loadFailedDefaults': 'Cannot load {what}: {msg} (the values shown are defaults)',
   'common.loadFailedOff': 'Cannot load {what}: {msg} (treated as off for now)',
   'common.refreshFailed': 'Refresh failed: {msg} (the view still shows the last good load)',
