@@ -149,8 +149,10 @@ export const StewardModule: React.FC = () => {
       setHealthFail(null)
       setHealth(report.data)
       // 静默刷新诊断结果（孤儿数据可能已被清除）
-      // §255 复核：这一发是"顺带更新"，上一份诊断仍在屏上、清理本身已经 toast 过 ⇒ 设计内静默，
-      // 但闸门的单条 if 视角看不见这段注释，所以它仍留在 CAP 名单里计数（同 §251 的 995／1450 两档）
+      // §255 复核：这一发是"顺带更新"⇒ 设计内静默。§268 按实测改口两处原话：
+      //  · 清理的可见回执是上面那块 `cleanupResult` 结果面板（:142 写／:682 渲染），不是 toast；
+      //  · "上一份诊断还在屏上"只在用户先前手动跑过诊断时成立，否则那一块整块不出现（fail-closed）。
+      // 闸门的单条 if 视角看不见这段注释，所以它仍留在 CAP 名单里计数（同 §251 的 995／1450 两档）
       window.pocketai.runDiagnose().then((r) => {
         if (r.ok && r.data) setDiagnose(r.data)
       }).catch(reportIpcError('steward.runDiagnose'))

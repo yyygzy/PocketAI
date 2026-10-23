@@ -18,7 +18,8 @@ import {
 import { getMentionQuery, filterMentionKbs } from '../../../utils/mention'
 import { extractTemplateVars } from '../../../utils/snippet-template'
 import type { KnowledgeBase, PromptSnippetRecord } from '../../../../../shared/types'
-import { hasIpcFailed, reportIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
+import { errText } from '../../../utils/error'
 
 interface Props {
   running: boolean
@@ -63,6 +64,9 @@ export const AgentComposer: React.FC<Props> = ({
   // 用户片段（首次触发时惰性拉取）
   const snippetsRef = useRef<PromptSnippetRecord[] | null>(null)
   const [snippetsReady, setSnippetsReady] = useState(0) // 仅作刷新信号
+  // §268：这两发惰性读失败时以前整组清单原地消失（`/` 只剩内置、@ 的知识库组不见），屏上零字。
+  // 各挂一句、各给一次重试——入口是打字，而 ref 的占位是防"每次渲染重拉一趟"的刻意设计（§221），所以句子必须自带出口
+  const [snippetsFail, setSnippetsFail] = useState<{ error?: string } | null>(null)
 
   // 变量填充态
   const [varSnippet, setVarSnippet] = useState<PromptSnippetRecord | null>(null)
@@ -72,6 +76,7 @@ export const AgentComposer: React.FC<Props> = ({
   const [mentionIndex, setMentionIndex] = useState(0)
   // 知识库列表（首次触发时惰性拉取）
   const kbsRef = useRef<KnowledgeBase[] | null>(null)
+  const [kbsFail, setKbsFail] = useState<{ error?: string } | null>(null)
 
   // 内置指令（随界面语言变化）
   const builtins = useMemo<SlashCommand[]>(() => buildBuiltinSlashCommands(t), [t])
@@ -121,19 +126,36 @@ export const AgentComposer: React.FC<Props> = ({
   }, [mentionInfo?.query])
 
   // 首次进入 @ 触发态时惰性拉取知识库列表
+  const loadKbs = useCallback(() => {
+    if (kbsRef.current !== null) return
+    kbsRef.current = [] // 占位防并发重复拉取
+    window.pocketai.listKnowledgeBases()
+      .then((list) => {
+        // §221：失败不能把 `{ok:false}` 写进 ref（读它的那句 `.map` 崩）。
+        // 也**不能**清回 null——这根 effect 的依赖 `mentionInfo` 是每次渲染新建的对象，
+        // 清 null 就变成"每次渲染重拉一趟"（真挂载用例里量到过：输入框卡死在转圈）
+        if (hasIpcFailed(list)) {
+          setKbsFail({ error: list.error })
+          return
+        }
+        kbsRef.current = list
+        setKbsFail(null)
+      })
+      .catch((e: unknown) => {
+        setKbsFail({ error: errText(e, '') })
+        logIpcError('agent.listKnowledgeBases', e)
+      })
+  }, [])
+
   useEffect(() => {
-    if (mentionInfo && kbsRef.current === null) {
-      kbsRef.current = [] // 占位防并发重复拉取
-      window.pocketai.listKnowledgeBases()
-        .then((list) => {
-          // §221：失败不能把 `{ok:false}` 写进 ref（读它的那句 `.map` 崩）。
-          // 也**不能**清回 null——这根 effect 的依赖 `mentionInfo` 是每次渲染新建的对象，
-          // 清 null 就变成"每次渲染重拉一趟"（真挂载用例里量到过：输入框卡死在转圈）
-          if (!hasIpcFailed(list)) kbsRef.current = list
-        })
-        .catch(reportIpcError('agent.listKnowledgeBases'))
-    }
-  }, [mentionInfo])
+    if (mentionInfo) loadKbs()
+  }, [mentionInfo, loadKbs])
+
+  // §268 重试：只有点这句上的键才清占位（effect 那条"非 null 就不重拉"的防重逻辑照旧）
+  const retryKbs = (): void => {
+    kbsRef.current = null
+    loadKbs()
+  }
 
   // 过滤结果变化时高亮回到第一项
   useEffect(() => {
@@ -146,10 +168,20 @@ export const AgentComposer: React.FC<Props> = ({
       window.pocketai.listPromptSnippets()
         .then((list) => {
           // §221：失败不写进 ref（读它的那句 `.map` 崩）；ref 保持 null ⇒ 下次进触发态自己会重拉
-          if (!hasIpcFailed(list)) snippetsRef.current = list
+          if (hasIpcFailed(list)) {
+            setSnippetsFail({ error: list.error })
+          } else {
+            snippetsRef.current = list
+            setSnippetsFail(null)
+          }
           setSnippetsReady((n) => n + 1)
         })
-        .catch(reportIpcError('agent.listPromptSnippets'))
+        .catch((e: unknown) => {
+          // 同上：这里**不配重试键**——退出再进入触发态就会自己重拉（ref 没被占位写死），句子只说后果
+          setSnippetsFail({ error: errText(e, '') })
+          setSnippetsReady((n) => n + 1)
+          logIpcError('agent.listPromptSnippets', e)
+        })
     }
   }, [trigger])
 
@@ -422,6 +454,24 @@ export const AgentComposer: React.FC<Props> = ({
               >×</button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* §268：两发惰性读各挂一句，各自独立成行（不互相挂靠、也不挂在菜单浮层里——浮层一关句子就没了＝替这次失败闭嘴）。
+          知识库那句带一次重试（它的 ref 被占位写死，再打字不会重拉）；片段那句**不带键**（它的 ref 失败时仍是 null，
+          退出再进入触发态自己会重拉＝天然出口，多一颗键是多余机关，同 §266 那三处的道理） */}
+      {/* 键放在 `role="alert"` 外面 ⇒ 那句的 textContent 是纯句子，用例可整值比（§264 的教训） */}
+      {kbsFail && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span role="alert" className="text-xs text-[var(--color-danger)]">
+            {t('common.loadFailedNamed', { what: t('common.kbList'), msg: ipcFailText(kbsFail, t('common.unknownError')) })}
+          </span>
+          <button data-testid="agent-composer-kbs-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={retryKbs}>{t('agent.retryRead')}</button>
+        </div>
+      )}
+      {snippetsFail && (
+        <div role="alert" className="text-xs text-[var(--color-danger)]">
+          {t('common.loadFailedNamed', { what: t('common.snippetList'), msg: ipcFailText(snippetsFail, t('common.unknownError')) })}
         </div>
       )}
 

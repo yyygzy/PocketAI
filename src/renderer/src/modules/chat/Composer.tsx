@@ -15,7 +15,8 @@ import {
 } from '../../utils/snippet-slash'
 import { getMentionQuery, filterMentionKbs, filterMentionFiles } from '../../utils/mention'
 import type { ChatAttachment, KnowledgeBase, MessageRecord, PromptSnippetRecord } from '../../../../shared/types'
-import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 interface Props {
   streaming: boolean
@@ -69,6 +70,10 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
   // 用户片段（首次触发时惰性拉取；ref 存数据防重复请求，ready 仅作刷新信号）
   const snippetsRef = useRef<PromptSnippetRecord[] | null>(null)
   const [snippetsReady, setSnippetsReady] = useState(0)
+  // §268：这两发惰性读失败时以前整组清单**原地消失**（`/` 只剩内置指令、`#` 与 @ 的知识库组空着），
+  // 屏上既不说"没读到"也不说"没有"。各挂一句、各给一次重试（重试必须自带：入口是打字，
+  // 而 ref 的占位是 §221 量过的"清回 null 就每次渲染重拉、输入框卡死在转圈"，不能靠再打一次字重发）
+  const [snippetsFail, setSnippetsFail] = useState<{ error?: string } | null>(null)
   // 片段变量填充态（含 {{var}} 的片段选中后先收集变量再插入）
   const [varSnippet, setVarSnippet] = useState<PromptSnippetRecord | null>(null)
 
@@ -77,6 +82,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
   const [mentionIndex, setMentionIndex] = useState(0)
   // 知识库列表（首次触发时惰性拉取）
   const kbsRef = useRef<KnowledgeBase[] | null>(null)
+  const [kbsFail, setKbsFail] = useState<{ error?: string } | null>(null)
 
   // 内置斜杠指令（label/template 随界面语言）
   const builtins = useMemo<SlashCommand[]>(() => buildBuiltinSlashCommands(t), [t])
@@ -131,19 +137,30 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
   }, [mentionInfo?.query])
 
   // 首次进入 @ 触发态时惰性拉取知识库列表
+  const loadKbs = useCallback(() => {
+    if (kbsRef.current !== null) return
+    kbsRef.current = [] // 占位防并发重复拉取
+    window.pocketai.listKnowledgeBases()
+      .then((list) => {
+        // §221：失败不能把 `{ok:false}` 写进 ref（读它的那句 `.map`／`.find` 崩）。
+        // 也**不能**在这里清回 null——这根 effect 的依赖 `mentionInfo` 是每次渲染新建的对象，
+        // 清 null 就变成"每次渲染重拉一趟"（真挂载用例里量到过：输入框直接卡死在转圈）
+        if (hasIpcFailed(list)) {
+          setKbsFail({ error: list.error })
+          return
+        }
+        kbsRef.current = list
+        setKbsFail(null)
+      })
+      .catch((e: unknown) => {
+        setKbsFail({ error: errText(e, '') })
+        logIpcError('chat.listKnowledgeBases', e)
+      })
+  }, [])
+
   useEffect(() => {
-    if (mentionInfo && kbsRef.current === null) {
-      kbsRef.current = [] // 占位防并发重复拉取
-      window.pocketai.listKnowledgeBases()
-        .then((list) => {
-          // §221：失败不能把 `{ok:false}` 写进 ref（读它的那句 `.map`／`.find` 崩）。
-          // 也**不能**在这里清回 null——这根 effect 的依赖 `mentionInfo` 是每次渲染新建的对象，
-          // 清 null 就变成"每次渲染重拉一趟"（真挂载用例里量到过：输入框直接卡死在转圈）
-          if (!hasIpcFailed(list)) kbsRef.current = list
-        })
-        .catch(reportIpcError('chat.listKnowledgeBases'))
-    }
-  }, [mentionInfo])
+    if (mentionInfo) loadKbs()
+  }, [mentionInfo, loadKbs])
 
   // 触发词变化时高亮回到第一项
   useEffect(() => {
@@ -151,18 +168,41 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
   }, [triggerInfo?.query])
 
   // 首次进入触发态时惰性拉取片段列表
-  useEffect(() => {
-    if (triggerInfo && snippetsRef.current === null) {
-      snippetsRef.current = [] // 占位防并发重复拉取
-      window.pocketai.listPromptSnippets()
-        .then((list) => {
-          // §221：失败不写进 ref（读它的那句 `.map` 崩）；不清回 null——那会让这根 effect 每次渲染重拉一趟
-          if (!hasIpcFailed(list)) snippetsRef.current = list
+  const loadSnippets = useCallback(() => {
+    if (snippetsRef.current !== null) return
+    snippetsRef.current = [] // 占位防并发重复拉取
+    window.pocketai.listPromptSnippets()
+      .then((list) => {
+        // §221：失败不写进 ref（读它的那句 `.map` 崩）；不清回 null——那会让这根 effect 每次渲染重拉一趟
+        if (hasIpcFailed(list)) {
+          setSnippetsFail({ error: list.error })
           setSnippetsReady((n) => n + 1)
-        })
-        .catch(reportIpcError('chat.listPromptSnippets'))
-    }
-  }, [triggerInfo])
+          return
+        }
+        snippetsRef.current = list
+        setSnippetsFail(null)
+        setSnippetsReady((n) => n + 1)
+      })
+      .catch((e: unknown) => {
+        setSnippetsFail({ error: errText(e, '') })
+        setSnippetsReady((n) => n + 1)
+        logIpcError('chat.listPromptSnippets', e)
+      })
+  }, [])
+
+  useEffect(() => {
+    if (triggerInfo) loadSnippets()
+  }, [triggerInfo, loadSnippets])
+
+  // §268 重试：只有点这句上的键才清占位（effect 那条"非 null 就不重拉"的防重逻辑照旧）
+  const retryKbs = (): void => {
+    kbsRef.current = null
+    loadKbs()
+  }
+  const retrySnippets = (): void => {
+    snippetsRef.current = null
+    loadSnippets()
+  }
 
   // draftKey 变化（切会话）或 draft 异步加载到达：提交旧会话 → 回填新会话草稿。
   // 同一次渲染内 draft 已随父级清空为 ''，异步加载完成后再次触发本 effect。
@@ -536,6 +576,26 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
             </button>
+          </div>
+        )}
+
+        {/* §268：这两发惰性读各挂一句、各带一次重试——各自独立成行，不挂在对方的块里，也不挂在菜单浮层里
+            （浮层一关句子就没了＝替这次失败闭嘴；常驻到读到为止才是这句的本分，同 §258／§264 那块口径）。
+            键放在 `role="alert"` 那个盒子**外面**：那样那句的 textContent 就是纯句子，用例能整值比（§264 的教训是键在盒子里时 textContent 会带上「重试」二字） */}
+        {kbsFail && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span role="alert" className="text-xs text-[var(--color-danger)]">
+              {t('common.loadFailedNamed', { what: t('common.kbList'), msg: ipcFailText(kbsFail, t('common.unknownError')) })}
+            </span>
+            <button data-testid="composer-kbs-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={retryKbs}>{t('agent.retryRead')}</button>
+          </div>
+        )}
+        {snippetsFail && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span role="alert" className="text-xs text-[var(--color-danger)]">
+              {t('common.loadFailedNamed', { what: t('common.snippetList'), msg: ipcFailText(snippetsFail, t('common.unknownError')) })}
+            </span>
+            <button data-testid="composer-snippets-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={retrySnippets}>{t('agent.retryRead')}</button>
           </div>
         )}
 

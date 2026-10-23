@@ -4,8 +4,9 @@
 import React, { useState } from 'react'
 import type { AssistantRecord, KnowledgeBase, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { hasIpcFailed, ipcFailText, isIpcFail, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, isIpcFail, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useToast } from '../../components/ToastProvider'
 
 interface Props {
@@ -22,13 +23,41 @@ export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }
   const [section, setSection] = useState<Section>(null)
   const [skills, setSkills] = useState<SkillRecord[] | null>(null)
   const [kbs, setKbs] = useState<KnowledgeBase[] | null>(null)
+  // §268：这两发是"点开那一格才惰性拉"，失败侧以前什么都不写 ⇒ 面板整片空白（连「暂无可选项」那句都不出现），
+  // 把"没读到"演成"这里没东西"。现在各挂一句、逐发点名；**不配重试键**——再点那一格就是重发（`=== null` 那道守卫天然留着）
+  const [skillsFail, setSkillsFail] = useState<{ error?: string } | null>(null)
+  const [kbsFail, setKbsFail] = useState<{ error?: string } | null>(null)
 
   const toggleSection = async (s: Exclude<Section, null>) => {
     setSection((prev) => (prev === s ? null : s))
     if (s === 'skills' && skills === null) {
-      window.pocketai.listSkills().then((v) => { if (!hasIpcFailed(v)) setSkills(v) }).catch(reportIpcError('chatConfig.listSkills'))
+      window.pocketai.listSkills()
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setSkillsFail({ error: v.error })
+            return
+          }
+          setSkillsFail(null)
+          setSkills(v)
+        })
+        .catch((e: unknown) => {
+          setSkillsFail({ error: errText(e, '') })
+          logIpcError('chatConfig.listSkills', e)
+        })
     } else if (s === 'kb' && kbs === null) {
-      window.pocketai.listKnowledgeBases().then((v) => { if (!hasIpcFailed(v)) setKbs(v) }).catch(reportIpcError('chatConfig.listKnowledgeBases'))
+      window.pocketai.listKnowledgeBases()
+        .then((v) => {
+          if (hasIpcFailed(v)) {
+            setKbsFail({ error: v.error })
+            return
+          }
+          setKbsFail(null)
+          setKbs(v)
+        })
+        .catch((e: unknown) => {
+          setKbsFail({ error: errText(e, '') })
+          logIpcError('chatConfig.listKnowledgeBases', e)
+        })
     }
   }
 
@@ -116,24 +145,38 @@ export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }
               {assistant.isBuiltin ? (
                 <p className="text-xs text-[var(--color-text-muted)]">{t('ccb.builtinHint')}</p>
               ) : section === 'skills' ? (
-                skills === null ? null : skills.length === 0 ? (
-                  <p className="text-xs text-[var(--color-text-muted)]">{t('ccb.none')}</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {skills.map((s) => (
-                      <button
-                        key={s.id}
-                        className={chipCls(assistant.skillIds?.includes(s.id) ?? false)}
-                        title={s.description}
-                        onClick={() => toggleId('skillIds', s.id)}
-                      >
-                        {s.icon} {s.name}
-                      </button>
-                    ))}
-                  </div>
-                )
+                <>
+                  {skillsFail && (
+                    <LoadFailNotice
+                      what={t('common.skillsList')}
+                      msg={ipcFailText(skillsFail, t('common.unknownError'))}
+                    />
+                  )}
+                  {skills === null ? null : skills.length === 0 ? (
+                    <p className="text-xs text-[var(--color-text-muted)]">{t('ccb.none')}</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {skills.map((s) => (
+                        <button
+                          key={s.id}
+                          className={chipCls(assistant.skillIds?.includes(s.id) ?? false)}
+                          title={s.description}
+                          onClick={() => toggleId('skillIds', s.id)}
+                        >
+                          {s.icon} {s.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               ) : (
                 <>
+                  {kbsFail && (
+                    <LoadFailNotice
+                      what={t('common.kbList')}
+                      msg={ipcFailText(kbsFail, t('common.unknownError'))}
+                    />
+                  )}
                   {kbs === null ? null : kbs.length === 0 ? (
                     <p className="text-xs text-[var(--color-text-muted)]">{t('ccb.none')}</p>
                   ) : (
