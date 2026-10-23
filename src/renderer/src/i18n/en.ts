@@ -215,6 +215,7 @@ export const en = {
   'unlock.tooManyAttempts': 'Too many attempts. Please wait {s}s before retrying.',
 
   // ── Chat: list / import / export ──
+  'chat.pricing': 'Pricing config',
   'chat.searchPlaceholder': '🔍 Search messages…',
   'chat.filterConversations': 'Filter conversations…',
   'chat.newConversation': '+ New chat',

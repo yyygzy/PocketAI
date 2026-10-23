@@ -200,6 +200,7 @@ export const ko = {
   'unlock.hidePwd': '비밀번호 숨기기',
   'unlock.lockStateUnread': '잠금 상태를 불러오지 못했습니다: {msg} (아래 버튼은 잠기지 않은 것으로 표시되지만, 제출 시 메인 프로세스가 다시 제한합니다)',
   'unlock.tooManyAttempts': '시도 횟수가 너무 많습니다. {s}초 후에 다시 시도하세요',
+  'chat.pricing': '단가 설정',
   'chat.searchPlaceholder': '🔍 메시지 검색…',
   'chat.filterConversations': '대화 필터링…',
   'chat.newConversation': '+ 새 채팅',

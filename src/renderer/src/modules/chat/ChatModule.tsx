@@ -51,6 +51,8 @@ export const ChatModule: React.FC = () => {
   const { confirm, dialog } = useConfirm()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
+  // 助手清单那一读失败的原因（§276）：列表停在空值，把"读不到"演成"你一个助手都没建"
+  const [assistantsUnread, setAssistantsUnread] = useState<{ error: string } | null>(null)
   const [currentAssistantId, setCurrentAssistantId] = useState<string>('asst-default')
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
@@ -116,8 +118,18 @@ export const ChatModule: React.FC = () => {
   )
 
   const reloadAssistants = useCallback(() => {
-    return window.pocketai.listAssistants().then((v) => { if (!hasIpcFailed(v)) setAssistants(v) }).catch(reportIpcError('chat.listAssistants'))
-  }, [])
+    return window.pocketai.listAssistants().then((v) => {
+      if (hasIpcFailed(v)) {
+        setAssistantsUnread({ error: ipcFailText(v, t('common.unknownError')) })
+        return
+      }
+      setAssistantsUnread(null)
+      setAssistants(v)
+    }).catch((e) => {
+      setAssistantsUnread({ error: errText(e, t('common.unknownError')) })
+      reportIpcError('chat.listAssistants')(e)
+    })
+  }, [t])
 
   // 流式会话收口：6 个流式 ref + liveColumns + focusBranch + 事件订阅全部内聚于 hook
   // 解构取稳定回调（useCallback []），避免以对象形式入 useCallback 依赖致其每渲染重建
@@ -1409,6 +1421,20 @@ export const ChatModule: React.FC = () => {
           onExport={() => void handleExportAssistants()}
           onImport={() => void handleImportAssistants()}
         />
+        {assistantsUnread && (
+          <div className="px-3 py-2 border-b border-[var(--color-border)]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice what={t('common.assistantsList')} msg={assistantsUnread.error} />
+              <button
+                data-testid="assistants-retry"
+                className="btn-ghost text-[11px] py-0.5 px-2 shrink-0"
+                onClick={() => void reloadAssistants()}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex-1 min-h-0 flex flex-col">
           <ConversationList
             conversations={conversations}

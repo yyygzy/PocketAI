@@ -215,6 +215,7 @@ export const zh = {
   'unlock.tooManyAttempts': '尝试次数过多，请等待 {s} 秒后再试',
 
   // ── 对话模块：会话列表/导入导出 ──
+  'chat.pricing': '单价配置',
   'chat.searchPlaceholder': '🔍 搜索消息…',
   'chat.filterConversations': '过滤会话…',
   'chat.newConversation': '+ 新对话',

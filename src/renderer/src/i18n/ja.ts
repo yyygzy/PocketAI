@@ -200,6 +200,7 @@ export const ja = {
   'unlock.hidePwd': 'パスワードを非表示',
   'unlock.lockStateUnread': 'ロック状態を読み込めません：{msg}（下のボタンは未ロックで表示されていますが、送信時はメインプロセスが再び制限します）',
   'unlock.tooManyAttempts': '試行回数が多すぎます。{s} 秒後に再試行してください',
+  'chat.pricing': '単価設定',
   'chat.searchPlaceholder': '🔍 メッセージを検索…',
   'chat.filterConversations': '会話を絞り込み…',
   'chat.newConversation': '+ 新しいチャット',

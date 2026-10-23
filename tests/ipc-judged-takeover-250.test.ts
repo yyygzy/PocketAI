@@ -203,11 +203,18 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 //  侧栏那两发拆开独立判（避免 Promise.all 一损俱损），各挂一句、各给一颗键；
 //  浮窗那一发脸是 §222 的"整块没内容"⇒ 配 LoadFailNotice。
 //  但侧栏 rollback 那两发仍是"反判无 else"（写失败后回滚读也失败时不再额外提示）⇒ Sidebar 剩 2 处）
-const SILENT_READ_CAP = 16
+// §276：16 → 14（收掉对话页两发：助手清单＋单价配置。两发都在对话页，失败时列表/配置停在旧值或空值。
+//  形状统一用 §222 的 LoadFailNotice（"整块没内容"），各配一颗重试键。
+//  ChatView.tsx 剩 1 处是 prepareExportDrag 写操作，设计内静默）
+// §277：14 → 14（收掉技能市场导入流程 4 处：handleImport 2 处＋handleImportFolder 2 处。
+//  改前形状是 `if (r.ok && r.canceled) return` / `if (r.ok && r.skill) { ... }` / `if (!r.ok) { ... }`，
+//  前两行的失败侧（`!r.ok`）靠第三行接管，但扫描器对复合条件 `r.ok && ...` 的 fallthrough 不识别。
+//  改成 error-first：`if (!r.ok) { ... return }` / `if (r.canceled) return` / `if (r.skill) { ... }`，
+//  行为不变，扫描器能识别。但扫描器仍找到 14 处设计内或待收的静默读 ⇒ CAP 维持 14）
+const SILENT_READ_CAP = 14
 
 const STILL_SILENT_PROOF = [
-  'src/renderer/src/modules/chat/ChatView.tsx',
-  // §275 起换成这一份：Sidebar 那两发已收干，再当"仍静默"的对照就是假证
+  // §276 起换成这两份：ChatModule 与 ChatView 那两发已收干，再当"仍静默"的对照就是假证
   'src/renderer/src/modules/settings/SettingsModule.tsx',
   'src/renderer/src/modules/image/ImageModule.tsx'
 ]
@@ -228,7 +235,11 @@ const SILENT_PER_FILE: Record<string, number> = {
   // 但 rollbackOrder 与 rollbackPinned 那两发仍是"反判无 else"（写失败后回滚读也失败时不再额外提示，
   // 因为写失败本身已经可见，回滚再失败属于雪上加霜而非独立故障）⇒ 剩 2 处
   'src/renderer/src/components/Sidebar.tsx': 2,
-  'src/renderer/src/modules/chat/ChatModule.tsx': 1,
+  // §276：助手清单那一读收口（清零）。失败时列表停在空值，把"读不到"演成"你一个助手都没建"⇒ 配 LoadFailNotice＋重试键
+  'src/renderer/src/modules/chat/ChatModule.tsx': 0,
+  // §276：单价配置那一读收口（清零）。失败时 pricing 停在 null，费用估算功能不可用⇒ 配 LoadFailNotice＋重试键
+  // 剩 1 处是 prepareExportDrag（:558，写操作不是读操作，拖拽准备失败时退化点击导出，设计内）
+  'src/renderer/src/modules/chat/ChatView.tsx': 1,
   // §260：对话页那三发列表读（会话／归档／分组）从 ChatModule 抽到这个 hook 后全部收口（清零）。
   // ChatModule 自己剩的那 1 处是 `reloadAssistants`（:117 反判无 else，助手清单那一读），与本簇无关。
   'src/renderer/src/modules/chat/useConversationLists.ts': 0,
@@ -301,7 +312,7 @@ const SILENT_PER_FILE: Record<string, number> = {
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
 
-describe('§250~§275 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
+describe('§250~§277 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
   it('扫描器自证：六种判据写法各归对桶（极性写反整面就废）', () => {
     const fake = `
       const a = await f()

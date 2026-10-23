@@ -175,13 +175,6 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
 
   const handleImport = useCallback(async () => {
     const r = await window.pocketai.importSkill()
-    if (r.ok && r.canceled) return
-    if (r.ok && r.skill) {
-      setSkills(await onChanged())
-      setView({ mode: 'detail', id: r.skill.id })
-      flash(true, r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone'))
-      return
-    }
     if (!r.ok) {
       const keyMap: Record<string, string> = {
         NOT_SKILL_FILE: 'skill.market.notSkillFile',
@@ -190,14 +183,30 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
         MISSING_FIELDS: 'skill.market.missingFields'
       }
       flash(false, t(keyMap[r.error ?? ''] ?? 'skill.market.importFailed'))
+      return
+    }
+    if (r.canceled) return
+    if (r.skill) {
+      setSkills(await onChanged())
+      setView({ mode: 'detail', id: r.skill.id })
+      flash(true, r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone'))
     }
   }, [flash, t, onChanged])
 
   /** §236：导入一个上游 SKILL.md 技能目录（正文进库，scripts/references 复制成这份技能的快照） */
   const handleImportFolder = useCallback(async () => {
     const r = await window.pocketai.importSkillFolder()
-    if (r.ok && r.canceled) return
-    if (r.ok && r.skill) {
+    if (!r.ok) {
+      const keyMap: Record<string, string> = {
+        NO_SKILL_MD: 'skill.market.noSkillMd',
+        NOT_A_DIRECTORY: 'skill.market.notADirectory',
+        ENTRY_TOO_LARGE: 'skill.market.entryTooLarge'
+      }
+      flash(false, t(keyMap[r.error ?? ''] ?? 'skill.market.importFailed'))
+      return
+    }
+    if (r.canceled) return
+    if (r.skill) {
       setSkills(await onChanged())
       setView({ mode: 'detail', id: r.skill.id })
       const notes: string[] = [
@@ -206,14 +215,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
         (r.skipped ?? []).length > 0 ? t('skill.market.skippedFiles').replace('{n}', String(r.skipped!.length)) : ''
       ].filter(Boolean)
       flash(true, [t('skill.market.importFolderDone'), ...notes].filter(Boolean).join(' '))
-      return
     }
-    const keyMap: Record<string, string> = {
-      NO_SKILL_MD: 'skill.market.noSkillMd',
-      NOT_A_DIRECTORY: 'skill.market.notADirectory',
-      ENTRY_TOO_LARGE: 'skill.market.entryTooLarge'
-    }
-    flash(false, t(keyMap[r.error ?? ''] ?? 'skill.market.importFailed'))
   }, [flash, t, onChanged])
 
   const handleDelete = useCallback(

@@ -8,6 +8,7 @@ import { BranchNav } from './BranchNav'
 import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
 import { ChatConfigBar } from './ChatConfigBar'
+import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
@@ -16,7 +17,8 @@ import { hasUsableModel } from '../../utils/provider-pick'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
 import { exportConversationAsPng } from '../../utils/export-image'
 import { rangeBetween, mergeRange } from '../../utils/message-select'
-import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 interface Turn {
   user: MessageRecord | null
@@ -218,9 +220,21 @@ export const ChatView: React.FC<Props> = ({
   const searchInputRef = useRef<HTMLInputElement>(null)
   /** 本机单价配置：气泡 token 微展示命中单价时附带估算费用；拉取失败静默只显示 token */
   const [pricing, setPricing] = useState<UsagePricing | null>(null)
+  // 单价那一读失败的原因（§276）：pricing 停在 null，费用估算功能不可用
+  const [pricingUnread, setPricingUnread] = useState<{ error: string } | null>(null)
   useEffect(() => {
-    window.pocketai.getUsagePricing().then((v) => { if (!hasIpcFailed(v)) setPricing(v) }).catch(reportIpcError('chat.getUsagePricing'))
-  }, [])
+    window.pocketai.getUsagePricing().then((v) => {
+      if (hasIpcFailed(v)) {
+        setPricingUnread({ error: ipcFailText(v, t('common.unknownError')) })
+        return
+      }
+      setPricingUnread(null)
+      setPricing(v)
+    }).catch((e) => {
+      setPricingUnread({ error: errText(e, t('common.unknownError')) })
+      reportIpcError('chat.getUsagePricing')(e)
+    })
+  }, [t])
 
   // 分支聚焦：重新生成/编辑重发完成后自动切到新分支
   // 父组件每次 setFocusBranch 都自增 nonce，引用变即 nonce 变；直接依赖 focusBranch
@@ -697,6 +711,32 @@ export const ChatView: React.FC<Props> = ({
           )}
         </button>
       </div>
+
+      {/* 单价读取失败提示 */}
+      {pricingUnread && (
+        <div className="px-3 py-2 border-b border-[var(--color-border)]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice what={t('chat.pricing')} msg={pricingUnread.error} />
+            <button
+              data-testid="pricing-retry"
+              className="btn-ghost text-[11px] py-0.5 px-2 shrink-0"
+              onClick={() => window.pocketai.getUsagePricing().then((v) => {
+                if (hasIpcFailed(v)) {
+                  setPricingUnread({ error: ipcFailText(v, t('common.unknownError')) })
+                  return
+                }
+                setPricingUnread(null)
+                setPricing(v)
+              }).catch((e) => {
+                setPricingUnread({ error: errText(e, t('common.unknownError')) })
+                reportIpcError('chat.getUsagePricing')(e)
+              })}
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 会话内搜索条 */}
       {searchOpen && (
