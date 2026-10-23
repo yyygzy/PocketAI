@@ -271,8 +271,8 @@ describe('B55：模型级文本协议开关在真端点上的整链行为', () =
     )
     expect(afterSwitch.length).toBeGreaterThan(0)
     for (const b of afterSwitch) expect(b.tools).toBeUndefined()
-    // 「切换后上下文里不许再有 assistant.tool_calls」这条改到 buildContext/strip 的确定性用例里守
-    // （tests/agent-context.test.ts）——放在这儿实测会漂：它依赖前一条用例在同一会话里留了什么。
+    // 「切换后上下文里不许再有 assistant.tool_calls」⇒ 本文件下一条 it 钉住（手动塞历史＋触发降级）；
+    // helper 自身的确定性用例在 tests/agent-context.test.ts。
     rejectTools = false
   })
 
@@ -284,5 +284,64 @@ describe('B55：模型级文本协议开关在真端点上的整链行为', () =
     expect(done!.usedTools).toBe(true)
     setTextProtocolModel(providerId(), MODEL, false)
     setTextProtocolModel(providerId(), 'another-model', false)
+  })
+
+  it('降级路径里 stripToolCallsFromContext 真被调用：历史有 tool_calls 时，切换后的请求里 messages 不含 tool_calls', async () => {
+    // 这条钉住 engine.ts:1571 的调用点——helper 自己的单测在 agent-context.test.ts，
+    // 但"降级路径真调了它"这条只有 e2e 能证。顺序耦合的解法：手动往库里塞历史，不依赖前一条用例。
+    const freshConvId = conversationRepo.create({ assistantId, title: 'strip-probe', titleDefault: false }).id
+    // 塞一条带 tool_calls 的 assistant 消息＋一条 tool 结果（正是 buildContext 会还原回来的形状）
+    messageRepo.insert({
+      conversationId: freshConvId,
+      role: 'user',
+      content: '现在几点'
+    })
+    messageRepo.insert({
+      conversationId: freshConvId,
+      role: 'assistant',
+      content: '我查一下',
+      toolCalls: JSON.stringify([{ id: 'tc_probe', type: 'function', function: { name: 'time_now', arguments: '{}' } }])
+    })
+    messageRepo.insert({
+      conversationId: freshConvId,
+      role: 'tool',
+      content: '{"toolCallId":"tc_probe","content":"18:00"}'
+    })
+    // 触发降级：端点见到 tools 就 400
+    endpointMode = 'fence'
+    rejectTools = true
+    let done: AgentDoneEvent | null = null
+    let error = ''
+    const emit = (channel: string, data: unknown) => {
+      if (channel === IPC.AGENT_DONE_EVENT) done = data as AgentDoneEvent
+      if (channel === IPC.AGENT_ERROR_EVENT) error = JSON.stringify(data)
+    }
+    bodies = []
+    await agentEngine.run(
+      {
+        requestId: `req-strip-${Date.now()}`,
+        conversationId: freshConvId,
+        assistantId,
+        content: '那 100 天后是几号',
+        agentMode: true,
+        targets: [{ providerId: providerId(), model: MODEL }]
+      },
+      emit
+    )
+    expect(error).toBe('')
+    expect(done).not.toBeNull()
+    // 关键断言：降级后的那次请求（带 PROTOCOL_MARKER 的那次）里，assistant 消息不含 tool_calls 字段
+    // （tool 消息的 tool_call_id 是另一回事，stripToolCallsFromContext 不管它）
+    const afterSwitch = bodies.filter((b) => JSON.stringify(b).includes(PROTOCOL_MARKER))
+    expect(afterSwitch.length).toBeGreaterThan(0)
+    for (const b of afterSwitch) {
+      const msgs = (b.messages as { role: string; tool_calls?: unknown }[]) ?? []
+      const assistantMsgs = msgs.filter((m) => m.role === 'assistant')
+      // 如果 stripToolCallsFromContext 没被调用，assistant 消息里会出现 tool_calls 字段
+      for (const a of assistantMsgs) {
+        expect(a.tool_calls).toBeUndefined()
+      }
+    }
+    rejectTools = false
   })
 })
