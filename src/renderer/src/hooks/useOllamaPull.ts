@@ -3,7 +3,7 @@
 // 封装：事件订阅/清理、并发与空名守卫、成功回调、错误复位；组件卸载不中断后台拉取。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OllamaPullEvent } from '../../../shared/types'
-import { reportIpcError } from '../utils/ipc'
+import { hasIpcFailed, logIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
 
 /** 推荐卡片拉取按钮的派生状态（纯函数，供 UI 与单测共用） */
@@ -34,6 +34,9 @@ export function useOllamaPull(opts?: UseOllamaPullOptions) {
   const [pulling, setPulling] = useState<string | null>(null)
   const [pullEvt, setPullEvt] = useState<OllamaPullEvent | null>(null)
   const [error, setError] = useState('')
+  // §267：那颗 ✕ 没送到主进程时要说一句——下载还在走，而界面以前连 console 都不留
+  // （`abortOllamaPull` 走 safeHandle，失败是**已 resolve 的 `{ok:false}`**，那条 `.catch(reportIpcError(...))` 接不到它）
+  const [stopUnread, setStopUnread] = useState<{ error?: string } | null>(null)
   // 回调放 ref，事件订阅只需挂载一次，不因调用方回调变化重订阅
   const onDoneRef = useRef<UseOllamaPullOptions['onDone']>(opts?.onDone)
   onDoneRef.current = opts?.onDone
@@ -70,12 +73,25 @@ export function useOllamaPull(opts?: UseOllamaPullOptions) {
       return false
     } finally {
       setPulling(null)
+      // §267：这一发落定了 ⇒ "可能还在继续"到点，那句必须跟着作废（§266 同一条反向纪律）
+      setStopUnread(null)
     }
   }, [pulling])
 
-  const abort = useCallback(() => {
-    window.pocketai.abortOllamaPull().catch(reportIpcError('ollama.abortPull'))
+  const abort = useCallback((): void => {
+    window.pocketai.abortOllamaPull()
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setStopUnread({ error: r.error })
+          return
+        }
+        setStopUnread(null)
+      })
+      .catch((e: unknown) => {
+        setStopUnread({ error: errText(e, '') })
+        logIpcError('ollama.abortPull', e)
+      })
   }, [])
 
-  return { pulling, pullEvt, error, pull, abort }
+  return { pulling, pullEvt, error, pull, abort, stopUnread }
 }

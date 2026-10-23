@@ -54,7 +54,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   }, [t])
 
   // 模型拉取（进度事件/中止/成功刷新）与管家推荐卡片共用同一 hook
-  const { pulling, pullEvt, error: pullError, pull, abort: abortPull } = useOllamaPull({
+  const { pulling, pullEvt, error: pullError, pull, abort: abortPull, stopUnread } = useOllamaPull({
     onDone: (model) => {
       markPullDone(model)
       refresh()
@@ -354,6 +354,14 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
               </button>
             )}
           </div>
+
+          {/* §267：那颗 ✕ 没送到主进程 ⇒ 说一句。不配重试键——✕ 本来就还挂着，再按一次就是重发；
+              也只说后果不指出路（出路就是那颗 ✕）。那句独立成一行，不挂在进度那一块之下。 */}
+          {stopUnread && (
+            <div role="alert" className="text-[11px] text-[var(--color-danger)] leading-relaxed">
+              {t('common.stopNotSent', { msg: ipcFailText(stopUnread, t('common.unknownError')) })}
+            </div>
+          )}
 
           {/* pull 进度 */}
       {pulling && pullEvt && (

@@ -16,7 +16,7 @@
 //  严版第一刀砍掉一条假阳：`OllamaPanel.tsx:144` 的 `stopTimerRef.current = null` 是**定时器句柄**，
 //  不是"在跑"这件事的状态；把它算成"自述已停"就成假阳（宽松版留着这条，用来暴露判据自己）。
 //  本批收掉目标桶那两处（`useAgentChat.ts` 的 abortAgent、`PopupApp.tsx` 的 abortChat）⇒ 目标桶归零；
-//  静默桶开批 7 处一条没动，逐条登记在下面（**§266 已收掉其中三颗真按钮 ⇒ 现数 4**，登记同步调小）。
+//  静默桶开批 7 处一条没动，逐条登记在下面（**§266 收掉其中三颗真按钮 ⇒ 4；§267 再收拉模型那颗 ✕ ⇒ 现数 3**，登记同步调小）。
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -123,11 +123,11 @@ const JUDGED = SITES.filter((s) => s.judged)
 /**
  * 等式 ratchet：
  *  · 目标桶收口后**必须为 0**——谁把 `setStreaming(false)` 放回一个不判结果的停止旁边就红；
- *  · 静默桶 §265 开批 7 → §266 收掉三颗真按钮（`useStreamSession`／翻译页／绘图页的 handleStop）⇒ **现数 4**，
- *    逐文件登记在下面（收一处减一格，新增也红）。
+ *  · 静默桶 §265 开批 7 → §266 收掉三颗真按钮（`useStreamSession`／翻译页／绘图页的 handleStop）→ **§267 再收拉模型那颗 ✕
+ *    （`useOllamaPull.ts` 的 abort）⇒ 现数 3**，逐文件登记在下面（收一处减一格，新增也红）。
  */
 const LIE_CAP = 0
-const SILENT_CAP = 4
+const SILENT_CAP = 3
 
 const SILENT_PER_FILE: Record<string, number> = {
   // §266 收掉了这两份的 handleStop（停止键那发），剩下的这一发是**卸载清理路径**上的中止：
@@ -135,9 +135,6 @@ const SILENT_PER_FILE: Record<string, number> = {
   // 要不要给个「离开时没停住」的提示＝待决策（用户看不见那一屏，说话没有落点）。
   'src/renderer/src/modules/translate/TranslateModule.tsx': 1,
   'src/renderer/src/modules/image/ImageModule.tsx': 1,
-  // 拉模型那颗 ✕：`pulling` 由 `pullOllamaModel` 自己 settle 收尾，abort 失败时进度条继续走＝没自述已停。
-  // 与上面两处的区别只在于它是**用户点的键**——下一批收它时要判：那句挂在哪个屏（进度条那一行还在场）。
-  'src/renderer/src/hooks/useOllamaPull.ts': 1,
   // 停止 ollama 服务：await 的结果整个丢，但 800ms 后 `refresh()` 从主进程回读真状态 ⇒ 不摆在"已停"上。
   'src/renderer/src/components/OllamaPanel.tsx': 1
 }
@@ -181,7 +178,7 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
     expect(SILENT.length, '静默桶必须非空').toBeGreaterThan(0)
   })
 
-  it(`等式 ratchet：目标桶 ${LIE_CAP} 处（§265 开批 2 → 收两处）、静默桶 ${SILENT_CAP} 处（§266 再收三颗真按钮 7→4）`, () => {
+  it(`等式 ratchet：目标桶 ${LIE_CAP} 处（§265 开批 2 → 收两处）、静默桶 ${SILENT_CAP} 处（§266 收三颗真按钮 7→4，§267 收拉模型那颗 ✕ 4→3）`, () => {
     expect(LIE, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} ${s.ch}() ⇒ ${s.body}`).join('\n')}`).toHaveLength(LIE_CAP)
     expect(
       SILENT,
@@ -197,7 +194,7 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
     expect(registered, '登记表总数必须等于 CAP').toBe(SILENT_CAP)
   })
 
-  it('正向对照：本批与 §266 收口的五处＋既有五处正解，都必须在"判过了"那一桶里', () => {
+  it('正向对照：§265／§266／§267 收口的六处＋既有五处正解，都必须在"判过了"那一桶里', () => {
     const judgedFiles = JUDGED.map((s) => s.file)
     for (const f of [
       // §265 收的两处（谎报已停那一档）
@@ -207,6 +204,8 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
       'src/renderer/src/modules/chat/useStreamSession.ts',
       'src/renderer/src/modules/translate/TranslateModule.tsx',
       'src/renderer/src/modules/image/ImageModule.tsx',
+      // §267 收的拉模型那颗 ✕（同一档：键还挂着，只欠一句话）
+      'src/renderer/src/hooks/useOllamaPull.ts',
       // 立面之前就已是正解的那五处
       'src/renderer/src/modules/settings/ProviderSettings.tsx',
       'src/renderer/src/modules/agent/chat/AgentEvalPanel.tsx',
@@ -279,5 +278,33 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
       const line = read(`src/renderer/src/i18n/${dict}.ts`).split('\n').find((l) => l.includes("'common.stopNotSent'")) ?? ''
       expect(line, `${dict} 那句不再承诺一个具体的出路`).not.toMatch(/再送一次|再按一次|send it again|もう一度|다시/)
     }
+  })
+
+  it('§267 那颗 ✕ 的形状数得出（两路各写一次 unread、两处收回、只进 console 那一形归零、两屏各挂一句、preload 类型带 error）', () => {
+    const read = (rel: string): string =>
+      fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
+    const HOOK = read('src/renderer/src/hooks/useOllamaPull.ts')
+    const PANEL = read('src/renderer/src/components/OllamaPanel.tsx')
+    const STEWARD = read('src/renderer/src/modules/steward/StewardModule.tsx')
+    const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
+    expect(count(HOOK, /setStopUnread\(\{ error: /g), 'resolve 的失败对象与 reject 各写一次').toBe(2)
+    // 两处收回：这一发落定（finally）／✕ 这次真送到了。
+    // **没有**"开新一轮"那一处：`pull` 被 `pulling !== null` 挡着⇒能开新一轮就说明 finally 已经清过，那行是零效果的守卫（§266 纪律第 7 条，写的时候按模板加了、回读时删掉）
+    expect(count(HOOK, /setStopUnread\(null\)/g), '两处各收回一次').toBe(2)
+    // 旧写法：把 reject 裸交给 reportIpcError（而 safeHandle 的失败连这条都走不到——探针实测 console.warn 也是 0 条）
+    expect(count(HOOK, /\.catch\(reportIpcError\('ollama\.abortPull'\)\)/g), '那颗 ✕ 不许再有"只进 console"那一形').toBe(0)
+    // 不配重试键：✕ 在句子在场时本来就还挂着（两屏都是），再按一次就是重发
+    expect(count(HOOK, /retryStop/g), 'hook 不自造重试出口').toBe(0)
+    expect(count(PANEL, /retryStop|abortPull\(\)/g), '设置页那屏不自造重试出口').toBe(0)
+    expect(count(STEWARD, /retryStop/g), '管家页那屏同').toBe(0)
+    // 那句在两屏各挂得出去（计数盯渲染条件本身，§266 那条漏杀的教训）
+    const RENDER = /\{stopUnread && \(\s*<div role="alert"[\s\S]{0,160}common\.stopNotSent/g
+    expect(count(PANEL, RENDER), '设置页那块面板挂那句').toBe(1)
+    expect(count(STEWARD, RENDER), '管家页推荐卡片那一格挂同一句').toBe(1)
+    // preload 类型诚实化：原文 `Promise<{ ok: boolean }>` 是在说"这发不会失败"
+    expect(
+      count(read('src/preload/index.ts'), /abortOllamaPull: \(\): Promise<\{ ok: boolean; error\?: string \}>/g),
+      'abortOllamaPull 类型带失败分支'
+    ).toBe(1)
   })
 })

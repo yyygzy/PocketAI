@@ -77,7 +77,7 @@ export const StewardModule: React.FC = () => {
   }, [t])
 
   // 拉取推荐模型：成功后重拉推荐刷新 installed 标记并 toast，失败 toast 展示错误
-  const { pulling, pullEvt, pull: pullModel, abort: abortPull } = useOllamaPull({
+  const { pulling, pullEvt, pull: pullModel, abort: abortPull, stopUnread } = useOllamaPull({
     onDone: (model) => {
       refreshRecommendation()
       toast.success(`${t('ollama.pullDone')}：${model}`)
@@ -531,6 +531,12 @@ export const StewardModule: React.FC = () => {
                           ✕ {t('ollama.abort')}
                         </button>
                       </div>
+                      {/* §267：那颗 ✕ 没送到 ⇒ 说一句（✕ 还挂着，再按一次就是重发，所以不另配重试键） */}
+                      {stopUnread && (
+                        <div role="alert" className="text-[10px] text-[var(--color-danger)] leading-relaxed">
+                          {t('common.stopNotSent', { msg: ipcFailText(stopUnread, t('common.unknownError')) })}
+                        </div>
+                      )}
                     </div>
                   ) : pullState === 'pullable' || pullState === 'busy-other' || pullState === 'disabled' ? (
                     <div className="mt-1.5 flex justify-end">

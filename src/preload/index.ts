@@ -1267,7 +1267,7 @@ const api = {
     ipcRenderer.invoke(IPC.OLLAMA_LIST_MODELS),
   pullOllamaModel: (model: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.OLLAMA_PULL, model),
-  abortOllamaPull: (): Promise<{ ok: boolean }> =>
+  abortOllamaPull: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.OLLAMA_PULL_ABORT),
   onOllamaInstallEvent: (handler: (e: OllamaInstallEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: OllamaInstallEvent) => handler(data)
