@@ -21,6 +21,7 @@ import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
+import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import { errText } from '../../../utils/error'
 
 /** 单个工具的试运行状态（key = `${serverId}:${toolName}`） */
@@ -289,6 +290,20 @@ export const McpPanel: React.FC = () => {
             <option value="tuna">{t('agent.f.pipTuna')}</option>
             <option value="custom">{t('agent.f.pipCustom')}</option>
           </select>
+          {/* §274：pip 源那一读失败时，这一格停在字面量默认值「官方」⇒ 用 §226 第二形态（有东西但那不是你的设置）。
+              键在 alert 盒子外面（§268），那句的 textContent 才是纯句子。 */}
+          {pip.pipSourceUnread && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <ShowingDefaultsNotice what={t('agent.f.pipSource')} msg={pip.pipSourceUnread.error} />
+              <button
+                data-testid="mcp-pip-source-retry"
+                className="btn-ghost text-[11px] py-0.5 px-2 shrink-0"
+                onClick={pip.reloadPipSource}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           {pip.pipCustomOpen && (
             <div className="space-y-1">
               <div className="flex gap-1">

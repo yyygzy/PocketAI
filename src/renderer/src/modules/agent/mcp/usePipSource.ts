@@ -1,11 +1,11 @@
 // MCP 面板的 pip 下载源设置（全局，影响所有 Python MCP 依赖安装）
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { PythonPipSource } from '../../../../../shared/types'
 import { isAllowedPipSourceUrl } from '../../../../../shared/schemas/mcp'
 import type { ConfirmOptions } from '../../../components/ConfirmDialog'
 import { useI18n } from '../../../i18n'
-import { reportIpcError } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 
 export function usePipSource(
   notify: (msg: string) => void,
@@ -16,18 +16,39 @@ export function usePipSource(
   const [pipCustomOpen, setPipCustomOpen] = useState(false)
   const [pipCustomUrl, setPipCustomUrl] = useState('')
   const [pipCustomError, setPipCustomError] = useState('')
+  // §274：pip 源那一读失败时，这一格停在字面量默认值「官方」⇒ 把通道故障演成"你选的就是官方"。
+  // 出路只有"关掉面板再开一次"，而 MCP 面板里可能正在配别的东西 ⇒ 按 §268 判据算"代价大到等于没出口"⇒ 配一颗重试键。
+  const [pipSourceUnread, setPipSourceUnread] = useState<{ error: string } | null>(null)
 
-  useEffect(() => {
+  const loadPipSource = useCallback(() => {
     window.pocketai.getPythonPipSource().then((r) => {
-      if (r.ok && r.source) {
+      if (hasIpcFailed(r)) {
+        setPipSourceUnread({ error: ipcFailText(r, t('common.unknownError')) })
+        return
+      }
+      setPipSourceUnread(null)
+      // §274：hasIpcFailed 已判过失败，这里 r.ok 必真 ⇒ 只判 source 是否非空（扫掉 `.ok` 裸真值，免得闸门把这条读成静默点）
+      if (r.source) {
         setPipSourceState(r.source)
         if (r.source !== 'official' && r.source !== 'tuna') {
           setPipCustomOpen(true)
           setPipCustomUrl(r.source)
         }
       }
-    }).catch(reportIpcError('mcp.getPythonPipSource'))
-  }, [])
+    }).catch((e) => {
+      setPipSourceUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('mcp.getPythonPipSource', e)
+    })
+  }, [t])
+
+  const reloadPipSource = useCallback(() => {
+    setPipSourceUnread(null)
+    loadPipSource()
+  }, [loadPipSource])
+
+  useEffect(() => {
+    loadPipSource()
+  }, [loadPipSource])
 
   const choosePipSource = async (next: PythonPipSource) => {
     if (next === 'custom') {
@@ -74,11 +95,13 @@ export function usePipSource(
 
   return {
     pipSource,
+    pipSourceUnread,
     pipCustomOpen,
     pipCustomUrl,
     setPipCustomUrl,
     pipCustomError,
     choosePipSource,
-    saveCustomPipSource
+    saveCustomPipSource,
+    reloadPipSource
   }
 }

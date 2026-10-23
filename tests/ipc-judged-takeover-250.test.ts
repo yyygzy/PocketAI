@@ -197,13 +197,12 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 //  **这一簇只给两颗键**——历史那一发现查有天然出口（那颗「历史」按钮的 onClick 里 `if (!showHistory) refreshSessions()`），
 //  按 §268 口径不造机关；策略那一发的脸是 §226 的第二形态「这里显示的是默认值」，不是 §222 的"整块没内容"）
 // §273：23 → 19（收掉四个清单屏各一发：助手市场网格／技能市场本地 tab／技能表单的模板清单／用户记忆。
-//  **这一簇四发全配键**——现查四处的自发重发都只在"写完东西之后"，没有一处是"点一下就重拉"；
-//  其中模板那一发最隐蔽：失败时不是摆一张假空态，而是把那颗「+ 从模板创建」的**入口整块变没**）
-const SILENT_READ_CAP = 19
+//  **这一簇两发全配键**——现查两处的自发重发都只在"写完东西之后"，没有一处是"点一下就重拉"）
+const SILENT_READ_CAP = 17
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/chat/ChatView.tsx',
-  // §273 起换成这一份：AssistantMarket 那一发已收干，再当"仍静默"的对照就是假证
+  // §274 起换成这一份：OllamaPanel 那一发已收干，再当"仍静默"的对照就是假证
   'src/renderer/src/components/Sidebar.tsx',
   'src/renderer/src/modules/settings/SettingsModule.tsx',
   'src/renderer/src/modules/image/ImageModule.tsx'
@@ -283,7 +282,11 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/modules/settings/UserMemoryPanel.tsx': 0,
   // §273：技能表单的模板那一发收口（清零）。这一张的脸不是空态而是**入口整块不见**；改前那行注释写的是
   // 「失败仅记诊断日志，保持空列表不影响 UI」——回读 JSX 后确认这条判断错了，注释已就地改口（同 §268 那两条的手法）
-  'src/renderer/src/modules/skills/SkillModule.tsx': 0
+  'src/renderer/src/modules/skills/SkillModule.tsx': 0,
+  // §274：停在字面量默认两发收口（清零）。Ollama 面板镜像地址那一格失败时停在字面量默认值「空串」；
+  //  MCP 面板 pip 源那一格失败时停在字面量默认值「官方」。两发的出路都是"关掉面板再开一次"⇒ 各配一颗键
+  'src/renderer/src/components/OllamaPanel.tsx': 0,
+  'src/renderer/src/modules/agent/mcp/usePipSource.ts': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
@@ -350,7 +353,7 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
     expect(SILENT.length, '静默名单非空').toBeGreaterThan(10)
   })
 
-  it('§250~§273 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
+  it('§250~§274 逐批收口后，这几份文件的剩余静默数与登记相符', () => {
     for (const [file, expected] of Object.entries(SILENT_PER_FILE)) {
       const left = SILENT.filter((s) => s.file === file)
       expect(left.length, `${file} 仍静默 ${left.length} 处（登记的是 ${expected}）：\n${left.map((s) => `  L${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(expected)
@@ -711,5 +714,43 @@ describe('§250 第四面：判了失败面还得接管它（先验扫描器自�
         expect(s.includes(reused), `${dict} 缺复用的屏上名词 ${reused}`).toBe(true)
       }
     }
+  })
+})
+
+describe('§274 形状：停在字面量默认两发（镜像地址＋pip 源）', () => {
+  const n = (src: string, re: RegExp): number => (src.match(re) ?? []).length
+  const read = (p: string): string => fs.readFileSync(path.join(ROOT, p), 'utf8')
+
+  it('两发都用 §226 第二形态（ShowingDefaultsNotice）＋各配一颗键', () => {
+    const ollama = read('src/renderer/src/components/OllamaPanel.tsx')
+    const pip = read('src/renderer/src/modules/agent/mcp/usePipSource.ts')
+    const mcp = read('src/renderer/src/modules/agent/mcp/McpPanel.tsx')
+
+    // ① 两发都判失败对象（hasIpcFailed）＋失败侧写状态（setMirrorUnread/setPipSourceUnread）
+    expect(n(ollama, /if \(hasIpcFailed\(r\)\) \{\s*\n\s*setMirrorUnread/g), '镜像那一发判失败对象').toBe(1)
+    expect(n(pip, /if \(hasIpcFailed\(r\)\) \{\s*\n\s*setPipSourceUnread/g), 'pip 源那一发判失败对象').toBe(1)
+
+    // ② 两发都用 §226 第二形态（ShowingDefaultsNotice），不是 §222（LoadFailNotice）
+    expect(n(ollama, /<ShowingDefaultsNotice what=\{t\('ollama\.mirror'\)/g), '镜像那句用 §226 形态').toBe(1)
+    expect(n(mcp, /<ShowingDefaultsNotice what=\{t\('agent\.f\.pipSource'\)/g), 'pip 源那句用 §226 形态').toBe(1)
+
+    // ③ 两颗键各一颗、每屏只这一颗
+    expect(n(ollama, /data-testid="ollama-mirror-retry"/g), '镜像那颗键只一颗').toBe(1)
+    expect(n(mcp, /data-testid="mcp-pip-source-retry"/g), 'pip 源那颗键只一颗').toBe(1)
+
+    // ④ 两颗键都点 reload 回调（不是 load 本身）
+    expect(n(ollama, /onClick=\{reloadMirror\}/g), '镜像那颗键点 reload').toBe(1)
+    expect(n(mcp, /onClick=\{pip\.reloadPipSource\}/g), 'pip 源那颗键点 reload').toBe(1)
+
+    // ⑤ 两发的 loader 都是 useCallback（防 effect 重跑）
+    expect(n(ollama, /const loadMirror = useCallback\(\(\) =>/g), '镜像 loader 是 useCallback').toBe(1)
+    expect(n(pip, /const loadPipSource = useCallback\(\(\) =>/g), 'pip 源 loader 是 useCallback').toBe(1)
+
+    // ⑥ 两发的 reload 回调都先清 unread 再 load
+    expect(n(ollama, /const reloadMirror = useCallback\(\(\) => \{\s*\n\s*setMirrorUnread\(null\)\s*\n\s*loadMirror\(\)/g), '镜像 reload 先清 unread').toBe(1)
+    expect(n(pip, /const reloadPipSource = useCallback\(\(\) => \{\s*\n\s*setPipSourceUnread\(null\)\s*\n\s*loadPipSource\(\)/g), 'pip 源 reload 先清 unread').toBe(1)
+
+    // ⑦ 镜像那发的保存成功路径清 unread（防保存成功后那句仍挂着）
+    expect(n(ollama, /if \(r\.ok\) \{\s*\n\s*setMirror\(mirrorDraft\.trim\(\)\)\s*\n\s*setMirrorUnread\(null\)/g), '镜像保存成功清 unread').toBe(1)
   })
 })

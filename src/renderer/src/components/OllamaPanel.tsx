@@ -9,7 +9,8 @@ import type {
 import { modelRecKey } from '../../../shared/model-rec-codes'
 import { useI18n } from '../i18n'
 import { LoadFailNotice } from './LoadFailNotice'
-import { reportIpcError, hasIpcFailed, ipcFailText } from '../utils/ipc'
+import { ShowingDefaultsNotice } from './ShowingDefaultsNotice'
+import { reportIpcError, hasIpcFailed, ipcFailText, logIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
 import { useTransientNotice } from '../hooks/useTransientNotice'
 import { useOllamaPull } from '../hooks/useOllamaPull'
@@ -34,6 +35,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const [rec, setRec] = useState<ModelRecommendation | null>(null)
   const [mirror, setMirror] = useState('')
   const [mirrorDraft, setMirrorDraft] = useState('')
+  // §274：镜像地址那一读失败时，这一格停在字面量默认值「空串」⇒ 把通道故障演成"你没设过镜像"。
+  // 出路只有"关掉面板再开一次"，而 Ollama 面板里可能正在配别的东西 ⇒ 按 §268 判据算"代价大到等于没出口"⇒ 配一颗重试键。
+  const [mirrorUnread, setMirrorUnread] = useState<{ error: string } | null>(null)
   const { notice: mirrorSaved, show: markMirrorSaved } = useTransientNotice<boolean>(2000)
   // handleStop 的延时回调：组件卸载后必须清理，避免对已卸载组件 setState
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -61,14 +65,32 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     }
   })
 
-  useEffect(() => {
-    refresh()
+  const loadMirror = useCallback(() => {
     window.pocketai.getOllamaMirror().then((r) => {
-      if (r.ok && r.mirror != null) {
+      if (hasIpcFailed(r)) {
+        setMirrorUnread({ error: ipcFailText(r, t('common.unknownError')) })
+        return
+      }
+      setMirrorUnread(null)
+      // §274：hasIpcFailed 已判过失败，这里 r.ok 必真 ⇒ 只判 mirror 是否非空（扫掉 `.ok` 裸真值，免得闸门把这条读成静默点）
+      if (r.mirror != null) {
         setMirror(r.mirror)
         setMirrorDraft(r.mirror)
       }
-    }).catch(reportIpcError('ollama.getMirror'))
+    }).catch((e) => {
+      setMirrorUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('ollama.getMirror', e)
+    })
+  }, [t])
+
+  const reloadMirror = useCallback(() => {
+    setMirrorUnread(null)
+    loadMirror()
+  }, [loadMirror])
+
+  useEffect(() => {
+    refresh()
+    loadMirror()
     const off1 = window.pocketai.onOllamaInstallEvent((e) => setInstallEvt(e))
     const timer = setInterval(refresh, 8000) // 兜底轮询（外部启停/系统 ollama 变化）
     return () => {
@@ -79,7 +101,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
         stopTimerRef.current = null
       }
     }
-  }, [refresh])
+  }, [refresh, loadMirror])
 
   useEffect(() => {
     window.pocketai
@@ -249,6 +271,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
                   const r = await window.pocketai.setOllamaMirror(mirrorDraft)
                   if (r.ok) {
                     setMirror(mirrorDraft.trim())
+                    setMirrorUnread(null)
                     markMirrorSaved(true)
                   } else {
                     setErr(r.error || 'bad mirror')
@@ -262,6 +285,20 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
               {t('ollama.mirrorSave')}
             </button>
           </div>
+          {/* §274：镜像地址那一读失败时，这一格停在字面量默认值「空串」⇒ 用 §226 第二形态（有东西但那不是你的设置）。
+              键在 alert 盒子外面（§268），那句的 textContent 才是纯句子。 */}
+          {mirrorUnread && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <ShowingDefaultsNotice what={t('ollama.mirror')} msg={mirrorUnread.error} />
+              <button
+                data-testid="ollama-mirror-retry"
+                className="shrink-0 px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text)]"
+                onClick={reloadMirror}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           <div className="mt-1 leading-relaxed">
             {mirror ? t('ollama.mirrorOn') : t('ollama.mirrorHint')}
             {mirrorSaved && <span className="text-[var(--color-success)]"> ✓ {t('ollama.mirrorSaved')}</span>}
