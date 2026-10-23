@@ -99,6 +99,8 @@ export const ja = {
   'sidebar.unpin': '固定を解除',
   'sidebar.pinFull': '固定数の上限に達しました',
   'sidebar.pinnedSuffix': '固定済み',
+  'sidebar.order': 'サイドバーの順序',
+  'sidebar.pinned': '固定モジュール',
   'controls.toggleTheme': 'ライト/ダークテーマ切り替え',
   'controls.toggleLang': '中国語に切り替え',
   'tab.newChat': '新しいチャット',
@@ -1216,6 +1218,7 @@ export const ja = {
   'popup.attachLimit': '添付は最大 {n} 個まで',
   'popup.dropToAttach': 'ドロップして添付',
   'popup.removeAttachment': '添付を削除',
+  'popup.payload': 'ポップアップデータ',
 
   // ── グローバルコマンドパレット（Ctrl+P） ──
   'palette.placeholder': '会話・アシスタント・ナレッジベース・モジュールを検索…',

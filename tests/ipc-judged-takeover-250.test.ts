@@ -198,12 +198,16 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 //  按 §268 口径不造机关；策略那一发的脸是 §226 的第二形态「这里显示的是默认值」，不是 §222 的"整块没内容"）
 // §273：23 → 19（收掉四个清单屏各一发：助手市场网格／技能市场本地 tab／技能表单的模板清单／用户记忆。
 //  **这一簇两发全配键**——现查两处的自发重发都只在"写完东西之后"，没有一处是"点一下就重拉"）
-const SILENT_READ_CAP = 17
+// §274：19 → 17（停在字面量默认两发收口：镜像地址＋pip 源。两发的出路都是"关掉面板再开一次"⇒ 各配一颗键）
+// §275：17 → 16（收掉侧栏初始读两发＋浮窗一发：侧栏顺序／固定模块／弹窗数据。
+//  侧栏那两发拆开独立判（避免 Promise.all 一损俱损），各挂一句、各给一颗键；
+//  浮窗那一发脸是 §222 的"整块没内容"⇒ 配 LoadFailNotice。
+//  但侧栏 rollback 那两发仍是"反判无 else"（写失败后回滚读也失败时不再额外提示）⇒ Sidebar 剩 2 处）
+const SILENT_READ_CAP = 16
 
 const STILL_SILENT_PROOF = [
   'src/renderer/src/modules/chat/ChatView.tsx',
-  // §274 起换成这一份：OllamaPanel 那一发已收干，再当"仍静默"的对照就是假证
-  'src/renderer/src/components/Sidebar.tsx',
+  // §275 起换成这一份：Sidebar 那两发已收干，再当"仍静默"的对照就是假证
   'src/renderer/src/modules/settings/SettingsModule.tsx',
   'src/renderer/src/modules/image/ImageModule.tsx'
 ]
@@ -220,6 +224,9 @@ const STILL_SILENT_PROOF = [
 const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/App.tsx': 0,
   'src/renderer/src/detached/DetachedApp.tsx': 0,
+  // §275：侧栏那两发初始读（顺序／固定模块）收口（各挂一句、各给一颗键）；
+  // 但 rollbackOrder 与 rollbackPinned 那两发仍是"反判无 else"（写失败后回滚读也失败时不再额外提示，
+  // 因为写失败本身已经可见，回滚再失败属于雪上加霜而非独立故障）⇒ 剩 2 处
   'src/renderer/src/components/Sidebar.tsx': 2,
   'src/renderer/src/modules/chat/ChatModule.tsx': 1,
   // §260：对话页那三发列表读（会话／归档／分组）从 ChatModule 抽到这个 hook 后全部收口（清零）。
@@ -286,12 +293,15 @@ const SILENT_PER_FILE: Record<string, number> = {
   // §274：停在字面量默认两发收口（清零）。Ollama 面板镜像地址那一格失败时停在字面量默认值「空串」；
   //  MCP 面板 pip 源那一格失败时停在字面量默认值「官方」。两发的出路都是"关掉面板再开一次"⇒ 各配一颗键
   'src/renderer/src/components/OllamaPanel.tsx': 0,
-  'src/renderer/src/modules/agent/mcp/usePipSource.ts': 0
+  'src/renderer/src/modules/agent/mcp/usePipSource.ts': 0,
+  // §275：浮窗 payload 那一发收口（清零）。失败时界面停在初值（「暂无可用模型服务」），
+  // 把"读不到"演成"你一个服务商都没配"；脸是 §222 的"整块没内容"⇒ 配 LoadFailNotice
+  'src/renderer/src/popup/PopupApp.tsx': 0
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
 
-describe('§250 第四面：判了失败面还得接管它（先验扫描器自己）', () => {
+describe('§250~§275 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
   it('扫描器自证：六种判据写法各归对桶（极性写反整面就废）', () => {
     const fake = `
       const a = await f()

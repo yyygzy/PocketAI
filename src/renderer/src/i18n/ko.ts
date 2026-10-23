@@ -99,6 +99,8 @@ export const ko = {
   'sidebar.unpin': '고정 해제',
   'sidebar.pinFull': '고정 한도를 초과했습니다',
   'sidebar.pinnedSuffix': '고정됨',
+  'sidebar.order': '사이드바 순서',
+  'sidebar.pinned': '고정 모듈',
   'controls.toggleTheme': '라이트/다크 테마 전환',
   'controls.toggleLang': '중국어로 전환',
   'tab.newChat': '새 채팅',
@@ -1216,6 +1218,7 @@ export const ko = {
   'popup.attachLimit': '첨부는 최대 {n}개까지',
   'popup.dropToAttach': '놓아서 첨부',
   'popup.removeAttachment': '첨부 제거',
+  'popup.payload': '팝업 데이터',
 
   // ── 전역 명령 팔레트(Ctrl+P) ──
   'palette.placeholder': '대화, 어시스턴트, 지식 베이스, 모듈 검색…',

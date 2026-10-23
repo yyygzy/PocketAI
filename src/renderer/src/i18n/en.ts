@@ -102,6 +102,8 @@ export const en = {
   'sidebar.unpin': 'Unpin',
   'sidebar.pinFull': 'Pin limit reached',
   'sidebar.pinnedSuffix': 'Pinned',
+  'sidebar.order': 'Sidebar order',
+  'sidebar.pinned': 'Pinned modules',
   'controls.toggleTheme': 'Toggle light/dark theme',
   'controls.toggleLang': '切换为中文',
 
@@ -1271,6 +1273,7 @@ export const en = {
   'popup.attachLimit': 'Up to {n} attachments',
   'popup.dropToAttach': 'Drop to attach',
   'popup.removeAttachment': 'Remove attachment',
+  'popup.payload': 'Popup data',
 
   // ── Global command palette (Ctrl+P) ──
   'palette.placeholder': 'Search conversations, assistants, knowledge bases, modules…',

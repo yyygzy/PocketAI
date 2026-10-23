@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
-import { hasIpcFailed, logIpcError, reportIpcError } from '../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../utils/ipc'
+import { errText } from '../utils/error'
 import { ThemeLangControls } from './ThemeLangControls'
+import { ShowingDefaultsNotice } from './ShowingDefaultsNotice'
 import { useToast } from './ToastProvider'
 import { useAppStore } from '../store/app-store'
 import { DETACHABLE_MODULE_IDS, MAX_PINNED_SIDEBAR_MODULES } from '../../../shared/types'
@@ -59,6 +61,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 待发提醒角标数（仅主窗口挂提醒中心时拉取；到点广播后刷新）
   // null = 这一发读没拿到（V4-Iter-250）：0 会被读成「没有待发提醒」，所以角标分三态
   const [pendingReminders, setPendingReminders] = useState<number | null>(0)
+  // §275：侧栏顺序与固定模块的读取失败追踪（两发独立判，避免 Promise.all 一损俱损）
+  const [orderUnread, setOrderUnread] = useState<{ error: string } | null>(null)
+  const [pinnedUnread, setPinnedUnread] = useState<{ error: string } | null>(null)
 
   useEffect(() => {
     if (!onOpenReminders) return
@@ -86,14 +91,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, [onOpenReminders])
 
   useEffect(() => {
-    // 读取失败保持默认顺序/全未固定，仅记诊断（Promise.all 任一 reject 会整体失败，故整体 catch）
-    void Promise.all([window.pocketai.getSidebarOrder(), window.pocketai.getSidebarPinned()])
-      .then(([ord, pin]) => {
-        if (ord.ok && ord.data) setSidebarOrder(ord.data)
-        if (pin.ok && pin.data) setPinnedModules(pin.data)
-      })
-      .catch(reportIpcError('sidebar.loadNav'))
-  }, [setSidebarOrder, setPinnedModules])
+    // §275：两发独立判，避免 Promise.all 一损俱损；失败侧挂原因，成功即收回
+    window.pocketai.getSidebarOrder().then((ord) => {
+      if (hasIpcFailed(ord)) {
+        setOrderUnread({ error: ipcFailText(ord, t('common.unknownError')) })
+        return
+      }
+      setOrderUnread(null)
+      if (ord.data) setSidebarOrder(ord.data)
+    }).catch((e) => {
+      setOrderUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('sidebar.getOrder', e)
+    })
+    window.pocketai.getSidebarPinned().then((pin) => {
+      if (hasIpcFailed(pin)) {
+        setPinnedUnread({ error: ipcFailText(pin, t('common.unknownError')) })
+        return
+      }
+      setPinnedUnread(null)
+      if (pin.data) setPinnedModules(pin.data)
+    }).catch((e) => {
+      setPinnedUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('sidebar.getPinned', e)
+    })
+  }, [setSidebarOrder, setPinnedModules, t])
+
+  // §275：重试函数（清 unread 后重读）
+  const retryOrder = (): void => {
+    setOrderUnread(null)
+    window.pocketai.getSidebarOrder().then((ord) => {
+      if (hasIpcFailed(ord)) {
+        setOrderUnread({ error: ipcFailText(ord, t('common.unknownError')) })
+        return
+      }
+      setOrderUnread(null)
+      if (ord.data) setSidebarOrder(ord.data)
+    }).catch((e) => {
+      setOrderUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('sidebar.retryOrder', e)
+    })
+  }
+  const retryPinned = (): void => {
+    setPinnedUnread(null)
+    window.pocketai.getSidebarPinned().then((pin) => {
+      if (hasIpcFailed(pin)) {
+        setPinnedUnread({ error: ipcFailText(pin, t('common.unknownError')) })
+        return
+      }
+      setPinnedUnread(null)
+      if (pin.data) setPinnedModules(pin.data)
+    }).catch((e) => {
+      setPinnedUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('sidebar.retryPinned', e)
+    })
+  }
 
   // 右键菜单：点击其他区域 / Esc / 再次右键 关闭
   useEffect(() => {
@@ -126,7 +177,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const rollbackOrder = (): void => {
     window.pocketai
       .getSidebarOrder()
-      .then((x) => x.ok && x.data && setSidebarOrder(x.data))
+      .then((x) => {
+        if (!hasIpcFailed(x) && x.data) setSidebarOrder(x.data)
+      })
       .catch(reportIpcError('sidebar.rollbackOrder'))
   }
 
@@ -162,7 +215,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const rollback = (): void => {
       window.pocketai
         .getSidebarPinned()
-        .then((x) => x.ok && x.data && setPinnedModules(x.data))
+        .then((x) => {
+          if (!hasIpcFailed(x) && x.data) setPinnedModules(x.data)
+        })
         .catch(reportIpcError('sidebar.rollbackPinned'))
     }
     window.pocketai
@@ -188,6 +243,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <img src={logoUrl} alt="墨匣" className="w-10 h-10 shrink-0" />
         {!collapsed && <span className="font-bold text-base">墨匣</span>}
       </div>
+
+      {/* §275：侧栏顺序与固定模块读取失败提示 */}
+      {!collapsed && (orderUnread || pinnedUnread) && (
+        <div className="px-3 py-2 border-b border-[var(--color-border)] space-y-1">
+          {orderUnread && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <ShowingDefaultsNotice what={t('sidebar.order')} msg={orderUnread.error} />
+              <button
+                data-testid="sidebar-order-retry"
+                className="btn-ghost text-[11px] py-0.5 px-2 shrink-0"
+                onClick={retryOrder}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
+          {pinnedUnread && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <ShowingDefaultsNotice what={t('sidebar.pinned')} msg={pinnedUnread.error} />
+              <button
+                data-testid="sidebar-pinned-retry"
+                className="btn-ghost text-[11px] py-0.5 px-2 shrink-0"
+                onClick={retryPinned}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 模块列表（拖拽排序；右键弹出独立窗口 / 固定不被休眠） */}
       <nav className="flex-1 py-2 overflow-y-auto">

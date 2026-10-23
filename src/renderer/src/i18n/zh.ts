@@ -102,6 +102,8 @@ export const zh = {
   'sidebar.unpin': '取消固定',
   'sidebar.pinFull': '固定数量已达上限',
   'sidebar.pinnedSuffix': '已固定',
+  'sidebar.order': '侧栏顺序',
+  'sidebar.pinned': '固定模块',
   'controls.toggleTheme': '切换明暗主题',
   'controls.toggleLang': 'Switch to English',
 
@@ -1271,6 +1273,7 @@ export const zh = {
   'popup.attachLimit': '最多添加 {n} 个附件',
   'popup.dropToAttach': '松开以添加附件',
   'popup.removeAttachment': '移除附件',
+  'popup.payload': '弹窗数据',
 
   // ── 全局命令面板（Ctrl+P） ──
   'palette.placeholder': '搜索会话、助手、知识库、模块…',

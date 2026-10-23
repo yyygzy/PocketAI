@@ -54,6 +54,8 @@ export const PopupApp: React.FC = () => {
   // §265 第六面：按「停止」那一发过去是裸发，紧接着一句就把界面改成"已停"；
   // `safeHandle` 下主进程的失败是已 resolve 的 `{ok:false}`，`.catch` 根本不会经过。
   const [stopUnread, setStopUnread] = useState<{ error?: string; requestId?: string } | null>(null)
+  // §275：浮窗载荷读取失败追踪（首次拉取失败时挂原因，订阅推送成功后收回）
+  const [payloadUnread, setPayloadUnread] = useState<{ error: string } | null>(null)
   const [providerId, setProviderId] = useState(() => localStorage.getItem(LS_PROVIDER) || '')
   const [model, setModel] = useState(() => localStorage.getItem(LS_MODEL) || '')
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -124,8 +126,21 @@ export const PopupApp: React.FC = () => {
       setAssistantsUnread({ error: errText(e, '') })
       logIpcError('popup.listAssistants', e)
     })
-    void window.pocketai.getPopupPayload().then((v) => { if (!hasIpcFailed(v)) applyPayload(v) }).catch(reportIpcError('popup.getPayload'))
-    const unsub = window.pocketai.onPopupPayload(applyPayload)
+    void window.pocketai.getPopupPayload().then((v) => {
+      if (hasIpcFailed(v)) {
+        setPayloadUnread({ error: ipcFailText(v, t('common.unknownError')) })
+        return
+      }
+      setPayloadUnread(null)
+      applyPayload(v)
+    }).catch((e: unknown) => {
+      setPayloadUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('popup.getPayload', e)
+    })
+    const unsub = window.pocketai.onPopupPayload((p) => {
+      setPayloadUnread(null)
+      applyPayload(p)
+    })
     return unsub
   }, [applyPayload])
 
@@ -487,6 +502,9 @@ export const PopupApp: React.FC = () => {
             )}
             {modelsUnread && (
               <LoadFailNotice what={t('common.modelsList')} msg={ipcFailText(modelsUnread, t('common.unknownError'))} />
+            )}
+            {payloadUnread && (
+              <LoadFailNotice what={t('popup.payload')} msg={payloadUnread.error} />
             )}
           </div>
         )}
