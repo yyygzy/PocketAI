@@ -65,8 +65,12 @@ beforeEach(() => {
   })
 })
 afterEach(() => {
-  // 不还原也行（每个用例 beforeEach 重装），但留着免得污染别的文件
-  delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView
+  // §288：**故意不在这里 delete 原型方法**。此前的写法 `delete Element.prototype.scrollIntoView`
+  // 在满载时会把跨用例的 React pending commit（走 MessageChannel 那一族）撞进未装窗口 ⇒
+  // 抛 `el.scrollIntoView is not a function`（§287 交付的第一趟全量撞过一次，第二趟 0 红 ⇒ 判 flake）。
+  // isolate:true 每个测试文件各起一份 jsdom，spy 留在原型上不污染别的文件；
+  // beforeEach 每用例都会重装一个全新的 vi.fn()，`expect(scrollSpy).toHaveBeenCalled()`
+  // 读的仍是当前用例那份。
 })
 
 const highlightClass = 'ring-1'
