@@ -74,6 +74,33 @@ describe('② 许可证面板', () => {
     expect(alerts()).toEqual([])
     expect(loadingOn()).toBe(false)
   })
+
+  // §294 B165：LicensePanel 里那一发指纹读失败不能演成「没有指纹」。
+  // `SettingsModule.tsx:1582-1595` 是组件自己拉的（不像 lic 从父页传下来），
+  // §278 那批交付时把失败面写成 `ShowingDefaultsNotice what={t('lic.fpLabel')} …`
+  // ——即"这里显示的是默认值"那一族（§226），但**只在源码级**判据；本批把两半都补进 CI。
+  it('§294 指纹那一读失败 ⇒ 那句「这里显示的是默认值」上屏（§226 第二形态）', async () => {
+    stubPocketai({
+      ...stubs,
+      getLicenseFingerprint: () => ({ ok: false, error: 'FP:指纹通道断了' })
+    })
+    mountWithProviders(<LicensePanel lic={lic()} err={null} onChange={() => {}} />)
+    // ShowingDefaultsNotice 用 `common.loadFailedDefaults` 那句、"有东西但那不是你的设置"
+    const sentence = L('common.loadFailedDefaults')
+      .replace('{what}', L('lic.fpLabel'))
+      .replace('{msg}', 'FP:指纹通道断了')
+    await waitFor(() => expect(alerts()).toEqual([sentence]))
+    // 老实说"读不到"不许同时把那一栏禁掉——`无法读取` 兜底字要仍在场（说实话不等于禁输入）
+    expect(screen.getByText(L('lic.fpUnavailable'))).toBeTruthy()
+  })
+
+  it('§294 反向对照：指纹读到 ⇒ 那句不出现、指纹值上屏（默认值兜底也不该出现）', async () => {
+    stubPocketai(stubs) // 复用文件顶的 'fp-1234'
+    mountWithProviders(<LicensePanel lic={lic()} err={null} onChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('fp-1234')).toBeTruthy())
+    expect(alerts(), '"读到了"不该被说成"这里显示的是默认值"').toEqual([])
+    expect(screen.queryByText(L('lic.fpUnavailable')), '兜底字只在真读不到时挂').toBeNull()
+  })
 })
 
 describe('③ 更新面板', () => {
