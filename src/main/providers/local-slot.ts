@@ -89,8 +89,6 @@ class SlotQueue {
     }
     let self!: Waiter
     await new Promise<void>((resolve, reject) => {
-      self = { kind, enqueuedAt: nowFn(), state: 'queued', resolve, reject }
-      this.waiters.push(self)
       const onAbort = (): void => {
         // 仍在队列里：直接摘掉并让 acquire 抛出 AbortError（不占槽，因此不需要 release）
         const i = this.waiters.indexOf(self)
@@ -99,6 +97,21 @@ class SlotQueue {
           reject(abortError())
         }
       }
+      self = {
+        kind,
+        enqueuedAt: nowFn(),
+        state: 'queued',
+        reject,
+        // §305：交棒成功这一支 signal 没有 abort，`once:true` 那层自摘永远不触发 ⇒
+        // 必须在 resolve 里主动摘掉 onAbort，否则长命 signal（一次 run 复用的 master）上
+        // 每"排队再被放行"一次就净累加一个监听器、闭包又钉住这个已结的 waiter。
+        // 兄弟 abort 路径靠 `once` 自摘、这一路径此前漏摘——与已修的 lock/socket 两处同族的不对称。
+        resolve: (): void => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }
+      }
+      this.waiters.push(self)
       signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
