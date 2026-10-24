@@ -23,7 +23,7 @@ import {
 import { AssistantRail } from '../src/renderer/src/modules/chat/AssistantRail'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 
-const dicts = { zh, en, ja, ko } as const
+const dicts: Record<'zh' | 'en' | 'ja' | 'ko', Record<string, string>> = { zh, en, ja, ko }
 type Lang = keyof typeof dicts
 const tFor = (lang: Lang) => (key: string): string => dicts[lang][key] ?? key
 
@@ -94,8 +94,8 @@ describe('96 把键逐本字典齐 + 与磁盘内置助手对齐', () => {
   it('zh 字典的 name/description 逐字等于磁盘 JSON 原始串（DB 兜底与字典同源，不许偷偷改一处）', () => {
     for (const id of BUILTIN_ASSISTANT_IDS) {
       const json = JSON.parse(readFileSync(path.resolve(__dirname, `../extensions/assistants/${id}.json`), 'utf8')) as { name: string; description: string }
-      expect(zh[BUILTIN_I18N_KEYS[id].name], `${id} name`).toBe(json.name)
-      expect(zh[BUILTIN_I18N_KEYS[id].description], `${id} description`).toBe(json.description)
+      expect(dicts.zh[BUILTIN_I18N_KEYS[id].name], `${id} name`).toBe(json.name)
+      expect(dicts.zh[BUILTIN_I18N_KEYS[id].description], `${id} description`).toBe(json.description)
     }
   })
 

@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const { state } = vi.hoisted(() => ({
-  state: { insertParams: [] as unknown[][], sourceName: '通用问答' }
+  state: { insertParams: [] as unknown[], sourceName: '通用问答' }
 }))
 
 vi.mock('../src/main/db/database', () => ({
