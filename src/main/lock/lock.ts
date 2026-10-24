@@ -79,6 +79,9 @@ export class LockService extends EventEmitter {
   onAppHidden(): void {
     if (this.state === 'unlocked') {
       if (this.autoLockTimeout > 0) {
+        // §303：重复 hide（主窗 minimize + detached 窗 hide，两路都接本方法）不能留孤儿 timer，
+        // 否则 onAppShown 只清当前那个、前一个仍在旧到点处把应用锁掉。与兄弟 markIdle 对齐。
+        if (this.idleTimer) clearTimeout(this.idleTimer)
         this.idleTimer = setTimeout(() => {
           this.lock('app-hidden')
         }, this.autoLockTimeout)

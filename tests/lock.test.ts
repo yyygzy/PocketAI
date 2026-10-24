@@ -107,6 +107,16 @@ describe('LockService — app-hidden / os-sleep 触发', () => {
     expect(svc.getStatus().state).toBe('unlocked')
   })
 
+  it('两次 onAppHidden 之间没有 shown ⇒ onAppShown 要清掉前一个 timer，不留孤儿提前锁（§303）', () => {
+    svc.setAutoTimeout(30_000)
+    svc.onAppHidden() // t=0 排 T1（应到 t=30000 锁）
+    vi.advanceTimersByTime(10_000) // t=10000
+    svc.onAppHidden() // t=10000 又 hide（主窗 minimize 后 detached 窗 hide）：应重排到 t=40000、并清掉 T1
+    svc.onAppShown() // 只显示一次 ⇒ 清当前 timer；若没清 T1，T1 会在 t=30000 处剩着锁
+    vi.advanceTimersByTime(25_000) // t=35000：越过 T1 的 30000，但距 onAppShown 之后本不该再有 app-hidden 锁
+    expect(svc.getStatus().state).toBe('unlocked') // T1 被漏清则这里已锁 ⇒ 红
+  })
+
   it('onOsSleep() 立即 lock(os-sleep)', () => {
     const events: LockStateEvent[] = []
     svc.onStateChange((e) => events.push(e))
