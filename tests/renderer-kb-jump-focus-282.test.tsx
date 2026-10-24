@@ -35,6 +35,10 @@ const listKbDocuments = vi.fn()
 const listKbChunks = vi.fn()
 let scrollSpy: ReturnType<typeof vi.fn>
 
+// §293：给本文件所有挂载等待统一 8s／50ms 预算（memory §235／§261 那条"1s 挂载等待已算成族、
+// 修法统一给 MOUNT_BUDGET"的应用；§282 那批交付时用了默认 1s、满载下 §292 撞出红一条）
+const MOUNT_BUDGET = { timeout: 8000, interval: 50 }
+
 function mountDetail(jump: { docId: string; seq: number } | null | undefined, onHandled?: () => void): void {
   mountWithProviders(
     <KbDetail kb={kb()} onChanged={() => {}} jumpFocus={jump} onJumpHandled={onHandled} />
@@ -78,12 +82,12 @@ const highlightClass = 'ring-1'
 describe('KbDetail jumpFocus 落点', () => {
   it('命中已加载到的文档 ⇒ 自动打开分块预览（标题带 doc 名），无需手点', async () => {
     mountDetail({ docId: 'd1', seq: 2 })
-    await waitFor(() => expect(screen.getByText(zh['kb.chunkPreview'].replace('{title}', '文档 d1'))).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(zh['kb.chunkPreview'].replace('{title}', '文档 d1'))).toBeTruthy(), MOUNT_BUDGET)
   })
 
   it('目标分块被滚动定位并高亮，别的分块不高亮', async () => {
     mountDetail({ docId: 'd1', seq: 1 })
-    await waitFor(() => expect(screen.getByText('分块正文 1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('分块正文 1')).toBeTruthy(), MOUNT_BUDGET)
     const target = document.getElementById('kb-chunk-1')!
     const other = document.getElementById('kb-chunk-2')!
     expect(target.className).toContain(highlightClass)
@@ -93,7 +97,7 @@ describe('KbDetail jumpFocus 落点', () => {
 
   it('反向对照：没有 jumpFocus ⇒ 不打开预览（正常进详情页不该弹分块窗）', async () => {
     mountDetail(null)
-    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy(), MOUNT_BUDGET)
     expect(screen.queryByText(zh['kb.chunkPreview'].replace('{title}', '文档 d1'))).toBeNull()
     expect(listKbChunks).not.toHaveBeenCalled()
   })
@@ -101,7 +105,7 @@ describe('KbDetail jumpFocus 落点', () => {
   it('悬空对照：jumpFocus 指向已删除/不属于本库的文档 ⇒ 不消费、不开预览、不回清 pending', async () => {
     const onHandled = vi.fn()
     mountDetail({ docId: 'gone', seq: 0 }, onHandled)
-    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('文档 d1')).toBeTruthy(), MOUNT_BUDGET)
     expect(screen.queryByText(/分块预览/)).toBeNull()
     expect(onHandled).not.toHaveBeenCalled()
     expect(listKbChunks).not.toHaveBeenCalled()
@@ -110,20 +114,20 @@ describe('KbDetail jumpFocus 落点', () => {
   it('消费后回调清 pending（同一次跳转不重复弹）', async () => {
     const onHandled = vi.fn()
     mountDetail({ docId: 'd2', seq: 0 }, onHandled)
-    await waitFor(() => expect(screen.getByText(zh['kb.chunkPreview'].replace('{title}', '文档 d2'))).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(zh['kb.chunkPreview'].replace('{title}', '文档 d2'))).toBeTruthy(), MOUNT_BUDGET)
     expect(onHandled).toHaveBeenCalledTimes(1)
   })
 
   it('seq=0 是真序号 ⇒ 高亮落在那一条上（真值判断 `if (!seq)` 会把它吃掉）', async () => {
     mountDetail({ docId: 'd1', seq: 0 })
-    await waitFor(() => expect(screen.getByText('分块正文 0')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('分块正文 0')).toBeTruthy(), MOUNT_BUDGET)
     expect(document.getElementById('kb-chunk-0')!.className).toContain(highlightClass)
   })
 
   it('关窗（点遮罩）后回到文档列表，不再留着预览', async () => {
     mountDetail({ docId: 'd1', seq: 2 })
-    await waitFor(() => expect(screen.getByText(zh['kb.chunkPreview'].replace('{title}', '文档 d1'))).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(zh['kb.chunkPreview'].replace('{title}', '文档 d1'))).toBeTruthy(), MOUNT_BUDGET)
     fireEvent.click(screen.getByText(zh['common.close']))
-    await waitFor(() => expect(screen.queryByText(zh['kb.chunkPreview'].replace('{title}', '文档 d1'))).toBeNull())
+    await waitFor(() => expect(screen.queryByText(zh['kb.chunkPreview'].replace('{title}', '文档 d1'))).toBeNull(), MOUNT_BUDGET)
   })
 })
