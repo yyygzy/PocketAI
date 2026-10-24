@@ -11,6 +11,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.{test,spec}.{ts,tsx}'],
+    // §299：jsdom 文件里把 testing-library 的 asyncUtilTimeout 抬到 8s（node 文件自己跳过，见该文件）。
+    setupFiles: ['tests/setup-env.ts'],
     /**
      * 默认 5000ms 对「真跑东西」的用例太紧：240 个 isolate worker 抢机器时，
      * 实测有 4 条同时越线（export-markdown 9234ms 冷加载 react-dom/server、
