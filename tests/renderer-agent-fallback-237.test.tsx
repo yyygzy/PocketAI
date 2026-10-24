@@ -108,7 +108,13 @@ beforeEach(() => {
   stubPocketai(stubBase())
 })
 
-const badge = async (): Promise<HTMLElement> => (await screen.findByTestId('agent-fallback-badge')) as HTMLElement
+// §298：徽标要等整条挂载链（getUiPrefs→listConversations→applyLastModelOf 设 providerId/model）
+// 跑完才渲染。findBy/裸 waitFor 走 testing-library 自己的 asyncUtilTimeout（默认 1000ms），
+// 与 vitest testTimeout 是两条独立预算；满载 240 isolate worker 抢机器时这条链墙钟能 >1s
+// ⇒ §295 撞出"找不到徽标"的红（§297 定性）。统一给 8s／50ms 预算（与 §293 同一味药）。
+const MOUNT_BUDGET = { timeout: 8000, interval: 50 }
+
+const badge = async (): Promise<HTMLElement> => (await screen.findByTestId('agent-fallback-badge', {}, MOUNT_BUDGET)) as HTMLElement
 
 describe('备用徽标的四张脸', () => {
   it('没设过：说"备用未设"，而不是给一个看起来像读数的空位', async () => {
@@ -125,7 +131,7 @@ describe('备用徽标的四张脸', () => {
     // 反向对照：这一张脸不能是"未设"
     expect(text).not.toBe(zh['agent.fallbackUnset'])
     fireEvent.click(screen.getByTestId('agent-fallback-badge'))
-    const editor = await screen.findByTestId('agent-fallback-editor')
+    const editor = await screen.findByTestId('agent-fallback-editor', {}, MOUNT_BUDGET)
     const selects = editor.querySelectorAll('select')
     expect((selects[0] as HTMLSelectElement).value).toBe('ollama')
     expect((selects[1] as HTMLSelectElement).value).toBe('qwen3:1.7b')
@@ -152,7 +158,7 @@ describe('设与清：实参照写、拒绝照说', () => {
   it('挑一对再保存 ⇒ 发给主进程的是（当前 provider, 当前模型, 那一对），界面不自作主张先改徽标', async () => {
     mountWithProviders(<AgentPanel />)
     fireEvent.click(await badge())
-    const editor = await screen.findByTestId('agent-fallback-editor')
+    const editor = await screen.findByTestId('agent-fallback-editor', {}, MOUNT_BUDGET)
     const selects = editor.querySelectorAll('select')
     fireEvent.change(selects[0]!, { target: { value: 'ollama' } })
     fireEvent.change(selects[1]!, { target: { value: 'qwen3:1.7b' } })
@@ -161,6 +167,7 @@ describe('设与清：实参照写、拒绝照说', () => {
       expect(
         pocketaiCalls().filter((c) => c.fn === 'setFallbackTarget').at(-1)?.args
       ).toEqual(['glm', 'glm-4.6', { providerId: 'ollama', model: 'qwen3:1.7b' }])
+    , MOUNT_BUDGET
     )
   })
 
@@ -168,21 +175,22 @@ describe('设与清：实参照写、拒绝照说', () => {
     table = { [fallbackTargetKey('glm', 'glm-4.6')]: { providerId: 'ollama', model: 'qwen3:1.7b' } }
     mountWithProviders(<AgentPanel />)
     fireEvent.click(await badge())
-    fireEvent.click(await screen.findByTestId('agent-fallback-clear'))
+    fireEvent.click(await screen.findByTestId('agent-fallback-clear', {}, MOUNT_BUDGET))
     await waitFor(() =>
       expect(pocketaiCalls().filter((c) => c.fn === 'setFallbackTarget').at(-1)?.args).toEqual([
         'glm',
         'glm-4.6',
         null
       ])
+    , MOUNT_BUDGET
     )
-    await waitFor(() => expect(screen.getByTestId('agent-fallback-badge').textContent).toBe(zh['agent.fallbackUnset']))
+    await waitFor(() => expect(screen.getByTestId('agent-fallback-badge').textContent).toBe(zh['agent.fallbackUnset']), MOUNT_BUDGET)
   })
 
   it('两个都没选 ⇒ 保存是灰的（不发一次"清除"，也不发一条空备用）', async () => {
     mountWithProviders(<AgentPanel />)
     fireEvent.click(await badge())
-    const save = (await screen.findByTestId('agent-fallback-save')) as HTMLButtonElement
+    const save = (await screen.findByTestId('agent-fallback-save', {}, MOUNT_BUDGET)) as HTMLButtonElement
     expect(save.disabled).toBe(true)
     expect(pocketaiCalls().some((c) => c.fn === 'setFallbackTarget')).toBe(false)
   })
@@ -196,7 +204,7 @@ describe('设与清：实参照写、拒绝照说', () => {
     ]
     mountWithProviders(<AgentPanel />)
     fireEvent.click(await badge())
-    const editor = await screen.findByTestId('agent-fallback-editor')
+    const editor = await screen.findByTestId('agent-fallback-editor', {}, MOUNT_BUDGET)
     const providerOptions = editor.querySelectorAll('select')[0]!.querySelectorAll('option')
     // 只有那条占位「选择 Provider…」——把自己列进候选等于给用户一个"点了没换"的按钮
     expect(providerOptions).toHaveLength(1)
@@ -206,7 +214,7 @@ describe('设与清：实参照写、拒绝照说', () => {
     setReply = { targets: {}, rejected: 'FALLBACK_IS_SELF' }
     mountWithProviders(<AgentPanel />)
     fireEvent.click(await badge())
-    const editor = await screen.findByTestId('agent-fallback-editor')
+    const editor = await screen.findByTestId('agent-fallback-editor', {}, MOUNT_BUDGET)
     const selects = editor.querySelectorAll('select')
     fireEvent.change(selects[0]!, { target: { value: 'glm' } })
     fireEvent.change(selects[1]!, { target: { value: 'glm-4.5' } })
@@ -217,6 +225,7 @@ describe('设与清：实参照写、拒绝照说', () => {
           .map((n) => n.textContent ?? '')
           .join('\n')
       ).toContain(zh['agent.fallback.rejected.FALLBACK_IS_SELF'])
+    , MOUNT_BUDGET
     )
     expect(screen.getByTestId('agent-fallback-badge').textContent).toBe(zh['agent.fallbackUnset'])
   })
@@ -226,14 +235,15 @@ describe('溢出提示那句：只在引擎真算得出来时才出现', () => {
   /** 起一轮真运行：发送 → 进 running，并给出这一发的 requestId（DONE 要按它归属） */
   async function startRun(): Promise<{ requestId: () => string }> {
     mountWithProviders(<AgentPanel />)
-    await waitFor(() => expect(screen.getByText(zh['common.send'])).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(zh['common.send'])).toBeTruthy(), MOUNT_BUDGET)
     const input = screen.getByTitle(zh['agent.composerTitle']) as HTMLTextAreaElement
     fireEvent.change(input, { target: { value: '跑一件事' } })
     await waitFor(() =>
       expect((screen.getByText(zh['common.send']) as HTMLButtonElement).disabled).toBe(false)
+    , MOUNT_BUDGET
     )
     fireEvent.click(screen.getByText(zh['common.send']))
-    await waitFor(() => expect(screen.getByText(zh['common.stop'])).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(zh['common.stop'])).toBeTruthy(), MOUNT_BUDGET)
     return {
       requestId: () =>
         (pocketaiCalls().filter((c) => c.fn === 'sendMessage').at(-1)!.args[0] as { requestId: string })
@@ -259,27 +269,27 @@ describe('溢出提示那句：只在引擎真算得出来时才出现', () => {
   it('DONE 带 historyTight ⇒ 那句上屏；点关闭就没了', async () => {
     const { requestId } = await startRun()
     feedDone({ historyTight: true }, requestId())
-    const notice = await screen.findByTestId('history-tight-notice')
+    const notice = await screen.findByTestId('history-tight-notice', {}, MOUNT_BUDGET)
     expect(notice.textContent).toContain(zh['agent.historyTightHint'])
     fireEvent.click(screen.getByTestId('history-tight-close'))
-    await waitFor(() => expect(screen.queryByTestId('history-tight-notice')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('history-tight-notice')).toBeNull(), MOUNT_BUDGET)
   })
 
   it('反向对照：正常一轮不带这个标记 ⇒ 不出现那句（量不出来就不猜给用户）', async () => {
     const { requestId } = await startRun()
     feedDone({}, requestId())
-    await waitFor(() => expect(screen.queryByText(zh['common.stop'])).toBeNull())
+    await waitFor(() => expect(screen.queryByText(zh['common.stop'])).toBeNull(), MOUNT_BUDGET)
     expect(screen.queryByTestId('history-tight-notice')).toBeNull()
   })
 
   it('上一轮那句不许跟着起新一轮', async () => {
     const { requestId } = await startRun()
     feedDone({ historyTight: true }, requestId())
-    await screen.findByTestId('history-tight-notice')
+    await screen.findByTestId('history-tight-notice', {}, MOUNT_BUDGET)
     const input = screen.getByTitle(zh['agent.composerTitle']) as HTMLTextAreaElement
     fireEvent.change(input, { target: { value: '第二问' } })
     fireEvent.click(screen.getByText(zh['common.send']))
-    await waitFor(() => expect(screen.queryByTestId('history-tight-notice')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('history-tight-notice')).toBeNull(), MOUNT_BUDGET)
   })
 })
 
@@ -290,7 +300,7 @@ describe('historyTight 是「那一轮」的事实，不是会话的属性（hoo
       { wrapper: HookProviders }
     )
     act(() => result.current.setAssistantId('a1'))
-    await waitFor(() => expect(result.current.conversationId).toBe('c1'))
+    await waitFor(() => expect(result.current.conversationId).toBe('c1'), MOUNT_BUDGET)
     act(() => result.current.changeProvider('glm'))
     act(() => result.current.setModel('glm-4.6'))
     await act(async () => {
