@@ -87,10 +87,15 @@ describe('KbDetail jumpFocus 落点', () => {
 
   it('目标分块被滚动定位并高亮，别的分块不高亮', async () => {
     mountDetail({ docId: 'd1', seq: 1 })
-    await waitFor(() => expect(screen.getByText('分块正文 1')).toBeTruthy(), MOUNT_BUDGET)
-    const target = document.getElementById('kb-chunk-1')!
+    // §296：高亮 className 由 setHlSeq（KnowledgeModule.tsx:1383）触发的第二次 commit 才落到
+    // ring-1（:1414-1415），文本「分块正文 1」由 setChunks（:1368）第一次 commit 就有——§282 那批
+    // 只 waitFor 文本在场就同步读 className，满载下第二次 commit 落在 waitFor 返回之后 ⇒ 红。
+    // 修法：把 ring-1 那条断言本身挪进 waitFor（其余反向／滚动断言仍在同步位置，它们读的初值即稳）。
+    await waitFor(() => {
+      expect(screen.getByText('分块正文 1')).toBeTruthy()
+      expect(document.getElementById('kb-chunk-1')!.className).toContain(highlightClass)
+    }, MOUNT_BUDGET)
     const other = document.getElementById('kb-chunk-2')!
-    expect(target.className).toContain(highlightClass)
     expect(other.className).not.toContain(highlightClass)
     expect(scrollSpy).toHaveBeenCalled()
   })
@@ -120,8 +125,11 @@ describe('KbDetail jumpFocus 落点', () => {
 
   it('seq=0 是真序号 ⇒ 高亮落在那一条上（真值判断 `if (!seq)` 会把它吃掉）', async () => {
     mountDetail({ docId: 'd1', seq: 0 })
-    await waitFor(() => expect(screen.getByText('分块正文 0')).toBeTruthy(), MOUNT_BUDGET)
-    expect(document.getElementById('kb-chunk-0')!.className).toContain(highlightClass)
+    // §296：同上一条——ring-1 来自 setHlSeq 的第二次 commit，断言要挪进 waitFor
+    await waitFor(() => {
+      expect(screen.getByText('分块正文 0')).toBeTruthy()
+      expect(document.getElementById('kb-chunk-0')!.className).toContain(highlightClass)
+    }, MOUNT_BUDGET)
   })
 
   it('关窗（点遮罩）后回到文档列表，不再留着预览', async () => {
