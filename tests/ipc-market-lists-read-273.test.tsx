@@ -50,7 +50,7 @@ beforeEach(() => {
 })
 
 describe('① 助手市场：那片空白不再演成"你一个助手都没建"', () => {
-  const mount = (over: Record<string, (...a: any[]) => unknown> = {}): void => {
+  const mount = (over: Record<string, (...a: any[]) => unknown> = {}): ReturnType<typeof mountWithProviders> => {
     stubPocketai({
       listAssistants: () => {
         calls.assistants += 1
@@ -58,7 +58,7 @@ describe('① 助手市场：那片空白不再演成"你一个助手都没建"'
       },
       ...over
     })
-    mountWithProviders(<AssistantMarket providers={[]} onClose={() => {}} onChanged={() => {}} />)
+    return mountWithProviders(<AssistantMarket providers={[]} onClose={() => {}} onChanged={() => {}} />)
   }
 
   it('读不到 ⇒ 那句上屏并自带一颗键（这一屏没有"点一下就重拉"的格子）', async () => {
@@ -96,7 +96,7 @@ describe('① 助手市场：那片空白不再演成"你一个助手都没建"'
 })
 
 describe('② 技能市场本地那一 tab：「还没有任何技能」这张脸让位', () => {
-  const mount = (over: Record<string, (...a: any[]) => unknown> = {}): void => {
+  const mount = (over: Record<string, (...a: any[]) => unknown> = {}): ReturnType<typeof mountWithProviders> => {
     stubPocketai({
       listSkills: () => {
         calls.skills += 1
@@ -105,7 +105,7 @@ describe('② 技能市场本地那一 tab：「还没有任何技能」这张�
       syncSkills: () => ({ count: 0, errors: [] }),
       ...over
     })
-    mountWithProviders(<SkillMarket onClose={() => {}} onChanged={async () => []} />)
+    return mountWithProviders(<SkillMarket onClose={() => {}} onChanged={async () => []} />)
   }
 
   it('读不到 ⇒ 「还没有任何技能…」让位给那句，reject 面也是同一张脸', async () => {
@@ -238,5 +238,51 @@ describe('④ 用户记忆那一发', () => {
     mount()
     await waitFor(() => expect(bodyText()).toContain('PROBE-记忆'), MOUNT_BUDGET)
     expect(alerts()).toEqual([])
+  })
+})
+
+// ---------- §292 B160 收口：关掉整个弹层再开 ⇒ 挂载效应在 unmount→mount 时重跑 ----------
+// 「这一屏的天然出口是关掉整个弹层再开、代价大到等于没出口」——§273 交付时那句"关掉再开重拉"
+// 只在源码级：`AssistantMarket.tsx:31` 与 `SkillMarket.tsx:51` 都在挂载 `useEffect(..., [])` 里读
+// 清单，市场面板是条件挂载（父层 `open && <XMarket … />`），关掉就是 unmount、再开就是 remount ⇒
+// effect 再跑一次。这条此前没有 CI 读它——有人把清单 store 提升到 Context／全局 memo（§253 那族
+// "跨挂载缓存"）或给 effect 加 `if (assistants.length) return` 之类的守卫，两份清单就会停在上一份、
+// 用户看不到库里新加的助手／技能，而屏上一句错都不冒。§285 已经在 AssistantEditor 上钉过同形状，
+// 这里把两格市场弹层补齐。
+describe('⑤ §292 B160：AssistantMarket／SkillMarket 关掉再开 ⇒ 通道各重发一次', () => {
+  it('助手市场：挂→等→unmount→重挂 ⇒ listAssistants 从 1 涨到 2', async () => {
+    // 借用 describe ① 里同形状的 mount，只是这里要拿 render 结果去 unmount
+    const mountAgain = (): ReturnType<typeof mountWithProviders> => {
+      stubPocketai({
+        listAssistants: () => {
+          calls.assistants += 1
+          return [A1]
+        }
+      })
+      return mountWithProviders(<AssistantMarket providers={[]} onClose={() => {}} onChanged={() => {}} />)
+    }
+    const r1 = mountAgain()
+    await waitFor(() => expect(calls.assistants).toBe(1), MOUNT_BUDGET)
+    r1.unmount()
+    mountAgain()
+    await waitFor(() => expect(calls.assistants, '关→重开必须重发清单那一发').toBe(2), MOUNT_BUDGET)
+  })
+
+  it('技能市场：挂→等→unmount→重挂 ⇒ listSkills 从 1 涨到 2（syncSkills 不参与计数——§273 那两发里只算清单）', async () => {
+    const mountAgain = (): ReturnType<typeof mountWithProviders> => {
+      stubPocketai({
+        listSkills: () => {
+          calls.skills += 1
+          return [S1]
+        },
+        syncSkills: () => ({ count: 0, errors: [] })
+      })
+      return mountWithProviders(<SkillMarket onClose={() => {}} onChanged={async () => []} />)
+    }
+    const r1 = mountAgain()
+    await waitFor(() => expect(calls.skills).toBe(1), MOUNT_BUDGET)
+    r1.unmount()
+    mountAgain()
+    await waitFor(() => expect(calls.skills, '关→重开必须重发清单那一发').toBe(2), MOUNT_BUDGET)
   })
 })
