@@ -8,6 +8,7 @@ import { updateManager } from './update-manager'
 import { stopReminderScheduler } from './reminder/scheduler'
 import { killAllTerminals } from './terminal/terminal-service'
 import { killInFlightShellJobs } from './tools/shell-tools'
+import { channelService } from './channels/channel-service'
 import { dbService } from './db/database'
 import { createLogger } from './logger'
 
@@ -106,6 +107,10 @@ export async function runCleanupChain(): Promise<void> {
     const n = killInFlightShellJobs()
     if (n > 0) log.warn(`退出链：杀掉 ${n} 个在途 shell 子进程`)
   } catch { /* ignore */ }
+  // 停所有渠道网关（V4-Iter-283）：Telegram/Discord/… 的 socket 与自动重连循环，
+  // OS 硬关 socket 兜不住「已排队的 reconnect/重 identify」——停在 close 之前，
+  // 也让 handleMessage 不再在库关掉后才回落到这条服务
+  try { channelService.stopAll() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
   log.info('清理链完成')
 }
@@ -131,5 +136,7 @@ export function runFallbackCleanup(): void {
   try {
     void mcpManager.stopAll().catch(() => { /* ignore */ })
   } catch { /* ignore */ }
+  // 停渠道网关（V4-Iter-283）：兜底路径同样试一次，别让 abort 不掉的自动重连留在退出半程
+  try { channelService.stopAll() } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
 }

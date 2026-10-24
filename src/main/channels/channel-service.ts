@@ -110,6 +110,22 @@ export class ChannelService {
     GATEWAYS[type].stop()
   }
 
+  /**
+   * §283：退出链调用——逐个停所有网关。
+   * 各 gateway 的 stop() 会 abort 重连控制器并关 socket；OS 随进程硬关 socket 是兜底，
+   * 但 abort 不掉「已排队的重连/重 identify」，退出时主动停一遍（形状与 mcpManager.stopAll 对齐）。
+   * 单个网关 stop 抛错不带走其余（与 autoStart 的逐条 try 同口径）。
+   */
+  stopAll(): void {
+    for (const type of CHANNEL_TYPES) {
+      try {
+        GATEWAYS[type].stop()
+      } catch (err) {
+        log.warn(`${type} 网关停止异常:`, errMsg(err))
+      }
+    }
+  }
+
   /** 单条入站消息处理（收口复查 → 白名单 → 会话 → 问答 → 回复） */
   private async handleMessage(type: ChannelType, msg: IncomingMessage): Promise<void> {
     // 纵深防御：各 gateway 已收口，这里再复查一次（防未来新增通道绕过 sanitize）

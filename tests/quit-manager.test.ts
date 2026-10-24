@@ -84,6 +84,10 @@ vi.mock('../src/main/tools/shell-tools', () => ({
   killInFlightShellJobs: () => { mocks.calls.push('killInFlightShellJobs'); return 0 }
 }))
 
+vi.mock('../src/main/channels/channel-service', () => ({
+  channelService: { stopAll: () => { mocks.calls.push('stopChannels') } }
+}))
+
 vi.mock('../src/main/db/database', () => ({
   dbService: {
     close: () => {
@@ -122,10 +126,10 @@ describe('退出标志', () => {
 })
 
 describe('runCleanupChain 异步清理链', () => {
-  it('按序执行十步：abortPull → stopAll → cleanup → 撤更新器延迟检查 → 三个 scheduler → 终端与在途 shell → close', async () => {
+  it('按序执行十一步：abortPull → stopAll → cleanup → 撤更新器延迟检查 → 三个 scheduler → 终端与在途 shell → 停渠道网关 → close', async () => {
     await runCleanupChain()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'close'
     ])
   })
 
@@ -133,7 +137,7 @@ describe('runCleanupChain 异步清理链', () => {
     mocks.stopAllError = new Error('MCP 停止失败')
     await expect(runCleanupChain()).resolves.toBeUndefined()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'close'
     ])
   })
 
@@ -149,10 +153,10 @@ describe('runCleanupChain 异步清理链', () => {
     expect(mocks.calls).toContain('close')
   })
 
-  it('三个 scheduler 与在途 shell 的杀都排在 close 之前（199/202：它们的清理都要读库或动进程表）', async () => {
+  it('三个 scheduler、在途 shell 的杀与停渠道网关都排在 close 之前（199/202/283：它们的清理都要读库、动进程表或断 socket）', async () => {
     await runCleanupChain()
     const closeAt = mocks.calls.indexOf('close')
-    for (const s of ['stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killInFlightShellJobs']) {
+    for (const s of ['stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killInFlightShellJobs', 'stopChannels']) {
       expect(mocks.calls.indexOf(s)).toBeGreaterThanOrEqual(0)
       expect(mocks.calls.indexOf(s)).toBeLessThan(closeAt)
     }
@@ -160,10 +164,10 @@ describe('runCleanupChain 异步清理链', () => {
 })
 
 describe('runFallbackCleanup 同步兜底', () => {
-  it('兜底也试一次停 MCP（197：链没跑到的路径别把子进程留在后台）', () => {
+  it('兜底也试一次停 MCP（197）＋停渠道网关（283：别让 abort 不掉的自动重连留在退出半程）', () => {
     runFallbackCleanup()
     expect(mocks.calls).toEqual([
-      'abortPull', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopAll', 'close'
+      'abortPull', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopAll', 'stopChannels', 'close'
     ])
   })
 
@@ -179,7 +183,7 @@ describe('runCleanupOnce（197：幂等 ＋ 总时限）', () => {
     expect(await runCleanupOnce(2000)).toBe('done')
     expect(isCleanupDone()).toBe(true)
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'close'
     ])
     const n = mocks.calls.length
     expect(await runCleanupOnce(2000)).toBe('done')

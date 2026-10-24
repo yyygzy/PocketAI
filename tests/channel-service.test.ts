@@ -3,7 +3,8 @@
 // 覆盖 src/main/channels/channel-service.ts 核心路径：
 // - loadConvMap / saveConvMap：KV 中会话映射的读取与持久化（null/非法 JSON/数组/合法对象）
 // - ChannelService 公开方法：onStatus 监听器增删、init 注册各网关状态回调、
-//   autoStart 跳过 disabled 网关并吞启动错误、start 校验 enabled、stop 转发
+//   autoStart 跳过 disabled 网关并吞启动错误、start 校验 enabled、stop 转发、
+//   stopAll（§283：退出链调用）逐个停并把单个抛错吞掉
 // - handleMessage 路由：sanitizeIncoming 复查 → 白名单 fail-closed → busyChats 串行锁
 // - processMessage 分支：模型未配置走助手默认 → 会话映射复用/重建 → runChat 结果分流
 // - runChat 事件收集器：AGENT_DONE / CHAT_DONE / AGENT_ERROR / CHAT_ERROR 与
@@ -295,6 +296,23 @@ describe('ChannelService 公开方法', () => {
   it('stop 转发到 gateway.stop', () => {
     svc.stop('discord')
     expect(mocks.gatewayStub.stop).toHaveBeenCalledTimes(1)
+  })
+
+  // §283：退出链调用的 stopAll —— 逐个停所有网关（5 个 stub 共用，调用次数 = CHANNEL_TYPES.length）
+  it('stopAll：逐个停所有网关，次数 = CHANNEL_TYPES.length', () => {
+    svc.stopAll()
+    expect(mocks.gatewayStub.stop).toHaveBeenCalledTimes(CHANNEL_TYPES.length)
+  })
+
+  // §283：单个网关 stop 抛错不能带走其余（与 autoStart 的逐条 try 同口径）
+  it('stopAll：单个网关 stop 抛错不带走其余', () => {
+    let calls = 0
+    mocks.gatewayStub.stop.mockImplementation(() => {
+      calls++
+      if (calls === 2) throw new Error('discard 失败')
+    })
+    expect(() => svc.stopAll()).not.toThrow()
+    expect(mocks.gatewayStub.stop).toHaveBeenCalledTimes(CHANNEL_TYPES.length)
   })
 
   it('autoStart 跳过 disabled 网关并启动 enabled 网关', async () => {
