@@ -174,6 +174,8 @@ class DingtalkGateway implements IGateway {
     })
 
     ws.addEventListener('close', () => {
+      // §304：socket 一关就摘掉本条挂在长命 ctrl.signal 上的 onAbort，避免每次 reconnect 累加一个监听器并钉住已关 ws（同兄弟 sleep() 的自清理）。
+      ctrl.signal.removeEventListener('abort', onAbort)
       this.ws = null
       this.running = false
       if (ctrl.signal.aborted) return

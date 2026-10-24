@@ -137,6 +137,10 @@ class DiscordGateway implements IGateway {
     })
 
     ws.addEventListener('close', (ev: CloseEvent) => {
+      // §304：这条 socket 一关，connect() 挂在长命 ctrl.signal 上的 onAbort 就该摘掉——
+      // 否则每次 reconnect 都在同一个 signal 上净累加一个 once 监听器、并钉住一个已关 ws 不进 GC
+      // （sibling 的 sleep() 自己会 removeEventListener，connect() 此前漏了）。放在最前面覆盖所有关法。
+      ctrl.signal.removeEventListener('abort', onAbort)
       // §284：先捕获 running／starting，再 cleanupConnection——原实现在 cleanup 之后才判 `this.running`，
       // 而 cleanup 会无条件把 running 清成 false ⇒ "运行中意外断开"那一支恒假、从上线起没跑过一次。
       const wasRunning = this.running
