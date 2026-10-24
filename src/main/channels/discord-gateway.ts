@@ -146,7 +146,8 @@ class DiscordGateway implements IGateway {
         // stop 触发：状态已由 stop() 设置
         return
       }
-      // 代码 4000+ 为应用主动关闭：不重连
+      // 代码 4000+ 是 Discord 网关自定义的关闭码，多数属"重连也不会好"那一档（认证 4004、shard/intents
+      // 配置类 4010-4015），粗一刀切不重连；§287：op7 服务端要求重连那条不再走这一路（改回 RFC 1012）。
       if (ev.code >= 4000) return
       // 服务端要求重连：自动 backoff 重试
       if (wasStarting) {
@@ -213,8 +214,13 @@ class DiscordGateway implements IGateway {
         // 服务端确认心跳，无需操作
         break
       case 7: // Reconnect
+        // §287：服务端要求"断开后立刻重连"——旧写法 `ws.close(4001, ...)` 会被下面 close handler
+        // 那句 `if (ev.code >= 4000) return` 挡住 ⇒ op7 之后网关停在停机态、既不 resume 也不重新
+        // identify。改成 RFC 6455 的 1012（Service Restart）：< 4000 ⇒ close handler 走 wasRunning
+        // 分支起 reconnect，新 socket 从 Hello 走正常 identify（Discord 侧 op7 允许带 resume，
+        // 但我们没实现 resume——identify 一次拿到新 session 也够用，形状与 §284 Fix B 那条一致）。
         try {
-          this.ws?.close(4001, 'server requested reconnect')
+          this.ws?.close(1012, 'server requested reconnect')
         } catch {
           /* noop */
         }

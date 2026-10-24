@@ -234,3 +234,70 @@ describe('§284 Fix B：op9 invalid-session 那 2 秒 setTimeout', () => {
     expect(ws0.sentIdentifies()).toBe(1)
   })
 })
+
+// ---------- §287 op7 服务端要求重连：close 码 4001 → 1012 ----------
+// `discord-gateway.ts` 的 close handler 有一句 `if (ev.code >= 4000) return`——粗挡 Discord
+// 网关自定义那族"重连也不会好"的码（认证 4004、shard/intents 配置类 4010-4015）。op7 Reconnect
+// 服务端要求"断开立刻重连"，旧代码走 `ws.close(4001, 'server requested reconnect')` 恰落进这一档 ⇒
+// 网关停在停机态、既不 resume 也不重 identify。§287 把 op7 的 close 码换成 RFC 6455 的 1012
+// （Service Restart：< 4000 ⇒ close handler 走 wasRunning 分支起 reconnect）。
+describe('§287 op7 Reconnect：close 码 4001 → 1012 之后真起 reconnect', () => {
+  it('READY 之后收 op7 ⇒ 新 WebSocket 起来（旧 4001 会被 4000+ 挡）', async () => {
+    const gw = await freshGateway()
+    await gw.start(() => {})
+    const ws0 = FakeWebSocket.instances[0]!
+    ws0.fireOpen()
+    ws0.fireHello()
+    ws0.fireRaw({
+      op: 0,
+      s: 1,
+      t: 'READY',
+      d: { user: { id: 'u1', username: 'bot' }, session_id: 's1' }
+    })
+    expect(gw.isRunning()).toBe(true)
+    const before = FakeWebSocket.instances.length
+    ws0.fireRaw({ op: 7, s: 2, t: null, d: null })
+    // op7 里 ws.close(1012) 会同步 fire close 事件 ⇒ wasRunning=true ⇒ reconnect sleep(1000)→connect
+    await vi.advanceTimersByTimeAsync(1_200)
+    expect(FakeWebSocket.instances.length, 'op7 之后必须起新 socket').toBeGreaterThan(before)
+    gw.stop()
+  })
+
+  it('反向对照：close 4004（认证失败）⇒ 不 reconnect（`>=4000` 那一挡对 4004 仍然管用）', async () => {
+    const gw = await freshGateway()
+    await gw.start(() => {})
+    const ws0 = FakeWebSocket.instances[0]!
+    ws0.fireOpen()
+    ws0.fireHello()
+    ws0.fireRaw({
+      op: 0,
+      s: 1,
+      t: 'READY',
+      d: { user: { id: 'u1', username: 'bot' }, session_id: 's1' }
+    })
+    const before = FakeWebSocket.instances.length
+    ws0.close(4004, 'auth failed')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(FakeWebSocket.instances.length, '4004 认证失败不该 reconnect').toBe(before)
+    gw.stop()
+  })
+
+  it('反向对照：close 4015（disallowed intents）⇒ 不 reconnect', async () => {
+    const gw = await freshGateway()
+    await gw.start(() => {})
+    const ws0 = FakeWebSocket.instances[0]!
+    ws0.fireOpen()
+    ws0.fireHello()
+    ws0.fireRaw({
+      op: 0,
+      s: 1,
+      t: 'READY',
+      d: { user: { id: 'u1', username: 'bot' }, session_id: 's1' }
+    })
+    const before = FakeWebSocket.instances.length
+    ws0.close(4015, 'disallowed intents')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(FakeWebSocket.instances.length, '4015 配置类错也不该 reconnect').toBe(before)
+    gw.stop()
+  })
+})
