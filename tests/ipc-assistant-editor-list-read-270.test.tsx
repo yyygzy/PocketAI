@@ -37,7 +37,7 @@ const KB: KnowledgeBase = { id: 'kb1', name: 'PROBE-知识库', documentCount: 3
 const TOOL: ToolSchema = { id: 'fs.read', name: 'PROBE-工具', description: '读文件', parameters: {}, source: 'builtin' }
 const SKILL: SkillRecord = { id: 'sk1', name: 'PROBE-技能', icon: '⚡', description: '一支技能', enabled: true } as unknown as SkillRecord
 
-function mount(over: Record<string, (...a: any[]) => unknown> = {}): void {
+function mount(over: Record<string, (...a: any[]) => unknown> = {}): ReturnType<typeof mountWithProviders> {
   stubPocketai({
     listKnowledgeBases: () => [KB],
     listAvailableTools: () => [TOOL],
@@ -45,7 +45,7 @@ function mount(over: Record<string, (...a: any[]) => unknown> = {}): void {
     saveAssistant: (a) => a,
     ...over
   })
-  mountWithProviders(
+  return mountWithProviders(
     <AssistantEditor initial={{ name: 'PROBE-助手' }} providers={[]} onCancel={() => {}} onSaved={() => {}} />
   )
 }
@@ -152,5 +152,71 @@ describe('③ 三发互不干扰：一句只点自己的名、一颗键只重发
     expect(calls.kbs, '知识库那一发不该被重发').toBe(before.kbs)
     expect(calls.tools, '工具那一发不该被重发').toBe(before.tools)
     expect(calls.skills, '技能这一发确实重发过一次').toBe(before.skills + 1)
+  })
+})
+
+// ---------- §285 B157 收口：关掉再开自己会重拉（挂载效应在 unmount→mount 时重跑） ----------
+// 那句"这一屏的天然出口是关掉编辑器重开"的形态判据此前只在源码级：`AssistantEditor.tsx:96` 那个
+// `useEffect(() => { loadKbs(); loadTools(); loadSkills() }, [])`——组件在 AssistantMarket.tsx:248 是
+// 条件挂载（`(view.mode === 'edit' || view.mode === 'create') && <AssistantEditor … />`），关闭编辑器
+// 走 setView({mode:'grid'}) ⇒ 卸载；重开 ⇒ 重新挂 ⇒ 三发各再来一遍。这一形状此前没有任何 CI 读它——
+// 有人把 useEffect 改成 "if (kbs.length) return"（首屏之后不再拉），或者把清单 store 挪进全局 memo 都会静默
+// 让"重开重拉"这条出口失效，而屏上一句错都不冒。
+describe('④ §285 B157：unmount→remount 三发都各自重跑一次', () => {
+  it('关掉再开：三发各重跑一次（kbs／tools／skills 都从 1 涨到 2）', async () => {
+    const calls = { kbs: 0, tools: 0, skills: 0 }
+    const stubs = {
+      listKnowledgeBases: () => {
+        calls.kbs += 1
+        return [KB]
+      },
+      listAvailableTools: () => {
+        calls.tools += 1
+        return [TOOL]
+      },
+      listSkills: () => {
+        calls.skills += 1
+        return [SKILL]
+      }
+    }
+    const r1 = mount(stubs)
+    await waitFor(
+      () => {
+        expect(calls.kbs).toBe(1)
+        expect(calls.tools).toBe(1)
+        expect(calls.skills).toBe(1)
+      },
+      MOUNT_BUDGET
+    )
+    r1.unmount()
+    mount(stubs)
+    await waitFor(
+      () => {
+        expect(calls.kbs, '关→重开必须重发知识库那一发').toBe(2)
+        expect(calls.tools, '关→重开必须重发工具那一发').toBe(2)
+        expect(calls.skills, '关→重开必须重发技能那一发').toBe(2)
+      },
+      MOUNT_BUDGET
+    )
+  })
+
+  it('反向对照：重开不是沿用第一份清单——第二次挂载撞上失败，那句立刻上屏', async () => {
+    let fail = false
+    const stubs = {
+      listKnowledgeBases: () => (fail ? { ok: false, error: REASON } : [KB]),
+      listAvailableTools: () => [TOOL],
+      listSkills: () => [SKILL]
+    }
+    // 首开：三发都读到，屏上零 alert
+    const r1 = mount(stubs)
+    await waitFor(() => expect(bodyText()).toContain('PROBE-知识库'), MOUNT_BUDGET)
+    expect(alerts()).toEqual([])
+    r1.unmount()
+    // 二开：同一根知识库通道改吐失败对象 ⇒ 那句必须重新出现（而不是 React 复用同一份 state 把上一份留下）
+    fail = true
+    mount(stubs)
+    await waitFor(() => expect(alerts()).toEqual([FAILED(KB_WHAT, REASON)]), MOUNT_BUDGET)
+    // 那一句"未创建"空态照旧要让位（同 §270 主用例的判据）
+    expect(bodyText(), '把"读不到"演成"这台没建知识库"').not.toContain(L('ae.noKb'))
   })
 })
