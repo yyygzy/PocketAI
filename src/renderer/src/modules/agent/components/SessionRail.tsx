@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { AssistantRecord, ConversationRecord, MessageSearchResult } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { assistantDisplayName } from '../../chat/assistant-display'
 import { MessageSearchResults } from '../../../components/MessageSearchResults'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { ExportMenu } from '../../chat/ConversationList'
@@ -185,7 +186,7 @@ export const SessionRail: React.FC<Props> = ({
       >
         <option value="">{t('agent.selectAssistant')}</option>
         {assistants.map((a) => (
-          <option key={a.id} value={a.id}>{a.avatar} {a.name}</option>
+          <option key={a.id} value={a.id}>{a.avatar} {assistantDisplayName(a, t)}</option>
         ))}
       </select>
       <div className="flex gap-1 mb-2">

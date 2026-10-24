@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import type { AssistantRecord, ConversationRecord, ConversationGroupRecord, MessageSearchResult, StarredMessageItem } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { assistantDisplayName } from './assistant-display'
 import { EmptyState } from '../../components/EmptyState'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { MessageSearchResults, relTime } from '../../components/MessageSearchResults'
@@ -970,7 +971,7 @@ const ConvItem: React.FC<{
                   .filter((a) => a.id !== 'asst-default')
                   .map((a) => ({
                     key: `asst:${a.id}`,
-                    label: `${conv.assistantId === a.id ? '✓ ' : ''}👤 ${a.name}`
+                    label: `${conv.assistantId === a.id ? '✓ ' : ''}👤 ${assistantDisplayName(a, t)}`
                   }))
               ]
               : [])

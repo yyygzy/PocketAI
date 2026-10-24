@@ -55,6 +55,9 @@ export const assistantSaveSchema = assistantRecordFull
 /** ASSISTANT_SET_PINNED 第二参 */
 export const booleanSchema = z.boolean()
 
+/** §281：ASSISTANT_DUPLICATE 第二参（渲染层传来的可见名，允许 undefined 走 DB 兜底） */
+export const optionalStringSchema = z.string().max(200).optional()
+
 /** ASSISTANT_IMPORT 顶层 JSON 格式校验 */
 export const assistantImportSchema = z.object({
   version: z.number().int().optional(),

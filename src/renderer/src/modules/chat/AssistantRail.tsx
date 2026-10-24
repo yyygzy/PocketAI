@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import type { AssistantRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { assistantDisplayName, assistantDisplayDescription } from './assistant-display'
 
 interface Props {
   assistants: AssistantRecord[]
@@ -18,7 +19,7 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
   const [q, setQ] = useState('')
   const kw = q.trim().toLowerCase()
   const filtered = kw
-    ? assistants.filter((a) => a.name.toLowerCase().includes(kw) || a.description.toLowerCase().includes(kw))
+    ? assistants.filter((a) => assistantDisplayName(a, t).toLowerCase().includes(kw) || assistantDisplayDescription(a, t).toLowerCase().includes(kw))
     : assistants
   return (
     <div className="shrink-0 border-b border-[var(--color-border)]">
@@ -68,7 +69,7 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
           <div
             key={a.id}
             onClick={() => onSelect(a.id)}
-            title={a.description}
+            title={assistantDisplayDescription(a, t)}
             className={`group w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] cursor-pointer ${
               activeId === a.id
                 ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
@@ -76,7 +77,7 @@ export const AssistantRail: React.FC<Props> = ({ assistants, activeId, onSelect,
             }`}
           >
             <span className="text-base shrink-0">{a.avatar}</span>
-            <span className="flex-1 text-left truncate">{a.name}</span>
+            <span className="flex-1 text-left truncate">{assistantDisplayName(a, t)}</span>
             {!a.isBuiltin && (
               <span className="text-[9px] px-1 rounded bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)] shrink-0">
                 {t('rail.mine')}

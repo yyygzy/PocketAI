@@ -152,8 +152,8 @@ const api = {
   ): Promise<AssistantRecord | { ok: false; error: string }> => ipcRenderer.invoke(IPC.ASSISTANT_SAVE, record),
   deleteAssistant: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_DELETE, id),
-  duplicateAssistant: (id: string): Promise<AssistantRecord> =>
-    ipcRenderer.invoke(IPC.ASSISTANT_DUPLICATE, id),
+  duplicateAssistant: (id: string, displayName?: string): Promise<AssistantRecord> =>
+    ipcRenderer.invoke(IPC.ASSISTANT_DUPLICATE, id, displayName),
   setAssistantPinned: (id: string, pinned: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_SET_PINNED, id, pinned),
   exportAssistants: (): Promise<

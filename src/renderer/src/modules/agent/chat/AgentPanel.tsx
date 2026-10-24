@@ -28,12 +28,19 @@ import { buildReminderText, reminderCreatedToastKey } from '../../../utils/remin
 import { formatDateTime } from '../../../utils/time'
 import { formatStepTokens } from '../../../utils/agent-step-tokens'
 import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
+import { assistantDisplayName } from '../../chat/assistant-display'
 
 export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
   const { providers, assistants, providersUnread, assistantsUnread, fetchingModels, fetchModels } = useProviderData()
   const chat = useAgentChat(providers, assistants)
+  // §281：内置助手的 name 走渲染层字典（DB 存的是中文原始串，非内置原样透传）
+  const nameOfAssistant = (assistantId: string | null | undefined): string | null => {
+    if (!assistantId) return null
+    const a = assistants.find((x) => x.id === assistantId)
+    return a ? assistantDisplayName(a, t) : null
+  }
   // busy 上报：Agent 运行中豁免休眠，防止切走标签后被 LRU 卸载导致任务中断
   useEffect(() => {
     useAppStore.getState().setModuleBusy('agent', chat.running)
@@ -230,9 +237,7 @@ export const AgentPanel: React.FC = () => {
         toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
         return
       }
-      const assistantName = chat.assistantId
-        ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
-        : null
+      const assistantName = nameOfAssistant(chat.assistantId)
       const html = await buildConversationHtml(conv, msgs, assistantName)
       const r = await window.pocketai.exportConversationHtml(id, html)
       if (r.canceled) return
@@ -260,9 +265,7 @@ export const AgentPanel: React.FC = () => {
         toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
         return
       }
-      const assistantName = chat.assistantId
-        ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
-        : null
+      const assistantName = nameOfAssistant(chat.assistantId)
       const html = await buildConversationHtml(conv, msgs, assistantName)
       const r = await window.pocketai.exportConversationPdf(id, html)
       if (r.canceled) return
@@ -294,9 +297,7 @@ export const AgentPanel: React.FC = () => {
           toast.info(t('chat.exportMultiCapped', { max, dropped: capped.dropped }))
         }
       }
-      const assistantName = chat.assistantId
-        ? assistants.find((a) => a.id === chat.assistantId)?.name ?? null
-        : null
+      const assistantName = nameOfAssistant(chat.assistantId)
       const files = await buildBatchExportFiles({
         convs: selected,
         format,

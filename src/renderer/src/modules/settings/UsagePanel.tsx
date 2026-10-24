@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { builtinAssistantNameById } from '../chat/assistant-display'
 import { useToast } from '../../components/ToastProvider'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
@@ -479,7 +480,7 @@ export const UsagePanel: React.FC = () => {
                       title={t('usage.clickToJump')}
                     >
                       <td className="py-1.5 pr-2 truncate max-w-0">
-                        <span className="text-[var(--color-text)]">{a.name}</span>
+                        <span className="text-[var(--color-text)]">{builtinAssistantNameById(a.assistantId, t) ?? a.name}</span>
                       </td>
                       <td className="py-1.5 pr-2 text-right text-[var(--color-text-muted)]">{a.requests}</td>
                       <td className="py-1.5 pr-2 text-right font-mono text-[var(--color-text)]">{fmtTokens(a.totalTokens)}</td>
@@ -491,7 +492,7 @@ export const UsagePanel: React.FC = () => {
                           onClick={(e) => {
                             e.stopPropagation()
                             // 聚合 key 为 '(未知助手)' 的行对应 assistant_id 为 NULL 的自由会话
-                            openAsstDetail(a.assistantId === '(未知助手)' ? null : a.assistantId, a.name)
+                            openAsstDetail(a.assistantId === '(未知助手)' ? null : a.assistantId, builtinAssistantNameById(a.assistantId, t) ?? a.name)
                           }}
                           className="text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"
                           title={t('usage.viewDetail')}

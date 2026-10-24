@@ -173,12 +173,16 @@ export const assistantRepo = {
     return mustGet(() => this.get(id), '助手')
   },
 
-  /** 复制任意助手为「我的助手」 */
-  duplicate(sourceId: string): AssistantRecord {
+  /**
+   * 复制任意助手为「我的助手」。
+   * §281：渲染层传可见名（已本地化＋已加"副本"后缀），命中内置助手时不再落 DB 里的中文原始串；
+   * 未传时回落到旧行为（`${src.name} 副本`），保证旧调用点与 PopupApp 那类不感知语言的入口不破。
+   */
+  duplicate(sourceId: string, displayName?: string): AssistantRecord {
     const src = this.get(sourceId)
     if (!src) throw new Error('助手不存在')
     return this.save({
-      name: `${src.name} 副本`,
+      name: displayName?.trim() || `${src.name} 副本`,
       description: src.description,
       avatar: src.avatar,
       systemPrompt: src.systemPrompt,

@@ -8,7 +8,7 @@ import { kbRepo } from '../../db/repositories/kb.repo'
 import { skillRepo } from '../../db/repositories/skill.repo'
 import { assertCanCreateAssistant } from '../../license/license'
 import { safeHandle, argsSchema } from '../safe-handle'
-import { assistantSaveSchema, booleanSchema, assistantImportSchema } from '../../../shared/schemas/assistants'
+import { assistantSaveSchema, booleanSchema, optionalStringSchema, assistantImportSchema } from '../../../shared/schemas/assistants'
 import { idSchema } from '../../../shared/schemas/providers'
 import { safeFileName } from '../../../shared/export-markdown'
 import {
@@ -32,10 +32,10 @@ export function registerAssistantHandlers(): void {
     assistantRepo.delete(id)
     return { ok: true }
   }, argsSchema(idSchema))
-  safeHandle(IPC.ASSISTANT_DUPLICATE, (_e, id: string) => {
+  safeHandle(IPC.ASSISTANT_DUPLICATE, (_e, id: string, displayName?: string) => {
     assertCanCreateAssistant(assistantRepo.list().filter((a) => !a.isBuiltin).length)
-    return assistantRepo.duplicate(id)
-  }, argsSchema(idSchema))
+    return assistantRepo.duplicate(id, displayName)
+  }, argsSchema(idSchema, optionalStringSchema))
   safeHandle(IPC.ASSISTANT_SET_PINNED, (_e, id: string, pinned: boolean) => {
     assistantRepo.setPinned(id, pinned)
     return { ok: true }

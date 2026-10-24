@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { useAppStore } from '../store/app-store'
 import { COMMAND_PALETTE_EVENT } from '../hooks/useGlobalShortcuts'
+import { assistantDisplayName, assistantDisplayDescription } from '../modules/chat/assistant-display'
 import {
   filterPaletteItems,
   nextPaletteIndex,
@@ -88,7 +89,7 @@ export const CommandPalette: React.FC = () => {
         next.push({ id: c.id, type: 'conv-agent', title: c.title, subtitle: c.lastMessagePreview ?? undefined, assistantId: c.assistantId ?? undefined })
       }
       for (const a of assistants) {
-        next.push({ id: a.id, type: 'assistant', title: a.name, subtitle: a.description || undefined })
+        next.push({ id: a.id, type: 'assistant', title: assistantDisplayName(a, t), subtitle: assistantDisplayDescription(a, t) || undefined })
       }
       for (const kb of kbs) {
         next.push({ id: kb.id, type: 'kb', title: kb.name, subtitle: kb.description || undefined })

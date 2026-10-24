@@ -8,6 +8,7 @@
 // 聚合到单页「快速配置」，加密降级为完成页的可选卡片，目标新用户 3 分钟内跑通。
 import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
+import { assistantDisplayName, assistantDisplayDescription } from '../chat/assistant-display'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
@@ -270,7 +271,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       if (assistant) {
         let target = assistant
         if (assistant.isBuiltin) {
-          target = await window.pocketai.duplicateAssistant(assistant.id)
+          target = await window.pocketai.duplicateAssistant(assistant.id, `${assistantDisplayName(assistant, t)} ${t('assistant.copySuffix')}`)
           // §223：不判就把失败对象当助手用 ⇒ `target.id` 是 undefined，向导后面几步
           // （saveAssistant／setAssistantPinned）拿着假 id 写库，助手列表还被塞进一条 `{ok:false}`
           if (hasIpcFailed(target)) throw new Error(ipcFailText(target, t('common.unknownError')))
@@ -691,12 +692,12 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                       <div className="flex items-center gap-1.5">
                         <span className="text-base leading-none">{a.avatar || '🤖'}</span>
                         <span className="text-[12px] font-medium text-[var(--color-text)] truncate">
-                          {a.name}
+                          {assistantDisplayName(a, t)}
                         </span>
                       </div>
                       {a.description && (
                         <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">
-                          {a.description}
+                          {assistantDisplayDescription(a, t)}
                         </div>
                       )}
                     </button>
@@ -737,7 +738,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
               <div className="flex items-center gap-2">
                 <span className="text-[var(--color-text-muted)]">{t('wizard.summaryAssistant')}:</span>
                 <span className="text-[var(--color-success)]">
-                  ✓ {assistants.find((a) => a.id === selectedAssistantId)?.name ?? ''}
+                  ✓ {(() => { const a = assistants.find((x) => x.id === selectedAssistantId); return a ? assistantDisplayName(a, t) : '' })()}
                 </span>
               </div>
             )}

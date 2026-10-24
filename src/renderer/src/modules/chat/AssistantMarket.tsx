@@ -6,6 +6,7 @@ import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
+import { assistantDisplayName, assistantDisplayDescription, assistantDisplayWelcome } from './assistant-display'
 
 interface Props {
   providers: ProviderRecord[]
@@ -60,8 +61,10 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
     : null
 
   const handleDuplicate = async (id: string) => {
+    const src = assistants.find((a) => a.id === id)
+    const displayName = src ? `${assistantDisplayName(src, t)} ${t('assistant.copySuffix')}` : undefined
     try {
-      await window.pocketai.duplicateAssistant(id)
+      await window.pocketai.duplicateAssistant(id, displayName)
     } catch (e) {
       flash(errText(e))
       return
@@ -169,8 +172,8 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
                       )}
                     </div>
                   </div>
-                  <h3 className="mt-2 font-medium text-sm">{a.name}</h3>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)] line-clamp-3 leading-relaxed">{a.description}</p>
+                  <h3 className="mt-2 font-medium text-sm">{assistantDisplayName(a, t)}</h3>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)] line-clamp-3 leading-relaxed">{assistantDisplayDescription(a, t)}</p>
                 </div>
               ))}
             </div>
@@ -182,14 +185,14 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
                 <span className="text-5xl">{current.avatar}</span>
                 <div className="flex-1">
                   <h3 className="text-xl font-semibold flex items-center gap-2">
-                    {current.name}
+                    {assistantDisplayName(current, t)}
                     {current.isBuiltin ? (
                       <span className="badge badge-accent">{t('am.builtin')}</span>
                     ) : (
                       <span className="badge badge-muted">{t('am.mine')}</span>
                     )}
                   </h3>
-                  <p className="text-sm text-[var(--color-text-muted)] mt-1">{current.description}</p>
+                  <p className="text-sm text-[var(--color-text-muted)] mt-1">{assistantDisplayDescription(current, t)}</p>
                 </div>
               </div>
 
@@ -202,7 +205,7 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
                 )}
                 <div>
                   <dt className="text-xs text-[var(--color-text-muted)] mb-0.5">{t('am.welcome')}</dt>
-                  <dd className="bg-[var(--color-input-bg)] rounded-lg p-3 text-[13px]">{current.welcomeMessage || t('am.noWelcome')}</dd>
+                  <dd className="bg-[var(--color-input-bg)] rounded-lg p-3 text-[13px]">{assistantDisplayWelcome(current, t) || t('am.noWelcome')}</dd>
                 </div>
                 <div>
                   <dt className="text-xs text-[var(--color-text-muted)] mb-0.5">System Prompt</dt>

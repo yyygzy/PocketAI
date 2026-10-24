@@ -12,6 +12,7 @@ import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
 import { ConversationList } from './ConversationList'
 import { ChatView } from './ChatView'
+import { assistantDisplayName, assistantDisplayWelcome } from './assistant-display'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useStreamSession } from './useStreamSession'
 import { useConversationLists } from './useConversationLists'
@@ -233,6 +234,13 @@ export const ChatModule: React.FC = () => {
   }, [reloadConversations])
 
   const currentAssistant = assistants.find((a) => a.id === currentAssistantId) ?? null
+
+  // §281：导出/显示时把内置助手的 name 走渲染层字典（DB 里存的是中文原始串，非内置原样透传）
+  const nameOfAssistant = (assistantId: string | null | undefined): string | null => {
+    if (!assistantId) return null
+    const a = assistants.find((x) => x.id === assistantId)
+    return a ? assistantDisplayName(a, t) : null
+  }
 
   // 对话配置条更新助手（技能/知识库/工具权限）
   const handleAssistantUpdated = (updated: AssistantRecord) => {
@@ -538,7 +546,7 @@ export const ChatModule: React.FC = () => {
     }
     // 点击「新对话」直接在数据库创建一条对话记录，标题用当前助手名
     try {
-      const title = currentAssistant?.name || t('chat.newConversation')
+      const title = (currentAssistant ? assistantDisplayName(currentAssistant, t) : '') || t('chat.newConversation')
       const conv = await window.pocketai.createConversation(currentAssistantId, title)
       // §219：失败不判就照常清草稿＋setCurrentConvId(undefined)＋setMessages([]) ⇒ 当前会话在界面上被抹掉，而库里其实一条都没建
       if (hasIpcFailed(conv)) {
@@ -719,9 +727,7 @@ export const ChatModule: React.FC = () => {
         toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
         return
       }
-      const assistantName = conv.assistantId
-        ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
-        : null
+      const assistantName = nameOfAssistant(conv.assistantId)
       const html = await buildConversationHtml(conv, msgs, assistantName)
       const r = await window.pocketai.exportConversationHtml(id, html)
       if (r.canceled) return
@@ -749,9 +755,7 @@ export const ChatModule: React.FC = () => {
         toast.error(t('chat.exportFail', { e: ipcFailText(msgs, t('common.unknownError')) }))
         return
       }
-      const assistantName = conv.assistantId
-        ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
-        : null
+      const assistantName = nameOfAssistant(conv.assistantId)
       const html = await buildConversationHtml(conv, msgs, assistantName)
       const r = await window.pocketai.exportConversationPdf(id, html)
       if (r.canceled) return
@@ -796,8 +800,7 @@ export const ChatModule: React.FC = () => {
         convs: selected,
         format,
         listMessages: (id) => window.pocketai.listMessages(id),
-        resolveAssistantName: (assistantId) =>
-          assistantId ? assistants.find((a) => a.id === assistantId)?.name ?? null : null
+        resolveAssistantName: nameOfAssistant
       })
       const outcome = await finishBatchExport(files, format)
       if (outcome.kind === 'failed') {
@@ -1037,9 +1040,7 @@ export const ChatModule: React.FC = () => {
     const picked = messages.filter((m) => idSet.has(m.id))
     if (picked.length === 0) return
     const conv = conversations.find((c) => c.id === currentConvId)
-    const assistantName = conv
-      ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
-      : null
+    const assistantName = nameOfAssistant(conv?.assistantId)
     const title = conv?.title || 'PocketAI'
     const md = buildMessagesMarkdown({ title, assistantName }, picked)
     try {
@@ -1064,9 +1065,7 @@ export const ChatModule: React.FC = () => {
     const picked = messages.filter((m) => idSet.has(m.id))
     if (picked.length === 0) return null
     const conv = conversations.find((c) => c.id === currentConvId)
-    const assistantName = conv
-      ? assistants.find((a) => a.id === conv.assistantId)?.name ?? null
-      : null
+    const assistantName = nameOfAssistant(conv?.assistantId)
     const title = conv?.title || 'PocketAI'
     const md = buildMessagesMarkdown({ title, assistantName }, picked)
     try {
@@ -1502,8 +1501,8 @@ export const ChatModule: React.FC = () => {
         onTargetsChange={handleTargetsChange}
         messages={messages}
         liveColumns={liveColumns}
-        welcomeMessage={currentAssistant?.welcomeMessage}
-        assistantName={currentAssistant?.name}
+        welcomeMessage={currentAssistant ? assistantDisplayWelcome(currentAssistant, t) : undefined}
+        assistantName={currentAssistant ? assistantDisplayName(currentAssistant, t) : undefined}
         assistant={currentAssistant}
         onAssistantUpdated={handleAssistantUpdated}
         onSend={handleSend}
@@ -1579,7 +1578,7 @@ export const ChatModule: React.FC = () => {
               {assistants
                 .filter((a) => a.id !== 'asst-default')
                 .map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
+                  <option key={a.id} value={a.id}>{assistantDisplayName(a, t)}</option>
                 ))}
             </select>
             <div className="flex gap-2 justify-end">

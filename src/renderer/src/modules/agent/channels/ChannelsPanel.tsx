@@ -11,6 +11,7 @@ import type {
 } from '../../../../../shared/types'
 import { CHANNEL_TYPES } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
+import { assistantDisplayName } from '../../chat/assistant-display'
 import { useToast } from '../../../components/ToastProvider'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
@@ -395,7 +396,7 @@ export const ChannelsPanel: React.FC = () => {
           >
             <option value="">{t('channel.assistantNone')}</option>
             {assistants.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
+              <option key={a.id} value={a.id}>{assistantDisplayName(a, t)}</option>
             ))}
           </select>
           {/* §271：读不到就说读不到——「未绑定助手」那一项不是"你没有助手"的证据。键在 alert 盒子外面（§268） */}
