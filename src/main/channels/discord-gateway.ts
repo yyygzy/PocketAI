@@ -71,6 +71,9 @@ class DiscordGateway implements IGateway {
   private heartbeatTimer: NodeJS.Timeout | null = null
   private selfUserId: string | null = null
   private lastSeq: number | null = null
+  // §284：op9 invalid-session 那 2 秒 setTimeout 的句柄。cleanupConnection 与 stop 都要清，
+  // 否则 reconnect 起来的新 socket 会被 stale timer 追加一次 op2 identify（服务端会拒）。
+  private pendingIdentifyTimer: NodeJS.Timeout | null = null
 
   onStatus(l: (evt: ChannelStatusEvent) => void): () => void {
     return this.status.add(l)
@@ -134,6 +137,10 @@ class DiscordGateway implements IGateway {
     })
 
     ws.addEventListener('close', (ev: CloseEvent) => {
+      // §284：先捕获 running／starting，再 cleanupConnection——原实现在 cleanup 之后才判 `this.running`，
+      // 而 cleanup 会无条件把 running 清成 false ⇒ "运行中意外断开"那一支恒假、从上线起没跑过一次。
+      const wasRunning = this.running
+      const wasStarting = this.starting
       this.cleanupConnection()
       if (ctrl.signal.aborted) {
         // stop 触发：状态已由 stop() 设置
@@ -142,14 +149,13 @@ class DiscordGateway implements IGateway {
       // 代码 4000+ 为应用主动关闭：不重连
       if (ev.code >= 4000) return
       // 服务端要求重连：自动 backoff 重试
-      if (this.starting) {
+      if (wasStarting) {
         this.starting = false
         this.status.emit('error', '握手阶段连接关闭，请检查网络')
         return
       }
       // 运行中意外断开：尝试重连
-      if (this.running) {
-        this.running = false
+      if (wasRunning) {
         void this.reconnect(token, ctrl).catch((err) => {
           if (!ctrl.signal.aborted) log.error('Discord reconnect 异常:', safeError(err, 'reconnect'))
         })
@@ -214,9 +220,15 @@ class DiscordGateway implements IGateway {
         }
         break
       case 9: // Invalid Session
-        // 重置会话后重新 Identify
+        // 重置会话后重新 Identify；2 秒 setTimeout 挂进 pendingIdentifyTimer，
+        // 期间 socket 若关（服务端把会话清了之后自己 close）⇒ cleanupConnection 会把这发撤销，
+        // 由 reconnect 起来的新 socket 从 Hello 走一次正常 identify，避免 stale timer 补一枪。
         this.lastSeq = null
-        setTimeout(() => this.identify(token), 2000)
+        if (this.pendingIdentifyTimer) clearTimeout(this.pendingIdentifyTimer)
+        this.pendingIdentifyTimer = setTimeout(() => {
+          this.pendingIdentifyTimer = null
+          this.identify(token)
+        }, 2000)
         break
       case 11:
         // Heartbeat ACK（部分版本 op 11）
@@ -275,6 +287,12 @@ class DiscordGateway implements IGateway {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
+    }
+    // §284：撤销 op9 那发 2 秒后重 identify 的调度——socket 若关了 / stop 触发 / 走 reconnect，
+    // 都不该再由 stale timer 在下一条 socket 上补一枪（服务端会当成"READY 后又 identify"拒掉）。
+    if (this.pendingIdentifyTimer) {
+      clearTimeout(this.pendingIdentifyTimer)
+      this.pendingIdentifyTimer = null
     }
     this.ws = null
     this.running = false
