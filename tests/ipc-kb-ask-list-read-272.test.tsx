@@ -215,6 +215,27 @@ describe('② 保留策略那一发：「这里显示的是默认值」那句＋
     expect(bodyText()).toContain('PROBE-会话')
     expect(bodyText(), '策略那句不替历史编一句').not.toContain(HIST_FAIL)
   })
+
+  // §286 B159：那一格此前只在源码注释（`KbAskPanel.tsx:572` 那句「这一发全文件只有挂载一处读、
+  // 那颗『自动清理』按钮只展开行、不重读」）里。这里钉的是**那颗按钮切换 showRetention 状态、不重发
+  // `getKbAskRetention` 通道**——成功路径挂一次 ⇒ 打开历史面板、点两次「自动清理」（收起再展开），
+  // 通道计数仍应停在 1。§272 那批留下的 9 例都没读这个数：那颗 `kb-ask-retention-retry` 键（第 183–188
+  // 那条）证的是"点重试键确实会多打一次"，反方向"点开行不会多打"此前没测过。
+  it('§286 B159：那颗「自动清理」按钮只展开行、不重发保留策略那一发', async () => {
+    mountPanel(panelStubs())
+    // 挂载那一读 fired getKbAskRetention 一次；这一发全文件只在挂载读一次
+    await waitFor(() => expect(calls.retention).toBe(1), MOUNT_BUDGET)
+    const before = { retention: calls.retention, sessions: calls.sessions }
+    // 打开历史面板那行（那颗按钮的 onClick 会走 refreshSessions，sessions 涨一格；不动 retention）
+    fireEvent.click(historyBtn())
+    await waitFor(() => expect(calls.sessions).toBe(before.sessions + 1), MOUNT_BUDGET)
+    // 点两次「自动清理」：先展开、再收起——两次都不该重发策略通道
+    const btn = screen.getByRole('button', { name: RETENTION_WHAT })
+    fireEvent.click(btn)
+    await waitFor(() => expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0), MOUNT_BUDGET)
+    fireEvent.click(screen.getByRole('button', { name: RETENTION_WHAT }))
+    expect(calls.retention, '那行只是展开／收起、不重发保留策略那一发').toBe(before.retention)
+  })
 })
 
 describe('③ 跨库漫游那一发：那句、让位与那颗键', () => {
