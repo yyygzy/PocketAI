@@ -128,6 +128,34 @@ describe('① 渠道面板：服务商与助手两发各说一句一颗键', () 
     expect(alerts()).toEqual([])
     expect(options()).toContain('PROBE-助手')
   })
+
+  // §295 B158：切 channel type tab 不重拉这两份清单。§271 那批交付时把这条写在本文件顶注里
+  // （"渠道面板切网关类型不重拉这两份清单"）——是"这一屏的天然出口不是切 tab、而是各发自己
+  // 的重试键"这个形状判断的依据，但只在源码里：`ChannelsPanel.tsx:194-198` 那个 `switchType`
+  // 只做 `setActiveType` ＋ 清两份凭据草稿、不调 `loadProviders` / `loadAssistants`。
+  // 本批钉这个"不"：默认 Telegram、点 Discord ⇒ 两个通道 callCount 都停在挂载那一次的 1。
+  it('§295 B158：切 tab 只切状态、不重发服务商与助手两份清单', async () => {
+    const calls = { providers: 0, assistants: 0 }
+    mountChannels({
+      listProviders: () => {
+        calls.providers += 1
+        return [GLM]
+      },
+      listAssistants: () => {
+        calls.assistants += 1
+        return [ASSISTANT]
+      }
+    })
+    await waitFor(() => {
+      expect(calls.providers).toBe(1)
+      expect(calls.assistants).toBe(1)
+    }, MOUNT_BUDGET)
+    // 切到 Discord（默认是 Telegram）；stub 的自增发生在被调那一刻、同步，
+    // 所以 fireEvent.click 后立刻读计数就能抓住"切 tab 顺手多发一发"的形状
+    fireEvent.click(screen.getByRole('button', { name: L('channel.discord.title') }))
+    expect(calls.providers, '切 tab 不重发服务商清单').toBe(1)
+    expect(calls.assistants, '切 tab 不重发助手清单').toBe(1)
+  })
 })
 
 // ─────────────────────── ② 设置页那两发 ───────────────────────
