@@ -188,6 +188,34 @@ describe('② WebDAV 配置那一读：三种到货要分得开', () => {
   })
 })
 
+// §301 盘 B140 时补：上面 ② 只把 getBackupSchedule 固定桩成成功（`mountBackup` 的默认 SCHED）、
+// 断的是 WebDAV 配置那一读的失败。§251 给"备份计划读失败"补的那张脸——`SettingsModule.tsx:1246`
+// `!schedule && schedErr && <LoadFailNotice/>`（失败时那块不许整块消失、要说"读不到"）此前没有真挂载用例，
+// 只有 §251 接线计数的源码级判据。BackupPanel 早已为真挂载而 export（:215 那条计数就是钉这个），
+// 这里就着同一个 `mountBackup` 把这张脸补成行为用例。
+describe('§301 备份计划那一读失败：那块不许整块消失', () => {
+  it('getBackupSchedule 回 {ok:false} ⇒ 那句"读不到"常驻，不把计划演成"没这回事"', async () => {
+    mountBackup({ getBackupSchedule: () => ({ ok: false, error: 'SCHED:计划读不到' }) })
+    await waitFor(() =>
+      expect(alerts()).toContain(L('common.loadFailed').replace('{msg}', 'SCHED:计划读不到'))
+    )
+  })
+
+  it('reject 面 ⇒ 同一句用抛出的原文', async () => {
+    mountBackup({ getBackupSchedule: () => Promise.reject(new Error('备份计划通道炸了')) })
+    await waitFor(() =>
+      expect(alerts()).toContain(L('common.loadFailed').replace('{msg}', '备份计划通道炸了'))
+    )
+  })
+
+  it('反向对照：读到 ⇒ 没有那句"读不到"、屏上零 alert（计划那块照常摆出来）', async () => {
+    mountBackup()
+    await waitFor(() => expect(bodyText()).toContain(L('bk.webdavTitle')))
+    expect(alerts()).toEqual([])
+    expect(bodyText()).not.toContain('读不到')
+  })
+})
+
 // ───────── ③ 接线计数 ─────────
 
 describe('③ 接线计数', () => {
