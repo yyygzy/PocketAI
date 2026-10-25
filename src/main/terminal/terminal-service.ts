@@ -57,7 +57,10 @@ export function startTerminal(wc: WebContents): { ok: boolean; sessionId?: numbe
   proc.stdout.on('data', (buf: Buffer) => push('stdout', buf.toString('utf8')))
   proc.stderr.on('data', (buf: Buffer) => push('stderr', buf.toString('utf8')))
   proc.on('exit', (code) => {
-    sessions.delete(ownerId)
+    // §306：只有当 sessions[ownerId] 仍指向**本 proc** 才删。startTerminal 重开同窗口时
+    // 会先 killTerminal(旧)＋set(新)，而旧 proc 的 'exit' 是异步、通常在新 session 就位之后才到；
+    // 无身份守卫就会把刚登记的新 session 连带删掉 ⇒ 新 shell 进程成孤儿、killAllTerminals 收不到（退出仍留一个活 shell）。
+    if (sessions.get(ownerId)?.proc === proc) sessions.delete(ownerId)
     push('exit', String(code ?? -1))
   })
   proc.on('error', (e) => {
