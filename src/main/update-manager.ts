@@ -4,7 +4,7 @@ import EventEmitter from 'node:events'
 import { IPC, type UpdateStatus, type UpdateEvent } from '../shared/types'
 import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
-import { downloadAsarPatch, restartToApplyPatch, isPatchPending } from './update/asar-patcher'
+import { downloadAsarPatch, restartToApplyPatch, isPatchPending, clearPendingPatch } from './update/asar-patcher'
 import { isPortableRuntime } from './portable'
 import { safeFetch } from './net/safe-fetch'
 import { safeHandle, argsSchema, z } from './ipc/safe-handle'
@@ -226,6 +226,9 @@ class UpdateManager extends EventEmitter {
       // 任何一步失败（补丁不存在/校验失败/网络错误）静默回退全量更新
       if (!isPortableRuntime()) {
         try {
+          // §312：先把上一轮留下的暂存清掉再打这一轮的补丁——这一发若 404／校验失败，
+          // 残料不能留着被后面的 quitAndInstall 当成"补丁就绪"（那会让延迟脚本与 NSIS 抢写同一份 app.asar）
+          clearPendingPatch()
           const patch = await downloadAsarPatch(this.newVersion ?? '')
           if (patch.ok) {
             this.progress = 100
@@ -259,10 +262,10 @@ class UpdateManager extends EventEmitter {
       return { ok: false, error: '开发环境不支持安装' }
     }
 
-    // 增量补丁就绪 → 延迟替换脚本 + 重启（不走 NSIS 安装器）
-    if (isPatchPending()) {
+    // 增量补丁就绪**且对得上这次要装的版本**（§312）→ 延迟替换脚本 + 重启（不走 NSIS 安装器）
+    if (isPatchPending(this.newVersion ?? '')) {
       try {
-        restartToApplyPatch() // 内部 app.quit()
+        restartToApplyPatch(this.newVersion ?? '') // 内部 app.quit()
         return { ok: true }
       } catch (e) {
         this.error = errMsg(e)

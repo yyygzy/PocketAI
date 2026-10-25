@@ -3,8 +3,12 @@
 // 流程：download() 从 GitHub Release 下载 asar-patch-{cur}-{latest}.json.gz →
 // RSA 验签（复用 license 公钥，防补丁被篡改注入代码）→ 校验当前 app.asar
 // oldSha256（防错版本打补丁）→ 按块重建新 asar → 校验 newSha256 →
-// 写临时目录 → restartToApplyPatch() 生成延迟替换脚本（app.asar 运行中被锁，
-// 由 detached cmd 等待进程退出后替换并重启）。
+// 写临时目录（新 asar ＋延迟替换脚本 ＋ 身份记录 patch-meta.json，见 §312）→
+// restartToApplyPatch() 拉起那份脚本（app.asar 运行中被锁，脚本由 detached cmd 等待进程退出后替换并重启）。
+//
+// 陈旧暂存（§312）：暂存目录是**跨进程留在磁盘上**的状态，而「点安装」这一次要装的版本可能早已不是
+// 当初打下补丁时那一版（同进程里再检查一次更新就会换目标）。所以消费那一刻必须对账：
+// 身份记录里的基线版本＝当前 app.getVersion()、目标版本＝这次要装的版本、两份 asar 的哈希都复验得上。
 //
 // 失败语义：任何一步失败抛错，由 UpdateManager 回退 electron-updater 全量更新。
 // 便携版不适用（asar 解压在 %TEMP%，替换无效），由调用方跳过。
@@ -12,7 +16,7 @@ import { app } from 'electron'
 import { createHash, createPublicKey, verify as cryptoVerify } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, openSync, readSync, closeSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { safeFetch } from '../net/safe-fetch'
 import { PUBLIC_KEY_DER_B64 } from '../license/public-key'
@@ -56,6 +60,60 @@ function sha256Hex(buf: Buffer): string {
 /** 当前安装的 app.asar 路径（安装版：resources/app.asar） */
 function currentAsarPath(): string {
   return path.join(process.resourcesPath, 'app.asar')
+}
+
+/**
+ * 暂存目录里的三份文件（§312）：新 asar、延迟替换脚本、以及**身份记录**。
+ * 身份记录最后落盘＝「这一份补丁是给哪一版的」——旧版本的应用没有它，那类残留一律当「没有补丁」。
+ */
+const WORK_DIR_NAME = 'pocketai-asar-update'
+const PENDING_META_FILE = 'patch-meta.json'
+
+interface PendingPatchMeta {
+  format: 1
+  oldVersion: string
+  newVersion: string
+  oldSha256: string
+  newSha256: string
+}
+
+function workDirPath(): string {
+  return path.join(app.getPath('temp'), WORK_DIR_NAME)
+}
+function stagedAsarPath(): string {
+  return path.join(workDirPath(), 'app.asar')
+}
+function pendingScriptPath(): string {
+  return path.join(workDirPath(), process.platform === 'win32' ? 'apply-update.cmd' : 'apply-update.sh')
+}
+function pendingMetaPath(): string {
+  return path.join(workDirPath(), PENDING_META_FILE)
+}
+
+/** 分块算文件 sha256（一次校验不该把整份 app.asar 读进内存）；读不到返回 null */
+function sha256FileSync(file: string): string | null {
+  let fd: number | undefined
+  try {
+    fd = openSync(file, 'r')
+    const hash = createHash('sha256')
+    const buf = Buffer.alloc(4 * 1024 * 1024)
+    for (;;) {
+      const n = readSync(fd, buf, 0, buf.length, null)
+      if (n <= 0) break
+      hash.update(buf.subarray(0, n))
+    }
+    return hash.digest('hex')
+  } catch {
+    return null
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        /* 已经关掉了 */
+      }
+    }
+  }
 }
 
 function canonicalize(p: AsarPatchPayload): string {
@@ -138,6 +196,12 @@ export async function downloadAsarPatch(latestVersion: string): Promise<AsarPatc
   validatePayload(payload)
   verifySignature(payload)
 
+  // 3.5 §312：签名只保证「发布侧签的就是这两个版本」，还得跟**本机当前版本／这次要装的目标版本**对账——
+  // 否则一个过期补丁文件（例如目标版本已经往前走了）也能通过下面全部校验，把旧一版的 asar 盖上来。
+  if (payload.oldVersion !== currentVersion || payload.newVersion !== latestVersion) {
+    throw new Error('补丁的基线版本或目标版本与当前不符')
+  }
+
   // 4. 复验块清单哈希：签名字段 chunksSha256 必须与 chunks 实际内容一致。
   //    JSON.stringify 键序必须与发布侧 make-asar-patch.js 完全一致（r/d 单键对象，传输链不重序列化）。
   const chunksCanonical = Buffer.from(JSON.stringify(payload.chunks), 'utf8')
@@ -176,12 +240,20 @@ export async function downloadAsarPatch(latestVersion: string): Promise<AsarPatc
     throw new Error('重建结果校验失败（newSha256 不匹配）')
   }
 
-  // 7. 写临时目录 + 生成延迟替换脚本
-  const workDir = path.join(app.getPath('temp'), 'pocketai-asar-update')
+  // 7. 写临时目录 + 生成延迟替换脚本 + 落身份记录（记录**最后**写：半截的暂存目录不当作「补丁就绪」）
+  const workDir = workDirPath()
   mkdirSync(workDir, { recursive: true })
-  const newAsarPath = path.join(workDir, 'app.asar')
+  const newAsarPath = stagedAsarPath()
   writeFileSync(newAsarPath, newBuf)
   writeReplaceScript(workDir, newAsarPath, asarPath)
+  const meta: PendingPatchMeta = {
+    format: 1,
+    oldVersion: payload.oldVersion,
+    newVersion: payload.newVersion,
+    oldSha256: payload.oldSha256.toLowerCase(),
+    newSha256: payload.newSha256.toLowerCase()
+  }
+  writeFileSync(pendingMetaPath(), JSON.stringify(meta), 'utf8')
 
   return { ok: true, patchBytes, newSize: newBuf.length }
 }
@@ -210,31 +282,84 @@ function writeReplaceScript(workDir: string, newAsarPath: string, targetAsar: st
   }
 }
 
-/** 补丁是否就绪（downloadAsarPatch 成功后为 true） */
-export function isPatchPending(): boolean {
-  const workDir = path.join(app.getPath('temp'), 'pocketai-asar-update')
-  return existsSync(path.join(workDir, process.platform === 'win32' ? 'apply-update.cmd' : 'apply-update.sh'))
+/** 读身份记录；缺文件／形状不对（含旧版本应用留下的无记录残留）一律返回 null＝「没有补丁」 */
+function readPendingMeta(): PendingPatchMeta | null {
+  let raw: Partial<PendingPatchMeta>
+  try {
+    raw = JSON.parse(readFileSync(pendingMetaPath(), 'utf8')) as Partial<PendingPatchMeta>
+  } catch {
+    return null
+  }
+  if (!raw || typeof raw !== 'object' || raw.format !== 1) return null
+  if (typeof raw.oldVersion !== 'string' || !raw.oldVersion ||
+      typeof raw.newVersion !== 'string' || !raw.newVersion) {
+    return null
+  }
+  for (const k of ['oldSha256', 'newSha256'] as const) {
+    if (typeof raw[k] !== 'string' || !HEX64_RE.test(raw[k] as string)) return null
+  }
+  return raw as PendingPatchMeta
 }
 
-/** 启动延迟替换脚本并退出应用（由 UpdateManager.quitAndInstall 分流调用） */
-export function restartToApplyPatch(): void {
-  const workDir = path.join(app.getPath('temp'), 'pocketai-asar-update')
-  const script = process.platform === 'win32'
-    ? path.join(workDir, 'apply-update.cmd')
-    : path.join(workDir, 'apply-update.sh')
+/** 清掉暂存（陈旧或对账失败）。删失败也不影响判据——「有没有补丁」只由对账结果决定 */
+export function clearPendingPatch(): void {
+  for (const p of [stagedAsarPath(), pendingScriptPath(), pendingMetaPath()]) {
+    try {
+      rmSync(p, { force: true })
+    } catch {
+      /* 占用／权限问题：留给下一次 */
+    }
+  }
+}
+
+/**
+ * 补丁是否可用（§312）：调用方必须交出**这次要装的目标版本**。
+ * 五样全对上才算数：身份记录在、目标版本一致、基线版本就是当前跑的版本、
+ * 暂存的那份新 asar 没被动过、当前 resources/app.asar 仍是补丁的基线。
+ * 任一样不过 ⇒ 判「没有补丁」并顺手清掉那份陈旧暂存（调用方据此回退全量安装）。
+ */
+export function isPatchPending(targetVersion: string): boolean {
+  const meta = readPendingMeta()
+  if (!meta) {
+    // 旧版本应用留下的无记录残留（只有脚本与暂存件）：既不当补丁用，也不留在盘上等着被误用
+    clearPendingPatch()
+    return false
+  }
+  const usable =
+    meta.newVersion === targetVersion &&
+    meta.oldVersion === app.getVersion() &&
+    existsSync(pendingScriptPath()) &&
+    sha256FileSync(stagedAsarPath()) === meta.newSha256 &&
+    sha256FileSync(currentAsarPath()) === meta.oldSha256
+  if (!usable) {
+    clearPendingPatch()
+    return false
+  }
+  return true
+}
+
+/**
+ * 启动延迟替换脚本并退出应用（由 UpdateManager.quitAndInstall 分流调用）。
+ * §312：这里**再对账一次**——不能只信调用方那句「有补丁」，两个判断之间隔着一次 IPC。
+ */
+export function restartToApplyPatch(targetVersion: string): void {
+  const script = pendingScriptPath()
   if (!existsSync(script)) throw new Error('替换脚本不存在，请重新下载更新')
+  if (!isPatchPending(targetVersion)) {
+    throw new Error('补丁已过期或与要安装的版本不符，请重新检查更新')
+  }
 
   if (process.platform === 'win32') {
     const child = spawn('cmd.exe', ['/d', '/s', '/c', script], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
-      cwd: workDir
+      cwd: workDirPath()
     })
     child.on('error', () => { /* 更新脚本启动失败由用户手动处理 */ })
     child.unref()
   } else {
-    const child = spawn('sh', [script], { detached: true, stdio: 'ignore', cwd: workDir })
+    const child = spawn('sh', [script], { detached: true, stdio: 'ignore', cwd: workDirPath() })
     child.on('error', () => { /* 更新脚本启动失败由用户手动处理 */ })
     child.unref()
   }

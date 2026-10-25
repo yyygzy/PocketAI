@@ -4,7 +4,9 @@
 // - init：dev 环境读开关并置 unavailable
 // - check：busy 互斥 / dev 拒绝 / linux 无 APPIMAGE / win32 便携 / 上游抛错收敛
 // - download：状态门 / dev 拒绝 / busy 互斥 / 增量补丁成功 / 回退全量 / 抛错 + keep-awake 释放
+//   §312：打补丁之前先 clearPendingPatch（上一轮的暂存不能留着）
 // - quitAndInstall：状态门 / 补丁待应用重启 / NSIS 安装
+//   §312：两条支路都把「这次要装的目标版本」交给补丁侧对账
 // - setAutoUpdate：持久化 / 失败收敛 / dev 开启不触发 check
 // - getInfo / getStatusSnapshot
 //
@@ -32,6 +34,11 @@ const mocks = vi.hoisted(() => ({
   patchPending: false,
   restartCalls: 0,
   restartThrows: false,
+  // §312：对账要的「这次要装的目标版本」是否真传给了补丁那侧，以及暂存清理的先后
+  pendingArgs: [] as string[],
+  restartArgs: [] as string[],
+  clearCalls: 0,
+  patchSeq: [] as string[],
   // keep-awake 调用顺序
   keepAwakeCalls: [] as string[],
   reset() {
@@ -51,6 +58,10 @@ const mocks = vi.hoisted(() => ({
     this.patchPending = false
     this.restartCalls = 0
     this.restartThrows = false
+    this.pendingArgs = []
+    this.restartArgs = []
+    this.clearCalls = 0
+    this.patchSeq = []
     this.keepAwakeCalls = []
   }
 }))
@@ -97,14 +108,23 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
 
 vi.mock('../src/main/update/asar-patcher', () => ({
   downloadAsarPatch: async () => {
+    mocks.patchSeq.push('patch')
     if (mocks.patchThrows) throw new Error('补丁下载失败')
     return mocks.patchResult ?? { ok: false }
   },
-  restartToApplyPatch: () => {
+  restartToApplyPatch: (targetVersion: string) => {
     if (mocks.restartThrows) throw new Error('重启失败')
+    mocks.restartArgs.push(targetVersion)
     mocks.restartCalls++
   },
-  isPatchPending: () => mocks.patchPending
+  isPatchPending: (targetVersion: string) => {
+    mocks.pendingArgs.push(targetVersion)
+    return mocks.patchPending
+  },
+  clearPendingPatch: () => {
+    mocks.clearCalls++
+    mocks.patchSeq.push('clear')
+  }
 }))
 
 vi.mock('../src/main/portable', () => ({
@@ -324,6 +344,17 @@ describe('download 下载更新', () => {
     expect(mocks.keepAwakeCalls).toEqual(['acquire', 'release'])
   })
 
+  it('§312 打这一轮补丁之前先把上一轮的暂存清掉（陈旧那份不能留着被安装误用）', async () => {
+    goPackaged()
+    emit('update-available', { version: '1.3.0' })
+    mocks.patchThrows = true // 这一轮的补丁下载失败 ⇒ 盘上绝不能留着上一轮
+    const r = await updateManager.download()
+    expect(r).toEqual({ ok: true })
+    expect(mocks.clearCalls).toBe(1)
+    expect(mocks.patchSeq).toEqual(['clear', 'patch'])
+    expect(mocks.downloadCalls).toBe(1)
+  })
+
   it('增量不可用回退全量：downloadUpdate 被调用', async () => {
     goPackaged()
     emit('update-available', { version: '1.3.0' })
@@ -362,6 +393,9 @@ describe('quitAndInstall 退出安装', () => {
     expect(r).toEqual({ ok: true })
     expect(mocks.restartCalls).toBe(1)
     expect(mocks.quitInstallCalls).toHaveLength(0)
+    // §312：对账必须拿到「这次要装的目标版本」，补丁侧才知道那份暂存还相不相干
+    expect(mocks.pendingArgs).toEqual(['1.3.0'])
+    expect(mocks.restartArgs).toEqual(['1.3.0'])
   })
 
   it('常规路径：调 autoUpdater.quitAndInstall(true, true) 静默安装', async () => {
@@ -370,6 +404,8 @@ describe('quitAndInstall 退出安装', () => {
     const r = await updateManager.quitAndInstall()
     expect(r).toEqual({ ok: true })
     expect(mocks.quitInstallCalls).toEqual([[true, true]])
+    expect(mocks.pendingArgs).toEqual(['1.3.0'])
+    expect(mocks.restartCalls).toBe(0)
   })
 })
 

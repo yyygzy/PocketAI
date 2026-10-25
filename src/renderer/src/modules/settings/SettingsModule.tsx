@@ -2543,7 +2543,9 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
   const handleRestart = async () => {
     if (!(await confirm({ message: t('upd.restartConfirm') }))) return
     try {
-      await window.pocketai.quitAndInstall()
+      const r = await window.pocketai.quitAndInstall()
+      // §312：这条支路的失败是 resolve 出来的 {ok:false}（补丁过期／NSIS 抛错）——不判它就是"按了没动静"
+      if (!r.ok) setNotice({ ok: false, text: r.error ?? t('upd.installFail') })
     } catch (e) {
       setNotice({ ok: false, text: errText(e, t('upd.installFail')) })
     }

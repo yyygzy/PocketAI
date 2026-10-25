@@ -7,6 +7,8 @@
 // - 重建层：越界块引用 / 无效块 / 大小不符 / newSha256 不符
 // - 成功路径：r/d 混合块（含末尾非整块）字节级重建 + 延迟替换脚本落盘
 // - isPatchPending / restartToApplyPatch 状态与分流
+// - §312 消费那一刻的身份与哈希对账：目标版本换了／基线版本不符／暂存件被改过／
+//   当前 asar 被手动换过／旧版应用留的无记录残留 ⇒ 一律判「没有补丁」并把残留清干净
 //
 // 策略（同 license.test.ts）：内置公钥 mock 成测试 RSA 对，补丁用配套私钥按
 // 发布侧 scripts/make-asar-patch.js 相同规范串签发；safeFetch 与 electron 打桩；
@@ -66,6 +68,7 @@ import {
   downloadAsarPatch,
   isPatchPending,
   restartToApplyPatch,
+  clearPendingPatch,
   PATCH_MAX_DECOMPRESSED
 } from '../src/main/update/asar-patcher'
 import * as keyModule from '../src/main/license/public-key'
@@ -424,19 +427,19 @@ describe('downloadAsarPatch 成功路径', () => {
     expect(script).toContain(process.execPath)
   })
 
-  it('成功后 isPatchPending() 为 true；全新临时目录为 false', async () => {
-    expect(isPatchPending()).toBe(false)
+  it('成功后 isPatchPending(目标版本) 为 true；全新临时目录为 false', async () => {
+    expect(isPatchPending('1.2.8')).toBe(false)
     const gz = makePatchGz(OLD_ASAR, NEW_ASAR)
     safeFetchMock.mockResolvedValue({ status: 200, body: gz })
     makeFakeAsar(OLD_ASAR)
     await downloadAsarPatch('1.2.8')
-    expect(isPatchPending()).toBe(true)
+    expect(isPatchPending('1.2.8')).toBe(true)
   })
 })
 
 describe('restartToApplyPatch', () => {
   it('替换脚本不存在 → 抛错且不退出应用', async () => {
-    expect(() => restartToApplyPatch()).toThrow(/替换脚本不存在/)
+    expect(() => restartToApplyPatch('1.2.8')).toThrow(/替换脚本不存在/)
     expect(app.quit).not.toHaveBeenCalled()
   })
 
@@ -446,7 +449,7 @@ describe('restartToApplyPatch', () => {
     makeFakeAsar(OLD_ASAR)
     await downloadAsarPatch('1.2.8')
 
-    restartToApplyPatch()
+    restartToApplyPatch('1.2.8')
 
     expect(spawn).toHaveBeenCalledTimes(1)
     const [cmd, args, opts] = vi.mocked(spawn).mock.calls[0]!
@@ -454,5 +457,110 @@ describe('restartToApplyPatch', () => {
     expect(Array.isArray(args)).toBe(true)
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
     expect(app.quit).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------- §312：暂存补丁的身份与哈希对账 ----------
+describe('§312 陈旧暂存不许盖掉真正的更新', () => {
+  const workDirOf = (): string => path.join(tempDir, 'pocketai-asar-update')
+  const pathsOf = (): { staged: string; script: string; meta: string } => ({
+    staged: path.join(workDirOf(), 'app.asar'),
+    script: path.join(workDirOf(), SCRIPT_NAME),
+    meta: path.join(workDirOf(), 'patch-meta.json')
+  })
+  const metaOf = (): Record<string, unknown> =>
+    JSON.parse(fs.readFileSync(pathsOf().meta, 'utf8')) as Record<string, unknown>
+
+  /** 真实走一遍 staging（1.2.7 → 1.2.8）：三份文件都按产品码自己写出来 */
+  async function stage(): Promise<void> {
+    const gz = makePatchGz(OLD_ASAR, NEW_ASAR)
+    safeFetchMock.mockResolvedValue({ status: 200, body: gz })
+    makeFakeAsar(OLD_ASAR)
+    await downloadAsarPatch('1.2.8')
+  }
+
+  it('正向对照：目标版本对得上 ⇒ 判「补丁就绪」，身份记录带基线与两份哈希', async () => {
+    await stage()
+    expect(isPatchPending('1.2.8')).toBe(true)
+    const m = metaOf()
+    expect(m.oldVersion).toBe(APP_VERSION)
+    expect(m.newVersion).toBe('1.2.8')
+    expect(m.oldSha256).toBe(sha256Hex(OLD_ASAR))
+    expect(m.newSha256).toBe(sha256Hex(NEW_ASAR))
+  })
+
+  it('目标版本换到 1.3.0（同进程里又检查了一次更新）⇒ 判「没有补丁」，陈旧那份清干净', async () => {
+    await stage()
+    expect(fs.existsSync(pathsOf().script)).toBe(true)
+    expect(isPatchPending('1.3.0')).toBe(false)
+    const p = pathsOf()
+    expect(fs.existsSync(p.staged), '暂存的新 asar 必须删掉').toBe(false)
+    expect(fs.existsSync(p.script), '替换脚本必须删掉——留着它 NSIS 完了还会被下一次误用').toBe(false)
+    expect(fs.existsSync(p.meta), '身份记录必须删掉').toBe(false)
+  })
+
+  it('身份记录的基线版本与当前 app.getVersion() 不符 ⇒ 判「没有补丁」并清理', async () => {
+    await stage()
+    const p = pathsOf()
+    fs.writeFileSync(p.meta, JSON.stringify({ ...metaOf(), oldVersion: '1.0.0' }), 'utf8')
+    expect(isPatchPending('1.2.8')).toBe(false)
+    expect(fs.existsSync(p.script)).toBe(false)
+  })
+
+  it('暂存的那份 app.asar 被外部改过一个字节 ⇒ 哈希复验拦住并清理', async () => {
+    await stage()
+    const p = pathsOf()
+    const buf = fs.readFileSync(p.staged)
+    buf[0] = buf[0] === 0 ? 1 : 0
+    fs.writeFileSync(p.staged, buf)
+    expect(isPatchPending('1.2.8')).toBe(false)
+    expect(fs.existsSync(p.meta)).toBe(false)
+  })
+
+  it('当前 resources/app.asar 被手动替换过（不再是补丁的基线）⇒ 拦住并清理', async () => {
+    await stage()
+    fs.writeFileSync(asarPath, Buffer.concat([OLD_ASAR, Buffer.from('x')]))
+    expect(isPatchPending('1.2.8')).toBe(false)
+    expect(fs.existsSync(pathsOf().script)).toBe(false)
+  })
+
+  it('旧版本应用留下的无记录残留（只有脚本＋暂存件）⇒ 判「没有补丁」、不抛，并把残留清掉', () => {
+    fs.mkdirSync(workDirOf(), { recursive: true })
+    const p = pathsOf()
+    fs.writeFileSync(p.script, '@echo off', 'utf8')
+    fs.writeFileSync(p.staged, NEW_ASAR)
+    expect(isPatchPending('1.2.8')).toBe(false)
+    expect(fs.existsSync(p.script)).toBe(false)
+    expect(fs.existsSync(p.staged)).toBe(false)
+  })
+
+  it('身份记录形状坏（JSON 坏／哈希字段非法）⇒ 判「没有补丁」而不抛', async () => {
+    await stage()
+    const p = pathsOf()
+    fs.writeFileSync(p.meta, '{not json', 'utf8')
+    expect(isPatchPending('1.2.8')).toBe(false)
+    await stage()
+    fs.writeFileSync(p.meta, JSON.stringify({ ...metaOf(), newSha256: 'zz' }), 'utf8')
+    expect(isPatchPending('1.2.8')).toBe(false)
+  })
+
+  it('清理动作对空目录不抛（全新临时目录里点「重启安装」也走得下去）', () => {
+    expect(() => clearPendingPatch()).not.toThrow()
+    expect(isPatchPending('1.2.8')).toBe(false)
+  })
+
+  it('调用方漏判也挡得住：restartToApplyPatch(错的目标版本) ⇒ 抛错、不 spawn、不退出', async () => {
+    await stage()
+    expect(() => restartToApplyPatch('1.3.0')).toThrow(/补丁已过期或与要安装的版本不符/)
+    expect(spawn).not.toHaveBeenCalled()
+    expect(app.quit).not.toHaveBeenCalled()
+  })
+
+  it('下载层也认版本：签名有效但目标版本不是这次要装的那版 ⇒ 拒绝，不落暂存', async () => {
+    const gz = makePatchGz(OLD_ASAR, NEW_ASAR, { newVersion: '1.2.9' })
+    safeFetchMock.mockResolvedValue({ status: 200, body: gz })
+    makeFakeAsar(OLD_ASAR)
+    await expect(downloadAsarPatch('1.2.8')).rejects.toThrow(/基线版本或目标版本/)
+    expect(fs.existsSync(pathsOf().staged)).toBe(false)
   })
 })
