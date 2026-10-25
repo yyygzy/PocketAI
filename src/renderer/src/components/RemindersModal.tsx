@@ -1,6 +1,6 @@
 // 提醒中心：待发（pending）管理 + 历史（已触发/已错过/已取消）查阅
 // 挂载于主窗口 App.tsx；打开期间到点/取消的广播会触发自动重拉
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastProvider'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../utils/ipc'
@@ -71,6 +71,11 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
   const ruleWords = buildRuleWords(t)
   const toast = useToast()
   const [tab, setTab] = useState<Tab>('pending')
+  // §311：`reload(scope)` 是 async——来回快速点两个 tab 时，前一个 tab 那一发可能后到，
+  // 于是「历史」tab 摆着「待发」那批记录（行内按钮与徽标是按 tab 画的 ⇒ 对着一张错表点「改期」）。
+  // 判据同 §309／§264：「这一发是不是还给当前 tab」。ref 在 render 期同步，首次加载不会误挡。
+  const tabRef = useRef<Tab>(tab)
+  tabRef.current = tab
   const [items, setItems] = useState<ReminderRecord[] | null>(null)
   // §222 同一口径：读不到就明说，别把列表长期挂在「加载中…」上
   const [loadErr, setLoadErr] = useState<string | null>(null)
@@ -87,6 +92,8 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
       // 下面 `items.length === 0` 为假、`items.map` 当场 TypeError（提醒中心整个打不开）。
       // §222 那个面在这里正好用上：读不到就明说读不到，别顶着「加载中…」
       const list = await window.pocketai.listReminders(scope)
+      // §311：切走了就不替那个 tab 写屏，也不替它留一句「读不到」
+      if (tabRef.current !== scope) return
       if (hasIpcFailed(list)) {
         setLoadErr(ipcFailText(list, t('common.unknownError')))
         return

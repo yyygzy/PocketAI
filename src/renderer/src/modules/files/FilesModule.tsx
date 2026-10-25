@@ -14,6 +14,11 @@ export const FilesModule: React.FC = () => {
   const [relDir, setRelDir] = useState('') // '' = data 根目录
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
+  // §311：`load(dir)` 是 async——进大目录后马上点面包屑回上一级，旧目录那一发后到，
+  // 于是**旧目录的文件列表挂在新的路径标签下面**（行内删除用的是条目自带 relPath，数据不会误删，
+  // 但那一眼看过去的路径与内容是假的）。判据同 §309／§264：「这一发是不是还给当前目录」。
+  const dirRef = useRef(relDir)
+  dirRef.current = relDir
   const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(2600)
   const { confirm, dialog } = useConfirm()
   const [preview, setPreview] = useState<{ entry: FileEntry; result: FileReadResult } | null>(null)
@@ -24,6 +29,8 @@ export const FilesModule: React.FC = () => {
     setLoading(true)
     try {
       const list = await window.pocketai.listFiles(dir)
+      // §311：切走了就不替那个目录写屏，也不弹那句「操作失败」
+      if (dirRef.current !== dir) return
       // safeHandle 把失败转成 **resolve 的 {ok:false}**：不判就 setEntries(对象)，
       // 下面 `entries.length === 0` 为假、`entries.map` 抛 TypeError ⇒ 整屏错误边界（§214）。
       // 触发路径是真的：files-service.ts:65 的 statSync 没包 try，目录被外部删掉就会走到这里。
@@ -35,9 +42,11 @@ export const FilesModule: React.FC = () => {
       }
     } catch (e) {
       logIpcError('files.listFiles', e)
+      // §311：迟到的那一发也不许替旧目录清空列表／把新一发的「加载中」关掉
+      if (dirRef.current !== dir) return
       setEntries([])
     } finally {
-      setLoading(false)
+      if (dirRef.current === dir) setLoading(false)
     }
   }, [t, showNotice])
 

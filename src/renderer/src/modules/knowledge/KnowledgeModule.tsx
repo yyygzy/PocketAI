@@ -621,6 +621,12 @@ export const KbDetail: React.FC<{
   const [batchMode, setBatchMode] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // §311：`kb` 是 prop、`KbDetail` 在 :175 渲染时不带 key ⇒ 切库是**同一个实例**，docs/readErr 跨库存活。
+  // 这里要挡的不是"旧 state"（那是另一族，见台账 §311 记的候选），而是**旧那一发的迟到响应**：
+  // 点库 A（大库、读得慢）再点库 B，A 的清单会在 B 之后落回 `setDocs` ⇒ B 屏上摆着 A 的文档，
+  // 左栏高亮的还是 B。判据抄 §309／§264：「这一发是不是还给当前选中项」。
+  const kbIdRef = useRef(kb.id)
+  kbIdRef.current = kb.id
 
   // 列表刷新后把已不存在的选中项丢掉（刚批量删完、或数据健康那边把重复收掉了），
   // 否则「已选 N 篇」数的是幽灵，动作还会发给不存在的 id
@@ -641,6 +647,8 @@ export const KbDetail: React.FC<{
 
   const loadDocs = useCallback(() => window.pocketai.listKbDocuments(kb.id)
     .then((v) => {
+      // §311：迟到的响应不许画进别的库（判据同 §309／§264）
+      if (kbIdRef.current !== kb.id) return
       if (hasIpcFailed(v)) {
         setReadErr(ipcFailText(v, t('common.unknownError')))
         return
@@ -649,6 +657,7 @@ export const KbDetail: React.FC<{
       setDocs(v)
     })
     .catch((e: unknown) => {
+      if (kbIdRef.current !== kb.id) return
       setReadErr(errText(e, t('common.unknownError')))
       logIpcError('kb.listDocuments', e)
     }), [kb.id])
@@ -688,6 +697,9 @@ export const KbDetail: React.FC<{
       })
       // `.catch` 只接得住 reject：safeHandle 的失败是 **resolve 的 {ok:false}**。
       // 不判就 setDocs(对象) ⇒ 下面 docs.map 崩；而 list?.some 抛错还会让这发轮询既不停也不刷新（§214）
+      // §311：切库时这发可能还在飞（effect 清理只 clearInterval、拦不住已发出的那一发）⇒
+      // 既不许把旧库的清单画进新库，也不许替旧库弹一句「刷新失败」
+      if (kbIdRef.current !== kb.id) return
       if (!list || hasIpcFailed(list)) {
         const msg = rejectMsg ?? (list ? ipcFailText(list, t('common.unknownError')) : t('common.unknownError'))
         stopPolling()

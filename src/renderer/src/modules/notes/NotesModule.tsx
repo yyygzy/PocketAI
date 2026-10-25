@@ -42,6 +42,11 @@ export const NotesModule: React.FC = () => {
   const [creating, setCreating] = useState(false)
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [loadError, setLoadError] = useState(false)
+  // §311：`load(kw)` 是 async——连着敲两个关键词时前一行那一发可能后到，于是上一次搜索的结果挂在
+  // 当前输入框的关键词下面（那一发若是失败还会把新关键词的结果整张清空＋报「读不到」）。
+  // 判据同 §309／§264：「这一发是不是还给当前关键词」。ref 在 render 期同步，首次加载不误挡。
+  const keywordRef = useRef(keyword)
+  keywordRef.current = keyword
   const { notice, show: showNotice } = useTransientNotice<{ ok: boolean; text: string }>(4000)
   const { confirm, dialog } = useConfirm()
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -71,14 +76,20 @@ export const NotesModule: React.FC = () => {
 
   const load = useCallback(
     async (kw?: string) => {
+      // §311：这一发的归属键（`load('')` 与「当前关键词为空」是同一件事）
+      const want = kw ?? ''
       try {
         const list = await withIpcTimeout(
           kw ? window.pocketai.searchNotes(kw) : window.pocketai.listNotes()
         )
+        // §311：切走了就不替旧关键词写屏，也不替它把「读不到」关掉
+        if (keywordRef.current !== want) return
         setNotes(list)
         setLoadError(false)
       } catch (e) {
         logIpcError('notes.load', e)
+        // §311：迟到那一发的失败不许替当前关键词清空列表＋报「读不到」（留痕照旧）
+        if (keywordRef.current !== want) return
         setLoadError(true)
         setNotes([])
       }

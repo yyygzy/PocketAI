@@ -57,6 +57,11 @@ const KbAskPanel: React.FC<{
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
   const requestRef = useRef<string | null>(null)
+  // §311：**最后一次点开的那条会话**（不是当前 sessionId state——那正是这一发要写的东西）。
+  // `loadSession(A)` 的响应迟到时用户可能已经点了 B 或按了「新对话」，那一句 `setSessionId(A)`
+  // 不只是画错屏：`ask()` 拿的是 state `sessionId`（:308）与 `msgsRef` 的历史 ⇒
+  // 下一句追问会**落进 A 那条会话**（:326 persist），比显示谎报更重一档。判据同 §309／§264。
+  const openedSessionRef = useRef<string | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   // msgs 镜像：一次性挂载的流式订阅与持久化需要拿到最新全量消息
   const msgsRef = useRef<KbAskMessage[]>([])
@@ -350,6 +355,9 @@ const KbAskPanel: React.FC<{
       requestRef.current = null
       setPending(false)
     }
+    // §311：按了「新对话」＝不再等任何一发历史回放（否则迟到的 A 会把新对话屏变成 A，
+    // 而下一句追问会直接落进 A 那条会话）
+    openedSessionRef.current = null
     setSessionId(null)
     setSessionCreatedAt(0)
     msgsRef.current = []
@@ -366,9 +374,12 @@ const KbAskPanel: React.FC<{
       requestRef.current = null
       setPending(false)
     }
+    openedSessionRef.current = id
     window.pocketai
       .getKbAskSession(id)
       .then((rec) => {
+        // §311：切走了就不许把 A 的会话 id／历史写进当前屏（写了它，下一句追问会落进 A）
+        if (openedSessionRef.current !== id) return
         if (!rec) {
           refreshSessions()
           return
@@ -381,7 +392,10 @@ const KbAskPanel: React.FC<{
         setStreamSources([])
         setShowHistory(false)
       })
-      .catch((e) => toast.error(errText(e)))
+      .catch((e) => {
+        if (openedSessionRef.current !== id) return
+        toast.error(errText(e))
+      })
   }
 
   // 跨库漫游跳转：外部传入会话 id → 展开历史面板并回放，随后通知父级清空
