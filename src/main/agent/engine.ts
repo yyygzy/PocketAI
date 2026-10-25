@@ -990,414 +990,435 @@ class AgentEngine {
     const parentRequestId = internal?.parentRequestId ?? null
     // 预算不在这里建：它要按档收缩（147），而档位要等容量判据算出来 ⇒ 见下面 `capacity` 那一处。
     // 子 run 一律用父传下来的同一个对象，所以"这轮最坏花多久"整棵树只算一次。
-    traceParents.set(requestId, parentRequestId)
-    traceModels.set(requestId, target.model)
+    // §307：从**第一处登记**起就把 setup+循环整段包进这个 try。循环体本身自带 try/finally 收尾；
+    // 但循环**之前**的 setup 段（解析助手、getAdapter、建 ctx）若抛出，会绕过那层 finally ⇒
+    // traceParents/traceModels/controllers/interjections/loopTimer 留在那儿泄漏、会话卡 streaming 且不报错。
+    // 下面 catch 补上与内层 catch 同款收尾：发错误事件、落会话状态、摘掉此刻已登记的资源。
+    // loopTimer 提到 try 外：setup 里抛时它可能还没赋值（未注册），catch 用 if 兜住。
+    let loopTimer: ReturnType<typeof setTimeout> | undefined
+    try {
+      traceParents.set(requestId, parentRequestId)
+      traceModels.set(requestId, target.model)
 
-    // 解析助手配置
-    let effectivePrompt = ''
-    let kbIds: string[] = []
-    let skillIds: string[] = []
-    let defaultParams: Record<string, unknown> | null = null
-    let assistant: ReturnType<typeof assistantRepo.get> = null
-    if (assistantId) assistant = assistantRepo.get(assistantId) ?? null
-    effectivePrompt = assistant?.systemPrompt ?? ''
-    kbIds = assistant?.knowledgeBaseIds ?? []
-    skillIds = assistant?.skillIds ?? []
-    defaultParams = assistant?.defaultParams ?? null
-    // 工具授权（含 SEC-3 的空数组语义收口）
-    const toolPermissions = resolveAgentToolPermissions(assistant?.toolPermissions, {
-      hasAssistant: !!assistantId,
-      isBuiltin: assistant?.isBuiltin ?? false
-    })
-    // Agent 模式必须有系统提示词引导任务拆解与工具调用；助手未配置时用默认模板
-    if (!effectivePrompt || !effectivePrompt.trim()) {
-      effectivePrompt = DEFAULT_AGENT_PROMPT
-    }
-
-    // 知识库检索注入
-    let knowledgeContext = ''
-    let sources: MessageSource[] = []
-    if (effectivePrompt.includes('{{knowledge}}') && kbIds.length > 0) {
-      const tKb = performance.now()
-      try {
-        const result = await ragService.retrieve(kbIds, content)
-        knowledgeContext = ragService.buildContext(result.chunks)
-        sources = chunksToSources(result.chunks)
-      } catch (e) {
-        // 检索失败不阻断 Agent，但这一轮是「带着空资料库在答题」，必须留痕（A3）
-        noteRetrievalDegradation(
-          {
-            stage: 'retrieve',
-            reason: `Agent 侧知识库检索整次失败，本轮未注入任何资料：${errMsg(e, '未知错误')}`
-          },
-          performance.now() - tKb
-        )
+      // 解析助手配置
+      let effectivePrompt = ''
+      let kbIds: string[] = []
+      let skillIds: string[] = []
+      let defaultParams: Record<string, unknown> | null = null
+      let assistant: ReturnType<typeof assistantRepo.get> = null
+      if (assistantId) assistant = assistantRepo.get(assistantId) ?? null
+      effectivePrompt = assistant?.systemPrompt ?? ''
+      kbIds = assistant?.knowledgeBaseIds ?? []
+      skillIds = assistant?.skillIds ?? []
+      defaultParams = assistant?.defaultParams ?? null
+      // 工具授权（含 SEC-3 的空数组语义收口）
+      const toolPermissions = resolveAgentToolPermissions(assistant?.toolPermissions, {
+        hasAssistant: !!assistantId,
+        isBuiltin: assistant?.isBuiltin ?? false
+      })
+      // Agent 模式必须有系统提示词引导任务拆解与工具调用；助手未配置时用默认模板
+      if (!effectivePrompt || !effectivePrompt.trim()) {
+        effectivePrompt = DEFAULT_AGENT_PROMPT
       }
-    }
 
-    // 工具 schema 与 {{tools}}（模板没写占位就不必渲染文本清单，见 DEFAULT_AGENT_PROMPT 上方说明）
-    /**
-     * 工具面 —— 144 的委派开关就落在这**一处**（口径同源，见 delegate-prefs 的注释）：
-     *  · 父 run：只有用户点名允许这台模型委派（决策③：默认关）才留着 `delegate_task`；
-     *    开关没开就**根本不进清单**，而不是"看得见但执行被拒"（那是 V4-Iter-118 那轮的形状）。
-     *  · 子 run：面 = 父同款筛法的结果，再减去 `delegate_task` 与 confirm/deny 类工具 ——
-     *    "子级授权 ⊆ 父级"因此是结构性成立的，不需要再去读一遍助手的 tool_permissions。
-     */
-    const surface = toolRegistry.filterByPermissions(toolPermissions)
-    const delegationEnabled = !asChild && isDelegationEnabledFor(target.providerId, target.model)
-    const baseTools = asChild
-      ? childToolSurface(surface)
-      : surface.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
-    /**
-     * 145 定的两条合取，150 按用户选定（A2 + 一起细化）收到"**子对这机显存的实际占用**"上：
-     *  ① 容量档只管**落在本地端点**的候选——"两个本地模型能否同驻"对云子没有对象（M3/M10 说的都是这张卡）；
-     *  ② 检索链那条只在 embedding 真的落到本地推理端点时才拦（内置那路是 CPU onnxruntime、云端 embedding 不碰这张卡）。
-     * 清单只列放得开的落点：一个都没有时 `model` 参数**不进 schema**（模型看不见 ⇒ 不会填），
-     * 保持 144 那条"没放不开就不给看"的形状，而不是"看得见但被拒"（118 那轮）。
-     * 今天父在本地时本地候选仍过不了 ①（应用从不设 num_ctx），但**云端候选第一次真的可达**。
-     */
-    const childUsesRetrieval = surfaceUsesRetrieval(baseTools, kbIds)
-    // 局部变量与导入的函数**不能同名**（同名会自引用进 TDZ，`const x = x(...)` 当场炸）
-    const hitsLocalEmbeddingEndpoint = retrievalHitsLocalEndpoint(kbIds)
-    const capacity = slotDecision()
-    const roleAllows = (candidate: { endpointLocal: boolean }): boolean =>
-      mayAssignDistinctModelRole(capacity, {
-        childEndpointLocal: candidate.endpointLocal,
-        childUsesRetrieval,
-        retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint
-      }).allowed
-    const roleModelOptions = delegationEnabled
-      ? listRoleModelOptions(target.providerId, (c) => roleAllows(c))
-      : []
-    /**
-     * 147：一轮编排的上限按档给。只有**父真的落在本机**时才算本机那一档（实测低配 2 子 / 10 次，
-     * 依据是 M7 热态 1.34s/次 + M8 冷启动 3045ms 的实测耗时）；云端父走全局默认——
-     * 拿这张卡的显存档去限一台云端模型的编排长度，是 150 刚清掉的那类"判据找错对象"。
-     * 子 run 继承同一个对象（下面 ctx.budget），所以整棵树只算这一次。
-     */
-    const budget =
-      internal?.budget ??
-      newRunBudget(delegationLimitsOf(capacity.bucket, providerEndpointLocal(target.providerId)))
-    const tools =
-      roleModelOptions.length > 0
-        ? baseTools.map((t) =>
-            t.name === DELEGATE_TOOL_NAME ? withDelegateModelParam(t, roleModelOptions) : t
+      // 知识库检索注入
+      let knowledgeContext = ''
+      let sources: MessageSource[] = []
+      if (effectivePrompt.includes('{{knowledge}}') && kbIds.length > 0) {
+        const tKb = performance.now()
+        try {
+          const result = await ragService.retrieve(kbIds, content)
+          knowledgeContext = ragService.buildContext(result.chunks)
+          sources = chunksToSources(result.chunks)
+        } catch (e) {
+          // 检索失败不阻断 Agent，但这一轮是「带着空资料库在答题」，必须留痕（A3）
+          noteRetrievalDegradation(
+            {
+              stage: 'retrieve',
+              reason: `Agent 侧知识库检索整次失败，本轮未注入任何资料：${errMsg(e, '未知错误')}`
+            },
+            performance.now() - tKb
           )
-        : baseTools
-    /**
-     * 用户点名为"走文本协议"的模型（§4.4-⑦）：首轮就不传 tools，改由 system prompt 里的协议段
-     * 承载工具清单。与"端点报 400 才自动降级"是两条独立入口，共用同一个注入 helper。
-     */
-    const forcedTextProtocol = tools.length > 0 && isTextProtocolForced(target.providerId, target.model)
-    /** 因「'*' 只给内置」而被挡下的 MCP 工具数，随 DONE 事件回传用于零调用提示 */
-    const mcpHeldBack = countMcpHeldBack(toolPermissions, toolRegistry.listAll())
-    const toolsText = /\{\{\s*tools\s*\}\}/.test(effectivePrompt)
-      ? toolRegistry.formatForPrompt(tools)
-      : ''
-
-    // §236：按需档只有在模型真拿得到 load_skill 时才是实话 ⇒ 判据取自**这次实际生效的工具面**，
-    // 不是取自「这是 Agent 运行」（助手没授权这颗工具时，技能照旧全文注入）
-    const skillsContext = buildSkillsContext(skillIds, {
-      loadToolAvailable: tools.some((t) => t.id === 'skill.load')
-    })
-    const memoryContext = buildMemoryContext()
-    const renderedPrompt = renderPrompt(effectivePrompt, {
-      knowledge: knowledgeContext,
-      tools: toolsText,
-      skills: skillsContext,
-      memory: memoryContext
-    })
-
-    // 持久化用户消息
-    const userMsg = messageRepo.insert({
-      conversationId,
-      role: 'user',
-      content,
-      status: 'done',
-      attachments: payload.attachments
-    })
-    // 回传用户消息 DB id，渲染端本地占位卡（u_xxx）据此获得可删除的 dbId
-    emit(IPC.AGENT_STEP_EVENT, {
-      requestId,
-      conversationId,
-      stepIndex: 0,
-      type: 'user',
-      messageId: userMsg.id
-    })
-
-    // 会话标题与状态
-    // 首轮消息：先落截断标题，后台用模型生成短标题（开关可控、失败静默降级）
-    runFirstMessageTitle({
-      conversationId,
-      userContent: content,
-      providerId: target.providerId,
-      model: target.model
-    })
-    conversationRepo.touch(conversationId, {
-      modelLabel: `agent:${target.providerId}:${target.model}`,
-      status: 'streaming'
-    })
-
-    // 主控制器
-    const master = new AbortController()
-    this.controllers.set(requestId, master)
-    // 插队收件箱只给主干开（子 run 不接插队，理由见 interjections 的注释）
-    if (!asChild) this.interjections.set(requestId, [])
-    const loopTimer = setTimeout(() => master.abort(), LOOP_TIMEOUT_MS)
-
-    // 工作消息列表（ReAct 上下文）
-    // 上下文窗口（V4-Iter-234）：声明过窗口的模型按 token 预算裁，没声明的照旧按 30 条。
-    // 凡是被窗口切掉的早期消息都要进摘要（SEC-19）——这条规矩由规划器返回的 early 承载，
-    // 不再靠"两个阈值凑巧对齐"。
-    const allHistory = messageRepo.listByConversation(conversationId)
-    const declaredWindow = getModelContextWindow(target.providerId, target.model)
-    const windowPlan = planHistoryWindow({
-      allHistory,
-      systemPrompt: renderedPrompt,
-      tools,
-      declaredTokens: declaredWindow
-    })
-    // 装不下时只进日志（口径与停止/卸载类同档，界面那一句写在设置数的当下说，见模型栏）
-    if (windowPlan.noRoom) {
-      logger.warn(
-        `[agent] 声明窗口 ${declaredWindow} 装不下固定开销，历史只带最近一轮（预算 ${windowPlan.budgetTokens}）`
-      )
-    }
-    let summaryPrefix = ''
-    if (windowPlan.early.length > 0) {
-      // 优先用 LLM 生成高质量摘要，失败/超时降级为规则摘要
-      const summaryAdapter = providerManager.getAdapter(target.providerId)
-      summaryPrefix = await summarizeHistoryWithLLM(
-        windowPlan.early,
-        summaryAdapter,
-        target.model,
-        master.signal
-      )
-    }
-    const messages = buildContext(
-      windowPlan.windowed,
-      summaryPrefix ? `${renderedPrompt}\n\n## 对话摘要（早期对话的精简记忆）\n${summaryPrefix}` : renderedPrompt
-    )
-
-    // 注入附件：图片→multimodal，文本→追加到用户消息
-    injectAttachments(messages, payload.attachments)
-
-    // 附件自动入库到助手关联的所有知识库（文本直接入库，图片需 KB 配 OCR）
-    if (payload.attachments && kbIds.length > 0) {
-      void import('../attachment/attachment-ingestion')
-        .then(async (m) => {
-          for (const kbId of kbIds) {
-            const kb = kbRepo.get(kbId)
-            const ocrConfig = kb?.ocrProviderId && kb.ocrModel
-              ? { providerId: kb.ocrProviderId, model: kb.ocrModel }
-              : null
-            await m.ingestAttachmentsToKb(kbId, userMsg.id, payload.attachments!, ocrConfig)
-          }
-        })
-        .catch((e) => logger.warn(`附件入库失败: ${errMsg(e)}`))
-    }
-
-    // 允许调用的工具 id 集合：`'*'` 原样交给注册表判定——它**只覆盖内置工具**，
-    // MCP 工具必须有显式 id 才放行（口径与收紧理由见 registry.ts 的 isToolAllowedBy）
-    // 原样把授权表交给 isToolAllowedBy 判定：'*' 的含义（只覆盖内置）写在那一处的注释里。
-    // 这里曾把 '*' 之外的逐条 id 全丢掉（`includes('*') ? ['*'] : …`），于是 `*` 助手
-    // 即使点名勾上了某条 MCP 工具，发给模型的清单里有它、执行时却报 TOOL_NOT_ALLOWED。
-    // 子 run 例外：授权必须**物化成具体 id**（父面筛出来的那几条），不许带着 '*' 往下传——
-    // 否则"子级不得扩张"这条只能靠注释保证（方案 §144 硬规矩①）。
-    const allowedToolIds = asChild ? new Set<string>(tools.map((t) => t.id)) : new Set<string>(toolPermissions)
-
-    // 显式规划阶段（Plan-and-Execute）：
-    // 首轮对话（无历史工具调用）先让 LLM 输出执行计划，注入 system prompt 引导后续执行。
-    // 规划失败不阻塞主流程；简单任务模型会输出"无需计划"。
-    // 无工具/短单行输入时跳过规划（shouldSkipPlanning），避免白付一次 LLM 往返。
-    let planText = ''
-    const hasToolHistory = messages.some(
-      (m) => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls?.length)
-    )
-    if (!hasToolHistory && !shouldSkipPlanning(content, tools.length)) {
-      try {
-        const planAdapter = providerManager.getAdapter(target.providerId)
-        const planSystem = `你是一个任务规划助手。请分析用户的最新请求，制定简洁的执行计划。
-要求：
-1. 用数字编号列出步骤（1. 2. 3. ...），每步不超过 20 字
-2. 简单任务（问好、闲聊、一句话可答）输出"无需计划"
-3. 只输出计划本身，不要额外解释`
-        const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
-        const planMessages: AdapterChatMessage[] = [{ role: 'system', content: planSystem }]
-        if (lastUserMsg) planMessages.push(lastUserMsg)
-
-        const planResult = await planAdapter.streamChat(
-          planMessages,
-          {
-            model: target.model,
-            signal: master.signal,
-            maxTokens: 512,
-            temperature: 0.3
-          },
-          { onDelta: () => {} }
-        )
-        planText = (planResult.content || '').trim()
-      } catch {
-        // 规划失败不阻塞主流程，降级为无计划模式
+        }
       }
-    }
 
-    // 将计划注入 system prompt，引导后续 ReAct 循环按计划执行
-    if (planText && planText !== '无需计划') {
-      const planInjection = `\n\n## 执行计划\n${planText}\n\n请按以上计划逐步执行，每步可调用工具获取中间结果，全部完成后给出最终回答。`
-      const sysMsg = messages.find((m) => m.role === 'system')
-      if (sysMsg && typeof sysMsg.content === 'string') {
-        sysMsg.content += planInjection
-      }
-      // emit 计划到前端展示（stepIndex=0，不持久化到 DB，避免污染对话历史）
+      // 工具 schema 与 {{tools}}（模板没写占位就不必渲染文本清单，见 DEFAULT_AGENT_PROMPT 上方说明）
+      /**
+       * 工具面 —— 144 的委派开关就落在这**一处**（口径同源，见 delegate-prefs 的注释）：
+       *  · 父 run：只有用户点名允许这台模型委派（决策③：默认关）才留着 `delegate_task`；
+       *    开关没开就**根本不进清单**，而不是"看得见但执行被拒"（那是 V4-Iter-118 那轮的形状）。
+       *  · 子 run：面 = 父同款筛法的结果，再减去 `delegate_task` 与 confirm/deny 类工具 ——
+       *    "子级授权 ⊆ 父级"因此是结构性成立的，不需要再去读一遍助手的 tool_permissions。
+       */
+      const surface = toolRegistry.filterByPermissions(toolPermissions)
+      const delegationEnabled = !asChild && isDelegationEnabledFor(target.providerId, target.model)
+      const baseTools = asChild
+        ? childToolSurface(surface)
+        : surface.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
+      /**
+       * 145 定的两条合取，150 按用户选定（A2 + 一起细化）收到"**子对这机显存的实际占用**"上：
+       *  ① 容量档只管**落在本地端点**的候选——"两个本地模型能否同驻"对云子没有对象（M3/M10 说的都是这张卡）；
+       *  ② 检索链那条只在 embedding 真的落到本地推理端点时才拦（内置那路是 CPU onnxruntime、云端 embedding 不碰这张卡）。
+       * 清单只列放得开的落点：一个都没有时 `model` 参数**不进 schema**（模型看不见 ⇒ 不会填），
+       * 保持 144 那条"没放不开就不给看"的形状，而不是"看得见但被拒"（118 那轮）。
+       * 今天父在本地时本地候选仍过不了 ①（应用从不设 num_ctx），但**云端候选第一次真的可达**。
+       */
+      const childUsesRetrieval = surfaceUsesRetrieval(baseTools, kbIds)
+      // 局部变量与导入的函数**不能同名**（同名会自引用进 TDZ，`const x = x(...)` 当场炸）
+      const hitsLocalEmbeddingEndpoint = retrievalHitsLocalEndpoint(kbIds)
+      const capacity = slotDecision()
+      const roleAllows = (candidate: { endpointLocal: boolean }): boolean =>
+        mayAssignDistinctModelRole(capacity, {
+          childEndpointLocal: candidate.endpointLocal,
+          childUsesRetrieval,
+          retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint
+        }).allowed
+      const roleModelOptions = delegationEnabled
+        ? listRoleModelOptions(target.providerId, (c) => roleAllows(c))
+        : []
+      /**
+       * 147：一轮编排的上限按档给。只有**父真的落在本机**时才算本机那一档（实测低配 2 子 / 10 次，
+       * 依据是 M7 热态 1.34s/次 + M8 冷启动 3045ms 的实测耗时）；云端父走全局默认——
+       * 拿这张卡的显存档去限一台云端模型的编排长度，是 150 刚清掉的那类"判据找错对象"。
+       * 子 run 继承同一个对象（下面 ctx.budget），所以整棵树只算这一次。
+       */
+      const budget =
+        internal?.budget ??
+        newRunBudget(delegationLimitsOf(capacity.bucket, providerEndpointLocal(target.providerId)))
+      const tools =
+        roleModelOptions.length > 0
+          ? baseTools.map((t) =>
+              t.name === DELEGATE_TOOL_NAME ? withDelegateModelParam(t, roleModelOptions) : t
+            )
+          : baseTools
+      /**
+       * 用户点名为"走文本协议"的模型（§4.4-⑦）：首轮就不传 tools，改由 system prompt 里的协议段
+       * 承载工具清单。与"端点报 400 才自动降级"是两条独立入口，共用同一个注入 helper。
+       */
+      const forcedTextProtocol = tools.length > 0 && isTextProtocolForced(target.providerId, target.model)
+      /** 因「'*' 只给内置」而被挡下的 MCP 工具数，随 DONE 事件回传用于零调用提示 */
+      const mcpHeldBack = countMcpHeldBack(toolPermissions, toolRegistry.listAll())
+      const toolsText = /\{\{\s*tools\s*\}\}/.test(effectivePrompt)
+        ? toolRegistry.formatForPrompt(tools)
+        : ''
+
+      // §236：按需档只有在模型真拿得到 load_skill 时才是实话 ⇒ 判据取自**这次实际生效的工具面**，
+      // 不是取自「这是 Agent 运行」（助手没授权这颗工具时，技能照旧全文注入）
+      const skillsContext = buildSkillsContext(skillIds, {
+        loadToolAvailable: tools.some((t) => t.id === 'skill.load')
+      })
+      const memoryContext = buildMemoryContext()
+      const renderedPrompt = renderPrompt(effectivePrompt, {
+        knowledge: knowledgeContext,
+        tools: toolsText,
+        skills: skillsContext,
+        memory: memoryContext
+      })
+
+      // 持久化用户消息
+      const userMsg = messageRepo.insert({
+        conversationId,
+        role: 'user',
+        content,
+        status: 'done',
+        attachments: payload.attachments
+      })
+      // 回传用户消息 DB id，渲染端本地占位卡（u_xxx）据此获得可删除的 dbId
       emit(IPC.AGENT_STEP_EVENT, {
         requestId,
         conversationId,
         stepIndex: 0,
-        type: 'thought',
-        text: `**执行计划**\n${planText}`
+        type: 'user',
+        messageId: userMsg.id
       })
-    }
 
-    // 点名走文本协议的模型：先抹掉跨轮历史里还原回来的 assistant.tool_calls（见 helper 注释）
-    if (forcedTextProtocol) stripToolCallsFromContext(messages)
+      // 会话标题与状态
+      // 首轮消息：先落截断标题，后台用模型生成短标题（开关可控、失败静默降级）
+      runFirstMessageTitle({
+        conversationId,
+        userContent: content,
+        providerId: target.providerId,
+        model: target.model
+      })
+      conversationRepo.touch(conversationId, {
+        modelLabel: `agent:${target.providerId}:${target.model}`,
+        status: 'streaming'
+      })
 
-    // 状态机上下文：封装所有跨节点共享的可变状态
-    const ctx: AgentRunContext = {
-      requestId,
-      conversationId,
-      assistantId: assistantId ?? null,
-      parentRequestId,
-      budget,
-      asChild,
-      childUsesRetrieval,
-      retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint,
-      target,
-      fallbackTried: false,
-      messages,
-      master,
-      userMsg,
-      tools,
-      allowedToolIds,
-      defaultParams: defaultParams ?? {},
-      sources,
-      kbIds,
-      skillIds,
-      emit,
-      unattended: unattended ?? false,
-      stepCount: 0,
-      maxSteps: MAX_STEPS,
-      retriedEmpty: false,
-      textProtocolMode: forcedTextProtocol,
-      pendingToolCalls: null,
-      retriedBadCall: false,
-      pendingAssistantMsgId: '',
-      finalContent: '',
-      finalMessageId: '',
-      lastAssistantMsgId: '',
-      recentToolSignatures: []
-    }
+      // 主控制器
+      const master = new AbortController()
+      this.controllers.set(requestId, master)
+      // 插队收件箱只给主干开（子 run 不接插队，理由见 interjections 的注释）
+      if (!asChild) this.interjections.set(requestId, [])
+      loopTimer = setTimeout(() => master.abort(), LOOP_TIMEOUT_MS)
 
-    try {
-      // 状态机驱动：llm → tools → llm → ... → final
-      // 首次触顶（stepCount >= maxSteps）时注入重规划提示并追加步数预算继续执行；
-      // 再次触顶才跳出循环进入 degrade 降级
-      let state: AgentState = 'llm'
-      let replanned = false
-      while (state !== 'final') {
-        if (ctx.master.signal.aborted) throw new Error('Agent 运行已中止')
-        if (ctx.stepCount >= ctx.maxSteps) {
-          if (replanned) break
-          replanned = true
-          this.runReplanStep(ctx)
-          continue
-        }
-        /**
-         * 预算闸（方案 §144：本轮编排的总 LLM 调用数）。**只掐子 run**，不掐父 run——
-         * 父 run 一直由 maxSteps/重规划管着，把它也纳入新闸门等于给既有单代理路径引入回归
-         * （同 140 那条纪律："不把没数据实现成变慢"）。子 run 触顶就带着已做到的步骤进降级收敛，
-         * 而不是抛错让整次编排失败：宁可拿到半份结果，也不要用户等了一场空。
-         */
-        if (ctx.asChild && budgetExhausted(ctx.budget)) {
-          logger.warn(`[agent] 委派预算触顶（${ctx.budget.used}/${ctx.budget.max}），子 run 提前收敛`)
-          break
-        }
+      // 工作消息列表（ReAct 上下文）
+      // 上下文窗口（V4-Iter-234）：声明过窗口的模型按 token 预算裁，没声明的照旧按 30 条。
+      // 凡是被窗口切掉的早期消息都要进摘要（SEC-19）——这条规矩由规划器返回的 early 承载，
+      // 不再靠"两个阈值凑巧对齐"。
+      const allHistory = messageRepo.listByConversation(conversationId)
+      const declaredWindow = getModelContextWindow(target.providerId, target.model)
+      const windowPlan = planHistoryWindow({
+        allHistory,
+        systemPrompt: renderedPrompt,
+        tools,
+        declaredTokens: declaredWindow
+      })
+      // 装不下时只进日志（口径与停止/卸载类同档，界面那一句写在设置数的当下说，见模型栏）
+      if (windowPlan.noRoom) {
+        logger.warn(
+          `[agent] 声明窗口 ${declaredWindow} 装不下固定开销，历史只带最近一轮（预算 ${windowPlan.budgetTokens}）`
+        )
+      }
+      let summaryPrefix = ''
+      if (windowPlan.early.length > 0) {
+        // 优先用 LLM 生成高质量摘要，失败/超时降级为规则摘要
+        const summaryAdapter = providerManager.getAdapter(target.providerId)
+        summaryPrefix = await summarizeHistoryWithLLM(
+          windowPlan.early,
+          summaryAdapter,
+          target.model,
+          master.signal
+        )
+      }
+      const messages = buildContext(
+        windowPlan.windowed,
+        summaryPrefix ? `${renderedPrompt}\n\n## 对话摘要（早期对话的精简记忆）\n${summaryPrefix}` : renderedPrompt
+      )
 
-        ctx.stepCount++
-        const stepIndex = ctx.stepCount
+      // 注入附件：图片→multimodal，文本→追加到用户消息
+      injectAttachments(messages, payload.attachments)
 
-        if (state === 'llm') {
-          // 步与步之间的唯一安全插入点：见 drainInterjections 上方那条消息顺序约束
-          this.drainInterjections(ctx)
-          state = await this.runLLMStep(ctx, stepIndex)
-        } else {
-          state = await this.runToolsStep(ctx, stepIndex)
+      // 附件自动入库到助手关联的所有知识库（文本直接入库，图片需 KB 配 OCR）
+      if (payload.attachments && kbIds.length > 0) {
+        void import('../attachment/attachment-ingestion')
+          .then(async (m) => {
+            for (const kbId of kbIds) {
+              const kb = kbRepo.get(kbId)
+              const ocrConfig = kb?.ocrProviderId && kb.ocrModel
+                ? { providerId: kb.ocrProviderId, model: kb.ocrModel }
+                : null
+              await m.ingestAttachmentsToKb(kbId, userMsg.id, payload.attachments!, ocrConfig)
+            }
+          })
+          .catch((e) => logger.warn(`附件入库失败: ${errMsg(e)}`))
+      }
+
+      // 允许调用的工具 id 集合：`'*'` 原样交给注册表判定——它**只覆盖内置工具**，
+      // MCP 工具必须有显式 id 才放行（口径与收紧理由见 registry.ts 的 isToolAllowedBy）
+      // 原样把授权表交给 isToolAllowedBy 判定：'*' 的含义（只覆盖内置）写在那一处的注释里。
+      // 这里曾把 '*' 之外的逐条 id 全丢掉（`includes('*') ? ['*'] : …`），于是 `*` 助手
+      // 即使点名勾上了某条 MCP 工具，发给模型的清单里有它、执行时却报 TOOL_NOT_ALLOWED。
+      // 子 run 例外：授权必须**物化成具体 id**（父面筛出来的那几条），不许带着 '*' 往下传——
+      // 否则"子级不得扩张"这条只能靠注释保证（方案 §144 硬规矩①）。
+      const allowedToolIds = asChild ? new Set<string>(tools.map((t) => t.id)) : new Set<string>(toolPermissions)
+
+      // 显式规划阶段（Plan-and-Execute）：
+      // 首轮对话（无历史工具调用）先让 LLM 输出执行计划，注入 system prompt 引导后续执行。
+      // 规划失败不阻塞主流程；简单任务模型会输出"无需计划"。
+      // 无工具/短单行输入时跳过规划（shouldSkipPlanning），避免白付一次 LLM 往返。
+      let planText = ''
+      const hasToolHistory = messages.some(
+        (m) => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls?.length)
+      )
+      if (!hasToolHistory && !shouldSkipPlanning(content, tools.length)) {
+        try {
+          const planAdapter = providerManager.getAdapter(target.providerId)
+          const planSystem = `你是一个任务规划助手。请分析用户的最新请求，制定简洁的执行计划。
+要求：
+1. 用数字编号列出步骤（1. 2. 3. ...），每步不超过 20 字
+2. 简单任务（问好、闲聊、一句话可答）输出"无需计划"
+3. 只输出计划本身，不要额外解释`
+          const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
+          const planMessages: AdapterChatMessage[] = [{ role: 'system', content: planSystem }]
+          if (lastUserMsg) planMessages.push(lastUserMsg)
+
+          const planResult = await planAdapter.streamChat(
+            planMessages,
+            {
+              model: target.model,
+              signal: master.signal,
+              maxTokens: 512,
+              temperature: 0.3
+            },
+            { onDelta: () => {} }
+          )
+          planText = (planResult.content || '').trim()
+        } catch {
+          // 规划失败不阻塞主流程，降级为无计划模式
         }
       }
 
-      // 超步数降级：再调一次 LLM（不带 tools）强制生成最终回答
-      if (state !== 'final') {
-        const degradeOk = await this.runDegradeStep(ctx)
-        if (!degradeOk) {
-          // 降级失败时 runDegradeStep 内已 emit 错误事件并更新会话状态，
-          // 此处直接结束，不再发 DONE 事件（避免 error+done 双事件、状态被 done 覆盖）
-          return
+      // 将计划注入 system prompt，引导后续 ReAct 循环按计划执行
+      if (planText && planText !== '无需计划') {
+        const planInjection = `\n\n## 执行计划\n${planText}\n\n请按以上计划逐步执行，每步可调用工具获取中间结果，全部完成后给出最终回答。`
+        const sysMsg = messages.find((m) => m.role === 'system')
+        if (sysMsg && typeof sysMsg.content === 'string') {
+          sysMsg.content += planInjection
         }
+        // emit 计划到前端展示（stepIndex=0，不持久化到 DB，避免污染对话历史）
+        emit(IPC.AGENT_STEP_EVENT, {
+          requestId,
+          conversationId,
+          stepIndex: 0,
+          type: 'thought',
+          text: `**执行计划**\n${planText}`
+        })
       }
 
-      const doneEvt: AgentDoneEvent = {
+      // 点名走文本协议的模型：先抹掉跨轮历史里还原回来的 assistant.tool_calls（见 helper 注释）
+      if (forcedTextProtocol) stripToolCallsFromContext(messages)
+
+      // 状态机上下文：封装所有跨节点共享的可变状态
+      const ctx: AgentRunContext = {
         requestId,
         conversationId,
-        finalMessageId: ctx.finalMessageId,
-        fullContent: ctx.finalContent,
-        stepCount: ctx.stepCount,
-        traceStats: safeTraceStats(requestId),
-        sources: ctx.sources.length > 0 ? ctx.sources : undefined,
-        usedTools: ctx.recentToolSignatures.length > 0,
-        mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined,
-        // §237：§234 那条只进日志的实话上屏。判据是**我们自己那把尺子**算出来的（声明过窗口
-        // 且固定开销已把它吃光）——没声明过的模型量不了，就不带这个标记，不猜一句话给用户。
-        historyTight: windowPlan.noRoom ? true : undefined
+        assistantId: assistantId ?? null,
+        parentRequestId,
+        budget,
+        asChild,
+        childUsesRetrieval,
+        retrievalHitsLocalEndpoint: hitsLocalEmbeddingEndpoint,
+        target,
+        fallbackTried: false,
+        messages,
+        master,
+        userMsg,
+        tools,
+        allowedToolIds,
+        defaultParams: defaultParams ?? {},
+        sources,
+        kbIds,
+        skillIds,
+        emit,
+        unattended: unattended ?? false,
+        stepCount: 0,
+        maxSteps: MAX_STEPS,
+        retriedEmpty: false,
+        textProtocolMode: forcedTextProtocol,
+        pendingToolCalls: null,
+        retriedBadCall: false,
+        pendingAssistantMsgId: '',
+        finalContent: '',
+        finalMessageId: '',
+        lastAssistantMsgId: '',
+        recentToolSignatures: []
       }
-      emit(IPC.AGENT_DONE_EVENT, doneEvt)
-      conversationRepo.touch(conversationId, { status: 'done' })
-    } catch (e) {
-      const aborted = isAbortError(e) || /中止/.test(errMsg(e))
-      const errText = aborted ? 'Agent 运行已中止' : errMsg(e)
-      // 清理流式占位消息：错误/中止时把当前轮 assistant 占位写入终态并同步 UI，
-      // 否则渲染端消息卡永远显示「思考中…」（只清 pending，不覆盖已完成消息）
-      if (ctx.pendingAssistantMsgId) {
-        const pendingId = ctx.pendingAssistantMsgId
-        ctx.pendingAssistantMsgId = ''
-        const noticeText = aborted ? '（已中止）' : `（出错：${errText}）`
-        try {
-          messageRepo.updateContent(pendingId, noticeText, aborted ? 'aborted' : 'error')
-          emit(IPC.AGENT_STEP_EVENT, {
-            requestId,
-            conversationId,
-            stepIndex: ctx.stepCount,
-            type: 'thought',
-            text: noticeText,
-            messageId: pendingId
-          })
-        } catch (cleanupErr) {
-          logger.warn(`清理占位消息失败: ${errMsg(cleanupErr)}`)
+
+      try {
+        // 状态机驱动：llm → tools → llm → ... → final
+        // 首次触顶（stepCount >= maxSteps）时注入重规划提示并追加步数预算继续执行；
+        // 再次触顶才跳出循环进入 degrade 降级
+        let state: AgentState = 'llm'
+        let replanned = false
+        while (state !== 'final') {
+          if (ctx.master.signal.aborted) throw new Error('Agent 运行已中止')
+          if (ctx.stepCount >= ctx.maxSteps) {
+            if (replanned) break
+            replanned = true
+            this.runReplanStep(ctx)
+            continue
+          }
+          /**
+           * 预算闸（方案 §144：本轮编排的总 LLM 调用数）。**只掐子 run**，不掐父 run——
+           * 父 run 一直由 maxSteps/重规划管着，把它也纳入新闸门等于给既有单代理路径引入回归
+           * （同 140 那条纪律："不把没数据实现成变慢"）。子 run 触顶就带着已做到的步骤进降级收敛，
+           * 而不是抛错让整次编排失败：宁可拿到半份结果，也不要用户等了一场空。
+           */
+          if (ctx.asChild && budgetExhausted(ctx.budget)) {
+            logger.warn(`[agent] 委派预算触顶（${ctx.budget.used}/${ctx.budget.max}），子 run 提前收敛`)
+            break
+          }
+
+          ctx.stepCount++
+          const stepIndex = ctx.stepCount
+
+          if (state === 'llm') {
+            // 步与步之间的唯一安全插入点：见 drainInterjections 上方那条消息顺序约束
+            this.drainInterjections(ctx)
+            state = await this.runLLMStep(ctx, stepIndex)
+          } else {
+            state = await this.runToolsStep(ctx, stepIndex)
+          }
         }
+
+        // 超步数降级：再调一次 LLM（不带 tools）强制生成最终回答
+        if (state !== 'final') {
+          const degradeOk = await this.runDegradeStep(ctx)
+          if (!degradeOk) {
+            // 降级失败时 runDegradeStep 内已 emit 错误事件并更新会话状态，
+            // 此处直接结束，不再发 DONE 事件（避免 error+done 双事件、状态被 done 覆盖）
+            return
+          }
+        }
+
+        const doneEvt: AgentDoneEvent = {
+          requestId,
+          conversationId,
+          finalMessageId: ctx.finalMessageId,
+          fullContent: ctx.finalContent,
+          stepCount: ctx.stepCount,
+          traceStats: safeTraceStats(requestId),
+          sources: ctx.sources.length > 0 ? ctx.sources : undefined,
+          usedTools: ctx.recentToolSignatures.length > 0,
+          mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined,
+          // §237：§234 那条只进日志的实话上屏。判据是**我们自己那把尺子**算出来的（声明过窗口
+          // 且固定开销已把它吃光）——没声明过的模型量不了，就不带这个标记，不猜一句话给用户。
+          historyTight: windowPlan.noRoom ? true : undefined
+        }
+        emit(IPC.AGENT_DONE_EVENT, doneEvt)
+        conversationRepo.touch(conversationId, { status: 'done' })
+      } catch (e) {
+        const aborted = isAbortError(e) || /中止/.test(errMsg(e))
+        const errText = aborted ? 'Agent 运行已中止' : errMsg(e)
+        // 清理流式占位消息：错误/中止时把当前轮 assistant 占位写入终态并同步 UI，
+        // 否则渲染端消息卡永远显示「思考中…」（只清 pending，不覆盖已完成消息）
+        if (ctx.pendingAssistantMsgId) {
+          const pendingId = ctx.pendingAssistantMsgId
+          ctx.pendingAssistantMsgId = ''
+          const noticeText = aborted ? '（已中止）' : `（出错：${errText}）`
+          try {
+            messageRepo.updateContent(pendingId, noticeText, aborted ? 'aborted' : 'error')
+            emit(IPC.AGENT_STEP_EVENT, {
+              requestId,
+              conversationId,
+              stepIndex: ctx.stepCount,
+              type: 'thought',
+              text: noticeText,
+              messageId: pendingId
+            })
+          } catch (cleanupErr) {
+            logger.warn(`清理占位消息失败: ${errMsg(cleanupErr)}`)
+          }
+        }
+        const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
+        emit(IPC.AGENT_ERROR_EVENT, errEvt)
+        conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
+      } finally {
+        clearTimeout(loopTimer)
+        this.controllers.delete(requestId)
+        // 归因表必须跟着清理：漏了它，同一个 requestId 的残留会把以后某轮的 trace
+        // 挂到别的父运行上（归因错比没归因更难查）
+        traceParents.delete(requestId)
+        traceModels.delete(requestId)
+        // 插队收件箱同一条纪律（238）：运行已经不再消费它，留着就是把"下一轮同名 requestId"
+        // 的插队接到这一轮上。渲染层不需要知道这件事——它只按 clientRef 对账，
+        // 没被对上的那条会在 DONE/ERROR 后回到队列等正常发送。
+        this.interjections.delete(requestId)
       }
+    } catch (setupErr) {
+      // §307：setup 段抛出（进不了循环体的 inner finally）的兜底收尾。此时 ctx 尚未构造，
+      // 流式占位消息那套清理不适用（跳过）；只补登记摘除 + 错误事件 + 会话状态。
+      const aborted = isAbortError(setupErr) || /中止/.test(errMsg(setupErr))
+      const errText = aborted ? 'Agent 运行已中止' : errMsg(setupErr)
+      if (loopTimer) clearTimeout(loopTimer)
+      this.controllers.delete(requestId)
+      traceParents.delete(requestId)
+      traceModels.delete(requestId)
+      this.interjections.delete(requestId)
       const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
       emit(IPC.AGENT_ERROR_EVENT, errEvt)
       conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
-    } finally {
-      clearTimeout(loopTimer)
-      this.controllers.delete(requestId)
-      // 归因表必须跟着清理：漏了它，同一个 requestId 的残留会把以后某轮的 trace
-      // 挂到别的父运行上（归因错比没归因更难查）
-      traceParents.delete(requestId)
-      traceModels.delete(requestId)
-      // 插队收件箱同一条纪律（238）：运行已经不再消费它，留着就是把"下一轮同名 requestId"
-      // 的插队接到这一轮上。渲染层不需要知道这件事——它只按 clientRef 对账，
-      // 没被对上的那条会在 DONE/ERROR 后回到队列等正常发送。
-      this.interjections.delete(requestId)
     }
   }
 
