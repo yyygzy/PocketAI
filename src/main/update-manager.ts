@@ -265,6 +265,11 @@ class UpdateManager extends EventEmitter {
     // 增量补丁就绪**且对得上这次要装的版本**（§312）→ 延迟替换脚本 + 重启（不走 NSIS 安装器）
     if (isPatchPending(this.newVersion ?? '')) {
       try {
+        // §313：这一轮**可能已经下载过全量**（electron-updater 那条「退出时自动装」的 handler 是在全量下载
+        // 完成时挂上的，BaseUpdater.js:33），而它在 app.quit() 时只重查这个标志（:79-81）。补丁支的意思是
+        // 「这一版只由那份延迟脚本装」——不关掉它，app.quit() 会同时把 NSIS 起来，两条安装链一起写
+        // resources/，脚本还在第 2 秒就把应用重新拉起（可能撞上写到一半的目录）。
+        autoUpdater.autoInstallOnAppQuit = false
         restartToApplyPatch(this.newVersion ?? '') // 内部 app.quit()
         return { ok: true }
       } catch (e) {

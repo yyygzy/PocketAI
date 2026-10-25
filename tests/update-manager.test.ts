@@ -7,6 +7,7 @@
 //   §312：打补丁之前先 clearPendingPatch（上一轮的暂存不能留着）
 // - quitAndInstall：状态门 / 补丁待应用重启 / NSIS 安装
 //   §312：两条支路都把「这次要装的目标版本」交给补丁侧对账
+//   §313：补丁支必须在拉起脚本之前关掉「退出时自动装」（否则 NSIS 与延迟脚本两条链同时写 resources/）
 // - setAutoUpdate：持久化 / 失败收敛 / dev 开启不触发 check
 // - getInfo / getStatusSnapshot
 //
@@ -34,6 +35,10 @@ const mocks = vi.hoisted(() => ({
   patchPending: false,
   restartCalls: 0,
   restartThrows: false,
+  // §313：electron-updater 的「退出时自动装」标志——补丁支必须在拉起脚本**之前**关掉它
+  installOnQuit: true,
+  installOnQuitWrites: [] as boolean[],
+  installOnQuitAtRestart: null as boolean | null,
   // §312：对账要的「这次要装的目标版本」是否真传给了补丁那侧，以及暂存清理的先后
   pendingArgs: [] as string[],
   restartArgs: [] as string[],
@@ -58,6 +63,9 @@ const mocks = vi.hoisted(() => ({
     this.patchPending = false
     this.restartCalls = 0
     this.restartThrows = false
+    this.installOnQuit = true
+    this.installOnQuitWrites = []
+    this.installOnQuitAtRestart = null
     this.pendingArgs = []
     this.restartArgs = []
     this.clearCalls = 0
@@ -78,7 +86,12 @@ vi.mock('electron-updater', () => ({
   autoUpdater: {
     on: (ev: string, cb: (info: unknown) => void) => { mocks.listeners.set(ev, cb) },
     autoDownload: false,
-    autoInstallOnAppQuit: false,
+    // §313：这面镜子要能照出"谁在什么时候改过它"（真实现里 applyAutoUpdateFlags 每次 init 都写 true）
+    get autoInstallOnAppQuit() { return mocks.installOnQuit },
+    set autoInstallOnAppQuit(v: boolean) {
+      mocks.installOnQuit = v
+      mocks.installOnQuitWrites.push(v)
+    },
     checkForUpdates: async () => {
       mocks.checkCalls++
       if (mocks.checkForUpdatesError) throw mocks.checkForUpdatesError
@@ -115,6 +128,8 @@ vi.mock('../src/main/update/asar-patcher', () => ({
   restartToApplyPatch: (targetVersion: string) => {
     if (mocks.restartThrows) throw new Error('重启失败')
     mocks.restartArgs.push(targetVersion)
+    // §313：抓「脚本被拉起那一刻」的标志值——把它挪到 restart 之后就该抓到 true
+    mocks.installOnQuitAtRestart = mocks.installOnQuit
     mocks.restartCalls++
   },
   isPatchPending: (targetVersion: string) => {
@@ -396,6 +411,29 @@ describe('quitAndInstall 退出安装', () => {
     // §312：对账必须拿到「这次要装的目标版本」，补丁侧才知道那份暂存还相不相干
     expect(mocks.pendingArgs).toEqual(['1.3.0'])
     expect(mocks.restartArgs).toEqual(['1.3.0'])
+  })
+
+  it('§313 补丁支：拉起脚本**之前**就把「退出时自动装」关掉（顺序也要钉住）', async () => {
+    goPackaged()
+    emit('update-downloaded', { version: '1.3.0' })
+    mocks.patchPending = true
+    // init 那次写的是 true（生产里 applyAutoUpdateFlags 就这么干），本轮必须是 false
+    expect(mocks.installOnQuit).toBe(true)
+    const r = await updateManager.quitAndInstall()
+    expect(r).toEqual({ ok: true })
+    expect(mocks.installOnQuitAtRestart, '脚本被拉起那一刻，标志应当已经是 false').toBe(false)
+    expect(mocks.installOnQuit).toBe(false)
+    expect(mocks.quitInstallCalls).toHaveLength(0)
+  })
+
+  it('反向对照：走 NSIS 那支时不许提前关掉它（不然用户下次关窗就没有"退出时自动装"了）', async () => {
+    goPackaged()
+    emit('update-downloaded', { version: '1.3.0' })
+    const r = await updateManager.quitAndInstall()
+    expect(r).toEqual({ ok: true })
+    expect(mocks.quitInstallCalls).toEqual([[true, true]])
+    expect(mocks.installOnQuitWrites, '本轮除 init 那一次外不该有人改过它').toEqual([true])
+    expect(mocks.installOnQuit).toBe(true)
   })
 
   it('常规路径：调 autoUpdater.quitAndInstall(true, true) 静默安装', async () => {
