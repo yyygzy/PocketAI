@@ -423,6 +423,23 @@ export class McpManager extends EventEmitter {
     return this.start(id)
   }
 
+  /**
+   * 把一条记录从运行时里彻底摘掉（删除 MCP Server 走这条，而不是只 stop，§314）。
+   * 只 stop 的话 entry 还留在 map 里，两件事跟着留下：
+   * ① 垂死子进程的 stderr 仍会经 handleLog 推到「MCP 日志」面——那个 serverId 在界面上已经不存在了；
+   * ② entry 带着**已解密的 env/headers** 与最近 200 行输出缓冲活到进程退出（记录本身早已从库里删掉，
+   *   这份内存副本是它最后的容身之处）。
+   * lastError/autoRestarts 跟着消失没有损失：状态清单以库里的记录为准，那条记录已经不在了。
+   *
+   * 只做两件事是有意的：能在摘除这一刻还挂着稳定运行定时器的 entry 一定带着 client（定时器只在
+   * 翻成 running 那一刻设），而带 client 的 stop 走的就是清定时器那条支路；in-flight 的启动 Promise
+   * 由 start 自己的 finally 摘除，在这里提前删反而会让并发点「启动」绕过去重、多 spawn 一个进程。
+   */
+  async forget(id: string): Promise<void> {
+    await this.stop(id)
+    this.runtimes.delete(id)
+  }
+
   /** 列出某 MCP Server 的工具（要求已启动） */
   async listTools(id: string): Promise<ToolSchema[]> {
     const entry = this.runtimes.get(id)

@@ -85,7 +85,10 @@ export function registerMcpHandlers(): void {
     // 与安装整段（含前置 stop）共用 per-server 操作锁：安装/重装进行中删除一律拒绝，
     // 避免 pip 进程树占用 venv 造成孤儿目录或静默重建
     pythonEnvService.withServerOp(id, async () => {
-      await mcpManager.stop(id)
+      // §314：删除要的是 forget（停＋把运行时 entry 摘掉），不是只 stop——
+      // 只 stop 的话那条 entry 会带着已解密的 env/headers 与输出缓冲活到进程退出，
+      // 而垂死子进程后到的日志还会推给一个界面上已经不存在的 serverId
+      await mcpManager.forget(id)
       // 清理该 Server 的独立 venv 与工作目录；清理失败不阻断 DB 删除（条目没了环境即为孤儿，
       // 下次启动不会再引用），但把警告带回 UI 提示用户可手动删除目录
       let warning: string | undefined

@@ -905,3 +905,59 @@ describe('McpManager — 调用记录事件（onCall）', () => {
     expect(calls).toHaveLength(0)
   })
 })
+
+// ---------- §314：forget ＝ 停＋把运行时 entry 摘掉（删除服务器走这条） ----------
+describe('McpManager — §314 删除不许只 stop：entry 与它带的凭据要一起消失', () => {
+  let logEvents: Array<{ serverId: string; line: string }>
+
+  beforeEach(() => {
+    logEvents = []
+    mgr.onLog((e) => logEvents.push({ serverId: e.serverId, line: e.line }))
+    // 握手两发（initialize / tools/list）都要过，才有"正在跑"的 entry 可摘
+    mocks.requestImpl = async () => ({ tools: [] })
+  })
+
+  it('正向对照：只 stop 时，垂死子进程后到的一行 stderr 仍会推给这个 serverId', async () => {
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1')
+    const client = mocks.clients[0]!
+    await mgr.stop('srv1')
+    logEvents.length = 0
+    client.callOnLog('stderr', 'shutdown 前最后吐的一行')
+    expect(logEvents.filter((e) => e.serverId === 'srv1').map((e) => e.line))
+      .toContain('shutdown 前最后吐的一行')
+  })
+
+  it('forget 之后：同一条 client 再吐一行、再报一次退出，日志与状态流都不许再有它', async () => {
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1')
+    const client = mocks.clients[0]!
+    await mgr.forget('srv1')
+    events.length = 0
+    logEvents.length = 0
+    client.callOnLog('stderr', '迟到的日志行')
+    client.callOnExit(1, null)
+    expect(logEvents, 'entry 已摘 ⇒ handleLog 该直接回').toEqual([])
+    expect(events, 'handleExit 也因 entry 不在而什么都不发（不给已删除的配置自动重启）').toEqual([])
+    // 顺序判据：stop 必须在摘 entry 之前真正执行到 client.shutdown。
+    // 反过来写（先 delete 再 stop）时这两行断言照样绿——进程却留在机器上。
+    expect(client.shutdown, 'forget 要把子进程真关掉，不是只把登记抹掉').toHaveBeenCalled()
+  })
+
+  it('反向对照：forget 只摘它那一条，另一条在跑的服务器不受影响（防"整张清掉"这种过度修复）', async () => {
+    mocks.repoList = [makeRecord({ id: 'srv1' }), makeRecord({ id: 'srv2', name: 'other-srv' })]
+    await mgr.start('srv1')
+    await mgr.start('srv2')
+    expect(mocks.clients).toHaveLength(2)
+    await mgr.forget('srv1')
+    logEvents.length = 0
+    mocks.clients[1]!.callOnLog('stderr', 'srv2 还活着')
+    expect(logEvents.map((e) => `${e.serverId}:${e.line}`)).toEqual(['srv2:srv2 还活着'])
+  })
+
+  it('forget 对没见过的 id 是幂等的（不该抛，也不该发事件）', async () => {
+    events.length = 0
+    await expect(mgr.forget('nope')).resolves.toBeUndefined()
+    expect(events).toEqual([])
+  })
+})
