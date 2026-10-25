@@ -16,7 +16,6 @@
 // 反向对照：空 targets 在第一行守卫里抛（那时还什么都没登记）⇒ 依旧向外 reject（证明没把 try 提到守卫之前）。
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'node:fs'
-import path from 'node:path'
 
 const P = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMP || '/tmp'

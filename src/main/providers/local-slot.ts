@@ -308,9 +308,18 @@ export async function withLocalSlot<T>(req: SlotRequest, fn: () => Promise<T>): 
   const queue = queueFor(origin, decision.maxConcurrentChatSlots)
   const startedAt = nowFn()
   await queue.acquire(currentSlotKind(), req.signal)
-  const waited = nowFn() - startedAt
-  if (waited >= SLOW_WAIT_PERF_MS) {
-    deps.recordWait?.(waited, `${req.lane}/${currentSlotKind()} model=${req.label} origin=${origin}`)
+  // §308：acquire 成功起槽就**已持有**，而释放挂在下面那层 finally——中间任何抛出都必须先放槽再让错冒出去，
+  // 否则 busy 永远多占 1：实测档槽=1 ⇒ 这台机的队列从此死锁，之后每个本地推理都排队不起跑、直到重启。
+  // 此前这段只有慢等待埋点 deps.recordWait（index.ts 接的 recordPerf，≥500ms 的等待才调），它一抛就死锁。
+  // 不能图省事把 acquire 挪进下面的 try——acquire 自己抛（排队中被 abort）时槽并未到手，那层 finally 会误减 busy。
+  try {
+    const waited = nowFn() - startedAt
+    if (waited >= SLOW_WAIT_PERF_MS) {
+      deps.recordWait?.(waited, `${req.lane}/${currentSlotKind()} model=${req.label} origin=${origin}`)
+    }
+  } catch (e) {
+    queue.release()
+    throw e
   }
   try {
     return await heldStore.run(true, () => {
