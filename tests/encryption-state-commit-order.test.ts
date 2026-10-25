@@ -14,6 +14,13 @@ const mocks = vi.hoisted(() => ({
   seq: [] as string[],
   failEnable: false,
   failRekey: false,
+  /** §310：接下来 N 次「无密钥开库」抛错（改密校验那趟是带密钥开的，不受这颗开关影响） */
+  failPlainOpenTimes: 0,
+  /** §310：rekey 成功后第一次 close 抛错（模拟"越过不可逆点才撞上文件锁"那个窗口） */
+  failCloseAfterRekey: false,
+  closeThrowLeft: 0,
+  /** §310：`isOpen()` 改成有状态的——补齐分支靠它判"这次到底开开没" */
+  opened: true,
   cfg: { salt: null as Buffer | null, kdf: null as unknown, mode: 'none', hasPw: false }
 }))
 
@@ -52,10 +59,25 @@ vi.mock('../src/main/crypto/master-key', () => {
 
 vi.mock('../src/main/db/database', () => ({
   dbService: {
-    isOpen: () => true,
+    isOpen: () => mocks.opened,
     getEncryptionMode: () => mocks.cfg.mode,
-    open: (key?: Buffer) => { mocks.seq.push(key ? 'open:withKey' : 'open:plain') },
-    close: () => { mocks.seq.push('close') },
+    open: (key?: Buffer) => {
+      mocks.seq.push(key ? 'open:withKey' : 'open:plain')
+      // §310：无密钥开库按需抛错（校验密码那一趟是带密钥开的，不受这颗开关影响）
+      if (!key && mocks.failPlainOpenTimes > 0) {
+        mocks.failPlainOpenTimes -= 1
+        throw new Error('file locked')
+      }
+      mocks.opened = true
+    },
+    close: () => {
+      mocks.seq.push('close')
+      if (mocks.closeThrowLeft > 0) {
+        mocks.closeThrowLeft -= 1
+        throw new Error('close failed')
+      }
+      mocks.opened = false
+    },
     enableEncryption: () => {
       mocks.seq.push('enableEncryption')
       if (mocks.failEnable) throw new Error('disk locked')
@@ -66,7 +88,11 @@ vi.mock('../src/main/db/database', () => ({
       prepare: () => ({ get: () => 1, all: () => [], run: () => {} }),
       pragma: (sql: string) => {
         mocks.seq.push(`pragma:${sql.split(' ')[0]}`)
-        if (sql.startsWith('rekey') && mocks.failRekey) throw new Error('rekey failed')
+        if (sql.startsWith('rekey')) {
+          // §310：把抛错点钉在"库已改为明文"之后第一步（close）——这正是分档里最难的一档
+          if (mocks.failCloseAfterRekey) mocks.closeThrowLeft = 1
+          if (mocks.failRekey) throw new Error('rekey failed')
+        }
         return []
       },
       transaction: (fn: () => void) => fn
@@ -101,7 +127,7 @@ vi.mock('../src/main/crypto/recovery-key', () => ({
   recoveryKeyManager: {
     hasRecovery: () => false,
     enableRecovery: () => 'CODE-CODE-CODE',
-    disableRecovery: () => {},
+    disableRecovery: () => { mocks.seq.push('disableRecovery') },
     recoverMasterKey: () => Buffer.alloc(32, 5)
   }
 }))
@@ -145,6 +171,10 @@ beforeEach(() => {
   mocks.seq = []
   mocks.failEnable = false
   mocks.failRekey = false
+  mocks.failPlainOpenTimes = 0
+  mocks.failCloseAfterRekey = false
+  mocks.closeThrowLeft = 0
+  mocks.opened = true
   mocks.cfg.salt = Buffer.alloc(16, 1)
   mocks.cfg.kdf = { N: 32768, r: 8, p: 1 }
   mocks.cfg.mode = 'none'
@@ -223,5 +253,106 @@ describe('ENCRYPTION_CHANGE_PASSWORD：改密 rekey 失败不得销毁旧 salt',
     expect(rekeyAt).toBeGreaterThanOrEqual(0)
     expect(seq.indexOf('setSalt')).toBeGreaterThan(rekeyAt)
     expect(seq.indexOf('setKdf')).toBeGreaterThan(rekeyAt)
+  })
+})
+
+// §310：禁用加密此前把"改库＋改配置"整段裸着（既没 catch 也没分档），抛错就留下
+// 「库关着＋config 说要密码」的半状态——本会话 IPC 全挂，下次启动走 unlock 分支开不了明文库。
+// `rekey = ''` 是不可逆点，所以两种半状态要分开钉：越过之前能真回滚，越过之后只能把禁用做完。
+describe('ENCRYPTION_DISABLE：以 rekey 为不可逆点分两档收尾', () => {
+  beforeEach(() => {
+    mocks.cfg.mode = 'db'
+    mocks.cfg.hasPw = true
+    const mgr = masterKeyManager as unknown as { __setMode: (m: string) => void; setRawKey: (k: Buffer) => void }
+    mgr.__setMode('db')
+    mgr.setRawKey(Buffer.alloc(32, 4))
+    mocks.seq = []
+  })
+
+  it('正向对照：一次做完 ⇒ 库按无密重开、config 四条落齐、凭据与恢复码尾巴照跑', async () => {
+    const r = (await call(IPC.ENCRYPTION_DISABLE, OLD_PW)) as { ok: boolean }
+    expect(r.ok).toBe(true)
+    const seq = mocks.seq
+    const rekeyAt = seq.indexOf('pragma:rekey')
+    expect(rekeyAt).toBeGreaterThanOrEqual(0)
+    expect(seq.indexOf('init:none')).toBeGreaterThan(rekeyAt)
+    expect(seq.lastIndexOf('open:plain')).toBeGreaterThan(rekeyAt)
+    expect(seq.indexOf('setMode:none')).toBeGreaterThan(rekeyAt)
+    // 凭据必须按固定密钥重裹（跳过这一步＝下次启动全解不开，界面上像 Key 全没了）
+    expect(seq).toContain('restoreSnapshot')
+    expect(seq).toContain('disableRecovery')
+    expect(mocks.cfg.mode).toBe('none')
+    expect(mocks.cfg.hasPw).toBe(false)
+    expect(mocks.cfg.salt).toBeNull()
+    expect(mocks.cfg.kdf).toBeNull()
+  })
+
+  it('抛在不可逆点之前（rekey 自己失败）⇒ 真回滚：旧密钥回到会话、配置一个字节不写', async () => {
+    mocks.failRekey = true
+    const r = (await call(IPC.ENCRYPTION_DISABLE, OLD_PW)) as { ok: boolean; error?: string }
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('库与配置都未改动')
+    const seq = mocks.seq
+    expect(seq).toContain('setRawKey') // 回滚持钥
+    expect(seq[seq.length - 1]).toBe('open:withKey') // 用旧密钥把会话重新打开
+    expect(seq).not.toContain('init:none')
+    expect(seq).not.toContain('setMode:none')
+    expect(seq).not.toContain('setHasPw:false')
+    expect(seq).not.toContain('clearSalt')
+    expect(seq).not.toContain('restoreSnapshot')
+    expect(mocks.cfg.mode).toBe('db')
+    expect(mocks.cfg.hasPw).toBe(true)
+    expect(mocks.cfg.salt).not.toBeNull()
+  })
+
+  it('越过不可逆点后才抛（无密开库失败一次）⇒ 不退旧密钥，重试开库并把禁用做完', async () => {
+    mocks.failPlainOpenTimes = 1
+    const r = (await call(IPC.ENCRYPTION_DISABLE, OLD_PW)) as { ok: boolean; error?: string }
+    expect(r.ok, r.error).toBe(true)
+    const seq = mocks.seq
+    const rekeyAt = seq.indexOf('pragma:rekey')
+    expect(rekeyAt).toBeGreaterThanOrEqual(0)
+    // 库已是明文：拿旧主密钥重开必然再失败 ⇒ 这一档绝不许出现 setRawKey（错修"一律当真回滚处理"就红在这）
+    expect(seq).not.toContain('setRawKey')
+    expect(seq.filter((s) => s === 'open:plain').length).toBeGreaterThanOrEqual(2) // 抛一次 + 补齐一次
+    expect(seq.indexOf('setMode:none')).toBeGreaterThan(rekeyAt)
+    expect(seq).toContain('setHasPw:false')
+    expect(seq).toContain('restoreSnapshot') // 凭据按固定密钥重裹过，下次启动才解得开
+    expect(seq).toContain('disableRecovery')
+    expect(mocks.cfg.mode).toBe('none')
+    expect(mocks.cfg.hasPw).toBe(false)
+  })
+
+  it('抛在"库已明文、还没切无密模式"那一步（close 失败）⇒ 补齐分支自己切模式，会话不许留着旧主密钥', async () => {
+    mocks.failCloseAfterRekey = true
+    const r = (await call(IPC.ENCRYPTION_DISABLE, OLD_PW)) as { ok: boolean; error?: string }
+    expect(r.ok, r.error).toBe(true)
+    const seq = mocks.seq
+    const rekeyAt = seq.indexOf('pragma:rekey')
+    expect(rekeyAt).toBeGreaterThanOrEqual(0)
+    expect(seq).not.toContain('setRawKey')
+    // 这一档的 `init:none` 是补齐分支自己发的（try 里那句还没跑到）——删掉它，会话就留着旧主密钥、
+    // 而库已是明文：字段密钥与"是否加密"两处读数一起说谎（V4-Iter-195 的同族）
+    expect(seq.filter((s) => s === 'init:none').length).toBeGreaterThanOrEqual(1)
+    expect(seq.indexOf('setMode:none')).toBeGreaterThan(rekeyAt)
+    expect(masterKeyManager.getMode()).toBe('none')
+    expect(masterKeyManager.isDbEncrypted()).toBe(false)
+    expect(mocks.cfg.mode).toBe('none')
+    expect(mocks.cfg.hasPw).toBe(false)
+  })
+
+  it('补齐也做不完（开库一直失败）⇒ 明说"没有一次做完"，不许留下半个不加密标记', async () => {
+    mocks.failPlainOpenTimes = 99
+    const r = (await call(IPC.ENCRYPTION_DISABLE, OLD_PW)) as { ok: boolean; error?: string }
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('没有一次做完')
+    const seq = mocks.seq
+    // 库没开 ⇒ config 写不了、凭据也不许重裹（否则密文换了钥而标记还是旧的＝第二种半状态）
+    expect(seq).not.toContain('setMode:none')
+    expect(seq).not.toContain('setHasPw:false')
+    expect(seq).not.toContain('restoreSnapshot')
+    expect(seq).not.toContain('disableRecovery')
+    expect(mocks.cfg.mode).toBe('db')
+    expect(mocks.cfg.hasPw).toBe(true)
   })
 })

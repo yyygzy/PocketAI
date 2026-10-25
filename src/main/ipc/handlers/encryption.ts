@@ -259,17 +259,61 @@ export function registerEncryptionHandlers(): void {
     } catch { /* 忽略 */ }
     const fieldSnapshot = exportFieldCredentials()
 
-    dbService.getHandle().pragma('journal_mode = DELETE')
-    dbService.getHandle().pragma("rekey = ''")
-    dbService.close()
-    masterKeyManager.init('none')  // ← key 切换为 fixed key
-    dbService.open()
-    appConfigRepo.setEncryptionMode('none')
-    appConfigRepo.setHasMasterPassword(false)
-    appConfigRepo.clearMasterPasswordSalt()
-    appConfigRepo.clearKdfParams() // 档位与 salt 成对：留下与库不符的标记会误导下次派生
-    log.info('已禁用加密')
-
+    // §310：这一段是"改库＋改配置"的两步棋，此前**一句 try 都没有**，而同文件两个兄弟路径都有回滚
+    // （改密 :200-215、启用 :351-357；:345-347 的注释还专门写了"反过来做会留下 config 与库不符的半状态"）。
+    // safeHandle 把抛出转成 `{ok:false}`，于是抛在 `dbService.open()`（文件锁/磁盘满）时留下的是：
+    // 库关着（本会话所有 IPC 撞 "Database not opened"）＋ config 仍说要主密码——下次启动库能以明文打开，
+    // 但 boot 见 `mode==='db' || hasPw` 走 **unlock** 分支，拿派生密钥去开明文库必失败 ⇒ 弹「密码错误或
+    // 数据库已损坏」然后 quit（`index.ts:334-340/360-381`）。
+    // 三种半状态的可救性不同，所以分两档：`rekey = ''` 是**不可逆点**——越过它库已是明文，
+    // 把内存密钥退回旧主密钥反而打不开。
+    //   ① 没越过 ⇒ 库与配置都还是原样 ⇒ 照改密那条真回滚；
+    //   ② 越过了 ⇒ 不退密钥，改成**把禁用做完**（重试无密打开 → config 落齐 → 凭据尾巴照跑，
+    //      否则字段密文仍按旧主密钥裹着，下次用固定密钥解不开＝界面上"Key 全没了"，见 crypto/master-key.ts:48-50）；
+    //      做不完就明说，绝不返回"已禁用"。
+    const commitDisabledConfig = (): void => {
+      appConfigRepo.setEncryptionMode('none')
+      appConfigRepo.setHasMasterPassword(false)
+      appConfigRepo.clearMasterPasswordSalt()
+      appConfigRepo.clearKdfParams() // 档位与 salt 成对：留下与库不符的标记会误导下次派生
+    }
+    let rekeyed = false
+    try {
+      dbService.getHandle().pragma('journal_mode = DELETE')
+      dbService.getHandle().pragma("rekey = ''")
+      rekeyed = true // ← 从这里起库已是明文，退不回旧密钥
+      dbService.close()
+      masterKeyManager.init('none')  // ← key 切换为 fixed key
+      dbService.open()
+      commitDisabledConfig()
+      log.info('已禁用加密')
+    } catch (e) {
+      const reason = errMsg(e)
+      if (!rekeyed) {
+        // 库还是加密原样、配置一个字节没动 ⇒ 真回滚（open() 里会把 journal_mode 带回 WAL）
+        log.error('禁用加密在改库之前就抛错，库与配置保持原状:', reason)
+        dbService.close()
+        if (currentKey) {
+          masterKeyManager.setRawKey(currentKey)
+          dbService.open(currentKey)
+        } else {
+          dbService.open()
+        }
+        return { ok: false, error: '禁用加密未完成：库与配置都未改动，主密码照常用' }
+      }
+      log.error('禁用加密中途抛错（库已改为明文，退不回旧密钥），改为把禁用做完:', reason)
+      try {
+        // 抛在 `close`/`init`/`open`/config 哪一步都可能：这三步自身幂等（open 已开就 no-op），
+        // 所以补齐直接重放一遍，不判断"上一步做到哪"
+        masterKeyManager.init('none')
+        dbService.open()
+        commitDisabledConfig()
+      } catch (e2) {
+        log.error('补齐无密会话与加密标记也未成功:', errMsg(e2))
+        return { ok: false, error: '禁用加密没有一次做完：库已改为不加密，但这次没能把连接与加密标记写齐。请重启应用；若启动时仍要求输入主密码且解不开，请用备份恢复。' }
+      }
+      log.info('已禁用加密（中途抛错后补齐）')
+    }
     // ⚠️ key 已切为 fixed，用 fixed key 重新加密 WebDAV 密码
     if (webDAVPassword && savedCfg) {
       try {
