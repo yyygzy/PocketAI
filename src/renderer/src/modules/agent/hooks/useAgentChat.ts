@@ -821,6 +821,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       return
     }
     void window.pocketai.listMessages(conversationId).then((dbMsgs: MessageRecord[]) => {
+      // §309：迟到响应不许画进别的会话——切到 B 之后 A 的那一发才回来，会把 A 的卡片
+      // 直接 dispatch 成当前屏（而卡片是会话级 state：切走再切回就"凭空多出/丢失消息"）。
+      // 判据与本文件其余四发一致（loadRunStats:775/782、loadSessionStats:792/799、loadSubSessionReads:682）：
+      // 「这一发是不是还给当前会话」。conversationIdRef 在 render 期同步（:127），不会误挡首次加载。
+      if (conversationIdRef.current !== conversationId) return
       if (hasIpcFailed(dbMsgs)) return
       dispatch({ type: 'load', messages: toAgentMessages(dbMsgs) })
     }).catch(reportIpcError('agent.listMessages'))

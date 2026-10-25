@@ -107,6 +107,10 @@ export const ChatModule: React.FC = () => {
       window.pocketai
         .listMessages(convId)
         .then((v) => {
+          // §309：判据抄本文件 loadDraft（:378 成功支／:383 失败支）与 §264 注释（:398）——
+          // 「这一发是不是还给当前会话」。不挡就是：点大会话 A 再点 B，A 的迟到响应把 **A 的消息**
+          // 画进 B 的屏（侧栏还高亮着 B），或把 A 的"读不到"留在 B 上——两种都是屏上说谎。
+          if (currentConvRef.current !== convId) return
           if (hasIpcFailed(v)) {
             setMsgsReadErr(ipcFailText(v, t('common.unknownError')))
             return
@@ -115,7 +119,7 @@ export const ChatModule: React.FC = () => {
           setMessages(v)
         })
         .catch(reportIpcError('chat.listMessages')),
-    [t]
+    [t, currentConvRef]
   )
 
   const reloadAssistants = useCallback(() => {
@@ -359,7 +363,7 @@ export const ChatModule: React.FC = () => {
   }, [saveDraft])
 
   // 会话切换统一加载草稿（手动切换/新对话/初始自动选中/搜索跳转全覆盖）；
-  // 同步清空防旧会话文本闪现，异步加载完成后回填；cancelled 守卫防快速连切竞态
+  // 同步清空防旧会话文本闪现，异步加载完成后回填；迟到响应按 currentConvRef 判归属（§264）
   const loadDraft = useCallback((id: string): void => {
     setDraftUnread(null)
     window.pocketai
