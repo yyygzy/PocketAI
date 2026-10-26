@@ -20,7 +20,8 @@ import type {
   ProviderRecord
 } from '../../../../shared/types'
 import { errText } from '../../utils/error'
-import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, ipcFailureText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { KB_ASK_MAX_HISTORY } from '../../../../shared/types'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
 
@@ -318,10 +319,12 @@ const KbAskPanel: React.FC<{
       setSessionId(sid)
       setSessionCreatedAt(createdAt)
     }
-    const history: { role: 'user' | 'assistant'; content: string }[] = msgsRef.current.map((m) => ({
-      role: m.role,
-      content: m.content
-    }))
+    // §318：发之前先裁到上限。主进程拼消息时本来就只取最近 KB_ASK_MAX_HISTORY 条（ask-service），
+    // 入参 schema 现在也用它——原来是「schema 卡 50、主进程裁到 10」两个数，
+    // 于是第 11 条以后的历史让整句发不出去，而那 11 条以后主进程反正也用不上。
+    const history: { role: 'user' | 'assistant'; content: string }[] = msgsRef.current
+      .slice(-KB_ASK_MAX_HISTORY)
+      .map((m) => ({ role: m.role, content: m.content }))
     const next: KbAskMessage[] = [...msgsRef.current, { role: 'user', content: q }]
     msgsRef.current = next
     setMsgs(next)
@@ -330,14 +333,23 @@ const KbAskPanel: React.FC<{
     setPending(true)
     persistRef.current(next, sid, createdAt)
     try {
-      const { requestId } = await window.pocketai.kbAsk({
+      const r = await window.pocketai.kbAsk({
         kbIds: [kb.id],
         providerId,
         model,
         question: q,
         history
       })
-      requestRef.current = requestId
+      // §318：safeHandle 把入参校验失败与抛出都转成**已 resolve** 的 `{ ok:false, error }`，
+      // 而这一发原来是「解构即数据」⇒ requestId 是 undefined：转圈不消失、停止按钮按下去空转，
+      // 而那句提问已经落库。同文件其余七发都判了信封，只有发起这一发漏了。
+      // 已经落库的提问不回滚：那与"生成中途失败"留下的形状一致，回滚是另一件事。
+      if (hasIpcFailed(r)) {
+        setPending(false)
+        toast.error(ipcFailureText(r, t))
+        return
+      }
+      requestRef.current = r.requestId
     } catch (e) {
       setPending(false)
       toast.error(errText(e))

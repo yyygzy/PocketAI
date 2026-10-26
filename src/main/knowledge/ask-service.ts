@@ -8,10 +8,7 @@ import { chunksToSources } from '../../shared/kb-sources'
 import { providerManager } from '../providers/manager'
 import type { AdapterChatMessage } from '../providers/types'
 import type { KbAskChunkEvent, KbAskDoneEvent, KbAskErrorEvent, KbAskMessage, MessageSource } from '../../shared/types'
-import { IPC } from '../../shared/types'
-
-/** 追问历史最多携带条数（超出截断最早的） */
-export const KB_ASK_MAX_HISTORY = 10
+import { IPC, KB_ASK_MAX_HISTORY } from '../../shared/types'
 
 /**
  * 拼装问答消息序列（纯函数）：

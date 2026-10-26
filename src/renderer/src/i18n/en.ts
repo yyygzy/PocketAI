@@ -23,6 +23,8 @@ export const en = {
   'ipc.field.path': 'Path',
   'ipc.field.id': 'ID',
   'ipc.field.enabled': 'Enabled switch',
+  'ipc.field.question': 'Question',
+  'ipc.field.history': 'Chat history',
 
   // ── Common ──
   'common.save': 'Save',

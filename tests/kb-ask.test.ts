@@ -5,10 +5,10 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../src/main/knowledge/rag', () => ({ ragService: {} }))
 vi.mock('../src/main/providers/manager', () => ({ providerManager: {} }))
 
-import {
-  buildAskMessages,
-  KB_ASK_MAX_HISTORY
-} from '../src/main/knowledge/ask-service'
+import { buildAskMessages } from '../src/main/knowledge/ask-service'
+// §318：这个上限挪进了 shared/types——入参 schema（主进程）与发之前的裁剪（渲染层）要读同一个数，
+// 渲染层不可能 import 主进程模块，所以它不能留在 ask-service 里。
+import { KB_ASK_MAX_HISTORY } from '../src/shared/types'
 import { chunksToSources } from '../src/shared/kb-sources'
 
 describe('buildAskMessages — 问答消息拼装', () => {

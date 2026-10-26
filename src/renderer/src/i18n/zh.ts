@@ -23,6 +23,8 @@ export const zh = {
   'ipc.field.path': '路径',
   'ipc.field.id': 'ID',
   'ipc.field.enabled': '启用开关',
+  'ipc.field.question': '提问',
+  'ipc.field.history': '追问历史',
 
   // ── 通用 ──
   'common.save': '保存',

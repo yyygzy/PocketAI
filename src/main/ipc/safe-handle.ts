@@ -49,7 +49,9 @@ const ISSUE_FIELD_LABELS: Record<string, string> = {
   content: '内容',
   path: '路径',
   id: 'ID',
-  enabled: '启用开关'
+  enabled: '启用开关',
+  question: '提问',
+  history: '追问历史'
 }
 
 function fieldLabel(path: (string | number)[]): string {

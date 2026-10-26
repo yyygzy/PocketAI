@@ -23,6 +23,8 @@ export const ko = {
   'ipc.field.path': '경로',
   'ipc.field.id': 'ID',
   'ipc.field.enabled': '사용 스위치',
+  'ipc.field.question': '질문',
+  'ipc.field.history': '추가 질문 기록',
 
   'common.save': '저장',
   'common.cancel': '취소',

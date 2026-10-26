@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import fs from 'node:fs'
 import { BrowserWindow, dialog } from 'electron'
-import { IPC } from '../../../shared/types'
+import { IPC, KB_ASK_MAX_HISTORY } from '../../../shared/types'
 import type { KnowledgeBase } from '../../../shared/types'
 import { kbRepo } from '../../db/repositories/kb.repo'
 import { kbDocRepo } from '../../db/repositories/kb-doc.repo'
@@ -204,7 +204,7 @@ export function registerKnowledgeHandlers(): void {
     providerId: z.string().min(1),
     model: z.string().min(1),
     question: z.string().min(1).max(100_000),
-    history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).max(50)
+    history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).max(KB_ASK_MAX_HISTORY)
   })
   safeHandle(IPC.KB_ASK, (e, args: {
     kbIds: string[]

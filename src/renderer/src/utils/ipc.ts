@@ -92,7 +92,9 @@ const ARG_FIELD_KEYS = new Set([
   'content',
   'path',
   'id',
-  'enabled'
+  'enabled',
+  'question',
+  'history'
 ])
 
 type Translator = (key: string, params?: Record<string, string | number>) => string

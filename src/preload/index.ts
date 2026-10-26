@@ -215,7 +215,7 @@ const api = {
   listSkillFiles: (id: string): Promise<
     { ok: true; files: Array<{ path: string; size: number }> } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.SKILL_LIST_FILES, id),
-  syncSkills: (): Promise<{ count: number; errors: string[] }> =>
+  syncSkills: (): Promise<{ count: number; errors: string[] } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
     ipcRenderer.invoke(IPC.SKILL_SYNC),
   fetchSkillIndex: (
     indexUrl: string
@@ -431,13 +431,16 @@ const api = {
   },
 
   // ---------- KB 问答模式 ----------
+  // §318：这一条与下面 createLocalBackup／syncSkills 原本只写成功形状（如 `{ requestId; sources }`），
+  // 把 safeHandle 一定会产出的 `{ ok:false }` 从类型里抹掉了 ⇒ 消费侧「解构即数据」编译器不响，
+  // 那五面静默闸门也看不见这几根通道。类型诚实之后，判不判信封由 TS 兜着。
   kbAsk: (args: {
     kbIds: string[]
     providerId: string
     model: string
     question: string
     history: { role: 'user' | 'assistant'; content: string }[]
-  }): Promise<{ requestId: string; sources: MessageSource[] }> =>
+  }): Promise<{ requestId: string; sources: MessageSource[] } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
     ipcRenderer.invoke(IPC.KB_ASK, args),
   kbAskAbort: (requestId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.KB_ASK_ABORT, requestId),
@@ -1070,7 +1073,7 @@ const api = {
     ipcRenderer.invoke(IPC.CLIPBOARD_COPY_SENSITIVE, text, ttlMs),
 
   // ---------- 备份 ----------
-  createLocalBackup: (): Promise<{ path: string; size: number; encrypted: boolean }> =>
+  createLocalBackup: (): Promise<{ path: string; size: number; encrypted: boolean } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_LOCAL),
   createEncryptedLocalBackup: (): Promise<
     { ok: true; path: string; size: number; encrypted: boolean; saltB64: string }

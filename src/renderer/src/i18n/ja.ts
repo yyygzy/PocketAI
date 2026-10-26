@@ -23,6 +23,8 @@ export const ja = {
   'ipc.field.path': 'パス',
   'ipc.field.id': 'ID',
   'ipc.field.enabled': '有効化スイッチ',
+  'ipc.field.question': '質問',
+  'ipc.field.history': '追加質問の履歴',
 
   'common.save': '保存',
   'common.cancel': 'キャンセル',

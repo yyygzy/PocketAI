@@ -528,6 +528,15 @@ export interface MessageSource {
 }
 
 // ---------- KB 问答模式（知识库详情页内选库即聊，轻量流式） ----------
+
+/**
+ * 追问历史最多携带条数（§318：这个数只有出处一份）。
+ * 曾经有两个数各管一摊——IPC 入参 schema 卡 50、主进程拼消息时裁到 10，
+ * 于是「第 26 轮起发不出去」被 schema 挡死，而主进程本来就会丢掉 11 条以后的：
+ * 上限写两处，迟早和实现不一致（与 §154/§266 立的『别把同一件事抄第二遍』同一条）
+ * 渲染层发之前按它裁，主进程再兜一次。
+ */
+export const KB_ASK_MAX_HISTORY = 10
 export interface KbAskMessage {
   role: 'user' | 'assistant'
   content: string
