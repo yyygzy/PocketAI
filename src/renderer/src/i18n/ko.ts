@@ -1999,6 +1999,7 @@ export const ko = {
   'bk.restore': '복원',
   'bk.restoreConfirm': '⚠️ 복원하면 현재 데이터가 덮어씌워집니다. 계속할까요?\n{name}',
   'bk.downloadingRestore': '다운로드 및 복원 중…',
+  'bk.localRestoring': '복원 중: 백업 파일을 선택한 뒤 잠시 기다려 주세요…',
   'bk.restoreOk': '복원 완료 (적용에는 재시작 필요)',
   'bk.restoreOkPasswordChanged': '복원 완료: 현재 마스터 비밀번호가 백업 생성 시 사용한 비밀번호로 변경되었습니다. 앱을 재시작하고 해당 비밀번호로 잠금을 해제하세요.',
   'bk.restorePwdTitle': '백업 비밀번호 입력',

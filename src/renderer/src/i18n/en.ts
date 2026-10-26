@@ -2076,6 +2076,7 @@ export const en = {
   'bk.restore': 'Restore',
   'bk.restoreConfirm': '⚠️ Restoring overwrites current data. Continue?\n{name}',
   'bk.downloadingRestore': 'Downloading & restoring…',
+  'bk.localRestoring': 'Restoring: choose a backup file, then wait…',
   'bk.restoreOk': 'Restore complete (restart to apply)',
   'bk.restoreOkPasswordChanged': 'Restore complete: the master password is now the one used for this backup. Restart the app and unlock with that password.',
   'bk.restorePwdTitle': 'Enter backup password',

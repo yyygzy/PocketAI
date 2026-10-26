@@ -1999,6 +1999,7 @@ export const ja = {
   'bk.restore': '復元',
   'bk.restoreConfirm': '⚠️ 復元すると現在のデータが上書きされます。続行しますか？\n{name}',
   'bk.downloadingRestore': 'ダウンロード＆復元中…',
+  'bk.localRestoring': '復元中：バックアップファイルを選択し、選択後はそのままお待ちください…',
   'bk.restoreOk': '復元完了（適用には再起動が必要）',
   'bk.restoreOkPasswordChanged': '復元完了：現在のマスターパスワードはバックアップ作成時のものに変更されました。アプリを再起動してそのパスワードでロック解除してください。',
   'bk.restorePwdTitle': 'バックアップパスワードを入力',

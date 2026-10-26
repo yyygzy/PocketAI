@@ -2077,6 +2077,7 @@ export const zh = {
   'bk.restore': '恢复',
   'bk.restoreConfirm': '⚠️ 恢复备份将覆盖当前数据，确定？\n{name}',
   'bk.downloadingRestore': '正在下载恢复…',
+  'bk.localRestoring': '正在恢复：请挑选备份文件，选中后请稍候…',
   'bk.restoreOk': '恢复成功（重启生效）',
   'bk.restoreOkPasswordChanged': '恢复成功：当前主密码已变为备份时使用的密码，请重启应用并用该密码解锁',
   'bk.restorePwdTitle': '输入备份密码',

@@ -859,6 +859,8 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   const [wdUser, setWdUser] = useState('')
   const [wdPwd, setWdPwd] = useState('')
   const [wdDir, setWdDir] = useState('')
+  /** §325：测试连接那发的代次——改了地址连测两次，先回的那条不许把结论盖到当前表单上 */
+  const wdTestSeqRef = useRef(0)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   // 合并恢复状态
   const [mergeOpen, setMergeOpen] = useState(false)
@@ -896,6 +898,8 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   // §251：三处 getBackupSchedule（进面板、上传后、保存后）共用同一条接管——失败时那一块整块消失，
   // 用户会以为"没有定时备份这回事"，所以把原因落在备份计划区上方
   const [schedErr, setSchedErr] = useState<string | null>(null)
+  /** §325：保存定时计划那发的代次——连点两颗开关时，先回的那条不许把面板回弹成旧一次的结果 */
+  const schedSeqRef = useRef(0)
   const loadSchedule = useCallback(
     () =>
       window.pocketai
@@ -923,7 +927,10 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   }
 
   async function saveSchedule(patch: { enabled?: boolean; intervalHours?: number; retentionCount?: number }) {
+    const seq = ++schedSeqRef.current
     const next = await window.pocketai.setBackupSchedule(patch)
+    // §325：连点两颗开关时两发写在飞，先回的那条既不许把计划回弹成旧值、也不许多说一句失败
+    if (seq !== schedSeqRef.current) return
     // §217：失败对象没有 enabled/intervalHours ⇒ 面板把「定时备份」显示成一个不存在的计划
     if (hasIpcFailed(next)) {
       showNotice(false, ipcFailText(next, t('common.unknownError')))
@@ -947,8 +954,11 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   async function testWD() {
     if (wdPwd && !isWebdavPasswordUsable(wdPwd)) return showNotice(false, t('bk.pwdLatin1'))
     const c: WebDAVConfig = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
+    const seq = ++wdTestSeqRef.current
     showNotice(true, t('bk.connecting'))
     const r = await window.pocketai.testWebDAV(c)
+    // §325：这句结论必须来自最新那次输入的那台服务器，先回的旧一发不许替它说话
+    if (seq !== wdTestSeqRef.current) return
     showNotice(r.ok, r.ok ? t('bk.connOk') : t('bk.connFail', { e: r.message ?? t('common.unknownError') }))
   }
 
@@ -1087,10 +1097,15 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   /** 本地恢复：首次主进程弹文件选择器；取消静默；需要密码时记住文件路径供框内重试 */
   async function doLocalRestorePick() {
     if (!(await confirm({ message: t('bk.localRestoreConfirm'), danger: true }))) return
-    showNotice(true, t('bk.downloadingRestore'))
+    // §325（真机撞出）：原来这里摆的是「正在下载恢复…」，而那一会儿主进程只是在等用户挑文件，
+    // 挑完才真下载；取消的那发又直接 return ⇒ 那句永远挂在屏上。换成一句对两段都成立的话术，并在取消时收回。
     const seq = ++restoreSeqRef.current
+    showNotice(true, t('bk.localRestoring'))
     const r = await window.pocketai.restoreLocalBackup()
-    if (r.canceled) return
+    if (r.canceled) {
+      setNotice(null)
+      return
+    }
     handleRestoreResult(r, null, seq)
   }
 
