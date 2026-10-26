@@ -157,6 +157,10 @@ export function registerBackupHandlers(): void {
     let token = typeof payload?.restoreToken === 'string' ? payload.restoreToken : ''
     let filePath = peekPathToken(token)
     if (!filePath) {
+      // §323：带了令牌却已过期 ⇒ 明确失败，绝不重弹选择器。重弹会把「用户取消」回成
+      // {ok:true, canceled:true}（渲染层只看 ok 就报「恢复成功」），还可能让用户在第二只框里
+      // 选了另一份备份、被当成原来那份整库替换（不可逆）。同一条规则 assistants.ts 早已写下。
+      if (token) return { ok: false, error: '备份文件的选择已过期，请重新选择文件恢复' }
       const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
       if (!win) return { ok: false, error: '窗口不可用' }
       const { canceled, filePaths } = await dialog.showOpenDialog(win, {
@@ -187,7 +191,10 @@ export function registerBackupHandlers(): void {
       // §315：失败也可能发生在库文件已被替换之后 ⇒ 对账不问成败（helper 自己吞错，不带偏这次结果）
       await reconcileAfterConfigSwap()
     }
-  }, argsSchema(backupRestoreArgsSchema))
+  // §323：入参整条可选——首选用那一发是 `restoreLocalBackup()`（payload undefined），
+  // 而 tuple 里的对象 schema 不接受 undefined ⇒ 两种形状都被挡在门外（「参数至少需要 1 项」／
+  // 「参数类型不对」），这颗键点了必失败、连选择器都弹不出。同 lock.ts:66 的写法。
+  }, argsSchema(backupRestoreArgsSchema.optional()))
 
   safeHandle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: unknown, backupPassword?: unknown) => {
     const {

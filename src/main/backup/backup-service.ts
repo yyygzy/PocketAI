@@ -612,39 +612,55 @@ export async function restoreIncrementalFromWebDAV(
     }
   }
 
-  // 3. 附件：本地已有同 sha256 文件则跳过，否则下载
-  mkdirSync(ATTACHMENTS_DIR, { recursive: true })
-  for (const a of index.attachments) {
-    // 防路径穿越：索引中的附件名只能是裸文件名
-    if (a.name.includes('/') || a.name.includes('\\') || a.name.includes('..')) {
-      restoreSessionKey()
-      return { ok: false, error: `非法的附件名：${a.name}` }
-    }
-    const local = join(ATTACHMENTS_DIR, a.name)
-    if (existsSync(local)) {
-      try {
-        if (sha256Hex(readFileSync(local)) === a.sha256) continue
-      } catch {
-        /* 读取失败则继续走下载 */
+  // §323：从这里起内存主密钥可能已被上面的异机支路换成备份库那份（setRawKey），而库还没换——
+  // 这一段里任何一处抛出（下载抖动、写盘被锁）都必须按「库换没换」收尾，否则应用会带着
+  // 与磁盘不一致的密钥继续服务。全量那份 restoreBackupBlob 的 catch 写的正是这套，增量这份漏了。
+  try {
+    // 3. 附件：本地已有同 sha256 文件则跳过，否则下载
+    mkdirSync(ATTACHMENTS_DIR, { recursive: true })
+    for (const a of index.attachments) {
+      // 防路径穿越：索引中的附件名只能是裸文件名
+      if (a.name.includes('/') || a.name.includes('\\') || a.name.includes('..')) {
+        restoreSessionKey()
+        return { ok: false, error: `非法的附件名：${a.name}` }
       }
+      const local = join(ATTACHMENTS_DIR, a.name)
+      if (existsSync(local)) {
+        try {
+          if (sha256Hex(readFileSync(local)) === a.sha256) continue
+        } catch {
+          /* 读取失败则继续走下载 */
+        }
+      }
+      const res = await fetchBlobVerified(a.blob, a.sha256)
+      if (!res.ok || !res.data) {
+        restoreSessionKey()
+        return { ok: false, code: res.code, error: res.error }
+      }
+      writeFileSync(local, res.data)
     }
-    const res = await fetchBlobVerified(a.blob, a.sha256)
-    if (!res.ok || !res.data) {
-      restoreSessionKey()
-      return { ok: false, code: res.code, error: res.error }
-    }
-    writeFileSync(local, res.data)
-  }
 
-  // 4. 关闭 DB → 替换 → 以正确密钥重开 + 迁移（与全量恢复一致）
-  // 破坏前预检：备份库加密但当前无主密码密钥时直接拒绝，避免替换后打不开
-  if (index.dbEncrypted && !masterKeyManager.getDbKey()) {
-    restoreSessionKey()
-    return { ok: false, error: '该增量备份来自加密库，但当前会话未解锁主密码，请先解锁后再恢复' }
+    // 4. 关闭 DB → 替换 → 以正确密钥重开 + 迁移（与全量恢复一致）
+    // 破坏前预检：备份库加密但当前无主密码密钥时直接拒绝，避免替换后打不开
+    if (index.dbEncrypted && !masterKeyManager.getDbKey()) {
+      restoreSessionKey()
+      return { ok: false, error: '该增量备份来自加密库，但当前会话未解锁主密码，请先解锁后再恢复' }
+    }
+    dbService.close()
+    removeStaleSidecars(DB_PATH)
+    writeFileSync(DB_PATH, dbRes.data)
+  } catch (e) {
+    // 抛出必在库替换之前或那一句本身（替换成功后到重开之间那一段自己有 catch）⇒ 只有一档：
+    // 磁盘仍是原库，把会话密钥换回去并确保库是开着的（open() 见已开着会直接 return，幂等）
+    try {
+      restoreSessionKey()
+      const k = masterKeyManager.getDbKey()
+      if (!k) dbService.open()
+      else dbService.open(k)
+    } catch { /* 原库本身也无法打开，交给用户重启 */ }
+    log.error(`增量恢复中途失败: ${errMsg(e)}`)
+    return { ok: false, error: `增量恢复失败：${errMsg(e)}` }
   }
-  dbService.close()
-  removeStaleSidecars(DB_PATH)
-  writeFileSync(DB_PATH, dbRes.data)
   const dbKey = masterKeyManager.getDbKey()
   try {
     if (index.dbEncrypted && dbKey) {
@@ -880,7 +896,13 @@ export async function restoreBackupBlob(
     result = { ok: false, error: `恢复失败：${errMsg(e)}` }
     return result
   } finally {
-    rmSync(tmp, { recursive: true, force: true })
+    // §323：清理失败不许顶掉上面已经备好的 return——库换没换、迁移跑没跑，在那两步里就定了；
+    // 但也不能咽掉：残留的正是这份 DB 副本（与 createZipBuffer 那份 :269-276 同口径）
+    try {
+      rmSync(tmp, { recursive: true, force: true })
+    } catch (e) {
+      log.warn(`恢复临时目录清理失败（残留 DB 副本）: ${tmp}:`, errMsg(e))
+    }
   }
 }
 
