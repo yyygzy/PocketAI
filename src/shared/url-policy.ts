@@ -6,13 +6,19 @@
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
 
-/** 取小写主机名（IPv6 带方括号）；无法解析返回 null */
-export function urlHost(raw: string): string | null {
+/** 取小写主机名与端口（缺协议按 https 补）；无法解析返回 null */
+export function urlHostAndPort(raw: string): { host: string; port: string } | null {
   try {
-    return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase()
+    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+    return { host: u.hostname.toLowerCase(), port: u.port }
   } catch {
     return null
   }
+}
+
+/** 取小写主机名（IPv6 带方括号）；无法解析返回 null */
+export function urlHost(raw: string): string | null {
+  return urlHostAndPort(raw)?.host ?? null
 }
 
 export function isLoopbackHost(host: string | null): boolean {

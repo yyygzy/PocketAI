@@ -14,7 +14,7 @@
 // 未实测档一律**不套槽**（用户 2026-10-15 选定）：判据没测过的卡（>4GiB / 采不到）与今天完全一致，
 // 免得把"我们没有数据"实现成"用户变慢"。
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { isLoopbackHost, urlHost } from '../../shared/url-policy'
+import { isLoopbackHost, urlHost, urlHostAndPort } from '../../shared/url-policy'
 import { planLocalCapacity, type LocalCapacityDecision } from '../agent/local-capacity'
 
 /** 谁在提这个请求。默认前台；后台索引 / OCR / 自动标题由调用链的作用域标明 */
@@ -162,13 +162,23 @@ const queues = new Map<string, SlotQueue>()
 /**
  * 队列按 **origin** 分：同一台机器上多条 provider 记录指的往往是同一张卡，必须共排队；
  * 不同 host 各自一条队（局域网另一台机器的显存不该让本机排队）。
+ *
+ * §316：**回环端点先折成 `localhost[:端口]` 再当键**。闸门判「是不是本机」用的是主机名
+ * （`isLocalInferenceBaseUrl` → `urlHost`，不含端口、`localhost`／`127.0.0.1`／`[::1]` 都算回环），
+ * 而键原来直接取 `URL.host`（含端口、写法敏感）⇒ 同一个服务器的 `localhost:11434` 与
+ * `127.0.0.1:11434` 各排一条容量 1 的队，「同一张卡同时只放一路生成」这条不变量对那个配置
+ * 静默失效（实测：两条同时在飞，M10 的互顶与 M5 的 +64% 都回来了）。判据与键必须同轴。
+ * 端口**故意保留**：11434 与 1234 是两个各自加载模型的服务，而「同机两个服务是否也互顶」
+ * 本仓没有直测数据（M10 测的是同一个服务内的两个模型），不替它发明结论。
+ * 折出来的 `localhost` 也是判据屏那一行读到的串（`judgement.value.queue` 的 `{origin}`），
+ * 所以取的是用户本来就会写的那个主机名，不是内部行话。
+ * 导出给观察方（测试与判据屏辅助）用同一份口径找队列，别在测试里抄第二遍折叠规则。
  */
-function originOf(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).host
-  } catch {
-    return baseUrl
-  }
+export function originOf(baseUrl: string): string {
+  const hp = urlHostAndPort(baseUrl)
+  if (!hp) return baseUrl
+  const host = isLoopbackHost(hp.host) ? 'localhost' : hp.host
+  return hp.port ? `${host}:${hp.port}` : host
 }
 
 function queueFor(origin: string, capacity: number): SlotQueue {

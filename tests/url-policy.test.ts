@@ -5,7 +5,7 @@
 // - providers/types.normalizeBaseUrl：实际出网 URL 的拼装结果
 // 判据口径与 schemas/mcp.ts 的 pip 源例外、channels/gateway-base.ts 的回环例外一致。
 import { describe, it, expect } from 'vitest'
-import { ensureScheme, isPlainRemoteHttp, isLoopbackHost, urlHost } from '../src/shared/url-policy'
+import { ensureScheme, isPlainRemoteHttp, isLoopbackHost, urlHost, urlHostAndPort } from '../src/shared/url-policy'
 import { normalizeBaseUrl } from '../src/main/providers/types'
 
 describe('ensureScheme', () => {
@@ -58,6 +58,27 @@ describe('urlHost / isLoopbackHost', () => {
     expect(isLoopbackHost(urlHost('https://127.0.0.1'))).toBe(true)
     expect(isLoopbackHost(urlHost('https://example.com'))).toBe(false)
     expect(isLoopbackHost(null)).toBe(false)
+  })
+})
+
+// §316：本地槽位的队列键要用「主机名＋端口」，而判「是不是本机」用的是主机名——
+// 两者必须出自同一份读法，否则同一个服务器的两种写法会各排一条队（见 local-slot-loopback-origin-316）
+describe('urlHostAndPort', () => {
+  it('主机名折大小写、端口原样带出；缺协议按 https 补（与 urlHost 同一份读法）', () => {
+    expect(urlHostAndPort('http://LOCALHOST:11434/v1')).toEqual({ host: 'localhost', port: '11434' })
+    expect(urlHostAndPort('127.0.0.1:11434/v1')).toEqual({ host: '127.0.0.1', port: '11434' })
+    expect(urlHostAndPort('[::1]:11434/v1')).toEqual({ host: '[::1]', port: '11434' })
+  })
+
+  it('不写端口与写默认端口是同一个键（否则同机同服务会因为写法分家）', () => {
+    expect(urlHostAndPort('http://127.0.0.1/v1')).toEqual({ host: '127.0.0.1', port: '' })
+    expect(urlHostAndPort('http://127.0.0.1:80/v1')).toEqual({ host: '127.0.0.1', port: '' })
+    expect(urlHostAndPort('https://example.com:443/v1')).toEqual({ host: 'example.com', port: '' })
+  })
+
+  it('解析不了 → null，与 urlHost 同时失败（不是各判各的）', () => {
+    expect(urlHostAndPort('not a url')).toBeNull()
+    expect(urlHost('not a url')).toBeNull()
   })
 })
 

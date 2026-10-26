@@ -42,6 +42,7 @@ import {
 } from '../src/main/agent/delegate-capability'
 import {
   localSlotSnapshot,
+  originOf,
   resetLocalSlotsForTest,
   setSlotDecisionForTest,
   withLocalSlot
@@ -305,7 +306,9 @@ describe('app_config 落盘形状', () => {
 // 界面就会指着一条好模型说"它不回话"；不排队（默认未实测档）又永远撞不到那条路，
 // 所以判据必须同时有"占着槽"与"端点装死"两条真链，让两种假说算出不同的数。
 function origin(): string {
-  return new URL(baseUrl).host
+  // §316：队列键由产品侧折出来（回环端点 ⇒ localhost[:端口]），这里按同一份口径找那条队，
+  // 不在测试里抄第二遍折叠规则——原来写死的 `new URL(baseUrl).host` 正是本轮改掉的那个假设。
+  return originOf(baseUrl)
 }
 
 /** 等状态，不等时长（CI 上排队要多久取决于负载，固定 sleep 只会同时制造假绿和假红） */
