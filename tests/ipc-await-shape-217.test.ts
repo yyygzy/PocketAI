@@ -539,8 +539,11 @@ describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下
     expect(SITES.length).toBeGreaterThanOrEqual(250)
     const judged = SITES.filter((s) => s.kind === 'judged' || s.kind === 'judged-via-helper').length
     const caught = SITES.filter((s) => s.kind === 'try-catch').length
-    expect(judged, '判返回值的点').toBeGreaterThanOrEqual(200)
-    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(40)
+    // §326：沙箱这一屏两处从"只被 try/catch 包着"挪进了"判返回值"（现数：judged 249／caught 38）。
+    // 这两根是**量级底线**（扫描器瞎了才会掉到这儿），不是精确数；收一处静默点就会让 caught 少一点、judged 多一点，
+    // 所以 judged 那根随批上提，caught 那根留出 Enough 的余量。
+    expect(judged, '判返回值的点').toBeGreaterThanOrEqual(240)
+    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(35)
     expect(judged + caught + unsafe.length).toBe(SITES.length)
   })
 

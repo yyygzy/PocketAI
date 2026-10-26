@@ -6,8 +6,9 @@
 //  - 与宿主零 postMessage 通信（通信桥为迷你应用后续扩展点，本期刻意不开放）
 //
 // V2 批次九扩展：迷你应用（isApp）视图——网格展示已标记为应用的产物，支持设为应用/编辑/取消标记
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { SandboxFileMeta } from '../../../../shared/types'
+import { SANDBOX_MAX_DESC_CHARS, SANDBOX_MAX_NAME_CHARS } from '../../../../shared/schemas/sandbox'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
@@ -62,6 +63,8 @@ export const SandboxModule: React.FC = () => {
   const { notice: toast, show: setToast } = useTransientNotice<string>(2500)
   // 编辑中的产物（设为应用 / 改元数据）
   const [editingId, setEditingId] = useState<string | null>(null)
+  // §326：预览那发的代次号——左栏那几行在读盘时一颗都不置灰，连点两个产物就是两发同时在飞
+  const previewSeqRef = useRef(0)
 
   const load = useCallback(async () => {
     const list = await window.pocketai.listSandboxFiles()
@@ -95,11 +98,15 @@ export const SandboxModule: React.FC = () => {
     // 原因进本模块既有的 toast（这一族其它失败都是它，不另立新脸）＋清掉上一份预览
     // （屏上还摆着别的文件内容，比空白更会骗人，§256 那条"陈旧谎报要收回"）。
     let r: { meta: SandboxFileMeta; html: string } | null | { ok: false; error?: string }
+    const seq = ++previewSeqRef.current
     try {
       r = await window.pocketai.getSandboxFile(id)
     } catch (e) {
       r = { ok: false, error: errText(e, t('common.unknownError')) }
     }
+    // §326：迟到的那一发（无论成功还是失败）都不许再写屏——它认的是自己那次点中的产物，
+    // 而屏上此刻已经是用户后点的那一份了
+    if (seq !== previewSeqRef.current) return
     if (hasIpcFailed(r)) {
       setToast(ipcFailText(r, t('common.unknownError')))
       setPreview(null)
@@ -140,7 +147,14 @@ export const SandboxModule: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (!confirm(t('sandbox.deleteConfirm'))) return
     try {
-      await window.pocketai.deleteSandboxFile(id)
+      const r = await window.pocketai.deleteSandboxFile(id)
+      // §326：改前这一发的返回值一个判据都没有：删没删成都不清楚，就先把预览卸了、把编辑面板关掉，
+      // 随后 load() 又把那条摆回列表（屏上自己跟自己打架），而用户只看到"点了没反应"。
+      if (!r.ok) {
+        setToast(ipcFailText(r, t('common.unknownError')))
+        await load()
+        return
+      }
       if (selectedId === id) {
         setSelectedId(null)
         setPreview(null)
@@ -153,13 +167,24 @@ export const SandboxModule: React.FC = () => {
   }
 
   const handleToggleApp = async (f: SandboxFileMeta, toApp: boolean) => {
+    let r: SandboxFileMeta | null | { ok: false; error?: string }
     try {
-      await window.pocketai.updateSandboxMeta(f.id, { isApp: toApp })
-      await load()
-      setToast(toApp ? t('miniapp.promoted') : t('miniapp.demoted'))
-    } catch (err) {
-      setToast(errText(err))
+      r = await window.pocketai.updateSandboxMeta(f.id, { isApp: toApp })
+    } catch (e) {
+      r = { ok: false, error: errText(e, t('common.unknownError')) }
     }
+    // §326：改前三种到货（记录／null／失败对象）全被咽掉，照样弹「已设为迷你应用」，
+    // 而紧跟其后的 load() 会把 ⭐ 翻回去 ⇒ 那句成功话术当场被自己证伪
+    await load()
+    if (hasIpcFailed(r)) {
+      setToast(ipcFailText(r, t('common.unknownError')))
+      return
+    }
+    if (r === null) {
+      setToast(t('sandbox.gone'))
+      return
+    }
+    setToast(toApp ? t('miniapp.promoted') : t('miniapp.demoted'))
   }
 
   // 停止预览：卸载 iframe（中止脚本 / 重置预览态）
@@ -207,6 +232,7 @@ export const SandboxModule: React.FC = () => {
               className="input-mini w-full"
               placeholder={t('sandbox.namePlaceholder')}
               value={newName}
+              maxLength={SANDBOX_MAX_NAME_CHARS}
               onChange={(e) => setNewName(e.target.value)}
             />
             <textarea
@@ -365,7 +391,17 @@ const SandboxItem: React.FC<{
   const save = async () => {
     setSaving(true)
     try {
-      await window.pocketai.updateSandboxMeta(f.id, { name, icon, description: desc })
+      const r = await window.pocketai.updateSandboxMeta(f.id, { name, icon, description: desc })
+      // §326：改前这里直接 onSaved() ⇒ 关掉面板、重载，还弹一句「元数据已保存」，而库里一个字都没改。
+      // 失败侧留着面板与用户正写的字（这一屏没有别的出路能把它再拉回来，重开面板就全丢了）
+      if (hasIpcFailed(r)) {
+        onError(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      if (r === null) {
+        onError(t('sandbox.gone'))
+        return
+      }
       onSaved()
     } catch (err) {
       onError(errText(err))
@@ -404,6 +440,7 @@ const SandboxItem: React.FC<{
             <input
               className="input-mini flex-1"
               value={name}
+              maxLength={SANDBOX_MAX_NAME_CHARS}
               onChange={(e) => setName(e.target.value)}
             />
           </div>
@@ -422,6 +459,7 @@ const SandboxItem: React.FC<{
             className="input-mini w-full h-14 resize-none text-[11px]"
             placeholder={t('miniapp.descPlaceholder')}
             value={desc}
+            maxLength={SANDBOX_MAX_DESC_CHARS}
             onChange={(e) => setDesc(e.target.value)}
           />
           <div className="flex items-center justify-between gap-1">

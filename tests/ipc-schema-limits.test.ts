@@ -300,6 +300,13 @@ describe('sandbox schema — 与服务层对齐', () => {
     )
   })
 
+  // §326：界面那句 placeholder 写的是「名称（可留空）」，主进程 cleanName 也确实兜着默认名「未命名」，
+  // 而改前 schema 与 service 各有一道 min(1) ⇒ 留空点保存必失败。这里钉住"空名要放行"，
+  // 上限仍由输入框的 maxLength 与服务层截断各守一道（数字出处见 SANDBOX_MAX_NAME_CHARS）。
+  it('name 留空通过（「可留空」是真话；上限那条由下一个用例继续守着）', () => {
+    expect(sandboxCreateSchema.safeParse({ name: '', html: '<html></html>' }).success).toBe(true)
+  })
+
   it('name 超 60 / html 超 256K 字符拒绝', () => {
     expect(sandboxCreateSchema.safeParse({ name: 'n'.repeat(61), html: 'x' }).success).toBe(false)
     expect(

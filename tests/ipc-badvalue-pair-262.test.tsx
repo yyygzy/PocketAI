@@ -231,7 +231,8 @@ describe('③ 接线计数', () => {
 
   it('两处"只判真值"的形状归零，各有 hasIpcFailed 在前', () => {
     expect(count(SANDBOX, /const r = await window\.pocketai\.getSandboxFile\(id\)\n\s*if \(r\) \{/g), '旧的 if (r)').toBe(0)
-    expect(count(SANDBOX, /if \(hasIpcFailed\(r\)\) \{/g), '失败面先判').toBe(1)
+    // §326 在这一屏又收了两个消费点（设为应用／保存元数据），都写成同一形状 ⇒ 1 变 3
+    expect(count(SANDBOX, /if \(hasIpcFailed\(r\)\) \{/g), '失败面先判').toBe(3)
     expect(count(SETTINGS, /loadWebDAVConfig\(\)\.then\(\(c\) => \{\n\s*if \(c\) \{/g), '旧的 if (c)').toBe(0)
     expect(count(SETTINGS, /if \(hasIpcFailed\(c\)\) \{/g)).toBe(1)
     expect(count(SETTINGS, /\.catch\(reportIpcError\('settings\.loadWebDAVConfig'\)\)/g), '裸交出去那一形归零').toBe(0)

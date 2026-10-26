@@ -213,7 +213,9 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       const keyMap: Record<string, string> = {
         NO_SKILL_MD: 'skill.market.noSkillMd',
         NOT_A_DIRECTORY: 'skill.market.notADirectory',
-        ENTRY_TOO_LARGE: 'skill.market.entryTooLarge'
+        ENTRY_TOO_LARGE: 'skill.market.entryTooLarge',
+        // §326：资源回滚做成了、库里那条删不掉——这一张脸必须单独说一句（列表里会留下打不开的记录）
+        SKILL_ROW_RESIDUE: 'skill.market.rowResidue'
       }
       flash(false, t(keyMap[r.error ?? ''] ?? 'skill.market.importFailed'))
       return

@@ -1,6 +1,7 @@
 // 最终回答里的 ```html 代码块操作：存沙箱临时文件 / 安装为迷你应用
 import React, { useState } from 'react'
 import { useI18n } from '../../../i18n'
+import { SANDBOX_MAX_DESC_CHARS, SANDBOX_MAX_NAME_CHARS } from '../../../../../shared/schemas/sandbox'
 import { useToast } from '../../../components/ToastProvider'
 import { requestSandboxOpenApps } from '../../sandbox/SandboxModule'
 import { errText } from '../../../utils/error'
@@ -97,6 +98,7 @@ export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock })
             <input
               className="input-mini flex-1"
               value={appName}
+              maxLength={SANDBOX_MAX_NAME_CHARS}
               onChange={(e) => setAppName(e.target.value)}
               placeholder={t('sandbox.namePlaceholder')}
             />
@@ -105,6 +107,7 @@ export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock })
             className="input-mini w-full h-12 resize-none text-[11px]"
             placeholder={t('miniapp.descPlaceholder')}
             value={appDesc}
+            maxLength={SANDBOX_MAX_DESC_CHARS}
             onChange={(e) => setAppDesc(e.target.value)}
           />
           <div className="flex justify-end gap-1">

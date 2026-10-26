@@ -11,7 +11,10 @@ import fs from 'node:fs'
 import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { errMsg } from '../error'
+import { createLogger } from '../logger'
 import { skillRepo } from '../db/repositories/skill.repo'
+
+const log = createLogger('skill-io')
 import type { SkillRecord } from '../../shared/types'
 import { parseSkillText, type SkillShape } from './skill-parser'
 import { installSkillFiles, readSkillFolder, rollbackSkillFiles } from './skill-files'
@@ -176,7 +179,15 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
       skipped = read.skipped.concat(inst.skipped)
     } catch (e) {
       const cleanup = rollbackSkillFiles(skill.id)
-      skillRepo.delete(skill.id)
+      try {
+        skillRepo.delete(skill.id)
+      } catch (deleteErr) {
+        // 文件回滚做成了、库里那条删不掉 ⇒ 留下的正是上面那条注释明令不许的形状：列表里有这条、
+        // 它自带的文件不在，`load_skill` 只会一直报"没这条文件"。渲染层认不出光秃秃的原文（一律折叠成
+        // 「导入失败」），所以这一张脸要自己的回码，界面才有机会说"列表里会留下一条打不开的记录"。
+        log.warn(`技能资源已回滚、记录删不掉（列表里会留下打不开的这条 ${skill.id}）:`, errMsg(deleteErr))
+        return { ok: false, error: 'SKILL_ROW_RESIDUE' }
+      }
       return { ok: false, error: cleanup ? `${errMsg(e)}；残留清理也失败：${cleanup}` : errMsg(e) }
     }
     const nameDuplicated = skillRepo.list().some((s) => s.name === shape.name && s.id !== skill.id)

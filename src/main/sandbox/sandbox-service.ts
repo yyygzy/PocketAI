@@ -8,8 +8,12 @@ import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { DATA_DIR } from '../portable'
 import { sandboxRepo } from '../db/repositories/sandbox.repo'
+import { errMsg } from '../error'
+import { createLogger } from '../logger'
 import type { SandboxFileMeta } from '../../shared/types'
 import { z } from 'zod'
+
+const log = createLogger('sandbox')
 
 const SANDBOX_DIR_NAME = 'sandbox'
 export const MAX_HTML_BYTES = 256 * 1024
@@ -69,7 +73,9 @@ export function createSandboxFile(
   html: string,
   opts: CreateSandboxOptions = {}
 ): SandboxFileMeta {
-  z.string().min(1).parse(name)
+  // §326：名称允许空——界面那句「名称（可留空）」指着的就是下面 cleanName 的默认名，
+  // 改前这里和入参 schema 各有一道 min(1)，留空点保存必失败。
+  z.string().parse(name)
   z.string().parse(html)
   const content = String(html ?? '')
   if (!content.trim()) throw new Error('HTML 内容不能为空')
@@ -80,7 +86,8 @@ export function createSandboxFile(
   const id = randomUUID()
   const fileName = `${id}.html`
   fs.mkdirSync(sandboxDir(), { recursive: true })
-  fs.writeFileSync(resolveDataPath(`${SANDBOX_DIR_NAME}/${fileName}`), content, 'utf8')
+  const htmlPath = resolveDataPath(`${SANDBOX_DIR_NAME}/${fileName}`)
+  fs.writeFileSync(htmlPath, content, 'utf8')
   const meta: SandboxFileMeta = {
     id,
     name: cleanName(name),
@@ -90,7 +97,18 @@ export function createSandboxFile(
     description: cleanDescription(opts.description ?? ''),
     isApp: !!opts.isApp
   }
-  sandboxRepo.insert(meta, fileName)
+  try {
+    sandboxRepo.insert(meta, fileName)
+  } catch (e) {
+    // 库里没这条 ⇒ 界面上没人能再指到这份文件（列表看不见、删除键要 id、备份不装这个目录、
+    // 健康屏也不计它）⇒ 只能就地删掉，与姊妹 image-service 的「DB 写失败回滚已写文件」同一口径。
+    try {
+      fs.rmSync(htmlPath, { force: true })
+    } catch (cleanupErr) {
+      log.warn(`入库失败后回滚落盘也没做成，磁盘上留下没人认领的产物 ${htmlPath}:`, errMsg(cleanupErr))
+    }
+    throw e
+  }
   return meta
 }
 
@@ -140,10 +158,14 @@ export function deleteSandboxFile(id: string): void {
   const row = sandboxRepo.get(String(id ?? ''))
   if (!row) return
   sandboxRepo.delete(row.id)
+  const htmlPath = resolveDataPath(`${SANDBOX_DIR_NAME}/${row.fileName}`)
   try {
-    fs.rmSync(resolveDataPath(`${SANDBOX_DIR_NAME}/${row.fileName}`), { force: true })
-  } catch {
-    // 文件已不在磁盘时忽略；元数据已删除即视为成功
+    fs.rmSync(htmlPath, { force: true })
+  } catch (e) {
+    // 旧注释写的「文件已不在磁盘时忽略」其实走不到：force:true 自己就吞掉 ENOENT。
+    // 真走到这里的是占用／权限那一类，元数据已删 ⇒ 这次删除仍算成功，但那份 HTML 从此没人能删它，
+    // 所以只留痕、不无声（顶掉已做成的删除是 §323 那一族的反面）。
+    log.warn(`沙箱产物元数据已删、磁盘那份没删掉，留下没人认领的产物 ${htmlPath}:`, errMsg(e))
   }
 }
 

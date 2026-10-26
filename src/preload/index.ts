@@ -913,23 +913,28 @@ const api = {
   },
 
   // ---------- 沙箱（v2 批次八：沙箱基础层） ----------
-  listSandboxFiles: (): Promise<SandboxFileMeta[]> =>
+  // §326：这四条的失败形状写进类型（safeHandle 把抛错／入参拒绝转成 resolve 的 `{ok:false}`，
+  // 只挂 .catch 接不住；类型撒谎时 §250／§263 那几面闸门全瞎，tsc 才是那道判据）
+  listSandboxFiles: (): Promise<SandboxFileMeta[] | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.SANDBOX_LIST),
   createSandboxFile: (
     name: string,
     html: string,
     opts?: { icon?: string; description?: string; isApp?: boolean }
-  ): Promise<SandboxFileMeta> =>
+  ): Promise<SandboxFileMeta | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
     ipcRenderer.invoke(IPC.SANDBOX_CREATE, { name, html, opts }),
-  getSandboxFile: (id: string): Promise<{ meta: SandboxFileMeta; html: string } | null> =>
+  getSandboxFile: (
+    id: string
+  ): Promise<{ meta: SandboxFileMeta; html: string } | null | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.SANDBOX_GET, id),
-  deleteSandboxFile: (id: string): Promise<{ ok: boolean }> =>
+  deleteSandboxFile: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.SANDBOX_DELETE, id),
   updateSandboxMeta: (
     id: string,
     patch: { name?: string; icon?: string; description?: string; isApp?: boolean }
-  ): Promise<SandboxFileMeta | null> =>
-    ipcRenderer.invoke(IPC.SANDBOX_UPDATE_META, { id, patch }),
+  ): Promise<
+    SandboxFileMeta | null | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.SANDBOX_UPDATE_META, { id, patch }),
 
   // ---------- 快捷浮窗（快捷问答 / 选区助手） ----------
   hidePopup: (): Promise<{ ok: boolean }> =>
