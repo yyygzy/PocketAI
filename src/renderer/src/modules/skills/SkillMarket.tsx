@@ -4,7 +4,7 @@
 // - local: 原有技能列表（grid/detail），支持启停/复制/导出/删除
 // - online: 远程 registry index 拉取 + 网格展示 + 一键导入
 // URL 导入：粘贴 raw URL（.json 或 .md），safeFetch 后 parse 导入
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
@@ -76,11 +76,20 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       })
   }, [])
 
+  /**
+   * 在线清单那一发的代次（§322）：`fetchRemote` 可以被"进 tab"、URL 框的 Enter、「刷新」键叠着发，
+   * 而先发起的那条常常后回 ⇒ 旧那份把新 URL 的清单覆盖掉，同时"还在加载"被先回的那条翻成"已就绪"——
+   * 屏上摆着结果、内容却是另一个索引的。只有**最后发起那次**的响应允许写屏（清单、错误句、loading 都算）。
+   */
+  const remoteSeqRef = useRef(0)
+
   const fetchRemote = useCallback(
     async (url: string) => {
+      const seq = ++remoteSeqRef.current
       setRemoteLoading(true)
       setRemoteError(null)
       const res = await window.pocketai.fetchSkillIndex(url)
+      if (seq !== remoteSeqRef.current) return
       setRemoteLoading(false)
       if (res.ok && res.skills) {
         setRemoteSkills(res.skills)
@@ -95,6 +104,9 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
 
   useEffect(() => {
     load()
+    // §322：`registryUrl` **不进依赖**。那颗输入框是受控的、逐字符 setRegistryUrl，
+    // 把 URL 放进依赖等于"每敲一个字符发一条真实网络请求"（默认值是 GitHub 上的真索引，主进程不缓存）。
+    // 换完 URL 要重头发的是那两颗显式入口：URL 框的 Enter 与「刷新」按钮。
     if (tab === 'online') fetchRemote(registryUrl)
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -103,7 +115,8 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
     return () => {
       window.removeEventListener('keydown', onKey)
     }
-  }, [tab, registryUrl, load, fetchRemote, onClose])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, load, fetchRemote, onClose])
 
   // 搜索过滤
   const filtered = useMemo(() => {
