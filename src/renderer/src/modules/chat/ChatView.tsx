@@ -71,6 +71,31 @@ export function findMatchIds(messages: MessageRecord[], keyword: string): string
   return out
 }
 
+/**
+ * 拖拽槽（V4-Iter-319）：一个可拖按钮一格，格子里带着「关联号」。
+ *
+ * 为什么要有代次（§309／§311 同族，形状是「迟到响应写进共享槽」）：pointerdown 发起预写之后、
+ * 那个 promise 落地之前是一段 await 窗口，其间用户可以再按一次、也可以按另一个按钮。旧那轮的响应
+ * 晚到时只会看见一个格子，于是把**旧内容**的路径写进当前那一格，dragstart 照旧同步取用——
+ * 长图按钮拖出去的是多选导出的 Markdown（或反之），而界面看不出任何异常。
+ * `beginDrag` 记一代，`commitDrag` 只认还成立的那一代；两格各管一个按钮，格子之间也不串。
+ */
+export interface DragSlot {
+  gen: number
+  path: string | null
+}
+
+/** pointerdown：清掉上一轮的成品路径并抢占这一代，返回关联号留给稍后的 commit 对账 */
+export function beginDrag(slot: DragSlot): number {
+  slot.path = null
+  return ++slot.gen
+}
+
+/** 预写落地：关联号已不是最新一代（期间又按过一次）就丢弃这一份迟到的结果 */
+export function commitDrag(slot: DragSlot, gen: number, path: string | null): void {
+  if (slot.gen === gen) slot.path = path
+}
+
 export interface FocusBranch {
   turnKey: string
   batchId: string
@@ -208,8 +233,10 @@ export const ChatView: React.FC<Props> = ({
   const [exportingImage, setExportingImage] = useState(false)
   /** 长图拖拽缓存：上次导出的 dataUrl + 文件名（messages 引用变化即失效） */
   const pngCacheRef = useRef<{ dataUrl: string; fileName: string; messagesRef: MessageRecord[] } | null>(null)
-  /** 拖拽临时文件路径（pointerdown 预写入，dragstart 同步消费；null=未就绪） */
-  const dragPathRef = useRef<string | null>(null)
+  /** 长图按钮那一格：pointerdown 预写、dragstart 同步取用（null=未就绪，本次不可拖） */
+  const pngDragRef = useRef<DragSlot>({ gen: 0, path: null })
+  /** 多选导出那一格：与长图各一格（共用同一格时长图的迟到响应会覆盖多选刚写好的路径） */
+  const mdDragRef = useRef<DragSlot>({ gen: 0, path: null })
   /** 系统提示词覆盖弹层开关 */
   const [sysOverrideOpen, setSysOverrideOpen] = useState(false)
   const [sysOverrideText, setSysOverrideText] = useState('')
@@ -549,19 +576,23 @@ export const ChatView: React.FC<Props> = ({
 
   /** 长图按钮 pointerdown：有 PNG 缓存时预写拖拽临时文件（无缓存则本次不可拖，退化为点击导出） */
   const handleImageDragPointerDown = useCallback(() => {
-    dragPathRef.current = null
+    const slot = pngDragRef.current
+    const gen = beginDrag(slot)
     const cache = pngCacheRef.current
     if (!cache || cache.messagesRef !== messages) return
     const base64 = cache.dataUrl.split(',')[1] ?? ''
     if (!base64) return
     void window.pocketai.prepareExportDrag({ defaultName: cache.fileName, ext: 'png', content: base64 })
-      .then((r) => { if (r.ok && r.path) dragPathRef.current = r.path })
+      .then((r) => {
+        // 失败/没路径时不 commit：beginDrag 已把这一格清空，未就绪就是「本次不可拖」
+        if (r.ok && r.path) commitDrag(slot, gen, r.path)
+      })
       .catch(reportIpcError('chat.prepareExportDrag'))
   }, [messages])
 
-  /** dragstart 同步消费预写路径；未就绪（预写未完成/失败）则取消本次拖拽，不影响点击导出 */
-  const handleExportDragStart = useCallback((e: React.DragEvent) => {
-    const p = dragPathRef.current
+  /** 长图按钮 dragstart：同步取用本格路径；未就绪（预写未完成/失败）则取消本次拖拽，不影响点击导出 */
+  const handleImageDragStart = useCallback((e: React.DragEvent) => {
+    const p = pngDragRef.current.path
     if (!p) {
       e.preventDefault()
       return
@@ -571,12 +602,23 @@ export const ChatView: React.FC<Props> = ({
 
   /** 多选导出按钮 pointerdown：预构建 Markdown 写临时文件（内容轻量，pointerdown→dragstart 间隙足够） */
   const handleMessagesDragPointerDown = useCallback(() => {
-    dragPathRef.current = null
+    const slot = mdDragRef.current
+    const gen = beginDrag(slot)
     if (!onPrepareMessagesDrag) return
     void onPrepareMessagesDrag(Array.from(selectedIds))
-      .then((p) => { dragPathRef.current = p })
+      .then((p) => { commitDrag(slot, gen, p) })
       .catch(reportIpcError('chat.prepareMessagesDrag'))
   }, [onPrepareMessagesDrag, selectedIds])
+
+  /** 多选导出按钮 dragstart：只读自己那一格 */
+  const handleMessagesDragStart = useCallback((e: React.DragEvent) => {
+    const p = mdDragRef.current.path
+    if (!p) {
+      e.preventDefault()
+      return
+    }
+    window.pocketai.startExportDrag(p)
+  }, [])
 
   // 会话内搜索命中列表（按消息顺序）
   const matchIds = useMemo(() => findMatchIds(messages, searchKeyword), [messages, searchKeyword])
@@ -693,7 +735,7 @@ export const ChatView: React.FC<Props> = ({
           onClick={() => void handleExportImage()}
           draggable
           onPointerDown={handleImageDragPointerDown}
-          onDragStart={handleExportDragStart}
+          onDragStart={handleImageDragStart}
           disabled={exportingImage || messages.length === 0}
           className="ml-1 p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors disabled:opacity-40"
           title={exportingImage ? t('chat.exportingImage') : t('chat.exportImageDrag')}
@@ -843,7 +885,7 @@ export const ChatView: React.FC<Props> = ({
               onClick={() => onExportMessages(Array.from(selectedIds))}
               draggable={!!onPrepareMessagesDrag}
               onPointerDown={handleMessagesDragPointerDown}
-              onDragStart={handleExportDragStart}
+              onDragStart={handleMessagesDragStart}
               title={t('chatview.exportSelectedDrag')}
               className="text-xs px-2 py-1 rounded text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
             >
