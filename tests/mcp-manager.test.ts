@@ -1034,3 +1034,54 @@ describe('McpManager — §315 reconcileRuntimes 只摘"已经不是那条记录
     expect(logLines).toEqual(['srv2:srv2 照旧'])
   })
 })
+
+// ---------- §317：createClient 那次 await 期间被删除 ⇒ 不许写回 map、不许拉起进程 ----------
+describe('McpManager — §317 启动与删除交错：写回 entry 之前要现查记录还在不在', () => {
+  let logLines: string[]
+
+  beforeEach(() => {
+    logLines = []
+    mgr.onLog((e) => logLines.push(`${e.serverId}:${e.line}`))
+    mocks.requestImpl = async () => ({ tools: [] })
+  })
+
+  it('删除落在 createClient 的 await 里 ⇒ start 抛「不存在」、一次都不 spawn、map 里没写回', async () => {
+    mocks.repoList = [makeRecord()]
+    const started = mgr.start('srv1') // 同步跑到 createClient 那次 await 就把控制权交还
+    mocks.repoList = [] // 真链里删除是一条独立的 IPC 宏任务，正好在这一次 await 期间走完
+    await expect(started).rejects.toThrow('MCP Server 不存在: srv1')
+    expect(mocks.clients).toHaveLength(1) // client 已按原样造出来（那次 await 的代价）
+    expect(mocks.clients[0]!.spawn, '中止必须发生在拉起进程之前').not.toHaveBeenCalled()
+    expect(events.map((e) => `${e.serverId}:${e.status}`), '不许给已删除的 id 推 starting').toEqual([])
+    // 「没写回 map」的可观测证据：stopAll 循不到它 ⇒ 不会有任何 stopped 事件、也不会去关那颗 client
+    await mgr.stopAll()
+    expect(events).toEqual([])
+    expect(mocks.clients[0]!.shutdown).not.toHaveBeenCalled()
+    expect(logLines).toEqual([])
+  })
+
+  it('窗口再宽一点（删除落在 spawn 之后、握手期间）：既有那颗「已停止」守卫负责关进程、状态不许翻 running', async () => {
+    // 这一条不新增机关，它钉的是"为什么只需要上面那一个检查点"：那时 entry 已在 map 里，
+    // forget→stop 会把它标成 stopped，doStart 回来时那颗守卫就有牙（我把新检查点挪到写回之后，
+    // 靠的就是这一条还在守着——所以它必须有用例点名，不能只写在注释里）。
+    mocks.repoList = [makeRecord()]
+    let releaseSpawn!: () => void
+    mocks.spawnImpl = () =>
+      new Promise<void>((r) => {
+        releaseSpawn = r
+      })
+    const started = mgr.start('srv1')
+    // 等状态，不等时长：直到 doStart 真卡在 spawn 上
+    for (let i = 0; i < 50 && mocks.clients[0]?.spawn.mock.calls.length === 0; i++) {
+      await vi.advanceTimersByTimeAsync(0)
+    }
+    mocks.repoList = []
+    await mgr.forget('srv1')
+    expect(mocks.clients[0]!.shutdown, '此刻 stop 还看不到 client，不该也不能关进程').not.toHaveBeenCalled()
+    events.length = 0
+    releaseSpawn()
+    await started
+    expect(mocks.clients[0]!.shutdown, '握手回来发现自己已被摘走 ⇒ 关掉刚拉起的进程').toHaveBeenCalled()
+    expect(events.filter((e) => e.status === 'running'), '别把 running 与工具清单写给已删除的 id').toEqual([])
+  })
+})

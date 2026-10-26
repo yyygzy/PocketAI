@@ -280,6 +280,18 @@ export class McpManager extends EventEmitter {
     // 按传输类型创建 client（stdio 走子进程，http 走 HTTP+SSE）
     const client = await this.createClient(id, record, startToken)
 
+    // §317：上面那次 await 里删除（forget）可能已经走完，而**那一刻 map 里还没有这条 entry**
+    // （写回在下一步），所以 `stop()` 既无从标记也无从可关——下面那颗「握手期间已点停止」的守卫
+    // 靠的是 stop 把 status 写成 stopped，对这个形状它是瞎的。不现查一次就会把一个用户已删除的
+    // server 拉起来跑满整场会话：UI 无行（状态与工具清单都以库为准，见 listRuntimes）、停不掉、
+    // 还给不存在的 serverId 推日志（handleLog 查不到 entry 才丢弃），并占住同一刻正被
+    // removeServerEnv 删除的 venv 目录——那条锁的注释（handlers/mcp.ts 的 DELETE 分支）防的正是这件事。
+    // 窗口不是理论值：python＋依赖那条 createClient 会经 getEnvState→probeVersion 真起子进程。
+    // 此刻还没 spawn，没有进程要关，所以只需中止。
+    // 文案沿用 start 开头那句（「MCP Server 不存在: id」）：事实同一个——这条记录不在了，
+    // 只是发现得晚，界面显示的形状不变，不新增用户可见串。
+    if (!mcpServerRepo.get(id)) throw new Error(`MCP Server 不存在: ${id}`)
+
     const entry: RuntimeEntry = {
       record,
       client: null,
