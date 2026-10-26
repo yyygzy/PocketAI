@@ -61,6 +61,9 @@ let running = false
  * - 只处理 kind==='full'：incremental 索引引用内容寻址 blob，绝不能按份数盲删
  * - 按 mtime 倒序（防御列举结果乱序），保留最新 keep 份（含本次新包），其余入删除列表
  * - justUploaded 再做一次兜底排除：新包即使因 WebDAV 时钟漂移 mtime 异常落入待删区也绝不删
+ * - §326/§327：**时间判不出来的一份绝不进删除名单**。一条 NaN 参与比较会被 sort 当成"与谁都相等"，
+ *   整表顺序就交给服务器返回顺序了（探针实测：keep=2 时删除名单里是最新的那两份 new/mid，
+ *   留下的反倒是最旧的）⇒ 这里宁可不删（远端可能多留几份），也不许删错。
  */
 export function selectPrunableBackups(
   files: Pick<WebDAVBackupFile, 'name' | 'mtime' | 'kind'>[],
@@ -68,12 +71,16 @@ export function selectPrunableBackups(
   justUploaded?: string
 ): string[] {
   if (!Number.isFinite(keep) || keep <= 0) return []
-  const full = files
-    .filter((f) => f.kind === 'full')
+  const full = files.filter((f) => f.kind === 'full')
+  const known = full.filter((f) => Number.isFinite(f.mtime))
+  const unknown = full.length - known.length
+  if (unknown > 0) {
+    log.warn(`备份轮转：${unknown} 份云端备份的时间判不出来，本轮不参与删除（宁可不删，也不能按错的顺序删）`)
+  }
+  // 最旧优先删除：若中途失败/取消，留在远端的也是相对较新的包
+  return known
     .slice()
     .sort((a, b) => b.mtime - a.mtime)
-  // 最旧优先删除：若中途失败/取消，留在远端的也是相对较新的包
-  return full
     .slice(keep)
     .filter((f) => f.name !== justUploaded)
     .reverse()

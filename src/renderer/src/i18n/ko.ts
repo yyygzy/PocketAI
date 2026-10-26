@@ -2033,6 +2033,7 @@ export const ko = {
   'bk.inSyncHint': '최신 상태',
   'bk.never': '없음',
   'bk.cloudNotFetched': '가져오지 않음',
+  'bk.cloudTimeUnknown': '클라우드 백업의 시각을 읽을 수 없습니다',
   'bk.merge': '병합',
   'bk.mergeFromCloud': '🔀 클라우드에서 병합',
   'bk.mergeTitle': '병합 복원',

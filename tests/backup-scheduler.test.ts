@@ -107,8 +107,16 @@ vi.mock('../src/main/backup/backup-service', () => ({
   }
 }))
 
+/** §327：轮转那句"时间判不出来"的留痕也要能判（原来的桩什么都不接） */
+const LOG = vi.hoisted(() => ({ warns: [] as string[] }))
+
 vi.mock('../src/main/logger', () => ({
-  createLogger: () => ({ info: () => {}, warn: () => {}, debug: () => {}, error: () => {} })
+  createLogger: () => ({
+    info: () => {},
+    warn: (...a: unknown[]) => LOG.warns.push(a.map(String).join(' ')),
+    debug: () => {},
+    error: () => {}
+  })
 }))
 
 beforeEach(() => mocks.reset())
@@ -306,6 +314,33 @@ describe('selectPrunableBackups 轮转决策', () => {
     // 无排除时 fresh.zip 会被删；带 justUploaded 后待删列表为空
     expect(selectPrunableBackups(files, 2)).toEqual(['fresh.zip'])
     expect(selectPrunableBackups(files, 2, 'fresh.zip')).toEqual([])
+  })
+
+  // §327：一条 NaN 参与比较会被 sort 当成"与谁都相等"⇒ 整表顺序交给服务器返回顺序。
+  // 探针（data/tmp/probe-327.mjs）实测改前 keep=2 时删除名单里是最新的 new/mid，留下的反倒是最旧的 old。
+  it('时间判不出来的一份绝不进删除名单（可判的那份照旧按新旧算）', () => {
+    LOG.warns.length = 0
+    const files = [
+      fullFile('old.zip', 100),
+      fullFile('mystery.zip', NaN), // 服务器那格 GetLastModified 是空元素／带属性元素
+      fullFile('new.zip', 300)
+    ]
+    expect(selectPrunableBackups(files, 1)).toEqual(['old.zip'])
+    expect(LOG.warns.join('\n'), '要留一句痕：本轮有几份不参与删除').toContain('时间判不出来')
+  })
+
+  it('全表都判不出来 ⇒ 一份都不删（宁可不轮转）', () => {
+    LOG.warns.length = 0
+    const files = [fullFile('a.zip', NaN), fullFile('b.zip', NaN)]
+    expect(selectPrunableBackups(files, 1)).toEqual([])
+    expect(LOG.warns).toHaveLength(1)
+  })
+
+  it('反向对照：全部可判时既不多留痕也不改变删除名单', () => {
+    LOG.warns.length = 0
+    const files = [fullFile('a.zip', 100), fullFile('b.zip', 200), fullFile('c.zip', 300)]
+    expect(selectPrunableBackups(files, 2)).toEqual(['a.zip'])
+    expect(LOG.warns).toEqual([])
   })
 })
 

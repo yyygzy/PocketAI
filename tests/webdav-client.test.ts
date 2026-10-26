@@ -34,6 +34,7 @@ import {
   fullRemotePath,
   assertUploadSize,
   assertDownloadSize,
+  mtimeFromBackupName,
   listFiles
 } from '../src/main/backup/webdav-client'
 import type { WebDAVCredentials } from '../src/main/backup/webdav-client'
@@ -178,7 +179,7 @@ describe('listFiles — 远端条目 → BackupFile[]', () => {
     expect(result[0]!.kind).toBe('incremental')
   })
 
-  it('size 缺失时默认为 0，lastmod 缺失时用当前时间', async () => {
+  it('size／lastmod 都缺 ⇒ 体积空着（不再演成 0 KB）、时间用包名里那份（不再当成"刚刚"）', async () => {
     mockGetDirectoryContents.mockResolvedValue([
       {
         filename: 'pocketai-backup-20260920T032000Z.zip',
@@ -188,13 +189,74 @@ describe('listFiles — 远端条目 → BackupFile[]', () => {
 
     const result = await listFiles(creds)
     expect(result).toHaveLength(1)
-    expect(result[0]!.size).toBe(0)
-    expect(typeof result[0]!.mtime).toBe('number')
+    // §327：改前是 `?? 0`（一个字节都没有的 0 KB）与 `?? Date.now()`（把"服务器没说"演成"刚刚备份过"，
+    // 那份会被当成最新、把真正的最新挤进待删区）
+    expect(result[0]!.size).toBeNaN()
+    expect(result[0]!.mtime).toBe(Date.UTC(2026, 8, 20, 3, 20, 0))
+  })
+
+  it('§327 三种 lastmod 形状：标准串用服务器的，空串与带属性的对象用包名兜', async () => {
+    mockGetDirectoryContents.mockResolvedValue([
+      // 服务器给的比名字新 ⇒ 说明"谁优先"没写反
+      { filename: 'pocketai-backup-20260101T000000Z.zip', size: 10, lastmod: '2026-09-30T10:00:00Z', type: 'file' },
+      { filename: 'pocketai-backup-20260910T000000Z.zip', size: 20, lastmod: '', type: 'file' },
+      {
+        filename: 'pocketai-backup-20260912T000000Z.zip',
+        size: 30,
+        lastmod: { '#text': 'Sat, 12 Sep 2026 00:00:00 GMT', '@xml:lang': 'en' },
+        type: 'file'
+      },
+      { filename: 'pocketai-backup-.zip', size: 40, lastmod: '', type: 'file' }
+    ])
+
+    const result = await listFiles(creds)
+    const byName = new Map(result.map((f) => [f.name, f]))
+    expect(byName.get('pocketai-backup-20260101T000000Z.zip')!.mtime).toBe(
+      Date.parse('2026-09-30T10:00:00Z')
+    )
+    expect(byName.get('pocketai-backup-20260910T000000Z.zip')!.mtime).toBe(
+      Date.UTC(2026, 8, 10)
+    )
+    expect(byName.get('pocketai-backup-20260912T000000Z.zip')!.mtime).toBe(
+      Date.UTC(2026, 8, 12)
+    )
+    // 名字里也没有日期 ⇒ 留 NaN，交给"不可判就不删"那道闸（绝不编一个时间出来）
+    expect(byName.get('pocketai-backup-.zip')!.mtime).toBeNaN()
+    expect(
+      result.filter((f) => Number.isFinite(f.mtime)).map((f) => f.name),
+      '排序得是可判的那三份（新→旧）'
+    ).toEqual([
+      'pocketai-backup-20260101T000000Z.zip',
+      'pocketai-backup-20260912T000000Z.zip',
+      'pocketai-backup-20260910T000000Z.zip'
+    ])
   })
 
   it('空目录返回空数组', async () => {
     mockGetDirectoryContents.mockResolvedValue([])
     const result = await listFiles(creds)
     expect(result).toEqual([])
+  })
+})
+
+// ── §327 包名里的时间戳 ──────────────────────────────────
+describe('mtimeFromBackupName — 两个世代的名字都要认', () => {
+  it('紧凑写法与带横杠的 ISO 都还原成同一时刻', () => {
+    expect(mtimeFromBackupName('pocketai-backup-20260920T032000Z.zip')).toBe(
+      Date.UTC(2026, 8, 20, 3, 20, 0)
+    )
+    expect(mtimeFromBackupName('pocketai-backup-2026-09-20T032000000Z.zip')).toBe(
+      Date.UTC(2026, 8, 20, 3, 20, 0)
+    )
+    expect(mtimeFromBackupName('pocketai-inc-2026-09-21T032000000Z.json.enc')).toBe(
+      Date.UTC(2026, 8, 21, 3, 20, 0)
+    )
+    expect(mtimeFromBackupName('pocketai-backup-2026-10-25.zip')).toBe(Date.UTC(2026, 9, 25))
+  })
+
+  it('越界的月／日不猜（Date.UTC 会静默进位＝编一个不存在的时间）', () => {
+    expect(mtimeFromBackupName('pocketai-backup-2026-13-40.zip')).toBeNaN()
+    expect(mtimeFromBackupName('pocketai-backup-.zip')).toBeNaN()
+    expect(mtimeFromBackupName('pocketai-backup-notes.zip')).toBeNaN()
   })
 })

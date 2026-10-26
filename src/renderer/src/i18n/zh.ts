@@ -2111,6 +2111,7 @@ export const zh = {
   'bk.inSyncHint': '已同步',
   'bk.never': '从未',
   'bk.cloudNotFetched': '未拉取',
+  'bk.cloudTimeUnknown': '云端备份的时间读不出来',
   'bk.merge': '合并',
   'bk.mergeFromCloud': '🔀 合并恢复',
   'bk.mergeTitle': '合并恢复',

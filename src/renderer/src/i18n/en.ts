@@ -2110,6 +2110,7 @@ export const en = {
   'bk.inSyncHint': 'Up to date',
   'bk.never': 'Never',
   'bk.cloudNotFetched': 'Not fetched',
+  'bk.cloudTimeUnknown': 'The cloud backups have no readable timestamp',
   'bk.merge': 'Merge',
   'bk.mergeFromCloud': '🔀 Merge from Cloud',
   'bk.mergeTitle': 'Merge Restore',

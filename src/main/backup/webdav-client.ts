@@ -38,7 +38,11 @@ interface WebdavModule {
 interface RemoteDirEntry {
   filename: string
   size?: number
-  lastmod?: string
+  /**
+   * 包装层原样透出 PROPFIND 的那一格：标准服务器给 RFC1123 串，
+   * 空元素给 `''`，元素带属性（如 xml:lang）时给一个对象 ⇒ 三种都得防（见 toMtime）。
+   */
+  lastmod?: string | Record<string, unknown> | null
   type: 'file' | 'directory'
 }
 
@@ -175,6 +179,42 @@ export async function downloadFile(
   return assertDownloadSize(Buffer.from(content))
 }
 
+/**
+ * 把包名里那串时间戳还原成毫秒。两个世代的名字都要认：
+ * 现在产出的 `pocketai-backup-2026-10-25T031200123Z.zip`（`toISOString().replace(/[:.]/g,'')`）、
+ * 早期与注释里的紧凑写法 `pocketai-backup-20260920T032000Z.zip`，以及用户手放的 `...-2026-10-25.zip`。
+ * 越界的月／日一律拒（`Date.UTC` 会静默进位，进位＝编一个不存在的时间）。
+ */
+export function mtimeFromBackupName(name: string): number {
+  const m = /(\d{4})-?(\d{2})-?(\d{2})(?:T(\d{2})(\d{2})(\d{2}))?(\d{1,3})?Z?/.exec(name)
+  if (!m) return NaN
+  const [, y, mo, d, hh, mm, ss, ms] = m
+  const [Y, MO, D, H, MI, S] = [Number(y), Number(mo), Number(d), Number(hh ?? 0), Number(mm ?? 0), Number(ss ?? 0)]
+  if (MO < 1 || MO > 12 || D < 1 || D > 31 || H > 23 || MI > 59 || S > 60) return NaN
+  return Date.UTC(Y, MO - 1, D, H, MI, S, Number((ms ?? '0').padEnd(3, '0')))
+}
+
+/**
+ * §327：服务器那格 GetLastModified 有三种形状（探针 `data/tmp/probe-327.mjs` 走的是仓里真 webdav@5.11 的解析器）：
+ * 标准串、**空元素**（解析成 `''`）、**带属性的元素**（RFC 里 `xml:lang` 合法，解析成对象）——
+ * 后两种 `new Date(...)` 得 NaN，而一条 NaN 会被 sort 当成"与谁都相等"，
+ * 于是轮转把**最新的两份**列进删除名单、「恢复最新一份」指向最旧那份。
+ * 所以：解析不出来就用我们自己写进包名的时间戳兜；还兜不住才留 NaN，交给下游"不可判就不删"那道闸。
+ */
+function toMtime(lastmod: unknown, name: string): number {
+  const fromServer = typeof lastmod === 'string' ? Date.parse(lastmod) : NaN
+  return Number.isFinite(fromServer) ? fromServer : mtimeFromBackupName(name)
+}
+
+/**
+ * 同一族的第二条：包装层是 `parseInt(rawSize,10)`，元素带属性时它也是 NaN。
+ * `?? 0` 只挡 null／undefined，挡不住 NaN ⇒ 界面上会出现「NaN KB」（§217 那句「已打包 NaN MB」的同族）。
+ * 这里把 NaN 原样留给界面（那一格空着），不贴一个假的 0。
+ */
+function toSize(size: number | undefined): number {
+  return typeof size === 'number' && Number.isFinite(size) ? size : NaN
+}
+
 export async function listFiles(creds: WebDAVCredentials): Promise<BackupFile[]> {
   const client = await buildClient(creds)
   const dir = creds.directory ?? '/'
@@ -192,8 +232,8 @@ export async function listFiles(creds: WebDAVCredentials): Promise<BackupFile[]>
       const encrypted = e.filename.endsWith('.enc.zip') || e.filename.endsWith('.json.enc')
       return {
         name,
-        size: e.size ?? 0,
-        mtime: new Date(e.lastmod ?? Date.now()).getTime(),
+        size: toSize(e.size),
+        mtime: toMtime(e.lastmod, name),
         encrypted,
         kind: name.startsWith('pocketai-inc-')
           ? ('incremental' as const)

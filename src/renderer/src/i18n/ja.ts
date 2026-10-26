@@ -2033,6 +2033,7 @@ export const ja = {
   'bk.inSyncHint': '最新です',
   'bk.never': 'なし',
   'bk.cloudNotFetched': '未取得',
+  'bk.cloudTimeUnknown': 'クラウド上のバックアップの時刻を読み取れません',
   'bk.merge': 'マージ',
   'bk.mergeFromCloud': '🔀 クラウドからマージ',
   'bk.mergeTitle': 'マージ復元',

@@ -841,6 +841,26 @@ const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168]
 const RETENTION_OPTIONS = [0, 3, 5, 10, 20, 30]
 
 /** 导出只为给用例真挂载（§262 起 WebDAV 配置那一读的行为判据）；运行期仍只由 SettingsModule 渲染 */
+/**
+ * §327：这一屏有三处要用「云端最新那一份」（状态格的时间、「哪边更新」那句、那颗「恢复最新一份」的键）。
+ * 时间判不出来的一份（服务器那格 GetLastModified 是空元素或带属性元素时，包装层给空串／对象 ⇒ NaN）
+ * 一律不参与：一条 NaN 会把 Math.max 与 sort 一起算坏（探针实测改前三张脸——「云端最新」显示成「从未」、
+ * 「哪边更新」落到「两边一致」、那颗键指向最旧那一份）。这里用 reduce 不用 sort，剔掉 NaN 后与比较器无关。
+ */
+export function latestCloudBackup<T extends { mtime: number }>(files: T[]): T | null {
+  const known = files.filter((f) => Number.isFinite(f.mtime))
+  if (known.length === 0) return null
+  return known.reduce((a, b) => (b.mtime > a.mtime ? b : a))
+}
+
+/** 读不出的时间／体积宁可空着，也不贴 0 或 Invalid Date（§217 那句「已打包 NaN MB」的同族） */
+export function fmtCloudCellTime(ts: number): string {
+  return Number.isFinite(ts) ? new Date(ts).toLocaleString() : '—'
+}
+
+export function fmtCloudCellSize(bytes: number): string {
+  return Number.isFinite(bytes) ? `${(bytes / 1024).toFixed(1)} KB` : '—'
+}
 export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc }) => {
   const { t, lang } = useI18n()
   const { confirm, dialog } = useConfirm()
@@ -1034,6 +1054,9 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   }, [t])
 
   // 时间格式化：null/undefined → 从未；否则按语言本地化
+  // §327：三处共用同一份「云端最新」（时间格、「哪边更新」、恢复那颗键），各自重算就会各算各的错
+  const cloudLatestFile = latestCloudBackup(webdavList)
+  const cloudTs: number | null = cloudLatestFile ? cloudLatestFile.mtime : null
   const formatSyncTime = useCallback((ts: number | null | undefined): string => {
     if (!ts) return t('bk.never')
     return new Date(ts).toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN')
@@ -1245,19 +1268,21 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
                 {listLoading
                   ? t('bk.listLoading')
                   : webdavList.length
-                    ? formatSyncTime(Math.max(...webdavList.map((f) => f.mtime)))
+                    ? cloudTs === null ? t('bk.cloudTimeUnknown') : formatSyncTime(cloudTs)
                     : t('bk.cloudNotFetched')}
               </div>
             </div>
           </div>
           {(() => {
             const localTs = schedule?.lastRunAt ?? 0
-            const cloudTs = webdavList.length ? Math.max(...webdavList.map((f) => f.mtime)) : 0
+            // 时间一份都判不出来时不猜哪边新（改前 NaN 让三句比较全落空 ⇒ 演成「两边一致」）
+            if (webdavList.length && cloudTs === null) return <div className="text-[11px] text-[var(--color-text-muted)]">{t('bk.cloudTimeUnknown')}</div>
+            const cloudNum = cloudTs ?? 0
             let hint = t('bk.inSyncHint')
-            if (localTs && !cloudTs) hint = t('bk.localNewerHint')
-            else if (!localTs && cloudTs) hint = t('bk.cloudNewerHint')
-            else if (localTs > cloudTs) hint = t('bk.localNewerHint')
-            else if (cloudTs > localTs) hint = t('bk.cloudNewerHint')
+            if (localTs && !cloudNum) hint = t('bk.localNewerHint')
+            else if (!localTs && cloudNum) hint = t('bk.cloudNewerHint')
+            else if (localTs > cloudNum) hint = t('bk.localNewerHint')
+            else if (cloudNum > localTs) hint = t('bk.cloudNewerHint')
             return <div className="text-[11px] text-[var(--color-text-muted)]">{hint}</div>
           })()}
           <div className="flex gap-2">
@@ -1266,7 +1291,7 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
             </button>
             {webdavList.length > 0 &&
               (() => {
-                const latest = [...webdavList].sort((a, b) => b.mtime - a.mtime)[0]
+                const latest = cloudLatestFile
                 return latest ? (
                   <>
                     <button
@@ -1406,8 +1431,8 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
                         )}
                         {f.name}
                       </td>
-                      <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{(f.size / 1024).toFixed(1)} KB</td>
-                      <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{new Date(f.mtime).toLocaleString()}</td>
+                      <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{fmtCloudCellSize(f.size)}</td>
+                      <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{fmtCloudCellTime(f.mtime)}</td>
                       <td className="px-3 py-1.5 text-right">
                         <button className="btn-ghost text-xs px-2 py-0.5 mr-1" onClick={() => doRestore(f.name)}>{t('bk.restore')}</button>
                         <button className="btn-ghost text-xs px-2 py-0.5 mr-1" onClick={() => doMergeScan(f.name)}>{t('bk.merge')}</button>
