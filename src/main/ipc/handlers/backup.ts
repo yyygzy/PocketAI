@@ -21,6 +21,34 @@ import { createLogger } from '../../logger'
 const log = createLogger('backup')
 import { isNoneMode, newSecretKeys, NONE_MODE_HINT } from '../../crypto/none-mode-gate'
 
+/**
+ * §315：配置被**整批**换掉的那几条入口之后（合并＝逐表 `DELETE FROM` 再写入云端那份，
+ * merge-service.ts:549；恢复＝整个库文件替换后重开，backup-service.ts:830-845），
+ * 主进程里两份「以配置行为键」的内存态要跟着对账，否则旧的那份会继续服务新的记录：
+ * - provider 适配器带着旧的 baseUrl 与**已解密**的 Key，而 `getAdapter` 命中缓存时是在
+ *   「这条还在不在／还启用吗」两道检查**之前**就返回（providers/manager.ts:13-18）；
+ * - MCP 运行时带着旧的子进程，工具列表与权限分级是启动那一刻烤进去的（mcp/manager.ts:297／:583），
+ *   而界面只看得到库里那份 ⇒ 云端把「信任只读工具」关掉后，Agent 仍会免确认调用那个旧进程。
+ *
+ * 两处的手法不同是有意的：适配器是纯值对象，清掉零成本（下次用到时按新记录重建）；
+ * MCP 的 `forget` 会**杀进程**，所以只摘「库里已无这条」或「身份字段变了」的那几条——改个名字不该停机。
+ *
+ * 对账失败不把已经完成的合并／恢复报成失败（库已经换好了，回「失败」只会诱导用户再恢复一次）：
+ * 原因带回给能显示它的那一侧（合并有 summary，恢复没有 ⇒ 同时落 main.log）。
+ */
+async function reconcileAfterConfigSwap(): Promise<{ stopped: string[]; error?: string }> {
+  try {
+    const { providerManager } = await import('../../providers/manager')
+    const { mcpManager } = await import('../../mcp/manager')
+    providerManager.invalidate()
+    return { stopped: await mcpManager.reconcileRuntimes() }
+  } catch (e) {
+    const error = errMsg(e)
+    log.warn('配置整批替换后的运行时对账失败:', error)
+    return { stopped: [], error }
+  }
+}
+
 export function registerBackupHandlers(): void {
   safeHandle(IPC.BACKUP_LOCAL, async () => {
     const { createLocalBackup } = await import('../../backup/backup-service')
@@ -155,6 +183,9 @@ export function registerBackupHandlers(): void {
     } catch (e) {
       dropPathToken(token)
       return { ok: false, error: errMsg(e, '本地恢复失败') }
+    } finally {
+      // §315：失败也可能发生在库文件已被替换之后 ⇒ 对账不问成败（helper 自己吞错，不带偏这次结果）
+      await reconcileAfterConfigSwap()
     }
   }, argsSchema(backupRestoreArgsSchema))
 
@@ -175,9 +206,15 @@ export function registerBackupHandlers(): void {
         return await restoreIncrementalFromWebDAV(cfg, fn, { backupPassword: pwd })
       } catch (e) {
         return { ok: false, error: errMsg(e, '增量恢复失败') }
+      } finally {
+        await reconcileAfterConfigSwap() // §315：同本地恢复，对账不问成败
       }
     }
-    return restoreFromWebDAV(cfg, fn, { backupPassword: pwd })
+    try {
+      return await restoreFromWebDAV(cfg, fn, { backupPassword: pwd })
+    } finally {
+      await reconcileAfterConfigSwap() // §315
+    }
   })
   safeHandle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: unknown, backupPassword?: unknown) => {
     const { scanMergeConflicts } = await import('../../backup/merge-service')
@@ -197,13 +234,24 @@ export function registerBackupHandlers(): void {
     const { loadWebDAVConfig } = await import('../../backup/backup-service')
     const cfg = loadWebDAVConfig()
     if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    let result: { ok: boolean; error?: string; summary?: string; code?: string; mcpStopped?: number; reconcileFailed?: boolean }
     try {
-      return await executeMerge(cfg, payload.filename, payload.strategy, {
+      result = await executeMerge(cfg, payload.filename, payload.strategy, {
         backupPassword: payload.backupPassword || undefined
       })
     } catch (e) {
-      return { ok: false, error: errMsg(e, '合并失败') }
+      result = { ok: false, error: errMsg(e, '合并失败') }
     }
+    // §315：整表覆盖排在附件合并之前，所以"失败"的那一发也可能已经把配置换掉了 ⇒ 对账不问成败
+    const rec = await reconcileAfterConfigSwap()
+    if (result.ok) {
+      // 结果走**结构化字段**回给界面（渲染层在合并成功那句后面拼上它，见 SettingsModule 的 doMergeExecute），
+      // 不写进 summary：那条通道渲染层一个字都不读（成功分支只挑 mergeOk／mergeCredNote 拼），
+      // 往里写字＝留一句没人读的话（而"悄悄停掉了用户的 Server"恰恰必须让用户看见）
+      if (rec.error) result.reconcileFailed = true
+      else if (rec.stopped.length > 0) result.mcpStopped = rec.stopped.length
+    }
+    return result
   }, argsSchema(mergeExecutePayloadSchema))
   safeHandle(IPC.BACKUP_WEBDAV_DELETE, async (_e, filename: string) => {
     const { loadWebDAVConfig, deleteWebDAVBackup } = await import('../../backup/backup-service')

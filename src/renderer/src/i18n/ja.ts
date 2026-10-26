@@ -2044,6 +2044,8 @@ export const ja = {
   'bk.mergeStrategyNewerDesc': 'タイムスタンプで自動的に新しい方を選択',
   'bk.mergeOk': 'マージ成功',
   'bk.mergeCredNote': '認証情報（API Key / env / headers）はマシン間で移動しません：ローカルに既存の行はロールの値を維持し、クラウド側の新規行は「設定」で再入力が必要です',
+  'bk.mergeMcpStopped': 'MCP サーバー {n} 件の記録がクラウド側に置換または削除されたため停止しました。必要時に手動で再起動してください',
+  'bk.mergeReconcileFail': '設定はマージされましたがランタイムの照合を完了できませんでした。アプリの再起動を推奨します',
   'bk.mergeFail': 'マージ失敗：{e}',
   'lic.activate': 'ライセンスをアクティベート',
   'lic.clear': 'クリア',

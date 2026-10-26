@@ -961,3 +961,76 @@ describe('McpManager — §314 删除不许只 stop：entry 与它带的凭据�
     expect(events).toEqual([])
   })
 })
+
+// ---------- §315：配置被整批换掉之后（合并／恢复），按身份字段对账 ----------
+describe('McpManager — §315 reconcileRuntimes 只摘"已经不是那条记录的那个进程"', () => {
+  let logLines: string[]
+
+  beforeEach(() => {
+    // 握手两发（initialize / tools/list）都要过，才有"正在跑"的 entry 可对账
+    mocks.requestImpl = async () => ({ tools: [] })
+    logLines = []
+    mgr.onLog((e) => logLines.push(`${e.serverId}:${e.line}`))
+  })
+
+  it('正向对照：库里那份一模一样 ⇒ 一台都不许停', async () => {
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1')
+    const client = mocks.clients[0]!
+    expect(await mgr.reconcileRuntimes()).toEqual([])
+    expect(client.shutdown, '没变化却杀进程＝过度修复').not.toHaveBeenCalled()
+    client.callOnLog('stderr', '还在跑')
+    expect(logLines).toEqual(['srv1:还在跑'])
+  })
+
+  it('只改了名字与 enabled ⇒ 不许停（那几列不改变"这个进程是什么"）', async () => {
+    mocks.repoList = [makeRecord({ env: { TOKEN: 'a' } })]
+    await mgr.start('srv1')
+    mocks.repoList = [makeRecord({ name: '换了个名', enabled: false, createdAt: 9, env: { TOKEN: 'a' } })]
+    expect(await mgr.reconcileRuntimes()).toEqual([])
+  })
+
+  it('记录整条没了 ⇒ 摘掉，且子进程真被关掉', async () => {
+    mocks.repoList = [makeRecord()]
+    await mgr.start('srv1')
+    const client = mocks.clients[0]!
+    mocks.repoList = []
+    expect(await mgr.reconcileRuntimes()).toEqual(['srv1'])
+    expect(client.shutdown).toHaveBeenCalled()
+    logLines.length = 0
+    client.callOnLog('stderr', '迟到的行')
+    expect(logLines, 'entry 已摘 ⇒ 不该再推日志').toEqual([])
+  })
+
+  it('云端把「信任只读工具」关掉 ⇒ 必须摘（工具列表里的权限分级是启动那一刻烤进去的）', async () => {
+    mocks.repoList = [makeRecord({ trustReadOnly: true })]
+    await mgr.start('srv1')
+    mocks.repoList = [makeRecord({ trustReadOnly: false })]
+    expect(await mgr.reconcileRuntimes()).toEqual(['srv1'])
+  })
+
+  it('command 与 args 换了 ⇒ 摘；args 只是顺序变了也摘（argv 顺序有意义）', async () => {
+    mocks.repoList = [makeRecord({ args: ['--stdio', 'a'] })]
+    await mgr.start('srv1')
+    mocks.repoList = [makeRecord({ args: ['a', '--stdio'] })]
+    expect(await mgr.reconcileRuntimes()).toEqual(['srv1'])
+  })
+
+  it('env 只是键序不同、值一模一样 ⇒ 不许摘（否则合并会集体误停机）', async () => {
+    mocks.repoList = [makeRecord({ env: { A: '1', B: '2' }, headers: { X: 'x' } })]
+    await mgr.start('srv1')
+    mocks.repoList = [makeRecord({ env: { B: '2', A: '1' }, headers: { X: 'x' } })]
+    expect(await mgr.reconcileRuntimes()).toEqual([])
+  })
+
+  it('两条在跑的只摘该摘的那一条（另一条不受影响）', async () => {
+    mocks.repoList = [makeRecord({ id: 'srv1' }), makeRecord({ id: 'srv2', name: 'other-srv' })]
+    await mgr.start('srv1')
+    await mgr.start('srv2')
+    mocks.repoList = [makeRecord({ id: 'srv2' })] // srv1 那条被云端删了
+    expect(await mgr.reconcileRuntimes()).toEqual(['srv1'])
+    logLines.length = 0
+    mocks.clients[1]!.callOnLog('stderr', 'srv2 照旧')
+    expect(logLines).toEqual(['srv2:srv2 照旧'])
+  })
+})

@@ -2121,6 +2121,8 @@ export const en = {
   'bk.mergeStrategyNewerDesc': 'Automatically pick the newer version by timestamp',
   'bk.mergeOk': 'Merge succeeded',
   'bk.mergeCredNote': 'credentials (API keys / env / headers) are not carried across machines — existing local rows keep their values, while cloud-new rows need re-entering in Settings',
+  'bk.mergeMcpStopped': '{n} MCP server record(s) were replaced or removed by the cloud copy and their processes have been stopped; start them again when needed',
+  'bk.mergeReconcileFail': 'settings were merged, but running servers could not be reconciled — restarting the app is recommended',
   'bk.mergeFail': 'Merge failed: {e}',
 
   // ── Settings: license ──

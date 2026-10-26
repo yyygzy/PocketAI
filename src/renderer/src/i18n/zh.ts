@@ -2122,6 +2122,8 @@ export const zh = {
   'bk.mergeStrategyNewerDesc': '按时间戳自动取较新的版本',
   'bk.mergeOk': '合并成功',
   'bk.mergeCredNote': '凭据（API Key / env / headers）不跨机搬运：本机已有行保留本机值，云端新增行的凭据需到「设置」重新填写',
+  'bk.mergeMcpStopped': '本机 {n} 台 MCP Server 的记录已被云端取代或删除，其进程已停止；需要用时请重新启动',
+  'bk.mergeReconcileFail': '配置已合并，但运行时对账未完成，建议重启应用',
   'bk.mergeFail': '合并失败：{e}',
 
   // ── 设置：License ──

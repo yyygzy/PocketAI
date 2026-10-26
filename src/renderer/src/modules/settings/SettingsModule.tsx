@@ -1140,7 +1140,15 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
     try {
       const r = await window.pocketai.mergeExecuteWebDAVBackup(mergeFilename, strategy, mergePwd || undefined)
       if (r.ok) {
-        showNotice(true, `${t('bk.mergeOk')} · ${t('bk.mergeCredNote')}`)
+        // §315：合并会把「记录已被云端取代或删除」的那几台 MCP Server 从运行时里摘掉（原先在跑的就停了）。
+        // 这句必须上屏——悄悄停机＝屏上什么都没变，用户只会发现工具突然不能用了。
+        const parts = [t('bk.mergeOk')]
+        if (r.reconcileFailed) parts.push(t('bk.mergeReconcileFail'))
+        else if (typeof r.mcpStopped === 'number' && r.mcpStopped > 0) {
+          parts.push(t('bk.mergeMcpStopped', { n: r.mcpStopped }))
+        }
+        parts.push(t('bk.mergeCredNote'))
+        showNotice(true, parts.join(' · '))
         setMergeOpen(false)
         await refreshList()
       } else if (r.code === 'badPassword' || r.code === 'legacyNoCross') {

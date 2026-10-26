@@ -167,6 +167,32 @@ export function startupFailureHint(message: string): string {
   return `${message}（进程仍在运行：首次通过 npx 启动需现下载依赖，慢网络可能要一两分钟，可稍后再点一次启动）`
 }
 
+/**
+ * 「这个进程是什么」的指纹（§315 运行时对账用）。只收会改变进程本身（或工具权限语义）的字段：
+ * `name`／`enabled`／`createdAt` 改了不改进程 ⇒ 不在清单里，否则改个名字就会杀掉正在跑的 Server。
+ * 数组按存储顺序比（args／pythonPackages 的顺序有意义），env/headers 按键排序比（同一份值不该因键序变化而误停机）。
+ */
+function identityOf(r: McpServerRecord): string {
+  return JSON.stringify([
+    r.transport,
+    r.runtime,
+    r.command,
+    r.args,
+    r.url,
+    r.pythonPackages,
+    r.trustReadOnly,
+    sortedPairs(r.env),
+    sortedPairs(r.headers)
+  ])
+}
+
+function sortedPairs(map: Record<string, string>): Array<[string, string]> {
+  const entries = Object.entries(map ?? {})
+  // 只按键名排，不用默认的"把整对儿当字符串比"：后者的顺序会随值变化，
+  // 于是同一份 env 只因为值的先后不同就能算出两个指纹 ⇒ 没人改过也会在合并后被误停机
+  return entries.sort((a, b) => (a[0] === b[0] ? 0 : a[0] < b[0] ? -1 : 1))
+}
+
 interface RuntimeEntry {
   record: McpServerRecord
   client: McpTransportClient | null
@@ -438,6 +464,31 @@ export class McpManager extends EventEmitter {
   async forget(id: string): Promise<void> {
     await this.stop(id)
     this.runtimes.delete(id)
+  }
+
+  /**
+   * 与库里的当前记录对账，把「已经不是这条记录的那个进程」摘掉（§315）。
+   * 触发场景＝配置被整批换掉的两条入口：WebDAV 合并（`DELETE FROM mcp_servers` 后写入云端那份）
+   * 与全量恢复（整个库文件被替换）——两处都不经过 `MCP_SERVER_DELETE`，所以 forget 不会被叫到。
+   *
+   * 为什么不能整张清掉：forget 会**杀掉正在跑的子进程**，而"这条记录还是那个进程"是常态
+   * （改名、改开关都不影响进程是什么）。只比身份字段：
+   * `name`／`enabled`／`createdAt` 改了不改进程，所以不在清单里；
+   * `trustReadOnly` 必须在——工具的权限分级是在建工具列表那一刻烤进 `entry.tools` 的（:297／:583），
+   * 云端把它关掉而本机继续用旧列表 ⇒ Agent 还会**免确认**调用一个旧配置起的进程。
+   * env/headers 也进清单：合并对本机已有的行本来就保留本机密文（merge-service 的 preserveColumns），
+   * 所以真没变时不会误杀，而"值变了"正是要停机的形状。
+   */
+  async reconcileRuntimes(): Promise<string[]> {
+    // 先一次性判完再逐条摘：中间任何一次 await 都可能被并发操作改动画像，
+    // 让"决定"只发生在同步这一段里，结果与并发无关（决定之后被并发摘掉的条目，再 forget 一次是幂等的）
+    const stale: string[] = []
+    for (const [id, entry] of this.runtimes) {
+      const current = mcpServerRepo.get(id)
+      if (!current || identityOf(current) !== identityOf(entry.record)) stale.push(id)
+    }
+    for (const id of stale) await this.forget(id)
+    return stale
   }
 
   /** 列出某 MCP Server 的工具（要求已启动） */

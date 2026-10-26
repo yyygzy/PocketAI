@@ -2044,6 +2044,8 @@ export const ko = {
   'bk.mergeStrategyNewerDesc': '타임스탬프로 자동으로 최신 버전 선택',
   'bk.mergeOk': '병합 성공',
   'bk.mergeCredNote': '자격 증명(API Key / env / headers)은 기기 간에 이동하지 않습니다: 로컬에 이미 있는 행은 로컬 값을 유지하고, 클라우드의 새 행은 "설정"에서 다시 입력해야 합니다',
+  'bk.mergeMcpStopped': '로컬의 MCP 서버 {n}개 기록이 클라우드본으로 교체 또는 삭제되어 프로세스가 중지되었습니다. 필요할 때 다시 시작하세요',
+  'bk.mergeReconcileFail': '설정은 병합되었으나 런타임 대조를 마치지 못했습니다. 앱 재시작을 권장합니다',
   'bk.mergeFail': '병합 실패: {e}',
   'lic.activate': '라이선스 활성화',
   'lic.clear': '지우기',

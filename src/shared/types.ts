@@ -1806,6 +1806,13 @@ export interface MergeExecuteResult {
   error?: string
   summary?: string
   code?: 'needBackupPassword' | 'badPassword' | 'legacyNoCross'
+  /**
+   * §315：合并把 mcp_servers 整表换成云端那份之后，运行时对账的结果（屏上那句必须说得出口）。
+   * `mcpStopped`＝被摘掉的台数（记录已被云端取代或删除、或启动它的那份配置已变），其中原先在跑的已停止；
+   * `reconcileFailed`＝对账本身没做成（库已经换好了，不能因此把合并报成失败），那句只能建议重启。
+   */
+  mcpStopped?: number
+  reconcileFailed?: boolean
 }
 
 // ---------- WebDAV 备份配置与文件列表 ----------
