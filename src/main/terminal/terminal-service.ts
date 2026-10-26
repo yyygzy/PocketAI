@@ -23,6 +23,16 @@ interface TerminalSession {
 
 const sessions = new Map<number, TerminalSession>()
 
+/**
+ * 每一轮 shell 的轮次号（§320）。
+ *
+ * 为什么需要：同一窗口重开终端（切语言、卸载再挂、dev 的 StrictMode 双跑）时 `ownerId` 恒定不变，
+ * 而上一轮那台 shell 被 `killTerminal` 之后的 `'exit'` 是异步的——它和新一轮的监听器注册在同一段
+ * 窗口里赛跑。迟到的那一帧一旦被新一轮收下，渲染端会把 `running` 误置成 false（输入框从此失灵），
+ * 屏上还多出一个退出码。轮次号让每一帧自己说清"我是哪一轮写的"。
+ */
+let lastEpoch = 0
+
 /** 当前平台的交互式 shell 启动命令 */
 function shellCommand(): { cmd: string; args: string[] } {
   if (process.platform === 'win32') return { cmd: 'cmd.exe', args: [] }
@@ -30,9 +40,10 @@ function shellCommand(): { cmd: string; args: string[] } {
 }
 
 /** 启动终端 session（同窗口重复调用先杀旧的） */
-export function startTerminal(wc: WebContents): { ok: boolean; sessionId?: number; error?: string } {
+export function startTerminal(wc: WebContents): { ok: true; sessionId: number; epoch: number } | { ok: false; error: string } {
   const ownerId = wc.id
   killTerminal(ownerId)
+  const epoch = ++lastEpoch
   const { cmd, args } = shellCommand()
   let proc: ChildProcess
   try {
@@ -51,7 +62,7 @@ export function startTerminal(wc: WebContents): { ok: boolean; sessionId?: numbe
 
   const push = (stream: 'stdout' | 'stderr' | 'exit', data: string) => {
     if (!wc.isDestroyed()) {
-      wc.send(IPC.TERMINAL_OUTPUT, { sessionId: ownerId, stream, data })
+      wc.send(IPC.TERMINAL_OUTPUT, { sessionId: ownerId, epoch, stream, data })
     }
   }
   proc.stdout.on('data', (buf: Buffer) => push('stdout', buf.toString('utf8')))
@@ -69,11 +80,11 @@ export function startTerminal(wc: WebContents): { ok: boolean; sessionId?: numbe
   })
 
   sessions.set(ownerId, { proc, ownerId })
-  return { ok: true, sessionId: ownerId }
+  return { ok: true, sessionId: ownerId, epoch }
 }
 
 /** 向终端 stdin 写入一行（渲染端已附换行）；deny 黑名单命令直接拦截 */
-export function inputTerminal(ownerId: number, data: string): { ok: boolean; error?: string } {
+export function inputTerminal(ownerId: number, data: string): { ok: true } | { ok: false; error: string } {
   const s = sessions.get(ownerId)
   if (!s || !s.proc.stdin || s.proc.stdin.destroyed) {
     return { ok: false, error: '终端未运行' }

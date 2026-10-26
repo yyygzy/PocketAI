@@ -1,9 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
-import { reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, ipcFailureText, reportIpcError } from '../../utils/ipc'
 
 const MAX_OUTPUT = 50000
 const KEEP_OUTPUT = 40000
+
+/** 输出一帧（与 preload 的 TERMINAL_OUTPUT 载荷同形；epoch＝写这帧的那台 shell 的轮次号） */
+interface TerminalFrame {
+  sessionId: number
+  epoch: number
+  stream: 'stdout' | 'stderr' | 'exit'
+  data: string
+}
+
+/**
+ * 本轮轮次号还没落地时暂存的帧数上限（§320）。
+ * 这段时间正常情况下只有一两行（shell 的首字节实测十几毫秒，比 IPC 往返晚得多），
+ * 上限纯粹是「startTerminal 一直不回来」时的兜底；越界丢最旧的，与屏上自己的 MAX_OUTPUT 同口径。
+ */
+const PENDING_MAX = 100
 
 /**
  * 终端缓冲追加：超过 MAX_OUTPUT 就丢最旧的一段，并回报 clipped。
@@ -35,33 +50,54 @@ export const TerminalModule: React.FC = () => {
   useEffect(() => {
     let unsub: (() => void) | undefined
     let mounted = true
+    // §320：听众挂在发起**之前**（挂在 await 之后时，主进程一起 shell 就在往这扇窗口推帧，
+    // 十几毫秒内开口的首屏会没人听）；而本轮的轮次号要等 startTerminal 的回复才知道，
+    // 所以这中间到达的帧先暂存——它们分不清是刚起那台 shell 的首屏，还是上一台被杀掉的迟到退出。
+    // 轮次号落地后只回放属于本轮的那些，其余丢掉：丢掉的那一帧若是旧 shell 的 exit，
+    // 收下它会把 running 误置成 false，输入框从此失灵。
+    let epoch: number | null = null
+    const pending: TerminalFrame[] = []
 
-    const start = async () => {
+    const apply = (p: TerminalFrame): void => {
+      if (p.stream === 'exit') {
+        setRunning(false)
+      }
+      setOutput((prev) => {
+        const r = appendOutput(prev, p.data)
+        if (r.clipped) {
+          // 只在第一次置位：更新函数可能被重复调用，state 幂等设 true 没有副作用
+          setClipped(true)
+        }
+        return r.text
+      })
+    }
+
+    unsub = window.pocketai.onTerminalOutput((p) => {
+      if (!mounted) return
+      if (epoch === null) {
+        if (pending.length >= PENDING_MAX) pending.shift()
+        pending.push(p)
+        return
+      }
+      if (p.epoch !== epoch) return
+      apply(p)
+    })
+
+    void (async () => {
       const r = await window.pocketai.startTerminal()
       if (!mounted) return
-      if (!r.ok) {
-        setError(r.error ?? t('terminal.startFailed'))
+      if (hasIpcFailed(r)) {
+        setError(ipcFailText(r, t('terminal.startFailed')))
         return
       }
       setRunning(true)
       setError(null)
-      unsub = window.pocketai.onTerminalOutput((payload) => {
-        if (!mounted) return
-        if (payload.stream === 'exit') {
-          setRunning(false)
-        }
-        setOutput((prev) => {
-          const r = appendOutput(prev, payload.data)
-          if (r.clipped) {
-            // 只在第一次置位：更新函数可能被重复调用，state 幂等设 true 没有副作用
-            setClipped(true)
-          }
-          return r.text
-        })
-      })
-    }
-
-    void start()
+      epoch = r.epoch
+      for (const p of pending) {
+        if (p.epoch === epoch) apply(p)
+      }
+      pending.length = 0
+    })()
 
     return () => {
       mounted = false
@@ -77,24 +113,42 @@ export const TerminalModule: React.FC = () => {
     }
   }, [output])
 
-  const sendInput = (data: string) => {
-    if (!running) return
-    window.pocketai.terminalInput(data).catch(reportIpcError('terminal.terminalInput'))
+  /**
+   * 写一行给 shell，并回答「这条真的送出去了没」（§320）。
+   *
+   * 主进程那两种拒绝——管道不可用、deny 名单拦下——都是 `safeHandle` 转成的 **resolve 值**
+   * （`{ok:false}`），过去这里只挂 `.catch`，于是两种拒绝都演成"命令发出去了"：
+   * 输入框被清空、命令还进了历史，屏上零反应。reject（通道没注册那种）仍只留 console 痕，与 §224 一致。
+   */
+  const sendInput = async (data: string): Promise<boolean> => {
+    const r = await window.pocketai.terminalInput(data)
+    if (hasIpcFailed(r)) {
+      setError(t('terminal.sendFailed', { msg: ipcFailureText(r, t) }))
+      return false
+    }
+    setError(null)
+    return true
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (!input) return
-      sendInput(input + '\r\n')
-      setHistory((prev) => {
-        const next = prev.filter((h) => h !== input)
-        next.push(input)
-        if (next.length > 200) next.shift()
-        return next
-      })
-      setInput('')
-      setHistoryIndex(-1)
+      const cmd = input
+      if (!cmd) return
+      void sendInput(cmd + '\r\n')
+        .then((sent) => {
+          // 没送出去就不清空、不进历史：用户能改、能重试，而不是对着一句被吞掉的拒绝重新打字
+          if (!sent) return
+          setInput('')
+          setHistory((prev) => {
+            const next = prev.filter((h) => h !== cmd)
+            next.push(cmd)
+            if (next.length > 200) next.shift()
+            return next
+          })
+          setHistoryIndex(-1)
+        })
+        .catch(reportIpcError('terminal.terminalInput'))
       return
     }
     if (e.key === 'ArrowUp') {
@@ -141,7 +195,7 @@ export const TerminalModule: React.FC = () => {
         />
         <button
           type="button"
-          onClick={() => sendInput('\x03')}
+          onClick={() => void sendInput('\x03').catch(reportIpcError('terminal.terminalInput'))}
           disabled={!running}
           title={t('terminal.sendCtrlC')}
           className="px-2 py-1 text-[10px] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] disabled:opacity-40 disabled:cursor-not-allowed"

@@ -1198,14 +1198,18 @@ const api = {
     ipcRenderer.invoke(IPC.REMINDER_RESCHEDULE_NEXT, id),
 
   // ---------- 终端 ----------
-  startTerminal: (): Promise<{ ok: boolean; sessionId?: number; error?: string }> =>
+  // §320：两条发起通道过去写成 `{ ok: boolean; ... }`——失败形状被类型抹平，消费点也就没人判。
+  // 现在写成可判别联合（判完 `ok:false` 那一支，tsc 就接管剩下的一半），startTerminal 另回一个
+  // **轮次号 epoch**：同一窗口重开终端时 webContents id 不变，渲染端只有靠它才分得出
+  // 「这帧是刚起的那台 shell 的首屏」与「上一台被杀掉的 shell 迟到的退出」——后者会把 running 误置 false。
+  startTerminal: (): Promise<{ ok: true; sessionId: number; epoch: number } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
     ipcRenderer.invoke(IPC.TERMINAL_START),
-  terminalInput: (data: string): Promise<{ ok: boolean; error?: string }> =>
+  terminalInput: (data: string): Promise<{ ok: true } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
     ipcRenderer.invoke(IPC.TERMINAL_INPUT, { data }),
   killTerminal: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.TERMINAL_KILL),
-  onTerminalOutput: (handler: (payload: { sessionId: number; stream: 'stdout' | 'stderr' | 'exit'; data: string }) => void): (() => void) => {
-    const listener = (_e: IpcRendererEvent, data: { sessionId: number; stream: 'stdout' | 'stderr' | 'exit'; data: string }) => handler(data)
+  onTerminalOutput: (handler: (payload: { sessionId: number; epoch: number; stream: 'stdout' | 'stderr' | 'exit'; data: string }) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: { sessionId: number; epoch: number; stream: 'stdout' | 'stderr' | 'exit'; data: string }) => handler(data)
     ipcRenderer.on(IPC.TERMINAL_OUTPUT, listener)
     return () => ipcRenderer.removeListener(IPC.TERMINAL_OUTPUT, listener)
   },

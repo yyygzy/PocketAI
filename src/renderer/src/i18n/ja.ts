@@ -2238,6 +2238,7 @@ export const ja = {
   'terminal.inputPlaceholder': 'コマンドを入力、Enter で送信、↑↓ で履歴',
   'terminal.notRunning': 'ターミナルが起動していません',
   'terminal.sendCtrlC': '中断シグナルを送信',
+  'terminal.sendFailed': 'コマンドを送信できませんでした：{msg}',
   'terminal.startFailed': 'ターミナルの起動に失敗しました',
   'terminal.outputTruncated': '出力が長すぎて切り詰められました…',
 

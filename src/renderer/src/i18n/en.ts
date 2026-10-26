@@ -2326,6 +2326,7 @@ export const en = {
   'terminal.inputPlaceholder': 'Enter command, Enter to send, ↑↓ for history',
   'terminal.notRunning': 'Terminal not running',
   'terminal.sendCtrlC': 'Send interrupt signal',
+  'terminal.sendFailed': 'Command not sent: {msg}',
   'terminal.startFailed': 'Terminal failed to start',
   'terminal.outputTruncated': 'Output truncated…',
 

@@ -2238,6 +2238,7 @@ export const ko = {
   'terminal.inputPlaceholder': '명령 입력, Enter로 전송, ↑↓ 이력',
   'terminal.notRunning': '터미널이 실행 중이 아닙니다',
   'terminal.sendCtrlC': '중단 신호 보내기',
+  'terminal.sendFailed': '명령어를 전송하지 않았습니다: {msg}',
   'terminal.startFailed': '터미널 시작 실패',
   'terminal.outputTruncated': '출력이 너무 길어 잘림…',
 

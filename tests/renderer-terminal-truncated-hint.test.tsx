@@ -12,17 +12,21 @@ import { zh } from '../src/renderer/src/i18n/zh'
 
 // StrictMode 下组件会「订阅→卸载→再订阅」，只记最后一个回调会撞上"打到已卸载的那个"这种竞态
 // ⇒ 记下所有订阅者，测试时全打一遍：活的会生效，死的那次有 `if (!mounted) return` 自己吞掉
-type Payload = { stream: string; data: string }
-let subs: Array<(p: Payload) => void> = []
-const push = async (p: Payload) => {
-  await act(async () => { subs.forEach((cb) => cb(p)) })
+// §320：帧现在带轮次号 epoch，桩回的 startTerminal 也带——两边对不上就会被归属判据丢掉（那条判据由
+// tests/terminal-frame-epoch-320.test.tsx 专门演，这里只喂"同一轮"的帧，管的是截断那一句话）
+type Frame = { sessionId: number; epoch: number; stream: string; data: string }
+const EPOCH = 7
+let subs: Array<(p: Frame) => void> = []
+const push = async (p: Omit<Frame, 'sessionId' | 'epoch'>): Promise<void> => {
+  const frame: Frame = { sessionId: 42, epoch: EPOCH, ...p }
+  await act(async () => { subs.forEach((cb) => cb(frame)) })
 }
 
 beforeEach(() => {
   subs = []
   stubPocketai({
-    startTerminal: async () => ({ ok: true }),
-    onTerminalOutput: (cb: (p: Payload) => void) => {
+    startTerminal: async () => ({ ok: true, sessionId: 42, epoch: EPOCH }),
+    onTerminalOutput: (cb: (p: Frame) => void) => {
       subs.push(cb)
       return () => { subs = subs.filter((x) => x !== cb) }
     },

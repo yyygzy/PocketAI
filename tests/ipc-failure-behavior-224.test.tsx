@@ -83,7 +83,7 @@ describe('① 知识库问答的「自动清理」下拉：真抛错不许把乐
 describe('② 离开终端模块时 killTerminal 真抛错 ⇒ 从此在 console 里留痕', () => {
   it('卸载路径上 reject ⇒ console.warn 有 `[ipc] terminal.killTerminal 失败: …`（孤儿 shell 是 §197／§202 那一族，看不见才是问题）', async () => {
     stubPocketai({
-      startTerminal: () => ({ ok: true }),
+      startTerminal: () => ({ ok: true, sessionId: 7, epoch: 7 }),
       onTerminalOutput: () => () => {},
       killTerminal: () => Promise.reject(new Error('pty 已退出')),
       terminalInput: () => ({ ok: true })
@@ -97,7 +97,7 @@ describe('② 离开终端模块时 killTerminal 真抛错 ⇒ 从此在 console
 
   it('反向对照：卸载时 kill 成功 ⇒ 零留痕（挡住"每次卸载都记一条"这种过闸门写法）', async () => {
     stubPocketai({
-      startTerminal: () => ({ ok: true }),
+      startTerminal: () => ({ ok: true, sessionId: 7, epoch: 7 }),
       onTerminalOutput: () => () => {},
       killTerminal: () => ({ ok: true }),
       terminalInput: () => ({ ok: true })

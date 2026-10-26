@@ -2327,6 +2327,7 @@ export const zh = {
   'terminal.inputPlaceholder': '输入命令，Enter 发送，↑↓ 历史',
   'terminal.notRunning': '终端未运行',
   'terminal.sendCtrlC': '发送中断信号',
+  'terminal.sendFailed': '命令没送出去：{msg}',
   'terminal.startFailed': '终端启动失败',
   'terminal.outputTruncated': '输出过长已截断…',
 

@@ -1,4 +1,4 @@
-// 终端 session 登记表按身份删除测试（V4-Iter-306）
+// 终端 session 登记表按身份删除测试（V4-Iter-306）＋ 每一轮 shell 的轮次号（V4-Iter-320）
 //
 // 缺陷：terminal-service 的 proc.on('exit') 回调写死 `sessions.delete(ownerId)`——按 key 删、不认是哪个 proc。
 // startTerminal 重开同一窗口时顺序是：killTerminal(旧)→sessions.set(新) 先就位，旧 proc 的 'exit' 是异步、
@@ -9,6 +9,10 @@
 //
 // 观测：不读私有 sessions，用公开 API 的下游后果判——修前新 session 被误删 ⇒ killAllTerminals 收不到它（B.kill 不被调）；
 // 修后仍在表里 ⇒ killAllTerminals 杀得到（B.kill 被调）。假 spawn 返回可控 EventEmitter，手动 emit('exit') 定时序。
+//
+// §320 在同一套假 spawn 上加的是**生产者那一半**：重开同一窗口时每一轮 shell 要有一个自己的轮次号，
+// 而且"回复给渲染端的那个号"与"这一轮的每一帧带的那个号"必须出自同一个数——渲染端那一圈
+// `if (p.epoch !== epoch) return` 只对得上号才有牙（消费面在 tests/terminal-frame-epoch-320.test.tsx）。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { WebContents } from 'electron'
@@ -79,5 +83,50 @@ describe('§306 终端 exit 回调按身份删，重开同窗口不误删新 ses
     killAllTerminals()
     // 身份匹配 ⇒ exit 回调已删登记 ⇒ killAll 无从再杀
     expect(A.kill, '正常退出后登记已摘，killAll 不该重复杀一个已摘的').not.toHaveBeenCalled()
+  })
+})
+
+interface Frame { sessionId: number; epoch: number; stream: string; data: string }
+
+/** 记下每一帧的假窗口（真 Electron 里这一步就是 webContents.send） */
+const mkRecordingWc = (id: number): { wc: WebContents; frames: Frame[] } => {
+  const frames: Frame[] = []
+  const wc = {
+    id,
+    isDestroyed: () => false,
+    send: (_channel: string, payload: Frame) => { frames.push(payload) }
+  }
+  return { wc: wc as unknown as WebContents, frames }
+}
+
+const epochOf = (r: ReturnType<typeof startTerminal>): number => {
+  if (!r.ok) throw new Error('PROBE：这一轮该起得来')
+  return r.epoch
+}
+
+describe('§320 每一轮 shell 有自己的轮次号，且回复与推送同源', () => {
+  it('重开同一窗口：旧 shell 迟到的 exit 带旧号、新 shell 的输出带新号（渲染端据此滤掉跨轮帧）', () => {
+    const { wc, frames } = mkRecordingWc(11)
+    const e1 = epochOf(startTerminal(wc)) // A
+    const A = procs[0]!
+    const e2 = epochOf(startTerminal(wc)) // 重开 ⇒ killTerminal(A)＋新 B
+    const B = procs[1]!
+    expect(e2, '两轮之间号要往前走').not.toBe(e1)
+
+    A.emit('exit', 3) // 旧那台这时才退（§306 的那个迟到时序）
+    B.stdout.emit('data', Buffer.from('PROBE-OUT'))
+
+    const exitFrame = frames.find((f) => f.stream === 'exit')
+    const outFrame = frames.find((f) => f.stream === 'stdout')
+    expect(exitFrame?.epoch, '旧 shell 的退出帧要带旧轮号，不能借新号蒙进新屏').toBe(e1)
+    expect(outFrame?.epoch, '新 shell 的输出帧要带新轮号').toBe(e2)
+    expect(exitFrame?.sessionId, 'sessionId 仍是那一扇窗（本轮号与它是两件事）').toBe(11)
+  })
+
+  it('反向钉：startTerminal 回复里的号＝这一轮帧里的号（不是各数一遍）', () => {
+    const { wc, frames } = mkRecordingWc(12)
+    const replied = epochOf(startTerminal(wc))
+    procs[0]!.stderr.emit('data', Buffer.from('PROBE-ERR'))
+    expect(frames.find((f) => f.stream === 'stderr')?.epoch).toBe(replied)
   })
 })
