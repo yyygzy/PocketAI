@@ -853,6 +853,8 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   const [schedule, setSchedule] = useState<BackupScheduleStatus | null>(null)
   const [webdavList, setWebdavList] = useState<WebDAVBackupFile[]>([])
   const [listLoading, setListLoading] = useState(false)
+  /** §324：列表读的代次——迟到那发不许把旧一次（或改地址前那台服务器）的清单画回当前屏 */
+  const listSeqRef = useRef(0)
   const [wdUrl, setWdUrl] = useState('')
   const [wdUser, setWdUser] = useState('')
   const [wdPwd, setWdPwd] = useState('')
@@ -866,6 +868,8 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   const [mergeExecuting, setMergeExecuting] = useState(false)
   // 异机合并：备份密码（扫描成功后沿用到执行阶段）
   const [mergePwd, setMergePwd] = useState('')
+  /** §324：扫描的代次——只有最新发起那一发允许写冲突表、记住的密码与「还在扫描」 */
+  const mergeScanSeqRef = useRef(0)
 
   useEffect(() => {
     window.pocketai.loadWebDAVConfig().then((c) => {
@@ -999,9 +1003,12 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   }
 
   const refreshList = useCallback(async () => {
+    const seq = ++listSeqRef.current
     setListLoading(true)
     try {
       const items = await window.pocketai.listWebDAVBackups()
+      // §324：存完新地址后 effect 会再拉一次；旧地址那份迟到不许把清单盖回当前屏（内容来自另一台服务器）
+      if (seq !== listSeqRef.current) return
       // 196：失败是 {ok:false} 返回值 ⇒ 判返回值才走得到那句「获取远程备份列表失败」
       if (hasIpcFailed(items)) {
         setNotice({ ok: false, text: t('bk.listFail') })
@@ -1009,9 +1016,10 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
       }
       setWebdavList(items)
     } catch {
+      if (seq !== listSeqRef.current) return
       setNotice({ ok: false, text: t('bk.listFail') })
     } finally {
-      setListLoading(false)
+      if (seq === listSeqRef.current) setListLoading(false)
     }
   }, [t])
 
@@ -1034,12 +1042,18 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   const [restorePwdValue, setRestorePwdValue] = useState('')
   const [restorePwdError, setRestorePwdError] = useState('')
   const [restorePwdBusy, setRestorePwdBusy] = useState(false)
+  /** §324：恢复那一发的代次——迟到回执不许改弹窗目标，也不许清掉用户正在输入的密码 */
+  const restoreSeqRef = useRef(0)
 
   /** 收口恢复结果：成功提示；密码三态打开/更新密码弹窗；其他失败走 notice */
   function handleRestoreResult(
     r: import('../../../../shared/types').BackupRestoreResult,
-    target: RestoreTarget | null
+    target: RestoreTarget | null,
+    seq: number
   ): void {
+    // §324：迟到那发不许把弹窗目标改回它那一份（用户此刻正在为另一份输密码），
+    // 也不许把人家的密码输入清掉、再多报一句「恢复成功」
+    if (seq !== restoreSeqRef.current) return
     if (r.ok) {
       setRestoreTarget(null)
       setRestorePwdValue('')
@@ -1065,17 +1079,19 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   async function doRestore(filename: string) {
     if (!(await confirm({ message: t('bk.restoreConfirm', { name: filename }), danger: true }))) return
     showNotice(true, t('bk.downloadingRestore'))
+    const seq = ++restoreSeqRef.current
     const r = await window.pocketai.restoreWebDAVBackup(filename)
-    handleRestoreResult(r, { kind: 'webdav', name: filename })
+    handleRestoreResult(r, { kind: 'webdav', name: filename }, seq)
   }
 
   /** 本地恢复：首次主进程弹文件选择器；取消静默；需要密码时记住文件路径供框内重试 */
   async function doLocalRestorePick() {
     if (!(await confirm({ message: t('bk.localRestoreConfirm'), danger: true }))) return
     showNotice(true, t('bk.downloadingRestore'))
+    const seq = ++restoreSeqRef.current
     const r = await window.pocketai.restoreLocalBackup()
     if (r.canceled) return
-    handleRestoreResult(r, null)
+    handleRestoreResult(r, null, seq)
   }
 
   async function doRestoreWithPassword() {
@@ -1086,12 +1102,15 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
       return
     }
     setRestorePwdBusy(true)
+    const seq = ++restoreSeqRef.current
     try {
       const r = restoreTarget.kind === 'webdav'
         ? await window.pocketai.restoreWebDAVBackup(restoreTarget.name, pwd)
         : await window.pocketai.restoreLocalBackup({ restoreToken: restoreTarget.restoreToken, backupPassword: pwd })
-      handleRestoreResult(r, restoreTarget)
+      handleRestoreResult(r, restoreTarget, seq)
     } finally {
+      // 「重试中」不挂代次判据：busy 为真时重试键与密码框都禁用 ⇒ 不可能有两发重试同时在飞，
+      // 加了就是走不到的分支（变异实测存活，遂删）；但这句复位本身必须有，否则弹窗永久卡死
       setRestorePwdBusy(false)
     }
   }
@@ -1110,6 +1129,7 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
 
   // 合并恢复：先扫描冲突，再弹窗让用户选策略；异机备份按三态错误在弹窗内输密码重扫
   async function doMergeScan(filename: string, pwd?: string) {
+    const seq = ++mergeScanSeqRef.current
     setMergeFilename(filename)
     setMergeReport(null)
     setMergeOpen(true)
@@ -1117,13 +1137,18 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
     if (pwd === undefined) setMergePwd('') // 首次扫描清空旧密码；密码重试保留输入
     try {
       const r = await window.pocketai.mergeScanWebDAVBackup(filename, pwd)
+      // §324：这一发已经不是最新那次（用户关掉弹层去点了另一份）⇒ 一个字都不写屏。
+      // 只写报告不判的话，屏上是 A 的冲突表而 mergeFilename 已是 B，执行那发就拿着 B 的文件名＋A 的密码去合并。
+      if (seq !== mergeScanSeqRef.current) return
       setMergeReport(r)
       // 扫描成功后记住密码，执行阶段沿用（合并不改本机主密码）
       if (r.ok) setMergePwd(pwd ?? '')
     } catch (e) {
+      if (seq !== mergeScanSeqRef.current) return
       setMergeReport({ ok: false, error: errText(e, t('bk.mergeFail')), tables: [], attachmentsToAdd: 0 })
     } finally {
-      setMergeScanning(false)
+      // 「还在扫描」也归最新那发管：先回的那条不许把它翻掉（§322 同一张脸）
+      if (seq === mergeScanSeqRef.current) setMergeScanning(false)
     }
   }
 
