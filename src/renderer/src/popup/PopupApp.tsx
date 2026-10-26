@@ -81,16 +81,24 @@ export const PopupApp: React.FC = () => {
     [providers, providerId]
   )
 
-  // 浮窗载荷（快捷问答 / 选区文本）：首次拉取 + 后续推送
-  const pendingActionRef = useRef<{ ts: number; action: SelectionAction } | null>(null)
+  // 浮窗载荷（快捷问答 / 选区文本）：首次拉取 + 后续推送。
+  // §321：同一份载荷会被投两次——挂载时 pull 一次（`getPopupPayload`），`did-finish-load` 时主进程
+  // 又按缓存 push 一次（`main/popup.ts:246-248`），两条路都喂这个函数，而载荷里那个 `ts`
+  // 过去只被写进 ref、全仓没人读 ⇒ 重复投递会把"待自动执行的动作"重新武装一遍，
+  // 流式一结束就再发一条用户没要求的请求。现在按内容认同一份载荷（ts＋mode＋text＋action），
+  // 重复的那份整个不当数；而**每一份新载荷都重新定义待发动作**——不带 action（快捷键取词那一类）
+  // 就是把待发的清掉，否则一个此前没跑成的旧动作会在 provider／模型凑齐的那一刻跑在新文本上。
+  const pendingActionRef = useRef<SelectionAction | null>(null)
+  const handledPayloadRef = useRef<{ ts: number; mode: string; text: string; action: string } | null>(null)
   const applyPayload = useCallback((p: PopupPayload | null) => {
     if (!p) return
+    const key = { ts: p.ts, mode: p.mode as string, text: p.text ?? '', action: p.action ?? '' }
+    const prev = handledPayloadRef.current
+    if (prev && prev.ts === key.ts && prev.mode === key.mode && prev.text === key.text && prev.action === key.action) return
+    handledPayloadRef.current = key
     setMode(p.mode)
     setSelection(p.mode === 'selection' ? p.text ?? '' : '')
-    if (p.mode === 'selection' && p.action && SELECTION_ACTIONS.includes(p.action)) {
-      // 应用内划词浮条带动作：待 provider/model/助手就绪后自动执行（见下方 effect）
-      pendingActionRef.current = { ts: p.ts, action: p.action }
-    }
+    pendingActionRef.current = p.mode === 'selection' && p.action && SELECTION_ACTIONS.includes(p.action) ? p.action : null
     if (p.mode === 'quick') {
       if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
       focusTimerRef.current = setTimeout(() => { taRef.current?.focus() }, 50)
@@ -417,7 +425,7 @@ export const PopupApp: React.FC = () => {
     if (!pending || mode !== 'selection' || streaming) return
     if (!selection.trim() || !assistant || !providerId || !model) return
     pendingActionRef.current = null
-    runSelectionAction(pending.action)
+    runSelectionAction(pending)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, selection, assistant, providerId, model, streaming])
 
