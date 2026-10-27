@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { McpRuntime, PythonEnvInstallEvent, PythonEnvState } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { errText } from '../../../utils/error'
-import { logIpcError } from '../../../utils/ipc'
+import { hasIpcFailed, logIpcError } from '../../../utils/ipc'
 
 export function usePythonEnv(serverId: string | undefined, runtime: McpRuntime) {
   const { t } = useI18n()
@@ -17,12 +17,13 @@ export function usePythonEnv(serverId: string | undefined, runtime: McpRuntime) 
     if (!serverId) return ''
     try {
       const r = await window.pocketai.getPythonEnvStatus(serverId)
-      if (r.ok && r.state) {
+      // §336：用 hasIpcFailed 判信封，基础设施失败时 r 没有 state 字段⇒不判就直接读会白屏
+      if (!hasIpcFailed(r) && r.state) {
         setEnvState(r.state)
         if (r.recentEvents) setEnvEvents(r.recentEvents)
-      } else if (r.error) {
+      } else if (hasIpcFailed(r)) {
         // 存量脏数据等场景：由表单错误条展示，避免静默停在旧状态
-        return r.error
+        return r.error ?? ''
       }
     } catch (e) {
       logIpcError('mcp.getPythonEnvStatus', e)

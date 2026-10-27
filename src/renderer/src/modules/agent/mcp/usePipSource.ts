@@ -59,8 +59,12 @@ export function usePipSource(
     setPipCustomError('')
     try {
       const r = await window.pocketai.setPythonPipSource(next)
-      if (r.ok && r.source) setPipSourceState(r.source)
-      else if (r.error) notify(r.error)
+      // §336：hasIpcFailed 判信封，{ok:false} 无 error 字段时两分支都跳过⇒静默吞失败
+      if (hasIpcFailed(r)) {
+        notify(ipcFailText(r, t('agent.mcp.setPipSourceFailed')))
+      } else if (r.source) {
+        setPipSourceState(r.source)
+      }
     } catch (e) {
       notify(errText(e, t('agent.mcp.setPipSourceFailed')))
     }
@@ -82,11 +86,12 @@ export function usePipSource(
     if (!ok) return
     try {
       const r = await window.pocketai.setPythonPipSource(url)
-      if (r.ok && r.source) {
+      // §336：与 choosePipSource 同一形——hasIpcFailed 判信封，失败写错误条
+      if (hasIpcFailed(r)) {
+        setPipCustomError(ipcFailText(r, t('agent.mcp.setPipSourceFailed')))
+      } else if (r.source) {
         setPipSourceState(r.source)
         setPipCustomError('')
-      } else if (r.error) {
-        setPipCustomError(r.error)
       }
     } catch (e) {
       setPipCustomError(errText(e, t('agent.mcp.setPipSourceFailed')))

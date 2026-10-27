@@ -1,5 +1,5 @@
 // MCP Server 管理面板：左列表（启停/编辑/删除 + pip 源） / 右编辑表单或日志
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   McpServerRecord,
   McpServerRuntime,
@@ -60,6 +60,8 @@ export const McpPanel: React.FC = () => {
   const [toolRuns, setToolRuns] = useState<Record<string, ToolRunState>>({})
   const [importOpen, setImportOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
+  // §336：调用日志切换 server 时旧请求可能迟到，用代次计数器钉住"只接受最新那一发"
+  const callLogGenRef = useRef(0)
 
   const pip = usePipSource(setNotice, askConfirm)
 
@@ -94,12 +96,15 @@ export const McpPanel: React.FC = () => {
   }, [load])
 
   const reloadCallLogs = useCallback(async () => {
+    const gen = ++callLogGenRef.current
     const r = await window.pocketai.listMcpCallLogs(callLogServer || null)
-    if (r.ok) {
+    // §336：迟到响应不覆盖新请求的结果——代次不匹配说明用户已切换 server，那份数据属于旧选择
+    if (gen !== callLogGenRef.current) return
+    if (hasIpcFailed(r)) {
+      setCallLogsUnread({ error: r.error })
+    } else {
       setCallLogsUnread(null)
       setCallLogs(r.logs ?? [])
-    } else {
-      setCallLogsUnread({ error: r.error })
     }
   }, [callLogServer])
 
@@ -109,11 +114,11 @@ export const McpPanel: React.FC = () => {
 
   const handleClearCallLogs = async () => {
     const r = await window.pocketai.clearMcpCallLogs(callLogServer || null)
-    if (r.ok) {
+    if (hasIpcFailed(r)) {
+      toast.error(ipcFailText(r, t('common.unknownError')))
+    } else {
       setCallLogs([])
       toast.success(t('agent.callLogCleared'))
-    } else {
-      toast.error(r.error ?? t('common.unknownError'))
     }
   }
 
@@ -186,14 +191,15 @@ export const McpPanel: React.FC = () => {
     const argsJson = toolRuns[key]?.argsJson ?? ''
     setToolRuns((prev) => ({ ...prev, [key]: { ...prev[key], argsJson, running: true, result: undefined } }))
     const r = await window.pocketai.callMcpServerTool(serverId, toolName, argsJson)
+    // §336：完成后只更新 running/result 字段，不写回 argsJson——运行期间用户可能已编辑文本框，陈旧值会覆盖用户输入
     setToolRuns((prev) => ({
       ...prev,
       [key]: {
         ...prev[key],
-        argsJson,
+        argsJson: prev[key]?.argsJson ?? argsJson,
         running: false,
-        result: r.ok ? (r.content ?? '') : (r.error ?? t('common.unknownError')),
-        isError: r.ok ? r.isError : true
+        result: hasIpcFailed(r) ? (r.error ?? t('common.unknownError')) : (r.content ?? ''),
+        isError: hasIpcFailed(r) ? true : r.isError
       }
     }))
     // 试运行本身就是一次调用：立刻刷新记录，用户不用点刷新就能看到成败与耗时

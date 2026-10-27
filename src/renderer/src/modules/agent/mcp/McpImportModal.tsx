@@ -59,8 +59,12 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
         warnings.push(`${item.key}: ${errText(e)}`)
       }
     }
-    await onImported()
-    setImporting(false)
+    // §336：onImported 调父级的 load()，若抛异常必须 finally 释放 importing 锁，否则模态框卡死
+    try {
+      await onImported()
+    } finally {
+      setImporting(false)
+    }
     toast.success(t('agent.importSuccess', { n: success }))
     if (warnings.length) toast.error(warnings.join('；'))
     onClose()

@@ -173,13 +173,11 @@ export const ChannelsPanel: React.FC = () => {
       if (!ok) return
     }
     try {
-      // §333：乐观更新失败时回滚——快照在飞之前的值，IPC 失败时还原
-      const snapshot = cfgs[activeType]
+      // §336：乐观更新失败时不再回滚快照——回滚会覆盖用户在飞期间对其他字段的编辑（snapshot 是整份配置，不是补丁字段）
+      // 失败只报错，本地编辑保留，用户可重试或手动撤销
       const next = await window.pocketai.setChannelConfig(activeType, patch)
       // §219：失败不判就把 `{ok:false}` 写成本渠道的配置 ⇒ 表单显示的是库里没有的配置
       if (hasIpcFailed(next)) {
-        // 回滚到快照
-        if (snapshot) setCfgs((prev) => ({ ...prev, [activeType]: snapshot }))
         toast.error(ipcFailText(next, t('common.unknownError')))
         return
       }
@@ -192,13 +190,22 @@ export const ChannelsPanel: React.FC = () => {
   }
 
   const handleStart = async () => {
-    const r = await window.pocketai.startChannel(activeType)
-    if (!r.ok) toast.error(r.error ?? t('common.unknownError'))
+    try {
+      const r = await window.pocketai.startChannel(activeType)
+      // §336：与 handleStop 对齐——hasIpcFailed 判信封，try/catch 兜未处理 rejection
+      if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
+    } catch (e) {
+      toast.error(errText(e, t('common.unknownError')))
+    }
   }
   const handleStop = async () => {
-    const r = await window.pocketai.stopChannel(activeType)
-    // §217：safeHandle 的失败是 resolve 的 `{ok:false}`，这一条既没判也没 catch ⇒ 停没停下来界面看不出来
-    if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
+    try {
+      const r = await window.pocketai.stopChannel(activeType)
+      // §217：safeHandle 的失败是 resolve 的 `{ok:false}`，这一条既没判也没 catch ⇒ 停没停下来界面看不出来
+      if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
+    } catch (e) {
+      toast.error(errText(e, t('common.unknownError')))
+    }
   }
 
   // 切换 tab 时清空凭据草稿
@@ -306,10 +313,18 @@ export const ChannelsPanel: React.FC = () => {
               }
               onChange={(e) => setPrimaryDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && primaryDraft.trim()) void patchCfg({ primarySecret: primaryDraft.trim() })
+                if (e.key === 'Enter' && primaryDraft.trim()) {
+                  // §336：Enter 键同步清草稿再发 IPC，防止后续 onBlur 再发一发（blur 在 click 之前触发，若草稿未清会重保存）
+                  const trimmed = primaryDraft.trim()
+                  setPrimaryDraft('')
+                  void patchCfg({ primarySecret: trimmed })
+                }
               }}
               onBlur={() => {
-                if (primaryDraft.trim()) void patchCfg({ primarySecret: primaryDraft.trim() })
+                if (primaryDraft.trim()) {
+                  // §336：onBlur 不同步清草稿——若用户取消确认对话框，草稿应保留供重试
+                  void patchCfg({ primarySecret: primaryDraft.trim() })
+                }
               }}
             />
             {cfg.hasPrimarySecret && (
@@ -347,10 +362,18 @@ export const ChannelsPanel: React.FC = () => {
               }
               onChange={(e) => setSecondaryDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && secondaryDraft.trim()) void patchCfg({ secondarySecret: secondaryDraft.trim() })
+                if (e.key === 'Enter' && secondaryDraft.trim()) {
+                  // §336：Enter 键同步清草稿再发 IPC，防止后续 onBlur 再发一发
+                  const trimmed = secondaryDraft.trim()
+                  setSecondaryDraft('')
+                  void patchCfg({ secondarySecret: trimmed })
+                }
               }}
               onBlur={() => {
-                if (secondaryDraft.trim()) void patchCfg({ secondarySecret: secondaryDraft.trim() })
+                if (secondaryDraft.trim()) {
+                  // §336：onBlur 不同步清草稿——若用户取消确认对话框，草稿应保留供重试
+                  void patchCfg({ secondarySecret: secondaryDraft.trim() })
+                }
               }}
             />
             {cfg.hasSecondarySecret && (
