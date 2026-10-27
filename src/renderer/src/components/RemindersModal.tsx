@@ -140,7 +140,9 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
         toast.success(t('reminder.center.cancelOk'))
         notifyChanged()
       } else {
-        toast.error(t('reminder.center.cancelFail'))
+        // §334：改前 IPC 失败与业务拒绝（已取消／已触发）并成同一句⇒用户分不清哪边出了问题；
+        // 现在 `ipcFailText` 优先读 r.error（safeHandle 兜住的 infrastructure 错误），没有才落回兜底键
+        toast.error(ipcFailText(r, t('reminder.center.cancelFail')))
       }
       await reload(tab)
     } catch (e) {
@@ -159,7 +161,8 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
         toast.success(t('reminder.center.rescheduleOk'))
         notifyChanged()
       } else {
-        toast.error(t('reminder.center.rescheduleFail'))
+        // §334：同 handleCancel——IPC 失败与业务拒绝（无循环规则／记录不存在）分开说
+        toast.error(ipcFailText(r, t('reminder.center.rescheduleFail')))
       }
       await reload(tab)
     } catch (e) {

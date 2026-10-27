@@ -62,10 +62,12 @@ export const reminderRescheduleSchema = z.object({
 })
 
 /** REMINDER_UPDATE（pending 行编辑）入参 schema；
- *  repeatRule: undefined=不改（不传该字段），null=清除变一次性，对象=改循环规则 */
+ *  repeatRule: undefined=不改（不传该字段），null=清除变一次性，对象=改循环规则
+ *  §334：改前 `.nullable()` 不含 `.optional()`⇒字段缺省就过不了 zod 校验，与注释里的三档语义矛盾；
+ *  换成 `.nullish()`（＝`.nullable().optional()`），与 create/reschedule 两档对齐 */
 export const reminderUpdateSchema = z.object({
   id: reminderIdSchema,
   text: reminderTextSchema.optional(),
   fireAt: z.number().int().positive('触发时间非法').optional(),
-  repeatRule: reminderRepeatRuleSchema.nullable()
+  repeatRule: reminderRepeatRuleSchema.nullish()
 })
