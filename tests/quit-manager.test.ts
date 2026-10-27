@@ -25,8 +25,12 @@ const mocks = vi.hoisted(() => ({
   cleanupError: null as Error | null,
   closeError: null as Error | null,
   quitCalls: 0,
+  dragTempArgs: [] as unknown[],
+  dragTempError: null as Error | null,
   reset() {
     this.calls = []
+    this.dragTempArgs = []
+    this.dragTempError = null
     this.stopAllError = null
     this.stopAllHang = false
     this.cleanupError = null
@@ -88,6 +92,15 @@ vi.mock('../src/main/channels/channel-service', () => ({
   channelService: { stopAll: () => { mocks.calls.push('stopChannels') } }
 }))
 
+vi.mock('../src/main/export/drag-temp', () => ({
+  cleanupDragTempDir: (...args: unknown[]) => {
+    mocks.calls.push('cleanupDragTemp')
+    mocks.dragTempArgs = args
+    if (mocks.dragTempError) throw mocks.dragTempError
+    return 0
+  }
+}))
+
 vi.mock('../src/main/db/database', () => ({
   dbService: {
     close: () => {
@@ -126,10 +139,10 @@ describe('退出标志', () => {
 })
 
 describe('runCleanupChain 异步清理链', () => {
-  it('按序执行十一步：abortPull → stopAll → cleanup → 撤更新器延迟检查 → 三个 scheduler → 终端与在途 shell → 停渠道网关 → close', async () => {
+  it('按序执行十二步：abortPull → stopAll → cleanup → 撤更新器延迟检查 → 三个 scheduler → 终端与在途 shell → 停渠道网关 → 清导出拖拽临时文件 → close', async () => {
     await runCleanupChain()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'cleanupDragTemp', 'close'
     ])
   })
 
@@ -137,7 +150,7 @@ describe('runCleanupChain 异步清理链', () => {
     mocks.stopAllError = new Error('MCP 停止失败')
     await expect(runCleanupChain()).resolves.toBeUndefined()
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'cleanupDragTemp', 'close'
     ])
   })
 
@@ -156,7 +169,7 @@ describe('runCleanupChain 异步清理链', () => {
   it('三个 scheduler、在途 shell 的杀与停渠道网关都排在 close 之前（199/202/283：它们的清理都要读库、动进程表或断 socket）', async () => {
     await runCleanupChain()
     const closeAt = mocks.calls.indexOf('close')
-    for (const s of ['stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killInFlightShellJobs', 'stopChannels']) {
+    for (const s of ['stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killInFlightShellJobs', 'stopChannels', 'cleanupDragTemp']) {
       expect(mocks.calls.indexOf(s)).toBeGreaterThanOrEqual(0)
       expect(mocks.calls.indexOf(s)).toBeLessThan(closeAt)
     }
@@ -167,7 +180,7 @@ describe('runFallbackCleanup 同步兜底', () => {
   it('兜底也试一次停 MCP（197）＋停渠道网关（283：别让 abort 不掉的自动重连留在退出半程）', () => {
     runFallbackCleanup()
     expect(mocks.calls).toEqual([
-      'abortPull', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopAll', 'stopChannels', 'close'
+      'abortPull', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopAll', 'stopChannels', 'cleanupDragTemp', 'close'
     ])
   })
 
@@ -183,7 +196,7 @@ describe('runCleanupOnce（197：幂等 ＋ 总时限）', () => {
     expect(await runCleanupOnce(2000)).toBe('done')
     expect(isCleanupDone()).toBe(true)
     expect(mocks.calls).toEqual([
-      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'close'
+      'abortPull', 'stopAll', 'cleanup', 'cancelStartupCheck', 'stopBackupScheduler', 'stopTaskScheduler', 'stopReminderScheduler', 'killAllTerminals', 'killInFlightShellJobs', 'stopChannels', 'cleanupDragTemp', 'close'
     ])
     const n = mocks.calls.length
     expect(await runCleanupOnce(2000)).toBe('done')
@@ -198,5 +211,26 @@ describe('runCleanupOnce（197：幂等 ＋ 总时限）', () => {
     expect(await mod.runCleanupOnce(30)).toBe('timeout')
     expect(mod.isCleanupDone()).toBe(false)
     expect(mocks.calls).toContain('stopAll')
+  })
+})
+// ---------- V4-Iter-329：导出拖拽的临时文件不留过这一次运行 ----------
+
+describe('329 退出链清导出拖拽临时文件', () => {
+  it('清理链里那一步传 maxAgeMs=0（全清），而不是只清过期的那一档', async () => {
+    await runCleanupChain()
+    expect(mocks.calls).toContain('cleanupDragTemp')
+    expect(mocks.dragTempArgs[2]).toBe(0)
+  })
+
+  it('清理那一步自己抛错不阻断 close（临时目录不可用不能让退出卡住）', async () => {
+    mocks.dragTempError = new Error('临时目录被占用')
+    await expect(runCleanupChain()).resolves.toBeUndefined()
+    expect(mocks.calls[mocks.calls.length - 1]).toBe('close')
+  })
+
+  it('反向对照：兜底同步路径也清一道（正常链没跑成时不留死角）', () => {
+    runFallbackCleanup()
+    expect(mocks.calls).toContain('cleanupDragTemp')
+    expect(mocks.calls.indexOf('cleanupDragTemp')).toBeLessThan(mocks.calls.indexOf('close'))
   })
 })

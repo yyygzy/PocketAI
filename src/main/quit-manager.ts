@@ -9,6 +9,7 @@ import { stopReminderScheduler } from './reminder/scheduler'
 import { killAllTerminals } from './terminal/terminal-service'
 import { killInFlightShellJobs } from './tools/shell-tools'
 import { channelService } from './channels/channel-service'
+import { cleanupDragTempDir } from './export/drag-temp'
 import { dbService } from './db/database'
 import { createLogger } from './logger'
 
@@ -111,6 +112,12 @@ export async function runCleanupChain(): Promise<void> {
   // OS 硬关 socket 兜不住「已排队的 reconnect/重 identify」——停在 close 之前，
   // 也让 handleMessage 不再在库关掉后才回落到这条服务
   try { channelService.stopAll() } catch { /* ignore */ }
+  // 导出拖拽的临时文件（V4-Iter-329）：pointerdown 就预写，用户没拖也留在 %TEMP%\pocketai-export，
+  // 而惰性清理只挂在下一发 prepare 上 ⇒ 整段会话明文／长图可以活过整次运行。退出时全清一道。
+  try {
+    const n = cleanupDragTempDir(Date.now(), undefined, 0)
+    if (n > 0) log.info(`退出链：清掉 ${n} 个导出拖拽临时文件`)
+  } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
   log.info('清理链完成')
 }
@@ -138,5 +145,7 @@ export function runFallbackCleanup(): void {
   } catch { /* ignore */ }
   // 停渠道网关（V4-Iter-283）：兜底路径同样试一次，别让 abort 不掉的自动重连留在退出半程
   try { channelService.stopAll() } catch { /* ignore */ }
+  // 导出拖拽临时文件（V4-Iter-329）：兜底路径也要试一次，否则这步只在正常清理链里才有
+  try { cleanupDragTempDir(Date.now(), undefined, 0) } catch { /* ignore */ }
   try { dbService.close() } catch { /* ignore */ }
 }

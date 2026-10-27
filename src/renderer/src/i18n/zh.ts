@@ -245,6 +245,8 @@ export const zh = {
   'chat.exportBatchDone': '已导出 {n} 个会话到 {dir}',
   'chat.exportBatchEmpty': '暂无可导出的会话',
   'chat.exportBatchFailed': '个失败',
+  'chat.exportBatchUnreadable': '{n} 个会话读不到消息，已跳过',
+  'chat.exportBatchAllFailed': '{n} 个会话一个都没导出成功（读不到消息或写不进磁盘）',
   'chat.exportMulti': '多选导出…',
   'chat.exportSelectedMd': '导出所选 MD',
   'chat.exportSelectedHtml': '导出所选网页',

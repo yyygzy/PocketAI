@@ -15,8 +15,14 @@ export function dragTempDir(): string {
 /** 拖拽文件最大内容（10 MB，与多选导出上限同量级；防灌爆临时目录） */
 export const DRAG_CONTENT_MAX_CHARS = 10 * 1024 * 1024
 
-/** 过期阈值：24h */
-export const DRAG_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000
+/**
+ * 惰性清理阈值：10 分钟。
+ * §329 改：原本是 24 小时，而清理只挂在下一发 `EXPORT_PREPARE_DRAG` 上 ⇒
+ * 「pointerdown 预写了但没拖」的那一份整段会话明文／长图可以一直躺在临时目录里等下一次拖拽。
+ * 现在退出链也会全清一道（`quit-manager`），这个阈值管的是"本次运行内别攒着"：
+ * 不能再低——`startDrag` 之后系统还在读那个文件，删早了拖出去的是半份或空份。
+ */
+export const DRAG_TEMP_MAX_AGE_MS = 10 * 60 * 1000
 
 /**
  * 路径归属校验：filePath 必须是**已存在的普通文件**且直接位于拖拽临时目录内。
@@ -43,8 +49,15 @@ export function isDragTempPath(filePath: string, dir: string = dragTempDir()): b
   }
 }
 
-/** 清理过期拖拽临时文件（>24h）；目录不存在/单文件失败均静默（下次启动再清） */
-export function cleanupDragTempDir(now: number = Date.now(), dir: string = dragTempDir()): number {
+/**
+ * 清理过期拖拽临时文件；目录不存在/单文件失败均静默。
+ * `maxAgeMs` 缺省用惰性阈值（10 分钟）；退出链传 0 ⇒ 全清（§329：临时导出文件不该活过一次运行）。
+ */
+export function cleanupDragTempDir(
+  now: number = Date.now(),
+  dir: string = dragTempDir(),
+  maxAgeMs: number = DRAG_TEMP_MAX_AGE_MS
+): number {
   let removed = 0
   let names: string[]
   try {
@@ -56,7 +69,7 @@ export function cleanupDragTempDir(now: number = Date.now(), dir: string = dragT
     try {
       const p = path.join(dir, name)
       const st = fs.statSync(p)
-      if (st.isFile() && now - st.mtimeMs > DRAG_TEMP_MAX_AGE_MS) {
+      if (st.isFile() && now - st.mtimeMs > maxAgeMs) {
         fs.unlinkSync(p)
         removed++
       }

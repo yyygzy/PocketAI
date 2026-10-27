@@ -109,3 +109,36 @@ describe('cleanupDragTempDir', () => {
     expect(cleanupDragTempDir(now, path.join(dir, 'not-exist'))).toBe(0)
   })
 })
+
+describe('329 惰性阈值与退出全清', () => {
+  const touch = (name: string, mtime: Date): string => {
+    const p = path.join(dir, name)
+    fs.writeFileSync(p, '整段会话明文')
+    fs.utimesSync(p, mtime, mtime)
+    return p
+  }
+
+  it('阈值已从 24 小时降到 10 分钟：一次运行里攒下的临时文件会在下一发 prepare 时被收掉', () => {
+    expect(DRAG_TEMP_MAX_AGE_MS).toBe(10 * 60 * 1000)
+  })
+
+  it('刚写完的文件不许被清掉（startDrag 之后系统还在读它）', () => {
+    const fresh = touch('fresh.md', new Date())
+    expect(cleanupDragTempDir(Date.now(), dir)).toBe(0)
+    expect(fs.existsSync(fresh)).toBe(true)
+  })
+
+  it('超过 10 分钟的清掉，目录不存在时返回 0 不抛', () => {
+    const old = touch('old.md', new Date(Date.now() - DRAG_TEMP_MAX_AGE_MS - 1000))
+    const keep = touch('new.md', new Date(Date.now() - 1000))
+    expect(cleanupDragTempDir(Date.now(), dir)).toBe(1)
+    expect(fs.existsSync(old)).toBe(false)
+    expect(fs.existsSync(keep)).toBe(true)
+  })
+
+  it('maxAgeMs=0（退出链那一档）⇒ 连刚写完的也清（反向对照：不是只清过期）', () => {
+    const fresh = touch('fresh2.md', new Date())
+    expect(cleanupDragTempDir(Date.now(), dir, 0)).toBe(1)
+    expect(fs.existsSync(fresh)).toBe(false)
+  })
+})

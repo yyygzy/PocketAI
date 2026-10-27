@@ -230,6 +230,8 @@ export const ko = {
   'chat.exportBatchDone': '대화 {n}개를 {dir}에 내보냈습니다',
   'chat.exportBatchEmpty': '내보낼 대화가 없습니다',
   'chat.exportBatchFailed': '개 실패',
+  'chat.exportBatchUnreadable': '{n}개 대화를 읽지 못해 건너뛰었습니다',
+  'chat.exportBatchAllFailed': '{n}개 중 하나도 내보내지 못했습니다(읽기 실패 또는 쓰기 실패)',
   'chat.exportMulti': '다중 선택 내보내기…',
   'chat.exportSelectedMd': '선택 항목 MD 내보내기',
   'chat.exportSelectedHtml': '선택 항목 HTML 내보내기',

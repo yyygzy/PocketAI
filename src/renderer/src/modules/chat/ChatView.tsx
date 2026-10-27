@@ -9,6 +9,7 @@ import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
 import { ChatConfigBar } from './ChatConfigBar'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { useToast } from '../../components/ToastProvider'
 import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
@@ -193,6 +194,7 @@ export const ChatView: React.FC<Props> = ({
   onTogglePin
 }) => {
   const { t } = useI18n()
+  const toast = useToast()
   // 被引用消息快速查找表（用于气泡顶部显示引用条）
   const msgById = useMemo(() => {
     const m = new Map<string, MessageRecord>()
@@ -540,11 +542,14 @@ export const ChatView: React.FC<Props> = ({
       // 缓存供导出拖拽复用（messages 引用变化即视为失效）
       pngCacheRef.current = { dataUrl, fileName, messagesRef: messages }
     } catch (e) {
+      // §329：改前只 console.error ⇒ 那颗按钮的 spinner 收回、屏上什么都没变，
+      // 用户只会当成「点了没反应」（这一路不走 IPC，失败不会变成 {ok:false}，只能自己说话）
       console.error('export image failed', e)
+      toast.error(t('chat.exportFail', { e: errText(e, t('common.unknownError')) }))
     } finally {
       setExportingImage(false)
     }
-  }, [exportingImage, messages, assistantName, t])
+  }, [exportingImage, messages, assistantName, t, toast])
 
   /** 多选导出长图：复用同一渲染管线，按 selectedIds 顺序过滤 */
   const handleExportSelectedImage = useCallback(async () => {
@@ -556,7 +561,10 @@ export const ChatView: React.FC<Props> = ({
     }
     const LIMIT = 500
     const truncated = slice.length > LIMIT
-    const finalSlice = truncated ? slice.slice(0, LIMIT) : slice
+    // §329：取法与整会话那路对齐（`slice(-LIMIT)`）。图里那一行写的是「仅导出最近 500 条」
+    // （`chat.exportImageTooLong`，渲染在图上：`utils/export-image.tsx:90`），
+    // 改前取的是**前** 500 条 ⇒ 图上那句话与图的内容正好相反。
+    const finalSlice = truncated ? slice.slice(-LIMIT) : slice
     setExportingImage(true)
     try {
       const fileName = `pocketai-selected-${fileTimestamp(Date.now())}.png`
@@ -569,10 +577,11 @@ export const ChatView: React.FC<Props> = ({
       })
     } catch (e) {
       console.error('export selected image failed', e)
+      toast.error(t('chat.exportFail', { e: errText(e, t('common.unknownError')) }))
     } finally {
       setExportingImage(false)
     }
-  }, [exportingImage, selectedIds, messages, assistantName, t])
+  }, [exportingImage, selectedIds, messages, assistantName, t, toast])
 
   /** 长图按钮 pointerdown：有 PNG 缓存时预写拖拽临时文件（无缓存则本次不可拖，退化为点击导出） */
   const handleImageDragPointerDown = useCallback(() => {

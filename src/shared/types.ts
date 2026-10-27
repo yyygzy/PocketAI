@@ -1967,7 +1967,6 @@ export const IPC = {
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_BATCH_DELETE: 'conversation:batch-delete',
   CONVERSATION_RENAME: 'conversation:rename',
-  CONVERSATION_EXPORT: 'conversation:export',
   CONVERSATION_EXPORT_MD: 'conversation:export-md',
   CONVERSATION_EXPORT_HTML: 'conversation:export-html',
   CONVERSATION_EXPORT_PDF: 'conversation:export-pdf', // 单条导出 PDF（渲染端传自包含 HTML，主进程隐藏窗口 printToPDF）

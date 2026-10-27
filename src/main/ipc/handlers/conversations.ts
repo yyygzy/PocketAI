@@ -157,22 +157,6 @@ export function registerConversationHandlers(): void {
     conversationRepo.setSystemPromptOverride(convId, text)
     return { ok: true }
   }, argsSchema(idSchema, z.string().max(100_000).nullable()))
-  safeHandle(IPC.CONVERSATION_EXPORT, (_e, id: string) => {
-    const conv = conversationRepo.get(id)
-    if (!conv) return { ok: false, error: '会话不存在' }
-    const messages = messageRepo.listByConversation(id)
-    const assistant = conv.assistantId ? assistantRepo.get(conv.assistantId) ?? null : null
-    return {
-      ok: true,
-      data: {
-        version: 1,
-        exportedAt: Date.now(),
-        conversation: conv,
-        messages,
-        assistant
-      }
-    }
-  }, argsSchema(idSchema))
   safeHandle(IPC.CONVERSATION_EXPORT_MD, async (e, id: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: '窗口不可用' }

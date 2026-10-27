@@ -245,6 +245,8 @@ export const en = {
   'chat.exportBatchDone': 'Exported {n} conversations to {dir}',
   'chat.exportBatchEmpty': 'No conversations to export',
   'chat.exportBatchFailed': 'failed',
+  'chat.exportBatchUnreadable': '{n} conversations could not be read and were skipped',
+  'chat.exportBatchAllFailed': 'Nothing was exported: {n} conversation(s) unreadable or unwritable',
   'chat.exportMulti': 'Select & export…',
   'chat.exportSelectedMd': 'Export selected MD',
   'chat.exportSelectedHtml': 'Export selected HTML',

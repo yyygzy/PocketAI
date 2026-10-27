@@ -27,7 +27,7 @@ import { buildConversationHtml } from '../../../utils/export-html'
 import { buildReminderText, reminderCreatedToastKey } from '../../../utils/reminder-presets'
 import { formatDateTime } from '../../../utils/time'
 import { formatStepTokens } from '../../../utils/agent-step-tokens'
-import { capSelection, buildBatchExportFiles, finishBatchExport, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
+import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutcome, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
 import { assistantDisplayName } from '../../chat/assistant-display'
 
 export const AgentPanel: React.FC = () => {
@@ -298,19 +298,15 @@ export const AgentPanel: React.FC = () => {
         }
       }
       const assistantName = nameOfAssistant(chat.assistantId)
-      const files = await buildBatchExportFiles({
+      const built = await buildBatchExportFiles({
         convs: selected,
         format,
         listMessages: (id) => window.pocketai.listMessages(id),
         resolveAssistantName: () => assistantName
       })
-      const outcome = await finishBatchExport(files, format)
-      if (outcome.kind === 'failed') {
-        toast.error(t('chat.exportFail', { e: outcome.error || t('common.unknownError') }))
-      } else if (outcome.kind === 'done') {
-        const warn = outcome.failedCount > 0 ? `（${outcome.failedCount} ${t('chat.exportBatchFailed')}）` : ''
-        toast.success(`${t('chat.exportBatchDone', { n: outcome.count, dir: outcome.dir })}${warn}`)
-      }
+      const outcome = await finishBatchExport(built.files, format)
+      // 两屏共用一份收尾话术（§329：一个都没落地不许报绿；「读不到」与「写不进」分开报数）
+      reportBatchOutcome(toast, t, outcome, built.unreadable, t('common.unknownError'))
     } catch (e) {
       toast.error(t('chat.exportFail', { e: errText(e) }))
     }

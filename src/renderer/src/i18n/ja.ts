@@ -230,6 +230,8 @@ export const ja = {
   'chat.exportBatchDone': '{n}件の会話を {dir} に出力しました',
   'chat.exportBatchEmpty': 'エクスポートする会話がありません',
   'chat.exportBatchFailed': '件失敗',
+  'chat.exportBatchUnreadable': '{n}件の会話が読み取れずスキップしました',
+  'chat.exportBatchAllFailed': '{n}件はいずれも出力できませんでした（読み取り不可または書き込み不可）',
   'chat.exportMulti': '複数選択して書き出す…',
   'chat.exportSelectedMd': '選択分をMDで書き出す',
   'chat.exportSelectedHtml': '選択分をHTMLで書き出す',

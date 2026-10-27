@@ -252,8 +252,6 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_BATCH_DELETE, ids),
   renameConversation: (id: string, title: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_RENAME, id, title),
-  exportConversation: (id: string): Promise<{ ok: boolean; data?: ConversationExportPayload; error?: string }> =>
-    ipcRenderer.invoke(IPC.CONVERSATION_EXPORT, id),
   exportConversationMd: (id: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_EXPORT_MD, id),
   exportConversationHtml: (id: string, html: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
