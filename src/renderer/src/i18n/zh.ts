@@ -403,8 +403,8 @@ export const zh = {
   'lock.unlockFailed': '解锁失败',
 
   // ── 定时提醒 ──
-  'reminder.fired': '⏰ 提醒：{{text}}',
-  'reminder.missedSummary': '有 {{count}} 条提醒在应用未运行期间过期',
+  'reminder.fired': '⏰ 提醒：{text}',
+  'reminder.missedSummary': '有 {count} 条提醒在应用未运行期间过期',
 
   // ── 平台管家（静态文案；检测项 label/detail 来自主进程数据） ──
   'steward.modelRec': '🤖 模型推荐',
@@ -737,7 +737,7 @@ export const zh = {
   'agent.copyReasoning': '复制思考过程',
   'agent.unknownError': '未知错误',
   'agent.todoTitle': '任务清单',
-  'agent.todoProgress': '{{done}}/{{total}} 已完成',
+  'agent.todoProgress': '{done}/{total} 已完成',
   'agent.resume': '继续执行',
   'agent.noToolCallNotice': '当前模型未使用可用工具，建议换用 7b 及以上模型以获得更好效果',
   'agent.textProtocol': '文本协议',
@@ -1614,10 +1614,13 @@ export const zh = {
   'kb.syncUpToDate': '已检查 {n} 个文件文档，全部为最新',
   'kb.syncConfirm': '检测到 {n} 个文档源文件有更新、{m} 个源文件已丢失。将重索引变更文档并移除丢失文档，继续吗？',
   'kb.syncDone': '已重索引 {n} 个变更文档，移除 {m} 个丢失文档',
+  'kb.syncAllFailed': '同步失败：{n} 个文件一个都没处理成功',
+  'kb.syncPartial': '同步只做成一部分：成功 {ok} 个、失败 {failed} 个',
   'kb.docEnabled': '参与检索（取消勾选可临时排除）',
   'kb.docDisabled': '已排除出检索（勾选可恢复）',
   'kb.folderNoMatch': '该文件夹中未找到支持的文档（md/txt/pdf/docx/xlsx/html 等）',
   'kb.folderTruncated': '文件数量超出单次导入上限，已导入前 {n} 个，请分批导入剩余文件',
+  'kb.folderSkipped': '另有 {n} 个文件被跳过（类型不支持、图片未启用 OCR，或超过单文件大小上限）',
   'kb.addSkipped': '导入 {n} 篇，跳过 {d} 篇重复（同路径 {p}、内容相同 {c}）',
   'kb.dupUrl': '该网址已经在知识库里了，没有重复抓取',
   'kb.batchMode': '批量操作',

@@ -615,6 +615,8 @@ export const KbDetail: React.FC<{
   const [readErr, setReadErr] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [previewDoc, setPreviewDoc] = useState<KbDocument | null>(null)
+  /** §331：要定位的那个分块号。`jumpFocus` 在消费那一趟就被父级清空，预览不能现场读它——见下面那条消费 effect */
+  const [previewFocusSeq, setPreviewFocusSeq] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [askMode, setAskMode] = useState(false)
   /** 批量模式：行首那个复选框在批量模式下表示「选中要处理」，平时表示「参与检索」 */
@@ -672,7 +674,13 @@ export const KbDetail: React.FC<{
     if (!jumpFocus) return
     const doc = docs.find((d) => d.id === jumpFocus.docId)
     if (!doc) return
+    // §331：**先取后清**。`onJumpHandled()` 是父级的 `setJumpFocus(null)`，与下面两行同一次批处理提交
+    // ⇒ 渲染 ChunkPreview 时 `jumpFocus` 已经是 null，改前那句 `focusSeq={jumpFocus?.seq}` 恒为 null，
+    // 「查看原文」只打开分块窗、既不滚动也不高亮（整条定位链失效，且 §282 那条用例因为把 jumpFocus
+    // 当固定 prop 挂、没建模父级回清，一直是假绿）。所以现在把 seq 提成一份自己的读数再清 pending。
+    const seq = jumpFocus.seq
     setAskMode(false)
+    setPreviewFocusSeq(seq)
     setPreviewDoc(doc)
     onJumpHandled?.()
   }, [jumpFocus, docs, onJumpHandled])
@@ -765,6 +773,9 @@ export const KbDetail: React.FC<{
         toast.warning(t('kb.folderTruncated', { n: r.docs.length }))
       }
       toastSkippedDuplicates(r)
+      // §331：另一本没人说的账——主进程扫描时跳过的文件（类型不支持、图片未开 OCR、超过单文件大小上限、
+      // 读不到）。改前 `skippedCount` 渲染层从不读 ⇒ 一个文件夹里几十上百个文件被悄悄丢掉，屏上只报「已导入 N 篇」。
+      if (r.skippedCount > 0) toast.warning(t('kb.folderSkipped', { n: r.skippedCount }))
       await refresh()
       startPolling()
     } finally {
@@ -913,15 +924,30 @@ export const KbDetail: React.FC<{
         danger: missing.length > 0
       })
       if (!ok) return
+      // §331：这一趟是 N 发独立请求，改前逐条 await 全不判、末尾无条件报「已重索引 n 个、移除 m 个」
+      // ⇒ 全部失败也报全成功。现在两笔账各自数，失败那条单独说。
+      let reindexed = 0
+      let removed = 0
+      let failed = 0
       for (const doc of changed) {
-        await window.pocketai.reindexKbDocument(kb.id, doc.docId)
+        const r = await window.pocketai.reindexKbDocument(kb.id, doc.docId)
+        if (hasIpcFailed(r)) failed++
+        else reindexed++
       }
       for (const doc of missing) {
-        await window.pocketai.deleteKbDocument(doc.docId)
+        const r = await window.pocketai.deleteKbDocument(doc.docId)
+        if (hasIpcFailed(r)) failed++
+        else removed++
       }
       await refresh()
-      if (changed.length > 0) startPolling()
-      toast.success(t('kb.syncDone', { n: changed.length, m: missing.length }))
+      if (reindexed > 0) startPolling()
+      if (failed === 0) {
+        toast.success(t('kb.syncDone', { n: reindexed, m: removed }))
+      } else if (reindexed + removed === 0) {
+        toast.error(t('kb.syncAllFailed', { n: failed }))
+      } else {
+        toast.warning(t('kb.syncPartial', { ok: reindexed + removed, failed }))
+      }
     } catch (e) {
       toast.error(errText(e))
     } finally {
@@ -1122,7 +1148,14 @@ export const KbDetail: React.FC<{
 
       {/* 分块预览弹层 */}
       {previewDoc && (
-        <ChunkPreview doc={previewDoc} onClose={() => setPreviewDoc(null)} focusSeq={jumpFocus?.seq ?? null} />
+        <ChunkPreview
+          doc={previewDoc}
+          onClose={() => {
+            setPreviewDoc(null)
+            setPreviewFocusSeq(null)
+          }}
+          focusSeq={previewFocusSeq}
+        />
       )}
 
       {/* 添加 URL / 录入文本弹窗 */}
@@ -1460,7 +1493,13 @@ const RenameDocDialog: React.FC<{
     setBusy(true)
     setError('')
     try {
-      await window.pocketai.renameKbDocument(doc.id, trimmed)
+      const r = await window.pocketai.renameKbDocument(doc.id, trimmed)
+      // §331：safeHandle 的失败是 resolve 的 `{ok:false}`（文档已被删／标题超 500 字被 zod 整条拒）——
+      // 改前这一发完全不判，失败也照弹「已重命名」并关窗，用户以为改上了而库里还是旧标题
+      if (hasIpcFailed(r)) {
+        setError(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       toast.success(t('kb.renameOk'))
       await onDone()
       onClose()
@@ -1557,7 +1596,13 @@ const EditTextDocDialog: React.FC<{
     setBusy(true)
     setError('')
     try {
-      await window.pocketai.updateKbDocText(doc.id, trimmedTitle, text)
+      const r = await window.pocketai.updateKbDocText(doc.id, trimmedTitle, text)
+      // §331：失败绝不关窗——改前不判信封，界面报「已保存」然后 onClose 把这个 textarea 卸载，
+      // 刚敲进去的原文（粘贴超 100 万字符被 zod 拒、或文档已不在）就此永久丢失
+      if (hasIpcFailed(r)) {
+        setError(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       toast.success(t('kb.editOk'))
       await onDone()
       onClose()

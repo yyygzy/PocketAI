@@ -5,6 +5,7 @@
 // ② ChunkPreview 滚动到目标分块并高亮闪烁；③ 消费后回调清 pending。
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { useState } from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { KbDetail } from '../src/renderer/src/modules/knowledge/KnowledgeModule'
@@ -40,9 +41,24 @@ let scrollSpy: ReturnType<typeof vi.fn>
 const MOUNT_BUDGET = { timeout: 8000, interval: 50 }
 
 function mountDetail(jump: { docId: string; seq: number } | null | undefined, onHandled?: () => void): void {
-  mountWithProviders(
-    <KbDetail kb={kb()} onChanged={() => {}} jumpFocus={jump} onJumpHandled={onHandled} />
-  )
+  // §331：**照 `KnowledgeModule.tsx` 的真实接线挂**。上一版把 jumpFocus 当固定 prop 传进去
+  // （永不回清），于是"消费时顺手清空 pending、同一批里 ChunkPreview 读 `jumpFocus?.seq` 恒为 null"
+  // 这条真缺陷在 CI 里根本演不出来 ⇒ 用例是假绿。这里换成父级那份 state：消费一次就清成 null。
+  const Harness = (): React.ReactElement => {
+    const [j, setJ] = useState(jump ?? null)
+    return (
+      <KbDetail
+        kb={kb()}
+        onChanged={() => {}}
+        jumpFocus={j}
+        onJumpHandled={() => {
+          onHandled?.()
+          setJ(null)
+        }}
+      />
+    )
+  }
+  mountWithProviders(<Harness />)
 }
 
 beforeEach(() => {

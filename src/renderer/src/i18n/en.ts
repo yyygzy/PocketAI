@@ -403,8 +403,8 @@ export const en = {
   'lock.unlockFailed': 'Unlock failed',
 
   // ── Reminders ──
-  'reminder.fired': '⏰ Reminder: {{text}}',
-  'reminder.missedSummary': '{{count}} reminder(s) expired while the app was not running',
+  'reminder.fired': '⏰ Reminder: {text}',
+  'reminder.missedSummary': '{count} reminder(s) expired while the app was not running',
 
   // ── Platform steward (static labels; check labels/details come from main-process data) ──
   'steward.modelRec': '🤖 Model recommendations',
@@ -736,7 +736,7 @@ export const en = {
   'agent.copyReasoning': 'Copy reasoning',
   'agent.unknownError': 'Unknown error',
   'agent.todoTitle': 'Task list',
-  'agent.todoProgress': '{{done}}/{{total}} completed',
+  'agent.todoProgress': '{done}/{total} completed',
   'agent.resume': 'Resume',
   'agent.noToolCallNotice': 'The model did not use any available tools. Switch to a 7B+ model for better results.',
   'agent.textProtocol': 'Text protocol',
@@ -1613,10 +1613,13 @@ export const en = {
   'kb.syncUpToDate': 'Checked {n} file documents, all up to date',
   'kb.syncConfirm': 'Found {n} changed and {m} missing source files. Changed documents will be reindexed and missing ones removed. Continue?',
   'kb.syncDone': 'Reindexed {n} changed documents, removed {m} missing documents',
+  'kb.syncAllFailed': 'Sync failed: none of the {n} files could be processed',
+  'kb.syncPartial': 'Sync partially done: {ok} succeeded, {failed} failed',
   'kb.docEnabled': 'Included in retrieval (uncheck to temporarily exclude)',
   'kb.docDisabled': 'Excluded from retrieval (check to restore)',
   'kb.folderNoMatch': 'No supported documents found in this folder (md/txt/pdf/docx/xlsx/html, etc.)',
   'kb.folderTruncated': 'File count exceeded the per-import limit; imported the first {n}. Import the rest in batches',
+  'kb.folderSkipped': '{n} more files were skipped (unsupported type, image without OCR enabled, or over the size limit)',
   'kb.addSkipped': 'Imported {n}, skipped {d} duplicates ({p} same path, {c} identical content)',
   'kb.dupUrl': 'This URL is already in the knowledge base; it was not fetched again',
   'kb.batchMode': 'Batch actions',

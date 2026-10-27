@@ -542,10 +542,12 @@ describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下
     // §326：沙箱这一屏两处从"只被 try/catch 包着"挪进了"判返回值"（现数：judged 249／caught 38）。
     // §328：首启向导那一屏再搬四处（saveAssistant 绑 provider／setAssistantPinned／循环里的 saveSkill／completeWizard），
     //   先探针现量两桶再动数字：judged 253／caught 34／unsafe 0／SITES 287（总数不变＝纯搬运，不是扫描器少看了）。
+    // §331：知识库文档重命名／编辑原文／消息右键建提醒三发从 try/catch 桶搬进判定桶（§330 那批搬了两发问答历史读取），
+    //   探针现量：judged 258／caught 29／unsafe 0／**SITES 287＝和 §328 完全一样** ⇒ 是搬运不是漏看。
     // 这两根是**量级底线**（扫描器瞎了才会掉到这儿），不是精确数；收一处静默点就会让 caught 少一点、judged 多一点，
     // 所以 judged 那根随批上提，caught 那根留出 Enough 的余量。
-    expect(judged, '判返回值的点').toBeGreaterThanOrEqual(250)
-    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(30)
+    expect(judged, '判返回值的点').toBeGreaterThanOrEqual(255)
+    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(28)
     expect(judged + caught + unsafe.length).toBe(SITES.length)
   })
 

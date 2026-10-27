@@ -68,6 +68,9 @@ const KbAskPanel: React.FC<{
   const msgsRef = useRef<KbAskMessage[]>([])
   // 会话留痕：当前会话 id / 创建时间；历史列表与展开态
   const [sessionId, setSessionId] = useState<string | null>(null)
+  // §331：当前会话的标题。改前 `persistSession` 每次 upsert 都用首句重算标题 ⇒ 用户在历史里改好的
+  // 会话名会被下一句追问静默还原成「首问截断」。这里留一份用户那一侧的标题（null＝还没定过，按首问算）。
+  const sessionTitleRef = useRef<string | null>(null)
   const [sessionCreatedAt, setSessionCreatedAt] = useState(0)
   const [sessionList, setSessionList] = useState<KbAskSessionMeta[]>([])
   const [showHistory, setShowHistory] = useState(false)
@@ -241,7 +244,8 @@ const KbAskPanel: React.FC<{
       .saveKbAskSession({
         id: sid,
         kbId: kb.id,
-        title: sessionTitleFrom(firstUser?.content ?? ''),
+        // §331：用户改过名字就沿用那份，不再用首句重算把改名冲掉（null＝本会话还没定过标题）
+        title: sessionTitleRef.current ?? sessionTitleFrom(firstUser?.content ?? ''),
         messages: next,
         providerId,
         model,
@@ -372,6 +376,7 @@ const KbAskPanel: React.FC<{
     openedSessionRef.current = null
     setSessionId(null)
     setSessionCreatedAt(0)
+    sessionTitleRef.current = null
     msgsRef.current = []
     setMsgs([])
     setStreamText('')
@@ -404,6 +409,7 @@ const KbAskPanel: React.FC<{
         }
         setSessionId(rec.id)
         setSessionCreatedAt(rec.createdAt)
+        sessionTitleRef.current = rec.title
         msgsRef.current = rec.messages
         setMsgs(rec.messages)
         setStreamText('')
@@ -460,6 +466,8 @@ const KbAskPanel: React.FC<{
           toast.error(ipcFailText(r, t('common.unknownError')))
           return
         }
+        // §331：改的正是当前开着的那条 ⇒ 追问落库用的标题也换成新名（否则 persistSession 把旧名写回去）
+        if (id === sessionId) sessionTitleRef.current = title
         refreshSessions()
       })
       .catch((e) => toast.error(errText(e)))

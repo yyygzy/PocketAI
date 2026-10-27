@@ -1394,12 +1394,19 @@ export const ChatModule: React.FC = () => {
       return
     }
     try {
-      await window.pocketai.createReminder({
+      const r = await window.pocketai.createReminder({
         text,
         fireAt,
         conversationId: currentConvId ?? null,
         ...(repeatRule ? { repeatRule } : {})
       })
+      // §331：这一发的成功形状是 `{ok:true,id,fireAt}`、失败是 safeHandle 折出来的 `{ok:false}`——
+      // 改前整个返回值不接，时间已过／超过 30 天／待发达上限时照样派发角标事件＋弹「已设置提醒」，
+      // 而库里根本没建（姊妹调用点 AgentPanel 同链路早已判过）。失败就说不建成的原因，且不再刷新角标。
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+        return
+      }
       // 通知 Sidebar 角标即时刷新（创建无 IPC 广播，本地事件轻量通知）
       window.dispatchEvent(new Event('pocketai:reminders-changed'))
       toast.success(

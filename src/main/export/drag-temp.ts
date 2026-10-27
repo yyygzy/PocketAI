@@ -69,7 +69,7 @@ export function cleanupDragTempDir(
     try {
       const p = path.join(dir, name)
       const st = fs.statSync(p)
-      if (st.isFile() && now - st.mtimeMs > maxAgeMs) {
+      if (st.isFile() && now - st.mtimeMs >= maxAgeMs) {
         fs.unlinkSync(p)
         removed++
       }

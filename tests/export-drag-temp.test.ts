@@ -141,4 +141,21 @@ describe('329 惰性阈值与退出全清', () => {
     expect(cleanupDragTempDir(Date.now(), dir, 0)).toBe(1)
     expect(fs.existsSync(fresh)).toBe(false)
   })
+
+  // §331：上面那条用两个 `Date.now()` 夹一个刚写的文件，落在同一毫秒时 `now - mtime` 就是 0，
+  // 而比较写的是严格 `>` ⇒ 时红时绿（全量 C 趟就是这么撞出来的）。这里把 `now` 直接取成那份文件自己的
+  // mtime，边界变成确定性的：退出那一档「全清」不许漏掉刚拖出去的那一份。
+  it('同一毫秒的确定性边界：now 取这份文件自己的 mtime ⇒ 退出那一档仍要清掉它', () => {
+    const p = touch('same-ms.md', new Date())
+    const mtimeMs = fs.statSync(p).mtimeMs
+    expect(cleanupDragTempDir(mtimeMs, dir, 0)).toBe(1)
+    expect(fs.existsSync(p)).toBe(false)
+  })
+
+  it('反向钉：把阈值那一档的 now 也取成同一毫秒 ⇒ 刚写的那份必须留住（"全清"不许写成无条件删）', () => {
+    const p = touch('under-threshold.md', new Date())
+    const mtimeMs = fs.statSync(p).mtimeMs
+    expect(cleanupDragTempDir(mtimeMs, dir, DRAG_TEMP_MAX_AGE_MS)).toBe(0)
+    expect(fs.existsSync(p)).toBe(true)
+  })
 })

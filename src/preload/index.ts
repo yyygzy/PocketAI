@@ -525,10 +525,17 @@ const api = {
   getKbDocText: (docId: string): Promise<{ title: string; text: string } | null> =>
     ipcRenderer.invoke(IPC.KB_DOC_GET_TEXT, docId),
   /** 编辑 txt 文档标题+原文（保存后后台自动重建索引） */
-  updateKbDocText: (docId: string, title: string, text: string): Promise<KbDocument> =>
+  updateKbDocText: (
+    docId: string,
+    title: string,
+    text: string
+  ): Promise<KbDocument | { ok: false; error: string; ipcCode?: string; ipcArgs?: unknown[] }> =>
     ipcRenderer.invoke(IPC.KB_DOC_UPDATE_TEXT, docId, title, text),
   /** 重命名文档标题（全部类型，不重建索引） */
-  renameKbDocument: (docId: string, title: string): Promise<KbDocument> =>
+  renameKbDocument: (
+    docId: string,
+    title: string
+  ): Promise<KbDocument | { ok: false; error: string; ipcCode?: string; ipcArgs?: unknown[] }> =>
     ipcRenderer.invoke(IPC.KB_DOC_RENAME, docId, title),
   checkKbUpdates: (kbId: string): Promise<{
     checked: number
@@ -1186,8 +1193,10 @@ const api = {
   /** 消息右键「提醒我」直建一次性提醒 */
   createReminder: (
     payload: ReminderCreatePayload
-  ): Promise<{ ok: true; id: string; fireAt: number }> =>
-    ipcRenderer.invoke(IPC.REMINDER_CREATE, payload),
+  ): Promise<
+    | { ok: true; id: string; fireAt: number }
+    | { ok: false; error: string; ipcCode?: string; ipcArgs?: unknown[] }
+  > => ipcRenderer.invoke(IPC.REMINDER_CREATE, payload),
   /** 提醒列表：scope 缺省/pending=待发（按触发时间升序），history=已触发/错过/取消（倒序），上限 50 */
   listReminders: (scope?: 'pending' | 'history'): Promise<ReminderRecord[]> =>
     ipcRenderer.invoke(IPC.REMINDER_LIST, scope),
