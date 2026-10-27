@@ -182,8 +182,11 @@ const api = {
   listSkills: (): Promise<SkillRecord[]> => ipcRenderer.invoke(IPC.SKILL_LIST),
   getSkill: (id: string): Promise<SkillRecord | null> =>
     ipcRenderer.invoke(IPC.SKILL_GET, id),
-  saveSkill: (record: Partial<SkillRecord> & { name: string }): Promise<SkillRecord> =>
-    ipcRenderer.invoke(IPC.SKILL_SAVE, record),
+  // §328：类型要带上失败分支——safeHandle 把抛错与 zod 拒绝转成 resolve 的 `{ok:false}`，
+  // 只写 `Promise<SkillRecord>` 就是让调用处"看上去判不了"（运行期看得见，只有 tsc 看不见这一面）
+  saveSkill: (record: Partial<SkillRecord> & { name: string }): Promise<
+    SkillRecord | { ok: false; error: string; ipcCode?: string; ipcArgs?: unknown[] }
+  > => ipcRenderer.invoke(IPC.SKILL_SAVE, record),
   deleteSkill: (id: string): Promise<{ ok: boolean; filesRemoved?: boolean }> =>
     ipcRenderer.invoke(IPC.SKILL_DELETE, id),
   exportSkill: (

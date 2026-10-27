@@ -5,8 +5,10 @@
 // ① k 输入框留空时**不许**替用户编一个数——要传 undefined，让主进程去用这个库自己的 topN；
 // ② 指标/失效/停用/警告四组信息必须同时在场，只把 recall 摆出来就是在一个坏卷子上报喜。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { mountWithProviders, stubPocketai } from './helpers/renderer'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import fs from 'node:fs'
+import path from 'node:path'
+import { HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
 import { KbEvalPanel } from '../src/renderer/src/modules/knowledge/KbEvalPanel'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { KbEvalRunResult } from '../src/shared/kb-eval'
@@ -175,5 +177,76 @@ describe('评测集面板', () => {
     await waitFor(() => expect(pickKbEvalSet).toHaveBeenCalled())
     expect(screen.queryByText('set.json')).toBeNull()
     expect(screen.queryByText(/读不到评测集/)).toBeNull()
+  })
+})
+
+// ---------- V4-Iter-328：这块屏的读数不属于"上一个库" ----------
+
+/**
+ * `KnowledgeModule.tsx` 里 `KbDetail` 渲染时不带 `key`（§311 记过同一件事：切库是**同一个实例**），
+ * 所以下面那颗 `KbEvalPanel` 的 `file/result/busy` 会跨库存活：库 A 的 recall@k 画在库 B 屏上，
+ * 跑一半切库更是把 A 的结果落到 B。修法照同文件 `KbAskPanel` 的先例（`key={kb.id}`，注释就写着
+ * "保证切库重挂载，会话状态不跨库串数据"）。
+ *
+ * 三条各管一段：① 行为用例先证明"不带 key 就真会串"（不这么写，判据只是在断一句空话）；
+ * ② 带 key 的那发证明这条修法真的清掉了它；③ 源码级闸门盯**生产挂载那一行**——
+ *   ①② 用的是用例自己搭的 wrapper，挂载处漏了 key 它们俩都不会红。
+ */
+describe('328 切库不串评测读数', () => {
+  async function pickAndRun() {
+    fireEvent.click(screen.getByText(zh['kb.evalPick']))
+    await waitFor(() => expect(screen.getByText('set.json')).toBeTruthy())
+    fireEvent.click(screen.getByText(zh['kb.evalRun']))
+    await waitFor(() => expect(screen.getByText('50.0%')).toBeTruthy())
+  }
+
+  it('牙齿：同一个实例换个 kbId ⇒ 卷名与分数照旧挂在屏上（这就是挂载处必须带 key 的原因）', async () => {
+    pickKbEvalSet.mockResolvedValue({ token: 'tk', fileName: 'set.json' })
+    runKbEval.mockResolvedValue(result())
+    const view = render(
+      <HookProviders>
+        <KbEvalPanel kbId="kbE" />
+      </HookProviders>
+    )
+    await pickAndRun()
+    await act(async () => {
+      view.rerender(
+        <HookProviders>
+          <KbEvalPanel kbId="kbF" />
+        </HookProviders>
+      )
+    })
+    expect(screen.getByText('set.json'), '不带 key ⇒ 库 A 的卷子还挂在库 B 的屏上').toBeTruthy()
+    expect(screen.getByText('50.0%'), '不带 key ⇒ 库 A 的 recall@k 画在库 B 上').toBeTruthy()
+  })
+
+  it('反向对照：带上 key 换库 ⇒ 那一屏归零，不会把 A 的分数留在 B 上', async () => {
+    pickKbEvalSet.mockResolvedValue({ token: 'tk', fileName: 'set.json' })
+    runKbEval.mockResolvedValue(result())
+    const view = render(
+      <HookProviders>
+        <KbEvalPanel key="kbE" kbId="kbE" />
+      </HookProviders>
+    )
+    await pickAndRun()
+    await act(async () => {
+      view.rerender(
+        <HookProviders>
+          <KbEvalPanel key="kbF" kbId="kbF" />
+        </HookProviders>
+      )
+    })
+    expect(screen.queryByText('set.json')).toBeNull()
+    expect(screen.queryByText('50.0%')).toBeNull()
+  })
+
+  it('生产挂载那一行带 key（源码级：上面两条用的是用例自己的 wrapper，盯不到挂载处）', () => {
+    const src = fs
+      .readFileSync(path.resolve(__dirname, '../src/renderer/src/modules/knowledge/KnowledgeModule.tsx'), 'utf8')
+      .split(/\r?\n/)
+    const sites = src.filter((l) => l.includes('<KbEvalPanel'))
+    expect(sites, '这块屏只该有一个挂载点').toHaveLength(1)
+    expect(sites[0]).toContain('key={kb.id}')
+    expect(sites[0]).toContain('kbId={kb.id}')
   })
 })

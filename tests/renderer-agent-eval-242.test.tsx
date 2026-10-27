@@ -8,7 +8,7 @@
 // 另外三件只在真挂载时才现形的事：入口默认收起（不自动读、更不自动跑——这一屏每跑一次都花额度）、
 // 进度事件由订阅回调推出来（首帧闭包读不到最新 state，见 §238 那条）、坏 k 值在发出去之前就被夹住。
 import { describe, it, expect, beforeEach } from 'vitest'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { AgentPanel } from '../src/renderer/src/modules/agent/chat/AgentPanel'
 import { mountWithProviders, pocketaiCalls, stubPocketai } from './helpers/renderer'
 import { zh } from '../src/renderer/src/i18n/zh'
@@ -306,5 +306,99 @@ describe('④ 那两句实话', () => {
     fireEvent.click(screen.getByTestId('agent-eval-close'))
     await waitFor(() => expect(screen.queryByTestId('agent-eval-panel')).toBeNull())
     resolveRun(fakeResult())
+  })
+})
+
+// ---------- V4-Iter-328：那一趟的读数不绑在面板实例上 ----------
+
+/** 主进程推来的进度事件（形状照 `AgentEvalProgressEvent`，别抄实现里的字段名） */
+const runningEvent = {
+  runId: 'suite-1',
+  tier: 'smoke' as const,
+  model: 'glm-4.6',
+  providerId: 'glm',
+  total: 8,
+  done: 2,
+  phase: 'attempt-start' as const,
+  current: { taskId: 'calc-then-write', attempt: 1 }
+}
+
+describe('⑤ 328 孤儿趟：面板收得掉，那一趟收不掉', () => {
+  it('收起面板再打开 ⇒ 那颗「停下」与进度都还在（改前两者一起消失，那一趟没人能停）', async () => {
+    let resolveRun: (v: unknown) => void = () => {}
+    runReply = new Promise((r) => {
+      resolveRun = r
+    })
+    await openPanel()
+    fireEvent.click(await screen.findByTestId('agent-eval-run'))
+    await waitFor(() => expect(h.progress.length).toBeGreaterThan(0))
+    h.progress[0]!(runningEvent)
+    expect((await screen.findByTestId('agent-eval-progress')).textContent).toContain('第 3/8 发')
+
+    fireEvent.click(screen.getByTestId('agent-eval-close'))
+    await waitFor(() => expect(screen.queryByTestId('agent-eval-panel')).toBeNull())
+
+    fireEvent.click(await toggle())
+    await screen.findByTestId('agent-eval-panel')
+    expect(screen.getByTestId('agent-eval-stop'), '那一趟还在主进程里跑 ⇒ 停它的那颗键必须回来').toBeTruthy()
+    expect((screen.getByTestId('agent-eval-progress') as HTMLElement).textContent).toContain('第 3/8 发')
+    expect((screen.getByTestId('agent-eval-run') as HTMLButtonElement).disabled, '在跑的时候不许再开一趟').toBe(true)
+
+    await act(async () => {
+      resolveRun(fakeResult())
+    })
+  })
+
+  it('面板是空着挂上来的、只靠进度事件认出一趟在跑（渲染端重走过那一趟的情形）', async () => {
+    // 这一屏发起的那发 Promise 已经随旧文档一起没了：界面唯一能知道"有趟在跑"的证据就是事件到货
+    let resolveRun: (v: unknown) => void = () => {}
+    runReply = new Promise((r) => {
+      resolveRun = r
+    })
+    await openPanel()
+    fireEvent.click(await screen.findByTestId('agent-eval-run'))
+    await waitFor(() => expect(h.progress.length).toBeGreaterThan(0))
+    fireEvent.click(screen.getByTestId('agent-eval-close'))
+    await waitFor(() => expect(screen.queryByTestId('agent-eval-panel')).toBeNull())
+    await act(async () => {
+      resolveRun(fakeResult())
+    })
+    // 现在 store 归零、面板也没挂：重开面板时它不知道有任何趟
+    fireEvent.click(await toggle())
+    await screen.findByTestId('agent-eval-panel')
+    expect(screen.queryByTestId('agent-eval-stop')).toBeNull()
+    // 事件推来 ⇒ 那颗键与那一句进度当场长出来（"在跑"的证据只在这一条路上）
+    await waitFor(() => expect(h.progress.length).toBeGreaterThan(0))
+    await act(async () => {
+      h.progress[0]!(runningEvent)
+    })
+    expect(screen.getByTestId('agent-eval-stop')).toBeTruthy()
+    expect((screen.getByTestId('agent-eval-progress') as HTMLElement).textContent).toContain('第 3/8 发')
+
+    // 用例自己收尾：这份读数是模块级的，留着"有一趟在跑"会把后面那两条的「跑一趟」点成禁用态
+    stopReply = { stopped: false }
+    fireEvent.click(screen.getByTestId('agent-eval-stop'))
+    await waitFor(() => expect(screen.queryByTestId('agent-eval-stop')).toBeNull())
+  })
+
+  it('被「已经在跑」挡住时，那句让用户点的『停下』此刻真的在屏上', async () => {
+    runReply = { ok: false, error: 'EVAL_ALREADY_RUNNING:已经有一趟评测在跑了', ipcCode: 'EVAL_ALREADY_RUNNING' }
+    await openPanel()
+    fireEvent.click(await screen.findByTestId('agent-eval-run'))
+    expect((await screen.findByTestId('agent-eval-error')).textContent).toBe(zh['agent.eval.alreadyRunning'])
+    expect(screen.getByTestId('agent-eval-stop'), '这句话指的那颗键不许不在屏上（指路文案要实地走过）').toBeTruthy()
+
+    // 主进程说"没东西可停"是最硬的一句 ⇒ 那句话留着，那颗键收回
+    stopReply = { stopped: false }
+    fireEvent.click(screen.getByTestId('agent-eval-stop'))
+    await waitFor(() => expect(screen.queryByTestId('agent-eval-stop')).toBeNull())
+  })
+
+  it('反向对照：EVAL_RUN_BUSY 不是"有一趟评测在跑" ⇒ 不该长出那颗键', async () => {
+    runReply = { ok: false, error: 'EVAL_RUN_BUSY:有 Agent 运行正在进行', ipcCode: 'EVAL_RUN_BUSY' }
+    await openPanel()
+    fireEvent.click(await screen.findByTestId('agent-eval-run'))
+    expect((await screen.findByTestId('agent-eval-error')).textContent).toBe(zh['agent.eval.busy'])
+    expect(screen.queryByTestId('agent-eval-stop')).toBeNull()
   })
 })

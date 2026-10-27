@@ -64,9 +64,18 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [apiKey, setApiKey] = useState('')
   const [selectedAssistantId, setSelectedAssistantId] = useState<string | null>(null)
   const [setupErr, setSetupErr] = useState('')
+  // §328：「完成 / 跳过」那两发的落库结果（向导是否已完成记在 app_config）。
+  // 改前 `finish()` 只看 catch，而 safeHandle 把抛错转成 resolve 的 `{ok:false}` ⇒ catch 永不进，
+  // 屏上零提示就把向导关了，代价是下次开机整趟重走。
+  const [finishErr, setFinishErr] = useState('')
   // §229：完成页那句「内置技能: ✓ 自动启用前 3 个」原本是**无条件渲染**的，
   // 而启用这一步在读不到技能列表时会被整步跳过 ⇒ 那一句就在替用户撒谎。这一步的结果要留下，完成页按结果说。
-  const [skillOutcome, setSkillOutcome] = useState<{ state: 'enabled' | 'skipped' | 'failed'; msg?: string } | null>(null)
+  const [skillOutcome, setSkillOutcome] = useState<{
+    state: 'enabled' | 'skipped' | 'failed' | 'enableFailed'
+    msg?: string
+    done?: number
+    total?: number
+  } | null>(null)
   // B1 闸门触发后开放「回安全步设主密码」的入口（配置步内专用）
   const [jumpToSecurity, setJumpToSecurity] = useState(false)
   // 存下的整条 provider 记录（147 起完成页的可选探针要用它的 models；只存 id 会看不出有没有缓存模型）
@@ -75,7 +84,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [probeModel, setProbeModel] = useState('')
   const [probing, setProbing] = useState(false)
   const [probeOut, setProbeOut] = useState<DelegateProbeResult | null>(null)
-  const [probeErr, setProbeErr] = useState('')
+  // §328：判定与报错都带着"测的是哪一台"（载荷里本来就有 providerId/model）。
+  // 改前换 select 不收回旧结论 ⇒ 那句「可当管控者」会跟着用户指到另一台模型上。
+  const [probeErr, setProbeErr] = useState<{ model: string; text: string } | null>(null)
   const [probeSkipped, setProbeSkipped] = useState(false)
 
   // Step 2: Encryption state
@@ -161,11 +172,25 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
 
   async function finish() {
     setBusy(true)
+    setFinishErr('')
+    // §328：这一发的结果原本无人看。`safeHandle` 把写库失败转成 resolve 的 `{ok:false}` ⇒ 下面那个 catch
+    // 是死支路，改前等于"没记住向导已完成"也要静默关窗，代价是下次开机整趟重走、屏上零提示。
+    let markFail: string | null = null
     try {
-      await window.pocketai.completeWizard()
+      const done = await window.pocketai.completeWizard()
+      if (hasIpcFailed(done)) {
+        markFail = ipcFailText(done, t('common.unknownError'))
+        logIpcError('wizard.complete', new Error(markFail))
+      }
     } catch (e) {
-      // 标记失败不阻塞关闭（向导已完成，重启后仍会再弹，但不卡死用户）
+      markFail = errText(e, t('common.unknownError'))
       logIpcError('wizard.complete', e)
+    }
+    setBusy(false)
+    // 失败就不关：那一句话要留在屏上，那两颗键留着再点一次
+    if (markFail) {
+      setFinishErr(t('wizard.markFailed', { msg: markFail }))
+      return
     }
     onClose()
   }
@@ -284,18 +309,25 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           })
         }
         if (!target.defaultProviderId) {
-          await window.pocketai.saveAssistant({
+          // §328：这一发不判 ⇒ safeHandle 的 `{ok:false}` 只是被 await 掉，向导照样前进、
+          // 完成页照画 ✓ 助手，而那位助手其实没绑上 provider（对话页挑不到）。
+          // 用 hasIpcFailed：成功载荷是记录（没有 ok 字段），失败载荷才有。
+          const bound = await window.pocketai.saveAssistant({
             ...target,
             defaultProviderId: providerId,
           })
+          if (hasIpcFailed(bound)) throw new Error(ipcFailText(bound, t('common.unknownError')))
         }
       }
       // 3. pin 选中的助手（内置的 pin 副本）
-      await window.pocketai.setAssistantPinned(effectiveAssistantId, true)
+      // §328 同族：这一发成功载荷就是 `{ok:true}`，所以判据必须是 hasIpcFailed（isIpcFail 会把成功读成失败，同 139）
+      const pinned = await window.pocketai.setAssistantPinned(effectiveAssistantId, true)
+      if (hasIpcFailed(pinned)) throw new Error(ipcFailText(pinned, t('common.unknownError')))
 
       // 4. 自动启用前 3 个内置 skill（轻量，让新用户开箱有技能）
       // §229：这一步读不到不该打断首启（模型与助手都已经存好），但必须把结果留给完成页——
       // 原本是 `.catch(() => [])` 再加完成页那句无条件的 ✓，等于把"没读到"演成"没有内置技能要启用"
+      // §328：另一半脸是"读到了、写没做成"——那几发 saveSkill 原本无人判，✓ 那句同样在替用户撒谎
       let skillReject: string | null = null
       const skills = await window.pocketai.listSkills().catch((e: unknown) => {
         skillReject = errText(e, t('common.unknownError'))
@@ -310,14 +342,30 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       } else {
         // §223 那条 TypeError 的防法从"吞成空表"换成"判过再用"
         const builtinSkills = skills.filter((s) => s.isBuiltin).slice(0, 3)
+        let enableFail: string | null = null
+        // 数「现在开着几条」而不是"写了几个请求"：本来就开着的也要算进来，
+        // 否则三条里两条原本已开、只新写一条成功也会报成 1/3（部分成功的数字要诚实）
+        let enabledCount = 0
         for (const sk of builtinSkills) {
           if (!sk.enabled) {
-            await window.pocketai.saveSkill({ ...sk, enabled: true })
-          }
+            const saved = await window.pocketai.saveSkill({ ...sk, enabled: true })
+            // 不在这几发上 throw：模型与助手已经存好，技能这一格"没全做成"不该把用户卡在配置步
+            if (hasIpcFailed(saved)) {
+              enableFail ??= ipcFailText(saved, t('common.unknownError'))
+            } else enabledCount++
+          } else enabledCount++
         }
         // 一个内置技能都没有（`extensions/skills` 目录缺失时主进程就回空表）：
         // 「自动启用前 3 个」同样不能说 ⇒ 标成 skipped，完成页那一行整条不显示
-        setSkillOutcome({ state: builtinSkills.length > 0 ? 'enabled' : 'skipped' })
+        if (builtinSkills.length === 0) setSkillOutcome({ state: 'skipped' })
+        else if (enableFail)
+          setSkillOutcome({
+            state: 'enableFailed',
+            msg: enableFail,
+            done: enabledCount,
+            total: builtinSkills.length
+          })
+        else setSkillOutcome({ state: 'enabled' })
       }
     } catch (e) {
       setSetupErr(errText(e, t('common.unknownError')))
@@ -358,6 +406,11 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const probeCandidates = (savedProvider?.models ?? []).filter((m) => typeof m === 'string' && m.trim() !== '')
   // 当前要测的那台按派生值走（候选换了就回落第一条），不为此再写一个 effect
   const activeProbeModel = probeCandidates.includes(probeModel) ? probeModel : (probeCandidates[0] ?? '')
+  // §328 归属判据：旧结论只对它自己那一台成立 ⇒ 换了 select，不属于当前那台的结论一律不画。
+  // 只比 model、不比 providerId：完成页没有回配置步的路径，那一屏里 savedProvider 不会在半路换掉
+  // （要换得先重新走「下一步」，而那条路重新 mount 不了这一格），所以 providerId 那一支不可达，不写防御句。
+  const probeVerdict = probeOut && probeOut.entry.model === activeProbeModel ? probeOut : null
+  const probeErrShown = probeErr && probeErr.model === activeProbeModel ? probeErr.text : null
 
   /**
    * 首启跑一次 142 探针（V4-Iter-147，用户 2026-10-16 选定"可选、可跳过、失败不阻塞"）。
@@ -369,20 +422,21 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
    */
   async function runProbe(): Promise<void> {
     if (!savedProvider || !activeProbeModel) return
+    const probed = { providerId: savedProvider.id, model: activeProbeModel } as const
     setProbing(true)
-    setProbeErr('')
+    setProbeErr(null)
     try {
-      const r = await window.pocketai.probeDelegateCapability(savedProvider.id, activeProbeModel)
+      const r = await window.pocketai.probeDelegateCapability(probed.providerId, probed.model)
       // 探针成功载荷是 {entry, error}，没有 ok ⇒ 必须用 hasIpcFailed（isIpcFail 会把成功读成失败，同 139）
-      if (hasIpcFailed(r)) setProbeErr(ipcFailText(r, t('common.unknownError')))
+      if (hasIpcFailed(r)) setProbeErr({ model: probed.model, text: ipcFailText(r, t('common.unknownError')) })
       else {
         setProbeOut(r)
         // 152：`r.error` 是**码 + 数**（不是中文句子），句子在这儿按当前语言拼——
         // 这一格在首启、面向新用户，中英夹排比设置页更容易撞上（147 的真机自测就是这么发现的）
-        if (r.error) setProbeErr(delegateNoticeText(t, r.error, t('common.unknownError')))
+        if (r.error) setProbeErr({ model: probed.model, text: delegateNoticeText(t, r.error, t('common.unknownError')) })
       }
     } catch (e) {
-      setProbeErr(errText(e, t('common.unknownError')))
+      setProbeErr({ model: probed.model, text: errText(e, t('common.unknownError')) })
     } finally {
       setProbing(false)
     }
@@ -743,7 +797,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
               </div>
             )}
             {skillOutcome?.state === 'enabled' && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2" data-wizard-skill-row>
                 <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
                 <span className="text-[var(--color-success)]">✓ {t('wizard.summarySkillsAuto')}</span>
               </div>
@@ -751,10 +805,23 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             {/* §229：这一步没读到 ⇒ 那一格说「读不到：原因」；读到了但一个内置技能都没有 ⇒ 整行不显示。
                 两种都不许留着那句 ✓「自动启用前 3 个」（它原本是 unconditional 的） */}
             {skillOutcome?.state === 'failed' && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2" data-wizard-skill-row>
                 <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
                 <span className="text-[var(--color-danger)]">
                   {t('common.loadFailed', { msg: skillOutcome.msg ?? t('common.unknownError') })}
+                </span>
+              </div>
+            )}
+            {/* §328：读到了、写没做成 ⇒ 不许留着那句 ✓「自动启用前 3 个」，报数也不许四舍五入成"全做成" */}
+            {skillOutcome?.state === 'enableFailed' && (
+              <div className="flex items-center gap-2" data-wizard-skill-row>
+                <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
+                <span className="text-[var(--color-danger)]">
+                  {t('wizard.summarySkillsEnableFailed', {
+                    done: skillOutcome.done ?? 0,
+                    total: skillOutcome.total ?? 0,
+                    msg: skillOutcome.msg ?? t('common.unknownError')
+                  })}
                 </span>
               </div>
             )}
@@ -815,14 +882,16 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                   {t('wizard.probeLater')}
                 </button>
               </div>
-              {probeErr && (
+              {probeErrShown && (
                 <div className="text-[11px] text-[var(--color-danger)] mt-2 leading-relaxed" data-probe-error>
-                  {t('wizard.probeFailed', { e: probeErr })}
+                  {t('wizard.probeFailed', { e: probeErrShown })}
                 </div>
               )}
-              {probeOut && !probeErr && (
+              {probeVerdict && !probeErrShown && (
                 <div className="text-[11px] text-[var(--color-text)] mt-2 leading-relaxed" data-probe-verdict>
-                  {t('wizard.probeVerdict', { label: t(DELEGATE_CAPABILITY_LABEL_KEY[probeOut.entry.capability]) })}
+                  {t('wizard.probeVerdict', {
+                    label: t(DELEGATE_CAPABILITY_LABEL_KEY[probeVerdict.entry.capability])
+                  })}
                   {/* 判定与开关是两件事（决策③：默认关、逐台点名）。这一句不许省，也不许写成"已开启" */}
                   <div className="text-[var(--color-text-muted)] mt-1">{t('wizard.probeNotEnabled')}</div>
                 </div>
@@ -832,6 +901,12 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         </>
       )}
 
+      {/* §328：「完成 / 跳过」那两发的落库结果留在屏上（改前静默关窗 ⇒ 下次开机整趟重走、零提示） */}
+      {finishErr && (
+        <div className="text-[11px] text-[var(--color-danger)] mt-4" data-wizard-finish-error>
+          {finishErr}
+        </div>
+      )}
       {/* 底部操作 */}
       <div className="flex items-center justify-between mt-6">
         <button className="btn-ghost text-[12px]" disabled={busy} onClick={finish}>

@@ -85,7 +85,10 @@ export const providerRepo = {
     // 字段加密：apiKeys → 密文
     // 渲染层传来的是掩码视图（PROVIDER_LIST 不回明文），占位项按原值回填，
     // 使「只改名称/模型列表」的保存不会把 ••••abcd 当真密钥写库。
-    const apiKeys = restoreMaskedList(input.apiKeys, existing?.apiKeys)
+    // §328：回填之后去重。首启向导那条「已有同 baseUrl 就追加这把 Key」在中途失败后会被再点一次，
+    // 而界面上看得见的是掩码串，追加的那把是明文 ⇒ 调用处 `includes` 永远对不上（掩码 ≠ 明文），
+    // 只有还原成真实值这一刻才判得出"这把已经在库里"。同一把 Key 存两遍没有任何合法含义。
+    const apiKeys = [...new Set(restoreMaskedList(input.apiKeys, existing?.apiKeys))]
     // B1：明文模式的字段密钥是源码公开的固定密钥 ⇒ 新 Key 一律拒存（沿用掩码原值、删 Key 不触发）。
     // 只报数量不回显 Key。
     if (isNoneMode()) {

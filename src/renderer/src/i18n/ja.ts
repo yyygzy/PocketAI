@@ -1950,6 +1950,7 @@ export const ja = {
   'wizard.summaryAssistant': 'デフォルトアシスタント',
   'wizard.summarySkills': 'ビルトインスキル',
   'wizard.summarySkillsAuto': '上位 3 つを自動有効化',
+  'wizard.summarySkillsEnableFailed': '自動有効化が途中で止まりました（{done}/{total} 件有効）：{msg}',
   // ── 初回セットアップ：完了ステップの任意プローブ（V4-Iter-147）──
   'wizard.probeTitle': 'おまけの確認：このモデルは仕事を委任できる？',
   'wizard.probeHint': '3 回の実リクエストを送ります（ローカルモデルで約 10 秒）、見るのはネイティブのツール呼び出し経路だけ。スキップしても利用には影響せず、後から「設定 → モデルプロバイダー」で再テストできます。',
@@ -1960,6 +1961,7 @@ export const ja = {
   'wizard.probeVerdict': '判定：{label}',
   'wizard.probeNotEnabled': '委任できると判定しても、有効にはなっていません：スイッチは「設定 → モデルプロバイダー」でモデルごとに点名が必要です。',
   'wizard.probeFailed': '今回判定が出ませんでした：{e}',
+  'wizard.markFailed': 'このステップの完了を記録できませんでした。次回起動時にウィザードが再度表示される可能性があります：{msg}',
   'bk.webdavTitle': 'WebDAV 同期（Nextcloud / ownCloud など）',
   'bk.user': 'ユーザー名',
   'bk.password': 'パスワード',

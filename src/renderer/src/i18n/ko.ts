@@ -1950,6 +1950,7 @@ export const ko = {
   'wizard.summaryAssistant': '기본 어시스턴트',
   'wizard.summarySkills': '내장 스킬',
   'wizard.summarySkillsAuto': '상위 3개 자동 활성화',
+  'wizard.summarySkillsEnableFailed': '자동 활성화가 모두 되지 않았습니다({done}/{total}개 켜짐): {msg}',
   // ── 최초 실행 마법사: 완료 단계의 선택형 프로브 (V4-Iter-147) ──
   'wizard.probeTitle': '선택 확인: 이 모델이 작업을 위임할 수 있나요?',
   'wizard.probeHint': '실제 요청을 3회 보냅니다(로컬 모델에서 약 10초), 네이티브 도구 호출 경로만 봅니다. 건너뛰어도 사용에 영향이 없으며, 이후에도 「설정 → 모델 공급자」에서 다시 확인할 수 있습니다.',
@@ -1960,6 +1961,7 @@ export const ko = {
   'wizard.probeVerdict': '판정: {label}',
   'wizard.probeNotEnabled': '위임 가능으로 판정돼도 켜진 것은 아닙니다: 스위치는 「설정 → 모델 공급자」에서 모델별로 직접 켜야 합니다.',
   'wizard.probeFailed': '이번에는 판정이 없습니다: {e}',
+  'wizard.markFailed': '이 단계의 완료 상태를 저장하지 못했습니다. 다음 시작 시 마법사가 다시 나타날 수 있습니다: {msg}',
   'bk.webdavTitle': 'WebDAV 동기화 (Nextcloud / ownCloud 등)',
   'bk.user': '사용자명',
   'bk.password': '비밀번호',

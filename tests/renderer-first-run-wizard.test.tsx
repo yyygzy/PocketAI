@@ -198,7 +198,14 @@ describe('147 完成页探针：只在点名时发，失败不阻塞完成', () 
     createdAt: 1
   }
   const probeCalls = () => pocketaiCalls().filter((c) => c.fn === 'probeDelegateCapability')
-  const okProbe = () => ({ entry: { capability: 'native_tools_ok' }, error: null })
+  // §328：桩要照真实载荷给（`DelegateProbeResult.entry` 带 providerId 与 model，界面按它判判定属于哪一台）
+  const okProbe = (providerId: string, model: string) => ({
+    entry: {
+      key: `${providerId}::${model}`, providerId, model, capability: 'native_tools_ok',
+      samples: 3, nativeHits: 3, digest: '', checkedAt: 1
+    },
+    error: null
+  })
 
   /** 一路点到完成页（step 3）；返回 render 结果好查 data 属性 */
   async function toDone(over: Record<string, unknown> = {}) {

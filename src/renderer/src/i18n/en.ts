@@ -2025,6 +2025,7 @@ export const en = {
   'wizard.summaryAssistant': 'Default assistant',
   'wizard.summarySkills': 'Builtin skills',
   'wizard.summarySkillsAuto': 'First 3 enabled automatically',
+  'wizard.summarySkillsEnableFailed': 'Auto-enable incomplete ({done}/{total} enabled): {msg}',
   // ── First-run wizard: optional probe on the Done step (V4-Iter-147) ──
   'wizard.probeTitle': 'One extra check: can this model delegate work?',
   'wizard.probeHint': 'Sends 3 real requests to it (about 10s on a local model) and only looks at the native tool-call path. Skipping changes nothing; you can probe later under Settings → Model Providers.',
@@ -2035,6 +2036,7 @@ export const en = {
   'wizard.probeVerdict': 'Verdict: {label}',
   'wizard.probeNotEnabled': 'Probing OK does not turn delegation on: the switch is still per-model under Settings → Model Providers.',
   'wizard.probeFailed': 'No verdict this time: {e}',
+  'wizard.markFailed': 'Could not record the wizard as done; it may appear again at next start: {msg}',
 
   // ── Settings: backup ──
   'bk.webdavTitle': 'WebDAV sync (Nextcloud / ownCloud / etc.)',

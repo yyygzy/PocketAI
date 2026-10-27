@@ -1102,8 +1102,10 @@ export const KbDetail: React.FC<{
 
       {/* 检索测试 */}
       <RetrievalTest kbId={kb.id} topN={kb.topN} />
-      {/* 检索评测集：同一套检索，换一份卷子看指标 */}
-      <KbEvalPanel kbId={kb.id} />
+      {/* 检索评测集：同一套检索，换一份卷子看指标。
+          §328：key 与下面的 KbAskPanel 同一个理由——KbDetail 不带 key，切库是同一个实例，
+          卷子/分数/`busy` 会跨库存活（库 A 的 recall@k 画在库 B 屏上，跑一半切库更是把 A 的结果落到 B） */}
+      <KbEvalPanel key={kb.id} kbId={kb.id} />
       </div>
 
       {/* KB 问答（问答 tab；key 保证切库重挂载，会话状态不跨库串数据） */}

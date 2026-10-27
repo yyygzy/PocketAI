@@ -20,6 +20,22 @@ import {
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`
 
+/**
+ * §328：「这一趟在跑」不是面板的私事，所以不放在组件态里。
+ * 主进程按模块级 `activeEval` 只许一趟（`ipc/handlers/agent.ts`），而面板关得掉、切得掉：
+ * 改前那颗「停下」挂在组件态 `busy` 上 ⇒ 面板一收，键就没了，重开后又看见「已经在跑，
+ * 请等它结束或先点『停下』」这句指向一颗屏上不存在的键（进度到货同样不画，因为
+ * `running = busy && progress`）。这一份状态跟着那一趟走：发起 ⇒ 置位，自己那一趟落地 ⇒ 清零，
+ * 进度到货 ⇒ 置位并记下最新一份（覆盖"渲染端重走过、什么都不知道"那一段），
+ * 「停下」拿到 `stopped:false` ⇒ 清零（那一刻主进程说没有东西在跑，这是最硬的一句）。
+ */
+const runState = { inFlight: false, progress: null as AgentEvalProgressEvent | null }
+const runListeners = new Set<() => void>()
+function patchRunState(patch: Partial<typeof runState>): void {
+  Object.assign(runState, patch)
+  runListeners.forEach((l) => l())
+}
+
 interface Props {
   providerId: string
   model: string
@@ -32,9 +48,11 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
   const { t } = useI18n()
   const [tier, setTier] = useState<'smoke' | 'full'>('smoke')
   const [kText, setKText] = useState('2')
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [progress, setProgress] = useState<AgentEvalProgressEvent | null>(null)
+  // §328：「在跑」与「最新那份进度」都从模块级 `runState` 镜像过来（下面那个订阅会写它），
+  // 所以面板关掉再打开、或切走模块再切回来，看见的还是同一趟的读数
+  const [inFlight, setInFlight] = useState(runState.inFlight)
+  const [sharedProgress, setSharedProgress] = useState<AgentEvalProgressEvent | null>(runState.progress)
   const [result, setResult] = useState<AgentEvalRunResult | null>(null)
   /** `null`＝还没读；字符串＝读失败的那句原因；数组＝清单（空数组就是"没跑过"，不是"读不到"） */
   const [reports, setReports] = useState<AgentEvalReportEntry[] | null>(null)
@@ -70,21 +88,38 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
   useEffect(() => {
     if (typeof window.pocketai.onAgentEvalProgress !== 'function') return
     return window.pocketai.onAgentEvalProgress((event) => {
-      if (!mountedRef.current) return
-      setProgress(event)
+      // 进度到货就说明那一趟真在跑（哪怕这一发是别的窗口、或渲染端重走过发起的）。
+      // 写模块级状态这一句**不能挂在 mounted 判断后面**：面板收着的时候也要把读数存住
+      patchRunState({ inFlight: true, progress: event })
     })
   }, [])
 
+  // §328：面板重开时先对账一次模块级状态，再订阅它
+  useEffect(() => {
+    const sync = () => {
+      setInFlight(runState.inFlight)
+      setSharedProgress(runState.progress)
+    }
+    runListeners.add(sync)
+    return () => {
+      runListeners.delete(sync)
+    }
+  }, [])
+
   const run = async (): Promise<void> => {
-    setBusy(true)
     setError('')
-    setProgress(null)
+    // 领号在 await 之前：这一发起跑就该让「停下」出现在屏上
+    patchRunState({ inFlight: true, progress: null })
+    // 「已经在跑」那一支不许在 finally 里把状态清掉（清了就又回到"键不存在"）
+    let keepInFlight = false
     try {
       const k = Math.min(AGENT_EVAL_MAX_K, Math.max(1, Number(kText) || 1))
       const r = await window.pocketai.runAgentEval({ providerId, model, tier, k })
       if (hasIpcFailed(r)) {
         // 「已经在跑」「现在有 Agent 运行」都是回码：句子按语言出，不把这行中文贴到界面上
         setError(ipcFailureText(r, t))
+        // 「已经有趟在跑」＝那一趟仍在，别在 finally 里把自己那份读数抹掉（keepInFlight 那条有牙，见 Z10）
+        if ((r as { ipcCode?: string }).ipcCode === 'EVAL_ALREADY_RUNNING') keepInFlight = true
         return
       }
       setResult(r)
@@ -92,7 +127,7 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
     } catch (e) {
       setError(errText(e))
     } finally {
-      setBusy(false)
+      if (!keepInFlight) patchRunState({ inFlight: false, progress: null })
     }
   }
 
@@ -102,8 +137,12 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
       setError(ipcFailureText(r, t))
       return
     }
-    // stopped:false 不是失败：那一趟正好自己跑完了，这里只把"停过了"这件事说一声
-    if (!r.stopped) setError(t('agent.eval.stoppedNote'))
+    // stopped:false 不是失败：那一趟正好自己跑完了，这里只把"停过了"这件事说一声；
+    // 同时它也是最硬的一句「现在没有东西在跑」⇒ 屏上那颗键该收回去
+    if (!r.stopped) {
+      setError(t('agent.eval.stoppedNote'))
+      patchRunState({ inFlight: false, progress: null })
+    }
   }
 
   const openReport = async (fileName: string): Promise<void> => {
@@ -115,7 +154,8 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
     setReportText(r.text)
   }
 
-  const running = busy && progress !== null
+  // §328：进度那一行与那颗「停下」都按"这一趟在跑"来判，而不是按"这个面板实例发起过"
+  const shownProgress = sharedProgress
 
   return (
     <div
@@ -139,7 +179,7 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
         <select
           value={tier}
           data-testid="agent-eval-tier"
-          disabled={busy}
+          disabled={inFlight}
           onChange={(e) => setTier(e.target.value === 'full' ? 'full' : 'smoke')}
           className="input text-xs"
         >
@@ -153,18 +193,18 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
           className="input w-14 text-xs"
           value={kText}
           inputMode="numeric"
-          disabled={busy}
+          disabled={inFlight}
           onChange={(e) => setKText(e.target.value.replace(/[^0-9]/g, ''))}
         />
         <button
           onClick={() => void run()}
-          disabled={busy}
+          disabled={inFlight}
           data-testid="agent-eval-run"
           className="btn-accent text-xs disabled:opacity-50"
         >
           {t('agent.eval.run')}
         </button>
-        {busy && (
+        {inFlight && (
           <button onClick={() => void stop()} data-testid="agent-eval-stop" className="btn-ghost text-xs">
             {t('common.stop')}
           </button>
@@ -175,12 +215,12 @@ export const AgentEvalPanel: React.FC<Props> = ({ providerId, model, targetLabel
       {/* 全局工作目录那件事不是实现细节，是用户会踩的坑：评测一头发一发地切它 */}
       <p className="text-[11px] text-[var(--color-warning)]">{t('agent.eval.workspaceWarn')}</p>
 
-      {running && progress && (
+      {inFlight && shownProgress && (
         <p data-testid="agent-eval-progress" className="text-[var(--color-accent)]">
           {t('agent.eval.progress', {
-            done: progress.done + 1,
-            total: progress.total,
-            task: progress.current ? `${progress.current.taskId}#${progress.current.attempt}` : ''
+            done: shownProgress.done + 1,
+            total: shownProgress.total,
+            task: shownProgress.current ? `${shownProgress.current.taskId}#${shownProgress.current.attempt}` : ''
           })}
         </p>
       )}
