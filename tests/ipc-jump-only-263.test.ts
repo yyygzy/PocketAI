@@ -208,10 +208,11 @@ const FAIL_CLOSED = SITES.filter((s) => !s.successWrites)
 
 /**
  * 等式 ratchet：收口一处就把它从这里减一格（改了产品码不改名单会红，反向也一样）。
- * §263 开批 19 → 收六处清单读 ⇒ 13；§264 再收六处（锁状态／两发统计／草稿／向导助手清单）⇒**现数 7**。
- * 7 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
+ * §263 开批 19 → 收六处清单读 ⇒ 13；§264 再收六处（锁状态／两发统计／草稿／向导助手清单）⇒ 7；
+ * §335 缺陷 hunt 新增一处（SkillModule 实时校验失败不判信封 ⇒ 白屏）⇒ **现数 8**。
+ * 8 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
  */
-const JUMP_LIE_CAP = 7
+const JUMP_LIE_CAP = 8
 
 const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 首启向导／换电脑检测那一发：读不到就**不弹**（不会弹一个假向导），屏上没有假数字。
@@ -230,7 +231,11 @@ const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 回复通知开关（§223 明写「开关关闭／异常一律静默」——不发通知是 fail-safe 方向）；
   // 对话页那侧的 provider/model 回填（同 useAgentChat 那条，不摆假模型）；
   // 草稿**写**失败（§221 设计内：📝 不点亮就是它的可见出口，本地补丁不跑就是说实话）。
-  'src/renderer/src/modules/chat/ChatModule.tsx': 3
+  'src/renderer/src/modules/chat/ChatModule.tsx': 3,
+  // §335 实时校验：validateSkill 基础设施失败时 r 没有 warnings 字段，不判信封就直接 setValidation
+  // ⇒ validation.warnings.length 白屏。修复后失败侧只 return（保持原校验状态不打断输入），
+  // 属于"少做一件事"（不更新校验结果）而不是"报一个假状态"⇒ 登记，待决策是否补一句 toast。
+  'src/renderer/src/modules/skills/SkillModule.tsx': 1
 }
 
 /** 正向对照：这些文件必须**真的出现在名单里**（防"扫描器恒返回空"这种假绿，§250 同一条） */

@@ -55,6 +55,27 @@ describe('parseSkillJson — JSON 技能解析', () => {
     expect(error).toContain('过长')
   })
 
+  // §335：resident=false 时按按需导入上限（32KB）校验，与 Markdown 路径对齐
+  it('resident=false 时允许 8KB~32KB 的内容', () => {
+    const longContent = 'a'.repeat(16 * 1024) // 16KB，超过常驻 8KB 但在按需 32KB 内
+    const { shape, error } = parseSkillJson(
+      JSON.stringify({ name: 'x', content: longContent }),
+      false
+    )
+    expect(error).toBe('')
+    expect(shape?.content).toBe(longContent)
+  })
+
+  it('resident=false 时仍拒绝超过 32KB 的内容', () => {
+    const hugeContent = 'a'.repeat(33 * 1024) // 33KB，超过按需上限
+    const { shape, error } = parseSkillJson(
+      JSON.stringify({ name: 'x', content: hugeContent }),
+      false
+    )
+    expect(shape).toBeNull()
+    expect(error).toContain('过长')
+  })
+
   it('icon 自动截断到 4 字符', () => {
     const { shape } = parseSkillJson(JSON.stringify({ name: 'x', icon: 'abcde', content: 'body' }))
     expect(shape?.icon).toBe('abcd')
@@ -153,6 +174,17 @@ name: md-skill
 正文内容`
     const { shape } = parseSkillText(md)
     expect(shape?.name).toBe('md-skill')
+  })
+
+  // §335：parseSkillText 的 resident 参数必须转发到 JSON 分支，否则按需导入的 JSON 技能仍被 8KB 卡死
+  it('resident=false 转发到 JSON 分支（允许 >8KB 内容）', () => {
+    const longContent = 'a'.repeat(16 * 1024)
+    const { shape, error } = parseSkillText(
+      JSON.stringify({ name: 'json-skill', content: longContent }),
+      false
+    )
+    expect(error).toBe('')
+    expect(shape?.content).toBe(longContent)
   })
 })
 

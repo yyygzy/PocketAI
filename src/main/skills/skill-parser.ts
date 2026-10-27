@@ -101,8 +101,8 @@ export interface SkillParseResult {
   ignoredKeys: string[]
 }
 
-/** 从 JSON 字符串解析 */
-export function parseSkillJson(text: string): SkillParseResult {
+/** 从 JSON 字符串解析（resident 控制内容上限：常驻 8KB / 按需 32KB，与 Markdown 对齐） */
+export function parseSkillJson(text: string, resident = true): SkillParseResult {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -132,7 +132,7 @@ export function parseSkillJson(text: string): SkillParseResult {
       ? raw.tags.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).slice(0, 10)
       : undefined
   }
-  const err = validate(shape)
+  const err = validate(shape, resident)
   if (err) return { shape: null, error: err, ignoredKeys: [] }
   return { shape, error: '', ignoredKeys: [] }
 }
@@ -171,7 +171,7 @@ export function parseSkillMarkdown(text: string, resident = true): SkillParseRes
 export function parseSkillText(text: string, resident = true): SkillParseResult {
   const trimmed = text.trimStart()
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    return parseSkillJson(text)
+    return parseSkillJson(text, resident)
   }
   return parseSkillMarkdown(text, resident)
 }

@@ -403,8 +403,12 @@ const SkillForm: React.FC<{
     }
     const text = JSON.stringify({ name, description, icon, content })
     const timer = setTimeout(() => {
-      // 实时校验为后台辅助，失败仅记诊断日志，保持原校验状态不打断输入
-      window.pocketai.validateSkill(text).then((r) => setValidation({ ok: r.ok, warnings: r.warnings })).catch(reportIpcError('skills.validate'))
+      // 实时校验为后台辅助，失败仅记诊断日志，保持原校验状态不打断输入（§335：safeHandle 基础设施失败时
+      // r 没有 warnings 字段 ⇒ 不判信封就直接 setValidation ⇒ :486 的 warnings.length 白屏）
+      window.pocketai.validateSkill(text).then((r) => {
+        if (hasIpcFailed(r)) return
+        setValidation({ ok: r.ok, warnings: r.warnings })
+      }).catch(reportIpcError('skills.validate'))
     }, 500)
     return () => clearTimeout(timer)
   }, [name, description, icon, content])
