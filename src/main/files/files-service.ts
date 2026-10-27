@@ -247,8 +247,10 @@ async function openExternal(relPath: string): Promise<FileOpResult> {
     safeRelPath.parse(relPath)
     const abs = toAbs(relPath)
     if (!fs.existsSync(abs)) return { ok: false, error: '目标不存在' }
-    await shell.openPath(abs)
-    return { ok: true }
+    // §332：`shell.openPath` 不抛错——**没有关联程序／被策略挡下时它 resolve 出一句错误串**，
+    // 改前这句被直接丢掉 ⇒ 返回 `{ok:true}`，"什么都没打开"在屏上就是成功
+    const failure = await shell.openPath(abs)
+    return failure ? { ok: false, error: failure } : { ok: true }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }

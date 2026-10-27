@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileEntry, FileReadResult } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
-import { logIpcError, reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { logIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { EmptyState } from '../../components/EmptyState'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -113,9 +113,21 @@ export const FilesModule: React.FC = () => {
     load(relDir)
   }
 
+  // §332：预览这一发改前既没有归属也没有代次（`dirRef` 只守列表那两趟）——连点👁两个文件时
+  // 先点的那一发若后到，会把后点的那一份顶掉；点👁后关掉面板，迟到的那一发还会把面板自己弹回来。
+  // 代次在"开"与"关"两侧都推进：关窗＝作废在飞那一发。
+  const previewReqRef = useRef(0)
+  const invalidatePreview = (): void => {
+    previewReqRef.current += 1
+    setPreview(null)
+  }
+
   const handleOpenPreview = async (e: FileEntry) => {
+    const seq = ++previewReqRef.current
     try {
       const result = await window.pocketai.readFile(e.relPath)
+      // §332：迟到那一发不许顶掉后来点的那一份，也不许替它报失败
+      if (seq !== previewReqRef.current) return
       // §219：失败对象被当成文件内容开进预览面板 ⇒ 面板显示一个空／怪文件而不说读不了
       if (hasIpcFailed(result)) {
         flash(false, ipcFailText(result, t('fm.opFailed')))
@@ -123,6 +135,7 @@ export const FilesModule: React.FC = () => {
       }
       setPreview({ entry: e, result })
     } catch (err) {
+      if (seq !== previewReqRef.current) return
       flash(false, errText(err, t('fm.opFailed')))
     }
   }
@@ -134,6 +147,14 @@ export const FilesModule: React.FC = () => {
     } catch (err) {
       flash(false, errText(err, t('fm.opFailed')))
     }
+  }
+
+  /** §332：「在系统里打开」这一族四颗键原先只挂 `.catch`——safeHandle 的失败是 resolve 的值 ⇒
+   *  catch 永不响＝死代码；而主进程 `files-service.ts` 把 `shell.openPath` 的返回错误串丢了 ⇒
+   *  "什么都没打开"回的是 `{ok:true}`。调用点各自 `await` 各自判（§217 只认得出这种形状的机关），
+   *  话术收成这一处。 */
+  const reportOpenFailure = (r: { ok: false; error?: string }): void => {
+    flash(false, ipcFailText(r, t('fm.opFailed')))
   }
 
   const fmtSize = (size: number): string => {
@@ -174,7 +195,7 @@ export const FilesModule: React.FC = () => {
         <button className="btn-ghost text-xs" onClick={() => load(relDir)}>
           🔄 {t('fm.refresh')}
         </button>
-        <button className="btn-ghost text-xs" onClick={() => window.pocketai.openFileLocation(relDir || '.').catch(reportIpcError('files.openFileLocation'))}>
+        <button className="btn-ghost text-xs" onClick={async () => { try { const r = await window.pocketai.openFileLocation(relDir || '.'); if (hasIpcFailed(r)) reportOpenFailure(r) } catch (err) { flash(false, errText(err, t('fm.opFailed'))) } }}>
           📤 {t('fm.openDataDir')}
         </button>
         {notice && (
@@ -263,14 +284,14 @@ export const FilesModule: React.FC = () => {
                       <button
                         className="px-1.5 py-1 rounded text-xs hover:bg-[var(--color-hover-overlay)]"
                         title={t('fm.openExternal')}
-                        onClick={() => window.pocketai.openFileExternal(e.relPath).catch(reportIpcError('files.openFileExternal'))}
+                        onClick={async () => { try { const r = await window.pocketai.openFileExternal(e.relPath); if (hasIpcFailed(r)) reportOpenFailure(r) } catch (err) { flash(false, errText(err, t('fm.opFailed'))) } }}
                       >
                         ↗
                       </button>
                       <button
                         className="px-1.5 py-1 rounded text-xs hover:bg-[var(--color-hover-overlay)]"
                         title={t('fm.openLocation')}
-                        onClick={() => window.pocketai.openFileLocation(e.relPath).catch(reportIpcError('files.openFileLocation'))}
+                        onClick={async () => { try { const r = await window.pocketai.openFileLocation(e.relPath); if (hasIpcFailed(r)) reportOpenFailure(r) } catch (err) { flash(false, errText(err, t('fm.opFailed'))) } }}
                       >
                         📍
                       </button>
@@ -303,7 +324,7 @@ export const FilesModule: React.FC = () => {
       {preview && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm"
-          onClick={() => setPreview(null)}
+          onClick={invalidatePreview}
         >
           <div
             className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-2xl p-5 max-w-3xl w-[min(760px,90vw)] max-h-[80vh] flex flex-col"
@@ -320,7 +341,7 @@ export const FilesModule: React.FC = () => {
               </h4>
               <button
                 className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-lg leading-none"
-                onClick={() => setPreview(null)}
+                onClick={invalidatePreview}
               >
                 ×
               </button>
@@ -353,7 +374,7 @@ export const FilesModule: React.FC = () => {
                 <button className="btn-ghost text-xs" onClick={() => handleSaveAs(preview.entry)}>
                   💾 {t('fm.saveAs')}
                 </button>
-                <button className="btn-ghost text-xs" onClick={() => window.pocketai.openFileExternal(preview.entry.relPath).catch(reportIpcError('files.openFileExternal'))}>
+                <button className="btn-ghost text-xs" onClick={async () => { try { const r = await window.pocketai.openFileExternal(preview.entry.relPath); if (hasIpcFailed(r)) reportOpenFailure(r) } catch (err) { flash(false, errText(err, t('fm.opFailed'))) } }}>
                   ↗ {t('fm.openExternal')}
                 </button>
               </div>

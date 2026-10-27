@@ -215,20 +215,25 @@ describe('reminderRepo.rescheduleNext — 一键重新安排 missed 循环', () 
     expect(reminderRepo.rescheduleNext('r1')).toEqual({ ok: false })
   })
 
-  it('daily 循环：按 computeNextFireAt 重算 next（prevFireAt + intervalDays 天）', () => {
+  it('daily 循环：按 computeNextFireAt 重算 next，且**必须追平到 now 之后**（§332）', () => {
     getMock.mockImplementation(() => ({
       ...row,
       fire_at: 1000,
       status: 'missed',
       repeat_rule: '{"kind":"daily","intervalDays":1}'
     }))
+    const before = Date.now()
     const out = reminderRepo.rescheduleNext('r1')
     expect(out.ok).toBe(true)
-    // 1000 + 1*86400000 = 86401000
-    expect(out.fireAt).toBe(86401000)
+    // §332 之前这一条钉的是 `86401000`——那是**过去时刻**，主进程把它原样写回 pending，
+    // 调度器下一个 30s tick 又算"到期"，于是一条早就错过的日提醒会连环弹通知直到追平。
+    // 口径改成：结果严格 > now，且仍踩在原来的日周期上（不许顺手漂到别的时刻）。
+    const nextFireAt = out.fireAt as number
+    expect(nextFireAt).toBeGreaterThan(before)
+    expect((nextFireAt - 1000) % 86_400_000).toBe(0)
     // reschedule 走 run：参数 (status='pending', fireAt, ruleJson, id)
     expect(runMock.mock.calls[0]![0]).toBe('pending')
-    expect(runMock.mock.calls[0]![1]).toBe(86401000)
+    expect(runMock.mock.calls[0]![1]).toBe(nextFireAt)
     expect(runMock.mock.calls[0]![2]).toBe('{"kind":"daily","intervalDays":1}')
     expect(runMock.mock.calls[0]![3]).toBe('r1')
   })
@@ -292,10 +297,99 @@ describe('computeNextFireAt — monthly 月末回落', () => {
     expect([d.getMonth(), d.getDate()]).toEqual([5, 30]) // 6 月没有 31 号 → 6/30
   })
 
-  it('now 远在未来也只递推 8 次就返回，不死循环', () => {
+  it('now 远在 14 年后：递推不设步数上限，仍落到 now 那个月（§332 改前只递推 8 次⇒那种跨度交出去仍是过去时刻）', () => {
     const far = day(2040, 0, 1)
     const next = computeNextFireAt(day(2026, 0, 31), { kind: 'monthly', dayOfMonth: 31 }, far)
     expect(Number.isFinite(next)).toBe(true)
+    expect(next, '追平是这句的本意：远在 14 年后的 now 也必须拿到 now 之后的时刻').toBeGreaterThan(far)
+    expect(new Date(next)).toEqual(new Date(2040, 0, 31, 9, 0, 0, 0)) // 落在 now 那个月的号数，不多跳
     expect(next).toBeLessThan(far + 2 * 86_400_000 * 31)
+  })
+})
+
+// §332 R4：三档循环规则的「追平」口径。改前只有 monthly 一支在递推，daily／weekly 连注释里
+// 那句「结果必须 > now」都没兑现（`scheduler.ts:29` 把过去时刻原样写回 pending ⇒ 连环弹通知）。
+describe('computeNextFireAt — §332 三档都要追平到 now 之后', () => {
+  const DAY = 86_400_000
+  const at = (y: number, m: number, d: number, h = 9) => new Date(y, m, d, h, 0, 0, 0).getTime()
+
+  it('daily 错过 10 天 ⇒ 追平到 now 之后，且仍踩在原来的日周期上', () => {
+    const now = at(2026, 9, 20, 18)
+    const prev = at(2026, 9, 10, 9) // 10 天前的那一次触发
+    const next = computeNextFireAt(prev, { kind: 'daily', intervalDays: 1 }, now)
+    expect(next).toBeGreaterThan(now)
+    expect((next - prev) % DAY, '不许顺手漂到别的时刻：仍与 prev 同一天周期网格').toBe(0)
+    expect(next - now, '追平后最多再等一个周期').toBeLessThanOrEqual(DAY)
+    expect(new Date(next).getHours(), '墙钟 9 点还是 9 点').toBe(9)
+  })
+
+  it('daily intervalDays=3 错过 20 天 ⇒ 按 3 天网格追平', () => {
+    const now = at(2026, 9, 20, 18)
+    const prev = at(2026, 8, 30, 9)
+    const next = computeNextFireAt(prev, { kind: 'daily', intervalDays: 3 }, now)
+    expect(next).toBeGreaterThan(now)
+    expect((next - prev) % (3 * DAY)).toBe(0)
+    expect(next - now).toBeLessThanOrEqual(3 * DAY)
+  })
+
+  it('daily 一年没开机 ⇒ 照样追平（改前根本没有追平这一步，交出去的就是一年前那个过去时刻）', () => {
+    const now = at(2027, 9, 20, 18)
+    const prev = at(2026, 9, 20, 9)
+    const next = computeNextFireAt(prev, { kind: 'daily', intervalDays: 1 }, now)
+    expect(next).toBeGreaterThan(now)
+    expect(next - now).toBeLessThanOrEqual(DAY)
+    // 这一条跨年，不钉网格／墙钟：三档都是 ms 递推，带夏令时的机器上跨年本来就差一小时
+    // （R8 那条 DST 只记档未修，别把它的现状当成契约钉住）
+  })
+
+  it('边界：候选恰好等于 now ⇒ 严格大于 now（"到点"与"已过点"不能留给下一个 tick 连环弹）', () => {
+    const now = at(2026, 9, 20, 18)
+    const prev = now - DAY // daily：candidate = prev + DAY = now
+    const next = computeNextFireAt(prev, { kind: 'daily', intervalDays: 1 }, now)
+    expect(next).toBeGreaterThan(now)
+    expect(next).toBe(now + DAY)
+  })
+
+  it('weekly [周五] 错过两周多 ⇒ 追平后仍是周五、同一墙钟时刻，且最多再等一周', () => {
+    const now = at(2026, 9, 20, 18) // 2026-10-20 是周二
+    const prev = at(2026, 9, 2, 9) // 两周半前的周五（整段在同一次夏令时区间内，跨年那条不钉墙钟）
+    expect(new Date(prev).getDay()).toBe(5)
+    const next = computeNextFireAt(prev, { kind: 'weekly', weekdays: [5] }, now)
+    expect(next).toBeGreaterThan(now)
+    const d = new Date(next)
+    expect(d.getDay(), '周五的提醒不许追平到别的日子').toBe(5)
+    expect([d.getHours(), d.getMinutes()]).toEqual([9, 0])
+    expect(next - now).toBeLessThanOrEqual(7 * DAY)
+  })
+
+  it('weekly 空 weekdays（脏规则）⇒ 退化成 7 天周期，同样必须 > now', () => {
+    const now = at(2026, 9, 20, 18)
+    const prev = now - 30 * DAY
+    const next = computeNextFireAt(prev, { kind: 'weekly', weekdays: [] }, now)
+    expect(next).toBeGreaterThan(now)
+    expect(next - now).toBeLessThanOrEqual(7 * DAY)
+  })
+
+  it('monthly 停机关了半年 ⇒ 追平到 now 之后所在的那个月，号数照旧', () => {
+    const now = at(2026, 9, 20, 18)
+    const prev = at(2026, 3, 15, 9) // 半年前的 15 号
+    const next = computeNextFireAt(prev, { kind: 'monthly', dayOfMonth: 15 }, now)
+    expect(next).toBeGreaterThan(now)
+    const d = new Date(next)
+    expect([d.getMonth(), d.getDate()], 'now 在 10 月 20 日、15 号已过 ⇒ 跳到 11 月 15 日').toEqual([10, 15])
+    expect([d.getHours(), d.getMinutes()]).toEqual([9, 0])
+  })
+
+  it('三档共同的反向钉：结果永远不可能 ≤ now（追平后立刻"到期"＝连环弹通知）', () => {
+    const now = Date.now()
+    const cases: Array<{ prev: number; rule: Parameters<typeof computeNextFireAt>[1] }> = [
+      { prev: now - 400 * DAY, rule: { kind: 'daily', intervalDays: 1 } },
+      { prev: now - 400 * DAY, rule: { kind: 'weekly', weekdays: [1, 3, 5] } },
+      { prev: now - 400 * DAY, rule: { kind: 'monthly', dayOfMonth: 29 } }
+    ]
+    for (const c of cases) {
+      const next = computeNextFireAt(c.prev, c.rule, now)
+      expect(next, `规则 ${JSON.stringify(c.rule)} 交出过去时刻`).toBeGreaterThan(now)
+    }
   })
 })

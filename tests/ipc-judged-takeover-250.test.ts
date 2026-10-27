@@ -320,7 +320,10 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/components/SnippetButton.tsx': 0
 }
 
-const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder']
+const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder',
+  // §332：`FilesModule.tsx` 的 `reportOpenFailure`——逐行看过：它只有一句 `flash(false, ipcFailText(r, t('fm.opFailed')))`，
+  // 即"替用户把那一句说出来"，不是只进 console；四个「在系统里打开」的调用点各自 `if (hasIpcFailed(r))` 再调它
+  'reportOpenFailure']
 
 describe('§250~§279 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
   it('扫描器自证：六种判据写法各归对桶（极性写反整面就废）', () => {
@@ -659,8 +662,11 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     expect(inPanel(/\{sessionList\.length === 0 && !sessionsUnread && \(/g), '历史空态让位').toBe(1)
     expect(inPanel(/t\('kb\.askNoSessions'\)/g), '那张空态只许出现一次').toBe(1)
     expect(inPanel(/（\$\{sessionList\.length\}）/g), '按钮上的条数只许出现在"读到了"那一支').toBe(1)
-    // 钉**条件式本身**（§266 的 Z7 手法）：只数那个 token 会放过"两支都报数"的写法
-    expect(inPanel(/\{sessionsUnread \? t\('kb\.askHistory'\) : `\$\{t\('kb\.askHistory'\)\}（\$\{sessionList\.length\}）`\}/g), '不报数只发生在读不到那一支').toBe(1)
+    // 钉**条件式本身**（§266 的 Z7 手法）：只数那个 token 会放过"两支都报数"的写法。
+    // §332 加了第二个不报数的理由：`searchKeyword.trim()` 非空时屏上那份是**筛选结果**，
+    // 拿它当"库里有几条"报就是撒谎（改前关掉搜索面板只清词不重拉，那颗按钮能长期挂着「历史（1）」）。
+    // 条件式改成一头两判 ⇒ 摘掉任何一半都要红。
+    expect(inPanel(/\{sessionsUnread \|\| searchKeyword\.trim\(\) \? t\('kb\.askHistory'\) : `\$\{t\('kb\.askHistory'\)\}（\$\{sessionList\.length\}）`\}/g), '不报数只发生在读不到或筛选态那两支').toBe(1)
     expect(inRoam(/\{items\.length === 0 && !itemsUnread \? \(/g), '漫游空态让位').toBe(1)
     expect(inRoam(/t\('kb\.roamEmpty'\)/g), '那张空态只许出现一次').toBe(1)
 

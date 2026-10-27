@@ -24,7 +24,7 @@ import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcE
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
-import { buildMessagesMarkdown } from '../../../../shared/export-markdown'
+import { buildMessagesMarkdown, safeFileName } from '../../../../shared/export-markdown'
 import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutcome, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../utils/palette-nav'
@@ -45,6 +45,13 @@ function tempMessage(role: 'user' | 'assistant', content: string, model?: string
     createdAt: Date.now()
   }
 }
+
+/** §332：多选消息导出的那一份文件名走唯一那把尺子（`safeFileName` 内部裁到 `EXPORT_FILE_NAME_MAX`
+ *  并映射 Windows 保留名）。改前两个调用点都是把整条会话标题原样拼进去，而两条通道的入参闸都是
+ *  `defaultName: z.string().max(200)` ⇒ 标题一长（rename 那条通道没有长度上限，200 字以上合法）
+ *  就整发被 zod 挡：点「导出选中」只剩一句「失败」，拖出那一路直接退化（返回 null、屏上零句）。
+ *  与 §330 那批"导出口径只留一处出处"同一个口径——§330 收了批量那一路（`utils/batch-export.ts:86`），这两处是同族余下。 */
+const messagesExportName = (title: string, count: number): string => safeFileName(`${title}-${count}`)
 
 export const ChatModule: React.FC = () => {
   const { t } = useI18n()
@@ -1050,7 +1057,7 @@ export const ChatModule: React.FC = () => {
     const md = buildMessagesMarkdown({ title, assistantName }, picked)
     try {
       const r = await window.pocketai.exportMessages({
-        defaultName: `${title}-${picked.length}`,
+        defaultName: messagesExportName(title, picked.length),
         content: md
       })
       if (r.canceled) return
@@ -1075,7 +1082,7 @@ export const ChatModule: React.FC = () => {
     const md = buildMessagesMarkdown({ title, assistantName }, picked)
     try {
       const r = await window.pocketai.prepareExportDrag({
-        defaultName: `${title}-${picked.length}`,
+        defaultName: messagesExportName(title, picked.length),
         ext: 'md',
         content: md
       })

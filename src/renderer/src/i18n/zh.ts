@@ -2235,6 +2235,7 @@ export const zh = {
   'notes.saveFail': '自动保存失败：{e}',
   'notes.deleteFail': '删除失败：{e}',
   'notes.pinFail': '置顶失败：{e}',
+  'notes.gone': '这条笔记已经不在了',
 
   // ── 翻译模块 ──
   'translate.run': '翻译',

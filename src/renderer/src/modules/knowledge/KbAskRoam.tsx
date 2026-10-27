@@ -24,14 +24,19 @@ export const KbAskRoam: React.FC<{
   const [itemsUnread, setItemsUnread] = useState<{ error?: string } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const itemsReqRef = useRef(0)
   const refresh = useCallback((kw: string) => {
     const k = kw.trim()
+    // §332：与问答屏那一发同一族——防抖只拦新发送、不拦旧响应；这一屏连点两个关键词时
+    // 后到那一发会把当前关键词的清单顶掉，失败面也会替当前那一次挂上「读不到」
+    const seq = ++itemsReqRef.current
     const p = k
       ? window.pocketai.searchAllKbAskSessions(k, ROAM_LIMIT)
       : window.pocketai.listAllKbAskSessions(ROAM_LIMIT)
     // §223 那条老坑（绑到变量的 Promise 会把 `{ok:false}` 当数据写进列表）由这里的判据接着挡住
     p
       .then((r) => {
+        if (seq !== itemsReqRef.current) return
         if (hasIpcFailed(r)) {
           setItemsUnread({ error: r.error })
           return
@@ -41,6 +46,7 @@ export const KbAskRoam: React.FC<{
       })
       .catch((e: unknown) => {
         // reject 面同一张脸；旧写法那条会消失的 toast 等于没说
+        if (seq !== itemsReqRef.current) return
         setItemsUnread({ error: errText(e, '') })
         logIpcError('kb.searchAllKbAskSessions', e)
       })

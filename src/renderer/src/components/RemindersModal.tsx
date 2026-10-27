@@ -79,7 +79,17 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
   const [items, setItems] = useState<ReminderRecord[] | null>(null)
   // §222 同一口径：读不到就明说，别把列表长期挂在「加载中…」上
   const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [busyId, setBusyId] = useState<string | null>(null)
+  // §332：在飞态改成一"行"一格。改前是一个单槽 `busyId`——连点 A、B 两行取消时 A 先回，
+  // finally 把那一格清掉，而 B 那一发还在飞 ⇒ B 的按钮重新可点，双击 B 就得到第二次
+  // `{ok:false}`（已取消的不能重复取消）⇒ **已经取消成功却弹一句「取消失败（提醒可能已触发）」**
+  const [busyIds, setBusyIds] = useState<Record<string, true>>({})
+  const markBusy = (id: string, on: boolean): void =>
+    setBusyIds((prev) => {
+      const next = { ...prev }
+      if (on) next[id] = true
+      else delete next[id]
+      return next
+    })
   // 弹窗有两种模式：pending 行编辑（update）与终态行改期（reschedule，把行拉回 pending）
   const [editing, setEditing] = useState<{
     record: ReminderRecord
@@ -123,7 +133,7 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
   }, [tab, reload])
 
   const handleCancel = async (id: string) => {
-    setBusyId(id)
+    markBusy(id, true)
     try {
       const r = await window.pocketai.cancelReminder(id)
       if (r.ok) {
@@ -136,13 +146,13 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
     } catch (e) {
       toast.error(errText(e))
     } finally {
-      setBusyId(null)
+      markBusy(id, false)
     }
   }
 
   // 历史 tab missed 循环提醒一键「重新安排」：按原 rule 重算下次触发回 pending
   const handleRescheduleNext = async (id: string) => {
-    setBusyId(id)
+    markBusy(id, true)
     try {
       const r = await window.pocketai.rescheduleNextReminder(id)
       if (r.ok) {
@@ -155,7 +165,7 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
     } catch (e) {
       toast.error(errText(e))
     } finally {
-      setBusyId(null)
+      markBusy(id, false)
     }
   }
 
@@ -232,14 +242,14 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => setEditing({ record: r, mode: 'edit' })}
-                        disabled={busyId === r.id}
+                        disabled={!!busyIds[r.id]}
                         className="btn-ghost text-[11px] text-[var(--color-accent)] disabled:opacity-50"
                       >
                         {t('reminder.center.edit')}
                       </button>
                       <button
                         onClick={() => void handleCancel(r.id)}
-                        disabled={busyId === r.id}
+                        disabled={!!busyIds[r.id]}
                         className="btn-ghost text-[11px] text-[var(--color-danger)] disabled:opacity-50"
                       >
                         {t('reminder.center.cancel')}
@@ -251,7 +261,7 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
                           此前渲染端一个入口都没接 */}
                       <button
                         onClick={() => setEditing({ record: r, mode: 'reschedule' })}
-                        disabled={busyId === r.id}
+                        disabled={!!busyIds[r.id]}
                         className="btn-ghost text-[11px] text-[var(--color-accent)] disabled:opacity-50"
                       >
                         {t('reminder.center.rescheduleAt')}
@@ -260,7 +270,7 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
                       {r.status === 'missed' && r.repeatRule && (
                         <button
                           onClick={() => void handleRescheduleNext(r.id)}
-                          disabled={busyId === r.id}
+                          disabled={!!busyIds[r.id]}
                           className="btn-ghost text-[11px] text-[var(--color-accent)] disabled:opacity-50"
                         >
                           {t('reminder.center.reschedule')}

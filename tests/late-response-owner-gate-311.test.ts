@@ -29,8 +29,14 @@ const ROOT = path.resolve(__dirname, '..')
  * 两个都是"这一发是不是还给当前这件事"，只是键不同（流式那几支按 requestId 挡）。 */
 const SITES: Array<{ file: string; refs: string[]; writers: string[] }> = [
   { file: 'src/renderer/src/modules/knowledge/KnowledgeModule.tsx', refs: ['kbIdRef'], writers: ['setDocs', 'setReadErr'] },
-  { file: 'src/renderer/src/modules/knowledge/KbAskPanel.tsx', refs: ['openedSessionRef', 'requestRef'], writers: ['setSessionId', 'setSessionCreatedAt', 'setMsgs'] },
+  // §332：历史会话搜索那一发原本在名单之外——它有 200ms 防抖，而防抖只拦"新发送"、不拦"旧响应"。
+  // `sessionsReqRef` 是"这一发是不是还给最近那一次"的代次轴（与 §311 那两轴同一形状，只是键是序号）
+  { file: 'src/renderer/src/modules/knowledge/KbAskPanel.tsx', refs: ['openedSessionRef', 'requestRef', 'sessionsReqRef'], writers: ['setSessionId', 'setSessionCreatedAt', 'setMsgs', 'setSessionList', 'setSessionsUnread'] },
+  { file: 'src/renderer/src/modules/knowledge/KbAskRoam.tsx', refs: ['itemsReqRef'], writers: ['setItems', 'setItemsUnread'] },
   { file: 'src/renderer/src/components/RemindersModal.tsx', refs: ['tabRef'], writers: ['setItems', 'setLoadErr'] },
+  // §332 的预览代次（`previewReqRef`）**不登记在这一列**：那一屏的 `setPreview(null)` 是用户自己关窗，
+  // 它不需要归属判据、却会被名单当成"没挡住的写点"。这条链改由真挂载用例守
+  // （`tests/renderer-file-open-332.test.tsx`：连点两个文件＋关窗后迟到都不许画进来）
   { file: 'src/renderer/src/modules/files/FilesModule.tsx', refs: ['dirRef'], writers: ['setEntries', 'setLoading'] },
   { file: 'src/renderer/src/modules/notes/NotesModule.tsx', refs: ['keywordRef'], writers: ['setNotes', 'setLoadError'] }
 ]
@@ -180,8 +186,8 @@ function scanFile(rel: string, refs: string[], writers: string[], src?: string):
 
 const ALL = SITES.flatMap((s) => scanFile(s.file, s.refs, s.writers))
 
-describe('§311 迟到响应的归属判据（五处收口之后的源码级闸门）', () => {
-  it('注册表五处都扫得到写点（防检测器退化成"什么都没看见"）', () => {
+describe('§311 迟到响应的归属判据（源码级闸门；站点名单会长，§332 已加到六站）', () => {
+  it('注册表里每一站都扫得到写点（防检测器退化成"什么都没看见"）', () => {
     const byFile = new Map<string, number>()
     ALL.forEach((w) => byFile.set(w.file, (byFile.get(w.file) ?? 0) + 1))
     expect([...byFile.keys()].sort()).toEqual(SITES.map((s) => s.file).sort())
@@ -246,7 +252,9 @@ describe('§311 迟到响应的归属判据（五处收口之后的源码级闸�
   })
 
   it('反向对照：新添一处没守卫的迟到写点时，扫描必须看得见它（防判据恒返回"都挡住了"）', () => {
-    const fil = SITES[3]!
+    // 按**文件名**取，不按下标（§332 往名单里插了一站，`SITES[3]` 这种写法当场把反向对照打空）
+    const fil = SITES.find((s) => s.file.endsWith('FilesModule.tsx'))!
+    expect(fil, '反向对照用的那一站必须在名单里').toBeTruthy()
     const src = fs.readFileSync(path.join(ROOT, fil.file), 'utf8')
     const nl = src.includes('\r\n') ? '\r\n' : '\n'
     const withNewSite = `${src}${nl}const __probeLateSite = async (): Promise<void> => {${nl}  const v = await window.pocketai.listFiles('probe')${nl}  setEntries(v)${nl}}${nl}`

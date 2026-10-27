@@ -649,23 +649,39 @@ const api = {
   },
 
   // ---------- 笔记 ----------
-  listNotes: (): Promise<Note[]> => ipcRenderer.invoke(IPC.NOTES_LIST),
-  getNote: (id: string): Promise<Note | null> => ipcRenderer.invoke(IPC.NOTES_GET, id),
+  // §332：这七条改前的返回类型只写成功形状（`Note[]`／`Note`／`Note | null`／`{ ok: boolean }`）⇒
+  // safeHandle 把抛错与 zod 拒绝折成 resolve 的 `{ok:false}` 时，tsc 不会逼调用点判，
+  // 失败对象就被当记录用（本批崩屏两条的温床）。口径同 §318／§330／§331。
+  listNotes: (): Promise<Note[] | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.NOTES_LIST),
+  getNote: (
+    id: string
+  ): Promise<Note | null | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.NOTES_GET, id),
   createNote: (input: {
     title?: string
     content?: string
     tags?: string[]
-  }): Promise<Note> => ipcRenderer.invoke(IPC.NOTES_CREATE, input),
+  }): Promise<Note | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.NOTES_CREATE, input),
   updateNote: (
     id: string,
     patch: Partial<Pick<Note, 'title' | 'content' | 'pinned'>> & { tags?: string[] }
-  ): Promise<Note | null> => ipcRenderer.invoke(IPC.NOTES_UPDATE, id, patch),
-  deleteNote: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.NOTES_DELETE, id),
-  searchNotes: (keyword: string): Promise<Note[]> => ipcRenderer.invoke(IPC.NOTES_SEARCH, keyword),
+  ): Promise<Note | null | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.NOTES_UPDATE, id, patch),
+  deleteNote: (
+    id: string
+  ): Promise<{ ok: true } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.NOTES_DELETE, id),
+  searchNotes: (
+    keyword: string
+  ): Promise<Note[] | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.NOTES_SEARCH, keyword),
   createNoteFromMessage: (input: {
     title?: string
     content: string
-  }): Promise<Note> => ipcRenderer.invoke(IPC.NOTES_CREATE_FROM_MESSAGE, input),
+  }): Promise<Note | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.NOTES_CREATE_FROM_MESSAGE, input),
 
   // ---------- 提示词片段 ----------
   listPromptSnippets: (): Promise<PromptSnippetRecord[]> => ipcRenderer.invoke(IPC.SNIPPETS_LIST),

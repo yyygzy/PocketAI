@@ -7,7 +7,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Note } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
-import { logIpcError } from '../../utils/ipc'
+// §332：这一屏改前一个信封判据都没有（只 import 了留痕那一条）——safeHandle 的失败是 resolve 的值，
+// `.catch` 与真值判断都挡不住它，于是失败对象被当数据塞进列表 state
+import { hasIpcFailed, isIpcFail, ipcFailureText, logIpcError } from '../../utils/ipc'
+import type { IpcFailureInput } from '../../utils/ipc'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 
@@ -74,6 +77,14 @@ export const NotesModule: React.FC = () => {
     [t]
   )
 
+  /** §332：resolve 面的失败（safeHandle 折出来的 `{ok:false}`）走同一张话术——
+   * 登记过的回码换四语，其余原样透出，绝不咽掉（`ipcFailText` 那种"整句换成回码原文"在本屏会把
+   * 「自动保存失败：」这个前缀丢掉，而这颗前缀正是用户分辨是哪一发失败了） */
+  const noteFailText = useCallback(
+    (r: IpcFailureInput, fallbackKey: string): string => t(fallbackKey, { e: ipcFailureText(r, t) }),
+    [t]
+  )
+
   const load = useCallback(
     async (kw?: string) => {
       // §311：这一发的归属键（`load('')` 与「当前关键词为空」是同一件事）
@@ -84,6 +95,14 @@ export const NotesModule: React.FC = () => {
         )
         // §311：切走了就不替旧关键词写屏，也不替它把「读不到」关掉
         if (keywordRef.current !== want) return
+        // §332：这一发失败的是 **resolve 的 `{ok:false}`**（备份恢复占着库时主进程抛错被 safeHandle 折成它），
+        // 而类型里只写着 `Note[]` ⇒ 改前直塞进 `notes`，渲染那行 `n.content.slice(0, 40)` 当场 TypeError＝
+        // 整块屏不见（根层边界接住＝笔记屏什么都不剩）。走这一屏本来就有那张「读不到＋重试」的脸，接管到它。
+        if (isIpcFail(list)) {
+          setLoadError(true)
+          setNotes([])
+          return
+        }
         setNotes(list)
         setLoadError(false)
       } catch (e) {
@@ -115,6 +134,11 @@ export const NotesModule: React.FC = () => {
   }, [load])
 
   // 切换激活笔记时，把该笔记内容载入草稿（取消未保存的定时器）
+  //
+  // §332：依赖是**这一条笔记的 id**，不是 `active` 那个对象。改前依赖 `active`＝笔记对象一换就重置草稿，
+  // 而自动保存写回（`setNotes(prev => prev.map(...))`）恰好会让它换 ⇒ 保存往返期间用户敲进去的那几个字
+  // 被服务端回来的旧副本无条件吞掉，下一次自动保存再把吞后的内容落库（"正在保存"一闪，字就没了）。
+  // 时间戳与列表由那一发自己写（不需要这个 effect 兜），切笔记时才重建草稿。
   useEffect(() => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
@@ -132,7 +156,8 @@ export const NotesModule: React.FC = () => {
       setDraft({ title: '', content: '', tags: [], pinned: false })
       setLastSavedAt(null)
     }
-  }, [active])
+    // 只在"换了一条笔记"时重建草稿：故依赖 activeId，而不是派生出来的那个对象
+  }, [activeId])
 
   const scheduleSave = useCallback(
     (next: NoteDraft) => {
@@ -149,10 +174,23 @@ export const NotesModule: React.FC = () => {
               pinned: next.pinned
             })
           )
-          if (updated) {
-            setLastSavedAt(updated.updatedAt)
-            setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))
+          // §332：自动保存那一发有三张到货——成功记录／`null`（笔记不在了）／safeHandle 折出的 `{ok:false}`。
+          // 改前只有 `if (updated)` 一个真值判断：失败对象是真值 ⇒ 走成功支，屏上「上次保存」被写成
+          // `fmtTime(undefined)`＝**NaN-NaN-NaN NaN:NaN**，而列表里那条还是旧内容（用户以为存上了）。
+          // 触发最经常的一张：正文超 100_000 字符（`schemas/notes.ts` 的 NOTE_MAX_CONTENT_CHARS）被 zod 整条拒，
+          // 而这一屏的 textarea 没有任何限长文案。失败就说不建成的原因，时间戳与列表都不动。
+          if (isIpcFail(updated)) {
+            flash(false, noteFailText(updated, 'notes.saveFail'))
+            return
           }
+          if (!updated) {
+            // §332：第三种到货——这条笔记在别处被删了（`note.repo.ts:90`）。改前 `if (updated)` 静默跳过
+            // ＝"看着还在编辑，其实每 500ms 白写一发、一个字都落不了库"，屏上连一句都没有
+            flash(false, t('notes.gone'))
+            return
+          }
+          setLastSavedAt(updated.updatedAt)
+          setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))
         } catch (e) {
           flash(false, noteErrorText(e, 'notes.saveFail'))
         } finally {
@@ -160,7 +198,7 @@ export const NotesModule: React.FC = () => {
         }
       }, AUTO_SAVE_DELAY)
     },
-    [activeId, errText, flash]
+    [activeId, errText, flash, noteFailText, t]
   )
 
   const handleNew = async () => {
@@ -170,6 +208,12 @@ export const NotesModule: React.FC = () => {
       const note = await withIpcTimeout(
         window.pocketai.createNote({ title: t('notes.untitled') })
       )
+      // §332：新建那一发的失败同样是 resolve 的值 ⇒ 改前把这个 `{ok:false}` 对象塞进列表首位、
+      // 还把 `undefined` 当成 activeId，渲染那行的 `n.content.slice(0, 40)` 当场 TypeError＝整块屏不见
+      if (isIpcFail(note)) {
+        flash(false, noteFailText(note, 'notes.createFail'))
+        return
+      }
       setNotes((prev) => [note, ...prev])
       setActiveId(note.id)
     } catch (e) {
@@ -183,7 +227,13 @@ export const NotesModule: React.FC = () => {
     if (!active) return
     if (!(await confirm({ message: t('notes.deleteConfirm', { title: active.title || t('notes.untitled') }), danger: true }))) return
     try {
-      await withIpcTimeout(window.pocketai.deleteNote(active.id))
+      const res = await withIpcTimeout(window.pocketai.deleteNote(active.id))
+      // §332：这一发成功形状是 `{ok:true}`、失败是 `{ok:false}`（`{ok}` 在 preload 里早已声明，改前没人读）
+      // ⇒ 改前失败也照样把那一行从列表里抹掉＋退出编辑＝**演成"删掉了"**，库里那条还在、下次开机又回来
+      if (hasIpcFailed(res)) {
+        flash(false, noteFailText(res, 'notes.deleteFail'))
+        return
+      }
       setNotes((prev) => prev.filter((n) => n.id !== active.id))
       setActiveId(null)
     } catch (e) {
@@ -200,14 +250,25 @@ export const NotesModule: React.FC = () => {
       const updated = await withIpcTimeout(
         window.pocketai.updateNote(active.id, { pinned: nextPinned })
       )
-      if (updated) {
-        setNotes((prev) => {
-          const list = prev.map((n) => (n.id === updated.id ? updated : n))
-          // 置顶状态变化可能影响排序，但列表由 load 负责排序，这里手动重排
-          list.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updatedAt - a.updatedAt)
-          return list
-        })
+      if (isIpcFail(updated)) {
+        // 置顶是"先改屏再落库"的乐观改动 ⇒ 失败必须把那颗图钉退回原样（同下面 catch 那一支），
+        // 否则屏上钉着、库里没钉；改前这个失败对象还会被当记录写进列表（同样当场崩屏）
+        setDraft((d) => ({ ...d, pinned: !nextPinned }))
+        flash(false, noteFailText(updated, 'notes.pinFail'))
+        return
       }
+      if (!updated) {
+        // §332：第三种到货——那条笔记已经不在了（`note.repo.ts:90`）；退回乐观改动并明说，不静默
+        setDraft((d) => ({ ...d, pinned: !nextPinned }))
+        flash(false, t('notes.gone'))
+        return
+      }
+      setNotes((prev) => {
+        const list = prev.map((n) => (n.id === updated.id ? updated : n))
+        // 置顶状态变化可能影响排序，但列表由 load 负责排序，这里手动重排
+        list.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updatedAt - a.updatedAt)
+        return list
+      })
     } catch (e) {
       // 失败则回退置顶态
       setDraft((d) => ({ ...d, pinned: !nextPinned }))

@@ -68,36 +68,51 @@ function monthDayAt(year: number, monthIndex: number, dayOfMonth: number, base: 
 }
 
 
+/** 候选仍 ≤ now 时按周期追平（§332）。
+ *  用闭式而不是循环：要追平的幅度只受"这台应用多久没醒"限制（三个月不关机也追得平），
+ *  循环就得挑一个"够大"的次数上限，而上限本身就是下一个坑。 */
+function advancePastNow(candidate: number, periodMs: number, now: number): number {
+  if (candidate > now) return candidate
+  // d = now - candidate ≥ 0，取 floor(d/p)+1 保证 candidate + k·p 严格大于 now
+  const k = Math.floor((now - candidate) / periodMs) + 1
+  return candidate + k * periodMs
+}
+
 /** 计算下一次循环触发时间（epoch ms）：
  * - daily: prevFireAt + intervalDays 天
  * - weekly: 找 prevFireAt 之后的下一个匹配 weekday
  * - monthly: 下一自然月的 dayOfMonth（不存在则取该月最后一天）
- * 若新时间仍 ≤ now（时区/夏令时边界）则继续递推直到 > now（上限 8 次防死循环） */
+ * 三档都必须保证结果 **> now**（§332：改前这句只写在注释里，daily／weekly 都没兑现——
+ * 错过几天时交出去的还是过去时刻，`scheduler.ts:29` 把它原样写回 pending，
+ * 下一个 30s tick 又算"到期"，于是一条周五的日提醒在周一连环弹出多次通知才追平） */
 export function computeNextFireAt(prevFireAt: number, rule: ReminderRepeatRule, now: number): number {
   if (rule.kind === 'daily') {
-    return prevFireAt + rule.intervalDays * 86_400_000
+    const period = rule.intervalDays * 86_400_000
+    return advancePastNow(prevFireAt + period, period, now)
   }
   if (rule.kind === 'weekly') {
     const days = rule.weekdays
-    if (days.length === 0) return prevFireAt + 7 * 86_400_000
+    if (days.length === 0) return advancePastNow(prevFireAt + 7 * 86_400_000, 7 * 86_400_000, now)
     const base = new Date(prevFireAt)
     for (let i = 1; i <= 7; i++) {
       const d = new Date(base.getTime() + i * 86_400_000)
       const dow = ((d.getDay() + 6) % 7) + 1 // 周一=1 ... 周日=7
-      if (days.includes(dow)) return d.getTime()
+      if (days.includes(dow)) return advancePastNow(d.getTime(), 7 * 86_400_000, now)
     }
-    return prevFireAt + 7 * 86_400_000
+    return advancePastNow(prevFireAt + 7 * 86_400_000, 7 * 86_400_000, now)
   }
   // monthly：下一个自然月的 dayOfMonth；该月没有这天就取当月最后一天（2 月 30 号→2 月末）
   const base = new Date(prevFireAt)
-  let monthCursor = base.getMonth() + 1 // 从下一个自然月开始找
+  // §332：改前的 `guard < 8` 是正确性边界而不是兜底——错过 8 个月以上（长期关机／补录旧规则）
+  // 交出去的还是**过去时刻**，scheduler 把它原样写回 pending，下一个 tick 又算"到期"。
+  // 递推不设上限：步数＝错过的月数，候选每月严格前进，任何有限的 now 都会停。
+  // （曾试过"起点直接跳到 now 所在月"：那条变异 W31 存活＝那一跳没有任何可判差异，
+  //  正确性全在这句递推里 ⇒ 按「零效果的守卫直接删」撤掉，只留用例钉得住的那一种写法。）
+  let monthCursor = base.getMonth() + 1
   let result = monthDayAt(base.getFullYear(), monthCursor, rule.dayOfMonth, base)
-  // 递推：跨月边界/DST 让候选仍 ≤ now 时继续往后一个月（上限 8 次防死循环）
-  let guard = 0
-  while (result <= now && guard < 8) {
+  while (result <= now) {
     monthCursor += 1
     result = monthDayAt(base.getFullYear(), monthCursor, rule.dayOfMonth, base)
-    guard++
   }
   return result
 }

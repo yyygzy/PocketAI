@@ -2150,6 +2150,7 @@ export const ja = {
   'notes.saveFail': '自動保存に失敗：{e}',
   'notes.deleteFail': '削除に失敗：{e}',
   'notes.pinFail': 'ピン留めに失敗：{e}',
+  'notes.gone': 'このメモはもう存在しません',
   'translate.run': '翻訳',
   'translate.stop': '停止',
   'translate.copy': '訳文をコピー',

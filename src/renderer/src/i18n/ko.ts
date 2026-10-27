@@ -2150,6 +2150,7 @@ export const ko = {
   'notes.saveFail': '자동 저장 실패: {e}',
   'notes.deleteFail': '삭제 실패: {e}',
   'notes.pinFail': '고정 실패: {e}',
+  'notes.gone': '이 메모는 이미 없습니다',
   'translate.run': '번역',
   'translate.stop': '중지',
   'translate.copy': '번역문 복사',

@@ -216,6 +216,10 @@ const KbForm: React.FC<{
   const [ocrProviderId, setOcrProviderId] = useState(kb?.ocrProviderId ?? '')
   const [ocrModel, setOcrModel] = useState(kb?.ocrModel ?? '')
   const [error, setError] = useState('')
+  // §332：这颗键改前没有防重入（姊妹屏的批量导出早已带锁）⇒ 新建库连点两下＝两发 create，
+  // `kb.repo.ts:90` 各拿一个 randomUUID ⇒ 左栏多一本同名孤儿库；免费版第二本还会被
+  // assertCanCreateKb 拒掉，用户看的就是"点了两下没反应"
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     window.pocketai
@@ -248,6 +252,8 @@ const KbForm: React.FC<{
       setError(t('kb.embRequired'))
       return
     }
+    if (saving) return
+    setSaving(true)
     try {
       const saved = await window.pocketai.saveKnowledgeBase({
         id: kb?.id,
@@ -278,6 +284,8 @@ const KbForm: React.FC<{
       onSaved(saved)
     } catch (e) {
       setError(errText(e))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -582,8 +590,8 @@ const KbForm: React.FC<{
       {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
 
       <div className="flex gap-2 pt-2">
-        <button onClick={handleSave} className="btn-primary">
-          {t('common.save')}
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? t('common.saving') : t('common.save')}
         </button>
         <button onClick={onCancel} className="btn-ghost">
           {t('common.cancel')}
@@ -956,7 +964,11 @@ export const KbDetail: React.FC<{
   }
 
   if (editing) {
-    return <KbForm kb={kb} onSaved={() => { setEditing(false); onChanged() }} onCancel={() => setEditing(false)} />
+    // §332：`key` 与紧邻的 KbEvalPanel／KbAskPanel 同一个理由——KbDetail 不带 key，切库是同一个实例，
+    // 而 KbForm 的二十来个字段只在 mount 时取初值、`handleSave` 传的却是**当前**那份 `kb?.id`：
+    // 库 A 点「设置」→ 左栏点库 B → 保存 ⇒ 屏上是 A 的嵌入模型与分块参数，落库落进 B（A 没动、B 被覆盖，
+    // 且 embeddingDim 保旧值 ⇒ B 的旧向量按 dim 分片表再也召不回来）
+    return <KbForm key={kb.id} kb={kb} onSaved={() => { setEditing(false); onChanged() }} onCancel={() => setEditing(false)} />
   }
 
   return (
@@ -1127,7 +1139,9 @@ export const KbDetail: React.FC<{
       </div>
 
       {/* 检索测试 */}
-      <RetrievalTest kbId={kb.id} topN={kb.topN} />
+      {/* §332：同下面两颗 key——改前切库不重挂载，query／results／诊断徽标全是 RetrievalTest 自己的 state
+          ⇒ 库 A 点「搜索」→ 左栏点库 B：标题与 topN 已是 B 的，屏上还摆着 A 的命中（B 其实一条都没测） */}
+      <RetrievalTest key={kb.id} kbId={kb.id} topN={kb.topN} />
       {/* 检索评测集：同一套检索，换一份卷子看指标。
           §328：key 与下面的 KbAskPanel 同一个理由——KbDetail 不带 key，切库是同一个实例，
           卷子/分数/`busy` 会跨库存活（库 A 的 recall@k 画在库 B 屏上，跑一半切库更是把 A 的结果落到 B） */}
@@ -1160,7 +1174,10 @@ export const KbDetail: React.FC<{
 
       {/* 添加 URL / 录入文本弹窗 */}
       {addSource && (
+        // §332：同一族的第三张脸——弹窗不随切库重挂载，粘在里面的网址带着旧库的来路，
+        // 而 `kbId` 已经是新库 ⇒ 库 A 点「添加 URL」→ 粘好网址 → 左栏点库 B → 确定，抓进来的文档落到 B
         <AddSourceDialog
+          key={kb.id}
           kbId={kb.id}
           mode={addSource}
           onClose={() => setAddSource(null)}
@@ -1245,7 +1262,8 @@ export const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, 
   const [error, setError] = useState('')
 
   const handleSearch = async () => {
-    if (!query.trim()) return
+    // `disabled` 只管得住浏览器真点；Enter 与程序化派发不走它 ⇒ 守卫要在这一层也有一份
+    if (!query.trim() || loading) return
     setLoading(true)
     setError('')
     setResults(null)
@@ -1276,8 +1294,13 @@ export const RetrievalTest: React.FC<{ kbId: string; topN: number }> = ({ kbId, 
         <input
           className="input flex-1"
           value={query}
+          disabled={loading}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          // §332：改前只有一颗 `disabled={loading}` 的按钮，输入框不设防 ⇒ Enter 这条路由绕过在飞守卫
+          // （连按三次＝三发并发，最后回来的那发画进屏，而 `highlightQuery(c.content, query)` 拿**当前**
+          // 输入框的词去高亮**旧那一发**的结果）；输入法确认候选词的那次 Enter 也照样发一发（同屏
+          // `KbAskPanel.tsx:834` 早已判 `isComposing`，这一行没有）
+          onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && handleSearch()}
           placeholder={t('kb.searchPh')}
         />
         <button onClick={handleSearch} disabled={loading} className="btn-primary text-xs disabled:opacity-50">

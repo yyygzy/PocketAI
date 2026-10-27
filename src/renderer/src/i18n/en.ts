@@ -2234,6 +2234,7 @@ export const en = {
   'notes.saveFail': 'Auto-save failed: {e}',
   'notes.deleteFail': 'Delete failed: {e}',
   'notes.pinFail': 'Pin failed: {e}',
+  'notes.gone': 'This note no longer exists',
 
   // ── Translate module ──
   'translate.run': 'Translate',

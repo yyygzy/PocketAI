@@ -97,13 +97,19 @@ const KbAskPanel: React.FC<{
   const [retentionUnread, setRetentionUnread] = useState<{ error?: string } | null>(null)
 
   /** 拉取本库历史会话列表（仅元数据，更新时间倒序）；有关键词时走搜索 */
+  // §332：这一发有 200ms 防抖，防抖只拦"新发送"、不拦"旧响应"——改词后旧那一发若是后到，
+  // 会把新关键词的列表顶掉，而空态那句按**当前**关键词取 ⇒ 屏上挂着不匹配的条目却说「无匹配」；
+  // 旧那一发若是失败还会把当前屏的「读不到」挂上去。代次只看"这是不是最近发起的那一发"。
+  const sessionsReqRef = useRef(0)
   const refreshSessions = (kw = searchKeyword) => {
     const k = kw.trim()
+    const seq = ++sessionsReqRef.current
     const p = k
       ? window.pocketai.searchKbAskSessions(kb.id, k)
       : window.pocketai.listKbAskSessions(kb.id)
     p
       .then((r) => {
+        if (seq !== sessionsReqRef.current) return
         // §223 那条老坑还在：`p` 是绑到变量的 Promise，把 `{ok:false}` 写进列表 state ⇒ 点进去 `.map` 崩。
         // §272 补的是另一半：改前失败侧只有一句"什么都不写"⇒「暂无历史会话」替通道故障说话，
         // 而那颗按钮上的 `（{n}）` 会跟着报 0。这一发的出路是现成的——按钮 onClick 里
@@ -117,6 +123,8 @@ const KbAskPanel: React.FC<{
       })
       .catch((e: unknown) => {
         // reject 面同一张脸（旧写法是一条会消失的 toast，而 toast 看不见就等于没说）
+        // §332：迟到的那一发不许替当前那一次把「读不到」挂上屏
+        if (seq !== sessionsReqRef.current) return
         setSessionsUnread({ error: errText(e, '') })
         logIpcError('kb.searchKbAskSessions', e)
       })
@@ -553,6 +561,8 @@ const KbAskPanel: React.FC<{
               // 关闭历史面板时清空搜索态
               setSearchKeyword('')
               if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+              // §332：清词还得重拉，否则屏上留着的仍是上一份筛选结果（那颗按钮的「（N）」就是它）
+              refreshSessions('')
             }
             setShowHistory(!showHistory)
           }}
@@ -562,8 +572,11 @@ const KbAskPanel: React.FC<{
               : ' border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)]'
           }`}
         >
-          {/* §272：读不到就**不报条数**（§269 同一条：挂着"历史（0）"就是把通道故障演成"你一条都没有"） */}
-          {sessionsUnread ? t('kb.askHistory') : `${t('kb.askHistory')}（${sessionList.length}）`}
+          {/* §272：读不到就**不报条数**（§269 同一条：挂着"历史（0）"就是把通道故障演成"你一条都没有"）。
+              §332：报数的那一句还得是**整库那一份**——改前 `sessionList` 是筛选后的结果，
+              而关闭面板只清关键词不重拉 ⇒ 搜过一个只命中 1 条的词再关掉，按钮长期挂着「历史（1）」，
+              库里其实 50 条。两条一起修：有关键词时不报数，关闭时清词**并重拉**。 */}
+          {sessionsUnread || searchKeyword.trim() ? t('kb.askHistory') : `${t('kb.askHistory')}（${sessionList.length}）`}
         </button>
         <button onClick={startNewSession} className="btn-ghost text-xs">
           {t('kb.askNewSession')}
