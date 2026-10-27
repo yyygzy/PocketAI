@@ -724,6 +724,8 @@ export const KbDetail: React.FC<{
       if (!list || hasIpcFailed(list)) {
         const msg = rejectMsg ?? (list ? ipcFailText(list, t('common.unknownError')) : t('common.unknownError'))
         stopPolling()
+        // §337：轮询因错误停下时也要解 busy——否则按钮永远灰着
+        setBusy(false)
         toast.error(t('common.refreshFailed', { msg }))
         return
       }
@@ -731,6 +733,8 @@ export const KbDetail: React.FC<{
       const hasIndexing = list.some((d) => d.status === 'pending' || d.status === 'parsing' || d.status === 'indexing')
       if (!hasIndexing) {
         stopPolling()
+        // §337：全部文档 ready/error 后解 busy——与 handleAddFiles/handleReindex 等的 try 块配对
+        setBusy(false)
         onChanged()
       }
     }, 2000)
@@ -760,11 +764,18 @@ export const KbDetail: React.FC<{
     setBusy(true)
     try {
       const r = await window.pocketai.addKbFiles(kb.id)
-      if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
-      else toastSkippedDuplicates(r)
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        setBusy(false)
+        return
+      }
+      toastSkippedDuplicates(r)
       await refresh()
+      // §337：busy 不在 finally 里清——索引异步进行，finally 清完用户就能再点⇒重复入队。
+      // 改由 startPolling 检测到全部 ready 后清（见 :733）；全被判重时 hasIndexing=false 第一轮就清。
       startPolling()
-    } finally {
+    } catch (e) {
+      toast.error(errText(e))
       setBusy(false)
     }
   }
@@ -777,6 +788,7 @@ export const KbDetail: React.FC<{
       if (hasIpcFailed(r)) {
         toast.error(ipcFailText(r, t('common.unknownError')))
         await refresh()
+        setBusy(false)
         return
       }
       // 「没有可导入的文件」只在真的是空命中时说——全被判重复的情况由下面那句交代
@@ -790,8 +802,10 @@ export const KbDetail: React.FC<{
       // 读不到）。改前 `skippedCount` 渲染层从不读 ⇒ 一个文件夹里几十上百个文件被悄悄丢掉，屏上只报「已导入 N 篇」。
       if (r.skippedCount > 0) toast.warning(t('kb.folderSkipped', { n: r.skippedCount }))
       await refresh()
+      // §337：busy 由 startPolling 检测到全部 ready 后清，不在 finally 里清（防索引期间重复点击）
       startPolling()
-    } finally {
+    } catch (e) {
+      toast.error(errText(e))
       setBusy(false)
     }
   }
@@ -836,16 +850,17 @@ export const KbDetail: React.FC<{
       // safeHandle 的失败是返回值不是 reject：不判它就会把一次没入队的操作报成"已处理"
       if (hasIpcFailed(r)) {
         toast.error(ipcFailText(r, t('common.unknownError')))
+        setBusy(false)
         return
       }
       setSelected([])
       await refresh()
+      // §337：busy 由 startPolling 检测到全部 ready 后清，防索引期间重复点击
       startPolling()
       // 队列只认库里还存在的文档：入队数少于选中的篇数就如实报差值，不假装全成功
       toast.info(t('kb.batchDone', { n: r.enqueued, m: ids.length - r.enqueued }))
     } catch (e) {
       toast.error(errText(e))
-    } finally {
       setBusy(false)
     }
   }
@@ -924,19 +939,24 @@ export const KbDetail: React.FC<{
       // 「…is not a function」而不是真原因（这颗按钮是用户主动点的，必须说人话）
       if (hasIpcFailed(r)) {
         toast.error(ipcFailText(r, t('common.unknownError')))
+        setBusy(false)
         return
       }
       const changed = r.issues.filter((i) => i.kind === 'changed')
       const missing = r.issues.filter((i) => i.kind === 'missing')
       if (r.issues.length === 0) {
         toast.info(t('kb.syncUpToDate', { n: r.checked }))
+        setBusy(false)
         return
       }
       const ok = await confirm({
         message: t('kb.syncConfirm', { n: changed.length, m: missing.length }),
         danger: missing.length > 0
       })
-      if (!ok) return
+      if (!ok) {
+        setBusy(false)
+        return
+      }
       // §331：这一趟是 N 发独立请求，改前逐条 await 全不判、末尾无条件报「已重索引 n 个、移除 m 个」
       // ⇒ 全部失败也报全成功。现在两笔账各自数，失败那条单独说。
       let reindexed = 0
@@ -953,7 +973,12 @@ export const KbDetail: React.FC<{
         else removed++
       }
       await refresh()
-      if (reindexed > 0) startPolling()
+      if (reindexed > 0) {
+        // §337：busy 由 startPolling 检测到全部 ready 后清，防索引期间重复点击
+        startPolling()
+      } else {
+        setBusy(false)
+      }
       if (failed === 0) {
         toast.success(t('kb.syncDone', { n: reindexed, m: removed }))
       } else if (reindexed + removed === 0) {
@@ -963,7 +988,6 @@ export const KbDetail: React.FC<{
       }
     } catch (e) {
       toast.error(errText(e))
-    } finally {
       setBusy(false)
     }
   }
