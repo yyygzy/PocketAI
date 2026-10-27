@@ -2,11 +2,14 @@
 // 记忆来源：Agent 对话中经 memory_save 工具主动保存 + 用户手动添加
 import React, { useCallback, useEffect, useState } from 'react'
 import type { UserMemoryRecord } from '../../../../shared/types'
+// §333：那道 2000 字上限此前只在 zod 里，输入框不设防 ⇒ 粘一段超长的记忆按「添加」，
+// 整条被拒而界面先一步把用户敲的那段清空。数字取 schema 那一份，不在这里重抄。
+import { MEMORY_MAX_CONTENT_CHARS } from '../../../../shared/schemas/memory'
 import { useI18n } from '../../i18n'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { Notice } from './ProviderSettings'
-import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 
@@ -55,7 +58,14 @@ export const UserMemoryPanel: React.FC = () => {
     if (!content || busy) return
     setBusy(true)
     try {
-      await window.pocketai.addMemory(content)
+      const added = await window.pocketai.addMemory(content)
+      // §333：改前整个返回值不接 ⇒ 内容超 2000 字符被 zod 整条拒（safeHandle 折成 resolve 的 `{ok:false}`，
+      // 那句 catch 永不响），屏上照旧弹「已添加」并把用户敲的那段清空＝数据丢了还说成功。
+      // 失败时草稿必须留着（原文还在框里才能改短再试），原因走四语字典。
+      if (hasIpcFailed(added)) {
+        flash(false, ipcFailText(added, t('common.unknownError')))
+        return
+      }
       setDraft('')
       flash(true, t('set.memoryAdded'))
       refresh()
@@ -76,7 +86,12 @@ export const UserMemoryPanel: React.FC = () => {
     if (!content || !editingId || busy) return
     setBusy(true)
     try {
-      await window.pocketai.updateMemory(editingId, content)
+      const updated = await window.pocketai.updateMemory(editingId, content)
+      // §333：同上——失败时不收编辑框（关编辑框会把这个输入框整个卸载，刚敲的新内容永久消失）
+      if (hasIpcFailed(updated)) {
+        flash(false, ipcFailText(updated, t('common.unknownError')))
+        return
+      }
       setEditingId(null)
       flash(true, t('set.memoryUpdated'))
       refresh()
@@ -90,11 +105,18 @@ export const UserMemoryPanel: React.FC = () => {
   const remove = async (m: UserMemoryRecord) => {
     if (!(await confirm({ message: t('set.memoryDeleteConfirm'), danger: true }))) return
     try {
-      await window.pocketai.deleteMemory(m.id)
+      const res = await window.pocketai.deleteMemory(m.id)
+      // §333：改前失败也是 resolve 的值 ⇒ 照旧弹「已删除」，refresh 后那条又回来（看着像闹鬼）。
+      // 库里那条没删，这句就得说原因；`reportIpcError` 那句死代码一起换成判据。
+      if (hasIpcFailed(res)) {
+        flash(false, ipcFailText(res, t('common.unknownError')))
+        return
+      }
       flash(true, t('set.memoryDeleted'))
       refresh()
     } catch (e) {
-      reportIpcError('memory.delete')(e)
+      flash(false, errText(e, t('common.unknownError')))
+      logIpcError('memory.delete', e)
     }
   }
 
@@ -107,6 +129,7 @@ export const UserMemoryPanel: React.FC = () => {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && add()}
+          maxLength={MEMORY_MAX_CONTENT_CHARS}
           placeholder={t('set.memoryPlaceholder')}
           className="flex-1 text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
         />
@@ -143,6 +166,7 @@ export const UserMemoryPanel: React.FC = () => {
                     autoFocus
                     value={editDraft}
                     onChange={(e) => setEditDraft(e.target.value)}
+                    maxLength={MEMORY_MAX_CONTENT_CHARS}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') saveEdit()
                       if (e.key === 'Escape') setEditingId(null)

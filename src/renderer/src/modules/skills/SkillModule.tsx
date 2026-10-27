@@ -37,8 +37,12 @@ export const SkillModule: React.FC = () => {
   }, [t, toast])
   useEffect(() => {
     // 打开技能页时自动同步内置（支持开发时热更新 + 生产环境首次载入）
-    window.pocketai.syncSkills().catch(reportIpcError('skills.syncBuiltin'))
-    load()
+    // §333：syncSkills 失败要说原因，不能只进 console ⇒ 改 await + 判信封
+    ;(async () => {
+      const r = await window.pocketai.syncSkills()
+      if (hasIpcFailed(r)) toast.error(ipcFailText(r, t('common.unknownError')))
+      load()
+    })()
   }, [])
 
   // 搜索过滤：名称 + 描述

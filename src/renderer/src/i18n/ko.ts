@@ -72,6 +72,7 @@ export const ko = {
   'common.copy': '복사',
   'common.copied': '복사됨',
   'common.copyFailed': '복사 실패, 다시 시도하세요',
+  'common.saveFailed': '저장 실패, 다시 시도하세요',
   'common.selectAll': '모두 선택',
   'common.copySelected': '선택 항목 복사',
   'common.starSelected': '선택 항목 즐겨찾기',

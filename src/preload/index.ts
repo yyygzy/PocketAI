@@ -170,13 +170,20 @@ const api = {
   > => ipcRenderer.invoke(IPC.ASSISTANT_IMPORT, opts),
 
   // ---------- 用户记忆 ----------
-  listMemories: (): Promise<UserMemoryRecord[]> => ipcRenderer.invoke(IPC.MEMORY_LIST),
-  addMemory: (content: string): Promise<UserMemoryRecord> =>
-    ipcRenderer.invoke(IPC.MEMORY_ADD, content),
-  updateMemory: (id: string, content: string): Promise<UserMemoryRecord> =>
-    ipcRenderer.invoke(IPC.MEMORY_UPDATE, id, content),
-  deleteMemory: (id: string): Promise<{ ok: boolean }> =>
-    ipcRenderer.invoke(IPC.MEMORY_DELETE, id),
+  // §333：这四条改前只写成功形状 ⇒ safeHandle 折出来的 `{ok:false}` 过不了 tsc 那一关就没人判，
+  // 三发写操作于是都演成"成功"（见 UserMemoryPanel）。口径同 §318／§330／§331／§332。
+  listMemories: (): Promise<
+    UserMemoryRecord[] | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.MEMORY_LIST),
+  addMemory: (content: string): Promise<
+    UserMemoryRecord | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.MEMORY_ADD, content),
+  updateMemory: (id: string, content: string): Promise<
+    UserMemoryRecord | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.MEMORY_UPDATE, id, content),
+  deleteMemory: (id: string): Promise<
+    { ok: true } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.MEMORY_DELETE, id),
 
   // ---------- 技能 ----------
   listSkills: (): Promise<SkillRecord[]> => ipcRenderer.invoke(IPC.SKILL_LIST),

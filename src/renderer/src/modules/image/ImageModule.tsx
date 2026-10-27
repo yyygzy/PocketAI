@@ -86,8 +86,17 @@ export const ImageModule: React.FC = () => {
     [enabledProviders, providerId]
   )
   const previewRecord = useMemo(
-    () => gallery.find((g) => g.id === previewId) ?? null,
-    [gallery, previewId]
+    () => {
+      // §333：latest 刚生成时可能还没进 gallery（刷新在途或失败）⇒ 优先从 gallery 取，取不到再 fallback 到 latest
+      if (!previewId) return null
+      const fromGallery = gallery.find((g) => g.id === previewId)
+      if (fromGallery) return fromGallery
+      if (latest?.id === previewId) {
+        return { ...latest, thumbDataUrl: latestDataUrl }
+      }
+      return null
+    },
+    [gallery, previewId, latest, latestDataUrl]
   )
   /** 模型 datalist 候选（图像模型常不在 /models 列表，允许手输） */
   const modelOptions = activeProvider?.models ?? []
@@ -544,13 +553,20 @@ export const ImageModule: React.FC = () => {
               </button>
               <button
                 className="btn-ghost text-xs"
-                onClick={() => window.pocketai.openFileLocation(previewRecord.fileName)}
+                onClick={async () => {
+                  const r = await window.pocketai.openFileLocation(previewRecord.fileName)
+                  // §333：失败（文件不在／系统没关联程序）要说原因，不能点了没反应
+                  if (!r.ok) flash(false, t('common.opFailed', { msg: r.error ?? t('common.unknownError') }))
+                }}
               >
                 📍 {t('image.openLocation')}
               </button>
               <button
                 className="btn-ghost text-xs"
-                onClick={() => window.pocketai.openFileExternal(previewRecord.fileName)}
+                onClick={async () => {
+                  const r = await window.pocketai.openFileExternal(previewRecord.fileName)
+                  if (!r.ok) flash(false, t('common.opFailed', { msg: r.error ?? t('common.unknownError') }))
+                }}
               >
                 ↗ {t('image.openExternal')}
               </button>

@@ -73,6 +73,7 @@ export const zh = {
   'common.copy': '复制',
   'common.copied': '已复制',
   'common.copyFailed': '复制失败，请重试',
+  'common.saveFailed': '保存失败，请重试',
   'common.selectAll': '全选',
   'common.copySelected': '复制选中',
   'common.starSelected': '收藏选中',

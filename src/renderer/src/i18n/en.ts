@@ -73,6 +73,7 @@ export const en = {
   'common.copy': 'Copy',
   'common.copied': 'Copied',
   'common.copyFailed': 'Copy failed, please try again',
+  'common.saveFailed': 'Save failed, please try again',
   'common.selectAll': 'Select all',
   'common.copySelected': 'Copy selected',
   'common.starSelected': 'Star selected',

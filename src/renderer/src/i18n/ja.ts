@@ -72,6 +72,7 @@ export const ja = {
   'common.copy': 'コピー',
   'common.copied': 'コピーしました',
   'common.copyFailed': 'コピーに失敗しました。再試行してください',
+  'common.saveFailed': '保存に失敗しました。再試行してください',
   'common.selectAll': 'すべて選択',
   'common.copySelected': '選択部分をコピー',
   'common.starSelected': '選択項目をスター付きに',

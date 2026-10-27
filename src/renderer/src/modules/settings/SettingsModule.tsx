@@ -694,6 +694,7 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
   }, [])
   const { copied, copy } = useCopyFeedback(2000, sensitiveWriter)
   const { notice: copyFailed, show: showCopyFailed } = useTransientNotice<boolean>(3000)
+  const { notice: saveFailed, show: showSaveFailed } = useTransientNotice<boolean>(3000)
   return (
     <Modal open title={title} onClose={onClose}>
       <p className="text-xs text-[var(--color-warning)] mb-2">{t('enc.recoveryShowOnce')}</p>
@@ -718,7 +719,18 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
         >
           {t('enc.recoveryCopy')}
         </button>
-        <button className="btn-ghost" onClick={() => window.pocketai.saveRecoveryFile(code)}>
+        <button
+          className="btn-ghost"
+          onClick={async () => {
+            try {
+              const r = await window.pocketai.saveRecoveryFile(code)
+              // canceled＝用户在选择器里取消，不是失败；只有 ok:false 且非 canceled 才报错
+              if (r.ok === false && !r.canceled) showSaveFailed(true)
+            } catch {
+              showSaveFailed(true)
+            }
+          }}
+        >
           {t('enc.recoverySaveFile')}
         </button>
       </div>
@@ -729,6 +741,9 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
       )}
       {copyFailed && (
         <p className="text-[11px] text-[var(--color-danger)] mb-2">{t('common.copyFailed')}</p>
+      )}
+      {saveFailed && (
+        <p className="text-[11px] text-[var(--color-danger)] mb-2">{t('common.saveFailed')}</p>
       )}
       <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-3">
         {t('enc.recoveryModalWarn')}
@@ -2188,6 +2203,8 @@ export const NetworkPanel: React.FC = () => {
 export const AppearancePanel: React.FC = () => {
   const { t } = useI18n()
   const [opacity, setOpacity] = useState(1)
+  // §333：commitOpacity 失败时回滚到「最后一次真正存住的值」，不是拖动中的本地值
+  const savedOpacityRef = useRef(1)
   const [css, setCss] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
@@ -2212,6 +2229,7 @@ export const AppearancePanel: React.FC = () => {
         setUiErr(ipcFailText(r, t('common.unknownError')))
       } else {
         setOpacity(r.data.opacity)
+        savedOpacityRef.current = r.data.opacity
         setCss(r.data.customCss)
         setChatFontSize(normalizeFontSize(r.data.chatFontSize))
         const lines = normalizeCodeCollapseLines(r.data.codeCollapseLines)
@@ -2347,11 +2365,15 @@ export const AppearancePanel: React.FC = () => {
   }
 
   // 滑块拖动结束后提交（拖动中只更新本地，避免频繁 IPC）
+  // §333：改前这一发失败只说一句，滑块仍停在没落库的那一档（同屏其余五发都回滚）；
+  // 回滚的锚点是「最后一次真正存住的那个值」，不是拖动过程中的本地值。
   const commitOpacity = async (value: number) => {
     const r = await window.pocketai.setUiPrefs({ opacity: value })
     if (r.ok && r.data) {
       setOpacity(r.data.opacity)
+      savedOpacityRef.current = r.data.opacity
     } else {
+      setOpacity(savedOpacityRef.current)
       setNotice({ ok: false, text: r.error ?? t('common.unknownError') })
     }
   }
@@ -2552,6 +2574,11 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
   const [changelogLoading, setChangelogLoading] = useState(false)
   const [changelogError, setChangelogError] = useState<string | null>(null)
   const [releases, setReleases] = useState<Array<{ tag: string; name: string; date: string; body: string; url: string; prerelease: boolean }>>([])
+
+  // §333：autoUpdate 初值定死在 mount 那一刻 ⇒ info 迟到或刷新后状态不跟 ⇒ 加一道同步
+  useEffect(() => {
+    if (info?.autoUpdateEnabled !== undefined) setAutoUpdate(info.autoUpdateEnabled)
+  }, [info?.autoUpdateEnabled])
 
   const handleOpenChangelog = async () => {
     setChangelogOpen(true)
