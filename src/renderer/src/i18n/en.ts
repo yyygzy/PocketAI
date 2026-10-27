@@ -303,6 +303,7 @@ export const en = {
   'chat.exportingImage': 'Generating image…',
   'chat.exportImageTooLong': 'Only the latest 500 messages exported',
   'chat.exportMultiCapped': 'At most {max} per export; {dropped} ignored',
+  'chat.exportBatchProgress': 'Exporting… {done}/{total}',
   'chat.more': 'More',
   'chat.pin': 'Pin',
   'chat.morePinned': '{n} more pinned messages, click to expand',

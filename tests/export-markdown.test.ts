@@ -8,7 +8,8 @@ import {
   formatSources,
   formatAttachments,
   safeFileName,
-  dedupeFileNames
+  dedupeFileNames,
+  EXPORT_FILE_NAME_MAX
 } from '../src/shared/export-markdown'
 import type { KbAskMessage } from '../src/shared/types'
 
@@ -163,6 +164,33 @@ describe('usage / 文件名工具', () => {
   it('safeFileName 替换 Windows 非法字符并兜底', () => {
     expect(safeFileName('a/b:c*d?e')).toBe('a_b_c_d_e')
     expect(safeFileName('///')).toBe('conversation')
+  })
+
+  // §330：两类曾经没人管的文件名——长标题会把整批导出挡死（批量通道的 name 上限是整条数组级校验），
+  // Windows 保留名压根写不出来（落盘失败只汇成一句「N 个失败」）
+  it('safeFileName 认 Windows 保留名（带扩展名也算），非保留名不误伤', () => {
+    expect(safeFileName('CON')).toBe('_CON')
+    expect(safeFileName('con.txt')).toBe('_con.txt')
+    expect(safeFileName('NUL.md')).toBe('_NUL.md')
+    expect(safeFileName('COM9')).toBe('_COM9')
+    expect(safeFileName('LPT1.log')).toBe('_LPT1.log')
+    // 反向对照：只是「以保留名开头」的普通名字不许动
+    expect(safeFileName('CONSOLE.md')).toBe('CONSOLE.md')
+    expect(safeFileName('null-pointer.md')).toBe('null-pointer.md')
+    // 末段是保留名样式但整名不是（扩展名 .CON 不影响主名）
+    expect(safeFileName('a.CON')).toBe('a.CON')
+  })
+
+  it('safeFileName 裁到上限且保住扩展名（长标题不再撑破入参闸）', () => {
+    const long = '会'.repeat(300)
+    const cut = safeFileName(`${long}.md`)
+    expect(cut.length).toBeLessThanOrEqual(EXPORT_FILE_NAME_MAX)
+    expect(cut.endsWith('.md')).toBe(true)
+    expect(cut).toBe(`${'会'.repeat(EXPORT_FILE_NAME_MAX - 3)}.md`)
+    // 上限必须严格低于批量导出通道那道 name.max(200)（否则一个长标题挡死整批）
+    expect(EXPORT_FILE_NAME_MAX).toBeLessThan(200)
+    // 反向对照：不超上限的名字逐字不变
+    expect(safeFileName('短标题.md')).toBe('短标题.md')
   })
 
   it('dedupeFileNames 同名追加序号且保持顺序', () => {

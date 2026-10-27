@@ -288,6 +288,7 @@ export const ja = {
   'chat.exportingImage': '画像を生成中…',
   'chat.exportImageTooLong': '最新500件のみ書き出し',
   'chat.exportMultiCapped': '1回の書き出しは最大 {max} 件。{dropped} 件を無視しました',
+  'chat.exportBatchProgress': '書き出し中 {done}/{total}',
   'chat.more': 'その他',
   'chat.pin': 'ピン留め',
   'chat.morePinned': 'ピン留めメッセージがあと {n} 件、クリックで展開',

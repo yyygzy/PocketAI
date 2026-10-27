@@ -25,6 +25,8 @@ interface Props {
   onBatchExport?: (format: 'md' | 'html') => void
   /** 多选导出：把选中的会话（按列表显示顺序）交父级导出 */
   onBatchExportSelected?: (format: 'md' | 'html' | 'pdf', convs: ConversationRecord[]) => void
+  /** 批量导出在飞时的逐会话进度（§330：null＝不在飞） */
+  batchExportProgress?: { done: number; total: number } | null
   /** 批量删除：选中会话 id 列表交父级执行 */
   onBatchDelete?: (ids: string[]) => void
   /** 归档区会话（底部折叠展示） */
@@ -74,6 +76,7 @@ export const ConversationList: React.FC<Props> = ({
   onExportEncrypted,
   onBatchExport,
   onBatchExportSelected,
+  batchExportProgress,
   onBatchDelete,
   archivedConversations,
   archivedUnread,
@@ -437,6 +440,12 @@ export const ConversationList: React.FC<Props> = ({
                 onClick={() => setConvFilter('')}
               >×</button>
             )}
+          </div>
+        )}
+        {/* §330：批量导出在飞时逐会话进度（多选那一条一点就退多选态，进度只能挂在常驻的这一格） */}
+        {batchExportProgress && (
+          <div data-export-batch-progress className="text-[11px] text-[var(--color-text-muted)] px-0.5">
+            {t('chat.exportBatchProgress', { done: batchExportProgress.done, total: batchExportProgress.total })}
           </div>
         )}
         {/* 工具栏两行布局：主行（新对话+批量导出）/ 次行（导入·加密导入·收藏·建组），

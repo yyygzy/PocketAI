@@ -20,7 +20,7 @@ import type {
   ProviderRecord
 } from '../../../../shared/types'
 import { errText } from '../../utils/error'
-import { hasIpcFailed, ipcFailText, ipcFailureText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { hasIpcFailed, isIpcFail, ipcFailText, ipcFailureText, logIpcError, reportIpcError } from '../../utils/ipc'
 import { KB_ASK_MAX_HISTORY } from '../../../../shared/types'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
@@ -392,6 +392,12 @@ const KbAskPanel: React.FC<{
       .then((rec) => {
         // §311：切走了就不许把 A 的会话 id／历史写进当前屏（写了它，下一句追问会落进 A）
         if (openedSessionRef.current !== id) return
+        // §330：这一发成功时是记录、失败时是 `{ok:false}`（safeHandle 不 reject）——
+        // 只判 `!rec` 的话失败对象是真值，undefined 的 id／messages 会直接进 state，渲染那行 msgs.map 当场抛
+        if (isIpcFail(rec)) {
+          toast.error(ipcFailText(rec, t('common.unknownError')))
+          return
+        }
         if (!rec) {
           refreshSessions()
           return
@@ -470,6 +476,11 @@ const KbAskPanel: React.FC<{
         else if (!r.ok && r.error) toast.error(r.error)
       } else {
         const rec = await window.pocketai.getKbAskSession(id)
+        // §330：同一条通道的第二种到货分开说——读不到（失败对象）与真不在了是两件事
+        if (isIpcFail(rec)) {
+          toast.error(ipcFailText(rec, t('common.unknownError')))
+          return
+        }
         if (!rec) {
           toast.error(t('kb.askSessionNotFound'))
           refreshSessions()

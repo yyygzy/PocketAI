@@ -288,6 +288,7 @@ export const ko = {
   'chat.exportingImage': '이미지 생성 중…',
   'chat.exportImageTooLong': '최근 500개만 내보내기',
   'chat.exportMultiCapped': '한 번에 최대 {max}개까지 내보낼 수 있습니다. {dropped}개 무시됨',
+  'chat.exportBatchProgress': '내보내는 중 {done}/{total}',
   'chat.more': '더보기',
   'chat.pin': '상단 고정',
   'chat.morePinned': '고정된 메시지 {n}개 더 있음, 클릭하여 펼치기',

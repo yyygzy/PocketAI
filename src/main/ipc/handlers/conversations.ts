@@ -247,7 +247,8 @@ export function registerConversationHandlers(): void {
     return { ok: true, path: filePath }
   }, argsSchema(z.object({
     defaultName: z.string().min(1).max(200),
-    content: z.string().min(1).max(5 * 1024 * 1024)
+    // 与拖出那一路同闸（原先这里是 5MB 字面量、拖拽那路 10MB ⇒ 同一份 Markdown 拖得出去、点必失败）
+    content: z.string().min(1).max(DRAG_CONTENT_MAX_CHARS)
   })))
 
   // 导出拖拽到桌面（Electron 文件拖出）：
@@ -352,8 +353,6 @@ export function registerConversationHandlers(): void {
       messages,
       assistant
     }
-    const encrypted = encryptWithPassword(password, JSON.stringify(payload))
-
     const safeName = safeFileName(conv.title)
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       defaultPath: `${safeName}.moxia`,
@@ -364,6 +363,9 @@ export function registerConversationHandlers(): void {
     })
     if (canceled || !filePath) return { ok: true, canceled: true }
 
+    // KDF 排在保存对话框之后（V4-Iter-330）：改前点完导出要先等一轮 PBKDF2 才弹框，
+    // 用户在框里取消时那一轮纯白跑
+    const encrypted = encryptWithPassword(password, JSON.stringify(payload))
     fs.writeFileSync(filePath, encrypted)
     return { ok: true, path: filePath }
   }, argsSchema(idSchema, z.string().min(1)))

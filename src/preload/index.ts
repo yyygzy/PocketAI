@@ -464,8 +464,13 @@ const api = {
     ipcRenderer.invoke(IPC.KB_ASK_SESSION_SAVE, record),
   listKbAskSessions: (kbId: string): Promise<KbAskSessionMeta[]> =>
     ipcRenderer.invoke(IPC.KB_ASK_SESSION_LIST, kbId),
-  getKbAskSession: (id: string): Promise<KbAskSessionRecord | null> =>
-    ipcRenderer.invoke(IPC.KB_ASK_SESSION_GET, id),
+  getKbAskSession: (
+    id: string
+  ): Promise<
+    | KbAskSessionRecord
+    | null
+    | { ok: false; error: string; ipcCode?: string; ipcArgs?: unknown[] }
+  > => ipcRenderer.invoke(IPC.KB_ASK_SESSION_GET, id),
   deleteKbAskSession: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.KB_ASK_SESSION_DELETE, id),
   renameKbAskSession: (id: string, title: string): Promise<{ ok: boolean }> =>

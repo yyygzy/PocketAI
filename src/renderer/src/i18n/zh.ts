@@ -303,6 +303,7 @@ export const zh = {
   'chat.exportingImage': '正在生成长图…',
   'chat.exportImageTooLong': '仅导出最近 500 条消息',
   'chat.exportMultiCapped': '单次最多导出 {max} 个，已忽略 {dropped} 个',
+  'chat.exportBatchProgress': '导出中 {done}/{total}',
   'chat.more': '更多',
   'chat.pin': '置顶',
   'chat.unpin': '取消置顶',

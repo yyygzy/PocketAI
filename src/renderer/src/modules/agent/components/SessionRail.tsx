@@ -30,6 +30,8 @@ interface Props {
   onBatchExport?: (format: 'md' | 'html') => void
   /** 多选导出：把选中的会话（按列表显示顺序）交父级导出 */
   onBatchExportSelected?: (format: 'md' | 'html' | 'pdf', convs: ConversationRecord[]) => void
+  /** 批量导出在飞时逐会话进度（§330：null＝不在飞） */
+  batchExportProgress?: { done: number; total: number } | null
   /** 归档区会话（底部折叠展示） */
   archivedConversations?: ConversationRecord[]
   onTogglePin?: (id: string, pinned: boolean) => void
@@ -58,6 +60,7 @@ export const SessionRail: React.FC<Props> = ({
   onExportEncrypted,
   onBatchExport,
   onBatchExportSelected,
+  batchExportProgress,
   archivedConversations,
   onTogglePin,
   onSetArchived,
@@ -189,6 +192,12 @@ export const SessionRail: React.FC<Props> = ({
           <option key={a.id} value={a.id}>{a.avatar} {assistantDisplayName(a, t)}</option>
         ))}
       </select>
+      {/* §330：批量导出在飞时逐会话进度（多选那一条一点就退多选态，进度只能挂在常驻的这一格） */}
+      {batchExportProgress && (
+        <div data-export-batch-progress className="text-[11px] text-[var(--color-text-muted)] mb-1.5 px-0.5">
+          {t('chat.exportBatchProgress', { done: batchExportProgress.done, total: batchExportProgress.total })}
+        </div>
+      )}
       <div className="flex gap-1 mb-2">
         {selectMode ? (
           <>

@@ -281,13 +281,18 @@ export const AgentPanel: React.FC = () => {
 
   // 批量导出：convs 缺省 = 当前助手全部会话（列表即范围）；传入 = 多选导出
   // pdf 逐会话 printToPDF 耗时高，选中上限收紧为 BATCH_PDF_MAX
+  // §330：这颗键此前没有 ChatModule 那张 batchBusyRef ⇒ 连点两下并发开两批、两个目录选择框排队
+  const batchBusyRef = useRef(false)
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
   const handleBatchExport = async (format: 'md' | 'html' | 'pdf', convs?: ConversationRecord[]) => {
+    if (batchBusyRef.current) return
+    batchBusyRef.current = true
     const list = convs ?? chat.conversations
-    if (list.length === 0) {
-      toast.info(t('chat.exportBatchEmpty'))
-      return
-    }
     try {
+      if (list.length === 0) {
+        toast.info(t('chat.exportBatchEmpty'))
+        return
+      }
       const max = format === 'pdf' ? BATCH_PDF_MAX : BATCH_EXPORT_MAX
       let selected = list
       if (convs) {
@@ -302,13 +307,18 @@ export const AgentPanel: React.FC = () => {
         convs: selected,
         format,
         listMessages: (id) => window.pocketai.listMessages(id),
-        resolveAssistantName: () => assistantName
+        resolveAssistantName: () => assistantName,
+        // §330：50 个 PDF 约 50 秒，这个参数此前从没被传过 ⇒ 长批屏上零进度
+        onProgress: (done, total) => setBatchProgress({ done, total })
       })
       const outcome = await finishBatchExport(built.files, format)
       // 两屏共用一份收尾话术（§329：一个都没落地不许报绿；「读不到」与「写不进」分开报数）
       reportBatchOutcome(toast, t, outcome, built.unreadable, t('common.unknownError'))
     } catch (e) {
       toast.error(t('chat.exportFail', { e: errText(e) }))
+    } finally {
+      batchBusyRef.current = false
+      setBatchProgress(null)
     }
   }
 
@@ -400,6 +410,7 @@ export const AgentPanel: React.FC = () => {
           onExportPdf={(id) => void handleExportPdf(id)}
           onBatchExport={(fmt) => void handleBatchExport(fmt)}
           onBatchExportSelected={(fmt, convs) => void handleBatchExport(fmt, convs)}
+          batchExportProgress={batchProgress}
           onExportEncrypted={(id) => { setCryptoPwd(''); setCryptoPrompt({ kind: 'export', id }) }}
           archivedConversations={chat.archivedConversations}
           onTogglePin={(id, pinned) => void handleTogglePin(id, pinned)}

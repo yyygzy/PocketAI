@@ -776,6 +776,8 @@ export const ChatModule: React.FC = () => {
   // 批量导出：convs 缺省 = 当前助手全部会话；传入 = 多选导出（重名由主进程加序号）
   // pdf 逐会话 printToPDF 耗时高，选中上限收紧为 BATCH_PDF_MAX
   const batchBusyRef = useRef(false)
+  // §330：逐会话构建那一步的进度（50 个 PDF 约 50 秒，这个读数此前无处可去）
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
   const handleBatchExport = async (format: 'md' | 'html' | 'pdf', convs?: ConversationRecord[]) => {
     if (batchBusyRef.current) return
     batchBusyRef.current = true
@@ -804,7 +806,9 @@ export const ChatModule: React.FC = () => {
         convs: selected,
         format,
         listMessages: (id) => window.pocketai.listMessages(id),
-        resolveAssistantName: nameOfAssistant
+        resolveAssistantName: nameOfAssistant,
+        // §330：50 个 PDF 约 50 秒，这个参数此前从没被传过 ⇒ 长批屏上零进度
+        onProgress: (done, total) => setBatchProgress({ done, total })
       })
       const outcome = await finishBatchExport(built.files, format)
       // 两屏共用一份收尾话术（§329：一个都没落地不许报绿；「读不到」与「写不进」分开报数）
@@ -813,6 +817,7 @@ export const ChatModule: React.FC = () => {
       toast.error(t('chat.exportFail', { e: errText(e) }))
     } finally {
       batchBusyRef.current = false
+      setBatchProgress(null)
     }
   }
 
@@ -1449,6 +1454,7 @@ export const ChatModule: React.FC = () => {
             onExportEncrypted={handleExportEncrypted}
             onBatchExport={handleBatchExport}
             onBatchExportSelected={(fmt, convs) => void handleBatchExport(fmt, convs)}
+            batchExportProgress={batchProgress}
             onBatchDelete={handleBatchDeleteConv}
             onImport={handleImportConv}
             onImportEncrypted={handleImportEncrypted}

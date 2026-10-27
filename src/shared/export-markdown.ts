@@ -24,11 +24,32 @@ export interface ExportConversationMeta {
   assistantId?: string | null
 }
 
-/** 文件名安全化：Windows 非法字符替换为 _，去除首尾空格/点；全为非法字符时兜底 */
+/**
+ * 落盘文件名的字符上限（含扩展名）。批量导出那路在 zod 上是整条数组级校验（`name.max(200)`），
+ * 一个超长标题就能把整批全部挡死 ⇒ 这里裁到远低于那道闸，让长标题只影响自己那一个名字。
+ */
+export const EXPORT_FILE_NAME_MAX = 120
+
+/** Windows 保留名（大小写不敏感，带扩展名同样保留）：CON／PRN／AUX／NUL／COM1-9／LPT1-9 */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+
+/**
+ * 文件名安全化：Windows 非法字符替换为 _，去除首尾空格/点；全为非法字符时兜底。
+ * 另两件事各自挡住一类真实失败（V4-Iter-330）：保留名前面补下划线（`CON.md` 根本写不出来），
+ * 超长裁到 {@link EXPORT_FILE_NAME_MAX} 且保住扩展名（200 字以上的标题不再撑破入参闸）。
+ */
 export function safeFileName(name: string): string {
   const cleaned = name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/^\.+|\.+$/g, '').trim()
   // 替换后只剩下划线（如 '///' → '___'）同样视为无有效文件名
-  return cleaned === '' || /^_+$/.test(cleaned) ? 'conversation' : cleaned
+  if (cleaned === '' || /^_+$/.test(cleaned)) return 'conversation'
+  const dot = cleaned.lastIndexOf('.')
+  const hasExt = dot > 0
+  const ext = hasExt ? cleaned.slice(dot) : ''
+  let base = hasExt ? cleaned.slice(0, dot) : cleaned
+  if (WINDOWS_RESERVED.test(base)) base = `_${base}`
+  const room = Math.max(1, EXPORT_FILE_NAME_MAX - ext.length)
+  if (base.length > room) base = base.slice(0, room).replace(/\.+$/g, '')
+  return `${base}${ext}`
 }
 
 /**
