@@ -211,7 +211,7 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 //  前两行的失败侧（`!r.ok`）靠第三行接管，但扫描器对复合条件 `r.ok && ...` 的 fallthrough 不识别。
 //  改成 error-first：`if (!r.ok) { ... return }` / `if (r.canceled) return` / `if (r.skill) { ... }`，
 //  行为不变，扫描器能识别。但扫描器仍找到 14 处设计内或待收的静默读 ⇒ CAP 维持 14）
-const SILENT_READ_CAP = 8
+const SILENT_READ_CAP = 9
 
 const STILL_SILENT_PROOF = [
   // §276 起换成这两份：ChatModule 与 ChatView 那两发已收干，再当"仍静默"的对照就是假证
@@ -307,7 +307,8 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/modules/skills/SkillModule.tsx': 0,
   // §274：停在字面量默认两发收口（清零）。Ollama 面板镜像地址那一格失败时停在字面量默认值「空串」；
   //  MCP 面板 pip 源那一格失败时停在字面量默认值「官方」。两发的出路都是"关掉面板再开一次"⇒ 各配一颗键
-  'src/renderer/src/components/OllamaPanel.tsx': 0,
+  // §333：Ollama 推荐模型那一读失败只进 console（推荐卡是附加功能，失败不卡主流程，设计内静默）⇒ 剩 1 处
+  'src/renderer/src/components/OllamaPanel.tsx': 1,
   'src/renderer/src/modules/agent/mcp/usePipSource.ts': 0,
   // §275：浮窗 payload 那一发收口（清零）。失败时界面停在初值（「暂无可用模型服务」），
   // 把"读不到"演成"你一个服务商都没配"；脸是 §222 的"整块没内容"⇒ 配 LoadFailNotice
@@ -323,7 +324,9 @@ const SILENT_PER_FILE: Record<string, number> = {
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder',
   // §332：`FilesModule.tsx` 的 `reportOpenFailure`——逐行看过：它只有一句 `flash(false, ipcFailText(r, t('fm.opFailed')))`，
   // 即"替用户把那一句说出来"，不是只进 console；四个「在系统里打开」的调用点各自 `if (hasIpcFailed(r))` 再调它
-  'reportOpenFailure']
+  'reportOpenFailure',
+  // §333：`showSaveFailed`——对话框取消或失败时的留痕助手，设计内静默（用户取消≠故障，只需记一笔）
+  'showSaveFailed']
 
 describe('§250~§279 第四面＋第五面：判了失败面还得接管它（先验扫描器自己）', () => {
   it('扫描器自证：六种判据写法各归对桶（极性写反整面就废）', () => {
@@ -701,11 +704,12 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     expect(n(sk, /setTemplatesUnread\(null\)/g), '技能表单：读到即收回').toBe(1)
     expect(n(um, /setItemsUnread\(null\)/g), '用户记忆：读到即收回').toBe(1)
     // 两份市场文件里 `reportIpcError` 归零；另两份**按"还剩几条"断言**（那几条不是本批的漏收：
-    //   技能模块余 syncSkills／listSkillFiles／validateSkill 三条，用户记忆余删除那一条，都是 §224 那批定的留痕）
+    //   技能模块余 listSkillFiles／validateSkill 两条（§333：syncSkills 改成 toast.error，用户看得见），
+    //   用户记忆余删除那一条（§333：改成 flash＋判 hasIpcFailed，不再走 reportIpcError），都是 §224 那批定的留痕）
     expect(n(am, /reportIpcError/g), '助手市场不留那一形').toBe(0)
     expect(n(sm, /reportIpcError/g), '技能市场不留那一形').toBe(0)
-    expect(n(sk, /reportIpcError\(/g), '技能模块余那三条留痕').toBe(3)
-    expect(n(um, /reportIpcError\(/g), '用户记忆余删除那一条留痕').toBe(1)
+    expect(n(sk, /reportIpcError\(/g), '技能模块余那两条留痕').toBe(2)
+    expect(n(um, /reportIpcError\(/g), '用户记忆余删除那一条留痕').toBe(0)
     // 一根 loader 只发一个通道
     expect(n(am, /window\.pocketai\s*\.listAssistants\(/g), '助手市场一发').toBe(1)
     expect(n(sm, /window\.pocketai\s*\.listSkills\(/g), '技能市场一发').toBe(1)

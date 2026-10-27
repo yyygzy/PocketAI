@@ -15,6 +15,7 @@ import { assistantDisplayName } from '../../chat/assistant-display'
 import { useToast } from '../../../components/ToastProvider'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
+import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import { errText } from '../../../utils/error'
 import { StatusDot, MiniBtn } from '../ui'
 import { useConfirm } from '../../../components/ConfirmDialog'
@@ -27,6 +28,8 @@ export const ChannelsPanel: React.FC = () => {
   const [activeType, setActiveType] = useState<ChannelType>('telegram')
   // 各网关配置缓存（按 type 分开）
   const [cfgs, setCfgs] = useState<Partial<Record<ChannelType, ChannelConfig>>>({})
+  // §333：某一类配置读不到时，那一格不许装作「默认值就是实情」⇒ 按 type 点名
+  const [cfgsUnread, setCfgsUnread] = useState<Partial<Record<ChannelType, { error?: string }>>>({})
   const [statuses, setStatuses] = useState<Partial<Record<ChannelType, ChannelStatusEvent>>>({})
   // 主凭据草稿（Telegram/Discord 单 token；Slack 用两个草稿；飞书/钉钉 secondary 也分）
   const [primaryDraft, setPrimaryDraft] = useState('')
@@ -86,21 +89,25 @@ export const ChannelsPanel: React.FC = () => {
 
   const loadAllConfigs = async (): Promise<void> => {
     const next: Partial<Record<ChannelType, ChannelConfig>> = {}
+    const failed: Partial<Record<ChannelType, { error?: string }>> = {}
     for (const type of CHANNEL_TYPES) {
       try {
         const c = await window.pocketai.getChannelConfig(type)
         // §223：不判就把 `{ok:false}` 塞进 cfgs ⇒ 消费方那句 `cfgs[activeType] ?? 默认值` 拦不住（它是真值），
         // 于是开关面板读的是失败对象的字段。跳过这一条，让它退回默认值，并把原因留痕
         if (hasIpcFailed(c)) {
+          failed[type] = { error: c.error }
           logIpcError(`channels.getConfig:${type}`, new Error(ipcFailText(c, t('common.unknownError'))))
           continue
         }
         next[type] = c
       } catch (e) {
+        failed[type] = { error: errText(e) }
         logIpcError(`channels.getConfig:${type}`, e)
       }
     }
     setCfgs(next)
+    setCfgsUnread(failed)
     // 同步状态快照
     try {
       const snap = await window.pocketai.listChannelStatus()
@@ -166,9 +173,13 @@ export const ChannelsPanel: React.FC = () => {
       if (!ok) return
     }
     try {
+      // §333：乐观更新失败时回滚——快照在飞之前的值，IPC 失败时还原
+      const snapshot = cfgs[activeType]
       const next = await window.pocketai.setChannelConfig(activeType, patch)
       // §219：失败不判就把 `{ok:false}` 写成本渠道的配置 ⇒ 表单显示的是库里没有的配置
       if (hasIpcFailed(next)) {
+        // 回滚到快照
+        if (snapshot) setCfgs((prev) => ({ ...prev, [activeType]: snapshot }))
         toast.error(ipcFailText(next, t('common.unknownError')))
         return
       }
@@ -233,6 +244,14 @@ export const ChannelsPanel: React.FC = () => {
       <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
         {t(`channel.${activeType}.desc`)}
       </p>
+
+      {/* §333：这一类配置读不到时，下面那堆字段全是默认值——点名让用户知道 */}
+      {cfgsUnread[activeType] && (
+        <ShowingDefaultsNotice
+          what={t(`channel.${activeType}.title`)}
+          msg={ipcFailText(cfgsUnread[activeType]!, t('common.unknownError'))}
+        />
+      )}
 
       {/* 运行状态 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-2 text-xs">

@@ -35,7 +35,7 @@ interface ToolRunState {
 export const McpPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
-  // 重命名解构：本组件仍有一处原生 confirm 调用（handleDelete），不要让 hook 的 confirm 遮蔽它
+  // §333：handleDelete 那颗原生 confirm 收到 askConfirm，与其他五发统一
   const { confirm: askConfirm, dialog: confirmDialog } = useConfirm()
   const [records, setRecords] = useState<McpServerRecord[]>([])
   const [runtimes, setRuntimes] = useState<McpServerRuntime[]>([])
@@ -44,6 +44,8 @@ export const McpPanel: React.FC = () => {
   // 调用记录（落库，跨重启可查）与它的 server 过滤：''=全部
   const [callLogs, setCallLogs] = useState<McpCallLogRecord[]>([])
   const [callLogServer, setCallLogServer] = useState('')
+  // §333：调用记录那一读失败时，空列表不许装作「没有记录」⇒ 单独点名
+  const [callLogsUnread, setCallLogsUnread] = useState<{ error?: string } | null>(null)
   const [notice, setNotice] = useState('')
   // §259：这两发是裸值列表通道 ⇒ safeHandle 的失败 `{ok:false,error}` 是 truthy，
   // 一旦被当数组写进来，下面 `records.map` 当场 TypeError（探针实测：这一屏一个字都不剩）。
@@ -93,9 +95,13 @@ export const McpPanel: React.FC = () => {
 
   const reloadCallLogs = useCallback(async () => {
     const r = await window.pocketai.listMcpCallLogs(callLogServer || null)
-    if (r.ok) setCallLogs(r.logs ?? [])
-    else toast.error(r.error ?? t('common.unknownError'))
-  }, [callLogServer, toast, t])
+    if (r.ok) {
+      setCallLogsUnread(null)
+      setCallLogs(r.logs ?? [])
+    } else {
+      setCallLogsUnread({ error: r.error })
+    }
+  }, [callLogServer])
 
   useEffect(() => {
     void reloadCallLogs().catch(reportIpcError('mcp.callLogList'))
@@ -216,7 +222,7 @@ export const McpPanel: React.FC = () => {
     if (!r.ok) toast.error(t('agent.restartFail', { e: r.error ?? t('common.unknownError') }))
   }
   const handleDelete = async (id: string) => {
-    if (!confirm(t('agent.deleteConfirm'))) return
+    if (!(await askConfirm({ title: t('common.delete'), message: t('agent.deleteConfirm'), danger: true }))) return
     const r = await window.pocketai.deleteMcpServer(id)
     // 安装中删除等后端拒绝：提示且不刷新列表（记录仍在）
     if (!r.ok) {
@@ -535,6 +541,13 @@ export const McpPanel: React.FC = () => {
                   {t('agent.clear')}
                 </MiniBtn>
               </div>
+              {callLogsUnread && (
+                <LoadFailNotice
+                  what={t('agent.callLogTitle')}
+                  msg={ipcFailText(callLogsUnread, t('common.unknownError'))}
+                />
+              )}
+              {!callLogsUnread && (
               <div className="max-h-40 overflow-y-auto bg-[var(--color-input-bg)] rounded p-2 font-mono text-[11px] leading-relaxed">
                 {callLogs.length === 0 ? (
                   <p className="text-[var(--color-text-muted)]">{t('agent.callLogEmpty')}</p>
@@ -556,6 +569,7 @@ export const McpPanel: React.FC = () => {
                   ))
                 )}
               </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between mb-2">

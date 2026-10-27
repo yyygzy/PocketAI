@@ -106,7 +106,11 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   useEffect(() => {
     window.pocketai
       .recommendModels()
-      .then((r) => r.ok && r.data && setRec(r.data))
+      .then((r) => {
+        // §333：改前 r.ok=false 静默吞掉⇒推荐卡不出现也没解释；现在失败记日志
+        if (!r.ok) logIpcError('ollama.recommendModels', new Error(r.error ?? 'recommendModels failed'))
+        else if (r.data) setRec(r.data)
+      })
       .catch(reportIpcError('ollama.recommendModels'))
   }, [])
 
@@ -148,9 +152,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     try {
       const r = await window.pocketai.startOllama()
       if (r.ok && r.status) setStatus(r.status)
-      else if (!r.ok) setErr(r.error || 'start failed')
+      else if (!r.ok) setErr(r.error || t('common.unknownError'))
     } catch (e) {
-      setErr(errText(e))
+      setErr(errText(e, t('common.unknownError')))
     } finally {
       setStarting(false)
     }
@@ -161,7 +165,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       await window.pocketai.stopOllama()
     } catch (e) {
       // stopOllama reject（通道失败/进程已退出）必须兜底，否则 unhandled 且 refresh 不执行
-      setErr(errText(e))
+      setErr(errText(e, t('common.unknownError')))
     }
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
     stopTimerRef.current = setTimeout(() => {
@@ -274,7 +278,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
                     setMirrorUnread(null)
                     markMirrorSaved(true)
                   } else {
-                    setErr(r.error || 'bad mirror')
+                    setErr(r.error || t('common.unknownError'))
                   }
                 } catch (e) {
                   // IPC reject 必须兜底，否则 unhandled 且用户无反馈

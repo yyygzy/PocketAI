@@ -9,6 +9,7 @@ import { useI18n } from '../../../i18n'
 import { errText } from '../../../utils/error'
 import { logIpcError, hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 import { usePythonEnv } from './usePythonEnv'
+import { LoadFailNotice } from '../../../components/LoadFailNotice'
 
 const ARGS_PLACEHOLDER = '["-y","@modelcontextprotocol/server-filesystem","/tmp"]'
 const ENV_PLACEHOLDER = '{"API_KEY":"xxx"}'
@@ -63,6 +64,8 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   // Python 运行时列表（仅 runtime=python 时使用）
   const [pyRuntimes, setPyRuntimes] = useState<PythonRuntime[]>([])
   const [pyLoading, setPyLoading] = useState(false)
+  // §333：Python 列表那一读失败时，空下拉不许装作「没有环境」⇒ 单独点名
+  const [pyRuntimesUnread, setPyRuntimesUnread] = useState<{ error?: string } | null>(null)
   const [pyDownloading, setPyDownloading] = useState(false)
 
   // Python 依赖（venv 安装向导）
@@ -92,13 +95,15 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
       // §223：失败对象写进 pyRuntimes ⇒ 下拉里那些 `r.path`／`r.version` 全是 undefined，
       // 用户看到的是"一个空名字的可选项"而不是"读不到"。与下面 catch 同口径：留痕＋退回空清单
       if (hasIpcFailed(rts)) {
-        logIpcError('mcp.listPythonRuntimes', new Error(ipcFailText(rts, t('common.unknownError'))))
+        setPyRuntimesUnread({ error: rts.error })
         setPyRuntimes([])
         return
       }
+      setPyRuntimesUnread(null)
       setPyRuntimes(rts)
     } catch (e) {
       logIpcError('mcp.listPythonRuntimes', e)
+      setPyRuntimesUnread({ error: errText(e) })
       setPyRuntimes([])
     } finally {
       setPyLoading(false)
@@ -264,9 +269,16 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
                   </button>
                 </div>
               </div>
-              {pyRuntimes.length === 0 ? (
+              {pyRuntimesUnread && (
+                <LoadFailNotice
+                  what={t('agent.f.pythonRuntimes')}
+                  msg={ipcFailText(pyRuntimesUnread, t('common.unknownError'))}
+                />
+              )}
+              {!pyRuntimesUnread && pyRuntimes.length === 0 ? (
                 <p className="text-[11px] text-[var(--color-text-muted)]">{t('agent.f.pythonEmpty')}</p>
-              ) : (
+              ) : null}
+              {!pyRuntimesUnread && pyRuntimes.length > 0 && (
                 <select
                   className="select-mini w-full"
                   value={command}
