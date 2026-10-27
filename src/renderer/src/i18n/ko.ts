@@ -1431,6 +1431,7 @@ export const ko = {
   'kb.dim': '벡터 차원: {n} (모델 변경 시 인덱스 재구축 필요)',
   'kb.nameRequired': '이름은 필수입니다',
   'kb.embRequired': 'Embedding 공급자와 모델을 선택하세요',
+  'kb.embeddingChanged': 'Embedding 모델이 변경되었습니다. 인덱스를 재구축해야 합니다: 기존 벡터는 차원이 맞지 않아 검색에 나타나지 않습니다',
   'kb.promptUrl': 'URL 입력',
   'kb.promptTitle': '제목 입력',
   'kb.promptText': '텍스트 내용 입력',

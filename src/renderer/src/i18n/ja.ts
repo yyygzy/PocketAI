@@ -1431,6 +1431,7 @@ export const ja = {
   'kb.dim': 'ベクトル次元：{n}（モデル変更時はインデックス再構築が必要）',
   'kb.nameRequired': '名前は必須です',
   'kb.embRequired': 'Embedding プロバイダーとモデルを選択してください',
+  'kb.embeddingChanged': 'Embedding モデルが変更されました。インデックスの再構築が必要です：旧ベクトルは次元が一致せず、検索時に現れません',
   'kb.promptUrl': 'URL を入力',
   'kb.promptTitle': 'タイトルを入力',
   'kb.promptText': 'テキスト内容を入力',

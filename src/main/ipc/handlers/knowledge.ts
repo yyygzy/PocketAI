@@ -42,7 +42,15 @@ export function registerKnowledgeHandlers(): void {
     if (!record.id || !kbRepo.get(record.id)) {
       assertCanCreateKb(kbRepo.list().length)
     }
-    return kbRepo.save(record)
+    // §334 A9：检测 embedding 模型变更——改后旧向量维度不匹配⇒检索静默丢失，必须提醒重建
+    const existing = record.id ? kbRepo.get(record.id) : null
+    const embeddingChanged =
+      existing &&
+      existing.embeddingDim !== null &&
+      (record.embeddingProviderId !== existing.embeddingProviderId ||
+        record.embeddingModel !== existing.embeddingModel)
+    const saved = kbRepo.save(record)
+    return embeddingChanged ? { ...saved, embeddingChanged: true } : saved
   }, argsSchema(kbSaveSchema))
   safeHandle(IPC.KB_DELETE, (_e, id: string) => {
     ingestionService.deleteKb(id)

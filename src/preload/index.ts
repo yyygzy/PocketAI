@@ -503,7 +503,8 @@ const api = {
     ipcRenderer.invoke(IPC.KB_GET, id),
   saveKnowledgeBase: (
     record: Partial<KnowledgeBase> & { name: string }
-  ): Promise<KnowledgeBase> => ipcRenderer.invoke(IPC.KB_SAVE, record),
+  ): Promise<KnowledgeBase & { embeddingChanged?: boolean }> =>
+    ipcRenderer.invoke(IPC.KB_SAVE, record),
   deleteKnowledgeBase: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.KB_DELETE, id),
 
@@ -1224,7 +1225,7 @@ const api = {
   listReminders: (scope?: 'pending' | 'history'): Promise<ReminderRecord[]> =>
     ipcRenderer.invoke(IPC.REMINDER_LIST, scope),
   /** 取消待发提醒；返回 ok=false 表示已触发/不存在 */
-  cancelReminder: (id: string): Promise<{ ok: boolean }> =>
+  cancelReminder: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.REMINDER_CANCEL, id),
   /** 重新安排历史提醒（missed/cancelled/fired 行回 pending，可选改循环规则） */
   rescheduleReminder: (
@@ -1237,7 +1238,7 @@ const api = {
   /** 一键重新安排 missed 循环提醒（按原 rule 重算下次触发回 pending） */
   rescheduleNextReminder: (
     id: string
-  ): Promise<{ ok: boolean; fireAt?: number }> =>
+  ): Promise<{ ok: boolean; fireAt?: number; error?: string }> =>
     ipcRenderer.invoke(IPC.REMINDER_RESCHEDULE_NEXT, id),
 
   // ---------- 终端 ----------

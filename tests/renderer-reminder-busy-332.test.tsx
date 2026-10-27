@@ -94,7 +94,7 @@ describe('§332 提醒中心：在飞态一行一格', () => {
     fireEvent.click(cancelBtns()[1]!)
     await waitFor(() => expect(q['cancel:a']?.length && q['cancel:b']?.length).toBeTruthy(), MOUNT_BUDGET)
 
-    await flush(() => answer('cancel:b', { ok: false, error: 'ALREADY-FIRED' }))
+    await flush(() => answer('cancel:b', { ok: false }))
     await waitFor(() => expect(q['rem:pending']?.length).toBeTruthy(), MOUNT_BUDGET)
     await flush(() => answer('rem:pending', [reminder('a', '那条甲'), reminder('b', '那条乙')]))
     const toasts = screen.queryAllByRole('status').map((el) => el.textContent ?? '')

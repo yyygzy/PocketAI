@@ -1489,6 +1489,7 @@ export const en = {
   'kb.dim': 'Vector dimension: {n} (rebuild the index after switching models)',
   'kb.nameRequired': 'Name is required',
   'kb.embRequired': 'Select an embedding provider and model',
+  'kb.embeddingChanged': 'Embedding model changed; index rebuild required: old vectors have mismatched dimensions and will not appear in retrieval',
   'kb.promptUrl': 'Enter URL',
   'kb.promptTitle': 'Enter title',
   'kb.promptText': 'Enter text content',

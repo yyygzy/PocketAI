@@ -547,10 +547,13 @@ describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下
     // §332：文件页四颗「在系统里打开」从"只挂 `.catch`"改成 `const r = await …`＋inline 判信封，
     //   探针现量：judged 262／caught 29／unsafe 0／SITES 291（＝287＋4，正对着那四颗键）
     //   ⇒ 净新增四个判点、两桶之间没有搬运，两根底线都不用动。
+    // §334：提醒中心两处 cancel/reschedule 从 try-catch 桶搬进判定桶（加了 ipcFailText 判失败面），
+    //   探针现量：judged 264／caught 26／unsafe 0／SITES 290（＝291-1，总数微降是因为合并了一处）
+    //   ⇒ 净新增两个判点、caught 桶少两点，底线相应下调。
     // 这两根是**量级底线**（扫描器瞎了才会掉到这儿），不是精确数；收一处静默点就会让 caught 少一点、judged 多一点，
     // 所以 judged 那根随批上提，caught 那根留出 Enough 的余量。
     expect(judged, '判返回值的点').toBeGreaterThanOrEqual(255)
-    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(28)
+    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(26)
     expect(judged + caught + unsafe.length).toBe(SITES.length)
   })
 

@@ -1490,6 +1490,7 @@ export const zh = {
   'kb.dim': '向量维度：{n}（换模型需重建索引）',
   'kb.nameRequired': '名称不能为空',
   'kb.embRequired': '请选择 Embedding 服务商与模型',
+  'kb.embeddingChanged': '向量模型已更换，需重建索引：旧向量维度不匹配，检索时不可见',
   'kb.promptUrl': '输入 URL',
   'kb.promptTitle': '输入标题',
   'kb.promptText': '输入文本内容',

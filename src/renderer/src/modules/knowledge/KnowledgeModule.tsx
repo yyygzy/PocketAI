@@ -197,6 +197,7 @@ const KbForm: React.FC<{
   onCancel: () => void
 }> = ({ kb, onSaved, onCancel }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [name, setName] = useState(kb?.name ?? '')
   const [description, setDescription] = useState(kb?.description ?? '')
@@ -280,6 +281,10 @@ const KbForm: React.FC<{
       if (hasIpcFailed(saved)) {
         setError(ipcFailText(saved, t('common.unknownError')))
         return
+      }
+      // A9：向量模型换过 ⇒ 旧向量维度不匹配、检索时不可见，提示用户重建索引
+      if (saved.embeddingChanged) {
+        toast.warning(t('kb.embeddingChanged'))
       }
       onSaved(saved)
     } catch (e) {
