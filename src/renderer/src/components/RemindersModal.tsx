@@ -77,6 +77,18 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
   // 判据同 §309／§264：「这一发是不是还给当前 tab」。ref 在 render 期同步，首次加载不会误挡。
   const tabRef = useRef<Tab>(tab)
   tabRef.current = tab
+  // §348：这一屏有**两条归属轴**，缺一不可：
+  //  · `tabRef`——"这一发是不是还给当前那个 tab"（§311 立的，挡的是跨 tab）；
+  //  · `genRef`——"同一块屏里并发两发，谁说了算"（本批补）。同 tab 的并发不是想象出来的：
+  //    到点广播（`onReminderFired` 那一发）与"取消／改期／删除后的重取"、还有 §345 那颗「重试」键
+  //    （六个 caller 的现量行号写进台账 §348 那行——注释里不钉行号，§311 的注册表口径：行号会腐）
+  //    可以在同一块屏上前后发出两发，于是**先发出的那一发可能后落地**，把一份"取消前"的清单画回来
+  //    ⇒那一行照旧摆着、那颗「取消」照旧可点，再点一次就得到 §332 记过的那句谎
+  //    （已经取消成功却弹"取消失败（提醒可能已触发）"）。广播还会在用户正看着这屏时自己来一发，
+  //    所以这条路径比跨 tab 那条更常走到。
+
+  const genRef = useRef(0)
+
   const [items, setItems] = useState<ReminderRecord[] | null>(null)
   // §222 同一口径：读不到就明说，别把列表长期挂在「加载中…」上
   const [loadErr, setLoadErr] = useState<string | null>(null)
@@ -98,11 +110,20 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
   } | null>(null)
 
   const reload = useCallback(async (scope: Tab) => {
+    // §348：派发前就挡——不是当前 tab 的那一发**根本别发出去**。
+    // 光有"落地后再判 tab"不够：那一发一旦参与代次竞赛，就会把当前 tab 正在飞的那发算成"迟到"丢掉，
+    // 而它自己回来时又被 tab 判据丢掉⇒两边都不写，这一屏卡在「加载中…」——比画回一份旧清单更难解释。
+    // 走得得到的一刻：切 tab 那次 render 已把 `tabRef.current` 写成新 tab，而旧订阅的清理排在提交之后，
+    // 就在这中间到达的广播带着的仍是旧 tab。
+    if (tabRef.current !== scope) return
+    const my = ++genRef.current
     try {
       // §223：`setItems(await listReminders())` 把失败对象直接写进列表 state ⇒
       // 下面 `items.length === 0` 为假、`items.map` 当场 TypeError（提醒中心整个打不开）。
       // §222 那个面在这里正好用上：读不到就明说读不到，别顶着「加载中…」
       const list = await window.pocketai.listReminders(scope)
+      // §348：同一块屏上并发两发——只有**最后发出**的那一发能写回，迟到的那份旧清单不许画回来
+      if (my !== genRef.current) return
       // §311：切走了就不替那个 tab 写屏，也不替它留一句「读不到」
       if (tabRef.current !== scope) return
       if (hasIpcFailed(list)) {
@@ -115,6 +136,7 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
     } catch (e) {
       // §347：抛出面（桥层 reject，不走 safeHandle 的 `{ok:false}`）以前只进 console，
       // 于是"两条到货的路"里有一条没人认领（§251 的口径）；切走了仍不替那个 tab 留话（§311）
+      if (my !== genRef.current) return
       if (tabRef.current !== scope) return
       setLoadErr(errText(e, t('common.unknownError')))
       reportIpcError('reminder.list')(e)

@@ -33,7 +33,10 @@ const SITES: Array<{ file: string; refs: string[]; writers: string[] }> = [
   // `sessionsReqRef` 是"这一发是不是还给最近那一次"的代次轴（与 §311 那两轴同一形状，只是键是序号）
   { file: 'src/renderer/src/modules/knowledge/KbAskPanel.tsx', refs: ['openedSessionRef', 'requestRef', 'sessionsReqRef'], writers: ['setSessionId', 'setSessionCreatedAt', 'setMsgs', 'setSessionList', 'setSessionsUnread'] },
   { file: 'src/renderer/src/modules/knowledge/KbAskRoam.tsx', refs: ['itemsReqRef'], writers: ['setItems', 'setItemsUnread'] },
-  { file: 'src/renderer/src/components/RemindersModal.tsx', refs: ['tabRef'], writers: ['setItems', 'setLoadErr'] },
+  // §348 起这一站有**两条轴**：`tabRef` 管跨 tab（§311），`genRef` 管同一块屏里并发两发
+  // （到点广播与取消／改期后的重取可以前后发出两发，先发出的可能后落地⇒把"取消前"那份清单画回来）。
+  // 上面那道总判据认任一轴，所以下面另加一面专门只按 `genRef` 扫。
+  { file: 'src/renderer/src/components/RemindersModal.tsx', refs: ['tabRef', 'genRef'], writers: ['setItems', 'setLoadErr'] },
   // §332 的预览代次（`previewReqRef`）**不登记在这一列**：那一屏的 `setPreview(null)` 是用户自己关窗，
   // 它不需要归属判据、却会被名单当成"没挡住的写点"。这条链改由真挂载用例守
   // （`tests/renderer-file-open-332.test.tsx`：连点两个文件＋关窗后迟到都不许画进来）
@@ -262,5 +265,71 @@ describe('§311 迟到响应的归属判据（源码级闸门；站点名单会�
     const probe = found.filter((w) => w.fn === '__probeLateSite')
     expect(probe.length, '新的迟到写点要进名单（不算同步写）').toBe(1)
     expect(probe[0]?.coveredBy, '而它没有守卫 ⇒ 必须判成裸写').toBeUndefined()
+  })
+})
+
+// §348：提醒中心那一站从一轴变两轴。`tabRef` 管"还给不给上一个 tab 写"，
+// `genRef` 管"同一块屏里并发两发谁说了算"——上面那道注册表判据认前者就够，
+// 所以这一面**只按 `genRef` 扫**：摘掉代次那道早退，本面必须立刻报裸写（否则它就是个装饰）。
+describe('§348 提醒中心的第二条轴：两个分支各要有一道代次早退（tabRef 不算数）', () => {
+  const fil = SITES.find((s) => s.file.endsWith('RemindersModal.tsx'))!
+  const src = fs.readFileSync(path.join(ROOT, fil.file), 'utf8')
+  const nl = src.includes('\r\n') ? '\r\n' : '\n'
+  const GUARD = 'if (my !== genRef.current) return'
+  const bare = (arr: string[]): Write[] =>
+    scanFile(fil.file, ['genRef'], fil.writers, arr.join(nl)).filter((w) => !w.coveredBy && w.fn === 'reload')
+
+  it('注册表里这一站认了两条轴（漏一条＝这一面的对照打空）', () => {
+    expect(fil.refs.sort()).toEqual(['genRef', 'tabRef'])
+  })
+
+  it('源码里那道代次早退正好两处（成功支／抛出支各一道），且当下没有裸写', () => {
+    const lines = src.split(nl)
+    expect(lines.filter((l) => l.trim() === GUARD).length, '两个分支各一道，多一处少一处都要先看一眼').toBe(2)
+    expect(bare(lines).map((w) => `${w.setter}@${w.line}`), '现在就该是空').toEqual([])
+  })
+
+  it('漏杀对照：只摘成功支／只摘抛出支／换成 false && 中和——三种都必须立刻判成裸写', () => {
+    const lines = src.split(nl)
+    const idx = lines.map((l, i) => (l.trim() === GUARD ? i : -1)).filter((i) => i >= 0)
+    expect(idx.length).toBe(2)
+
+    const noSuccess = lines.filter((_, i) => i !== idx[0]!)
+    expect(bare(noSuccess).map((w) => w.setter).join(','), '成功支摘掉：setItems 那两处变裸').toContain('setItems')
+
+    const noCatch = lines.filter((_, i) => i !== idx[1]!)
+    expect(bare(noCatch).map((w) => w.setter).join(','), '抛出支摘掉：那一句 setLoadErr 变裸').toContain('setLoadErr')
+
+    const neutered = [...lines]
+    neutered[idx[0]!] = GUARD.replace('if (my', 'if (false && my')
+    expect(bare(neutered).length, 'false && 中和必须算没守卫（§266 Z7 那一族）').toBeGreaterThanOrEqual(2)
+  })
+
+  it('反向对照：把计数器从 useRef 挪进回调里（每次派发都归零＝守卫没牙），本面看不见它、但要留下一句提醒', () => {
+    // `reload` 内部自增的局部变量照样能挡住"同一次调用之后的迟到"，却挡不住两次调用之间——
+    // 这一面对那种写法是瞎的（AST 看不出 ref 的生命周期），所以那条由真挂载用例守
+    // （tests/reminder-generation-348.test.tsx 的 ②③：两发并发时迟到的那份不许画回来）。
+    const lines = src.split(nl)
+    expect(lines.some((l) => l.trim() === 'const genRef = useRef(0)'), '计数器必须挂在 ref 上').toBe(true)
+  })
+
+  it('派发前那道 tab 早退必须是 `reload` 的**第一句**（代次守卫自己带出来的失效模式靠它关）', () => {
+    // 为什么这一条只有闸门看得见：要让"旧 tab 的那一发"参与代次竞赛，得在 React 提交与 effect 清理
+    // 之间插进一次广播——jsdom 里 `act` 把两步一起刷完，插不进去（清单 B195 因此写"只有 CI"）。
+    // 但它不是空想：摘掉这句之后，"切走 tab 的旧订阅回调"发出的那一发会把 `genRef` 顶上去，
+    // 于是当前 tab 正在飞的那一发回来时被当成迟到丢掉、而它自己回来时又被 tab 判据丢掉⇒两边都不写，
+    // 这一屏卡在「加载中…」——比画回一份旧清单更难解释。所以自增必须排在这道早退**之后**。
+    const lines = src.split(nl)
+    const head = lines.findIndex((l) => l.trim() === 'const reload = useCallback(async (scope: Tab) => {')
+    expect(head, 'reload 的函数头要找得到（形状变了这条要跟着改）').toBeGreaterThan(-1)
+    // 函数头之后的第一句**可执行语句**（注释不算——本仓的注释比代码长，按行号比会天天自己撞红）
+    const firstStmt = lines.slice(head + 1).find((l) => l.trim() !== '' && !l.trim().startsWith('//'))
+    expect(firstStmt, 'reload 里取不到第一句').toBeTruthy()
+    expect(firstStmt!.trim(), '第一句必须是派发前的 tab 早退').toBe('if (tabRef.current !== scope) return')
+    const inc = lines.findIndex((l) => l.trim() === 'const my = ++genRef.current')
+    expect(inc, '自增那句要找得到').toBeGreaterThan(head + 1)
+    // 自增必须排在这道早退**之后**（顺序错了＝旧 tab 那一发先把当前那发顶成"迟到"）
+    expect(lines.slice(head + 1, inc).some((l) => l.trim() === 'if (tabRef.current !== scope) return'),
+      '自增前必须先有派发前那道早退').toBe(true)
   })
 })
