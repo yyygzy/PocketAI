@@ -5,11 +5,14 @@
 // 本批动手前的现数是**35 个 onKeyDown-Enter 提交点里只有 2 个判了**。这里把它做成一张名单闸门，
 // 让"再写一个自由文本 Enter 提交框而忘了判"变成 CI 红而不是又一次 hunt。
 //
-// 两桶口径：
-// - 自由文本桶＝宿主元素没有 type、或 type 是 text／无条件的其它值 ⇒ **必须判 isComposing**（21＋2＝23 处）
-// - 口令与数字桶（type 含 password／number 的 12 处）⇒ 本批**未判定**：口令框里走没走输入法组字、
-//   Chromium 在 password input 上给不给 composition 事件，我没有实测过，不下"不适用"的结论；
-//   这张表只保证它们被看见、新增的要进来
+// 两桶口径（§341 起两桶同判，不再有"未判定"那一档）：
+// - 自由文本桶＝宿主元素没有 type、或 type 是 text／无条件的其它值（23 处，§340 铺满）
+// - 口令与数字桶（type 含 password／number 的 12 处）⇒ §341 真机判掉了这一档：CDP `Input.imeSetComposition`
+//   ＋`Input.dispatchKeyEvent` 打在跑起来的实例上，password 与 number 两格里 compositionstart 照发、
+//   组字中那次 keydown 的 `isComposing` 都是 true（同屏 text 格作正向对照）。真机后果最重的一格是锁屏解锁框：
+//   连按八次组字 Enter，屏上先七次「密码错误」、第八次翻成「尝试过于频繁，请稍后再试」
+//   ⇒ 半截组字串真的打进主进程校验链、吃掉了 SEC-10 限流器的额度。
+//   （1 个字的组字串会被 `masterPasswordSchema` 的 min(6) 挡在 IPC 入口，那是另一张脸：错误照弹、但不计额度）
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -97,14 +100,15 @@ describe('① 分类器自己要有牙', () => {
     ])
   })
 
-  it('漏杀对照：把 sample 里那句 isComposing 拿掉 ⇒ 自由文本桶立刻出现违规（判据不是恒绿）', () => {
+  it('漏杀对照：把 sample 里那句 isComposing 拿掉 ⇒ 违规名单立刻多一个（判据不是恒绿）', () => {
     const stripped = SAMPLE.replace(' && !e.nativeEvent.isComposing', '')
-    expect(scan('sample.tsx', SAMPLE).filter((s) => !s.secret && !s.hasComposing).map((s) => s.calls)).toEqual(['save'])
-    expect(scan('sample.tsx', stripped).filter((s) => !s.secret && !s.hasComposing).map((s) => s.calls)).toEqual(['save', 'ok'])
+    // §341 起两桶同判，所以 sample 里没判的那颗口令框（send）也在名单里
+    expect(scan('sample.tsx', SAMPLE).filter((s) => !s.hasComposing).map((s) => s.calls)).toEqual(['save', 'send'])
+    expect(scan('sample.tsx', stripped).filter((s) => !s.hasComposing).map((s) => s.calls)).toEqual(['save', 'send', 'ok'])
   })
 })
 
-describe('② 全仓现数与自由文本桶', () => {
+describe('② 全仓现数与两桶身份证', () => {
   const sites = allSites()
   const freeText = sites.filter((s) => !s.secret)
   const secret = sites.filter((s) => s.secret)
@@ -115,8 +119,8 @@ describe('② 全仓现数与自由文本桶', () => {
     expect(freeText.length).toBe(23)
   })
 
-  it('自由文本桶一处不漏：每一个都得判 isComposing', () => {
-    const missing = freeText.filter((s) => !s.hasComposing).map((s) => `${s.file} → ${s.calls}`)
+  it('一个不漏（§341 起两桶并一条判据）：35 个提交点每个都得判 isComposing', () => {
+    const missing = sites.filter((s) => !s.hasComposing).map((s) => `${s.file} → ${s.calls}`)
     expect(missing, `这些输入框按 Enter 会把输入法组字中的半截句子交出去：\n${missing.join('\n')}`).toEqual([])
   })
 
@@ -148,7 +152,7 @@ describe('② 全仓现数与自由文本桶', () => {
     ].sort())
   })
 
-  it('口令与数字那 12 处＝本批未判定，逐条登记在表（状态：不判 isComposing，理由见文件头）', () => {
+  it('口令与数字那 12 处的身份证（§341 真机判定后并入必判桶，名单照钉）', () => {
     expect(secret.map((s) => `${s.file}::${s.calls}`).sort()).toEqual([
       'components/LockOverlay.tsx::onUnlock',
       'components/ReminderMenu.tsx::submitCustom',

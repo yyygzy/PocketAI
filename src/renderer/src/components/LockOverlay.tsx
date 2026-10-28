@@ -27,7 +27,7 @@ export const LockOverlay: React.FC<{
             autoFocus
             value={pwd}
             onChange={(e) => onPwdChange(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && onUnlock()}
+            onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && onUnlock()}
             placeholder={t('lock.pwdPlaceholder')}
             className="mb-3 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-4 py-2 text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
           />

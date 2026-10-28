@@ -1488,7 +1488,7 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
                     autoFocus
                     disabled={mergeExecuting}
                     onChange={(e) => setMergePwd(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void doMergeRescanWithPwd() }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void doMergeRescanWithPwd() }}
                   />
                   {mergeReport.code === 'badPassword' && (
                     <div className="text-xs text-[var(--color-danger)] mt-2">{t('bk.restoreBadPwd')}</div>
@@ -1601,7 +1601,7 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
               autoFocus
               disabled={restorePwdBusy}
               onChange={(e) => { setRestorePwdValue(e.target.value); setRestorePwdError('') }}
-              onKeyDown={(e) => { if (e.key === 'Enter') void doRestoreWithPassword() }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void doRestoreWithPassword() }}
             />
             {restorePwdError && (
               <div className="text-xs text-[var(--color-danger)] mt-2">{restorePwdError}</div>
@@ -2499,7 +2499,7 @@ export const AppearancePanel: React.FC = () => {
             onChange={(e) => setCollapseInput(e.target.value)}
             onBlur={(e) => void commitCodeCollapse(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') void commitCodeCollapse(e.currentTarget.value)
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) void commitCodeCollapse(e.currentTarget.value)
             }}
             className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] px-1.5 py-0.5 text-[11px] text-[var(--color-text)]"
           />

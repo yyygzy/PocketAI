@@ -139,7 +139,7 @@ export function UnlockPage() {
         placeholder={opts.placeholder}
         autoFocus={opts.autoFocus}
         disabled={opts.disabled}
-        onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit() }}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSubmit() }}
         style={{ paddingRight: 32 }}
       />
       <button

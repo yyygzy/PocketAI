@@ -313,7 +313,7 @@ export const ChannelsPanel: React.FC = () => {
               }
               onChange={(e) => setPrimaryDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && primaryDraft.trim()) {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing && primaryDraft.trim()) {
                   // §336：Enter 键同步清草稿再发 IPC，防止后续 onBlur 再发一发（blur 在 click 之前触发，若草稿未清会重保存）
                   const trimmed = primaryDraft.trim()
                   setPrimaryDraft('')
@@ -362,7 +362,7 @@ export const ChannelsPanel: React.FC = () => {
               }
               onChange={(e) => setSecondaryDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && secondaryDraft.trim()) {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing && secondaryDraft.trim()) {
                   // §336：Enter 键同步清草稿再发 IPC，防止后续 onBlur 再发一发
                   const trimmed = secondaryDraft.trim()
                   setSecondaryDraft('')

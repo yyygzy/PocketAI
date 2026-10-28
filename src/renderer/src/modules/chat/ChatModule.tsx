@@ -1638,7 +1638,7 @@ export const ChatModule: React.FC = () => {
               autoFocus
               value={cryptoPwd}
               onChange={(e) => setCryptoPwd(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') confirmCrypto(); if (e.key === 'Escape') setCryptoPrompt(null) }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) confirmCrypto(); if (e.key === 'Escape') setCryptoPrompt(null) }}
               placeholder={t('common.enterPassword')}
               className="w-full px-3 py-2 border border-[var(--color-border)] rounded bg-[var(--color-input-bg)] text-sm outline-none focus:border-[var(--color-accent)]"
             />

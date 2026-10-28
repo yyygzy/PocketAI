@@ -202,7 +202,7 @@ export const ReminderMenu: React.FC<Props> = ({ anchor, onPick, onClose }) => {
             value={minutes}
             onChange={(e) => setMinutes(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); submitCustom() }
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); submitCustom() }
             }}
             className="w-16 px-1.5 py-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-input-bg,var(--color-sidebar))] outline-none focus:border-[var(--color-accent)]"
           />

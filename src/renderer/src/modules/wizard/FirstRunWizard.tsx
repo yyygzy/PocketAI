@@ -617,7 +617,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                   className="input flex-1"
                   value={pwd2}
                   onChange={(e) => setPwd2(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void enableEncryption()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && void enableEncryption()}
                   placeholder={t('unlock.phConfirm')}
                   disabled={busy}
                 />
