@@ -96,8 +96,14 @@ interface AppState {
   // ─── 锁屏 ───
   locked: boolean
   dbEncrypted: boolean
+  // §343：`dbEncrypted` 是这一发读的**副本**，副本要能表达「还没读回来」与「没读回来」。
+  // 初值 pending=true／known=false＝挂载那一刻什么都不知道，遮罩只许说"正在确认"。
+  dbEncKnown: boolean
+  dbEncPending: boolean
   setLocked: (v: boolean) => void
   setDbEncrypted: (v: boolean) => void
+  setDbEncKnown: (v: boolean) => void
+  setDbEncPending: (v: boolean) => void
 
   // ─── 首启向导 ───
   wizard: WizardVariant | null
@@ -165,8 +171,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   locked: false,
   dbEncrypted: false,
+  dbEncKnown: false,
+  dbEncPending: true,
   setLocked: (v) => set({ locked: v }),
   setDbEncrypted: (v) => set({ dbEncrypted: v }),
+  setDbEncKnown: (v) => set({ dbEncKnown: v }),
+  setDbEncPending: (v) => set({ dbEncPending: v }),
 
   wizard: null,
   setWizard: (v) => set({ wizard: v })

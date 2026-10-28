@@ -383,6 +383,8 @@ export const ja = {
   'lock.unlock': 'ロック解除',
   'lock.unlockNow': '続行（パスワードなし）',
   'lock.unlockFailed': 'ロック解除に失敗しました',
+  'lock.checkingEnc': 'この端末にマスターパスワードが設定されているか確認中です…',
+  'lock.encUnread': '暗号化状態を読み取れません：{msg}（マスターパスワードが設定されている前提で扱います。入力して解除してください）',
 
   // ── リマインダー ──
   'reminder.fired': '⏰ リマインダー：{text}',

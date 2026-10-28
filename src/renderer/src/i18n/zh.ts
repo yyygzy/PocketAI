@@ -402,6 +402,8 @@ export const zh = {
   'lock.unlock': '解锁',
   'lock.unlockNow': '继续（无需密码）',
   'lock.unlockFailed': '解锁失败',
+  'lock.checkingEnc': '正在确认这台设备是否设过主密码…',
+  'lock.encUnread': '加密状态读不到：{msg}（下面按可能设过主密码处理，请输入密码后解锁）',
 
   // ── 定时提醒 ──
   'reminder.fired': '⏰ 提醒：{text}',

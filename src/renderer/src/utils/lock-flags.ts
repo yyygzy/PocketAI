@@ -12,24 +12,32 @@ import { hasIpcFailed, ipcFailText } from './ipc'
 export interface EncryptionFlagDeps {
   setDbEncrypted: (v: boolean) => void
   setEncReadErr: (v: string | null) => void
+  /** §343：副本的"知不知道"与"在不在飞"——遮罩要靠这两个值区分「正在确认」与「确实没加密」 */
+  setEncKnown: (v: boolean) => void
+  setEncPending: (v: boolean) => void
   t: (k: string) => string
 }
 
 /**
  * 读一次主进程的加密态并写回本窗口的副本。
- * 失败侧**只报错、不动旧值**：旧值可能是 false，把它写成 false 等于替用户宣布"数据是明文"。
+ * 失败侧**只报错、不动旧值**：旧值可能是 false，把它写成 false 等于替用户宣布"数据是明文"，
+ * 但把 known 打成 false 是诚实的——屏上不知道，就该说"正在确认／读不到"。
  */
 export function createEncryptionFlagSyncer(deps: EncryptionFlagDeps): () => Promise<void> {
   let gen = 0
   return async () => {
     const my = ++gen
+    deps.setEncPending(true)
     const s = await window.pocketai.getEncryptionStatus()
-    // 期间又按了一次锁屏事件 ⇒ 这一发是旧读数，丢掉（主进程仍是对的那份，由后一发写回）
+    // 期间又按了一次锁屏事件 ⇒ 这一发是旧读数，pending 由最新那发自己收尾
     if (my !== gen) return
+    deps.setEncPending(false)
     if (hasIpcFailed(s)) {
+      deps.setEncKnown(false)
       deps.setEncReadErr(ipcFailText(s, deps.t('common.unknownError')))
       return
     }
+    deps.setEncKnown(true)
     deps.setEncReadErr(null)
     deps.setDbEncrypted(s.dbEncrypted)
   }

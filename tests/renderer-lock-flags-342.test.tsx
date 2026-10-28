@@ -14,12 +14,22 @@ const t = (k: string): string => `t:${k}`
 describe('createEncryptionFlagSyncer', () => {
   let setDbEncrypted: ReturnType<typeof vi.fn>
   let setEncReadErr: ReturnType<typeof vi.fn>
-  let deps: { setDbEncrypted: any; setEncReadErr: any; t: typeof t }
+  let setEncKnown: ReturnType<typeof vi.fn>
+  let setEncPending: ReturnType<typeof vi.fn>
+  let deps: {
+    setDbEncrypted: any
+    setEncReadErr: any
+    setEncKnown: any
+    setEncPending: any
+    t: typeof t
+  }
 
   beforeEach(() => {
     setDbEncrypted = vi.fn()
     setEncReadErr = vi.fn()
-    deps = { setDbEncrypted, setEncReadErr, t }
+    setEncKnown = vi.fn()
+    setEncPending = vi.fn()
+    deps = { setDbEncrypted, setEncReadErr, setEncKnown, setEncPending, t }
   })
 
   afterEach(() => {
@@ -37,7 +47,24 @@ describe('createEncryptionFlagSyncer', () => {
     stubPocketai({ getEncryptionStatus: () => ({ ok: false, error: 'boom' }) })
     await createEncryptionFlagSyncer(deps)()
     expect(setEncReadErr).toHaveBeenCalledWith('boom')
+    expect(setEncKnown, '读失败后仍然「知道」＝遮罩继续演成已知态').toHaveBeenLastCalledWith(false)
     expect(setDbEncrypted, '失败侧不许把副本写成 false（那等于宣布"数据是明文"）').not.toHaveBeenCalled()
+  })
+
+  it('在飞那一段：pending 先立、known 还没立（§343 的"正在确认"就靠这两个值）', async () => {
+    let release: ((v: unknown) => void) | null = null
+    stubPocketai({ getEncryptionStatus: () => new Promise((resolve) => { release = resolve }) })
+    const sync = createEncryptionFlagSyncer(deps)
+    const running = sync()
+    await Promise.resolve()
+    expect(setEncPending).toHaveBeenLastCalledWith(true)
+    expect(setEncKnown, '读还没回来就说"知道了"＝遮罩会立刻按未加密那张脸渲染').not.toHaveBeenCalled()
+    expect(setDbEncrypted).not.toHaveBeenCalled()
+    release!({ dbEncrypted: true })
+    await running
+    expect(setEncKnown).toHaveBeenLastCalledWith(true)
+    expect(setEncPending).toHaveBeenLastCalledWith(false)
+    expect(setDbEncrypted).toHaveBeenLastCalledWith(true)
   })
 
   it('迟到对照：先出发后回来的那一发不许顶掉新读数', async () => {

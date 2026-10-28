@@ -13,7 +13,7 @@ import { LockOverlay } from '../src/renderer/src/components/LockOverlay'
 function mount(onUnlock = vi.fn()) {
   stubPocketai()
   mountWithProviders(
-    <LockOverlay dbEncrypted pwd="" onPwdChange={() => {}} onUnlock={onUnlock} />
+    <LockOverlay dbEncrypted encKnown encPending={false} pwd="" onPwdChange={() => {}} onUnlock={onUnlock} />
   )
   const box = document.querySelector('input[type=password]') as HTMLElement
   return { onUnlock, box }

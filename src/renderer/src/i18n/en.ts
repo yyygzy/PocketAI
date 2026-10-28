@@ -402,6 +402,8 @@ export const en = {
   'lock.unlock': 'Unlock',
   'lock.unlockNow': 'Continue (no password)',
   'lock.unlockFailed': 'Unlock failed',
+  'lock.checkingEnc': 'Checking whether this device has a master password…',
+  'lock.encUnread': 'Encryption status unavailable: {msg} (this screen assumes a master password may be set - enter it to unlock)',
 
   // ── Reminders ──
   'reminder.fired': '⏰ Reminder: {text}',

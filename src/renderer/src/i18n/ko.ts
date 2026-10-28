@@ -383,6 +383,8 @@ export const ko = {
   'lock.unlock': '잠금 해제',
   'lock.unlockNow': '계속 (비밀번호 없음)',
   'lock.unlockFailed': '잠금 해제 실패',
+  'lock.checkingEnc': '이 기기에 마스터 비밀번호가 설정됐는지 확인 중입니다…',
+  'lock.encUnread': '암호화 상태를 불러오지 못했습니다: {msg} (마스터 비밀번호가 설정된 것으로 가정합니다. 비밀번호를 입력해 해제하세요)',
 
   // ── 리마인더 ──
   'reminder.fired': '⏰ 리마인더: {text}',

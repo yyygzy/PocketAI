@@ -31,6 +31,9 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
   const { t } = useI18n()
   const [locked, setLocked] = useState(false)
   const [dbEncrypted, setDbEncrypted] = useState(false)
+  // §343：副本的「知不知道」与「在不在飞」——遮罩要靠这两个值把「正在确认」与「确实没加密」分开
+  const [encKnown, setEncKnown] = useState(false)
+  const [encPending, setEncPending] = useState(true)
   const [lockPwd, setLockPwd] = useState('')
   const [lockErr, setLockErr] = useState('')
   // 挂载那两发读的失败原因（V4-Iter-250）：读不到 ≠ 「没加密、没锁」，与主窗口 App.tsx 同一口径
@@ -41,7 +44,9 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
   // 锁屏状态与主窗口联动（锁屏事件广播到所有窗口）
   useEffect(() => {
     // 与主窗口 App.tsx 同一口径：挂载两发读＋每次锁屏事件重读加密态（§342，浮窗自己也会弹遮罩）
-    const syncEnc = createEncryptionFlagSyncer({ setDbEncrypted, setEncReadErr, t })
+    const syncEnc = createEncryptionFlagSyncer({
+      setDbEncrypted, setEncReadErr, setEncKnown, setEncPending, t
+    })
     void syncEnc().catch(reportIpcError('detached.getEncryptionStatus'))
     window.pocketai
       .getLockStatus()
@@ -118,7 +123,8 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
 
   async function handleUnlock() {
     setLockErr('')
-    const res = await window.pocketai.unlock(dbEncrypted ? lockPwd : undefined)
+    // §343：不确定（还在飞或读失败）时按「可能设过主密码」处理，别空发 undefined 白吃一发限流失败
+    const res = await window.pocketai.unlock(!encKnown || dbEncrypted ? lockPwd : undefined)
     if (!res.ok) setLockErr(res.error ?? t('lock.unlockFailed'))
   }
 
@@ -140,6 +146,9 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
         {locked && (
           <LockOverlay
             dbEncrypted={dbEncrypted}
+            encKnown={encKnown}
+            encPending={encPending}
+            encErr={encReadErr}
             pwd={lockPwd}
             onPwdChange={setLockPwd}
             error={lockErr}

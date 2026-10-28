@@ -28,12 +28,16 @@ export default function App() {
   const activeModule = useAppStore((s) => s.activeModule)
   const locked = useAppStore((s) => s.locked)
   const dbEncrypted = useAppStore((s) => s.dbEncrypted)
+  const dbEncKnown = useAppStore((s) => s.dbEncKnown)
+  const dbEncPending = useAppStore((s) => s.dbEncPending)
   const wizard = useAppStore((s) => s.wizard)
 
   const switchModule = useAppStore((s) => s.switchModule)
   const touchModule = useAppStore((s) => s.touchModule)
   const setLocked = useAppStore((s) => s.setLocked)
   const setDbEncrypted = useAppStore((s) => s.setDbEncrypted)
+  const setDbEncKnown = useAppStore((s) => s.setDbEncKnown)
+  const setDbEncPending = useAppStore((s) => s.setDbEncPending)
   const setWizard = useAppStore((s) => s.setWizard)
 
   // 仅 UI 本地状态：锁屏密码输入
@@ -87,7 +91,9 @@ export default function App() {
     // 默认值是 dbEncrypted=false／locked=false，静默失败＝界面把"读不到"演成"没加密、没锁"。
     // 加密态还得在每次锁屏事件到达时重读（§342）：挂载那次读到的副本会漂——
     // 向导里设完主密码、设置页关掉加密，主进程 mode 当场变了，遮罩却还按旧值渲染。
-    const syncEnc = createEncryptionFlagSyncer({ setDbEncrypted, setEncReadErr, t })
+    const syncEnc = createEncryptionFlagSyncer({
+      setDbEncrypted, setEncReadErr, setEncKnown: setDbEncKnown, setEncPending: setDbEncPending, t
+    })
     void syncEnc().catch(reportIpcError('app.getEncryptionStatus'))
     window.pocketai
       .getLockStatus()
@@ -108,7 +114,7 @@ export default function App() {
       void syncEnc().catch(reportIpcError('app.getEncryptionStatus'))
     })
     return off
-  }, [setDbEncrypted, setLocked, t])
+  }, [setDbEncrypted, setDbEncKnown, setDbEncPending, setLocked, t])
 
   // 首启向导 / 换电脑检测
   useEffect(() => {
@@ -163,7 +169,8 @@ export default function App() {
 
   async function handleUnlock() {
     setLockErr('')
-    const res = await window.pocketai.unlock(dbEncrypted ? lockPwd : undefined)
+    // §343：`dbEncrypted` 只是一份副本；不知道（还在飞或读失败）时按「可能设过主密码」处理——宁可让用户多输一次，也不空发 undefined 去白吃一发 SEC-10 的失败计数
+    const res = await window.pocketai.unlock(!dbEncKnown || dbEncrypted ? lockPwd : undefined)
     if (!res.ok) {
       setLockErr(res.error ?? t('lock.unlockFailed'))
     }
@@ -214,6 +221,9 @@ export default function App() {
 
         {locked && (
           <LockOverlay
+            encKnown={dbEncKnown}
+            encPending={dbEncPending}
+            encErr={encReadErr}
             dbEncrypted={dbEncrypted}
             pwd={lockPwd}
             onPwdChange={setLockPwd}

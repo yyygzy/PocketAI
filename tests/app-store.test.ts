@@ -152,6 +152,12 @@ describe('模块切换与保活', () => {
     expect(mounted()).not.toContain('chat')
   })
 
+  it('加密态副本的初值：未知且在读（§343）', () => {
+    const init = useAppStore.getInitialState()
+    expect(init.dbEncKnown, '初值就说「知道了」＝启动那一刻遮罩会先按未加密那张脸渲染').toBe(false)
+    expect(init.dbEncPending, '初值不标记在飞＝「正在确认」那一格永远不会出现').toBe(true)
+  })
+
   it('侧栏顺序进 store（Ctrl+1..9 要按它绑定）', () => {
     const s = useAppStore.getState()
     const custom = [...DEFAULT_SIDEBAR_ORDER]
