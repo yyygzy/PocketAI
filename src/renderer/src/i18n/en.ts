@@ -52,6 +52,7 @@ export const en = {
   'common.loadFailedDefaults': 'Cannot load {what}: {msg} (the values shown are defaults)',
   'common.loadFailedOff': 'Cannot load {what}: {msg} (treated as off for now)',
   'common.refreshFailed': 'Refresh failed: {msg} (the view still shows the last good load)',
+  'common.refreshFailedNamed': 'Could not refresh {what}: {msg} (the view still shows the last good load)',
   // ── Root error boundary (V4-Iter-146): readable fallback when a component throws while rendering ──
   'crash.title': 'The interface hit an error',
   'crash.hint': 'This came from an exception while rendering - your data is not the problem. Paste the line below to the developer.',

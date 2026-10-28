@@ -38,7 +38,7 @@ describe('§251 收口后的接线：九发读各自的接管落点', () => {
       ['备份计划：三处重取并成一条 loadSchedule，两条失败面都写 schedErr', /setSchedErr\((ipcFailText|errText)\(/g, 2, SRC],
       ['备份计划读不到时那一块不再整块消失', /!schedule && schedErr && <LoadFailNotice/g, 1, SRC],
       ['上传后与保存后的两处刷新改走同一条 loadSchedule', /await loadSchedule\(\)/g, 2, SRC],
-      ['进面板那一发也走 loadSchedule', /void loadSchedule\(\)/g, 1, SRC]
+      ['进面板那一发也走 loadSchedule（§345 起第二处是旧值横幅那颗重试键，两处都是同一条接管）', /void loadSchedule\(\)/g, 2, SRC]
     ]
     for (const [what, re, want, src] of cases) {
       expect(count(re, src), what).toBe(want)

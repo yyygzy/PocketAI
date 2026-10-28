@@ -52,6 +52,7 @@ export const zh = {
   'common.loadFailedDefaults': '{what}读不到：{msg}（当前显示的是默认值）',
   'common.loadFailedOff': '{what}读不到：{msg}（暂时按关闭处理）',
   'common.refreshFailed': '刷新失败：{msg}（界面停在上一份）',
+  'common.refreshFailedNamed': '{what}刷新失败：{msg}（界面停在上一份）',
   // ── 根错误边界（V4-Iter-146）：任何组件 render 抛错时给的可读兜底屏 ──
   'crash.title': '界面出错了',
   'crash.hint': '这是渲染过程中抛出的异常，不是你的数据出了问题。下面那行错误信息可以直接贴给开发者。',

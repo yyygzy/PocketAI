@@ -9,6 +9,7 @@ import type {
 import { modelRecKey } from '../../../shared/model-rec-codes'
 import { useI18n } from '../i18n'
 import { LoadFailNotice } from './LoadFailNotice'
+import { StaleValueNotice } from './StaleValueNotice'
 import { ShowingDefaultsNotice } from './ShowingDefaultsNotice'
 import { reportIpcError, hasIpcFailed, ipcFailText, logIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
@@ -52,9 +53,15 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
           setStatusErr(ipcFailText(v, t('common.unknownError')))
           return
         }
+        // §345：8s 一次的轮询到了新值，「下面显示的是上一次读到的值」当场不再成立 ⇒ 必须同时收回原因
+        setStatusErr(null)
         setStatus(v)
       })
-      .catch(reportIpcError('ollama.getStatus'))
+      // §345：reject 面只进 console ⇒ 旧状态照摆着却没人说，与本批其余各处同口径写进同一份 err
+      .catch((e: unknown) => {
+        setStatusErr(errText(e, t('common.unknownError')))
+        reportIpcError('ollama.getStatus')(e)
+      })
   }, [t])
 
   // 模型拉取（进度事件/中止/成功刷新）与管家推荐卡片共用同一 hook
@@ -211,6 +218,13 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
 
       {/* §222：一次都没读到过 ⇒ 明说"读不到"，别整块不渲染（那看着像"没装"） */}
       {!status && statusErr && <LoadFailNotice msg={statusErr} />}
+      {/* §345：这一发是 8s 一轮的轮询（安装／启停／拉模型后还会立刻再来一发）。失败侧留着旧 status 是对的
+          （清掉会把"运行中"那一屏瞬间抹空），但徽标与那颗「启动／停止」都照旧值摆 ⇒ 原因得有出口 */}
+      {status && statusErr && (
+        <div className="mb-2">
+          <StaleValueNotice what={t('ollama.title')} msg={statusErr} onRetry={refresh} testid="ollama-status-stale-retry" />
+        </div>
+      )}
 
       {/* 平台不支持 */}
       {status && !status.platformSupported && (

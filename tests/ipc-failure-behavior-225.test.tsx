@@ -53,7 +53,12 @@ describe('① 加密面板：数据由父页传下来，门要有三条腿', () 
     // 数据一到，加密面板会连带挂出自动锁与恢复密钥两块，它们各自还要一发读
     stubPocketai({ getLockStatus: () => ({ state: 'unlocked', autoLockTimeout: 0 }), hasRecoveryKey: () => false })
     mountWithProviders(<EncryptionPanel enc={enc()} err="库被占用" onChange={() => {}} />)
-    expect(alerts()).toEqual([])
+    // §345 改了这半张脸：有数据＋有原因时那句原因不再是"什么都不挂"，而是「刷新失败＋界面停在上一份」的旧值横幅。
+    // 本条的原意（残留的原因不许把面板压掉、也不许退回加载中）照旧由下面两行守着。
+    expect(alerts()).toEqual([
+      L('common.refreshFailedNamed').replace('{what}', L('enc.dbEnc')).replace('{msg}', '库被占用')
+    ])
+    expect(screen.getByText(L('enc.dbEnc'))).toBeTruthy()
     expect(loadingOn()).toBe(false)
   })
 })

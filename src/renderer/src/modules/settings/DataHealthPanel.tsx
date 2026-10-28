@@ -7,7 +7,9 @@ import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { StaleValueNotice } from '../../components/StaleValueNotice'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 import { formatVectorIndex } from '../../utils/vector-index'
 import { formatTraceLedger } from '../../utils/trace-ledger'
@@ -50,7 +52,11 @@ export const DataHealthPanel: React.FC = () => {
         setLoadErr(null)
         setReport(r)
       })
-      .catch(reportIpcError('dataHealth.get'))
+      // §345：reject 面只进 console ⇒ 旧报告照摆着却没人说；与本批其余各处同口径写进同一份 err
+      .catch((e: unknown) => {
+        setLoadErr(errText(e, t('common.unknownError')))
+        reportIpcError('dataHealth.get')(e)
+      })
   }, [t, toast])
 
   useEffect(() => {
@@ -157,6 +163,13 @@ export const DataHealthPanel: React.FC = () => {
 
   return (
     <div>
+      {/* §345：`load(true)`（那颗「刷新」键）与各修复动作后的重扫都会再读一发；失败侧旧报告留着是对的，
+          但得说出"下面这份是上一次读到的"——否则刚点过修复的屏看着像"数字没变＝修复没效" */}
+      {loadErr && (
+        <div className="mb-2">
+          <StaleValueNotice what={t('set.dataHealth')} msg={loadErr} onRetry={() => load(true)} testid="data-health-stale-retry" />
+        </div>
+      )}
       {/* 体积汇总卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
         <StatCard label={t('dh.total')} value={formatBytes(sizes.userDataBytes)} />

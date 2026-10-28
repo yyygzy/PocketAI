@@ -7,6 +7,7 @@ import { useI18n } from '../../i18n'
 import { builtinAssistantNameById } from '../chat/assistant-display'
 import { useToast } from '../../components/ToastProvider'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { StaleValueNotice } from '../../components/StaleValueNotice'
 import { errText } from '../../utils/error'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { requestUsageJump } from './usage-jump'
@@ -94,8 +95,15 @@ export const UsagePanel: React.FC = () => {
   const load = useCallback((d: number) => {
     window.pocketai.getUsageSummary(d).then((r) => {
       if (failAction(r, setLoadErr)) return
+      // §345：新值一到，「下面显示的是上一次读到的值」当场不再成立 ⇒ 成功侧必须把原因收回
+      setLoadErr(null)
       setSummary(r)
-    }).catch(reportIpcError('usage.get'))
+    // §345：reject 面（桥层抛出，不走 safeHandle 的 {ok:false}）以前只进 console ⇒
+    // 屏上照旧摆着上一窗的汇总、一个字都没说，与本批其余六处同口径写进同一份 err
+    }).catch((e: unknown) => {
+      setLoadErr(errText(e, t('common.unknownError')))
+      reportIpcError('usage.get')(e)
+    })
     window.pocketai.getUsageConversations(d, 20).then((r) => { if (!failAction(r)) setConvUsage(r) }).catch(reportIpcError('usage.conversations'))
     window.pocketai.getUsageAssistants(d, 10).then((r) => { if (!failAction(r)) setAsstUsage(r) }).catch(reportIpcError('usage.assistants'))
     // deps 与文件里 openDetail 那两条同口径（toast/t 只用于报错，不必进依赖）
@@ -283,6 +291,13 @@ export const UsagePanel: React.FC = () => {
         </div>
       )}
 
+      {/* §345：`load(days)` 会随时间窗切换重跑（7／30／90 天三档），失败侧留着上一窗的汇总是对的，
+          但那一屏卡片是按"当前所选天数"摆的——切到 30 天失败后屏上还是 7 天的数字却不说明，就是拿旧数当新数 */}
+      {summary && loadErr && (
+        <div className="mb-2">
+          <StaleValueNotice what={t('set.usage')} msg={loadErr} onRetry={reload} testid="usage-summary-stale-retry" />
+        </div>
+      )}
       {!summary ? (
         loadErr ? (
           <LoadFailNotice msg={loadErr} />

@@ -16,6 +16,7 @@ import { modelRecKey } from '../../../../shared/model-rec-codes'
 import { buildDiagnosticReport, type ReportLabels } from '../../utils/diagnostic-report'
 import { useToast } from '../../components/ToastProvider'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { StaleValueNotice } from '../../components/StaleValueNotice'
 import { useOllamaPull, pickPullState } from '../../hooks/useOllamaPull'
 
 const LEVEL_ICON: Record<CheckLevel, string> = { ok: '✅', warn: '⚠️', danger: '❌' }
@@ -472,6 +473,13 @@ export const StewardModule: React.FC = () => {
       )}
       {recommendation && (
         <Section title={t('steward.modelRec')}>
+          {/* §345：这一发会被 `load(force)` 与"拉完一个模型"重跑；失败侧旧推荐留着，
+              但那三个档位徽标与「下载」那颗键都照旧值摆 ⇒ 要点名"没能刷新成最新" */}
+          {recErr && (
+            <div className="mb-2">
+              <StaleValueNotice what={t('steward.modelRec')} msg={recErr} onRetry={refreshRecommendation} testid="steward-rec-stale-retry" />
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-[var(--color-accent)] text-[var(--color-on-accent)]">
               {t(modelRecKey('tier', recommendation.tier))}

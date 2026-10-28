@@ -30,6 +30,7 @@ import { errText } from '../../utils/error'
 import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { StaleValueNotice } from '../../components/StaleValueNotice'
 import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
@@ -368,6 +369,9 @@ export const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; err: stri
 
   return (
     <div className="space-y-3">
+      {/* §345：这份副本有三个读者（挂载／锁屏事件／面板动作后刷新），重读失败时旧值留着是对的，
+          但原因得有出口——否则屏上继续画「已加密＋已解锁」，那一格上还挂着改口令／关闭加密两颗键 */}
+      {err && <StaleValueNotice what={t('enc.dbEnc')} msg={err} onRetry={onChange} testid="enc-stale-retry" />}
       <StatusRow label={t('enc.dbEnc')} value={encrypted ? t('enc.enabled') : t('enc.disabled')} ok={encrypted} />
       <StatusRow label={t('enc.status')} value={unlocked ? t('enc.unlocked') : t('enc.locked')} ok={unlocked} />
       <StatusRow label={t('enc.field')} value={encrypted ? t('enc.fieldValue') : t('enc.fieldValueNone')} ok={encrypted} />
@@ -1319,6 +1323,13 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
 
       {/* 定时备份（需先保存 WebDAV 配置） */}
       {!schedule && schedErr && <LoadFailNotice msg={schedErr} />}
+      {/* §345：loadSchedule 有三个 caller（进面板／上传后／保存后）——后两发失败时旧计划还画在屏上，
+          而开关是按那份旧值摆的（保存会照它写回）⇒ 这一句要说清"没刷成最新"，并给一条重读路径 */}
+      {schedule && schedErr && (
+        <div className="mb-2">
+          <StaleValueNotice what={t('dh.backupState')} msg={schedErr} onRetry={() => void loadSchedule()} testid="schedule-stale-retry" />
+        </div>
+      )}
       {cfg && schedule && (
         <div className="rounded-lg border border-[var(--color-border)] p-3">
           <label className="flex items-center gap-2 cursor-pointer">
@@ -1745,6 +1756,9 @@ export const LicensePanel: React.FC<{ lic: LicenseStatus | null; err: string | n
 
   return (
     <div className="space-y-2 text-xs">
+      {/* §345：许可证有两发读（挂载＋LicensePanel 动作后的 onChange，如激活成功后重拉）；
+          第二发失败时旧许可证照常在屏上，那一句"授权状态"就得说出它没能刷新 */}
+      {err && <StaleValueNotice what={t('lic.status')} msg={err} onRetry={onChange} testid="lic-stale-retry" />}
       {lic.valid && payload ? (
         <>
           <StatusRow label={t('lic.status')} value={t('lic.validValue', { plan: payload.plan.toUpperCase() })} ok />
