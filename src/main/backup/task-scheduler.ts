@@ -14,6 +14,7 @@ import { createLogger } from '../logger'
 import { errMsg } from '../error'
 import { loadWebDAVConfig, listWebDAVBackups, isEncryptedBlob, ENC_PREFIX, decryptBackup, toCreds } from './backup-service'
 import { downloadFile } from './webdav-client'
+import { pickLatestBackup } from '../../shared/backup-latest'
 import { createHash } from 'node:crypto'
 
 const log = createLogger('task-scheduler')
@@ -68,8 +69,14 @@ const tasks: TaskDef[] = [
       const backups = await listWebDAVBackups(cfg)
       if (backups.length === 0) return
 
-      // 校验最新的一个备份
-      const latest = backups[0]!
+      // 校验最新的一个备份。「最新」不取列举结果的第 0 位（§338）：那一份的排序比较器会被
+      // NaN 折成 +0，整表顺序交给服务器返回顺序 ⇒ 改前能验到最旧那份还照报「校验通过」，
+      // 真正坏掉的最新那份永远不会被下载到
+      const latest = pickLatestBackup(backups)
+      if (!latest) {
+        log.warn(`备份校验：${backups.length} 份云端备份的时间都判不出来，本轮不校验（宁可不验，也不猜一份来验）`)
+        return
+      }
       const raw = await downloadFile(creds, latest.name)
       let buf = raw
       if (isEncryptedBlob(raw, latest.name)) {

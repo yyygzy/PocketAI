@@ -35,6 +35,7 @@ import { useToast } from '../../components/ToastProvider'
 import { modLabel } from '../../utils/shortcuts'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 import { isWebdavPasswordUsable } from '../../../../shared/schemas/backup'
+import { pickLatestBackup } from '../../../../shared/backup-latest'
 
 // ─── 键盘快捷键速查（只读，应用内固定快捷键） ────────────────────────────
 const ShortcutHelpPanel: React.FC = () => {
@@ -858,15 +859,10 @@ const RETENTION_OPTIONS = [0, 3, 5, 10, 20, 30]
 /** 导出只为给用例真挂载（§262 起 WebDAV 配置那一读的行为判据）；运行期仍只由 SettingsModule 渲染 */
 /**
  * §327：这一屏有三处要用「云端最新那一份」（状态格的时间、「哪边更新」那句、那颗「恢复最新一份」的键）。
- * 时间判不出来的一份（服务器那格 GetLastModified 是空元素或带属性元素时，包装层给空串／对象 ⇒ NaN）
- * 一律不参与：一条 NaN 会把 Math.max 与 sort 一起算坏（探针实测改前三张脸——「云端最新」显示成「从未」、
- * 「哪边更新」落到「两边一致」、那颗键指向最旧那一份）。这里用 reduce 不用 sort，剔掉 NaN 后与比较器无关。
+ * 判据实现自 §338 起在 shared（主进程那条备份校验任务读同一份派生，不再各算一遍）；
+ * 剔掉 NaN 的原因与探针读数记在 shared/backup-latest.ts。
  */
-export function latestCloudBackup<T extends { mtime: number }>(files: T[]): T | null {
-  const known = files.filter((f) => Number.isFinite(f.mtime))
-  if (known.length === 0) return null
-  return known.reduce((a, b) => (b.mtime > a.mtime ? b : a))
-}
+export const latestCloudBackup = pickLatestBackup
 
 /** 读不出的时间／体积宁可空着，也不贴 0 或 Invalid Date（§217 那句「已打包 NaN MB」的同族） */
 export function fmtCloudCellTime(ts: number): string {

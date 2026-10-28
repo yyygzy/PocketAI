@@ -4,6 +4,7 @@
 // - tick：从未运行 → 补跑；到点/未到点判定；两任务互不干扰；异常容错
 // - kb_health_check：卡住文档（pending/parsing/indexing 超 1h）标记 error；未超时不标记；非卡状态不动
 // - backup_verify：无配置 / 无备份跳过；全量 zip sha256 / 加密解密 / 增量索引校验 / 索引无效抛错
+//   ＋ §338：「最新那一份」的挑选剔掉判不出时间的一份，全判不出时不猜一份来验
 // - initTaskScheduler / stopTaskScheduler：60s 首跑 + 10min 周期 + 不重复注册 + stop 停止
 //
 // 策略：
@@ -23,11 +24,13 @@ const mocks = vi.hoisted(() => ({
   statusCalls: [] as Array<{ id: string; status: string; error?: string | null }>,
   // WebDAV
   webdavCfg: null as unknown,
-  backups: [] as Array<{ name: string }>,
+  // 真形状带 mtime（listWebDAVBackups 回的就是 BackupFile，§338 的判据要看它）
+  backups: [] as Array<{ name: string; mtime: number }>,
   downloadRaw: Buffer.from('raw'),
   encrypted: false,
   decryptedRaw: Buffer.from('decrypted'),
   downloadCalls: 0,
+  downloadNames: [] as string[],
   decryptCalls: 0,
   listBackupsError: null as Error | null,
   // 库是否处于打开态（锁屏/未解锁时为 false）与捕获到的 warn 文案
@@ -44,6 +47,7 @@ const mocks = vi.hoisted(() => ({
     this.encrypted = false
     this.decryptedRaw = Buffer.from('decrypted')
     this.downloadCalls = 0
+    this.downloadNames = []
     this.decryptCalls = 0
     this.listBackupsError = null
     this.dbOpen = true
@@ -91,8 +95,9 @@ vi.mock('../src/main/backup/backup-service', () => ({
 }))
 
 vi.mock('../src/main/backup/webdav-client', () => ({
-  downloadFile: async () => {
+  downloadFile: async (_creds: unknown, name: string) => {
     mocks.downloadCalls++
+    mocks.downloadNames.push(name)
     return mocks.downloadRaw
   }
 }))
@@ -110,6 +115,11 @@ vi.mock('../src/main/logger', () => ({
 
 beforeEach(() => mocks.reset())
 
+/** 时间判得出来的一份（BackupFile 的正常形状），day 决定新旧 */
+const dated = (name: string, day: number): { name: string; mtime: number } => ({ name, mtime: Date.UTC(2026, 8, day) })
+/** 时间判不出来的一份：手放的包名没有日期，服务器那格又是空元素 ⇒ §327 的两层兜底都兜不住 */
+const unknownTime = (name: string): { name: string; mtime: number } => ({ name, mtime: NaN })
+
 afterEach(() => {
   stopTaskScheduler()
   vi.useRealTimers()
@@ -120,7 +130,7 @@ afterEach(() => {
 describe('tick 到点判定', () => {
   it('从未运行：两个任务都补跑，并各写 last_run_at', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-full-20260927.zip' }]
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
     await tick()
     expect(mocks.downloadCalls).toBe(1)
     expect(Number(mocks.config.get('task.kb_health_check.last_run_at'))).toBeGreaterThan(0)
@@ -163,7 +173,7 @@ describe('库未开时不撞库', () => {
   it('整轮跳过：不跑任务、不写 last_run_at、也不产生任何 warn（此前每 10 分钟刷两条 WARN）', async () => {
     mocks.dbOpen = false
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-full-20260927.zip' }]
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
     await expect(tick()).resolves.toBeUndefined()
     expect(mocks.downloadCalls).toBe(0)
     expect(mocks.config.size).toBe(0)
@@ -172,7 +182,7 @@ describe('库未开时不撞库', () => {
 
   it('任务跑一半库被关（写不回时间戳）：只 warn 写入失败，不顶掉任务原本的报错、不外溢', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-inc-20260927.json' }]
+    mocks.backups = [dated('pocketai-inc-20260927.json', 27)]
     mocks.downloadRaw = Buffer.from(JSON.stringify({ kind: 'inc' })) // 缺 db.sha256 → 任务抛错
     mocks.setThrows = true // 收尾写 last_run_at 时库已关
     await expect(tick()).resolves.toBeUndefined()
@@ -250,7 +260,7 @@ describe('backup_verify 备份校验', () => {
 
   it('全量 zip（未加密）：下载后走 sha256 校验路径，任务正常完成', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-full-20260927.zip' }]
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
     mocks.downloadRaw = Buffer.from('zip content')
     await tick()
     expect(mocks.downloadCalls).toBe(1)
@@ -260,7 +270,7 @@ describe('backup_verify 备份校验', () => {
 
   it('加密备份：先解密再校验', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-full-20260927.zip' }]
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
     mocks.encrypted = true
     mocks.decryptedRaw = Buffer.from('plain zip')
     await tick()
@@ -270,7 +280,7 @@ describe('backup_verify 备份校验', () => {
 
   it('增量备份索引有效（含 kind 与 db.sha256）：校验通过', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-inc-20260927.json' }]
+    mocks.backups = [dated('pocketai-inc-20260927.json', 27)]
     mocks.downloadRaw = Buffer.from(JSON.stringify({ kind: 'inc', db: { sha256: 'abc' } }))
     await tick()
     expect(mocks.downloadCalls).toBe(1)
@@ -279,9 +289,42 @@ describe('backup_verify 备份校验', () => {
 
   it('增量备份索引无效（缺 db.sha256）：抛错被 runTask 捕获，tick 不传播', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-inc-20260927.json' }]
+    mocks.backups = [dated('pocketai-inc-20260927.json', 27)]
     mocks.downloadRaw = Buffer.from(JSON.stringify({ kind: 'inc' }))
     await expect(tick()).resolves.toBeUndefined()
+  })
+
+  // §338：「最新那一份」不再取列举结果的第 0 位。改前那条 NaN 比较把整表顺序交给服务器返回顺序，
+  // 于是校验的是随便哪一份、日志还照报「备份校验通过」——真正坏掉的最新那份永远验不到。
+  it('判不出时间的那份排在最前 ⇒ 下载的是真正的最新那份', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [
+      unknownTime('pocketai-backup.zip'),
+      dated('pocketai-backup-2026-09-01.zip', 1),
+      dated('pocketai-backup-2026-09-27.zip', 27)
+    ]
+    await tick()
+    expect(mocks.downloadNames).toEqual(['pocketai-backup-2026-09-27.zip'])
+  })
+
+  it('反向对照：全判得出来时，那份最新的照样被校验（新闸不许顺手挡掉正常路径）', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [
+      dated('pocketai-backup-2026-09-01.zip', 1),
+      dated('pocketai-backup-2026-09-27.zip', 27)
+    ]
+    await tick()
+    expect(mocks.downloadNames).toEqual(['pocketai-backup-2026-09-27.zip'])
+  })
+
+  it('一份都判不出时间 ⇒ 零下载 ＋ 一句 warn，不猜一份来验也不报通过；任务算跑完所以不每 10 分钟重跑', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [unknownTime('pocketai-backup.zip'), unknownTime('pocketai-inc-index.json')]
+    await tick()
+    expect(mocks.downloadCalls).toBe(0)
+    expect(mocks.warns.some((w) => w.includes('本轮不校验'))).toBe(true)
+    expect(mocks.warns.some((w) => w.includes('备份校验通过'))).toBe(false)
+    expect(Number(mocks.config.get('task.backup_verify.last_run_at'))).toBeGreaterThan(0)
   })
 })
 
@@ -291,7 +334,7 @@ describe('initTaskScheduler / stopTaskScheduler 调度周期', () => {
   it('init 后 60s 触发首次 tick（补跑两任务），之后 10min 周期到点才重跑', async () => {
     vi.useFakeTimers()
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-full-20260927.zip' }]
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
     initTaskScheduler()
     // 未到 60s：不执行
     await vi.advanceTimersByTimeAsync(59_000)
@@ -324,7 +367,7 @@ describe('initTaskScheduler / stopTaskScheduler 调度周期', () => {
     // stop 后推进时间不触发
     stopTaskScheduler()
     mocks.webdavCfg = { host: 'dav.example.com' }
-    mocks.backups = [{ name: 'pocketai-full-20260927.zip' }]
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(mocks.downloadCalls).toBe(0)
     // 再 init：重新注册 setTimeout + setInterval
