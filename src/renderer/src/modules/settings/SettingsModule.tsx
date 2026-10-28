@@ -25,6 +25,7 @@ import { CODE_COLLAPSE_THRESHOLD } from '../../utils/code-block'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
+import { createEncryptionStatusSyncer } from '../../utils/lock-flags'
 import { errText } from '../../utils/error'
 import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
@@ -136,16 +137,43 @@ const ConversationSettingsPanel: React.FC = () => {
   )
 }
 
+// §344：设置页那一份「主进程加密态」副本（EncryptionPanel 与 BackupPanel 都要读整块，不只 dbEncrypted）。
+// 它有三个读点：挂载首发、锁屏事件重读、面板动作后刷新（启用／改口令／关闭／锁定都调 onChange）。
+// 三处各写各的时，谁先落地没有保证——那颗「关掉加密」的写点就在面板动作里，若锁屏事件那一发（改前的值）
+// 迟到，面板会被画回「已加密＋已解锁」，那一格上还挂着改口令／关闭加密两颗键，用户照着点就去动一个已经变明文的库。
+// 所以三发共用一份带代次守卫的同步器（口径同 §342：只有最新那一发能写回）。
+// 抽成 hook 是为了让"三发共用同一个代次计数器"这件事能被真挂载用例演出来：
+// 同步器若写成每次 render 都重建（守卫立刻没牙），源码判据看不出来，重挂载一次就能红。
+export function useEncryptionCopy(): { enc: EncryptionStatus | null; err: string | null; refresh: () => void } {
+  const { t } = useI18n()
+  const [enc, setEnc] = useState<EncryptionStatus | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const tRef = useRef(t)
+  tRef.current = t
+  const syncRef = useRef<(() => Promise<void>) | null>(null)
+  if (!syncRef.current) {
+    syncRef.current = createEncryptionStatusSyncer({ setStatus: setEnc, setErr, t: (k) => tRef.current(k) })
+  }
+  const syncEnc = syncRef.current
+  useEffect(() => {
+    void syncEnc()
+    // 锁屏遮罩不卸载本模块：解锁后 masterPasswordVerified 会变化，需重新拉取
+    return window.pocketai.onLockStateChange(() => {
+      void syncEnc()
+    })
+  }, [])
+  return { enc, err, refresh: () => { void syncEnc() } }
+}
+
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
   const [paths, setPaths] = useState<AppPaths | null>(null)
-  const [enc, setEnc] = useState<EncryptionStatus | null>(null)
+  const encCopy = useEncryptionCopy()
   const [lic, setLic] = useState<LicenseStatus | null>(null)
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateStatus, setUpdateStatus] = useState<UpdateEvent>({ status: 'idle' })
   // §225：加密／许可证／更新这三块面板的数据都在本页挂载时一次拉走，读失败的原因得跟着数据一起交下去。
   // 不交的话，面板自己的门是 `if (!x) return 加载中…`，于是"这次没读到"被长期说成"还在加载"（§222 立的那一面）。
-  const [encErr, setEncErr] = useState<string | null>(null)
   const [licErr, setLicErr] = useState<string | null>(null)
   const [pathsErr, setPathsErr] = useState<string | null>(null)
   const [updErr, setUpdErr] = useState<string | null>(null)
@@ -165,10 +193,6 @@ export const SettingsModule: React.FC = () => {
         setPathsErr(errText(e, t('common.unknownError')))
         logIpcError('settings.getPaths', e)
       })
-    window.pocketai.getEncryptionStatus().then((v) => {
-      if (hasIpcFailed(v)) { setEncErr(ipcFailText(v, t('common.unknownError'))); return }
-      setEnc(v)
-    }).catch((e) => { setEncErr(errText(e, t('common.unknownError'))); logIpcError('settings.getEncryptionStatus', e) })
     window.pocketai.getLicenseStatus().then((v) => {
       if (hasIpcFailed(v)) { setLicErr(ipcFailText(v, t('common.unknownError'))); return }
       setLic(v)
@@ -181,41 +205,8 @@ export const SettingsModule: React.FC = () => {
     const unsub = window.pocketai.onUpdateEvent((data) => {
       setUpdateStatus(data)
     })
-    // 锁屏遮罩不卸载本模块：解锁后 masterPasswordVerified 会变化，需重新拉取
-    const offLock = window.pocketai.onLockStateChange(() => {
-      window.pocketai
-        .getEncryptionStatus()
-        .then((v) => {
-          if (hasIpcFailed(v)) {
-            setEncErr(ipcFailText(v, t('common.unknownError')))
-            return
-          }
-          setEncErr(null)
-          setEnc(v)
-        })
-        .catch((e: unknown) => {
-          setEncErr(errText(e, t('common.unknownError')))
-          logIpcError('settings.onUnlock.getEncryptionStatus', e)
-        })
-    })
-    return () => { unsub(); offLock() }
+    return unsub
   }, [])
-
-  const refreshEnc = () =>
-    window.pocketai
-      .getEncryptionStatus()
-      .then((v) => {
-        if (hasIpcFailed(v)) {
-          setEncErr(ipcFailText(v, t('common.unknownError')))
-          return
-        }
-        setEncErr(null)
-        setEnc(v)
-      })
-      .catch((e: unknown) => {
-        setEncErr(errText(e, t('common.unknownError')))
-        logIpcError('settings.refreshEnc', e)
-      })
 
   return (
     <div className="flex flex-col h-full">
@@ -246,12 +237,12 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.encryption')}</h3>
-          <EncryptionPanel enc={enc} err={encErr} onChange={refreshEnc} />
+          <EncryptionPanel enc={encCopy.enc} err={encCopy.err} onChange={encCopy.refresh} />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.backup')}</h3>
-          <BackupPanel enc={enc} />
+          <BackupPanel enc={encCopy.enc} />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">

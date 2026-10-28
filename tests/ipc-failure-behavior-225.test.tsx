@@ -168,9 +168,7 @@ describe('⑤ 父页的接线：三发 fetch 各有两条失败面，都要交�
 
   it('加密／许可证／更新：resolve 与 reject 两条失败面都写进各自的 err，成功分支仍写数据本体', () => {
     const cases: Array<[string, string, string, string]> = [
-      // 起点锚必须带上"这一发自己的第二行"：`getEncryptionStatus().then((v) => {` 这种写法在本文件里有三处
-      //（挂载那一发、解锁事件那一发、refreshEnc 那一发），只锚第一行的话区域会一路溢到最后一处
-      ['window.pocketai.getEncryptionStatus().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setEncErr(', 'window.pocketai.getLicenseStatus().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setLicErr(', 'setEncErr', 'setEnc(v)'],
+      // 许可证／更新这两发仍在父页里；加密那一发 §344 搬进了共享同步器，单独一条判据在下面
       ['window.pocketai.getLicenseStatus().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setLicErr(', 'window.pocketai.getUpdateInfo().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setUpdErr(', 'setLicErr', 'setLic(v)'],
       ['window.pocketai.getUpdateInfo().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setUpdErr(', '// 监听主进程推送的更新状态事件', 'setUpdErr', 'setUpdateInfo(v)']
     ]
@@ -183,8 +181,23 @@ describe('⑤ 父页的接线：三发 fetch 各有两条失败面，都要交�
     }
   })
 
+  // §344 把加密那一发（挂载／锁屏事件／面板动作后三处）收进 utils/lock-flags.ts 的共享同步器。
+  // 本节的意图不变：这一发的两条失败面都要把原因交出去、成功分支照旧写本体——只是读者搬了家，判据跟着搬。
+  it('加密那一发搬进共享同步器后，两条失败面与成功分支仍然齐全', () => {
+    const flags = fs
+      .readFileSync(path.resolve(__dirname, '../src/renderer/src/utils/lock-flags.ts'), 'utf-8')
+      .replace(/\r\n/g, '\n')
+    const ANCHOR = 'export function createEncryptionStatusSyncer'
+    expect(flags.split(ANCHOR).length - 1, `起点锚命中次数不对：${ANCHOR}`).toBe(1)
+    const body = flags.slice(flags.indexOf(ANCHOR))
+    expect(body, 'resolve 面没判').toContain('if (hasIpcFailed(s))')
+    expect(body, 'resolve 面没把原因交出去').toContain(`deps.setErr(ipcFailText(s, deps.t('common.unknownError')))`)
+    expect(body, 'reject 面没把原因交出去').toContain(`deps.setErr(errText(e, deps.t('common.unknownError')))`)
+    expect(body, '成功分支不许被顺手删掉').toContain('deps.setStatus(s)')
+  })
+
   it('三个调用点都把各自的 err 传下去了（漏一个就还是那个永远不会结束的加载）', () => {
-    expect(callSite('<EncryptionPanel ')).toContain('err={encErr}')
+    expect(callSite('<EncryptionPanel ')).toContain('err={encCopy.err}')
     expect(callSite('<UpdatePanel ')).toContain('err={updErr}')
     expect(callSite('<LicensePanel ')).toContain('err={licErr}')
   })
