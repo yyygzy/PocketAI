@@ -9,6 +9,7 @@ import { readDelegateRoleForDisplay } from '../../../../../shared/delegation-rul
 import { HtmlBlockActions } from './HtmlBlockActions'
 import { FsWriteActions } from './FsWriteActions'
 import { writeClipboard } from '../../../utils/clipboard'
+import { localizeShellDenial } from '../../../utils/shell-denial'
 import { ReminderMenu } from '../../../components/ReminderMenu'
 import { requestSourceJump } from '../../knowledge/source-jump'
 // 与 Chat 侧同构的提醒回调：repeatRule 由预设浮层给出（循环预设才带，一次性为 undefined）
@@ -172,6 +173,10 @@ const AgentMessageCardImpl: React.FC<{
   const canEditUser = m.role === 'user' && Boolean(onRerun && m.dbId)
   // 运行中父级不传 onDelete（AgentPanel: running → undefined），据此禁用右键；编辑态同样不弹
   const canCtx = Boolean(del) && !editing
+  // §339：tool 结果要上屏的那份文本——被安全策略硬拒那句按界面语言取译文，其余原样。
+  // 卡里那颗「复制」与右键「复制」都读这一份，两条路不许一个给译文一个给原文。
+  // FsWriteActions 拿的仍是 content 原文——它要解析快照 id，不是给人读的句子
+  const toolResultText = m.toolResult ? localizeShellDenial(m.toolResult.content, t) : ''
 
   /** 右键菜单项：按角色过滤（复制/编辑/重跑/重新生成/删除/提醒我），点项即执行并关闭 */
   const buildCtxItems = (): { key: string; label: string; danger?: boolean; onClick: () => void }[] => {
@@ -183,7 +188,7 @@ const AgentMessageCardImpl: React.FC<{
     } else if (m.role === 'tool' && m.toolCall) {
       items.push({ key: 'copy', label: t('common.copy'), onClick: () => void writeClipboard(m.toolCall!.function.arguments) })
     } else if (m.role === 'tool' && m.toolResult) {
-      items.push({ key: 'copy', label: t('common.copy'), onClick: () => void writeClipboard(m.toolResult!.content) })
+      items.push({ key: 'copy', label: t('common.copy'), onClick: () => void writeClipboard(toolResultText) })
     } else if (m.role === 'assistant') {
       if (m.text) items.push({ key: 'copy', label: t('common.copy'), onClick: () => void writeClipboard(m.text) })
       if (m.isFinal && onRegenerate) items.push({ key: 'regen', label: t('agent.regenerate'), onClick: () => onRegenerate(m.id) })
@@ -295,11 +300,11 @@ const AgentMessageCardImpl: React.FC<{
           {m.isError ? t('agent.toolError') : t('agent.toolResult')}: {m.toolResult.name}
         </div>
         <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-          {m.toolResult.content}
+          {toolResultText}
         </pre>
         {/* §231：fs_write 的结果带快照 id 时给「还原到写入前」；没留快照时只说一句为什么，不出现坏按钮 */}
         {m.toolResult.name === 'fs_write' && !m.isError && <FsWriteActions resultContent={m.toolResult.content} />}
-        <CardActions copyText={m.toolResult.content} onDelete={del} />
+        <CardActions copyText={toolResultText} onDelete={del} />
         {ctxMenuNode}
       </div>
     )
