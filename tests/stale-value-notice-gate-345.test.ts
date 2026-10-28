@@ -88,7 +88,7 @@ interface Row {
   /** 重取函数里那三条落点的被调名 */
   errSetter: string
   dataSetter: string
-  loader: { file: string; fn?: string; jsx?: [string, string] }
+  loader: { file: string; fn: string }
 }
 
 const ENC = 'modules/settings/SettingsModule.tsx'
@@ -97,6 +97,7 @@ const UP = 'modules/settings/UsagePanel.tsx'
 const OL = 'components/OllamaPanel.tsx'
 const SW = 'modules/steward/StewardModule.tsx'
 const LF = 'utils/lock-flags.ts'
+const LC = 'utils/license-copy.ts'
 const NOTICE = 'components/StaleValueNotice.tsx'
 
 const REGISTRY: Row[] = [
@@ -120,9 +121,11 @@ const REGISTRY: Row[] = [
     msg: '{err}',
     retry: '{onChange}',
     data: 'lic',
-    errSetter: 'setLicErr',
-    dataSetter: 'setLic',
-    loader: { file: ENC, jsx: ['LicensePanel', 'onChange'] }
+    // §346：这一发的重取搬进 utils/license-copy.ts 的同步器（挂载与面板动作两发共用一份代次计数器），
+    // 三条落点的判据跟着搬——意图不变，只是不再数父页里那两处各写各的 setter
+    errSetter: 'deps.setErr',
+    dataSetter: 'deps.setStatus',
+    loader: { file: LC, fn: 'createLicenseStatusSyncer' }
   },
   {
     格: '定时备份计划那一块',
@@ -262,19 +265,6 @@ const fnByName = (rel: string, name: string): ts.Node => {
   return hits[0]!
 }
 
-/** 挂在 JSX 属性上的行内重取函数（lic 那一发就是这种写法） */
-const jsxAttrNode = (rel: string, component: string, attr: string): ts.Node => {
-  const hits: ts.Node[] = []
-  walk(src(rel), (n) => {
-    if (!isOpening(n) || n.tagName.getText() !== component) return
-    for (const p of n.attributes.properties) {
-      if (ts.isJsxAttribute(p) && p.name.getText() === attr && p.initializer) hits.push(p.initializer)
-    }
-  })
-  expect(hits.length, `<${component}> 上的 ${attr} 不是一个或不止一个`).toBe(1)
-  return hits[0]!
-}
-
 const callsTo = (fn: ts.Node, callee: string): ts.CallExpression[] => {
   const want = norm(callee)
   const out: ts.CallExpression[] = []
@@ -348,7 +338,7 @@ describe('② 同块配对：横幅挂上去时，§222「一发都没读到」�
 describe('③ 三条落点：每处的重取函数要有成功收回、写回数据、两条失败面', () => {
   it('一次 setXErr(null)、一次写回数据、两次把原因写进 err（resolve／reject 各一条）', () => {
     for (const r of REGISTRY) {
-      const target = r.loader.jsx ? jsxAttrNode(r.loader.file, r.loader.jsx[0], r.loader.jsx[1]) : fnByName(r.loader.file, r.loader.fn!)
+      const target = fnByName(r.loader.file, r.loader.fn)
       expect(nullClears(target, r.errSetter), `${r.格}：成功那发没把原因收回＝新值上屏还挂着"这是旧值"`).toBe(1)
       expect(callsTo(target, r.dataSetter).length, `${r.格}：这一发没把读到的值写回`).toBe(1)
       expect(failWrites(target, r.errSetter), `${r.格}：失败面只接了一条，另一条到货的路又能演成"没失败"`).toBe(2)

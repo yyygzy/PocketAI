@@ -7,6 +7,8 @@
 //    出现第二次就是又开了一份会漂的副本。
 // ③＝§343 加的那句「数据仍是明文」只许挂在 encKnown 上（遮罩三张脸的来源）。
 // ④＝§344 加的：设置页那一整块 EncryptionStatus 也有三个读者，三发必须共用一份代次守卫。
+// ⑤＝§346 加的：同一屏的许可证那发（挂载＋面板四个动作与 §345 那颗重试键）并成一份同步器，
+//     判据复用 ①…④ 那批助手——同一族只养一份判据实现，裸读名单另起一张表。
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -175,6 +177,21 @@ function setStatusCallCount(text: string, fnName: string): number {
       walk(node)
       return
     }
+    ts.forEachChild(node, visit)
+  }
+  visit(src)
+  return n
+}
+
+/**
+ * 数"把某个回调当函数调了几次"（`onChange()` 那种裸标识符调用；读 AST，注释里写什么都数不清）。
+ * 用在许可证那一屏：四颗动作键成功后都必须喊同一个入口，谁自己再发一发读就多出一个没有守卫的读者。
+ */
+function onChangeCalls(text: string, name: string): number {
+  const src = ts.createSourceFile('x.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let n = 0
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) n += 1
     ts.forEachChild(node, visit)
   }
   visit(src)
@@ -460,5 +477,86 @@ logIpcError('settings.getEncryptionStatus', e)
       // 每次判定都要实时问一次，不存副本 ⇒ 没有会漂的状态
       'utils/secret-consent.ts': 1
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// ⑤ V4-Iter-346：许可证那一发（挂载首发＋面板四个动作与 §345 那颗重试键）并成一份带代次守卫的同步器
+//
+// 形状与 ④ 同轴，差别在"第二个读者是谁"：这里没有锁屏事件，第二个读者是面板自己那四颗动作键
+// ——而 `busy` 只挡动作本身（`onChange()` 不被 await，`finally` 立刻放开键），
+// 所以"读数在飞、键已能再点"是结构上的必然窗口，换一份许可证再激活一次 ⇒ 迟到的那一发
+// 会把屏画回**已被覆盖的那份**（plan／持有人／到期日）。危害面＝这一屏下面正是「清除」与到期日。
+// 判据一律复用 ①…④ 那批助手（同一族只养一份判据实现）；裸读名单另起一张表，别和加密那张贴在一起。
+describe('⑤ 许可证那发读共用一份同步器（V4-Iter-346）', () => {
+  const SETTINGS = 'modules/settings/SettingsModule.tsx'
+  const FACTORY = 'utils/license-copy.ts'
+
+  it('全渲染层的许可证裸读名单：只有同步器本体这一处，新增读者必须先进这张表', () => {
+    const readers: Record<string, number> = {}
+    for (const f of walk(ROOT)) {
+      const rel = path.relative(ROOT, f).replace(/\\/g, '/')
+      const n = ipcCallCount(read(rel), 'getLicenseStatus')
+      if (n) readers[rel] = n
+    }
+    expect(readers, '多一处＝又多了一份会漂、且没有归属判据的副本').toEqual({
+      'utils/license-copy.ts': 1
+    })
+  })
+
+  it('工厂本体：成功侧与抛出侧各有一道"迟到就 return"，写回只有最新那一发的一个出口', () => {
+    const text = read(FACTORY)
+    expect(staleReturnCount(text, 'createLicenseStatusSyncer'), '两条到货的路都要判代次，少一条＝那条能顶掉新读数').toBe(2)
+    expect(setStatusCallCount(text, 'createLicenseStatusSyncer'), '写回只许一个出口：失败侧若也写值＝把"读不到"演成"没授权"').toBe(1)
+  })
+
+  it('hook 里工厂只造一次、挂在 ref 上，订阅 effect 依赖为空数组', () => {
+    const text = read(SETTINGS)
+    expect(ipcCallCount(text, 'createLicenseStatusSyncer'), '造两份＝两个各自独立的代次计数器，守卫等于没有').toBe(1)
+    expect(refHeldCreationGuard(text, 'createLicenseStatusSyncer'), '那道 `if (!xxx.current)` 守卫不见了').toMatch(/^!\w+\.current$/)
+    expect(effectDepsLength(text, 'useLicenseCopy'), '每次 render 重跑挂载那一发＝自己造出并发').toBe(0)
+    expect(syncerDepInit(text, 'createLicenseStatusSyncer', 'setStatus')).toBe('setLic')
+    expect(syncerDepInit(text, 'createLicenseStatusSyncer', 'setErr')).toBe('setErr')
+  })
+
+  it('面板拿到的是 hook 那份副本（属性值判据）：lic／err／onChange 三样都必须绑到 licCopy', () => {
+    const text = read(SETTINGS)
+    expect(jsxPropInit(text, 'LicensePanel', 'lic')).toBe('licCopy.lic')
+    expect(jsxPropInit(text, 'LicensePanel', 'err')).toBe('licCopy.err')
+    expect(jsxPropInit(text, 'LicensePanel', 'onChange')).toBe('licCopy.refresh')
+  })
+
+  it('面板里四颗动作键共用同一个入口（少一处＝那一发又变成没人管的裸读；重试键那半由 §345 的 testid 名单钉）', () => {
+    const text = read(SETTINGS)
+    expect(onChangeCalls(text, 'onChange'), 'LicensePanel 那四发（激活／清除／粘贴／在线）都该喊父页那个入口').toBe(4)
+  })
+
+  it('漏杀对照：每帧重造同步器／摘掉成功侧守卫／失败侧也写值 ⇒ 三条判据立刻红（不是恒绿）', () => {
+    const REFK = `export function useLic() {
+  const r = useRef(null)
+  if (!r.current) r.current = createLicenseStatusSyncer({ setStatus: setLic, setErr })
+  useEffect(() => { void s() }, [])
+  return 1
+}`
+    const PER_RENDER = REFK.replace('if (!r.current) r.current = createLicenseStatusSyncer({ setStatus: setLic, setErr })', 'const s = createLicenseStatusSyncer({ setStatus: setLic, setErr })')
+    expect(refHeldCreationGuard(REFK, 'createLicenseStatusSyncer')).toBe('!r.current')
+    expect(refHeldCreationGuard(PER_RENDER, 'createLicenseStatusSyncer'), '每帧重造＝代次计数器每帧归零，必须报出来').toBeNull()
+    const GUARDED = `export function createLicenseStatusSyncer(d: any) {
+  let gen = 0
+  return async () => {
+    const my = ++gen
+    try {
+      const s = await f()
+      if (my !== gen) return
+      d.setStatus(s)
+    } catch (e) {
+      if (my !== gen) return
+      d.setStatus(e)
+    }
+  }
+}`
+    expect(staleReturnCount(GUARDED, 'createLicenseStatusSyncer')).toBe(2)
+    expect(staleReturnCount(GUARDED.replace('      if (my !== gen) return\n      d.setStatus(s)', '      d.setStatus(s)'), 'createLicenseStatusSyncer'), '摘掉成功侧那道守卫后必须只剩一条').toBe(1)
+    expect(setStatusCallCount(GUARDED, 'createLicenseStatusSyncer'), '失败侧写值＝两个出口').toBe(2)
   })
 })

@@ -171,10 +171,9 @@ describe('⑤ 父页的接线：三发 fetch 各有两条失败面，都要交�
     return src.slice(i, src.indexOf('/>', i) + 2)
   }
 
-  it('加密／许可证／更新：resolve 与 reject 两条失败面都写进各自的 err，成功分支仍写数据本体', () => {
+  it('更新那一发（与还剩在父页里的读）：resolve 与 reject 两条失败面都写进各自的 err，成功分支仍写数据本体', () => {
     const cases: Array<[string, string, string, string]> = [
-      // 许可证／更新这两发仍在父页里；加密那一发 §344 搬进了共享同步器，单独一条判据在下面
-      ['window.pocketai.getLicenseStatus().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setLicErr(', 'window.pocketai.getUpdateInfo().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setUpdErr(', 'setLicErr', 'setLic(v)'],
+      // §346 起：许可证那一发也搬进了共享同步器（见下一条），这里只剩更新那一发
       ['window.pocketai.getUpdateInfo().then((v) => {' + NL + '      if (hasIpcFailed(v)) { setUpdErr(', '// 监听主进程推送的更新状态事件', 'setUpdErr', 'setUpdateInfo(v)']
     ]
     for (const [from, to, setter, okSetter] of cases) {
@@ -186,24 +185,31 @@ describe('⑤ 父页的接线：三发 fetch 各有两条失败面，都要交�
     }
   })
 
-  // §344 把加密那一发（挂载／锁屏事件／面板动作后三处）收进 utils/lock-flags.ts 的共享同步器。
-  // 本节的意图不变：这一发的两条失败面都要把原因交出去、成功分支照旧写本体——只是读者搬了家，判据跟着搬。
-  it('加密那一发搬进共享同步器后，两条失败面与成功分支仍然齐全', () => {
-    const flags = fs
-      .readFileSync(path.resolve(__dirname, '../src/renderer/src/utils/lock-flags.ts'), 'utf-8')
-      .replace(/\r\n/g, '\n')
-    const ANCHOR = 'export function createEncryptionStatusSyncer'
-    expect(flags.split(ANCHOR).length - 1, `起点锚命中次数不对：${ANCHOR}`).toBe(1)
-    const body = flags.slice(flags.indexOf(ANCHOR))
-    expect(body, 'resolve 面没判').toContain('if (hasIpcFailed(s))')
-    expect(body, 'resolve 面没把原因交出去').toContain(`deps.setErr(ipcFailText(s, deps.t('common.unknownError')))`)
-    expect(body, 'reject 面没把原因交出去').toContain(`deps.setErr(errText(e, deps.t('common.unknownError')))`)
-    expect(body, '成功分支不许被顺手删掉').toContain('deps.setStatus(s)')
+  // §344 把加密那一发（挂载／锁屏事件／面板动作后三处）、§346 把许可证那一发（挂载＋面板四个动作与重试键）
+  // 各自收进一份共享同步器。本节的意图不变：这一发的两条失败面都要把原因交出去、成功分支照旧写本体——
+  // 只是读者搬了家，判据跟着搬到新文件。（搬的理由不是"顺手统一"：两处都是"同一份数据有多个读者、
+  // 各写各的、谁先落地没有保证"，见 utils/lock-flags.ts 与 utils/license-copy.ts 的头部。）
+  it('加密与许可证那两发搬进共享同步器后，两条失败面与成功分支仍然齐全', () => {
+    const targets: Array<[string, string]> = [
+      ['../src/renderer/src/utils/lock-flags.ts', 'export function createEncryptionStatusSyncer'],
+      ['../src/renderer/src/utils/license-copy.ts', 'export function createLicenseStatusSyncer']
+    ]
+    for (const [file, anchor] of targets) {
+      const flags = fs.readFileSync(path.resolve(__dirname, file), 'utf-8').replace(/\r\n/g, '\n')
+      expect(flags.split(anchor).length - 1, `起点锚命中次数不对：${anchor}`).toBe(1)
+      const body = flags.slice(flags.indexOf(anchor))
+      expect(body, `${anchor}：resolve 面没判`).toContain('if (hasIpcFailed(s))')
+      expect(body, `${anchor}：resolve 面没把原因交出去`).toContain(`deps.setErr(ipcFailText(s, deps.t('common.unknownError')))`)
+      expect(body, `${anchor}：reject 面没把原因交出去`).toContain(`deps.setErr(errText(e, deps.t('common.unknownError')))`)
+      expect(body, `${anchor}：成功分支不许被顺手删掉`).toContain('deps.setStatus(s)')
+      // 同步器自己那份计数器只许有一份（每次 render 重造＝守卫没牙，§344 的教训）
+      expect(body, `${anchor}：代次计数器不许被挪进回调里`).toContain('let gen = 0')
+    }
   })
 
   it('三个调用点都把各自的 err 传下去了（漏一个就还是那个永远不会结束的加载）', () => {
     expect(callSite('<EncryptionPanel ')).toContain('err={encCopy.err}')
     expect(callSite('<UpdatePanel ')).toContain('err={updErr}')
-    expect(callSite('<LicensePanel ')).toContain('err={licErr}')
+    expect(callSite('<LicensePanel ')).toContain('err={licCopy.err}')
   })
 })

@@ -26,6 +26,7 @@ import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../utils/ipc'
 import { createEncryptionStatusSyncer } from '../../utils/lock-flags'
+import { createLicenseStatusSyncer } from '../../utils/license-copy'
 import { errText } from '../../utils/error'
 import { safeHttpHref } from '../../utils/external-url'
 import { EmptyState } from '../../components/EmptyState'
@@ -166,16 +167,39 @@ export function useEncryptionCopy(): { enc: EncryptionStatus | null; err: string
   return { enc, err, refresh: () => { void syncEnc() } }
 }
 
+// §346：许可证那份副本同样有两个读者（挂载那一发＋面板四个动作与 §345 那颗重试键共用的重取），
+// 并发窗口与危害都写在 utils/license-copy.ts 的头部——一句话版：`busy` 只挡动作本身，
+// 动作成功后那一发重读在飞时键已经能再点，于是"换一份许可证再激活"会让迟到的旧读数
+// 把面板画回**已被覆盖的那份**（plan／持有人／到期日都是旧的）。
+// 所以两发共用一份带代次守卫的同步器；形状照 §344：同步器挂 ref（每帧重造＝守卫没牙），
+// `t` 走 ref 现读（换语言后失败话术跟界面走），失败侧只报原因、不动旧值。
+export function useLicenseCopy(): { lic: LicenseStatus | null; err: string | null; refresh: () => void } {
+  const { t } = useI18n()
+  const [lic, setLic] = useState<LicenseStatus | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const tRef = useRef(t)
+  tRef.current = t
+  const syncRef = useRef<(() => Promise<void>) | null>(null)
+  if (!syncRef.current) {
+    syncRef.current = createLicenseStatusSyncer({ setStatus: setLic, setErr, t: (k) => tRef.current(k) })
+  }
+  const syncLic = syncRef.current
+  useEffect(() => {
+    void syncLic()
+  }, [])
+  return { lic, err, refresh: () => { void syncLic() } }
+}
+
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
   const [paths, setPaths] = useState<AppPaths | null>(null)
   const encCopy = useEncryptionCopy()
-  const [lic, setLic] = useState<LicenseStatus | null>(null)
+  const licCopy = useLicenseCopy()
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateStatus, setUpdateStatus] = useState<UpdateEvent>({ status: 'idle' })
   // §225：加密／许可证／更新这三块面板的数据都在本页挂载时一次拉走，读失败的原因得跟着数据一起交下去。
   // 不交的话，面板自己的门是 `if (!x) return 加载中…`，于是"这次没读到"被长期说成"还在加载"（§222 立的那一面）。
-  const [licErr, setLicErr] = useState<string | null>(null)
+  // §346：许可证那一份（数据＋原因）搬进 licCopy——它有两个读者，不能再摆成两处各写各的 state。
   const [pathsErr, setPathsErr] = useState<string | null>(null)
   const [updErr, setUpdErr] = useState<string | null>(null)
 
@@ -194,10 +218,8 @@ export const SettingsModule: React.FC = () => {
         setPathsErr(errText(e, t('common.unknownError')))
         logIpcError('settings.getPaths', e)
       })
-    window.pocketai.getLicenseStatus().then((v) => {
-      if (hasIpcFailed(v)) { setLicErr(ipcFailText(v, t('common.unknownError'))); return }
-      setLic(v)
-    }).catch((e) => { setLicErr(errText(e, t('common.unknownError'))); logIpcError('settings.getLicenseStatus', e) })
+    // §346：许可证那一发挪进 useLicenseCopy()——挂在这一发与面板动作那一发是同一个计数器，
+    // 写在这里就又多了一个没有守卫的读者
     window.pocketai.getUpdateInfo().then((v) => {
       if (hasIpcFailed(v)) { setUpdErr(ipcFailText(v, t('common.unknownError'))); return }
       setUpdateInfo(v)
@@ -283,21 +305,9 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
-          <LicensePanel lic={lic} err={licErr} onChange={() =>
-            window.pocketai
-              .getLicenseStatus()
-              .then((v) => {
-                if (hasIpcFailed(v)) {
-                  setLicErr(ipcFailText(v, t('common.unknownError')))
-                  return
-                }
-                setLicErr(null)
-                setLic(v)
-              })
-              .catch((e: unknown) => {
-                setLicErr(errText(e, t('common.unknownError')))
-                logIpcError('license.refreshStatus', e)
-              })} />
+          {/* §346：面板那四颗动作键与 §345 那颗「重试」都调 onChange＝同一个 refresh，
+              与挂载那一发共用同一份代次计数器（原来这里是第二处自己 `.then(落值)` 的裸读） */}
+          <LicensePanel lic={licCopy.lic} err={licCopy.err} onChange={licCopy.refresh} />
         </div>
       </div>
 

@@ -21,6 +21,11 @@ const SRC = fs
 const FLAGS = fs
   .readFileSync(path.resolve(__dirname, '../src/renderer/src/utils/lock-flags.ts'), 'utf-8')
   .replace(/\r\n/g, '\n')
+// §346 起：许可证那一发（挂载＋面板四个动作与 §345 那颗重试键）也并成一份带代次守卫的同步器，
+// 落点判据跟着搬到这个文件；计数 2→1 不是漏收——同一份数据的多次取只挂一句（纪律第 17 条）。
+const LIC = fs
+  .readFileSync(path.resolve(__dirname, '../src/renderer/src/utils/license-copy.ts'), 'utf-8')
+  .replace(/\r\n/g, '\n')
 
 const count = (re: RegExp, src: string = SRC): number => (src.match(re) ?? []).length
 
@@ -33,7 +38,8 @@ describe('§251 收口后的接线：九发读各自的接管落点', () => {
       ['路径整块消失时改说"读不到"', /!paths && pathsErr &&/g, 1, SRC],
       ['加密状态那发读：resolve 面写 err（§344 起三发共用一份同步器，落点在 lock-flags.ts，3→1）', /deps\.setErr\(ipcFailText\(s, deps\.t\(/g, 1, FLAGS],
       ['加密状态那发读：reject 面也写 err（同上，3→1）', /deps\.setErr\(errText\(e, deps\.t\(/g, 1, FLAGS],
-      ['许可证刷新的两条失败面写 licErr（挂载那一发本批之前就接了）', /setLicErr\(ipcFailText\(v, t\('common\.unknownError'\)\)\)/g, 2, SRC],
+      ['许可证那发读：resolve 面写 err（§346 起挂载与面板动作两发共用一份同步器，落点在 license-copy.ts，2→1）', /deps\.setErr\(ipcFailText\(s, deps\.t\(/g, 1, LIC],
+      ['许可证那发读：reject 面也写 err（同上，2→1）', /deps\.setErr\(errText\(e, deps\.t\(/g, 1, LIC],
       ['恢复码那一发的失败进这张卡片已有的 notice 通道', /setNotice\(\{ ok: false, text: ipcFailText\(v,/g, 1, SRC],
       ['备份计划：三处重取并成一条 loadSchedule，两条失败面都写 schedErr', /setSchedErr\((ipcFailText|errText)\(/g, 2, SRC],
       ['备份计划读不到时那一块不再整块消失', /!schedule && schedErr && <LoadFailNotice/g, 1, SRC],
@@ -62,10 +68,10 @@ describe('§251 收口后的接线：九发读各自的接管落点', () => {
       ['setEnabled(v)', /setEnabled\(v\)/g, 1, SRC],
       ['setPaths(v)', /setPaths\(v\)/g, 1, SRC],
       ['加密状态成功分支（§344 起在共享同步器里，3→1）', /deps\.setStatus\(s\)/g, 1, FLAGS],
-      ['setLic(v)', /setLic\(v\)/g, 2, SRC],
+      ['许可证成功分支（§346 起在同步器里，2→1）', /deps\.setStatus\(s\)/g, 1, LIC],
       ['setHasKey(v)', /setHasKey\(v\)/g, 1, SRC],
       ['setSchedule(v)', /setSchedule\(v\)/g, 1, SRC],
-      ['成功时把 err 清掉（残留的原因不许压过到了的数据，§222 那条）', /set(Enc|Lic|Paths|Title)?Err\(null\)|setSchedErr\(null\)/g, 4, SRC],
+      ['成功时把 err 清掉（残留的原因不许压过到了的数据，§222 那条；§346 起许可证那一句在同步器里，4→3）', /set(Enc|Paths|Title)?Err\(null\)|setSchedErr\(null\)/g, 3, SRC],
       ['同步器那发成功时也把 err 收回（§342 旗标＋§344 整块各一句）', /deps\.setErr\(null\)|setEncReadErr\(null\)/g, 2, FLAGS]
     ]
     for (const [what, re, want, src] of keeps) expect(count(re, src), `成功分支/清空那一句对不上：${what}`).toBe(want)
