@@ -147,8 +147,23 @@ export const DataHealthPanel: React.FC = () => {
   }
 
   if (!report) {
-    // §222：读失败与还没读到是两件事——前者要把原因留在界面上（toast 会消失，而这块本体一直挂着「加载中…」）
-    if (loadErr) return <LoadFailNotice msg={loadErr} />
+    // §222：读失败与还没读到是两件事——前者要把原因留在界面上（toast 会消失，而这块一直挂着「加载中…」）
+    // §350：这一支以前同屏没有出口——本体那颗「刷新」长在 report 到了之后的那块里，首读失败时它根本不在屏上
+    //（真机 §349 也是这条：数据恢复后这句不会自己变）。补同级一颗，走的正是本体那颗的同一个入口 `load(true)`。
+    if (loadErr) {
+      return (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={loadErr} />
+          <button
+            data-testid="data-health-read-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={() => load(true)}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )
+    }
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 

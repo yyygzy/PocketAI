@@ -348,8 +348,21 @@ export const McpPanel: React.FC = () => {
           </div>
         )}
         <div className="space-y-1 overflow-y-auto">
-          {/* 清单那发读不到 ⇒ 那句占在「尚未配置」那一格的位置上（空态让位，§254 同一手法） */}
-          {serversUnread && <LoadFailNotice what={t('agent.mcpServersList')} msg={ipcFailText(serversUnread, t('common.unknownError'))} />}
+          {/* 清单那发读不到 ⇒ 那句占在「尚未配置」那一格的位置上（空态让位，§254 同一手法）
+              §350：补同级重试——这一发的重跑以前只挂在**写流**尾部（新建／保存／导入／删除之后），
+              读不到时那些键都在别的屏上；一颗键走的是同一个 `load()`，头顶那句运行状态的"读不到"也一起再读一发 */}
+          {serversUnread && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice what={t('agent.mcpServersList')} msg={ipcFailText(serversUnread, t('common.unknownError'))} />
+              <button
+                data-testid="mcp-servers-read-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={() => void load()}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           {!serversUnread && records.length === 0 && (
             <p className="text-xs text-[var(--color-text-muted)]">
               {t('agent.noServers')}

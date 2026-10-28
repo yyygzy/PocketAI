@@ -126,7 +126,20 @@ export const KnowledgeModule: React.FC = () => {
           </div>
         </div>
         <div className="space-y-1 overflow-y-auto">
-          {kbsErr && <LoadFailNotice msg={kbsErr} />}
+          {/* §350：库清单首读失败时同屏没有重读这一发的键（`load()` 的重跑挂在**写流**尾部：新建／进详情后），
+              "新建一个库"不是"重读"的出口。键在 alert 盒子外面（§268） */}
+          {kbsErr && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice msg={kbsErr} />
+              <button
+                data-testid="kb-list-read-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={() => void load()}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           {kbs.length === 0 && !kbsErr && (
             <p className="text-xs text-[var(--color-text-muted)]">{t('kb.empty')}</p>
           )}
@@ -1081,7 +1094,21 @@ export const KbDetail: React.FC<{
         <div className="space-y-1">
           {/* §230：一条数据都没有又读不到 ⇒ 那句「暂无文档」是假话，换成「读不到：原因」；
               手里有数据时刷新失败 ⇒ 本体留着（用户还能照着行操作），另挂一句交代它停在上一份 */}
-          {readErr && docs.length === 0 && <LoadFailNotice msg={readErr} />}
+          {/* §350：文档清单首读失败（一条都没读到）时，`loadDocs()` 的重跑只有两个来源：切库／挂载，
+              以及上传·重索引·删除这些**写流**尾部——读不到那一屏里那些键都不算"重读这一发"的出口。
+              有值那一支（下面那句）§230 已写，本批给它补同级重试，与 §345 的一句一键对齐 */}
+          {readErr && docs.length === 0 && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice msg={readErr} />
+              <button
+                data-testid="kb-docs-read-retry"
+                className="text-xs underline text-[var(--color-text-muted)]"
+                onClick={() => void loadDocs()}
+              >
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           {readErr && docs.length > 0 && (
             <div role="alert" className="text-xs px-3 py-2 rounded bg-[var(--color-danger-bg)] text-[var(--color-danger)]">
               {t('common.refreshFailed', { msg: readErr })}

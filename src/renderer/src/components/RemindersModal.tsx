@@ -251,7 +251,19 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
           )}
           {items === null ? (
             loadErr ? (
-              <LoadFailNotice msg={loadErr} />
+              // §350：这一张脸（一发都没读到过）以前在同屏没有任何出口——§347 那颗键长在"有旧值"那一支，
+              // 而广播与 `pocketai:reminders-changed` 都要另一次到点或另一次**成功**动作才发得出（§349 真机：
+              // 表恢复后这句仍挂在屏上，直到关掉重开）。补的是同级那颗重试，键照旧在 alert 盒子外面（§268）。
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice msg={loadErr} />
+                <button
+                  data-testid="reminders-list-read-retry"
+                  className="text-xs underline text-[var(--color-text-muted)]"
+                  onClick={() => void reload(tab)}
+                >
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             ) : (
               <p className="text-xs text-[var(--color-text-muted)] py-6 text-center">{t('common.loading')}</p>
             )

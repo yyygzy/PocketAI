@@ -300,7 +300,18 @@ export const UsagePanel: React.FC = () => {
       )}
       {!summary ? (
         loadErr ? (
-          <LoadFailNotice msg={loadErr} />
+          // §350：首读失败时 §345 那颗横幅键（`summary &&`）不在屏上，同屏唯一的再触器是日窗 chips
+          // ——那是"换个窗口顺带重读"，不是"重读这一发"。补同级一颗，走 `reload`（同一发 `load(days)`）。
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice msg={loadErr} />
+            <button
+              data-testid="usage-summary-read-retry"
+              className="text-xs underline text-[var(--color-text-muted)]"
+              onClick={reload}
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
         ) : (
           <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
         )
