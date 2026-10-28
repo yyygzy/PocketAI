@@ -694,7 +694,9 @@ const PriceEditor: React.FC<{
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
 
-  useEffect(() => {
+  // §351：这一发从"effect 体内联"抽成具名的一份——不是为了收干逐渲染重读（§347 已经用 `[]` 依赖收干了），
+  // 而是失败那一支需要有个可再调的入口给那颗「重试」指；依赖仍是空的，行为与抽出前一致
+  const reloadModels = useCallback(() => {
     window.pocketai
       .listUsageModels()
       // §221：失败对象写进 models ⇒ 下面 `models ?? []` 拦不住（它是真值），priceKey(...)／rows 那圈按数组用就崩
@@ -714,6 +716,10 @@ const PriceEditor: React.FC<{
         reportIpcError('usage.listUsageModels')(e)
       })
   }, [])
+
+  useEffect(() => {
+    void reloadModels()
+  }, [reloadModels])
 
   // 编辑行清单：历史模型（按最近使用）∪ 已配置但已无用量的 key，去重
   const rows = useMemo(() => {
@@ -833,7 +839,20 @@ const PriceEditor: React.FC<{
             {models === null ? (
               <tr>
                 <td colSpan={4} className="py-3 px-2 text-[var(--color-text-muted)]">
-                  {modelsErr ? <LoadFailNotice msg={modelsErr} /> : t('common.loading')}
+                  {/* §351：这一发只有挂载一个读者（§347 把逐渲染重读收干成 `reloadModels`），失败时同屏没有任何东西会再跑它
+                      ——收起再展开算重新挂载、不是"重读"的出口，所以给同级一颗键；键不挂旧值横幅的理由见 §347 那段注释 */}
+                  {modelsErr ? (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <LoadFailNotice msg={modelsErr} />
+                      <button
+                        data-testid="price-models-read-retry"
+                        className="text-xs underline text-[var(--color-text-muted)]"
+                        onClick={reloadModels}
+                      >
+                        {t('agent.retryRead')}
+                      </button>
+                    </div>
+                  ) : t('common.loading')}
                 </td>
               </tr>
             ) : rows.length === 0 ? (

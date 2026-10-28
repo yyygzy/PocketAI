@@ -1692,7 +1692,22 @@ export const LicensePanel: React.FC<{ lic: LicenseStatus | null; err: string | n
 
   if (!lic) {
     // §225：许可证读不到时不许一直报"加载中"——激活状态、到期日、指纹全都建在这份数据上
-    if (err) return <LoadFailNotice msg={err} />
+    // §351：这一支原来同屏没有出口——四颗动作键与 §345 那颗「重试」都长在 `lic` 已到的本体里，
+    // 而这里连本体都没渲染。补同级一颗，走的正是那四颗键共用的 `onChange`（＝`licCopy.refresh`，键在 alert 盒子外，§268）
+    if (err) {
+      return (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={err} />
+          <button
+            data-testid="license-read-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={onChange}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )
+    }
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 

@@ -18,6 +18,9 @@ interface Props {
       两种都不许演成「还没有会话」⇒ 那句要有地方站；归档那份同理（那一区本来只在有条目时才出现） */
   conversationsUnread?: { error?: string } | null
   archivedUnread?: { error?: string } | null
+  /** §351：这两张"读不到"的脸以前同屏没有出口（重拉只挂在挂载、切助手与写流尾部）⇒ 父级把那一发的重拉递进来。
+   *  一句一键、两颗都在：活跃与归档可以各自失败（同一发里两份各自判），只给一颗的话另一张脸仍然没人管 */
+  onReloadLists?: () => void
   conversationId: string | null
   onSelect: (id: string) => void
   onNew: () => void
@@ -49,6 +52,7 @@ export const SessionRail: React.FC<Props> = ({
   conversations,
   conversationsUnread,
   archivedUnread,
+  onReloadLists,
   conversationId,
   onSelect,
   onNew,
@@ -295,9 +299,19 @@ export const SessionRail: React.FC<Props> = ({
           />
         ) : (
           <>
-            {/* §259：读不到时那句要占在「还没有会话」那一格的位置上——空态让位（§254 同一手法） */}
+            {/* §259：读不到时那句要占在「还没有会话」那一格的位置上——空态让位（§254 同一手法）
+                §351：旁边补同级一颗键（原来这一屏按不动任何东西：重拉只在挂载／切助手／删除归档这些写流尾部） */}
             {conversationsUnread && (
-              <LoadFailNotice what={t('agent.sessionsList')} msg={ipcFailText(conversationsUnread, t('common.unknownError'))} />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice what={t('agent.sessionsList')} msg={ipcFailText(conversationsUnread, t('common.unknownError'))} />
+                <button
+                  data-testid="session-rail-active-read-retry"
+                  className="text-[11px] underline text-[var(--color-text-muted)]"
+                  onClick={onReloadLists}
+                >
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             )}
             {!conversationsUnread && conversations.length === 0 && (
               <p className="text-[11px] text-[var(--color-text-muted)] px-0.5">
@@ -323,8 +337,18 @@ export const SessionRail: React.FC<Props> = ({
                 onToggleSelect={() => toggleSelect(c.id)}
               />
             ))}
+            {/* §351：归档那一半与活跃同一发、各自判各自说⇒各自一颗键（按下去都是同一次重拉，两份一起回） */}
             {archivedUnread && (
-              <LoadFailNotice what={t('agent.archivedList')} msg={ipcFailText(archivedUnread, t('common.unknownError'))} />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice what={t('agent.archivedList')} msg={ipcFailText(archivedUnread, t('common.unknownError'))} />
+                <button
+                  data-testid="session-rail-archived-read-retry"
+                  className="text-[11px] underline text-[var(--color-text-muted)]"
+                  onClick={onReloadLists}
+                >
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             )}
             {!archivedUnread && !!archivedConversations?.length && (
               <div className="pt-1">

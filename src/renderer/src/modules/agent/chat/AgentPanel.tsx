@@ -33,7 +33,8 @@ import { assistantDisplayName } from '../../chat/assistant-display'
 export const AgentPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
-  const { providers, assistants, providersUnread, assistantsUnread, fetchingModels, fetchModels } = useProviderData()
+  // §351：多取一个 `load`——这一栏那两张"读不到"的脸原来同屏没有出口（重跑只挂在挂载与"切回 Agent 模块"那两发上）
+  const { providers, assistants, providersUnread, assistantsUnread, fetchingModels, fetchModels, load } = useProviderData()
   const chat = useAgentChat(providers, assistants)
   // §281：内置助手的 name 走渲染层字典（DB 存的是中文原始串，非内置原样透传）
   const nameOfAssistant = (assistantId: string | null | undefined): string | null => {
@@ -400,6 +401,7 @@ export const AgentPanel: React.FC = () => {
           conversations={chat.conversations}
           conversationsUnread={chat.conversationsUnread}
           archivedUnread={chat.archivedUnread}
+          onReloadLists={() => void chat.reloadConversations()}
           conversationId={chat.conversationId}
           onSelect={chat.selectConversation}
           onNew={() => void chat.newConversation()}
@@ -517,12 +519,31 @@ export const AgentPanel: React.FC = () => {
         </div>
 
         {/* §261：服务商与助手这两发**读**失败各说各的（§257／§259 的逐发点名）。
-            放在这一栏而不是 SessionRail 里：侧栏收起时藏在折叠后面的那句等于没说（§257 同一条口径）。 */}
+            放在这一栏而不是 SessionRail 里：侧栏收起时藏在折叠后面的那句等于没说（§257 同一条口径）。
+            §351：一句配一颗键——这两发是一起 Promise.all 回来的、却各自判各自说，所以失败时也是两张脸。 */}
         {providersUnread && (
-          <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+            <button
+              data-testid="agent-providers-read-retry"
+              className="text-xs underline text-[var(--color-text-muted)]"
+              onClick={() => void load()}
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
         )}
         {assistantsUnread && (
-          <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+            <button
+              data-testid="agent-assistants-read-retry"
+              className="text-xs underline text-[var(--color-text-muted)]"
+              onClick={() => void load()}
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
         )}
 
         {/* §258：这一发是**写**（把当前助手／会话存回 ui_prefs）。失败不当场崩、后果在下次启动，

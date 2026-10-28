@@ -69,5 +69,7 @@ export function useProviderData() {
     }
   }, [fetchingModels])
 
-  return { providers, assistants, providersUnread, assistantsUnread, fetchingModels, fetchModels }
+  // §351：把 `load` 也交出去——Agent 页那两发的失败脸此前同屏没有出口（重跑只挂在挂载与"模块切回 agent"那两发上）。
+  // 纯增量返回，不改任何行为
+  return { providers, assistants, providersUnread, assistantsUnread, fetchingModels, fetchModels, load }
 }

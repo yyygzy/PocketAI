@@ -6,16 +6,20 @@
 // ——那两种写法在 DOM 上看起来一模一样。所以每处钉三件：**testid＋紧跟在那句之后的那颗 button＋onClick 的 initializer 里
 // 指的是哪一个具名 loader**；反向再钉一颗：这个新后缀 `-read-retry` 只许出现在名单里，别处为 0。
 //
-// 名单为什么只有六处（§350 的分诊尺子＝"这一发有没有用户在这屏上命令得动的重读入口"）：
-//   · 61 处 `<LoadFailNotice>` 调用点里，先例已给 15 处配过同级键（`-retry` 那一族，本批不动）；
-//   · 剩下 46 处分三档——**同屏已有出口**（管家页「重新检测」／MCP 调用日志「刷新」／会话栏「新对话」／
-//     技能与知识库那两个"再点一次那一格就重发"的读……）不给，给了就是第二颗同义键；
-//     **那一发还没有具名 loader**（挂载 effect 内联 `.then`，17 处：设置页六发、浮窗、首启向导、绘图页、
-//     问答与翻译那几发）不给——先抽 loader 再配键，否则键点了等于没点（§347"永不生效的守卫"同族）；
-//     **同屏没出口且 loader 已具名**的六处才收，就是下面这份名单。
-//   · 另有两处需要跨文件把 loader 递进来（`useProviderData` 的 `load` 没在返回值里、会话栏的重拉者在
-//     `useAgentChat` 里）⇒ 本批没做，记在台账候选。
-import { readFileSync } from 'node:fs'
+// 名单为什么是这十二处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
+//   · 现数（§351 之后）：61 处 `<LoadFailNotice>` 调用点，其中 27 处旁边（14 行内）已有同级 `agent.retryRead` 键——
+//     15 处是 §268／§271 的先例（本批不动），12 处是 §350（六处）＋§351（六处）收的，就是下面这份名单；
+//   · 34 处旁边没有：把窗口放宽到 40 行还有 5 处其实看得到键（ChatView 与浮窗那几发），
+//     那 5 处本批**没逐处回读⇒不写判语**，只登记为启发式盲区；
+//   · 剩下 29 处里已回读判过的：11 处"同屏已有别的出口"（管家页「重新检测」／MCP 调用日志「刷新」／
+//     会话栏「新对话」／`ChatConfigBar` 与 `KbAskPanel` 那种"再点一次那一格就重发"／`McpForm`「检测」）⇒ 不给；
+//   · 其余主要卡在**那一发没有具名 loader**（读写在挂载 effect 体内联 `.then` 里：设置页几发、绘图页四处、
+//     首启向导两处、问答一发、翻译一发、分片预览一发……）⇒ 先抽 loader 再配键，否则键点了等于没点
+//     （§347"永不生效的守卫"同族）——这是 §352 的账，名单见台账第一百一十一次末尾。
+//   · §351 收的六处里两颗是"重拉在别的文件里、要递进来"（AgentPanel 那两发要用 `useProviderData` 新返回的 `load`；
+//     会话栏那两发要用父级透下来的 `onReloadLists`），另两颗是 §350 分诊时**漏数**的——许可证那张脸的 `onChange`
+//     与定价表那张脸的 `reloadModels` 当时就在作用域里，判成"要先抽 loader"是错的。
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const R = 'src/renderer/src'
@@ -28,7 +32,14 @@ const SITES: Site[] = [
   { file: 'modules/knowledge/KnowledgeModule.tsx', testid: 'kb-list-read-retry', loader: 'load()' },
   { file: 'modules/knowledge/KnowledgeModule.tsx', testid: 'kb-docs-read-retry', loader: 'loadDocs()' },
   { file: 'modules/settings/DataHealthPanel.tsx', testid: 'data-health-read-retry', loader: 'load(true)' },
-  { file: 'modules/settings/UsagePanel.tsx', testid: 'usage-summary-read-retry', loader: 'reload' }
+  { file: 'modules/settings/UsagePanel.tsx', testid: 'usage-summary-read-retry', loader: 'reload' },
+  // §351：第二档那两处（那一发的重拉在别的文件里、要递进来），另加两处 §350 漏数的事实上已有具名 loader 的脸
+  { file: 'modules/agent/chat/AgentPanel.tsx', testid: 'agent-providers-read-retry', loader: 'load()' },
+  { file: 'modules/agent/chat/AgentPanel.tsx', testid: 'agent-assistants-read-retry', loader: 'load()' },
+  { file: 'modules/agent/components/SessionRail.tsx', testid: 'session-rail-active-read-retry', loader: 'onReloadLists' },
+  { file: 'modules/agent/components/SessionRail.tsx', testid: 'session-rail-archived-read-retry', loader: 'onReloadLists' },
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'license-read-retry', loader: 'onChange' },
+  { file: 'modules/settings/UsagePanel.tsx', testid: 'price-models-read-retry', loader: 'reloadModels' }
 ]
 
 /** `<LoadFailNotice … />` 之后紧跟一颗带这个 testid 的 button，中间只准隔空白与注释 */
@@ -58,32 +69,31 @@ describe('①名单内：每处都是"那句在前、那颗键在后"，且 onCl
   }
 })
 
-describe('②反向钉：新后缀只许出现在名单里', () => {
-  const files = [
-    'components/RemindersModal.tsx',
-    'modules/agent/mcp/McpPanel.tsx',
-    'modules/knowledge/KnowledgeModule.tsx',
-    'modules/settings/DataHealthPanel.tsx',
-    'modules/settings/UsagePanel.tsx',
-    'modules/agent/chat/AgentPanel.tsx',
-    'modules/agent/components/SessionRail.tsx',
-    'modules/image/ImageModule.tsx',
-    'modules/translate/TranslateModule.tsx',
-    'modules/wizard/FirstRunWizard.tsx',
-    'popup/PopupApp.tsx',
-    'modules/chat/ChatConfigBar.tsx'
-  ]
-  it('`-read-retry` 的总数＝名单数（多了就是给不该有机关的地方造了键）', () => {
+describe('②反向钉：这个新后缀只许出现在名单里（全仓扫，不靠手挑文件清单）', () => {
+  const tsx: string[] = []
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = `${dir}/${e.name}`
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith('.tsx')) tsx.push(p)
+    }
+  }
+  walk(R)
+  const found = new Map<string, number>()
+  for (const p of tsx) {
+    const n = (readFileSync(p, 'utf-8').match(/-read-retry/g) ?? []).length
+    if (n > 0) found.set(p.slice(`${R}/`.length), n)
+  }
+  const want = new Map<string, number>()
+  for (const s of SITES) want.set(s.file, (want.get(s.file) ?? 0) + 1)
+
+  it('总数＝名单数（多了就是给不该有机关的地方造了键）', () => {
     let n = 0
-    for (const f of files) n += (src(f).match(/-read-retry/g) ?? []).length
+    for (const v of found.values()) n += v
     expect(n).toBe(SITES.length)
   })
-  it('名单外的那些文件里一颗都没有（判过"同屏已有出口"与"还没具名 loader"的不许顺手加）', () => {
-    const roster = new Set(SITES.map((s) => s.file))
-    for (const f of files) {
-      if (roster.has(f)) continue
-      expect(src(f).match(/-read-retry/g), `${f} 本批不该出现 -read-retry`).toBeNull()
-    }
+  it('出现的文件与每文件的颗数，逐一对齐名单', () => {
+    expect([...found.entries()].sort()).toEqual([...want.entries()].sort())
   })
 })
 
