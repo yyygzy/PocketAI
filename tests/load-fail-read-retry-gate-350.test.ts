@@ -6,19 +6,27 @@
 // ——那两种写法在 DOM 上看起来一模一样。所以每处钉三件：**testid＋紧跟在那句之后的那颗 button＋onClick 的 initializer 里
 // 指的是哪一个具名 loader**；反向再钉一颗：这个新后缀 `-read-retry` 只许出现在名单里，别处为 0。
 //
-// 名单为什么是这十二处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
-//   · 现数（§351 之后）：61 处 `<LoadFailNotice>` 调用点，其中 27 处旁边（14 行内）已有同级 `agent.retryRead` 键——
-//     15 处是 §268／§271 的先例（本批不动），12 处是 §350（六处）＋§351（六处）收的，就是下面这份名单；
-//   · 34 处旁边没有：把窗口放宽到 40 行还有 5 处其实看得到键（ChatView 与浮窗那几发），
-//     那 5 处本批**没逐处回读⇒不写判语**，只登记为启发式盲区；
-//   · 剩下 29 处里已回读判过的：11 处"同屏已有别的出口"（管家页「重新检测」／MCP 调用日志「刷新」／
-//     会话栏「新对话」／`ChatConfigBar` 与 `KbAskPanel` 那种"再点一次那一格就重发"／`McpForm`「检测」）⇒ 不给；
-//   · 其余主要卡在**那一发没有具名 loader**（读写在挂载 effect 体内联 `.then` 里：设置页几发、绘图页四处、
-//     首启向导两处、问答一发、翻译一发、分片预览一发……）⇒ 先抽 loader 再配键，否则键点了等于没点
-//     （§347"永不生效的守卫"同族）——这是 §352 的账，名单见台账第一百一十一次末尾。
-//   · §351 收的六处里两颗是"重拉在别的文件里、要递进来"（AgentPanel 那两发要用 `useProviderData` 新返回的 `load`；
-//     会话栏那两发要用父级透下来的 `onReloadLists`），另两颗是 §350 分诊时**漏数**的——许可证那张脸的 `onChange`
-//     与定价表那张脸的 `reloadModels` 当时就在作用域里，判成"要先抽 loader"是错的。
+// 名单为什么是这十六处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
+//   · 现数（§352）：61 处 `<LoadFailNotice>` 调用点，其中 **27 处旁边已有同级重试键**——
+//     24 颗带字面 `data-testid`（§268／§271 的先例 12 颗＋下面名单里 §350／§351 的 12 颗），
+//     1 处的 testid 走变量（`AssistantEditor.tsx` 那句一键工厂 `listFailLine`＝上一轮按字面量扫的**漏数**），
+//     2 处键在但压根没有 testid（`ChatModule` 草稿那一发、首启向导的助手那一发）；
+//   · 启发式的假阳一处：`ChatModule.tsx` 的消息那一发往后五行撞进**隔壁** `draftUnread` 那块自己的键，
+//     其实它没有出口⇒ §352 收了它。窗口判据只能用来出候选，**每处都得回读**；
+//   · 剩下 34 处里：§352 收 4 处（那一发的重拉者已具名、且这一支同屏真没出口）；
+//     判"同屏已有出口"11 处——`McpForm` 头顶那颗「检测」的 onClick 就是 `loadPyRuntimes`、
+//     MCP 调用日志的「刷新」就是 `reloadCallLogs`、`ChatConfigBar` 两发的写者只有 `toggleSection`（再点那一格就重发）、
+//     `KbAskPanel` 的「历史」按钮里就 `refreshSessions`、管家页顶部「重新检测」重拉那四发、
+//     浮窗「拉模型」那颗就是 `fetchModels`、绘图页"最新那张"的写者在 `handleGenerate` 里（指它＝重跑一次生成＝花额度，那是假出口）；
+//   · **本批误判又被回读推翻的一处（写在这里当反面教材）**：我照"state 的直接写者"数出口，
+//     看到模型推荐那发的写者只有 `refreshRecommendation`、顶部「重新检测」写的是别处三发 ⇒ 判它没出口并造了键；
+//     回读 `load()` 的最后**一行就是 `refreshRecommendation()`**，而 §345 那颗 stale 键正是点「重新检测」演出来的
+//     ⇒ 键已撤销。**判"有没有出口"要顺着 loader 的调用链往下看一层，只看 setter 名单会误判**；
+//   · 余 19 处仍卡在**那一发没有具名 loader**（读写在挂载 effect 体内联 `.then`）或**重拉者在别的文件里**
+//     （`ConversationList` 三份清单、设置页余下五发、绘图页三发、问答／翻译／向导／浮窗那几发）
+//     ⇒ 先抽 loader 再配键，否则键点了等于没点（§347"永不生效的守卫"同族）——这是 §353 的账。
+//   · 判"已有出口"必须**往句子上面看**：`McpForm` 那颗「检测」在句子往上三十行，
+//     本批第一稿只回看了十行，差点给它造第二颗同义键。
 import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
@@ -39,7 +47,12 @@ const SITES: Site[] = [
   { file: 'modules/agent/components/SessionRail.tsx', testid: 'session-rail-active-read-retry', loader: 'onReloadLists' },
   { file: 'modules/agent/components/SessionRail.tsx', testid: 'session-rail-archived-read-retry', loader: 'onReloadLists' },
   { file: 'modules/settings/SettingsModule.tsx', testid: 'license-read-retry', loader: 'onChange' },
-  { file: 'modules/settings/UsagePanel.tsx', testid: 'price-models-read-retry', loader: 'reloadModels' }
+  { file: 'modules/settings/UsagePanel.tsx', testid: 'price-models-read-retry', loader: 'reloadModels' },
+  // §352：回读后又找出四处"重拉者已具名、这一支同屏真没出口"（其余"要先抽 loader"的仍然等 §353）
+  { file: 'components/OllamaPanel.tsx', testid: 'ollama-status-read-retry', loader: 'refresh' },
+  { file: 'modules/chat/ChatModule.tsx', testid: 'chat-messages-read-retry', loader: 'loadMessages' },
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'backup-schedule-read-retry', loader: 'loadSchedule()' },
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'encryption-read-retry', loader: 'onChange' }
 ]
 
 /** `<LoadFailNotice … />` 之后紧跟一颗带这个 testid 的 button，中间只准隔空白与注释 */
@@ -62,9 +75,13 @@ describe('①名单内：每处都是"那句在前、那颗键在后"，且 onCl
       const onClick = onClickOf(text, s.testid)
       // 判据读的是 initializer 里的标识符（§346 口径）：`() => {}`、写成别的 loader、换成新造的读都会红
       expect(onClick, `${s.testid} 的 onClick 不再指向 ${s.loader}：${onClick}`).toContain(s.loader)
-      // 名字只有一个出处：字典键，不许手抄
-      expect(text.slice(text.indexOf(`data-testid="${s.testid}"`)), `${s.testid} 的 label 不是从字典取的`)
-        .toMatch(/\{t\('agent\.retryRead'\)\}/)
+      // 名字只有一个出处：字典键，不许手抄。
+      // 切片必须**止于那颗 button 自己的 </button>**——早先整片切到文件末尾，于是 M9 那种"把这一颗的标签手抄成中文"
+      // 会被后面另一颗键的字典取值蒙过去（判据一改，整轮变异重跑）
+      const at2 = text.indexOf(`data-testid="${s.testid}"`)
+      const close = text.indexOf('</button>', at2)
+      expect(close, `${s.testid} 那颗 button 没有收尾`).toBeGreaterThan(at2)
+      expect(text.slice(at2, close), `${s.testid} 的 label 不是从字典取的`).toMatch(/\{t\('agent\.retryRead'\)\}/)
     })
   }
 })

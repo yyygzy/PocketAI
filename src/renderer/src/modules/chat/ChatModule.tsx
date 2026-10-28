@@ -1493,7 +1493,20 @@ export const ChatModule: React.FC = () => {
         </div>
       </div>
 
-      {msgsReadErr && <LoadFailNotice msg={msgsReadErr} />}
+      {/* §352：这一发的重拉者 `loadMessages` 本来就具名，可屏上没一颗键点得到它——换会话会重拉，
+          但"这条会话的消息读不到"没有出口（删除那两处在消息读不到时根本没有行可点）。 */}
+      {msgsReadErr && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={msgsReadErr} />
+          <button
+            data-testid="chat-messages-read-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={() => { if (currentConvId) loadMessages(currentConvId) }}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
       {/* §264 第五面：草稿那一读没读到⇒输入框是空的，看起来像"这条会话没存过草稿"（📝 那行的凭据）。
           说一句＋一次重试；这一处与 ChatModule 其余几发一样，全仓不挂载⇒**只有源码级判据**。 */}
       {draftUnread && (

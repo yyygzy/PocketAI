@@ -216,8 +216,22 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
 
       <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('ollama.desc')}</p>
 
-      {/* §222：一次都没读到过 ⇒ 明说"读不到"，别整块不渲染（那看着像"没装"） */}
-      {!status && statusErr && <LoadFailNotice msg={statusErr} />}
+      {/* §222：一次都没读到过 ⇒ 明说"读不到"，别整块不渲染（那看着像"没装"）。
+          §352：这一支同屏没有任何出口——操作区（安装／启动／停止）整块的条件要 `status` 在场，
+          读不到时它不出现，屏上就只剩这一句。8s 轮询确实在自动重发，但 §345 在同一页"有旧值"那一支
+          已经给了键（ollama-status-stale-retry），两支护同一口径：不叫用户等下一轮。 */}
+      {!status && statusErr && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={statusErr} />
+          <button
+            data-testid="ollama-status-read-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={refresh}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
       {/* §345：这一发是 8s 一轮的轮询（安装／启停／拉模型后还会立刻再来一发）。失败侧留着旧 status 是对的
           （清掉会把"运行中"那一屏瞬间抹空），但徽标与那颗「启动／停止」都照旧值摆 ⇒ 原因得有出口 */}
       {status && statusErr && (

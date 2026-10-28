@@ -370,7 +370,21 @@ export const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; err: stri
 
   if (!enc) {
     // §225：读失败与还没读到是两件事（§222 那一面在这里的落点）
-    if (err) return <LoadFailNotice msg={err} />
+    // §352：早退 return＝整块面板（含改口令／关闭加密那几颗键）换成这一句，同屏没有出口；
+    //         `onChange` 就是父级那份 `useEncryptionCopy` 的 refresh（与 §351 许可证那处同形）
+    if (err)
+      return (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={err} />
+          <button
+            data-testid="encryption-read-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={onChange}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 
@@ -1331,8 +1345,21 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
         </div>
       )}
 
-      {/* 定时备份（需先保存 WebDAV 配置） */}
-      {!schedule && schedErr && <LoadFailNotice msg={schedErr} />}
+      {/* 定时备份（需先保存 WebDAV 配置）
+          §352：`!schedule` 时下面那一整块（含开关与周期下拉）都不出现⇒ 这一支同屏没有出口；
+          兄弟支"有旧值"那一支（§345）用的就是同一个 `loadSchedule`，两支护同一口径 */}
+      {!schedule && schedErr && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={schedErr} />
+          <button
+            data-testid="backup-schedule-read-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={() => void loadSchedule()}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
       {/* §345：loadSchedule 有三个 caller（进面板／上传后／保存后）——后两发失败时旧计划还画在屏上，
           而开关是按那份旧值摆的（保存会照它写回）⇒ 这一句要说清"没刷成最新"，并给一条重读路径 */}
       {schedule && schedErr && (

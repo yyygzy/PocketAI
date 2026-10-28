@@ -42,9 +42,9 @@ describe('§251 收口后的接线：九发读各自的接管落点', () => {
       ['许可证那发读：reject 面也写 err（同上，2→1）', /deps\.setErr\(errText\(e, deps\.t\(/g, 1, LIC],
       ['恢复码那一发的失败进这张卡片已有的 notice 通道', /setNotice\(\{ ok: false, text: ipcFailText\(v,/g, 1, SRC],
       ['备份计划：三处重取并成一条 loadSchedule，两条失败面都写 schedErr', /setSchedErr\((ipcFailText|errText)\(/g, 2, SRC],
-      ['备份计划读不到时那一块不再整块消失', /!schedule && schedErr && <LoadFailNotice/g, 1, SRC],
+      ['备份计划读不到时那一块不再整块消失（§352 起这一支做成"那句＋同级那颗键"的同一份 JSX ⇒ 锚点从行尾挪到块首，判的还是同一件事）', /!schedule && schedErr && \(\s*<div[\s\S]{0,140}?<LoadFailNotice/g, 1, SRC],
       ['上传后与保存后的两处刷新改走同一条 loadSchedule', /await loadSchedule\(\)/g, 2, SRC],
-      ['进面板那一发也走 loadSchedule（§345 起第二处是旧值横幅那颗重试键，两处都是同一条接管）', /void loadSchedule\(\)/g, 2, SRC]
+      ['进面板那一发也走 loadSchedule（§345 起第二处是旧值横幅那颗重试键；§352 起第三处是"一发都没读到"那颗同级键，三处都指同一条接管）', /void loadSchedule\(\)/g, 3, SRC]
     ]
     for (const [what, re, want, src] of cases) {
       expect(count(re, src), what).toBe(want)
