@@ -86,6 +86,11 @@ export const SessionRail: React.FC<Props> = ({
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  // §353：搜索的关联号（与 ConversationList 同形、同一条后端通道）。debounce 合不掉**在飞那发**：
+  // 打字跨过 200ms 就有两发同名通道在飞，先派发那条晚回来会把当前关键词的整屏换成旧关键词那一页，
+  // 随后「加载更多」接的是当前关键词的第 N＋1 页 ⇒ 两份关键词的行拼在一起。
+  // 自增排在"关键词为空"那道早退之后（§348 的顺序纪律），纯重渲染不会把在飞那发判成过期。
+  const searchGenRef = useRef(0)
   const PAGE = 50
 
   const exitSelectMode = () => {
@@ -126,10 +131,13 @@ export const SessionRail: React.FC<Props> = ({
     }
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
+      const gen = ++searchGenRef.current
       setSearching(true)
       setOffset(0)
       try {
         const r = await window.pocketai.searchMessages(keyword, assistantId || undefined, undefined, 0)
+        // §353：迟到那一发属于上一次搜索 ⇒ 一个字都不写（连 toast 也不弹）
+        if (searchGenRef.current !== gen) return
         // 同 §214 那一族：safeHandle 的失败是 resolve 的 {ok:false}，不判就 setResults(对象) ⇒ for…of 崩
         if (hasIpcFailed(r)) {
           setResults([])
@@ -140,10 +148,11 @@ export const SessionRail: React.FC<Props> = ({
         setResults(r)
         setHasMore(r.length === PAGE)
       } catch (e) {
+        if (searchGenRef.current !== gen) return
         logIpcError('agent.searchMessages', e)
         setResults([])
       } finally {
-        setSearching(false)
+        if (searchGenRef.current === gen) setSearching(false)
       }
     }, 200)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
@@ -152,10 +161,14 @@ export const SessionRail: React.FC<Props> = ({
   // 加载更多
   const loadMore = async () => {
     if (loadingMore || !keyword) return
+    const gen = searchGenRef.current
     setLoadingMore(true)
     try {
       const next = offset + PAGE
       const r = await window.pocketai.searchMessages(keyword, assistantId || undefined, undefined, next)
+      // §353：这一页属于"点下去那一刻那份关键词／那个助手"的第 N＋1 页；期间关键词变了 ⇒
+      // 首页那发已经换了整屏，再把这一页接上去就是两份结果拼在一起，所以整份丢掉（连 offset 都不前进）
+      if (searchGenRef.current !== gen) return
       // 失败 ⇒ 保住已有结果、offset 不前进，不把失败对象展开进数组
       if (hasIpcFailed(r)) {
         toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
@@ -167,6 +180,7 @@ export const SessionRail: React.FC<Props> = ({
     } catch (e) {
       logIpcError('agent.searchMessages.loadMore', e)
     } finally {
+      // 在飞标志**不判代次**：只挡写回会把「加载更多」永远卡在禁用上，新搜索不会替它清（§348 那条）
       setLoadingMore(false)
     }
   }

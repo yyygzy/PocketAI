@@ -5,6 +5,7 @@
 // 不能用顶层 require()。这里用运行时动态 import() 按需加载，externalizeDepsPlugin
 // 会保留动态 import 语句，Node 在 CJS 中支持 import()。
 import type { WebDAVClient, WebDAVClientOptions } from 'webdav'
+import { sortBackupsNewestFirst } from '../../shared/backup-latest'
 
 export interface WebDAVCredentials {
   url: string           // https://cloud.example.com/remote.php/dav/files/username
@@ -221,26 +222,28 @@ export async function listFiles(creds: WebDAVCredentials): Promise<BackupFile[]>
   const entries = (await client.getDirectoryContents(dir, {
     signal: timeoutSignal(TIMEOUT_LIGHT_MS)
   })) as RemoteDirEntry[]
-  return entries
-    .filter(
-      (e) =>
-        e.type === 'file' &&
-        (e.filename.startsWith('pocketai-backup-') || e.filename.startsWith('pocketai-inc-'))
-    )
-    .map((e) => {
-      const name = e.filename.split('/').pop()!
-      const encrypted = e.filename.endsWith('.enc.zip') || e.filename.endsWith('.json.enc')
-      return {
-        name,
-        size: toSize(e.size),
-        mtime: toMtime(e.lastmod, name),
-        encrypted,
-        kind: name.startsWith('pocketai-inc-')
-          ? ('incremental' as const)
-          : ('full' as const)
-      }
-    })
-    .sort((a, b) => b.mtime - a.mtime)
+  // §353：顺序走 shared 那一份唯一口径（判不出时间的那份沉底）。裸 `b.mtime - a.mtime` 一遇 NaN 就返回
+  // NaN ⇒ 引擎按"相等"处理，整表顺序悄悄交给服务器返回顺序；下游两处各自守过（完整性校验走
+  // pickLatestBackup、轮转先剔 NaN），唯独设置页那张列表把返回顺序当"从新到旧"显示，所以在这里就排对。
+  return sortBackupsNewestFirst(
+    entries
+      .filter(
+        (e) =>
+          e.type === 'file' &&
+          (e.filename.startsWith('pocketai-backup-') || e.filename.startsWith('pocketai-inc-'))
+      )
+      .map((e) => {
+        const name = e.filename.split('/').pop()!
+        const encrypted = e.filename.endsWith('.enc.zip') || e.filename.endsWith('.json.enc')
+        return {
+          name,
+          size: toSize(e.size),
+          mtime: toMtime(e.lastmod, name),
+          encrypted,
+          kind: name.startsWith('pocketai-inc-') ? ('incremental' as const) : ('full' as const)
+        }
+      })
+  )
 }
 
 // ─── 增量备份：内容寻址 blob 存取 ──────────────────────────────────

@@ -121,6 +121,11 @@ export const ConversationList: React.FC<Props> = ({
   const [starredItems, setStarredItems] = useState<StarredMessageItem[]>([])
   const [starredLoading, setStarredLoading] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  // §353：搜索的关联号。debounce 只把"同一串字还没打完"的合并掉，**在飞那发合不掉**——
+  // 打字跨过 200ms 就会有两发同名通道在飞，先派发的那条晚回来时，它会把当前关键词的结果整页换成
+  // 旧关键词那一页；随后「加载更多」拿的却是当前关键词的下一页 ⇒ 两份关键词的行拼在同一屏里。
+  // 自增排在"关键词为空"那道早退**之后**（§348 的顺序纪律），所以纯重渲染不会把在飞那发判成过期。
+  const searchGenRef = useRef(0)
   const PAGE = 50
 
   const exitSelectMode = () => {
@@ -186,10 +191,13 @@ export const ConversationList: React.FC<Props> = ({
     }
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
+      const gen = ++searchGenRef.current
       setSearching(true)
       setOffset(0)
       try {
         const r = await window.pocketai.searchMessages(search.trim(), null, dateRange, 0)
+        // §353：迟到那一发属于上一次搜索 ⇒ 一个字都不写（连 toast 也不弹，用户已经在等这一串的新结果）
+        if (searchGenRef.current !== gen) return
         // safeHandle 的失败是 resolve 的 {ok:false}：不判就 setResults(对象)，
         // MessageSearchResults.tsx:62 的 `results.length === 0` 为假、67 行 for…of 抛 TypeError ⇒ 侧栏崩
         if (hasIpcFailed(r)) {
@@ -201,10 +209,12 @@ export const ConversationList: React.FC<Props> = ({
         setResults(r)
         setHasMore(r.length === PAGE)
       } catch (e) {
+        if (searchGenRef.current !== gen) return
         logIpcError('chat.searchMessages', e)
         setResults([])
       } finally {
-        setSearching(false)
+        // 在飞状态也只认最新那一号：旧那发把「搜索中」清掉，新那发就在飞却看着像已经结束
+        if (searchGenRef.current === gen) setSearching(false)
       }
     }, 200)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
@@ -213,10 +223,14 @@ export const ConversationList: React.FC<Props> = ({
   // 加载更多
   const loadMore = async () => {
     if (loadingMore || !search.trim()) return
+    const gen = searchGenRef.current
     setLoadingMore(true)
     try {
       const next = offset + PAGE
       const r = await window.pocketai.searchMessages(search.trim(), null, dateRange, next)
+      // §353：这一页是"点下去那一刻那份关键词"的第 N＋1 页；期间关键词变了 ⇒ 首页那发已经换了整屏，
+      // 再把这一页接上去就是两份关键词的行拼在一起，所以整份丢掉（连 offset 都不前进）
+      if (searchGenRef.current !== gen) return
       // 失败 ⇒ 保住已有结果、offset 不前进（否则那一页永远丢），并给出提示；不展开失败对象
       if (hasIpcFailed(r)) {
         toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
@@ -228,6 +242,8 @@ export const ConversationList: React.FC<Props> = ({
     } catch (e) {
       logIpcError('chat.searchMessages.loadMore', e)
     } finally {
+      // 这一句**不判代次**：迟到那发的守卫只管写回（结果／offset／hasMore），
+      // 把在飞标志也挡住会让「加载更多」永远卡在禁用上——新搜索不会替它清（§348 那条"新守卫自己造失效"）
       setLoadingMore(false)
     }
   }

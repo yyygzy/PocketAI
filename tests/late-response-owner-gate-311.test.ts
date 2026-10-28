@@ -41,7 +41,17 @@ const SITES: Array<{ file: string; refs: string[]; writers: string[] }> = [
   // 它不需要归属判据、却会被名单当成"没挡住的写点"。这条链改由真挂载用例守
   // （`tests/renderer-file-open-332.test.tsx`：连点两个文件＋关窗后迟到都不许画进来）
   { file: 'src/renderer/src/modules/files/FilesModule.tsx', refs: ['dirRef'], writers: ['setEntries', 'setLoading'] },
-  { file: 'src/renderer/src/modules/notes/NotesModule.tsx', refs: ['keywordRef'], writers: ['setNotes', 'setLoadError'] }
+  { file: 'src/renderer/src/modules/notes/NotesModule.tsx', refs: ['keywordRef'], writers: ['setNotes', 'setLoadError'] },
+  // §353（旧四条之④）：两屏的全文搜索。防抖只合并"新发送"，**合不掉在飞那发**——
+  // 与 §332 那条 KbAskPanel 历史搜索同一课，只是这次两屏各一份。`searchGenRef` 是"这一发是不是还给最近那一轮"。
+  // 名单只登记**会画错屏的那两个写点**（`setResults`／`setHasMore`）：
+  //   · `setSearching(true)`／`setOffset(0)` 是 timer 体内、`await` **之前**那一步的同步写，
+  //     而旧 timer 在重渲染时已被 `clearTimeout` 掉 ⇒ 它没有"晚到"这条路（闸门把 setTimeout 回调整支算作迟到可达，
+  //     这两处会被误报，照 §332 那条"不登记、改由挂载用例守"的口径处理，不为了过闸门写一道恒真的守卫）；
+  //   · `setLoadingMore` 在 `finally` 里**必须无条件**清掉（挡住它「加载更多」就永远卡在禁用），
+  //     这一条契约由 `tests/search-late-response-353.test.tsx` 的按钮断言守。
+  { file: 'src/renderer/src/modules/chat/ConversationList.tsx', refs: ['searchGenRef'], writers: ['setResults', 'setHasMore'] },
+  { file: 'src/renderer/src/modules/agent/components/SessionRail.tsx', refs: ['searchGenRef'], writers: ['setResults', 'setHasMore'] }
 ]
 
 interface Write {
