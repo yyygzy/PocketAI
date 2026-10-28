@@ -7,6 +7,7 @@ import { LockOverlay } from '../components/LockOverlay'
 import type { ModuleId } from '../components/Sidebar'
 import { useI18n } from '../i18n'
 import { hasIpcFailed, reportIpcError, ipcFailText } from '../utils/ipc'
+import { createEncryptionFlagSyncer } from '../utils/lock-flags'
 import { ShowingDefaultsNotice } from '../components/ShowingDefaultsNotice'
 import { matchAppShortcut, filterShortcutForContext, type ConversationShortcutAction } from '../utils/shortcuts'
 import { APP_SHORTCUT_EVENT, type AppShortcutEventDetail } from '../hooks/useGlobalShortcuts'
@@ -39,17 +40,9 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
 
   // 锁屏状态与主窗口联动（锁屏事件广播到所有窗口）
   useEffect(() => {
-    window.pocketai
-      .getEncryptionStatus()
-      .then((s) => {
-        if (hasIpcFailed(s)) {
-          setEncReadErr(ipcFailText(s, t('common.unknownError')))
-          return
-        }
-        setEncReadErr(null)
-        setDbEncrypted(s.dbEncrypted)
-      })
-      .catch(reportIpcError('detached.getEncryptionStatus'))
+    // 与主窗口 App.tsx 同一口径：挂载两发读＋每次锁屏事件重读加密态（§342，浮窗自己也会弹遮罩）
+    const syncEnc = createEncryptionFlagSyncer({ setDbEncrypted, setEncReadErr, t })
+    void syncEnc().catch(reportIpcError('detached.getEncryptionStatus'))
     window.pocketai
       .getLockStatus()
       .then((s) => {
@@ -61,13 +54,15 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
         setLocked(s.state === 'locked')
       })
       .catch(reportIpcError('detached.getLockStatus'))
-    return window.pocketai.onLockStateChange((e) => {
+    const off = window.pocketai.onLockStateChange((e) => {
       setLockReadErr(null)
       setLocked(e.state === 'locked')
       setLockPwd('')
       setLockErr('')
+      void syncEnc().catch(reportIpcError('detached.getEncryptionStatus'))
     })
-  }, [])
+    return off
+  }, [t])
 
   // 锁屏加固：inert 掉遮罩之外的全部内容（与主窗口同策略）
   useEffect(() => {

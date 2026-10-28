@@ -13,6 +13,7 @@ import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
 import { hasIpcFailed, reportIpcError, ipcFailText } from './utils/ipc'
+import { createEncryptionFlagSyncer } from './utils/lock-flags'
 import { ShowingDefaultsNotice } from './components/ShowingDefaultsNotice'
 import { startLongTaskObserver } from './utils/longtask'
 import { useAppStore } from './store/app-store'
@@ -84,17 +85,10 @@ export default function App() {
   useEffect(() => {
     // 这两发读只在挂载时跑一次、没有重试路径 ⇒ 失败不能只进 console：
     // 默认值是 dbEncrypted=false／locked=false，静默失败＝界面把"读不到"演成"没加密、没锁"。
-    window.pocketai
-      .getEncryptionStatus()
-      .then((s) => {
-        if (hasIpcFailed(s)) {
-          setEncReadErr(ipcFailText(s, t('common.unknownError')))
-          return
-        }
-        setEncReadErr(null)
-        setDbEncrypted(s.dbEncrypted)
-      })
-      .catch(reportIpcError('app.getEncryptionStatus'))
+    // 加密态还得在每次锁屏事件到达时重读（§342）：挂载那次读到的副本会漂——
+    // 向导里设完主密码、设置页关掉加密，主进程 mode 当场变了，遮罩却还按旧值渲染。
+    const syncEnc = createEncryptionFlagSyncer({ setDbEncrypted, setEncReadErr, t })
+    void syncEnc().catch(reportIpcError('app.getEncryptionStatus'))
     window.pocketai
       .getLockStatus()
       .then((s) => {
@@ -111,6 +105,7 @@ export default function App() {
       setLocked(e.state === 'locked')
       setLockPwd('')
       setLockErr('')
+      void syncEnc().catch(reportIpcError('app.getEncryptionStatus'))
     })
     return off
   }, [setDbEncrypted, setLocked, t])
