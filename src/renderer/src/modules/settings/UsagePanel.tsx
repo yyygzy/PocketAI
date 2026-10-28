@@ -1,7 +1,7 @@
 // 用量统计面板：token 用量汇总 + 按日趋势（纯 CSS 柱状图）+ provider/模型/会话/助手排行 + 费用估算
 // 数据来源：messages.usage（chat/agent 生成完成时落库），IPC getUsageSummary 聚合
 // 费用按本机配置的「每 100 万 token 单价」估算，单价仅存本地不上传
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { builtinAssistantNameById } from '../chat/assistant-display'
@@ -668,21 +668,41 @@ const PriceEditor: React.FC<{
   const [drafts, setDrafts] = useState<Record<string, { input: string; cache: string; output: string }>>({})
   const [saving, setSaving] = useState(false)
 
+  // §347：这一发改前挂在 `deps=[onError]` 上、而调用点 :548 传的是**行内箭头**⇒父页每渲染一次
+  // 就多读一发（§322"逐渲染重读"那一族：清单本身没变，那一发 IPC 却跟着界面重跑）。
+  // 收成稳定的一份：`t`／`onError` 走 ref 现读，effect 依赖只剩"挂载这一次"。
+  //
+  // 同批更正 §345 记在这一格的两条（都是回读出来的，不是顺手改口径）：
+  //  · **这里不挂旧值横幅**：那一发只有这一个读者——清单已经在屏上时，再没有第二个写者能把 `modelsErr` 写起来
+  //    （收起再展开是重新挂载，state 从零开始）。§345 判它"有牙"靠的正是那条逐渲染重读；
+  //    重读收干之后就没有"停在上一份"这一档，写了也永不生效⇒按"零效果的守卫直接删"不写。
+  //  · 抛出面（桥层 reject，不走 safeHandle 的信封）改前只有一条会消失的 toast、常驻那句没人写
+  //    （§251：两条到货的路都要有出口）。这一条**演得出**：挂载那一发抛出⇒`models` 仍是 null⇒走 §222 那句。
+  const tRef = useRef(t)
+  tRef.current = t
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
+
   useEffect(() => {
-    window.pocketai.listUsageModels()
+    window.pocketai
+      .listUsageModels()
       // §221：失败对象写进 models ⇒ 下面 `models ?? []` 拦不住（它是真值），priceKey(...)／rows 那圈按数组用就崩
       // §222：onError 那条 toast 会消失，而这一格一直显示「加载中…」⇒ 原因同时留给常驻那句
       .then((r) => {
         if (hasIpcFailed(r)) {
-          const msg = ipcFailText(r, t('common.unknownError'))
+          const msg = ipcFailText(r, tRef.current('common.unknownError'))
           setModelsErr(msg)
-          onError(new Error(msg))
+          onErrorRef.current(new Error(msg))
           return
         }
         setModels(r)
       })
-      .catch((e) => onError(e))
-  }, [onError])
+      .catch((e) => {
+        setModelsErr(errText(e, tRef.current('common.unknownError')))
+        onErrorRef.current(e)
+        reportIpcError('usage.listUsageModels')(e)
+      })
+  }, [])
 
   // 编辑行清单：历史模型（按最近使用）∪ 已配置但已无用量的 key，去重
   const rows = useMemo(() => {

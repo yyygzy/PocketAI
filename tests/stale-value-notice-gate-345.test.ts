@@ -1,4 +1,6 @@
-// V4-Iter-345 闸门：「面板先读到过值、那一发又重读失败」的旧值横幅——七处接线与两条到货的路
+// V4-Iter-345 闸门：「面板先读到过值、那一发又重读失败」的旧值横幅——八处接线与两条到货的路
+// （§345 收七处；§347 接第八处＝提醒中心那份清单，并把当时记在下面的两处"有牙待收"逐处回读：
+//   绘图页三处判为**无牙**、定价表那一处判为**落点不存在**——理由见下面名单后那段）
 //
 // 缺陷形状（§222 那一族的第三形态）：门写在 `if (!数据)` 那条路上，数据在，门就不开。
 // 重读失败时旧值留着是对的一半，但屏上从此说不出"这一发没成"，用户拿一份没人认领的旧数据当现状。
@@ -7,7 +9,7 @@
 // 以及⑤⑥⑦三条"成功一发到了，那句当场收回"）。
 //
 // 四层判据，全部读 AST（源码计数会被注释撑大，§333 那条踩过）：
-// ① 名单制：全渲染层的 <StaleValueNotice> 调用点必须正好是这七条，四条属性逐字对得上
+// ① 名单制：全渲染层的 <StaleValueNotice> 调用点必须正好是这九条，四条属性逐字对得上
 //    （`msg` 绑的是那一格的 err state、`onRetry` 绑的是那一格自己的重取入口——写成常量或接错块就红）；
 // ② 同块配对：每一处所在组件里必须还留着 §222 那句 LoadFailNotice，且它头顶的条件里判过"数据缺席"
 //    （少了它＝一发都没读到也被说成"这是旧值"；少了横幅＝本批白改）；
@@ -16,24 +18,32 @@
 // ④ 组件本体：`role="alert"` 容器里不许有按钮（§268 的教训：那样 textContent 会把「重试」算进句子），
 //    按钮必须是同级的、onClick 直接接 onRetry；句子取 §230 那句的成对键 `common.refreshFailedNamed`，四语都要有槽。
 //
-// 现查名单（`node data/tmp/sites-345.cjs` 打出来的四属性原文，闸门照它写）：
+// 现查名单（`node data/tmp/sites-345.cjs` 重跑出来的四属性原文，闸门照它写；§347 一行里行号已按磁盘更新）：
 //   components/OllamaPanel.tsx:225            ollama-status-stale-retry
+//   components/RemindersModal.tsx:222         reminders-list-stale-retry        ← §347 第八处
 //   modules/settings/DataHealthPanel.tsx:170  data-health-stale-retry
-//   modules/settings/SettingsModule.tsx:374   enc-stale-retry
-//   modules/settings/SettingsModule.tsx:1330  schedule-stale-retry
-//   modules/settings/SettingsModule.tsx:1761  lic-stale-retry
+//   modules/settings/SettingsModule.tsx:384   enc-stale-retry
+//   modules/settings/SettingsModule.tsx:1340  schedule-stale-retry
+//   modules/settings/SettingsModule.tsx:1771  lic-stale-retry
 //   modules/settings/UsagePanel.tsx:298       usage-summary-stale-retry
 //   modules/steward/StewardModule.tsx:480     steward-rec-stale-retry
 //
-// 同一族里**逐条回读过、本批没接**的落点（写在这里是给下一批的账，不是豁免名单）：
-//   · 提醒中心列表 RemindersModal.tsx:209 —— 门 `items === null ? (loadErr ? … : 加载中)`，
-//     而 reload 的 caller 除挂载 :119 外还有 :125/:127（到点广播与本地变更）与 :147/:167/:312（增删改后）
-//     ⇒ 有值时失败演得出，**有牙、待收**；
-//   · 绘图页 ImageModule.tsx:441/459/521（最新结果／画廊／预览）—— setGallery 写点 :130/:251/:286
-//     ⇒ 生成后重读演得出，**有牙、待收**；
-//   · 用量页定价表 UsagePanel.tsx:805（modelsErr）—— `listUsageModels` 挂在 `deps=[onError]` 的 effect 上，
-//     而调用点 :548 传的是行内箭头（每次渲染都是新的 onError）⇒ 这一发其实每渲染重跑一次，
-//     **有牙、待收**（同族还带出"逐渲染重读"那一条，另账）；
+// 同一族里**逐条回读过的其余落点**（写在这里是给下一批的账，不是豁免名单）：
+//   · §345 当时记成"有牙、待收"的绘图页三处（ImageModule.tsx:441/459/521＝最新结果／画廊／预览），
+//     §347 逐处回读后判为**无牙**，那条账在这里更正：
+//     - `setGalleryFail` 只有挂载那一个 effect 写（:126/:129/:132），生成后顺带刷新那一发（:251）
+//       根本不写它——而"顺带刷新失败不拦用户"正是 §256 登记过的**设计内静默**（CAP 名单里那条），
+//       不是"err 写了但门把它挡在屏外"；
+//     - `latestFail`／`previewFail` 两处都是**同一发里先把数据清空再写失败**（:231→:242/:246、:147/:153→:163/:167），
+//       写它的那一刻数据本就缺席⇒两句门（`!latestDataUrl`／`previewLoading`）本来就会开，没有"停在上一份"可言。
+//   · 用量页定价表 UsagePanel.tsx:805（modelsErr）——§347 回读后判为**落点不存在**，横幅不挂在这里：
+//     那一发挂在 `deps=[onError]` 的 effect 上、调用点传的是行内箭头⇒**每次渲染重跑一发**（§322 同族），
+//     §347 把这条逐渲染重读收干（`t`／`onError` 走 ref、effect 依赖只剩"挂载这一次"）；收干之后
+//     `models` 已经在屏上时就再没有第二个写者能把 `modelsErr` 写起来（收起再展开是重新挂载、state 从零开始）
+//     ⇒"停在上一份"这一档根本不会出现，写横幅就是永不生效的守卫（纪律：零效果的守卫直接删）。
+//     §345 当时判它"有牙"，靠的正是那条每渲染都跑的重读——**重读是缺陷，不是读者**。
+//     那一格真正补上的是抛出面：改前 `.catch((e) => onError(e))` 只有一条会消失的 toast，
+//     现在同一发 reject 也写常驻那句（§251：两条到货的路都要有出口），由 §347 的 P2 演。
 //   · 判过＝无牙（那一发只有挂载这一个读者，err 只可能在数据缺席时被写）：
 //     SettingsModule 的应用路径 :306、WebDAV 配置 :1249、划词浮窗配置 :1951、更新信息 :2603；
 //     SkillModule 模板清单 :501；首启向导的推荐 :466 与硬件 :498（两发都在同一个挂载 effect 里）；
@@ -96,6 +106,7 @@ const DH = 'modules/settings/DataHealthPanel.tsx'
 const UP = 'modules/settings/UsagePanel.tsx'
 const OL = 'components/OllamaPanel.tsx'
 const SW = 'modules/steward/StewardModule.tsx'
+const RM = 'components/RemindersModal.tsx'
 const LF = 'utils/lock-flags.ts'
 const LC = 'utils/license-copy.ts'
 const NOTICE = 'components/StaleValueNotice.tsx'
@@ -186,6 +197,19 @@ const REGISTRY: Row[] = [
     errSetter: 'setRecErr',
     dataSetter: 'setRecommendation',
     loader: { file: SW, fn: 'refreshRecommendation' }
+  },
+  {
+    // §347 第八处：提醒中心那份清单——`reload` 的 caller 除挂载还有到点广播／本地变更／增删改后共六处
+    格: '提醒中心那份清单',
+    file: RM,
+    testid: 'reminders-list-stale-retry',
+    what: `{t('reminder.center.title')}`,
+    msg: '{loadErr}',
+    retry: '{() => void reload(tab)}',
+    data: 'items',
+    errSetter: 'setLoadErr',
+    dataSetter: 'setItems',
+    loader: { file: RM, fn: 'reload' }
   }
 ]
 
@@ -303,8 +327,8 @@ const failWrites = (fn: ts.Node, callee: string): number => {
   return n
 }
 
-describe('① 名单制：全渲染层正好七处，四条属性逐字绑到那一格自己的 state 与重取入口', () => {
-  it('调用点总数＝7（多一处就是新落点，要人工过目再进名单）', () => {
+describe('① 名单制：全渲染层正好八处，四条属性逐字绑到那一格自己的 state 与重取入口', () => {
+  it('调用点总数＝8（多一处就是新落点，要人工过目再进名单）', () => {
     expect(noticeSites().length).toBe(REGISTRY.length)
   })
 

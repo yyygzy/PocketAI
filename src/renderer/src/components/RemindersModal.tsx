@@ -5,6 +5,7 @@ import { useI18n } from '../i18n'
 import { useToast } from './ToastProvider'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../utils/ipc'
 import { LoadFailNotice } from './LoadFailNotice'
+import { StaleValueNotice } from './StaleValueNotice'
 import { errText } from '../utils/error'
 import { repeatRuleLabel } from '../../../shared/reminder-rule'
 import type { ReminderRecord, ReminderRepeatRule, ReminderStatus } from '../../../shared/types'
@@ -108,14 +109,22 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
         setLoadErr(ipcFailText(list, t('common.unknownError')))
         return
       }
+      // §347：成功那一发必须把上一句「刷新失败」收回——挂着就是拿一份已经刷新的清单说"这是旧值"
       setItems(list)
+      setLoadErr(null)
     } catch (e) {
+      // §347：抛出面（桥层 reject，不走 safeHandle 的 `{ok:false}`）以前只进 console，
+      // 于是"两条到货的路"里有一条没人认领（§251 的口径）；切走了仍不替那个 tab 留话（§311）
+      if (tabRef.current !== scope) return
+      setLoadErr(errText(e, t('common.unknownError')))
       reportIpcError('reminder.list')(e)
     }
   }, [t])
 
   useEffect(() => {
+    // §347：换 tab 时那份原因是**上一个** tab 那一发的，挂在新一屏的「读不到」位上＝张冠李戴
     setItems(null)
+    setLoadErr(null)
     void reload(tab)
   }, [tab, reload])
 
@@ -206,6 +215,18 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
         </div>
 
         <div className="p-3 overflow-y-auto flex-1">
+          {/* §347：清单已经在屏上、这一发又没读到时＝§345 那一族的第八处。
+              上面那条 `items === null` 的门只管"一发都没读到"，两者互斥、同块并存。 */}
+          {items !== null && loadErr && (
+            <div className="mb-2">
+              <StaleValueNotice
+                what={t('reminder.center.title')}
+                msg={loadErr}
+                onRetry={() => void reload(tab)}
+                testid="reminders-list-stale-retry"
+              />
+            </div>
+          )}
           {items === null ? (
             loadErr ? (
               <LoadFailNotice msg={loadErr} />
