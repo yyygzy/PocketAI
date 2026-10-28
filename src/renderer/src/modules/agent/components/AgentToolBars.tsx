@@ -147,8 +147,14 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
             }
             onChange={(e) => setWsKeyDraft(e.target.value)}
             onKeyDown={(e) => {
+              // §340：§336 修过 ChannelsPanel 那颗凭据框，这张屏是同一形状的漏掉的姊妹处——
+              // Enter 之后 confirmSecret 弹窗会抢走 focus⇒onBlur 紧跟着追发第二发，
+              // 同一份 Key 写两次、两张确认弹窗叠上来。键盘这条同步清草稿再发；
+              // onBlur 不清，用户取消确认时草稿还在、可重试（与 ChannelsPanel 同口径）
               if (e.key === 'Enter' && wsKeyDraft.trim()) {
-                void patchWsConfig({ apiKey: wsKeyDraft.trim() })
+                const trimmed = wsKeyDraft.trim()
+                setWsKeyDraft('')
+                void patchWsConfig({ apiKey: trimmed })
               }
             }}
             onBlur={() => {

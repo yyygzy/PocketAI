@@ -619,7 +619,7 @@ export const ConversationList: React.FC<Props> = ({
                   maxLength={40}
                   onChange={(e) => setNewGroupName(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') void submitCreateGroup()
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) void submitCreateGroup()
                     if (e.key === 'Escape') { setCreatingGroup(false); setNewGroupName('') }
                   }}
                   onBlur={() => { if (!newGroupName.trim()) setCreatingGroup(false) }}
@@ -663,7 +663,7 @@ export const ConversationList: React.FC<Props> = ({
                             maxLength={40}
                             onChange={(e) => setGroupRenameDraft(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') void submitRenameGroup()
+                              if (e.key === 'Enter' && !e.nativeEvent.isComposing) void submitRenameGroup()
                               if (e.key === 'Escape') setRenamingGroupId(null)
                             }}
                             onBlur={() => void submitRenameGroup()}
@@ -902,7 +902,7 @@ const ConvItem: React.FC<{
           onClick={(e) => e.stopPropagation()}
           onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') commit()
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit()
             if (e.key === 'Escape') setEditing(false)
           }}
         />
@@ -929,7 +929,7 @@ const ConvItem: React.FC<{
               onClick={(e) => e.stopPropagation()}
               onBlur={commitNote}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitNote()
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing) commitNote()
                 if (e.key === 'Escape') setNoteEditing(false)
               }}
             />

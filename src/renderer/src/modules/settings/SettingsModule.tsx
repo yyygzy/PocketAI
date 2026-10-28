@@ -2144,6 +2144,9 @@ export const NetworkPanel: React.FC = () => {
   }, [])
 
   const save = async () => {
+    // §340：那颗「保存」有 disabled={saving}，但输入框不设防⇒Enter 这条路由绕过它，
+    // 连按 Enter 就是并发多发 setProxyUrl、回来的回执互相盖（守卫写在体内，两条路共用同一道）
+    if (saving) return
     setSaving(true)
     setNotice(null)
     try {
@@ -2173,7 +2176,7 @@ export const NetworkPanel: React.FC = () => {
           type="text"
           value={proxyUrl}
           onChange={(e) => setProxyUrl(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') void save() }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void save() }}
           placeholder="http://127.0.0.1:7890"
           spellCheck={false}
           autoCapitalize="off"

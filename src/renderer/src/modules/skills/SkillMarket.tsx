@@ -393,7 +393,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
                 value={registryUrl}
                 onChange={(e) => setRegistryUrl(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') fetchRemote(registryUrl)
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) fetchRemote(registryUrl)
                 }}
               />
             </div>
@@ -404,7 +404,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleImportFromUrl()
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleImportFromUrl()
                 }}
               />
               <button

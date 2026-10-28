@@ -452,7 +452,7 @@ const MkdirDialog: React.FC<{
             value={name}
             autoFocus
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && submit()}
             placeholder={t('fm.mkdirPrompt')}
           />
           {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}

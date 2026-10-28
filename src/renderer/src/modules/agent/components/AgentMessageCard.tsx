@@ -97,7 +97,7 @@ const UserCardBody: React.FC<{
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) {
               e.preventDefault()
               submit()
             } else if (e.key === 'Escape') {

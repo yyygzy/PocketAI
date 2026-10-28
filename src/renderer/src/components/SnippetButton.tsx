@@ -371,7 +371,7 @@ export const SnippetButton: React.FC<Props> = ({ onInsert, disabled }) => {
                     placeholder={t('snippet.varPh')}
                     autoFocus={i === 0}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                         e.preventDefault()
                         insertWithVars()
                       }

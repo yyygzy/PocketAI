@@ -700,7 +700,7 @@ const KbAskPanel: React.FC<{
                     value={renameDraft}
                     onChange={(e) => setRenameDraft(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitRename(s.id)
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) commitRename(s.id)
                       else if (e.key === 'Escape') setRenamingId(null)
                     }}
                     onBlur={() => commitRename(s.id)}

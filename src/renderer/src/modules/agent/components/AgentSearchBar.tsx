@@ -40,7 +40,7 @@ export const AgentSearchBar: React.FC<Props> = ({
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
             e.preventDefault()
             if (e.shiftKey) onPrev()
             else onNext()

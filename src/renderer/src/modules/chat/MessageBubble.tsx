@@ -278,7 +278,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
                 onChange={(e) => setEditText(e.target.value)}
                 autoFocus
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) {
                     e.preventDefault()
                     if (editText.trim() && editText.trim() !== content) {
                       setEditing(false)

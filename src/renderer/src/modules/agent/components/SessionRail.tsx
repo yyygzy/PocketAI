@@ -460,7 +460,7 @@ const SessionItem: React.FC<{
           onClick={(e) => e.stopPropagation()}
           onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') commit()
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit()
             if (e.key === 'Escape') setEditing(false)
           }}
         />

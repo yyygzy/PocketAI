@@ -128,7 +128,7 @@ export const UserMemoryPanel: React.FC = () => {
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && add()}
+          onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && add()}
           maxLength={MEMORY_MAX_CONTENT_CHARS}
           placeholder={t('set.memoryPlaceholder')}
           className="flex-1 text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
@@ -168,7 +168,7 @@ export const UserMemoryPanel: React.FC = () => {
                     onChange={(e) => setEditDraft(e.target.value)}
                     maxLength={MEMORY_MAX_CONTENT_CHARS}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') saveEdit()
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) saveEdit()
                       if (e.key === 'Escape') setEditingId(null)
                     }}
                     className="flex-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"

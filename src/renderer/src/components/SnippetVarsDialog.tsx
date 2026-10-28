@@ -35,7 +35,7 @@ export const SnippetVarsDialog: React.FC<Props> = ({ snippet, onCancel, onInsert
             placeholder={t('snippet.varPh')}
             autoFocus={i === 0}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                 e.preventDefault()
                 insert()
               }

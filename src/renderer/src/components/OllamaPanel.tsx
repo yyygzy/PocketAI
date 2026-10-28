@@ -381,7 +381,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
               value={customModel}
               disabled={!!pulling}
               onChange={(e) => setCustomModel(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void doPull(customModel).then((ok) => { if (ok) setCustomModel('') })}
+              onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && void doPull(customModel).then((ok) => { if (ok) setCustomModel('') })}
             />
             {pulling ? (
               <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-warning)]"

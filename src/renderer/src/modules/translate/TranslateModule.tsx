@@ -800,7 +800,7 @@ const GlossaryPanel: React.FC<{
             value={tgt}
             onChange={(e) => setTgt(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && canAdd) void submit()
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && canAdd) void submit()
             }}
           />
           <button

@@ -1584,7 +1584,7 @@ const RenameDocDialog: React.FC<{
               value={title}
               autoFocus
               onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
+              onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && submit()}
             />
           </Field>
           {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
@@ -1795,7 +1795,7 @@ const AddSourceDialog: React.FC<{
                 value={url}
                 autoFocus
                 onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submit()}
+                onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && submit()}
                 placeholder="https://example.com/article"
               />
             </Field>
