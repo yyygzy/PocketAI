@@ -58,6 +58,9 @@ interface Props {
   onSetAssistant?: (convId: string, assistantId: string | null) => void
   /** 备注编辑 */
   onSetNote?: (convId: string, note: string | null) => void
+  /** §354：三份清单那三发没读到时，父级交下来的重读入口（`useConversationLists` 的 reloadConversations，
+   *  一发重拉三份；三句各自配一颗键＝§351 会话栏那条先例，别把三半合并成一句） */
+  onReloadLists?: () => void
   /** 嵌入到已有侧栏容器时，去掉自身宽度/边框/背景 */
   embedded?: boolean
 }
@@ -96,6 +99,7 @@ export const ConversationList: React.FC<Props> = ({
   assistants,
   onSetAssistant,
   onSetNote,
+  onReloadLists,
   embedded
 }) => {
   const { t } = useI18n()
@@ -605,22 +609,37 @@ export const ConversationList: React.FC<Props> = ({
             {/* §260：三份读各说各的（§257／§259 的逐发点名口径）——活跃读到而归档没读到，
                 不该把读到的那份也说成不可信；点不出名的整屏「读不到」更会把半屏好数据冤枉掉 */}
             {conversationsUnread && (
-              <LoadFailNotice
-                what={t('chat.conversationsList')}
-                msg={ipcFailText(conversationsUnread, t('common.unknownError'))}
-              />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice
+                  what={t('chat.conversationsList')}
+                  msg={ipcFailText(conversationsUnread, t('common.unknownError'))}
+                />
+                <button data-testid="conv-list-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={onReloadLists}>
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             )}
             {archivedUnread && (
-              <LoadFailNotice
-                what={t('chat.archivedList')}
-                msg={ipcFailText(archivedUnread, t('common.unknownError'))}
-              />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice
+                  what={t('chat.archivedList')}
+                  msg={ipcFailText(archivedUnread, t('common.unknownError'))}
+                />
+                <button data-testid="archived-list-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={onReloadLists}>
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             )}
             {groupsUnread && (
-              <LoadFailNotice
-                what={t('chat.groupsList')}
-                msg={ipcFailText(groupsUnread, t('common.unknownError'))}
-              />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice
+                  what={t('chat.groupsList')}
+                  msg={ipcFailText(groupsUnread, t('common.unknownError'))}
+                />
+                <button data-testid="groups-list-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={onReloadLists}>
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             )}
 
             {/* 新建文件夹内联输入行 */}

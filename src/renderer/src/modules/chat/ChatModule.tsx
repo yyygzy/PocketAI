@@ -1481,6 +1481,9 @@ export const ChatModule: React.FC = () => {
             onToggleStar={handleToggleStar}
             groups={groups}
             groupsUnread={groupsUnread}
+            // §354：那三张「读不到」的脸共用的重读入口——一发重拉三份（§351 会话栏那两处同形）。
+            // 换助手／删会话那些动作的 onClick 里也有 reloadConversations，但它们都带副作用，不算这一屏的出口
+            onReloadLists={() => void reloadConversations()}
             onCreateGroup={handleCreateGroup}
             onRenameGroup={handleRenameGroup}
             onDeleteGroup={handleDeleteGroup}

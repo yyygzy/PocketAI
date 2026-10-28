@@ -15,10 +15,12 @@ import type { UpdateEvent, UpdateInfo } from '../src/shared/types'
 const L = (key: string): string => (zh as unknown as Record<string, string>)[key]!
 const STALE = '补丁已过期或与要安装的版本不符，请重新检查更新'
 
-const panelProps = (): { info: UpdateInfo; err: null; status: UpdateEvent } => ({
+const panelProps = (): { info: UpdateInfo; err: null; status: UpdateEvent; onReloadInfo: () => void } => ({
   info: { isPackaged: true, currentVersion: '1.2.8', autoUpdateEnabled: false } as unknown as UpdateInfo,
   err: null,
-  status: { status: 'downloaded', newVersion: '1.3.0' } as unknown as UpdateEvent
+  status: { status: 'downloaded', newVersion: '1.3.0' } as unknown as UpdateEvent,
+  // §354：那颗「重试」的新 prop；本批用例点的是「重启并安装」，这里给个不被调用的入口即可
+  onReloadInfo: () => {}
 })
 
 /** 点「重启并安装」→ 确认框点「确认」（弹窗的出路在那颗键自己身上） */

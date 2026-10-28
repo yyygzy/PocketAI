@@ -33,7 +33,9 @@ describe('§251 收口后的接线：九发读各自的接管落点', () => {
   it('① 新的接管写法逐条数得出（少一条就是那一发退回静默）', () => {
     const cases: Array<[string, RegExp, number, string]> = [
       ['智能标题那发：resolve／reject／成功清空三条落点都在', /setTitleErr\(/g, 3, SRC],
-      ['智能标题那块把原因挂上屏', /titleErr && <LoadFailNotice/g, 1, SRC],
+      // §354：智能标题那一支也做成"那句＋同级那颗键"的同一份 JSX ⇒ 锚点从 `titleErr && <LoadFailNotice`
+      // 挪到块首（指的还是同一件事：那一发失败时原因上得了屏）
+      ['智能标题那块把原因挂上屏', /\{titleErr && \([\s\S]{0,240}?<LoadFailNotice/g, 1, SRC],
       ['应用路径那发：resolve／reject／成功清空三条落点都在', /setPathsErr\(/g, 3, SRC],
       ['路径整块消失时改说"读不到"', /!paths && pathsErr &&/g, 1, SRC],
       ['加密状态那发读：resolve 面写 err（§344 起三发共用一份同步器，落点在 lock-flags.ts，3→1）', /deps\.setErr\(ipcFailText\(s, deps\.t\(/g, 1, FLAGS],

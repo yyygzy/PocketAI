@@ -240,7 +240,12 @@ describe('③ 接线计数', () => {
 
   it('那句"读不到"要真渲染在 WebDAV 表单里，且只在还没配上配置时', () => {
     expect(count(SETTINGS, /const \[wdCfgUnread, setWdCfgUnread\] = useState/g)).toBe(1)
-    expect(count(SETTINGS, /\{!cfg && wdCfgUnread && <div className="mb-2"><LoadFailNotice/g), '空态让位＋常驻').toBe(1)
+    // §354：那一支从"一句独占一行"改成"那句＋同级那颗键"的同一份 JSX ⇒ 字面锚点从 `<div className="mb-2"><LoadFailNotice`
+    // 挪到块首（判据要指的还是同一件事：只在 `!cfg` 时挂那张脸，且脸真在屏上）
+    expect(
+      count(SETTINGS, /\{!cfg && wdCfgUnread && \(\s*<div[\s\S]{0,140}?<LoadFailNotice/g),
+      '空态让位＋常驻（§354 起这一支是"那句＋同级那颗键"）'
+    ).toBe(1)
     expect(count(SETTINGS, /export const BackupPanel/), '导出只为真挂载').toBe(1)
   })
 })

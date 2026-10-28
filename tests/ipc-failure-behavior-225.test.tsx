@@ -111,14 +111,14 @@ describe('② 许可证面板', () => {
 describe('③ 更新面板', () => {
   it('info 为 null 且有原因 ⇒ 那句原因常驻（"当前版本／检查更新"全建在这份数据上）', () => {
     stubPocketai({})
-    mountWithProviders(<UpdatePanel info={null} err="更新源不可达" status={{ status: 'idle' }} />)
+    mountWithProviders(<UpdatePanel info={null} err="更新源不可达" status={{ status: 'idle' }} onReloadInfo={() => {}} />)
     expect(alerts()).toEqual([FAILED('更新源不可达')])
     expect(loadingOn()).toBe(false)
   })
 
   it('反向对照：info 到了 ⇒ 无 alert、不出现那句「读不到」', async () => {
     stubPocketai({})
-    mountWithProviders(<UpdatePanel info={info()} err={null} status={{ status: 'idle' }} />)
+    mountWithProviders(<UpdatePanel info={info()} err={null} status={{ status: 'idle' }} onReloadInfo={() => {}} />)
     await waitFor(() => expect(loadingOn()).toBe(false))
     expect(alerts()).toEqual([])
   })

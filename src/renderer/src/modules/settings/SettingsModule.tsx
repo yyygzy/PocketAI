@@ -74,14 +74,17 @@ const ShortcutHelpPanel: React.FC = () => {
 }
 
 /** 对话设置：智能标题开关（首条消息后用模型生成短标题） */
-const ConversationSettingsPanel: React.FC = () => {
+// §354：为了那颗「重试」的判据能真挂载演一遍而导出（原来只有本页挂载点，整页夹具要预置十几条通道）
+export const ConversationSettingsPanel: React.FC = () => {
   const { t } = useI18n()
   // null=尚未加载，避免开关初始闪烁
   const [enabled, setEnabled] = useState<boolean | null>(null)
   // §251：这一读失败时开关只是 disabled（屏上像"还在加载"），所以原因要落到界面上（闸门第四面的判据）
   const [titleErr, setTitleErr] = useState<string | null>(null)
 
-  useEffect(() => {
+  // §354：这一发从挂载 effect 体内联抽成具名 loader——「读不到」那张脸要出口，而按下去必须真再发一发
+  // （§350 第二档的口径：先抽 loader 再配键，否则键点了等于没按）。行为逐字不变，effect 只是改成调它。
+  const loadEnabled = useCallback(() => {
     window.pocketai
       .getSmartTitleEnabled()
       .then((v) => {
@@ -97,6 +100,10 @@ const ConversationSettingsPanel: React.FC = () => {
         logIpcError('settings.getSmartTitle', e)
       })
   }, [t])
+
+  useEffect(() => {
+    loadEnabled()
+  }, [loadEnabled])
 
   const toggle = async () => {
     const next = !enabled
@@ -133,7 +140,15 @@ const ConversationSettingsPanel: React.FC = () => {
             />
           </button>
         </div>
-        {titleErr && <LoadFailNotice msg={titleErr} />}
+        {/* §354：这一支同屏什么都没有（那颗开关在 `enabled === null` 时是 disabled，而 toggle 只写不读）⇒ 一句一键 */}
+        {titleErr && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice msg={titleErr} />
+            <button data-testid="smart-title-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={() => void loadEnabled()}>
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -203,7 +218,10 @@ export const SettingsModule: React.FC = () => {
   const [pathsErr, setPathsErr] = useState<string | null>(null)
   const [updErr, setUpdErr] = useState<string | null>(null)
 
-  useEffect(() => {
+  // §354：这两发从挂载 effect 体内联抽成具名 loader，好让两张「读不到」的脸各有一颗按下去真再发一发的键。
+  // 依赖**照旧写死 `[]`**（原文就是这样，`t` 只捕获挂载那一刻那份）——改成 `[t]` 会让 effect 在换语言时
+  // 重跑一次、连带重订一遍 `onUpdateEvent`，那是本批不该带来的行为变化。
+  const loadPaths = useCallback(() => {
     window.pocketai
       .getPaths()
       .then((v) => {
@@ -218,18 +236,26 @@ export const SettingsModule: React.FC = () => {
         setPathsErr(errText(e, t('common.unknownError')))
         logIpcError('settings.getPaths', e)
       })
-    // §346：许可证那一发挪进 useLicenseCopy()——挂在这一发与面板动作那一发是同一个计数器，
-    // 写在这里就又多了一个没有守卫的读者
+  }, [])
+
+  const loadUpdateInfo = useCallback(() => {
     window.pocketai.getUpdateInfo().then((v) => {
       if (hasIpcFailed(v)) { setUpdErr(ipcFailText(v, t('common.unknownError'))); return }
       setUpdateInfo(v)
     }).catch((e) => { setUpdErr(errText(e, t('common.unknownError'))); logIpcError('settings.getUpdateInfo', e) })
+  }, [])
+
+  useEffect(() => {
+    loadPaths()
+    // §346：许可证那一发挪进 useLicenseCopy()——挂在挂载那一发与面板动作那一发是同一个计数器，
+    // 写在这里就又多了一个没有守卫的读者
+    loadUpdateInfo()
     // 监听主进程推送的更新状态事件
     const unsub = window.pocketai.onUpdateEvent((data) => {
       setUpdateStatus(data)
     })
     return unsub
-  }, [])
+  }, [loadPaths, loadUpdateInfo])
 
   return (
     <div className="flex flex-col h-full">
@@ -270,7 +296,7 @@ export const SettingsModule: React.FC = () => {
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.update')}</h3>
-          <UpdatePanel info={updateInfo} err={updErr} status={updateStatus} />
+          <UpdatePanel info={updateInfo} err={updErr} status={updateStatus} onReloadInfo={loadUpdateInfo} />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
@@ -314,7 +340,13 @@ export const SettingsModule: React.FC = () => {
       {!paths && pathsErr && (
         <div className="shrink-0 border-t border-[var(--color-border)] pt-3 mt-3">
           <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-2">{t('set.paths')}</h3>
-          <LoadFailNotice msg={pathsErr} />
+          {/* §354：这一支整块只剩这一句（那四行路径要在 `paths` 到手后才画）⇒ 同级给一颗重读这一发的键 */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice msg={pathsErr} />
+            <button data-testid="paths-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={() => void loadPaths()}>
+              {t('agent.retryRead')}
+            </button>
+          </div>
         </div>
       )}
       {paths && (
@@ -923,7 +955,9 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   /** §324：扫描的代次——只有最新发起那一发允许写冲突表、记住的密码与「还在扫描」 */
   const mergeScanSeqRef = useRef(0)
 
-  useEffect(() => {
+  // §354：这一发抽成具名 loader（原来整段写在挂载 effect 体内联）——`!cfg` 时那一屏只剩这一句，
+  // 「保存」会把这份没人认领的空表单写回去（假出口），「测试连接」测的是连通性、不重读配置。
+  const reloadCfg = useCallback(() => {
     window.pocketai.loadWebDAVConfig().then((c) => {
       // §262：这一发有三种到货——配置、null（真的还没配过）、失败对象（safeHandle 的 resolve，§196）。
       // 旧写法 `if (c)` 把第三种当第一种：cfg 是 `{ok:false}` 也是真值 ⇒ 「同步状态卡＋上传/增量/刷新」
@@ -942,8 +976,12 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
       setWdCfgUnread({ error: errText(e, '') })
       logIpcError('settings.loadWebDAVConfig', e)
     })
-    void loadSchedule()
   }, [])
+
+  useEffect(() => {
+    reloadCfg()
+    void loadSchedule()
+  }, [reloadCfg])
 
   // §251：三处 getBackupSchedule（进面板、上传后、保存后）共用同一条接管——失败时那一块整块消失，
   // 用户会以为"没有定时备份这回事"，所以把原因落在备份计划区上方
@@ -1270,7 +1308,14 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
         <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('bk.webdavTitle')}</div>
         {/* §262：读不到时表单是空的，但那不是"还没配"——这一句把两种空分开头（§222 那张脸）。
             cfg 一旦到手（用户存了新的）这句就退场，不留陈旧谎报。 */}
-        {!cfg && wdCfgUnread && <div className="mb-2"><LoadFailNotice msg={ipcFailText(wdCfgUnread, t('common.unknownError'))} /></div>}
+        {!cfg && wdCfgUnread && (
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice msg={ipcFailText(wdCfgUnread, t('common.unknownError'))} />
+            <button data-testid="webdav-cfg-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={reloadCfg}>
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <Field label="URL"><input className="input" placeholder="https://dav.example.com/..." value={wdUrl} onChange={e => setWdUrl(e.target.value)} /></Field>
           <Field label={t('bk.user')}><input className="input" value={wdUser} onChange={e => setWdUser(e.target.value)} /></Field>
@@ -1988,7 +2033,9 @@ export const PopupPanel: React.FC = () => {
   const [captureErr, setCaptureErr] = useState('')
   const [saveErr, setSaveErr] = useState('')
 
-  useEffect(() => {
+  // §354：抽成具名 loader ⇒ 早退那一支的「读不到」有出口（那块面板的捕获／保存两颗键都不在屏上）。
+  // 依赖照旧 `[]`（原文如此，`t` 只捕获挂载那一刻那份），换成 `[t]` 会让换语言时多发一发读，属行为变化。
+  const loadPopupCfg = useCallback(() => {
     // §225：两条失败面都要落到那句「读不到」上——resolve 的 `{ok:false}` 走 then，真抛错走 catch
     window.pocketai.getPopupConfig().then((v) => {
       if (hasIpcFailed(v)) { setCfgErr(ipcFailText(v, t('common.unknownError'))); return }
@@ -1999,8 +2046,20 @@ export const PopupPanel: React.FC = () => {
     })
   }, [])
 
+  useEffect(() => {
+    loadPopupCfg()
+  }, [loadPopupCfg])
+
   if (!cfg) {
-    if (cfgErr) return <LoadFailNotice msg={cfgErr} />
+    if (cfgErr)
+      return (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={cfgErr} />
+          <button data-testid="popup-cfg-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadPopupCfg}>
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 
@@ -2620,7 +2679,7 @@ export const AppearancePanel: React.FC = () => {
 
 // ─── 更新面板 ────────────────────────────────────────────────────
 
-export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null; status: UpdateEvent }> = ({ info, err, status }) => {
+export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null; status: UpdateEvent; onReloadInfo: () => void }> = ({ info, err, status, onReloadInfo }) => {
   const { t } = useI18n()
   const { confirm, dialog } = useConfirm()
   const [busy, setBusy] = useState(false)
@@ -2666,7 +2725,16 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
 
   if (!info) {
     // §225：更新信息读不到 ⇒ 说清"读不到"，而不是一直"加载中"（这一块的"当前版本／检查更新"全建在 info 上）
-    if (err) return <LoadFailNotice msg={err} />
+    // §354：早退 return 把整块面板（含「检查更新」）换成这一句 ⇒ 这一支的同级键由父页递下来的 onReloadInfo 重读那一发
+    if (err)
+      return (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice msg={err} />
+          <button data-testid="update-info-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={onReloadInfo}>
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
 

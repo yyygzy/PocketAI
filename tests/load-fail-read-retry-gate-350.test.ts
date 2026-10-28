@@ -6,11 +6,11 @@
 // ——那两种写法在 DOM 上看起来一模一样。所以每处钉三件：**testid＋紧跟在那句之后的那颗 button＋onClick 的 initializer 里
 // 指的是哪一个具名 loader**；反向再钉一颗：这个新后缀 `-read-retry` 只许出现在名单里，别处为 0。
 //
-// 名单为什么是这十六处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
-//   · 现数（§352）：61 处 `<LoadFailNotice>` 调用点，其中 **27 处旁边已有同级重试键**——
-//     24 颗带字面 `data-testid`（§268／§271 的先例 12 颗＋下面名单里 §350／§351 的 12 颗），
-//     1 处的 testid 走变量（`AssistantEditor.tsx` 那句一键工厂 `listFailLine`＝上一轮按字面量扫的**漏数**），
-//     2 处键在但压根没有 testid（`ChatModule` 草稿那一发、首启向导的助手那一发）；
+// 名单为什么是这二十四处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
+//   · 现数（§354 重跑同一把尺子，`data/tmp/scope-354.py`）：61 处 `<LoadFailNotice>` 调用点，
+//     其中 **31 处旁边已有同级重试键**（＝§352 那版的 27＋§352 自己收的 4），**30 处没有**；
+//     27 的构成＝24 颗带字面 testid＋1 颗 testid 走变量（`AssistantEditor.tsx` 那句一键工厂 `listFailLine`
+//     ＝上一轮按字面量扫的**漏数**）＋2 处键在但压根没有 testid（`ChatModule` 草稿、首启向导助手）；
 //   · 启发式的假阳一处：`ChatModule.tsx` 的消息那一发往后五行撞进**隔壁** `draftUnread` 那块自己的键，
 //     其实它没有出口⇒ §352 收了它。窗口判据只能用来出候选，**每处都得回读**；
 //   · 剩下 34 处里：§352 收 4 处（那一发的重拉者已具名、且这一支同屏真没出口）；
@@ -22,9 +22,15 @@
 //     看到模型推荐那发的写者只有 `refreshRecommendation`、顶部「重新检测」写的是别处三发 ⇒ 判它没出口并造了键；
 //     回读 `load()` 的最后**一行就是 `refreshRecommendation()`**，而 §345 那颗 stale 键正是点「重新检测」演出来的
 //     ⇒ 键已撤销。**判"有没有出口"要顺着 loader 的调用链往下看一层，只看 setter 名单会误判**；
-//   · 余 19 处仍卡在**那一发没有具名 loader**（读写在挂载 effect 体内联 `.then`）或**重拉者在别的文件里**
-//     （`ConversationList` 三份清单、设置页余下五发、绘图页三发、问答／翻译／向导／浮窗那几发）
-//     ⇒ 先抽 loader 再配键，否则键点了等于没点（§347"永不生效的守卫"同族）——这是 §353 的账。
+//   · §354 收了那 19 处里的**八处**——先抽具名 loader（读写从挂载 effect 体内联 `.then` 提成 `useCallback`，
+//     effect 改成只调它；依赖照旧写死 `[]` 的那几处**不能顺手改成 `[t]`**，那会让换语言时多发一发读＋重订一遍事件）
+//     再配键：设置页五处（智能标题／路径脚注／WebDAV 配置／浮窗快捷键／更新信息——最后一处的读在父页，
+//     以 `onReloadInfo` 递进 props 驱动的 UpdatePanel，形状同 §351 许可证与 §352 加密面板）＋
+//     对话页侧栏三处（`useConversationLists` 那一发重拉三份清单⇒ **三句配三颗键**，同 §351 会话栏）；
+//   · 余 12 处仍是"要先抽 loader"那一档（绘图页三发含预览那颗带 `alive` 闭包要顺手换成代次判据、问答／翻译各一发、
+//     知识库分片预览一发、向导两发是同一句话挂两个槽位＝§332 第 32 条那一档、浮窗四发）——**§355 的账**；
+//   · 抽 loader 时给 PopupPanel 那个起名 `loadPopupCfg` 而非 `loadCfg`：本闸门的 onClick 判据读的是 initializer 里的
+//     **标识符子串**，`loadCfg` 会被隔壁 BackupPanel 的 `reloadCfg` 蒙过去（名字撞车＝判据变瞎），换个不重叠的名比放宽判据便宜。
 //   · 判"已有出口"必须**往句子上面看**：`McpForm` 那颗「检测」在句子往上三十行，
 //     本批第一稿只回看了十行，差点给它造第二颗同义键。
 import { readdirSync, readFileSync } from 'node:fs'
@@ -52,7 +58,18 @@ const SITES: Site[] = [
   { file: 'components/OllamaPanel.tsx', testid: 'ollama-status-read-retry', loader: 'refresh' },
   { file: 'modules/chat/ChatModule.tsx', testid: 'chat-messages-read-retry', loader: 'loadMessages' },
   { file: 'modules/settings/SettingsModule.tsx', testid: 'backup-schedule-read-retry', loader: 'loadSchedule()' },
-  { file: 'modules/settings/SettingsModule.tsx', testid: 'encryption-read-retry', loader: 'onChange' }
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'encryption-read-retry', loader: 'onChange' },
+  // §354：这一档八处原来卡在"那一发没有具名 loader"（读写在挂载 effect 体内联 `.then`）⇒ 本批先抽 loader 再配键。
+  // 设置页五处：三处是页内子面板各自挂载那一发、一处是页脚（getPaths）、一处是 props 驱动的 UpdatePanel（父页递 onReloadInfo）；
+  // 对话页侧栏三处：`useConversationLists` 那一发重拉三份清单，三句配三颗键＝§351 会话栏先例。
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'smart-title-read-retry', loader: 'loadEnabled' },
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'paths-read-retry', loader: 'loadPaths' },
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'webdav-cfg-read-retry', loader: 'reloadCfg' },
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'popup-cfg-read-retry', loader: 'loadPopupCfg' },
+  { file: 'modules/settings/SettingsModule.tsx', testid: 'update-info-read-retry', loader: 'onReloadInfo' },
+  { file: 'modules/chat/ConversationList.tsx', testid: 'conv-list-read-retry', loader: 'onReloadLists' },
+  { file: 'modules/chat/ConversationList.tsx', testid: 'archived-list-read-retry', loader: 'onReloadLists' },
+  { file: 'modules/chat/ConversationList.tsx', testid: 'groups-list-read-retry', loader: 'onReloadLists' }
 ]
 
 /** `<LoadFailNotice … />` 之后紧跟一颗带这个 testid 的 button，中间只准隔空白与注释 */
