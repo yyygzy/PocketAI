@@ -149,10 +149,16 @@ describe('① 本库历史那一发：那句上屏、不报条数，出口是再
     const before = calls.sessions
     fail = false
     fireEvent.click(historyBtn())
-    expect(calls.sessions, '点开＝重发这一发').toBeGreaterThan(before)
-    await waitFor(() => expect(alerts()).toEqual([]), MOUNT_BUDGET)
-    expect(historyBtn().textContent).toBe(`${HIST_WHAT}（1）`)
-    expect(bodyText()).toContain('PROBE-会话')
+    // §363：这一格"到货之后才成立"的有三位（次数长回来、按钮把数带回来、条目上屏），原写法只拿
+    // `waitFor(() => expect(alerts()).toEqual([]))` 当见证——而点开之前面板根本没开、那一刻 alerts()
+    // 本来就是空数组＝等不到任何东西，下一行同步读屏⇒到货慢一步就红（§362 同一族，这是第三处）。
+    // 顺带把「点开＝重发」那颗也从同步位挪进来：它等的是同一法的到货，写在外面对它没有增益。
+    await waitFor(() => {
+      expect(calls.sessions, '点开＝重发这一发').toBeGreaterThan(before)
+      expect(historyBtn().textContent).toBe(`${HIST_WHAT}（1）`)
+      expect(bodyText()).toContain('PROBE-会话')
+      expect(alerts(), '读到之后那句撤掉').toEqual([])
+    }, MOUNT_BUDGET)
   })
 
   it('reject 面同一张脸（旧写法只留一条 [ipc] 留痕）', async () => {
