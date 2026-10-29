@@ -88,9 +88,13 @@ describe('K1 文档重命名：失败不许演成功', () => {
     await openRowDialog(L('kb.rename'), 'kb.renameTitle')
     fireEvent.click(screen.getByText(L('common.save')))
 
-    await waitFor(() => expect(toasts().join('|')).not.toContain(L('kb.renameOk')))
-    expect(screen.getByText(L('kb.renameTitle'))).toBeTruthy()
-    expect(screen.getByText('文档已经不在了')).toBeTruthy()
+    // 到货的见证＝那句失败原因上屏。改前的门只断「没弹『已重命名』」——成功那趟它也一直为真、失败这趟 t=0 就为真
+    // ＝等于没等（§364 空极门），下面两句读的是"点了保存之后"的屏，负载窗里会假红。
+    await waitFor(() => {
+      expect(screen.getByText('文档已经不在了'), '失败原因上屏').toBeTruthy()
+      expect(toasts().join('|'), '不报「已重命名」').not.toContain(L('kb.renameOk'))
+      expect(screen.getByText(L('kb.renameTitle')), '弹窗不关').toBeTruthy()
+    })
   })
 
   it('正向对照：成功那趟照常报「已重命名」并关窗', async () => {
@@ -110,9 +114,13 @@ describe('K2 编辑原文：失败不许把刚写的原文一起带走', () => {
     fireEvent.change(area, { target: { value: '改了一半的长文，不能丢' } })
     fireEvent.click(screen.getByText(L('common.save')))
 
-    await waitFor(() => expect(toasts().join('|')).not.toContain(L('kb.editOk')))
-    expect(screen.getByText(L('kb.editTextTitle'))).toBeTruthy()
-    expect((document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('改了一半的长文，不能丢')
+    // 同 K1：门要等"那一发落定了"，见证＝失败原因上屏；textarea 还挂着、里面就是刚敲的那段，两句一起在门里读
+    await waitFor(() => {
+      expect(screen.getByText('文档已经不在了'), '失败原因上屏').toBeTruthy()
+      expect(toasts().join('|'), '不报「已保存」').not.toContain(L('kb.editOk'))
+      expect(screen.getByText(L('kb.editTextTitle')), '弹窗不关').toBeTruthy()
+      expect((document.querySelector('textarea') as HTMLTextAreaElement).value, '刚敲的原文没被带走').toBe('改了一半的长文，不能丢')
+    })
   })
 
   it('正向对照：成功那趟报「已保存」并关窗', async () => {

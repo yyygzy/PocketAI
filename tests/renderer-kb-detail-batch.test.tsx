@@ -221,7 +221,8 @@ describe('批量动作接到哪条通道', () => {
     fireEvent.click(batchButton(0, zh['kb.batchRetryErrors'].replace('{n}', '2')))
     await waitFor(() => expect(reindexKbDocs).toHaveBeenCalled())
     expect(reindexKbDocs.mock.calls[0]![0]).toEqual(['d2', 'd3'])
-    expect(screen.getByText(zh['kb.batchDone'].replace('{n}', '2').replace('{m}', '0'))).toBeTruthy()
+    // §364：上面那发"被调用"不等于"批量完成那句话已经上屏"（它要等桩的 promise 落地）
+    await waitFor(() => expect(screen.getByText(zh['kb.batchDone'].replace('{n}', '2').replace('{m}', '0'))).toBeTruthy())
   })
 
   it('入队数少于选中数（文档刚好被别人删了）⇒ 报的是真实差值', async () => {

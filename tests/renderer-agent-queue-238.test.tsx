@@ -240,8 +240,11 @@ describe('B 立即插队：条目靠 clientRef 对账', () => {
     interjectReply = () => ({ ok: false, error: 'RUN_NOT_FOUND:这轮运行已经结束' })
     const { result, requestId } = await mountRunning()
     act(() => result.current.interjectText('插队一句'))
-    await waitFor(() => expect(result.current.queue[0]!.interjecting).toBe(false))
-    expect(toasts()).toContain(zh['agent.interjectRunEnded'])
+    // §364：`interjecting` 是 hook state、`toasts()` 读的是屏；两者同一批提交但分两帧落地时就会假红
+    await waitFor(() => {
+      expect(result.current.queue[0]!.interjecting).toBe(false)
+      expect(toasts()).toContain(zh['agent.interjectRunEnded'])
+    })
     expect(sends()).toHaveLength(1)
     expect(result.current.messages.some((m) => m.role === 'user' && m.text === '插队一句')).toBe(false)
     expect(requestId()).toBeTruthy()

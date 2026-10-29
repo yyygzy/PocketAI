@@ -78,9 +78,12 @@ describe('§325③ 本地恢复那发的进度话术：对两段都成立，取�
     await waitFor(() => expect(bodyText()).toContain(FILE.name))
     clickButton(L('bk.localRestoreBtn'))
     await confirmInApp()
-    await waitFor(() => expect(restore.count()).toBe(1))
-    expect(bodyText()).toContain(L('bk.localRestoring'))
-    expect(bodyText(), '那一会儿主进程只是在等挑文件，"正在下载恢复"是句没发生的事').not.toContain(L('bk.downloadingRestore'))
+    // §364：门等的是"那一发打出去了"，可这两句读的是屏——到货慢一步就假红，整组搬进同一个 waitFor
+    await waitFor(() => {
+      expect(restore.count()).toBe(1)
+      expect(bodyText()).toContain(L('bk.localRestoring'))
+      expect(bodyText(), '那一会儿主进程只是在等挑文件，"正在下载恢复"是句没发生的事').not.toContain(L('bk.downloadingRestore'))
+    })
   })
 
   it('在选择器里取消 ⇒ 那句收回，屏上既没有进度也没有半句「恢复成功」', async () => {
@@ -89,9 +92,10 @@ describe('§325③ 本地恢复那发的进度话术：对两段都成立，取�
     await waitFor(() => expect(bodyText()).toContain(FILE.name))
     clickButton(L('bk.localRestoreBtn'))
     await confirmInApp()
-    await waitFor(() => expect(restore.count()).toBe(1))
-    expect(bodyText()).toContain(L('bk.localRestoring'))
-
+    await waitFor(() => {
+      expect(restore.count()).toBe(1)
+      expect(bodyText()).toContain(L('bk.localRestoring'))
+    })
     restore.answer(0, { ok: true, canceled: true })
     await restore.settle(0)
     expect(bodyText(), '陈句要收回——真机 B177 撞的就是这条挂着不走').not.toContain(L('bk.localRestoring'))

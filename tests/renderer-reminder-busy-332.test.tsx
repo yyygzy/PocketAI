@@ -69,8 +69,11 @@ describe('§332 提醒中心：在飞态一行一格', () => {
 
     fireEvent.click(btns[0]!)
     fireEvent.click(btns[1]!)
-    await waitFor(() => expect(q['cancel:a']?.length && q['cancel:b']?.length).toBeTruthy(), MOUNT_BUDGET)
-    expect(cancelBtns().map((b) => b.disabled), '两行都在飞 ⇒ 两行都禁点').toEqual([true, true])
+    // §364：门是"两发取消都还在飞"，禁点读的是屏——整组搬进同一个 waitFor
+    await waitFor(() => {
+      expect(q['cancel:a']?.length && q['cancel:b']?.length).toBeTruthy()
+      expect(cancelBtns().map((b) => b.disabled), '两行都在飞 ⇒ 两行都禁点').toEqual([true, true])
+    }, MOUNT_BUDGET)
 
     // A 先回：取消成功 → reload 那一发也要放行（`finally` 排在 reload 之后）
     await flush(() => answer('cancel:a', { ok: true }))

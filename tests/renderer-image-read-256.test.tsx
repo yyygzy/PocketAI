@@ -131,9 +131,13 @@ describe('② 预览弹窗：读不到／文件确实不在／读到了，三张
 
   it('反向对照：读到 dataUrl ⇒ 图上屏，两句都没有', async () => {
     await openPreview(() => ({ ok: true, dataUrl: 'data:image/png;base64,PROBE-DATA' }))
-    await waitFor(() => expect(screen.queryByText(L('image.loadFailed'))).toBeNull())
-    expect((screen.getByAltText('PROBE-PROMPT') as HTMLImageElement).src).toContain('PROBE-DATA')
-    expect(alerts()).toEqual([])
+    // 那一发读是异步的：改前这句门等的是「『文件已不存在』那句不在场」——成功那趟它从头到尾就不在场＝t=0 就为真，
+    // 等于没等（§364 的「空极门」）。到货的见证（img.src）写在门里、且排第一句。
+    await waitFor(() => {
+      expect((screen.getByAltText('PROBE-PROMPT') as HTMLImageElement).src, '大图上屏').toContain('PROBE-DATA')
+      expect(screen.queryByText(L('image.loadFailed'))).toBeNull()
+      expect(alerts()).toEqual([])
+    })
   })
 })
 
@@ -160,9 +164,12 @@ describe('③ 最新结果那一读：失败不许演成「永远加载中」', 
 
   it('反向对照：读到大图 ⇒ img 上屏、没有 alert、也没有「加载中」', async () => {
     await runGenerate(() => ({ ok: true, dataUrl: 'data:image/png;base64,PROBE-LATEST' }))
-    await waitFor(() => expect(screen.queryByText(L('common.loading'))).toBeNull())
-    expect((screen.getByAltText('PROBE-PROMPT') as HTMLImageElement).src).toContain('PROBE-LATEST')
-    expect(alerts()).toEqual([])
+    // 同 ②：那句门只断「『加载中』不在场」，成功那趟它从头到尾就不在场＝t=0 就为真＝没等（§364 空极门）
+    await waitFor(() => {
+      expect((screen.getByAltText('PROBE-PROMPT') as HTMLImageElement).src, '大图上屏').toContain('PROBE-LATEST')
+      expect(screen.queryByText(L('common.loading'))).toBeNull()
+      expect(alerts()).toEqual([])
+    })
   })
 })
 

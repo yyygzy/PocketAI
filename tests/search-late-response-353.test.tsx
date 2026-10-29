@@ -116,8 +116,11 @@ describe('对话页侧栏（ConversationList）', () => {
     await waitFor(() => expect(dispatches('甲')).toBe(1))
     fireEvent.change(box(), { target: { value: '甲乙' } })
     await settleMs(SETTLE)
-    await waitFor(() => expect(dispatches('甲乙')).toBe(1))
-    expect(screen.getByText(L('chat.searching'))).toBeTruthy()
+    // §364：dispatch 计数不等于「搜索中」已上屏（要先看见在飞态那一格，迟一帧就会假红）
+    await waitFor(() => {
+      expect(dispatches('甲乙')).toBe(1)
+      expect(screen.getByText(L('chat.searching'))).toBeTruthy()
+    })
 
     // 旧那发先落地：它一个字都不该写——**包括在飞标志**（清了就等于宣称"这一串搜完了"，
     // 而屏上既没有结果也等不到结果，下一发还在飞）
@@ -207,8 +210,11 @@ describe('Agent 页侧栏（SessionRail）', () => {
     await waitFor(() => expect(dispatches('甲')).toBe(1))
     fireEvent.change(box(), { target: { value: '甲乙' } })
     await settleMs(SETTLE)
-    await waitFor(() => expect(dispatches('甲乙')).toBe(1))
-    expect(screen.getByText(L('chat.searching'))).toBeTruthy()
+    // §364：dispatch 计数不等于「搜索中」已上屏（要先看见在飞态那一格，迟一帧就会假红）
+    await waitFor(() => {
+      expect(dispatches('甲乙')).toBe(1)
+      expect(screen.getByText(L('chat.searching'))).toBeTruthy()
+    })
 
     // 迟到的那一发先落地：一个字都不该写，也不该把「搜索中」清掉
     answer('甲', 0, [hit('栏-命中-甲-迟到')])

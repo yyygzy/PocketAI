@@ -89,9 +89,13 @@ describe('已缓存模型逐个移除', () => {
   it('点某个模型上的 ✕ → 只剩其余模型，保存时带的是改后的列表且保留原 id', async () => {
     await openGlm()
     fireEvent.click(screen.getByLabelText('从缓存中移除该模型（保存后生效）: glm-4.6'))
-    await waitFor(() => expect(screen.queryByText('glm-4.6')).not.toBeTruthy())
-    expect(screen.getByText('已缓存模型（1）')).toBeTruthy()
-    expect(screen.getByText('glm-5')).toBeTruthy()
+    // 门只断「glm-4.6 不在了」——那颗 ✕ 点的就是它，同一批 setState 里计数一起掉；把"计数掉到 1"这句请进门里当见证，
+    // 免得负载窗里读到的是移除前那一帧（§364：门只断不存在＝没牙）
+    await waitFor(() => {
+      expect(screen.getByText('已缓存模型（1）'), '计数跟着掉').toBeTruthy()
+      expect(screen.queryByText('glm-4.6')).not.toBeTruthy()
+      expect(screen.getByText('glm-5')).toBeTruthy()
+    })
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saved).toHaveLength(1))
