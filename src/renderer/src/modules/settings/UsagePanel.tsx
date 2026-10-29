@@ -407,8 +407,11 @@ export const UsagePanel: React.FC = () => {
           <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('usage.byModel')}</div>
           <div className="flex flex-col gap-1.5 mb-4">
             {summary.byModel.map((m) => {
-              const maxModelTokens = summary.byModel[0]!.totalTokens
-              const pct = Math.max((m.totalTokens / maxModelTokens) * 100, 2)
+              // §358：分母是这张表里最大的那一项——整屏都没有用量时它自己也是 0，`0/0` 是 NaN，
+              // `Math.max(NaN, 2)` 还是 NaN；而 `width: NaN%` 会被 Chromium 整条丢掉声明，条子回落到占满轨道
+              // （真机量：600px 的轨道算得 600px）＝把"这家一点没用过"画成"这家用得最多"。零用量就画零。
+              const maxModelTokens = summary.byModel[0]?.totalTokens ?? 0
+              const pct = maxModelTokens > 0 ? Math.max((m.totalTokens / maxModelTokens) * 100, 2) : 0
               return (
                 <div key={`${m.provider}::${m.model}`} className="flex items-center gap-2">
                   <span className="w-24 text-[11px] text-[var(--color-text)] truncate shrink-0" title={`${m.provider}/${m.model}`}>
