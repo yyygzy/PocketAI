@@ -57,7 +57,8 @@ describe('② 另两处（未导出组件）：接线计数', () => {
       ['KbForm 的服务商读：reject 面同样写进 error', /setError\(t\('common\.loadFailed', \{ msg: errText\(e\) \}\)\)/g, 1],
       ['ChunkPreview 的分块读：resolve 面写 chunkErr', /setChunkErr\(ipcFailText\(v, t\('common\.unknownError'\)\)\)/g, 1],
       ['ChunkPreview 的分块读：reject 面写 chunkErr', /setChunkErr\(errText\(e, t\('common\.unknownError'\)\)\)/g, 1],
-      ['分块读不到时那句原因上屏', /chunkErr && <LoadFailNotice msg=\{chunkErr\} \/>/g, 1],
+      // §355 在那句旁边补了一颗同级重试键 ⇒ 那句不再是一行裸 JSX，锚点跟着改到块首（判据没变：有原因才说原因）
+      ['分块读不到时那句原因上屏', /chunkErr && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice msg=\{chunkErr\} \/>/g, 1],
       ['有原因时空态那句「没有分块」让位', /chunks\.length === 0 && !chunkErr/g, 1],
       ['知识库列表：两条失败面都写 kbsErr', /setKbsErr\((ipcFailText|errText)\(/g, 2]
     ]

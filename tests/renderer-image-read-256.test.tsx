@@ -178,7 +178,8 @@ describe('④ 接线计数：旧写法只剩设计内那一条，且它头上必
     expect(count(/setLatestFail\(/g), '最新结果：清位＋resolve 失败＋reject').toBe(3)
     expect(count(/LoadFailNotice msg=/g), '三张「读不到」脸').toBe(3)
     expect(count(/gallery\.length === 0 && galleryFail \? '\?' : gallery\.length/g), '读不到且屏上空着时才用 ? 顶替计数').toBe(1)
-    expect(count(/gallery\.length === 0 && galleryFail && <LoadFailNotice/g), '那句也只替空屏说话').toBe(1)
+    // §355 起那句旁边多了一颗同级重试键 ⇒ 那句不再是裸 JSX，锚点跟着改到块首（判据没变：仍只在"空屏且读不到"那一支）
+    expect(count(/gallery\.length === 0 && galleryFail && \(\s*\n\s*<div[\s\S]{0,140}?<LoadFailNotice/g), '那句也只替空屏说话').toBe(1)
   })
 
   it('旧写法归零，只有设计内那条还在，并且带着 §256 的理由', () => {

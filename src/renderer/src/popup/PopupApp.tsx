@@ -106,7 +106,10 @@ export const PopupApp: React.FC = () => {
   }, [])
 
   // ─── 初始化：Provider / 助手 / payload ────────────────────────────
-  useEffect(() => {
+  // §355：清单那两发提成具名 loader（依赖照旧由那个 effect 拿着，这里 `[]` 就够），
+  // 因为窄窗里这张脸没有任何"点一下就重发"的入口；载荷那一发**不给键**——`applyPayload` 会把文本写回输入框，
+  // 重试等于重放一次有副作用的动作（与绘图页"重跑生成"那处同档假出口）
+  const loadProviders = useCallback(() => {
     window.pocketai.listProviders().then((ps) => {
       if (hasIpcFailed(ps)) {
         setProvidersUnread({ error: ps.error })
@@ -123,6 +126,9 @@ export const PopupApp: React.FC = () => {
       setProvidersUnread({ error: errText(e, '') })
       logIpcError('popup.listProviders', e)
     })
+  }, [])
+
+  const loadAssistants = useCallback(() => {
     window.pocketai.listAssistants().then((as_) => {
       if (hasIpcFailed(as_)) {
         setAssistantsUnread({ error: as_.error })
@@ -134,6 +140,11 @@ export const PopupApp: React.FC = () => {
       setAssistantsUnread({ error: errText(e, '') })
       logIpcError('popup.listAssistants', e)
     })
+  }, [])
+
+  useEffect(() => {
+    loadProviders()
+    loadAssistants()
     void window.pocketai.getPopupPayload().then((v) => {
       if (hasIpcFailed(v)) {
         setPayloadUnread({ error: ipcFailText(v, t('common.unknownError')) })
@@ -150,7 +161,7 @@ export const PopupApp: React.FC = () => {
       applyPayload(p)
     })
     return unsub
-  }, [applyPayload])
+  }, [applyPayload, loadProviders, loadAssistants])
 
   // provider/model 持久化 + 自动选中首个模型
   useEffect(() => {
@@ -503,11 +514,24 @@ export const PopupApp: React.FC = () => {
         {(providersUnread || assistantsUnread || modelsUnread) && (
           <div className="flex flex-col gap-1 px-3 pb-2 shrink-0">
             {providersUnread && (
-              <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+                {/* §355：窄窗里没有会重发这一发的东西（那颗下拉只会换选择）*/}
+                <button data-testid="popup-providers-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadProviders}>
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             )}
             {assistantsUnread && (
-              <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <LoadFailNotice what={t('common.assistantsList')} msg={ipcFailText(assistantsUnread, t('common.unknownError'))} />
+                <button data-testid="popup-assistants-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadAssistants}>
+                  {t('agent.retryRead')}
+                </button>
+              </div>
             )}
+            {/* §355：模型清单那处**不给键**——同一屏那颗「拉模型」的 onClick 就是 fetchModels（§350 口径：已有出口）；
+                载荷那处也不给——applyPayload 会把文本写回输入框，重试＝重放一次有副作用的动作 */}
             {modelsUnread && (
               <LoadFailNotice what={t('common.modelsList')} msg={ipcFailText(modelsUnread, t('common.unknownError'))} />
             )}

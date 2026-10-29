@@ -193,9 +193,10 @@ const KbAskPanel: React.FC<{
       })
   }
 
-  // 加载启用的 provider + 记忆的模型选择；默认第一个 provider 的第一个模型（小白零配置）
-  useEffect(() => {
-    let alive = true
+  // §355：这一发提成具名 loader（依赖照旧 `[]`）。原来闭包里的 `alive` 只能护住挂载那一发，
+  // 递不到那颗键手上 ⇒ 换成组件级的 `providersAliveRef`，由这个 effect 的 cleanup 负责置 false，语义不变。
+  const providersAliveRef = useRef(true)
+  const loadProviders = useCallback(() => {
     window.pocketai
       .listProviders()
       .then((ps) => {
@@ -205,7 +206,7 @@ const KbAskPanel: React.FC<{
           setProvidersUnread({ error: ps.error })
           return
         }
-        if (!alive) return
+        if (!providersAliveRef.current) return
         setProvidersUnread(null)
         const enabled = ps.filter((p) => p.enabled)
         setProviders(enabled)
@@ -221,8 +222,14 @@ const KbAskPanel: React.FC<{
         setProvidersUnread({ error: errText(e, '') })
         logIpcError('kbAsk.listProviders', e)
       })
+  }, [])
+
+  // 加载启用的 provider + 记忆的模型选择；默认第一个 provider 的第一个模型（小白零配置）
+  useEffect(() => {
+    providersAliveRef.current = true
+    loadProviders()
     return () => {
-      alive = false
+      providersAliveRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -525,7 +532,13 @@ const KbAskPanel: React.FC<{
     <div className="flex flex-col h-[520px]">
       {/* 模型选择：provider + model，记忆上次选择 */}
       {providersUnread && (
-        <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+          {/* §355：这一格的下拉在清单为空时只剩「请选择」，选它并不重发那一发（§272 给历史那颗留的出口在这儿用不上）*/}
+          <button data-testid="kbask-providers-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadProviders}>
+            {t('agent.retryRead')}
+          </button>
+        </div>
       )}
       <div className="flex gap-2 mb-3">
         <select className="input text-xs flex-1" value={providerId} onChange={(e) => selectProvider(e.target.value)}>

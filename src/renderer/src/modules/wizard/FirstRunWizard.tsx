@@ -118,7 +118,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     })
   }, [])
 
-  useEffect(() => {
+  // §355：这两发从挂载 effect 体内联提成具名 loader（依赖照旧 `[]`），好让那两张「读不到」的脸各有一颗
+  // 按下去真再发一发的键；加密态与 provider 快照那两发不动（前者有自己的落点，后者 §256 判过设计内静默）
+  const loadHardware = useCallback(() => {
     // 硬件画像 boot 时主进程已采集并缓存，这里只读快照（force=false，秒回）
     window.pocketai
       .getHardwareInfo(false)
@@ -135,17 +137,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         setHwFail({ error: errText(e, '') })
         logIpcError('wizard.getHardwareInfo', e)
       })
-    window.pocketai.getEncryptionStatus().then((v) => {
-      if (hasIpcFailed(v)) {
-        setEncFail(v)
-        return
-      }
-      setEncFail(null)
-      setEncStatus(v)
-    }).catch((e: unknown) => {
-      setEncFail({ error: errText(e, '') })
-      logIpcError('wizard.getEncryptionStatus', e)
-    })
+  }, [])
+
+  const loadRecommendation = useCallback(() => {
     // 模型推荐含一次 Ollama 端口探测，较轻，后台加载
     window.pocketai
       .recommendModels()
@@ -161,6 +155,22 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         setRecFail({ error: errText(e, '') })
         logIpcError('wizard.recommendModels', e)
       })
+  }, [])
+
+  useEffect(() => {
+    loadHardware()
+    window.pocketai.getEncryptionStatus().then((v) => {
+      if (hasIpcFailed(v)) {
+        setEncFail(v)
+        return
+      }
+      setEncFail(null)
+      setEncStatus(v)
+    }).catch((e: unknown) => {
+      setEncFail({ error: errText(e, '') })
+      logIpcError('wizard.getEncryptionStatus', e)
+    })
+    loadRecommendation()
 
     // 加载已有 provider + assistant（向导 Step 1 用）
     // §256 复核：这份 provider 快照**没有任何渲染消费者**，只在保存那步用来判「已有同 baseUrl 就追加 key」；
@@ -168,6 +178,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     // （`provider.repo.ts`，`tests/provider-save-models-preserve.test.ts` 守着）⇒ 判设计内静默、继续计数，不为清零改产品码。
     window.pocketai.listProviders().then((v) => { if (!hasIpcFailed(v)) setProviders(v) }).catch(reportIpcError('wizard.listProviders'))
     loadAssistants()
+    // 依赖照旧 `[]`（原文如此；`loadAssistants` 是组件里的普通函数，进了依赖会让整段 effect 逐渲染重跑＝§347 那档缺陷）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function finish() {
@@ -464,7 +476,14 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       <span className="text-[var(--color-text-muted)]"> — {t(modelRecKey('summary', recommendation.summary), recommendation.summaryParams)}</span>
     </div>
   ) : recFail ? (
-    <LoadFailNotice msg={ipcFailText(recFail, t('common.unknownError'))} />
+    // §355：这一份 JSX 同时挂在 step0 与 recheck 两个槽位（两个 variant 互斥⇒一屏只一颗），
+    // 而两处都没有别的键会重发 recommendModels
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <LoadFailNotice msg={ipcFailText(recFail, t('common.unknownError'))} />
+      <button data-testid="wizard-rec-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadRecommendation}>
+        {t('agent.retryRead')}
+      </button>
+    </div>
   ) : null
 
   const hardwareSummary = hardware ? (
@@ -497,7 +516,13 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     </div>
   ) : hwFail ? (
     // §258：这一发读不到时以前永远停在「加载中…」——把"没读到"演成"还在读"
-    <LoadFailNotice msg={ipcFailText(hwFail, t('common.unknownError'))} />
+    // §355：同一份两槽位；这一屏（欢迎页与换电脑重检页）都没有会重发 getHardwareInfo 的键
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <LoadFailNotice msg={ipcFailText(hwFail, t('common.unknownError'))} />
+      <button data-testid="wizard-hardware-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadHardware}>
+        {t('agent.retryRead')}
+      </button>
+    </div>
   ) : (
     <div className="text-[12px] text-[var(--color-text-muted)] py-4 text-center">
       {t('common.loading')}

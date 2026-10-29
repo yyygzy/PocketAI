@@ -104,7 +104,9 @@ export const ImageModule: React.FC = () => {
   const flash = useCallback((ok: boolean, text: string) => showNotice({ ok, text }), [showNotice])
 
   // ---------- 初始加载 ----------
-  useEffect(() => {
+  // §355：这两发从挂载 effect 体内联提成具名 loader（依赖照旧 `[]`，与原文一致），
+  // 好让两张「读不到」的脸各有一颗按下去真再发一发的键
+  const loadProviders = useCallback(() => {
     window.pocketai.listProviders().then((list) => {
       // §263 第五面：这一支过去只有一句 `return`——第四面算它"接管了"（流程停了），
       // 但 `providers` 停在 `[]`，下拉里摆的是「还没有可用的服务商」（`image.noProvider`）⇒ 把"读不到"演成"一家都没有"。
@@ -121,6 +123,9 @@ export const ImageModule: React.FC = () => {
       setProvidersUnread({ error: errText(e, '') })
       logIpcError('image.listProviders', e)
     })
+  }, [])
+
+  const loadGallery = useCallback(() => {
     window.pocketai.listImages().then((v) => {
       if (hasIpcFailed(v)) {
         setGalleryFail(v)
@@ -132,29 +137,34 @@ export const ImageModule: React.FC = () => {
       setGalleryFail({ error: errText(e, '') })
       logIpcError('image.listImages', e)
     })
+  }, [])
+
+  useEffect(() => {
+    loadProviders()
+    loadGallery()
     return () => {
       // 离开模块时中止进行中的生成；卸载路径上的失败不必打扰用户，但要留痕（§224）
       if (runningRef.current && requestIdRef.current) {
         window.pocketai.abortImage(requestIdRef.current).catch(reportIpcError('image.abortImage'))
       }
     }
-  }, [])
+  }, [loadProviders, loadGallery])
 
   // ---------- 预览弹窗：懒加载全图 + Esc 关闭 ----------
-  useEffect(() => {
-    if (!previewId) {
-      setPreviewDataUrl(null)
-      setPreviewFail(null)
-      return
-    }
-    let alive = true
+  // §355：那一发提成具名 loader，好让"这张图读不到"那张脸有出口。原来闭包里的 `alive` 递不出来
+  // （那颗键与换图共用同一个入口，却各自有各自的闭包）⇒ 换成组件级的代次判据，语义不变：
+  // 只有最新那一发能写回，换图／关窗时把号往前推就是作废在飞那发。
+  const previewGenRef = useRef(0)
+  const loadPreview = useCallback(() => {
+    if (!previewId) return
+    const gen = ++previewGenRef.current
     setPreviewLoading(true)
     setPreviewDataUrl(null)
     setPreviewFail(null)
     window.pocketai
       .getImageFile(previewId)
       .then((r) => {
-        if (!alive) return
+        if (previewGenRef.current !== gen) return
         if (r.ok && r.dataUrl) {
           setPreviewDataUrl(r.dataUrl)
           return
@@ -163,22 +173,32 @@ export const ImageModule: React.FC = () => {
         if (hasIpcFailed(r)) setPreviewFail(r)
       })
       .catch((e: unknown) => {
-        if (!alive) return
+        if (previewGenRef.current !== gen) return
         setPreviewFail({ error: errText(e, '') })
         logIpcError('image.getPreviewFile', e)
       })
       .finally(() => {
-        if (alive) setPreviewLoading(false)
+        if (previewGenRef.current === gen) setPreviewLoading(false)
       })
+  }, [previewId])
+
+  useEffect(() => {
+    if (!previewId) {
+      // 关窗：把在飞那一发作废，再清屏（与原来的 alive=false 同一步）
+      previewGenRef.current++
+      setPreviewDataUrl(null)
+      setPreviewFail(null)
+    } else {
+      loadPreview()
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setPreviewId(null)
     }
     window.addEventListener('keydown', onKey)
     return () => {
-      alive = false
       window.removeEventListener('keydown', onKey)
     }
-  }, [previewId])
+  }, [previewId, loadPreview])
 
   // ---------- 生成 ----------
   const handleGenerate = useCallback(async () => {
@@ -321,7 +341,13 @@ export const ImageModule: React.FC = () => {
       <div className="rounded-lg border border-[var(--color-border)] p-3 flex flex-col gap-2">
         {/* §263：那一读失败时下拉是空的，但那不是"没有服务商"——这句话要上屏（§222 那张脸，逐发点名 §259） */}
         {providersUnread && (
-          <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+            {/* §355：这一支屏上没有会重发这一发的东西（那颗下拉只是换选择、生成那颗键要等 `status` 与模型）*/}
+            <button data-testid="image-providers-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadProviders}>
+              {t('agent.retryRead')}
+            </button>
+          </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <select
@@ -456,7 +482,15 @@ export const ImageModule: React.FC = () => {
               只在屏上空着的时候说这句：清单一旦到货（生成后那发顺带刷新也会写它）就不该再挂着"读不到"。 */}
           <span className="text-[11px] text-[var(--color-text-muted)]">{gallery.length === 0 && galleryFail ? '?' : gallery.length}</span>
         </div>
-        {gallery.length === 0 && galleryFail && <LoadFailNotice msg={ipcFailText(galleryFail, t('common.unknownError'))} />}
+        {gallery.length === 0 && galleryFail && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice msg={ipcFailText(galleryFail, t('common.unknownError'))} />
+            {/* §355：清单为空时那一整片是这颗键的落点（生成完那一发顺带刷新是另一条路，不叫用户在这屏等一次生成）*/}
+            <button data-testid="image-gallery-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadGallery}>
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
         {gallery.length === 0 && !galleryFail ? (
           <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
             <div className="text-3xl mb-2">{THUMB_MISSING_ICON}</div>
@@ -518,7 +552,13 @@ export const ImageModule: React.FC = () => {
               {previewLoading ? (
                 <div className="text-xs text-[var(--color-text-muted)] py-8">{t('common.loading')}</div>
               ) : previewFail ? (
-                <LoadFailNotice msg={ipcFailText(previewFail, t('common.unknownError'))} />
+                <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+                  <LoadFailNotice msg={ipcFailText(previewFail, t('common.unknownError'))} />
+                  {/* §355：弹窗里除了「关闭」什么都没有⇒ 这一发要有出口就得给这颗键（它喊的是同一个 loadPreview）*/}
+                  <button data-testid="image-preview-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadPreview}>
+                    {t('agent.retryRead')}
+                  </button>
+                </div>
               ) : previewDataUrl ? (
                 <img
                   src={previewDataUrl}

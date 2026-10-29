@@ -1482,7 +1482,8 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: 
   // §254：读不到 ≠「这个文档没有分块」——那句空态得让位给原因
   const [chunkErr, setChunkErr] = useState<string | null>(null)
 
-  useEffect(() => {
+  // §355：这一发提成具名 loader（依赖照旧那份：只有换文档才重读），让「分块读不到」那张脸有出口
+  const loadChunks = useCallback(() => {
     window.pocketai
       .listKbChunks(doc.id)
       .then((v) => {
@@ -1498,7 +1499,11 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: 
         logIpcError('kb.listChunks', e)
       })
       .finally(() => setLoading(false))
-  }, [doc.id])
+  }, [doc.id, t])
+
+  useEffect(() => {
+    loadChunks()
+  }, [loadChunks])
 
   // 来源跳转定位：滚动到目标分块并高亮闪烁
   useEffect(() => {
@@ -1528,7 +1533,15 @@ const ChunkPreview: React.FC<{ doc: KbDocument; onClose: () => void; focusSeq?: 
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {loading && <p className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</p>}
-          {chunkErr && <LoadFailNotice msg={chunkErr} />}
+          {chunkErr && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice msg={chunkErr} />
+              {/* §355：弹窗里除「关闭」没有别的键会重发这一发，而空态那句「没有分块」已在 §254 让位给原因 */}
+              <button data-testid="kb-chunks-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadChunks}>
+                {t('agent.retryRead')}
+              </button>
+            </div>
+          )}
           {!loading && chunks.length === 0 && !chunkErr && (
             <p className="text-xs text-[var(--color-text-muted)]">{t('kb.noChunks')}</p>
           )}

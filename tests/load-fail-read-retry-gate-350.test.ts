@@ -6,9 +6,11 @@
 // ——那两种写法在 DOM 上看起来一模一样。所以每处钉三件：**testid＋紧跟在那句之后的那颗 button＋onClick 的 initializer 里
 // 指的是哪一个具名 loader**；反向再钉一颗：这个新后缀 `-read-retry` 只许出现在名单里，别处为 0。
 //
-// 名单为什么是这二十四处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
-//   · 现数（§354 重跑同一把尺子，`data/tmp/scope-354.py`）：61 处 `<LoadFailNotice>` 调用点，
-//     其中 **31 处旁边已有同级重试键**（＝§352 那版的 27＋§352 自己收的 4），**30 处没有**；
+// 名单为什么是这三十四处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
+//   · 现数（§355 重跑同一把尺子 `data/tmp/scope-354.py`）：61 处 `<LoadFailNotice>` 调用点，
+//     **49 处旁边已有同级重试键**（＝§354 那版的 31＋§354 收的 8＋本批 10）、**12 处没有**——
+//     那 12 处全部已写过判语：10 处"同屏已有出口"（名单末尾那段）＋本批新判 2 处（`PopupApp` 的模型清单＝同屏那颗「拉模型」
+//     就是 `fetchModels`；`PopupApp` 的载荷＝`applyPayload` 会把文本写回输入框，重试是重放有副作用的动作）⇒ **本批之后不再有"没判过的脸"**；
 //     27 的构成＝24 颗带字面 testid＋1 颗 testid 走变量（`AssistantEditor.tsx` 那句一键工厂 `listFailLine`
 //     ＝上一轮按字面量扫的**漏数**）＋2 处键在但压根没有 testid（`ChatModule` 草稿、首启向导助手）；
 //   · 启发式的假阳一处：`ChatModule.tsx` 的消息那一发往后五行撞进**隔壁** `draftUnread` 那块自己的键，
@@ -27,8 +29,14 @@
 //     再配键：设置页五处（智能标题／路径脚注／WebDAV 配置／浮窗快捷键／更新信息——最后一处的读在父页，
 //     以 `onReloadInfo` 递进 props 驱动的 UpdatePanel，形状同 §351 许可证与 §352 加密面板）＋
 //     对话页侧栏三处（`useConversationLists` 那一发重拉三份清单⇒ **三句配三颗键**，同 §351 会话栏）；
-//   · 余 12 处仍是"要先抽 loader"那一档（绘图页三发含预览那颗带 `alive` 闭包要顺手换成代次判据、问答／翻译各一发、
-//     知识库分片预览一发、向导两发是同一句话挂两个槽位＝§332 第 32 条那一档、浮窗四发）——**§355 的账**；
+//   · §355 收的是 §354 留下的那一档"要先抽 loader"的 12 处（与上面第 12 行那个"没有键的 12 处"不是同一批数）：
+//     十处抽完 loader 就配键（绘图页三发——预览那颗顺手把 `alive` 闭包换成组件级代次判据、
+//     问答／翻译各一发、知识库分片预览一发、向导两发＝同一句话挂两个槽位即 §332 第 32 条那一档、浮窗两发），
+//     余两处判"不给"＝上面那两处新判 ⇒ 名单 24→34，这一族不再有"没判过的脸"；
+//   · 厚度：§355 那十颗键**每颗都被真挂载按过一次**（`tests/load-fail-read-retry-355.test.tsx` 11 例，
+//     含向导两发同屏各点各的、浮窗两句配两颗键互不顶替、预览那发的代次判据）——闸门只保证身份，行为才保证有牙（第 35 条）；
+//     **有一档只有闸门看得见**：把标签从 `{t('agent.retryRead')}` 改成手抄中文。用例里的 `RETRY` 就是按字典取的那句，
+//     zh 的值正是「重试」⇒ 抄对了行为面比不出差别，只有本闸门读 JSX 里那个 `t(...)` 才咬得住（变异轮 U7 现测：只闸门红）；
 //   · 抽 loader 时给 PopupPanel 那个起名 `loadPopupCfg` 而非 `loadCfg`：本闸门的 onClick 判据读的是 initializer 里的
 //     **标识符子串**，`loadCfg` 会被隔壁 BackupPanel 的 `reloadCfg` 蒙过去（名字撞车＝判据变瞎），换个不重叠的名比放宽判据便宜。
 //   · 判"已有出口"必须**往句子上面看**：`McpForm` 那颗「检测」在句子往上三十行，
@@ -69,12 +77,25 @@ const SITES: Site[] = [
   { file: 'modules/settings/SettingsModule.tsx', testid: 'update-info-read-retry', loader: 'onReloadInfo' },
   { file: 'modules/chat/ConversationList.tsx', testid: 'conv-list-read-retry', loader: 'onReloadLists' },
   { file: 'modules/chat/ConversationList.tsx', testid: 'archived-list-read-retry', loader: 'onReloadLists' },
-  { file: 'modules/chat/ConversationList.tsx', testid: 'groups-list-read-retry', loader: 'onReloadLists' }
+  { file: 'modules/chat/ConversationList.tsx', testid: 'groups-list-read-retry', loader: 'onReloadLists' },
+  // §355：这一族收口——剩下那 12 处里的 10 处（另两处判"已有出口／重放有副作用"不给，理由在名单末尾与 roster）
+  { file: 'modules/image/ImageModule.tsx', testid: 'image-providers-read-retry', loader: 'loadProviders' },
+  { file: 'modules/image/ImageModule.tsx', testid: 'image-gallery-read-retry', loader: 'loadGallery' },
+  { file: 'modules/image/ImageModule.tsx', testid: 'image-preview-read-retry', loader: 'loadPreview' },
+  { file: 'modules/knowledge/KbAskPanel.tsx', testid: 'kbask-providers-read-retry', loader: 'loadProviders' },
+  { file: 'modules/knowledge/KnowledgeModule.tsx', testid: 'kb-chunks-read-retry', loader: 'loadChunks' },
+  { file: 'modules/translate/TranslateModule.tsx', testid: 'translate-providers-read-retry', loader: 'loadProviders' },
+  { file: 'modules/wizard/FirstRunWizard.tsx', testid: 'wizard-rec-read-retry', loader: 'loadRecommendation' },
+  { file: 'modules/wizard/FirstRunWizard.tsx', testid: 'wizard-hardware-read-retry', loader: 'loadHardware' },
+  { file: 'popup/PopupApp.tsx', testid: 'popup-providers-read-retry', loader: 'loadProviders' },
+  { file: 'popup/PopupApp.tsx', testid: 'popup-assistants-read-retry', loader: 'loadAssistants' }
 ]
 
-/** `<LoadFailNotice … />` 之后紧跟一颗带这个 testid 的 button，中间只准隔空白与注释 */
+/** `<LoadFailNotice … />` 之后紧跟一颗带这个 testid 的 button，中间只准隔空白与注释
+ *  §355：注释那一档原本只认行注释 `/* … *\/`，可 JSX 子位置写的是 `{/* … *\/}`（带花括号）⇒ 新加的十处里七处被判"没紧贴"。
+ *  与其为了过闸门把注释挪走（那是让判据迁就写法），把花括号这一形也认下来——预算不变（仍是 220 字符内的一条注释）*/
 const PAIR = (testid: string): RegExp =>
-  new RegExp(`<LoadFailNotice[\\s\\S]{0,200}?/>\\s*(?:/\\*[\\s\\S]{0,220}?\\*/\\s*)?<button\\s+data-testid="${testid}"`, 'm')
+  new RegExp(`<LoadFailNotice[\\s\\S]{0,200}?/>\\s*(?:\\{?/\\*[\\s\\S]{0,220}?\\*/\\}?\\s*)?<button\\s+data-testid="${testid}"`, 'm')
 
 const onClickOf = (text: string, testid: string): string => {
   const at = text.indexOf(`data-testid="${testid}"`)

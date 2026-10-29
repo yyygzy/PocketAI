@@ -159,7 +159,8 @@ export const TranslateModule: React.FC = () => {
   }, [])
 
   // ---------- 初始加载 ----------
-  useEffect(() => {
+  // §355：这一发从挂载 effect 体内联提成具名 loader（依赖照旧 `[]`），让那张「读不到」有出口
+  const loadProviders = useCallback(() => {
     window.pocketai.listProviders().then((list) => {
       // §263 第五面：过去这一支只有一句 `return`，`providers` 停在 `[]` ⇒ 下拉里摆「还没有可用的服务商」，
       // 把"读不到"演成"一家都没有"（那两发清单读在 §269 收了口，见上面的 loadHistory／loadGlossary）。
@@ -178,9 +179,13 @@ export const TranslateModule: React.FC = () => {
       setProvidersUnread({ error: errText(e, '') })
       logIpcError('translate.listProviders', e)
     })
+  }, [])
+
+  useEffect(() => {
+    loadProviders()
     loadHistory()
     loadGlossary()
-    // 三发都是挂载那一次的读；两根 loader 是 useCallback([]) ⇒ 依赖恒稳
+    // 三发都是挂载那一次的读；三根 loader 都是 useCallback([]) ⇒ 依赖恒稳
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -547,7 +552,13 @@ export const TranslateModule: React.FC = () => {
 
           {/* §263：服务商那一读没读到就直接说，别让它长成"一家都没有" */}
           {providersUnread && (
-            <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+              {/* §355：那一读失败时下拉里只剩「没有可用的服务商」，而改选择／按翻译都不会重发这一发 */}
+              <button data-testid="translate-providers-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadProviders}>
+                {t('agent.retryRead')}
+              </button>
+            </div>
           )}
           <select
             className="input text-xs py-1 w-auto max-w-[9rem]"

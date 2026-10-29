@@ -618,7 +618,7 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     }
   })
 
-  it('§272 那三发的形状数得出（两屏三份数据、两句两种脸、键该有 2 不该有 3、天然出口那行必须在场）', () => {
+  it('§272 那三发的形状数得出（两屏三份数据、两句两种脸、§272 两颗键＋§355 补的那颗、天然出口那行必须在场）', () => {
     const read = (rel: string): string =>
       fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
     const panel = read('src/renderer/src/modules/knowledge/KbAskPanel.tsx')
@@ -653,10 +653,13 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
 
     // ③ 键的两头钉：策略与漫游各一颗（这两发都没有"点一下就重发"的出口），
     //    而历史那一颗**不许存在**——它的出口是那行 `if (!showHistory) refreshSessions()`
+    //    §355 又给服务商那一发补了第三颗（那一屏只有下拉，改选择不会重发这一发）⇒ 面板从一句一颗变两句两颗
     expect(inPanel(/"kb-ask-retention-retry"/g), '策略那颗').toBe(1)
     expect(inRoam(/"kb-ask-roam-retry"/g), '漫游那颗').toBe(1)
     expect(inPanel(/kb-ask-sessions-retry/g), '历史那一发不造机关').toBe(0)
-    expect(inPanel(/agent\.retryRead/g), '面板一句一颗').toBe(1)
+    expect(inPanel(/\{providersUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.providersList'\)/g), '§355 那句服务商（渲染条件与名词成对）').toBe(1)
+    expect(inPanel(/"kbask-providers-read-retry"/g), '§355 服务商那颗只这一颗').toBe(1)
+    expect(inPanel(/agent\.retryRead/g), '面板两句各一颗（§272 策略＋§355 服务商）').toBe(2)
     expect(inRoam(/agent\.retryRead/g), '漫游一句一颗').toBe(1)
     // "不造键"的前提是那行代码还在；哪天它被改掉，这条就得红（而不是让那句变成没出路的话）
     expect(inPanel(/^ {12}if \(!showHistory\) refreshSessions\(\)$/gm), '展开历史面板就是重拉这一发').toBe(1)
