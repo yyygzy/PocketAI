@@ -107,7 +107,7 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
         <div className="space-y-2">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
             <span>
-              {t('kb.evalRecall').replace('{k}', String(m.k))} <strong>{pct(m.recallAtK)}</strong>
+              {t('kb.evalRecall', { k: m.k })} <strong>{pct(m.recallAtK)}</strong>
             </span>
             <span>
               {t('kb.evalMrr')} <strong>{m.mrr.toFixed(3)}</strong>
@@ -116,9 +116,9 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
               {t('kb.evalMedian')}{' '}
               <strong>{m.medianRank === null ? '—' : m.medianRank.toFixed(1)}</strong>
             </span>
-            <span className="text-[var(--color-danger)]">{t('kb.evalMissed').replace('{n}', String(m.missedCases))}</span>
+            <span className="text-[var(--color-danger)]">{t('kb.evalMissed', { n: m.missedCases })}</span>
             <span className="text-[var(--color-text-muted)]">
-              {t('kb.evalCases').replace('{n}', String(m.cases)).replace('{ms}', String(result?.elapsedMs ?? 0))}
+              {t('kb.evalCases', { n: m.cases, ms: result?.elapsedMs ?? 0 })}
             </span>
           </div>
 
@@ -132,7 +132,7 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
 
           {(result?.stale.length ?? 0) > 0 && (
             <p className="text-[11px] text-[var(--color-danger)]">
-              {t('kb.evalStale').replace('{n}', String(result?.stale.length ?? 0))}
+              {t('kb.evalStale', { n: result?.stale.length ?? 0 })}
               {result?.stale
                 .slice(0, 3)
                 .map((s) => ` ${s.caseId}→${s.docId}`)
@@ -142,7 +142,7 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
 
           {(result?.disabledTargets.length ?? 0) > 0 && (
             <p className="text-[11px] text-[var(--color-text-muted)]">
-              {t('kb.evalDisabled').replace('{n}', String(result?.disabledTargets.length ?? 0))}
+              {t('kb.evalDisabled', { n: result?.disabledTargets.length ?? 0 })}
             </p>
           )}
 

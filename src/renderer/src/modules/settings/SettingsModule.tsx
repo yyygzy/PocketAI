@@ -1251,7 +1251,15 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
       if (r.ok) setMergePwd(pwd ?? '')
     } catch (e) {
       if (seq !== mergeScanSeqRef.current) return
-      setMergeReport({ ok: false, error: errText(e, t('bk.mergeFail')), tables: [], attachmentsToAdd: 0 })
+      setMergeReport({
+        ok: false,
+        // §361：'bk.mergeFail' 是带 {e} 的整句话，不能当 errText 的兜底串直接放进 error——
+        // 那样 e 不是 Error／不是非空字符串时，屏上就剩「合并失败：{e}」这颗没填的占位符。
+        // 与执行那一路的两发（回码那一发、catch 那一发）同形：先填值，兜底走 common.unknownError。
+        error: t('bk.mergeFail', { e: errText(e, t('common.unknownError')) }),
+        tables: [],
+        attachmentsToAdd: 0
+      })
     } finally {
       // 「还在扫描」也归最新那发管：先回的那条不许把它翻掉（§322 同一张脸）
       if (seq === mergeScanSeqRef.current) setMergeScanning(false)

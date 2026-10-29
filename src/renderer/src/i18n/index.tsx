@@ -110,7 +110,11 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let str = dicts[lang]?.[key] ?? dicts.zh?.[key] ?? key
     if (params) {
       for (const [k, v] of Object.entries(params)) {
-        str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
+        // 第二参必须是函数：字符串第二参会展开替换模式，值里的 $&／$'／$`／$$／$1 会被当成
+        // 「引用这份文案自己」——$' 把占位符右侧的整段文案搬进值位、$& 反吐占位符本身，
+        // 而参数值多数取自库外（模型回文、文件名、用户起的名字）。四语文案都走这一发插值，
+        // 所以同一个名字在四种语言上坏法一样（§361 实测）。
+        str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), () => String(v))
       }
     }
     return str

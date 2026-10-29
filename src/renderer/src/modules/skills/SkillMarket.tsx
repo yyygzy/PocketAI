@@ -226,8 +226,8 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       setView({ mode: 'detail', id: r.skill.id })
       const notes: string[] = [
         r.forcedOnDemand ? t('skill.market.forcedOnDemand') : '',
-        (r.ignoredKeys ?? []).length > 0 ? t('skill.market.ignoredKeys').replace('{keys}', r.ignoredKeys!.join('、')) : '',
-        (r.skipped ?? []).length > 0 ? t('skill.market.skippedFiles').replace('{n}', String(r.skipped!.length)) : ''
+        (r.ignoredKeys ?? []).length > 0 ? t('skill.market.ignoredKeys', { keys: r.ignoredKeys!.join('、') }) : '',
+        (r.skipped ?? []).length > 0 ? t('skill.market.skippedFiles', { n: r.skipped!.length }) : ''
       ].filter(Boolean)
       flash(true, [t('skill.market.importFolderDone'), ...notes].filter(Boolean).join(' '))
     }
