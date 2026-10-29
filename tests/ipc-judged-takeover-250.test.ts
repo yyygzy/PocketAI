@@ -398,6 +398,43 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     }
   })
 
+  it('§357 补一面：全仓每一发 `listProviders()` 都得先判信封（专扫"根本没判"这一档）', () => {
+    // 为什么要另开这一条：第四面数的是"判了没接管"、第五面数的是"判了只 return"——**一发完全不判**的读
+    // 落在这两面的视野之外。§357 真机撞出来的正是这一档：`ChatModule.loadProviders` 把 `safeHandle` 的
+    // `{ok:false}` 当数组写进 `providers`，渲染期 `providers.some(...)`（`ChatView` 里「一家模型都没有」那一判）
+    // 抛 TypeError ⇒ 根 error boundary 把整个应用换成「界面出错了」；这一发从没进过任何一面的名单——
+    // `ChatModule` 在第四面登记过的那一处是助手清单的 `reloadAssistants`（§260 的注释写着它），与本发无关。
+    // 口径＝按调用点看 14 行窗口（这些读都写得很紧凑；窗口判据只能出候选、每处仍要回读——§350 那条纪律）。
+    const judged = (rel: string): string[] =>
+      blankComments(fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')).split('\n')
+    const unjudged: string[] = []
+    let callSites = 0
+    for (const rel of ALL) {
+      const lines = judged(rel)
+      lines.forEach((l, i) => {
+        if (!/\.listProviders\s*\(/.test(l)) return
+        callSites++
+        const win = lines.slice(i, i + 14).join('\n')
+        if (!/hasIpcFailed|isIpcFail|ipcFailText|errText/.test(win)) unjudged.push(`${rel}:${i + 1}`)
+      })
+    }
+    expect(unjudged, `这些 listProviders 调用点在 14 行窗口内没有任何失败判据：\n${unjudged.map((s) => `  ${s}`).join('\n')}`).toEqual([])
+    // 反向自证：不手挑文件清单（§351 那条），所以先数出现有 11 处调用点（十份文件，向导那屏两处）——
+    // 数为 0 就是这把尺子瞎了，数掉了就是有人新增了调用点而没判
+    expect(callSites, '全仓 `listProviders()` 调用点数（现查 11）').toBe(11)
+
+    // 上面那条窗口判据只问"有没有判"，问不出**顺序**与"成功那一发收不收得回去"（§348 第 34／§345 两条同族），
+    // 所以对本批这一处再钉三件：判据必须在写 state 之前、成功分支必须把原因清掉。
+    const cm = judged('src/renderer/src/modules/chat/ChatModule.tsx').join('\n')
+    const at = cm.indexOf('const loadProviders = useCallback')
+    expect(at, 'loadProviders 这个名字要在（改了名这条判据就得跟着改，别让它悄悄失效）').toBeGreaterThan(-1)
+    const body = cm.slice(at, at + 1400)
+    expect(body.indexOf('hasIpcFailed(list)'), '判据得在函数体里').toBeGreaterThan(-1)
+    expect(body.indexOf('setProviders(list)'), '写 state 必须在判据之后（顺序反了＝把失败对象当数组写进去，本批的缺陷本身）')
+      .toBeGreaterThan(body.indexOf('hasIpcFailed(list)'))
+    expect(/setProvidersUnread\(null\)/.test(body), '成功那一发要把那句收回去（不清就是自己造的假警报）').toBe(true)
+  })
+
   it('静默名单只减不增（ratchet 现数 ' + SILENT_READ_CAP + '）', () => {
     const over = SILENT.slice(SILENT_READ_CAP)
     expect(over.length, `新增"判了不接管"的读数点：\n${over.slice(0, 10).map((s) => `  ${s.file}:${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(0)

@@ -58,6 +58,9 @@ export const ChatModule: React.FC = () => {
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
+  // §357：服务商清单那一读失败的原因（同 §263 的绘图／翻译页两处）——不判就是"把失败对象当数组写进 state"，
+  // 渲染期 `providers.some(...)` 抛 TypeError 把整个应用送进根 error boundary
+  const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   // 助手清单那一读失败的原因（§276）：列表停在空值，把"读不到"演成"你一个助手都没建"
   const [assistantsUnread, setAssistantsUnread] = useState<{ error: string } | null>(null)
@@ -193,6 +196,15 @@ export const ChatModule: React.FC = () => {
   const loadProviders = useCallback((mode: 'mount' | 'reactivate') => {
     void Promise.all([window.pocketai.listProviders(), window.pocketai.getLastProvider()])
       .then(([list, lastRes]) => {
+        // §357：这一支过去**完全不判信封**——`safeHandle` 把主进程抛错转成 resolve 的 `{ok:false}`，
+        // 于是那份失败对象被当数组写进 `providers`，渲染期 `providers.some(...)`（`ChatView` 里
+        // 「一家模型都没有」那一判）抛 TypeError ⇒ 根 error boundary 把整个应用换成「界面出错了」（真机现测见台账 §357）。
+        // 改法与 §263 同一条：判信封 ⇒ **不动**上一份清单（用户还能接着用已选的那台）＋把原因上屏。
+        if (hasIpcFailed(list)) {
+          setProvidersUnread({ error: list.error })
+          return
+        }
+        setProvidersUnread(null)
         setProviders(list)
         // 切回来时：当前选择仍然有效就不动（别把用户手选的模型打回去）；
         // 空 model（上次那家没模型）算无效，拉完模型回来必须重挑
@@ -1518,6 +1530,22 @@ export const ChatModule: React.FC = () => {
           <button
             className="text-xs px-1.5 py-0.5 rounded border border-[var(--color-border)]"
             onClick={() => { if (currentConvId) loadDraft(currentConvId) }}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
+      {/* §357：服务商清单读不到那一档。以前这一发不判信封⇒失败对象被当数组写进 state⇒渲染期
+          `providers.some(...)` 抛 TypeError⇒根 error boundary 把整个应用换成「界面出错了」（真机现测＝台账 §357）。
+          现在：上一份清单留着（已选那台还能用）＋这句原因上屏＋一颗同级键。
+          这一处**只有源码级判据**——ChatModule 全仓不挂载（§264／§266 同判），键的牙由 §350 那面闸门按身份钉住。 */}
+      {providersUnread && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LoadFailNotice what={t('common.providersList')} msg={ipcFailText(providersUnread, t('common.unknownError'))} />
+          <button
+            data-testid="chat-providers-read-retry"
+            className="text-xs px-1.5 py-0.5 rounded border border-[var(--color-border)]"
+            onClick={() => void loadProviders('reactivate')}
           >
             {t('agent.retryRead')}
           </button>

@@ -6,9 +6,9 @@
 // ——那两种写法在 DOM 上看起来一模一样。所以每处钉三件：**testid＋紧跟在那句之后的那颗 button＋onClick 的 initializer 里
 // 指的是哪一个具名 loader**；反向再钉一颗：这个新后缀 `-read-retry` 只许出现在名单里，别处为 0。
 //
-// 名单为什么是这三十四处（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
-//   · 现数（§355 重跑同一把尺子 `data/tmp/scope-354.py`）：61 处 `<LoadFailNotice>` 调用点，
-//     **49 处旁边已有同级重试键**（＝§354 那版的 31＋§354 收的 8＋本批 10）、**12 处没有**——
+// 名单为什么是这三十五处（§357 又补一颗：对话页服务商那一发以前根本不判信封，修好之后这张脸才存在）（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
+//   · 现数（§357 重跑同一把尺子 `data/tmp/scope-354.py`）：62 处 `<LoadFailNotice>` 调用点，
+//     **50 处旁边已有同级重试键**（＝§354 那版的 31＋§354 收的 8＋§355 的 10＋§357 的 1）、**12 处没有**——
 //     那 12 处全部已写过判语：10 处"同屏已有出口"（名单末尾那段）＋本批新判 2 处（`PopupApp` 的模型清单＝同屏那颗「拉模型」
 //     就是 `fetchModels`；`PopupApp` 的载荷＝`applyPayload` 会把文本写回输入框，重试是重放有副作用的动作）⇒ **本批之后不再有"没判过的脸"**；
 //     27 的构成＝24 颗带字面 testid＋1 颗 testid 走变量（`AssistantEditor.tsx` 那句一键工厂 `listFailLine`
@@ -33,6 +33,9 @@
 //     十处抽完 loader 就配键（绘图页三发——预览那颗顺手把 `alive` 闭包换成组件级代次判据、
 //     问答／翻译各一发、知识库分片预览一发、向导两发＝同一句话挂两个槽位即 §332 第 32 条那一档、浮窗两发），
 //     余两处判"不给"＝上面那两处新判 ⇒ 名单 24→34，这一族不再有"没判过的脸"；
+//   · §357 再加第三十五颗：对话页 `ChatModule.loadProviders` 那一发**过去完全不判信封**，失败对象被当数组写进
+//     `providers`⇒渲染期 `providers.some(...)` 抛 TypeError⇒根 error boundary 把整个应用换成「界面出错了」。
+//     判信封、上一份清单留着、句子与同级键都到位⇒ 这一屏从此也有出口（ChatModule 全仓不挂载⇒这颗**只有闸门看得见**）。
 //   · 厚度：§355 那十颗键**每颗都被真挂载按过一次**（`tests/load-fail-read-retry-355.test.tsx` 11 例，
 //     含向导两发同屏各点各的、浮窗两句配两颗键互不顶替、预览那发的代次判据）——闸门只保证身份，行为才保证有牙（第 35 条）；
 //     **有一档只有闸门看得见**：把标签从 `{t('agent.retryRead')}` 改成手抄中文。用例里的 `RETRY` 就是按字典取的那句，
@@ -88,7 +91,11 @@ const SITES: Site[] = [
   { file: 'modules/wizard/FirstRunWizard.tsx', testid: 'wizard-rec-read-retry', loader: 'loadRecommendation' },
   { file: 'modules/wizard/FirstRunWizard.tsx', testid: 'wizard-hardware-read-retry', loader: 'loadHardware' },
   { file: 'popup/PopupApp.tsx', testid: 'popup-providers-read-retry', loader: 'loadProviders' },
-  { file: 'popup/PopupApp.tsx', testid: 'popup-assistants-read-retry', loader: 'loadAssistants' }
+  { file: 'popup/PopupApp.tsx', testid: 'popup-assistants-read-retry', loader: 'loadAssistants' },
+  // §357：对话页服务商那一读——它过去**根本不判信封**，失败对象被当数组写进 `providers`，渲染期 `providers.some(...)`
+  // 抛 TypeError 把整个应用送进根 error boundary（真机现测）。修好之后这张脸才有"读不到"这档，才轮到配出口：
+  // 这一屏没有别的键会重发那一发（切回模块的 `reactivate` 只有切走再切回来才发），⇒ 按第三档给键。
+  { file: 'modules/chat/ChatModule.tsx', testid: 'chat-providers-read-retry', loader: 'loadProviders' }
 ]
 
 /** `<LoadFailNotice … />` 之后紧跟一颗带这个 testid 的 button，中间只准隔空白与注释
