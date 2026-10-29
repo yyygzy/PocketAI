@@ -97,11 +97,16 @@ describe('① 上下文中枢面板（ChatConfigBar）：点开那一格读不�
     fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
     await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.skillsList'), REASON)]), MOUNT_BUDGET)
     fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
-    await waitFor(() => expect(callsOf('listSkills')).toBe(2), MOUNT_BUDGET)
-    expect(alerts()).toEqual([])
-    // 再点开那一格看芯片：读到之后守卫已关 ⇒ 不会再拉第三次（次数这条断言就是钉这一点的）
+    await waitFor(() => expect(callsOf('listSkills'), '点那一格＝重发这一发').toBe(2), MOUNT_BUDGET)
+    // §365（牙齿轮 Q1 咬出来的更正）：「那句退场」不就地判，也不并进这道门——组件在重发前先把上一次的横幅
+    // 清掉，那一刻 `alerts()` 空是"在飞"给的不是"读到了"给的（并进门里也永远为真＝还是假绿）。
+    // 芯片上屏之后一起判才对：那一帧才是"落定了、且横幅随之退场"。
+    // 再点开那一格看芯片：读到之后守卫已关 ⇒ 不会再拉第三次（次数这条断言就是钉这一点）
     fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
-    await waitFor(() => expect(screen.getByText('⚡ 技能一')).toBeTruthy(), MOUNT_BUDGET)
+    await waitFor(() => {
+      expect(screen.getByText('⚡ 技能一'), '读到 ⇒ 芯片上屏').toBeTruthy()
+      expect(alerts(), '那句随之退场').toEqual([])
+    }, MOUNT_BUDGET)
     expect(screen.getByText('⚡ 技能一')).toBeTruthy()
     expect(callsOf('listSkills')).toBe(2)
     // 这一处**没有**自造的重试键（那一格本身就是出口）

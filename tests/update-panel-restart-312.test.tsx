@@ -6,7 +6,7 @@
 // 于是按了那颗键屏上什么都没变：这是 §196／§204 那句「失败被咽」在更新链上的又一处
 // （那条通道本来就带失败分支，只是这一批才第一次真的会走到它）。
 import { describe, it, expect } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, screen, fireEvent, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { UpdatePanel } from '../src/renderer/src/modules/settings/SettingsModule'
 import { zh } from '../src/renderer/src/i18n/zh'
@@ -50,6 +50,8 @@ describe('§312 重启安装那发：失败是返回值，就得把原因说出�
     mountWithProviders(<UpdatePanel {...panelProps()} />)
     await clickRestart()
     await waitFor(() => expect(pocketaiCalls().filter((c) => c.fn === 'quitAndInstall')).toHaveLength(1))
+    // §365：门等"那一发发出去了"，而失败话术（含这句 STALE 与下面那句）要等信封**落地**才画 ⇒ 早读永远为真
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(screen.queryByText(STALE)).toBeNull()
     expect(screen.queryByText(L('upd.installFail'))).toBeNull()
   })

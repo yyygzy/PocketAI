@@ -175,6 +175,8 @@ describe('评测集面板', () => {
     mount()
     fireEvent.click(screen.getByText(zh['kb.evalPick']))
     await waitFor(() => expect(pickKbEvalSet).toHaveBeenCalled())
+    // §365：门等的是"对话框那一发被调起"，而画文件名/报错要等它**返回 null 落地** ⇒ 早读永远为真＝漏报
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(screen.queryByText('set.json')).toBeNull()
     expect(screen.queryByText(/读不到评测集/)).toBeNull()
   })

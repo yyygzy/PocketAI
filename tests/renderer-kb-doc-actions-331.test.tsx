@@ -7,7 +7,7 @@
 //  · K5 导入文件夹的 `skippedCount`（类型不支持／图片未开 OCR／超过单文件大小上限）改前渲染层从不读。
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { KbDetail } from '../src/renderer/src/modules/knowledge/KnowledgeModule'
 import { zh } from '../src/renderer/src/i18n/zh'
@@ -90,6 +90,8 @@ describe('K1 文档重命名：失败不许演成功', () => {
 
     // 到货的见证＝那句失败原因上屏。改前的门只断「没弹『已重命名』」——成功那趟它也一直为真、失败这趟 t=0 就为真
     // ＝等于没等（§364 空极门），下面两句读的是"点了保存之后"的屏，负载窗里会假红。
+    // §365 成色＝把 `renameKbDocument` 改成延迟 120ms 才回：改前形状当场红（红因就是这一条），本形状绿，
+    // 改前不延迟也绿⇒杠杆是延迟；同一颗缺陷另见 K2 头上那段 2×2。
     await waitFor(() => {
       expect(screen.getByText('文档已经不在了'), '失败原因上屏').toBeTruthy()
       expect(toasts().join('|'), '不报「已重命名」').not.toContain(L('kb.renameOk'))
@@ -108,13 +110,17 @@ describe('K1 文档重命名：失败不许演成功', () => {
 
 describe('K2 编辑原文：失败不许把刚写的原文一起带走', () => {
   it('那一发回 {ok:false} ⇒ textarea 还挂着、里面就是刚敲的那段', async () => {
-    updateKbDocText.mockResolvedValue(fail)
+    updateKbDocText.mockImplementation(() => new Promise((r) => setTimeout(() => r(fail), 120)))
     await openRowDialog(L('kb.editText'), 'kb.editTextTitle')
     const area = document.querySelector('textarea')!
     fireEvent.change(area, { target: { value: '改了一半的长文，不能丢' } })
     fireEvent.click(screen.getByText(L('common.save')))
 
     // 同 K1：门要等"那一发落定了"，见证＝失败原因上屏；textarea 还挂着、里面就是刚敲的那段，两句一起在门里读
+    // §365 成色（这一处延迟到货把旧形状推不红，于是换一把尺子跑 2×2＝形状×响应快慢，缺陷恒在＝摘掉 §331 那句信封判定）：
+    //   本形状 即时红／延迟 120ms 也红；改前形状 即时红／延迟 120ms **绿**——它那三句读的是"到货之前那一帧"
+    //   （弹窗本来开着、textarea 本来有值、toast 本来没弹），抓不抓得到缺陷全看响应够不够慢。
+    //   哨兵（本形状×延迟×无缺陷）绿＝红不是形状本身恒红。这就是 §364 折它的理由。
     await waitFor(() => {
       expect(screen.getByText('文档已经不在了'), '失败原因上屏').toBeTruthy()
       expect(toasts().join('|'), '不报「已保存」').not.toContain(L('kb.editOk'))
@@ -184,8 +190,12 @@ describe('K5 导入文件夹：被跳过的文件要报数', () => {
 
   it('反向对照：一个都没跳过时不许凭空冒出一句「被跳过 0 个」', async () => {
     fireEvent.click(screen.getByText(L('kb.importFolder')))
-    await waitFor(() => expect(renameKbDocument).not.toHaveBeenCalled())
-
+    // §365：改前这颗门等的是 `renameKbDocument` 没被调，而这条用例从头到尾不会调它＝初始值即真（不开的门）；
+    // "凭空冒出被跳过 0 个"又是导入那一发落地后才画的 ⇒ 紧随的负向句永远为真＝漏报。
+    // 改成：等真正会变动的那一发被调 ⇒ 再落定 ⇒ 两句当场判（"不该改名"这条判据保留）。
+    await waitFor(() => expect(addKbFolder).toHaveBeenCalled())
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    expect(renameKbDocument, '导入不该顺手改名的').not.toHaveBeenCalled()
     expect(toasts().join('|')).not.toContain(fill(L('kb.folderSkipped'), { n: 0 }))
   })
 })

@@ -133,6 +133,8 @@ describe('② 预览弹窗：读不到／文件确实不在／读到了，三张
     await openPreview(() => ({ ok: true, dataUrl: 'data:image/png;base64,PROBE-DATA' }))
     // 那一发读是异步的：改前这句门等的是「『文件已不存在』那句不在场」——成功那趟它从头到尾就不在场＝t=0 就为真，
     // 等于没等（§364 的「空极门」）。到货的见证（img.src）写在门里、且排第一句。
+    // §365 成色＝延迟 120ms 把这发到货推后：改前形状当场红（红因 Unable to find an element with the alt text:
+    // PROBE-PROMPT），同一杠杆下本形状绿、改前不延迟也绿⇒那处红是"到货被推后"演出来的，不是形状本身恒红。
     await waitFor(() => {
       expect((screen.getByAltText('PROBE-PROMPT') as HTMLImageElement).src, '大图上屏').toContain('PROBE-DATA')
       expect(screen.queryByText(L('image.loadFailed'))).toBeNull()
@@ -165,6 +167,7 @@ describe('③ 最新结果那一读：失败不许演成「永远加载中」', 
   it('反向对照：读到大图 ⇒ img 上屏、没有 alert、也没有「加载中」', async () => {
     await runGenerate(() => ({ ok: true, dataUrl: 'data:image/png;base64,PROBE-LATEST' }))
     // 同 ②：那句门只断「『加载中』不在场」，成功那趟它从头到尾就不在场＝t=0 就为真＝没等（§364 空极门）
+    // §365 成色同 ②：延迟 120ms 下改前形状当场红（红因同样是那句 alt 找不到），本形状绿。
     await waitFor(() => {
       expect((screen.getByAltText('PROBE-PROMPT') as HTMLImageElement).src, '大图上屏').toContain('PROBE-LATEST')
       expect(screen.queryByText(L('common.loading'))).toBeNull()

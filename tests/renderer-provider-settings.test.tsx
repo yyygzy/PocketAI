@@ -91,6 +91,8 @@ describe('已缓存模型逐个移除', () => {
     fireEvent.click(screen.getByLabelText('从缓存中移除该模型（保存后生效）: glm-4.6'))
     // 门只断「glm-4.6 不在了」——那颗 ✕ 点的就是它，同一批 setState 里计数一起掉；把"计数掉到 1"这句请进门里当见证，
     // 免得负载窗里读到的是移除前那一帧（§364：门只断不存在＝没牙）
+    // §365 成色：这一发**没有"到货"那一步**（摘模型是本地 setState，不经 IPC）⇒延迟杠杆不适用，
+    // 只能按形状判：同一批里计数与那行一起掉，把计数写进门里是让"见证"与"判据"落在同一帧，不新增等待。
     await waitFor(() => {
       expect(screen.getByText('已缓存模型（1）'), '计数跟着掉').toBeTruthy()
       expect(screen.queryByText('glm-4.6')).not.toBeTruthy()

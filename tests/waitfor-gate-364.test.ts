@@ -19,7 +19,9 @@
 //      · `expect(...)` 的文本要**爬到链顶**再取：`expect(a()).toEqual([])` 只取 `expect(a())` 会把 matcher 丢掉，
 //        于是全仓的「只断不存在」门一律读成「断存在」＝整面无声变宽（第一趟实测 absence 型门 0 颗就是这么来的）。
 //   ③ 紧随其后（同块、中间没有第二次 await）是一条 `expect(...)` 且读屏，且它要求「存在」
-//      （`findBy*` 自己会等⇒安全；要求「不存在」的那一档只会假绿、不会假红，另数一份钉住数量）。
+//      （`findBy*` 自己会等⇒安全；要求「不存在」的那一档进 absenceOnly——**注意这一桶方向不单一**：
+//       若那句"不在场"要等响应落地才成立（撤横幅），它其实**会假红**；若是"成功路径根本不该画"，它只会漏报。
+//       方向取决于产品何时画，源码看不出来 ⇒ §365 的处理＝逐条判、把名单连判语钉死，不再自动化。）
 // 两头钉：正向候选必须 0；改前形状喂进同一个分类器必须逐条报出来（不然"0"只是分类器失明）。
 // 已知盲区（如实记，本批不收）：
 //   · 门按"存在"读了 X、紧随的断言读的却是另一颗更晚到货的 Y ⇒ 放行。要收这一档得比"门读的那颗==断言读的那颗"，
@@ -49,12 +51,14 @@ interface Cand {
 interface Scan {
   /** 门不等屏、紧随其后要求屏上存在 ⇒ 负载窗里会假红（这一桶要收干） */
   positive: Cand[]
-  /** 门不等屏、紧随其后要求不存在 ⇒ 只会假绿（不动，数量钉住） */
+  /** 门不等屏、紧随其后要求不存在 ⇒ 方向要逐条判（撤除型会假红、恒不画型只会漏报），名单连判语钉死 */
   absenceOnly: Cand[]
   /** 门按「存在」读了屏 ⇒ 放行 */
   domGates: number
   /** 门只断不存在、但同块更早已把那样东西断上屏 ⇒ 等它退场，放行 */
   transitionGates: number
+  /** 门放行之后没有"紧随的读屏断言"（这一发不构成本面的形状） */
+  silent: number
   awaits: number
 }
 
@@ -126,7 +130,7 @@ function scanSource(fileName: string, text: string): Scan {
     return decls.some((d) => hit(d.node) && callRe(d.name).test(txt))
   }
 
-  const out: Scan = { positive: [], absenceOnly: [], domGates: 0, transitionGates: 0, awaits: 0 }
+  const out: Scan = { positive: [], absenceOnly: [], domGates: 0, transitionGates: 0, silent: 0, awaits: 0 }
   const blockOf = (n: ts.Node): ts.Block | null => (n.parent && ts.isBlock(n.parent) ? n.parent : null)
   /** 这一发空极门之前，同块里（或经由它调的本地 helper）确有东西上过屏 ⇒ 它是「等退场」，不是「没牙」 */
   const retractOf = (block: ts.Block | null, gate: ts.Statement): boolean => {
@@ -159,6 +163,7 @@ function scanSource(fileName: string, text: string): Scan {
         } else if (absenceReads.length > 0 && retractOf(block, node)) {
           out.transitionGates += 1
         } else if (block) {
+          let pushed = false
           const stmts = block.statements
           const at = stmts.indexOf(node)
           for (let i = at + 1; i < Math.min(stmts.length, at + 6); i++) {
@@ -177,8 +182,10 @@ function scanSource(fileName: string, text: string): Scan {
             }
             if (isAbsence(txt)) out.absenceOnly.push(cand)
             else out.positive.push(cand)
+            pushed = true
             break
           }
+          if (!pushed) out.silent += 1
         }
       }
     }
@@ -189,7 +196,7 @@ function scanSource(fileName: string, text: string): Scan {
 }
 
 function scanAll(): Scan {
-  const merged: Scan = { positive: [], absenceOnly: [], domGates: 0, transitionGates: 0, awaits: 0 }
+  const merged: Scan = { positive: [], absenceOnly: [], domGates: 0, transitionGates: 0, silent: 0, awaits: 0 }
   const files: string[] = []
   const walk = (d: string): void => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
@@ -207,6 +214,7 @@ function scanAll(): Scan {
     merged.absenceOnly.push(...one.absenceOnly)
     merged.domGates += one.domGates
     merged.transitionGates += one.transitionGates
+    merged.silent += one.silent
     merged.awaits += one.awaits
   }
   return merged
@@ -218,20 +226,67 @@ const detail = (c: Cand): string => `${where(c)}  ${c.gate}  ||  ${c.dom}`
 
 describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', () => {
   it('读法自证：全仓在等的 waitFor 有多少、各桶多少（分类器坏了这里先红）', () => {
-    // 四桶是**互斥**的：一颗门只进一格。现数（2026-10-29 本批量）＝awaits 978／按存在读屏 525／等退场 75，
-    // 余下 378 颗走"候选那条路"（其后没有同步读屏断言，或那句要求不存在⇒进假绿那一桶）。
-    // 逐颗钉死＝新增一颗"等退场"的门要人工过目为什么算退场（同 absenceOnly 那一档的处理方式）。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(978)
-    expect(ALL.domGates, `现数 ${ALL.domGates} 个门按「存在」读了屏（放行，见文件头盲区）`).toBe(525)
-    expect(ALL.transitionGates, `现数 ${ALL.transitionGates} 个「先上屏、再等退场」的门（放行）`).toBe(75)
+    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-30（§365 改后）＝awaits 977／按存在读屏 525／
+    // 等退场 75／门后没有读屏断言 359／会假红 0／只会假绿 18。逐颗钉死＝新增任何一格都要人工过目。
+    //   75/359 这一格在 268 那颗改造后搬运过一颗：那句「点那一格＝重发这一发」的计数门后面紧跟的不再是
+    //   同步读屏断言，而是另起一颗把到货见证写在里面的门⇒它从「等退场」落到「门后没有读屏断言」。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(977)
+    expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('525/75/359/0/18')
+    expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
+      '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
 
   it('正向候选＝0：门不等屏、紧随其后却是"要求屏上存在"的断言，一处都不许留', () => {
     expect(ALL.positive.map(where), `会假红的形状：\n${ALL.positive.map(detail).join('\n')}`).toEqual([])
   })
 
-  it('只会假绿那一档（要求「不存在」）钉在现数：新增要人工看过再改数字', () => {
-    expect(ALL.absenceOnly.length, `现数 ${ALL.absenceOnly.length}：\n${ALL.absenceOnly.map(where).join('\n')}`).toBe(24)
+  it('只会假绿那一档（要求「不存在」）＝18 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
+    // §365 判语（分组，位置按现数名单）：
+    //   ①「在飞那一帧」本身就是判据对象——负向句读的是"发出之后、落地之前"，折进门里反而把判据废掉：
+    //     load-fail-read-retry-350／352／354（"还在加载那一支既没有那句也没有那颗键"）、
+    //     renderer-agent-sub-session-refresh-245（挂载那次读到的是空表）、renderer-file-open-332（关窗那一瞬）、
+    //     stale-read-notice-347（切 tab 后在飞那一帧）、skill-market-fetch-debounce-322（两发都在飞）
+    //   ②弹与不弹由**同一次 handler** 决定（发通道与 setState 同批落地）⇒ 计数门放行时那一帧已定：
+    //     renderer-channel-b3 三颗、renderer-websearch-b3、renderer-provider-http-confirm 两颗、
+    //     renderer-provider-settings、renderer-mcp-none-mode-save、renderer-wizard-328
+    //   ③头顶已有到货锚（同块更早把该屏断成存在）⇒ 负向句读的是到货后的帧：backup-cloud-time-327
+    //   ④门等的"空态消失"本身就是到货转换（到货前空态必在）⇒ 有牙：renderer-image-read-256
+    //   另一档「错画要等落地」（renderer-data-health-perf 两颗、renderer-kb-doc-actions-331 导入那颗、
+    //   renderer-kb-eval-panel 取消那颗、update-panel-restart-312 成功那颗）本批已改＝负向句一律挪到落定之后，
+    //   故不在名单里；ipc-composer-list-read-268 那颗更是方向搞反（撤横幅要等落地⇒它其实会假红），已折进门里。
+    //   为什么这一档不再另立机器判据：「门放行时那句『不在场』成没成真」取决于**产品那边什么时候画**（同步 handler
+    //   还是响应落地），源码里看不出来——同一种形状（计数门＋先前上过屏＋现在要求不在）在 268 是会假红、在 347
+    //   是设计内的在飞帧。⇒ 只能逐条判＋把名单钉死，别再试着用 subject 交集自动化（本批试过，见台账 §365）。
+    const VERDICTS = [
+      'tests/backup-cloud-time-327.test.tsx:73 -> :75',
+      'tests/load-fail-read-retry-350.test.tsx:97 -> :99',
+      'tests/load-fail-read-retry-352.test.tsx:90 -> :91',
+      'tests/load-fail-read-retry-354.test.tsx:91 -> :92',
+      'tests/renderer-agent-sub-session-refresh-245.test.tsx:151 -> :152',
+      'tests/renderer-channel-b3.test.tsx:109 -> :110',
+      'tests/renderer-channel-b3.test.tsx:117 -> :119',
+      'tests/renderer-channel-b3.test.tsx:127 -> :128',
+      'tests/renderer-file-open-332.test.tsx:107 -> :109',
+      'tests/renderer-image-read-256.test.tsx:84 -> :85',
+      'tests/renderer-mcp-none-mode-save.test.tsx:59 -> :60',
+      'tests/renderer-provider-http-confirm.test.tsx:58 -> :59',
+      'tests/renderer-provider-http-confirm.test.tsx:64 -> :65',
+      'tests/renderer-provider-settings.test.tsx:249 -> :250',
+      'tests/renderer-websearch-b3.test.tsx:81 -> :82',
+      'tests/renderer-wizard-328.test.tsx:211 -> :212',
+      'tests/skill-market-fetch-debounce-322.test.tsx:159 -> :160',
+      'tests/stale-read-notice-347.test.tsx:159 -> :160'
+    ]
+    // 比对用整串而非数组：数组的 diff 只印第一颗漂的，剩下几颗得跑好几趟才看得见（本批就撞过）
+    const now = ALL.absenceOnly.map(where).sort()
+    const pinned = [...VERDICTS].sort()
+    const gone = pinned.filter((x) => !now.includes(x))
+    const fresh = now.filter((x) => !pinned.includes(x))
+    expect(now.join('\n'),
+      `名单漂了（现数 ${now.length}／钉着 ${pinned.length}）\n` +
+      `  判语作废、要重写或改位置：\n${gone.map((x) => '   - ' + x).join('\n')}\n` +
+      `  新冒出来、要补判语：\n${fresh.map((x) => '   + ' + x).join('\n')}`).toBe(pinned.join('\n'))
   })
 
   it('漏杀对照：§362／§363／§353 三种改前形状喂进同一个分类器，逐条报得出（"0"不是瞎的）', () => {
@@ -320,5 +375,25 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       })`)
     expect(chainedHelper.positive, `闭包 helper 没认出来：\n${chainedHelper.positive.map(detail).join('\n')}`).toEqual([])
     expect(chainedHelper.domGates).toBe(1)
+    // §365①：计数门＋紧随"要求不存在"⇒ 必须落进假绿那一桶（这一档的名单有牙的前提＝它真能被数出来）
+    const countThenAbsence = scanSource('fx-count-absence.tsx', `
+      const alerts = (): string[] => screen.queryAllByRole('alert').map((e) => (e.textContent ?? '').trim())
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('listSkills')).toBe(2))
+        expect(alerts()).toEqual([])
+      })`)
+    expect(countThenAbsence.absenceOnly.length, '计数门后那句负向断言没被数进假绿桶＝名单是瞎的').toBe(1)
+    // §365②：修法（负向句挪到"落定之后"）要真的改变形状，而不是把判据藏起来——两句都还在，只是位置在落定后
+    const afterSettle = scanSource('fx-settled.tsx', `
+      const alerts = (): string[] => screen.queryAllByRole('alert').map((e) => (e.textContent ?? '').trim())
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('listSkills')).toBe(2))
+        await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+        expect(alerts()).toEqual([])
+        expect(callsOf('listSkills')).toBe(2)
+      })`)
+    expect(afterSettle.positive).toEqual([])
+    expect(afterSettle.absenceOnly.length, '中间多一次落定 ⇒ 这一发不再算候选（修法生效的机器证据）').toBe(0)
+    expect(afterSettle.silent, '它要落在"门后无紧随读屏断言"那一格').toBe(1)
   })
 })

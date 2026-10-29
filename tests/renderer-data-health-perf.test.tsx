@@ -4,7 +4,7 @@
 // 这块只能在真实应用里点出来才看得见，所以用整份报告打桩钉住渲染契约：
 // 主进程只下发 PerfSummary（日志原文不过 IPC），面板负责把 label 翻成可读名。
 import { describe, it, expect } from 'vitest'
-import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, screen, waitFor, fireEvent } from '@testing-library/react'
 import { formatBytes } from '../src/renderer/src/utils/format'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { DataHealthPanel } from '../src/renderer/src/modules/settings/DataHealthPanel'
@@ -215,6 +215,9 @@ describe('数据健康面板 · 打开数据目录（V4-Iter-179）', () => {
     await mount([])
     fireEvent.click(screen.getByText('打开数据目录'))
     await waitFor(() => expect(openDirCalls).toBe(1))
+    // §365：这句读的是"发出去那一刻"，而错画（成功却弹失败 toast）发生在**那一发落地之后**⇒ 早读永远为真＝漏报。
+    // 先让通道那一发落定（一个宏任务边界把微任务排干），再读"不在场"才有牙。
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(screen.queryByText(/操作失败/)).toBeNull()
   })
 
@@ -237,7 +240,10 @@ describe('数据健康面板 · 清理 HTTP 缓存（V4-Iter-189）', () => {
     // 判据要挑「只有确认框里才有」那句：/HTTP 缓存/ 会同时命中那颗按钮，findByText 因多个元素直接抛错
     expect(await screen.findByText(/代码缓存不在清理范围内/)).toBeTruthy()
     fireEvent.click(screen.getByText('取消'))
-    await waitFor(() => expect(clearCacheCalls).toBe(0))
+    // §365：改前这颗门等的是"通道调用数＝0"，而 0 就是它的初始值＝一道不开的门；紧随那句"已清理不在场"
+    // 读的又是发出去那一刻——错发通道的话术要落地才画，两头都够不着。改成先落定、再当场判两句。
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    expect(clearCacheCalls).toBe(0)
     expect(screen.queryByText(/已清理/)).toBeNull()
   })
 
