@@ -133,10 +133,13 @@ describe('Agent 模块记住上次用的助手与会话', () => {
       conversations: { a1: [conv('c1')] },
       assistants: [assistant('a1')]
     })
-    await waitFor(() => expect(prefsWrites().length).toBeGreaterThan(0))
-    expect(result.current.assistantId).toBe('')
-    expect(result.current.conversationId).toBeNull()
-    expect(prefsWrites()).toEqual([{ agentAssistantId: '', agentConversationId: '' }])
+    // §362：见证要选"清完之后才成立"的那一组，不能是「prefs 被写过」（挂载本身就可能写一次）。
+    // 改前等 prefsWrites().length>0 就同步读 hook state，满载时那一发还没 settle⇒读到 'ghost'（负载窗里红的那条）。
+    await waitFor(() => {
+      expect(result.current.assistantId).toBe('')
+      expect(result.current.conversationId).toBeNull()
+      expect(prefsWrites()).toEqual([{ agentAssistantId: '', agentConversationId: '' }])
+    })
   })
 
   it('无存档（对照）：不自动选助手，也不写库；用户选了助手与会话后才落档', async () => {

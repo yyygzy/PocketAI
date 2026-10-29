@@ -117,9 +117,14 @@ describe('① 本库历史那一发：那句上屏、不报条数，出口是再
   it('挂载失败而面板没开 ⇒ 屏上零字，而那颗按钮不再报 0', async () => {
     mountPanel(panelStubs({ listKbAskSessions: failingSessions('HIST:历史通道断了') }))
     await waitFor(() => expect(calls.sessions).toBe(1), MOUNT_BUDGET)
-    expect(alerts(), '面板没展开时那句不占位（失败侧只让数字闭嘴）').toEqual([])
-    expect(bodyText(), '把通道故障演成"你一条都没问过"').not.toContain(`${HIST_WHAT}（0）`)
-    expect(historyBtn().textContent).toBe(HIST_WHAT)
+    // §362：DOM 那三句要等"到货之后"再断。改前这里等的是「这一发打了几次」，下一行就同步读屏，
+    // 满载时那一发还没落地就断⇒把"还没到货"读成"演成了 0"（992s 负载窗里红的那条就是这么来的）。
+    // 见证选初值≠终值的那个：按钮带数（0）⇒ 不带数。
+    await waitFor(() => {
+      expect(bodyText(), '把通道故障演成"你一条都没问过"').not.toContain(`${HIST_WHAT}（0）`)
+      expect(historyBtn().textContent).toBe(HIST_WHAT)
+      expect(alerts(), '面板没展开时那句不占位（失败侧只让数字闭嘴）').toEqual([])
+    }, MOUNT_BUDGET)
   })
 
   it('点开那一格 ⇒ 那句上屏、「暂无历史会话」让位，而这一发没有第二颗机关', async () => {
