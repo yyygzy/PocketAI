@@ -60,7 +60,7 @@ beforeAll(() => {
 const enc = (over: Partial<EncryptionStatus> = {}): EncryptionStatus =>
   ({
     mode: 'db', dbEncrypted: true, unlocked: true, masterPasswordVerified: true, recoveryKeyExists: false,
-    kdfN: null, kdfAtCurrentTier: true, autoLockMinutes: 5, ...over
+    kdfN: 131072, kdfAtCurrentTier: true, autoLockMinutes: 5, ...over
   }) as EncryptionStatus
 
 // props 驱动的两块（加密／许可证）在数据到位后还会连带挂出自动锁、恢复密钥、指纹这些自己拉的读，

@@ -142,7 +142,7 @@ describe('定时备份：首读就失败 ⇒ 开关那一整块不出现，那�
 const enc = (over: Partial<EncryptionStatus> = {}): EncryptionStatus =>
   ({
     mode: 'db', dbEncrypted: true, unlocked: true, masterPasswordVerified: true, recoveryKeyExists: false,
-    kdfN: null, kdfAtCurrentTier: true, autoLockMinutes: 5, ...over
+    kdfN: 131072, kdfAtCurrentTier: true, autoLockMinutes: 5, ...over
   }) as EncryptionStatus
 // props 驱动的面板在数据到位后还会自己拉锁状态／恢复密钥，桩不给就是 not a function（§225 同形）
 const PANEL_STUBS = {

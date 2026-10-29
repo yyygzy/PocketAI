@@ -1319,12 +1319,19 @@ export type EncryptionMode = 'none' | 'db' | 'field'
 
 export interface EncryptionStatus {
   mode: EncryptionMode
+  /** 「此刻有没有可用的密钥」——none 模式恒 true（没东西要解锁），db 模式锁定时 false */
   unlocked: boolean
-  /** DB 是否已加密（sqlcipher 开启） */
+  /** DB 是否已加密（sqlcipher 开启）＝只看模式，与解锁无关 */
   dbEncrypted: boolean
-  /** 字段级加密是否启用 */
+  /** 字段现在能不能加解密（none 模式是固定弱密钥，不是安全保障；§195） */
   fieldEncrypted: boolean
-  /** 当前主密码是否已验证通过（解锁状态） */
+  /**
+   * 当前主密码是否已验证通过。§359：这一发过去算的是 `hasKey()`，而它在 none 模式恒 true
+   * ⇒ 一把主密码都没设过的库会被告知「主密码已验证通过」。现在只看 db 档且已解锁。
+   * 合法组合（闸门 tests/encryption-status-shape-gate-359.test.ts 逼桩与代码一起对齐）：
+   *  `mode:'none'` ⇒ 本字段必为 false（与 `dbEncrypted`/`kdfN:null`/`kdfAtCurrentTier:false` 同批）；
+   *  `mode:'db'`   ⇒ 本字段＝`unlocked`。
+   */
   masterPasswordVerified: boolean
   /** 库的主密码 scrypt 档位 N（SEC-32②）；无密码模式为 null */
   kdfN: number | null

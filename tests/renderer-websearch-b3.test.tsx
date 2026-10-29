@@ -20,7 +20,7 @@ function mount(mode: 'none' | 'db'): void {
   stubPocketai({
     getEncryptionStatus: () => ({
       mode, unlocked: true, dbEncrypted: mode === 'db', fieldEncrypted: true,
-      masterPasswordVerified: true, kdfN: null, kdfAtCurrentTier: true
+      masterPasswordVerified: mode === 'db', kdfN: mode === 'db' ? 131072 : null, kdfAtCurrentTier: mode === 'db'
     }),
     getAgentWorkspaceDir: () => '',
     getShellConfig: () => ({ enabled: false, policy: 'confirm' }),

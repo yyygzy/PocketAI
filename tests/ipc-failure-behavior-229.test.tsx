@@ -181,7 +181,7 @@ const builtinSkill = { id: 's1', name: '内置一', isBuiltin: true, enabled: fa
 function mountWizard(over: Record<string, unknown>): void {
   stubPocketai({
     getHardwareInfo: () => ({ ok: true, data: wizardHardware }),
-    getEncryptionStatus: () => ({ mode: 'none', unlocked: true, dbEncrypted: false, fieldEncrypted: true, masterPasswordVerified: true, kdfN: null, kdfAtCurrentTier: true }),
+    getEncryptionStatus: () => ({ mode: 'none', unlocked: true, dbEncrypted: false, fieldEncrypted: true, masterPasswordVerified: false, kdfN: null, kdfAtCurrentTier: false }),
     recommendModels: () => ({ ok: false }),
     listProviders: () => [ollamaProvider],
     listAssistants: () => [{ id: 'a-builtin', name: '内置助手', isBuiltin: true, toolPermissions: [], defaultProviderId: null }],

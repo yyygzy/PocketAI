@@ -201,7 +201,7 @@ const mountWizard = (over: Record<string, (...a: any[]) => unknown>): void => {
     getHardwareInfo: () => ({ ok: true, data: wizardHardware }),
     getEncryptionStatus: () => ({
       mode: 'none', unlocked: true, dbEncrypted: false, fieldEncrypted: true,
-      masterPasswordVerified: true, kdfN: null, kdfAtCurrentTier: true
+      masterPasswordVerified: false, kdfN: null, kdfAtCurrentTier: false
     }),
     recommendModels: () => ({ ok: false }),
     listProviders: () => [{

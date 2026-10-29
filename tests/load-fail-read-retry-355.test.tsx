@@ -317,8 +317,8 @@ const REC = {
 const wizardStubs = (over: Record<string, any> = {}): Record<string, any> => ({
   getHardwareInfo: () => ({ ok: true, data: HW }),
   getEncryptionStatus: () => ({
-    mode: 'none', unlocked: true, dbEncrypted: false, fieldEncrypted: false,
-    masterPasswordVerified: true, kdfN: null, kdfAtCurrentTier: true
+    mode: 'none', unlocked: true, dbEncrypted: false, fieldEncrypted: true,
+    masterPasswordVerified: false, kdfN: null, kdfAtCurrentTier: false
   }),
   recommendModels: () => ({ ok: true, data: REC }),
   listProviders: () => [],

@@ -37,8 +37,12 @@ export function registerEncryptionHandlers(): void {
       // 用模式判断而非「是否有 key」：锁定清 key 后此字段必须仍为 true，
       // 否则锁屏 UI 会误判为无密码模式，用户无法提交密码解锁
       dbEncrypted: masterKeyManager.getMode() === 'db',
+      // 「字段现在能不能加解密」，不是「有没有主密码」：none 模式用固定弱密钥、db 模式锁定时为 false
       fieldEncrypted: masterKeyManager.hasKey(),
-      masterPasswordVerified: masterKeyManager.hasKey(),
+      // §359：这一发过去也算 `hasKey()`，而 `hasKey()` 在 none 模式恒为 true（`init('none')` 直接标已解锁）
+      // ⇒ 一把主密码都没设过的库会被告知「主密码已验证通过」。备份那格（唯一读者）本来还与 `dbEncrypted` 相与，
+      // 所以屏上没差别＝无牙；但字段名会被下一个人当事实用（`backup-service.ts` 早就为同一个坑写过注释）。
+      masterPasswordVerified: masterKeyManager.isDbEncrypted(),
       kdfN: kdf?.N ?? null,
       kdfAtCurrentTier: kdf?.atCurrent ?? false
     }

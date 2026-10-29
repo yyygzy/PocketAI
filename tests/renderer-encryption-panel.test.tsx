@@ -14,11 +14,11 @@ import type { EncryptionStatus } from '../src/shared/types'
 
 const none: EncryptionStatus = {
   mode: 'none', unlocked: true, dbEncrypted: false, fieldEncrypted: true,
-  masterPasswordVerified: true, kdfN: null, kdfAtCurrentTier: false
+  masterPasswordVerified: false, kdfN: null, kdfAtCurrentTier: false
 }
 const dbAt = (n: number): EncryptionStatus => ({
-  mode: 'db', unlocked: false, dbEncrypted: true, fieldEncrypted: true,
-  masterPasswordVerified: true, kdfN: n, kdfAtCurrentTier: n >= 131072
+  mode: 'db', unlocked: false, dbEncrypted: true, fieldEncrypted: false,
+  masterPasswordVerified: false, kdfN: n, kdfAtCurrentTier: n >= 131072
 })
 
 function mount(enc: EncryptionStatus) {

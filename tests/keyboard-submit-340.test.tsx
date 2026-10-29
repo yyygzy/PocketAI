@@ -57,7 +57,7 @@ describe('② 联网搜索 API Key：Enter 之后被 blur 追一发 ⇒ 只写�
     stubPocketai({
       getEncryptionStatus: () => ({
         mode: 'db', unlocked: true, dbEncrypted: true, fieldEncrypted: true,
-        masterPasswordVerified: true, kdfN: null, kdfAtCurrentTier: true
+        masterPasswordVerified: true, kdfN: 131072, kdfAtCurrentTier: true
       }),
       getAgentWorkspaceDir: () => '',
       getShellConfig: () => ({ enabled: false, policy: 'confirm' }),
