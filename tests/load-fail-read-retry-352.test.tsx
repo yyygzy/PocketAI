@@ -147,7 +147,7 @@ const enc = (over: Partial<EncryptionStatus> = {}): EncryptionStatus =>
 // props 驱动的面板在数据到位后还会自己拉锁状态／恢复密钥，桩不给就是 not a function（§225 同形）
 const PANEL_STUBS = {
   getLockStatus: () => ({ state: 'unlocked', autoLockTimeout: 0 }),
-  hasRecoveryKey: () => false,
+  hasRecoveryKey: () => ({ has: false, carriedFrom: null }),
   getLicenseFingerprint: () => 'fp-1234'
 }
 

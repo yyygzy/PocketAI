@@ -71,7 +71,7 @@ describe('§251 收口后的接线：九发读各自的接管落点', () => {
       ['setPaths(v)', /setPaths\(v\)/g, 1, SRC],
       ['加密状态成功分支（§344 起在共享同步器里，3→1）', /deps\.setStatus\(s\)/g, 1, FLAGS],
       ['许可证成功分支（§346 起在同步器里，2→1）', /deps\.setStatus\(s\)/g, 1, LIC],
-      ['setHasKey(v)', /setHasKey\(v\)/g, 1, SRC],
+      ['setHasKey(v.has)（§369 起这一发回来的是两件事，成功分支的落点跟着搬；旧字面 setHasKey(v) 已不存在）', /setHasKey\(v\.has\)/g, 1, SRC],
       ['setSchedule(v)', /setSchedule\(v\)/g, 1, SRC],
       ['成功时把 err 清掉（残留的原因不许压过到了的数据，§222 那条；§346 起许可证那一句在同步器里，4→3）', /set(Enc|Paths|Title)?Err\(null\)|setSchedErr\(null\)/g, 3, SRC],
       ['同步器那发成功时也把 err 收回（§342 旗标＋§344 整块各一句）', /deps\.setErr\(null\)|setEncReadErr\(null\)/g, 2, FLAGS]

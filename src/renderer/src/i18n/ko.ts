@@ -1896,6 +1896,7 @@ export const ko = {
   'enc.recoveryTitle': '🔑 복구 키 (비밀번호 분실 시 구명줄)',
   'enc.recoverySet': '설정됨',
   'enc.recoveryNotSet': '미설정 — 비밀번호를 분실하면 데이터를 복구할 수 없습니다',
+  'enc.recoveryCarried': '이 복구 키는 파싱에 실패한 {file}에서 필드 단위로 복원했습니다 — 복구 코드가 아직 유효한지 확인하세요',
   'enc.recoveryGenerate': '복구 키 생성',
   'enc.recoveryRegen': '재생성',
   'enc.recoveryRemove': '삭제',

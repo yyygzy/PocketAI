@@ -226,13 +226,17 @@ const detail = (c: Cand): string => `${where(c)}  ${c.gate}  ||  ${c.dom}`
 
 describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', () => {
   it('读法自证：全仓在等的 waitFor 有多少、各桶多少（分类器坏了这里先红）', () => {
-    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-30（§365 改后）＝awaits 977／按存在读屏 525／
-    // 等退场 75／门后没有读屏断言 359／会假红 0／只会假绿 18。逐颗钉死＝新增任何一格都要人工过目。
+    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-30（§369 加了两份新用例之后）＝awaits 983／按存在读屏 530／
+    // 等退场 75／门后没有读屏断言 360／会假红 0／只会假绿 18。逐颗钉死＝新增任何一格都要人工过目。
+    //   §369 这 6 颗的来路（不是搬运，是净新增）：recovery-carry-notice-369 里 6 发 waitFor＝
+    //   5 颗门按"那行字上屏"读（落进 按存在读屏 525→530）＋1 颗门等的是 notices.length（非 DOM 信号）、
+    //   门后先 settle 再读负向句（落进 门后没有读屏断言 359→360）——后者正是本闸门第一趟把那颗门抓出来之后
+    //   按 §365 的"先落定再读负向句"改的形状；改之前它是 会假红 那一档的第一手样本。
     //   75/359 这一格在 268 那颗改造后搬运过一颗：那句「点那一格＝重发这一发」的计数门后面紧跟的不再是
     //   同步读屏断言，而是另起一颗把到货见证写在里面的门⇒它从「等退场」落到「门后没有读屏断言」。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(977)
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(983)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('525/75/359/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('530/75/360/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

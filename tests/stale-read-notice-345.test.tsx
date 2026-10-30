@@ -67,7 +67,7 @@ const enc = (over: Partial<EncryptionStatus> = {}): EncryptionStatus =>
 // 桩不给就是 `window.pocketai.getLockStatus is not a function`——与 §225 同一份形状。
 const PANEL_STUBS = {
   getLockStatus: () => ({ state: 'unlocked', autoLockTimeout: 0 }),
-  hasRecoveryKey: () => false,
+  hasRecoveryKey: () => ({ has: false, carriedFrom: null }),
   getLicenseFingerprint: () => 'fp-1234'
 }
 

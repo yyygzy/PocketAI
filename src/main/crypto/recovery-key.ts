@@ -105,6 +105,16 @@ export const recoveryKeyManager = {
   },
 
   /**
+   * 设置页那一格的两件事：有没有这把包＋这把是不是从一份解析不出来的文件里按字段取回的。
+   * 后者要上屏说一句——「已设置」这件事本身不足以让人知道它刚经历过一次损坏。
+   * 一发读拿这两件事（分两次读＝坏文件那一句 warn 会说两遍）。
+   */
+  recoveryStatus(): { has: boolean; carriedFrom: string | null } {
+    const s = appConfigRepo.recoveryState()
+    return { has: s.blob !== null, carriedFrom: s.carriedFrom }
+  },
+
+  /**
    * 为当前 masterKey 生成/重新生成恢复密钥。
    * @returns 恢复码明文（仅此一次返回，调用方负责安全展示后即弃）
    */

@@ -379,7 +379,9 @@ export function registerEncryptionHandlers(): void {
   }, argsSchema(newMasterPasswordSchema))
 
   // ---------- 恢复密钥 ----------
-  safeHandle(IPC.ENCRYPTION_HAS_RECOVERY, () => recoveryKeyManager.hasRecovery())
+  // 这一发回来的是"状态"而不是一个布尔：包在不在 ＋ 它是不是从一份解析不出来的 config.json 里
+  // 按字段取回的（§369）。后者必须能让界面说话——"已设置"这三个字不足以说明它刚经历过一次损坏。
+  safeHandle(IPC.ENCRYPTION_HAS_RECOVERY, () => recoveryKeyManager.recoveryStatus())
 
   safeHandle(IPC.ENCRYPTION_GENERATE_RECOVERY, () => {
     // 仅 db 模式且已解锁：需要当前 masterKey 才能包裹

@@ -126,6 +126,8 @@ vi.mock('../src/main/crypto/credential-rotation', () => ({
 vi.mock('../src/main/crypto/recovery-key', () => ({
   recoveryKeyManager: {
     hasRecovery: () => false,
+    // §369：这一发通道回来的是两件事（包在不在＋是不是从坏文件扫回来的），真注册＋真 invoke 由下面那条用例判
+    recoveryStatus: () => { mocks.seq.push('recoveryStatus'); return { has: true, carriedFrom: 'config.json.corrupt-1700000000000' } },
     enableRecovery: () => 'CODE-CODE-CODE',
     disableRecovery: () => { mocks.seq.push('disableRecovery') },
     recoverMasterKey: () => Buffer.alloc(32, 5)
@@ -354,5 +356,19 @@ describe('ENCRYPTION_DISABLE：以 rekey 为不可逆点分两档收尾', () => 
     expect(seq).not.toContain('disableRecovery')
     expect(mocks.cfg.mode).toBe('db')
     expect(mocks.cfg.hasPw).toBe(true)
+  })
+})
+
+// §369：这一发通道从布尔改成两件事——真注册＋真 invoke 判一次形状（源码级那颗在 config-json-recovery-gate-369）
+describe('ENCRYPTION_HAS_RECOVERY：回来的是两件事，不是一个布尔', () => {
+  it('屏上要有料可读：has 与 carriedFrom 各是一件（回退成布尔＝那句"从留档取回"没有来源）', async () => {
+    const r = await call(IPC.ENCRYPTION_HAS_RECOVERY)
+    expect(r).toEqual({ has: true, carriedFrom: 'config.json.corrupt-1700000000000' })
+    expect(typeof r, '布尔形状＝§369 之前的样子').toBe('object')
+  })
+
+  it('这一发走的是 recoveryStatus（改回旧的 hasRecovery＝来源永远读不到，这条当场红）', async () => {
+    await call(IPC.ENCRYPTION_HAS_RECOVERY)
+    expect(mocks.seq).toContain('recoveryStatus')
   })
 })

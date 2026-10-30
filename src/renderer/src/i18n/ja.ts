@@ -1896,6 +1896,7 @@ export const ja = {
   'enc.recoveryTitle': '🔑 復旧キー（パスワードを忘れた際の命綱）',
   'enc.recoverySet': '設定済み',
   'enc.recoveryNotSet': '未設定 — パスワードを忘れるとデータを復旧できません',
+  'enc.recoveryCarried': 'この復旧キーは解析に失敗した {file} からフィールド単位で復元しました — 復旧コードが有効かご確認ください',
   'enc.recoveryGenerate': '復旧キーを生成',
   'enc.recoveryRegen': '再生成',
   'enc.recoveryRemove': '削除',

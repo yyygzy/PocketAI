@@ -1093,7 +1093,9 @@ const api = {
     ipcRenderer.invoke(IPC.ENCRYPTION_DISABLE, password),
   enableEncryption: (password: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_ENABLE, password),
-  hasRecoveryKey: (): Promise<boolean> =>
+  // 状态而非布尔：`has`＝有没有这把包；`carriedFrom`＝这把包是从哪份"解析不出来的文件"里
+  // 按字段取回的（'config.json' 或某份 config.json.corrupt-* 的名字；null＝来源正常）
+  hasRecoveryKey: (): Promise<{ has: boolean; carriedFrom: string | null }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_HAS_RECOVERY),
   generateRecoveryKey: (): Promise<{ ok: boolean; code?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_GENERATE_RECOVERY),

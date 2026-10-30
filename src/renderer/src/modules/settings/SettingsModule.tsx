@@ -807,10 +807,13 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
   )
 }
 
-const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
-  const { t } = useI18n()
+// 导出给用例挂载（§369：这一格自己拉一发读，桩不给就挂不起来——与 EncryptionPanel 同一份形状）
+export const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {  const { t } = useI18n()
   const { confirm, dialog } = useConfirm()
   const [hasKey, setHasKey] = useState<boolean | null>(null)
+  // §369：这把包是从哪份"解析不出来的文件"里按字段取回的（null＝来源正常）。
+  // 「已设置」这三个字不足以说明它刚经历过一次损坏，所以这一句要单独上屏。
+  const [carriedFrom, setCarriedFrom] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [shownCode, setShownCode] = useState('')
 
@@ -823,7 +826,8 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
             setNotice({ ok: false, text: ipcFailText(v, t('common.unknownError')) })
             return
           }
-          setHasKey(v)
+          setHasKey(v.has)
+          setCarriedFrom(v.carriedFrom)
         })
         .catch(reportIpcError('settings.hasRecoveryKey')),
     [t]
@@ -869,6 +873,9 @@ const RecoveryKeyCard: React.FC<{ setNotice: NoticeFn }> = ({ setNotice }) => {
           <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
             {hasKey ? t('enc.recoverySet') : t('enc.recoveryNotSet')}
           </div>
+          {hasKey && carriedFrom && (
+            <p className="unlock-recovery-warn mt-1">{t('enc.recoveryCarried', { file: carriedFrom })}</p>
+          )}
         </div>
         <div className="flex gap-2 shrink-0">
           <button className="btn-ghost" disabled={busy} onClick={generate}>

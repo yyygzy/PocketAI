@@ -1,6 +1,7 @@
 // app_config 仓储：键值对配置存储
 // 用于持久化 encryption_mode / has_master_password 等启动配置
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import { dbService } from '../database'
 import { CONFIG_PATH } from '../../portable'
 import { errMsg } from '../../error'
@@ -68,9 +69,21 @@ function readConfigFile(label: string): Record<string, unknown> | null {
   return null
 }
 
+/** 解析不出来的 config.json 里按字段扫恢复包：只认 `rv1:` 前缀＋base64 体＋收尾引号；取最后一处（文件越靠后越新） */
+function extractRecoveryBlob(text: string): string | null {
+  const re = /"recoveryBlob"\s*:\s*"(rv1:[A-Za-z0-9+/=]+)"/g
+  let last: string | null = null
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) last = m[1] ?? last
+  return last
+}
+
 /**
  * 写路径专用的读：解析不出来时**先把原文件改名留档再新建**，而不是当空对象覆盖。
  * 留档改不了名（文件被占住、权限）就抛＝这次改写放弃——"宁可写不成，不可把没读出来的键当没有"。
+ * 三把钥匙里只有 `recoveryBlob` 没有任何第二份（DB 回退副本没有它、备份包也不装它），
+ * 所以这里额外按字段把那一段从坏文件里扫出来带上（`recoveryCarriedFrom` 记下它是这么来的）；
+ * salt／档位各有 DB 副本，不靠这根松口子（把它们也扫出来＝把未校验的字节当权威）。
  */
 function loadConfigForWrite(): Record<string, unknown> {
   if (!existsSync(CONFIG_PATH)) return {}
@@ -86,10 +99,11 @@ function loadConfigForWrite(): Record<string, unknown> {
   } catch {
     // 落到下面的留档分支
   }
+  const salvage = extractRecoveryBlob(raw)
   const archive = `${CONFIG_PATH}.corrupt-${Date.now()}`
   renameSync(CONFIG_PATH, archive)
-  log.warn(`config.json 解析失败 ⇒ 原文已留档 ${archive}，本次改写只带自己要落的那一把钥匙；其余键（含恢复包）请从那份留档取回`)
-  return {}
+  log.warn(`config.json 解析失败 ⇒ 原文已留档 ${archive}，本次改写只带自己要落的那一把钥匙${salvage ? '（恢复包按字段扫出来带上了）' : '；恢复包没扫出来（其余键请从那份留档取回）'}`)
+  return salvage ? { recoveryBlob: salvage, recoveryCarriedFrom: basename(archive) } : {}
 }
 
 /** 同目录独占临时文件 + rename 覆盖：中途崩溃/断电留下的是没人认识的 .tmp-*，不是半截的 config.json */
@@ -153,10 +167,28 @@ function writeSaltToConfigFile(b64: string | null): void {
 // 任何一处能取回恢复码包。包内是「恢复码派生密钥加密后的 masterKey」，
 // config.json 被读到也无法离线伪造（暴力破解恢复码）。
 
-function readRecoveryBlobFromConfigFile(): string | null {
+/** 整份解析不出来时的那一发救援：从坏文件里按字段扫恢复包（恢复包是唯一没有第二份的钥匙） */
+function salvageRecoveryFromUnparseableFile(): { blob: string | null; carriedFrom: string | null } {
+  if (!existsSync(CONFIG_PATH)) return { blob: null, carriedFrom: null } // 压根没有文件＝没有恢复包，不是"读不出"
+  let raw: string
+  try {
+    raw = readFileSync(CONFIG_PATH, 'utf8')
+  } catch {
+    return { blob: null, carriedFrom: null } // readConfigFile 已经说过"读不出"，这里不重复表态
+  }
+  const salvaged = extractRecoveryBlob(raw)
+  if (!salvaged) return { blob: null, carriedFrom: null }
+  log.warn('恢复密钥包：config.json 整份解析失败，这一项是按字段扫出来的（未经 JSON 校验，解锁时以恢复码为准）')
+  return { blob: salvaged, carriedFrom: 'config.json' }
+}
+
+/** 读恢复包的两件事：包本身＋它是不是从一份"解析不出来的文件"里按字段取回的（null＝来源正常） */
+function readRecoveryFromConfigFile(): { blob: string | null; carriedFrom: string | null } {
   const cfg = readConfigFile('恢复密钥包')
-  const v = cfg?.recoveryBlob
-  return typeof v === 'string' ? v : null
+  if (cfg === null) return salvageRecoveryFromUnparseableFile()
+  const blob = typeof cfg.recoveryBlob === 'string' && cfg.recoveryBlob ? cfg.recoveryBlob : null
+  const carried = typeof cfg.recoveryCarriedFrom === 'string' && cfg.recoveryCarriedFrom ? cfg.recoveryCarriedFrom : null
+  return { blob, carriedFrom: blob ? carried : null }
 }
 
 function writeRecoveryBlobToConfigFile(blob: string | null): void {
@@ -164,11 +196,14 @@ function writeRecoveryBlobToConfigFile(blob: string | null): void {
     mutateConfigFile((cfg) => {
       if (blob === null) delete cfg.recoveryBlob
       else cfg.recoveryBlob = blob
+      // 用户自己写的这一把＝来源清楚，不再挂着"从坏文件取回"的那句话
+      delete cfg.recoveryCarriedFrom
     })
   } catch (e) {
     throw new Error(`恢复密钥写入 config.json 失败: ${errMsg(e)}`)
   }
 }
+
 
 
 // ---------- 主密码 KDF 档位（SEC-32②） ----------
@@ -317,8 +352,13 @@ export const appConfigRepo = {
 
   // ---------- 恢复密钥包 ----------
 
+  /** 恢复包的两件事一次读拿到（分开发＝坏文件那一句 warn 会说两遍） */
+  recoveryState(): { blob: string | null; carriedFrom: string | null } {
+    return readRecoveryFromConfigFile()
+  },
+
   getRecoveryBlob(): string | null {
-    return readRecoveryBlobFromConfigFile()
+    return this.recoveryState().blob
   },
 
   setRecoveryBlob(blob: string): void {

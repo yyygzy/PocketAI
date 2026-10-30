@@ -19,11 +19,16 @@ import {
 
 // mock appConfigRepo：用内存 blobStore 模拟 config.json 的恢复包读写
 const { blobStore } = vi.hoisted(() => ({
-  blobStore: { current: null as string | null }
+  // carried 与 reads 是 §369 加的两件事：前者喂来源，后者数这一发读到底发生几次
+  blobStore: { current: null as string | null, carried: null as string | null, reads: { state: 0, blob: 0 } }
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: {
-    getRecoveryBlob: () => blobStore.current,
+    getRecoveryBlob: () => { blobStore.reads.blob++; return blobStore.current },
+    recoveryState: () => {
+      blobStore.reads.state++
+      return { blob: blobStore.current, carriedFrom: blobStore.carried }
+    },
     setRecoveryBlob: (b: string) => {
       blobStore.current = b
     },
@@ -35,6 +40,9 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
 
 beforeEach(() => {
   blobStore.current = null
+  blobStore.carried = null
+  blobStore.reads.state = 0
+  blobStore.reads.blob = 0
 })
 
 describe('normalizeRecoveryCode — 规整用户输入', () => {
@@ -63,6 +71,36 @@ describe('generateRecoveryCode — 生成恢复码', () => {
     const a = generateRecoveryCode()
     const b = generateRecoveryCode()
     expect(a).not.toBe(b)
+  })
+})
+
+describe('§369 recoveryStatus — 设置页那一格的两件事', () => {
+  it('包在且来源在 ⇒ 两件都透传（少了来源这一件＝屏上那句没有料）', () => {
+    blobStore.current = 'rv1:AAAA'
+    blobStore.carried = 'config.json.corrupt-1700000000000'
+    expect(recoveryKeyManager.recoveryStatus()).toEqual({
+      has: true,
+      carriedFrom: 'config.json.corrupt-1700000000000'
+    })
+  })
+
+  it('包不在且来源不在 ⇒ 两件都是空（形状要成对，不许只挂着来源）', () => {
+    expect(recoveryKeyManager.recoveryStatus()).toEqual({ has: false, carriedFrom: null })
+  })
+
+  it('两件事来自同一发读（各读一次＝坏文件那一句 warn 会说两遍）', () => {
+    blobStore.current = 'rv1:AAAA'
+    recoveryKeyManager.recoveryStatus()
+    expect(blobStore.reads.state, '必须走 recoveryState 这一发读').toBe(1)
+    expect(blobStore.reads.blob, '不许再单独读一次包').toBe(0)
+  })
+
+  it('hasRecovery 仍然只看包在不在（这一格的另一个读者没被顺手改掉）', () => {
+    blobStore.current = 'rv1:AAAA'
+    blobStore.carried = 'config.json'
+    expect(recoveryKeyManager.hasRecovery()).toBe(true)
+    blobStore.current = null
+    expect(recoveryKeyManager.hasRecovery()).toBe(false)
   })
 })
 

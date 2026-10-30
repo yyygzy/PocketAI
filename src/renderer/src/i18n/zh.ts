@@ -1969,6 +1969,7 @@ export const zh = {
   'enc.recoveryTitle': '🔑 恢复密钥（忘记密码时的救命通道）',
   'enc.recoverySet': '已设置',
   'enc.recoveryNotSet': '未设置 —— 忘记主密码将无法找回数据',
+  'enc.recoveryCarried': '这一份是从解析失败的 {file} 里按字段取回的 —— 请确认你的恢复码仍可用',
   'enc.recoveryGenerate': '生成恢复密钥',
   'enc.recoveryRegen': '重新生成',
   'enc.recoveryRemove': '删除',

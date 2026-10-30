@@ -261,13 +261,16 @@ describe('④ 读侧分档：没有文件／读不出／键不在，三件事三
     expect(warnLines.join('\n')).toBe('')
   })
 
-  it('R2 文件在而解析不出来 ⇒ null，但必须说「解析失败」，且三把钥匙各自的 label 逐条点得到', async () => {
+  // §369 把这把钥匙的"解析失败"那一档改成了"按字段扫出来"（它是唯一没有第二份的钥匙），
+  // 本行的判语只对**有 DB 回退副本**的两把仍成立；恢复包那档的新契约见 tests/config-json-recovery-carry-369.test.ts。
+  // 「三把各自的 label 逐条点得到」这一件不变，所以这一发仍要三句都在。
+  it('R2 文件在而解析不出来 ⇒ salt／档位按缺失处理（各有 DB 副本），但必须说「解析失败」，且三把钥匙各自的 label 逐条点得到', async () => {
     corruptFile()
     const repo = await loadRepo()
 
     expect(repo.getMasterPasswordSalt()).toBeNull()
-    expect(repo.getRecoveryBlob()).toBeNull()
     expect(repo.getKdfParams().N).toBe(32768)
+    expect(repo.getRecoveryBlob(), '§369：恢复包不再被当"没有"').toBe('rv1:AAAA')
 
     const all = warnLines.join('\n')
     expect(all).toContain('主密码 salt：config.json 解析失败')

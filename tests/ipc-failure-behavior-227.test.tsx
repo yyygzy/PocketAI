@@ -61,7 +61,7 @@ const lockSelect = (): HTMLSelectElement => {
 const selectedText = (sel: HTMLSelectElement): string => sel.options[sel.selectedIndex]?.text ?? '(没有选中项)'
 
 describe('① 自动锁下拉：读不到时那格「永不」必须被点名（它同时也是未配置时的默认值）', () => {
-  const base = { hasRecoveryKey: () => false }
+  const base = { hasRecoveryKey: () => ({ has: false, carriedFrom: null }) }
 
   it('resolve 的 {ok:false} ⇒ 一句「自动锁屏读不到：…（当前显示的是默认值）」，下拉仍是禁用态', async () => {
     stubPocketai({ ...base, getLockStatus: () => ({ ok: false, error: '锁服务不可达' }) })

@@ -131,7 +131,7 @@ function swallowsFailure(body: string): boolean {
 
 const FN = functions(SRC)
 const WRITERS = ['writeSaltToConfigFile', 'writeRecoveryBlobToConfigFile', 'writeKdfToConfigFile']
-const READERS = ['readSaltFromConfigFile', 'readRecoveryBlobFromConfigFile', 'readKdfFromConfigFile']
+const READERS = ['readSaltFromConfigFile', 'readRecoveryFromConfigFile', 'readKdfFromConfigFile']
 
 describe('读法自证：分类器看得到这份源码里的函数、调用点与第一实参', () => {
   it('顶层函数逐个读得到（读不到＝下面所有判定都在数空气）', () => {
@@ -141,14 +141,16 @@ describe('读法自证：分类器看得到这份源码里的函数、调用点�
       'mutateConfigFile',
       'readConfigFile',
       'readKdfFromConfigFile',
-      'readRecoveryBlobFromConfigFile',
+      'extractRecoveryBlob',
+      'readRecoveryFromConfigFile',
+      'salvageRecoveryFromUnparseableFile',
       'readSaltFromConfigFile',
       'saveConfigFile',
       'writeKdfToConfigFile',
       'writeRecoveryBlobToConfigFile',
       'writeSaltToConfigFile'
     ].sort())
-    expect(FN.size, '顶层函数总数（再加一条读写通道要人工过目）').toBe(11)
+    expect(FN.size, '顶层函数总数（再加一条读写通道要人工过目）').toBe(13)
   })
 
   it('已知函数的调用点与第一实参取得到（拿 saveConfigFile 当对照）', () => {

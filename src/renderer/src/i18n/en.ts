@@ -1968,6 +1968,7 @@ export const en = {
   'enc.recoveryTitle': '🔑 Recovery key (lifeline for a forgotten password)',
   'enc.recoverySet': 'Configured',
   'enc.recoveryNotSet': 'Not configured — a forgotten password means unrecoverable data',
+  'enc.recoveryCarried': 'This key was salvaged field-by-field from the unparseable {file} — check that your recovery code still works',
   'enc.recoveryGenerate': 'Generate recovery key',
   'enc.recoveryRegen': 'Regenerate',
   'enc.recoveryRemove': 'Remove',

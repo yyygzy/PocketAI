@@ -39,7 +39,7 @@ const enc = (): EncryptionStatus =>
 const mount = (writeImpl: () => unknown): void => {
   stubPocketai({
     getLockStatus: () => ({ state: 'unlocked', autoLockTimeout: 300_000 }),
-    hasRecoveryKey: () => false,
+    hasRecoveryKey: () => ({ has: false, carriedFrom: null }),
     setAutoLockTimeout: writeImpl
   })
   mountWithProviders(<EncryptionPanel enc={enc()} err={null} onChange={() => {}} />)
