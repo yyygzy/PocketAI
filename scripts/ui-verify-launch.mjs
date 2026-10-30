@@ -56,6 +56,27 @@ export function preflight(root, port) {
   return { ok: errors.length === 0, errors, abs, dataDir }
 }
 
+/**
+ * 读 Electron 写下的端口文件。**任何读失败都不许抛穿**——这是 V4-Iter-366 撞出来的：
+ * Windows 上 Electron 会独占锁着 `DevToolsActivePort`，旧写法 `existsSync` 之后直接 `readFileSync`
+ * ⇒ 撞 `EBUSY: resource busy or locked`，启动闸门自己崩掉，`stdio: 'inherit'` 的下场是
+ * 我起的实例跟着一起走（那一趟连"root 有没有生效"都没读到，比没锁更糟）。
+ * 现在：读不到就返回 null 让轮询继续等，同时把最后一次错留着，超时那句要把它说出来——不 crash 也不哑。
+ */
+export function readCdpPort(fsLike, portFile) {
+  let raw
+  try {
+    raw = fsLike.readFileSync(portFile, 'utf-8')
+  } catch (e) {
+    const code = e && e.code ? e.code : 'UNKNOWN'
+    return { port: null, error: `${code}: ${(e && e.message) || ''}`.trim() }
+  }
+  const first = String(raw ?? '').split('\n')[0].trim()
+  // 端口号那一行还没写完（空文件／空行）＝还没读到，别把空串当端口报上去
+  if (!first) return { port: null, error: null }
+  return { port: first, error: null }
+}
+
 function main() {
   const argv = process.argv.slice(2)
   const flag = (name) => {
@@ -86,16 +107,22 @@ function main() {
 
   const portFile = path.join(plan.dataDir, 'userdata', 'DevToolsActivePort')
   const deadline = Date.now() + 20_000
+  let lastError = null
   const timer = setInterval(() => {
-    if (fs.existsSync(portFile)) {
+    const got = readCdpPort(fs, portFile)
+    if (got.error) lastError = got.error
+    if (got.port !== null) {
       clearInterval(timer)
       // 端口文件的第一行就是实际监听的端口（比命令行那个更可信）
-      console.log('root 已生效，CDP 端口：' + fs.readFileSync(portFile, 'utf-8').split('\n')[0].trim())
+      console.log('root 已生效，CDP 端口：' + got.port)
       return
     }
     if (Date.now() > deadline) {
       clearInterval(timer)
-      console.error(`${portFile} 20s 内没出现 ⇒ POCKETAI_APP_ROOT 没生效，立刻收手（杀掉自己起的进程）`)
+      console.error(
+        `${portFile} 20s 内读不到 ⇒ POCKETAI_APP_ROOT 没生效，立刻收手（杀掉自己起的进程）` +
+          (lastError ? `；最后一次读失败：${lastError}` : '')
+      )
       child.kill()
       process.exit(2)
     }

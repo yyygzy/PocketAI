@@ -14,7 +14,7 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { preflight } from '../scripts/ui-verify-launch.mjs'
+import { preflight, readCdpPort } from '../scripts/ui-verify-launch.mjs'
 
 const CI_ROOTS = path.join(process.cwd(), 'data', 'tmp')
 
@@ -93,5 +93,63 @@ describe('③ 端口', () => {
     const root = makeRoot('ci-239-empty')
     expect(preflight(root, 1024).ok).toBe(true)
     expect(preflight(root, 65535).ok).toBe(true)
+  })
+})
+
+// §366：读端口那一颗。立项理由是一次真事故——我用这台启动闸门起 scratch 实例，
+// `existsSync` 之后直接 `readFileSync`，而 Windows 上 Electron 独占锁着 `DevToolsActivePort`
+// ⇒ `EBUSY: resource busy or locked` 把闸门自己打崩，`stdio: 'inherit'` 之下我起的实例跟着没了，
+// 那一趟连"root 有没有生效"都没读到。闸门是拦人的，它自己不许被一次锁吃掉。
+describe('④ 读 CDP 端口：锁住时要能继续等，且不许哑', () => {
+  const PF = 'C:/nowhere/DevToolsActivePort'
+  const errFs = (code: string): unknown => ({
+    readFileSync: () => {
+      throw Object.assign(new Error(code + ': resource busy or locked, open ' + PF), { code })
+    }
+  })
+
+  it.each([
+    ['EBUSY（Electron 正锁着这份文件＝本批撞中的那颗）', 'EBUSY'],
+    ['EPERM', 'EPERM'],
+    ['EAGAIN', 'EAGAIN'],
+    ['ENOENT（还没写出来）', 'ENOENT']
+  ])('%s ⇒ 不抛穿、报"还没读到"并留着错误文本', (_what, code) => {
+    const r = readCdpPort(errFs(code) as never, PF)
+    expect(r.port, code + ' 竟然读出一个端口').toBeNull()
+    expect(r.error, code + ' 被咽掉了＝超时时说不出为什么').toContain(code)
+  })
+
+  it('抛出对象连 code 都没有（非典型错误）⇒ 也不许抛穿，归成 UNKNOWN', () => {
+    const r = readCdpPort({ readFileSync: () => { throw new Error('boom') } } as never, PF)
+    expect(r.port).toBeNull()
+    expect(r.error).toContain('UNKNOWN')
+  })
+
+  it('空文件／只有空白 ⇒ 算"还没读到"，不许把空串当端口报上去', () => {
+    for (const raw of ['', '\n', '   \n']) {
+      const r = readCdpPort({ readFileSync: () => raw } as never, PF)
+      expect(r.port, JSON.stringify(raw) + ' 竟然算读到了').toBeNull()
+    }
+  })
+
+  it('正向对照：正常那份内容取的是第一行（反向钉子——上面四颗若写过头，这里就红）', () => {
+    const r = readCdpPort({ readFileSync: () => '9371\n/devtools/browser/abc\n' } as never, PF)
+    expect(r.port).toBe('9371')
+    expect(r.error).toBeNull()
+  })
+})
+
+// §366 撞出来的另一档：`.mjs` 不参与 tsc 检查，用例 import 到的是**手抄的 `.d.mts`**——
+// 我加了 `readCdpPort` 却忘了补声明，tsc 只报一句"没有这个导出成员"，看起来像代码写错而不是声明漏抄。
+// ⇒ 两头钉：声明里写的必须真导出、真导出的必须写进声明（这份文件没有豁免名单）。
+describe('⑤ 手抄的 .d.mts 与 .mjs 的导出名必须成对', () => {
+  const names = (src: string): string[] =>
+    src.split('\n').map((l) => /^export function (\w+)/.exec(l)?.[1]).filter((x): x is string => !!x).sort()
+  const impl = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ui-verify-launch.mjs'), 'utf-8').replace(/\r\n/g, '\n')
+  const decl = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ui-verify-launch.d.mts'), 'utf-8').replace(/\r\n/g, '\n')
+
+  it('两侧名单逐字相同（多了＝抄漏，少了＝声明在骗 tsc）', () => {
+    expect(names(decl), '声明里的名字').toEqual(names(impl))
+    expect(names(impl).length, '判据函数总数（新增要连声明一起补）').toBe(2)
   })
 })

@@ -8,3 +8,11 @@ export interface PreflightResult {
 }
 
 export function preflight(root: string | undefined, port: string | number | undefined): PreflightResult
+
+/** 读 `DevToolsActivePort`：`port` 非空＝读到了；否则 `error` 留着最后一次失败原因（V4-Iter-366） */
+export interface CdpPortResult {
+  port: string | null
+  error: string | null
+}
+
+export function readCdpPort(fsLike: { readFileSync: (p: string, enc: string) => unknown }, portFile: string): CdpPortResult
