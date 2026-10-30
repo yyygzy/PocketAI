@@ -292,8 +292,8 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     expect(parametrized.map(rel), '模板标记键被带参调用＝渲染出半个字面大括号').toEqual([])
   })
 
-  it('动态 key 调用点钉在 99 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(99)
+  it('动态 key 调用点钉在 101 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(101)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {

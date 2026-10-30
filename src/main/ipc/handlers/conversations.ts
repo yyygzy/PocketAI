@@ -6,8 +6,10 @@ import path from 'node:path'
 import { IPC, type ConversationExportPayload } from '../../../shared/types'
 import {
   detectExternalFormat,
+  emptyDroppedMessages,
   parseChatGptExport,
-  parseClaudeJsonl
+  parseClaudeJsonl,
+  type ExternalWarning
 } from '../../../shared/conversation-import-external'
 import { buildConversationMarkdown, safeFileName, dedupeFileNames } from '../../../shared/export-markdown'
 import { dbService } from '../../db/database'
@@ -503,10 +505,13 @@ export function registerConversationHandlers(): void {
       const conversationCount = { n: 0 }
       const messageCount = { n: 0 }
       let skippedConversationCount = 0
-      const warnings: string[] = []
-      const addWarning = (w: string) => {
+      const warnings: ExternalWarning[] = []
+      const addWarning = (w: ExternalWarning) => {
         if (warnings.length < 5) warnings.push(w)
       }
+      // 消息级丢弃的四类计数跨文件累加。屏上那句「导入 m 条消息」只数**收下的**，
+      // 少掉的那部分过去没有任何地方会说（V4-Iter-370）
+      const dropped = emptyDroppedMessages()
       const handle = dbService.getHandle()
       // 归属助手：一次判定；id 无效/助手已删除静默回落自由会话，不阻断导入
       const ownerId =
@@ -516,7 +521,7 @@ export function registerConversationHandlers(): void {
         const format = detectExternalFormat(file.text)
         if (!format) {
           skippedConversationCount++
-          addWarning(`${file.name}: 无法识别的文件格式（支持 ChatGPT conversations.json 与 Claude JSONL）`)
+          addWarning({ code: 'IMPORT_UNKNOWN_FORMAT', where: file.name })
           continue
         }
         const baseName = file.name.replace(/\.[^.]+$/, '')
@@ -525,7 +530,12 @@ export function registerConversationHandlers(): void {
             ? parseChatGptExport(file.text)
             : parseClaudeJsonl(file.text, baseName)
         skippedConversationCount += parsed.skippedConversationCount
-        parsed.warnings.slice(0, 5).forEach((w) => addWarning(`${file.name}: ${w}`))
+        dropped.badJson += parsed.droppedMessages.badJson
+        dropped.notEvent += parsed.droppedMessages.notEvent
+        dropped.nonText += parsed.droppedMessages.nonText
+        dropped.emptyText += parsed.droppedMessages.emptyText
+        // 告警的"出处"用文件名（用户数据），句子本身由渲染层按码取四语
+        parsed.warnings.slice(0, 5).forEach((w) => addWarning({ ...w, where: w.where ?? file.name }))
 
         for (const conv of parsed.conversations) {
           const suffix = conv.source === 'chatgpt' ? ' (ChatGPT 导入)' : ' (Claude 导入)'
@@ -550,7 +560,7 @@ export function registerConversationHandlers(): void {
             messageCount.n += result
           } catch (e) {
             skippedConversationCount++
-            addWarning(`${conv.title}: 写入失败已跳过（${errMsg(e)}）`)
+            addWarning({ code: 'IMPORT_WRITE_FAILED', args: { err: errMsg(e) }, where: conv.title })
           }
         }
       }
@@ -560,6 +570,8 @@ export function registerConversationHandlers(): void {
         conversationCount: conversationCount.n,
         messageCount: messageCount.n,
         skippedConversationCount,
+        // 消息级丢弃的分类计数（跨文件累加）；屏上那句「导入 m 条消息」不含这部分
+        droppedMessages: dropped,
         warnings
       }
     },

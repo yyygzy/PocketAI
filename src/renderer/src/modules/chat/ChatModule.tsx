@@ -29,6 +29,7 @@ import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutc
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../utils/palette-nav'
 import { buildReminderText, reminderCreatedToastKey } from '../../utils/reminder-presets'
+import { importDroppedText, importWarningText } from '../../utils/import-summary'
 import { pickDefaultProvider, hasUsableModel, isTargetStillValid } from '../../utils/provider-pick'
 import { formatDateTime } from '../../utils/time'
 
@@ -904,7 +905,11 @@ export const ChatModule: React.FC = () => {
       if (r.skippedConversationCount > 0) {
         toast.warning(t('chat.importExternalSkipped', { n: r.skippedConversationCount }))
       }
-      if (r.warnings.length > 0) toast.error(r.warnings.join('\n'))
+      // 会话级那句只数"整个文件/整个会话"，文件里逐行被跳过的数过去哪儿都不说 ⇒ 另补一句分类明细
+      const droppedLine = importDroppedText(r.droppedMessages, t)
+      if (droppedLine) toast.warning(droppedLine)
+      // 告警是回码＋槽位，句子住在四语字典里（改前这里是把主进程发来的中文串原样拼一起上屏）
+      if (r.warnings.length > 0) toast.error(r.warnings.map((w) => importWarningText(w, t)).join('\n'))
       if (r.conversationCount === 0 && r.skippedConversationCount === 0) {
         toast.error(t('chat.importFail', { e: t('chat.importExternalUnknown') }))
       }

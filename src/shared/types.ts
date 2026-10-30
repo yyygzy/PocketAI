@@ -7,6 +7,7 @@ import type {
   ModelTierCode,
   ModelWarnCode
 } from './model-rec-codes'
+import type { ExternalDroppedMessages, ExternalWarning } from './conversation-import-external'
 
 // ---------- 硬件信息 ----------
 export interface CpuInfo {
@@ -614,7 +615,13 @@ export interface ConversationExternalImportResult {
   conversationCount: number
   messageCount: number
   skippedConversationCount: number
-  warnings: string[]
+  /**
+   * 消息级丢弃的分类计数（V4-Iter-370）。上面那几个数只算"会话"和"已收下的消息"，
+   * 文件里被跳过的行过去哪儿都不说 ⇒ 「导入 800 条」可以比真实消息少几十条而屏上一句没有。
+   */
+  droppedMessages: ExternalDroppedMessages
+  /** 回码＋槽位（句子由渲染层按码取四语，出处在 where） */
+  warnings: ExternalWarning[]
   error?: string
 }
 

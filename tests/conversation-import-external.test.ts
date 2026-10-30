@@ -154,9 +154,9 @@ describe('parseChatGptExport', () => {
     expect(r.skippedConversationCount).toBe(2)
   })
 
-  it('非法 JSON / 顶层非数组告警', () => {
-    expect(parseChatGptExport('{bad').warnings[0]).toContain('JSON')
-    expect(parseChatGptExport('{"x":1}').warnings[0]).toContain('数组')
+  it('非法 JSON / 顶层非数组各回一个码（句子住四语字典，这里只认码）', () => {
+    expect(parseChatGptExport('{bad').warnings).toEqual([{ code: 'IMPORT_FILE_NOT_JSON' }])
+    expect(parseChatGptExport('{"x":1}').warnings).toEqual([{ code: 'IMPORT_NOT_ARRAY' }])
   })
 
   it('单条内容超 100k 字符截断', () => {
@@ -269,7 +269,9 @@ describe('parseClaudeJsonl', () => {
     }
     const r = parseClaudeJsonl(lines.join('\n'), 'f')
     expect(r.conversations[0]!.messages).toHaveLength(MAX_EXTERNAL_MESSAGES_PER_CONV)
-    expect(r.warnings.join('\n')).toContain('上限')
+    // 码＋槽：上限值由主进程把常量塞进 args，四语字典里的句子自己带这个数（改前是手抄中文「…上限 10000 条」，
+    // 那个 10000 是抄的、不是取的）
+    expect(r.warnings).toEqual([{ code: 'IMPORT_MSG_LIMIT', args: { max: MAX_EXTERNAL_MESSAGES_PER_CONV } }])
   })
 })
 
