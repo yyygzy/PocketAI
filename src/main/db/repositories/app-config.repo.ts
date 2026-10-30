@@ -1,10 +1,13 @@
 // app_config 仓储：键值对配置存储
 // 用于持久化 encryption_mode / has_master_password 等启动配置
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dbService } from '../database'
 import { CONFIG_PATH } from '../../portable'
 import { errMsg } from '../../error'
+import { createLogger } from '../../logger'
 import { KDF_LEGACY, normalizeKdfParams, type KdfParams } from '../../crypto/index'
+
+const log = createLogger('config')
 
 export type EncryptionMode = 'none' | 'db'
 export type CipherType = 'sqlcipher' // 目前只支持 SQLCipher
@@ -37,6 +40,82 @@ const KEYS = {
   NET_PROXY_URL: 'net_proxy_url', // 主进程 API 流量代理 URL（http/https）；空/缺省=直连
 } as const
 
+// 主密码 salt 双通道与 config.json 的读写通道
+//
+// config.json 里同时住着三把解锁用的钥匙：masterPasswordSalt、kdfParams、recoveryBlob。
+// 前两件在 app_config 里各有一份回退副本；**recoveryBlob 只有这一份**（恢复包按设计不能
+// 存进加密库，否则「要读包才能解锁、要解锁才能读包」死锁）。
+// ⇒ 任何一次改写都必须把文件里其他键一起带走：文件解析不出来时**不许**按空对象重建，
+//    否则一次无关的写就把另外两把钥匙（含唯一的恢复途径）就地抹掉，且屏上没有任何地方会说。
+
+/** 读 config.json 的共享入口；三种事实在这里分开：没有文件／读不出或解析失败／键本身不在 */
+function readConfigFile(label: string): Record<string, unknown> | null {
+  if (!existsSync(CONFIG_PATH)) return null
+  let raw: string
+  try {
+    raw = readFileSync(CONFIG_PATH, 'utf8')
+  } catch (e) {
+    log.warn(`${label}：config.json 在，但读不出（这一项按缺失处理）: ${errMsg(e)}`)
+    return null
+  }
+  try {
+    const v = JSON.parse(raw) as unknown
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+  } catch {
+    // 解析不出来＝手工编辑过／断电留下的半截文件，走下面那句留痕
+  }
+  log.warn(`${label}：config.json 解析失败（多半是被手工编辑过或写入时中断留下的半截文件），这一项按缺失处理`)
+  return null
+}
+
+/**
+ * 写路径专用的读：解析不出来时**先把原文件改名留档再新建**，而不是当空对象覆盖。
+ * 留档改不了名（文件被占住、权限）就抛＝这次改写放弃——"宁可写不成，不可把没读出来的键当没有"。
+ */
+function loadConfigForWrite(): Record<string, unknown> {
+  if (!existsSync(CONFIG_PATH)) return {}
+  let raw: string
+  try {
+    raw = readFileSync(CONFIG_PATH, 'utf8')
+  } catch (e) {
+    throw new Error(`config.json 读不出，本次不改写（同文件里的 salt／档位／恢复包不能被一次失败的读顶掉）: ${errMsg(e)}`)
+  }
+  try {
+    const v = JSON.parse(raw) as unknown
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+  } catch {
+    // 落到下面的留档分支
+  }
+  const archive = `${CONFIG_PATH}.corrupt-${Date.now()}`
+  renameSync(CONFIG_PATH, archive)
+  log.warn(`config.json 解析失败 ⇒ 原文已留档 ${archive}，本次改写只带自己要落的那一把钥匙；其余键（含恢复包）请从那份留档取回`)
+  return {}
+}
+
+/** 同目录独占临时文件 + rename 覆盖：中途崩溃/断电留下的是没人认识的 .tmp-*，不是半截的 config.json */
+function saveConfigFile(cfg: Record<string, unknown>): void {
+  const tmp = `${CONFIG_PATH}.tmp-${process.pid}-${Date.now()}`
+  try {
+    // 0600＋wx：文件名通用、未来可能承载其他敏感配置；独占建（已存在就失败）避免并发写互相顶掉
+    writeFileSync(tmp, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    renameSync(tmp, CONFIG_PATH)
+  } catch (e) {
+    try {
+      unlinkSync(tmp)
+    } catch {
+      /* 临时文件没建成，不必再套一层错 */
+    }
+    throw new Error(`config.json 写入失败: ${errMsg(e)}`)
+  }
+}
+
+/** 读改写的唯一出口：三个写点都走这里，确保"其他键带着走"只需要在这一处成立 */
+function mutateConfigFile(mutate: (cfg: Record<string, unknown>) => void): void {
+  const cfg = loadConfigForWrite()
+  mutate(cfg)
+  saveConfigFile(cfg)
+}
+
 // ---------- 主密码 salt 双通道 ----------
 //
 // salt 不是秘密（KDF 公开参数），但必须在 DB 未解锁/未打开时可读，
@@ -45,58 +124,52 @@ const KEYS = {
 // 主通道：config.json（明文文件，随库无关）；DB 内保留一份兼容回退。
 
 function readSaltFromConfigFile(): string | null {
-  try {
-    if (!existsSync(CONFIG_PATH)) return null
-    const cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
-    return typeof cfg?.masterPasswordSalt === 'string' ? cfg.masterPasswordSalt : null
-  } catch {
-    return null
-  }
+  const cfg = readConfigFile('主密码 salt')
+  const v = cfg?.masterPasswordSalt
+  return typeof v === 'string' ? v : null
 }
 
 function writeSaltToConfigFile(b64: string | null): void {
   try {
-    let cfg: Record<string, unknown> = {}
-    if (existsSync(CONFIG_PATH)) {
-      try { cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) ?? {} } catch { /* 损坏则重建 */ }
-    }
-    if (b64 === null) delete cfg.masterPasswordSalt
-    else cfg.masterPasswordSalt = b64
-    // 0600：文件名通用，未来可能承载其他敏感配置；仅对新建文件生效
-    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
-  } catch { /* 写失败不阻塞主流程：DB 内仍有备份 */ }
+    mutateConfigFile((cfg) => {
+      if (b64 === null) delete cfg.masterPasswordSalt
+      else cfg.masterPasswordSalt = b64
+    })
+  } catch (e) {
+    // 写失败不阻塞主流程：DB 内仍有回退副本。但必须留痕——否则"文件里没 salt"这件事没人知道，
+    // 而它下一次表现出来的位置是启动解锁那句"密码错误"
+    log.warn(`salt 写 config.json 失败（DB 里的回退副本仍在）: ${errMsg(e)}`)
+  }
 }
+
 
 // ---------- 恢复密钥包（库外通道） ----------
 //
 // 与 salt 同理但更严格：恢复包用于「忘记主密码」场景，此时 DB 无法打开，
-// 包绝不能存进加密 DB（否则鸡生蛋）。只放 config.json，跟随便携目录走，
-// 且已纳入备份文件清单（files-service）。包内是「恢复码派生密钥加密后的
-// masterKey」，config.json 被读到也无法离线伪造（暴力破解恢复码）。
+// 包绝不能存进加密 DB（否则鸡生蛋）。只放 config.json，跟随便携目录走。
+// 注意 config.json **不在备份包里**（备份只装 manifest.json＋app.db＋attachments；
+// files-service 那张表是「禁止删除」的保护清单，不是备份清单），所以这个文件就是
+// 恢复包的**唯一副本**——写它的那几条路径一旦把别的键当空对象重建，用户就再没有
+// 任何一处能取回恢复码包。包内是「恢复码派生密钥加密后的 masterKey」，
+// config.json 被读到也无法离线伪造（暴力破解恢复码）。
 
 function readRecoveryBlobFromConfigFile(): string | null {
-  try {
-    if (!existsSync(CONFIG_PATH)) return null
-    const cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
-    return typeof cfg?.recoveryBlob === 'string' ? cfg.recoveryBlob : null
-  } catch {
-    return null
-  }
+  const cfg = readConfigFile('恢复密钥包')
+  const v = cfg?.recoveryBlob
+  return typeof v === 'string' ? v : null
 }
 
 function writeRecoveryBlobToConfigFile(blob: string | null): void {
   try {
-    let cfg: Record<string, unknown> = {}
-    if (existsSync(CONFIG_PATH)) {
-      try { cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) ?? {} } catch { /* 损坏则重建 */ }
-    }
-    if (blob === null) delete cfg.recoveryBlob
-    else cfg.recoveryBlob = blob
-    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
+    mutateConfigFile((cfg) => {
+      if (blob === null) delete cfg.recoveryBlob
+      else cfg.recoveryBlob = blob
+    })
   } catch (e) {
     throw new Error(`恢复密钥写入 config.json 失败: ${errMsg(e)}`)
   }
 }
+
 
 // ---------- 主密码 KDF 档位（SEC-32②） ----------
 //
@@ -107,25 +180,20 @@ function writeRecoveryBlobToConfigFile(blob: string | null): void {
 // 照搬一个巨大的 N 就能在同步的解锁路径上把主进程内存/时间打爆。
 
 function readKdfFromConfigFile(): unknown {
-  try {
-    if (!existsSync(CONFIG_PATH)) return null
-    const cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
-    return cfg?.kdfParams ?? null
-  } catch {
-    return null
-  }
+  const cfg = readConfigFile('主密码 KDF 档位')
+  return cfg?.kdfParams ?? null
 }
 
 function writeKdfToConfigFile(params: KdfParams | null): void {
   try {
-    let cfg: Record<string, unknown> = {}
-    if (existsSync(CONFIG_PATH)) {
-      try { cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) ?? {} } catch { /* 损坏则重建 */ }
-    }
-    if (params === null) delete cfg.kdfParams
-    else cfg.kdfParams = params
-    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
-  } catch { /* 写失败不阻塞主流程：DB 内仍有回退副本 */ }
+    mutateConfigFile((cfg) => {
+      if (params === null) delete cfg.kdfParams
+      else cfg.kdfParams = params
+    })
+  } catch (e) {
+    // 与 salt 那侧同口径：DB 里的回退副本仍在，所以不阻塞主流程，但必须留痕
+    log.warn(`KDF 档位写 config.json 失败（DB 里的回退副本仍在）: ${errMsg(e)}`)
+  }
 }
 
 // ---------- 内存读缓存 ----------
