@@ -2,11 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { formatBytes } from '../src/renderer/src/utils/format'
 
 describe('formatBytes', () => {
-  it('非有限值或 ≤0 返回 "-"', () => {
-    expect(formatBytes(0)).toBe('-')
+  // §378：0 与「拿不到」以前共用一个 '-'，于是"确实没有"和"读失败"在屏上长成同一个串
+  //（数据健康屏那七个体积格、清理后「回收 0 字节」全被画成 '-'）。现在分两档。
+  it('0 是"确实没有"：说 0 B，不许再借破折号演"没读到"', () => {
+    expect(formatBytes(0)).toBe('0 B')
+  })
+
+  it('只有拿不到（非有限值／负数）才说 "-"', () => {
     expect(formatBytes(-1)).toBe('-')
     expect(formatBytes(NaN)).toBe('-')
     expect(formatBytes(Infinity)).toBe('-')
+    expect(formatBytes(-Infinity)).toBe('-')
   })
 
   it('B 单位：< 1024 显示整数 B', () => {

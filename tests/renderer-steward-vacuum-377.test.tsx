@@ -132,6 +132,16 @@ describe('② 手动 VACUUM：没跑成 ≠ 跑过了没东西可回收', () => 
     expect(vacuumBoxes()[0]?.cls, '成功那一面反倒换了脸色').toContain('--color-success')
   })
 
+  it('§378：跑成了但一个字节也没回收 ⇒ 绿色那句说「回收 0 B」，不许再借 formatBytes(0) 的 \'-\' 说成"读不到"', async () => {
+    stubPocketai(baseStubs({ runVacuum: () => ({ vacuumedBytes: 0, vacuumFailed: false }) }))
+    mountWithProviders(<StewardModule />)
+    fireEvent.click(screen.getByText(L('steward.vacuum')))
+    await waitFor(() =>
+      expect(texts(vacuumBoxes()), '「回收 0 B」那句没上屏').toEqual([T('steward.vacuumResult', { b: formatBytes(0) })])
+    )
+    expect(vacuumBoxes().map((b) => b.text).join(' ')).not.toContain(' -')
+  })
+
   it('信封失败面照旧：通道回 {ok:false} ⇒ 只有 toast，那一格整格不出现（§216 那颗判据还在）', async () => {
     stubPocketai(baseStubs({ runVacuum: () => ({ ok: false, error: 'DB_LOCKED:数据库被占用' }) }))
     mountWithProviders(<StewardModule />)

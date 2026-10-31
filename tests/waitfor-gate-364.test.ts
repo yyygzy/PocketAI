@@ -226,7 +226,7 @@ const detail = (c: Cand): string => `${where(c)}  ${c.gate}  ||  ${c.dom}`
 
 describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', () => {
   it('读法自证：全仓在等的 waitFor 有多少、各桶多少（分类器坏了这里先红）', () => {
-    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-31（§377 加了一份新挂载用例之后；§369 那趟记的 983/530 已被顶掉）＝awaits 990／按存在读屏 537／
+    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-31（§378 又加了一份挂载用例之后；§377 那趟记的 990/537 已被顶掉）＝awaits 994／按存在读屏 541／
     // 等退场 75／门后没有读屏断言 360／会假红 0／只会假绿 18。逐颗钉死＝新增任何一格都要人工过目。
     //   §369 这 6 颗的来路（不是搬运，是净新增）：recovery-carry-notice-369 里 6 发 waitFor＝
     //   5 颗门按"那行字上屏"读（落进 按存在读屏 525→530）＋1 颗门等的是 notices.length（非 DOM 信号）、
@@ -237,9 +237,12 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   §377 把这格抬到 990／537（净新增 7 颗，全在 renderer-steward-vacuum-377：① 两颗「整格逐值等于那一句」、
     //   ② 三颗（两颗同上＋一颗等到 toast 里有那句话）、③ 两颗「未知／SSD 那一档上屏」）：
     //   七颗的到货见证都写在门里第一句、门后不再另读屏⇒全部落进「按存在读屏」，其余四桶一格未动。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(990)
+    //   §378 再抬到 994／541（净新增 4 颗、不是搬运）：data-health-zero-bytes-378 三颗（② 里两颗门等"确认框那颗
+    //   「确认」真在"＋一颗门等回执那句话上 toast 屏）＋ renderer-steward-vacuum-377 里 §378 补的那颗（门等
+    //   「回收 0 B」整值上屏）；四颗的到货见证都写在门里第一句⇒全部落进「按存在读屏」，其余四桶一格未动。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(994)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('537/75/360/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('541/75/360/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

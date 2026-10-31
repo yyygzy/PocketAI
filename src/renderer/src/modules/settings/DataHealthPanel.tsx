@@ -127,7 +127,11 @@ export const DataHealthPanel: React.FC = () => {
    * 失败必须弹 toast 且不许显示「已清理」；成功要把前后两个数一起给出来，让人看得见它到底清掉了多少。
    */
   const onClearCache = async () => {
-    const shown = report ? formatBytes(report.sizes.browserCacheBytes) : formatBytes(0)
+    // §378：这一发原先写 `report ? formatBytes(...) : formatBytes(0)`，借"0 字节"当"没有报告"的哨兵——
+    // 而那颗「清理」键只在上面 `if (!report)` 那道门之后才存在（那个分支根本走不到），
+    // 加上 0 现在老实说「0 B」，这句留着就是把"没读到"演成"读到 0"，所以改成早退而不是三元。
+    if (!report) return
+    const shown = formatBytes(report.sizes.browserCacheBytes)
     if (!(await confirm({ message: t('dh.browserCache.clearConfirm', { bytes: shown }), danger: true }))) return
     setBusy(true)
     try {
