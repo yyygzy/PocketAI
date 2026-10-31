@@ -1197,7 +1197,7 @@ export const ja = {
   'dh.integrity.issue.disabled': 'Provider は無効',
   'dh.integrity.issue.model-missing': 'モデルが Provider 一覧にありません',
   'dh.refresh': '更新',
-  'set.memoryHint': 'エージェントは会話の中でユーザーの偏好や事実を記憶します（下記で手動管理も可能）。メモリは会話コンテキストに注入され、いつでも削除できます。',
+  'set.memoryHint': 'エージェントは会話の中でユーザーの偏好や事実を記憶します（下記で手動管理も可能）。会話ごとに直近 {items} 件まで、1 件あたり {itemChars} 文字、合計約 {totalChars} 文字まで注入され、収まりきらない部分はモデルに伝わりません。メモリはいつでも削除できます。',
   'set.memoryPlaceholder': 'メモリを追加（例：簡潔な回答を好む）',
   'set.memoryEmpty': 'メモリはまだありません',
   'set.memoryAdded': 'メモリを追加しました',

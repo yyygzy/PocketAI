@@ -4,7 +4,14 @@ import React, { useCallback, useEffect, useState } from 'react'
 import type { UserMemoryRecord } from '../../../../shared/types'
 // §333：那道 2000 字上限此前只在 zod 里，输入框不设防 ⇒ 粘一段超长的记忆按「添加」，
 // 整条被拒而界面先一步把用户敲的那段清空。数字取 schema 那一份，不在这里重抄。
-import { MEMORY_MAX_CONTENT_CHARS } from '../../../../shared/schemas/memory'
+// §379：注入侧的三档上限（条数／单条／总长）也搬进同一份 shared，让下面那句披露与主进程的预算同源——
+// 文案里不写死数字，数字由 params 带出（§361 那族"手抄数字漂移"的正解）。
+import {
+  MEMORY_MAX_CONTENT_CHARS,
+  MEMORY_INJECT_MAX_ITEMS,
+  MEMORY_INJECT_MAX_ITEM_CHARS,
+  MEMORY_INJECT_MAX_TOTAL_CHARS
+} from '../../../../shared/schemas/memory'
 import { useI18n } from '../../i18n'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
@@ -122,7 +129,13 @@ export const UserMemoryPanel: React.FC = () => {
 
   return (
     <div>
-      <p className="text-xs text-[var(--color-text-muted)] mb-2">{t('set.memoryHint')}</p>
+      <p className="text-xs text-[var(--color-text-muted)] mb-2">
+        {t('set.memoryHint', {
+          items: MEMORY_INJECT_MAX_ITEMS,
+          itemChars: MEMORY_INJECT_MAX_ITEM_CHARS,
+          totalChars: MEMORY_INJECT_MAX_TOTAL_CHARS
+        })}
+      </p>
 
       <div className="flex gap-2 mb-3">
         <input

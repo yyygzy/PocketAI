@@ -1250,7 +1250,7 @@ export const en = {
   'dh.integrity.issue.disabled': 'Provider disabled',
   'dh.integrity.issue.model-missing': 'Model not in provider list',
   'dh.refresh': 'Refresh',
-  'set.memoryHint': 'The agent remembers your preferences and facts during conversations (you can also manage them below). Memories are injected into the conversation context and can be deleted anytime.',
+  'set.memoryHint': 'The agent remembers your preferences and facts during conversations (you can also manage them below). Each conversation injects at most the latest {items} memories, up to {itemChars} characters per memory and about {totalChars} characters in total—anything that does not fit is not visible to the model. Memories can be deleted anytime.',
   'set.memoryPlaceholder': 'Add a memory, e.g. prefers concise replies',
   'set.memoryEmpty': 'No memories yet',
   'set.memoryAdded': 'Memory added',

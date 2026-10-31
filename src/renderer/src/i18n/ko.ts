@@ -1197,7 +1197,7 @@ export const ko = {
   'dh.integrity.issue.disabled': 'Provider 비활성화됨',
   'dh.integrity.issue.model-missing': '모델이 Provider 목록에 없습니다',
   'dh.refresh': '새로고침',
-  'set.memoryHint': '에이전트는 대화 중 사용자의 선호와 사실을 기억합니다(아래에서 수동 관리도 가능). 메모리는 대화 컨텍스트에 주입되며 언제든 삭제할 수 있습니다.',
+  'set.memoryHint': '에이전트는 대화 중 사용자의 선호와 사실을 기억합니다(아래에서 수동 관리도 가능). 대화마다 최신 {items}개, 항목당 {itemChars}자, 총 약 {totalChars}자까지 주입되며 나머지는 모델에 전달되지 않습니다. 메모리는 언제든 삭제할 수 있습니다.',
   'set.memoryPlaceholder': '메모리 추가 (예: 간결한 답변 선호)',
   'set.memoryEmpty': '아직 메모리가 없습니다',
   'set.memoryAdded': '메모리가 추가되었습니다',

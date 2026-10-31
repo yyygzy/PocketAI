@@ -1251,7 +1251,7 @@ export const zh = {
   'dh.integrity.issue.missing': 'Provider 已删除',
   'dh.integrity.issue.disabled': 'Provider 已禁用',
   'dh.integrity.issue.model-missing': '模型不在 Provider 列表',
-  'set.memoryHint': 'Agent 会在对话中主动记住你的偏好与事实（也可在下方手动维护）。记忆将注入对话上下文，可随时删除。',
+  'set.memoryHint': 'Agent 会在对话中主动记住你的偏好与事实（也可在下方手动维护）。每次对话最多注入最近 {items} 条、单条最长 {itemChars} 字、总计约 {totalChars} 字，放不下的那部分模型看不到；记忆可随时删除。',
   'set.memoryPlaceholder': '添加一条记忆，如：偏好简洁的回复',
   'set.memoryEmpty': '暂无记忆',
   'set.memoryAdded': '记忆已添加',

@@ -18,6 +18,12 @@ import { SkillMarket } from '../src/renderer/src/modules/skills/SkillMarket'
 import { SkillModule } from '../src/renderer/src/modules/skills/SkillModule'
 import { UserMemoryPanel } from '../src/renderer/src/modules/settings/UserMemoryPanel'
 import { zh } from '../src/renderer/src/i18n/zh'
+// §379：那句记忆提示里的三个数字与主进程预算同源（都取自 shared），测试跟着取同一份、不重抄
+import {
+  MEMORY_INJECT_MAX_ITEMS,
+  MEMORY_INJECT_MAX_ITEM_CHARS,
+  MEMORY_INJECT_MAX_TOTAL_CHARS
+} from '../src/shared/schemas/memory'
 import type { AssistantRecord, SkillRecord, UserMemoryRecord } from '../src/shared/types'
 
 const L = (key: string): string => (zh as unknown as Record<string, string>)[key]!
@@ -26,6 +32,21 @@ const NAMED = (what: string, msg: string): string =>
 const alerts = (): string[] => screen.queryAllByRole('alert').map((e) => (e.textContent ?? '').trim())
 const bodyText = (): string => document.body.textContent ?? ''
 const MOUNT_BUDGET = { timeout: 8000, interval: 50 }
+
+/**
+ * §379：那句记忆提示现在带三颗占位符（数字取自 shared 那份与主进程预算同源的常量）。
+ * 这里照生产 `t` 的语义插值（全局替换＋函数型第二参＝§361 那两颗坑），测试不重抄数字。
+ */
+const T = (key: string, params: Record<string, number>): string =>
+  Object.entries(params).reduce(
+    (acc, [k, v]) => acc.replace(new RegExp('\\{' + k + '\\}', 'g'), () => String(v)),
+    L(key)
+  )
+const MEMORY_HINT = T('set.memoryHint', {
+  items: MEMORY_INJECT_MAX_ITEMS,
+  itemChars: MEMORY_INJECT_MAX_ITEM_CHARS,
+  totalChars: MEMORY_INJECT_MAX_TOTAL_CHARS
+})
 
 const ASSISTANTS_WHAT = L('common.assistantsList')
 const SKILLS_WHAT = L('common.skillsList')
@@ -215,7 +236,8 @@ describe('④ 用户记忆那一发', () => {
     mount({ listMemories: () => ({ ok: false, error: 'MEM:记忆通道断了' }) })
     await waitFor(() => expect(alerts()).toEqual([NAMED(MEMORY_WHAT, 'MEM:记忆通道断了')]), MOUNT_BUDGET)
     expect(screen.queryByText(L('set.memoryEmpty'))).toBeNull()
-    expect(bodyText(), '添加那一栏不许被那句吃掉（说实话不等于禁输入）').toContain(L('set.memoryHint'))
+    // §379：那句提示现在带三颗占位符（数字由 shared 常量带出），所以比对的是插值后的整句而不是字典原文
+    expect(bodyText(), '添加那一栏不许被那句吃掉（说实话不等于禁输入）').toContain(MEMORY_HINT)
   })
 
   it('那颗键点了有效：只重发记忆这一发', async () => {
