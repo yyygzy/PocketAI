@@ -1973,6 +1973,7 @@ export const en = {
   'enc.oldNewSame': 'New password must differ from the old one',
   'enc.oldWrong': 'Wrong current password',
   'enc.pwdUpdated': 'Password updated',
+  'enc.rotateUndecryptable': 'This password rotation could not decrypt {n} credential(s) with the old key (possibly corrupt or mismatched) — they were left unchanged; please re-enter them where needed.',
   'enc.disableTitle': 'Disable encryption',
   'enc.disableDesc': 'The database will return to plaintext storage. Enter the current master password to confirm.',
   'enc.enterCurrent': 'Enter the current password',

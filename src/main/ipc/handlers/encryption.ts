@@ -236,7 +236,9 @@ export function registerEncryptionHandlers(): void {
     }
 
     log.info('密码轮换成功')
-    return { ok: true, recoveryCode: newRecoveryCode }
+    // §375：解不开而没被重写的凭据条目数——透给界面，别让「轮换成功」盖住「有 N 行凭据没跟着换、得手动重填」
+    // （与 restoreFieldCredentials 同一口径：undecryptable 缺失按 0 算，别当崩）
+    return { ok: true, recoveryCode: newRecoveryCode, undecryptableCount: fieldSnapshot.undecryptable?.length ?? 0 }
   }, argsSchema(masterPasswordSchema, newMasterPasswordSchema))
   safeHandle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config

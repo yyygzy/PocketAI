@@ -9,7 +9,7 @@
 // - exportSecrets()/restoreSecrets()：主密码启用/禁用/轮换时随字段密钥重加密
 
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import { encryptSecret, decryptSecret, isCipherText } from './field-encrypt'
+import { encryptSecret, decryptSecret, isCipherText, hasUndecryptableCipher } from './field-encrypt'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
 import { z } from 'zod'
@@ -68,20 +68,23 @@ export function migrateKvSecrets(keys: readonly string[] = Object.values(SECRET_
   }
 }
 
-/** 密钥轮换前：用「旧字段密钥」导出明文快照（不含键以外的任何信息） */
+/** 密钥轮换前：用「旧字段密钥」导出明文快照（仅进程内存）；解不开的行单列进 undecryptable（§375，不进快照＝保持原密文不动） */
 export function exportSecrets(
   keys: readonly string[] = Object.values(SECRET_KV_KEYS)
-): Record<string, string> {
+): { snapshot: Record<string, string>; undecryptable: string[] } {
   const snapshot: Record<string, string> = {}
+  const undecryptable: string[] = []
   for (const key of keys) {
     try {
+      const raw = appConfigRepo.get(key)
       const v = getSecret(key)
       if (v) snapshot[key] = v
+      else if (hasUndecryptableCipher(raw)) undecryptable.push(key)
     } catch (e) {
       log.warn(`轮换导出失败 ${key}:`, errMsg(e))
     }
   }
-  return snapshot
+  return { snapshot, undecryptable }
 }
 
 /** 密钥轮换后：用「新字段密钥」重新加密落盘；空快照对应键保持删除态 */

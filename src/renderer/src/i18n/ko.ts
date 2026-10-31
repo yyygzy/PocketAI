@@ -1903,6 +1903,7 @@ export const ko = {
   'enc.oldNewSame': '새 비밀번호는 기존과 달라야 합니다',
   'enc.oldWrong': '현재 비밀번호가 잘못되었습니다',
   'enc.pwdUpdated': '비밀번호가 업데이트됨',
+  'enc.rotateUndecryptable': '이번 비밀번호 회전에서 {n}개 자격 증명을 이전 키로 복호화할 수 없습니다(손상되었거나 이전 비밀번호와 불일치할 수 있음). 재작성되지 않았으므로 해당 위치에서 직접 다시 입력하세요.',
   'enc.disableTitle': '암호화 비활성화',
   'enc.disableDesc': '데이터베이스가 평문 저장으로 돌아갑니다. 확인을 위해 현재 마스터 비밀번호를 입력하세요.',
   'enc.enterCurrent': '현재 비밀번호 입력',

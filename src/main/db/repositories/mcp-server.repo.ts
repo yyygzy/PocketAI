@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
-import { encryptSecretMap, decryptSecretMap, isCipherText } from '../../crypto/field-encrypt'
+import { encryptSecretMap, decryptSecretMap, isCipherText, hasUndecryptableCipher } from '../../crypto/field-encrypt'
 import { noneModeSecretBlock } from '../../crypto/none-mode-gate'
 import { restoreMaskedMap } from '../../../shared/secret-mask'
 import { createLogger } from '../../logger'
@@ -219,15 +219,27 @@ export const mcpServerRepo = {
     if (upgraded > 0) log.info(`MCP Server env/headers 已升级为字段加密: ${upgraded} 列`)
   },
 
-  /** 轮换前（旧字段密钥仍可用）：导出全部 env/headers 明文快照，仅进程内存 */
-  exportAllSecrets(): Record<string, { env: Record<string, string>; headers: Record<string, string> }> {
+  /** 轮换前（旧字段密钥仍可用）：导出全部 env/headers 明文快照，仅进程内存；解不开的行单列进 undecryptable（§375，同 provider） */
+  exportAllSecrets(): {
+    snapshot: Record<string, { env: Record<string, string>; headers: Record<string, string> }>
+    undecryptable: string[]
+  } {
     const snapshot: Record<string, { env: Record<string, string>; headers: Record<string, string> }> = {}
-    for (const row of this.list()) {
-      if (Object.keys(row.env).length > 0 || Object.keys(row.headers).length > 0) {
-        snapshot[row.id] = { env: row.env, headers: row.headers }
+    const undecryptable: string[] = []
+    const rows = dbService
+      .getHandle()
+      .prepare('SELECT id, env, headers FROM mcp_servers')
+      .all() as { id: string; env: string | null; headers: string | null }[]
+    for (const row of rows) {
+      const env = decryptSecretMap(row.env)
+      const headers = decryptSecretMap(row.headers)
+      if (Object.keys(env).length > 0 || Object.keys(headers).length > 0) {
+        snapshot[row.id] = { env, headers }
+      } else if (hasUndecryptableCipher(row.env) || hasUndecryptableCipher(row.headers)) {
+        undecryptable.push(row.id)
       }
     }
-    return snapshot
+    return { snapshot, undecryptable }
   },
 
   /**

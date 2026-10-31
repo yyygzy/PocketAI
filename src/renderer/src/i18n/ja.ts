@@ -1903,6 +1903,7 @@ export const ja = {
   'enc.oldNewSame': '新旧パスワードは同じにできません',
   'enc.oldWrong': '現在のパスワードが間違っています',
   'enc.pwdUpdated': 'パスワードを更新しました',
+  'enc.rotateUndecryptable': '今回のパスワードローテーションで {n} 件の認証情報を旧キーで復号できませんでした（破損または不一致の可能性）。書き換えられていないため、該当箇所へ手動で再入力してください。',
   'enc.disableTitle': '暗号化を無効化',
   'enc.disableDesc': 'データベースは平文ストレージに戻ります。確認のため現在のマスターパスワードを入力してください。',
   'enc.enterCurrent': '現在のパスワードを入力',

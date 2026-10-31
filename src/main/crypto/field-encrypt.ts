@@ -100,3 +100,19 @@ export function decryptSecretMap(stored: string | null | undefined): Record<stri
     return {}
   }
 }
+
+/**
+ * 轮换导出专用：区分「没配过凭据」与「有密文但解不开」这两态。
+ *
+ * decryptSecret 的 catch 把二者都折成 ''（→ decryptApiKeys 折成 []、decryptSecretMap 折成 {}），
+ * 而「解不开」的行（旧字段密钥不匹配／密文损坏，§323 那种半状态）在语义上绝不是「没凭据」：
+ * 轮换时它进不了明文快照，若又被当成「没配过」悄悄跳过，旧钥密文就原地留在被换掉的字段密钥下 ⇒ 永久解不开。
+ * ⇒ 三个轮换导出器都用这颗把它单独请出来（跳过重写、但如实上报），别和「真没配」混一栏。
+ *
+ * 判据成立的前提：空值从不以密文形态落盘（encryptSecret('')=''、encryptApiKeys([])=''、encryptSecretMap({})=''），
+ * 所以「是密文却解出空」只可能是解不开，不可能是「配了个空」。
+ */
+export function hasUndecryptableCipher(stored: string | null | undefined): boolean {
+  if (!stored || !isCipherText(stored)) return false
+  return decryptSecret(stored) === ''
+}

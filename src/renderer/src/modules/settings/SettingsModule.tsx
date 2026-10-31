@@ -611,6 +611,7 @@ const EnableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }>
 
 const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> = ({ onDone, setNotice }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [open, setOpen] = useState(false)
   const [oldPwd, setOldPwd] = useState('')
   const [newPwd, setNewPwd] = useState('')
@@ -633,6 +634,10 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
       onDone()  // ✅ 刷新加密状态
       // 之前生成过恢复码：rekey 后旧码失效，必须让用户保存新码
       if (r.recoveryCode) setRotatedCode(r.recoveryCode)
+      // §375：解不开而没跟着重写的凭据条目——「轮换成功」不许盖住这一句，另发一条 warning 让用户去重填
+      if (r.undecryptableCount && r.undecryptableCount > 0) {
+        toast.warning(t('enc.rotateUndecryptable', { n: r.undecryptableCount }))
+      }
     } catch (e) {
       setLocalErr(errText(e, t('enc.fail')))
     } finally {

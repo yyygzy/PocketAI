@@ -1974,6 +1974,7 @@ export const zh = {
   'enc.oldNewSame': '新旧密码不能相同',
   'enc.oldWrong': '旧密码错误',
   'enc.pwdUpdated': '密码已更新',
+  'enc.rotateUndecryptable': '本次密码轮换有 {n} 项凭据用旧密钥解不开（可能已损坏或与旧密码不匹配），未被重写——请到对应位置手动重填',
   'enc.disableTitle': '禁用加密',
   'enc.disableDesc': '数据库将恢复明文存储。请输入当前主密码以确认。',
   'enc.enterCurrent': '请输入当前密码',

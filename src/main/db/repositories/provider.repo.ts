@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
-import { encryptApiKeys, decryptApiKeys, isCipherText } from '../../crypto/field-encrypt'
+import { encryptApiKeys, decryptApiKeys, isCipherText, hasUndecryptableCipher } from '../../crypto/field-encrypt'
 import { isNoneMode, newSecretValues, NONE_MODE_HINT } from '../../crypto/none-mode-gate'
 import { restoreMaskedList } from '../../../shared/secret-mask'
 import type { ProviderRecord, ProviderType } from '../../../shared/types'
@@ -194,14 +194,23 @@ export const providerRepo = {
 
   /**
    * 密钥轮换前：用「旧字段密钥」导出全部 provider 的 apiKeys 明文。
-   * 解密失败的行（空数组）也保留原值，由恢复阶段决定写回策略。
+   * §375：解不开的行（有密文却解出空＝旧字段密钥不匹配／密文损坏）不能进快照——
+   * 若也按旧口径「空数组=没配过」悄悄略过，restore 阶段根本不遍历它、旧钥密文原地留在被换掉的密钥下 ⇒ 永久解不开。
+   * 所以把它们单列进 undecryptable（跳过重写、保持原密文，交给调用方如实上报），与「真没配密钥」分两栏。
    */
-  exportAllApiKeys(): Record<string, string[]> {
+  exportAllApiKeys(): { snapshot: Record<string, string[]>; undecryptable: string[] } {
     const snapshot: Record<string, string[]> = {}
-    for (const row of this.list()) {
-      if (row.apiKeys.length > 0) snapshot[row.id] = row.apiKeys
+    const undecryptable: string[] = []
+    const rows = dbService
+      .getHandle()
+      .prepare('SELECT id, api_key_encrypted FROM providers')
+      .all() as { id: string; api_key_encrypted: string | null }[]
+    for (const row of rows) {
+      const keys = decryptApiKeys(row.api_key_encrypted)
+      if (keys.length > 0) snapshot[row.id] = keys
+      else if (hasUndecryptableCipher(row.api_key_encrypted)) undecryptable.push(row.id)
     }
-    return snapshot
+    return { snapshot, undecryptable }
   },
 
   /**

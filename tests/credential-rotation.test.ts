@@ -48,31 +48,32 @@ beforeEach(() => {
 })
 
 describe('exportFieldCredentials — 快照导出', () => {
-  it('组合 KV secrets、Provider apiKeys 与 MCP env/headers 三路来源', () => {
-    mocks.exportSecrets.mockReturnValue({ webdavPassword: 'enc:xxx' })
-    mocks.exportAllApiKeys.mockReturnValue({ 'prov-1': ['sk-a', 'sk-b'] })
-    mocks.exportAllMcpSecrets.mockReturnValue({ 'srv-1': { env: { API_KEY: 'k' }, headers: {} } })
+  it('组合 KV secrets、Provider apiKeys 与 MCP env/headers 三路来源，并汇总各自的 undecryptable（§375）', () => {
+    mocks.exportSecrets.mockReturnValue({ snapshot: { webdavPassword: 'enc:xxx' }, undecryptable: ['agent.websearch_api_key'] })
+    mocks.exportAllApiKeys.mockReturnValue({ snapshot: { 'prov-1': ['sk-a', 'sk-b'] }, undecryptable: ['prov-9'] })
+    mocks.exportAllMcpSecrets.mockReturnValue({ snapshot: { 'srv-1': { env: { API_KEY: 'k' }, headers: {} } }, undecryptable: [] })
 
     const snapshot = exportFieldCredentials()
 
     expect(snapshot).toEqual({
       kv: { webdavPassword: 'enc:xxx' },
       providers: { 'prov-1': ['sk-a', 'sk-b'] },
-      mcp: { 'srv-1': { env: { API_KEY: 'k' }, headers: {} } }
+      mcp: { 'srv-1': { env: { API_KEY: 'k' }, headers: {} } },
+      undecryptable: ['agent.websearch_api_key', 'prov-9']
     })
     expect(mocks.exportSecrets).toHaveBeenCalledTimes(1)
     expect(mocks.exportAllApiKeys).toHaveBeenCalledTimes(1)
     expect(mocks.exportAllMcpSecrets).toHaveBeenCalledTimes(1)
   })
 
-  it('无任何凭据时返回空快照', () => {
-    mocks.exportSecrets.mockReturnValue({})
-    mocks.exportAllApiKeys.mockReturnValue({})
-    mocks.exportAllMcpSecrets.mockReturnValue({})
+  it('无任何凭据时返回空快照（undecryptable 也是空数组）', () => {
+    mocks.exportSecrets.mockReturnValue({ snapshot: {}, undecryptable: [] })
+    mocks.exportAllApiKeys.mockReturnValue({ snapshot: {}, undecryptable: [] })
+    mocks.exportAllMcpSecrets.mockReturnValue({ snapshot: {}, undecryptable: [] })
 
     const snapshot = exportFieldCredentials()
 
-    expect(snapshot).toEqual({ kv: {}, providers: {}, mcp: {} })
+    expect(snapshot).toEqual({ kv: {}, providers: {}, mcp: {}, undecryptable: [] })
   })
 })
 
@@ -81,7 +82,8 @@ describe('restoreFieldCredentials — 快照恢复', () => {
     const snapshot: FieldCredentialSnapshot = {
       kv: { webdavPassword: 'enc:yyy' },
       providers: { 'prov-2': ['sk-c'] },
-      mcp: { 'srv-2': { env: {}, headers: { Authorization: 'Bearer t' } } }
+      mcp: { 'srv-2': { env: {}, headers: { Authorization: 'Bearer t' } } },
+      undecryptable: ['prov-7']
     }
 
     restoreFieldCredentials(snapshot)
@@ -94,7 +96,7 @@ describe('restoreFieldCredentials — 快照恢复', () => {
   })
 
   it('旧快照缺 mcp 字段时按空处理（不因字段增量而崩）', () => {
-    restoreFieldCredentials({ kv: {}, providers: {} } as FieldCredentialSnapshot)
+    restoreFieldCredentials({ kv: {}, providers: {}, undecryptable: [] } as unknown as FieldCredentialSnapshot)
 
     expect(mocks.restoreSecrets).toHaveBeenCalledWith({})
     expect(mocks.restoreAllApiKeys).toHaveBeenCalledWith({})
@@ -103,13 +105,13 @@ describe('restoreFieldCredentials — 快照恢复', () => {
 })
 
 describe('导出 → 恢复往返', () => {
-  it('restore 收到的数据与 export 产出的快照完全一致', () => {
+  it('restore 收到的数据与 export 产出的快照完全一致（解不开的条目不进任何转发 map）', () => {
     const kv = { webdavPassword: 'enc:round-trip', telegramToken: 'enc:tt' }
     const providers = { 'prov-a': ['sk-1'], 'prov-b': ['sk-2', 'sk-3'] }
     const mcp = { 'srv-a': { env: { GH_TOKEN: 'ghp_x' }, headers: { 'X-Api-Key': 'k' } } }
-    mocks.exportSecrets.mockReturnValue(kv)
-    mocks.exportAllApiKeys.mockReturnValue(providers)
-    mocks.exportAllMcpSecrets.mockReturnValue(mcp)
+    mocks.exportSecrets.mockReturnValue({ snapshot: kv, undecryptable: [] })
+    mocks.exportAllApiKeys.mockReturnValue({ snapshot: providers, undecryptable: [] })
+    mocks.exportAllMcpSecrets.mockReturnValue({ snapshot: mcp, undecryptable: [] })
 
     const snapshot = exportFieldCredentials()
     restoreFieldCredentials(snapshot)

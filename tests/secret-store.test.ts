@@ -154,27 +154,46 @@ describe('migrateKvSecrets — 明文 → 密文幂等升级', () => {
   })
 })
 
-describe('exportSecrets — 导出明文快照', () => {
-  it('只导出有值的 key', () => {
+describe('exportSecrets — 导出明文快照（§375：返回 {snapshot, undecryptable}）', () => {
+  it('只导出有值的 key，无解不开项', () => {
     setSecret(VALID_KEY, 'token-1')
     // ANOTHER_KEY 不设置
-    const snapshot = exportSecrets([VALID_KEY, ANOTHER_KEY])
+    const { snapshot, undecryptable } = exportSecrets([VALID_KEY, ANOTHER_KEY])
     expect(snapshot).toEqual({ [VALID_KEY]: 'token-1' })
     expect(snapshot[ANOTHER_KEY]).toBeUndefined()
+    expect(undecryptable).toEqual([])
   })
 
-  it('空值不进入快照', () => {
+  it('空值不进入快照、也不算解不开', () => {
     store.set(VALID_KEY, '')
-    const snapshot = exportSecrets([VALID_KEY])
+    const { snapshot, undecryptable } = exportSecrets([VALID_KEY])
     expect(snapshot).toEqual({})
+    expect(undecryptable).toEqual([])
   })
 
   it('默认导出所有受管 key', () => {
     setSecret(VALID_KEY, 'a')
     setSecret(ANOTHER_KEY, 'b')
-    const snapshot = exportSecrets()
+    const { snapshot } = exportSecrets()
     expect(snapshot[VALID_KEY]).toBe('a')
     expect(snapshot[ANOTHER_KEY]).toBe('b')
+  })
+
+  // §375：有密文却解不开（坏 tag ⇒ AES-GCM 抛 ⇒ decryptSecret 折成 ''）＝第三态，既不进快照也不算「没配过」
+  it('有密文但解不开的 key ⇒ 不进 snapshot、单列进 undecryptable（不当「没配过」悄悄丢）', () => {
+    setSecret(VALID_KEY, 'good-token') // 正常可解
+    // 伪造一个 v1: 密文：base64 里 iv/tag 全零 ⇒ setAuthTag/final 抛 ⇒ decryptSecret catch→''
+    store.set(ANOTHER_KEY, 'v1:' + Buffer.alloc(12 + 4 + 16, 0).toString('base64'))
+    const { snapshot, undecryptable } = exportSecrets([VALID_KEY, ANOTHER_KEY])
+    expect(snapshot).toEqual({ [VALID_KEY]: 'good-token' })
+    expect(undecryptable).toEqual([ANOTHER_KEY])
+  })
+
+  it('历史明文（非 v1:）即便值可疑也不误判成解不开：照常进快照、undecryptable 空', () => {
+    store.set(VALID_KEY, 'legacy-plaintext-token') // 非密文，decryptSecret 原样返回
+    const { snapshot, undecryptable } = exportSecrets([VALID_KEY])
+    expect(snapshot).toEqual({ [VALID_KEY]: 'legacy-plaintext-token' })
+    expect(undecryptable).toEqual([])
   })
 })
 
@@ -202,7 +221,7 @@ describe('restoreSecrets — 恢复快照', () => {
 
   it('导出 → 恢复闭环：值不变', () => {
     setSecret(VALID_KEY, 'roundtrip-value')
-    const snapshot = exportSecrets([VALID_KEY])
+    const { snapshot } = exportSecrets([VALID_KEY])
     store.clear()
     restoreSecrets(snapshot)
     expect(getSecret(VALID_KEY)).toBe('roundtrip-value')
