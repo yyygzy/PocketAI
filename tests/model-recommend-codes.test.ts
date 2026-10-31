@@ -142,7 +142,7 @@ describe('④ 清单不许漂', () => {
       const keys = Object.keys(DICTS[lang]).filter((k) => k.startsWith('modelRec.'))
       expect(keys.length, `${lang} 的 modelRec 键数与清单不符`).toBe(total)
     }
-    expect(total).toBe(60)
+    expect(total).toBe(61)
   })
 })
 
@@ -194,7 +194,7 @@ describe('⑧ 括号／破折号／中黑按各语自己的惯例（ko／en，zh
     expect(bad, `ko 里这些条还带全角括号或「・」：${bad.join(', ')}`).toEqual([])
   })
 
-  it('反向对照：全角括号在 zh/ja 的这 60 条里确实大量在用 ⇒ 上一条不是全站禁令', () => {
+  it('反向对照：全角括号在 zh/ja 的这 61 条里确实大量在用 ⇒ 上一条不是全站禁令', () => {
     expect(values('zh').filter(([, v]) => v.includes('\uff08')).length).toBeGreaterThanOrEqual(10)
     expect(values('ja').filter(([, v]) => v.includes('\uff08')).length).toBeGreaterThanOrEqual(10)
   })

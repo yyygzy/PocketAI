@@ -26,8 +26,10 @@ import {
 import type {
   OllamaRuntimeStatus,
   OllamaInstallEvent,
+  OllamaLiveness,
   OllamaPullEvent
 } from '../../shared/types'
+import { classifyProbeFailure, OLLAMA_PROBE_TIMEOUT_MS } from '../../shared/ollama-probe'
 
 const log = createLogger('ollama')
 
@@ -35,7 +37,7 @@ const OLLAMA_VERSION = 'v0.34.2'
 const HOST = '127.0.0.1'
 const PORT = 11434
 const BASE_URL = `http://${HOST}:${PORT}`
-const OLLAMA_API_TIMEOUT_MS = 3000
+// §380：等待预算搬到 shared——设置页那句"未在 {seconds} 秒内答话"要报同一个数，不能两处各抄一遍
 
 /** app_config 里的下载镜像前缀（gh-proxy 风格：前缀直接拼官方完整 URL）；空=官方源 */
 const K_MIRROR = 'ollama_download_mirror'
@@ -107,7 +109,7 @@ function getMirror(): string {
 
 // ---------- 本地 API 探测（环回地址，不能走 safeFetch —— 它按 SSRF 策略拦截 127.0.0.1） ----------
 
-async function apiGetJson<T>(apiPath: string, timeoutMs = OLLAMA_API_TIMEOUT_MS): Promise<T | null> {
+async function apiGetJson<T>(apiPath: string, timeoutMs = OLLAMA_PROBE_TIMEOUT_MS): Promise<T | null> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
@@ -121,13 +123,33 @@ async function apiGetJson<T>(apiPath: string, timeoutMs = OLLAMA_API_TIMEOUT_MS)
   }
 }
 
-async function isApiUp(): Promise<boolean> {
-  return (await apiGetJson<{ version?: string }>('/api/version')) != null
+/**
+ * §380：存活探测单独一条路，结果带原因。改前这里是 `apiGetJson('/api/version') != null`，
+ * 于是那条 `catch { return null }` 把「连接被拒（真没跑）」与「3 秒没答话／回了 503／JSON 读不出」
+ * 压成同一个 null ⇒ 上层一律画「未运行」，把**我们不知道**签成了**确定没有**。
+ *
+ * 顺带把版本号在这一次探测里就交出去：改前 `getStatus()` 为拿版本又发第二发 `/api/version`，
+ * 那一发自己也可能超时 ⇒ "running:true 却 version:null" 这种自相矛盾的读数本来就存在。
+ */
+async function probeLiveness(timeoutMs = OLLAMA_PROBE_TIMEOUT_MS): Promise<{ liveness: OllamaLiveness; version: string | null }> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(`${BASE_URL}/api/version`, { signal: ctrl.signal })
+    // 有人监听不等于 API 可用，而非 2xx 究竟算不算"跑得起来能用"我们并不知道 ⇒ 不是 down
+    if (!res.ok) return { liveness: 'unknown', version: null }
+    const body = (await res.json()) as { version?: string }
+    return { liveness: 'up', version: body.version ?? null }
+  } catch (e) {
+    return { liveness: classifyProbeFailure(e), version: null }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
-async function getApiVersion(): Promise<string | null> {
-  const v = await apiGetJson<{ version?: string }>('/api/version')
-  return v?.version ?? null
+/** 动作挡板用的布尔（要不要再 spawn 一个 serve、健康轮询到了没有）；**界面上的"运行中/已停止"不许用它** */
+async function isApiUp(): Promise<boolean> {
+  return (await probeLiveness()).liveness === 'up'
 }
 
 async function listApiModelDetails(): Promise<OllamaModelDetail[]> {
@@ -399,7 +421,11 @@ function probeExeVersion(exe: string): Promise<string | null> {
 let pullCtrl: AbortController | null = null
 
 async function pullModel(model: string, onEvent?: (e: OllamaPullEvent) => void): Promise<void> {
-  if (!(await isApiUp())) throw new Error('Ollama 服务未运行，请先启动')
+  // §380：两种失败脸分两句话。「没在跑」与「3 秒没答话」不是一回事，
+  // 把后者也说成"未运行"会让人去装/起一遍——而那正是超时想避免的。
+  const { liveness } = await probeLiveness()
+  if (liveness === 'down') throw new Error('Ollama 服务未运行，请先启动')
+  if (liveness === 'unknown') throw new Error('未能确认 Ollama 服务状态（探测没有成功），请重试')
   if (!/^[\w.\-:]+(\/[\w.\-:]+)*$/.test(model)) {
     // 仅允许模型名安全字符，防止把任意 JSON/头注入到本地 API
     throw new Error('模型名包含非法字符')
@@ -489,14 +515,15 @@ async function getStatus(): Promise<OllamaRuntimeStatus> {
   const spec = ASSETS[platformKey()]
   const exe = portableExe()
   const installed = !!exe && fs.existsSync(exe)
-  const running = await isApiUp()
-  const version = running ? await getApiVersion() : null
-  const models = running ? await listApiModels() : []
+  const { liveness, version } = await probeLiveness()
+  // §380：清单只在答上了话那一支去取。`unknown` 时留空数组**不等于**"确实没有模型"，
+  // 消费面必须先判 `liveness` 再读这份清单（闸门钉住那一侧：`tests/ollama-liveness-gate-380.test.ts`）。
+  const models = liveness === 'up' ? await listApiModels() : []
   return {
     platformSupported: !!spec,
     installed,
-    running,
-    source: running ? (serveProc ? 'portable' : 'system') : null,
+    liveness,
+    source: liveness === 'up' ? (serveProc ? 'portable' : 'system') : null,
     version,
     installDir: installed && exe ? path.dirname(exe) : null,
     modelsDir: modelsDir(),

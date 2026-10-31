@@ -61,7 +61,7 @@ const RECOMMEND: ModelRecommendation = {
   summaryParams: {},
   localPicks: [],
   onlineHint: 'low_end',
-  ollamaRunning: true,
+  ollamaLiveness: 'up',
   installedModels: [],
   warnings: []
 }

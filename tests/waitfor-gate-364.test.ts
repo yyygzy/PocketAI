@@ -226,7 +226,7 @@ const detail = (c: Cand): string => `${where(c)}  ${c.gate}  ||  ${c.dom}`
 
 describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', () => {
   it('读法自证：全仓在等的 waitFor 有多少、各桶多少（分类器坏了这里先红）', () => {
-    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-31（§378 又加了一份挂载用例之后；§377 那趟记的 990/537 已被顶掉）＝awaits 994／按存在读屏 541／
+    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-31（§380 又加了两份挂载用例之后；§378 那趟记的 994/541 已被顶掉）＝awaits 1006／按存在读屏 545／
     // 等退场 75／门后没有读屏断言 360／会假红 0／只会假绿 18。逐颗钉死＝新增任何一格都要人工过目。
     //   §369 这 6 颗的来路（不是搬运，是净新增）：recovery-carry-notice-369 里 6 发 waitFor＝
     //   5 颗门按"那行字上屏"读（落进 按存在读屏 525→530）＋1 颗门等的是 notices.length（非 DOM 信号）、
@@ -240,9 +240,15 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   §378 再抬到 994／541（净新增 4 颗、不是搬运）：data-health-zero-bytes-378 三颗（② 里两颗门等"确认框那颗
     //   「确认」真在"＋一颗门等回执那句话上 toast 屏）＋ renderer-steward-vacuum-377 里 §378 补的那颗（门等
     //   「回收 0 B」整值上屏）；四颗的到货见证都写在门里第一句⇒全部落进「按存在读屏」，其余四桶一格未动。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(994)
+    //   §380 再抬到 1006／545／76／367（净新增 12 颗、不是搬运，两份新挂载用例都是 §380 自己写的）：
+    //   renderer-steward-ollama-liveness-380 四颗（② 三颗＋badge() 助手那颗，门等都写着"推荐那一格上屏"＝
+    //   到货见证在第一句）落进 按存在读屏 541→545；renderer-ollama-panel-liveness-380 七颗门等的是
+    //   `callsOf('getOllamaStatus')` 这个**调用计数**（非 DOM 信号）、门后先 settle 再读屏⇒落进
+    //   门后没有读屏断言 360→367；剩一颗是"重试到货后那句当场收回"的 `alerts()).toEqual([])`＝等退场 75→76。
+    //   会假红与只会假绿两桶一格未动（0／18）。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1006)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('541/75/360/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('545/76/367/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

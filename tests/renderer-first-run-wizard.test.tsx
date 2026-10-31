@@ -51,7 +51,7 @@ function mount(encMode: 'none' | 'db' = 'none', over: Record<string, unknown> = 
     // Ollama 面板（选到本地预设时才挂载）会订阅状态与镜像源
     onOllamaPullEvent: () => () => {},
     onOllamaInstallEvent: () => () => {},
-    getOllamaStatus: () => ({ ok: true, installed: false, running: false, models: [], version: '' }),
+    getOllamaStatus: () => ({ ok: true, installed: false, liveness: 'down', models: [], version: '' }),
     getOllamaMirror: () => ({ ok: true, mirror: '' }),
     setOllamaMirror: () => ({ ok: true }),
     startOllama: () => ({ ok: true }),
@@ -410,7 +410,7 @@ const RECO: ModelRecommendation = {
   summaryParams: {},
   localPicks: [],
   onlineHint: 'low_end',
-  ollamaRunning: false,
+  ollamaLiveness: 'down',
   installedModels: [],
   warnings: []
 }

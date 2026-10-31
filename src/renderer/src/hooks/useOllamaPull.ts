@@ -2,7 +2,7 @@
 // 同一条拉取链路（主进程全局单例，同一时刻只允许一个拉取任务）。
 // 封装：事件订阅/清理、并发与空名守卫、成功回调、错误复位；组件卸载不中断后台拉取。
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { OllamaPullEvent } from '../../../shared/types'
+import type { OllamaLiveness, OllamaPullEvent } from '../../../shared/types'
 import { hasIpcFailed, logIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
 
@@ -11,7 +11,7 @@ export type PickPullState = 'installed' | 'busy-other' | 'pulling' | 'disabled' 
 
 export function pickPullState(args: {
   installed: boolean
-  ollamaRunning: boolean
+  ollamaLiveness: OllamaLiveness
   pulling: string | null
   model: string
 }): PickPullState {
@@ -19,7 +19,9 @@ export function pickPullState(args: {
   if (args.installed) return 'installed'
   if (args.pulling === args.model) return 'pulling'
   if (args.pulling !== null) return 'busy-other'
-  if (!args.ollamaRunning) return 'disabled'
+  // §380：`!== 'up'`（不是 `=== 'down'`）——这一格只回答"能不能点"，探测没成功时照样点不动。
+  // 至于屏上那句话怎么说（「未运行」还是「状态未知」），由调用方按三态各自表态，不在这里折成一档。
+  if (args.ollamaLiveness !== 'up') return 'disabled'
   return 'pullable'
 }
 

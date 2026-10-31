@@ -162,7 +162,7 @@ describe('② 用量汇总：整张面板的数据源读不到时，说的是「
 })
 
 const ollamaStatus = (): OllamaRuntimeStatus => ({
-  platformSupported: true, installed: true, running: true, source: 'portable', version: '0.9.9',
+  platformSupported: true, installed: true, liveness: 'up', source: 'portable', version: '0.9.9',
   installDir: 'runtime/ollama-test', modelsDir: 'data/ollama-models', downloadUrl: null, downloadBytes: null, models: []
 })
 

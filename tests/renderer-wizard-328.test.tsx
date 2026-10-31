@@ -67,7 +67,7 @@ function mount(over: Record<string, unknown> = {}, onClose = () => {}) {
     probeDelegateCapability: (p: string, m: string) => probeOk(p, m),
     onOllamaPullEvent: () => () => {},
     onOllamaInstallEvent: () => () => {},
-    getOllamaStatus: () => ({ ok: true, installed: false, running: false, models: [], version: '' }),
+    getOllamaStatus: () => ({ ok: true, installed: false, liveness: 'down', models: [], version: '' }),
     getOllamaMirror: () => ({ ok: true, mirror: '' }),
     setOllamaMirror: () => ({ ok: true }),
     startOllama: () => ({ ok: true }),

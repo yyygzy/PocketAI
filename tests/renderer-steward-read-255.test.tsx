@@ -29,7 +29,7 @@ const RECO: ModelRecommendation = {
   summaryParams: {},
   localPicks: [{ id: 'PROBE-PICK:latest', tag: 'primary', reason: 'qwen3b_q4_lowvram', installed: false }],
   onlineHint: 'low_end',
-  ollamaRunning: true,
+  ollamaLiveness: 'up',
   installedModels: [],
   warnings: []
 }

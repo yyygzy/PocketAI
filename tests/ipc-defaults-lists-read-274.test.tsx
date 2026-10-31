@@ -29,7 +29,7 @@ const PIP_WHAT = L('agent.f.pipSource')
 const STATUS_PROBE = {
   platformSupported: true,
   installed: false,
-  running: false,
+  liveness: 'down',
   models: [],
   modelsDir: '/probe'
 } as unknown as OllamaRuntimeStatus

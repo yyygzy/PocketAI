@@ -6,7 +6,8 @@ import type {
   DiagnoseResult,
   HardwareInfo,
   HealthReport,
-  ModelRecommendation
+  ModelRecommendation,
+  OllamaLiveness
 } from '../src/shared/types'
 
 /** 固定英文标签（测试不依赖 i18n，字段名稳定可断言） */
@@ -61,6 +62,7 @@ const L: ReportLabels = {
   },
   diskTypes: { ssd: 'SSD', hdd: 'HDD', usb: 'USB', unknown: 'Unknown' },
   ollamaRunning: 'Running',
+  ollamaUnknown: 'Unknown',
   ollamaStopped: 'Stopped',
   installedModels: 'Installed models',
   onlineHint: 'Online advice',
@@ -130,7 +132,7 @@ const recommendation: ModelRecommendation = {
     { id: 'llama3.1:8b', tag: 'alternate', reason: 'llama31_8b_english', installed: false }
   ],
   onlineHint: 'general',
-  ollamaRunning: true,
+  ollamaLiveness: 'up',
   installedModels: ['qwen2.5:7b', 'nomic-embed-text'],
   warnings: ['mem_lt8']
 }
@@ -278,5 +280,19 @@ describe('buildDiagnosticReport — 缺失数据', () => {
     expect(r).toContain(L.gpuNone)
     expect(r).toContain('Removable: Yes')
     expect(r).toContain('Type: USB')
+  })
+
+  // §380：报告这张屏也要分三档——把"2.5 秒没答话"写成 Stopped，用户照着 Stopped 那一行去重装，
+  // 而报告本来就是给人（和支持者）读的，它比界面更不能替读者下没探到的结论。
+  it('§380 Ollama 那一行三张脸：up／down／unknown 各得各的串', () => {
+    const ollamaLine = (liveness: OllamaLiveness): string =>
+      (buildDiagnosticReport({ ...baseData, recommendation: { ...recommendation, ollamaLiveness: liveness } }, L)
+        .split('\n')
+        .find((line) => line.startsWith('Ollama:')) ?? '').trim()
+    expect(ollamaLine('up')).toBe(`Ollama: ${L.ollamaRunning}`)
+    expect(ollamaLine('down')).toBe(`Ollama: ${L.ollamaStopped}`)
+    expect(ollamaLine('unknown')).toBe(`Ollama: ${L.ollamaUnknown}`)
+    // 三串两两不同（共用一句＝这一档在报告里等于没有）
+    expect(new Set([L.ollamaRunning, L.ollamaStopped, L.ollamaUnknown]).size).toBe(3)
   })
 })

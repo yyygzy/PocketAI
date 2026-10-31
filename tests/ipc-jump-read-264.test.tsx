@@ -210,7 +210,7 @@ const mountWizard = (over: Record<string, (...a: any[]) => unknown>): void => {
     }],
     listAssistants: () => [{ id: 'a-builtin', name: 'PROBE-内置助手', isBuiltin: true, toolPermissions: [], defaultProviderId: null }],
     listSkills: () => [],
-    getOllamaStatus: () => ({ installed: false, running: false, models: [], version: '' }),
+    getOllamaStatus: () => ({ installed: false, liveness: 'down', models: [], version: '' }),
     getOllamaMirror: () => ({ mirror: '' }),
     probeDelegateCapability: () => ({ entry: { capability: 'unknown' }, error: null }),
     onOllamaPullEvent: () => () => {},

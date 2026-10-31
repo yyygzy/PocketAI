@@ -128,7 +128,7 @@ describe('② 导出报告：没读到的版本号要写「读不到：原因」
       exportStewardReport: () => ({ ok: true, canceled: false, path: '/tmp/r.txt' }),
       onOllamaPullEvent: () => () => {},
       onOllamaInstallEvent: () => () => {},
-      getOllamaStatus: () => ({ installed: false, running: false, models: [], version: '' }),
+      getOllamaStatus: () => ({ installed: false, liveness: 'down', models: [], version: '' }),
       getOllamaMirror: () => ({ mirror: '' }),
       ...over
     })
@@ -194,7 +194,7 @@ function mountWizard(over: Record<string, unknown>): void {
     setAssistantPinned: () => ({ ok: true }),
     onOllamaPullEvent: () => () => {},
     onOllamaInstallEvent: () => () => {},
-    getOllamaStatus: () => ({ installed: false, running: false, models: [], version: '' }),
+    getOllamaStatus: () => ({ installed: false, liveness: 'down', models: [], version: '' }),
     getOllamaMirror: () => ({ mirror: '' }),
     probeDelegateCapability: () => ({ entry: { capability: 'unknown' }, error: null }),
     ...over

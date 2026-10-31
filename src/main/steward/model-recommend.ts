@@ -9,7 +9,7 @@
 // + 2 条在线建议）直接进 IPC 返回值 ⇒ en / ja / ko 界面读到整句中文，而档位名与硬件总结
 // 还显示在**首启向导**那一屏（`FirstRunWizard.tsx:362,416`）——新用户第一眼就是中英夹排。
 
-import type { HardwareInfo, ModelPick, ModelRecommendation } from '../../shared/types'
+import type { HardwareInfo, ModelPick, ModelRecommendation, OllamaLiveness } from '../../shared/types'
 import type {
   ModelOnlineHintCode,
   ModelPickTagCode,
@@ -19,6 +19,7 @@ import type {
   ModelWarnCode
 } from '../../shared/model-rec-codes'
 import { isLowEndTier } from '../../shared/model-rec-codes'
+import { classifyProbeFailure } from '../../shared/ollama-probe'
 import { getHardwareInfo } from './hardware'
 
 const GB = 1024 * 1024 * 1024
@@ -30,17 +31,22 @@ interface OllamaTag {
   size?: number
 }
 
-/** 探测本机已安装的 Ollama 模型；服务未运行时返回 null */
-async function probeOllamaModels(): Promise<{ running: boolean; models: string[] }> {
+/**
+ * 探测本机 Ollama（`/api/tags`）里已装的模型。
+ * §380：返回值从 `{running:boolean}` 换成三态，且**判据与便携运行时那一侧同源**（共用 `classifyProbeFailure`）。
+ * 改前这里自相矛盾：非 2xx 算 `running:true`，而超时／坏 JSON 算 `running:false` ⇒ 管家页据此画「未运行」，
+ * 那句 `modelRec.warn.no_ollama` 还会教用户"安装并启动 Ollama"——一次 2.5 秒没答话就够把整条建议带偏。
+ */
+async function probeOllamaModels(): Promise<{ liveness: OllamaLiveness; models: string[] }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
     const res = await fetch(OLLAMA_TAGS_URL, { signal: controller.signal })
-    if (!res.ok) return { running: true, models: [] }
+    if (!res.ok) return { liveness: 'unknown', models: [] }
     const data = (await res.json()) as { models?: OllamaTag[] }
-    return { running: true, models: (data.models ?? []).map((m) => m.name) }
-  } catch {
-    return { running: false, models: [] }
+    return { liveness: 'up', models: (data.models ?? []).map((m) => m.name) }
+  } catch (e) {
+    return { liveness: classifyProbeFailure(e), models: [] }
   } finally {
     clearTimeout(timer)
   }
@@ -248,7 +254,10 @@ export async function recommendModels(): Promise<ModelRecommendation> {
   if (memGB < 8) warnings.push('mem_lt8')
   if (!hw.gpus.some((g) => g.cuda || g.mps)) warnings.push('no_gpu_accel')
   if (hw.disk.freeSpace != null && hw.disk.freeSpace < 10 * GB) warnings.push('disk_lt10g')
-  if (!ollama.running) warnings.push('no_ollama')
+  // §380：「没检测到」与「没探到」分两码。改前一句 `if (!ollama.running)` 把超时也说成 no_ollama，
+  // 于是那句话教用户"安装并启动 Ollama"——而他可能早就装好也在跑，只是那一发 2.5 秒没答上话。
+  if (ollama.liveness === 'down') warnings.push('no_ollama')
+  if (ollama.liveness === 'unknown') warnings.push('ollama_unknown')
 
   // 低配档换另一句在线建议。156 之前这里是对**中文档位名**做正则（`/入门|低配/`），
   // 换措辞就会静默选错句子 ⇒ 现在按码判断言（`isLowEndTier`）。
@@ -260,7 +269,7 @@ export async function recommendModels(): Promise<ModelRecommendation> {
     summaryParams: rule.summaryParams,
     localPicks,
     onlineHint,
-    ollamaRunning: ollama.running,
+    ollamaLiveness: ollama.liveness,
     installedModels: ollama.models,
     warnings
   }

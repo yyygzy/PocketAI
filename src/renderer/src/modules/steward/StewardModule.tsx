@@ -289,6 +289,7 @@ export const StewardModule: React.FC = () => {
         },
         ollamaRunning: t('steward.ollamaRunning'),
         ollamaStopped: t('steward.ollamaStopped'),
+        ollamaUnknown: t('steward.ollamaUnknown'),
         installedModels: t('steward.reportInstalledModels'),
         rec: (kind, code, params) => t(modelRecKey(kind, code), params),
         onlineHint: t('steward.reportOnlineHint'),
@@ -487,11 +488,17 @@ export const StewardModule: React.FC = () => {
               {t(modelRecKey('tier', recommendation.tier))}
             </span>
             <span className={`text-[11px] px-2 py-0.5 rounded-full ${
-              recommendation.ollamaRunning
+              recommendation.ollamaLiveness === 'up'
                 ? 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
                 : 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
             }`}>
-              Ollama {recommendation.ollamaRunning ? t('steward.ollamaRunning') : t('steward.ollamaStopped')}
+              {/* §380：三张脸各说各的。改前这一枚只有 `ollamaRunning` 一个布尔，
+                  于是"2.5 秒没答话"与"确实没装"共用同一句「未运行」，而那句话还带着 `no_ollama` 那条告警一起说"去装去启动" */}
+              Ollama {recommendation.ollamaLiveness === 'up'
+                ? t('steward.ollamaRunning')
+                : recommendation.ollamaLiveness === 'down'
+                ? t('steward.ollamaStopped')
+                : t('steward.ollamaUnknown')}
             </span>
             {recommendation.installedModels.length > 0 && (
               <span className="text-[11px] text-[var(--color-text-muted)]">
@@ -506,7 +513,7 @@ export const StewardModule: React.FC = () => {
             {recommendation.localPicks.map((p) => {
               const pullState = pickPullState({
                 installed: p.installed,
-                ollamaRunning: recommendation.ollamaRunning,
+                ollamaLiveness: recommendation.ollamaLiveness,
                 pulling,
                 model: p.id
               })

@@ -2,9 +2,10 @@
 //
 // 覆盖 src/main/ollama/ollama-runtime.ts 的可单测分支：
 //  - mirror 配置：getMirror（trim + DB 异常回退）、setMirror（URL 校验 + 落库）、mirrorConfigKey 常量
-//  - getStatus：未安装/已安装未运行/已安装且运行（系统版）三态 + platformSupported/downloadUrl 字段
-//  - pullModel：服务未运行、模型名注入校验、HTTP 非 ok、单层下载 + success、多层进度不回退、
-//               error 事件翻译（EOF/connection reset/其他）、跨 chunk 行切分
+//  - getStatus：探测五种真实形状各落到哪一态（up／down（没人听）／unknown（超时·503·坏 JSON））
+//               + 未安装/已安装字段 + platformSupported/downloadUrl 字段 + 只发一发探测
+//  - pullModel：服务确实没在跑（down）与探测没成功（unknown）各抛哪句、模型名注入校验、HTTP 非 ok、
+//               单层下载 + success、多层进度不回退、error 事件翻译（EOF/connection reset/其他）、跨 chunk 行切分
 //  - install 入口校验：平台不支持、服务已在跑
 //  - abortPull：无进行中 pull 不抛错
 //
@@ -120,9 +121,19 @@ function expectedExePath(): string {
   return path.join(dir, 'ollama')
 }
 
-/** 构造 fetch mock；按 url 末尾路径分派 GET /api/version、GET /api/tags、POST /api/pull */
+/**
+ * 构造 fetch mock；按 url 末尾路径分派 GET /api/version、GET /api/tags、POST /api/pull。
+ *
+ * §380：`apiUp:boolean` 换成了 `api:` 五种真实形状——因为"探测失败"本来就不是一种，而是四种不同的事实，
+ * 而改前的桩只会给 HTTP 503 那一把，并被当成"未运行"的期望写进用例（＝测试替谎背书）。
+ *  ① 'refused' 端口上没人听（本机实测：`TypeError: fetch failed` + `cause.code=ECONNREFUSED`）
+ *  ② 'abort'   3 秒没答话（本机实测：`AbortError` "This operation was aborted"）
+ *  ③ '503'     有人在监听但 API 没应答
+ *  ④ 'bad-json' 回了 200 却解析不出
+ *  ⑤ 'up'      正常答话（默认）
+ */
 function setupFetch(opts: {
-  apiUp?: boolean
+  api?: 'up' | 'refused' | 'abort' | '503' | 'bad-json'
   apiVersion?: string
   apiModels?: string[]
   pullOk?: boolean
@@ -132,13 +143,23 @@ function setupFetch(opts: {
   fetchMock.mockImplementation(async (url: string, _init?: RequestInit) => {
     const u = String(url)
     if (u.endsWith('/api/version')) {
-      if (opts.apiUp === false) return new Response(null, { status: 503 })
+      versionCalls++
+      const api = opts.api ?? 'up'
+      if (api === 'refused') {
+        throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
+      }
+      if (api === 'abort') {
+        throw Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })
+      }
+      if (api === '503') return new Response(null, { status: 503 })
+      if (api === 'bad-json') return new Response('<html>not json</html>', { status: 200 })
       return new Response(JSON.stringify({ version: opts.apiVersion ?? '0.1.0' }), {
         status: 200,
         headers: { 'content-type': 'application/json' }
       })
     }
     if (u.endsWith('/api/tags')) {
+      tagsCalls++
       return new Response(
         JSON.stringify({ models: (opts.apiModels ?? []).map((name) => ({ name })) }),
         { status: 200, headers: { 'content-type': 'application/json' } }
@@ -155,10 +176,18 @@ function setupFetch(opts: {
   })
 }
 
+/** `/api/tags` 被调了几次：用来证"探测没成功时那一发根本不该发"（旧写法是探一遍再读一遍，共两发 version） */
+let tagsCalls = 0
+
+/** 打了几发 `/api/version`（§380：getStatus 应当只发一发，版本从同一发探测里拿） */
+let versionCalls = 0
+
 let fetchMock: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   mocks.reset()
+  tagsCalls = 0
+  versionCalls = 0
   fetchMock = vi.fn()
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -229,49 +258,85 @@ describe('mirror 配置', () => {
 // ---------- getStatus ----------
 
 describe('getStatus', () => {
-  it('未安装未运行 → installed=false, running=false, source=null, version=null, models=[]', async () => {
-    setupFetch({ apiUp: false })
+  it('未安装、端口上没人听 → installed=false, liveness=down, source=null, version=null, models=[]', async () => {
+    setupFetch({ api: 'refused' })
     const s = await ollamaRuntime.getStatus()
     expect(s.installed).toBe(false)
-    expect(s.running).toBe(false)
+    expect(s.liveness).toBe('down')
     expect(s.source).toBeNull()
     expect(s.version).toBeNull()
     expect(s.models).toEqual([])
     expect(s.installDir).toBeNull()
   })
 
-  it('已安装未运行 → installed=true, running=false, source=null', async () => {
-    setupFetch({ apiUp: false })
+  it('已安装、没人听 → installed=true, liveness=down, source=null', async () => {
+    setupFetch({ api: 'refused' })
     mocks.state.existsPaths.add(expectedExePath())
     const s = await ollamaRuntime.getStatus()
     expect(s.installed).toBe(true)
-    expect(s.running).toBe(false)
+    expect(s.liveness).toBe('down')
     expect(s.source).toBeNull()
     expect(s.version).toBeNull()
     expect(s.models).toEqual([])
     expect(s.installDir).toBe(path.dirname(expectedExePath()))
   })
 
-  it('已安装且运行（系统版）→ source=system, version/models 有值', async () => {
-    setupFetch({ apiUp: true, apiVersion: '0.1.34', apiModels: ['llama3', 'qwen2.5:7b'] })
+  it('已安装且答上了话 → liveness=up, source=system, version/models 有值', async () => {
+    setupFetch({ api: 'up', apiVersion: '0.1.34', apiModels: ['llama3', 'qwen2.5:7b'] })
     mocks.state.existsPaths.add(expectedExePath())
     const s = await ollamaRuntime.getStatus()
     expect(s.installed).toBe(true)
-    expect(s.running).toBe(true)
+    expect(s.liveness).toBe('up')
     // serveProc 始终为 null（测试未 spawn），故 source 落 system
     expect(s.source).toBe('system')
     expect(s.version).toBe('0.1.34')
     expect(s.models).toEqual(['llama3', 'qwen2.5:7b'])
   })
 
+  it('§380 探测超时（AbortError）→ liveness=unknown，不是 down', async () => {
+    setupFetch({ api: 'abort' })
+    const s = await ollamaRuntime.getStatus()
+    expect(s.liveness).toBe('unknown')
+    expect(s.source).toBeNull()
+    expect(s.version).toBeNull()
+  })
+
+  it('§380 有人在监听却回了 503 → liveness=unknown（"有人听"不等于"跑得起来能用"，也不等于"没跑"）', async () => {
+    setupFetch({ api: '503' })
+    const s = await ollamaRuntime.getStatus()
+    expect(s.liveness).toBe('unknown')
+  })
+
+  it('§380 回了 200 但 JSON 读不出 → liveness=unknown', async () => {
+    setupFetch({ api: 'bad-json' })
+    const s = await ollamaRuntime.getStatus()
+    expect(s.liveness).toBe('unknown')
+  })
+
+  it('§380 探测没成功时不该再去取模型清单（那一发只会把"没答话"演成"这台机器没有模型"）', async () => {
+    setupFetch({ api: 'abort' })
+    const s = await ollamaRuntime.getStatus()
+    expect(s.liveness).toBe('unknown')
+    expect(tagsCalls).toBe(0)
+    expect(s.models).toEqual([])
+  })
+
+  it('§380 一次 getStatus 只发一发 /api/version（版本号从同一发探测里拿，不再"探一遍再读一遍"）', async () => {
+    setupFetch({ api: 'up', apiModels: ['llama3'] })
+    const s = await ollamaRuntime.getStatus()
+    expect(s.liveness).toBe('up')
+    expect(versionCalls).toBe(1)
+    expect(tagsCalls).toBe(1)
+  })
+
   it('modelsDir 锚定便携 data 目录（不写 ~/.ollama）', async () => {
-    setupFetch({ apiUp: false })
+    setupFetch({ api: 'refused' })
     const s = await ollamaRuntime.getStatus()
     expect(s.modelsDir).toBe(path.join(MOCK_DATA_DIR, 'ollama-models'))
   })
 
   it('platformSupported 与测试机平台一致；downloadUrl/downloadBytes 在 win32/linux x64 上有值', async () => {
-    setupFetch({ apiUp: false })
+    setupFetch({ api: 'refused' })
     const s = await ollamaRuntime.getStatus()
     const supported = ['win32-x64', 'linux-x64'].includes(`${process.platform}-${process.arch}`)
     expect(s.platformSupported).toBe(supported)
@@ -288,34 +353,39 @@ describe('getStatus', () => {
 // ---------- pullModel ----------
 
 describe('pullModel', () => {
-  it('服务未运行 → 抛 Ollama 服务未运行', async () => {
-    setupFetch({ apiUp: false })
+  it('§380 确实没人听（down）→ 抛 Ollama 服务未运行', async () => {
+    setupFetch({ api: 'refused' })
     await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('Ollama 服务未运行，请先启动')
   })
 
+  it('§380 探测超时（unknown）→ 抛的是「未能确认状态」那句，不是「未运行」', async () => {
+    setupFetch({ api: 'abort' })
+    await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('未能确认 Ollama 服务状态')
+  })
+
   it('模型名含空格 → 抛 模型名包含非法字符', async () => {
-    setupFetch({ apiUp: true })
+    setupFetch({ api: 'up' })
     await expect(ollamaRuntime.pullModel('name with space')).rejects.toThrow('模型名包含非法字符')
   })
 
   it('模型名含分号注入 → 抛 模型名包含非法字符', async () => {
-    setupFetch({ apiUp: true })
+    setupFetch({ api: 'up' })
     await expect(ollamaRuntime.pullModel('name; DROP TABLE')).rejects.toThrow('模型名包含非法字符')
   })
 
   it('模型名含 $ → 抛 模型名包含非法字符', async () => {
-    setupFetch({ apiUp: true })
+    setupFetch({ api: 'up' })
     await expect(ollamaRuntime.pullModel('name$(whoami)')).rejects.toThrow('模型名包含非法字符')
   })
 
   it('HTTP 非 ok → 抛 拉取请求失败：HTTP', async () => {
-    setupFetch({ apiUp: true, pullOk: false, pullStatus: 500 })
+    setupFetch({ api: 'up', pullOk: false, pullStatus: 500 })
     await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('拉取请求失败：HTTP 500')
   })
 
   it('单层下载 + success → onEvent 进度递增到 100、done=true', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: [
         '{"status":"downloading","digest":"sha256:abc","total":100,"completed":50}\n',
         '{"status":"downloading","digest":"sha256:abc","total":100,"completed":100}\n',
@@ -335,7 +405,7 @@ describe('pullModel', () => {
 
   it('多层下载层切换 → 进度单调递增不回退', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: [
         // 层 a 完成下载 50%
         '{"status":"downloading","digest":"sha256:a","total":100,"completed":50}\n',
@@ -362,7 +432,7 @@ describe('pullModel', () => {
 
   it('error 事件含 EOF → 抛 下载连接中断...', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: ['{"status":"downloading","digest":"sha256:abc","total":100,"completed":10}\n', '{"error":"EOF"}\n']
     })
     await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('下载连接中断，请检查网络后重试')
@@ -370,7 +440,7 @@ describe('pullModel', () => {
 
   it('error 事件含 connection reset → 抛 下载连接中断...', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: ['{"error":"connection reset by peer"}\n']
     })
     await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('下载连接中断，请检查网络后重试')
@@ -378,7 +448,7 @@ describe('pullModel', () => {
 
   it('error 事件含 broken pipe → 抛 下载连接中断...', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: ['{"error":"broken pipe"}\n']
     })
     await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('下载连接中断，请检查网络后重试')
@@ -386,7 +456,7 @@ describe('pullModel', () => {
 
   it('error 事件其他文本 → 抛原 error', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: ['{"error":"model not found"}\n']
     })
     await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('model not found')
@@ -394,7 +464,7 @@ describe('pullModel', () => {
 
   it('跨 chunk 行切分：NDJSON 一行分散多 chunk 仍能解析', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: [
         '{"status":"down',  // 第一行前半
         'loading","digest":"sha256:a","total":100,"completed":50}\n{"status":"succ',
@@ -411,7 +481,7 @@ describe('pullModel', () => {
 
   it('合法模型名（含 : 与 /）→ 通过校验进入流式', async () => {
     setupFetch({
-      apiUp: true,
+      api: 'up',
       pullChunks: ['{"status":"success"}\n']
     })
     const events: { done: boolean }[] = []
@@ -431,7 +501,7 @@ describe('install 入口校验', () => {
   })
 
   it('服务已在跑 → 抛 已检测到运行中的 Ollama', async () => {
-    setupFetch({ apiUp: true })
+    setupFetch({ api: 'up' })
     await expect(ollamaRuntime.install()).rejects.toThrow('已检测到运行中的 Ollama')
   })
 })

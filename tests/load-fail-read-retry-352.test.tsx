@@ -38,7 +38,7 @@ beforeAll(() => {
 
 // ─────────────────────────────── ① Ollama 运行时状态 ───────────────────────────────
 const ollamaStatus = (): OllamaRuntimeStatus => ({
-  platformSupported: true, installed: true, running: true, source: 'portable', version: '0.9.9',
+  platformSupported: true, installed: true, liveness: 'up', source: 'portable', version: '0.9.9',
   installDir: 'runtime/ollama-test', modelsDir: 'data/ollama-models', downloadUrl: null, downloadBytes: null, models: []
 })
 const ollamaStubs = (status: () => unknown): Record<string, unknown> => ({

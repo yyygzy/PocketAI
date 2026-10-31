@@ -311,7 +311,7 @@ const HW = {
 }
 const REC = {
   tier: 'mainstream', summary: 'nv_mainstream', summaryParams: { gpu: 'PROBE-GPU', vram: '8' },
-  localPicks: [], onlineHint: 'default', ollamaRunning: false, installedModels: [], warnings: []
+  localPicks: [], onlineHint: 'default', ollamaLiveness: 'down', installedModels: [], warnings: []
 }
 
 const wizardStubs = (over: Record<string, any> = {}): Record<string, any> => ({
@@ -324,7 +324,7 @@ const wizardStubs = (over: Record<string, any> = {}): Record<string, any> => ({
   listProviders: () => [],
   listAssistants: () => [],
   listSkills: () => [],
-  getOllamaStatus: () => ({ ok: true, installed: false, running: false, models: [], version: '' }),
+  getOllamaStatus: () => ({ ok: true, installed: false, liveness: 'down', models: [], version: '' }),
   getOllamaMirror: () => ({ ok: true, mirror: '' }),
   onOllamaPullEvent: () => () => {},
   onOllamaInstallEvent: () => () => {},

@@ -76,7 +76,8 @@ export type ModelReasonCode =
   | 'qwen3b_try_if_ram'
   | 'bge_m3_kb'
 
-export type ModelWarnCode = 'mem_lt8' | 'no_gpu_accel' | 'disk_lt10g' | 'no_ollama'
+/** §380：`no_ollama`＝探到"确实没人听"；`ollama_unknown`＝探了但没探出个所以然（超时／不应答／答不出） */
+export type ModelWarnCode = 'mem_lt8' | 'no_gpu_accel' | 'disk_lt10g' | 'no_ollama' | 'ollama_unknown'
 
 /** 在线模型建议：低配档与非低配档各一句 */
 export type ModelOnlineHintCode = 'low_end' | 'general'
@@ -133,7 +134,7 @@ export const MODEL_REC_CODES: Record<ModelRecKind, readonly string[]> = {
     'cpu_low'
   ] as ModelSummaryCode[],
   tag: ['primary', 'alternate', 'embedding'] as ModelPickTagCode[],
-  warn: ['mem_lt8', 'no_gpu_accel', 'disk_lt10g', 'no_ollama'] as ModelWarnCode[],
+  warn: ['mem_lt8', 'no_gpu_accel', 'disk_lt10g', 'no_ollama', 'ollama_unknown'] as ModelWarnCode[],
   onlineHint: ['low_end', 'general'] as ModelOnlineHintCode[],
   reason: [
     'qwen32b_24g',

@@ -74,6 +74,8 @@ export interface ReportLabels {
   rec: (kind: ModelRecKind, code: string, params?: Record<string, string | number>) => string
   ollamaRunning: string
   ollamaStopped: string
+  /** §380：探测没成功那一档的第三张脸（报告里也不许把它写成 Stopped） */
+  ollamaUnknown: string
   installedModels: string
   onlineHint: string
   warnings: string
@@ -170,7 +172,7 @@ export function buildDiagnosticReport(d: DiagnosticReportData, L: ReportLabels):
       L.rec('tier', r.tier),
       L.rec('summary', r.summary, r.summaryParams),
       '',
-      kv('Ollama', r.ollamaRunning ? L.ollamaRunning : L.ollamaStopped),
+      kv('Ollama', r.ollamaLiveness === 'up' ? L.ollamaRunning : r.ollamaLiveness === 'down' ? L.ollamaStopped : L.ollamaUnknown),
       kv(L.installedModels, r.installedModels.length ? r.installedModels.join(', ') : '-'),
       ''
     ]

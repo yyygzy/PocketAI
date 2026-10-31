@@ -1510,7 +1510,8 @@ export interface ModelRecommendation {
   localPicks: ModelPick[]
   /** 在线模型使用建议的码：`modelRec.onlineHint.*`（低配档与非低配档各一句） */
   onlineHint: ModelOnlineHintCode
-  ollamaRunning: boolean
+  /** §380：本机 Ollama 探测三态（与便携运行时面板同一口径）；只有 `down` 才支持"没在跑" */
+  ollamaLiveness: OllamaLiveness
   installedModels: string[]
   /** 告警的码：`modelRec.warn.*` */
   warnings: ModelWarnCode[]
@@ -1578,15 +1579,26 @@ export interface PythonRuntime {
 /** 当前 11434 服务由谁提供：portable=本平台下载的便携版；system=系统已装 Ollama */
 export type OllamaSource = 'portable' | 'system'
 
+/**
+ * §380：11434 探测结果的三态。分家的依据只有一个问题——**有没有人明确说"这里没人听"**：
+ *  · `down`＝连接被拒（`ECONNREFUSED`／`EADDRNOTAVAIL`），确实没跑；
+ *  · `up`＝那个 API 答上了话（2xx 且能解析出 JSON）；
+ *  · `unknown`＝其余一切：探测超时、有人监听但回了非 2xx、回了 2xx 却解析不出。
+ * 改前 `apiGetJson` 的 `catch { return null }` 与 `if (!res.ok) return null` 把这四类不同事实压成同一个 null，
+ * 于是 `running:false` ⇒ 界面画「未运行」、把"3 秒内没答话"这种**我们不知道**说成**确定没有**。
+ */
+export type OllamaLiveness = 'up' | 'down' | 'unknown'
+
 export interface OllamaRuntimeStatus {
   /** 当前平台是否提供便携发行包（仅 Windows x64 / Linux x64） */
   platformSupported: boolean
   /** 便携版二进制是否已下载解压 */
   installed: boolean
-  /** 11434 API 是否可用（不区分便携/系统） */
-  running: boolean
-  /** 服务来源：便携 / 系统 / null（未运行） */
+  /** 11434 探测结果（不区分便携/系统）；只有 `down` 才支持"没在跑"这句话 */
+  liveness: OllamaLiveness
+  /** 服务来源：便携 / 系统；只有 `liveness==='up'` 时才可能有值 */
   source: OllamaSource | null
+  /** 服务版本；只有 `liveness==='up'` 时有值（其余两态都是"没拿到"，不是"没有版本"） */
   version: string | null
   /** 便携版安装目录（runtime/ollama-*） */
   installDir: string | null
@@ -1596,6 +1608,7 @@ export interface OllamaRuntimeStatus {
   downloadUrl: string | null
   /** 发行包字节数（UI 体积提示） */
   downloadBytes: number | null
+  /** §380：只有 `liveness==='up'` 时这份清单才有意义；消费面必须先判那一态再读它（`[]` 不等于"确实没有模型"） */
   models: string[]
 }
 

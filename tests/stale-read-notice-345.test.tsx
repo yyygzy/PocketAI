@@ -261,7 +261,7 @@ describe('⑤ 用量汇总：默认窗 30 天，点到「近 7 天」那一发�
 
 // ─────────────────────── ⑥ Ollama 运行时状态（启停后立刻再读一发） ───────────────────────
 const ollamaStatus = (): OllamaRuntimeStatus => ({
-  platformSupported: true, installed: true, running: true, source: 'portable', version: '0.9.9',
+  platformSupported: true, installed: true, liveness: 'up', source: 'portable', version: '0.9.9',
   installDir: 'runtime/ollama-test', modelsDir: 'data/ollama-models', downloadUrl: null, downloadBytes: null, models: []
 })
 const ollamaStubs = (status: () => unknown): Record<string, unknown> => ({
@@ -292,7 +292,7 @@ describe('⑥ Ollama 面板：这块每 8s 轮询一次，启停后还会立刻�
 
   it('成功侧必须把原因收回：下一发轮询／重试读到新状态 ⇒ 那句当场收回（否则新值上屏还挂着"这是旧值"）', async () => {
     let fail = false
-    stubPocketai(ollamaStubs(() => (fail ? FAIL : { ...ollamaStatus(), running: true })) as never)
+    stubPocketai(ollamaStubs(() => (fail ? FAIL : { ...ollamaStatus(), liveness: 'up' })) as never)
     mountWithProviders(<OllamaPanel />)
     await settleAfter('getOllamaStatus')
     expect(alerts()).toEqual([])
@@ -317,7 +317,7 @@ const RECO: ModelRecommendation = {
   summaryParams: {},
   localPicks: [{ id: 'PROBE-PICK:latest', tag: 'primary', reason: 'qwen3b_q4_lowvram', installed: false }],
   onlineHint: 'low_end',
-  ollamaRunning: true,
+  ollamaLiveness: 'up',
   installedModels: [],
   warnings: []
 }

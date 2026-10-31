@@ -36,7 +36,7 @@ const pullGate = (): { promise: Promise<unknown>; resolve: (v: unknown) => void 
 }
 
 const status = (): OllamaRuntimeStatus => ({
-  platformSupported: true, installed: true, running: true, source: 'portable', version: '0.9.9',
+  platformSupported: true, installed: true, liveness: 'up', source: 'portable', version: '0.9.9',
   installDir: 'runtime/ollama-test', modelsDir: 'data/ollama-models', downloadUrl: null, downloadBytes: null, models: []
 })
 
@@ -143,7 +143,7 @@ describe('② 管家页推荐卡片那一格：同一颗 ✕，同一句', () =>
   const RECO: ModelRecommendation = {
     tier: 'entry', summary: 'cpu_low', summaryParams: {},
     localPicks: [{ id: 'PROBE-PICK:latest', tag: 'primary', reason: 'qwen3b_q4_lowvram', installed: false }],
-    onlineHint: 'low_end', ollamaRunning: true, installedModels: [], warnings: []
+    onlineHint: 'low_end', ollamaLiveness: 'up', installedModels: [], warnings: []
   }
   const stewardStubs = (over: Record<string, Impl> = {}): Record<string, Impl> => ({
     getHardwareInfo: () => ({ ok: true, data: hardwareSample }),

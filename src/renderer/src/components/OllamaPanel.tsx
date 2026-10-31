@@ -7,6 +7,7 @@ import type {
   ModelRecommendation
 } from '../../../shared/types'
 import { modelRecKey } from '../../../shared/model-rec-codes'
+import { OLLAMA_PROBE_TIMEOUT_MS } from '../../../shared/ollama-probe'
 import { useI18n } from '../i18n'
 import { LoadFailNotice } from './LoadFailNotice'
 import { StaleValueNotice } from './StaleValueNotice'
@@ -205,7 +206,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       <div className="flex items-center gap-2">
         <span className="text-base leading-none">🦙</span>
         <span className="text-xs font-semibold text-[var(--color-text)]">{t('ollama.title')}</span>
-        {status?.running && (
+        {status?.liveness === 'up' && (
           <span className="ml-auto flex items-center gap-1 text-[11px] text-[var(--color-success)]">
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)]" />
             {status.source === 'portable' ? t('ollama.portableSource') : t('ollama.systemSource')}
@@ -245,6 +246,25 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
         <p className="text-[11px] text-[var(--color-warning)] leading-relaxed">⚠️ {t('ollama.unsupported')}</p>
       )}
 
+      {/* §380：探测没有成功 ≠「已停止」。改前这里没有第三张脸——`running:false` 一个人兼了两件事，
+          3 秒没答话（服务可能正在启动、也可能端口上回了个 503）被画成"没在跑"，
+          于是下面那圈安装/启动引导直接把"再装一遍"当成出路。引导仍然在场（用户确实能直接点启动），
+          但屏上先说清楚我们只知道"没答话"。重试键在 alert 盒子**外面**（§268），那句的 textContent 才是纯句子。 */}
+      {status?.liveness === 'unknown' && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <div role="alert" className="text-[11px] text-[var(--color-warning)] leading-relaxed">
+            {t('ollama.probeUnknown', { seconds: OLLAMA_PROBE_TIMEOUT_MS / 1000 })}
+          </div>
+          <button
+            data-testid="ollama-liveness-retry"
+            className="text-xs underline text-[var(--color-text-muted)]"
+            onClick={refresh}
+          >
+            {t('agent.retryRead')}
+          </button>
+        </div>
+      )}
+
       {/* 安装进度 */}
       {(installing || starting) && (
         <div className="space-y-1">
@@ -267,7 +287,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
       )}
 
       {/* 操作区 */}
-      {status && status.platformSupported && !status.running && !installing && (
+      {status && status.platformSupported && status.liveness !== 'up' && !installing && (
         <div className="flex flex-wrap items-center gap-2">
           {!status.installed && (
             <button className="btn-primary text-xs px-3 py-1.5" onClick={handleInstall}>
@@ -338,7 +358,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
         </details>
       )}
 
-      {status?.running && status.source === 'portable' && (
+      {status?.liveness === 'up' && status.source === 'portable' && (
         <div className="flex items-center gap-2">
           <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             onClick={handleStop}>
@@ -347,8 +367,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
         </div>
       )}
 
-      {/* 已安装模型 + 拉取 */}
-      {status?.running && (
+      {/* 已安装模型 + 拉取。§380：只认 `up`——`unknown` 时那份清单是"没去取"，不是"取到的是空的"，
+          摆上来就会把 `ollama.noModels`「尚未拉取模型」那句画成事实 */}
+      {status?.liveness === 'up' && (
         <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
           <div className="flex flex-wrap gap-1.5">
             {status.models.length === 0 && (
