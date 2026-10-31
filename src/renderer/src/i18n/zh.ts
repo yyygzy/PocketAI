@@ -1147,6 +1147,7 @@ export const zh = {
   'usage.exportCsv': '导出 CSV',
   'usage.exportCsvDone': '已导出 {count} 条用量记录',
   'usage.exportCsvTruncated': '记录超过 {limit} 条，仅导出最近 {limit} 条，可缩小时间范围后重试',
+  'usage.detailTruncated': '合计只覆盖最近 {limit} 条，更早的记录未包含在此窗内',
   'usage.colTime': '时间',
   'usage.colProvider': '服务商',
   'usage.colCached': '缓存命中',

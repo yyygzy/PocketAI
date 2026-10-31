@@ -1093,6 +1093,7 @@ export const ko = {
   'usage.exportCsv': 'CSV 내보내기',
   'usage.exportCsvDone': '사용 기록 {count}건을 내보냈습니다',
   'usage.exportCsvTruncated': '기록이 {limit}건을 초과하여 최신 {limit}건만 내보냈습니다. 기간을 좁혀 다시 시도하세요',
+  'usage.detailTruncated': '합계는 최신 {limit}건만 포함하며 그 이전 기록은 이 창에 포함되지 않습니다',
   'usage.colTime': '시간',
   'usage.colProvider': '제공업체',
   'usage.colCached': '캐시',

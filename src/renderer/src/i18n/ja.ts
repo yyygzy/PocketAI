@@ -1093,6 +1093,7 @@ export const ja = {
   'usage.exportCsv': 'CSV書き出し',
   'usage.exportCsvDone': '利用記録 {count}件を書き出しました',
   'usage.exportCsvTruncated': '{limit}件を超えたため最新{limit}件のみ書き出しました。期間を短くして再試行してください',
+  'usage.detailTruncated': '合計は最新 {limit} 件のみを集計しています。それ以前の記録はこの窓に含まれません',
   'usage.colTime': '時刻',
   'usage.colProvider': 'プロバイダー',
   'usage.colCached': 'キャッシュ',

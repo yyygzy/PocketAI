@@ -1146,6 +1146,7 @@ export const en = {
   'usage.exportCsv': 'Export CSV',
   'usage.exportCsvDone': 'Exported {count} usage records',
   'usage.exportCsvTruncated': 'Over {limit} records; only the latest {limit} were exported. Narrow the range and retry.',
+  'usage.detailTruncated': 'The total covers only the latest {limit} records; earlier entries are not included in this window.',
   'usage.colTime': 'Time',
   'usage.colProvider': 'Provider',
   'usage.colCached': 'Cached',

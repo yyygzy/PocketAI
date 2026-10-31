@@ -48,6 +48,9 @@ export const UsagePanel: React.FC = () => {
   const [detail, setDetail] = useState<{ title: string; showConv: boolean } | null>(null)
   const [detailItems, setDetailItems] = useState<UsageDetailItem[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
+  // §376：producer（listUsageDetail）在行数超上限时如实回 truncated=true；footer 的合计只覆盖
+  // 已展示的那部分，不接这个 flag 就会被读成「这一窗全量」⇒对话框每次开都要重置、成功才写
+  const [detailTruncated, setDetailTruncated] = useState(false)
   // 预算提醒：daily/monthly 上限（null=不限）+ 今日/本月已花估算
   const [budget, setBudget] = useState<UsageBudgetStatus | null>(null)
   const [budgetEditing, setBudgetEditing] = useState(false)
@@ -61,11 +64,15 @@ export const UsagePanel: React.FC = () => {
     setDetail({ title, showConv: false })
     setDetailLoading(true)
     setDetailItems([])
+    setDetailTruncated(false)
     try {
       const r = await window.pocketai.getUsageDetail(days, EXPORT_LIMIT, id)
       // safeHandle 的失败是 resolve 的 {ok:false}：不判就 setDetailItems(对象.items=undefined) ⇒ 550 行 .map 崩
       if (hasIpcFailed(r)) toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
-      else setDetailItems(r.items)
+      else {
+        setDetailItems(r.items)
+        setDetailTruncated(r.truncated)
+      }
     } catch (e) {
       reportIpcError('usage.detail')(e)
     } finally {
@@ -78,11 +85,15 @@ export const UsagePanel: React.FC = () => {
     setDetail({ title: name, showConv: true })
     setDetailLoading(true)
     setDetailItems([])
+    setDetailTruncated(false)
     try {
       const r = await window.pocketai.getUsageDetail(days, EXPORT_LIMIT, undefined, assistantId)
       // safeHandle 的失败是 resolve 的 {ok:false}：不判就 setDetailItems(对象.items=undefined) ⇒ 550 行 .map 崩
       if (hasIpcFailed(r)) toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
-      else setDetailItems(r.items)
+      else {
+        setDetailItems(r.items)
+        setDetailTruncated(r.truncated)
+      }
     } catch (e) {
       reportIpcError('usage.detail')(e)
     } finally {
@@ -639,6 +650,16 @@ export const UsagePanel: React.FC = () => {
                     ))}
                   </tbody>
                   <tfoot>
+                    {detailTruncated && (
+                      <tr>
+                        <td
+                          className="py-1 px-3 text-[11px] text-[var(--color-text-muted)]"
+                          colSpan={detail.showConv ? 8 : 7}
+                        >
+                          {t('usage.detailTruncated', { limit: EXPORT_LIMIT })}
+                        </td>
+                      </tr>
+                    )}
                     <tr className="border-t border-[var(--color-border)] font-semibold">
                       <td className="py-2 px-3 text-[var(--color-text)]" colSpan={detail.showConv ? 3 : 2}>{t('usage.detailTotal')}</td>
                       <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
