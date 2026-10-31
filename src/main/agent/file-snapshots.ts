@@ -69,13 +69,19 @@ export function captureSnapshot(
   return record
 }
 
+/**
+ * 读一份快照。**两种事实分开**：null=没有这份快照（文件不存在，可能已被 prune 清理或从未留成）；
+ * 文件存在却解析不了=就地抛 SNAPSHOT_CORRUPT，绝不折成 null。理由同 §367 那簇——把"坏了"当"没有"
+ * 会让上层回一句「找不到这一笔写入的快照，可能已被清理」，而真相是快照还在、内容烂了，两种情形的
+ * 处置方式不同（前者重做一次写入即可，后者得查盘）。
+ */
 export function readSnapshot(root: string, id: string): FileSnapshot | null {
   const file = snapshotFile(root, id)
   if (!fs.existsSync(file)) return null
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8')) as FileSnapshot
   } catch {
-    return null
+    throw new Error('SNAPSHOT_CORRUPT:快照文件存在但读不出来')
   }
 }
 

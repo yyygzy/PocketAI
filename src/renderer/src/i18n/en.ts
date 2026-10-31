@@ -1064,6 +1064,7 @@ export const en = {
   'agent.fsWrite.notRestorable': 'The original was too large or not text, so no snapshot was kept for this write',
   'agent.fsWrite.errIdInvalid': 'Malformed snapshot id, so this write cannot be restored',
   'agent.fsWrite.errNotFound': 'Snapshot for this write was not found; it may have been cleaned up',
+  'agent.fsWrite.errCorrupt': 'The snapshot file for this write is there but could not be read (it is corrupted), so nothing was restored',
   'agent.fsWrite.errConsumed': 'This snapshot was already used: one write can be restored once',
   'agent.fsWrite.errDiverged': 'The file changed after this write, so restoring would swallow those edits; nothing was changed',
   'agent.fsWrite.errNotText': 'The current file is not readable text (too large or binary), so nothing was overwritten',

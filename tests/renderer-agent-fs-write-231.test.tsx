@@ -151,11 +151,12 @@ describe('③ 没留快照那一档要说为什么', () => {
 
 // V4-Iter-243：§242 真机点「还原到写入前」时屏幕上出现的是 `SNAPSHOT_DIVERGED` 这种码——
 // 那五个码原本是光秃秃的 `new Error('SNAPSHOT_*')`，不带 `:说明`，从 §206 那道闸门的缝里漏了出去。
-// 判据取向：**五条拒绝各出一语**（撞成一张脸就看不出为什么被拒），且码本身不进界面。
+// 判据取向：**每一档拒绝各出一语**（§243 那五档＋§371 补的"坏了"那一档＝六档；撞成一张脸就看不出为什么被拒），且码本身不进界面。
 describe('④ 还原被拒：每一档各出一句能懂的话', () => {
   const wrote = JSON.stringify({ path: 'a.md', bytes: 6, created: false, snapshotId: SNAP })
   const refusals: Array<[string, string]> = [
     ['SNAPSHOT_NOT_FOUND:找不到这一笔写入的快照', 'agent.fsWrite.errNotFound'],
+    ['SNAPSHOT_CORRUPT:快照文件存在但读不出来', 'agent.fsWrite.errCorrupt'],
     ['SNAPSHOT_CONSUMED:这份快照已经用过了', 'agent.fsWrite.errConsumed'],
     ['SNAPSHOT_DIVERGED:这笔写入之后文件又被改过', 'agent.fsWrite.errDiverged'],
     ['CURRENT_NOT_TEXT:当前内容不是可读文本（过大或二进制）', 'agent.fsWrite.errNotText'],
@@ -172,7 +173,7 @@ describe('④ 还原被拒：每一档各出一句能懂的话', () => {
     })
   }
 
-  it('五句彼此不同（撞成一张脸＝"无论为什么被拒都同一句"，用户不知道该做什么）', () => {
+  it('六句彼此不同（撞成一张脸＝"无论为什么被拒都同一句"，用户不知道该做什么）', () => {
     const texts = refusals.map(([, key]) => L(key))
     expect(new Set(texts).size).toBe(texts.length)
   })

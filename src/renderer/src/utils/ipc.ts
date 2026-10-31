@@ -49,10 +49,11 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   EVAL_ALREADY_RUNNING: 'agent.eval.alreadyRunning',
   EVAL_RUN_BUSY: 'agent.eval.busy',
   EVAL_REPORT_NOT_FOUND: 'agent.eval.reportMissing',
-  // 「还原到写入前」那一族的五条拒绝（V4-Iter-242 真机撞出来的：它们原本是光秃秃的码，
-  // 既躲过了§206 那道闸门，也让界面只能把码原样贴给用户）
+  // 「还原到写入前」那一族的六条拒绝（V4-Iter-242 真机撞出来的：它们原本是光秃秃的码，
+  // 既躲过了§206 那道闸门，也让界面只能把码原样贴给用户；§371 补上 SNAPSHOT_CORRUPT＝快照坏了）
   SNAPSHOT_ID_INVALID: 'agent.fsWrite.errIdInvalid',
   SNAPSHOT_NOT_FOUND: 'agent.fsWrite.errNotFound',
+  SNAPSHOT_CORRUPT: 'agent.fsWrite.errCorrupt',
   SNAPSHOT_CONSUMED: 'agent.fsWrite.errConsumed',
   SNAPSHOT_DIVERGED: 'agent.fsWrite.errDiverged',
   CURRENT_NOT_TEXT: 'agent.fsWrite.errNotText'

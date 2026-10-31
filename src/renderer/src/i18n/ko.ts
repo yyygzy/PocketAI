@@ -1013,6 +1013,7 @@ export const ko = {
   'agent.fsWrite.notRestorable': '원본이 너무 크거나 텍스트가 아니라 이 쓰기의 스냅샷을 남기지 않았습니다',
   'agent.fsWrite.errIdInvalid': '스냅숏 식별자 형식이 올바르지 않아 이 쓰기를 복원할 수 없습니다',
   'agent.fsWrite.errNotFound': '이 쓰기의 스냅숏을 찾지 못했습니다. 정리되었을 수 있습니다',
+  'agent.fsWrite.errCorrupt': '이 쓰기의 스냅숏 파일은 있지만 읽을 수 없습니다(내용이 손상됨). 복원하지 않았습니다',
   'agent.fsWrite.errConsumed': '이 스냅숏은 이미 사용했습니다. 복원은 쓰기당 한 번입니다',
   'agent.fsWrite.errDiverged': '이 쓰기 이후 파일이 다시 바뀌어, 복원하면 그 변경을 삼키게 됩니다. 건드리지 않았습니다',
   'agent.fsWrite.errNotText': '현재 파일은 읽을 수 있는 텍스트가 아니어서 덮어쓰지 않았습니다',

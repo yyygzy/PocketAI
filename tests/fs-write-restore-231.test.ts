@@ -199,6 +199,21 @@ describe('② 快照存储：真临时目录、真文件', () => {
     expect(() => readSnapshot(root, '../../escape')).toThrow(/SNAPSHOT_ID_INVALID/)
     expect(() => readSnapshot(root, 'x'.repeat(40))).toThrow(/SNAPSHOT_ID_INVALID/)
   })
+
+  // V4-Iter-371：改前 readSnapshot 的 catch 把「文件坏了」折成 null，上层就回一句
+  // 「找不到这一笔写入的快照，可能已被清理」——把"还在、但读不出来"谎报成"没这份"。
+  it('快照文件坏了（存在但解析不了）⇒ 抛 SNAPSHOT_CORRUPT，不折成"找不到"', () => {
+    const snap = captureSnapshot(root, { relPath: 'a', prevExists: true, prevContent: '旧', wroteContent: '新' })!
+    fs.writeFileSync(path.join(root, `${snap.id}.json`), '{"relPath":"a"', 'utf-8') // 半截 JSON＝断电那一形
+    expect(() => readSnapshot(root, snap.id)).toThrow(/SNAPSHOT_CORRUPT/)
+    // markConsumed 走同一条读：坏文件不能被当成"没这份"
+    expect(() => markConsumed(root, snap.id)).toThrow(/SNAPSHOT_CORRUPT/)
+  })
+
+  it('正向对照：真正不存在的 id 才是 SNAPSHOT_NOT_FOUND（与坏了那一档分得开）', () => {
+    // 一个合法形状、但盘上没有的编号
+    expect(() => markConsumed(root, '00000000-0000-0000-0000-000000000000')).toThrow(/SNAPSHOT_NOT_FOUND/)
+  })
 })
 
 describe('③ 真 fs_write：写之前留快照，还原回到写入前', () => {

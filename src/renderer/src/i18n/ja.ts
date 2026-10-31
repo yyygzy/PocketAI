@@ -1013,6 +1013,7 @@ export const ja = {
   'agent.fsWrite.notRestorable': '元のファイルが大きすぎるかテキストでないため、この書き込みのスナップショットは残っていません',
   'agent.fsWrite.errIdInvalid': 'スナップショット ID が不正なため、この書き込みは復元できません',
   'agent.fsWrite.errNotFound': 'この書き込みのスナップショットが見つかりません（整理された可能性があります）',
+  'agent.fsWrite.errCorrupt': 'この書き込みのスナップショットファイルは存在しますが読み取れません（内容が破損しているため）、復元しませんでした',
   'agent.fsWrite.errConsumed': 'このスナップショットは既に使用済みです。復元は 1 回の書き込みにつき 1 度です',
   'agent.fsWrite.errDiverged': 'この書き込みの後にファイルが変更されているため、復元するとその変更を消してしまいます。何も変更しませんでした',
   'agent.fsWrite.errNotText': '現在のファイルは読めるテキストでないため（大きすぎる／バイナリ）、上書きしませんでした',

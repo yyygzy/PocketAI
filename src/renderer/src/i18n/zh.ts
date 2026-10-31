@@ -1065,6 +1065,7 @@ export const zh = {
   'agent.fsWrite.notRestorable': '原文件过大或不是文本，这一笔没有留还原快照',
   'agent.fsWrite.errIdInvalid': '快照编号形状不对，这一笔没法还原',
   'agent.fsWrite.errNotFound': '找不到这一笔写入的快照，可能已被清理',
+  'agent.fsWrite.errCorrupt': '这一笔的快照文件还在，但内容读不出来（已损坏），所以没有拿它去还原',
   'agent.fsWrite.errConsumed': '这份快照已经用过了：一条写操作只还原一次',
   'agent.fsWrite.errDiverged': '这笔写入之后文件又被改过，还原会吞掉那段改动，所以没有动它',
   'agent.fsWrite.errNotText': '当前文件不是可读文本（过大或二进制），没有直接覆盖回去',

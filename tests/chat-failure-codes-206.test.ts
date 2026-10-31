@@ -114,6 +114,13 @@ describe('主进程回码 ↔ 渲染层登记表 双向对账', () => {
     expect(found.get('SNAPSHOT_NOT_FOUND')!.join(',')).toContain('fs-tools.ts')
   })
 
+  it('§371 补的 SNAPSHOT_CORRUPT：出处在 file-snapshots.ts，与 NOT_FOUND 分家（坏≠没有）', () => {
+    expect(found.has('SNAPSHOT_CORRUPT')).toBe(true)
+    expect(found.get('SNAPSHOT_CORRUPT')!.join(',')).toContain('file-snapshots.ts')
+    // 它登记的这句话与 errNotFound 不能是同一句（那等于没分家）
+    expect(IPC_FAIL_TEXT_KEYS['SNAPSHOT_CORRUPT']).not.toBe(IPC_FAIL_TEXT_KEYS['SNAPSHOT_NOT_FOUND'])
+  })
+
   it('GLOSSARY_TERM_EMPTY 到界面是四语句子，回码与中文尾段都不进界面（V4-Iter-208）', () => {
     const dict = (key: string): string => (zh as unknown as Record<string, string>)[key] ?? key
     const s = ipcFailureText('GLOSSARY_TERM_EMPTY:术语表词条不能为空', dict)
