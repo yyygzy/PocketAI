@@ -123,7 +123,7 @@ function swallowsFailure(body: string): boolean {
       if (end < 0) continue
       if (stripComments(body.slice(i + opener.length, end)) !== '') continue
       const after = body.slice(end + 1)
-      if (!/log\.warn|throw |renameSync\(/.test(after)) return true
+      if (!/log\.warn|throw |renameSync\(|renameWithRetry\(/.test(after)) return true
     }
   }
   return false
@@ -145,18 +145,20 @@ describe('读法自证：分类器看得到这份源码里的函数、调用点�
       'readRecoveryFromConfigFile',
       'salvageRecoveryFromUnparseableFile',
       'readSaltFromConfigFile',
+      'renameWithRetry',
       'saveConfigFile',
+      'sleepSync',
       'writeKdfToConfigFile',
       'writeRecoveryBlobToConfigFile',
       'writeSaltToConfigFile'
     ].sort())
-    expect(FN.size, '顶层函数总数（再加一条读写通道要人工过目）').toBe(13)
+    expect(FN.size, '顶层函数总数（再加一条读写通道或 rename 辅助要人工过目）').toBe(15)
   })
 
   it('已知函数的调用点与第一实参取得到（拿 saveConfigFile 当对照）', () => {
     const body = FN.get('saveConfigFile') ?? ''
     const calls = calledNames(body)
-    for (const want of ['writeFileSync', 'renameSync', 'unlinkSync', 'stringify']) {
+    for (const want of ['writeFileSync', 'renameWithRetry', 'unlinkSync', 'stringify']) {
       expect(calls, '少了 ' + want).toContain(want)
     }
     expect(firstArgOf(body, 'writeFileSync'), '写的那一发打的应该是临时文件变量').toEqual(['tmp'])
@@ -186,10 +188,20 @@ describe('① 写：整个模块只有一发写文件，且打的是独占临时
     expect(sites.sort().join(' + '), '现查写入站点').toBe('saveConfigFile(tmp)')
   })
 
-  it('saveConfigFile 里 flag: "wx"（独占建）与 renameSync(tmp, CONFIG_PATH)（原子换）两样都在', () => {
+  it('saveConfigFile 里 flag: "wx"（独占建）与 renameWithRetry(tmp, CONFIG_PATH)（原子换）两样都在', () => {
     const body = FN.get('saveConfigFile') ?? ''
     expect(body).toContain("flag: 'wx'")
-    expect(body).toContain('renameSync(tmp, CONFIG_PATH)')
+    expect(body).toContain('renameWithRetry(tmp, CONFIG_PATH)')
+  })
+
+  it('§374 renameWithRetry 那一层两头钉：自己体内真打 renameSync(from, to) 且只在瞬时码上退避', () => {
+    const body = FN.get('renameWithRetry') ?? ''
+    expect(body, '退避重试最终还要落到真原子换').toContain('renameSync(from, to)')
+    // 反向钉：不许把非瞬时错误也咽了——耗尽／非瞬时都要 throw
+    expect(body).toMatch(/throw e/)
+    expect(body, '只认这三把瞬时锁').toContain("code === 'EPERM'")
+    expect(body).toContain("code === 'EACCES'")
+    expect(body).toContain("code === 'EBUSY'")
   })
 })
 
@@ -217,7 +229,7 @@ describe('② 三个写点都只经 mutateConfigFile，体内不再各自 parse 
 describe('③ 坏文件不许被当空对象：留档、说话、拒写三件都在 loadConfigForWrite 里', () => {
   it('解析失败那一条路上：改名留档 + 那句"原文已留档"，且没有空 catch', () => {
     const body = FN.get('loadConfigForWrite') ?? ''
-    expect(body).toContain('renameSync(CONFIG_PATH, archive)')
+    expect(body).toContain('renameWithRetry(CONFIG_PATH, archive)')
     expect(body).toContain('原文已留档')
     expect(swallowsFailure(body), '解析失败这一支不许咽到底（后面必须真的留档）').toBe(false)
     expect(body).not.toContain('损坏则重建')

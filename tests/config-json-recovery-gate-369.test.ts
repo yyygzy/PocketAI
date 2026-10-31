@@ -127,7 +127,7 @@ describe('① 松口子只开在一把钥匙上', () => {
 describe('② 搬走坏文件那一发必须真把包带上', () => {
   it('loadConfigForWrite 里四件齐：改名留档＋按字段扫＋那句"原文已留档"＋带回来的那一句赋值', () => {
     const body = FN.get('loadConfigForWrite') ?? ''
-    expect(body).toContain('renameSync(CONFIG_PATH, archive)')
+    expect(body).toContain('renameWithRetry(CONFIG_PATH, archive)')
     expect(body).toContain('原文已留档')
     const calls = calledNames(body)
     expect(calls, '留档那一支要真的扫一次').toContain(EXTRACT)

@@ -10,6 +10,32 @@ import { KDF_LEGACY, normalizeKdfParams, type KdfParams } from '../../crypto/ind
 
 const log = createLogger('config')
 
+// Windows 上 `renameSync` 覆盖一个"目标已存在且被别的句柄瞬时持着"的文件（杀软扫刚写好的 tmp、
+// Windows Search 索引器、另一个 reader）会抛 EPERM／EACCES／EBUSY——这是**瞬时**锁，重试即可。
+// config.json 是恢复包的唯一副本（§367），一次瞬时锁就让 `generateRecoveryKey` 整发失败不值当，
+// 所以两处 rename 都走这层有界退避。耗尽后照旧抛（原子写那侧清 tmp、留档那侧放弃改写），语义不变。
+const RENAME_ATTEMPTS = 6
+const RENAME_BACKOFF_MS = 30
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+function renameWithRetry(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(from, to)
+      return
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      const transient = code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
+      if (!transient || attempt >= RENAME_ATTEMPTS - 1) throw e
+      log.warn(`rename ${basename(from)} → ${basename(to)} 撞 ${code}（Windows 目标被瞬时持句柄），第 ${attempt + 1} 次退避重试`)
+      sleepSync(RENAME_BACKOFF_MS)
+    }
+  }
+}
+
 export type EncryptionMode = 'none' | 'db'
 export type CipherType = 'sqlcipher' // 目前只支持 SQLCipher
 
@@ -101,7 +127,7 @@ function loadConfigForWrite(): Record<string, unknown> {
   }
   const salvage = extractRecoveryBlob(raw)
   const archive = `${CONFIG_PATH}.corrupt-${Date.now()}`
-  renameSync(CONFIG_PATH, archive)
+  renameWithRetry(CONFIG_PATH, archive)
   log.warn(`config.json 解析失败 ⇒ 原文已留档 ${archive}，本次改写只带自己要落的那一把钥匙${salvage ? '（恢复包按字段扫出来带上了）' : '；恢复包没扫出来（其余键请从那份留档取回）'}`)
   return salvage ? { recoveryBlob: salvage, recoveryCarriedFrom: basename(archive) } : {}
 }
@@ -112,7 +138,7 @@ function saveConfigFile(cfg: Record<string, unknown>): void {
   try {
     // 0600＋wx：文件名通用、未来可能承载其他敏感配置；独占建（已存在就失败）避免并发写互相顶掉
     writeFileSync(tmp, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
-    renameSync(tmp, CONFIG_PATH)
+    renameWithRetry(tmp, CONFIG_PATH)
   } catch (e) {
     try {
       unlinkSync(tmp)
