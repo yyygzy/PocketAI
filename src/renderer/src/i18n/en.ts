@@ -419,6 +419,7 @@ export const en = {
   'lock.unlockFailed': 'Unlock failed',
   'lock.checkingEnc': 'Checking whether this device has a master password…',
   'lock.encUnread': 'Encryption status unavailable: {msg} (this screen assumes a master password may be set - enter it to unlock)',
+  'lock.recoveryHint': 'Forgot the master password? Your recovery key can be used in the unlock window after restarting the app',
 
   // ── Reminders ──
   'reminder.fired': '⏰ Reminder: {text}',

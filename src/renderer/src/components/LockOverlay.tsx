@@ -46,6 +46,11 @@ export const LockOverlay: React.FC<{
             className="mb-3 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-4 py-2 text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
           />
         )}
+        {/* §372：恢复码那一格只长在启动解锁窗（ENCRYPTION_RECOVER 不在锁屏白名单），
+            这句只给"确认已加密"时——none／确认中／读不到都不许暗示有恢复途径（文案只承诺已证实之事）。 */}
+        {encKnown && dbEncrypted && (
+          <p className="mb-4 text-xs text-[var(--color-text-muted)]">{t('lock.recoveryHint')}</p>
+        )}
         {error && <div className="mb-3 text-sm text-[var(--color-danger)]">{error}</div>}
         <button
           onClick={onUnlock}

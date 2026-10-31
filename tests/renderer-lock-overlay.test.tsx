@@ -96,3 +96,29 @@ describe('加密态还没读回来时的三种脸（V4-Iter-343）', () => {
     expect(screen.queryByText(/加密状态读不到/)).toBeNull()
   })
 })
+
+// V4-Iter-372：恢复码那一格只长在启动解锁窗（ENCRYPTION_RECOVER 不在锁屏白名单），
+// 应用内锁屏面补一句指路；取向＝只在"确认已加密"时说，none／确认中／读不到都不许暗示有恢复途径。
+describe('锁屏面的恢复码指路那句（V4-Iter-372）', () => {
+  const HINT = '忘记主密码？恢复密钥需在重启应用后的解锁窗口中使用'
+
+  it('确认已加密：这句上屏（唯一该说的情形）', () => {
+    mount(true)
+    expect(screen.getByText(HINT)).toBeTruthy()
+  })
+
+  it('none 模式（确认没设主密码）：没有主密码可忘 ⇒ 这句不许出现', () => {
+    mount(false, vi.fn(), { encKnown: true, encPending: false })
+    expect(screen.queryByText(HINT)).toBeNull()
+  })
+
+  it('读还在飞：连要不要口令都没定 ⇒ 这句不许抢跑', () => {
+    mount(true, vi.fn(), { encKnown: false, encPending: true })
+    expect(screen.queryByText(HINT)).toBeNull()
+  })
+
+  it('读不到（按可能设过主密码处理）：还没证实加密 ⇒ 不承诺恢复途径，这句也不出现', () => {
+    mount(true, vi.fn(), { encKnown: false, encPending: false, encErr: 'boom' })
+    expect(screen.queryByText(HINT)).toBeNull()
+  })
+})

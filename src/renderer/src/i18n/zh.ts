@@ -419,6 +419,7 @@ export const zh = {
   'lock.unlockFailed': '解锁失败',
   'lock.checkingEnc': '正在确认这台设备是否设过主密码…',
   'lock.encUnread': '加密状态读不到：{msg}（下面按可能设过主密码处理，请输入密码后解锁）',
+  'lock.recoveryHint': '忘记主密码？恢复密钥需在重启应用后的解锁窗口中使用',
 
   // ── 定时提醒 ──
   'reminder.fired': '⏰ 提醒：{text}',
