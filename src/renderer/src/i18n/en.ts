@@ -452,6 +452,8 @@ export const en = {
   'steward.cleanupHint': '“Safe cleanup” deletes orphan messages/vector chunks and compacts the database; “VACUUM” only compacts without deleting.',
   'steward.cleanupResult': 'Removed {m} orphan messages and {c} orphan vector chunks, reclaimed {b}',
   'steward.vacuumResult': 'VACUUM reclaimed {b}',
+  'steward.cleanupVacuumFailed': 'Removed {m} orphan messages and {c} orphan vector chunks, but VACUUM did not run, so no space was reclaimed',
+  'steward.vacuumFailed': 'VACUUM did not run, so no space was reclaimed',
   'composer.ph': 'Type a message — Enter to send, Shift+Enter for a new line',
   // Prompt snippets
   'snippet.button': 'Prompt snippets',

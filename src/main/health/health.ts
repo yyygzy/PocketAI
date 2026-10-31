@@ -3,7 +3,7 @@
 
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { HealthReport, CleanupResult } from '../../shared/types'
+import { HealthReport, CleanupResult, VacuumOutcome } from '../../shared/types'
 import { dbService } from '../db/database'
 import { DB_PATH, DATA_DIR } from '../portable'
 
@@ -80,7 +80,14 @@ export class HealthService {
     let beforeBytes = 0
     if (existsSync(DB_PATH)) beforeBytes = statSync(DB_PATH).size
 
-    try { db.exec('VACUUM') } catch { /* ignore */ }
+    // §377：VACUUM 失败（SQLite busy／Windows 文件锁）以前被 ignore 掉，
+    // 于是前后字节相同 ⇒「回收 0」被画成绿色成功句＝把"没跑成"演成"跑过了、没东西可回收"。
+    let vacuumFailed = false
+    try {
+      db.exec('VACUUM')
+    } catch {
+      vacuumFailed = true
+    }
 
     let afterBytes = 0
     if (existsSync(DB_PATH)) afterBytes = statSync(DB_PATH).size
@@ -88,18 +95,25 @@ export class HealthService {
     return {
       removedOrphanMessages: rmMsg,
       removedOrphanChunks: rmChunk,
-      vacuumedBytes: Math.max(0, beforeBytes - afterBytes)
+      vacuumedBytes: Math.max(0, beforeBytes - afterBytes),
+      vacuumFailed
     }
   }
 
-  vacuum(): number {
+  vacuum(): VacuumOutcome {
     const db = dbService.getHandle()
     let beforeBytes = 0
     if (existsSync(DB_PATH)) beforeBytes = statSync(DB_PATH).size
-    try { db.exec('VACUUM') } catch { /* ignore */ }
+    // §377：跑没跑成与回收了几字节是两件事，不许都折进那一个数字
+    let vacuumFailed = false
+    try {
+      db.exec('VACUUM')
+    } catch {
+      vacuumFailed = true
+    }
     let afterBytes = 0
     if (existsSync(DB_PATH)) afterBytes = statSync(DB_PATH).size
-    return Math.max(0, beforeBytes - afterBytes)
+    return { vacuumedBytes: Math.max(0, beforeBytes - afterBytes), vacuumFailed }
   }
 }
 

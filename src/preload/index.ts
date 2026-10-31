@@ -81,6 +81,7 @@ import type {
   OllamaPullEvent,
   HealthReport,
   CleanupResult,
+  VacuumOutcome,
   ModelRecommendation,
   AuditResult,
   DiagnoseResult,
@@ -1266,7 +1267,7 @@ const api = {
     ipcRenderer.invoke(IPC.HEALTH_REPORT),
   runCleanup: (): Promise<CleanupResult> =>
     ipcRenderer.invoke(IPC.HEALTH_CLEANUP),
-  runVacuum: (): Promise<number> =>
+  runVacuum: (): Promise<VacuumOutcome> =>
     ipcRenderer.invoke(IPC.HEALTH_VACUUM),
   recommendModels: (): Promise<{ ok: boolean; data?: ModelRecommendation; error?: string }> =>
     ipcRenderer.invoke(IPC.STEWARD_MODEL_RECOMMEND),

@@ -53,8 +53,10 @@ const SITES: Array<[string, string, string]> = [
   ['../src/renderer/src/modules/settings/DataHealthPanel.tsx', 'deduplicateKbDocs(', "return t('dh.integrity.dedupDone'"],
   ['../src/renderer/src/modules/settings/SettingsModule.tsx', 'disableRecoveryKey()', "t('enc.recoveryRemoved')"],
   ['../src/renderer/src/modules/settings/SettingsModule.tsx', "setUiPrefs({ customCss: '' })", "setCss('')"],
-  ['../src/renderer/src/modules/steward/StewardModule.tsx', 'runVacuum()', 'setVacuumBytes(bytes)'],
-  ['../src/renderer/src/modules/steward/StewardModule.tsx', 'setVacuumBytes(bytes)\n      const report = await window.pocketai.getHealthReport()', 'setHealth(report.data)'],
+  // §377：这一点（「VACUUM 压缩」那颗键）的成功态从裸数字 `bytes` 换成了 `VacuumOutcome`——
+  // 「没跑成」要能被带出来，就不能只回一个 0。锚点跟着搬家，判据（判失败排在写成功态之前＋失败有反馈面）一字未松。
+  ['../src/renderer/src/modules/steward/StewardModule.tsx', 'runVacuum()', 'setVacuumResult(out)'],
+  ['../src/renderer/src/modules/steward/StewardModule.tsx', 'setVacuumResult(out)\n      const report = await window.pocketai.getHealthReport()', 'setHealth(report.data)'],
   ['../src/renderer/src/components/OllamaPanel.tsx', 'installOllama()', 'setStatus(finalStatus)'],
   ['../src/renderer/src/modules/skills/SkillModule.tsx', 'const saved = await window.pocketai.saveSkill({', 'onSaved(saved)'],
   ['../src/renderer/src/modules/skills/SkillMarket.tsx', 'const copy = await window.pocketai.saveSkill({', "flash(true, t('skill.market.duplicated'"],

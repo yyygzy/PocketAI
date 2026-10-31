@@ -452,6 +452,8 @@ export const zh = {
   'steward.cleanupHint': '「安全清理」删除孤儿消息/向量块并压缩数据库；「VACUUM」仅压缩不删除数据。',
   'steward.cleanupResult': '已删除孤儿消息 {m} 条、孤儿向量块 {c} 个，回收 {b}',
   'steward.vacuumResult': 'VACUUM 回收 {b}',
+  'steward.cleanupVacuumFailed': '已删除孤儿消息 {m} 条、孤儿向量块 {c} 个，但 VACUUM 没跑成，空间未压缩',
+  'steward.vacuumFailed': 'VACUUM 没跑成，空间未压缩',
   'composer.ph': '输入消息，Enter 发送，Shift+Enter 换行',
   // 提示词片段库
   'snippet.button': '提示词片段',

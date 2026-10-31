@@ -1464,6 +1464,14 @@ export interface CleanupResult {
   removedOrphanMessages: number
   removedOrphanChunks: number
   vacuumedBytes: number
+  /** §377：VACUUM 抛了（SQLite busy／Windows 文件锁）——不许折进「回收 0 字节」当成功 */
+  vacuumFailed: boolean
+}
+
+/** §377：手动 VACUUM 的结果——「跑没跑成」与「回收了几字节」是两件事 */
+export interface VacuumOutcome {
+  vacuumedBytes: number
+  vacuumFailed: boolean
 }
 
 // ---------- 首启向导 ----------

@@ -431,6 +431,8 @@ export const ja = {
   'steward.cleanupHint': '「安全なクリーンアップ」は孤立メッセージ/ベクトルチャンクを削除してデータベースを圧縮します。「VACUUM」はデータを削除せずに圧縮のみ行います。',
   'steward.cleanupResult': '孤立メッセージ {m} 件、孤立ベクトルチャンク {c} 個を削除、{b} を回収',
   'steward.vacuumResult': 'VACUUM で {b} を回収',
+  'steward.cleanupVacuumFailed': '孤立メッセージ {m} 件、孤立ベクトルチャンク {c} 個を削除しましたが、VACUUM は実行できず、領域は解放されていません',
+  'steward.vacuumFailed': 'VACUUM は実行できず、領域は解放されていません',
   'composer.ph': 'メッセージを入力 — Enter で送信、Shift+Enter で改行',
   // プロンプトスニペット
   'snippet.button': 'プロンプトスニペット',

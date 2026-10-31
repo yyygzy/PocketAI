@@ -286,6 +286,27 @@ export function mapEnum(map: Record<string, string>, v: string | number | null |
   return s
 }
 
+/**
+ * §377：介质没探测出来就是"不知道"——本地盘不许推断成 SSD（机械盘被画成 SSD 会把用户支去慢盘上还以为快；
+ * 同文件 GPU 段早就立了"不许填估算值"的纪律，这里不能例外）。
+ * 只有三类证据才给结论：可移除（DriveType=2 或总线 USB）→ usb；物理盘报了介质 → ssd/hdd；其余 → unknown。
+ */
+export function deriveDiskTypeWin32(input: {
+  dtype: number | null
+  mediumType: string | null
+  busType: string | null
+}): DiskInfo['type'] {
+  if (input.dtype === 2 || input.busType === 'USB') return 'usb'
+  if (input.mediumType === 'SSD') return 'ssd'
+  if (input.mediumType === 'HDD') return 'hdd'
+  return 'unknown'
+}
+
+/** §377：diskutil 那行只分得出可移动与固定，固定卷是 SSD 还是 HDD 它没说 ⇒ 不许替它说 */
+export function deriveDiskTypeDarwin(removable: boolean): DiskInfo['type'] {
+  return removable ? 'usb' : 'unknown'
+}
+
 function getDiskWin32(driveLetter: string): DiskInfo {
   const info: DiskInfo = {
     type: 'unknown',
@@ -333,18 +354,8 @@ ConvertTo-Json -InputObject $r -Compress
   info.mediumType = mapEnum(MEDIA_MAP, raw.medium)
   info.busType = mapEnum(BUS_MAP, raw.bus)
 
-  const isRemovable = raw.dtype === 2 || info.busType === 'USB'
-  if (isRemovable) {
-    info.type = 'usb'
-    info.removable = true
-  } else if (info.mediumType === 'SSD') {
-    info.type = 'ssd'
-  } else if (info.mediumType === 'HDD') {
-    info.type = 'hdd'
-  } else if (raw.dtype === 3) {
-    // 无法识别物理介质时沿用旧行为：本地盘按 SSD 展示
-    info.type = 'ssd'
-  }
+  info.type = deriveDiskTypeWin32({ dtype: raw.dtype, mediumType: info.mediumType, busType: info.busType })
+  info.removable = info.type === 'usb'
   return info
 }
 
@@ -371,7 +382,7 @@ function getDisk(): DiskInfo {
       const out = execFileSync('diskutil', ['info', APP_ROOT], { encoding: 'utf8' })
       const line = out.split('\n').find((l) => l.includes('Removable Media')) ?? ''
       info.removable = /Removable/i.test(line) && !/Fixed/i.test(line)
-      info.type = info.removable ? 'usb' : 'ssd'
+      info.type = deriveDiskTypeDarwin(info.removable)
     }
     return info
   } catch {

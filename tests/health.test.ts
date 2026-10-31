@@ -3,8 +3,8 @@
 // 覆盖 src/main/health/health.ts 三个方法：
 // - report：DB 完整性（PRAGMA ok/异常）、孤儿消息/chunk 统计、各计数、attachments 目录大小
 //   （目录不存在 / 正常累计 / 单文件 stat 抛错跳过 / readdir 抛错兜底）
-// - cleanup：孤儿删除 changes、VACUUM 前后字节差（路径不存在 → 0；exec 抛错忽略）
-// - vacuum：同 cleanup 的字节差逻辑
+// - cleanup：孤儿删除 changes、VACUUM 前后字节差（路径不存在 → 0；§377 起 exec 抛错不再忽略，回 vacuumFailed=true）
+// - vacuum：同 cleanup 的字节差逻辑 ＋ vacuumFailed（「跑没跑成」与「回收了几字节」分开回）
 //
 // 策略：
 // - vi.hoisted 集中 mocks + vi.mock dbService / portable / node:fs
@@ -172,49 +172,53 @@ describe('HealthService.report 健康报告', () => {
 // ---------- cleanup ----------
 
 describe('HealthService.cleanup 垃圾清理', () => {
-  it('正常：删除孤儿数取 changes，vacuumedBytes = before - after', () => {
+  it('正常：删除孤儿数取 changes，vacuumedBytes = before - after，VACUUM 跑成了', () => {
     const r = new HealthService().cleanup()
     expect(r.removedOrphanMessages).toBe(5)
     expect(r.removedOrphanChunks).toBe(3)
     expect(r.vacuumedBytes).toBe(300)
+    expect(r.vacuumFailed).toBe(false)
   })
 
-  it('DB 文件不存在：before/after 均为 0，vacuumedBytes=0', () => {
+  it('DB 文件不存在：before/after 均为 0，vacuumedBytes=0（跑成了，只是没东西可回收）', () => {
     mocks.dbFileExists = false
     const r = new HealthService().cleanup()
     expect(r.vacuumedBytes).toBe(0)
+    expect(r.vacuumFailed).toBe(false)
   })
 
-  it('VACUUM 抛错：忽略，仍返回删除结果；文件未变差值为 0', () => {
+  it('§377 VACUUM 抛错：删除结果照回，但必须报 vacuumFailed=true（以前折成「回收 0」被画成绿色成功句）', () => {
     mocks.execError = new Error('VACUUM 失败')
     const r = new HealthService().cleanup()
     expect(r.removedOrphanMessages).toBe(5)
     expect(r.removedOrphanChunks).toBe(3)
     expect(r.vacuumedBytes).toBe(0)
+    expect(r.vacuumFailed).toBe(true)
   })
 
-  it('VACUUM 后反而变大：vacuumedBytes 兜底 0 不为负', () => {
+  it('VACUUM 后反而变大：vacuumedBytes 兜底 0 不为负，且这不算失败', () => {
     mocks.beforeSize = 500
     mocks.afterSize = 800
     const r = new HealthService().cleanup()
     expect(r.vacuumedBytes).toBe(0)
+    expect(r.vacuumFailed).toBe(false)
   })
 })
 
 // ---------- vacuum ----------
 
 describe('HealthService.vacuum 手动压缩', () => {
-  it('正常：返回 before - after 字节差', () => {
-    expect(new HealthService().vacuum()).toBe(300)
+  it('正常：回字节差 ＋ 没失败', () => {
+    expect(new HealthService().vacuum()).toEqual({ vacuumedBytes: 300, vacuumFailed: false })
   })
 
-  it('DB 文件不存在：返回 0', () => {
+  it('DB 文件不存在：回 0，仍算跑成', () => {
     mocks.dbFileExists = false
-    expect(new HealthService().vacuum()).toBe(0)
+    expect(new HealthService().vacuum()).toEqual({ vacuumedBytes: 0, vacuumFailed: false })
   })
 
-  it('VACUUM 抛错：忽略并返回 0（文件未变）', () => {
+  it('§377 VACUUM 抛错：不许只回一个 0（那与"跑过了但没东西可回收"同形）⇒ 带出 vacuumFailed', () => {
     mocks.execError = new Error('VACUUM 失败')
-    expect(new HealthService().vacuum()).toBe(0)
+    expect(new HealthService().vacuum()).toEqual({ vacuumedBytes: 0, vacuumFailed: true })
   })
 })

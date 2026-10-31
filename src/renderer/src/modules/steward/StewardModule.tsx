@@ -3,6 +3,7 @@ import type {
   HardwareInfo,
   HealthReport,
   CleanupResult,
+  VacuumOutcome,
   ModelRecommendation,
   AuditResult,
   DiagnoseResult,
@@ -46,7 +47,8 @@ export const StewardModule: React.FC = () => {
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null)
   const [checking, setChecking] = useState<'audit' | 'diagnose' | null>(null)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
-  const [vacuumBytes, setVacuumBytes] = useState<number | null>(null)
+  // §377：「VACUUM 没跑成」以前被折成「回收 0 字节」的成功数字；换成带状态的结果，两张脸各按状态取
+  const [vacuumResult, setVacuumResult] = useState<VacuumOutcome | null>(null)
   const [cleaning, setCleaning] = useState(false)
   /** 最近一次「手动重新检测」完成时间；null 表示展示的是启动时自动检测的快照 */
   const [manualCheckedAt, setManualCheckedAt] = useState<number | null>(null)
@@ -165,13 +167,13 @@ export const StewardModule: React.FC = () => {
   const handleVacuum = async () => {
     setCleaning(true)
     try {
-      const bytes = await window.pocketai.runVacuum()
-      // 失败不判就 setVacuumBytes({ok:false}) ⇒ 非有限值走 formatBytes 的 '-' ⇒ 界面显示「VACUUM 回收 -」，像真跑过（§216）
-      if (hasIpcFailed(bytes)) {
-        toast.error(ipcFailText(bytes, t('common.unknownError')))
+      const out = await window.pocketai.runVacuum()
+      // 失败不判就 setVacuumResult({ok:false}) ⇒ vacuumFailed 缺省是假、bytes 是 '-' ⇒ 界面显示「VACUUM 回收 -」，像真跑过（§216）
+      if (hasIpcFailed(out)) {
+        toast.error(ipcFailText(out, t('common.unknownError')))
         return
       }
-      setVacuumBytes(bytes)
+      setVacuumResult(out)
       const report = await window.pocketai.getHealthReport()
       // §258：同 handleCleanup——判失败面也判"没有数据"
       if (hasIpcFailed(report) || !report.data) {
@@ -690,17 +692,36 @@ export const StewardModule: React.FC = () => {
           {t('steward.cleanupHint')}
         </p>
         {cleanupResult && (
-          <div className="mt-2 px-2 py-1.5 rounded bg-[var(--color-success-bg)] text-[11px] text-[var(--color-success)]">
-            {t('steward.cleanupResult', {
-              m: cleanupResult.removedOrphanMessages,
-              c: cleanupResult.removedOrphanChunks,
-              b: formatBytes(cleanupResult.vacuumedBytes)
-            })}
+          <div
+            className={`mt-2 px-2 py-1.5 rounded text-[11px] ${
+              cleanupResult.vacuumFailed
+                ? 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
+                : 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
+            }`}
+          >
+            {cleanupResult.vacuumFailed
+              ? t('steward.cleanupVacuumFailed', {
+                  m: cleanupResult.removedOrphanMessages,
+                  c: cleanupResult.removedOrphanChunks
+                })
+              : t('steward.cleanupResult', {
+                  m: cleanupResult.removedOrphanMessages,
+                  c: cleanupResult.removedOrphanChunks,
+                  b: formatBytes(cleanupResult.vacuumedBytes)
+                })}
           </div>
         )}
-        {vacuumBytes !== null && (
-          <div className="mt-2 px-2 py-1.5 rounded bg-[var(--color-success-bg)] text-[11px] text-[var(--color-success)]">
-            {t('steward.vacuumResult', { b: formatBytes(vacuumBytes) })}
+        {vacuumResult && (
+          <div
+            className={`mt-2 px-2 py-1.5 rounded text-[11px] ${
+              vacuumResult.vacuumFailed
+                ? 'bg-[var(--color-warning-bg)] text-[var(--color-warning)]'
+                : 'bg-[var(--color-success-bg)] text-[var(--color-success)]'
+            }`}
+          >
+            {vacuumResult.vacuumFailed
+              ? t('steward.vacuumFailed')
+              : t('steward.vacuumResult', { b: formatBytes(vacuumResult.vacuumedBytes) })}
           </div>
         )}
       </Section>
