@@ -254,7 +254,10 @@ describe('buildKbAskSessionMarkdown', () => {
 })
 
 describe('buildConversationHtml', () => {
-  it('输出自包含文档结构并过滤消息中的脚本注入', async () => {
+  // 单测级超时 30s：动态 import react-dom/server 与渲染管线，单跑实测 ~13s，
+  // 全量并发下 worker 冷启动挤压会顶破全局 20s（既有 flaky）。只放宽这一条慢用例，
+  // 文件内其余用例仍受全局 20s 约束；断言语义不变
+  it('输出自包含文档结构并过滤消息中的脚本注入', { timeout: 30_000 }, async () => {
     // 动态导入：该模块依赖 react-dom/server 与 Markdown 渲染管线
     const { buildConversationHtml } = await import('../src/renderer/src/utils/export-html')
     const html = await buildConversationHtml(conv, [

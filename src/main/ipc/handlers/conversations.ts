@@ -44,6 +44,13 @@ function dragIcon(): Electron.NativeImage {
   )
 }
 
+/** 导入归属助手口径（外部/JSON/加密三条导入路径共用）：
+ * id 无效或助手已删除 → 静默回落 null（自由会话），不阻断导入；
+ * assistantRepo.get 覆盖内置助手，合法 id 原样保留 */
+function resolveImportOwnerId(assistantId: string | null | undefined): string | null {
+  return assistantId && assistantRepo.get(assistantId) ? assistantId : null
+}
+
 export function registerConversationHandlers(): void {
   safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean, archivedOnly?: boolean) =>
     conversationRepo.list(assistantId, isAgent, { archivedOnly }),
@@ -416,7 +423,7 @@ export function registerConversationHandlers(): void {
     const payload = parsed.data
     const c = payload.conversation
     const newConv = conversationRepo.create({
-      assistantId: c.assistantId ?? null,
+      assistantId: resolveImportOwnerId(c.assistantId),
       title: (c.title ?? '导入的会话') + ' (加密导入)',
       modelLabel: c.modelLabel ?? undefined,
       titleDefault: false
@@ -458,7 +465,7 @@ export function registerConversationHandlers(): void {
     }
     const c = payload.conversation
     const newConv = conversationRepo.create({
-      assistantId: c.assistantId ?? null,
+      assistantId: resolveImportOwnerId(c.assistantId),
       title: (c.title ?? '导入的会话') + ' (导入)',
       modelLabel: c.modelLabel ?? undefined,
       titleDefault: false
@@ -490,7 +497,14 @@ export function registerConversationHandlers(): void {
         )
       }
     })
-    tx(payload.messages)
+    // 与加密导入同一口径：消息事务回滚后，事务外已创建的会话也要删掉，
+    // 否则会留下一条 0 消息的空会话脏数据
+    try {
+      tx(payload.messages)
+    } catch (e) {
+      conversationRepo.delete(newConv.id)
+      return { ok: false, error: `导入写入失败，已回滚：${errMsg(e)}` }
+    }
     return { ok: true, conversationId: newConv.id, messageCount: payload.messages.length }
   }, argsSchema(conversationExportPayloadSchema))
 
@@ -514,8 +528,7 @@ export function registerConversationHandlers(): void {
       const dropped = emptyDroppedMessages()
       const handle = dbService.getHandle()
       // 归属助手：一次判定；id 无效/助手已删除静默回落自由会话，不阻断导入
-      const ownerId =
-        arg.assistantId && assistantRepo.get(arg.assistantId) ? arg.assistantId : null
+      const ownerId = resolveImportOwnerId(arg.assistantId)
 
       for (const file of arg.files) {
         const format = detectExternalFormat(file.text)

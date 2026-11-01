@@ -587,6 +587,35 @@ export function overwriteConfigTables(
   return parts
 }
 
+/**
+ * 库内合并（第 1、2 步）：行级合并用户内容表 + 云端覆盖配置表，整体包在一个外层事务里。
+ * 任一表失败整体回滚，不再出现「报失败但已合并一半」的跨表不一致。
+ * mergeTable/overwriteTable 内部的 transaction 在嵌套时自动降级为 savepoint
+ * （better-sqlite3 语义），单表粒度不变。附件下载是网络 IO，不在这里面。
+ * 返回合并摘要行。导出供真库测试直调（绕过 WebDAV 下载）。
+ */
+export function runDbMergeTx(
+  localDb: Database.Database,
+  cloudDb: Database.Database,
+  strategy: MergeStrategy
+): string[] {
+  const summaryParts: string[] = []
+  const tx = localDb.transaction(() => {
+    // 1. 行级合并用户内容表
+    for (const { table, tsCol } of ROW_MERGE_TABLES) {
+      const r = mergeTable(localDb, cloudDb, table, tsCol, strategy)
+      if (r.inserted || r.updated) {
+        summaryParts.push(`${table}: +${r.inserted} ~${r.updated}`)
+      }
+    }
+
+    // 2. 云端覆盖配置类表（凭据列按表保留本机值，见 overwriteConfigTables）
+    summaryParts.push(...overwriteConfigTables(localDb, cloudDb))
+  })
+  tx()
+  return summaryParts
+}
+
 /** 执行合并恢复 */
 export async function executeMerge(
   cfg: WebDAVConfig,
@@ -605,16 +634,9 @@ export async function executeMerge(
     const localDb = dbService.getHandle()
     const summaryParts: string[] = []
 
-    // 1. 行级合并用户内容表
-    for (const { table, tsCol } of ROW_MERGE_TABLES) {
-      const r = mergeTable(localDb, cloudDb, table, tsCol, strategy)
-      if (r.inserted || r.updated) {
-        summaryParts.push(`${table}: +${r.inserted} ~${r.updated}`)
-      }
-    }
-
-    // 2. 云端覆盖配置类表（凭据列按表保留本机值，见 overwriteConfigTables）
-    summaryParts.push(...overwriteConfigTables(localDb, cloudDb))
+    // 库内写入（第 1、2 步）一个外层事务，任一表失败整体回滚（见 runDbMergeTx）；
+    // 附件下载（第 3 步）是网络 IO，保持在事务外。
+    summaryParts.push(...runDbMergeTx(localDb, cloudDb!, strategy))
 
     summaryParts.push('提示：跨机合并不搬运模型/服务凭据（Key、env、headers 仍是本机值或本机新行的云端密文），目标机请在「设置」重新填写')
 

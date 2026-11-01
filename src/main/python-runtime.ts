@@ -278,87 +278,108 @@ export async function extractTarGz(tarPath: string, destDir: string): Promise<vo
 
   let longName = ''
   let eof = false
-  while (!eof) {
-    const header = await readAsync(512).catch(() => null)
-    if (!header) break
-    // 全零块 = tar 结束
-    if (header.every((b) => b === 0)) {
-      eof = true
-      break
-    }
-
-    const name = header.toString('utf8', 0, 100).replace(/\0+$/, '')
-    const sizeStr = header.toString('utf8', 124, 136).replace(/\0+$/, '').trim()
-    const size = parseInt(sizeStr, 8) || 0
-    const typeflag = String.fromCharCode(header[156] ?? 0)
-    const linkname = header.toString('utf8', 157, 257).replace(/\0+$/, '')
-    const prefix = header.toString('utf8', 345, 500).replace(/\0+$/, '')
-
-    let fullName = longName || (prefix ? `${prefix}/${name}` : name)
-    const dataBlocks = Math.ceil(size / 512)
-
-    if (typeflag === 'L') {
-      // GNU 长文件名：数据块内容为下一个条目的真实文件名
-      const data = await readAsync(size)
-      const pad = (512 - (size % 512)) % 512
-      if (pad) await readAsync(pad)
-      longName = data.toString('utf8').replace(/\0+$/, '')
-      continue
-    }
-
-    if (typeflag === 'x' || typeflag === 'g') {
-      // pax 全局/扩展头：跳过数据
-      await skipBlocks(dataBlocks)
-      continue
-    }
-
-    if (typeflag === '5') {
-      // 目录
-      const dir = resolveUnder(destDir, fullName)
-      fs.mkdirSync(dir, { recursive: true })
-    } else if (typeflag === '0' || typeflag === '\0' || typeflag === '') {
-      // 普通文件
-      const filePath = resolveUnder(destDir, fullName)
-      fs.mkdirSync(path.dirname(filePath), { recursive: true })
-      const fileStream = fs.createWriteStream(filePath)
-      let remaining = size
-      while (remaining > 0) {
-        const data = await readAsync(Math.min(remaining, 65536))
-        fileStream.write(data)
-        remaining -= data.length
+  let activeWrite: ReturnType<typeof fs.createWriteStream> | null = null
+  try {
+    while (!eof) {
+      const header = await readAsync(512).catch(() => null)
+      if (!header) break
+      // 全零块 = tar 结束
+      if (header.every((b) => b === 0)) {
+        eof = true
+        break
       }
-      await new Promise<void>((res, rej) => {
-        fileStream.on('error', rej)
-        fileStream.end((err?: NodeJS.ErrnoException) => (err ? rej(err) : res()))
-      })
-      // 跳过填充字节使总长度对齐到 512
-      const pad = (512 - (size % 512)) % 512
-      if (pad) await readAsync(pad)
-    } else if (typeflag === '2') {
-      // 符号链接：链接本身与目标都必须在 destDir 内。
-      // 放行包内相对链接（bin/python3 → python3.12 等）；
-      // 绝对目标或 ../ 逃逸目标拒绝，防止后续条目经链接写出目录。
-      const linkPath = resolveUnder(destDir, fullName)
-      if (path.isAbsolute(linkname)) {
-        throw new Error(`tar 符号链接指向绝对路径，已拒绝: ${fullName} -> ${linkname}`)
+
+      const name = header.toString('utf8', 0, 100).replace(/\0+$/, '')
+      const sizeStr = header.toString('utf8', 124, 136).replace(/\0+$/, '').trim()
+      const size = parseInt(sizeStr, 8) || 0
+      const typeflag = String.fromCharCode(header[156] ?? 0)
+      const linkname = header.toString('utf8', 157, 257).replace(/\0+$/, '')
+      const prefix = header.toString('utf8', 345, 500).replace(/\0+$/, '')
+
+      let fullName = longName || (prefix ? `${prefix}/${name}` : name)
+      const dataBlocks = Math.ceil(size / 512)
+
+      if (typeflag === 'L') {
+        // GNU 长文件名：数据块内容为下一个条目的真实文件名
+        const data = await readAsync(size)
+        const pad = (512 - (size % 512)) % 512
+        if (pad) await readAsync(pad)
+        longName = data.toString('utf8').replace(/\0+$/, '')
+        continue
       }
-      const target = path.resolve(path.dirname(linkPath), linkname)
-      if (target !== destDir && !target.startsWith(destDir + path.sep)) {
-        throw new Error(`tar 符号链接目标越界，已拒绝: ${fullName} -> ${linkname}`)
+
+      if (typeflag === 'x' || typeflag === 'g') {
+        // pax 全局/扩展头：跳过数据
+        await skipBlocks(dataBlocks)
+        continue
       }
-      fs.mkdirSync(path.dirname(linkPath), { recursive: true })
-      if (fs.existsSync(linkPath)) fs.unlinkSync(linkPath)
-      try {
-        fs.symlinkSync(linkname, linkPath)
-      } catch {
-        // Windows 无开发者模式/管理员权限时创建符号链接会 EPERM：
-        // 目标已通过越界校验，创建失败按旧行为跳过（python win 发行包通常不含符号链接）
+
+      if (typeflag === '5') {
+        // 目录
+        const dir = resolveUnder(destDir, fullName)
+        fs.mkdirSync(dir, { recursive: true })
+      } else if (typeflag === '0' || typeflag === '\0' || typeflag === '') {
+        // 普通文件
+        const filePath = resolveUnder(destDir, fullName)
+        fs.mkdirSync(path.dirname(filePath), { recursive: true })
+        const fileStream = fs.createWriteStream(filePath)
+        activeWrite = fileStream
+        let remaining = size
+        while (remaining > 0) {
+          const data = await readAsync(Math.min(remaining, 65536))
+          fileStream.write(data)
+          remaining -= data.length
+        }
+        await new Promise<void>((res, rej) => {
+          fileStream.on('error', rej)
+          fileStream.end((err?: NodeJS.ErrnoException) => (err ? rej(err) : res()))
+        })
+        activeWrite = null
+        // 跳过填充字节使总长度对齐到 512
+        const pad = (512 - (size % 512)) % 512
+        if (pad) await readAsync(pad)
+      } else if (typeflag === '2') {
+        // 符号链接：链接本身与目标都必须在 destDir 内。
+        // 放行包内相对链接（bin/python3 → python3.12 等）；
+        // 绝对目标或 ../ 逃逸目标拒绝，防止后续条目经链接写出目录。
+        const linkPath = resolveUnder(destDir, fullName)
+        if (path.isAbsolute(linkname)) {
+          throw new Error(`tar 符号链接指向绝对路径，已拒绝: ${fullName} -> ${linkname}`)
+        }
+        const target = path.resolve(path.dirname(linkPath), linkname)
+        if (target !== destDir && !target.startsWith(destDir + path.sep)) {
+          throw new Error(`tar 符号链接目标越界，已拒绝: ${fullName} -> ${linkname}`)
+        }
+        fs.mkdirSync(path.dirname(linkPath), { recursive: true })
+        if (fs.existsSync(linkPath)) fs.unlinkSync(linkPath)
+        try {
+          fs.symlinkSync(linkname, linkPath)
+        } catch {
+          // Windows 无开发者模式/管理员权限时创建符号链接会 EPERM：
+          // 目标已通过越界校验，创建失败按旧行为跳过（python win 发行包通常不含符号链接）
+        }
+      } else {
+        // 其他类型（含 pax 数据块已在上方处理，此处兜底）：跳过数据块
+        await skipBlocks(dataBlocks)
       }
-    } else {
-      // 其他类型（含 pax 数据块已在上方处理，此处兜底）：跳过数据块
-      await skipBlocks(dataBlocks)
+      longName = ''
     }
-    longName = ''
+  } finally {
+    // 统一收口：无论正常结束还是拒绝/流错误抛出，输入链两条流（读流 + gunzip，
+    // pipe 的目标流即 gunzip 本身）与可能正在写的目标流都在这里销毁，并等 close
+    // 落锤——保证 fd 在错误冒泡给调用方之前已释放；否则拒绝路径会把 fd 泄漏到 GC，
+    // Windows 上调用方随后删除临时压缩包/目录必撞 ENOTEMPTY/EBUSY
+    const pendingClose: Promise<unknown>[] = []
+    const w = activeWrite
+    if (w) {
+      w.destroy()
+      pendingClose.push(new Promise((r) => (w.closed ? r(null) : w.once('close', () => r(null)))))
+    }
+    readStream.destroy()
+    gunzip.destroy()
+    pendingClose.push(new Promise((r) => (readStream.closed ? r(null) : readStream.once('close', () => r(null)))))
+    pendingClose.push(new Promise((r) => (gunzip.closed ? r(null) : gunzip.once('close', () => r(null)))))
+    await Promise.allSettled(pendingClose)
   }
 }
 

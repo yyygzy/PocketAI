@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   // 备份
   webdavCfg: null as unknown,
   webdavCfgBroken: false,
+  webdavPwdBroken: false,
   schedule: { enabled: false, intervalHours: 6, lastResult: null as null | { ok: boolean; at: number } },
   backupError: null as Error | null,
   // 硬件
@@ -52,6 +53,7 @@ const mocks = vi.hoisted(() => ({
     this.dbError = null
     this.webdavCfg = null
     this.webdavCfgBroken = false
+    this.webdavPwdBroken = false
     this.schedule = { enabled: false, intervalHours: 6, lastResult: null }
     this.backupError = null
     this.hwDiskRemovable = false

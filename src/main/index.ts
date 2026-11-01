@@ -96,6 +96,7 @@ function tryOpenDbNoPassword(): boolean {
   try {
     dbService.open()
     dbService.runMigrations()
+    dbService.sweepStaleStreamingMessages()
     return true
   } catch (e) {
     // SQLITE_NOTADB = 文件是加密的，必须用密码打开
@@ -387,6 +388,7 @@ async function boot(): Promise<void> {
       // 走到这里：库要么刚被本趟验开，要么被 handler 预验过（那次已 close）——下面这一次 open 是完整路径（含向量扩展）
       if (!dbService.isOpen()) dbService.open(masterKeyManager.getDbKey() ?? undefined)
       if (!openedPlaintext) dbService.runMigrations()
+      dbService.sweepStaleStreamingMessages()
       log.info('DB 解锁成功')
     } else if ('setPassword' in result) {
       // 设置新密码（明文 DB 首次加密）

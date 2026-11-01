@@ -993,6 +993,20 @@ export class DatabaseService {
     }
   }
 
+  /**
+   * 启动时一次性清扫：把上一次进程生命周期里没写完终态的 streaming 占位消息标记为 error。
+   * 只允许在「进程刚独占数据、渲染层尚未开始任何流式生成」的启动路径调用
+   * （boot 开库 / 解锁后开库）；绝不能挂进 runMigrations 或会话加载路径——
+   * 那两处运行期可被触发，会把正在流式输出的活消息误杀成 error。
+   */
+  sweepStaleStreamingMessages(): void {
+    if (!this.db) throw new Error('Database not opened')
+    const r = this.db
+      .prepare("UPDATE messages SET status='error' WHERE status='streaming'")
+      .run()
+    if (r.changes > 0) logger.info(`清扫中断的流式占位消息 ${r.changes} 条`)
+  }
+
   integrityCheck(): { ok: boolean; details: string } {
     if (!this.db) return { ok: false, details: 'Database not opened' }
     try {

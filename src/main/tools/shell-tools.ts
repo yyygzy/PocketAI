@@ -121,6 +121,10 @@ const ROOT_DELETE_RE = [
 // 对拆分后的每个片段匹配；命中即确认
 const CONFIRM_RULES: Array<[RegExp, string]> = [
   [/\b(?:rm|del|erase|rd|rmdir|remove-item)\b/i, 'DANGEROUS_DELETE'],
+  // 绕开 rm/del 词表的等效删除：git clean -f（-n 干跑不含 f，不误伤）、find -delete、rsync --delete
+  [/\bgit\b[^|&;\r\n]*\bclean\b[^|&;\r\n]*(?:\s-[a-zA-Z]*f|--force\b)/i, 'DANGEROUS_DELETE'],
+  [/\bfind\b[^|&;\r\n]*\s-delete\b/i, 'DANGEROUS_DELETE'],
+  [/\brsync\b[^|&;\r\n]*--delete\b/i, 'DANGEROUS_DELETE'],
   // 移动 / 强制复制 / 镜像复制 / 输出重定向写文件
   [/\b(?:move|mv|move-item)\b/i, 'DANGEROUS_OVERWRITE'],
   [/\bcp\b[^|&;\r\n]*-f\b/i, 'DANGEROUS_OVERWRITE'],

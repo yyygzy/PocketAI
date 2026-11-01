@@ -189,12 +189,19 @@ describe('verifyArchiveHash SHA256 钉版校验', () => {
 // ============ extractTarGz ============
 describe('extractTarGz 流式解压', () => {
   let destDir: string
+  let srcTgz: string
   beforeEach(() => {
     destDir = path.join(os.tmpdir(), 'py-runtime-extract-' + process.pid + '-' + Math.random().toString(36).slice(2))
+    // 源压缩包不放进 destDir：拒绝路径下 extractTarGz 的读流句柄释放有延迟，
+    // Windows 上锁着的文件会让 afterEach 的目录清理必败（ENOTEMPTY 存根）
+    srcTgz = path.join(os.tmpdir(), 'py-runtime-src-' + process.pid + '-' + Math.random().toString(36).slice(2) + '.tgz')
     fs.mkdirSync(destDir, { recursive: true })
   })
   afterEach(() => {
+    // extractTarGz 统一收口后 fd 在返回前已释放，且源压缩包在 destDir 之外：
+    // 普通 rmSync 即可稳定清理（此前的 12×350ms 重试环兜的是当时拒绝路径的读流 fd 泄漏）
     fs.rmSync(destDir, { recursive: true, force: true })
+    try { fs.rmSync(srcTgz, { force: true }) } catch { /* 临时文件，留给 OS 清理 */ }
   })
 
   it('普通文件 + 目录：正确写入', async () => {
@@ -203,7 +210,7 @@ describe('extractTarGz 流式解压', () => {
       { name: 'mydir', type: '5' },
       { name: 'mydir/file.txt', type: '0', content }
     ])
-    const tgzPath = path.join(destDir, 'test.tar.gz')
+    const tgzPath = srcTgz
     fs.writeFileSync(tgzPath, tgz)
 
     await extractTarGz(tgzPath, destDir)
@@ -221,7 +228,7 @@ describe('extractTarGz 流式解压', () => {
       { name: './@LongLink', type: 'L', content: nameBuf },
       { name: 'truncated', type: '0', content }
     ])
-    const tgzPath = path.join(destDir, 'test.tar.gz')
+    const tgzPath = srcTgz
     fs.writeFileSync(tgzPath, tgz)
 
     await extractTarGz(tgzPath, destDir)
@@ -235,7 +242,7 @@ describe('extractTarGz 流式解压', () => {
     const tgz = makeTarGz([
       { name: 'evil.txt', type: '2', linkname: '/etc/passwd' }
     ])
-    const tgzPath = path.join(destDir, 'test.tar.gz')
+    const tgzPath = srcTgz
     fs.writeFileSync(tgzPath, tgz)
 
     await expect(extractTarGz(tgzPath, destDir)).rejects.toThrow('符号链接指向绝对路径')
@@ -245,7 +252,7 @@ describe('extractTarGz 流式解压', () => {
     const tgz = makeTarGz([
       { name: 'evil.txt', type: '2', linkname: '../escape.txt' }
     ])
-    const tgzPath = path.join(destDir, 'test.tar.gz')
+    const tgzPath = srcTgz
     fs.writeFileSync(tgzPath, tgz)
 
     await expect(extractTarGz(tgzPath, destDir)).rejects.toThrow('符号链接目标越界')
@@ -255,10 +262,111 @@ describe('extractTarGz 流式解压', () => {
     const tgz = makeTarGz([
       { name: '../escape.txt', type: '0', content: Buffer.from('x') }
     ])
-    const tgzPath = path.join(destDir, 'test.tar.gz')
+    const tgzPath = srcTgz
     fs.writeFileSync(tgzPath, tgz)
 
     await expect(extractTarGz(tgzPath, destDir)).rejects.toThrow('tar 条目路径越界')
+  })
+
+  it('拒绝路径收口：symlink 拒绝时读流/gunzip 均销毁且 close 落锤，错误语义不变', async () => {
+    const destroyCalls: string[] = []
+    const seen: {
+      rs?: ReturnType<typeof fs.createReadStream>
+      gz?: ReturnType<typeof zlib.createGunzip>
+    } = {}
+    const realRS = fs.createReadStream
+    const realGZ = zlib.createGunzip
+    vi.spyOn(fs, 'createReadStream').mockImplementation(((...args: Parameters<typeof realRS>) => {
+      const s = realRS(...args)
+      seen.rs = s
+      const orig = s.destroy.bind(s)
+      s.destroy = ((err?: Error) => { destroyCalls.push('readStream'); return orig(err) }) as typeof s.destroy
+      return s
+    }) as typeof fs.createReadStream)
+    vi.spyOn(zlib, 'createGunzip').mockImplementation(((...args: Parameters<typeof realGZ>) => {
+      const s = realGZ(...args)
+      seen.gz = s
+      const orig = s.destroy.bind(s)
+      s.destroy = ((err?: Error) => { destroyCalls.push('gunzip'); return orig(err) }) as typeof s.destroy
+      return s
+    }) as typeof zlib.createGunzip)
+    try {
+      const tgz = makeTarGz([{ name: 'evil.txt', type: '2', linkname: '/etc/passwd' }])
+      const tgzPath = srcTgz
+      fs.writeFileSync(tgzPath, tgz)
+
+      const err = await extractTarGz(tgzPath, destDir).then(() => null, (e: unknown) => e)
+      // 错误语义不变：Error 类型 + 原文案
+      expect(err).toBeInstanceOf(Error)
+      expect(String((err as Error).message)).toContain('tar 符号链接指向绝对路径，已拒绝')
+      // 统一收口：两条输入流都销毁。EOF autoClose 可能先经公开 destroy 走一遍，
+      // finally 自己的调用一定追加在最后且顺序固定（读流先、gunzip 后）
+      expect(destroyCalls.slice(-2)).toEqual(['readStream', 'gunzip'])
+      // 且错误冒泡前 close 已落锤——fd 真正释放，不是只排队销毁
+      expect(seen.rs!.destroyed).toBe(true)
+      expect(seen.gz!.destroyed).toBe(true)
+      expect(seen.rs!.closed).toBe(true)
+      expect(seen.gz!.closed).toBe(true)
+      // 行为面证据：源压缩包可立即删除（fd 未关时 Windows 上必 EPERM/EBUSY）
+      expect(() => fs.rmSync(tgzPath, { force: true })).not.toThrow()
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('拒绝路径收口：tar 流提前结束时正在写入的目标流一并销毁', async () => {
+    const destroyCalls: string[] = []
+    const seen: {
+      rs?: ReturnType<typeof fs.createReadStream>
+      gz?: ReturnType<typeof zlib.createGunzip>
+      ws?: ReturnType<typeof fs.createWriteStream>
+    } = {}
+    const realRS = fs.createReadStream
+    const realGZ = zlib.createGunzip
+    const realWS = fs.createWriteStream
+    vi.spyOn(fs, 'createReadStream').mockImplementation(((...args: Parameters<typeof realRS>) => {
+      const s = realRS(...args)
+      seen.rs = s
+      const orig = s.destroy.bind(s)
+      s.destroy = ((err?: Error) => { destroyCalls.push('readStream'); return orig(err) }) as typeof s.destroy
+      return s
+    }) as typeof fs.createReadStream)
+    vi.spyOn(zlib, 'createGunzip').mockImplementation(((...args: Parameters<typeof realGZ>) => {
+      const s = realGZ(...args)
+      seen.gz = s
+      const orig = s.destroy.bind(s)
+      s.destroy = ((err?: Error) => { destroyCalls.push('gunzip'); return orig(err) }) as typeof s.destroy
+      return s
+    }) as typeof zlib.createGunzip)
+    vi.spyOn(fs, 'createWriteStream').mockImplementation(((...args: Parameters<typeof realWS>) => {
+      const s = realWS(...args)
+      seen.ws = s
+      const orig = s.destroy.bind(s)
+      s.destroy = ((err?: Error) => { destroyCalls.push('writeStream'); return orig(err) }) as typeof s.destroy
+      return s
+    }) as typeof fs.createWriteStream)
+    try {
+      // 头声明 1024 字节，实际只给 100 字节数据，gzip 流随后干净结束 → readAsync 拒绝
+      const header = tarHeader('partial.txt', { size: 1024, type: '0' })
+      const tgz = zlib.gzipSync(Buffer.concat([header, Buffer.alloc(100, 0x61)]))
+      const tgzPath = srcTgz
+      fs.writeFileSync(tgzPath, tgz)
+
+      const err = await extractTarGz(tgzPath, destDir).then(() => null, (e: unknown) => e)
+      // 错误语义不变：readAsync 的拒绝文案原样抛出
+      expect(err).toBeInstanceOf(Error)
+      expect(String((err as Error).message)).toContain('tar 流提前结束')
+      // 正在写的目标流也在 finally 收口。输入流到达 EOF 时 Node 的
+      // autoClose/autoDestroy 会经公开 destroy 先走一遍（见上一条用例），
+      // finally 自己的调用一定在最后且顺序固定（写流先、读流、gunzip 最后）
+      expect(destroyCalls.slice(-3)).toEqual(['writeStream', 'readStream', 'gunzip'])
+      expect(seen.ws!.destroyed).toBe(true)
+      expect(seen.ws!.closed).toBe(true)
+      expect(seen.rs!.closed).toBe(true)
+      expect(seen.gz!.closed).toBe(true)
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })
 

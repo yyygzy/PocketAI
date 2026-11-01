@@ -128,6 +128,20 @@ describe('classifyCommand', () => {
       expect(classifyCommand('rmdir dir', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
       expect(classifyCommand('remove-item x', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
     })
+    it('等效删除变体（git clean -f / find -delete / rsync --delete）→ DANGEROUS_DELETE', () => {
+      expect(classifyCommand('git clean -f', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('git clean -fdx', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('git clean --force', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('git status && git clean -fd', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('find . -name "*.tmp" -delete', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('rsync -av --delete src/ dst/', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+    })
+    it('无害近似不误伤：git clean -n 干跑 / 普通 find / 普通 rsync → allow', () => {
+      expect(classifyCommand('git clean -n', WS).decision).toBe('allow')
+      expect(classifyCommand('git clean', WS).decision).toBe('allow')
+      expect(classifyCommand('find . -name "*.log"', WS).decision).toBe('allow')
+      expect(classifyCommand('rsync -av src/ dst/', WS).decision).toBe('allow')
+    })
     it('移动 → DANGEROUS_OVERWRITE', () => {
       expect(classifyCommand('mv a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })
       expect(classifyCommand('move a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })

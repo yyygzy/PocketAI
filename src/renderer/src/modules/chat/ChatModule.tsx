@@ -898,6 +898,14 @@ export const ChatModule: React.FC = () => {
     setImportBusy(true)
     try {
       const r = await window.pocketai.importExternalConversations(files, importOwnerId || null)
+      // §331 同一口径：safeHandle 的失败是 resolve 的 {ok:false,error}——不判就往下行读
+      // r.warnings.length 会抛 TypeError，把真因（zod 拒／DB 关着）演成
+      // 「Cannot read properties of undefined」，且 setImportExternal(null) 被跳过、文件清单残留在弹窗里
+      if (hasIpcFailed(r)) {
+        toast.error(t('chat.importFail', { e: ipcFailText(r, t('common.unknownError')) }))
+        setImportExternal(null)
+        return
+      }
       if (r.conversationCount > 0) {
         toast.success(t('chat.importExternalOk', { c: r.conversationCount, m: r.messageCount }))
         await reloadConversations()

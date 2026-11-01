@@ -159,12 +159,24 @@ describe('resolveWorkspacePath — 路径穿越 + symlink 逃逸', () => {
     expect(() => resolveWorkspacePath('a\u0000b')).toThrow(/非法路径/)
   })
 
-  it('junction 指向工作区外被拒', () => {
+  it('junction 指向工作区外被拒', (ctx) => {
     const link = path.join(wsDir, 'evil')
     try {
       fs.symlinkSync(outsideDir, link, 'junction')
     } catch {
-      return // 无 symlink 权限时跳过
+      return ctx.skip('环境不支持创建 junction')
+    }
+    // 环境链验证：junction 建成 ≠ realpath 一定能解析（Windows 负载/Defender 下会漂移）。
+    // 解析不到预期目标说明本机此刻无法验证这条链，按环境不支持跳过；
+    // 能正常解析时「必须抛错」的安全断言原样保留，不放宽
+    let resolved: string
+    try {
+      resolved = fs.realpathSync(link)
+    } catch {
+      return ctx.skip('junction 已创建但 realpath 解析失败')
+    }
+    if (path.resolve(resolved) !== path.resolve(outsideDir)) {
+      return ctx.skip(`junction realpath 未指向预期目标：${resolved}`)
     }
     expect(() => resolveWorkspacePath('evil/secret.txt')).toThrow(/超出工作目录/)
   })

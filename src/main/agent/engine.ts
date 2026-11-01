@@ -2212,8 +2212,12 @@ class AgentEngine {
     const { conversationId, target, messages, master, userMsg, defaultParams, emit, requestId } = ctx
     const stepStart = Date.now()
 
+    // degradeMsg/degradeAccumulated 提升到 try 外：catch 收尾要写终态，块级声明在 catch 不可见
+    let degradeMsg: { id: string } | null = null
+    let degradeAccumulated = ''
+
     try {
-      const degradeMsg = messageRepo.insert({
+      const insertedDegradeMsg = messageRepo.insert({
         conversationId,
         role: 'assistant',
         content: '',
@@ -2222,13 +2226,14 @@ class AgentEngine {
         status: 'streaming',
         parentId: userMsg.id
       })
+      degradeMsg = insertedDegradeMsg
       emit(IPC.AGENT_STEP_EVENT, {
         requestId,
         conversationId,
         stepIndex: ctx.stepCount + 1,
         type: 'thought',
         text: '',
-        messageId: degradeMsg.id
+        messageId: insertedDegradeMsg.id
       })
 
       messages.push({
@@ -2244,7 +2249,6 @@ class AgentEngine {
         ...pickSafeParams(defaultParams)
       }
 
-      let degradeAccumulated = ''
       const degradeResult = await degradeAdapter.streamChat(messages, degradeParams, {
         onDelta: (delta) => {
           degradeAccumulated += delta
@@ -2252,7 +2256,7 @@ class AgentEngine {
             requestId,
             conversationId,
             stepIndex: ctx.stepCount + 1,
-            messageId: degradeMsg.id,
+            messageId: insertedDegradeMsg.id,
             delta
           })
         }
@@ -2262,10 +2266,10 @@ class AgentEngine {
       const finalText = degradeResult.finishReason === 'length'
         ? `${degradeText}\n\n_（回答因达到 token 上限被截断）_`
         : degradeText
-      messageRepo.updateContent(degradeMsg.id, finalText, 'done')
+      messageRepo.updateContent(insertedDegradeMsg.id, finalText, 'done')
 
       ctx.finalContent = finalText
-      ctx.finalMessageId = degradeMsg.id
+      ctx.finalMessageId = insertedDegradeMsg.id
 
       emit(IPC.AGENT_STEP_EVENT, {
         requestId,
@@ -2273,7 +2277,7 @@ class AgentEngine {
         stepIndex: ctx.stepCount + 1,
         type: 'final',
         text: finalText,
-        messageId: degradeMsg.id,
+        messageId: insertedDegradeMsg.id,
         done: true
       })
       // trace：降级步骤成功
@@ -2291,6 +2295,16 @@ class AgentEngine {
       return true
     } catch (e) {
       const aborted = isAbortError(e) || /中止/.test(errMsg(e))
+      const errText = aborted ? '（已中止）' : `（降级总结失败：${errMsg(e)}）`
+      // 收尾 degradeMsg 占位：catch 之外没有别处会为它写终态，漏掉就是一条永久 streaming 空行
+      // （导出/上下文重建都会带上它）；外层在 !degradeOk 时直接 return，也指望不上主 catch 的清理
+      if (degradeMsg) {
+        try {
+          messageRepo.updateContent(degradeMsg.id, degradeAccumulated || errText, aborted ? 'aborted' : 'error')
+        } catch (cleanupErr) {
+          logger.warn(`降级占位消息收尾失败: ${errMsg(cleanupErr)}`)
+        }
+      }
       // trace：降级步骤失败
       safeTrace({
         requestId: ctx.requestId,
