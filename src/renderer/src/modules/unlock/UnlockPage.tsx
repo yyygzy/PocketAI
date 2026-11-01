@@ -19,6 +19,8 @@ export function UnlockPage() {
   const [confirm, setConfirm] = useState('')
   const [recoveryCode, setRecoveryCode] = useState('')
   const [newCode, setNewCode] = useState('') // 恢复成功后服务端签发的新恢复码
+  // §385：恢复码重置密码同样是一次换钥——没能跟着重写的凭据条数要在成功页说一句，别等用户下次用到才发现
+  const [rotatedUndecryptable, setRotatedUndecryptable] = useState(0)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -220,6 +222,7 @@ export function UnlockPage() {
         clearLock()
         // 停在成功页展示新恢复码，用户确认保存后再进入应用
         setNewCode(r.recoveryCode)
+        setRotatedUndecryptable(r.undecryptableCount ?? 0)
       } catch (e) {
         setError(errText(e, t('unlock.recoverFailed')))
       } finally {
@@ -303,6 +306,9 @@ export function UnlockPage() {
             </button>
           </div>
           {copied && <p className="unlock-recovery-warn">{t('enc.clipboardAutoClear', { s: 30 })}</p>}
+          {rotatedUndecryptable > 0 && (
+            <p className="unlock-recovery-warn">{t('enc.rotateUndecryptable', { n: rotatedUndecryptable })}</p>
+          )}
           <p className="unlock-recovery-warn">{t('unlock.recoveryWarn')}</p>
           {error && <div className="unlock-error">{error}</div>}
           {lockNotice}

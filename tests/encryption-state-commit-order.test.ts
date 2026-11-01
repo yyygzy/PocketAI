@@ -151,6 +151,10 @@ vi.mock('../src/main/logger', () => ({
 vi.mock('../src/main/backup/backup-service', () => ({
   loadWebDAVConfig: () => null,
   saveWebDAVConfig: () => {},
+  // §385：轮换那几发改走这一对出口。手抄桩漏成员不会在装载时报错，
+  // 只有跑到那一发才以「handler 抛 ⇒ 回 {ok:false}」的脸出现（§381 的 G 同族），所以必须一起抄。
+  captureWebDAVForRekey: () => ({ cfg: null, undecryptable: false }),
+  restoreWebDAVAfterRekey: () => false,
   deriveKeySync: () => Buffer.alloc(32),
   ENC_PREFIX: 'PKBK1',
   isEncryptedBlob: () => false,

@@ -561,6 +561,7 @@ type NoticeFn = (n: { ok: boolean; text: string } | null) => void
 
 const EnableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> = ({ onDone, setNotice }) => {
   const { t } = useI18n()
+  const toast = useToast() // §385：换钥后「有 N 项没能重写」这一句要发出去（同改密那发）
   const [open, setOpen] = useState(false)
   const [pwd, setPwd] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -578,6 +579,10 @@ const EnableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }>
       setOpen(false); setPwd(''); setConfirm('')
       setNotice({ ok: true, text: t('enc.enabledOk') })
       onDone()
+      // §385：「已启用加密」同样不许盖住「有 N 项凭据没能跟着换钥」——同 §375 那一句、同一个出口
+      if (r.undecryptableCount && r.undecryptableCount > 0) {
+        toast.warning(t('enc.rotateUndecryptable', { n: r.undecryptableCount }))
+      }
     } catch (e) {
       setLocalErr(errText(e, t('enc.fail')))
     } finally {
@@ -677,6 +682,7 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
 
 const DisableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> = ({ onDone, setNotice }) => {
   const { t } = useI18n()
+  const toast = useToast() // §385：禁用加密同样是一次换钥（fixed key 重包），那一句要发得出去
   const [open, setOpen] = useState(false)
   const [pwd, setPwd] = useState('')
   const [busy, setBusy] = useState(false)
@@ -692,6 +698,10 @@ const DisableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }
       setOpen(false); setPwd('')
       setNotice({ ok: true, text: t('enc.disabledOk') })
       onDone()
+      // §385：禁用加密同样是一次换钥（fixed key 重包），「已禁用」不许盖住「有 N 项没能跟着换」
+      if (r.undecryptableCount && r.undecryptableCount > 0) {
+        toast.warning(t('enc.rotateUndecryptable', { n: r.undecryptableCount }))
+      }
     } catch (e) {
       setLocalErr(errText(e, t('enc.fail')))
     } finally {

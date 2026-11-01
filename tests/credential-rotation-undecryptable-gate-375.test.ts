@@ -116,8 +116,9 @@ describe('③ credential-rotation：export 汇总三路、restore 只转发 snap
 describe('④ 界面侧：回值带 undecryptableCount 且 SettingsModule 消费并说四语那句', () => {
   it('encryption.ts 改密回值把 count 透出去', () => {
     // §381 把这串搬进了多行 return，并在同一个 N 里加上了 WebDAV 口令那一档
-    // （判据指的还是同一件事：解不开的数量必须从这条通道带到界面，不许只留在日志）
-    expect(read(ENC)).toMatch(/undecryptableCount: \(fieldSnapshot\.undecryptable\?\.length \?\? 0\) \+ \(webdavUndecryptable \? 1 : 0\)/)
+    // §385 把"读那一次"收成出口 ⇒ 那颗 flag 从此叫 `webdavTicket.undecryptable`（判据指的还是同一件事：
+    // 解不开的数量必须从这条通道带到界面，不许只留在日志）
+    expect(read(ENC)).toMatch(/undecryptableCount: \(fieldSnapshot\.undecryptable\?\.length \?\? 0\) \+ \(webdavTicket\.undecryptable \? 1 : 0\)/)
   })
   it('SettingsModule 数了 count 才 toast.warning，且用的是字典键（不是硬写中文）', () => {
     const src = read(SM)

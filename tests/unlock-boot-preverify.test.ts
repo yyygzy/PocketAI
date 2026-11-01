@@ -117,6 +117,9 @@ vi.mock('../src/main/logger', () => ({ createLogger: () => ({ error: () => {}, w
 vi.mock('../src/main/backup/backup-service', () => ({
   loadWebDAVConfig: () => null,
   saveWebDAVConfig: () => {},
+  // §385：轮换那几发改走这一对出口（本文件真注册 encryption handlers，桩漏成员＝跑到那一发才红）
+  captureWebDAVForRekey: () => ({ cfg: null, undecryptable: false }),
+  restoreWebDAVAfterRekey: () => false,
   deriveKeySync: () => Buffer.alloc(32),
   ENC_PREFIX: 'PKBK1',
   isEncryptedBlob: () => false,

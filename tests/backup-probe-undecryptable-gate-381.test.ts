@@ -5,7 +5,7 @@
 //  四个密钥轮换点把它当明文回写＝那份口令永久解不开，而屏上「已配置」照旧）。
 // 本闸门守六件事：
 //   A 契约：三态的 `RemoteExistence`／`passwordUndecryptable`／`blobsProbeUnknown` 都在，且出 IPC 用的是掩码视图那份类型
-//   B 轮换四处：每一处都得"先判再写"（判据在赋值之前），且都留一条 warn；改前那一形归零
+//   B 轮换四处：§385 起都走同一对出口（capture → 换钥 → restore），逐处钉顺序与留痕；自己读／自己写／自己判那三形归零
 //   C 计数：`exists` 才计去重，`unknown` 另立一档并进结果与日志；旧的 `if (await remoteExists(...))` 归零
 //   D 消费面：设置页那句「解不开」必须同时绑 `cfg` 与那颗 flag（挂在别的条件上＝那张脸永不出现或永远出现）
 //   E 那句「几个没能确认」只在计数 >0 时追加，且数字走 params（不许在字典里写死、也不许手替）
@@ -66,31 +66,40 @@ function walk(node: ts.Node, cb: (n: ts.Node) => void): void {
 }
 
 /**
- * 找到 `let <name> = false` 那些声明，返回"它所属的那段函数体里、这次判据用得对不对"的清单。
- * 只认函数体（不是整个文件），否则一处的判据会把别处的喂绿（§348 那条：多处共用要按身份钉）。
+ * 找到"调了 `captureWebDAVForRekey()` 的那些函数体"，逐体报出：capture 的位置、换钥那一步
+ * （三个可能标记里最早的那个）、restore 的位置、留痕 warn 条数。
+ *
+ * §385 起这一族改成"共用一对出口"，本闸门的判据跟着从"每处自己读自己写"换成
+ * "每一处都走出口、且顺序对"（capture 早于换钥、restore 晚于换钥——顺序是这一对出口唯一的牙）。
+ * 按**函数体身份**钉、不是数次数（第 37 条），并剔掉外层函数（外层体的文本含内层的调用，会把同一处数两遍）。
  */
-function sitesDeclaring(name: string, src: string, fileName: string): Array<{ judge: number; assign: number; warns: number }> {
+function rekeySites(src: string, fileName: string): Array<{ capture: number; swap: number; restore: number; warns: number; at: number }> {
   const file = sf(fileName, src)
-  const out: Array<{ judge: number; assign: number; warns: number }> = []
-  walk(file, (decl) => {
-    if (!ts.isVariableStatement(decl)) return
-    const list = decl.declarationList.declarations
-    if (list.length !== 1 || list[0]!.name.getText(file) !== name) return
-    // 所属函数体：往上找到最近的函数（箭头/函数表达式/方法）
-    let body: ts.Node | undefined = decl.parent
-    while (body && !(ts.isBlock(body) && (ts.isArrowFunction(body.parent ?? body) || ts.isFunctionExpression(body.parent ?? body) || ts.isFunctionDeclaration(body.parent ?? body)))) {
-      body = body.parent
-    }
-    if (!body) return
+  const found: Array<{ start: number; end: number; at: number; capture: number; swap: number; restore: number; warns: number }> = []
+  walk(file, (fn) => {
+    if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn) || ts.isFunctionDeclaration(fn))) return
+    const body = fn.body
+    if (!body || !ts.isBlock(body)) return
     const text = body.getText(file)
-    const idx = (needle: string): number => text.indexOf(needle)
-    out.push({
-      judge: idx('read.passwordUndecryptable'),
-      assign: idx('webDAVPassword = read.cfg.passwordCipher'),
-      warns: text.split('if (webdavUndecryptable) log.warn(').length - 1
+    const capture = text.indexOf('captureWebDAVForRekey()')
+    if (capture < 0) return
+    const swaps = ['commitNewMasterKeyState(', 'dbService.enableEncryption(', "rekey = ''"]
+      .map((m) => text.indexOf(m))
+      .filter((p) => p >= 0)
+    found.push({
+      start: fn.getStart(file),
+      end: fn.getEnd(),
+      at: body.getStart(file),
+      capture,
+      swap: swaps.length ? Math.min(...swaps) : -1,
+      restore: text.indexOf('restoreWebDAVAfterRekey('),
+      warns: text.split('if (webdavTicket.undecryptable) log.warn(').length - 1
     })
   })
-  return out
+  return found
+    .filter((outer) => !found.some((inner) => inner !== outer && outer.at < inner.at && inner.end <= outer.end))
+    .map(({ capture, swap, restore, warns, at }) => ({ capture, swap, restore, warns, at }))
+    .sort((a, b) => a.at - b.at)
 }
 
 /** 那句 JSX 的守卫条件链（同 §380 那套：if／三元／`cond && (<JSX/>)` 三种落法都认） */
@@ -159,19 +168,22 @@ describe('A 契约：三态与两颗新字段都在，且不许退回旧形状',
   })
 })
 
-describe('B 轮换四处：先判再写、四处都留痕、改前一形归零', () => {
-  const sites = sitesDeclaring('webdavUndecryptable', ENC, 'encryption.ts')
+describe('B 轮换四处：都走同一对出口、capture 排在换钥之前、四处都留痕、改前那几形归零', () => {
+  // §385 把这一族收成一对出口（capture → 换钥 → restore）⇒ 本节的判据跟着换：
+  // 不再数"每处自己声明了那颗 flag"（那种形状已不存在，数出来永远是 0＝空转），
+  // 改成按函数体身份钉"这一处真的走了出口、且顺序对"。第五处在 `src/main/index.ts`，由 §385 的新闸门守。
+  const sites = rekeySites(ENC, 'encryption.ts')
 
-  it('声明处恰好 4 个（改密／启用／禁用／恢复码），少一处＝漏收一个轮换点', () => {
-    expect(sites.length, '现数轮换点数').toBe(4)
+  it('现数 4 处走出口（改密／启用／禁用／恢复码），少一处＝漏收一个轮换点', () => {
+    expect(sites.length, '现数走出口的轮换点数').toBe(4)
   })
 
-  it('每一处：判据在「把 load 的结果当明文」那一句之前', () => {
+  it('每一处：capture 早于换钥、换钥早于 restore（顺序反了＝那一行救不回来）', () => {
     for (const [i, s] of sites.entries()) {
-      expect(s.judge, `第 ${i + 1} 处没有调 webDAVPasswordUndecryptable`).toBeGreaterThan(-1)
-      expect(s.assign, `第 ${i + 1} 处没有赋值那一句`).toBeGreaterThan(-1)
-      expect(s.judge < s.assign, `第 ${i + 1} 处判据排在赋值之后＝解不开的那一份照样被回写`)
-        .toBe(true)
+      expect(s.swap, `第 ${i + 1} 处找不到"换钥那一步"（标记换了地方，判据要跟着搬）`).toBeGreaterThan(-1)
+      expect(s.restore, `第 ${i + 1} 处没有 restore 那一句`).toBeGreaterThan(-1)
+      expect(s.capture < s.swap, `第 ${i + 1} 处 capture 排在换钥之后＝只能报"解不开"`).toBe(true)
+      expect(s.swap < s.restore, `第 ${i + 1} 处 restore 排在换钥之前＝写的还是旧密钥`).toBe(true)
     }
   })
 
@@ -181,14 +193,16 @@ describe('B 轮换四处：先判再写、四处都留痕、改前一形归零',
     }
   })
 
-  it('反向钉：改前那一形（拿到 cfg 就无条件当明文）归零', () => {
+  it('反向钉：这一层不再自己读、自己写、自己判（三形一律归零＝出口是唯一路径）', () => {
     expect(ENC, '旧形还活着').not.toMatch(/if \(oldCfg\) \{ webDAVPassword = oldCfg\.passwordCipher/)
     expect(ENC, '不许再拿解密结果当密文判第二遍').not.toMatch(/webDAVPasswordUndecryptable\(/)
-    expect(ENC.match(/webDAVPassword = read\.cfg\.passwordCipher/g), '赋值只许出现在"判过、解得开"那一支').toHaveLength(4)
+    expect(ENC, '这一层只许出口自己读那一行').not.toMatch(/readWebDAVConfig\(/)
+    expect(ENC, '这一层只许出口自己写那一行').not.toMatch(/saveWebDAVConfig\(/)
+    expect(ENC, '自己声明那颗 flag 的旧形不许回来').not.toMatch(/let webdavUndecryptable = false/)
   })
 
   it('改密那发的 count 把这一项并进 §375 那一个 N（不是另起一句、也不是漏计）', () => {
-    expect(ENC).toMatch(/undecryptableCount: \(fieldSnapshot\.undecryptable\?\.length \?\? 0\) \+ \(webdavUndecryptable \? 1 : 0\)/)
+    expect(ENC).toMatch(/undecryptableCount: \(fieldSnapshot\.undecryptable\?\.length \?\? 0\) \+ \(webdavTicket\.undecryptable \? 1 : 0\)/)
   })
 })
 
@@ -328,39 +342,47 @@ describe('G 手抄 field-encrypt 桩的那几份测试必须带上 hasUndecrypta
   })
 })
 
-describe('H 读法自证：改前的形状喂进同一套读法，必须读成"没判／没绑"', () => {
-  it('sitesDeclaring 认不出改前那一形（没声明＝没有判据）', () => {
+describe('H 读法自证：改前的形状喂进同一套读法，必须读成"没走出口／没绑"', () => {
+  it('rekeySites 认不出改前那一形（没走出口＝没有这一处），也剔得掉外层函数', () => {
     const BEFORE = [
       'async function h() {',
       '  let webDAVPassword: string | null = null',
       '  let savedCfg = null',
       '  const read = readWebDAVConfig()',
       '  if (read.cfg) { webDAVPassword = read.cfg.passwordCipher; savedCfg = read.cfg }',
+      '  commitNewMasterKeyState(prepared)',
       '  if (webDAVPassword && savedCfg) saveWebDAVConfig(savedCfg)',
       '}'
     ].join('\n')
-    expect(sitesDeclaring('webdavUndecryptable', BEFORE, 'before.ts'), '改前形状不该有牙').toEqual([])
-    // 同一套读法用在改后形状上＝判据在前、赋值在后、留痕一条
+    expect(rekeySites(BEFORE, 'before.ts'), '改前形状不该被数成"走出口的一处"').toEqual([])
+    // 同一套读法用在改后形状上＝capture 在前、换钥在中、restore 在后、留痕一条
     const AFTER = [
       'async function h() {',
-      '  let webDAVPassword: string | null = null',
-      '  let savedCfg = null',
-      '  let webdavUndecryptable = false',
-      '  const read = readWebDAVConfig()',
-      '  webdavUndecryptable = read.passwordUndecryptable',
-      '  if (read.cfg && !read.passwordUndecryptable) { webDAVPassword = read.cfg.passwordCipher }',
-      '  if (webdavUndecryptable) log.warn("x")',
+      '  const t = captureWebDAVForRekey()',
+      '  commitNewMasterKeyState(prepared)',
+      '  restoreWebDAVAfterRekey(t)',
+      '  if (t.undecryptable) log.warn("x")',
       '}'
     ].join('\n')
-    const s = sitesDeclaring('webdavUndecryptable', AFTER, 'after.ts')
+    const s = rekeySites(AFTER, 'after.ts')
     expect(s.length).toBe(1)
-    expect(s[0]!.judge).toBeLessThan(s[0]!.assign)
-    expect(s[0]!.warns).toBe(1)
-    // 真源码里这四处都是 safeHandle 的箭头函数（本文件那 4 处就是这套读法数出来的）⇒ 同一形换个宿主也得读得出
-    const ARROW = AFTER.replace('async function h() {', 'const h = async () => {')
-    const a = sitesDeclaring('webdavUndecryptable', ARROW, 'arrow.ts')
-    expect(a.length, '箭头函数那一形也认').toBe(1)
-    expect(a[0]!.judge).toBeLessThan(a[0]!.assign)
+    expect(s[0]!.capture).toBeLessThan(s[0]!.swap)
+    expect(s[0]!.swap).toBeLessThan(s[0]!.restore)
+    // 外层函数（体内含同一串）不许被数第二遍：把上面那段套进一个外层函数再数
+    const NESTED = [
+      'function outer() {',
+      '  const h = async () => {',
+      '    const webdavTicket = captureWebDAVForRekey()',
+      '    commitNewMasterKeyState(prepared)',
+      '    restoreWebDAVAfterRekey(webdavTicket)',
+      '    if (webdavTicket.undecryptable) log.warn("x")',
+      '  }',
+      '  return h',
+      '}'
+    ].join('\n')
+    const n = rekeySites(NESTED, 'nested.ts')
+    expect(n.length, '嵌套两层的文本只许数到最内层那一处').toBe(1)
+    expect(n[0]!.warns, '留痕那条也按函数体身份数（外层不许把内层的 warn 顶给自己）').toBe(1)
   })
 
   it('guardingConditions 认得出 `cond && (<JSX/>)`，而挂在一个不含 flag 的 if 上的同一句会被判成"没绑"', () => {

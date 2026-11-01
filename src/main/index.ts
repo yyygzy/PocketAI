@@ -63,6 +63,8 @@ import { denyNewWindows } from './net/external-links'
 import { installContentSecurityPolicy } from './security/csp'
 import { installPermissionGuards } from './security/permissions'
 import { initBackupScheduler } from './backup/backup-scheduler'
+// §385：boot 首次设主密码那一发也要搬 WebDAV 备份口令，与四发轮换点共用同一对出口
+import { captureWebDAVForRekey, restoreWebDAVAfterRekey } from './backup/backup-service'
 import { initTaskScheduler } from './backup/task-scheduler'
 import { initReminderScheduler } from './reminder/scheduler'
 import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, type MarkedBrowserWindow } from './ui-preferences'
@@ -399,6 +401,10 @@ async function boot(): Promise<void> {
 
       // 明文 DB → enableEncryption
       // 字段密钥将从固定混淆密钥切为主密码密钥：先在旧密钥下导出字段凭据
+      // §385：这一发此前只搬字段凭据快照、**整行没搬 app_config 里的 WebDAV 备份口令**，
+      // 于是这一次换钥把那份口令留在旧固定密钥下＝从此真解不开（用户路径：禁用加密 → 再在这里首次设密码）。
+      // 现在与四发轮换点同源：旧钥下先读一次，换钥后再用新密钥落回（解不开的那一份不进回写）。
+      const webdavTicket = captureWebDAVForRekey()
       const fieldSnapshot = exportFieldCredentials()
       // 新设密码：新 salt + 现行档位成对落盘（见 crypto/master-password.ts）
       // 新设密码的顺序是刻意的（V4-Iter-195，对齐 SEC-33 那条写序）：内存派生 → **库真的加密成功**
@@ -413,6 +419,11 @@ async function boot(): Promise<void> {
       // 新库不应携带任何历史恢复包
       recoveryKeyManager.disableRecovery()
       restoreFieldCredentials(fieldSnapshot)
+      restoreWebDAVAfterRekey(webdavTicket)
+      if (webdavTicket.undecryptable) {
+        // 这一发没有对应的界面回执（解锁窗此刻正在关闭）⇒ 至少留痕，且设置页那一格（§382 的三档脸）会自己说
+        log.warn('WebDAV 备份口令用旧字段密钥解不开，本次首次设密码未重写它（需在设置 → 备份 重填）')
+      }
       log.info('DB 已加密')
     }
 

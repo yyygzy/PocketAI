@@ -1037,6 +1037,44 @@ export function loadWebDAVConfig(): WebDAVConfig | null {
   return readWebDAVConfig().cfg
 }
 
+/**
+ * 轮换（换字段密钥）那几发共用的出口：**旧钥还在手上时**先读一次，换钥后把那份明文重新落回。
+ *
+ * §385 现查：这件事此前有四份逐字副本（改密／启用／禁用／恢复码），而第五发——boot 里
+ * 「首次设置主密码」（`index.ts` 的 `setPassword` 那支，只搬字段凭据快照）**整行没搬**，
+ * 于是那一次的换钥把备份口令留在旧固定密钥下＝从此真解不开。收成这一对，五处同源。
+ */
+export interface WebDAVRekeyTicket {
+  /** 旧钥下解得开的那一份（`passwordCipher` 已是明文）；null＝没配过／那一读抛了／解不开 */
+  cfg: WebDAVConfig | null
+  /** 有密文却解不开＝本次不进回写（当明文回写＝在新密钥下判死，§381），调用方要如实上报 */
+  undecryptable: boolean
+}
+
+export function captureWebDAVForRekey(): WebDAVRekeyTicket {
+  try {
+    const read = readWebDAVConfig()
+    if (read.passwordUndecryptable) return { cfg: null, undecryptable: true }
+    return { cfg: read.cfg, undecryptable: false }
+  } catch {
+    // 那一读本身抛了（库已关闭等）：与「没配过」同样跳过，不连累轮换（§381 起的既有口径）
+    return { cfg: null, undecryptable: false }
+  }
+}
+
+/** 换钥**之后**调用：用当前（新）字段密钥把那份明文重新包一层落盘。返回是否真的重写了。 */
+export function restoreWebDAVAfterRekey(ticket: WebDAVRekeyTicket): boolean {
+  if (!ticket.cfg) return false
+  try {
+    // 不带 `passwordAlreadyCipher`＝声明"这是明文"，§384 的写侧会在新密钥下重包
+    saveWebDAVConfig(ticket.cfg)
+    return true
+  } catch (e) {
+    log.warn('WebDAV 凭据重加密失败:', errMsg(e))
+    return false
+  }
+}
+
 export function clearWebDAVConfig(): void {
   appConfigRepo.delete(CFG_KEY)
 }

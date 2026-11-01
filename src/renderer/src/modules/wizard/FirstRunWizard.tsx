@@ -93,6 +93,8 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [pwd, setPwd] = useState('')
   const [pwd2, setPwd2] = useState('')
   const [encDone, setEncDone] = useState(false)
+  // §385：这一发同样是换钥（fixed key → 主密码密钥）；没能跟着重写的凭据条数必须在「已设置」旁边说一句
+  const [encUndecryptable, setEncUndecryptable] = useState(0)
   const [encErr, setEncErr] = useState('')
 
   /**
@@ -401,6 +403,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       }
       setEncDone(true)
       setPwd(''); setPwd2('')
+      setEncUndecryptable(r.undecryptableCount ?? 0)
       setEncStatus({ ...(encStatus ?? { mode: 'none' as const }), mode: 'db' } as EncryptionStatus)
       // 这一发读现在有了**当场知道**的状态 ⇒ 「读不到」那句必须收回（不然它会挂在「已设置」旁边）
       setEncFail(null)
@@ -602,18 +605,28 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
           <p className="text-[12px] text-[var(--color-text-muted)] leading-relaxed mb-4">
             {t('wizard.secSubtitle')}
           </p>
-          {/* 加密卡片（可选） */}
+          {/* 加密卡片（可选）
+              §385 现量撞出的分支顺序：成功那发会把 encStatus 一并写成 mode:'db'（见上面 enableEncryption），
+              而「已经有主密码」那一支原先排在 encDone 之前 ⇒ 刚设完这一发走的是 encAlready，
+              encDone 那一格（含 wizard.encDoneHint 那句"去生成恢复密钥"）在 step 1 永远画不出来。
+              「本次刚设好」比「已有主密码」更具体，所以让它先判。 */}
           {encFail && <ShowingDefaultsNotice what={t('enc.dbEnc')} msg={ipcFailText(encFail, t('common.unknownError'))} />}
-          {encStatus?.mode === 'db' ? (
-            <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
-              ✅ {t('wizard.encAlready')}
-            </div>
-          ) : encDone ? (
+          {encDone ? (
             <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
               ✅ {t('wizard.encDone')}
               <div className="text-[11px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
                 {t('wizard.encDoneHint')}
               </div>
+              {/* §385：这一发也是换钥——没能跟着重写的凭据必须在「已设置」旁边说一句，别等用户下次用到才发现 */}
+              {encUndecryptable > 0 && (
+                <div className="unlock-recovery-warn text-[11px] mt-1 leading-relaxed">
+                  {t('enc.rotateUndecryptable', { n: encUndecryptable })}
+                </div>
+              )}
+            </div>
+          ) : encStatus?.mode === 'db' ? (
+            <div className="rounded-lg border border-[var(--color-success)] p-3 text-[12px] text-[var(--color-success)]">
+              ✅ {t('wizard.encAlready')}
             </div>
           ) : (
             <div className="rounded-lg border border-[var(--color-border)] p-3">

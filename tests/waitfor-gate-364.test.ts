@@ -250,9 +250,15 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   那 12 颗的到货见证都写在门里第一句（「那句解不开」上屏、「同步状态」卡上屏、「已保存 WebDAV 配置」回执上屏、
     //   「增量备份完成」那一行上屏），门后不再另读屏⇒全部落进「按存在读屏」；两处负向句（保存后那句收回、正常档零 alert）
     //   都排在"等到货"的门之后，不是新形状。其余四桶一格未动（等退场 76／无紧随断言 367／会假红 0／只会假绿 18）。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1018)
+    //   §385 再抬到 1026／565（净新增 8 颗、不是搬运，全在本枚新写的 renderer-rotate-undecryptable-faces-385）：
+    //   四张脸各两颗——一颗门等"同屏正向对照上屏"（回执那句／✅ 那一格／成功页标题）、一颗门等"要演的到货本身"
+    //   （toast 里那句话、卡片内那句告警）；到货见证都写在门里第一句、门后不再另读屏⇒全部落进「按存在读屏」；
+    //   四颗反向对照读的是 `expectNoRotateNotice()`／`not.toContain` 的**同步**负向句、都排在"等到货"的门之后
+    //   （§365 那句"先落定再读负向句"），不是新的门形状；`findByText` 那颗不计（分类器只认 `await waitFor`）。
+    //   其余四桶一格未动（等退场 76／无紧随断言 367／会假红 0／只会假绿 18）。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1026)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('557/76/367/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('565/76/367/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

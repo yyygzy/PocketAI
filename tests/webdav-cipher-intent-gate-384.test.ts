@@ -7,7 +7,7 @@
 //   B 写侧不猜：save 体内那一条件必须"声明 ∧ 形状"两半都在；改前那一形（只看 isCipherText）归零
 //   C 意图的来源：restore 走 `readWebDAVConfig` 并把那颗 flag 原封交出（走 load＝丢掉 flag＝密文被当明文回写）
 //   D handler 转交：SAVE 那发必须把声明转交给 save（不转交＝行为用例②(c) 当场双层化），TEST 那发用 `resolved.cfg`
-//   E 另四处调用方（密钥轮换）传的确实是明文 ⇒ 一律不带 opts；带了＝有人开始靠声明骗写侧
+//   E 轮换点不再自己写那一行：写只发生在出口内部（§385 起四处共用 capture/restore），且交出去的确实是明文
 //   F 形状判据四半都在（前缀／%4／字符集／round-trip／字节下界），且不是"只看前缀"那一形
 //   G 手抄 `isCipherText` 的测试桩不许留"只看前缀"那一形（桩答太松＝替被测代码把这一格喂绿）
 //   H 读法自证：改前那一形喂进同一套读法，必须读成"没声明／只看前缀"
@@ -157,14 +157,21 @@ describe('D handler 把声明转交给写侧（不转交＝解不开那一份被
   })
 })
 
-describe('E 另四处调用方传的确实是明文 ⇒ 一律不带 opts', () => {
-  it('轮换四点各一次 `saveWebDAVConfig(savedCfg)`，且没有一处带第二参', () => {
-    expect(count(ROTATE, 'saveWebDAVConfig(savedCfg)'), '现数四处（改密／启用／禁用／恢复码）').toBe(4)
-    expect(ROTATE, '带 opts＝有人开始靠声明让写侧放行密文').not.toMatch(/saveWebDAVConfig\(savedCfg,/)
+describe('E 轮换点不再自己写那一行：写只发生在出口内部，且交出去的确实是明文', () => {
+  // §385 把"换钥时搬 WebDAV 行"收成一对出口 ⇒ 本节的旧锚点（四处各一次 `saveWebDAVConfig(savedCfg)`）
+  // 已随代码搬家失效，判据跟着改指新地方：这一层不再出现写、也不再自己判 flag。
+  it('encryption.ts 里 saveWebDAVConfig／readWebDAVConfig 双双归零，四处只调 capture', () => {
+    expect(count(ROTATE, 'saveWebDAVConfig('), '写那一行只许出口做').toBe(0)
+    expect(count(ROTATE, 'readWebDAVConfig('), '读那一行只许出口做').toBe(0)
+    expect(count(ROTATE, 'captureWebDAVForRekey()'), '现数四处（改密／启用／禁用／恢复码）').toBe(4)
+    expect(ROTATE, '自己判 flag 的旧形不许回来').not.toMatch(/if \(read\.cfg && !read\.passwordUndecryptable\)/)
   })
 
-  it('那四处传进去的值仍由 §381 那道判据把关（解不开的不进快照）', () => {
-    expect(count(ROTATE, 'if (read.cfg && !read.passwordUndecryptable) {')).toBe(4)
+  it('出口内部那一句写的是 `ticket.cfg`、不带第二参（＝声明"这是明文"，新密钥下重包）', () => {
+    const body = fnBody('restoreWebDAVAfterRekey', SERVICE, 'backup-service.ts')
+    expect(body, '函数体没读到').not.toBe('')
+    expect(count(body, 'saveWebDAVConfig(ticket.cfg)'), '只此一处写，且不声明已是密文').toBe(1)
+    expect(body).not.toMatch(/saveWebDAVConfig\(ticket\.cfg,/)
   })
 })
 

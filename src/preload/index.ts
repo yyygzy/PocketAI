@@ -1091,9 +1091,9 @@ const api = {
     newPassword: string
   ): Promise<{ ok: boolean; error?: string; recoveryCode?: string; undecryptableCount?: number }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_CHANGE_PASSWORD, oldPassword, newPassword),
-  disableEncryption: (password: string): Promise<{ ok: boolean; error?: string }> =>
+  disableEncryption: (password: string): Promise<{ ok: boolean; error?: string; undecryptableCount?: number }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_DISABLE, password),
-  enableEncryption: (password: string): Promise<{ ok: boolean; error?: string }> =>
+  enableEncryption: (password: string): Promise<{ ok: boolean; error?: string; undecryptableCount?: number }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_ENABLE, password),
   // 状态而非布尔：`has`＝有没有这把包；`carriedFrom`＝这把包是从哪份"解析不出来的文件"里
   // 按字段取回的（'config.json' 或某份 config.json.corrupt-* 的名字；null＝来源正常）
@@ -1106,7 +1106,7 @@ const api = {
   recoverWithCode: (
     code: string,
     newPassword: string
-  ): Promise<AuthResult & { recoveryCode?: string }> =>
+  ): Promise<AuthResult & { recoveryCode?: string; undecryptableCount?: number }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_RECOVER, { code, newPassword }),
   saveRecoveryFile: (
     code: string
