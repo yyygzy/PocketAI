@@ -944,6 +944,8 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   const [cfg, setCfg] = useState<WebDAVConfig | null>(null)
   /** 配置文件那一读失败的原因（§262）：`error` 为空＝拿到了但形状不对 */
   const [wdCfgUnread, setWdCfgUnread] = useState<{ error?: string } | null>(null)
+  /** §381：口令栏「有密文却用当前主密码解不开」——配过、但那份口令用不了，和「没配过」不是同一格 */
+  const [wdPwdUndecryptable, setWdPwdUndecryptable] = useState(false)
   const [schedule, setSchedule] = useState<BackupScheduleStatus | null>(null)
   const [webdavList, setWebdavList] = useState<WebDAVBackupFile[]>([])
   const [listLoading, setListLoading] = useState(false)
@@ -977,15 +979,22 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
       // 变 uncontrolled（React 当场警告，URL 框成空串）——把"配置文件读不到"演成"你配过了，只是还没备份"。
       if (hasIpcFailed(c)) {
         setWdCfgUnread({ error: c.error })
+        setWdPwdUndecryptable(false)
         return
       }
       setWdCfgUnread(null)
-      if (!c) return
+      if (!c) {
+        // 真的没配过：表单是空的，那句「解不开」也不该留着（它说的是配过、只是用不了）
+        setWdPwdUndecryptable(false)
+        return
+      }
       setCfg(c)
+      setWdPwdUndecryptable(c.passwordUndecryptable)
       setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
     }).catch((e: unknown) => {
       // reject 面（配置那台机器真抛了）：同一句，不让它只进 console
       setWdCfgUnread({ error: errText(e, '') })
+      setWdPwdUndecryptable(false)
       logIpcError('settings.loadWebDAVConfig', e)
     })
   }, [])
@@ -1048,6 +1057,9 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
     const c: WebDAVConfig = { url: wdUrl, username: wdUser, passwordCipher: wdPwd || cfg?.passwordCipher || '', directory: wdDir }
     const r = await window.pocketai.saveWebDAVConfig(c)
     if (r.ok === false) return showNotice(false, r.error || t('common.unknownError'))
+    // §381：这次真输入了新口令＝它已用当前密钥重新加密，那句「解不开」当场收回；
+    // 留空（沿用已存那份）则不收回——它解没解开要以下一次读取为准，不由这里替它说话。
+    if (wdPwd) setWdPwdUndecryptable(false)
     setCfg(c); showNotice(true, t('bk.cfgSaved'))
   }
 
@@ -1106,7 +1118,9 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
         uploaded: r.blobsUploaded,
         skipped: r.blobsSkipped,
         kb: (r.bytesUploaded / 1024).toFixed(1)
-      })
+      }) +
+        // §381：探测没跑成的那些走了重传，「跳过 0 个」不等于「远端一份都没有」——只在真有过时说这一句
+        (r.blobsProbeUnknown > 0 ? ' ' + t('bk.incProbeUnknown', { n: r.blobsProbeUnknown }) : '')
     )
     await refreshList()
     await loadSchedule()
@@ -1334,6 +1348,14 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
             <button data-testid="webdav-cfg-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={reloadCfg}>
               {t('agent.retryRead')}
             </button>
+          </div>
+        )}
+        {/* §381：口令解不开＝「配过，但那一份用不了」——地址/用户名与同步卡片都是真的，
+            只有下一次备份会在鉴权那一步失败。这一格正是用户能当场重填的出口，所以必须上屏，
+            不能只留日志（同 §375 那一族：跳过要显式带出）。 */}
+        {cfg && wdPwdUndecryptable && (
+          <div role="alert" className="mb-2 text-[11px] text-[var(--color-warning)] leading-relaxed">
+            {t('bk.pwdUndecryptable')}
           </div>
         )}
         <div className="grid grid-cols-2 gap-2">

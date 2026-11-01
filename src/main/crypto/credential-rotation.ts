@@ -12,6 +12,9 @@
 //
 // 注意：WebDAV 备份密码另有独立存储（backup-service 配置文件），
 // 由各 IPC 流程自行捕获/恢复，不在本模块范围。
+// §381：那份独立存储此前把「有密文却解不开」读成「拿到了一份明文」——旧钥密文被当明文回写＝永久解不开。
+// 现在四个轮换点各自用 webDAVPasswordUndecryptable() 判过再决定重加密还是跳过，改密那发并把它计进
+// 同一个 undecryptableCount（界面仍是本文件 §375 那一句），所以这一张虽然不住在本模块，也在同一张账上。
 
 import { providerRepo } from '../db/repositories/provider.repo'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'

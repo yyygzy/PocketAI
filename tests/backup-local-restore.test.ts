@@ -16,7 +16,10 @@ vi.mock('unzipper', () => ({ default: { Open: { buffer: async () => { throw new 
 vi.mock('../src/main/db/database', () => ({ dbService: { getHandle: () => ({}), close: () => {}, open: () => {}, runMigrations: () => {} } }))
 vi.mock('../src/main/portable', () => ({ DB_PATH: '', ATTACHMENTS_DIR: '' }))
 vi.mock('../src/main/crypto/field-encrypt', () => ({
-  encryptApiKeys: () => '', decryptApiKeys: () => '', isCipherText: () => false
+  encryptApiKeys: () => '', decryptApiKeys: () => '', isCipherText: () => false,
+  // §381：本桩把 isCipherText 一律答 false（没有一样东西看着像密文）⇒「是密文却解不开」在这套假象下恒假；
+  // 照它自己的形状把这个成员补齐（漏成员只有跑到那一发才红，见 §366 那族）
+  hasUndecryptableCipher: () => false
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: { get: () => null, set: () => {}, delete: () => {}, getMasterPasswordSalt: () => null },
@@ -28,7 +31,7 @@ vi.mock('../src/main/backup/webdav-client', () => ({
   downloadFile: async () => Buffer.alloc(0),
   listFiles: async () => [],
   deleteFile: async () => {},
-  remoteExists: async () => false,
+  remoteExists: async () => 'absent',  // §381：三态里的「问过了、没有」（改前这是一枚塌成 false 的布尔）
   uploadRemoteBuffer: async () => ({}),
   downloadRemoteFile: async () => Buffer.alloc(0)
 }))

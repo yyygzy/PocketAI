@@ -1813,6 +1813,12 @@ export interface IncrementalBackupResult {
   blobsUploaded: number
   /** 命中远端去重、跳过上传的附件数量 */
   blobsSkipped: number
+  /**
+   * §381：探测「远端有没有这一片」没跑成的数量（超时／鉴权抖动／服务端 5xx）。
+   * 它们一律走了重传＝计进 blobsUploaded，所以这里单独带出，
+   * 别让「跳过 0 个」把那档「其实没探明白」演成「远端确实没有」。
+   */
+  blobsProbeUnknown: number
   /** 附件总数 */
   attachmentsTotal: number
   encrypted: boolean
@@ -1863,9 +1869,18 @@ export interface MergeExecuteResult {
 export interface WebDAVConfig {
   url: string
   username: string
-  /** 密文（主进程字段加密层加密）；渲染端读取时已被主进程解密为明文 */
+  /** 落盘＝字段加密层的密文；出 IPC 的掩码视图里若能解开则是明文（解不开时见 MaskedWebDAVConfig） */
   passwordCipher: string
   directory: string
+}
+
+/**
+ * §381：WebDAV 配置出 IPC 的那份掩码视图（SEC-35 的 `••••`＋末 4 位），
+ * 另带一颗「口令解不开」——它和「没配过」不是一回事：URL、用户名、同步卡片都是真的，
+ * 只有那份口令在当前字段密钥下用不了（主密码轮换没跟着重写的那份＝§375 那一族的第四张快照）。
+ */
+export interface MaskedWebDAVConfig extends WebDAVConfig {
+  passwordUndecryptable: boolean
 }
 
 export interface WebDAVBackupFile {

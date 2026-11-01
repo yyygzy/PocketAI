@@ -92,8 +92,8 @@ export function registerBackupHandlers(): void {
     return { ok: true }
   }, argsSchema(webdavConfigSchema))
   safeHandle(IPC.BACKUP_WEBDAV_LOAD_CONFIG, async () => {
-    const { loadWebDAVConfig, maskWebDAVConfig } = await import('../../backup/backup-service')
-    return maskWebDAVConfig(loadWebDAVConfig())
+    const { readWebDAVConfig, maskWebDAVConfig } = await import('../../backup/backup-service')
+    return maskWebDAVConfig(readWebDAVConfig())
   })
   safeHandle(IPC.BACKUP_SCHEDULE_GET, () => getBackupSchedule())
   safeHandle(

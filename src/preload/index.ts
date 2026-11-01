@@ -67,6 +67,7 @@ import type {
   UpdateInfo,
   UpdateEvent,
   WebDAVConfig,
+  MaskedWebDAVConfig,
   WebDAVBackupFile,
   EncryptionStatus,
   AuthResult,
@@ -1131,7 +1132,7 @@ const api = {
     ipcRenderer.invoke(IPC.BACKUP_LOCAL_RESTORE, payload),
   saveWebDAVConfig: (cfg: WebDAVConfig): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_SAVE_CONFIG, cfg),
-  loadWebDAVConfig: (): Promise<WebDAVConfig | null> =>
+  loadWebDAVConfig: (): Promise<MaskedWebDAVConfig | null> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_LOAD_CONFIG),
   testWebDAV: (cfg: WebDAVConfig): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke(IPC.BACKUP_WEBDAV_TEST, cfg),

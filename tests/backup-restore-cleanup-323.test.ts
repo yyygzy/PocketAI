@@ -139,7 +139,9 @@ vi.mock('../src/main/crypto/master-key', () => ({
 vi.mock('../src/main/crypto/field-encrypt', () => ({
   encryptApiKeys: (v: string) => v,
   decryptApiKeys: (v: string) => v,
-  isCipherText: () => false
+  isCipherText: () => false,
+  // §381：同上——这桩的 isCipherText 恒假，「解不开」那一档在它这里也就不可能成立
+  hasUndecryptableCipher: () => false
 }))
 
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({
@@ -156,7 +158,7 @@ vi.mock('../src/main/backup/webdav-client', () => ({
   },
   listFiles: async () => [],
   deleteFile: async () => {},
-  remoteExists: async () => true,
+  remoteExists: async () => 'exists',  // §381：三态里的「确认已有＝走去重」
   uploadRemoteBuffer: async () => ({}),
   downloadRemoteFile: async (_c: unknown, rel: string) => {
     // 只对附件生效：DB blob 那发在 setRawKey 之前，抛在那里属另一条链（本枚不收）

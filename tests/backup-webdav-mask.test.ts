@@ -62,7 +62,9 @@ vi.mock('../src/main/crypto/field-encrypt', () => ({
     }
   },
   encryptSecret: (s: string) => 'v1:' + Buffer.from(s).toString('base64'),
-  decryptSecret: (s: string) => (s.startsWith('v1:') ? Buffer.from(s.slice(3), 'base64').toString('utf8') : s)
+  decryptSecret: (s: string) => (s.startsWith('v1:') ? Buffer.from(s.slice(3), 'base64').toString('utf8') : s),
+  // §381：按本桩自己的假象抄真判据（真是密文、而这把假钥匙解出空＝解不开）
+  hasUndecryptableCipher: (s: string) => s.startsWith('v1:') && Buffer.from(s.slice(3), 'base64').toString('utf8') === ''
 }))
 
 vi.mock('../src/main/backup/webdav-client', () => ({
@@ -74,7 +76,7 @@ vi.mock('../src/main/backup/webdav-client', () => ({
   downloadFile: async () => Buffer.alloc(0),
   listFiles: async () => [],
   deleteFile: async () => {},
-  remoteExists: async () => false,
+  remoteExists: async () => 'absent',  // §381：三态里的「问过了、没有」（改前这是一枚塌成 false 的布尔）
   uploadRemoteBuffer: async () => ({}),
   downloadRemoteFile: async () => Buffer.alloc(0)
 }))

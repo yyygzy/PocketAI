@@ -181,11 +181,18 @@ export function registerEncryptionHandlers(): void {
     // ⚠️ key 还没切换，先用旧 key 取出 WebDAV 明文密码 + 字段级凭据快照
     let webDAVPassword: string | null = null
     let savedCfg: WebDAVConfig | null = null
+    let webdavUndecryptable = false
     try {
-      const { loadWebDAVConfig } = await import('../../backup/backup-service')
-      const oldCfg = loadWebDAVConfig()
-      if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
-    } catch { /* 无配置或解密失败，忽略 */ }
+      const { readWebDAVConfig } = await import('../../backup/backup-service')
+      const read = readWebDAVConfig()
+      // §381：解不开的那一份是「旧钥密文原样带回」，不是明文。把它当明文回写＝在新密钥下把它判死，
+      // 所以这一档不进快照（跳过重写、原密文原地保留），只如实上报——同 §375 的「跳过但显式带出」。
+      // flag 由读那一步在覆盖成明文之前就算好并随值一起带出（调用方不必、也不该再判第二遍）。
+      webdavUndecryptable = read.passwordUndecryptable
+      if (read.cfg && !read.passwordUndecryptable) {
+        webDAVPassword = read.cfg.passwordCipher; savedCfg = read.cfg
+      }
+    } catch { /* 配置那一读本身抛了（库已关闭等）：与「没配过」同样跳过，不连累轮换 */ }
     const fieldSnapshot = exportFieldCredentials()
 
     // rekey：先在内存里派生新密钥，库操作成功后才落盘 salt 与档位。
@@ -227,6 +234,8 @@ export function registerEncryptionHandlers(): void {
         saveWebDAVConfig(savedCfg)  // 直接复用 oldCfg，避免第二次 load 时 key mismatch
       } catch (e) { log.warn('WebDAV 凭据重加密失败:', errMsg(e)) }
     }
+    // §381：解不开那一档没进快照＝本次没被重写；这里留痕（界面那半只由改密那发的 count 说一句，同 §375 口径）
+    if (webdavUndecryptable) log.warn('WebDAV 备份口令用旧字段密钥解不开，本次轮换未重写（需用户在设置页重填）')
     restoreFieldCredentials(fieldSnapshot)
 
     // masterKey 已换 → 旧恢复包解密的是旧 key，必须重生（用户需重新保存新恢复码）
@@ -238,7 +247,13 @@ export function registerEncryptionHandlers(): void {
     log.info('密码轮换成功')
     // §375：解不开而没被重写的凭据条目数——透给界面，别让「轮换成功」盖住「有 N 行凭据没跟着换、得手动重填」
     // （与 restoreFieldCredentials 同一口径：undecryptable 缺失按 0 算，别当崩）
-    return { ok: true, recoveryCode: newRecoveryCode, undecryptableCount: fieldSnapshot.undecryptable?.length ?? 0 }
+    // §381：WebDAV 备份口令是这族的第四张快照（另存配置文件、不经 fieldSnapshot），
+    // 解不开时同样计进这一格——同一句界面话术、同一个「去对应位置重填」的出口，不另起一句文案。
+    return {
+      ok: true,
+      recoveryCode: newRecoveryCode,
+      undecryptableCount: (fieldSnapshot.undecryptable?.length ?? 0) + (webdavUndecryptable ? 1 : 0)
+    }
   }, argsSchema(masterPasswordSchema, newMasterPasswordSchema))
   safeHandle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config
@@ -258,11 +273,18 @@ export function registerEncryptionHandlers(): void {
     // ⚠️ key 还没切换，先用 master key 取出 WebDAV 明文密码 + 字段级凭据快照
     let webDAVPassword: string | null = null
     let savedCfg: WebDAVConfig | null = null
+    let webdavUndecryptable = false
     try {
-      const { loadWebDAVConfig } = await import('../../backup/backup-service')
-      const oldCfg = loadWebDAVConfig()
-      if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
-    } catch { /* 忽略 */ }
+      const { readWebDAVConfig } = await import('../../backup/backup-service')
+      const read = readWebDAVConfig()
+      // §381：解不开的那一份是「旧钥密文原样带回」，不是明文。把它当明文回写＝在新密钥下把它判死，
+      // 所以这一档不进快照（跳过重写、原密文原地保留），只如实上报——同 §375 的「跳过但显式带出」。
+      // flag 由读那一步在覆盖成明文之前就算好并随值一起带出（调用方不必、也不该再判第二遍）。
+      webdavUndecryptable = read.passwordUndecryptable
+      if (read.cfg && !read.passwordUndecryptable) {
+        webDAVPassword = read.cfg.passwordCipher; savedCfg = read.cfg
+      }
+    } catch { /* 配置那一读本身抛了（库已关闭等）：与「没配过」同样跳过 */ }
     const fieldSnapshot = exportFieldCredentials()
 
     // §310：这一段是"改库＋改配置"的两步棋，此前**一句 try 都没有**，而同文件两个兄弟路径都有回滚
@@ -328,6 +350,8 @@ export function registerEncryptionHandlers(): void {
         saveWebDAVConfig(savedCfg)  // 复用 oldCfg，避免 key mismatch
       } catch (e) { log.warn('WebDAV 凭据重加密失败:', errMsg(e)) }
     }
+    // §381：解不开那一档没进快照＝本次没被重写；这里留痕（界面那半只由改密那发的 count 说一句，同 §375 口径）
+    if (webdavUndecryptable) log.warn('WebDAV 备份口令用旧字段密钥解不开，本次轮换未重写（需用户在设置页重填）')
     restoreFieldCredentials(fieldSnapshot)
     // 已无主密码，恢复密钥失去意义（也避免残留包指向旧 masterKey）
     recoveryKeyManager.disableRecovery()
@@ -341,11 +365,18 @@ export function registerEncryptionHandlers(): void {
     // ⚠️ 当前是 fixed key 模式，先取出 WebDAV 明文密码 + 字段级凭据快照
     let webDAVPassword: string | null = null
     let savedCfg: WebDAVConfig | null = null
+    let webdavUndecryptable = false
     try {
-      const { loadWebDAVConfig } = await import('../../backup/backup-service')
-      const oldCfg = loadWebDAVConfig()
-      if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
-    } catch { /* 忽略 */ }
+      const { readWebDAVConfig } = await import('../../backup/backup-service')
+      const read = readWebDAVConfig()
+      // §381：解不开的那一份是「旧钥密文原样带回」，不是明文。把它当明文回写＝在新密钥下把它判死，
+      // 所以这一档不进快照（跳过重写、原密文原地保留），只如实上报——同 §375 的「跳过但显式带出」。
+      // flag 由读那一步在覆盖成明文之前就算好并随值一起带出（调用方不必、也不该再判第二遍）。
+      webdavUndecryptable = read.passwordUndecryptable
+      if (read.cfg && !read.passwordUndecryptable) {
+        webDAVPassword = read.cfg.passwordCipher; savedCfg = read.cfg
+      }
+    } catch { /* 配置那一读本身抛了（库已关闭等）：与「没配过」同样跳过 */ }
     const fieldSnapshot = exportFieldCredentials()
 
     // 启用加密＝新设主密码：内存派生 → enableEncryption 成功 → 才写 salt/档位/模式/标记。
@@ -376,6 +407,8 @@ export function registerEncryptionHandlers(): void {
         saveWebDAVConfig(savedCfg)  // 复用 oldCfg，避免 key mismatch
       } catch (e) { log.warn('WebDAV 凭据重加密失败:', errMsg(e)) }
     }
+    // §381：解不开那一档没进快照＝本次没被重写；这里留痕（界面那半只由改密那发的 count 说一句，同 §375 口径）
+    if (webdavUndecryptable) log.warn('WebDAV 备份口令用旧字段密钥解不开，本次轮换未重写（需用户在设置页重填）')
     restoreFieldCredentials(fieldSnapshot)
     return { ok: true }
   }, argsSchema(newMasterPasswordSchema))
@@ -464,11 +497,16 @@ export function registerEncryptionHandlers(): void {
       // 3) 旧 key 下导出全部需重加密的凭据（WebDAV 密码 + 字段级凭据）
       let webDAVPassword: string | null = null
       let savedCfg: WebDAVConfig | null = null
+      let webdavUndecryptable = false
       try {
-        const { loadWebDAVConfig } = await import('../../backup/backup-service')
-        const oldCfg = loadWebDAVConfig()
-        if (oldCfg) { webDAVPassword = oldCfg.passwordCipher; savedCfg = oldCfg }
-      } catch { /* 无配置或解密失败，忽略 */ }
+        const { readWebDAVConfig } = await import('../../backup/backup-service')
+        const read = readWebDAVConfig()
+        // §381：同改密那一路——解不开的旧钥密文不许当明文回写（不进快照、只上报）
+        webdavUndecryptable = read.passwordUndecryptable
+        if (read.cfg && !read.passwordUndecryptable) {
+          webDAVPassword = read.cfg.passwordCipher; savedCfg = read.cfg
+        }
+      } catch { /* 配置那一读本身抛了（库已关闭等）：与「没配过」同样跳过 */ }
       const fieldSnapshot = exportFieldCredentials()
 
       // 4) rekey 为新密码：内存派生 → 库操作成功后才落盘 salt/档位（理由同改密路径）
@@ -491,6 +529,8 @@ export function registerEncryptionHandlers(): void {
             saveWebDAVConfig(savedCfg)
           } catch (e) { log.warn('恢复后 WebDAV 凭据重加密失败:', errMsg(e)) }
         }
+        // §381：同改密那一路——解不开的那一份没进快照＝没被重写，日志留痕
+        if (webdavUndecryptable) log.warn('WebDAV 备份口令用旧字段密钥解不开，本次轮换未重写（需用户在设置页重填）')
         restoreFieldCredentials(fieldSnapshot)
 
         // 6) 旧恢复码包裹的是旧 masterKey → 生成新恢复码，要求用户重新保存

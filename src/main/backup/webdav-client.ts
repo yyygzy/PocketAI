@@ -248,16 +248,26 @@ export async function listFiles(creds: WebDAVCredentials): Promise<BackupFile[]>
 
 // ─── 增量备份：内容寻址 blob 存取 ──────────────────────────────────
 
-/** 远端相对路径（可含 blobs/ 子目录）的对象是否存在（HEAD/PROPFIND） */
+/**
+ * 远端相对路径（可含 blobs/ 子目录）的对象存在性（HEAD/PROPFIND）。
+ *
+ * §381：原来任何错都塌成 `false`（＝「远端没有」），于是「没问出来」被记成「问过了、没有」
+ * ⇒ 去重整片失效、已存在的 blob 重传，而账面上只留一句「跳过 0 个」，看着像云端一份都没有。
+ * 所以「不知道」单独留一档，交给消费面表态（它并没有谎报哪个数字——上传确实发生了）。
+ */
+export type RemoteExistence = 'exists' | 'absent' | 'unknown'
+
 export async function remoteExists(
   creds: WebDAVCredentials,
   relName: string
-): Promise<boolean> {
+): Promise<RemoteExistence> {
   const client = await buildClient(creds)
   try {
-    return await client.exists(fullRemotePath(creds, relName), { signal: timeoutSignal(TIMEOUT_LIGHT_MS) })
+    return (await client.exists(fullRemotePath(creds, relName), { signal: timeoutSignal(TIMEOUT_LIGHT_MS) }))
+      ? 'exists'
+      : 'absent'
   } catch {
-    return false
+    return 'unknown'
   }
 }
 

@@ -24,7 +24,8 @@ import { dbService } from '../db/database'
 import { masterKeyManager } from '../crypto/master-key'
 import { deriveKeySync, KDF_LEGACY, KDF_CURRENT, type KdfParams } from '../crypto/index'
 import { DB_PATH, ATTACHMENTS_DIR } from '../portable'
-import { encryptApiKeys, decryptApiKeys, isCipherText } from '../crypto/field-encrypt'
+import { encryptApiKeys, decryptApiKeys, isCipherText, hasUndecryptableCipher } from '../crypto/field-encrypt'
+import type { MaskedWebDAVConfig } from '../../shared/types'
 import { isMaskedSecret, maskSecret } from '../../shared/secret-mask'
 import { appConfigRepo, clearAppConfigCache } from '../db/repositories/app-config.repo'
 import {
@@ -467,14 +468,19 @@ export async function createWebDAVIncrementalBackup(
   let bytesUploaded = 0
   let blobsUploaded = 0
   let blobsSkipped = 0
+  let blobsProbeUnknown = 0
 
-  // 上传单个 blob（远端已存在则跳过）
+  // 上传单个 blob（远端确认已有才跳过；探测没跑成一律按新传处理，并单独计数）
   const uploadBlob = async (sha: string, prefix: 'db' | 'att', data: Buffer): Promise<string> => {
     const rel = blobRelName(prefix, sha, encrypted)
-    if (await remoteExists(creds, rel)) {
+    const state = await remoteExists(creds, rel)
+    if (state === 'exists') {
       blobsSkipped += 1
       return rel
     }
+    // §381：'unknown' 那一档仍然重传（内容寻址＋overwrite，重传是安全的），但它不许记进 blobsSkipped——
+    // 那是「我们没问出来」，不是「远端没有」；界面据此说一句「N 个分片没能确认」。
+    if (state === 'unknown') blobsProbeUnknown += 1
     const payload = encrypted ? encryptBackup(data).blob : data
     await uploadRemoteBuffer(creds, payload, rel)
     bytesUploaded += payload.length
@@ -510,13 +516,14 @@ export async function createWebDAVIncrementalBackup(
   bytesUploaded += indexPayload.length
 
   log.info(
-    `WebDAV 增量备份: ${indexName}（附件 ${atts.length}，新传 ${blobsUploaded} blob，跳过 ${blobsSkipped}，共 ${bytesUploaded} bytes）`
+    `WebDAV 增量备份: ${indexName}（附件 ${atts.length}，新传 ${blobsUploaded} blob，跳过 ${blobsSkipped}，探测未确认 ${blobsProbeUnknown}，共 ${bytesUploaded} bytes）`
   )
   return {
     filename: indexName,
     bytesUploaded,
     blobsUploaded,
     blobsSkipped,
+    blobsProbeUnknown,
     attachmentsTotal: atts.length,
     encrypted
   }
@@ -944,9 +951,15 @@ const CFG_KEY = 'webdav_config'
 /**
  * 出 IPC 的掩码视图（SEC-35）：备份口令明文只在主进程用于 WebDAV 鉴权，
  * 渲染层拿到的是 `••••`+末 4 位；它回传占位值即表示「未改动」，由 restoreWebDAVPassword 还原。
+ *
+ * §381：另带一颗 `passwordUndecryptable`——口令栏「有密文却解不开」时，`loadWebDAVConfig`
+ * 会把原始密文原样带回（非空＝看起来一切正常），这一档绝不是「没配过」，也不许只在日志里留痕：
+ * 设置页这一格正是用户能重填的唯一出口。flag 由 `readWebDAVConfig` 在覆盖之前算好，这里只是搬出去。
  */
-export function maskWebDAVConfig(cfg: WebDAVConfig | null): WebDAVConfig | null {
-  return cfg ? { ...cfg, passwordCipher: maskSecret(cfg.passwordCipher) } : null
+export function maskWebDAVConfig(read: WebDAVConfigRead): MaskedWebDAVConfig | null {
+  const cfg = read.cfg
+  if (!cfg) return null
+  return { ...cfg, passwordCipher: maskSecret(cfg.passwordCipher), passwordUndecryptable: read.passwordUndecryptable }
 }
 
 /**
@@ -972,18 +985,37 @@ export function saveWebDAVConfig(raw: WebDAVConfig): void {
   appConfigRepo.set(CFG_KEY, JSON.stringify(config))
 }
 
-export function loadWebDAVConfig(): WebDAVConfig | null {
+/**
+ * §381：配置文件这一读的三种到货，一起带出、不塌成同一档。
+ *
+ * 「解不开」的判据必须排在把密文覆盖成明文**之前**、对原始那一列做：
+ * 覆盖之后再判＝把一条恰好以 `v1:` 开头的可用口令再当密文试一次，误报成"解不开"（本枚自查撞出的假阳）。
+ */
+export interface WebDAVConfigRead {
+  /** null＝没配过，或配置文件那一行读不出来（JSON 坏等） */
+  cfg: WebDAVConfig | null
+  /** 有密文、当前字段密钥却解不开＝「配过，但那一份口令用不了」；与上面的 null 不是同一档 */
+  passwordUndecryptable: boolean
+}
+
+export function readWebDAVConfig(): WebDAVConfigRead {
   const raw = appConfigRepo.get(CFG_KEY)
-  if (!raw) return null
+  if (!raw) return { cfg: null, passwordUndecryptable: false }
   try {
-    const cfg: WebDAVConfig = JSON.parse(raw)
-    // 解密 password
-    const pwdArr = decryptApiKeys(cfg.passwordCipher)
+    const cfg = JSON.parse(raw) as WebDAVConfig
+    const column = cfg.passwordCipher
+    const passwordUndecryptable = typeof column === 'string' && hasUndecryptableCipher(column)
+    // 解密 password（解不开时保持原样＝调用方拿到的仍是密文，那颗 flag 会说清这是哪一种）
+    const pwdArr = decryptApiKeys(column)
     if (pwdArr.length > 0) cfg.passwordCipher = pwdArr[0]!
-    return cfg
+    return { cfg, passwordUndecryptable }
   } catch {
-    return null
+    return { cfg: null, passwordUndecryptable: false }
   }
+}
+
+export function loadWebDAVConfig(): WebDAVConfig | null {
+  return readWebDAVConfig().cfg
 }
 
 export function clearWebDAVConfig(): void {

@@ -18,7 +18,10 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   clearAppConfigCache: () => {}
 }))
 vi.mock('../src/main/crypto/field-encrypt', () => ({
-  encryptApiKeys: () => '', decryptApiKeys: () => '', isCipherText: () => false
+  encryptApiKeys: () => '', decryptApiKeys: () => '', isCipherText: () => false,
+  // §381：本桩把 isCipherText 一律答 false（没有一样东西看着像密文）⇒「是密文却解不开」在这套假象下恒假；
+  // 照它自己的形状把这个成员补齐（漏成员只有跑到那一发才红，见 §366 那族）
+  hasUndecryptableCipher: () => false
 }))
 vi.mock('../src/main/backup/webdav-client', () => ({
   downloadFile: async () => nextDownload,
