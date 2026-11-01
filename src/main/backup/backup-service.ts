@@ -1011,15 +1011,23 @@ export function saveWebDAVConfig(raw: WebDAVConfig, opts: SaveWebDAVOptions = {}
  * 覆盖之后再判＝把一条恰好以 `v1:` 开头的可用口令再当密文试一次，误报成"解不开"（本枚自查撞出的假阳）。
  */
 export interface WebDAVConfigRead {
-  /** null＝没配过，或配置文件那一行读不出来（JSON 坏等） */
+  /** null＝没配过，**或**那一行读不出来（§386：两种事实由 `configUnreadable` 分开说，不许共用一句） */
   cfg: WebDAVConfig | null
   /** 有密文、当前字段密钥却解不开＝「配过，但那一份口令用不了」；与上面的 null 不是同一档 */
   passwordUndecryptable: boolean
+  /**
+   * §386：那一行**存在**却解析不出来（整库恢复把 app_config 整表换成备份里那一份＝唯一入口，
+   * 见 `restoreWebDAVBackup` 里那句 `clearAppConfigCache` 注释）。改前它塌成 `cfg: null`＝「没配过」：
+   * 设置页摆一张空表单（「保存」正好把那份坏行覆盖掉）、六发动作回「未配置 WebDAV」、
+   * 远程清单回 `[]`（＝「没有备份」）、两个调度器静默跳过。
+   * 坏行与没配过的处置方式不同（重填并保存 vs 从头配置），所以这一档必须自己说话。
+   */
+  configUnreadable: boolean
 }
 
 export function readWebDAVConfig(): WebDAVConfigRead {
   const raw = appConfigRepo.get(CFG_KEY)
-  if (!raw) return { cfg: null, passwordUndecryptable: false }
+  if (!raw) return { cfg: null, passwordUndecryptable: false, configUnreadable: false }
   try {
     const cfg = JSON.parse(raw) as WebDAVConfig
     const column = cfg.passwordCipher
@@ -1027,14 +1035,35 @@ export function readWebDAVConfig(): WebDAVConfigRead {
     // 解密 password（解不开时保持原样＝调用方拿到的仍是密文，那颗 flag 会说清这是哪一种）
     const pwdArr = decryptApiKeys(column)
     if (pwdArr.length > 0) cfg.passwordCipher = pwdArr[0]!
-    return { cfg, passwordUndecryptable }
+    return { cfg, passwordUndecryptable, configUnreadable: false }
   } catch {
-    return { cfg: null, passwordUndecryptable: false }
+    // 有行、读不出来＝第三档，绝不与「没配过」共用一个出口
+    return { cfg: null, passwordUndecryptable: false, configUnreadable: true }
   }
 }
 
 export function loadWebDAVConfig(): WebDAVConfig | null {
   return readWebDAVConfig().cfg
+}
+
+/**
+ * 第三档那一句（出 IPC 给六发动作与那一读）。**故意不做成 `CODE:说明` 回码**：
+ * 备份这一面的报错整面是主进程中文串（§382 同一口径），而渲染层 158 个显示点里有 154 个直接贴
+ * `error`——塞一颗新码只会让那几处从中文退化成裸码（§206 那条教训）。要上四语的只有数据健康那一格，
+ * 它走自己的键（`dh.backupCfgBroken`），不经这句话。
+ */
+export const WEBDAV_CONFIG_UNREADABLE_MSG =
+  'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存'
+
+/**
+ * §386：动作那几发（全量／增量／清单／恢复／合并扫描／合并执行／删除）的统一取法。
+ * 「那一行读不出来」与「没配过」回两条不同的话——前者要的是"去重填"，后者要的是"去配置"；
+ * 合成一句「未配置 WebDAV」会把用户支去填一份新配置，而那份坏行就此被覆盖掉。
+ */
+export function loadWebDAVConfigOrError(): { cfg: WebDAVConfig } | { error: string } {
+  const read = readWebDAVConfig()
+  if (read.cfg) return { cfg: read.cfg }
+  return { error: read.configUnreadable ? WEBDAV_CONFIG_UNREADABLE_MSG : '未配置 WebDAV' }
 }
 
 /**

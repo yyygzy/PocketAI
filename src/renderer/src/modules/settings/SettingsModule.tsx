@@ -1144,8 +1144,10 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
       // §324：存完新地址后 effect 会再拉一次；旧地址那份迟到不许把清单盖回当前屏（内容来自另一台服务器）
       if (seq !== listSeqRef.current) return
       // 196：失败是 {ok:false} 返回值 ⇒ 判返回值才走得到那句「获取远程备份列表失败」
+      // §386：原因要一起说——「配置那一行读不出来」与「网络拉不到」是两种处置，
+      //        只报一句通用的"列表失败"会把坏行藏成一次普通的网络抖动。
       if (hasIpcFailed(items)) {
-        setNotice({ ok: false, text: t('bk.listFail') })
+        setNotice({ ok: false, text: ipcFailText(items, t('bk.listFail')) })
         return
       }
       setWebdavList(items)

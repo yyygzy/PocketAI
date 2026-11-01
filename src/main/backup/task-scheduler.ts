@@ -12,7 +12,7 @@ import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
-import { loadWebDAVConfig, listWebDAVBackups, isEncryptedBlob, ENC_PREFIX, decryptBackup, toCreds } from './backup-service'
+import { readWebDAVConfig, listWebDAVBackups, isEncryptedBlob, ENC_PREFIX, decryptBackup, toCreds } from './backup-service'
 import { downloadFile } from './webdav-client'
 import { pickLatestBackup } from '../../shared/backup-latest'
 import { createHash } from 'node:crypto'
@@ -63,8 +63,14 @@ const tasks: TaskDef[] = [
     name: '备份完整性校验',
     defaultIntervalHours: 24,
     run: async () => {
-      const cfg = loadWebDAVConfig()
-      if (!cfg) return
+      const read = readWebDAVConfig()
+      if (!read.cfg) {
+        // §386：坏行要说一句——这一发原先静默 return，屏上只剩「从未运行」，而真相是那份配置读不出来；
+        //        真没配过照旧安静（那是合法状态，每 24h 刷一条 warn 没有意义）。
+        if (read.configUnreadable) log.warn('备份校验跳过：WebDAV 配置那一行读不出来（请到设置 → 备份 重新填写并保存）')
+        return
+      }
+      const cfg = read.cfg
       const creds = toCreds(cfg)
       const backups = await listWebDAVBackups(cfg)
       if (backups.length === 0) return

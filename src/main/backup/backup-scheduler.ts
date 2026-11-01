@@ -15,7 +15,7 @@
 
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { masterKeyManager } from '../crypto/master-key'
-import { loadWebDAVConfig, createWebDAVBackup, listWebDAVBackups, deleteWebDAVBackup } from './backup-service'
+import { loadWebDAVConfig, loadWebDAVConfigOrError, readWebDAVConfig, createWebDAVBackup, listWebDAVBackups, deleteWebDAVBackup } from './backup-service'
 import type { WebDAVBackupFile } from '../../shared/types'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
@@ -135,8 +135,11 @@ export async function runScheduledBackup(): Promise<BackupRunResult | null> {
   const at = Date.now()
   let result: BackupRunResult
   try {
-    const cfg = loadWebDAVConfig()
-    if (!cfg) throw new Error('未配置 WebDAV')
+    // §386：坏行与没配过分两句——这一句会落进 `K_LAST_RESULT`，数据健康与管家体检都读它；
+    // 合成一句「未配置 WebDAV」＝把"你配过、本机读不出那份"说成"你还没配"，用户从此以为是自己没设过。
+    const got = loadWebDAVConfigOrError()
+    if ('error' in got) throw new Error(got.error)
+    const cfg = got.cfg
     const r = await createWebDAVBackup(cfg)
     result = { ok: true, at, filename: r.filename }
     log.info(`定时备份成功: ${r.filename}`)
@@ -197,7 +200,10 @@ export async function tick(): Promise<void> {
     // §382 现查后**故意不动**这一判：口令解不开时它照样往下试，`createWebDAVBackup` 抛 ⇒
     // `{ok:false,error}` 落进 K_LAST_RESULT ⇒ 数据健康与管家体检都读得到那条真失败。
     // 改成"解不开就不试"会把每轮的实际错误咽掉（屏上只剩安静），是负收益。
-    if (!loadWebDAVConfig()) return
+    // §386 同一口径用在坏行上：那一行读不出来时**不再静默 return**，让它走下面那一发，
+    // `runScheduledBackup` 会抛第三档那句并落进 K_LAST_RESULT（真没配过才安静）。
+    const wdRead = readWebDAVConfig()
+    if (!wdRead.cfg && !wdRead.configUnreadable) return
     const now = Date.now()
     const due =
       status.lastRunAt === null

@@ -112,7 +112,17 @@ export function runAudit(): AuditResult {
   try {
     const wdRead = readWebDAVConfig()
     const schedule = getBackupSchedule()
-    if (!wdRead.cfg) {
+    if (wdRead.configUnreadable) {
+      // §386：那一行存在却解析不出来（多半是整库恢复把它换成了一份不兼容的形状）。
+      // 判 danger 而不是 warn：这一档下用户点任何一发备份都会被告知"没配过"，坏行随时会被覆盖掉。
+      checks.push({
+        id: 'backup-cloud',
+        label: '云端备份',
+        level: 'danger',
+        detail: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），备份与恢复此刻都不可用',
+        suggestion: '设置 → 备份 → 重新填写地址、用户名与口令并保存'
+      })
+    } else if (!wdRead.cfg) {
       checks.push({
         id: 'backup-cloud',
         label: '云端备份',

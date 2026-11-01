@@ -1198,6 +1198,7 @@ export const zh = {
   'dh.backupOn': '已开启，每 {hours} 小时',
   'dh.backupOff': '已配置，定时未开启',
   'dh.backupPwdBroken': '已配置，但备份口令用当前主密码解不开，备份会在鉴权那一步失败',
+  'dh.backupCfgBroken': '配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存',
   'dh.lastOk': '上次成功备份',
   'dh.lastError': '上次备份失败',
   'dh.never': '从未运行',

@@ -83,7 +83,8 @@ beforeEach(() => {
 describe('①三种到货要分得开：没配过／解得开／解不开', () => {
   it('没配过 ⇒ load 回 null，判据说"不是解不开"，掩码视图也是 null', () => {
     expect(loadWebDAVConfig()).toBe(null)
-    expect(readWebDAVConfig()).toEqual({ cfg: null, passwordUndecryptable: false })
+    // §386 改形状：契约多了第三颗（那一行存在却读不出来）；这一档仍是"没配过"＝两颗都 false
+    expect(readWebDAVConfig()).toEqual({ cfg: null, passwordUndecryptable: false, configUnreadable: false })
     expect(maskWebDAVConfig(readWebDAVConfig())).toBe(null)
   })
 

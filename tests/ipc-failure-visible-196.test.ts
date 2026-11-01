@@ -6,6 +6,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const handlers = vi.hoisted(() => new Map<string, (e: unknown, ...a: unknown[]) => unknown>())
+// §386：LIST 那一发改吃三态那一读，桩里 load 与 read 必须同源（各写一份 ⇒ 反向对照那发就测不到真形状）
+const WD = vi.hoisted(() => ({
+  cfg: { url: 'https://dav.example', username: 'u', passwordCipher: 'v1:x' } as unknown
+}))
 vi.mock('electron', () => ({
   app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd(), quit: () => {} },
   dialog: { showOpenDialog: async () => ({ canceled: true }), showErrorBox: () => {} },
@@ -16,8 +20,12 @@ vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: () => {} }
 }))
 vi.mock('../src/main/backup/backup-service', () => ({
-  loadWebDAVConfig: vi.fn(() => ({ url: 'https://dav.example', username: 'u', passwordCipher: 'v1:x' })),
-  listWebDAVBackups: vi.fn(async () => { throw new Error('WebDAV PROPFIND 401') }),
+  loadWebDAVConfig: () => WD.cfg,
+  // §386：LIST 与其余五发各走这一读与这一取法，两枚都要在桩里（少一枚 ⇒ 通道直接抛「没有这个导出」）
+  readWebDAVConfig: () => ({ cfg: WD.cfg, passwordUndecryptable: false, configUnreadable: false }),
+  loadWebDAVConfigOrError: () => (WD.cfg ? { cfg: WD.cfg } : { error: '未配置 WebDAV' }),
+  WEBDAV_CONFIG_UNREADABLE_MSG: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存',
+  listWebDAVBackups: async () => { throw new Error('WebDAV PROPFIND 401') },
   createWebDAVClient: vi.fn(),
   runWebDAVBackup: vi.fn(),
   restoreFromWebDAV: vi.fn(),
@@ -46,8 +54,7 @@ describe('列表类通道不许把失败咽成空数组', () => {
   })
 
   it('反向对照：没配 WebDAV 时仍是空列表，不算失败', async () => {
-    const { loadWebDAVConfig } = await import('../src/main/backup/backup-service')
-    ;(loadWebDAVConfig as unknown as { mockReturnValue: (v: null) => void }).mockReturnValue(null)
+    WD.cfg = null
     registerBackupHandlers()
     const r = (await handlers.get(IPC.BACKUP_WEBDAV_LIST)!({})) as unknown[]
     expect(Array.isArray(r)).toBe(true)

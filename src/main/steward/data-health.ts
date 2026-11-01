@@ -241,10 +241,12 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   // 3. 备份状态（未配置 WebDAV 时 schedule 仍可读，lastRunAt 为 null）
   // §382：这一读要分三档——`!!loadWebDAVConfig()` 把「口令有密文却解不开」也算成"已配置"，
   // 而那一档下一次备份必在鉴权那步失败；取法必须是 readWebDAVConfig（判据排在密文被覆盖成明文之前）
+  // §386：再加一档「那一行存在却读不出来」——它也让 configured 落成 false，但那不是"没配过"
   const wdRead = readWebDAVConfig()
   const configured = !!wdRead.cfg
   let backup: DataHealthReport['backup'] = {
-    configured, passwordUndecryptable: wdRead.passwordUndecryptable, enabled: false, intervalHours: 24,
+    configured, passwordUndecryptable: wdRead.passwordUndecryptable, configUnreadable: wdRead.configUnreadable,
+    enabled: false, intervalHours: 24,
     lastRunAt: null, lastOkAt: null, lastError: null
   }
   try {
@@ -252,6 +254,7 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
     backup = {
       configured,
       passwordUndecryptable: wdRead.passwordUndecryptable,
+      configUnreadable: wdRead.configUnreadable,
       enabled: s.enabled,
       intervalHours: s.intervalHours,
       lastRunAt: s.lastRunAt,

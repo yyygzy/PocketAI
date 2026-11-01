@@ -36,6 +36,8 @@ const zeroSizes: DataHealthReport['sizes'] = {
 const backupOf = (over: Partial<DataHealthReport['backup']>): DataHealthReport['backup'] => ({
   configured: false,
   passwordUndecryptable: false,
+  // §386：契约多了第三档；这份夹具的三张脸都只判「配了／没配／口令解不开」，坏行档一律给 false
+  configUnreadable: false,
   enabled: false,
   intervalHours: 6,
   lastRunAt: null,
@@ -146,5 +148,40 @@ describe('② 按槽位钉住"同一时刻只一句"＋两件事同屏各说各�
     }
     expect(row(L('dh.backupState'))).toBe(L('dh.backupPwdBroken'))
     expect(row(L('dh.lastError'))).toBe('401 Unauthorized')
+  })
+})
+
+// ─── §386：第四种到货＝那一行存在却读不出来 ───
+//
+// 坏行时 `configured` 也是 false，所以它从前面那条「未配置 WebDAV」里抢走屏幕＝把"你配过、本机读不出那份"
+// 说成"你还没配"；处置方式不同（重填并保存 vs 从头配置），而点「保存」正好把坏行覆盖掉。
+// 判据按第 36 条：新那颗为 true 时**必须换句**，为 false 时**不许改旧档的话**；三句两两互斥按槽位钉。
+describe('③ §386 第四张脸：配置读不出来（与「没配过」「解不开」都不是同一格）', () => {
+  const FOUR = [...SENTENCES, L('dh.backupCfgBroken')]
+
+  it('坏行 ⇒ 那一句上屏且 warn；另三句一个都不在（尤其不许是「未配置 WebDAV」）', async () => {
+    const r = await mountBackup(backupOf({ configured: false, configUnreadable: true }))
+    expect(r.value).toBe(L('dh.backupCfgBroken'))
+    expect(r.warn).toBe(true)
+    const body = document.body.textContent ?? ''
+    expect(FOUR.filter((s) => body.includes(s)), `期望恰好一句`).toEqual([L('dh.backupCfgBroken')])
+  })
+
+  it('反向对照：坏行＋定时开着 ⇒ 仍说那句（"启用着"不许把读不出来演成正常）', async () => {
+    const r = await mountBackup(backupOf({ configured: false, configUnreadable: true, enabled: true, intervalHours: 6 }))
+    expect(r.value).toBe(L('dh.backupCfgBroken'))
+    expect(r.warn, 'warn 位不能只靠 !configured 喂绿').toBe(true)
+  })
+
+  it('反向对照：真没配过（新那颗 false）⇒ 旧那句一字未改', async () => {
+    const r = await mountBackup(backupOf({ configured: false, configUnreadable: false }))
+    expect(r.value).toBe(L('dh.backupNotConfigured'))
+    expect(document.body.textContent).not.toContain(L('dh.backupCfgBroken'))
+  })
+
+  it('反向对照：配了且口令解不开 ⇒ 仍是 §382 那句，新那句不许顶上来（两颗 flag 各说各的）', async () => {
+    const r = await mountBackup(backupOf({ configured: true, passwordUndecryptable: true, configUnreadable: false }))
+    expect(r.value).toBe(L('dh.backupPwdBroken'))
+    expect(document.body.textContent).not.toContain(L('dh.backupCfgBroken'))
   })
 })

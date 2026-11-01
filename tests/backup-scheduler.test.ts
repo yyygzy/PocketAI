@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   unlocked: false,
   // WebDAV 配置
   webdavCfg: null as unknown,
+  webdavUnreadable: false,
   // createWebDAVBackup 行为：优先 controllable，否则按 result/error
   backupResult: null as { filename: string; size: number; encrypted: boolean } | null,
   backupError: null as Error | null,
@@ -53,6 +54,7 @@ const mocks = vi.hoisted(() => ({
     this.dbMode = 'none'
     this.unlocked = false
     this.webdavCfg = null
+    this.webdavUnreadable = false
     this.backupResult = null
     this.backupError = null
     this.backupImpl = null
@@ -86,6 +88,18 @@ vi.mock('../src/main/crypto/master-key', () => ({
 
 vi.mock('../src/main/backup/backup-service', () => ({
   loadWebDAVConfig: () => mocks.webdavCfg,
+  // §386：调度器改吃三态那一读＋动作那发的统一取法，两枚都得有桩（同源：都读 mocks.webdavCfg）
+  readWebDAVConfig: () => ({
+    cfg: mocks.webdavCfg,
+    passwordUndecryptable: false,
+    configUnreadable: mocks.webdavUnreadable
+  }),
+  loadWebDAVConfigOrError: () =>
+    mocks.webdavUnreadable
+      ? { error: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存' }
+      : mocks.webdavCfg
+        ? { cfg: mocks.webdavCfg }
+        : { error: '未配置 WebDAV' },
   createWebDAVBackup: async () => {
     mocks.backupCalls++
     if (mocks.backupImpl) return await mocks.backupImpl()

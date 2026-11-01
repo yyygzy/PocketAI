@@ -18,8 +18,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 // 一份可改的读结果（三档各演一遍）。全局打桩＝beforeEach 装、这里由 reset 归位
+// §386 起这一读带第三颗 flag（那一行存在却解析不出来），桩形状要跟着齐（缺它＝真源码读到 undefined）
 const M = vi.hoisted(() => ({
-  read: { cfg: null as unknown, passwordUndecryptable: false },
+  read: { cfg: null as unknown, passwordUndecryptable: false, configUnreadable: false },
   schedule: {
     enabled: false,
     intervalHours: 6,
@@ -28,7 +29,7 @@ const M = vi.hoisted(() => ({
     lastResult: null as null | { ok: boolean; at: number; error?: string | null }
   },
   reset() {
-    this.read = { cfg: null, passwordUndecryptable: false }
+    this.read = { cfg: null, passwordUndecryptable: false, configUnreadable: false }
     this.schedule = {
       enabled: false,
       intervalHours: 6,
@@ -93,7 +94,7 @@ describe('数据健康的备份那一格：三档要分得开', () => {
 
   it('配过、口令解得开 ⇒ configured:true、那一颗 false（正向对照：别把正常那档也报成坏）', () => {
     M.reset()
-    M.read = { cfg: { url: 'https://dav.example.com', username: 'u', passwordCipher: '明文口令' }, passwordUndecryptable: false }
+    M.read = { cfg: { url: 'https://dav.example.com', username: 'u', passwordCipher: '明文口令' }, passwordUndecryptable: false, configUnreadable: false }
     M.schedule = { ...M.schedule, enabled: true }
     const r = getDataHealthReport()
     expect(r.backup.configured).toBe(true)
@@ -103,7 +104,7 @@ describe('数据健康的备份那一格：三档要分得开', () => {
 
   it('有配置、口令解不开 ⇒ configured:true 且 passwordUndecryptable:true（改前这一档只有前半）', () => {
     M.reset()
-    M.read = { cfg: { url: 'https://dav.example.com', username: 'u', passwordCipher: 'v1:旧钥密文' }, passwordUndecryptable: true }
+    M.read = { cfg: { url: 'https://dav.example.com', username: 'u', passwordCipher: 'v1:旧钥密文' }, passwordUndecryptable: true, configUnreadable: false }
     M.schedule = { ...M.schedule, enabled: true }
     const r = getDataHealthReport()
     expect(r.backup.configured).toBe(true)
@@ -112,11 +113,49 @@ describe('数据健康的备份那一格：三档要分得开', () => {
 
   it('解不开那一档仍然把上次的真实失败带着（lastError 没被新字段替掉＝两件事同屏各说各的）', () => {
     M.reset()
-    M.read = { cfg: { url: 'https://dav.example.com', username: 'u', passwordCipher: 'v1:旧钥密文' }, passwordUndecryptable: true }
+    M.read = { cfg: { url: 'https://dav.example.com', username: 'u', passwordCipher: 'v1:旧钥密文' }, passwordUndecryptable: true, configUnreadable: false }
     M.schedule = { ...M.schedule, enabled: true, lastRunAt: 123, lastResult: { ok: false, at: 123, error: '401 Unauthorized' } }
     const r = getDataHealthReport()
     expect(r.backup.passwordUndecryptable).toBe(true)
     expect(r.backup.lastError).toBe('401 Unauthorized')
     expect(r.backup.lastOkAt).toBe(null)
+  })
+})
+
+// §386：那一行**存在却解析不出来**（整库恢复把 app_config 整表换成备份里那份坏行）是第三档。
+// 改前它塌进 `cfg:null`＝与「没配过」共用一个出口，屏上说「未配置」、设置页摆空表单，
+// 点保存正好把那份坏行覆盖掉。生产侧这一读现在把三档分开交出去。
+describe('§386 第三档：坏行要单独说话，且不与另两档互相顶', () => {
+  it('那一行读不出来 ⇒ configured:false 且 configUnreadable:true（屏侧按后者画第三张脸）', () => {
+    M.reset()
+    M.read = { cfg: null, passwordUndecryptable: false, configUnreadable: true }
+    const r = getDataHealthReport()
+    expect(r.backup.configured).toBe(false)
+    expect(r.backup.configUnreadable).toBe(true)
+    expect(r.backup.passwordUndecryptable).toBe(false)
+  })
+
+  it('反向对照：真没配过 ⇒ 那颗 false（合法状态不许被画成"配置坏了"）', () => {
+    M.reset()
+    const r = getDataHealthReport()
+    expect(r.backup.configured).toBe(false)
+    expect(r.backup.configUnreadable).toBe(false)
+  })
+
+  it('反向对照：口令解不开那一档 ⇒ 那颗也 false（两档共用 cfg:null 会串味）', () => {
+    M.reset()
+    M.read = { cfg: { url: 'https://dav.example.com', username: 'u', passwordCipher: 'v1:旧钥密文' }, passwordUndecryptable: true, configUnreadable: false }
+    const r = getDataHealthReport()
+    expect(r.backup.passwordUndecryptable).toBe(true)
+    expect(r.backup.configUnreadable).toBe(false)
+  })
+
+  it('坏行那一档把上次的真实失败带着（lastError 与新字段各说各的事，同屏两句都要在）', () => {
+    M.reset()
+    M.read = { cfg: null, passwordUndecryptable: false, configUnreadable: true }
+    M.schedule = { ...M.schedule, enabled: true, lastRunAt: 123, lastResult: { ok: false, at: 123, error: 'WebDAV 配置那一行读不出来' } }
+    const r = getDataHealthReport()
+    expect(r.backup.configUnreadable).toBe(true)
+    expect(r.backup.lastError).toBe('WebDAV 配置那一行读不出来')
   })
 })

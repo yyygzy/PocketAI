@@ -241,8 +241,12 @@ describe('B 两处取法：读的是 readWebDAVConfig，且全仓不再有「!!l
     expect(hits, `还有一处把"有配置"判成"能用"：${hits.join(', ')}`).toEqual([])
   })
 
-  it('tick 那一处仍在（本批的口径＝不动它，理由写在它头顶的注释里）', () => {
-    expect(SCHED).toContain('if (!loadWebDAVConfig()) return')
+  it('tick 那一处仍在（§386 把它从 `!loadWebDAVConfig()` 搬成三态那一读；§382 那半口径不许变＝解不开照样往下试）', () => {
+    expect(SCHED).toContain('if (!wdRead.cfg && !wdRead.configUnreadable) return')
+    // 反向钉：§382 的判语不许被推翻——tick 一旦拿那颗 flag 当门，每轮的真失败就被咽进安静里
+    expect(SCHED, 'tick 开始拿 passwordUndecryptable 当门＝§382 的口径被推翻').not.toContain(
+      'if (wdRead.passwordUndecryptable) return'
+    )
     expect(raw('main/backup/backup-scheduler.ts')).toContain('§382')
   })
 })

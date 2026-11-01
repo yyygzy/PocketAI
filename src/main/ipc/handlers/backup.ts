@@ -75,6 +75,8 @@ export function registerBackupHandlers(): void {
     }
     // B2：备份口令是真正保护备份包的密钥，none 模式下只会用公开可复现的固定密钥混淆 → 拒绝新值。
     // 与已存口令一致（UI 空着口令框只改地址/目录）照常保存；加密模式切换流程直连 service，不经此闸。
+    // §386：坏行时 `prev` 取到空串＝"本机没有已存口令"，这一路不谎报——沿用掩码占位的保存会被
+    //        上面那道 `resolved === null` 挡下（「请输入真实备份口令」），而真填一句新口令正是坏行时该做的事。
     const prev = loadWebDAVConfig()?.passwordCipher ?? ''
     const changed = newSecretKeys({ pwd: resolved.cfg.passwordCipher }, { pwd: prev }).length > 0
     // SEC-37：新输入/改动的口令必须落在底层可编码的 Latin1 范围内，否则包在构造 Basic 头时
@@ -94,8 +96,13 @@ export function registerBackupHandlers(): void {
     return { ok: true }
   }, argsSchema(webdavConfigSchema))
   safeHandle(IPC.BACKUP_WEBDAV_LOAD_CONFIG, async () => {
-    const { readWebDAVConfig, maskWebDAVConfig } = await import('../../backup/backup-service')
-    return maskWebDAVConfig(readWebDAVConfig())
+    const { readWebDAVConfig, maskWebDAVConfig, WEBDAV_CONFIG_UNREADABLE_MSG } = await import('../../backup/backup-service')
+    const read = readWebDAVConfig()
+    // §386：那一行读不出来 ⇒ 回**失败信封**，不回 null。null 在渲染层是「真的没配过」⇒ 摆一张空表单，
+    // 而点「保存」恰好把那份坏行覆盖掉（用户从此看不出自己曾经有过一份配置）。失败信封走既有那张
+    // 「读不到」脸（带原因与同级重试键，见 SettingsModule 的 wdCfgUnread）。
+    if (read.configUnreadable) return { ok: false as const, error: WEBDAV_CONFIG_UNREADABLE_MSG }
+    return maskWebDAVConfig(read)
   })
   safeHandle(IPC.BACKUP_SCHEDULE_GET, () => getBackupSchedule())
   safeHandle(
@@ -116,9 +123,11 @@ export function registerBackupHandlers(): void {
     return testWebDAV(resolved.cfg)
   }, argsSchema(webdavConfigSchema))
   safeHandle(IPC.BACKUP_WEBDAV_UPLOAD, async () => {
-    const { loadWebDAVConfig, createWebDAVBackup } = await import('../../backup/backup-service')
-    const cfg = loadWebDAVConfig()
-    if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    const { loadWebDAVConfigOrError, createWebDAVBackup } = await import('../../backup/backup-service')
+    const got = loadWebDAVConfigOrError()
+    // §386：「那一行读不出来」不再冒充「未配置 WebDAV」——后者把用户支去填一份新配置，而坏行就此被覆盖
+    if ('error' in got) return { ok: false, error: got.error }
+    const cfg = got.cfg
     try {
       const r = await createWebDAVBackup(cfg)
       noteManualBackup() // 手动上传后刷新定时备份计时
@@ -128,9 +137,10 @@ export function registerBackupHandlers(): void {
     }
   })
   safeHandle(IPC.BACKUP_WEBDAV_UPLOAD_INCREMENTAL, async () => {
-    const { loadWebDAVConfig, createWebDAVIncrementalBackup } = await import('../../backup/backup-service')
-    const cfg = loadWebDAVConfig()
-    if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    const { loadWebDAVConfigOrError, createWebDAVIncrementalBackup } = await import('../../backup/backup-service')
+    const got = loadWebDAVConfigOrError()
+    if ('error' in got) return { ok: false, error: got.error } // §386：同上传那发
+    const cfg = got.cfg
     try {
       const r = await createWebDAVIncrementalBackup(cfg)
       noteManualBackup() // 手动备份同样刷新定时备份计时
@@ -140,9 +150,13 @@ export function registerBackupHandlers(): void {
     }
   })
   safeHandle(IPC.BACKUP_WEBDAV_LIST, async () => {
-    const { loadWebDAVConfig, listWebDAVBackups } = await import('../../backup/backup-service')
-    const cfg = loadWebDAVConfig()
-    if (!cfg) return []
+    const { readWebDAVConfig, listWebDAVBackups, WEBDAV_CONFIG_UNREADABLE_MSG } = await import('../../backup/backup-service')
+    const read = readWebDAVConfig()
+    // §386：坏行 ⇒ 失败信封。回 `[]` 是第二句假话（[]＝「这台服务器上一份备份都没有」，而真相是本机这份配置读不出来）
+    if (read.configUnreadable) return { ok: false as const, error: WEBDAV_CONFIG_UNREADABLE_MSG }
+    // 真没配过 ⇒ 仍是空列表（§196 的反向对照：那一档"没有备份"是真话，不该报失败）
+    if (!read.cfg) return []
+    const cfg = read.cfg
     // 196：列表拉不到就说拉不到。咽成 [] 会让界面显示「没有备份」，而 SettingsModule 那句
     // bk.listFail 从此没有触发路径（safeHandle 的抛错转 {ok:false} 也走不到渲染层的 catch）。
     try {
@@ -200,12 +214,13 @@ export function registerBackupHandlers(): void {
 
   safeHandle(IPC.BACKUP_WEBDAV_RESTORE, async (_e, filename: unknown, backupPassword?: unknown) => {
     const {
-      loadWebDAVConfig,
+      loadWebDAVConfigOrError,
       restoreFromWebDAV,
       restoreIncrementalFromWebDAV
     } = await import('../../backup/backup-service')
-    const cfg = loadWebDAVConfig()
-    if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    const got = loadWebDAVConfigOrError()
+    if ('error' in got) return { ok: false, error: got.error } // §386：同上传那发
+    const cfg = got.cfg
     const fn = backupFilenameSchema.parse(filename)
     // 异机恢复密码：空串/缺省视为未提供；不做空值以外的格式约束（主密码可含任意字符）
     const pwd = z.string().min(1).nullish().parse(backupPassword ?? null) ?? undefined
@@ -227,9 +242,10 @@ export function registerBackupHandlers(): void {
   })
   safeHandle(IPC.BACKUP_WEBDAV_MERGE_SCAN, async (_e, filename: unknown, backupPassword?: unknown) => {
     const { scanMergeConflicts } = await import('../../backup/merge-service')
-    const { loadWebDAVConfig } = await import('../../backup/backup-service')
-    const cfg = loadWebDAVConfig()
-    if (!cfg) return { ok: false, error: '未配置 WebDAV', tables: [], attachmentsToAdd: 0 }
+    const { loadWebDAVConfigOrError } = await import('../../backup/backup-service')
+    const got = loadWebDAVConfigOrError()
+    if ('error' in got) return { ok: false, error: got.error, tables: [], attachmentsToAdd: 0 } // §386
+    const cfg = got.cfg
     const fn = backupFilenameSchema.parse(filename)
     const pwd = z.string().min(1).nullish().parse(backupPassword ?? null) ?? undefined
     try {
@@ -240,9 +256,10 @@ export function registerBackupHandlers(): void {
   })
   safeHandle(IPC.BACKUP_WEBDAV_MERGE_EXECUTE, async (_e, payload: { filename: string; strategy: MergeStrategy; backupPassword?: string }) => {
     const { executeMerge } = await import('../../backup/merge-service')
-    const { loadWebDAVConfig } = await import('../../backup/backup-service')
-    const cfg = loadWebDAVConfig()
-    if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    const { loadWebDAVConfigOrError } = await import('../../backup/backup-service')
+    const got = loadWebDAVConfigOrError()
+    if ('error' in got) return { ok: false, error: got.error } // §386
+    const cfg = got.cfg
     let result: { ok: boolean; error?: string; summary?: string; code?: string; mcpStopped?: number; reconcileFailed?: boolean }
     try {
       result = await executeMerge(cfg, payload.filename, payload.strategy, {
@@ -263,9 +280,10 @@ export function registerBackupHandlers(): void {
     return result
   }, argsSchema(mergeExecutePayloadSchema))
   safeHandle(IPC.BACKUP_WEBDAV_DELETE, async (_e, filename: string) => {
-    const { loadWebDAVConfig, deleteWebDAVBackup } = await import('../../backup/backup-service')
-    const cfg = loadWebDAVConfig()
-    if (!cfg) return { ok: false, error: '未配置 WebDAV' }
+    const { loadWebDAVConfigOrError, deleteWebDAVBackup } = await import('../../backup/backup-service')
+    const got = loadWebDAVConfigOrError()
+    if ('error' in got) return { ok: false, error: got.error } // §386
+    const cfg = got.cfg
     await deleteWebDAVBackup(cfg, filename)
     return { ok: true }
   }, argsSchema(backupFilenameSchema))

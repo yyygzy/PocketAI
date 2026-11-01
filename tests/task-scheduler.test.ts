@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   statusCalls: [] as Array<{ id: string; status: string; error?: string | null }>,
   // WebDAV
   webdavCfg: null as unknown,
+  webdavUnreadable: false,
   // 真形状带 mtime（listWebDAVBackups 回的就是 BackupFile，§338 的判据要看它）
   backups: [] as Array<{ name: string; mtime: number }>,
   downloadRaw: Buffer.from('raw'),
@@ -42,6 +43,7 @@ const mocks = vi.hoisted(() => ({
     this.docs = []
     this.statusCalls = []
     this.webdavCfg = null
+    this.webdavUnreadable = false
     this.backups = []
     this.downloadRaw = Buffer.from('raw')
     this.encrypted = false
@@ -82,6 +84,11 @@ vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
 vi.mock('../src/main/backup/backup-service', () => ({
   ENC_PREFIX: 'PENC1:',
   loadWebDAVConfig: () => mocks.webdavCfg,
+  readWebDAVConfig: () => ({
+    cfg: mocks.webdavCfg,
+    passwordUndecryptable: false,
+    configUnreadable: mocks.webdavUnreadable
+  }),
   toCreds: (cfg: unknown) => ({ cfg }),
   listWebDAVBackups: async () => {
     if (mocks.listBackupsError) throw mocks.listBackupsError
@@ -249,6 +256,23 @@ describe('backup_verify 备份校验', () => {
     mocks.webdavCfg = null
     await tick()
     expect(mocks.downloadCalls).toBe(0)
+  })
+
+  // §386：那一行存在却解析不出来＝第三档。改前它与上一档共用 `if (!cfg) return` 那一句安静，
+  // 屏上只剩「从未运行」，而真相是那份配置读不出来（随时会被下一次保存覆盖掉）。
+  it('§386 那一行读不出来：不下载，但要留一句 warn（安静＝屏上读不到原因）', async () => {
+    mocks.webdavCfg = null
+    mocks.webdavUnreadable = true
+    await tick()
+    expect(mocks.downloadCalls).toBe(0)
+    expect(mocks.warns.join('\n'), '现数 warn：' + JSON.stringify(mocks.warns)).toContain('读不出来')
+  })
+
+  it('§386 反向对照：真没配过（那颗 false）⇒ 不许刷那句 warn（合法状态每 24h 报一条没有意义）', async () => {
+    mocks.webdavCfg = null
+    mocks.webdavUnreadable = false
+    await tick()
+    expect(mocks.warns.join('\n')).not.toContain('读不出来')
   })
 
   it('备份列表为空：不下载不校验', async () => {

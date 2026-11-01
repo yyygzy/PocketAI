@@ -151,7 +151,10 @@ describe('A 契约：三态与两颗新字段都在，且不许退回旧形状',
   })
 
   it('preload 出 IPC 那一发用的是掩码视图那份类型（退回 WebDAVConfig＝那颗 flag 到不了渲染层）', () => {
-    expect(PRELOAD).toMatch(/loadWebDAVConfig: \(\): Promise<MaskedWebDAVConfig \| null>/)
+    // §386：这一发从此还会回信封（那一行读不出来＝第三档），锚点跟着带上失败分支
+    expect(PRELOAD).toMatch(
+      /loadWebDAVConfig: \(\): Promise<MaskedWebDAVConfig \| \{ ok: false; error: string \} \| null>/
+    )
     expect(PRELOAD).not.toMatch(/loadWebDAVConfig: \(\): Promise<WebDAVConfig \| null>/)
   })
 

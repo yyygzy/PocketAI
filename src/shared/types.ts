@@ -436,6 +436,13 @@ export interface DataHealthReport {
      * 而那意味着下一次备份必在鉴权那一步失败。三档要分开摆：没配过／配了但用不了／配了且能用。
      */
     passwordUndecryptable: boolean
+    /**
+     * §386：app_config 里那一行**存在**却解析不出来（多半是被旧备份整表覆盖过）。
+     * 它与 `configured:false` 不是一回事：后者说"你还没配"，前者说"你配过、而本机读不出那份配置"——
+     * 处置方式也不同（重填并保存 vs 从头配置）。改前这一档塌进 `configured:false`，
+     * 于是设置页摆一张空表单，点「保存」正好把那份坏行覆盖掉。
+     */
+    configUnreadable: boolean
     enabled: boolean
     intervalHours: number
     lastRunAt: number | null

@@ -1144,6 +1144,7 @@ export const ja = {
   'dh.backupOn': '有効：{hours} 時間ごと',
   'dh.backupOff': '設定済み（定期無効）',
   'dh.backupPwdBroken': '設定済みですが、バックアップパスワードを現在のマスターパスワードで復号できません（バックアップは認証で失敗します）',
+  'dh.backupCfgBroken': '保存された WebDAV 設定を読み取れません（古い全体バックアップで上書きされた可能性が高い）。設定 → バックアップで再入力して保存してください',
   'dh.lastOk': '前回の成功バックアップ',
   'dh.lastError': '前回のバックアップ失敗',
   'dh.never': '未実行',

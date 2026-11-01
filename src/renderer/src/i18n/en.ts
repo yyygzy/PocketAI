@@ -1197,6 +1197,7 @@ export const en = {
   'dh.backupOn': 'On, every {hours} h',
   'dh.backupOff': 'Configured, schedule off',
   'dh.backupPwdBroken': 'Configured, but the backup password cannot be decrypted with the current master password — backups will fail at authentication',
+  'dh.backupCfgBroken': 'The stored WebDAV settings cannot be parsed (likely overwritten by an old whole-database backup) — re-enter them under Settings → Backup and save',
   'dh.lastOk': 'Last successful backup',
   'dh.lastError': 'Last backup failure',
   'dh.never': 'Never',

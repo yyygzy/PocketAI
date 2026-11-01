@@ -352,15 +352,19 @@ export const DataHealthPanel: React.FC = () => {
         <Row
           label={t('dh.backupState')}
           value={
-            !backup.configured
-              ? t('dh.backupNotConfigured')
-              : backup.passwordUndecryptable
-                ? t('dh.backupPwdBroken')
-                : backup.enabled
-                  ? t('dh.backupOn', { hours: backup.intervalHours })
-                  : t('dh.backupOff')
+            // §386：「那一行读不出来」排在最前——它也让 configured 落成 false，
+            // 但说"未配置"会把用户支去填一份新配置，而点保存正好覆盖掉那份坏行（unknown 不许演成"没有"＝§377 同一把尺子）
+            backup.configUnreadable
+              ? t('dh.backupCfgBroken')
+              : !backup.configured
+                ? t('dh.backupNotConfigured')
+                : backup.passwordUndecryptable
+                  ? t('dh.backupPwdBroken')
+                  : backup.enabled
+                    ? t('dh.backupOn', { hours: backup.intervalHours })
+                    : t('dh.backupOff')
           }
-          warn={!backup.configured || backup.passwordUndecryptable || !backup.enabled}
+          warn={backup.configUnreadable || !backup.configured || backup.passwordUndecryptable || !backup.enabled}
         />
         <Row
           label={t('dh.lastOk')}

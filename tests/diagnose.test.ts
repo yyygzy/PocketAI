@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   dbError: null as Error | null, // 不为 null 时所有 prepare().get() 抛错
   // 备份
   webdavCfg: null as unknown,
-  webdavPwdBroken: false,
+  webdavCfgBroken: false,
   schedule: { enabled: false, intervalHours: 6, lastResult: null as null | { ok: boolean; at: number } },
   backupError: null as Error | null,
   // 硬件
@@ -51,7 +51,7 @@ const mocks = vi.hoisted(() => ({
     this.schemaVersion = 99
     this.dbError = null
     this.webdavCfg = null
-    this.webdavPwdBroken = false
+    this.webdavCfgBroken = false
     this.schedule = { enabled: false, intervalHours: 6, lastResult: null }
     this.backupError = null
     this.hwDiskRemovable = false
@@ -109,7 +109,12 @@ vi.mock('../src/main/backup/backup-service', () => ({
   // §382：体检这一读换成 readWebDAVConfig（`!!load` 把"口令解不开"画成「已配置…level:ok」）
   readWebDAVConfig: () => {
     if (mocks.backupError) throw mocks.backupError
-    return { cfg: mocks.webdavCfg, passwordUndecryptable: mocks.webdavPwdBroken }
+    return {
+      cfg: mocks.webdavCfg,
+      passwordUndecryptable: mocks.webdavPwdBroken,
+      // §386：第三颗＝那一行存在却解析不出来；桩缺它＝真源码读到 undefined
+      configUnreadable: mocks.webdavCfgBroken
+    }
   }
 }))
 
@@ -305,6 +310,25 @@ describe('runAudit 安全检测', () => {
     expect(item?.detail).toContain('解不开')
     expect(item?.detail).not.toContain('每 6 小时执行')
     expect(item?.suggestion).toContain('设置 → 备份')
+  })
+
+  // §386：那一行**存在却解析不出来**（整库恢复把 app_config 整表换成坏行）原先与「没配过」共用出口，
+  // 这一格说「未配置 WebDAV」＝把用户支去填一份新配置，而那份坏行就此被覆盖掉。
+  it('§386 那一行读不出来：danger＋说"读不出来"，不许说「未配置 WebDAV」', () => {
+    mocks.webdavCfgBroken = true
+    const item = findAudit(runAudit().checks, 'backup-cloud')
+    expect(item?.level).toBe('danger')
+    expect(item?.detail).toContain('读不出来')
+    expect(item?.detail, '这一档与"没配过"是两件事').not.toContain('未配置 WebDAV')
+    expect(item?.suggestion).toContain('设置 → 备份')
+  })
+
+  it('§386 反向对照：真没配过（那颗 false）⇒ 仍是原来那句 warn「未配置 WebDAV」', () => {
+    mocks.webdavCfg = null
+    mocks.webdavCfgBroken = false
+    const item = findAudit(runAudit().checks, 'backup-cloud')
+    expect(item?.level).toBe('warn')
+    expect(item?.detail).toContain('未配置 WebDAV')
   })
 
   it('§382 口令解不开＋定时没开：同一张脸（不把"定时未开启"当成原因）', () => {
