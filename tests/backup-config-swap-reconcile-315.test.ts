@@ -97,7 +97,8 @@ vi.mock('../src/main/backup/merge-service', () => ({
 vi.mock('../src/main/backup/backup-service', () => ({
   loadWebDAVConfig: () => H.cfg,
   saveWebDAVConfig: () => {},
-  restoreWebDAVPassword: (c: unknown) => c,
+  // §384：这颗现在交回 `{cfg, passwordIsStoredCipher}`（意图由读侧声明，写侧不再猜形状）
+  restoreWebDAVPassword: (c: unknown) => ({ cfg: c, passwordIsStoredCipher: false }),
   listWebDAVBackups: async () => [],
   deleteWebDAVBackup: async () => {},
   createLocalBackup: async () => '/tmp/pocketai-315/b.zip',

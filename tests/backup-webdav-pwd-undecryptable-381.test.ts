@@ -7,6 +7,9 @@
 // 屏上「已配置」＋掩码末 4 位照旧，只有下一次备份会在鉴权那一步失败。
 //
 // 策略：真加密真解密（换字段密钥来造「解不开」，GCM tag 自己会拒），只桩开库与配置仓。
+//
+// §384 对本文件的改判（两处期望值翻转，各自注释里写了理由）：`isCipherText` 不再只看前缀、
+// save 的幂等防护改吃调用方的意图声明 ⇒ ①的「假阳钉子（二）」与②的第一发不再是"原样落盘/字节不变"。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const KEY_OLD = Buffer.alloc(32, 0x11)
@@ -57,6 +60,7 @@ import {
   loadWebDAVConfig,
   readWebDAVConfig,
   saveWebDAVConfig,
+  restoreWebDAVPassword,
   maskWebDAVConfig
 } from '../src/main/backup/backup-service'
 import { encryptApiKeys } from '../src/main/crypto/field-encrypt'
@@ -122,26 +126,50 @@ describe('①三种到货要分得开：没配过／解得开／解不开', () =
     expect(maskWebDAVConfig(readWebDAVConfig())!.passwordUndecryptable).toBe(false)
   })
 
-  it('假阳钉子（二）：明文直接以 v1: 开头时，save 的幂等防护把它**原样**落盘（不是信封）⇒ 今天会报「解不开」', () => {
-    // 这是 SEC-35/36 那族的既有歧义（isCipherText 只看前缀，分不出"密文"与"恰好像密文的明文"），
-    // 鉴权其实照常能过（这一串原样进出）。本枚不动它，但把今天的行为钉在这里：
-    // 谁将来改 save 的幂等防护，就必须同时改这一条并说明理由——不许让它悄悄变成第二种谎。
+  it('假阳钉子（二）＝§384 改判：明文直接以 v1: 开头时，save 不再猜形状 ⇒ 把它当明文包进信封、读回原口令、不报「解不开」', () => {
+    // 改前这一发是 SEC-35/36 那族既有歧义的现场（isCipherText 只看前缀 ⇒ 分不出"密文"与"恰好像密文的明文"）：
+    // 那串明文被原样落盘，从此读侧叫它「解不开」，屏上那格说"要重填"，而重填同一句还是原样落盘＝出不去的循环。
+    // §384 起写侧不再猜：调用方没声明"这串就是库里那份密文原文"⇒ 一律当明文加密。
     const LOOKALIKE = 'v1:look-alike-password'
     saveWebDAVConfig({ ...BASE, passwordCipher: LOOKALIKE })
-    expect(rawRow(), '这一列没有被再包一层信封').toContain(LOOKALIKE)
-    expect(loadWebDAVConfig()!.passwordCipher, '口令本身进出一致＝鉴权不受影响').toBe(LOOKALIKE)
-    expect(readWebDAVConfig().passwordUndecryptable, '今天它会被叫成「解不开」').toBe(true)
+    expect(rawRow(), '这一列现在被包进了信封（不再原样落盘）').not.toContain(LOOKALIKE)
+    expect(rawRow().startsWith('{"url"'), '落盘的仍是那行 JSON').toBe(true)
+    expect(loadWebDAVConfig()!.passwordCipher, '口令本身进出一致＝鉴权照常').toBe(LOOKALIKE)
+    expect(readWebDAVConfig().passwordUndecryptable, '§384 起它不再被叫成「解不开」').toBe(false)
+  })
+
+  it('反向对照（§384）：声明了「这串就是库里那份密文原文」才原样保留＝双重加密那一格仍然守得住', () => {
+    const real = encryptApiKeys([PW])
+    saveWebDAVConfig({ ...BASE, passwordCipher: real }, { passwordAlreadyCipher: true })
+    expect(rawRow(), '原样保留、绝不二次加密').toContain(real)
+    expect(loadWebDAVConfig()!.passwordCipher).toBe(PW)
+    // 而同一串若不声明就交进来 ⇒ 会被当明文再包一层（这正是"只有调用方知道意图"的代价，所以必须声明）
+    saveWebDAVConfig({ ...BASE, passwordCipher: real })
+    expect(loadWebDAVConfig()!.passwordCipher, '不声明＝当明文加密，解出来是那串密文而不是口令').toBe(real)
   })
 })
 
 describe('②回写那条路：解不开的那一份绝不能当明文写回去', () => {
-  it('把 load 的结果原样交给 save ⇒ 落盘字节一字未变＝旧钥密文原地烂掉（钉住「这条路是死的」）', () => {
+  it('不声明意图就把 load 的结果交给 save ⇒ 那一列被重写成双层信封（＝§381 四处轮换点必须先判的原因）', () => {
     saveWebDAVConfig(BASE)
     H.fieldKey = KEY_NEW
     const before = rawRow()
-    saveWebDAVConfig(loadWebDAVConfig()!) // ← 改前那四个轮换点做的正是这件事（以为 cfg.passwordCipher 是明文）
-    expect(rawRow()).toBe(before)
-    expect(readWebDAVConfig().passwordUndecryptable, '绕一圈回来还是解不开').toBe(true)
+    const stale = loadWebDAVConfig()! // 解不开时带回来的是旧钥密文原文
+    saveWebDAVConfig(stale) // ← 改前那四个轮换点做的正是这件事（以为 cfg.passwordCipher 是明文）
+    expect(rawRow(), '§384 起这一发不再"原样保留"，而是被当明文再包一层').not.toBe(before)
+    expect(loadWebDAVConfig()!.passwordCipher, '绕一圈拿回来的是那串密文＝当口令必败').toBe(stale.passwordCipher)
+    expect(readWebDAVConfig().passwordUndecryptable, '屏上从此看不出问题（新信封解得开）＝misuse 的代价').toBe(false)
+  })
+
+  it('同一份走掩码回填那一路＝带回那颗 flag、save 原样保留（handler 的实际形状，屏上仍如实说「解不开」）', () => {
+    saveWebDAVConfig(BASE)
+    H.fieldKey = KEY_NEW
+    const before = rawRow()
+    const restored = restoreWebDAVPassword({ ...BASE, passwordCipher: '••••d-42' })!
+    expect(restored.passwordIsStoredCipher, '解不开那一份必须由回填那一步说成密文').toBe(true)
+    saveWebDAVConfig(restored.cfg, { passwordAlreadyCipher: restored.passwordIsStoredCipher })
+    expect(rawRow(), '原样保留＝没有把旧钥密文再包一层').toBe(before)
+    expect(readWebDAVConfig().passwordUndecryptable, '这一档仍然如实上报').toBe(true)
   })
 
   it('解得开那一份走同一条路＝换新密钥重加密，换钥后仍能解开（正向对照：轮换本身是有效的）', () => {

@@ -1,7 +1,7 @@
 // field-encrypt 字段级 AES-256-GCM 加解密测试
 //
 // 覆盖 src/main/crypto/field-encrypt.ts：
-// - isCipherText：密文前缀识别
+// - isCipherText：信封形状识别（§384 起不再只看前缀）
 // - encryptSecret / decryptSecret：单字符串加解密（含明文向后兼容、损坏 fail closed）
 // - encryptApiKeys / decryptApiKeys：字符串数组加解密
 //
@@ -33,15 +33,33 @@ import {
   decryptSecretMap
 } from '../src/main/crypto/field-encrypt'
 
-describe('isCipherText — 密文前缀识别', () => {
-  it('v1: 开头 → true', () => {
-    expect(isCipherText('v1:abcdef')).toBe(true)
+describe('isCipherText — 信封形状识别（§384：前缀＋规范 base64＋装得下 IV+TAG）', () => {
+  it('真信封恒判为密文（最短那一发：明文 1 字节 ⇒ iv12+ct1+tag16＝29 字节＝body 40 字符）', () => {
+    expect(isCipherText(encryptSecret('a'))).toBe(true)
+    expect(isCipherText(encryptSecret('my-secret-token-12345'))).toBe(true)
+    expect(isCipherText(encryptApiKeys(['sk-abc']))).toBe(true)
   })
 
   it('非 v1: 开头 → false（含明文、空串）', () => {
     expect(isCipherText('')).toBe(false)
     expect(isCipherText('plaintext')).toBe(false)
     expect(isCipherText('v2:xxx')).toBe(false)
+  })
+
+  it('只有前缀、形状不对 ⇒ false（§384 收紧的那一格：恰好像密文的明文不再被当成密文）', () => {
+    expect(isCipherText('v1:')).toBe(false)
+    expect(isCipherText('v1:abcdef')).toBe(false) // 改前这一发是 true
+    expect(isCipherText('v1:look-alike-382-password')).toBe(false) // 含 -、且长度不是 4 的倍数
+  })
+
+  it('形状四道判据各挡一种：太短／长度不是 4 的倍数／非法字符／编码不规范', () => {
+    const A = (n: number): string => 'A'.repeat(n)
+    expect(isCipherText(`v1:${A(36)}`), '27 字节装不下 iv+tag（长度下界）').toBe(false)
+    expect(isCipherText(`v1:${A(40)}`), '30 字节刚刚够＝这一形必须是 true').toBe(true)
+    expect(isCipherText(`v1:${A(41)}`), '长度不是 4 的倍数').toBe(false)
+    expect(isCipherText(`v1:${A(39)}!`), '含非 base64 字符').toBe(false)
+    expect(isCipherText(`v1:${A(38)}B=`), '末组有多余比特：解码再编码不等于原串').toBe(false)
+    expect(isCipherText(`v1:${A(36)}AB==`), '单字节那组不编码规范：round-trip 不等').toBe(false)
   })
 })
 
@@ -82,13 +100,20 @@ describe('encryptSecret / decryptSecret — 单字符串加解密', () => {
   })
 
   it('损坏的密文 → 空串（fail closed）', () => {
-    // v1: 前缀但 base64 解码后长度不足（IV 12 + tag 16 = 28 字节最小）
-    expect(decryptSecret('v1:aaa')).toBe('')
     // 合法 base64 但认证标签不匹配
     const fakeIv = Buffer.alloc(12)
     const fakeTag = Buffer.alloc(16)
     const fakeCt = Buffer.concat([fakeIv, Buffer.from('tampered'), fakeTag])
     expect(decryptSecret('v1:' + fakeCt.toString('base64'))).toBe('')
+  })
+
+  it('§384 换边的那一格：坏得不成形状的 v1: 串现在走**明文**那一支（原样带回，不再是空串）', () => {
+    // 改前 isCipherText 只看前缀 ⇒ 这一发被当密文试解、解不出→''（按无凭据处理）。
+    // 改后它连信封的形状都不算 ⇒ 只能按「历史明文」原样返回。
+    // 代价如实写明：这样的列在屏上不再叫「解不开」，而是被当成一串能用的口令（鉴权自会失败）。
+    // 换来的另一面才是本枚要的：一条恰以 v1: 开头的**明文**不再被判死（见 backup-service 那两份 §384 用例）。
+    expect(decryptSecret('v1:aaa')).toBe('v1:aaa')
+    expect(decryptApiKeys('v1:broken')).toEqual([]) // 明文那一支 JSON.parse 仍失败 ⇒ 消费面照旧是「没有」
   })
 
   it('UTF-8 多字节字符（中文/emoji）加解密正确', () => {

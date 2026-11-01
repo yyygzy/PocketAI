@@ -17,9 +17,27 @@ const CIPHER_PREFIX = 'v1:'
 const IV_LEN = 12
 const TAG_LEN = 16
 
-/** 判断是否为加密密文 */
+/**
+ * 判断是否为加密密文。
+ *
+ * §384：以前只看前缀 ⇒ 一条恰好以 `v1:` 开头的**明文**会被当成"已加密"，
+ * 于是写侧的幂等防护把它原样落盘（明文进库），读侧又把它当解不开的密文（`hasUndecryptableCipher` 恒真）
+ * ＝屏上永远说"解不开"、重填同一句还是原样落盘＝出不去的循环。
+ * 现在按信封的真实结构判：`v1:` ＋ 规范 base64（长度是 4 的倍数、解码后再编码一字不差）＋ 至少装得下 IV+TAG。
+ *
+ * 残余歧义如实写明：随机 ASCII 口令里仍有约 1.7% 撞得进这个形状（探针 `data/tmp/probe-384-iscipher.mjs`），
+ * 所以形状判据只是把误判面从"以 v1: 开头"缩到"v1:＋规范 base64＋≥40 位"，
+ * **根治在写侧声明意图**（见 `saveWebDAVConfig` 的 `passwordAlreadyCipher`），不是把形状猜得更准。
+ */
 export function isCipherText(s: string): boolean {
-  return s.startsWith(CIPHER_PREFIX)
+  if (!s.startsWith(CIPHER_PREFIX)) return false
+  const body = s.slice(CIPHER_PREFIX.length)
+  if (body.length < ((IV_LEN + TAG_LEN) / 3) * 4 || body.length % 4 !== 0) return false
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body)) return false
+  const buf = Buffer.from(body, 'base64')
+  // round-trip 必须相等：不接受被 Node 悄悄丢掉的非法字符，也不接受多余的填充
+  if (buf.length < IV_LEN + TAG_LEN || buf.toString('base64') !== body) return false
+  return true
 }
 
 /** 单字符串加密：任意 UTF-8 文本 → v1:base64（空串返回空串） */

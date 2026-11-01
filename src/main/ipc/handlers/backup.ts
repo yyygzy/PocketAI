@@ -76,10 +76,10 @@ export function registerBackupHandlers(): void {
     // B2：备份口令是真正保护备份包的密钥，none 模式下只会用公开可复现的固定密钥混淆 → 拒绝新值。
     // 与已存口令一致（UI 空着口令框只改地址/目录）照常保存；加密模式切换流程直连 service，不经此闸。
     const prev = loadWebDAVConfig()?.passwordCipher ?? ''
-    const changed = newSecretKeys({ pwd: resolved.passwordCipher }, { pwd: prev }).length > 0
+    const changed = newSecretKeys({ pwd: resolved.cfg.passwordCipher }, { pwd: prev }).length > 0
     // SEC-37：新输入/改动的口令必须落在底层可编码的 Latin1 范围内，否则包在构造 Basic 头时
     // 当场抛错、请求根本发不出（存量的超范围口令不回头拦，免得把「只改目录」也锁死）
-    if (changed && !isWebdavPasswordUsable(resolved.passwordCipher)) {
+    if (changed && !isWebdavPasswordUsable(resolved.cfg.passwordCipher)) {
       return { ok: false as const, error: WEBDAV_PASSWORD_CHARSET_MSG }
     }
     if (isNoneMode() && changed) {
@@ -88,7 +88,9 @@ export function registerBackupHandlers(): void {
         error: `未设置主密码，备份口令不会被保存（它决定加密备份包能否被解开）。${NONE_MODE_HINT}`
       }
     }
-    saveWebDAVConfig(resolved)
+    // §384：沿用已存那一份时，「这一串是明文还是库里那份密文原文」由回填那一步带出来，
+    // 这里只把它转交给 save——写侧不再靠猜形状决定是否二次加密。
+    saveWebDAVConfig(resolved.cfg, { passwordAlreadyCipher: resolved.passwordIsStoredCipher })
     return { ok: true }
   }, argsSchema(webdavConfigSchema))
   safeHandle(IPC.BACKUP_WEBDAV_LOAD_CONFIG, async () => {
@@ -108,10 +110,10 @@ export function registerBackupHandlers(): void {
     if (!resolved) return { ok: false as const, message: '口令栏是掩码占位，而本机还没有已存口令：请输入真实备份口令后再测试。' }
     // 测试不写盘，因此一律校验：连存量的超范围口令也给一句可读原因，
     // 而不是底层那句 The string to be encoded contains characters outside of the Latin1 range
-    if (!isWebdavPasswordUsable(resolved.passwordCipher)) {
+    if (!isWebdavPasswordUsable(resolved.cfg.passwordCipher)) {
       return { ok: false as const, message: WEBDAV_PASSWORD_CHARSET_MSG }
     }
-    return testWebDAV(resolved)
+    return testWebDAV(resolved.cfg)
   }, argsSchema(webdavConfigSchema))
   safeHandle(IPC.BACKUP_WEBDAV_UPLOAD, async () => {
     const { loadWebDAVConfig, createWebDAVBackup } = await import('../../backup/backup-service')

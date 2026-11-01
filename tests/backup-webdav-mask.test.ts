@@ -50,22 +50,35 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
 }))
 
 // 字段加解密：可逆的假实现（v1:base64），够用来验证「存进去的是密文、解出来的是原口令」
-vi.mock('../src/main/crypto/field-encrypt', () => ({
-  isCipherText: (s: string) => s.startsWith('v1:'),
-  encryptApiKeys: (arr: string[]) => (arr.length === 0 ? '' : 'v1:' + Buffer.from(JSON.stringify(arr)).toString('base64')),
-  decryptApiKeys: (s: string) => {
-    if (!s || !s.startsWith('v1:')) return []
-    try {
-      return JSON.parse(Buffer.from(s.slice(3), 'base64').toString('utf8')) as string[]
-    } catch {
-      return []
-    }
-  },
-  encryptSecret: (s: string) => 'v1:' + Buffer.from(s).toString('base64'),
-  decryptSecret: (s: string) => (s.startsWith('v1:') ? Buffer.from(s.slice(3), 'base64').toString('utf8') : s),
-  // §381：按本桩自己的假象抄真判据（真是密文、而这把假钥匙解出空＝解不开）
-  hasUndecryptableCipher: (s: string) => s.startsWith('v1:') && Buffer.from(s.slice(3), 'base64').toString('utf8') === ''
-}))
+//
+// §384：真码的 isCipherText 从"只看前缀"收紧成"前缀＋规范 base64（%4、round-trip）＋装得下 IV+TAG"。
+// 本桩的假信封没有 IV/TAG 那 28 字节，所以只抄形状的前三半、不抄字节下界（抄了会把本桩自己的短信封判成明文）。
+// 之所以还得抄：写侧的幂等防护现在判"声明 ∧ 形状"，桩答得太松就等于替被测代码把这一格喂绿。
+vi.mock('../src/main/crypto/field-encrypt', () => {
+  const looksLikeEnvelope = (s: string): boolean => {
+    if (!s.startsWith('v1:')) return false
+    const body = s.slice(3)
+    if (!body || body.length % 4 !== 0) return false
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body)) return false
+    return Buffer.from(body, 'base64').toString('base64') === body
+  }
+  return {
+    isCipherText: (s: string) => looksLikeEnvelope(s),
+    encryptApiKeys: (arr: string[]) => (arr.length === 0 ? '' : 'v1:' + Buffer.from(JSON.stringify(arr)).toString('base64')),
+    decryptApiKeys: (s: string) => {
+      if (!s || !looksLikeEnvelope(s)) return []
+      try {
+        return JSON.parse(Buffer.from(s.slice(3), 'base64').toString('utf8')) as string[]
+      } catch {
+        return []
+      }
+    },
+    encryptSecret: (s: string) => 'v1:' + Buffer.from(s).toString('base64'),
+    decryptSecret: (s: string) => (looksLikeEnvelope(s) ? Buffer.from(s.slice(3), 'base64').toString('utf8') : s),
+    // §381：按本桩自己的假象抄真判据（真是密文、而这把假钥匙解出空＝解不开）
+    hasUndecryptableCipher: (s: string) => looksLikeEnvelope(s) && Buffer.from(s.slice(3), 'base64').toString('utf8') === ''
+  }
+})
 
 vi.mock('../src/main/backup/webdav-client', () => ({
   testConnection: async (creds: { password: string; url: string }) => {

@@ -963,24 +963,43 @@ export function maskWebDAVConfig(read: WebDAVConfigRead): MaskedWebDAVConfig | n
 }
 
 /**
- * 入 IPC 的口令回填：掩码占位 → 本机已存明文口令。
+ * 入 IPC 的口令回填：掩码占位 → 本机已存的那一份。
  * 是占位却没有已存口令时返回 null——照原样落盘存下的就是 '••••' 这串占位符，
  * 之后每次鉴权都失败且 UI 看不出原因（同 SEC-30 的「掩码写成真实值」陷阱）。
+ *
+ * §384：带回的不只是配置，还有「这一份到底是明文还是库里那份密文原文」。
+ * 解不开那一档（§381）`readWebDAVConfig` 交回的是**原始密文**，调用方若不知情把它直接交给 save，
+ * 就会被当明文再包一层信封。这件事只有读侧知道，所以由读侧说清楚，不让写侧猜形状。
  */
-export function restoreWebDAVPassword(cfg: WebDAVConfig): WebDAVConfig | null {
-  if (!isMaskedSecret(cfg.passwordCipher)) return cfg
-  const stored = loadWebDAVConfig()?.passwordCipher
-  if (!stored) return null
-  return { ...cfg, passwordCipher: stored }
+export interface RestoredWebDAVPassword {
+  cfg: WebDAVConfig
+  /** true ⇒ `cfg.passwordCipher` 就是库里那份密文原文（解不开那一档），写回时必须原样保留、绝不二次加密 */
+  passwordIsStoredCipher: boolean
 }
 
-export function saveWebDAVConfig(raw: WebDAVConfig): void {
+export function restoreWebDAVPassword(cfg: WebDAVConfig): RestoredWebDAVPassword | null {
+  if (!isMaskedSecret(cfg.passwordCipher)) return { cfg, passwordIsStoredCipher: false }
+  const read = readWebDAVConfig()
+  const stored = read.cfg?.passwordCipher
+  if (!stored) return null
+  return { cfg: { ...cfg, passwordCipher: stored }, passwordIsStoredCipher: read.passwordUndecryptable }
+}
+
+/** save 的第二参＝调用方对「传进来的这一串是什么」的声明（§384：幂等防护不再靠猜形状） */
+export interface SaveWebDAVOptions {
+  passwordAlreadyCipher?: boolean
+}
+
+export function saveWebDAVConfig(raw: WebDAVConfig, opts: SaveWebDAVOptions = {}): void {
   webdavConfigSchema.parse(raw)
-  // 幂等防护：已经是 v1: 密文的输入原样保留，绝不二次加密
-  //（二次加密后 load 只解一层会得到密文字符串，WebDAV 鉴权永久失败）
-  const passwordCipher = isCipherText(raw.passwordCipher)
-    ? raw.passwordCipher
-    : encryptApiKeys([raw.passwordCipher])
+  // 幂等防护：只有调用方声明「这一串就是库里那份密文原文」且它确实是一枚信封时才原样保留。
+  // 改前只看 isCipherText 的形状 ⇒ 一条恰好像密文的明文会被原样落盘（读侧从此叫它「解不开」），
+  // 而 save 的五个调用方里只有掩码回填那一路可能真传密文，其余四处传的都是明文。
+  // 反过来也不能一律重包：二次加密后 load 只解一层会得到密文字符串，WebDAV 鉴权永久失败。
+  const passwordCipher =
+    opts.passwordAlreadyCipher === true && isCipherText(raw.passwordCipher)
+      ? raw.passwordCipher
+      : encryptApiKeys([raw.passwordCipher])
   const config: WebDAVConfig = { ...raw, passwordCipher }
   appConfigRepo.set(CFG_KEY, JSON.stringify(config))
 }

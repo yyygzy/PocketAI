@@ -46,7 +46,8 @@ vi.mock('../src/main/portable', () => ({ DATA_DIR: process.cwd() }))
 vi.mock('../src/main/backup/backup-service', () => ({
   saveWebDAVConfig: (cfg: WebDAVConfig) => { mocks.saved.push(cfg) },
   // 本用例只测 B2 闸门；掩码回填与出 IPC 掩码由 tests/backup-webdav-mask.test.ts 覆盖
-  restoreWebDAVPassword: (cfg: WebDAVConfig) => cfg,
+  // §384：这颗交回 `{cfg, passwordIsStoredCipher}`（意图由读侧声明，写侧不再猜形状）
+  restoreWebDAVPassword: (cfg: WebDAVConfig) => ({ cfg, passwordIsStoredCipher: false }),
   maskWebDAVConfig: (cfg: WebDAVConfig | null) => cfg,
   loadWebDAVConfig: (): WebDAVConfig | null =>
     mocks.hasCfg
