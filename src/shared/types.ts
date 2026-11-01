@@ -431,6 +431,11 @@ export interface DataHealthReport {
   /** WebDAV 云备份状态 */
   backup: {
     configured: boolean
+    /**
+     * §382：`configured` 只说「这一栏有东西」——口令用当前主密码解不开时它照样是 true，
+     * 而那意味着下一次备份必在鉴权那一步失败。三档要分开摆：没配过／配了但用不了／配了且能用。
+     */
+    passwordUndecryptable: boolean
     enabled: boolean
     intervalHours: number
     lastRunAt: number | null

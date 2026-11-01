@@ -15,7 +15,11 @@ vi.mock('../src/main/db/database', () => ({
 vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({ kbDocRepo: { listAll: () => [] } }))
 vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: { list: () => [] } }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: { get: () => undefined, set: () => {} } }))
-vi.mock('../src/main/backup/backup-service', () => ({ loadWebDAVConfig: () => null }))
+// §382：数据健康那一读换成了 readWebDAVConfig（`!!load` 把"口令解不开"也算成已配置），桩要跟着给
+vi.mock('../src/main/backup/backup-service', () => ({
+  loadWebDAVConfig: () => null,
+  readWebDAVConfig: () => ({ cfg: null, passwordUndecryptable: false })
+}))
 
 import {
   classifyDataEntry,

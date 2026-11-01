@@ -194,6 +194,9 @@ export async function tick(): Promise<void> {
     if (!status.enabled) return
     // 隐私锁锁定中：加密库已关闭，跳过
     if (masterKeyManager.getMode() === 'db' && !masterKeyManager.hasKey()) return
+    // §382 现查后**故意不动**这一判：口令解不开时它照样往下试，`createWebDAVBackup` 抛 ⇒
+    // `{ok:false,error}` 落进 K_LAST_RESULT ⇒ 数据健康与管家体检都读得到那条真失败。
+    // 改成"解不开就不试"会把每轮的实际错误咽掉（屏上只剩安静），是负收益。
     if (!loadWebDAVConfig()) return
     const now = Date.now()
     const due =

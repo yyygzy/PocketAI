@@ -16,7 +16,7 @@ import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
-import { loadWebDAVConfig } from '../backup/backup-service'
+import { readWebDAVConfig } from '../backup/backup-service'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { errMsg } from '../error'
 import { getBootPerf } from './boot-perf'
@@ -239,15 +239,19 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   }
 
   // 3. 备份状态（未配置 WebDAV 时 schedule 仍可读，lastRunAt 为 null）
-  const configured = !!loadWebDAVConfig()
+  // §382：这一读要分三档——`!!loadWebDAVConfig()` 把「口令有密文却解不开」也算成"已配置"，
+  // 而那一档下一次备份必在鉴权那步失败；取法必须是 readWebDAVConfig（判据排在密文被覆盖成明文之前）
+  const wdRead = readWebDAVConfig()
+  const configured = !!wdRead.cfg
   let backup: DataHealthReport['backup'] = {
-    configured, enabled: false, intervalHours: 24,
+    configured, passwordUndecryptable: wdRead.passwordUndecryptable, enabled: false, intervalHours: 24,
     lastRunAt: null, lastOkAt: null, lastError: null
   }
   try {
     const s = getBackupSchedule()
     backup = {
       configured,
+      passwordUndecryptable: wdRead.passwordUndecryptable,
       enabled: s.enabled,
       intervalHours: s.intervalHours,
       lastRunAt: s.lastRunAt,

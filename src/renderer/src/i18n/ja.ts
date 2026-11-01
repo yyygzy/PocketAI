@@ -1143,6 +1143,7 @@ export const ja = {
   'dh.backupNotConfigured': 'WebDAV 未設定',
   'dh.backupOn': '有効：{hours} 時間ごと',
   'dh.backupOff': '設定済み（定期無効）',
+  'dh.backupPwdBroken': '設定済みですが、バックアップパスワードを現在のマスターパスワードで復号できません（バックアップは認証で失敗します）',
   'dh.lastOk': '前回の成功バックアップ',
   'dh.lastError': '前回のバックアップ失敗',
   'dh.never': '未実行',

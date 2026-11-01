@@ -354,11 +354,13 @@ export const DataHealthPanel: React.FC = () => {
           value={
             !backup.configured
               ? t('dh.backupNotConfigured')
-              : backup.enabled
-                ? t('dh.backupOn', { hours: backup.intervalHours })
-                : t('dh.backupOff')
+              : backup.passwordUndecryptable
+                ? t('dh.backupPwdBroken')
+                : backup.enabled
+                  ? t('dh.backupOn', { hours: backup.intervalHours })
+                  : t('dh.backupOff')
           }
-          warn={!backup.configured || !backup.enabled}
+          warn={!backup.configured || backup.passwordUndecryptable || !backup.enabled}
         />
         <Row
           label={t('dh.lastOk')}

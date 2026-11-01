@@ -52,7 +52,7 @@ const report = (): DataHealthReport => ({
     integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] },
     vectorIndex: { count: 0, dims: [] }
   },
-  backup: { configured: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
+  backup: { configured: false, passwordUndecryptable: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
   tasks: { kbHealthCheckLastRunAt: null, backupVerifyLastRunAt: null },
   boot: { stages: [], totalMs: 0 },
   recentPerf: [],

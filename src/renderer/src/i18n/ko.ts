@@ -1143,6 +1143,7 @@ export const ko = {
   'dh.backupNotConfigured': 'WebDAV 미설정',
   'dh.backupOn': '사용 중, {hours}시간마다',
   'dh.backupOff': '설정됨, 예약 꺼짐',
+  'dh.backupPwdBroken': '설정됨, 하지만 백업 비밀번호를 현재 마스터 비밀번호로 해독할 수 없어 백업이 인증에서 실패합니다',
   'dh.lastOk': '마지막 성공 백업',
   'dh.lastError': '마지막 백업 실패',
   'dh.never': '실행 기록 없음',

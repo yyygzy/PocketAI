@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   dbError: null as Error | null, // 不为 null 时所有 prepare().get() 抛错
   // 备份
   webdavCfg: null as unknown,
+  webdavPwdBroken: false,
   schedule: { enabled: false, intervalHours: 6, lastResult: null as null | { ok: boolean; at: number } },
   backupError: null as Error | null,
   // 硬件
@@ -50,6 +51,7 @@ const mocks = vi.hoisted(() => ({
     this.schemaVersion = 99
     this.dbError = null
     this.webdavCfg = null
+    this.webdavPwdBroken = false
     this.schedule = { enabled: false, intervalHours: 6, lastResult: null }
     this.backupError = null
     this.hwDiskRemovable = false
@@ -103,6 +105,11 @@ vi.mock('../src/main/backup/backup-service', () => ({
   loadWebDAVConfig: () => {
     if (mocks.backupError) throw mocks.backupError
     return mocks.webdavCfg
+  },
+  // §382：体检这一读换成 readWebDAVConfig（`!!load` 把"口令解不开"画成「已配置…level:ok」）
+  readWebDAVConfig: () => {
+    if (mocks.backupError) throw mocks.backupError
+    return { cfg: mocks.webdavCfg, passwordUndecryptable: mocks.webdavPwdBroken }
   }
 }))
 
@@ -285,6 +292,44 @@ describe('runAudit 安全检测', () => {
     const r = runAudit()
     expect(findAudit(r.checks, 'backup-cloud')?.level).toBe('ok')
     expect(findAudit(r.checks, 'backup-freshness')?.level).toBe('ok')
+  })
+
+  // §382：`!!loadWebDAVConfig()` 在"口令有密文却解不开"那一档读到 true ⇒ 改前这里走的是上面那条
+  // ok 支（「WebDAV 已配置，定时备份每 6 小时执行」），而那份口令下一次鉴权必失败。
+  it('§382 口令解不开＋定时开着：第三张脸（warn＋"解不开"那句），不许再说「每 6 小时执行」', () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.webdavPwdBroken = true
+    mocks.schedule = { enabled: true, intervalHours: 6, lastResult: { ok: true, at: Date.now() - 3600 * 1000 } }
+    const item = findAudit(runAudit().checks, 'backup-cloud')
+    expect(item?.level).toBe('warn')
+    expect(item?.detail).toContain('解不开')
+    expect(item?.detail).not.toContain('每 6 小时执行')
+    expect(item?.suggestion).toContain('设置 → 备份')
+  })
+
+  it('§382 口令解不开＋定时没开：同一张脸（不把"定时未开启"当成原因）', () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.webdavPwdBroken = true
+    const item = findAudit(runAudit().checks, 'backup-cloud')
+    expect(item?.level).toBe('warn')
+    expect(item?.detail).toContain('解不开')
+    expect(item?.detail).not.toContain('定时备份未开启')
+  })
+
+  it('§382 反向对照：解不开那一档不再推 backup-freshness（第三张脸已经比它更重，不摆两句相互矛盾的话）', () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.webdavPwdBroken = true
+    mocks.schedule = { enabled: true, intervalHours: 6, lastResult: { ok: true, at: Date.now() - 40 * 24 * 3600 * 1000 } }
+    expect(findAudit(runAudit().checks, 'backup-freshness')).toBeUndefined()
+  })
+
+  it('§382 正向对照：那颗为 false 时那一格照常（新判据不许把正常档也拉成 warn）', () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.webdavPwdBroken = false
+    mocks.schedule = { enabled: true, intervalHours: 6, lastResult: { ok: true, at: Date.now() - 3600 * 1000 } }
+    const item = findAudit(runAudit().checks, 'backup-cloud')
+    expect(item?.level).toBe('ok')
+    expect(item?.detail).toContain('每 6 小时执行')
   })
 
   it('backup 上次成功 30+ 天前：backup-freshness danger', () => {

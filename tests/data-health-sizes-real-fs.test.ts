@@ -25,7 +25,11 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: {
 vi.mock('../src/main/db/repositories/agent-trace.repo', () => ({
   agentTraceRepo: { countForHealth: () => ({ rows: 128, maxRowsInOneConversation: 65 }) }
 }))
-vi.mock('../src/main/backup/backup-service', () => ({ loadWebDAVConfig: () => null }))
+// §382：数据健康那一读换成了 readWebDAVConfig，桩要跟着给（缺成员＝整发抛 ⇒ handler 回 `{ok:false}`）
+vi.mock('../src/main/backup/backup-service', () => ({
+  loadWebDAVConfig: () => null,
+  readWebDAVConfig: () => ({ cfg: null, passwordUndecryptable: false })
+}))
 vi.mock('../src/main/knowledge/kb-health', () => ({
   getKbIntegrityReport: () => ({ orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] }),
   getVectorIndexStats: () => ({ count: 0, dims: [] })

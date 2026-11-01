@@ -18,7 +18,7 @@ import { dbService, LATEST_SCHEMA_VERSION } from '../db/database'
 import { masterKeyManager } from '../crypto/master-key'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { providerRepo } from '../db/repositories/provider.repo'
-import { loadWebDAVConfig } from '../backup/backup-service'
+import { readWebDAVConfig } from '../backup/backup-service'
 import { errMsg } from '../error'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { getHardwareInfo } from './hardware'
@@ -110,15 +110,26 @@ export function runAudit(): AuditResult {
 
   // 5. 备份姿态
   try {
-    const cfg = loadWebDAVConfig()
+    const wdRead = readWebDAVConfig()
     const schedule = getBackupSchedule()
-    if (!cfg) {
+    if (!wdRead.cfg) {
       checks.push({
         id: 'backup-cloud',
         label: '云端备份',
         level: 'warn',
         detail: '未配置 WebDAV 云备份，设备损坏/丢失时数据无法找回',
         suggestion: '设置 → 备份 → 配置 WebDAV（坚果云 / Nextcloud 等）'
+      })
+    } else if (wdRead.passwordUndecryptable) {
+      // §382：这一档改前走的是下面那条 else——「WebDAV 已配置，定时备份每 N 小时执行」+ level:'ok'，
+      // 而那份口令用当前主密码解不开、下一次备份必在鉴权那步失败。不判 danger 是把重复扣分留给
+      // 紧跟其后的 backup-freshness（尚无成功记录／过旧那一格自己会说）
+      checks.push({
+        id: 'backup-cloud',
+        label: '云端备份',
+        level: 'warn',
+        detail: 'WebDAV 已配置，但备份口令用当前主密码解不开（多半是改过主密码后没跟着重写的那一份），定时备份会在鉴权那一步失败',
+        suggestion: '设置 → 备份 → 重新输入 WebDAV 备份口令，再点「保存配置」'
       })
     } else {
       checks.push({
