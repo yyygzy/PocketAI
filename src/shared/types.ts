@@ -2277,7 +2277,9 @@ export const IPC = {
   AGENT_SET_CALENDAR_CONFIG: 'agent:set-calendar-config',
   AGENT_PICK_ICS_FILE: 'agent:pick-ics-file',
   AGENT_GET_LATEST_RUN_STATS: 'agent:get-latest-run-stats', // 会话最近一次运行统计（trace 聚合，只读）
+  AGENT_GET_RUN_STATS: 'agent:get-run-stats', // §398：**按这一次运行**（requestId）取统计，不按会话取最近一次（只读）
   AGENT_GET_LATEST_RUN_TRACES: 'agent:get-latest-run-traces', // 会话最近一次运行分步明细（只读）
+  AGENT_GET_RUN_TRACES: 'agent:get-run-traces', // §398：**按这一次运行**（requestId）取分步明细，与「本次运行统计」同一条口径（只读）
   AGENT_GET_SESSION_STATS: 'agent:get-session-stats', // 会话级累计统计（跨全部运行聚合，只读）
   AGENT_GET_TEXT_PROTOCOL: 'agent:get-text-protocol', // 被点名走文本协议的模型清单（只读）
   AGENT_SET_TEXT_PROTOCOL: 'agent:set-text-protocol', // 开/关某台模型的文本协议

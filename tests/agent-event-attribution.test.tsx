@@ -98,6 +98,8 @@ beforeEach(() => {
     listConversations: () => [CONV_RECORD],
     listMessages: () => [],
     getLatestRunStats: () => null,
+    // §398：DONE 兜底那一发改走这一发（按 requestId）；本文件不测那一格，桩照兄弟通道给安静值
+    getRunStats: () => null,
     getSessionStats: () => null,
     getAgentTextProtocol: () => [],
     // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）

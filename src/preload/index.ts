@@ -802,9 +802,21 @@ const api = {
   /** 会话最近一次 Agent 运行统计（步数/耗时/token）；无记录返回 null */
   getLatestRunStats: (conversationId: string): Promise<AgentRunStats | null> =>
     ipcRenderer.invoke(IPC.AGENT_GET_LATEST_RUN_STATS, conversationId),
+  /**
+   * §398：**按这一次运行**（requestId）取统计，与上面那发的问法不同——它不会顺着会话退到上一轮。
+   * 零行时回的是三个 0（那是"这一轮账本里就是没步"这个真值），不是 null；库读不出来才回失败对象。
+   */
+  getRunStats: (requestId: string): Promise<AgentRunStats | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_RUN_STATS, requestId),
   /** 会话最近一次 Agent 运行分步明细（step_index 升序）；无记录返回空数组 */
   getLatestRunTraces: (conversationId: string): Promise<AgentTraceRecord[]> =>
     ipcRenderer.invoke(IPC.AGENT_GET_LATEST_RUN_TRACES, conversationId),
+  /**
+   * §398：**按这一次运行**（requestId）取分步明细，与 `getRunStats` 同一颗身份、同一个问法。
+   * 本轮零行时回空数组＝"这一轮确实没有步"（与统计那格的三个 0 自洽），不是"读不到"。
+   */
+  getRunTraces: (requestId: string): Promise<AgentTraceRecord[] | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_RUN_TRACES, requestId),
   /** 会话级累计统计（跨全部运行：运行次数/总耗时/总 token）；无记录返回 null */
   getSessionStats: (conversationId: string): Promise<AgentSessionStats | null> =>
     ipcRenderer.invoke(IPC.AGENT_GET_SESSION_STATS, conversationId),

@@ -704,7 +704,7 @@ export const AgentPanel: React.FC = () => {
             </span>
             <button
               data-testid="run-stats-retry"
-              onClick={() => { if (chat.conversationId) chat.loadRunStats(chat.conversationId) }}
+              onClick={() => { chat.retryRunStats() }}
               className="px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:text-[var(--color-text)] transition-colors"
             >
               {t('agent.retryRead')}

@@ -125,6 +125,16 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   // 事件订阅闭包内读取当前会话（effect 仅依赖 [t]，不能直接用 conversationId state）
   const conversationIdRef = useRef<string | null>(null)
   conversationIdRef.current = conversationId
+  /**
+   * §398：「本次运行统计」这一整块（统计那格＋展开的分步明细）**现在讲的是哪一次运行**。
+   *  · `null` —— 还没有本轮事实＝进入/切回会话时那发「这个会话最近一次跑成什么样」（挂载路径的本义）；
+   *  · 有值 —— 刚跑完的这一轮（DONE 事件带来的 requestId）。
+   * 只留一个身份、两处共用：统计的兜底重读、那颗「重试」、展开明细的取数都问同一个问题。
+   * 少了这一颗，"本轮一行 trace 都没落库"那一档（`safeTrace` 写失败只 warn）就会顺着 `created_at DESC`
+   * 退到**上一轮**，把别人的账挂在「本次运行」下＝说假话；只改统计不改明细还会留一张自相矛盾的屏
+   * （标题「0 步」，下面列出上一轮的步骤）。
+   */
+  const runBlockRef = useRef<{ conversationId: string; requestId: string } | null>(null)
 
   /**
    * 运行中排队消息（V4-Iter-238）。三个 ref 是同一件事的三个侧面——事件回调只有**首帧闭包**，
@@ -771,6 +781,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
    */
   const loadRunStats = useCallback((id: string) => {
     setRunStatsUnread(null)
+    // §398：这一发问的是"这个会话最近一次"⇒这一块现在讲的是"没有哪一轮是当场跑出来的"
+    runBlockRef.current = null
     void window.pocketai.getLatestRunStats(id).then((stats) => {
       if (conversationIdRef.current !== id) return
       if (hasIpcFailed(stats)) {
@@ -784,6 +796,43 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       logIpcError('agent.getLatestRunStats', e)
     })
   }, [])
+
+  /**
+   * §398：这一发问的是"**这一轮**跑成什么样"（按 requestId，走 `agent:get-run-stats`）。
+   * 上一发不能替它答：本轮一行 trace 都没落库时（`safeTrace` 写失败只 warn），
+   * `latestStatsByConversation` 会顺着 `created_at DESC` 取到**上一轮**那个 request，
+   * 回一份非零数字，而渲染层把它画在「本次运行统计」下＝说假话。
+   * 两道守卫各挡一面：切走了别画（会话），新一轮已经开跑别把上一轮的数当新的（运行）。
+   */
+  const loadRunStatsForRun = useCallback((runConversationId: string, requestId: string) => {
+    setRunStatsUnread(null)
+    void window.pocketai.getRunStats(requestId).then((stats) => {
+      if (conversationIdRef.current !== runConversationId) return
+      if (requestIdRef.current !== requestId) return
+      if (hasIpcFailed(stats)) {
+        setRunStatsUnread({ error: stats.error })
+        return
+      }
+      setRunStats(stats)
+    }).catch((e: unknown) => {
+      if (conversationIdRef.current !== runConversationId) return
+      if (requestIdRef.current !== requestId) return
+      setRunStatsUnread({ error: errText(e, '') })
+      logIpcError('agent.getRunStats', e)
+    })
+  }, [])
+
+  /** 那颗「重试」＝把**这一块现在讲的那一次运行**再问一遍，不是永远问"会话最近一次" */
+  const retryRunStats = useCallback(() => {
+    const convId = conversationIdRef.current
+    if (!convId) return
+    const run = runBlockRef.current
+    if (run) {
+      loadRunStatsForRun(run.conversationId, run.requestId)
+      return
+    }
+    loadRunStats(convId)
+  }, [loadRunStats, loadRunStatsForRun])
 
   /** 会话累计统计（跨全部运行）——同上一条的形状，独立一句，一发挂掉不许把另一发说成不可信 */
   const loadSessionStats = useCallback((id: string) => {
@@ -886,6 +935,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         // 仅在事件仍归属当前会话时展示统计与复位（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setInterrupted(false)
+          // §398：从这一秒起，「本次运行统计」这一块讲的就是**这一轮**——兜底重读、那颗「重试」
+          //        与展开的分步明细都顺着这一颗身份问，不再顺着会话退到上一轮
+          runBlockRef.current = { conversationId: e.conversationId, requestId: e.requestId }
           // §396：主进程那一发 trace 统计读不出来时**不带这颗**（改前回一份 `{0,0,0}` ⇒ 屏上
           //        「0 步 · 耗时 0ms · 0 tokens」与"这轮确实一步没跑成"是同一个形状）。
           //        缺席⇒先复位再走与挂载同一条重读路：读到就填真值，读不到就亮那颗既有的
@@ -895,7 +947,9 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
             setRunStatsUnread(null)
           } else {
             setRunStats(null)
-            loadRunStats(e.conversationId)
+            // §398：这一发改按**这一轮**取（原先走 `loadRunStats(e.conversationId)`＝会话最近一次，
+            //        本轮零行时会把上一轮的非零账挂在「本次运行统计」下）。
+            loadRunStatsForRun(e.conversationId, e.requestId)
           }
           // 零调用提示：本轮有工具可用却一次都没调用**且整条会话都没有过工具卡**才亮——
           // 只凭本轮就建议换模型，等于拿一轮的信号断言这台模型的行为（§242 真机读数里
@@ -1064,10 +1118,21 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     if (!convId) return
     setTracesLoading(true)
     setLatestTracesUnread(null)
-    void window.pocketai.getLatestRunTraces(convId).then((traces) => {
+    // §398：这一格讲的是哪一次运行，明细就按那一次取。本轮零行时顺着会话取会列出**上一轮**的步骤，
+    //        而头顶那行已经是这一轮的「0 步」＝一句真话配一份假明细。null＝挂载那发讲的"最近一次"。
+    const run = runBlockRef.current
+    const asked = run?.requestId ?? null
+    const call: Promise<AgentTraceRecord[] | { ok: false; error: string }> =
+      run ? window.pocketai.getRunTraces(run.requestId) : window.pocketai.getLatestRunTraces(convId)
+    void call.then((traces) => {
       // §221：失败只跳过"写数据"这一半，setTracesLoading(false) 照跑（与下面那个 .catch 同形）；
       // 整条早退会把统计条永久卡在加载态
       if (conversationIdRef.current === convId) {
+        if (asked && requestIdRef.current !== asked) {
+          // 新一轮已经开跑：上一轮的明细不许画进这一轮（`send()` 把 latestTraces 清成 null 等这一发）
+          setTracesLoading(false)
+          return
+        }
         if (hasIpcFailed(traces)) {
           setLatestTracesUnread(ipcFailText(traces, t('agent.unknownError')))
         } else {
@@ -1076,7 +1141,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         setTracesLoading(false)
       }
     }).catch((e: unknown) => {
-      logIpcError('agent.getLatestRunTraces', e)
+      logIpcError(asked ? 'agent.getRunTraces' : 'agent.getLatestRunTraces', e)
       if (conversationIdRef.current === convId) {
         setLatestTracesUnread(errText(e, t('agent.unknownError')))
         setTracesLoading(false)
@@ -1230,6 +1295,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     sessionStats,
     sessionStatsUnread,
     loadRunStats,
+    retryRunStats,
     loadSessionStats,
     latestTraces,
     latestTracesUnread,

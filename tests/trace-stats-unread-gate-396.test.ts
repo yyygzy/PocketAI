@@ -142,15 +142,16 @@ describe('C 消费侧：两半各有牙', () => {
     const { trueArm } = arms()
     expect(trueArm).toContain('setRunStats(e.traceStats)')
     expect(trueArm).toContain('setRunStatsUnread(null)')
-    expect(trueArm, `现数真支：${trueArm}`).not.toContain('loadRunStats(')
+    // §398 后这一族有两个名字（按会话／按运行），真支两样都不许拉起来
+    expect(/loadRunStats(ForRun)?\(/.test(trueArm), `现数真支：${trueArm}`).toBe(false)
   })
 
-  it('不带⇒先复位再走与挂载同一条重读路（不许只把 null 摆上去就闭嘴）', () => {
+  it('不带⇒先复位再按**这一轮**取（§398：不许顺着会话退到上一轮，也不许只把 null 摆上去就闭嘴）', () => {
     const { elseArm } = arms()
     expect(elseArm).toContain('setRunStats(null)')
-    expect(elseArm).toContain('loadRunStats(e.conversationId)')
+    expect(elseArm).toContain('loadRunStatsForRun(e.conversationId, e.requestId)')
     expect(elseArm.indexOf('setRunStats(null)'), '顺序：旧值必须先收，否则在飞那一帧还挂着上轮数字')
-      .toBeLessThan(elseArm.indexOf('loadRunStats('))
+      .toBeLessThan(elseArm.indexOf('loadRunStatsForRun('))
   })
 
   it('改前那串 `setRunStats(e.traceStats ?? null)` 不许回来（它就是"0 步"上屏的那一步）', () => {
@@ -207,11 +208,13 @@ describe('E 读法自证：改前的两种形状喂进同一套读法，必须�
   setRunStats(null)
 }`)
     const [, elseArm = ''] = bad.split(/\}\s*else\s*\{/)
-    expect(elseArm.includes('loadRunStats('), '改前形状＝"没读到"与"库里没有"共用同一次沉默').toBe(false)
+    // §398 之后"重读"有两个名字（按会话／按运行），改前那一支两样都没有＝"没读到"与"库里没有"共用同一次沉默
+    expect(/loadRunStats(ForRun)?\(/.test(elseArm), '改前形状＝"没读到"与"库里没有"共用同一次沉默').toBe(false)
   })
 
   it('反向对照：现行源码过同一套读法（合成段能被抓红不代表读法本身空转）', () => {
     expect(ENGINE.includes(ZEROS)).toBe(false)
-    expect(CHAT).toContain('loadRunStats(e.conversationId)')
+    // §398：这一发改按这一轮取（`loadRunStatsForRun(e.conversationId, e.requestId)），不再是会话最近那次
+    expect(CHAT).toContain('loadRunStatsForRun(e.conversationId, e.requestId)')
   })
 })

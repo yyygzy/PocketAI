@@ -66,6 +66,8 @@ function stubBase(): Record<string, (...args: any[]) => unknown> {
       archivedOnly ? [] : [CONVERSATION],
     listMessages: () => [],
     getLatestRunStats: () => null,
+    // §398：DONE 兜底那一发改走这一发（按 requestId）；本文件不测那一格，桩照兄弟通道给安静值
+    getRunStats: () => null,
     getSessionStats: () => null,
     getLatestRunTraces: () => [],
     getAgentTextProtocol: () => [],

@@ -27,6 +27,12 @@
 //   · 门按"存在"读了 X、紧随的断言读的却是另一颗更晚到货的 Y ⇒ 放行。要收这一档得比"门读的那颗==断言读的那颗"，
 //     会把大量「门等加载完、断言查内容」的正常写法判成候选。
 //   · 转换门依赖「撤横幅与画新数据落在同一批 setState」——React 18 自动批处理下成立，逐处再验要读产品码的写序。
+//   · **本面的"读屏"只认 DOM**（`screen`／`textContent`／闭包 helper）。真 hook 夹具（`renderHook`＋
+//     `result.current`）读的是渲染层状态、同样要等响应落地才有值，但它不碰 DOM⇒一律落进「门后没有读屏断言」，
+//     本面看不见。§398 全量第一趟就是这么红了一颗（门等 `getRunStats` 的**调用计数**、紧随同步读
+//     `result.current.runStats`＝计数门 t=0 就放行，读的是落地之前那一帧）——同族在 §380／§396 已各摆七颗／九颗，
+//     只是那次没撞上。收这一档要把"读 hook 状态"当成第二类屏（`result.current` 出现在门后的同步断言里＝候选），
+//     代价是"无紧随读屏"那一格（现数 395）要重新分桶⇒另起一枚，本批只把形状记在台账的待收账里。
 // @vitest-environment node
 import fs from 'node:fs'
 import path from 'node:path'
@@ -263,9 +269,16 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   一份真 hook 用例里）：这份夹具没有屏可读——门等的是 hook 状态（`conversationId` 到位）与
     //   `getLatestRunStats` 的**调用计数**／`result.current` 的值，门后也不读屏⇒九颗全落「门后没有读屏断言」
     //   （367→376），「按存在读屏」那一格一格未动。⇒ 与 §380 那七颗同一形状：**hook 层的接线用例天然走计数门**。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1036)
+    //   §398 再抬到 1049／566／76／389／0／18（净新增 13 颗 awaits、不是搬运，全在 `agent-run-stats-scope-398`
+    //   一份真 hook 用例里）：这份夹具与 §396 同一形状——门等的是 hook 状态（`conversationId` 到位）／两发读取的
+    //   **调用计数**／`result.current` 的值，门后一律不读屏⇒13 颗全落「门后没有读屏断言」（376→389），
+    //   其余四桶一格未动（会假红 0／只会假绿 18 名单只有一颗随本枚插行漂了位置，判语一字未动）。
+    //   §398 的**第二段**（同一枚里补的「分步明细那一面」）再抬到 1055／395：本文件新写 6 颗，仍是同一形状
+    //   ——门等调用计数（`getRunTraces`／`getLatestRunTraces` 被问了几次）与 `result.current` 的值、门后不读屏
+    //   ⇒全部落「门后没有读屏断言」（389→395），其余四桶未动。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1055)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('566/76/376/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('566/76/395/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
@@ -296,7 +309,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/load-fail-read-retry-350.test.tsx:97 -> :99',
       'tests/load-fail-read-retry-352.test.tsx:90 -> :91',
       'tests/load-fail-read-retry-354.test.tsx:91 -> :92',
-      'tests/renderer-agent-sub-session-refresh-245.test.tsx:151 -> :152',
+      'tests/renderer-agent-sub-session-refresh-245.test.tsx:153 -> :154', // §398 现量＋2：该文件补 `getRunStats` 桩手抄名单时插了两行，形状与判语一字未动
       'tests/renderer-channel-b3.test.tsx:109 -> :110',
       'tests/renderer-channel-b3.test.tsx:117 -> :119',
       'tests/renderer-channel-b3.test.tsx:127 -> :128',

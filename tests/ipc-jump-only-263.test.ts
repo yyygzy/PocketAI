@@ -357,11 +357,15 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     const CHAT = 'src/renderer/src/modules/chat/ChatModule.tsx'
     const WIZ = 'src/renderer/src/modules/wizard/FirstRunWizard.tsx'
     const stats = read(STATS)
-    // 每发两路（resolve 的失败对象＋reject）各写自己那份 unread；统计是两发⇒四路
-    expect(count(stats, /setRunStatsUnread\(\{ error: /g), '本次运行统计两路').toBe(2)
+    // 每发两路（resolve 的失败对象＋reject）各写自己那份 unread；「本次运行统计」§398 起有两发
+    // （按会话最近一次＝挂载那一发／按这一轮＝DONE 兜底那一发）⇒ 2 变 4，不是搬运，是净新增一问
+    expect(count(stats, /setRunStatsUnread\(\{ error: /g), '本次运行统计两发×两路').toBe(4)
     expect(count(stats, /setSessionStatsUnread\(\{ error: /g), '会话累计统计两路').toBe(2)
     // §260 那条"要不要写"的守卫现在**成功路与失败路都有**——旧会话的失败不许在已切过去的屏上留一句"读不到"
-    expect(count(stats, /if \(conversationIdRef\.current !== id\) return/g), '两发×两路各挡一次迟到').toBe(4)
+    // 按会话那两发用 `!== id`（各 2 路＝4），§398 新加的按运行那一发参数名不同⇒单独数（2 路）
+    expect(count(stats, /if \(conversationIdRef\.current !== id\) return/g), '按会话那两发×两路各挡一次迟到').toBe(4)
+    expect(count(stats, /if \(conversationIdRef\.current !== runConversationId\) return/g), '§398 按运行那一发也两路都挡').toBe(2)
+    expect(count(stats, /if \(requestIdRef\.current !== requestId\) return/g), '§398：按运行那一发还得多挡一面——新一轮已经开跑').toBe(2)
     expect(count(read(UNLOCK), /setLockUnread\(\{ error: /g), '锁状态两路').toBe(2)
     expect(count(read(CHAT), /setDraftUnread\(\{ error: /g), '草稿读两路').toBe(2)
     expect(count(read(WIZ), /setAssistantsUnread\(\{ error: /g), '向导助手清单两路').toBe(2)

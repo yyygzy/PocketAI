@@ -159,9 +159,27 @@ export function registerAgentHandlers(): void {
     agentTraceRepo.latestStatsByConversation(conversationId),
   argsSchema(idSchema))
 
+  // §398：**按这一次运行**取统计。上面那一发问的是"这个会话最近跑成什么样"，这一发问的是"刚跑完的这一轮"——
+  // 两问不能共用一把尺子：本轮一行 trace 都没落库时（`safeTrace` 写失败只 warn，见 engine.ts），
+  // `latestStatsByConversation` 会顺着 `created_at DESC` 取到**上一轮**的 request 并把那份非零数字回给你，
+  // 而渲染层把它画在「本次运行统计」那一格里就是说假话。
+  // 回值口径：`statsByRequest` 对"这个 request 零行"回的是三个 0，**这不是失败也不是没有**——
+  // 按运行取时它就是真值（§396 定的口径：读到的账本真是 0 行就照摆 0），所以这里不折成 null。
+  safeHandle(IPC.AGENT_GET_RUN_STATS, (_e, requestId: string) =>
+    agentTraceRepo.statsByRequest(requestId),
+  argsSchema(idSchema))
+
   // 会话最近一次 Agent 运行的分步明细（按 step_index 升序）
   safeHandle(IPC.AGENT_GET_LATEST_RUN_TRACES, (_e, conversationId: string) =>
     agentTraceRepo.latestTracesByConversation(conversationId),
+  argsSchema(idSchema))
+
+  // §398：同一颗「本次运行」的身份，明细这一格也必须按**这一轮**取。它头顶的按钮写的就是
+  //  「查看本次运行分步明细」（zh.ts `agent.runStatsDetail`），顺着会话取会在本轮零行时列出上一轮的步骤；
+  //  而统计那格本枚已改成按运行⇒不改这里就会出现「0 步」下面挂着别人的步骤清单这种自相矛盾。
+  //  零行⇒`listByRequest` 回空数组＝"这一轮确实没有步"，与统计那格的三个 0 自洽。
+  safeHandle(IPC.AGENT_GET_RUN_TRACES, (_e, requestId: string) =>
+    agentTraceRepo.listByRequest(requestId),
   argsSchema(idSchema))
 
   // 会话级累计统计（跨该会话全部运行：运行次数/总耗时/总 token）
