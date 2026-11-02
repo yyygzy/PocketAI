@@ -225,4 +225,28 @@ describe('功能门控与 Lite 限制', () => {
     expect(licenseService.hasFeature('mcp')).toBe(false)
     expect(() => assertCanCreateAssistant(LITE_LIMITS.assistants)).toThrow()
   })
+
+  // §393：长驻会话跨零点——load 时有效、运行时过期 ⇒ getStatus/hasFeature 当场切档
+  it('§393 运行时过期：getStatus 回 expired=true + hasFeature 拒绝 + assertCan 抛', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-02T23:00:00Z'))
+      const st = licenseService.loadFromString(
+        sign(basePayload({ expires_at: Date.parse('2026-11-03T00:00:00Z') }))
+      )
+      expect(st.valid).toBe(true)
+      expect(st.expired).toBe(false)
+      expect(licenseService.hasFeature('mcp')).toBe(true)
+
+      // 过了一小时＝过了零点
+      vi.setSystemTime(new Date('2026-11-03T01:00:00Z'))
+      const st2 = licenseService.getStatus()
+      expect(st2.valid).toBe(false)
+      expect(st2.expired).toBe(true)
+      expect(licenseService.hasFeature('mcp')).toBe(false)
+      expect(() => assertCanCreateAssistant(LITE_LIMITS.assistants)).toThrow()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

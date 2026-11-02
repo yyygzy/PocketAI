@@ -184,8 +184,11 @@ export class LicenseService {
     return this.buildStatus(true, payload, false)
   }
 
-  /** 返回当前 License 状态（不触发验签） */
+  /** 返回当前 License 状态（不触发验签）；§393：运行时重判 expires_at */
   getStatus(): LicenseStatus {
+    if (this.current && Date.now() > this.current.expires_at) {
+      return this.buildStatus(false, this.current, true)
+    }
     return this.buildStatus(!!this.current, this.current ?? undefined, false)
   }
 
@@ -195,9 +198,9 @@ export class LicenseService {
     this.lastError = null
   }
 
-  /** 检查某个功能是否解锁 */
+  /** 检查某个功能是否解锁；§393：过期即回 false */
   hasFeature(feature: string): boolean {
-    if (!this.current) return false
+    if (!this.current || Date.now() > this.current.expires_at) return false
     return this.current.features.includes(feature) || this.current.plan === 'enterprise'
   }
 
