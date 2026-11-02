@@ -345,10 +345,12 @@ describe('F 手抄 backup-service 桩的那几份测试必须带上 readWebDAVCo
     })
     .sort()
 
-  it('名单现数四份（多一处＝有人在抄这一层而没被看到；少一处＝某份的读法漂了）', () => {
+  it('名单现数五份（多一处＝有人在抄这一层而没被看到；少一处＝某份的读法漂了）', () => {
     expect(stubbers).toEqual([
       'data-health-backup-face-382.test.ts',
       'data-health-sizes-real-fs.test.ts',
+      // §395 新增：这一份 mock 了同一层、又真跑 data-health 的任务那一组，桩形状必须跟着带 readWebDAVConfig
+      'data-health-task-last-ok-395.test.ts',
       'data-health.test.ts',
       'diagnose.test.ts'
     ])

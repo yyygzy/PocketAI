@@ -119,7 +119,7 @@ describe('数据健康：首读就失败 ⇒ 那颗长在报告里的「刷新�
         vectorIndex: { count: 0, dims: [] }
       },
       backup: { configured: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
-      tasks: { kbHealthCheckLastRunAt: null, backupVerifyLastRunAt: null },
+      tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
       boot: { stages: [], totalMs: 0 },
       recentPerf: [],
       perfHistory: []

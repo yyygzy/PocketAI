@@ -53,7 +53,7 @@ const report = (): DataHealthReport => ({
     vectorIndex: { count: 0, dims: [] }
   },
   backup: { configured: false, passwordUndecryptable: false, configUnreadable: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
-  tasks: { kbHealthCheckLastRunAt: null, backupVerifyLastRunAt: null },
+  tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
   boot: { stages: [], totalMs: 0 },
   recentPerf: [],
   perfHistory: []

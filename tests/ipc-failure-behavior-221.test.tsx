@@ -63,7 +63,7 @@ describe('① 数据健康面板：改前把失败对象当报告用，解构当
         traces: { rows: 0, maxRowsInOneConversation: 0 },
         kb: { total: 0, byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 }, errorDocs: [], integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] }, vectorIndex: { count: 0, dims: [] } },
         backup: { configured: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
-        tasks: { kbHealthCheckLastRunAt: null, backupVerifyLastRunAt: null },
+        tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
         boot: { stages: [], totalMs: 0 },
         recentPerf: [],
         perfHistory: []

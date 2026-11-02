@@ -180,6 +180,20 @@ export const DataHealthPanel: React.FC = () => {
     integrity.duplicates.length === 0 &&
     integrity.providerIssues.length === 0
 
+  // §395：维护任务那一格的时间戳来自 `last_run_at`，它在成功与失败两种收尾里都写
+  //        ⇒ 单摆时间等于把「跑过但失败」画成「跑过且成功」。这里按三档说话：
+  //        true 说「未报错」（跳过校验的一跑也算跑完没抛，所以不说"成功"）、false 说「失败」并染色、
+  //        null（这一版之前跑过的旧数据）只报时间，不替它编一档。
+  const taskResult = (lastRunAt: number | null, lastOk: boolean | null): string => {
+    if (lastRunAt === null) return t('dh.never')
+    const at = fmtTime(lastRunAt)
+    return lastOk === true
+      ? `${at} · ${t('dh.task.lastOk')}`
+      : lastOk === false
+        ? `${at} · ${t('dh.task.lastFailed')}`
+        : at
+  }
+
   return (
     <div>
       {/* §345：`load(true)`（那颗「刷新」键）与各修复动作后的重扫都会再读一发；失败侧旧报告留着是对的，
@@ -376,8 +390,16 @@ export const DataHealthPanel: React.FC = () => {
 
       <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.tasks')}</div>
       <div className="space-y-1">
-        <Row label={t('dh.task.kbHealthCheck')} value={tasks.kbHealthCheckLastRunAt === null ? t('dh.never') : fmtTime(tasks.kbHealthCheckLastRunAt)} />
-        <Row label={t('dh.task.backupVerify')} value={tasks.backupVerifyLastRunAt === null ? t('dh.never') : fmtTime(tasks.backupVerifyLastRunAt)} />
+        <Row
+          label={t('dh.task.kbHealthCheck')}
+          value={taskResult(tasks.kbHealthCheckLastRunAt, tasks.kbHealthCheckLastOk)}
+          warn={tasks.kbHealthCheckLastOk === false}
+        />
+        <Row
+          label={t('dh.task.backupVerify')}
+          value={taskResult(tasks.backupVerifyLastRunAt, tasks.backupVerifyLastOk)}
+          warn={tasks.backupVerifyLastOk === false}
+        />
       </div>
 
       {/* 本次启动耗时（USB 冷启动可视化；埋点见 src/main/steward/boot-perf.ts） */}

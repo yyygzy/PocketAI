@@ -57,7 +57,7 @@ const reportOf = (backup: DataHealthReport['backup']): DataHealthReport => ({
     vectorIndex: { count: 0, dims: [] }
   },
   backup,
-  tasks: { kbHealthCheckLastRunAt: null, backupVerifyLastRunAt: null },
+  tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
   boot: { stages: [{ id: 'window', ms: 900 }], totalMs: 900 },
   recentPerf: [],
   perfHistory: []

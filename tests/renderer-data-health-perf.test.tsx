@@ -52,7 +52,7 @@ function report(
       ...kbOver
     },
     backup: { configured: false, passwordUndecryptable: false, configUnreadable: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
-    tasks: { kbHealthCheckLastRunAt: null, backupVerifyLastRunAt: null },
+    tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
     boot: { stages: [{ id: 'window', ms: 900 }], totalMs: 900 },
     recentPerf: [{ label: 'kb.retrieve', ms: 4200, at: new Date('2026-10-10T08:20:00').getTime() }],
     perfHistory

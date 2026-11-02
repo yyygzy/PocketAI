@@ -1151,6 +1151,8 @@ export const ko = {
   'dh.tasks': '유지보수 작업(자동)',
   'dh.task.kbHealthCheck': '지식 베이스 헬스 체크',
   'dh.task.backupVerify': '백업 무결성 검사',
+  'dh.task.lastOk': '마지막 실행 오류 없음',
+  'dh.task.lastFailed': '마지막 실행 실패',
   'dh.boot.title': '부팅 타임라인',
   'dh.boot.dirs': '디렉터리/로그 초기화',
   'dh.boot.db': 'DB 열기+마이그레이션',

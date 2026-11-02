@@ -120,19 +120,30 @@ function setLastRun(key: string, at: number): void {
   appConfigRepo.set(`task.${key}.last_run_at`, String(at))
 }
 
+// §395：`last_run_at` 在成功与失败两种收尾里都写（它在 finally 里），所以「跑过」这一事实分不出成败；
+//        这一颗专管那一发抛没抛。跳过的那一支（没配 WebDAV／云端零份）任务体是 return 而非 throw，
+//        于是记 1＝「这一发没报错」，不是「备份校验通过了」——消费面（数据健康面板）的措辞按这个语义写。
+function setLastOk(key: string, ok: boolean): void {
+  appConfigRepo.set(`task.${key}.last_ok`, ok ? '1' : '0')
+}
+
 async function runTask(task: TaskDef): Promise<void> {
   const at = Date.now()
+  let ok = true
   try {
     await task.run()
     log.debug(`定时任务完成: ${task.name}`)
   } catch (e) {
+    ok = false
     log.warn(`定时任务失败: ${task.name} - ${errMsg(e)}`)
   } finally {
     try {
+      // 两颗写在同一颗保护里（flag 在前、时间戳在后）：任务跑一半时用户锁屏＝库关了，
+      // 这里抛出的只能是"写不回"，绝不能顶掉任务原本的异常（日志上只剩「Database not opened」就查不到真因）。
+      // 顺序取 flag 在前：万一只写进去这一颗，屏上那句说的是"这一发"，而下一次 tick 会照旧补跑到点的任务。
+      setLastOk(task.key, ok)
       setLastRun(task.key, at)
     } catch (e) {
-      // 任务跑一半时用户锁屏（库随之关闭）→ 时间戳写不回。这里只 warn：
-      // finally 里抛错会顶掉任务真正的异常，日志上就只剩「Database not opened」而看不到原本出了什么事
       log.warn(`定时任务时间戳写入失败: ${task.name} - ${errMsg(e)}`)
     }
   }

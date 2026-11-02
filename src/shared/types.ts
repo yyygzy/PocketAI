@@ -449,10 +449,14 @@ export interface DataHealthReport {
     lastOkAt: number | null
     lastError: string | null
   }
-  /** 内置维护任务（task-scheduler）上次运行时间 */
+  /** 内置维护任务（task-scheduler）上次运行时间
+   *  §395：`lastOk` 是三档（true 成功／false 失败／null 还没记过），不是布尔——
+   *        时间戳只能说明「跑过」，屏上那句必须跟着这一档走，不许把 null 画成成功 */
   tasks: {
     kbHealthCheckLastRunAt: number | null
+    kbHealthCheckLastOk: boolean | null
     backupVerifyLastRunAt: number | null
+    backupVerifyLastOk: boolean | null
   }
   /** 本次启动各阶段累计耗时（主进程内存埋点；USB 冷启动可视化） */
   boot: {

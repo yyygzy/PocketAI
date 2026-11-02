@@ -1151,6 +1151,8 @@ export const ja = {
   'dh.tasks': 'メンテナンスタスク（自動）',
   'dh.task.kbHealthCheck': 'ナレッジベースヘルスチェック',
   'dh.task.backupVerify': 'バックアップ整合性チェック',
+  'dh.task.lastOk': '前回の実行はエラーなし',
+  'dh.task.lastFailed': '前回の実行は失敗',
   'dh.boot.title': '起動タイムライン',
   'dh.boot.dirs': 'ディレクトリ/ログ初期化',
   'dh.boot.db': 'DB オープン+マイグレーション',

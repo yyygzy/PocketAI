@@ -1205,6 +1205,8 @@ export const zh = {
   'dh.tasks': '维护任务（自动）',
   'dh.task.kbHealthCheck': '知识库健康检查',
   'dh.task.backupVerify': '备份完整性校验',
+  'dh.task.lastOk': '上次运行未报错',
+  'dh.task.lastFailed': '上次运行失败',
   'dh.refresh': '刷新',
   'dh.boot.title': '本次启动耗时',
   'dh.boot.dirs': '目录/日志初始化',

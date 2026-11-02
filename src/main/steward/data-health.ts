@@ -201,6 +201,15 @@ function readLastRun(key: string): number | null {
   }
 }
 
+function readLastOk(key: string): boolean | null {
+  try {
+    const raw = appConfigRepo.get(key)
+    return raw === '1' ? true : raw === '0' ? false : null
+  } catch {
+    return null
+  }
+}
+
 /** 聚合数据健康度报告（DB 未解锁时 kb/backup/tasks 探测会抛错，由 safeHandle 兜底）
  *  @param opts.refresh 面板上那颗「刷新」按钮：只影响浏览器缓存那一格是否重算（V4-Iter-177） */
 export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealthReport {
@@ -268,7 +277,9 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   // 4. 内置维护任务上次运行时间
   const tasks = {
     kbHealthCheckLastRunAt: readLastRun('task.kb_health_check.last_run_at'),
-    backupVerifyLastRunAt: readLastRun('task.backup_verify.last_run_at')
+    kbHealthCheckLastOk: readLastOk('task.kb_health_check.last_ok'),
+    backupVerifyLastRunAt: readLastRun('task.backup_verify.last_run_at'),
+    backupVerifyLastOk: readLastOk('task.backup_verify.last_ok')
   }
 
   // 5. 本次启动各阶段耗时（内存埋点即时快照）

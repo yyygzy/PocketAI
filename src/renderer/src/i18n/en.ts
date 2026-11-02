@@ -1204,6 +1204,8 @@ export const en = {
   'dh.tasks': 'Maintenance tasks (automatic)',
   'dh.task.kbHealthCheck': 'KB health check',
   'dh.task.backupVerify': 'Backup integrity check',
+  'dh.task.lastOk': 'last run raised no error',
+  'dh.task.lastFailed': 'last run failed',
   'dh.boot.title': 'Boot timeline',
   'dh.boot.dirs': 'Dirs & logging init',
   'dh.boot.db': 'DB open + migrate',

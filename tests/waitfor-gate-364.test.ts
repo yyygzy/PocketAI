@@ -256,9 +256,12 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   四颗反向对照读的是 `expectNoRotateNotice()`／`not.toContain` 的**同步**负向句、都排在"等到货"的门之后
     //   （§365 那句"先落定再读负向句"），不是新的门形状；`findByText` 那颗不计（分类器只认 `await waitFor`）。
     //   其余四桶一格未动（等退场 76／无紧随断言 367／会假红 0／只会假绿 18）。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1026)
+    //   §395 再抬到 1027／566（净新增 1 颗、不是搬运，在 renderer-task-last-ok-face-395 的 mountTasks 助手）：
+    //   那颗门的到货见证写在第一句（两行任务各自挂上 title 才放行），门后只做同步读屏⇒落进「按存在读屏」。
+    //   其余四桶一格未动（等退场 76／无紧随断言 367／会假红 0／只会假绿 18）。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1027)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('565/76/367/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('566/76/367/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
