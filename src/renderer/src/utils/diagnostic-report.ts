@@ -77,7 +77,7 @@ export interface ReportLabels {
   /** §380：探测没成功那一档的第三张脸（报告里也不许把它写成 Stopped） */
   ollamaUnknown: string
   installedModels: string
-  /** §387：ollamaLiveness !== 'up' 时那一行不能说「-」（=没模型），要说「未确认」 */
+  /** §390：ollamaLiveness !== 'up' 时那一行不能说「-」（=没模型），要说「未确认」 */
   installedModelsUnconfirmed: string
   onlineHint: string
   warnings: string

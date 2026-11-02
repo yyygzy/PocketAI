@@ -297,9 +297,9 @@ describe('buildDiagnosticReport — 缺失数据', () => {
     expect(new Set([L.ollamaRunning, L.ollamaStopped, L.ollamaUnknown]).size).toBe(3)
   })
 
-  // §387：已装模型那一行也要按 liveness 分两档——up 时空数组说「-」（=没模型），
+  // §390：已装模型那一行也要按 liveness 分两档——up 时空数组说「-」（=没模型），
   // 非 up 时空数组说「未确认」（=没探到，不能说没模型）。
-  it('§387 已装模型那一行：up 时按数组走，非 up 时说未确认', () => {
+  it('§390 已装模型那一行：up 时按数组走，非 up 时说未确认', () => {
     const modelsLine = (liveness: OllamaLiveness, models: string[]): string =>
       (buildDiagnosticReport(
         { ...baseData, recommendation: { ...recommendation, ollamaLiveness: liveness, installedModels: models } },
