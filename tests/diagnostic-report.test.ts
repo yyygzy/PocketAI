@@ -65,6 +65,7 @@ const L: ReportLabels = {
   ollamaUnknown: 'Unknown',
   ollamaStopped: 'Stopped',
   installedModels: 'Installed models',
+  installedModelsUnconfirmed: 'Unconfirmed (Ollama not running or status unknown)',
   onlineHint: 'Online advice',
   warnings: 'Warnings',
   integrity: 'DB integrity',
@@ -294,5 +295,27 @@ describe('buildDiagnosticReport — 缺失数据', () => {
     expect(ollamaLine('unknown')).toBe(`Ollama: ${L.ollamaUnknown}`)
     // 三串两两不同（共用一句＝这一档在报告里等于没有）
     expect(new Set([L.ollamaRunning, L.ollamaStopped, L.ollamaUnknown]).size).toBe(3)
+  })
+
+  // §387：已装模型那一行也要按 liveness 分两档——up 时空数组说「-」（=没模型），
+  // 非 up 时空数组说「未确认」（=没探到，不能说没模型）。
+  it('§387 已装模型那一行：up 时按数组走，非 up 时说未确认', () => {
+    const modelsLine = (liveness: OllamaLiveness, models: string[]): string =>
+      (buildDiagnosticReport(
+        { ...baseData, recommendation: { ...recommendation, ollamaLiveness: liveness, installedModels: models } },
+        L
+      )
+        .split('\n')
+        .find((line) => line.startsWith('Installed models:')) ?? '').trim()
+    // up + 有模型 ⇒ 列出来
+    expect(modelsLine('up', ['qwen2.5:7b', 'nomic-embed-text'])).toBe('Installed models: qwen2.5:7b, nomic-embed-text')
+    // up + 空数组 ⇒ -（确实没模型）
+    expect(modelsLine('up', [])).toBe('Installed models: -')
+    // down + 空数组 ⇒ 未确认（探测失败，不能说没模型）
+    expect(modelsLine('down', [])).toBe(`Installed models: ${L.installedModelsUnconfirmed}`)
+    // unknown + 空数组 ⇒ 同上
+    expect(modelsLine('unknown', [])).toBe(`Installed models: ${L.installedModelsUnconfirmed}`)
+    // down + 有模型（理论上不会发生，但万一探针成功过又掉线）⇒ 也列出来（数据比沉默有用）
+    expect(modelsLine('down', ['qwen2.5:7b'])).toBe('Installed models: qwen2.5:7b')
   })
 })

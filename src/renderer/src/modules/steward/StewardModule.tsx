@@ -291,6 +291,7 @@ export const StewardModule: React.FC = () => {
         ollamaStopped: t('steward.ollamaStopped'),
         ollamaUnknown: t('steward.ollamaUnknown'),
         installedModels: t('steward.reportInstalledModels'),
+        installedModelsUnconfirmed: t('steward.reportInstalledModelsUnconfirmed'),
         rec: (kind, code, params) => t(modelRecKey(kind, code), params),
         onlineHint: t('steward.reportOnlineHint'),
         warnings: t('steward.reportWarnings'),

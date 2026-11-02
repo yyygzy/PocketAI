@@ -2836,7 +2836,9 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
       case 'available':
         return { text: t('upd.available', { v: newVer ?? '' }), color: 'text-[var(--color-warning)]' }
       case 'unavailable':
-        return { text: t('upd.unavailable'), color: 'text-[var(--color-success)]' }
+        return status?.error
+          ? { text: t('upd.notSupported'), color: 'text-[var(--color-info)]' }
+          : { text: t('upd.unavailable'), color: 'text-[var(--color-success)]' }
       case 'downloading':
         return { text: t('upd.downloading', { p: progress }), color: 'text-[var(--color-info)]' }
       case 'downloaded':

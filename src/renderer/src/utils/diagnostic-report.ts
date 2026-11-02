@@ -77,6 +77,8 @@ export interface ReportLabels {
   /** §380：探测没成功那一档的第三张脸（报告里也不许把它写成 Stopped） */
   ollamaUnknown: string
   installedModels: string
+  /** §387：ollamaLiveness !== 'up' 时那一行不能说「-」（=没模型），要说「未确认」 */
+  installedModelsUnconfirmed: string
   onlineHint: string
   warnings: string
   // 健康字段
@@ -173,7 +175,9 @@ export function buildDiagnosticReport(d: DiagnosticReportData, L: ReportLabels):
       L.rec('summary', r.summary, r.summaryParams),
       '',
       kv('Ollama', r.ollamaLiveness === 'up' ? L.ollamaRunning : r.ollamaLiveness === 'down' ? L.ollamaStopped : L.ollamaUnknown),
-      kv(L.installedModels, r.installedModels.length ? r.installedModels.join(', ') : '-'),
+      kv(L.installedModels, r.ollamaLiveness === 'up' || r.installedModels.length > 0
+        ? (r.installedModels.length ? r.installedModels.join(', ') : '-')
+        : L.installedModelsUnconfirmed),
       ''
     ]
     r.localPicks.forEach((p) => {
