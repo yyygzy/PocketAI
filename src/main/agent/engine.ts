@@ -128,13 +128,19 @@ function safeTrace(rec: Parameters<typeof agentTraceRepo.insert>[0]): void {
   }
 }
 
-/** 安全获取 trace 统计，表不存在时返回默认值（口径见 `AgentRunStats`：token 含子 run，步数/耗时算主干） */
-function safeTraceStats(requestId: string): AgentRunStats {
+/**
+ * 安全获取 trace 统计（口径见 `AgentRunStats`：token 含子 run，步数/耗时算主干）。
+ * §396：读不出来时回 **null**，不再回 `{0,0,0}` 那份默认值——那一发失败摆出来的三个 0
+ * 与"这轮确实一步都没跑成"在屏上同一个形状，而 DONE 事件旁边就带着我们知道的真步数，
+ * 谎是可以在源头避免的。表不存在那一档注释原先写过，但迁移链里 `agent_traces` 一直在建，
+ * 真实的抛出来源是库被关／SQL IO 错（U 盘场景），所以"读不出来"是要上屏的一档，不是默认值。
+ */
+function safeTraceStats(requestId: string): AgentRunStats | null {
   try {
     return agentTraceRepo.statsByRequest(requestId)
   } catch (e) {
     logger.warn(`[agent] trace 统计失败: ${errMsg(e)}`)
-    return { totalDurationMs: 0, totalTokens: 0, stepCount: 0 }
+    return null
   }
 }
 
@@ -1358,7 +1364,8 @@ class AgentEngine {
           finalMessageId: ctx.finalMessageId,
           fullContent: ctx.finalContent,
           stepCount: ctx.stepCount,
-          traceStats: safeTraceStats(requestId),
+          // §396：读到才带这一颗；读不出来时**不带**（不是带一份 0），渲染层据此走那颗既有的「本次运行统计 读不到」
+          traceStats: safeTraceStats(requestId) ?? undefined,
           sources: ctx.sources.length > 0 ? ctx.sources : undefined,
           usedTools: ctx.recentToolSignatures.length > 0,
           mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined,

@@ -1006,6 +1006,11 @@ export interface AgentDoneEvent {
   finalMessageId: string
   fullContent: string
   stepCount: number
+  /**
+   * §396：**只在主进程那一发 trace 统计真读到时携带**。读不出来时不带这一颗——
+   * 原先失败回一份 `{0,0,0}`，屏上「0 步 · 耗时 0ms · 0 tokens」与"这轮确实一步没跑成"同一个形状，
+   * 而旁边就躺着我们知道真值的 `stepCount`。缺这一颗时渲染层走既有的重读那一发＋那颗「读不到」。
+   */
   traceStats?: AgentRunStats
   /** 知识库引用来源（RAG 检索命中的 chunk），仅最终回答无 tool_calls 时携带 */
   sources?: MessageSource[]

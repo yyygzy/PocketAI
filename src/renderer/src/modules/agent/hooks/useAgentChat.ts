@@ -886,7 +886,17 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         // 仅在事件仍归属当前会话时展示统计与复位（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setInterrupted(false)
-          setRunStats(e.traceStats ?? null)
+          // §396：主进程那一发 trace 统计读不出来时**不带这颗**（改前回一份 `{0,0,0}` ⇒ 屏上
+          //        「0 步 · 耗时 0ms · 0 tokens」与"这轮确实一步没跑成"是同一个形状）。
+          //        缺席⇒先复位再走与挂载同一条重读路：读到就填真值，读不到就亮那颗既有的
+          //        「本次运行统计 读不到」＋重试键（§264 那张脸，本枚复用不另起一句）。
+          if (e.traceStats) {
+            setRunStats(e.traceStats)
+            setRunStatsUnread(null)
+          } else {
+            setRunStats(null)
+            loadRunStats(e.conversationId)
+          }
           // 零调用提示：本轮有工具可用却一次都没调用**且整条会话都没有过工具卡**才亮——
           // 只凭本轮就建议换模型，等于拿一轮的信号断言这台模型的行为（§242 真机读数里
           // 同一台模型上一轮调了、这一轮没调，那句「似乎从不」就是这么被撑破的）。
