@@ -853,6 +853,13 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE skills ADD COLUMN resident INTEGER NOT NULL DEFAULT 1;
     `
+  },
+  {
+    version: 52,
+    name: 'kb_doc_updated_at',
+    up: `
+      ALTER TABLE kb_documents ADD COLUMN updated_at INTEGER;
+    `
   }
 ]
 

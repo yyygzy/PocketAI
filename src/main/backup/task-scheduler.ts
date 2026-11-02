@@ -47,7 +47,7 @@ const tasks: TaskDef[] = [
       let fixed = 0
       for (const doc of docs) {
         if (doc.status === 'pending' || doc.status === 'parsing' || doc.status === 'indexing') {
-          if (now - doc.createdAt > STUCK_THRESHOLD) {
+          if (now - (doc.updatedAt ?? doc.createdAt) > STUCK_THRESHOLD) {
             kbDocRepo.setStatus(doc.id, 'error', '索引超时，已自动标记为失败')
             fixed++
           }

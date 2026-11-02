@@ -697,6 +697,8 @@ export interface KbDocument {
   /** 文档级检索开关：false 临时排除出检索范围（不删除、不重索引） */
   enabled: boolean
   createdAt: number
+  /** §394：最后一次状态变更时间；旧数据（迁移前）或新建时可能缺，健康检查回退到 createdAt */
+  updatedAt?: number | null
 }
 
 export interface KbChunk {

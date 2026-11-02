@@ -17,6 +17,7 @@ interface KbDocRow {
   content_hash: string | null
   enabled: number
   created_at: number
+  updated_at?: number | null
 }
 
 export function rowToRecord(row: KbDocRow): KbDocument {
@@ -31,7 +32,8 @@ export function rowToRecord(row: KbDocRow): KbDocument {
     error: row.error,
     contentHash: row.content_hash,
     enabled: row.enabled === 1,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 
@@ -115,8 +117,8 @@ export const kbDocRepo = {
   setStatus(id: string, status: KbDocStatus, error?: string | null): void {
     dbService
       .getHandle()
-      .prepare('UPDATE kb_documents SET status=?, error=? WHERE id=?')
-      .run(status, error ?? null, id)
+      .prepare('UPDATE kb_documents SET status=?, error=?, updated_at=? WHERE id=?')
+      .run(status, error ?? null, Date.now(), id)
   },
 
   setChunkCount(id: string, count: number): void {
