@@ -151,7 +151,7 @@ export function runAudit(): AuditResult {
           : 'WebDAV 已配置但定时备份未开启，仅手动备份',
         suggestion: schedule.enabled ? undefined : '设置 → 备份 → 勾选「启用定时自动备份」'
       })
-      const lastOkAt = schedule.lastResult?.ok ? schedule.lastResult.at : null
+      const lastOkAt = schedule.lastOkAt
       if (lastOkAt === null) {
         checks.push({
           id: 'backup-freshness',

@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => ({
   webdavCfg: null as unknown,
   webdavCfgBroken: false,
   webdavPwdBroken: false,
-  schedule: { enabled: false, intervalHours: 6, lastResult: null as null | { ok: boolean; at: number } },
+  schedule: { enabled: false, intervalHours: 6, lastResult: null as null | { ok: boolean; at: number }, lastOkAt: null as number | null },
   backupError: null as Error | null,
   // 硬件
   hwDiskRemovable: false,
@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => ({
     this.webdavCfg = null
     this.webdavCfgBroken = false
     this.webdavPwdBroken = false
-    this.schedule = { enabled: false, intervalHours: 6, lastResult: null }
+    this.schedule = { enabled: false, intervalHours: 6, lastResult: null, lastOkAt: null }
     this.backupError = null
     this.hwDiskRemovable = false
     this.hwDiskFreeSpace = null
@@ -221,6 +221,7 @@ describe('runAudit 安全检测', () => {
     mocks.schedule = {
       enabled: true,
       intervalHours: 6,
+      lastOkAt: Date.now() - 1 * 24 * 3600 * 1000,
       lastResult: { ok: true, at: Date.now() - 1 * 24 * 3600 * 1000 }
     }
   }
@@ -294,7 +295,8 @@ describe('runAudit 安全检测', () => {
     mocks.schedule = {
       enabled: true,
       intervalHours: 6,
-      lastResult: { ok: true, at: Date.now() - 1 * 24 * 3600 * 1000 } // 1 天前
+      lastOkAt: Date.now() - 1 * 24 * 3600 * 1000,
+      lastResult: { ok: true, at: Date.now() - 1 * 24 * 3600 * 1000 }
     }
     const r = runAudit()
     expect(findAudit(r.checks, 'backup-cloud')?.level).toBe('ok')
@@ -306,7 +308,7 @@ describe('runAudit 安全检测', () => {
   it('§382 口令解不开＋定时开着：第三张脸（warn＋"解不开"那句），不许再说「每 6 小时执行」', () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.webdavPwdBroken = true
-    mocks.schedule = { enabled: true, intervalHours: 6, lastResult: { ok: true, at: Date.now() - 3600 * 1000 } }
+    mocks.schedule = { enabled: true, intervalHours: 6, lastOkAt: Date.now() - 3600 * 1000, lastResult: { ok: true, at: Date.now() - 3600 * 1000 } }
     const item = findAudit(runAudit().checks, 'backup-cloud')
     expect(item?.level).toBe('warn')
     expect(item?.detail).toContain('解不开')
@@ -345,14 +347,14 @@ describe('runAudit 安全检测', () => {
   it('§382 反向对照：解不开那一档不再推 backup-freshness（第三张脸已经比它更重，不摆两句相互矛盾的话）', () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.webdavPwdBroken = true
-    mocks.schedule = { enabled: true, intervalHours: 6, lastResult: { ok: true, at: Date.now() - 40 * 24 * 3600 * 1000 } }
+    mocks.schedule = { enabled: true, intervalHours: 6, lastOkAt: Date.now() - 40 * 24 * 3600 * 1000, lastResult: { ok: true, at: Date.now() - 40 * 24 * 3600 * 1000 } }
     expect(findAudit(runAudit().checks, 'backup-freshness')).toBeUndefined()
   })
 
   it('§382 正向对照：那颗为 false 时那一格照常（新判据不许把正常档也拉成 warn）', () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.webdavPwdBroken = false
-    mocks.schedule = { enabled: true, intervalHours: 6, lastResult: { ok: true, at: Date.now() - 3600 * 1000 } }
+    mocks.schedule = { enabled: true, intervalHours: 6, lastOkAt: Date.now() - 3600 * 1000, lastResult: { ok: true, at: Date.now() - 3600 * 1000 } }
     const item = findAudit(runAudit().checks, 'backup-cloud')
     expect(item?.level).toBe('ok')
     expect(item?.detail).toContain('每 6 小时执行')
@@ -363,7 +365,8 @@ describe('runAudit 安全检测', () => {
     mocks.schedule = {
       enabled: true,
       intervalHours: 6,
-      lastResult: { ok: true, at: Date.now() - 40 * 24 * 3600 * 1000 } // 40 天前
+      lastOkAt: Date.now() - 40 * 24 * 3600 * 1000,
+      lastResult: { ok: true, at: Date.now() - 40 * 24 * 3600 * 1000 }
     }
     const r = runAudit()
     const fresh = findAudit(r.checks, 'backup-freshness')

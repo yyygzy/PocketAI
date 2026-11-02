@@ -258,7 +258,7 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
       enabled: s.enabled,
       intervalHours: s.intervalHours,
       lastRunAt: s.lastRunAt,
-      lastOkAt: s.lastResult?.ok ? s.lastResult.at : null,
+      lastOkAt: s.lastOkAt,
       lastError: s.lastResult && !s.lastResult.ok ? s.lastResult.error ?? '备份失败' : null
     }
   } catch (e) {

@@ -26,6 +26,7 @@ const M = vi.hoisted(() => ({
     intervalHours: 6,
     retentionCount: 3,
     lastRunAt: null as number | null,
+    lastOkAt: null as number | null,
     lastResult: null as null | { ok: boolean; at: number; error?: string | null }
   },
   reset() {
@@ -35,6 +36,7 @@ const M = vi.hoisted(() => ({
       intervalHours: 6,
       retentionCount: 3,
       lastRunAt: null,
+      lastOkAt: null,
       lastResult: null
     }
   }

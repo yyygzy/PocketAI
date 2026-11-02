@@ -37,6 +37,8 @@ export interface BackupScheduleStatus {
   /** 保留最近 N 份全量包，0=不自动清理 */
   retentionCount: number
   lastRunAt: number | null
+  /** §392：独立成功槽位，不随失败覆盖 */
+  lastOkAt: number | null
   lastResult: BackupRunResult | null
 }
 
@@ -45,6 +47,7 @@ const K_INTERVAL = 'backup.schedule_interval_hours'
 const K_RETENTION = 'backup.retention_count'
 const K_LAST_RUN = 'backup.last_run_at'
 const K_LAST_RESULT = 'backup.last_result'
+const K_LAST_OK = 'backup.last_ok_at'
 
 const TICK_MS = 10 * 60 * 1000 // 10 分钟检查一次
 const DEFAULT_INTERVAL_HOURS = 24
@@ -108,6 +111,10 @@ export function getBackupSchedule(): BackupScheduleStatus {
       const v = Number(appConfigRepo.get(K_LAST_RUN))
       return Number.isFinite(v) && v > 0 ? v : null
     })(),
+    lastOkAt: (() => {
+      const v = Number(appConfigRepo.get(K_LAST_OK))
+      return Number.isFinite(v) && v > 0 ? v : null
+    })(),
     lastResult: readResult()
   }
 }
@@ -143,6 +150,7 @@ export async function runScheduledBackup(): Promise<BackupRunResult | null> {
     const r = await createWebDAVBackup(cfg)
     result = { ok: true, at, filename: r.filename }
     log.info(`定时备份成功: ${r.filename}`)
+    appConfigRepo.set(K_LAST_OK, String(at))
     // 备份成功后按保留份数轮转旧全量包；整段失败不改变备份成功结论
     result.pruned = await pruneOldBackups(cfg, r.filename)
   } catch (e) {
