@@ -11,11 +11,11 @@
 //   ④ 收合：Esc 与点外部都收得掉；运行中附件与片段两行禁用、知识库行仍可挑。
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import React from 'react'
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
-import { mountWithProviders, stubPocketai } from './helpers/renderer'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { agentToolsStub, mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AgentComposer } from '../src/renderer/src/modules/agent/components/AgentComposer'
 import { zh } from '../src/renderer/src/i18n/zh'
-import type { KnowledgeBase, PromptSnippetRecord } from '../src/shared/types'
+import type { KnowledgeBase, PromptSnippetRecord, ShellConfig } from '../src/shared/types'
 
 const L = (key: string): string => (zh as unknown as Record<string, string>)[key]!
 const FAILED = (what: string, msg: string): string =>
@@ -94,6 +94,7 @@ function props(over: Record<string, unknown> = {}): Record<string, unknown> {
     workspaceUnread: null,
     onPickWorkspace: pickWorkspace,
     onRetryWorkspace: retryWorkspace,
+    tools: agentToolsStub(),
     ...over
   }
 }
@@ -389,5 +390,166 @@ describe('⑥ 升级回显（§399②a 第二半：常态一颗徽标，坏消�
       MOUNT_BUDGET
     )
     expect(danger()).toBe(true)
+  })
+})
+
+describe('⑦ 工具策略那一行与它的嵌套第二层（§399②b）', () => {
+  const toolsMenu = (): HTMLElement | null => screen.queryByTestId('agent-composer-tools-menu')
+  const toolsRow = (): HTMLElement => screen.getByTestId('agent-composer-plus-tools')
+  const openTools = async (): Promise<void> => {
+    await openPlus()
+    fireEvent.click(toolsRow())
+    await waitFor(() => expect(toolsMenu()).not.toBeNull(), MOUNT_BUDGET)
+  }
+  const DEFAULTS = (what: string, msg: string): string =>
+    L('common.loadFailedDefaults').replace('{what}', what).replace('{msg}', msg)
+  const threeUnread = (): Record<string, unknown> => ({
+    tools: agentToolsStub({
+      toolUnread: { workspace: null, shell: 'S:终端清单取不到', webSearch: 'W:渠道取不到', calendar: 'C:日历取不到' }
+    })
+  })
+  const dangerNow = (): boolean =>
+    (screen.getByTestId('agent-composer-plus').getAttribute('class') ?? '').includes('text-[var(--color-danger)]')
+
+  it('两层都没开⇒ 那三行控件不在屏上（消息流之上那条常驻折叠条从此没有第二份脸）', () => {
+    mount()
+    expect(toolsMenu()).toBeNull()
+    expect(screen.queryAllByRole('checkbox'), '控件只住在那一层里').toEqual([])
+  })
+
+  it('点那一行⇒ 长出第二层、三行齐；外层「+」菜单同时还在，那一行的悬停翻成「收起」', async () => {
+    mount()
+    await openTools()
+    expect(menu(), '那一层嵌在外层里面，不是把外层顶掉').not.toBeNull()
+    expect(within(toolsMenu() as HTMLElement).getAllByRole('checkbox')).toHaveLength(3)
+    expect(toolsRow().getAttribute('title')).toBe(L('agent.collapse'))
+    expect(toolsRow().getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('再点那一行⇒ 只收那一层，外层菜单留着（不是"点一下把两层一起关掉"）', async () => {
+    mount()
+    await openTools()
+    fireEvent.click(toolsRow())
+    await waitFor(() => expect(toolsMenu()).toBeNull(), MOUNT_BUDGET)
+    expect(menu()).not.toBeNull()
+  })
+
+  it('Esc 在那一层里⇒只收那一层；外层菜单要再按一次才收（不越级，也不变成哑键）', async () => {
+    mount()
+    await openTools()
+    fireEvent.keyDown(toolsMenu() as HTMLElement, { key: 'Escape' })
+    await waitFor(() => expect(toolsMenu()).toBeNull(), MOUNT_BUDGET)
+    expect(menu(), '外层不该被内层的 Esc 顺带关掉').not.toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(menu()).toBeNull(), MOUNT_BUDGET)
+  })
+
+  it('点内层之外、但还在外层菜单里（知识库那行标题）⇒ 只收内层', async () => {
+    mount()
+    await openTools()
+    fireEvent.mouseDown(screen.getByText(L('mention.knowledge')))
+    await waitFor(() => expect(toolsMenu()).toBeNull(), MOUNT_BUDGET)
+    expect(menu()).not.toBeNull()
+  })
+
+  it('点真正的外部（输入框）⇒ 两层一起收；重开「+」时那一层不残留成开着', async () => {
+    mount()
+    await openTools()
+    fireEvent.mouseDown(screen.getByTitle(L('agent.composerTitle')))
+    await waitFor(() => expect(menu()).toBeNull(), MOUNT_BUDGET)
+    expect(toolsMenu()).toBeNull()
+    fireEvent.click(screen.getByTestId('agent-composer-plus'))
+    await waitFor(() => expect(menu()).not.toBeNull(), MOUNT_BUDGET)
+    expect(toolsMenu(), 'toolsOpen 留在 true＝重开直接摊开那三行，与"点一下才展开"相反').toBeNull()
+  })
+
+  it('密钥确认弹窗里点一下不算"点浮层外面"⇒ 两层都不收（点确认就关层＝这发永远确认不完）', async () => {
+    mount(
+      {},
+      {
+        tools: agentToolsStub({
+          secretDialog: React.createElement(
+            'div',
+            { role: 'dialog', 'data-testid': 'stub-secret-dialog' },
+            React.createElement('button', { 'data-testid': 'stub-secret-confirm' }, '确认')
+          )
+        })
+      }
+    )
+    await openTools()
+    expect(screen.getByTestId('stub-secret-dialog')).toBeTruthy()
+    const btn = screen.getByTestId('stub-secret-confirm')
+    fireEvent.mouseDown(btn)
+    fireEvent.click(btn)
+    expect(toolsMenu(), '内层不该被这一下关掉').not.toBeNull()
+    expect(menu(), '外层更不该').not.toBeNull()
+  })
+
+  it('摘要行点的是"开着哪几项"：开了终端与联网就点🖥🌐，没开日历就不点📅', async () => {
+    mount(
+      {},
+      {
+        tools: agentToolsStub({
+          shellConfig: { enabled: true, policy: 'confirm' },
+          wsConfig: { enabled: true, provider: 'tavily', apiKey: '', hasKey: false }
+        })
+      }
+    )
+    await openPlus()
+    const row = toolsRow().textContent ?? ''
+    expect(row).toContain('🖥')
+    expect(row).toContain('🌐')
+    expect(row, '日历没开就不点📅').not.toContain('📅')
+  })
+
+  it('三项全关着⇒ 那一行只念一次「工具配置」（旧折叠条的 `summary || t(...)` 会念成「工具配置 工具配置」）', async () => {
+    mount()
+    await openPlus()
+    const off = toolsRow().textContent ?? ''
+    expect(off).toContain(L('agent.toolConfig'))
+    expect(off.split(L('agent.toolConfig')).length - 1, '「工具配置」在这行上只出现一次').toBe(1)
+    expect(off).not.toContain('🖥')
+  })
+
+  it('在那一层里勾终端开关⇒ `patchShellConfig` 收到 {enabled:true}（控件真接上，不是画出来的死控件）', async () => {
+    const patchShellConfig = vi.fn(async (_patch: Partial<ShellConfig>): Promise<void> => {
+      /* 只数被调与载荷，写本身由 §256 那族用例判 */
+    })
+    mount({}, { tools: agentToolsStub({ patchShellConfig }) })
+    await openTools()
+    const box = within(toolsMenu() as HTMLElement).getAllByRole('checkbox')[0] as HTMLInputElement
+    fireEvent.click(box)
+    expect(patchShellConfig).toHaveBeenCalledTimes(1)
+    expect(patchShellConfig.mock.calls[0]?.[0]).toEqual({ enabled: true })
+  })
+
+  it('工具那三发读不到⇒ 徽标转危险色＋三句各成一行住在浮层**外面**；那两层里都没有这句', async () => {
+    mount({}, threeUnread())
+    await waitFor(
+      () =>
+        expect(alerts()).toEqual([
+          DEFAULTS(L('agent.shell.enable'), 'S:终端清单取不到'),
+          DEFAULTS(L('agent.websearch.title'), 'W:渠道取不到'),
+          DEFAULTS(L('agent.calendar.title'), 'C:日历取不到')
+        ]),
+      MOUNT_BUDGET
+    )
+    expect(dangerNow(), '那三项读不到也要被那颗「+」点名').toBe(true)
+    // 菜单没开时三句已经在场；开了两层，句子里没有它们（住进浮层＝一关就替这次失败闭嘴）
+    await openTools()
+    expect((menu() as HTMLElement).textContent).not.toContain('（当前显示的是默认值）')
+    expect((toolsMenu() as HTMLElement).textContent).not.toContain('（当前显示的是默认值）')
+  })
+
+  it('只读那一档：上下文三行不给（没有可发出去的一句话），但那颗「+」与三行设置照常在、且没有输入框', async () => {
+    mount({}, { readOnly: true })
+    expect(screen.queryByTitle(L('agent.composerTitle')), '那一档根本不渲染输入框').toBeNull()
+    await openPlus()
+    expect(screen.queryByTestId('agent-composer-plus-file')).toBeNull()
+    expect(screen.queryByText(L('snippet.button'))).toBeNull()
+    expect(screen.queryByText(L('mention.knowledge'))).toBeNull()
+    // 设置那三行不是"上下文来源"，只读档也要能改（子会话详情里看一眼这台机器开了什么，是 §235 的口径）
+    expect(screen.getByTestId('agent-composer-plus-workspace')).toBeTruthy()
+    expect(toolsRow()).toBeTruthy()
   })
 })

@@ -8,6 +8,7 @@ import React from 'react'
 import { cleanup, render } from '@testing-library/react'
 import { I18nProvider } from '../../src/renderer/src/i18n'
 import { ToastProvider } from '../../src/renderer/src/components/ToastProvider'
+import type { AgentToolConfigs } from '../../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
 
 /**
  * 桩的入参故意放宽成 `any[]`：每条真实通道有自己的入参类型，而 `(...args: unknown[]) => unknown`
@@ -74,6 +75,31 @@ export function HookProviders({ children }: { children: React.ReactNode }): Reac
 /** 包上渲染层通用 Provider（i18n + Toast）后渲染；组件挂在 Modal/遮罩里也能查到 */
 export function mountWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
   return render(<HookProviders>{ui}</HookProviders>)
+}
+
+/**
+ * §399②b：输入框那颗「+」整份收着 `useAgentToolConfigs` 的返回值，凡挂 `AgentComposer` 的用例都要给一份。
+ * 默认＝四发都读到、三个开关都关着（＝没有任何一句「读不到」，那颗徽标不转色）；
+ * 要演坏消息的用例按 `over` 覆盖对应那一格。
+ */
+export function agentToolsStub(over: Partial<AgentToolConfigs> = {}): AgentToolConfigs {
+  return {
+    workspaceDir: '',
+    shellConfig: { enabled: false, policy: 'confirm' },
+    calConfig: { enabled: false, paths: [] },
+    wsConfig: { enabled: false, provider: 'tavily', apiKey: '', hasKey: false },
+    wsKeyDraft: '',
+    toolUnread: { workspace: null, shell: null, webSearch: null, calendar: null },
+    setWsKeyDraft: () => { /* 那颗凭据框自己的行为由 §340 那族用例判 */ },
+    pickWorkspace: async () => { /* 同上：拉起本机对话框那一发在 CI 里只能数被调次数 */ },
+    retryWorkspace: () => { /* 同上 */ },
+    patchShellConfig: async () => { /* 同上 */ },
+    patchWsConfig: async () => { /* 同上 */ },
+    secretDialog: null,
+    patchCalConfig: async () => { /* 同上 */ },
+    addIcs: async () => { /* 同上 */ },
+    ...over
+  }
 }
 
 afterEach(() => {

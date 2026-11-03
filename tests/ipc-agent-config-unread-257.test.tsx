@@ -17,10 +17,9 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
-import { HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
+import { agentToolsStub, HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
 import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
 import { useAgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
-import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
 import { AgentComposer } from '../src/renderer/src/modules/agent/components/AgentComposer'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { CalendarConfig, ProviderRecord, ShellConfig, WebSearchConfig } from '../src/shared/types'
@@ -35,17 +34,57 @@ const WS_ON: WebSearchConfig = { enabled: true, provider: 'tavily', apiKey: '', 
 const CAL_ON: CalendarConfig = { enabled: true, paths: ['C:/cal.ics'] }
 
 
-/** 真 hook ＋ 真组件：这一屏要证的正是"读失败时界面上摆的到底是什么" */
+/**
+ * §399②b 之后这一簇的落点：那三条「读不到」由**输入区在浮层外面**说，那三行控件在
+ * 那颗「+」的**嵌套第二层**里（旧形状是"消息流之上那行条，收起态只露三条句子"）。
+ * 仍挂真 hook——这一屏要证的正是"读失败时界面上摆的到底是什么"。
+ */
+const composerBase = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  running: false,
+  canSend: true,
+  att: {
+    attachments: [],
+    dragOver: false,
+    addFiles: () => {},
+    addAttachment: () => {},
+    removeAt: () => {},
+    clear: () => {},
+    openPicker: () => {},
+    fileInputProps: {},
+    dropZoneProps: {},
+    pasteProps: {}
+  },
+  onSend: () => {},
+  onAbort: () => {},
+  queue: [],
+  queueFull: false,
+  onQueue: () => {},
+  onInterject: () => {},
+  onDropQueued: () => {},
+  onSendQueuedNow: () => {},
+  // 这一簇只判工具那三发：那颗模型级开关的作用域（provider+model）在这里不成立，关掉免得干扰屏上的文字
+  textProtocolAvailable: false,
+  textProtocolForced: false,
+  textProtocolUnread: null,
+  onToggleTextProtocol: () => {},
+  onRetryTextProtocol: () => {},
+  workspaceDir: '',
+  workspaceUnread: null,
+  onPickWorkspace: () => {},
+  onRetryWorkspace: () => {},
+  tools: agentToolsStub(),
+  ...over
+})
+
 const Harness = (): JSX.Element => {
   const tools = useAgentToolConfigs()
-  return <AgentToolBars tools={tools} />
+  return React.createElement(AgentComposer, composerBase({ tools }) as never)
 }
 
-/** 工具配置默认是收起的：收起态只有那三条「读不到」，控件要点了 ▸ 才出现 */
-const expandBars = (): void => {
-  const toggle = document.querySelector('button')
-  if (!toggle) throw new Error('AgentToolBars 没渲染出展开按钮')
-  fireEvent.click(toggle)
+/** 点开那颗「+」，再点摘要行开第二层（那三行控件在里面） */
+const openToolRows = (): void => {
+  fireEvent.click(screen.getByTestId('agent-composer-plus'))
+  fireEvent.click(screen.getByTestId('agent-composer-plus-tools'))
 }
 
 const READ_FAILS = (over: Record<string, (...a: unknown[]) => unknown> = {}): Record<string, (...a: unknown[]) => unknown> => ({
@@ -53,6 +92,9 @@ const READ_FAILS = (over: Record<string, (...a: unknown[]) => unknown> = {}): Re
   getShellConfig: () => ({ ok: false, error: 'SHELL:读不到' }),
   getWebSearchConfig: () => ({ ok: false, error: 'WS:读不到' }),
   getCalendarConfig: () => ({ ok: false, error: 'CAL:读不到' }),
+  // 点那颗「+」会顺手做一发知识库惰性读（§399① 的入口机关，不是本簇的判据）——不预置就是未处理的抛错
+  listKnowledgeBases: () => [],
+  listPromptSnippets: () => [],
   ...over
 })
 
@@ -154,7 +196,7 @@ describe('⓪ 真挂 useAgentChat：这两发读的失败面真从通道走到 s
   })
 })
 
-describe('① 四发工具配置读：读不到要点名说，且不许藏在收起态后面', () => {
+describe('① 四发工具配置读：读不到要点名说，且不许藏在折叠态后面', () => {
   it('shell／联网搜索／日历三发都读不到 ⇒ 三条「{名字}读不到：原因（当前显示的是默认值）」逐字在场', async () => {
     stubPocketai(READ_FAILS())
     mountWithProviders(<Harness />)
@@ -175,27 +217,30 @@ describe('① 四发工具配置读：读不到要点名说，且不许藏在收
       getShellConfig: () => SHELL_ON,
       getWebSearchConfig: () => WS_ON,
       getCalendarConfig: () => CAL_ON,
-      setWebSearchConfig: () => WS_ON
+      setWebSearchConfig: () => WS_ON,
+      listKnowledgeBases: () => [],
+      listPromptSnippets: () => []
     })
     mountWithProviders(<Harness />)
-    expandBars()
+    openToolRows()
     await waitFor(() => expect(screen.getByText(T('agent.shell.hintOn'))).toBeTruthy())
     expect(screen.queryByText(/读不到/)).toBeNull()
   })
 
-  it('那句「读不到」在**收起态**也在场（§235 的口径：藏在折叠后面等于没说）', async () => {
+  it('那三条在**两层菜单都没开**时也在场（§235／§268 的口径：藏进折叠态后面＝等于没说）', async () => {
     stubPocketai(READ_FAILS())
     mountWithProviders(<Harness />)
-    // 一次都不点展开
+    // 一次都不点：那颗「+」与第二层都没开
     await waitFor(() => expect(screen.getByText(defaultsLine(T('agent.shell.enable'), 'SHELL:读不到'))).toBeTruthy())
     expect(screen.queryByText(T('agent.shell.hintOn'))).toBeNull()
+    expect(screen.queryByTestId('agent-composer-tools-menu')).toBeNull()
   })
 
   it('当场把联网搜索打开且写成功 ⇒ 那句「读不到」必须自己收回（它已经不再是"没读到"）', async () => {
     stubPocketai(READ_FAILS({ setWebSearchConfig: () => WS_ON }))
     mountWithProviders(<Harness />)
     await waitFor(() => expect(screen.getByText(defaultsLine(T('agent.websearch.title'), 'WS:读不到'))).toBeTruthy())
-    expandBars()
+    openToolRows()
     // 第二颗 checkbox＝联网搜索那一行（第一颗是终端命令）；点 label 文本在 jsdom 里不可靠，直接点控件
     fireEvent.click(screen.getAllByRole('checkbox')[1]!)
     await waitFor(() => expect(screen.queryByText(defaultsLine(T('agent.websearch.title'), 'WS:读不到'))).toBeNull())
@@ -251,6 +296,7 @@ describe('② 那两颗徽标的第三态（§399②a：落点从顶栏搬进了
           workspaceUnread: null,
           onPickWorkspace: vi.fn(),
           onRetryWorkspace: retryWorkspace,
+          tools: agentToolsStub(),
           ...over
         } as never
       )
@@ -330,13 +376,15 @@ describe('③ 接线计数：旧写法归零，六处的新落点逐条数得出
     expect(count(CHAT, /if \(!hasIpcFailed\(traces\)\) setLatestTraces/g)).toBe(0)
   })
 
-  it('渲染层：两颗徽标各自第三态在场（§399②a：落点是输入框那颗「+」，顶栏归零），那三条 notice 在收起态与展开态都渲染', () => {
+  it('渲染层：两颗徽标各自第三态在场（§399②a：落点是输入框那颗「+」，顶栏归零），那三条 notice 由输入区在浮层外面说（§399②b）', () => {
     expect(count(AC, /workspaceUnread/g), '📁 那一颗的三态＋那一句（§399②a 现数 11：props 声明／解构／危险色那颗徽标／菜单那一行的 title 两处＋条件两处＋文本一处／句子那一支三处）').toBe(11)
     expect(count(AC, /textProtocolUnread/g), '文本协议那一颗同上（现数 11）').toBe(11)
     expect(count(BAR, /workspaceUnread/g), '顶栏那份第二脸：搬完了就该是 0').toBe(0)
     expect(count(BAR, /textProtocolUnread/g), '同上').toBe(0)
-    expect(count(BARS, /unreadBars/g), '定义一处＋两个分支各渲染一次').toBe(3)
-    expect(count(BARS, /ShowingDefaultsNotice/g), '三条点名（终端命令／联网搜索／日历）').toBe(5)
+    // §399②b：那三条 notice 不再由 `AgentToolBars` 渲染（搬进那颗「+」＝藏进折叠态后面），
+    // 改成输入区在浮层**外面**各挂自己的渲染条件——按条件数，别按标识符数（注释里也出现那个组件名）
+    expect(count(BARS, /ShowingDefaultsNotice/g), '那一屏不再自己说那三条').toBe(0)
+    expect(count(AC, /\{tools\.toolUnread\.\w+ && <ShowingDefaultsNotice/g), '三条各挂自己的渲染条件（终端命令／联网搜索／日历）').toBe(3)
   })
 
   it('四条新文案在四本字典都有，且界面里真在用（不是死键）', () => {

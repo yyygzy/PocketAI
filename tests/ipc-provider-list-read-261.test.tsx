@@ -228,9 +228,13 @@ describe('③ 接线计数', () => {
     expect(count(PANEL, /providersUnread, assistantsUnread/g), '从 hook 解构出来').toBe(1)
     expect(count(PANEL, /<LoadFailNotice what=\{t\('common\.providersList'\)}/g)).toBe(1)
     expect(count(PANEL, /<LoadFailNotice what=\{t\('common\.assistantsList'\)}/g)).toBe(1)
-    const bar = PANEL.indexOf('<AgentToolBars tools={tools} />')
+    // §399②b 锚点搬家：原来钉的是 `<AgentToolBars tools={tools} />`——那一行现在整个搬进了「+」的嵌套第二层，
+    // Panel 里读不到了。判据不变（这两句要在**默认就展开的**区域，不能住进任何折叠态），换钉的落点＝输入区挂载点：
+    // 菜单没点开时它在屏上，两句必须排在它之前。
+    const composer = PANEL.indexOf('<AgentComposer')
     const notice = PANEL.indexOf('providersUnread && (')
-    expect(notice, '两句在工具栏之前（侧栏收起也在场）').toBeGreaterThan(-1)
-    expect(notice, '两句在 <AgentToolBars/> 之前').toBeLessThan(bar)
+    expect(notice, '两句在侧栏消息流区（侧栏收起也在场）').toBeGreaterThan(-1)
+    expect(composer, '输入区还在 Panel 里（锚点别又漂了）').toBeGreaterThan(-1)
+    expect(notice, '两句在 <AgentComposer/> 之前（不藏在「+」的折叠层后面）').toBeLessThan(composer)
   })
 })

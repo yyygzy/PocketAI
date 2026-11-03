@@ -295,9 +295,14 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     全部落「门后没有读屏断言」（395→400）＝§398 记下的那条 hook 盲区**第二次踩到**，形状与 §396／§398 同：
     //     门自己等的就是到货那一帧，门后同步读的是同一个值，不是「门等 A、断言读 B」。
     //   会假红仍 0、只会假绿仍 18。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1086)
+    //   §399②b 再抬到 1094／587／89／400／0／18（净新增 8 颗 awaits，全在 `renderer-agent-composer-plus-399` 那 12 颗新用例里：
+    //   3 颗「门等那一层/那一句存在」＋5 颗「等那一层收掉」＝等退场；`ipc-agent-config-unread-257` 那份重写后逐字仍是 16 颗）：
+    //   · 同一枚把 `renderer-websearch-b3` 的那颗「只会假绿」从 :81→:82 搬成 :79→:80（去掉「先点开展开」那两行，判语一字未动）
+    //     ⇒ 又一次印证「改过判据所在文件就要重取这面闸门的数字」，名单里带行号的条目会随夹具改动漂移。
+    //   会假红仍 0、无紧随读屏仍 400（②b 没往 hook 夹具里加门）。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1094)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('584/84/400/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('587/89/400/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
@@ -338,7 +343,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-provider-http-confirm.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:64 -> :65',
       'tests/renderer-provider-settings.test.tsx:249 -> :250',
-      'tests/renderer-websearch-b3.test.tsx:81 -> :82',
+      'tests/renderer-websearch-b3.test.tsx:79 -> :80', // §399②b 现量＋2：那份夹具去掉「先点开展开」那两行，形状与判语一字未动
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
       'tests/skill-market-fetch-debounce-322.test.tsx:159 -> :160',
       'tests/stale-read-notice-347.test.tsx:159 -> :160'

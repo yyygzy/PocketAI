@@ -39,9 +39,7 @@ function mount(mode: 'none' | 'db'): void {
     return <AgentToolBars tools={tools} />
   }
   mountWithProviders(<Harness />)
-  // 工具栏默认收起，先展开
-  // 收起态的「工具配置」在按钮与其 title 节点上各出现一次 ⇒ 取第一个并点上层的按钮
-  fireEvent.click(screen.getAllByText('工具配置')[0]!.closest('button') as HTMLElement)
+  // §399②b：那三行不再有「先点开展开」那一步——收起的活归「+」菜单那一行，AgentToolBars 只留控件本体
 }
 
 const keyInput = (): HTMLInputElement =>

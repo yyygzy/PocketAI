@@ -5,8 +5,11 @@ import { SnippetButton } from '../../../components/SnippetButton'
 import { FloatingPanel } from '../../../components/FloatingPanel'
 import { SlashMenu } from '../../../components/SlashMenu'
 import { MentionMenu, type MentionItem } from '../../../components/MentionMenu'
+import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import { SnippetVarsDialog } from '../../../components/SnippetVarsDialog'
+import { AgentToolBars, agentToolSummary } from './AgentToolBars'
 import type { useAttachments } from '../hooks/useAttachments'
+import type { AgentToolConfigs } from '../hooks/useAgentToolConfigs'
 import { MAX_QUEUE_ITEMS, type AgentQueueItem } from '../hooks/useAgentChat'
 import { useToast } from '../../../components/ToastProvider'
 import {
@@ -54,6 +57,17 @@ interface Props {
   workspaceUnread: string | null
   onPickWorkspace: () => void
   onRetryWorkspace: () => void
+  /**
+   * §399②b：工具策略那三行也收进这颗菜单（嵌套第二层）。整份配置对象透传给 `AgentToolBars`——
+   * 它需要的是同一份状态与同一批出口，逐个拆成 props 只会多出一张"抄来的清单"。
+   */
+  tools: AgentToolConfigs
+  /**
+   * 只读那一档（看别人的子会话）：输入那半不渲染（口径没变——禁用框不吭声，上面那条横幅已经把为什么说了），
+   * 但这颗「+」与它收着的**设置**留着。设置是"这一台模型怎么跑"的，不是"这条消息"的；
+   * 把它连着那两句「读不到」一起藏进只读档＝这次失败等于没说过（§222／§268）。
+   */
+  readOnly?: boolean
 }
 
 export const AgentComposer: React.FC<Props> = ({
@@ -76,7 +90,9 @@ export const AgentComposer: React.FC<Props> = ({
   workspaceDir,
   workspaceUnread,
   onPickWorkspace,
-  onRetryWorkspace
+  onRetryWorkspace,
+  tools,
+  readOnly = false
 }) => {
   const { t } = useI18n()
   const toast = useToast()
@@ -105,6 +121,9 @@ export const AgentComposer: React.FC<Props> = ({
   // §399：输入行左端那两颗键（📎／📝）收进一颗「+」，知识库清单也从这里点得到（不必打字触发 @）
   const [plusOpen, setPlusOpen] = useState(false)
   const plusRef = useRef<HTMLButtonElement>(null)
+  // §399②b：工具策略那三行的嵌套第二层（自己的开合状态＋自己的锚点＝那颗摘要行）
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const toolsRowRef = useRef<HTMLButtonElement>(null)
   // `kbsRef` 是 ref，读到了不会自己重渲染——开菜单那一发落回来时要敲一下这记信号
   const [kbsReady, setKbsReady] = useState(0)
 
@@ -116,8 +135,10 @@ export const AgentComposer: React.FC<Props> = ({
 
   // §399②a 升级回显：常态输入行上只有一颗「+」，被它收进去的项**不**在屏上占行。
   // 但任一项处于「读不到」时，这颗徽标转危险色，并且下面就地长出那一句＋同级出口——
-  // 只在坏消息时占行。判据是四项自己那张脸，不是"菜单开没开"：折叠起来就等于没说过（§222／§268）。
-  const plusDanger = !!(kbsFail || snippetsFail || textProtocolUnread || workspaceUnread)
+  // 只在坏消息时占行。判据是这七项自己那张脸（§399②b 起含工具那三发），不是"菜单开没开"：折叠起来就等于没说过（§222／§268）。
+  // 工具那三发共用一颗 `anyToolUnread`＝那颗徽标与摘要行读同一份判据，不各算一遍（按身份钉，不是数次数）。
+  const anyToolUnread = !!(tools.toolUnread.shell || tools.toolUnread.webSearch || tools.toolUnread.calendar)
+  const plusDanger = !!(kbsFail || snippetsFail || textProtocolUnread || workspaceUnread || anyToolUnread)
 
   // 当前触发态（光标位置取自 textarea selectionStart）
   const cursor = taRef.current?.selectionStart ?? input.length
@@ -537,14 +558,21 @@ export const AgentComposer: React.FC<Props> = ({
           <button data-testid="agent-composer-workspace-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={onRetryWorkspace}>{t('agent.retryRead')}</button>
         </div>
       )}
+      {/* §399②b：工具那三发的「读不到」搬自 `AgentToolBars` 那行条（收起态也在场那条判据不变）——
+          它们**不跟着控件进嵌套第二层**：那层一关这三条就不说话＝替这次失败闭嘴（§222／§268）。
+          这三发各自的出口是"当场改一次配置"（写成功即清位，§256 那两条陈旧谎报的同一课），
+          所以这里只有句子、不造重试键（同 §268 片段那一句的道理）。 */}
+      {tools.toolUnread.shell && <ShowingDefaultsNotice what={t('agent.shell.enable')} msg={tools.toolUnread.shell} />}
+      {tools.toolUnread.webSearch && <ShowingDefaultsNotice what={t('agent.websearch.title')} msg={tools.toolUnread.webSearch} />}
+      {tools.toolUnread.calendar && <ShowingDefaultsNotice what={t('agent.calendar.title')} msg={tools.toolUnread.calendar} />}
 
       {/* 输入 */}
       <div
         className={`relative flex gap-2 pt-2 border-t border-[var(--color-border)] mt-2 rounded-b-xl ${
           dragOver ? 'ring-2 ring-[var(--color-accent)]' : ''
         }`}
-        {...dropZoneProps}
-        {...pasteProps}
+        {...(readOnly ? {} : dropZoneProps)}
+        {...(readOnly ? {} : pasteProps)}
       >
         {menuOpen && !varSnippet && (
           <SlashMenu
@@ -607,29 +635,35 @@ export const AgentComposer: React.FC<Props> = ({
         </button>
         {plusOpen && (
           <FloatingPanel anchorRef={plusRef} width={252} onClose={() => setPlusOpen(false)} data-testid="agent-composer-plus-menu">
-            <button
-              type="button"
-              role="menuitem"
-              data-testid="agent-composer-plus-file"
-              disabled={running}
-              title={running ? t('agent.queue.textOnly') : t('common.attachFile')}
-              onClick={() => {
-                setPlusOpen(false)
-                openPicker()
-              }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors disabled:opacity-40"
-            >
-              <span aria-hidden>📎</span>
-              <span>{t('common.attachFile')}</span>
-            </button>
-            <SnippetButton
-              onInsert={(text) => {
-                setPlusOpen(false)
-                insertAtCursor(text)
-              }}
-              disabled={running}
-              variant="row"
-            />
+            {/* 上下文那一组（附件／片段／知识库）在只读档里**不给**：那一档没有可发出去的一句话，
+                加了附件就是"看起来加上了、其实没人读它"（同 §238 排队只带文字那条道理）。 */}
+            {!readOnly && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="agent-composer-plus-file"
+                  disabled={running}
+                  title={running ? t('agent.queue.textOnly') : t('common.attachFile')}
+                  onClick={() => {
+                    setPlusOpen(false)
+                    openPicker()
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors disabled:opacity-40"
+                >
+                  <span aria-hidden>📎</span>
+                  <span>{t('common.attachFile')}</span>
+                </button>
+                <SnippetButton
+                  onInsert={(text) => {
+                    setPlusOpen(false)
+                    insertAtCursor(text)
+                  }}
+                  disabled={running}
+                  variant="row"
+                />
+              </>
+            )}
             {/* §399②a：这两行搬自顶栏。执行设置放在**知识库那组之前**——知识库是一份可长的清单，
                 浮层向上长，把它排到最后才不会把这两行顶出窗口。
                 点文本协议那行**不收菜单**：这一发的写是异步的，留着才看得见那张脸翻过去（关菜单再点是第二次点击）。 */}
@@ -694,80 +728,126 @@ export const AgentComposer: React.FC<Props> = ({
                     : t('agent.workspaceNone')}
               </span>
             </button>
-            <div className="my-1 border-t border-[var(--color-border)]" />
-            <div className="px-3 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
-              {t('mention.knowledge')}
-            </div>
-            {menuKbs.length === 0 && kbsRef.current === null && (
-              <div className="px-3 py-2 text-[10px] text-[var(--color-text-muted)]">…</div>
-            )}
-            {menuKbs.length === 0 && kbsRef.current !== null && !kbsFail && (
-              // 读成功、库里真的没有东西才说这句。读失败时这里**一个字都不加**＝菜单里不装"这里没东西"，
-              // 说话的是浮层外面那句既有的「知识库清单读不到」＋那颗重试键（§268：藏进浮层＝替这次失败闭嘴）
-              <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">{t('ccb.none')}</div>
-            )}
-            {menuKbs.map((kb) => (
-              <button
-                key={kb.id}
-                type="button"
-                role="menuitem"
-                data-testid={`agent-composer-plus-kb-${kb.id}`}
-                onClick={() => {
-                  setPlusOpen(false)
-                  addKbChip(kb)
-                }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors"
+            {/* §399②b：工具策略那三行也收进来——它原本是消息流之上那行可折叠的条，收起态摆的就是
+                "三个开关都关着"那张谎脸（§257 记的），展开又要占三行高度。这里点它开**第二层**：
+                那层里的 Esc 不越级（外层菜单留着），弹窗「确认」也不算点外部（`secretDialog` 渲染在那层里面）。
+                那一层 `align="right"`＝摆在父菜单右侧：真机量过默认那一形（同样向上长）会把上面四行整片盖住。
+                三条「读不到」不跟着进来——它们在浮层外面那一句区（上面那三行 `ShowingDefaultsNotice`）。 */}
+            <button
+              ref={toolsRowRef}
+              type="button"
+              role="menuitem"
+              aria-expanded={toolsOpen}
+              data-testid="agent-composer-plus-tools"
+              title={toolsOpen ? t('agent.collapse') : t('agent.expand')}
+              onClick={() => setToolsOpen((v) => !v)}
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                anyToolUnread
+                  ? 'text-[var(--color-danger)]'
+                  : 'text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)]'
+              }`}
+            >
+              <span aria-hidden>🛠</span>
+              <span className="flex-1 min-w-0 truncate">{t('agent.toolConfig')}</span>
+              {/* 摘要点的是"开着哪几项"，与那三行的 checkbox 同源（全关着就留空，不重复念一遍名词） */}
+              <span className="shrink-0 opacity-70">{agentToolSummary(tools)}</span>
+            </button>
+            {toolsOpen && (
+              <FloatingPanel
+                anchorRef={toolsRowRef}
+                width={300}
+                align="right"
+                onClose={() => setToolsOpen(false)}
+                data-testid="agent-composer-tools-menu"
+                data-esc-nested="1"
               >
-                <span className="flex-1 min-w-0 truncate">{kb.name}</span>
-                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
-                  {kb.documentCount} {t('common.docs')}
-                </span>
-              </button>
-            ))}
+                <AgentToolBars tools={tools} />
+              </FloatingPanel>
+            )}
+            {!readOnly && (
+              <>
+                <div className="my-1 border-t border-[var(--color-border)]" />
+                <div className="px-3 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+                  {t('mention.knowledge')}
+                </div>
+                {menuKbs.length === 0 && kbsRef.current === null && (
+                  <div className="px-3 py-2 text-[10px] text-[var(--color-text-muted)]">…</div>
+                )}
+                {menuKbs.length === 0 && kbsRef.current !== null && !kbsFail && (
+                  // 读成功、库里真的没有东西才说这句。读失败时这里**一个字都不加**＝菜单里不装"这里没东西"，
+                  // 说话的是浮层外面那句既有的「知识库清单读不到」＋那颗重试键（§268：藏进浮层＝替这次失败闭嘴）
+                  <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">{t('ccb.none')}</div>
+                )}
+                {menuKbs.map((kb) => (
+                  <button
+                    key={kb.id}
+                    type="button"
+                    role="menuitem"
+                    data-testid={`agent-composer-plus-kb-${kb.id}`}
+                    onClick={() => {
+                      setPlusOpen(false)
+                      addKbChip(kb)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors"
+                  >
+                    <span className="flex-1 min-w-0 truncate">{kb.name}</span>
+                    <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                      {kb.documentCount} {t('common.docs')}
+                    </span>
+                  </button>
+                ))}
+              </>
+            )}
           </FloatingPanel>
         )}
-        <textarea
-          ref={taRef}
-          data-agent-composer-input
-          className="input flex-1 text-sm min-h-[40px] max-h-[120px] resize-none"
-          value={input}
-          onChange={(e) => handleInputChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={running ? t('agent.inputPhRunning') : t('agent.inputPh')}
-          title={t('agent.composerTitle')}
-        />
-        {running ? (
-          // 运行中三键（V4-Iter-238）：停止是原来的那颗；入队等本轮结束自动发；立即插队交给引擎，
-          // 由它在**下一个步边界**收下（不是打断当前这一步）
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              className="btn-ghost"
-              onClick={doQueue}
-              disabled={!input.trim() || queueFull}
-              title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.enqueueTitle')}
-              data-testid="agent-queue-enqueue"
-            >
-              {t('agent.queue.enqueue')}
-            </button>
-            <button
-              className="btn-ghost"
-              onClick={doInterject}
-              disabled={!input.trim() || queueFull}
-              title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.interjectTitle')}
-              data-testid="agent-queue-interject"
-            >
-              {t('agent.queue.interject')}
-            </button>
-            <button className="btn-ghost" onClick={onAbort}>{t('common.stop')}</button>
-          </div>
-        ) : (
-          <button
-            className="btn-primary"
-            onClick={doSend}
-            disabled={(!input.trim() && attachments.length === 0) || !canSend}
-          >
-            {t('common.send')}
-          </button>
+        {/* 只读那一档不渲染输入与发送（口径没变：不是"禁用一个框"，那一档根本没有可发的一句话；
+            为什么只读由上面那条横幅说，这里不重复一句），但那颗「+」与它收着的设置留下 */}
+        {!readOnly && (
+          <>
+            <textarea
+              ref={taRef}
+              data-agent-composer-input
+              className="input flex-1 text-sm min-h-[40px] max-h-[120px] resize-none"
+              value={input}
+              onChange={(e) => handleInputChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={running ? t('agent.inputPhRunning') : t('agent.inputPh')}
+              title={t('agent.composerTitle')}
+            />
+            {running ? (
+              // 运行中三键（V4-Iter-238）：停止是原来的那颗；入队等本轮结束自动发；立即插队交给引擎，
+              // 由它在**下一个步边界**收下（不是打断当前这一步）
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  className="btn-ghost"
+                  onClick={doQueue}
+                  disabled={!input.trim() || queueFull}
+                  title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.enqueueTitle')}
+                  data-testid="agent-queue-enqueue"
+                >
+                  {t('agent.queue.enqueue')}
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={doInterject}
+                  disabled={!input.trim() || queueFull}
+                  title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.interjectTitle')}
+                  data-testid="agent-queue-interject"
+                >
+                  {t('agent.queue.interject')}
+                </button>
+                <button className="btn-ghost" onClick={onAbort}>{t('common.stop')}</button>
+              </div>
+            ) : (
+              <button
+                className="btn-primary"
+                onClick={doSend}
+                disabled={(!input.trim() && attachments.length === 0) || !canSend}
+              >
+                {t('common.send')}
+              </button>
+            )}
+          </>
         )}
       </div>
     </>

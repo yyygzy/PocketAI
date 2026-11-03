@@ -1,14 +1,33 @@
-// Agent 工具开关三行：shell 命令策略 / 联网搜索 / 本地日历（可折叠，默认收起省空间）
-// 凭据明文仅存主进程，渲染端只拿 hasKey 标记（不回显）
-import React, { useState } from 'react'
+// Agent 工具三行：shell 命令策略 / 联网搜索 / 本地日历（凭据明文仅存主进程，渲染端只拿 hasKey 标记＝不回显）
+//
+// §399②b：这一整块从"消息流之上那行可折叠的条"搬进了输入框那颗「+」的**嵌套第二层**——
+// ① 那行折叠条本身收起时，屏上看着就是"这台机器三个工具都没开"（§257 记的那张谎脸），展开又是三行高度；
+// ② 它与附件／片段／执行设置本是同一件事（这一轮怎么跑），散在两处。
+// **三条「读不到」没有跟着搬进来**（§222／§268：句子住进浮层＝菜单一关就不说话＝替这次失败闭嘴）——
+// 它们由 `AgentComposer` 在浮层**外面**那一句区渲染，与文本协议／工作目录那两句同一处。
+import React from 'react'
 import type { ShellConfig, WebSearchConfig } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
-import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import type { AgentToolConfigs } from '../hooks/useAgentToolConfigs'
+
+/**
+ * 「+」菜单里那颗摘要点的图标：开着哪几项就点哪几个（与下面那三行同源，不是第二份状态）。
+ * 全关着时回空串——屏上不重复念一遍「工具配置」（旧折叠条那形是 `summary || t('agent.toolConfig')`，
+ * 三个都没开时会念成「工具配置 工具配置」，本枚顺手把它去掉，不留第二张脸）。
+ */
+export const agentToolSummary = (
+  tools: Pick<AgentToolConfigs, 'shellConfig' | 'wsConfig' | 'calConfig'>
+): string =>
+  [
+    tools.shellConfig.enabled ? '🖥' : null,
+    tools.wsConfig.enabled ? '🌐' : null,
+    tools.calConfig.enabled ? '📅' : null
+  ]
+    .filter(Boolean)
+    .join(' ')
 
 export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) => {
   const { t } = useI18n()
-  const [expanded, setExpanded] = useState(false)
   const {
     workspaceDir,
     shellConfig,
@@ -24,53 +43,11 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
     toolUnread
   } = tools
 
-  // §257：三发配置读失败时这里摆的是各自的默认值（开关全是"关"），收起态那一行连图标都不显示，
-  // 看着就像"这台机器三个工具都没开"。哪一发没读到就点名哪一发（§226 的口径：不冒充读数）。
-  const unreadBars = (
-    <>
-      {toolUnread.shell && <ShowingDefaultsNotice what={t('agent.shell.enable')} msg={toolUnread.shell} />}
-      {toolUnread.webSearch && <ShowingDefaultsNotice what={t('agent.websearch.title')} msg={toolUnread.webSearch} />}
-      {toolUnread.calendar && <ShowingDefaultsNotice what={t('agent.calendar.title')} msg={toolUnread.calendar} />}
-    </>
-  )
-
-  if (!expanded) {
-    // 收起态：单行摘要，点击展开
-    const summary = [
-      shellConfig.enabled ? '🖥' : null,
-      wsConfig.enabled ? '🌐' : null,
-      calConfig.enabled ? '📅' : null
-    ].filter(Boolean).join(' ') || t('agent.toolConfig')
-    return (
-      <>
-        {unreadBars}
-        <button
-          onClick={() => setExpanded(true)}
-          className="mt-1 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-0.5 self-start"
-          title={t('agent.expand')}
-        >
-          <span>▸</span>
-          <span>{t('agent.toolConfig')}</span>
-          <span className="opacity-70">{summary}</span>
-        </button>
-      </>
-    )
-  }
-
   return (
-    <>
-      {unreadBars}
-      <button
-        onClick={() => setExpanded(false)}
-        className="mt-1 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-0.5 self-start"
-        title={t('agent.collapse')}
-      >
-        <span>▾</span>
-        <span>{t('agent.toolConfig')}</span>
-      </button>
+    <div className="flex flex-col gap-1.5 py-1">
       {/* 终端命令（shell_exec）策略：未设置工作目录时整体置灰 */}
       <div
-        className={`mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs ${
+        className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs ${
           workspaceDir ? '' : 'opacity-40 pointer-events-none'
         }`}
         title={
@@ -112,7 +89,7 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
       </div>
 
       {/* 联网搜索（web.search）配置：Key 明文仅存主进程，渲染端不回显 */}
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs">
         <label className="flex items-center gap-1.5 cursor-pointer select-none font-medium">
           <input
             type="checkbox"
@@ -175,11 +152,13 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
         <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
           {wsConfig.enabled ? t('agent.websearch.hintOn') : t('agent.websearch.hintOff')}
         </span>
+        {/* 密钥确认弹窗就渲染在这一行里（§399②b 后它在嵌套层**内部**）＝点「确认」不算"点浮层外面"，
+            外层那颗「+」与这一层都不会被那一下 mousedown 关掉 */}
         {secretDialog}
       </div>
 
       {/* 本地日历（calendar.read）配置：添加 .ics 文件后 Agent 可读取日程 */}
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs">
         <label className="flex items-center gap-1.5 cursor-pointer select-none font-medium">
           <input
             type="checkbox"
@@ -219,6 +198,6 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
             : t('agent.calendar.hintOff')}
         </span>
       </div>
-    </>
+    </div>
   )
 }

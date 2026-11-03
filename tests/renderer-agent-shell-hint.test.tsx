@@ -7,7 +7,6 @@
 // 1) 可见文本的**开头**就得是核心结论（截断后仍然说真话）；
 // 2) 完整文案挂在 title 上（悬停可见），且与字典逐字相同。
 import { describe, it, expect, vi } from 'vitest'
-import { fireEvent } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
 import type { AgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
@@ -32,11 +31,8 @@ function mount(enabled: boolean) {
     addIcs: () => {}
   } as unknown as AgentToolConfigs
   mountWithProviders(<AgentToolBars tools={tools} />)
-  // 工具栏默认收起，先展开。注意别按文本查：三项全关时收起态的摘要会回退成
-  // 同一句「工具配置」， getByText 会撞重，直接点第一个按钮即可
-  const toggle = document.querySelector('button')
-  if (!toggle) throw new Error('AgentToolBars 未渲染出展开按钮')
-  fireEvent.click(toggle)
+  // §399②b：这一屏不再有"收起／展开"那颗条了——三行控件住在输入框那颗「+」的第二层里，
+  // 而这份夹具挂的就是那三行本身，所以不必再点任何开关（点了反而会误翻一个 checkbox）
 }
 
 function hintSpan(): HTMLElement {

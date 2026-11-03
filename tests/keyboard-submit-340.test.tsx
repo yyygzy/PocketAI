@@ -75,8 +75,8 @@ describe('② 联网搜索 API Key：Enter 之后被 blur 追一发 ⇒ 只写�
       const tools = useAgentToolConfigs()
       return <AgentToolBars tools={tools} />
     }
+    // §399②b：那三行不再有"先点开展开"那一步（控件住在「+」的第二层里，这份夹具挂的就是控件本身）
     mountWithProviders(<Harness />)
-    fireEvent.click(screen.getAllByText('工具配置')[0]!.closest('button') as HTMLElement)
   }
 
   beforeEach(() => { calls.length = 0 })

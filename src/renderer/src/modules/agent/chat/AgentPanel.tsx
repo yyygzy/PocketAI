@@ -13,7 +13,6 @@ import { SessionRail } from '../components/SessionRail'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { AgentModelBar } from '../components/AgentModelBar'
 import { AgentEvalPanel } from './AgentEvalPanel'
-import { AgentToolBars } from '../components/AgentToolBars'
 import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
 import { AgentSearchBar } from '../components/AgentSearchBar'
@@ -548,8 +547,8 @@ export const AgentPanel: React.FC = () => {
           </div>
         )}
 
-        <AgentToolBars tools={tools} />
-
+        {/* §399②b：`<AgentToolBars/>` 那一整行条搬进了输入框那颗「+」的嵌套第二层（三条「读不到」
+            由那颗输入区在浮层外面说），这里不再挂它。 */}
         {/* 会话内消息搜索栏 */}
         {searchOpen && (
           <AgentSearchBar
@@ -998,35 +997,37 @@ export const AgentPanel: React.FC = () => {
           </div>
         )}
 
-        {/* 只读那一档**不渲染**输入区，而不是渲染一个禁用框：禁用框不吭声，用户只知道"发不出去"；
-            上面那条横幅/读不到的句子已经把为什么说了，这里就不再重复一句（同一条判据只说一次） */}
-        {!chat.subSessionReadonly && (
-          <AgentComposer
-            running={chat.running}
-            canSend={chat.canSend}
-            att={att}
-            onSend={(text) => {
-              // 失败收口在 useAgentChat.send 里（返回值＋reject 两条都会落到同一个 toast）
-              void chat.send(text, att.attachments)
-            }}
-            onAbort={chat.abort}
-            queue={chat.queue}
-            queueFull={chat.queueFull}
-            onQueue={chat.enqueueText}
-            onInterject={chat.interjectText}
-            onDropQueued={chat.dropQueued}
-            onSendQueuedNow={chat.sendQueuedNow}
-            textProtocolAvailable={!!chat.providerId && !!chat.model}
-            textProtocolForced={chat.textProtocolForced}
-            textProtocolUnread={chat.textProtocolUnread}
-            onToggleTextProtocol={(on) => chat.setTextProtocol(on)}
-            onRetryTextProtocol={chat.retryTextProtocol}
-            workspaceDir={tools.workspaceDir}
-            workspaceUnread={tools.toolUnread.workspace}
-            onPickWorkspace={() => void tools.pickWorkspace()}
-            onRetryWorkspace={tools.retryWorkspace}
-          />
-        )}
+        {/* 只读那一档**不渲染输入**那半（口径没变：不是"给一个禁用的框"，那一档根本没有可发的一句话；
+            为什么只读由上面那条横幅说，这里不重复一句）。但输入区里那颗「+」与它收着的**设置**留着——
+            文本协议／工作目录／工具策略是"这一台模型怎么跑"的，连着那几句「读不到」一起藏进只读档
+            ＝这次失败等于没说过（§222／§268，§399②b）。 */}
+        <AgentComposer
+          readOnly={chat.subSessionReadonly}
+          running={chat.running}
+          canSend={chat.canSend}
+          att={att}
+          onSend={(text) => {
+            // 失败收口在 useAgentChat.send 里（返回值＋reject 两条都会落到同一个 toast）
+            void chat.send(text, att.attachments)
+          }}
+          onAbort={chat.abort}
+          queue={chat.queue}
+          queueFull={chat.queueFull}
+          onQueue={chat.enqueueText}
+          onInterject={chat.interjectText}
+          onDropQueued={chat.dropQueued}
+          onSendQueuedNow={chat.sendQueuedNow}
+          textProtocolAvailable={!!chat.providerId && !!chat.model}
+          textProtocolForced={chat.textProtocolForced}
+          textProtocolUnread={chat.textProtocolUnread}
+          onToggleTextProtocol={(on) => chat.setTextProtocol(on)}
+          onRetryTextProtocol={chat.retryTextProtocol}
+          workspaceDir={tools.workspaceDir}
+          workspaceUnread={tools.toolUnread.workspace}
+          onPickWorkspace={() => void tools.pickWorkspace()}
+          onRetryWorkspace={tools.retryWorkspace}
+          tools={tools}
+        />
       </div>
 
       {/* 密码弹窗 — 加密导出/解密导入（对齐 Chat 模块样式） */}

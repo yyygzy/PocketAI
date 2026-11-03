@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { mountWithProviders, stubPocketai } from './helpers/renderer'
+import { agentToolsStub, mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AgentComposer } from '../src/renderer/src/modules/agent/components/AgentComposer'
 import { AgentModelBar } from '../src/renderer/src/modules/agent/components/AgentModelBar'
 import { zeroCallNoticeFlags } from '../src/renderer/src/modules/agent/agent-shared'
@@ -76,7 +76,8 @@ function mountMenu(opts: {
         workspaceDir: '',
         workspaceUnread: null,
         onPickWorkspace: () => {},
-        onRetryWorkspace: () => {}
+        onRetryWorkspace: () => {},
+        tools: agentToolsStub()
       } as never
     )
   )

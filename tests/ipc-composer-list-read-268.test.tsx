@@ -12,7 +12,7 @@
 //    所以再打字也不会重拉 ⇒ 句子必须自带一颗重试键，否则那是句没出路的话。
 import { describe, it, expect, beforeAll } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
-import { mountWithProviders, calledFns, stubPocketai } from './helpers/renderer'
+import { agentToolsStub, mountWithProviders, calledFns, stubPocketai } from './helpers/renderer'
 import { ChatConfigBar } from '../src/renderer/src/modules/chat/ChatConfigBar'
 import { Composer } from '../src/renderer/src/modules/chat/Composer'
 import { AgentComposer } from '../src/renderer/src/modules/agent/components/AgentComposer'
@@ -224,7 +224,8 @@ describe('③ Agent 输入框（AgentComposer）：同一颗知识库那句自�
     workspaceDir: '',
     workspaceUnread: null,
     onPickWorkspace: () => { /* 同上 */ },
-    onRetryWorkspace: () => { /* 同上 */ }
+    onRetryWorkspace: () => { /* 同上 */ },
+    tools: agentToolsStub()
   }
   const type = (v: string): void => {
     fireEvent.change(document.querySelector('[data-agent-composer-input]') as Element, { target: { value: v } })
