@@ -439,7 +439,9 @@ describe('E 真挂载：输入框在运行中不再被禁用', () => {
     expect(screen.getByTestId('agent-queue-interject')).toBeTruthy()
     expect((input() as HTMLTextAreaElement).disabled).toBe(false)
     expect(input().getAttribute('placeholder')).toBe(zh['agent.inputPhRunning'])
-    // 附件那一发在运行中是关的（排队只带文字）
+    // 附件那一发在运行中是关的（排队只带文字）。§399 起它躺在「+」菜单里＝先点开再看那一行，
+    // 判据本身一字未动（仍是"那颗入口在运行中禁用，且说得出为什么"）
+    fireEvent.click(screen.getByTestId('agent-composer-plus'))
     expect(screen.getByTitle(zh['agent.queue.textOnly'])).toBeTruthy()
   })
 

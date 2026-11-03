@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { SnippetButton } from '../../../components/SnippetButton'
+import { FloatingPanel } from '../../../components/FloatingPanel'
 import { SlashMenu } from '../../../components/SlashMenu'
 import { MentionMenu, type MentionItem } from '../../../components/MentionMenu'
 import { SnippetVarsDialog } from '../../../components/SnippetVarsDialog'
@@ -77,9 +78,17 @@ export const AgentComposer: React.FC<Props> = ({
   // 知识库列表（首次触发时惰性拉取）
   const kbsRef = useRef<KnowledgeBase[] | null>(null)
   const [kbsFail, setKbsFail] = useState<{ error?: string } | null>(null)
+  // §399：输入行左端那两颗键（📎／📝）收进一颗「+」，知识库清单也从这里点得到（不必打字触发 @）
+  const [plusOpen, setPlusOpen] = useState(false)
+  const plusRef = useRef<HTMLButtonElement>(null)
+  // `kbsRef` 是 ref，读到了不会自己重渲染——开菜单那一发落回来时要敲一下这记信号
+  const [kbsReady, setKbsReady] = useState(0)
 
   // 内置指令（随界面语言变化）
   const builtins = useMemo<SlashCommand[]>(() => buildBuiltinSlashCommands(t), [t])
+
+  // 「+」菜单里那组知识库：清单本体在 ref 里（防并发重拉），靠 `kbsReady` 这记信号重取一次
+  const menuKbs = useMemo(() => kbsRef.current ?? [], [kbsReady])
 
   // 当前触发态（光标位置取自 textarea selectionStart）
   const cursor = taRef.current?.selectionStart ?? input.length
@@ -140,6 +149,7 @@ export const AgentComposer: React.FC<Props> = ({
         }
         kbsRef.current = list
         setKbsFail(null)
+        setKbsReady((n) => n + 1)
       })
       .catch((e: unknown) => {
         setKbsFail({ error: errText(e, '') })
@@ -298,6 +308,18 @@ export const AgentComposer: React.FC<Props> = ({
     })
   }
 
+  /** 挑中一个知识库＝追加成一颗 kb chip（@ 那条路与「+」菜单里那一组共用同一份形状） */
+  const addKbChip = (kb: KnowledgeBase): void => {
+    att.addAttachment({
+      type: 'kb',
+      name: kb.name,
+      mimeType: '',
+      size: 0,
+      data: '',
+      kbId: kb.id
+    })
+  }
+
   /** 选中 @ 菜单项：知识库追加为 kb chip，文件追加为普通附件 */
   const pickMentionItem = (index: number) => {
     const item = mentionItems[index]
@@ -310,14 +332,7 @@ export const AgentComposer: React.FC<Props> = ({
     if (item.type === 'kb') {
       const kb = (kbsRef.current ?? []).find((k) => k.id === item.value)
       if (!kb) return
-      att.addAttachment({
-        type: 'kb',
-        name: kb.name,
-        mimeType: '',
-        size: 0,
-        data: '',
-        kbId: kb.id
-      })
+      addKbChip(kb)
     }
     requestAnimationFrame(() => {
       taRef.current?.focus()
@@ -516,17 +531,85 @@ export const AgentComposer: React.FC<Props> = ({
           />
         )}
         <input {...fileInputProps} />
+        {/* §399：输入行左端收成一颗「+」。三行接的都是**已有的出口**——附件仍是那颗隐藏 input、
+            片段仍是 SnippetButton 那套三态弹层、知识库仍是同一发惰性读＋同一颗 kb chip（不另起第二份清单机关）。
+            「清单读不到」那句仍然在浮层**外面**（上面那两处 §268 的句子）：菜单一关就不说话＝替这次失败闭嘴。 */}
         <button
-          onClick={openPicker}
-          disabled={running}
-          title={running ? t('agent.queue.textOnly') : t('common.attachFile')}
-          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors disabled:opacity-40"
+          ref={plusRef}
+          type="button"
+          data-testid="agent-composer-plus"
+          aria-haspopup="menu"
+          aria-expanded={plusOpen}
+          title={t('agent.plusMenu')}
+          aria-label={t('agent.plusMenu')}
+          onClick={() => {
+            if (plusOpen) setPlusOpen(false)
+            else {
+              setPlusOpen(true)
+              loadKbs()
+            }
+          }}
+          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[17px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-          </svg>
+          ＋
         </button>
-        <SnippetButton onInsert={insertAtCursor} disabled={running} />
+        {plusOpen && (
+          <FloatingPanel anchorRef={plusRef} width={252} onClose={() => setPlusOpen(false)} data-testid="agent-composer-plus-menu">
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="agent-composer-plus-file"
+              disabled={running}
+              title={running ? t('agent.queue.textOnly') : t('common.attachFile')}
+              onClick={() => {
+                setPlusOpen(false)
+                openPicker()
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors disabled:opacity-40"
+            >
+              <span aria-hidden>📎</span>
+              <span>{t('common.attachFile')}</span>
+            </button>
+            <SnippetButton
+              onInsert={(text) => {
+                setPlusOpen(false)
+                insertAtCursor(text)
+              }}
+              disabled={running}
+              variant="row"
+            />
+            <div className="my-1 border-t border-[var(--color-border)]" />
+            <div className="px-3 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+              {t('mention.knowledge')}
+            </div>
+            {menuKbs.length === 0 && kbsRef.current === null && (
+              <div className="px-3 py-2 text-[10px] text-[var(--color-text-muted)]">…</div>
+            )}
+            {menuKbs.length === 0 && kbsRef.current !== null && !kbsFail && (
+              // 读成功、库里真的没有东西才说这句。读失败时这里**一个字都不加**＝菜单里不装"这里没东西"，
+              // 说话的是浮层外面那句既有的「知识库清单读不到」＋那颗重试键（§268：藏进浮层＝替这次失败闭嘴）
+              <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">{t('ccb.none')}</div>
+            )}
+            {menuKbs.map((kb) => (
+              <button
+                key={kb.id}
+                type="button"
+                role="menuitem"
+                data-testid={`agent-composer-plus-kb-${kb.id}`}
+                onClick={() => {
+                  setPlusOpen(false)
+                  addKbChip(kb)
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors"
+              >
+                <span className="flex-1 min-w-0 truncate">{kb.name}</span>
+                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                  {kb.documentCount} {t('common.docs')}
+                </span>
+              </button>
+            ))}
+          </FloatingPanel>
+        )}
         <textarea
           ref={taRef}
           data-agent-composer-input

@@ -15,6 +15,11 @@ interface Props {
   /** 把最终文本插入输入框（由各 Composer 实现光标位置拼接） */
   onInsert: (text: string) => void
   disabled?: boolean
+  /**
+   * 'icon'＝输入行上那颗 📝（对话页照旧）；'row'＝整行菜单项（Agent 输入框的「+」里用）。
+   * 只换触发键的长相，弹层那三态与全部机关一字不动。
+   */
+  variant?: 'icon' | 'row'
 }
 
 const POPUP_WIDTH = 304
@@ -27,7 +32,7 @@ interface EditingState {
   content: string
 }
 
-export const SnippetButton: React.FC<Props> = ({ onInsert, disabled }) => {
+export const SnippetButton: React.FC<Props> = ({ onInsert, disabled, variant = 'icon' }) => {
   const { t } = useI18n()
   const toast = useToast()
   const btnRef = useRef<HTMLButtonElement>(null)
@@ -221,14 +226,26 @@ export const SnippetButton: React.FC<Props> = ({ onInsert, disabled }) => {
         aria-label={t('snippet.button')}
         disabled={disabled}
         onClick={() => (open ? closePopup() : openPopup())}
-        className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[17px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+        className={
+          variant === 'row'
+            ? 'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] transition-colors disabled:opacity-40'
+            : 'shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[17px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors disabled:opacity-30 disabled:pointer-events-none'
+        }
       >
-        📝
+        {variant === 'row' ? (
+          <>
+            <span aria-hidden>📝</span>
+            <span>{t('snippet.button')}</span>
+          </>
+        ) : (
+          '📝'
+        )}
       </button>
 
       {open && (
         <div
           ref={popupRef}
+          data-esc-nested="1"
           style={{ position: 'fixed', bottom: pos.bottom, left: pos.left, width: POPUP_WIDTH }}
           className="z-[9999] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
         >

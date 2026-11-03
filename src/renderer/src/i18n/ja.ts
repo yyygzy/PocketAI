@@ -708,6 +708,7 @@ export const ja = {
   'agent.emptyHint': 'アシスタントを選択 → 新しいセッション → プロバイダー/モデルを選択 → タスクを入力。エージェントは利用可能なツールを自動的に呼び出します。',
   'agent.inputPh': 'エージェントにタスクを与えてください（Enter で送信、Shift+Enter で改行）',
   'agent.composerTitle': 'メッセージ入力（Ctrl+/ でフォーカス）',
+  'agent.plusMenu': 'コンテキストを追加',
   // 実行中にメッセージを積む（V4-Iter-238）
   'agent.inputPhRunning': '実行中：まずキューに入り、この実行の終了後に自動送信されます',
   'agent.queue.enqueue': 'キュー',

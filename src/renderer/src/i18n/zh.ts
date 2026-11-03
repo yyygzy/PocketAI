@@ -736,6 +736,8 @@ export const zh = {
   'agent.emptyHint': '选择助手 → 新会话 → 选择 Provider/模型 → 输入任务。Agent 会自动调用可用工具。',
   'agent.inputPh': '给 Agent 一个任务（Enter 发送，Shift+Enter 换行）',
   'agent.composerTitle': '输入消息（Ctrl+/ 聚焦）',
+  // §399：输入行左端收成一颗「+」（今天装的是上下文三项，执行设置另起一枚再往里收）
+  'agent.plusMenu': '添加上下文',
   // 运行中排队消息（V4-Iter-238）
   'agent.inputPhRunning': '运行中：先排队，本轮结束后自动发送',
   'agent.queue.enqueue': '入队',

@@ -276,9 +276,17 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   §398 的**第二段**（同一枚里补的「分步明细那一面」）再抬到 1055／395：本文件新写 6 颗，仍是同一形状
     //   ——门等调用计数（`getRunTraces`／`getLatestRunTraces` 被问了几次）与 `result.current` 的值、门后不读屏
     //   ⇒全部落「门后没有读屏断言」（389→395），其余四桶未动。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1055)
+    //   §399① 再抬到 1064／571／80／395／0／18（净新增 9 颗 awaits、不是搬运，全在 `renderer-agent-composer-plus-399`
+    //   一份真挂载用例里）：这九颗读的都是**屏**（`data-testid` 那颗菜单在不在、片段弹层里那一行、外面那句 alert）
+    //   ⇒ 5 颗落「按存在读屏」（566→571）；另外 4 颗是"点完键等那层菜单收掉"＝同块更早已把它断上屏的**转换门**
+    //   ⇒ 落「等退场」（76→80）。「门后没有读屏断言」那一格一格未动（§398 记的那条 hook 盲区本枚没踩：
+    //   这份夹具读的是 DOM，不读 `result.current`）。会假红／只会假绿两桶仍为 0／18。
+    //     · 同一枚里后补的两颗（「Esc 不越级」与「mousedown 再 click」那两例）再抬到 1066／572／81：
+    //       一颗门等"片段那一层里那一行上屏"＝按存在读屏（571→572）、一颗门等"那一层收掉"＝等退场（80→81）；
+    //       「mousedown 再 click」那例根本不写门（点完同步读），不进任何一格。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1066)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('566/76/395/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('572/81/395/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

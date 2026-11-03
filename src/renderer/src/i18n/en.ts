@@ -735,6 +735,7 @@ export const en = {
   'agent.emptyHint': 'Select assistant → New session → pick provider/model → enter a task. The agent calls available tools automatically.',
   'agent.inputPh': 'Give the agent a task (Enter to send, Shift+Enter for a new line)',
   'agent.composerTitle': 'Message input (Ctrl+/ to focus)',
+  'agent.plusMenu': 'Add context',
   // Messages queued while a run is in flight (V4-Iter-238)
   'agent.inputPhRunning': 'Running: type to queue, sent after this run',
   'agent.queue.enqueue': 'Queue',
