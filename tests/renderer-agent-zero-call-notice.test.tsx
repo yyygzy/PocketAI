@@ -134,9 +134,15 @@ describe('B55④：开关作用域在 hook 状态里是一台模型一个', () =
 
   it('点名了 gpt-mini ⇒ 选它时 forced=true，切到 gpt-max 立刻复位 false', async () => {
     const result = mountHook(['p1::gpt-mini'])
-    await waitFor(() => expect(pocketaiCalls().some((c) => c.fn === 'getAgentTextProtocol')).toBe(true))
     act(() => result.current.changeProvider('p1'))
     act(() => result.current.setModel('gpt-mini'))
+    // §400：改前这发门等的是「`getAgentTextProtocol` 那一发调用发生了」＝计数门，调用一发出就放行，
+    // 而紧随的断言读的是响应落地才有的 `result.current.textProtocolForced` ⇒ 负载窗里读的是落地之前那一帧。
+    // 修法按 §364 的口径＝把到货的见证折进同一道门、排第一句（那句计数降为第二句，门仍证「问过了」）。
+    await waitFor(() => {
+      expect(result.current.textProtocolForced).toBe(true)
+      expect(pocketaiCalls().some((c) => c.fn === 'getAgentTextProtocol')).toBe(true)
+    })
     expect(result.current.providerId).toBe('p1')
     expect(result.current.textProtocolForced).toBe(true)
     // 换另一台模型：作用域是 provider+model 一台一个，不能跟着过去
@@ -146,10 +152,13 @@ describe('B55④：开关作用域在 hook 状态里是一台模型一个', () =
 
   it('通过 setTextProtocol 关掉当前这台 ⇒ 徽标复位，且写库带的是 on=false', async () => {
     const result = mountHook(['p1::gpt-mini'])
-    await waitFor(() => expect(pocketaiCalls().some((c) => c.fn === 'getAgentTextProtocol')).toBe(true))
     act(() => result.current.changeProvider('p1'))
     act(() => result.current.setModel('gpt-mini'))
-    expect(result.current.textProtocolForced).toBe(true)
+    // §400：同上一发——门等调用、断言读 `result.current`＝落地之前那一帧（见同文件另一处的修法）
+    await waitFor(() => {
+      expect(result.current.textProtocolForced).toBe(true)
+      expect(pocketaiCalls().some((c) => c.fn === 'getAgentTextProtocol')).toBe(true)
+    })
     await act(async () => {
       await result.current.setTextProtocol(false)
     })

@@ -3,7 +3,9 @@
 // 来路＝§361 全量第一趟在 992s 负载窗里红两条 → §362 用**延迟到货的桩**确定性复现（不是重造负载）→
 // §363 收第三处 → 本批横扫全仓把这一面钉住。判据口径（三条都要满足才算候选）：
 //   ① 语句是 `await waitFor(cb)`；
-//   ② cb **没把屏等到变**——判据不是「门体里有没有读屏的字面量」，而是**逐条看门里 expect 的极性**：
+//   ② cb **没把屏等到变**——判据不是「门体里有没有读屏的字面量」，而是**逐条看门里 expect 的极性**
+//      （**屏有两类**，§400 补第二半：DOM 屏＝下面说的字面量＋闭包 helper；hook 屏＝`result.current`。
+//       门按「存在」读了 hook 屏 ⇒ 同样放行，只是另记一格 hookGates，不占 domGates）：
 //      · 有一条「读屏 且 要求存在」⇒ 门确实在等屏，放行（domGates）。
 //      · 「读屏却只要求不存在」（`toEqual([])`／`toBeNull()`／`toHaveLength(0)`／`toBeFalsy()`）＝空极门：
 //        单看它 t=0 就为真、门立刻放行 ⇒ §363 那一发（等「没有 alert」再去读历史按钮）就是这个形状。
@@ -27,12 +29,20 @@
 //   · 门按"存在"读了 X、紧随的断言读的却是另一颗更晚到货的 Y ⇒ 放行。要收这一档得比"门读的那颗==断言读的那颗"，
 //     会把大量「门等加载完、断言查内容」的正常写法判成候选。
 //   · 转换门依赖「撤横幅与画新数据落在同一批 setState」——React 18 自动批处理下成立，逐处再验要读产品码的写序。
-//   · **本面的"读屏"只认 DOM**（`screen`／`textContent`／闭包 helper）。真 hook 夹具（`renderHook`＋
-//     `result.current`）读的是渲染层状态、同样要等响应落地才有值，但它不碰 DOM⇒一律落进「门后没有读屏断言」，
-//     本面看不见。§398 全量第一趟就是这么红了一颗（门等 `getRunStats` 的**调用计数**、紧随同步读
+//   · 「读屏」认**两类**屏（§400 收的就是第二半）：DOM 屏＝`screen`／`textContent`／闭包 helper；
+//     hook 屏＝`result.current`。真 hook 夹具（`renderHook`＋`result.current`）读的是渲染层状态、
+//     同样要等响应落地才有值，但它不碰 DOM⇒旧版一律落进「门后没有读屏断言」，这一面看不见。
+//     §398 全量第一趟就是这么红了一颗（门等 `getRunStats` 的**调用计数**、紧随同步读
 //     `result.current.runStats`＝计数门 t=0 就放行，读的是落地之前那一帧）——同族在 §380／§396 已各摆七颗／九颗，
-//     只是那次没撞上。收这一档要把"读 hook 状态"当成第二类屏（`result.current` 出现在门后的同步断言里＝候选），
-//     代价是"无紧随读屏"那一格（现数 395）要重新分桶⇒另起一枚，本批只把形状记在台账的待收账里。
+//     只是那次没撞上。§400 把它当成第二类屏收干：门里按「存在」读 `result.current`⇒另记一桶（hookGates）放行，
+//     门不等任何屏、紧随的同步断言读 `result.current` 且要求存在⇒照旧进「会假红」；「无紧随读屏」那一格
+//     因此从 400 搬到 309（现查）。留下两档**与 DOM 半同形**的盲区（不是新增、是原有盲区在第二类屏上的复现）：
+//     – 只认 `result.current` 这个字面串：把 `result` 改名解构（`const { result: r }`）或先落进本地量
+//       （`const ref = result.current.queue[0]`、隔一句再 `expect(ref)`）都读不到⇒落「无紧随读屏」。
+//       现查全仓 44 处 `renderHook` 没有别名解构（`grep -c renderHook`＋`grep -v "const { result"` 逐条过目），
+//       这一档目前只是理论盲区；DOM 半本来就有同形的一条（读进 const 再断）。
+//     – hook 屏与 DOM 屏之间仍**不比对象**：门按存在读了 `result.current.a`、紧随断言读更晚到货的 `result.current.b`
+//       ⇒ 放行（与第一条盲区同一条口子，收它要把两颗取值比成同一颗，会把大量正常写法判成候选）。
 // @vitest-environment node
 import fs from 'node:fs'
 import path from 'node:path'
@@ -46,6 +56,13 @@ const ABSENCE = /(?:^|[^A-Za-z])\.not\.|toBeNull\(\)|toEqual\(\[\]|toHaveLength\
 const NOT_ABSENT = /\.not\.(toBeNull|toBeUndefined|toBeFalsy|toEqual\(\[\]\)|toHaveLength\(0\))/
 /** 这一句断的是「屏上没有」吗（`not.toBeNull()` 这类双否定不算） */
 const isAbsence = (s: string): boolean => ABSENCE.test(s) && !NOT_ABSENT.test(s)
+/**
+ * §400 第二份屏：真 hook 夹具（`renderHook`）读的是 `result.current.*`＝渲染层状态，
+ * 同样要等响应落地才有值，但它不碰 DOM。§398 全量第一趟就是这么红了一颗（门等**调用计数**、
+ * 紧随同步读 `result.current.runStats`＝计数门 t=0 就放行，读的是落地之前那一帧），
+ * 而本面当时把它记成「门后没有读屏断言」＝看不见。⇒ 读屏 ＝ 读 DOM **或** 读 hook 状态。
+ */
+const HOOK = /\bresult\.current\b/
 
 interface Cand {
   file: string
@@ -59,9 +76,11 @@ interface Scan {
   positive: Cand[]
   /** 门不等屏、紧随其后要求不存在 ⇒ 方向要逐条判（撤除型会假红、恒不画型只会漏报），名单连判语钉死 */
   absenceOnly: Cand[]
-  /** 门按「存在」读了屏 ⇒ 放行 */
+  /** 门按「存在」读了 DOM ⇒ 放行 */
   domGates: number
-  /** 门只断不存在、但同块更早已把那样东西断上屏 ⇒ 等它退场，放行 */
+  /** §400：门按「存在」读了 hook 状态（`result.current.*`）⇒ 放行；与 `domGates` 分开数＝证明这一半不是空枪 */
+  hookGates: number
+  /** 门只断不存在、但同块更早已把那样东西断上屏（DOM 或 hook 都算）⇒ 等它退场，放行 */
   transitionGates: number
   /** 门放行之后没有"紧随的读屏断言"（这一发不构成本面的形状） */
   silent: number
@@ -97,6 +116,8 @@ function scanSource(fileName: string, text: string): Scan {
   }
   const readsDom = (s: string): boolean =>
     DOM_BASE.test(s) || [...helpers].some((h) => callRe(h).test(s))
+  /** 本面的"屏"有两份：DOM 与 hook 状态（§400 收的那一半） */
+  const readsScreen = (s: string): boolean => readsDom(s) || HOOK.test(s)
 
   /** 子树里每一条 `expect(...)` 的**整条链**文本（爬到链顶，matcher 才不会丢） */
   const expectsIn = (node: ts.Node): string[] => {
@@ -130,13 +151,13 @@ function scanSource(fileName: string, text: string): Scan {
    *    粗判会把它放行；本批不靠这条判据兜它们，是把到货的见证直接折进门里（折完它们不再是候选）。
    *    留下的盲区写进文件头：新增一颗「先读过屏、再等另一样东西不在」的门会放行 ⇒ 用现数钉住、加一颗要人工过目。 */
   const putsOnScreen = (node: ts.Node): boolean => {
-    const hit = (n: ts.Node): boolean => expectsIn(n).some((x) => readsDom(x) && !isAbsence(x))
+    const hit = (n: ts.Node): boolean => expectsIn(n).some((x) => readsScreen(x) && !isAbsence(x))
     if (hit(node)) return true
     const txt = node.getText(sf)
     return decls.some((d) => hit(d.node) && callRe(d.name).test(txt))
   }
 
-  const out: Scan = { positive: [], absenceOnly: [], domGates: 0, transitionGates: 0, silent: 0, awaits: 0 }
+  const out: Scan = { positive: [], absenceOnly: [], domGates: 0, hookGates: 0, transitionGates: 0, silent: 0, awaits: 0 }
   const blockOf = (n: ts.Node): ts.Block | null => (n.parent && ts.isBlock(n.parent) ? n.parent : null)
   /** 这一发空极门之前，同块里（或经由它调的本地 helper）确有东西上过屏 ⇒ 它是「等退场」，不是「没牙」 */
   const retractOf = (block: ts.Block | null, gate: ts.Statement): boolean => {
@@ -163,10 +184,14 @@ function scanSource(fileName: string, text: string): Scan {
         // 门里一句 expect 都没有（`() => { foo() }`／`async () => { await … }`）⇒ 回落到整段文本判读屏
         const readsPresent = es.length > 0 ? es.some((x) => readsDom(x) && !isAbsence(x)) : readsDom(gate.getText(sf))
         const absenceReads = es.filter((x) => readsDom(x) && isAbsence(x))
+        // §400：门按「存在」读了 hook 状态＝它等的就是那一帧落地，放行，但单独记一桶（与 DOM 那桶数不同＝证明这一半不是空枪）
+        const hookPresent = es.some((x) => !readsDom(x) && HOOK.test(x) && !isAbsence(x))
         const block = blockOf(node)
         if (readsPresent) {
           out.domGates += 1
-        } else if (absenceReads.length > 0 && retractOf(block, node)) {
+        } else if (hookPresent) {
+          out.hookGates += 1
+        } else if ((absenceReads.length > 0 || es.some((x) => !readsDom(x) && HOOK.test(x))) && retractOf(block, node)) {
           out.transitionGates += 1
         } else if (block) {
           let pushed = false
@@ -179,7 +204,7 @@ function scanSource(fileName: string, text: string): Scan {
             if (i > at + 1 && /await\s/.test(prev.getText(sf))) break
             const txt = s.getText(sf)
             if (!/^expect\(/.test(txt.trim())) continue
-            if (!readsDom(txt)) continue
+            if (!readsScreen(txt)) continue
             if (/findBy/.test(txt)) break // findBy 自己会等
             const cand: Cand = {
               file: fileName, gateLine: lineOf(node), domLine: lineOf(s),
@@ -202,7 +227,7 @@ function scanSource(fileName: string, text: string): Scan {
 }
 
 function scanAll(): Scan {
-  const merged: Scan = { positive: [], absenceOnly: [], domGates: 0, transitionGates: 0, silent: 0, awaits: 0 }
+  const merged: Scan = { positive: [], absenceOnly: [], domGates: 0, hookGates: 0, transitionGates: 0, silent: 0, awaits: 0 }
   const files: string[] = []
   const walk = (d: string): void => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
@@ -219,6 +244,7 @@ function scanAll(): Scan {
     merged.positive.push(...one.positive)
     merged.absenceOnly.push(...one.absenceOnly)
     merged.domGates += one.domGates
+    merged.hookGates += one.hookGates
     merged.transitionGates += one.transitionGates
     merged.silent += one.silent
     merged.awaits += one.awaits
@@ -232,7 +258,7 @@ const detail = (c: Cand): string => `${where(c)}  ${c.gate}  ||  ${c.dom}`
 
 describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', () => {
   it('读法自证：全仓在等的 waitFor 有多少、各桶多少（分类器坏了这里先红）', () => {
-    // 五桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-31（§381 又加了一份挂载用例；§380 那趟记的 1006/545 已被顶掉）＝awaits 1018／按存在读屏 557／
+    // 六桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-31（§381 又加了一份挂载用例；§380 那趟记的 1006/545 已被顶掉）＝awaits 1018／按存在读屏 557／
     // 等退场 75／门后没有读屏断言 360／会假红 0／只会假绿 18。逐颗钉死＝新增任何一格都要人工过目。
     //   §369 这 6 颗的来路（不是搬运，是净新增）：recovery-carry-notice-369 里 6 发 waitFor＝
     //   5 颗门按"那行字上屏"读（落进 按存在读屏 525→530）＋1 颗门等的是 notices.length（非 DOM 信号）、
@@ -300,18 +326,32 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   · 同一枚把 `renderer-websearch-b3` 的那颗「只会假绿」从 :81→:82 搬成 :79→:80（去掉「先点开展开」那两行，判语一字未动）
     //     ⇒ 又一次印证「改过判据所在文件就要重取这面闸门的数字」，名单里带行号的条目会随夹具改动漂移。
     //   会假红仍 0、无紧随读屏仍 400（②b 没往 hook 夹具里加门）。
+    //   §400＝**只改分桶、不新增门**：awaits 一字未动（仍 1094），"读屏"从只认 DOM 扩成 DOM＋hook 两类
+    //   （第二类的字面判据＝`result.current`）⇒「门后没有读屏断言」那一格搬出 91 颗（400→309），
+    //   去向＝81 颗门自己按「存在」读了 hook 屏＝新格 hookGates、9 颗门等的是 hook 屏上那句"收回"＝等退场
+    //   （89→98）、1 颗门后读的是 hook 屏上的"不在场"＝进假绿名单（18→19）。
+    //   · **搬完第一趟就红了两颗真的会假红**（此前它们一直藏在 309 那一格）＝
+    //     `renderer-agent-zero-call-notice` 的两处：门等 `getAgentTextProtocol` 的**调用计数**（发出即放行）、
+    //     紧随同步读 `result.current.providerId`／`.textProtocolForced`，而后者是渲染层推导
+    //     （`src/renderer/src/modules/agent/hooks/useAgentChat.ts:314` 取 `textProtocolModels`＝响应落地才有值）
+    //     ⇒ §398 记的那条盲区的第一手样本。修法按本文件口径＝把到货的见证（`textProtocolForced` 翻真）折进
+    //     同一道门、排第一句，那句计数降为第二句（门仍有牙＝初值 false；两份用例 9 例改后仍全绿）。
+    //   · 假绿名单多那一颗＝`renderer-run-stats-unread-396:194 -> :195`（旧版看不见它读的那份屏）：判语见那颗
+    //     条目旁的注释，方向＝**只会漏报**（那一颗只在响应回来的失败分支点亮，成功／读到 null 那一发什么都不点，
+    //     所以门放行时那句"不在场"恒真，不会因迟到到货而假红）。
+    //   · 「按存在读 DOM」那一格 587 一格未动＝这一枚没动任何 DOM 判据，只把 hook 那半收进来。
     expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1094)
-    expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('587/89/400/0/18')
-    expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
-      '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
+    expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('587/81/98/309/0/19')
+    expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
+      '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
 
   it('正向候选＝0：门不等屏、紧随其后却是"要求屏上存在"的断言，一处都不许留', () => {
     expect(ALL.positive.map(where), `会假红的形状：\n${ALL.positive.map(detail).join('\n')}`).toEqual([])
   })
 
-  it('只会假绿那一档（要求「不存在」）＝18 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
+  it('只会假绿那一档（要求「不存在」）＝19 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
     // §365 判语（分组，位置按现数名单）：
     //   ①「在飞那一帧」本身就是判据对象——负向句读的是"发出之后、落地之前"，折进门里反而把判据废掉：
     //     load-fail-read-retry-350／352／354（"还在加载那一支既没有那句也没有那颗键"）、
@@ -343,6 +383,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-provider-http-confirm.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:64 -> :65',
       'tests/renderer-provider-settings.test.tsx:249 -> :250',
+      'tests/renderer-run-stats-unread-396.test.tsx:194 -> :195', // §400 新入名单（不是新形状，是旧版看不见它读的那份屏＝hook 屏）：门等挂载那一发的调用计数、紧随断 `result.current.runStatsUnread` 仍是 null。判语＝**只会漏报**：那一颗只在响应回来的失败分支点亮（`useAgentChat.ts:794`／`:800`），成功／读到 null 那一发回什么都不点⇒门放行那一刻"不在场"恒真，不会因为迟到到货而假红；这一发漏的是「落地以后才点亮」那一档（同块更早已把它断成不在场、后面的门再等它翻真，那是另一颗门的事）。
       'tests/renderer-websearch-b3.test.tsx:79 -> :80', // §399②b 现量＋2：那份夹具去掉「先点开展开」那两行，形状与判语一字未动
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
       'tests/skill-market-fetch-debounce-322.test.tsx:159 -> :160',
@@ -465,5 +506,42 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     expect(afterSettle.positive).toEqual([])
     expect(afterSettle.absenceOnly.length, '中间多一次落定 ⇒ 这一发不再算候选（修法生效的机器证据）').toBe(0)
     expect(afterSettle.silent, '它要落在"门后无紧随读屏断言"那一格').toBe(1)
+
+    // §400 漏杀对照（第二份屏）：真 hook 夹具的改前形状——门等**调用计数**、门后同步读 `result.current`。
+    // 这一颗本枚在真源码里抓到了两颗（`renderer-agent-zero-call-notice` 那两处），喂进分类器必须照样报出来，
+    // 否则「hookGates 81」只是把门换了一格、不是这一半真有牙。
+    const hookCountGate = scanSource('fx-hook-count-gate.tsx', `
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('getAgentTextProtocol')).toBe(1))
+        expect(result.current.textProtocolForced).toBe(true)
+      })`)
+    expect(hookCountGate.positive.length, '门等调用计数、紧随同步读 result.current ⇒ 这一族没被第二类屏认出来＝hook 半是瞎的').toBe(1)
+    expect(hookCountGate.hookGates, '它不该被算成"门在读屏"').toBe(0)
+    expect(hookCountGate.silent, '也不该再留在"无紧随读屏"那一格').toBe(0)
+    // §400 反向对照①：门自己按「存在」读 `result.current`（§396／§398／②a 那三份 hook 夹具的正规写法）⇒ 放行
+    const hookPresenceGate = scanSource('fx-hook-gate.tsx', `
+      it('t', async () => {
+        await waitFor(() => expect(result.current.conversationId).toBe('c1'))
+        expect(result.current.runStats).toBeNull()
+      })`)
+    expect(hookPresenceGate.positive).toEqual([])
+    expect(hookPresenceGate.hookGates, '按存在读 hook 屏 ⇒ 要落在新格，不能仍算"门不等屏"').toBe(1)
+    // §400 反向对照②：更早已把那个值断成存在、门等它收回（在飞那一帧的收旧值写法）⇒ 转换门，不算候选
+    const hookRetractGate = scanSource('fx-hook-retract.tsx', `
+      it('t', async () => {
+        expect(result.current.runStatsUnread).not.toBeNull()
+        await waitFor(() => expect(result.current.runStatsUnread).toBeNull())
+        expect(result.current.runStats?.stepCount).toBe(2)
+      })`)
+    expect(hookRetractGate.positive).toEqual([])
+    expect(hookRetractGate.transitionGates, '这句"收回"是要等的那件事 ⇒ 落「等退场」').toBe(1)
+    // §400 反向对照③：门后那句读 hook 屏但要求「不存在」⇒ 只进假绿那一桶（名单里有牙的前提＝它数得出来）
+    const hookThenAbsence = scanSource('fx-hook-absence.tsx', `
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('getLatestRunStats')).toBe(1))
+        expect(result.current.runStatsUnread).toBeNull()
+      })`)
+    expect(hookThenAbsence.positive).toEqual([])
+    expect(hookThenAbsence.absenceOnly.length).toBe(1)
   })
 })
