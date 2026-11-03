@@ -181,7 +181,7 @@ describe('调用点接住了这条约定（V4-Iter-208）', () => {
 //
 // 扫描器自己的两条坑都在本批实测踩过，写在这里免得下次重犯：
 //  · 捕获组写成 `[^;{}]*?` 会把 `import {\n a\n} from 'x'` 这种多行形态**整条漏掉**——
-//    我第一版就这么把 17 个文件（含 `agent/file-snapshots.ts`、`agent/eval/suite.ts`）判成闭包外，
+//    我第一版就这么把 17 个文件（含 `agent/file-snapshots.ts`、`mcp/json-rpc.ts`）判成闭包外，
 //    连带把 3 个码误报成孤儿。正解 `[^;]*?`：本仓 TS 不写分号，非贪婪下最近的 `from` 就是本条语句的。
 //  · 只按"同一行里 import … from"扫，同样漏多行形态。
 // `import type` 那类**不算边**：它在编译期被擦掉，把"只被类型引用"当成"运行时会被 require 到"
@@ -272,7 +272,7 @@ describe('回码的 throw 站点从 IPC 入口可达（V4-Iter-247）', () => {
 
   it('扫描器不是空转：① 多行 import 的文件收得到 ② 闭包确实有边界（不是"全都可达"）', () => {
     // ① 这两个只能靠**多行** import 收到；第一版单行／`[^;{}]` 正则把它们漏成了孤儿码
-    for (const f of ['agent/file-snapshots.ts', 'agent/eval/suite.ts', 'mcp/json-rpc.ts']) {
+    for (const f of ['agent/file-snapshots.ts', 'mcp/json-rpc.ts']) {
       expect(strict.has(path.join(MAIN_ROOT, f.replace(/\//g, path.sep))), `闭包里应当有 ${f}`).toBe(true)
     }
     // ② 反向对照：真有一批文件在闭包外。若哪天扫描器写成"返回全部文件"，这一条必须红

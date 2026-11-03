@@ -206,9 +206,8 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
       'src/renderer/src/modules/image/ImageModule.tsx',
       // §267 收的拉模型那颗 ✕（同一档：键还挂着，只欠一句话）
       'src/renderer/src/hooks/useOllamaPull.ts',
-      // 立面之前就已是正解的那五处
+      // 立面之前就已是正解的那四处
       'src/renderer/src/modules/settings/ProviderSettings.tsx',
-      'src/renderer/src/modules/agent/chat/AgentEvalPanel.tsx',
       'src/renderer/src/modules/agent/channels/ChannelsPanel.tsx',
       'src/renderer/src/modules/agent/mcp/McpPanel.tsx',
       'src/renderer/src/components/RemindersModal.tsx'

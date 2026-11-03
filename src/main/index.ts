@@ -120,14 +120,16 @@ function tryOpenDbNoPassword(): boolean {
 
 /**
  * 页面加载失败/挂起自动重试。
- * 双兜底：① did-fail-load（请求被丢）→ reload；② did-start-loading 后
- * 8 秒无响应（请求在网络服务崩溃恢复期内挂起，既不成功也不失败）→ 强制
- * reload。网络服务约 1-2 秒内重启完成，重试必然成功，窗口即可显示。
+ * 双兜底：① did-fail-load（请求被丢）→ reload；② 导航开始后超时无响应
+ * （请求在网络服务崩溃恢复期内挂起，既不成功也不失败）→ 强制重载。
+ * 超时判据：打包版 8s；dev 30s——Vite 首次按需编译渲染端模块图实测 17.6s
+ * （2026-11-03 dev 白屏排查），8s 会把正常冷启动误判成挂起。
  */
 function installLoadRetry(win: BrowserWindow, label: string): void {
   let retries = 0
   let hangTimer: NodeJS.Timeout | null = null
   let warned = false
+  const hangMs = isDevMode ? 30_000 : 8_000
 
   const retry = (why: string) => {
     if (win.isDestroyed()) return
@@ -154,6 +156,23 @@ function installLoadRetry(win: BrowserWindow, label: string): void {
     retries++
     log.warn(`${label} ${why}，${retries}/5 次重试…`)
     win.webContents.reload()
+    // reload() 在 webContents 卡死时可能不产生新导航（不触发 did-start-loading），
+    // 这里补一次计时，避免重试链断在 1/5 后窗口长期空白
+    armHangTimer()
+  }
+
+  /**
+   * 导航开始后计时：期间若没有 did-stop-loading（成功会清掉计时器），即判为挂起。
+   * 注意不能因 isLoading()===false 静默返回——那正是「网络服务崩溃后 reload 没
+   * 真正开始、重试链断掉」的形态。
+   */
+  const armHangTimer = () => {
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = setTimeout(() => {
+      hangTimer = null
+      if (win.isDestroyed()) return
+      retry(`页面加载超时(${hangMs / 1000}s 无响应)`)
+    }, hangMs)
   }
 
   win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
@@ -162,11 +181,7 @@ function installLoadRetry(win: BrowserWindow, label: string): void {
   })
 
   win.webContents.on('did-start-loading', () => {
-    if (hangTimer) clearTimeout(hangTimer)
-    hangTimer = setTimeout(() => {
-      if (!win.isDestroyed() && !win.webContents.isLoading()) return
-      retry('页面加载超时(8s 无响应)')
-    }, 8000)
+    armHangTimer()
   })
 
   win.webContents.on('did-stop-loading', () => {
@@ -546,6 +561,11 @@ async function boot(): Promise<void> {
 
 // ─── 单实例锁 ───────────────────────────────────────────────────
 
+// dev 判定：不能只看 app.isPackaged。本机 `electron .` 启动时 app.isPackaged
+// 实测仍为 true（见 2026-11-03 dev 白屏排查），单靠它会让下面整段 dev 加固开关
+// 失效；electron-vite dev 必定注入 ELECTRON_RENDERER_URL，用它兜住。
+const isDevMode = !app.isPackaged || process.env.ELECTRON_RENDERER_URL !== undefined
+
 // 在 requestSingleInstanceLock 之前重定向 userData：
 // Electron 的 process singleton lock 文件位于 userData 目录下，
 // 若不提前设置，会落到 %APPDATA%/<app-name>/lockfile，
@@ -573,7 +593,7 @@ if (!gotLock) {
   // dev 专用：禁用系统代理。本机若运行代理/VPN 类软件（Clash、v2ray 等），
   // 其系统代理/TUN 可能拦截 localhost 回环请求 → 渲染层加载 5173 挂起、
   // 窗口永远空白；生产打包走 loadFile 不受影响，无需此开关。
-  if (!app.isPackaged) {
+  if (isDevMode) {
     app.commandLine.appendSwitch('no-proxy-server')
     // dev 专用：禁用 Chromium 沙箱。受限环境（CI/沙箱/无 GPU 驱动）下
     // Chromium 网络服务与 GPU 进程可能因沙箱权限不足崩溃，导致窗口白屏。
