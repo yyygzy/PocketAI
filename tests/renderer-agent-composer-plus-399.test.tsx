@@ -44,11 +44,20 @@ beforeAll(() => {
 
 const openPicker = vi.fn()
 const addAttachment = vi.fn()
+// §399②a：那两项搬进来的四个出口——按"发没发、发的什么"判，不靠读屏猜
+const toggleTextProtocol = vi.fn()
+const retryTextProtocol = vi.fn()
+const pickWorkspace = vi.fn()
+const retryWorkspace = vi.fn()
 
-// 这两颗是模块级的 `vi.fn`：逐例清零，否则"恰好一次"那种判据会被上一例的账喂绿
+// 这些是模块级的 `vi.fn`：逐例清零，否则"恰好一次"那种判据会被上一例的账喂绿
 beforeEach(() => {
   openPicker.mockClear()
   addAttachment.mockClear()
+  toggleTextProtocol.mockClear()
+  retryTextProtocol.mockClear()
+  pickWorkspace.mockClear()
+  retryWorkspace.mockClear()
 })
 
 function props(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -75,6 +84,16 @@ function props(over: Record<string, unknown> = {}): Record<string, unknown> {
     onInterject: () => {},
     onDropQueued: () => {},
     onSendQueuedNow: () => {},
+    // §399②a：搬进来的这两项。默认摆"读到了、且没走文本协议、也没设目录"那一档（三档都由下面的用例逐张演）
+    textProtocolAvailable: true,
+    textProtocolForced: false,
+    textProtocolUnread: null,
+    onToggleTextProtocol: toggleTextProtocol,
+    onRetryTextProtocol: retryTextProtocol,
+    workspaceDir: '',
+    workspaceUnread: null,
+    onPickWorkspace: pickWorkspace,
+    onRetryWorkspace: retryWorkspace,
     ...over
   }
 }
@@ -228,5 +247,147 @@ describe('④ 收合与运行中', () => {
       (screen.getByTitle(L('snippet.button')) as HTMLButtonElement).disabled
     ).toBe(true)
     expect((screen.getByTestId('agent-composer-plus-kb-k1') as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+describe('⑤ 顶栏那两颗徽标搬进菜单（§399②a 第一半：入口搬家，脸一个字没改）', () => {
+  it('菜单里两行齐：文本协议按「没走」那一脸、工作目录按「未设置」那一脸（名字逐字取字典）', async () => {
+    mount()
+    await openPlus()
+    const tp = screen.getByTestId('agent-composer-plus-text-protocol')
+    expect(tp.textContent).toContain(L('agent.textProtocol'))
+    expect(tp.getAttribute('aria-checked')).toBe('false')
+    expect(tp.getAttribute('title')).toBe(L('agent.textProtocolHint'))
+    const ws = screen.getByTestId('agent-composer-plus-workspace')
+    expect(ws.textContent).toContain(L('agent.workspaceNone'))
+    expect(ws.getAttribute('title')).toBe(L('agent.workspacePickTip'))
+    // 反向对照：这两行不是"已启用／已设置"的替身
+    expect(screen.queryByText(L('agent.textProtocolOn'))).toBeNull()
+  })
+
+  it('点文本协议那行⇒ 传的是取反后的目标状态（关着点 true），且菜单不收（这一发的写是异步的）', async () => {
+    mount()
+    await openPlus()
+    const tp = screen.getByTestId('agent-composer-plus-text-protocol')
+    fireEvent.click(tp)
+    expect(toggleTextProtocol).toHaveBeenCalledTimes(1)
+    expect(toggleTextProtocol).toHaveBeenLastCalledWith(true)
+    expect(menu(), '点了开关就收菜单＝要再点一次才看得见那张脸翻过去').not.toBeNull()
+  })
+
+  it('已启用那一档：行上是「文本协议已启用」＋aria-checked=true＋悬停讲"点击关闭"，点下去传 false', async () => {
+    mount({}, { textProtocolForced: true })
+    await openPlus()
+    const on = screen.getByTestId('agent-composer-plus-text-protocol')
+    expect(on.getAttribute('aria-checked')).toBe('true')
+    expect(on.textContent).toContain(L('agent.textProtocolOn'))
+    expect(on.getAttribute('title')).toBe(L('agent.textProtocolOnHint'))
+    fireEvent.click(on)
+    expect(toggleTextProtocol).toHaveBeenCalledTimes(1)
+    expect(toggleTextProtocol).toHaveBeenLastCalledWith(false)
+  })
+
+  it('点工作目录那行⇒ 只调 onPickWorkspace 一次并把菜单收掉（挑目录是本机对话框，不是又一发通道）', async () => {
+    mount()
+    await openPlus()
+    fireEvent.click(screen.getByTestId('agent-composer-plus-workspace'))
+    expect(pickWorkspace).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(menu()).toBeNull(), MOUNT_BUDGET)
+  })
+
+  it('工作目录读得到⇒ 行上是末段目录名、悬停是全路径；读到空串才是「未设置」', async () => {
+    mount({}, { workspaceDir: 'C:/Users/x/proj-beta' })
+    await openPlus()
+    const ws = screen.getByTestId('agent-composer-plus-workspace')
+    expect(ws.textContent).toContain('proj-beta')
+    expect(ws.getAttribute('title')).toBe('C:/Users/x/proj-beta')
+    expect(screen.queryByText(L('agent.workspaceNone'))).toBeNull()
+  })
+
+  it('工作目录读不到⇒ 行上写「工作目录取不到」＋悬停带原因，「未设置」一个字都不许摆（§257 那张谎脸）', async () => {
+    mount({}, { workspaceUnread: 'WS_DIR:库被占用' })
+    await openPlus()
+    const bad = screen.getByTestId('agent-composer-plus-workspace')
+    expect(bad.textContent).toContain(L('agent.workspaceReadFail'))
+    expect(bad.getAttribute('title')).toContain('WS_DIR:库被占用')
+    expect(screen.queryByText(L('agent.workspaceNone')), '默认字面量冒充读数').toBeNull()
+  })
+
+  it('文本协议读不到⇒ 那一行既不是「文本协议」也不是「文本协议已启用」，直说取不到，悬停带原因', async () => {
+    mount({}, { textProtocolUnread: 'TP:清单取不到', textProtocolForced: true })
+    await openPlus()
+    const tp = screen.getByTestId('agent-composer-plus-text-protocol')
+    expect(tp.textContent).toContain(L('agent.textProtocolReadFail'))
+    expect(tp.getAttribute('title')).toContain('TP:清单取不到')
+    expect(screen.queryByText(L('agent.textProtocol'))).toBeNull()
+    expect(screen.queryByText(L('agent.textProtocolOn'))).toBeNull()
+  })
+
+  it('还没选到模型⇒ 不给那颗能点的开关（作用域是 provider+model），但工作目录那行照常在', async () => {
+    mount({}, { textProtocolAvailable: false })
+    await openPlus()
+    expect(screen.queryByTestId('agent-composer-plus-text-protocol')).toBeNull()
+    expect(screen.getByTestId('agent-composer-plus-workspace')).toBeTruthy()
+  })
+})
+
+describe('⑥ 升级回显（§399②a 第二半：常态一颗徽标，坏消息时才就地长出那句）', () => {
+  const danger = (): boolean => (plus().getAttribute('class') ?? '').includes('text-[var(--color-danger)]')
+
+  it('常态（四项都读到了）：徽标不带危险色，输入区一句「读不到」都没有', async () => {
+    mount()
+    expect(danger(), '没坏消息时不许常驻一行摘要').toBe(false)
+    expect(alerts()).toEqual([])
+    await openPlus()
+    expect(alerts()).toEqual([])
+  })
+
+  it('工作目录那一读失败⇒ 徽标转危险色＋浮层外长出那句与同级重试键；点它只发那一次重读出口', async () => {
+    mount({}, { workspaceUnread: 'WS_DIR:库被占用' })
+    await waitFor(() => expect(alerts()).toEqual([L('agent.workspaceUnread')]), MOUNT_BUDGET)
+    expect(danger(), '坏消息时那颗徽标要点名').toBe(true)
+    const line = screen.getByText(L('agent.workspaceUnread'))
+    expect(line.getAttribute('title'), '原因挂在悬停上（这一句本体是既有的那张脸）').toBe('WS_DIR:库被占用')
+    const panel = menu()
+    expect(panel, '没点菜单时那句就该在屏上（藏在浮层后面＝替这次失败闭嘴）').toBeNull()
+    fireEvent.click(screen.getByTestId('agent-composer-workspace-retry'))
+    expect(retryWorkspace).toHaveBeenCalledTimes(1)
+    expect(pickWorkspace, '重试是重读那一发，不是又开一次本机对话框').toHaveBeenCalledTimes(0)
+  })
+
+  it('文本协议那一读失败⇒ 同一形状：那句（既有那张 title）＋那颗键，且菜单里那一行也只说取不到', async () => {
+    mount({}, { textProtocolUnread: 'TP:清单取不到' })
+    await waitFor(() => expect(alerts()).toEqual([L('agent.textProtocolUnread')]), MOUNT_BUDGET)
+    expect(danger()).toBe(true)
+    expect(screen.getByText(L('agent.textProtocolUnread')).getAttribute('title')).toBe('TP:清单取不到')
+    await openPlus()
+    expect(screen.getByTestId('agent-composer-plus-text-protocol').textContent).toContain(L('agent.textProtocolReadFail'))
+    fireEvent.click(screen.getByTestId('agent-composer-text-protocol-retry'))
+    expect(retryTextProtocol).toHaveBeenCalledTimes(1)
+  })
+
+  it('知识库那一读失败（①就有的那两句之一）⇒ 现在也被这颗徽标点名；菜单收掉之后那句还在', async () => {
+    mount({ listKnowledgeBases: () => ({ ok: false, error: REASON }) })
+    await openPlus()
+    await settle()
+    await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.kbList'), REASON)]), MOUNT_BUDGET)
+    expect(danger()).toBe(true)
+    // 收合不算消失：那句与那颗键都不在菜单里，菜单关了它们还在
+    expect((menu() as HTMLElement).querySelector('[data-testid="agent-composer-kbs-retry"]')).toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(menu()).toBeNull(), MOUNT_BUDGET)
+    expect(alerts()).toEqual([FAILED(L('common.kbList'), REASON)])
+    expect(screen.getByTestId('agent-composer-kbs-retry')).toBeTruthy()
+  })
+
+  it('两项同时读不到⇒ 两句各成一行（不合并、不互相挂靠），徽标只一颗转色', async () => {
+    mount({ listKnowledgeBases: () => ({ ok: false, error: REASON }) }, { workspaceUnread: 'WS_DIR:库被占用' })
+    await openPlus()
+    await settle()
+    await waitFor(
+      () => expect(alerts()).toEqual([FAILED(L('common.kbList'), REASON), L('agent.workspaceUnread')]),
+      MOUNT_BUDGET
+    )
+    expect(danger()).toBe(true)
   })
 })

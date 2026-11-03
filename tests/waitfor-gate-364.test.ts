@@ -284,9 +284,20 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     · 同一枚里后补的两颗（「Esc 不越级」与「mousedown 再 click」那两例）再抬到 1066／572／81：
     //       一颗门等"片段那一层里那一行上屏"＝按存在读屏（571→572）、一颗门等"那一层收掉"＝等退场（80→81）；
     //       「mousedown 再 click」那例根本不写门（点完同步读），不进任何一格。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1066)
+    //   §399②a 再抬到 1086／584／84／400／0／18（净新增 20 颗 awaits、不是搬运，只动两份测试：
+    //   `renderer-agent-text-protocol-badge` +9、`renderer-agent-composer-plus-399` +6、`ipc-agent-config-unread-257` +5；
+    //   其余文件逐份现数一字未动）：
+    //   · badge 那份原来**一颗门都不写**（旧的落点是顶栏常驻徽标，挂载即画完、同步读屏就够），搬进「+」之后
+    //     每一例都要先等那一行上屏⇒8 颗「门等那一行存在」＝按存在读屏（572→584 里的 8 颗）、1 颗等"菜单收掉"＝等退场；
+    //   · 399 那份新增 4 颗读的是浮层外面那句 alert（到货见证写在第一句、门后只做同步读屏）、2 颗等菜单收＝等退场
+    //     （81→84）；
+    //   · 257 那份 ④ 的五颗读的是 `result.current`（真 hook 夹具，屏上没有这一格）⇒ 分类器看不见 DOM 之外的读屏，
+    //     全部落「门后没有读屏断言」（395→400）＝§398 记下的那条 hook 盲区**第二次踩到**，形状与 §396／§398 同：
+    //     门自己等的就是到货那一帧，门后同步读的是同一个值，不是「门等 A、断言读 B」。
+    //   会假红仍 0、只会假绿仍 18。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1086)
     expect([ALL.domGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('572/81/395/0/18')
+      `现数 按存在/等退场/无紧随断言/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('584/84/400/0/18')
     expect(ALL.domGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '五桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

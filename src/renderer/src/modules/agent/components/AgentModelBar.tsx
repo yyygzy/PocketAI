@@ -1,4 +1,6 @@
-// Agent 模型配置栏：Provider / 模型选择 + 模型列表拉取 + 工作目录
+// Agent 模型配置栏：Provider / 模型选择 + 模型列表拉取 + 这台模型的窗口/备用
+// §399②a：「走文本协议」与 📁 工作目录两颗徽标搬进了输入框那颗「+」——它们是"这一轮怎么跑"的设置，
+// 不是"这台模型"的属性；这里只留 provider／model 两颗下拉与上下文窗口／备用 target 两颗徽标。
 import React, { useState } from 'react'
 import type { ProviderRecord } from '../../../../../shared/types'
 import {
@@ -18,16 +20,6 @@ interface Props {
   selectedProvider?: ProviderRecord
   fetchingModels: boolean
   onFetchModels: () => void
-  workspaceDir: string
-  onPickWorkspace: () => void
-  /** §257：那一读失败过的原因；非空时这颗 📁 不许演成「未设置」（它是默认字面量，不是读数） */
-  workspaceUnread?: string | null
-  /** 当前 provider+model 是否被点名走文本协议（§4.4-⑦ 显式开关） */
-  textProtocolForced?: boolean
-  /** §257：文本协议清单读失败的原因；非空时徽标走第三态（抄 §234 那颗窗口徽标） */
-  textProtocolUnread?: string | null
-  /** 开/关当前这台模型的文本协议；不传则不出现开关（如未选模型） */
-  onToggleTextProtocol?: (on: boolean) => void
   /** §234：这台模型声明的上下文窗口（token）；null/undefined=未设，引擎按最近的 30 条走 */
   contextWindowTokens?: number | null
   /** 那一读失败过的原因；非空时按钮不许演成"未设"，要说是读不到 */
@@ -54,12 +46,6 @@ export const AgentModelBar: React.FC<Props> = ({
   selectedProvider,
   fetchingModels,
   onFetchModels,
-  workspaceDir,
-  onPickWorkspace,
-  workspaceUnread,
-  textProtocolForced,
-  textProtocolUnread,
-  onToggleTextProtocol,
   contextWindowTokens,
   contextWindowUnread,
   onSetContextWindow,
@@ -133,32 +119,6 @@ export const AgentModelBar: React.FC<Props> = ({
           </button>
         </>
       ) : null}
-      {/* 模型级「走文本协议」开关：常驻可见（关闭入口不能只藏在零调用提示里，
-          否则协议生效后模型开始调工具，那条提示就再也不出现、开关也就关不掉了） */}
-      {onToggleTextProtocol && providerId && model && (
-        <button
-          className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-            textProtocolForced
-              ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-              : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]'
-          }`}
-          title={
-            textProtocolUnread
-              ? `${t('agent.textProtocolUnread')} — ${textProtocolUnread}`
-              : textProtocolForced
-                ? t('agent.textProtocolOnHint')
-                : t('agent.textProtocolHint')
-          }
-          onClick={() => onToggleTextProtocol(!textProtocolForced)}
-        >
-          {/* §257：读不到时这一脸既不是"已启用"也不是"没启用"，直说取不到（抄 §234 那颗窗口徽标） */}
-          {textProtocolUnread
-            ? t('agent.textProtocolReadFail')
-            : textProtocolForced
-              ? t('agent.textProtocolOn')
-              : t('agent.textProtocol')}
-        </button>
-      )}
       {/* 模型级「上下文窗口」输入（§234）。未设过的模型仍走原来的 30 条，所以这里没设就直说没设，
           不给一个看起来像"当前值"的数——那是把默认值冒充读数（§226 那一族的反面）。 */}
       {onSetContextWindow && providerId && model && (
@@ -332,24 +292,6 @@ export const AgentModelBar: React.FC<Props> = ({
           </span>
         </div>
       )}
-      <button
-        className="btn-ghost text-xs shrink-0 max-w-[180px]"
-        onClick={onPickWorkspace}
-        title={
-          workspaceUnread
-            ? `${t('agent.workspaceUnread')} — ${workspaceUnread}`
-            : workspaceDir || t('agent.workspacePickTip')
-        }
-      >
-        <span className="block truncate">
-          {/* §257：那一读失败时这里以前写「未设置」＝默认字面量冒充读数（还顺手把终端命令置灰） */}
-          📁 {workspaceUnread
-            ? t('agent.workspaceReadFail')
-            : workspaceDir
-              ? workspaceDir.split(/[\\/]/).filter(Boolean).pop() || workspaceDir
-              : t('agent.workspaceNone')}
-        </span>
-      </button>
     </div>
   )
 }

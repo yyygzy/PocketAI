@@ -12,6 +12,7 @@
 // 桩按 preload 的真实签名（`src/preload/index.ts:729/733/739/746/757/763`：这几发成功回**裸值**，
 // 失败才是 safeHandle 的 `{ok:false}` 信封），配置对象一律按类型写死，缺字段编译期就红。
 // @vitest-environment jsdom
+import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/react'
 import fs from 'node:fs'
@@ -20,7 +21,7 @@ import { HookProviders, mountWithProviders, stubPocketai } from './helpers/rende
 import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
 import { useAgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
 import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
-import { AgentModelBar } from '../src/renderer/src/modules/agent/components/AgentModelBar'
+import { AgentComposer } from '../src/renderer/src/modules/agent/components/AgentComposer'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { CalendarConfig, ProviderRecord, ShellConfig, WebSearchConfig } from '../src/shared/types'
 import type { AssistantRecord, ConversationRecord } from '../src/shared/types'
@@ -33,10 +34,6 @@ const SHELL_ON: ShellConfig = { enabled: true, policy: 'auto-safe' }
 const WS_ON: WebSearchConfig = { enabled: true, provider: 'tavily', apiKey: '', hasKey: true }
 const CAL_ON: CalendarConfig = { enabled: true, paths: ['C:/cal.ics'] }
 
-const PROVIDER = {
-  id: 'p1', type: 'openai-compatible', name: 'PROBE-P', baseUrl: 'https://example.invalid/v1',
-  apiKeys: [], models: ['m1'], enabled: true, createdAt: 1
-} as ProviderRecord
 
 /** 真 hook ＋ 真组件：这一屏要证的正是"读失败时界面上摆的到底是什么" */
 const Harness = (): JSX.Element => {
@@ -205,30 +202,65 @@ describe('① 四发工具配置读：读不到要点名说，且不许藏在收
   })
 })
 
-describe('② AgentModelBar 两颗徽标的第三态', () => {
+describe('② 那两颗徽标的第三态（§399②a：落点从顶栏搬进了输入框那颗「+」）', () => {
+  // 搬家不改口径：这两发读失败时屏上摆的是哪张脸，仍是 §257 那件事，只是入口换了。
+  // 顶栏那份第二脸已归零（③里那条 BAR=0 钉住），这里再按新落点演一遍同一组对照。
+  const att = {
+    attachments: [],
+    dragOver: false,
+    addFiles: () => {},
+    addAttachment: () => {},
+    removeAt: () => {},
+    clear: () => {},
+    openPicker: () => {},
+    fileInputProps: {},
+    dropZoneProps: {},
+    pasteProps: {}
+  }
+  /** 这两发重读的出口：本 describe 里按"点那颗键 ⇒ 那一发真发出去"判，不靠读屏猜 */
+  const retryWorkspace = vi.fn()
+  const retryTextProtocol = vi.fn()
+  /** 挂 AgentComposer 并把那颗「+」点开：`over`＝这两项的 props 覆盖 */
   const bar = (over: Record<string, unknown> = {}): void => {
-    stubPocketai({ setUiPrefs: () => ({ ok: true }) })
+    stubPocketai({
+      setUiPrefs: () => ({ ok: true }),
+      listKnowledgeBases: () => [],
+      listPromptSnippets: () => []
+    })
     mountWithProviders(
-      <AgentModelBar
-        providers={[PROVIDER]}
-        providerId="p1"
-        model="m1"
-        onProviderChange={() => {}}
-        onModelChange={() => {}}
-        selectedProvider={PROVIDER}
-        fetchingModels={false}
-        onFetchModels={() => {}}
-        workspaceDir=""
-        onPickWorkspace={vi.fn()}
-        onToggleTextProtocol={() => {}}
-        {...over}
-      />
+      React.createElement(
+        AgentComposer,
+        {
+          running: false,
+          canSend: true,
+          att: att as never,
+          onSend: () => {},
+          onAbort: () => {},
+          queue: [],
+          queueFull: false,
+          onQueue: () => {},
+          onInterject: () => {},
+          onDropQueued: () => {},
+          onSendQueuedNow: () => {},
+          textProtocolAvailable: true,
+          textProtocolForced: false,
+          textProtocolUnread: null,
+          onToggleTextProtocol: vi.fn(),
+          onRetryTextProtocol: retryTextProtocol,
+          workspaceDir: '',
+          workspaceUnread: null,
+          onPickWorkspace: vi.fn(),
+          onRetryWorkspace: retryWorkspace,
+          ...over
+        } as never
+      )
     )
+    fireEvent.click(screen.getByTestId('agent-composer-plus'))
   }
 
-  it('工作目录读不到 ⇒ 📁 那颗写「工作目录取不到」，不写「未设置」；悬停带着原因', async () => {
+  it('工作目录读不到 ⇒ 📁 那一行写「工作目录取不到」，不写「未设置」；悬停带着原因', async () => {
     bar({ workspaceUnread: 'WS_DIR:读不到' })
-    const chip = await screen.findByText(/工作目录取不到/)
+    const chip = (await screen.findByText(T('agent.workspaceReadFail'))).closest('button') as HTMLElement
     expect(chip.textContent).toContain('📁')
     expect(screen.queryByText(T('agent.workspaceNone'))).toBeNull()
     expect(chip.closest('button')?.getAttribute('title')).toContain('WS_DIR:读不到')
@@ -236,22 +268,42 @@ describe('② AgentModelBar 两颗徽标的第三态', () => {
 
   it('反向对照：读到空串才是「未设置」（两件事两种脸）', async () => {
     bar()
-    await screen.findByText(/未设置/)
+    await screen.findByText(new RegExp(T('agent.workspaceNone')))
     expect(screen.queryByText(T('agent.workspaceReadFail'))).toBeNull()
   })
 
-  it('文本协议清单读不到 ⇒ 徽标第三态，既不是「文本协议」也不是「文本协议已启用」', async () => {
+  it('文本协议清单读不到 ⇒ 那一行第三态，既不是「文本协议」也不是「文本协议已启用」', async () => {
     bar({ textProtocolUnread: 'TP:清单取不到' })
     const badge = await screen.findByText(T('agent.textProtocolReadFail'))
-    expect(badge.getAttribute('title')).toContain('TP:清单取不到')
+    expect(badge.closest('button')?.getAttribute('title')).toContain('TP:清单取不到')
     expect(screen.queryByText(T('agent.textProtocol'))).toBeNull()
     expect(screen.queryByText(T('agent.textProtocolOn'))).toBeNull()
   })
 
-  it('反向对照：读到清单里点名了这台 ⇒ 徽标是「文本协议已启用」；没点名 ⇒「文本协议」', async () => {
+  it('反向对照：读到清单里点名了这台 ⇒ 那一行是「文本协议已启用」', async () => {
     bar({ textProtocolForced: true })
-    await screen.findByText(T('agent.textProtocolOn'))
+    await screen.findByText(new RegExp(T('agent.textProtocolOn')))
     expect(screen.queryByText(T('agent.textProtocolReadFail'))).toBeNull()
+  })
+
+  it('这两项各自的「读不到」句子住在浮层**外面**，且各带一颗同级重试键（搬进菜单≠只写在菜单里）', async () => {
+    bar({ workspaceUnread: 'WS_DIR:读不到', textProtocolUnread: 'TP:清单取不到' })
+    // 菜单是开着的（`bar` 点了那颗「+」），两句却都在菜单盒子之外
+    const panel = screen.getByTestId('agent-composer-plus-menu')
+    const REASONS: Record<string, string> = {
+      'agent.workspaceUnread': 'WS_DIR:读不到',
+      'agent.textProtocolUnread': 'TP:清单取不到'
+    }
+    for (const key of ['agent.workspaceUnread', 'agent.textProtocolUnread']) {
+      const line = await screen.findByText(T(key))
+      expect(panel.contains(line), `${key} 那句被关进浮层＝一关就等于没说过`).toBe(false)
+      expect(line.getAttribute('title'), '原因挂在那句的悬停上（句子本体是既有的那张脸，四语不动）').toBe(REASONS[key])
+    }
+    // 点这两颗键＝各自重问那一发读，不是又开一次本机对话框
+    fireEvent.click(screen.getByTestId('agent-composer-workspace-retry'))
+    expect(retryWorkspace).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('agent-composer-text-protocol-retry'))
+    expect(retryTextProtocol).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -261,6 +313,7 @@ describe('③ 接线计数：旧写法归零，六处的新落点逐条数得出
   const CFG = read('modules/agent/hooks/useAgentToolConfigs.ts')
   const CHAT = read('modules/agent/hooks/useAgentChat.ts')
   const BAR = read('modules/agent/components/AgentModelBar.tsx')
+  const AC = read('modules/agent/components/AgentComposer.tsx')
   const BARS = read('modules/agent/components/AgentToolBars.tsx')
   const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
 
@@ -277,9 +330,11 @@ describe('③ 接线计数：旧写法归零，六处的新落点逐条数得出
     expect(count(CHAT, /if \(!hasIpcFailed\(traces\)\) setLatestTraces/g)).toBe(0)
   })
 
-  it('渲染层：两颗徽标各自第三态在场，那三条 notice 在收起态与展开态都渲染', () => {
-    expect(count(BAR, /workspaceUnread/g), '📁 那颗的三态（props 声明＋解构＋title＋文本）').toBe(6)
-    expect(count(BAR, /textProtocolUnread/g), '文本协议那颗的三态').toBe(6)
+  it('渲染层：两颗徽标各自第三态在场（§399②a：落点是输入框那颗「+」，顶栏归零），那三条 notice 在收起态与展开态都渲染', () => {
+    expect(count(AC, /workspaceUnread/g), '📁 那一颗的三态＋那一句（§399②a 现数 11：props 声明／解构／危险色那颗徽标／菜单那一行的 title 两处＋条件两处＋文本一处／句子那一支三处）').toBe(11)
+    expect(count(AC, /textProtocolUnread/g), '文本协议那一颗同上（现数 11）').toBe(11)
+    expect(count(BAR, /workspaceUnread/g), '顶栏那份第二脸：搬完了就该是 0').toBe(0)
+    expect(count(BAR, /textProtocolUnread/g), '同上').toBe(0)
     expect(count(BARS, /unreadBars/g), '定义一处＋两个分支各渲染一次').toBe(3)
     expect(count(BARS, /ShowingDefaultsNotice/g), '三条点名（终端命令／联网搜索／日历）').toBe(5)
   })
@@ -287,8 +342,78 @@ describe('③ 接线计数：旧写法归零，六处的新落点逐条数得出
   it('四条新文案在四本字典都有，且界面里真在用（不是死键）', () => {
     for (const key of ['agent.workspaceReadFail', 'agent.workspaceUnread', 'agent.textProtocolReadFail', 'agent.textProtocolUnread']) {
       expect(T(key), `${key} 该在 zh 里`).toBeTruthy()
-      const used = count(BAR, new RegExp(`'${key}'`, 'g')) + count(BARS, new RegExp(`'${key}'`, 'g'))
+      const used = count(BAR, new RegExp(`'${key}'`, 'g')) + count(BARS, new RegExp(`'${key}'`, 'g')) + count(AC, new RegExp(`'${key}'`, 'g'))
       expect(used, `${key} 必须有渲染点`).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('④ §399②a：那两项的重试出口真接回 hook（不是只把那颗键画在屏上）', () => {
+  it('工作目录那一读失败过 ⇒ retryWorkspace() 真重问那一发，读到之后那句自己收回、目录也落进那一行', async () => {
+    let n = 0
+    stubPocketai({
+      getAgentWorkspaceDir: () => {
+        n += 1
+        return n === 1 ? { ok: false, error: 'WS_DIR:库被占用' } : 'C:/ws'
+      },
+      getShellConfig: () => SHELL_ON,
+      getWebSearchConfig: () => WS_ON,
+      getCalendarConfig: () => CAL_ON
+    })
+    const { result } = renderHook(() => useAgentToolConfigs(), { wrapper: HookProviders })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    await waitFor(() => expect(result.current.toolUnread.workspace).toBe('WS_DIR:库被占用'))
+    expect(result.current.workspaceDir, '读不到时那格是空的，不是"未设置"的读数').toBe('')
+    await act(async () => {
+      result.current.retryWorkspace()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    await waitFor(() => expect(result.current.toolUnread.workspace, '当场读到 ⇒ 那句"读不到"到此作废').toBeNull())
+    expect(result.current.workspaceDir).toBe('C:/ws')
+    expect(n, '重试＝真重问那一发通道（把出口接成空函数就在这条红）').toBeGreaterThanOrEqual(2)
+  })
+
+  it('文本协议那一读失败过 ⇒ retryTextProtocol() 再发一次，读到的清单真落到那一行的脸上', async () => {
+    let n = 0
+    const result = await mountChat({
+      getAgentTextProtocol: () => {
+        n += 1
+        return n === 1 ? { ok: false, error: 'TP:清单取不到' } : ['p1::m1']
+      }
+    })
+    await waitFor(() => expect(result.current.textProtocolUnread).toBe('TP:清单取不到'))
+    await act(async () => {
+      result.current.changeProvider('p1')
+      result.current.setModel('m1')
+    })
+    expect(result.current.textProtocolForced, '还没重问之前，那一行不该演成"已启用"').toBe(false)
+    await act(async () => {
+      result.current.retryTextProtocol()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    await waitFor(() => expect(result.current.textProtocolUnread, '读到就是读到了，那句要自己收回').toBeNull())
+    expect(result.current.textProtocolForced, '重试读到的清单＝那一行翻成"已启用"').toBe(true)
+    expect(n, '同上：出口接成空函数就在这条红').toBeGreaterThanOrEqual(2)
+  })
+
+  it('反向对照：挂载就读到 ⇒ 一次都不许多发（重试键不是常驻的第二发）', async () => {
+    let n = 0
+    stubPocketai({
+      getAgentWorkspaceDir: () => {
+        n += 1
+        return 'C:/ws'
+      },
+      getShellConfig: () => SHELL_ON,
+      getWebSearchConfig: () => WS_ON,
+      getCalendarConfig: () => CAL_ON
+    })
+    const { result } = renderHook(() => useAgentToolConfigs(), { wrapper: HookProviders })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    await waitFor(() => expect(result.current.toolUnread.workspace).toBeNull())
+    expect(n, '本枚不该顺手把挂载读变成第二次').toBe(1)
   })
 })

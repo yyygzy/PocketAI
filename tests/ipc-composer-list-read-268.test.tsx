@@ -214,7 +214,17 @@ describe('③ Agent 输入框（AgentComposer）：同一颗知识库那句自�
     onQueue: () => { /* 同上 */ },
     onInterject: () => { /* 同上 */ },
     onDropQueued: () => { /* 同上 */ },
-    onSendQueuedNow: () => { /* 同上 */ }
+    onSendQueuedNow: () => { /* 同上 */ },
+    // §399②a：这两项搬进了那颗「+」，本批只判清单那两发，故一律摆"读到了"那一档（全 null ⇒ 不长出新的句子）
+    textProtocolAvailable: true,
+    textProtocolForced: false,
+    textProtocolUnread: null,
+    onToggleTextProtocol: () => { /* 本批不判写入 */ },
+    onRetryTextProtocol: () => { /* 同上 */ },
+    workspaceDir: '',
+    workspaceUnread: null,
+    onPickWorkspace: () => { /* 同上 */ },
+    onRetryWorkspace: () => { /* 同上 */ }
   }
   const type = (v: string): void => {
     fireEvent.change(document.querySelector('[data-agent-composer-input]') as Element, { target: { value: v } })

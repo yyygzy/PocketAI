@@ -49,10 +49,6 @@ function mountBar(
       selectedProvider={glm}
       fetchingModels={false}
       onFetchModels={() => {}}
-      workspaceDir=""
-      onPickWorkspace={() => {}}
-      textProtocolForced={false}
-      onToggleTextProtocol={() => {}}
       onSetContextWindow={opts.withControl === false ? undefined : onSet}
       contextWindowTokens={opts.tokens}
       contextWindowUnread={opts.unread}

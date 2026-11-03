@@ -485,7 +485,8 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     // 精确到 JSX 属性写法（注释里也出现 role="alert" 这几个字，宽松的数法会把注释算进去）
     const ALERT = /role="alert" className="text-xs text-\[var\(--color-danger\)\]"/g
     expect(count(CO, ALERT), '对话页两句都自带 alert 盒子').toBe(2)
-    expect(count(AC, ALERT), 'Agent 页两句都自带 alert 盒子').toBe(2)
+    // §399②a：文本协议／工作目录那两项搬进那颗「+」时各带来自己那一句（都在浮层外面，见 §399 闸门 C）
+    expect(count(AC, ALERT), 'Agent 页四句都自带 alert 盒子（清单两句＋搬进来的两项各一句）').toBe(4)
 
     // 重试键按"各屏有没有天然出口"配：不该造机关的地方别造，该有出口的地方别缺
     expect(count(CC, /retry/g), '中枢面板一处键都不造（再点那一格本身就是出口）').toBe(0)

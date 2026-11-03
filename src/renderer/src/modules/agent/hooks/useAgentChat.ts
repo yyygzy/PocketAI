@@ -288,7 +288,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   }, [providers, providerId, model])
 
   // 文本协议开关的当前状态：清单在挂载时读一次，之后以 set 通道回传的最新值为准
-  useEffect(() => {
+  // §399②a：抽成具名 loader——那颗开关搬进输入框的「+」之后，「读不到」那句旁边要有同款出口
+  const loadTextProtocol = useCallback(() => {
     void window.pocketai
       .getAgentTextProtocol()
       .then((list) => {
@@ -304,6 +305,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         logIpcError('agent.getTextProtocol', e)
       })
   }, [t])
+
+  useEffect(() => {
+    loadTextProtocol()
+  }, [loadTextProtocol])
 
   /** 当前选中的 provider+model 是否已被点名走文本协议 */
   const textProtocolForced =
@@ -1308,6 +1313,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     mcpHeldBack,
     textProtocolForced,
     textProtocolUnread,
+    retryTextProtocol: loadTextProtocol,
     uiPrefsUnread,
     setTextProtocol,
     contextWindowTokens,

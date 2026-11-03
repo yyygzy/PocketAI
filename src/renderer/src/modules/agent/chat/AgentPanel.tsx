@@ -443,12 +443,6 @@ export const AgentPanel: React.FC = () => {
               selectedProvider={chat.selectedProvider}
               fetchingModels={fetchingModels}
               onFetchModels={() => void fetchModels(chat.providerId)}
-              workspaceDir={tools.workspaceDir}
-              workspaceUnread={tools.toolUnread.workspace}
-              onPickWorkspace={() => void tools.pickWorkspace()}
-              textProtocolForced={chat.textProtocolForced}
-              textProtocolUnread={chat.textProtocolUnread}
-              onToggleTextProtocol={(on) => chat.setTextProtocol(on)}
               contextWindowTokens={chat.contextWindowTokens}
               contextWindowUnread={chat.contextWindowUnread}
               onSetContextWindow={(tokens) => chat.setContextWindow(tokens)}
@@ -1022,6 +1016,15 @@ export const AgentPanel: React.FC = () => {
             onInterject={chat.interjectText}
             onDropQueued={chat.dropQueued}
             onSendQueuedNow={chat.sendQueuedNow}
+            textProtocolAvailable={!!chat.providerId && !!chat.model}
+            textProtocolForced={chat.textProtocolForced}
+            textProtocolUnread={chat.textProtocolUnread}
+            onToggleTextProtocol={(on) => chat.setTextProtocol(on)}
+            onRetryTextProtocol={chat.retryTextProtocol}
+            workspaceDir={tools.workspaceDir}
+            workspaceUnread={tools.toolUnread.workspace}
+            onPickWorkspace={() => void tools.pickWorkspace()}
+            onRetryWorkspace={tools.retryWorkspace}
           />
         )}
       </div>

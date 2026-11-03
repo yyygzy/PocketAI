@@ -39,6 +39,21 @@ interface Props {
   onInterject: (text: string) => void
   onDropQueued: (clientRef: string) => void
   onSendQueuedNow: (clientRef: string) => void
+  /**
+   * §399②a：顶栏那两颗徽标（模型级「走文本协议」／📁 工作目录）搬进这颗菜单。
+   * 「关闭入口要常驻可达」这条既有契约（Iter-113 的死路：开关只藏在零调用提示里，
+   * 协议一生效提示就再也不出现、开关也就关不掉）靠的是**「+」本身一直在输入行上**，
+   * 不是靠菜单开着——所以搬进来不破它，但前提是那句「读不到」绝不能只写在菜单里（下面那两处句子在浮层外面）。
+   */
+  textProtocolAvailable: boolean
+  textProtocolForced: boolean
+  textProtocolUnread: string | null
+  onToggleTextProtocol: (on: boolean) => void
+  onRetryTextProtocol: () => void
+  workspaceDir: string
+  workspaceUnread: string | null
+  onPickWorkspace: () => void
+  onRetryWorkspace: () => void
 }
 
 export const AgentComposer: React.FC<Props> = ({
@@ -52,7 +67,16 @@ export const AgentComposer: React.FC<Props> = ({
   onQueue,
   onInterject,
   onDropQueued,
-  onSendQueuedNow
+  onSendQueuedNow,
+  textProtocolAvailable,
+  textProtocolForced,
+  textProtocolUnread,
+  onToggleTextProtocol,
+  onRetryTextProtocol,
+  workspaceDir,
+  workspaceUnread,
+  onPickWorkspace,
+  onRetryWorkspace
 }) => {
   const { t } = useI18n()
   const toast = useToast()
@@ -89,6 +113,11 @@ export const AgentComposer: React.FC<Props> = ({
 
   // 「+」菜单里那组知识库：清单本体在 ref 里（防并发重拉），靠 `kbsReady` 这记信号重取一次
   const menuKbs = useMemo(() => kbsRef.current ?? [], [kbsReady])
+
+  // §399②a 升级回显：常态输入行上只有一颗「+」，被它收进去的项**不**在屏上占行。
+  // 但任一项处于「读不到」时，这颗徽标转危险色，并且下面就地长出那一句＋同级出口——
+  // 只在坏消息时占行。判据是四项自己那张脸，不是"菜单开没开"：折叠起来就等于没说过（§222／§268）。
+  const plusDanger = !!(kbsFail || snippetsFail || textProtocolUnread || workspaceUnread)
 
   // 当前触发态（光标位置取自 textarea selectionStart）
   const cursor = taRef.current?.selectionStart ?? input.length
@@ -489,6 +518,25 @@ export const AgentComposer: React.FC<Props> = ({
           {t('common.loadFailedNamed', { what: t('common.snippetList'), msg: ipcFailText(snippetsFail, t('common.unknownError')) })}
         </div>
       )}
+      {/* §399②a：搬进来的这两项各自那句「读不到」也住在这里（浮层外面），原因挂在那句的悬停上，
+          出口是同级那颗键——这两发的读都只在挂载跑一次，没有"再点那一格就自己重拉"的天然出口（§268 分档）。
+          句子用的是这两项既有那两张 title（四语齐全、且已经说明"这里按未启用/未设置显示"），零新文案。 */}
+      {textProtocolUnread && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span role="alert" className="text-xs text-[var(--color-danger)]" title={textProtocolUnread}>
+            {t('agent.textProtocolUnread')}
+          </span>
+          <button data-testid="agent-composer-text-protocol-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={onRetryTextProtocol}>{t('agent.retryRead')}</button>
+        </div>
+      )}
+      {workspaceUnread && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span role="alert" className="text-xs text-[var(--color-danger)]" title={workspaceUnread}>
+            {t('agent.workspaceUnread')}
+          </span>
+          <button data-testid="agent-composer-workspace-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={onRetryWorkspace}>{t('agent.retryRead')}</button>
+        </div>
+      )}
 
       {/* 输入 */}
       <div
@@ -549,7 +597,11 @@ export const AgentComposer: React.FC<Props> = ({
               loadKbs()
             }
           }}
-          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[17px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+          className={`shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[17px] transition-colors ${
+            plusDanger
+              ? 'text-[var(--color-danger)] hover:bg-[var(--color-hover-overlay)]'
+              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
+          }`}
         >
           ＋
         </button>
@@ -578,6 +630,70 @@ export const AgentComposer: React.FC<Props> = ({
               disabled={running}
               variant="row"
             />
+            {/* §399②a：这两行搬自顶栏。执行设置放在**知识库那组之前**——知识库是一份可长的清单，
+                浮层向上长，把它排到最后才不会把这两行顶出窗口。
+                点文本协议那行**不收菜单**：这一发的写是异步的，留着才看得见那张脸翻过去（关菜单再点是第二次点击）。 */}
+            {textProtocolAvailable && (
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={textProtocolForced}
+                data-testid="agent-composer-plus-text-protocol"
+                title={
+                  textProtocolUnread
+                    ? `${t('agent.textProtocolUnread')} — ${textProtocolUnread}`
+                    : textProtocolForced
+                      ? t('agent.textProtocolOnHint')
+                      : t('agent.textProtocolHint')
+                }
+                onClick={() => onToggleTextProtocol(!textProtocolForced)}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                  textProtocolUnread
+                    ? 'text-[var(--color-danger)]'
+                    : textProtocolForced
+                      ? 'text-[var(--color-accent)]'
+                      : 'text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)]'
+                }`}
+              >
+                <span className="flex-1 min-w-0 truncate">
+                  {/* 三档分开：读不到既不是"已启用"也不是"没启用"（§257 那张脸，一个字没改地搬过来） */}
+                  {textProtocolUnread
+                    ? t('agent.textProtocolReadFail')
+                    : textProtocolForced
+                      ? t('agent.textProtocolOn')
+                      : t('agent.textProtocol')}
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="agent-composer-plus-workspace"
+              title={
+                workspaceUnread
+                  ? `${t('agent.workspaceUnread')} — ${workspaceUnread}`
+                  : workspaceDir || t('agent.workspacePickTip')
+              }
+              onClick={() => {
+                setPlusOpen(false)
+                onPickWorkspace()
+              }}
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                workspaceUnread
+                  ? 'text-[var(--color-danger)]'
+                  : 'text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)]'
+              }`}
+            >
+              <span aria-hidden>📁</span>
+              <span className="flex-1 min-w-0 truncate">
+                {/* 三档分开：读不到／已设（取末段目录名）／真没设过——读不到时不许把默认字面量「未设置」冒充读数（§257） */}
+                {workspaceUnread
+                  ? t('agent.workspaceReadFail')
+                  : workspaceDir
+                    ? workspaceDir.split(/[\\/]/).filter(Boolean).pop() || workspaceDir
+                    : t('agent.workspaceNone')}
+              </span>
+            </button>
             <div className="my-1 border-t border-[var(--color-border)]" />
             <div className="px-3 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
               {t('mention.knowledge')}

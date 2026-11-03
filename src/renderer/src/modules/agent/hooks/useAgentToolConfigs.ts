@@ -34,7 +34,8 @@ export function useAgentToolConfigs() {
     setToolUnread((prev) => (prev[key] === msg ? prev : { ...prev, [key]: msg }))
   }, [])
 
-  useEffect(() => {
+  // §399②a：工作目录那一读抽成具名 loader——这颗徽标搬进输入框的「+」之后，「读不到」那句旁边要有同款出口
+  const loadWorkspace = useCallback(() => {
     window.pocketai.getAgentWorkspaceDir().then((v) => {
       if (hasIpcFailed(v)) {
         markUnread('workspace', ipcFailText(v, t('agent.unknownError')))
@@ -43,6 +44,10 @@ export function useAgentToolConfigs() {
       markUnread('workspace', null)
       setWorkspaceDir(v)
     }).catch((e: unknown) => { markUnread('workspace', errText(e, t('agent.unknownError'))); logIpcError('agent.getWorkspaceDir', e) })
+  }, [t, markUnread])
+
+  useEffect(() => {
+    loadWorkspace()
     window.pocketai.getShellConfig().then((v) => {
       if (hasIpcFailed(v)) {
         markUnread('shell', ipcFailText(v, t('agent.unknownError')))
@@ -67,12 +72,12 @@ export function useAgentToolConfigs() {
       markUnread('calendar', null)
       setCalConfigState(v)
     }).catch((e: unknown) => { markUnread('calendar', errText(e, t('agent.unknownError'))); logIpcError('agent.getCalendarConfig', e) })
-  }, [t, markUnread])
+  }, [t, markUnread, loadWorkspace])
 
   const pickWorkspace = async () => {
     const dir = await window.pocketai.pickAgentWorkspaceDir()
     // preload 声明的是 string，但 safeHandle 的失败是 **resolve 的 {ok:false}**（§205 记过这层类型撒谎）；
-    // 不判就把失败对象塞进 workspaceDir，消费方 `AgentModelBar.tsx:102` 对它做 .split ⇒ 整屏崩
+    // 不判就把失败对象塞进 workspaceDir，消费方（那颗 📁 徽标）对它做 .split ⇒ 整屏崩
     if (hasIpcFailed(dir)) {
       toast.error(ipcFailText(dir, t('common.unknownError')))
       return
@@ -156,6 +161,7 @@ export function useAgentToolConfigs() {
     toolUnread,
     setWsKeyDraft,
     pickWorkspace,
+    retryWorkspace: loadWorkspace,
     patchShellConfig,
     patchWsConfig,
     secretDialog,
