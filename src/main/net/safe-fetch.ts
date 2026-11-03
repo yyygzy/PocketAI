@@ -43,6 +43,12 @@ export interface SafeFetchOptions {
   sinkFile?: string
   /** 下载进度回调（received 已收字节；total 取 Content-Length，缺失为 null） */
   onProgress?: (received: number, total: number | null) => void
+  /**
+   * 精确 origin 私网放行（默认关闭）：仅当请求 URL 的 origin（协议+主机+端口）
+   * 与这里完全一致时，才允许连接本机/内网地址；重定向到其它 origin 不继承放行。
+   * 仅供用户显式确认的 SearXNG 实例使用，web_fetch 等通用抓取不得传入。
+   */
+  allowPrivateOrigin?: string
 }
 
 export interface SafeFetchResult {
@@ -184,19 +190,36 @@ export function assertFetchable(u: URL): void {
   if (!u.hostname) throw new SafeFetchError('URL 缺少主机名')
 }
 
+/** 主机名是否属于本机/内网/保留语义（字面 IP 或常见内网后缀；域名解析结果另由 resolveAndValidate 判定） */
+export function isPrivateHostname(hostname: string): boolean {
+  const raw = hostname.toLowerCase()
+  const host = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal')
+  ) {
+    return true
+  }
+  if (net.isIP(host)) return isDisallowedIp(host)
+  return false
+}
+
 /**
  * 解析并校验目标主机，返回一个允许连接的 IP（用于钉住连接防重绑定）。
  * 主机名是字面 IP 时直接校验；域名则取 DNS 全部记录逐个校验。
+ * allowPrivate=true 仅由 allowPrivateOrigin 精确匹配的调用方传入（默认仍拒绝私网）。
  */
-async function resolveAndValidate(u: URL): Promise<string> {
+async function resolveAndValidate(u: URL, allowPrivate = false): Promise<string> {
   // WHATWG URL 对 IPv6 字面量主机名保留方括号（'[::1]'），先剥掉
   const raw = u.hostname.toLowerCase()
   const host = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
-    throw new SafeFetchError(`禁止访问内网主机: ${host}`)
+  if (isPrivateHostname(host)) {
+    if (!allowPrivate) throw new SafeFetchError(`禁止访问内网主机: ${host}`)
   }
   if (net.isIP(host)) {
-    if (isDisallowedIp(host)) throw new SafeFetchError(`禁止访问内网/保留地址: ${host}`)
+    if (!allowPrivate && isDisallowedIp(host)) throw new SafeFetchError(`禁止访问内网/保留地址: ${host}`)
     return host
   }
   let list: { address: string }[]
@@ -208,7 +231,10 @@ async function resolveAndValidate(u: URL): Promise<string> {
   }
   if (list.length === 0) throw new SafeFetchError(`域名解析失败: ${host}`)
   const ok = list.find((a) => !isDisallowedIp(a.address))
-  if (!ok) throw new SafeFetchError(`目标解析到内网/保留地址，已拦截: ${host}`)
+  if (!ok) {
+    if (allowPrivate) return list[0]!.address
+    throw new SafeFetchError(`目标解析到内网/保留地址，已拦截: ${host}`)
+  }
   return ok.address
 }
 
@@ -421,7 +447,9 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
     for (let hop = 0; ; hop++) {
       if (signal?.aborted) throw new SafeFetchError('已中止')
       assertFetchable(current)
-      const ip = await resolveAndValidate(current)
+      // 只对用户显式确认的那一个精确 origin 放行私网；重定向换了 origin 即失效
+      const allowPrivate = !!opts.allowPrivateOrigin && current.origin === opts.allowPrivateOrigin
+      const ip = await resolveAndValidate(current, allowPrivate)
       if (signal?.aborted) throw new SafeFetchError('已中止')
 
       const { req, res } = await requestOnce(

@@ -226,6 +226,21 @@ describe('web.search execute', () => {
     await tool.execute({ query: 'x', count: 8 })
     expect(mockRunWebSearch).toHaveBeenCalledWith('x', 8, undefined)
   })
+
+  it('未启用（code=WEB_SEARCH_DISABLED）→ 返回可引导 JSON，不抛错', async () => {
+    const err = Object.assign(new Error('联网搜索当前未启用'), { code: 'WEB_SEARCH_DISABLED' })
+    mockRunWebSearch.mockRejectedValueOnce(err)
+    const out = JSON.parse(await tool.execute({ query: '今天新闻' }))
+    expect(out.ok).toBe(false)
+    expect(out.error.code).toBe('WEB_SEARCH_DISABLED')
+    expect(out.error.hint).toContain('「+」')
+    expect(out.error.hint).toContain('SearXNG')
+  })
+
+  it('其它错误（429/401）仍抛出，交给引擎按 isError 回灌', async () => {
+    mockRunWebSearch.mockRejectedValueOnce(new Error('搜索服务限流（HTTP 429）'))
+    await expect(tool.execute({ query: 'q' })).rejects.toThrow('HTTP 429')
+  })
 })
 
 // ── js.eval ──────────────────────────────────────────────

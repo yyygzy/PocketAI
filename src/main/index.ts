@@ -41,6 +41,7 @@ import { masterKeyManager } from './crypto/master-key'
 import { commitNewMasterKeyState, prepareNewMasterKey, verifyAndOpenMasterKey } from './crypto/master-password'
 import { bootNeedsReverify, unlockCoordinator } from './crypto/unlock-coordinator'
 import { migrateKvSecrets } from './crypto/secret-store'
+import { migrateLegacyWebSearchKey } from './tools/websearch-config'
 import { exportFieldCredentials, restoreFieldCredentials } from './crypto/credential-rotation'
 import { recoveryKeyManager } from './crypto/recovery-key'
 import { providerRepo } from './db/repositories/provider.repo'
@@ -459,6 +460,7 @@ async function boot(): Promise<void> {
   // 阶段 3：历史明文凭据一次性升级为字段加密（幂等；此时字段密钥在各模式均已可用）
   try {
     migrateKvSecrets()
+    migrateLegacyWebSearchKey()
     providerRepo.migratePlaintextKeys()
     mcpServerRepo.migratePlaintextSecrets()
   } catch (e) {

@@ -30,7 +30,14 @@ const defaultsLine = (what: string, msg: string): string =>
   T('common.loadFailedDefaults').replace('{what}', what).replace('{msg}', msg)
 
 const SHELL_ON: ShellConfig = { enabled: true, policy: 'auto-safe' }
-const WS_ON: WebSearchConfig = { enabled: true, provider: 'tavily', apiKey: '', hasKey: true }
+const WS_ON: WebSearchConfig = {
+  enabled: true,
+  provider: 'tavily',
+  apiKey: '',
+  hasKey: true,
+  searxngBaseUrl: '',
+  searxngAllowPrivate: false
+}
 const CAL_ON: CalendarConfig = { enabled: true, paths: ['C:/cal.ics'] }
 
 

@@ -783,7 +783,12 @@ const api = {
   getWebSearchConfig: (): Promise<WebSearchConfig> =>
     ipcRenderer.invoke(IPC.AGENT_GET_WEBSEARCH_CONFIG),
   setWebSearchConfig: (
-    patch: Partial<Pick<WebSearchConfig, 'enabled' | 'provider' | 'apiKey'>>
+    patch: Partial<
+      Pick<
+        WebSearchConfig,
+        'enabled' | 'provider' | 'apiKey' | 'searxngBaseUrl' | 'searxngAllowPrivate'
+      >
+    >
   ): Promise<WebSearchConfig> => ipcRenderer.invoke(IPC.AGENT_SET_WEBSEARCH_CONFIG, patch),
 
   // ---------- 本地日历配置（calendar.read） ----------

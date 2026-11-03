@@ -156,13 +156,13 @@ const webFetchTool: BuiltinTool = {
   }
 }
 
-// ---- 联网搜索（v2 批次六真实现）：默认关闭，Agent 页配置服务商与 Key 后启用 ----
+// ---- 联网搜索（可插拔 provider）：默认关闭；未启用返回可引导的结构化提示，不摘工具 ----
 const webSearchTool: BuiltinTool = {
   schema: {
     id: 'web.search',
     name: 'web_search',
     description:
-      '联网搜索实时信息（新闻/资料/价格等），返回「标题+链接+摘要」列表。需用户在 Agent 页启用并配置搜索服务商；未启用时调用会报错。参数：query (string)，count (number, 可选, 默认 5, 最多 8)。',
+      '联网搜索实时信息（新闻/资料/价格等），返回「标题+链接+摘要」列表。支持 Tavily / 博查 / SearXNG（SearXNG 免 Key）。需用户在 Agent 输入框「+」→「工具配置」中启用；未启用时返回结构化指引（error.code=WEB_SEARCH_DISABLED），请据此引导用户开启。参数：query (string)，count (number, 可选, 默认 5, 最多 8)。',
     parameters: {
       type: 'object',
       properties: {
@@ -179,9 +179,24 @@ const webSearchTool: BuiltinTool = {
   async execute(args, ctx) {
     const query = String(args?.query ?? '').trim()
     if (!query) throw new Error('query 不能为空')
-    const hits = await runWebSearch(query, Number(args?.count), ctx?.signal)
-    if (hits.length === 0) return JSON.stringify({ query, results: [], note: '无搜索结果' })
-    return JSON.stringify({ query, results: hits })
+    try {
+      const hits = await runWebSearch(query, Number(args?.count), ctx?.signal)
+      if (hits.length === 0) return JSON.stringify({ query, results: [], note: '无搜索结果' })
+      return JSON.stringify({ query, results: hits })
+    } catch (e) {
+      // 按 error.code 识别（跨模块 class 身份在 mock/打包边界不可靠），未启用是「可引导」不是失败
+      if (e && typeof e === 'object' && (e as { code?: string }).code === 'WEB_SEARCH_DISABLED') {
+        return JSON.stringify({
+          ok: false,
+          error: {
+            code: 'WEB_SEARCH_DISABLED',
+            message: '联网搜索当前未启用',
+            hint: '请引导用户点击 Agent 输入框旁的「+」→「工具配置」→ 勾选 🌐「联网搜索」，然后选择服务商：Tavily / 博查需填写 API Key；SearXNG 免 Key，但需填写自建或可信实例地址。'
+          }
+        })
+      }
+      throw e
+    }
   }
 }
 

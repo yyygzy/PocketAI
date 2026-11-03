@@ -24,7 +24,10 @@ export const SECRET_KV_KEYS = {
   SLACK_BOT_TOKEN: 'channel.slack_bot_token',
   SLACK_APP_TOKEN: 'channel.slack_app_token',
   DISCORD_BOT_TOKEN: 'channel.discord_bot_token',
-  WEBSEARCH_API_KEY: 'agent.websearch_api_key'
+  /** 历史单槽 Key（启动时一次性迁移到按 provider 的键，见 websearch-config.migrateLegacyWebSearchKey） */
+  WEBSEARCH_API_KEY: 'agent.websearch_api_key',
+  WEBSEARCH_TAVILY_KEY: 'agent.websearch_tavily_key',
+  WEBSEARCH_BOCHA_KEY: 'agent.websearch_bocha_key'
 } as const
 
 /** key 必须是已注册的受管密钥，防止任意 key 污染 app_config */

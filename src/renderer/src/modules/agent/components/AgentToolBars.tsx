@@ -33,7 +33,9 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
     shellConfig,
     wsConfig,
     wsKeyDraft,
+    wsUrlDraft,
     setWsKeyDraft,
+    setWsUrlDraft,
     patchShellConfig,
     patchWsConfig,
     patchCalConfig,
@@ -110,47 +112,101 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
           >
             <option value="tavily">Tavily</option>
             <option value="bocha">{t('agent.websearch.providerBocha')}</option>
+            <option value="searxng">{t('agent.websearch.providerSearxng')}</option>
           </select>
         </label>
-        <label className="flex items-center gap-1 select-none min-w-0">
-          <span className="text-[var(--color-text-muted)]">API Key</span>
-          <input
-            type="password"
-            className="input-mini w-40"
-            value={wsKeyDraft}
-            disabled={!wsConfig.enabled}
-            placeholder={
-              wsConfig.hasKey ? t('agent.websearch.keySaved') : t('agent.websearch.keyPlaceholder')
-            }
-            onChange={(e) => setWsKeyDraft(e.target.value)}
-            onKeyDown={(e) => {
-              // §340：§336 修过 ChannelsPanel 那颗凭据框，这张屏是同一形状的漏掉的姊妹处——
-              // Enter 之后 confirmSecret 弹窗会抢走 focus⇒onBlur 紧跟着追发第二发，
-              // 同一份 Key 写两次、两张确认弹窗叠上来。键盘这条同步清草稿再发；
-              // onBlur 不清，用户取消确认时草稿还在、可重试（与 ChannelsPanel 同口径）
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing && wsKeyDraft.trim()) {
-                const trimmed = wsKeyDraft.trim()
-                setWsKeyDraft('')
-                void patchWsConfig({ apiKey: trimmed })
-              }
-            }}
-            onBlur={() => {
-              if (wsKeyDraft.trim()) void patchWsConfig({ apiKey: wsKeyDraft.trim() })
-            }}
-          />
-          {wsConfig.hasKey && (
-            <button
-              className="btn-ghost text-[11px] shrink-0"
-              title={t('agent.websearch.keyClearTip')}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => void patchWsConfig({ apiKey: '' })}
+        {wsConfig.provider === 'searxng' ? (
+          <>
+            <label className="flex items-center gap-1 select-none min-w-0">
+              <span className="text-[var(--color-text-muted)]">{t('agent.websearch.searxngUrl')}</span>
+              <input
+                type="text"
+                className="input-mini w-56"
+                value={wsUrlDraft}
+                disabled={!wsConfig.enabled}
+                placeholder={t('agent.websearch.searxngUrlPlaceholder')}
+                onChange={(e) => setWsUrlDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                    const next = wsUrlDraft.trim()
+                    if (next !== wsConfig.searxngBaseUrl) void patchWsConfig({ searxngBaseUrl: next })
+                  }
+                }}
+                onBlur={() => {
+                  const next = wsUrlDraft.trim()
+                  if (next !== wsConfig.searxngBaseUrl) void patchWsConfig({ searxngBaseUrl: next })
+                }}
+              />
+            </label>
+            <label
+              className="flex items-center gap-1 select-none"
+              title={t('agent.websearch.searxngAllowPrivateWarn')}
             >
-              {t('agent.websearch.keyClear')}
-            </button>
-          )}
-        </label>
+              <input
+                type="checkbox"
+                checked={wsConfig.searxngAllowPrivate}
+                disabled={!wsConfig.enabled || !wsConfig.searxngBaseUrl}
+                onChange={(e) =>
+                  void patchWsConfig({ searxngAllowPrivate: e.target.checked })
+                }
+              />
+              <span className="text-[var(--color-text-muted)]">
+                {t('agent.websearch.searxngAllowPrivate')}
+              </span>
+            </label>
+            {wsConfig.searxngAllowPrivate && (
+              <span className="text-[11px] text-[var(--color-danger)]">
+                {t('agent.websearch.searxngAllowPrivateWarn')}
+              </span>
+            )}
+          </>
+        ) : (
+          <label className="flex items-center gap-1 select-none min-w-0">
+            <span className="text-[var(--color-text-muted)]">API Key</span>
+            <input
+              type="password"
+              className="input-mini w-40"
+              value={wsKeyDraft}
+              disabled={!wsConfig.enabled}
+              placeholder={
+                wsConfig.hasKey ? t('agent.websearch.keySaved') : t('agent.websearch.keyPlaceholder')
+              }
+              onChange={(e) => setWsKeyDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // §340：§336 修过 ChannelsPanel 那颗凭据框，这张屏是同一形状的漏掉的姊妹处——
+                // Enter 之后 confirmSecret 弹窗会抢走 focus⇒onBlur 紧跟着追发第二发，
+                // 同一份 Key 写两次、两张确认弹窗叠上来。键盘这条同步清草稿再发；
+                // onBlur 不清，用户取消确认时草稿还在、可重试（与 ChannelsPanel 同口径）
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing && wsKeyDraft.trim()) {
+                  const trimmed = wsKeyDraft.trim()
+                  setWsKeyDraft('')
+                  void patchWsConfig({ apiKey: trimmed })
+                }
+              }}
+              onBlur={() => {
+                if (wsKeyDraft.trim()) void patchWsConfig({ apiKey: wsKeyDraft.trim() })
+              }}
+            />
+            {wsConfig.hasKey && (
+              <button
+                className="btn-ghost text-[11px] shrink-0"
+                title={t('agent.websearch.keyClearTip')}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void patchWsConfig({ apiKey: '' })}
+              >
+                {t('agent.websearch.keyClear')}
+              </button>
+            )}
+          </label>
+        )}
         <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
-          {wsConfig.enabled ? t('agent.websearch.hintOn') : t('agent.websearch.hintOff')}
+          {wsConfig.enabled
+            ? wsConfig.provider === 'searxng'
+              ? wsConfig.searxngBaseUrl
+                ? t('agent.websearch.hintSearxng')
+                : t('agent.websearch.searxngHint')
+              : t('agent.websearch.hintOn')
+            : t('agent.websearch.hintOff')}
         </span>
         {/* 密钥确认弹窗就渲染在这一行里（§399②b 后它在嵌套层**内部**）＝点「确认」不算"点浮层外面"，
             外层那颗「+」与这一层都不会被那一下 mousedown 关掉 */}

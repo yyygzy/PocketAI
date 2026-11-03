@@ -491,7 +491,14 @@ describe('⑦ 工具策略那一行与它的嵌套第二层（§399②b）', () 
       {
         tools: agentToolsStub({
           shellConfig: { enabled: true, policy: 'confirm' },
-          wsConfig: { enabled: true, provider: 'tavily', apiKey: '', hasKey: false }
+          wsConfig: {
+            enabled: true,
+            provider: 'tavily',
+            apiKey: '',
+            hasKey: false,
+            searxngBaseUrl: '',
+            searxngAllowPrivate: false
+          }
         })
       }
     )

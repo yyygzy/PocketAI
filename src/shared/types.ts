@@ -1055,8 +1055,9 @@ export interface ShellConfig {
   policy: ShellPolicy
 }
 
-/** 联网搜索服务商（v2 批次六：web.search 工具） */
-export type WebSearchProvider = 'tavily' | 'bocha'
+/** 联网搜索服务商（tavily/bocha 需 Key；searxng 免 Key，需用户自建或可信实例地址） */
+export const WEB_SEARCH_PROVIDERS = ['tavily', 'bocha', 'searxng'] as const
+export type WebSearchProvider = (typeof WEB_SEARCH_PROVIDERS)[number]
 
 export interface WebSearchConfig {
   enabled: boolean
@@ -1064,6 +1065,10 @@ export interface WebSearchConfig {
   /** 渲染端永远拿到空串（Key 不回显明文），是否已配置看 hasKey */
   apiKey: string
   hasKey: boolean
+  /** SearXNG 实例基地址（空串=未配置；不内置任何公共实例） */
+  searxngBaseUrl: string
+  /** 用户显式确认允许该 SearXNG 地址访问本机/内网（仅对此精确 origin 生效） */
+  searxngAllowPrivate: boolean
 }
 
 /** 本地日历（calendar.read 工具）：启停 + .ics 文件路径列表（上限 10 个） */

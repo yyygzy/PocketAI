@@ -21,10 +21,14 @@ export function useAgentToolConfigs() {
     enabled: false,
     provider: 'tavily',
     apiKey: '',
-    hasKey: false
+    hasKey: false,
+    searxngBaseUrl: '',
+    searxngAllowPrivate: false
   })
   /** 联网搜索 Key 输入框（不回显已存 Key，仅新输入时生效） */
   const [wsKeyDraft, setWsKeyDraft] = useState('')
+  /** SearXNG 实例地址输入框（失焦/Enter 时落库；成功后以后端规整值为准） */
+  const [wsUrlDraft, setWsUrlDraft] = useState('')
   // §257：这四发挂载读的失败面以前是「屏上摆着默认值」——工作目录演成"你没设"（还顺手把终端命令置灰）、
   // 三个开关演成"都是关的"，看着像读数。每一发各存自己的原因，屏上按面点名（§226 的口径）。
   const [toolUnread, setToolUnread] = useState<{ workspace: string | null; shell: string | null; webSearch: string | null; calendar: string | null }>(
@@ -63,6 +67,7 @@ export function useAgentToolConfigs() {
       }
       markUnread('webSearch', null)
       setWsConfigState(v)
+      setWsUrlDraft(v.searxngBaseUrl ?? '')
     }).catch((e: unknown) => { markUnread('webSearch', errText(e, t('agent.unknownError'))); logIpcError('agent.getWebSearchConfig', e) })
     window.pocketai.getCalendarConfig().then((v) => {
       if (hasIpcFailed(v)) {
@@ -101,11 +106,20 @@ export function useAgentToolConfigs() {
   }
 
   const patchWsConfig = async (
-    patch: Partial<Pick<WebSearchConfig, 'enabled' | 'provider' | 'apiKey'>>
+    patch: Partial<
+      Pick<
+        WebSearchConfig,
+        'enabled' | 'provider' | 'apiKey' | 'searxngBaseUrl' | 'searxngAllowPrivate'
+      >
+    >
   ) => {
     // 超长预检：避免主进程拒绝后草稿被误清（后端仍有同样校验，双保险）
     if (typeof patch.apiKey === 'string' && patch.apiKey.trim().length > 256) {
       toast.error(t('agent.websearch.keyTooLong'))
+      return
+    }
+    if (typeof patch.searxngBaseUrl === 'string' && patch.searxngBaseUrl.trim().length > 512) {
+      toast.error(t('agent.websearch.searxngUrlTooLong'))
       return
     }
     if (typeof patch.apiKey === 'string' && patch.apiKey.trim() !== '' && (await isUnprotectedMode())) {
@@ -121,6 +135,7 @@ export function useAgentToolConfigs() {
       markUnread('webSearch', null)
       setWsConfigState(next)
       if (patch.apiKey !== undefined) setWsKeyDraft('')
+      if (patch.searxngBaseUrl !== undefined) setWsUrlDraft(next.searxngBaseUrl ?? '')
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
     }
@@ -158,8 +173,10 @@ export function useAgentToolConfigs() {
     calConfig,
     wsConfig,
     wsKeyDraft,
+    wsUrlDraft,
     toolUnread,
     setWsKeyDraft,
+    setWsUrlDraft,
     pickWorkspace,
     retryWorkspace: loadWorkspace,
     patchShellConfig,

@@ -1,6 +1,7 @@
 // Work Agent IPC：中止 / 工作目录 / shell 与联网搜索与日历策略 / 工具审批应答 / 工具清单
 import { BrowserWindow, dialog } from 'electron'
-import { IPC } from '../../../shared/types'
+import { IPC, WEB_SEARCH_PROVIDERS } from '../../../shared/types'
+import type { WebSearchProvider } from '../../../shared/types'
 import { chatService } from '../../chat/chat-service'
 import { agentEngine } from '../../agent/engine'
 import { toolRegistry } from '../../tools/registry'
@@ -100,11 +101,35 @@ export function registerAgentHandlers(): void {
   safeHandle(IPC.AGENT_GET_WEBSEARCH_CONFIG, () => getWebSearchConfig())
   safeHandle(
     IPC.AGENT_SET_WEBSEARCH_CONFIG,
-    (_e, input: { enabled?: unknown; provider?: unknown; apiKey?: unknown }) => {
-      const patch: { enabled?: boolean; provider?: 'tavily' | 'bocha'; apiKey?: string } = {}
+    (
+      _e,
+      input: {
+        enabled?: unknown
+        provider?: unknown
+        apiKey?: unknown
+        searxngBaseUrl?: unknown
+        searxngAllowPrivate?: unknown
+      }
+    ) => {
+      const patch: {
+        enabled?: boolean
+        provider?: WebSearchProvider
+        apiKey?: string
+        searxngBaseUrl?: string
+        searxngAllowPrivate?: boolean
+      } = {}
       if (typeof input?.enabled === 'boolean') patch.enabled = input.enabled
-      if (input?.provider === 'tavily' || input?.provider === 'bocha') patch.provider = input.provider
+      if (
+        typeof input?.provider === 'string' &&
+        (WEB_SEARCH_PROVIDERS as readonly string[]).includes(input.provider)
+      ) {
+        patch.provider = input.provider as WebSearchProvider
+      }
       if (typeof input?.apiKey === 'string') patch.apiKey = input.apiKey
+      if (typeof input?.searxngBaseUrl === 'string') patch.searxngBaseUrl = input.searxngBaseUrl
+      if (typeof input?.searxngAllowPrivate === 'boolean') {
+        patch.searxngAllowPrivate = input.searxngAllowPrivate
+      }
       return setWebSearchConfig(patch)
     },
     argsSchema(websearchConfigSchema)
