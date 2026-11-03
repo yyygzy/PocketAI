@@ -18,6 +18,9 @@
 //        外加本地读屏 helper 的**传递闭包**（`shown()`→`sel()`→`screen`：第一版只认直接摸 DOM 那一层，
 //        于是 228 那颗门被读成「不读屏」＝假阳）；标识符边界不能用 `\b`（中文标识符在它下面不成立——
 //        这是扫描第一版把 208 条当候选的另一处假阳成因）。
+//        §401 又补两半：`result`／`result.current` 的**别名**（`const { result: r } = renderHook(...)`、
+//        `const st = result.current`）也当读屏；以及**门后把屏读进本地量、紧随的 `expect` 只断那颗本地量**
+//        （那句 expect 自己没有任何读屏字面量＝旧版看不见，见 `locals` 那段）。
 //      · `expect(...)` 的文本要**爬到链顶**再取：`expect(a()).toEqual([])` 只取 `expect(a())` 会把 matcher 丢掉，
 //        于是全仓的「只断不存在」门一律读成「断存在」＝整面无声变宽（第一趟实测 absence 型门 0 颗就是这么来的）。
 //   ③ 紧随其后（同块、中间没有第二次 await）是一条 `expect(...)` 且读屏，且它要求「存在」
@@ -36,11 +39,16 @@
 //     `result.current.runStats`＝计数门 t=0 就放行，读的是落地之前那一帧）——同族在 §380／§396 已各摆七颗／九颗，
 //     只是那次没撞上。§400 把它当成第二类屏收干：门里按「存在」读 `result.current`⇒另记一桶（hookGates）放行，
 //     门不等任何屏、紧随的同步断言读 `result.current` 且要求存在⇒照旧进「会假红」；「无紧随读屏」那一格
-//     因此从 400 搬到 309（现查）。留下两档**与 DOM 半同形**的盲区（不是新增、是原有盲区在第二类屏上的复现）：
-//     – 只认 `result.current` 这个字面串：把 `result` 改名解构（`const { result: r }`）或先落进本地量
-//       （`const ref = result.current.queue[0]`、隔一句再 `expect(ref)`）都读不到⇒落「无紧随读屏」。
-//       现查全仓 44 处 `renderHook` 没有别名解构（`grep -c renderHook`＋`grep -v "const { result"` 逐条过目），
-//       这一档目前只是理论盲区；DOM 半本来就有同形的一条（读进 const 再断）。
+//     因此从 400 搬到 309（现查）。当时留下的两档**与 DOM 半同形**的盲区，§401 收掉两半、新记一条边界：
+//     – （§401 已收）**别名**：`const { result: r } = renderHook(...)` 之后的 `r.current.x`、
+//       `const st = result.current` 之后的 `st.x` 也算读 hook 屏（readsHook 现查别名表）。
+//       现查全仓 44 处 `renderHook` 都直接写 `result.current`⇒**0 处真样本**，这一半今天不动任何桶，
+//       净效果只是"分类器认得这种写法"，由两条 fixture 钉住（漏杀对照②＝`r.current` 当候选、反向对照③＝`st.x` 当门在读屏）。
+//     – （§401 已收）门后先把屏读进**本地量**、紧随的 `expect` 只断那颗本地量（句子里没有任何读屏字面量）＝
+//       间接读屏。这一半现查**1 处真样本**＝`ipc-stop-silent-266.test.tsx` 改前 :141→:145，
+//       按 §364 口径折进同一道门后从「无紧随读屏」搬进「按存在读屏」（588／308，见下面的现数注释）。
+//     – （§401 **有意不收**的边界，fixture 钉住＝反向对照④）屏读发生在第二次 await **之前**、断言在其后⇒本面
+//       不报（那道门保护不到它，门等的是另一件事）；收它要按语句顺序重排"屏读落在哪一帧"，成本另计。
 //     – hook 屏与 DOM 屏之间仍**不比对象**：门按存在读了 `result.current.a`、紧随断言读更晚到货的 `result.current.b`
 //       ⇒ 放行（与第一条盲区同一条口子，收它要把两颗取值比成同一颗，会把大量正常写法判成候选）。
 // @vitest-environment node
@@ -116,8 +124,36 @@ function scanSource(fileName: string, text: string): Scan {
   }
   const readsDom = (s: string): boolean =>
     DOM_BASE.test(s) || [...helpers].some((h) => callRe(h).test(s))
-  /** 本面的"屏"有两份：DOM 与 hook 状态（§400 收的那一半） */
-  const readsScreen = (s: string): boolean => readsDom(s) || HOOK.test(s)
+  /** §401 第一半：`result`／`result.current` 的**别名**也算读 hook 屏。两种写法（现查全仓 0 处，收它是把这一档
+   *  从"理论盲区"变成"分类器认得"——不认它，将来一份夹具写 `const { result: r } = renderHook(...)` 就整半变瞎）：
+   *   · `const { result: r } = renderHook(...)` ⇒ `r.current.x` 是读屏
+   *   · `const st = result.current`（或 `= r.current`）⇒ `st.x` 是读屏
+   *  标识符边界仍不许用 `\b` 起头（中文标识符在它下面不成立，§364 第一版就栽在这里），用 `(?<![\w$])`。 */
+  const aliasResult: string[] = []
+  const aliasState: string[] = []
+  const collectAlias = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n) && n.initializer) {
+      const init = n.initializer.getText(sf).trim()
+      if (ts.isObjectBindingPattern(n.name) && /renderHook\s*\(/.test(init)) {
+        for (const el of n.name.elements) {
+          if (ts.isBindingElement(el) && el.propertyName && ts.isIdentifier(el.name) && el.propertyName.getText(sf) === 'result') {
+            aliasResult.push(el.name.text)
+          }
+        }
+      }
+      if (ts.isIdentifier(n.name) && /\.current$/.test(init)) aliasState.push(n.name.text)
+    }
+    ts.forEachChild(n, collectAlias)
+  }
+  collectAlias(sf)
+  /** 标识符边界（照 `callRe` 那把尺子，只是这里比的不是调用而是取值） */
+  const idRe = (x: string): RegExp => new RegExp('(?<![' + '\\w' + '$])' + x)
+  const readsHook = (s: string): boolean =>
+    HOOK.test(s) ||
+    aliasResult.some((a) => idRe(a + '\\.current\\b').test(s)) ||
+    aliasState.some((a) => idRe(a + '\\.').test(s))
+  /** 本面的"屏"有两份：DOM 与 hook 状态（§400 收的那一半，§401 把别名写法也认进来） */
+  const readsScreen = (s: string): boolean => readsDom(s) || readsHook(s)
 
   /** 子树里每一条 `expect(...)` 的**整条链**文本（爬到链顶，matcher 才不会丢） */
   const expectsIn = (node: ts.Node): string[] => {
@@ -185,33 +221,44 @@ function scanSource(fileName: string, text: string): Scan {
         const readsPresent = es.length > 0 ? es.some((x) => readsDom(x) && !isAbsence(x)) : readsDom(gate.getText(sf))
         const absenceReads = es.filter((x) => readsDom(x) && isAbsence(x))
         // §400：门按「存在」读了 hook 状态＝它等的就是那一帧落地，放行，但单独记一桶（与 DOM 那桶数不同＝证明这一半不是空枪）
-        const hookPresent = es.some((x) => !readsDom(x) && HOOK.test(x) && !isAbsence(x))
+        const hookPresent = es.some((x) => !readsDom(x) && readsHook(x) && !isAbsence(x))
         const block = blockOf(node)
         if (readsPresent) {
           out.domGates += 1
         } else if (hookPresent) {
           out.hookGates += 1
-        } else if ((absenceReads.length > 0 || es.some((x) => !readsDom(x) && HOOK.test(x))) && retractOf(block, node)) {
+        } else if ((absenceReads.length > 0 || es.some((x) => !readsDom(x) && readsHook(x))) && retractOf(block, node)) {
           out.transitionGates += 1
         } else if (block) {
           let pushed = false
           const stmts = block.statements
           const at = stmts.indexOf(node)
+          /** §401 第二半：门后先把屏读进**本地量**（`const btn = screen.getByTestId(…)`／`const st = result.current`），
+           * 紧随的 `expect` 只读那颗本地量＝句子里没有任何读屏字面量 ⇒ 旧版整发落「无紧随读屏」＝看不见，
+           * 而它读的仍是"落地之前那一帧"。记名只在本条门的窗口内有效，窗口里出现第二次 await 照旧断（同既有口径）。 */
+          const locals: string[] = []
           for (let i = at + 1; i < Math.min(stmts.length, at + 6); i++) {
             const s = stmts[i]
             const prev = stmts[i - 1]
             if (!s || !prev) break
             if (i > at + 1 && /await\s/.test(prev.getText(sf))) break
             const txt = s.getText(sf)
-            if (!/^expect\(/.test(txt.trim())) continue
-            if (!readsScreen(txt)) continue
-            if (/findBy/.test(txt)) break // findBy 自己会等
+            const t = txt.trim()
+            if (!/^expect\(/.test(t)) {
+              const m = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*([\s\S]+)$/.exec(t)
+              if (m && m[1] && readsScreen(m[2] ?? '')) locals.push(m[1])
+              continue
+            }
+            // 这条断言自己没读屏，但读的是门后刚取下来的那颗本地量＝同一帧的间接读屏
+            const viaLocal = !readsScreen(t) && locals.some((x) => idRe(x).test(t))
+            if (!readsScreen(t) && !viaLocal) continue
+            if (/findBy/.test(t)) break // findBy 自己会等
             const cand: Cand = {
               file: fileName, gateLine: lineOf(node), domLine: lineOf(s),
               gate: (src[lineOf(node) - 1] ?? '').trim().slice(0, 90),
-              dom: txt.replace(/\s+/g, ' ').slice(0, 90)
+              dom: (viaLocal ? '[读本地量 ' + locals.join(',') + '] ' : '') + t.replace(/\s+/g, ' ').slice(0, 90)
             }
-            if (isAbsence(txt)) out.absenceOnly.push(cand)
+            if (isAbsence(t)) out.absenceOnly.push(cand)
             else out.positive.push(cand)
             pushed = true
             break
@@ -340,9 +387,24 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     条目旁的注释，方向＝**只会漏报**（那一颗只在响应回来的失败分支点亮，成功／读到 null 那一发什么都不点，
     //     所以门放行时那句"不在场"恒真，不会因迟到到货而假红）。
     //   · 「按存在读 DOM」那一格 587 一格未动＝这一枚没动任何 DOM 判据，只把 hook 那半收进来。
+    //   §401＝再补两半：①`result`／`result.current` 的**别名**写法（`const { result: r } = renderHook(...)`
+    //     之后的 `r.current.x`、`const st = result.current` 之后的 `st.x`）＝readsHook 现查别名表；
+    //     ②门后把屏读进**本地量**、紧随的 `expect` 只断那颗本地量（句子本身没有任何读屏字面量⇒旧版看不见）。
+    //     终态＝**1094／588／81／98／308／0／19**：
+    //      · 别名那半现查 **0 处真样本**（全仓 44 处 `renderHook` 都直接写 `result.current`）⇒今天一个桶都没动，
+    //        净效果只是"分类器认得这种写法"，由两条 fixture 钉住（漏杀对照②＝`r.current` 当候选、反向对照③＝`st.x` 当门在读屏；
+//        V3／V4 各只打中其中一条⇒两支的牙是分开验的，不是同一颗牙数两遍）。
+    //      · 本地量那半现查 **1 处真样本**＝`ipc-stop-silent-266.test.tsx` 改前 :141→:145：那道门等的是
+    //        `sel!.value`——上一句 `fireEvent.change` 已经把它设成 'p1'＝t=0 就为真＝**门本身没牙**，紧随的
+    //        `expect(go, '生成键在场').toBeTruthy()` 读的却是 `const go = Array.from(document.querySelectorAll('button'))…`
+    //        取下来的那颗本地量（换过服务商之后才长出来的键）⇒旧版整发落「无紧随读屏」。修法按 §364 口径＝
+    //        把到货的见证（那颗键在场）折进同一道门、排第一句⇒这颗门从 silent 搬进按存在读屏
+    //        （587→588、309→308），会假红仍归零、判据一句没删也没放宽。
+    //      · **有意放行的边界**（fixture 钉住＝反向对照④）：屏读发生在第二次 await **之前**，门保护不到它⇒本面
+    //        不报；收它要按语句顺序重排"屏读落在哪一帧"，成本另计、本枚不收。
     expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1094)
     expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('587/81/98/309/0/19')
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('588/81/98/308/0/19')
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
@@ -543,5 +605,61 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       })`)
     expect(hookThenAbsence.positive).toEqual([])
     expect(hookThenAbsence.absenceOnly.length).toBe(1)
+    // §401 漏杀对照①（第二半·读进本地量）：计数门 → 把屏读进本地量 → 只断那颗本地量"在场"。
+    // 旧版看不见它（那句 expect 里没有任何读屏字面量）＝整发落「无紧随读屏」，而它读的还是落地之前那一帧。
+    const localReadGate = scanSource('fx-local-read.tsx', `
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('listModels')).toBe(1))
+        const go = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent ?? '').includes('生成'))
+        expect(go, '生成键在场').toBeTruthy()
+      })`)
+    expect(localReadGate.positive.length, '门后把屏读进本地量、紧随只断那颗本地量＝这一族没被认出来＝本地量那半是瞎的').toBe(1)
+    expect(localReadGate.silent, '它不该再留在"无紧随读屏"那一格').toBe(0)
+    // §401 反向对照①：门后把屏读进本地量、紧随断的是"不在场"⇒ 只进假绿那一桶
+    const localAbsenceGate = scanSource('fx-local-absence.tsx', `
+      const alerts = (): Element[] => Array.from(document.querySelectorAll('[role="alert"]'))
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('listModels')).toBe(1))
+        const rows = alerts()
+        expect(rows).toEqual([])
+      })`)
+    expect(localAbsenceGate.positive).toEqual([])
+    expect(localAbsenceGate.absenceOnly.length, '这句"不在场"读的是本地量 ⇒ 要进假绿名单（名单才有牙）').toBe(1)
+    // §401 反向对照②：门自己按存在读了屏（后面那颗本地量只是同一帧的复用）⇒ 放行，不许算候选
+    const gateReadsFirst = scanSource('fx-gate-reads-first.tsx', `
+      it('t', async () => {
+        await waitFor(() => expect(screen.getByText('生成')).toBeTruthy())
+        const go = screen.getByTestId('image-generate')
+        expect(go).toBeTruthy()
+      })`)
+    expect(gateReadsFirst.positive, '门在读屏，本地量只是复用 ⇒ 报出来就是假阳：' + gateReadsFirst.positive.map(detail).join(' / ')).toEqual([])
+    expect(gateReadsFirst.domGates).toBe(1)
+    // §401 漏杀对照②（第一半·别名）：`const { result: r } = renderHook(...)` 之后计数门＋只断 `r.current.x` 在场
+    const aliasHookGate = scanSource('fx-alias-hook.tsx', `
+      const { result: r } = renderHook(() => useAgentChat(P, A))
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('getAgentTextProtocol')).toBe(1))
+        expect(r.current.textProtocolForced).toBe(true)
+      })`)
+    expect(aliasHookGate.positive.length, 'result 改名解构 ⇒ 分类器要认得这种写法（现查全仓 0 处，钉住的是将来）').toBe(1)
+    // §401 反向对照③：别名门自己按存在读屏 ⇒ 落 hookGates，不算候选
+    const aliasPresenceGate = scanSource('fx-alias-presence.tsx', `
+      const st = result.current
+      it('t', async () => {
+        await waitFor(() => expect(st.conversationId).toBe('c1'))
+        expect(st.runStats).toBeNull()
+      })`)
+    expect(aliasPresenceGate.positive).toEqual([])
+    expect(aliasPresenceGate.hookGates, '整份状态取进本地量（const st = result.current）之后 st.x＝读 hook 屏').toBe(1)
+    // §401 反向对照④（**有意放行的边界**，如实记）：屏读发生在第二次 await **之前**，
+    // 门保护不到它⇒本面不报（收它要按语句顺序重排"屏读落在哪一帧"＝成本另计，本枚不收）
+    const localThenSecondAwait = scanSource('fx-local-two-await.tsx', `
+      it('t', async () => {
+        await waitFor(() => expect(callsOf('listModels')).toBe(1))
+        const go = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === '生成')
+        await waitFor(() => expect(callsOf('generateImage')).toBe(1))
+        expect(go, '那颗键在场').toBeTruthy()
+      })`)
+    expect(localThenSecondAwait.positive).toEqual([])
   })
 })

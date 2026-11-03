@@ -138,7 +138,13 @@ async function imageAndRun(impls: Record<string, (...a: any[]) => unknown>): Pro
   const sel = Array.from(document.querySelectorAll('select')).find((s) => Array.from(s.options).some((o) => o.value === 'p1'))
   expect(sel, '服务商下拉在场').toBeTruthy()
   fireEvent.change(sel!, { target: { value: 'p1' } })
-  await waitFor(() => expect(sel!.value).toBe('p1'), MOUNT_BUDGET)
+  // §401：改前这道门等的是 `sel!.value`——上面那句 fireEvent 已经把它设成 'p1'＝t=0 就为真＝**没牙**；
+  // 而紧随的 `expect(go, '生成键在场')` 读的是"换过服务商之后才长出来的那颗键"（读屏走的是
+  // `const go = …querySelectorAll('button')…` 那颗本地量＝本面旧版看不见）。修法按 §364 口径＝
+  // 把到货的见证（那颗键在场）折进同一道门、排第一句，判据一句没删、也没放宽。
+  await waitFor(() => expect(
+    Array.from(document.querySelectorAll('button')).some((b) => (b.textContent ?? '').includes(L('image.generate')))
+  ).toBe(true), MOUNT_BUDGET)
   const ta = document.querySelector('textarea') as HTMLTextAreaElement
   fireEvent.change(ta, { target: { value: '画一张' } })
   const go = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent ?? '').includes(L('image.generate')))
