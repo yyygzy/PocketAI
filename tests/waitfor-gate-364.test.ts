@@ -408,9 +408,16 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     （`urlLabel()`／`allowBox()`／`keyInput()`，分类器按传递闭包认），其中两道门等的是
     //     `allowBox().disabled`／`.checked` 这种**初值≠终值**的自己会变的属性＝真到货见证，不是恒真门；
     //     余下五桶一格未动，「会假红」仍归零，「只会假绿」19 颗名单一字未动（本枚不改 `renderer-websearch-b3`）。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1098)
+    //   §410（＝修 truncate 裁掉行内说明那句安全限定语，台账第一百七十二次）净新增 **2 颗 awaits**，都在
+    //     新挂载用例 `tests/renderer-hint-title-410.test.tsx`（六例里只有两例用 `await waitFor`，
+    //     其余四例的到货见证走 `findByText`＝自带等待，不落在这面的计数里）。
+    //     两颗都落「按存在读屏（DOM）」＝**605→607**：门读的是 `el.textContent` 换成下一张脸那一颗
+    //     （关 🌐 那句换「未启用」／日历那颗勾换「未启用」），初值≠终值＝真到货见证（§407 那条通则的又一处），
+    //     紧随的 `title` 那句读的是同一份 state、同一帧⇒不需要额外落定。
+    //     余下四桶未动，「会假红」仍归零、「只会假绿」19 颗名单一字未动（本枚不改那两份兄弟用例）。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1100)
     expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('605/81/95/298/0/19')
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('607/81/95/298/0/19')
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

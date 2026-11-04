@@ -45,6 +45,23 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
     toolUnread
   } = tools
 
+  // §410：这两句行内说明各自提成一个量＝正文与悬停的 title 取同一份，不存在"两份手写漂开"。
+  // 它们原先挂在 truncate 上，298px 宽的浮层里四语都被裁掉尾巴（被裁的半句是安全限定语），
+  // 而 jsdom 不做布局⇒CI 全绿看不见裁切，所以这两行的类名里不再出现 truncate，改由 flex-wrap 换行。
+  const wsHint = !wsConfig.enabled
+    ? t('agent.websearch.hintOff')
+    : (wsConfig.provider === 'searxng'
+        ? wsConfig.searxngBaseUrl
+          ? t('agent.websearch.hintSearxng')
+          : t('agent.websearch.searxngHint')
+        : t('agent.websearch.hintOn')) +
+      (wsConfig.depth === 'deep' ? ' · ' + t('agent.websearch.depthHint') : '')
+  const calHint = !calConfig.enabled
+    ? t('agent.calendar.hintOff')
+    : calConfig.paths.length > 0
+      ? t('agent.calendar.hintOn')
+      : t('agent.calendar.hintNoFile')
+
   return (
     <div className="flex flex-col gap-1.5 py-1">
       {/* 终端命令（shell_exec）策略：未设置工作目录时整体置灰 */}
@@ -214,15 +231,8 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
             )}
           </label>
         )}
-        <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
-          {wsConfig.enabled
-            ? (wsConfig.provider === 'searxng'
-                ? wsConfig.searxngBaseUrl
-                  ? t('agent.websearch.hintSearxng')
-                  : t('agent.websearch.searxngHint')
-                : t('agent.websearch.hintOn')) +
-              (wsConfig.depth === 'deep' ? ' · ' + t('agent.websearch.depthHint') : '')
-            : t('agent.websearch.hintOff')}
+        <span className="w-full basis-full text-[11px] text-[var(--color-text-muted)]" title={wsHint}>
+          {wsHint}
         </span>
         {/* 密钥确认弹窗就渲染在这一行里（§399②b 后它在嵌套层**内部**）＝点「确认」不算"点浮层外面"，
             外层那颗「+」与这一层都不会被那一下 mousedown 关掉 */}
@@ -262,12 +272,8 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
             </button>
           </span>
         ))}
-        <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
-          {calConfig.enabled
-            ? calConfig.paths.length > 0
-              ? t('agent.calendar.hintOn')
-              : t('agent.calendar.hintNoFile')
-            : t('agent.calendar.hintOff')}
+        <span className="w-full basis-full text-[11px] text-[var(--color-text-muted)]" title={calHint}>
+          {calHint}
         </span>
       </div>
     </div>
