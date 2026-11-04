@@ -23,7 +23,8 @@ export function useAgentToolConfigs() {
     apiKey: '',
     hasKey: false,
     searxngBaseUrl: '',
-    searxngAllowPrivate: false
+    searxngAllowPrivate: false,
+    depth: 'auto'
   })
   /** 联网搜索 Key 输入框（不回显已存 Key，仅新输入时生效） */
   const [wsKeyDraft, setWsKeyDraft] = useState('')
@@ -109,7 +110,7 @@ export function useAgentToolConfigs() {
     patch: Partial<
       Pick<
         WebSearchConfig,
-        'enabled' | 'provider' | 'apiKey' | 'searxngBaseUrl' | 'searxngAllowPrivate'
+        'enabled' | 'provider' | 'apiKey' | 'searxngBaseUrl' | 'searxngAllowPrivate' | 'depth'
       >
     >
   ) => {

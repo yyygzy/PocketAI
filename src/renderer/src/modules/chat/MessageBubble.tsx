@@ -13,6 +13,15 @@ import { writeClipboard } from '../../utils/clipboard'
 import { isTtsSupported, speak, stop, subscribeSpeak, stripSpeechText } from '../../utils/tts'
 import { SELECTION_ACTIONS, MAX_SELECTION_TEXT } from '../../utils/selection-actions'
 
+/** 网页来源的域名（解析失败留空） */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return ''
+  }
+}
+
 interface Props {
   role: 'user' | 'assistant'
   content: string
@@ -352,9 +361,25 @@ const MessageBubbleImpl: React.FC<Props> = ({
                       <span className="shrink-0 text-[10px] px-1 rounded border border-[var(--color-border)] text-[var(--color-accent)] font-medium">
                         [{i + 1}]
                       </span>
-                      <span className="text-[11px] text-[var(--color-accent)] font-medium truncate">
-                        {s.docTitle}
-                      </span>
+                      {s.kind === 'web' && s.url ? (
+                        <a
+                          href={s.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-[var(--color-accent)] font-medium truncate hover:underline"
+                        >
+                          {s.docTitle}
+                        </a>
+                      ) : (
+                        <span className="text-[11px] text-[var(--color-accent)] font-medium truncate">
+                          {s.docTitle}
+                        </span>
+                      )}
+                      {s.kind === 'web' && s.url && (
+                        <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                          {hostOf(s.url)}
+                        </span>
+                      )}
                       {s.kbId && s.seq !== undefined && (
                         <button
                           onClick={() =>

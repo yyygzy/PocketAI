@@ -93,7 +93,8 @@ export function agentToolsStub(over: Partial<AgentToolConfigs> = {}): AgentToolC
       apiKey: '',
       hasKey: false,
       searxngBaseUrl: '',
-      searxngAllowPrivate: false
+      searxngAllowPrivate: false,
+      depth: 'quick'
     },
     wsKeyDraft: '',
     wsUrlDraft: '',

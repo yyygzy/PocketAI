@@ -7,13 +7,18 @@
 // - agent.websearch_api_key        ：历史单槽 Key（boot 时幂等迁移后删除）
 // - agent.websearch_searxng_url    ：SearXNG 实例基地址（空=未配置，不内置公共实例）
 // - agent.websearch_searxng_allow_private：'1'=用户显式确认允许该地址走私网/环回
+// - agent.websearch_depth          ：'auto'（默认，跟随模型；模型缺省 quick）| 'quick' | 'deep'（强制覆盖）
 //
 // 安全约定：getWebSearchConfig 面向渲染端返回时永远不回传 Key 明文（apiKey='' + hasKey 标记）；
 // 主进程内部读 Key 用 getWebSearchSecret()。私网放行只对 searxngBaseUrl 的精确 origin 生效，
 // 且默认关闭；URL 为公网/空时强制回落 false，避免旧勾选在改地址后被继承。
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { getSecret, setSecret, hasSecret, SECRET_KV_KEYS } from '../crypto/secret-store'
-import type { WebSearchConfig, WebSearchProvider } from '../../shared/types'
+import type {
+  WebSearchConfig,
+  WebSearchDepthSetting,
+  WebSearchProvider
+} from '../../shared/types'
 import { websearchConfigSchema } from '../../shared/schemas/agent'
 import { isPrivateHostname } from '../net/safe-fetch'
 import { createLogger } from '../logger'
@@ -24,6 +29,7 @@ const KEY_ENABLED = 'agent.websearch_enabled'
 const KEY_PROVIDER = 'agent.websearch_provider'
 const KEY_SEARXNG_URL = 'agent.websearch_searxng_url'
 const KEY_SEARXNG_ALLOW_PRIVATE = 'agent.websearch_searxng_allow_private'
+const KEY_DEPTH = 'agent.websearch_depth'
 
 const MAX_API_KEY_CHARS = 256
 const MAX_SEARXNG_URL_CHARS = 512
@@ -46,6 +52,12 @@ function readSearxngUrl(): string {
 
 function readSearxngAllowPrivate(): boolean {
   return appConfigRepo.get(KEY_SEARXNG_ALLOW_PRIVATE) === '1'
+}
+
+/** 配置档位：auto（默认）/quick/deep；脏值一律回落 auto（不在读取处替用户做强制选择） */
+function readDepth(): WebSearchDepthSetting {
+  const raw = appConfigRepo.get(KEY_DEPTH)
+  return raw === 'quick' || raw === 'deep' ? raw : 'auto'
 }
 
 /**
@@ -86,7 +98,8 @@ export function getWebSearchConfig(): WebSearchConfig {
     apiKey: '',
     hasKey: slot ? hasSecret(slot) : false,
     searxngBaseUrl: readSearxngUrl(),
-    searxngAllowPrivate: readSearxngAllowPrivate()
+    searxngAllowPrivate: readSearxngAllowPrivate(),
+    depth: readDepth()
   }
 }
 
@@ -98,6 +111,7 @@ export function setWebSearchConfig(
     apiKey: string
     searxngBaseUrl: string
     searxngAllowPrivate: boolean
+    depth: WebSearchDepthSetting
   }>
 ): WebSearchConfig {
   const patch = websearchConfigSchema.parse(input)
@@ -128,6 +142,7 @@ export function setWebSearchConfig(
     appConfigRepo.set(KEY_ENABLED, patch.enabled ? '1' : '0')
   }
   if (patch.provider) appConfigRepo.set(KEY_PROVIDER, patch.provider)
+  if (patch.depth) appConfigRepo.set(KEY_DEPTH, patch.depth)
 
   const slot = providerKeySlot(nextProvider)
   if (typeof patch.apiKey === 'string' && slot) {
@@ -157,6 +172,7 @@ export function getWebSearchSecret(): {
   apiKey: string
   searxngBaseUrl: string
   searxngAllowPrivate: boolean
+  depth: WebSearchDepthSetting
 } {
   const provider = readProvider()
   const slot = providerKeySlot(provider)
@@ -165,7 +181,8 @@ export function getWebSearchSecret(): {
     provider,
     apiKey: slot ? getSecret(slot) : '',
     searxngBaseUrl: readSearxngUrl(),
-    searxngAllowPrivate: readSearxngAllowPrivate()
+    searxngAllowPrivate: readSearxngAllowPrivate(),
+    depth: readDepth()
   }
 }
 

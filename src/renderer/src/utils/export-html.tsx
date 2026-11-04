@@ -7,9 +7,9 @@
 //
 // 已知限制：katex/mermaid 为懒加载，导出瞬间未就绪时公式/图表保留源码文本。
 import React from 'react'
-import type { KbAskMessage, MessageRecord } from '../../../shared/types'
+import type { KbAskMessage, MessageRecord, MessageSource } from '../../../shared/types'
 import type { ExportConversationMeta, ExportKbAskSessionMeta } from '../../../shared/export-markdown'
-import { formatSources, formatAttachments, roleLabel } from '../../../shared/export-markdown'
+import { formatAttachments, roleLabel } from '../../../shared/export-markdown'
 import { Markdown } from '../modules/chat/Markdown'
 // react-dom/server 体积可观，动态 import 拆为独立 chunk——仅导出 HTML 时加载，不回退主包瘦身成果
 
@@ -90,9 +90,22 @@ function ToolCalls({ raw }: { raw: string }): React.ReactElement | null {
   )
 }
 
+/** 导出用去重：网页来源按 URL、知识库来源按标题（与 formatSources 口径一致） */
+function exportSources(sources?: MessageSource[] | null): MessageSource[] {
+  const seen = new Set<string>()
+  const out: MessageSource[] = []
+  for (const s of sources ?? []) {
+    const key = s.kind === 'web' && s.url ? `web:${s.url}` : `doc:${s.docTitle}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(s)
+  }
+  return out
+}
+
 function MessageView({ msg }: { msg: MessageRecord }): React.ReactElement {
   const time = new Date(msg.createdAt).toLocaleString()
-  const sources = formatSources(msg.sources)
+  const sources = exportSources(msg.sources)
   const attachments = formatAttachments(msg.attachments)
   return (
     <section className="msg">
@@ -114,7 +127,15 @@ function MessageView({ msg }: { msg: MessageRecord }): React.ReactElement {
         <>
           <div className="sources"><strong>参考来源：</strong></div>
           <ol className="sources">
-            {sources.map((s, i) => <li key={i}>{s.replace(/^\[\d+\]\s*/, '')}</li>)}
+            {sources.map((s, i) => (
+              <li key={i}>
+                {s.kind === 'web' && s.url ? (
+                  <a href={s.url} target="_blank" rel="noreferrer">{s.docTitle}</a>
+                ) : (
+                  s.docTitle
+                )}
+              </li>
+            ))}
           </ol>
         </>
       )}
@@ -168,7 +189,7 @@ export async function buildConversationHtml(
 
 /** KB 问答消息视图：user 引用块气泡 / assistant Markdown + 来源列表（无附件/工具/token） */
 function KbAskMessageView({ msg }: { msg: KbAskMessage }): React.ReactElement {
-  const sources = formatSources(msg.sources)
+  const sources = exportSources(msg.sources)
   return (
     <section className="msg">
       <h2>{roleLabel(msg.role)}</h2>
@@ -181,7 +202,15 @@ function KbAskMessageView({ msg }: { msg: KbAskMessage }): React.ReactElement {
         <>
           <div className="sources"><strong>参考来源：</strong></div>
           <ol className="sources">
-            {sources.map((s, i) => <li key={i}>{s.replace(/^\[\d+\]\s*/, '')}</li>)}
+            {sources.map((s, i) => (
+              <li key={i}>
+                {s.kind === 'web' && s.url ? (
+                  <a href={s.url} target="_blank" rel="noreferrer">{s.docTitle}</a>
+                ) : (
+                  s.docTitle
+                )}
+              </li>
+            ))}
           </ol>
         </>
       )}

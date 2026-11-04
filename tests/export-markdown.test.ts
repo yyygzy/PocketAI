@@ -128,6 +128,24 @@ describe('formatSources', () => {
     // 来源片段正文不进导出（降噪）
     expect(md).not.toContain('片段')
   })
+
+  it('网页来源按 URL 去重，并输出可点的完整 URL', () => {
+    const lines = formatSources([
+      { chunkId: 'w1', docId: 'https://a.example.com/x', docTitle: '网页一', content: '', url: 'https://a.example.com/x', kind: 'web' },
+      { chunkId: 'w2', docId: 'https://a.example.com/x', docTitle: '同页换了标题', content: '', url: 'https://a.example.com/x', kind: 'web' },
+      { chunkId: 'w3', docId: 'https://b.example.com/y', docTitle: '网页二', content: '', url: 'https://b.example.com/y', kind: 'web' }
+    ])
+    expect(lines).toEqual([
+      '[1] 网页一 — https://a.example.com/x',
+      '[2] 网页二 — https://b.example.com/y'
+    ])
+  })
+
+  it('网页来源标题为空时回落 URL（知识库来源仍走未命名兜底）', () => {
+    expect(formatSources([
+      { chunkId: 'w1', docId: 'https://a.example.com/x', docTitle: '', content: '', url: 'https://a.example.com/x', kind: 'web' }
+    ])[0]).toBe('[1] https://a.example.com/x — https://a.example.com/x')
+  })
 })
 
 describe('formatAttachments', () => {
@@ -266,7 +284,17 @@ describe('buildConversationHtml', () => {
         id: 'a1',
         role: 'assistant',
         content: '## 回答\n\n正文',
-        sources: [{ chunkId: '1', docId: 'd1', docTitle: '手册', content: '' }]
+        sources: [
+          { chunkId: '1', docId: 'd1', docTitle: '手册', content: '' },
+          {
+            chunkId: 'w1',
+            docId: 'https://a.example.com/x',
+            docTitle: '网页标题',
+            content: '',
+            url: 'https://a.example.com/x',
+            kind: 'web'
+          }
+        ]
       })
     ], '小助手')
 
@@ -274,6 +302,9 @@ describe('buildConversationHtml', () => {
     expect(html).toContain('<title>测试会话</title>')
     expect(html).toContain('小助手')
     expect(html).toContain('手册')
+    // 网页来源导出后仍是可点链接（不丢 URL）
+    expect(html).toContain('href="https://a.example.com/x"')
+    expect(html).toContain('网页标题')
     expect(html).toContain('回答')
     // 关键安全断言：消息正文里的裸 <script> 不得作为标签存活
     expect(html).not.toContain('<script>')

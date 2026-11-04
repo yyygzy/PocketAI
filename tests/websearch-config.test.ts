@@ -222,6 +222,33 @@ describe('历史单槽 Key 迁移（幂等）', () => {
   })
 })
 
+describe('搜索深度档位（depth: auto/quick/deep）', () => {
+  it('默认 auto（不干预模型选择）', () => {
+    expect(getWebSearchConfig().depth).toBe('auto')
+    expect(getWebSearchSecret().depth).toBe('auto')
+  })
+
+  it.each(['quick', 'deep'] as const)('保存 %s 后视图与主进程明文一致', (depth) => {
+    setWebSearchConfig({ depth })
+    expect(getWebSearchConfig().depth).toBe(depth)
+    expect(getWebSearchSecret().depth).toBe(depth)
+  })
+
+  it('非法持久化值 → 回落 auto（不在读取处替用户强制档位）', () => {
+    mocks.cfgStore.set('agent.websearch_depth', 'turbo')
+    expect(getWebSearchConfig().depth).toBe('auto')
+  })
+
+  it('只改 depth 不影响 enabled/provider', () => {
+    setWebSearchConfig({ enabled: true, provider: 'searxng' })
+    setWebSearchConfig({ depth: 'deep' })
+    const c = getWebSearchConfig()
+    expect(c.enabled).toBe(true)
+    expect(c.provider).toBe('searxng')
+    expect(c.depth).toBe('deep')
+  })
+})
+
 describe('getWebSearchSecret — 主进程读明文与 SearXNG 配置', () => {
   it('返回当前 provider 的 Key 明文', () => {
     setWebSearchConfig({ provider: 'bocha', apiKey: 'sk-plaintext' })

@@ -16,7 +16,7 @@ import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
 import { AgentSearchBar } from '../components/AgentSearchBar'
 import { ZeroToolCallNotice } from '../components/ZeroToolCallNotice'
-import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages, delegateRoleLabel } from '../agent-shared'
+import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages, delegateRoleLabel, isDeepSearchRunning } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
@@ -45,6 +45,9 @@ export const AgentPanel: React.FC = () => {
     useAppStore.getState().setModuleBusy('agent', chat.running)
   }, [chat.running])
   const tools = useAgentToolConfigs()
+  // 「深度检索中」：复用运行态 chip 流那一行，不另造进度组件
+  const lastLive = chat.liveSteps[chat.liveSteps.length - 1]
+  const deepSearchRunning = isDeepSearchRunning(chat.running, lastLive, tools.wsConfig.depth)
   const att = useAttachments()
   const [railOpen, setRailOpen] = useState(true)
   const [statsExpanded, setStatsExpanded] = useState(false)
@@ -609,6 +612,9 @@ export const AgentPanel: React.FC = () => {
           <div className="mb-2 self-start w-full max-w-[640px] flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
             <span className="inline-block w-2 h-2 shrink-0 rounded-full bg-[var(--color-accent)] animate-pulse" />
             <span className="shrink-0">{t('agent.runningStep', { n: chat.currentStep })}</span>
+            {deepSearchRunning && (
+              <span className="shrink-0 text-[var(--color-accent)]">{t('agent.websearch.deepRunning')}</span>
+            )}
             {chat.liveSteps.length > 0 && (
               <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1 py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {chat.liveSteps.map((s, i) => {

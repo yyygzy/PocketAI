@@ -1,5 +1,5 @@
 // Agent 模块共享：类型、常量与纯函数（MCP 面板 / Agent 对话 / Channels 共用）
-import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult, MessageSource } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult, MessageSource, WebSearchDepthSetting } from '../../../../shared/types'
 import { readDelegateRoleForDisplay, type DelegateRole } from '../../../../shared/delegation-rules'
 import type { SlashCommand } from '../../utils/snippet-slash'
 
@@ -57,6 +57,11 @@ export interface LiveStep {
    * 所以那条去重照旧成立。
    */
   callId?: string
+  /**
+   * tool_call 时：`web_search` 且参数 depth=deep。auto 档位下界面据此显示「深度检索中…」
+   * （配置为 quick/deep 时以配置为准，不看这个字段）。
+   */
+  deepSearch?: boolean
 }
 
 /** chip 流最大保留长度（防超长运行撑爆 UI；超出丢最旧） */
@@ -76,6 +81,35 @@ export function delegateRoleLabel(t: (key: string) => string, role: DelegateRole
 }
 
 /**
+ * web_search 的 depth 参数是否 deep（auto 档位下界面据此显示「深度检索中…」）。
+ * 参数是模型生成的 JSON，可能畸形——解析失败按 quick（与 builtin 的兜底一致）。
+ */
+function readDeepSearchArg(name?: string, raw?: string): boolean {
+  if (name !== 'web_search' || !raw) return false
+  try {
+    const args = JSON.parse(raw) as { depth?: unknown } | null
+    return args?.depth === 'deep'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 运行态是否应显示「深度检索中…」：复用运行态 chip 行，不另造进度组件。
+ * 口径与主进程覆写一致——配置 quick/deep 强制生效；auto 才看模型参数里点的 depth。
+ */
+export function isDeepSearchRunning(
+  running: boolean,
+  step: LiveStep | undefined,
+  setting: WebSearchDepthSetting
+): boolean {
+  if (!running || !step || step.type !== 'tool_call' || step.toolName !== 'web_search') return false
+  if (setting === 'deep') return true
+  if (setting === 'quick') return false
+  return step.deepSearch === true
+}
+
+/**
  * liveSteps 归约（纯函数，可单测）：把 step 事件追加到 chip 流。
  * - 不在白名单的类型（user/todo/final）返回原数组（引用不变，不触发重渲染）
  * - 同一 stepIndex 的 thought 占位→正式更新会去重为一条（同 index 同类型同 callId 覆盖）
@@ -91,7 +125,8 @@ export function reduceLiveSteps(prev: LiveStep[], event: { stepIndex: number; ty
     role: t === 'tool_call'
       ? readDelegateRoleForDisplay(event.toolCall?.function?.name, event.toolCall?.function?.arguments) ?? undefined
       : undefined,
-    callId: t === 'tool_call' ? event.toolCall?.id : undefined
+    callId: t === 'tool_call' ? event.toolCall?.id : undefined,
+    deepSearch: t === 'tool_call' ? readDeepSearchArg(event.toolCall?.function?.name, event.toolCall?.function?.arguments) : undefined
   }
   // 同 stepIndex 同类型同 callId 覆盖（thought 先 emit 占位再 emit 正式文本，chip 只留一条）
   const dupIdx = prev.findIndex(

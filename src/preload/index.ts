@@ -786,7 +786,7 @@ const api = {
     patch: Partial<
       Pick<
         WebSearchConfig,
-        'enabled' | 'provider' | 'apiKey' | 'searxngBaseUrl' | 'searxngAllowPrivate'
+        'enabled' | 'provider' | 'apiKey' | 'searxngBaseUrl' | 'searxngAllowPrivate' | 'depth'
       >
     >
   ): Promise<WebSearchConfig> => ipcRenderer.invoke(IPC.AGENT_SET_WEBSEARCH_CONFIG, patch),

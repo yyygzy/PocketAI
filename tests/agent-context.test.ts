@@ -68,6 +68,7 @@ import {
   ensureProtocolPrompt,
   countMcpHeldBack,
   extractKbSearchSources,
+  extractWebSearchSources,
   mergeSources,
   wrapUntrusted,
   UNTRUSTED_START,
@@ -79,6 +80,7 @@ import {
   buildImageParts
 } from '../src/main/chat/context-attachments'
 import { badArgsError } from '../src/main/tools/registry'
+import { renderDeepText } from '../src/main/search/deep'
 
 let seq = 0
 function msg(partial: Partial<MessageRecord> & { role: MessageRecord['role']; content: string }): MessageRecord {
@@ -377,6 +379,22 @@ describe('compressToolResult', () => {
     expect(compressToolResult('short', 100)).toBe('short')
   })
 
+  it('deep 6 条清单（<2000）不被压缩层改写，来源 6 条与模型看到的一致', () => {
+    const items = Array.from({ length: 6 }, (_, i) => ({
+      title: `第${i + 1}条搜索结果标题`.padEnd(30, '标'),
+      url: `https://site${i + 1}.example.com/path/to/article-${i + 1}`,
+      snippet: '摘'.repeat(300),
+      ...(i < 3 ? { content: '正'.repeat(1200) } : {})
+    }))
+    const rendered = renderDeepText(items, 3)
+    // 实测 1628 字符：在 2000 压缩层阈值之下，压缩函数必须原样返回
+    expect(rendered.text.length).toBeLessThan(2000)
+    expect(compressToolResult(rendered.text, 2000)).toBe(rendered.text)
+    const sources = extractWebSearchSources('web_search', rendered.text)
+    expect(sources).toHaveLength(6)
+    expect(sources.map((s) => s.url)).toEqual(items.map((i) => i.url))
+  })
+
   it('JSON 数组超长：保留前 3 项 + 总数提示', () => {
     const arr = Array.from({ length: 50 }, (_, i) => ({ id: i, name: `item-${i}-padding` }))
     const out = compressToolResult(JSON.stringify(arr), 500)
@@ -626,6 +644,144 @@ describe('kb_search 引用来源归集（SEC-29）', () => {
       docTitle: 'T',
       content: 'c'
     }))
+    expect(mergeSources([], many)).toHaveLength(12)
+  })
+})
+describe('web_search / web_fetch 引用来源归集（P1 来源展示）', () => {
+  it('web_search 成功 → 每条产 kind=web、带 url 与摘要', () => {
+    const content = JSON.stringify({
+      query: 'q',
+      results: [
+        { title: '标题一', url: 'https://a.example.com/x', snippet: '摘要一' },
+        { title: '标题二', url: 'https://b.example.com/y', snippet: '摘要二' }
+      ]
+    })
+    expect(extractWebSearchSources('web_search', content)).toEqual([
+      {
+        chunkId: 'web:https://a.example.com/x',
+        docId: 'https://a.example.com/x',
+        docTitle: '标题一',
+        content: '摘要一',
+        url: 'https://a.example.com/x',
+        kind: 'web'
+      },
+      {
+        chunkId: 'web:https://b.example.com/y',
+        docId: 'https://b.example.com/y',
+        docTitle: '标题二',
+        content: '摘要二',
+        url: 'https://b.example.com/y',
+        kind: 'web'
+      }
+    ])
+  })
+
+  it('deep 纯文本清单（[n] 标题 — URL + 摘要/正文）→ 逐条产出来源，摘要优先', () => {
+    const text = [
+      '深度检索（3 路）：2 条结果，正文 1 条',
+      '[1] 标题一 — https://a.example.com/x',
+      '摘要：摘要一',
+      '正文：正文一',
+      '[2] 标题二 — https://b.example.com/y',
+      '摘要：摘要二'
+    ].join('\n')
+    const out = extractWebSearchSources('web_search', text)
+    expect(out).toHaveLength(2)
+    expect(out[0]).toEqual({
+      chunkId: 'web:https://a.example.com/x',
+      docId: 'https://a.example.com/x',
+      docTitle: '标题一',
+      content: '摘要一',
+      url: 'https://a.example.com/x',
+      kind: 'web'
+    })
+    expect(out[1]!.content).toBe('摘要二')
+  })
+
+  it('deep 文本清单 6 条 → 来源 6 条（与模型看到的一致）；非 http(s)/畸形行跳过', () => {
+    const lines = ['深度检索（3 路）：6 条结果，正文 2 条']
+    for (let i = 1; i <= 6; i++) {
+      lines.push(`[${i}] 标题${i} — https://s${i}.example.com/a`)
+      lines.push(`摘要：摘要${i}`)
+    }
+    lines.push('[7] 非法 — ftp://x.example.com/a')
+    lines.push('随机说明行')
+    const out = extractWebSearchSources('web_search', lines.join('\n'))
+    expect(out).toHaveLength(6)
+    expect(out.map((s) => s.url)).toEqual(
+      Array.from({ length: 6 }, (_, i) => `https://s${i + 1}.example.com/a`)
+    )
+    expect(out.every((s) => s.kind === 'web' && s.chunkId === `web:${s.url}`)).toBe(true)
+  })
+
+  it('deep 清单里的摘要超长时仍按 400 字截断', () => {
+    const long = '正'.repeat(500)
+    const out = extractWebSearchSources(
+      'web_search',
+      `[1] T — https://a.example.com/x\n摘要：${long}`
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0]!.content.length).toBe(400)
+  })
+
+  it('web_fetch 成功 → 单条来源（标题缺失时回落 URL）', () => {
+    const out = extractWebSearchSources(
+      'web_fetch',
+      JSON.stringify({ url: 'https://a.example.com/x', title: '', content: '正文' })
+    )
+    expect(out).toEqual([
+      {
+        chunkId: 'web:https://a.example.com/x',
+        docId: 'https://a.example.com/x',
+        docTitle: 'https://a.example.com/x',
+        content: '正文',
+        url: 'https://a.example.com/x',
+        kind: 'web'
+      }
+    ])
+  })
+
+  it('出错结果、非联网工具、畸形文本、非 http(s) URL 都不产出来源', () => {
+    const ok = JSON.stringify({ results: [{ title: 'T', url: 'https://a.example.com/x', snippet: 's' }] })
+    const deep = '[1] T — https://a.example.com/x\n摘要：s'
+    expect(extractWebSearchSources('web_search', ok, true)).toEqual([])
+    expect(extractWebSearchSources('web_search', deep, true)).toEqual([])
+    expect(extractWebSearchSources('web_search', 'not json')).toEqual([])
+    expect(extractWebSearchSources('kb_search', ok)).toEqual([])
+    expect(
+      extractWebSearchSources(
+        'web_search',
+        JSON.stringify({ results: [{ title: 'T', url: 'javascript:alert(1)', snippet: 's' }] })
+      )
+    ).toEqual([])
+    expect(extractWebSearchSources('web_search', '[1] 危险 — javascript:alert(1)')).toEqual([])
+    // 未启用信封（{ok:false, error}）没有 results，同样不产出来源
+    expect(
+      extractWebSearchSources('web_search', JSON.stringify({ ok: false, error: 'WEB_SEARCH_DISABLED' }))
+    ).toEqual([])
+  })
+
+  it('并入 mergeSources：同一 URL 去重，总数仍封顶 12', () => {
+    const one = extractWebSearchSources(
+      'web_search',
+      JSON.stringify({ results: [{ title: 'T', url: 'https://a.example.com/x', snippet: 's' }] })
+    )
+    const merged = mergeSources([], [
+      ...one,
+      ...extractWebSearchSources(
+        'web_search',
+        JSON.stringify({ results: [{ title: '同页', url: 'https://a.example.com/x', snippet: 's2' }] })
+      )
+    ])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]!.docTitle).toBe('T')
+
+    const many = Array.from({ length: 30 }, (_, i) =>
+      extractWebSearchSources(
+        'web_search',
+        JSON.stringify({ results: [{ title: `T${i}`, url: `https://s${i}.example.com/a`, snippet: 's' }] })
+      )[0]!
+    )
     expect(mergeSources([], many)).toHaveLength(12)
   })
 })

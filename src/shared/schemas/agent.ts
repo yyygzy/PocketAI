@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import { CHAT_MAX_CONTENT_CHARS } from './chat'
 import { FALLBACK_MAX_PART_CHARS } from '../fallback-target'
-import { WEB_SEARCH_PROVIDERS } from '../types'
+import { WEB_SEARCH_DEPTH_SETTINGS, WEB_SEARCH_PROVIDERS } from '../types'
 
 const AGENT_MAX_APIKEY_CHARS = 256
 const AGENT_MAX_SEARXNG_URL_CHARS = 512
@@ -29,7 +29,8 @@ export const websearchConfigSchema = z.object({
     .string()
     .max(AGENT_MAX_SEARXNG_URL_CHARS, 'SearXNG 地址过长（上限 512 字符）')
     .optional(),
-  searxngAllowPrivate: z.boolean().optional()
+  searxngAllowPrivate: z.boolean().optional(),
+  depth: z.enum(WEB_SEARCH_DEPTH_SETTINGS).optional()
 })
 
 /** AGENT_SET_CALENDAR_CONFIG 入参 */

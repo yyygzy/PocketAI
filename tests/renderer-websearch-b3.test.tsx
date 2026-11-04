@@ -25,10 +25,16 @@ function mount(mode: 'none' | 'db'): void {
     getAgentWorkspaceDir: () => '',
     getShellConfig: () => ({ enabled: false, policy: 'confirm' }),
     getCalendarConfig: () => ({ enabled: false, paths: [] }),
-    getWebSearchConfig: () => ({ enabled: true, provider: 'tavily', apiKey: '', hasKey: false }),
-    setWebSearchConfig: (patch: { apiKey?: string }) => {
+    getWebSearchConfig: () => ({
+      enabled: true, provider: 'tavily', apiKey: '', hasKey: false,
+      searxngBaseUrl: '', searxngAllowPrivate: false, depth: 'auto'
+    }),
+    setWebSearchConfig: (patch: { apiKey?: string; depth?: string }) => {
       setWebSearchConfig(patch)
-      return Promise.resolve({ enabled: true, provider: 'tavily', apiKey: '', hasKey: true })
+      return Promise.resolve({
+        enabled: true, provider: 'tavily', apiKey: '', hasKey: true,
+        searxngBaseUrl: '', searxngAllowPrivate: false, depth: 'auto', ...patch
+      })
     },
     setShellConfig: () => ({}),
     setCalendarConfig: () => ({}),
@@ -44,6 +50,10 @@ function mount(mode: 'none' | 'db'): void {
 
 const keyInput = (): HTMLInputElement =>
   screen.getByPlaceholderText('输入 API Key') as HTMLInputElement
+
+/** 按标签取「搜索深度」下拉（列表里还有 shell 策略/provider 两个下拉，按序号取会随布局漂移） */
+const depthSelect = (): HTMLSelectElement =>
+  screen.getByText('搜索深度').parentElement!.querySelector('select') as HTMLSelectElement
 
 beforeEach(() => {
   setWebSearchConfig.mockClear()
@@ -78,5 +88,33 @@ describe('联网搜索 Key 的 B3 承认', () => {
     fireEvent.keyDown(keyInput(), { key: 'Enter' })
     await waitFor(() => expect(setWebSearchConfig).toHaveBeenCalledTimes(1))
     expect(screen.queryByText(WARN)).toBeNull()
+  })
+})
+
+describe('搜索深度三档（默认 auto）', () => {
+  it('渲染三档并默认选中 auto', () => {
+    mount('db')
+    const sel = depthSelect()
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['auto', 'quick', 'deep'])
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual([
+      '自动（跟随模型）',
+      '快速（标题+摘要）',
+      '深度（补读正文）'
+    ])
+    expect(sel.value).toBe('auto')
+  })
+
+  it('切到 deep 落库 {depth:"deep"}', async () => {
+    mount('db')
+    fireEvent.change(depthSelect(), { target: { value: 'deep' } })
+    await waitFor(() => expect(setWebSearchConfig).toHaveBeenCalledWith({ depth: 'deep' }))
+  })
+
+  it('选 deep 时行内说明显示耗时/配额提示', async () => {
+    mount('db')
+    fireEvent.change(depthSelect(), { target: { value: 'deep' } })
+    await waitFor(() =>
+      expect(screen.getByText(/深度模式并行扩展 3 路检索并补读前 3 条正文/)).toBeTruthy()
+    )
   })
 })

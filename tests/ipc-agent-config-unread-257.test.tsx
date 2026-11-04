@@ -36,7 +36,8 @@ const WS_ON: WebSearchConfig = {
   apiKey: '',
   hasKey: true,
   searxngBaseUrl: '',
-  searxngAllowPrivate: false
+  searxngAllowPrivate: false,
+  depth: 'quick'
 }
 const CAL_ON: CalendarConfig = { enabled: true, paths: ['C:/cal.ics'] }
 

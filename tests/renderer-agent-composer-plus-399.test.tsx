@@ -497,7 +497,8 @@ describe('⑦ 工具策略那一行与它的嵌套第二层（§399②b）', () 
             apiKey: '',
             hasKey: false,
             searxngBaseUrl: '',
-            searxngAllowPrivate: false
+            searxngAllowPrivate: false,
+            depth: 'quick'
           }
         })
       }

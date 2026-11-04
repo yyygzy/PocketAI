@@ -77,15 +77,20 @@ export function dedupeFileNames(names: string[]): string[] {
   })
 }
 
-/** 来源去重（按文档标题）→ 有序列表条目文本 */
+/** 来源去重（知识库按标题、网页按 URL）→ 有序列表条目文本（网页条目附可点地址） */
 export function formatSources(sources: MessageSource[] | null | undefined): string[] {
   if (!sources || sources.length === 0) return []
-  const titles: string[] = []
+  const seen = new Set<string>()
+  const out: string[] = []
   for (const s of sources) {
-    const title = s.docTitle?.trim() || '(未命名文档)'
-    if (!titles.includes(title)) titles.push(title)
+    const isWeb = s.kind === 'web' && !!s.url
+    const title = s.docTitle?.trim() || (isWeb ? s.url! : '(未命名文档)')
+    const key = isWeb ? `web:${s.url}` : `doc:${title}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(isWeb ? `[${out.length + 1}] ${title} — ${s.url}` : `[${out.length + 1}] ${title}`)
   }
-  return titles.map((title, i) => `[${i + 1}] ${title}`)
+  return out
 }
 
 /** 附件 → Markdown 行：图片只列名（base64 不入文件），文本附截断预览 */

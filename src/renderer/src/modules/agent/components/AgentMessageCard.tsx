@@ -17,6 +17,15 @@ type RemindHandler = (id: string, fireAt: number, repeatRule?: import('../../../
 
 const cardBtnClass = 'text-[10px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors'
 
+/** 网页来源右上角的域名（解析失败就留空，不把脏 URL 画到界面上） */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return ''
+  }
+}
+
 /** 卡片操作区：重新生成（可选）+ 重跑（可选）+ 复制 + 删除（删除仅非流式时由父级传入） */
 const CardActions: React.FC<{
   copyText: string
@@ -383,9 +392,26 @@ const AgentMessageCardImpl: React.FC<{
                   className="px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)]"
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="text-[11px] text-[var(--color-accent)] font-medium truncate">
-                      {i + 1}. {s.docTitle}
-                    </span>
+                    {s.kind === 'web' && s.url ? (
+                      // 网页来源：标题本身就是可点链接（走既有 setWindowOpenHandler 开系统浏览器）
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-[var(--color-accent)] font-medium truncate hover:underline"
+                      >
+                        {i + 1}. {s.docTitle}
+                      </a>
+                    ) : (
+                      <span className="text-[11px] text-[var(--color-accent)] font-medium truncate">
+                        {i + 1}. {s.docTitle}
+                      </span>
+                    )}
+                    {s.kind === 'web' && s.url && (
+                      <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                        {hostOf(s.url)}
+                      </span>
+                    )}
                     {/* 与聊天气泡同一套跳转：缺 kbId 或 seq（A2 之前的老数据）就不给入口，别点了没反应 */}
                     {s.kbId && s.seq !== undefined && (
                       <button

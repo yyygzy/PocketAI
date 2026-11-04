@@ -115,6 +115,21 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
             <option value="searxng">{t('agent.websearch.providerSearxng')}</option>
           </select>
         </label>
+        <label className="flex items-center gap-1 select-none" title={t('agent.websearch.depthHint')}>
+          <span className="text-[var(--color-text-muted)]">{t('agent.websearch.depth')}</span>
+          <select
+            className="select-mini"
+            value={wsConfig.depth}
+            disabled={!wsConfig.enabled}
+            onChange={(e) =>
+              void patchWsConfig({ depth: e.target.value as WebSearchConfig['depth'] })
+            }
+          >
+            <option value="auto">{t('agent.websearch.depthAuto')}</option>
+            <option value="quick">{t('agent.websearch.depthQuick')}</option>
+            <option value="deep">{t('agent.websearch.depthDeep')}</option>
+          </select>
+        </label>
         {wsConfig.provider === 'searxng' ? (
           <>
             <label className="flex items-center gap-1 select-none min-w-0">
@@ -201,11 +216,12 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
         )}
         <span className="text-[11px] text-[var(--color-text-muted)] min-w-0 flex-1 truncate">
           {wsConfig.enabled
-            ? wsConfig.provider === 'searxng'
-              ? wsConfig.searxngBaseUrl
-                ? t('agent.websearch.hintSearxng')
-                : t('agent.websearch.searxngHint')
-              : t('agent.websearch.hintOn')
+            ? (wsConfig.provider === 'searxng'
+                ? wsConfig.searxngBaseUrl
+                  ? t('agent.websearch.hintSearxng')
+                  : t('agent.websearch.searxngHint')
+                : t('agent.websearch.hintOn')) +
+              (wsConfig.depth === 'deep' ? ' · ' + t('agent.websearch.depthHint') : '')
             : t('agent.websearch.hintOff')}
         </span>
         {/* 密钥确认弹窗就渲染在这一行里（§399②b 后它在嵌套层**内部**）＝点「确认」不算"点浮层外面"，

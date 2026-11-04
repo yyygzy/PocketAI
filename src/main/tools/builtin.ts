@@ -10,6 +10,7 @@ import type { ToolSchema } from '../../shared/types'
 import { runWebSearch } from './websearch'
 import { runJsEval } from '../sandbox/js-eval-runner'
 import { safeFetch } from '../net/safe-fetch'
+import { extractReadableText, extractTitle } from '../net/readable'
 import { weatherTool } from './weather'
 import { errMsg } from '../error'
 import { calendarReadTool } from './calendar-ics'
@@ -162,27 +163,39 @@ const webSearchTool: BuiltinTool = {
     id: 'web.search',
     name: 'web_search',
     description:
-      '联网搜索实时信息（新闻/资料/价格等），返回「标题+链接+摘要」列表。支持 Tavily / 博查 / SearXNG（SearXNG 免 Key）。需用户在 Agent 输入框「+」→「工具配置」中启用；未启用时返回结构化指引（error.code=WEB_SEARCH_DISABLED），请据此引导用户开启。参数：query (string)，count (number, 可选, 默认 5, 最多 8)。',
+      '联网搜索实时信息（新闻/资料/价格等），返回「标题+链接+摘要」列表。支持 Tavily / 博查 / SearXNG（SearXNG 免 Key）。需用户在 Agent 输入框「+」→「工具配置」中启用；未启用时返回结构化指引（error.code=WEB_SEARCH_DISABLED），请据此引导用户开启。参数：query (string)，count (number, 可选, 默认 5, 最多 8)，depth (quick|deep, 可选, 默认 quick；deep 会并行扩展 3 路检索并对前 3 条补读正文，耗时更长)。',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: '搜索关键词' },
-        count: { type: 'number', description: '返回结果条数，默认 5，最多 8' }
+        count: { type: 'number', description: '返回结果条数，默认 5，最多 8' },
+        depth: {
+          type: 'string',
+          enum: ['quick', 'deep'],
+          description: '搜索深度：quick=标题+摘要（默认）；deep=并行 3 路 + 前 3 条补读正文，更慢更全'
+        }
       },
       required: ['query'],
       additionalProperties: false
     },
     source: 'builtin',
     permission: 'auto',
-    timeoutMs: 30_000 // 网络搜索，默认 30s
+    // deep 自带 30s 总预算＋最长 10s 的正文补读，工具层留出余量；quick 由 provider 的 15s 超时兜住
+    timeoutMs: 45_000
   },
   async execute(args, ctx) {
     const query = String(args?.query ?? '').trim()
     if (!query) throw new Error('query 不能为空')
     try {
-      const hits = await runWebSearch(query, Number(args?.count), ctx?.signal)
-      if (hits.length === 0) return JSON.stringify({ query, results: [], note: '无搜索结果' })
-      return JSON.stringify({ query, results: hits })
+      const depthRaw = args?.depth
+      const depth = depthRaw === 'deep' || depthRaw === 'quick' ? depthRaw : undefined
+      const out = await runWebSearch(query, Number(args?.count), ctx?.signal, depth)
+      if (Array.isArray(out)) {
+        if (out.length === 0) return JSON.stringify({ query, results: [], note: '无搜索结果' })
+        return JSON.stringify({ query, results: out })
+      }
+      // deep：模型可见输出是纯文本编号清单（[n] 标题 — URL + 摘要/正文），不再套 JSON 信封
+      return out.text
     } catch (e) {
       // 按 error.code 识别（跨模块 class 身份在 mock/打包边界不可靠），未启用是「可引导」不是失败
       if (e && typeof e === 'object' && (e as { code?: string }).code === 'WEB_SEARCH_DISABLED') {
@@ -300,22 +313,4 @@ export function safeMathEval(expr: string): number {
   }
 }
 
-// ---- 辅助：从 HTML 抽取正文 ----
-async function extractReadableText(html: string, maxChars: number): Promise<string> {
-  // 动态加载 cheerio（dependencies 被 externalize，运行时按需 ESM 加载，不拖慢启动）
-  const { load } = await import('cheerio')
-  const $ = load(html)
-  // 移除明显非正文元素
-  $('script,style,noscript,iframe,nav,footer,header,aside,form,button').remove()
-  $('[role=banner],[role=navigation],[role=search]').remove()
-  // 优先 main / article
-  const main = $('main, article, .post, .content, #content').first()
-  const root = main.length ? main : $('body')
-  const text = root.text().replace(/\s+/g, ' ').trim()
-  return text.length > maxChars ? text.slice(0, maxChars) + '…' : text
-}
-
-function extractTitle(html: string): string {
-  const m = html.match(/<title[^>]*>([^<]+)<\/title>/i)
-  return m ? m[1]!.trim() : ''
-}
+// ---- 辅助：从 HTML 抽取正文已抽到 ../net/readable.ts（web_fetch 与 deep 共用）----

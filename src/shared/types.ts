@@ -532,7 +532,7 @@ export interface McpCallEvent {
   resultPreview: string | null
   error: string | null
 }
-/** RAG 检索命中的知识库 chunk 引用来源 */
+/** RAG 检索命中的知识库 chunk 引用来源；联网搜索/网页抓取来源复用同一结构 */
 export interface MessageSource {
   chunkId: string
   docId: string
@@ -542,6 +542,10 @@ export interface MessageSource {
   kbId?: string
   /** 分块序号（旧数据无此字段，不可跳转原文） */
   seq?: number
+  /** 网页来源的可点链接（仅 kind='web'；知识库来源不带） */
+  url?: string
+  /** 来源类型：缺省＝旧知识库来源（与迁移前落库数据同一口径）；web＝联网搜索/网页抓取 */
+  kind?: 'kb' | 'web'
 }
 
 // ---------- KB 问答模式（知识库详情页内选库即聊，轻量流式） ----------
@@ -1059,6 +1063,14 @@ export interface ShellConfig {
 export const WEB_SEARCH_PROVIDERS = ['tavily', 'bocha', 'searxng'] as const
 export type WebSearchProvider = (typeof WEB_SEARCH_PROVIDERS)[number]
 
+/** 搜索深度（模型可传 / 实际执行）：quick＝单路标题+摘要；deep＝并行 3 路 + 前 3 条补读正文 */
+export const WEB_SEARCH_DEPTHS = ['quick', 'deep'] as const
+export type WebSearchDepth = (typeof WEB_SEARCH_DEPTHS)[number]
+
+/** 配置档位：auto＝不干预（模型自己选，缺省 quick）；quick/deep＝强制覆盖模型的选择 */
+export const WEB_SEARCH_DEPTH_SETTINGS = ['auto', 'quick', 'deep'] as const
+export type WebSearchDepthSetting = (typeof WEB_SEARCH_DEPTH_SETTINGS)[number]
+
 export interface WebSearchConfig {
   enabled: boolean
   provider: WebSearchProvider
@@ -1069,6 +1081,8 @@ export interface WebSearchConfig {
   searxngBaseUrl: string
   /** 用户显式确认允许该 SearXNG 地址访问本机/内网（仅对此精确 origin 生效） */
   searxngAllowPrivate: boolean
+  /** 搜索深度档位：auto＝跟随模型（默认）、quick/deep＝强制覆盖 */
+  depth: WebSearchDepthSetting
 }
 
 /** 本地日历（calendar.read 工具）：启停 + .ics 文件路径列表（上限 10 个） */

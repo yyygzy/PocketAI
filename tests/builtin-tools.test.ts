@@ -224,7 +224,31 @@ describe('web.search execute', () => {
   it('count 透传给 runWebSearch', async () => {
     mockRunWebSearch.mockResolvedValueOnce([])
     await tool.execute({ query: 'x', count: 8 })
-    expect(mockRunWebSearch).toHaveBeenCalledWith('x', 8, undefined)
+    expect(mockRunWebSearch).toHaveBeenCalledWith('x', 8, undefined, undefined)
+  })
+
+  it('depth=deep 透传给 runWebSearch；非法/缺省得 undefined（交给 adapter 按配置解析）', async () => {
+    mockRunWebSearch.mockResolvedValueOnce([])
+    await tool.execute({ query: 'x', depth: 'deep' })
+    expect(mockRunWebSearch).toHaveBeenLastCalledWith('x', NaN, undefined, 'deep')
+
+    mockRunWebSearch.mockResolvedValueOnce([])
+    await tool.execute({ query: 'x', depth: 'turbo' })
+    expect(mockRunWebSearch).toHaveBeenLastCalledWith('x', NaN, undefined, undefined)
+  })
+
+  it('deep 结果 → 直接返回纯文本清单，不再套 JSON 信封', async () => {
+    mockRunWebSearch.mockResolvedValueOnce({
+      depth: 'deep',
+      query: 'x',
+      results: [],
+      text: '深度检索（3 路）：无搜索结果',
+      angles: 3,
+      truncated: false
+    })
+    const out = await tool.execute({ query: 'x', depth: 'deep' })
+    expect(out).toBe('深度检索（3 路）：无搜索结果')
+    expect(() => JSON.parse(out)).toThrow()
   })
 
   it('未启用（code=WEB_SEARCH_DISABLED）→ 返回可引导 JSON，不抛错', async () => {

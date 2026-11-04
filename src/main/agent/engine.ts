@@ -936,6 +936,98 @@ export function mergeSources(existing: MessageSource[], added: MessageSource[]):
   return Array.from(byId.values())
 }
 
+/**
+ * web_search / web_fetch 工具结果 → 网页引用来源（P1 来源展示）。
+ * 只在成功结果上映射：解析失败、isError、未启用信封（{ok:false,error}）都退回空数组。
+ * 工具结果形状：
+ *  · web_search quick＝{ query, results:[{title,url,snippet}] }（JSON）；
+ *  · web_search deep＝纯文本编号清单（`[n] 标题 — URL`，随后可选 `摘要：` / `正文：` 行），
+ *    已不再有 JSON 信封，所以 JSON 解析失败时按清单行解析；
+ *  · web_fetch＝{ url, title, content }。
+ * 三种都按 kind='web' 落进既有 sources（JSON 落库，无需迁移）。
+ */
+export function extractWebSearchSources(
+  toolName: string,
+  resultContent: string,
+  isError?: boolean
+): MessageSource[] {
+  if (isError) return []
+  if (toolName !== 'web_search' && toolName !== 'web_fetch') return []
+  if (toolName === 'web_fetch') {
+    try {
+      const parsed = JSON.parse(resultContent) as Record<string, unknown>
+      const source = webSource(parsed?.url, parsed?.title, parsed?.content)
+      return source ? [source] : []
+    } catch {
+      return []
+    }
+  }
+  try {
+    const parsed = JSON.parse(resultContent) as Record<string, unknown>
+    if (!Array.isArray(parsed?.results)) return []
+    const out: MessageSource[] = []
+    for (const item of parsed.results as Array<Record<string, unknown>>) {
+      // 兼容旧 quick/deep JSON：有 snippet 用 snippet，否则用 content
+      const source = webSource(item?.url, item?.title, item?.snippet ?? item?.content)
+      if (source) out.push(source)
+    }
+    return out
+  } catch {
+    // deep 文本清单：逐行抽出全部条目（http(s) 过滤交给 webSource，去重/12 条上限交给 mergeSources）
+    const out: MessageSource[] = []
+    for (const item of parseDeepTextSources(resultContent)) {
+      const source = webSource(item.url, item.title, item.content)
+      if (source) out.push(source)
+    }
+    return out
+  }
+}
+
+/**
+ * 解析 deep 的纯文本清单。
+ * 条目行：`[n] 标题 — URL`（标题用贪婪匹配，兼容标题自身含 " — "；URL 必须是 http(s) 且无空格）；
+ * 详情行：`摘要：...` / `正文：...`，归属上一条条目。畸形行直接跳过，不抛错。
+ */
+function parseDeepTextSources(
+  content: string
+): Array<{ title: string; url: string; content: string }> {
+  const out: Array<{ title: string; url: string; content: string }> = []
+  let current: { title: string; url: string; content: string } | null = null
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    const item = /^\[(\d+)\]\s+(.*)\s+—\s+(https?:\/\/\S+)$/.exec(line)
+    if (item) {
+      current = { title: item[2]!.trim(), url: item[3]!, content: '' }
+      out.push(current)
+      continue
+    }
+    const detail = /^(摘要|正文)：(.+)$/.exec(line)
+    if (detail && current) {
+      // 摘要优先（来源卡展示用的是一句话摘要）；没有摘要时用正文
+      if (detail[1] === '摘要' || !current.content) current.content = detail[2]!.trim()
+    }
+  }
+  return out
+}
+
+function webSource(
+  urlRaw: unknown,
+  titleRaw: unknown,
+  contentRaw: unknown
+): MessageSource | null {
+  const url = typeof urlRaw === 'string' ? urlRaw.trim() : ''
+  if (!/^https?:\/\//i.test(url)) return null
+  return {
+    chunkId: `web:${url}`,
+    docId: url,
+    docTitle: typeof titleRaw === 'string' && titleRaw.trim() ? titleRaw.trim() : url,
+    content: typeof contentRaw === 'string' ? contentRaw.slice(0, 400) : '',
+    url,
+    kind: 'web'
+  }
+}
+
 /** 运行中插队的一条待消费消息（V4-Iter-238） */
 interface PendingInterjection {
   clientRef: string
@@ -2084,8 +2176,12 @@ class AgentEngine {
       })
 
       const truncatedResult = contextToolResult(toolMsg.id, toolResult.content)
-      // kb_search 命中并入引用来源（SEC-29），最终回答的 sources 才覆盖多步检索
-      ctx.sources = mergeSources(ctx.sources, extractKbSearchSources(tc.function.name, toolResult.content, toolResult.isError))
+      // kb_search 命中并入引用来源（SEC-29）；web_search/web_fetch 成功结果按 kind='web' 并入（P1）
+      // 两次提取各自解析，最后只走一次 mergeSources（12 条上限与去重口径不重复实现）
+      ctx.sources = mergeSources(ctx.sources, [
+        ...extractKbSearchSources(tc.function.name, toolResult.content, toolResult.isError),
+        ...extractWebSearchSources(tc.function.name, toolResult.content, toolResult.isError)
+      ])
       if (ctx.textProtocolMode) {
         // 文本协议模式：以 user 消息回填工具结果（role:'tool' 需要 tool_call_id，
         // 对不支持 tools 的端点可能报错）
