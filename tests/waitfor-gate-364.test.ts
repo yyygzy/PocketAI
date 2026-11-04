@@ -402,9 +402,15 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //        （587→588、309→308），会假红仍归零、判据一句没删也没放宽。
     //      · **有意放行的边界**（fixture 钉住＝反向对照④）：屏读发生在第二次 await **之前**，门保护不到它⇒本面
     //        不报；收它要按语句顺序重排"屏读落在哪一帧"，成本另计、本枚不收。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1081)
+    //   §407（＝补 SearXNG 那一支的挂载用例，台账第一百六十九次）净新增 17 颗 awaits，全在
+    //     `tests/renderer-websearch-searxng-407.test.tsx` 一份新挂载用例里（九例，每例先等到货再读屏）。
+    //     17 颗**全落「按存在读屏（DOM）」＝588→605**：那三个新件的取法一律写成读屏 helper
+    //     （`urlLabel()`／`allowBox()`／`keyInput()`，分类器按传递闭包认），其中两道门等的是
+    //     `allowBox().disabled`／`.checked` 这种**初值≠终值**的自己会变的属性＝真到货见证，不是恒真门；
+    //     余下五桶一格未动，「会假红」仍归零，「只会假绿」19 颗名单一字未动（本枚不改 `renderer-websearch-b3`）。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1098)
     expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('588/81/95/298/0/19')
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('605/81/95/298/0/19')
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
