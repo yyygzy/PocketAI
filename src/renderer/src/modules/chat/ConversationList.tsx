@@ -794,12 +794,20 @@ export const ConversationList: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 多选操作条（selectMode 时固定底部；归档区不参与多选） */}
+      {/* 多选操作条（selectMode 时固定底部；归档区不参与多选）。
+          §416：计数原来带 `flex-1 truncate`，这一行全是不收缩的 nowrap 按钮，`flex-1` 的 basis=0
+          就把计数压成 0 宽——元素在、但一个字都看不见。现在按 flex 语义分配：计数 shrink-0
+          不参与收缩，剩余空间交给中间的空占位（flex-1），按钮不动；窄栏放不下时整行换行，
+          计数始终完整可见（ja/ko 的长句也不靠固定宽度，不挤别的元素）。 */}
       {selectMode && (
-        <div className="shrink-0 border-t border-[var(--color-border)] px-2 py-2 flex items-center gap-1.5 bg-[var(--color-sidebar)]">
-          <span className="text-[11px] text-[var(--color-text-muted)] flex-1 truncate">
+        <div className="shrink-0 border-t border-[var(--color-border)] px-2 py-2 flex flex-wrap items-center gap-1.5 bg-[var(--color-sidebar)]">
+          <span
+            data-testid="conv-multi-count"
+            className="text-[11px] text-[var(--color-text-muted)] shrink-0 whitespace-nowrap"
+          >
             {t('chat.exportMultiCount', { n: selectedConvs.length })}
           </span>
+          <span aria-hidden="true" className="flex-1 min-w-0" />
           <button
             onClick={() => handleExportSelected('md')}
             disabled={selectedConvs.length === 0}

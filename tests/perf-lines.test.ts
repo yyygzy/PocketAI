@@ -134,6 +134,37 @@ describe('summarizePerf', () => {
     expect(rows[0]!.byModel).toEqual([{ model: 'glm-4', count: 1, p50Ms: 6000, maxMs: 6000 }])
   })
 
+  describe('model 名带空格时的解析边界', () => {
+    const modelOf = (detail: string): string | undefined =>
+      summarizePerf([evt('chat.ttft', 6000, EPOCH, detail)])[0]!.byModel[0]?.model
+
+    it('不带空格：旧日志写法原样解析（历史行不退化）', () => {
+      expect(modelOf('model=gpt-4o')).toBe('gpt-4o')
+      expect(modelOf('model=gpt-4o step=2')).toBe('gpt-4o')
+      expect(modelOf('model=gpt-4o origin=local')).toBe('gpt-4o')
+    })
+
+    it('带一个空格：整段模型名都保留，后面的 key= 字段不作名字', () => {
+      expect(modelOf('model=Qwen Max')).toBe('Qwen Max')
+      expect(modelOf('model=Qwen Max step=3')).toBe('Qwen Max')
+    })
+
+    it('带多个空格：名字内部空格保留，字段分隔的空白不计入名字', () => {
+      expect(modelOf('model=My  Model  2.5')).toBe('My  Model  2.5')
+      expect(modelOf('model=My  Model  2.5   step=4')).toBe('My  Model  2.5')
+    })
+
+    it('模型名里含 = 且前面没有空白分隔时完整保留（边界只看「空白 + key=」）', () => {
+      expect(modelOf('model=a=b')).toBe('a=b')
+      expect(modelOf('model=a=b step=5')).toBe('a=b')
+    })
+
+    it('model= 后没有内容时不产出空字符串模型（面板不出现空名行）', () => {
+      expect(modelOf('model=')).toBeUndefined()
+      expect(modelOf('model=  ')).toBeUndefined()
+    })
+  })
+
   it('空输入返回空数组（面板据此显示空态而不是 0 行表头）', () => {
     expect(summarizePerf([])).toEqual([])
   })

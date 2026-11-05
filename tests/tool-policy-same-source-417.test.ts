@@ -127,7 +127,7 @@ describe('工具策略快照与 registry 同源（P0-3a）', () => {
         (entry.id === 'shell.exec'
           ? ({ id: 'shell.exec', name: 'shell_exec', source: 'builtin' } as ToolSchema)
           : undefined)
-      expect(schema, entry.id).toBeTruthy()
+      if (!schema) throw new Error(`生效面里的工具在注册表找不到：${entry.id}`)
       expect(entry.granted).toBe(isToolAllowedBy(allowed, schema))
       // state 只由「内在 deny / 策略停用 / granted」三者推导，渲染层不参与
       if (entry.id === 'shell.exec') {

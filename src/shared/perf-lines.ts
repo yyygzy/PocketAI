@@ -10,7 +10,14 @@ import type { PerfEvent, PerfSummary } from './types'
 const TS_RE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})/
 /** 事件体：label 允许字母数字与 . _ - :（渲染端长任务用 `renderer:longtask`）；ms 非负整数；detail 可选 */
 const PERF_RE = /\[perf\]\s+([\w.:-]+):\s+(\d+)ms(?:\s*\|\s*([\s\S]*))?$/
-const MODEL_RE = /(?:^|\s)model=(\S+)/
+/**
+ * detail 里的模型归因：写入侧格式是 `model=<name> [key=value ...]`（现为 `step=` / `origin=`）。
+ * 模型名可以是带空格的自定义名，所以不能取 `\S+`；边界＝**行尾，或「空白 + 下一个 `key=`」**。
+ * 前提不是猜的：detail 的其它字段都由写入侧用空格拼成 `key=value`，模型名本身不以下一个字段的
+ * `key=` 形式出现（名字里含 `=` 但前面没有空白分隔的，如 `model=a=b`，仍完整保留）。
+ * 兼容旧日志：`model=gpt-4o`、`model=gpt-4o step=2` 与旧实现解析结果一致，不会退化成空串。
+ */
+const MODEL_RE = /(?:^|\s)model=(.*?)(?=\s+[\w.-]+=|$)/
 /** DEBUG 级 [perf] 行：未超阈值的快操作（logPerfDebug），不参与慢事件统计 */
 const DEBUG_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\s+DEBUG\b/
 
@@ -51,7 +58,8 @@ export function summarizePerf(events: readonly PerfEvent[], topLabels = 6): Perf
     const bucket = byLabel.get(e.label) ?? { ms: [], lastAt: 0, byModel: new Map<string, number[]>() }
     bucket.ms.push(e.ms)
     if (e.at > bucket.lastAt) bucket.lastAt = e.at
-    const model = e.detail ? MODEL_RE.exec(e.detail)?.[1] : undefined
+    // 名字两端可能有字段分隔留下的空白；空/全空白不产出“空名模型”行
+    const model = e.detail ? MODEL_RE.exec(e.detail)?.[1]?.trim() || undefined : undefined
     if (model) bucket.byModel.set(model, [...(bucket.byModel.get(model) ?? []), e.ms])
     byLabel.set(e.label, bucket)
   }
