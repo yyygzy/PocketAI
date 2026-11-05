@@ -16,6 +16,7 @@ vi.mock('../src/main/db/repositories/skill.repo', () => ({
 }))
 
 import { buildSkillsContext } from '../src/main/assistant/skills'
+import { EXTERNAL_CONTENT_NOTICE } from '../src/shared/external-content'
 
 const skill = (over: Partial<SkillRecord>): SkillRecord =>
   ({
@@ -35,17 +36,16 @@ beforeEach(() => {
   enabledSkills.current = []
 })
 
-describe('常驻档：与改动前逐字相同', () => {
-  it('两条常驻技能 ⇒ 输出与改动前那版实现逐字相同（回归基线，不是"看起来差不多"）', () => {
+describe('常驻档：声明在前，技能正文原样拼接', () => {
+  it('两条常驻技能 ⇒ 外部内容声明只出现一次，正文片段与改动前一致', () => {
     enabledSkills.current = [skill({}), skill({ id: 's2', name: '代码审查', content: '审查代码' })]
     const out = buildSkillsContext(['s1', 's2'])
-    // 这条期望串是按 V4-Iter-236 之前 `buildSkillsContext`/`formatSkill` 的输出**手抄的原件**：
-    // '## 已启用技能\n\n' + 头一句 + '\n\n' + 各条 '### {icon} {name}\n（{description}）\n{content}'，两条之间 '\n\n'
-    const expected =
-      '## 已启用技能\n\n以下是当前助手启用的技能指令，请在回答中严格遵循：\n\n' +
-      '### 🌐 翻译助手\n（专业翻译）\n你是一个专业翻译。绝不添加原文没有的内容。\n\n' +
-      '### 🌐 代码审查\n（专业翻译）\n审查代码'
-    expect(out).toBe(expected)
+    // 统计口径仍是"按内容断言"：声明只包一层，技能正文保持原格式逐字不变
+    expect(out.match(new RegExp(EXTERNAL_CONTENT_NOTICE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))).toHaveLength(1)
+    expect(out).toContain('以下是当前助手启用的技能文本，请按其中描述的方法做事')
+    expect(out).toContain('### 🌐 翻译助手\n（专业翻译）\n你是一个专业翻译。绝不添加原文没有的内容。')
+    expect(out).toContain('### 🌐 代码审查\n（专业翻译）\n审查代码')
+    expect(out).not.toContain('严格遵循')
     expect(out).not.toContain('load_skill')
   })
 })

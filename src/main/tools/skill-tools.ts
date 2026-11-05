@@ -14,6 +14,7 @@
 import type { BuiltinTool } from './builtin'
 import { skillRepo } from '../db/repositories/skill.repo'
 import { listSkillFiles, readSkillFile } from '../skills/skill-files'
+import { EXTERNAL_CONTENT_NOTICE } from '../../shared/external-content'
 
 /** 同一条技能名撞上两条时给模型看的那一句里的 id 截断长度（够它回选，不够它拼路径） */
 const ID_HINT_CHARS = 8
@@ -67,7 +68,9 @@ const loadSkillTool: BuiltinTool = {
         path: file.path,
         size: file.size,
         truncated: file.truncated,
-        content: file.content
+        // 技能自带文件与正文同属外部内容：按需取回的这份也要带上同一句声明，不能裸奔
+        notice: EXTERNAL_CONTENT_NOTICE,
+        content: `${EXTERNAL_CONTENT_NOTICE}\n\n${file.content}`
       })
     }
     return JSON.stringify({
@@ -76,7 +79,8 @@ const loadSkillTool: BuiltinTool = {
       size: skill.content.length,
       // 第三层的入口：把清单给出去，模型才知道"这条技能还带了文件"这件事可以进一步做
       files: listSkillFiles(skill.id),
-      content: skill.content
+      notice: EXTERNAL_CONTENT_NOTICE,
+      content: `${EXTERNAL_CONTENT_NOTICE}\n\n${skill.content}`
     })
   }
 }

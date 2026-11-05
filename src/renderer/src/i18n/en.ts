@@ -582,6 +582,7 @@ export const en = {
   'ae.mcpNotInAll': 'The built-in (*) grant does not cover MCP tools — those come from external servers and must be allowed one by one.',
   'ae.noTools': 'No tools available — start an MCP server in the “Agent” section and its tools will appear here.',
   'ae.skillsLabel': 'Linked skills (auto-injected into the system prompt, no need to write {{skills}}; built-in skills must be enabled on the “Skills” page first)',
+  'skills.budgetWarn': 'Resident skill text has a total budget of {budget}KB. In binding order, {count} bound skill(s) will be skipped entirely ({names}). You can switch them to on-demand; on-demand text still has a 32KB per-skill limit.',
   'ae.noSkills': 'No skills available — create or enable one in the “Skills” section.',
   'ae.skillDisabledHint': 'Disabled skills can’t be linked — enable it on the “Skills” page first.',
   'ae.skillDisabledTag': 'Disabled',

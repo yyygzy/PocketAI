@@ -288,7 +288,9 @@ describe('G 工具策略那一行与它的嵌套第二层（§399②b）', () =>
     const nested = ac.lastIndexOf('<FloatingPanel')
     expect(nested > outer, '嵌套第二层没在 AC 里（<AgentToolBars/> 又被搬回消息流之上了？）').toBe(true)
     expect(ac.indexOf('</FloatingPanel>') > nested, '嵌套层先收、外层后收＝它是嵌进去的，不是并列的').toBe(true)
-    expect(ac.indexOf('<AgentToolBars tools={tools} />') > nested, '控件本体只在那一层里面').toBe(true)
+    expect(ac.indexOf('<AgentToolBars', nested) > nested, '控件本体只在那一层里面').toBe(true)
+    // P0-3a：控件本体多了「查看工具策略」入口（弹层由 AC 外层渲染），这一层仍是它唯一的宿主
+    expect(ac.slice(nested, ac.indexOf('</FloatingPanel>', nested))).toContain('onOpenPolicy')
     // Esc 不越级：那一层带标记，且它的 onClose 只关自己（写成 setPlusOpen(false)＝Esc 一下把两层都收了）
     const seg = ac.slice(nested, ac.indexOf('</FloatingPanel>', nested))
     expect(seg).toContain('data-esc-nested="1"')

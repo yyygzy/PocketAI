@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { AssistantRecord, ProviderRecord, KnowledgeBase, ToolSchema, SkillRecord } from '../../../../shared/types'
+import { planResidentSkills, RESIDENT_SKILL_TOTAL_CHAR_BUDGET } from '../../../../shared/skill-budget'
 import { useI18n } from '../../i18n'
 import { hasIpcFailed, isIpcFail, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
@@ -197,6 +198,25 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
 
   return (
     <div className="space-y-4">
+      {/* 常驻技能总预算：与主进程同一份规划函数（src/shared/skill-budget.ts），
+          屏上只展示「按绑定顺序会被整份跳过哪几条」，不在渲染端另算一套阈值 */}
+      {(() => {
+        const bound = skillIds.flatMap((id) => {
+          const s = skills.find((x) => x.id === id)
+          return s && s.enabled ? [s] : []
+        })
+        const plan = planResidentSkills(bound)
+        if (plan.excluded.length === 0) return null
+        return (
+          <p className="text-xs text-[var(--color-danger)]" data-testid="ae-skill-budget-warn">
+            {t('skills.budgetWarn', {
+              budget: Math.round(RESIDENT_SKILL_TOTAL_CHAR_BUDGET / 1024),
+              count: plan.excluded.length,
+              names: plan.excluded.map((s) => s.name).join('、')
+            })}
+          </p>
+        )
+      })()}
       <div className="flex gap-3">
         <div className="w-20 shrink-0">
           <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('ae.avatar')}</label>

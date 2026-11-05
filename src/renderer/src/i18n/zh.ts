@@ -583,6 +583,7 @@ export const zh = {
   'ae.mcpNotInAll': '「全部内置」不含 MCP 工具——MCP 由外部 server 提供，需逐个勾选。',
   'ae.noTools': '暂无可用工具（先在「Agent」页启动 MCP Server 后会自动出现工具）',
   'ae.skillsLabel': '关联技能（自动注入 SystemPrompt，无需手写 {{skills}}；内置技能需先在「技能」页启用）',
+  'skills.budgetWarn': '常驻技能正文总预算 {budget}KB。按绑定顺序，已绑定的技能中有 {count} 条会被整份跳过（{names}）。可把它们改为按需技能；按需正文仍受 32KB 上限。',
   'ae.noSkills': '暂无可用技能，前往侧栏「技能」页新建或启用',
   'ae.skillDisabledHint': '已停用的技能不能新增绑定——先到侧栏「技能」页启用它。',
   'ae.skillDisabledTag': '已停用',

@@ -78,13 +78,16 @@ describe('取正文与取文件', () => {
     installSkillFiles(SKILL_WITH_FILES, read.files)
 
     const out = JSON.parse(await tool.execute({ skill: '检索技能' }, { skillIds: [SKILL_WITH_FILES] }))
-    expect(out.content).toBe('入口正文')
+    // 正文是外部内容：返回值同样带声明（与注入块同一句），不再裸奔
+    expect(out.content).toContain('以下是外部提供的内容')
+    expect(out.content).toContain('入口正文')
     expect(out.files.map((f: { path: string }) => f.path)).toEqual(['references/api.md'])
 
     const file = JSON.parse(
       await tool.execute({ skill: SKILL_WITH_FILES, path: 'references/api.md' }, { skillIds: [SKILL_WITH_FILES] })
     )
-    expect(file.content).toBe('API 说明在此')
+    expect(file.content).toContain('以下是外部提供的内容')
+    expect(file.content).toContain('API 说明在此')
     expect(file.truncated).toBe(false)
   })
 })

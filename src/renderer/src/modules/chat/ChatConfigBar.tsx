@@ -3,6 +3,7 @@
 // - 按钮角标显示已配置项总数
 import React, { useState } from 'react'
 import type { AssistantRecord, KnowledgeBase, SkillRecord } from '../../../../shared/types'
+import { planResidentSkills, RESIDENT_SKILL_TOTAL_CHAR_BUDGET } from '../../../../shared/skill-budget'
 import { useI18n } from '../../i18n'
 import { hasIpcFailed, ipcFailText, isIpcFail, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
@@ -168,6 +169,25 @@ export const ChatConfigBar: React.FC<Props> = ({ assistant, onAssistantUpdated }
                       ))}
                     </div>
                   )}
+                  {(() => {
+                    // 与主进程同一份规划函数：按绑定顺序算「哪些会因总预算被整份跳过」
+                    const allSkills = skills ?? []
+                    const bound = (assistant.skillIds ?? []).flatMap((id) => {
+                      const s = allSkills.find((x) => x.id === id)
+                      return s && s.enabled ? [s] : []
+                    })
+                    const plan = planResidentSkills(bound)
+                    if (plan.excluded.length === 0) return null
+                    return (
+                      <p className="text-xs text-[var(--color-danger)] mt-1.5" data-testid="ccb-skill-budget-warn">
+                        {t('skills.budgetWarn', {
+                          budget: Math.round(RESIDENT_SKILL_TOTAL_CHAR_BUDGET / 1024),
+                          count: plan.excluded.length,
+                          names: plan.excluded.map((s) => s.name).join('、')
+                        })}
+                      </p>
+                    )
+                  })()}
                 </>
               ) : (
                 <>

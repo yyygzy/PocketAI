@@ -768,8 +768,9 @@ export const AgentComposer: React.FC<Props> = ({
                 <AgentToolBars
                   tools={tools}
                   onOpenPolicy={() => {
+                    // 只收工具这一层；策略屏是 z-[60] 的模态，外层「+」菜单留着也不挡视线，
+                    // 关掉屏后还回到原来的工具菜单（不去动外层菜单的开关，§399②b 的 Esc 判据不破）
                     setToolsOpen(false)
-                    setPlusOpen(false)
                     setPolicyOpen(true)
                   }}
                 />
