@@ -57,6 +57,7 @@ import {
   normalizeSearxngBaseUrl,
   migrateLegacyWebSearchKey
 } from '../src/main/tools/websearch-config'
+import { WEB_SEARCH_DEPTHS, WEB_SEARCH_DEPTH_SETTINGS } from '../src/shared/types'
 
 const TAVILY_KEY = 'agent.websearch_tavily_key'
 const BOCHA_KEY = 'agent.websearch_bocha_key'
@@ -228,10 +229,23 @@ describe('搜索深度档位（depth: auto/quick/deep）', () => {
     expect(getWebSearchSecret().depth).toBe('auto')
   })
 
-  it.each(['quick', 'deep'] as const)('保存 %s 后视图与主进程明文一致', (depth) => {
-    setWebSearchConfig({ depth })
-    expect(getWebSearchConfig().depth).toBe(depth)
-    expect(getWebSearchSecret().depth).toBe(depth)
+  // 回归（真机报错：配置侧枚举只收 quick|deep，保存 auto 被 IPC 入参校验拒掉）：
+  // 三档都必须能存进 KV、读回同值；auto 覆盖已存的 quick 后也不许被脏值回落成 quick。
+  it.each(['auto', 'quick', 'deep'] as const)(
+    '保存 %s 后落库、视图与主进程明文一致',
+    (depth) => {
+      // 预置另一档，确保本次保存真的覆盖了旧值（尤其覆盖掉 auto 的"读取期默认值"）
+      setWebSearchConfig({ depth: depth === 'auto' ? 'quick' : 'auto' })
+      setWebSearchConfig({ depth })
+      expect(mocks.cfgStore.get('agent.websearch_depth')).toBe(depth)
+      expect(getWebSearchConfig().depth).toBe(depth)
+      expect(getWebSearchSecret().depth).toBe(depth)
+    }
+  )
+
+  it('配置侧三档、模型侧仍只 quick|deep（两处枚举不混用）', () => {
+    expect([...WEB_SEARCH_DEPTH_SETTINGS]).toEqual(['auto', 'quick', 'deep'])
+    expect([...WEB_SEARCH_DEPTHS]).toEqual(['quick', 'deep'])
   })
 
   it('非法持久化值 → 回落 auto（不在读取处替用户强制档位）', () => {
