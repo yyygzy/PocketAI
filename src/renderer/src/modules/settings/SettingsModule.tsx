@@ -35,7 +35,7 @@ import { StaleValueNotice } from '../../components/StaleValueNotice'
 import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useToast } from '../../components/ToastProvider'
-import { modLabel } from '../../utils/shortcuts'
+import { modLabel, isLinuxPlatform } from '../../utils/shortcuts'
 import { NEW_MASTER_PASSWORD_MIN } from '../../../../shared/schemas/encryption'
 import { isWebdavPasswordUsable } from '../../../../shared/schemas/backup'
 import { pickLatestBackup } from '../../../../shared/backup-latest'
@@ -2186,6 +2186,7 @@ export const PopupPanel: React.FC = () => {
     title: string
     hint: string
     accel: string
+    platformNote?: string
   }> = [
     {
       which: 'quick',
@@ -2199,7 +2200,10 @@ export const PopupPanel: React.FC = () => {
       key: 'selectionEnabled',
       title: t('popup.selectionTitle'),
       hint: t('popup.selectionHint'),
-      accel: cfg.selectionAccelerator
+      accel: cfg.selectionAccelerator,
+      // §415：Linux 上这条路本来就取不到系统选中文本（主进程只写了 win32/darwin），
+      // 开关照常能用、按下只会打开快捷问答窗——这件事原先只存在于 popup.ts 的一行注释里。
+      platformNote: isLinuxPlatform() ? t('popup.selectionLinuxHint') : undefined
     }
   ]
 
@@ -2211,6 +2215,11 @@ export const PopupPanel: React.FC = () => {
             <div className="min-w-0">
               <div className="text-[var(--color-text)]">{r.title}</div>
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{r.hint}</div>
+              {r.platformNote && (
+                <div className="text-[11px] text-[var(--color-warning)] leading-relaxed mt-1" data-testid="set-popup-linux-hint">
+                  ⚠️ {r.platformNote}
+                </div>
+              )}
             </div>
             <button
               role="switch"

@@ -389,6 +389,11 @@ export const DataHealthPanel: React.FC = () => {
       </div>
 
       <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.tasks')}</div>
+      {/* §415：这一栏只报了"上次什么时候跑的"，没说它什么时候不跑——判据是 last_run_at 的间隔，
+          所以应用没开着时到点的任务会在下次启动后补跑（不是丢掉），这句得写在屏上 */}
+      <div className="mb-1.5 text-[11px] text-[var(--color-text-muted)] leading-relaxed" data-testid="dh-tasks-run-hint">
+        {t('dh.tasksRunHint')}
+      </div>
       <div className="space-y-1">
         <Row
           label={t('dh.task.kbHealthCheck')}

@@ -102,6 +102,12 @@ export const UsagePanel: React.FC = () => {
   }, [days])
 
   const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
+  /**
+   * §415：单价表是"有没有配过"这件事的唯一判据。空表时 `cost` 恒 0，而 0 既可能是"确实没花"
+   * 也可能是"算不出"——屏上把算不出画成 ¥0（或 `fmtCost(0)`＝空串留下的裸 ¥）就是拿约定冒充读数。
+   * `pricing === null`（那一发还在飞或读不到，失败另有 toast 报因）不算"没配"，只把金额那半留白。
+   */
+  const pricesConfigured = pricing !== null && Object.keys(pricing.prices).length > 0
 
   const load = useCallback((d: number) => {
     window.pocketai.getUsageSummary(d).then((r) => {
@@ -249,8 +255,13 @@ export const UsagePanel: React.FC = () => {
               {budgetEditing ? t('common.cancel') : `⚙️ ${t('usage.budget')}`}
             </button>
           </div>
-          <BudgetRow label={t('usage.budgetDaily')} limit={budget.daily} cost={budget.todayCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetDaily') })} />
-          <BudgetRow label={t('usage.budgetMonthly')} limit={budget.monthly} cost={budget.monthCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetMonthly') })} />
+          <BudgetRow label={t('usage.budgetDaily')} limit={budget.daily} cost={budget.todayCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetDaily') })} priced={pricesConfigured} />
+          <BudgetRow label={t('usage.budgetMonthly')} limit={budget.monthly} cost={budget.monthCost} symbol={currencySymbol} overText={t('usage.budgetExceeded', { scope: t('usage.budgetMonthly') })} priced={pricesConfigured} />
+          {pricing !== null && !pricesConfigured && (
+            <div className="mt-1 text-[10px] text-[var(--color-text-muted)]" data-testid="usage-budget-no-price">
+              {t('usage.budgetNoPrice')}
+            </div>
+          )}
           {!budgetEditing && (
             <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
               {budget.warn ? t('usage.budgetWarnStateOn') : t('usage.budgetWarnStateOff')}
@@ -380,7 +391,7 @@ export const UsagePanel: React.FC = () => {
                       key={d.date}
                       className="flex-1 min-w-[3px] rounded-t bg-[var(--color-accent)] opacity-70 hover:opacity-100"
                       style={{ height: `${Math.max(pct, d.cost > 0 ? 3 : 1)}%` }}
-                      title={`${d.date} · ${currencySymbol}${fmtCost(d.cost)}`}
+                      title={`${d.date} · ${fmtTokens(d.totalTokens)}${d.cost > 0 ? ` · ${currencySymbol}${fmtCost(d.cost)}` : ''}`}
                     />
                   )
                 })}
@@ -675,7 +686,11 @@ export const UsagePanel: React.FC = () => {
                         {detailItems.reduce((s, m) => s + m.totalTokens, 0).toLocaleString()}
                       </td>
                       <td className="py-2 px-3 text-right font-mono text-[var(--color-accent)]">
-                        {currencySymbol}{fmtCost(detailItems.reduce((s, m) => s + m.cost, 0))}
+                        {(() => {
+                          // §415：合计格与上面每一行同一个判据——0 与"算不出"都别留下裸货币符号
+                          const sum = fmtCost(detailItems.reduce((s, m) => s + m.cost, 0))
+                          return sum ? `${currencySymbol}${sum}` : '—'
+                        })()}
                       </td>
                     </tr>
                   </tfoot>
@@ -990,20 +1005,29 @@ const StatCard: React.FC<{ label: string; value: string; hint?: string }> = ({ l
 )
 
 /** 预算行：label + 已花/上限 + 进度条；超限时进度条与金额变红并显示超支文案 */
-const BudgetRow: React.FC<{ label: string; limit: number | null; cost: number; symbol: string; overText: string }> = ({ label, limit, cost, symbol, overText }) => {
-  const over = limit !== null && limit > 0 && cost > limit
+const BudgetRow: React.FC<{
+  label: string
+  limit: number | null
+  cost: number
+  symbol: string
+  overText: string
+  priced: boolean
+}> = ({ label, limit, cost, symbol, overText, priced }) => {
+  // §415：没配单价时 cost 恒 0，而 0 在这里既可能是"确实没花"也可能是"算不出"⇒ 两种不许画成同一个样子。
+  // 算不出那一档：金额留白、不画进度条、也不判超额（`over` 本来就只会是假，但屏上那根 0 宽的条仍在说"没用完"）。
+  const over = priced && limit !== null && limit > 0 && cost > limit
   const pct = limit !== null && limit > 0 ? Math.min((cost / limit) * 100, 100) : 0
   return (
     <div className="mb-1.5 last:mb-0">
       <div className="flex justify-between text-[11px] mb-0.5">
         <span className="text-[var(--color-text-muted)]">{label}</span>
         <span className={over ? 'text-[var(--color-danger)] font-semibold' : 'text-[var(--color-text)]'}>
-          {symbol}{fmtCost(cost)} / {limit !== null ? `${symbol}${fmtCost(limit)}` : '—'}
+          {priced ? `${symbol}${fmtCost(cost) || '0'}` : '—'} / {limit !== null ? `${symbol}${fmtCost(limit) || '0'}` : '—'}
           {over && <span className="ml-1.5">{overText}</span>}
         </span>
       </div>
-      {limit !== null && (
-        <div className="h-1.5 rounded bg-[var(--color-bg)] overflow-hidden">
+      {limit !== null && priced && (
+        <div className="h-1.5 rounded bg-[var(--color-bg)] overflow-hidden" data-testid="usage-budget-bar">
           <div
             className={`h-full rounded ${over ? 'bg-[var(--color-danger)]' : 'bg-[var(--color-accent)]'} opacity-80`}
             style={{ width: `${Math.max(pct, cost > 0 ? 2 : 0)}%` }}

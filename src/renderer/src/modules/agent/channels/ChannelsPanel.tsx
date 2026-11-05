@@ -230,6 +230,11 @@ export const ChannelsPanel: React.FC = () => {
         {t('channel.desc')}
       </p>
 
+      {/* §415：这句原先一字没有——网关的连接是本机进程维持的，退出应用后 IM 那边发消息不会有人代答 */}
+      <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed" data-testid="channel-run-hint">
+        {t('channel.runHint')}
+      </p>
+
       {/* 网关类型 tab */}
       <div className="flex flex-wrap gap-2 text-sm">
         {CHANNEL_TYPES.map((type) => (

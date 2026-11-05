@@ -90,6 +90,16 @@ export function modLabel(): string {
   return /mac/i.test(platform) ? '⌘' : 'Ctrl'
 }
 
+/**
+ * §415：选区取词在 Linux 上没有零依赖的统一方案（`src/main/popup.ts` 的平台分支只写了 win32/darwin），
+ * 快捷键按下去只会打开快捷问答窗。设置屏要照实说一句，就得先认得出这台是 Linux——
+ * 沿用 `modLabel` 同一个取法（`navigator.platform`），不另开一条 IPC。
+ */
+export function isLinuxPlatform(): boolean {
+  const platform = typeof navigator !== 'undefined' ? navigator.platform ?? '' : ''
+  return /linux/i.test(platform)
+}
+
 /** 非主窗口上下文：detached=独立窗口（单模块、无侧栏）、popup=快捷浮窗（简易问答） */
 export type ShortcutContext = 'detached' | 'popup'
 

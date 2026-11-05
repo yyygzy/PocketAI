@@ -620,7 +620,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
                 {unitPrice.cache !== undefined && (
                   <div className="flex justify-between"><span className="text-[var(--color-text-muted)]">{t('usage.priceCache')}</span><span>{currencySymbol}{unitPrice.cache}/1M</span></div>
                 )}
-                <div className="flex justify-between border-t border-[var(--color-border)] pt-1.5"><span className="text-[var(--color-text-muted)]">{t('usage.cost')}</span><span className="font-semibold text-[var(--color-accent)]">{currencySymbol}{costText}</span></div>
+                <div className="flex justify-between border-t border-[var(--color-border)] pt-1.5"><span className="text-[var(--color-text-muted)]">{t('usage.cost')}</span><span className="font-semibold text-[var(--color-accent)]">{currencySymbol}{costText || '0'}</span></div>
               </div>
             ) : (
               <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">{t('chat.usageNoPrice')}</div>

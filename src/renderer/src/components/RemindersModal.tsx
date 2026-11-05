@@ -219,6 +219,10 @@ export const RemindersModal: React.FC<Props> = ({ onClose }) => {
           </button>
         </div>
 
+        <div className="px-4 pt-2 text-[11px] text-[var(--color-text-muted)] leading-relaxed" data-testid="reminder-center-run-hint">
+          {t('reminder.center.runHint')}
+        </div>
+
         <div className="px-3 pt-2 flex gap-1">
           {(['pending', 'history'] as Tab[]).map((tb) => (
             <button

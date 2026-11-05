@@ -426,9 +426,18 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //       ＋向导那一例等 `onClose` 被调（同理）。
     //     「会假红」仍归零；「只会假绿」19 颗名单只漂了一行：§412 给 `skill-market-fetch-debounce-322` 的 stub 补了一发
     //     `listAssistants`（技能市场挂载时多一发读），那份文件里那一格整体下移一行，判语未变。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1111)
+    //   §415（＝P0-2a 纯文案与空态：用量屏单价空态／Linux 取词标注／三句运行前提，台账第一百七十六次）
+    //     净新增 **9 颗 awaits**，全在新挂载用例 `tests/renderer-p0-2a-copy-415.test.tsx` 的用量屏那一组里
+    //     （其余用例的到货见证走 `findByTestId`／`findByText`＝自带等待，不落在这面的计数里）。
+    //     9 颗**全落「按存在读屏（DOM）」＝615→624**：三颗读预算卡那格标题（`getByText(「预算」)`，
+    //     找不到会抛＝真到货见证），两颗读 `budgetRowText()` 那枚 helper 的返回值——helper 自己走
+    //     `screen.getByText` 往上爬层、分类器按传递闭包认成读屏（§407 那条通则的又一处），等的是
+    //     「¥1.23」「¥80.00」这种**初值（`—`）≠终值**的那串到货；三颗读 `querySelectorAll` 出来的
+    //     趋势柱 `title` 与明细弹窗合计格（同样初值 `—` ≠ 终值 `¥0.4000`）；一颗等明细那两颗眼睛到货。
+    //     余下四桶未动，「会假红」仍归零，「只会假绿」19 颗名单一字未动（本枚不改那两份兄弟用例）。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1120)
     expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('615/81/95/301/0/19')
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('624/81/95/301/0/19')
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
