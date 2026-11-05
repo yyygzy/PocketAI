@@ -813,7 +813,7 @@ export interface McpToolAnnotations {
 }
 
 /** 工具策略屏的一档（只读）：取值全部来自 toolRegistry 的同一处判定，渲染端不另写规则 */
-export type ToolPolicyState = 'available' | 'disabled' | 'needs-explicit' | 'denied'
+export type ToolPolicyState = 'available' | 'disabled' | 'needs-explicit' | 'denied' | 'not-granted'
 
 export interface ToolPolicyEntry {
   id: string
@@ -825,6 +825,8 @@ export interface ToolPolicyEntry {
   dynamic: boolean
   /** 静态基线的原因码（如 WRITES_WORKSPACE_FILE）；动态工具见 shell 那一段 */
   reasons: string[]
+  /** 仅「当前助手」视角：这条工具是否在该助手的授权面内（与 isToolAllowedBy 同一判定） */
+  granted?: boolean
 }
 
 export interface ShellPolicySnapshot {
@@ -836,9 +838,31 @@ export interface ShellPolicySnapshot {
   denyReasons: string[]
 }
 
+/** 传给 policySnapshot 的助手上下文（由 IPC 层用 resolveAgentToolPermissions 解析好） */
+export interface ToolPolicyAssistantContext {
+  id: string
+  name: string
+  isBuiltin: boolean
+  permissions: string[]
+  emptyPermissions: boolean
+}
+
+/** 「当前助手」视角：授权列表由 resolveAgentToolPermissions 解析后再交给 isToolAllowedBy */
+export interface ToolPolicyAssistantView extends ToolPolicyAssistantContext {
+  /** 生效面里是否有 load_skill；没有则按需技能会退化为全文注入 */
+  loadSkillAvailable: boolean
+  /** 该助手实际生效的工具面（判定值仍来自 isToolAllowedBy） */
+  tools: ToolPolicyEntry[]
+}
+
 export interface ToolPolicySnapshot {
+  /** 注册表全量视角（不随助手变化） */
   tools: ToolPolicyEntry[]
   shell: ShellPolicySnapshot
+  /** 当前助手视角；未传 assistantId 或找不到该助手时为 undefined */
+  assistant?: ToolPolicyAssistantView
+  /** 未启动的 MCP Server 数：它们的工具不在任何一列，屏上单独说明 */
+  mcpStoppedServers: number
 }
 
 export interface ToolCall {

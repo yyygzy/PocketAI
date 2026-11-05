@@ -7,7 +7,15 @@ import { getFsTools } from './fs-tools'
 import { getSkillTools } from './skill-tools'
 import { getShellTools, getShellPolicyInfo } from './shell-tools'
 import { mcpManager } from '../mcp/manager'
-import type { ToolPolicyEntry, ToolPolicySnapshot, ToolPolicyState, ToolSchema, ToolResult } from '../../shared/types'
+import type {
+  ToolPolicyAssistantContext,
+  ToolPolicyAssistantView,
+  ToolPolicyEntry,
+  ToolPolicySnapshot,
+  ToolPolicyState,
+  ToolSchema,
+  ToolResult
+} from '../../shared/types'
 import { EXTERNAL_CONTENT_NOTICE } from '../../shared/external-content'
 import { errMsg } from '../error'
 
@@ -119,7 +127,7 @@ class ToolRegistry {
    * - MCP：`'*'` 不覆盖，状态固定 `needs-explicit`（与 isToolAllowedBy 同一口径）。
    * 渲染端不得另写阈值或工具名单——测试按函数身份钉，而不是数规则条数。
    */
-  policySnapshot(): ToolPolicySnapshot {
+  policySnapshot(assistant?: ToolPolicyAssistantContext): ToolPolicySnapshot {
     const shell = getShellPolicyInfo()
     const entries: ToolPolicyEntry[] = []
     for (const tool of this.listBuiltinTools()) {
@@ -144,7 +152,8 @@ class ToolRegistry {
       dynamic: true,
       reasons: []
     })
-    for (const schema of ensureUniqueToolNames(this.listBuiltin(), this.listMcp())) {
+    const mcpSchemas = ensureUniqueToolNames(this.listBuiltin(), this.listMcp())
+    for (const schema of mcpSchemas) {
       const state: ToolPolicyState =
         schema.permission === 'deny' ? 'denied' : 'needs-explicit'
       entries.push({
@@ -157,7 +166,81 @@ class ToolRegistry {
         reasons: []
       })
     }
-    return { tools: entries, shell }
+    const mcpStoppedServers = mcpManager.listRuntimes().filter((r) => r.status !== 'running').length
+    return {
+      tools: entries,
+      shell,
+      mcpStoppedServers,
+      assistant: assistant ? this.effectiveView(assistant, shell, mcpSchemas) : undefined
+    }
+  }
+
+  /**
+   * 「当前助手实际生效工具面」。
+   *
+   * 判定只走两条既有机关，不在这里另写规则：
+   *  · 授权：`isToolAllowedBy`（`'*'` 只覆盖内置，MCP 必须逐条 id）；
+   *  · 空数组语义：由 IPC 层调用 `resolveAgentToolPermissions` 解析后传进来（[] 不等于 ['*']）。
+   * 这里只负责把「未授权 / 内在 deny / 被策略停用 / MCP 需逐条」翻成一档可渲染的状态。
+   */
+  private effectiveView(
+    assistant: ToolPolicyAssistantContext,
+    shell: ReturnType<typeof getShellPolicyInfo>,
+    mcpSchemas: ToolSchema[]
+  ): ToolPolicyAssistantView {
+    const allowed = new Set(assistant.permissions)
+    const tools: ToolPolicyEntry[] = []
+    for (const tool of this.listBuiltinTools()) {
+      if (tool.schema.id === 'shell.exec') continue
+      const granted = isToolAllowedBy(allowed, tool.schema)
+      const state: ToolPolicyState =
+        tool.schema.permission === 'deny'
+          ? 'denied'
+          : granted
+            ? 'available'
+            : 'not-granted'
+      tools.push({
+        id: tool.schema.id,
+        name: tool.schema.name,
+        source: 'builtin',
+        permission: tool.schema.permission ?? 'auto',
+        state,
+        dynamic: Boolean(tool.classify),
+        reasons: tool.policyReason ? [tool.policyReason] : [],
+        granted
+      })
+    }
+    const shellSchema = this.listBuiltin().find((s) => s.id === 'shell.exec')
+    const shellGranted = shellSchema ? isToolAllowedBy(allowed, shellSchema) : false
+    tools.push({
+      id: 'shell.exec',
+      name: 'shell_exec',
+      source: 'builtin',
+      permission: shellSchema?.permission ?? 'auto',
+      state: !shell.enabled ? 'disabled' : shellGranted ? 'available' : 'not-granted',
+      dynamic: true,
+      reasons: [],
+      granted: shellGranted
+    })
+    for (const schema of mcpSchemas) {
+      const granted = isToolAllowedBy(allowed, schema)
+      tools.push({
+        id: schema.id,
+        name: schema.name,
+        source: 'mcp',
+        permission: schema.permission ?? 'auto',
+        state: schema.permission === 'deny' ? 'denied' : granted ? 'available' : 'needs-explicit',
+        dynamic: false,
+        reasons: [],
+        granted
+      })
+    }
+    const loadSkillSchema = this.listBuiltin().find((s) => s.id === 'skill.load')
+    return {
+      ...assistant,
+      loadSkillAvailable: loadSkillSchema ? isToolAllowedBy(allowed, loadSkillSchema) : false,
+      tools
+    }
   }
 
   /** 按工具名查找 schema（内置 + MCP），未找到返回 undefined */

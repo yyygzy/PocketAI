@@ -7,7 +7,8 @@ import { ko } from '../src/renderer/src/i18n/ko'
 describe('工具策略屏四语 parity（P0-3a）', () => {
   it('tp.* 四语键集完全一致且都有文案', () => {
     const keys = Object.keys(zh).filter((k) => k.startsWith('tp.'))
-    expect(keys.length).toBe(56)
+    // P0-3c 新增两张视角（当前助手／注册表全量）与五档状态、空数组两句解释：56 → 69
+    expect(keys.length).toBe(69)
     for (const [name, dict] of Object.entries({ zh, en, ja, ko })) {
       const own = Object.keys(dict).filter((k) => k.startsWith('tp.'))
       expect(own.sort(), `${name} 的 tp.* 键集`).toEqual([...keys].sort())

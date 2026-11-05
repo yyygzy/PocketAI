@@ -440,9 +440,12 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   §417＋§418 两批新增 **4 颗**，全落「按存在读屏（DOM）」624→628：
     //     工具策略屏 3 颗（挂载后等 fs_read、等失败句、重试后等 fs_read 回来）＋技能预算屏 1 颗
     //     （挂载后等 `[data-skill-chip]` 到货，技能那一读是挂载后才发的）。总数 1121→1125。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1125)
+    //   P0-3c「当前助手生效面」把工具策略屏那枚从 3 颗改写到 7 颗（+4，全落「按存在读屏（DOM）」）：
+    //     默认落点空态 1 颗、切注册表后等 fs_read 1 颗、自建助手横幅 1 颗、内置助手横幅 1 颗、
+    //     失败句与重试后的空态各 1 颗 ⇒ 628→632，总数 1125→1129。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1129)
     expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('628/82/95/301/0/19')
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('632/82/95/301/0/19')
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

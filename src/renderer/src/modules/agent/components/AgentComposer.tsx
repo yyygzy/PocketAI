@@ -64,6 +64,11 @@ interface Props {
    */
   tools: AgentToolConfigs
   /**
+   * 当前会话绑定的助手：策略屏据此展示「当前助手实际生效工具面」。
+   * 没有值（例如尚未选助手）时屏上给明确空态，不退化回注册表全量。
+   */
+  assistantId?: string | null
+  /**
    * 只读那一档（看别人的子会话）：输入那半不渲染（口径没变——禁用框不吭声，上面那条横幅已经把为什么说了），
    * 但这颗「+」与它收着的**设置**留着。设置是"这一台模型怎么跑"的，不是"这条消息"的；
    * 把它连着那两句「读不到」一起藏进只读档＝这次失败等于没说过（§222／§268）。
@@ -93,6 +98,7 @@ export const AgentComposer: React.FC<Props> = ({
   onPickWorkspace,
   onRetryWorkspace,
   tools,
+  assistantId,
   readOnly = false
 }) => {
   const { t } = useI18n()
@@ -457,7 +463,12 @@ export const AgentComposer: React.FC<Props> = ({
 
   return (
     <>
-      {policyOpen && <ToolPolicyDialog onClose={() => setPolicyOpen(false)} />}
+      {policyOpen && (
+        <ToolPolicyDialog
+          assistantId={assistantId ?? undefined}
+          onClose={() => setPolicyOpen(false)}
+        />
+      )}
       {/* 运行中排队条（V4-Iter-238）：条上每一项都还没进正在跑的这一轮 */}
       {queue.length > 0 && (
         <div className="pt-2" data-testid="agent-queue-bar">

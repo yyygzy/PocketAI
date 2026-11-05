@@ -1005,6 +1005,7 @@ export const AgentPanel: React.FC = () => {
             ＝这次失败等于没说过（§222／§268，§399②b）。 */}
         <AgentComposer
           readOnly={chat.subSessionReadonly}
+          assistantId={chat.assistantId}
           running={chat.running}
           canSend={chat.canSend}
           att={att}

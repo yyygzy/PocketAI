@@ -763,8 +763,8 @@ const api = {
   // ---------- 工具 ----------
   listAvailableTools: (): Promise<ToolSchema[]> => ipcRenderer.invoke(IPC.TOOL_LIST_AVAILABLE),
   // 只读策略总览（判定值只在主进程 registry 生成，渲染端只渲染）
-  getToolPolicy: (): Promise<ToolPolicySnapshot | { ok: false; error: string }> =>
-    ipcRenderer.invoke(IPC.TOOL_POLICY_SNAPSHOT),
+  getToolPolicy: (assistantId?: string): Promise<ToolPolicySnapshot | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.TOOL_POLICY_SNAPSHOT, assistantId),
 
   // ---------- Work Agent ----------
   // §265：同 abortChat——类型不许再说"不会失败"（这一发的结果过去连 `.catch` 都没有，界面已经替它说"已停"）

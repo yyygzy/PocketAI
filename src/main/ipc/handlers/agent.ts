@@ -11,6 +11,8 @@ import { getWebSearchConfig, setWebSearchConfig } from '../../tools/websearch-co
 import { getCalendarConfig, setCalendarConfig } from '../../tools/calendar-ics'
 import { resolveApproval } from '../../agent/tool-approval'
 import { agentTraceRepo } from '../../db/repositories/agent-trace.repo'
+import { assistantRepo } from '../../db/repositories/assistant.repo'
+import { resolveAgentToolPermissions } from '../../agent/tool-permissions'
 import { safeHandle, argsSchema } from '../safe-handle'
 import { createLogger } from '../../logger'
 import {
@@ -44,8 +46,28 @@ const log = createLogger('agent')
 export function registerAgentHandlers(): void {
   // ---------- 工具 ----------
   safeHandle(IPC.TOOL_LIST_AVAILABLE, () => toolRegistry.listAll())
-  // 只读策略总览：判定值来自 registry.policySnapshot 一处，渲染端不复制规则
-  safeHandle(IPC.TOOL_POLICY_SNAPSHOT, () => toolRegistry.policySnapshot())
+  // 只读策略总览：判定值来自 registry.policySnapshot 一处，渲染端不复制规则。
+  // 「当前助手视角」的授权列表也由运行侧同一个 resolveAgentToolPermissions 解析：
+  // [] 与 ['*'] 的两种语义在这里就分开，屏上不再猜。
+  safeHandle(
+    IPC.TOOL_POLICY_SNAPSHOT,
+    (_e, assistantId?: string) => {
+      const record = assistantId ? assistantRepo.get(assistantId) : null
+      if (!record) return toolRegistry.policySnapshot()
+      const permissions = resolveAgentToolPermissions(record.toolPermissions, {
+        hasAssistant: true,
+        isBuiltin: record.isBuiltin
+      })
+      return toolRegistry.policySnapshot({
+        id: record.id,
+        name: record.name,
+        isBuiltin: record.isBuiltin,
+        permissions,
+        emptyPermissions: permissions.length === 0
+      })
+    },
+    argsSchema(idSchema.optional())
+  )
 
   // ---------- Work Agent ----------
   // AGENT_* 事件通过 chat:send 的 emit 推送到对应 sender

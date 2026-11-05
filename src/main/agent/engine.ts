@@ -345,22 +345,9 @@ export const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent
 
 {{memory}}`
 
-/**
- * 工具授权解析（纯函数，SEC-3）：
- * - 助手显式配置了 toolPermissions → 原样生效（`['*']` 是显式的全授权声明，
- *   但**只覆盖内置工具**，MCP 工具仍需逐条 id —— 见 `tools/registry.ts` 的 `isToolAllowedBy`）；
- * - 空数组 = **不授权任何工具**；只有两种情形保留旧的「空即全授权」：
- *   未选助手（平台默认 Agent 会话）与内置助手（避免升级后历史助手突然失去全部能力）。
- * 曾经的无条件 `[] → ['*']` 让「拿到一个助手 JSON」等价于「拿到全授权 Agent（含 shell_exec）」。
- */
-export function resolveAgentToolPermissions(
-  assistantPermissions: string[] | null | undefined,
-  opts: { hasAssistant: boolean; isBuiltin: boolean }
-): string[] {
-  const list = Array.isArray(assistantPermissions) ? assistantPermissions : []
-  if (list.length > 0) return list
-  return opts.hasAssistant && !opts.isBuiltin ? [] : ['*']
-}
+import { resolveAgentToolPermissions } from './tool-permissions'
+// 策略屏与 Agent 运行共用同一份解析；保留从这里导出以兼容既有调用/测试
+export { resolveAgentToolPermissions }
 
 /** 与 shared/text-tool-protocol 的注入段标题一致，用作"是否已注入"的幂等标记 */
 const PROTOCOL_MARKER = '## 工具调用协议'
