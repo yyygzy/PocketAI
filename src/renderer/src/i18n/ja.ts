@@ -1519,6 +1519,7 @@ export const ja = {
   'skill.market.bindDone': '「{name}」に紐付けました。次の会話から適用されます',
   'skill.market.bindFailed': '紐付けに失敗しました：{msg}',
   'skill.market.bindDisabledHint': 'このスキルは無効です。有効化してから紐付けてください',
+  'skill.market.bindBuiltinHint': '組み込みのアシスタントには直接紐付けできません。まずアシスタントマーケットで「マイアシスタントにコピー」を使ってください。',
   'skill.market.tabLocal': 'ローカル',
   'skill.market.tabOnline': 'オンライン',
   'skill.market.onlineTitle': 'オンラインスキルマーケット',

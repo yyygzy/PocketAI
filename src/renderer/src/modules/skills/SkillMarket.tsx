@@ -722,26 +722,48 @@ const LocalDetail: React.FC<{
             <div className="flex flex-wrap gap-1.5">
               {assistants.map((a) => {
                 const bound = (a.skillIds ?? []).includes(skill.id)
-                return bound ? (
-                  <span
-                    key={a.id}
-                    data-skill-bound={a.id}
-                    className="text-[11px] px-2 py-1 rounded border border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                  >
-                    ✓ {assistantDisplayName(a, t)}
-                  </span>
-                ) : (
+                if (bound) {
+                  return (
+                    <span
+                      key={a.id}
+                      data-skill-bound={a.id}
+                      className="text-[11px] px-2 py-1 rounded border border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                    >
+                      ✓ {assistantDisplayName(a, t)}
+                    </span>
+                  )
+                }
+                /**
+                 * §414（真机轮撞出来的）：内置助手改不动——`assistant.repo.save()` 对内置直接抛
+                 * 「内置助手不可编辑，请先复制为我的助手」，所以新装机上这一排八颗键按下去必失败，
+                 * 屏上只留一块 2400ms 自己收的 toast。口径与编辑器那一排一致（§412 定的"不可选＋一句原因"）：
+                 * 不造那颗键，但格子留在原位说清是谁、为什么。
+                 */
+                const builtinBlocked = a.isBuiltin
+                return (
                   <button
                     key={a.id}
                     data-skill-bind={a.id}
+                    data-skill-blocked={builtinBlocked ? 'true' : undefined}
+                    disabled={builtinBlocked}
+                    title={builtinBlocked ? t('skill.market.bindBuiltinHint') : undefined}
                     onClick={() => onBind(skill, a)}
-                    className="text-[11px] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]"
+                    className={`text-[11px] px-2 py-1 rounded border ${
+                      builtinBlocked
+                        ? 'border-[var(--color-border)] text-[var(--color-text-muted)] opacity-50'
+                        : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]'
+                    }`}
                   >
                     {assistantDisplayName(a, t)} · {t('skill.market.bindButton')}
                   </button>
                 )
               })}
             </div>
+            {assistants.some((a) => a.isBuiltin && !(a.skillIds ?? []).includes(skill.id)) && (
+              <p className="text-xs text-[var(--color-text-muted)] mt-1.5" data-testid="skill-market-bind-builtin-hint">
+                {t('skill.market.bindBuiltinHint')}
+              </p>
+            )}
             {assistants.every((a) => !(a.skillIds ?? []).includes(skill.id)) && (
               <p className="text-xs text-[var(--color-text-muted)] mt-1.5" data-testid="skill-market-bind-none">
                 {t('skill.market.bindNone')}

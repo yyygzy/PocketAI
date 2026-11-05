@@ -31,6 +31,16 @@ const A_FREE = {
 const A_BOUND = {
   id: 'a2', name: 'PROBE-已绑助手', skillIds: ['sk1']
 } as unknown as AssistantRecord
+/**
+ * §414（真机轮撞出来的）：内置助手改不动——`assistant.repo.save()` 对内置直接抛
+ * 「内置助手不可编辑，请先复制为我的助手」⇒ 新装机上那一排八颗「绑定」键按下去必失败。
+ */
+const A_BUILTIN_FREE = {
+  id: 'a3', name: 'PROBE-内置未绑', isBuiltin: true, skillIds: []
+} as unknown as AssistantRecord
+const A_BUILTIN_BOUND = {
+  id: 'a4', name: 'PROBE-内置已绑', isBuiltin: true, skillIds: ['sk1']
+} as unknown as AssistantRecord
 
 function mount(over: Record<string, (...a: any[]) => unknown> = {}) {
   stubPocketai({
@@ -159,7 +169,8 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
   })
 
   /**
-   * §322 同族的第四处：这一发也能叠着发（进市场、切 tab、重试键），而它比另几发多一层机关——   * 绑定成功那一路会**本地改写** `assistants`。先发起的那条后回时写的是发出去之前那份快照，
+   * §322 同族的第四处：这一发也能叠着发（进市场、切 tab、重试键），而它比另几发多一层机关——
+   * 绑定成功那一路会**本地改写** `assistants`。先发起的那条后回时写的是发出去之前那份快照，
    * 于是刚点出来的 ✓ 会无声退回成「绑定」那颗键（屏上开始说假话，而库里其实绑好了）。
    * 同一条用例里两个方向都要见证：最新那条确实写了屏（键长出来了），迟到那条没写（✓ 没被抹掉）。
    */
@@ -255,5 +266,36 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
     })
     expect(screen.queryByRole('alert'), '迟到的坏消息不许改口成"读不到"').toBeNull()
     expect(bindButton('a1')).toBeTruthy()
+  })
+
+  it('内置助手那一格不给能点的键＝不可点＋同屏一句为什么，而按它确实什么都没发出去（§414）', async () => {
+    await mount({ listAssistants: () => [A_FREE, A_BUILTIN_FREE] })
+    await openDetail(SKILL_ON.name)
+    const dead = bindButton('a3')
+    expect(dead, '内置那位要留在名单里说清是谁，不能藏起来').toBeTruthy()
+    expect(dead!.disabled, '必失败的那颗键不该让人按').toBe(true)
+    expect(dead!.getAttribute('data-skill-blocked')).toBe('true')
+    expect(dead!.title).toBe(L('skill.market.bindBuiltinHint'))
+    const hint = screen.getByTestId('skill-market-bind-builtin-hint')
+    expect(hint.textContent).toBe(L('skill.market.bindBuiltinHint'))
+    // 同屏正向对照：非内置那位照旧可点、也不带那颗标记
+    const live = bindButton('a1')!
+    expect(live.disabled).toBe(false)
+    expect(live.getAttribute('data-skill-blocked')).toBeNull()
+    // 先按那颗按不动的、再按可点的 ⇒ 唯一那发的载荷只能是可点那位
+    fireEvent.click(dead!)
+    fireEvent.click(live)
+    const payload = await savedOnce()
+    expect(payload.id).toBe('a1')
+    expect(pocketaiCalls().filter((c) => c.fn === 'saveAssistant').length, '按内置那颗不许真发那一发').toBe(1)
+  })
+
+  it('反向对照：没有"想绑却绑不了"的内置助手 ⇒ 那句不在；已绑的内置仍画 ✓、不给第二颗键（§414）', async () => {
+    await mount({ listAssistants: () => [A_FREE, A_BUILTIN_BOUND] })
+    await openDetail(SKILL_ON.name)
+    expect(screen.queryByTestId('skill-market-bind-builtin-hint')).toBeNull()
+    expect(document.querySelectorAll('[data-skill-blocked="true"]').length).toBe(0)
+    expect(document.querySelector('[data-skill-bound="a4"]'), '已绑的内置画 ✓').toBeTruthy()
+    expect(bindButton('a4'), '已绑的不该再给一颗键').toBeNull()
   })
 })

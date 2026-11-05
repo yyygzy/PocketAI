@@ -1581,6 +1581,7 @@ export const en = {
   'skill.market.bindDone': 'Linked to “{name}” — it applies from the next message',
   'skill.market.bindFailed': 'Link failed: {msg}',
   'skill.market.bindDisabledHint': 'This skill is disabled — enable it before linking',
+  'skill.market.bindBuiltinHint': 'Built-in assistants can’t be linked — use “Copy to my assistants” in the Assistant Market first.',
   'skill.market.tabLocal': 'Local',
   'skill.market.tabOnline': 'Online',
   'skill.market.onlineTitle': 'Online Skill Market',

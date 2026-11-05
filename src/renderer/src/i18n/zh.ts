@@ -1583,6 +1583,7 @@ export const zh = {
   'skill.market.bindDone': '已绑定到「{name}」，下次对话就会带上这条技能',
   'skill.market.bindFailed': '绑定失败：{msg}',
   'skill.market.bindDisabledHint': '这条技能已停用，先启用才能绑定到助手',
+  'skill.market.bindBuiltinHint': '内置助手不能直接绑定技能——先到助手市场按「复制为我的助手」建一份。',
   'skill.market.tabLocal': '本地',
   'skill.market.tabOnline': '在线',
   'skill.market.onlineTitle': '在线技能市场',

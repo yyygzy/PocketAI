@@ -1519,6 +1519,7 @@ export const ko = {
   'skill.market.bindDone': '"{name}"에 연결했습니다. 다음 대화부터 적용됩니다',
   'skill.market.bindFailed': '연결 실패: {msg}',
   'skill.market.bindDisabledHint': '이 스킬은 비활성화되었습니다. 활성화 후 연결하세요',
+  'skill.market.bindBuiltinHint': '내장 어시스턴트는 직접 연결할 수 없습니다. 먼저 어시스턴트 마켓에서 "내 어시스턴트로 복사"를 사용하세요.',
   'skill.market.tabLocal': '로컬',
   'skill.market.tabOnline': '온라인',
   'skill.market.onlineTitle': '온라인 스킬 마켓',
