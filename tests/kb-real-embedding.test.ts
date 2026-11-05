@@ -205,6 +205,8 @@ describe.skipIf(!HAS_MODEL)('真 embedding 下的检索行为（B60/B63/B64/B65�
     expect(first.kbId).toBe('kbReal')
     expect(first.docId).toBe(docRefundId)
     expect(first.seq).toBe(1) // p1 是退款文档的第 2 块
+    // P0-2b：分数必须原样取自检索层（不做四舍五入、不在映射时另算）
+    expect(first.score).toBe(res.chunks.find((c) => c.chunkId === idOf(1))!.score)
     expect(sources.every((s) => s.kbId !== undefined && s.seq !== undefined)).toBe(true)
   })
 })

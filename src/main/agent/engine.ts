@@ -20,6 +20,7 @@ import type {
   ToolSchema,
   MessageRecord,
   MessageSource,
+  MessageRetrieval,
   ApprovalPreviewField
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
@@ -221,6 +222,8 @@ interface AgentRunContext {
   allowedToolIds: Set<string>
   defaultParams: Record<string, unknown>
   sources: MessageSource[]
+  /** P0-2b：首轮 {{knowledge}} 检索的事实（没触发/0 命中/失败都如实记，随最终回答落库并随 done 下发） */
+  retrieval: MessageRetrieval
   /** 当前助手绑定的知识库 id 列表，按次运行透传给 kb_search 工具 */
   kbIds: string[]
   /** §236：这次运行绑定的技能 id——load_skill 唯一的可读范围，与 buildSkillsContext 同一个来源 */
@@ -904,6 +907,8 @@ export function extractKbSearchSources(
       // 跳转原文的条件是 kbId 与 seq 都在（缺一个渲染层就不给入口）；老结果没这两个字段时不写
       if (typeof item?.kbId === 'string' && item.kbId) source.kbId = item.kbId
       if (typeof item?.seq === 'number' && Number.isFinite(item.seq)) source.seq = item.seq
+      // 分数原样搬检索层的融合分（kb_search 输出里已有 score），渲染层不补数
+      if (typeof item?.score === 'number' && Number.isFinite(item.score)) source.score = item.score
       out.push(source)
     }
     return out
@@ -1109,13 +1114,17 @@ class AgentEngine {
       // 知识库检索注入
       let knowledgeContext = ''
       let sources: MessageSource[] = []
+      // P0-2b：把「有没有检索 / 命中几条 / 是否失败」一起记下来（渲染层只念事实，不靠 sources.length 猜）
+      let retrieval: MessageRetrieval = { searched: false, hits: 0 }
       if (effectivePrompt.includes('{{knowledge}}') && kbIds.length > 0) {
         const tKb = performance.now()
         try {
           const result = await ragService.retrieve(kbIds, content)
           knowledgeContext = ragService.buildContext(result.chunks)
           sources = chunksToSources(result.chunks)
+          retrieval = { searched: true, hits: result.chunks.length, kbCount: kbIds.length }
         } catch (e) {
+          retrieval = { searched: true, hits: 0, failed: true, kbCount: kbIds.length }
           // 检索失败不阻断 Agent，但这一轮是「带着空资料库在答题」，必须留痕（A3）
           noteRetrievalDegradation(
             {
@@ -1373,6 +1382,7 @@ class AgentEngine {
         allowedToolIds,
         defaultParams: defaultParams ?? {},
         sources,
+        retrieval,
         kbIds,
         skillIds,
         emit,
@@ -1446,6 +1456,8 @@ class AgentEngine {
           // §396：读到才带这一颗；读不出来时**不带**（不是带一份 0），渲染层据此走那颗既有的「本次运行统计 读不到」
           traceStats: safeTraceStats(requestId) ?? undefined,
           sources: ctx.sources.length > 0 ? ctx.sources : undefined,
+          // P0-2b：0 命中/未启用/失败也要即时可见，不能等下次重读会话才看见
+          retrieval: ctx.retrieval,
           usedTools: ctx.recentToolSignatures.length > 0,
           mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined,
           // §237：§234 那条只进日志的实话上屏。判据是**我们自己那把尺子**算出来的（声明过窗口
@@ -1875,7 +1887,8 @@ class AgentEngine {
       stepText,
       'done',
       !toolCalls || toolCalls.length === 0 ? sources : undefined,
-      result.usage
+      result.usage,
+      !toolCalls || toolCalls.length === 0 ? ctx.retrieval : undefined
     )
     ctx.pendingAssistantMsgId = '' // 占位已写终态
     // LLM 步 usage 落库后检查预算 80% 软预警（周期标记去重；内部全 try/catch 不影响 Agent）
@@ -2356,7 +2369,7 @@ class AgentEngine {
       const finalText = degradeResult.finishReason === 'length'
         ? `${degradeText}\n\n_（回答因达到 token 上限被截断）_`
         : degradeText
-      messageRepo.updateContent(insertedDegradeMsg.id, finalText, 'done')
+      messageRepo.updateContent(insertedDegradeMsg.id, finalText, 'done', undefined, undefined, ctx.retrieval)
 
       ctx.finalContent = finalText
       ctx.finalMessageId = insertedDegradeMsg.id

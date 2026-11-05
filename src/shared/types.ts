@@ -216,6 +216,11 @@ export interface MessageRecord {
   batchId?: string | null
   /** 知识库引用来源（RAG 检索命中的 chunk 元信息） */
   sources?: MessageSource[] | null
+  /**
+   * 本轮知识库检索事实（异步落库时与 sources 同一 envelope 存进 sources 列，不新增列）。
+   * 旧消息没有该字段＝没有记录过，界面上不做任何推断。
+   */
+  retrieval?: MessageRetrieval | null
   /** token 用量（provider 返回，assistant 消息记录；旧数据为 null） */
   usage?: UsageStats | null
   /** 引用回复：本条消息引用的同会话另一条消息 id（user 消息记录；未引用为 null） */
@@ -557,6 +562,30 @@ export interface MessageSource {
   url?: string
   /** 来源类型：缺省＝旧知识库来源（与迁移前落库数据同一口径）；web＝联网搜索/网页抓取 */
   kind?: 'kb' | 'web'
+  /**
+   * 检索层产出的融合分（RRF：各路排名 1/(60+rank) 之和，典型 0.01–0.05）。
+   * 语义：**同一轮检索内**越大越相关（已按它排序）；它既不是余弦相似度、也不是概率，
+   * 跨轮次/跨知识库集合/跨阈值策略都不可比。旧消息没有该字段（不显示、不按 0 分处理）。
+   */
+  score?: number
+}
+
+/**
+ * 一轮回答的知识库检索事实（P0-2b）。
+ * 「检索过但 0 条达标」「整次失败」「压根没启用」以前在界面上完全一样（都靠 sources.length 推断），
+ * 现在由检索层如实写下，渲染层只念这份事实。
+ * 存储：塞在 messages.sources 那一列的 envelope 里（`{ items, retrieval }`），不新增列、不迁移；
+ * 旧行的纯数组形状照旧可读。
+ */
+export interface MessageRetrieval {
+  /** 本轮是否真的发起过知识库检索（false＝未启用知识库/未触发） */
+  searched: boolean
+  /** 达标条数（searched=true 且未失败时才有意义） */
+  hits: number
+  /** 整次检索异常/超时：一条都没注入 */
+  failed?: boolean
+  /** 本次参与检索的知识库数量 */
+  kbCount?: number
 }
 
 // ---------- KB 问答模式（知识库详情页内选库即聊，轻量流式） ----------
@@ -1082,6 +1111,8 @@ export interface AgentDoneEvent {
   traceStats?: AgentRunStats
   /** 知识库引用来源（RAG 检索命中的 chunk），仅最终回答无 tool_calls 时携带 */
   sources?: MessageSource[]
+  /** 本轮知识库检索事实（与 sources 同源；为让 0 命中/失败即时可见，不只等下次重读） */
+  retrieval?: MessageRetrieval
   /** 本次运行是否实际调用了工具（用于零调用提示） */
   usedTools?: boolean
   /**

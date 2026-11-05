@@ -374,6 +374,16 @@ const AgentMessageCardImpl: React.FC<{
       {m.isFinal && <div className="text-[10px] text-[var(--color-accent)] mb-1">{t('agent.finalAnswer')}</div>}
       <div className={`whitespace-pre-wrap ${m.isError ? 'text-[var(--color-danger)]' : ''}`}>{m.text || (m.isFinal ? '' : t('agent.thinking'))}</div>
       {htmlBlock && <HtmlBlockActions htmlBlock={htmlBlock} />}
+      {/* P0-2b：检索事实——「没启用 / 检索了 0 条 / 检索失败」不再和「有来源」混为一谈 */}
+      {m.retrieval && (m.retrieval.failed || !m.retrieval.searched || m.retrieval.hits === 0) && (
+        <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+          {m.retrieval.failed
+            ? t('chatview.retrieval.failed')
+            : !m.retrieval.searched
+              ? t('chatview.retrieval.off')
+              : t('chatview.retrieval.empty')}
+        </div>
+      )}
       {/* 知识库引用来源 */}
       {m.sources && m.sources.length > 0 && (
         <div className="mt-2">
@@ -407,6 +417,11 @@ const AgentMessageCardImpl: React.FC<{
                         {i + 1}. {s.docTitle}
                       </span>
                     )}
+                    {typeof s.score === 'number' && s.kind !== 'web' && (
+                      <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                        {t('chatview.sourceScore', { score: s.score.toFixed(3) })}
+                      </span>
+                    )}
                     {s.kind === 'web' && s.url && (
                       <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-muted)]">
                         {hostOf(s.url)}
@@ -431,6 +446,11 @@ const AgentMessageCardImpl: React.FC<{
                   </div>
                 </div>
               ))}
+              {m.sources.some((s) => typeof s.score === 'number') && (
+                <p className="text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                  {t('chatview.sourceScoreNote')}
+                </p>
+              )}
             </div>
           )}
         </div>

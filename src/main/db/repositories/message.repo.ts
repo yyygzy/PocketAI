@@ -30,8 +30,20 @@ export function rowToRecord(row: MessageRow): MessageRecord {
     try { attachments = JSON.parse(row.attachments) } catch { /* ignore */ }
   }
   let sources: MessageRecord['sources'] = undefined
+  let retrieval: MessageRecord['retrieval'] = undefined
   if (row.sources) {
-    try { sources = JSON.parse(row.sources) } catch { /* ignore */ }
+    try {
+      const parsed: unknown = JSON.parse(row.sources)
+      if (Array.isArray(parsed)) {
+        // 旧行：纯数组，没有检索事实可读
+        sources = parsed as MessageRecord['sources']
+      } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { items?: unknown }).items)) {
+        // P0-2b envelope：sources 与该轮检索事实同列，不新增列/不迁移
+        const env = parsed as { items: NonNullable<MessageRecord['sources']>; retrieval?: MessageRecord['retrieval'] }
+        sources = env.items
+        retrieval = env.retrieval ?? null
+      }
+    } catch { /* ignore */ }
   }
   let usage: MessageRecord['usage'] = undefined
   if (row.usage) {
@@ -51,6 +63,7 @@ export function rowToRecord(row: MessageRow): MessageRecord {
     attachments,
     batchId: row.batch_id,
     sources,
+    retrieval,
     usage,
     replyToId: row.reply_to_id ?? null,
     starred: !!row.starred,
@@ -137,9 +150,15 @@ export const messageRepo = {
     content: string,
     status: MessageStatus,
     sources?: MessageRecord['sources'],
-    usage?: MessageRecord['usage']
+    usage?: MessageRecord['usage'],
+    retrieval?: MessageRecord['retrieval']
   ): void {
-    const sourcesJson = sources && sources.length > 0 ? JSON.stringify(sources) : null
+    // 带 retrieval ⇒ 存 envelope（0 命中也要落库存事实）；不带 ⇒ 维持旧纯数组/null 形状
+    const sourcesJson = retrieval
+      ? JSON.stringify({ items: sources ?? [], retrieval })
+      : sources && sources.length > 0
+        ? JSON.stringify(sources)
+        : null
     const usageJson = usage ? JSON.stringify(usage) : null
     dbService
       .getHandle()

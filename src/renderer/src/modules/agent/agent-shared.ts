@@ -1,5 +1,5 @@
 // Agent 模块共享：类型、常量与纯函数（MCP 面板 / Agent 对话 / Channels 共用）
-import type { ChatAttachment, MessageRecord, TodoItem, ToolCall, ToolResult, MessageSource, WebSearchDepthSetting } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord, MessageRetrieval, TodoItem, ToolCall, ToolResult, MessageSource, WebSearchDepthSetting } from '../../../../shared/types'
 import { readDelegateRoleForDisplay, type DelegateRole } from '../../../../shared/delegation-rules'
 import type { SlashCommand } from '../../utils/snippet-slash'
 
@@ -19,6 +19,8 @@ export interface AgentMessage {
   attachments?: ChatAttachment[]
   /** 知识库引用来源（RAG 检索命中的 chunk） */
   sources?: MessageSource[]
+  /** 本轮知识库检索事实（有没有检索/命中几条/失败）；旧消息没有 */
+  retrieval?: MessageRetrieval
   dbId?: string // 对应 DB message.id（用于删除单条消息；live 占位卡需等主进程回传）
 }
 
@@ -323,6 +325,7 @@ export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
         text: m.content || (m.status === 'streaming' ? '（中断）' : ''),
         isFinal: true,
         sources: m.sources ?? undefined,
+        retrieval: m.retrieval ?? undefined,
         dbId: m.id
       })
     } else if (m.role === 'tool') {

@@ -599,7 +599,8 @@ describe('kb_search 引用来源归集（SEC-29）', () => {
       ]
     })
     expect(extractKbSearchSources('kb_search', content)).toEqual([
-      { chunkId: 'c1', docId: 'd1', docTitle: '设计文档', content: '片段一' },
+      { chunkId: 'c1', docId: 'd1', docTitle: '设计文档', content: '片段一', score: 0.9 },
+      // 工具结果里没有分数时不补 0、不造值：键就不写，渲染层据此不显示徽标
       { chunkId: 'c2', docId: 'd2', docTitle: '手册', content: '片段二' }
     ])
   })

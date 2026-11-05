@@ -51,10 +51,15 @@ describe('buildAskMessages — 问答消息拼装', () => {
     expect(msgs.map((m) => m.role)).toEqual(['assistant', 'user'])
   })
 
-  it('chunksToSources：RetrievedChunk 映射为 MessageSource', () => {
+  it('chunksToSources：RetrievedChunk 映射为 MessageSource（分数原样取自检索层）', () => {
+    // P0-2b：分数不写死断言某个值，而是断言「渲染层拿到的就是检索层给的那个数」
+    const score = 0.0342
     const out = chunksToSources([
-      { chunkId: 'c1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: '手册', content: '正文', score: 0.9 }
+      { chunkId: 'c1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: '手册', content: '正文', score }
     ])
-    expect(out).toEqual([{ chunkId: 'c1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: '手册', content: '正文' }])
+    expect(out).toEqual([
+      { chunkId: 'c1', docId: 'd1', kbId: 'kb1', seq: 0, docTitle: '手册', content: '正文', score }
+    ])
+    expect(out[0]!.score).toBe(score)
   })
 })

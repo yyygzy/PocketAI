@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import type { ChatAttachment, MessageRecord, MessageSource, ReminderRepeatRule, UsagePricing, UsageStats } from '../../../../shared/types'
+import type { ChatAttachment, MessageRecord, MessageRetrieval, MessageSource, ReminderRepeatRule, UsagePricing, UsageStats } from '../../../../shared/types'
 import { computeUsageCost, priceKey } from '../../../../shared/usage-pricing'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
@@ -32,6 +32,8 @@ interface Props {
   createdAt?: number
   attachments?: ChatAttachment[]
   sources?: MessageSource[]
+  /** 本轮知识库检索事实（旧消息没有：不显示任何状态句） */
+  retrieval?: MessageRetrieval
   selected?: boolean
   /** 搜索跳转临时高亮（ring 闪烁动画，2s 后由父组件清除） */
   highlight?: boolean
@@ -85,6 +87,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
   createdAt,
   attachments,
   sources,
+  retrieval,
   selected,
   highlight,
   usage,
@@ -339,6 +342,17 @@ const MessageBubbleImpl: React.FC<Props> = ({
           )}
         </div>
 
+        {/* P0-2b：没启用 / 检索了 0 条 / 检索失败——三种事实分开说，旧消息无字段则不说 */}
+        {!isUser && retrieval && (retrieval.failed || !retrieval.searched || retrieval.hits === 0) && (
+          <div className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
+            {retrieval.failed
+              ? t('chatview.retrieval.failed')
+              : !retrieval.searched
+                ? t('chatview.retrieval.off')
+                : t('chatview.retrieval.empty')}
+          </div>
+        )}
+
         {/* 知识库引用来源 */}
         {!isUser && sources && sources.length > 0 && (
           <div className="mt-1.5">
@@ -375,6 +389,11 @@ const MessageBubbleImpl: React.FC<Props> = ({
                           {s.docTitle}
                         </span>
                       )}
+                      {typeof s.score === 'number' && s.kind !== 'web' && (
+                        <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                          {t('chatview.sourceScore', { score: s.score.toFixed(3) })}
+                        </span>
+                      )}
                       {s.kind === 'web' && s.url && (
                         <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-muted)]">
                           {hostOf(s.url)}
@@ -398,6 +417,11 @@ const MessageBubbleImpl: React.FC<Props> = ({
                     </div>
                   </div>
                 ))}
+                {sources.some((s) => typeof s.score === 'number') && (
+                  <p className="text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                    {t('chatview.sourceScoreNote')}
+                  </p>
+                )}
               </div>
             )}
           </div>

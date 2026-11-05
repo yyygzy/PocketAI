@@ -10,7 +10,8 @@ import type {
   ChatChunkEvent,
   ChatDoneEvent,
   ChatErrorEvent,
-  MessageSource
+  MessageSource,
+  MessageRetrieval
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import { acquireKeepAwake, releaseKeepAwake } from '../keep-awake'
@@ -215,6 +216,8 @@ class ChatService {
     const shouldRetrieve = effectivePrompt.includes('{{knowledge}}') || extraKbIds.length > 0
     let knowledgeContext = ''
     let sources: MessageSource[] = []
+    // P0-2b：这轮到底有没有检索、命中几条、是否整次失败——如实记录，屏上不再靠 sources.length 猜
+    let retrieval: MessageRetrieval = { searched: false, hits: 0 }
     let extraSystemPrompt: string | null = null
     if (shouldRetrieve && allKbIds.length > 0) {
       const tKb = performance.now()
@@ -222,12 +225,13 @@ class ChatService {
         const result = await ragService.retrieve(allKbIds, content)
         knowledgeContext = ragService.buildContext(result.chunks)
         sources = chunksToSources(result.chunks)
+        retrieval = { searched: true, hits: result.chunks.length, kbCount: allKbIds.length }
         // 模板不含 {{knowledge}} 但用户显式 @ 引用了知识库 → 追加为独立 system 消息
         if (!effectivePrompt.includes('{{knowledge}}') && knowledgeContext) {
           extraSystemPrompt = `以下是与用户问题相关的知识库内容：\n\n${knowledgeContext}`
         }
       } catch (e) {
-        // 检索失败不阻断对话，仅跳过知识注入 —— 但「这一轮压根没注入资料」不能悄悄过去（A3）
+        retrieval = { searched: true, hits: 0, failed: true, kbCount: allKbIds.length }
         noteRetrievalDegradation(
           {
             stage: 'retrieve',
@@ -322,7 +326,8 @@ class ChatService {
             messageId: placeholders[index]!.id,
             signal: master.signal,
             emit,
-            sources
+            sources,
+            retrieval
           })
         )
       )
@@ -506,8 +511,9 @@ class ChatService {
     signal: AbortSignal
     emit: EmitFn
     sources?: MessageSource[]
+    retrieval?: MessageRetrieval
   }): Promise<void> {
-    const { requestId, index, target, messages, messageId, signal, emit, sources } = args
+    const { requestId, index, target, messages, messageId, signal, emit, sources, retrieval } = args
 
     let accumulated = ''
 
@@ -539,7 +545,7 @@ class ChatService {
         model: target.model
       })
       const full = result.content
-      messageRepo.updateContent(messageId, full, 'done', sources, result.usage)
+      messageRepo.updateContent(messageId, full, 'done', sources, result.usage, retrieval)
       // usage 落库后检查预算 80% 软预警（周期标记去重，多 target 只广播一次；内部全 try/catch）
       checkAndBroadcastBudgetWarnings()
       const e: ChatDoneEvent = { requestId, targetIndex: index, messageId, fullContent: full, sources }
@@ -553,7 +559,7 @@ class ChatService {
       const finalContent = aborted
         ? partial || '_(已停止)_'
         : partial || `请求失败: ${errMsg(err)}`
-      messageRepo.updateContent(messageId, finalContent, aborted ? 'aborted' : 'error', sources)
+      messageRepo.updateContent(messageId, finalContent, aborted ? 'aborted' : 'error', sources, undefined, retrieval)
 
       if (aborted) {
         const e: ChatDoneEvent = {

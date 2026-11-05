@@ -988,9 +988,14 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           // 委派跑完当场两处入口都不出现，要切走再回来才看见（2026-10-21 真机 B133 撞出来的）。
           // 只在"这一轮就是当前看着的这条会话"时重读：别的会话的 DONE 不该动这里的列表。
           loadSubSessionReads()
-          // 把知识库引用来源挂到最终回答卡片（流式结束即时显示，无需 reload）
-          if (e.sources?.length) {
-            dispatch({ type: 'setSources', messageId: e.finalMessageId, sources: e.sources })
+          // 把知识库引用来源与「有没有检索/命中几条」挂到最终回答卡片（流式结束即时显示，无需 reload）
+          if (e.sources?.length || e.retrieval) {
+            dispatch({
+              type: 'setSources',
+              messageId: e.finalMessageId,
+              sources: e.sources,
+              retrieval: e.retrieval
+            })
           }
           // 运行结束后刷新会话累计统计（本次运行已入库）
           // 运行结束后刷新会话累计统计（本次运行已入库）——§264：走与挂载同一条路，失败同样上屏＋可重试

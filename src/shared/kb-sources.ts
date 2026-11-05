@@ -15,6 +15,8 @@ export function chunksToSources(chunks: RetrievedChunk[]): MessageSource[] {
     docTitle: c.docTitle,
     content: c.content,
     kbId: c.kbId,
-    seq: c.seq
+    seq: c.seq,
+    // 分数只搬检索层给的融合分（RRF），渲染层不补、不改、不四舍五入成别的量
+    score: c.score
   }))
 }

@@ -1041,6 +1041,7 @@ export const ChatView: React.FC<Props> = ({
                         messageId={msg.id}
                         createdAt={msg.createdAt}
                         sources={msg.sources ?? undefined}
+                        retrieval={msg.retrieval ?? undefined}
                         usage={msg.usage ?? null}
                         sessionTokensUpTo={sessionUpTo.get(msg.id) ?? null}
                         provider={msg.provider ?? null}

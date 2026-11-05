@@ -169,6 +169,48 @@ describe('rowToRecord — DB 行映射为 MessageRecord', () => {
   })
 })
 
+// P0-2b：检索事实（是否检索过 / 命中几条 / 是否失败）没有新列可加，
+// 复用 messages.sources 这一列 JSON 存 envelope `{ items, retrieval }`。
+// 旧行是纯数组，必须照旧能读——这份用例就是"不迁移"的凭据。
+describe('P0-2b：sources 列复用 envelope 存检索事实（无迁移）', () => {
+  const source = { chunkId: 'c1', docId: 'd1', docTitle: '手册', content: '片段', score: 0.0342 }
+
+  it('旧行仍是纯数组 → 来源照常解析，retrieval 不补（不把"不知道"当成"未启用"）', () => {
+    const rec = rowToRecord({ ...baseRow, sources: JSON.stringify([source]) })
+    expect(rec.sources).toEqual([source])
+    expect(rec.retrieval).toBeUndefined()
+  })
+
+  it('envelope → 同时解出 sources 与检索事实（含 0 命中）', () => {
+    const retrieval = { searched: true, hits: 0, kbCount: 2 }
+    const rec = rowToRecord({ ...baseRow, sources: JSON.stringify({ items: [], retrieval }) })
+    expect(rec.sources).toEqual([])
+    expect(rec.retrieval).toEqual(retrieval)
+  })
+
+  it('envelope 但 retrieval 缺失 → 来源可读、事实为 null（不瞎猜）', () => {
+    const rec = rowToRecord({ ...baseRow, sources: JSON.stringify({ items: [source] }) })
+    expect(rec.sources).toEqual([source])
+    expect(rec.retrieval).toBeNull()
+  })
+
+  it('updateContent 带 retrieval → 写 envelope（0 命中也要落库存事实）', () => {
+    const retrieval = { searched: true, hits: 0, kbCount: 1 }
+    messageRepo.updateContent('m1', '答案', 'done', undefined, undefined, retrieval)
+    expect(JSON.parse(state.lastParams[2] as string)).toEqual({ items: [], retrieval })
+  })
+
+  it('updateContent 不带 retrieval → 维持旧纯数组形状（既有调用方不受影响）', () => {
+    messageRepo.updateContent('m1', '答案', 'done', [source], undefined)
+    expect(JSON.parse(state.lastParams[2] as string)).toEqual([source])
+  })
+
+  it('updateContent 不带 retrieval 且无来源 → null（同旧行为）', () => {
+    messageRepo.updateContent('m1', '答案', 'done')
+    expect(state.lastParams[2]).toBeNull()
+  })
+})
+
 describe('deleteBatch — 批量删除', () => {
   it('空数组 → 返回 0 且不执行 SQL', () => {
     const result = messageRepo.deleteBatch([])
