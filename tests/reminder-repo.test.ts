@@ -231,16 +231,50 @@ describe('reminderRepo.rescheduleNext — 一键重新安排 missed 循环', () 
     const nextFireAt = out.fireAt as number
     expect(nextFireAt).toBeGreaterThan(before)
     expect((nextFireAt - 1000) % 86_400_000).toBe(0)
-    // reschedule 走 run：参数 (status='pending', fireAt, ruleJson, id)
-    expect(runMock.mock.calls[0]![0]).toBe('pending')
-    expect(runMock.mock.calls[0]![1]).toBe(nextFireAt)
-    expect(runMock.mock.calls[0]![2]).toBe('{"kind":"daily","intervalDays":1}')
-    expect(runMock.mock.calls[0]![3]).toBe('r1')
+    // 一次条件 UPDATE：args = (status='pending', fireAt, ruleJson, id, 期望 status, 期望 fire_at, 期望 rule)
+    const upd = runMock.mock.calls[0]!
+    expect(upd[0]).toBe('pending')
+    expect(upd[1]).toBe(nextFireAt)
+    expect(upd[2]).toBe('{"kind":"daily","intervalDays":1}')
+    expect(upd[3]).toBe('r1')
+    expect(upd[4]).toBe('missed')
+    expect(upd[5]).toBe(1000)
+    expect(upd[6]).toBe('{"kind":"daily","intervalDays":1}')
+    expect(String(prepareMock.mock.calls[1]![0])).toContain('WHERE id=? AND status=? AND fire_at=? AND repeat_rule IS ?')
+  })
+
+  it('pending 循环提醒不能被推到下一周期（不是"终态/missed"就不进重排）', () => {
+    getMock.mockImplementation(() => ({
+      ...row,
+      status: 'pending',
+      repeat_rule: '{"kind":"daily","intervalDays":1}'
+    }))
+    expect(reminderRepo.rescheduleNext('r1')).toEqual({ ok: false })
+    expect(runMock).not.toHaveBeenCalled()
+  })
+
+  it('并发/过期期望值：第二次条件写 changes=0 → 不生效，且不覆盖别人写的 fire_at', () => {
+    getMock.mockImplementation(() => ({
+      ...row,
+      status: 'missed',
+      repeat_rule: '{"kind":"daily","intervalDays":1}'
+    }))
+    // 第一次成功
+    const first = reminderRepo.rescheduleNext('r1')
+    expect(first.ok).toBe(true)
+    // 第二次拿到的是同一份过期快照（模拟 tick 已先行改过）⇒ UPDATE 的期望值匹配不上
+    runMock.mockImplementation(() => ({ changes: 0 }))
+    const second = reminderRepo.rescheduleNext('r1')
+    expect(second).toEqual({ ok: false })
+    // 第二次仍然只尝试一次条件写，没有退回"无条件 UPDATE"
+    expect(runMock.mock.calls[1]![4]).toBe('missed')
+    expect(runMock.mock.calls[1]![5]).toBe(1000)
   })
 
   it('reschedule 返回 false（changes=0）→ { ok: false }', () => {
     getMock.mockImplementation(() => ({
       ...row,
+      status: 'missed',
       repeat_rule: '{"kind":"daily","intervalDays":1}'
     }))
     runMock.mockImplementation(() => ({ changes: 0 }))

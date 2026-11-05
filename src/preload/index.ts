@@ -227,7 +227,11 @@ const api = {
   listSkillFiles: (id: string): Promise<
     { ok: true; files: Array<{ path: string; size: number }> } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.SKILL_LIST_FILES, id),
-  syncSkills: (): Promise<{ count: number; errors: string[] } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+  /** removed/retired：内置清单同步时删掉/停用的下线内置技能数（见 assistant/builtin.ts） */
+  syncSkills: (): Promise<
+    { count: number; removed: number; retired: number; errors: string[] } |
+    { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > =>
     ipcRenderer.invoke(IPC.SKILL_SYNC),
   fetchSkillIndex: (
     indexUrl: string

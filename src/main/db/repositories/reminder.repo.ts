@@ -68,38 +68,55 @@ function monthDayAt(year: number, monthIndex: number, dayOfMonth: number, base: 
 }
 
 
-/** 候选仍 ≤ now 时按周期追平（§332）。
- *  用闭式而不是循环：要追平的幅度只受"这台应用多久没醒"限制（三个月不关机也追得平），
- *  循环就得挑一个"够大"的次数上限，而上限本身就是下一个坑。 */
-function advancePastNow(candidate: number, periodMs: number, now: number): number {
+/** 以**本地日历**推进 n 天：直接改 Date 的日字段，时分秒沿用原值。
+ *  跨夏令时时一个本地日不是固定 86_400_000ms（23h/25h），所以不能用毫秒加法。 */
+function addLocalDays(ts: number, days: number): number {
+  const d = new Date(ts)
+  return new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate() + days,
+    d.getHours(),
+    d.getMinutes(),
+    d.getSeconds(),
+    d.getMilliseconds()
+  ).getTime()
+}
+
+/** 候选仍 ≤ now 时按本地日历周期追平（§332 的"结果必须 > now"口径不变）。
+ *  先按 24h 粗估步数（DST 造成的日长变化是常数级 ±1h，估算最多差一步），
+ *  再用日历步进收尾：结果严格 > now，且本地钟点与候选一致。 */
+function advanceDaysPastNow(candidate: number, intervalDays: number, now: number): number {
   if (candidate > now) return candidate
-  // d = now - candidate ≥ 0，取 floor(d/p)+1 保证 candidate + k·p 严格大于 now
-  const k = Math.floor((now - candidate) / periodMs) + 1
-  return candidate + k * periodMs
+  const approxSteps = Math.floor((now - candidate) / (intervalDays * 86_400_000))
+  let cur = approxSteps > 0 ? addLocalDays(candidate, approxSteps * intervalDays) : candidate
+  while (cur <= now) cur = addLocalDays(cur, intervalDays)
+  return cur
 }
 
 /** 计算下一次循环触发时间（epoch ms）：
- * - daily: prevFireAt + intervalDays 天
- * - weekly: 找 prevFireAt 之后的下一个匹配 weekday
+ * - daily: prevFireAt 之后 intervalDays 个**本地日历日**
+ * - weekly: 找 prevFireAt 之后的下一个匹配 weekday（同样按本地日历日步进）
  * - monthly: 下一自然月的 dayOfMonth（不存在则取该月最后一天）
+ * daily/weekly 不再用固定 86_400_000ms 加法：四语 UI 覆盖有夏令时的地区时，
+ * 固定毫秒会让触发钟点漂一小时；按日历日推进则本地钟点不变。
  * 三档都必须保证结果 **> now**（§332：改前这句只写在注释里，daily／weekly 都没兑现——
  * 错过几天时交出去的还是过去时刻，`scheduler.ts:29` 把它原样写回 pending，
  * 下一个 30s tick 又算"到期"，于是一条周五的日提醒在周一连环弹出多次通知才追平） */
 export function computeNextFireAt(prevFireAt: number, rule: ReminderRepeatRule, now: number): number {
   if (rule.kind === 'daily') {
-    const period = rule.intervalDays * 86_400_000
-    return advancePastNow(prevFireAt + period, period, now)
+    // 按本地日历日推进：跨夏令时也落在同样的本地钟点（不是固定 24h）
+    return advanceDaysPastNow(addLocalDays(prevFireAt, rule.intervalDays), rule.intervalDays, now)
   }
   if (rule.kind === 'weekly') {
     const days = rule.weekdays
-    if (days.length === 0) return advancePastNow(prevFireAt + 7 * 86_400_000, 7 * 86_400_000, now)
-    const base = new Date(prevFireAt)
+    if (days.length === 0) return advanceDaysPastNow(addLocalDays(prevFireAt, 7), 7, now)
     for (let i = 1; i <= 7; i++) {
-      const d = new Date(base.getTime() + i * 86_400_000)
-      const dow = ((d.getDay() + 6) % 7) + 1 // 周一=1 ... 周日=7
-      if (days.includes(dow)) return advancePastNow(d.getTime(), 7 * 86_400_000, now)
+      const candidate = addLocalDays(prevFireAt, i)
+      const dow = ((new Date(candidate).getDay() + 6) % 7) + 1 // 周一=1 ... 周日=7
+      if (days.includes(dow)) return advanceDaysPastNow(candidate, 7, now)
     }
-    return advancePastNow(prevFireAt + 7 * 86_400_000, 7 * 86_400_000, now)
+    return advanceDaysPastNow(addLocalDays(prevFireAt, 7), 7, now)
   }
   // monthly：下一个自然月的 dayOfMonth；该月没有这天就取当月最后一天（2 月 30 号→2 月末）
   const base = new Date(prevFireAt)
@@ -247,13 +264,28 @@ export const reminderRepo = {
   },
 
   /** 一键重新安排 missed 循环提醒：按原 rule 用 computeNextFireAt 重算下次触发回 pending。
-   *  一次性 missed（无 repeatRule）不支持，返回 ok=false 由前端引导用户新建 */
+   *  一次性 missed（无 repeatRule）不支持，返回 ok=false 由前端引导用户新建。
+   *  **读-改-写收窄到一次条件 UPDATE**：期望值（status/fire_at/repeat_rule）取自刚才读到的快照，
+   *  期间被 30s tick 或另一次点击改过 ⇒ changes=0，本次不生效（不会覆盖别人写下的 fire_at）。
+   *  pending 行不在可重排范围：条件里有 `status<>'pending'`，循环提醒不会被推掉当前周期。 */
   rescheduleNext(id: string): { ok: boolean; fireAt?: number } {
-    const rec = this.get(reminderIdSchema.parse(id))
-    if (!rec || !rec.repeatRule) return { ok: false }
+    const rid = reminderIdSchema.parse(id)
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT * FROM reminders WHERE id=?')
+      .get(rid) as ReminderRow | undefined
+    if (!row) return { ok: false }
+    const rec = rowToRecord(row)
+    if (!rec.repeatRule || rec.status === 'pending') return { ok: false }
     const next = computeNextFireAt(rec.fireAt, rec.repeatRule, Date.now())
-    const ok = this.reschedule(rec.id, next, rec.repeatRule)
-    return ok ? { ok: true, fireAt: next } : { ok: false }
+    const info = dbService
+      .getHandle()
+      .prepare(
+        `UPDATE reminders SET status=?, fire_at=?, repeat_rule=?
+         WHERE id=? AND status=? AND fire_at=? AND repeat_rule IS ?`
+      )
+      .run('pending', next, JSON.stringify(rec.repeatRule), rid, rec.status, rec.fireAt, row.repeat_rule ?? null)
+    return info.changes > 0 ? { ok: true, fireAt: next } : { ok: false }
   },
 
   cancel(id: string): boolean {

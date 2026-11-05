@@ -79,6 +79,35 @@ export const skillRepo = {
     }
   },
 
+  /** 现存内置技能 id（内置清单同步时用它对比"文件已移除"的行） */
+  listBuiltinIds(): string[] {
+    const rows = dbService
+      .getHandle()
+      .prepare('SELECT id FROM skills WHERE is_builtin=1')
+      .all() as Array<{ id: string }>
+    return rows.map((r) => r.id)
+  },
+
+  /** 清理已下线的内置技能：**只删 is_builtin=1 的行**（用户导入/自建的行连条件都匹配不上）。
+   *  返回 true 表示真的删了一行（被引用时调用方会先走 disableBuiltin，不会到这里）。 */
+  deleteBuiltinIfUnused(id: string): boolean {
+    const info = dbService
+      .getHandle()
+      .prepare('DELETE FROM skills WHERE id=? AND is_builtin=1')
+      .run(id)
+    return info.changes > 0
+  },
+
+  /** 被助手仍引用的下线内置技能：保留行与内容、只停用（不进注入面，用户可自行恢复）。
+   *  只在 enabled=1 时翻转，重复同步不会重复"清理"。 */
+  disableBuiltin(id: string): boolean {
+    const info = dbService
+      .getHandle()
+      .prepare('UPDATE skills SET enabled=0 WHERE id=? AND is_builtin=1 AND enabled=1')
+      .run(id)
+    return info.changes > 0
+  },
+
   /** 新建（自定义技能）或保存编辑；内置技能仅允许通过 enabled 字段切换开关 */
   save(input: Partial<SkillRecord> & { name: string }): SkillRecord {
     const db = dbService.getHandle()
