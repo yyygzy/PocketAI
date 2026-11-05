@@ -309,6 +309,9 @@ export const conversationRepo = {
         // 正是上面那句注释要避免的"看不见却占着库"，只是当时只数了子会话，没数到 trace 这一层。
         // 用量明细不用管：它本来就是 `messages JOIN conversations` 的派生视图，消息没了它就没了。
         db.prepare('DELETE FROM agent_traces WHERE conversation_id=?').run(cid)
+        // 审批审计账本（P0-2c-1）：隐私优先，会话删除时级联删除；
+        // 产品口径是「会话存在期间可回溯」，不做跨会话永久留存。
+        db.prepare('DELETE FROM approval_events WHERE conversation_id=?').run(cid)
         db.prepare('DELETE FROM conversations WHERE id=?').run(cid)
       }
     })

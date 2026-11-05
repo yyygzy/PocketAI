@@ -10,12 +10,13 @@
 // 参数指纹把复用限定在「同一工具同一操作」上，用户点一次只放过一次实际动作。
 import { randomUUID, createHash } from 'node:crypto'
 import { IPC } from '../../shared/types'
-import type { ToolApprovalRequestEvent } from '../../shared/types'
+import type { ApprovalAuditContext, ToolApprovalRequestEvent } from '../../shared/types'
 
 type EmitFn = (channel: string, data: unknown) => void
+type SettleReason = 'user' | 'timeout' | 'abort'
 
 interface PendingApproval {
-  settle: (approved: boolean) => void
+  settle: (approved: boolean, reason: SettleReason, alwaysAllow?: boolean) => void
   timer: NodeJS.Timeout
   conversationId?: string
   /** 白名单键：toolName + 参数指纹（见 toolAllowKey） */
@@ -98,11 +99,36 @@ export function createApproval(
   req: Omit<ToolApprovalRequestEvent, 'approvalId'>,
   emit: EmitFn,
   signal?: AbortSignal,
-  argsJson?: string | null
+  argsJson?: string | null,
+  audit?: ApprovalAuditContext
 ): Promise<boolean> {
-  // 会话级「总是允许」：同一会话内同工具同参数不再弹窗
+  const argsDigest = toolArgsFingerprint(argsJson)
+  const requestedAt = audit?.requestedAt ?? Date.now()
+  // record 是回调，不随上下文落库（拆分后 context 才是纯元数据）
+  const { record: recordFn, ...auditCtx } = audit ?? {}
+  const writeAudit = (
+    decision: 'auto_allow' | 'user_approve' | 'user_deny' | 'timeout_deny' | 'policy_deny',
+    reasonCode: string,
+    scope: 'once' | 'session'
+  ): void => {
+    recordFn?.({
+      requestId: req.requestId,
+      conversationId: req.conversationId,
+      toolName: req.toolName,
+      decision,
+      reasonCode,
+      scope,
+      argsDigest,
+      argsJson,
+      context: { ...auditCtx, requestedAt },
+      emit
+    })
+  }
+
+  // 会话级「总是允许」：同一会话内同工具同参数不再弹窗（审计记 auto_allow + session）
   const allowKey = toolAllowKey(req.toolName, argsJson)
   if (isSessionAllowed(req.conversationId, allowKey)) {
+    if (audit) writeAudit('auto_allow', 'SESSION_ALLOW', 'session')
     return Promise.resolve(true)
   }
 
@@ -114,23 +140,35 @@ export function createApproval(
       signal?.removeEventListener('abort', onAbort)
       pending.delete(approvalId)
     }
-    const settle = (approved: boolean) => {
+    const settle = (approved: boolean, reason: SettleReason, alwaysAllow = false) => {
       if (!pending.has(approvalId)) return // 已超时/已应答：幂等忽略
       cleanup()
+      if (audit) {
+        if (approved) {
+          writeAudit('user_approve', 'USER_APPROVE', alwaysAllow ? 'session' : 'once')
+        } else if (reason === 'timeout') {
+          writeAudit('timeout_deny', 'TIMEOUT', 'once')
+        } else if (reason === 'abort') {
+          writeAudit('policy_deny', 'ABORTED', 'once')
+        } else {
+          writeAudit('user_deny', 'USER_DENY', 'once')
+        }
+      }
       resolve(approved)
     }
 
-    const onAbort = () => settle(false)
+    const onAbort = () => settle(false, 'abort')
 
     // 已中止：不登记 pending、不建定时器，直接按拒绝返回
     if (signal?.aborted) {
+      if (audit) writeAudit('policy_deny', 'ABORTED', 'once')
       resolve(false)
       return
     }
 
     const entry: PendingApproval = {
       settle,
-      timer: setTimeout(() => settle(false), APPROVAL_TIMEOUT_MS),
+      timer: setTimeout(() => settle(false, 'timeout'), APPROVAL_TIMEOUT_MS),
       conversationId: req.conversationId,
       allowKey
     }
@@ -154,7 +192,7 @@ export function resolveApproval(
   const entry = pending.get(approvalId)
   if (!entry) return false
   if (approved && alwaysAllow) markSessionAllow(entry.conversationId, entry.allowKey)
-  entry.settle(approved)
+  entry.settle(approved, 'user', alwaysAllow)
   return true
 }
 

@@ -49,6 +49,7 @@ const backupOf = (over: Partial<DataHealthReport['backup']>): DataHealthReport['
 const reportOf = (backup: DataHealthReport['backup']): DataHealthReport => ({
   sizes: zeroSizes,
   traces: { rows: 0, maxRowsInOneConversation: 0 },
+  approvals: { rows: 0, writeFailures: 0 },
   kb: {
     total: 0,
     byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 },

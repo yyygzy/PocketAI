@@ -100,6 +100,7 @@ import type {
   GlossaryTerm,
   ShellConfig,
   ToolApprovalRequestEvent,
+  ApprovalAuditWarnEvent,
   WebSearchConfig,
   CalendarConfig,
   ChannelConfig,
@@ -394,6 +395,9 @@ const api = {
     ipcRenderer.invoke(IPC.DATA_HEALTH_OPEN_DIR),
   clearBrowserCache: (): Promise<{ ok: boolean; beforeBytes: number; afterBytes: number; error?: string }> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_CLEAR_CACHE),
+  // 清空审批审计账本（P0-2c-1）：显式动作、无入参；返回实际删除行数，失败走 safeHandle 的 {ok:false}
+  clearApprovalRecords: (): Promise<{ ok: true; cleared: number } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.DATA_HEALTH_CLEAR_APPROVALS),
   // 本机判据屏（V4-Iter-146）：只读汇总，一次进来会现采一次显存（异步，不占事件循环）
   getLocalJudgement: (): Promise<LocalJudgementReport> =>
     ipcRenderer.invoke(IPC.LOCAL_JUDGEMENT_GET),
@@ -1215,6 +1219,12 @@ const api = {
     const listener = (_e: IpcRendererEvent, data: import('../shared/types').BudgetWarnEvent) => handler(data)
     ipcRenderer.on(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
+  },
+  /** 审批审计写失败（fail-open）：主进程每进程只广播一次，渲染端弹一条可见提示 */
+  onApprovalAuditWarn: (handler: (e: ApprovalAuditWarnEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: ApprovalAuditWarnEvent) => handler(data)
+    ipcRenderer.on(IPC.AGENT_APPROVAL_AUDIT_WARN_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.AGENT_APPROVAL_AUDIT_WARN_EVENT, listener)
   },
   /** 消息右键「提醒我」直建一次性提醒 */
   createReminder: (

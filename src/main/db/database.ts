@@ -860,6 +860,37 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE kb_documents ADD COLUMN updated_at INTEGER;
     `
+  },
+  {
+    version: 53,
+    name: 'approval_events',
+    up: `
+      CREATE TABLE IF NOT EXISTS approval_events (
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        assistant_id TEXT,
+        step_index INTEGER,
+        tool_call_id TEXT,
+        tool_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('auto_allow', 'user_approve', 'user_deny', 'timeout_deny', 'policy_deny')),
+        reason_code TEXT,
+        scope TEXT NOT NULL DEFAULT 'once' CHECK (scope IN ('once', 'session')),
+        args_digest TEXT,
+        args_redacted TEXT,
+        actor TEXT NOT NULL DEFAULT 'local_user',
+        requested_at INTEGER NOT NULL,
+        decided_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_approval_events_conversation
+        ON approval_events(conversation_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_approval_events_created
+        ON approval_events(created_at);
+      CREATE INDEX IF NOT EXISTS idx_approval_events_request
+        ON approval_events(request_id);
+    `
   }
 ]
 

@@ -8,6 +8,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { ToastProvider } from './components/ToastProvider'
 import { ReminderListener } from './hooks/ReminderListener'
 import { BudgetWarningListener } from './hooks/BudgetWarningListener'
+import { ApprovalAuditListener } from './hooks/ApprovalAuditListener'
 import { RemindersModal } from './components/RemindersModal'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
@@ -180,6 +181,7 @@ export default function App() {
     <ToastProvider>
       <ReminderListener />
       <BudgetWarningListener />
+      <ApprovalAuditListener />
       <div className="flex h-screen w-screen overflow-hidden">
         <div ref={contentRef} className="flex flex-1 min-w-0 h-full">
           <Sidebar

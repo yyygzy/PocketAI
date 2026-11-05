@@ -224,6 +224,30 @@ export const DataHealthPanel: React.FC = () => {
     }
   }
 
+  /**
+   * 清空审批审计账本（P0-2c-1）：显式动作，与「清理 HTTP 缓存」同款确认框。
+   * 失败必须弹 toast（不许把"没清掉"画成「已清空」）；成功把实际删除条数报出来。
+   */
+  const onClearApprovals = async () => {
+    if (!report) return
+    if (!(await confirm({ message: t('dh.approvals.clearConfirm', { rows: report.approvals.rows }), danger: true }))) return
+    setBusy(true)
+    try {
+      const r = await window.pocketai.clearApprovalRecords()
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+      } else {
+        toast.success(t('dh.approvals.clearDone', { count: r.cleared }))
+      }
+      load()
+    } catch (e) {
+      reportIpcError('dataHealth.clearApprovals')(e)
+      load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!report) {
     // §222：读失败与还没读到是两件事——前者要把原因留在界面上（toast 会消失，而这块一直挂着「加载中…」）
     // §350：这一支以前同屏没有出口——本体那颗「刷新」长在 report 到了之后的那块里，首读失败时它根本不在屏上
@@ -245,7 +269,7 @@ export const DataHealthPanel: React.FC = () => {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 
-  const { sizes, traces, kb, backup, tasks, boot, recentPerf, perfHistory } = report
+  const { sizes, traces, approvals, kb, backup, tasks, boot, recentPerf, perfHistory } = report
   const integrity = kb.integrity
   const hasDimMismatch = integrity.brokenDocs.some((d) => d.reason === 'dim-mismatch')
   const integrityOk =
@@ -308,6 +332,26 @@ export const DataHealthPanel: React.FC = () => {
       {/* Agent 运行账本的规模（探测见 agent-trace.repo.countForHealth；为什么报这两个数见台账 V4-Iter-173） */}
       <div className="mb-4 space-y-1">
         <Row label={t('dh.traces')} value={formatTraceLedger(traces, t)} />
+      </div>
+
+      {/* 审批审计账本（approval_events，P0-2c-1）：行数 + 本次进程写失败次数。
+          口径是「会话存在期间可回溯」，删会话会级联删除；不写成永久可查。 */}
+      <div className="mb-4 space-y-1">
+        <Row
+          label={t('dh.approvals')}
+          value={
+            approvals.rows === 0
+              ? t('dh.approvals.empty')
+              : t('dh.approvals.value', { rows: approvals.rows.toLocaleString('en-US'), failures: approvals.writeFailures })
+          }
+          warn={approvals.writeFailures > 0}
+        />
+        <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('dh.approvals.hint')}</div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onClearApprovals} disabled={busy || approvals.rows === 0} className="chip">
+            {t('dh.approvals.clear')}
+          </button>
+        </div>
       </div>
 
       {/* 知识库索引状态 */}

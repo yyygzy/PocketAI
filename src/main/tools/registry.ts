@@ -327,7 +327,12 @@ class ToolRegistry {
     return baseline
   }
 
-  /** 执行单个工具调用（signal 透传给支持中止的长时工具，kbIds/agent 透传给 kb_search/todo_write） */
+  /**
+   * 执行单个工具调用（signal 透传给支持中止的长时工具，kbIds/agent 透传给 kb_search/todo_write）。
+   * 注意：本方法**不经过审批链**——引擎在调用前已自行跑 `classify` + `createApproval`，
+   * 而 MCP 面板的「手动试运行」等旁路会绕过审批直接落到这里，因此这些调用不会进
+   * approval_events（P0-2c-1 已明确不纳入）。这是已知风险，暂不改结构。
+   */
   async execute(
     toolName: string,
     argsJson: string,

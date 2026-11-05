@@ -49,7 +49,8 @@ import { buildToolPreviewFields } from '../../shared/tool-preview'
 import { injectAttachments, appendTextAttachments, buildImageParts } from '../chat/context-attachments'
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
-import { createApproval } from './tool-approval'
+import { createApproval, toolArgsFingerprint } from './tool-approval'
+import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
 import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot } from './tool-output-offload'
 import {
@@ -2068,6 +2069,26 @@ class AgentEngine {
       }
 
       if (classification.decision === 'deny') {
+        // 策略拒绝统一记 policy_deny（reason 原样带上：UNKNOWN_TOOL / TOOL_NOT_ALLOWED /
+        // TOOL_DENIED / DENY_RULE:* / BAD_ARGS…）——事后要能解释"那次为什么没做"。
+        recordApprovalDecision({
+          requestId,
+          conversationId,
+          toolName: tc.function.name,
+          decision: 'policy_deny',
+          reasonCode: classification.reason ?? 'BLOCKED',
+          scope: 'once',
+          argsDigest: toolArgsFingerprint(tc.function.arguments),
+          argsJson: tc.function.arguments,
+          context: {
+            assistantId: ctx.assistantId,
+            stepIndex,
+            toolCallId: tc.id,
+            toolId: tc.function.name,
+            argsJson: tc.function.arguments
+          },
+          emit
+        })
         // BAD_ARGS（参数 JSON 解析失败）走富文本错误，命中下方修正引导注入；
         // 其余 deny 原因按安全策略拒绝处理。
         results[i] = classification.reason === 'BAD_ARGS'
@@ -2085,6 +2106,24 @@ class AgentEngine {
             }
       } else if (classification.decision === 'confirm') {
         if (unattended) {
+          recordApprovalDecision({
+            requestId,
+            conversationId,
+            toolName: tc.function.name,
+            decision: 'policy_deny',
+            reasonCode: 'UNATTENDED',
+            scope: 'once',
+            argsDigest: toolArgsFingerprint(tc.function.arguments),
+            argsJson: tc.function.arguments,
+            context: {
+              assistantId: ctx.assistantId,
+              stepIndex,
+              toolCallId: tc.id,
+              toolId: tc.function.name,
+              argsJson: tc.function.arguments
+            },
+            emit
+          })
           results[i] = {
             toolCallId: tc.id,
             name: tc.function.name,
@@ -2108,7 +2147,17 @@ class AgentEngine {
             emit,
             master.signal,
             // 参数指纹参与「总是允许」粒度（SEC-13）：同工具同参数才复用
-            tc.function.arguments
+            tc.function.arguments,
+            {
+              assistantId: ctx.assistantId,
+              stepIndex,
+              toolCallId: tc.id,
+              toolId: tc.function.name,
+              argsJson: tc.function.arguments,
+              requestedAt: Date.now(),
+              // settle 时回写审批审计（tool-approval 不直接依赖 DB）
+              record: recordApprovalDecision
+            }
           )
           if (!approved) {
             results[i] = {

@@ -261,6 +261,7 @@ describe('③ 三句"要应用开着才会做"，各按各自的真行为说', (
         otherBytes: 0, browserCacheBytes: 0, browserCacheFiles: 0
       },
       traces: { rows: 0, maxRowsInOneConversation: 0 },
+      approvals: { rows: 0, writeFailures: 0 },
       kb: {
         total: 0, byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 }, errorDocs: [],
         integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] },

@@ -65,6 +65,7 @@ const reportWith = (integrity: Partial<DataHealthReport['kb']['integrity']>): Da
     otherBytes: 0, browserCacheBytes: 1024, browserCacheFiles: 1
   },
   traces: { rows: 0, maxRowsInOneConversation: 0 },
+  approvals: { rows: 0, writeFailures: 0 },
   kb: {
     total: 1,
     byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 1, error: 0 },

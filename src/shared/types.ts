@@ -435,6 +435,8 @@ export interface DataHealthReport {
    * 不是整张表多大（2026-10-17 合成实测，台账 V4-Iter-173）——没有这两个数，那批毫秒数落不到真实库上。
    */
   traces: { rows: number; maxRowsInOneConversation: number }
+  /** 审批审计账本（`approval_events`）：行数 + 本次进程内写失败次数 */
+  approvals: { rows: number; writeFailures: number }
   /** 知识库文档索引状态分布 + 失败文档清单（最多 10 条，创建时间倒序） */
   kb: {
     total: number
@@ -1275,6 +1277,65 @@ export interface ToolApprovalResponsePayload {
   approved: boolean
   /** 勾选「本次会话总是允许」：后续同会话同工具名直接放行（不落库） */
   alwaysAllow?: boolean
+}
+
+/** 审批落库的判定结果（只用于审计，不参与执行控制） */
+export type ApprovalDecision = 'auto_allow' | 'user_approve' | 'user_deny' | 'timeout_deny' | 'policy_deny'
+/** 审批范围：单次 / 本次会话白名单（当前没有永久白名单） */
+export type ApprovalScope = 'once' | 'session'
+
+/** 审计写入所需的调用上下文（事件本身没有这些字段，由引擎补齐） */
+export interface ApprovalAuditContext {
+  assistantId?: string | null
+  stepIndex?: number
+  toolCallId?: string
+  toolId?: string
+  argsJson?: string | null
+  requestedAt?: number
+  /**
+   * settle 时回写审计账本。由引擎注入 `recordApprovalDecision`，
+   * tool-approval 因此不直接 import DB/repo —— 审批单元测试不该被 electron/portable 拉下水。
+   */
+  record?: (input: ApprovalAuditWriteInput) => void
+}
+
+/** createApproval 决定落账时交给引擎回调的载荷（与 approval-audit 的 RecordApprovalInput 同形） */
+export interface ApprovalAuditWriteInput {
+  requestId: string
+  conversationId: string
+  toolName: string
+  decision: ApprovalDecision
+  reasonCode: string
+  scope: ApprovalScope
+  argsDigest: string
+  argsJson: string | null | undefined
+  context: Omit<ApprovalAuditContext, 'record'>
+  emit: (channel: string, payload: unknown) => void
+}
+
+/** approval_events 写入行（repo 内部使用） */
+export interface ApprovalEventInput {
+  requestId: string
+  conversationId: string
+  assistantId: string | null
+  stepIndex: number | null
+  toolCallId: string | null
+  toolId: string
+  toolName: string
+  decision: ApprovalDecision
+  reasonCode: string | null
+  scope: ApprovalScope
+  argsDigest: string | null
+  argsRedacted: string | null
+  actor: string
+  requestedAt: number
+  decidedAt: number
+}
+
+/** 审批审计写失败广播（主进程 → 渲染端；只提示一次，不阻断工具执行） */
+export interface ApprovalAuditWarnEvent {
+  at: number
+  failures: number
 }
 
 // ---------- 发送请求 ----------
@@ -2212,6 +2273,7 @@ export const IPC = {
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
   DATA_HEALTH_OPEN_DIR: 'dataHealth:open-dir', // 在系统文件管理器里打开数据目录（「浏览器缓存」那一格旁的只读跳转）
   DATA_HEALTH_CLEAR_CACHE: 'dataHealth:clear-cache', // 清 default session 的 HTTP 缓存（同那一格旁的显式动作；不做文件系统删除，见 cache-clean.ts）
+  DATA_HEALTH_CLEAR_APPROVALS: 'dataHealth:clear-approvals', // 清空审批审计账本（approval_events）
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
   DATA_HEALTH_KB_REINDEX: 'dataHealth:kb-reindex', // 缺向量/维度不匹配文档一键重建索引
@@ -2417,6 +2479,7 @@ export const IPC = {
   APP_OPEN_DETACHED: 'app:open-detached',
   AGENT_TOOL_APPROVAL_EVENT: 'agent:tool-approval-event',
   AGENT_TOOL_APPROVE_RESPONSE: 'agent:tool-approve-response',
+  AGENT_APPROVAL_AUDIT_WARN_EVENT: 'agent:approval-audit-warn', // 主进程→渲染端：审批审计写失败（只提示，不阻断）
 
   // ---------- Channels（IM Bot 网关：Telegram/飞书/钉钉/Slack/Discord） ----------
   CHANNEL_GET_CONFIG: 'channel:get-config',

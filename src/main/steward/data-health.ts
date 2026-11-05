@@ -16,6 +16,7 @@ import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
+import { approvalEventRepo, getApprovalAuditFailureCount } from '../db/repositories/approval-event.repo'
 import { readWebDAVConfig } from '../backup/backup-service'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { errMsg } from '../error'
@@ -225,6 +226,11 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   // 1b. Agent 运行账本（agent_traces）规模：总行数 + 单个会话最多行数。
   //     后者贵一些（200,000 行实测 16 ms，要逐行数），所以只在这一屏被打开时算一次。
   const traces = agentTraceRepo.countForHealth()
+  // 1c. 审批审计账本（approval_events）：行数 + 本次进程内写失败次数（fail-open 的可观测面）。
+  const approvals = {
+    rows: approvalEventRepo.count(),
+    writeFailures: getApprovalAuditFailureCount()
+  }
 
   // 2. 知识库索引状态 + 完整性探测（探测整体容错：失败按全空处理，不阻断报告）
   const docs = kbDocRepo.listAll()
@@ -291,5 +297,5 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   // 7. 跨会话慢事件（从日志尾部聚合，只下发统计行）
   const perfHistory = getPerfHistory()
 
-  return { sizes, traces, kb, backup, tasks, boot, recentPerf, perfHistory }
+  return { sizes, traces, approvals, kb, backup, tasks, boot, recentPerf, perfHistory }
 }

@@ -8,6 +8,7 @@ import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
+import { approvalEventRepo } from '../../db/repositories/approval-event.repo'
 import { clearBrowserHttpCache } from '../../steward/cache-clean'
 import { computeLocalJudgements } from '../../steward/local-judgement'
 import { recordPerf } from '../../steward/perf-probe'
@@ -65,6 +66,9 @@ export function registerStewardHandlers(): void {
   // 清 HTTP 缓存（V4-Iter-189）：与上一条同处「浏览器缓存」那一格，同样**不接收任何路径入参**；
   // 只调 session.clearCache()（Chromium 自己淘汰），失败原样回报——不许把没做成的清理画成释放了空间。
   safeHandle(IPC.DATA_HEALTH_CLEAR_CACHE, () => clearBrowserHttpCache())
+  // 清空审批审计账本：显式动作、无入参；返回实际删除行数，失败按 safeHandle 原样回报。
+  // 这里刻意让 clearAll() 抛错（不在 repo 里吞成 0）——用户点的就是"清干净"，静默报 0 会被读成"本来就没有"。
+  safeHandle(IPC.DATA_HEALTH_CLEAR_APPROVALS, () => ({ ok: true as const, cleared: approvalEventRepo.clearAll() }))
   // 本机判据屏（V4-Iter-146）：现采一次显存是**异步**的，这条通道因此是 async；
   // 失败不降级成空报告——空报告会与"这台机器真的采不到"混成一回事（safeHandle 把失败转成
   // {ok:false,error} 返回值，渲染层按 hasIpcFailed 判，不许把失败画成数据）。

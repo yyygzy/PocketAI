@@ -43,6 +43,7 @@ function report(
       ...sizesOver
     },
     traces: { rows: 12340, maxRowsInOneConversation: 1200, ...tracesOver },
+    approvals: { rows: 0, writeFailures: 0 },
     kb: {
       total: 2,
       byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 2, error: 0 },
