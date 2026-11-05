@@ -17,6 +17,7 @@ import { UsagePanel } from './UsagePanel'
 import { DataHealthPanel } from './DataHealthPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { LocalJudgementPanel } from './LocalJudgementPanel'
+import { OutboundPanel } from './OutboundPanel'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
 import { applyChatFontSize, normalizeFontSize } from '../../chat-font'
@@ -292,6 +293,11 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.backup')}</h3>
           <BackupPanel enc={encCopy.enc} />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.outbound')}</h3>
+          <OutboundPanel />
         </div>
 
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">

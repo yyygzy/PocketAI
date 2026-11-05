@@ -2162,6 +2162,42 @@ export const BUILTIN_EMBED_DIM = 512
 /** bge 中文系列检索场景的查询指令前缀（仅加在查询侧，文档侧不加） */
 export const BUILTIN_QUERY_PREFIX = '为这个句子生成表示以用于检索相关文章：'
 
+// ---------- 出网清单（只读） ----------
+// 清单由主进程注册表 OUTBOUND_ENTRIES 导出，覆盖测试按调用点文件做回归；
+// 这里只描述渲染端拿到的视图，避免把「显示文案」写死在主进程。
+export type OutboundKind = 'fixed' | 'configurable' | 'runtime-url' | 'local-loopback'
+export type OutboundTransport =
+  | 'safeFetch'
+  | 'fetch'
+  | 'webdav'
+  | 'updater'
+  | 'websocket'
+  | 'child-process'
+
+export interface OutboundAddress {
+  /** 可选标签（服务商名 / MCP Server 名）；空串表示只展示地址 */
+  label: string
+  value: string
+}
+
+export interface OutboundEntryView {
+  id: string
+  /** 类别名 i18n 键 */
+  labelKey: string
+  /** 用途说明 i18n 键 */
+  purposeKey: string
+  kind: OutboundKind
+  /** 固定端点常量（configurable/runtime-url 也可能列出已知的固定部分，可能为空） */
+  endpoints: string[]
+  transport: OutboundTransport
+  /** 配置来源（如 provider baseUrl、agent.websearch_searxng_url、mcp_servers） */
+  configSource: string
+  /** 从现有配置仓储解析出的当前真实地址；未配置 / 读不到为空数组 */
+  addresses: OutboundAddress[]
+  /** 解析当前地址失败时的原因（失败不伪装成未配置） */
+  resolveError?: string
+}
+
 // ---------- IPC 通道 ----------
 export const IPC = {
   SYSTEM_HARDWARE_INFO: 'system:hardware-info',
@@ -2509,6 +2545,7 @@ export const IPC = {
   // ---------- 网络代理（主进程 API 流量） ----------
   NET_PROXY_GET: 'net:proxy-get', // 读取当前代理 URL（''=直连）
   NET_PROXY_SET: 'net:proxy-set', // 保存并立即应用代理（''=恢复直连）
+  OUTBOUND_GET: 'net:outbound-get', // 只读出网清单：注册表 + 各条当前真实地址
 
   // ---------- 侧栏模块顺序与固定 ----------
   SIDEBAR_GET_ORDER: 'sidebar:get-order',

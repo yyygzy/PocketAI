@@ -26,6 +26,7 @@ import { registerEncryptionHandlers } from './handlers/encryption'
 import { registerBackupHandlers } from './handlers/backup'
 import { registerLockHandlers } from './handlers/lock'
 import { registerStewardHandlers } from './handlers/steward'
+import { registerOutboundHandlers } from './handlers/outbound'
 import { registerPreferenceHandlers } from './handlers/preferences'
 import { registerFileHandlers } from './handlers/files'
 import { registerReminderHandlers } from './handlers/reminders'
@@ -55,6 +56,7 @@ export function registerIpcHandlers(): void {
   registerBackupHandlers()
   registerLockHandlers()
   registerStewardHandlers()
+  registerOutboundHandlers()
   registerPreferenceHandlers()
   registerFileHandlers()
   registerReminderHandlers()

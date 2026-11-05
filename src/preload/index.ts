@@ -1020,6 +1020,10 @@ const api = {
     ipcRenderer.invoke(IPC.NET_PROXY_GET),
   setProxyUrl: (url: string): Promise<string | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.NET_PROXY_SET, url),
+  /** 只读出网清单：注册表 + 各条当前真实地址 */
+  getOutboundEntries: (): Promise<
+    import('../shared/types').OutboundEntryView[] | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.OUTBOUND_GET),
 
   // ---------- 侧栏模块顺序与固定 ----------
   getSidebarOrder: (): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>
