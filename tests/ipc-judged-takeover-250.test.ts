@@ -770,7 +770,10 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     expect(n(sk, /"skill-form-templates-retry"/g), '技能模板那颗').toBe(1)
     expect(n(um, /"user-memory-retry"/g), '用户记忆那颗').toBe(1)
     expect(n(am, /agent\.retryRead/g), '助手市场一句一颗').toBe(1)
-    expect(n(sm, /agent\.retryRead/g), '技能市场一句一颗').toBe(1)
+    // §412 起技能市场有**两发**清单读（本地技能清单＋助手清单），所以这句一键的屏也是两颗；
+    // 反向钉：新那颗的 testid 只许出现一次，第三颗要进来就先得红在这里
+    expect(n(sm, /agent\.retryRead/g), '技能市场两句两颗（§273 一发＋§412 一发）').toBe(2)
+    expect(n(sm, /"skill-market-assistants-retry"/g), '§412 那颗只一颗').toBe(1)
     expect(n(sk, /agent\.retryRead/g), '技能模块一句一颗（多了就是给不该有机关的地方造键）').toBe(1)
     expect(n(um, /agent\.retryRead/g), '用户记忆一句一颗').toBe(1)
 

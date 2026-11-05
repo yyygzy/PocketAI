@@ -577,6 +577,8 @@ export const en = {
   'ae.noTools': 'No tools available — start an MCP server in the “Agent” section and its tools will appear here.',
   'ae.skillsLabel': 'Linked skills (auto-injected into the system prompt, no need to write {{skills}}; built-in skills must be enabled on the “Skills” page first)',
   'ae.noSkills': 'No skills available — create or enable one in the “Skills” section.',
+  'ae.skillDisabledHint': 'Disabled skills can’t be linked — enable it on the “Skills” page first.',
+  'ae.skillDisabledTag': 'Disabled',
 
   // ── Comparison columns ──
   'cmp.streaming': 'Generating',
@@ -1573,6 +1575,12 @@ export const en = {
   'skill.market.exportDone': 'Exported',
   'skill.market.exportFailed': 'Export failed',
   'skill.market.builtinHint': 'Built-in skill content is read-only. Duplicate it as yours to edit a copy.',
+  'skill.market.bindTitle': 'Link to an assistant',
+  'skill.market.bindNone': 'Not linked to any assistant',
+  'skill.market.bindButton': 'Link',
+  'skill.market.bindDone': 'Linked to “{name}” — it applies from the next message',
+  'skill.market.bindFailed': 'Link failed: {msg}',
+  'skill.market.bindDisabledHint': 'This skill is disabled — enable it before linking',
   'skill.market.tabLocal': 'Local',
   'skill.market.tabOnline': 'Online',
   'skill.market.onlineTitle': 'Online Skill Market',
@@ -2055,6 +2063,9 @@ export const en = {
   'wizard.summarySkills': 'Builtin skills',
   'wizard.summarySkillsAuto': 'First 3 enabled automatically',
   'wizard.summarySkillsEnableFailed': 'Auto-enable incomplete ({done}/{total} enabled): {msg}',
+  'wizard.summarySkillsBound': 'Linked to this assistant automatically',
+  'wizard.summarySkillsBoundAlready': 'Already linked to this assistant',
+  'wizard.summarySkillsBindFailed': 'Linking to the assistant failed: {msg}',
   // ── First-run wizard: optional probe on the Done step (V4-Iter-147) ──
   'wizard.probeTitle': 'One extra check: can this model delegate work?',
   'wizard.probeHint': 'Sends 3 real requests to it (about 10s on a local model) and only looks at the native tool-call path. Skipping changes nothing; you can probe later under Settings → Model Providers.',

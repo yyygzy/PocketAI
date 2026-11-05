@@ -76,6 +76,14 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     done?: number
     total?: number
   } | null>(null)
+  // §412：「技能启用了」与「这位助手用得上」是两件事——前者只写 skills.enabled，
+  // 后者才把它写进助手的 skillIds；缺了后半句，装完的技能在会话里根本不会出现（P0-1 的断链）。
+  // 单独一档回执，是因为绑 provider 那一发只在"这位助手还没配 provider"时才发，
+  // 挂在那一发上就等于"第二次跑向导的人什么都没绑，完成页还照样画 ✓"＝§328 记过的那族谎。
+  const [skillBindOutcome, setSkillBindOutcome] = useState<{
+    state: 'bound' | 'already' | 'failed'
+    msg?: string
+  } | null>(null)
   // B1 闸门触发后开放「回安全步设主密码」的入口（配置步内专用）
   const [jumpToSecurity, setJumpToSecurity] = useState(false)
   // 存下的整条 provider 记录（147 起完成页的可选探针要用它的 models；只存 id 会看不出有没有缓存模型）
@@ -306,15 +314,19 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       // 2. 把 assistant 绑定到刚保存的 provider
       //    内置助手只读，需先复制为「我的助手」再绑定 provider
       let effectiveAssistantId = selectedAssistantId
+      // §412：这一步之后还要拿这条记录写 skillIds，所以把记录本身也带出去（副本，不是内置模板）
+      let effectiveAssistant: AssistantRecord | null = null
       const assistant = assistants.find((a) => a.id === selectedAssistantId)
       if (assistant) {
         let target = assistant
+        effectiveAssistant = assistant
         if (assistant.isBuiltin) {
           target = await window.pocketai.duplicateAssistant(assistant.id, `${assistantDisplayName(assistant, t)} ${t('assistant.copySuffix')}`)
           // §223：不判就把失败对象当助手用 ⇒ `target.id` 是 undefined，向导后面几步
           // （saveAssistant／setAssistantPinned）拿着假 id 写库，助手列表还被塞进一条 `{ok:false}`
           if (hasIpcFailed(target)) throw new Error(ipcFailText(target, t('common.unknownError')))
           effectiveAssistantId = target.id
+          effectiveAssistant = target
           setSelectedAssistantId(target.id)
           // 把副本加入本地列表，供后续摘要展示
           setAssistants((prev) => {
@@ -331,6 +343,9 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             defaultProviderId: providerId,
           })
           if (hasIpcFailed(bound)) throw new Error(ipcFailText(bound, t('common.unknownError')))
+          // §412：技能那一步在后面，它还要拿这条记录写 `skillIds`——必须换成刚写回的这一份，
+          // 拿着绑 provider 之前的旧记录再存一次会把刚绑上的 provider 抹掉（`save()` 是全列覆盖）
+          effectiveAssistant = bound
         }
       }
       // 3. pin 选中的助手（内置的 pin 副本）
@@ -360,17 +375,26 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         // 数「现在开着几条」而不是"写了几个请求"：本来就开着的也要算进来，
         // 否则三条里两条原本已开、只新写一条成功也会报成 1/3（部分成功的数字要诚实）
         let enabledCount = 0
+        // 现在确实开着的那几条（本来就开着的＋这次写成功的）＝下一步能绑的集合
+        const nowOn: string[] = []
         for (const sk of builtinSkills) {
           if (!sk.enabled) {
             const saved = await window.pocketai.saveSkill({ ...sk, enabled: true })
             // 不在这几发上 throw：模型与助手已经存好，技能这一格"没全做成"不该把用户卡在配置步
             if (hasIpcFailed(saved)) {
               enableFail ??= ipcFailText(saved, t('common.unknownError'))
-            } else enabledCount++
-          } else enabledCount++
+            } else {
+              enabledCount++
+              nowOn.push(sk.id)
+            }
+          } else {
+            enabledCount++
+            nowOn.push(sk.id)
+          }
         }
         // 一个内置技能都没有（`extensions/skills` 目录缺失时主进程就回空表）：
-        // 「自动启用前 3 个」同样不能说 ⇒ 标成 skipped，完成页那一行整条不显示
+        // 「自动启用前 3 个」同样不能说 ⇒ 标成 skipped，完成页那一行整条不显示。
+        // 绑定那一发也跳过——没东西可绑，不能报"已绑定"。
         if (builtinSkills.length === 0) setSkillOutcome({ state: 'skipped' })
         else if (enableFail)
           setSkillOutcome({
@@ -380,6 +404,30 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             total: builtinSkills.length
           })
         else setSkillOutcome({ state: 'enabled' })
+
+        // 5. §412：把这次开着的内置技能绑到向导选中的那位助手（内置的＝上一步复制出的副本）。
+        //    单独一发 saveAssistant：上面那发只在助手没配 provider 时才发，绑技能不能借它的条件。
+        //    `effectiveAssistant` 为空只可能是"没选中助手"，那条在配置步的入口就被拦了（wizard.pickAssistant）。
+        if (nowOn.length > 0 && effectiveAssistant) {
+          const prev = effectiveAssistant.skillIds ?? []
+          const merged = [...new Set([...prev, ...nowOn])]
+          if (merged.length === prev.length) {
+            setSkillBindOutcome({ state: 'already' })
+          } else {
+            const linked = await window.pocketai.saveAssistant({
+              ...effectiveAssistant,
+              // 上面刚 pin 过这位助手，而手里这份快照还是 pin 之前的（`isPinned: false`）；
+              // `assistant.repo.save()` 只在 input.isPinned **缺省**时才回落到库里那条，
+              // 把旧值原样写回等于绑个技能顺手把助手取消固定 ⇒ 这里显式留空
+              isPinned: undefined,
+              skillIds: merged
+            })
+            // 同样不 throw：技能没绑上不等于首启失败，但完成页那一句必须换成失败脸（§328 口径）
+            if (hasIpcFailed(linked))
+              setSkillBindOutcome({ state: 'failed', msg: ipcFailText(linked, t('common.unknownError')) })
+            else setSkillBindOutcome({ state: 'bound' })
+          }
+        }
       }
     } catch (e) {
       setSetupErr(errText(e, t('common.unknownError')))
@@ -860,6 +908,28 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
                     total: skillOutcome.total ?? 0,
                     msg: skillOutcome.msg ?? t('common.unknownError')
                   })}
+                </span>
+              </div>
+            )}
+            {/* §412：「启用」与「绑到这位助手」分两行说。绑上了才等于"装完即用"，
+                上面那行 ✓ 只说启用，不许替这一行说话 */}
+            {skillBindOutcome?.state === 'bound' && (
+              <div className="flex items-center gap-2" data-wizard-skill-bind-row>
+                <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
+                <span className="text-[var(--color-success)]">✓ {t('wizard.summarySkillsBound')}</span>
+              </div>
+            )}
+            {skillBindOutcome?.state === 'already' && (
+              <div className="flex items-center gap-2" data-wizard-skill-bind-row>
+                <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
+                <span className="text-[var(--color-success)]">✓ {t('wizard.summarySkillsBoundAlready')}</span>
+              </div>
+            )}
+            {skillBindOutcome?.state === 'failed' && (
+              <div className="flex items-center gap-2" data-wizard-skill-bind-row>
+                <span className="text-[var(--color-text-muted)]">{t('wizard.summarySkills')}:</span>
+                <span className="text-[var(--color-danger)]">
+                  {t('wizard.summarySkillsBindFailed', { msg: skillBindOutcome.msg ?? t('common.unknownError') })}
                 </span>
               </div>
             )}

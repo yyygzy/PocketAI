@@ -152,11 +152,13 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
     setToolPermissions((prev) => prev.filter((id) => !group.some((t) => t.id === id)))
   }
 
-  const chipCls = (on: boolean) =>
+  const chipCls = (on: boolean, blocked = false) =>
     `text-[11px] px-2 py-1 rounded border ${
-      on
-        ? 'bg-[var(--color-accent-soft)] border-[var(--color-accent)] text-[var(--color-accent)]'
-        : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]'
+      blocked
+        ? 'border-[var(--color-border)] text-[var(--color-text-muted)] opacity-50'
+        : on
+          ? 'bg-[var(--color-accent-soft)] border-[var(--color-accent)] text-[var(--color-accent)]'
+          : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]'
     }`
 
   const handleSave = async () => {
@@ -294,18 +296,37 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
             {t('ae.noSkills')}
           </p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {skills.map((sk) => (
-              <button
-                key={sk.id}
-                onClick={() => toggleSkill(sk.id)}
-                title={sk.description}
-                className={chipCls(skillIds.includes(sk.id))}
-              >
-                {sk.icon} {sk.name}
-              </button>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {skills.map((sk) => {
+                // §412：停用的技能不能新增绑定（绑了运行期也被 `listEnabledByIds` 静默跳过＝"绑了等于没绑"那张谎脸）。
+                // 但**已绑且后来停用**的那条要留在屏上并可点掉——取消绑定是用户的决定，不是我们的。
+                const bound = skillIds.includes(sk.id)
+                const blocked = !sk.enabled && !bound
+                return (
+                  <button
+                    key={sk.id}
+                    onClick={() => toggleSkill(sk.id)}
+                    disabled={blocked}
+                    title={blocked ? t('ae.skillDisabledHint') : sk.description}
+                    className={chipCls(bound, blocked)}
+                    data-skill-chip={sk.id}
+                    data-skill-blocked={blocked ? 'true' : undefined}
+                  >
+                    {sk.icon} {sk.name}
+                    {bound && !sk.enabled && (
+                      <span className="ml-1 text-[10px] text-[var(--color-danger)]">{t('ae.skillDisabledTag')}</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            {skills.some((sk) => !sk.enabled && !skillIds.includes(sk.id)) && (
+              <p className="text-xs text-[var(--color-text-muted)] mt-1.5" data-testid="ae-skill-disabled-hint">
+                {t('ae.skillDisabledHint')}
+              </p>
+            )}
+          </>
         )}
       </div>
 

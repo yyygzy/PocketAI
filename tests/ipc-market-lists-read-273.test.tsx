@@ -119,6 +119,7 @@ describe('① 助手市场：那片空白不再演成"你一个助手都没建"'
 describe('② 技能市场本地那一 tab：「还没有任何技能」这张脸让位', () => {
   const mount = (over: Record<string, (...a: any[]) => unknown> = {}): ReturnType<typeof mountWithProviders> => {
     stubPocketai({
+      listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
       listSkills: () => {
         calls.skills += 1
         return [S1]
@@ -164,6 +165,7 @@ describe('② 技能市场本地那一 tab：「还没有任何技能」这张�
 describe('③ 技能表单的模板那一发：入口整块不见是最隐蔽的一张脸', () => {
   const mountToForm = (over: Record<string, (...a: any[]) => unknown> = {}): void => {
     stubPocketai({
+      listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
       listSkills: () => [S1],
       syncSkills: () => ({ count: 0, errors: [] }),
       getSkillTemplates: () => {
@@ -223,6 +225,7 @@ describe('③ 技能表单的模板那一发：入口整块不见是最隐蔽的
 describe('④ 用户记忆那一发', () => {
   const mount = (over: Record<string, (...a: any[]) => unknown> = {}): void => {
     stubPocketai({
+      listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
       listMemories: () => {
         calls.memories += 1
         return [M1]
@@ -293,6 +296,7 @@ describe('⑤ §292 B160：AssistantMarket／SkillMarket 关掉再开 ⇒ 通道
   it('技能市场：挂→等→unmount→重挂 ⇒ listSkills 从 1 涨到 2（syncSkills 不参与计数——§273 那两发里只算清单）', async () => {
     const mountAgain = (): ReturnType<typeof mountWithProviders> => {
       stubPocketai({
+        listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
         listSkills: () => {
           calls.skills += 1
           return [S1]

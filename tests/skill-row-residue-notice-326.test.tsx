@@ -19,6 +19,7 @@ type Impl = (...a: any[]) => unknown
 const mountMarket = (importFolder: Impl): void => {
   stubPocketai({
     listSkills: () => [],
+    listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
     syncSkills: () => ({ count: 0, errors: [] }),
     fetchSkillIndex: () => ({ ok: true, skills: [] }),
     importSkillFolder: importFolder

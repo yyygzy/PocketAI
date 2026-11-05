@@ -51,6 +51,7 @@ function mountMarket(): void {
   inflight = []
   calls = 0
   stubPocketai({
+    listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
     listSkills: () => [],
     syncSkills: () => ({ count: 0, errors: [] }),
     fetchSkillIndex: (url: string) =>

@@ -578,6 +578,8 @@ export const zh = {
   'ae.noTools': '暂无可用工具（先在「Agent」页启动 MCP Server 后会自动出现工具）',
   'ae.skillsLabel': '关联技能（自动注入 SystemPrompt，无需手写 {{skills}}；内置技能需先在「技能」页启用）',
   'ae.noSkills': '暂无可用技能，前往侧栏「技能」页新建或启用',
+  'ae.skillDisabledHint': '已停用的技能不能新增绑定——先到侧栏「技能」页启用它。',
+  'ae.skillDisabledTag': '已停用',
 
   // ── 多模型对照列 ──
   'cmp.streaming': '生成中',
@@ -1575,6 +1577,12 @@ export const zh = {
   'skill.market.exportDone': '已导出',
   'skill.market.exportFailed': '导出失败',
   'skill.market.builtinHint': '内置技能内容不可直接修改；「复制为我的技能」后即可编辑副本。',
+  'skill.market.bindTitle': '绑定到助手',
+  'skill.market.bindNone': '未绑定到任何助手',
+  'skill.market.bindButton': '绑定',
+  'skill.market.bindDone': '已绑定到「{name}」，下次对话就会带上这条技能',
+  'skill.market.bindFailed': '绑定失败：{msg}',
+  'skill.market.bindDisabledHint': '这条技能已停用，先启用才能绑定到助手',
   'skill.market.tabLocal': '本地',
   'skill.market.tabOnline': '在线',
   'skill.market.onlineTitle': '在线技能市场',
@@ -2057,6 +2065,9 @@ export const zh = {
   'wizard.summarySkills': '内置技能',
   'wizard.summarySkillsAuto': '自动启用前 3 个',
   'wizard.summarySkillsEnableFailed': '自动启用没全做成（{done}/{total} 已开）：{msg}',
+  'wizard.summarySkillsBound': '已自动绑定到这位助手',
+  'wizard.summarySkillsBoundAlready': '这位助手早已绑定',
+  'wizard.summarySkillsBindFailed': '绑定到助手失败：{msg}',
   // ── 首启向导：完成页的可选探针（V4-Iter-147）──
   'wizard.probeTitle': '顺手测一下：这台模型能不能「派活」',
   'wizard.probeHint': '会向它发 3 次真请求（本地模型约 10 秒），只考察原生工具调用路径。跳过不影响使用，之后也能在「设置 → 模型服务商」里再测。',

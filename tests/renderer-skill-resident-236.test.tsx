@@ -35,6 +35,7 @@ beforeEach(() => {
   filesResult = { ok: true, files: [{ path: 'references/api.md', size: 8 }] }
   saveResult = skill()
   stubPocketai({
+    listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
     listSkills: () => skills,
     syncSkills: () => ({ count: 0, errors: [] }),
     getSkillTemplates: () => [],
@@ -98,6 +99,7 @@ describe('自带文件那三张脸', () => {
 describe('市场那一屏的目录入口', () => {
   it('点「导入技能目录」⇒ 走那条新通道，并把"已按按需导入"与不执行的字段说出来', async () => {
     stubPocketai({
+      listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
       listSkills: () => skills,
       syncSkills: () => ({ count: 0, errors: [] }),
       getSkillTemplates: () => [],

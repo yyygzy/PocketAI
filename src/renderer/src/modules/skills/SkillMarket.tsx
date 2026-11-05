@@ -5,8 +5,9 @@
 // - online: 远程 registry index 拉取 + 网格展示 + 一键导入
 // URL 导入：粘贴 raw URL（.json 或 .md），safeFetch 后 parse 导入
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { SkillRecord } from '../../../../shared/types'
+import type { AssistantRecord, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { assistantDisplayName } from '../chat/assistant-display'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
@@ -77,6 +78,43 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   }, [])
 
   /**
+   * §412：助手清单——「绑定到助手」那一行的数据源。
+   * 装完技能不生效的真根因不是导入那一步，是导入之后没有任何地方把它接到助手身上：
+   * 向导只写 `skills.enabled`，助手的 `skillIds` 一直是空的，运行期 `buildSkillsContext` 按 `skillIds` 取，
+   * 于是技能躺在库里、一次都没进过对话。
+   */
+  const [assistants, setAssistants] = useState<AssistantRecord[]>([])
+  const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
+
+  /**
+   * 这一发的代次（§322 同族）：它和 `fetchRemote` 一样能被叠着发（进市场、切 tab、那颗重试键），
+   * 但比那三发多一层——**绑定成功那一路会本地改写 `assistants`**（拿 `saveAssistant` 的返回值替换那条）。
+   * 先发起的那条后回时写的还是发出去之前的整份快照 ⇒ 刚点出来的 ✓ 会退回成「绑定」那颗键。
+   * 只有最后发起那次的响应允许写屏（清单与那句失败话术都算）。
+   */
+  const assistantsSeqRef = useRef(0)
+
+  const loadAssistants = useCallback(() => {
+    const seq = ++assistantsSeqRef.current
+    window.pocketai
+      .listAssistants()
+      .then((v) => {
+        if (seq !== assistantsSeqRef.current) return
+        if (hasIpcFailed(v)) {
+          setAssistantsUnread({ error: v.error })
+          return
+        }
+        setAssistantsUnread(null)
+        setAssistants(v)
+      })
+      .catch((e: unknown) => {
+        if (seq !== assistantsSeqRef.current) return
+        setAssistantsUnread({ error: errText(e, '') })
+        logIpcError('assistants.list', e)
+      })
+  }, [])
+
+  /**
    * 在线清单那一发的代次（§322）：`fetchRemote` 可以被"进 tab"、URL 框的 Enter、「刷新」键叠着发，
    * 而先发起的那条常常后回 ⇒ 旧那份把新 URL 的清单覆盖掉，同时"还在加载"被先回的那条翻成"已就绪"——
    * 屏上摆着结果、内容却是另一个索引的。只有**最后发起那次**的响应允许写屏（清单、错误句、loading 都算）。
@@ -104,6 +142,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
 
   useEffect(() => {
     load()
+    loadAssistants()
     // §322：`registryUrl` **不进依赖**。那颗输入框是受控的、逐字符 setRegistryUrl，
     // 把 URL 放进依赖等于"每敲一个字符发一条真实网络请求"（默认值是 GitHub 上的真索引，主进程不缓存）。
     // 换完 URL 要重头发的是那两颗显式入口：URL 框的 Enter 与「刷新」按钮。
@@ -116,7 +155,7 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       window.removeEventListener('keydown', onKey)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, load, fetchRemote, onClose])
+  }, [tab, load, loadAssistants, fetchRemote, onClose])
 
   // 搜索过滤
   const filtered = useMemo(() => {
@@ -245,6 +284,32 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       setView({ mode: 'grid' })
     },
     [t, onChanged, flash]
+  )
+
+  /**
+   * §412：把这条技能并进助手的 `skillIds`（`saveAssistant` 是全量保存，所以传回整条记录）。
+   * 并集用 Set，与向导那一发同一条口径：`listEnabledByIds` 是按传入顺序逐条取的，
+   * 同一个 id 在 `skillIds` 里出现两次＝那条技能的正文在同一轮里注入两遍。
+   * 成功后必须拿返回值替换本地那份：不换，下一次绑另一条技能会拿旧的 `skillIds` 把刚写进去的那条覆盖掉。
+   */
+  const handleBind = useCallback(
+    async (skill: SkillRecord, assistant: AssistantRecord) => {
+      const prev = assistant.skillIds ?? []
+      const saved = await window.pocketai.saveAssistant({
+        ...assistant,
+        skillIds: [...new Set([...prev, skill.id])]
+      })
+      if (hasIpcFailed(saved)) {
+        flash(
+          false,
+          t('skill.market.bindFailed', { msg: ipcFailText(saved, t('common.unknownError')) })
+        )
+        return
+      }
+      setAssistants((cur) => cur.map((a) => (a.id === saved.id ? saved : a)))
+      flash(true, t('skill.market.bindDone', { name: assistantDisplayName(saved, t) }))
+    },
+    [flash, t]
   )
 
   // ---------- 在线技能操作 ----------
@@ -516,10 +581,14 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
           current && tab === 'local' ? (
             <LocalDetail
               skill={current as SkillRecord}
+              assistants={assistants}
+              assistantsUnread={assistantsUnread}
               onToggle={handleToggle}
               onDuplicate={handleDuplicate}
               onExport={handleExport}
               onDelete={handleDelete}
+              onBind={handleBind}
+              onRetryAssistants={loadAssistants}
               builtinBadge={builtinBadge}
               mineBadge={mineBadge}
             />
@@ -554,13 +623,29 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
 // ---------- 详情子组件 ----------
 const LocalDetail: React.FC<{
   skill: SkillRecord
+  assistants: AssistantRecord[]
+  assistantsUnread: { error?: string } | null
   onToggle: (s: SkillRecord) => void
   onDuplicate: (s: SkillRecord) => void
   onExport: (s: SkillRecord) => void
   onDelete: (s: SkillRecord) => void
+  onBind: (s: SkillRecord, a: AssistantRecord) => void
+  onRetryAssistants: () => void
   builtinBadge: string
   mineBadge: string
-}> = ({ skill, onToggle, onDuplicate, onExport, onDelete, builtinBadge, mineBadge }) => {
+}> = ({
+  skill,
+  assistants,
+  assistantsUnread,
+  onToggle,
+  onDuplicate,
+  onExport,
+  onDelete,
+  onBind,
+  onRetryAssistants,
+  builtinBadge,
+  mineBadge
+}) => {
   const { t } = useI18n()
   return (
     <div className="max-w-2xl mx-auto space-y-4">
@@ -608,6 +693,64 @@ const LocalDetail: React.FC<{
           </button>
         )}
       </div>
+
+      {/* §412：装完就地绑定。技能库里的东西过去没有任何一条路能进助手的 skillIds——
+          向导只写 skills.enabled，运行期按 skillIds 取，于是"装了一屋子技能、一次都没进过对话"。 */}
+      <div data-testid="skill-market-bind">
+        <div className="text-xs text-[var(--color-text-muted)] mb-1.5">{t('skill.market.bindTitle')}</div>
+        {assistantsUnread ? (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <LoadFailNotice
+              what={t('common.assistantsList')}
+              msg={ipcFailText(assistantsUnread, t('common.unknownError'))}
+            />
+            {/* 键在 alert 盒子外面（§268：盒子里会被念进那句的 textContent） */}
+            <button
+              data-testid="skill-market-assistants-retry"
+              className="text-xs underline text-[var(--color-text-muted)]"
+              onClick={onRetryAssistants}
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        ) : !skill.enabled ? (
+          <p className="text-xs text-[var(--color-text-muted)]" data-testid="skill-market-bind-disabled">
+            {t('skill.market.bindDisabledHint')}
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {assistants.map((a) => {
+                const bound = (a.skillIds ?? []).includes(skill.id)
+                return bound ? (
+                  <span
+                    key={a.id}
+                    data-skill-bound={a.id}
+                    className="text-[11px] px-2 py-1 rounded border border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                  >
+                    ✓ {assistantDisplayName(a, t)}
+                  </span>
+                ) : (
+                  <button
+                    key={a.id}
+                    data-skill-bind={a.id}
+                    onClick={() => onBind(skill, a)}
+                    className="text-[11px] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)]"
+                  >
+                    {assistantDisplayName(a, t)} · {t('skill.market.bindButton')}
+                  </button>
+                )
+              })}
+            </div>
+            {assistants.every((a) => !(a.skillIds ?? []).includes(skill.id)) && (
+              <p className="text-xs text-[var(--color-text-muted)] mt-1.5" data-testid="skill-market-bind-none">
+                {t('skill.market.bindNone')}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
       {skill.isBuiltin && (
         <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
           {t('skill.market.builtinHint')}

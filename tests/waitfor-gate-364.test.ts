@@ -415,9 +415,20 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     （关 🌐 那句换「未启用」／日历那颗勾换「未启用」），初值≠终值＝真到货见证（§407 那条通则的又一处），
     //     紧随的 `title` 那句读的是同一份 state、同一帧⇒不需要额外落定。
     //     余下四桶未动，「会假红」仍归零、「只会假绿」19 颗名单一字未动（本枚不改那两份兄弟用例）。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1100)
+    //   §412（＝技能装完即用：向导补 skillIds 那一发＋编辑器拦停用绑定＋市场就地绑定，台账第一百七十三次）
+    //     净新增 **11 颗 awaits**，全在三份新挂载用例里（`renderer-wizard-412` 8 例／`assistant-editor-skill-bind-412` 4 例／
+    //     `skill-market-bind-412` 9 例）。分两桶：
+    //     · **按存在读屏（DOM）＝607→615** 八颗＝市场七颗（两颗「绑好了」那句到货、一颗失败原因句、重试后长出那颗键、
+    //       reject 面那句到货、reject 重试后长出键、迟到那条不许抹掉 ✓ 之前先等 ✓ 出现）
+    //       ＋编辑器挂载门一颗 `querySelector('[data-skill-chip]')`（技能那一读是挂载后发的，
+    //       不等 chip 到货就同步读屏＝本面当初要抓的形状）；
+    //     · **无紧随读屏＝298→301** 三颗＝两份 harness 的「等那一发 saveAssistant 落地」helper（门读的是调用记录不是屏）
+    //       ＋向导那一例等 `onClose` 被调（同理）。
+    //     「会假红」仍归零；「只会假绿」19 颗名单只漂了一行：§412 给 `skill-market-fetch-debounce-322` 的 stub 补了一发
+    //     `listAssistants`（技能市场挂载时多一发读），那份文件里那一格整体下移一行，判语未变。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1111)
     expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('607/81/95/298/0/19')
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('615/81/95/301/0/19')
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
@@ -461,7 +472,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-run-stats-unread-396.test.tsx:194 -> :195', // §400 新入名单（不是新形状，是旧版看不见它读的那份屏＝hook 屏）：门等挂载那一发的调用计数、紧随断 `result.current.runStatsUnread` 仍是 null。判语＝**只会漏报**：那一颗只在响应回来的失败分支点亮（`useAgentChat.ts:794`／`:800`），成功／读到 null 那一发回什么都不点⇒门放行那一刻"不在场"恒真，不会因为迟到到货而假红；这一发漏的是「落地以后才点亮」那一档（同块更早已把它断成不在场、后面的门再等它翻真，那是另一颗门的事）。
       'tests/renderer-websearch-b3.test.tsx:89 -> :90', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
-      'tests/skill-market-fetch-debounce-322.test.tsx:159 -> :160',
+      'tests/skill-market-fetch-debounce-322.test.tsx:160 -> :161',
       'tests/stale-read-notice-347.test.tsx:159 -> :160'
     ]
     // 比对用整串而非数组：数组的 diff 只印第一颗漂的，剩下几颗得跑好几趟才看得见（本批就撞过）
