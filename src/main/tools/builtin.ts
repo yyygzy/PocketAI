@@ -35,6 +35,8 @@ export interface BuiltinTool {
   execute(args: Record<string, unknown>, ctx?: ToolExecuteContext): Promise<string>
   /** 工具级动态判定（如 shell_exec 按策略/命令内容判定）；缺省时只看 schema.permission */
   classify?(args: Record<string, unknown>): ToolClassification
+  /** 静态基线为 confirm 时的原因码（与 schema 同处定义，策略屏直接读取，不另写名单） */
+  policyReason?: string
 }
 
 /** Agent 运行级上下文片段（todo_write 等需要向渲染端发事件的工具使用） */

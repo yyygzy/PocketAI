@@ -26,7 +26,10 @@ export const agentToolSummary = (
     .filter(Boolean)
     .join(' ')
 
-export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) => {
+export const AgentToolBars: React.FC<{ tools: AgentToolConfigs; onOpenPolicy?: () => void }> = ({
+  tools,
+  onOpenPolicy
+}) => {
   const { t } = useI18n()
   const {
     workspaceDir,
@@ -276,6 +279,19 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs }> = ({ tools }) 
           {calHint}
         </span>
       </div>
+
+      {/* P0-3a：只读策略总览入口。放在工具配置里，是因为用户正是在这里问"它到底能碰什么"；
+          不另开设置层级（屏本身也只读，不承担编辑职责）。 */}
+      {onOpenPolicy && (
+        <button
+          type="button"
+          onClick={onOpenPolicy}
+          className="mt-0.5 self-start text-[11px] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)]"
+          title={t('tp.openTip')}
+        >
+          {t('tp.open')}
+        </button>
+      )}
     </div>
   )
 }

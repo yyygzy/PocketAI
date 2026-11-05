@@ -5,9 +5,9 @@ import { BUILTIN_TOOLS } from './builtin'
 import type { ToolAgentContext, ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
 import { getSkillTools } from './skill-tools'
-import { getShellTools } from './shell-tools'
+import { getShellTools, getShellPolicyInfo } from './shell-tools'
 import { mcpManager } from '../mcp/manager'
-import type { ToolSchema, ToolResult } from '../../shared/types'
+import type { ToolPolicyEntry, ToolPolicySnapshot, ToolPolicyState, ToolSchema, ToolResult } from '../../shared/types'
 import { errMsg } from '../error'
 
 /** LLM 函数名合法形态（各 OpenAI 兼容端点普遍要求字母开头 + 字母数字下划线） */
@@ -109,6 +109,54 @@ class ToolRegistry {
   /** 全部工具（内置 + MCP，MCP 名称已保证全局唯一） */
   listAll(): ToolSchema[] {
     return [...this.listBuiltin(), ...ensureUniqueToolNames(this.listBuiltin(), this.listMcp())]
+  }
+
+  /**
+   * 策略屏的只读快照：判定值只从这里出去。
+   * - 内置工具：schema.permission 基线＋同处定义的 policyReason；动态分类器只标 `dynamic`；
+   * - 终端：开关/策略/原因码来自 `getShellPolicyInfo()`（同一份规则表，见 shell-tools.ts:550）；
+   * - MCP：`'*'` 不覆盖，状态固定 `needs-explicit`（与 isToolAllowedBy 同一口径）。
+   * 渲染端不得另写阈值或工具名单——测试按函数身份钉，而不是数规则条数。
+   */
+  policySnapshot(): ToolPolicySnapshot {
+    const shell = getShellPolicyInfo()
+    const entries: ToolPolicyEntry[] = []
+    for (const tool of this.listBuiltinTools()) {
+      // 终端即使被停用也要出现在屏上，单独由下面的 shell 段补齐
+      if (tool.schema.id === 'shell.exec') continue
+      entries.push({
+        id: tool.schema.id,
+        name: tool.schema.name,
+        source: 'builtin',
+        permission: tool.schema.permission ?? 'auto',
+        state: tool.schema.permission === 'deny' ? 'denied' : 'available',
+        dynamic: Boolean(tool.classify),
+        reasons: tool.policyReason ? [tool.policyReason] : []
+      })
+    }
+    entries.push({
+      id: 'shell.exec',
+      name: 'shell_exec',
+      source: 'builtin',
+      permission: 'auto',
+      state: shell.enabled ? 'available' : 'disabled',
+      dynamic: true,
+      reasons: []
+    })
+    for (const schema of ensureUniqueToolNames(this.listBuiltin(), this.listMcp())) {
+      const state: ToolPolicyState =
+        schema.permission === 'deny' ? 'denied' : 'needs-explicit'
+      entries.push({
+        id: schema.id,
+        name: schema.name,
+        source: 'mcp',
+        permission: schema.permission ?? 'auto',
+        state,
+        dynamic: false,
+        reasons: []
+      })
+    }
+    return { tools: entries, shell }
   }
 
   /** 按工具名查找 schema（内置 + MCP），未找到返回 undefined */

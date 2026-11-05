@@ -812,6 +812,35 @@ export interface McpToolAnnotations {
   openWorldHint?: boolean
 }
 
+/** 工具策略屏的一档（只读）：取值全部来自 toolRegistry 的同一处判定，渲染端不另写规则 */
+export type ToolPolicyState = 'available' | 'disabled' | 'needs-explicit' | 'denied'
+
+export interface ToolPolicyEntry {
+  id: string
+  name: string
+  source: 'builtin' | 'mcp'
+  permission: 'auto' | 'confirm' | 'deny'
+  state: ToolPolicyState
+  /** 是否有按参数动态判定（当前只有 shell_exec） */
+  dynamic: boolean
+  /** 静态基线的原因码（如 WRITES_WORKSPACE_FILE）；动态工具见 shell 那一段 */
+  reasons: string[]
+}
+
+export interface ShellPolicySnapshot {
+  enabled: boolean
+  policy: ShellPolicy
+  /** 需要批准的原因码，与 classifyCommand 的规则表同源 */
+  confirmReasons: string[]
+  /** 永不执行的原因码，与 DENY_RULES 同源 */
+  denyReasons: string[]
+}
+
+export interface ToolPolicySnapshot {
+  tools: ToolPolicyEntry[]
+  shell: ShellPolicySnapshot
+}
+
 export interface ToolCall {
   id: string // LLM 生成的调用 ID
   type: 'function'
@@ -2370,6 +2399,7 @@ export const IPC = {
 
   // 工具（只读）
   TOOL_LIST_AVAILABLE: 'tool:list-available', // 列出所有可用工具（按助手机器权限可在外层过滤）
+  TOOL_POLICY_SNAPSHOT: 'tool:policy-snapshot', // 只读策略总览：判定值来自 registry 同一处
 
   // ---------- License 授权 ----------
   LICENSE_GET_STATUS: 'license:get-status',

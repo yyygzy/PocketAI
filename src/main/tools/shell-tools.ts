@@ -8,6 +8,7 @@
 // 本工具不是 OS 沙箱：批准的命令以应用自身权限运行。
 import { spawn } from 'node:child_process'
 import type { BuiltinTool } from './builtin'
+import type { ShellPolicy } from '../../shared/types'
 import { getWorkspaceDir, resolveWorkspacePath } from './fs-tools'
 import { getShellConfig } from './shell-config'
 import { errMsg } from '../error'
@@ -19,6 +20,14 @@ export interface CommandClassification {
   /** 稳定 reason code，渲染端映射 i18n */
   reason?: string
 }
+
+/**
+ * 策略屏与分类器共用的原因码：这里定义一次，`classifyCommand`／`classifyShellArgs` 只引用常量，
+ * 屏上列出的事项因此不可能与真正执行用的规则漂开。
+ */
+const REASON_ROOT_DELETE = 'BLOCKED_ROOT_DELETE'
+const REASON_OUTSIDE = 'DANGEROUS_OUTSIDE'
+const REASON_REQUIRES_CONFIRM = 'REQUIRES_CONFIRM'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MIN_TIMEOUT_MS = 10_000
@@ -234,7 +243,7 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
     if (re.test(cmd)) return { decision: 'deny', reason }
   }
   for (const re of ROOT_DELETE_RE) {
-    if (re.test(cmd)) return { decision: 'deny', reason: 'BLOCKED_ROOT_DELETE' }
+    if (re.test(cmd)) return { decision: 'deny', reason: REASON_ROOT_DELETE }
   }
 
   // 2) 工作目录之外的绝对路径（盘符路径；POSIX 绝对路径误伤面大，仅对明显系统目录确认）
@@ -243,12 +252,12 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
     const p = m[1]!
     const normWin = p.replace(/[\\/]+$/, '').toLowerCase().replace(/\//g, '\\')
     if (normWin !== wsWin && !normWin.startsWith(wsWin + '\\')) {
-      return { decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' }
+      return { decision: 'confirm', reason: REASON_OUTSIDE }
     }
   }
   // POSIX 风格 /etc、/usr、/bin、/sbin、/System、私有目录等
   if (/(^|[\s="'`(])\/(?:etc|usr|bin|sbin|System|private|var\/root)(?:[\\/]|\b)/.test(cmd)) {
-    return { decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' }
+    return { decision: 'confirm', reason: REASON_OUTSIDE }
   }
 
   // 3) 危险特征：整条命令（覆盖管道跨段模式，如 curl|sh）+ 每个片段各判一遍
@@ -463,7 +472,7 @@ function classifyShellArgs(args: Record<string, unknown>): CommandClassification
   // 逐条确认：非黑名单命令也一律弹窗，但保留 classifyCommand 的具体危险原因，
   // 避免审批展示层再次调用 classifyCommand 造成重复分类。
   if (config.policy === 'confirm') {
-    return { decision: 'confirm', reason: verdict.reason ?? 'REQUIRES_CONFIRM' }
+    return { decision: 'confirm', reason: verdict.reason ?? REASON_REQUIRES_CONFIRM }
   }
   // 仅危险确认：沿用分类器结果（confirm/allow）
   return verdict
@@ -529,4 +538,25 @@ export function getShellTools(): BuiltinTool[] {
   if (!getWorkspaceDir()) return []
   if (!getShellConfig().enabled) return []
   return [shellExecTool]
+}
+
+export interface ShellPolicyInfo {
+  enabled: boolean
+  policy: ShellPolicy
+  confirmReasons: string[]
+  denyReasons: string[]
+}
+
+/**
+ * 策略屏的终端那段：开关/策略来自 `getShellConfig`，原因码直接取自下面两张规则表
+ * （含 classifyCommand 里工作目录之外的两处判定）——屏不另写名单。
+ * 开关关掉时 `getShellTools()` 不注册该工具，所以这里必须独立于工具清单返回。
+ */
+export function getShellPolicyInfo(): ShellPolicyInfo {
+  const { enabled, policy } = getShellConfig()
+  const confirmReasons = [
+    ...new Set([...CONFIRM_RULES.map(([, reason]) => reason), REASON_OUTSIDE, REASON_REQUIRES_CONFIRM])
+  ]
+  const denyReasons = [...new Set([...DENY_RULES.map(([, reason]) => reason), REASON_ROOT_DELETE])]
+  return { enabled, policy, confirmReasons, denyReasons }
 }

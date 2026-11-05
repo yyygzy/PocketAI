@@ -218,6 +218,7 @@ const fsWriteTool: BuiltinTool = {
     // （`childToolSurface` 摘 confirm 类），这条后果记在台账 V4-Iter-231。
     permission: 'confirm'
   },
+  policyReason: 'WRITES_WORKSPACE_FILE',
   async execute(args) {
     const rel = String(args?.path ?? '')
     if (!rel) throw new Error('path 不能为空')

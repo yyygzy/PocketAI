@@ -44,6 +44,8 @@ const log = createLogger('agent')
 export function registerAgentHandlers(): void {
   // ---------- 工具 ----------
   safeHandle(IPC.TOOL_LIST_AVAILABLE, () => toolRegistry.listAll())
+  // 只读策略总览：判定值来自 registry.policySnapshot 一处，渲染端不复制规则
+  safeHandle(IPC.TOOL_POLICY_SNAPSHOT, () => toolRegistry.policySnapshot())
 
   // ---------- Work Agent ----------
   // AGENT_* 事件通过 chat:send 的 emit 推送到对应 sender

@@ -8,6 +8,7 @@ import { MentionMenu, type MentionItem } from '../../../components/MentionMenu'
 import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import { SnippetVarsDialog } from '../../../components/SnippetVarsDialog'
 import { AgentToolBars, agentToolSummary } from './AgentToolBars'
+import { ToolPolicyDialog } from './ToolPolicyDialog'
 import type { useAttachments } from '../hooks/useAttachments'
 import type { AgentToolConfigs } from '../hooks/useAgentToolConfigs'
 import { MAX_QUEUE_ITEMS, type AgentQueueItem } from '../hooks/useAgentChat'
@@ -124,6 +125,8 @@ export const AgentComposer: React.FC<Props> = ({
   // §399②b：工具策略那三行的嵌套第二层（自己的开合状态＋自己的锚点＝那颗摘要行）
   const [toolsOpen, setToolsOpen] = useState(false)
   const toolsRowRef = useRef<HTMLButtonElement>(null)
+  // P0-3a：只读策略总览的开关（屏渲染在输入区外层，不随嵌套菜单关闭而卸载）
+  const [policyOpen, setPolicyOpen] = useState(false)
   // `kbsRef` 是 ref，读到了不会自己重渲染——开菜单那一发落回来时要敲一下这记信号
   const [kbsReady, setKbsReady] = useState(0)
 
@@ -454,6 +457,7 @@ export const AgentComposer: React.FC<Props> = ({
 
   return (
     <>
+      {policyOpen && <ToolPolicyDialog onClose={() => setPolicyOpen(false)} />}
       {/* 运行中排队条（V4-Iter-238）：条上每一项都还没进正在跑的这一轮 */}
       {queue.length > 0 && (
         <div className="pt-2" data-testid="agent-queue-bar">
@@ -761,7 +765,14 @@ export const AgentComposer: React.FC<Props> = ({
                 data-testid="agent-composer-tools-menu"
                 data-esc-nested="1"
               >
-                <AgentToolBars tools={tools} />
+                <AgentToolBars
+                  tools={tools}
+                  onOpenPolicy={() => {
+                    setToolsOpen(false)
+                    setPlusOpen(false)
+                    setPolicyOpen(true)
+                  }}
+                />
               </FloatingPanel>
             )}
             {!readOnly && (

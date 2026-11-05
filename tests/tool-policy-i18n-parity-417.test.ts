@@ -1,0 +1,19 @@
+import { describe, expect, it } from 'vitest'
+import { zh } from '../src/renderer/src/i18n/zh'
+import { en } from '../src/renderer/src/i18n/en'
+import { ja } from '../src/renderer/src/i18n/ja'
+import { ko } from '../src/renderer/src/i18n/ko'
+
+describe('工具策略屏四语 parity（P0-3a）', () => {
+  it('tp.* 四语键集完全一致且都有文案', () => {
+    const keys = Object.keys(zh).filter((k) => k.startsWith('tp.'))
+    expect(keys.length).toBe(56)
+    for (const [name, dict] of Object.entries({ zh, en, ja, ko })) {
+      const own = Object.keys(dict).filter((k) => k.startsWith('tp.'))
+      expect(own.sort(), `${name} 的 tp.* 键集`).toEqual([...keys].sort())
+      for (const k of keys) {
+        expect((dict as Record<string, string>)[k]?.trim(), `${name}.${k}`).toBeTruthy()
+      }
+    }
+  })
+})
