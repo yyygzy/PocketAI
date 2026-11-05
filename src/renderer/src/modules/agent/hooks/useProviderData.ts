@@ -15,7 +15,7 @@ export function useProviderData() {
 
   const load = useCallback(() => {
     // Promise.all 任一 reject 整体 reject，必须挂 .catch 否则未处理 rejection 穿透
-    void Promise.all([window.pocketai.listProviders(), window.pocketai.listAssistants()]).then(([ps, as_]) => {
+    void Promise.all([window.pocketai.listProviders(), window.pocketai.listAssistants('mine')]).then(([ps, as_]) => {
       // 逐发判（§257／§259 的口径）：以前这两行是"拿到就写"，而 safeHandle 的失败是 resolve 的
       // `{ok:false}` ⇒ ① `ps.filter` 当场 TypeError，被下面那句 .catch 当成"通道失败"念进 console，
       // **assistants 明明读到了也一起丢**（探针实测两份都是空数组）；

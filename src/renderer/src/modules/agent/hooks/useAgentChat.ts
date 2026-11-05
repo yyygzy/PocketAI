@@ -559,28 +559,47 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
       })
   }, [restored, assistantId, conversationId, t])
 
-  // 恢复来的助手必须仍然存在（助手可能被删除或被导入覆盖）；不在列表里就清回自由会话，
-  // 并把存档一起抹掉——否则每次进来都要重演一遍"选中一个不存在的助手"
+  // 恢复来的助手必须仍然存在（助手可能被删除或被导入覆盖）；不在「我的助手」列表里不等于不存在——
+  // 停用的内置助手仍被旧会话引用，所以按 id 查一次再决定是否清回自由会话
   useEffect(() => {
-    if (!restored || !assistants || assistants.length === 0) return
-    if (!assistantId || assistants.some((a) => a.id === assistantId)) return
-    setAssistantId('')
-    setConversationId(null)
-    restoreRef.current = null
+    if (!restored || !assistants) return
+    if (!assistantId) return
+    if (assistants.some((a) => a.id === assistantId)) return
+    let cancelled = false
     void window.pocketai
-      .setUiPrefs({ agentAssistantId: '', agentConversationId: '' })
-      .then((r) => {
-        if (r.ok === false) {
-          logIpcError('agent.setUiPrefs', r.error ?? 'failed')
-          setUiPrefsUnread(ipcFailText(r, t('common.unknownError')))
+      .getAssistant(assistantId)
+      .then((a) => {
+        if (cancelled) return
+        // 读不到就不做判断：宁可保留旧存档，也不能因为一次读失败把会话清成自由会话
+        if (hasIpcFailed(a)) {
+          logIpcError('agent.getAssistant', a.error ?? 'failed')
           return
         }
-        setUiPrefsUnread(null)
+        if (a) return // 存在（可能是已停用的内置助手）⇒ 保留
+        setAssistantId('')
+        setConversationId(null)
+        restoreRef.current = null
+        void window.pocketai
+          .setUiPrefs({ agentAssistantId: '', agentConversationId: '' })
+          .then((r) => {
+            if (r.ok === false) {
+              logIpcError('agent.setUiPrefs', r.error ?? 'failed')
+              setUiPrefsUnread(ipcFailText(r, t('common.unknownError')))
+              return
+            }
+            setUiPrefsUnread(null)
+          })
+          .catch((e: unknown) => {
+            logIpcError('agent.setUiPrefs', e)
+            setUiPrefsUnread(errText(e, t('common.unknownError')))
+          })
       })
       .catch((e: unknown) => {
-        logIpcError('agent.setUiPrefs', e)
-        setUiPrefsUnread(errText(e, t('common.unknownError')))
+        logIpcError('agent.getAssistant', e)
       })
+    return () => {
+      cancelled = true
+    }
   }, [restored, assistants, assistantId, t])
 
   // 助手切换 → 拉活跃+归档会话列表并自动选中最近一次（活跃列表已按置顶权重+updated_at DESC 排序）

@@ -184,6 +184,7 @@ describe('② 快照存储：真临时目录、真文件', () => {
     expect(readSnapshot(root, snap.id)?.consumedAt).toBeTypeOf('number')
   })
 
+  // 满载并发盘上要读写 103 份快照，默认 20s 预算在全量跑里会超时（单跑约 1～2s）⇒ 给足 60s。
   it('份数超过上限时淘汰最旧的，保留最新的 100 份', () => {
     for (let i = 0; i < 103; i++) {
       captureSnapshot(root, { relPath: `f${i}`, prevExists: true, prevContent: 'p', wroteContent: 'w' })
@@ -193,7 +194,7 @@ describe('② 快照存储：真临时目录、真文件', () => {
     }
     expect(listSnapshotIds(root)).toHaveLength(100)
     expect(prune(root)).toBe(0)
-  })
+  }, 60000)
 
   it('id 形状守卫：拿用户输入当 id 不能越出快照目录', () => {
     expect(() => readSnapshot(root, '../../escape')).toThrow(/SNAPSHOT_ID_INVALID/)

@@ -134,7 +134,7 @@ export const ChatModule: React.FC = () => {
   )
 
   const reloadAssistants = useCallback(() => {
-    return window.pocketai.listAssistants().then((v) => {
+    return window.pocketai.listAssistants('mine').then((v) => {
       if (hasIpcFailed(v)) {
         setAssistantsUnread({ error: ipcFailText(v, t('common.unknownError')) })
         return
@@ -237,7 +237,7 @@ export const ChatModule: React.FC = () => {
 
   // 初始加载（assistants/conversations）；流式事件订阅已移入 useStreamSession
   useEffect(() => {
-    window.pocketai.listAssistants().then((list) => {
+    window.pocketai.listAssistants('mine').then((list) => {
       // §221：这里不能整条早退——尾巴那句「清扫空壳会话 → reloadConversations」是会话列表唯一的入口，
       // 助手清单读失败时它照样得跑，所以只把"当数据用"的那半圈进判据里
       if (hasIpcFailed(list)) toast.error(ipcFailText(list, t('common.unknownError')))
@@ -257,13 +257,56 @@ export const ChatModule: React.FC = () => {
     }).catch(reportIpcError('chat.listAssistantsInit'))
   }, [reloadConversations])
 
-  const currentAssistant = assistants.find((a) => a.id === currentAssistantId) ?? null
+  // 列表之外按 id 兜底：内置助手被「停用」后仍可能被旧会话引用（配置条/欢迎语/导出署名不能因此空白）
+  const extraAssistantsRef = useRef<Map<string, AssistantRecord>>(new Map())
+  const [, setAssistantFallbackVersion] = useState(0)
+  useEffect(() => {
+    const id = currentAssistantId
+    // asst-default 是自由聊天的隐式身份：它本来就不进「我的助手」，不该被当成"已停用"再兜底
+    if (!id || id === 'asst-default' || assistants.some((a) => a.id === id) || extraAssistantsRef.current.has(id)) return
+    let cancelled = false
+    window.pocketai
+      .getAssistant(id)
+      .then((a) => {
+        if (cancelled || hasIpcFailed(a) || !a) return
+        extraAssistantsRef.current.set(a.id, a)
+        setAssistantFallbackVersion((v) => v + 1)
+      })
+      .catch(reportIpcError('chat.getAssistantFallback'))
+    return () => {
+      cancelled = true
+    }
+  }, [assistants, currentAssistantId])
+
+  const currentAssistant =
+    assistants.find((a) => a.id === currentAssistantId) ??
+    extraAssistantsRef.current.get(currentAssistantId) ??
+    null
+  /** 当前会话的助手不在「我的助手」里且是内置 ⇒ 它已被停用（旧会话仍可看，但要说出来） */
+  const currentAssistantDisabled =
+    !!currentAssistant?.isBuiltin && !assistants.some((a) => a.id === currentAssistantId)
 
   // §281：导出/显示时把内置助手的 name 走渲染层字典（DB 里存的是中文原始串，非内置原样透传）
   const nameOfAssistant = (assistantId: string | null | undefined): string | null => {
     if (!assistantId) return null
-    const a = assistants.find((x) => x.id === assistantId)
+    const a = assistants.find((x) => x.id === assistantId) ?? extraAssistantsRef.current.get(assistantId)
     return a ? assistantDisplayName(a, t) : null
+  }
+
+  // 按 id 解析助手：列表优先，缓存其次，最后按 id 查一次（停用的内置也要能当标题/身份用）
+  const resolveAssistantById = async (id: string): Promise<AssistantRecord | null> => {
+    const found = assistants.find((a) => a.id === id) ?? extraAssistantsRef.current.get(id)
+    if (found) return found
+    if (id === 'asst-default') return null // 自由聊天的隐式身份：标题沿用旧的「新对话」口径
+    try {
+      const r = await window.pocketai.getAssistant(id)
+      if (hasIpcFailed(r) || !r) return null
+      extraAssistantsRef.current.set(r.id, r)
+      return r
+    } catch (e) {
+      reportIpcError('chat.getAssistantById')(e)
+      return null
+    }
   }
 
   // 对话配置条更新助手（技能/知识库/工具权限）
@@ -274,13 +317,16 @@ export const ChatModule: React.FC = () => {
   const handleSelectAssistant = (id: string) => {
     discardCurrentIfEmpty()
     assistantIdRef.current = id
+    // 同步镜像：市场「使用」会在本次渲染内紧接着调 handleNewConv，只改 state 会让它读到旧助手/旧会话
+    currentConvRef.current = null
+    messagesRef.current = []
     setCurrentAssistantId(id)
     setCurrentConvId(null)
     setMessages([])
     reloadConversations(true)
 
     // 应用助手默认模型（助手级参数）；未配置则保留当前全局选择
-    const asst = assistants.find((a) => a.id === id)
+    const asst = assistants.find((a) => a.id === id) ?? extraAssistantsRef.current.get(id)
     if (asst?.defaultProviderId && asst.defaultModel) {
       setTargets([{ providerId: asst.defaultProviderId, model: asst.defaultModel }])
     }
@@ -561,7 +607,8 @@ export const ChatModule: React.FC = () => {
   const handleNewConv = async () => {
     // 当前会话本身就是空壳（自动标题+未置顶+0消息；挂草稿的也一并复用，草稿随会话保留）
     // → 不新建行，避免点一次「新对话」堆一个空「新对话」
-    const curId = currentConvId
+    // 用同步 ref 而非 state：市场「使用」会在切助手后同一拍调用这里，state 还是旧值
+    const curId = currentConvRef.current
     const cur = curId ? convIndexRef.current.get(curId) : null
     if (cur && cur.titleDefault && !cur.pinned && messagesRef.current.length === 0) {
       userEditedTargetsRef.current = false // 与新建同口径，允许模型回填
@@ -570,8 +617,10 @@ export const ChatModule: React.FC = () => {
     }
     // 点击「新对话」直接在数据库创建一条对话记录，标题用当前助手名
     try {
-      const title = (currentAssistant ? assistantDisplayName(currentAssistant, t) : '') || t('chat.newConversation')
-      const conv = await window.pocketai.createConversation(currentAssistantId, title)
+      const aid = assistantIdRef.current
+      const asst = await resolveAssistantById(aid)
+      const title = (asst ? assistantDisplayName(asst, t) : '') || t('chat.newConversation')
+      const conv = await window.pocketai.createConversation(aid, title)
       // §219：失败不判就照常清草稿＋setCurrentConvId(undefined)＋setMessages([]) ⇒ 当前会话在界面上被抹掉，而库里其实一条都没建
       if (hasIpcFailed(conv)) {
         toast.error(ipcFailText(conv, t('common.unknownError')))
@@ -1570,6 +1619,11 @@ export const ChatModule: React.FC = () => {
       {stopUnread && (
         <div role="alert" className="text-xs text-[var(--color-danger)]">
           {t('common.stopNotSent', { msg: ipcFailText(stopUnread, t('common.unknownError')) })}
+        </div>
+      )}
+      {currentAssistantDisabled && (
+        <div role="status" className="mx-auto max-w-3xl mb-1 text-[11px] text-[var(--color-text-muted)]">
+          {t('am.disabledHint')}
         </div>
       )}
       <ChatView

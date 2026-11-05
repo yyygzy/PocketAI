@@ -1,9 +1,9 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
 import React, { useEffect, useRef, useState } from 'react'
-import type { ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
+import type { AssistantRecord, ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
 import { isDelegateRole, parseDelegationResultChildPrefixes } from '../../../../../shared/delegation-rules'
 import { useI18n } from '../../../i18n'
-import { hasIpcFailed, ipcFailText } from '../../../utils/ipc'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { useProviderData } from '../hooks/useProviderData'
 import { useAgentChat } from '../hooks/useAgentChat'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../../hooks/useGlobalShortcuts'
@@ -34,10 +34,33 @@ export const AgentPanel: React.FC = () => {
   // §351：多取一个 `load`——这一栏那两张"读不到"的脸原来同屏没有出口（重跑只挂在挂载与"切回 Agent 模块"那两发上）
   const { providers, assistants, providersUnread, assistantsUnread, fetchingModels, fetchModels, load } = useProviderData()
   const chat = useAgentChat(providers, assistants)
+  // 停用的内置助手可能仍被旧会话引用：列表里没有就按 id 兜底一次，别让名字/导出署名变空
+  const [fallbackAssistant, setFallbackAssistant] = useState<AssistantRecord | null>(null)
+  useEffect(() => {
+    const id = chat.assistantId
+    if (!id || assistants.some((a) => a.id === id)) return
+    let cancelled = false
+    window.pocketai
+      .getAssistant(id)
+      .then((a) => {
+        if (cancelled || hasIpcFailed(a) || !a) return
+        setFallbackAssistant(a)
+      })
+      .catch((e: unknown) => {
+        logIpcError('agent.getAssistantFallback', e)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [assistants, chat.assistantId])
+  const railAssistants =
+    fallbackAssistant && !assistants.some((a) => a.id === fallbackAssistant.id)
+      ? [...assistants, fallbackAssistant]
+      : assistants
   // §281：内置助手的 name 走渲染层字典（DB 存的是中文原始串，非内置原样透传）
   const nameOfAssistant = (assistantId: string | null | undefined): string | null => {
     if (!assistantId) return null
-    const a = assistants.find((x) => x.id === assistantId)
+    const a = assistants.find((x) => x.id === assistantId) ?? (fallbackAssistant?.id === assistantId ? fallbackAssistant : null)
     return a ? assistantDisplayName(a, t) : null
   }
   // busy 上报：Agent 运行中豁免休眠，防止切走标签后被 LRU 卸载导致任务中断
@@ -394,7 +417,7 @@ export const AgentPanel: React.FC = () => {
     <div className="flex gap-3 h-full">
       {railOpen && (
         <SessionRail
-          assistants={assistants}
+          assistants={railAssistants}
           assistantId={chat.assistantId}
           onAssistantChange={chat.setAssistantId}
           conversations={chat.conversations}

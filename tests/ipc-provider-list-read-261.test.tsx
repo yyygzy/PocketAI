@@ -41,6 +41,9 @@ const PARENT = { id: 'c1', assistantId: 'a1', title: '父会话', modelLabel: 'g
 const stubBase = (over: Record<string, Impl> = {}): Record<string, Impl> => ({
   listProviders: () => [GLM, OFF],
   listAssistants: () => [A1],
+  // 货架式助手：列表读不到时 Agent 恢复会按 id 再查一次；这里回同一份记录，
+  // 免得用例把「读不到列表」误演成「助手被删了」。
+  getAssistant: (id: string) => (id === A1.id ? A1 : null),
   getUiPrefs: () => ({ ok: true, data: { agentAssistantId: 'a1', agentConversationId: 'c1' } }),
   setUiPrefs: (p: Record<string, unknown>) => ({ ok: true, data: p }),
   listConversations: (_a: string, _isAgent: boolean, archivedOnly?: boolean) => (archivedOnly ? [] : [PARENT]),

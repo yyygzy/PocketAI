@@ -108,6 +108,17 @@ export interface AssistantRecord {
   isBuiltin: boolean
   isPinned: boolean
   createdAt: number
+  /** 仅内置助手在列表返回时填充：是否已被「启用」进我的助手列表 */
+  enabled?: boolean
+}
+
+/** ASSISTANT_LIST 的取数口径：all=全量（默认，行为不变）；mine=自建＋已启用的内置；market=仅内置 */
+export type AssistantListScope = 'all' | 'mine' | 'market'
+
+/** 复制助手的返回：附带被丢弃的失效技能/知识库引用数（仅 duplicate 通道返回） */
+export type DuplicatedAssistant = AssistantRecord & {
+  droppedSkills: number
+  droppedKb: number
 }
 
 // ---------- 技能（可复用提示词片段） ----------
@@ -2028,6 +2039,7 @@ export const IPC = {
   ASSISTANT_DELETE: 'assistant:delete',
   ASSISTANT_DUPLICATE: 'assistant:duplicate',
   ASSISTANT_SET_PINNED: 'assistant:set-pinned',
+  ASSISTANT_SET_ENABLED: 'assistant:set-enabled',
   ASSISTANT_EXPORT: 'assistant:export', // 导出全部用户助手为 JSON
   ASSISTANT_IMPORT: 'assistant:import', // 从 JSON 导入助手（同名覆盖）
 

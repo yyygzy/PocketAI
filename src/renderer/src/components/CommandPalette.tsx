@@ -73,7 +73,7 @@ export const CommandPalette: React.FC = () => {
     void Promise.allSettled([
       window.pocketai.listConversations(undefined, false, false),
       window.pocketai.listConversations(undefined, true, false),
-      window.pocketai.listAssistants(),
+      window.pocketai.listAssistants('mine'),
       window.pocketai.listKnowledgeBases()
     ]).then(([chatR, agentR, asstR, kbR]) => {
       if (cancelled) return

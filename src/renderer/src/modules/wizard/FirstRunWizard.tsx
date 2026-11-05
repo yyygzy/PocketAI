@@ -112,7 +112,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
    */
   const loadAssistants = useCallback(() => {
     setAssistantsUnread(null)
-    window.pocketai.listAssistants().then((list) => {
+    window.pocketai.listAssistants('market').then((list) => {
       if (hasIpcFailed(list)) {
         setAssistantsUnread({ error: list.error })
         return
@@ -321,10 +321,11 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
         let target = assistant
         effectiveAssistant = assistant
         if (assistant.isBuiltin) {
-          target = await window.pocketai.duplicateAssistant(assistant.id, `${assistantDisplayName(assistant, t)} ${t('assistant.copySuffix')}`)
+          const dup = await window.pocketai.duplicateAssistant(assistant.id, `${assistantDisplayName(assistant, t)} ${t('assistant.copySuffix')}`)
           // §223：不判就把失败对象当助手用 ⇒ `target.id` 是 undefined，向导后面几步
           // （saveAssistant／setAssistantPinned）拿着假 id 写库，助手列表还被塞进一条 `{ok:false}`
-          if (hasIpcFailed(target)) throw new Error(ipcFailText(target, t('common.unknownError')))
+          if (hasIpcFailed(dup)) throw new Error(ipcFailText(dup, t('common.unknownError')))
+          target = dup
           effectiveAssistantId = target.id
           effectiveAssistant = target
           setSelectedAssistantId(target.id)

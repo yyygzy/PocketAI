@@ -550,10 +550,12 @@ describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下
     // §334：提醒中心两处 cancel/reschedule 从 try-catch 桶搬进判定桶（加了 ipcFailText 判失败面），
     //   探针现量：judged 264／caught 26／unsafe 0／SITES 290（＝291-1，总数微降是因为合并了一处）
     //   ⇒ 净新增两个判点、caught 桶少两点，底线相应下调。
+    // 「货架式助手」本批：FirstRunWizard 的 duplicateAssistant 从 try-catch 桶搬进判定桶
+    //   （失败要区分"配额超限"并上屏）⇒ caught 26→25，下限随之下调。
     // 这两根是**量级底线**（扫描器瞎了才会掉到这儿），不是精确数；收一处静默点就会让 caught 少一点、judged 多一点，
     // 所以 judged 那根随批上提，caught 那根留出 Enough 的余量。
     expect(judged, '判返回值的点').toBeGreaterThanOrEqual(255)
-    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(26)
+    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(25)
     expect(judged + caught + unsafe.length).toBe(SITES.length)
   })
 

@@ -527,6 +527,12 @@ export const zh = {
   'am.unpin': '取消置顶',
   'am.pin': '置顶',
   'am.saved': '已保存',
+  'am.enable': '启用',
+  'am.disable': '停用',
+  'am.enabled': '已启用',
+  'am.disabled': '已停用',
+  'am.disabledHint': '该助手已停用，历史会话仍可继续查看',
+  'am.duplicatedDropped': '已复制为「我的助手」；已丢弃 {skills} 个失效技能、{kb} 个失效知识库',
   'assistant.copySuffix': '副本',
   // §281：内置助手的 name/description/welcomeMessage 走渲染层字典，DB 里保留中文原始串作兜底
   'assistant.builtin.asst-default.name': '通用问答',

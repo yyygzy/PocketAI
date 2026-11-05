@@ -435,9 +435,11 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     「¥1.23」「¥80.00」这种**初值（`—`）≠终值**的那串到货；三颗读 `querySelectorAll` 出来的
     //     趋势柱 `title` 与明细弹窗合计格（同样初值 `—` ≠ 终值 `¥0.4000`）；一颗等明细那两颗眼睛到货。
     //     余下四桶未动，「会假红」仍归零，「只会假绿」19 颗名单一字未动（本枚不改那两份兄弟用例）。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1120)
+    //   「货架式助手」本批：Agent 恢复用例新增一颗门（等 `result.current.assistantId` 停在原值）
+    //     ⇒ 按存在读 hook 那一桶 81→82，总数 1120→1121。
+    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1121)
     expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('624/81/95/301/0/19')
+      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('624/82/95/301/0/19')
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })

@@ -6,6 +6,7 @@ import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
+import { useToast } from '../../components/ToastProvider'
 import { assistantDisplayName, assistantDisplayDescription, assistantDisplayWelcome } from './assistant-display'
 
 interface Props {
@@ -26,9 +27,10 @@ type View =
 
 export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged, onUse, initialDetailId }) => {
   const { t } = useI18n()
+  const toast = useToast()
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [view, setView] = useState<View>(initialDetailId ? { mode: 'detail', id: initialDetailId } : { mode: 'grid' })
-  const { notice: toast, show: flash } = useTransientNotice<string>(2000)
+  const { notice, show: flash } = useTransientNotice<string>(2000)
 
   /**
    * §273：这一发读失败时，市场网格整片空白（这一屏连「真的没有」那句都没有）⇒ 把通道故障演成"一个助手都没有"。
@@ -37,7 +39,7 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
   const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
 
   const load = useCallback(() => {
-    window.pocketai
+    return window.pocketai
       .listAssistants()
       .then((v) => {
         if (hasIpcFailed(v)) {
@@ -64,15 +66,40 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
     const src = assistants.find((a) => a.id === id)
     const displayName = src ? `${assistantDisplayName(src, t)} ${t('assistant.copySuffix')}` : undefined
     try {
-      await window.pocketai.duplicateAssistant(id, displayName)
+      const copy = await window.pocketai.duplicateAssistant(id, displayName)
+      // 配额超限是 resolve 的 `{ok:false}`：不判就会照常 flash「已复制」，把失败演成成功
+      if (hasIpcFailed(copy)) {
+        toast.error(ipcFailText(copy, t('common.unknownError')))
+        return
+      }
+      await load()
+      onChanged()
+      const dropped = (copy.droppedSkills ?? 0) + (copy.droppedKb ?? 0)
+      if (dropped > 0) {
+        toast.warning(t('am.duplicatedDropped', { skills: copy.droppedSkills, kb: copy.droppedKb }))
+      } else {
+        flash(t('am.duplicated'))
+      }
+      // 复制成功直接进编辑器：让用户马上能改名/改权限
+      setView({ mode: 'edit', id: copy.id })
     } catch (e) {
-      flash(errText(e))
-      return
+      toast.error(errText(e, t('common.unknownError')))
     }
-    await load()
-    onChanged()
-    flash(t('am.duplicated'))
-    setView({ mode: 'grid' })
+  }
+
+  const handleToggleEnabled = async (a: AssistantRecord) => {
+    try {
+      const r = await window.pocketai.setAssistantEnabled(a.id, !a.enabled)
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      await load()
+      onChanged()
+      flash(a.enabled ? t('am.disabled') : t('am.enabled'))
+    } catch (e) {
+      toast.error(errText(e, t('common.unknownError')))
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -166,7 +193,10 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
                     <div className="flex gap-1">
                       {a.isPinned && <span title={t('am.pinned')}>📌</span>}
                       {a.isBuiltin ? (
-                        <span className={builtinBadge}>{t('am.builtin')}</span>
+                        <>
+                          <span className={builtinBadge}>{t('am.builtin')}</span>
+                          {a.enabled && <span className={mineBadge}>{t('am.enabled')}</span>}
+                        </>
                       ) : (
                         <span className={mineBadge}>{t('am.mine')}</span>
                       )}
@@ -174,6 +204,17 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
                   </div>
                   <h3 className="mt-2 font-medium text-sm">{assistantDisplayName(a, t)}</h3>
                   <p className="mt-1 text-xs text-[var(--color-text-muted)] line-clamp-3 leading-relaxed">{assistantDisplayDescription(a, t)}</p>
+                  {a.isBuiltin && (
+                    <button
+                      className="mt-3 text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)]"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void handleToggleEnabled(a)
+                      }}
+                    >
+                      {a.enabled ? t('am.disable') : t('am.enable')}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -216,7 +257,15 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
               </dl>
 
               <div className="flex flex-wrap gap-2 mt-5">
-                {onUse && (
+                {current.isBuiltin && (
+                  <button
+                    className={current.enabled ? 'btn-ghost' : 'btn-primary'}
+                    onClick={() => void handleToggleEnabled(current)}
+                  >
+                    {current.enabled ? t('am.disable') : t('am.enable')}
+                  </button>
+                )}
+                {onUse && (!current.isBuiltin || current.enabled) && (
                   <button
                     className="btn-primary"
                     onClick={() => onUse(current.id)}
@@ -262,9 +311,9 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
           )}
         </div>
 
-        {toast && (
+        {notice && (
           <div className="shrink-0 px-5 py-2 text-xs text-center bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-            {toast}
+            {notice}
           </div>
         )}
       </div>

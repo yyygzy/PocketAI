@@ -46,6 +46,8 @@ interface MountOpts {
   conversations?: Record<string, ConversationRecord[]>
   archived?: Record<string, ConversationRecord[]>
   assistants?: AssistantRecord[]
+  /** 按 id 兜底查询返回的记录（null=该助手确实已删除；停用的内置助手仍应返回记录） */
+  existingAssistant?: AssistantRecord | null
 }
 
 function mount(opts: MountOpts = {}) {
@@ -53,6 +55,8 @@ function mount(opts: MountOpts = {}) {
   stubPocketai({
     getUiPrefs: () =>
       opts.prefsFail ? { ok: false, error: '库读不到' } : { ok: true, data: { ...stored } },
+    // §4 兜底：不在「我的助手」列表里时要按 id 查一次，确认它不是"已删除"而是"已停用的内置"
+    getAssistant: () => opts.existingAssistant ?? null,
     setUiPrefs: (patch: Record<string, unknown>) => ({ ok: true, data: patch }),
     listConversations: (assistantId: string, _agent: boolean, isArchived: boolean) =>
       (isArchived ? opts.archived?.[assistantId] : opts.conversations?.[assistantId]) ?? [],
@@ -140,6 +144,19 @@ describe('Agent 模块记住上次用的助手与会话', () => {
       expect(result.current.conversationId).toBeNull()
       expect(prefsWrites()).toEqual([{ agentAssistantId: '', agentConversationId: '' }])
     })
+  })
+
+  it('助手不在「我的助手」里但仍存在（停用的内置）：保留存档，不清成自由会话', async () => {
+    const result = mount({
+      stored: { agentAssistantId: 'asst-coder', agentConversationId: 'c9' },
+      conversations: { 'asst-coder': [conv('c9', 'asst-coder')] },
+      assistants: [assistant('a1')],
+      existingAssistant: { ...assistant('asst-coder'), isBuiltin: true }
+    })
+    await waitFor(() => expect(result.current.assistantId).toBe('asst-coder'))
+    expect(result.current.conversationId).toBe('c9')
+    // 只允许挂载时把正常存档写回一次；绝不能出现清空（agentAssistantId: ''）
+    expect(prefsWrites().some((w) => w.agentAssistantId === '')).toBe(false)
   })
 
   it('无存档（对照）：不自动选助手，也不写库；用户选了助手与会话后才落档', async () => {

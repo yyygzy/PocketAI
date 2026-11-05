@@ -7,6 +7,8 @@ import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } fro
 import type {
   ProviderRecord,
   AssistantRecord,
+  AssistantListScope,
+  DuplicatedAssistant,
   SkillRecord,
   UserMemoryRecord,
   ConversationRecord,
@@ -140,19 +142,21 @@ const api = {
     ipcRenderer.invoke(IPC.PROVIDER_TEST, id),
 
   // ---------- 助手 ----------
-  listAssistants: (): Promise<AssistantRecord[]> =>
-    ipcRenderer.invoke(IPC.ASSISTANT_LIST),
-  getAssistant: (id: string): Promise<AssistantRecord | null> =>
+  listAssistants: (scope?: AssistantListScope): Promise<AssistantRecord[]> =>
+    ipcRenderer.invoke(IPC.ASSISTANT_LIST, scope),
+  getAssistant: (id: string): Promise<AssistantRecord | null | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_GET, id),
   saveAssistant: (
     record: Partial<AssistantRecord> & { name: string }
   ): Promise<AssistantRecord | { ok: false; error: string }> => ipcRenderer.invoke(IPC.ASSISTANT_SAVE, record),
   deleteAssistant: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_DELETE, id),
-  duplicateAssistant: (id: string, displayName?: string): Promise<AssistantRecord> =>
+  duplicateAssistant: (id: string, displayName?: string): Promise<DuplicatedAssistant | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_DUPLICATE, id, displayName),
   setAssistantPinned: (id: string, pinned: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ASSISTANT_SET_PINNED, id, pinned),
+  setAssistantEnabled: (id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.ASSISTANT_SET_ENABLED, id, enabled),
   exportAssistants: (): Promise<
     { ok: true; canceled: true } | { ok: true; path: string; count: number } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.ASSISTANT_EXPORT),

@@ -2,8 +2,9 @@
 import { dialog, BrowserWindow } from 'electron'
 import fs from 'node:fs'
 import { IPC } from '../../../shared/types'
-import type { AssistantRecord } from '../../../shared/types'
+import type { AssistantListScope, AssistantRecord, DuplicatedAssistant } from '../../../shared/types'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
+import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { kbRepo } from '../../db/repositories/kb.repo'
 import { skillRepo } from '../../db/repositories/skill.repo'
 import { assertCanCreateAssistant } from '../../license/license'
@@ -18,8 +19,39 @@ import {
 import { errMsg } from '../../error'
 import { issuePathToken, peekPathToken, dropPathToken } from '../dialog-path-token'
 
+/** 已启用的内置助手 id 列表：只存 app_config KV，不碰 assistants 表（内置行每次启动会被 upsert 覆盖） */
+const ENABLED_BUILTIN_IDS_KEY = 'assistants.enabled_builtin_ids'
+
+function readEnabledBuiltinIds(): string[] {
+  const raw = appConfigRepo.get(ENABLED_BUILTIN_IDS_KEY)
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/** 读时清理悬空 id（内置助手行被删/被覆盖成不存在）：幂等且不需要额外启动钩子 */
+function enabledBuiltinIds(): string[] {
+  const ids = [...new Set(readEnabledBuiltinIds())]
+  const builtinIds = new Set(assistantRepo.list().filter((a) => a.isBuiltin).map((a) => a.id))
+  const kept = ids.filter((id) => builtinIds.has(id))
+  if (kept.length !== ids.length) appConfigRepo.set(ENABLED_BUILTIN_IDS_KEY, JSON.stringify(kept))
+  return kept
+}
+
 export function registerAssistantHandlers(): void {
-  safeHandle(IPC.ASSISTANT_LIST, () => assistantRepo.list())
+  safeHandle(IPC.ASSISTANT_LIST, (_e, rawScope?: unknown) => {
+    const scope: AssistantListScope = rawScope === 'mine' || rawScope === 'market' ? rawScope : 'all'
+    const all = assistantRepo.list()
+    const enabled = new Set(enabledBuiltinIds())
+    const withFlag = (a: AssistantRecord): AssistantRecord => (a.isBuiltin ? { ...a, enabled: enabled.has(a.id) } : a)
+    if (scope === 'mine') return all.filter((a) => !a.isBuiltin || enabled.has(a.id)).map(withFlag)
+    if (scope === 'market') return all.filter((a) => a.isBuiltin).map(withFlag)
+    return all.map(withFlag)
+  })
   safeHandle(IPC.ASSISTANT_GET, (_e, id: string) => assistantRepo.get(id), argsSchema(idSchema))
   safeHandle(IPC.ASSISTANT_SAVE, (_e, record: Partial<AssistantRecord> & { name: string }) => {
     // License 门控：免费版限制自建助手数量（新建/复制场景；内置助手不计）
@@ -32,13 +64,30 @@ export function registerAssistantHandlers(): void {
     assistantRepo.delete(id)
     return { ok: true }
   }, argsSchema(idSchema))
-  safeHandle(IPC.ASSISTANT_DUPLICATE, (_e, id: string, displayName?: string) => {
+  safeHandle(IPC.ASSISTANT_DUPLICATE, (_e, id: string, displayName?: string): DuplicatedAssistant => {
     assertCanCreateAssistant(assistantRepo.list().filter((a) => !a.isBuiltin).length)
-    return assistantRepo.duplicate(id, displayName)
+    const src = assistantRepo.get(id)
+    if (!src) throw new Error('助手不存在')
+    // 复制前过滤已失效的引用：宁可明确告诉用户丢了几项，也不要静默少能力
+    const validSkills = new Set(skillRepo.list().map((s) => s.id))
+    const validKbs = new Set(kbRepo.list().map((k) => k.id))
+    const keptSkills = src.skillIds.filter((x) => validSkills.has(x))
+    const keptKbs = src.knowledgeBaseIds.filter((x) => validKbs.has(x))
+    const copy = assistantRepo.duplicate(id, displayName, { skillIds: keptSkills, knowledgeBaseIds: keptKbs })
+    return { ...copy, droppedSkills: src.skillIds.length - keptSkills.length, droppedKb: src.knowledgeBaseIds.length - keptKbs.length }
   }, argsSchema(idSchema, optionalStringSchema))
   safeHandle(IPC.ASSISTANT_SET_PINNED, (_e, id: string, pinned: boolean) => {
     assistantRepo.setPinned(id, pinned)
     return { ok: true }
+  }, argsSchema(idSchema, booleanSchema))
+  safeHandle(IPC.ASSISTANT_SET_ENABLED, (_e, id: string, enabled: boolean) => {
+    const target = assistantRepo.get(id)
+    if (!target || !target.isBuiltin) return { ok: false, error: '只能启用或停用内置助手' }
+    const ids = enabledBuiltinIds()
+    const has = ids.includes(id)
+    if (enabled && !has) appConfigRepo.set(ENABLED_BUILTIN_IDS_KEY, JSON.stringify([...ids, id]))
+    else if (!enabled && has) appConfigRepo.set(ENABLED_BUILTIN_IDS_KEY, JSON.stringify(ids.filter((x) => x !== id)))
+    return { ok: true, enabled }
   }, argsSchema(idSchema, booleanSchema))
 
   // ---------- 导出：全量用户助手（非内置）→ JSON → showSaveDialog ----------

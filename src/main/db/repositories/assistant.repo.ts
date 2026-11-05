@@ -177,8 +177,13 @@ export const assistantRepo = {
    * 复制任意助手为「我的助手」。
    * §281：渲染层传可见名（已本地化＋已加"副本"后缀），命中内置助手时不再落 DB 里的中文原始串；
    * 未传时回落到旧行为（`${src.name} 副本`），保证旧调用点与 PopupApp 那类不感知语言的入口不破。
+   * `overrides` 只用于复制时清掉已失效的技能/知识库引用（主进程在落库前过滤）。
    */
-  duplicate(sourceId: string, displayName?: string): AssistantRecord {
+  duplicate(
+    sourceId: string,
+    displayName?: string,
+    overrides?: { skillIds?: string[]; knowledgeBaseIds?: string[] }
+  ): AssistantRecord {
     const src = this.get(sourceId)
     if (!src) throw new Error('助手不存在')
     return this.save({
@@ -190,8 +195,8 @@ export const assistantRepo = {
       defaultModel: src.defaultModel,
       defaultParams: src.defaultParams,
       toolPermissions: src.toolPermissions,
-      skillIds: src.skillIds,
-      knowledgeBaseIds: src.knowledgeBaseIds,
+      skillIds: overrides?.skillIds ?? src.skillIds,
+      knowledgeBaseIds: overrides?.knowledgeBaseIds ?? src.knowledgeBaseIds,
       welcomeMessage: src.welcomeMessage,
       isPinned: false
     })
