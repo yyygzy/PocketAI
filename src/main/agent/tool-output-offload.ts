@@ -17,10 +17,22 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DATA_DIR } from '../portable'
 
-/** 超过这个长度才值得落文件（短的直接进上下文，多一次 fs 往返不划算） */
-export const OFFLOAD_THRESHOLD_CHARS = 20_000
 /** 上下文里留几行预览 */
 export const OFFLOAD_PREVIEW_LINES = 10
+/**
+ * 落文件门槛（v54）：**与 trace 截断上限 `TRACE_TEXT_MAX_CHARS` 对齐**。
+ * 低于它时 trace 存的就是全文，不需要另一条路径；一旦被 trace 截断，就必须有可取的全文。
+ * 这一档原先取 20,000，留下 4,001–20,000 这一段"trace 里没有全文、也没有文件"的空档（P0-5 第一批修掉）。
+ */
+export const OFFLOAD_MIN_CHARS = 4_000
+/**
+ * 上下文改放「预览 + 引用」的门槛（与落文件门槛分开）：
+ * 4,001–20,000 这一段照样落文件（供 trace 回放/诊断），但上下文里仍放原文，
+ * 不把模型的输入形状一起改掉——那是一次行为变化，不该和"补全文路径"捆在一批。
+ */
+export const OFFLOAD_PREVIEW_MIN_CHARS = 20_000
+/** 兼容既有调用/测试的旧名：语义是"上下文预览门槛"，不是落文件门槛 */
+export const OFFLOAD_THRESHOLD_CHARS = OFFLOAD_PREVIEW_MIN_CHARS
 /** 卸载目录里最多留多少份文件（按 mtime 淘汰最旧的） */
 export const OFFLOAD_KEEP_FILES = 200
 /** 给模型看的路径前缀：只有 `fs_read` 认它，指向应用数据目录下的卸载根 */
@@ -47,12 +59,26 @@ export interface OffloadRef {
 }
 
 /**
- * 落一份全文。返回 null 表示**没落**（没过阈值，或写失败）。
+ * 落一份全文。返回 null 表示**没落**（没过落文件门槛，或写失败）。
  * 写失败退回"照旧截断"而不是抛错：这一步的返回值还要给模型用，卸载只是让它**还能读回全文**，
  * 不是它工作的前提——把辅助做成故障点是本末倒置。
+ *
+ * 这里落的是**缓存**：全文的权威存储是那条 tool 消息的 `messages.content`
+ * （见 engine.ts 的持久化处）。读回放必须走 messages，不要把这个 `.txt` 当唯一来源。
  */
 export function offloadToolOutput(root: string, key: string, content: string): OffloadRef | null {
-  if (content.length <= OFFLOAD_THRESHOLD_CHARS) return null
+  if (content.length <= OFFLOAD_MIN_CHARS) return null
+  return writeOffloadFile(root, key, content)
+}
+
+/**
+ * 无条件落一份全文（v54 的补洞入口）：
+ * trace 的 `toolResult` 是**整步聚合字符串**，多个中等长度的调用拼起来也会越过 4000，
+ * 那时单看每个调用的长度都不会触发 `offloadToolOutput`——所以写入端在"整步被截断"时
+ * 对每个调用都调这里，保证每一段都有可取回的文件，不留"trace 截了、却没有路径"的段。
+ * 仍然只是缓存：权威存储是 `messages.content`。
+ */
+export function writeOffloadFile(root: string, key: string, content: string): OffloadRef | null {
   const file = `${safeSegment(key)}.txt`
   const absPath = path.join(root, file)
   try {

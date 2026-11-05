@@ -891,6 +891,30 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_approval_events_request
         ON approval_events(request_id);
     `
+  },
+  {
+    // v54：让「某一步的工具输出」能反查到全文（P0-5 冷 blob 第一批，方案 B）。
+    //
+    // 为什么是引用而不是搬家：工具的完整返回值**本来就已全量落在 `messages.content`**
+    // （engine.ts 写 tool 消息时原样存），卸载文件只是同一份内容的可读缓存。
+    // 所以这里只补一条指针，不新建 blob 存储、不做引用计数表。
+    //
+    // 三列都由写入端按需填，旧行与「内容没超过截断上限」的行一律 NULL——
+    // NULL 的语义是**从未留全文**，不是"清理过"；判定函数见 `agent/trace-replay.ts`。
+    //
+    // `result_chars` 存的是 **JS String.length（Unicode 字符数）**，不是字节数，也不是 UTF-8 编码后的长度：
+    // 它要与 `capTraceText` 尾巴里那句"完整 N 字符"一致，名字带 `_chars` 就是为了不再出现
+    // "叫 bytes 却装字符数"的口径混用。
+    //
+    // ALTER 不可重入，但迁移表（schema_migrations）保证这条只执行一次；
+    // 测试会退回版本号重跑，验证重复执行与旧行兼容。
+    version: 54,
+    name: 'agent_trace_cold_ref',
+    up: `
+      ALTER TABLE agent_traces ADD COLUMN message_id TEXT;
+      ALTER TABLE agent_traces ADD COLUMN cold_ref TEXT;
+      ALTER TABLE agent_traces ADD COLUMN result_chars INTEGER;
+    `
   }
 ]
 

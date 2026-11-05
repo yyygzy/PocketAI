@@ -27,6 +27,10 @@ mem.exec(`
     tool_args TEXT,
     tool_result TEXT,
     model TEXT,
+    -- v54：回放引用三列（本文件只验证 repo 的读写/聚合，不验证判定逻辑）
+    message_id TEXT,
+    cold_ref TEXT,
+    result_chars INTEGER,
     created_at INTEGER
   )
 `)

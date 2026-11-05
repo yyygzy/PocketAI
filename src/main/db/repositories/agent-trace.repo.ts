@@ -39,6 +39,10 @@ interface AgentTraceRow {
   tool_args?: string | null
   tool_result?: string | null
   model?: string | null
+  /** v54：被截断返回值的回放引用（旧行 NULL＝从未留全文） */
+  message_id?: string | null
+  cold_ref?: string | null
+  result_chars?: number | null
   created_at: number
 }
 
@@ -79,6 +83,9 @@ function rowToRecord(row: AgentTraceRow): AgentTraceRecord {
     toolArgs: row.tool_args ?? undefined,
     toolResult: row.tool_result ?? undefined,
     model: row.model ?? undefined,
+    messageId: row.message_id ?? undefined,
+    coldRef: row.cold_ref ?? undefined,
+    resultChars: row.result_chars ?? undefined,
     createdAt: row.created_at
   }
 }
@@ -89,8 +96,8 @@ export const agentTraceRepo = {
     const id = randomUUID()
     const createdAt = Date.now()
     dbService.getHandle().prepare(
-      `INSERT INTO agent_traces (id, request_id, conversation_id, parent_request_id, step_index, step_type, tool_name, duration_ms, token_usage, prompt_tokens, completion_tokens, status, error, tool_args, tool_result, model, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO agent_traces (id, request_id, conversation_id, parent_request_id, step_index, step_type, tool_name, duration_ms, token_usage, prompt_tokens, completion_tokens, status, error, tool_args, tool_result, model, message_id, cold_ref, result_chars, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       rec.requestId,
@@ -108,6 +115,9 @@ export const agentTraceRepo = {
       rec.toolArgs ?? null,
       rec.toolResult ?? null,
       rec.model ?? null,
+      rec.messageId ?? null,
+      rec.coldRef ?? null,
+      rec.resultChars ?? null,
       createdAt
     )
     return { ...rec, id, createdAt }

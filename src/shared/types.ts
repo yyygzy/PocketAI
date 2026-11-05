@@ -1058,6 +1058,15 @@ export interface AgentSessionStats {
   childRuns?: number
 }
 
+/** Agent 轨迹回放可用性（P0-5 冷 blob 第一批）：三档互不兜底，判据见 `main/agent/trace-replay.ts` */
+export type TraceReplayState =
+  /** 卸载文件与对应 `messages` 行都在：可以按 `messageId` 读回全文 */
+  | 'replayable'
+  /** 有引用记录，但文件或 `messages` 行已不在（文件被淘汰、消息被删/被清扫） */
+  | 'expired'
+  /** 从未留全文：旧行没有引用列，或内容从未超过截断上限 */
+  | 'never_stored'
+
 /** Agent 单步执行轨迹（agent_traces 表一行，渲染层分步明细用） */
 export interface AgentTraceRecord {
   id: string
@@ -1086,11 +1095,30 @@ export interface AgentTraceRecord {
   /**
    * v50（V4-Iter-232）：这一步的**入参原文**（多个工具调用时按调用顺序用换行分隔，每段带工具名）。
    * 只在 `stepType='tools'` 那一类步骤上有值；写入端按 `TRACE_TEXT_MAX_CHARS` 截断并留一句"完整 N 字符"，
-   * 所以这一列是**可诊断的线索**，不是"存档的副本"——真要看全文，那一步的返回值在卸载文件里（同批）。
+   * 所以这一列是**可诊断的线索**，不是"存档的副本"——全文按 `messageId` 去 `messages.content` 读，
+   * 卸载文件只是缓存（见 v54 的 `messageId`／`coldRef`）。
    */
   toolArgs?: string
   /** v50：这一步的**返回值原文**（同上，截断口径一致；错误结果也照存，那正是最该看的一种） */
   toolResult?: string
+  /**
+   * v54（P0-5 冷 blob 第一批）：这一步被截断的返回值反查 `messages` 的钥匙。
+   * 多个工具调用时按调用顺序换行分隔（与 `toolArgs`／`toolResult` 同序同分法），
+   * 只收录**长度超过 `TRACE_TEXT_MAX_CHARS`** 的那些调用；NULL＝从未留全文。
+   */
+  messageId?: string
+  /**
+   * v54：卸载文件的相对引用（`@outputs/<file>.txt`），与 `messageId` 同序对应，空段表示该调用没落文件。
+   * **这是缓存不是权威存储**：读回放一律走 `messages.content`，文件没了不代表原文没了。
+   */
+  coldRef?: string
+  /** v54：被截断返回值的原始长度，口径是 **JS String.length（字符数）**，与"完整 N 字符"一致 */
+  resultChars?: number
+  /**
+   * 回放可用性（主进程按"文件 + `messages` 行是否都在"判定后附上，见 `agent/trace-replay.ts`）。
+   * 渲染层拿到的记录可能不带这一颗：不带＝调用方没走判定，不代表可回放。
+   */
+  replay?: TraceReplayState
   /**
    * v50：跑这一步的那台模型。
    * 为什么不能由会话上那一个 `model` 推出来：跨模型角色（§145／§150）之后子运行可以换模型，

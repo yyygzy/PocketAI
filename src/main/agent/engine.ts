@@ -52,7 +52,7 @@ import { createLogger } from '../logger'
 import { createApproval, toolArgsFingerprint } from './tool-approval'
 import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
-import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot } from './tool-output-offload'
+import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot, writeOffloadFile, OFFLOAD_PREVIEW_MIN_CHARS } from './tool-output-offload'
 import {
   isToolsUnsupportedError,
   extractTextToolCalls,
@@ -781,15 +781,30 @@ export function wrapUntrusted(content: string): string {
  *  - 纯文本：保留首段 + 末段
  */
 /**
- * 进上下文的那一份工具结果（V4-Iter-232）：过阈值就**落文件 + 只留预览**，不过阈值照旧截断。
+ * 进上下文的那一份工具结果（V4-Iter-232）：过预览门槛就**落文件 + 只留预览**，不过预览门槛照旧截断。
  * 为什么两处都用它（本轮新结果 + 跨轮重建历史）：原来两处各自调 `compressToolResult`，
  * 于是“砍掉的那一段模型再也拿不回来”在同一轮里发生两次。键取那条工具结果的 DB 消息 id，
  * 所以跨轮重建不会反复重写同一份全文。
+ *
+ * v54：返回值多带一个 `coldRef`——**只要内容过了 trace 截断上限就会落文件**（落文件门槛与截断上限对齐），
+ * 而预览门槛仍是 20,000，两档分开。`coldRef` 只是缓存路径，回放读取走 `messages` 全文。
  */
-export function contextToolResult(messageKey: string, content: string): string {
+export function contextToolResultWithRef(messageKey: string, content: string): { text: string; coldRef: string | null } {
   const off = offloadToolOutput(defaultOffloadRoot(), messageKey, content)
-  if (off) return compressToolResult(buildOffloadPreview(content, off.ref), MAX_TOOL_RESULT_CHARS)
-  return compressToolResult(content, MAX_TOOL_RESULT_CHARS)
+  return { text: contextTextOf(content, off?.ref ?? null), coldRef: off?.ref ?? null }
+}
+
+/** 上下文那一份的取法（预览门槛与落文件门槛分开后，只此一处） */
+function contextTextOf(content: string, coldRef: string | null): string {
+  if (!coldRef) return compressToolResult(content, MAX_TOOL_RESULT_CHARS)
+  // 4,001–20,000 这一段：文件已落（供回放/诊断），但上下文照旧放原文，不改模型看到的形状
+  return content.length > OFFLOAD_PREVIEW_MIN_CHARS
+    ? compressToolResult(buildOffloadPreview(content, coldRef), MAX_TOOL_RESULT_CHARS)
+    : compressToolResult(content, MAX_TOOL_RESULT_CHARS)
+}
+
+export function contextToolResult(messageKey: string, content: string): string {
+  return contextToolResultWithRef(messageKey, content).text
 }
 
 export function compressToolResult(content: string, maxChars: number): string {
@@ -2205,6 +2220,14 @@ class AgentEngine {
     await Promise.all(allowTasks)
 
     // 按原顺序持久化 + push messages + emit tool_result
+    //
+    // v54：trace 的 `toolResult` 是**整步聚合串**，被截断的判据只看聚合长度
+    // （多个中等长度的调用拼起来也会越过上限）；一旦这一步被截断，
+    // 每个调用都记 message id 并保证有落文件——否则就会出现"聚合被截了，单个调用都没过门槛"的空档。
+    const rawResultText = results.map((r) => `${r?.name ?? ''} ${r?.isError ? 'ERROR' : 'OK'} ${r?.content ?? ''}`).join(NL)
+    const traceTruncated = rawResultText.length > TRACE_TEXT_MAX_CHARS
+    const coldMessageIds: string[] = []
+    const coldRefs: string[] = []
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i]!
       const toolResult = results[i]!
@@ -2224,7 +2247,15 @@ class AgentEngine {
         status: 'done'
       })
 
-      const truncatedResult = contextToolResult(toolMsg.id, toolResult.content)
+      const ctxResult = contextToolResultWithRef(toolMsg.id, toolResult.content)
+      const truncatedResult = ctxResult.text
+      if (traceTruncated) {
+        coldMessageIds.push(toolMsg.id)
+        // 单调用没到落文件门槛、但整步仍被截断时补落一份（见 writeOffloadFile 的说明）。
+        // 落文件失败留空段（不补假路径）：判定会因此降级，比"画成可回放但点开没有"诚实。
+        const ref = ctxResult.coldRef ?? writeOffloadFile(defaultOffloadRoot(), toolMsg.id, toolResult.content)?.ref ?? ''
+        coldRefs.push(ref)
+      }
       // kb_search 命中并入引用来源（SEC-29）；web_search/web_fetch 成功结果按 kind='web' 并入（P1）
       // 两次提取各自解析，最后只走一次 mergeSources（12 条上限与去重口径不重复实现）
       ctx.sources = mergeSources(ctx.sources, [
@@ -2281,13 +2312,17 @@ class AgentEngine {
       status: hasError ? 'error' : 'success',
       error: hasError ? results.find((r) => r?.isError)?.content : undefined,
       // v50：这一步"做了什么、得到什么"。截断口径见 capTraceText——
-      // 这一列是可诊断的线索，全文在卸载文件里（同一批），别把它当存档副本
+      // 这一列是可诊断的线索，**不是存档副本**：全文按 v54 的 `messageId` 去 `messages.content` 读，
+      // 卸载文件只是那条全文的缓存。以前这里写"全文在卸载文件里"是假话（4,001–20,000 这一段没有文件）。
       toolArgs: capTraceText(
         toolCalls.map((tc) => `${tc.function.name} ${tc.function.arguments ?? ''}`).join(NL)
       ),
-      toolResult: capTraceText(
-        results.map((r) => `${r?.name ?? ''} ${r?.isError ? 'ERROR' : 'OK'} ${r?.content ?? ''}`).join(NL)
-      )
+      toolResult: capTraceText(rawResultText),
+      // v54：只在"这一步确有内容被截断"时落引用；否则留 NULL = 从未留全文。
+      // 多调用按调用顺序换行分隔，与 toolResult 的分段一一对应。
+      messageId: traceTruncated ? coldMessageIds.join(NL) : undefined,
+      coldRef: traceTruncated ? coldRefs.join(NL) : undefined,
+      resultChars: traceTruncated ? rawResultText.length : undefined
     })
 
     return 'llm'
