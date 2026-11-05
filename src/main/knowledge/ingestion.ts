@@ -140,8 +140,9 @@ export class IngestionService {
     const vectors = await embedTexts(kb.embeddingProviderId!, kb.embeddingModel!, texts)
     const embedMs = performance.now() - te
 
-    // 首次入库确定维度并写回知识库
-    if (kb.embeddingDim === null && vectors.length > 0) {
+    // 写回实际向量维度：首次入库确定维度；换模型重建后记录仍停在旧值时也要纠正，
+    // 否则数据健康会一直按旧维度判定为「不匹配」，重建按钮点了也不会消失。
+    if (vectors.length > 0 && kb.embeddingDim !== vectors[0]!.length) {
       kbRepo.setEmbeddingDim(kb.id, vectors[0]!.length)
     }
 

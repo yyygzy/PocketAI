@@ -81,7 +81,7 @@ const reportWith = (integrity: Partial<DataHealthReport['kb']['integrity']>): Da
 
 describe('② 数据健康面板的两条修复动作：改前弹的是"可数的假数字"', () => {
   const mount = (impls: Record<string, () => unknown>): void => {
-    stubPocketai({ getDataHealth: () => reportWith({ orphanVectors: 12, orphanChunks: 4, brokenDocs: [{ id: 'd1', title: '坏文档', kbName: '库A', reason: 'missing-vec' }] }), ...impls })
+    stubPocketai({ getDataHealth: () => reportWith({ orphanVectors: 12, orphanChunks: 4, brokenDocs: [{ id: 'd1', kbId: 'kbA', title: '坏文档', kbName: '库A', reason: 'missing-vec' }] }), ...impls })
     mountWithProviders(<DataHealthPanel />)
   }
 
@@ -106,6 +106,42 @@ describe('② 数据健康面板的两条修复动作：改前弹的是"可数�
     await settleAfter('reindexKbDocs')
     expect(panels()).toEqual(['索引器未就绪'])
     expect(screen.queryByText(/已入队/)).toBeNull()
+  })
+
+  it('重建成功 ⇒ 入队当下不重扫，目标文档跑完后再扫一次并撤掉「不匹配」', async () => {
+    let healthCalls = 0
+    let docListCalls = 0
+    stubPocketai({
+      getDataHealth: () => {
+        healthCalls += 1
+        // 第一次（挂载）看到坏文档；重建完成后的那次重扫必须看到已消失
+        return reportWith({
+          orphanVectors: 12,
+          orphanChunks: 4,
+          brokenDocs:
+            healthCalls === 1
+              ? [{ id: 'd1', kbId: 'kbA', title: '坏文档', kbName: '库A', reason: 'dim-mismatch' }]
+              : []
+        })
+      },
+      reindexKbDocs: () => ({ enqueued: 1 }),
+      listKbDocuments: () => {
+        docListCalls += 1
+        return [{ id: 'd1', status: docListCalls === 1 ? 'pending' : 'ready' }]
+      }
+    })
+    mountWithProviders(<DataHealthPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: L('dh.integrity.reindex') }))
+    await settleAfter('reindexKbDocs')
+    // 入队后不得立刻重扫：旧实现会在这一刻 load()，用户看到的还是「不匹配」
+    expect(healthCalls).toBe(1)
+    expect(screen.getByText('坏文档')).toBeTruthy()
+    expect(screen.getByText(L('dh.integrity.dimMismatchHint'))).toBeTruthy()
+
+    await waitFor(() => expect(healthCalls).toBe(2), { timeout: 6000 })
+    await waitFor(() => expect(screen.queryByText('坏文档')).toBeNull())
+    expect(docListCalls).toBe(2)
+    expect(screen.queryByText(L('dh.integrity.dimMismatchHint'))).toBeNull()
   })
 })
 

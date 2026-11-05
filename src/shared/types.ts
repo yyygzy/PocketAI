@@ -368,6 +368,7 @@ export interface BudgetWarnEvent {
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */
 export interface KbBrokenDoc {
   id: string
+  kbId: string
   kbName: string
   title: string
   /** missing-vec = 有 embedding 无向量索引（vec 库丢了）；dim-mismatch = 向量维度与知识库配置不一致（换模型未重建） */

@@ -186,8 +186,16 @@ describe('IngestionService.ingestDocument — 入库状态机', () => {
     })
   })
 
-  it('已有维度的知识库不重复写回 embeddingDim', async () => {
+  it('已有维度与实际向量维度不一致时写回实际维度（换模型重建后必须自愈）', async () => {
     mocks.kb = makeKb({ embeddingDim: 1536 })
+    mocks.doc = makeDoc(writeTmp('x'.repeat(200), 'doc.md'), 'md')
+    const svc = new IngestionService()
+    await svc.ingestDocument('kb1', 'doc1')
+    expect(mocks.dimSet).toEqual([{ id: 'kb1', dim: 3 }])
+  })
+
+  it('已有维度与实际向量维度一致时不重复写回', async () => {
+    mocks.kb = makeKb({ embeddingDim: 3 })
     mocks.doc = makeDoc(writeTmp('x'.repeat(200), 'doc.md'), 'md')
     const svc = new IngestionService()
     await svc.ingestDocument('kb1', 'doc1')

@@ -1,8 +1,8 @@
 // 数据健康面板：数据体量明细 + 知识库索引状态 + 知识库完整性 + 备份与维护任务运行情况
 // 数据来源：dataHealth:get 聚合（只读探测，见 src/main/steward/data-health.ts）
 // 修复动作：dataHealth:kb-clean / kb-dedup / kb-reindex（见 src/main/knowledge/kb-health.ts）
-import React, { useCallback, useEffect, useState } from 'react'
-import type { DataHealthReport, KbDocStatus, KbDuplicateGroup } from '../../../../shared/types'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import type { DataHealthReport, KbDocStatus, KbDocument, KbDuplicateGroup } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -27,6 +27,9 @@ export const DataHealthPanel: React.FC = () => {
   const [report, setReport] = useState<DataHealthReport | null>(null)
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [reindexing, setReindexing] = useState(false)
+  const reindexTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reindexToken = useRef(0)
 
   /** safeHandle 的失败是 resolve 的 `{ok:false}`：弹错并告诉调用方"这次没做成"（返回 true＝失败已处理） */
   const failAction = (r: unknown): boolean => {
@@ -63,16 +66,78 @@ export const DataHealthPanel: React.FC = () => {
     load()
   }, [load])
 
+  // 卸载时停掉重建完成轮询，避免定时器继续碰已卸载组件的 state
+  useEffect(
+    () => () => {
+      reindexToken.current += 1
+      if (reindexTimer.current) clearTimeout(reindexTimer.current)
+    },
+    []
+  )
+
+  /**
+   * 重建入队后等到目标文档真正跑完再重扫健康度。
+   * 入队即 load() 会让用户看到"点了重建，提示还在"，误以为没生效；这里只轮询轻量的文档状态，
+   * 目标文档全部离开 pending/parsing/indexing（或达到兜底次数）后，再重算完整报告。
+   */
+  const pollReindexDone = useCallback(
+    (targets: Array<{ kbId: string; docId: string }>) => {
+      const token = ++reindexToken.current
+      if (reindexTimer.current) clearTimeout(reindexTimer.current)
+      const maxAttempts = 150 // 2s × 150 ≈ 5 分钟兜底，避免队列卡住时无限轮询
+      let attempts = 0
+      setReindexing(true)
+
+      const tick = async (): Promise<void> => {
+        if (token !== reindexToken.current) return
+        attempts += 1
+        try {
+          const kbIds = [...new Set(targets.map((t) => t.kbId))]
+          const lists = await Promise.all(kbIds.map((id) => window.pocketai.listKbDocuments(id)))
+          const failed = lists.find((l) => hasIpcFailed(l))
+          if (failed) {
+            load()
+            setReindexing(false)
+            return
+          }
+          const docsById = new Map<string, KbDocument>()
+          for (const list of lists) for (const d of list) docsById.set(d.id, d)
+          const stillRunning = targets.some((t) => {
+            const d = docsById.get(t.docId)
+            return d !== undefined && (d.status === 'pending' || d.status === 'parsing' || d.status === 'indexing')
+          })
+          if (!stillRunning || attempts >= maxAttempts) {
+            load()
+            setReindexing(false)
+            return
+          }
+        } catch (e) {
+          reportIpcError('dataHealth.kbReindexPoll')(e)
+          load()
+          setReindexing(false)
+          return
+        }
+        reindexTimer.current = setTimeout(() => {
+          void tick()
+        }, 2000)
+      }
+      reindexTimer.current = setTimeout(() => {
+        void tick()
+      }, 2000)
+    },
+    [load]
+  )
+
   /** 修复动作统一包装：执行 → 成功提示 → 刷新报告；fn 返回 null 表示"这次没做成"（失败提示由 fn 自己弹） */
   const runAction = useCallback(
-    async (tag: string, fn: () => Promise<string | null>) => {
+    async (tag: string, fn: () => Promise<string | null>, reload = true) => {
       setBusy(true)
       try {
         // 原先是无条件 `toast.success(await fn())`：safeHandle 的失败是 resolve 的 `{ok:false}`，
         // 于是绿色提示会说「已清理 undefined 条孤儿向量、undefined 条孤儿分块」，而实际一条都没动（§216）
         const text = await fn()
         if (text !== null) toast.success(text)
-        load()
+        if (reload) load()
       } catch (e) {
         reportIpcError(tag)(e)
       } finally {
@@ -89,12 +154,21 @@ export const DataHealthPanel: React.FC = () => {
       return t('dh.integrity.cleanDone', { vectors: r.removedVectors, chunks: r.removedChunks })
     })
 
-  const onReindex = () =>
-    runAction('dataHealth.kbReindex', async () => {
-      const r = await window.pocketai.reindexKbDocs(report!.kb.integrity.brokenDocs.map((d) => d.id))
-      if (failAction(r)) return null
-      return t('dh.integrity.reindexDone', { count: r.enqueued })
-    })
+  const onReindex = () => {
+    const targets = report!.kb.integrity.brokenDocs.map((d) => ({ kbId: d.kbId, docId: d.id }))
+    return runAction(
+      'dataHealth.kbReindex',
+      async () => {
+        const r = await window.pocketai.reindexKbDocs(targets.map((d) => d.docId))
+        if (failAction(r)) return null
+        // 入队后不立刻重扫：等这些文档真正跑完再刷新，才能看到「不匹配」消失；空队列才直接刷新
+        if (r.enqueued > 0) pollReindexDone(targets)
+        else load()
+        return t('dh.integrity.reindexDone', { count: r.enqueued })
+      },
+      false
+    )
+  }
 
   const onDedup = async (group: KbDuplicateGroup) => {
     const removeCount = group.docs.length - 1
@@ -173,6 +247,7 @@ export const DataHealthPanel: React.FC = () => {
 
   const { sizes, traces, kb, backup, tasks, boot, recentPerf, perfHistory } = report
   const integrity = kb.integrity
+  const hasDimMismatch = integrity.brokenDocs.some((d) => d.reason === 'dim-mismatch')
   const integrityOk =
     integrity.orphanVectors === 0 &&
     integrity.orphanChunks === 0 &&
@@ -319,7 +394,12 @@ export const DataHealthPanel: React.FC = () => {
                   ))}
                 </tbody>
               </table>
-              <button onClick={onReindex} disabled={busy} className="chip">{t('dh.integrity.reindex')}</button>
+              {hasDimMismatch && (
+                <div className="text-[11px] text-[var(--color-text-muted)] mb-1.5 leading-relaxed">
+                  {t('dh.integrity.dimMismatchHint')}
+                </div>
+              )}
+              <button onClick={onReindex} disabled={busy || reindexing} className="chip">{t('dh.integrity.reindex')}</button>
             </div>
           )}
 

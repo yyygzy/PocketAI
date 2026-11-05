@@ -194,7 +194,7 @@ export function getKbIntegrityReport(): KbIntegrityReport {
   for (const [docId, reason] of broken) {
     const doc = docById.get(docId)
     if (!doc) continue // 探测间隙被删除
-    brokenDocs.push({ id: docId, kbName: kbNameOf(doc.kbId), title: doc.title || doc.source, reason })
+    brokenDocs.push({ id: docId, kbId: doc.kbId, kbName: kbNameOf(doc.kbId), title: doc.title || doc.source, reason })
   }
   brokenDocs.sort((a, b) => a.kbName.localeCompare(b.kbName) || a.title.localeCompare(b.title))
 
