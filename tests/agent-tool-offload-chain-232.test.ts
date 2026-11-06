@@ -178,11 +178,16 @@ describe('① 过阈值：上下文里换成了引用 + 预览，而不是那 25
     const text = toolMessageContent()
     expect(text).toContain(OFFLOAD_PREFIX)
     expect(text.length).toBeLessThan(4000)
-    // 全文真的在盘上（引用不是空头支票）
-    const root = path.join(P.data, 'agent-tool-outputs')
-    const files = fs.readdirSync(root).filter((f) => f.endsWith('.txt'))
-    expect(files.length).toBeGreaterThan(0)
-    const full = fs.readFileSync(path.join(root, files[0]!), 'utf-8')
+    // 全文真的在盘上（引用不是空头支票）：按**预览里给出的引用本身**去解析，
+    // 而不是"根目录里随便找个文件"——后者在分目录布局下会漏掉"引用指错了"这种坏法。
+    const refInText = text.match(/@outputs\/[^\s，。]+/)?.[0]
+    expect(refInText, '预览里没有引用').toBeTruthy()
+    const rel = refInText!.slice(OFFLOAD_PREFIX.length)
+    // 新布局：`<conversationId>/<messageId>.txt`，第一段必须就是本次会话 id
+    expect(rel.startsWith(`${convId}/`)).toBe(true)
+    const abs = path.join(P.data, 'agent-tool-outputs', rel)
+    expect(fs.existsSync(abs), `引用指向的文件不存在: ${refInText}`).toBe(true)
+    const full = fs.readFileSync(abs, 'utf-8')
     // 卸载的是**那一步工具结果的原文**（fs_read 的 JSON 信封），不是文件本身——
     // 断言按这个口径写：长串必须在里面，长度不能低于原文
     expect(full).toContain('q'.repeat(1000))

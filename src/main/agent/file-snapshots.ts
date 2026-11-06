@@ -13,6 +13,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { DATA_DIR } from '../portable'
+import { createLogger } from '../logger'
+import { errMsg } from '../error'
+
+const log = createLogger('snapshot')
 
 export interface FileSnapshot {
   id: string
@@ -29,6 +33,43 @@ export interface FileSnapshot {
 
 export const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 const MAX_SNAPSHOTS = 100
+/** 原子写临时后缀；`.part` 不在 `listSnapshotIds`/`readSnapshot` 的解析路径上 */
+const PART_SUFFIX = '.part'
+const STALE_PART_MS = 60 * 60 * 1000
+
+/**
+ * 写一份 JSON 走 `.part` → rename：杀进程/断电时最多剩一个 `.part`，
+ * 而 `readSnapshot` 只认 `<id>.json`，半截文件永远不会被当成一份快照读出来。
+ */
+function writeSnapshotAtomic(file: string, record: FileSnapshot): void {
+  const part = `${file}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}${PART_SUFFIX}`
+  fs.writeFileSync(part, JSON.stringify(record), 'utf-8')
+  try {
+    fs.renameSync(part, file)
+  } catch (e) {
+    try {
+      fs.rmSync(part, { force: true })
+    } catch { /* 留待下次 prune 扫走 */ }
+    throw e
+  }
+}
+
+/** 淘汰失败计数（不静默；第三批数据健康口径取这个数） */
+let pruneFailures = 0
+const loggedPruneFailures = new Set<string>()
+
+export function getSnapshotPruneFailureCount(): number {
+  return pruneFailures
+}
+
+function recordPruneFailure(target: string, e: unknown): void {
+  pruneFailures++
+  if (loggedPruneFailures.size > 1000) loggedPruneFailures.clear()
+  if (!loggedPruneFailures.has(target)) {
+    loggedPruneFailures.add(target)
+    log.warn(`快照删除失败（累计 ${pruneFailures} 次）: ${target}: ${errMsg(e)}`)
+  }
+}
 
 export function defaultSnapshotRoot(): string {
   return path.join(DATA_DIR, 'agent-file-snapshots')
@@ -64,7 +105,7 @@ export function captureSnapshot(
     createdAt: Date.now(),
     consumedAt: null
   }
-  fs.writeFileSync(snapshotFile(root, record.id), JSON.stringify(record), 'utf-8')
+  writeSnapshotAtomic(snapshotFile(root, record.id), record)
   prune(root)
   return record
 }
@@ -89,7 +130,8 @@ export function markConsumed(root: string, id: string): FileSnapshot {
   const record = readSnapshot(root, id)
   if (!record) throw new Error('SNAPSHOT_NOT_FOUND:找不到这一笔写入的快照')
   const next: FileSnapshot = { ...record, consumedAt: Date.now() }
-  fs.writeFileSync(snapshotFile(root, id), JSON.stringify(next), 'utf-8')
+  // 原地重写也走原子替换：`markConsumed` 被杀在半截时，读到的是旧 JSON 而不是坏 JSON
+  writeSnapshotAtomic(snapshotFile(root, id), next)
   return next
 }
 
@@ -107,15 +149,33 @@ export function listSnapshotIds(root: string): string[] {
 /** 超出份数上限时淘汰最旧的若干份（保留最新 MAX_SNAPSHOTS 份） */
 export function prune(root: string): number {
   const ids = listSnapshotIds(root)
-  if (ids.length <= MAX_SNAPSHOTS) return 0
   let removed = 0
-  for (const id of ids.slice(MAX_SNAPSHOTS)) {
-    try {
-      fs.rmSync(snapshotFile(root, id))
-      removed++
-    } catch {
-      // 淘汰失败不影响写入本身：快照目录会由数据健康屏那侧报体积
+  if (ids.length > MAX_SNAPSHOTS) {
+    for (const id of ids.slice(MAX_SNAPSHOTS)) {
+      try {
+        fs.rmSync(snapshotFile(root, id))
+        removed++
+      } catch (e) {
+        // 淘汰失败不影响写入本身，但**必须留痕**：Windows 文件锁会让目录悄悄超上限
+        recordPruneFailure(snapshotFile(root, id), e)
+      }
     }
   }
+  // 半写临时文件：只清一小时前就不动的，避免抢正在写的那个
+  try {
+    const now = Date.now()
+    for (const f of fs.readdirSync(root)) {
+      if (!f.endsWith(PART_SUFFIX)) continue
+      const abs = path.join(root, f)
+      try {
+        if (now - fs.statSync(abs).mtimeMs > STALE_PART_MS) {
+          fs.rmSync(abs)
+          removed++
+        }
+      } catch (e) {
+        recordPruneFailure(abs, e)
+      }
+    }
+  } catch { /* 目录不可读：下次写入再试 */ }
   return removed
 }

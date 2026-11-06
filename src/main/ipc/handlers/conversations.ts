@@ -24,6 +24,7 @@ import { htmlToPdf } from '../../export/pdf'
 import { errMsg } from '../../error'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { clearSessionAllow } from '../../agent/tool-approval'
+import { purgeConversationColdData } from '../../agent/cold-data'
 import {
   conversationExportPayloadSchema,
   conversationImportDataSchema,
@@ -76,7 +77,8 @@ export function registerConversationHandlers(): void {
     for (const m of msgs) {
       deleteMessageAttachmentDocs(m.id)
     }
-    conversationRepo.delete(id)
+    // 仓储只删行；磁盘上的冷数据目录由这里按「本次删掉的会话 id（含子会话）」级联清理
+    purgeConversationColdData(conversationRepo.delete(id))
     clearSessionAllow(id) // 清会话级工具「总是允许」白名单
     return { ok: true }
   }, argsSchema(idSchema))
@@ -90,7 +92,7 @@ export function registerConversationHandlers(): void {
         for (const m of msgs) {
           deleteMessageAttachmentDocs(m.id)
         }
-        conversationRepo.delete(id)
+        purgeConversationColdData(conversationRepo.delete(id))
         clearSessionAllow(id)
         ok++
       } catch {

@@ -608,7 +608,7 @@ export function buildContext(history: MessageRecord[], systemPrompt?: string): A
         // 若没找到对应的 assistant.tool_calls，跳过该 tool 消息（避免 LLM API 报错）
         if (!lastAssistant) continue
         // 压缩恢复的历史工具结果（同样给定界：DB 里存的是原文，包装只发生在进上下文时）
-        const truncated = wrapUntrusted(contextToolResult(m.id, typeof tr.content === 'string' ? tr.content : String(tr.content ?? '')))
+        const truncated = wrapUntrusted(contextToolResult(m.id, typeof tr.content === 'string' ? tr.content : String(tr.content ?? ''), m.conversationId))
         out.push({
           role: 'tool',
           content: truncated,
@@ -789,8 +789,12 @@ export function wrapUntrusted(content: string): string {
  * v54：返回值多带一个 `coldRef`——**只要内容过了 trace 截断上限就会落文件**（落文件门槛与截断上限对齐），
  * 而预览门槛仍是 20,000，两档分开。`coldRef` 只是缓存路径，回放读取走 `messages` 全文。
  */
-export function contextToolResultWithRef(messageKey: string, content: string): { text: string; coldRef: string | null } {
-  const off = offloadToolOutput(defaultOffloadRoot(), messageKey, content)
+export function contextToolResultWithRef(
+  messageKey: string,
+  content: string,
+  conversationId?: string | null
+): { text: string; coldRef: string | null } {
+  const off = offloadToolOutput(defaultOffloadRoot(), messageKey, content, conversationId)
   return { text: contextTextOf(content, off?.ref ?? null), coldRef: off?.ref ?? null }
 }
 
@@ -803,8 +807,8 @@ function contextTextOf(content: string, coldRef: string | null): string {
     : compressToolResult(content, MAX_TOOL_RESULT_CHARS)
 }
 
-export function contextToolResult(messageKey: string, content: string): string {
-  return contextToolResultWithRef(messageKey, content).text
+export function contextToolResult(messageKey: string, content: string, conversationId?: string | null): string {
+  return contextToolResultWithRef(messageKey, content, conversationId).text
 }
 
 export function compressToolResult(content: string, maxChars: number): string {
@@ -2247,13 +2251,13 @@ class AgentEngine {
         status: 'done'
       })
 
-      const ctxResult = contextToolResultWithRef(toolMsg.id, toolResult.content)
+      const ctxResult = contextToolResultWithRef(toolMsg.id, toolResult.content, conversationId)
       const truncatedResult = ctxResult.text
       if (traceTruncated) {
         coldMessageIds.push(toolMsg.id)
         // 单调用没到落文件门槛、但整步仍被截断时补落一份（见 writeOffloadFile 的说明）。
         // 落文件失败留空段（不补假路径）：判定会因此降级，比"画成可回放但点开没有"诚实。
-        const ref = ctxResult.coldRef ?? writeOffloadFile(defaultOffloadRoot(), toolMsg.id, toolResult.content)?.ref ?? ''
+        const ref = ctxResult.coldRef ?? writeOffloadFile(defaultOffloadRoot(), toolMsg.id, toolResult.content, conversationId)?.ref ?? ''
         coldRefs.push(ref)
       }
       // kb_search 命中并入引用来源（SEC-29）；web_search/web_fetch 成功结果按 kind='web' 并入（P1）

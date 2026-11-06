@@ -292,7 +292,13 @@ export const conversationRepo = {
       .run(...vals)
   },
 
-  delete(id: string): void {
+  /**
+   * 删除会话（含委派子会话）。**只删库，不删盘**——冷数据目录的清理由调用方
+   * （IPC 层）拿这里返回的 id 清单交给 `agent/cold-data.ts`，仓储不依赖文件系统。
+   *
+   * @returns 本次真正删掉的会话 id（含全部子会话），供上层级联清理文件
+   */
+  delete(id: string): string[] {
     const db = dbService.getHandle()
     // 先取子树：删掉父会话时，委派出去的子代理会话不能变成孤儿（它们不在列表里，
     // 留着的后果是"看不见却占着库、还计入会话统计"）。级联口径已在方案 §144 记档。
@@ -316,6 +322,7 @@ export const conversationRepo = {
       }
     })
     tx()
+    return doomed
   },
 
   /** 读取会话未发送草稿；无草稿返回空串 */

@@ -137,12 +137,14 @@ describe('① 卸载：过阈值才落，落下来的必须读得回来', () => 
     for (let i = 0; i < OFFLOAD_KEEP_FILES + 5; i++) {
       const file = path.join(root, `m${i}.txt`)
       fs.writeFileSync(file, 'x', 'utf-8')
-      const t = new Date(1_700_000_000_000 + i * 1000)
+      // 用"最近几分钟"的 mtime：这批文件测的是**份数上限**，别让后来加的 30 天时间上限把它们先清掉
+      const t = new Date(Date.now() - (i + 1) * 1000)
       fs.utimesSync(file, t, t)
     }
     expect(pruneOffloads(root)).toBe(5)
     expect(fs.readdirSync(root)).toHaveLength(OFFLOAD_KEEP_FILES)
-    expect(fs.existsSync(path.join(root, `m${OFFLOAD_KEEP_FILES + 4}.txt`))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'm0.txt'))).toBe(true) // 最新的一份保留
+    expect(fs.existsSync(path.join(root, `m${OFFLOAD_KEEP_FILES + 4}.txt`))).toBe(false) // 最旧的被淘汰
   })
 
   it('落一份新文件会顺手淘汰超额旧文件（"记得写、忘了清"是这一层最容易犯的错）', () => {
@@ -150,13 +152,14 @@ describe('① 卸载：过阈值才落，落下来的必须读得回来', () => 
     for (let i = 0; i < OFFLOAD_KEEP_FILES; i++) {
       const file = path.join(root, `old${i}.txt`)
       fs.writeFileSync(file, 'x', 'utf-8')
-      const ts = new Date(1_600_000_000_000 + i * 1000)
+      const ts = new Date(Date.now() - (i + 1) * 1000)
       fs.utimesSync(file, ts, ts)
     }
     const off = offloadToolOutput(root, 'brand-new', long('庚段：'))!
     expect(fs.existsSync(off.absPath)).toBe(true)
     expect(fs.readdirSync(root)).toHaveLength(OFFLOAD_KEEP_FILES)
-    expect(fs.existsSync(path.join(root, 'old0.txt'))).toBe(false)
+    expect(fs.existsSync(path.join(root, 'old0.txt'))).toBe(true) // 最新的一份不会被淘汰
+    expect(fs.existsSync(path.join(root, `old${OFFLOAD_KEEP_FILES - 1}.txt`))).toBe(false) // 最旧的那份被淘汰
   })
 
   it('卸载默认落在应用数据目录下，不在用户工作目录里', () => {
