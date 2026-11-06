@@ -440,6 +440,8 @@ export const ko = {
   'steward.cleanupVacuumFailed': '고아 메시지 {m}개, 고아 벡터 청크 {c}개를 삭제했지만 VACUUM을 실행하지 못해 공간을 회수하지 않았습니다',
   'steward.vacuumFailed': 'VACUUM을 실행하지 못해 공간을 회수하지 않았습니다',
   'composer.ph': '메시지 입력 — Enter로 전송, Shift+Enter로 줄 바꿈',
+  'composer.agentMode': 'Agent 모드',
+  'composer.agentModeHint': '이 대화에서는 도구(파일 읽기/쓰기, 명령 실행 등)를 사용할 수 있습니다. 사용 가능 여부는 선택한 모델에 따라 다릅니다.',
   // 프롬프트 스니펫
   'snippet.button': '프롬프트 스니펫',
   'snippet.title': '프롬프트 스니펫',

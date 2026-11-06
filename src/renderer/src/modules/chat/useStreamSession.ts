@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatTarget } from '../../../../shared/types'
 import type { CompareColumn } from './ComparisonColumns'
 import type { FocusBranch } from './ChatView'
+import type { AgentMessage } from '../agent/agent-shared'
+import { messagesReducer } from '../agent/hooks/messages-reducer'
 import { hasIpcFailed, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 
@@ -21,7 +23,7 @@ import { errText } from '../../utils/error'
  */
 export interface UseStreamSessionOptions {
   /** finalize 后按需重载消息（仅当当前会话仍为流式会话时） */
-  loadMessages: (convId: string) => void
+  loadMessages: (convId: string) => void | Promise<void>
   /** finalize 后刷新会话列表 */
   reloadConversations: () => void
   /** 读取当前会话 id（finalize 时判断是否仍需 loadMessages） */
@@ -31,6 +33,8 @@ export interface UseStreamSessionOptions {
    * 至少一列 done → 'done'；全部 error/aborted → 'error'。供失焦通知等使用。
    */
   onStreamsSettled?: (convId: string, outcome: 'done' | 'error') => void
+  /** Agent 步骤 error 事件缺 error 文案时的兜底句（随界面语言） */
+  unknownErrorText?: string
 }
 
 /** 单列落定状态（与 CompareColumn['status'] 对齐，含 abort 中断） */
@@ -47,13 +51,19 @@ export function settledOutcome(statuses: readonly SettledStatus[]): 'done' | 'er
 export interface UseStreamSessionApi {
   /** 流式中的虚拟列（非 null 表示正在流式） */
   liveColumns: CompareColumn[] | null
+  /** Agent 模式下正在跑的事件流（按 requestId 归属；非 null 表示这一轮来自 Agent） */
+  agentStream: { convId: string; requestId: string; messages: AgentMessage[] } | null
+  /** Agent 模式是否在跑（会话切换后仍为 true，用于全局忙碌态） */
+  agentRunning: boolean
   /** 分支聚焦信号：regenerate/resend 后把对应轮次切到新分支 */
   focusBranch: FocusBranch | null
   /** 是否流式中（ref 直读，事件 handler 内调用即得最新值） */
   isStreaming: () => boolean
   /** 发起流式：初始化 6 ref + liveColumns，返回 requestId；忙时返回 null */
   beginStream: (convId: string, targets: ChatTarget[]) => string | null
-  /** 流式 IPC reject 兜底：清 ref + 清 liveColumns + 按需 loadMessages */
+  /** 发起 Agent 模式事件流：不建虚拟列，改由 agentStream 收 step/chunk，返回 requestId；忙时返回 null */
+  beginAgentStream: (convId: string) => string | null
+  /** 流式 IPC reject 兜底：清 ref + 清 liveColumns/agentStream + 按需 loadMessages */
   failStream: (requestId: string, convId: string) => void
   /** 发分支聚焦信号（nonce 自增，ChatView effect 据此回填新分支） */
   focusNewBranch: (turnKey: string, batchId: string) => void
@@ -65,6 +75,12 @@ export interface UseStreamSessionApi {
 
 export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessionApi {
   const [liveColumns, setLiveColumns] = useState<CompareColumn[] | null>(null)
+  const [agentStream, setAgentStream] = useState<{
+    convId: string
+    requestId: string
+    messages: AgentMessage[]
+  } | null>(null)
+  const [agentRunning, setAgentRunning] = useState(false)
   const [focusBranch, setFocusBranch] = useState<FocusBranch | null>(null)
   /** §266 第六面：按「停止」那一发的结果过去只交给 `.catch(reportIpcError(...))`——
    *  而 abort 走 safeHandle，失败是**已 resolve 的 `{ok:false}`**，那条 catch 不会经过 ⇒ 屏上零字，流却还在跑。 */
@@ -115,6 +131,95 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       if (e.requestId === requestIdRef.current) markSettled(e.requestId, e.targetIndex, { status: 'error', error: e.error })
     })
 
+    // ---- Agent 模式事件流（v1：同一会话入口，只消费既有事件，不改引擎） ----
+    // 归属只看 requestId：会话切走后仍继续归并，切回来还能看到这一轮的实时卡片。
+    const offAgentStep = window.pocketai.onAgentStep((e) => {
+      if (e.requestId !== requestIdRef.current) return
+      // 用户气泡由 ChatModule 本地乐观插入；interject（运行中插队）v1 不做
+      if (e.type === 'user' || e.type === 'interject') return
+      setAgentStream((prev) => {
+        if (!prev || prev.requestId !== e.requestId) return prev
+        return {
+          ...prev,
+          messages: messagesReducer(prev.messages, {
+            type: 'step',
+            event: e,
+            unknownErrorText: optsRef.current.unknownErrorText ?? ''
+          })
+        }
+      })
+    })
+    const offAgentChunk = window.pocketai.onAgentChunk((e) => {
+      if (e.requestId !== requestIdRef.current) return
+      setAgentStream((prev) => {
+        if (!prev || prev.requestId !== e.requestId) return prev
+        return {
+          ...prev,
+          messages: messagesReducer(prev.messages, {
+            type: 'chunk',
+            messageId: e.messageId,
+            delta: e.delta,
+            reasoning: e.reasoning
+          })
+        }
+      })
+    })
+    let agentFinalizeTimer: ReturnType<typeof setTimeout> | null = null
+    function finalizeAgent(convId: string, outcome: 'done' | 'error') {
+      if (finalizedRef.current) return
+      finalizedRef.current = true
+      setStopUnread(null)
+      optsRef.current.onStreamsSettled?.(convId, outcome)
+      const requestId = requestIdRef.current
+      requestIdRef.current = null
+      streamingConvRef.current = null
+      // 与聊天流一样延迟 200ms：先让最后一段 chunk 画完，再重读库里的持久化消息并撤掉实时卡，
+      // 避免 done 时立刻清空出现空白闪断。done 事件本身不再追加任何卡片（去重在 reducer/持久化）。
+      agentFinalizeTimer = setTimeout(() => {
+        agentFinalizeTimer = null
+        optsRef.current.reloadConversations()
+        const clearLive = () => {
+          setAgentStream((prev) => (prev && prev.requestId === requestId ? null : prev))
+          setAgentRunning(false)
+        }
+        if (convId && optsRef.current.getCurrentConvId() === convId) {
+          Promise.resolve(optsRef.current.loadMessages(convId)).finally(clearLive)
+        } else {
+          clearLive()
+        }
+      }, 200)
+    }
+    const offAgentDone = window.pocketai.onAgentDone((e) => {
+      if (e.requestId !== requestIdRef.current) return
+      finalizeAgent(e.conversationId, 'done')
+    })
+    const offAgentError = window.pocketai.onAgentError((e) => {
+      if (e.requestId !== requestIdRef.current) return
+      setAgentStream((prev) => {
+        if (!prev || prev.requestId !== e.requestId) return prev
+        // 引擎在发 error 前会先把当前占位 assistant 写入「（出错：…）／（已中止）」终态并作为 thought 步发出；
+        // 这时别再追加第二张错误卡。只有连占位卡都没有的 setup 级失败才补一张，避免错误静默。
+        const lastAssistant = [...prev.messages].reverse().find((m) => m.role === 'assistant')
+        const alreadyNoticed =
+          !!lastAssistant &&
+          (lastAssistant.isError || /^（(出错：|已中止)/.test(lastAssistant.text))
+        if (alreadyNoticed) return prev
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            {
+              id: `agent-error-${e.requestId}`,
+              role: 'assistant',
+              text: `⚠️ ${e.error}`,
+              isError: true
+            }
+          ]
+        }
+      })
+      finalizeAgent(e.conversationId, 'error')
+    })
+
     // finalize 在流式结束后延迟 200ms 再清空/重载，避免立即重渲染打断最后一段输出。
     // 这个 timer 必须在 effect cleanup 时清掉，否则组件卸载后会触发 setLiveColumns 等。
     let finalizeTimer: ReturnType<typeof setTimeout> | null = null
@@ -141,7 +246,12 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       offChunk()
       offDone()
       offError()
+      offAgentStep()
+      offAgentChunk()
+      offAgentDone()
+      offAgentError()
       if (finalizeTimer) clearTimeout(finalizeTimer)
+      if (agentFinalizeTimer) clearTimeout(agentFinalizeTimer)
     }
   }, [])
 
@@ -152,6 +262,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     const requestId = crypto.randomUUID()
     requestIdRef.current = requestId
     setStopUnread(null) // §266：新一轮流式，上一发"停止没送到"不再作数（陈旧谎报要自己退场，§256）
+    setAgentStream(null)
+    setAgentRunning(false)
     finalizedRef.current = false
     totalColumnsRef.current = targets.length
     settledCountRef.current = 0
@@ -168,11 +280,30 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     return requestId
   }, [])
 
+  /** Agent 模式：同一 requestId 认领，不建虚拟列；步骤由 agent 事件流归并成 AgentMessage 卡片 */
+  const beginAgentStream = useCallback((convId: string): string | null => {
+    if (requestIdRef.current) return null
+    const requestId = crypto.randomUUID()
+    requestIdRef.current = requestId
+    setStopUnread(null)
+    finalizedRef.current = false
+    totalColumnsRef.current = 0
+    settledCountRef.current = 0
+    resultsRef.current = []
+    streamingConvRef.current = convId
+    setLiveColumns(null)
+    setAgentStream({ convId, requestId, messages: [] })
+    setAgentRunning(true)
+    return requestId
+  }, [])
+
   const failStream = useCallback((requestId: string, convId: string) => {
     if (requestIdRef.current !== requestId) return
     requestIdRef.current = null
     streamingConvRef.current = null
     setLiveColumns(null)
+    setAgentStream((prev) => (prev && prev.requestId === requestId ? null : prev))
+    setAgentRunning(false)
     if (convId && optsRef.current.getCurrentConvId() === convId) optsRef.current.loadMessages(convId)
   }, [])
 
@@ -205,9 +336,12 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
 
   return {
     liveColumns,
+    agentStream,
+    agentRunning,
     focusBranch,
     isStreaming,
     beginStream,
+    beginAgentStream,
     failStream,
     focusNewBranch,
     abort,

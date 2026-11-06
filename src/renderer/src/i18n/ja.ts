@@ -440,6 +440,8 @@ export const ja = {
   'steward.cleanupVacuumFailed': '孤立メッセージ {m} 件、孤立ベクトルチャンク {c} 個を削除しましたが、VACUUM は実行できず、領域は解放されていません',
   'steward.vacuumFailed': 'VACUUM は実行できず、領域は解放されていません',
   'composer.ph': 'メッセージを入力 — Enter で送信、Shift+Enter で改行',
+  'composer.agentMode': 'Agent モード',
+  'composer.agentModeHint': 'この会話ではツール（ファイルの読み書き、コマンド実行など）を利用できます。利用可否は選択中のモデルに依存します。',
   // プロンプトスニペット
   'snippet.button': 'プロンプトスニペット',
   'snippet.title': 'プロンプトスニペット',

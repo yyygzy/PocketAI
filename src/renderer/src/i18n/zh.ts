@@ -461,6 +461,8 @@ export const zh = {
   'steward.cleanupVacuumFailed': '已删除孤儿消息 {m} 条、孤儿向量块 {c} 个，但 VACUUM 没跑成，空间未压缩',
   'steward.vacuumFailed': 'VACUUM 没跑成，空间未压缩',
   'composer.ph': '输入消息，Enter 发送，Shift+Enter 换行',
+  'composer.agentMode': 'Agent 模式',
+  'composer.agentModeHint': '本会话可调用工具（读写文件、执行命令等）；能否调用取决于所选模型。',
   // 提示词片段库
   'snippet.button': '提示词片段',
   'snippet.title': '提示词片段',

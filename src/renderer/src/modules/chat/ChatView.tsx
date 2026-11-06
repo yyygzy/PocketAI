@@ -13,6 +13,8 @@ import { useToast } from '../../components/ToastProvider'
 import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
+import { AgentMessageCard } from '../agent/components/AgentMessageCard'
+import { toAgentMessages, type AgentMessage } from '../agent/agent-shared'
 import { cumulativeTokensByMessage } from '../../utils/usage-summary'
 import { hasUsableModel } from '../../utils/provider-pick'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
@@ -26,6 +28,10 @@ interface Turn {
   replies: MessageRecord[]
   /** 按 batch 分组后的回复（每组 = 一次生成；多组即多分支） */
   batches: MessageRecord[][]
+  /** 该轮全部消息（按原顺序，含 tool 记录）：Agent 轮次按此序列复原卡片 */
+  items: MessageRecord[]
+  /** 该轮里的工具记录；role=tool 只由 Agent 引擎写入，出现即说明这轮是 Agent 运行 */
+  tools: MessageRecord[]
 }
 
 /** 一轮回复按批次分组：有 batchId 按 batchId 归组；旧数据按“连续 5 秒内”归为同批 */
@@ -54,6 +60,23 @@ function groupBatches(replies: MessageRecord[]): MessageRecord[][] {
     }
   }
   return batches
+}
+
+/**
+ * 持久化的 Agent 轮次（P0-4 v1）：Agent 引擎会把多步 assistant 与 tool 记录按顺序落库，
+ * 若仍按普通「连续回复分 batch」渲染，多步会被误画成并行分支。
+ * 这里把「用户之后的全部记录」交给既有 toAgentMessages 还原成卡片；
+ * 过滤掉空的 assistant 占位（带 tool 调用的 LLM 步正文可能为空），只把最后一条非错误助手卡标成最终回答。
+ */
+function agentCardsOf(items: MessageRecord[]): AgentMessage[] {
+  const cards = toAgentMessages(items.filter((m) => m.role !== 'user')).filter(
+    (c) => c.role !== 'assistant' || c.text.trim() || c.todos?.length || c.isError || c.sources?.length
+  )
+  let lastFinal = -1
+  cards.forEach((c, i) => {
+    if (c.role === 'assistant' && !c.isError && !c.todos?.length) lastFinal = i
+  })
+  return cards.map((c, i) => (c.role === 'assistant' ? { ...c, isFinal: !c.isError && i === lastFinal } : c))
 }
 
 /**
@@ -109,6 +132,14 @@ interface Props {
   onTargetsChange: (t: ChatTarget[]) => void
   messages: MessageRecord[]
   liveColumns: CompareColumn[] | null
+  /** 忙碌态（普通流式由 liveColumns 推出；Agent 模式没有虚拟列，由父级显式传入） */
+  streaming?: boolean
+  /** Agent 模式开关（默认关；按会话存在渲染层，不写库） */
+  agentMode?: boolean
+  /** 切换 Agent 模式（运行时禁用） */
+  onToggleAgentMode?: () => void
+  /** Agent 模式的实时卡片；非 null 时作为末条虚拟项追加在当前消息流之后 */
+  agentLive?: AgentMessage[] | null
   welcomeMessage?: string
   assistantName?: string
   assistant: AssistantRecord | null
@@ -163,6 +194,10 @@ export const ChatView: React.FC<Props> = ({
   onTargetsChange,
   messages,
   liveColumns,
+  streaming: streamingProp,
+  agentMode = false,
+  onToggleAgentMode,
+  agentLive,
   welcomeMessage,
   assistantName,
   assistant,
@@ -214,7 +249,7 @@ export const ChatView: React.FC<Props> = ({
     if (m) onForward?.(m)
   }, [msgById, onForward])
   const scrollBoxRef = useRef<HTMLDivElement>(null)
-  const streaming = liveColumns !== null
+  const streaming = streamingProp ?? liveColumns !== null
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新，避免竞态抖动）
   const isAtBottomRef = useRef(true)
   // 切会话后待滚底标记：messages 异步加载，length 变化 effect 里消费
@@ -356,11 +391,24 @@ export const ChatView: React.FC<Props> = ({
     const result: Turn[] = []
     for (const m of messages) {
       if (m.role === 'user') {
-        result.push({ user: m, replies: [], batches: [] })
+        result.push({ user: m, replies: [], batches: [], items: [m], tools: [] })
       } else if (m.role === 'assistant') {
         const last = result[result.length - 1]
-        if (last) last.replies.push(m)
-        else result.push({ user: null, replies: [m], batches: [] })
+        if (last) {
+          last.replies.push(m)
+          last.items.push(m)
+        } else {
+          result.push({ user: null, replies: [m], batches: [], items: [m], tools: [] })
+        }
+      } else if (m.role === 'tool') {
+        // Agent 引擎写入的工具记录：留在同一轮，供持久化后按 Agent 卡片复原
+        const last = result[result.length - 1]
+        if (last) {
+          last.tools.push(m)
+          last.items.push(m)
+        } else {
+          result.push({ user: null, replies: [], batches: [], items: [m], tools: [m] })
+        }
       }
     }
     for (const t of result) t.batches = groupBatches(t.replies)
@@ -388,15 +436,19 @@ export const ChatView: React.FC<Props> = ({
     } else if (last) {
       last.batches = [...last.batches, virtualReplies]
     } else {
-      copy.push({ user: null, replies: virtualReplies, batches: [virtualReplies] })
+      copy.push({ user: null, replies: virtualReplies, batches: [virtualReplies], items: virtualReplies, tools: [] })
     }
     return copy
   }, [turns, liveColumns])
 
+  // Agent 实时卡片作为末条虚拟项（与轮次共用同一个滚动/虚拟化容器，保证是同一条消息流）
+  const liveAgentCards = agentLive && agentLive.length > 0 ? agentLive : null
+  const listCount = renderedTurns.length + (liveAgentCards ? 1 : 0)
+
   // 虚拟化：每轮一个虚拟项，只渲染可视区 + overscan，避免长对话 DOM 线性增长
   // 复用 V3-Eng-2 模式：measureElement 动态高度 + isNearBottom/shouldStickToBottom 滚底决策
   const virtualizer = useVirtualizer({
-    count: renderedTurns.length,
+    count: listCount,
     getScrollElement: () => scrollBoxRef.current,
     estimateSize: () => 200,
     overscan: 4,
@@ -479,7 +531,7 @@ export const ChatView: React.FC<Props> = ({
 
   // 滚底决策：切会话待滚底标记优先；否则流式追加时按 isAtBottomRef 跟滚
   useEffect(() => {
-    const count = renderedTurns.length
+    const count = listCount
     if (count === 0) return
     const lastIndex = count - 1
     if (pendingScrollBottomRef.current) {
@@ -491,7 +543,7 @@ export const ChatView: React.FC<Props> = ({
     if (shouldStickToBottom(false, isAtBottomRef.current, streaming)) {
       virtualizer.scrollToIndex(lastIndex, { align: 'end' })
     }
-  }, [renderedTurns.length, liveColumns, streaming, virtualizer])
+  }, [listCount, liveColumns, agentLive, streaming, virtualizer])
 
   const handleScroll = useCallback(() => {
     const el = scrollBoxRef.current
@@ -508,11 +560,11 @@ export const ChatView: React.FC<Props> = ({
 
   /** 回到底部：滚到最后一轮并标记在底部（恢复流式跟滚） */
   const jumpToBottom = useCallback(() => {
-    if (renderedTurns.length === 0) return
-    virtualizer.scrollToIndex(renderedTurns.length - 1, { align: 'end' })
+    if (listCount === 0) return
+    virtualizer.scrollToIndex(listCount - 1, { align: 'end' })
     isAtBottomRef.current = true
     setAtBottom(true)
-  }, [renderedTurns.length, virtualizer])
+  }, [listCount, virtualizer])
 
   /** 回到首条消息 */
   const jumpToTop = useCallback(() => {
@@ -935,7 +987,7 @@ export const ChatView: React.FC<Props> = ({
       {/* 消息流（虚拟化：每轮一个虚拟项，只渲染可视区 + overscan） */}
       <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative">
         <div className="max-w-5xl mx-auto px-4 py-5">
-          {renderedTurns.length === 0 ? (
+          {listCount === 0 ? (
             <div className="flex flex-col items-center justify-center h-72 text-center px-6">
               <div className="text-4xl mb-3">🎒</div>
               {assistantName && <p className="text-[var(--color-text)] font-semibold">{assistantName}</p>}
@@ -953,6 +1005,30 @@ export const ChatView: React.FC<Props> = ({
           ) : (
             <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
               {virtualizer.getVirtualItems().map((vi) => {
+                // Agent 实时卡片：作为末条虚拟项，与已持久化轮次共用同一容器
+                if (vi.index >= renderedTurns.length) {
+                  return (
+                    <div
+                      key="agent-live"
+                      data-testid="chat-agent-live"
+                      data-index={vi.index}
+                      ref={virtualizer.measureElement}
+                      className="space-y-3"
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        transform: `translateY(${vi.start}px)`,
+                        width: '100%',
+                        paddingBottom: 24
+                      }}
+                    >
+                      {liveAgentCards!.map((m) => (
+                        <AgentMessageCard key={m.id} m={m} />
+                      ))}
+                    </div>
+                  )
+                }
                 const turn = renderedTurns[vi.index]
                 if (!turn) return null
                 const ti = vi.index
@@ -964,7 +1040,9 @@ export const ChatView: React.FC<Props> = ({
                   .map((r) => r.model)
                   .filter(Boolean)
                   .join(' · ')
-                const comparing = compareTurns.has(turnKey) && turn.batches.length > 1
+                // Agent 轮次：tool 记录只由 Agent 引擎写入，出现即按 Agent 卡片复原（避免多步被误画成并行分支）
+                const agentCards = turn.tools.length > 0 ? agentCardsOf(turn.items) : null
+                const comparing = !agentCards && compareTurns.has(turnKey) && turn.batches.length > 1
                 // 该轮时间戳：用户消息优先，否则取该轮首条回复
                 const turnTs = turn.user?.createdAt ?? turn.replies[0]?.createdAt
                 // 日期分隔线：与上一轮不同自然日时在轮顶插入
@@ -1022,7 +1100,13 @@ export const ChatView: React.FC<Props> = ({
                         onRemind={onRemind}
                       />
                     )}
-                    {comparing ? (
+                    {agentCards ? (
+                      <div className="space-y-3" data-testid="chat-agent-turn">
+                        {agentCards.map((c) => (
+                          <AgentMessageCard key={c.id} m={c} />
+                        ))}
+                      </div>
+                    ) : comparing ? (
                       <BranchCompare
                         batches={turn.batches}
                         activeIndex={activeIdx}
@@ -1079,7 +1163,7 @@ export const ChatView: React.FC<Props> = ({
                         onDelete={handleDeleteOne}
                       />
                     ) : null}
-                    {turn.batches.length > 1 && (
+                    {!agentCards && turn.batches.length > 1 && (
                       <BranchNav
                         index={activeIdx}
                         total={turn.batches.length}
@@ -1097,7 +1181,7 @@ export const ChatView: React.FC<Props> = ({
           )}
         </div>
         {/* 浮动跳转按钮：回到底部（非底部时）/ 回到顶部（滚动超 300px 时） */}
-        {(showJumpTop || !atBottom) && renderedTurns.length > 0 && (
+        {(showJumpTop || !atBottom) && listCount > 0 && (
           <div className="absolute right-4 bottom-4 flex flex-col gap-2 z-20">
             {showJumpTop && (
               <button
@@ -1127,6 +1211,8 @@ export const ChatView: React.FC<Props> = ({
         noModels={noModelsAtAll}
         onSend={onSend}
         onStop={onStop}
+        agentMode={agentMode}
+        onToggleAgentMode={onToggleAgentMode}
         replyTo={replyToMessage ?? null}
         onCancelReply={() => onReply?.(null)}
         draftKey={draftKey ?? ''}

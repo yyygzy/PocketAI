@@ -461,6 +461,8 @@ export const en = {
   'steward.cleanupVacuumFailed': 'Removed {m} orphan messages and {c} orphan vector chunks, but VACUUM did not run, so no space was reclaimed',
   'steward.vacuumFailed': 'VACUUM did not run, so no space was reclaimed',
   'composer.ph': 'Type a message — Enter to send, Shift+Enter for a new line',
+  'composer.agentMode': 'Agent mode',
+  'composer.agentModeHint': 'This conversation can call tools (read/write files, run commands). Tool calling depends on the selected model.',
   // Prompt snippets
   'snippet.button': 'Prompt snippets',
   'snippet.title': 'Prompt snippets',

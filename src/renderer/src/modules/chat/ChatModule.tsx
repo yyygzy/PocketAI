@@ -24,6 +24,7 @@ import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcE
 import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
+import { buildChatSendPayload } from './send-payload'
 import { buildMessagesMarkdown, safeFileName } from '../../../../shared/export-markdown'
 import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutcome, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
@@ -67,6 +68,12 @@ export const ChatModule: React.FC = () => {
   const [assistantsUnread, setAssistantsUnread] = useState<{ error: string } | null>(null)
   const [currentAssistantId, setCurrentAssistantId] = useState<string>('asst-default')
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
+  /**
+   * Agent 模式开关（P0-4 v1）：按 conversationId 存在渲染层，不写库、不进草稿；
+   * 空串键＝尚未创建的新会话，首次发送建会话后把当时的开关值带到新 id 上。
+   */
+  const [agentModeByConv, setAgentModeByConv] = useState<Record<string, boolean>>({})
+  const agentMode = agentModeByConv[currentConvId ?? ''] === true
   const [messages, setMessages] = useState<MessageRecord[]>([])
   // 消息那一读失败的原因（V4-Iter-250）：不写这句，屏上留着的是上一条会话或空列表，两种都像「这里没消息」
   const [msgsReadErr, setMsgsReadErr] = useState<string | null>(null)
@@ -150,11 +157,13 @@ export const ChatModule: React.FC = () => {
   // 流式会话收口：6 个流式 ref + liveColumns + focusBranch + 事件订阅全部内聚于 hook
   // 解构取稳定回调（useCallback []），避免以对象形式入 useCallback 依赖致其每渲染重建
   const {
-    liveColumns, focusBranch, isStreaming, beginStream, failStream, focusNewBranch, abort, stopUnread
+    liveColumns, agentStream, agentRunning, focusBranch, isStreaming,
+    beginStream, beginAgentStream, failStream, focusNewBranch, abort, stopUnread
   } = useStreamSession({
     loadMessages,
     reloadConversations,
     getCurrentConvId: () => currentConvRef.current,
+    unknownErrorText: t('agent.unknownError'),
     // 回复完成通知：仅窗口不可见或失焦时弹（前台不打扰）；开关关闭/异常一律静默
     onStreamsSettled: (convId, outcome) => {
       if (!document.hidden && document.hasFocus()) return
@@ -181,8 +190,8 @@ export const ChatModule: React.FC = () => {
   // busy 上报：流式生成中豁免休眠，防止切走标签后被 LRU 卸载导致输出中断；
   // 重挂时 liveColumns 归 null，effect 自动重新上报 false
   useEffect(() => {
-    useAppStore.getState().setModuleBusy('chat', liveColumns !== null)
-  }, [liveColumns])
+    useAppStore.getState().setModuleBusy('chat', liveColumns !== null || agentRunning)
+  }, [liveColumns, agentRunning])
 
   /**
    * 拉服务商列表并回填默认目标。
@@ -1035,6 +1044,7 @@ export const ChatModule: React.FC = () => {
 
   const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => {
     if (isStreaming()) return
+    const useAgent = agentMode
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0) return
 
@@ -1059,26 +1069,36 @@ export const ChatModule: React.FC = () => {
         return
       }
       convId = c.id
+      const newConvId = c.id
       setCurrentConvId(convId)
+      // 新会话从空串键迁到真实 id：开关状态跟着这条会话走（仍只在渲染层）
+      setAgentModeByConv((prev) => {
+        const next = { ...prev }
+        delete next['']
+        if (useAgent) next[newConvId] = true
+        return next
+      })
       await reloadConversations()
     }
 
     setMessages((prev) => [...prev, tempMessage('user', text)])
 
-    const requestId = beginStream(convId, validTargets)
+    // Agent 模式不建虚拟列：走既有 chat:send + agentMode，事件由 useStreamSession 归并成卡片
+    const requestId = useAgent ? beginAgentStream(convId) : beginStream(convId, validTargets)
     if (!requestId) return
 
     window.pocketai
-      .sendMessage({
+      .sendMessage(buildChatSendPayload({
         requestId,
         conversationId: convId,
         assistantId: currentAssistantId,
         content: text,
         targets: validTargets,
+        agentMode: useAgent,
         attachments,
-        replyToId: replyToId ?? null,
+        replyToId,
         kbRefs
-      })
+      }))
       .then((r) => {
         if (hasIpcFailed(r)) onChatSendFailed(requestId, convId, r)
       })
@@ -1632,6 +1652,13 @@ export const ChatModule: React.FC = () => {
         onTargetsChange={handleTargetsChange}
         messages={messages}
         liveColumns={liveColumns}
+        streaming={liveColumns !== null || agentRunning}
+        agentMode={agentMode}
+        onToggleAgentMode={() => {
+          const key = currentConvId ?? ''
+          setAgentModeByConv((prev) => ({ ...prev, [key]: !prev[key] }))
+        }}
+        agentLive={agentStream && agentStream.convId === currentConvId ? agentStream.messages : null}
         welcomeMessage={currentAssistant ? assistantDisplayWelcome(currentAssistant, t) : undefined}
         assistantName={currentAssistant ? assistantDisplayName(currentAssistant, t) : undefined}
         assistant={currentAssistant}

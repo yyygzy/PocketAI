@@ -41,6 +41,10 @@ interface Props {
   messages?: MessageRecord[]
   /** 知识库列表（用于 @ 面板） */
   kbs?: KnowledgeBase[]
+  /** Agent 模式开关（默认关；状态由父级按会话保存，不写库） */
+  agentMode?: boolean
+  /** 切换 Agent 模式（流式中禁用） */
+  onToggleAgentMode?: () => void
 }
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
@@ -49,7 +53,7 @@ const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js'
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_TEXT_SIZE = 2 * 1024 * 1024 // 2MB
 
-export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit, messages = [], kbs = [] }) => {
+export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit, messages = [], kbs = [], agentMode = false, onToggleAgentMode }) => {
   const { t } = useI18n()
   const [text, setText] = useState(draft ?? '')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
@@ -596,6 +600,30 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
               {t('common.loadFailedNamed', { what: t('common.snippetList'), msg: ipcFailText(snippetsFail, t('common.unknownError')) })}
             </span>
             <button data-testid="composer-snippets-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={retrySnippets}>{t('agent.retryRead')}</button>
+          </div>
+        )}
+
+        {onToggleAgentMode && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="chat-agent-mode-toggle"
+              aria-pressed={agentMode}
+              disabled={streaming}
+              onClick={onToggleAgentMode}
+              title={t('composer.agentModeHint')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                agentMode
+                  ? 'border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-hover-overlay)]'
+                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${agentMode ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-text-muted)]'}`} />
+              {t('composer.agentMode')}
+            </button>
+            {agentMode && (
+              <span className="text-[11px] text-[var(--color-text-muted)]">{t('composer.agentModeHint')}</span>
+            )}
           </div>
         )}
 
