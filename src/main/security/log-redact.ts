@@ -22,10 +22,14 @@ export const MAX_LOG_STRING_CHARS = 2000
 /** 递归深度上限：与 logger 的 inspect(depth: 4) 对齐，超深结构交给 inspect 自身处理 */
 const MAX_DEPTH = 4
 
-/** 超长字符串截断（含原长提示，便于排障时判断是否被截） */
-export function capLogString(s: string): string {
-  if (s.length <= MAX_LOG_STRING_CHARS) return s
-  return `${s.slice(0, MAX_LOG_STRING_CHARS)}…[已截断，原长 ${s.length} 字符]`
+/**
+ * 超长字符串截断（含原长提示，便于排障时判断是否被截）。
+ * `maxChars` 默认是日志口径 2000；诊断账本（agent_traces）传 Infinity——
+ * 那边有自己的 4000 封顶，且要求**先脱敏、再截断**，不能在这里提前切半截密钥。
+ */
+export function capLogString(s: string, maxChars = MAX_LOG_STRING_CHARS): string {
+  if (s.length <= maxChars) return s
+  return `${s.slice(0, maxChars)}…[已截断，原长 ${s.length} 字符]`
 }
 
 /**
@@ -33,21 +37,28 @@ export function capLogString(s: string): string {
  * Error/Date/Buffer/Map/Set 等非普通对象原样保留（由 inspect 自行格式化），
  * 循环引用替换为 [Circular]。
  */
-export function redactLogValue(value: unknown, seen: WeakSet<object> = new WeakSet(), depth = 0): unknown {
-  if (typeof value === 'string') return capLogString(value)
+export function redactLogValue(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+  depth = 0,
+  maxStringChars = MAX_LOG_STRING_CHARS
+): unknown {
+  if (typeof value === 'string') return capLogString(value, maxStringChars)
   if (value === null || typeof value !== 'object') return value
   if (value instanceof Error || value instanceof Date || Buffer.isBuffer(value)) {
-    return value instanceof Error ? capLogString(value.stack ?? `${value.name}: ${value.message}`) : value
+    return value instanceof Error
+      ? capLogString(value.stack ?? `${value.name}: ${value.message}`, maxStringChars)
+      : value
   }
   if (depth >= MAX_DEPTH) return '[depth-limit]'
   if (seen.has(value)) return '[Circular]'
   seen.add(value)
-  if (Array.isArray(value)) return value.map((v) => redactLogValue(v, seen, depth + 1))
+  if (Array.isArray(value)) return value.map((v) => redactLogValue(v, seen, depth + 1, maxStringChars))
   // Map/Set/TypedArray 等：不拆解结构（拆了反而丢信息），交给 inspect 原样输出
   if (value instanceof Map || value instanceof Set) return value
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = SENSITIVE_LOG_KEY_RE.test(k) ? REDACTED_PLACEHOLDER : redactLogValue(v, seen, depth + 1)
+    out[k] = SENSITIVE_LOG_KEY_RE.test(k) ? REDACTED_PLACEHOLDER : redactLogValue(v, seen, depth + 1, maxStringChars)
   }
   return out
 }

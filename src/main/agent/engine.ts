@@ -52,6 +52,7 @@ import { createLogger } from '../logger'
 import { createApproval, toolArgsFingerprint } from './tool-approval'
 import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
+import { redactSecretsInText, redactArgsInText } from '../security/audit-redact'
 import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot, writeOffloadFile, OFFLOAD_PREVIEW_MIN_CHARS } from './tool-output-offload'
 import {
   isToolsUnsupportedError,
@@ -110,11 +111,65 @@ export const TRACE_TEXT_MAX_CHARS = 4000
 /** 换行符写成一个常量：这几段是 python 批处理进文件的，字符串字面量里放转义序列容易被工具吃掉 */
 const NL = String.fromCharCode(10)
 
+/** 只用来判断"这段返回值是不是 JSON 结构"，命中才多走一次结构化脱敏（不是凭据规则） */
+const JSON_HEAD_RE = /^[[{]/
+
 /** 截断并如实带上原始长度（空串与 undefined 都不写，避免把"没有"存成"空字符串"） */
 export function capTraceText(value: string | null | undefined, maxChars = TRACE_TEXT_MAX_CHARS): string | undefined {
   if (!value) return undefined
   if (value.length <= maxChars) return value
   return `${value.slice(0, maxChars)}\n…（此处截断，完整 ${value.length} 字符）`
+}
+
+/**
+ * trace 的 `tool_args`（工具步骤）写库口径：**逐个参数先过参数级脱敏，再拼装、最后整体截断**。
+ *
+ * 为什么不是把拼好的 `name args` 整串丢给文本规则：JSON 里是 `"api_key":"xxx"`，
+ * 键名与冒号之间隔着一个引号，文本规则的 `api_key\s*[:=]` 命中不到；参数级函数先
+ * `JSON.parse` 再按键名脱敏，才不会漏掉这一种最常见的形态。
+ *
+ * 顺序不能反：每个参数都是**脱敏完再参与拼装**，拼装完才允许 capTraceText 按 4000 切断。
+ * 反过来（先截断再脱敏）会让恰好跨边界的密钥被切成两半——半截密钥仍然是密钥。
+ */
+export function capRedactedToolCallArgs(toolCalls: ToolCall[]): string | undefined {
+  const joined = toolCalls
+    .map((tc) => `${tc.function.name} ${redactArgsInText(tc.function.arguments)}`)
+    .join(NL)
+  return capTraceText(joined)
+}
+
+/**
+ * 重复拦截那一行的 `tool_args`：形态与 `computeToolSignature` 相同（`name:args` 排序后 `|` 连接），
+ * 只是每个参数先过脱敏。**只用于落库**——重复判定仍然用原文签名，
+ * 因为脱敏会把不同的密钥值折叠成同一个 `[redacted]`，拿它判重会误拦。
+ */
+export function capRedactedToolSignature(toolCalls: ToolCall[]): string | undefined {
+  const text = toolCalls
+    .map((tc) => `${tc.function.name}:${redactArgsInText(tc.function.arguments)}`)
+    .sort()
+    .join('|')
+  return capTraceText(text)
+}
+
+/**
+ * trace 的 `tool_args` / `tool_result` 写库口径：**先脱敏、再截断**。
+ *
+ * 顺序不能反：`capTraceText` 会在 4000 字符处切断。若先截断再脱敏，
+ * 恰好跨边界的密钥会被切成两半——半截密钥仍然是密钥（`api_key=sk-li` 这类前缀
+ * 有的服务照样能猜），而脱敏规则再也拼不回原形态。所以这里必须先让规则跑完，
+ * 再让 capTraceText 封顶；截断提示里的"完整 N 字符"因此是**脱敏后**的长度。
+ *
+ * 只处理诊断账本这一列；`messages.content` 是权威原文，卸载文件是它的缓存，
+ * 两者都不在这里改（否则回放会看到被改写过的"原文"）。
+ */
+export function capRedactedTraceText(value: string | null | undefined): string | undefined {
+  const raw = value ?? ''
+  if (!raw) return undefined
+  // 工具返回值常常就是 JSON（`fs_read` 这类直接 stringify 结果体）。若只走文本规则，
+  // `"api_key":"xxx"` 的键名与冒号之间隔着一个引号，`api_key\s*[:=]` 命中不到；
+  // 所以像 JSON 的先尝试一次参数级脱敏，解析失败（纯文本 / 被定界标记包住）再退回文本规则。
+  const text = JSON_HEAD_RE.test(raw.trimStart()) ? redactArgsInText(raw) : redactSecretsInText(raw)
+  return capTraceText(text || undefined)
 }
 
 /** 安全写入 trace，防止 DB 问题阻塞主流程 */
@@ -2035,7 +2090,8 @@ class AgentEngine {
         status: 'error',
         error: `重复工具调用已拦截：${signature}`,
         // 签名本身就是「工具名 + 参数」，这一列存下来才能回答"它反复传的是哪一串"
-        toolArgs: capTraceText(signature)
+        // 参数里可能有密钥：落库前逐个参数脱敏再封顶（见 capRedactedToolSignature 的说明）
+        toolArgs: capRedactedToolSignature(toolCalls)
       })
       return 'llm'
     }
@@ -2318,10 +2374,8 @@ class AgentEngine {
       // v50：这一步"做了什么、得到什么"。截断口径见 capTraceText——
       // 这一列是可诊断的线索，**不是存档副本**：全文按 v54 的 `messageId` 去 `messages.content` 读，
       // 卸载文件只是那条全文的缓存。以前这里写"全文在卸载文件里"是假话（4,001–20,000 这一段没有文件）。
-      toolArgs: capTraceText(
-        toolCalls.map((tc) => `${tc.function.name} ${tc.function.arguments ?? ''}`).join(NL)
-      ),
-      toolResult: capTraceText(rawResultText),
+      toolArgs: capRedactedToolCallArgs(toolCalls),
+      toolResult: capRedactedTraceText(rawResultText),
       // v54：只在"这一步确有内容被截断"时落引用；否则留 NULL = 从未留全文。
       // 多调用按调用顺序换行分隔，与 toolResult 的分段一一对应。
       messageId: traceTruncated ? coldMessageIds.join(NL) : undefined,
