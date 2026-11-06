@@ -8,7 +8,7 @@
   "defaultModel": null,
   "defaultParams": null,
   "toolPermissions": [],
-  "skillIds": [],
+  "skillIds": ["skill-data-analyst", "skill-structured-output"],
   "welcomeMessage": "你好，我是数据分析师。把表格、字段说明或业务问题发给我，我会先对齐口径再分析。",
   "isPinned": false
 }

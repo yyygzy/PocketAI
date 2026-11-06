@@ -8,7 +8,7 @@
   "defaultModel": null,
   "defaultParams": null,
   "toolPermissions": [],
-  "skillIds": [],
+  "skillIds": ["skill-translator"],
   "welcomeMessage": "你好，我是翻译专家。请发送需要翻译的内容，并告知目标语言；如有术语表也一并发给我。",
   "isPinned": false
 }

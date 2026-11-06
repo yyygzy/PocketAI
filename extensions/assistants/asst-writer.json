@@ -8,7 +8,7 @@
   "defaultModel": null,
   "defaultParams": null,
   "toolPermissions": [],
-  "skillIds": [],
+  "skillIds": ["skill-writer", "skill-polish"],
   "welcomeMessage": "你好，我是写作润色助手。把需要打磨的文字发给我，并告诉我文体和目标读者即可。",
   "isPinned": false
 }

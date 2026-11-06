@@ -35,6 +35,15 @@ interface RemoteSkill {
 const DEFAULT_REGISTRY =
   'https://raw.githubusercontent.com/yyygzy/skill-registry/main/index.json'
 
+/**
+ * 一条技能被几个助手引用（"N 个助手在用"的唯一口径）。
+ * 数据源就是助手自己的 `skillIds`——运行期 `buildSkillsContext` 也只认它（∩ `skills.enabled`），
+ * 不拿 `skills.enabled` 当"在用"，这正是"启用了却从没进过对话"那张假脸。
+ * 按助手 id 去重：同一条技能在一个助手的 skillIds 里出现两次仍只算一个助手。
+ */
+const countSkillUsers = (assistants: AssistantRecord[], skillId: string): number =>
+  new Set(assistants.filter((a) => (a.skillIds ?? []).includes(skillId)).map((a) => a.id)).size
+
 export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
   const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('local')
@@ -85,6 +94,12 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
    */
   const [assistants, setAssistants] = useState<AssistantRecord[]>([])
   const [assistantsUnread, setAssistantsUnread] = useState<{ error?: string } | null>(null)
+  /**
+   * 助手清单是否**真的读到过**。网格上"N 个助手在用"只在它为 true 时才画：
+   * 还没回来、或读失败了都一律不画——空数组不是"0 个助手在用"，那是"不知道"，
+   * 把不知道显示成 0 等于替用户断言了一条没读过的事实。
+   */
+  const [assistantsLoaded, setAssistantsLoaded] = useState(false)
 
   /**
    * 这一发的代次（§322 同族）：它和 `fetchRemote` 一样能被叠着发（进市场、切 tab、那颗重试键），
@@ -101,14 +116,17 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
       .then((v) => {
         if (seq !== assistantsSeqRef.current) return
         if (hasIpcFailed(v)) {
+          setAssistantsLoaded(false)
           setAssistantsUnread({ error: v.error })
           return
         }
+        setAssistantsLoaded(true)
         setAssistantsUnread(null)
         setAssistants(v)
       })
       .catch((e: unknown) => {
         if (seq !== assistantsSeqRef.current) return
+        setAssistantsLoaded(false)
         setAssistantsUnread({ error: errText(e, '') })
         logIpcError('assistants.list', e)
       })
@@ -547,6 +565,21 @@ export const SkillMarket: React.FC<Props> = ({ onClose, onChanged }) => {
                       <span className="text-[10px] text-[var(--color-text-muted)]">
                         {s.enabled ? t('skill.on') : t('skill.off')}
                       </span>
+                      {/* 启用 ≠ 在用：这里数的是助手 skillIds 里的实际引用。
+                          助手清单没读到过就不画（空数组≠0，别把"不知道"说成"没人用"）。 */}
+                      {assistantsLoaded && (
+                        <span
+                          className="text-[10px] text-[var(--color-text-muted)]"
+                          data-testid={`skill-user-count-${s.id}`}
+                        >
+                          {(() => {
+                            const count = countSkillUsers(assistants, s.id)
+                            return count > 0
+                              ? t('skill.market.userCount', { count })
+                              : t('skill.market.userCountNone')
+                          })()}
+                        </span>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -693,6 +726,15 @@ const LocalDetail: React.FC<{
           </button>
         )}
       </div>
+
+      {/* 启用开关旁的一句实话：启用只是"可用"，不是"在用"——不绑到助手的技能一次也进不了对话。
+          这也解释了为什么内置助手那颗绑定键是灰的（要先复制为我的助手）。全程不写"已生效"。 */}
+      <p
+        className="text-[11px] text-[var(--color-text-muted)] leading-relaxed -mt-2"
+        data-testid="skill-market-enable-hint"
+      >
+        {t('skill.market.enableHint')}
+      </p>
 
       {/* §412：装完就地绑定。技能库里的东西过去没有任何一条路能进助手的 skillIds——
           向导只写 skills.enabled，运行期按 skillIds 取，于是"装了一屋子技能、一次都没进过对话"。 */}

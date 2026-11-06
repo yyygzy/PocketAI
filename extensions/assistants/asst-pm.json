@@ -8,7 +8,7 @@
   "defaultModel": null,
   "defaultParams": null,
   "toolPermissions": [],
-  "skillIds": [],
+  "skillIds": ["skill-solution-design"],
   "welcomeMessage": "你好，我是产品经理助手。给我一个想法或需求，我会帮你理清用户、场景、方案与验收标准。",
   "isPinned": false
 }

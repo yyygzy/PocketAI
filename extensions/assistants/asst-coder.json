@@ -8,7 +8,7 @@
   "defaultModel": null,
   "defaultParams": null,
   "toolPermissions": ["*"],
-  "skillIds": [],
+  "skillIds": ["skill-bug-diagnostician", "skill-code-review"],
   "welcomeMessage": "你好，我是代码工程师。把代码、报错信息或需求发给我，我会先理清思路再给出可运行方案。",
   "isPinned": true
 }

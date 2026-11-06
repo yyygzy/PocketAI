@@ -8,7 +8,7 @@
   "defaultModel": null,
   "defaultParams": null,
   "toolPermissions": [],
-  "skillIds": [],
+  "skillIds": ["skill-deep-think", "skill-structured-output"],
   "welcomeMessage": "你好，我是学术助手。我可以协助文献综述、公式推导、论文结构与引用格式。请注意：我不会编造文献，存疑引用会提示你核实。",
   "isPinned": false
 }

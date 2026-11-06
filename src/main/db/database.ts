@@ -15,13 +15,15 @@ import fs from 'node:fs'
 import { DB_PATH, DATA_DIR } from '../portable'
 import { errMsg } from '../error'
 import { createLogger } from '../logger'
+import { BUILTIN_ASSISTANT_SKILL_IDS, mergeBuiltinSkillIds } from './builtin-assistant-skills'
 
 const logger = createLogger('db')
 
 export type Migration = {
   version: number
   name: string
-  up: string
+  /** 纯结构迁移用 SQL；需要逐行读改写（如 v56 的内置助手技能并集）时用函数形式 */
+  up: string | ((db: Database.Database) => void)
 }
 
 const MIGRATIONS: Migration[] = [
@@ -931,6 +933,27 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE agent_traces ADD COLUMN change_set TEXT;
     `
+  },
+  {
+    // v56：给**已存在**的内置助手补初始技能绑定（技能"启用即空转"的第二半）。
+    //
+    // 新装机的绑定来自 `extensions/assistants/*.json`（首次插入时由 upsertBuiltin 写入）；
+    // 老库里的内置行早已存在，而 upsertBuiltin 对已有行**故意不写 skill_ids**（保留用户改动），
+    // 于是新加的 json 绑定永远补不上——这一版只补这一件事。
+    //
+    // 三条硬口径：
+    //  · 只动 `is_builtin=1` 的行；"我的助手"（含用户复制出来的副本）连条件都匹配不上；
+    //  · **只做并集**：已有 skill_ids（用户/历史内容）原顺序保留，只追加缺失的内置 id，不覆盖；
+    //  · **不动 enabled**：用户停用过的技能绑定后仍不生效（运行期 listEnabledByIds 还要 enabled=1），
+    //    绑定是惰性的；本迁移不碰 skills 表。
+    // 幂等：并集后长度没变就不落盘；重复执行（含退回版本号重跑）结果相同。
+    version: 56,
+    name: 'builtin_assistant_skill_bindings',
+    up: (db) => {
+      for (const [assistantId, skillIds] of Object.entries(BUILTIN_ASSISTANT_SKILL_IDS)) {
+        mergeBuiltinSkillIds(db, assistantId, skillIds)
+      }
+    }
   }
 ]
 
@@ -1062,7 +1085,8 @@ export class DatabaseService {
     for (const m of MIGRATIONS) {
       if (applied.has(m.version)) continue
       const tx = db.transaction(() => {
-        db.exec(m.up)
+        if (typeof m.up === 'function') m.up(db)
+        else db.exec(m.up)
         db
           .prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
           .run(m.version, m.name, now)

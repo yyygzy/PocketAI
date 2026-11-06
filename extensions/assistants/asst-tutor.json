@@ -8,7 +8,7 @@
   "defaultModel": null,
   "defaultParams": null,
   "toolPermissions": [],
-  "skillIds": [],
+  "skillIds": ["skill-deep-think", "skill-structured-output"],
   "welcomeMessage": "你好，我是学习教练。告诉我你想学什么、目前基础如何，我会用大白话讲清楚，再通过提问帮你巩固。",
   "isPinned": false
 }

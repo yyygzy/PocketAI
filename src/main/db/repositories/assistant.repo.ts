@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
+import { mergeBuiltinSkillIds } from '../builtin-assistant-skills'
 import type { AssistantRecord } from '../../../shared/types'
 
 interface AssistantRow {
@@ -118,6 +119,19 @@ export const assistantRepo = {
         a.isPinned ? 1 : 0, Date.now()
       )
     }
+  },
+
+  /**
+   * 受限写（v56）：给内置助手补初始技能绑定。
+   *
+   * `save()` 对 `isBuiltin` 直接抛「内置助手不可编辑」是对的，不应为迁移放开那道闸门；
+   * 这里只放行一件事——**向 `is_builtin=1` 的行并集写入 `skill_ids`**。
+   * 不写 enabled、不写任何其它列、不碰 `is_builtin=0` 的用户助手；
+   * 已有 id 原顺序保留，只追加缺失项（用户手工加过的不会被覆盖），重复执行幂等。
+   * 实现见 `db/builtin-assistant-skills.ts`，迁移 v56 用的是同一个函数。
+   */
+  mergeBuiltinSkillIds(id: string, addIds: readonly string[]): number {
+    return mergeBuiltinSkillIds(dbService.getHandle(), id, addIds)
   },
 
   /** 新建（自定义助手）或保存对自定义助手的编辑 */
