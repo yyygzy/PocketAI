@@ -224,7 +224,9 @@ describe('A2：Agent 引用来源带 kbId/seq（跳转原文的前提）', () =>
       docTitle: '手册 c1',
       content: '片段 c1 正文',
       kbId: 'kb-alpha',
-      seq: 0
+      seq: 0,
+      // §436：生产侧 chunksToSources 一直带检索分（kb-sources.ts:20），夹具 chunk() 给的是 0.5
+      score: 0.5
     })
     expect(stored[1]?.kbId).toBe('kb-beta')
     expect(stored[1]?.seq).toBe(7)

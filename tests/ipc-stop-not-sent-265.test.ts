@@ -251,11 +251,20 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
     const HOOK = read('src/renderer/src/modules/chat/useStreamSession.ts')
     const TR = read('src/renderer/src/modules/translate/TranslateModule.tsx')
     const IMG = read('src/renderer/src/modules/image/ImageModule.tsx')
-    const NULL_CLEAR: Record<string, number> = { useStreamSession: 3, TranslateModule: 2, ImageModule: 2 }
+    // §436：按"每条流式路径各一对收尾"钉身份，不是"某一条路径多写了"：
+    //   chat 3 处 —— :229 落定、:288 开新一轮、:329 中止成功；
+    //   agent 2 处 —— :171 finalizeAgent 落定、:264 开新一轮。
+    // 两条路径各自的"还在继续"都是谎，各收各的；不合并成一个收口函数（本批只重钉，不动产品结构）。
+    const NULL_CLEAR: Record<string, number> = { useStreamSession: 5, TranslateModule: 2, ImageModule: 2 }
+    const CLEAR_DESC: Record<string, string> = {
+      useStreamSession: 'chat 3（落定/开新一轮/中止成功）＋agent 2（落定/开新一轮）',
+      TranslateModule: '开新一轮／落定各一次',
+      ImageModule: '开新一轮／落定各一次'
+    }
     for (const [f, src] of [['useStreamSession', HOOK], ['TranslateModule', TR], ['ImageModule', IMG]] as const) {
       expect(count(src, /setStopUnread\(\{ error: /g), `${f}：resolve 的失败对象与 reject 各写一次`).toBe(2)
-      // 对话页那处多一处：hook 的 finalize 也要收回（那一轮落定后"还在继续"就是新的谎）
-      expect(count(src, /setStopUnread\(null\)/g), `${f}：开新一轮／落成功／落定各收回`).toBe(NULL_CLEAR[f])
+      // 对话页多两处：agent 路径与 chat 路径各有自己的"那一轮落定后还在继续"要收回（§436）
+      expect(count(src, /setStopUnread\(null\)/g), `${f}：${CLEAR_DESC[f]}`).toBe(NULL_CLEAR[f])
     }
     // 旧写法：把 reject 裸交给 reportIpcError（而 safeHandle 的失败连这条都走不到）
     expect(count(HOOK, /\.catch\(reportIpcError\('chat\.abortChat'\)\)/g), '对话页那颗停止不许再有这一形').toBe(0)

@@ -230,7 +230,7 @@ export const DataHealthPanel: React.FC = () => {
    */
   const onClearApprovals = async () => {
     if (!report) return
-    if (!(await confirm({ message: t('dh.approvals.clearConfirm', { rows: report.approvals.rows }), danger: true }))) return
+    if (!(await confirm({ message: t('dh.approvals.clearConfirm', { rows: report.approvals?.rows ?? 0 }), danger: true }))) return
     setBusy(true)
     try {
       const r = await window.pocketai.clearApprovalRecords()
@@ -270,6 +270,34 @@ export const DataHealthPanel: React.FC = () => {
   }
 
   const { sizes, traces, approvals, coldFailures, kb, backup, tasks, boot, recentPerf, perfHistory } = report
+  // §436：冷数据段（P0-5）与审批段（P0-2c）是后加字段，旧夹具/旧报告可能没有。
+  // 缺字段时降级成 0 并在顶部挂一句「数据不可读」，不许整屏白（:342 的 TypeError 就是这么炸的）。
+  const coldOk =
+    typeof sizes.coldOffloadBytes === 'number' &&
+    typeof sizes.coldOffloadFiles === 'number' &&
+    typeof sizes.coldSnapshotBytes === 'number' &&
+    typeof sizes.coldSnapshotFiles === 'number'
+  const coldFailuresOk =
+    coldFailures !== null &&
+    coldFailures !== undefined &&
+    typeof coldFailures.purge === 'number' &&
+    typeof coldFailures.offloadPrune === 'number' &&
+    typeof coldFailures.snapshotPrune === 'number'
+  const approvalsOk =
+    approvals !== null &&
+    approvals !== undefined &&
+    typeof approvals.rows === 'number' &&
+    typeof approvals.writeFailures === 'number'
+  const reportIncomplete = !coldOk || !coldFailuresOk || !approvalsOk
+  const coldOffloadBytes = coldOk ? sizes.coldOffloadBytes : 0
+  const coldOffloadFiles = coldOk ? sizes.coldOffloadFiles : 0
+  const coldSnapshotBytes = coldOk ? sizes.coldSnapshotBytes : 0
+  const coldSnapshotFiles = coldOk ? sizes.coldSnapshotFiles : 0
+  const coldPurge = coldFailuresOk ? coldFailures.purge : 0
+  const coldOffloadPrune = coldFailuresOk ? coldFailures.offloadPrune : 0
+  const coldSnapshotPrune = coldFailuresOk ? coldFailures.snapshotPrune : 0
+  const approvalsRows = approvalsOk ? approvals.rows : 0
+  const approvalsFailures = approvalsOk ? approvals.writeFailures : 0
   const integrity = kb.integrity
   const hasDimMismatch = integrity.brokenDocs.some((d) => d.reason === 'dim-mismatch')
   const integrityOk =
@@ -300,6 +328,11 @@ export const DataHealthPanel: React.FC = () => {
       {loadErr && (
         <div className="mb-2">
           <StaleValueNotice what={t('set.dataHealth')} msg={loadErr} onRetry={() => load(true)} testid="data-health-stale-retry" />
+        </div>
+      )}
+      {reportIncomplete && (
+        <div role="status" className="mb-2 text-[11px] text-[var(--color-text-muted)]">
+          {t('dh.reportIncomplete')}
         </div>
       )}
       {/* 体积汇总卡片 */}
@@ -336,28 +369,28 @@ export const DataHealthPanel: React.FC = () => {
       <div className="mb-4 space-y-1">
         <BarRow
           label={t('dh.coldOffload')}
-          ratio={sizes.userDataBytes > 0 ? sizes.coldOffloadBytes / sizes.userDataBytes : 0}
+          ratio={sizes.userDataBytes > 0 ? coldOffloadBytes / sizes.userDataBytes : 0}
           value={t('dh.coldOffloadValue', {
-            bytes: formatBytes(sizes.coldOffloadBytes),
-            count: sizes.coldOffloadFiles.toLocaleString('en-US')
+            bytes: formatBytes(coldOffloadBytes),
+            count: coldOffloadFiles.toLocaleString('en-US')
           })}
         />
         <BarRow
           label={t('dh.coldSnapshots')}
-          ratio={sizes.userDataBytes > 0 ? sizes.coldSnapshotBytes / sizes.userDataBytes : 0}
+          ratio={sizes.userDataBytes > 0 ? coldSnapshotBytes / sizes.userDataBytes : 0}
           value={t('dh.coldSnapshotValue', {
-            bytes: formatBytes(sizes.coldSnapshotBytes),
-            count: sizes.coldSnapshotFiles.toLocaleString('en-US')
+            bytes: formatBytes(coldSnapshotBytes),
+            count: coldSnapshotFiles.toLocaleString('en-US')
           })}
         />
         <Row
           label={t('dh.coldFailures')}
           value={t('dh.coldFailuresValue', {
-            purge: coldFailures.purge,
-            prune: coldFailures.offloadPrune,
-            snapshot: coldFailures.snapshotPrune
+            purge: coldPurge,
+            prune: coldOffloadPrune,
+            snapshot: coldSnapshotPrune
           })}
-          warn={coldFailures.purge + coldFailures.offloadPrune + coldFailures.snapshotPrune > 0}
+          warn={coldPurge + coldOffloadPrune + coldSnapshotPrune > 0}
         />
         <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('dh.coldFailuresHint')}</div>
       </div>
@@ -373,15 +406,15 @@ export const DataHealthPanel: React.FC = () => {
         <Row
           label={t('dh.approvals')}
           value={
-            approvals.rows === 0
+            approvalsRows === 0
               ? t('dh.approvals.empty')
-              : t('dh.approvals.value', { rows: approvals.rows.toLocaleString('en-US'), failures: approvals.writeFailures })
+              : t('dh.approvals.value', { rows: approvalsRows.toLocaleString('en-US'), failures: approvalsFailures })
           }
-          warn={approvals.writeFailures > 0}
+          warn={approvalsFailures > 0}
         />
         <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('dh.approvals.hint')}</div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={onClearApprovals} disabled={busy || approvals.rows === 0} className="chip">
+          <button onClick={onClearApprovals} disabled={busy || approvalsRows === 0} className="chip">
             {t('dh.approvals.clear')}
           </button>
         </div>

@@ -49,7 +49,9 @@ export const FsWriteActions: React.FC<{
    * `undefined` 尚未确认——此时也不出现按钮，避免"点了才报错"。
    */
   snapshotAvailable?: boolean
-}> = ({ resultContent, snapshotAvailable }) => {
+  /** 存在性这一发没查成（IPC 失败/抛错）：说清"这次是查不到，不是没有"，别让按钮无声消失（§436） */
+  snapshotUnconfirmed?: boolean
+}> = ({ resultContent, snapshotAvailable, snapshotUnconfirmed }) => {
   const { t } = useI18n()
   const toast = useToast()
   const [busy, setBusy] = useState(false)
@@ -73,8 +75,15 @@ export const FsWriteActions: React.FC<{
       </div>
     )
   }
-  // 未确认（undefined）同样不给你一个"点了一定失败"的按钮；列表那层查完会再渲染。
-  if (snapshotAvailable !== true) return null
+  // 未确认（undefined）同样不给你一个"点了一定失败"的按钮；但"查没成"要说出口，
+  // 否则用户看到的是"这条写入没有还原入口"，而事实是"这次没查到"（§436）。
+  if (snapshotAvailable !== true) {
+    return snapshotUnconfirmed ? (
+      <div role="status" className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+        {t('agent.fsWrite.snapshotUnknown')}
+      </div>
+    ) : null
+  }
 
   const restore = async () => {
     if (busy) return

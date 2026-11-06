@@ -240,21 +240,22 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     expect(
       [ALL.length, pureSentence.length, goodSites.length, badSites.length, mixedSites.length, dataSites.length].join('/'),
       `现数 truncate位/纯句子（有title/没title）/混合/纯数据 ＝ ${ALL.length}/${pureSentence.length}（${goodSites.length}/${badSites.length}）/${mixedSites.length}/${dataSites.length}`
-    ).toBe('100/10/1/9/13/77')
+    ).toBe('100/9/1/8/13/78')
   })
 
-  it('名单等式：9 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
+  it('名单等式：8 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
     const PINNED = [
       // ── 本枚未收（同屏之外），逐颗如实写"没量过＝未判定"，不许写成"不适用"──
       'src/renderer/src/modules/settings/SettingsModule.tsx#upd.autoUpdateHint', // 21 字，设置→自动更新那行
       'src/renderer/src/modules/agent/components/AgentModelBar.tsx#agent.noModelsHint', // 19 字，顶栏模型那行
       'src/renderer/src/modules/knowledge/KnowledgeModule.tsx#kb.chunkPreview', // 14 字＋{title} 插值，弹窗标题
       'src/renderer/src/modules/agent/components/SessionRail.tsx#chat.exportMultiCount', // 10 字＋{n}，多选底栏
-      'src/renderer/src/modules/chat/ConversationList.tsx#chat.exportMultiCount', // 10 字＋{n}，同一句的另一屏
       'src/renderer/src/modules/settings/ProviderSettings.tsx#provider.nModels', // 7 字＋{n}，服务商列表行
       'src/renderer/src/modules/agent/components/AgentComposer.tsx#agent.toolConfig', // 4 字，「+」菜单那一行
       'src/renderer/src/popup/PopupApp.tsx#popup.titleQuick,popup.titleSelection', // 4 字，浮窗标题栏
       'src/renderer/src/modules/skills/SkillModule.tsx#skill.off,skill.on' // 3 字，技能列表行
+      // §436 移出：ConversationList.tsx#chat.exportMultiCount —— 15c0101 已把 truncate 换成
+      //   shrink-0 whitespace-nowrap（多选计数不再被压成 0 宽），它已不在 truncate 族里。
     ].sort()
     const now = badSites.map(ident).sort()
     expect(now.join('\n'), `现数 ${now.length} 颗：\n${now.join('\n')}`).toBe(PINNED.join('\n'))
@@ -356,11 +357,13 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
 
   it('如实报出混合位与纯数据位的数量（本面不收，别让它听起来像"已判定没问题"）', () => {
     expect(mixedSites.length, `混合位现数 ${mixedSites.length}＝句子与数据同挂一位，裁的是哪一半要逐处再看`).toBe(13)
-    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(77)
+    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(78)
     // 混合位里最像"句子被连坐"的一档：字典句 ≥10 字（这些将来要单独判，本枚只列不判）
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(
-      'src/renderer/src/modules/settings/SettingsModule.tsx:1571(16字)'
+      // §436：身份＝WebDAV 备份文件列表的 f.name 单元格（数据＋16 字字典句，已带 title）。
+      // 行号随 WebDAV 那批增行从 1571 移到 1585；只重钉行号，身份未变。
+      'src/renderer/src/modules/settings/SettingsModule.tsx:1585(16字)'
     )
   })
 })

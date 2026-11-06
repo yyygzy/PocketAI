@@ -22,9 +22,12 @@ export function createDetachedWindow(moduleId: string): void {
     title: '墨匣 Moxia - PocketAI',
     icon: process.platform === 'win32'
       ? path.join(app.getAppPath(), 'build/icon/icon.ico')
-      : path.join(__dirname, '../../../build/icon/icon-256.png'),
+      : path.join(__dirname, '../../build/icon/icon-256.png'),
     webPreferences: {
-      preload: path.join(__dirname, '../../preload/index.js'),
+      // __dirname 是构建后的 out/main（见 package.json main 与 electron.vite.config.ts 的 outDir），
+      // 与主窗口/浮窗/解锁窗同一口径只退一级；此前退两级会指向 <app>/preload/index.js（不存在），
+      // preload 加载失败 ⇒ 本窗口 window.pocketai 缺失 ⇒ DetachedApp 挂载即崩。
+      preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true
@@ -45,7 +48,7 @@ export function createDetachedWindow(moduleId: string): void {
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#/detached?module=${moduleId}`)
   } else {
-    win.loadFile(path.join(__dirname, '../../renderer/index.html'), {
+    win.loadFile(path.join(__dirname, '../renderer/index.html'), {
       hash: `/detached?module=${moduleId}`
     })
   }

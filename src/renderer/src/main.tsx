@@ -6,7 +6,7 @@ import { DetachedApp } from './detached/DetachedApp'
 import type { ModuleId } from './components/Sidebar'
 import { DETACHABLE_MODULE_IDS } from '../../shared/types'
 import type { SidebarModuleId } from '../../shared/types'
-import { I18nProvider } from './i18n'
+import { I18nProvider, useI18n } from './i18n'
 import { ToastProvider } from './components/ToastProvider'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { loadAndInjectCustomCss } from './custom-css'
@@ -25,6 +25,30 @@ if (window.location.hash.startsWith('#/detached')) {
 }
 const isDetached = detachedModule !== null
 
+// 安全桥（preload → contextBridge）整块没注入时，任何 `window.pocketai.*` 都是一发
+// "Cannot read properties of undefined"；交给根错误边界只会得到一行难以归因的 TypeError。
+// 在挂载前先认这一种环境异常，给一屏说得清"是这个窗口没加载到 preload"的提示。
+const bridgeMissing = typeof window.pocketai === 'undefined'
+
+function BridgeMissingScreen(): React.JSX.Element {
+  const { t } = useI18n()
+  return (
+    <div className="flex h-full w-full items-center justify-center p-6">
+      <div className="max-w-md text-center space-y-3">
+        <div className="text-sm font-semibold text-[var(--color-text)]">{t('bridge.missing.title')}</div>
+        <div className="text-xs text-[var(--color-text-muted)] leading-relaxed">{t('bridge.missing.hint')}</div>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
+        >
+          {t('bridge.missing.reload')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // 标签页系统已下线（V4-Iter-112：标签从不携带实例状态，导航只剩侧栏），
 // 清掉它遗留在 localStorage 的布局键，不给后续版本留孤儿数据
 localStorage.removeItem('pocketai.tabs.v1')
@@ -42,7 +66,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           刻意放在 I18nProvider **里面**：兜底屏的文案要走四语字典。代价是 i18n 自身崩了兜不住，
           这条取舍写进台账，不假装全覆盖。 */}
       <AppErrorBoundary>
-        {isPopup ? (
+        {bridgeMissing ? (
+          <BridgeMissingScreen />
+        ) : isPopup ? (
           <ToastProvider>
             <PopupApp />
           </ToastProvider>

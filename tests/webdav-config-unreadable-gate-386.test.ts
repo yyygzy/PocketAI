@@ -61,6 +61,9 @@ const HEALTH = stripComments(raw('main/steward/data-health.ts'))
 const DIAG = stripComments(raw('main/steward/diagnose.ts'))
 const TYPES = stripComments(raw('shared/types.ts'))
 const PANEL = stripComments(raw('renderer/src/modules/settings/DataHealthPanel.tsx'))
+// §436：备份卡片片段（dh.backup → dh.tasks）。D/G 原先从全文第一个 value={ / warn={ 起读，
+// 新增的冷数据段把锚点截断了；圈定到这一块，断言才有意义。
+const BACKUP_SEG = PANEL.slice(PANEL.indexOf("t('dh.backup')"), PANEL.indexOf("t('dh.tasks')"))
 
 const count = (src: string, needle: string): number => src.split(needle).length - 1
 
@@ -167,7 +170,13 @@ describe('D 两处屏各自绑门，第三档必须排在「没配过」之前',
   it('数据健康那一格：backup.configUnreadable 在 !backup.configured 之前，且 warn 位也带上它', () => {
     expect(PANEL.indexOf('backup.configUnreadable')).toBeGreaterThan(-1)
     expect(PANEL.indexOf('backup.configUnreadable'), '顺序反了＝新档永远不画').toBeLessThan(PANEL.indexOf('!backup.configured'))
-    const warn = PANEL.slice(PANEL.indexOf('warn={'), PANEL.indexOf('}', PANEL.indexOf('warn={')))
+    // §436：原先取全文第一个 warn={，被上面新增的冷数据段（dh.coldFailures）截断 ⇒ 读到的是别人家的 warn。
+    // 改成只读备份卡片这一块（dh.backup → dh.tasks），锚点坏了会先撞下面的长度断言，不会静默读空串。
+    const warn = BACKUP_SEG.slice(
+      BACKUP_SEG.indexOf('warn={'),
+      BACKUP_SEG.indexOf('}', BACKUP_SEG.indexOf('warn={'))
+    )
+    expect(warn.length, '锚点没圈到备份卡片里的 warn').toBeGreaterThan(0)
     expect(warn, 'warn 位不许只靠 !configured 喂绿').toContain('backup.configUnreadable')
   })
 
@@ -232,9 +241,12 @@ describe('F 四语与「不许硬写」', () => {
 })
 
 describe('G 读法自证：分类器认得出"没绑门／绑错顺序"', () => {
-  const GOOD = PANEL.slice(PANEL.indexOf('value={'), PANEL.indexOf('warn={'))
+  // §436：同 D 的锚点问题——从全文第一个 value={ 开始会被冷数据段截断。圈到备份卡片，
+  // 并先断言圈到了东西：否则 GOOD 为空时 indexOf 全 -1，两例会以"-1 > -1"/"0 < 0"的形式假失败。
+  const GOOD = BACKUP_SEG.slice(BACKUP_SEG.indexOf('value={'), BACKUP_SEG.indexOf('warn={'))
 
   it('读法本身：好形状能读出"第三档在前"', () => {
+    expect(GOOD.length, '锚点没圈到备份卡片里的 value/warn').toBeGreaterThan(0)
     expect(GOOD.indexOf('backup.configUnreadable')).toBeGreaterThan(-1)
     expect(GOOD.indexOf('backup.configUnreadable')).toBeLessThan(GOOD.indexOf('!backup.configured'))
   })

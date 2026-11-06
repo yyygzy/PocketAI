@@ -273,6 +273,9 @@ function scanSource(fileName: string, text: string): Scan {
   return out
 }
 
+/** §436 新判据的数据面：每个测试文件自己有几颗 await waitFor（scanAll 填） */
+const PER_FILE_AWAITS: Record<string, number> = {}
+
 function scanAll(): Scan {
   const merged: Scan = { positive: [], absenceOnly: [], domGates: 0, hookGates: 0, transitionGates: 0, silent: 0, awaits: 0 }
   const files: string[] = []
@@ -288,6 +291,7 @@ function scanAll(): Scan {
     const rel = path.relative(ROOT, f).replace(/\\/g, '/')
     if (rel === 'tests/waitfor-gate-364.test.ts') continue // 本文件的 fixture 文本不参与（它们也不是真语句）
     const one = scanSource(rel, fs.readFileSync(f, 'utf8'))
+    if (one.awaits > 0) PER_FILE_AWAITS[rel] = one.awaits
     merged.positive.push(...one.positive)
     merged.absenceOnly.push(...one.absenceOnly)
     merged.domGates += one.domGates
@@ -304,7 +308,7 @@ const where = (c: Cand): string => `${c.file}:${c.gateLine} -> :${c.domLine}`
 const detail = (c: Cand): string => `${where(c)}  ${c.gate}  ||  ${c.dom}`
 
 describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', () => {
-  it('读法自证：全仓在等的 waitFor 有多少、各桶多少（分类器坏了这里先红）', () => {
+  it('读法自证：逐文件上限＋新文件必须登记（总量只作参考，不再钉死）', () => {
     // 六桶**互斥且守恒**（一颗门只进一格）。现数 2026-10-31（§381 又加了一份挂载用例；§380 那趟记的 1006/545 已被顶掉）＝awaits 1018／按存在读屏 557／
     // 等退场 75／门后没有读屏断言 360／会假红 0／只会假绿 18。逐颗钉死＝新增任何一格都要人工过目。
     //   §369 这 6 颗的来路（不是搬运，是净新增）：recovery-carry-notice-369 里 6 发 waitFor＝
@@ -443,9 +447,160 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   P0-3c「当前助手生效面」把工具策略屏那枚从 3 颗改写到 7 颗（+4，全落「按存在读屏（DOM）」）：
     //     默认落点空态 1 颗、切注册表后等 fs_read 1 颗、自建助手横幅 1 颗、内置助手横幅 1 颗、
     //     失败句与重试后的空态各 1 颗 ⇒ 628→632，总数 1125→1129。
-    expect(ALL.awaits, `现数 ${ALL.awaits} 个 await waitFor`).toBe(1129)
-    expect([ALL.domGates, ALL.hookGates, ALL.transitionGates, ALL.silent, ALL.positive.length, ALL.absenceOnly.length].join('/'),
-      `现数 按存在读DOM/按存在读hook/等退场/无紧随读屏/会假红/只会假绿 ＝ ${ALL.domGates}/${ALL.hookGates}/${ALL.transitionGates}/${ALL.silent}/${ALL.positive.length}/${ALL.absenceOnly.length}`).toBe('632/82/95/301/0/19')
+    // §436 换判据：不再钉「全仓总量」。那数字每加一个测试就要改，拦不住任何真实回归。
+    // 新判据＝**逐文件上限＋新文件必须登记**：
+    //   · 拦得住：既有文件里多加 waitFor（超过该文件上限）；新测试文件用了 waitFor 却没登记；
+    //   · 拦不住：把 waitFor 从 A 删掉同时在 B 加同样多（总量守恒型搬运）——这一类交给下面两条身份判据
+    //     （absenceOnly 名单逐颗认身份、positive 必须为 0）与四桶守恒兜；
+    //   · 上限＝登记时的现数，不留余量：要加一颗就得在这里 +1 并写理由，评审能看见；
+    //   · 单文件现数最高 42（renderer-kb-detail-batch）——那是一个文件的上限，不是总量。
+    // 现数参考（仅供人看，不参与断言）：awaits＝1142（2026-11-06）。
+    const AWAIT_CAP: Record<string, number> = {
+      'tests/agent-conversation-switch-race-309.test.tsx': 7,
+      'tests/agent-delegation-real-chain.test.ts': 2,
+      'tests/agent-event-attribution.test.tsx': 2,
+      'tests/agent-interject-ipc-238.test.ts': 1,
+      'tests/agent-role-concurrency-chain.test.ts': 1,
+      'tests/agent-run-stats-scope-398.test.tsx': 19,
+      'tests/approval-audit-panel-p0-2c-3.test.tsx': 4,
+      'tests/assistant-editor-skill-bind-412.test.tsx': 2,
+      'tests/backup-cloud-time-327.test.tsx': 4,
+      'tests/backup-late-response-324.test.tsx': 27,
+      'tests/backup-merge-stopped-notice-315.test.tsx': 6,
+      'tests/backup-stale-banner-325.test.tsx': 15,
+      'tests/chat-send-failure-visible-204.test.tsx': 2,
+      'tests/data-health-cold-243.test.tsx': 1,
+      'tests/data-health-zero-bytes-378.test.tsx': 3,
+      'tests/glossary-add-failure-211.test.tsx': 6,
+      'tests/ipc-agent-config-unread-257.test.tsx': 16,
+      'tests/ipc-assistant-editor-list-read-270.test.tsx': 16,
+      'tests/ipc-badvalue-pair-262.test.tsx': 15,
+      'tests/ipc-chat-list-read-260.test.tsx': 2,
+      'tests/ipc-composer-list-read-268.test.tsx': 22,
+      'tests/ipc-defaults-lists-read-274.test.tsx': 8,
+      'tests/ipc-envelope-prefs-258.test.tsx': 13,
+      'tests/ipc-failure-behavior-218.test.tsx': 3,
+      'tests/ipc-failure-behavior-220.test.tsx': 2,
+      'tests/ipc-failure-behavior-221.test.tsx': 1,
+      'tests/ipc-failure-behavior-222.test.tsx': 2,
+      'tests/ipc-failure-behavior-223.test.tsx': 2,
+      'tests/ipc-failure-behavior-224.test.tsx': 3,
+      'tests/ipc-failure-behavior-225.test.tsx': 6,
+      'tests/ipc-failure-behavior-226.test.tsx': 9,
+      'tests/ipc-failure-behavior-227.test.tsx': 6,
+      'tests/ipc-failure-behavior-228.test.tsx': 11,
+      'tests/ipc-failure-behavior-229.test.tsx': 3,
+      'tests/ipc-failure-behavior-230.test.tsx': 8,
+      'tests/ipc-failure-settings-tier-216.test.tsx': 1,
+      'tests/ipc-failure-t1-214.test.tsx': 6,
+      'tests/ipc-jump-read-263.test.tsx': 13,
+      'tests/ipc-jump-read-264.test.tsx': 16,
+      'tests/ipc-kb-ask-list-read-272.test.tsx': 31,
+      'tests/ipc-kb-read-takeover-254.test.tsx': 3,
+      'tests/ipc-list-read-259.test.tsx': 15,
+      'tests/ipc-market-lists-read-273.test.tsx': 24,
+      'tests/ipc-provider-list-read-261.test.tsx': 10,
+      'tests/ipc-provider-lists-read-271.test.tsx': 16,
+      'tests/ipc-sidebar-popup-read-275.test.tsx': 6,
+      'tests/ipc-stop-not-sent-265.test.tsx': 17,
+      'tests/ipc-stop-silent-266.test.tsx': 21,
+      'tests/ipc-stop-silent-267.test.tsx': 11,
+      'tests/ipc-translate-list-read-269.test.tsx': 16,
+      'tests/kb-ask-send-envelope-318.test.tsx': 6,
+      'tests/kb-ask-session-envelope-330.test.tsx': 2,
+      'tests/keyboard-submit-340.test.tsx': 3,
+      'tests/load-fail-read-retry-350.test.tsx': 10,
+      'tests/load-fail-read-retry-351.test.tsx': 5,
+      'tests/load-fail-read-retry-352.test.tsx': 7,
+      'tests/load-fail-read-retry-354.test.tsx': 10,
+      'tests/load-fail-read-retry-355.test.tsx': 35,
+      'tests/mcp-manager.test.ts': 1,
+      'tests/popup-payload-owner-321.test.tsx': 3,
+      'tests/recovery-carry-notice-369.test.tsx': 6,
+      'tests/reminder-generation-348.test.tsx': 7,
+      'tests/renderer-agent-composer-plus-399.test.tsx': 25,
+      'tests/renderer-agent-context-window-234.test.tsx': 5,
+      'tests/renderer-agent-fallback-237.test.tsx': 11,
+      'tests/renderer-agent-fs-write-231.test.tsx': 12,
+      'tests/renderer-agent-provider-list-sync.test.tsx': 7,
+      'tests/renderer-agent-queue-238.test.tsx': 14,
+      'tests/renderer-agent-restore-last-used.test.tsx': 10,
+      'tests/renderer-agent-sub-session-235.test.tsx': 6,
+      'tests/renderer-agent-sub-session-refresh-245.test.tsx': 12,
+      'tests/renderer-agent-text-protocol-badge.test.tsx': 9,
+      'tests/renderer-agent-zero-call-notice.test.tsx': 2,
+      'tests/renderer-app-error-boundary.test.tsx': 3,
+      'tests/renderer-assistant-editor-tool-groups.test.tsx': 1,
+      'tests/renderer-channel-b3.test.tsx': 7,
+      'tests/renderer-data-health-perf.test.tsx': 2,
+      'tests/renderer-encryption-panel.test.tsx': 1,
+      'tests/renderer-file-open-332.test.tsx': 25,
+      'tests/renderer-first-run-wizard.test.tsx': 14,
+      'tests/renderer-hint-title-410.test.tsx': 2,
+      'tests/renderer-image-read-256.test.tsx': 11,
+      'tests/renderer-kb-ask-search-332.test.tsx': 26,
+      'tests/renderer-kb-ask-title-331.test.tsx': 8,
+      'tests/renderer-kb-detail-batch.test.tsx': 42,
+      'tests/renderer-kb-doc-actions-331.test.tsx': 12,
+      'tests/renderer-kb-eval-panel.test.tsx': 20,
+      'tests/renderer-kb-jump-focus-282.test.tsx': 8,
+      'tests/renderer-kb-retrieval-panel.test.tsx': 1,
+      'tests/renderer-kb-switch-332.test.tsx': 5,
+      'tests/renderer-late-response-owner-311.test.tsx': 14,
+      'tests/renderer-local-judgement-panel.test.tsx': 13,
+      'tests/renderer-mcp-import-templates-mount.test.tsx': 2,
+      'tests/renderer-mcp-none-mode-save.test.tsx': 4,
+      'tests/renderer-notes-332.test.tsx': 9,
+      'tests/renderer-ollama-panel-liveness-380.test.tsx': 8,
+      'tests/renderer-p0-2a-copy-415.test.tsx': 9,
+      'tests/renderer-pip-source-confirm.test.tsx': 1,
+      'tests/renderer-provider-http-confirm.test.tsx': 3,
+      'tests/renderer-provider-settings.test.tsx': 7,
+      'tests/renderer-reminder-busy-332.test.tsx': 7,
+      'tests/renderer-reminders-modal-reschedule.test.tsx': 3,
+      'tests/renderer-reminders-modal-rule.test.tsx': 1,
+      'tests/renderer-rotate-undecryptable-faces-385.test.tsx': 8,
+      'tests/renderer-run-stats-unread-396.test.tsx': 9,
+      'tests/renderer-settings-webdav-undecryptable-381.test.tsx': 12,
+      'tests/renderer-sidebar-badge-250.test.tsx': 1,
+      'tests/renderer-sidebar-nav.test.tsx': 2,
+      'tests/renderer-skill-resident-236.test.tsx': 1,
+      'tests/renderer-steward-ollama-liveness-380.test.tsx': 4,
+      'tests/renderer-steward-read-255.test.tsx': 8,
+      'tests/renderer-steward-vacuum-377.test.tsx': 8,
+      'tests/renderer-task-last-ok-face-395.test.tsx': 1,
+      'tests/renderer-terminal-truncated-hint.test.tsx': 2,
+      'tests/renderer-unlock-rate-limit.test.tsx': 7,
+      'tests/renderer-websearch-b3.test.tsx': 7,
+      'tests/renderer-websearch-searxng-407.test.tsx': 17,
+      'tests/renderer-wizard-328.test.tsx': 6,
+      'tests/renderer-wizard-412.test.tsx': 1,
+      'tests/sandbox-meta-envelope-326.test.tsx': 13,
+      'tests/search-late-response-353.test.tsx': 11,
+      'tests/settings-enc-copy-344.test.tsx': 1,
+      'tests/settings-license-copy-346.test.tsx': 3,
+      'tests/skill-budget-ui-418.test.tsx': 1,
+      'tests/skill-market-bind-412.test.tsx': 8,
+      'tests/skill-market-fetch-debounce-322.test.tsx': 15,
+      'tests/skill-market-visibility-428.test.tsx': 6,
+      'tests/skill-row-residue-notice-326.test.tsx': 4,
+      'tests/stale-read-notice-345.test.tsx': 14,
+      'tests/stale-read-notice-347.test.tsx': 25,
+      'tests/terminal-frame-epoch-320.test.tsx': 4,
+      'tests/tool-policy-screen-417.test.tsx': 7,
+      'tests/update-panel-restart-312.test.tsx': 3
+    }
+    const sum = Object.values(PER_FILE_AWAITS).reduce((a, b) => a + b, 0)
+    expect(sum, '逐文件合计必须等于总量（两套读法同源）').toBe(ALL.awaits)
+    const unregistered = Object.keys(PER_FILE_AWAITS).filter((f) => !Object.prototype.hasOwnProperty.call(AWAIT_CAP, f)).sort()
+    expect(unregistered.map((f) => `  + ${f}：${PER_FILE_AWAITS[f]} 颗`).join('\n'),
+      `新文件用了 await waitFor 却没登记上限：\n${unregistered.map((f) => '  + ' + f).join('\n')}`).toBe('')
+    const over = Object.keys(AWAIT_CAP)
+      .filter((f) => (PER_FILE_AWAITS[f] ?? 0) > (AWAIT_CAP[f] ?? 0))
+      .sort()
+    expect(over.map((f) => `  ${f}：现 ${PER_FILE_AWAITS[f] ?? 0} > 上限 ${AWAIT_CAP[f] ?? 0}`).join('\n'),
+      'waitFor 超过本文件上限：加了就抬上限并写理由').toBe('')
+    // 六桶**互斥且守恒**：分类器不认的门形状会让守恒式先红
     expect(ALL.domGates + ALL.hookGates + ALL.transitionGates + ALL.silent + ALL.positive.length + ALL.absenceOnly.length,
       '六桶必须守恒：对不上＝出现了分类器不认的门形状').toBe(ALL.awaits)
   })
@@ -454,7 +609,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     expect(ALL.positive.map(where), `会假红的形状：\n${ALL.positive.map(detail).join('\n')}`).toEqual([])
   })
 
-  it('只会假绿那一档（要求「不存在」）＝19 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
+  it('只会假绿那一档（要求「不存在」）＝21 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
     // §365 判语（分组，位置按现数名单）：
     //   ①「在飞那一帧」本身就是判据对象——负向句读的是"发出之后、落地之前"，折进门里反而把判据废掉：
     //     load-fail-read-retry-350／352／354（"还在加载那一支既没有那句也没有那颗键"）、
@@ -472,6 +627,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   还是响应落地），源码里看不出来——同一种形状（计数门＋先前上过屏＋现在要求不在）在 268 是会假红、在 347
     //   是设计内的在飞帧。⇒ 只能逐条判＋把名单钉死，别再试着用 subject 交集自动化（本批试过，见台账 §365）。
     const VERDICTS = [
+      'tests/approval-audit-panel-p0-2c-3.test.tsx:237 -> :238', // §436 新入名单（本批导出测试）：门等「正在导出」消失（那一发已落地），紧随断言成功/失败提示都不在 ⇒ 读的是落地后的帧，有牙；没进「等退场」桶是因为门前的 fireEvent 不读屏（retractOf 只看同一块里的 expect）。
       'tests/backup-cloud-time-327.test.tsx:73 -> :75',
       'tests/load-fail-read-retry-350.test.tsx:97 -> :99',
       'tests/load-fail-read-retry-352.test.tsx:90 -> :91',
@@ -490,6 +646,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-websearch-b3.test.tsx:89 -> :90', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
       'tests/skill-market-fetch-debounce-322.test.tsx:160 -> :161',
+      'tests/skill-market-visibility-428.test.tsx:94 -> :95', // §436 新入名单（本批前的 §428）：门等 `reads === 1`（失败那一发已发出），失败分支本身不写屏 ⇒ 门放行时"不在场"恒真，只会漏报、不会假红。
       'tests/stale-read-notice-347.test.tsx:159 -> :160'
     ]
     // 比对用整串而非数组：数组的 diff 只印第一颗漂的，剩下几颗得跑好几趟才看得见（本批就撞过）

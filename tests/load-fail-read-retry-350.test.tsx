@@ -113,6 +113,7 @@ describe('数据健康：首读就失败 ⇒ 那颗长在报告里的「刷新�
       },
       coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
       traces: { rows: 0, maxRowsInOneConversation: 0 },
+      approvals: { rows: 0, writeFailures: 0 },
       kb: {
         total: 0,
         byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 },

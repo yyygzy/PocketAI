@@ -50,7 +50,9 @@ function mountCard(msg: AgentMessage, restore: unknown): { calls: () => number }
     createReminder: () => ({ ok: true }),
     reportPerf: () => undefined
   })
-  mountWithProviders(<AgentMessageCard m={msg} />)
+  // §436：按钮的挂载条件是"列表批量查完、确实在本机"——这里直接挂单卡，就得把这份判定喂进去；
+  // 不喂＝undefined＝"还没确认"，13 例会全部停在"找不到还原按钮"（那是夹具缺口，不是产品藏按钮）。
+  mountWithProviders(<AgentMessageCard m={msg} snapshotAvailable={true} />)
   return { calls: () => n }
 }
 

@@ -58,9 +58,12 @@ describe('① 数据健康面板：改前把失败对象当报告用，解构当
       getDataHealth: () => ({
         sizes: {
           userDataBytes: 1024, dbBytes: 1024, attachmentsBytes: 1024, extensionsBytes: 1024, logsBytes: 1024,
+          coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0,
           otherBytes: 0, browserCacheBytes: 0, browserCacheFiles: 0
         },
+        coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
         traces: { rows: 0, maxRowsInOneConversation: 0 },
+        approvals: { rows: 0, writeFailures: 0 },
         kb: { total: 0, byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 }, errorDocs: [], integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] }, vectorIndex: { count: 0, dims: [] } },
         backup: { configured: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
         tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },

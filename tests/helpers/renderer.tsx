@@ -50,6 +50,12 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   state.impls = new Map(Object.entries(impls))
   // i18n Provider 挂载时会同步调这个通道（真实代码里是可选链 + catch），默认给个空实现
   if (!state.impls.has('setAppLanguage')) state.impls.set('setAppLanguage', () => Promise.resolve())
+  // §436：订阅类通道（useStreamSession 挂载即订阅）默认给一个"空退订函数"——
+  // 它是 mount 的固定副作用，不是用例要断言的业务调用；不给会被 buildStub 当成漏 mock 直接抛（§266）。
+  if (!state.impls.has('onAgentStep')) state.impls.set('onAgentStep', () => () => {})
+  if (!state.impls.has('onAgentChunk')) state.impls.set('onAgentChunk', () => () => {})
+  if (!state.impls.has('onAgentDone')) state.impls.set('onAgentDone', () => () => {})
+  if (!state.impls.has('onAgentError')) state.impls.set('onAgentError', () => () => {})
   const g = globalThis as unknown as { window: { pocketai: unknown } }
   g.window.pocketai = buildStub()
 }

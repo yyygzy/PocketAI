@@ -163,7 +163,9 @@ const AgentMessageCardImpl: React.FC<{
   onRemind?: RemindHandler
   /** 本机是否还有这条 fs_write 结果的快照（由列表批量查一次后传下来；异机恢复后为 false） */
   snapshotAvailable?: boolean
-}> = ({ m, onDelete, onRerun, onRegenerate, onRemind, snapshotAvailable }) => {
+  /** 快照存在性这一发没查成 ⇒ 不是"本机没有"，卡片要把「暂时无法确认」说上屏（§436） */
+  snapshotUnconfirmed?: boolean
+}> = ({ m, onDelete, onRerun, onRegenerate, onRemind, snapshotAvailable, snapshotUnconfirmed }) => {
   const { t } = useI18n()
   const [showReasoning, setShowReasoning] = useState(false)
   const [showSources, setShowSources] = useState(false)
@@ -315,7 +317,11 @@ const AgentMessageCardImpl: React.FC<{
         </pre>
         {/* §231：fs_write 的结果带快照 id 时给「还原到写入前」；没留快照时只说一句为什么，不出现坏按钮 */}
         {m.toolResult.name === 'fs_write' && !m.isError && (
-          <FsWriteActions resultContent={m.toolResult.content} snapshotAvailable={snapshotAvailable} />
+          <FsWriteActions
+            resultContent={m.toolResult.content}
+            snapshotAvailable={snapshotAvailable}
+            snapshotUnconfirmed={snapshotUnconfirmed}
+          />
         )}
         <CardActions copyText={toolResultText} onDelete={del} />
         {ctxMenuNode}

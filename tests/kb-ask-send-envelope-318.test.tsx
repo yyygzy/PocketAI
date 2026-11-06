@@ -145,10 +145,13 @@ describe('§318 源码面：一份上限 ＋ 诚实的返回类型', () => {
   })
 
   it('发起类通道的返回类型必须带失败形状（三条逐钉）', () => {
-    const src = read('../src/preload/index.ts')
+    // §436：prettier 会把长类型拆行，锚点按"声明全文"匹配——先把空白压平，再逐字要求
+    // 完整的成功形状＋`| { ok: false`。只容忍换行，不放宽字段集合（syncSkills 多出的
+    // removed/retired 也写在锚点里，产物变了就必须在这里改）。
+    const src = read('../src/preload/index.ts').replace(/\s+/g, ' ').replace(/Promise< /g, 'Promise<')
     for (const anchor of [
       '}): Promise<{ requestId: string; sources: MessageSource[] } | { ok: false',
-      'syncSkills: (): Promise<{ count: number; errors: string[] } | { ok: false',
+      'syncSkills: (): Promise<{ count: number; removed: number; retired: number; errors: string[] } | { ok: false',
       'createLocalBackup: (): Promise<{ path: string; size: number; encrypted: boolean } | { ok: false'
     ]) {
       expect(src.includes(anchor), `preload 声明缺了失败形状：${anchor.slice(0, 44)}…`).toBe(true)

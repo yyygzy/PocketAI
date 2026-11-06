@@ -450,9 +450,17 @@ export const ApprovalAuditPanel: React.FC = () => {
                 <span>
                   {t('approvalAudit.field.actor')}：{actorText(row.actor, t)}
                 </span>
-                <span className="truncate max-w-[280px]">
+                <span>
                   {t('approvalAudit.field.conversation')}：
-                  {conversationTitle.get(row.conversationId) ?? `#${row.conversationId.slice(0, 8)}`}
+                  {/* §436：截断位只包数据本身，字段名留在外面——句子与数据同挂一个 truncate
+                      会被 §410 记成"混合位"，也说不清被截掉的到底是标签还是标题。
+                      再补 title：悬停能看到完整标题，而不是只靠省略号猜。 */}
+                  <span
+                    className="truncate max-w-[280px]"
+                    title={conversationTitle.get(row.conversationId) ?? `#${row.conversationId.slice(0, 8)}`}
+                  >
+                    {conversationTitle.get(row.conversationId) ?? `#${row.conversationId.slice(0, 8)}`}
+                  </span>
                 </span>
               </div>
 

@@ -7,6 +7,7 @@ import { AgentMessageCard } from './AgentMessageCard'
 import { readSnapshotId } from './FsWriteActions'
 import { isNearBottom, shouldStickToBottom } from './virtual-list-utils'
 import { useI18n } from '../../../i18n'
+import { reportIpcError } from '../../../utils/ipc'
 import type { AgentMessage } from '../agent-shared'
 import type { ReactNode } from 'react'
 
@@ -55,12 +56,16 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   // P0-5 第三批：本机快照存在性。按一屏消息里的 snapshotId 去重后**一次 IPC** 批量查，
   // 不按每条消息各查一次；流式追加时 id 集合不变就不重复查（否则每个 token 打一次 IPC）。
   const [snapshotsExisting, setSnapshotsExisting] = useState<Record<string, boolean>>({})
+  // §436：存在性这一发没查成（失败信封或真抛错）≠「本机没有」。这一档要能说出口，
+  // 否则按钮无声不出现，用户会以为这批写入本来就不能还原（§217 的「空 catch」同一条）。
+  const [snapshotsUnconfirmed, setSnapshotsUnconfirmed] = useState<Record<string, true>>({})
   const snapshotKeyRef = useRef('')
 
   // 切会话：上一会话的快照判定不能串到这一会话
   useEffect(() => {
     snapshotKeyRef.current = ''
     setSnapshotsExisting({})
+    setSnapshotsUnconfirmed({})
   }, [conversationId])
 
   useEffect(() => {
@@ -76,20 +81,41 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
     snapshotKeyRef.current = key
     if (unique.length === 0) return
     let cancelled = false
+    // 查没成 ⇒ 这批 id 全部记成「暂时无法确认」，由卡片把这句话挂上屏（不是"本机没有"）
+    const markUnconfirmed = (): void => {
+      setSnapshotsUnconfirmed((prev) => {
+        if (unique.every((id) => prev[id])) return prev
+        const next = { ...prev }
+        for (const id of unique) next[id] = true
+        return next
+      })
+    }
     void window.pocketai
       .snapshotsExist(unique)
       .then((res) => {
         if (cancelled) return
-        // 查不到就保持"未确认"（不出按钮）：宁可不出入口，也不给一个点了必然失败的按钮
-        if ('ok' in res && res.ok === false) return
+        // 失败信封：落痕 + 把"查不到"说出口；不再只 `return` 让按钮无声消失
+        if ('ok' in res && res.ok === false) {
+          markUnconfirmed()
+          return
+        }
         const existing = 'existing' in res ? res.existing : []
         const map: Record<string, boolean> = {}
         for (const id of unique) map[id] = false
         for (const id of existing) map[id] = true
         setSnapshotsExisting((prev) => ({ ...prev, ...map }))
+        setSnapshotsUnconfirmed((prev) => {
+          if (!unique.some((id) => prev[id])) return prev
+          const next = { ...prev }
+          for (const id of unique) delete next[id]
+          return next
+        })
       })
-      .catch(() => {
-        /* 同上：保持未确认 */
+      .catch((e: unknown) => {
+        if (cancelled) return
+        // 真抛错也要留痕：空 catch 会把"通道没注册/同步抛错"全咽掉（§217）
+        markUnconfirmed()
+        reportIpcError('agent.snapshotsExist')(e)
       })
     return () => {
       cancelled = true
@@ -101,6 +127,13 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
     if (m.isError || !m.toolResult || m.toolResult.name !== 'fs_write') return undefined
     const id = readSnapshotId(m.toolResult.content)
     return id ? snapshotsExisting[id] : undefined
+  }
+
+  /** 这一条的快照存在性是"查没成"（≠ 本机没有）：要在卡片上把那句话挂出来 */
+  const snapshotUnconfirmedFor = (m: AgentMessage): boolean => {
+    if (m.isError || !m.toolResult || m.toolResult.name !== 'fs_write') return false
+    const id = readSnapshotId(m.toolResult.content)
+    return id ? snapshotsUnconfirmed[id] === true : false
   }
 
   const virtualizer = useVirtualizer({
@@ -215,6 +248,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
                   onRegenerate={isLastFinal ? onRegenerateMessage : undefined}
                   onRemind={onRemindMessage}
                   snapshotAvailable={snapshotAvailableFor(m)}
+                  snapshotUnconfirmed={snapshotUnconfirmedFor(m)}
                 />
               </div>
             )
