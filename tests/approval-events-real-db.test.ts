@@ -23,6 +23,7 @@ vi.mock('../src/main/logger', () => ({
 
 import { dbService, LATEST_SCHEMA_VERSION } from '../src/main/db/database'
 import {
+  APPROVAL_AUDIT_MAX_PAGE,
   approvalEventRepo,
   trimToLimits,
   resetApprovalAuditStateForTest
@@ -160,5 +161,92 @@ describe('删会话级联删除审批记录', () => {
       .prepare('SELECT conversation_id FROM approval_events ORDER BY rowid')
       .all() as Array<{ conversation_id: string }>
     expect(rows.map((r) => r.conversation_id)).toEqual([other])
+  })
+})
+
+// 明细屏只读分页查询（P0-2c-3）：排序 / 分页追加 / 组合筛选 / 字段白名单 / 硬上限。
+// `insert()` 的 created_at 取 decidedAt，所以用例用 decidedAt 控制排序与时间范围。
+describe('明细屏只读分页查询', () => {
+  it('按 created_at 倒序分页：offset 追加不重不漏，多取一行判 hasMore', () => {
+    const t0 = Date.now() - 60_000
+    for (let i = 0; i < 5; i++) {
+      approvalEventRepo.insert(event('c-page', { requestId: `r-${i}`, toolName: `tool-${i}`, decidedAt: t0 + i * 1000 }))
+    }
+
+    const p1 = approvalEventRepo.list({ offset: 0, limit: 2 })
+    expect(p1.rows.map((r) => r.toolName)).toEqual(['tool-4', 'tool-3'])
+    expect(p1.hasMore).toBe(true)
+
+    const p2 = approvalEventRepo.list({ offset: 2, limit: 2 })
+    expect(p2.rows.map((r) => r.toolName)).toEqual(['tool-2', 'tool-1'])
+    expect(p2.hasMore).toBe(true)
+
+    const p3 = approvalEventRepo.list({ offset: 4, limit: 2 })
+    expect(p3.rows.map((r) => r.toolName)).toEqual(['tool-0'])
+    expect(p3.hasMore).toBe(false)
+
+    const ids = [...p1.rows, ...p2.rows, ...p3.rows].map((r) => r.id)
+    expect(new Set(ids).size).toBe(5)
+  })
+
+  it('会话 + 决定 + 时间范围组合同时生效', () => {
+    const base = Date.now() - 100_000
+    approvalEventRepo.insert(event('c-a', { requestId: 'r-a1', decision: 'user_approve', reasonCode: 'USER_APPROVE', decidedAt: base + 1000 }))
+    approvalEventRepo.insert(event('c-a', { requestId: 'r-a2', decision: 'user_deny', reasonCode: 'USER_DENY', decidedAt: base + 2000 }))
+    approvalEventRepo.insert(event('c-a', { requestId: 'r-a3', decision: 'user_approve', reasonCode: 'USER_APPROVE', decidedAt: base + 3000 }))
+    approvalEventRepo.insert(event('c-b', { requestId: 'r-b1', decision: 'user_approve', reasonCode: 'USER_APPROVE', decidedAt: base + 2000 }))
+
+    const rows = approvalEventRepo.list({
+      offset: 0,
+      limit: 10,
+      conversationId: 'c-a',
+      decision: 'user_approve',
+      from: base + 500,
+      to: base + 2500
+    })
+    expect(rows.rows).toHaveLength(1)
+    expect(rows.rows[0]?.decidedAt).toBe(base + 1000)
+    expect(rows.rows[0]?.conversationId).toBe('c-a')
+    expect(rows.rows[0]?.decision).toBe('user_approve')
+    expect(rows.hasMore).toBe(false)
+  })
+
+  it('只返回白名单字段：没有原始参数、也没有工具结果字段', () => {
+    approvalEventRepo.insert(
+      event('c-fields', { argsDigest: 'sha256:abcdef1234567890', argsRedacted: '{"command":"ls"}' })
+    )
+    const page = approvalEventRepo.list({ offset: 0, limit: 1 })
+    const row = page.rows[0]!
+    expect(Object.keys(row).sort()).toEqual(
+      [
+        'actor',
+        'argsDigest',
+        'argsRedacted',
+        'assistantId',
+        'conversationId',
+        'createdAt',
+        'decidedAt',
+        'decision',
+        'id',
+        'reasonCode',
+        'requestedAt',
+        'scope',
+        'stepIndex',
+        'toolId',
+        'toolName'
+      ].sort()
+    )
+    expect(row.argsRedacted).toBe('{"command":"ls"}')
+    expect(row.argsDigest).toBe('sha256:abcdef1234567890')
+  })
+
+  it('limit 超过硬顶时按 APPROVAL_AUDIT_MAX_PAGE 截断，绝不一发拉全表', () => {
+    const t0 = Date.now() - 200_000
+    for (let i = 0; i < APPROVAL_AUDIT_MAX_PAGE + 5; i++) {
+      approvalEventRepo.insert(event('c-cap', { requestId: `r-${i}`, decidedAt: t0 + i }))
+    }
+    const page = approvalEventRepo.list({ offset: 0, limit: 10_000 })
+    expect(page.rows).toHaveLength(APPROVAL_AUDIT_MAX_PAGE)
+    expect(page.hasMore).toBe(true)
   })
 })

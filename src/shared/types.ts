@@ -1441,6 +1441,51 @@ export interface ApprovalEventInput {
   decidedAt: number
 }
 
+/**
+ * 审批明细屏的查询入参（P0-2c-3）。
+ * `limit` 在 IPC 层用 zod 封顶 100——这一屏**永远分页取**，不接受"一次拉全表"；
+ * `from`/`to` 是 `created_at` 的毫秒闭区间（渲染端按本地日界换算后传入）。
+ */
+export interface ApprovalAuditQuery {
+  offset: number
+  limit: number
+  conversationId?: string
+  decision?: ApprovalDecision
+  from?: number
+  to?: number
+}
+
+/**
+ * 审批明细屏的一行（只含可展示字段）。
+ * 没有原始参数、没有工具结果：`argsRedacted` 是唯一参数来源，`argsDigest` 只做短哈希。
+ */
+export interface ApprovalAuditRow {
+  id: string
+  conversationId: string
+  assistantId: string | null
+  stepIndex: number | null
+  toolId: string
+  toolName: string
+  decision: ApprovalDecision
+  reasonCode: string | null
+  scope: ApprovalScope
+  /** 参数指纹（完整哈希）；界面只展示前 10 位，并注明不能还原内容 */
+  argsDigest: string | null
+  /** 写库前已脱敏的参数摘要；绝不回填/重拼原始参数 */
+  argsRedacted: string | null
+  actor: string
+  requestedAt: number
+  decidedAt: number
+  /** 记录落库时间（= decidedAt）：列表排序与时间筛选都按这一列 */
+  createdAt: number
+}
+
+/** 审批明细屏的一页（hasMore=还有下一页；不做总数统计，避免每次翻页多扫一遍全表） */
+export interface ApprovalAuditPage {
+  rows: ApprovalAuditRow[]
+  hasMore: boolean
+}
+
 /** 审批审计写失败广播（主进程 → 渲染端；只提示一次，不阻断工具执行） */
 export interface ApprovalAuditWarnEvent {
   at: number
@@ -2419,6 +2464,7 @@ export const IPC = {
   DATA_HEALTH_OPEN_DIR: 'dataHealth:open-dir', // 在系统文件管理器里打开数据目录（「浏览器缓存」那一格旁的只读跳转）
   DATA_HEALTH_CLEAR_CACHE: 'dataHealth:clear-cache', // 清 default session 的 HTTP 缓存（同那一格旁的显式动作；不做文件系统删除，见 cache-clean.ts）
   DATA_HEALTH_CLEAR_APPROVALS: 'dataHealth:clear-approvals', // 清空审批审计账本（approval_events）
+  APPROVALS_LIST: 'approvals:list', // 审批明细屏（P0-2c-3）：只读分页 + 筛选，limit 由 zod 封顶
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
   DATA_HEALTH_KB_REINDEX: 'dataHealth:kb-reindex', // 缺向量/维度不匹配文档一键重建索引

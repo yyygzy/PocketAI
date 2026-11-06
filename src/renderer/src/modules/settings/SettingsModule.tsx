@@ -15,6 +15,7 @@ import { ProviderSettings, Notice } from './ProviderSettings'
 import { UserMemoryPanel } from './UserMemoryPanel'
 import { UsagePanel } from './UsagePanel'
 import { DataHealthPanel } from './DataHealthPanel'
+import { ApprovalAuditPanel } from './ApprovalAuditPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { LocalJudgementPanel } from './LocalJudgementPanel'
 import { OutboundPanel } from './OutboundPanel'
@@ -271,6 +272,13 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.dataHealth')}</h3>
           <DataHealthPanel />
+        </div>
+
+        {/* 审批明细（P0-2c-3，只读 v1）：紧跟数据健康——同一类"账本"视图，跨会话审计，
+            会话内单条审批详情不在本批范围内（没有稳定的定位锚点，不假装能跳） */}
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.approvalAudit')}</h3>
+          <ApprovalAuditPanel />
         </div>
 
         <div className="mt-4">

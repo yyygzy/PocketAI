@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 import type { ToolApprovalRequestEvent } from '../../../shared/types'
 import { logIpcError } from '../utils/ipc'
+import { approvalReasonText } from '../utils/approval-reason'
 
 /** 按危险区间把命令切段，命中部分包危险色 span（区间已排序合并，下标对原始命令对齐） */
 function highlightSegments(
@@ -83,10 +84,8 @@ export const ToolApprovalDialog: React.FC = () => {
 
   if (!current) return null
 
-  // reason code → 文案；缺失时回退显示原始 code（宁可信息不丢）
-  const reasonKey = `agent.approval.reason.${current.reason}`
-  const reasonText = t(reasonKey)
-  const reasonLabel = reasonText === reasonKey ? current.reason : reasonText
+  // reason code → 文案；缺失时回退显示原始 code（宁可信息不丢）——与审批明细屏共用同一入口
+  const reasonLabel = approvalReasonText(current.reason, t)
   const isDanger = current.risk === 'danger'
 
   return (

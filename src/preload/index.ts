@@ -25,6 +25,8 @@ import type {
   UsageModelItem,
   UsageDetailResult,
   DataHealthReport,
+  ApprovalAuditPage,
+  ApprovalAuditQuery,
   SendMessagePayload,
   RegeneratePayload,
   ResendPayload,
@@ -398,6 +400,9 @@ const api = {
   // 清空审批审计账本（P0-2c-1）：显式动作、无入参；返回实际删除行数，失败走 safeHandle 的 {ok:false}
   clearApprovalRecords: (): Promise<{ ok: true; cleared: number } | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.DATA_HEALTH_CLEAR_APPROVALS),
+  // 审批明细屏（P0-2c-3）：只读分页 + 组合筛选；limit 由主进程 zod 封顶，失败返回 {ok:false}
+  listApprovalEvents: (query: ApprovalAuditQuery): Promise<ApprovalAuditPage | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.APPROVALS_LIST, query),
   // 本机判据屏（V4-Iter-146）：只读汇总，一次进来会现采一次显存（异步，不占事件循环）
   getLocalJudgement: (): Promise<LocalJudgementReport> =>
     ipcRenderer.invoke(IPC.LOCAL_JUDGEMENT_GET),

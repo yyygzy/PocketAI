@@ -2,13 +2,13 @@
 import fs from 'node:fs'
 import { BrowserWindow, dialog, shell } from 'electron'
 import { z } from 'zod'
-import { IPC } from '../../../shared/types'
+import { IPC, type ApprovalAuditQuery } from '../../../shared/types'
 import { DATA_DIR } from '../../portable'
 import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
-import { approvalEventRepo } from '../../db/repositories/approval-event.repo'
+import { APPROVAL_AUDIT_MAX_PAGE, approvalEventRepo } from '../../db/repositories/approval-event.repo'
 import { clearBrowserHttpCache } from '../../steward/cache-clean'
 import { computeLocalJudgements } from '../../steward/local-judgement'
 import { recordPerf } from '../../steward/perf-probe'
@@ -18,6 +18,20 @@ import { safeHandle, argsSchema } from '../safe-handle'
 
 /** 报告文本上限（渲染端拼装的纯文本远小于此，仅做防灌爆） */
 const REPORT_MAX_CHARS = 200_000
+
+/**
+ * 审批明细屏入参（P0-2c-3）：只读查询，全部字段都收口。
+ * `limit` 硬顶 100（与 repo 的 clamp 同一个常量）——这一屏不接受"一次拉全表"；
+ * `from`/`to` 是毫秒时间戳（渲染端按本地日界换算），缺省即不筛。
+ */
+const approvalAuditQuerySchema = z.object({
+  offset: z.number().int().min(0).max(1_000_000),
+  limit: z.number().int().min(1).max(APPROVAL_AUDIT_MAX_PAGE),
+  conversationId: z.string().min(1).max(200).optional(),
+  decision: z.enum(['auto_allow', 'user_approve', 'user_deny', 'timeout_deny', 'policy_deny']).optional(),
+  from: z.number().int().min(0).optional(),
+  to: z.number().int().min(0).optional()
+})
 
 /** 默认文件名时间戳 YYYYMMDD-HHmm */
 function reportTimestamp(): string {
@@ -69,6 +83,13 @@ export function registerStewardHandlers(): void {
   // 清空审批审计账本：显式动作、无入参；返回实际删除行数，失败按 safeHandle 原样回报。
   // 这里刻意让 clearAll() 抛错（不在 repo 里吞成 0）——用户点的就是"清干净"，静默报 0 会被读成"本来就没有"。
   safeHandle(IPC.DATA_HEALTH_CLEAR_APPROVALS, () => ({ ok: true as const, cleared: approvalEventRepo.clearAll() }))
+  // 审批明细屏（P0-2c-3）：只读分页 + 组合筛选；失败由 safeHandle 转 {ok:false}，渲染端按 hasIpcFailed 判读，
+  // 绝不允许把读取失败画成"没有记录"。
+  safeHandle(
+    IPC.APPROVALS_LIST,
+    (_e, query: ApprovalAuditQuery) => approvalEventRepo.list(query),
+    argsSchema(approvalAuditQuerySchema)
+  )
   // 本机判据屏（V4-Iter-146）：现采一次显存是**异步**的，这条通道因此是 async；
   // 失败不降级成空报告——空报告会与"这台机器真的采不到"混成一回事（safeHandle 把失败转成
   // {ok:false,error} 返回值，渲染层按 hasIpcFailed 判，不许把失败画成数据）。

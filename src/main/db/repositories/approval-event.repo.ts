@@ -5,7 +5,12 @@
 // 写入失败不抛：由调用方决定 fail-open，并读 getApprovalAuditFailureCount() 做可见提示。
 
 import { randomUUID } from 'node:crypto'
-import type { ApprovalEventInput } from '../../../shared/types'
+import type {
+  ApprovalAuditPage,
+  ApprovalAuditQuery,
+  ApprovalAuditRow,
+  ApprovalEventInput
+} from '../../../shared/types'
 import { dbService } from '../database'
 import { createLogger } from '../../logger'
 
@@ -13,7 +18,31 @@ const log = createLogger('approval-events')
 
 export const APPROVAL_RETENTION_DAYS = 180
 export const APPROVAL_MAX_ROWS = 100_000
+/**
+ * 审批明细屏单次请求的硬上限（P0-2c-3）。
+ * IPC 层的 zod 与 repo 的防御性 clamp 都用这一个数：这一屏永远分页取，不允许一次拉全表。
+ */
+export const APPROVAL_AUDIT_MAX_PAGE = 100
 const TRIM_INTERVAL_MS = 60 * 1000
+
+/** 审批明细查询的库内行（snake_case，只在 repo 内出现） */
+interface ApprovalAuditDbRow {
+  id: string
+  conversation_id: string
+  assistant_id: string | null
+  step_index: number | null
+  tool_id: string
+  tool_name: string
+  decision: ApprovalAuditRow['decision']
+  reason_code: string | null
+  scope: ApprovalAuditRow['scope']
+  args_digest: string | null
+  args_redacted: string | null
+  actor: string
+  requested_at: number
+  decided_at: number
+  created_at: number
+}
 
 let writeFailures = 0
 let lastTrimAt = 0
@@ -72,6 +101,69 @@ export const approvalEventRepo = {
     } catch (err) {
       log.warn('审批审计计数失败', err)
       return 0
+    }
+  },
+
+  /**
+   * 审批明细屏的只读分页查询（P0-2c-3）。
+   * 组合条件全部下推到 SQL（会话 / 决定 / created_at 闭区间），排序固定 `created_at DESC, id DESC`
+   * 保证"加载更多"每次追加的行序稳定；多取一行判断 hasMore，**不做 COUNT**（不在每次翻页时多扫一遍全表）。
+   * 失败不吞：让异常上抛，由 safeHandle 转成 `{ok:false}`，渲染端不许把它画成"没有记录"。
+   */
+  list(query: ApprovalAuditQuery): ApprovalAuditPage {
+    const limit = Math.min(Math.max(1, Math.trunc(query.limit)), APPROVAL_AUDIT_MAX_PAGE)
+    const offset = Math.max(0, Math.trunc(query.offset))
+    const where: string[] = []
+    const params: Array<string | number> = []
+    if (query.conversationId) {
+      where.push('conversation_id = ?')
+      params.push(query.conversationId)
+    }
+    if (query.decision) {
+      where.push('decision = ?')
+      params.push(query.decision)
+    }
+    if (typeof query.from === 'number' && Number.isFinite(query.from)) {
+      where.push('created_at >= ?')
+      params.push(query.from)
+    }
+    if (typeof query.to === 'number' && Number.isFinite(query.to)) {
+      where.push('created_at <= ?')
+      params.push(query.to)
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+    const rows = dbService
+      .getHandle()
+      .prepare(
+        `SELECT id, conversation_id, assistant_id, step_index, tool_id, tool_name,
+                decision, reason_code, scope, args_digest, args_redacted, actor,
+                requested_at, decided_at, created_at
+         FROM approval_events
+         ${whereSql}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(...params, limit + 1, offset) as ApprovalAuditDbRow[]
+    const hasMore = rows.length > limit
+    return {
+      rows: rows.slice(0, limit).map((r) => ({
+        id: r.id,
+        conversationId: r.conversation_id,
+        assistantId: r.assistant_id,
+        stepIndex: r.step_index,
+        toolId: r.tool_id,
+        toolName: r.tool_name,
+        decision: r.decision,
+        reasonCode: r.reason_code,
+        scope: r.scope,
+        argsDigest: r.args_digest,
+        argsRedacted: r.args_redacted,
+        actor: r.actor,
+        requestedAt: r.requested_at,
+        decidedAt: r.decided_at,
+        createdAt: r.created_at
+      })),
+      hasMore
     }
   },
 
