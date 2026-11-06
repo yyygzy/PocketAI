@@ -11,8 +11,21 @@ import {
   OUTBOUND_SCAN_EXEMPT_FILES,
   outboundRegisteredFiles
 } from '../src/main/net/outbound-registry'
+import { zh } from '../src/renderer/src/i18n/zh'
+import { en } from '../src/renderer/src/i18n/en'
+import { ja } from '../src/renderer/src/i18n/ja'
+import { ko } from '../src/renderer/src/i18n/ko'
 
 const MAIN_ROOT = path.resolve(__dirname, '..', 'src', 'main')
+
+/** 四本字典当数据读（原文是逐键字面量类型，需要字符串索引） */
+const DICTS: Record<string, Record<string, string>> = {
+  zh: zh as unknown as Record<string, string>,
+  en: en as unknown as Record<string, string>,
+  ja: ja as unknown as Record<string, string>,
+  ko: ko as unknown as Record<string, string>
+}
+const LANGS = ['zh', 'en', 'ja', 'ko']
 
 /** 出网调用点识别规则（与注册表说明一致；webdav 包在本仓库是动态 import('webdav')） */
 const OUTBOUND_CALL_PATTERNS: Array<{ name: string; re: RegExp }> = [
@@ -109,5 +122,20 @@ describe('出网调用点覆盖', () => {
       // 固定端点/配置来源必居其一（或两者都写清）
       expect(e.endpoints.length > 0 || e.configSource.trim() !== '').toBe(true)
     }
+  })
+
+  // OutboundPanel 里那两发 `t(e.labelKey)` / `t(e.purposeKey)` 是动态 key（i18n-interpolation-361 的
+  // 动态桶判不了它们，只能按"已登记的数据驱动"计数）。能登记的前提是取值域封闭且键真实存在：
+  // 取值域＝本注册表的枚举，键的存在性由这条用例钉住——注册表里改错一颗 key，这里先红。
+  it('labelKey / purposeKey 在四语字典里都存在（OutboundPanel 动态取词的静态依据）', () => {
+    const missing: string[] = []
+    for (const e of OUTBOUND_ENTRIES) {
+      for (const key of [e.labelKey, e.purposeKey]) {
+        for (const lang of LANGS) {
+          if (!DICTS[lang]?.[key]) missing.push(`${e.id} / ${lang} 缺 ${key}`)
+        }
+      }
+    }
+    expect(missing, `注册表里有字典查不到的 key：\n${missing.join('\n')}`).toEqual([])
   })
 })

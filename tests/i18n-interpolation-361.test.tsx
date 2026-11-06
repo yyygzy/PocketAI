@@ -292,9 +292,29 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     expect(parametrized.map(rel), '模板标记键被带参调用＝渲染出半个字面大括号').toEqual([])
   })
 
-  it('动态 key 调用点钉在 103 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
+  it('动态 key 调用点钉在 105 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
     // §417 P0-3a：工具策略屏两发 `tp.reason.${code}`（ToolPolicyDialog.tsx:99／116）⇒ 101→103
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(103)
+    //
+    // 110→105 复查（7 处逐条定性后的处置，不是"把 103 改成现数"）：
+    //  ① 已改写 5 发——联合类型本身是闭合枚举，展开成字面量表让编译期兜底：
+    //    · AgentPanel.tsx `agent.traceChangesReason.${changes.degradedReason}` → changeReasonText
+    //    · AgentPanel.tsx `agent.traceChangeKind.${e.kind}`              → changeKindText
+    //    · AgentPanel.tsx `agent.traceChangeContent.${e.content}`         → changeContentText
+    //      （三张表各自 `satisfies Record<WorkspaceChangeDegradedReason, string>` /
+    //       `Record<WorkspaceChangeEntry['kind'], string>` /
+    //       `Record<Exclude<WorkspaceChangeEntry['content'], 'hashed'|'not-compared'>, string>`，
+    //       联合类型加成员而表里没补，typecheck 直接红）
+    //    · OutboundPanel.tsx `outbound.kind.${e.kind}`                    → kindText
+    //    · OutboundPanel.tsx `outbound.transport.${e.transport}`          → transportText
+    //  ② 登记 2 发——key 由主进程 OUTBOUND_ENTRIES（26 条）枚举，渲染端不复制 26 条键就无法静态化，
+    //    属数据驱动的动态取词，本面确实判不了：
+    //    · OutboundPanel.tsx `t(e.labelKey)`
+    //    · OutboundPanel.tsx `t(e.purposeKey)`
+    //    登记依据（静态可复核）：这两颗键的取值域封闭 = 注册表 26 条 entry × 2；且每条 key 四语都在，
+    //    由 outbound-coverage.test.ts 的「labelKey/purposeKey 四语存在」用例钉住。
+    //  余下 5 发在改写前都不是缺陷（四语键齐全），也没有误报（都是真调用点）。
+    //  计数含义：105 = "5 改写 + 2 登记"之后仍在数里的动态调用点总数，不是"闸门通过"。
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(105)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {

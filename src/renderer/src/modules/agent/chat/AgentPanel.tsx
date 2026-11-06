@@ -1,6 +1,12 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
 import React, { useEffect, useRef, useState } from 'react'
-import type { AssistantRecord, ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
+import type {
+  AssistantRecord,
+  ConversationRecord,
+  ReminderRepeatRule,
+  WorkspaceChangeDegradedReason,
+  WorkspaceChangeEntry
+} from '../../../../../shared/types'
 import { isDelegateRole, parseDelegationResultChildPrefixes } from '../../../../../shared/delegation-rules'
 import { parseWorkspaceChangeSet } from '../../../../../shared/workspace-changes'
 import { useI18n } from '../../../i18n'
@@ -414,6 +420,39 @@ export const AgentPanel: React.FC = () => {
       await chat.reloadConversations()
     }
   }
+
+  /**
+   * 变更清单的三张文案表：key 全部写成**字面量**，不再用 `agent.traceChangeXxx.${...}` 动态拼接。
+   *
+   * 为什么：动态模板拼错 key（或联合类型加了新成员却没加文案）时，运行期只会把 key 原文丢到屏上，
+   * 而"数动态调用点"的闸门只能数出"又多了几处动态"，拦不住具体是哪条拼错。
+   * `satisfies Record<联合类型, string>` 让联合类型一加成员就在这里编译红，静态可复核。
+   * 出网清单那两处 `t(e.labelKey)` / `t(e.purposeKey)` 是另一回事：key 由主进程注册表枚举，
+   * 渲染端无法在不复制 26 条键的前提下写成字面量，属于**已登记的数据驱动**（见 §interpolation 闸门）。
+   */
+  const changeReasonText = {
+    'too-many-files': t('agent.traceChangesReason.too-many-files'),
+    'too-many-bytes': t('agent.traceChangesReason.too-many-bytes'),
+    timeout: t('agent.traceChangesReason.timeout'),
+    'too-many-changes': t('agent.traceChangesReason.too-many-changes'),
+    'before-scan-failed': t('agent.traceChangesReason.before-scan-failed'),
+    'after-scan-failed': t('agent.traceChangesReason.after-scan-failed'),
+    'auto-allowed-not-recorded': t('agent.traceChangesReason.auto-allowed-not-recorded')
+  } satisfies Record<WorkspaceChangeDegradedReason, string>
+  const changeKindText = {
+    added: t('agent.traceChangeKind.added'),
+    modified: t('agent.traceChangeKind.modified'),
+    deleted: t('agent.traceChangeKind.deleted')
+  } satisfies Record<WorkspaceChangeEntry['kind'], string>
+  const changeContentText = {
+    'mtime-only': t('agent.traceChangeContent.mtime-only'),
+    binary: t('agent.traceChangeContent.binary'),
+    'too-large': t('agent.traceChangeContent.too-large'),
+    unreadable: t('agent.traceChangeContent.unreadable')
+  } satisfies Record<
+    Exclude<WorkspaceChangeEntry['content'], 'hashed' | 'not-compared'>,
+    string
+  >
 
   return (
     <div className="flex gap-3 h-full">
@@ -901,7 +940,7 @@ export const AgentPanel: React.FC = () => {
                                   <div className="text-[var(--color-text-muted)]">
                                     {t('agent.traceChangesDegraded', {
                                       reason: changes.degradedReason
-                                        ? t(`agent.traceChangesReason.${changes.degradedReason}`)
+                                        ? changeReasonText[changes.degradedReason]
                                         : ''
                                     })}
                                   </div>
@@ -922,9 +961,9 @@ export const AgentPanel: React.FC = () => {
                                         <ul className="mt-1 max-h-40 overflow-y-auto">
                                           {changes.entries.map((e) => (
                                             <li key={`${e.kind}:${e.path}`} className="whitespace-pre-wrap break-all">
-                                              {t(`agent.traceChangeKind.${e.kind}`)} {e.path} ({formatBytes(e.size)})
+                                              {changeKindText[e.kind]} {e.path} ({formatBytes(e.size)})
                                               {e.content !== 'hashed' && e.content !== 'not-compared'
-                                                ? ` · ${t(`agent.traceChangeContent.${e.content}`)}`
+                                                ? ` · ${changeContentText[e.content]}`
                                                 : ''}
                                             </li>
                                           ))}

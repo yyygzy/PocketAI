@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
-import type { OutboundEntryView } from '../../../../shared/types'
+import type { OutboundEntryView, OutboundKind, OutboundTransport } from '../../../../shared/types'
 
 export const OutboundPanel: React.FC = () => {
   const { t } = useI18n()
@@ -48,6 +48,23 @@ export const OutboundPanel: React.FC = () => {
   }
 
   const hasRuntime = entries.some((e) => e.kind === 'runtime-url')
+
+  // kind / transport 的文案写成字面量 key（原来 `outbound.kind.${...}` 是动态拼接）：
+  // 联合类型加了新成员而这里没补文案时，`satisfies Record<...>` 直接编译红，不靠运行期撞。
+  const kindText = {
+    fixed: t('outbound.kind.fixed'),
+    configurable: t('outbound.kind.configurable'),
+    'runtime-url': t('outbound.kind.runtime-url'),
+    'local-loopback': t('outbound.kind.local-loopback')
+  } satisfies Record<OutboundKind, string>
+  const transportText = {
+    safeFetch: t('outbound.transport.safeFetch'),
+    fetch: t('outbound.transport.fetch'),
+    webdav: t('outbound.transport.webdav'),
+    updater: t('outbound.transport.updater'),
+    websocket: t('outbound.transport.websocket'),
+    'child-process': t('outbound.transport.child-process')
+  } satisfies Record<OutboundTransport, string>
 
   return (
     <div className="space-y-3 text-xs">
@@ -94,7 +111,7 @@ export const OutboundPanel: React.FC = () => {
                   )}
                 </td>
                 <td className="px-3 py-2 text-[var(--color-text-muted)]">
-                  {t(`outbound.kind.${e.kind}`)}
+                  {kindText[e.kind]}
                   {e.kind === 'local-loopback' && (
                     <div className="mt-0.5 text-[10px] text-[var(--color-success)]">{t('outbound.localOnly')}</div>
                   )}
@@ -102,7 +119,7 @@ export const OutboundPanel: React.FC = () => {
                 <td className="px-3 py-2 text-[var(--color-text-muted)]">
                   <div>{t(e.purposeKey)}</div>
                   <div className="mt-0.5 text-[10px] font-mono break-all">
-                    {t(`outbound.transport.${e.transport}`)}
+                    {transportText[e.transport]}
                     {e.configSource ? ` · ${e.configSource}` : ''}
                   </div>
                 </td>
