@@ -27,6 +27,8 @@ import type {
   DataHealthReport,
   ApprovalAuditPage,
   ApprovalAuditQuery,
+  ApprovalExportQuery,
+  ApprovalExportResult,
   SendMessagePayload,
   RegeneratePayload,
   ResendPayload,
@@ -403,6 +405,11 @@ const api = {
   // 审批明细屏（P0-2c-3）：只读分页 + 组合筛选；limit 由主进程 zod 封顶，失败返回 {ok:false}
   listApprovalEvents: (query: ApprovalAuditQuery): Promise<ApprovalAuditPage | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.APPROVALS_LIST, query),
+  // 审批明细导出（P0-2c-3）：按当前筛选落 JSON/CSV；取消返回 {ok:true,canceled:true}，失败 {ok:false}
+  exportApprovalEvents: (
+    query: ApprovalExportQuery
+  ): Promise<ApprovalExportResult | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.APPROVALS_EXPORT, query),
   // 本机判据屏（V4-Iter-146）：只读汇总，一次进来会现采一次显存（异步，不占事件循环）
   getLocalJudgement: (): Promise<LocalJudgementReport> =>
     ipcRenderer.invoke(IPC.LOCAL_JUDGEMENT_GET),

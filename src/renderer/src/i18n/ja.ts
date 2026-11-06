@@ -1154,6 +1154,13 @@ export const ja = {
   // 承認明細画面（P0-2c-3、読み取り専用）：事実のみ。会話を削除すると記録も削除される
   'approvalAudit.intro': '人が判断したツール操作の記録です：承認/拒否、タイムアウト/中止、セッション内の自動許可、ポリシーによる拒否。この画面は読み取り専用です。会話を削除すると、その記録も削除されます（それ以外は最大 180 日または 10 万件まで保持）。',
   'approvalAudit.privacy': '表示されるのはマスク済みの引数要約と引数フィンガープリントの短いハッシュのみです。フィンガープリントは 2 回の判断が同じ引数を対象にしたことだけを示し、内容を復元できません。ツールの実行結果はこの表に含まれず、表示しません。',
+  'approvalAudit.export.hint': '上の絞り込み条件に一致する記録をエクスポートします。エクスポートには独自の行数上限があり、超えた場合は明示的に通知します。',
+  'approvalAudit.export.json': 'JSON をエクスポート',
+  'approvalAudit.export.csv': 'CSV をエクスポート',
+  'approvalAudit.export.exporting': 'エクスポート中…',
+  'approvalAudit.export.done': '{n} 行をエクスポートしました。',
+  'approvalAudit.export.truncated': '先頭 {n} 行のみエクスポートしました（上限 {max} 行）。絞り込みを狭めて再試行してください。',
+  'approvalAudit.export.failed': 'エクスポートに失敗しました：{msg}',
   'approvalAudit.loading': '読み込み中…',
   'approvalAudit.loadMore': 'さらに読み込む',
   'approvalAudit.loadingMore': '読み込み中…',

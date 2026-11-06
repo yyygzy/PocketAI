@@ -1154,6 +1154,13 @@ export const ko = {
   // 승인 상세 화면(P0-2c-3, 읽기 전용): 사실만 표시. 대화 삭제 시 기록도 삭제됨
   'approvalAudit.intro': '사람의 판단이 필요했던 도구 동작이 여기에 기록됩니다: 사용자의 승인/거부, 시간 초과/중단, 세션 내 자동 허용, 정책 거부. 이 화면은 읽기 전용입니다. 대화를 삭제하면 해당 기록도 함께 삭제되며, 그 외에는 최대 180일 또는 10만 건까지 보관됩니다.',
   'approvalAudit.privacy': '표시되는 것은 마스킹된 인자 요약과 인자 지문의 짧은 해시뿐입니다. 지문은 두 번의 판단이 같은 인자를 대상으로 했음만 증명하며 내용을 복원할 수 없습니다. 도구 실행 결과는 이 표에 없으며 표시하지 않습니다.',
+  'approvalAudit.export.hint': '위 필터 조건에 맞는 기록을 내보냅니다. 내보내기에는 자체 행 수 제한이 있으며, 초과하면 명확히 알려 줍니다.',
+  'approvalAudit.export.json': 'JSON 내보내기',
+  'approvalAudit.export.csv': 'CSV 내보내기',
+  'approvalAudit.export.exporting': '내보내는 중…',
+  'approvalAudit.export.done': '{n}행을 내보냈습니다.',
+  'approvalAudit.export.truncated': '앞의 {n}행만 내보냈습니다(상한 {max}행). 필터를 좁혀 다시 시도하세요.',
+  'approvalAudit.export.failed': '내보내기 실패: {msg}',
   'approvalAudit.loading': '불러오는 중…',
   'approvalAudit.loadMore': '더 불러오기',
   'approvalAudit.loadingMore': '불러오는 중…',

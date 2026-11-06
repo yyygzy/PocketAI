@@ -1486,6 +1486,36 @@ export interface ApprovalAuditPage {
   hasMore: boolean
 }
 
+/** 审批明细导出格式：JSON 面向脚本，CSV 面向表格 */
+export type ApprovalExportFormat = 'json' | 'csv'
+
+/**
+ * 审批明细导出入参：与屏幕筛选同口径（会话/决定/时间范围）。
+ * 不含分页字段——导出由主进程按固定页大小收集，并受独立硬上限约束。
+ */
+export interface ApprovalExportQuery {
+  format: ApprovalExportFormat
+  conversationId?: string
+  decision?: ApprovalDecision
+  from?: number
+  to?: number
+}
+
+/**
+ * 审批明细导出结果：取消时没有文件路径；成功时带上实际行数与是否截断，
+ * 界面必须如实提示"只导出了前 N 行"，不许静默截断。
+ */
+export type ApprovalExportResult =
+  | { ok: true; canceled: true }
+  | {
+      ok: true
+      canceled?: false
+      path: string
+      exportedRows: number
+      truncated: boolean
+      maxRows: number
+    }
+
 /** 审批审计写失败广播（主进程 → 渲染端；只提示一次，不阻断工具执行） */
 export interface ApprovalAuditWarnEvent {
   at: number
@@ -2465,6 +2495,7 @@ export const IPC = {
   DATA_HEALTH_CLEAR_CACHE: 'dataHealth:clear-cache', // 清 default session 的 HTTP 缓存（同那一格旁的显式动作；不做文件系统删除，见 cache-clean.ts）
   DATA_HEALTH_CLEAR_APPROVALS: 'dataHealth:clear-approvals', // 清空审批审计账本（approval_events）
   APPROVALS_LIST: 'approvals:list', // 审批明细屏（P0-2c-3）：只读分页 + 筛选，limit 由 zod 封顶
+  APPROVALS_EXPORT: 'approvals:export', // 审批明细导出（P0-2c-3）：按当前筛选落 JSON/CSV，独立硬上限
   DATA_HEALTH_KB_CLEAN: 'dataHealth:kb-clean', // 清理孤儿向量/孤儿 chunk
   DATA_HEALTH_KB_DEDUP: 'dataHealth:kb-dedup', // 重复文档去重（保留指定文档，删其余）
   DATA_HEALTH_KB_REINDEX: 'dataHealth:kb-reindex', // 缺向量/维度不匹配文档一键重建索引

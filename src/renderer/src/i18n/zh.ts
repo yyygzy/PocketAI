@@ -1209,6 +1209,13 @@ export const zh = {
   // 审批明细屏（P0-2c-3，只读）：只陈述事实——会话删除后记录一并删除；不写"完整审计/永久保留/已加密"
   'approvalAudit.intro': '这里列出需要有人参与决定的工具动作：你批准或拒绝的、超时或中止的、本会话放行的、以及被策略拒绝的。该视图只读；删除会话时，这些记录会一并删除（另外最多保留 180 天或 10 万条）。',
   'approvalAudit.privacy': '只显示脱敏后的参数摘要和参数指纹的短哈希。指纹只能证明两次审批针对的是同一份参数，不能还原内容；工具结果不在本表，也不展示。',
+  'approvalAudit.export.hint': '导出当前筛选条件下的记录；导出有独立的行数上限，超出会明确提示。',
+  'approvalAudit.export.json': '导出 JSON',
+  'approvalAudit.export.csv': '导出 CSV',
+  'approvalAudit.export.exporting': '导出中…',
+  'approvalAudit.export.done': '已导出 {n} 行。',
+  'approvalAudit.export.truncated': '只导出了前 {n} 行（上限 {max} 行），请缩小筛选范围后重试。',
+  'approvalAudit.export.failed': '导出失败：{msg}',
   'approvalAudit.loading': '加载中…',
   'approvalAudit.loadMore': '加载更多',
   'approvalAudit.loadingMore': '加载中…',

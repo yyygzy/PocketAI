@@ -168,3 +168,74 @@ describe('加载更多：追加行、到位后不再显示按钮', () => {
     await waitFor(() => expect(screen.queryByText(L('approvalAudit.loadMore'))).toBeNull(), MOUNT_BUDGET)
   })
 })
+
+describe('导出：范围随筛选、截断明说、失败不伪装', () => {
+  const exportButton = (label: string): HTMLButtonElement => {
+    const el = screen.getByText(label).closest('button')
+    expect(el, `找不到导出按钮：${label}`).not.toBeNull()
+    return el as HTMLButtonElement
+  }
+
+  const mountWithExport = (
+    exportImpl: (q: unknown) => unknown,
+    listImpl: () => { rows: ApprovalAuditRow[]; hasMore: boolean } = () => ({
+      rows: [row({ id: 'page-1', toolName: 'tool-one' })],
+      hasMore: false
+    })
+  ): void => {
+    stubPocketai({
+      listApprovalEvents: listImpl,
+      listConversations: () => [],
+      exportApprovalEvents: exportImpl
+    })
+    mountWithProviders(<ApprovalAuditPanel />)
+  }
+
+  it('导出 JSON 携带当前筛选条件；成功如实提示行数', async () => {
+    let got: Record<string, unknown> | null = null
+    mountWithExport((q) => {
+      got = q as Record<string, unknown>
+      return { ok: true, path: 'C:/tmp/x.json', exportedRows: 1, truncated: false, maxRows: 2000 }
+    })
+    await screen.findByText('tool-one', {}, MOUNT_BUDGET)
+
+    const decisionSelect = document.querySelectorAll('select')[1] as HTMLSelectElement
+    fireEvent.change(decisionSelect, { target: { value: 'user_deny' } })
+    await waitFor(() => expect(exportButton(L('approvalAudit.export.json')).disabled).toBe(false), MOUNT_BUDGET)
+
+    fireEvent.click(exportButton(L('approvalAudit.export.json')))
+    await screen.findByText(L('approvalAudit.export.done').replace('{n}', '1'), {}, MOUNT_BUDGET)
+    expect(got).toEqual({ format: 'json', decision: 'user_deny' })
+  })
+
+  it('被硬上限截断 ⇒ 明确说"只导出了前 N 行（上限 M）"，不许静默', async () => {
+    mountWithExport(() => ({ ok: true, path: 'C:/tmp/x.csv', exportedRows: 2000, truncated: true, maxRows: 2000 }))
+    await screen.findByText('tool-one', {}, MOUNT_BUDGET)
+    fireEvent.click(exportButton(L('approvalAudit.export.csv')))
+    await screen.findByText(
+      L('approvalAudit.export.truncated').replace('{n}', '2000').replace('{max}', '2000'),
+      {},
+      MOUNT_BUDGET
+    )
+  })
+
+  it('导出失败 ⇒ 报"导出失败：{msg}"，不画成成功', async () => {
+    mountWithExport(() => ({ ok: false, error: 'PROBE:导出失败' }))
+    await screen.findByText('tool-one', {}, MOUNT_BUDGET)
+    fireEvent.click(exportButton(L('approvalAudit.export.json')))
+    await screen.findByText(
+      L('approvalAudit.export.failed').replace('{msg}', 'PROBE:导出失败'),
+      {},
+      MOUNT_BUDGET
+    )
+  })
+
+  it('用户取消保存 ⇒ 不提示成功也不报错', async () => {
+    mountWithExport(() => ({ ok: true, canceled: true }))
+    await screen.findByText('tool-one', {}, MOUNT_BUDGET)
+    fireEvent.click(exportButton(L('approvalAudit.export.csv')))
+    await waitFor(() => expect(screen.queryByText(L('approvalAudit.export.exporting'))).toBeNull(), MOUNT_BUDGET)
+    expect(screen.queryByText(L('approvalAudit.export.done').replace('{n}', '0'))).toBeNull()
+    expect(screen.queryByText(L('approvalAudit.export.failed').replace('{msg}', 'PROBE:导出失败'))).toBeNull()
+  })
+})

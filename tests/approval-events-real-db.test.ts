@@ -29,6 +29,7 @@ import {
   resetApprovalAuditStateForTest
 } from '../src/main/db/repositories/approval-event.repo'
 import { conversationRepo } from '../src/main/db/repositories/conversation.repo'
+import { collectApprovalExportRows } from '../src/main/export/approval-export'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -248,5 +249,41 @@ describe('明细屏只读分页查询', () => {
     const page = approvalEventRepo.list({ offset: 0, limit: 10_000 })
     expect(page.rows).toHaveLength(APPROVAL_AUDIT_MAX_PAGE)
     expect(page.hasMore).toBe(true)
+  })
+})
+
+// 导出（P0-2c-3 另一半）：复用同一套 list() 查询，范围＝筛选条件的结果集；
+// 超过硬上限时只收前 N 行并如实标记 truncated，绝不拉全表。
+describe('导出收集', () => {
+  it('导出集合与屏幕同条件一致：会话 + 决定 + 时间范围同时生效', () => {
+    const base = Date.now() - 60_000
+    for (let i = 0; i < 5; i++) {
+      approvalEventRepo.insert(
+        event('c-exp', {
+          requestId: `r-${i}`,
+          toolName: `t${i}`,
+          decision: i % 2 === 0 ? 'user_approve' : 'user_deny',
+          decidedAt: base + (i + 1) * 1000
+        })
+      )
+    }
+    const { rows, truncated } = collectApprovalExportRows((q) => approvalEventRepo.list(q), {
+      conversationId: 'c-exp',
+      decision: 'user_approve',
+      from: base + 1500,
+      to: base + 5500
+    })
+    expect(rows.map((r) => r.toolName)).toEqual(['t4', 't2'])
+    expect(truncated).toBe(false)
+  })
+
+  it('导出硬上限：超过时只收前 N 行并标记 truncated', () => {
+    const base = Date.now() - 60_000
+    for (let i = 0; i < 6; i++) {
+      approvalEventRepo.insert(event('c-exp-cap', { requestId: `r-${i}`, toolName: `t${i}`, decidedAt: base + i }))
+    }
+    const { rows, truncated } = collectApprovalExportRows((q) => approvalEventRepo.list(q), {}, 3)
+    expect(rows.map((r) => r.toolName)).toEqual(['t5', 't4', 't3'])
+    expect(truncated).toBe(true)
   })
 })

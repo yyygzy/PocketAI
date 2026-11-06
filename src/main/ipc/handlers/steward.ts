@@ -2,13 +2,21 @@
 import fs from 'node:fs'
 import { BrowserWindow, dialog, shell } from 'electron'
 import { z } from 'zod'
-import { IPC, type ApprovalAuditQuery } from '../../../shared/types'
+import { IPC, type ApprovalAuditQuery, type ApprovalExportQuery } from '../../../shared/types'
 import { DATA_DIR } from '../../portable'
 import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
 import { APPROVAL_AUDIT_MAX_PAGE, approvalEventRepo } from '../../db/repositories/approval-event.repo'
+import {
+  APPROVAL_EXPORT_MAX_ROWS,
+  buildApprovalCsv,
+  buildApprovalJson,
+  collectApprovalExportRows,
+  toExportRow,
+  type ApprovalExportFilters
+} from '../../export/approval-export'
 import { clearBrowserHttpCache } from '../../steward/cache-clean'
 import { computeLocalJudgements } from '../../steward/local-judgement'
 import { recordPerf } from '../../steward/perf-probe'
@@ -27,6 +35,18 @@ const REPORT_MAX_CHARS = 200_000
 const approvalAuditQuerySchema = z.object({
   offset: z.number().int().min(0).max(1_000_000),
   limit: z.number().int().min(1).max(APPROVAL_AUDIT_MAX_PAGE),
+  conversationId: z.string().min(1).max(200).optional(),
+  decision: z.enum(['auto_allow', 'user_approve', 'user_deny', 'timeout_deny', 'policy_deny']).optional(),
+  from: z.number().int().min(0).optional(),
+  to: z.number().int().min(0).optional()
+})
+
+/**
+ * 审批明细导出入参（P0-2c-3）：与屏幕筛选同口径，**不接受分页字段**——
+ * 导出的硬上限由主进程的 `APPROVAL_EXPORT_MAX_ROWS` 决定，渲染端无法要求"导全表"。
+ */
+const approvalExportSchema = z.object({
+  format: z.enum(['json', 'csv']),
   conversationId: z.string().min(1).max(200).optional(),
   decision: z.enum(['auto_allow', 'user_approve', 'user_deny', 'timeout_deny', 'policy_deny']).optional(),
   from: z.number().int().min(0).optional(),
@@ -89,6 +109,58 @@ export function registerStewardHandlers(): void {
     IPC.APPROVALS_LIST,
     (_e, query: ApprovalAuditQuery) => approvalEventRepo.list(query),
     argsSchema(approvalAuditQuerySchema)
+  )
+  // 审批明细导出（P0-2c-3）：范围＝当前筛选条件的结果集，主进程按 100/页收集，独立硬上限
+  // `APPROVAL_EXPORT_MAX_ROWS`；只落白名单字段（`args_redacted`，绝无原始参数/工具结果）。
+  // 超出上限如实回报 truncated（界面提示"只导出了前 N 行"），失败由 safeHandle 转 {ok:false}。
+  safeHandle(
+    IPC.APPROVALS_EXPORT,
+    async (e, req: ApprovalExportQuery) => {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+      if (!win) return { ok: false as const, error: '窗口不可用' }
+
+      const filters: ApprovalExportFilters = {}
+      if (req.conversationId) filters.conversationId = req.conversationId
+      if (req.decision) filters.decision = req.decision
+      if (req.from !== undefined) filters.from = req.from
+      if (req.to !== undefined) filters.to = req.to
+
+      const { rows, truncated } = collectApprovalExportRows(
+        (query) => approvalEventRepo.list(query),
+        filters
+      )
+      const exported = rows.map(toExportRow)
+      const content =
+        req.format === 'csv'
+          ? buildApprovalCsv(exported)
+          : buildApprovalJson(exported, {
+              exportedAt: new Date().toISOString(),
+              filters,
+              maxRows: APPROVAL_EXPORT_MAX_ROWS,
+              exportedRows: exported.length,
+              truncated
+            })
+
+      const isCsv = req.format === 'csv'
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: `pocketai-approvals-${reportTimestamp()}.${req.format}`,
+        filters: [
+          { name: isCsv ? 'CSV 文件' : 'JSON 文件', extensions: [req.format] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      })
+      if (canceled || !filePath) return { ok: true as const, canceled: true as const }
+      fs.writeFileSync(filePath, content, 'utf8')
+      return {
+        ok: true as const,
+        canceled: false as const,
+        path: filePath,
+        exportedRows: exported.length,
+        truncated,
+        maxRows: APPROVAL_EXPORT_MAX_ROWS
+      }
+    },
+    argsSchema(approvalExportSchema)
   )
   // 本机判据屏（V4-Iter-146）：现采一次显存是**异步**的，这条通道因此是 async；
   // 失败不降级成空报告——空报告会与"这台机器真的采不到"混成一回事（safeHandle 把失败转成

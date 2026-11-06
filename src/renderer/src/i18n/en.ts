@@ -1207,6 +1207,13 @@ export const en = {
   // Approval audit view (P0-2c-3, read-only): factual only — records are deleted with their conversation
   'approvalAudit.intro': 'Tool actions that involved a decision are listed here: your approvals and denials, timeouts and aborts, session-level allows, and policy denials. This view is read-only. Deleting a conversation deletes its records too; records are otherwise kept for at most 180 days or 100,000 rows.',
   'approvalAudit.privacy': 'Only redacted argument summaries and a short argument fingerprint are shown. The fingerprint only proves that two decisions concerned the same arguments; it cannot restore their content. Tool results are not stored in this table and are not shown.',
+  'approvalAudit.export.hint': 'Exports the records that match the filters above. The export has its own row limit; if it is exceeded, you will be told explicitly.',
+  'approvalAudit.export.json': 'Export JSON',
+  'approvalAudit.export.csv': 'Export CSV',
+  'approvalAudit.export.exporting': 'Exporting…',
+  'approvalAudit.export.done': 'Exported {n} rows.',
+  'approvalAudit.export.truncated': 'Only the first {n} rows were exported (limit {max}). Narrow the filters and try again.',
+  'approvalAudit.export.failed': 'Export failed: {msg}',
   'approvalAudit.loading': 'Loading…',
   'approvalAudit.loadMore': 'Load more',
   'approvalAudit.loadingMore': 'Loading…',

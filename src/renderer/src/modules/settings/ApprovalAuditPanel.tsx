@@ -3,7 +3,13 @@
 // 分页策略：固定 PAGE_SIZE 条「加载更多」，服务端 zod 硬顶 100/次，本屏累计硬顶 500 条——
 //   跨会话审计是翻阅而不是精确翻页，避免 COUNT 全表；排序固定 created_at DESC, id DESC，追加行序稳定。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ApprovalAuditQuery, ApprovalAuditRow, ConversationRecord } from '../../../../shared/types'
+import type {
+  ApprovalAuditQuery,
+  ApprovalAuditRow,
+  ApprovalExportFormat,
+  ApprovalExportQuery,
+  ConversationRecord
+} from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
@@ -86,6 +92,8 @@ export const ApprovalAuditPanel: React.FC = () => {
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
   const [conversations, setConversations] = useState<ConversationRecord[]>([])
+  const [exporting, setExporting] = useState<ApprovalExportFormat | null>(null)
+  const [exportMsg, setExportMsg] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null)
   // 条件变化/并发请求的序号：只有最后一次发起的请求能落 state，避免旧响应盖掉新筛选
   const seqRef = useRef(0)
 
@@ -202,6 +210,48 @@ export const ApprovalAuditPanel: React.FC = () => {
     setTo('')
   }
 
+  /**
+   * 导出当前筛选条件的结果集（JSON/CSV）。范围只带四项筛选，不带 offset/limit——
+   * 行数上限由主进程的硬顶决定；截断时主进程回报 truncated，这里明确提示"只导出了前 N 行"。
+   */
+  const runExport = (format: ApprovalExportFormat): void => {
+    if (exporting || loading || rows.length === 0) return
+    setExporting(format)
+    setExportMsg(null)
+    const query: ApprovalExportQuery = { format }
+    if (conversationId) query.conversationId = conversationId
+    if (decision) query.decision = decision
+    const start = dayStart(from)
+    const end = dayEnd(to)
+    if (start !== undefined) query.from = start
+    if (end !== undefined) query.to = end
+    window.pocketai
+      .exportApprovalEvents(query)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setExportMsg({
+            kind: 'err',
+            text: t('approvalAudit.export.failed', { msg: ipcFailText(r, t('common.unknownError')) })
+          })
+          return
+        }
+        if (r.canceled) return
+        setExportMsg(
+          r.truncated
+            ? { kind: 'warn', text: t('approvalAudit.export.truncated', { n: r.exportedRows, max: r.maxRows }) }
+            : { kind: 'ok', text: t('approvalAudit.export.done', { n: r.exportedRows }) }
+        )
+      })
+      .catch((e) => {
+        logIpcError('approvalAudit.export', e)
+        setExportMsg({
+          kind: 'err',
+          text: t('approvalAudit.export.failed', { msg: t('common.unknownError') })
+        })
+      })
+      .finally(() => setExporting(null))
+  }
+
   const conversationTitle = useMemo(() => {
     const map = new Map<string, string>()
     for (const c of conversations) map.set(c.id, c.title)
@@ -281,6 +331,41 @@ export const ApprovalAuditPanel: React.FC = () => {
           </button>
         )}
       </div>
+
+      {/* 导出：范围＝上面这套筛选条件的结果集；主进程有独立硬上限，截断会明说 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          className="text-xs px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+          disabled={exporting !== null || loading || rows.length === 0}
+          onClick={() => runExport('json')}
+        >
+          {t('approvalAudit.export.json')}
+        </button>
+        <button
+          className="text-xs px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+          disabled={exporting !== null || loading || rows.length === 0}
+          onClick={() => runExport('csv')}
+        >
+          {t('approvalAudit.export.csv')}
+        </button>
+        {exporting && (
+          <span className="text-[11px] text-[var(--color-text-muted)]">{t('approvalAudit.export.exporting')}</span>
+        )}
+        <span className="text-[11px] text-[var(--color-text-muted)]">{t('approvalAudit.export.hint')}</span>
+      </div>
+      {exportMsg && (
+        <p
+          className={`text-[11px] ${
+            exportMsg.kind === 'err'
+              ? 'text-[var(--color-danger)]'
+              : exportMsg.kind === 'warn'
+                ? 'text-[var(--color-warning)]'
+                : 'text-[var(--color-success)]'
+          }`}
+        >
+          {exportMsg.text}
+        </p>
+      )}
 
       {/* 读取失败：与"没有记录"分开展示；有旧行时只在顶部提示追加失败 */}
       {loadErr && rows.length === 0 && <LoadFailNotice msg={loadErr} />}
