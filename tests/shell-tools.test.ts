@@ -272,9 +272,18 @@ describe('classifyCommand', () => {
       })
     })
 
-    it('普通脚本运行与常用命令不误伤（仍是 allow）', () => {
-      for (const cmd of ['node server.js', 'python build.py', 'npm run build', 'git status', 'ls -la', 'node --version']) {
+    it('普通常用命令不误伤（仍是 allow）；脚本文件运行自 P0-3b 起改为 confirm', () => {
+      // 这些命令不执行用户脚本、也不写盘：豁免不变
+      for (const cmd of ['npm run build', 'git status', 'ls -la', 'node --version']) {
         expect(classifyCommand(cmd, WS).decision, cmd).toBe('allow')
+      }
+      // `node server.js` / `python build.py` 会执行命令行之外的脚本内容，写入面不可知：
+      // P0-3b 把它们从 allow 收紧为 confirm（原因码见新规则块）
+      for (const cmd of ['node server.js', 'python build.py']) {
+        expect(classifyCommand(cmd, WS), cmd).toEqual({
+          decision: 'confirm',
+          reason: 'DANGEROUS_WRITE'
+        })
       }
     })
   })
@@ -343,5 +352,82 @@ describe('findDangerRanges — 审批弹窗危险片段高亮区间', () => {
     expect(findDangerRanges('ls -la')).toEqual([])
     expect(findDangerRanges('')).toEqual([])
     expect(findDangerRanges('   ')).toEqual([])
+  })
+})
+
+// P0-3b 盘点纠错：这些形态明确会写盘，此前却落在 allow。
+// 每条规则给一个正例；下面另有一组反例钉住"不要误伤"的豁免口径。
+describe('P0-3b 会写盘命令补进 CONFIRM', () => {
+  const confirm = (cmd: string, reason = 'DANGEROUS_WRITE') =>
+    expect(classifyCommand(cmd, WS)).toEqual({ decision: 'confirm', reason })
+
+  describe('正例', () => {
+    it('tee（含 -a 追加：同样改盘）', () => {
+      confirm('tee out.txt')
+      confirm('echo hi | tee -a log.txt')
+    })
+
+    it('sed 原地改写（-i / --in-place）', () => {
+      confirm("sed -i 's/a/b/' f.txt")
+      confirm("sed --in-place 's/a/b/' f.txt")
+    })
+
+    it('tar 提取（-x* / --extract / 旧式 tar xf）', () => {
+      confirm('tar -xzf a.tgz')
+      confirm('tar -xf a.tar')
+      confirm('tar --extract -f a.tar')
+      confirm('tar xf a.tar')
+    })
+
+    it('unzip 解包', () => {
+      confirm('unzip a.zip')
+    })
+
+    it('执行脚本文件（python/node/sh）', () => {
+      confirm('python build.py')
+      confirm('node scripts/gen.js')
+      confirm('bash deploy.sh')
+    })
+
+    it('git 覆盖工作区（checkout 路径模式 / restore 默认回写）', () => {
+      confirm('git checkout -- .')
+      confirm('git checkout .')
+      confirm('git checkout -- app.ts')
+      confirm('git restore .')
+      confirm('git restore -s HEAD app.ts')
+    })
+
+    it('工作目录外的临时路径', () => {
+      confirm('%TEMP%\\out.txt', 'DANGEROUS_OUTSIDE')
+      confirm('/tmp/out.txt', 'DANGEROUS_OUTSIDE')
+    })
+  })
+
+  describe('反例（不误伤）', () => {
+    it('sed 不带 -i 只输出到 stdout', () => {
+      expect(classifyCommand("sed -n '1,5p' f.txt", WS)).toEqual({ decision: 'allow' })
+    })
+
+    it('tar 只列表（-t / -tf）', () => {
+      expect(classifyCommand('tar -tf a.tar', WS)).toEqual({ decision: 'allow' })
+      expect(classifyCommand('tar -t a.tar', WS)).toEqual({ decision: 'allow' })
+    })
+
+    it('git checkout <分支> 不是覆盖工作区', () => {
+      expect(classifyCommand('git checkout main', WS)).toEqual({ decision: 'allow' })
+      expect(classifyCommand('git checkout -b feature', WS)).toEqual({ decision: 'allow' })
+    })
+
+    it('git restore 只动索引（--staged / -S）', () => {
+      expect(classifyCommand('git restore --staged .', WS)).toEqual({ decision: 'allow' })
+      expect(classifyCommand('git restore -S .', WS)).toEqual({ decision: 'allow' })
+    })
+
+    it('解释器不带脚本参数（--version / -V / -v）不执行用户脚本', () => {
+      expect(classifyCommand('python --version', WS)).toEqual({ decision: 'allow' })
+      expect(classifyCommand('python -V', WS)).toEqual({ decision: 'allow' })
+      expect(classifyCommand('node --version', WS)).toEqual({ decision: 'allow' })
+      expect(classifyCommand('bash --version', WS)).toEqual({ decision: 'allow' })
+    })
   })
 })

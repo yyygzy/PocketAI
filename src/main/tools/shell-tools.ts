@@ -175,13 +175,31 @@ const CONFIRM_RULES: Array<[RegExp, string]> = [
   // 下载落盘（管道执行已被 DANGEROUS_PIPE_EXEC 覆盖，落盘后另行执行是绕过路径）
   [/\b(?:curl|wget)\b[^|&;\r\n]*(?:-o|-O|--output(?:-document)?)\b/i, 'DANGEROUS_DOWNLOAD_WRITE'],
   [/\b(?:iwr|invoke-webrequest|invoke-restmethod)\b[^|&;\r\n]*-out(?:file|path)\b/i, 'DANGEROUS_DOWNLOAD_WRITE'],
+  // ── P0-3b 盘点纠错：会写盘、此前却落在 allow 的命令 ──
+  // 直接写文件：tee（`-a` 只是追加，同样改盘）、sed -i / --in-place（原地改写）
+  [/\btee\b/i, 'DANGEROUS_WRITE'],
+  [/\bsed\b[^|&;\r\n]*\s(?:-[a-zA-Z]*i\b|--in-place\b)/i, 'DANGEROUS_WRITE'],
+  // 解包展开：tar 的提取形态（-x / -xf / --extract / 旧式 `tar xf`；-t 列表不命中）、unzip
+  [/\btar\s+x[a-zA-Z]*\b|\btar\b[^|&;\r\n]*\s-[a-zA-Z]*x[a-zA-Z]*\b|\btar\b[^|&;\r\n]*--extract\b/i, 'DANGEROUS_WRITE'],
+  [/\bunzip\b/i, 'DANGEROUS_WRITE'],
+  // 执行脚本文件：脚本内容不在命令行里，运行时可能写任意路径（只认带扩展名的脚本形态；
+  // `python -V`／`node --version` 这类无脚本参数的调用不命中）
+  [/\b(?:python|python3|pypy|py)\b[^|&;\r\n]*\.py\b/i, 'DANGEROUS_WRITE'],
+  [/\bnode\b[^|&;\r\n]*\.(?:c|m)?js\b/i, 'DANGEROUS_WRITE'],
+  [/\b(?:sh|bash|zsh|dash)\b[^|&;\r\n]*\.(?:sh|bash|zsh)\b/i, 'DANGEROUS_WRITE'],
+  // git 覆盖工作区：checkout 的路径模式（`-- 路径` / `.` / `*`；切分支不命中）
+  [/\bgit\b[^|&;\r\n]*\bcheckout\b[^|&;\r\n]*\s--(?=\s|$)|\bgit\b[^|&;\r\n]*\bcheckout\b[^|&;\r\n]*\s(?:\.|\*)(?=\s|$)/i, 'DANGEROUS_WRITE'],
+  // restore 默认回写工作区；仅动索引（--staged / -S）且没有 --worktree 时豁免。
+  // 注意本规则**不加 /i**：`-S`（暂存区）与 `-s`（指定来源，仍回写工作区）是两回事。
+  [/\bgit\b[^|&;\r\n]*\brestore\b(?![^|&;\r\n]*(?:--staged|\s-S\b))/, 'DANGEROUS_WRITE'],
+  [/\bgit\b[^|&;\r\n]*\brestore\b[^|&;\r\n]*(?:--worktree|\s-W\b)/, 'DANGEROUS_WRITE'],
   // 提权动词
   [/\b(?:sudo|runas)\b/i, 'DANGEROUS_PRIVILEGE'],
   // 目录穿越：cd .. 、../ 、..\ 、a/../b、sub\..\..（前导允许 / 与 \；
   // git 的 A..B 区间语法中 .. 紧邻字母/波浪线，不会命中）
   [/(?:^|[\s=:'"([\\/])\.\.(?:[\\/]|\s|$)/, 'DANGEROUS_TRAVERSAL'],
   // 环境变量家目录（工作目录之外）
-  [/(?:~[\\/]|\$HOME\b|%(?:USERPROFILE|APPDATA|LOCALAPPDATA|SYSTEMROOT|WINDIR)%)/i, 'DANGEROUS_OUTSIDE']
+  [/(?:~[\\/]|\$HOME\b|\$TMPDIR\b|\$TMP\b|%(?:USERPROFILE|APPDATA|LOCALAPPDATA|SYSTEMROOT|WINDIR|TEMP|TMP)%)/i, 'DANGEROUS_OUTSIDE']
 ]
 
 // ---------- 审批弹窗展示：危险片段高亮 ----------
@@ -256,7 +274,7 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
     }
   }
   // POSIX 风格 /etc、/usr、/bin、/sbin、/System、私有目录等
-  if (/(^|[\s="'`(])\/(?:etc|usr|bin|sbin|System|private|var\/root)(?:[\\/]|\b)/.test(cmd)) {
+  if (/(^|[\s="'`(])\/(?:etc|usr|bin|sbin|System|private|var\/root|var\/tmp|tmp)(?:[\\/]|\b)/.test(cmd)) {
     return { decision: 'confirm', reason: REASON_OUTSIDE }
   }
 
