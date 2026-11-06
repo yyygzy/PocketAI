@@ -56,6 +56,13 @@ describe('classifyDataEntry', () => {
     expect(classifyDataEntry('config.json')).toBe('other')
     expect(classifyDataEntry('runtime/python/python.exe')).toBe('other')
   })
+  it('冷数据按目录单列：卸载文件与会话化路径、快照文件各归各桶', () => {
+    expect(classifyDataEntry('agent-tool-outputs/conv-1/msg-1.txt')).toBe('coldOffload')
+    expect(classifyDataEntry('agent-tool-outputs\\conv-1\\msg-1.txt.part')).toBe('coldOffload')
+    expect(classifyDataEntry('agent-file-snapshots/snap-1.json')).toBe('coldSnapshots')
+    // 反向对照：名字相近但不在根级的目录不许误判
+    expect(classifyDataEntry('attachments/agent-tool-outputs/x.txt')).toBe('attachments')
+  })
 })
 
 describe('aggregateDataSizes', () => {
@@ -80,6 +87,22 @@ describe('aggregateDataSizes', () => {
     expect(s.userDataBytes).toBe(2460)
     expect(s.browserCacheBytes).toBe(10000)
     expect(s.browserCacheFiles).toBe(2)
+    expect(s.coldOffloadBytes).toBe(0)
+    expect(s.coldSnapshotFiles).toBe(0)
+  })
+  it('冷数据：字节进合计、「其他」不再含它；条数只数正式文件（`.part` 只算字节）', () => {
+    const s = aggregateDataSizes([
+      { rel: 'agent-tool-outputs/conv-1/msg-1.txt', bytes: 100 },
+      { rel: 'agent-tool-outputs/conv-1/msg-2.txt', bytes: 100 },
+      { rel: 'agent-tool-outputs/conv-1/msg-3.txt.part', bytes: 50 },
+      { rel: 'agent-file-snapshots/snap-1.json', bytes: 20 }
+    ])
+    expect(s.coldOffloadBytes).toBe(250) // 含半写的 .part
+    expect(s.coldOffloadFiles).toBe(2) // 只数正式 .txt
+    expect(s.coldSnapshotBytes).toBe(20)
+    expect(s.coldSnapshotFiles).toBe(1)
+    expect(s.otherBytes).toBe(0)
+    expect(s.userDataBytes).toBe(270)
   })
   it('空目录全 0', () => {
     const s = aggregateDataSizes([])

@@ -59,6 +59,9 @@ export const delegateToggleSchema = z.object({
   on: z.boolean()
 })
 
+/** AGENT_SNAPSHOTS_EXIST 入参：一批快照 id（一屏一次，别一条消息查一次） */
+export const snapshotIdsSchema = z.array(z.string().min(1).max(128)).max(500)
+
 /**
  * AGENT_INTERJECT 入参（V4-Iter-238）：运行中插队的一句话。
  * `clientRef` 是渲染层给排队项的本地 id（引擎原样回进 step 事件，界面据此知道哪条已被收下）；

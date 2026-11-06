@@ -425,10 +425,21 @@ export interface DataHealthReport {
     attachmentsBytes: number
     extensionsBytes: number
     logsBytes: number
+    /** 工具输出卸载文件（`agent-tool-outputs/`）：字节 + 正式 `.txt` 条数（`.part` 只算字节） */
+    coldOffloadBytes: number
+    coldOffloadFiles: number
+    /** 写入快照（`agent-file-snapshots/`）：字节 + 正式 `.json` 份数 */
+    coldSnapshotBytes: number
+    coldSnapshotFiles: number
     otherBytes: number
     browserCacheBytes: number
     browserCacheFiles: number
   }
+  /**
+   * 冷数据清理失败计数（本次进程内累计，重启归零）。
+   * 三个数不相加掩盖：删会话目录失败 / 卸载淘汰失败 / 快照淘汰失败 各自说明是哪一路坏了。
+   */
+  coldFailures: { purge: number; offloadPrune: number; snapshotPrune: number }
   /**
    * Agent 运行账本（`agent_traces`）的规模：总行数 + 单个会话最多多少行。
    * 后一个不是凑的：复合索引 `(conversation_id, created_at)` 的收益自变量是**单个会话的行数**，
@@ -2530,6 +2541,7 @@ export const IPC = {
   AGENT_ABORT_DELEGATE_PROBE: 'agent:abort-delegate-probe', // §246：停止正在跑的那一发探针（不下结论、不改写判定）
   AGENT_SET_DELEGATE_ENABLED: 'agent:set-delegate-enabled', // 决策③：点名允许某台模型顺序委派（默认关）
   AGENT_RESTORE_FILE_WRITE: 'agent:restore-file-write', // §231：把一次 fs_write 还原到写入前（按快照 id）
+  AGENT_SNAPSHOTS_EXIST: 'agent:snapshots-exist', // P0-5 第三批：批量判「本机还有没有这几份快照」（只读，供结果卡点击前禁用还原）
   AGENT_GET_MODEL_WINDOWS: 'agent:get-model-windows', // §234：每台模型声明的上下文窗口（token），只读
   AGENT_SET_MODEL_WINDOW: 'agent:set-model-window', // §234：设/清一台模型的上下文窗口，回传最新表
   AGENT_GET_FALLBACKS: 'agent:get-fallbacks', // §237：每台模型的备用 target（`providerId::model` → 一台），只读

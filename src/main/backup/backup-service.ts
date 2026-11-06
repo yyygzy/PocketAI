@@ -21,6 +21,7 @@ import type { Archiver, ArchiverOptions } from 'archiver'
 const archiver = require('archiver') as (format: string, options?: ArchiverOptions) => Archiver
 import unzipper from 'unzipper'
 import { dbService } from '../db/database'
+import { purgeConversationColdData, removedConversationIds } from '../agent/cold-data'
 import { masterKeyManager } from '../crypto/master-key'
 import { deriveKeySync, KDF_LEGACY, KDF_CURRENT, type KdfParams } from '../crypto/index'
 import { DB_PATH, ATTACHMENTS_DIR } from '../portable'
@@ -742,6 +743,22 @@ export interface RestoreResult {
 }
 
 /**
+ * 整库替换后，旧库里有哪些会话在新库里已经不存在。
+ * 查询失败返回 `null`（不是空数组）：空的会话清单与"库没打开"必须分开，
+ * 后者不能拿来当"全部删掉"的依据——宁可少删目录，也不在没有 DB 的情况下误删盘。
+ * 冷数据不打包进备份，所以**不能整目录清空**——同机恢复时会话 id 不变，卸载文件仍然有效；
+ * 只清「这次恢复后确实没有对应会话行」的目录。
+ */
+function conversationIdsSafe(): string[] | null {
+  try {
+    const rows = dbService.getHandle().prepare('SELECT id FROM conversations').all() as { id: string }[]
+    return rows.map((r) => r.id)
+  } catch {
+    return null
+  }
+}
+
+/**
  * 恢复核心：对已下载/读出的备份包字节执行解密 → 安全校验 → 解压 → 替换 DB/附件 → 重开。
  * WebDAV 与本地文件恢复共用，保证两条路径安全行为一致（Zip Slip/符号链接/密钥回滚）。
  */
@@ -850,6 +867,8 @@ export async function restoreBackupBlob(
     }
 
     // 7. 关闭当前 DB
+    //    先记下旧库的会话 id：整库替换后才知道哪些会话连行带冷数据一起没了。
+    const beforeConversationIds = conversationIdsSafe() ?? []
     dbService.close()
 
     // 8. 删陈旧 WAL/SHM → 替换 DB 文件
@@ -881,6 +900,17 @@ export async function restoreBackupBlob(
       dbService.open()
     }
     dbService.runMigrations()
+
+    // 10.5 恢复后级联：旧库里被这次整库替换抹掉的会话，其卸载目录一起删（含子会话不必再展开——
+    //      子会话行同样消失，diff 会一起给出）。删盘以 DB 的既有事实为准，且只在库已成功重开之后。
+    if (dbReplaced) {
+      const afterIds = conversationIdsSafe()
+      // null = 新库清单拿不到（例如加密库未解锁）：不删盘，交给淘汰上限兜底
+      if (afterIds) {
+        const removedIds = removedConversationIds(beforeConversationIds, afterIds)
+        if (removedIds.length > 0) purgeConversationColdData(removedIds)
+      }
+    }
 
     log.info(`恢复完成: ${opts.displayName ?? '备份包'} (DB加密=${manifest.dbEncrypted}, 异机密码=${usedBackupPassword})`)
     result = usedBackupPassword ? { ok: true, passwordChanged: true } : { ok: true }

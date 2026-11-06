@@ -6,6 +6,7 @@ import { chatService } from '../../chat/chat-service'
 import { agentEngine } from '../../agent/engine'
 import { toolRegistry } from '../../tools/registry'
 import { getWorkspaceDir, setWorkspaceDir, restoreFileWrite } from '../../tools/fs-tools'
+import { snapshotExists } from '../../agent/file-snapshots'
 import { getShellConfig, setShellConfig } from '../../tools/shell-config'
 import { getWebSearchConfig, setWebSearchConfig } from '../../tools/websearch-config'
 import { getCalendarConfig, setCalendarConfig } from '../../tools/calendar-ics'
@@ -26,7 +27,8 @@ import {
   interjectSchema,
   fallbackSetSchema,
   delegateProbeSchema,
-  delegateToggleSchema
+  delegateToggleSchema,
+  snapshotIdsSchema
 } from '../../../shared/schemas/agent'
 import { listTextProtocolModels, setTextProtocolModel } from '../../agent/text-protocol-prefs'
 import {
@@ -294,6 +296,18 @@ export function registerAgentHandlers(): void {
     IPC.AGENT_RESTORE_FILE_WRITE,
     (_e, snapshotId: string) => ({ ok: true as const, ...restoreFileWrite(snapshotId) }),
     argsSchema(idSchema)
+  )
+
+  // P0-5 第三批：结果卡在**点击前**判断「本机还有没有这份快照」。
+  // 一条消息一次 IPC 是明显的 N+1，所以按一批 id 查（渲染层在消息列表变化时合并成一次调用）。
+  // 只回存在性，不读内容：异机恢复后文件不在本机，按钮就该先变成不可用，而不是点了才报错。
+  safeHandle(
+    IPC.AGENT_SNAPSHOTS_EXIST,
+    (_e, ids: string[]) => {
+      const unique = [...new Set(ids)]
+      return { existing: unique.filter((id) => snapshotExists(id)) }
+    },
+    argsSchema(snapshotIdsSchema)
   )
 
   // 渲染端对工具审批弹窗的应答

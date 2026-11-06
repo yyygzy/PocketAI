@@ -161,7 +161,9 @@ const AgentMessageCardImpl: React.FC<{
   onRegenerate?: (id: string) => void
   /** 右键「提醒我」：父级按 id 取正文并调 IPC 建提醒（与 Chat 同链路） */
   onRemind?: RemindHandler
-}> = ({ m, onDelete, onRerun, onRegenerate, onRemind }) => {
+  /** 本机是否还有这条 fs_write 结果的快照（由列表批量查一次后传下来；异机恢复后为 false） */
+  snapshotAvailable?: boolean
+}> = ({ m, onDelete, onRerun, onRegenerate, onRemind, snapshotAvailable }) => {
   const { t } = useI18n()
   const [showReasoning, setShowReasoning] = useState(false)
   const [showSources, setShowSources] = useState(false)
@@ -312,7 +314,9 @@ const AgentMessageCardImpl: React.FC<{
           {toolResultText}
         </pre>
         {/* §231：fs_write 的结果带快照 id 时给「还原到写入前」；没留快照时只说一句为什么，不出现坏按钮 */}
-        {m.toolResult.name === 'fs_write' && !m.isError && <FsWriteActions resultContent={m.toolResult.content} />}
+        {m.toolResult.name === 'fs_write' && !m.isError && (
+          <FsWriteActions resultContent={m.toolResult.content} snapshotAvailable={snapshotAvailable} />
+        )}
         <CardActions copyText={toolResultText} onDelete={del} />
         {ctxMenuNode}
       </div>

@@ -57,8 +57,11 @@ const STALE_PART_MS = 60 * 60 * 1000
 /** 给模型看的路径前缀：只有 `fs_read` 认它，指向应用数据目录下的卸载根 */
 export const OFFLOAD_PREFIX = '@outputs/'
 
+/** 卸载根目录名：数据健康的冷数据口径按它分桶，不写字面量避免两处漂移 */
+export const OFFLOAD_DIR_NAME = 'agent-tool-outputs'
+
 export function defaultOffloadRoot(): string {
-  return path.join(DATA_DIR, 'agent-tool-outputs')
+  return path.join(DATA_DIR, OFFLOAD_DIR_NAME)
 }
 
 /**

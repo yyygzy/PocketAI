@@ -24,10 +24,21 @@ import { getBootPerf } from './boot-perf'
 import { getRecentPerf } from './perf-probe'
 import { getPerfHistory } from './perf-history'
 import { getKbIntegrityReport, getVectorIndexStats } from '../knowledge/kb-health'
+import { getColdDataFailureStats } from '../agent/cold-data'
+import { OFFLOAD_DIR_NAME } from '../agent/tool-output-offload'
+import { SNAPSHOT_DIR_NAME } from '../agent/file-snapshots'
 
 // ─── 纯函数：数据目录体积分类聚合 ────────────────────────────────
 
-export type DataBucket = 'db' | 'attachments' | 'extensions' | 'logs' | 'browserCache' | 'other'
+export type DataBucket =
+  | 'db'
+  | 'attachments'
+  | 'extensions'
+  | 'logs'
+  | 'browserCache'
+  | 'coldOffload'
+  | 'coldSnapshots'
+  | 'other'
 
 /**
  * 按 DATA_DIR 相对路径（统一 / 分隔）归类体积桶。
@@ -45,6 +56,10 @@ export function classifyDataEntry(rel: string): DataBucket {
   if (isBrowserProfilePath(norm)) return 'browserCache'
   const top = norm.split('/')[0]
   if (top === 'attachments' || top === 'extensions' || top === 'logs') return top
+  // P0-5 第三批：冷数据从「其他」里摘出来单列（体积与条数都要看得见）；
+  // 目录名取自两个存储模块，避免面板口径与实际落点漂移。
+  if (top === OFFLOAD_DIR_NAME) return 'coldOffload'
+  if (top === SNAPSHOT_DIR_NAME) return 'coldSnapshots'
   return 'other'
 }
 
@@ -54,24 +69,41 @@ export interface DataSizeEntry {
   bytes: number
 }
 
-/** 体积条目按桶聚合 → DataHealthReport.sizes（合计只算用户数据，浏览器缓存单列） */
+/** 体积条目按桶聚合 → DataHealthReport.sizes（合计只算用户数据，浏览器缓存单列）
+ *
+ * 冷数据（卸载文件 / 写入快照）单独成桶，但仍计入 `userDataBytes`——它们确实占用户数据目录的盘，
+ * 只是以前混在「其他」里看不见。条数只数**正式文件**（卸载 `.txt` / 快照 `.json`），
+ * 半写的 `.part` 算字节但不计条数。
+ */
 export function aggregateDataSizes(entries: DataSizeEntry[]): DataHealthReport['sizes'] {
   const buckets: Record<DataBucket, number> = {
-    db: 0, attachments: 0, extensions: 0, logs: 0, browserCache: 0, other: 0
+    db: 0, attachments: 0, extensions: 0, logs: 0, browserCache: 0,
+    coldOffload: 0, coldSnapshots: 0, other: 0
   }
   let cacheFiles = 0
+  let coldOffloadFiles = 0
+  let coldSnapshotFiles = 0
   for (const e of entries) {
     const b = classifyDataEntry(e.rel)
     buckets[b] += e.bytes
     if (b === 'browserCache') cacheFiles++
+    const norm = e.rel.replaceAll('\\', '/')
+    if (b === 'coldOffload' && norm.endsWith('.txt')) coldOffloadFiles++
+    if (b === 'coldSnapshots' && norm.endsWith('.json')) coldSnapshotFiles++
   }
   return {
-    userDataBytes: buckets.db + buckets.attachments + buckets.extensions + buckets.logs + buckets.other,
+    userDataBytes:
+      buckets.db + buckets.attachments + buckets.extensions + buckets.logs +
+      buckets.coldOffload + buckets.coldSnapshots + buckets.other,
     dbBytes: buckets.db,
     attachmentsBytes: buckets.attachments,
     extensionsBytes: buckets.extensions,
     logsBytes: buckets.logs,
     otherBytes: buckets.other,
+    coldOffloadBytes: buckets.coldOffload,
+    coldOffloadFiles,
+    coldSnapshotBytes: buckets.coldSnapshots,
+    coldSnapshotFiles,
     browserCacheBytes: buckets.browserCache,
     browserCacheFiles: cacheFiles
   }
@@ -297,5 +329,23 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   // 7. 跨会话慢事件（从日志尾部聚合，只下发统计行）
   const perfHistory = getPerfHistory()
 
-  return { sizes, traces, approvals, kb, backup, tasks, boot, recentPerf, perfHistory }
+  // 8. 冷数据清理失败计数（P0-5 第三批）：三个数各自取，不做合计掩盖是哪一路失败
+  const coldFailures = getColdDataFailureStats()
+
+  return {
+    sizes,
+    traces,
+    approvals,
+    coldFailures: {
+      purge: coldFailures.purgeFailures,
+      offloadPrune: coldFailures.offloadPruneFailures,
+      snapshotPrune: coldFailures.snapshotPruneFailures
+    },
+    kb,
+    backup,
+    tasks,
+    boot,
+    recentPerf,
+    perfHistory
+  }
 }

@@ -31,6 +31,10 @@ const zeroSizes: DataHealthReport['sizes'] = {
   attachmentsBytes: 0,
   extensionsBytes: 0,
   logsBytes: 0,
+  coldOffloadBytes: 0,
+  coldOffloadFiles: 0,
+  coldSnapshotBytes: 0,
+  coldSnapshotFiles: 0,
   otherBytes: 0,
   browserCacheBytes: 0,
   browserCacheFiles: 0
@@ -38,6 +42,7 @@ const zeroSizes: DataHealthReport['sizes'] = {
 
 const fullReport = (sizes: DataHealthReport['sizes']): DataHealthReport => ({
   sizes,
+  coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
   traces: { rows: 0, maxRowsInOneConversation: 0 },
   approvals: { rows: 0, writeFailures: 0 },
   kb: {

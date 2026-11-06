@@ -21,7 +21,7 @@ interface FsWriteResult {
 }
 
 /** 只认"有字符串 snapshotId 且没被标成不可还原"这一种形状；解析失败一律当"没有还原入口" */
-function readSnapshotId(content: string): string | null {
+export function readSnapshotId(content: string): string | null {
   try {
     const parsed = JSON.parse(content) as FsWriteResult
     if (parsed.notRestorable) return null
@@ -41,7 +41,15 @@ export function isNotRestorable(content: string): boolean {
   }
 }
 
-export const FsWriteActions: React.FC<{ resultContent: string }> = ({ resultContent }) => {
+export const FsWriteActions: React.FC<{
+  resultContent: string
+  /**
+   * 本机是否还有这份快照（由消息列表批量查一次后传进来）：
+   * `true` 可还原；`false` 本机没有（异机恢复/已淘汰），**不出现按钮**并说清事实；
+   * `undefined` 尚未确认——此时也不出现按钮，避免"点了才报错"。
+   */
+  snapshotAvailable?: boolean
+}> = ({ resultContent, snapshotAvailable }) => {
   const { t } = useI18n()
   const toast = useToast()
   const [busy, setBusy] = useState(false)
@@ -55,6 +63,18 @@ export const FsWriteActions: React.FC<{ resultContent: string }> = ({ resultCont
       </div>
     ) : null
   }
+
+  // P0-5 第三批：异机恢复后快照文件不在本机。判定必须在**点击前**生效——
+  // 让用户点了才吃 SNAPSHOT_NOT_FOUND，是拿错误当发现手段。文案只说事实，不暗示"还在加载"。
+  if (snapshotAvailable === false) {
+    return (
+      <div role="status" className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+        {t('agent.fsWrite.snapshotMissing')}
+      </div>
+    )
+  }
+  // 未确认（undefined）同样不给你一个"点了一定失败"的按钮；列表那层查完会再渲染。
+  if (snapshotAvailable !== true) return null
 
   const restore = async () => {
     if (busy) return

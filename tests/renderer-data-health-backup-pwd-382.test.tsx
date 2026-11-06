@@ -28,6 +28,10 @@ const zeroSizes: DataHealthReport['sizes'] = {
   attachmentsBytes: 0,
   extensionsBytes: 0,
   logsBytes: 0,
+  coldOffloadBytes: 0,
+  coldOffloadFiles: 0,
+  coldSnapshotBytes: 0,
+  coldSnapshotFiles: 0,
   otherBytes: 0,
   browserCacheBytes: 0,
   browserCacheFiles: 0
@@ -48,6 +52,7 @@ const backupOf = (over: Partial<DataHealthReport['backup']>): DataHealthReport['
 
 const reportOf = (backup: DataHealthReport['backup']): DataHealthReport => ({
   sizes: zeroSizes,
+  coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
   traces: { rows: 0, maxRowsInOneConversation: 0 },
   approvals: { rows: 0, writeFailures: 0 },
   kb: {

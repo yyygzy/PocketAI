@@ -37,11 +37,16 @@ function report(
       attachmentsBytes: 2 * 1024 * 1024,
       extensionsBytes: 1 * 1024 * 1024,
       logsBytes: 512 * 1024,
+      coldOffloadBytes: 0,
+      coldOffloadFiles: 0,
+      coldSnapshotBytes: 0,
+      coldSnapshotFiles: 0,
       otherBytes: 0,
       browserCacheBytes: 801 * 1024 * 1024,
       browserCacheFiles: 21103,
       ...sizesOver
     },
+    coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
     traces: { rows: 12340, maxRowsInOneConversation: 1200, ...tracesOver },
     approvals: { rows: 0, writeFailures: 0 },
     kb: {

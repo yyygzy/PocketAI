@@ -269,7 +269,7 @@ export const DataHealthPanel: React.FC = () => {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 
-  const { sizes, traces, approvals, kb, backup, tasks, boot, recentPerf, perfHistory } = report
+  const { sizes, traces, approvals, coldFailures, kb, backup, tasks, boot, recentPerf, perfHistory } = report
   const integrity = kb.integrity
   const hasDimMismatch = integrity.brokenDocs.some((d) => d.reason === 'dim-mismatch')
   const integrityOk =
@@ -327,6 +327,39 @@ export const DataHealthPanel: React.FC = () => {
           <button onClick={onOpenDir} disabled={busy} className="chip">{t('dh.browserCache.open')}</button>
           <button onClick={onClearCache} disabled={busy} className="chip">{t('dh.browserCache.clear')}</button>
         </div>
+      </div>
+
+      {/* 冷数据（P0-5 第三批）：以前混在「其他」里，用户既看不见也判断不了该不该在意。
+          这里只读列出体积与条数 + 三路清理失败计数；**不放一键清空**——那会和引用关系、
+          还原入口打架，留给以后专门设计。 */}
+      <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.coldData')}</div>
+      <div className="mb-4 space-y-1">
+        <BarRow
+          label={t('dh.coldOffload')}
+          ratio={sizes.userDataBytes > 0 ? sizes.coldOffloadBytes / sizes.userDataBytes : 0}
+          value={t('dh.coldOffloadValue', {
+            bytes: formatBytes(sizes.coldOffloadBytes),
+            count: sizes.coldOffloadFiles.toLocaleString('en-US')
+          })}
+        />
+        <BarRow
+          label={t('dh.coldSnapshots')}
+          ratio={sizes.userDataBytes > 0 ? sizes.coldSnapshotBytes / sizes.userDataBytes : 0}
+          value={t('dh.coldSnapshotValue', {
+            bytes: formatBytes(sizes.coldSnapshotBytes),
+            count: sizes.coldSnapshotFiles.toLocaleString('en-US')
+          })}
+        />
+        <Row
+          label={t('dh.coldFailures')}
+          value={t('dh.coldFailuresValue', {
+            purge: coldFailures.purge,
+            prune: coldFailures.offloadPrune,
+            snapshot: coldFailures.snapshotPrune
+          })}
+          warn={coldFailures.purge + coldFailures.offloadPrune + coldFailures.snapshotPrune > 0}
+        />
+        <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('dh.coldFailuresHint')}</div>
       </div>
 
       {/* Agent 运行账本的规模（探测见 agent-trace.repo.countForHealth；为什么报这两个数见台账 V4-Iter-173） */}

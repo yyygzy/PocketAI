@@ -42,6 +42,15 @@ export function getColdDataFailureStats(): ColdDataFailureStats {
 }
 
 /**
+ * 整库替换（备份恢复）后的差集：旧库有、新库没有的会话 id（含子会话——子会话行也没了，自然在差集里）。
+ * 调用方必须在**恢复成功、库已重开**之后才调；拿不到新库会话清单时不要调（空集不等于空库）。
+ */
+export function removedConversationIds(beforeIds: string[], afterIds: string[]): string[] {
+  const after = new Set(afterIds)
+  return beforeIds.filter((id) => !after.has(id))
+}
+
+/**
  * 删掉一批会话的冷数据目录（整目录递归删，幂等：目录不在也算成功）。
  * **只删 `agent-tool-outputs/<conversationId>/`**，不碰旧平铺文件：
  * 旧布局的文件没有会话归属，删会话时无法判断它属于谁——误删比留着更糟。

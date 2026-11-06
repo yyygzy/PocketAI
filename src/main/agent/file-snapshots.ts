@@ -71,8 +71,25 @@ function recordPruneFailure(target: string, e: unknown): void {
   }
 }
 
+/** 快照根目录名：数据健康的冷数据口径按它分桶，不写字面量避免两处漂移 */
+export const SNAPSHOT_DIR_NAME = 'agent-file-snapshots'
+
 export function defaultSnapshotRoot(): string {
-  return path.join(DATA_DIR, 'agent-file-snapshots')
+  return path.join(DATA_DIR, SNAPSHOT_DIR_NAME)
+}
+
+/**
+ * 只回答「本机还有没有这份快照」，**不读内容**。
+ * 用于结果卡在**点击前**判断还原入口是否可用：异机恢复后快照文件不在本机，
+ * 让用户点了才吃 `SNAPSHOT_NOT_FOUND` 是拿错误当发现手段。
+ * id 形状不对或文件不存在都按 `false`（形状不对的 id 本来就不可能存在）。
+ */
+export function snapshotExists(id: string, root = defaultSnapshotRoot()): boolean {
+  try {
+    return fs.existsSync(snapshotFile(root, id))
+  } catch {
+    return false
+  }
 }
 
 function snapshotFile(root: string, id: string): string {

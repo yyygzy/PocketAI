@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ReminderRepeatRule } from '../../../../../shared/types'
 import { AgentMessageCard } from './AgentMessageCard'
+import { readSnapshotId } from './FsWriteActions'
 import { isNearBottom, shouldStickToBottom } from './virtual-list-utils'
 import { useI18n } from '../../../i18n'
 import type { AgentMessage } from '../agent-shared'
@@ -51,6 +52,56 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
   const pendingScrollBottomRef = useRef(true)
   // 滚出底部锚定区时显示「回到底部」悬浮按钮
   const [showJumpBottom, setShowJumpBottom] = useState(false)
+  // P0-5 第三批：本机快照存在性。按一屏消息里的 snapshotId 去重后**一次 IPC** 批量查，
+  // 不按每条消息各查一次；流式追加时 id 集合不变就不重复查（否则每个 token 打一次 IPC）。
+  const [snapshotsExisting, setSnapshotsExisting] = useState<Record<string, boolean>>({})
+  const snapshotKeyRef = useRef('')
+
+  // 切会话：上一会话的快照判定不能串到这一会话
+  useEffect(() => {
+    snapshotKeyRef.current = ''
+    setSnapshotsExisting({})
+  }, [conversationId])
+
+  useEffect(() => {
+    const ids: string[] = []
+    for (const m of messages) {
+      if (m.isError || !m.toolResult || m.toolResult.name !== 'fs_write') continue
+      const id = readSnapshotId(m.toolResult.content)
+      if (id) ids.push(id)
+    }
+    const unique = [...new Set(ids)]
+    const key = `${conversationId ?? ''}|${unique.join('|')}`
+    if (key === snapshotKeyRef.current) return
+    snapshotKeyRef.current = key
+    if (unique.length === 0) return
+    let cancelled = false
+    void window.pocketai
+      .snapshotsExist(unique)
+      .then((res) => {
+        if (cancelled) return
+        // 查不到就保持"未确认"（不出按钮）：宁可不出入口，也不给一个点了必然失败的按钮
+        if ('ok' in res && res.ok === false) return
+        const existing = 'existing' in res ? res.existing : []
+        const map: Record<string, boolean> = {}
+        for (const id of unique) map[id] = false
+        for (const id of existing) map[id] = true
+        setSnapshotsExisting((prev) => ({ ...prev, ...map }))
+      })
+      .catch(() => {
+        /* 同上：保持未确认 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [messages, conversationId])
+
+  /** 这条消息的快照在本机是否存在：null=没有快照 id / undefined=还没确认 */
+  const snapshotAvailableFor = (m: AgentMessage): boolean | undefined => {
+    if (m.isError || !m.toolResult || m.toolResult.name !== 'fs_write') return undefined
+    const id = readSnapshotId(m.toolResult.content)
+    return id ? snapshotsExisting[id] : undefined
+  }
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -163,6 +214,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = ({
                   onRerun={onRerunMessage}
                   onRegenerate={isLastFinal ? onRegenerateMessage : undefined}
                   onRemind={onRemindMessage}
+                  snapshotAvailable={snapshotAvailableFor(m)}
                 />
               </div>
             )

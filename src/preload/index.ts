@@ -893,6 +893,12 @@ const api = {
   ): Promise<
     { ok: true; path: string; bytes: number; removed: boolean } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.AGENT_RESTORE_FILE_WRITE, snapshotId),
+  /**
+   * P0-5 第三批：批量判「本机还有没有这几份快照」。
+   * 只回存在的 id；调用方在消息列表变化时合并成一次，不按每条消息各查一次。
+   */
+  snapshotsExist: (snapshotIds: string[]): Promise<{ existing: string[] } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_SNAPSHOTS_EXIST, snapshotIds),
 
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>
