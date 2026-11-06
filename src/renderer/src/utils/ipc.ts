@@ -6,6 +6,8 @@
 //
 // 边界：用户主动触发的操作（保存/生成/导入等）不要用本工具吞错——
 // 应在调用处 try/catch 后给 toast 或内联错误反馈。
+import type { UsagePricing } from '../../../shared/types'
+import { currencySymbolOf } from '../../../shared/usage-pricing'
 
 /**
  * safeHandle 把 handler 抛出的异常转成 `{ ok:false, error }` **返回值**（不是 reject），
@@ -148,10 +150,16 @@ export function chatSendFailureText(
   t: (key: string, params?: Record<string, string | number>) => string
 ): string {
   const text = typeof msg === 'string' ? msg : msg.error ?? ''
-  const m = text.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+)/)
+  // 回码形态：`BUDGET_EXCEEDED:scope:limit:currency:中文尾段`（旧形态没有 currency 段，第三组可缺省）。
+  // 符号按回码里那一轮的币种走；缺省时 currencySymbolOf 回 CNY（与主进程 parsePricing 的兜底同口径）。
+  const m = text.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+)(?::([A-Z]{3}))?/)
   if (m) {
     const scope = m[1] === 'daily' ? t('usage.budgetDaily') : t('usage.budgetMonthly')
-    return t('usage.budgetBlocked', { scope, limit: m[2]! })
+    return t('usage.budgetBlocked', {
+      scope,
+      symbol: currencySymbolOf(m[3] as UsagePricing['currency'] | undefined),
+      limit: m[2]!
+    })
   }
   return ipcFailureText(msg, t)
 }

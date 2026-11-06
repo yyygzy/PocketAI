@@ -272,7 +272,9 @@ export interface UsageDetailRow extends UsageRow {
 
 /**
  * 聚合行级用量明细 → UsageDetailItem[]（CSV 导出用，每轮生成一行）。
- * 与既有聚合同口径：坏 JSON 跳过、未配单价费用计 0、roundCost 消浮点尾巴；保持入参顺序（SQL 已按时间倒序）。
+ * 与既有聚合同口径：坏 JSON 跳过、roundCost 消浮点尾巴；保持入参顺序（SQL 已按时间倒序）。
+ * 费用：**命不中单价记 null（算不出）**，不记 0——行级明细会被原样导成 CSV，
+ * 写 0 等于跟用户说"这一轮真的没花钱"（V4 收尾：CSV「估算花费」列不许撒谎）。
  */
 export function aggregateUsageDetail(
   rows: UsageDetailRow[],
@@ -284,9 +286,7 @@ export function aggregateUsageDetail(
     if (!u) continue
     const provider = row.provider || '(未知)'
     const model = row.model || '(未知)'
-    const cost = prices[priceKey(provider, model)]
-      ? computeUsageCost(u, prices[priceKey(provider, model)]!)
-      : 0
+    const price = prices[priceKey(provider, model)]
     items.push({
       createdAt: row.created_at,
       messageId: row.message_id,
@@ -300,7 +300,7 @@ export function aggregateUsageDetail(
       completionTokens: u.completionTokens,
       cachedTokens: u.cachedTokens ?? 0,
       totalTokens: u.totalTokens,
-      cost: roundCost(cost)
+      cost: price ? computeUsageCost(u, price) : null
     })
   }
   return items

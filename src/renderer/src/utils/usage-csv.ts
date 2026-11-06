@@ -32,6 +32,7 @@ export function formatLocalTime(ts: number): string {
 /**
  * 构建用量明细 CSV：BOM + 表头 + 明细行（明细保持 service 返回的时间倒序）。
  * assistantName 为 null（自由会话/助手已删除）时该列输出空串。
+ * cost 为 null（该模型没配单价、算不出）时「估算花费」列**留空**：写 0 会被读成"这一轮真的没花钱"。
  */
 export function buildUsageCsv(items: UsageDetailItem[], h: UsageCsvHeader): string {
   const lines: string[] = []
@@ -48,7 +49,7 @@ export function buildUsageCsv(items: UsageDetailItem[], h: UsageCsvHeader): stri
         it.completionTokens,
         it.cachedTokens,
         it.totalTokens,
-        it.cost
+        it.cost ?? ''
       ].map(csvCell).join(',')
     )
   }

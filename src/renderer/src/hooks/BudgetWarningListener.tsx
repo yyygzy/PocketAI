@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useToast } from '../components/ToastProvider'
 import { useI18n } from '../i18n'
 import { reportIpcError } from '../utils/ipc'
+import { currencySymbolOf } from '../../../shared/usage-pricing'
 
 export function BudgetWarningListener() {
   const toast = useToast()
@@ -16,6 +17,8 @@ export function BudgetWarningListener() {
         toast.warning(
           t('usage.budgetWarnToast', {
             scope: t(e.scope === 'daily' ? 'usage.scopeDaily' : 'usage.scopeMonthly'),
+            // 符号跟着这次估算所用的币种走（事件载荷带的），不再写死 ¥
+            symbol: currencySymbolOf(e.currency),
             cost: e.cost.toFixed(2),
             limit: e.limit.toFixed(2),
             pct: Math.round(e.ratio * 100)

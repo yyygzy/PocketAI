@@ -88,4 +88,18 @@ describe('buildUsageCsv', () => {
     const line = csv.replace('\uFEFF', '').trimEnd().split('\r\n')[1]
     expect(line).toBe('2026-10-02 15:04:05,"周报, ""Q3""",写作助手,openai,gpt-4o,100,50,0,150,0.0004')
   })
+
+  it('cost=null（该模型没配单价、算不出）时「估算花费」列留空，不写 0', () => {
+    const csv = buildUsageCsv([item({ cost: null })], h)
+    const line = csv.replace('\uFEFF', '').trimEnd().split('\r\n')[1]!
+    // 末列是空串（行尾没有多余的 0），列数仍为 10 —— 空 ≠ 0，也 ≠ "漏了一列"
+    expect(line).toBe('2026-10-02 15:04:05,测试会话,写作助手,openai,gpt-4o,100,50,0,150,')
+    expect(line.split(',')).toHaveLength(10)
+  })
+
+  it('真有单价且算出 0 时照常写 0（"花 0 元"是读数，不是缺价）', () => {
+    const csv = buildUsageCsv([item({ cost: 0 })], h)
+    const line = csv.replace('\uFEFF', '').trimEnd().split('\r\n')[1]!
+    expect(line.endsWith(',150,0')).toBe(true)
+  })
 })

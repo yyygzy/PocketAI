@@ -333,7 +333,12 @@ export interface UsageDetailItem {
   completionTokens: number
   cachedTokens: number
   totalTokens: number
-  cost: number
+  /**
+   * 该轮估算费用。
+   * `null`＝这条 provider/model 没配单价（**算不出**，不是 0）；CSV 导出留空，界面显示「—」。
+   * 数值（含 0）＝确实按单价算出的结果。
+   */
+  cost: number | null
 }
 
 /** 行级明细查询结果（超出 limit 时 truncated=true） */
@@ -354,7 +359,7 @@ export interface UsageBudgetStatus {
   warn: boolean
 }
 
-/** 预算 80% 软预警事件（USAGE_BUDGET_WARNING_EVENT 载荷；同一周期只发一次） */
+/** 预算 80% 软预警事件（同一周期只发一次；纯阈值判定结果，不含展示口径） */
 export interface BudgetWarnEvent {
   scope: 'daily' | 'monthly'
   /** 当前周期已花估算费用 */
@@ -363,6 +368,14 @@ export interface BudgetWarnEvent {
   limit: number
   /** cost/limit（0~1+，保留 4 位） */
   ratio: number
+}
+
+/**
+ * 软预警的**广播**载荷（USAGE_BUDGET_WARNING_EVENT）：在阈值事件上补上这组金额所用的币种。
+ * 符号必须跟着它走——渲染端文案里再写死 ¥，用户在设置里换成 USD 后就会读到「$金额」配「¥」的错配。
+ */
+export interface BudgetWarnBroadcastEvent extends BudgetWarnEvent {
+  currency: UsagePricing['currency']
 }
 
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */

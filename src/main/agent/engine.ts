@@ -149,12 +149,15 @@ export function capRedactedToolCallArgs(toolCalls: ToolCall[]): string | undefin
  * 只是每个参数先过脱敏。**只用于落库**——重复判定仍然用原文签名，
  * 因为脱敏会把不同的密钥值折叠成同一个 `[redacted]`，拿它判重会误拦。
  */
-export function capRedactedToolSignature(toolCalls: ToolCall[]): string | undefined {
-  const text = toolCalls
+function redactedToolSignatureText(toolCalls: ToolCall[]): string {
+  return toolCalls
     .map((tc) => `${tc.function.name}:${redactArgsInText(tc.function.arguments)}`)
     .sort()
     .join('|')
-  return capTraceText(text)
+}
+
+export function capRedactedToolSignature(toolCalls: ToolCall[]): string | undefined {
+  return capTraceText(redactedToolSignatureText(toolCalls))
 }
 
 /**
@@ -178,11 +181,32 @@ export function capRedactedTraceText(value: string | null | undefined): string |
   return capTraceText(text || undefined)
 }
 
+/**
+ * trace 的 `error` 写库口径（v56 收尾）：与 `tool_args` / `tool_result` **同一套规则**——自由文本先脱敏、再截断。
+ * 这一列实际装两类东西，不能一刀切：
+ * 1) 结构化状态码（`empty_response` / `bad_tool_call_block` / `tools_unsupported_fallback`）——
+ *    前端和判据按字面认（`error === 'empty_response'`），改写等于改协议，原样保留；
+ * 2) 自由文本（工具报错原文、LLM 报错、`重复工具调用已拦截：<签名>`）——
+ *    provider 常在报错里回显密钥，走 `capRedactedTraceText`。
+ *    其中重复签名所在的那串在调用点已按 `name:args` 逐参脱敏（保留结构，只折掉参数值），
+ *    这里再过一遍文本规则是幂等的；封顶（4000）只在 safeTrace 这一处做一次。
+ * 顺序不能反：先截断会让跨边界的半截密钥逃过规则（见 `capRedactedTraceText` 的说明）。
+ */
+const STRUCTURED_TRACE_ERRORS = new Set(['empty_response', 'bad_tool_call_block', 'tools_unsupported_fallback'])
+
+export function redactTraceError(error: string | null | undefined): string | undefined {
+  if (!error) return undefined
+  if (STRUCTURED_TRACE_ERRORS.has(error)) return error
+  return capRedactedTraceText(error)
+}
+
 /** 安全写入 trace，防止 DB 问题阻塞主流程 */
 function safeTrace(rec: Parameters<typeof agentTraceRepo.insert>[0]): void {
   try {
     agentTraceRepo.insert({
       ...rec,
+      // error 列只在这一道口收口：结构化状态码原样、自由文本先脱敏再截断（见 redactTraceError）
+      error: redactTraceError(rec.error),
       parentRequestId: traceParents.get(rec.requestId) ?? null,
       model: rec.model ?? traceModels.get(rec.requestId)
     })
@@ -2094,7 +2118,9 @@ class AgentEngine {
         toolName: toolList,
         durationMs: Date.now() - stepStart,
         status: 'error',
-        error: `重复工具调用已拦截：${signature}`,
+        // 签名原文含参数值（可能带密钥）：落库用脱敏版（结构与原文一致，只把参数值折掉），
+        // 封顶交给 safeTrace 的 redactTraceError 统一做一次，避免这里再截一遍出现两段"已截断"
+        error: `重复工具调用已拦截：${redactedToolSignatureText(toolCalls)}`,
         // 签名本身就是「工具名 + 参数」，这一列存下来才能回答"它反复传的是哪一串"
         // 参数里可能有密钥：落库前逐个参数脱敏再封顶（见 capRedactedToolSignature 的说明）
         toolArgs: capRedactedToolSignature(toolCalls)

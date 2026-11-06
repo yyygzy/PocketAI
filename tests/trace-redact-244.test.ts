@@ -42,6 +42,7 @@ import {
   capRedactedToolCallArgs,
   capRedactedToolSignature,
   capRedactedTraceText,
+  redactTraceError,
   TRACE_TEXT_MAX_CHARS
 } from '../src/main/agent/engine'
 
@@ -146,7 +147,55 @@ describe('② 顺序：先脱敏、再截断 4000（边界上的密钥不许留�
   })
 })
 
-describe('③ 误伤口径（可接受的代价，写清楚而不是假装没有）', () => {
+describe('③ agent_traces.error：同源脱敏，但结构化状态码不许误伤', () => {
+  it('工具报错原文里的凭据被替换（与 tool_result 同一套规则）', () => {
+    const out = redactTraceError('401 Unauthorized: Authorization: Bearer sk-live-ABC123')!
+    expect(out).toBe('401 Unauthorized: Authorization: [redacted]')
+    expect(out).not.toContain('sk-live')
+  })
+
+  it('JSON 形态的报错按键名脱敏（不是只靠文本规则）', () => {
+    const out = redactTraceError('{"api_key":"sk-live-ERR","error":"bad request"}')!
+    expect(out).not.toContain('sk-live-ERR')
+    expect(out).toContain('"api_key":"[redacted]"')
+  })
+
+  it('重复拦截那一行：签名逐参脱敏，`name:args|…` 结构保留（否则诊断看不出它反复传的是哪一串）', () => {
+    const sig = capRedactedToolSignature([
+      call('http_request', '{"headers":{"authorization":"Bearer abc.def.ghi"}}')
+    ])!
+    const out = redactTraceError(`重复工具调用已拦截：${sig}`)!
+    expect(out.startsWith('重复工具调用已拦截：http_request:{')).toBe(true)
+    expect(out).not.toContain('abc.def.ghi')
+  })
+
+  it('结构化状态码原样保留（前端/判据按字面认，改写等于改协议）', () => {
+    for (const code of ['empty_response', 'bad_tool_call_block', 'tools_unsupported_fallback']) {
+      expect(redactTraceError(code)).toBe(code)
+    }
+    expect(redactTraceError(undefined)).toBeUndefined()
+  })
+
+  it('顺序仍是先脱敏、再截断：4000 边界上的密钥不留半截', () => {
+    const raw = `${'x'.repeat(3980)}api_key=sk-live-SECRET-abcdefgh`
+    const out = redactTraceError(raw)!
+    expect(out).toContain('api_key=[redacted]')
+    expect(out).not.toContain('sk-live')
+    expect(out).not.toContain('SECRET')
+    // 替换后长度降到 4000 以下，不该出现截断提示（证明规则先看到了完整密钥）
+    expect(out).not.toContain('此处截断')
+  })
+
+  it('源码门禁：error 列只在 safeTrace 收口；重复拦截行不许再写原文签名', () => {
+    const s = src('src/main/agent/engine.ts')
+    expect(s).toMatch(/error:\s*redactTraceError\(rec\.error\)/)
+    expect(s).toMatch(/error:\s*`重复工具调用已拦截：\$\{redactedToolSignatureText\(toolCalls\)\}`/)
+    // 原文签名 `signature` 只许留在重复判定里，不许再进落库语句
+    expect(s).not.toMatch(/error:\s*`重复工具调用已拦截：\$\{signature\}`/)
+  })
+})
+
+describe('④ 误伤口径（可接受的代价，写清楚而不是假装没有）', () => {
   it('纯文本结果里出现示例 `token=` 也会被替换：保留键名、只换值', () => {
     // 网页正文/文档里完全可能出现这种示例代码，规则无法区分"示例"与"真值"。
     // 取舍：诊断账本是辅助线索，宁可让示例值变成 [redacted]，也不把真凭据留在库里。

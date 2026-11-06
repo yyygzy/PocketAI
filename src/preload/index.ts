@@ -1225,8 +1225,8 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.REMINDER_FIRED, listener)
   },
   /** 预算 80% 软预警（主进程在每轮 usage 落库后检查，同一日/月周期只推一次） */
-  onUsageBudgetWarning: (handler: (e: import('../shared/types').BudgetWarnEvent) => void): (() => void) => {
-    const listener = (_e: IpcRendererEvent, data: import('../shared/types').BudgetWarnEvent) => handler(data)
+  onUsageBudgetWarning: (handler: (e: import('../shared/types').BudgetWarnBroadcastEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: import('../shared/types').BudgetWarnBroadcastEvent) => handler(data)
     ipcRenderer.on(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
   },

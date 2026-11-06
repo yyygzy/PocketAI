@@ -4,6 +4,8 @@
 // 这里按**行为**钉住三个入口（回码文案／Agent hook／划词浮窗），源码区域的逐点核对在 ipc-failure-visible-196.test.ts。
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { act, renderHook } from '@testing-library/react'
 import { HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
@@ -16,10 +18,12 @@ import { ja } from '../src/renderer/src/i18n/ja'
 import { ko } from '../src/renderer/src/i18n/ko'
 import type { AssistantRecord, ConversationRecord, ProviderRecord } from '../src/shared/types'
 
-// main 侧抛的原始串（assertBudget 的中文尾段），界面只许拿回码换四语
-const RAW_DAILY = 'BUDGET_EXCEEDED:daily:0.5:已达到今日预算上限 ¥0.5'
+// main 侧抛的原始串（assertBudget 的中文尾段），界面只许拿回码换四语。
+// v56：回码第三段带**本轮估算所用的币种**，渲染层据此选符号（不再写死 ¥）。
+const RAW_DAILY = 'BUDGET_EXCEEDED:daily:0.5:CNY:已达到今日预算上限 ¥0.5'
 const BLOCKED_DAILY = zh['usage.budgetBlocked']
   .replace('{scope}', zh['usage.budgetDaily'])
+  .replace('{symbol}', '¥')
   .replace('{limit}', '0.5')
 
 const dictT = (key: string, params?: Record<string, string | number>): string =>
@@ -41,9 +45,16 @@ describe('回码 → 界面文案（全项目只翻译这一次）', () => {
   })
 
   it('monthly 走「每月预算」，limit 原样带过去', () => {
-    const s = chatSendFailureText('BUDGET_EXCEEDED:monthly:88.00:已达到本月预算上限 ¥88.00', dictT)
+    const s = chatSendFailureText('BUDGET_EXCEEDED:monthly:88.00:CNY:已达到本月预算上限 ¥88.00', dictT)
     expect(s).toContain(zh['usage.budgetMonthly'])
-    expect(s).toContain('88.00')
+    expect(s).toContain('¥88.00')
+  })
+
+  it('币种换成 USD 后符号跟回码走：金额仍是 88.00，但不再挂 ¥（v56 接口/账本口径对齐）', () => {
+    const s = chatSendFailureText('BUDGET_EXCEEDED:monthly:88.00:USD:已达到本月预算上限 $88.00', dictT)
+    expect(s).toContain('$88.00')
+    expect(s).not.toContain('¥')
+    expect(s).not.toContain('$¥')
   })
 
   it('登记过的回码换四语，冒号后的中文说明不进界面（V4-Iter-206）', () => {
@@ -56,6 +67,17 @@ describe('回码 → 界面文案（全项目只翻译这一次）', () => {
   it('没登记的（provider／网络报错）原样透出——把普通报错咽成空串是不允许的', () => {
     const raw = '请求失败: connect ECONNREFUSED 127.0.0.1:11434'
     expect(chatSendFailureText(raw, dictT)).toBe(raw)
+  })
+
+  it('软预警 toast 的符号也跟事件币种走（源码门禁：主进程带 currency、渲染端不写死 ¥）', () => {
+    const bw = fs.readFileSync(path.resolve(__dirname, '../src/main/usage/budget-warn.ts'), 'utf-8')
+    expect(bw).toMatch(/currency:\s*pricing\.currency/)
+    const listener = fs.readFileSync(
+      path.resolve(__dirname, '../src/renderer/src/hooks/BudgetWarningListener.tsx'),
+      'utf-8'
+    )
+    expect(listener).toMatch(/symbol:\s*currencySymbolOf\(e\.currency\)/)
+    expect(listener).not.toMatch(/symbol:\s*'¥'/)
   })
 
   it('四语把 scope 拼进 budgetBlocked 后不许出现叠词（真机露出过「已达到每日预算预算上限」）', () => {

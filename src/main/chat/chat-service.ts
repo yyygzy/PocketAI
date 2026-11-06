@@ -27,6 +27,7 @@ import { chunksToSources } from '../../shared/kb-sources'
 import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { usageService } from '../usage/usage-service'
 import { getUsagePricing } from '../usage/pricing-config'
+import { currencySymbolOf } from '../../shared/usage-pricing'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
@@ -491,15 +492,21 @@ class ChatService {
   }
 
   /**
-   * 预算硬阻断断言：开启后达到日/月上限即抛错（BUDGET_EXCEEDED:scope:limit:msg）。
+   * 预算硬阻断断言：开启后达到日/月上限即抛错（BUDGET_EXCEEDED:scope:limit:currency:msg）。
+   * 回码里带上**这次估算所用的币种**：渲染端换文案时符号跟着它，不再写死 ¥
+   * （用户可以把币种改成 USD，金额口径与展示符号必须同源）。
    * 未开启或未超限则无操作。
    */
   private assertBudget(): void {
     if (!appConfigRepo.isUsageBudgetHardBlockEnabled()) return
-    const exceeded = usageService.checkBudgetExceeded(getUsagePricing().prices)
+    const pricing = getUsagePricing()
+    const exceeded = usageService.checkBudgetExceeded(pricing.prices)
     if (!exceeded) return
     const scopeLabel = exceeded.scope === 'daily' ? '今日' : '本月'
-    throw new Error(`BUDGET_EXCEEDED:${exceeded.scope}:${exceeded.limit}:已达到${scopeLabel}预算上限 ¥${exceeded.limit}`)
+    const symbol = currencySymbolOf(pricing.currency)
+    throw new Error(
+      `BUDGET_EXCEEDED:${exceeded.scope}:${exceeded.limit}:${pricing.currency}:已达到${scopeLabel}预算上限 ${symbol}${exceeded.limit}`
+    )
   }
 
   private async runTarget(args: {

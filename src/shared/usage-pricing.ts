@@ -12,6 +12,15 @@ export const COST_SCALE = 6
 /** 合法币种白名单 */
 export const PRICING_CURRENCIES = ['CNY', 'USD'] as const
 
+/**
+ * 币种 → 展示符号的**唯一**映射。预算阻断/预警文案、单价编辑器、气泡费用都走这里，
+ * 免得"用户在设置里改成 USD、界面上还挂着 ¥"（V4 收尾：币种写死的小尾巴）。
+ * 传入 null/undefined（设置还没读到）时回 CNY：与 `parsePricing` 的兜底口径一致。
+ */
+export function currencySymbolOf(currency: UsagePricing['currency'] | null | undefined): string {
+  return currency === 'USD' ? '$' : '¥'
+}
+
 /** 四舍五入到 COST_SCALE 位小数，消除浮点累加误差 */
 export function roundCost(n: number): number {
   if (!Number.isFinite(n)) return 0

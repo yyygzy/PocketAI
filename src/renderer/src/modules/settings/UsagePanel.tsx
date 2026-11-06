@@ -13,7 +13,7 @@ import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { requestUsageJump } from './usage-jump'
 import { fmtTokens, fmtCost } from '../../utils/token'
 import { buildUsageCsv } from '../../utils/usage-csv'
-import { priceKey } from '../../../../shared/usage-pricing'
+import { currencySymbolOf, priceKey } from '../../../../shared/usage-pricing'
 
 const RANGES = [7, 30, 90] as const
 /** 导出行级明细的上限（与主进程 listUsageDetail 默认值一致；超出会提示截断） */
@@ -101,7 +101,7 @@ export const UsagePanel: React.FC = () => {
     }
   }, [days])
 
-  const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
+  const currencySymbol = currencySymbolOf(pricing?.currency)
   /**
    * §415：单价表是"有没有配过"这件事的唯一判据。空表时 `cost` 恒 0，而 0 既可能是"确实没花"
    * 也可能是"算不出"——屏上把算不出画成 ¥0（或 `fmtCost(0)`＝空串留下的裸 ¥）就是拿约定冒充读数。
@@ -655,7 +655,11 @@ export const UsagePanel: React.FC = () => {
                         <td className="py-1.5 px-3 text-right font-mono text-[var(--color-text-muted)]">{m.cachedTokens.toLocaleString()}</td>
                         <td className="py-1.5 px-3 text-right font-mono text-[var(--color-text)]">{m.totalTokens.toLocaleString()}</td>
                         <td className="py-1.5 px-3 text-right font-mono text-[var(--color-accent)]">
-                          {m.cost > 0 ? `${currencySymbol}${fmtCost(m.cost)}` : '—'}
+                          {(() => {
+                            // null＝这条模型没配单价（算不出）；fmtCost(0) 也回空串，两种都不留裸货币符号
+                            const text = fmtCost(m.cost ?? 0)
+                            return text ? `${currencySymbol}${text}` : '—'
+                          })()}
                         </td>
                       </tr>
                     ))}
@@ -687,8 +691,10 @@ export const UsagePanel: React.FC = () => {
                       </td>
                       <td className="py-2 px-3 text-right font-mono text-[var(--color-accent)]">
                         {(() => {
-                          // §415：合计格与上面每一行同一个判据——0 与"算不出"都别留下裸货币符号
-                          const sum = fmtCost(detailItems.reduce((s, m) => s + m.cost, 0))
+                          // §415：合计格与上面每一行同一个判据——0 与"算不出"都别留下裸货币符号。
+                          // 有一行 cost=null（没配单价）时合计就是**不完整的估算**，宁可显示「—」也不拿部分和冒充总额。
+                          const anyUnknown = detailItems.some((m) => m.cost === null)
+                          const sum = anyUnknown ? '' : fmtCost(detailItems.reduce((s, m) => s + (m.cost ?? 0), 0))
                           return sum ? `${currencySymbol}${sum}` : '—'
                         })()}
                       </td>

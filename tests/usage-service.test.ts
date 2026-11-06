@@ -409,14 +409,15 @@ describe('aggregateUsageDetail', () => {
     })
   })
 
-  it('配置单价时费用正确并 roundCost，未配置模型 cost=0', () => {
+  it('配置单价时费用正确；未配置模型 cost=null（算不出，不是 0）', () => {
     const prices = { 'openai::gpt-4o': { input: 2, output: 4 } } // (100×2+50×4)/1e6 = 0.0004
     const items = aggregateUsageDetail([
       detailRow(),
       detailRow({ model: 'gpt-4o-mini' })
     ], prices)
     expect(items[0]!.cost).toBe(0.0004)
-    expect(items[1]!.cost).toBe(0)
+    // 行级明细会原样进 CSV：这里若回 0，导出的「估算花费」就等于跟用户说"这一轮真的没花钱"
+    expect(items[1]!.cost).toBeNull()
   })
 })
 

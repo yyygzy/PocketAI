@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import type { ChatAttachment, MessageRecord, MessageRetrieval, MessageSource, ReminderRepeatRule, UsagePricing, UsageStats } from '../../../../shared/types'
-import { computeUsageCost, priceKey } from '../../../../shared/usage-pricing'
+import { computeUsageCost, currencySymbolOf, priceKey } from '../../../../shared/usage-pricing'
 import { useI18n } from '../../i18n'
 import { CopyButton } from '../../components/CopyButton'
 import { requestSourceJump } from '../knowledge/source-jump'
@@ -144,7 +144,7 @@ const MessageBubbleImpl: React.FC<Props> = ({
       : undefined
   const costValue = usage && unitPrice ? computeUsageCost(usage, unitPrice) : 0
   const costText = fmtCost(costValue)
-  const currencySymbol = pricing?.currency === 'USD' ? '$' : '¥'
+  const currencySymbol = currencySymbolOf(pricing?.currency)
   const tokenHint = usage
     ? [
         t('chatview.tokenHint', { prompt: usage.promptTokens, completion: usage.completionTokens }),
