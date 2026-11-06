@@ -12,6 +12,7 @@
 // 4. 文件名时间戳，永不覆盖旧备份
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto'
+import { sha256Hex } from '../fs/hash'
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, statSync, readdirSync, rmSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -428,9 +429,7 @@ export interface IncrementalIndex {
   attachments: IncrementalAttachment[]
 }
 
-export function sha256Hex(buf: Buffer): string {
-  return createHash('sha256').update(buf).digest('hex')
-}
+export { sha256Hex }
 
 /** 加密时的 blob 后缀规则，集中管理避免不一致 */
 export function blobRelName(prefix: 'db' | 'att', sha: string, encrypted: boolean): string {

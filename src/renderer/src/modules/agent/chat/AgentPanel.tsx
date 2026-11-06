@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { AssistantRecord, ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
 import { isDelegateRole, parseDelegationResultChildPrefixes } from '../../../../../shared/delegation-rules'
+import { parseWorkspaceChangeSet } from '../../../../../shared/workspace-changes'
 import { useI18n } from '../../../i18n'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { useProviderData } from '../hooks/useProviderData'
@@ -24,6 +25,7 @@ import { writeClipboard } from '../../../utils/clipboard'
 import { buildConversationHtml } from '../../../utils/export-html'
 import { buildReminderText, reminderCreatedToastKey } from '../../../utils/reminder-presets'
 import { formatDateTime } from '../../../utils/time'
+import { formatBytes } from '../../../utils/format'
 import { formatStepTokens } from '../../../utils/agent-step-tokens'
 import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutcome, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
 import { assistantDisplayName } from '../../chat/assistant-display'
@@ -813,7 +815,9 @@ export const AgentPanel: React.FC = () => {
                       .map((p) => chat.subSessions.filter((s) => s.id.slice(0, 8) === p))
                       .filter((list) => list.length === 1)
                       .map((list) => list[0] as ConversationRecord)
-                    const hasIo = !!(tr.toolArgs || tr.toolResult || tr.model)
+                    // v55：变更清单是这一步的"执行后事实"，有它才展开；null 与"没有变更"分开说
+                    const changes = parseWorkspaceChangeSet(tr.changeSet)
+                    const hasIo = !!(tr.toolArgs || tr.toolResult || tr.model || changes)
                     const rowClass = 'flex flex-wrap items-baseline gap-x-1.5'
                     const line = (
                       <>
@@ -886,6 +890,53 @@ export const AgentPanel: React.FC = () => {
                                 className="max-h-40 overflow-y-auto px-1.5 py-1 rounded border border-[var(--color-border)] whitespace-pre-wrap break-all"
                               >
                                 {t('agent.traceResult')}：{tr.toolResult}
+                              </div>
+                            )}
+                            {changes && (
+                              <div
+                                data-testid="trace-changes"
+                                className="px-1.5 py-1 rounded border border-[var(--color-border)]"
+                              >
+                                {changes.status === 'degraded' ? (
+                                  <div className="text-[var(--color-text-muted)]">
+                                    {t('agent.traceChangesDegraded', {
+                                      reason: changes.degradedReason
+                                        ? t(`agent.traceChangesReason.${changes.degradedReason}`)
+                                        : ''
+                                    })}
+                                  </div>
+                                ) : (
+                                  <>
+                                    {changes.entries.length === 0 ? (
+                                      <div className="text-[var(--color-text-muted)]">{t('agent.traceChangesNone')}</div>
+                                    ) : (
+                                      <>
+                                        <div className="text-[var(--color-text-muted)]">
+                                          {t('agent.traceChangesTitle', {
+                                            count: changes.entries.length,
+                                            added: changes.counts.added,
+                                            modified: changes.counts.modified,
+                                            deleted: changes.counts.deleted
+                                          })}
+                                        </div>
+                                        <ul className="mt-1 max-h-40 overflow-y-auto">
+                                          {changes.entries.map((e) => (
+                                            <li key={`${e.kind}:${e.path}`} className="whitespace-pre-wrap break-all">
+                                              {t(`agent.traceChangeKind.${e.kind}`)} {e.path} ({formatBytes(e.size)})
+                                              {e.content !== 'hashed' && e.content !== 'not-compared'
+                                                ? ` · ${t(`agent.traceChangeContent.${e.content}`)}`
+                                                : ''}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </>
+                                    )}
+                                    {/* 口径说明：自动放行的调用不做扫描，别让这份清单被读成"本步全部变更" */}
+                                    <div className="mt-1 text-[var(--color-text-muted)]">
+                                      {t('agent.traceChangesScope')}
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             )}
                           </div>

@@ -31,6 +31,8 @@ mem.exec(`
     message_id TEXT,
     cold_ref TEXT,
     result_chars INTEGER,
+    -- v55：执行后变更清单 JSON（NULL＝没记录）
+    change_set TEXT,
     created_at INTEGER
   )
 `)

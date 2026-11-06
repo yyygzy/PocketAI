@@ -1078,6 +1078,57 @@ export type TraceReplayState =
   /** 从未留全文：旧行没有引用列，或内容从未超过截断上限 */
   | 'never_stored'
 
+/** 执行后变更清单里的单个路径（只记录事实，不承诺可还原） */
+export interface WorkspaceChangeEntry {
+  /** 相对受保护目录的路径（不落绝对路径） */
+  path: string
+  kind: 'added' | 'modified' | 'deleted'
+  /** 变更后的字节数；删除项用变更前的字节数 */
+  size: number
+  /**
+   * 内容可比对状态：
+   * - `hashed`：变更项取过当前文件哈希（只是指纹，**没有变更前内容可对比**）；
+   * - `mtime-only`：大小没变、只有 mtime 变了；前扫没有存内容，无法判断内容是否真的变了；
+   * - `binary`／`too-large`：未取内容，**不可比对**；
+   * - `unreadable`：读取失败；
+   * - `not-compared`：删除项，后扫已看不到文件，只能报大小。
+   */
+  content: 'hashed' | 'mtime-only' | 'binary' | 'too-large' | 'unreadable' | 'not-compared'
+  /** 变更后指纹（仅 content='hashed' 时给；它不能用来还原） */
+  afterSha?: string
+}
+
+/** 变更清单降级原因：任一闸门超限都整次降级，不产出半份清单 */
+export type WorkspaceChangeDegradedReason =
+  | 'too-many-files'
+  | 'too-many-bytes'
+  | 'timeout'
+  | 'too-many-changes'
+  | 'before-scan-failed'
+  | 'after-scan-failed'
+  /**
+   * 本步只执行了**自动放行**的 shell／MCP 调用：它们不做前后扫描（每一步固定两扫的代价
+   * 会落到所有步骤上），因此这一档写"未记录"，而不是留 NULL 冒充"没有变更"。
+   */
+  | 'auto-allowed-not-recorded'
+
+/**
+ * 一次 shell／MCP 步骤执行后的工作目录变更清单（v55，只读事实）。
+ *
+ * **口径**：只回答"改了哪些路径、大小多少"，不回答"内容改成了什么"，
+ * 也不提供回滚——回滚只存在于 `fs_write` 的单文件快照（2 MiB／100 份／有失败态）。
+ * 超出任一闸门时 `status='degraded'` 且 `entries` 为空，表示**本次未记录变更**，
+ * 绝不能把空清单演成"没有变更"。
+ */
+export interface WorkspaceChangeSet {
+  status: 'ok' | 'degraded'
+  entries: WorkspaceChangeEntry[]
+  counts: { added: number; modified: number; deleted: number }
+  /** 前扫 + 后扫的实际耗时（毫秒） */
+  scanMs: number
+  degradedReason?: WorkspaceChangeDegradedReason
+}
+
 /** Agent 单步执行轨迹（agent_traces 表一行，渲染层分步明细用） */
 export interface AgentTraceRecord {
   id: string
@@ -1112,6 +1163,12 @@ export interface AgentTraceRecord {
   toolArgs?: string
   /** v50：这一步的**返回值原文**（同上，截断口径一致；错误结果也照存，那正是最该看的一种） */
   toolResult?: string
+  /**
+   * v55：这一步执行后工作目录的**变更清单**（JSON 字符串，形状见 `WorkspaceChangeSet`）。
+   * 只在含 shell／MCP 调用的 tools 步骤上尽力记录；NULL＝没记录（旧行、无目标工具、前扫失败等），
+   * 与"没有变更"不是一回事——渲染层必须分开说。
+   */
+  changeSet?: string
   /**
    * v54（P0-5 冷 blob 第一批）：这一步被截断的返回值反查 `messages` 的钥匙。
    * 多个工具调用时按调用顺序换行分隔（与 `toolArgs`／`toolResult` 同序同分法），

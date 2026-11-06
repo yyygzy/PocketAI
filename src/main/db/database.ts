@@ -915,6 +915,22 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE agent_traces ADD COLUMN cold_ref TEXT;
       ALTER TABLE agent_traces ADD COLUMN result_chars INTEGER;
     `
+  },
+  {
+    // v55：执行后变更清单（P0-3b，只读事实，不提供回滚）。
+    //
+    // 为什么挂在 `agent_traces` 上而不是新建表：会话删除、重跑清理、脱敏、回放三档等生命周期
+    // 都已经围绕这一行转；新开一张表就得把它们逐条复制一遍，且很容易漏级联。
+    // 这一列只存 JSON 字符串（形状见 `shared/types.ts` 的 `WorkspaceChangeSet`），
+    // 写入端有硬上限（100 条 / 32k 字符），超限整次降级为「本次未记录变更」。
+    //
+    // NULL 的语义是**没记录**（旧行、本步没有 shell/MCP 调用、前扫失败），
+    // 与"没有变更"不是一回事；渲染端必须分开说。
+    version: 55,
+    name: 'agent_trace_change_set',
+    up: `
+      ALTER TABLE agent_traces ADD COLUMN change_set TEXT;
+    `
   }
 ]
 

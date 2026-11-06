@@ -7,10 +7,9 @@
 // 纯函数（classifyDataEntry / aggregateDataSizes / groupDocStatus / topErrorDocs）
 // 单独导出供 tests/data-health.test.ts 直测。
 
-import { readdirSync, statSync } from 'node:fs'
-import path from 'node:path'
 import type { DataHealthReport, KbDocStatus, KbDocument, KbIntegrityReport } from '../../shared/types'
 import { isBrowserProfilePath } from '../../shared/data-dirs'
+import { walkEntries, type WalkFileEntry } from '../fs/dir-walk'
 import { DATA_DIR } from '../portable'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
@@ -64,7 +63,7 @@ export function classifyDataEntry(rel: string): DataBucket {
 }
 
 export interface DataSizeEntry {
-  /** 相对 DATA_DIR 的路径（/ 分隔） */
+  /** 相对 base 的路径（/ 分隔） */
   rel: string
   bytes: number
 }
@@ -145,41 +144,11 @@ export function topErrorDocs(
 
 // ─── fs 探测：数据目录递归体积 ──────────────────────────────────
 
-/**
- * 递归收集目录下全部文件的相对路径与体积；单项 stat 失败忽略。
- *
- * `mode` 是 V4-Iter-177 的性能接缝：`skipProfile` 用于每次都要新鲜的"用户数据"明细
- * （一个文件都不 stat 那两棵 Chromium 档案树），`onlyProfile` 只走档案树、结果由上层按进程缓存。
- * 判据用**相对路径的首段**，所以子项（`userdata/Cache/...`）在两种模式下都会被同一棵树带走。
- */
-function walkEntries(dir: string, base: string, out: DataSizeEntry[], mode: 'skipProfile' | 'onlyProfile'): void {
-  let items: import('node:fs').Dirent[]
-  try {
-    items = readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return // 目录不存在/不可读 → 该桶按 0 处理
-  }
-  for (const it of items) {
-    const full = path.join(dir, it.name)
-    const rel = path.relative(base, full).replaceAll('\\', '/')
-    const profile = isBrowserProfilePath(rel)
-    if (mode === 'skipProfile' && profile) continue
-    if (mode === 'onlyProfile' && !profile) continue
-    if (it.isDirectory()) {
-      walkEntries(full, base, out, mode)
-    } else if (it.isFile()) {
-      try {
-        out.push({ rel, bytes: statSync(full).size })
-      } catch { /* 竞态删除/权限 → 跳过该文件 */ }
-    }
-  }
-}
-
 /** 用户数据明细（不含浏览器档案树）——每次都现走，附件/日志这类会变的量必须新鲜 */
 export function collectUserDataEntries(): DataSizeEntry[] {
-  const out: DataSizeEntry[] = []
-  walkEntries(DATA_DIR, DATA_DIR, out, 'skipProfile')
-  return out
+  const walked: WalkFileEntry[] = []
+  walkEntries(DATA_DIR, DATA_DIR, walked, 'skipProfile')
+  return walked.map((e) => ({ rel: e.rel, bytes: e.bytes }))
 }
 
 export interface BrowserCacheStats {
@@ -201,7 +170,7 @@ let browserCacheMemo: BrowserCacheStats | null = null
  * 所以不写推测，用一次真实清理的量去回答。
  */
 export function browserCacheTreeBreakdown(): Array<{ tree: string; bytes: number; files: number }> {
-  const entries: DataSizeEntry[] = []
+  const entries: WalkFileEntry[] = []
   walkEntries(DATA_DIR, DATA_DIR, entries, 'onlyProfile')
   const byTree = new Map<string, { bytes: number; files: number }>()
   for (const e of entries) {
@@ -216,7 +185,7 @@ export function browserCacheTreeBreakdown(): Array<{ tree: string; bytes: number
 
 export function getBrowserCacheStats(refresh: boolean): BrowserCacheStats {
   if (refresh || !browserCacheMemo) {
-    const out: DataSizeEntry[] = []
+    const out: WalkFileEntry[] = []
     walkEntries(DATA_DIR, DATA_DIR, out, 'onlyProfile')
     browserCacheMemo = { bytes: out.reduce((s, e) => s + e.bytes, 0), files: out.length }
   }

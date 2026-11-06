@@ -21,7 +21,8 @@ import type {
   MessageRecord,
   MessageSource,
   MessageRetrieval,
-  ApprovalPreviewField
+  ApprovalPreviewField,
+  WorkspaceChangeSet
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import { slotDecision } from '../providers/local-slot'
@@ -53,6 +54,11 @@ import { createApproval, toolArgsFingerprint } from './tool-approval'
 import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
 import { redactSecretsInText, redactArgsInText } from '../security/audit-redact'
+import {
+  beginWorkspaceChangeAudit,
+  buildStepChangeSet,
+  finishWorkspaceChangeAudit
+} from './workspace-changes'
 import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot, writeOffloadFile, OFFLOAD_PREVIEW_MIN_CHARS } from './tool-output-offload'
 import {
   isToolsUnsupportedError,
@@ -2106,6 +2112,21 @@ class AgentEngine {
       toolRegistry.classify(tc.function.name, tc.function.arguments, allowedToolIds)
     )
 
+    // P0-3b（427 收窄）：**只对「被判 confirm 且用户已批准」的 shell／MCP 调用**前后各扫一次工作目录。
+    // 自动放行的调用不扫——每一步固定两扫的代价会落到所有步骤上（按本仓历史基线 ≈0.027 ms/文件：
+    // 5k 文件≈0.27 s、25k≈1.35 s／次审计；推算依据见 workspace-changes 的 CHANGE_SET_LIMITS），
+    // 而自动放行恰恰是用户没在看的那一类；
+    // 这类步骤改由 buildStepChangeSet 写一条"自动放行不记变更"的降级记录，不留 NULL 冒充"没有变更"。
+    // deny／被拒／无人值守不扫（没执行就不可能有变更）；fs_write 已有单文件快照，不重复扫。
+    const workspaceRoot = getWorkspaceDir()
+    const isChangeAuditedTool = (toolName: string): boolean => {
+      const schema = toolRegistry.getSchema(toolName)
+      return schema?.id === 'shell.exec' || schema?.source === 'mcp'
+    }
+    /** 本步每条「已批准」调用各自一份清单，最后合并成一步一份（任何一份降级即整步降级） */
+    const stepAudits: WorkspaceChangeSet[] = []
+    let hadAutoAllowedAuditableCall = false
+
     const results: ToolResult[] = new Array(toolCalls.length)
     const allowTasks: Promise<void>[] = []
     /**
@@ -2242,11 +2263,18 @@ class AgentEngine {
               isError: true
             }
           } else {
+            // 变更清单只跟"已批准"的这一步：前扫紧贴执行前（比步骤级更准），后扫紧贴执行后
+            const audit = isChangeAuditedTool(tc.function.name)
+              ? beginWorkspaceChangeAudit(workspaceRoot)
+              : null
             results[i] = await this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, skillIds, agentCtx)
+            if (audit) stepAudits.push(finishWorkspaceChangeAudit(audit))
           }
         }
       } else {
         const idx = i
+        // 自动放行：不扫（代价），只记"这一类调用存在"，本步据此如实写"未记录"
+        if (workspaceRoot && isChangeAuditedTool(tc.function.name)) hadAutoAllowedAuditableCall = true
         allowTasks.push(
           this.executeWithTimeout(tc, allowedToolIds, master.signal, kbIds, skillIds, agentCtx).then((r) => {
             results[idx] = r
@@ -2380,7 +2408,10 @@ class AgentEngine {
       // 多调用按调用顺序换行分隔，与 toolResult 的分段一一对应。
       messageId: traceTruncated ? coldMessageIds.join(NL) : undefined,
       coldRef: traceTruncated ? coldRefs.join(NL) : undefined,
-      resultChars: traceTruncated ? rawResultText.length : undefined
+      resultChars: traceTruncated ? rawResultText.length : undefined,
+      // v55：只读变更清单。undefined（无目标工具／全被拒／未设工作目录）→ 不写；
+      // 降级由内部返回 degraded，渲染层据此说"本次未记录变更"，绝不与"没有变更"混用同一句话。
+      changeSet: buildStepChangeSet(stepAudits, hadAutoAllowedAuditableCall)
     })
 
     return 'llm'
