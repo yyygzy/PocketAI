@@ -23,6 +23,7 @@ import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
 import { AgentSearchBar } from '../components/AgentSearchBar'
 import { ZeroToolCallNotice } from '../components/ZeroToolCallNotice'
+import { TraceReplayStatus } from '../components/TraceReplayStatus'
 import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages, delegateRoleLabel, isDeepSearchRunning } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { useAppStore } from '../../../store/app-store'
@@ -868,6 +869,8 @@ export const AgentPanel: React.FC = () => {
                         {tr.toolName && <span className="text-[var(--color-accent)]">{tr.toolName}</span>}
                         <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
                         {stepTokens && <span className="text-[var(--color-text-muted)]">{stepTokens}</span>}
+                        {/* 回放状态的行内徽标挂主行右端（ml-auto）：不另起一行，也不挤压工具名 */}
+                        <TraceReplayStatus replay={tr.replay} />
                       </>
                     )
                     return (
