@@ -331,6 +331,9 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_SET_NOTE, convId, note),
   setConversationSystemPromptOverride: (convId: string, text: string | null): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_SET_SYSTEM_PROMPT_OVERRIDE, convId, text),
+  /** v57：记住本会话的 Agent 模式开关（按会话各自记住，重启/切会话都从这里恢复） */
+  setConversationAgentMode: (convId: string, on: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.CONVERSATION_SET_AGENT_MODE, convId, on),
 
   // ---------- 窗口行为（开机自启/关窗到托盘） ----------
   getWindowBehavior: (): Promise<import('../shared/types').WindowBehaviorSettings> =>

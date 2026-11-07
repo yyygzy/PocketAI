@@ -168,6 +168,10 @@ export function registerConversationHandlers(): void {
     conversationRepo.setSystemPromptOverride(convId, text)
     return { ok: true }
   }, argsSchema(idSchema, z.string().max(100_000).nullable()))
+  // v57：Agent 模式开关按会话落库。会话不存在时返回 ok:false（不静默成功，否则"记住了"是假的）
+  safeHandle(IPC.CONVERSATION_SET_AGENT_MODE, (_e, convId: string, on: boolean) =>
+    ({ ok: conversationRepo.setAgentMode(String(convId ?? ''), on) }),
+  argsSchema(idSchema, z.boolean()))
   safeHandle(IPC.CONVERSATION_EXPORT_MD, async (e, id: string) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: '窗口不可用' }

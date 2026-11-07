@@ -954,6 +954,20 @@ const MIGRATIONS: Migration[] = [
         mergeBuiltinSkillIds(db, assistantId, skillIds)
       }
     }
+  },
+  {
+    // v57：会话级 Agent 模式开关（P0-4b-1）。
+    //
+    // 改前它只活在渲染层 state（`agentModeByConv`），重启即丢；产品语义一直是"每会话各自记住"，
+    // 所以持久边界必须是会话行本身（删会话即随之清除，备份/恢复也天然一致）。
+    //
+    // 老会话口径**明确为关闭**：`NOT NULL DEFAULT 0`，不是 NULL。迁移前"没有条目"读出来的就是
+    // false，迁移后行为逐字一致；不用 NULL 留一个"不知道开没开"的第三态。
+    version: 57,
+    name: 'conversation_agent_mode',
+    up: `
+      ALTER TABLE conversations ADD COLUMN agent_mode INTEGER NOT NULL DEFAULT 0;
+    `
   }
 ]
 

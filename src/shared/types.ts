@@ -182,6 +182,12 @@ export interface ConversationRecord {
   parentConversationId?: string | null
   /** v48：这条会话承担的角色（归会话不归 trace——独立会话意味着一会话一角色）；null=无角色 */
   roleKey?: string | null
+  /**
+   * v57：本会话的 Agent 模式开关（P0-4b-1）。
+   * 落库记忆：重启与切会话都按各自会话行恢复。缺省/false＝关闭——包括迁移前的老会话
+   * （列是 `NOT NULL DEFAULT 0`，不用 NULL 表达"没设置"）。
+   */
+  agentMode?: boolean
 }
 
 /** 会话分组文件夹（按助手维度归集） */
@@ -2465,6 +2471,7 @@ export const IPC = {
   CONVERSATION_SET_ASSISTANT: 'conversation:set-assistant', // 改归属助手（assistantId=null 回自由会话；同时清分组）
   CONVERSATION_SET_NOTE: 'conversation:set-note', // 设置会话备注（trim 空串存 NULL）
   CONVERSATION_SET_SYSTEM_PROMPT_OVERRIDE: 'conversation:set-system-prompt-override', // 设置会话级系统提示词覆盖（trim 空串存 NULL）
+  CONVERSATION_SET_AGENT_MODE: 'conversation:set-agent-mode', // v57：记住本会话的 Agent 模式开关（按会话各自记住）
 
   WINDOW_BEHAVIOR_GET: 'window-behavior:get', // 读取窗口行为设置（开机自启/关窗到托盘）
   WINDOW_BEHAVIOR_SET_LAUNCH: 'window-behavior:set-launch', // 设置开机自启

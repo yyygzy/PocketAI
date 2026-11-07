@@ -31,6 +31,8 @@ interface ConversationRow {
   parent_conversation_id?: string | null
   /** v48：本会话承担的角色；NULL=无角色（用户会话） */
   role_key?: string | null
+  /** v57：本会话的 Agent 模式开关（0/1；老会话迁移后为 0＝关闭） */
+  agent_mode?: number
 }
 
 export function rowToRecord(row: ConversationRow): ConversationRecord {
@@ -52,7 +54,8 @@ export function rowToRecord(row: ConversationRow): ConversationRecord {
     note: row.note ?? null,
     systemPromptOverride: row.system_prompt_override ?? null,
     parentConversationId: row.parent_conversation_id ?? null,
-    roleKey: row.role_key ?? null
+    roleKey: row.role_key ?? null,
+    agentMode: row.agent_mode === 1
   }
 }
 
@@ -265,6 +268,19 @@ export const conversationRepo = {
       .run(v, id)
   },
 
+  /**
+   * v57：Agent 模式开关（按会话各自记住）。
+   * 不动 updated_at：切个开关不该把会话顶到列表最前。返回有没有命中这一行——
+   * 会话不存在时上层要能说"没记住"，而不是静默成功。
+   */
+  setAgentMode(id: string, on: boolean): boolean {
+    const info = dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET agent_mode=? WHERE id=?')
+      .run(on ? 1 : 0, id)
+    return info.changes > 0
+  },
+
   /** 归档写 archived_at；取消归档清空。不动 pinned（恢复后保持原置顶态） */
   setArchived(id: string, archived: boolean): void {
     dbService
@@ -424,8 +440,8 @@ export const conversationRepo = {
       const now = Date.now()
       const newConvId = randomUUID()
       db.prepare(
-        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default, system_prompt_override)
-         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, 0, ?)`
+        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default, system_prompt_override, agent_mode)
+         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, 0, ?, ?)`
       ).run(
         newConvId,
         src.assistantId,
@@ -433,7 +449,9 @@ export const conversationRepo = {
         src.modelLabel,
         now,
         now,
-        src.systemPromptOverride
+        src.systemPromptOverride,
+        // 分支是这条会话的延续：Agent 模式跟着源会话走，否则一开分支就静默退回普通问答
+        src.agentMode ? 1 : 0
       )
 
       const idMap = new Map<string, string>()

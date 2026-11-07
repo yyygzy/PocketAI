@@ -25,6 +25,7 @@ import { errText } from '../../utils/error'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { buildConversationHtml } from '../../utils/export-html'
 import { buildChatSendPayload } from './send-payload'
+import { PENDING_AGENT_MODE_KEY, resolveAgentMode } from './agent-mode'
 import { buildMessagesMarkdown, safeFileName } from '../../../../shared/export-markdown'
 import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutcome, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
@@ -69,11 +70,13 @@ export const ChatModule: React.FC = () => {
   const [currentAssistantId, setCurrentAssistantId] = useState<string>('asst-default')
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   /**
-   * Agent 模式开关（P0-4 v1）：按 conversationId 存在渲染层，不写库、不进草稿；
-   * 空串键＝尚未创建的新会话，首次发送建会话后把当时的开关值带到新 id 上。
+   * Agent 模式开关（P0-4b-1）：**按会话落库**（`conversations.agent_mode`，迁移 v57）。
+   * 取值以会话记录为准（切会话/重启各自恢复各自的）；`agentModeByConv` 只剩两件事：
+   * 尚未建会话的空串键，以及本次点击的乐观值（写库失败回滚）。
+   * `agentModeRecord`：当前会话不在列表里（跨助手搜索跳转）时单条读回的那份，避免演成关闭。
    */
   const [agentModeByConv, setAgentModeByConv] = useState<Record<string, boolean>>({})
-  const agentMode = agentModeByConv[currentConvId ?? ''] === true
+  const [agentModeRecord, setAgentModeRecord] = useState<{ id: string; agentMode?: boolean } | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
   // 消息那一读失败的原因（V4-Iter-250）：不写这句，屏上留着的是上一条会话或空列表，两种都像「这里没消息」
   const [msgsReadErr, setMsgsReadErr] = useState<string | null>(null)
@@ -104,6 +107,12 @@ export const ChatModule: React.FC = () => {
     groupsUnread,
     reloadConversations
   } = useConversationLists({ assistantIdRef, currentConvRef, onAutoSelect: setCurrentConvId })
+  /** Agent 模式取值：记录优先，`agentModeByConv` 只做空串键与乐观覆盖（见上方说明） */
+  const agentMode = resolveAgentMode(
+    currentConvId,
+    agentModeRecord ? [...conversations, ...archivedConversations, agentModeRecord] : [...conversations, ...archivedConversations],
+    agentModeByConv
+  )
   // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
   const userEditedTargetsRef = useRef(false)
   // 草稿防抖句柄 + 最新文本镜像（卸载/关闭时尽力落库）
@@ -119,6 +128,36 @@ export const ChatModule: React.FC = () => {
     for (const c of [...conversations, ...archivedConversations]) idx.set(c.id, c)
     convIndexRef.current = idx
   }, [conversations, archivedConversations])
+
+  // 切会话：列表里没有这一条（跨助手搜索跳转等）就单条读回，
+  // 否则"有记录但不在本列表"会被演成关闭，与"记住各会话自己的模式"相悖
+  useEffect(() => {
+    setAgentModeRecord(null)
+    const id = currentConvId
+    if (!id || convIndexRef.current.has(id)) return
+    let alive = true
+    window.pocketai
+      .getConversation(id)
+      .then((v) => {
+        if (!alive || currentConvRef.current !== id) return
+        if (hasIpcFailed(v) || !v) return
+        setAgentModeRecord({ id, agentMode: v.agentMode })
+      })
+      .catch(reportIpcError('chat.getConversation'))
+    return () => { alive = false }
+  }, [currentConvId])
+
+  // 一旦选中了真实会话，就把"未建会话"那格的暂存值清掉：
+  // 否则上次空白态里开过 Agent，下次再进空白态会被继承——与"新会话默认关闭"相悖
+  useEffect(() => {
+    if (!currentConvId) return
+    setAgentModeByConv((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, PENDING_AGENT_MODE_KEY)) return prev
+      const next = { ...prev }
+      delete next[PENDING_AGENT_MODE_KEY]
+      return next
+    })
+  }, [currentConvId])
 
   const loadMessages = useCallback(
     (convId: string) =>
@@ -1071,13 +1110,20 @@ export const ChatModule: React.FC = () => {
       convId = c.id
       const newConvId = c.id
       setCurrentConvId(convId)
-      // 新会话从空串键迁到真实 id：开关状态跟着这条会话走（仍只在渲染层）
+      // 新会话从空串键迁到真实 id；开了 Agent 就把这一格落库（重启后也记住）。
+      // 失败只记诊断、不打断发送：这一发仍靠 payload 的 agentMode 走 Agent 链，丢的只是"下次还开着"
       setAgentModeByConv((prev) => {
         const next = { ...prev }
-        delete next['']
+        delete next[PENDING_AGENT_MODE_KEY]
         if (useAgent) next[newConvId] = true
         return next
       })
+      if (useAgent) {
+        void window.pocketai
+          .setConversationAgentMode(newConvId, true)
+          .then((r) => { if (hasIpcFailed(r)) logIpcError('chat.setConversationAgentMode', r.error ?? '') })
+          .catch(reportIpcError('chat.setConversationAgentMode'))
+      }
       await reloadConversations()
     }
 
@@ -1319,6 +1365,41 @@ export const ChatModule: React.FC = () => {
       setForwarding(false)
     }
   }, [forwardSource, forwarding, reloadConversations, handleSelectMessage, toast, t])
+
+  /**
+   * 切换 Agent 模式（P0-4b-1）：先写库再留本地乐观值。
+   * 已有会话：`conversation:set-agent-mode` 落库；失败就把乐观值撤回并报出来，
+   * 否则屏上"开了"而下次重启还是关的。尚未建会话：只动空串键，建会话时再落库。
+   */
+  const handleToggleAgentMode = (): void => {
+    const id = currentConvId
+    const next = !agentMode
+    if (!id) {
+      setAgentModeByConv((prev) => ({ ...prev, [PENDING_AGENT_MODE_KEY]: next }))
+      return
+    }
+    setAgentModeByConv((prev) => ({ ...prev, [id]: next }))
+    const revert = (): void => {
+      setAgentModeByConv((prev) => {
+        const copy = { ...prev }
+        delete copy[id]
+        return copy
+      })
+    }
+    window.pocketai
+      .setConversationAgentMode(id, next)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          revert()
+          toast.error(ipcFailText(r, t('common.unknownError')))
+        }
+      })
+      .catch((e: unknown) => {
+        revert()
+        toast.error(t('common.opFailed', { msg: errText(e) }))
+        reportIpcError('chat.setConversationAgentMode')(e)
+      })
+  }
 
   const handleStop = () => {
     abort()
@@ -1654,10 +1735,7 @@ export const ChatModule: React.FC = () => {
         liveColumns={liveColumns}
         streaming={liveColumns !== null || agentRunning}
         agentMode={agentMode}
-        onToggleAgentMode={() => {
-          const key = currentConvId ?? ''
-          setAgentModeByConv((prev) => ({ ...prev, [key]: !prev[key] }))
-        }}
+        onToggleAgentMode={handleToggleAgentMode}
         agentLive={agentStream && agentStream.convId === currentConvId ? agentStream.messages : null}
         welcomeMessage={currentAssistant ? assistantDisplayWelcome(currentAssistant, t) : undefined}
         assistantName={currentAssistant ? assistantDisplayName(currentAssistant, t) : undefined}
