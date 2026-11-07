@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { ToolPolicyEntry, ToolPolicySnapshot } from '../../../../../shared/types'
+import type { ToolPolicyReasonCode } from '../../../../../shared/tool-policy-reasons'
 import { useI18n } from '../../../i18n'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
@@ -19,6 +20,41 @@ export const ToolPolicyDialog: React.FC<{ assistantId?: string; onClose: () => v
   onClose
 }) => {
   const { t } = useI18n()
+  // 29 颗原因码 ↔ i18n 的 tp.reason.*：字面量表钉住完整性（漏一颗 typecheck 就红，不再运行时拼 key）
+  const reasonText = {
+    BLOCKED_FORMAT: t('tp.reason.BLOCKED_FORMAT'),
+    BLOCKED_DISKPART: t('tp.reason.BLOCKED_DISKPART'),
+    BLOCKED_MKFS: t('tp.reason.BLOCKED_MKFS'),
+    BLOCKED_SHUTDOWN: t('tp.reason.BLOCKED_SHUTDOWN'),
+    BLOCKED_BOOTCFG: t('tp.reason.BLOCKED_BOOTCFG'),
+    BLOCKED_CIPHER_WIPE: t('tp.reason.BLOCKED_CIPHER_WIPE'),
+    BLOCKED_REG_HIVE: t('tp.reason.BLOCKED_REG_HIVE'),
+    BLOCKED_SYSTEM_DELETE: t('tp.reason.BLOCKED_SYSTEM_DELETE'),
+    BLOCKED_FORKBOMB: t('tp.reason.BLOCKED_FORKBOMB'),
+    BLOCKED_ROOT_DELETE: t('tp.reason.BLOCKED_ROOT_DELETE'),
+    DANGEROUS_DELETE: t('tp.reason.DANGEROUS_DELETE'),
+    DANGEROUS_OVERWRITE: t('tp.reason.DANGEROUS_OVERWRITE'),
+    DANGEROUS_WRITE: t('tp.reason.DANGEROUS_WRITE'),
+    DANGEROUS_KILL: t('tp.reason.DANGEROUS_KILL'),
+    DANGEROUS_PERMISSION: t('tp.reason.DANGEROUS_PERMISSION'),
+    DANGEROUS_ACCOUNT: t('tp.reason.DANGEROUS_ACCOUNT'),
+    DANGEROUS_REGISTRY: t('tp.reason.DANGEROUS_REGISTRY'),
+    DANGEROUS_PUBLISH: t('tp.reason.DANGEROUS_PUBLISH'),
+    DANGEROUS_PIPE_EXEC: t('tp.reason.DANGEROUS_PIPE_EXEC'),
+    DANGEROUS_ENCODED: t('tp.reason.DANGEROUS_ENCODED'),
+    DANGEROUS_INTERPRETER_INLINE: t('tp.reason.DANGEROUS_INTERPRETER_INLINE'),
+    DANGEROUS_EXEC_HOST: t('tp.reason.DANGEROUS_EXEC_HOST'),
+    DANGEROUS_PERSISTENCE: t('tp.reason.DANGEROUS_PERSISTENCE'),
+    DANGEROUS_DOWNLOAD_WRITE: t('tp.reason.DANGEROUS_DOWNLOAD_WRITE'),
+    DANGEROUS_PRIVILEGE: t('tp.reason.DANGEROUS_PRIVILEGE'),
+    DANGEROUS_TRAVERSAL: t('tp.reason.DANGEROUS_TRAVERSAL'),
+    DANGEROUS_OUTSIDE: t('tp.reason.DANGEROUS_OUTSIDE'),
+    REQUIRES_CONFIRM: t('tp.reason.REQUIRES_CONFIRM'),
+    WRITES_WORKSPACE_FILE: t('tp.reason.WRITES_WORKSPACE_FILE')
+  } satisfies Record<ToolPolicyReasonCode, string>
+  // 快照里的码按主进程同一张规则表来；万一未来漂出一个表外码，原样显示码本身（不再拼 i18n key）
+  const reasonTextOf = (code: string): string =>
+    code in reasonText ? reasonText[code as ToolPolicyReasonCode] : code
   const [snapshot, setSnapshot] = useState<ToolPolicySnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -105,7 +141,7 @@ export const ToolPolicyDialog: React.FC<{ assistantId?: string; onClose: () => v
                 key={code}
                 className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
               >
-                {t(`tp.reason.${code}`)}
+                {reasonTextOf(code)}
               </span>
             ))
           : tool.dynamic
@@ -122,7 +158,7 @@ export const ToolPolicyDialog: React.FC<{ assistantId?: string; onClose: () => v
           key={code}
           className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] text-[var(--color-text)]"
         >
-          {t(`tp.reason.${code}`)}
+          {reasonTextOf(code)}
         </span>
       ))}
     </div>

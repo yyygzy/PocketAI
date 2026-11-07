@@ -112,9 +112,9 @@ describe('工具策略屏（P0-3a／P0-3c）', () => {
     expect(screen.getAllByText('已停用').length).toBeGreaterThan(0)
     expect(screen.getByText('需逐条授权')).toBeTruthy()
     expect(screen.getByText('终端工具当前未启用，模型看不到它；下方规则仍按注册表展示')).toBeTruthy()
-    // 终端规则同样按快照里的码渲染；ONLY_FROM_SNAPSHOT 在屏里没有本地名单，只能来自返回对象
+    // 终端规则同样按快照里的码渲染；ONLY_FROM_SNAPSHOT 在屏里没有本地名单，只能来自返回对象（表外码原样显示）
     expect(screen.getByText('删除文件（含 git clean -f）')).toBeTruthy()
-    expect(screen.getByText('tp.reason.ONLY_FROM_SNAPSHOT')).toBeTruthy()
+    expect(screen.getByText('ONLY_FROM_SNAPSHOT')).toBeTruthy()
     expect(screen.getByText('格式化磁盘')).toBeTruthy()
     // 注册表视角才标 `*` 的 MCP 口径
     expect(screen.getByText('* 只覆盖内置工具，MCP 工具必须逐条勾选；勾选后仍按各自判定执行')).toBeTruthy()

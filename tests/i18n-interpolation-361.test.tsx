@@ -292,8 +292,9 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     expect(parametrized.map(rel), '模板标记键被带参调用＝渲染出半个字面大括号').toEqual([])
   })
 
-  it('动态 key 调用点钉在 105 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
-    // §417 P0-3a：工具策略屏两发 `tp.reason.${code}`（ToolPolicyDialog.tsx:99／116）⇒ 101→103
+  it('动态 key 调用点钉在 100 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
+    // §417 P0-3a：工具策略屏两发 `tp.reason.${code}`（旧注释 99／116，现 ToolPolicyDialog.tsx:108／125）
+    //   已改为 `satisfies Record<ToolPolicyReasonCode, string>` 字面表 ⇒ 动态点 −2
     //
     // 110→105 复查（7 处逐条定性后的处置，不是"把 103 改成现数"）：
     //  ① 已改写 5 发——联合类型本身是闭合枚举，展开成字面量表让编译期兜底：
@@ -315,7 +316,8 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     //  余下 5 发在改写前都不是缺陷（四语键齐全），也没有误报（都是真调用点）。
     //  计数含义：105 = "5 改写 + 2 登记"之后仍在数里的动态调用点总数，不是"闸门通过"。
     //  §429：技能市场那个无挂载点的孤儿文件删除后，它带来的 2 个动态调用点一并退场 ⇒ 105→103（只减不增）。
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(103)
+    //  本次 C 类收口：DataHealthPanel `dh.integrity.role.${p.role}` 随 KbProviderRole 联合类型改字面表 ⇒ −1；103→100。
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(100)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {

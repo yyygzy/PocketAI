@@ -20,7 +20,8 @@ import type {
   KbBrokenDoc,
   KbDuplicateGroup,
   KbIntegrityReport,
-  KbProviderIssue
+  KbProviderIssue,
+  KbProviderRole
 } from '../../shared/types'
 
 // ─── 纯函数：重复文档分组 ────────────────────────────────────────
@@ -67,7 +68,7 @@ export function collectProviderIssues(
   const byId = new Map(providers.map((p) => [p.id, p]))
   const issues: KbProviderIssue[] = []
   for (const kb of kbs) {
-    const refs: Array<{ role: string; providerId: string | null; model: string | null }> = [
+    const refs: Array<{ role: KbProviderRole; providerId: string | null; model: string | null }> = [
       { role: 'embedding', providerId: kb.embeddingProviderId, model: kb.embeddingModel },
       { role: 'rerank', providerId: kb.rerankProviderId, model: kb.rerankModel },
       { role: 'hyde', providerId: kb.hydeProviderId, model: kb.hydeModel },

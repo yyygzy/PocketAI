@@ -2,7 +2,7 @@
 // 数据来源：dataHealth:get 聚合（只读探测，见 src/main/steward/data-health.ts）
 // 修复动作：dataHealth:kb-clean / kb-dedup / kb-reindex（见 src/main/knowledge/kb-health.ts）
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { DataHealthReport, KbDocStatus, KbDocument, KbDuplicateGroup } from '../../../../shared/types'
+import type { DataHealthReport, KbDocStatus, KbDocument, KbDuplicateGroup, KbProviderRole } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -22,6 +22,14 @@ function fmtTime(ms: number | null): string {
 
 export const DataHealthPanel: React.FC = () => {
   const { t } = useI18n()
+  // 5 个 provider 角色 ↔ i18n 的 dh.integrity.role.*：字面量表钉住完整性（不再运行时拼 key）
+  const providerRoleText = {
+    embedding: t('dh.integrity.role.embedding'),
+    rerank: t('dh.integrity.role.rerank'),
+    hyde: t('dh.integrity.role.hyde'),
+    multiquery: t('dh.integrity.role.multiquery'),
+    ocr: t('dh.integrity.role.ocr')
+  } satisfies Record<KbProviderRole, string>
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
   const [report, setReport] = useState<DataHealthReport | null>(null)
@@ -537,7 +545,7 @@ export const DataHealthPanel: React.FC = () => {
                   <tr key={`${p.kbId}-${p.role}-${i}`} className="border-t border-[var(--color-border)]">
                     <td className="py-1.5 pr-2 truncate max-w-0">
                       <span className="text-[10px] text-[var(--color-text-muted)] mr-1.5">{p.kbName}</span>
-                      <span className="text-[var(--color-text)]">{t(`dh.integrity.role.${p.role}`)}</span>
+                      <span className="text-[var(--color-text)]">{providerRoleText[p.role]}</span>
                     </td>
                     <td className="py-1.5 text-right text-[var(--color-warning)] whitespace-nowrap">
                       {t(`dh.integrity.issue.${p.issue}`)}

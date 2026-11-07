@@ -8,6 +8,7 @@ import type {
   ModelWarnCode
 } from './model-rec-codes'
 import type { ExternalDroppedMessages, ExternalWarning } from './conversation-import-external'
+import type { ToolPolicyReasonCode } from './tool-policy-reasons'
 
 // ---------- 硬件信息 ----------
 export interface CpuInfo {
@@ -403,12 +404,15 @@ export interface KbDuplicateGroup {
   docs: { id: string; title: string; createdAt: number }[]
 }
 
+/** 知识库 provider 引用角色（与 kb-health.ts 的 refs 清单同源） */
+export type KbProviderRole = 'embedding' | 'rerank' | 'hyde' | 'multiquery' | 'ocr'
+
 /** KB 数据健康：知识库配置的 provider 引用失效 */
 export interface KbProviderIssue {
   kbId: string
   kbName: string
-  /** 引用角色：embedding | rerank | hyde | multiquery | ocr */
-  role: string
+  /** 引用角色 */
+  role: KbProviderRole
   /** missing = provider 已删除；disabled = 已禁用；model-missing = 模型不在该 provider 模型列表 */
   issue: 'missing' | 'disabled' | 'model-missing'
 }
@@ -892,7 +896,7 @@ export interface ToolPolicyEntry {
   /** 是否有按参数动态判定（当前只有 shell_exec） */
   dynamic: boolean
   /** 静态基线的原因码（如 WRITES_WORKSPACE_FILE）；动态工具见 shell 那一段 */
-  reasons: string[]
+  reasons: ToolPolicyReasonCode[]
   /** 仅「当前助手」视角：这条工具是否在该助手的授权面内（与 isToolAllowedBy 同一判定） */
   granted?: boolean
 }

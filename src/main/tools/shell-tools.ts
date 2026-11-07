@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process'
 import type { BuiltinTool } from './builtin'
 import type { ShellPolicy } from '../../shared/types'
+import type { ToolPolicyReasonCode } from '../../shared/tool-policy-reasons'
 import { getWorkspaceDir, resolveWorkspacePath } from './fs-tools'
 import { getShellConfig } from './shell-config'
 import { errMsg } from '../error'
@@ -25,9 +26,9 @@ export interface CommandClassification {
  * 策略屏与分类器共用的原因码：这里定义一次，`classifyCommand`／`classifyShellArgs` 只引用常量，
  * 屏上列出的事项因此不可能与真正执行用的规则漂开。
  */
-const REASON_ROOT_DELETE = 'BLOCKED_ROOT_DELETE'
-const REASON_OUTSIDE = 'DANGEROUS_OUTSIDE'
-const REASON_REQUIRES_CONFIRM = 'REQUIRES_CONFIRM'
+const REASON_ROOT_DELETE: ToolPolicyReasonCode = 'BLOCKED_ROOT_DELETE'
+const REASON_OUTSIDE: ToolPolicyReasonCode = 'DANGEROUS_OUTSIDE'
+const REASON_REQUIRES_CONFIRM: ToolPolicyReasonCode = 'REQUIRES_CONFIRM'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MIN_TIMEOUT_MS = 10_000
@@ -93,7 +94,7 @@ const SEGMENT_SPLIT_RE = /&&|\|\||[|&;\r\n]/
 
 // ---------- deny（黑名单：毁灭性/不可逆系统命令，永不执行） ----------
 // 每条 [正则, reason]，对整条命令（大小写不敏感）匹配
-const DENY_RULES: Array<[RegExp, string]> = [
+const DENY_RULES: Array<[RegExp, ToolPolicyReasonCode]> = [
   // format 必须带盘符才算（避免误杀 "npm run format"）
   [/\bformat(?:\.com)?\b[^\n]*\b[a-z]:/i, 'BLOCKED_FORMAT'],
   [/\bdiskpart\b/i, 'BLOCKED_DISKPART'],
@@ -128,7 +129,7 @@ const ROOT_DELETE_RE = [
 
 // ---------- confirm（危险特征：需用户审批） ----------
 // 对拆分后的每个片段匹配；命中即确认
-const CONFIRM_RULES: Array<[RegExp, string]> = [
+const CONFIRM_RULES: Array<[RegExp, ToolPolicyReasonCode]> = [
   [/\b(?:rm|del|erase|rd|rmdir|remove-item)\b/i, 'DANGEROUS_DELETE'],
   // 绕开 rm/del 词表的等效删除：git clean -f（-n 干跑不含 f，不误伤）、find -delete、rsync --delete
   [/\bgit\b[^|&;\r\n]*\bclean\b[^|&;\r\n]*(?:\s-[a-zA-Z]*f|--force\b)/i, 'DANGEROUS_DELETE'],
@@ -295,7 +296,7 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
  * 供用户手动终端使用——用户即操作者，不需要 confirm 审批层，但仍硬拒 deny 规则。
  * 返回 null=放行；否则返回稳定 reason code。
  */
-export function classifyDenyOnly(command: string): string | null {
+export function classifyDenyOnly(command: string): ToolPolicyReasonCode | null {
   const raw = String(command ?? '')
   if (!raw.trim()) return null
   const cmd = process.platform === 'win32' ? raw.replace(/\^/g, '') : raw
@@ -303,7 +304,7 @@ export function classifyDenyOnly(command: string): string | null {
     if (re.test(cmd)) return reason
   }
   for (const re of ROOT_DELETE_RE) {
-    if (re.test(cmd)) return 'BLOCKED_ROOT_DELETE'
+    if (re.test(cmd)) return REASON_ROOT_DELETE
   }
   return null
 }
@@ -561,8 +562,8 @@ export function getShellTools(): BuiltinTool[] {
 export interface ShellPolicyInfo {
   enabled: boolean
   policy: ShellPolicy
-  confirmReasons: string[]
-  denyReasons: string[]
+  confirmReasons: ToolPolicyReasonCode[]
+  denyReasons: ToolPolicyReasonCode[]
 }
 
 /**
