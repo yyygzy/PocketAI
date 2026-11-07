@@ -53,7 +53,6 @@ export const McpTemplatesModal: React.FC<Props> = ({ onClose, onCreated }) => {
         env: inst.draft.env,
         url: inst.draft.url,
         headers: inst.draft.headers,
-        enabled: inst.draft.enabled,
         pythonPackages: inst.draft.pythonPackages
       })
       // 闸门拒绝走结构化失败，不是异常

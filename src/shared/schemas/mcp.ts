@@ -90,7 +90,6 @@ const mcpServerRecordFull = z.object({
         })
       }
     }),
-  enabled: z.boolean(),
   createdAt: z.number().int().nonnegative(),
   pythonPackages: z
     .array(z.string().max(MCP_MAX_PACKAGE_CHARS))

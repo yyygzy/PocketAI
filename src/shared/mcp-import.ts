@@ -15,7 +15,6 @@ export interface McpImportDraft {
   env: Record<string, string>
   url: string | null
   headers: Record<string, string>
-  enabled: boolean
   pythonPackages: string[]
 }
 
@@ -100,7 +99,6 @@ function parseEntry(key: string, raw: unknown): McpImportItem {
         env: {},
         url,
         headers,
-        enabled: true,
         pythonPackages: []
       }
     }
@@ -142,7 +140,6 @@ function parseEntry(key: string, raw: unknown): McpImportItem {
       env,
       url: null,
       headers: {},
-      enabled: true,
       pythonPackages
     }
   }

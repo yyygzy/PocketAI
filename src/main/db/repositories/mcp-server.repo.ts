@@ -24,7 +24,6 @@ interface McpServerRow {
   args: string | null // JSON 数组字符串
   env: string | null // JSON 对象字符串
   url: string | null
-  enabled: number
   created_at: number
   python_packages?: string | null // JSON 字符串数组（v16 起；旧库可能无此列）
   headers?: string | null // JSON 对象字符串（v41 起；旧库可能无此列）
@@ -68,7 +67,6 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
     env,
     url: row.url,
     headers,
-    enabled: row.enabled === 1,
     createdAt: row.created_at,
     // v44 前的旧库无此列 → 一律按「不信任」处理（SEC-5 的默认必须偏保守）
     trustReadOnly: row.trust_read_only === 1,
@@ -147,7 +145,7 @@ export const mcpServerRepo = {
     if (existing) {
       db.prepare(
         `UPDATE mcp_servers SET
-           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, enabled=?, python_packages=?, headers=?, trust_read_only=?
+           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, python_packages=?, headers=?, trust_read_only=?
          WHERE id=?`
       ).run(
         input.name ?? existing.name,
@@ -157,7 +155,6 @@ export const mcpServerRepo = {
         JSON.stringify(input.args ?? existing.args),
         envCipher,
         input.url ?? existing.url,
-        input.enabled !== undefined ? (input.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
         JSON.stringify(pythonPackages),
         headersCipher,
         trustReadOnly,
@@ -167,8 +164,8 @@ export const mcpServerRepo = {
       const now = Date.now()
       db.prepare(
         `INSERT INTO mcp_servers
-           (id, name, transport, runtime, command, args, env, url, enabled, created_at, python_packages, headers, trust_read_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, name, transport, runtime, command, args, env, url, created_at, python_packages, headers, trust_read_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -178,7 +175,6 @@ export const mcpServerRepo = {
         JSON.stringify(input.args ?? []),
         envCipher,
         input.url ?? null,
-        input.enabled !== false ? 1 : 0,
         now,
         JSON.stringify(pythonPackages),
         headersCipher,

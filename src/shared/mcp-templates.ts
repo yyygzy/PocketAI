@@ -22,7 +22,7 @@ export interface McpTemplate {
   desc: string
   /** 场景分组（i18n key 后缀，渲染端按 agent.tplCat<Key> 翻译并分组展示） */
   category: 'web' | 'file' | 'think' | 'auto'
-  draft: Omit<McpImportDraft, 'enabled'>
+  draft: McpImportDraft
   /** 需用户填写占位符的模板才声明；创建前渲染端按此渲染输入框 */
   placeholders?: McpTemplatePlaceholder[]
 }
@@ -242,8 +242,7 @@ export function instantiateMcpTemplate(
       args: (t.draft.args ?? []).map(sub),
       url: t.draft.url ? sub(t.draft.url) : null,
       env: subMap(t.draft.env),
-      headers: subMap(t.draft.headers),
-      enabled: true
+      headers: subMap(t.draft.headers)
     }
   }
 }

@@ -47,7 +47,6 @@ describe('McpForm 处理 none 模式闸门拒绝', () => {
       args: [],
       env: {},
       url: null,
-      enabled: true,
       createdAt: 0,
       pythonPackages: [],
       headers: {},
@@ -60,7 +59,7 @@ describe('McpForm 处理 none 模式闸门拒绝', () => {
     expect(screen.queryByText(BLOCK_MSG)).toBeNull()
   })
 
-  it('不再渲染「启用」开关，提交载荷也不再带 enabled（列保留，由 repo 沿用旧值）', async () => {
+  it('不再渲染「启用」开关，提交载荷也不再带 enabled', async () => {
     const rec: McpServerRecord = {
       id: 'srv-1',
       name: 'demo',
@@ -70,14 +69,13 @@ describe('McpForm 处理 none 模式闸门拒绝', () => {
       args: [],
       env: {},
       url: null,
-      enabled: true,
       createdAt: 0,
       pythonPackages: [],
       headers: {},
       trustReadOnly: false
     }
     stubPocketai({ saveMcpServer: () => rec })
-    mount({ name: 'demo', transport: 'stdio', command: 'node', enabled: false })
+    mount({ name: 'demo', transport: 'stdio', command: 'node' })
     expect(screen.queryByText('启用')).toBeNull()
     await clickSave()
     const call = pocketaiCalls().find((c) => c.fn === 'saveMcpServer')

@@ -56,7 +56,6 @@ function crashRecord(over: Partial<McpServerRecord> = {}): McpServerRecord {
     env: { POCKETAI_ATTEMPTS_FILE: attemptsFile },
     url: null,
     headers: {},
-    enabled: true,
     pythonPackages: [],
     trustReadOnly: false,
     createdAt: 1,

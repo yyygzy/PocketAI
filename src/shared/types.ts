@@ -967,7 +967,6 @@ export interface McpServerRecord {
   url: string | null // http 传输
   /** http 传输的自定义请求头（如 Authorization: Bearer xxx）；stdio 恒为 {} */
   headers: Record<string, string>
-  enabled: boolean
   createdAt: number
   /**
    * SEC-5：是否信任该 Server 的「只读命名」工具免确认。默认 false ⇒ 该 Server 的全部工具

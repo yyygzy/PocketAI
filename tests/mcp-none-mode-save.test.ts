@@ -56,7 +56,6 @@ const DDL = `
     args TEXT,
     env TEXT,
     url TEXT,
-    enabled INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     python_packages TEXT,
     headers TEXT,
@@ -217,8 +216,8 @@ describe('不受闸门影响的既有通路', () => {
   it('明文模式仍能迁移历史明文 env（migratePlaintextSecrets 不经 save）', () => {
     mocks.db
       .prepare(
-        `INSERT INTO mcp_servers (id,name,transport,command,args,env,url,enabled,created_at)
-         VALUES ('legacy','legacy','stdio','npx','[]','{"API_KEY":"sk-historical"}',NULL,1,0)`
+        `INSERT INTO mcp_servers (id,name,transport,command,args,env,url,created_at)
+         VALUES ('legacy','legacy','stdio','npx','[]','{"API_KEY":"sk-historical"}',NULL,0)`
       )
       .run()
     mcpServerRepo.migratePlaintextSecrets()
@@ -233,26 +232,5 @@ describe('不受闸门影响的既有通路', () => {
       mcpServerRepo.restoreAllSecrets({ [rec.id]: { env: { API_KEY: 'sk-rotated-back' }, headers: {} } })
     ).not.toThrow()
     expect(mcpServerRepo.get(rec.id)?.env).toEqual({ API_KEY: 'sk-rotated-back' })
-  })
-})
-
-// 表单摘掉「启用」开关后不再提交 enabled，但列仍在：新建沿用默认 1，更新沿用旧值（含历史 0）
-describe('mcp_servers.enabled 的写入路径仍然工作', () => {
-  it('新建时未传 enabled ⇒ 落库为 1', () => {
-    const rec = mcpServerRepo.save({ name: 'demo', transport: 'stdio', command: 'node', env: {} })
-    expect(rec.enabled).toBe(true)
-  })
-
-  it('更新时未传 enabled ⇒ 沿用旧值，不把历史 0 翻成 1', () => {
-    const rec = mcpServerRepo.save({
-      name: 'demo',
-      transport: 'stdio',
-      command: 'node',
-      env: {},
-      enabled: false
-    })
-    expect(rec.enabled).toBe(false)
-    const saved = mcpServerRepo.save({ id: rec.id, name: 'demo-renamed' })
-    expect(saved.enabled).toBe(false)
   })
 })

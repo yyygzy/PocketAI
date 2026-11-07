@@ -160,7 +160,6 @@ function makeRecord(over: Partial<McpServerRecord> = {}): McpServerRecord {
     env: {},
     url: null,
     headers: {},
-    enabled: true,
     createdAt: 0,
     trustReadOnly: false,
     pythonPackages: [],
@@ -983,10 +982,10 @@ describe('McpManager — §315 reconcileRuntimes 只摘"已经不是那条记录
     expect(logLines).toEqual(['srv1:还在跑'])
   })
 
-  it('只改了名字与 enabled ⇒ 不许停（那几列不改变"这个进程是什么"）', async () => {
+  it('只改了名字与 createdAt ⇒ 不许停（那两列不改变"这个进程是什么"）', async () => {
     mocks.repoList = [makeRecord({ env: { TOKEN: 'a' } })]
     await mgr.start('srv1')
-    mocks.repoList = [makeRecord({ name: '换了个名', enabled: false, createdAt: 9, env: { TOKEN: 'a' } })]
+    mocks.repoList = [makeRecord({ name: '换了个名', createdAt: 9, env: { TOKEN: 'a' } })]
     expect(await mgr.reconcileRuntimes()).toEqual([])
   })
 

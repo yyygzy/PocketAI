@@ -156,7 +156,6 @@ function makeRecord(id: string): McpServerRecord {
     env: {},
     url: null,
     headers: {},
-    enabled: true,
     createdAt: 0,
     trustReadOnly: false,
     pythonPackages: []

@@ -29,7 +29,6 @@ function runtimeWith(status: McpServerStatus): McpServerRuntime {
     env: {},
     url: null,
     headers: {},
-    enabled: true,
     createdAt: 1,
     trustReadOnly: false,
     pythonPackages: [],

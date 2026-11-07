@@ -686,7 +686,6 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
           env: inst.draft.env,
           url: inst.draft.url,
           headers: inst.draft.headers,
-          enabled: inst.draft.enabled,
           pythonPackages: inst.draft.pythonPackages
         })
         if ('ok' in saved) {

@@ -141,8 +141,7 @@ beforeAll(async () => {
     transport: 'stdio',
     runtime: 'node',
     command: process.execPath,
-    args: [FIXTURE],
-    enabled: true
+    args: [FIXTURE]
   }).id
   await mcpManager.start(mcpServerId)
 })

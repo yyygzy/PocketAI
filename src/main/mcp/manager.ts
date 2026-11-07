@@ -169,7 +169,8 @@ export function startupFailureHint(message: string): string {
 
 /**
  * 「这个进程是什么」的指纹（§315 运行时对账用）。只收会改变进程本身（或工具权限语义）的字段：
- * `name`／`enabled`／`createdAt` 改了不改进程 ⇒ 不在清单里，否则改个名字就会杀掉正在跑的 Server。
+ * `name`／`createdAt` 改了不改进程 ⇒ 不在清单里，否则改个名字就会杀掉正在跑的 Server。
+ * （`enabled` 列已在迁移 v58 删除，历史注释里提到的它不再存在。）
  * 数组按存储顺序比（args／pythonPackages 的顺序有意义），env/headers 按键排序比（同一份值不该因键序变化而误停机）。
  */
 function identityOf(r: McpServerRecord): string {
@@ -485,7 +486,7 @@ export class McpManager extends EventEmitter {
    *
    * 为什么不能整张清掉：forget 会**杀掉正在跑的子进程**，而"这条记录还是那个进程"是常态
    * （改名、改开关都不影响进程是什么）。只比身份字段：
-   * `name`／`enabled`／`createdAt` 改了不改进程，所以不在清单里；
+   * `name`／`createdAt` 改了不改进程，所以不在清单里（`enabled` 列已在迁移 v58 删除）；
    * `trustReadOnly` 必须在——工具的权限分级是在建工具列表那一刻烤进 `entry.tools` 的（:297／:583），
    * 云端把它关掉而本机继续用旧列表 ⇒ Agent 还会**免确认**调用一个旧配置起的进程。
    * env/headers 也进清单：合并对本机已有的行本来就保留本机密文（merge-service 的 preserveColumns），

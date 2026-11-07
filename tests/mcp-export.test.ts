@@ -16,7 +16,6 @@ function rec(partial: Partial<McpServerRecord> & Pick<McpServerRecord, 'name' | 
     env: {},
     url: null,
     headers: {},
-    enabled: true,
     createdAt: 1700000000000,
     trustReadOnly: false,
     pythonPackages: [],
@@ -136,16 +135,15 @@ describe('mcp-export', () => {
     expect(r.mcpServers.fs!.env!.API_KEY).toBe('real')
   })
 
-  it('不导出 id/enabled/createdAt/runtime', () => {
+  it('不导出 id/createdAt/runtime', () => {
     const r = buildMcpExportPayload([
-      rec({ name: 'fs', transport: 'stdio', command: 'node', enabled: false })
+      rec({ name: 'fs', transport: 'stdio', command: 'node' })
     ])
     const entry = r.mcpServers.fs as Record<string, unknown>
     expect(entry.id).toBeUndefined()
-    expect(entry.enabled).toBeUndefined()
     expect(entry.createdAt).toBeUndefined()
     expect(entry.runtime).toBeUndefined()
-    // 禁用服务仍导出
+    // 配置本体仍导出
     expect(entry.command).toBe('node')
   })
 

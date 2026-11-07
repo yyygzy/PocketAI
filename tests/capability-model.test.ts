@@ -67,7 +67,6 @@ const server = (
   env: {},
   url: null,
   headers: {},
-  enabled: true,
   createdAt: 1,
   trustReadOnly: false,
   pythonPackages: [],
@@ -168,20 +167,6 @@ describe('MCP 状态：四种运行状态 + enabled 不参与', () => {
 
   it('running（工具名只在这档带出）', () => {
     expect(deriveMcpCapabilityState(runtime({ id: 'x', status: 'running' }))).toBe('running')
-  })
-
-  it('record.enabled 不参与状态：enabled=true 但没 runtime 仍是未启动；enabled=false 但 running 仍是运行中', () => {
-    const groups = buildCapabilityGroups(
-      baseInput({
-        servers: [
-          server({ id: 's1', name: 'enabled-true', enabled: true }),
-          server({ id: 's2', name: 'enabled-false', enabled: false })
-        ],
-        runtimes: [runtime({ id: 's2', status: 'running' })]
-      })
-    )
-    expect(groups.mcpServers[0]!.state).toBe('stopped')
-    expect(groups.mcpServers[1]!.state).toBe('running')
   })
 })
 

@@ -77,11 +77,10 @@ describe('instantiateMcpTemplate', () => {
   const templates = listMcpTemplates()
   const filesystem = templates.find((t) => t.id === 'filesystem')!
 
-  it('占位符替换为用户填写的值，enabled 为 true', () => {
+  it('占位符替换为用户填写的值', () => {
     const inst = instantiateMcpTemplate(filesystem, { dir: 'D:\\docs' })
     expect(inst.error).toBeUndefined()
     expect(inst.draft?.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem', 'D:\\docs'])
-    expect(inst.draft?.enabled).toBe(true)
   })
 
   it('缺值返回 missing:<key>', () => {

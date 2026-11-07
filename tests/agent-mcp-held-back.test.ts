@@ -51,8 +51,7 @@ beforeAll(() => {
     transport: 'stdio',
     runtime: 'node',
     command: process.execPath,
-    args: [FIXTURE],
-    enabled: true
+    args: [FIXTURE]
   })
   serverId = rec.id
 })

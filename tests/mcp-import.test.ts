@@ -62,7 +62,6 @@ describe('mcp-import', () => {
         env: { KEY: 'val' },
         url: null,
         headers: {},
-        enabled: true,
         pythonPackages: []
       })
     })

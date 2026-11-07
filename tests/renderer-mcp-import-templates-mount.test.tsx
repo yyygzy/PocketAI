@@ -31,7 +31,7 @@ describe('① 批量导入：闸门拒绝的那条计入警告，成功数不虚
       const name = (rec as { name: string }).name
       return name === 'secret-two'
         ? { ok: false, error: '未设置主密码，新密钥不会被保存' }
-        : { id: 'srv-1', name, transport: 'stdio', enabled: true }
+        : { id: 'srv-1', name, transport: 'stdio' }
     })
     fireEvent.change(screen.getByPlaceholderText(zh['agent.importPh']), { target: { value: JSON_TWO } })
     fireEvent.click(screen.getByText(zh['agent.importParse']))
@@ -44,7 +44,7 @@ describe('① 批量导入：闸门拒绝的那条计入警告，成功数不虚
   })
 
   it('反向对照：全部成功时不出现警告条，成功数等于条数', async () => {
-    mount((rec) => ({ id: 'srv-ok', name: (rec as { name: string }).name, transport: 'stdio', enabled: true }))
+    mount((rec) => ({ id: 'srv-ok', name: (rec as { name: string }).name, transport: 'stdio' }))
     fireEvent.change(screen.getByPlaceholderText(zh['agent.importPh']), { target: { value: JSON_TWO } })
     fireEvent.click(screen.getByText(zh['agent.importParse']))
     fireEvent.click(await screen.findByText(zh['agent.importConfirm']))
@@ -97,7 +97,7 @@ describe('② 模板创建：闸门拒绝不许标「已创建」，成功才标
   })
 
   it('同屏正向对照：真存下来时才打「已创建」——上一条的"没有"不是因为徽标根本不渲染', async () => {
-    const rec = { id: 'srv-mem', name: 'memory', transport: 'stdio', enabled: true }
+    const rec = { id: 'srv-mem', name: 'memory', transport: 'stdio' }
     mount(() => rec)
     fireEvent.click(createBtnOf('memory'))
     await waitFor(() => expect(screen.getByText(zh['agent.tplCreated'])).toBeTruthy())

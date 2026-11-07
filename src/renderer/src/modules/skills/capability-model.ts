@@ -3,8 +3,8 @@
 // 两条硬口径，改这里之前先读：
 // 1) MCP 的「已授权 N 个助手」**只能**来自主进程 policySnapshot()（ToolPolicyEntry[]）。
 //    渲染端不写任何 permission 名单或阈值——工具是否可调用、`'*'` 覆盖到哪，都由 registry 一处判定。
-// 2) MCP **不展示** `mcp_servers.enabled`：`manager.start()` 根本不读这个字段，运行与否只由
-//    runtime.status 决定。把 enabled 画成「已启用」是一张假状态脸（本文件连读都不读它）。
+// 2) MCP **没有**「启用开关」：`manager.start()` 从不读旧的 `mcp_servers.enabled`（该列已在迁移
+//    v58 删除），运行与否只由 runtime.status 决定。把状态画成「已启用」是一张假状态脸。
 import type {
   AssistantRecord,
   McpServerRecord,
@@ -153,7 +153,7 @@ export function countAuthorizedAssistants(
   return count
 }
 
-/** 只读 runtime.status。`record.enabled` 故意不参与——理由见文件头。 */
+/** 只读 runtime.status。MCP 没有「启用开关」——理由见文件头。 */
 export function deriveMcpCapabilityState(
   runtime: Pick<McpServerRuntime, 'status'> | undefined
 ): McpCapabilityState {

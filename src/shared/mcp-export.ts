@@ -3,7 +3,7 @@
 // 安全默认：env/headers 中的敏感值默认替换为 REDACTED——判定同时看键名（authorization/token/…）
 // 与值的形态（sk-/ghp_/Bearer/高熵串），因为键名由用户或模板自填，`KEY_1`/`X-Auth` 会躲过键名匹配。
 // 便携场景配置文件可能随 U 盘丢失，换机导入后按 x-pocketai-redacted-keys 清单手动补密钥即可。
-// 不导出 id/enabled/createdAt；runtime 不导出（导入端按 command basename 推断）；
+// 不导出 id/createdAt（旧 enabled 列已在迁移 v58 删除）；runtime 不导出（导入端按 command basename 推断）；
 // python 包名走 PocketAI 扩展键 x-pocketai-python-packages（标准客户端忽略未知键）。
 import type { McpServerRecord } from './types'
 
@@ -90,7 +90,7 @@ function redactRecord(
 /**
  * 导出记录列表为标准 mcpServers 载荷。
  * 同名记录（理论上不该有）后者覆盖前者；空 env/headers 省略键；
- * 禁用状态的服务同样导出（换机后用户自行启停，导入端默认 enabled=true）。
+ * 与运行状态/启用状态无关：配置本体一律导出（旧 enabled 列已在迁移 v58 删除）。
  */
 export function buildMcpExportPayload(
   records: McpServerRecord[],

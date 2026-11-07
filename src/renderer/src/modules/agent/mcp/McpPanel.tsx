@@ -142,7 +142,6 @@ export const McpPanel: React.FC = () => {
           env: base?.env ?? {},
           url: base?.url ?? null,
           headers: base?.headers ?? {},
-          enabled: base?.enabled ?? false,
           createdAt: base?.createdAt ?? Date.now(),
           trustReadOnly: base?.trustReadOnly ?? false,
           pythonPackages: base?.pythonPackages ?? [],

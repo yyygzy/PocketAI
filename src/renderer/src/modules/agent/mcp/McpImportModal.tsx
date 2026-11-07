@@ -45,7 +45,6 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
           env: item.draft.env,
           url: item.draft.url,
           headers: item.draft.headers,
-          enabled: item.draft.enabled,
           pythonPackages: item.draft.pythonPackages
         })
         // 闸门拒绝（如未设主密码时的新密钥）走结构化失败，不是异常

@@ -968,6 +968,23 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE conversations ADD COLUMN agent_mode INTEGER NOT NULL DEFAULT 0;
     `
+  },
+  {
+    // v58：删除 mcp_servers.enabled（死字段）。
+    //
+    // 它从来没有判定式：启动/重启/对账只校验记录存在，全仓没有一处用 enabled 决定行为；
+    // 上一批（96cd45a）已摘掉表单里的「启用」勾选框，这一版把列本身删掉。
+    //
+    // 不可重入：SQLite 的 DROP COLUMN 没有 IF EXISTS，重复执行会报 "no such column"。
+    // 本仓库测试惯例是删掉 schema_migrations 行再跑一遍，所以先用 table_info 守卫。
+    // 内置 SQLite 3.53.4（>= 3.35），支持 ALTER TABLE ... DROP COLUMN，不倒表、不 VACUUM。
+    version: 58,
+    name: 'drop_mcp_servers_enabled',
+    up: (db) => {
+      const cols = db.prepare('PRAGMA table_info(mcp_servers)').all() as Array<{ name: string }>
+      if (!cols.some((c) => c.name === 'enabled')) return
+      db.exec('ALTER TABLE mcp_servers DROP COLUMN enabled;')
+    }
   }
 ]
 
