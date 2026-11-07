@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { AssistantRecord, ProviderRecord, KnowledgeBase, ToolSchema, SkillRecord } from '../../../../shared/types'
 import { planResidentSkills, RESIDENT_SKILL_TOTAL_CHAR_BUDGET } from '../../../../shared/skill-budget'
 import { useI18n } from '../../i18n'
@@ -11,11 +11,13 @@ interface Props {
   providers: ProviderRecord[]
   onCancel: () => void
   onSaved: (a: AssistantRecord) => void
+  /** 能力中心「去授权」时只做滚动聚焦到 MCP 工具组；勾选逻辑仍完全在本编辑器内 */
+  focusToolGroup?: 'mcp'
 }
 
 const VARIABLE_KEYS = ['ae.var.date', 'ae.var.time', 'ae.var.weekday', 'ae.var.user', 'ae.var.knowledge', 'ae.var.tools', 'ae.var.skills']
 
-export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel, onSaved }) => {
+export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel, onSaved, focusToolGroup }) => {
   const { t } = useI18n()
   const [avatar, setAvatar] = useState(initial.avatar ?? '🤖')
   const [name, setName] = useState(initial.name ?? '')
@@ -40,6 +42,18 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
   const [skillsUnread, setSkillsUnread] = useState<{ error?: string } | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const mcpGroupRef = useRef<HTMLDivElement | null>(null)
+
+  // 能力中心跳进来时只帮用户滚到 MCP 工具组，不替他勾任何一项
+  useEffect(() => {
+    if (focusToolGroup !== 'mcp') return
+    // MCP 工具组要等工具清单回来才渲染；只盯 focusToolGroup 会在组还没出现时就滚空
+    if (tools.length === 0) return
+    const id = window.setTimeout(() => {
+      mcpGroupRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 0)
+    return () => window.clearTimeout(id)
+  }, [focusToolGroup, tools])
 
   // ---------- 三份清单读（§270）：两条失败路各写原因、读到即收回；失败侧保持上一份 ----------
   /**
@@ -407,7 +421,14 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
           </div>
         )}
         {mcpTools.length > 0 && (
-          <div>
+          <div
+            ref={mcpGroupRef}
+            className={
+              focusToolGroup === 'mcp'
+                ? 'rounded-md outline outline-1 outline-[var(--color-accent)] p-2'
+                : undefined
+            }
+          >
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                 🔌 {t('ae.groupMcp')}

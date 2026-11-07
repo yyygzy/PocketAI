@@ -19,6 +19,7 @@ import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
 import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
+import { CapabilityCenter } from '../../skills/CapabilityCenter'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
@@ -60,6 +61,8 @@ export const McpPanel: React.FC = () => {
   const [toolRuns, setToolRuns] = useState<Record<string, ToolRunState>>({})
   const [importOpen, setImportOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
+  // 高级控制台只留一个入口；能力中心复用同一份外壳（不另写工具勾选逻辑）
+  const [capabilityOpen, setCapabilityOpen] = useState(false)
   // §336：调用日志切换 server 时旧请求可能迟到，用代次计数器钉住"只接受最新那一发"
   const callLogGenRef = useRef(0)
 
@@ -262,6 +265,12 @@ export const McpPanel: React.FC = () => {
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold">MCP Servers</h3>
           <div className="flex gap-1">
+            <button
+              onClick={() => setCapabilityOpen(true)}
+              className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
+            >
+              {t('cap.title')}
+            </button>
             <button
               onClick={() => setTemplatesOpen(true)}
               className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
@@ -636,6 +645,10 @@ export const McpPanel: React.FC = () => {
             await load()
           }}
         />
+      )}
+
+      {capabilityOpen && (
+        <CapabilityCenter onClose={() => setCapabilityOpen(false)} />
       )}
     </div>
   )

@@ -881,6 +881,12 @@ export interface ToolPolicyEntry {
   id: string
   name: string
   source: 'builtin' | 'mcp'
+  /**
+   * 仅 source='mcp' 时填充：这条工具属于哪个 Server（取自 ToolSchema.mcpServerId）。
+   * 加它是为了让能力中心按 Server 汇总「已授权 N 个助手」时不必去猜 `mcp:<serverId>:<name>` 前缀。
+   * 纯增量字段：既有快照消费方（ToolPolicyDialog 等）只读 id/name/source/state/granted，不受影响。
+   */
+  mcpServerId?: string
   permission: 'auto' | 'confirm' | 'deny'
   state: ToolPolicyState
   /** 是否有按参数动态判定（当前只有 shell_exec） */

@@ -7,7 +7,7 @@ import { reportIpcError, hasIpcFailed, ipcFailText, logIpcError } from '../../ut
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useToast } from '../../components/ToastProvider'
 import { errText } from '../../utils/error'
-import { SkillMarket } from './SkillMarket'
+import { CapabilityCenter } from './CapabilityCenter'
 import { useConfirm } from '../../components/ConfirmDialog'
 
 export const SkillModule: React.FC = () => {
@@ -97,7 +97,7 @@ export const SkillModule: React.FC = () => {
           <div className="flex items-center gap-1">
             <button
               onClick={() => setMarketOpen(true)}
-              title={t('skill.market.title')}
+              title={t('cap.title')}
               className="text-xs px-2 py-1 rounded bg-[var(--color-inline-code-bg)] hover:bg-[var(--color-hover-overlay)]"
             >
               🛒
@@ -189,7 +189,7 @@ export const SkillModule: React.FC = () => {
 
       {/* 技能市场模态 */}
       {marketOpen && (
-        <SkillMarket onClose={() => setMarketOpen(false)} onChanged={load} />
+        <CapabilityCenter onClose={() => setMarketOpen(false)} onChanged={load} />
       )}
 
       {dialog}
