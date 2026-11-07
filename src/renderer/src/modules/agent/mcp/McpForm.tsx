@@ -31,7 +31,6 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   const [envText, setEnvText] = useState(JSON.stringify(initial.env ?? {}, null, 2))
   const [url, setUrl] = useState(initial.url ?? '')
   const [headersText, setHeadersText] = useState(JSON.stringify(initial.headers ?? {}, null, 2))
-  const [enabled, setEnabled] = useState(initial.enabled !== false)
   // SEC-5：MCP 工具默认每次调用都要人工确认；勾选「信任只读命名工具」后，
   // get/list/read 等只读前缀才免确认（名字由 Server 自报，默认不信任）
   const [trustReadOnly, setTrustReadOnly] = useState(initial.trustReadOnly ?? false)
@@ -165,7 +164,6 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         // 仅 stdio+python 保留依赖列表；repo 层也会兜底归一化
         pythonPackages:
           transport === 'stdio' && runtime === 'python' ? packageLines : [],
-        enabled,
         trustReadOnly
       })
       // 主进程闸门（如未设主密码时拒绝新密钥）以 { ok:false, error } 返回，
@@ -461,10 +459,6 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
             {t('agent.f.trustReadOnly')}
             <span className="block text-[11px] text-[var(--color-text-muted)]">{t('agent.f.trustReadOnlyHint')}</span>
           </span>
-        </label>
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          {t('common.enable')}
         </label>
       </div>
       {error && <div className="text-xs text-[var(--color-danger)] bg-[var(--color-danger-bg)] px-3 py-2 rounded">{error}</div>}

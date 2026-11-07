@@ -42,7 +42,9 @@ const DISPOSED = [
   'wizard.modelTitle', 'common.none', 'skill.market.editHint', 'mention.kbAttached', 'mention.kbLimit',
   'ms.single', 'ms.provider', 'ms.model', 'ms.modelId', 'ms.addCompare', 'am.deleteBtn', 'usage.requestCount',
   'ollama.running', 'dh.integrity.brokenDocs', 'dh.integrity.duplicates', 'dh.integrity.providerIssues',
-  'wizard.installed', 'wizard.securityTitle', 'wizard.securitySubtitle', 'wizard.noRecoveryHint', 'wizard.gotoSettings'
+  'wizard.installed', 'wizard.securityTitle', 'wizard.securitySubtitle', 'wizard.noRecoveryHint', 'wizard.gotoSettings',
+  // MCP 表单摘掉「启用」假开关（`mcp_servers.enabled` 从不参与运行判定）后成孤儿：四语一并删除
+  'common.enable'
 ]
 
 /**

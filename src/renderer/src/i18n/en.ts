@@ -68,7 +68,6 @@ export const en = {
   'common.start': 'Start',
   'common.starting': 'Starting…',
   'common.restart': 'Restart',
-  'common.enable': 'Enabled',
   'common.add': 'Add',
   'common.unknownError': 'Unknown error',
   'common.docs': 'documents',

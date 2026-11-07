@@ -67,7 +67,6 @@ export const ko = {
   'common.start': '시작',
   'common.starting': '시작 중…',
   'common.restart': '다시 시작',
-  'common.enable': '활성화됨',
   'common.add': '추가',
   'common.unknownError': '알 수 없는 오류',
   'common.docs': '개의 문서',

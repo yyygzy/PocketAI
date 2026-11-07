@@ -68,7 +68,6 @@ export const zh = {
   'common.start': '启动',
   'common.starting': '启动中…',
   'common.restart': '重启',
-  'common.enable': '启用',
   'common.add': '添加',
   'common.unknownError': '未知错误',
   'common.docs': '篇文档',

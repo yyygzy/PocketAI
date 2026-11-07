@@ -235,3 +235,24 @@ describe('不受闸门影响的既有通路', () => {
     expect(mcpServerRepo.get(rec.id)?.env).toEqual({ API_KEY: 'sk-rotated-back' })
   })
 })
+
+// 表单摘掉「启用」开关后不再提交 enabled，但列仍在：新建沿用默认 1，更新沿用旧值（含历史 0）
+describe('mcp_servers.enabled 的写入路径仍然工作', () => {
+  it('新建时未传 enabled ⇒ 落库为 1', () => {
+    const rec = mcpServerRepo.save({ name: 'demo', transport: 'stdio', command: 'node', env: {} })
+    expect(rec.enabled).toBe(true)
+  })
+
+  it('更新时未传 enabled ⇒ 沿用旧值，不把历史 0 翻成 1', () => {
+    const rec = mcpServerRepo.save({
+      name: 'demo',
+      transport: 'stdio',
+      command: 'node',
+      env: {},
+      enabled: false
+    })
+    expect(rec.enabled).toBe(false)
+    const saved = mcpServerRepo.save({ id: rec.id, name: 'demo-renamed' })
+    expect(saved.enabled).toBe(false)
+  })
+})

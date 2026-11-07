@@ -67,7 +67,6 @@ export const ja = {
   'common.start': '開始',
   'common.starting': '起動中…',
   'common.restart': '再起動',
-  'common.enable': '有効',
   'common.add': '追加',
   'common.unknownError': '不明なエラー',
   'common.docs': '件のドキュメント',

@@ -60,6 +60,32 @@ describe('McpForm 处理 none 模式闸门拒绝', () => {
     expect(screen.queryByText(BLOCK_MSG)).toBeNull()
   })
 
+  it('不再渲染「启用」开关，提交载荷也不再带 enabled（列保留，由 repo 沿用旧值）', async () => {
+    const rec: McpServerRecord = {
+      id: 'srv-1',
+      name: 'demo',
+      transport: 'stdio',
+      runtime: 'binary',
+      command: 'node',
+      args: [],
+      env: {},
+      url: null,
+      enabled: true,
+      createdAt: 0,
+      pythonPackages: [],
+      headers: {},
+      trustReadOnly: false
+    }
+    stubPocketai({ saveMcpServer: () => rec })
+    mount({ name: 'demo', transport: 'stdio', command: 'node', enabled: false })
+    expect(screen.queryByText('启用')).toBeNull()
+    await clickSave()
+    const call = pocketaiCalls().find((c) => c.fn === 'saveMcpServer')
+    const payload = call?.args[0] as Record<string, unknown> | undefined
+    expect(payload).toBeTruthy()
+    expect(Object.prototype.hasOwnProperty.call(payload, 'enabled')).toBe(false)
+  })
+
   it('表单原样提交用户填写的 env，是否放行由主进程判定', async () => {
     // 编辑既有记录：env 是掩码视图，用户把值改成真实新密钥
     stubPocketai({
