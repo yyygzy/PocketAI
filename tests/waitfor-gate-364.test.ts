@@ -472,8 +472,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // 上限＝迁移后的现数，不留余量；绑定那一份里两条靠"切 tab 叠两发在飞读"的并发用例因触发路径消失而删除
       // （在线索引那份的并发契约没有丢，②③⑤合并重写仍在上表）。
       // 同批新增 capability-mcp-stop-429（停止按钮三条：成功退场／失败不动状态／迟到事件重读）。
+      // v58（删 mcp_servers.enabled）修该文件的授权数竞态：新增 1 颗门（先等「已授权 N 个助手」到货再断言，
+      // 否则后面的「停后消失」恒真）；「停后授权数消失」并进「起键就绪」那同一颗门里，不另开第二颗。
       'tests/capability-bind-412.test.tsx': 7,
-      'tests/capability-mcp-stop-429.test.tsx': 3,
+      'tests/capability-mcp-stop-429.test.tsx': 4,
       'tests/capability-online-seq-322.test.tsx': 8,
       'tests/capability-row-residue-326.test.tsx': 4,
       'tests/capability-visibility-428.test.tsx': 6,
@@ -559,7 +561,16 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-local-judgement-panel.test.tsx': 13,
       'tests/renderer-mcp-import-templates-mount.test.tsx': 2,
       'tests/renderer-mcp-none-mode-save.test.tsx': 4,
-      'tests/renderer-notes-332.test.tsx': 9,
+      // 2026-11-07（settle 假等待修复）9→11，**+2 全在 332③#3**，不是写多了：
+      //   原 9 处断言前都只有 `settle()`（setTimeout 0）当屏障——React 提交走 `setImmediate`，
+      //   全量多 worker 下 timer 先到就断言，反向对照那条会停在初值空态「还没有笔记」＝偶发假红。
+      //   9 处全部改成"等正向前提真的落到 DOM"：①×2（notes.loadFail／甲笔记）、②（新建失败）、
+      //   ③#1（自动保存失败）、③#2（已经不在了）、④×2（删除失败／成功退编辑态的「选择左侧笔记…」）、
+      //   ⑤（置顶失败）这 8 处用 `findByText`（RTL 自带等待，本分类器只认 `await waitFor`，故不计）；
+      //   只剩 ③#3 必须写两颗门：那一发成功回包在屏上**没有新文案**（与旧副本同形），单点文本「上次保存」
+      //   在选中笔记那一刻就已存在、拿它当门会在到货前就放行＝假通过；唯一可观测的是「保存中…」的
+      //   **在场→退场**过渡 ⇒ 第一颗等它上屏（在飞那一帧）、第二颗等它退场（到货），两段缺一不可。
+      'tests/renderer-notes-332.test.tsx': 11,
       'tests/renderer-ollama-panel-liveness-380.test.tsx': 8,
       'tests/renderer-p0-2a-copy-415.test.tsx': 9,
       'tests/renderer-pip-source-confirm.test.tsx': 1,
@@ -643,7 +654,8 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-channel-b3.test.tsx:127 -> :128',
       'tests/renderer-file-open-332.test.tsx:107 -> :109',
       'tests/renderer-image-read-256.test.tsx:84 -> :85',
-      'tests/renderer-mcp-none-mode-save.test.tsx:59 -> :60',
+      // v58（删 mcp_servers.enabled）：该用例记录夹具少了一行 `enabled`，整块下移，故门与断言各上移一行（判语本身不变）。
+      'tests/renderer-mcp-none-mode-save.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:64 -> :65',
       'tests/renderer-provider-settings.test.tsx:249 -> :250',

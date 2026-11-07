@@ -35,7 +35,6 @@ const SERVER = {
   env: {},
   url: null,
   headers: {},
-  enabled: true,
   createdAt: 1,
   trustReadOnly: false,
   pythonPackages: []
@@ -132,11 +131,21 @@ describe('429 能力中心：停止按钮', () => {
     await openMcpDetail()
     expect(screen.getByTestId('capability-mcp-stop')).toBeTruthy()
     expect(bodyText()).toContain(L('cap.mcp.toolsTitle'))
-    expect(bodyText()).toContain(L('cap.state.mcp.authorized').replace('{n}', '1'))
+    // 授权人数是 loadPolicy() 异步到货的：先把它等出来，后面的「停后消失」才不是恒真断言
+    await waitFor(
+      () => expect(bodyText()).toContain(L('cap.state.mcp.authorized').replace('{n}', '1')),
+      MOUNT_BUDGET
+    )
     expect(bodyText()).toContain('probe_tool')
 
     fireEvent.click(screen.getByTestId('capability-mcp-stop'))
-    await waitFor(() => expect(screen.getByTestId('capability-mcp-start')).toBeTruthy(), MOUNT_BUDGET)
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-mcp-start')).toBeTruthy()
+      // 「存在」已在停止前等出来过，这里并进同一发门里等「消失」，才不会变成永远为真的断言
+      expect(bodyText(), '授权数也不许留着').not.toContain(
+        L('cap.state.mcp.authorized').replace('{n}', '1')
+      )
+    }, MOUNT_BUDGET)
 
     expect(pocketaiCalls().filter((c) => c.fn === 'stopMcpServer').map((c) => c.args[0])).toEqual(['m1'])
     // 运行中的三样一起退场：chip、工具块、授权 chip 与授权区
@@ -144,9 +153,6 @@ describe('429 能力中心：停止按钮', () => {
     expect(screen.queryByText(L('cap.state.mcp.running'), { exact: true })).toBeNull()
     expect(bodyText(), '工具清单不许留着上一次的快照').not.toContain(L('cap.mcp.toolsTitle'))
     expect(bodyText()).not.toContain('probe_tool')
-    expect(bodyText(), '授权数也不许留着').not.toContain(
-      L('cap.state.mcp.authorized').replace('{n}', '1')
-    )
     expect(screen.queryByTestId('capability-mcp-stop')).toBeNull()
     expect(screen.queryByTestId('capability-mcp-stop-error')).toBeNull()
   })
