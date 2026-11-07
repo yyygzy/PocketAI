@@ -1111,7 +1111,8 @@ export const ChatModule: React.FC = () => {
       const newConvId = c.id
       setCurrentConvId(convId)
       // 新会话从空串键迁到真实 id；开了 Agent 就把这一格落库（重启后也记住）。
-      // 失败只记诊断、不打断发送：这一发仍靠 payload 的 agentMode 走 Agent 链，丢的只是"下次还开着"
+      // 失败不打断发送（这一发仍靠 payload 的 agentMode 走 Agent 链），但**必须说出来**：
+      // 用户以为「Agent 模式开着」已经记住了，实际重启就丢 ⇒ 与同模块其它写失败一样走 toast。
       setAgentModeByConv((prev) => {
         const next = { ...prev }
         delete next[PENDING_AGENT_MODE_KEY]
@@ -1121,7 +1122,12 @@ export const ChatModule: React.FC = () => {
       if (useAgent) {
         void window.pocketai
           .setConversationAgentMode(newConvId, true)
-          .then((r) => { if (hasIpcFailed(r)) logIpcError('chat.setConversationAgentMode', r.error ?? '') })
+          .then((r) => {
+            if (hasIpcFailed(r)) {
+              logIpcError('chat.setConversationAgentMode', r.error ?? '')
+              toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+            }
+          })
           .catch(reportIpcError('chat.setConversationAgentMode'))
       }
       await reloadConversations()

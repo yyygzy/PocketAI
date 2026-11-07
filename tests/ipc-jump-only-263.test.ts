@@ -211,10 +211,12 @@ const FAIL_CLOSED = SITES.filter((s) => !s.successWrites)
  * §263 开批 19 → 收六处清单读 ⇒ 13；§264 再收六处（锁状态／两发统计／草稿／向导助手清单）⇒ 7；
  * §335 缺陷 hunt 新增一处（SkillModule 实时校验失败不判信封 ⇒ 白屏）⇒ 8；
  * 「货架式助手」本批新增两处（ChatModule／AgentPanel 的「停用内置按 id 兜底」那两发读——
- *   读不到就保持现状，不把名字/导出署名演成"未知助手"）⇒ **现数 10**。
- * 10 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
+ *   读不到就保持现状，不把名字/导出署名演成"未知助手"）⇒ 10。
+ * §429：能力中心挂载读服务商清单（成功支 setProviders 上屏、失败支直接 return，不预选假服务商）＋
+ *   ChatModule :438 那处旧账实测多出一处（`git blame` 指向 6c58cb9，只改登记不改代码）⇒ **现数 12**。
+ * 12 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
  */
-const JUMP_LIE_CAP = 10
+const JUMP_LIE_CAP = 12
 
 const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 首启向导／换电脑检测那一发：读不到就**不弹**（不会弹一个假向导），屏上没有假数字。
@@ -234,14 +236,18 @@ const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 对话页那侧的 provider/model 回填（同 useAgentChat 那条，不摆假模型）；
   // 草稿**写**失败（§221 设计内：📝 不点亮就是它的可见出口，本地补丁不跑就是说实话）；
   // 停用的内置助手按 id 兜底那一发（读不到就保持现状，不把配置条/欢迎语/署名演成"未知助手"）。
-  'src/renderer/src/modules/chat/ChatModule.tsx': 4,
+  // :438 那处是 6c58cb9（10 月）留下的旧账：实测 5 处、登记长期写着 4，本批只把登记改对，不改产品码。
+  'src/renderer/src/modules/chat/ChatModule.tsx': 5,
   // 停用的内置助手被旧会话引用：按 id 兜底那一发读不到时保持现状（不清存档、不把名字改成"未知"）
   // ⇒ "少做一件事"，不是报假状态 ⇒ 登记。
   'src/renderer/src/modules/agent/chat/AgentPanel.tsx': 1,
   // §335 实时校验：validateSkill 基础设施失败时 r 没有 warnings 字段，不判信封就直接 setValidation
   // ⇒ validation.warnings.length 白屏。修复后失败侧只 return（保持原校验状态不打断输入），
   // 属于"少做一件事"（不更新校验结果）而不是"报一个假状态"⇒ 登记，待决策是否补一句 toast。
-  'src/renderer/src/modules/skills/SkillModule.tsx': 1
+  'src/renderer/src/modules/skills/SkillModule.tsx': 1,
+  // §429：能力中心挂载读服务商清单——成功支 `setProviders(v)` 要上屏，失败支直接 `return`
+  // （服务商只用于助手编辑器的默认项，读不到就不预选、不摆假服务商）⇒ 与"少做一件事"同档，登记。
+  'src/renderer/src/modules/skills/CapabilityCenter.tsx': 1
 }
 
 /** 正向对照：这些文件必须**真的出现在名单里**（防"扫描器恒返回空"这种假绿，§250 同一条） */
@@ -310,7 +316,7 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     expect(LIE.length + FAIL_CLOSED.length, '总数＝判过失败面且只跳的那批').toBe(SITES.length)
   })
 
-  it('等式 ratchet：目标桶 10 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2）', () => {
+  it('等式 ratchet：目标桶 12 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2）', () => {
     expect(LIE.length, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(JUMP_LIE_CAP)
   })
 

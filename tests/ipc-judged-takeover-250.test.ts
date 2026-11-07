@@ -240,6 +240,8 @@ const SILENT_PER_FILE: Record<string, number> = {
   // 因为写失败本身已经可见，回滚再失败属于雪上加霜而非独立故障）⇒ 剩 2 处
   'src/renderer/src/components/Sidebar.tsx': 2,
   // §276：助手清单那一读收口（清零）。失败时列表停在空值，把"读不到"演成"你一个助手都没建"⇒ 配 LoadFailNotice＋重试键
+  // §430：`setConversationAgentMode`（新会话落库 Agent 开关）那发也收口（清零）。原来失败侧只有 logIpcError，
+  // 用户以为「开上了」而重启就丢 ⇒ 与同模块其它写失败一样 toast.error（不打断发送，只补可见回执）。
   'src/renderer/src/modules/chat/ChatModule.tsx': 0,
   // §276：单价配置那一读收口（清零）。失败时 pricing 停在 null，费用估算功能不可用⇒ 配 LoadFailNotice＋重试键
   // 剩 1 处是 prepareExportDrag（:558，写操作不是读操作，拖拽准备失败时退化点击导出，设计内）
@@ -257,7 +259,9 @@ const SILENT_PER_FILE: Record<string, number> = {
   // §256 复核后留下的三处设计内静默（都不是读数屏上的谎报，闸门的单条 if 视角看不见理由）：
   //  · ImageModule：生成成功后那发「顺带刷新画廊」——图与耗时已在最新结果区、flash 已说「生成完成」；
   //  · FirstRunWizard：挂载那份 provider 快照无任何渲染消费者，保存前会现取一次，两道都失败还有 repo 的 foundByDedupe 兜底；
-  //    而保存前那发现取失败只进 console 是**故意不卡住首启必经路**。
+  //  · FirstRunWizard :249 保存前的现取本身也**故意静默**——向导是首启必经路，此刻屏上是「保存中」而不是读数屏，
+  //    一次清单刷新失败不该把用户卡在这里（拿到旧快照继续走；判错由 repo 侧 foundByDedupe 兜底）⇒ 不是"用户主动点一下却没反应"。
+  //    §430 复核：这两处就是登记里的 2，SILENT 总数实测 9＝CAP 9，**没有放宽上限**。
   'src/renderer/src/modules/image/ImageModule.tsx': 1,
   'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 2,
   // §257：这一簇没有设计内静默——`useAgentToolConfigs` 四发读全部收口（清零）。
@@ -419,9 +423,11 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
       })
     }
     expect(unjudged, `这些 listProviders 调用点在 14 行窗口内没有任何失败判据：\n${unjudged.map((s) => `  ${s}`).join('\n')}`).toEqual([])
-    // 反向自证：不手挑文件清单（§351 那条），所以先数出现有 11 处调用点（十份文件，向导那屏两处）——
-    // 数为 0 就是这把尺子瞎了，数掉了就是有人新增了调用点而没判
-    expect(callSites, '全仓 `listProviders()` 调用点数（现查 11）').toBe(11)
+    // 反向自证：不手挑文件清单（§351 那条），所以先数出现有 12 处调用点（十一份文件，向导那屏两处）——
+    // 数为 0 就是这把尺子瞎了，数掉了就是有人新增了调用点而没判。
+    // §429 多出的一发来自能力中心（`CapabilityCenter.tsx` 挂载读服务商清单，失败支直接 return、不摆假服务商），
+    // 它已在上方 14 行窗口判据里过线（`hasIpcFailed` 判定）；这里只把计数改到实测。
+    expect(callSites, '全仓 `listProviders()` 调用点数（现查 12）').toBe(12)
 
     // 上面那条窗口判据只问"有没有判"，问不出**顺序**与"成功那一发收不收得回去"（§348 第 34／§345 两条同族），
     // 所以对本批这一处再钉三件：判据必须在写 state 之前、成功分支必须把原因清掉。

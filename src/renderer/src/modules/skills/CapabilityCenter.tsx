@@ -582,9 +582,14 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
           let lastError: string | undefined
           try {
             const runs = await window.pocketai.getMcpRuntimes()
-            if (Array.isArray(runs)) {
+            // safeHandle 的失败是 resolve 的 `{ok:false}`，不是 reject：先判信封再当数组读
+            if (!hasIpcFailed(runs) && Array.isArray(runs)) {
               setRuntimes(runs)
+              setRuntimeUnread(null)
               lastError = runs.find((x) => x.id === server.id)?.lastError ?? undefined
+            } else {
+              // 复读运行态失败：不能把信封当数组读，也不能假装"状态没变"⇒ 让第三组挂上「运行态读不到」那张脸
+              setRuntimeUnread({ error: hasIpcFailed(runs) ? runs.error : undefined })
             }
           } catch (e) {
             logIpcError('mcp.runtimesAfterStartFail', e)
@@ -828,7 +833,7 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
                       <button key={item.skill.id} className={cardShell} onClick={() => setView({ kind: 'installedSkill', id: item.skill.id })}>
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-xl">{item.skill.icon}</span>
-                          <span className="text-sm font-medium truncate">{item.skill.name}</span>
+                          <span className="text-sm font-medium truncate" title={item.skill.name}>{item.skill.name}</span>
                           <span className={`ml-auto ${item.skill.isBuiltin ? readyChip : chip}`}>
                             {item.skill.isBuiltin ? t('skill.builtin') : t('skill.market.mine')}
                           </span>
@@ -888,7 +893,7 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
                           <button key={item.skill.id} className={cardShell} onClick={() => setView({ kind: 'onlineSkill', id: item.skill.id })}>
                             <div className="flex items-center gap-2 mb-1">
                               <span className="text-xl">{item.skill.icon ?? '⚡'}</span>
-                              <span className="text-sm font-medium truncate">{item.skill.name}</span>
+                              <span className="text-sm font-medium truncate" title={item.skill.name}>{item.skill.name}</span>
                               <span className={`ml-auto ${readyChip}`}>{t('skill.market.onlineBadge')}</span>
                             </div>
                             <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed line-clamp-2 min-h-[2.4em]">
@@ -927,12 +932,12 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
                     {filtered.mcpServers.map((item) => (
                       <button key={item.server.id} className={cardShell} onClick={() => setView({ kind: 'mcpServer', id: item.server.id })}>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-medium truncate">{item.server.name}</span>
+                          <span className="text-sm font-medium truncate" title={item.server.name}>{item.server.name}</span>
                           <span className={`ml-auto ${item.state === 'running' ? readyChip : chip}`}>
                             {mcpStateLabels[item.state]()}
                           </span>
                         </div>
-                        <p className="text-[11px] text-[var(--color-text-muted)] truncate">
+                        <p className="text-[11px] text-[var(--color-text-muted)] truncate" title={formatMcpLaunch(item.server) || '—'}>
                           {formatMcpLaunch(item.server) || '—'}
                         </p>
                         {item.authorizedAssistants !== null && item.authorizedAssistants > 0 && (
@@ -955,7 +960,7 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
                     {filtered.mcpTemplates.map((item) => (
                       <button key={item.template.id} className={cardShell} onClick={() => setView({ kind: 'mcpTemplate', id: item.template.id })}>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-xs font-semibold truncate">{item.template.draft.name}</span>
+                          <span className="font-mono text-xs font-semibold truncate" title={item.template.draft.name}>{item.template.draft.name}</span>
                           <span className={`ml-auto ${item.configured ? readyChip : chip}`}>
                             {item.configured ? t('cap.tpl.configured') : t('cap.tpl.unconfigured')}
                           </span>

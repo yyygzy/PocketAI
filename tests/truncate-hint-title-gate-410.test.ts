@@ -240,7 +240,7 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     expect(
       [ALL.length, pureSentence.length, goodSites.length, badSites.length, mixedSites.length, dataSites.length].join('/'),
       `现数 truncate位/纯句子（有title/没title）/混合/纯数据 ＝ ${ALL.length}/${pureSentence.length}（${goodSites.length}/${badSites.length}）/${mixedSites.length}/${dataSites.length}`
-    ).toBe('100/9/1/8/13/78')
+    ).toBe('104/9/1/8/13/82')
   })
 
   it('名单等式：8 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
@@ -357,7 +357,9 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
 
   it('如实报出混合位与纯数据位的数量（本面不收，别让它听起来像"已判定没问题"）', () => {
     expect(mixedSites.length, `混合位现数 ${mixedSites.length}＝句子与数据同挂一位，裁的是哪一半要逐处再看`).toBe(13)
-    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(78)
+    // §429：能力中心卡片新入 4 颗纯数据位（技能名／服务器名／启动命令／模板名）；
+    // 本批已逐颗补了 title（裁的是数据本来就该有 tooltip），桶数不变、只把登记改到实测。
+    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(82)
     // 混合位里最像"句子被连坐"的一档：字典句 ≥10 字（这些将来要单独判，本枚只列不判）
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(
