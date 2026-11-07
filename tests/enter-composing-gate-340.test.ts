@@ -113,13 +113,13 @@ describe('② 全仓现数与两桶身份证', () => {
   const freeText = sites.filter((s) => !s.secret)
   const secret = sites.filter((s) => s.secret)
 
-  it(`Enter 提交点总数＝36（口令 12＋自由文本 24）——新增提交点必须先进这张表`, () => {
-    expect(sites.length).toBe(36)
+  it(`Enter 提交点总数＝35（口令 12＋自由文本 23）——新增提交点必须先进这张表`, () => {
+    expect(sites.length).toBe(35)
     expect(secret.length).toBe(12)
-    expect(freeText.length).toBe(24)
+    expect(freeText.length).toBe(23)
   })
 
-  it('一个不漏（§341 起两桶并一条判据）：36 个提交点每个都得判 isComposing', () => {
+  it('一个不漏（§341 起两桶并一条判据）：35 个提交点每个都得判 isComposing', () => {
     const missing = sites.filter((s) => !s.hasComposing).map((s) => `${s.file} → ${s.calls}`)
     expect(missing, `这些输入框按 Enter 会把输入法组字中的半截句子交出去：\n${missing.join('\n')}`).toEqual([])
   })
@@ -147,8 +147,7 @@ describe('② 全仓现数与两桶身份证', () => {
       'modules/settings/SettingsModule.tsx::save',
       'modules/settings/UserMemoryPanel.tsx::add',
       'modules/settings/UserMemoryPanel.tsx::saveEdit,setEditingId',
-      'modules/skills/SkillMarket.tsx::fetchRemote',
-      'modules/skills/SkillMarket.tsx::handleImportFromUrl',
+      'modules/skills/CapabilityCenter.tsx::handleImportFromUrl',
       'modules/translate/TranslateModule.tsx::submit'
     ].sort())
   })

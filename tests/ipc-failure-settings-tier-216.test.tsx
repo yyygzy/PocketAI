@@ -59,7 +59,7 @@ const SITES: Array<[string, string, string]> = [
   ['../src/renderer/src/modules/steward/StewardModule.tsx', 'setVacuumResult(out)\n      const report = await window.pocketai.getHealthReport()', 'setHealth(report.data)'],
   ['../src/renderer/src/components/OllamaPanel.tsx', 'installOllama()', 'setStatus(finalStatus)'],
   ['../src/renderer/src/modules/skills/SkillModule.tsx', 'const saved = await window.pocketai.saveSkill({', 'onSaved(saved)'],
-  ['../src/renderer/src/modules/skills/SkillMarket.tsx', 'const copy = await window.pocketai.saveSkill({', "flash(true, t('skill.market.duplicated'"],
+  ['../src/renderer/src/modules/skills/CapabilityCenter.tsx', 'const copy = await window.pocketai.saveSkill({', "toast.success(t('skill.market.duplicated')"],
   ['../src/renderer/src/modules/sandbox/SandboxModule.tsx', 'createSandboxFile(newName, newHtml)', "setNewName('')"],
   ['../src/renderer/src/modules/agent/components/HtmlBlockActions.tsx', "createSandboxFile(t('sandbox.agentDefaultName'), htmlBlock)", 'setSavedToSandbox(true)'],
   ['../src/renderer/src/modules/agent/components/HtmlBlockActions.tsx', 'createSandboxFile(appName, htmlBlock, {', 'setInstallingApp(false)'],

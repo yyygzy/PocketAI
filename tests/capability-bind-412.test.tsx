@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
-// V4-Iter-412（P0-1 第三枚）：技能市场里"装完就地绑定"那一行
+// V4-Iter-412（P0-1 第三枚）：装完就地绑定那一行——原用例挂在 SkillMarket 上，
+// §429 删除那个已无挂载点的孤儿文件后，契约整段迁到能力中心（同一套 saveAssistant 并集写入）。
 //
 // 现场（改前）：技能屏与技能市场能新建、能导入、能启用，但**没有任何地方**能把一条技能接到助手身上——
 // 助手编辑器的技能区读的是 `listSkills()` 的整表、勾选写 `skillIds`，而市场里连助手清单都没拉过。
-// 结果："我装完这个技能，它就该在这个助手里生效"这件事从来没成立过。
 //
-// 三条口径：
+// 三条口径（迁移后一字未松）：
 //  ① 详情屏上摊开助手清单，已绑的画 ✓、没绑的给一颗「绑定」键（≤3 步：导入 → 详情 → 绑定）；
 //  ② 停用那条不给键，只说一句"先启用才能绑定"——绑了运行期也会被 `listEnabledByIds` 跳过＝按了没反应的那张脸；
 //  ③ 助手那一读失败要上屏并配一颗**同级**重试键（§268：键在 alert 盒子外面，否则会被念进那句的 textContent）。
+//
+// 迁移时**删掉**的两条：原「迟到的那份助手清单」与「迟到 reject」靠"切 tab 再发一发"来叠两个在飞的清单读，
+// 而能力中心没有 tab、助手清单只在挂载/重试时读（重试键只在读不到时出现）⇒ 该并发触发路径已不存在，
+// 代次守卫在能力中心也无从验证。此处如实删掉，不假装覆盖还在。
 import { describe, it, expect, beforeEach } from 'vitest'
-import { fireEvent, screen, waitFor, act } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
-import { SkillMarket } from '../src/renderer/src/modules/skills/SkillMarket'
+import { CapabilityCenter } from '../src/renderer/src/modules/skills/CapabilityCenter'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { AssistantRecord, SkillRecord } from '../src/shared/types'
 
@@ -42,21 +46,27 @@ const A_BUILTIN_BOUND = {
   id: 'a4', name: 'PROBE-内置已绑', isBuiltin: true, skillIds: ['sk1']
 } as unknown as AssistantRecord
 
+/** 能力中心挂载时会同时读技能/助手/MCP/授权/供应商；未预置的通道会被桩直接抛错，这里一次补齐 */
 function mount(over: Record<string, (...a: any[]) => unknown> = {}) {
   stubPocketai({
     listSkills: () => [SKILL_ON, SKILL_OFF],
     listAssistants: () => [A_FREE, A_BOUND],
+    listMcpServers: () => [],
+    getMcpRuntimes: () => [],
+    getToolPolicy: () => ({ tools: [] }),
+    listProviders: () => [],
+    onMcpStatus: () => () => {},
+    onMcpLog: () => () => {},
     saveAssistant: (a: Record<string, unknown>) => a,
-    syncSkills: () => ({ count: 0, errors: [] }),
-    fetchSkillIndex: () => ({ ok: true, skills: [] }),
+    saveSkill: (a: Record<string, unknown>) => a,
     ...over
   })
   return mountWithProviders(
-    <SkillMarket onClose={() => {}} onChanged={async () => [SKILL_ON, SKILL_OFF]} />
+    <CapabilityCenter onClose={() => {}} onChanged={async () => [SKILL_ON, SKILL_OFF]} />
   )
 }
 
-/** 走进某条技能的详情屏：市场默认停在本地 tab 的网格，点卡片进详情 */
+/** 走进某条技能的详情屏：能力中心默认停在总览网格，点卡片进详情 */
 async function openDetail(name: string): Promise<void> {
   const card = await screen.findByText(name, {}, MOUNT_BUDGET)
   const btn = card.closest('button')
@@ -87,7 +97,7 @@ beforeEach(() => {
   ;(Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {}
 })
 
-describe('412 市场：详情屏上就能把技能绑到助手', () => {
+describe('412 能力中心：详情屏上就能把技能绑到助手', () => {
   it('已绑的那位画 ✓、没绑的那位给键；点了 ⇒ 载荷带着这条技能，屏上说绑好了', async () => {
     await mount()
     await openDetail(SKILL_ON.name)
@@ -108,12 +118,12 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
   it('一条都没绑过时那句「未绑定到任何助手」在，绑上之后就不在（空态不是常驻的）', async () => {
     await mount({ listAssistants: () => [A_FREE] })
     await openDetail(SKILL_ON.name)
-    expect(screen.getByTestId('skill-market-bind-none').textContent).toBe(L('skill.market.bindNone'))
+    expect(screen.getByTestId('capability-bind-none').textContent).toBe(L('skill.market.bindNone'))
     fireEvent.click(bindButton('a1')!)
     await savedOnce()
     const done = L('skill.market.bindDone').replace('{name}', A_FREE.name)
     await waitFor(() => expect(bodyText()).toContain(done), MOUNT_BUDGET)
-    expect(screen.queryByTestId('skill-market-bind-none')).toBeNull()
+    expect(screen.queryByTestId('capability-bind-none')).toBeNull()
   })
 
   it('绑那一发回 {ok:false} ⇒ 说「绑定失败：原因」，不许报成功', async () => {
@@ -132,7 +142,7 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
   it('停用的技能不给绑定键，只说一句"先启用才能绑定"', async () => {
     await mount()
     await openDetail(SKILL_OFF.name)
-    expect(screen.getByTestId('skill-market-bind-disabled').textContent).toBe(L('skill.market.bindDisabledHint'))
+    expect(screen.getByTestId('capability-bind-disabled').textContent).toBe(L('skill.market.bindDisabledHint'))
     expect(document.querySelectorAll('[data-skill-bind]').length, '按了没反应的键不该造出来').toBe(0)
     expect(document.querySelectorAll('[data-skill-bound]').length).toBe(0)
   })
@@ -155,7 +165,7 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
     expect(alert.textContent, '盒子里放键会被念进句子').not.toContain(L('agent.retryRead'))
     expect(reads).toBe(1)
 
-    fireEvent.click(screen.getByTestId('skill-market-assistants-retry'))
+    fireEvent.click(screen.getByTestId('capability-assistants-retry'))
     await waitFor(() => expect(bindButton('a1')).toBeTruthy(), MOUNT_BUDGET)
     expect(reads, '重试只补发那一发').toBe(2)
     expect(bodyText()).not.toContain(failed)
@@ -165,54 +175,9 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
     await mount()
     await openDetail(SKILL_ON.name)
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.queryByTestId('skill-market-assistants-retry')).toBeNull()
+    expect(screen.queryByTestId('capability-assistants-retry')).toBeNull()
   })
 
-  /**
-   * §322 同族的第四处：这一发也能叠着发（进市场、切 tab、重试键），而它比另几发多一层机关——
-   * 绑定成功那一路会**本地改写** `assistants`。先发起的那条后回时写的是发出去之前那份快照，
-   * 于是刚点出来的 ✓ 会无声退回成「绑定」那颗键（屏上开始说假话，而库里其实绑好了）。
-   * 同一条用例里两个方向都要见证：最新那条确实写了屏（键长出来了），迟到那条没写（✓ 没被抹掉）。
-   */
-  it('迟到的那份助手清单不许把刚绑上的 ✓ 抹回「绑定」，而最新那条照写', async () => {
-    let releaseFirst: ((v: unknown) => void) | null = null
-    let reads = 0
-    await mount({
-      listAssistants: () => {
-        reads += 1
-        if (reads === 1)
-          return new Promise((res) => {
-            releaseFirst = res
-          })
-        return [A_FREE, A_BOUND]
-      }
-    })
-    // 那颗重试键只在"读不到"时才长出来，这一支没读不到 ⇒ 用切 tab 这条真实路径再发一发
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(L('skill.market.tabOnline')) }))
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(L('skill.market.tabLocal')) }))
-    await openDetail(SKILL_ON.name)
-    expect(reads, '进市场一发＋两次切 tab 各一发').toBe(3)
-
-    fireEvent.click(bindButton('a1')!)
-    await waitFor(() => expect(document.querySelector('[data-skill-bound="a1"]')).toBeTruthy(), MOUNT_BUDGET)
-
-    await act(async () => {
-      ;(releaseFirst as unknown as (v: unknown) => void)([A_FREE, A_BOUND])
-    })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    expect(
-      document.querySelector('[data-skill-bound="a1"]'),
-      '迟到那条带着"还没绑"的旧快照，不该把 ✓ 抹回键'
-    ).toBeTruthy()
-    expect(bindButton('a1')).toBeNull()
-  })
-
-  /**
-   * `.catch` 那一路（通道直接 reject，不是 `{ok:false}`）也要有牙：safeHandle 把主进程抛错转成返回值，
-   * 但 preload 层自己坏掉时走的就是这条 ⇒ 同一张"读不到"的脸＋那颗重试键。
-   */
   it('助手那一发是 reject 面时也是同一张脸（不是静默的空白）', async () => {
     let reads = 0
     await mount({
@@ -227,45 +192,10 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
       .replace('{what}', L('common.assistantsList'))
       .replace('{msg}', 'PROBE:通道坏了')
     await waitFor(() => expect(bodyText()).toContain(failed), MOUNT_BUDGET)
-    fireEvent.click(screen.getByTestId('skill-market-assistants-retry'))
+    fireEvent.click(screen.getByTestId('capability-assistants-retry'))
     await waitFor(() => expect(bindButton('a1')).toBeTruthy(), MOUNT_BUDGET)
     expect(bodyText()).not.toContain(failed)
     expect(reads).toBe(2)
-  })
-
-  /**
-   * `.catch` 里那句代次判据的见证：坏消息也会迟到。
-   * 最新那条已经把清单画上屏了，先发起的那条此时才 reject ⇒ 不许把"读到了"那一屏改口成"读不到"
-   * （同族形状：写屏的三处——清单、失败句、loading——都归最新那条管，§322）。
-   */
-  it('迟到那条是 reject 面时不许把刚读到的清单说成「读不到」', async () => {
-    let rejectFirst: ((e: unknown) => void) | null = null
-    let reads = 0
-    await mount({
-      listAssistants: () => {
-        reads += 1
-        if (reads === 1)
-          return new Promise((_res, rej) => {
-            rejectFirst = rej
-          })
-        return [A_FREE, A_BOUND]
-      }
-    })
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(L('skill.market.tabOnline')) }))
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(L('skill.market.tabLocal')) }))
-    await openDetail(SKILL_ON.name)
-    // 正向对照：最新那条确实写了屏（那颗键在、alert 不在），否则下面那句"不存在"是恒真的
-    expect(bindButton('a1')).toBeTruthy()
-    expect(screen.queryByRole('alert')).toBeNull()
-
-    await act(async () => {
-      ;(rejectFirst as unknown as (e: unknown) => void)(new Error('PROBE:迟到的坏消息'))
-    })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    expect(screen.queryByRole('alert'), '迟到的坏消息不许改口成"读不到"').toBeNull()
-    expect(bindButton('a1')).toBeTruthy()
   })
 
   it('内置助手那一格不给能点的键＝不可点＋同屏一句为什么，而按它确实什么都没发出去（§414）', async () => {
@@ -276,7 +206,7 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
     expect(dead!.disabled, '必失败的那颗键不该让人按').toBe(true)
     expect(dead!.getAttribute('data-skill-blocked')).toBe('true')
     expect(dead!.title).toBe(L('skill.market.bindBuiltinHint'))
-    const hint = screen.getByTestId('skill-market-bind-builtin-hint')
+    const hint = screen.getByTestId('capability-bind-builtin-hint')
     expect(hint.textContent).toBe(L('skill.market.bindBuiltinHint'))
     // 同屏正向对照：非内置那位照旧可点、也不带那颗标记
     const live = bindButton('a1')!
@@ -293,7 +223,7 @@ describe('412 市场：详情屏上就能把技能绑到助手', () => {
   it('反向对照：没有"想绑却绑不了"的内置助手 ⇒ 那句不在；已绑的内置仍画 ✓、不给第二颗键（§414）', async () => {
     await mount({ listAssistants: () => [A_FREE, A_BUILTIN_BOUND] })
     await openDetail(SKILL_ON.name)
-    expect(screen.queryByTestId('skill-market-bind-builtin-hint')).toBeNull()
+    expect(screen.queryByTestId('capability-bind-builtin-hint')).toBeNull()
     expect(document.querySelectorAll('[data-skill-blocked="true"]').length).toBe(0)
     expect(document.querySelector('[data-skill-bound="a4"]'), '已绑的内置画 ✓').toBeTruthy()
     expect(bindButton('a4'), '已绑的不该再给一颗键').toBeNull()

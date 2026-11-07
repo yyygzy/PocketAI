@@ -97,6 +97,9 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
   const [bindError, setBindError] = useState<{ skillId: string; msg: string } | null>(null)
   const [startBusyId, setStartBusyId] = useState<string | null>(null)
   const [startError, setStartError] = useState<{ serverId: string; msg: string } | null>(null)
+  const [stopBusyId, setStopBusyId] = useState<string | null>(null)
+  /** 停止失败：只写 inline，**不动**运行态（失败时服务器仍是上一次读到的状态） */
+  const [stopError, setStopError] = useState<{ serverId: string; msg: string } | null>(null)
   const [logsOpenId, setLogsOpenId] = useState<string | null>(null)
   /** serverId → 最近 200 行运行时日志（与 McpPanel 同一个广播源） */
   const [logs, setLogs] = useState<Record<string, string[]>>({})
@@ -609,6 +612,42 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
     [assistants, confirm, loadPolicy, t]
   )
 
+  /**
+   * 停止 MCP：复用现有 stopMcpServer 通道（不新造 IPC），成功也不弹提示——
+   * 屏上状态 chip 与工具/授权区的消失本身就是反馈。
+   * 成功时立即把该条从 runtimes 里摘掉（缺条目＝stopped，`deriveMcpCapabilityState` 的口径），
+   * 工具清单与授权数都随 `running` 条件一起退场，不会留着上一次的快照装成还在跑。
+   * 失败只写 inline：运行态一个字都不改。
+   */
+  const handleStopServer = useCallback(
+    async (server: McpServerRecord) => {
+      setStopBusyId(server.id)
+      setStopError(null)
+      try {
+        const r = await window.pocketai.stopMcpServer(server.id)
+        if (hasIpcFailed(r)) {
+          setStopError({
+            serverId: server.id,
+            msg: ipcFailText(r, t('common.unknownError'))
+          })
+          return
+        }
+        setRuntimes((cur) => cur.filter((x) => x.id !== server.id))
+        // 启动失败那一行属于上一轮；已经停下来了就不该再把旧原因挂在启动区
+        setStartError((cur) => (cur?.serverId === server.id ? null : cur))
+        loadPolicy(assistants)
+      } catch (e) {
+        setStopError({
+          serverId: server.id,
+          msg: errText(e, t('common.unknownError'))
+        })
+      } finally {
+        setStopBusyId(null)
+      }
+    },
+    [assistants, loadPolicy, t]
+  )
+
   /** 模板创建：校验占位符 → instantiate → saveMcpServer；成功后留在当前详情，可继续启动 */
   const handleCreateTemplate = useCallback(
     async (template: McpTemplate) => {
@@ -745,6 +784,8 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
               bindingSkillId={bindingSkillId}
               startBusyId={startBusyId}
               startError={startError}
+              stopBusyId={stopBusyId}
+              stopError={stopError}
               logsOpenId={logsOpenId}
               logs={logs}
               tplValues={tplValues}
@@ -761,6 +802,7 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
               onCopyBuiltin={handleCopyBuiltin}
               onAuthorize={(a) => setEditor({ initial: a, focusMcp: true })}
               onStart={(s) => void handleStartServer(s)}
+              onStop={(s) => void handleStopServer(s)}
               onToggleLogs={toggleLogs}
               onTplValue={(tplId, key, value) =>
                 setTplValues((prev) => ({ ...prev, [tplId]: { ...prev[tplId], [key]: value } }))
@@ -795,7 +837,14 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
                           {item.skill.description || '—'}
                         </p>
                         <div className="mt-2">
-                          <span className={chip}>{skillStateLabels[item.state](item.boundAssistants)}</span>
+                          {/* 助手清单没读到过就不画「已绑定 N」——空数组≠0，别把"不知道"说成"没人用" */}
+                          <span className={chip}>
+                            {assistantsUnread
+                              ? item.skill.enabled
+                                ? t('skill.on')
+                                : t('skill.off')
+                              : skillStateLabels[item.state](item.boundAssistants)}
+                          </span>
                         </div>
                       </button>
                     ))}
@@ -1013,6 +1062,8 @@ const DetailView: React.FC<{
   bindingSkillId: string | null
   startBusyId: string | null
   startError: { serverId: string; msg: string } | null
+  stopBusyId: string | null
+  stopError: { serverId: string; msg: string } | null
   logsOpenId: string | null
   logs: Record<string, string[]>
   tplValues: Record<string, Record<string, string>>
@@ -1029,6 +1080,7 @@ const DetailView: React.FC<{
   onCopyBuiltin: () => void
   onAuthorize: (a: AssistantRecord) => void
   onStart: (s: McpServerRecord) => void
+  onStop: (s: McpServerRecord) => void
   onToggleLogs: (serverId: string) => void
   onTplValue: (tplId: string, key: string, value: string) => void
   onCreateTemplate: (tpl: McpTemplate) => void
@@ -1147,7 +1199,11 @@ const InstalledSkillDetail: React.FC<{
           )}
         </div>
         <span className={`ml-auto shrink-0 ${skill.enabled ? readyChip : chip}`}>
-          {skillStateLabels[item.state](item.boundAssistants)}
+          {assistantsUnread
+            ? skill.enabled
+              ? t('skill.on')
+              : t('skill.off')
+            : skillStateLabels[item.state](item.boundAssistants)}
         </span>
       </div>
 
@@ -1181,11 +1237,22 @@ const InstalledSkillDetail: React.FC<{
           label={t('cap.behavior.enabled')}
           value={skill.enabled ? t('skill.on') : t('skill.off')}
         />
-        <Row
-          label={t('cap.behavior.bound')}
-          value={item.boundAssistants > 0 ? t('skill.market.userCount', { count: item.boundAssistants }) : t('skill.market.userCountNone')}
-        />
+        {/* 助手清单读不到时这一行没有事实可写，宁可缺席也不写「0 个助手」 */}
+        {!assistantsUnread && (
+          <Row
+            label={t('cap.behavior.bound')}
+            value={item.boundAssistants > 0 ? t('skill.market.userCount', { count: item.boundAssistants }) : t('skill.market.userCountNone')}
+          />
+        )}
       </div>
+
+      {/* 启用 ≠ 在用：启用只让技能可用，还要绑定到助手才会进对话 */}
+      <p
+        className="text-[11px] text-[var(--color-text-muted)] leading-relaxed -mt-2"
+        data-testid="capability-enable-hint"
+      >
+        {t('skill.market.enableHint')}
+      </p>
 
       {/* 就地绑定：写入仍是 saveAssistant 并集；失败只写 inline，已勾/已绑列表原样保留 */}
       <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
@@ -1228,6 +1295,7 @@ const InstalledSkillDetail: React.FC<{
                 boundTo(a) ? (
                   <span
                     key={a.id}
+                    data-skill-bound={a.id}
                     className="text-[11px] px-2 py-1 rounded border border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
                   >
                     ✓ {assistantDisplayName(a, t)}
@@ -1251,6 +1319,7 @@ const InstalledSkillDetail: React.FC<{
                 boundTo(a) ? (
                   <span
                     key={a.id}
+                    data-skill-bound={a.id}
                     className="text-[11px] px-2 py-1 rounded border border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
                   >
                     ✓ {assistantDisplayName(a, t)}
@@ -1258,6 +1327,8 @@ const InstalledSkillDetail: React.FC<{
                 ) : (
                   <button
                     key={a.id}
+                    data-skill-bind={a.id}
+                    data-skill-blocked="true"
                     disabled
                     title={t('skill.market.bindBuiltinHint')}
                     className="text-[11px] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] opacity-50"
@@ -1268,12 +1339,18 @@ const InstalledSkillDetail: React.FC<{
               )}
             </div>
             {builtinAssistants.some((a) => !boundTo(a)) && (
-              <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+              <p
+                className="text-[10px] text-[var(--color-text-muted)] leading-relaxed"
+                data-testid="capability-bind-builtin-hint"
+              >
                 {t('skill.market.bindBuiltinHint')}
               </p>
             )}
             {assistants.every((a) => !boundTo(a)) && (
-              <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+              <p
+                className="text-[10px] text-[var(--color-text-muted)] leading-relaxed"
+                data-testid="capability-bind-none"
+              >
                 {t('skill.market.bindNone')}
               </p>
             )}
@@ -1305,9 +1382,12 @@ const McpServerDetail: React.FC<{
   mcpStateLabels: Record<McpCapabilityState, () => string>
   startBusyId: string | null
   startError: { serverId: string; msg: string } | null
+  stopBusyId: string | null
+  stopError: { serverId: string; msg: string } | null
   logsOpenId: string | null
   logs: Record<string, string[]>
   onStart: (s: McpServerRecord) => void
+  onStop: (s: McpServerRecord) => void
   onToggleLogs: (serverId: string) => void
   onRetryAssistants: () => void
   onAuthorize: (a: AssistantRecord) => void
@@ -1325,9 +1405,12 @@ const McpServerDetail: React.FC<{
   mcpStateLabels,
   startBusyId,
   startError,
+  stopBusyId,
+  stopError,
   logsOpenId,
   logs,
   onStart,
+  onStop,
   onToggleLogs,
   onRetryAssistants,
   onAuthorize,
@@ -1341,6 +1424,8 @@ const McpServerDetail: React.FC<{
     : []
   const running = item.state === 'running'
   const busy = startBusyId === server.id
+  const stopping = stopBusyId === server.id
+  const stopFailedMsg = stopError?.serverId === server.id ? stopError.msg : null
   const runtimeError = runtimes.find((r) => r.id === server.id)?.lastError ?? null
   /** 失败原因优先使用本次点击后刷到的 lastError；面板打开前就已是 error 的走运行时快照 */
   const failedMsg = startError?.serverId === server.id ? startError.msg : runtimeError
@@ -1420,16 +1505,32 @@ const McpServerDetail: React.FC<{
         <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-1.5">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold">{t('cap.mcp.toolsTitle')}</span>
-            {canViewLogs && (
+            <div className="ml-auto shrink-0 flex items-center gap-2">
               <button
-                className="ml-auto text-xs underline text-[var(--color-text-muted)]"
-                data-testid="capability-mcp-toggle-logs"
-                onClick={() => onToggleLogs(server.id)}
+                className="btn-ghost text-xs"
+                data-testid="capability-mcp-stop"
+                disabled={stopping}
+                onClick={() => onStop(server)}
               >
-                {logsOpen ? t('cap.mcp.hideLogs') : t('cap.mcp.viewLogs')}
+                {stopping ? t('cap.mcp.stopping') : t('cap.mcp.stop')}
               </button>
-            )}
+              {canViewLogs && (
+                <button
+                  className="text-xs underline text-[var(--color-text-muted)]"
+                  data-testid="capability-mcp-toggle-logs"
+                  onClick={() => onToggleLogs(server.id)}
+                >
+                  {logsOpen ? t('cap.mcp.hideLogs') : t('cap.mcp.viewLogs')}
+                </button>
+              )}
+            </div>
           </div>
+          {/* 停止失败自己一张脸：运行态不跟着改，重试仍是这颗键 */}
+          {stopFailedMsg && (
+            <p className="text-[11px] text-[var(--color-danger)]" data-testid="capability-mcp-stop-error">
+              {t('cap.mcp.stopFailed', { msg: stopFailedMsg })}
+            </p>
+          )}
           {registrySnapshot === null ? (
             policyUnread ? null : (
               <p className="text-[11px] text-[var(--color-text-muted)]">{t('cap.mcp.toolsPending')}</p>

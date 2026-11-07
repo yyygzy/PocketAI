@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, pocketaiCalls, stubPocketai } from './helpers/renderer'
 import { SkillModule } from '../src/renderer/src/modules/skills/SkillModule'
-import { SkillMarket } from '../src/renderer/src/modules/skills/SkillMarket'
+import { CapabilityCenter } from '../src/renderer/src/modules/skills/CapabilityCenter'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { SkillRecord } from '../src/shared/types'
 
@@ -96,10 +96,10 @@ describe('自带文件那三张脸', () => {
   })
 })
 
-describe('市场那一屏的目录入口', () => {
+describe('能力中心那一屏的目录入口', () => {
   it('点「导入技能目录」⇒ 走那条新通道，并把"已按按需导入"与不执行的字段说出来', async () => {
     stubPocketai({
-      listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
+      listAssistants: () => [],
       listSkills: () => skills,
       syncSkills: () => ({ count: 0, errors: [] }),
       getSkillTemplates: () => [],
@@ -107,6 +107,12 @@ describe('市场那一屏的目录入口', () => {
       saveSkill: (rec: Partial<SkillRecord>) => rec as SkillRecord,
       deleteSkill: () => ({ ok: true, filesRemoved: false }),
       listSkillFiles: () => ({ ok: true, files: [] }),
+      listMcpServers: () => [],
+      getMcpRuntimes: () => [],
+      getToolPolicy: () => ({ tools: [] }),
+      listProviders: () => [],
+      onMcpStatus: () => () => {},
+      onMcpLog: () => () => {},
       importSkillFolder: () => ({
         ok: true,
         skill: skill({ id: 'up-1', name: '上游技能' }),
@@ -116,8 +122,8 @@ describe('市场那一屏的目录入口', () => {
         skipped: [{ path: 'scripts/big.bin', reason: 'FILE_TOO_LARGE' }]
       })
     })
-    mountWithProviders(<SkillMarket onClose={() => {}} onChanged={async () => skills} />)
-    fireEvent.click(await screen.findByTestId('skill-import-folder'))
+    mountWithProviders(<CapabilityCenter onClose={() => {}} onChanged={async () => skills} />)
+    fireEvent.click(await screen.findByTestId('capability-import-folder'))
     const line = await screen.findByText(zh['skill.market.importFolderDone'], { exact: false })
     expect(line.textContent).toContain(zh['skill.market.forcedOnDemand'])
     expect(line.textContent).toContain(

@@ -314,7 +314,8 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     //    由 outbound-coverage.test.ts 的「labelKey/purposeKey 四语存在」用例钉住。
     //  余下 5 发在改写前都不是缺陷（四语键齐全），也没有误报（都是真调用点）。
     //  计数含义：105 = "5 改写 + 2 登记"之后仍在数里的动态调用点总数，不是"闸门通过"。
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(105)
+    //  §429：技能市场那个无挂载点的孤儿文件删除后，它带来的 2 个动态调用点一并退场 ⇒ 105→103（只减不增）。
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(103)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {

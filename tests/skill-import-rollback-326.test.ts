@@ -2,7 +2,7 @@
 // V4-Iter-326⑤ 目录导入的回滚：`rollbackSkillFiles` 有 catch，而 `skillRepo.delete` 原本裸着。
 //
 // 裸着的那一句抛出去会被外层 catch 咽成 `{ok:false,error:<原文>}`，而渲染层认不出这句原文
-// （`SkillMarket.tsx` 的 keyMap 只认三个码，其余一律折叠成「导入失败」）⇒
+// （`CapabilityCenter.tsx` 的 folderErrorText 只认那几个码，其余一律折叠成「导入失败」）⇒
 // 用户看到"失败了"，列表里却多了一条**有记录、没文件**的技能——正是这一层注释明令不许的形状。
 // 所以这一张脸要自己的回码。判据：三种回滚结果各回什么、留没留痕、旧那两张脸不许被新分支吃掉。
 //

@@ -468,6 +468,15 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/backup-late-response-324.test.tsx': 27,
       'tests/backup-merge-stopped-notice-315.test.tsx': 6,
       'tests/backup-stale-banner-325.test.tsx': 15,
+      // §429：技能市场孤儿文件删除后，四份按它源码约定写的用例整体迁到能力中心（文件随之改名），
+      // 上限＝迁移后的现数，不留余量；绑定那一份里两条靠"切 tab 叠两发在飞读"的并发用例因触发路径消失而删除
+      // （在线索引那份的并发契约没有丢，②③⑤合并重写仍在上表）。
+      // 同批新增 capability-mcp-stop-429（停止按钮三条：成功退场／失败不动状态／迟到事件重读）。
+      'tests/capability-bind-412.test.tsx': 7,
+      'tests/capability-mcp-stop-429.test.tsx': 3,
+      'tests/capability-online-seq-322.test.tsx': 8,
+      'tests/capability-row-residue-326.test.tsx': 4,
+      'tests/capability-visibility-428.test.tsx': 6,
       'tests/chat-send-failure-visible-204.test.tsx': 2,
       'tests/data-health-cold-243.test.tsx': 1,
       'tests/data-health-zero-bytes-378.test.tsx': 3,
@@ -580,10 +589,6 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/settings-enc-copy-344.test.tsx': 1,
       'tests/settings-license-copy-346.test.tsx': 3,
       'tests/skill-budget-ui-418.test.tsx': 1,
-      'tests/skill-market-bind-412.test.tsx': 8,
-      'tests/skill-market-fetch-debounce-322.test.tsx': 15,
-      'tests/skill-market-visibility-428.test.tsx': 6,
-      'tests/skill-row-residue-notice-326.test.tsx': 4,
       'tests/stale-read-notice-345.test.tsx': 14,
       'tests/stale-read-notice-347.test.tsx': 25,
       'tests/terminal-frame-epoch-320.test.tsx': 4,
@@ -609,12 +614,12 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     expect(ALL.positive.map(where), `会假红的形状：\n${ALL.positive.map(detail).join('\n')}`).toEqual([])
   })
 
-  it('只会假绿那一档（要求「不存在」）＝21 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
+  it('只会假绿那一档（要求「不存在」）＝20 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
     // §365 判语（分组，位置按现数名单）：
     //   ①「在飞那一帧」本身就是判据对象——负向句读的是"发出之后、落地之前"，折进门里反而把判据废掉：
     //     load-fail-read-retry-350／352／354（"还在加载那一支既没有那句也没有那颗键"）、
     //     renderer-agent-sub-session-refresh-245（挂载那次读到的是空表）、renderer-file-open-332（关窗那一瞬）、
-    //     stale-read-notice-347（切 tab 后在飞那一帧）、skill-market-fetch-debounce-322（两发都在飞）
+    //     stale-read-notice-347（切 tab 后在飞那一帧）、capability-online-seq-322（两发都在飞）
     //   ②弹与不弹由**同一次 handler** 决定（发通道与 setState 同批落地）⇒ 计数门放行时那一帧已定：
     //     renderer-channel-b3 三颗、renderer-websearch-b3、renderer-provider-http-confirm 两颗、
     //     renderer-provider-settings、renderer-mcp-none-mode-save、renderer-wizard-328
@@ -645,8 +650,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-run-stats-unread-396.test.tsx:194 -> :195', // §400 新入名单（不是新形状，是旧版看不见它读的那份屏＝hook 屏）：门等挂载那一发的调用计数、紧随断 `result.current.runStatsUnread` 仍是 null。判语＝**只会漏报**：那一颗只在响应回来的失败分支点亮（`useAgentChat.ts:794`／`:800`），成功／读到 null 那一发回什么都不点⇒门放行那一刻"不在场"恒真，不会因为迟到到货而假红；这一发漏的是「落地以后才点亮」那一档（同块更早已把它断成不在场、后面的门再等它翻真，那是另一颗门的事）。
       'tests/renderer-websearch-b3.test.tsx:89 -> :90', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
-      'tests/skill-market-fetch-debounce-322.test.tsx:160 -> :161',
-      'tests/skill-market-visibility-428.test.tsx:94 -> :95', // §436 新入名单（本批前的 §428）：门等 `reads === 1`（失败那一发已发出），失败分支本身不写屏 ⇒ 门放行时"不在场"恒真，只会漏报、不会假红。
+      'tests/capability-visibility-428.test.tsx:103 -> :104', // §429 迁移（原 §436 判语沿用）：门等 `reads === 1`（失败那一发已发出、渲染已重跑），紧随断言网格没长出假 0；门与断言读同一屏、失败落屏与计数条件同批 ⇒ 只会漏报，不会假红。
       'tests/stale-read-notice-347.test.tsx:159 -> :160'
     ]
     // 比对用整串而非数组：数组的 diff 只印第一颗漂的，剩下几颗得跑好几趟才看得见（本批就撞过）

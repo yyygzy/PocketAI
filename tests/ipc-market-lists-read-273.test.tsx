@@ -2,8 +2,8 @@
 //
 // 名单现查 23 条里这一族占四条（逐条原文 data/tmp/silent-273.json）：
 //  · `AssistantMarket.tsx:31` 挂载读助手清单 ⇒ 失败时网格**整片空白**（这一屏原本连「真的没有」那句话都没有）；
-//  · `SkillMarket.tsx:51` 挂载读本地技能 ⇒ 「还没有任何技能，点击「导入」或新建一个吧」（＝把故障演成"你一个都没装"，
-//    而且这句话正指着市场里那两颗导入键）；
+//  · `CapabilityCenter.tsx` 挂载读本地技能 ⇒ 「还没有任何技能，点击「导入」或新建一个吧」（＝把故障演成"你一个都没装"，
+//    而且这句话正指着能力中心顶部那两颗导入键）；§429 起接替已删除的 `SkillMarket.tsx` 同一发
 //  · `SkillModule.tsx:366` 挂载读技能模板 ⇒ `!skill && templates.length > 0` 为假 ⇒ **那颗「+ 从模板创建」入口整块不见**
 //    （改前那行注释写"保持空列表不影响 UI"，回读 JSX 后确认这条是错的，见台账 §273）；
 //  · `UserMemoryPanel.tsx:23` 挂载读用户记忆 ⇒ 「暂无记忆」。
@@ -14,8 +14,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AssistantMarket } from '../src/renderer/src/modules/chat/AssistantMarket'
-import { SkillMarket } from '../src/renderer/src/modules/skills/SkillMarket'
 import { SkillModule } from '../src/renderer/src/modules/skills/SkillModule'
+import { CapabilityCenter } from '../src/renderer/src/modules/skills/CapabilityCenter'
 import { UserMemoryPanel } from '../src/renderer/src/modules/settings/UserMemoryPanel'
 import { zh } from '../src/renderer/src/i18n/zh'
 // §379：那句记忆提示里的三个数字与主进程预算同源（都取自 shared），测试跟着取同一份、不重抄
@@ -116,18 +116,25 @@ describe('① 助手市场：那片空白不再演成"你一个助手都没建"'
   })
 })
 
-describe('② 技能市场本地那一 tab：「还没有任何技能」这张脸让位', () => {
+describe('② 能力中心已装技能那一格：「还没有任何技能」这张脸让位', () => {
   const mount = (over: Record<string, (...a: any[]) => unknown> = {}): ReturnType<typeof mountWithProviders> => {
     stubPocketai({
-      listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
+      listAssistants: () => [],
       listSkills: () => {
         calls.skills += 1
         return [S1]
       },
-      syncSkills: () => ({ count: 0, errors: [] }),
+      listMcpServers: () => [],
+      getMcpRuntimes: () => [],
+      getToolPolicy: () => ({ tools: [] }),
+      listProviders: () => [],
+      onMcpStatus: () => () => {},
+      onMcpLog: () => () => {},
+      // ③ 的搜索词非空会触发一次在线索引；这里给"空索引"即可，别让它落到未预置通道的告警上
+      fetchSkillIndex: () => ({ ok: true, skills: [] }),
       ...over
     })
-    return mountWithProviders(<SkillMarket onClose={() => {}} onChanged={async () => []} />)
+    return mountWithProviders(<CapabilityCenter onClose={() => {}} onChanged={async () => []} />)
   }
 
   it('读不到 ⇒ 「还没有任何技能…」让位给那句，reject 面也是同一张脸', async () => {
@@ -136,7 +143,7 @@ describe('② 技能市场本地那一 tab：「还没有任何技能」这张�
     expect(screen.queryByText(L('skill.market.empty'))).toBeNull()
   })
 
-  it('那颗键点了有效，而且不去重发别家（这一屏只有本地清单那一发）', async () => {
+  it('那颗键点了有效，而且不去重发别家（这一格只有本地技能清单那一发）', async () => {
     let fail = true
     mount({
       listSkills: () => {
@@ -146,7 +153,7 @@ describe('② 技能市场本地那一 tab：「还没有任何技能」这张�
     })
     await waitFor(() => expect(alerts()).toHaveLength(1), MOUNT_BUDGET)
     fail = false
-    fireEvent.click(screen.getByTestId('skill-market-skills-retry'))
+    fireEvent.click(screen.getByTestId('capability-skills-retry'))
     await waitFor(() => expect(alerts()).toEqual([]), MOUNT_BUDGET)
     expect(calls.skills).toBe(2)
     expect(bodyText()).toContain('PROBE-技能')
@@ -156,8 +163,8 @@ describe('② 技能市场本地那一 tab：「还没有任何技能」这张�
     mount()
     await waitFor(() => expect(bodyText()).toContain('PROBE-技能'), MOUNT_BUDGET)
     expect(alerts()).toEqual([])
-    fireEvent.change(screen.getByPlaceholderText(L('skill.market.searchPh')), { target: { value: 'zzz' } })
-    await waitFor(() => expect(bodyText()).toContain(L('skill.market.noMatch')), MOUNT_BUDGET)
+    fireEvent.change(screen.getByPlaceholderText(L('cap.searchPh')), { target: { value: 'zzz' } })
+    await waitFor(() => expect(bodyText()).toContain(L('cap.noMatch')), MOUNT_BUDGET)
     expect(alerts(), '"没匹配上"不是"读不到"').toEqual([])
   })
 })
@@ -268,13 +275,13 @@ describe('④ 用户记忆那一发', () => {
 
 // ---------- §292 B160 收口：关掉整个弹层再开 ⇒ 挂载效应在 unmount→mount 时重跑 ----------
 // 「这一屏的天然出口是关掉整个弹层再开、代价大到等于没出口」——§273 交付时那句"关掉再开重拉"
-// 只在源码级：`AssistantMarket.tsx:31` 与 `SkillMarket.tsx:51` 都在挂载 `useEffect(..., [])` 里读
+// 只在源码级：`AssistantMarket.tsx:31` 与 `CapabilityCenter.tsx` 都在挂载 `useEffect(..., [])` 里读
 // 清单，市场面板是条件挂载（父层 `open && <XMarket … />`），关掉就是 unmount、再开就是 remount ⇒
 // effect 再跑一次。这条此前没有 CI 读它——有人把清单 store 提升到 Context／全局 memo（§253 那族
 // "跨挂载缓存"）或给 effect 加 `if (assistants.length) return` 之类的守卫，两份清单就会停在上一份、
 // 用户看不到库里新加的助手／技能，而屏上一句错都不冒。§285 已经在 AssistantEditor 上钉过同形状，
 // 这里把两格市场弹层补齐。
-describe('⑤ §292 B160：AssistantMarket／SkillMarket 关掉再开 ⇒ 通道各重发一次', () => {
+describe('⑤ §292 B160：AssistantMarket／能力中心 关掉再开 ⇒ 通道各重发一次', () => {
   it('助手市场：挂→等→unmount→重挂 ⇒ listAssistants 从 1 涨到 2', async () => {
     // 借用 describe ① 里同形状的 mount，只是这里要拿 render 结果去 unmount
     const mountAgain = (): ReturnType<typeof mountWithProviders> => {
@@ -293,17 +300,22 @@ describe('⑤ §292 B160：AssistantMarket／SkillMarket 关掉再开 ⇒ 通道
     await waitFor(() => expect(calls.assistants, '关→重开必须重发清单那一发').toBe(2), MOUNT_BUDGET)
   })
 
-  it('技能市场：挂→等→unmount→重挂 ⇒ listSkills 从 1 涨到 2（syncSkills 不参与计数——§273 那两发里只算清单）', async () => {
+  it('能力中心：挂→等→unmount→重挂 ⇒ listSkills 从 1 涨到 2（其余清单不参与计数——§273 那两发里只算清单）', async () => {
     const mountAgain = (): ReturnType<typeof mountWithProviders> => {
       stubPocketai({
-        listAssistants: () => [], // §412：技能市场挂载时多一发助手清单（「绑定到助手」那一行的数据源）
+        listAssistants: () => [],
         listSkills: () => {
           calls.skills += 1
           return [S1]
         },
-        syncSkills: () => ({ count: 0, errors: [] })
+        listMcpServers: () => [],
+        getMcpRuntimes: () => [],
+        getToolPolicy: () => ({ tools: [] }),
+        listProviders: () => [],
+        onMcpStatus: () => () => {},
+        onMcpLog: () => () => {}
       })
-      return mountWithProviders(<SkillMarket onClose={() => {}} onChanged={async () => []} />)
+      return mountWithProviders(<CapabilityCenter onClose={() => {}} onChanged={async () => []} />)
     }
     const r1 = mountAgain()
     await waitFor(() => expect(calls.skills).toBe(1), MOUNT_BUDGET)

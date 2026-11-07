@@ -297,10 +297,10 @@ const SILENT_PER_FILE: Record<string, number> = {
   // 那不是"想看列表"的人本来要做的动作 ⇒ 按 §268 判据配一颗键
   'src/renderer/src/modules/knowledge/KbAskRoam.tsx': 0,
   // §273：四个清单屏各一发收口（清零）。助手市场那一发失败时网格整片空白（原本连「真的没有」那句话都没有）；
-  //  技能市场那发摆「还没有任何技能，点击「导入」或新建一个吧」——这句话正指着市场里那两颗导入键；
+  //  §429：技能市场那份孤儿文件删除后，同一发（本地技能清单）在能力中心里承担，仍按"读不到→LoadFailNotice＋同级重试键"收口；
   //  用户记忆那发摆「暂无记忆」
   'src/renderer/src/modules/chat/AssistantMarket.tsx': 0,
-  'src/renderer/src/modules/skills/SkillMarket.tsx': 0,
+  'src/renderer/src/modules/skills/CapabilityCenter.tsx': 0,
   'src/renderer/src/modules/settings/UserMemoryPanel.tsx': 0,
   // §273：技能表单的模板那一发收口（清零）。这一张的脸不是空态而是**入口整块不见**；改前那行注释写的是
   // 「失败仅记诊断日志，保持空列表不影响 UI」——回读 JSX 后确认这条判断错了，注释已就地改口（同 §268 那两条的手法）
@@ -730,56 +730,56 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     const read = (rel: string): string =>
       fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
     const am = read('src/renderer/src/modules/chat/AssistantMarket.tsx')
-    const sm = read('src/renderer/src/modules/skills/SkillMarket.tsx')
+    const sm = read('src/renderer/src/modules/skills/CapabilityCenter.tsx')
     const sk = read('src/renderer/src/modules/skills/SkillModule.tsx')
     const um = read('src/renderer/src/modules/settings/UserMemoryPanel.tsx')
     const n = (src: string, re: RegExp): number => (src.match(re) ?? []).length
 
     // ① 四发各两条失败路写原因（resolve 的失败对象／reject），读到即收回
     expect(n(am, /setAssistantsUnread\(\{ error: /g), '助手市场：两条失败路').toBe(2)
-    expect(n(sm, /setSkillsUnread\(\{ error: /g), '技能市场：两条失败路').toBe(2)
+    expect(n(sm, /setSkillsUnread\(\{ error: /g), '能力中心：两条失败路').toBe(2)
     expect(n(sk, /setTemplatesUnread\(\{ error: /g), '技能表单：两条失败路').toBe(2)
     expect(n(um, /setItemsUnread\(\{ error: /g), '用户记忆：两条失败路').toBe(2)
     expect(n(am, /setAssistantsUnread\(null\)/g), '助手市场：读到即收回').toBe(1)
-    expect(n(sm, /setSkillsUnread\(null\)/g), '技能市场：读到即收回').toBe(1)
+    expect(n(sm, /setSkillsUnread\(null\)/g), '能力中心：读到即收回').toBe(1)
     expect(n(sk, /setTemplatesUnread\(null\)/g), '技能表单：读到即收回').toBe(1)
     expect(n(um, /setItemsUnread\(null\)/g), '用户记忆：读到即收回').toBe(1)
     // 两份市场文件里 `reportIpcError` 归零；另两份**按"还剩几条"断言**（那几条不是本批的漏收：
     //   技能模块余 listSkillFiles／validateSkill 两条（§333：syncSkills 改成 toast.error，用户看得见），
     //   用户记忆余删除那一条（§333：改成 flash＋判 hasIpcFailed，不再走 reportIpcError），都是 §224 那批定的留痕）
     expect(n(am, /reportIpcError/g), '助手市场不留那一形').toBe(0)
-    expect(n(sm, /reportIpcError/g), '技能市场不留那一形').toBe(0)
+    expect(n(sm, /reportIpcError/g), '能力中心不留那一形').toBe(0)
     expect(n(sk, /reportIpcError\(/g), '技能模块余那两条留痕').toBe(2)
     expect(n(um, /reportIpcError\(/g), '用户记忆余删除那一条留痕').toBe(0)
     // 一根 loader 只发一个通道
     expect(n(am, /window\.pocketai\s*\.listAssistants\(/g), '助手市场一发').toBe(1)
-    expect(n(sm, /window\.pocketai\s*\.listSkills\(/g), '技能市场一发').toBe(1)
+    expect(n(sm, /window\.pocketai\s*\.listSkills\(/g), '能力中心一发').toBe(1)
     expect(n(sk, /window\.pocketai\s*\.getSkillTemplates\(/g), '技能模板一发').toBe(1)
     expect(n(um, /window\.pocketai\s*\.listMemories\(/g), '用户记忆一发').toBe(1)
 
     // ② 四句真挂得出去：渲染条件与所点名词成对（这一簇四份都是"真没读到"，所以全用 §222 的 LoadFailNotice，
     //    没有 §226 的第二形态——那一档要的是"值还在且可改"，这四格都不成立）
     expect(n(am, /\{view\.mode === 'grid' && assistantsUnread && \(\s*\n\s*<div[\s\S]{0,220}?<LoadFailNotice what=\{t\('common\.assistantsList'\)/g), '助手市场那句').toBe(1)
-    expect(n(sm, /\{tab === 'local' && skillsUnread && \(\s*\n\s*<div[\s\S]{0,220}?<LoadFailNotice what=\{t\('common\.skillsList'\)/g), '技能市场那句').toBe(1)
+    expect(n(sm, /\{skillsUnread \? \(\s*\n\s*<div[\s\S]{0,220}?<LoadFailNotice what=\{t\('common\.skillsList'\)/g), '能力中心那句').toBe(1)
     expect(n(sk, /\{!skill && templatesUnread && \(\s*\n\s*<div[\s\S]{0,260}?<LoadFailNotice\s*\n\s*what=\{t\('common\.skillTemplatesList'\)/g), '技能模板那句').toBe(1)
     expect(n(um, /\{itemsUnread && \(\s*\n\s*<div[\s\S]{0,180}?<LoadFailNotice what=\{t\('set\.memory'\)/g), '用户记忆那句').toBe(1)
 
     // ③ 四颗键各一颗、每屏只这一颗（与 §272 相反：这四发的自发重发都只在"写完东西之后"）
     expect(n(am, /"assistant-market-assistants-retry"/g), '助手市场那颗').toBe(1)
-    expect(n(sm, /"skill-market-skills-retry"/g), '技能市场那颗').toBe(1)
+    expect(n(sm, /"capability-skills-retry"/g), '能力中心那颗').toBe(1)
     expect(n(sk, /"skill-form-templates-retry"/g), '技能模板那颗').toBe(1)
     expect(n(um, /"user-memory-retry"/g), '用户记忆那颗').toBe(1)
     expect(n(am, /agent\.retryRead/g), '助手市场一句一颗').toBe(1)
-    // §412 起技能市场有**两发**清单读（本地技能清单＋助手清单），所以这句一键的屏也是两颗；
-    // 反向钉：新那颗的 testid 只许出现一次，第三颗要进来就先得红在这里
-    expect(n(sm, /agent\.retryRead/g), '技能市场两句两颗（§273 一发＋§412 一发）').toBe(2)
-    expect(n(sm, /"skill-market-assistants-retry"/g), '§412 那颗只一颗').toBe(1)
+    // §412 起能力中心有**多处**清单读（本地技能、MCP 服务器、助手清单×2 处详情），所以这句一键的屏是四颗；
+    // 反向钉：助手那颗的 testid 只在两个详情各一颗，第三处要进来就先得红在这里
+    expect(n(sm, /agent\.retryRead/g), '能力中心四句四颗（§273 一发＋§412 一发＋MCP 两发）').toBe(4)
+    expect(n(sm, /"capability-assistants-retry"/g), '§412 那颗两处详情各一颗').toBe(2)
     expect(n(sk, /agent\.retryRead/g), '技能模块一句一颗（多了就是给不该有机关的地方造键）').toBe(1)
     expect(n(um, /agent\.retryRead/g), '用户记忆一句一颗').toBe(1)
 
     // ④ 「真的没有」那张脸各留一处且带让位；**模板这一发钉的是入口不许被吃掉**（本簇最隐蔽的一张脸）
-    expect(n(sm, /tab === 'local' && skillsUnread/g), '技能市场：让位那一处＋那句那一处（成对，缺一处就红）').toBe(2)
-    expect(n(sm, /t\('skill\.market\.empty'\)/g), '技能市场空态只一处').toBe(1)
+    expect(n(sm, /\{skillsUnread \? \(/g), '能力中心：让位与空态是同一个三元的两个分支').toBe(1)
+    expect(n(sm, /t\('skill\.market\.empty'\)/g), '能力中心空态只一处').toBe(1)
     expect(n(um, /\{items\.length === 0 && !itemsUnread \? \(/g), '用户记忆空态让位').toBe(1)
     expect(n(um, /t\('set\.memoryEmpty'\)/g), '那张空态只一处').toBe(1)
     expect(n(sk, /\{!skill && !templatesUnread && templates\.length > 0 && \(/g), '入口只在"读到了且真有"时出现').toBe(1)
