@@ -20,6 +20,10 @@ const mocks = vi.hoisted(() => ({
   embedCalls: [] as number[],
   embedError: null as Error | null,
   rawTexts: {} as Record<string, string>,
+  oldChunkCount: 0,
+  stageNo: 0,
+  stages: {} as Record<string, Record<number, Float32Array>>,
+  droppedStages: [] as string[],
   reset() {
     this.kb = null
     this.doc = null
@@ -32,6 +36,10 @@ const mocks = vi.hoisted(() => ({
     this.embedCalls = []
     this.embedError = null
     this.rawTexts = {}
+    this.oldChunkCount = 0
+    this.stageNo = 0
+    this.stages = {}
+    this.droppedStages = []
   }
 }))
 
@@ -62,9 +70,42 @@ vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
 }))
 vi.mock('../src/main/db/repositories/kb-chunk.repo', () => ({
   kbChunkRepo: {
+    countByDoc: () => mocks.oldChunkCount,
     deleteByDoc: (docId: string) => mocks.deletedByDoc.push(docId),
     insertMany: (chunks: typeof mocks.inserted) => {
       mocks.inserted.push(...chunks)
+    },
+    createVectorStage: () => {
+      const id = `kb_stage_${String(++mocks.stageNo).padStart(32, '0')}`
+      mocks.stages[id] = {}
+      return id
+    },
+    appendStageVectors: (stageId: string, items: Array<{ sequence: number; embedding: Float32Array }>) => {
+      for (const it of items) mocks.stages[stageId]![it.sequence] = it.embedding
+    },
+    dropVectorStage: (stageId: string) => {
+      mocks.droppedStages.push(stageId)
+      delete mocks.stages[stageId]
+    },
+    replaceDocChunksAtomically: (args: {
+      docId: string
+      kbId: string
+      stageId: string
+      chunks: Array<{ sequence: number; content: string }>
+      updateDoc: () => void
+    }) => {
+      mocks.deletedByDoc.push(args.docId)
+      const vectors = mocks.stages[args.stageId] ?? {}
+      mocks.inserted.push(
+        ...args.chunks.map((c) => ({
+          docId: args.docId,
+          kbId: args.kbId,
+          sequence: c.sequence,
+          content: c.content,
+          embedding: vectors[c.sequence]!
+        }))
+      )
+      args.updateDoc()
     }
   }
 }))
@@ -224,6 +265,47 @@ describe('IngestionService.ingestDocument — 入库状态机', () => {
     expect(result.status).toBe('error')
     expect(result.error).toContain('503')
     expect(mocks.statuses).not.toContain('ready')
+    expect(mocks.inserted).toEqual([])
+  })
+
+  it('有旧索引时重建失败：不删旧块、状态 ready + 明确说明旧索引保留，且能再次重建', async () => {
+    mocks.kb = makeKb()
+    mocks.doc = makeDoc(writeTmp('z'.repeat(200), 'doc.md'), 'md')
+    mocks.oldChunkCount = 3
+    mocks.embedError = new Error('Embedding API 503')
+    const svc = new IngestionService()
+    const result = await svc.ingestDocument('kb1', 'doc1')
+
+    // 旧索引仍在 ⇒ 不能写笼统的 error，也不能在嵌入成功前删块
+    expect(result.status).toBe('ready')
+    expect(result.error).toContain('旧索引已保留（3 块）')
+    expect(result.error).toContain('503')
+    expect(mocks.deletedByDoc).toEqual([])
+    expect(mocks.inserted).toEqual([])
+    expect(mocks.chunkCounts).toContainEqual({ id: 'doc1', n: 3 })
+    // 暂存表无论成败都要丢弃
+    expect(mocks.droppedStages.length).toBe(1)
+
+    // 再次重建可正常替换（失败不会把文档锁死）
+    mocks.embedError = null
+    const again = await svc.ingestDocument('kb1', 'doc1')
+    expect(again.status).toBe('ready')
+    expect(again.error).toBeNull()
+    expect(mocks.deletedByDoc).toEqual(['doc1'])
+  })
+
+  it('有旧索引时源文件丢失：同样保留旧索引并如实说明', async () => {
+    mocks.kb = makeKb()
+    mocks.doc = makeDoc(writeTmp('w'.repeat(200), 'doc.md'), 'md')
+    // 源文件在首次入库后被删除
+    fs.rmSync(mocks.doc.source, { force: true })
+    mocks.oldChunkCount = 2
+    const svc = new IngestionService()
+    const result = await svc.ingestDocument('kb1', 'doc1')
+
+    expect(result.status).toBe('ready')
+    expect(result.error).toContain('旧索引已保留（2 块）')
+    expect(mocks.deletedByDoc).toEqual([])
     expect(mocks.inserted).toEqual([])
   })
 })

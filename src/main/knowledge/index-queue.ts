@@ -1,7 +1,6 @@
 // 索引任务队列：将文档入库/重建索引任务放入后台异步顺序执行
 // 避免大文档批量向量化阻塞 IPC 主线程
-import { ingestionService } from './ingestion'
-import { kbDocRepo } from '../db/repositories/kb-doc.repo'
+import { ingestionService, markDocumentFailure } from './ingestion'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
 import { runInSlotKind } from '../providers/local-slot'
@@ -70,9 +69,10 @@ export class IndexQueue {
           }
         })
       } catch (e) {
-        // ingestion 内部已设置 error 状态，这里仅记录日志
+        // ingestion 内部已按真实旧块数收尾；这里兜事务开始前的失败（KB 配置缺失等），
+        // 同一收尾口保证「旧索引仍在」不会被写成笼统的 error
         log.warn(`索引任务失败: doc=${task.docId} ${errMsg(e)}`)
-        try { kbDocRepo.setStatus(task.docId, 'error', errMsg(e)) } catch { /* ignore */ }
+        try { markDocumentFailure(task.docId, e) } catch { /* ignore */ }
       } finally {
         for (const fn of this.listeners) {
           try { fn(task) } catch { /* ignore listener errors */ }

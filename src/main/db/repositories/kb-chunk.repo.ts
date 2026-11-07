@@ -17,6 +17,22 @@ export interface ChunkInsert {
   embedding: Float32Array
 }
 
+/** 仅正文的分块信息：重建时正文在内存、向量在暂存表，最终事务里两者合并落库 */
+export interface StagedChunkContent {
+  sequence: number
+  content: string
+}
+
+/** 单批从暂存表回读的向量条数：把事务内的 JS 堆峰值钉在「一批」而非整篇向量 */
+const STAGE_VECTOR_BATCH = 64
+
+/** 暂存表名由本模块生成，只允许这个形状（表名会拼进 SQL，不接受外部传入随意值） */
+const STAGE_TABLE_RE = /^kb_stage_[0-9a-f]{32}$/
+
+function assertStageId(stageId: string): void {
+  if (!STAGE_TABLE_RE.test(stageId)) throw new Error('非法向量暂存表名')
+}
+
 export interface ChunkRow {
   id: string
   doc_id: string
@@ -172,6 +188,95 @@ export const kbChunkRepo = {
       }
     })
     tx(chunks)
+  },
+
+  /** 某文档的实际分块数（失败语义按真实块数说话，不信任可能陈旧的 chunk_count） */
+  countByDoc(docId: string): number {
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT COUNT(*) AS n FROM kb_chunks WHERE doc_id=?')
+      .get(docId) as { n: number }
+    return row.n
+  },
+
+  /**
+   * 建一张连接级 TEMP 暂存表（不入主库 schema、进程重启即消失）。
+   * 重建时 embedding 逐批写这里，而不是把整篇向量堆在 JS 堆里。
+   */
+  createVectorStage(): string {
+    const stageId = `kb_stage_${randomUUID().replace(/-/g, '')}`
+    dbService
+      .getHandle()
+      .exec(`CREATE TEMP TABLE ${stageId} (sequence INTEGER PRIMARY KEY, embedding BLOB NOT NULL)`)
+    return stageId
+  },
+
+  /** 追加一批向量到暂存表（每批一个短事务，失败只回滚这一批） */
+  appendStageVectors(
+    stageId: string,
+    items: Array<{ sequence: number; embedding: Float32Array }>
+  ): void {
+    assertStageId(stageId)
+    if (items.length === 0) return
+    const db = dbService.getHandle()
+    const stmt = db.prepare(`INSERT INTO ${stageId}(sequence, embedding) VALUES (?, ?)`)
+    const tx = db.transaction((rows: typeof items) => {
+      for (const r of rows) stmt.run(r.sequence, float32ToBuffer(r.embedding))
+    })
+    tx(items)
+  },
+
+  /** 丢弃暂存表（成功/失败路径都必须调用；TEMP 表随连接消失，这里主动释放） */
+  dropVectorStage(stageId: string): void {
+    assertStageId(stageId)
+    dbService.getHandle().exec(`DROP TABLE IF EXISTS temp.${stageId}`)
+  },
+
+  /**
+   * 原子替换某文档的分块与向量：
+   * 删旧块（含向量映射）→ 分批从暂存表读回新向量并连同正文写入 → 执行 updateDoc（文档状态/计数等）。
+   * 全在**同一个事务**里；任何一步失败整体回滚，旧块与旧向量映射原样保留。
+   *
+   * 正文 `chunks` 只含文本（已在内存），向量按 STAGE_VECTOR_BATCH 条一批从暂存表取，
+   * 事务内的 JS 堆峰值与文档总块数无关。
+   */
+  replaceDocChunksAtomically(args: {
+    docId: string
+    kbId: string
+    stageId: string
+    chunks: StagedChunkContent[]
+    updateDoc: () => void
+  }): void {
+    const { docId, kbId, stageId, chunks, updateDoc } = args
+    assertStageId(stageId)
+    if (chunks.length === 0) throw new Error('分块后无有效内容')
+
+    const db = dbService.getHandle()
+    const contentBySeq = new Map(chunks.map((c) => [c.sequence, c.content]))
+    const readStmt = db.prepare(
+      `SELECT sequence, embedding FROM ${stageId} WHERE sequence >= ? AND sequence <= ?`
+    )
+    const tx = db.transaction(() => {
+      // 先删向量映射再删块：kbVecRepo.deleteByDoc 依赖 JOIN kb_chunks 找到 rowid
+      this.deleteByDoc(docId)
+      for (let i = 0; i < chunks.length; i += STAGE_VECTOR_BATCH) {
+        const slice = chunks.slice(i, i + STAGE_VECTOR_BATCH)
+        const rows = readStmt.all(slice[0]!.sequence, slice[slice.length - 1]!.sequence) as Array<{
+          sequence: number
+          embedding: Buffer
+        }>
+        if (rows.length !== slice.length) throw new Error('向量暂存记录不完整，已回滚')
+        const inserts: ChunkInsert[] = rows.map((r) => {
+          const content = contentBySeq.get(r.sequence)
+          const embedding = bufferToFloat32(r.embedding)
+          if (content === undefined || !embedding) throw new Error('向量暂存记录损坏，已回滚')
+          return { docId, kbId, sequence: r.sequence, content, embedding }
+        })
+        this.insertMany(inserts)
+      }
+      updateDoc()
+    })
+    tx()
   },
 
   /** 列出某文档的分块（不含向量，供预览） */

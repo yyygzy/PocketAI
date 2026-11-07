@@ -4,25 +4,25 @@
 // - enqueue 立即返回生成 id 的任务；process 单飞（running 期间不重复启动）
 // - text 任务走 ingestText（payload 缺省补空串），file/url/reindex 统一走 ingestDocument
 // - FIFO 顺序执行：上一任务完成前不启动下一任务
-// - 失败不阻断：setStatus(docId,'error') 落库 + 后续任务继续；setStatus 二次抛错被吞
+// - 失败不阻断：markDocumentFailure(docId, err) 收尾 + 后续任务继续；收尾函数自身抛错被吞
 // - onTaskDone 成功/失败都通知、可退订、listener 抛错不影响其他监听者
 //
-// 策略：vi.hoisted 集中 mocks + vi.mock ingestion/kb-doc.repo/logger；
+// 策略：vi.hoisted 集中 mocks + vi.mock ingestion/logger；
 // 通过导出的 IndexQueue 类创建全新实例隔离测试，单例仅验证导出可用。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   ingestText: vi.fn(),
   ingestDocument: vi.fn(),
-  setStatus: vi.fn()
+  markDocumentFailure: vi.fn()
 }))
 
 vi.mock('../src/main/knowledge/ingestion', () => ({
-  ingestionService: { ingestText: mocks.ingestText, ingestDocument: mocks.ingestDocument }
-}))
-
-vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
-  kbDocRepo: { setStatus: mocks.setStatus }
+  ingestionService: {
+    ingestText: mocks.ingestText,
+    ingestDocument: mocks.ingestDocument
+  },
+  markDocumentFailure: mocks.markDocumentFailure
 }))
 
 vi.mock('../src/main/logger', () => ({
@@ -46,7 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.ingestText.mockResolvedValue(undefined)
   mocks.ingestDocument.mockResolvedValue(undefined)
-  mocks.setStatus.mockReturnValue(undefined)
+  mocks.markDocumentFailure.mockReturnValue(undefined)
 })
 
 describe('IndexQueue — 入队与队列状态', () => {
@@ -135,7 +135,7 @@ describe('IndexQueue — 任务分发', () => {
 })
 
 describe('IndexQueue — 失败不阻断', () => {
-  it('任务失败 → setStatus(docId,"error",消息) 落库，后续任务继续执行', async () => {
+  it('任务失败 → markDocumentFailure(docId,消息) 收尾，后续任务继续执行', async () => {
     const q = new IndexQueue()
     mocks.ingestDocument.mockImplementation((_kbId: string, docId: string) =>
       docId === 'd-bad' ? Promise.reject(new Error('向量化超时')) : Promise.resolve()
@@ -143,21 +143,24 @@ describe('IndexQueue — 失败不阻断', () => {
     q.enqueue({ kbId: 'kb', docId: 'd-bad', kind: 'file' })
     q.enqueue({ kbId: 'kb', docId: 'd-good', kind: 'file' })
     await drain(q)
-    expect(mocks.setStatus).toHaveBeenCalledWith('d-bad', 'error', '向量化超时')
+    expect(mocks.markDocumentFailure).toHaveBeenCalledWith(
+      'd-bad',
+      expect.objectContaining({ message: '向量化超时' })
+    )
     expect(mocks.ingestDocument).toHaveBeenCalledTimes(2)
   })
 
-  it('字符串异常也能透传给 setStatus（errMsg 收口）', async () => {
+  it('字符串异常也能透传给 markDocumentFailure（errMsg 收口）', async () => {
     const q = new IndexQueue()
     mocks.ingestText.mockRejectedValueOnce('解析失败')
     q.enqueue({ kbId: 'kb', docId: 'doc-t', kind: 'text' })
     await drain(q)
-    expect(mocks.setStatus).toHaveBeenCalledWith('doc-t', 'error', '解析失败')
+    expect(mocks.markDocumentFailure).toHaveBeenCalledWith('doc-t', '解析失败')
   })
 
-  it('setStatus 自身抛错被吞掉，不影响队列继续', async () => {
+  it('收尾函数自身抛错被吞掉，不影响队列继续', async () => {
     const q = new IndexQueue()
-    mocks.setStatus.mockImplementation(() => { throw new Error('db closed') })
+    mocks.markDocumentFailure.mockImplementation(() => { throw new Error('db closed') })
     mocks.ingestDocument.mockImplementation((_kbId: string, docId: string) =>
       docId === 'd-bad' ? Promise.reject(new Error('boom')) : Promise.resolve()
     )
