@@ -396,12 +396,15 @@ export const SessionRail: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 多选操作条（selectMode 时固定底部；归档区不参与多选） */}
+      {/* 多选操作条（selectMode 时固定底部；归档区不参与多选）。
+          §416：与对话屏 ConversationList 同构——计数 shrink-0 不参与收缩，
+          剩余空间交给空占位；窄栏放不下时整行换行，计数始终完整可见。 */}
       {selectMode && (
-        <div className="shrink-0 border-t border-[var(--color-border)] pt-2 mt-1 flex items-center gap-1.5">
-          <span className="text-[11px] text-[var(--color-text-muted)] flex-1 truncate">
+        <div className="shrink-0 border-t border-[var(--color-border)] pt-2 mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-[var(--color-text-muted)] shrink-0 whitespace-nowrap">
             {t('chat.exportMultiCount', { n: selectedConvs.length })}
           </span>
+          <span aria-hidden="true" className="flex-1 min-w-0" />
           <button
             onClick={() => handleExportSelected('md')}
             disabled={selectedConvs.length === 0}

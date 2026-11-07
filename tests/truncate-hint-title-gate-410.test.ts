@@ -240,22 +240,22 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     expect(
       [ALL.length, pureSentence.length, goodSites.length, badSites.length, mixedSites.length, dataSites.length].join('/'),
       `现数 truncate位/纯句子（有title/没title）/混合/纯数据 ＝ ${ALL.length}/${pureSentence.length}（${goodSites.length}/${badSites.length}）/${mixedSites.length}/${dataSites.length}`
-    ).toBe('104/9/1/8/13/82')
+    ).toBe('103/8/1/7/13/82')
   })
 
-  it('名单等式：8 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
+  it('名单等式：7 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
     const PINNED = [
       // ── 本枚未收（同屏之外），逐颗如实写"没量过＝未判定"，不许写成"不适用"──
       'src/renderer/src/modules/settings/SettingsModule.tsx#upd.autoUpdateHint', // 21 字，设置→自动更新那行
       'src/renderer/src/modules/agent/components/AgentModelBar.tsx#agent.noModelsHint', // 19 字，顶栏模型那行
       'src/renderer/src/modules/knowledge/KnowledgeModule.tsx#kb.chunkPreview', // 14 字＋{title} 插值，弹窗标题
-      'src/renderer/src/modules/agent/components/SessionRail.tsx#chat.exportMultiCount', // 10 字＋{n}，多选底栏
       'src/renderer/src/modules/settings/ProviderSettings.tsx#provider.nModels', // 7 字＋{n}，服务商列表行
       'src/renderer/src/modules/agent/components/AgentComposer.tsx#agent.toolConfig', // 4 字，「+」菜单那一行
       'src/renderer/src/popup/PopupApp.tsx#popup.titleQuick,popup.titleSelection', // 4 字，浮窗标题栏
       'src/renderer/src/modules/skills/SkillModule.tsx#skill.off,skill.on' // 3 字，技能列表行
       // §436 移出：ConversationList.tsx#chat.exportMultiCount —— 15c0101 已把 truncate 换成
       //   shrink-0 whitespace-nowrap（多选计数不再被压成 0 宽），它已不在 truncate 族里。
+      // §416 移出：SessionRail.tsx#chat.exportMultiCount —— 与对话屏对齐成同构写法后，同样不在 truncate 族里。
     ].sort()
     const now = badSites.map(ident).sort()
     expect(now.join('\n'), `现数 ${now.length} 颗：\n${now.join('\n')}`).toBe(PINNED.join('\n'))
