@@ -13,6 +13,7 @@ import { getCalendarConfig, setCalendarConfig } from '../../tools/calendar-ics'
 import { resolveApproval } from '../../agent/tool-approval'
 import { agentTraceRepo } from '../../db/repositories/agent-trace.repo'
 import { annotateTraceReplay } from '../../agent/trace-replay'
+import { redactTraceFieldsForRead } from '../../security/audit-redact'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { resolveAgentToolPermissions } from '../../agent/tool-permissions'
 import { safeHandle, argsSchema } from '../safe-handle'
@@ -214,8 +215,11 @@ export function registerAgentHandlers(): void {
 
   // 会话最近一次 Agent 运行的分步明细（按 step_index 升序）
   // v54：每一行带上回放判定（文件 + messages 行是否都在）；不给页面新增入口，只让既有明细能说真话
+  // 读时兜底：历史行无法回写，三列自由文本在离开主进程前再脱一次敏（幂等，不改格式）
   safeHandle(IPC.AGENT_GET_LATEST_RUN_TRACES, (_e, conversationId: string) =>
-    annotateTraceReplay(agentTraceRepo.latestTracesByConversation(conversationId)),
+    annotateTraceReplay(agentTraceRepo.latestTracesByConversation(conversationId)).map(
+      redactTraceFieldsForRead
+    ),
   argsSchema(idSchema))
 
   // §398：同一颗「本次运行」的身份，明细这一格也必须按**这一轮**取。它头顶的按钮写的就是
@@ -223,7 +227,7 @@ export function registerAgentHandlers(): void {
   //  而统计那格本枚已改成按运行⇒不改这里就会出现「0 步」下面挂着别人的步骤清单这种自相矛盾。
   //  零行⇒`listByRequest` 回空数组＝"这一轮确实没有步"，与统计那格的三个 0 自洽。
   safeHandle(IPC.AGENT_GET_RUN_TRACES, (_e, requestId: string) =>
-    annotateTraceReplay(agentTraceRepo.listByRequest(requestId)),
+    annotateTraceReplay(agentTraceRepo.listByRequest(requestId)).map(redactTraceFieldsForRead),
   argsSchema(idSchema))
 
   // 会话级累计统计（跨该会话全部运行：运行次数/总耗时/总 token）

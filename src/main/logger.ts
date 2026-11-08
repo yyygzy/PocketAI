@@ -5,6 +5,7 @@
 // - 输出：控制台带级别标签与时间戳；打包后同步落盘 userData/logs/main.log
 //   文件超过 1MB 时滚动（main.log → main.old.log），避免无限增长
 // - 落盘内容统一经 security/log-redact 处理：敏感键名的值替换为 [redacted]，
+//   字符串参数再跑一遍 audit-redact 的文本级规则（errMsg(e) 这类自由文本），
 //   超长字符串按长度截断（日志目录可能在便携盘上，见 SEC-14）
 // - 日志路径解析失败（如 electron 未就绪、测试环境打桩）时自动禁落盘，绝不抛错影响业务
 
@@ -13,6 +14,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { inspect } from 'node:util'
 import { capLogString, redactLogValue } from './security/log-redact'
+import { redactSecretsInText } from './security/audit-redact'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -82,13 +84,16 @@ function timestamp(): string {
 function formatArgs(args: unknown[]): string {
   return args
     .map((a) => {
-      if (typeof a === 'string') return capLogString(a)
-      if (a instanceof Error) return capLogString(a.stack ?? `${a.name}: ${a.message}`)
+      // 先脱敏再截断：反过来的话跨在 2000 边界的密钥会被切半截，规则再也拼不回原形态。
+      if (typeof a === 'string') return capLogString(redactSecretsInText(a))
+      if (a instanceof Error) {
+        return capLogString(redactSecretsInText(a.stack ?? `${a.name}: ${a.message}`))
+      }
       try {
         // 结构体参数先按敏感键名脱敏 + 长串封顶再序列化（SEC-14，日志可能落在便携盘）
         return inspect(redactLogValue(a), { depth: 4, breakLength: 120 })
       } catch {
-        return capLogString(String(a))
+        return capLogString(redactSecretsInText(String(a)))
       }
     })
     .join(' ')

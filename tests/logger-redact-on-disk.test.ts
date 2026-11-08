@@ -71,6 +71,13 @@ describe('日志落盘脱敏（真文件）', () => {
     expect(diskBytes()).toContain(CONTROL)
   })
 
+  it('字符串参数（errMsg(e) 这类自由文本）也走文本级脱敏', () => {
+    createLogger('probe').warn('provider 报错:', `Incorrect API key provided: ${SECRET}`)
+    const disk = diskBytes()
+    expect(disk).not.toContain(SECRET)
+    expect(disk).toContain('Incorrect API key provided: [redacted]')
+  })
+
   it('readLogTail 读的就是这份文件（写盘与主进程内读取同一通道）', () => {
     createLogger('probe').warn('慢事件样例')
     const tail = readLogTail().join('\n')

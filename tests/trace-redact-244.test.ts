@@ -45,6 +45,10 @@ import {
   redactTraceError,
   TRACE_TEXT_MAX_CHARS
 } from '../src/main/agent/engine'
+import {
+  redactSecretsInText,
+  redactTraceFieldsForRead
+} from '../src/main/security/audit-redact'
 
 const call = (name: string, args: string): { id: string; type: 'function'; function: { name: string; arguments: string } } => ({
   id: `call_${name}`,
@@ -206,5 +210,129 @@ describe('④ 误伤口径（可接受的代价，写清楚而不是假装没有
   it('不含凭据形态的正常长文本原样保留（不因"看起来像密码"就乱切）', () => {
     const body = '这是一段很长的正文。'.repeat(10)
     expect(capRedactedTraceText(body)).toBe(body)
+  })
+})
+
+describe('⑤ 裸 token / provider 回显 / JSON 值 / 幂等 / ReDoS', () => {
+  it('provider 回显：Incorrect API key provided: <token> 整段值被替换', () => {
+    const raw = 'LLM 请求失败: Incorrect API key provided: sk-proj-AbCd1234EfGh5678IjKl'
+    const out = capRedactedTraceText(raw)!
+    expect(out).toBe('LLM 请求失败: Incorrect API key provided: [redacted]')
+    expect(out).not.toContain('sk-proj')
+  })
+
+  it('JSON 值内嵌：error.message 里的 provider 回显也被递归命中（token 不带 sk- 也拦）', () => {
+    const withPrefix = JSON.stringify({
+      error: { message: 'Incorrect API key provided: sk-proj-AbCd1234EfGh5678IjKl' }
+    })
+    const opaque = JSON.stringify({
+      error: { message: 'Incorrect API key provided: abc123XYZ' }
+    })
+    expect(capRedactedTraceText(withPrefix)).not.toContain('sk-proj')
+    expect(capRedactedTraceText(withPrefix)).toContain('Incorrect API key provided: [redacted]')
+    expect(capRedactedTraceText(opaque)).toContain('Incorrect API key provided: [redacted]')
+    expect(capRedactedTraceText(opaque)).not.toContain('abc123XYZ')
+  })
+
+  it('五种裸 token 形态都被替换（不依赖 api_key= 之类的键名）', () => {
+    const secrets = [
+      'sk-proj-AbCd1234EfGh5678IjKl',
+      'AIzaSyD-1234567890abcdefghijklmnopqrstu',
+      'AKIAIOSFODNN7EXAMPLE',
+      'ghp_1234567890abcdefghijABCDEFGHIJ123456',
+      'xoxb-123456789012-abcdefABCDEF'
+    ]
+    for (const secret of secrets) {
+      const out = redactSecretsInText(`凭证：${secret} 结束`)
+      expect(out, secret).not.toContain(secret)
+      expect(out, secret).toContain('[redacted]')
+    }
+  })
+
+  it('幂等：脱敏结果再过一遍不变形，[redacted] 不被二次处理', () => {
+    const raw = [
+      'Authorization: Bearer sk-live-ABC123._-~+/=',
+      'api_key=sk-live-ZZZ',
+      'Incorrect API key provided: sk-proj-AbCd1234EfGh5678IjKl',
+      '{"error":{"message":"Incorrect API key provided: AIzaSyD-1234567890abcdefghijklmnopqrstu"}}',
+      'xoxb-123456789012-abcdefABCDEF'
+    ].join('\n')
+    const once = capRedactedTraceText(raw)!
+    const twice = capRedactedTraceText(once)!
+    expect(twice).toBe(once)
+  })
+
+  it('误伤反例：正文里的 risk-management / task-first / disk-usage / sk-learn 不被吃掉', () => {
+    // 这四个词都含 `sk-`：前三个靠起始边界挡住（`sk-` 前还有字母），
+    // 第四个靠长度（`sk-` 后只有 5 个字符，不足 8）。
+    const body = '采用 risk-management 与 task-first 的做法，先看 disk-usage，再看 sk-learn 的示例。'
+    expect(redactSecretsInText(body)).toBe(body)
+    expect(capRedactedTraceText(body)).toBe(body)
+  })
+
+  it('ReDoS：100KB 对抗性输入不出现灾难性回溯', () => {
+    const samples = [
+      'a'.repeat(100_000),
+      '"'.repeat(100_000),
+      '\\"'.repeat(50_000),
+      'sk-'.repeat(25_000),
+      'Authorization: '.repeat(7_000),
+      `${'x'.repeat(99_990)}Incorrect API key provided:`
+    ]
+    const start = performance.now()
+    for (const s of samples) redactSecretsInText(s)
+    const elapsed = performance.now() - start
+    expect(elapsed).toBeLessThan(1000)
+  })
+})
+
+describe('⑥ 读时兜底：历史行离开主进程前补脱敏', () => {
+  it('error / toolArgs / toolResult 里的明文凭据被补掉，其它字段与格式原样保留', () => {
+    const rec = {
+      id: 't1',
+      requestId: 'r1',
+      conversationId: 'c1',
+      stepIndex: 0,
+      stepType: 'tools',
+      status: 'error',
+      error: 'Incorrect API key provided: sk-proj-AbCd1234EfGh5678IjKl',
+      toolArgs: '{"api_key":"opaque-secret-value","q":"ok"}',
+      toolResult: 'Authorization: Bearer sk-live-ABC123',
+      createdAt: 1
+    } as const
+    const out = redactTraceFieldsForRead(rec)
+    expect(out).not.toBe(rec)
+    expect(out.error).toBe('Incorrect API key provided: [redacted]')
+    expect(out.toolArgs).toBe('{"api_key":"[redacted]","q":"ok"}')
+    expect(out.toolResult).toBe('Authorization: [redacted]')
+    expect(out.id).toBe('t1')
+    expect(out.createdAt).toBe(1)
+  })
+
+  it('读时兜底幂等：已脱敏的行再过一遍完全不变', () => {
+    const rec = {
+      id: 't2',
+      requestId: 'r2',
+      conversationId: 'c2',
+      stepIndex: 1,
+      stepType: 'llm',
+      status: 'error',
+      error: 'api_key=[redacted]',
+      toolArgs: '{"api_key":"[redacted]"}',
+      toolResult: 'Incorrect API key provided: [redacted]',
+      createdAt: 2
+    } as const
+    const once = redactTraceFieldsForRead(rec)
+    const twice = redactTraceFieldsForRead(once)
+    expect(twice).toEqual(once)
+  })
+
+  it('源码门禁：两个 trace 读取 IPC 都接读时兜底；logger 字符串参数走同一套文本规则', () => {
+    const h = src('src/main/ipc/handlers/agent.ts')
+    expect(h).toMatch(/IPC\.AGENT_GET_LATEST_RUN_TRACES[\s\S]{0,200}redactTraceFieldsForRead/)
+    expect(h).toMatch(/IPC\.AGENT_GET_RUN_TRACES[\s\S]{0,200}redactTraceFieldsForRead/)
+    const l = src('src/main/logger.ts')
+    expect(l).toMatch(/capLogString\(redactSecretsInText\(/)
+    expect(l).toMatch(/from '\.\/security\/audit-redact'/)
   })
 })
