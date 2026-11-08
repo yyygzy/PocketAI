@@ -1,7 +1,6 @@
 // 加密 IPC：主密码设置/解锁/轮换/启停、恢复密钥、剪贴板敏感内容守卫
-import path from 'node:path'
 import fs from 'node:fs'
-import { BrowserWindow, dialog, app } from 'electron'
+import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import { dbService } from '../../db/database'
 import { masterKeyManager } from '../../crypto/master-key'
@@ -13,7 +12,7 @@ import { unlockCoordinator } from '../../crypto/unlock-coordinator'
 import { authRateLimiter, AUTH_BUCKET } from '../../crypto/auth-ratelimit'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { lockService } from '../../lock/lock'
-import { denyNewWindows } from '../../net/external-links'
+import { closeUnlockWindow, showUnlockWindow } from '../../windows/unlock-window'
 import { createLogger } from '../../logger'
 import { safeHandle, errMsg, argsSchema, z } from '../safe-handle'
 import {
@@ -101,12 +100,8 @@ export function registerEncryptionHandlers(): void {
     // 运行时解锁（加密锁后重新打开 DB）
     try {
       if (!verifyAndOpenMasterKey(password)) throw new Error('密码错误')
-      // 关闭解锁窗口
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (win.getTitle().includes('解锁') || win.getTitle().includes('Unlock')) {
-          win.close()
-        }
-      }
+      // 关闭解锁窗口（与启动期共用同一份实现，按窗内状态关，不靠标题匹配）
+      closeUnlockWindow()
       // 与隐私锁状态机同步（加密锁已把 lockService 置为 locked）
       lockService.unlock()
       authRateLimiter.reset(AUTH_BUCKET.UNLOCK)
@@ -134,29 +129,9 @@ export function registerEncryptionHandlers(): void {
     lockService.lock('manual')
     masterKeyManager.clear()
     dbService.close()
-    // 显示解锁窗口供用户重新解锁
-    const unlockWin = new BrowserWindow({
-      width: 420, height: 440, resizable: false, minimizable: false,
-      maximizable: false, show: false, frame: true, autoHideMenuBar: true,
-      title: '墨匣 Moxia - PocketAI — 解锁', backgroundColor: '#1e1e2e',
-      icon: process.platform === 'win32'
-        ? path.join(app.getAppPath(), 'build/icon/icon.ico')
-        : path.join(__dirname, '../../build/icon/icon-256.png'),
-      webPreferences: {
-        preload: path.join(__dirname, '../preload/unlock.js'),
-        nodeIntegration: false, contextIsolation: true, sandbox: true
-      }
-    })
-    unlockWin.on('ready-to-show', () => unlockWin.show())
-    denyNewWindows(unlockWin.webContents)
-    if (process.env['ELECTRON_RENDERER_URL']) {
-      const base = new URL(process.env['ELECTRON_RENDERER_URL'])
-      base.pathname = '/unlock.html'
-      base.search = '?mode=unlock'
-      unlockWin.loadURL(base.toString())
-    } else {
-      unlockWin.loadFile(path.join(__dirname, '../renderer/unlock.html'), { query: { mode: 'unlock' } })
-    }
+    // 显示解锁窗口供用户重新解锁。必须走与启动期同一份实现：那边有置顶、加载重试
+    // 与显示兜底，之前这里自己 new 一份，锁屏后重弹会缺这些（白屏/被遮挡只在锁屏路径复现）
+    showUnlockWindow('unlock')
     return { ok: true }
   })
   safeHandle(IPC.ENCRYPTION_CHANGE_PASSWORD, async (_e, oldPassword: string, newPassword: string) => {

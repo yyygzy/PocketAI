@@ -25,14 +25,8 @@ import { app, BrowserWindow, dialog, powerMonitor } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { SESSION_DATA_DIR_NAME, USER_DATA_DIR_NAME } from '../shared/data-dirs'
-
-/** 应用图标路径：Windows 用 .ico（含 16/32/48/256 多尺寸，任务栏显示更清晰），
- *  其他平台用 256px png */
-function appIconPath(): string {
-  return process.platform === 'win32'
-    ? path.join(app.getAppPath(), 'build/icon/icon.ico')
-    : path.join(app.getAppPath(), 'build/icon/icon-256.png')
-}
+import { IS_DEV_MODE, appIconPath, installLoadRetry, installShowFallback } from './windows/boot-guards'
+import { closeUnlockWindow, showUnlockWindow } from './windows/unlock-window'
 import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR, LOGS_DIR } from './portable'
 import { dbService } from './db/database'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
@@ -89,7 +83,6 @@ const skillsLog = createLogger('skills')
 // ensureDirs 会先删除重建，setPath 再使用时路径才安全。
 
 let mainWindow: BrowserWindow | null = null
-let unlockWindow: BrowserWindow | null = null
 
 // ─── DB 打开（先尝试无密码，失败 = 已加密） ────────────────────────
 
@@ -115,142 +108,6 @@ function tryOpenDbNoPassword(): boolean {
     process.exit(1)
   }
   return false
-}
-
-// ─── 解锁窗口 ─────────────────────────────────────────────────────
-
-/**
- * 页面加载失败/挂起自动重试。
- * 双兜底：① did-fail-load（请求被丢）→ reload；② 导航开始后超时无响应
- * （请求在网络服务崩溃恢复期内挂起，既不成功也不失败）→ 强制重载。
- * 超时判据：打包版 8s；dev 30s——Vite 首次按需编译渲染端模块图实测 17.6s
- * （2026-11-03 dev 白屏排查），8s 会把正常冷启动误判成挂起。
- */
-function installLoadRetry(win: BrowserWindow, label: string): void {
-  let retries = 0
-  let hangTimer: NodeJS.Timeout | null = null
-  let warned = false
-  const hangMs = isDevMode ? 30_000 : 8_000
-
-  const retry = (why: string) => {
-    if (win.isDestroyed()) return
-    if (retries >= 5) {
-      log.error(`${label} 页面加载失败（已重试 ${retries} 次）: ${why}`)
-      // 重试穷尽仍未加载成功 → 大概率安全软件（杀软/电脑管家类）查杀
-      // 网络服务进程。生产环境没有终端可看日志，弹窗引导用户自救。
-      if (!warned) {
-        warned = true
-        try {
-          dialog.showMessageBox({
-            type: 'warning',
-            title: '页面加载失败',
-            message: `${label}页面多次加载失败，界面可能一直空白。`,
-            detail:
-              '常见原因：安全软件（电脑管家/杀毒软件）拦截了应用的网络组件。\n' +
-              '请在安全软件中把本应用所在目录加入「信任区/白名单」后重新打开应用。\n' +
-              `应用目录：${app.getAppPath()}`
-          })
-        } catch { /* dialog 不可用时忽略 */ }
-      }
-      return
-    }
-    retries++
-    log.warn(`${label} ${why}，${retries}/5 次重试…`)
-    win.webContents.reload()
-    // reload() 在 webContents 卡死时可能不产生新导航（不触发 did-start-loading），
-    // 这里补一次计时，避免重试链断在 1/5 后窗口长期空白
-    armHangTimer()
-  }
-
-  /**
-   * 导航开始后计时：期间若没有 did-stop-loading（成功会清掉计时器），即判为挂起。
-   * 注意不能因 isLoading()===false 静默返回——那正是「网络服务崩溃后 reload 没
-   * 真正开始、重试链断掉」的形态。
-   */
-  const armHangTimer = () => {
-    if (hangTimer) clearTimeout(hangTimer)
-    hangTimer = setTimeout(() => {
-      hangTimer = null
-      if (win.isDestroyed()) return
-      retry(`页面加载超时(${hangMs / 1000}s 无响应)`)
-    }, hangMs)
-  }
-
-  win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
-    if (!isMainFrame) return
-    retry(`加载失败(${code} ${desc})`)
-  })
-
-  win.webContents.on('did-start-loading', () => {
-    armHangTimer()
-  })
-
-  win.webContents.on('did-stop-loading', () => {
-    if (hangTimer) {
-      clearTimeout(hangTimer)
-      hangTimer = null
-    }
-  })
-}
-
-function showUnlockWindow(mode: 'unlock' | 'setPassword' = 'unlock'): void {
-  if (unlockWindow) {
-    unlockWindow.setAlwaysOnTop(true, 'screen-saver')
-    unlockWindow.focus()
-    return
-  }
-
-  unlockWindow = new BrowserWindow({
-    width: 420,
-    height: 440,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    show: false,
-    frame: true,
-    autoHideMenuBar: true,
-    title: '墨匣 Moxia - PocketAI — 解锁',
-    backgroundColor: '#1e1e2e',
-    icon: appIconPath(),
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/unlock.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true
-    }
-  })
-
-  // 解锁窗是启动期强制模态（关闭即退出）：置顶 + 抢焦点，
-  // 防止被终端/其他窗口遮挡导致用户误以为「启动后没窗口」
-  unlockWindow.setAlwaysOnTop(true, 'screen-saver')
-  unlockWindow.on('ready-to-show', () => {
-    unlockWindow?.show()
-    unlockWindow?.focus()
-  })
-  // 锁屏窗口同样收口外链
-  denyNewWindows(unlockWindow.webContents)
-  installLoadRetry(unlockWindow, '解锁窗')
-
-  // 渲染进程加载 unlock.html（独立入口），附带 mode 参数
-  const query = `?mode=${mode}`
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    // dev：Vite 服务器 URL 是 http://localhost:5173/ ，用 URL 替换 pathname
-    const base = new URL(process.env['ELECTRON_RENDERER_URL'])
-    base.pathname = '/unlock.html'
-    base.search = query
-    unlockWindow.loadURL(base.toString())
-  } else {
-    unlockWindow.loadFile(path.join(__dirname, '../renderer/unlock.html'), { query: { mode } })
-  }
-
-  // 解锁窗口关闭 = 用户放弃（解锁是强制的，app 退出）
-  unlockWindow.on('closed', () => {
-    unlockWindow = null
-    if (!mainWindow) {
-      unlockCoordinator.cancel()
-      app.quit()
-    }
-  })
 }
 
 // ─── 主窗口 ───────────────────────────────────────────────────────
@@ -306,15 +163,21 @@ function createMainWindow(): void {
   mainWindow.on('minimize', () => lockService.onAppHidden())
   mainWindow.on('restore', () => lockService.onAppShown())
 
+  /** 主窗口的导航入口：加载重试要用它重发，而不是 reload()（导航没提交时那只是 about:blank） */
+  const load = () => {
+    if (process.env['ELECTRON_RENDERER_URL']) {
+      mainWindow?.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    } else {
+      mainWindow?.loadFile(path.join(__dirname, '../renderer/index.html'))
+    }
+  }
+
   // 外链收口：应用内拒开新窗，仅 http/https 跳系统浏览器（防 file:/javascript: 等）
   denyNewWindows(mainWindow.webContents)
-  installLoadRetry(mainWindow, '主窗口')
-
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
-  }
+  installLoadRetry(mainWindow, '主窗口', load)
+  // 与解锁窗同款显示兜底：ready-to-show 迟迟不来时别让用户对着空桌面
+  installShowFallback(mainWindow, '主窗口')
+  load()
 }
 
 // ─── 核心启动流程 ─────────────────────────────────────────────────
@@ -378,8 +241,9 @@ async function boot(): Promise<void> {
 
     const unlockMode: 'unlock' | 'setPassword' =
       dbService.getEncryptionMode() === 'none' && !hasExistingPassword ? 'setPassword' : 'unlock'
-    showUnlockWindow(unlockMode)
-    log.info('已弹出解锁窗口（屏幕置顶），请输入主密码；主窗口将在解锁后打开')
+    // quitOnClose：启动期解锁是强制模态，用户关掉窗就是放弃启动
+    showUnlockWindow(unlockMode, { quitOnClose: true })
+    // 「已弹出」那句由解锁窗自己在 ready-to-show 之后打（此前无条件打在这里，窗口没显示也照说）
     const result = await unlockCoordinator.waitForUnlock()
 
     if (!result) {
@@ -445,8 +309,7 @@ async function boot(): Promise<void> {
       log.info('DB 已加密')
     }
 
-    unlockWindow?.close()
-    unlockWindow = null
+    closeUnlockWindow()
     bootMark('unlock', '解锁流程完成（含用户输入等待）')
   }
 
@@ -563,10 +426,7 @@ async function boot(): Promise<void> {
 
 // ─── 单实例锁 ───────────────────────────────────────────────────
 
-// dev 判定：不能只看 app.isPackaged。本机 `electron .` 启动时 app.isPackaged
-// 实测仍为 true（见 2026-11-03 dev 白屏排查），单靠它会让下面整段 dev 加固开关
-// 失效；electron-vite dev 必定注入 ELECTRON_RENDERER_URL，用它兜住。
-const isDevMode = !app.isPackaged || process.env.ELECTRON_RENDERER_URL !== undefined
+// dev 判定见 windows/boot-guards 的 IS_DEV_MODE（不能只看 app.isPackaged）
 
 // 在 requestSingleInstanceLock 之前重定向 userData：
 // Electron 的 process singleton lock 文件位于 userData 目录下，
@@ -595,7 +455,7 @@ if (!gotLock) {
   // dev 专用：禁用系统代理。本机若运行代理/VPN 类软件（Clash、v2ray 等），
   // 其系统代理/TUN 可能拦截 localhost 回环请求 → 渲染层加载 5173 挂起、
   // 窗口永远空白；生产打包走 loadFile 不受影响，无需此开关。
-  if (isDevMode) {
+  if (IS_DEV_MODE) {
     app.commandLine.appendSwitch('no-proxy-server')
     // dev 专用：禁用 Chromium 沙箱。受限环境（CI/沙箱/无 GPU 驱动）下
     // Chromium 网络服务与 GPU 进程可能因沙箱权限不足崩溃，导致窗口白屏。
@@ -653,6 +513,13 @@ if (!gotLock) {
     log.info('app ready, boot() 已发起')
   })
 }
+
+// 子进程级取证：网络服务崩溃（type=Network Service）过去只在控制台留一行 Chromium 自己的
+// stderr，落盘日志里既没有时刻也没有上下文；2026-11-08「解锁窗永久不可见」正是靠它把
+// loadURL 与崩溃的先后对上（见 windows/boot-guards 的「导航从未开始」那条判据）。
+app.on('child-process-gone', (_event, details) => {
+  log.warn(`子进程退出: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`)
+})
 
 app.on('before-quit', (e) => {
   // 197：这里判的必须是「链跑完没有」，不是「谁发起的退出」——isQuitting() 只表示别再弹确认框，

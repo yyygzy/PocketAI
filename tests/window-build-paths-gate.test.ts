@@ -24,7 +24,8 @@ const REQUIRED_FILES = [
   'src/main/index.ts',
   'src/main/windows/detached.ts',
   'src/main/popup.ts',
-  'src/main/ipc/handlers/encryption.ts'
+  // 解锁窗的创建从 ipc/handlers/encryption.ts 收到了这里（启动期与锁屏后共用一份）
+  'src/main/windows/unlock-window.ts'
 ]
 
 type Kind = 'preload' | 'page'
