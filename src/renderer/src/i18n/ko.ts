@@ -327,7 +327,7 @@ export const ko = {
   'chat.tools.filter.all': '전체',
   'chat.tools.filter.tools': '도구 허용',
   'chat.tools.filter.plain': '일반 대화',
-  'chat.jumpNeedsAssistant': '대화를 찾을 수 없습니다. 해당 도우미로 전환한 뒤 다시 시도하세요.',
+  'chat.jumpNeedsAssistant': '이 대화는 삭제되었거나 다른 도우미에 속해 있을 수 있습니다.',
   'chat.searching': '🔍 검색 중…',
   'chat.noResult': '"{query}"에 대한 결과가 없습니다',
   'chat.resultCount': '결과 {n}개, 대화 {m}개',

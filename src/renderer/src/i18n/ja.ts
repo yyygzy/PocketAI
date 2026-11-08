@@ -327,7 +327,7 @@ export const ja = {
   'chat.tools.filter.all': 'すべて',
   'chat.tools.filter.tools': 'ツール許可',
   'chat.tools.filter.plain': '通常チャット',
-  'chat.jumpNeedsAssistant': '会話が見つかりません。所属アシスタントに切り替えてから再試行してください。',
+  'chat.jumpNeedsAssistant': 'この会話は削除されたか、別のアシスタントに属している可能性があります。',
   'chat.searching': '🔍 検索中…',
   'chat.noResult': '「{query}」の結果はありません',
   'chat.resultCount': '{n} 件の結果、{m} 個の会話',

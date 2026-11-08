@@ -342,7 +342,7 @@ export const zh = {
   'chat.tools.filter.all': '全部',
   'chat.tools.filter.tools': '允许工具',
   'chat.tools.filter.plain': '普通对话',
-  'chat.jumpNeedsAssistant': '找不到该会话，请先切换到它所属的助手再试',
+  'chat.jumpNeedsAssistant': '该会话可能已被删除，或不属于当前助手',
   'chat.searching': '🔍 搜索中…',
   'chat.noResult': '没有找到「{query}」',
   'chat.resultCount': '共 {n} 条结果，{m} 个会话',

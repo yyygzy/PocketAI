@@ -342,7 +342,7 @@ export const en = {
   'chat.tools.filter.all': 'All',
   'chat.tools.filter.tools': 'Tools allowed',
   'chat.tools.filter.plain': 'Plain chat',
-  'chat.jumpNeedsAssistant': 'Conversation not found. Switch to its assistant and try again.',
+  'chat.jumpNeedsAssistant': 'This conversation may have been deleted or belongs to another assistant.',
   'chat.searching': '🔍 Searching…',
   'chat.noResult': 'No results for “{query}”',
   'chat.resultCount': '{n} results in {m} conversations',
