@@ -15,6 +15,8 @@ import { ChatView } from './ChatView'
 import { assistantDisplayName, assistantDisplayWelcome } from './assistant-display'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useStreamSession } from './useStreamSession'
+import { useAgentRunInsights } from '../agent/hooks/useAgentRunInsights'
+import { isReadonlyConversation } from '../agent/sub-session'
 import { useConversationLists } from './useConversationLists'
 import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
@@ -80,8 +82,14 @@ export const ChatModule: React.FC = () => {
     id: string
     agentMode?: boolean
     modelLabel?: string | null
+    /** P2：子代理会话判定要用的那一格（跨助手跳转时只单条读回这几个字段） */
+    parentConversationId?: string | null
   } | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
+  /** P2：run 索引刷新令牌——`onStreamsSettled` 主动 +1，跑完一轮数字才不会停在上一轮 */
+  const [runsRefresh, setRunsRefresh] = useState(0)
+  /** P2：刚跑完的那一轮 requestId（done 时下传 ChatView，聚焦该轮摘要） */
+  const [focusRunRequestId, setFocusRunRequestId] = useState<string | null>(null)
   // 消息那一读失败的原因（V4-Iter-250）：不写这句，屏上留着的是上一条会话或空列表，两种都像「这里没消息」
   const [msgsReadErr, setMsgsReadErr] = useState<string | null>(null)
   const [replyToMessage, setReplyToMessage] = useState<MessageRecord | null>(null)
@@ -117,6 +125,26 @@ export const ChatModule: React.FC = () => {
     agentModeRecord ? [...conversations, ...archivedConversations, agentModeRecord] : [...conversations, ...archivedConversations],
     agentModeByConv
   )
+  /**
+   * P2：每轮运行摘要。只在工具有效会话读库（普通会话打开时一次 `agent:list-runs` 都不发）；
+   * 映射是纯函数，消息流式变化不会反复打 IPC，`runsRefresh` 由 settle 主动推。
+   */
+  const { runsByTurn, unread: runsUnread } = useAgentRunInsights({
+    conversationId: currentConvId,
+    enabled: agentMode,
+    messages,
+    refreshToken: runsRefresh
+  })
+  /**
+   * P2：子代理会话只读。判据已搬到 `modules/agent/sub-session.ts`（P4 删除 `useAgentChat` 后的归处），
+   * 这里用列表行或跨助手单条读回的那份判定，不依赖 Agent 壳的 hook。
+   */
+  const currentConvRecord = currentConvId
+    ? conversations.find((c) => c.id === currentConvId) ??
+      archivedConversations.find((c) => c.id === currentConvId) ??
+      (agentModeRecord?.id === currentConvId ? agentModeRecord : null)
+    : null
+  const subSessionReadonly = isReadonlyConversation(currentConvRecord)
   // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
   const userEditedTargetsRef = useRef(false)
   // 草稿防抖句柄 + 最新文本镜像（卸载/关闭时尽力落库）
@@ -145,7 +173,7 @@ export const ChatModule: React.FC = () => {
       .then((v) => {
         if (!alive || currentConvRef.current !== id) return
         if (hasIpcFailed(v) || !v) return
-        setAgentModeRecord({ id, agentMode: v.agentMode, modelLabel: v.modelLabel })
+        setAgentModeRecord({ id, agentMode: v.agentMode, modelLabel: v.modelLabel, parentConversationId: v.parentConversationId })
       })
       .catch(reportIpcError('chat.getConversation'))
     return () => { alive = false }
@@ -200,7 +228,7 @@ export const ChatModule: React.FC = () => {
   // 流式会话收口：6 个流式 ref + liveColumns + focusBranch + 事件订阅全部内聚于 hook
   // 解构取稳定回调（useCallback []），避免以对象形式入 useCallback 依赖致其每渲染重建
   const {
-    liveColumns, agentStream, agentRunning, focusBranch, isStreaming,
+    liveColumns, agentStream, agentRunning, liveSteps, focusBranch, isStreaming,
     beginStream, beginAgentStream, failStream, focusNewBranch, abort, stopUnread
   } = useStreamSession({
     loadMessages,
@@ -208,7 +236,13 @@ export const ChatModule: React.FC = () => {
     getCurrentConvId: () => currentConvRef.current,
     unknownErrorText: t('agent.unknownError'),
     // 回复完成通知：仅窗口不可见或失焦时弹（前台不打扰）；开关关闭/异常一律静默
-    onStreamsSettled: (convId, outcome) => {
+    onStreamsSettled: (convId, outcome, requestId) => {
+      // P2：跑完一轮主动刷新 run 索引（done/error 都刷；不刷的话屏上数字停在上一轮，直到切会话）
+      if (convId === currentConvRef.current) {
+        setRunsRefresh((v) => v + 1)
+        // 只有正常跑完才把视线带回本轮摘要；中止/出错时用户要看的是错误本身
+        if (outcome === 'done' && requestId) setFocusRunRequestId(requestId)
+      }
       if (!document.hidden && document.hasFocus()) return
       void (async () => {
         try {
@@ -578,14 +612,15 @@ export const ChatModule: React.FC = () => {
 
   // 搜索跳转：切到目标会话并设 focusMessageId 让 ChatView 滚动+高亮。
   // P1：跨助手口径与命令面板一致——先切助手再跳；解析不到时才提示（不静默失败）。
-  const handleSelectMessage = useCallback(async (convId: string, messageId: string) => {
+  // P2：`messageId` 省略时就是「按 id 打开会话」（子会话入口复用同一条跨助手口径）。
+  const handleSelectMessage = useCallback(async (convId: string, messageId?: string) => {
     const openWithin = (conv?: ConversationRecord) => {
       userEditedTargetsRef.current = false
       setActiveDraft('')
       draftTextRef.current = ''
       setCurrentConvId(convId)
       void loadMessages(convId)
-      setFocusMessageId(messageId)
+      setFocusMessageId(messageId ?? null)
       if (conv) restoreLastModel(conv)
     }
 
@@ -629,6 +664,14 @@ export const ChatModule: React.FC = () => {
     }
     openWithin(target)
   }, [assistants, loadMessages, reloadConversations, restoreLastModel, discardCurrentIfEmpty, t, toast])
+
+  /** P2：轮次检查器里的子会话入口。只是「按 id 打开会话」，落点与搜索跳转同一条路（含跨助手切换） */
+  const handleOpenSubSession = useCallback(
+    (conversationId: string) => {
+      void handleSelectMessage(conversationId)
+    },
+    [handleSelectMessage]
+  )
 
   // 命令面板导航：跨助手先切助手+拉列表（不 autoSelect，防覆盖目标）再定位会话；
   // 仅助手项（无 conversationId）走标准助手切换自动选最近会话。
@@ -1791,6 +1834,10 @@ export const ChatModule: React.FC = () => {
         agentMode={agentMode}
         onToggleAgentMode={handleToggleAgentMode}
         agentLive={agentStream && agentStream.convId === currentConvId ? agentStream.messages : null}
+        liveSteps={agentStream && agentStream.convId === currentConvId ? liveSteps : []}
+        runsByTurn={runsByTurn}
+        runsUnread={runsUnread}
+        readonly={subSessionReadonly}
         welcomeMessage={currentAssistant ? assistantDisplayWelcome(currentAssistant, t) : undefined}
         assistantName={currentAssistant ? assistantDisplayName(currentAssistant, t) : undefined}
         assistant={currentAssistant}
@@ -1805,6 +1852,8 @@ export const ChatModule: React.FC = () => {
         onSaveAsNote={handleSaveAsNote}
         focusBranch={focusBranch}
         focusMessageId={focusMessageId}
+        focusRunRequestId={focusRunRequestId}
+        onOpenSubSession={handleOpenSubSession}
         replyToMessage={replyToMessage}
         onReply={handleSetReply}
         onToggleStar={handleToggleStar}

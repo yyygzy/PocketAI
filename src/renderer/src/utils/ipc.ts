@@ -47,6 +47,8 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   GLOSSARY_TERM_EMPTY: 'translate.glossaryTermEmpty',
   // 插队赶在运行结束之后（V4-Iter-238）：那句中文留给日志，界面只说"没被收下、还在条上"
   RUN_NOT_FOUND: 'agent.interjectRunEnded',
+  // 同会话并发起两轮（P2 / V4-Iter-459）：引擎侧兜底守卫，明确告诉被拒的一方而不是静默丢弃
+  AGENT_RUN_BUSY: 'agent.conversationBusy',
   // 「还原到写入前」那一族的六条拒绝（V4-Iter-242 真机撞出来的：它们原本是光秃秃的码，
   // 既躲过了§206 那道闸门，也让界面只能把码原样贴给用户；§371 补上 SNAPSHOT_CORRUPT＝快照坏了）
   SNAPSHOT_ID_INVALID: 'agent.fsWrite.errIdInvalid',

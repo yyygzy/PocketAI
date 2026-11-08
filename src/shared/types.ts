@@ -1097,6 +1097,43 @@ export interface AgentSessionStats {
   childRuns?: number
 }
 
+/**
+ * P2（V4-Iter-459）：会话的一轮运行索引（只读）。
+ *
+ * 与既有两个接口的区别：`AGENT_GET_LATEST_RUN_STATS` 只回答「最近一次」，`AGENT_GET_RUN_STATS`
+ * 要调用方先知道 requestId；这里一次性列出该会话全部 run 并按 `request_id` 聚合，
+ * 供对话页把摘要挂到**对应轮次**上（`messages` 没有 requestId 列，映射靠 `agent_traces.message_id`，
+ * 缺失时渲染层用 `created_at` 区间兜底）。
+ *
+ * 口径与 `statsByRequest` 同一条：步数/耗时只算主干，token 含子 run（`childRuns` 仅在 >0 时给）。
+ * `changeCount` 也仅在至少一步真的记下变更清单时给；`undefined` ≠ 没有变更。
+ */
+export interface AgentRunIndexEntry {
+  requestId: string
+  conversationId: string
+  /** 这一轮首条 trace 的写入时间（映射兜底用） */
+  startedAt: number
+  /** 这一轮最后一条 trace 的写入时间 */
+  endedAt: number
+  stepCount: number
+  totalDurationMs: number
+  totalTokens: number
+  /** 主干里 status='error' 的步数 */
+  errorSteps: number
+  /** trace 行上记的 `message_id`（换行/逗号分隔的多值已拆开去重），渲染层据此优先映射轮次 */
+  messageIds: string[]
+  /** 执行后变更清单里的路径条数（只有记过才给） */
+  changeCount?: number
+  /** 本轮包含几次子 run（仅 >0 时给，口径同 AgentRunStats） */
+  childRuns?: number
+  /**
+   * 本轮子 run 落在哪些子会话（仅 >0 时给）。
+   * 数据源是子 run 的 trace 行 `conversation_id`：每条子 run 在独立子会话里写步骤，
+   * 轮次检查器据此提供「进对应子会话」的入口（P2 / V4-Iter-459）。
+   */
+  childConversationIds?: string[]
+}
+
 /** Agent 轨迹回放可用性（P0-5 冷 blob 第一批）：三档互不兜底，判据见 `main/agent/trace-replay.ts` */
 export type TraceReplayState =
   /** 卸载文件与对应 `messages` 行都在：可以按 `messageId` 读回全文 */
@@ -2697,6 +2734,7 @@ export const IPC = {
   AGENT_GET_LATEST_RUN_TRACES: 'agent:get-latest-run-traces', // 会话最近一次运行分步明细（只读）
   AGENT_GET_RUN_TRACES: 'agent:get-run-traces', // §398：**按这一次运行**（requestId）取分步明细，与「本次运行统计」同一条口径（只读）
   AGENT_GET_SESSION_STATS: 'agent:get-session-stats', // 会话级累计统计（跨全部运行聚合，只读）
+  AGENT_LIST_RUNS: 'agent:list-runs', // P2：会话全部 run 索引（只读，按 request_id 聚合后映射轮次）
   AGENT_GET_TEXT_PROTOCOL: 'agent:get-text-protocol', // 被点名走文本协议的模型清单（只读）
   AGENT_SET_TEXT_PROTOCOL: 'agent:set-text-protocol', // 开/关某台模型的文本协议
   AGENT_LIST_DELEGATE_CAPS: 'agent:list-delegate-caps', // 已判出的"能不能当管控者"清单（只读，带 stale）

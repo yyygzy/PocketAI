@@ -1135,6 +1135,17 @@ class AgentEngine {
   private controllers = new Map<string, AbortController>()
 
   /**
+   * 同会话单活动 run 守卫（P2 / V4-Iter-459）：过渡期两个壳可能同时保活，而控制器只按
+   * requestId 管——同一会话并发起两次 run 时，两轮会分别往同一条消息时间线上写步事件。
+   * 这里按 `conversationId → requestId` 登记，第二个并发 run 直接抛 `AGENT_RUN_BUSY`：
+   * chat-service 把它转成 `{ok:false}`，渲染层用 `chatSendFailureText` 明确提示被拒的一方，
+   * 不再静默丢弃。子 run 的会话 id 独立，不会被父的登记挡住。
+   * 注意：`chat:send` 本身有按会话的串行锁，正常并发发送会排在锁后依次执行；这条守卫是引擎侧
+   * 的兜底（直接调用 `run()`、或将来某个绕开串行锁的入口）。
+   */
+  private activeConversations = new Map<string, string>()
+
+  /**
    * 运行中插队的收件箱（V4-Iter-238）：**只给主干 run 开**。
    *  · 键是 requestId，运行结束（finally）必删——留着它，同一个 requestId 的残句会被
    *    下一轮复用同名 id 的运行吃掉（与 traceParents 同一条纪律）；
@@ -1168,6 +1179,13 @@ class AgentEngine {
     return this.controllers.size > 0
   }
 
+  /** 只摘自己登记的那一轮：并发守卫登记的是 requestId，别的 run 不能替它解锁 */
+  private releaseConversation(conversationId: string, requestId: string): void {
+    if (this.activeConversations.get(conversationId) === requestId) {
+      this.activeConversations.delete(conversationId)
+    }
+  }
+
   /**
    * `internal` 只给主进程内部用（144 的子 run）：渲染层经 IPC 传不进来，
    * 因为 `chat:send` 的入参走 zod 且是**非严格对象**——未声明的键会被剥掉，
@@ -1190,6 +1208,13 @@ class AgentEngine {
     // traceParents/traceModels/controllers/interjections/loopTimer 留在那儿泄漏、会话卡 streaming 且不报错。
     // 下面 catch 补上与内层 catch 同款收尾：发错误事件、落会话状态、摘掉此刻已登记的资源。
     // loopTimer 提到 try 外：setup 里抛时它可能还没赋值（未注册），catch 用 if 兜住。
+    // P2：同一会话不允许同时起两个 run（见 `activeConversations` 的注释）。
+    // 放在第一处登记之前：被拒的一方不会写用户消息、不会建 trace、不会动会话状态。
+    const busyRequestId = this.activeConversations.get(conversationId)
+    if (busyRequestId && busyRequestId !== requestId) {
+      throw new Error('AGENT_RUN_BUSY:同一会话已有运行进行中')
+    }
+    this.activeConversations.set(conversationId, requestId)
     let loopTimer: ReturnType<typeof setTimeout> | undefined
     try {
       traceParents.set(requestId, parentRequestId)
@@ -1611,6 +1636,7 @@ class AgentEngine {
         // 的插队接到这一轮上。渲染层不需要知道这件事——它只按 clientRef 对账，
         // 没被对上的那条会在 DONE/ERROR 后回到队列等正常发送。
         this.interjections.delete(requestId)
+        this.releaseConversation(conversationId, requestId)
       }
     } catch (setupErr) {
       // §307：setup 段抛出（进不了循环体的 inner finally）的兜底收尾。此时 ctx 尚未构造，
@@ -1622,6 +1648,7 @@ class AgentEngine {
       traceParents.delete(requestId)
       traceModels.delete(requestId)
       this.interjections.delete(requestId)
+      this.releaseConversation(conversationId, requestId)
       const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
       emit(IPC.AGENT_ERROR_EVENT, errEvt)
       conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })

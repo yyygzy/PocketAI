@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatTarget } from '../../../../shared/types'
 import type { CompareColumn } from './ComparisonColumns'
 import type { FocusBranch } from './ChatView'
-import type { AgentMessage } from '../agent/agent-shared'
+import type { AgentMessage, LiveStep } from '../agent/agent-shared'
+import { reduceLiveSteps } from '../agent/agent-shared'
 import { messagesReducer } from '../agent/hooks/messages-reducer'
 import { hasIpcFailed, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
@@ -31,8 +32,10 @@ export interface UseStreamSessionOptions {
   /**
    * 全部目标列落定后的成败汇总（在 finalize 时同步触发一次）：
    * 至少一列 done → 'done'；全部 error/aborted → 'error'。供失焦通知等使用。
+   * P2 起带上 `requestId`：对话页用它把「刚跑完的那一轮」映射到轮次摘要上，done 之后聚焦该轮摘要；
+   * 聊天流没有 requestId 时为 null。
    */
-  onStreamsSettled?: (convId: string, outcome: 'done' | 'error') => void
+  onStreamsSettled?: (convId: string, outcome: 'done' | 'error', requestId?: string | null) => void
   /** Agent 步骤 error 事件缺 error 文案时的兜底句（随界面语言） */
   unknownErrorText?: string
 }
@@ -55,6 +58,8 @@ export interface UseStreamSessionApi {
   agentStream: { convId: string; requestId: string; messages: AgentMessage[] } | null
   /** Agent 模式是否在跑（会话切换后仍为 true，用于全局忙碌态） */
   agentRunning: boolean
+  /** P2：运行中实时步骤条（与 Agent 调试台同一份 `reduceLiveSteps` 归约结果）；非运行态为空数组 */
+  liveSteps: LiveStep[]
   /** 分支聚焦信号：regenerate/resend 后把对应轮次切到新分支 */
   focusBranch: FocusBranch | null
   /** 是否流式中（ref 直读，事件 handler 内调用即得最新值） */
@@ -81,6 +86,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     messages: AgentMessage[]
   } | null>(null)
   const [agentRunning, setAgentRunning] = useState(false)
+  /** P2：实时步骤条数据；订阅与 `useAgentChat` 用的同一批 step 事件、同一个归约函数 */
+  const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [focusBranch, setFocusBranch] = useState<FocusBranch | null>(null)
   /** §266 第六面：按「停止」那一发的结果过去只交给 `.catch(reportIpcError(...))`——
    *  而 abort 走 safeHandle，失败是**已 resolve 的 `{ok:false}`**，那条 catch 不会经过 ⇒ 屏上零字，流却还在跑。 */
@@ -137,6 +144,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       if (e.requestId !== requestIdRef.current) return
       // 用户气泡由 ChatModule 本地乐观插入；interject（运行中插队）v1 不做
       if (e.type === 'user' || e.type === 'interject') return
+      setLiveSteps((prev) => reduceLiveSteps(prev, e))
       setAgentStream((prev) => {
         if (!prev || prev.requestId !== e.requestId) return prev
         return {
@@ -169,8 +177,9 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       if (finalizedRef.current) return
       finalizedRef.current = true
       setStopUnread(null)
-      optsRef.current.onStreamsSettled?.(convId, outcome)
-      const requestId = requestIdRef.current
+      const settledRequestId = requestIdRef.current
+      optsRef.current.onStreamsSettled?.(convId, outcome, settledRequestId)
+      const requestId = settledRequestId
       requestIdRef.current = null
       streamingConvRef.current = null
       // 与聊天流一样延迟 200ms：先让最后一段 chunk 画完，再重读库里的持久化消息并撤掉实时卡，
@@ -181,6 +190,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
         const clearLive = () => {
           setAgentStream((prev) => (prev && prev.requestId === requestId ? null : prev))
           setAgentRunning(false)
+          setLiveSteps([])
         }
         if (convId && optsRef.current.getCurrentConvId() === convId) {
           Promise.resolve(optsRef.current.loadMessages(convId)).finally(clearLive)
@@ -230,7 +240,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       const convId = streamingConvRef.current
       // 成败汇总同步通知（失焦系统通知用）；缺记录按 error 保守处理
       if (convId) {
-        optsRef.current.onStreamsSettled?.(convId, settledOutcome(resultsRef.current))
+        optsRef.current.onStreamsSettled?.(convId, settledOutcome(resultsRef.current), requestIdRef.current)
       }
       requestIdRef.current = null
       streamingConvRef.current = null
@@ -293,6 +303,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     streamingConvRef.current = convId
     setLiveColumns(null)
     setAgentStream({ convId, requestId, messages: [] })
+    setLiveSteps([])
     setAgentRunning(true)
     return requestId
   }, [])
@@ -304,6 +315,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     setLiveColumns(null)
     setAgentStream((prev) => (prev && prev.requestId === requestId ? null : prev))
     setAgentRunning(false)
+    setLiveSteps([])
     if (convId && optsRef.current.getCurrentConvId() === convId) optsRef.current.loadMessages(convId)
   }, [])
 
@@ -338,6 +350,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     liveColumns,
     agentStream,
     agentRunning,
+    liveSteps,
     focusBranch,
     isStreaming,
     beginStream,

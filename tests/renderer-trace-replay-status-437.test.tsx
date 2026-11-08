@@ -7,7 +7,7 @@
 //      **不许默认成 expired 或 never_stored**——这是本批最重要的一条；
 //   ③ 四态不是只靠颜色：短词与符号两两不同，悬停文案各说各的成因；
 //   ④ 四态节点里没有按钮／没有任何执行入口（本批只读，不做回放/dry-run/续跑）；
-//   ⑤ AgentPanel 真把 `tr.replay` 递给这个组件，且挂在主行内（结构锚点，防"组件写了但没接上"）。
+//   ⑤ `AgentTraceList` 真把 `tr.replay` 递给这个组件，且挂在主行内（结构锚点，防"组件写了但没接上"）。
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -17,6 +17,9 @@ import { TraceReplayStatus } from '../src/renderer/src/modules/agent/components/
 import { zh } from '../src/renderer/src/i18n/zh'
 
 const ROOT = path.resolve(__dirname, '..')
+// P2 / V4-Iter-459：步骤流本体从 AgentPanel 搬进 AgentTraceList（AgentPanel 只剩挂载），
+// 断言随实现搬到新位置；不写成"两处任一处成立"——那会允许残留第二份渲染而不报错。
+const LIST = path.join(ROOT, 'src/renderer/src/modules/agent/components/AgentTraceList.tsx')
 const PANEL = path.join(ROOT, 'src/renderer/src/modules/agent/chat/AgentPanel.tsx')
 const COMPONENT = path.join(ROOT, 'src/renderer/src/modules/agent/components/TraceReplayStatus.tsx')
 
@@ -98,14 +101,16 @@ describe('§437 回放状态：行内徽标（三档事实＋一档判定不可�
     expect(LONG.unavailable).not.toContain('当时未存')
   })
 
-  it('AgentPanel 把 tr.replay 递给徽标并挂在主行内（不另起一行、不挤压工具名）', () => {
-    const src = fs.readFileSync(PANEL, 'utf-8')
-    expect(src).toContain("import { TraceReplayStatus } from '../components/TraceReplayStatus'")
+  it('AgentTraceList 把 tr.replay 递给徽标并挂在主行内（不另起一行、不挤压工具名）', () => {
+    const src = fs.readFileSync(LIST, 'utf-8')
+    expect(src).toContain("import { TraceReplayStatus } from './TraceReplayStatus'")
     const statusIdx = src.indexOf('<TraceReplayStatus replay={tr.replay} />')
     expect(statusIdx).toBeGreaterThan(-1)
     // 位置身份：紧跟在主行的 tokens 之后（同一个 `line` 片段里），不是行外独立节点
     expect(statusIdx).toBeGreaterThan(src.indexOf('{stepTokens &&'))
     expect(src.split('<TraceReplayStatus replay={tr.replay} />').length - 1).toBe(1)
+    // 反向锚点：旧位置不再留第二份渲染（搬移而不是复制）
+    expect(fs.readFileSync(PANEL, 'utf-8')).not.toContain('<TraceReplayStatus')
     // 布局身份：ml-auto＋shrink-0＋nowrap＝靠右、不压工具名、不换行加高
     const comp = fs.readFileSync(COMPONENT, 'utf-8')
     expect(comp).toContain('ml-auto shrink-0 whitespace-nowrap')

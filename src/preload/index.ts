@@ -62,6 +62,7 @@ import type {
   AgentRunStats,
   AgentSessionStats,
   AgentTraceRecord,
+  AgentRunIndexEntry,
   ToolSchema,
   ToolPolicySnapshot,
   LicenseStatus,
@@ -852,6 +853,12 @@ const api = {
   /** 会话级累计统计（跨全部运行：运行次数/总耗时/总 token）；无记录返回 null */
   getSessionStats: (conversationId: string): Promise<AgentSessionStats | null> =>
     ipcRenderer.invoke(IPC.AGENT_GET_SESSION_STATS, conversationId),
+  /**
+   * P2：会话全部 run 的索引（只读，按 request_id 聚合）。对话页用它把「本轮记录」挂到对应轮次；
+   * 失败分支是 `{ok:false}` 信封（读取失败 ≠ 没有运行）。
+   */
+  listAgentRuns: (conversationId: string): Promise<AgentRunIndexEntry[] | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_LIST_RUNS, conversationId),
   /** 被点名「走文本协议」的模型清单（元素形如 `providerId::model`） */
   getAgentTextProtocol: (): Promise<string[]> =>
     ipcRenderer.invoke(IPC.AGENT_GET_TEXT_PROTOCOL),

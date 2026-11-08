@@ -456,11 +456,19 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //   · 单文件现数最高 42（renderer-kb-detail-batch）——那是一个文件的上限，不是总量。
     // 现数参考（仅供人看，不参与断言）：awaits＝1142（2026-11-06）。
     const AWAIT_CAP: Record<string, number> = {
+      // 同会话并发守卫（P2 / V4-Iter-459）：第一轮必须先真正挂到 LLM 闸门上（用户消息落库），
+      // 此时再起第二轮才能断言「被拒且没有第二条用户消息」；不等这一颗会在并发窗口外读到只有 0 条。
+      // 上限＝现数 1，不留余量。
+      'tests/agent-conversation-guard-459.test.ts': 1,
       'tests/agent-conversation-switch-race-309.test.tsx': 7,
       'tests/agent-delegation-real-chain.test.ts': 2,
       'tests/agent-event-attribution.test.tsx': 2,
       'tests/agent-interject-ipc-238.test.ts': 1,
       'tests/agent-role-concurrency-chain.test.ts': 1,
+      // 轮次检查器（P2 / V4-Iter-459）：展开后先等 getRunTraces 那一发真的发出（断言 beforeEach 的空账本
+      // 不会把「未调用」判成通过），再等异步 trace 到货、inspector 挂上，才能读步骤行与变更清单。
+      // 上限＝现数 2，不留余量。
+      'tests/agent-run-inspector-459.test.tsx': 2,
       'tests/agent-run-stats-scope-398.test.tsx': 19,
       'tests/approval-audit-panel-p0-2c-3.test.tsx': 4,
       'tests/assistant-editor-skill-bind-412.test.tsx': 2,

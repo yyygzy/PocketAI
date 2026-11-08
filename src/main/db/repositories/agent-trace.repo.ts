@@ -1,6 +1,11 @@
 // Agent Trace 数据访问：记录 Agent 每一步的执行情况，供调试/性能分析使用
 import { randomUUID } from 'node:crypto'
-import type { AgentRunStats, AgentSessionStats, AgentTraceRecord } from '../../../shared/types'
+import type {
+  AgentRunIndexEntry,
+  AgentRunStats,
+  AgentSessionStats,
+  AgentTraceRecord
+} from '../../../shared/types'
 import { dbService } from '../database'
 import { createLogger } from '../../logger'
 
@@ -90,6 +95,53 @@ function rowToRecord(row: AgentTraceRow): AgentTraceRecord {
     resultChars: row.result_chars ?? undefined,
     changeSet: row.change_set ?? undefined,
     createdAt: row.created_at
+  }
+}
+
+interface AgentRunIndexRow {
+  request_id: string
+  started_at: number
+  ended_at: number
+  step_count: number
+  total_duration: number
+  total_tokens: number
+  error_steps: number
+  message_ids: string | null
+}
+
+/** trace 行上的 `message_id` 是**多值一列**（换行分隔），这里拆开去重后才交给渲染层做轮次映射 */
+function splitMessageIds(raw: string | null): string[] {
+  if (!raw) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const part of raw.split(/[\n,]/)) {
+    const id = part.trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+/**
+ * 变更清单的条数。`NULL`＝没记录（旧行／自动放行／扫描失败），不是"没有变更"；
+ * `status='degraded'` 同样表示整次未记录，所以只认 `status='ok'` 的那份。
+ */
+function changeCountOf(raw: string): number | undefined {
+  try {
+    const parsed = JSON.parse(raw) as {
+      status?: string
+      entries?: unknown
+      counts?: { added?: number; modified?: number; deleted?: number }
+    }
+    if (!parsed || parsed.status !== 'ok') return undefined
+    if (parsed.counts) {
+      const { added, modified, deleted } = parsed.counts
+      return (Number(added) || 0) + (Number(modified) || 0) + (Number(deleted) || 0)
+    }
+    return Array.isArray(parsed.entries) ? parsed.entries.length : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -217,6 +269,104 @@ export const agentTraceRepo = {
       if (isTableMissingError(e)) {
         warnTableMissingOnce()
         return null
+      }
+      throw e
+    }
+  },
+
+  /**
+   * P2（V4-Iter-459）：会话的 run 索引（只读）。**不改表、不加列**——
+   * `messages` 没有 requestId 列，所以除了按 `request_id` 聚合，唯一能帮渲染层映射轮次的就是
+   * `agent_traces.message_id`（回放引用列）；它在旧行/未截断的行上是 NULL，因此渲染层还有
+   * `created_at` 区间兜底，这里不替它猜。
+   *
+   * 聚合口径与 `statsByRequest` 逐条对齐（否则同一轮在摘要与「本次运行统计」里会两个数）：
+   * · 步数、耗时、错误步只算**主干**（`request_id = ?` 的行）；
+   * · token 含直接子 run（`parent_request_id` 指回来的那一层；子级工具面已摘掉 `delegate_task`，不套娃）；
+   * · `childRuns` 只在 >0 时给（界面才不会写「含 0 次子代理」）。
+   *
+   * 一次调用固定 3 条语句（主聚合 + 子 run 聚合 + 变更清单），不随 run 数变成 N+1。
+   * 50 轮 / 1000 行的真库用例在 `tests/agent-list-runs-real-db-459.test.ts`。
+   */
+  listRuns(conversationId: string, limit = 50): AgentRunIndexEntry[] {
+    const take = Math.max(1, Math.min(200, Math.floor(limit)))
+    try {
+      const db = dbService.getHandle()
+      const rows = db.prepare(
+        `SELECT request_id,
+                MIN(created_at) AS started_at,
+                MAX(created_at) AS ended_at,
+                COUNT(*) AS step_count,
+                COALESCE(SUM(duration_ms), 0) AS total_duration,
+                COALESCE(SUM(token_usage), 0) AS total_tokens,
+                COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS error_steps,
+                GROUP_CONCAT(DISTINCT CASE WHEN message_id IS NOT NULL AND message_id <> '' THEN message_id END) AS message_ids
+         FROM agent_traces
+         WHERE conversation_id = ?
+         GROUP BY request_id
+         ORDER BY MIN(created_at) DESC, request_id DESC
+         LIMIT ?`
+      ).all(conversationId, take) as AgentRunIndexRow[]
+      if (rows.length === 0) return []
+
+      const ids = rows.map((r) => r.request_id)
+      const placeholders = ids.map(() => '?').join(', ')
+
+      const childRows = db.prepare(
+        `SELECT parent_request_id AS parent_id,
+                COUNT(DISTINCT request_id) AS child_runs,
+                COALESCE(SUM(token_usage), 0) AS child_tokens,
+                GROUP_CONCAT(DISTINCT conversation_id) AS child_conversations
+         FROM agent_traces
+         WHERE parent_request_id IN (${placeholders})
+         GROUP BY parent_request_id`
+      ).all(...ids) as Array<{
+        parent_id: string
+        child_runs: number
+        child_tokens: number
+        child_conversations: string | null
+      }>
+      const childMap = new Map(childRows.map((r) => [r.parent_id, r]))
+
+      const changeRows = db.prepare(
+        `SELECT request_id, change_set FROM agent_traces
+         WHERE request_id IN (${placeholders}) AND change_set IS NOT NULL`
+      ).all(...ids) as Array<{ request_id: string; change_set: string }>
+      const changeMap = new Map<string, number>()
+      for (const r of changeRows) {
+        const n = changeCountOf(r.change_set)
+        if (n === undefined) continue
+        changeMap.set(r.request_id, (changeMap.get(r.request_id) ?? 0) + n)
+      }
+
+      return rows.map((r) => {
+        const child = childMap.get(r.request_id)
+        const entry: AgentRunIndexEntry = {
+          requestId: r.request_id,
+          conversationId,
+          startedAt: r.started_at,
+          endedAt: r.ended_at,
+          stepCount: r.step_count,
+          totalDurationMs: r.total_duration,
+          totalTokens: r.total_tokens + (child?.child_tokens ?? 0),
+          errorSteps: r.error_steps,
+          messageIds: splitMessageIds(r.message_ids)
+        }
+        const changeCount = changeMap.get(r.request_id)
+        if (changeCount !== undefined) entry.changeCount = changeCount
+        if (child && child.child_runs > 0) {
+          entry.childRuns = child.child_runs
+          // 子会话 id 来自子 run 的 trace 行；同一次委派的每一步都会写同一个 conversation_id，
+          // GROUP_CONCAT(DISTINCT) 已去重。这里复用 message_id 的同一套拆分口径。
+          const childConversationIds = splitMessageIds(child.child_conversations)
+          if (childConversationIds.length > 0) entry.childConversationIds = childConversationIds
+        }
+        return entry
+      })
+    } catch (e) {
+      if (isTableMissingError(e)) {
+        warnTableMissingOnce()
+        return []
       }
       throw e
     }

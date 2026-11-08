@@ -235,6 +235,13 @@ export function registerAgentHandlers(): void {
     agentTraceRepo.sessionStatsByConversation(conversationId),
   argsSchema(idSchema))
 
+  // P2（V4-Iter-459）：会话全部 run 的索引（只读）。与上面几发的区别：
+  // 「最近一次」只回答一轮、`AGENT_GET_RUN_STATS` 要先有 requestId；这一发一次给出可映射轮次的清单，
+  // 对话页据此把摘要挂到对应轮次。**不改表、不加列、不写库**（`messages` 没有 requestId，映射靠 trace.message_id）。
+  safeHandle(IPC.AGENT_LIST_RUNS, (_e, conversationId: string) =>
+    agentTraceRepo.listRuns(conversationId),
+  argsSchema(idSchema))
+
   // ---------- 模型级「走文本协议」显式开关（§4.4-⑦） ----------
   safeHandle(IPC.AGENT_GET_TEXT_PROTOCOL, () => listTextProtocolModels())
   safeHandle(

@@ -26,26 +26,27 @@ import { errText } from '../../../utils/error'
 import { useToast } from '../../../components/ToastProvider'
 import { findRerunSourceId, toAgentMessages, reduceLiveSteps, type AgentMessage, type LiveStep } from '../agent-shared'
 import { messagesReducer } from './messages-reducer'
+import {
+  identityUnreadOf,
+  isSubSessionReadonly,
+  subSessionOf,
+  type SubSessionIdentity
+} from '../sub-session'
+import {
+  applyInterjectEvent,
+  createRunSettlementLedger,
+  settleRunQueue,
+  type AgentQueueItem
+} from '../queue-settlement'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../../utils/palette-nav'
 
 /**
  * 运行中排队的一条消息（V4-Iter-238）。
  * 只在渲染层内存里，**不落库、不进 store**：刷新页面就没了。这是有意的——
  * 排队项既不是消息也不是任务，把它持久化就得引入第三种存储形状，而它的全部价值在"这一轮跑完接着说"。
+ * 类型与结算规则已抽到 `../queue-settlement`（P2 / V4-Iter-459），这里只做兼容导出。
  */
-export interface AgentQueueItem {
-  /** 渲染层生成的本地 id，随插队请求交给引擎，再原样回到 step 事件里（对账用） */
-  clientRef: string
-  /** 排队项属于哪条会话：切会话不丢，切回来还在条上 */
-  conversationId: string
-  text: string
-  /**
-   * true = 已经交给引擎、等它在下个步边界收下。
-   * 只有 `interject` 事件能把它消掉；运行结束（DONE/ERROR）时还挂着的一律视为**没送到**，
-   * 退回排队等自动发送——宁可重发一次，也不能让用户那句话凭空消失。
-   */
-  interjecting: boolean
-}
+export type { AgentQueueItem }
 
 /** 排队条上限：再多就不是"补一句"而是"批量灌"了，那种场景应该等运行结束再发 */
 export const MAX_QUEUE_ITEMS = 20
@@ -89,9 +90,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
    *    也不让人把消息发进一条机器会话：那种 run 的步骤不进父的 token 汇总（§163 口径），
    *    发出去的钱与产物都看不见。
    */
-  const [subSessionIdentity, setSubSessionIdentity] = useState<
-    { state: 'loading' } | { state: 'ok'; record: ConversationRecord | null } | { state: 'failed'; reason: string }
-  >({ state: 'loading' })
+  const [subSessionIdentity, setSubSessionIdentity] = useState<SubSessionIdentity>({ state: 'loading' })
   /** 当前会话的直接子会话（「子代理会话」那格列表；读失败时保持空，另有一句 unread 的话） */
   const [subSessions, setSubSessions] = useState<ConversationRecord[]>([])
   const [subSessionsUnread, setSubSessionsUnread] = useState<string | null>(null)
@@ -146,6 +145,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
    */
   const [queue, setQueue] = useState<AgentQueueItem[]>([])
   const queueRef = useRef<AgentQueueItem[]>(queue)
+  /** P2：`(requestId, clientRef)` 幂等账本——两个订阅各自结算同一轮时也不重复发下一条 */
+  const settlementLedgerRef = useRef(createRunSettlementLedger())
   const runningRef = useRef(false)
   const sendRef = useRef<(text: string, attachments: ChatAttachment[]) => void>(() => {})
   const canStartRunRef = useRef<() => boolean>(() => false)
@@ -241,23 +242,25 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   }
 
   /**
-   * 一轮结束后的收尾（V4-Iter-238），两件事：
+   * 一轮结束后的收尾（V4-Iter-238 / P2 定稿）：
    *  ① 还挂着"已交给引擎"的项归回排队——没收到 `interject` 事件就是没落库。
    *     不归回的话它会永远停在"插队中"，既不上屏也不自动发，用户那句话就消失了；
    *  ② 只有**正常跑完**且当前正看着这条会话时才自动发出下一条。中止/出错不自动发：
    *     按停止就是要停下来看结果，紧跟一条自动发送等于没停；而后台会话的排队项要等用户切回来
    *     再发——`send` 发的是"当前看着的会话"，在后台回调里发就是把话塞进别的会话。
+   *
+   * 结算由**持有队列的这个 hook 自己**订阅 DONE/ERROR 驱动，不依赖 `useStreamSession` 的
+   * `onStreamsSettled`（观测 hook 不订阅也照样 drain）；跨订阅重复到达由
+   * `settlementLedgerRef` 按 `(requestId, clientRef)` 去重，不会重复发。
    */
-  const settleQueueAfterRun = (convId: string, autoSend: boolean): void => {
-    const settled = queueRef.current.map((q) =>
-      q.conversationId === convId && q.interjecting ? { ...q, interjecting: false } : q
+  const settleQueueAfterRun = (convId: string, requestId: string, autoSend: boolean): void => {
+    const result = settleRunQueue(
+      queueRef.current,
+      { conversationId: convId, requestId, autoSend, canAutoSend: canStartRunRef.current() },
+      settlementLedgerRef.current
     )
-    writeQueue(settled)
-    if (!autoSend) return
-    const next = settled.find((q) => q.conversationId === convId && !q.interjecting)
-    if (!next || !canStartRunRef.current()) return
-    writeQueue(settled.filter((q) => q.clientRef !== next.clientRef))
-    sendRef.current(next.text, [])
+    writeQueue(result.queue)
+    if (result.next) sendRef.current(result.next.text, [])
   }
 
   const selectedProvider = useMemo(
@@ -763,18 +766,15 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   }, [conversationId, loadSubSessionReads])
 
   /** 正在看的子代理会话（null=不是子会话或还没读到） */
-  const subSession = subSessionIdentity.state === 'ok' && subSessionIdentity.record?.parentConversationId
-    ? subSessionIdentity.record
-    : null
+  const subSession = subSessionOf(subSessionIdentity)
   /** 身份读不到的那句话（界面据此显示只读条＋重试，而不是假装这条会话能发） */
-  const identityUnread = subSessionIdentity.state === 'failed' ? subSessionIdentity.reason : null
+  const identityUnread = identityUnreadOf(subSessionIdentity)
   /**
    * 只读判据（一处派生，六处接管：输入区整块、卡片上的删除／截断重跑／重新生成／右键提醒、断点恢复那条）。
    * `loading` 不在内：那一档只出现在"没有任何本地线索"的入口，且和用户敲下回车之间是几毫秒，
    * 把它算进去会让每次切会话都闪一次输入框。
    */
-  const subSessionReadonly =
-    subSessionIdentity.state === 'failed' || (subSessionIdentity.state === 'ok' && !!subSessionIdentity.record?.parentConversationId)
+  const subSessionReadonly = isSubSessionReadonly(subSessionIdentity)
 
   /** 打开某趟子代理的独立会话：本地已有那条记录，直接写进身份，避免"先能输入再变只读"的那一帧 */
   const openSubSession = (id: string) => {
@@ -933,8 +933,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
          * 当成"没送到"再发一遍——库里凭空多一条重复消息。
          */
         if (e.type === 'interject' && e.clientRef && fromThisRun(e.requestId)) {
-          const rest = queueRef.current.filter((q) => q.clientRef !== e.clientRef)
-          if (rest.length !== queueRef.current.length) writeQueue(rest)
+          // 按 clientRef 过滤即幂等：重复事件结果不变（见 `../queue-settlement`）
+          writeQueue(applyInterjectEvent(queueRef.current, e.clientRef))
         }
         if (!thisRunShownNow(e)) return
         setCurrentStep(e.stepIndex)
@@ -955,7 +955,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         setCurrentStep(0)
         setLiveSteps([])
         // 排队条收尾：见 settleQueueAfterRun。自动发送只在正看着这条会话时发生
-        settleQueueAfterRun(e.conversationId, e.conversationId === conversationIdRef.current)
+        settleQueueAfterRun(e.conversationId, e.requestId, e.conversationId === conversationIdRef.current)
         // 仅在事件仍归属当前会话时展示统计与复位（切会话后迟到的 DONE 不覆盖）
         if (e.conversationId === conversationIdRef.current) {
           setInterrupted(false)
@@ -1010,7 +1010,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         setCurrentStep(0)
         setLiveSteps([])
         // 中止/出错：插队中的项归回队列，但**不**自动发下一条（用户要停下来看，见 settleQueueAfterRun ②）
-        settleQueueAfterRun(e.conversationId, false)
+        settleQueueAfterRun(e.conversationId, e.requestId, false)
         // 「可断点恢复」是按会话讲的：正在看别的会话时不该被上一轮的失败点亮
         if (e.conversationId === conversationIdRef.current) {
           setInterrupted(true)

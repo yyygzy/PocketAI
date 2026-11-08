@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing } from '../../../../shared/types'
+import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
@@ -14,7 +14,9 @@ import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isNearBottom, shouldStickToBottom } from '../agent/components/virtual-list-utils'
 import { AgentMessageCard } from '../agent/components/AgentMessageCard'
-import { toAgentMessages, type AgentMessage } from '../agent/agent-shared'
+import { AgentLiveStepStrip } from '../agent/components/AgentLiveStepStrip'
+import { AgentRunSummary } from '../agent/components/AgentRunSummary'
+import { toAgentMessages, type AgentMessage, type LiveStep } from '../agent/agent-shared'
 import { cumulativeTokensByMessage } from '../../utils/usage-summary'
 import { hasUsableModel } from '../../utils/provider-pick'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
@@ -140,6 +142,17 @@ interface Props {
   onToggleAgentMode?: () => void
   /** Agent 模式的实时卡片；非 null 时作为末条虚拟项追加在当前消息流之后 */
   agentLive?: AgentMessage[] | null
+  /** P2：运行中实时步骤条（与 Agent 调试台同一份 chip 流）；挂在实时卡片上方的轮次内 */
+  liveSteps?: LiveStep[]
+  /**
+   * P2：轮次 key（该轮首条消息 id）→ 本轮 run 摘要。
+   * 由 ChatModule 用 `useAgentRunInsights` 算好；`undefined` 表示当前会话没有启用 run 索引。
+   */
+  runsByTurn?: Map<string, AgentRunIndexEntry>
+  /** run 索引读取失败的原因（读不到 ≠ 没有运行，需要屏上有一句） */
+  runsUnread?: string | null
+  /** 子代理会话只读：隐藏输入区（P2 的 `subSessionReadonly` 在 ChatModule 侧的落点） */
+  readonly?: boolean
   welcomeMessage?: string
   assistantName?: string
   assistant: AssistantRecord | null
@@ -156,6 +169,13 @@ interface Props {
   focusBranch?: FocusBranch | null
   /** 搜索跳转定位：加载会话后滚动到匹配消息并临时高亮 */
   focusMessageId?: string | null
+  /**
+   * P2：刚跑完的那一轮 requestId。ChatModule 在 `onStreamsSettled` 里传下来，
+   * 本视图找到对应轮次后滚动到它并临时高亮本轮摘要（要求「done 之后聚焦到该轮摘要」）。
+   */
+  focusRunRequestId?: string | null
+  /** P2：从轮次里的子 run 进入对应子会话（由 ChatModule 切会话） */
+  onOpenSubSession?: (conversationId: string) => void
   /** 当前待回复的引用消息（Composer 显示引用条） */
   replyToMessage?: MessageRecord | null
   /** 设置/清除引用消息 */
@@ -198,6 +218,10 @@ export const ChatView: React.FC<Props> = ({
   agentMode = false,
   onToggleAgentMode,
   agentLive,
+  liveSteps,
+  runsByTurn,
+  runsUnread,
+  readonly = false,
   welcomeMessage,
   assistantName,
   assistant,
@@ -212,6 +236,8 @@ export const ChatView: React.FC<Props> = ({
   onSaveAsNote,
   focusBranch,
   focusMessageId,
+  focusRunRequestId,
+  onOpenSubSession,
   replyToMessage,
   onReply,
   onToggleStar,
@@ -262,6 +288,9 @@ export const ChatView: React.FC<Props> = ({
   /** 处于并排对比模式的轮次（turnKey 集合） */
   const [compareTurns, setCompareTurns] = useState<Set<string>>(new Set())
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
+  /** P2：刚跑完、正被聚焦的那一轮 requestId（只高亮本轮摘要，2.5s 后褪掉） */
+  const [highlightRunId, setHighlightRunId] = useState<string | null>(null)
+  const focusedRunIdRef = useRef<string | null>(null)
   /** 长会话滚动超过阈值时显示「回到顶部」按钮 */
   const [showJumpTop, setShowJumpTop] = useState(false)
   /** 当前是否在底部（state 驱动回底按钮显隐，与 isAtBottomRef 同步） */
@@ -450,6 +479,13 @@ export const ChatView: React.FC<Props> = ({
   const virtualizer = useVirtualizer({
     count: listCount,
     getScrollElement: () => scrollBoxRef.current,
+    // P2：塞进摘要/检查器之前先补稳定 key——旧实现只靠索引，轮次一插入或重载（临时消息换真 id、
+    // 实时卡片出现/消失）measureElement 的尺寸缓存就会串到别的轮次上，虚拟列表会跳高度。
+    // key 与 `buildTurnBoundaries` 的 key 同源：该轮首条消息 id；实时 Agent 卡片固定一档。
+    getItemKey: (index) => {
+      if (index >= renderedTurns.length) return 'agent-live'
+      return renderedTurns[index]?.items[0]?.id ?? `turn-${index}`
+    },
     estimateSize: () => 200,
     overscan: 4,
     measureElement: (el) => {
@@ -469,6 +505,26 @@ export const ChatView: React.FC<Props> = ({
     const timer = setTimeout(() => setHighlightMsgId(null), 2000)
     return () => clearTimeout(timer)
   }, [focusMessageId, messages, renderedTurns, virtualizer])
+
+  /**
+   * P2：done 之后聚焦到本轮摘要。
+   * 轮次映射（`runsByTurn`）可能比 settle 信号晚一拍（刚读库），所以没命中就等下一次渲染再试；
+   * 命中一次后按 requestId 记忆，避免轮次重排时反复抢滚动位置。
+   */
+  useEffect(() => {
+    if (!focusRunRequestId || !runsByTurn) return
+    if (focusedRunIdRef.current === focusRunRequestId) return
+    const idx = renderedTurns.findIndex((turn, i) => {
+      const key = turn.items[0]?.id ?? `turn-${i}`
+      return runsByTurn.get(key)?.requestId === focusRunRequestId
+    })
+    if (idx < 0) return
+    focusedRunIdRef.current = focusRunRequestId
+    virtualizer.scrollToIndex(idx, { align: 'end' })
+    setHighlightRunId(focusRunRequestId)
+    const timer = setTimeout(() => setHighlightRunId(null), 2500)
+    return () => clearTimeout(timer)
+  }, [focusRunRequestId, runsByTurn, renderedTurns, virtualizer])
 
   /** 置顶横幅展开态（默认最多展示 3 条，超出折叠） */
   const [pinsExpanded, setPinsExpanded] = useState(false)
@@ -987,6 +1043,12 @@ export const ChatView: React.FC<Props> = ({
       {/* 消息流（虚拟化：每轮一个虚拟项，只渲染可视区 + overscan） */}
       <div ref={scrollBoxRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative">
         <div className="max-w-5xl mx-auto px-4 py-5">
+          {/* run 索引读失败：读不到 ≠ 没有运行，屏上要留一句（细则见 P2 台账） */}
+          {runsUnread && (
+            <div className="mb-2 text-[11px] text-[var(--color-danger)]" data-testid="chat-run-index-unread">
+              {t('agent.runSummaryUnread', { reason: runsUnread })}
+            </div>
+          )}
           {listCount === 0 ? (
             <div className="flex flex-col items-center justify-center h-72 text-center px-6">
               <div className="text-4xl mb-3">🎒</div>
@@ -1023,6 +1085,7 @@ export const ChatView: React.FC<Props> = ({
                         paddingBottom: 24
                       }}
                     >
+                      <AgentLiveStepStrip steps={liveSteps ?? []} className="mb-2" />
                       {liveAgentCards!.map((m) => (
                         <AgentMessageCard key={m.id} m={m} />
                       ))}
@@ -1032,7 +1095,8 @@ export const ChatView: React.FC<Props> = ({
                 const turn = renderedTurns[vi.index]
                 if (!turn) return null
                 const ti = vi.index
-                const turnKey = turn.user?.id ?? `turn-${ti}`
+                // 与 `run-turn-map.buildTurnBoundaries` 同源：轮次 key = 该轮首条消息 id
+                const turnKey = turn.items[0]?.id ?? `turn-${ti}`
                 const activeIdx = activeBatchIndexOf(turn, turnKey)
                 const activeBatch = turn.batches[activeIdx] ?? []
                 const msg = activeBatch[0]! // length === 1 分支内必非空
@@ -1042,6 +1106,7 @@ export const ChatView: React.FC<Props> = ({
                   .join(' · ')
                 // Agent 轮次：tool 记录只由 Agent 引擎写入，出现即按 Agent 卡片复原（避免多步被误画成并行分支）
                 const agentCards = turn.tools.length > 0 ? agentCardsOf(turn.items) : null
+                const runSummary = runsByTurn?.get(turnKey)
                 const comparing = !agentCards && compareTurns.has(turnKey) && turn.batches.length > 1
                 // 该轮时间戳：用户消息优先，否则取该轮首条回复
                 const turnTs = turn.user?.createdAt ?? turn.replies[0]?.createdAt
@@ -1051,7 +1116,7 @@ export const ChatView: React.FC<Props> = ({
                 const showDateSep = !!turnTs && (!prevTs || isDifferentDay(turnTs, prevTs))
                 return (
                   <div
-                    key={turn.user?.id ?? `turn-${ti}`}
+                    key={turnKey}
                     data-index={vi.index}
                     ref={virtualizer.measureElement}
                     className="space-y-4"
@@ -1163,6 +1228,14 @@ export const ChatView: React.FC<Props> = ({
                         onDelete={handleDeleteOne}
                       />
                     ) : null}
+                    {/* P2：本轮记录摘要常驻（检查器后续按需展开，先只挂这一行数字） */}
+                    {runSummary && (
+                      <AgentRunSummary
+                        run={runSummary}
+                        highlight={highlightRunId === runSummary.requestId}
+                        onOpenSubSession={onOpenSubSession}
+                      />
+                    )}
                     {!agentCards && turn.batches.length > 1 && (
                       <BranchNav
                         index={activeIdx}
@@ -1205,22 +1278,31 @@ export const ChatView: React.FC<Props> = ({
         )}
       </div>
 
-      <Composer
-        streaming={streaming}
-        canSend={canSend}
-        noModels={noModelsAtAll}
-        onSend={onSend}
-        onStop={onStop}
-        agentMode={agentMode}
-        onToggleAgentMode={onToggleAgentMode}
-        replyTo={replyToMessage ?? null}
-        onCancelReply={() => onReply?.(null)}
-        draftKey={draftKey ?? ''}
-        draft={draft}
-        onDraftChange={onDraftChange}
-        onDraftCommit={onDraftCommit}
-        messages={messages}
-      />
+      {readonly ? (
+        <div
+          className="shrink-0 px-4 py-3 text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)]"
+          data-testid="chat-sub-session-readonly"
+        >
+          {t('agent.subSessionNote')}
+        </div>
+      ) : (
+        <Composer
+          streaming={streaming}
+          canSend={canSend}
+          noModels={noModelsAtAll}
+          onSend={onSend}
+          onStop={onStop}
+          agentMode={agentMode}
+          onToggleAgentMode={onToggleAgentMode}
+          replyTo={replyToMessage ?? null}
+          onCancelReply={() => onReply?.(null)}
+          draftKey={draftKey ?? ''}
+          draft={draft}
+          onDraftChange={onDraftChange}
+          onDraftCommit={onDraftCommit}
+          messages={messages}
+        />
+      )}
 
       {/* 系统提示词覆盖弹层：textarea 预填当前 override，无 override 时灰色显示助手默认预览 */}
       {sysOverrideOpen && (

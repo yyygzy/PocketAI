@@ -1,14 +1,7 @@
 // Agent 对话面板：左侧会话栏（可收起） + 右侧配置栏/消息流/输入区（纯组合，逻辑都在 hooks 中）
 import React, { useEffect, useRef, useState } from 'react'
-import type {
-  AssistantRecord,
-  ConversationRecord,
-  ReminderRepeatRule,
-  WorkspaceChangeDegradedReason,
-  WorkspaceChangeEntry
-} from '../../../../../shared/types'
+import type { AssistantRecord, ConversationRecord, ReminderRepeatRule } from '../../../../../shared/types'
 import { isDelegateRole, parseDelegationResultChildPrefixes } from '../../../../../shared/delegation-rules'
-import { parseWorkspaceChangeSet } from '../../../../../shared/workspace-changes'
 import { useI18n } from '../../../i18n'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { useProviderData } from '../hooks/useProviderData'
@@ -23,7 +16,8 @@ import { AgentComposer } from '../components/AgentComposer'
 import { VirtualMessageList } from '../components/VirtualMessageList'
 import { AgentSearchBar } from '../components/AgentSearchBar'
 import { ZeroToolCallNotice } from '../components/ZeroToolCallNotice'
-import { TraceReplayStatus } from '../components/TraceReplayStatus'
+import { AgentTraceList } from '../components/AgentTraceList'
+import { AgentLiveStepStrip } from '../components/AgentLiveStepStrip'
 import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages, delegateRoleLabel, isDeepSearchRunning } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { useAppStore } from '../../../store/app-store'
@@ -32,8 +26,6 @@ import { writeClipboard } from '../../../utils/clipboard'
 import { buildConversationHtml } from '../../../utils/export-html'
 import { buildReminderText, reminderCreatedToastKey } from '../../../utils/reminder-presets'
 import { formatDateTime } from '../../../utils/time'
-import { formatBytes } from '../../../utils/format'
-import { formatStepTokens } from '../../../utils/agent-step-tokens'
 import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutcome, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../../utils/batch-export'
 import { assistantDisplayName } from '../../chat/assistant-display'
 
@@ -85,8 +77,6 @@ export const AgentPanel: React.FC = () => {
   const [statsExpanded, setStatsExpanded] = useState(false)
   /** §235：「子代理会话」那一格（本会话派出去过哪几趟） */
   const [subRunsOpen, setSubRunsOpen] = useState(false)
-  /** 分步明细里逐条展开「入参／返回」（键=trace 行 id，天然唯一，切会话不用清） */
-  const [traceIoOpen, setTraceIoOpen] = useState<Record<string, boolean>>({})
 
   // ---------- 会话内消息搜索 ----------
   const [searchOpen, setSearchOpen] = useState(false)
@@ -422,39 +412,6 @@ export const AgentPanel: React.FC = () => {
     }
   }
 
-  /**
-   * 变更清单的三张文案表：key 全部写成**字面量**，不再用 `agent.traceChangeXxx.${...}` 动态拼接。
-   *
-   * 为什么：动态模板拼错 key（或联合类型加了新成员却没加文案）时，运行期只会把 key 原文丢到屏上，
-   * 而"数动态调用点"的闸门只能数出"又多了几处动态"，拦不住具体是哪条拼错。
-   * `satisfies Record<联合类型, string>` 让联合类型一加成员就在这里编译红，静态可复核。
-   * 出网清单那两处 `t(e.labelKey)` / `t(e.purposeKey)` 是另一回事：key 由主进程注册表枚举，
-   * 渲染端无法在不复制 26 条键的前提下写成字面量，属于**已登记的数据驱动**（见 §interpolation 闸门）。
-   */
-  const changeReasonText = {
-    'too-many-files': t('agent.traceChangesReason.too-many-files'),
-    'too-many-bytes': t('agent.traceChangesReason.too-many-bytes'),
-    timeout: t('agent.traceChangesReason.timeout'),
-    'too-many-changes': t('agent.traceChangesReason.too-many-changes'),
-    'before-scan-failed': t('agent.traceChangesReason.before-scan-failed'),
-    'after-scan-failed': t('agent.traceChangesReason.after-scan-failed'),
-    'auto-allowed-not-recorded': t('agent.traceChangesReason.auto-allowed-not-recorded')
-  } satisfies Record<WorkspaceChangeDegradedReason, string>
-  const changeKindText = {
-    added: t('agent.traceChangeKind.added'),
-    modified: t('agent.traceChangeKind.modified'),
-    deleted: t('agent.traceChangeKind.deleted')
-  } satisfies Record<WorkspaceChangeEntry['kind'], string>
-  const changeContentText = {
-    'mtime-only': t('agent.traceChangeContent.mtime-only'),
-    binary: t('agent.traceChangeContent.binary'),
-    'too-large': t('agent.traceChangeContent.too-large'),
-    unreadable: t('agent.traceChangeContent.unreadable')
-  } satisfies Record<
-    Exclude<WorkspaceChangeEntry['content'], 'hashed' | 'not-compared'>,
-    string
-  >
-
   return (
     <div className="flex gap-3 h-full">
       {railOpen && (
@@ -672,43 +629,16 @@ export const AgentPanel: React.FC = () => {
           highlightId={activeHit?.id ?? null}
         />
 
-        {/* 运行中：实时步骤条（chip 流，step 事件驱动；结束后由 runStats 区接管） */}
+        {/* 运行中：实时步骤条（chip 流，step 事件驱动；结束后由 runStats 区接管）。
+            渲染本体与对话页实时卡片共用 `AgentLiveStepStrip`，避免两套样式。 */}
         {chat.running && (
-          <div className="mb-2 self-start w-full max-w-[640px] flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-            <span className="inline-block w-2 h-2 shrink-0 rounded-full bg-[var(--color-accent)] animate-pulse" />
-            <span className="shrink-0">{t('agent.runningStep', { n: chat.currentStep })}</span>
-            {deepSearchRunning && (
-              <span className="shrink-0 text-[var(--color-accent)]">{t('agent.websearch.deepRunning')}</span>
-            )}
-            {chat.liveSteps.length > 0 && (
-              <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1 py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {chat.liveSteps.map((s, i) => {
-                  const isLast = i === chat.liveSteps.length - 1
-                  return (
-                    <span
-                      key={`${s.stepIndex}-${s.type}-${i}`}
-                      className={`shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-[10px] leading-none ${
-                        s.type === 'error'
-                          ? 'border-[var(--color-danger)] text-[var(--color-danger)]'
-                          : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
-                      } ${isLast ? 'animate-pulse border-[var(--color-accent)] text-[var(--color-accent)]' : ''}`}
-                    >
-                      <span>{t(`agent.liveStep.${s.type}`)}</span>
-                      {/* 委派那一步用角色标签替掉裸工具名：delegate_task 对用户不如"派了谁"有用 */}
-                      {s.role ? (
-                        <span className="text-[var(--color-accent)]" data-delegate-role={s.role}>
-                          {delegateRoleLabel(t, s.role)}
-                        </span>
-                      ) : (
-                        s.toolName && <span className="text-[var(--color-accent)]">{s.toolName}</span>
-                      )}
-                      <span className="opacity-60">#{s.stepIndex}</span>
-                    </span>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+          <AgentLiveStepStrip
+            steps={chat.liveSteps}
+            currentStep={chat.currentStep}
+            running={chat.running}
+            deepSearchRunning={deepSearchRunning}
+            className="mb-2 self-start w-full max-w-[640px]"
+          />
         )}
 
         {/* §265 第六面：按了「停止」而指令没送到主进程时，界面已经回到未运行态，那一轮却可能还在跑。
@@ -844,155 +774,18 @@ export const AgentPanel: React.FC = () => {
                 {!chat.tracesLoading && !chat.latestTracesUnread && (!chat.latestTraces || chat.latestTraces.length === 0) && (
                   <div className="text-xs text-[var(--color-text-muted)]">{t('agent.traceEmpty')}</div>
                 )}
-                {!chat.tracesLoading &&
-                  chat.latestTraces?.map((tr, i) => {
-                    const stepTokens = formatStepTokens(tr, t)
-                    const ioOpen = traceIoOpen[tr.id] ?? false
-                    // 这一步派出去的那几趟子会话：拿返回值头部里的 8 位前缀去直接子会话中找命中。
-                    // 一个前缀命中 0 个或 ≥2 个都不给入口（宁可不给，也不赌是哪一趟），列表那一格照样能翻；
-                    // 同一步并行委派好几趟时，每个唯一命中各给一个按钮
-                    const kids = parseDelegationResultChildPrefixes(tr.toolResult)
-                      .map((p) => chat.subSessions.filter((s) => s.id.slice(0, 8) === p))
-                      .filter((list) => list.length === 1)
-                      .map((list) => list[0] as ConversationRecord)
-                    // v55：变更清单是这一步的"执行后事实"，有它才展开；null 与"没有变更"分开说
-                    const changes = parseWorkspaceChangeSet(tr.changeSet)
-                    const hasIo = !!(tr.toolArgs || tr.toolResult || tr.model || changes)
-                    const rowClass = 'flex flex-wrap items-baseline gap-x-1.5'
-                    const line = (
-                      <>
-                        <span className="text-[var(--color-text-muted)]">#{i + 1}</span>
-                        <span className={tr.status === 'error' ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'}>
-                          {tr.status === 'error' ? '✕' : '✓'}
-                        </span>
-                        <span>{t(`agent.traceType.${tr.stepType}`)}</span>
-                        {tr.toolName && <span className="text-[var(--color-accent)]">{tr.toolName}</span>}
-                        <span className="text-[var(--color-text-muted)]">{formatRunDuration(tr.durationMs ?? 0)}</span>
-                        {stepTokens && <span className="text-[var(--color-text-muted)]">{stepTokens}</span>}
-                        {/* 回放状态的行内徽标挂主行右端（ml-auto）：不另起一行，也不挤压工具名 */}
-                        <TraceReplayStatus replay={tr.replay} />
-                      </>
-                    )
-                    return (
-                      <div key={tr.id} className="text-xs leading-relaxed">
-                        {/* 整行就是开关（▸/▾ 与上面那条统计头同一个动作语言）；只有真有东西可展开时它才是按钮 */}
-                        {hasIo ? (
-                          <button
-                            type="button"
-                            onClick={() => setTraceIoOpen((p) => ({ ...p, [tr.id]: !ioOpen }))}
-                            aria-expanded={ioOpen}
-                            data-testid={`trace-io-${tr.id}`}
-                            title={t('agent.traceIo')}
-                            className={`${rowClass} w-full text-left hover:opacity-70 transition-opacity`}
-                          >
-                            <span className="w-3 inline-block text-[var(--color-text-muted)]">
-                              {ioOpen ? '▾' : '▸'}
-                            </span>
-                            {line}
-                          </button>
-                        ) : (
-                          <div className={rowClass}>{line}</div>
-                        )}
-                        {tr.error && (
-                          <div className="ml-4 text-[var(--color-danger)] whitespace-pre-wrap break-all">{tr.error}</div>
-                        )}
-                        {/* 子会话入口单独一行：嵌进整行按钮里会把点击搞糊（点开子会话不该顺手收起这一行） */}
-                        {kids.length > 0 && (
-                          <div className="ml-4 mt-0.5 flex flex-wrap gap-x-1.5">
-                            {kids.map((k) => (
-                              <button
-                                key={k.id}
-                                onClick={() => chat.openSubSession(k.id)}
-                                data-testid={`trace-open-sub-${tr.id}`}
-                                className="px-1 py-0.5 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:opacity-80 transition-opacity"
-                              >
-                                {t('agent.openSubSession')}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {hasIo && ioOpen && (
-                          <div className="ml-4 mt-1 space-y-1">
-                            {tr.model && (
-                              <div data-testid="trace-model" className="text-[var(--color-text-muted)]">
-                                {t('agent.traceModel')}：{tr.model}
-                              </div>
-                            )}
-                            {tr.toolArgs && (
-                              <div
-                                data-testid="trace-args"
-                                className="max-h-40 overflow-y-auto px-1.5 py-1 rounded border border-[var(--color-border)] whitespace-pre-wrap break-all"
-                              >
-                                {t('agent.traceArgs')}：{tr.toolArgs}
-                              </div>
-                            )}
-                            {tr.toolResult && (
-                              <div
-                                data-testid="trace-result"
-                                className="max-h-40 overflow-y-auto px-1.5 py-1 rounded border border-[var(--color-border)] whitespace-pre-wrap break-all"
-                              >
-                                {t('agent.traceResult')}：{tr.toolResult}
-                              </div>
-                            )}
-                            {changes && (
-                              <div
-                                data-testid="trace-changes"
-                                className="px-1.5 py-1 rounded border border-[var(--color-border)]"
-                              >
-                                {changes.status === 'degraded' ? (
-                                  <div className="text-[var(--color-text-muted)]">
-                                    {t('agent.traceChangesDegraded', {
-                                      reason: changes.degradedReason
-                                        ? changeReasonText[changes.degradedReason]
-                                        : ''
-                                    })}
-                                  </div>
-                                ) : (
-                                  <>
-                                    {changes.entries.length === 0 ? (
-                                      <div className="text-[var(--color-text-muted)]">{t('agent.traceChangesNone')}</div>
-                                    ) : (
-                                      <>
-                                        <div className="text-[var(--color-text-muted)]">
-                                          {t('agent.traceChangesTitle', {
-                                            count: changes.entries.length,
-                                            added: changes.counts.added,
-                                            modified: changes.counts.modified,
-                                            deleted: changes.counts.deleted
-                                          })}
-                                        </div>
-                                        <ul className="mt-1 max-h-40 overflow-y-auto">
-                                          {changes.entries.map((e) => (
-                                            <li key={`${e.kind}:${e.path}`} className="whitespace-pre-wrap break-all">
-                                              {changeKindText[e.kind]} {e.path} ({formatBytes(e.size)})
-                                              {e.content !== 'hashed' && e.content !== 'not-compared'
-                                                ? ` · ${changeContentText[e.content]}`
-                                                : ''}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </>
-                                    )}
-                                    {/* 口径说明：自动放行的调用不做扫描，别让这份清单被读成"本步全部变更" */}
-                                    <div className="mt-1 text-[var(--color-text-muted)]">
-                                      {t('agent.traceChangesScope')}
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {!hasIo && (
-                          // 这三列是 v50 才有的：旧行留 NULL。空白会被读成"这一步什么都没传"，
-                          // 所以要说"没记录"，不能演成"没有"（§222 那一族）
-                          <div data-testid="trace-no-io" className="ml-4 text-[var(--color-text-muted)]">
-                            {t('agent.traceNoIo')}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                {!chat.tracesLoading && (
+                  <AgentTraceList
+                    traces={chat.latestTraces ?? []}
+                    resolveSubSessions={(tr) =>
+                      parseDelegationResultChildPrefixes(tr.toolResult)
+                        .map((p) => chat.subSessions.filter((s) => s.id.slice(0, 8) === p))
+                        .filter((list) => list.length === 1)
+                        .map((list) => list[0] as ConversationRecord)
+                    }
+                    onOpenSubSession={chat.openSubSession}
+                  />
+                )}
               </div>
             )}
           </div>
