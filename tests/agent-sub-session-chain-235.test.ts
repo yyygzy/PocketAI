@@ -89,14 +89,17 @@ const call = (name: string, ...args: unknown[]): Promise<any> => {
   return (fn as (...a: unknown[]) => Promise<any>)(...args)
 }
 
-/** 建一条会话：给了 parent 就写 parent_conversation_id（与 delegation 建子会话走同一条 create） */
+/** 建一条会话：给了 parent 就写 parent_conversation_id（与 delegation 建子会话走同一条 create）；
+ *  "是 Agent 会话"只由 agent_mode 表达——v59 之后 model 不再带 `agent:` 前缀 */
 function mkConv(title: string, parentConversationId?: string, roleKey?: string): string {
-  return conversationRepo.create({
+  const id = conversationRepo.create({
     assistantId: 'a-chain',
     title,
-    modelLabel: 'agent:glm:glm-4.6',
+    modelLabel: 'glm:glm-4.6',
     ...(parentConversationId ? { parentConversationId, roleKey } : {})
   }).id
+  conversationRepo.setAgentMode(id, true)
+  return id
 }
 
 beforeAll(() => {
