@@ -104,26 +104,31 @@ describe('码 → 键 → 四语文案', () => {
   })
 })
 
-describe('本簇的"几发成了"只有一个说法（V4-Iter-155）', () => {
+describe('本簇两处计数分属两种口径（V4-Iter-155；2026-11-08 拆开）', () => {
   /**
-   * 155 之前 ja 一句写「ヒット」、另一句写「成功」；ko 一句「적중」、一句「성공」——
-   * 同一个计数在同一个屏上有两个名字，用户会以为是两件事。（别处的「캐시 적중」「初回ヒット」是
-   * "缓存命中 / 检索排名"那个 hit，与本簇无关，所以不在本条断言范围内。）
+   * 155 之前 ja 一句写「ヒット」、另一句写「成功」；ko 一句「적중」、一句「성공」——曾按"同一屏
+   * 只留一个词"统一过。2026-11-08 核过中文原文后拆开：两处说的不是同一件事，不能用同一个词约束。
+   *   · `provider.capHint`：中文「3 次全成才算」——说的是 3 次调用是否每次都成功（调用成功次数），
+   *     ja/ko 的「成功 / 성공」是对的，保持原样。
+   *   · `delegate.failNotCapable`：中文带 `{hits}/{samples}`——统计的是探测样本与判定结果是否吻合
+   *     （命中率），不是成功次数；判定为「只会写围栏」时命中数恰好是写围栏的次数，译成「成功」
+   *     会把负面结论说成正面，所以必须用「命中 / 적중」。
+   * （别处的「캐시 적중」「初回ヒット」是"缓存命中 / 检索排名"那个 hit，与本簇无关。）
    */
-  it('ja 用「成功」、ko 用「성공」，且本簇里不再出现「ヒット」「적중」「完走」', () => {
-    const forLang: Array<{ lang: Lang; word: string; banned: string[] }> = [
-      { lang: 'ja', word: '成功', banned: ['ヒット', '完走', '命中'] },
-      { lang: 'ko', word: '성공', banned: ['적중'] }
+  it('capHint 说"调用全成功"（ja 成功 / ko 성공）；failNotCapable 说"样本命中"（ja 命中 / ko 적중）', () => {
+    const forLang: Array<{ lang: Lang; okWord: string; hitWord: string; bannedInHit: string[] }> = [
+      { lang: 'ja', okWord: '成功', hitWord: '命中', bannedInHit: ['成功', 'ヒット', '完走'] },
+      { lang: 'ko', okWord: '성공', hitWord: '적중', bannedInHit: ['성공'] }
     ]
-    for (const { lang, word, banned } of forLang) {
+    for (const { lang, okWord, hitWord, bannedInHit } of forLang) {
       const d = DICTS[lang] as unknown as Record<string, string>
-      const keys = Object.keys(d).filter((k) => k.startsWith('provider.cap') || k.startsWith('delegate.fail'))
-      expect(keys.length, `${lang} 筛到的键太少`).toBeGreaterThanOrEqual(12)
-      // 计数那两处（悬停说明 + 判定不符的拒绝）必须用同一个词
-      expect(d['provider.capHint'], `${lang} capHint 没用「${word}」`).toContain(word)
-      expect(d['delegate.failNotCapable'], `${lang} failNotCapable 没用「${word}」`).toContain(word)
-      for (const k of keys)
-        for (const b of banned) expect(d[k], `${lang}.${k} 还留着「${b}」`).not.toContain(b)
+      // 悬停说明：调用成功次数，不是命中率，不许混用「命中 / 적중」
+      expect(d['provider.capHint'], `${lang} capHint 说的是调用成功，应用「${okWord}」`).toContain(okWord)
+      expect(d['provider.capHint'], `${lang} capHint 不是命中率，不该出现「${hitWord}」`).not.toContain(hitWord)
+      // 判定不符的拒绝：{hits}/{samples} 是样本命中率，必须用「命中 / 적중」，且不留旧口径
+      expect(d['delegate.failNotCapable'], `${lang} failNotCapable 说的是样本命中，应用「${hitWord}」`).toContain(hitWord)
+      for (const b of bannedInHit)
+        expect(d['delegate.failNotCapable'], `${lang}.delegate.failNotCapable 还留着「${b}」`).not.toContain(b)
     }
   })
 })

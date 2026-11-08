@@ -13,8 +13,12 @@
 //  - local-loopback：只连本机环回，不出网（在屏上明确标「不出网」）；
 //  - transport=child-process：由子进程发起，应用自身不直接连接。
 //
-// 重要：这里不重构传输层、不动 safeFetch、不改代理语义；固定域名常量也不在本批
-// 全铺回调用点（避免波及过多文件），只在注册表内登记，仍然重复的字面量在报告里列明。
+// endpointEvidence 说明「该端点在本仓库里如何被证实」：
+//  - callsite（默认）：调用点文件里能找到该地址（含模板常量拼接）；
+//  - redirect：上游 302 后由 safeFetch 跟随到该地址，调用点文件里没有字面量；
+//  - config：地址由构建配置/环境变量决定（如 electron-builder publish）；
+//  - runtime：由子进程或运行时决定，应用自身不直接请求。
+// 覆盖测试按此做双向校验：调用点出现的地址必须登记，callsite 条目的登记地址必须真被调用。
 import type {
   OutboundAddress,
   OutboundEntryView,
@@ -32,9 +36,13 @@ const OPEN_METEO_FORECAST = 'https://api.open-meteo.com'
 const OLLAMA_LOOPBACK = 'http://127.0.0.1:11434'
 const OLLAMA_RECOMMEND_LOOPBACK = 'http://localhost:11434'
 const OLLAMA_OFFICIAL = 'https://github.com/ollama/ollama'
+const OLLAMA_REGISTRY = 'https://registry.ollama.ai'
 const PYTHON_STANDALONE = 'https://github.com/astral-sh/python-build-standalone'
-const GH_RELEASES = 'https://github.com/yyggzy/PocketAI'
+const GH_RELEASES = 'https://github.com/yyygzy/PocketAI'
+const GH_RELEASE_CDN_OBJECTS = 'https://objects.githubusercontent.com'
+const GH_RELEASE_CDN_ASSETS = 'https://release-assets.githubusercontent.com'
 const GH_API = 'https://api.github.com'
+const NPM_REGISTRY_DEFAULT = 'https://registry.npmjs.org'
 const TELEGRAM_API = 'https://api.telegram.org'
 const DISCORD_API = 'https://discord.com/api/v10'
 const DISCORD_GATEWAY_WS = 'wss://gateway.discord.gg'
@@ -54,6 +62,8 @@ export interface OutboundEntry {
   transport: OutboundTransport
   /** 覆盖测试用：相对 src/main 的源文件路径 */
   files: string[]
+  /** 端点证据类型；缺省按 callsite 校验（见文件头说明） */
+  endpointEvidence?: 'callsite' | 'redirect' | 'config' | 'runtime'
   /** 读现有配置仓储拿当前真实地址；未配置返回 []，抛错由上层区分 */
   resolve?: () => Promise<OutboundAddress[]>
 }
@@ -118,6 +128,17 @@ async function resolvePipIndex(): Promise<OutboundAddress[]> {
   const value =
     source === 'official' ? PIP_INDEX_OFFICIAL : source === 'tuna' ? PIP_INDEX_TUNA : source
   return [{ label: source, value }]
+}
+
+async function resolveNpmRegistry(): Promise<OutboundAddress[]> {
+  const registry = (process.env.npm_config_registry ?? '').trim() || NPM_REGISTRY_DEFAULT
+  return [{ label: '', value: registry }]
+}
+
+async function resolveProxy(): Promise<OutboundAddress[]> {
+  const { appConfigRepo } = await import('../db/repositories/app-config.repo')
+  const url = (appConfigRepo.getProxyUrl() ?? '').trim()
+  return url ? [{ label: '', value: url }] : []
 }
 
 function fixedAddresses(endpoints: string[]): OutboundAddress[] {
@@ -215,7 +236,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     labelKey: 'outbound.entry.skillRemote',
     purposeKey: 'outbound.purpose.skillRemote',
     kind: 'runtime-url',
-    configSource: '技能包 URL / 索引地址（运行时输入，默认索引在 GitHub raw）',
+    configSource: '技能包 URL / 索引地址（运行时输入，默认走 GitHub Contents API，raw 兜底）',
     endpoints: [],
     transport: 'safeFetch',
     files: ['skills/skill-io.ts']
@@ -268,10 +289,23 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     purposeKey: 'outbound.purpose.mcpPythonDeps',
     kind: 'configurable',
     configSource: 'python_pip_index_url',
-    endpoints: [],
+    endpoints: [PIP_INDEX_OFFICIAL, PIP_INDEX_TUNA],
+    endpointEvidence: 'runtime',
     transport: 'child-process',
     files: ['mcp/python-env.ts'],
     resolve: resolvePipIndex
+  },
+  {
+    id: 'mcp-node-deps',
+    labelKey: 'outbound.entry.mcpNodeDeps',
+    purposeKey: 'outbound.purpose.mcpNodeDeps',
+    kind: 'configurable',
+    configSource: 'npm registry（npx 安装 MCP 依赖，由 Node/npm 环境决定）',
+    endpoints: [NPM_REGISTRY_DEFAULT],
+    endpointEvidence: 'runtime',
+    transport: 'child-process',
+    files: ['mcp/json-rpc.ts'],
+    resolve: resolveNpmRegistry
   },
   {
     id: 'ollama-local',
@@ -309,8 +343,19 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     labelKey: 'outbound.entry.ollamaModelPull',
     purposeKey: 'outbound.purpose.ollamaModelPull',
     kind: 'runtime-url',
-    configSource: '本地 Ollama 守护进程（/api/pull），模型来源由运行时指定',
+    configSource: '本地 Ollama 守护进程（/api/pull），模型 blob 来自其 registry（默认 registry.ollama.ai）',
     endpoints: [OLLAMA_LOOPBACK],
+    transport: 'child-process',
+    files: ['ollama/ollama-runtime.ts']
+  },
+  {
+    id: 'ollama-registry',
+    labelKey: 'outbound.entry.ollamaRegistry',
+    purposeKey: 'outbound.purpose.ollamaRegistry',
+    kind: 'runtime-url',
+    configSource: 'Ollama 守护进程的模型仓库（默认 registry.ollama.ai，可由用户环境改写）',
+    endpoints: [OLLAMA_REGISTRY],
+    endpointEvidence: 'runtime',
     transport: 'child-process',
     files: ['ollama/ollama-runtime.ts']
   },
@@ -331,6 +376,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     kind: 'fixed',
     configSource: 'electron-builder publish（GitHub Releases）',
     endpoints: [GH_RELEASES],
+    endpointEvidence: 'config',
     transport: 'updater',
     files: ['update-manager.ts']
   },
@@ -355,6 +401,17 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     files: ['update/asar-patcher.ts']
   },
   {
+    id: 'github-release-cdn',
+    labelKey: 'outbound.entry.githubReleaseCdn',
+    purposeKey: 'outbound.purpose.githubReleaseCdn',
+    kind: 'fixed',
+    configSource: 'GitHub Release 下载 302 后的 CDN（由 safeFetch 跟随）',
+    endpoints: [GH_RELEASE_CDN_OBJECTS, GH_RELEASE_CDN_ASSETS],
+    endpointEvidence: 'redirect',
+    transport: 'safeFetch',
+    files: ['python-runtime.ts', 'ollama/ollama-runtime.ts', 'update/asar-patcher.ts', 'update-manager.ts']
+  },
+  {
     id: 'im-api',
     labelKey: 'outbound.entry.imApi',
     purposeKey: 'outbound.purpose.imApi',
@@ -362,7 +419,14 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     configSource: 'channels 中对应渠道的开关与凭据',
     endpoints: [TELEGRAM_API, DISCORD_API, SLACK_API, FEISHU_API, DINGTALK_API],
     transport: 'fetch',
-    files: ['channels/gateway-base.ts', 'channels/telegram-gateway.ts']
+    files: [
+      'channels/gateway-base.ts',
+      'channels/telegram-gateway.ts',
+      'channels/discord-gateway.ts',
+      'channels/slack-gateway.ts',
+      'channels/feishu-gateway.ts',
+      'channels/dingtalk-gateway.ts'
+    ]
   },
   {
     id: 'im-ws-discord',
@@ -391,9 +455,21 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     kind: 'configurable',
     configSource: '环境变量 POCKETAI_LICENSE_URL',
     endpoints: [ACTIVATION_BASE_URL],
+    endpointEvidence: 'config',
     transport: 'fetch',
     files: ['license/activation-client.ts'],
     resolve: async () => [{ label: '', value: ACTIVATION_BASE_URL }]
+  },
+  {
+    id: 'http-proxy',
+    labelKey: 'outbound.entry.httpProxy',
+    purposeKey: 'outbound.purpose.httpProxy',
+    kind: 'configurable',
+    configSource: 'app_config.net_proxy_url（全局 fetch 的下一跳）',
+    endpoints: [],
+    transport: 'fetch',
+    files: ['net/proxy.ts'],
+    resolve: resolveProxy
   }
 ]
 
