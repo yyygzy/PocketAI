@@ -357,7 +357,7 @@ WHERE agent_mode = 1
 
 ### P2：运行记录挂到轮次（新增只读 IPC + 互斥守卫）
 
-**目标**：每轮工具运行都有摘要与检查器；队列在单一控制器里结算；同一会话不会从两个壳各起一个 run。
+**目标**：每轮工具运行都有摘要与检查器；队列由持有队列的 hook 自行订阅 Done/Error 并在纯函数里幂等结算；同一会话不会从两个壳各起一个 run。
 
 **改动面**
 
@@ -374,26 +374,23 @@ WHERE agent_mode = 1
    - `src/renderer/src/modules/agent/hooks/useAgentRunInsights.ts`（从 `useAgentChat` 抽出）：`runsByTurn`、`runStats`、`sessionStats`、展开态 trace、子会话。
    - `src/renderer/src/modules/agent/components/AgentRunSummary.tsx`：步数/耗时/token/变更数/子会话/降级标记，挂在对应轮次内。
    - `src/renderer/src/modules/agent/components/AgentRunInspector.tsx`：步骤流、每步 token、工具入参/返回、变更清单、`TraceReplayStatus`、子会话入口；默认折叠，展开才读库。
-   - `src/renderer/src/modules/agent/components/AgentLiveStepStrip.tsx`：运行中 chip 流，结束后收起。
+   - `src/renderer/src/modules/agent/components/AgentLiveStepStrip.tsx`：运行中 chip 流，结束后收起；**与 Agent 调试台共用同一份渲染**，挂在对话页实时 Agent 卡片（`chat-agent-live`）内、持久化卡片之上。零步骤（还没收到 step 事件）或非运行态整条不渲染。
    - `src/renderer/src/modules/chat/ChatView.tsx`：
      - 给现有虚拟化补 `getItemKey`（当前 ChatView 的 `useVirtualizer` **没有** `getItemKey`；只有 `VirtualMessageList` 有）。键用轮次首条消息 id；摘要作为轮次内元素，不新增顶层虚拟项。
      - 摘要挂在工具轮次；`onStreamsSettled` 后主动刷新该会话 run 索引。
    - `src/renderer/src/modules/chat/ChatModule.tsx`：接 `useAgentRunInsights`；仅在工具有效会话启用。
 
-3. **单一运行控制器与队列**——修正 R1 自相矛盾：
-   - `src/renderer/src/modules/agent/run-controller.ts`（模块级单例 store）：
-     - 维护 `activeRunByConversation`、`queueByConversation`、`ownerByConversation`。
-     - **它订阅 `onAgentDone` / `onAgentError`** 用于结算队列与释放锁；`useStreamSession` 继续负责 step/chunk 卡片，两者职责不重叠。
-     - `begin(convId, requestId, owner)` / `settle(convId)` / `isBusy(convId)`；`settle` 幂等。
-   - `src/renderer/src/modules/agent/hooks/useAgentQueue.ts`：从 `useAgentChat` 抽出的队列/插队，状态落到 `run-controller`。
-   - `ChatModule` 与 `AgentPanel` 都使用同一控制器；发送前 `begin` 失败 → toast「该会话正在运行」。
-   - **主进程互斥守卫**：`AgentEngine` 增加 `activeConversationRuns: Map<conversationId, requestId>`；同一 `conversationId` 已有活动 run 时，第二个 `agentMode` 请求直接返回 `AGENT_RUN_BUSY`，不写用户消息、不起第二个控制器。`finally` 释放。这覆盖分体窗口/两个壳同时发起的场景。
-   - `subSessionReadonly` 从 `useAgentChat` 移到 `src/renderer/src/modules/agent/sub-session.ts`（或 `run-controller` 同目录的 `useSubSessionIdentity`）；`ChatView` 与 `AgentPanel` 共用，P4 删除 `useAgentChat` 后仍保留。
+3. **队列与运行归属**——**不建 `run-controller` 单例**：
+   - 两个壳各自持有自己的队列（`useAgentChat` 现状），结算规则抽到 `modules/agent/queue-settlement.ts` 纯函数；队列 hook **自己订阅** `onAgentDone` / `onAgentError` 来 drain，不依赖观测 hook 的 `onStreamsSettled`（观测 hook 不订阅也能结算）。
+   - 幂等账本按 `(requestId, clientRef)`：`settledRuns` 保证同一个 Done 只驱动一次 drain，`sent` 拦住同一项被旧快照重复发出；插队事件按 `clientRef` 去重。
+   - 不做「发送前 `begin` 失败 toast」，也不让 `ChatModule` 与 `AgentPanel` 共用同一控制器——双壳同会话发送本来就由 `chat:send` 的**按会话串行锁**排队，不为此改发送前状态机。
+   - **主进程互斥守卫（兜底，不是常态）**：`AgentEngine` 的 `activeConversations: Map<conversationId, requestId>` 在首处登记之前检查，同一 `conversationId` 已有活动 run 时第二个 `agentMode` 请求抛 `AGENT_RUN_BUSY`，不写用户消息；`finally` 释放。正常经 `chat:send` 的并发会被串行锁排队，轮不到这条守卫——它只在直接调 `run()`／将来绕开串行锁的入口生效。
+   - `subSessionReadonly` 已移到 `src/renderer/src/modules/agent/sub-session.ts`；`ChatView` 与 `AgentPanel` 共用，P4 删除 `useAgentChat` 后仍保留。
 
 **风险与规避**
-- 两套订阅重复：step/chunk 只在 `useStreamSession`；Done/Error 只在 `run-controller`。同一事件两处处理会重复结算，用 `settle` 幂等 + 测试钉住。
-- 队列 drain 依赖 Done/Error：控制器订阅是必需的，R1 不再写「不订阅」。
-- 同会话双 run：主进程守卫是权威，渲染层 `begin` 只是体验层。
+- 两套订阅重复：step/chunk 在 `useStreamSession` 与 `useAgentChat` 各自归并；Done/Error 由持有队列的 hook 订阅，靠 `(requestId, clientRef)` 账本幂等，用例钉住「双订阅只发一条」。
+- 队列 drain 依赖 Done/Error：结算订阅放在持有队列的 hook 内，观测 hook 不订阅也照样 drain。
+- 同会话双 run：`chat:send` 串行锁是常态防线；主进程 `AGENT_RUN_BUSY` 守卫是绕锁入口的兜底。
 - 轮次映射错位：以 `message_id` 优先、时间区间兜底；run 索引按 `request_id` 去重。
 - 长 trace 卡顿：检查器懒加载 + 分页/虚拟化；摘要不读明细。
 - 虚拟列表 key：先补 `getItemKey` 再塞摘要，避免滚动跳动。
@@ -401,13 +398,14 @@ WHERE agent_mode = 1
 
 **验收**
 1. 工具会话跑 3 步任务：该轮出现摘要，步数/耗时/token/变更数与 `agent_traces` 查询一致。
-2. 展开检查器：能看到该 run 的步骤流、每步 token、工具入参/返回；只有 1 次 `agent:list-runs` 调用。
-3. 打开 1000 条消息的会话：`agent:list-runs` 调用 **0 次**；滚动 **0 次**；展开某一轮 **1 次**（用 IPC spy 断言）。
+2. 展开检查器：能看到该 run 的步骤流、每步 token、工具入参/返回；折叠时 0 次读库，展开只多 1 次 `getRunTraces`（不再发 `agent:list-runs`）。
+3. 打开 1000 条消息的会话：普通会话 `agent:list-runs` **0 次**；Agent 会话打开时 **1 次**（摘要常驻的必要一次）；滚动 **0 次**；展开某一轮只多 **1 次** `getRunTraces`（用 IPC spy 断言）。
 4. 切到另一会话再切回：摘要与 trace 恢复，不串会话。
 5. 子代理：摘要显示子会话数；进入只读子会话，输入区不可发送；返回父会话正常。
 6. 队列：运行中入队 2 条，FIFO；Done/Error 后 drain；插队在工具调用边界生效；上限 20。
-7. 同会话并发：主窗口与分体 Agent 窗口同时对同一会话发工具请求 → 第二个收到 `AGENT_RUN_BUSY`，不产生第二条用户消息。
+7. 同会话并发：双壳同时发送时由 `chat:send` 的按会话串行锁**排队**；只有绕过串行锁直接调引擎（或将来某个绕锁入口）时，第二个请求才收到 `AGENT_RUN_BUSY`，且不产生第二条用户消息——守卫是兜底而非常态。
 8. `onStreamsSettled` 后摘要在 1 次刷新内出现，不需要手动重开会话。
+9. 运行中的实时卡片顶部出现步骤条：随 step 事件推进（旧 chip 保留、新 chip 追加）；零步骤不显示；Done/Error 后随卡片收起。
 
 **迁移/兼容**：无 schema 变更；新增 IPC 只读；`agent_traces` 既有数据直接可读。
 
@@ -495,7 +493,7 @@ WHERE agent_mode = 1
 | `modules/agent/components/TraceReplayStatus.tsx` | replay 徽标 | 保留 |
 | `modules/agent/hooks/useAgentToolConfigs.ts` / `useAttachments.ts` / `agent-shared.ts` / `messages-reducer.ts` | 共享 | 保留 |
 | `modules/agent/mcp/McpPanel.tsx` / `channels/ChannelsPanel.tsx` | 配置面板 | 保留，仅挂设置 |
-| `modules/agent/run-controller.ts` / `sub-session.ts` | P2 新增 | 保留 |
+| `modules/agent/queue-settlement.ts` / `sub-session.ts` | P2 新增 | 保留（不建 `run-controller`） |
 
 **快捷键**：不存在专用 Agent 快捷键。`Ctrl/Cmd+1…9` 按侧栏位置切换模块，删掉 Agent 后序号顺延；这是预期变化，需在帮助文案说明。
 
@@ -530,8 +528,8 @@ WHERE agent_mode = 1
 
 | # | 风险 | 影响 | 概率 | 规避 | 兜底 |
 |---|---|---|---|---|---|
-| R1 | 队列/运行归属两套实现，Done/Error 不结算 | 高 | 中 | 单一 `run-controller` 订阅 Done/Error；`useStreamSession` 只做 step/chunk；`settle` 幂等 | revert P2 |
-| R2 | 同会话两个壳各起一个 run | 高 | 中 | 主进程 `activeConversationRuns` 互斥；渲染层 `begin` 预检 | 返回 `AGENT_RUN_BUSY` |
+| R1 | 队列/运行归属两套实现，Done/Error 不结算 | 高 | 中 | 各壳自队列；`queue-settlement.ts` 纯函数 + `(requestId, clientRef)` 账本幂等；队列 hook 自订阅 Done/Error | revert P2 |
+| R2 | 同会话两个壳各起一个 run | 高 | 中 | `chat:send` 按会话串行锁排队（常态）；主进程 `activeConversations` 互斥兜底 | 绕锁入口返回 `AGENT_RUN_BUSY` |
 | R3 | 历史前缀/关闭状态判定回弹（M1） | 高 | 中 | v59 迁移 + `resolveAgentMode` 只认列；七条矩阵测试 | 回退 P0 + 备份 |
 | R4 | `modelLabel` 被普通发送覆盖，误判为 bug（M2） | 中 | 高 | 文档/验收明确 A 口径；测试断言 `provider:model` + 徽标消失 | 不改行为 |
 | R5 | Agent 多目标只跑第一个 | 中 | 高 | 工具开启时收起多目标，只留单目标；文案说明 | 显示「仅使用首个目标」 |
@@ -587,11 +585,11 @@ WHERE agent_mode = 1
 
 **运行记录**
 10. 3 步工具任务：该轮摘要的步数/耗时/token/变更数与 `agent_traces` 一致；展开可看每步入参/返回。
-11. 打开 1000 条消息会话：`agent:list-runs` **0 次**；滚动 **0 次**；展开一轮 **1 次**（IPC spy）。
+11. 打开 1000 条消息会话：普通会话 `agent:list-runs` **0 次**；Agent 会话打开 1 次；滚动 **0 次**；展开一轮只多 **1 次** `getRunTraces`（IPC spy）。
 12. 切会话再切回：摘要与 trace 正确恢复，不串会话。
 13. 子会话：摘要显示数量；只读视图不可发送；返回正常。
 14. 队列 FIFO、Done/Error 后 drain、插队边界生效、上限 20。
-15. 同会话并发（主窗口 + 分体窗口）：第二个请求 `AGENT_RUN_BUSY`，无第二条用户消息。
+15. 同会话并发（主窗口 + 分体窗口）：正常发送被串行锁**排队**；绕锁直接调引擎时第二个请求 `AGENT_RUN_BUSY`，无第二条用户消息（兜底而非常态）。
 
 **设置与退役**
 16. 设置 → 能力 / 连接：MCP 与 Channels 完整可用；与 Agent 旧标签读同一配置。
@@ -614,7 +612,7 @@ WHERE agent_mode = 1
 - `npm run typecheck`：0 错误。
 - `npx vitest run`：全绿；改动前记录文件/用例数，改动后不得减少；新增覆盖 P0 矩阵、P1 筛选/命令面板、P2 run 映射/队列/守卫。
 - `npm run build`：当前平台 exit 0；发版另跑 `npm run dist`（Windows）与 `npm run dist:linux`。
-- **性能（可观测）**：打开 1000 条消息会话，`agent:list-runs` 调用次数为 0；滚动为 0；展开一轮为 1；摘要渲染不触发第二次读库。
+- **性能（可观测）**：打开 1000 条消息会话，普通会话 `agent:list-runs` 调用次数为 **0**，Agent 会话为 **1**（摘要常驻的必要一次）；滚动为 **0**；展开一轮只多 **1 次** `getRunTraces`；摘要渲染不触发第二次读库。
 - **数据**：P0 前后 `conversations` / `messages` / `agent_traces` 行数不变；仅 `conversations.model` 与 `agent_mode` 按迁移规则变化；无新增表/列。
 - **i18n**：`tests/i18n-parity.test.ts`、`tests/i18n-dead-keys.test.ts` 全绿。
 
