@@ -241,7 +241,8 @@ describe('buildConvListQuery — 列表过滤/排序条件', () => {
   it('asst-default / 普通助手 / agent 过滤组合与参数顺序', () => {
     const def = buildConvListQuery({ assistantId: 'asst-default', isAgent: false })
     expect(def.where).toContain("(assistant_id = 'asst-default' OR assistant_id IS NULL)")
-    expect(def.where).toContain("(model NOT LIKE 'agent:%' OR model IS NULL)")
+    // 对话侧不再按 model 前缀反选（否则跑过一次 Agent 模式的会话会从对话列表消失，见 440 回归用例）
+    expect(def.where).not.toContain('NOT LIKE')
     expect(def.vals).toEqual([])
 
     const asst = buildConvListQuery({ assistantId: 'asst-9', isAgent: true, archivedOnly: true })

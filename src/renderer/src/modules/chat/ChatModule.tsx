@@ -76,7 +76,11 @@ export const ChatModule: React.FC = () => {
    * `agentModeRecord`：当前会话不在列表里（跨助手搜索跳转）时单条读回的那份，避免演成关闭。
    */
   const [agentModeByConv, setAgentModeByConv] = useState<Record<string, boolean>>({})
-  const [agentModeRecord, setAgentModeRecord] = useState<{ id: string; agentMode?: boolean } | null>(null)
+  const [agentModeRecord, setAgentModeRecord] = useState<{
+    id: string
+    agentMode?: boolean
+    modelLabel?: string | null
+  } | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
   // 消息那一读失败的原因（V4-Iter-250）：不写这句，屏上留着的是上一条会话或空列表，两种都像「这里没消息」
   const [msgsReadErr, setMsgsReadErr] = useState<string | null>(null)
@@ -141,7 +145,7 @@ export const ChatModule: React.FC = () => {
       .then((v) => {
         if (!alive || currentConvRef.current !== id) return
         if (hasIpcFailed(v) || !v) return
-        setAgentModeRecord({ id, agentMode: v.agentMode })
+        setAgentModeRecord({ id, agentMode: v.agentMode, modelLabel: v.modelLabel })
       })
       .catch(reportIpcError('chat.getConversation'))
     return () => { alive = false }

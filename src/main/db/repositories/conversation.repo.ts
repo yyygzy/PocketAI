@@ -86,9 +86,11 @@ export function buildConvListQuery(args: ConvListArgs): { where: string; vals: u
   }
   if (args.isAgent === true) {
     conds.push("model LIKE 'agent:%'")
-  } else if (args.isAgent === false) {
-    conds.push("(model NOT LIKE 'agent:%' OR model IS NULL)")
   }
+  // isAgent=false **不再**按 `model NOT LIKE 'agent:%'` 反选：
+  // 引擎一开跑就把 conversations.model 写成 `agent:...`（engine.ts 的 run setup），
+  // 反选会让"在对话里用过一次 Agent 模式"的会话从对话列表消失（归档/置顶同源同样中招）。
+  // 子会话仍由上面 includeSubSessions 统一排除；Agent 侧只看 true 分支，口径不变。
   const orderBy = args.archivedOnly
     ? 'pinned DESC, archived_at DESC, updated_at DESC'
     : 'pinned DESC, updated_at DESC'
