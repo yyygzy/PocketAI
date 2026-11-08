@@ -135,8 +135,14 @@ export function installLoadRetry(win: BrowserWindow, label: string, reload: () =
     armHangTimer()
   })
 
+  // 只有**页面确实提交出内容**才算加载结束。反例：网络服务在 loadURL 当口崩溃后，
+  // Chromium 实测会在 ~1s 内补发一次 did-stop-loading，但 getURL() 仍是空/about:blank；
+  // 此时若无条件 clearTimers()，5s 快探针与挂起阈值会被一起清掉，只剩 45s 显示兜底
+  // ——「加载停了但没提交」于是既不重试也不报错，干等（真机注入实测形态）。
+  // 所以用 navigationStarted() 当判据：已提交才清；没提交就保留计时，交给重试链接管。
+  // 正常路径不受影响：页面提交后 did-stop-loading 时 URL 非空，照旧清掉两个计时器。
   win.webContents.on('did-stop-loading', () => {
-    clearTimers()
+    if (navigationStarted()) clearTimers()
   })
 
   // 崩溃取证：渲染进程没了就永远不会有 ready-to-show，窗口会一直停在隐藏态
