@@ -1340,8 +1340,11 @@ class AgentEngine {
         model: target.model
       })
       conversationRepo.touch(conversationId, {
-        modelLabel: `agent:${target.providerId}:${target.model}`,
-        status: 'streaming'
+        modelLabel: `${target.providerId}:${target.model}`,
+        status: 'streaming',
+        // v2 P0：能力只认会话列，`model` 只存 `provider:model`（方案 §4.2）。
+        // Agent 模块建的会话此前只有前缀、没有这一列，靠这里在运行开始时补齐。
+        agentMode: true
       })
 
       // 主控制器
@@ -1847,7 +1850,7 @@ class AgentEngine {
             ctx.target = { providerId: fb.providerId, model: fb.model }
             traceModels.set(ctx.requestId, fb.model)
             // 会话上那行"最近使用"也要跟着换：否则切走再回来，标题栏还写着那台失败的模型
-            conversationRepo.touch(conversationId, { modelLabel: `agent:${fb.providerId}:${fb.model}` })
+            conversationRepo.touch(conversationId, { modelLabel: `${fb.providerId}:${fb.model}` })
             const swapText = `（${target.model} 连续重试仍未答上来，已换到 ${fb.model} 再试一次）`
             messageRepo.updateContent(assistantMsg.id, swapText, 'done')
             ctx.pendingAssistantMsgId = ''

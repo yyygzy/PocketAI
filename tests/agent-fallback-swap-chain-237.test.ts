@@ -230,7 +230,7 @@ describe('① 换一次：真换到了那台，并且归因留在旧那台上', 
       expect(notice!.status).toBe('done')
       expect(notice!.content).toContain(GOOD_MODEL)
       // 会话那行"最近使用"跟着实际作答的那台走：切走再回来不该还显示那台失败的
-      expect(conversationRepo.get(out.conversationId)!.modelLabel).toBe(`agent:${goodProvider}:${GOOD_MODEL}`)
+      expect(conversationRepo.get(out.conversationId)!.modelLabel).toBe(`${goodProvider}:${GOOD_MODEL}`)
     },
     30_000
   )
@@ -244,7 +244,7 @@ describe('① 换一次：真换到了那台，并且归因留在旧那台上', 
     expect(out.traces.every((r) => r.model === BAD_MODEL)).toBe(true)
     expect(messageRepo.listByConversation(out.conversationId).some((m) => m.content.includes('已换到'))).toBe(false)
     // 会话那行"最近使用"仍是原来那台：没换就不许改
-    expect(conversationRepo.get(out.conversationId)!.modelLabel).toBe(`agent:${badProvider}:${BAD_MODEL}`)
+    expect(conversationRepo.get(out.conversationId)!.modelLabel).toBe(`${badProvider}:${BAD_MODEL}`)
   }, 30_000)
 
   it('备用设在**别的模型**上不影响这一发（表是按 provider＋模型取的，不是一台全局兜底）', async () => {

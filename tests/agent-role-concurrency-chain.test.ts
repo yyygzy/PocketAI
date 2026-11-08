@@ -792,7 +792,7 @@ describe('145 真链：判据放行 ⇒ 角色真的落在另一台模型上', (
     const kid = kidsOf(conv)[0]
     expect(kid, '跨模型角色要建新子会话').toBeDefined()
     expect(kid!.roleKey).toBe('writer')
-    expect(kid!.modelLabel).toBe(`agent:${remoteProviderId}:${REMOTE_MODEL}`)
+    expect(kid!.modelLabel).toBe(`${remoteProviderId}:${REMOTE_MODEL}`)
     expect(childReqs('remote').length).toBeGreaterThan(0)
     expect(delegateToolMsg(conv)).toContain('子代理结论：来自 remote')
   })

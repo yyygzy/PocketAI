@@ -57,8 +57,8 @@ afterAll(() => {
 })
 
 describe('v58 删除 mcp_servers.enabled', () => {
-  it('全新库跑到 v58：列不存在，且版本号落在 58', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(58)
+  it('全新库跑到 ≥ v58：列不存在，且 v58 记录在', () => {
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(58)
     expect(colsOf('mcp_servers').map((c) => c.name)).not.toContain('enabled')
     expect(versionRow(58)?.name).toBe('drop_mcp_servers_enabled')
   })

@@ -241,13 +241,16 @@ describe('buildConvListQuery — 列表过滤/排序条件', () => {
   it('asst-default / 普通助手 / agent 过滤组合与参数顺序', () => {
     const def = buildConvListQuery({ assistantId: 'asst-default', isAgent: false })
     expect(def.where).toContain("(assistant_id = 'asst-default' OR assistant_id IS NULL)")
-    // 对话侧不再按 model 前缀反选（否则跑过一次 Agent 模式的会话会从对话列表消失，见 440 回归用例）
+    // 对话侧不做类型过滤（能力开关不是身份；跑过一次工具也不会从对话列表消失，见 440 回归用例）
     expect(def.where).not.toContain('NOT LIKE')
+    expect(def.where).not.toContain('agent_mode')
     expect(def.vals).toEqual([])
 
     const asst = buildConvListQuery({ assistantId: 'asst-9', isAgent: true, archivedOnly: true })
     expect(asst.where).toContain('assistant_id = ?')
-    expect(asst.where).toContain("model LIKE 'agent:%'")
+    // Agent 侧按会话能力列归集，v59 后不再看 `model` 前缀
+    expect(asst.where).toContain('agent_mode = 1')
+    expect(asst.where).not.toContain('LIKE')
     expect(asst.where).toContain('archived = 1')
     // 参数顺序：assistantId 先于 archived 条件之前的拼装位置（archived 无参数），仅一个绑定值
     expect(asst.vals).toEqual(['asst-9'])

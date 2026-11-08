@@ -144,4 +144,19 @@ describe('④ 重启后恢复（关掉数据库再打开同一个文件）', () 
     expect(records.find((c) => c.id === a.id)!.agentMode).toBe(true)
     expect(records.find((c) => c.id === b.id)!.agentMode).toBe(false)
   })
+
+  it('v2 用例：关模式 → 重启仍关（关闭即关闭，启动修复不把它误开）', () => {
+    const c = conversationRepo.create({ title: '关闭后重启' })
+    expect(conversationRepo.setAgentMode(c.id, true)).toBe(true)
+    expect(conversationRepo.setAgentMode(c.id, false)).toBe(true)
+
+    dbService.close()
+    dbService.open()
+    dbService.runMigrations()
+    // 产品启动路径的幂等修复也在重开之后跑（本会话没有前缀残留，应命中 0 行）
+    expect(dbService.repairLegacyAgentLabels()).toBe(0)
+
+    expect(conversationRepo.get(c.id)!.agentMode, '用户关掉的开关重启后又开了').toBe(false)
+    expect(resolveAgentMode(c.id, conversationRepo.list(undefined, false), {})).toBe(false)
+  })
 })

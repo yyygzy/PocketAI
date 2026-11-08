@@ -985,6 +985,24 @@ const MIGRATIONS: Migration[] = [
       if (!cols.some((c) => c.name === 'enabled')) return
       db.exec('ALTER TABLE mcp_servers DROP COLUMN enabled;')
     }
+  },
+  {
+    // v59：历史 `agent:` 前缀一次性剥离（v2 方案 §4.1）。
+    //
+    // 前缀是把展示字段当类型标签，正是"跑一轮就从对话列表消失"的根因；v2 起能力只认
+    // `conversations.agent_mode`，`model` 只存 `provider:model`。
+    //
+    // 只改 `model` 与 `agent_mode` 两列值，不新增表/列；`length(model) > 6` 排除正好是
+    // `agent:` 的空模型行（保留原样，不写成空串）。幂等：正常升级后再次命中 0 行。
+    version: 59,
+    name: 'strip_agent_model_label',
+    up: `
+      UPDATE conversations
+      SET model = substr(model, 7),
+          agent_mode = 1
+      WHERE model LIKE 'agent:%'
+        AND length(model) > 6;
+    `
   }
 ]
 
@@ -1138,6 +1156,29 @@ export class DatabaseService {
       .prepare("UPDATE messages SET status='error' WHERE status='streaming'")
       .run()
     if (r.changes > 0) logger.info(`清扫中断的流式占位消息 ${r.changes} 条`)
+  }
+
+  /**
+   * v59 的幂等修复（v2 方案 §4.4）：旧版本在降级期间又会把 `agent:` 前缀写回会话行，
+   * 回到新版本时用同一条 UPDATE 再剥一次，不依赖第二次迁移。
+   *
+   * 只允许在「进程刚独占数据」的启动路径调用（boot 开库 / 解锁后开库）；不挂进会话加载路径。
+   * 对已修复行是空操作（命中 0 行），可反复调用不抛。
+   * @returns 本次真正修复的行数
+   */
+  repairLegacyAgentLabels(): number {
+    if (!this.db) throw new Error('Database not opened')
+    const r = this.db
+      .prepare(
+        `UPDATE conversations
+         SET model = substr(model, 7),
+             agent_mode = 1
+         WHERE model LIKE 'agent:%'
+           AND length(model) > 6`
+      )
+      .run()
+    if (r.changes > 0) logger.info(`修复降级期残留的 agent: 前缀会话 ${r.changes} 条`)
+    return r.changes
   }
 
   integrityCheck(): { ok: boolean; details: string } {

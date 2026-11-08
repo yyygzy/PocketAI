@@ -33,10 +33,12 @@ export function planChildRun(input: {
   const child = conversationRepo.create({
     assistantId: input.assistantId,
     title: `子代理 · ${input.role}`,
-    modelLabel: `agent:${input.target.providerId}:${input.target.model}`,
+    // v2 P0：`model` 只存 `provider:model`；能力落列（子会话同样是"允许调用工具"的会话）
+    modelLabel: `${input.target.providerId}:${input.target.model}`,
     parentConversationId: input.parentConversationId,
     roleKey: input.role
   })
+  conversationRepo.setAgentMode(child.id, true)
   const payload: SendMessagePayload = {
     requestId: randomUUID(),
     conversationId: child.id,

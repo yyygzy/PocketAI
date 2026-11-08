@@ -85,12 +85,13 @@ export function buildConvListQuery(args: ConvListArgs): { where: string; vals: u
     vals.push(args.assistantId)
   }
   if (args.isAgent === true) {
-    conds.push("model LIKE 'agent:%'")
+    // v2 P0：Agent 侧的归集口径是会话能力列，不再是 `model` 前缀（迁移 v59 已把历史前缀清掉）。
+    conds.push('agent_mode = 1')
   }
-  // isAgent=false **不再**按 `model NOT LIKE 'agent:%'` 反选：
-  // 引擎一开跑就把 conversations.model 写成 `agent:...`（engine.ts 的 run setup），
-  // 反选会让"在对话里用过一次 Agent 模式"的会话从对话列表消失（归档/置顶同源同样中招）。
-  // 子会话仍由上面 includeSubSessions 统一排除；Agent 侧只看 true 分支，口径不变。
+  // isAgent=false/undefined 不做类型过滤，保持「对话侧栏=所有会话」口径：
+  // 能力开关不是身份，允许调用工具的会话同样属于对话列表。P1 才在渲染层加徽标与筛选。
+  // 绝不能改成 `agent_mode = 0` 反选——那会重演 440 的"跑一轮就从对话列表消失"。
+  // 子会话仍由上面 includeSubSessions 统一排除。
   const orderBy = args.archivedOnly
     ? 'pinned DESC, archived_at DESC, updated_at DESC'
     : 'pinned DESC, updated_at DESC'
@@ -291,13 +292,17 @@ export const conversationRepo = {
       .run(archived ? 1 : 0, archived ? Date.now() : null, id)
   },
 
-  touch(id: string, patch: { modelLabel?: string; status?: string } = {}): void {
+  touch(id: string, patch: { modelLabel?: string; status?: string; agentMode?: boolean } = {}): void {
     // 归档会话重新活跃（收到消息/状态变化）自动回到主列表
     const sets = ['updated_at=?', 'archived=0', 'archived_at=NULL']
     const vals: unknown[] = [Date.now()]
     if (patch.modelLabel !== undefined) {
       sets.push('model=?')
       vals.push(patch.modelLabel)
+    }
+    if (patch.agentMode !== undefined) {
+      sets.push('agent_mode=?')
+      vals.push(patch.agentMode ? 1 : 0)
     }
     if (patch.status !== undefined) {
       sets.push('status=?')

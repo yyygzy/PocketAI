@@ -10,6 +10,7 @@ export const PENDING_AGENT_MODE_KEY = ''
 
 type AgentModeRecord = Pick<ConversationRecord, 'id'> & {
   agentMode?: boolean
+  /** 展示字段，仅保留在类型里说明"它不参与判定"；历史前缀由迁移 v59 回填 */
   modelLabel?: string | null
 }
 
@@ -22,9 +23,7 @@ export function resolveAgentMode(
   if (Object.prototype.hasOwnProperty.call(local, convId)) return local[convId] === true
   const record = records.find((r) => r.id === convId)
   if (!record) return false
-  if (record.agentMode === true) return true
-  // 入口对齐：Agent 模块建的会话 agent_mode 仍是默认 0，只有 modelLabel 带 `agent:` 前缀。
-  // 对话列表不再按前缀反选后它们会出现在对话侧栏，若这里仍判关闭，一次普通发送就会把
-  // modelLabel 覆盖成 `provider:model`，会话又被踢回 Agent 侧——所以按前缀兜底判开启。
-  return (record.modelLabel ?? '').startsWith('agent:')
+  // v2：唯一口径是会话列。`modelLabel` 不再参与判定——旧前缀兜底会让用户显式关闭后
+  // 重启又被判回开启（评审 M1）；历史前缀已由 v59 一次性剥掉。
+  return record.agentMode === true
 }
