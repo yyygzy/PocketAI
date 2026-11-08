@@ -22,6 +22,8 @@ export interface OnlineSkill {
   description?: string
   icon?: string
   url: string
+  /** 清单可选提供的 sha256/md5；有就校验，没有就放行 */
+  hash?: string
 }
 
 /** 技能状态是闭合三档：停用 / 启用但没绑任何助手 / 已绑定（N 个助手）。 */

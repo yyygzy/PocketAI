@@ -475,6 +475,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // v58（删 mcp_servers.enabled）修该文件的授权数竞态：新增 1 颗门（先等「已授权 N 个助手」到货再断言，
       // 否则后面的「停后消失」恒真）；「停后授权数消失」并进「起键就绪」那同一颗门里，不另开第二颗。
       'tests/capability-bind-412.test.tsx': 7,
+      // 默认索引地址断言：点「联网加载」后只有一发 fetchSkillIndex，先等那一发真的发出（urls 收到 1 条）
+      // 才能断言地址；没有这颗门会在桩调用前读到空数组，默认地址断言变成假红。上限＝现数 1，不留余量。
+      'tests/capability-default-registry.test.tsx': 1,
       'tests/capability-mcp-stop-429.test.tsx': 4,
       'tests/capability-online-seq-322.test.tsx': 8,
       'tests/capability-row-residue-326.test.tsx': 4,

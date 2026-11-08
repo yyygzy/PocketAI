@@ -20,11 +20,52 @@ import { parseSkillText, type SkillShape } from './skill-parser'
 import { installSkillFiles, readSkillFolder, rollbackSkillFiles } from './skill-files'
 import { safeFetch } from '../net/safe-fetch'
 import { skillShapeSchema } from '../../shared/schemas/skills'
+import {
+  GITHUB_NOT_FOUND_TEXT,
+  GITHUB_RATE_LIMIT_TEXT,
+  githubHttpErrorText,
+  githubIndexCandidates,
+  githubNetworkErrorText,
+  githubRequestHeaders,
+  githubSkillCandidates,
+  verifyContentHash
+} from './github-contents'
 
 /** 导入文件大小上限（技能本质是文本，256KB 足够宽裕） */
 const MAX_IMPORT_BYTES = 256 * 1024
 /** 远程拉取额外宽松一点（registry index 可能长一点） */
 const MAX_REMOTE_BYTES = 512 * 1024
+
+type RemoteFetchResult =
+  | { ok: true; body: Buffer }
+  | { ok: false; kind: 'http'; status: number; error: string }
+  | { ok: false; kind: 'network'; error: string }
+
+/** 走 safeFetch 拉远程文本；GitHub 域名附带 raw Accept，错误统一转成用户可读文案 */
+async function fetchRemote(url: string): Promise<RemoteFetchResult> {
+  const headers = githubRequestHeaders(url)
+  try {
+    const res = await safeFetch(
+      url,
+      headers
+        ? { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000, headers }
+        : { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000 }
+    )
+    if (res.status >= 300) {
+      return { ok: false, kind: 'http', status: res.status, error: githubHttpErrorText(res.status) }
+    }
+    return { ok: true, body: res.body }
+  } catch (e) {
+    return { ok: false, kind: 'network', error: githubNetworkErrorText(e) }
+  }
+}
+
+/** 多候选地址都失败时，优先暴露限流/不存在这类明确诊断，其次用最后一次错误 */
+function pickRegistryError(errors: string[]): string {
+  if (errors.includes(GITHUB_RATE_LIMIT_TEXT)) return GITHUB_RATE_LIMIT_TEXT
+  if (errors.includes(GITHUB_NOT_FOUND_TEXT)) return GITHUB_NOT_FOUND_TEXT
+  return errors[errors.length - 1] ?? '拉取失败'
+}
 
 const FILE_FILTERS = [
   { name: '墨匣技能（JSON / Markdown）', extensions: ['json', 'md'] }
@@ -207,20 +248,26 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
 
 /** 从远程 URL 导入技能（safeFetch + 自动检测 JSON/Markdown） */
 export async function importSkillFromUrl(
-  url: string
+  url: string,
+  expectedHash?: string
 ): Promise<{ ok: boolean; skill?: SkillRecord; error?: string }> {
   try {
     if (!url || typeof url !== 'string') return { ok: false, error: 'URL 为空' }
-    let res
-    try {
-      res = await safeFetch(url, { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000 })
-    } catch (e) {
-      const msg = errMsg(e)
-      return { ok: false, error: `网络请求失败: ${msg}` }
+    const { primaryUrl, fallbackUrl } = githubSkillCandidates(url)
+    let res = await fetchRemote(primaryUrl)
+    // API 地址映射后 404（仓库/分支/路径口径不一致）→ 回退原 raw 地址再试一次
+    if (!res.ok && res.kind === 'http' && res.status === 404 && fallbackUrl) {
+      res = await fetchRemote(fallbackUrl)
     }
-    if (res.status >= 300) {
-      return { ok: false, error: `HTTP ${res.status}` }
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.kind === 'network' ? `网络请求失败: ${res.error}` : res.error
+      }
     }
+    const hash = verifyContentHash(res.body, expectedHash)
+    if (hash.state === 'mismatch') return { ok: false, error: hash.error }
+
     const text = res.body.toString('utf8')
     if (!text.trim()) return { ok: false, error: '远程内容为空' }
 
@@ -234,16 +281,20 @@ export async function importSkillFromUrl(
   }
 }
 
-/** 拉取 registry index（safeFetch） */
+/** 拉取 registry index（safeFetch + GitHub Contents API 优先、raw 兜底） */
 export async function fetchRegistryIndex(
   indexUrl: string
 ): Promise<{ ok: boolean; text?: string; error?: string }> {
   try {
-    const res = await safeFetch(indexUrl, { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000 })
-    if (res.status >= 300) return { ok: false, error: `HTTP ${res.status}` }
-    return { ok: true, text: res.body.toString('utf8') }
+    if (!indexUrl || typeof indexUrl !== 'string') return { ok: false, error: 'URL 为空' }
+    const errors: string[] = []
+    for (const url of githubIndexCandidates(indexUrl)) {
+      const res = await fetchRemote(url)
+      if (res.ok) return { ok: true, text: res.body.toString('utf8') }
+      errors.push(res.error)
+    }
+    return { ok: false, error: pickRegistryError(errors) }
   } catch (e) {
-    const msg = errMsg(e)
-    return { ok: false, error: msg }
+    return { ok: false, error: errMsg(e) }
   }
 }

@@ -58,10 +58,10 @@ export function registerSkillHandlers(): void {
     if (error) return { ok: false, error, skills: [] }
     return { ok: true, skills }
   }, argsSchema(z.string().url('索引 URL 不合法')))
-  safeHandle(IPC.SKILL_IMPORT_URL, async (_e, url: string) => {
+  safeHandle(IPC.SKILL_IMPORT_URL, async (_e, url: string, expectedHash: string) => {
     const { importSkillFromUrl } = await import('../../skills/skill-io')
-    return importSkillFromUrl(url)
-  }, argsSchema(z.string().url('URL 不合法')))
+    return importSkillFromUrl(url, expectedHash)
+  }, argsSchema(z.string().url('URL 不合法'), z.string().max(128)))
 
   // SDK：技能校验 + 模板
   safeHandle(IPC.SKILL_VALIDATE, (_e, text: string) => validateSkillText(text), argsSchema(z.string()))

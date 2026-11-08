@@ -49,7 +49,7 @@ interface Props {
 
 /** 默认 registry（与技能市场同一份自建索引） */
 const DEFAULT_REGISTRY =
-  'https://raw.githubusercontent.com/yygygzy/skill-registry/main/index.json'
+  'https://api.github.com/repos/yyygzy/skill-registry/contents/index.json?ref=main'
 
 type View =
   | { kind: 'installedSkill'; id: string }
@@ -472,7 +472,7 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
 
   const handleImportRemote = useCallback(
     async (s: OnlineSkill) => {
-      const r = await window.pocketai.importSkillFromUrl(s.url)
+      const r = await window.pocketai.importSkillFromUrl(s.url, s.hash)
       if (r.ok && r.skill) {
         await refreshSkills()
         toast.success(t('skill.market.importDone'))

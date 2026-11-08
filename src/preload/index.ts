@@ -240,12 +240,13 @@ const api = {
     ipcRenderer.invoke(IPC.SKILL_SYNC),
   fetchSkillIndex: (
     indexUrl: string
-  ): Promise<{ ok: boolean; skills?: Array<{ id: string; name: string; description?: string; icon?: string; url: string }>; error?: string }> =>
+  ): Promise<{ ok: boolean; skills?: Array<{ id: string; name: string; description?: string; icon?: string; url: string; hash?: string }>; error?: string }> =>
     ipcRenderer.invoke(IPC.SKILL_FETCH_INDEX, indexUrl),
   importSkillFromUrl: (
-    url: string
+    url: string,
+    hash?: string
   ): Promise<{ ok: boolean; skill?: SkillRecord; error?: string }> =>
-    ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url),
+    ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url, hash ?? ''),
   validateSkill: (text: string): Promise<{ ok: boolean; error?: string; warnings: string[]; shape?: { name: string; description: string; icon: string; content: string } }> =>
     ipcRenderer.invoke(IPC.SKILL_VALIDATE, text),
   getSkillTemplates: (): Promise<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>> =>
