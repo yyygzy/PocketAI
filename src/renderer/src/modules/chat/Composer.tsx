@@ -611,7 +611,7 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
               aria-pressed={agentMode}
               disabled={streaming}
               onClick={onToggleAgentMode}
-              title={t('composer.agentModeHint')}
+              title={t('composer.tools.hint')}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 agentMode
                   ? 'border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-hover-overlay)]'
@@ -619,10 +619,10 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
               }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${agentMode ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-text-muted)]'}`} />
-              {t('composer.agentMode')}
+              {t('composer.tools.label')}
             </button>
             {agentMode && (
-              <span className="text-[11px] text-[var(--color-text-muted)]">{t('composer.agentModeHint')}</span>
+              <span className="text-[11px] text-[var(--color-text-muted)]">{t('composer.tools.hint')}</span>
             )}
           </div>
         )}

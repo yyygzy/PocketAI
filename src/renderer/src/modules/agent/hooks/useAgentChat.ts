@@ -649,8 +649,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           : ''
       const restoredHit = want ? list.find((x) => x.id === want) : undefined
       restoreRef.current = null
-      // 命令面板跨助手跳来：pending 指定会话优先于「恢复上次」与「自动选最近」（助手不匹配保留 pending）
-      const pending = consumePendingOpenConversation(true, assistantId)
+      // 命令面板在 P1 起一律走对话模块；这里只消费旧结构 isAgent:true 的 pending（过渡守卫）
+      const pending = consumePendingOpenConversation({ assistantId, legacyAgentOnly: true })
       const findConv = (id: string) => list.find((x) => x.id === id) ?? archivedArr.find((x) => x.id === id)
       let chosenId: string | null = null
       let chosenLabel: string | null | undefined
@@ -688,7 +688,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
         setAssistantId(d.assistantId) // 助手 effect 重新拉列表时消费 pending
         return
       }
-      consumePendingOpenConversation(true, assistantId) // 同助手：清掉 pending 防残留
+      consumePendingOpenConversation({ assistantId, legacyAgentOnly: true }) // 同助手：清掉遗留 pending 防残留
       if (d.conversationId) setConversationId(d.conversationId)
     }
     window.addEventListener(OPEN_CONVERSATION_EVENT, handler)

@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import type { AssistantRecord, ConversationRecord, ConversationGroupRecord, MessageSearchResult, StarredMessageItem } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { assistantDisplayName } from './assistant-display'
+import {
+  filterVisibleConversations,
+  isAllVisibleSelected,
+  matchesToolsFilter,
+  selectAllVisibleIds,
+  type ToolsFilter
+} from './conversation-filter'
 import { EmptyState } from '../../components/EmptyState'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { MessageSearchResults, relTime } from '../../components/MessageSearchResults'
@@ -120,6 +127,8 @@ export const ConversationList: React.FC<Props> = ({
   const [deleting, setDeleting] = useState(false)
   // 会话标题过滤（纯前端，与消息搜索互斥）
   const [convFilter, setConvFilter] = useState('')
+  // 能力筛选：全部 / 允许工具 / 普通对话（与标题过滤 AND；筛选态不分组）
+  const [toolsFilter, setToolsFilter] = useState<ToolsFilter>('all')
   // 收藏列表视图：与搜索/过滤/多选互斥；数据由本组件自持（上限 200 条）
   const [starredMode, setStarredMode] = useState(false)
   const [starredItems, setStarredItems] = useState<StarredMessageItem[]>([])
@@ -149,12 +158,24 @@ export const ConversationList: React.FC<Props> = ({
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
-  const allSelected = conversations.length > 0 && conversations.every((c) => selectedIds.includes(c.id))
+  // 可见集：标题搜索与能力筛选 AND（筛选态不分组、全选与归档都跟随它）
+  const filteredConversations = useMemo(
+    () => filterVisibleConversations(conversations, { titleQuery: convFilter, toolsFilter }),
+    [conversations, convFilter, toolsFilter]
+  )
+  // 归档区跟随能力筛选；计数也按筛选后计算，避免「筛了允许工具，归档里还混着普通对话」
+  const visibleArchived = useMemo(
+    () => (archivedConversations ?? []).filter((c) => matchesToolsFilter(c, toolsFilter)),
+    [archivedConversations, toolsFilter]
+  )
+
+  // 全选只针对**筛选后的可见集**：筛选「允许工具」时，不能被看不见的普通会话一起选中
+  const allSelected = isAllVisibleSelected(filteredConversations, selectedIds)
   const toggleSelectAll = () => {
-    setSelectedIds(allSelected ? [] : conversations.map((c) => c.id))
+    setSelectedIds(allSelected ? [] : selectAllVisibleIds(filteredConversations))
   }
 
-  const selectedConvs = conversations.filter((c) => selectedIds.includes(c.id))
+  const selectedConvs = filteredConversations.filter((c) => selectedIds.includes(c.id))
   const handleExportSelected = (format: 'md' | 'html' | 'pdf') => {
     if (selectedConvs.length === 0) return
     onBatchExportSelected?.(format, selectedConvs)
@@ -166,7 +187,7 @@ export const ConversationList: React.FC<Props> = ({
     if (!window.confirm(t('chat.batchDeleteConfirm', { n: selectedConvs.length }))) return
     setDeleting(true)
     try {
-      await onBatchDelete?.(selectedIds)
+      await onBatchDelete?.(selectedConvs.map((c) => c.id))
       exitSelectMode()
     } finally {
       setDeleting(false)
@@ -254,11 +275,6 @@ export const ConversationList: React.FC<Props> = ({
 
   const isSearching = search.trim().length > 0
 
-  // 会话标题过滤：不区分大小写匹配 title；空关键词不过滤
-  const filteredConversations = convFilter.trim()
-    ? conversations.filter((c) => c.title.toLowerCase().includes(convFilter.trim().toLowerCase()))
-    : conversations
-
   // ---------- 分组文件夹 ----------
   // 折叠态用「折叠集合」：默认全展开，只记录被手动折叠的组
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
@@ -281,8 +297,8 @@ export const ConversationList: React.FC<Props> = ({
     return () => cancelAnimationFrame(raf)
   }, [renamingGroupId])
 
-  /** 分区仅在普通浏览态生效（搜索/收藏/多选/标题过滤时平铺，便于全局查找） */
-  const groupedMode = !isSearching && !starredMode && !selectMode && !convFilter.trim() && !!onMoveConv
+  /** 分区仅在普通浏览态生效（搜索/收藏/多选/标题过滤/能力筛选时平铺，便于全局查找） */
+  const groupedMode = !isSearching && !starredMode && !selectMode && !convFilter.trim() && toolsFilter === 'all' && !!onMoveConv
 
   // 置顶优先，其次最近更新
   const convCmp = (a: ConversationRecord, b: ConversationRecord) =>
@@ -460,6 +476,30 @@ export const ConversationList: React.FC<Props> = ({
                 onClick={() => setConvFilter('')}
               >×</button>
             )}
+          </div>
+        )}
+        {/* 能力筛选：全部 / 允许工具 / 普通对话（与标题过滤 AND；搜索/收藏态保持原平铺行为） */}
+        {!isSearching && !starredMode && (
+          <div className="flex flex-wrap gap-1">
+            {([
+              { value: 'all', label: t('chat.tools.filter.all') },
+              { value: 'tools', label: t('chat.tools.filter.tools') },
+              { value: 'plain', label: t('chat.tools.filter.plain') }
+            ] as const).map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={toolsFilter === value}
+                onClick={() => setToolsFilter(value)}
+                className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  toolsFilter === value
+                    ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         )}
         {/* §330：批量导出在飞时逐会话进度（多选那一条一点就退多选态，进度只能挂在常驻的这一格） */}
@@ -753,16 +793,20 @@ export const ConversationList: React.FC<Props> = ({
               </>
             ) : (
               <>
-                {!conversationsUnread && filteredConversations.length === 0 && (
+                {!conversationsUnread && filteredConversations.length === 0 && visibleArchived.length === 0 && (
                   <EmptyState
                     className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2"
-                    message={convFilter.trim() ? t('chat.noFilteredConversations') : t('chat.noConversations')}
+                    message={
+                      convFilter.trim() || toolsFilter !== 'all'
+                        ? t('chat.noFilteredConversations')
+                        : t('chat.noConversations')
+                    }
                   />
                 )}
                 {filteredConversations.map((c) => renderConv(c, false))}
               </>
             )}
-            {!!archivedConversations?.length && (
+            {visibleArchived.length > 0 && (
               <div className="pt-1">
                 <button
                   type="button"
@@ -770,9 +814,9 @@ export const ConversationList: React.FC<Props> = ({
                   className="w-full flex items-center gap-1 px-2.5 py-1.5 rounded text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)]"
                 >
                   <span className="text-[10px]">{showArchived ? '▼' : '▶'}</span>
-                  <span>📦 {t('chat.archivedSection', { n: archivedConversations.length })}</span>
+                  <span>📦 {t('chat.archivedSection', { n: visibleArchived.length })}</span>
                 </button>
-                {showArchived && archivedConversations.map((c) => (
+                {showArchived && visibleArchived.map((c) => (
                   <ConvItem
                     key={c.id}
                     conv={c}
@@ -954,6 +998,12 @@ const ConvItem: React.FC<{
           <span className="block truncate">
             {conv.pinned && !selectMode && <span className="mr-1 text-[10px] opacity-70" title={t('chat.unpin')}>📍</span>}
             {!selectMode && conv.hasDraft && <span className="mr-1 text-[10px]" title={t('chat.draftHint')}>📝</span>}
+            {conv.agentMode === true && (
+              <span
+                className="mr-1 inline-block align-middle text-[9px] px-1 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                title={t('chat.tools.badge')}
+              >{t('chat.tools.badge')}</span>
+            )}
             {conv.title}
           </span>
           {/* 最新消息预览：多选态/空预览不渲染，避免行高跳动 */}

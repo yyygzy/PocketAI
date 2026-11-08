@@ -7,6 +7,7 @@ import { useAppStore } from '../store/app-store'
 import { COMMAND_PALETTE_EVENT } from '../hooks/useGlobalShortcuts'
 import { assistantDisplayName, assistantDisplayDescription } from '../modules/chat/assistant-display'
 import {
+  buildConversationItems,
   filterPaletteItems,
   nextPaletteIndex,
   type PaletteItem,
@@ -37,10 +38,9 @@ const MODULE_TITLE_KEY: Record<ModuleId, string> = {
   settings: 'tab.settings'
 }
 
-/** 分组展示顺序与标题 key */
+/** 分组展示顺序与标题 key（会话只有一组：不再拆 chat / agent 两份） */
 const GROUPS: { type: PaletteType; labelKey: string; icon: string }[] = [
-  { type: 'conv-chat', labelKey: 'palette.groupConvChat', icon: '💬' },
-  { type: 'conv-agent', labelKey: 'palette.groupConvAgent', icon: '🤖' },
+  { type: 'conv-chat', labelKey: 'palette.groupConvChat', icon: '' },
   { type: 'assistant', labelKey: 'palette.groupAssistant', icon: '🧑‍🏫' },
   { type: 'kb', labelKey: 'palette.groupKb', icon: '📚' },
   { type: 'module', labelKey: 'palette.groupModule', icon: '⚡' }
@@ -71,23 +71,16 @@ export const CommandPalette: React.FC = () => {
     let cancelled = false
     setLoading(true)
     void Promise.allSettled([
+      // P0 后 isAgent=false 已表示「不做类型过滤」＝全部非归档会话；不再为 Agent 单读一遍制造重复项
       window.pocketai.listConversations(undefined, false, false),
-      window.pocketai.listConversations(undefined, true, false),
       window.pocketai.listAssistants('mine'),
       window.pocketai.listKnowledgeBases()
-    ]).then(([chatR, agentR, asstR, kbR]) => {
+    ]).then(([chatR, asstR, kbR]) => {
       if (cancelled) return
       const chat = chatR.status === 'fulfilled' ? chatR.value : []
-      const agent = agentR.status === 'fulfilled' ? agentR.value : []
       const assistants = asstR.status === 'fulfilled' ? asstR.value : []
       const kbs = kbR.status === 'fulfilled' ? kbR.value : []
-      const next: PaletteItem[] = []
-      for (const c of chat.slice(0, CONV_PREVIEW_LIMIT)) {
-        next.push({ id: c.id, type: 'conv-chat', title: c.title, subtitle: c.lastMessagePreview ?? undefined, assistantId: c.assistantId ?? undefined })
-      }
-      for (const c of agent.slice(0, CONV_PREVIEW_LIMIT)) {
-        next.push({ id: c.id, type: 'conv-agent', title: c.title, subtitle: c.lastMessagePreview ?? undefined, assistantId: c.assistantId ?? undefined })
-      }
+      const next: PaletteItem[] = buildConversationItems(Array.isArray(chat) ? chat : [], CONV_PREVIEW_LIMIT)
       for (const a of assistants) {
         next.push({ id: a.id, type: 'assistant', title: assistantDisplayName(a, t), subtitle: assistantDisplayDescription(a, t) || undefined })
       }
@@ -120,13 +113,14 @@ export const CommandPalette: React.FC = () => {
   const execute = useCallback((item: PaletteItem) => {
     switch (item.type) {
       case 'conv-chat':
-        requestOpenConversation({ conversationId: item.id, assistantId: item.assistantId, isAgent: false })
-        break
-      case 'conv-agent':
-        requestOpenConversation({ conversationId: item.id, assistantId: item.assistantId, isAgent: true })
+        requestOpenConversation({
+          conversationId: item.id,
+          assistantId: item.assistantId,
+          toolsEnabled: item.toolsEnabled === true
+        })
         break
       case 'assistant':
-        requestOpenConversation({ assistantId: item.id, isAgent: false })
+        requestOpenConversation({ assistantId: item.id })
         break
       case 'kb':
         requestOpenKb(item.id)

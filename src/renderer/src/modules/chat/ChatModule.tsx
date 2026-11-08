@@ -576,21 +576,64 @@ export const ChatModule: React.FC = () => {
     if (conv) restoreLastModel(conv)
   }
 
-  // 搜索跳转：切到目标会话并设 focusMessageId 让 ChatView 滚动+高亮
-  const handleSelectMessage = useCallback((convId: string, messageId: string) => {
-    discardCurrentIfEmpty()
-    userEditedTargetsRef.current = false
-    setActiveDraft('')
-    draftTextRef.current = ''
-    setCurrentConvId(convId)
-    loadMessages(convId)
-    setFocusMessageId(messageId)
-  }, [loadMessages, discardCurrentIfEmpty])
+  // 搜索跳转：切到目标会话并设 focusMessageId 让 ChatView 滚动+高亮。
+  // P1：跨助手口径与命令面板一致——先切助手再跳；解析不到时才提示（不静默失败）。
+  const handleSelectMessage = useCallback(async (convId: string, messageId: string) => {
+    const openWithin = (conv?: ConversationRecord) => {
+      userEditedTargetsRef.current = false
+      setActiveDraft('')
+      draftTextRef.current = ''
+      setCurrentConvId(convId)
+      void loadMessages(convId)
+      setFocusMessageId(messageId)
+      if (conv) restoreLastModel(conv)
+    }
+
+    // 先查本地活跃/归档列表（同一个 ref 索引，避免渲染闭包陈旧）
+    const local = convIndexRef.current.get(convId)
+    if (local) {
+      discardCurrentIfEmpty()
+      openWithin(local)
+      return
+    }
+
+    // 不在本助手列表：读单条记录拿归属助手，属于其他助手则先切再跳
+    let target: ConversationRecord | null = null
+    try {
+      const v = await window.pocketai.getConversation(convId)
+      if (hasIpcFailed(v) || !v) {
+        toast.error(t('chat.jumpNeedsAssistant'))
+        return
+      }
+      target = v
+    } catch (e) {
+      reportIpcError('chat.getConversation')(e)
+      toast.error(t('chat.jumpNeedsAssistant'))
+      return
+    }
+
+    const targetAssistant = target.assistantId ?? 'asst-default'
+    if (targetAssistant !== assistantIdRef.current) {
+      discardCurrentIfEmpty()
+      assistantIdRef.current = targetAssistant
+      setCurrentAssistantId(targetAssistant)
+      setCurrentConvId(null)
+      setMessages([])
+      const asst = assistants.find((a) => a.id === targetAssistant)
+      if (asst?.defaultProviderId && asst.defaultModel) {
+        setTargets([{ providerId: asst.defaultProviderId, model: asst.defaultModel }])
+      }
+      await reloadConversations(false)
+    } else {
+      discardCurrentIfEmpty()
+    }
+    openWithin(target)
+  }, [assistants, loadMessages, reloadConversations, restoreLastModel, discardCurrentIfEmpty, t, toast])
 
   // 命令面板导航：跨助手先切助手+拉列表（不 autoSelect，防覆盖目标）再定位会话；
-  // 仅助手项（无 conversationId）走标准助手切换自动选最近会话
+  // 仅助手项（无 conversationId）走标准助手切换自动选最近会话。
+  // P1：不再按 isAgent 拒绝——两种 detail 都接受，一律在对话壳里打开。
   const handlePaletteOpen = useCallback((detail: OpenConversationDetail) => {
-    if (detail.isAgent) return
     // 仅助手项：切助手（discard + reload autoSelect 最近会话 + 默认模型回填）
     if (!detail.conversationId) {
       if (detail.assistantId && detail.assistantId !== assistantIdRef.current) {
@@ -629,20 +672,20 @@ export const ChatModule: React.FC = () => {
       }
       void reloadConversations(false).then((list) => {
         // 事件路径与 pending 兜底竞态时清掉残留（助手此刻已匹配）
-        consumePendingOpenConversation(false, detail.assistantId)
+        consumePendingOpenConversation({ assistantId: detail.assistantId })
         openWithin(list.find((c) => c.id === targetId))
       })
     } else {
       discardCurrentIfEmpty()
-      consumePendingOpenConversation(false, assistantIdRef.current)
+      consumePendingOpenConversation({ assistantId: assistantIdRef.current })
       openWithin(conversations.find((c) => c.id === targetId))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assistants, conversations, reloadConversations, loadMessages, restoreLastModel, discardCurrentIfEmpty])
 
-  // 命令面板：挂载时消费 pending（面板从其他模块跳来，chat 可能尚未挂载；isAgent 不匹配保留）+ 常驻事件
+  // 命令面板：挂载时消费 pending（面板从其他模块跳来，chat 可能尚未挂载）+ 常驻事件
   useEffect(() => {
-    const pending = consumePendingOpenConversation(false, assistantIdRef.current)
+    const pending = consumePendingOpenConversation({ assistantId: assistantIdRef.current })
     if (pending) handlePaletteOpen(pending)
     // 仅挂载首帧消费一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -650,7 +693,8 @@ export const ChatModule: React.FC = () => {
   useEffect(() => {
     const handler = (e: Event) => {
       const d = (e as CustomEvent<OpenConversationDetail>).detail
-      if (d && !d.isAgent) handlePaletteOpen(d)
+      // P1：所有会话跳转都归对话壳，不再过滤 isAgent
+      if (d) handlePaletteOpen(d)
     }
     window.addEventListener(OPEN_CONVERSATION_EVENT, handler)
     return () => window.removeEventListener(OPEN_CONVERSATION_EVENT, handler)

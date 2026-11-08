@@ -1,12 +1,14 @@
 // 命令面板纯函数测试：子串匹配、截断保序、循环键盘导航
 import { describe, it, expect } from 'vitest'
 import {
+  buildConversationItems,
   matchesQuery,
   filterPaletteItems,
   nextPaletteIndex,
   PALETTE_LIMIT,
   type PaletteItem
 } from '../src/renderer/src/utils/command-palette'
+import type { ConversationRecord } from '../src/shared/types'
 
 function item(partial: Partial<PaletteItem> & { id: string; title: string }): PaletteItem {
   return { type: 'module', ...partial }
@@ -18,6 +20,37 @@ const items: PaletteItem[] = [
   item({ id: '3', title: '翻译助手', subtitle: 'Translator', type: 'assistant' }),
   item({ id: '4', title: '产品知识库', type: 'kb' })
 ]
+
+describe('buildConversationItems（P1：一条会话只出现一次）', () => {
+  const conv = (id: string, title: string, updatedAt: number, agentMode?: boolean): ConversationRecord =>
+    ({ id, title, updatedAt, agentMode, assistantId: 'a1', lastMessagePreview: null }) as unknown as ConversationRecord
+
+  it('同一 id 只出一条（旧 conv-chat / conv-agent 双读产生的重复被去重）', () => {
+    const items = buildConversationItems([conv('c1', '同一条', 10, true), conv('c1', '同一条', 10, true)])
+    expect(items).toHaveLength(1)
+    expect(items[0]!.type).toBe('conv-chat')
+  })
+
+  it('按 updatedAt 倒序，并带出 toolsEnabled 口径', () => {
+    const items = buildConversationItems([
+      conv('old', '旧会话', 100, false),
+      conv('new', '新会话', 300, true),
+      conv('mid', '中会话', 200)
+    ])
+    expect(items.map((i) => i.id)).toEqual(['new', 'mid', 'old'])
+    expect(items[0]!.toolsEnabled).toBe(true)
+    expect(items[1]!.toolsEnabled).toBe(false) // 缺省 agentMode = 普通对话
+    expect(items[2]!.toolsEnabled).toBe(false)
+  })
+
+  it('limit 截前 N 条（命令面板的预览上限）', () => {
+    const items = buildConversationItems(
+      [conv('a', 'A', 1), conv('b', 'B', 2), conv('c', 'C', 3)],
+      2
+    )
+    expect(items.map((i) => i.id)).toEqual(['c', 'b'])
+  })
+})
 
 describe('matchesQuery', () => {
   it('空查询全命中', () => {
