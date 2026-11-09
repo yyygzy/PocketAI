@@ -613,6 +613,8 @@ export const zh = {
   // ── Agent 模块 ──
   'agent.tabServers': '🔌 MCP 服务',
   'agent.tabChat': '🤖 Agent 对话',
+  'agent.mcpInSettings': '也可在「设置 → 能力（MCP）」中管理。',
+  'agent.channelsInSettings': '也可在「设置 → 连接（IM 网关）」中管理。',
   'agent.add': '+ 新增',
   'agent.noServers': '尚未配置。点击「新增」添加 MCP Server（如 npx -y @modelcontextprotocol/server-filesystem）',
   'agent.nTools': '{n} 个工具',
@@ -1229,6 +1231,10 @@ export const zh = {
   'set.dataHealth': '数据健康',
   'set.memory': '用户记忆',
   'set.approvalAudit': '审批明细',
+  'set.capability': '能力（MCP）',
+  'set.capabilityHint': 'MCP Server 的安装、启停与工具授权。',
+  'set.connection': '连接（IM 网关）',
+  'set.connectionHint': 'Telegram / 飞书 / 钉钉 / Slack / Discord 的入站网关配置。',
 
   // 审批明细屏（P0-2c-3，只读）：只陈述事实——会话删除后记录一并删除；不写"完整审计/永久保留/已加密"
   'approvalAudit.intro': '这里列出需要有人参与决定的工具动作：你批准或拒绝的、超时或中止的、本会话放行的、以及被策略拒绝的。该视图只读；删除会话时，这些记录会一并删除（另外最多保留 180 天或 10 万条）。',

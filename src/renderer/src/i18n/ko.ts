@@ -585,6 +585,8 @@ export const ko = {
   'cmp.empty': '(내용 없음)',
   'agent.tabServers': '🔌 MCP 서버',
   'agent.tabChat': '🤖 Agent 채팅',
+  'agent.mcpInSettings': '"설정 → 기능(MCP)"에서도 관리할 수 있습니다.',
+  'agent.channelsInSettings': '"설정 → 연결(IM 게이트웨이)"에서도 관리할 수 있습니다.',
   'agent.add': '+ 추가',
   'agent.noServers': '구성되지 않음. "추가"를 클릭하여 MCP 서버를 생성하세요 (예: npx -y @modelcontextprotocol/server-filesystem)',
   'agent.nTools': '도구 {n}개',
@@ -1174,6 +1176,10 @@ export const ko = {
   'set.dataHealth': '데이터 헬스',
   'set.memory': '사용자 메모리',
   'set.approvalAudit': '승인 상세',
+  'set.capability': '기능(MCP)',
+  'set.capabilityHint': 'MCP 서버 설치·시작/중지·도구 권한 관리.',
+  'set.connection': '연결(IM 게이트웨이)',
+  'set.connectionHint': 'Telegram / Feishu / DingTalk / Slack / Discord 인바운드 게이트웨이 설정.',
 
   // 승인 상세 화면(P0-2c-3, 읽기 전용): 사실만 표시. 대화 삭제 시 기록도 삭제됨
   'approvalAudit.intro': '사람의 판단이 필요했던 도구 동작이 여기에 기록됩니다: 사용자의 승인/거부, 시간 초과/중단, 세션 내 자동 허용, 정책 거부. 이 화면은 읽기 전용입니다. 대화를 삭제하면 해당 기록도 함께 삭제되며, 그 외에는 최대 180일 또는 10만 건까지 보관됩니다.',

@@ -25,6 +25,12 @@ export const AgentModule: React.FC = () => {
           {t('channel.tab')}
         </TabBtn>
       </div>
+      {/* P3 / V4-Iter-460：旧标签保留到 P4；这里只加一句「也可在设置中管理」，不写「已迁移」 */}
+      {tab !== 'agent' && (
+        <p className="mb-2 text-[11px] text-[var(--color-text-muted)]">
+          {tab === 'servers' ? t('agent.mcpInSettings') : t('agent.channelsInSettings')}
+        </p>
+      )}
       <div className="flex-1 overflow-hidden">
         {tab === 'agent' ? <AgentPanel /> : tab === 'servers' ? <McpPanel /> : <ChannelsPanel />}
       </div>

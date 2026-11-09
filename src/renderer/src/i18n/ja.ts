@@ -585,6 +585,8 @@ export const ja = {
   'cmp.empty': '（内容なし）',
   'agent.tabServers': '🔌 MCP サーバー',
   'agent.tabChat': '🤖 Agent チャット',
+  'agent.mcpInSettings': '「設定 → 機能（MCP）」でも管理できます。',
+  'agent.channelsInSettings': '「設定 → 接続（IM ゲートウェイ）」でも管理できます。',
   'agent.add': '+ 追加',
   'agent.noServers': '未構成です。「追加」をクリックして MCP Server を作成してください（例: npx -y @modelcontextprotocol/server-filesystem）',
   'agent.nTools': '{n} 個のツール',
@@ -1174,6 +1176,10 @@ export const ja = {
   'set.dataHealth': 'データヘルス',
   'set.memory': 'ユーザーメモリ',
   'set.approvalAudit': '承認の詳細',
+  'set.capability': '機能（MCP）',
+  'set.capabilityHint': 'MCP サーバーのインストール・起動/停止・ツール許可。',
+  'set.connection': '接続（IM ゲートウェイ）',
+  'set.connectionHint': 'Telegram / Feishu / DingTalk / Slack / Discord の受信ゲートウェイ設定。',
 
   // 承認明細画面（P0-2c-3、読み取り専用）：事実のみ。会話を削除すると記録も削除される
   'approvalAudit.intro': '人が判断したツール操作の記録です：承認/拒否、タイムアウト/中止、セッション内の自動許可、ポリシーによる拒否。この画面は読み取り専用です。会話を削除すると、その記録も削除されます（それ以外は最大 180 日または 10 万件まで保持）。',

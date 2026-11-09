@@ -612,6 +612,8 @@ export const en = {
   // ── Agent module ──
   'agent.tabServers': '🔌 MCP Servers',
   'agent.tabChat': '🤖 Agent Chat',
+  'agent.mcpInSettings': 'Also manageable in Settings → Capabilities (MCP).',
+  'agent.channelsInSettings': 'Also manageable in Settings → Connections (IM gateway).',
   'agent.add': '+ Add',
   'agent.noServers': 'Not configured. Click “Add” to create an MCP Server (e.g. npx -y @modelcontextprotocol/server-filesystem).',
   'agent.nTools': '{n} tools',
@@ -1227,6 +1229,10 @@ export const en = {
   'set.dataHealth': 'Data Health',
   'set.memory': 'User Memory',
   'set.approvalAudit': 'Approval details',
+  'set.capability': 'Capabilities (MCP)',
+  'set.capabilityHint': 'Install, start/stop, and authorize tools for MCP servers.',
+  'set.connection': 'Connections (IM gateway)',
+  'set.connectionHint': 'Inbound gateway settings for Telegram / Feishu / DingTalk / Slack / Discord.',
 
   // Approval audit view (P0-2c-3, read-only): factual only — records are deleted with their conversation
   'approvalAudit.intro': 'Tool actions that involved a decision are listed here: your approvals and denials, timeouts and aborts, session-level allows, and policy denials. This view is read-only. Deleting a conversation deletes its records too; records are otherwise kept for at most 180 days or 100,000 rows.',

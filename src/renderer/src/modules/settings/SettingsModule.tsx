@@ -19,6 +19,7 @@ import { ApprovalAuditPanel } from './ApprovalAuditPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { LocalJudgementPanel } from './LocalJudgementPanel'
 import { OutboundPanel } from './OutboundPanel'
+import { CapabilitySettingsPanel, ConnectionSettingsPanel } from './EmbeddedAgentPanels'
 import { useI18n } from '../../i18n'
 import { injectCustomCss } from '../../custom-css'
 import { applyChatFontSize, normalizeFontSize } from '../../chat-font'
@@ -279,6 +280,20 @@ export const SettingsModule: React.FC = () => {
         <div className="mt-4 border-t border-[var(--color-border)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.approvalAudit')}</h3>
           <ApprovalAuditPanel />
+        </div>
+
+        {/* P3 / V4-Iter-460：能力台外移（只做加法）——设置里新增第二入口，Agent 壳旧标签保留到 P4。
+            设置页与 Agent 壳挂的是同一份面板组件（EmbeddedAgentPanels），不各留一份。 */}
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">{t('set.capability')}</h3>
+          <p className="mb-3 text-xs text-[var(--color-text-muted)]">{t('set.capabilityHint')}</p>
+          <CapabilitySettingsPanel />
+        </div>
+
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">{t('set.connection')}</h3>
+          <p className="mb-3 text-xs text-[var(--color-text-muted)]">{t('set.connectionHint')}</p>
+          <ConnectionSettingsPanel />
         </div>
 
         <div className="mt-4">
