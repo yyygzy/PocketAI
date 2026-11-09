@@ -491,7 +491,7 @@ WHERE agent_mode = 1
 | `modules/agent/components/AgentMessageCard.tsx` | 共享卡片 | 保留 |
 | `modules/agent/components/VirtualMessageList.tsx` | Agent 虚拟列表 | 删除；`getItemKey` 思路移到 ChatView 的 virtualizer（ChatView 已有自己的 per-turn 虚拟化） |
 | `modules/agent/components/TraceReplayStatus.tsx` | replay 徽标 | 保留 |
-| `modules/agent/hooks/useAgentToolConfigs.ts` / `useAttachments.ts` / `agent-shared.ts` / `messages-reducer.ts` | 共享 | 保留 |
+| `modules/agent/hooks/useAgentToolConfigs.ts` / `agent-shared.ts` / `messages-reducer.ts` | 共享 | 保留（P5 批次 1/2 再搬 `messages-reducer.ts`、`useAgentToolConfigs.ts` 到 `chat/`；`useAttachments.ts` 已于 P4 批次 2 删除） |
 | `modules/agent/mcp/McpPanel.tsx` / `channels/ChannelsPanel.tsx` | 配置面板 | 保留，仅挂设置 |
 | `modules/agent/queue-settlement.ts` / `sub-session.ts` | P2 新增 | 保留（不建 `run-controller`） |
 
@@ -645,7 +645,7 @@ WHERE agent_mode = 1
 | 入口与模块挂载 | `src/renderer/src/components/Sidebar.tsx`、`src/renderer/src/components/Workspace.tsx` |
 | 对话壳 | `src/renderer/src/modules/chat/ChatModule.tsx`、`ChatView.tsx`、`Composer.tsx`、`ConversationList.tsx`、`useStreamSession.ts`、`agent-mode.ts`、`send-payload.ts` |
 | Agent 壳 | `src/renderer/src/modules/agent/AgentModule.tsx`、`chat/AgentPanel.tsx`、`hooks/useAgentChat.ts`、`components/SessionRail.tsx`、`components/AgentComposer.tsx` |
-| 共享运行组件 | `src/renderer/src/modules/agent/components/AgentMessageCard.tsx`、`VirtualMessageList.tsx`、`TraceReplayStatus.tsx`、`hooks/messages-reducer.ts`、`agent-shared.ts` |
+| 共享运行组件 | `src/renderer/src/modules/agent/components/AgentMessageCard.tsx`、`TraceReplayStatus.tsx`、`hooks/messages-reducer.ts`、`agent-shared.ts` |
 | 配置面板 | `src/renderer/src/modules/agent/mcp/McpPanel.tsx`、`src/renderer/src/modules/agent/channels/ChannelsPanel.tsx` |
 | 设置入口 | `src/renderer/src/modules/settings/SettingsModule.tsx` |
 | 主进程链路 | `src/main/chat/chat-service.ts`、`src/main/agent/engine.ts`、`src/main/db/repositories/conversation.repo.ts`、`src/main/db/repositories/agent-trace.repo.ts`、`src/main/db/database.ts` |
@@ -653,3 +653,31 @@ WHERE agent_mode = 1
 | 命令/导航 | `src/renderer/src/components/CommandPalette.tsx`、`src/renderer/src/utils/palette-nav.ts` |
 | 侧栏状态 | `src/renderer/src/store/app-store.ts` |
 | 分体窗口 | `src/renderer/src/detached/DetachedApp.tsx` |
+
+## 11. P5（技术债，已拍板执行）：内部 hook 收口
+
+> 本节把 §0／§9 中「拆出本方案」的 P5 落成可执行口径。只做文件搬迁与去反向依赖，不改行为、不动数据；每批独立提交、可单独 revert。
+
+### 11.1 目标
+
+- 对话壳不再从 `modules/agent/hooks` 直接引 hook；`agent/hooks` 不再反向依赖 `modules/chat`（现状为 `useAgentRunInsights` → `chat/run-turn-map`）。
+- 只搬 hook；共享卡片、设置面板与运行时组件一律留在 `agent/`。
+
+### 11.2 文件清单
+
+| 批次 | 搬迁 | 同步改引用 |
+|---|---|---|
+| 1 | `agent/hooks/messages-reducer.ts` → `chat/messages-reducer.ts`；`agent/hooks/useAgentRunInsights.ts` → `chat/useAgentRunInsights.ts`（`../../chat/run-turn-map` 收成 `./run-turn-map`） | `chat/useStreamSession.ts`、`chat/ChatModule.tsx`；`tests/messages-reducer-truncate.test.ts`、`tests/agent-delegate-role-label.test.tsx` |
+| 2 | `agent/hooks/useAgentToolConfigs.ts` → `chat/useAgentToolConfigs.ts`；`agent/components/AgentToolBars.tsx` → `chat/AgentToolBars.tsx` | `chat/ComposerToolConfig.tsx`；`tests/helpers/renderer.tsx`、`ipc-agent-config-unread-257`、`ipc-failure-t1-214`、`ipc-judged-takeover-250`、`keyboard-submit-340`、`renderer-agent-shell-hint`、`renderer-hint-title-410`、`renderer-websearch-b3`、`renderer-websearch-searxng-407`、`truncate-hint-title-gate-410`、`enter-composing-gate-340` |
+
+### 11.3 验收
+
+- `npm run typecheck` 0 错误；每批运行相关用例与 `waitfor-gate-364`、`i18n-dead-keys`、`i18n-parity`、`i18n-interpolation-361`。
+- 受影响用例与闸门的路径锚点全部更新；每个搬走的 hook 至少有一条行为用例打在新入口；基线按用例数计，改动后不得减少。
+- 批次 2 追加 `npm run build`，核对 chunk 无异常增长；行尾保持 LF。
+
+### 11.4 不做
+
+- 不合并统一 runtime（如 `useAgentRuntime`）；不新建 `chat/hooks/`，`chat/` 继续平铺。
+- 不搬共享卡片（`AgentMessageCard`、`AgentLiveStepStrip`、`AgentRunSummary`、`ZeroToolCallNotice`、`ToolPolicyDialog` 等）；批次 2 的 `AgentToolBars` 是随工具配置 hook 一起搬的唯一例外。
+- 不搬 `MCP`／`Channels` 面板（留在 `agent/`，只挂设置）；不改行为、不改测试断言口径、不改数据库与配置，本阶段没有需要迁移的数据。
