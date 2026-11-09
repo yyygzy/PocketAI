@@ -488,6 +488,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/capability-row-residue-326.test.tsx': 4,
       'tests/capability-visibility-428.test.tsx': 6,
       'tests/chat-model-extras-461.test.tsx': 5,
+      // §461 深搜提示：quick／auto 两档要等 `getWebSearchConfig` 那一发真的发出，再读判定结果与屏；
+      // 不等这一颗会在候选态之前读到初始 false，负向断言变成假绿。上限＝现数 7，不留余量。
+      'tests/chat-deep-search-running-461.test.tsx': 7,
       'tests/chat-send-failure-visible-204.test.tsx': 0,
       'tests/data-health-cold-243.test.tsx': 1,
       'tests/data-health-zero-bytes-378.test.tsx': 3,
@@ -622,7 +625,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     expect(ALL.positive.map(where), `会假红的形状：\n${ALL.positive.map(detail).join('\n')}`).toEqual([])
   })
 
-  it('只会假绿那一档（要求「不存在」）＝20 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
+  it('只会假绿那一档（要求「不存在」）＝22 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
     // §365 判语（分组，位置按现数名单）：
     //   ①「在飞那一帧」本身就是判据对象——负向句读的是"发出之后、落地之前"，折进门里反而把判据废掉：
     //     load-fail-read-retry-350／352／354（"还在加载那一支既没有那句也没有那颗键"）、
@@ -633,6 +636,8 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     renderer-provider-settings、renderer-mcp-none-mode-save、renderer-wizard-328
     //   ③头顶已有到货锚（同块更早把该屏断成存在）⇒ 负向句读的是到货后的帧：backup-cloud-time-327
     //   ④门等的"空态消失"本身就是到货转换（到货前空态必在）⇒ 有牙：renderer-image-read-256
+    //   ⑤门只等「配置那一发发出」，紧随的负向句读的是判定结果（quick／auto 不亮）：配置 promise 未必已落地
+    //     ⇒ 只会假绿、不会假红，三档判定由 chat-deep-search-running-461 的纯函数单测兜底
     //   另一档「错画要等落地」（renderer-data-health-perf 两颗、renderer-kb-doc-actions-331 导入那颗、
     //   renderer-kb-eval-panel 取消那颗、update-panel-restart-312 成功那颗）本批已改＝负向句一律挪到落定之后，
     //   故不在名单里；ipc-composer-list-read-268 那颗更是方向搞反（撤横幅要等落地⇒它其实会假红），已折进门里。
@@ -658,6 +663,8 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-websearch-b3.test.tsx:89 -> :90', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
       'tests/capability-visibility-428.test.tsx:103 -> :104', // §429 迁移（原 §436 判语沿用）：门等 `reads === 1`（失败那一发已发出、渲染已重跑），紧随断言网格没长出假 0；门与断言读同一屏、失败落屏与计数条件同批 ⇒ 只会漏报，不会假红。
+      'tests/chat-deep-search-running-461.test.tsx:191 -> :192', // §461 深搜提示：门等 getWebSearchConfig 那一发发出，紧随断言「quick 档屏上没有深搜提示」；门放行时配置 promise 未必已落地 ⇒ 只会假绿，判定本身由 judgeDeepSearchRunning 的三档单测兜底。
+      'tests/chat-deep-search-running-461.test.tsx:198 -> :199', // §461 同上：auto 档末步没带 deepSearch，断言提示不在场。
       'tests/stale-read-notice-347.test.tsx:159 -> :160'
     ]
     // 比对用整串而非数组：数组的 diff 只印第一颗漂的，剩下几颗得跑好几趟才看得见（本批就撞过）

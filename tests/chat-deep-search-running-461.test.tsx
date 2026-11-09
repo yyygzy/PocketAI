@@ -105,8 +105,10 @@ describe('useDeepSearchRunning：只在候选态读配置', () => {
   it('quick 档：模型传了 depth=deep 也灭', async () => {
     stubPocketai({ getWebSearchConfig: () => wsConfig('quick') })
     const { result } = run(true, true, [webSearchStep({ deepSearch: true })])
-    await waitFor(() => expect(calledFns()).toContain('getWebSearchConfig'))
-    expect(result.current).toBe(false)
+    await waitFor(() => {
+      expect(calledFns()).toContain('getWebSearchConfig')
+      expect(result.current).toBe(false)
+    })
   })
 
   it('auto 档：末步 deepSearch=true 才亮', async () => {
@@ -118,8 +120,10 @@ describe('useDeepSearchRunning：只在候选态读配置', () => {
   it('auto 档：末步没带 deepSearch 就灭（配置读到了也不亮）', async () => {
     stubPocketai({ getWebSearchConfig: () => wsConfig('auto') })
     const { result } = run(true, true, [webSearchStep({ deepSearch: false })])
-    await waitFor(() => expect(calledFns()).toContain('getWebSearchConfig'))
-    expect(result.current).toBe(false)
+    await waitFor(() => {
+      expect(calledFns()).toContain('getWebSearchConfig')
+      expect(result.current).toBe(false)
+    })
   })
 
   it('读配置失败按 auto 兜底：不阻断提示，也不假装 deep', async () => {
