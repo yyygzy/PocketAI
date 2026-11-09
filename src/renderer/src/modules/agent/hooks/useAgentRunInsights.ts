@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentRunIndexEntry, MessageRecord } from '../../../../../shared/types'
+import type { AgentRunIndexEntry, AgentSessionStats, MessageRecord } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { errText } from '../../../utils/error'
 import { hasIpcFailed, ipcFailText, reportIpcError } from '../../../utils/ipc'
@@ -21,6 +21,15 @@ export interface AgentRunInsights {
   runsByTurn: Map<string, AgentRunIndexEntry>
   /** 读取失败的原因（读不到 ≠ 没有运行） */
   unread: string | null
+  /**
+   * P4 批次 0：会话级累计（总 token / 耗时 / 步数）。
+   * 直接读主进程 `agent:get-session-stats`——与 Agent 壳同一份聚合口径，不在渲染层拿
+   * `listAgentRuns`（只取最近 50 轮）自己求和，避免长会话把"总步数"算少。
+   */
+  sessionStats: AgentSessionStats | null
+  sessionUnread: string | null
+  /** 那一发读不到时的重试 */
+  retrySessionStats: () => void
 }
 
 /**
@@ -39,6 +48,9 @@ export function useAgentRunInsights({
   const { t } = useI18n()
   const [runs, setRuns] = useState<AgentRunIndexEntry[]>([])
   const [unread, setUnread] = useState<string | null>(null)
+  const [sessionStats, setSessionStats] = useState<AgentSessionStats | null>(null)
+  const [sessionUnread, setSessionUnread] = useState<string | null>(null)
+  const [sessionRetry, setSessionRetry] = useState(0)
   // 迟到响应写进共享槽（§309／§311 同族）：切会话后旧读落回时只认还成立的那一代
   const liveConvRef = useRef<string | null>(conversationId)
   liveConvRef.current = conversationId
@@ -74,10 +86,48 @@ export function useAgentRunInsights({
     }
   }, [conversationId, enabled, refreshToken, t])
 
+  /**
+   * 会话累计：与 run 索引同一批触发条件（会话/开关/落定刷新/手动重试）。
+   * 读不到时保留上一次的数字？不——与 Agent 壳一致，失败就把数字让位给一句"读不到"，
+   * 否则屏上会用旧数替这一次失败说话。
+   */
+  useEffect(() => {
+    if (!conversationId || !enabled) {
+      setSessionStats(null)
+      setSessionUnread(null)
+      return
+    }
+    let alive = true
+    const target = conversationId
+    window.pocketai
+      .getSessionStats(target)
+      .then((stats) => {
+        if (!alive || liveConvRef.current !== target) return
+        if (hasIpcFailed(stats)) {
+          setSessionUnread(ipcFailText(stats, t('common.unknownError')))
+          setSessionStats(null)
+          return
+        }
+        setSessionUnread(null)
+        setSessionStats(stats ?? null)
+      })
+      .catch((e) => {
+        reportIpcError('agent.getSessionStats')(e)
+        if (!alive || liveConvRef.current !== target) return
+        setSessionUnread(errText(e, t('common.unknownError')))
+        setSessionStats(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [conversationId, enabled, refreshToken, sessionRetry, t])
+
+  const retrySessionStats = useMemo(() => () => setSessionRetry((n) => n + 1), [])
+
   const runsByTurn = useMemo(
     () => mapRunsToTurns(runs, buildTurnBoundaries(messages)),
     [runs, messages]
   )
 
-  return { runs, runsByTurn, unread }
+  return { runs, runsByTurn, unread, sessionStats, sessionUnread, retrySessionStats }
 }

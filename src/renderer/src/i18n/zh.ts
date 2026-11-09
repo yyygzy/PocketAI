@@ -945,6 +945,7 @@ export const zh = {
   'agent.liveStep.replan': '重规划',
   'agent.liveStep.error': '错误',
   'agent.sessionStats': '会话累计：{runs} 次运行 · 耗时 {duration} · {tokens} tokens',
+  'agent.sessionStatsWithSteps': '会话累计：{runs} 次运行 · {steps} 步 · 耗时 {duration} · {tokens} tokens',
   'agent.runStatsBlock': '本次运行统计',
   'agent.sessionStatsBlock': '会话累计统计',
   'agent.traceDetail': '分步明细',

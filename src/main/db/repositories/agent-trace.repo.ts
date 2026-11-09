@@ -251,18 +251,20 @@ export const agentTraceRepo = {
         `SELECT COALESCE(SUM(CASE WHEN conversation_id = ? THEN duration_ms ELSE 0 END), 0) AS total_duration,
                 COALESCE(SUM(token_usage), 0) AS total_tokens,
                 COUNT(DISTINCT CASE WHEN conversation_id = ? THEN request_id END) AS run_count,
+                COUNT(CASE WHEN conversation_id = ? THEN 1 END) AS total_steps,
                 COUNT(DISTINCT CASE WHEN conversation_id <> ? THEN request_id END) AS child_runs
          FROM agent_traces
          WHERE conversation_id = ?
             OR parent_request_id IN (SELECT request_id FROM agent_traces WHERE conversation_id = ?)`
-      ).get(conversationId, conversationId, conversationId, conversationId, conversationId) as {
-        run_count: number; total_duration: number; total_tokens: number; child_runs: number
+      ).get(conversationId, conversationId, conversationId, conversationId, conversationId, conversationId) as {
+        run_count: number; total_duration: number; total_tokens: number; total_steps: number; child_runs: number
       } | undefined
       if (!row || row.run_count === 0) return null
       return {
         runCount: row.run_count,
         totalDurationMs: row.total_duration,
         totalTokens: row.total_tokens,
+        totalSteps: row.total_steps,
         ...(row.child_runs > 0 ? { childRuns: row.child_runs } : {})
       }
     } catch (e) {

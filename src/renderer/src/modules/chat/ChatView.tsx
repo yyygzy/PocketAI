@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry } from '../../../../shared/types'
+import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry, AgentSessionStats } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
@@ -7,6 +7,11 @@ import { ComparisonColumns, type CompareColumn } from './ComparisonColumns'
 import { BranchNav } from './BranchNav'
 import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
+import { ChatModelExtras } from './ChatModelExtras'
+import { ChatSessionStats } from './ChatSessionStats'
+import type { AgentModelExtras } from './useAgentModelExtras'
+import { ZeroToolCallNotice } from '../agent/components/ZeroToolCallNotice'
+import type { AgentQueueItem } from '../agent/queue-settlement'
 import { ChatConfigBar } from './ChatConfigBar'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useToast } from '../../components/ToastProvider'
@@ -161,6 +166,32 @@ interface Props {
   agentLive?: AgentMessage[] | null
   /** P2：运行中实时步骤条（与 Agent 调试台同一份 chip 流）；挂在实时卡片上方的轮次内 */
   liveSteps?: LiveStep[]
+  /** P4 批次 0：主目标的模型级配置；不传则不挂顶栏徽标 */
+  modelExtras?: AgentModelExtras
+  /**
+   * P4 批次 0：会话级累计统计（总 token / 耗时 / 步数）。
+   * 数据由 ChatModule 经 `useAgentRunInsights` 读 `agent:get-session-stats`（与 Agent 壳同一份聚合）；
+   * 不传 `onRetrySessionStats` 则不挂这颗入口（普通对话页/测试不受影响）。
+   */
+  sessionStats?: AgentSessionStats | null
+  sessionStatsUnread?: string | null
+  onRetrySessionStats?: () => void
+  /** P4 批次 0：零调用提示（本轮有工具可用却没调用、且会话从未出现过工具卡） */
+  noToolCallNotice?: boolean
+  /** 本轮被 `'*'` 挡下的 MCP 工具数（附在零调用提示里） */
+  noToolMcpHeldBack?: number
+  /** 当前主目标是否已点名走文本协议（决定提示里是否再给「改用文本协议」） */
+  textProtocolForced?: boolean
+  onCloseNoToolCallNotice?: () => void
+  onEnableTextProtocol?: () => void
+  /** P4 批次 0：运行中排队条（本会话），仅「允许调用工具」时出现 */
+  queue?: AgentQueueItem[]
+  /** 排队条是否已满（满时入队按钮禁用，并给出上限文案） */
+  queueFull?: boolean
+  onQueue?: (text: string) => void
+  onInterject?: (text: string) => void
+  onDropQueued?: (clientRef: string) => void
+  onSendQueuedNow?: (clientRef: string) => void
   /**
    * P2：轮次 key（该轮首条消息 id）→ 本轮 run 摘要。
    * 由 ChatModule 用 `useAgentRunInsights` 算好；`undefined` 表示当前会话没有启用 run 索引。
@@ -249,6 +280,23 @@ export const ChatView: React.FC<Props> = ({
   onToggleAgentMode,
   agentLive,
   liveSteps,
+  /** P4 批次 0：主目标的模型级配置（由 ChatModule 统一调一次 `useAgentModelExtras`） */
+  modelExtras,
+  sessionStats = null,
+  sessionStatsUnread = null,
+  onRetrySessionStats,
+  /** P4 批次 0：零调用提示（判定/展示与 Agent 壳共用同一份实现） */
+  noToolCallNotice = false,
+  noToolMcpHeldBack = 0,
+  textProtocolForced = false,
+  onCloseNoToolCallNotice,
+  onEnableTextProtocol,
+  queue,
+  queueFull = false,
+  onQueue,
+  onInterject,
+  onDropQueued,
+  onSendQueuedNow,
   runsByTurn,
   runsUnread,
   readonly = false,
@@ -879,6 +927,15 @@ export const ChatView: React.FC<Props> = ({
           onChange={onTargetsChange}
           disabled={streaming}
         />
+        {/* P4 批次 0：主目标的窗口 / 备用 / 文本协议徽标（迁移自 AgentModelBar，共用同一展示组件） */}
+        {modelExtras && <ChatModelExtras providers={providers} targets={targets} extras={modelExtras} />}
+        {onRetrySessionStats && (
+          <ChatSessionStats
+            stats={sessionStats}
+            unread={sessionStatsUnread}
+            onRetry={onRetrySessionStats}
+          />
+        )}
         <button
           onClick={openSearch}
           className="ml-auto p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
@@ -1354,7 +1411,22 @@ export const ChatView: React.FC<Props> = ({
           <span>{t('agent.subSessionNote')}</span>
         </div>
       ) : (
-        <Composer
+        <>
+          {/* P4 批次 0：零调用提示（迁移自 Agent 壳；判定与展示均为唯一实现）。
+              只在落定后出现，且与 Agent 壳同一条口径：MCP 被挡时只说被挡，否则可建议开文本协议 */}
+          {noToolCallNotice && !streaming && (
+            <div className="shrink-0 px-4">
+              <ZeroToolCallNotice
+                mcpHeldBack={noToolMcpHeldBack}
+                providerId={targets[0]?.providerId ?? ''}
+                model={targets[0]?.model ?? ''}
+                textProtocolForced={textProtocolForced}
+                onClose={() => onCloseNoToolCallNotice?.()}
+                onEnableTextProtocol={() => onEnableTextProtocol?.()}
+              />
+            </div>
+          )}
+          <Composer
           streaming={streaming}
           canSend={canSend}
           noModels={noModelsAtAll}
@@ -1362,6 +1434,13 @@ export const ChatView: React.FC<Props> = ({
           onStop={onStop}
           agentMode={agentMode}
           onToggleAgentMode={onToggleAgentMode}
+          assistantId={assistant?.id}
+          queue={queue}
+          queueFull={queueFull}
+          onQueue={onQueue}
+          onInterject={onInterject}
+          onDropQueued={onDropQueued}
+          onSendQueuedNow={onSendQueuedNow}
           replyTo={replyToMessage ?? null}
           onCancelReply={() => onReply?.(null)}
           draftKey={draftKey ?? ''}
@@ -1370,6 +1449,7 @@ export const ChatView: React.FC<Props> = ({
           onDraftCommit={onDraftCommit}
           messages={messages}
         />
+        </>
       )}
 
       {/* 系统提示词覆盖弹层：textarea 预填当前 override，无 override 时灰色显示助手默认预览 */}

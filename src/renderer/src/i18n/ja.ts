@@ -916,6 +916,7 @@ export const ja = {
   'agent.liveStep.replan': '再計画',
   'agent.liveStep.error': 'エラー',
   'agent.sessionStats': 'セッション合計：{runs}回実行 · 所要時間 {duration} · {tokens}トークン',
+  'agent.sessionStatsWithSteps': 'セッション合計：{runs}回実行 · {steps}ステップ · 所要時間 {duration} · {tokens}トークン',
   'agent.runStatsBlock': '今回の実行統計',
   'agent.sessionStatsBlock': '会話累計の統計',
   'agent.traceDetail': 'ステップ詳細',

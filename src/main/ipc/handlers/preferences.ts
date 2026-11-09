@@ -1,7 +1,12 @@
 // 用户与界面偏好 IPC：首启向导、界面偏好（透明度/CSS）、侧栏模块顺序
 import { IPC } from '../../../shared/types'
 import type { UiPreferences, SidebarModuleId, WizardState } from '../../../shared/types'
-import { DEFAULT_SIDEBAR_ORDER, MAX_PINNED_SIDEBAR_MODULES } from '../../../shared/types'
+import {
+  DEFAULT_SIDEBAR_ORDER,
+  MAX_PINNED_SIDEBAR_MODULES,
+  inspectSidebarOrder,
+  inspectSidebarPinned
+} from '../../../shared/types'
 import { isPortableRuntime } from '../../portable'
 import { getMachineId } from '../../steward/machine'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
@@ -14,25 +19,29 @@ const K_SIDEBAR_ORDER = 'sidebar.order'
 const K_SIDEBAR_PINNED = 'sidebar.pinned'
 const K_LAST_PROVIDER = 'wizard.last_provider_id'
 
-/** 读取侧栏顺序；配置缺失或非法时回退默认值 */
+/**
+ * 读取侧栏顺序；配置缺失或非法时回退默认值。
+ * P4 批次 0：先按当前默认清单过滤（退役模块会残留在老配置里）再校验，过滤过则回写一次，
+ * 让下次启动直接读到干净数据；写入失败不影响本次读取（只是下次还要再清洗一遍）。
+ */
 function readSidebarOrder(): SidebarModuleId[] {
   const raw = appConfigRepo.get(K_SIDEBAR_ORDER)
-  if (raw) {
+  if (!raw) return [...DEFAULT_SIDEBAR_ORDER]
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return [...DEFAULT_SIDEBAR_ORDER]
+  }
+  const { list, changed } = inspectSidebarOrder(parsed)
+  if (changed) {
     try {
-      const arr = JSON.parse(raw)
-      if (
-        Array.isArray(arr) &&
-        arr.length === DEFAULT_SIDEBAR_ORDER.length &&
-        new Set(arr).size === DEFAULT_SIDEBAR_ORDER.length &&
-        DEFAULT_SIDEBAR_ORDER.every((m) => arr.includes(m))
-      ) {
-        return arr as SidebarModuleId[]
-      }
+      appConfigRepo.set(K_SIDEBAR_ORDER, JSON.stringify(list))
     } catch {
-      /* 解析失败 → 回退默认 */
+      /* 回写失败不阻断读取 */
     }
   }
-  return [...DEFAULT_SIDEBAR_ORDER]
+  return list
 }
 
 /**
@@ -49,11 +58,16 @@ function readSidebarPinned(): SidebarModuleId[] {
   } catch {
     return []
   }
-  if (!Array.isArray(arr)) return []
-  const valid = arr.filter(
-    (x): x is SidebarModuleId => typeof x === 'string' && DEFAULT_SIDEBAR_ORDER.includes(x as SidebarModuleId)
-  )
-  return [...new Set(valid)].slice(0, MAX_PINNED_SIDEBAR_MODULES)
+  const { list, changed } = inspectSidebarPinned(arr)
+  // 与 sidebar.order 同步：过滤掉退役/非法项后回写一次，避免旧配置留下幽灵固定项
+  if (changed) {
+    try {
+      appConfigRepo.set(K_SIDEBAR_PINNED, JSON.stringify(list))
+    } catch {
+      /* 回写失败不阻断读取 */
+    }
+  }
+  return list
 }
 
 export function registerPreferenceHandlers(): void {

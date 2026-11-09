@@ -1,5 +1,9 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import { useI18n } from '../../i18n'
+import { useToast } from '../../components/ToastProvider'
+import { MAX_QUEUE_ITEMS, type AgentQueueItem } from './useAgentQueue'
+import { ToolPolicyDialog } from '../agent/components/ToolPolicyDialog'
+import { ComposerToolConfig } from './ComposerToolConfig'
 import { SnippetButton } from '../../components/SnippetButton'
 import { SlashMenu } from '../../components/SlashMenu'
 import { MentionMenu, type MentionItem } from '../../components/MentionMenu'
@@ -45,6 +49,16 @@ interface Props {
   agentMode?: boolean
   /** 切换 Agent 模式（流式中禁用） */
   onToggleAgentMode?: () => void
+  /** 当前助手 id：工具策略总览按「这个助手到底能用什么」给视角 */
+  assistantId?: string
+  /** P4 批次 0：本会话的运行中排队条（仅「允许调用工具」时产生） */
+  queue?: AgentQueueItem[]
+  /** 排队条已满：入队/插队按钮禁用并给出上限文案 */
+  queueFull?: boolean
+  onQueue?: (text: string) => void
+  onInterject?: (text: string) => void
+  onDropQueued?: (clientRef: string) => void
+  onSendQueuedNow?: (clientRef: string) => void
 }
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
@@ -53,8 +67,34 @@ const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js'
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_TEXT_SIZE = 2 * 1024 * 1024 // 2MB
 
-export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend, onStop, replyTo, onCancelReply, draftKey, draft, onDraftChange, onDraftCommit, messages = [], kbs = [], agentMode = false, onToggleAgentMode }) => {
+export const Composer: React.FC<Props> = ({
+  streaming,
+  canSend,
+  noModels,
+  onSend,
+  onStop,
+  replyTo,
+  onCancelReply,
+  draftKey,
+  draft,
+  onDraftChange,
+  onDraftCommit,
+  messages = [],
+  kbs = [],
+  agentMode = false,
+  onToggleAgentMode,
+  assistantId,
+  queue = [],
+  queueFull = false,
+  onQueue,
+  onInterject,
+  onDropQueued,
+  onSendQueuedNow
+}) => {
   const { t } = useI18n()
+  const toast = useToast()
+  // P4 批次 0：只读工具策略总览（迁自 Agent 壳 P0-3a），入口挂在「允许调用工具」提示行
+  const [policyOpen, setPolicyOpen] = useState(false)
   const [text, setText] = useState(draft ?? '')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [dragOver, setDragOver] = useState(false)
@@ -235,9 +275,50 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
     ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
   }
 
+  /** 清空输入并同步草稿（入队/插队与正常发送共用） */
+  const clearInput = () => {
+    updateText('')
+    setAttachments([])
+    setNavIndex(null)
+    onCancelReply?.()
+    requestAnimationFrame(() => {
+      if (taRef.current) taRef.current.style.height = 'auto'
+    })
+  }
+
+  /**
+   * 运行中排队（P4 批次 0，迁自 Agent 壳 V4-Iter-238）：
+   * Enter 等同「入队」；附件不能进队列（队列项只有文本），明说原因而不是静默丢。
+   */
+  const queueFromInput = (asInterject: boolean) => {
+    const trimmed = text.trim()
+    if (!trimmed || !canSend) return
+    if (attachments.length > 0) {
+      toast.error(t('agent.queue.textOnly'))
+      return
+    }
+    if (queueFull) {
+      toast.error(t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }))
+      return
+    }
+    pushHistory(trimmed)
+    if (asInterject) onInterject?.(trimmed)
+    else onQueue?.(trimmed)
+    clearInput()
+  }
+
   const submit = () => {
     const trimmed = text.trim()
-    if ((!trimmed && attachments.length === 0) || !canSend || streaming) return
+    if ((!trimmed && attachments.length === 0) || !canSend) return
+    // 运行中：只有允许调用工具的会话能排队/插队；普通对话维持原来的「运行中不发送」
+    if (streaming) {
+      if (!agentMode || attachments.length > 0) {
+        if (agentMode) toast.error(t('agent.queue.textOnly'))
+        return
+      }
+      queueFromInput(false)
+      return
+    }
     // 发送前推入历史（只推正文，附件/引用不加入历史）
     if (trimmed) pushHistory(trimmed)
     // 提取 kbRefs（kb 类型附件的 kbId）
@@ -537,6 +618,9 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
 
   return (
     <div className="shrink-0 px-4 pb-4 pt-2">
+      {policyOpen && (
+        <ToolPolicyDialog assistantId={assistantId} onClose={() => setPolicyOpen(false)} />
+      )}
       <div className="max-w-3xl mx-auto">
         {/* 附件预览 */}
         {attachments.length > 0 && (
@@ -622,8 +706,68 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
               {t('composer.tools.label')}
             </button>
             {agentMode && (
-              <span className="text-[11px] text-[var(--color-text-muted)]">{t('composer.tools.hint')}</span>
+              <>
+                <span className="text-[11px] text-[var(--color-text-muted)]">{t('composer.tools.hint')}</span>
+                <button
+                  type="button"
+                  onClick={() => setPolicyOpen(true)}
+                  title={t('tp.openTip')}
+                  data-testid="chat-tool-policy-open"
+                  className="text-[11px] underline text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >
+                  {t('tp.open')}
+                </button>
+              </>
             )}
+          </div>
+        )}
+
+        {/* 工具配置（P4 批次 0 / 选项 A）：只允许调用工具时挂载——普通对话不发这四发读数。
+            组件内部复用 `useAgentToolConfigs` + `AgentToolBars`（唯一实现） */}
+        {agentMode && <ComposerToolConfig />}
+
+        {/* 运行中排队条（P4 批次 0，迁自 Agent 壳）：条上每一项都还没进正在跑的这一轮 */}
+        {queue.length > 0 && (
+          <div className="mb-1.5" data-testid="chat-queue-bar">
+            <div className="text-[11px] text-[var(--color-text-muted)] mb-1">{t('agent.queue.barTitle')}</div>
+            <ul className="flex flex-col gap-1">
+              {queue.map((q) => (
+                <li
+                  key={q.clientRef}
+                  className="flex items-center gap-2 text-xs bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-lg px-2 py-1"
+                >
+                  <span className="flex-1 truncate" title={q.text}>
+                    {q.text}
+                  </span>
+                  {q.interjecting ? (
+                    // 已交给引擎、等它在下个步边界收下；此时撤回禁用——那句话随时可能落库
+                    <span
+                      className="shrink-0 text-[var(--color-text-muted)]"
+                      data-testid={`chat-queue-state-${q.clientRef}`}
+                    >
+                      {t('agent.queue.interjecting')}
+                    </span>
+                  ) : (
+                    <button
+                      className="text-xs shrink-0 underline text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                      onClick={() => onSendQueuedNow?.(q.clientRef)}
+                      data-testid={`chat-queue-send-${q.clientRef}`}
+                    >
+                      {streaming ? t('agent.queue.interject') : t('common.send')}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onDropQueued?.(q.clientRef)}
+                    disabled={q.interjecting}
+                    title={t('agent.queue.drop')}
+                    className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-40"
+                    data-testid={`chat-queue-drop-${q.clientRef}`}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -709,12 +853,43 @@ export const Composer: React.FC<Props> = ({ streaming, canSend, noModels, onSend
           />
 
           {streaming ? (
-            <button
-              onClick={onStop}
-              className="shrink-0 h-9 px-4 rounded-xl bg-[var(--color-danger)] hover:opacity-90 text-white text-sm font-medium"
-            >
-              {t('common.stop')}
-            </button>
+            agentMode ? (
+              // 运行中三键（迁自 Agent 壳 V4-Iter-238）：停止是原来的动作；入队等本轮结束自动发；
+              // 立即插队交给引擎，由它在下一个步边界收下（不是打断当前这一步）
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => queueFromInput(false)}
+                  disabled={!text.trim() || queueFull}
+                  title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.enqueueTitle')}
+                  className="h-9 px-3 rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  data-testid="chat-queue-enqueue"
+                >
+                  {t('agent.queue.enqueue')}
+                </button>
+                <button
+                  onClick={() => queueFromInput(true)}
+                  disabled={!text.trim() || queueFull}
+                  title={queueFull ? t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }) : t('agent.queue.interjectTitle')}
+                  className="h-9 px-3 rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  data-testid="chat-queue-interject"
+                >
+                  {t('agent.queue.interject')}
+                </button>
+                <button
+                  onClick={onStop}
+                  className="shrink-0 h-9 px-4 rounded-xl bg-[var(--color-danger)] hover:opacity-90 text-white text-sm font-medium"
+                >
+                  {t('common.stop')}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={onStop}
+                className="shrink-0 h-9 px-4 rounded-xl bg-[var(--color-danger)] hover:opacity-90 text-white text-sm font-medium"
+              >
+                {t('common.stop')}
+              </button>
+            )
           ) : (
             <button
               onClick={submit}

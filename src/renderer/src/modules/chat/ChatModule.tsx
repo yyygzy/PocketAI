@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -15,6 +15,9 @@ import { ChatView } from './ChatView'
 import { assistantDisplayName, assistantDisplayWelcome } from './assistant-display'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useStreamSession } from './useStreamSession'
+import { useAgentQueue, MAX_QUEUE_ITEMS } from './useAgentQueue'
+import { useZeroToolCallNotice } from './useZeroToolCallNotice'
+import { useAgentModelExtras } from './useAgentModelExtras'
 import { useAgentRunInsights } from '../agent/hooks/useAgentRunInsights'
 import { isReadonlyConversation } from '../agent/sub-session'
 import { useConversationLists } from './useConversationLists'
@@ -124,6 +127,11 @@ export const ChatModule: React.FC = () => {
   const assistantIdRef = useRef('asst-default')
   const currentConvRef = useRef<string | null>(null)
   currentConvRef.current = currentConvId
+  /** P4 批次 0：运行中排队/插队迁到对话壳，host 需要的「此刻」取值全部走 ref */
+  const agentModeRef = useRef(false)
+  const queueSendRef = useRef<(text: string, attachments: ChatAttachment[]) => void>(() => {})
+  const queueAckRef = useRef<(clientRef: string) => void>(() => {})
+  const queueSettleRef = useRef<(convId: string, requestId: string, autoSend: boolean) => void>(() => {})
   // §260：会话／归档／分组这三发读连同「失败对象绝不进 state」的收口一起抽到 hook 里
   const {
     conversations,
@@ -143,11 +151,18 @@ export const ChatModule: React.FC = () => {
     agentModeRecord ? [...conversations, ...archivedConversations, agentModeRecord] : [...conversations, ...archivedConversations],
     agentModeByConv
   )
+  agentModeRef.current = agentMode
   /**
    * P2：每轮运行摘要。只在工具有效会话读库（普通会话打开时一次 `agent:list-runs` 都不发）；
    * 映射是纯函数，消息流式变化不会反复打 IPC，`runsRefresh` 由 settle 主动推。
    */
-  const { runsByTurn, unread: runsUnread } = useAgentRunInsights({
+  const {
+    runsByTurn,
+    unread: runsUnread,
+    sessionStats,
+    sessionUnread: sessionStatsUnread,
+    retrySessionStats
+  } = useAgentRunInsights({
     conversationId: currentConvId,
     enabled: agentMode,
     messages,
@@ -178,6 +193,23 @@ export const ChatModule: React.FC = () => {
     for (const c of [...conversations, ...archivedConversations]) idx.set(c.id, c)
     convIndexRef.current = idx
   }, [conversations, archivedConversations])
+
+  /**
+   * P4 批次 0：主目标的模型级配置与零调用提示。
+   * `useAgentModelExtras` 是唯一读写实现（顶栏徽标与这里的提示都吃同一份读数，不再各读一遍）；
+   * 零调用提示的判定/展示同样是唯一实现，Agent 壳也调用同一个 hook。
+   */
+  const zeroToolNote = useZeroToolCallNotice()
+  const primaryTarget = targets[0]
+  const modelExtras = useAgentModelExtras(
+    primaryTarget?.providerId ?? '',
+    primaryTarget?.model ?? '',
+    providers
+  )
+  // 切会话：那句「这一轮没用工具」是上一轮的事实，不该跟着切过去
+  useEffect(() => {
+    zeroToolNote.clear()
+  }, [currentConvId, zeroToolNote.clear])
 
   // 切会话：列表里没有这一条（跨助手搜索跳转等）就单条读回，
   // 否则"有记录但不在本列表"会被演成关闭，与"记住各会话自己的模式"相悖
@@ -246,15 +278,32 @@ export const ChatModule: React.FC = () => {
   // 流式会话收口：6 个流式 ref + liveColumns + focusBranch + 事件订阅全部内聚于 hook
   // 解构取稳定回调（useCallback []），避免以对象形式入 useCallback 依赖致其每渲染重建
   const {
-    liveColumns, agentStream, agentRunning, liveSteps, focusBranch, isStreaming,
+    liveColumns, agentStream, agentRunning, liveSteps, focusBranch, isStreaming, getRequestId,
     beginStream, beginAgentStream, failStream, focusNewBranch, abort, stopUnread
   } = useStreamSession({
     loadMessages,
     reloadConversations,
     getCurrentConvId: () => currentConvRef.current,
     unknownErrorText: t('agent.unknownError'),
+    // P4 批次 0：引擎已收下插队（同一个 clientRef）→ 从排队条划掉；复用同一份事件订阅
+    onAgentInterject: (clientRef) => queueAckRef.current(clientRef),
+    // P4 批次 0：零调用提示（本轮 usedTools + 会话是否出现过工具卡；判定见 useZeroToolCallNotice）
+    onAgentDoneMeta: (e) => {
+      if (e.conversationId !== currentConvRef.current) return
+      zeroToolNote.applyDone(
+        e.usedTools,
+        e.mcpHeldBack,
+        messagesRef.current.some((m) => m.role === 'tool')
+      )
+    },
     // 回复完成通知：仅窗口不可见或失焦时弹（前台不打扰）；开关关闭/异常一律静默
     onStreamsSettled: (convId, outcome, requestId) => {
+      // P4 批次 0：排队条结算。延后一拍——finalize 在本回调返回后才清 requestId，
+      // 立即自动发送会被 handleSend 的 isStreaming() 挡回。后台会话不自动发。
+      if (requestId) {
+        const autoSend = outcome === 'done' && convId === currentConvRef.current
+        setTimeout(() => queueSettleRef.current(convId, requestId, autoSend), 0)
+      }
       // P2：跑完一轮主动刷新 run 索引（done/error 都刷；不刷的话屏上数字停在上一轮，直到切会话）
       if (convId === currentConvRef.current) {
         setRunsRefresh((v) => v + 1)
@@ -281,6 +330,36 @@ export const ChatModule: React.FC = () => {
       })()
     }
   })
+
+  /**
+   * P4 批次 0：运行中排队 / 插队（V4-Iter-238 迁入对话壳）。
+   * 唯一实现是 `useAgentQueue`；Agent 壳的 `useAgentChat` 也调用它，这里只是第二个宿主。
+   * 队列项按会话归属，切会话不丢；只有「允许调用工具」的会话会产出排队项。
+   */
+  const {
+    queue: agentQueue,
+    enqueueText,
+    interjectText,
+    dropQueued,
+    sendQueuedNow,
+    ackInterject,
+    settleAfterRun: settleQueueAfterRun
+  } = useAgentQueue({
+    getConversationId: () => currentConvRef.current,
+    getRequestId: () => getRequestId(),
+    isRunning: () => getRequestId() !== null,
+    canStartRun: () =>
+      agentModeRef.current &&
+      targetsRef.current.some((target) => target.providerId && target.model) &&
+      !isStreaming(),
+    send: (text, attachments) => queueSendRef.current(text, attachments)
+  })
+  queueAckRef.current = ackInterject
+  queueSettleRef.current = settleQueueAfterRun
+  const visibleQueue = useMemo(
+    () => agentQueue.filter((item) => item.conversationId === currentConvId),
+    [agentQueue, currentConvId]
+  )
 
   // busy 上报：流式生成中豁免休眠，防止切走标签后被 LRU 卸载导致输出中断；
   // 重挂时 liveColumns 归 null，effect 自动重新上报 false
@@ -1304,6 +1383,10 @@ export const ChatModule: React.FC = () => {
       .catch((e) => onChatSendFailed(requestId, convId, errText(e)))
     setReplyToMessage(null)
   }
+  // 队列的自动发送与排队条「发送」都走这里：始终指向当前渲染的 handleSend（含最新 agentMode/targets）
+  queueSendRef.current = (text, attachments) => {
+    void handleSend(text, attachments)
+  }
 
   // 引用回复：ChatView 已查好完整消息，直接设置
   const handleSetReply = (msg: MessageRecord | null) => {
@@ -1891,6 +1974,21 @@ export const ChatModule: React.FC = () => {
         onToggleAgentMode={handleToggleAgentMode}
         agentLive={agentStream && agentStream.convId === currentConvId ? agentStream.messages : null}
         liveSteps={agentStream && agentStream.convId === currentConvId ? liveSteps : []}
+        modelExtras={modelExtras}
+        sessionStats={sessionStats}
+        sessionStatsUnread={sessionStatsUnread}
+        onRetrySessionStats={retrySessionStats}
+        noToolCallNotice={zeroToolNote.visible}
+        noToolMcpHeldBack={zeroToolNote.mcpHeldBack}
+        textProtocolForced={modelExtras.textProtocolForced}
+        onCloseNoToolCallNotice={() => zeroToolNote.setVisible(false)}
+        onEnableTextProtocol={() => void modelExtras.setTextProtocol(true)}
+        queue={visibleQueue}
+        queueFull={visibleQueue.length >= MAX_QUEUE_ITEMS}
+        onQueue={enqueueText}
+        onInterject={interjectText}
+        onDropQueued={dropQueued}
+        onSendQueuedNow={sendQueuedNow}
         runsByTurn={runsByTurn}
         runsUnread={runsUnread}
         readonly={subSessionReadonly}

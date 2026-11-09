@@ -36,6 +36,20 @@ export interface UseStreamSessionOptions {
    * 聊天流没有 requestId 时为 null。
    */
   onStreamsSettled?: (convId: string, outcome: 'done' | 'error', requestId?: string | null) => void
+  /**
+   * P4 批次 0：引擎已收下一条运行中插队（`interject` 步事件带同一个 clientRef）。
+   * 队列对账复用这一份事件订阅，不在宿主里另起一套事件解析。
+   */
+  onAgentInterject?: (clientRef: string, requestId: string) => void
+  /**
+   * P4 批次 0：Agent DONE 的附加事实（`usedTools` / `mcpHeldBack`）。
+   * 零调用提示要按「本轮有没有用工具」决定亮灭；订阅仍复用这一份事件流，不另起监听。
+   */
+  onAgentDoneMeta?: (meta: {
+    conversationId: string
+    usedTools?: boolean
+    mcpHeldBack?: number
+  }) => void
   /** Agent 步骤 error 事件缺 error 文案时的兜底句（随界面语言） */
   unknownErrorText?: string
 }
@@ -64,6 +78,8 @@ export interface UseStreamSessionApi {
   focusBranch: FocusBranch | null
   /** 是否流式中（ref 直读，事件 handler 内调用即得最新值） */
   isStreaming: () => boolean
+  /** 当前运行的 requestId（ref 直读）；null = 没有运行。运行中插队需要它做归属 */
+  getRequestId: () => string | null
   /** 发起流式：初始化 6 ref + liveColumns，返回 requestId；忙时返回 null */
   beginStream: (convId: string, targets: ChatTarget[]) => string | null
   /** 发起 Agent 模式事件流：不建虚拟列，改由 agentStream 收 step/chunk，返回 requestId；忙时返回 null */
@@ -142,8 +158,13 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     // 归属只看 requestId：会话切走后仍继续归并，切回来还能看到这一轮的实时卡片。
     const offAgentStep = window.pocketai.onAgentStep((e) => {
       if (e.requestId !== requestIdRef.current) return
-      // 用户气泡由 ChatModule 本地乐观插入；interject（运行中插队）v1 不做
-      if (e.type === 'user' || e.type === 'interject') return
+      // 插队对账放在这里：这句话是否已被引擎收下与用户当前看哪条会话无关（对话壳切走也照收）。
+      if (e.type === 'interject' && e.clientRef) {
+        optsRef.current.onAgentInterject?.(e.clientRef, e.requestId)
+      }
+      // 用户气泡由 ChatModule 本地乐观插入；interject 则要落成实时用户卡（同 Agent 壳口径），
+      // 否则那句话只在队列条上消失、要等本轮结束重载后才看得见
+      if (e.type === 'user') return
       setLiveSteps((prev) => reduceLiveSteps(prev, e))
       setAgentStream((prev) => {
         if (!prev || prev.requestId !== e.requestId) return prev
@@ -201,6 +222,11 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     }
     const offAgentDone = window.pocketai.onAgentDone((e) => {
       if (e.requestId !== requestIdRef.current) return
+      optsRef.current.onAgentDoneMeta?.({
+        conversationId: e.conversationId,
+        usedTools: e.usedTools,
+        mcpHeldBack: e.mcpHeldBack
+      })
       finalizeAgent(e.conversationId, 'done')
     })
     const offAgentError = window.pocketai.onAgentError((e) => {
@@ -266,6 +292,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
   }, [])
 
   const isStreaming = useCallback(() => requestIdRef.current !== null, [])
+  const getRequestId = useCallback(() => requestIdRef.current, [])
 
   const beginStream = useCallback((convId: string, targets: ChatTarget[]): string | null => {
     if (requestIdRef.current) return null // 正在流式中
@@ -353,6 +380,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     liveSteps,
     focusBranch,
     isStreaming,
+    getRequestId,
     beginStream,
     beginAgentStream,
     failStream,

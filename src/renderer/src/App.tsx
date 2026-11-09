@@ -15,6 +15,8 @@ import { FirstRunWizard } from './modules/wizard/FirstRunWizard'
 import { useI18n } from './i18n'
 import { hasIpcFailed, reportIpcError, ipcFailText } from './utils/ipc'
 import { createEncryptionFlagSyncer } from './utils/lock-flags'
+import { consumeBootDeepLinkTarget } from './utils/deep-link'
+import { requestOpenConversation } from './utils/palette-nav'
 import { ShowingDefaultsNotice } from './components/ShowingDefaultsNotice'
 import { startLongTaskObserver } from './utils/longtask'
 import { useAppStore } from './store/app-store'
@@ -61,6 +63,14 @@ export default function App() {
   useEffect(() => {
     touchModule(activeModule)
   }, [activeModule, touchModule])
+
+  // P4 批次 0：主窗口深链 `module=agent` → 对话页 + 最近一条工具会话。
+  // 入口（main.tsx）已在渲染前解析好目标；这里在挂载后交给既有的 requestOpenConversation，
+  // 复用它的「切助手 → 开会话 → 消费 pending」路径。子组件（对话壳）的监听先于本 effect 注册。
+  useEffect(() => {
+    const target = consumeBootDeepLinkTarget()
+    if (target) requestOpenConversation(target)
+  }, [])
 
   // 渲染层长任务观测（实测定位界面卡顿；不支持的环境静默跳过）
   useEffect(() => {

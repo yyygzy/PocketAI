@@ -1094,6 +1094,8 @@ export interface AgentSessionStats {
   runCount: number          // 运行次数 = 主干的 DISTINCT request_id（子 run 不另计一次"运行"）
   totalDurationMs: number   // 主干全部运行耗时之和
   totalTokens: number       // 全部运行 token 之和（含子 run）
+  /** 主干全部运行的步数之和（与 `AgentRunStats.stepCount` 同一口径：只算主干） */
+  totalSteps?: number
   childRuns?: number
 }
 
@@ -2218,6 +2220,56 @@ export const DETACHABLE_MODULE_IDS: SidebarModuleId[] = [
   'image',
   'sandbox'
 ]
+
+/** 清洗结果的统一形状：`changed=true` 表示原值被过滤/修补过，读取方应回写一次 app_config */
+export interface SidebarPreferenceInspection {
+  list: SidebarModuleId[]
+  changed: boolean
+}
+
+function sameIds(raw: unknown[], list: SidebarModuleId[]): boolean {
+  return raw.length === list.length && raw.every((x, i) => x === list[i])
+}
+
+/**
+ * 清洗侧栏顺序（P4 批次 0）：**先按当前默认清单过滤，再校验长度/重复**。
+ * 过滤优先而不是先卡长度：退役模块会残留在老用户的 `sidebar.order` 里，
+ * 先过滤能把它们剔除并保住用户既有排序；长度/重复校验只拒绝真正缺项或坏数据（整体回默认）。
+ * `changed` 供主进程读取侧判断是否需要「回写一次」，避免每次启动重复清洗。
+ */
+export function inspectSidebarOrder(
+  raw: unknown,
+  allowed: SidebarModuleId[] = DEFAULT_SIDEBAR_ORDER
+): SidebarPreferenceInspection {
+  const fallback = [...allowed]
+  if (!Array.isArray(raw)) return { list: fallback, changed: false }
+  const filtered = raw.filter(
+    (x): x is SidebarModuleId => typeof x === 'string' && allowed.includes(x as SidebarModuleId)
+  )
+  const complete = filtered.length === allowed.length && new Set(filtered).size === filtered.length
+  const list = complete ? filtered : fallback
+  return { list, changed: !sameIds(raw, list) }
+}
+
+/**
+ * 清洗「固定不被休眠」列表：剔除不存在/已退役的模块 id、去重、截断到上限。
+ * 与 `sidebar.order` 同步过滤，保证 P4 摘除模块后旧配置不会留下幽灵项。
+ */
+export function inspectSidebarPinned(
+  raw: unknown,
+  allowed: SidebarModuleId[] = DEFAULT_SIDEBAR_ORDER
+): SidebarPreferenceInspection {
+  if (!Array.isArray(raw)) return { list: [], changed: false }
+  const out: SidebarModuleId[] = []
+  for (const x of raw) {
+    if (typeof x !== 'string') continue
+    const id = x as SidebarModuleId
+    if (!allowed.includes(id) || out.includes(id)) continue
+    out.push(id)
+  }
+  const list = out.slice(0, MAX_PINNED_SIDEBAR_MODULES)
+  return { list, changed: !sameIds(raw, list) }
+}
 
 // ---------- 界面偏好（透明度 / 自定义 CSS / 聊天字号） ----------
 /** 聊天正文字号档位：small 13px / medium 14px / large 16px */

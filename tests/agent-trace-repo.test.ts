@@ -223,7 +223,8 @@ describe('agentTraceRepo.sessionStatsByConversation', () => {
     expect(agentTraceRepo.sessionStatsByConversation('c1')).toEqual({
       runCount: 2,
       totalDurationMs: 350,
-      totalTokens: 40
+      totalTokens: 40,
+      totalSteps: 3
     })
   })
 
@@ -234,7 +235,8 @@ describe('agentTraceRepo.sessionStatsByConversation', () => {
     expect(agentTraceRepo.sessionStatsByConversation('c1')).toEqual({
       runCount: 1,
       totalDurationMs: 100,
-      totalTokens: 10
+      totalTokens: 10,
+      totalSteps: 1
     })
   })
 })

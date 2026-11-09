@@ -11,7 +11,7 @@ import {
   MAX_KEPT_MODULES,
   MAX_PINNED_MODULES
 } from '../src/renderer/src/store/app-store'
-import { DEFAULT_SIDEBAR_ORDER } from '../src/shared/types'
+import { DEFAULT_SIDEBAR_ORDER, inspectSidebarOrder, inspectSidebarPinned } from '../src/shared/types'
 import type { ModuleId } from '../src/renderer/src/components/Sidebar'
 
 const FRESH = {
@@ -81,6 +81,53 @@ describe('导航偏好清洗（库里可能是脏值）', () => {
     expect(withJunk).toHaveLength(DEFAULT_SIDEBAR_ORDER.length)
     expect(normalizeSidebarOrder(withJunk)).toEqual(DEFAULT_SIDEBAR_ORDER)
     expect(normalizeSidebarOrder(undefined)).toEqual(DEFAULT_SIDEBAR_ORDER)
+  })
+})
+
+describe('退役模块过滤（P4 批次 0 前置：先过滤再校验长度/重复）', () => {
+  // 用「默认清单去掉 agent」模拟批次 1 摘除后的新默认，验证老用户 12 项配置能平滑落到 11 项
+  const allowed = DEFAULT_SIDEBAR_ORDER.filter((m) => m !== 'agent')
+
+  it('inspectSidebarOrder：过滤退役项后保住用户既有排序，并标记 changed', () => {
+    const raw = [
+      'settings',
+      'agent',
+      'chat',
+      'skills',
+      'knowledge',
+      'files',
+      'notes',
+      'translate',
+      'image',
+      'sandbox',
+      'terminal',
+      'steward'
+    ]
+    const r = inspectSidebarOrder(raw, allowed)
+    expect(r.list).toEqual(raw.filter((m) => m !== 'agent'))
+    expect(r.list).toHaveLength(allowed.length)
+    // 回写一次的口径靠这个标志：过滤发生过
+    expect(r.changed).toBe(true)
+  })
+
+  it('inspectSidebarOrder：过滤后仍缺项 / 干净配置分别回默认与不回写', () => {
+    // 过滤后少一项（用户配置本就缺项）→ 整体回默认、需要回写
+    expect(inspectSidebarOrder(allowed.slice(0, -1), allowed).list).toEqual(allowed)
+    expect(inspectSidebarOrder(allowed.slice(0, -1), allowed).changed).toBe(true)
+    // 干净配置（顺序不同但完整）→ 原样保留且不回写
+    const clean = [...allowed].reverse()
+    expect(inspectSidebarOrder(clean, allowed)).toEqual({ list: clean, changed: false })
+  })
+
+  it('inspectSidebarPinned：与顺序同步过滤退役项、去重、截断', () => {
+    const raw = ['agent', 'chat', 'chat', 'nope', 'settings', 'translate', 'image', 'files']
+    const r = inspectSidebarPinned(raw, allowed)
+    expect(r.list).toEqual(['chat', 'settings', 'translate', 'image'])
+    expect(r.changed).toBe(true)
+    expect(inspectSidebarPinned(['chat', 'settings'], allowed)).toEqual({
+      list: ['chat', 'settings'],
+      changed: false
+    })
   })
 })
 

@@ -15,13 +15,8 @@ import type {
   ProviderRecord
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
-import {
-  MODEL_WINDOW_MAX_TOKENS,
-  MODEL_WINDOW_MIN_TOKENS,
-  modelWindowKey
-} from '../../../../../shared/model-window'
-import { fallbackTargetKey, type FallbackTarget } from '../../../../../shared/fallback-target'
-import { chatSendFailureText, hasIpcFailed, ipcFailText, ipcFailureText, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
+import { useAgentModelExtras } from '../../chat/useAgentModelExtras'
+import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcError, type IpcFailureInput } from '../../../utils/ipc'
 import { errText } from '../../../utils/error'
 import { useToast } from '../../../components/ToastProvider'
 import { findRerunSourceId, toAgentMessages, reduceLiveSteps, type AgentMessage, type LiveStep } from '../agent-shared'
@@ -32,12 +27,8 @@ import {
   subSessionOf,
   type SubSessionIdentity
 } from '../sub-session'
-import {
-  applyInterjectEvent,
-  createRunSettlementLedger,
-  settleRunQueue,
-  type AgentQueueItem
-} from '../queue-settlement'
+import { MAX_QUEUE_ITEMS, useAgentQueue } from '../../chat/useAgentQueue'
+import { useZeroToolCallNotice } from '../../chat/useZeroToolCallNotice'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../../utils/palette-nav'
 
 /**
@@ -46,10 +37,10 @@ import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConve
  * 排队项既不是消息也不是任务，把它持久化就得引入第三种存储形状，而它的全部价值在"这一轮跑完接着说"。
  * 类型与结算规则已抽到 `../queue-settlement`（P2 / V4-Iter-459），这里只做兼容导出。
  */
-export type { AgentQueueItem }
+export type { AgentQueueItem } from '../queue-settlement'
 
-/** 排队条上限：再多就不是"补一句"而是"批量灌"了，那种场景应该等运行结束再发 */
-export const MAX_QUEUE_ITEMS = 20
+/** 排队条上限与实现都在对话壳共用的 `useAgentQueue`，这里只做兼容导出 */
+export { MAX_QUEUE_ITEMS }
 
 export function useAgentChat(providers: ProviderRecord[], assistants?: AssistantRecord[]) {
   const { t } = useI18n()
@@ -95,22 +86,14 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [subSessions, setSubSessions] = useState<ConversationRecord[]>([])
   const [subSessionsUnread, setSubSessionsUnread] = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState(0) // 当前运行正在执行的步数（running 时显示，结束后丢弃）
-  /** 零调用提示：本次运行有工具可用但模型未调用任何工具时显示 */
-  const [noToolCallNotice, setNoToolCallNotice] = useState(false)
-  /** 本次运行被「'*' 只给内置」挡下的 MCP 工具数（随 DONE 事件回传，附在零调用提示里） */
-  const [mcpHeldBack, setMcpHeldBack] = useState(0)
-  /** 被用户点名「走文本协议」的模型键（`providerId::model`）；开关存 app_config，跨重启保留 */
-  const [textProtocolModels, setTextProtocolModels] = useState<string[]>([])
-  // §257：这发读失败时徽标会显示「文本协议」（＝没走），与"读到了但没走"同一张脸；
-  // 抄 §234 那颗窗口徽标的第三态，让"取不到"自己说自己是取不到。
-  const [textProtocolUnread, setTextProtocolUnread] = useState<string | null>(null)
-  /** §234：每台模型声明的上下文窗口（键同上，值是 token 数）。表里没有=未设=按 30 条 */
-  const [modelWindows, setModelWindows] = useState<Record<string, number>>({})
-  /** 那一读失败过：界面不许把"没读到"演成"没有一台模型设过窗口"（§222 那一族） */
-  const [modelWindowsUnread, setModelWindowsUnread] = useState<string | null>(null)
-  /** §237：每台模型的备用 target 表（`providerId::model` → 一台）；表里没那台＝没设过＝引擎一句都不换 */
-  const [fallbackTargets, setFallbackTargets] = useState<Record<string, FallbackTarget>>({})
-  const [fallbackUnread, setFallbackUnread] = useState<string | null>(null)
+  /** 零调用提示：本次运行有工具可用但模型未调用任何工具时显示（实现见 `useZeroToolCallNotice`） */
+  const {
+    visible: noToolCallNotice,
+    mcpHeldBack,
+    setVisible: setNoToolCallNotice,
+    applyDone: applyZeroToolCallNotice,
+    clear: clearZeroToolCallNotice
+  } = useZeroToolCallNotice()
   /**
    * §237：这一轮的固定开销已超过**声明过的**窗口，历史只带了最近一问（引擎那侧 `windowPlan.noRoom`）。
    * 只在 DONE 带 true 时点亮，切会话／起新一轮都清掉——它是"这一轮"的事实，不是会话的属性。
@@ -120,6 +103,23 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
+  /**
+   * 模型级配置（上下文窗口 / 备用链 / 文本协议）：P4 批次 0 起状态与读写全部收进
+   * `useAgentModelExtras`——对话壳也调用同一份实现，这里只解构出既有对外字段。
+   */
+  const {
+    textProtocolForced,
+    textProtocolUnread,
+    retryTextProtocol,
+    setTextProtocol,
+    contextWindowTokens,
+    contextWindowUnread,
+    setContextWindow,
+    fallbackTarget,
+    fallbackMissing,
+    fallbackUnread,
+    setFallback
+  } = useAgentModelExtras(providerId, model, providers)
   const requestIdRef = useRef('')
   // 事件订阅闭包内读取当前会话（effect 仅依赖 [t]，不能直接用 conversationId state）
   const conversationIdRef = useRef<string | null>(null)
@@ -136,17 +136,10 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   const runBlockRef = useRef<{ conversationId: string; requestId: string } | null>(null)
 
   /**
-   * 运行中排队消息（V4-Iter-238）。三个 ref 是同一件事的三个侧面——事件回调只有**首帧闭包**，
-   * 读 state 会读到过期值，而过期值在这条链上会直接造成重复消息：
-   *  · `runningRef`：`send()` 里的 `running` 挡板改用 ref，否则 DONE 回调里刚发起来的新一轮
-   *    会被上一次渲染的 `running=true` 挡回去（自动发送静默失效）；
-   *  · `queueRef`：队列的同步镜像，所有写入都走 `writeQueue`，让同一次回调里的"先归位再自动发"看得见；
-   *  · `sendRef`/`canStartRunRef`：DONE 回调要发下一条，而 send 的入参（模型/会话）必须取当前渲染的值。
+   * 运行中排队 / 插队（V4-Iter-238）：实现已抽到对话壳共用的 `useAgentQueue`（P4 批次 0），
+   * 这里不再保留第二份；`runningRef` 仍是本 hook 的「此刻是否在跑」，`sendRef`/`canStartRunRef`
+   * 让结算回调读得到当前渲染的模型/会话。
    */
-  const [queue, setQueue] = useState<AgentQueueItem[]>([])
-  const queueRef = useRef<AgentQueueItem[]>(queue)
-  /** P2：`(requestId, clientRef)` 幂等账本——两个订阅各自结算同一轮时也不重复发下一条 */
-  const settlementLedgerRef = useRef(createRunSettlementLedger())
   const runningRef = useRef(false)
   const sendRef = useRef<(text: string, attachments: ChatAttachment[]) => void>(() => {})
   const canStartRunRef = useRef<() => boolean>(() => false)
@@ -157,111 +150,21 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setRunning(v)
   }
 
-  /** 队列的唯一写入口：ref 与 state 同步走，同一次回调里"先归位再自动发"才看得见新列表 */
-  const writeQueue = (next: AgentQueueItem[]): void => {
-    queueRef.current = next
-    setQueue(next)
-  }
-
-  /**
-   * 把一句话放进**当前会话**的排队条。返回本地 clientRef，空串表示没放进去（文本为空／没有会话／条满）。
-   * 条满要说出来：按下入队的人以为那句话已经在路上，静默丢掉等于骗人。
-   */
-  const pushQueueItem = (text: string, interjecting: boolean): string => {
-    const content = text.trim()
-    const convId = conversationIdRef.current
-    if (!content || !convId) return ''
-    const forThisConv = queueRef.current.filter((q) => q.conversationId === convId)
-    if (forThisConv.length >= MAX_QUEUE_ITEMS) {
-      toast.error(t('agent.queue.tooMany', { max: MAX_QUEUE_ITEMS }))
-      return ''
-    }
-    const clientRef = `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    writeQueue([...queueRef.current, { clientRef, conversationId: convId, text: content, interjecting }])
-    return clientRef
-  }
-
-  /** 「入队」：等这一轮跑完自动发出（中止/出错时不自动发，见 settleQueueAfterRun） */
-  const enqueueText = (text: string): void => {
-    pushQueueItem(text, false)
-  }
-
-  /**
-   * 把一条排队项交给正在运行的主干 run（引擎只在下个步边界收下）。
-   * 这里"成功"只等于"引擎接了这条请求"，**不等于**它已进这一轮：真正的凭据是随后那条
-   * 带同一个 clientRef 的 `interject` 事件。所以成功分支什么都不做——
-   * 划掉排队项由事件负责，运行结束时还挂着的一律按"没送到"归回队列。
-   */
-  const requestInterject = (clientRef: string, text: string): void => {
-    const backToQueue = (msg?: IpcFailureInput): void => {
-      writeQueue(queueRef.current.map((q) => (q.clientRef === clientRef ? { ...q, interjecting: false } : q)))
-      if (msg) toast.error(ipcFailureText(msg, t) || t('agent.unknownError'))
-    }
-    const requestId = requestIdRef.current
-    // 还没有 requestId（发送请求本身尚在路上）：归回队列等自动发送，不报错误
-    if (!requestId) {
-      backToQueue()
-      return
-    }
-    void window.pocketai
-      .interjectAgent({ requestId, clientRef, text })
-      .then((r) => {
-        if (hasIpcFailed(r)) backToQueue(r)
-      })
-      .catch((e) => {
-        reportIpcError('agent.interjectAgent')(e)
-        backToQueue()
-      })
-  }
-
-  /** 「立即插队」：先进条（看得见），再交给引擎；接不住就留在条上当普通排队项 */
-  const interjectText = (text: string): void => {
-    const content = text.trim()
-    const clientRef = pushQueueItem(content, true)
-    if (!clientRef) return
-    requestInterject(clientRef, content)
-  }
-
-  /** 撤掉一条还没发出去的排队消息（只动内存，DB 里从来没有它） */
-  const dropQueued = (clientRef: string): void => {
-    writeQueue(queueRef.current.filter((q) => q.clientRef !== clientRef))
-  }
-
-  /** 排队条上的「发送」：运行中就插队，空闲时当成一条正常消息发出去 */
-  const sendQueuedNow = (clientRef: string): void => {
-    const item = queueRef.current.find((q) => q.clientRef === clientRef)
-    if (!item || item.interjecting) return
-    if (runningRef.current) {
-      writeQueue(queueRef.current.map((q) => ({ ...q, interjecting: q.clientRef === clientRef ? true : q.interjecting })))
-      requestInterject(clientRef, item.text)
-      return
-    }
-    if (!canStartRunRef.current()) return
-    writeQueue(queueRef.current.filter((q) => q.clientRef !== clientRef))
-    sendRef.current(item.text, [])
-  }
-
-  /**
-   * 一轮结束后的收尾（V4-Iter-238 / P2 定稿）：
-   *  ① 还挂着"已交给引擎"的项归回排队——没收到 `interject` 事件就是没落库。
-   *     不归回的话它会永远停在"插队中"，既不上屏也不自动发，用户那句话就消失了；
-   *  ② 只有**正常跑完**且当前正看着这条会话时才自动发出下一条。中止/出错不自动发：
-   *     按停止就是要停下来看结果，紧跟一条自动发送等于没停；而后台会话的排队项要等用户切回来
-   *     再发——`send` 发的是"当前看着的会话"，在后台回调里发就是把话塞进别的会话。
-   *
-   * 结算由**持有队列的这个 hook 自己**订阅 DONE/ERROR 驱动，不依赖 `useStreamSession` 的
-   * `onStreamsSettled`（观测 hook 不订阅也照样 drain）；跨订阅重复到达由
-   * `settlementLedgerRef` 按 `(requestId, clientRef)` 去重，不会重复发。
-   */
-  const settleQueueAfterRun = (convId: string, requestId: string, autoSend: boolean): void => {
-    const result = settleRunQueue(
-      queueRef.current,
-      { conversationId: convId, requestId, autoSend, canAutoSend: canStartRunRef.current() },
-      settlementLedgerRef.current
-    )
-    writeQueue(result.queue)
-    if (result.next) sendRef.current(result.next.text, [])
-  }
+  const {
+    queue,
+    enqueueText,
+    interjectText,
+    dropQueued,
+    sendQueuedNow,
+    ackInterject,
+    settleAfterRun: settleQueueAfterRun
+  } = useAgentQueue({
+    getConversationId: () => conversationIdRef.current,
+    getRequestId: () => requestIdRef.current || null,
+    isRunning: () => runningRef.current,
+    canStartRun: () => canStartRunRef.current(),
+    send: (text, attachments) => sendRef.current(text, attachments)
+  })
 
   const selectedProvider = useMemo(
     () => providers.find((p) => p.id === providerId),
@@ -289,174 +192,6 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     }
     if (model && p.models.length > 0 && !p.models.includes(model)) setModel('')
   }, [providers, providerId, model])
-
-  // 文本协议开关的当前状态：清单在挂载时读一次，之后以 set 通道回传的最新值为准
-  // §399②a：抽成具名 loader——那颗开关搬进输入框的「+」之后，「读不到」那句旁边要有同款出口
-  const loadTextProtocol = useCallback(() => {
-    void window.pocketai
-      .getAgentTextProtocol()
-      .then((list) => {
-        if (hasIpcFailed(list)) {
-          setTextProtocolUnread(ipcFailText(list, t('agent.unknownError')))
-          return
-        }
-        setTextProtocolUnread(null)
-        setTextProtocolModels(Array.isArray(list) ? list : [])
-      })
-      .catch((e: unknown) => {
-        setTextProtocolUnread(errText(e, t('agent.unknownError')))
-        logIpcError('agent.getTextProtocol', e)
-      })
-  }, [t])
-
-  useEffect(() => {
-    loadTextProtocol()
-  }, [loadTextProtocol])
-
-  /** 当前选中的 provider+model 是否已被点名走文本协议 */
-  const textProtocolForced =
-    !!providerId && !!model && textProtocolModels.includes(`${providerId}::${model}`)
-
-  // §234：每台模型的上下文窗口表，挂载读一次，之后以 set 通道回传的最新值为准
-  useEffect(() => {
-    void window.pocketai
-      .getModelContextWindows()
-      .then((res) => {
-        if (hasIpcFailed(res)) {
-          // 读不到不许咽成空表——空表在界面上和"没有一台模型设过窗口"长得一模一样
-          setModelWindowsUnread(ipcFailText(res, t('agent.unknownError')))
-          return
-        }
-        setModelWindowsUnread(null)
-        setModelWindows(res)
-      })
-      .catch(reportIpcError('agent.getModelContextWindows'))
-  }, [t])
-
-  /** 当前选中模型声明的窗口；null=未设（引擎那一侧退回"最近 30 条"的旧口径） */
-  const contextWindowTokens =
-    providerId && model ? modelWindows[modelWindowKey(providerId, model)] ?? null : null
-
-  /**
-   * 设/清当前这台模型的窗口（下一轮运行生效）。
-   * 三条失败面各说各的：IPC 失败⇒原因；服务层回码拒绝⇒那句"这个数不行"（数字取自共享常量，
-   * 不手抄）；两者都不做本地乐观更新——表以库里回传的为准。
-   */
-  const setContextWindow = useCallback(
-    (tokens: number | null) => {
-      if (!providerId || !model) return
-      void window.pocketai
-        .setModelContextWindow(providerId, model, tokens)
-        .then((res) => {
-          if (hasIpcFailed(res)) {
-            toast.error(ipcFailText(res, t('agent.unknownError')))
-            return
-          }
-          if (res.rejected) {
-            toast.error(
-              res.rejected === 'MODEL_WINDOW_INVALID_VALUE'
-                ? t('agent.window.rejected.MODEL_WINDOW_INVALID_VALUE', {
-                    min: MODEL_WINDOW_MIN_TOKENS,
-                    max: MODEL_WINDOW_MAX_TOKENS
-                  })
-                : t('agent.window.rejected.MODEL_WINDOW_INVALID_ID')
-            )
-            return
-          }
-          setModelWindows(res.windows)
-          setModelWindowsUnread(null)
-        })
-        .catch(reportIpcError('agent.setModelContextWindow'))
-    },
-    [providerId, model, toast, t]
-  )
-
-  // ---------- §237：每台模型的备用 target ----------
-  // 挂载读一次，之后以 set 通道回传的最新表为准（口径同上面那颗窗口：不做本地乐观更新）。
-  useEffect(() => {
-    void window.pocketai
-      .getFallbackTargets()
-      .then((res) => {
-        // 读不到不许咽成空表——空表在界面上和"没有一台模型设过备用"长得一模一样
-        if (hasIpcFailed(res)) {
-          setFallbackUnread(ipcFailText(res, t('agent.unknownError')))
-          return
-        }
-        setFallbackUnread(null)
-        setFallbackTargets(res)
-      })
-      .catch(reportIpcError('agent.getFallbackTargets'))
-  }, [t])
-
-  /** 当前选中那台模型的备用；null=没设过 */
-  const fallbackTarget =
-    providerId && model ? fallbackTargets[fallbackTargetKey(providerId, model)] ?? null : null
-
-  /**
-   * 备用**设过但那台已经不在这个实例里**：provider 不在清单／被停用，或它的模型清单里没这个名字
-   * （§151 那类清单漂移会造出这一格）。判据与引擎那处逐字同一条（enabled ＋ models.includes），
-   * 差别只是界面拿得到列表，能把它说出来；引擎那侧选择不换、只留日志。
-   */
-  const fallbackMissing = (() => {
-    if (!fallbackTarget) return false
-    const p = providers.find((x) => x.id === fallbackTarget.providerId)
-    return !p || !p.enabled || !p.models.includes(fallbackTarget.model)
-  })()
-
-  /**
-   * 设/清当前这台模型的备用（下一轮运行生效）。
-   * 三档失败各说各的：IPC 失败⇒原因；服务层回码拒绝⇒那句四语（"指向自己"与"这台不行"是两回事）；
-   * 都不做本地乐观更新。
-   */
-  const setFallback = useCallback(
-    (target: FallbackTarget | null) => {
-      if (!providerId || !model) return
-      void window.pocketai
-        .setFallbackTarget(providerId, model, target)
-        .then((res) => {
-          if (hasIpcFailed(res)) {
-            toast.error(ipcFailText(res, t('agent.unknownError')))
-            return
-          }
-          if (res.rejected) {
-            toast.error(
-              t(
-                res.rejected === 'FALLBACK_IS_SELF'
-                  ? 'agent.fallback.rejected.FALLBACK_IS_SELF'
-                  : 'agent.fallback.rejected.FALLBACK_INVALID_ID'
-              )
-            )
-            return
-          }
-          setFallbackTargets(res.targets)
-          setFallbackUnread(null)
-        })
-        .catch(reportIpcError('agent.setFallbackTarget'))
-    },
-    [providerId, model, toast, t]
-  )
-
-  /** 开/关当前这台模型的文本协议（下一轮运行生效；不做本地乐观更新，以库里回传的清单为准） */
-  const setTextProtocol = useCallback(
-    (on: boolean) => {
-      if (!providerId || !model) return
-      void window.pocketai
-        .setAgentTextProtocol(providerId, model, on)
-        .then((list) => {
-          // §221：这是用户点的那一下，失败必须说话。原来那句 `Array.isArray(list) ? list : []`
-          // 会把 `{ok:false}` 咽成空清单 ⇒ 按钮自己变回「文本协议」，看起来像"关掉了"
-          if (hasIpcFailed(list)) {
-            toast.error(ipcFailText(list, t('agent.unknownError')))
-            return
-          }
-          setTextProtocolModels(Array.isArray(list) ? list : [])
-          // 这一发 set 通道回传的就是最新清单 ⇒ 挂载那次"取不到"到此作废（§256 那两条陈旧谎报的同一课）
-          setTextProtocolUnread(null)
-        })
-        .catch(reportIpcError('agent.setTextProtocol'))
-    },
-    [providerId, model]
-  )
 
   /**
    * 回填某会话最后使用的 Provider/模型：会话记录的 modelLabel 优先
@@ -885,8 +620,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     setLatestTracesUnread(null)
     setTracesLoading(false)
     setLiveSteps([])
-    setNoToolCallNotice(false)
-    setMcpHeldBack(0)
+    clearZeroToolCallNotice()
     // §237：那句"这一轮带不下更多历史"是**那一轮**的事实，切会话不该把它带过去
     setHistoryTight(false)
     if (!conversationId) {
@@ -934,7 +668,7 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
          */
         if (e.type === 'interject' && e.clientRef && fromThisRun(e.requestId)) {
           // 按 clientRef 过滤即幂等：重复事件结果不变（见 `../queue-settlement`）
-          writeQueue(applyInterjectEvent(queueRef.current, e.clientRef))
+          ackInterject(e.clientRef)
         }
         if (!thisRunShownNow(e)) return
         setCurrentStep(e.stepIndex)
@@ -975,13 +709,13 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
             //        本轮零行时会把上一轮的非零账挂在「本次运行统计」下）。
             loadRunStatsForRun(e.conversationId, e.requestId)
           }
-          // 零调用提示：本轮有工具可用却一次都没调用**且整条会话都没有过工具卡**才亮——
-          // 只凭本轮就建议换模型，等于拿一轮的信号断言这台模型的行为（§242 真机读数里
-          // 同一台模型上一轮调了、这一轮没调，那句「似乎从不」就是这么被撑破的）。
-          setNoToolCallNotice(
-            e.usedTools === false && !messagesRef.current.some((m) => m.role === 'tool')
+          // 零调用提示：本轮有工具可用却一次都没调用**且整条会话都没有过工具卡**才亮
+          //（判定与展示在 P4 批次 0 起与对话壳共用同一份实现，见 `useZeroToolCallNotice`）
+          applyZeroToolCallNotice(
+            e.usedTools,
+            e.mcpHeldBack,
+            messagesRef.current.some((m) => m.role === 'tool')
           )
-          setMcpHeldBack(e.mcpHeldBack ?? 0)
           // §237：引擎那一侧算出来的"这一轮带不下更多历史"上屏（只在 true 时点亮）
           setHistoryTight(e.historyTight === true)
           // §245：子会话是**这一轮跑出来的**，而 `subSessions` 原来只在进入会话时读一次 ⇒
@@ -1337,11 +1071,11 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
     mcpHeldBack,
     textProtocolForced,
     textProtocolUnread,
-    retryTextProtocol: loadTextProtocol,
+    retryTextProtocol,
     uiPrefsUnread,
     setTextProtocol,
     contextWindowTokens,
-    contextWindowUnread: modelWindowsUnread,
+    contextWindowUnread,
     setContextWindow,
     fallbackTarget,
     fallbackMissing,

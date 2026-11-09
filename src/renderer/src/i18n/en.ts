@@ -943,6 +943,7 @@ export const en = {
   'agent.liveStep.replan': 'Replan',
   'agent.liveStep.error': 'Error',
   'agent.sessionStats': 'Session total: {runs} runs · {duration} · {tokens} tokens',
+  'agent.sessionStatsWithSteps': 'Session total: {runs} runs · {steps} steps · {duration} · {tokens} tokens',
   'agent.runStatsBlock': 'run statistics',
   'agent.sessionStatsBlock': 'session totals',
   'agent.traceDetail': 'Step details',

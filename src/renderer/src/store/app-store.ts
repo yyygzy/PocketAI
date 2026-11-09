@@ -8,7 +8,7 @@
 import { create } from 'zustand'
 import type { ModuleId } from '../components/Sidebar'
 import type { WizardVariant } from '../modules/wizard/FirstRunWizard'
-import { DEFAULT_SIDEBAR_ORDER } from '../../../shared/types'
+import { DEFAULT_SIDEBAR_ORDER, inspectSidebarOrder, inspectSidebarPinned } from '../../../shared/types'
 
 /** 同时保活（挂载但隐藏）的模块数上限；超出后 LRU 尾部进入 dormant（卸载渲染） */
 export const MAX_KEPT_MODULES = 4
@@ -16,29 +16,17 @@ export const MAX_KEPT_MODULES = 4
 /** 可固定的模块数上限：固定数达到保活上限即等于全量豁免，LRU 失去意义 */
 export const MAX_PINNED_MODULES = MAX_KEPT_MODULES
 
-/** 清洗来自 app_config 的固定列表：只留合法模块 id、去重、截断到上限 */
+/** 清洗来自 app_config 的固定列表：只留合法模块 id、去重、截断到上限（与主进程共用同一实现） */
 export function normalizePinnedModules(raw: unknown): ModuleId[] {
-  if (!Array.isArray(raw)) return []
-  const out: ModuleId[] = []
-  for (const x of raw) {
-    if (typeof x !== 'string') continue
-    const id = x as ModuleId
-    if (!DEFAULT_SIDEBAR_ORDER.includes(id) || out.includes(id)) continue
-    out.push(id)
-  }
-  return out.slice(0, MAX_PINNED_MODULES)
+  return inspectSidebarPinned(raw, DEFAULT_SIDEBAR_ORDER).list
 }
 
-/** 清洗侧栏顺序：必须是全部模块的一个排列，否则整体回默认（半截列表比没有列表更糟） */
+/**
+ * 清洗侧栏顺序：先按当前默认清单过滤（剔除退役模块），再校验「必须正好是全部模块的一个排列」，
+ * 不合法则整体回默认（半截列表比没有列表更糟）。实现与主进程读取侧共用，避免两处口径漂移。
+ */
 export function normalizeSidebarOrder(raw: unknown): ModuleId[] {
-  if (!Array.isArray(raw) || raw.length !== DEFAULT_SIDEBAR_ORDER.length) return [...DEFAULT_SIDEBAR_ORDER]
-  const list = raw.filter(
-    (x): x is ModuleId => typeof x === 'string' && DEFAULT_SIDEBAR_ORDER.includes(x as ModuleId)
-  )
-  if (list.length !== DEFAULT_SIDEBAR_ORDER.length || new Set(list).size !== list.length) {
-    return [...DEFAULT_SIDEBAR_ORDER]
-  }
-  return list
+  return inspectSidebarOrder(raw, DEFAULT_SIDEBAR_ORDER).list
 }
 
 export interface EvictCtx {

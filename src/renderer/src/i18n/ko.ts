@@ -916,6 +916,7 @@ export const ko = {
   'agent.liveStep.replan': '재계획',
   'agent.liveStep.error': '오류',
   'agent.sessionStats': '세션 합계: {runs}회 실행 · 소요 시간 {duration} · {tokens}토큰',
+  'agent.sessionStatsWithSteps': '세션 합계: {runs}회 실행 · {steps}단계 · 소요 시간 {duration} · {tokens}토큰',
   'agent.runStatsBlock': '이번 실행 통계',
   'agent.sessionStatsBlock': '대화 누적 통계',
   'agent.traceDetail': '단계 상세',

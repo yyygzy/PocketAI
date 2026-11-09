@@ -311,6 +311,18 @@ export function zeroCallNoticeFlags(s: {
   }
 }
 
+/**
+ * 零调用提示是否该亮：本轮有工具可用却一次都没调用**且整条会话都没有过工具卡**。
+ * 只凭本轮就建议换模型，等于拿一轮的信号断言这台模型的行为（§242 真机读数里
+ * 同一台模型上一轮调了、这一轮没调）。P4 批次 0 起两个壳（Agent / 对话）共用这一条判定。
+ */
+export function shouldShowZeroToolCallNotice(
+  usedTools: boolean | undefined,
+  hasToolHistory: boolean
+): boolean {
+  return usedTools === false && !hasToolHistory
+}
+
 /** DB MessageRecord[] → Agent 对话视图的 AgentMessage[]（tool 消息拆 call/result 两张卡） */
 export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
   const out: AgentMessage[] = []
