@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentRunIndexEntry, AgentSessionStats, MessageRecord } from '../../../../../shared/types'
-import { useI18n } from '../../../i18n'
-import { errText } from '../../../utils/error'
-import { hasIpcFailed, ipcFailText, reportIpcError } from '../../../utils/ipc'
-import { buildTurnBoundaries, mapRunsToTurns } from '../../chat/run-turn-map'
+import type { AgentRunIndexEntry, AgentSessionStats, MessageRecord } from '../../../../shared/types'
+import { useI18n } from '../../i18n'
+import { errText } from '../../utils/error'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
+import { buildTurnBoundaries, mapRunsToTurns } from './run-turn-map'
 
 export interface UseAgentRunInsightsOptions {
   conversationId: string | null

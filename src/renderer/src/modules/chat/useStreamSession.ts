@@ -4,7 +4,7 @@ import type { CompareColumn } from './ComparisonColumns'
 import type { FocusBranch } from './ChatView'
 import type { AgentMessage, LiveStep } from '../agent/agent-shared'
 import { reduceLiveSteps } from '../agent/agent-shared'
-import { messagesReducer } from '../agent/hooks/messages-reducer'
+import { messagesReducer } from './messages-reducer'
 import { hasIpcFailed, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 

@@ -371,7 +371,7 @@ WHERE agent_mode = 1
    - 现有只读接口保留：`getAgentRunStats`（按 requestId）、`getAgentSessionStats`、`getLatestAgentTraces`（100 行上限）。**不把「列出全部 run」塞进这些接口。**
 
 2. **轮次 UI**：
-   - `src/renderer/src/modules/agent/hooks/useAgentRunInsights.ts`（从 `useAgentChat` 抽出）：`runsByTurn`、`runStats`、`sessionStats`、展开态 trace、子会话。
+   - `src/renderer/src/modules/agent/hooks/useAgentRunInsights.ts`（从 `useAgentChat` 抽出；P5 批次 1 已搬到 `chat/useAgentRunInsights.ts`）：`runsByTurn`、`runStats`、`sessionStats`、展开态 trace、子会话。
    - `src/renderer/src/modules/agent/components/AgentRunSummary.tsx`：步数/耗时/token/变更数/子会话/降级标记，挂在对应轮次内。
    - `src/renderer/src/modules/agent/components/AgentRunInspector.tsx`：步骤流、每步 token、工具入参/返回、变更清单、`TraceReplayStatus`、子会话入口；默认折叠，展开才读库。
    - `src/renderer/src/modules/agent/components/AgentLiveStepStrip.tsx`：运行中 chip 流，结束后收起；**与 Agent 调试台共用同一份渲染**，挂在对话页实时 Agent 卡片（`chat-agent-live`）内、持久化卡片之上。零步骤（还没收到 step 事件）或非运行态整条不渲染。
@@ -491,7 +491,7 @@ WHERE agent_mode = 1
 | `modules/agent/components/AgentMessageCard.tsx` | 共享卡片 | 保留 |
 | `modules/agent/components/VirtualMessageList.tsx` | Agent 虚拟列表 | 删除；`getItemKey` 思路移到 ChatView 的 virtualizer（ChatView 已有自己的 per-turn 虚拟化） |
 | `modules/agent/components/TraceReplayStatus.tsx` | replay 徽标 | 保留 |
-| `modules/agent/hooks/useAgentToolConfigs.ts` / `agent-shared.ts` / `messages-reducer.ts` | 共享 | 保留（P5 批次 1/2 再搬 `messages-reducer.ts`、`useAgentToolConfigs.ts` 到 `chat/`；`useAttachments.ts` 已于 P4 批次 2 删除） |
+| `modules/agent/hooks/useAgentToolConfigs.ts` / `agent-shared.ts` | 共享 | 保留（`useAgentToolConfigs.ts` 待 P5 批次 2 搬到 `chat/`；`messages-reducer.ts` 已于 P5 批次 1 搬到 `chat/`；`useAttachments.ts` 已于 P4 批次 2 删除） |
 | `modules/agent/mcp/McpPanel.tsx` / `channels/ChannelsPanel.tsx` | 配置面板 | 保留，仅挂设置 |
 | `modules/agent/queue-settlement.ts` / `sub-session.ts` | P2 新增 | 保留（不建 `run-controller`） |
 
@@ -643,9 +643,9 @@ WHERE agent_mode = 1
 | 角色 | 文件 |
 |---|---|
 | 入口与模块挂载 | `src/renderer/src/components/Sidebar.tsx`、`src/renderer/src/components/Workspace.tsx` |
-| 对话壳 | `src/renderer/src/modules/chat/ChatModule.tsx`、`ChatView.tsx`、`Composer.tsx`、`ConversationList.tsx`、`useStreamSession.ts`、`agent-mode.ts`、`send-payload.ts` |
+| 对话壳 | `src/renderer/src/modules/chat/ChatModule.tsx`、`ChatView.tsx`、`Composer.tsx`、`ConversationList.tsx`、`useStreamSession.ts`、`messages-reducer.ts`、`useAgentRunInsights.ts`、`agent-mode.ts`、`send-payload.ts` |
 | Agent 壳 | `src/renderer/src/modules/agent/AgentModule.tsx`、`chat/AgentPanel.tsx`、`hooks/useAgentChat.ts`、`components/SessionRail.tsx`、`components/AgentComposer.tsx` |
-| 共享运行组件 | `src/renderer/src/modules/agent/components/AgentMessageCard.tsx`、`TraceReplayStatus.tsx`、`hooks/messages-reducer.ts`、`agent-shared.ts` |
+| 共享运行组件 | `src/renderer/src/modules/agent/components/AgentMessageCard.tsx`、`TraceReplayStatus.tsx`、`agent-shared.ts` |
 | 配置面板 | `src/renderer/src/modules/agent/mcp/McpPanel.tsx`、`src/renderer/src/modules/agent/channels/ChannelsPanel.tsx` |
 | 设置入口 | `src/renderer/src/modules/settings/SettingsModule.tsx` |
 | 主进程链路 | `src/main/chat/chat-service.ts`、`src/main/agent/engine.ts`、`src/main/db/repositories/conversation.repo.ts`、`src/main/db/repositories/agent-trace.repo.ts`、`src/main/db/database.ts` |
@@ -660,7 +660,7 @@ WHERE agent_mode = 1
 
 ### 11.1 目标
 
-- 对话壳不再从 `modules/agent/hooks` 直接引 hook；`agent/hooks` 不再反向依赖 `modules/chat`（现状为 `useAgentRunInsights` → `chat/run-turn-map`）。
+- 对话壳不再从 `modules/agent/hooks` 直接引 hook；`agent/hooks` 不再反向依赖 `modules/chat`（P5 批次 1 后 `useAgentRunInsights` 已随搬家把 `../../chat/run-turn-map` 收成 `./run-turn-map`）。
 - 只搬 hook；共享卡片、设置面板与运行时组件一律留在 `agent/`。
 
 ### 11.2 文件清单

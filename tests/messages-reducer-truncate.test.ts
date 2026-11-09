@@ -1,6 +1,6 @@
 // messages-reducer 截断重跑动作测试
 import { describe, it, expect } from 'vitest'
-import { messagesReducer } from '../src/renderer/src/modules/agent/hooks/messages-reducer'
+import { messagesReducer } from '../src/renderer/src/modules/chat/messages-reducer'
 import type { AgentMessage } from '../src/renderer/src/modules/agent/agent-shared'
 
 const mk = (id: string, role: AgentMessage['role'] = 'user'): AgentMessage => ({ id, role, text: id })

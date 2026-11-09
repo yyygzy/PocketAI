@@ -488,6 +488,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/capability-row-residue-326.test.tsx': 4,
       'tests/capability-visibility-428.test.tsx': 6,
       'tests/chat-model-extras-461.test.tsx': 5,
+      // P5 批次 1：run 索引 hook 搬到 `chat/` 后新开的行为用例——两发读库都是挂载后才落地，
+      // 门要等 `runs`／`sessionStats`／`sessionUnread` 真的写进 hook 状态再断言；不等会在落地前读到空态。
+      // 上限＝现数 4，不留余量。
+      'tests/chat-agent-run-insights-463.test.tsx': 4,
       // §461 深搜提示：quick／auto 两档要等 `getWebSearchConfig` 那一发真的发出，再读判定结果与屏；
       // 不等这一颗会在候选态之前读到初始 false，负向断言变成假绿。上限＝现数 7，不留余量。
       'tests/chat-deep-search-running-461.test.tsx': 7,
