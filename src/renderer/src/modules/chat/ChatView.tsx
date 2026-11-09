@@ -22,6 +22,7 @@ import { AgentMessageCard } from '../agent/components/AgentMessageCard'
 import { AgentLiveStepStrip } from '../agent/components/AgentLiveStepStrip'
 import { AgentRunSummary } from '../agent/components/AgentRunSummary'
 import { toAgentMessages, type AgentMessage, type LiveStep } from '../agent/agent-shared'
+import { useDeepSearchRunning } from './useDeepSearchRunning'
 import { cumulativeTokensByMessage } from '../../utils/usage-summary'
 import { hasUsableModel } from '../../utils/provider-pick'
 import { daySeparatorLabel, isDifferentDay, fileTimestamp } from '../../utils/time'
@@ -357,6 +358,8 @@ export const ChatView: React.FC<Props> = ({
   }, [msgById, onForward])
   const scrollBoxRef = useRef<HTMLDivElement>(null)
   const streaming = streamingProp ?? liveColumns !== null
+  // 「深度检索中…」：单一判定在 `useDeepSearchRunning`（Agent 模式 + 运行中 + 末步 web_search 才读配置）
+  const deepSearchRunning = useDeepSearchRunning({ agentMode, running: streaming, steps: liveSteps })
   // 用户是否处于底部锚定区（历史状态，scroll 事件更新，避免竞态抖动）
   const isAtBottomRef = useRef(true)
   // 切会话后待滚底标记：messages 异步加载，length 变化 effect 里消费
@@ -1195,7 +1198,11 @@ export const ChatView: React.FC<Props> = ({
                         paddingBottom: 24
                       }}
                     >
-                      <AgentLiveStepStrip steps={liveSteps ?? []} className="mb-2" />
+                      <AgentLiveStepStrip
+                        steps={liveSteps ?? []}
+                        deepSearchRunning={deepSearchRunning}
+                        className="mb-2"
+                      />
                       {liveAgentCards!.map((m) => (
                         <AgentMessageCard key={m.id} m={m} />
                       ))}

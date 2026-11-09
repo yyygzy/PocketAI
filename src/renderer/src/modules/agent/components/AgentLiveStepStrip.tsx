@@ -8,7 +8,7 @@ interface AgentLiveStepStripProps {
   currentStep?: number
   /** 结束后收起：false 时不渲染 */
   running?: boolean
-  /** 深度联网检索进行中（由 `isDeepSearchRunning` 判定后传入） */
+  /** 深度联网检索进行中（由 `judgeDeepSearchRunning` 判定后传入） */
   deepSearchRunning?: boolean
   className?: string
 }

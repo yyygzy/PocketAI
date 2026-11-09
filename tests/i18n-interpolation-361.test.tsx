@@ -292,7 +292,7 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     expect(parametrized.map(rel), '模板标记键被带参调用＝渲染出半个字面大括号').toEqual([])
   })
 
-  it('动态 key 调用点钉在 100 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
+  it('动态 key 调用点钉在 99 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
     // §417 P0-3a：工具策略屏两发 `tp.reason.${code}`（旧注释 99／116，现 ToolPolicyDialog.tsx:108／125）
     //   已改为 `satisfies Record<ToolPolicyReasonCode, string>` 字面表 ⇒ 动态点 −2
     //
