@@ -36,6 +36,7 @@ import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
 const logger = createLogger('chat-service')
 import { withProviderLimit } from './concurrency'
 import { agentEngine } from '../agent/engine'
+import { markRunStarted, markRunFinished } from './runtime-registry'
 import { injectAttachments, appendTextAttachments, buildImageParts } from './context-attachments'
 import type { AdapterChatMessage } from '../providers/types'
 import type { MessageRecord } from '../../shared/types'
@@ -274,9 +275,11 @@ class ChatService {
         model: targets[0]!.model
       })
       conversationRepo.touch(conversationId, {
-        modelLabel: targets.map((t) => `${t.providerId}:${t.model}`).join(' | '),
-        status: 'streaming'
+        modelLabel: targets.map((t) => `${t.providerId}:${t.model}`).join(' | ')
       })
+      conversationRepo.setRunState(conversationId, { status: 'streaming' })
+      // B-2：非 Agent 的普通对话也要进运行态注册表（以前只有渲染端本地知道自己在跑）
+      markRunStarted({ conversationId, requestId, mode: 'chat' })
 
       // 3. 构建共享上下文（此刻历史含刚插入的用户消息，不含占位回复）
       const messages = buildContext(messageRepo.listByConversation(conversationId), renderedPrompt)
@@ -335,7 +338,12 @@ class ChatService {
 
       // 全部目标失败 → 标记 error；否则 done
       const allFailed = results.every((r) => r.status === 'rejected')
-      conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+      conversationRepo.setRunState(conversationId, { status: allFailed ? 'error' : 'done' })
+      markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
+    } catch (e) {
+      // 运行中途抛错（供应商适配器/持久化）：注册表留「失败」角标，错误照原样抛给 IPC 层
+      markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))
+      throw e
     } finally {
       this.controllers.delete(requestId)
       releaseKeepAwake()
@@ -390,7 +398,8 @@ class ChatService {
         })
       )
 
-      conversationRepo.touch(conversationId, { status: 'streaming' })
+      conversationRepo.setRunState(conversationId, { status: 'streaming' })
+      markRunStarted({ conversationId, requestId, mode: 'chat' })
 
       // 并发执行
       const results = await Promise.allSettled(
@@ -408,7 +417,11 @@ class ChatService {
       )
 
       const allFailed = results.every((r) => r.status === 'rejected')
-      conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+      conversationRepo.setRunState(conversationId, { status: allFailed ? 'error' : 'done' })
+      markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
+    } catch (e) {
+      markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))
+      throw e
     } finally {
       this.controllers.delete(requestId)
       releaseKeepAwake()
@@ -466,7 +479,8 @@ class ChatService {
         })
       )
 
-      conversationRepo.touch(conversationId, { status: 'streaming' })
+      conversationRepo.setRunState(conversationId, { status: 'streaming' })
+      markRunStarted({ conversationId, requestId, mode: 'chat' })
 
       const results = await Promise.allSettled(
         targets.map((target, index) =>
@@ -483,7 +497,11 @@ class ChatService {
       )
 
       const allFailed = results.every((r) => r.status === 'rejected')
-      conversationRepo.touch(conversationId, { status: allFailed ? 'error' : 'done' })
+      conversationRepo.setRunState(conversationId, { status: allFailed ? 'error' : 'done' })
+      markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
+    } catch (e) {
+      markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))
+      throw e
     } finally {
       this.controllers.delete(requestId)
       releaseKeepAwake()

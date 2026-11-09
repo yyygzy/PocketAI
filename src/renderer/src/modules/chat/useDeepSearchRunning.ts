@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react'
 import type { WebSearchDepthSetting } from '../../../../shared/types'
 import type { LiveStep } from '../../components/agent/agent-shared'
-import { logIpcError } from '../../utils/ipc'
+import { hasIpcFailed, logIpcError } from '../../utils/ipc'
 
 /** 纯判定：单一实现，ChatView 只负责把结果传给 `AgentLiveStepStrip.deepSearchRunning` */
 export function judgeDeepSearchRunning(
@@ -47,6 +47,12 @@ export function useDeepSearchRunning(args: {
     window.pocketai
       .getWebSearchConfig()
       .then((cfg) => {
+        if (hasIpcFailed(cfg)) {
+          // 读不到就按 auto（与 .catch 同一口径）：不阻断运行提示，也不假装拿到了配置
+          logIpcError('chat.deepSearch.websearchConfig', cfg.error)
+          if (alive) setDepth('auto')
+          return
+        }
         if (alive) setDepth(cfg.depth)
       })
       .catch((e) => {

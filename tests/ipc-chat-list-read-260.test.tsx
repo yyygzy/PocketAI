@@ -285,6 +285,76 @@ describe('③ ConversationList：三句各点各的名，空态让位', () => {
     expect(screen.getByText(L('chat.noConversations'))).toBeTruthy()
     expect(alerts()).toEqual([])
   })
+
+  it('loading 且空 ⇒ 渲染骨架行，不显示「暂无对话」（A-1）', async () => {
+    // 骨架延迟 120ms 出现：用假时钟推进，不为这 120ms 往文件里加 waitFor 预算
+    vi.useFakeTimers()
+    try {
+      mount({ listState: 'loading' })
+      await act(async () => { vi.advanceTimersByTime(150) })
+      expect(screen.getByTestId('conversation-skeleton')).toBeTruthy()
+      expect(screen.queryByText(L('chat.noConversations'))).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('idle（首次进入、还没发第一发）也按 pending 处理，不先闪空态', async () => {
+    vi.useFakeTimers()
+    try {
+      mount({ listState: 'idle' })
+      await act(async () => { vi.advanceTimersByTime(150) })
+      expect(screen.getByTestId('conversation-skeleton')).toBeTruthy()
+      expect(screen.queryByText(L('chat.noConversations'))).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ready 且空 ⇒ 骨架消失，恢复空态', async () => {
+    mount({ listState: 'ready' })
+    expect(screen.getByText(L('chat.noConversations'))).toBeTruthy()
+    expect(screen.queryByTestId('conversation-skeleton')).toBeNull()
+  })
+
+  it('loading 但已有数据 ⇒ 保留真实行，不拿骨架盖住', async () => {
+    mount({ conversations: [C1], listState: 'loading' })
+    expect(screen.getByText('会话一')).toBeTruthy()
+    expect(screen.queryByTestId('conversation-skeleton')).toBeNull()
+  })
+})
+
+describe('⑤ listState：idle → loading → ready/error', () => {
+  it('初始 idle；读到后 ready', async () => {
+    const { result } = setup()
+    expect(result.current.listState).toBe('idle')
+    await act(async () => { await result.current.reloadConversations() })
+    expect(result.current.listState).toBe('ready')
+  })
+
+  it('活跃那发读不到 ⇒ error（不影响归档/分组各自成功）', async () => {
+    const { result } = setup({
+      listConversations: (_a: string, _x: boolean, archivedOnly?: boolean) =>
+        archivedOnly ? [ARCH] : { ok: false, error: 'CONV_ACTIVE:会话读不到' }
+    })
+    await act(async () => { await result.current.reloadConversations() })
+    expect(result.current.listState).toBe('error')
+    expect(result.current.archivedConversations).toEqual([ARCH])
+  })
+
+  it('同一助手刷新失败 ⇒ error，但已有列表不清空', async () => {
+    let failing = false
+    const { result } = setup({
+      listConversations: (_a: string, _x: boolean, archivedOnly?: boolean) =>
+        failing ? { ok: false, error: 'CONV_ACTIVE:刷新挂了' } : archivedOnly ? [ARCH] : [C1, C2]
+    })
+    await act(async () => { await result.current.reloadConversations() })
+    expect(result.current.listState).toBe('ready')
+    failing = true
+    await act(async () => { await result.current.reloadConversations() })
+    expect(result.current.listState).toBe('error')
+    expect(result.current.conversations).toEqual([C1, C2])
+  })
 })
 
 describe('④ 接线计数', () => {
@@ -323,7 +393,16 @@ describe('④ 接线计数', () => {
     expect(count(CHAT, /archivedUnread=\{archivedUnread\}/g)).toBe(1)
     expect(count(CHAT, /groupsUnread=\{groupsUnread\}/g)).toBe(1)
     expect(count(LIST, /<LoadFailNotice/g), '三句各一块').toBe(3)
-    expect(count(LIST, /!conversationsUnread && filteredConversations\.length === 0/g)).toBe(1)
-    expect(count(LIST, /!conversationsUnread && topConversations\.length === 0/g)).toBe(1)
+    expect(count(LIST, /!listPending && !conversationsUnread && filteredConversations\.length === 0/g)).toBe(1)
+    expect(count(LIST, /!listPending && !conversationsUnread && topConversations\.length === 0/g)).toBe(1)
+    expect(count(LIST, /<SidebarSkeleton/g), '加载态骨架：普通列表与分组列表各一处').toBe(2)
+  })
+
+  it('ChatModule 只在「归属匹配且已就绪」时把 messages 交给 ChatView（A-1）', () => {
+    expect(count(CHAT, /messagesConvId === currentConvId && messagesState === 'ready'/g)).toBe(1)
+    expect(count(CHAT, /messages=\{visibleMessages\}/g)).toBe(1)
+    expect(count(CHAT, /messagesLoading=\{messagesLoading\}/g)).toBe(1)
+    expect(count(CHAT, /const switched = messagesConvIdRef\.current !== convId/g)).toBe(1)
+    expect(count(CHAT, /setMessages\(\[\]\)/g), '清空只发生在切会话那一支与显式重置处').toBeGreaterThanOrEqual(1)
   })
 })

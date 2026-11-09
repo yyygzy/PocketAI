@@ -1003,6 +1003,36 @@ const MIGRATIONS: Migration[] = [
       WHERE model LIKE 'agent:%'
         AND length(model) > 6;
     `
+  },
+  {
+    // v60：运行态持久化（B-3 / D4 已定）。
+    //
+    // 与 v59 的关系：v59 只改写 `conversations` 的既有列值，v60 **只新建表**、不读不改
+    // `conversations` 任何一列，也不做历史回填（旧 run 只存在于 `agent_traces`，保留现状）。
+    // 因此 v59 → v60 是纯增量，降级回旧版本时这张表会被忽略。
+    //
+    // 幂等：`CREATE TABLE/INDEX IF NOT EXISTS`，测试按惯例删掉 schema_migrations 的 v60 行
+    // 再跑一遍迁移，第二遍是空操作；空库直接跑到 v60 与带数据升级得到同一结构。
+    //
+    // 为什么单独一张表而不是继续用 `conversations.status`：后者只容得下「每会话一个当前态」，
+    // 既回答不了「上一轮怎么结束的」，也会把运行态混进身份表。这里按 requestId 一行一 run，
+    // 终态（done/failed/aborted/interrupted）都可回溯；启动时把残留的 running/pending_approval
+    // 标为 interrupted（见 runtime-registry.reconcileInterruptedRuns）。
+    version: 60,
+    name: 'conversation_runs',
+    up: `
+      CREATE TABLE IF NOT EXISTS conversation_runs (
+        request_id      TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        mode            TEXT NOT NULL CHECK (mode IN ('chat','agent')),
+        status          TEXT NOT NULL CHECK (status IN ('running','pending_approval','done','failed','aborted','interrupted')),
+        started_at      INTEGER NOT NULL,
+        ended_at        INTEGER,
+        error_code      TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv
+        ON conversation_runs(conversation_id, started_at DESC);
+    `
   }
 ]
 

@@ -10,8 +10,8 @@
 | 条目 | 结论 | 与现有设计的冲突 |
 | --- | --- | --- |
 | A. 每类窗口骨架 + 主题/账号快照首绘 | **部分适用**。PocketAI 没有账号体系，「账号快照」不成立；真正的首绘问题是列表/消息没有加载态、ja/ko 首绘语言闪、浅色主题窗口底色写死深色、切换会话会短暂显示上一个会话的消息。骨架只建议做「主窗口 + 独立窗口」两类，解锁窗与浮窗不建议套。 | 无破坏性冲突；主题需要新增一条 renderer→main 的 KV 镜像链路，主进程才能在建窗时选底色 |
-| B. 会话与运行态拆分 | **方向正确，可落地，但不要照搬「删列」**。`conversations.status` 现在只写不读，属于「身份表里塞运行态」的既成事实；但删列会破坏导出/导入与降级兼容，应「停止作为事实来源 + 保留列」。先修 `touch()` 的副作用，再做运行态读模型。 | 「待确认」依赖审批链路补一条 settle 广播；「未读」是全新概念，需要口径拍板 |
-| C. 审批顺序 | **现有实现已覆盖大半**：硬拒绝优先、`auto-safe` 只放过非危险命令、无人值守拒绝、超时拒绝、MCP 默认询问、破坏性注解强制询问。真正的洞只有 3 个：会话级「总是允许」能放过 danger、MCP 危险工具没有风险等级且仍可勾「总是允许」、策略读取失败落到 `deny(BAD_ARGS)` 而不是「继续询问」。 | PocketAI 没有「计费类工具」，不能硬套；需要决定是抽象成「不可逆/高副作用」档还是放弃该档 |
+| B. 会话与运行态拆分 | **方向正确，可落地，但不要照搬「删列」**。`conversations.status` 现在只写不读，属于「身份表里塞运行态」的既成事实；但删列会破坏导出/导入与降级兼容，应「停止作为事实来源 + 保留列」。先修 `touch()` 的副作用，再做运行态读模型。 | 「待确认」依赖审批链路补一条 settle 广播；未读口径已由 D3 拍板 |
+| C. 审批顺序 | **现有实现已覆盖大半**：硬拒绝优先、`auto-safe` 只放过非危险命令、无人值守拒绝、超时拒绝、MCP 默认询问、破坏性注解强制询问。真正的洞只有 3 个：会话级「总是允许」能放过 danger、MCP 危险工具没有风险等级且仍可勾「总是允许」、策略读取失败落到 `deny(BAD_ARGS)` 而不是「继续询问」。 | PocketAI 没有「计费类工具」，不能硬套；D6 已定只保留 `danger`「不可逆/高副作用」档 |
 
 **必须做的前置**（跨条目）：
 
@@ -212,7 +212,7 @@
 - `ConversationList.tsx` 在现有角标位（`997-1012`）增加：进行中（转圈/脉冲点）、待确认（高亮 + 数字）、失败（红色点）。未读留到 B-4。
 - 「失败」清除策略：打开该会话或用户点掉角标后清除；不设自动过期，避免静默丢失。
 
-### B.3（必须，若 D4 选择持久化）可恢复的 run 头
+### B.3（必须，D4 已定持久化）可恢复的 run 头
 
 - 迁移 v60：新增 `conversation_runs`：
 
@@ -252,7 +252,7 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
 
 ### B.6 数据与迁移
 
-- v60（必须，若 D4 选择持久化）：`conversation_runs` + 索引。
+- v60（必须，D4 已定持久化）：`conversation_runs` + 索引。
 - v61（可选）：`conversation_read_state`。
 - 无回填；回退时新表可留在库中，旧版本会忽略（迁移器不校验更高版本）。
 - 必须补 real-db 升级用例：v59 → v60（明文 + 加密变体），参照 `conversation-agent-label-v59-encrypted-upgrade-real-db.test.ts`；索引存在性参照 `agent-traces-indexes-real-db.test.ts`。
@@ -279,7 +279,7 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
 - 风险 1：状态事件丢失导致角标不消失 → 快照 + focus 重拉兜底；终态同时写库，可在下次启动纠正。
 - 风险 2：`touch()` 拆分漏改调用点 → 全仓 grep `touch(` 与 `status:` 复核；补一条「状态写入不影响 updated_at/archived」的单测。
 - 风险 3：迁移失败 → 用 `table_info` 守卫（沿用 v58 的做法），real-db 用例覆盖 v59→v60。
-- 风险 4：行为变化（归档不再自动恢复）可能不符合部分用户预期 → 需 D5 拍板；回退只需恢复 `touch()` 调用。
+- 风险 4：行为变化（归档不再自动恢复）可能不符合部分用户预期 → D5 已定「不再自动取消归档」，按拍板执行；回退只需恢复 `touch()` 调用。
 - 回滚：B-1 可单独回退；B-2 纯内存无数据痕迹；B-3 回退代码后新表残留但被旧版本忽略；B-4 回退后角标消失但已读数据不影响主流程。
 
 ---
@@ -305,11 +305,11 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
 
 ### C.1（必须）新增 `forceConfirm` 档，并放在会话白名单之前
 
-- 扩展 `ToolClassification`：`risk?: 'danger' | 'costly'`（`costly` 仅当 D6 选选项二时启用）、`forceConfirm?: boolean`。
+- 扩展 `ToolClassification`：`risk?: 'danger'`（D6 已定本阶段不引入 `costly`）、`forceConfirm?: boolean`。
 - 置位规则（建议）：
   - shell：`reason` 以 `DANGEROUS_` 开头（`shell-tools.ts:132-173` 的命中项）。
   - MCP：`destructiveHint === true || openWorldHint === true` 或命中危险关键词（`manager.ts:116-130`）。
-  - `fs_write`：保持 `confirm` 基线，暂不升级为 `forceConfirm`（避免过度打扰；是否升级见 D6）。
+  - `fs_write`：保持 `confirm` 基线，不升级为 `forceConfirm`（D6 已定本阶段只保留 `danger`）。
 - 审批有效顺序：**硬拒绝（classification=deny）→ 无人值守拒绝 → 会话白名单 → 询问/放行**；`forceConfirm` 不改变 `decision`（仍是 `confirm`），只做两件事：跳过白名单、禁用「总是允许」。
 - `createApproval`：`forceConfirm` 时跳过白名单查询；`resolveApproval` 收到 `alwaysAllow` 时若 `forceConfirm`，忽略并记录 `ignored_always_allow`（不允许静默扩权）。
 - UI：`forceConfirm` 不渲染「本次会话总是允许」；MCP 危险工具复用现有 danger 样式（`ToolApprovalDialog.tsx:87-120`）。
@@ -325,12 +325,11 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
 - i18n：新增 `agent.approval.reason.POLICY_UNAVAILABLE`，四语言同步（parity 用例会兜底）。
 - 边界：`getFsTools()` 读取工作区目录失败发生在「列工具」阶段，不是工具判定阶段，会直接让本轮失败；这属于失败关闭，不需要改，但要在文档里说明它和 `POLICY_UNAVAILABLE` 不是一类。
 
-### C.3（可延后，待 D6）计费/高成本档
+### C.3（可延后，D6 已定不引入）计费/高成本档
 
 - 现状只有全局用量预算（`app-config.repo.ts:61-64`、`usage` 模块），没有按工具计费。
-- 选项一（推荐）：不造「计费」概念，只保留「不可逆/高副作用」的 `danger` 档；把外部付费调用（若未来引入）映射为 `costly`，同样 forceConfirm。
-- 选项二：现在就给 web_search / 图像生成等打 `costly` 标记，提前建立闸门；代价是误打扰与维护成本。
-- 本方案不替你做选择，默认按选项一排版。
+- D6 已定：不造「计费」概念，只保留「不可逆/高副作用」的 `danger` 档；未来若引入外部付费调用，再映射为 `costly` 并同样 forceConfirm。
+- 因此本批不需要给 web_search / 图像生成打 `costly` 标记，也不新增相关闸门。
 
 ### C.4（可延后）MCP 手工试运行
 
@@ -398,7 +397,7 @@ B-4（未读） ── 依赖 D3 口径；与 B-2/B-3 解耦
 
 - A-4 锁屏/向导快照、A-5 独立窗模块骨架。
 - B-4 未读、B-5 `status` 退役。
-- C-3 计费/高成本档、C-4 MCP 手工试运行审批。
+- C-3 计费/高成本档（D6 已定不引入）、C-4 MCP 手工试运行审批。
 
 ### 5.4 可独立排期性
 
@@ -406,19 +405,21 @@ B-4（未读） ── 依赖 D3 口径；与 B-2/B-3 解耦
 
 ---
 
-## 6. 需要拍板的口径（不替你决定）
+## 6. 已定口径（D1–D9，2026-11-09 拍板）
 
-| 编号 | 问题 | 本方案倾向 | 影响 |
+以下为**已定**结论，实施按此执行，不再作为待定项。
+
+| 编号 | 问题 | 已定结论 | 影响 |
 | --- | --- | --- | --- |
-| D1 | 「账号快照」在 PocketAI 没有账号体系，是否接受映射为「主题/语言 + 锁屏 + 首启向导」 | 接受映射；账号部分不做 | A 的范围 |
-| D2 | 主题镜像是否新增 `ui.theme` KV 与 IPC（不做则主进程无法修正浅色窗口底色） | 做 | A-2 是否成立 |
-| D3 | 未读的定义：只算助手消息？打开即读还是聚焦才读？锁屏是否算读？ | 只算助手消息；打开且窗口可见即读；锁屏不算 | B-4 |
-| D4 | 运行态是否持久化 `conversation_runs`（不持久化则崩溃后「已中断」只能靠 messages 推断） | 持久化 | B-3 与 v60 |
-| D5 | 归档会话收到后台 run 时，是否允许自动取消归档（现状允许） | 不再自动取消归档 | B-1 的行为变化 |
-| D6 | 「计费类工具」PocketAI 不存在：抽象成 `costly` 档，还是只保留 `danger`「不可逆/高副作用」 | 只保留 `danger`，未来有付费工具再加 `costly` | C 的范围 |
-| D7 | `conversations.status` 是否本批停写 | 只停读，暂不停写 | B-5 |
-| D8 | 首屏串行链 `listAssistants → cleanupEmptyConversations → reloadConversations` 是否允许并行/后置清理（会影响空会话的可见时机） | 保持顺序，靠骨架遮住等待；不并行 | A-1 的实现 |
-| D9 | 解锁窗/浮窗是否接受「不做骨架」 | 接受，不做 | A 的范围 |
+| D1 | 「账号快照」在 PocketAI 没有账号体系，是否接受映射为「主题/语言 + 锁屏 + 首启向导」 | **已定：接受映射；账号部分不做** | A 的范围 |
+| D2 | 主题镜像是否新增 `ui.theme` KV 与 IPC | **已定：做** | A-2 成立 |
+| D3 | 未读的定义 | **已定：只算助手消息；打开且窗口聚焦才算读；锁屏不算读** | B-4 |
+| D4 | 运行态是否持久化 `conversation_runs` | **已定：持久化（v60）** | B-3 |
+| D5 | 归档会话收到后台 run 时，是否允许自动取消归档 | **已定：不再自动取消归档** | B-1 的行为变化 |
+| D6 | 「计费类工具」档位 | **已定：不引入 `costly`；本阶段只保留 `danger`（不可逆/高副作用）** | C 的范围 |
+| D7 | `conversations.status` 是否本批停写 | **已定：只停读，继续写** | B-5 |
+| D8 | 首屏串行链是否并行/后置清理 | **已定：保持现有顺序，靠骨架遮住等待** | A-1 的实现 |
+| D9 | 解锁窗/浮窗是否做骨架 | **已定：接受不做骨架** | A 的范围 |
 
 ---
 

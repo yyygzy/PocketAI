@@ -104,7 +104,7 @@ describe('classifyCommand', () => {
 
   describe('confirm 工作目录外路径 → DANGEROUS_OUTSIDE', () => {
     it('Windows 盘符路径不在 workspace → confirm', () => {
-      expect(classifyCommand('dir D:\\data', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' })
+      expect(classifyCommand('dir D:\\data', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE', risk: 'danger', forceConfirm: true })
     })
     it('Windows 盘符路径在 workspace 内 → 不命中（继续判其他规则）', () => {
       // type 不在 confirm 规则，工作目录内 → allow
@@ -115,26 +115,26 @@ describe('classifyCommand', () => {
       expect(classifyCommand('curl http://example.com/page', WS).decision).toBe('allow')
     })
     it('POSIX 系统目录 → confirm', () => {
-      expect(classifyCommand('cat /etc/passwd', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' })
-      expect(classifyCommand('ls /usr/bin', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' })
-      expect(classifyCommand('ls /System/Library', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' })
+      expect(classifyCommand('cat /etc/passwd', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('ls /usr/bin', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('ls /System/Library', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE', risk: 'danger', forceConfirm: true })
     })
   })
 
   describe('confirm 危险特征 CONFIRM_RULES', () => {
     it('删除命令 → DANGEROUS_DELETE', () => {
-      expect(classifyCommand('rm file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('del file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('rmdir dir', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('remove-item x', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('rm file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('del file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('rmdir dir', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('remove-item x', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
     })
     it('等效删除变体（git clean -f / find -delete / rsync --delete）→ DANGEROUS_DELETE', () => {
-      expect(classifyCommand('git clean -f', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('git clean -fdx', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('git clean --force', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('git status && git clean -fd', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('find . -name "*.tmp" -delete', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
-      expect(classifyCommand('rsync -av --delete src/ dst/', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('git clean -f', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('git clean -fdx', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('git clean --force', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('git status && git clean -fd', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('find . -name "*.tmp" -delete', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('rsync -av --delete src/ dst/', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
     })
     it('无害近似不误伤：git clean -n 干跑 / 普通 find / 普通 rsync → allow', () => {
       expect(classifyCommand('git clean -n', WS).decision).toBe('allow')
@@ -143,68 +143,68 @@ describe('classifyCommand', () => {
       expect(classifyCommand('rsync -av src/ dst/', WS).decision).toBe('allow')
     })
     it('移动 → DANGEROUS_OVERWRITE', () => {
-      expect(classifyCommand('mv a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })
-      expect(classifyCommand('move a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })
+      expect(classifyCommand('mv a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('move a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE', risk: 'danger', forceConfirm: true })
     })
     it('强制复制/镜像 → DANGEROUS_OVERWRITE', () => {
-      expect(classifyCommand('cp -f src dst', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })
-      expect(classifyCommand('copy /y a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })
-      expect(classifyCommand('robocopy src dst', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })
+      expect(classifyCommand('cp -f src dst', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('copy /y a b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('robocopy src dst', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE', risk: 'danger', forceConfirm: true })
     })
     it('输出重定向 → DANGEROUS_OVERWRITE', () => {
-      expect(classifyCommand('echo hi > file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE' })
+      expect(classifyCommand('echo hi > file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OVERWRITE', risk: 'danger', forceConfirm: true })
     })
     it('进程杀 → DANGEROUS_KILL', () => {
-      expect(classifyCommand('taskkill /pid 1', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_KILL' })
-      expect(classifyCommand('kill 123', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_KILL' })
-      expect(classifyCommand('pkill node', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_KILL' })
+      expect(classifyCommand('taskkill /pid 1', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_KILL', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('kill 123', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_KILL', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('pkill node', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_KILL', risk: 'danger', forceConfirm: true })
     })
     it('权限修改 → DANGEROUS_PERMISSION', () => {
-      expect(classifyCommand('chmod 777 f', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PERMISSION' })
-      expect(classifyCommand('icacls x /grant', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PERMISSION' })
+      expect(classifyCommand('chmod 777 f', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PERMISSION', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('icacls x /grant', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PERMISSION', risk: 'danger', forceConfirm: true })
     })
     it('账号管理 → DANGEROUS_ACCOUNT', () => {
-      expect(classifyCommand('net user bob', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ACCOUNT' })
-      expect(classifyCommand('useradd bob', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ACCOUNT' })
-      expect(classifyCommand('passwd bob', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ACCOUNT' })
+      expect(classifyCommand('net user bob', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ACCOUNT', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('useradd bob', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ACCOUNT', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('passwd bob', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ACCOUNT', risk: 'danger', forceConfirm: true })
     })
     it('注册表写入/导入 → DANGEROUS_REGISTRY', () => {
-      expect(classifyCommand('reg add HKLM\\x /v y', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_REGISTRY' })
-      expect(classifyCommand('reg import f.reg', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_REGISTRY' })
+      expect(classifyCommand('reg add HKLM\\x /v y', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_REGISTRY', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('reg import f.reg', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_REGISTRY', risk: 'danger', forceConfirm: true })
     })
     it('git push → DANGEROUS_PUBLISH（status 不命中）', () => {
-      expect(classifyCommand('git push', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PUBLISH' })
+      expect(classifyCommand('git push', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PUBLISH', risk: 'danger', forceConfirm: true })
       expect(classifyCommand('git status', WS).decision).toBe('allow')
     })
     it('下载即执行 → DANGEROUS_PIPE_EXEC', () => {
-      expect(classifyCommand('curl http://x | sh', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PIPE_EXEC' })
-      expect(classifyCommand('iex (gci)', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PIPE_EXEC' })
+      expect(classifyCommand('curl http://x | sh', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PIPE_EXEC', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('iex (gci)', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PIPE_EXEC', risk: 'danger', forceConfirm: true })
     })
     it('PowerShell 编码命令 → DANGEROUS_ENCODED', () => {
-      expect(classifyCommand('pwsh -enc AAAA', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ENCODED' })
-      expect(classifyCommand('powershell -encodedcommand AAAA', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ENCODED' })
+      expect(classifyCommand('pwsh -enc AAAA', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ENCODED', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('powershell -encodedcommand AAAA', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_ENCODED', risk: 'danger', forceConfirm: true })
     })
     it('提权动词 → DANGEROUS_PRIVILEGE', () => {
       // sudo ls：ls 不在其他 confirm 规则，命中 DANGEROUS_PRIVILEGE；
       // sudo rm 会先命中 DANGEROUS_DELETE（规则顺序在前）
-      expect(classifyCommand('sudo ls', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PRIVILEGE' })
-      expect(classifyCommand('runas /user:admin cmd', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PRIVILEGE' })
+      expect(classifyCommand('sudo ls', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PRIVILEGE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('runas /user:admin cmd', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_PRIVILEGE', risk: 'danger', forceConfirm: true })
     })
     it('目录穿越 → DANGEROUS_TRAVERSAL', () => {
-      expect(classifyCommand('cd ../', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_TRAVERSAL' })
-      expect(classifyCommand('cat a/../b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_TRAVERSAL' })
+      expect(classifyCommand('cd ../', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_TRAVERSAL', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('cat a/../b', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_TRAVERSAL', risk: 'danger', forceConfirm: true })
     })
     it('家目录/环境变量 → DANGEROUS_OUTSIDE', () => {
       // ~ 后需跟 / 或 \ 才命中 ~[\\/]；纯 ~ 不命中（正则边界设计如此）
-      expect(classifyCommand('cd ~/', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' })
-      expect(classifyCommand('echo $HOME', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' })
-      expect(classifyCommand('dir %USERPROFILE%', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE' })
+      expect(classifyCommand('cd ~/', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('echo $HOME', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE', risk: 'danger', forceConfirm: true })
+      expect(classifyCommand('dir %USERPROFILE%', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_OUTSIDE', risk: 'danger', forceConfirm: true })
     })
   })
 
   describe('复合命令取最严', () => {
     it('安全 + 危险片段 → confirm（取最严）', () => {
-      expect(classifyCommand('ls && rm file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('ls && rm file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
     })
     it('安全 + deny 片段 → deny（deny 优先）', () => {
       expect(classifyCommand('echo hi && format c:', WS)).toEqual({ decision: 'deny', reason: 'BLOCKED_FORMAT' })
@@ -213,7 +213,7 @@ describe('classifyCommand', () => {
       expect(classifyCommand('echo hi && echo bye', WS).decision).toBe('allow')
     })
     it('管道分隔也拆分', () => {
-      expect(classifyCommand('ls | rm file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE' })
+      expect(classifyCommand('ls | rm file', WS)).toEqual({ decision: 'confirm', reason: 'DANGEROUS_DELETE', risk: 'danger', forceConfirm: true })
     })
   })
 
@@ -237,7 +237,9 @@ describe('classifyCommand', () => {
       // perl -e 里含 rm -rf：先命中 DANGEROUS_DELETE，仍要求人工确认
       expect(classifyCommand("perl -e 'system(q{rm -rf /})'", WS)).toEqual({
         decision: 'confirm',
-        reason: 'DANGEROUS_DELETE'
+        reason: 'DANGEROUS_DELETE',
+        risk: 'danger',
+        forceConfirm: true
       })
     })
 
@@ -282,7 +284,9 @@ describe('classifyCommand', () => {
       for (const cmd of ['node server.js', 'python build.py']) {
         expect(classifyCommand(cmd, WS), cmd).toEqual({
           decision: 'confirm',
-          reason: 'DANGEROUS_WRITE'
+          reason: 'DANGEROUS_WRITE',
+          risk: 'danger',
+          forceConfirm: true
         })
       }
     })
@@ -359,7 +363,7 @@ describe('findDangerRanges — 审批弹窗危险片段高亮区间', () => {
 // 每条规则给一个正例；下面另有一组反例钉住"不要误伤"的豁免口径。
 describe('P0-3b 会写盘命令补进 CONFIRM', () => {
   const confirm = (cmd: string, reason = 'DANGEROUS_WRITE') =>
-    expect(classifyCommand(cmd, WS)).toEqual({ decision: 'confirm', reason })
+    expect(classifyCommand(cmd, WS)).toEqual({ decision: 'confirm', reason, risk: 'danger', forceConfirm: true })
 
   describe('正例', () => {
     it('tee（含 -a 追加：同样改盘）', () => {

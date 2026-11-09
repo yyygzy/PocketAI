@@ -28,6 +28,10 @@ export interface ToolClassification {
   decision: ToolDecision
   /** 稳定 reason code（如 DANGEROUS_DELETE / SHELL_DISABLED），供渲染端 i18n */
   reason?: string
+  /** confirm 时的风险档；danger 会禁用「本次会话总是允许」 */
+  risk?: 'danger'
+  /** 强制逐次确认：跳过会话白名单，且弹窗不提供「总是允许」 */
+  forceConfirm?: boolean
 }
 
 export interface BuiltinTool {

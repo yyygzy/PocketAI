@@ -55,7 +55,9 @@ describe('auto-safe 档：新规则仍为 confirm（没有被降级成自动执�
     ]) {
       expect(classifyShell(command), command).toEqual({
         decision: 'confirm',
-        reason: 'DANGEROUS_WRITE'
+        reason: 'DANGEROUS_WRITE',
+        risk: 'danger',
+        forceConfirm: true
       })
     }
   })
@@ -63,11 +65,15 @@ describe('auto-safe 档：新规则仍为 confirm（没有被降级成自动执�
   it('git 覆盖工作区：confirm；只动索引的 restore 仍是 allow', () => {
     expect(classifyShell('git restore .')).toEqual({
       decision: 'confirm',
-      reason: 'DANGEROUS_WRITE'
+      reason: 'DANGEROUS_WRITE',
+      risk: 'danger',
+      forceConfirm: true
     })
     expect(classifyShell('git checkout -- .')).toEqual({
       decision: 'confirm',
-      reason: 'DANGEROUS_WRITE'
+      reason: 'DANGEROUS_WRITE',
+      risk: 'danger',
+      forceConfirm: true
     })
     expect(classifyShell('git restore --staged .')).toEqual({ decision: 'allow' })
   })

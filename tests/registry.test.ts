@@ -64,6 +64,27 @@ describe('stricterDecision — 取更严判定（deny > confirm > allow）', () 
     const b: ToolClassification = { decision: 'deny', reason: 'SHELL_DISABLED' }
     expect(stricterDecision(a, b).reason).toBe('SHELL_DISABLED')
   })
+
+  it('confirm 任一侧要求强制确认 → 结果保留 danger/forceConfirm', () => {
+    const plain: ToolClassification = { decision: 'confirm', reason: 'REQUIRES_CONFIRM' }
+    const forced: ToolClassification = { decision: 'confirm', risk: 'danger', forceConfirm: true }
+    for (const [a, b] of [
+      [plain, forced],
+      [forced, plain]
+    ] as const) {
+      expect(stricterDecision(a, b)).toMatchObject({
+        decision: 'confirm',
+        risk: 'danger',
+        forceConfirm: true
+      })
+    }
+  })
+
+  it('deny 压过 confirm：强制确认也不能把拒绝降级', () => {
+    const forced: ToolClassification = { decision: 'confirm', risk: 'danger', forceConfirm: true }
+    const denied: ToolClassification = { decision: 'deny', reason: 'DANGEROUS' }
+    expect(stricterDecision(forced, denied)).toEqual(denied)
+  })
 })
 
 describe('mcpResultIsError — 从 unknown 安全提取 isError', () => {

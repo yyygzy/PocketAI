@@ -11,6 +11,7 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { IPC } from '../../shared/types'
 import type { ApprovalAuditContext, ToolApprovalRequestEvent } from '../../shared/types'
+import { markApprovalPending, markApprovalSettled } from '../chat/runtime-registry'
 
 type EmitFn = (channel: string, data: unknown) => void
 type SettleReason = 'user' | 'timeout' | 'abort'
@@ -21,6 +22,8 @@ interface PendingApproval {
   conversationId?: string
   /** 白名单键：toolName + 参数指纹（见 toolAllowKey） */
   allowKey?: string
+  /** 强制逐次确认：不查也不写会话白名单，忽略 alwaysAllow */
+  forceConfirm?: boolean
 }
 
 /** 审批等待上限：超时无操作按拒绝收敛。四语那句提示里写的分钟数由用例与此常量对账（不许两边各写一遍） */
@@ -125,9 +128,12 @@ export function createApproval(
     })
   }
 
+  // 危险档（risk='danger'）与显式 forceConfirm 一律逐次询问：会话白名单既不查也不写
+  const forceConfirm = req.forceConfirm === true || req.risk === 'danger'
+
   // 会话级「总是允许」：同一会话内同工具同参数不再弹窗（审计记 auto_allow + session）
   const allowKey = toolAllowKey(req.toolName, argsJson)
-  if (isSessionAllowed(req.conversationId, allowKey)) {
+  if (!forceConfirm && isSessionAllowed(req.conversationId, allowKey)) {
     if (audit) writeAudit('auto_allow', 'SESSION_ALLOW', 'session')
     return Promise.resolve(true)
   }
@@ -143,6 +149,8 @@ export function createApproval(
     const settle = (approved: boolean, reason: SettleReason, alwaysAllow = false) => {
       if (!pending.has(approvalId)) return // 已超时/已应答：幂等忽略
       cleanup()
+      // B-2：待确认计数跟着这次裁决走（允许/拒绝/超时/中止都算结束）
+      markApprovalSettled(req.conversationId, req.requestId)
       if (audit) {
         if (approved) {
           writeAudit('user_approve', 'USER_APPROVE', alwaysAllow ? 'session' : 'once')
@@ -170,10 +178,13 @@ export function createApproval(
       settle,
       timer: setTimeout(() => settle(false, 'timeout'), APPROVAL_TIMEOUT_MS),
       conversationId: req.conversationId,
-      allowKey
+      allowKey,
+      forceConfirm
     }
     signal?.addEventListener('abort', onAbort, { once: true })
     pending.set(approvalId, entry)
+    // B-2：「待确认」是活态——登记在弹窗真正广播之前，侧栏与对话页立刻可见
+    markApprovalPending(req.conversationId, req.requestId)
 
     const event: ToolApprovalRequestEvent = { ...req, approvalId }
     emit(IPC.AGENT_TOOL_APPROVAL_EVENT, event)
@@ -191,6 +202,11 @@ export function resolveApproval(
 ): boolean {
   const entry = pending.get(approvalId)
   if (!entry) return false
+  // 强制逐次确认：即便渲染端误传 alwaysAllow，也不落白名单、审计仍记 once
+  if (entry.forceConfirm) {
+    entry.settle(approved, 'user', false)
+    return true
+  }
   if (approved && alwaysAllow) markSessionAllow(entry.conversationId, entry.allowKey)
   entry.settle(approved, 'user', alwaysAllow)
   return true

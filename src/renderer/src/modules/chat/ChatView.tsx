@@ -14,6 +14,7 @@ import { ZeroToolCallNotice } from '../../components/agent/ZeroToolCallNotice'
 import type { AgentQueueItem } from './queue-settlement'
 import { ChatConfigBar } from './ChatConfigBar'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { MessagesSkeleton } from '../../components/Skeleton'
 import { useToast } from '../../components/ToastProvider'
 import { writeClipboard } from '../../utils/clipboard'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -156,6 +157,8 @@ interface Props {
   targets: ChatTarget[]
   onTargetsChange: (t: ChatTarget[]) => void
   messages: MessageRecord[]
+  /** A-1：消息区正在加载（切会话后、数据到达前），用骨架替代空态/欢迎语 */
+  messagesLoading?: boolean
   liveColumns: CompareColumn[] | null
   /** 忙碌态（普通流式由 liveColumns 推出；Agent 模式没有虚拟列，由父级显式传入） */
   streaming?: boolean
@@ -275,6 +278,7 @@ export const ChatView: React.FC<Props> = ({
   targets,
   onTargetsChange,
   messages,
+  messagesLoading = false,
   liveColumns,
   streaming: streamingProp,
   agentMode = false,
@@ -1162,7 +1166,9 @@ export const ChatView: React.FC<Props> = ({
               {t('agent.runSummaryUnread', { reason: runsUnread })}
             </div>
           )}
-          {listCount === 0 ? (
+          {messagesLoading ? (
+            <MessagesSkeleton />
+          ) : listCount === 0 ? (
             <div className="flex flex-col items-center justify-center h-72 text-center px-6">
               <div className="text-4xl mb-3">🎒</div>
               {assistantName && <p className="text-[var(--color-text)] font-semibold">{assistantName}</p>}

@@ -29,6 +29,8 @@ import { IS_DEV_MODE, appIconPath, installLoadRetry, installShowFallback } from 
 import { closeUnlockWindow, showUnlockWindow } from './windows/unlock-window'
 import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR, LOGS_DIR } from './portable'
 import { dbService } from './db/database'
+import { conversationRunRepo } from './db/repositories/conversation-run.repo'
+import { reconcileInterruptedRuns, setRuntimePersistence } from './chat/runtime-registry'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { masterKeyManager } from './crypto/master-key'
@@ -84,6 +86,9 @@ const skillsLog = createLogger('skills')
 
 let mainWindow: BrowserWindow | null = null
 
+// B-3：运行态注册表的落地面（模块级接线；repo 内部会自己判 dbService 是否已 open）
+setRuntimePersistence(conversationRunRepo)
+
 // ─── DB 打开（先尝试无密码，失败 = 已加密） ────────────────────────
 
 function tryOpenDbNoPassword(): boolean {
@@ -92,6 +97,8 @@ function tryOpenDbNoPassword(): boolean {
     dbService.runMigrations()
     dbService.sweepStaleStreamingMessages()
     dbService.repairLegacyAgentLabels()
+    // v60/B-3：上一进程残留的运行态标 interrupted（只在这里做——此刻本进程还没起任何 run）
+    reconcileInterruptedRuns()
     return true
   } catch (e) {
     // SQLITE_NOTADB = 文件是加密的，必须用密码打开
@@ -271,6 +278,7 @@ async function boot(): Promise<void> {
       if (!openedPlaintext) dbService.runMigrations()
       dbService.sweepStaleStreamingMessages()
       dbService.repairLegacyAgentLabels()
+      reconcileInterruptedRuns()
       log.info('DB 解锁成功')
     } else if ('setPassword' in result) {
       // 设置新密码（明文 DB 首次加密）

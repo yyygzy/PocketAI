@@ -288,7 +288,7 @@ describe('v59 加密库升级（前缀回填 + 能力位置位）', () => {
     expect(selectUntouched()).toEqual(beforeUntouched)
     expect(integrity()).toEqual(['ok'])
     expect(versionName(59)).toBe('strip_agent_model_label')
-    expect(LATEST_SCHEMA_VERSION).toBe(59)
+    expect(LATEST_SCHEMA_VERSION).toBe(60)
   })
 
   it('加密库上重复跑迁移不抛且空操作', () => {

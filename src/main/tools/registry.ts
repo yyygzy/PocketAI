@@ -313,7 +313,12 @@ class ToolRegistry {
       schema.permission === 'deny'
         ? { decision: 'deny', reason: 'TOOL_DENIED' }
         : schema.permission === 'confirm'
-          ? { decision: 'confirm', reason: 'REQUIRES_CONFIRM' }
+          ? {
+              decision: 'confirm',
+              reason: 'REQUIRES_CONFIRM',
+              // MCP 破坏性/开放世界工具：即使被勾过「总是允许」也必须逐次询问
+              ...(schema.forceConfirm ? { risk: 'danger' as const, forceConfirm: true } : {})
+            }
           : { decision: 'allow' }
 
     if (schema.source === 'builtin') {
@@ -412,7 +417,12 @@ export function badArgsError(argsJson: string, detail: string): string {
 /** 取两个判定中更严格者（deny > confirm > allow），reason 随更严结果 */
 export function stricterDecision(a: ToolClassification, b: ToolClassification): ToolClassification {
   const rank: Record<ToolClassification['decision'], number> = { allow: 0, confirm: 1, deny: 2 }
-  return rank[b.decision] > rank[a.decision] ? b : a
+  const winner = rank[b.decision] > rank[a.decision] ? b : a
+  // 两边都是 confirm 时，任一侧要求强制确认都要保留，否则基线/动态判定会互相抹掉风险档
+  if (winner.decision === 'confirm' && (a.forceConfirm || b.forceConfirm)) {
+    return { ...winner, risk: 'danger', forceConfirm: true }
+  }
+  return winner
 }
 
 /** 从 MCP tools/call 返回中提取 isError 标志（形状不保证，unknown 安全收窄） */

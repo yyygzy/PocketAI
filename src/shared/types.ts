@@ -155,6 +155,10 @@ export interface ConversationRecord {
   assistantId: string | null
   title: string
   modelLabel: string | null // 形如 "providerId:model"
+  /**
+   * D7：`conversations.status` 只写不读——主进程运行开始/结束仍写这一列（导出/降级兼容），
+   * 界面不得拿它当运行态事实来源；侧栏与对话页一律读 `ChatRuntimeStateEvent`（B-2）。
+   */
   status: string
   createdAt: number
   updatedAt: number
@@ -866,6 +870,11 @@ export interface ToolSchema {
    * 「这个 server 说了什么」。规范写明注解不可作为安全依据，所以它**永远不会**单独将工具升到 auto。
    */
   mcpAnnotations?: McpToolAnnotations
+  /**
+   * 强制逐次确认：命中的工具即使被用户勾过「本次会话总是允许」也必须重新询问，
+   * 且审批弹窗不提供「总是允许」。当前只由 MCP 破坏性/开放世界注解或危险关键词置位。
+   */
+  forceConfirm?: boolean
   timeoutMs?: number // 单工具执行超时（毫秒），未配置时使用默认 30s
 }
 
@@ -1429,6 +1438,8 @@ export interface ToolApprovalRequestEvent {
   reason: string
   /** confirm=需用户确认；deny 不走弹窗（保留字段以备扩展） */
   risk?: 'danger' | 'custom'
+  /** 强制逐次确认：会话白名单不生效，弹窗不提供「总是允许」 */
+  forceConfirm?: boolean
   /** 语义化预览字段（MCP 等非 shell 工具）；存在时渲染端替代 command 块展示 */
   fields?: ApprovalPreviewField[]
   /** shell 命令危险片段字符区间（对 command 下标），渲染端标红 */
@@ -1655,6 +1666,33 @@ export interface ChatErrorEvent {
   targetIndex: number
   messageId: string
   error: string
+}
+
+/**
+ * 会话运行态（B-2/D4）：主进程注册表的快照与增量事件共用这一形状。
+ * `state='idle'` 是**移除**信号（运行结束/失败角标被清除），不是一种可见状态。
+ * 只带身份与状态，不带任何消息内容（事件会广播到所有渲染窗口）。
+ */
+export type ChatRuntimeState =
+  | 'running'
+  | 'pending_approval'
+  | 'failed'
+  | 'interrupted'
+  | 'idle'
+
+export interface ChatRuntimeStateEvent {
+  conversationId: string
+  /** 已清除/无归属时可为 null（当前实现总带 requestId） */
+  requestId: string | null
+  /** 只在新建运行时必填；后续状态迁移沿用首次登记的值 */
+  mode?: 'chat' | 'agent'
+  state: ChatRuntimeState
+  startedAt?: number
+  /** 这次状态变更的时间戳（界面不需要排序，只用于诊断） */
+  at: number
+  /** 待确认的审批数（state='pending_approval' 时 >0） */
+  pendingApprovals?: number
+  errorCode?: string
 }
 
 // ---------- 快捷浮窗 ----------
@@ -2613,6 +2651,9 @@ export const IPC = {
   CHAT_CHUNK_EVENT: 'chat:chunk-event',
   CHAT_DONE_EVENT: 'chat:done-event',
   CHAT_ERROR_EVENT: 'chat:error-event',
+  CHAT_GET_RUNTIME_STATES: 'chat:get-runtime-states', // B-2：运行态快照（窗口挂载/聚焦时取）
+  CHAT_CLEAR_RUNTIME_FAILURE: 'chat:clear-runtime-failure', // B-2：清除「失败/已中断」角标（用户打开会话时）
+  CHAT_RUNTIME_STATE_EVENT: 'chat:runtime-state-event', // 主进程→渲染端：运行态增量（只带身份与状态）
   CONVERSATION_TITLE_EVENT: 'conversation:title-event',
 
   KB_LIST: 'kb:list',

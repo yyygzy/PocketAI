@@ -292,8 +292,40 @@ export const conversationRepo = {
       .run(archived ? 1 : 0, archived ? Date.now() : null, id)
   },
 
+  /**
+   * 运行态写入：只更新 status / model / agent_mode，**不碰 updated_at、不取消归档**。
+   *
+   * 与 `touch()` 的分工：`touch()` 代表「用户可见消息活动」，会置顶并让归档会话回到列表；
+   * 运行开始/结束属于运行态变化，不应改变侧栏排序，也不应把后台 run 的归档会话顶回来（D5）。
+   */
+  setRunState(
+    id: string,
+    patch: { modelLabel?: string; status?: string; agentMode?: boolean } = {}
+  ): void {
+    const sets: string[] = []
+    const vals: unknown[] = []
+    if (patch.modelLabel !== undefined) {
+      sets.push('model=?')
+      vals.push(patch.modelLabel)
+    }
+    if (patch.agentMode !== undefined) {
+      sets.push('agent_mode=?')
+      vals.push(patch.agentMode ? 1 : 0)
+    }
+    if (patch.status !== undefined) {
+      sets.push('status=?')
+      vals.push(patch.status)
+    }
+    if (sets.length === 0) return
+    vals.push(id)
+    dbService
+      .getHandle()
+      .prepare(`UPDATE conversations SET ${sets.join(', ')} WHERE id=?`)
+      .run(...vals)
+  },
+
   touch(id: string, patch: { modelLabel?: string; status?: string; agentMode?: boolean } = {}): void {
-    // 归档会话重新活跃（收到消息/状态变化）自动回到主列表
+    // 用户可见消息活动：置顶并让归档会话回到主列表；运行态变化请用 setRunState
     const sets = ['updated_at=?', 'archived=0', 'archived_at=NULL']
     const vals: unknown[] = [Date.now()]
     if (patch.modelLabel !== undefined) {
@@ -341,6 +373,8 @@ export const conversationRepo = {
         // 审批审计账本（P0-2c-1）：隐私优先，会话删除时级联删除；
         // 产品口径是「会话存在期间可回溯」，不做跨会话永久留存。
         db.prepare('DELETE FROM approval_events WHERE conversation_id=?').run(cid)
+        // v60：运行态行跟着会话走，否则删完会话还留着「看不见却在跑」的 run 记录
+        db.prepare('DELETE FROM conversation_runs WHERE conversation_id=?').run(cid)
         db.prepare('DELETE FROM conversations WHERE id=?').run(cid)
       }
     })

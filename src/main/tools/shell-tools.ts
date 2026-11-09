@@ -20,6 +20,10 @@ export interface CommandClassification {
   decision: CommandDecision
   /** 稳定 reason code，渲染端映射 i18n */
   reason?: string
+  /** confirm 时的风险档；danger 会禁用「本次会话总是允许」 */
+  risk?: 'danger'
+  /** 强制逐次确认：跳过会话白名单，且弹窗不提供「总是允许」 */
+  forceConfirm?: boolean
 }
 
 /**
@@ -271,20 +275,20 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
     const p = m[1]!
     const normWin = p.replace(/[\\/]+$/, '').toLowerCase().replace(/\//g, '\\')
     if (normWin !== wsWin && !normWin.startsWith(wsWin + '\\')) {
-      return { decision: 'confirm', reason: REASON_OUTSIDE }
+      return { decision: 'confirm', reason: REASON_OUTSIDE, risk: 'danger', forceConfirm: true }
     }
   }
   // POSIX 风格 /etc、/usr、/bin、/sbin、/System、私有目录等
   if (/(^|[\s="'`(])\/(?:etc|usr|bin|sbin|System|private|var\/root|var\/tmp|tmp)(?:[\\/]|\b)/.test(cmd)) {
-    return { decision: 'confirm', reason: REASON_OUTSIDE }
+    return { decision: 'confirm', reason: REASON_OUTSIDE, risk: 'danger', forceConfirm: true }
   }
 
   // 3) 危险特征：整条命令（覆盖管道跨段模式，如 curl|sh）+ 每个片段各判一遍
   const segments = cmd.split(SEGMENT_SPLIT_RE)
   for (const [re, reason] of CONFIRM_RULES) {
-    if (re.test(cmd)) return { decision: 'confirm', reason }
+    if (re.test(cmd)) return { decision: 'confirm', reason, risk: 'danger', forceConfirm: true }
     for (const seg of segments) {
-      if (re.test(seg)) return { decision: 'confirm', reason }
+      if (re.test(seg)) return { decision: 'confirm', reason, risk: 'danger', forceConfirm: true }
     }
   }
 
@@ -491,6 +495,8 @@ function classifyShellArgs(args: Record<string, unknown>): CommandClassification
   // 逐条确认：非黑名单命令也一律弹窗，但保留 classifyCommand 的具体危险原因，
   // 避免审批展示层再次调用 classifyCommand 造成重复分类。
   if (config.policy === 'confirm') {
+    // 危险命令保留 forceConfirm/risk；普通命令只是「逐条确认」，仍允许会话级总是允许
+    if (verdict.decision === 'confirm' && verdict.forceConfirm) return verdict
     return { decision: 'confirm', reason: verdict.reason ?? REASON_REQUIRES_CONFIRM }
   }
   // 仅危险确认：沿用分类器结果（confirm/allow）

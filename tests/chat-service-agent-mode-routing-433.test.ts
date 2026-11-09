@@ -33,7 +33,8 @@ vi.mock('../src/main/db/repositories/message.repo', () => ({
 vi.mock('../src/main/db/repositories/conversation.repo', () => ({
   conversationRepo: {
     get: () => ({ id: 'c1', systemPromptOverride: null }),
-    touch: () => {}
+    touch: () => {},
+    setRunState: () => {}
   }
 }))
 vi.mock('../src/main/db/repositories/assistant.repo', () => ({

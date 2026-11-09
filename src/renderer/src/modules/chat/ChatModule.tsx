@@ -21,6 +21,7 @@ import { useAgentModelExtras } from './useAgentModelExtras'
 import { useAgentRunInsights } from './useAgentRunInsights'
 import { isReadonlyConversation } from './sub-session'
 import { useConversationLists } from './useConversationLists'
+import { useConversationRuntimeStore, useConversationRuntimeSync } from '../../store/conversation-runtime-store'
 import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
@@ -89,6 +90,10 @@ export const ChatModule: React.FC = () => {
     parentConversationId?: string | null
   } | null>(null)
   const [messages, setMessages] = useState<MessageRecord[]>([])
+  /** 当前 `messages` 属于哪个会话；与 currentConvId 不一致时一律不渲染（A-1） */
+  const [messagesConvId, setMessagesConvId] = useState<string | null>(null)
+  const messagesConvIdRef = useRef<string | null>(null)
+  const [messagesState, setMessagesState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   /** P2：run 索引刷新令牌——`onStreamsSettled` 主动 +1，跑完一轮数字才不会停在上一轮 */
   const [runsRefresh, setRunsRefresh] = useState(0)
   /** P2：刚跑完的那一轮 requestId（done 时下传 ChatView，聚焦该轮摘要） */
@@ -143,8 +148,27 @@ export const ChatModule: React.FC = () => {
     conversationsUnread,
     archivedUnread,
     groupsUnread,
+    listState,
     reloadConversations
   } = useConversationLists({ assistantIdRef, currentConvRef, onAutoSelect: setCurrentConvId })
+  // B-2：运行态镜像（快照 + 增量），侧栏与对话页都从这里读；不再看 conversations.status（D7）
+  useConversationRuntimeSync()
+  // 用户打开会话即视为「看到过这次失败/中断」：主进程清角标成功后同步移除本地镜像
+  useEffect(() => {
+    if (!currentConvId) return
+    const rt = useConversationRuntimeStore.getState().byConversation[currentConvId]
+    if (!rt || (rt.state !== 'failed' && rt.state !== 'interrupted')) return
+    window.pocketai
+      .clearChatRuntimeFailure(currentConvId)
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          logIpcError('chat.clearRuntimeFailure', r.error)
+          return
+        }
+        useConversationRuntimeStore.getState().apply({ ...rt, state: 'idle', at: Date.now() })
+      })
+      .catch(reportIpcError('chat.clearRuntimeFailure'))
+  }, [currentConvId])
   /** Agent 模式取值：记录优先，`agentModeByConv` 只做空串键与乐观覆盖（见上方说明） */
   const agentMode = resolveAgentMode(
     currentConvId,
@@ -178,6 +202,11 @@ export const ChatModule: React.FC = () => {
       (agentModeRecord?.id === currentConvId ? agentModeRecord : null)
     : null
   const subSessionReadonly = isReadonlyConversation(currentConvRecord)
+  // A-1：消息只有「属于当前会话且已就绪」才交给 ChatView；加载中交给骨架，避免旧会话消息闪一下
+  const visibleMessages =
+    messagesConvId === currentConvId && messagesState === 'ready' ? messages : []
+  const messagesLoading =
+    currentConvId !== null && messagesConvId === currentConvId && messagesState === 'loading'
   // 标记用户是否在切换会话后手动改了模型；若改过则回填不再覆盖
   const userEditedTargetsRef = useRef(false)
   // 草稿防抖句柄 + 最新文本镜像（卸载/关闭时尽力落库）
@@ -242,8 +271,17 @@ export const ChatModule: React.FC = () => {
   }, [currentConvId])
 
   const loadMessages = useCallback(
-    (convId: string) =>
-      window.pocketai
+    (convId: string) => {
+      // 切到另一个会话：先清空可见消息并进入 loading，避免新响应到达前把旧会话消息画在新会话上
+      const switched = messagesConvIdRef.current !== convId
+      if (switched) {
+        messagesConvIdRef.current = convId
+        setMessagesConvId(convId)
+        setMessages([])
+        setMsgsReadErr(null)
+        setMessagesState('loading')
+      }
+      return window.pocketai
         .listMessages(convId)
         .then((v) => {
           // §309：判据抄本文件 loadDraft（:378 成功支／:383 失败支）与 §264 注释（:398）——
@@ -252,12 +290,20 @@ export const ChatModule: React.FC = () => {
           if (currentConvRef.current !== convId) return
           if (hasIpcFailed(v)) {
             setMsgsReadErr(ipcFailText(v, t('common.unknownError')))
+            if (switched) setMessagesState('error')
             return
           }
           setMsgsReadErr(null)
           setMessages(v)
+          setMessagesState('ready')
         })
-        .catch(reportIpcError('chat.listMessages')),
+        .catch((e) => {
+          if (switched && currentConvRef.current === convId && messagesConvIdRef.current === convId) {
+            setMessagesState('error')
+          }
+          reportIpcError('chat.listMessages')(e)
+        })
+    },
     [t, currentConvRef]
   )
 
@@ -504,6 +550,13 @@ export const ChatModule: React.FC = () => {
     // 同步镜像：市场「使用」会在本次渲染内紧接着调 handleNewConv，只改 state 会让它读到旧助手/旧会话
     currentConvRef.current = null
     messagesRef.current = []
+    messagesConvIdRef.current = null
+    setMessagesConvId(null)
+    setMessagesState('idle')
+    // A-1：切助手后旧助手的三份列表都不属于新视图，先清掉，由 loading 骨架接住
+    setConversations(() => [])
+    setArchivedConversations(() => [])
+    setGroups(() => [])
     setCurrentAssistantId(id)
     setCurrentConvId(null)
     setMessages([])
@@ -905,6 +958,9 @@ export const ChatModule: React.FC = () => {
       draftTextRef.current = ''
       setCurrentConvId(conv.id)
       setMessages([])
+      messagesConvIdRef.current = conv.id
+      setMessagesConvId(conv.id)
+      setMessagesState('ready')
       await reloadConversations()
     } catch (e) {
       toast.error(t('common.opFailed', { msg: errText(e) }))
@@ -1336,6 +1392,10 @@ export const ChatModule: React.FC = () => {
       convId = c.id
       const newConvId = c.id
       setCurrentConvId(convId)
+      // A-1：新会话从空开始，消息归属立即记到它名下（否则首条流式消息会被「不属于当前会话」挡掉）
+      messagesConvIdRef.current = convId
+      setMessagesConvId(convId)
+      setMessagesState('ready')
       // 新会话从空串键迁到真实 id；开了 Agent 就把这一格落库（重启后也记住）。
       // 失败不打断发送（这一发仍靠 payload 的 agentMode 走 Agent 链），但**必须说出来**：
       // 用户以为「Agent 模式开着」已经记住了，实际重启就丢 ⇒ 与同模块其它写失败一样走 toast。
@@ -1868,6 +1928,7 @@ export const ChatModule: React.FC = () => {
           <ConversationList
             conversations={conversations}
             conversationsUnread={conversationsUnread}
+            listState={listState}
             currentId={currentConvId}
             onSelect={handleSelectConv}
             onNew={handleNewConv}
@@ -1967,7 +2028,8 @@ export const ChatModule: React.FC = () => {
         providers={providers}
         targets={targets}
         onTargetsChange={handleTargetsChange}
-        messages={messages}
+        messages={visibleMessages}
+        messagesLoading={messagesLoading}
         liveColumns={liveColumns}
         streaming={liveColumns !== null || agentRunning}
         agentMode={agentMode}

@@ -337,6 +337,42 @@ describe('conversationRepo.setNote — 备注（v38）', () => {
   })
 })
 
+describe('conversationRepo.setRunState — 运行态写入不改变活跃排序', () => {
+  it('status 写入不碰 updated_at / archived / archived_at（D5）', () => {
+    conversationRepo.setRunState('c500', { status: 'done' })
+    expect(state.lastSql).toBe('UPDATE conversations SET status=? WHERE id=?')
+    expect(state.lastParams).toEqual(['done', 'c500'])
+    expect(state.lastSql).not.toContain('updated_at')
+    expect(state.lastSql).not.toContain('archived')
+  })
+
+  it('运行开始可同时写 model/agent_mode/status，仍不置顶、不取消归档', () => {
+    conversationRepo.setRunState('c501', {
+      modelLabel: 'p:m',
+      agentMode: true,
+      status: 'streaming'
+    })
+    expect(state.lastSql).toBe(
+      'UPDATE conversations SET model=?, agent_mode=?, status=? WHERE id=?'
+    )
+    expect(state.lastParams).toEqual(['p:m', 1, 'streaming', 'c501'])
+    expect(state.lastSql).not.toContain('updated_at')
+    expect(state.lastSql).not.toContain('archived')
+  })
+
+  it('空 patch 不发 SQL（避免无意义写入）', () => {
+    conversationRepo.setRunState('c502', {})
+    expect(state.runSqls).toHaveLength(0)
+  })
+
+  it('touch 仍保留用户可见消息活动语义（置顶 + 取消归档）', () => {
+    conversationRepo.touch('c503')
+    expect(state.lastSql).toContain('updated_at=?')
+    expect(state.lastSql).toContain('archived=0')
+    expect(state.lastSql).toContain('archived_at=NULL')
+  })
+})
+
 describe('conversationRepo.delete — 草稿级联删除', () => {
   it('删除会话事务内同步删除 messages/fts/草稿/会话四步', () => {
     conversationRepo.delete('c200')

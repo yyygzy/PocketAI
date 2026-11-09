@@ -43,7 +43,7 @@ import { ragService } from '../knowledge/rag'
 import { chunksToSources } from '../../shared/kb-sources'
 import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { toolRegistry, badArgsError } from '../tools/registry'
-import type { ToolAgentContext } from '../tools/builtin'
+import type { ToolAgentContext, ToolClassification } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath, buildFsWritePreview } from '../tools/fs-tools'
 import { findDangerRanges } from '../tools/shell-tools'
 import { buildToolPreviewFields } from '../../shared/tool-preview'
@@ -51,6 +51,7 @@ import { injectAttachments, appendTextAttachments, buildImageParts } from '../ch
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
 import { createApproval, toolArgsFingerprint } from './tool-approval'
+import { markRunStarted, markRunFinished } from '../chat/runtime-registry'
 import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
 import { redactSecretsInText, redactArgsInText } from '../security/audit-redact'
@@ -933,7 +934,7 @@ export function compressToolResult(content: string, maxChars: number): string {
  *  此处直接复用，不再重复调用 classifyCommand。 */
 function buildApprovalDisplay(
   tc: ToolCall,
-  reason?: string
+  classification: ToolClassification
 ): {
   command: string
   cwd?: string
@@ -942,6 +943,7 @@ function buildApprovalDisplay(
   fields?: ApprovalPreviewField[]
   highlights?: Array<{ start: number; end: number }>
 } {
+  const reason = classification.reason
   let parsed: Record<string, unknown> = {}
   try {
     parsed = tc.function.arguments ? (JSON.parse(tc.function.arguments) as Record<string, unknown>) : {}
@@ -959,7 +961,8 @@ function buildApprovalDisplay(
       /* 保持工作目录根；执行阶段会再次校验 */
     }
 
-    const risk: 'danger' | 'custom' = reason?.startsWith('DANGEROUS_') ? 'danger' : 'custom'
+    const risk: 'danger' | 'custom' =
+      classification.risk === 'danger' || reason?.startsWith('DANGEROUS_') ? 'danger' : 'custom'
     return { command, cwd: cwdAbs, risk, reason, highlights: findDangerRanges(command) }
   }
 
@@ -973,12 +976,16 @@ function buildApprovalDisplay(
   // MCP 工具：按参数名启发式生成语义化预览字段（路径解析复用工作目录守卫）
   if (toolRegistry.getSchema(tc.function.name)?.source === 'mcp') {
     const fields = buildToolPreviewFields(parsed, resolveWorkspacePath)
-    return { command: JSON.stringify(parsed), risk: 'custom', fields: fields ?? undefined }
+    return {
+      command: JSON.stringify(parsed),
+      risk: classification.risk ?? 'custom',
+      fields: fields ?? undefined
+    }
   }
 
   return {
     command: JSON.stringify(parsed),
-    risk: 'custom'
+    risk: classification.risk ?? 'custom'
   }
 }
 
@@ -1215,6 +1222,8 @@ class AgentEngine {
       throw new Error('AGENT_RUN_BUSY:同一会话已有运行进行中')
     }
     this.activeConversations.set(conversationId, requestId)
+    // B-2：并发守卫放行后即登记运行态（setup 段抛错也走下面的兜底 catch 落失败，不留「永久进行中」）
+    markRunStarted({ conversationId, requestId, mode: 'agent' })
     let loopTimer: ReturnType<typeof setTimeout> | undefined
     try {
       traceParents.set(requestId, parentRequestId)
@@ -1366,11 +1375,11 @@ class AgentEngine {
       })
       conversationRepo.touch(conversationId, {
         modelLabel: `${target.providerId}:${target.model}`,
-        status: 'streaming',
         // v2 P0：能力只认会话列，`model` 只存 `provider:model`（方案 §4.2）。
         // Agent 模块建的会话此前只有前缀、没有这一列，靠这里在运行开始时补齐。
         agentMode: true
       })
+      conversationRepo.setRunState(conversationId, { status: 'streaming' })
 
       // 主控制器
       const master = new AbortController()
@@ -1598,7 +1607,8 @@ class AgentEngine {
           historyTight: windowPlan.noRoom ? true : undefined
         }
         emit(IPC.AGENT_DONE_EVENT, doneEvt)
-        conversationRepo.touch(conversationId, { status: 'done' })
+        conversationRepo.setRunState(conversationId, { status: 'done' })
+        markRunFinished(conversationId, requestId, 'done')
       } catch (e) {
         const aborted = isAbortError(e) || /中止/.test(errMsg(e))
         const errText = aborted ? 'Agent 运行已中止' : errMsg(e)
@@ -1624,7 +1634,8 @@ class AgentEngine {
         }
         const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
         emit(IPC.AGENT_ERROR_EVENT, errEvt)
-        conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
+        conversationRepo.setRunState(conversationId, { status: aborted ? 'aborted' : 'error' })
+        markRunFinished(conversationId, requestId, aborted ? 'aborted' : 'failed', aborted ? undefined : errText)
       } finally {
         clearTimeout(loopTimer)
         this.controllers.delete(requestId)
@@ -1651,7 +1662,8 @@ class AgentEngine {
       this.releaseConversation(conversationId, requestId)
       const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
       emit(IPC.AGENT_ERROR_EVENT, errEvt)
-      conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
+      conversationRepo.setRunState(conversationId, { status: aborted ? 'aborted' : 'error' })
+      markRunFinished(conversationId, requestId, aborted ? 'aborted' : 'failed', aborted ? undefined : errText)
     }
   }
 
@@ -1877,7 +1889,7 @@ class AgentEngine {
             ctx.target = { providerId: fb.providerId, model: fb.model }
             traceModels.set(ctx.requestId, fb.model)
             // 会话上那行"最近使用"也要跟着换：否则切走再回来，标题栏还写着那台失败的模型
-            conversationRepo.touch(conversationId, { modelLabel: `${fb.providerId}:${fb.model}` })
+            conversationRepo.setRunState(conversationId, { modelLabel: `${fb.providerId}:${fb.model}` })
             const swapText = `（${target.model} 连续重试仍未答上来，已换到 ${fb.model} 再试一次）`
             messageRepo.updateContent(assistantMsg.id, swapText, 'done')
             ctx.pendingAssistantMsgId = ''
@@ -2283,7 +2295,7 @@ class AgentEngine {
             isError: true
           }
         } else {
-          const display = buildApprovalDisplay(tc, classification.reason)
+          const display = buildApprovalDisplay(tc, classification)
           const approved = await createApproval(
             {
               requestId,
@@ -2293,6 +2305,7 @@ class AgentEngine {
               cwd: display.cwd,
               reason: display.reason ?? classification.reason ?? 'REQUIRES_CONFIRM',
               risk: display.risk,
+              forceConfirm: classification.forceConfirm === true,
               fields: display.fields,
               highlights: display.highlights
             },
@@ -2654,7 +2667,9 @@ class AgentEngine {
           ? 'Agent 运行已中止'
           : `已达最大推理步数（${ctx.maxSteps}），且降级总结失败：${errMsg(e)}`
       })
-      conversationRepo.touch(conversationId, { status: aborted ? 'aborted' : 'error' })
+      conversationRepo.setRunState(conversationId, { status: aborted ? 'aborted' : 'error' })
+      // 降级步骤失败后 run() 会直接 return（不经过成功分支），这里必须自己收口运行态
+      markRunFinished(conversationId, ctx.requestId, aborted ? 'aborted' : 'failed', aborted ? undefined : errMsg(e))
       return false
     }
   }

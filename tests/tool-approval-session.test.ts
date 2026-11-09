@@ -17,7 +17,7 @@ function makeReq(overrides: Record<string, unknown> = {}) {
     command: 'echo hi',
     cwd: '/tmp',
     reason: 'REQUIRES_CONFIRM',
-    risk: 'danger' as const,
+    risk: 'custom' as const,
     ...overrides
   }
 }
@@ -162,5 +162,67 @@ describe('tool-approval session allowlist', () => {
     emit.mockClear()
     createApproval(makeReq({ toolName: 'tool-0' }), emit)
     expect(emit).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('危险档 / forceConfirm — 不能「总是允许」', () => {
+  beforeEach(() => {
+    resetApprovalStateForTest()
+  })
+
+  it('risk=danger 应答勾选 alwaysAllow 也不写白名单：下次仍弹窗', async () => {
+    const emit = vi.fn()
+    const p1 = createApproval(makeReq({ risk: 'danger' }), emit)
+    const e1 = emit.mock.calls[0]![1] as { approvalId: string }
+    resolveApproval(e1.approvalId, true, true)
+    await expect(p1).resolves.toBe(true)
+
+    emit.mockClear()
+    createApproval(makeReq({ risk: 'danger' }), emit)
+    expect(emit).toHaveBeenCalledTimes(1)
+  })
+
+  it('forceConfirm 先于白名单：已存在的会话允许不生效', async () => {
+    const emit = vi.fn()
+    // 先用普通档建立白名单
+    const p1 = createApproval(makeReq(), emit, undefined, '{"command":"echo hi"}')
+    const e1 = emit.mock.calls[0]![1] as { approvalId: string }
+    resolveApproval(e1.approvalId, true, true)
+    await expect(p1).resolves.toBe(true)
+
+    // 同工具同参数、但本次要求强制确认 → 仍需弹窗
+    emit.mockClear()
+    createApproval(
+      makeReq({ forceConfirm: true }),
+      emit,
+      undefined,
+      '{"command":"echo hi"}'
+    )
+    expect(emit).toHaveBeenCalledTimes(1)
+  })
+
+  it('forceConfirm 不落白名单：后续普通调用仍需弹窗', async () => {
+    const emit = vi.fn()
+    const p1 = createApproval(makeReq({ forceConfirm: true }), emit, undefined, '{"command":"echo hi"}')
+    const e1 = emit.mock.calls[0]![1] as { approvalId: string }
+    resolveApproval(e1.approvalId, true, true)
+    await expect(p1).resolves.toBe(true)
+
+    emit.mockClear()
+    createApproval(makeReq(), emit, undefined, '{"command":"echo hi"}')
+    expect(emit).toHaveBeenCalledTimes(1)
+  })
+
+  it('forceConfirm 批准审计仍记 once（alwaysAllow 被忽略）', async () => {
+    const emit = vi.fn()
+    const audits: Array<{ scope: string; decision: string }> = []
+    const p = createApproval(makeReq({ forceConfirm: true }), emit, undefined, '{"command":"echo hi"}', {
+      requestedAt: 1,
+      record: (input) => audits.push({ scope: input.scope, decision: input.decision })
+    })
+    const ev = emit.mock.calls[0]![1] as { approvalId: string }
+    resolveApproval(ev.approvalId, true, true)
+    await expect(p).resolves.toBe(true)
+    expect(audits).toEqual([{ scope: 'once', decision: 'user_approve' }])
   })
 })

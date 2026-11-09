@@ -99,14 +99,23 @@ const MCP_DANGEROUS_KEYWORDS = [
 ]
 
 /**
+ * 高风险 MCP 工具：破坏性/开放世界注解，或名字命中危险关键词。
+ * 命中后即使权限是 confirm，也必须逐次询问——会话级「总是允许」不生效（审批顺序前置）。
+ */
+export function mcpToolForceConfirm(name: string, annotations?: McpToolAnnotations): boolean {
+  if (annotations?.destructiveHint === true || annotations?.openWorldHint === true) return true
+  const lower = (name ?? '').toLowerCase()
+  return MCP_DANGEROUS_KEYWORDS.some((kw) => lower.includes(kw))
+}
+
+/**
  * MCP 工具权限分级（SEC-5）。
  *
  * 默认一律 `confirm`：工具名与描述都由 Server 自报，把执行类工具命名成 `get_status`
  * 就能骗过任何按名字放行的规则，所以「名字看起来只读」不构成免确认的依据。
  * 只有用户在 Server 上显式勾选「信任只读工具」（trustReadOnly）后，才沿用名称语义分级：
  * 危险关键词 → confirm，只读前缀 → auto，其余未知语义 → confirm。
- */
-/**
+ *
  * §236 二次分级：注解**只会让一个工具更保守**，永远不会替它打开 auto。
  * 规范写明 annotations 不可作为安全依据（Server 自报），这里就照办：
  *  · `destructiveHint`／`openWorldHint` 为 true ⇒ 即便 trustReadOnly 且名字像只读，也留 confirm；
@@ -119,10 +128,8 @@ export function classifyMcpToolPermission(
   annotations?: McpToolAnnotations
 ): 'auto' | 'confirm' {
   if (!trustReadOnly) return 'confirm'
-  if (annotations?.destructiveHint === true || annotations?.openWorldHint === true) return 'confirm'
+  if (mcpToolForceConfirm(name, annotations)) return 'confirm'
   const lower = (name ?? '').toLowerCase()
-  // 危险关键词命中 → 必须人工确认
-  if (MCP_DANGEROUS_KEYWORDS.some((kw) => lower.includes(kw))) return 'confirm'
   // 只读前缀命中 → 自动放行
   if (MCP_READONLY_PREFIXES.some((p) => lower.startsWith(p))) return 'auto'
   // 未知语义 → 保守 confirm
@@ -637,6 +644,7 @@ export class McpManager extends EventEmitter {
       parameters = o.inputSchema as Record<string, unknown>
     }
     const annotations = normalizeMcpAnnotations(o.annotations)
+    const permission = classifyMcpToolPermission(name, trustReadOnly, annotations)
     return {
       id: `mcp:${serverId}:${name}`,
       name,
@@ -644,7 +652,11 @@ export class McpManager extends EventEmitter {
       parameters,
       source: 'mcp',
       // MCP 工具权限：未显式信任该 Server 时一律 confirm（见 classifyMcpToolPermission）
-      permission: classifyMcpToolPermission(name, trustReadOnly, annotations),
+      permission,
+      // 破坏性/开放世界工具：进入 confirm 后也必须逐次询问，不允许会话级「总是允许」
+      ...(permission === 'confirm' && mcpToolForceConfirm(name, annotations)
+        ? { forceConfirm: true }
+        : {}),
       ...(annotations ? { mcpAnnotations: annotations } : {}),
       mcpServerId: serverId
     }

@@ -552,10 +552,13 @@ describe('① 底座：闸门得先看见整个宇宙（任何一项塌了，下
     //   ⇒ 净新增两个判点、caught 桶少两点，底线相应下调。
     // 「货架式助手」本批：FirstRunWizard 的 duplicateAssistant 从 try-catch 桶搬进判定桶
     //   （失败要区分"配额超限"并上屏）⇒ caught 26→25，下限随之下调。
+    // P5 拆壳：`useAgentChat.truncateMessagesFrom` 随函数整体删除（全库已无此符号）。拿 d81dfde 与 HEAD
+    //   逐点对比：caught 25→24，少的那一点就是它；其余 24 个 try/catch 点一一对得上，unsafe 恒为 0
+    //   ⇒ 是「整个 await 点随函数消失」，不是漏捕获。下限按现数收到 24、不留余量：再少就是有人静默删了捕获。
     // 这两根是**量级底线**（扫描器瞎了才会掉到这儿），不是精确数；收一处静默点就会让 caught 少一点、judged 多一点，
     // 所以 judged 那根随批上提，caught 那根留出 Enough 的余量。
     expect(judged, '判返回值的点').toBeGreaterThanOrEqual(255)
-    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(25)
+    expect(caught, '只被 try/catch 包着的点').toBeGreaterThanOrEqual(24)
     expect(judged + caught + unsafe.length).toBe(SITES.length)
   })
 

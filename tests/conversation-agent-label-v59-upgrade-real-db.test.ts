@@ -325,7 +325,7 @@ describe('v58 → v59 真实升级（含 agent: 前缀与混合 agent_mode）', 
     expect(selectUntouched()).toEqual(beforeUntouched)
     expect(integrity()).toEqual(['ok'])
     expect(versionName(59)).toBe('strip_agent_model_label')
-    expect(LATEST_SCHEMA_VERSION).toBe(59)
+    expect(LATEST_SCHEMA_VERSION).toBe(60)
   })
 
   it('重复跑迁移不抛且空操作：删掉 v59 记录再跑，行完全不变', () => {

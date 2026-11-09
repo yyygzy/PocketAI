@@ -10,11 +10,13 @@ import {
   type ToolsFilter
 } from './conversation-filter'
 import { EmptyState } from '../../components/EmptyState'
+import { SidebarSkeleton } from '../../components/Skeleton'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { MessageSearchResults, relTime } from '../../components/MessageSearchResults'
 import { logIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useToast } from '../../components/ToastProvider'
 import { formatDateTime } from '../../utils/time'
+import { useConversationRuntime } from '../../store/conversation-runtime-store'
 
 interface Props {
   conversations: ConversationRecord[]
@@ -40,6 +42,8 @@ interface Props {
   archivedConversations?: ConversationRecord[]
   /** 归档那一发没读到（§260） */
   archivedUnread?: { error?: string } | null
+  /** 活跃列表加载态（A-1）：只在空列表时渲染骨架；缺省按已就绪处理 */
+  listState?: 'idle' | 'loading' | 'ready' | 'error'
   onTogglePin?: (id: string, pinned: boolean) => void
   onSetArchived?: (id: string, archived: boolean) => void
   onImport?: () => void
@@ -75,6 +79,7 @@ interface Props {
 export const ConversationList: React.FC<Props> = ({
   conversations,
   conversationsUnread,
+  listState = 'ready',
   currentId,
   onSelect,
   onNew,
@@ -440,6 +445,9 @@ export const ConversationList: React.FC<Props> = ({
     setStarredItems((prev) => prev.filter((m) => m.id !== id))
   }
 
+  // A-1：首次进入与切换助手时都属于 pending（idle 也按 pending 处理，避免先闪一下「暂无会话」）
+  const listPending = listState === 'idle' || listState === 'loading'
+
   return (
     <div className={embedded ? 'flex flex-col h-full min-h-0' : 'w-60 shrink-0 flex flex-col bg-[var(--color-sidebar)] border-r border-[var(--color-border)]'}>
       {/* 搜索框（收藏视图态隐藏） */}
@@ -704,7 +712,8 @@ export const ConversationList: React.FC<Props> = ({
 
             {groupedMode ? (
               <>
-                {!conversationsUnread && topConversations.length === 0 && groupViews.length === 0 && (
+                {listPending && conversations.length === 0 && <SidebarSkeleton />}
+                {!listPending && !conversationsUnread && topConversations.length === 0 && groupViews.length === 0 && (
                   <EmptyState
                     className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2"
                     message={t('chat.noConversations')}
@@ -793,7 +802,8 @@ export const ConversationList: React.FC<Props> = ({
               </>
             ) : (
               <>
-                {!conversationsUnread && filteredConversations.length === 0 && visibleArchived.length === 0 && (
+                {listPending && conversations.length === 0 && <SidebarSkeleton />}
+                {!listPending && !conversationsUnread && filteredConversations.length === 0 && visibleArchived.length === 0 && (
                   <EmptyState
                     className="text-xs text-[var(--color-text-muted)] text-center mt-6 px-2"
                     message={
@@ -914,6 +924,18 @@ const ConvItem: React.FC<{
   onSetNote?: (convId: string, note: string | null) => void
 }> = ({ conv, isActive, onSelect, onDelete, onRename, onExport, onExportHtml, onExportPdf, onExportEncrypted, onTogglePin, onSetArchived, selectMode, checked, onToggleSelect, inArchive, indented, draggable, groups, onMoveConv, assistants, onSetAssistant, onSetNote }) => {
   const { t } = useI18n()
+  // B-2：运行态角标（run 属于主进程，不按「当前窗口在不在跑」判断）
+  const runtime = useConversationRuntime(conv.id)
+  const runtimeLabel =
+    runtime?.state === 'running'
+      ? t('chat.runtime.running')
+      : runtime?.state === 'pending_approval'
+        ? t('chat.runtime.pendingApproval')
+        : runtime?.state === 'failed'
+          ? t('chat.runtime.failed')
+          : runtime?.state === 'interrupted'
+            ? t('chat.runtime.interrupted')
+            : ''
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -1003,6 +1025,26 @@ const ConvItem: React.FC<{
                 className="mr-1 inline-block align-middle text-[9px] px-1 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
                 title={t('chat.tools.badge')}
               >{t('chat.tools.badge')}</span>
+            )}
+            {runtimeLabel && !selectMode && (
+              <span
+                role="status"
+                aria-label={runtimeLabel}
+                title={
+                  runtime?.state === 'pending_approval' && runtime.pendingApprovals
+                    ? `${runtimeLabel} (${runtime.pendingApprovals})`
+                    : runtimeLabel
+                }
+                className={`mr-1 inline-block align-middle w-1.5 h-1.5 rounded-full ${
+                  runtime?.state === 'running'
+                    ? 'bg-[var(--color-accent)] animate-pulse motion-reduce:animate-none'
+                    : runtime?.state === 'pending_approval'
+                      ? 'bg-[var(--color-warning)]'
+                      : runtime?.state === 'failed'
+                        ? 'bg-[var(--color-danger)]'
+                        : 'bg-[var(--color-warning)] opacity-60'
+                }`}
+              />
             )}
             {conv.title}
           </span>

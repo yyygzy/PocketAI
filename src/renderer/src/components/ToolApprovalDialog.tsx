@@ -66,8 +66,8 @@ export const ToolApprovalDialog: React.FC = () => {
     if (!head || busy) return
     setBusy(true)
     try {
-      // 仅在允许时把「总是允许」带上；拒绝一律不记
-      const res = await window.pocketai.respondToolApproval(head.approvalId, approved, approved && alwaysAllow)
+      // 仅在允许时把「总是允许」带上；拒绝一律不记；强制确认的条目一律不带
+      const res = await window.pocketai.respondToolApproval(head.approvalId, approved, approved && alwaysAllow && !head.forceConfirm && head.risk !== 'danger')
       if (!res.ok) {
         // 主进程已按 5 分钟超时自动拒绝：保留弹窗并提示，不允许误以为已放行
         setStaleNote(true)
@@ -87,6 +87,8 @@ export const ToolApprovalDialog: React.FC = () => {
   // reason code → 文案；缺失时回退显示原始 code（宁可信息不丢）——与审批明细屏共用同一入口
   const reasonLabel = approvalReasonText(current.reason, t)
   const isDanger = current.risk === 'danger'
+  // 危险档/强制逐次确认：不提供「本次会话总是允许」（主进程同样不认）
+  const canAlwaysAllow = !isDanger && !current.forceConfirm
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm p-4">
@@ -172,7 +174,7 @@ export const ToolApprovalDialog: React.FC = () => {
         <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-[var(--color-border)] shrink-0">
           {staleNote ? (
             <span className="text-[11px] text-[var(--color-text-muted)]">{t('agent.approval.expired')}</span>
-          ) : (
+          ) : canAlwaysAllow ? (
             <label
               className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-[var(--color-text-muted)]"
               title={t('agent.approval.alwaysAllowHint')}
@@ -186,6 +188,8 @@ export const ToolApprovalDialog: React.FC = () => {
               />
               {t('agent.approval.alwaysAllow')}
             </label>
+          ) : (
+            <span />
           )}
           <div className="flex gap-2">
             {staleNote ? (

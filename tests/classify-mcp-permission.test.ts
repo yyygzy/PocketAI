@@ -19,7 +19,7 @@ vi.mock('../src/main/mcp/python-env', () => ({
 }))
 vi.mock('../src/main/logger', () => ({ createLogger: () => ({}) }))
 
-import { classifyMcpToolPermission } from '../src/main/mcp/manager'
+import { classifyMcpToolPermission, mcpToolForceConfirm } from '../src/main/mcp/manager'
 
 const TRUSTED = true
 
@@ -121,5 +121,25 @@ describe('classifyMcpToolPermission — 显式信任后的名称分级', () => {
   it('null/undefined → confirm', () => {
     expect(classifyMcpToolPermission(null as unknown as string, TRUSTED)).toBe('confirm')
     expect(classifyMcpToolPermission(undefined as unknown as string, TRUSTED)).toBe('confirm')
+  })
+})
+
+describe('mcpToolForceConfirm — 危险工具必须逐次询问', () => {
+  it('破坏性/开放世界注解 → 强制确认', () => {
+    expect(mcpToolForceConfirm('get_status', { destructiveHint: true })).toBe(true)
+    expect(mcpToolForceConfirm('get_status', { openWorldHint: true })).toBe(true)
+  })
+
+  it('名字命中危险关键词 → 强制确认（大小写不敏感）', () => {
+    expect(mcpToolForceConfirm('delete_file')).toBe(true)
+    expect(mcpToolForceConfirm('DeleteFile')).toBe(true)
+    expect(mcpToolForceConfirm('exec_command')).toBe(true)
+    expect(mcpToolForceConfirm('write_file')).toBe(true)
+  })
+
+  it('只读工具（无危险注解/关键词）→ 不强制，可走普通确认', () => {
+    expect(mcpToolForceConfirm('get_status')).toBe(false)
+    expect(mcpToolForceConfirm('list_files', { readOnlyHint: true })).toBe(false)
+    expect(mcpToolForceConfirm('get_status', { destructiveHint: false, openWorldHint: false })).toBe(false)
   })
 })

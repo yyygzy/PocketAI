@@ -17,6 +17,9 @@ import { hasIpcFailed, reportIpcError } from '../../utils/ipc'
 /** 哪一发没读到：`error` 为空＝拿到了但不是数组（形状不符也按读不到处理，绝不写进列表） */
 export type ListUnread = { error?: string } | null
 
+/** 活跃列表的加载态（A-1）：只在空列表时用于骨架，已有数据不会被它清掉 */
+export type ListState = 'idle' | 'loading' | 'ready' | 'error'
+
 export interface UseConversationListsOptions {
   /** 读哪个助手的列表：切换助手时由父级先行改写，所以取 ref 而不是值（值会把 callback 绑死在旧助手上） */
   assistantIdRef: MutableRefObject<string>
@@ -37,6 +40,7 @@ export function useConversationLists({
   conversationsUnread: ListUnread
   archivedUnread: ListUnread
   groupsUnread: ListUnread
+  listState: ListState
   reloadConversations: (autoSelect?: boolean) => Promise<ConversationRecord[]>
   // 三份列表的**本地先行**更新仍由 ChatModule 持有（改名／置顶／归档／拖进分组那一族）：
   // 这里只把 setter 交出去，读取失败的处理不经由它们（写进 state 的必须是数组这一条由 reload 保证）
@@ -50,6 +54,7 @@ export function useConversationLists({
   const [conversationsUnread, setConversationsUnread] = useState<ListUnread>(null)
   const [archivedUnread, setArchivedUnread] = useState<ListUnread>(null)
   const [groupsUnread, setGroupsUnread] = useState<ListUnread>(null)
+  const [listState, setListState] = useState<ListState>('idle')
   // 三份各自「最后一次成功读到」属于哪个助手。§259 那条口径在这里的落地方式：
   // 刷新失败而上一份就是同一个助手的 ⇒ 保持（清空会把「刚归档完这一条」演成「整列消失」）；
   // 上一份属于别的助手 ⇒ 必须清空（留着会把别的助手的会话演成「这个助手本来就没有会话」）。
@@ -65,6 +70,7 @@ export function useConversationLists({
       // 这一发是"哪个助手的"就到此为止：切助手与流式收尾撞上时，旧助手那次的响应会晚到，
       // 而它要写的 state 现在属于新助手（§259 那条 `cancelled` 在同一族的真链路上撞过）
       const stale = (): boolean => assistantIdRef.current !== aid
+      setListState('loading')
       return Promise.all([
         window.pocketai.listConversations(aid, false, false),
         window.pocketai.listConversations(aid, false, true),
@@ -77,10 +83,12 @@ export function useConversationLists({
           if (hasIpcFailed(list) || !Array.isArray(list)) {
             if (ownerRef.current.list !== aid) setConversations([])
             setConversationsUnread({ error: hasIpcFailed(list) ? list.error : undefined })
+            setListState('error')
           } else {
             ownerRef.current.list = aid
             setConversationsUnread(null)
             setConversations(list)
+            setListState('ready')
           }
           if (hasIpcFailed(archived) || !Array.isArray(archived)) {
             if (ownerRef.current.archived !== aid) setArchivedConversations([])
@@ -112,6 +120,7 @@ export function useConversationLists({
           const error = errText(e, '')
           if (ownerRef.current.list !== aid) setConversations([])
           setConversationsUnread({ error })
+          setListState('error')
           if (ownerRef.current.archived !== aid) setArchivedConversations([])
           setArchivedUnread({ error })
           if (ownerRef.current.groups !== aid) setGroups([])
@@ -129,6 +138,7 @@ export function useConversationLists({
     conversationsUnread,
     archivedUnread,
     groupsUnread,
+    listState,
     reloadConversations,
     setConversations,
     setArchivedConversations,

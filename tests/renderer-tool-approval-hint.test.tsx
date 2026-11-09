@@ -64,3 +64,25 @@ describe('审批弹窗的自动拒绝提示', () => {
     }
   })
 })
+
+describe('审批弹窗的「本次会话总是允许」入口', () => {
+  it('普通风险档提供勾选', async () => {
+    mountWithProviders(<ToolApprovalDialog />)
+    await act(async () => { fire?.(REQ) })
+    expect(await screen.findByText(zh['agent.approval.alwaysAllow'])).toBeTruthy()
+  })
+
+  it('risk=danger 不提供勾选', async () => {
+    mountWithProviders(<ToolApprovalDialog />)
+    await act(async () => { fire?.({ ...REQ, approvalId: 'a2', risk: 'danger' }) })
+    expect(await screen.findByText(zh['agent.approval.warning'])).toBeTruthy()
+    expect(screen.queryByText(zh['agent.approval.alwaysAllow'])).toBeNull()
+  })
+
+  it('forceConfirm 不提供勾选', async () => {
+    mountWithProviders(<ToolApprovalDialog />)
+    await act(async () => { fire?.({ ...REQ, approvalId: 'a3', forceConfirm: true }) })
+    expect(await screen.findByText(zh['agent.approval.warning'])).toBeTruthy()
+    expect(screen.queryByText(zh['agent.approval.alwaysAllow'])).toBeNull()
+  })
+})
