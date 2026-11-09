@@ -3,6 +3,8 @@
 // ui.opacity     窗口透明度（0.6–1），主进程 BrowserWindow.setOpacity
 //                Windows / macOS 原生支持；Linux 取决于窗口管理器（不支持时静默无效）
 // ui.custom_css  自定义 CSS 文本，渲染端读取后注入 <style>，主进程只负责存取
+// ui.theme       窗口底色主题（light/dark）。渲染端 localStorage 仍是切换时的事实来源，
+//                这里存一份是为了让 BrowserWindow 在页面首帧之前就用对底色（否则浅色主题会先黑一下）。
 //
 // 安全：CSS 仅作用于本应用渲染进程沙箱，不接触 Node API；限制长度防止误塞大内容。
 
@@ -15,6 +17,7 @@ const K_OPACITY = 'ui.opacity'
 const K_CUSTOM_CSS = 'ui.custom_css'
 const K_CHAT_FONT_SIZE = 'ui.chat_font_size'
 const K_CODE_COLLAPSE_LINES = 'ui.code_collapse_lines'
+const K_THEME = 'ui.theme'
 // Agent 模块「上次用在哪」：助手 + 会话。存这里而不是 localStorage，是因为 app_config 属于
 // 合并时的 LOCAL_KEEP 表——换机合并不会把另一台机器的"上次会话"搬过来（那是会点错人的状态）
 const K_AGENT_ASSISTANT_ID = 'ui.agent_assistant_id'
@@ -115,4 +118,66 @@ export function applyOpacityToMainWindows(opacity?: number): void {
       /* 平台不支持时静默忽略 */
     }
   }
+}
+
+// ─── 主题底色（A-3 / D1） ────────────────────────────────────────
+
+export type UiTheme = 'light' | 'dark'
+
+/** 非法/缺失一律按现有默认（深色）：theme-init.js 的默认也是不加 .light */
+export function normalizeUiTheme(v: unknown): UiTheme {
+  return v === 'light' ? 'light' : 'dark'
+}
+
+/**
+ * BrowserWindow 的底色。取值必须与渲染端根背景一致：
+ * 深色是现有写死的 #1e1e2e；浅色取 Catppuccin Latte 的 Base（theme.css `--color-bg`）。
+ */
+export function windowBackground(theme: UiTheme = getUiTheme()): string {
+  return theme === 'light' ? '#eff1f5' : '#1e1e2e'
+}
+
+/**
+ * 读回上次主题。库未打开时（解锁窗创建早于解锁）退回深色，且**不缓存**——
+ * 解锁后主窗口要能读到真实值。
+ */
+export function getUiTheme(): UiTheme {
+  try {
+    return normalizeUiTheme(appConfigRepo.get(K_THEME))
+  } catch {
+    return 'dark'
+  }
+}
+
+/** 主题化的窗口标记（浮窗保持透明、解锁窗不参与切换，故不靠标题判断） */
+export const THEMED_WINDOW_MARKER = '__pocketaiThemedWindow' as const
+
+export type ThemedBrowserWindow = BrowserWindow & {
+  [K in typeof THEMED_WINDOW_MARKER]?: boolean
+}
+
+export function markThemedWindow(win: BrowserWindow): void {
+  ;(win as ThemedBrowserWindow)[THEMED_WINDOW_MARKER] = true
+}
+
+/** 把底色应用到所有主题化窗口（主窗口 + 独立窗口；浮窗/解锁窗不在标记内） */
+export function applyThemeToWindows(theme: UiTheme = getUiTheme()): void {
+  const color = windowBackground(theme)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    if ((win as ThemedBrowserWindow)[THEMED_WINDOW_MARKER] !== true) continue
+    try {
+      win.setBackgroundColor(color)
+    } catch {
+      /* 窗口正在销毁/平台不支持时忽略：下次启动仍会按 KV 重建 */
+    }
+  }
+}
+
+/** 保存主题（KV + 立即刷所有主题化窗口的底色），返回归一后的值 */
+export function setUiTheme(theme: UiTheme): UiTheme {
+  const next = normalizeUiTheme(theme)
+  appConfigRepo.set(K_THEME, next)
+  applyThemeToWindows(next)
+  return next
 }

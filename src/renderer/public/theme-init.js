@@ -6,7 +6,14 @@
     var theme = localStorage.getItem('pocketai.theme')
     if (theme === 'light') document.documentElement.classList.add('light')
     var lang = localStorage.getItem('pocketai.lang')
-    if (lang === 'en') document.documentElement.lang = 'en'
+    // 语言只写 <html lang>：首帧据此选对 CJK 字形，不加载任何字典（整份字典仍由 i18n 按需拉取）。
+    // 取值口径与 i18n readInitialLang 一致：存储值优先，其次浏览器语言 ja/ko，其余保持 zh-CN。
+    if (!lang) {
+      var nav = (navigator.language || '').toLowerCase()
+      if (nav.indexOf('ja') === 0) lang = 'ja'
+      else if (nav.indexOf('ko') === 0) lang = 'ko'
+    }
+    if (lang === 'en' || lang === 'ja' || lang === 'ko') document.documentElement.lang = lang
   } catch (e) {
     // localStorage 被禁用/隐私模式时静默降级默认主题，此阶段无日志通道
   }

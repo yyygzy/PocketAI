@@ -2,6 +2,7 @@
 // 主题状态直接操作 <html class="light"> 并持久化 localStorage（index.html 内联脚本防闪烁）
 import React, { useState } from 'react'
 import { useI18n, LANGS } from '../i18n'
+import { hasIpcFailed, logIpcError, reportIpcError } from '../utils/ipc'
 
 const THEME_KEY = 'pocketai.theme'
 
@@ -19,6 +20,14 @@ export const ThemeLangControls: React.FC<{ collapsed?: boolean }> = ({ collapsed
     } catch {
       /* ignore */
     }
+    // A-3：同步主进程（窗口底色立即跟着变 + 下次启动读回 KV）。
+    // 失败不回滚界面主题：localStorage 仍是切换的事实来源，只是下次启动会退回上一次成功的底色。
+    window.pocketai
+      .setUiTheme(next ? 'light' : 'dark')
+      .then((r) => {
+        if (hasIpcFailed(r)) logIpcError('ui.setTheme', r.error)
+      })
+      .catch(reportIpcError('ui.setTheme'))
   }
 
   const iconBtnCls =

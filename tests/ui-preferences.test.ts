@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   store: new Map<string, string>(),
+  windows: [] as unknown[],
   appConfigRepo: {
     get: (k: string) => mocks.store.get(k) ?? null,
     set: (k: string, v: string) => { mocks.store.set(k, v) },
@@ -21,15 +22,16 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
   BrowserWindow: {
-    getAllWindows: () => []
+    getAllWindows: () => mocks.windows
   }
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: mocks.appConfigRepo }))
 
-import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, MAX_PREFERENCE_ID_CHARS, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES } from '../src/main/ui-preferences'
+import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, MAX_PREFERENCE_ID_CHARS, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES, getUiTheme, windowBackground, setUiTheme, normalizeUiTheme, markThemedWindow } from '../src/main/ui-preferences'
 
 beforeEach(() => {
   mocks.store.clear()
+  mocks.windows.length = 0
 })
 
 describe('clampOpacity — 透明度限幅', () => {
@@ -199,6 +201,59 @@ describe('normalizeCodeCollapseLines — 折叠阈值清洗', () => {
     expect(normalizeCodeCollapseLines('0')).toBe(0)
     expect(normalizeCodeCollapseLines('12.9')).toBe(12)
     expect(normalizeCodeCollapseLines(999)).toBe(MAX_CODE_COLLAPSE_LINES)
+  })
+})
+
+describe('主题底色（ui.theme，A-3 / D1）', () => {
+  function fakeWindow(): { win: Record<string, unknown>; setBackgroundColor: ReturnType<typeof vi.fn> } {
+    const setBackgroundColor = vi.fn()
+    return { win: { isDestroyed: () => false, setBackgroundColor }, setBackgroundColor }
+  }
+
+  it('无值 → 按现有默认深色（不改默认）', () => {
+    expect(getUiTheme()).toBe('dark')
+    expect(windowBackground()).toBe('#1e1e2e')
+    expect(normalizeUiTheme(null)).toBe('dark')
+    expect(normalizeUiTheme('bogus')).toBe('dark')
+  })
+
+  it('切到浅色 → 写 KV、底色变浅、只作用于打了主题标记的窗口', () => {
+    expect(setUiTheme('light')).toBe('light')
+    expect(mocks.store.get('ui.theme')).toBe('light')
+    expect(windowBackground('light')).toBe('#eff1f5')
+
+    const themed = fakeWindow()
+    const popup = fakeWindow()
+    markThemedWindow(themed.win as never)
+    mocks.windows.push(themed.win, popup.win)
+
+    setUiTheme('light')
+    expect(themed.setBackgroundColor).toHaveBeenLastCalledWith('#eff1f5')
+    expect(popup.setBackgroundColor).not.toHaveBeenCalled()
+
+    setUiTheme('dark')
+    expect(themed.setBackgroundColor).toHaveBeenLastCalledWith('#1e1e2e')
+  })
+
+  it('重新启动读回上次主题（无缓存，直接读 KV）', () => {
+    setUiTheme('light')
+    expect(getUiTheme()).toBe('light')
+    expect(windowBackground()).toBe('#eff1f5')
+  })
+
+  it('库未打开（读 KV 抛错）→ 退回深色且不污染后续读取', () => {
+    const original = mocks.appConfigRepo.get
+    mocks.appConfigRepo.get = () => {
+      throw new Error('Database not opened')
+    }
+    try {
+      expect(getUiTheme()).toBe('dark')
+      expect(windowBackground()).toBe('#1e1e2e')
+    } finally {
+      mocks.appConfigRepo.get = original
+    }
+    mocks.store.set('ui.theme', 'light')
+    expect(getUiTheme()).toBe('light')
   })
 })
 

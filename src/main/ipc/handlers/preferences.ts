@@ -10,7 +10,7 @@ import {
 import { isPortableRuntime } from '../../portable'
 import { getMachineId } from '../../steward/machine'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
-import { getUiPreferences, setUiPreferences } from '../../ui-preferences'
+import { getUiPreferences, setUiPreferences, setUiTheme, type UiTheme } from '../../ui-preferences'
 import { isReplyNotifyEnabled, setReplyNotifyEnabled, showReplyNotification } from '../../notify/reply-notify'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../../../shared/schemas/preferences'
@@ -93,6 +93,11 @@ export function registerPreferenceHandlers(): void {
     ok: true as const,
     data: setUiPreferences(patch ?? {})
   }), argsSchema(uiPrefsPatchSchema))
+  // A-3：主题切换时同步窗口底色（否则要等下次启动）；枚举由 schema 收口，脏值不进 KV
+  safeHandle(IPC.UI_SET_THEME, (_e, theme: UiTheme) => ({
+    ok: true as const,
+    data: setUiTheme(theme)
+  }), argsSchema(z.enum(['light', 'dark'])))
 
   // ---------- 回复完成系统通知 ----------
   safeHandle(IPC.NOTIFY_REPLY_GET, () => isReplyNotifyEnabled())

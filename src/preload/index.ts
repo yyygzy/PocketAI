@@ -1047,6 +1047,9 @@ const api = {
     patch: Partial<UiPreferences>
   ): Promise<{ ok: boolean; data?: UiPreferences; error?: string }> =>
     ipcRenderer.invoke(IPC.UI_SET_PREFS, patch),
+  /** A-3：把当前主题同步给主进程（窗口底色 + 下次启动读回） */
+  setUiTheme: (theme: 'light' | 'dark'): Promise<{ ok: boolean; data?: 'light' | 'dark'; error?: string }> =>
+    ipcRenderer.invoke(IPC.UI_SET_THEME, theme),
 
   // ---------- 回复完成系统通知 ----------
   getReplyNotifyEnabled: (): Promise<boolean> =>

@@ -4,6 +4,7 @@ import { BrowserWindow, app } from 'electron'
 import path from 'node:path'
 import { lockService } from '../lock/lock'
 import { denyNewWindows } from '../net/external-links'
+import { markThemedWindow, windowBackground } from '../ui-preferences'
 
 /** 模块白名单：独立窗口只允许打开这些模块（settings/steward 不允许弹出） */
 export const DETACHED_MODULES = new Set([
@@ -18,7 +19,7 @@ export function createDetachedWindow(moduleId: string): void {
     minWidth: 640,
     minHeight: 480,
     show: false,
-    backgroundColor: '#1e1e2e',
+    backgroundColor: windowBackground(),
     title: '墨匣 Moxia - PocketAI',
     icon: process.platform === 'win32'
       ? path.join(app.getAppPath(), 'build/icon/icon.ico')
@@ -33,6 +34,8 @@ export function createDetachedWindow(moduleId: string): void {
       sandbox: true
     }
   })
+  // A-3：独立窗口与主窗口共用主题底色（切主题时一起刷新）
+  markThemedWindow(win)
   win.on('ready-to-show', () => win.show())
   // 独立窗口同样不参与后台节流（后台任务 UI 不卡顿）
   win.webContents.setBackgroundThrottling(false)

@@ -64,7 +64,7 @@ import { initBackupScheduler } from './backup/backup-scheduler'
 import { captureWebDAVForRekey, restoreWebDAVAfterRekey } from './backup/backup-service'
 import { initTaskScheduler } from './backup/task-scheduler'
 import { initReminderScheduler } from './reminder/scheduler'
-import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, type MarkedBrowserWindow } from './ui-preferences'
+import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, markThemedWindow, windowBackground, type MarkedBrowserWindow } from './ui-preferences'
 import { beginQuit, isCleanupDone, isQuitting, runCleanupOnce, runFallbackCleanup } from './quit-manager'
 import { createLogger, configureLogDir } from './logger'
 import { bootMark } from './steward/boot-perf'
@@ -127,7 +127,7 @@ function createMainWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
-    backgroundColor: '#1e1e2e',
+    backgroundColor: windowBackground(),
     title: '墨匣 Moxia - PocketAI',
     icon: appIconPath(),
     webPreferences: {
@@ -165,6 +165,8 @@ function createMainWindow(): void {
   mainWindow.on('closed', () => { mainWindow = null })
   // 标记主窗口：透明度等窗口级偏好只应用到主窗口（浮窗/独立窗口不打此标记）
   ;(mainWindow as MarkedBrowserWindow)[MAIN_WINDOW_MARKER] = true
+  // A-3：切主题时主窗口底色跟着变（与独立窗口同一标记口径）
+  markThemedWindow(mainWindow)
   // 隐私锁：窗口隐藏/最小化 → 计时；重新显示 → 取消计时
   mainWindow.on('hide', () => lockService.onAppHidden())
   mainWindow.on('show', () => lockService.onAppShown())

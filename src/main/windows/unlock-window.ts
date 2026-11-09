@@ -8,6 +8,7 @@ import path from 'node:path'
 import { createLogger } from '../logger'
 import { unlockCoordinator } from '../crypto/unlock-coordinator'
 import { denyNewWindows } from '../net/external-links'
+import { windowBackground } from '../ui-preferences'
 import { appIconPath, installLoadRetry, installShowFallback } from './boot-guards'
 
 const log = createLogger('boot')
@@ -43,7 +44,8 @@ export function showUnlockWindow(
     frame: true,
     autoHideMenuBar: true,
     title: '墨匣 Moxia - PocketAI — 解锁',
-    backgroundColor: '#1e1e2e',
+    // 解锁时库可能还没打开：windowBackground() 读不到 KV 会退回深色，不阻断解锁流程
+    backgroundColor: windowBackground(),
     icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/unlock.js'),

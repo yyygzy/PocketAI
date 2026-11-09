@@ -5,7 +5,7 @@ import { PopupApp } from './popup/PopupApp'
 import { DetachedApp } from './detached/DetachedApp'
 import type { ModuleId } from './components/Sidebar'
 import { DETACHABLE_MODULE_IDS } from '../../shared/types'
-import { I18nProvider, useI18n } from './i18n'
+import { I18nProvider, preloadInitialLang, useI18n } from './i18n'
 import { ToastProvider } from './components/ToastProvider'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { loadAndInjectCustomCss } from './custom-css'
@@ -97,6 +97,8 @@ function renderApp(): void {
  * 任何失败都不阻断启动：读不到就按普通启动落到对话页。
  */
 async function boot(): Promise<void> {
+  // A-3：首帧无闪烁——非 zh 时先把当前语言字典预载到位（上限 150ms，超时按旧行为兜底）
+  await preloadInitialLang()
   if (!bridgeMissing && !isPopup && !isDetached) {
     const link = parseModuleDeepLink(window.location.search, window.location.hash)
     if (link) {

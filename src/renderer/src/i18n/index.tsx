@@ -63,6 +63,21 @@ function readInitialLang(): Lang {
   return 'zh'
 }
 
+/**
+ * 首帧去闪：非 zh 时在首次 render 前预载当前语言字典（只预载这一份，不预热全部）。
+ * 最多等 capMs：chunk 异常/过慢时先按 zh 兜底渲染，Provider 随后照旧补一次渲染——
+ * 与改造前的最坏情况相同，不会把启动卡死。
+ */
+export function preloadInitialLang(capMs = 150): Promise<void> {
+  const lang = readInitialLang()
+  if (lang === 'zh') return Promise.resolve()
+  const loaded = ensureLang(lang).then(() => undefined, () => undefined)
+  return Promise.race([
+    loaded,
+    new Promise<void>((resolve) => setTimeout(resolve, capMs))
+  ])
+}
+
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [lang, setLangState] = useState<Lang>(readInitialLang)
   // 懒加载字典到位后要有一次渲染，否则界面会停在 zh 兜底直到下一次无关重渲染
