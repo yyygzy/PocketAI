@@ -90,6 +90,24 @@ export const ChatModule: React.FC = () => {
   const [runsRefresh, setRunsRefresh] = useState(0)
   /** P2：刚跑完的那一轮 requestId（done 时下传 ChatView，聚焦该轮摘要） */
   const [focusRunRequestId, setFocusRunRequestId] = useState<string | null>(null)
+  /**
+   * P2：子会话返回锚点（只由聊天壳的返回入口设置）。
+   * 其它导航路径（侧栏/命令面板/搜索跳转/用量跳转）都不设置，保持原行为。
+   */
+  const [subReturnAnchor, setSubReturnAnchor] = useState<{
+    token: number
+    parentId: string
+    turnKey: string
+    requestId?: string | null
+  } | null>(null)
+  /** 进入子会话时记下的来源（child + parent + 轮次 key），返回时先校验是不是同一条来源 */
+  const subReturnFromRef = useRef<{
+    childId: string
+    parentId: string
+    turnKey: string
+    requestId?: string | null
+  } | null>(null)
+  const subReturnTokenRef = useRef(0)
   // 消息那一读失败的原因（V4-Iter-250）：不写这句，屏上留着的是上一条会话或空列表，两种都像「这里没消息」
   const [msgsReadErr, setMsgsReadErr] = useState<string | null>(null)
   const [replyToMessage, setReplyToMessage] = useState<MessageRecord | null>(null)
@@ -401,6 +419,7 @@ export const ChatModule: React.FC = () => {
   }
 
   const handleSelectAssistant = (id: string) => {
+    setSubReturnAnchor(null)
     discardCurrentIfEmpty()
     assistantIdRef.current = id
     // 同步镜像：市场「使用」会在本次渲染内紧接着调 handleNewConv，只改 state 会让它读到旧助手/旧会话
@@ -600,6 +619,7 @@ export const ChatModule: React.FC = () => {
   }, [])
 
   const handleSelectConv = (id: string) => {
+    setSubReturnAnchor(null)
     discardCurrentIfEmpty()
     userEditedTargetsRef.current = false // 切换会话时重置，允许回填
     setActiveDraft('') // 同步清空，防新会话草稿异步到达前闪现旧文本
@@ -615,6 +635,7 @@ export const ChatModule: React.FC = () => {
   // P2：`messageId` 省略时就是「按 id 打开会话」（子会话入口复用同一条跨助手口径）。
   const handleSelectMessage = useCallback(async (convId: string, messageId?: string) => {
     const openWithin = (conv?: ConversationRecord) => {
+      setSubReturnAnchor(null)
       userEditedTargetsRef.current = false
       setActiveDraft('')
       draftTextRef.current = ''
@@ -665,13 +686,47 @@ export const ChatModule: React.FC = () => {
     openWithin(target)
   }, [assistants, loadMessages, reloadConversations, restoreLastModel, discardCurrentIfEmpty, t, toast])
 
-  /** P2：轮次检查器里的子会话入口。只是「按 id 打开会话」，落点与搜索跳转同一条路（含跨助手切换） */
+  /**
+   * P2：轮次检查器里的子会话入口 —— 记下来源（父会话 + 这一轮的 key/requestId），
+   * 供聊天壳的返回入口把位置拉回原轮次；打开本身仍走搜索跳转同一条口径。
+   */
   const handleOpenSubSession = useCallback(
-    (conversationId: string) => {
+    (conversationId: string, anchor: { turnKey: string; requestId?: string | null }) => {
+      const parentId = currentConvRef.current
+      subReturnFromRef.current = parentId
+        ? { childId: conversationId, parentId, turnKey: anchor.turnKey, requestId: anchor.requestId ?? null }
+        : null
       void handleSelectMessage(conversationId)
     },
     [handleSelectMessage]
   )
+
+  /**
+   * P2：聊天壳子会话只读态的返回入口。
+   * 只有这条路径设置恢复锚点（轮次 key，requestId 兜底），其它导航不设置；
+   * 来源对不上（例如不是从摘要入口进来的）就只回父会话，不拽位置。
+   */
+  const handleBackFromSubSession = useCallback(() => {
+    const childId = currentConvId
+    const parentId = currentConvRecord?.parentConversationId ?? null
+    if (!childId || !parentId) return
+    const from = subReturnFromRef.current
+    const anchor = from && from.childId === childId && from.parentId === parentId ? from : null
+    handleSelectConv(parentId)
+    if (anchor) {
+      setSubReturnAnchor({
+        token: ++subReturnTokenRef.current,
+        parentId,
+        turnKey: anchor.turnKey,
+        requestId: anchor.requestId ?? null
+      })
+    }
+  }, [currentConvId, currentConvRecord, handleSelectConv])
+
+  /** 锚点已应用：清空，避免后续导航复用同一锚点 */
+  const handleRestoreAnchorApplied = useCallback(() => {
+    setSubReturnAnchor(null)
+  }, [])
 
   // 命令面板导航：跨助手先切助手+拉列表（不 autoSelect，防覆盖目标）再定位会话；
   // 仅助手项（无 conversationId）走标准助手切换自动选最近会话。
@@ -696,6 +751,7 @@ export const ChatModule: React.FC = () => {
     }
     const targetId = detail.conversationId
     const openWithin = (conv?: ConversationRecord) => {
+      setSubReturnAnchor(null)
       userEditedTargetsRef.current = false
       setActiveDraft('')
       draftTextRef.current = ''
@@ -1838,6 +1894,11 @@ export const ChatModule: React.FC = () => {
         runsByTurn={runsByTurn}
         runsUnread={runsUnread}
         readonly={subSessionReadonly}
+        onBackToParent={subSessionReadonly ? handleBackFromSubSession : undefined}
+        restoreTurnAnchor={
+          subReturnAnchor && currentConvId === subReturnAnchor.parentId ? subReturnAnchor : null
+        }
+        onRestoreTurnAnchorApplied={handleRestoreAnchorApplied}
         welcomeMessage={currentAssistant ? assistantDisplayWelcome(currentAssistant, t) : undefined}
         assistantName={currentAssistant ? assistantDisplayName(currentAssistant, t) : undefined}
         assistant={currentAssistant}

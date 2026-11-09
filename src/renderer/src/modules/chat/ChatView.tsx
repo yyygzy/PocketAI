@@ -98,6 +98,23 @@ export function findMatchIds(messages: MessageRecord[], keyword: string): string
 }
 
 /**
+ * P2：子会话返回锚点 → 轮次下标。轮次 key 与 `run-turn-map` 同源（首条消息 id）；
+ * key 未命中时再用 requestId 兜底。纯函数，便于单测，不依赖 DOM/滚动位置。
+ */
+export function findTurnIndexByAnchor(
+  turns: Array<{ items: Array<{ id: string }> }>,
+  anchor: { turnKey: string; requestId?: string | null },
+  runsByTurn?: ReadonlyMap<string, { requestId: string }> | null
+): number {
+  const keyOf = (turn: { items: Array<{ id: string }> }, i: number): string => turn.items[0]?.id ?? `turn-${i}`
+  let idx = turns.findIndex((turn, i) => keyOf(turn, i) === anchor.turnKey)
+  if (idx < 0 && anchor.requestId && runsByTurn) {
+    idx = turns.findIndex((turn, i) => runsByTurn.get(keyOf(turn, i))?.requestId === anchor.requestId)
+  }
+  return idx
+}
+
+/**
  * 拖拽槽（V4-Iter-319）：一个可拖按钮一格，格子里带着「关联号」。
  *
  * 为什么要有代次（§309／§311 同族，形状是「迟到响应写进共享槽」）：pointerdown 发起预写之后、
@@ -153,6 +170,16 @@ interface Props {
   runsUnread?: string | null
   /** 子代理会话只读：隐藏输入区（P2 的 `subSessionReadonly` 在 ChatModule 侧的落点） */
   readonly?: boolean
+  /** 子会话只读态的返回入口（只在聊天壳里给；旧 Agent 模块的返回不经过这里） */
+  onBackToParent?: () => void
+  /**
+   * 子会话返回锚点。**只由返回入口设置**（侧栏/命令面板/搜索跳转都不传）：
+   * 按轮次 key（与 `run-turn-map` 同源）定位，`requestId` 只在 key 未命中时兜底，
+   * 不依赖 `scrollTop` 数值（内容会变）。
+   */
+  restoreTurnAnchor?: { token: number; turnKey: string; requestId?: string | null } | null
+  /** 锚点应用后通知父级清空，避免后续导航复用同一锚点 */
+  onRestoreTurnAnchorApplied?: () => void
   welcomeMessage?: string
   assistantName?: string
   assistant: AssistantRecord | null
@@ -174,8 +201,11 @@ interface Props {
    * 本视图找到对应轮次后滚动到它并临时高亮本轮摘要（要求「done 之后聚焦到该轮摘要」）。
    */
   focusRunRequestId?: string | null
-  /** P2：从轮次里的子 run 进入对应子会话（由 ChatModule 切会话） */
-  onOpenSubSession?: (conversationId: string) => void
+  /** P2：从轮次里的子 run 进入对应子会话（由 ChatModule 切会话；带上该轮 key 供返回定位） */
+  onOpenSubSession?: (
+    conversationId: string,
+    anchor: { turnKey: string; requestId?: string | null }
+  ) => void
   /** 当前待回复的引用消息（Composer 显示引用条） */
   replyToMessage?: MessageRecord | null
   /** 设置/清除引用消息 */
@@ -222,6 +252,9 @@ export const ChatView: React.FC<Props> = ({
   runsByTurn,
   runsUnread,
   readonly = false,
+  onBackToParent,
+  restoreTurnAnchor,
+  onRestoreTurnAnchorApplied,
   welcomeMessage,
   assistantName,
   assistant,
@@ -600,6 +633,26 @@ export const ChatView: React.FC<Props> = ({
       virtualizer.scrollToIndex(lastIndex, { align: 'end' })
     }
   }, [listCount, liveColumns, agentLive, streaming, virtualizer])
+
+  /**
+   * 子会话返回定位：只认 `restoreTurnAnchor`（其它跳转不传这一项）。
+   * 放在滚底 effect 之后——先让「切会话滚底」跑完，再把位置拉回进入子会话前的那一轮。
+   * 锚点是轮次 key（与 `run-turn-map.buildTurnBoundaries` 同源），`requestId` 仅兜底；
+   * 命中后按 token 记忆，避免父会话消息流变化时反复抢滚动位置。
+   */
+  const appliedRestoreAnchorRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!restoreTurnAnchor || messages.length === 0) return
+    if (appliedRestoreAnchorRef.current === restoreTurnAnchor.token) return
+    const idx = findTurnIndexByAnchor(renderedTurns, restoreTurnAnchor, runsByTurn)
+    if (idx < 0) return
+    appliedRestoreAnchorRef.current = restoreTurnAnchor.token
+    pendingScrollBottomRef.current = false
+    isAtBottomRef.current = false
+    setAtBottom(false)
+    virtualizer.scrollToIndex(idx, { align: 'center' })
+    onRestoreTurnAnchorApplied?.()
+  }, [restoreTurnAnchor, messages, renderedTurns, runsByTurn, virtualizer, onRestoreTurnAnchorApplied])
 
   const handleScroll = useCallback(() => {
     const el = scrollBoxRef.current
@@ -1233,7 +1286,11 @@ export const ChatView: React.FC<Props> = ({
                       <AgentRunSummary
                         run={runSummary}
                         highlight={highlightRunId === runSummary.requestId}
-                        onOpenSubSession={onOpenSubSession}
+                        onOpenSubSession={
+                          onOpenSubSession
+                            ? (id) => onOpenSubSession(id, { turnKey, requestId: runSummary.requestId })
+                            : undefined
+                        }
                       />
                     )}
                     {!agentCards && turn.batches.length > 1 && (
@@ -1280,10 +1337,21 @@ export const ChatView: React.FC<Props> = ({
 
       {readonly ? (
         <div
-          className="shrink-0 px-4 py-3 text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)]"
+          className="shrink-0 px-4 py-3 text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)] flex items-center gap-3"
           data-testid="chat-sub-session-readonly"
         >
-          {t('agent.subSessionNote')}
+          {onBackToParent && (
+            <button
+              type="button"
+              onClick={onBackToParent}
+              data-testid="chat-sub-session-back"
+              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              {t('agent.backToParent')}
+            </button>
+          )}
+          <span>{t('agent.subSessionNote')}</span>
         </div>
       ) : (
         <Composer
