@@ -1,4 +1,4 @@
-// 命令面板跨模块导航总线测试：request/consume pending + 归属过滤（P1：一律落对话，isAgent 仅读兼容）
+// 命令面板跨模块导航总线测试：request/consume pending + 归属过滤（P1 起一律落对话；批次 1 摘除 isAgent 兼容）
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const store = new Map<string, string>()
@@ -39,17 +39,6 @@ describe('requestOpenConversation', () => {
     expect((dispatched[0]!.detail as { moduleId: string }).moduleId).toBe('chat')
   })
 
-  it('旧结构调用（isAgent:true）也一律落对话，只保留 isAgent 供过渡壳读取', () => {
-    requestOpenConversation({ conversationId: 'c2', assistantId: 'a2', isAgent: true })
-    expect((dispatched[0]!.detail as { moduleId: string }).moduleId).toBe('chat')
-    expect(JSON.parse(store.get('pocketai-pending-conv')!)).toEqual({
-      conversationId: 'c2',
-      assistantId: 'a2',
-      toolsEnabled: true,
-      isAgent: true
-    })
-  })
-
   it('助手项（无 conversationId）也可发起', () => {
     requestOpenConversation({ assistantId: 'a9' })
     expect(dispatched[1]!.detail).toEqual({ assistantId: 'a9', toolsEnabled: false })
@@ -58,7 +47,7 @@ describe('requestOpenConversation', () => {
 })
 
 describe('consumePendingOpenConversation', () => {
-  it('读后即清并结构化返回（isAgent 翻译为 toolsEnabled）', () => {
+  it('读后即清并结构化返回', () => {
     store.set('pocketai-pending-conv', JSON.stringify({ conversationId: 'c1', assistantId: 'a1', toolsEnabled: false }))
     expect(consumePendingOpenConversation()).toEqual({
       conversationId: 'c1',
@@ -68,13 +57,9 @@ describe('consumePendingOpenConversation', () => {
     expect(store.has('pocketai-pending-conv')).toBe(false)
   })
 
-  it('旧结构 isAgent:true → toolsEnabled:true（落对话页，不再落 Agent 模块）', () => {
+  it('旧结构 isAgent 不再识别（sessionStorage 刷新即清，无需兼容）：清除并返回 null', () => {
     store.set('pocketai-pending-conv', JSON.stringify({ conversationId: 'c1', assistantId: 'a2', isAgent: true }))
-    expect(consumePendingOpenConversation()).toEqual({
-      conversationId: 'c1',
-      assistantId: 'a2',
-      toolsEnabled: true
-    })
+    expect(consumePendingOpenConversation()).toBeNull()
     expect(store.has('pocketai-pending-conv')).toBe(false)
   })
 
@@ -94,19 +79,6 @@ describe('consumePendingOpenConversation', () => {
     expect(consumePendingOpenConversation({ assistantId: 'a1' })).toEqual({
       conversationId: 'c1',
       toolsEnabled: false
-    })
-  })
-
-  it('legacyAgentOnly：新结构原样保留给对话，旧 isAgent:true 才消费', () => {
-    store.set('pocketai-pending-conv', JSON.stringify({ conversationId: 'c1', toolsEnabled: true }))
-    expect(consumePendingOpenConversation({ legacyAgentOnly: true })).toBeNull()
-    expect(store.has('pocketai-pending-conv'), '不能被 Agent 壳偷走').toBe(true)
-    expect(consumePendingOpenConversation()).toEqual({ conversationId: 'c1', toolsEnabled: true })
-
-    store.set('pocketai-pending-conv', JSON.stringify({ conversationId: 'c2', isAgent: true }))
-    expect(consumePendingOpenConversation({ legacyAgentOnly: true })).toEqual({
-      conversationId: 'c2',
-      toolsEnabled: true
     })
   })
 

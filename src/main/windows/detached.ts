@@ -7,7 +7,7 @@ import { denyNewWindows } from '../net/external-links'
 
 /** 模块白名单：独立窗口只允许打开这些模块（settings/steward 不允许弹出） */
 export const DETACHED_MODULES = new Set([
-  'chat', 'agent', 'skills', 'knowledge', 'files', 'notes', 'translate', 'image', 'sandbox'
+  'chat', 'skills', 'knowledge', 'files', 'notes', 'translate', 'image', 'sandbox'
 ])
 
 /** 创建独立窗口渲染指定模块 */

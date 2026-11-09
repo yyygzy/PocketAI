@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
 import { useProviderData } from '../src/renderer/src/modules/agent/hooks/useProviderData'
+import { LEGACY_AGENT_MODULE_ID } from '../src/renderer/src/modules/agent/agent-shared'
 import { AgentPanel } from '../src/renderer/src/modules/agent/chat/AgentPanel'
 import { useAppStore } from '../src/renderer/src/store/app-store'
 import { zh } from '../src/renderer/src/i18n/zh'
@@ -78,12 +79,13 @@ const run = (over: Record<string, Impl> = {}) => {
   return renderHook(() => useProviderData(), { wrapper: HookProviders })
 }
 
-/** 这个 hook 重拉的唯一真路就是"切回 Agent 那一屏"（第二个 effect 为此存在）。
-    两次切换必须分开两个 act：同一个 act 里 React 会把它合并成"值没变"，effect 不会重跑。 */
+// 这个 hook 重拉的唯一真路就是"切回 Agent 那一屏"（第二个 effect 为此存在）。
+// 批次 1 摘除 agent 入口后该屏不可达，这里用壳内遗留 id 常量继续覆盖这条重拉路径（壳随批次 2 删除）。
+// 两次切换必须分开两个 act：同一个 act 里 React 会把它合并成"值没变"，effect 不会重跑。
 const backToAgent = async (): Promise<void> => {
   await act(async () => { useAppStore.getState().switchModule('settings') })
   await act(async () => {
-    useAppStore.getState().switchModule('agent')
+    useAppStore.getState().switchModule(LEGACY_AGENT_MODULE_ID)
     await new Promise((r) => setTimeout(r, 25))
   })
 }

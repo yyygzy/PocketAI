@@ -85,8 +85,8 @@ describe('导航偏好清洗（库里可能是脏值）', () => {
 })
 
 describe('退役模块过滤（P4 批次 0 前置：先过滤再校验长度/重复）', () => {
-  // 用「默认清单去掉 agent」模拟批次 1 摘除后的新默认，验证老用户 12 项配置能平滑落到 11 项
-  const allowed = DEFAULT_SIDEBAR_ORDER.filter((m) => m !== 'agent')
+  // 批次 1 起默认清单已不含 agent；用「新默认 + 退役项」模拟老用户 12 项配置能平滑落到 11 项
+  const allowed = DEFAULT_SIDEBAR_ORDER
 
   it('inspectSidebarOrder：过滤退役项后保住用户既有排序，并标记 changed', () => {
     const raw = [

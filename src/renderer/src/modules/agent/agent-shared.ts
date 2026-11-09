@@ -2,6 +2,13 @@
 import type { ChatAttachment, MessageRecord, MessageRetrieval, TodoItem, ToolCall, ToolResult, MessageSource, WebSearchDepthSetting } from '../../../../shared/types'
 import { readDelegateRoleForDisplay, type DelegateRole } from '../../../../shared/delegation-rules'
 import type { SlashCommand } from '../../utils/snippet-slash'
+import type { ModuleId } from '../../components/Sidebar'
+
+/**
+ * 批次 1（V4-Iter-461）已摘除 agent 入口，`SidebarModuleId` 不再包含 'agent'；
+ * Agent 壳仅作回滚对照保留到批次 2，壳内部仍按旧 id 自报活跃/忙碌，借这个别名通过类型检查。
+ */
+export const LEGACY_AGENT_MODULE_ID = 'agent' as unknown as ModuleId
 
 export type Tab = 'agent' | 'servers' | 'channels'
 

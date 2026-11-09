@@ -387,8 +387,8 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
           : ''
       const restoredHit = want ? list.find((x) => x.id === want) : undefined
       restoreRef.current = null
-      // 命令面板在 P1 起一律走对话模块；这里只消费旧结构 isAgent:true 的 pending（过渡守卫）
-      const pending = consumePendingOpenConversation({ assistantId, legacyAgentOnly: true })
+      // 命令面板在 P1 起一律走对话模块；Agent 壳批次 1 起已无入口，这里只保留壳内自洽的兜底消费
+      const pending = consumePendingOpenConversation({ assistantId })
       const findConv = (id: string) => list.find((x) => x.id === id) ?? archivedArr.find((x) => x.id === id)
       let chosenId: string | null = null
       let chosenLabel: string | null | undefined
@@ -421,12 +421,12 @@ export function useAgentChat(providers: ProviderRecord[], assistants?: Assistant
   useEffect(() => {
     const handler = (e: Event) => {
       const d = (e as CustomEvent<OpenConversationDetail>).detail
-      if (!d || !d.isAgent) return
+      if (!d || !d.toolsEnabled) return
       if (d.assistantId && d.assistantId !== assistantId) {
         setAssistantId(d.assistantId) // 助手 effect 重新拉列表时消费 pending
         return
       }
-      consumePendingOpenConversation({ assistantId, legacyAgentOnly: true }) // 同助手：清掉遗留 pending 防残留
+      consumePendingOpenConversation({ assistantId }) // 同助手：清掉遗留 pending 防残留
       if (d.conversationId) setConversationId(d.conversationId)
     }
     window.addEventListener(OPEN_CONVERSATION_EVENT, handler)

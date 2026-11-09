@@ -88,7 +88,6 @@ export const zh = {
 
   // ── 侧栏 ──
   'sidebar.chat': '对话',
-  'sidebar.agent': 'Agent',
   'sidebar.skills': '技能',
   'sidebar.knowledge': '知识库',
   'sidebar.files': '文件',
@@ -116,7 +115,6 @@ export const zh = {
 
   // ── 标签栏 ──
   'tab.newChat': '新对话',
-  'tab.newAgent': '新 Agent',
   'tab.skills': '技能',
   'tab.knowledge': '知识库',
   'tab.files': '文件',
@@ -141,8 +139,6 @@ export const zh = {
   'workspace.sandbox.subtitle': 'AI 生成迷你应用 · 隔离预览 · 产物管理',
   'workspace.terminal.title': '终端',
   'workspace.terminal.subtitle': '命令执行 · 输出查看 · 历史命令',
-  'workspace.agent.title': 'Work Agent',
-  'workspace.agent.subtitle': 'MCP Server · 工具调用 · 多步推理',
   'workspace.settings.title': '设置',
   'workspace.settings.subtitle': '模型服务商配置 · 应用路径',
   'workspace.steward.title': '平台管家',

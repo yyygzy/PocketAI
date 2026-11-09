@@ -359,8 +359,9 @@ describe('channels/preferences/encryption/license — 上限', () => {
 describe('侧栏导航 schema（顺序 / 固定）', () => {
   // 这条是本轮的"反向对照"：这里曾手写 11 项枚举、漏掉 12 个模块里的 'terminal'，
   // 于是**任何**合法顺序都被拒 ⇒ setSidebarOrder 永远失败并被前端回滚，侧栏拖拽排序从未生效。
+  // 批次 1 摘除 agent 后默认清单为 11 项（枚举与本表必须同步）。
   it('默认顺序必须自通过（枚举与常量清单不许漂移）', () => {
-    expect(DEFAULT_SIDEBAR_ORDER).toHaveLength(12)
+    expect(DEFAULT_SIDEBAR_ORDER).toHaveLength(11)
     expect(sidebarOrderSchema.safeParse(DEFAULT_SIDEBAR_ORDER).success).toBe(true)
     const reversed = [...DEFAULT_SIDEBAR_ORDER].reverse()
     expect(sidebarOrderSchema.safeParse(reversed).success).toBe(true)

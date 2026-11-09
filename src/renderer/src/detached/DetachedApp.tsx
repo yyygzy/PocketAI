@@ -14,7 +14,6 @@ import { APP_SHORTCUT_EVENT, type AppShortcutEventDetail } from '../hooks/useGlo
 
 const MODULE_TITLES: Record<ModuleId, string> = {
   chat: 'tab.newChat',
-  agent: 'tab.newAgent',
   skills: 'tab.skills',
   knowledge: 'tab.knowledge',
   files: 'tab.files',

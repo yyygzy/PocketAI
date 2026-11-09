@@ -3,7 +3,8 @@
 // 再广播 'pocketai:switch-module'（复用 App 既有机制）与目标事件（已挂载即时消费）。
 //
 // P1（V4-Iter-457）：不再把「Agent 会话」当第二种入口——所有会话跳转一律落到对话模块；
-// `isAgent` 仅作为旧 pending 的读取兼容保留（P4 删除）。
+// P4 批次 1（V4-Iter-461）：旧结构 `isAgent` 读写一并摘除。sessionStorage pending 只活到刷新
+// （关窗/重启即清），升级后不存在需要兼容的旧值；读到旧结构按「缺能力口径」清除并忽略。
 
 export const OPEN_CONVERSATION_EVENT = 'pocketai:open-conversation'
 export const OPEN_KB_EVENT = 'pocketai:palette-open-kb'
@@ -15,15 +16,11 @@ export interface OpenConversationDetail {
   assistantId?: string
   /** 该会话是否允许调用工具（徽标口径；打开动作本身不改变会话能力） */
   toolsEnabled?: boolean
-  /** @deprecated P1 前旧结构；只读兼容，不再写入，P4 删除 */
-  isAgent?: boolean
 }
 
 export interface ConsumePendingOptions {
   /** 只消费属于该助手的 pending（不匹配时保留，防默认助手抢先消费） */
   assistantId?: string
-  /** 只消费旧结构 `isAgent:true` 的 pending（Agent 壳过渡守卫；新结构原样留给对话） */
-  legacyAgentOnly?: boolean
 }
 
 const PENDING_CONV_KEY = 'pocketai-pending-conv'
@@ -42,10 +39,8 @@ export function requestOpenConversation(detail: OpenConversationDetail): void {
   const next: OpenConversationDetail = {
     conversationId: detail.conversationId,
     assistantId: detail.assistantId,
-    toolsEnabled: detail.toolsEnabled ?? detail.isAgent === true
+    toolsEnabled: detail.toolsEnabled === true
   }
-  // 旧调用方（过渡期测试/历史代码）显式带 isAgent 时原样落盘，供 Agent 壳的 legacy 守卫读取
-  if (detail.isAgent !== undefined) next.isAgent = detail.isAgent
   writePending(PENDING_CONV_KEY, next)
   window.dispatchEvent(
     new CustomEvent('pocketai:switch-module', { detail: { moduleId: 'chat' } })
@@ -57,8 +52,7 @@ export function requestOpenConversation(detail: OpenConversationDetail): void {
  * 消费 pending 会话跳转（读后即清，坏 JSON/字段缺失容错）。
  * - options.assistantId：给定时光要求 pending.assistantId 与之相等（或 pending 不带助手 id），
  *   不匹配保留（防目标助手未切换时，默认助手的列表 effect 抢先消费）
- * - options.legacyAgentOnly：只消费旧结构 `isAgent:true`；新结构保留给对话模块
- * - 旧结构 `isAgent:true` 读入后翻译为 `toolsEnabled:true`（不再返回 isAgent）
+ * - 只认新结构 `toolsEnabled`；旧结构 `isAgent` 不再识别（按缺能力口径清除，见文件头说明）
  */
 export function consumePendingOpenConversation(
   options: ConsumePendingOptions = {}
@@ -77,13 +71,12 @@ export function consumePendingOpenConversation(
     const assistantId = typeof d.assistantId === 'string' && d.assistantId.length > 0
       ? d.assistantId
       : undefined
-    // 两 id 皆无 = 空跳转；会话项还必须带能力口径（新结构 toolsEnabled / 旧结构 isAgent）
-    const hasMode = typeof d.isAgent === 'boolean' || typeof d.toolsEnabled === 'boolean'
+    // 两 id 皆无 = 空跳转；会话项还必须带能力口径（新结构 toolsEnabled）
+    const hasMode = typeof d.toolsEnabled === 'boolean'
     if ((!conversationId && !assistantId) || (conversationId && !hasMode)) {
       sessionStorage.removeItem(PENDING_CONV_KEY)
       return null
     }
-    if (options.legacyAgentOnly && d.isAgent !== true) return null
     if (
       options.assistantId !== undefined &&
       assistantId !== undefined &&
@@ -95,7 +88,7 @@ export function consumePendingOpenConversation(
     return {
       conversationId,
       assistantId,
-      toolsEnabled: typeof d.toolsEnabled === 'boolean' ? d.toolsEnabled : d.isAgent === true
+      toolsEnabled: d.toolsEnabled === true
     }
   } catch {
     sessionStorage.removeItem(PENDING_CONV_KEY)

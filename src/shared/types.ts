@@ -2169,7 +2169,6 @@ export type ImageResult =
 // ---------- 侧栏模块顺序 ----------
 export type SidebarModuleId =
   | 'chat'
-  | 'agent'
   | 'skills'
   | 'knowledge'
   | 'files'
@@ -2184,7 +2183,6 @@ export type SidebarModuleId =
 /** 侧栏模块默认顺序（也是非法/缺项配置的回退值） */
 export const DEFAULT_SIDEBAR_ORDER: SidebarModuleId[] = [
   'chat',
-  'agent',
   'skills',
   'knowledge',
   'files',
@@ -2211,7 +2209,6 @@ export const MAX_PINNED_SIDEBAR_MODULES = 4
  */
 export const DETACHABLE_MODULE_IDS: SidebarModuleId[] = [
   'chat',
-  'agent',
   'skills',
   'knowledge',
   'files',

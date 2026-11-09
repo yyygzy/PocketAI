@@ -5,6 +5,7 @@ import { useEffect } from 'react'
 import { matchAppShortcut, type AppShortcutId, type ConversationShortcutAction } from '../utils/shortcuts'
 import { useAppStore } from '../store/app-store'
 import { reportIpcError } from '../utils/ipc'
+import type { ModuleId } from '../components/Sidebar'
 
 /** 会话类快捷键事件名 */
 export const APP_SHORTCUT_EVENT = 'pai:app-shortcut'
@@ -14,8 +15,8 @@ export const COMMAND_PALETTE_EVENT = 'pai:command-palette'
 
 export type AppShortcutEventDetail = { action: ConversationShortcutAction }
 
-/** 响应会话类快捷键的模块 */
-const CONV_MODULES = new Set(['chat', 'agent'])
+/** 响应会话类快捷键的模块（P4 批次 1：Agent 入口已并入对话，只剩 chat） */
+const CONV_MODULES = new Set<ModuleId>(['chat'])
 
 export function useGlobalShortcuts(): void {
   useEffect(() => {
@@ -68,7 +69,7 @@ export function useGlobalShortcuts(): void {
 }
 
 /** 活动模块实例守卫：保活隐藏实例 / 同模块非活动实例不得响应会话类快捷键 */
-export function isActiveModuleInstance(moduleId: 'chat' | 'agent'): boolean {
+export function isActiveModuleInstance(moduleId: ModuleId): boolean {
   return document.querySelector(`[data-active-module="${moduleId}"]`) !== null
 }
 

@@ -10,7 +10,6 @@ const SettingsModule = lazy(() => import('../modules/settings/SettingsModule').t
 const StewardModule = lazy(() => import('../modules/steward/StewardModule').then((m) => ({ default: m.StewardModule })))
 const KnowledgeModule = lazy(() => import('../modules/knowledge/KnowledgeModule').then((m) => ({ default: m.KnowledgeModule })))
 const SkillModule = lazy(() => import('../modules/skills/SkillModule').then((m) => ({ default: m.SkillModule })))
-const AgentModule = lazy(() => import('../modules/agent/AgentModule').then((m) => ({ default: m.AgentModule })))
 const FilesModule = lazy(() => import('../modules/files/FilesModule').then((m) => ({ default: m.FilesModule })))
 const NotesModule = lazy(() => import('../modules/notes/NotesModule').then((m) => ({ default: m.NotesModule })))
 const TranslateModule = lazy(() => import('../modules/translate/TranslateModule').then((m) => ({ default: m.TranslateModule })))
@@ -34,18 +33,6 @@ const ModuleBody: React.FC<{ id: ModuleId }> = ({ id }) => {
   const { t } = useI18n()
 
   if (id === 'chat') return <ChatModule />
-  if (id === 'agent') {
-    return (
-      <div className="flex-1 overflow-hidden p-5">
-        <Header title={t('workspace.agent.title')} subtitle={t('workspace.agent.subtitle')} />
-        <div className="h-[calc(100%-2.25rem)]">
-          <Suspense fallback={<ModuleFallback />}>
-            <AgentModule />
-          </Suspense>
-        </div>
-      </div>
-    )
-  }
   if (id === 'settings') {
     return (
       <div className="flex-1 overflow-hidden p-5">

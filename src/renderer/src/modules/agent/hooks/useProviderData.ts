@@ -4,6 +4,7 @@ import type { AssistantRecord, ProviderRecord } from '../../../../../shared/type
 import { errText } from '../../../utils/error'
 import { hasIpcFailed, reportIpcError } from '../../../utils/ipc'
 import { useAppStore } from '../../../store/app-store'
+import { LEGACY_AGENT_MODULE_ID } from '../agent-shared'
 
 export function useProviderData() {
   const [providers, setProviders] = useState<ProviderRecord[]>([])
@@ -50,7 +51,7 @@ export function useProviderData() {
   // 这里得重拉一次，否则模型下拉还停在旧列表（表现为"刚拉到的模型选不到"）。
   const activeModule = useAppStore((s) => s.activeModule)
   useEffect(() => {
-    if (activeModule === 'agent') load()
+    if (activeModule === LEGACY_AGENT_MODULE_ID) load()
   }, [activeModule, load])
 
   /** 手动重新拉取某个 Provider 的模型列表；失败不阻断（设置页有完整报错） */

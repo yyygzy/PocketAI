@@ -44,7 +44,9 @@ const DISPOSED = [
   'ollama.running', 'dh.integrity.brokenDocs', 'dh.integrity.duplicates', 'dh.integrity.providerIssues',
   'wizard.installed', 'wizard.securityTitle', 'wizard.securitySubtitle', 'wizard.noRecoveryHint', 'wizard.gotoSettings',
   // MCP 表单摘掉「启用」假开关（`mcp_servers.enabled` 从不参与运行判定）后成孤儿：四语一并删除
-  'common.enable'
+  'common.enable',
+  // P4 批次 1（V4-Iter-461）摘除 Agent 侧栏入口后，这四把 UI 文案随入口一并四语删除
+  'sidebar.agent', 'tab.newAgent', 'workspace.agent.title', 'workspace.agent.subtitle'
 ]
 
 /**

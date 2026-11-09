@@ -23,7 +23,6 @@ interface SidebarProps {
 
 const MODULE_ICONS: Record<ModuleId, string> = {
   chat: '💬',
-  agent: '🤖',
   skills: '⚡',
   knowledge: '📚',
   files: '📁',

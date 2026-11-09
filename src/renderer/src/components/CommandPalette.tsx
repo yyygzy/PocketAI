@@ -25,7 +25,6 @@ const PALETTE_MODULES: ModuleId[] = [
 
 const MODULE_TITLE_KEY: Record<ModuleId, string> = {
   chat: 'tab.newChat',
-  agent: 'tab.newAgent',
   skills: 'tab.skills',
   knowledge: 'tab.knowledge',
   files: 'tab.files',

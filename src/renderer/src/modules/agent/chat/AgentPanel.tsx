@@ -18,7 +18,7 @@ import { AgentSearchBar } from '../components/AgentSearchBar'
 import { ZeroToolCallNotice } from '../components/ZeroToolCallNotice'
 import { AgentTraceList } from '../components/AgentTraceList'
 import { AgentLiveStepStrip } from '../components/AgentLiveStepStrip'
-import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages, delegateRoleLabel, isDeepSearchRunning } from '../agent-shared'
+import { formatRunDuration, agentMessagesToMarkdown, searchAgentMessages, delegateRoleLabel, isDeepSearchRunning, LEGACY_AGENT_MODULE_ID } from '../agent-shared'
 import { useToast } from '../../../components/ToastProvider'
 import { useAppStore } from '../../../store/app-store'
 import { errText } from '../../../utils/error'
@@ -66,7 +66,7 @@ export const AgentPanel: React.FC = () => {
   }
   // busy 上报：Agent 运行中豁免休眠，防止切走标签后被 LRU 卸载导致任务中断
   useEffect(() => {
-    useAppStore.getState().setModuleBusy('agent', chat.running)
+    useAppStore.getState().setModuleBusy(LEGACY_AGENT_MODULE_ID, chat.running)
   }, [chat.running])
   const tools = useAgentToolConfigs()
   // 「深度检索中」：复用运行态 chip 流那一行，不另造进度组件
@@ -197,7 +197,7 @@ export const AgentPanel: React.FC = () => {
   }
   useEffect(() => {
     const onShortcut = (ev: Event) => {
-      if (!isActiveModuleInstance('agent')) return
+      if (!isActiveModuleInstance(LEGACY_AGENT_MODULE_ID)) return
       const { action } = (ev as CustomEvent<AppShortcutEventDetail>).detail
       const r = shortcutRef.current
       if (action === 'newConv') {

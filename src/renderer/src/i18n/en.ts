@@ -88,7 +88,6 @@ export const en = {
 
   // ── Sidebar ──
   'sidebar.chat': 'Chat',
-  'sidebar.agent': 'Agent',
   'sidebar.skills': 'Skills',
   'sidebar.knowledge': 'Knowledge',
   'sidebar.files': 'Files',
@@ -116,7 +115,6 @@ export const en = {
 
   // ── Tab bar ──
   'tab.newChat': 'New chat',
-  'tab.newAgent': 'New Agent',
   'tab.skills': 'Skills',
   'tab.knowledge': 'Knowledge Base',
   'tab.files': 'Files',
@@ -141,8 +139,6 @@ export const en = {
   'workspace.sandbox.subtitle': 'AI-generated mini apps · Isolated preview · Artifacts',
   'workspace.terminal.title': 'Terminal',
   'workspace.terminal.subtitle': 'Command execution · Output viewer · History',
-  'workspace.agent.title': 'Work Agent',
-  'workspace.agent.subtitle': 'MCP Server · Tool calls · Multi-step reasoning',
   'workspace.settings.title': 'Settings',
   'workspace.settings.subtitle': 'Model providers · App paths',
   'workspace.steward.title': 'Steward',

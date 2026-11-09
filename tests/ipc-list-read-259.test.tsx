@@ -202,7 +202,7 @@ describe('② 会话列表那两发：失败对象绝不进 state', () => {
     await waitFor(() => expect(result.current.conversations).toEqual([CONV]))
     await act(async () => {
       // 走命令面板那条真路（`requestOpenConversation` 才会把 pending 存下来给助手切换 effect 消费）
-      requestOpenConversation({ isAgent: true, assistantId: 'a2', conversationId: 'arch-only-9' })
+      requestOpenConversation({ toolsEnabled: true, assistantId: 'a2', conversationId: 'arch-only-9' })
     })
     await waitFor(() => expect(result.current.conversationId).toBe('arch-only-9'))
     expect(result.current.archivedUnread, '归档那半的失败仍然要说出来')
