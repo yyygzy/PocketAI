@@ -5,7 +5,7 @@ import {
   createRunSettlementLedger,
   settleRunQueue,
   type AgentQueueItem
-} from '../src/renderer/src/modules/agent/queue-settlement'
+} from '../src/renderer/src/modules/chat/queue-settlement'
 
 interface FakeAgentEvent {
   requestId: string

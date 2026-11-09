@@ -9,7 +9,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { AgentSessionStats } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { formatRunDuration } from '../agent/agent-shared'
+import { formatRunDuration } from '../../components/agent/agent-shared'
 
 interface Props {
   stats: AgentSessionStats | null

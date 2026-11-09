@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
-import type { AgentRunIndexEntry } from '../../../../../shared/types'
-import { useI18n } from '../../../i18n'
-import { formatRunDuration } from '../agent-shared'
+import type { AgentRunIndexEntry } from '../../../../shared/types'
+import { useI18n } from '../../i18n'
+import { formatRunDuration } from './agent-shared'
 import { AgentRunInspector } from './AgentRunInspector'
 
 interface AgentRunSummaryProps {

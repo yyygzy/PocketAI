@@ -8,7 +8,7 @@
 // 聚合到单页「快速配置」，加密降级为完成页的可选卡片，目标新用户 3 分钟内跑通。
 import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
-import { assistantDisplayName, assistantDisplayDescription } from '../chat/assistant-display'
+import { assistantDisplayName, assistantDisplayDescription } from '../../utils/assistant-display'
 import { OllamaPanel } from '../../components/OllamaPanel'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'

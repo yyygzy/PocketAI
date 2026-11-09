@@ -24,7 +24,7 @@ import { useConfirm } from '../../components/ConfirmDialog'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
-import { assistantDisplayName } from '../chat/assistant-display'
+import { assistantDisplayName } from '../../utils/assistant-display'
 import { AssistantEditor } from '../chat/AssistantEditor'
 import { formatMcpLaunch, mcpSecretKeyHint } from '../agent/mcp/mcp-launch'
 import {

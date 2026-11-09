@@ -2,7 +2,7 @@
 // `shouldShowZeroToolCallNotice`，展示复用 `ZeroToolCallNotice`——两处都是唯一实现。
 // 本 hook 只管「这一轮的结果怎么落到提示上」：亮/灭、被挡下的 MCP 工具数、切会话/关闭时收场。
 import { useCallback, useState } from 'react'
-import { shouldShowZeroToolCallNotice } from '../agent/agent-shared'
+import { shouldShowZeroToolCallNotice } from '../../components/agent/agent-shared'
 
 export interface ZeroToolCallNoticeState {
   visible: boolean

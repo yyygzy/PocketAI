@@ -1,6 +1,6 @@
 // 斜杠快捷指令纯函数测试
 import { describe, it, expect } from 'vitest'
-import { filterSlashCommands, getSlashQuery, type SlashCommand } from '../src/renderer/src/modules/agent/agent-shared'
+import { filterSlashCommands, getSlashQuery, type SlashCommand } from '../src/renderer/src/components/agent/agent-shared'
 
 const commands: SlashCommand[] = [
   { name: 'summary', label: '总结', template: 'tpl-summary', kind: 'builtin' },

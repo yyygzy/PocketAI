@@ -1,6 +1,6 @@
 import React from 'react'
-import type { TraceReplayState } from '../../../../../shared/types'
-import { useI18n } from '../../../i18n'
+import type { TraceReplayState } from '../../../../shared/types'
+import { useI18n } from '../../i18n'
 
 /**
  * P0-5（渲染端只读接档）：每条 trace 回放状态的**行内徽标**（挂主行右端，不单独占一行）。

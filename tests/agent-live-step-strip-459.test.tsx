@@ -6,8 +6,8 @@
 // · 同一条实时卡片上步骤推进时，旧 chip 留、新 chip 追加，步号跟着走。
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { AgentLiveStepStrip } from '../src/renderer/src/modules/agent/components/AgentLiveStepStrip'
-import type { LiveStep } from '../src/renderer/src/modules/agent/agent-shared'
+import { AgentLiveStepStrip } from '../src/renderer/src/components/agent/AgentLiveStepStrip'
+import type { LiveStep } from '../src/renderer/src/components/agent/agent-shared'
 import { HookProviders, mountWithProviders } from './helpers/renderer'
 import { zh } from '../src/renderer/src/i18n/zh'
 

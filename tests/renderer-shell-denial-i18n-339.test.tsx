@@ -12,13 +12,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fireEvent, screen } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { AgentMessageCard } from '../src/renderer/src/modules/agent/components/AgentMessageCard'
+import { AgentMessageCard } from '../src/renderer/src/components/agent/AgentMessageCard'
 import { localizeShellDenial } from '../src/renderer/src/utils/shell-denial'
 import { zh } from '../src/renderer/src/i18n/zh'
 import { en } from '../src/renderer/src/i18n/en'
 import { ja } from '../src/renderer/src/i18n/ja'
 import { ko } from '../src/renderer/src/i18n/ko'
-import type { AgentMessage } from '../src/renderer/src/modules/agent/agent-shared'
+import type { AgentMessage } from '../src/renderer/src/components/agent/agent-shared'
 
 const DICTS: Record<string, Record<string, string>> = {
   zh: zh as unknown as Record<string, string>,

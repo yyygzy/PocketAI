@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import type { AssistantRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { assistantDisplayName, assistantDisplayDescription } from './assistant-display'
+import { assistantDisplayName, assistantDisplayDescription } from '../../utils/assistant-display'
 
 interface Props {
   assistants: AssistantRecord[]

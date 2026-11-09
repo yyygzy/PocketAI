@@ -13,13 +13,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { screen } from '@testing-library/react'
 import { mountWithProviders } from './helpers/renderer'
-import { TraceReplayStatus } from '../src/renderer/src/modules/agent/components/TraceReplayStatus'
+import { TraceReplayStatus } from '../src/renderer/src/components/agent/TraceReplayStatus'
 import { zh } from '../src/renderer/src/i18n/zh'
 
 const ROOT = path.resolve(__dirname, '..')
 // P2 / V4-Iter-459：步骤流本体在 AgentTraceList；P4 批次 2 已删 Agent 壳。
-const LIST = path.join(ROOT, 'src/renderer/src/modules/agent/components/AgentTraceList.tsx')
-const COMPONENT = path.join(ROOT, 'src/renderer/src/modules/agent/components/TraceReplayStatus.tsx')
+const LIST = path.join(ROOT, 'src/renderer/src/components/agent/AgentTraceList.tsx')
+const COMPONENT = path.join(ROOT, 'src/renderer/src/components/agent/TraceReplayStatus.tsx')
 
 const LONG = {
   replayable: zh['agent.traceReplay.replayable'],

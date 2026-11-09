@@ -1,6 +1,6 @@
 // 「深度检索中…」判定（V4-Iter-461 批次 2 删壳后恢复）
 //
-// 原先 `isDeepSearchRunning` 长在 `agent/agent-shared.ts`，唯一传参宿主是已删除的 Agent 壳。
+// 原先 `isDeepSearchRunning` 长在 `components/agent/agent-shared.ts`，唯一传参宿主是已删除的 Agent 壳。
 // 恢复时落在 `chat/` 而不是回填 `agent-shared.ts`：现在唯一的宿主与消费者都是对话壳，
 // 判定还要受 `agentMode` 约束并读联网搜索配置；回填进 agent 目录会制造「Agent 壳还在用」的错觉，
 // 也会把一个只有对话壳调的 hook 塞进已无入口的模块。`agent-shared.ts` 只留仍被复用组件的纯工具。
@@ -11,7 +11,7 @@
 //   auto  → 看末步 `deepSearch`（= 模型给 web_search 传了 depth:"deep"）
 import { useEffect, useState } from 'react'
 import type { WebSearchDepthSetting } from '../../../../shared/types'
-import type { LiveStep } from '../agent/agent-shared'
+import type { LiveStep } from '../../components/agent/agent-shared'
 import { logIpcError } from '../../utils/ipc'
 
 /** 纯判定：单一实现，ChatView 只负责把结果传给 `AgentLiveStepStrip.deepSearchRunning` */

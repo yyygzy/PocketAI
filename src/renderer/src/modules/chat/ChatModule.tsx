@@ -12,14 +12,14 @@ import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
 import { ConversationList } from './ConversationList'
 import { ChatView } from './ChatView'
-import { assistantDisplayName, assistantDisplayWelcome } from './assistant-display'
+import { assistantDisplayName, assistantDisplayWelcome } from '../../utils/assistant-display'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { useStreamSession } from './useStreamSession'
 import { useAgentQueue, MAX_QUEUE_ITEMS } from './useAgentQueue'
 import { useZeroToolCallNotice } from './useZeroToolCallNotice'
 import { useAgentModelExtras } from './useAgentModelExtras'
 import { useAgentRunInsights } from './useAgentRunInsights'
-import { isReadonlyConversation } from '../agent/sub-session'
+import { isReadonlyConversation } from './sub-session'
 import { useConversationLists } from './useConversationLists'
 import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
@@ -169,7 +169,7 @@ export const ChatModule: React.FC = () => {
     refreshToken: runsRefresh
   })
   /**
-   * P2：子代理会话只读。判据已搬到 `modules/agent/sub-session.ts`（P4 删除 `useAgentChat` 后的归处），
+   * P2：子代理会话只读。判据已搬到 `modules/chat/sub-session.ts`（P4 删除 `useAgentChat` 后的归处），
    * 这里用列表行或跨助手单条读回的那份判定，不依赖 Agent 壳的 hook。
    */
   const currentConvRecord = currentConvId

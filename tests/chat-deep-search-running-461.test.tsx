@@ -16,7 +16,7 @@ import {
   judgeDeepSearchRunning,
   useDeepSearchRunning
 } from '../src/renderer/src/modules/chat/useDeepSearchRunning'
-import type { AgentMessage, LiveStep } from '../src/renderer/src/modules/agent/agent-shared'
+import type { AgentMessage, LiveStep } from '../src/renderer/src/components/agent/agent-shared'
 import { zh } from '../src/renderer/src/i18n/zh'
 import { HookProviders, calledFns, mountWithProviders, stubPocketai } from './helpers/renderer'
 

@@ -11,9 +11,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { AgentMessageCard } from '../src/renderer/src/modules/agent/components/AgentMessageCard'
+import { AgentMessageCard } from '../src/renderer/src/components/agent/AgentMessageCard'
 import { zh } from '../src/renderer/src/i18n/zh'
-import type { AgentMessage } from '../src/renderer/src/modules/agent/agent-shared'
+import type { AgentMessage } from '../src/renderer/src/components/agent/agent-shared'
 import type { MessageSource } from '../src/shared/types'
 
 /** 跳转是跨模块事件广播，这里当真实监听方把两次广播按顺序记下来 */

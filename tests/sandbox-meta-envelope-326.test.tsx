@@ -214,7 +214,7 @@ describe('§326⑥ 闸门数字只有一份出处（输入框抄的是 schema �
   it('沙箱这一屏与安装表单那两格都用标识符，不写字面量', () => {
     for (const p of [
       'src/renderer/src/modules/sandbox/SandboxModule.tsx',
-      'src/renderer/src/modules/agent/components/HtmlBlockActions.tsx'
+      'src/renderer/src/components/agent/HtmlBlockActions.tsx'
     ]) {
       const src = read(p)
       expect(src, p).toContain('import { SANDBOX_MAX_DESC_CHARS, SANDBOX_MAX_NAME_CHARS }')

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isNearBottom, shouldStickToBottom } from '../src/renderer/src/modules/agent/components/virtual-list-utils'
+import { isNearBottom, shouldStickToBottom } from '../src/renderer/src/components/agent/virtual-list-utils'
 
 describe('isNearBottom', () => {
   it('内容不超容器时视为在底部', () => {

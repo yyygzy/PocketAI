@@ -1,9 +1,9 @@
 // 轮次检查器（P2 / V4-Iter-459）：摘要展开后才读库，步骤流 / 每步 token / 变更清单 / replay / 子会话
 import React, { useEffect, useState } from 'react'
-import type { AgentRunIndexEntry, AgentTraceRecord } from '../../../../../shared/types'
-import { useI18n } from '../../../i18n'
-import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
-import { errText } from '../../../utils/error'
+import type { AgentRunIndexEntry, AgentTraceRecord } from '../../../../shared/types'
+import { useI18n } from '../../i18n'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 import { AgentTraceList } from './AgentTraceList'
 
 interface AgentRunInspectorProps {

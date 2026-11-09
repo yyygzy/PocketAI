@@ -2,8 +2,8 @@
 // 两条「为什么」互斥（判定在 agent-shared 的 zeroCallNoticeFlags，便于单测）：
 // 已知有 MCP 工具被 `'*'` 挡下时只说被挡——那时更可能的原因是授权，不是端点。
 import React from 'react'
-import { useI18n } from '../../../i18n'
-import { zeroCallNoticeFlags } from '../agent-shared'
+import { useI18n } from '../../i18n'
+import { zeroCallNoticeFlags } from './agent-shared'
 
 interface Props {
   mcpHeldBack: number

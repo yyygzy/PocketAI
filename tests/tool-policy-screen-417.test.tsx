@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
-import { ToolPolicyDialog } from '../src/renderer/src/modules/agent/components/ToolPolicyDialog'
+import { ToolPolicyDialog } from '../src/renderer/src/components/agent/ToolPolicyDialog'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import type { ToolPolicySnapshot } from '../src/shared/types'
 

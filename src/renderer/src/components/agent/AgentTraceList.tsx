@@ -5,12 +5,12 @@ import type {
   ConversationRecord,
   WorkspaceChangeDegradedReason,
   WorkspaceChangeEntry
-} from '../../../../../shared/types'
-import { parseWorkspaceChangeSet } from '../../../../../shared/workspace-changes'
-import { useI18n } from '../../../i18n'
-import { formatBytes } from '../../../utils/format'
-import { formatStepTokens } from '../../../utils/agent-step-tokens'
-import { formatRunDuration } from '../agent-shared'
+} from '../../../../shared/types'
+import { parseWorkspaceChangeSet } from '../../../../shared/workspace-changes'
+import { useI18n } from '../../i18n'
+import { formatBytes } from '../../utils/format'
+import { formatStepTokens } from '../../utils/agent-step-tokens'
+import { formatRunDuration } from './agent-shared'
 import { TraceReplayStatus } from './TraceReplayStatus'
 
 interface AgentTraceListProps {

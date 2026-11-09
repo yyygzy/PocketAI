@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest'
 import { screen } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { FsWriteActions } from '../src/renderer/src/modules/agent/components/FsWriteActions'
+import { FsWriteActions } from '../src/renderer/src/components/agent/FsWriteActions'
 import { zh } from '../src/renderer/src/i18n/zh'
 
 const L = (key: string): string => (zh as unknown as Record<string, string>)[key]!

@@ -11,7 +11,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { HtmlBlockActions } from '../src/renderer/src/modules/agent/components/HtmlBlockActions'
+import { HtmlBlockActions } from '../src/renderer/src/components/agent/HtmlBlockActions'
 import { zh } from '../src/renderer/src/i18n/zh'
 
 const ZH = zh as unknown as Record<string, string>
@@ -61,8 +61,8 @@ const SITES: Array<[string, string, string]> = [
   ['../src/renderer/src/modules/skills/SkillModule.tsx', 'const saved = await window.pocketai.saveSkill({', 'onSaved(saved)'],
   ['../src/renderer/src/modules/skills/CapabilityCenter.tsx', 'const copy = await window.pocketai.saveSkill({', "toast.success(t('skill.market.duplicated')"],
   ['../src/renderer/src/modules/sandbox/SandboxModule.tsx', 'createSandboxFile(newName, newHtml)', "setNewName('')"],
-  ['../src/renderer/src/modules/agent/components/HtmlBlockActions.tsx', "createSandboxFile(t('sandbox.agentDefaultName'), htmlBlock)", 'setSavedToSandbox(true)'],
-  ['../src/renderer/src/modules/agent/components/HtmlBlockActions.tsx', 'createSandboxFile(appName, htmlBlock, {', 'setInstallingApp(false)'],
+  ['../src/renderer/src/components/agent/HtmlBlockActions.tsx', "createSandboxFile(t('sandbox.agentDefaultName'), htmlBlock)", 'setSavedToSandbox(true)'],
+  ['../src/renderer/src/components/agent/HtmlBlockActions.tsx', 'createSandboxFile(appName, htmlBlock, {', 'setInstallingApp(false)'],
   ['../src/renderer/src/components/AttachmentGrid.tsx', 'writeImageClipboard(src)', 'setCopied(true)']
 ]
 /** 文件名单由点位表导出：往表里加文件忘了加行（或反之）就红，不留两份会漂移的清单 */

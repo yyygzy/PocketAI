@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import type { ToolPolicyEntry, ToolPolicySnapshot } from '../../../../../shared/types'
-import type { ToolPolicyReasonCode } from '../../../../../shared/tool-policy-reasons'
-import { useI18n } from '../../../i18n'
-import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
-import { errText } from '../../../utils/error'
+import type { ToolPolicyEntry, ToolPolicySnapshot } from '../../../../shared/types'
+import type { ToolPolicyReasonCode } from '../../../../shared/tool-policy-reasons'
+import { useI18n } from '../../i18n'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { errText } from '../../utils/error'
 
 /**
  * 工具策略总览（P0-3a／P0-3c）。

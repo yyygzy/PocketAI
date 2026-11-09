@@ -1,6 +1,6 @@
 // 运行中排队 / 插队（V4-Iter-238 迁入对话壳，P4 批次 0）：对话壳唯一实现。
 //
-// 纯结算规则留在 `../agent/queue-settlement`（幂等账本、归位、自动发送判据都在那里），
+// 纯结算规则留在 `./queue-settlement`（幂等账本、归位、自动发送判据都在那里），
 // 这里只做「宿主无关」的状态与 IPC 编排：宿主壳提供会话身份、当前 requestId、发送入口与
 // 前置条件。
 //
@@ -15,7 +15,7 @@ import {
   createRunSettlementLedger,
   settleRunQueue,
   type AgentQueueItem
-} from '../agent/queue-settlement'
+} from './queue-settlement'
 
 export type { AgentQueueItem }
 

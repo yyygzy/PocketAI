@@ -11,7 +11,7 @@ import { chatSendFailureText, hasIpcFailed, ipcFailText, logIpcError, reportIpcE
 import { LoadFailNotice } from '../components/LoadFailNotice'
 import { errText } from '../utils/error'
 import { useCopyFeedback } from '../hooks/useCopyFeedback'
-import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../modules/agent/agent-shared'
+import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../components/agent/agent-shared'
 import type { AssistantRecord, ChatAttachment, PopupPayload, ProviderRecord, SelectionAction } from '../../../shared/types'
 import {
   SELECTION_ACTIONS,

@@ -7,9 +7,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { AgentMessageCard } from '../src/renderer/src/modules/agent/components/AgentMessageCard'
+import { AgentMessageCard } from '../src/renderer/src/components/agent/AgentMessageCard'
 import { zh } from '../src/renderer/src/i18n/zh'
-import type { AgentMessage } from '../src/renderer/src/modules/agent/agent-shared'
+import type { AgentMessage } from '../src/renderer/src/components/agent/agent-shared'
 
 const L = (key: string): string => (zh as unknown as Record<string, string>)[key]!
 const RESTORE = L('agent.fsWrite.restore')

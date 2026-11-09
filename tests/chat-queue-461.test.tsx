@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
 import { mountWithProviders, pocketaiCalls, stubPocketai } from './helpers/renderer'
 import { Composer } from '../src/renderer/src/modules/chat/Composer'
-import type { AgentQueueItem } from '../src/renderer/src/modules/agent/queue-settlement'
+import type { AgentQueueItem } from '../src/renderer/src/modules/chat/queue-settlement'
 
 /** agentMode=true 会挂载工具配置块（P4 批次 0）⇒ 这些用例需要预置四发读数 */
 const stubToolReads = (extra: Record<string, unknown> = {}): void => {

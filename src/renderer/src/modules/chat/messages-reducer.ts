@@ -1,6 +1,6 @@
 // Agent 对话消息流 reducer：把 SSE 风格的 step/chunk 事件归并进不可变消息数组
 import type { AgentStepEvent } from '../../../../shared/types'
-import type { AgentMessage } from '../agent/agent-shared'
+import type { AgentMessage } from '../../components/agent/agent-shared'
 
 export type MessagesAction =
   | { type: 'load'; messages: AgentMessage[] }

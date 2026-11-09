@@ -19,7 +19,7 @@ import {
   assistantDisplayDescription,
   assistantDisplayWelcome,
   builtinAssistantNameById
-} from '../src/renderer/src/modules/chat/assistant-display'
+} from '../src/renderer/src/utils/assistant-display'
 import { AssistantRail } from '../src/renderer/src/modules/chat/AssistantRail'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 

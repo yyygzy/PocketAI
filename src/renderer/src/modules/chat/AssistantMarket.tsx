@@ -7,7 +7,7 @@ import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { errText } from '../../utils/error'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
 import { useToast } from '../../components/ToastProvider'
-import { assistantDisplayName, assistantDisplayDescription, assistantDisplayWelcome } from './assistant-display'
+import { assistantDisplayName, assistantDisplayDescription, assistantDisplayWelcome } from '../../utils/assistant-display'
 
 interface Props {
   providers: ProviderRecord[]

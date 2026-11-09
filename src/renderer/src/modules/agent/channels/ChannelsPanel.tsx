@@ -11,7 +11,7 @@ import type {
 } from '../../../../../shared/types'
 import { CHANNEL_TYPES } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
-import { assistantDisplayName } from '../../chat/assistant-display'
+import { assistantDisplayName } from '../../../utils/assistant-display'
 import { useToast } from '../../../components/ToastProvider'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'

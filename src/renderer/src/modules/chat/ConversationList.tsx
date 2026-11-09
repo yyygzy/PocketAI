@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import type { AssistantRecord, ConversationRecord, ConversationGroupRecord, MessageSearchResult, StarredMessageItem } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { assistantDisplayName } from './assistant-display'
+import { assistantDisplayName } from '../../utils/assistant-display'
 import {
   filterVisibleConversations,
   isAllVisibleSelected,

@@ -1,5 +1,5 @@
-import { useI18n } from '../../../i18n'
-import { delegateRoleLabel, type LiveStep } from '../agent-shared'
+import { useI18n } from '../../i18n'
+import { delegateRoleLabel, type LiveStep } from './agent-shared'
 
 interface AgentLiveStepStripProps {
   /** 由 `reduceLiveSteps` 归约的 chip 流（与 Agent 调试台同源，不另起解析） */

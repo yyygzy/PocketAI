@@ -1,11 +1,11 @@
 // 最终回答里的 ```html 代码块操作：存沙箱临时文件 / 安装为迷你应用
 import React, { useState } from 'react'
-import { useI18n } from '../../../i18n'
-import { SANDBOX_MAX_DESC_CHARS, SANDBOX_MAX_NAME_CHARS } from '../../../../../shared/schemas/sandbox'
-import { useToast } from '../../../components/ToastProvider'
-import { requestSandboxOpenApps } from '../../sandbox/SandboxModule'
-import { errText } from '../../../utils/error'
-import { hasIpcFailed, ipcFailText } from '../../../utils/ipc'
+import { useI18n } from '../../i18n'
+import { SANDBOX_MAX_DESC_CHARS, SANDBOX_MAX_NAME_CHARS } from '../../../../shared/schemas/sandbox'
+import { useToast } from '../../components/ToastProvider'
+import { requestSandboxOpenApps } from '../../modules/sandbox/SandboxModule'
+import { errText } from '../../utils/error'
+import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
 
 export const HtmlBlockActions: React.FC<{ htmlBlock: string }> = ({ htmlBlock }) => {
   const { t } = useI18n()

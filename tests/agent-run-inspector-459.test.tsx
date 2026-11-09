@@ -7,7 +7,7 @@
 // · 轮次里的子 run 能进对应子会话（按钮把 conversationId 交给回调）。
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { AgentRunSummary } from '../src/renderer/src/modules/agent/components/AgentRunSummary'
+import { AgentRunSummary } from '../src/renderer/src/components/agent/AgentRunSummary'
 import { mountWithProviders, stubPocketai, calledFns } from './helpers/renderer'
 import type { AgentRunIndexEntry, AgentTraceRecord } from '../src/shared/types'
 

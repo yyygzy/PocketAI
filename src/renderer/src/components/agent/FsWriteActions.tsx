@@ -7,10 +7,10 @@
 //  · **没留快照时不出现按钮**（`snapshotId` 为 null），并说一句为什么——出现一个注定失败的按钮更糟；
 //  · 失败走 toast + `role="status"`，不冒充读数（§228 那条口径：操作类反馈不是"读不到"）。
 import React, { useState } from 'react'
-import { useI18n } from '../../../i18n'
-import { useToast } from '../../../components/ToastProvider'
-import { errText } from '../../../utils/error'
-import { hasIpcFailed, ipcFailureText, logIpcError } from '../../../utils/ipc'
+import { useI18n } from '../../i18n'
+import { useToast } from '../../components/ToastProvider'
+import { errText } from '../../utils/error'
+import { hasIpcFailed, ipcFailureText, logIpcError } from '../../utils/ipc'
 
 interface FsWriteResult {
   path?: unknown

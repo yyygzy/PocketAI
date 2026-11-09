@@ -4,7 +4,7 @@
 // 键**逐字枚举**而不是拼模板：`i18n-dead-keys` 对 `assistant.builtin.${id}.name` 这种动态族是整族免检的
 // （§156 那次 `judgement.reason.${code}` 就是这么漏过 94 把键的）——写死成 Record 里每一项，
 // 扫描器看得见每一把键、也能反向钉"不许少一把"。
-import type { AssistantRecord } from '../../../../shared/types'
+import type { AssistantRecord } from '../../../shared/types'
 
 export const BUILTIN_ASSISTANT_IDS = [
   'asst-default',

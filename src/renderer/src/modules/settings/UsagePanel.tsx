@@ -4,7 +4,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
-import { builtinAssistantNameById } from '../chat/assistant-display'
+import { builtinAssistantNameById } from '../../utils/assistant-display'
 import { useToast } from '../../components/ToastProvider'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { StaleValueNotice } from '../../components/StaleValueNotice'

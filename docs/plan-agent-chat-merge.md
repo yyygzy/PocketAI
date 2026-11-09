@@ -645,7 +645,7 @@ WHERE agent_mode = 1
 | 入口与模块挂载 | `src/renderer/src/components/Sidebar.tsx`、`src/renderer/src/components/Workspace.tsx` |
 | 对话壳 | `src/renderer/src/modules/chat/ChatModule.tsx`、`ChatView.tsx`、`Composer.tsx`、`ConversationList.tsx`、`useStreamSession.ts`、`messages-reducer.ts`、`useAgentRunInsights.ts`、`agent-mode.ts`、`send-payload.ts` |
 | Agent 壳 | `src/renderer/src/modules/agent/AgentModule.tsx`、`chat/AgentPanel.tsx`、`hooks/useAgentChat.ts`、`components/SessionRail.tsx`、`components/AgentComposer.tsx` |
-| 共享运行组件 | `src/renderer/src/modules/agent/components/AgentMessageCard.tsx`、`TraceReplayStatus.tsx`、`agent-shared.ts` |
+| 共享运行组件 | `src/renderer/src/components/agent/AgentMessageCard.tsx`、`TraceReplayStatus.tsx`、`agent-shared.ts` |
 | 配置面板 | `src/renderer/src/modules/agent/mcp/McpPanel.tsx`、`src/renderer/src/modules/agent/channels/ChannelsPanel.tsx` |
 | 设置入口 | `src/renderer/src/modules/settings/SettingsModule.tsx` |
 | 主进程链路 | `src/main/chat/chat-service.ts`、`src/main/agent/engine.ts`、`src/main/db/repositories/conversation.repo.ts`、`src/main/db/repositories/agent-trace.repo.ts`、`src/main/db/database.ts` |
@@ -661,7 +661,9 @@ WHERE agent_mode = 1
 ### 11.1 目标
 
 - 对话壳不再从 `modules/agent/hooks` 直接引 hook；`agent/hooks` 不再反向依赖 `modules/chat`（P5 批次 1 后 `useAgentRunInsights` 已随搬家把 `../../chat/run-turn-map` 收成 `./run-turn-map`）。
-- 只搬 hook；共享卡片、设置面板与运行时组件一律留在 `agent/`。
+- 批次 3 修订：共享卡片不再「一律留在 `agent/`」。`agent/` 最终只保留设置面板（MCP/Channels）与挂载入口 `ui.tsx`；对话壳、浮窗都要用的共享组件与纯工具统一搬到中立的 `src/renderer/src/components/agent/`，`agent/` 不得再有任何 `agent → chat` 反向依赖。
+  - 推翻原口径的原因：`agent/` 已不再是 Agent 业务壳，只剩设置面板；把共享卡片继续留在 `agent/components` 会让「设置面板的私有组件」和「对话页的渲染件」混在同一目录，且 `popup/` 引用它时必须跨到 `modules/agent`。中立目录让 `chat/`、`popup/`、设置面板都只向下依赖组件层。
+  - 边界：只搬「被跨模块复用」的渲染件与纯工具；只服务单一模块的实现仍留在该模块（`queue-settlement.ts`、`sub-session.ts` 只服务对话壳，归 `chat/`）。
 
 ### 11.2 文件清单
 
@@ -669,15 +671,18 @@ WHERE agent_mode = 1
 |---|---|---|
 | 1 | `agent/hooks/messages-reducer.ts` → `chat/messages-reducer.ts`；`agent/hooks/useAgentRunInsights.ts` → `chat/useAgentRunInsights.ts`（`../../chat/run-turn-map` 收成 `./run-turn-map`） | `chat/useStreamSession.ts`、`chat/ChatModule.tsx`；`tests/messages-reducer-truncate.test.ts`、`tests/agent-delegate-role-label.test.tsx` |
 | 2 | `agent/hooks/useAgentToolConfigs.ts` → `chat/useAgentToolConfigs.ts`；`agent/components/AgentToolBars.tsx` → `chat/AgentToolBars.tsx` | `chat/ComposerToolConfig.tsx`；`tests/helpers/renderer.tsx`、`ipc-agent-config-unread-257`、`ipc-failure-t1-214`、`ipc-judged-takeover-250`、`keyboard-submit-340`、`renderer-agent-shell-hint`、`renderer-hint-title-410`、`renderer-websearch-b3`、`renderer-websearch-searxng-407`、`truncate-hint-title-gate-410`、`enter-composing-gate-340` |
+| 3 | `agent/agent-shared.ts` 与 11 个共享组件/工具（`AgentMessageCard`、`HtmlBlockActions`、`FsWriteActions`、`AgentLiveStepStrip`、`AgentRunSummary`、`AgentRunInspector`、`AgentTraceList`、`TraceReplayStatus`、`ZeroToolCallNotice`、`ToolPolicyDialog`、`virtual-list-utils`）→ `components/agent/`；`agent/queue-settlement.ts`、`agent/sub-session.ts` → `chat/`；`chat/assistant-display.ts` → `utils/assistant-display.ts`（消 `ChannelsPanel → chat` 反向依赖，选整文件平移这一侵入最小的做法） | 18 个 src 文件（`chat/ChatView.tsx`、`ChatModule.tsx`、`messages-reducer.ts` 等，`popup/PopupApp.tsx`、`components/CommandPalette.tsx`、`agent/channels/ChannelsPanel.tsx` 等）；21 个用例的路径锚点 |
 
 ### 11.3 验收
 
 - `npm run typecheck` 0 错误；每批运行相关用例与 `waitfor-gate-364`、`i18n-dead-keys`、`i18n-parity`、`i18n-interpolation-361`。
 - 受影响用例与闸门的路径锚点全部更新；每个搬走的 hook 至少有一条行为用例打在新入口；基线按用例数计，改动后不得减少。
 - 批次 2 追加 `npm run build`，核对 chunk 无异常增长；行尾保持 LF。
+- 批次 3 追加 `npm run build` 前后对照：先在 HEAD 干净工作区构建记录产物，再在搬迁后的工作区构建比对，主 chunk 的文件名、体积、SHA-256 必须一致；行尾保持 LF，不留 re-export 转发壳。
 
 ### 11.4 不做
 
 - 不合并统一 runtime（如 `useAgentRuntime`）；不新建 `chat/hooks/`，`chat/` 继续平铺。
 - 不搬共享卡片（`AgentMessageCard`、`AgentLiveStepStrip`、`AgentRunSummary`、`ZeroToolCallNotice`、`ToolPolicyDialog` 等）；批次 2 的 `AgentToolBars` 是随工具配置 hook 一起搬的唯一例外。
+  - 批次 3 修订：本条已推翻。共享卡片与纯工具统一搬到中立目录 `src/renderer/src/components/agent/`（见 §11.1 的原因与边界）；`MCP`／`Channels` 面板与 `ui.tsx` 仍不搬。
 - 不搬 `MCP`／`Channels` 面板（留在 `agent/`，只挂设置）；不改行为、不改测试断言口径、不改数据库与配置，本阶段没有需要迁移的数据。

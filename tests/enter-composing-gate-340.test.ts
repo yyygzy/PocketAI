@@ -129,7 +129,7 @@ describe('② 全仓现数与两桶身份证', () => {
       'components/OllamaPanel.tsx::doPull,setCustomModel',
       'components/SnippetButton.tsx::insertWithVars',
       'components/SnippetVarsDialog.tsx::insert,onCancel',
-      'modules/agent/components/AgentMessageCard.tsx::onEditingChange,submit',
+      'components/agent/AgentMessageCard.tsx::onEditingChange,submit',
       'modules/chat/AgentToolBars.tsx::patchWsConfig',
       'modules/chat/ConversationList.tsx::commit,setEditing',
       'modules/chat/ConversationList.tsx::commitNote,setNoteEditing',

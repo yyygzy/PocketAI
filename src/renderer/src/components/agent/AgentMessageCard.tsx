@@ -1,19 +1,19 @@
 // Agent 对话消息卡：用户 / tool_call / tool_result / assistant（含思考折叠、沙箱操作）
 // React.memo：流式 chunk 只更新对应消息对象，其余卡片引用不变直接跳过重渲染
 import React, { useEffect, useRef, useState } from 'react'
-import { useI18n } from '../../../i18n'
-import { CopyButton } from '../../../components/CopyButton'
-import { AttachmentGrid } from '../../../components/AttachmentGrid'
-import { extractFirstHtmlBlock, delegateRoleLabel, type AgentMessage } from '../agent-shared'
-import { readDelegateRoleForDisplay } from '../../../../../shared/delegation-rules'
+import { useI18n } from '../../i18n'
+import { CopyButton } from '../../components/CopyButton'
+import { AttachmentGrid } from '../../components/AttachmentGrid'
+import { extractFirstHtmlBlock, delegateRoleLabel, type AgentMessage } from './agent-shared'
+import { readDelegateRoleForDisplay } from '../../../../shared/delegation-rules'
 import { HtmlBlockActions } from './HtmlBlockActions'
 import { FsWriteActions } from './FsWriteActions'
-import { writeClipboard } from '../../../utils/clipboard'
-import { localizeShellDenial } from '../../../utils/shell-denial'
-import { ReminderMenu } from '../../../components/ReminderMenu'
-import { requestSourceJump } from '../../knowledge/source-jump'
+import { writeClipboard } from '../../utils/clipboard'
+import { localizeShellDenial } from '../../utils/shell-denial'
+import { ReminderMenu } from '../../components/ReminderMenu'
+import { requestSourceJump } from '../../modules/knowledge/source-jump'
 // 与 Chat 侧同构的提醒回调：repeatRule 由预设浮层给出（循环预设才带，一次性为 undefined）
-type RemindHandler = (id: string, fireAt: number, repeatRule?: import('../../../../../shared/types').ReminderRepeatRule) => void
+type RemindHandler = (id: string, fireAt: number, repeatRule?: import('../../../../shared/types').ReminderRepeatRule) => void
 
 const cardBtnClass = 'text-[10px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors'
 

@@ -1,6 +1,6 @@
 // Agent 运行实时步骤条 liveSteps 归约纯函数测试
 import { describe, expect, it } from 'vitest'
-import { reduceLiveSteps, LIVE_STEPS_MAX, type LiveStep } from '../src/renderer/src/modules/agent/agent-shared'
+import { reduceLiveSteps, LIVE_STEPS_MAX, type LiveStep } from '../src/renderer/src/components/agent/agent-shared'
 
 const ev = (stepIndex: number, type: string, toolName?: string, args?: string, callId = 'tc1') => ({
   stepIndex,

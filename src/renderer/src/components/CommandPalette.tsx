@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { useAppStore } from '../store/app-store'
 import { COMMAND_PALETTE_EVENT } from '../hooks/useGlobalShortcuts'
-import { assistantDisplayName, assistantDisplayDescription } from '../modules/chat/assistant-display'
+import { assistantDisplayName, assistantDisplayDescription } from '../utils/assistant-display'
 import {
   buildConversationItems,
   filterPaletteItems,
