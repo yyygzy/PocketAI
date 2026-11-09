@@ -1,16 +1,14 @@
-// 批量导出那句进度，两屏各有一格（V4-Iter-330）
+// 批量导出那句进度，对话页侧栏有一格（V4-Iter-330）
 //
-// `buildBatchExportFiles` 的 `onProgress` 一直是死参数（两个调用方都不传）⇒ 50 个 PDF 那趟约 50 秒，
-// 屏上零话。现在两屏各挂一份父级读数：ChatModule / AgentPanel 传 `batchExportProgress`，
-// ConversationList / SessionRail 在**常驻那一格**渲染（多选那条底栏一点就退多选态，进度挂那儿等于没挂）。
-// 同一句话挂两个槽位 ⇒ 判据按槽位各取各的值、各数各的次数（第 32 条）。
+// `buildBatchExportFiles` 的 `onProgress` 一直是死参数（调用方不传）⇒ 50 个 PDF 那趟约 50 秒，
+// 屏上零话。现在 ChatModule 传 `batchExportProgress`，
+// ConversationList 在**常驻那一格**渲染（多选那条底栏一点就退多选态，进度挂那儿等于没挂）。
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import fs from 'node:fs'
 import { HookProviders, stubPocketai } from './helpers/renderer'
 import { ConversationList } from '../src/renderer/src/modules/chat/ConversationList'
-import { SessionRail } from '../src/renderer/src/modules/agent/components/SessionRail'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { AssistantRecord, ConversationRecord } from '../src/shared/types'
 
@@ -67,55 +65,15 @@ describe('① ConversationList（对话页侧栏）那一格', () => {
   })
 })
 
-describe('② SessionRail（Agent 页侧栏）那一格', () => {
-  const mount = (progress: { done: number; total: number } | null): void => {
-    render(
-      <HookProviders>
-        <SessionRail
-          assistants={asst()}
-          assistantId="a1"
-          onAssistantChange={() => {}}
-          conversations={[conv('c1'), conv('c2')]}
-          conversationId="c1"
-          onSelect={() => {}}
-          onNew={() => {}}
-          onDelete={() => {}}
-          onRename={() => {}}
-          batchExportProgress={progress}
-        />
-      </HookProviders>
-    )
-  }
-
-  it('在飞 ⇒ 那格印同一句话（两屏同键同形，但各取各的槽位值）', () => {
-    mount({ done: 12, total: 50 })
-    const cell = screen.getByText(PROGRESS_TEXT(12, 50))
-    expect(cell.closest('[data-export-batch-progress]')).not.toBeNull()
-    expect(screen.queryAllByText(PROGRESS_TEXT(12, 50))).toHaveLength(1)
-  })
-
-  it('不在飞 ⇒ 那格不存在', () => {
-    mount(null)
-    expect(document.querySelector('[data-export-batch-progress]')).toBeNull()
-  })
-})
-
-describe('③ 两份读数都真在传（不是组件里挂了个没人喂的格子）', () => {
-  it('两个父级各传一次 batchExportProgress、各接一次 onProgress', () => {
+describe('③ 这份读数真在传（不是组件里挂了个没人喂的格子）', () => {
+  it('父级传一次 batchExportProgress、接一次 onProgress', () => {
     const CHAT = read('src/renderer/src/modules/chat/ChatModule.tsx')
-    const AGENT = read('src/renderer/src/modules/agent/chat/AgentPanel.tsx')
-    for (const [src, name] of [[CHAT, 'ChatModule'], [AGENT, 'AgentPanel']] as const) {
-      expect(src.match(/batchExportProgress=\{batchProgress\}/g) ?? [], `${name} 传进度`).toHaveLength(1)
-      expect(src.match(/onProgress: \(done, total\) => setBatchProgress\(\{ done, total \}\)/g) ?? [], `${name} 接 onProgress`).toHaveLength(1)
-    }
+    expect(CHAT.match(/batchExportProgress=\{batchProgress\}/g) ?? [], 'ChatModule 传进度').toHaveLength(1)
+    expect(CHAT.match(/onProgress: \(done, total\) => setBatchProgress\(\{ done, total \}\)/g) ?? [], 'ChatModule 接 onProgress').toHaveLength(1)
   })
 
-  it('反向钉：这句话在两份组件源码里各只出现一次（不许同屏两格）', () => {
-    for (const p of [
-      'src/renderer/src/modules/chat/ConversationList.tsx',
-      'src/renderer/src/modules/agent/components/SessionRail.tsx'
-    ]) {
-      expect(read(p).match(/chat\.exportBatchProgress/g) ?? [], p).toHaveLength(1)
-    }
+  it('反向钉：这句话在组件源码里只出现一次（不许同屏两格）', () => {
+    const p = 'src/renderer/src/modules/chat/ConversationList.tsx'
+    expect(read(p).match(/chat\.exportBatchProgress/g) ?? [], p).toHaveLength(1)
   })
 })

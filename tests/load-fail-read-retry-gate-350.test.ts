@@ -6,9 +6,9 @@
 // ——那两种写法在 DOM 上看起来一模一样。所以每处钉三件：**testid＋紧跟在那句之后的那颗 button＋onClick 的 initializer 里
 // 指的是哪一个具名 loader**；反向再钉一颗：这个新后缀 `-read-retry` 只许出现在名单里，别处为 0。
 //
-// 名单为什么是这三十五处（§357 又补一颗：对话页服务商那一发以前根本不判信封，修好之后这张脸才存在）（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
-//   · 现数（§357 重跑同一把尺子 `data/tmp/scope-354.py`）：62 处 `<LoadFailNotice>` 调用点，
-//     **50 处旁边已有同级重试键**（＝§354 那版的 31＋§354 收的 8＋§355 的 10＋§357 的 1）、**12 处没有**——
+// 名单为什么是这三十一处（§357 又补一颗：对话页服务商那一发以前根本不判信封，修好之后这张脸才存在）（分诊尺子＝"这一发有没有用户在这屏上**命令得动**的重读入口"）：
+//   · 现数（§357 重跑同一把尺子 `data/tmp/scope-354.py`）：58 处 `<LoadFailNotice>` 调用点，
+//     **46 处旁边已有同级重试键**（＝§354 那版的 31＋§354 收的 8＋§355 的 10＋§357 的 1）、**12 处没有**——
 //     那 12 处全部已写过判语：10 处"同屏已有出口"（名单末尾那段）＋本批新判 2 处（`PopupApp` 的模型清单＝同屏那颗「拉模型」
 //     就是 `fetchModels`；`PopupApp` 的载荷＝`applyPayload` 会把文本写回输入框，重试是重放有副作用的动作）⇒ **本批之后不再有"没判过的脸"**；
 //     27 的构成＝24 颗带字面 testid＋1 颗 testid 走变量（`AssistantEditor.tsx` 那句一键工厂 `listFailLine`
@@ -59,10 +59,6 @@ const SITES: Site[] = [
   { file: 'modules/settings/DataHealthPanel.tsx', testid: 'data-health-read-retry', loader: 'load(true)' },
   { file: 'modules/settings/UsagePanel.tsx', testid: 'usage-summary-read-retry', loader: 'reload' },
   // §351：第二档那两处（那一发的重拉在别的文件里、要递进来），另加两处 §350 漏数的事实上已有具名 loader 的脸
-  { file: 'modules/agent/chat/AgentPanel.tsx', testid: 'agent-providers-read-retry', loader: 'load()' },
-  { file: 'modules/agent/chat/AgentPanel.tsx', testid: 'agent-assistants-read-retry', loader: 'load()' },
-  { file: 'modules/agent/components/SessionRail.tsx', testid: 'session-rail-active-read-retry', loader: 'onReloadLists' },
-  { file: 'modules/agent/components/SessionRail.tsx', testid: 'session-rail-archived-read-retry', loader: 'onReloadLists' },
   { file: 'modules/settings/SettingsModule.tsx', testid: 'license-read-retry', loader: 'onChange' },
   { file: 'modules/settings/UsagePanel.tsx', testid: 'price-models-read-retry', loader: 'reloadModels' },
   // §352：回读后又找出四处"重拉者已具名、这一支同屏真没出口"（其余"要先抽 loader"的仍然等 §353）

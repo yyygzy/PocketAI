@@ -2762,7 +2762,7 @@ class AgentEngine {
     })
 
     // 子 run 的事件不外发：144 只让用户看见"父派了谁、拿回什么"（角色标签与子步展开是 146 的界面项），
-    // 而 useAgentChat 第一行就按 requestId 过滤，转发过来也只会静默丢掉。
+    // 而渲染层第一行就按 requestId 过滤，转发过来也只会静默丢掉。
     // 最终回答从 emit 里接 —— run() 没有返回值，DONE/ERROR 就是它既有的出口。
     let finalContent = ''
     let childError = ''

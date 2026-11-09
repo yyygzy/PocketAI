@@ -1,21 +1,19 @@
 // @vitest-environment jsdom
-// V4-Iter-268：输入框那圈六发**惰性清单读**——失败要逐发点名说一句，且各屏的出口形状按各屏自己有没有天然重发入口定。
+// V4-Iter-268：输入框那圈四发**惰性清单读**——失败要逐发点名说一句，且各屏的出口形状按各屏自己有没有天然重发入口定。
 //
-// 闸门量出来的现数（`data/tmp/silent-42.json`）里这六处同一形状：`if (!hasIpcFailed(v)) 写进 ref/state`，
+// 闸门量出来的现数里这四处同一形状：`if (!hasIpcFailed(v)) 写进 ref/state`，
 // 失败侧什么都不做 ⇒ @ 菜单里的知识库组、/ # 菜单里的用户片段组、上下文面板里的技能／知识库芯片**整组消失**，
 // 屏上既不说"没读到"也不说"没有"（把通道故障演成"这里没东西"，§222 那一族的最后一种脸）。
 //
 // 重试键配不配，**按那一屏自己有没有天然入口**判（不是套模板）：
 //  · 上下文面板那两发——再点那一格就是重发（`=== null` 那道守卫留着）⇒ 不加键；
-//  · AgentComposer 的片段——失败时 ref 仍是 null ⇒ 退出再进触发态自己会重拉 ⇒ 不加键；
-//  · 两个 Composer 的知识库——ref 被**占位写成 `[]`**（§221 量过：清回 null 会每次渲染重拉、输入框卡死转圈），
+//  · 对话页 Composer 的知识库——ref 被**占位写成 `[]`**（§221 量过：清回 null 会每次渲染重拉、输入框卡死转圈），
 //    所以再打字也不会重拉 ⇒ 句子必须自带一颗重试键，否则那是句没出路的话。
 import { describe, it, expect, beforeAll } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
-import { agentToolsStub, mountWithProviders, calledFns, stubPocketai } from './helpers/renderer'
+import { mountWithProviders, calledFns, stubPocketai } from './helpers/renderer'
 import { ChatConfigBar } from '../src/renderer/src/modules/chat/ChatConfigBar'
 import { Composer } from '../src/renderer/src/modules/chat/Composer'
-import { AgentComposer } from '../src/renderer/src/modules/agent/components/AgentComposer'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type {
   AssistantRecord,
@@ -190,77 +188,3 @@ describe('② 对话页输入框（Composer）：两发的 ref 都被占位写�
   })
 })
 
-describe('③ Agent 输入框（AgentComposer）：同一颗知识库那句自带键', () => {
-  const att = {
-    attachments: [],
-    dragOver: false,
-    addFiles: () => { /* 本批不判附件 */ },
-    addAttachment: () => { /* 同上 */ },
-    removeAt: () => { /* 同上 */ },
-    clear: () => { /* 同上 */ },
-    openPicker: () => { /* 同上 */ },
-    fileInputProps: {},
-    dropZoneProps: {},
-    pasteProps: {}
-  }
-  const props = {
-    running: false,
-    canSend: true,
-    att: att as unknown as Parameters<typeof AgentComposer>[0]['att'],
-    onSend: () => { /* 本批不判发送 */ },
-    onAbort: () => { /* 同上 */ },
-    queue: [],
-    queueFull: false,
-    onQueue: () => { /* 同上 */ },
-    onInterject: () => { /* 同上 */ },
-    onDropQueued: () => { /* 同上 */ },
-    onSendQueuedNow: () => { /* 同上 */ },
-    // §399②a：这两项搬进了那颗「+」，本批只判清单那两发，故一律摆"读到了"那一档（全 null ⇒ 不长出新的句子）
-    textProtocolAvailable: true,
-    textProtocolForced: false,
-    textProtocolUnread: null,
-    onToggleTextProtocol: () => { /* 本批不判写入 */ },
-    onRetryTextProtocol: () => { /* 同上 */ },
-    workspaceDir: '',
-    workspaceUnread: null,
-    onPickWorkspace: () => { /* 同上 */ },
-    onRetryWorkspace: () => { /* 同上 */ },
-    tools: agentToolsStub()
-  }
-  const type = (v: string): void => {
-    fireEvent.change(document.querySelector('[data-agent-composer-input]') as Element, { target: { value: v } })
-  }
-  const mount = (over: Record<string, Impl> = {}): void => {
-    stubPocketai({ listKnowledgeBases: () => [KB], listPromptSnippets: () => [SNIPPET], ...over })
-    mountWithProviders(<AgentComposer {...props} />)
-  }
-
-  it('知识库那发挂 ⇒ 那句＋键；点它成功 ⇒ 退场且通道共两次', async () => {
-    let first = true
-    mount({
-      listKnowledgeBases: () => {
-        if (first) { first = false; return FAIL }
-        return [KB]
-      }
-    })
-    type('@')
-    await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.kbList'), REASON)]), MOUNT_BUDGET)
-    fireEvent.click(screen.getByTestId('agent-composer-kbs-retry'))
-    await waitFor(() => expect(alerts()).toEqual([]), MOUNT_BUDGET)
-    expect(callsOf('listKnowledgeBases')).toBe(2)
-  })
-
-  it('片段那发挂 ⇒ 那句在、没有键（这一屏的出口是"退出再进触发态"）', async () => {
-    mount({ listPromptSnippets: () => FAIL })
-    type('/')
-    await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.snippetList'), REASON)]), MOUNT_BUDGET)
-    expect(screen.queryByTestId('agent-composer-kbs-retry')).toBeNull()
-  })
-
-  it('反向对照：两发都读到 ⇒ 零 alert，斜杠菜单里片段照常摆', async () => {
-    mount()
-    type('/')
-    await waitFor(() => expect(screen.getByText('#探针片段')).toBeTruthy(), MOUNT_BUDGET)
-    expect(alerts()).toEqual([])
-  })
-})

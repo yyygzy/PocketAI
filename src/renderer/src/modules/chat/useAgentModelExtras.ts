@@ -1,10 +1,9 @@
 // 模型级配置（P4 批次 0 迁移）：上下文窗口覆盖 / 备用模型链 / 文本协议点名。
 //
-// 这三项原来只长在 Agent 壳（`useAgentChat` 内联实现 + `AgentModelBar` 徽标 + 「+」菜单）。
-// 迁移口径要求「不留第二份实现」，因此状态、挂载读、写回与三态话术全部收在这里：
-// · Agent 壳的 `useAgentChat` 现在调用本 hook；
-// · 对话壳的 `ChatModelExtras` 也调用本 hook；
-// · 展示层只保留一份 `ModelExtrasBadges`（AgentModelBar 与对话壳顶栏共用）。
+// 这三项原来只长在 Agent 壳（P4 批次 2 已删）。迁移口径要求「不留第二份实现」，
+// 因此状态、挂载读、写回与三态话术全部收在这里：
+// · 对话壳的 `ChatModelExtras` 调用本 hook；
+// · 展示层只保留一份 `ModelExtrasBadges`。
 //
 // 三条贯穿约束（照搬原实现，不重新发明）：
 //  ① 读不到 ≠ 没设过：窗口表/备用表/文本协议清单读失败时保留 unread 原因，界面给"读不到"那张脸；

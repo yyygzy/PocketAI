@@ -333,7 +333,7 @@ export const ChatModule: React.FC = () => {
 
   /**
    * P4 批次 0：运行中排队 / 插队（V4-Iter-238 迁入对话壳）。
-   * 唯一实现是 `useAgentQueue`；Agent 壳的 `useAgentChat` 也调用它，这里只是第二个宿主。
+   * 唯一实现是 `useAgentQueue`，本组件是唯一宿主。
    * 队列项按会话归属，切会话不丢；只有「允许调用工具」的会话会产出排队项。
    */
   const {
@@ -1820,7 +1820,7 @@ export const ChatModule: React.FC = () => {
       })
       // §331：这一发的成功形状是 `{ok:true,id,fireAt}`、失败是 safeHandle 折出来的 `{ok:false}`——
       // 改前整个返回值不接，时间已过／超过 30 天／待发达上限时照样派发角标事件＋弹「已设置提醒」，
-      // 而库里根本没建（姊妹调用点 AgentPanel 同链路早已判过）。失败就说不建成的原因，且不再刷新角标。
+      // 而库里根本没建（P4 批次 2 前 Agent 壳的同链路调用点早已判过）。失败就说不建成的原因，且不再刷新角标。
       if (hasIpcFailed(r)) {
         toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
         return

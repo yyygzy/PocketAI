@@ -196,7 +196,6 @@ describe('渲染层的回落必须安全（不抛、不留半截回码、不泄�
 describe('走翻译那几个文件的调用点：接线形状闸门', () => {
   const files = [
     '../src/renderer/src/modules/chat/ChatModule.tsx',
-    '../src/renderer/src/modules/agent/hooks/useAgentChat.ts',
     '../src/renderer/src/popup/PopupApp.tsx',
     '../src/renderer/src/modules/translate/TranslateModule.tsx'
   ]
@@ -210,12 +209,13 @@ describe('走翻译那几个文件的调用点：接线形状闸门', () => {
     }
   }
 
-  it('正好八处在调这两个 helper（少一处＝闸门空转，多一处＝没登记）', () => {
+  it('正好六处在调这两个 helper（少一处＝闸门空转，多一处＝没登记）', () => {
     // 4 → 7：V4-Iter-217 给 TranslateModule 的删除翻译／清空历史／删除术语表词条三处补上了失败判定，
     // 用的是本文件立的同一个收口 helper（而不是 ipcFailText），这样将来这些通道回码化时界面不用再改。
     // 7 → 8：V4-Iter-238 的插队失败那一发（RUN_NOT_FOUND 与 zod 挡下来都走同一条口）。
-    expect(sites.length).toBe(8)
-    expect(sites.map((s) => s.arg).sort()).toEqual(['msg', 'msg', 'msg', 'msg', 'r', 'r', 'r', 'term'])
+    // 8 → 6：P4 批次 2 删掉 Agent 壳后，useAgentChat 那两处随文件一起消失。
+    expect(sites.length).toBe(6)
+    expect(sites.map((s) => s.arg).sort()).toEqual(['msg', 'msg', 'r', 'r', 'r', 'term'])
   })
 
   it('每处都带 `|| t(…)` 兜底（error 为空时不许弹一句空 toast）', () => {

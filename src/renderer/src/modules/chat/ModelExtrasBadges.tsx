@@ -1,7 +1,7 @@
 // 模型级徽标（P4 批次 0 迁移，唯一展示实现）：上下文窗口 / 备用模型链 / 文本协议。
 //
-// 原来这组徽标只在 Agent 壳的 `AgentModelBar` 里；对话壳顶栏要同一套能力，故把「徽标 + 小编辑器」
-// 整段抽到这里：`AgentModelBar` 与对话壳 `ChatModelExtras` 都渲染本组件，不存在第二套徽标。
+// 原来这组徽标只在 Agent 壳里（P4 批次 2 已删）；对话壳顶栏需要同一套能力，故把「徽标 + 小编辑器」
+// 整段抽到这里：对话壳 `ChatModelExtras` 渲染本组件，不存在第二套徽标。
 // 遮罩/拒绝话术与三态脸（未设 / 读不到 / 已设）逐字沿用原实现，未新增 i18n key。
 import React, { useState } from 'react'
 import type { ProviderRecord } from '../../../../shared/types'

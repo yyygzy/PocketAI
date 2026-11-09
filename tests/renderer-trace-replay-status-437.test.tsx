@@ -17,10 +17,8 @@ import { TraceReplayStatus } from '../src/renderer/src/modules/agent/components/
 import { zh } from '../src/renderer/src/i18n/zh'
 
 const ROOT = path.resolve(__dirname, '..')
-// P2 / V4-Iter-459：步骤流本体从 AgentPanel 搬进 AgentTraceList（AgentPanel 只剩挂载），
-// 断言随实现搬到新位置；不写成"两处任一处成立"——那会允许残留第二份渲染而不报错。
+// P2 / V4-Iter-459：步骤流本体在 AgentTraceList；P4 批次 2 已删 Agent 壳。
 const LIST = path.join(ROOT, 'src/renderer/src/modules/agent/components/AgentTraceList.tsx')
-const PANEL = path.join(ROOT, 'src/renderer/src/modules/agent/chat/AgentPanel.tsx')
 const COMPONENT = path.join(ROOT, 'src/renderer/src/modules/agent/components/TraceReplayStatus.tsx')
 
 const LONG = {
@@ -109,8 +107,6 @@ describe('§437 回放状态：行内徽标（三档事实＋一档判定不可�
     // 位置身份：紧跟在主行的 tokens 之后（同一个 `line` 片段里），不是行外独立节点
     expect(statusIdx).toBeGreaterThan(src.indexOf('{stepTokens &&'))
     expect(src.split('<TraceReplayStatus replay={tr.replay} />').length - 1).toBe(1)
-    // 反向锚点：旧位置不再留第二份渲染（搬移而不是复制）
-    expect(fs.readFileSync(PANEL, 'utf-8')).not.toContain('<TraceReplayStatus')
     // 布局身份：ml-auto＋shrink-0＋nowrap＝靠右、不压工具名、不换行加高
     const comp = fs.readFileSync(COMPONENT, 'utf-8')
     expect(comp).toContain('ml-auto shrink-0 whitespace-nowrap')

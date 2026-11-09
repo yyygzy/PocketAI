@@ -317,7 +317,8 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     //  计数含义：105 = "5 改写 + 2 登记"之后仍在数里的动态调用点总数，不是"闸门通过"。
     //  §429：技能市场那个无挂载点的孤儿文件删除后，它带来的 2 个动态调用点一并退场 ⇒ 105→103（只减不增）。
     //  本次 C 类收口：DataHealthPanel `dh.integrity.role.${p.role}` 随 KbProviderRole 联合类型改字面表 ⇒ −1；103→100。
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(100)
+    //  P4 批次 2（V4-Iter-461）：删 Agent 壳时 `AgentPanel` 里 `t(\`agent.${...}\`)` 那 1 发随之退场 ⇒ 100→99（只减不增）。
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(99)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {

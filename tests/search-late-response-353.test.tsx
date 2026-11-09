@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// V4-Iter-353（旧四条之④）：两条侧栏的全文搜索补上"哪一轮"的归属判据。
+// V4-Iter-353（旧四条之④）：对话页侧栏的全文搜索补上"哪一轮"的归属判据。
 //
 // 缺陷形状＝§309／§311／§348 那一族的又一种到货方式：**debounce 合不掉在飞那发**。
 // 200ms 只把"同一串字还没打完"的请求合并掉，用户打字跨过这个间隔就会有两发同名通道在飞；
@@ -16,7 +16,6 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor, act } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { ConversationList } from '../src/renderer/src/modules/chat/ConversationList'
-import { SessionRail } from '../src/renderer/src/modules/agent/components/SessionRail'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { AssistantRecord, ConversationRecord, MessageSearchResult } from '../src/shared/types'
 
@@ -168,63 +167,5 @@ describe('对话页侧栏（ConversationList）', () => {
     expect(btn, '那颗按钮不该消失（新关键词那页仍是整页，还有下一页）').toBeTruthy()
     expect(btn!.disabled, '在飞标志没被清 ⇒ 守卫把 setLoadingMore(false) 也挡住了').toBe(false)
     expect(btn!.textContent).toBe(L('chat.searchLoadMore'))
-  })
-})
-
-describe('Agent 页侧栏（SessionRail）', () => {
-  const mount = (): void => {
-    stubPocketai({
-      listConversationGroups: () => [],
-      searchMessages: queueSearch
-    })
-    mountWithProviders(
-      <SessionRail
-        assistants={asst()}
-        assistantId="a1"
-        onAssistantChange={() => {}}
-        conversations={[conv('c1'), conv('c2')]}
-        conversationId="c1"
-        onSelect={() => {}}
-        onNew={() => {}}
-        onDelete={() => {}}
-        onRename={() => {}}
-      />
-    )
-  }
-  const box = (): HTMLElement => screen.getByPlaceholderText(L('chat.searchPlaceholder')) as HTMLElement
-
-  it('正向对照：只有一发在飞时结果上屏', async () => {
-    mount()
-    fireEvent.change(box(), { target: { value: '甲' } })
-    await settleMs(SETTLE)
-    await waitFor(() => expect(dispatches('甲')).toBe(1))
-    answer('甲', 0, [hit('栏-命中-甲')])
-    await settleMs(0)
-    expect(screen.getByText('栏-命中-甲')).toBeTruthy()
-  })
-
-  it('两发在飞：旧关键词那份晚到，结果与「搜索中」都不许动（与对话页同一份规矩、各自钉一遍）', async () => {
-    mount()
-    fireEvent.change(box(), { target: { value: '甲' } })
-    await settleMs(SETTLE)
-    await waitFor(() => expect(dispatches('甲')).toBe(1))
-    fireEvent.change(box(), { target: { value: '甲乙' } })
-    await settleMs(SETTLE)
-    // §364：dispatch 计数不等于「搜索中」已上屏（要先看见在飞态那一格，迟一帧就会假红）
-    await waitFor(() => {
-      expect(dispatches('甲乙')).toBe(1)
-      expect(screen.getByText(L('chat.searching'))).toBeTruthy()
-    })
-
-    // 迟到的那一发先落地：一个字都不该写，也不该把「搜索中」清掉
-    answer('甲', 0, [hit('栏-命中-甲-迟到')])
-    await settleMs(0)
-    expect(screen.queryByText('栏-命中-甲-迟到'), 'Agent 侧栏的迟到那发把当前结果盖掉了').toBeNull()
-    expect(screen.getByText(L('chat.searching')), '迟到那发清了在飞标志，屏上会换成"没有找到"').toBeTruthy()
-
-    answer('甲乙', 0, [hit('栏-命中-甲乙')])
-    await settleMs(0)
-    expect(screen.getByText('栏-命中-甲乙')).toBeTruthy()
-    expect(screen.queryByText(L('chat.searching'))).toBeNull()
   })
 })

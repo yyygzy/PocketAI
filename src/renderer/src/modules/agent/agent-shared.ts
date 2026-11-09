@@ -1,16 +1,7 @@
-// Agent 模块共享：类型、常量与纯函数（MCP 面板 / Agent 对话 / Channels 共用）
-import type { ChatAttachment, MessageRecord, MessageRetrieval, TodoItem, ToolCall, ToolResult, MessageSource, WebSearchDepthSetting } from '../../../../shared/types'
+// Agent 模块共享：类型、常量与纯函数（MCP 面板 / 对话壳 / Channels 共用）
+import type { ChatAttachment, MessageRecord, MessageRetrieval, TodoItem, ToolCall, ToolResult, MessageSource } from '../../../../shared/types'
 import { readDelegateRoleForDisplay, type DelegateRole } from '../../../../shared/delegation-rules'
 import type { SlashCommand } from '../../utils/snippet-slash'
-import type { ModuleId } from '../../components/Sidebar'
-
-/**
- * 批次 1（V4-Iter-461）已摘除 agent 入口，`SidebarModuleId` 不再包含 'agent'；
- * Agent 壳仅作回滚对照保留到批次 2，壳内部仍按旧 id 自报活跃/忙碌，借这个别名通过类型检查。
- */
-export const LEGACY_AGENT_MODULE_ID = 'agent' as unknown as ModuleId
-
-export type Tab = 'agent' | 'servers' | 'channels'
 
 export interface AgentMessage {
   id: string
@@ -29,21 +20,6 @@ export interface AgentMessage {
   /** 本轮知识库检索事实（有没有检索/命中几条/失败）；旧消息没有 */
   retrieval?: MessageRetrieval
   dbId?: string // 对应 DB message.id（用于删除单条消息；live 占位卡需等主进程回传）
-}
-
-/**
- * 「重新生成」：给定某条助手消息，定位它之前最近一条可重跑的用户消息（卡片 id）。
- * 可重跑条件：role=user、有 dbId（已持久化才能截断）、文本非空。
- * 找不到返回 null（如运行中的占位卡、前面全是工具卡）。
- */
-export function findRerunSourceId(messages: AgentMessage[], assistantId: string): string | null {
-  const idx = messages.findIndex((m) => m.id === assistantId)
-  if (idx <= 0) return null
-  for (let i = idx - 1; i >= 0; i--) {
-    const m = messages[i]!
-    if (m.role === 'user' && m.dbId && m.text.trim()) return m.id
-  }
-  return null
 }
 
 // ---------- 斜杠快捷指令 ----------
@@ -104,21 +80,6 @@ function readDeepSearchArg(name?: string, raw?: string): boolean {
 }
 
 /**
- * 运行态是否应显示「深度检索中…」：复用运行态 chip 行，不另造进度组件。
- * 口径与主进程覆写一致——配置 quick/deep 强制生效；auto 才看模型参数里点的 depth。
- */
-export function isDeepSearchRunning(
-  running: boolean,
-  step: LiveStep | undefined,
-  setting: WebSearchDepthSetting
-): boolean {
-  if (!running || !step || step.type !== 'tool_call' || step.toolName !== 'web_search') return false
-  if (setting === 'deep') return true
-  if (setting === 'quick') return false
-  return step.deepSearch === true
-}
-
-/**
  * liveSteps 归约（纯函数，可单测）：把 step 事件追加到 chip 流。
  * - 不在白名单的类型（user/todo/final）返回原数组（引用不变，不触发重渲染）
  * - 同一 stepIndex 的 thought 占位→正式更新会去重为一条（同 index 同类型同 callId 覆盖）
@@ -165,95 +126,6 @@ export function filterSlashCommands(commands: SlashCommand[], query: string): Sl
   const q = query.trim().toLowerCase()
   if (!q) return commands
   return commands.filter((c) => c.name.toLowerCase().startsWith(q))
-}
-
-/** 工具调用参数 JSON 美化；非合法 JSON 原样返回 */
-function prettyJson(raw: string | undefined): string {
-  if (!raw) return ''
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
-  } catch {
-    return raw
-  }
-}
-
-/**
- * 把内存中的 Agent 消息序列化为 Markdown（供一键复制；文件导出走主进程 renderConversationToMarkdown）。
- * - user/assistant：正文原文保留（可能本身含 Markdown）
- * - tool：工具名 + 参数/输出代码块；错误标记
- * - 流式占位空卡（无正文/无工具信息）跳过
- */
-export function agentMessagesToMarkdown(messages: AgentMessage[], title: string): string {
-  const lines: string[] = [`# ${title}`, '']
-  for (const m of messages) {
-    if (m.role === 'tool') {
-      const name = m.toolResult?.name ?? m.toolCall?.function.name ?? 'tool'
-      lines.push(`## 🔧 工具：${name}`, '')
-      const args = m.toolResult?.arguments ?? m.toolCall?.function.arguments
-      if (args) {
-        lines.push('**参数：**', '', '```json', prettyJson(args), '```', '')
-      }
-      if (m.toolResult?.content) {
-        if (m.toolResult.isError) lines.push('**结果（错误）：**', '')
-        lines.push('```', m.toolResult.content, '```', '')
-      }
-      lines.push('---', '')
-      continue
-    }
-
-    const label = m.role === 'user' ? '👤 用户' : '🤖 助手'
-    const hasBody =
-      m.text.trim() ||
-      (m.attachments && m.attachments.length > 0)
-    if (!hasBody) continue
-
-    lines.push(`## ${label}`, '')
-    if (m.attachments && m.attachments.length > 0) {
-      for (const a of m.attachments) {
-        lines.push(`- 📎 ${a.name}${a.type === 'image' ? '（图片）' : ''}${a.type === 'kb' ? '（知识库）' : ''}`)
-      }
-      lines.push('')
-    }
-    if (m.isError) lines.push('> ⚠️ 该消息生成失败', '')
-    if (m.text.trim()) lines.push(m.text.trim(), '')
-    lines.push('---', '')
-  }
-  return lines.join('\n')
-}
-
-// ---------- 会话内消息搜索 ----------
-
-export interface MessageSearchHit {
-  /** 命中消息在 messages 数组中的下标（时间顺序） */
-  index: number
-  /** 命中消息 id */
-  id: string
-  /** 命中角色 */
-  role: AgentMessage['role']
-}
-
-/** 取出消息参与搜索的全部文本（正文 + 工具名/参数/输出） */
-function searchableText(m: AgentMessage): string {
-  const parts = [m.text]
-  if (m.toolCall) parts.push(m.toolCall.function.name, m.toolCall.function.arguments)
-  if (m.toolResult) parts.push(m.toolResult.name, m.toolResult.arguments ?? '', m.toolResult.content)
-  return parts.join('\n')
-}
-
-/**
- * 会话内搜索：大小写不敏感子串匹配，按时间顺序返回命中（正文/工具名/参数/输出）。
- * query 为空或仅空白时返回空数组。
- */
-export function searchAgentMessages(messages: AgentMessage[], query: string): MessageSearchHit[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return []
-  const hits: MessageSearchHit[] = []
-  messages.forEach((m, index) => {
-    if (searchableText(m).toLowerCase().includes(q)) {
-      hits.push({ index, id: m.id, role: m.role })
-    }
-  })
-  return hits
 }
 
 // ---------- 附件读取 ----------

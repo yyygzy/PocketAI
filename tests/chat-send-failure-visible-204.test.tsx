@@ -1,22 +1,20 @@
 // V4-Iter-204：B104 真机①抓到的漏点——主发送链写成 `.then((r) => { void r })`，
 // safeHandle 的 `{ok:false}` 于是被咽掉：预算硬阻断时聊天页一条提示也没有、转圈不消失，
 // 而 196 那条文件级闸门因为 regenerate/resend 带着 guard 照样全绿。
-// 这里按**行为**钉住三个入口（回码文案／Agent hook／划词浮窗），源码区域的逐点核对在 ipc-failure-visible-196.test.ts。
+// 这里按**行为**钉住两个入口（回码文案／划词浮窗；Agent hook 那一半随 P4 批次 2 删壳退场），
+// 源码区域的逐点核对在 ipc-failure-visible-196.test.ts。
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { act, renderHook } from '@testing-library/react'
-import { HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
-import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
+import { fireEvent, screen } from '@testing-library/react'
+import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { PopupApp } from '../src/renderer/src/popup/PopupApp'
 import { chatSendFailureText } from '../src/renderer/src/utils/ipc'
 import { zh } from '../src/renderer/src/i18n/zh'
 import { en } from '../src/renderer/src/i18n/en'
 import { ja } from '../src/renderer/src/i18n/ja'
 import { ko } from '../src/renderer/src/i18n/ko'
-import type { AssistantRecord, ConversationRecord, ProviderRecord } from '../src/shared/types'
 
 // main 侧抛的原始串（assertBudget 的中文尾段），界面只许拿回码换四语。
 // v56：回码第三段带**本轮估算所用的币种**，渲染层据此选符号（不再写死 ¥）。
@@ -91,85 +89,6 @@ describe('回码 → 界面文案（全项目只翻译这一次）', () => {
         expect(s.replace(/\s+/g, '').toLowerCase(), `${name}/${key} ⇒ ${s}`).not.toContain((tail + tail).toLowerCase())
       }
     }
-  })
-})
-
-describe('Agent 页发起失败：运行态停下 ＋ toast 给文案', () => {
-  const PROVIDERS = [
-    { id: 'p1', name: 'P', type: 'openai', enabled: true, models: ['m1'] }
-  ] as unknown as ProviderRecord[]
-  const ASSISTANTS = [{ id: 'a1', name: 'a1', isBuiltin: false, isPinned: false }] as unknown as AssistantRecord[]
-  const CONV_RECORD = { id: 'c1', assistantId: 'a1', title: 't', modelLabel: null } as unknown as ConversationRecord
-
-  let sendReturn: () => unknown = () => ({ ok: true })
-
-  beforeEach(() => {
-    sendReturn = () => ({ ok: true })
-    stubPocketai({
-      getUiPrefs: () => ({ ok: true, data: {} }),
-      setUiPrefs: (patch: Record<string, unknown>) => ({ ok: true, data: patch }),
-      listConversations: () => [CONV_RECORD],
-      listMessages: () => [],
-      getLatestRunStats: () => null,
-      getSessionStats: () => null,
-      getAgentTextProtocol: () => [],
-      // §234：模型栏那颗「上下文窗口」挂载要读这张表（桩给空表=没有一台设过）
-      getModelContextWindows: () => ({}),
-      // §237：挂载时要读这张备用表（桩给空表＝没有一台设过备用）
-      getFallbackTargets: () => ({}),
-      setFallbackTarget: () => ({ targets: {} }),
-      getConversation: () => null,
-      listChildConversations: () => [],
-      setModelContextWindow: () => ({ windows: {} }),
-      sendMessage: () => sendReturn(),
-      abortAgent: () => ({ ok: true }),
-      onAgentStep: () => () => {},
-      onAgentChunk: () => () => {},
-      onAgentDone: () => () => {},
-      onAgentError: () => () => {},
-      onConversationTitle: () => () => {}
-    })
-  })
-
-  async function mountAndSend(): Promise<{ current: ReturnType<typeof useAgentChat> }> {
-    const { result } = renderHook(() => useAgentChat(PROVIDERS, ASSISTANTS), { wrapper: HookProviders })
-    act(() => result.current.setAssistantId('a1'))
-    await waitFor(() => expect(result.current.conversationId).toBe('c1'))
-    act(() => result.current.changeProvider('p1'))
-    act(() => result.current.setModel('m1'))
-    await act(async () => {
-      void result.current.send('你好', [])
-    })
-    return result
-  }
-
-  it('{ok:false} 带预算回码 ⇒ running 复位，toast 是专门文案', async () => {
-    sendReturn = () => ({ ok: false, error: RAW_DAILY })
-    const result = await mountAndSend()
-    expect(result.current.running).toBe(false)
-    expect(screen.getByText(BLOCKED_DAILY)).toBeTruthy()
-  })
-
-  it('反向对照：{ok:true} 时运行态保持、一条 toast 也不弹', async () => {
-    const result = await mountAndSend()
-    expect(result.current.running).toBe(true)
-    expect(screen.queryByRole('status')).toBeNull()
-  })
-
-  it('浮动 promise 那两条入口（resume／截断重跑）也接得住：同一条收口', async () => {
-    sendReturn = () => ({ ok: false, error: 'CHAT_NO_TARGET:未选择模型' })
-    const { result } = renderHook(() => useAgentChat(PROVIDERS, ASSISTANTS), { wrapper: HookProviders })
-    act(() => result.current.setAssistantId('a1'))
-    await waitFor(() => expect(result.current.conversationId).toBe('c1'))
-    act(() => result.current.changeProvider('p1'))
-    act(() => result.current.setModel('m1'))
-    // resume 内部就是 send(...)，且调用方写的是 void chat.resume()
-    await act(async () => {
-      void result.current.resume()
-    })
-    expect(result.current.running).toBe(false)
-    expect(screen.getByText(zh['chat.errNoTarget'])).toBeTruthy()
-    expect(screen.queryByText('CHAT_NO_TARGET')).toBeNull()
   })
 })
 

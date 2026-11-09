@@ -85,12 +85,11 @@ describe('调用点按契约判返回值（V4-Iter-196 的四处）', () => {
 // ChatModule 里有 send／regenerate／resend 三条链共用 `if (hasIpcFailed(r))` 这串字符，
 // 主发送链写成 `.then((r) => { void r })` 时文件里仍留着另外两条的 guard ⇒ CI 全绿、真机零反馈。
 // 所以按调用点切区域，一条一条判。
-describe('chat 发起类通道：五个入口逐个核对（V4-Iter-204）', () => {
+describe('chat 发起类通道：四个入口逐个核对（V4-Iter-204）', () => {
   const CHAINS: Array<[string, string, string]> = [
     ['../src/renderer/src/modules/chat/ChatModule.tsx', '.sendMessage(', 'onChatSendFailed'],
     ['../src/renderer/src/modules/chat/ChatModule.tsx', '.regenerateMessage(', 'onChatSendFailed'],
     ['../src/renderer/src/modules/chat/ChatModule.tsx', '.resendMessage(', 'onChatSendFailed'],
-    ['../src/renderer/src/modules/agent/hooks/useAgentChat.ts', '.sendMessage(', 'fail('],
     ['../src/renderer/src/popup/PopupApp.tsx', '.sendMessage(', 'failSend(']
   ]
 

@@ -3,7 +3,7 @@ import type { ConversationRecord } from '../../../../shared/types'
 /**
  * 子代理会话的只读判定（P2，V4-Iter-459）。
  *
- * 从 `useAgentChat` 里搬出来的「归处」：P4 删除 `useAgentChat` 之后，`ChatModule` 仍要能判
+ * 判据的「归处」：`ChatModule` 要能判
  * 「这条会话由子代理跑出 → 输入区只读」。因此判据只依赖会话记录上的 `parentConversationId`，
  * 不依赖任何 Agent 壳的 hook；读失败（`failed`）与读到子会话一样按只读处理——不能让一次读失败
  * 演成「可以往里发消息」。

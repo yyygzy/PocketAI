@@ -202,13 +202,11 @@ describe('② 形状闸门：16 个点逐个核对「判失败」排在「写 st
     ['../src/renderer/src/modules/knowledge/KnowledgeModule.tsx', 'listKbDocuments(kb.id).catch', 'setDocs(list)', /stopPolling/],
     ['../src/renderer/src/modules/knowledge/KnowledgeModule.tsx', 'getKbDocText(doc.id)', 'setText(r.text)', /setError/],
     ['../src/renderer/src/modules/chat/ConversationList.tsx', 'searchMessages(search.trim(), null, dateRange, 0)', 'setResults(r)', /toast\.error/],
-    ['../src/renderer/src/modules/chat/ConversationList.tsx', 'searchMessages(search.trim(), null, dateRange, next)', 'setOffset(next)', /toast\.error/],
-    ['../src/renderer/src/modules/agent/components/SessionRail.tsx', 'searchMessages(keyword, assistantId || undefined, undefined, 0)', 'setResults(r)', /toast\.error/],
-    ['../src/renderer/src/modules/agent/components/SessionRail.tsx', 'searchMessages(keyword, assistantId || undefined, undefined, next)', 'setOffset(next)', /toast\.error/]
+    ['../src/renderer/src/modules/chat/ConversationList.tsx', 'searchMessages(search.trim(), null, dateRange, next)', 'setOffset(next)', /toast\.error/]
   ]
 
-  it('正好 16 个点位，一个都没少（少一处就是有人把闸门当摆设）', () => {
-    expect(SITES.length).toBe(16)
+  it('正好 14 个点位，一个都没少（少一处就是有人把闸门当摆设）', () => {
+    expect(SITES.length).toBe(14)
   })
 
   for (const [rel, from, until, feedback] of SITES) {

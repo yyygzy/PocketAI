@@ -95,7 +95,7 @@ export const DetachedApp: React.FC<{ moduleId: ModuleId }> = ({ moduleId }) => {
   }, [])
 
   // 应用内快捷键中枢：lock / 会话类四动作（newConv / focusSearch / focusComposer / abort）
-  // Workspace 内的 ChatModule / AgentPanel 已监听 APP_SHORTCUT_EVENT 且守卫可通过
+  // Workspace 内的 ChatModule 已监听 APP_SHORTCUT_EVENT 且守卫可通过
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const m = matchAppShortcut(e, { running: false })

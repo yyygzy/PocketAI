@@ -197,8 +197,7 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
   it('正向对照：§265／§266／§267 收口的六处＋既有五处正解，都必须在"判过了"那一桶里', () => {
     const judgedFiles = JUDGED.map((s) => s.file)
     for (const f of [
-      // §265 收的两处（谎报已停那一档）
-      'src/renderer/src/modules/agent/hooks/useAgentChat.ts',
+      // §265 收的一处（谎报已停那一档）
       'src/renderer/src/popup/PopupApp.tsx',
       // §266 收的三颗真按钮（点了没反应那一档）
       'src/renderer/src/modules/chat/useStreamSession.ts',
@@ -222,21 +221,17 @@ describe('§265 第六面：命令类那发「按了停止」——判没判 ∧
     }
   })
 
-  it('§265 两处的形状数得出（unread 两路各写一次、重试键各一颗、裸交出去归零、preload 类型带 error）', () => {
+  it('§265 那处的形状数得出（浮窗侧：unread 两路各写一次、重试键各一颗、裸交出去归零、preload 类型带 error）', () => {
     const read = (rel: string): string =>
       fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
-    const HOOK = read('src/renderer/src/modules/agent/hooks/useAgentChat.ts')
     const POPUP = read('src/renderer/src/popup/PopupApp.tsx')
     const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
-    for (const [f, src] of [['useAgentChat', HOOK], ['PopupApp', POPUP]] as const) {
+    for (const [f, src] of [['PopupApp', POPUP]] as const) {
       expect(count(src, /setStopUnread\(\{ error: /g), `${f}：resolve 的失败对象与 reject 各写一次 unread`).toBe(2)
       expect(count(src, /setStopUnread\(null\)/g), `${f}：发送前收回上一句＋这回落成功即收回，共两处`).toBe(2)
       expect(count(src, /requestId: id/g), `${f}：记住那一发的 requestId，"再送一次"才有对象`).toBe(2)
       expect(count(src, /\.catch\(reportIpcError\('(?:agent|popup)\.abort/g), `${f}：不该再有"只进 console"那一形`).toBe(0)
     }
-    expect(count(HOOK, /const retryStop = /g), 'hook 自己导出"再送一次"').toBe(1)
-    expect(count(read('src/renderer/src/modules/agent/chat/AgentPanel.tsx'), /chat\.retryStop/g), '那颗重试键真接得上').toBe(1)
-    expect(count(read('src/renderer/src/modules/agent/chat/AgentPanel.tsx'), /common\.stopNotSent/g), 'Agent 页挂那句').toBe(1)
     expect(count(POPUP, /common\.stopNotSent/g), '浮窗挂那句（同一个界面名词只留一份键，§263 同一条）').toBe(1)
     const PRELOAD = read('src/preload/index.ts')
     expect(count(PRELOAD, /abortAgent: \(requestId: string\): Promise<\{ ok: boolean; error\?: string \}>/g), 'preload 类型带失败分支').toBe(1)

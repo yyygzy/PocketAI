@@ -1,23 +1,6 @@
 // Agent 模块共享的小型展示组件
 import React from 'react'
 
-export const TabBtn: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({
-  active,
-  onClick,
-  children
-}) => (
-  <button
-    onClick={onClick}
-    className={`px-3 py-1.5 text-sm border-b-2 -mb-px ${
-      active
-        ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
-        : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-    }`}
-  >
-    {children}
-  </button>
-)
-
 export const StatusDot: React.FC<{ status: string }> = ({ status }) => {
   const color =
     status === 'running' ? 'bg-[var(--color-success)]' :

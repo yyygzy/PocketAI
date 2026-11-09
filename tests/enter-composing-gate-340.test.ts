@@ -113,13 +113,13 @@ describe('② 全仓现数与两桶身份证', () => {
   const freeText = sites.filter((s) => !s.secret)
   const secret = sites.filter((s) => s.secret)
 
-  it(`Enter 提交点总数＝35（口令 12＋自由文本 23）——新增提交点必须先进这张表`, () => {
-    expect(sites.length).toBe(35)
-    expect(secret.length).toBe(12)
-    expect(freeText.length).toBe(23)
+  it(`Enter 提交点总数＝32（口令 11＋自由文本 21）——新增提交点必须先进这张表`, () => {
+    expect(sites.length).toBe(32)
+    expect(secret.length).toBe(11)
+    expect(freeText.length).toBe(21)
   })
 
-  it('一个不漏（§341 起两桶并一条判据）：35 个提交点每个都得判 isComposing', () => {
+  it('一个不漏（§341 起两桶并一条判据）：32 个提交点每个都得判 isComposing', () => {
     const missing = sites.filter((s) => !s.hasComposing).map((s) => `${s.file} → ${s.calls}`)
     expect(missing, `这些输入框按 Enter 会把输入法组字中的半截句子交出去：\n${missing.join('\n')}`).toEqual([])
   })
@@ -130,9 +130,7 @@ describe('② 全仓现数与两桶身份证', () => {
       'components/SnippetButton.tsx::insertWithVars',
       'components/SnippetVarsDialog.tsx::insert,onCancel',
       'modules/agent/components/AgentMessageCard.tsx::onEditingChange,submit',
-      'modules/agent/components/AgentSearchBar.tsx::onClose,onNext,onPrev',
       'modules/agent/components/AgentToolBars.tsx::patchWsConfig',
-      'modules/agent/components/SessionRail.tsx::commit,setEditing',
       'modules/chat/ConversationList.tsx::commit,setEditing',
       'modules/chat/ConversationList.tsx::commitNote,setNoteEditing',
       'modules/chat/ConversationList.tsx::setCreatingGroup,setNewGroupName,submitCreateGroup',
@@ -152,13 +150,12 @@ describe('② 全仓现数与两桶身份证', () => {
     ].sort())
   })
 
-  it('口令与数字那 12 处的身份证（§341 真机判定后并入必判桶，名单照钉）', () => {
+  it('口令与数字那 11 处的身份证（§341 真机判定后并入必判桶，名单照钉）', () => {
     expect(secret.map((s) => `${s.file}::${s.calls}`).sort()).toEqual([
       'components/LockOverlay.tsx::onUnlock',
       'components/ReminderMenu.tsx::submitCustom',
       'modules/agent/channels/ChannelsPanel.tsx::patchCfg,setPrimaryDraft',
       'modules/agent/channels/ChannelsPanel.tsx::patchCfg,setSecondaryDraft',
-      'modules/agent/chat/AgentPanel.tsx::confirmCrypto,setCryptoPrompt',
       'modules/agent/components/AgentToolBars.tsx::patchWsConfig,setWsKeyDraft',
       'modules/chat/ChatModule.tsx::confirmCrypto,setCryptoPrompt',
       'modules/settings/SettingsModule.tsx::commitCodeCollapse',

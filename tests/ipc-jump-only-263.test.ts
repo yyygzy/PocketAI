@@ -213,10 +213,11 @@ const FAIL_CLOSED = SITES.filter((s) => !s.successWrites)
  * 「货架式助手」本批新增两处（ChatModule／AgentPanel 的「停用内置按 id 兜底」那两发读——
  *   读不到就保持现状，不把名字/导出署名演成"未知助手"）⇒ 10。
  * §429：能力中心挂载读服务商清单（成功支 setProviders 上屏、失败支直接 return，不预选假服务商）＋
- *   ChatModule :438 那处旧账实测多出一处（`git blame` 指向 6c58cb9，只改登记不改代码）⇒ **现数 12**。
- * 12 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
+ *   ChatModule :438 那处旧账实测多出一处（`git blame` 指向 6c58cb9，只改登记不改代码）⇒ 12；
+ * P4 批次 2 删掉 Agent 壳后，随 `useAgentChat`／`useProviderData` 一起减去 3 条 ⇒ **现数 9**。
+ * 9 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
  */
-const JUMP_LIE_CAP = 12
+const JUMP_LIE_CAP = 9
 
 const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 首启向导／换电脑检测那一发：读不到就**不弹**（不会弹一个假向导），屏上没有假数字。
@@ -227,10 +228,7 @@ const JUMP_LIE_PER_FILE: Record<string, number> = {
   // `getUiPrefs` 挂载恢复（读不到⇒用默认助手）——这正是 §226「当前显示的是默认值」那一族，
   //   但 §258 已在同一屏挂了那句写失败（「这次选的助手与会话没能记住」），**两句怎么共存是没定的口径**
   //   ⇒ 待决策，不为清零瞎改（同 §255／§256 处理"闸门看不见理由"那两处：登记，不改产品码迁就扫描器）。
-  'src/renderer/src/modules/agent/hooks/useAgentChat.ts': 2,
-  // `fetchModels`：既有决定（源码注释在位）——「拉取失败静默，Provider 配置问题在设置页有完整报错」。
-  // 设计内，与 §256 判掉的那三处同类：本屏不摆假数字（模型列表保持上一份），只少一次刷新。
-  'src/renderer/src/modules/agent/hooks/useProviderData.ts': 1,
+  // P4 批次 2 已随 `useAgentChat` 删除上述两处登记。
   // §264 收掉了草稿那一读（那句现在挂在输入区上方＋可重试）。剩三条：
   // 回复通知开关（§223 明写「开关关闭／异常一律静默」——不发通知是 fail-safe 方向）；
   // 对话页那侧的 provider/model 回填（同 useAgentChat 那条，不摆假模型）；
@@ -240,21 +238,21 @@ const JUMP_LIE_PER_FILE: Record<string, number> = {
   'src/renderer/src/modules/chat/ChatModule.tsx': 5,
   // 停用的内置助手被旧会话引用：按 id 兜底那一发读不到时保持现状（不清存档、不把名字改成"未知"）
   // ⇒ "少做一件事"，不是报假状态 ⇒ 登记。
-  'src/renderer/src/modules/agent/chat/AgentPanel.tsx': 1,
+  // P4 批次 2 已随 `AgentPanel` 删除。
   // §335 实时校验：validateSkill 基础设施失败时 r 没有 warnings 字段，不判信封就直接 setValidation
   // ⇒ validation.warnings.length 白屏。修复后失败侧只 return（保持原校验状态不打断输入），
   // 属于"少做一件事"（不更新校验结果）而不是"报一个假状态"⇒ 登记，待决策是否补一句 toast。
   'src/renderer/src/modules/skills/SkillModule.tsx': 1,
   // §429：能力中心挂载读服务商清单——成功支 `setProviders(v)` 要上屏，失败支直接 `return`
   // （服务商只用于助手编辑器的默认项，读不到就不预选、不摆假服务商）⇒ 与"少做一件事"同档，登记。
-  'src/renderer/src/modules/skills/CapabilityCenter.tsx': 1
+  'src/renderer/src/modules/skills/CapabilityCenter.tsx': 1,
+  // 深链解析（deep-link.ts）：成功支写状态上屏，失败支直接 return——同"少做一件事"档，登记。
+  'src/renderer/src/utils/deep-link.ts': 1
 }
 
 /** 正向对照：这些文件必须**真的出现在名单里**（防"扫描器恒返回空"这种假绿，§250 同一条） */
 const STILL_JUMP_SILENT_PROOF = [
   'src/renderer/src/App.tsx',
-  'src/renderer/src/modules/agent/hooks/useAgentChat.ts',
-  'src/renderer/src/modules/agent/hooks/useProviderData.ts',
   'src/renderer/src/modules/chat/ChatModule.tsx'
 ]
 
@@ -316,7 +314,7 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     expect(LIE.length + FAIL_CLOSED.length, '总数＝判过失败面且只跳的那批').toBe(SITES.length)
   })
 
-  it('等式 ratchet：目标桶 12 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2）', () => {
+  it('等式 ratchet：目标桶 9 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2，P4 批次 2 删 Agent 壳−3）', () => {
     expect(LIE.length, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(JUMP_LIE_CAP)
   })
 
@@ -360,29 +358,17 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     }
   })
 
-  it('§264 那六处的形状也数得出（锁状态／两发统计／草稿／向导助手清单，含"迟到两路都挡"）', () => {
+  it('§264 那三处的形状也数得出（锁状态／草稿／向导助手清单，含"迟到两路都挡"）', () => {
     const read = (rel: string): string =>
       blankComments(fs.readFileSync(path.resolve(ROOT, rel), 'utf8').replace(/\r\n/g, '\n'))
     const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
-    const STATS = 'src/renderer/src/modules/agent/hooks/useAgentChat.ts'
     const UNLOCK = 'src/renderer/src/modules/unlock/UnlockPage.tsx'
     const CHAT = 'src/renderer/src/modules/chat/ChatModule.tsx'
     const WIZ = 'src/renderer/src/modules/wizard/FirstRunWizard.tsx'
-    const stats = read(STATS)
-    // 每发两路（resolve 的失败对象＋reject）各写自己那份 unread；「本次运行统计」§398 起有两发
-    // （按会话最近一次＝挂载那一发／按这一轮＝DONE 兜底那一发）⇒ 2 变 4，不是搬运，是净新增一问
-    expect(count(stats, /setRunStatsUnread\(\{ error: /g), '本次运行统计两发×两路').toBe(4)
-    expect(count(stats, /setSessionStatsUnread\(\{ error: /g), '会话累计统计两路').toBe(2)
-    // §260 那条"要不要写"的守卫现在**成功路与失败路都有**——旧会话的失败不许在已切过去的屏上留一句"读不到"
-    // 按会话那两发用 `!== id`（各 2 路＝4），§398 新加的按运行那一发参数名不同⇒单独数（2 路）
-    expect(count(stats, /if \(conversationIdRef\.current !== id\) return/g), '按会话那两发×两路各挡一次迟到').toBe(4)
-    expect(count(stats, /if \(conversationIdRef\.current !== runConversationId\) return/g), '§398 按运行那一发也两路都挡').toBe(2)
-    expect(count(stats, /if \(requestIdRef\.current !== requestId\) return/g), '§398：按运行那一发还得多挡一面——新一轮已经开跑').toBe(2)
     expect(count(read(UNLOCK), /setLockUnread\(\{ error: /g), '锁状态两路').toBe(2)
     expect(count(read(CHAT), /setDraftUnread\(\{ error: /g), '草稿读两路').toBe(2)
     expect(count(read(WIZ), /setAssistantsUnread\(\{ error: /g), '向导助手清单两路').toBe(2)
-    // 三处收口的 reject 不许再裸交出去（旧形：`.catch(reportIpcError('通道名'))`／空 `catch {}`）
-    expect(count(stats, /\.catch\(reportIpcError\('agent\.(getLatestRunStats|getSessionStats)'\)\)/g), '统计那两发的裸交出去归零').toBe(0)
+    // 收口的 reject 不许再裸交出去（旧形：`.catch(reportIpcError('通道名'))`／空 `catch {}`）
     expect(count(read(CHAT), /\.catch\(\(e\) => \{ if \(!cancelled\) reportIpcError\('chat\.getConversationDraft'\)/g), '草稿那发的"只留痕"归零').toBe(0)
     expect(count(read(WIZ), /\.catch\(reportIpcError\('wizard\.listAssistants'\)\)/g), '向导助手那发同理').toBe(0)
     // 锁状态那处旧写法是**空 catch**（连留痕都没有），必须不再出现

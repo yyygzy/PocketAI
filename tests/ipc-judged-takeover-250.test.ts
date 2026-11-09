@@ -265,14 +265,7 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/modules/image/ImageModule.tsx': 1,
   'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 2,
   // §257：这一簇没有设计内静默——`useAgentToolConfigs` 四发读全部收口（清零）。
-  // §258 把 `useAgentChat` 也归零：`setUiPrefs` 那两发**写**失败过去只进 console（§257 留的产品决策），
-  // 口径定了——不弹 toast（那发在挂载恢复后也会重放一次同值写入，会撞在启动那一下），
-  // 改成 Agent 面板常驻一句「这次选的助手与会话没能记住」，写成功即收回。
   'src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts': 0,
-  'src/renderer/src/modules/agent/hooks/useAgentChat.ts': 0,
-  // §261：Agent 挂载时那两发清单读（服务商／助手）也收口——旧写法是 `ps.filter` 当场 TypeError
-  // 被 .catch 念进 console（连带丢掉读到的那份），`setAssistants(as_)` 则把失败对象交给 SessionRail 的 .map。
-  'src/renderer/src/modules/agent/hooks/useProviderData.ts': 0,
   // §268：输入框那圈的六发惰性读全部收口（各挂一句、逐发点名；知识库那两发带重试键，
   // 片段与上下文中枢那几发的出口是"再点／再进一次触发态"自己会重拉——各屏的出口形状不同，理由写在各文件注释里）
   'src/renderer/src/modules/chat/ChatConfigBar.tsx': 0,
@@ -280,7 +273,6 @@ const SILENT_PER_FILE: Record<string, number> = {
   // §270：助手编辑器那三发清单读收口（清零）。三份不同数据各挂一句、各给一颗键——
   // 这一屏"重开编辑器再拉"要丢掉整个表单，出口代价大到等于没出口，所以键不是多余机关
   'src/renderer/src/modules/chat/AssistantEditor.tsx': 0,
-  'src/renderer/src/modules/agent/components/AgentComposer.tsx': 0,
   // §269：翻译页余下那三发（挂载读历史／翻译成功后刷新历史／挂载读术语表）收口（清零）。
   // 两发历史**并成一根 loader、共用一张脸**（同一份数据的两次取不该说两遍），术语表那句与那颗键是同一份 JSX，
   // 遮罩内外二选一渲染 ⇒ 同一时刻只一句、一键。
@@ -423,11 +415,12 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
       })
     }
     expect(unjudged, `这些 listProviders 调用点在 14 行窗口内没有任何失败判据：\n${unjudged.map((s) => `  ${s}`).join('\n')}`).toEqual([])
-    // 反向自证：不手挑文件清单（§351 那条），所以先数出现有 12 处调用点（十一份文件，向导那屏两处）——
+    // 反向自证：不手挑文件清单（§351 那条），所以先数出现有 11 处调用点（十份文件，向导那屏两处）——
     // 数为 0 就是这把尺子瞎了，数掉了就是有人新增了调用点而没判。
     // §429 多出的一发来自能力中心（`CapabilityCenter.tsx` 挂载读服务商清单，失败支直接 return、不摆假服务商），
     // 它已在上方 14 行窗口判据里过线（`hasIpcFailed` 判定）；这里只把计数改到实测。
-    expect(callSites, '全仓 `listProviders()` 调用点数（现查 12）').toBe(12)
+    // P4 批次 2 删掉 Agent 壳后，随 `useProviderData` 一起减少 1 处。
+    expect(callSites, '全仓 `listProviders()` 调用点数（现查 11）').toBe(11)
 
     // 上面那条窗口判据只问"有没有判"，问不出**顺序**与"成功那一发收不收得回去"（§348 第 34／§345 两条同族），
     // 所以对本批这一处再钉三件：判据必须在写 state 之前、成功分支必须把原因清掉。
@@ -453,24 +446,22 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     expect(unregistered, `未登记的助手：${unregistered.join(', ')}——去看它到底做没做事，再决定加名字还是改成直接接管`).toEqual([])
     expect(helpers.length, '这一档不是空的（空了说明分类器没在跑）').toBeGreaterThan(0)
   })
-  it('§268 那六发的形状数得出（两路各写失败对象、读到即收回、只进 console 那一形归零、渲染条件本身在场、键按各屏有没有天然出口配）', () => {
+  it('§268 那四发的形状数得出（两路各写失败对象、读到即收回、只进 console 那一形归零、渲染条件本身在场、键按各屏有没有天然出口配）', () => {
     const read = (rel: string): string =>
       fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
     const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
     const CC = read('src/renderer/src/modules/chat/ChatConfigBar.tsx')
     const CO = read('src/renderer/src/modules/chat/Composer.tsx')
-    const AC = read('src/renderer/src/modules/agent/components/AgentComposer.tsx')
 
     // 每发两条失败路（resolve 的失败对象／reject）各写一次；读到即收回
-    for (const [name, src] of [['ChatConfigBar', CC], ['Composer', CO], ['AgentComposer', AC]] as const) {
+    for (const [name, src] of [['ChatConfigBar', CC], ['Composer', CO]] as const) {
       // 每份文件两发惰性读、每发两条失败路（resolve 的失败对象／reject）⇒ 各写两次
       expect(count(src, /set(?:Skills|Kbs|Snippets)Fail\(\{ error: /g), `${name}：两发 × 两条失败路各写一次`).toBe(4)
       expect(count(src, /set(?:Skills|Kbs|Snippets)Fail\(null\)/g), `${name}：每发读到即收回，共两处`).toBe(2)
     }
-    // 旧写法（裸交给 reportIpcError）在这三处归零
+    // 旧写法（裸交给 reportIpcError）在这两处归零
     expect(count(CC, /\.catch\(reportIpcError\('chatConfig\./g), '中枢面板不再有那一形').toBe(0)
     expect(count(CO, /\.catch\(reportIpcError\('chat\.list/g), '对话页输入框同').toBe(0)
-    expect(count(AC, /\.catch\(reportIpcError\('agent\.list/g), 'Agent 输入框同').toBe(0)
 
     // 那句真挂得出去：计数盯**渲染条件用的是哪一个 fail 状态**＋它旁边点的是哪个界面名词
     // （§266 的 Z7 教训——只数文案会放过把守卫换成 `false &&` 那种写法；这里守卫名与名词成对，写串了也红）
@@ -478,36 +469,25 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     const CC_KBS = /\{kbsFail && \([\s\S]{0,240}?what=\{t\('common\.kbList'\)/g
     const CO_KBS = /\{kbsFail && \([\s\S]{0,240}?common\.kbList/g
     const CO_SNIPPETS = /\{snippetsFail && \([\s\S]{0,240}?common\.snippetList/g
-    const AC_KBS = /\{kbsFail && \([\s\S]{0,240}?common\.kbList/g
-    const AC_SNIPPETS = /\{snippetsFail && \([\s\S]{0,240}?common\.snippetList/g
     expect(count(CC, CC_SKILLS), '中枢面板·技能那句挂在渲染条件里').toBe(1)
     expect(count(CC, CC_KBS), '中枢面板·知识库那句挂在渲染条件里').toBe(1)
     expect(count(CO, CO_KBS), '对话页·知识库那句挂在渲染条件里').toBe(1)
     expect(count(CO, CO_SNIPPETS), '对话页·片段那句挂在渲染条件里').toBe(1)
-    expect(count(AC, AC_KBS), 'Agent 页·知识库那句挂在渲染条件里').toBe(1)
-    expect(count(AC, AC_SNIPPETS), 'Agent 页·片段那句挂在渲染条件里').toBe(1)
     // 那句确实是要被读到的那种（alert 盒子或 LoadFailNotice 组件）
     expect(count(CC, /<LoadFailNotice/g), '中枢面板两句都走 LoadFailNotice（role=alert 在那个组件里）').toBe(2)
     // 精确到 JSX 属性写法（注释里也出现 role="alert" 这几个字，宽松的数法会把注释算进去）
     const ALERT = /role="alert" className="text-xs text-\[var\(--color-danger\)\]"/g
     expect(count(CO, ALERT), '对话页两句都自带 alert 盒子').toBe(2)
-    // §399②a：文本协议／工作目录那两项搬进那颗「+」时各带来自己那一句（都在浮层外面，见 §399 闸门 C）
-    expect(count(AC, ALERT), 'Agent 页四句都自带 alert 盒子（清单两句＋搬进来的两项各一句）').toBe(4)
 
     // 重试键按"各屏有没有天然出口"配：不该造机关的地方别造，该有出口的地方别缺
     expect(count(CC, /retry/g), '中枢面板一处键都不造（再点那一格本身就是出口）').toBe(0)
     expect(count(CO, /data-testid="composer-(?:kbs|snippets)-retry"/g), '对话页两处都自带出口').toBe(2)
-    expect(count(AC, /data-testid="agent-composer-kbs-retry"/g), 'Agent 页知识库那句自带出口').toBe(1)
-    expect(count(AC, /snippets-retry/g), 'Agent 页片段那句不造键（失败时 ref 仍是 null，再进触发态自己会重拉）').toBe(0)
     // 占位写死这条不许被"顺手修好"成清回 null（§221 真挂载量过：那会让输入框每次渲染重拉、卡死在转圈）
     expect(count(CO, /kbsRef\.current = \[\] \/\/ 占位防并发重复拉取/g), '对话页知识库占位仍在').toBe(1)
     expect(count(CO, /snippetsRef\.current = \[\] \/\/ 占位防并发重复拉取/g), '对话页片段占位仍在').toBe(1)
-    expect(count(AC, /kbsRef\.current = \[\] \/\/ 占位防并发重复拉取/g), 'Agent 页知识库占位仍在').toBe(1)
-    expect(count(AC, /snippetsRef\.current = \[\]/g), 'Agent 页片段没有占位（正因如此才不给键）').toBe(0)
-    // 清回 null 只许出现在"点重试键"那条路上（数一下：对话页两个出口＝2、Agent 页一个出口＝1、中枢面板 0）
+    // 清回 null 只许出现在"点重试键"那条路上（数一下：对话页两个出口＝2、中枢面板 0）
     expect(count(CC, /(?:kbs|snippets)Ref\.current = null/g), '中枢面板没有 ref 这件事').toBe(0)
     expect(count(CO, /(?:kbs|snippets)Ref\.current = null/g), '对话页只有两颗重试键各清一次').toBe(2)
-    expect(count(AC, /(?:kbs|snippets)Ref\.current = null/g), 'Agent 页只有知识库那颗键清一次').toBe(1)
 
     // 三个新界面名词四语都要有（一个界面名词只留一份键，§263）
     for (const dict of ['zh', 'en', 'ja', 'ko']) {

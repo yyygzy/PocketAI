@@ -317,10 +317,9 @@ describe('创建提醒的 toast 选键（reminderCreatedToastKey）', () => {
     expect(enRep.toLowerCase()).toContain('recurring')
   })
 
-  it('两处调用点都走这个函数，源码里不再留手抄的三元', () => {
+  it('调用点走这个函数，源码里不再留手抄的三元', () => {
     for (const f of [
-      'src/renderer/src/modules/chat/ChatModule.tsx',
-      'src/renderer/src/modules/agent/chat/AgentPanel.tsx'
+      'src/renderer/src/modules/chat/ChatModule.tsx'
     ]) {
       const src = readFileSync(f, 'utf8') as string
       expect(src, f + ' 应当改用 reminderCreatedToastKey').toContain('t(reminderCreatedToastKey(repeatRule)')

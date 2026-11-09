@@ -1,11 +1,11 @@
 // V4-Iter-330（源码级闸门）：导出族那四处没人管的形状
 //
-// 为什么这几面只做源码级：`ChatModule` / `AgentPanel` / `ChatView` 全仓没有挂载用例（整棵树代价不成比例，
+// 为什么这几面只做源码级：`ChatModule` / `ChatView` 全仓没有挂载用例（整棵树代价不成比例，
 // 边界记在台账 §253／记忆「清单零覆盖待补」），而 `KbAskPanel` 那两发的**行为**已经由
 // `tests/kb-ask-session-envelope-330.test.tsx` 真挂载跑到了；这里补的是"另外几处同族形状不许漂回去"：
 //   ① 通道类型诚实化：`getKbAskSession` 的 preload 返回类型必须带失败分支，且两个调用点各自"判了并接管"
 //      （第五面口径：条件里有 isIpcFail、体内有 return、也说了话）；
-//   ② 批量导出那颗锁：两屏各有 `if (batchBusyRef.current) return` ＋ finally 里解锁（改前 Agent 那屏根本没锁）；
+//   ② 批量导出那颗锁：对话页有 `if (batchBusyRef.current) return` ＋ finally 里解锁；
 //   ③ 多选消息导出那道大小闸与拖出通道同源（不许再写回 5MB 字面量）；
 //   ④ 加密导出那发：KDF 必须排在保存对话框**与**「取消就 return」之后（改前点完先等一轮 PBKDF2 才弹框）。
 // 计数一律读 AST（第 33 条：注释里也写着同一串）。
@@ -94,9 +94,8 @@ function callSiteJudgements(src: string): number {
   return sites
 }
 
-// ---------- ② 两屏那颗批量锁 ----------
+// ---------- ② 对话页那颗批量锁 ----------
 const CHAT = 'renderer/src/modules/chat/ChatModule.tsx'
-const AGENT = 'renderer/src/modules/agent/chat/AgentPanel.tsx'
 
 function busyGuard(src: string, file: string): { guards: number; releases: number } {
   const sf = parse(file, src)
@@ -159,20 +158,11 @@ describe('330 ① getKbAskSession：类型带失败分支，两处调用都判�
   })
 })
 
-describe('330 ② 两屏各有那颗批量锁（连点两下不许开两批）', () => {
-  it.each([[CHAT, 'ChatModule'], [AGENT, 'AgentPanel']] as const)('%s 有守卫且在 finally 里解锁', (file, name) => {
-    const { guards, releases } = busyGuard(read(file), file)
-    expect(guards, `${name} 的 batchBusyRef 守卫数`).toBe(1)
-    expect(releases, `${name} 在 finally 里解锁的次数（漏解锁＝一次失败后这颗键永远按不动）`).toBe(1)
-  })
-
-  it('漏杀对照：守卫挪到 finally 之外不解锁 ⇒ 计数判红', () => {
-    const noRelease = read(AGENT).replace(
-      'batchBusyRef.current = false\n      setBatchProgress(null)',
-      'setBatchProgress(null)'
-    )
-    expect(noRelease, '手术没落到盘上＝对照无效').not.toBe(read(AGENT))
-    expect(busyGuard(noRelease, AGENT).releases, '漏解锁）。').toBe(0)
+describe('330 ② 对话页那颗批量锁（连点两下不许开两批）', () => {
+  it('ChatModule 有守卫且在 finally 里解锁', () => {
+    const { guards, releases } = busyGuard(read(CHAT), CHAT)
+    expect(guards, 'ChatModule 的 batchBusyRef 守卫数').toBe(1)
+    expect(releases, 'ChatModule 在 finally 里解锁的次数（漏解锁＝一次失败后这颗键永远按不动）').toBe(1)
   })
 })
 

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-// P3 / V4-Iter-460：MCP 与 Channels 在设置页新增第二入口（只做加法：Agent 壳旧标签保留到 P4）
+// P3 / V4-Iter-460：MCP 与 Channels 在设置页的第二入口（P4 批次 2 已删 Agent 壳，设置页这一份保留）
 //
 // 钉三件事：
-// ① 设置页两个分区挂的确实是两份真面板（不是标题占位），且挂法与 Agent 壳共用同一份组件；
-// ② Agent 壳三个旧标签仍在（P3 不删入口，P4 才动）；
+// ① 设置页两个分区挂的确实是两份真面板（不是标题占位），且都经共享组件挂载；
+// ② Agent 壳文件已删除，设置页不再引用 AgentModule，共享面板仍挂两处；
 // ③ 新增文案四语都在（键集合对等由 i18n-parity 守，这里钉"别只写中文"）。
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
@@ -80,7 +80,7 @@ describe('① 设置页两个分区挂的是真面板', () => {
   })
 })
 
-describe('② 设置页与 Agent 壳共用同一份实现，旧入口不删', () => {
+describe('② 设置页经共享组件挂两个面板，且不再引用 AgentModule', () => {
   it('两个面板只在 EmbeddedAgentPanels 里挂一次，SettingsModule 不各留一份', () => {
     const embedded = read(EMBEDDED)
     expect(embedded).toContain("from '../agent/mcp/McpPanel'")
@@ -93,14 +93,13 @@ describe('② 设置页与 Agent 壳共用同一份实现，旧入口不删', ()
     expect(settings).not.toContain("from '../agent/channels/ChannelsPanel'")
   })
 
-  it('Agent 壳三个旧标签保留（P3 只做加法）', () => {
-    const agentModule = read(AGENT_MODULE)
-    expect(agentModule).toContain("t('agent.tabChat')")
-    expect(agentModule).toContain("t('agent.tabServers')")
-    expect(agentModule).toContain("t('channel.tab')")
-    expect(agentModule).toContain('<AgentPanel />')
-    expect(agentModule).toContain('<McpPanel />')
-    expect(agentModule).toContain('<ChannelsPanel />')
+  it('Agent 壳已删除：设置页不再引用 AgentModule，共享组件仍挂两个面板', () => {
+    expect(fs.existsSync(path.join(ROOT, AGENT_MODULE)), 'P4 批次 2 应已删除 Agent 壳').toBe(false)
+    const settings = read(SETTINGS)
+    expect(settings).not.toContain('modules/agent/AgentModule')
+    const embedded = read(EMBEDDED)
+    expect(embedded).toContain('<McpPanel />')
+    expect(embedded).toContain('<ChannelsPanel />')
   })
 })
 
@@ -109,9 +108,7 @@ describe('③ 新增文案四语齐', () => {
     'set.capability',
     'set.capabilityHint',
     'set.connection',
-    'set.connectionHint',
-    'agent.mcpInSettings',
-    'agent.channelsInSettings'
+    'set.connectionHint'
   ] as const
 
   it.each(KEYS)('%s 四本字典都非空', (key) => {

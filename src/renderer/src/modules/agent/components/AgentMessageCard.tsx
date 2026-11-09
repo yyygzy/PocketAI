@@ -184,7 +184,7 @@ const AgentMessageCardImpl: React.FC<{
   }, [ctxMenu])
   const del = onDelete ? () => onDelete(m.id) : undefined
   const canEditUser = m.role === 'user' && Boolean(onRerun && m.dbId)
-  // 运行中父级不传 onDelete（AgentPanel: running → undefined），据此禁用右键；编辑态同样不弹
+  // 运行中父级不传 onDelete（对话壳：running → undefined），据此禁用右键；编辑态同样不弹
   const canCtx = Boolean(del) && !editing
   // §339：tool 结果要上屏的那份文本——被安全策略硬拒那句按界面语言取译文，其余原样。
   // 卡里那颗「复制」与右键「复制」都读这一份，两条路不许一个给译文一个给原文。

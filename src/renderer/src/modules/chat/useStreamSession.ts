@@ -102,7 +102,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     messages: AgentMessage[]
   } | null>(null)
   const [agentRunning, setAgentRunning] = useState(false)
-  /** P2：实时步骤条数据；订阅与 `useAgentChat` 用的同一批 step 事件、同一个归约函数 */
+  /** P2：实时步骤条数据；订阅 step 事件、用 `reduceLiveSteps` 归约 */
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [focusBranch, setFocusBranch] = useState<FocusBranch | null>(null)
   /** §266 第六面：按「停止」那一发的结果过去只交给 `.catch(reportIpcError(...))`——

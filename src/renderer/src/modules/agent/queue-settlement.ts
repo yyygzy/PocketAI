@@ -10,7 +10,7 @@
 // 幂等账本由调用方持有。这样队列规则可以被确定性用例钉住（`agent-queue-settlement-459.test.ts`），
 // 不依赖 React 挂载或真实 IPC 事件。
 
-/** 运行中排队的一条消息（渲染层内存态，不落库：见 `useAgentChat` 的注释） */
+/** 运行中排队的一条消息（渲染层内存态，不落库） */
 export interface AgentQueueItem {
   /** 渲染层生成的本地 id，随插队请求交给引擎，再原样回到 step 事件里（对账用） */
   clientRef: string

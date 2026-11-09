@@ -1,11 +1,10 @@
-// 运行中排队 / 插队（V4-Iter-238 迁入对话壳，P4 批次 0）：两个聊天壳共用这一份实现。
+// 运行中排队 / 插队（V4-Iter-238 迁入对话壳，P4 批次 0）：对话壳唯一实现。
 //
 // 纯结算规则留在 `../agent/queue-settlement`（幂等账本、归位、自动发送判据都在那里），
 // 这里只做「宿主无关」的状态与 IPC 编排：宿主壳提供会话身份、当前 requestId、发送入口与
-// 前置条件，本 hook 不关心自己挂在 Agent 壳还是对话壳上。
+// 前置条件。
 //
-// 迁移口径：迁完后 Agent 壳的 `useAgentChat` 也调用本 hook，不再留第二份队列实现；
-// 批次 2 删除 Agent 壳时，本文件与 `queue-settlement` 一起留下，作为唯一实现。
+// P4 批次 2 删壳后，本文件与 `queue-settlement` 是唯一实现。
 import { useCallback, useRef, useState } from 'react'
 import type { ChatAttachment } from '../../../../shared/types'
 import { useI18n } from '../../i18n'

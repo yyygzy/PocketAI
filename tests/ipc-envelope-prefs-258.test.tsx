@@ -1,4 +1,4 @@
-// V4-Iter-258：管家页那三发裸值通道改信封＋Agent 面板那两发写失败上屏。
+// V4-Iter-258：管家页那三发裸值通道改信封（Agent 面板那两发写失败上屏随 P4 批次 2 删壳退场）。
 //
 // 为什么不是"再补一句提示"就完事：这三发在 preload 里类型标成裸值（原 `src/preload/index.ts:116/122/1204`），
 // 而 `safeHandle` 的失败是一个**解析出来的** `{ok:false,error}`（`src/main/ipc/safe-handle.ts:181`）⇒
@@ -8,26 +8,18 @@
 //  · 数据健康报告 ⇒ 三个计数 undefined、孤儿消息／向量块反而显示「✅ 0」（把没读到演成健康）。
 // 所以这一批走的是**根治形状**：main 侧包信封、preload 类型诚实化 ⇒ 调用点不判就编译期红。
 // 界面那一档按既有那两张脸：失败时整块换成「读不到：原因」（§222），且必须与"检查真的失败"分辨开。
-//
-// 另一件：`setUiPrefs` 那两发是**写**，失败过去只进 console（§257 登记的设计内）。口径改成
-// "面板常驻一句、写成功即收回"，不弹 toast——那发在挂载恢复后也会重放一次同值写入，
-// 弹出来会撞在启动那一下。
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
-import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
-import { HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
+import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { StewardModule } from '../src/renderer/src/modules/steward/StewardModule'
-import { useAgentChat } from '../src/renderer/src/modules/agent/hooks/useAgentChat'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type {
-  AssistantRecord,
-  ConversationRecord,
   HardwareInfo,
   HealthReport,
-  ModelRecommendation,
-  ProviderRecord
+  ModelRecommendation
 } from '../src/shared/types'
 
 const L = (key: string): string => (zh as unknown as Record<string, string>)[key]!
@@ -155,90 +147,11 @@ describe('① 管家页：信封化之后，读不到的那一块说的是「读
   })
 })
 
-describe('② setUiPrefs 那两发写：面板常驻一句，写成功即收回', () => {
-  const CONV = { id: 'c1', assistantId: 'a1', title: '会话', modelLabel: null } as unknown as ConversationRecord
-  const PROVIDERS = [
-    { id: 'p1', name: 'P', type: 'openai-compatible', enabled: true, models: ['m1'] }
-  ] as unknown as ProviderRecord[]
-  const ASSISTANTS = [
-    { id: 'a1', name: 'a1', isBuiltin: false, isPinned: false },
-    { id: 'a2', name: 'a2', isBuiltin: false, isPinned: false }
-  ] as unknown as AssistantRecord[]
-
-  type ChatImpl = (...a: any[]) => unknown
-  const chatStubs = (over: Record<string, ChatImpl> = {}): Record<string, ChatImpl> => ({
-    listProviders: () => [{ id: 'p1', name: 'P', type: 'openai-compatible', enabled: true, models: ['m1'] }] as unknown as ProviderRecord[],
-    listAssistants: () => ASSISTANTS,
-    getUiPrefs: () => ({ ok: true, data: { agentAssistantId: 'a1', agentConversationId: 'c1' } }),
-    setUiPrefs: (patch: Record<string, unknown>) => ({ ok: true, data: patch }),
-    listConversations: () => [CONV],
-    listMessages: () => [],
-    getLatestRunStats: () => null,
-    getSessionStats: () => null,
-    getAgentTextProtocol: () => [],
-    getModelContextWindows: () => ({}),
-    getFallbackTargets: () => ({}),
-    setFallbackTarget: () => ({ targets: {} }),
-    getConversation: () => null,
-    listChildConversations: () => [],
-    getAgentWorkspaceDir: () => '',
-    getShellConfig: () => ({}),
-    getWebSearchConfig: () => ({}),
-    getCalendarConfig: () => ({}),
-    sendMessage: () => ({ ok: true }),
-    abortAgent: () => ({ ok: true }),
-    onAgentStep: () => () => {},
-    onAgentChunk: () => () => {},
-    onAgentDone: () => () => {},
-    onAgentError: () => () => {},
-    onConversationTitle: () => () => {},
-    ...over
-  })
-
-  const mountChat = () =>
-    renderHook(() => useAgentChat(PROVIDERS, ASSISTANTS), { wrapper: HookProviders })
-
-  it('写回失败（{ok:false}）⇒ hook 上那句带的是通道原文', async () => {
-    stubPocketai(chatStubs({ setUiPrefs: () => ({ ok: false, error: 'PREF_BUSY:设置库被占用' }) }))
-    const { result } = mountChat()
-    await waitFor(() => expect(result.current.uiPrefsUnread).toBe('PREF_BUSY:设置库被占用'))
-  })
-
-  it('反向对照：写成功 ⇒ 那句是 null，一次都不许出现', async () => {
-    stubPocketai(chatStubs())
-    const { result } = mountChat()
-    await waitFor(() => expect(result.current.assistantId).toBe('a1'))
-    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
-    expect(result.current.uiPrefsUnread).toBeNull()
-  })
-
-  it('当场换成另一个助手且这次写进去了 ⇒ 那句收回（不带着旧失败往下走）', async () => {
-    let failing = true
-    stubPocketai(chatStubs({
-      setUiPrefs: (patch: Record<string, unknown>) =>
-        failing ? { ok: false, error: 'PREF_BUSY:设置库被占用' } : { ok: true, data: patch }
-    }))
-    const { result } = mountChat()
-    await waitFor(() => expect(result.current.uiPrefsUnread).toBe('PREF_BUSY:设置库被占用'))
-    failing = false
-    await act(async () => { result.current.setAssistantId('a2') })
-    await waitFor(() => expect(result.current.uiPrefsUnread).toBeNull())
-  })
-
-  it('reject 面（Promise 被拒）⇒ 同一句，用的是抛出来的原文', async () => {
-    stubPocketai(chatStubs({ setUiPrefs: () => Promise.reject(new Error('写偏好炸了')) }))
-    const { result } = mountChat()
-    await waitFor(() => expect(result.current.uiPrefsUnread).toBe('写偏好炸了'))
-  })
-})
-
-describe('③ 接线计数：旧形状归零，新形状数得出', () => {
+describe('② 接线计数：旧形状归零，新形状数得出', () => {
   const read = (rel: string): string =>
     fs.readFileSync(path.resolve(__dirname, '../', rel), 'utf-8').replace(/\r\n/g, '\n')
   const STEWARD = read('src/renderer/src/modules/steward/StewardModule.tsx')
   const WIZARD = read('src/renderer/src/modules/wizard/FirstRunWizard.tsx')
-  const CHAT = read('src/renderer/src/modules/agent/hooks/useAgentChat.ts')
-  const PANEL = read('src/renderer/src/modules/agent/chat/AgentPanel.tsx')
   const MAIN_SYS = read('src/main/ipc/handlers/system.ts')
   const MAIN_STEWARD = read('src/main/ipc/handlers/steward.ts')
   const PRELOAD = read('src/preload/index.ts')
@@ -270,17 +183,5 @@ describe('③ 接线计数：旧形状归零，新形状数得出', () => {
     expect(count(WIZARD, /setHwFail\(hw\)/g)).toBe(1)
     expect(count(WIZARD, /hwFail \? \(/g), '失败档排在读到与"加载中…"之间').toBe(1)
     expect(count(WIZARD, /msg=\{ipcFailText\(hwFail, t\('common\.unknownError'\)\)\}/g), '那句带的是通道原文').toBe(1)
-  })
-
-  it('面板：那句常驻挂在模型栏与工具栏之间，键走字典', () => {
-    expect(count(PANEL, /chat\.uiPrefsUnread && \(/g)).toBe(1)
-    expect(count(PANEL, /t\('agent\.prefsNotSaved', \{ msg: chat\.uiPrefsUnread \}\)/g)).toBe(1)
-  })
-
-  it('hook：两发写各有 resolve／reject 两面，且不再只进 console', () => {
-    expect(count(CHAT, /setUiPrefsUnread\(ipcFailText\(r, t\('common\.unknownError'\)\)\)/g)).toBe(2)
-    expect(count(CHAT, /setUiPrefsUnread\(errText\(e, t\('common\.unknownError'\)\)\)/g), 'reject 面').toBe(2)
-    expect(count(CHAT, /setUiPrefsUnread\(null\)/g), '写成功即收回').toBe(2)
-    expect(count(CHAT, /reportIpcError\('agent\.setUiPrefs'\)/g), '那条只进 console 的兜底已经换掉').toBe(0)
   })
 })

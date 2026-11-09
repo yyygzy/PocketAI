@@ -1,6 +1,6 @@
 // 应用内全局快捷键中枢：window keydown 唯一注册点（App 挂载一次）
 // - 标签/窗口类动作直接操作 store / IPC
-// - 会话类动作通过 CustomEvent 派发给当前活动实例（ChatModule / AgentPanel 自行守卫活动态）
+// - 会话类动作通过 CustomEvent 派发给当前活动实例（ChatModule 自行守卫活动态）
 import { useEffect } from 'react'
 import { matchAppShortcut, type AppShortcutId, type ConversationShortcutAction } from '../utils/shortcuts'
 import { useAppStore } from '../store/app-store'
@@ -24,7 +24,7 @@ export function useGlobalShortcuts(): void {
       const s = useAppStore.getState()
       // 锁屏期间全部快捷键不响应（内容区已 inert，此处再守一道）
       if (s.locked) return
-      // 活动模块是否流式运行中（busy 由 ChatModule / AgentPanel 上报）
+      // 活动模块是否流式运行中（busy 由 ChatModule 上报）
       const running = s.busyModules[s.activeModule] === true
       const m = matchAppShortcut(e, { running })
       if (!m) return
