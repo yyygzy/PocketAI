@@ -12,7 +12,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
 import { HookProviders, stubPocketai } from './helpers/renderer'
-import { useAgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
+import { useAgentToolConfigs } from '../src/renderer/src/modules/chat/useAgentToolConfigs'
 import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../src/shared/types'
 
 const SHELL_ON: ShellConfig = { enabled: true, policy: 'auto-safe' }
@@ -30,7 +30,7 @@ const CAL_ON: CalendarConfig = { enabled: true, paths: ['C:/cal.ics'] }
 describe('① 接线计数：配置 hook 的落点逐条数得出', () => {
   const read = (rel: string): string =>
     fs.readFileSync(path.resolve(__dirname, '../src/renderer/src', rel), 'utf-8').replace(/\r\n/g, '\n')
-  const CFG = read('modules/agent/hooks/useAgentToolConfigs.ts')
+  const CFG = read('modules/chat/useAgentToolConfigs.ts')
   const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
 
   it('配置 hook：一发读三个落点（失败／清位／reject），加四处"当场改成功也清位"', () => {

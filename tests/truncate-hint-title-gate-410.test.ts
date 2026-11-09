@@ -27,7 +27,7 @@ import ts from 'typescript'
 
 const ROOT = path.resolve(__dirname, '..')
 const RENDERER = 'src/renderer/src'
-const BARS = 'src/renderer/src/modules/agent/components/AgentToolBars.tsx'
+const BARS = 'src/renderer/src/modules/chat/AgentToolBars.tsx'
 
 const walkDir = function* (dir: string): Generator<string> {
   for (const name of fs.readdirSync(dir)) {
@@ -345,7 +345,7 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
   })
 
   it('两头钉的另一头：本枚收的那两行所属文件里，"句子挂 truncate"的残留数＝只剩终端那一行', () => {
-    const rel = 'src/renderer/src/modules/agent/components/AgentToolBars.tsx'
+    const rel = 'src/renderer/src/modules/chat/AgentToolBars.tsx'
     const inBars = badSites.filter((r) => r.file === rel)
     expect(inBars.map((r) => r.keys.join(',')).sort().join(' ｜ '), '联网搜索与日历那两行必须已经收干').toBe('')
     const good = goodSites.filter((r) => r.file === rel)

@@ -11,8 +11,8 @@ import React from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { MessageBubble } from '../src/renderer/src/modules/chat/MessageBubble'
-import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
-import { useAgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
+import { AgentToolBars } from '../src/renderer/src/modules/chat/AgentToolBars'
+import { useAgentToolConfigs } from '../src/renderer/src/modules/chat/useAgentToolConfigs'
 import { zh } from '../src/renderer/src/i18n/zh'
 
 const L = (k: string): string => (zh as unknown as Record<string, string>)[k]!

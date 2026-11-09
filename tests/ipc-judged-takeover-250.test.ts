@@ -265,7 +265,7 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/modules/image/ImageModule.tsx': 1,
   'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 2,
   // §257：这一簇没有设计内静默——`useAgentToolConfigs` 四发读全部收口（清零）。
-  'src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts': 0,
+  'src/renderer/src/modules/chat/useAgentToolConfigs.ts': 0,
   // §268：输入框那圈的六发惰性读全部收口（各挂一句、逐发点名；知识库那两发带重试键，
   // 片段与上下文中枢那几发的出口是"再点／再进一次触发态"自己会重拉——各屏的出口形状不同，理由写在各文件注释里）
   'src/renderer/src/modules/chat/ChatConfigBar.tsx': 0,

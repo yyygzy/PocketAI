@@ -8,8 +8,8 @@
 // 2) 完整文案挂在 title 上（悬停可见），且与字典逐字相同。
 import { describe, it, expect, vi } from 'vitest'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
-import type { AgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
+import { AgentToolBars } from '../src/renderer/src/modules/chat/AgentToolBars'
+import type { AgentToolConfigs } from '../src/renderer/src/modules/chat/useAgentToolConfigs'
 import { zh } from '../src/renderer/src/i18n/zh'
 
 function mount(enabled: boolean) {

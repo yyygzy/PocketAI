@@ -6,9 +6,9 @@
 // **三条「读不到」没有跟着搬进来**（§222／§268：句子住进浮层＝菜单一关就不说话＝替这次失败闭嘴）——
 // 它们由对话壳输入区在浮层**外面**那一句区渲染，与文本协议／工作目录那两句同一处。
 import React from 'react'
-import type { ShellConfig, WebSearchConfig } from '../../../../../shared/types'
-import { useI18n } from '../../../i18n'
-import type { AgentToolConfigs } from '../hooks/useAgentToolConfigs'
+import type { ShellConfig, WebSearchConfig } from '../../../../shared/types'
+import { useI18n } from '../../i18n'
+import type { AgentToolConfigs } from './useAgentToolConfigs'
 
 /**
  * 「+」菜单里那颗摘要点的图标：开着哪几项就点哪几个（与下面那三行同源，不是第二份状态）。

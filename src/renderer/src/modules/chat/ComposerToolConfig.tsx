@@ -13,8 +13,8 @@ import React, { useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { FloatingPanel } from '../../components/FloatingPanel'
 import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
-import { AgentToolBars, agentToolSummary } from '../agent/components/AgentToolBars'
-import { useAgentToolConfigs } from '../agent/hooks/useAgentToolConfigs'
+import { AgentToolBars, agentToolSummary } from './AgentToolBars'
+import { useAgentToolConfigs } from './useAgentToolConfigs'
 
 export const ComposerToolConfig: React.FC = () => {
   const { t } = useI18n()

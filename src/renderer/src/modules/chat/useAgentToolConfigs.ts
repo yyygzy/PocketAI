@@ -1,13 +1,13 @@
 // Agent 工具开关配置：工作目录 / shell 策略 / 联网搜索 / 本地日历
 // 所有变更立即持久化，以后端回写为准（含值域兜底）
 import { useCallback, useEffect, useState } from 'react'
-import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../../shared/types'
-import { useI18n } from '../../../i18n'
-import { useToast } from '../../../components/ToastProvider'
-import { hasIpcFailed, ipcFailText, logIpcError } from '../../../utils/ipc'
-import { useConfirm } from '../../../components/ConfirmDialog'
-import { isUnprotectedMode } from '../../../utils/secret-consent'
-import { errText } from '../../../utils/error'
+import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../shared/types'
+import { useI18n } from '../../i18n'
+import { useToast } from '../../components/ToastProvider'
+import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import { useConfirm } from '../../components/ConfirmDialog'
+import { isUnprotectedMode } from '../../utils/secret-consent'
+import { errText } from '../../utils/error'
 
 export function useAgentToolConfigs() {
   const { t } = useI18n()

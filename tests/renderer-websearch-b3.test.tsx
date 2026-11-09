@@ -8,8 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
-import { useAgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
+import { AgentToolBars } from '../src/renderer/src/modules/chat/AgentToolBars'
+import { useAgentToolConfigs } from '../src/renderer/src/modules/chat/useAgentToolConfigs'
 
 const WARN =
   '当前未设置主密码：这条凭据只会用源码中公开的固定密钥做本地混淆，拿到本机数据目录的人可以还原。确认仍要保存？'

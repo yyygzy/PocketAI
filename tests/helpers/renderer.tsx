@@ -8,7 +8,7 @@ import React from 'react'
 import { cleanup, render } from '@testing-library/react'
 import { I18nProvider } from '../../src/renderer/src/i18n'
 import { ToastProvider } from '../../src/renderer/src/components/ToastProvider'
-import type { AgentToolConfigs } from '../../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
+import type { AgentToolConfigs } from '../../src/renderer/src/modules/chat/useAgentToolConfigs'
 
 /**
  * 桩的入参故意放宽成 `any[]`：每条真实通道有自己的入参类型，而 `(...args: unknown[]) => unknown`

@@ -481,7 +481,7 @@ WHERE agent_mode = 1
 | `modules/agent/components/SessionRail.tsx` | Agent 会话列表 | 删除（P1 已把它降为过渡期工具会话列表） |
 | `modules/agent/components/AgentComposer.tsx` | Agent 输入区 | 删除；队列/工具策略已迁入统一 Composer |
 | `modules/agent/components/AgentModelBar.tsx` | Agent 模型条 | 删除；单目标模型选择已在 Composer |
-| `modules/agent/components/AgentToolBars.tsx` | Agent 工具栏 | 删除；工具配置入口在设置/Composer |
+| `modules/agent/components/AgentToolBars.tsx` | Agent 工具栏 | P5 批次 2 已搬到 `chat/AgentToolBars.tsx`；工具配置入口在设置/Composer |
 | `modules/agent/components/AgentSearchBar.tsx` | Agent 消息搜索条 | 删除；对话侧已有消息搜索 |
 | `modules/agent/components/ZeroToolCallNotice.tsx` | 零工具调用提示 | **迁移**到 `ChatView` 工具轮次（不是删除） |
 | `modules/agent/components/ToolPolicyDialog.tsx` | 工具策略弹窗 | **迁移**到统一 Composer/工具设置（不是删除） |
@@ -491,7 +491,7 @@ WHERE agent_mode = 1
 | `modules/agent/components/AgentMessageCard.tsx` | 共享卡片 | 保留 |
 | `modules/agent/components/VirtualMessageList.tsx` | Agent 虚拟列表 | 删除；`getItemKey` 思路移到 ChatView 的 virtualizer（ChatView 已有自己的 per-turn 虚拟化） |
 | `modules/agent/components/TraceReplayStatus.tsx` | replay 徽标 | 保留 |
-| `modules/agent/hooks/useAgentToolConfigs.ts` / `agent-shared.ts` | 共享 | 保留（`useAgentToolConfigs.ts` 待 P5 批次 2 搬到 `chat/`；`messages-reducer.ts` 已于 P5 批次 1 搬到 `chat/`；`useAttachments.ts` 已于 P4 批次 2 删除） |
+| `modules/agent/hooks/useAgentToolConfigs.ts` / `agent-shared.ts` | 共享 | `agent-shared.ts` 保留；`useAgentToolConfigs.ts` 已于 P5 批次 2 搬到 `chat/`；`messages-reducer.ts` 已于 P5 批次 1 搬到 `chat/`；`useAttachments.ts` 已于 P4 批次 2 删除 |
 | `modules/agent/mcp/McpPanel.tsx` / `channels/ChannelsPanel.tsx` | 配置面板 | 保留，仅挂设置 |
 | `modules/agent/queue-settlement.ts` / `sub-session.ts` | P2 新增 | 保留（不建 `run-controller`） |
 

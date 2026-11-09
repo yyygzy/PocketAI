@@ -11,7 +11,7 @@ import { act, renderHook } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
 import { HookProviders, mountWithProviders, stubPocketai } from './helpers/renderer'
-import { useAgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
+import { useAgentToolConfigs } from '../src/renderer/src/modules/chat/useAgentToolConfigs'
 import { ConversationList } from '../src/renderer/src/modules/chat/ConversationList'
 import { FilesModule } from '../src/renderer/src/modules/files/FilesModule'
 import type { ConversationRecord, MessageSearchResult } from '../src/shared/types'
@@ -193,10 +193,10 @@ describe('② 形状闸门：16 个点逐个核对「判失败」排在「写 st
     ['../src/renderer/src/modules/settings/UsagePanel.tsx', 'getUsageDetail(days, EXPORT_LIMIT, undefined, assistantId)', 'setDetailItems(r.items)', /toast\.error/],
     ['../src/renderer/src/modules/settings/UsagePanel.tsx', 'setUsageBudget(daily, monthly, budgetHardBlockDraft', 'setBudget(next)', /toast\.error/],
     ['../src/renderer/src/modules/settings/UsagePanel.tsx', 'setUsagePricing({ currency, prices })', 'onSaved(next)', /onError/],
-    ['../src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts', 'pickAgentWorkspaceDir()', 'setWorkspaceDir(dir)', /toast\.error/],
-    ['../src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts', 'setShellConfig(patch)', 'setShellConfigState(next)', /toast\.error/],
-    ['../src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts', 'setWebSearchConfig(patch)', 'setWsConfigState(next)', /toast\.error/],
-    ['../src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts', 'setCalendarConfig(patch)', 'setCalConfigState(next)', /toast\.error/],
+    ['../src/renderer/src/modules/chat/useAgentToolConfigs.ts', 'pickAgentWorkspaceDir()', 'setWorkspaceDir(dir)', /toast\.error/],
+    ['../src/renderer/src/modules/chat/useAgentToolConfigs.ts', 'setShellConfig(patch)', 'setShellConfigState(next)', /toast\.error/],
+    ['../src/renderer/src/modules/chat/useAgentToolConfigs.ts', 'setWebSearchConfig(patch)', 'setWsConfigState(next)', /toast\.error/],
+    ['../src/renderer/src/modules/chat/useAgentToolConfigs.ts', 'setCalendarConfig(patch)', 'setCalConfigState(next)', /toast\.error/],
     ['../src/renderer/src/modules/files/FilesModule.tsx', 'listFiles(dir)', 'setEntries(list)', /showNotice/],
     ['../src/renderer/src/modules/knowledge/KnowledgeModule.tsx', 'saveKnowledgeBase({', 'onSaved(saved)', /setError/],
     ['../src/renderer/src/modules/knowledge/KnowledgeModule.tsx', 'listKbDocuments(kb.id).catch', 'setDocs(list)', /stopPolling/],
@@ -227,7 +227,7 @@ describe('② 形状闸门：16 个点逐个核对「判失败」排在「写 st
 
   it('这四处失败提示的文案来源是 IPC 的 error 字段，不是写死的中文（四语面的入口在 ipcFailureText）', () => {
     expect(read('../src/renderer/src/modules/settings/UsagePanel.tsx')).toContain('ipcFailText(')
-    expect(read('../src/renderer/src/modules/agent/hooks/useAgentToolConfigs.ts')).toContain('ipcFailText(')
+    expect(read('../src/renderer/src/modules/chat/useAgentToolConfigs.ts')).toContain('ipcFailText(')
     expect(read('../src/renderer/src/modules/files/FilesModule.tsx')).toContain('ipcFailText(')
     expect(read('../src/renderer/src/modules/knowledge/KnowledgeModule.tsx')).toContain('ipcFailText(')
   })

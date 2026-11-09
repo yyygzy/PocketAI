@@ -7,8 +7,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { AgentToolBars } from '../src/renderer/src/modules/agent/components/AgentToolBars'
-import { useAgentToolConfigs } from '../src/renderer/src/modules/agent/hooks/useAgentToolConfigs'
+import { AgentToolBars } from '../src/renderer/src/modules/chat/AgentToolBars'
+import { useAgentToolConfigs } from '../src/renderer/src/modules/chat/useAgentToolConfigs'
 
 type WsView = {
   enabled: boolean
