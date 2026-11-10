@@ -197,6 +197,15 @@ const api = {
   deleteMemory: (id: string): Promise<
     { ok: true } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
   > => ipcRenderer.invoke(IPC.MEMORY_DELETE, id),
+  restoreMemory: (id: string): Promise<
+    UserMemoryRecord | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.MEMORY_RESTORE, id),
+  listDeletedMemories: (): Promise<
+    UserMemoryRecord[] | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.MEMORY_LIST_DELETED),
+  purgeMemories: (ids: string[]): Promise<
+    { ok: true; deleted: number } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }
+  > => ipcRenderer.invoke(IPC.MEMORY_PURGE, ids),
 
   // ---------- 技能 ----------
   listSkills: (): Promise<SkillRecord[]> => ipcRenderer.invoke(IPC.SKILL_LIST),

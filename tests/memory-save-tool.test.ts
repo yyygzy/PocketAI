@@ -26,12 +26,26 @@ describe('memory_save 工具', () => {
     expect(memorySaveTool.schema.parameters.required).toEqual(['content'])
   })
 
-  it('保存新记忆：调用 repo.add 并返回 ok', async () => {
+  it('保存新记忆：来源记为 agent，调用 repo.add 并返回 ok', async () => {
     addMock.mockImplementation(() => ({ id: 'm1', content: '用户偏好简洁回复', createdAt: 1, updatedAt: 1 }))
-    const out = JSON.parse(await memorySaveTool.execute({ content: '用户偏好简洁回复' }))
+    const out = JSON.parse(
+      await memorySaveTool.execute(
+        { content: '用户偏好简洁回复' },
+        { agent: { requestId: 'req-1', conversationId: 'conv-1', emit: () => {} } }
+      )
+    )
     expect(out.ok).toBe(true)
     expect(out.id).toBe('m1')
-    expect(addMock).toHaveBeenCalledWith('用户偏好简洁回复')
+    expect(addMock).toHaveBeenCalledWith('用户偏好简洁回复', {
+      source: 'agent',
+      conversationId: 'conv-1'
+    })
+  })
+
+  it('没有会话上下文时 conversationId 落 null', async () => {
+    addMock.mockImplementation(() => ({ id: 'm2', content: 'X', createdAt: 1, updatedAt: 1 }))
+    await memorySaveTool.execute({ content: 'X' })
+    expect(addMock).toHaveBeenCalledWith('X', { source: 'agent', conversationId: null })
   })
 
   it('完全重复的内容：跳过保存返回 duplicate', async () => {
@@ -52,12 +66,12 @@ describe('memory_save 工具', () => {
   it('保存前 trim，首尾空白不落库', async () => {
     addMock.mockImplementation(() => ({ id: 'm2', content: 'X', createdAt: 1, updatedAt: 1 }))
     await memorySaveTool.execute({ content: '  X  ' })
-    expect(addMock).toHaveBeenCalledWith('X')
+    expect(addMock).toHaveBeenCalledWith('X', { source: 'agent', conversationId: null })
   })
 
   it('超 500 字符截断到 500', async () => {
     addMock.mockImplementation(() => ({ id: 'm3', content: 'x', createdAt: 1, updatedAt: 1 }))
     await memorySaveTool.execute({ content: 'y'.repeat(600) })
-    expect(addMock).toHaveBeenCalledWith('y'.repeat(500))
+    expect(addMock).toHaveBeenCalledWith('y'.repeat(500), { source: 'agent', conversationId: null })
   })
 })

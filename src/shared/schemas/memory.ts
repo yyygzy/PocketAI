@@ -22,3 +22,14 @@ export const memoryIdSchema = z.string().min(1)
 export const MEMORY_INJECT_MAX_ITEMS = 50
 export const MEMORY_INJECT_MAX_ITEM_CHARS = 200
 export const MEMORY_INJECT_MAX_TOTAL_CHARS = 2000
+
+/**
+ * 活跃记忆行数上限。取值依据：注入侧只看最新 50 条、总 2000 字，留 20 倍于可见窗口的裁量空间；
+ * 每行内容上限 2000 字符，1000 行最坏约 200 万字符（UTF-8 中文约 6 MB），对本地 SQLite 无压力，
+ * 也能让设置页一次列出。到上限后**拒绝新的写入/恢复**，不自动清理最旧——静默删用户数据不可接受；
+ * 既有超出上限的数据保持原样，只挡住新增。
+ */
+export const MEMORY_MAX_ROWS = 1000
+
+/** 批量物理清理的入参：空数组直接拒绝；单次 10000 条，避免异常数据把一次 IPC 撑爆 */
+export const memoryIdsSchema = z.array(memoryIdSchema).min(1).max(10000)

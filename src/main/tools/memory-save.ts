@@ -23,7 +23,7 @@ export const memorySaveTool: BuiltinTool = {
     permission: 'auto',
     timeoutMs: 3_000 // 本地 DB 追加
   },
-  async execute(args) {
+  async execute(args, ctx) {
     const raw = typeof args?.content === 'string' ? args.content.trim() : ''
     if (!raw) throw new Error('content 不能为空')
     const content = raw.slice(0, MAX_CONTENT_CHARS)
@@ -32,7 +32,10 @@ export const memorySaveTool: BuiltinTool = {
     if (existing) {
       return JSON.stringify({ ok: true, duplicate: true, id: existing.id, message: '该记忆已存在，未重复保存' })
     }
-    const record = userMemoryRepo.add(content)
+    const record = userMemoryRepo.add(content, {
+      source: 'agent',
+      conversationId: ctx?.agent?.conversationId ?? null
+    })
     return JSON.stringify({ ok: true, id: record.id, content: record.content })
   }
 }

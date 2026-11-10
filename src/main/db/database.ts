@@ -1114,6 +1114,38 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_skill_import_audits_skill
         ON skill_import_audits(skill_id, created_at DESC);
     `
+  },
+  {
+    // v65：用户记忆可追溯——写入者来源、来源会话、软删除。
+    //
+    // 此前 `user_memory` 只有内容与时间戳：设置页手写与 Agent `memory_save` 写出来的行长得一模一样，
+    // 删除是物理 DELETE，用户点错就再也找不回来。这三列只做归因与可撤销，不参与召回阈值
+    // （仍是最新 50 条 / 单条 200 字 / 总 2000 字，见 shared/schemas/memory.ts）。
+    //
+    // 历史行口径：迁移前的两条写入路径无法回溯区分，统一记为 'legacy'——不猜 'user' 也不猜
+    // 'agent'（同 v62 对历史 MCP 调用的处理思路：认不出来的就不假装认得）。
+    // `deleted_at` 用可空时间戳而不是布尔：删除时间本身可回溯，NULL/非 NULL 天然是软删除判据。
+    //
+    // 幂等：SQLite 的 ADD COLUMN 没有 IF NOT EXISTS，先查 PRAGMA（同 v58/v61/v62/v63）；
+    // 测试按惯例删掉 schema_migrations 的 v65 行再跑，第二遍是空操作。
+    version: 65,
+    name: 'user_memory_provenance',
+    up: (db) => {
+      const cols = new Set(
+        (db.prepare('PRAGMA table_info(user_memory)').all() as Array<{ name: string }>).map((c) => c.name)
+      )
+      if (!cols.has('source')) {
+        db.exec(
+          "ALTER TABLE user_memory ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy' CHECK (source IN ('user','agent','legacy'));"
+        )
+      }
+      if (!cols.has('conversation_id')) {
+        db.exec('ALTER TABLE user_memory ADD COLUMN conversation_id TEXT;')
+      }
+      if (!cols.has('deleted_at')) {
+        db.exec('ALTER TABLE user_memory ADD COLUMN deleted_at INTEGER;')
+      }
+    }
   }
 ]
 

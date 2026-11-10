@@ -141,9 +141,17 @@ export interface SkillRecord {
 }
 
 // ---------- 用户记忆（长期记忆条目） ----------
+/** 记忆写入者：user=设置页手写；agent=Agent 经 memory_save 写入；legacy=v65 之前无法回溯的历史行 */
+export type UserMemorySource = 'user' | 'agent' | 'legacy'
+
 export interface UserMemoryRecord {
   id: string
   content: string
+  source: UserMemorySource
+  /** Agent 写入时所在的会话；用户手写或历史行为 null */
+  conversationId: string | null
+  /** 软删除时间（毫秒）；null=未删除。物理删除只留给明确的清理动作 */
+  deletedAt: number | null
   createdAt: number
   updatedAt: number
 }
@@ -2632,6 +2640,9 @@ export const IPC = {
   MEMORY_ADD: 'memory:add',
   MEMORY_UPDATE: 'memory:update',
   MEMORY_DELETE: 'memory:delete',
+  MEMORY_RESTORE: 'memory:restore',
+  MEMORY_LIST_DELETED: 'memory:list-deleted',
+  MEMORY_PURGE: 'memory:purge',
 
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_GET: 'conversation:get', // 单条会话：渲染层按 id 判「这是不是子代理会话」（§235）
