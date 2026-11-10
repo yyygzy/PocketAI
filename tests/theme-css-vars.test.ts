@@ -31,15 +31,24 @@ function listFiles(dir: string): string[] {
 
 /** 取 `:root {` / `html.light {` 这类顶层块里定义的变量名 */
 function definedIn(css: string, selector: string): Set<string> {
-  const start = css.indexOf(selector)
-  expect(start, `theme.css 里找不到 ${selector}`).toBeGreaterThanOrEqual(0)
-  const end = css.indexOf('}', start)
-  return new Set([...css.slice(start, end).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]!))
+  // 连 `{` 一起找：文件头部注释里也写着这些选择器名，只按名字 indexOf 会落在注释上
+  const m = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{').exec(css)
+  expect(m, `theme.css 里找不到 ${selector} {`).toBeTruthy()
+  const end = css.indexOf('}', m!.index)
+  return new Set([...css.slice(m!.index, end).matchAll(/(--[\w-]+)\s*:/g)].map((mm) => mm[1]!))
 }
 
 const css = fs.readFileSync(THEME_CSS, 'utf8')
 const dark = definedIn(css, ':root')
 const light = definedIn(css, 'html.light')
+// L1：主题注册表扩成多套后，新增的两套同样要"变量名一个不差"（否则切过去会有一批声明失效）
+const ocean = definedIn(css, 'html.ocean')
+const sand = definedIn(css, 'html.sand')
+const blocks = [
+  ['light', light],
+  ['ocean', ocean],
+  ['sand', sand]
+] as const
 
 /** 收集所有「无兜底值」且未定义的 var() 引用 */
 function undefinedRefs(): Map<string, string[]> {
@@ -50,7 +59,7 @@ function undefinedRefs(): Map<string, string[]> {
     for (const m of text.matchAll(/var\(\s*(--[\w-]+)(\s*,[^)]*)?\)/g)) {
       const name = m[1]!
       const hasFallback = Boolean(m[2])
-      if (hasFallback || dark.has(name) || light.has(name)) continue
+      if (hasFallback || dark.has(name) || light.has(name) || ocean.has(name) || sand.has(name)) continue
       const line = text.slice(0, m.index).split('\n').length
       hits.set(name, [...(hits.get(name) ?? []), `${path.relative(process.cwd(), file)}:${line}`])
     }
@@ -59,18 +68,25 @@ function undefinedRefs(): Map<string, string[]> {
 }
 
 describe('theme.css 令牌', () => {
-  it('暗色与亮色两套定义的变量名完全对等（漏一套 = 另一套主题下声明失效）', () => {
-    const onlyDark = [...dark].filter((v) => !light.has(v))
-    const onlyLight = [...light].filter((v) => !dark.has(v))
-    expect({ onlyDark, onlyLight }).toEqual({ onlyDark: [], onlyLight: [] })
+  it('暗色与其余各套定义的变量名完全对等（漏一套 = 另一套主题下声明失效）', () => {
+    // 只比色板 token：--chat-font-size 这类全局档位只在 :root 定义一次，不属于单套主题
+    const palette = (set: Set<string>): Set<string> =>
+      new Set([...set].filter((v) => v.startsWith('--color-') || v.startsWith('--hljs-')))
+    const darkPalette = palette(dark)
+    for (const [name, set] of blocks) {
+      const blockPalette = palette(set)
+      const onlyDark = [...darkPalette].filter((v) => !blockPalette.has(v))
+      const onlyBlock = [...blockPalette].filter((v) => !darkPalette.has(v))
+      expect({ [name]: { onlyDark, onlyBlock } }).toEqual({ [name]: { onlyDark: [], onlyBlock: [] } })
+    }
   })
 
-  it('回归点：--color-bg-elevated 两主题都有且不透明（弹层不许再是透明）', () => {
-    for (const set of [dark, light]) {
+  it('回归点：--color-bg-elevated 四套都有且不透明（弹层不许再是透明）', () => {
+    for (const set of [dark, light, ocean, sand]) {
       expect(set.has('--color-bg-elevated')).toBe(true)
     }
     const values = [...css.matchAll(/--color-bg-elevated:\s*([^;]+);/g)].map((m) => m[1]!.trim())
-    expect(values).toHaveLength(2)
+    expect(values).toHaveLength(4)
     // 十六进制不透明色；rgba(...) 或 transparent 都会让浮层重新透出底下内容
     for (const v of values) expect(v).toMatch(/^#[0-9a-f]{3,8}$/i)
   })

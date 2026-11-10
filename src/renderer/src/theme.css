@@ -1,7 +1,10 @@
 /* ─────────────────────────────────────────────────────────────
-   墨匣 双主题变量体系
-   暗色（默认）= Catppuccin Mocha
-   亮色（html.light）= Catppuccin Latte
+   墨匣 内置主题预设（注册表见 src/shared/themes.ts）
+   深色（默认，无 class）= Catppuccin Mocha
+   html.light = Catppuccin Latte
+   html.ocean = 深海蓝（自建）
+   html.sand  = 暖砂浅色（自建）
+   新增预设时：这里加一整段同名 36 个 token，并在注册表里登记 id/class/窗口底色。
    ───────────────────────────────────────────────────────────── */
 
 :root {
@@ -115,6 +118,100 @@ html.light {
   --hljs-title: #1e66f5;
   --hljs-attr: #df8e1d;
   --hljs-built_in: #04a5e5;
+}
+
+/* ── 深海蓝（ocean）：深底 + 冷色调；窗口底色 = --color-surface #0f2033 ── */
+html.ocean {
+  color-scheme: dark;
+
+  --color-bg: #08111c;
+  --color-bg-secondary: #0f2033;
+  --color-bg-elevated: #16293f;
+  --color-sidebar: #0b1725;
+  --color-surface: #0f2033;
+  --color-surface-hover: #182c44;
+  --color-border: #2b4a6f;
+  --color-accent: #6cb6ff;
+  --color-on-accent: #08111c;
+
+  --color-text: #d7e6f7;
+  --color-text-muted: #8095ab;
+  --color-text-weak: #b3c8de;
+  /* 琥珀在深蓝底上偏暖，压到浅暖黄仍保证 8:1 以上（配 warning-bg 也够） */
+  --color-warning-strong: #ffd479;
+
+  --color-hover-overlay: rgba(255, 255, 255, 0.06);
+  --color-input-bg: rgba(0, 0, 0, 0.25);
+  --color-inline-code-bg: rgba(255, 255, 255, 0.1);
+  --color-shadow: rgba(0, 0, 0, 0.5);
+  --color-accent-soft: rgba(108, 182, 255, 0.22);
+  --color-modal-overlay: rgba(0, 0, 0, 0.6);
+
+  --color-danger: #fb7185;
+  --color-danger-bg: rgba(251, 113, 133, 0.14);
+  --color-success: #6ee7b7;
+  --color-success-bg: rgba(110, 231, 183, 0.14);
+  --color-warning: #ffd479;
+  --color-warning-bg: rgba(255, 212, 121, 0.14);
+  --color-info: #7dd3fc;
+  --color-info-bg: rgba(125, 211, 252, 0.14);
+
+  --hljs-bg: #08111c;
+  --hljs-text: #d7e6f7;
+  --hljs-keyword: #c4a7ff;
+  --hljs-string: #7ee2b8;
+  --hljs-number: #ffb08a;
+  --hljs-comment: #7e93a9;
+  --hljs-title: #6cb6ff;
+  --hljs-attr: #ffd479;
+  --hljs-built_in: #7dd3fc;
+}
+
+/* ── 暖砂浅色（sand）：暖白底 + 棕橙强调；窗口底色 = --color-surface #faf7f0 ── */
+html.sand {
+  color-scheme: light;
+
+  --color-bg: #e6ddcd;
+  --color-bg-secondary: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-sidebar: #efe8db;
+  --color-surface: #faf7f0;
+  --color-surface-hover: #efe8db;
+  --color-border: #cdbfa9;
+  --color-accent: #9a4a00;
+  --color-on-accent: #ffffff;
+
+  --color-text: #3a3228;
+  --color-text-muted: #75685a;
+  --color-text-weak: #4a4136;
+  /* 亮底上的琥珀必须压深（同 light 侧的理由：原色只有 1.9:1）；配 12% 棕橙底仍有 7:1 */
+  --color-warning-strong: #6b3d00;
+
+  --color-hover-overlay: rgba(0, 0, 0, 0.05);
+  --color-input-bg: #ffffff;
+  --color-inline-code-bg: rgba(0, 0, 0, 0.06);
+  --color-shadow: rgba(80, 60, 30, 0.16);
+  --color-accent-soft: rgba(154, 74, 0, 0.16);
+  --color-modal-overlay: rgba(0, 0, 0, 0.4);
+
+  --color-danger: #b3261e;
+  --color-danger-bg: rgba(179, 38, 30, 0.08);
+  --color-success: #2e6b1f;
+  --color-success-bg: rgba(46, 107, 31, 0.1);
+  --color-warning: #a85b00;
+  --color-warning-bg: rgba(168, 91, 0, 0.12);
+  --color-info: #0b6a8f;
+  --color-info-bg: rgba(11, 106, 143, 0.1);
+
+  --hljs-bg: #ffffff;
+  --hljs-text: #3a3228;
+  --hljs-keyword: #7b3fa0;
+  --hljs-string: #2e6b1f;
+  --hljs-number: #a8500a;
+  --hljs-comment: #8a7d6d;
+  --hljs-title: #0b6a8f;
+  --hljs-attr: #a85b00;
+  --hljs-built_in: #0b6a8f;
 }
 
 /* ── 主题切换平滑过渡（不作用于 transform 等，避免布局动画副作用）── */
