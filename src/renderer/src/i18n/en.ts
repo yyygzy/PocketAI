@@ -110,7 +110,6 @@ export const en = {
   'sidebar.pinnedSuffix': 'Pinned',
   'sidebar.order': 'Sidebar order',
   'sidebar.pinned': 'Pinned modules',
-  'controls.toggleTheme': 'Toggle light/dark theme',
   'controls.toggleLang': '切换为中文',
 
   // ── Tab bar ──
@@ -1433,6 +1432,12 @@ export const en = {
   'set.memoryUpdated': 'Memory updated',
   'set.memoryDeleted': 'Memory deleted',
   'set.memoryDeleteConfirm': 'Delete this memory?',
+  'ui.theme': 'Theme',
+  'ui.themeHint': 'Built-in color presets; applies immediately and is remembered.',
+  'ui.theme.dark': 'Dark',
+  'ui.theme.light': 'Light',
+  'ui.theme.ocean': 'Ocean',
+  'ui.theme.sand': 'Sand',
   'ui.opacity': 'Window opacity',
   'ui.opacityHint': 'Takes effect when you release the slider; affects the main window only. Supported on Windows / macOS; on Linux it depends on the window manager.',
   'ui.fontSize': 'Chat font size',

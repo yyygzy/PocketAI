@@ -17,6 +17,7 @@ import { UsagePanel } from './UsagePanel'
 import { DataHealthPanel } from './DataHealthPanel'
 import { ApprovalAuditPanel } from './ApprovalAuditPanel'
 import { OllamaPanel } from '../../components/OllamaPanel'
+import { ThemeSelect } from '../../components/ThemeLangControls'
 import { LocalJudgementPanel } from './LocalJudgementPanel'
 import { OutboundPanel } from './OutboundPanel'
 import { CapabilitySettingsPanel, ConnectionSettingsPanel } from './EmbeddedAgentPanels'
@@ -2619,6 +2620,15 @@ export const AppearancePanel: React.FC = () => {
       {uiErr && (
         <ShowingDefaultsNotice what={[t('ui.opacity'), t('ui.fontSize'), t('ui.codeCollapse'), t('ui.customCss')].join(' / ')} msg={uiErr} />
       )}
+      {/* 主题：内置预设选择器（与侧栏共用注册表与状态，切换即写 localStorage + 主进程镜像） */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[var(--color-text)]">{t('ui.theme')}</span>
+          <ThemeSelect />
+        </div>
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.themeHint')}</p>
+      </div>
+
       {/* 窗口透明度 */}
       <div>
         <div className="flex items-center justify-between mb-1">

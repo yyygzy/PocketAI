@@ -110,7 +110,6 @@ export const zh = {
   'sidebar.pinnedSuffix': '已固定',
   'sidebar.order': '侧栏顺序',
   'sidebar.pinned': '固定模块',
-  'controls.toggleTheme': '切换明暗主题',
   'controls.toggleLang': 'Switch to English',
 
   // ── 标签栏 ──
@@ -1434,6 +1433,12 @@ export const zh = {
   'set.memoryUpdated': '记忆已更新',
   'set.memoryDeleted': '记忆已删除',
   'set.memoryDeleteConfirm': '确定删除这条记忆吗？',
+  'ui.theme': '主题',
+  'ui.themeHint': '内置配色预设，切换后立即生效并记住选择。',
+  'ui.theme.dark': '深色',
+  'ui.theme.light': '浅色',
+  'ui.theme.ocean': '深海蓝',
+  'ui.theme.sand': '暖砂',
   'ui.opacity': '窗口透明度',
   'ui.opacityHint': '拖动后松开即生效；仅影响主窗口，Windows / macOS 支持，Linux 视窗口管理器而定。',
   'ui.fontSize': '聊天字号',
