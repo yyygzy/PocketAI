@@ -1087,6 +1087,33 @@ const MIGRATIONS: Migration[] = [
         db.exec("ALTER TABLE skills ADD COLUMN category TEXT NOT NULL DEFAULT '';")
       }
     }
+  },
+  {
+    // v64：技能导入审计（装前静态扫描的旁路账本）。
+    //
+    // 只记「什么时候、从哪来、扫描分级」，不存 findings 的命中片段——那些是正文原文，
+    // 可能带用户密钥；审计表不该成为第二个泄漏面。finding_codes 只是稳定码数组，
+    // 供后续界面/诊断按码聚合，不随文案变化。
+    // 不复用 approval_events：那张表的语义是「会话内工具审批」，conversation_id 必填，
+    // 技能导入没有会话维度，硬塞会把两种事件混成一张脸。
+    // 幂等：CREATE TABLE/INDEX IF NOT EXISTS；测试按惯例删掉 schema_migrations 的 v64 行再跑。
+    version: 64,
+    name: 'skill_import_audits',
+    up: `
+      CREATE TABLE IF NOT EXISTS skill_import_audits (
+        id             TEXT PRIMARY KEY,
+        skill_id       TEXT NOT NULL,
+        skill_name     TEXT NOT NULL,
+        source         TEXT NOT NULL CHECK (source IN ('file','folder','url')),
+        source_detail  TEXT NOT NULL,
+        scan_level     TEXT NOT NULL CHECK (scan_level IN ('none','info','notice','attention')),
+        finding_codes  TEXT NOT NULL,
+        finding_count  INTEGER NOT NULL,
+        created_at     INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_skill_import_audits_skill
+        ON skill_import_audits(skill_id, created_at DESC);
+    `
   }
 ]
 

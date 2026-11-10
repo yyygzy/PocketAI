@@ -5,6 +5,7 @@ import type { UiTheme } from '../shared/themes'
 import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
+import type { SkillScanResult } from '../shared/skill-scan'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -217,6 +218,8 @@ const api = {
     canceled?: boolean
     skill?: SkillRecord
     nameDuplicated?: boolean
+    /** 装前静态扫描的候选与事实；none 时通常不展示 */
+    scan?: SkillScanResult
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT),
   /* §236：目录导入与「这条技能带了哪些文件」。两个返回类型都带失败分支（safeHandle 把抛错转成返回值）。 */
@@ -230,6 +233,8 @@ const api = {
         ignoredKeys?: string[]
         forcedOnDemand?: boolean
         nameDuplicated?: boolean
+        /** 装前静态扫描的候选与事实；none 时通常不展示 */
+        scan?: SkillScanResult
         error?: string
       }
     | { ok: false; error: string }
@@ -250,7 +255,7 @@ const api = {
   importSkillFromUrl: (
     url: string,
     hash?: string
-  ): Promise<{ ok: boolean; skill?: SkillRecord; error?: string }> =>
+  ): Promise<{ ok: boolean; skill?: SkillRecord; scan?: SkillScanResult; error?: string }> =>
     ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url, hash ?? ''),
   validateSkill: (text: string): Promise<{ ok: boolean; error?: string; warnings: string[]; shape?: { name: string; description: string; icon: string; content: string } }> =>
     ipcRenderer.invoke(IPC.SKILL_VALIDATE, text),

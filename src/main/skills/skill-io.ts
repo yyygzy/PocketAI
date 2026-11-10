@@ -8,15 +8,21 @@
 //  - 远程 URL 导入走 safeFetch（SSRF 防护），支持 JSON 和 Markdown 两种格式；
 //  - 文件对话框由主进程弹出，渲染端只拿结果不接触文件路径。
 import fs from 'node:fs'
+import path from 'node:path'
 import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { errMsg } from '../error'
 import { createLogger } from '../logger'
 import { skillRepo } from '../db/repositories/skill.repo'
+import {
+  skillImportAuditRepo,
+  type SkillImportSource
+} from '../db/repositories/skill-import-audit.repo'
 
 const log = createLogger('skill-io')
 import type { SkillRecord } from '../../shared/types'
 import { parseSkillText, type SkillShape } from './skill-parser'
+import { safeUrlForDisplay, scanSkill, type SkillScanResult } from './skill-scan'
 import { installSkillFiles, readSkillFolder, rollbackSkillFiles } from './skill-files'
 import { safeFetch } from '../net/safe-fetch'
 import { skillShapeSchema } from '../../shared/schemas/skills'
@@ -94,6 +100,22 @@ export function saveShapeAsSkill(shape: SkillShape, opts: { resident?: boolean }
   })
 }
 
+/** 导入审计是旁路：仓储内部 fail-open，这里只负责把三个入口的字段摆齐 */
+function auditImported(
+  skill: SkillRecord,
+  source: SkillImportSource,
+  sourceDetail: string,
+  scan: SkillScanResult
+): void {
+  skillImportAuditRepo.insert({
+    skillId: skill.id,
+    skillName: skill.name,
+    source,
+    sourceDetail,
+    scan
+  })
+}
+
 /** 导出单个技能为 JSON 文件（用户选择保存位置） */
 export async function exportSkill(
   win: BrowserWindow,
@@ -139,6 +161,8 @@ export async function importSkill(
   canceled?: boolean
   skill?: SkillRecord
   nameDuplicated?: boolean
+  /** 装前静态扫描结果（候选与事实，不是安全判定；界面下一轮再用） */
+  scan?: SkillScanResult
   error?: string
 }> {
   try {
@@ -153,8 +177,7 @@ export async function importSkill(
     if (stat.size > MAX_IMPORT_BYTES) return { ok: false, error: 'FILE_TOO_LARGE' }
 
     const raw = fs.readFileSync(file, 'utf8')
-    const { shape, error } = parseSkillText(raw)
-    // （解析签名多了一个 ignoredKeys，这里不解构它：单文件导入本来就没有资源，未知键只在目录导入里报）
+    const { shape, error, ignoredKeys } = parseSkillText(raw)
     if (!shape) {
       // 兼容旧格式：非标准 pocketai-skill 的 JSON 也给个明确错误
       if (error === '缺少 name 字段' || error === '缺少 content 字段') {
@@ -165,8 +188,11 @@ export async function importSkill(
     }
 
     const nameDuplicated = skillRepo.list().some((s) => s.name === shape.name)
+    // 落库前先扫：扫描是纯函数，不碰文件系统，也不改变导入判定
+    const scan = scanSkill({ content: shape.content, ignoredKeys })
     const skill = saveShapeAsSkill(shape)
-    return { ok: true, skill, nameDuplicated }
+    auditImported(skill, 'file', path.basename(file), scan)
+    return { ok: true, skill, nameDuplicated, scan }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }
@@ -191,6 +217,8 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
   /** 正文超常驻上限被降成按需的那一句（界面据此解释为什么开关是关的） */
   forcedOnDemand?: boolean
   nameDuplicated?: boolean
+  /** 装前静态扫描结果（正文 + 随包资源清单 + 白名单外声明字段） */
+  scan?: SkillScanResult
   error?: string
 }> {
   try {
@@ -216,6 +244,11 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
       return { ok: false, error: parsed.error || residentTry.error }
     }
 
+    const scan = scanSkill({
+      content: shape.content,
+      resources: read.files.map((f) => ({ path: f.rel, size: f.size })),
+      ignoredKeys: parsed.ignoredKeys
+    })
     const skill = saveShapeAsSkill(shape, { resident: useResident })
     let copied: string[] = []
     let skipped = read.skipped
@@ -237,6 +270,7 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
       return { ok: false, error: cleanup ? `${errMsg(e)}；残留清理也失败：${cleanup}` : errMsg(e) }
     }
     const nameDuplicated = skillRepo.list().some((s) => s.name === shape.name && s.id !== skill.id)
+    auditImported(skill, 'folder', path.basename(filePaths[0]!), scan)
     return {
       ok: true,
       skill,
@@ -244,7 +278,8 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
       skipped,
       ignoredKeys: parsed.ignoredKeys,
       forcedOnDemand: !useResident,
-      nameDuplicated
+      nameDuplicated,
+      scan
     }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
@@ -255,7 +290,7 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
 export async function importSkillFromUrl(
   url: string,
   expectedHash?: string
-): Promise<{ ok: boolean; skill?: SkillRecord; error?: string }> {
+): Promise<{ ok: boolean; skill?: SkillRecord; scan?: SkillScanResult; error?: string }> {
   try {
     if (!url || typeof url !== 'string') return { ok: false, error: 'URL 为空' }
     const { primaryUrl, fallbackUrl } = githubSkillCandidates(url)
@@ -276,11 +311,14 @@ export async function importSkillFromUrl(
     const text = res.body.toString('utf8')
     if (!text.trim()) return { ok: false, error: '远程内容为空' }
 
-    const { shape, error } = parseSkillText(text)
+    const { shape, error, ignoredKeys } = parseSkillText(text)
     if (!shape) return { ok: false, error: `解析失败: ${error}` }
 
+    const scan = scanSkill({ content: shape.content, ignoredKeys })
     const skill = saveShapeAsSkill(shape)
-    return { ok: true, skill }
+    // 来源明细只留 origin + pathname：URL 的查询串可能带令牌，审计不抄
+    auditImported(skill, 'url', safeUrlForDisplay(url), scan)
+    return { ok: true, skill, scan }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }

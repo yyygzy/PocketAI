@@ -28,6 +28,10 @@ vi.mock('electron', () => ({
   dialog: { showSaveDialog: async () => ({}), showOpenDialog: async () => ({}) }
 }))
 vi.mock('../src/main/db/repositories/skill.repo', () => ({ skillRepo: mocks.skillRepo }))
+// 远程导入现在还会写审计；这一份用例只测拉取/映射，审计仓储整层桩掉
+vi.mock('../src/main/db/repositories/skill-import-audit.repo', () => ({
+  skillImportAuditRepo: { insert: () => true }
+}))
 vi.mock('../src/main/skills/skill-parser', () => ({
   parseSkillText: (text: string) => ({
     shape: { name: '远程技能', description: '', icon: '', content: text },

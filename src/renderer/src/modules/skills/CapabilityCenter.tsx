@@ -18,6 +18,8 @@ import type {
   ToolPolicyState
 } from '../../../../shared/types'
 import { instantiateMcpTemplate, listMcpTemplates, type McpTemplate } from '../../../../shared/mcp-templates'
+import type { SkillScanResult } from '../../../../shared/skill-scan'
+import { SkillScanReport } from './SkillScanReport'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -89,6 +91,8 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
   const [keyword, setKeyword] = useState('')
   const [view, setView] = useState<View | null>(null)
   const [urlInput, setUrlInput] = useState('')
+  // 导入后的扫描结果（候选与事实）；none 时不弹，避免制造空态
+  const [scanReport, setScanReport] = useState<{ skillName: string; scan: SkillScanResult } | null>(null)
 
   // ---------- 第二段接线状态 ----------
   const [providers, setProviders] = useState<ProviderRecord[]>([])
@@ -424,6 +428,11 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
     }
   }
 
+  /** 扫描结论是事实视图，不阻断导入；none 时不弹窗，不写「暂无风险」 */
+  const showScanReport = useCallback((skillName: string, scan?: SkillScanResult) => {
+    if (scan && scan.level !== 'none') setScanReport({ skillName, scan })
+  }, [])
+
   const handleImport = useCallback(async () => {
     const r = await window.pocketai.importSkill()
     if (!r.ok) {
@@ -435,9 +444,10 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       await refreshSkills()
       setView({ kind: 'installedSkill', id: r.skill.id })
       toast.success(r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone'))
+      showScanReport(r.skill.name, r.scan)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSkills, t, toast])
+  }, [refreshSkills, showScanReport, t, toast])
 
   const handleImportFolder = useCallback(async () => {
     const r = await window.pocketai.importSkillFolder()
@@ -457,9 +467,10 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
         (r.skipped ?? []).length > 0 ? t('skill.market.skippedFiles', { n: r.skipped!.length }) : ''
       ].filter(Boolean)
       toast.success([t('skill.market.importFolderDone'), ...notes].filter(Boolean).join(' '))
+      showScanReport(r.skill.name, r.scan)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSkills, t, toast])
+  }, [refreshSkills, showScanReport, t, toast])
 
   const handleDelete = useCallback(
     async (s: SkillRecord) => {
@@ -481,11 +492,12 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       if (r.ok && r.skill) {
         await refreshSkills()
         toast.success(t('skill.market.importDone'))
+        showScanReport(r.skill.name, r.scan)
       } else {
         toast.error(r.error ?? t('skill.market.importFailed'))
       }
     },
-    [refreshSkills, t, toast]
+    [refreshSkills, showScanReport, t, toast]
   )
 
   const handleImportFromUrl = useCallback(async () => {
@@ -499,10 +511,11 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       await refreshSkills()
       toast.success(t('skill.market.importDone'))
       setUrlInput('')
+      showScanReport(r.skill.name, r.scan)
     } else {
       toast.error(r.error ?? t('skill.market.importFailed'))
     }
-  }, [urlInput, refreshSkills, t, toast])
+  }, [urlInput, refreshSkills, showScanReport, t, toast])
 
   // ---------- 第二段：绑定 / 启动 / 授权 ----------
   const reloadAssistants = useCallback(async () => {
@@ -999,6 +1012,15 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       </div>
 
       {dialog}
+
+      {/* 导入后的扫描结论：分级平铺，attention 不折叠；none 时组件自身返回 null */}
+      {scanReport && (
+        <SkillScanReport
+          skillName={scanReport.skillName}
+          scan={scanReport.scan}
+          onClose={() => setScanReport(null)}
+        />
+      )}
 
       {/* 助手编辑器：授权复用同一份勾选逻辑，这里只负责把记录和 providers 递进去 */}
       {editor && (
