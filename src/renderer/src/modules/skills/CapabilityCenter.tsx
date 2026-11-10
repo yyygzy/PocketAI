@@ -45,6 +45,8 @@ interface Props {
   onClose: () => void
   /** 技能写操作后交回最新清单（与技能页共享一次读；不传则自己重读） */
   onChanged?: () => Promise<SkillRecord[]>
+  /** 「去试运行」：跳到 MCP 面板并展开该 Server 的工具行（执行 UI 不在这里复制） */
+  onTrialRun?: (serverId: string) => void
 }
 
 /** 默认 registry（与技能市场同一份自建索引） */
@@ -57,7 +59,7 @@ type View =
   | { kind: 'mcpServer'; id: string }
   | { kind: 'mcpTemplate'; id: string }
 
-export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
+export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialRun }) => {
   const { t } = useI18n()
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
@@ -812,6 +814,7 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged }) => {
                 setTplValues((prev) => ({ ...prev, [tplId]: { ...prev[tplId], [key]: value } }))
               }
               onCreateTemplate={(tpl) => void handleCreateTemplate(tpl)}
+              onTrialRun={onTrialRun}
             />
           ) : (
             <div className="space-y-6">
@@ -1088,6 +1091,7 @@ const DetailView: React.FC<{
   onToggleLogs: (serverId: string) => void
   onTplValue: (tplId: string, key: string, value: string) => void
   onCreateTemplate: (tpl: McpTemplate) => void
+  onTrialRun?: (serverId: string) => void
 }> = (props) => {
   const { t } = useI18n()
   const { item } = props
@@ -1397,6 +1401,7 @@ const McpServerDetail: React.FC<{
   onAuthorize: (a: AssistantRecord) => void
   onCreateAssistant: () => void
   onCopyBuiltin: () => void
+  onTrialRun?: (serverId: string) => void
 }> = ({
   item,
   assistants,
@@ -1419,7 +1424,8 @@ const McpServerDetail: React.FC<{
   onRetryAssistants,
   onAuthorize,
   onCreateAssistant,
-  onCopyBuiltin
+  onCopyBuiltin,
+  onTrialRun
 }) => {
   const { t } = useI18n()
   const server = item.server
@@ -1510,6 +1516,15 @@ const McpServerDetail: React.FC<{
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold">{t('cap.mcp.toolsTitle')}</span>
             <div className="ml-auto shrink-0 flex items-center gap-2">
+              {onTrialRun && (
+                <button
+                  className="text-xs underline text-[var(--color-text-muted)]"
+                  data-testid="capability-mcp-trial-run"
+                  onClick={() => onTrialRun(server.id)}
+                >
+                  {t('cap.mcp.gotoRun')}
+                </button>
+              )}
               <button
                 className="btn-ghost text-xs"
                 data-testid="capability-mcp-stop"

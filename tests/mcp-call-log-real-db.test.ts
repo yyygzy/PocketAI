@@ -54,6 +54,7 @@ describe('MCP 调用记录真库往返（B32 / B33）', () => {
     mcpCallLogRepo.append({
       serverId: 'srv-real-1',
       tool: 'create_entities',
+      source: 'manual',
       ok: true,
       durationMs: 42,
       argsPreview: summarizeMcpArgs({ name: FAKE_KEY, token: FAKE_KEY }),
@@ -78,6 +79,7 @@ describe('MCP 调用记录真库往返（B32 / B33）', () => {
     expect(all).toHaveLength(1)
     expect(all[0]!.serverId).toBe('srv-real-1')
     expect(all[0]!.tool).toBe('create_entities')
+    expect(all[0]!.source).toBe('manual')
     expect(all[0]!.ok).toBe(true)
     expect(all[0]!.argsPreview).toContain('[redacted]')
     expect(all[0]!.argsPreview ?? '').not.toContain(FAKE_KEY)
@@ -90,6 +92,7 @@ describe('MCP 调用记录真库往返（B32 / B33）', () => {
     mcpCallLogRepo.append({
       serverId: 'srv-control',
       tool: 'control_no_redact',
+      source: 'agent',
       ok: true,
       durationMs: 1,
       argsPreview: `{"name":"${FAKE_KEY}"}`,
@@ -110,6 +113,7 @@ describe('MCP 调用记录真库往返（B32 / B33）', () => {
       mcpCallLogRepo.append({
         serverId: 'srv-real-2',
         tool: `t${i}`,
+        source: 'agent',
         ok: true,
         durationMs: 1,
         argsPreview: null,
@@ -132,6 +136,7 @@ describe('MCP 调用记录真库往返（B32 / B33）', () => {
         mcpCallLogRepo.append({
           serverId,
           tool: `tool-${i}`,
+          source: 'agent',
           ok: true,
           durationMs: 1,
           argsPreview: null,

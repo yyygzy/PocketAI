@@ -1048,6 +1048,24 @@ const MIGRATIONS: Migration[] = [
       if (cols.some((c) => c.name === 'unread')) return
       db.exec('ALTER TABLE conversations ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;')
     }
+  },
+  {
+    // v62：MCP 调用记录补「来源」（V4-Iter-469）。
+    //
+    // v45 建表时这张表同时承接 Agent 循环与 MCP 面板的手工试运行，但两者在库里长得一模一样——
+    // 「这次调用是模型发起的，还是用户在面板点试运行」只能靠猜。新列只做归因，不参与任何
+    // 权限/审批判定，也不改原有打码与截断（见 src/main/mcp/call-summary.ts）。
+    //
+    // 历史行口径：v62 之前的记录没有来源信息，无法回溯区分，统一记为 'agent'——
+    // 该表当年的主链路就是 Agent；不伪造 'manual'，也不引入第三态。
+    // 幂等：SQLite 的 ADD COLUMN 没有 IF NOT EXISTS，先查 PRAGMA（同 v58/v61）。
+    version: 62,
+    name: 'mcp_call_log_source',
+    up: (db) => {
+      const cols = db.prepare('PRAGMA table_info(mcp_call_log)').all() as Array<{ name: string }>
+      if (cols.some((c) => c.name === 'source')) return
+      db.exec("ALTER TABLE mcp_call_log ADD COLUMN source TEXT NOT NULL DEFAULT 'agent';")
+    }
   }
 ]
 

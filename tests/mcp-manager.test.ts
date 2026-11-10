@@ -858,11 +858,21 @@ describe('McpManager — 调用记录事件（onCall）', () => {
     const e = calls[0]!
     expect(e.serverId).toBe('srv1')
     expect(e.tool).toBe('fetch')
+    expect(e.source).toBe('agent')
     expect(e.ok).toBe(true)
     expect(e.error).toBeNull()
     expect(e.durationMs).toBeGreaterThanOrEqual(0)
     expect(e.argsPreview).toContain('url=')
     expect(e.resultPreview).toBe('ok')
+  })
+
+  it('手工试运行传 source=manual → 事件按 manual 归因（权限判定不受影响）', async () => {
+    const calls: McpCallEvent[] = []
+    mgr.onCall((e) => calls.push(e))
+    await mgr.callTool('srv1', 'fetch', {}, 'manual')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.source).toBe('manual')
+    expect(calls[0]!.ok).toBe(true)
   })
 
   it('server 正常响应但带 isError → 记为失败，结果照旧返回给调用方', async () => {

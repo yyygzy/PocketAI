@@ -5,7 +5,7 @@
 // 回答的是「这个 server 昨晚被调了什么、返了什么、成没成」。
 import { dbService } from '../database'
 import { z } from 'zod'
-import type { McpCallEvent, McpCallLogRecord } from '../../../shared/types'
+import type { McpCallEvent, McpCallLogRecord, McpCallSource } from '../../../shared/types'
 
 /** server id 与 mcp_servers 同形状（UUID），复用长度校验避免空串拼进 SQL */
 const serverIdSchema = z.string().min(1).max(64)
@@ -20,6 +20,7 @@ interface McpCallLogRow {
   id: number
   server_id: string
   tool: string
+  source: string | null
   ok: number
   duration_ms: number
   args_preview: string | null
@@ -28,11 +29,17 @@ interface McpCallLogRow {
   created_at: number
 }
 
+/** 只认两个已知值；v62 之前的历史行没有来源信息 ⇒ 按 agent 读（表当年只服务 Agent 链路） */
+function rowSource(raw: string | null): McpCallSource {
+  return raw === 'manual' ? 'manual' : 'agent'
+}
+
 function rowToRecord(row: McpCallLogRow): McpCallLogRecord {
   return {
     id: row.id,
     serverId: row.server_id,
     tool: row.tool,
+    source: rowSource(row.source),
     ok: row.ok === 1,
     durationMs: row.duration_ms,
     argsPreview: row.args_preview ?? null,
@@ -51,11 +58,12 @@ export const mcpCallLogRepo = {
     const tx = db.transaction(() => {
       db.prepare(
         `INSERT INTO mcp_call_log
-         (server_id, tool, ok, duration_ms, args_preview, result_preview, error, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         (server_id, tool, source, ok, duration_ms, args_preview, result_preview, error, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         serverId,
         evt.tool.slice(0, 128),
+        evt.source,
         evt.ok ? 1 : 0,
         Math.max(0, Math.round(evt.durationMs)),
         evt.argsPreview,

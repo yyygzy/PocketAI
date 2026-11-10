@@ -6,7 +6,8 @@ import type {
   McpServerStatusEvent,
   McpServerLogEvent,
   McpCallLogRecord,
-  PythonPipSource
+  PythonPipSource,
+  ToolSchema
 } from '../../../../../shared/types'
 import { useI18n } from '../../../i18n'
 import { describeMcpAnnotations } from '../../../../../shared/mcp-annotations'
@@ -24,6 +25,7 @@ import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../..
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import { errText } from '../../../utils/error'
+import { buildExampleArgs } from './tool-args-example'
 
 /** 单个工具的试运行状态（key = `${serverId}:${toolName}`） */
 interface ToolRunState {
@@ -31,6 +33,8 @@ interface ToolRunState {
   running: boolean
   result?: string
   isError?: boolean
+  /** 本次调用耗时（含超时失败），与调用记录同一口径 */
+  durationMs?: number
 }
 
 export const McpPanel: React.FC = () => {
@@ -187,12 +191,28 @@ export const McpPanel: React.FC = () => {
   const runtimeOf = (id: string): McpServerRuntime | undefined =>
     runtimes.find((r) => r.id === id)
 
-  // 手动试运行：真实调用该工具（等价于 confirm 后执行），结果行内展示
-  const handleRunTool = async (serverId: string, toolName: string) => {
-    const key = `${serverId}:${toolName}`
+  // 手动试运行：真实调用该工具（等价于 confirm 后执行），结果行内展示。
+  // 安全口径：用户点「试运行」本身就是一次显式动作，普通 confirm 工具不再重复问；
+  // 只有 forceConfirm（主进程 mcpToolForceConfirm 判定的破坏性/开放世界工具）才拦一道。
+  // permission==='auto' 不会被标 forceConfirm，因此不会弹。
+  const handleRunTool = async (serverId: string, tool: ToolSchema) => {
+    if (tool.forceConfirm) {
+      const ok = await askConfirm({
+        title: t('agent.toolRunForceTitle'),
+        message: t('agent.toolRunForceMsg', { tool: tool.name }),
+        danger: true
+      })
+      if (!ok) return
+    }
+    const key = `${serverId}:${tool.name}`
     const argsJson = toolRuns[key]?.argsJson ?? ''
-    setToolRuns((prev) => ({ ...prev, [key]: { ...prev[key], argsJson, running: true, result: undefined } }))
-    const r = await window.pocketai.callMcpServerTool(serverId, toolName, argsJson)
+    setToolRuns((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], argsJson, running: true, result: undefined, durationMs: undefined }
+    }))
+    const startedAt = Date.now()
+    const r = await window.pocketai.callMcpServerTool(serverId, tool.name, argsJson)
+    const durationMs = Date.now() - startedAt
     // §336：完成后只更新 running/result 字段，不写回 argsJson——运行期间用户可能已编辑文本框，陈旧值会覆盖用户输入
     setToolRuns((prev) => ({
       ...prev,
@@ -201,11 +221,27 @@ export const McpPanel: React.FC = () => {
         argsJson: prev[key]?.argsJson ?? argsJson,
         running: false,
         result: hasIpcFailed(r) ? (r.error ?? t('common.unknownError')) : (r.content ?? ''),
-        isError: hasIpcFailed(r) ? true : r.isError
+        isError: hasIpcFailed(r) ? true : r.isError,
+        durationMs
       }
     }))
     // 试运行本身就是一次调用：立刻刷新记录，用户不用点刷新就能看到成败与耗时
     void reloadCallLogs().catch(reportIpcError('mcp.callLogList'))
+  }
+
+  const handleCopyResult = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(t('common.copied'))
+    } catch {
+      toast.error(t('common.copyFailed'))
+    }
+  }
+
+  // 能力中心的「去试运行」：关掉浮层并展开这台 Server 的工具行，执行仍留在本面板
+  const handleGoTrialRun = (serverId: string) => {
+    setCapabilityOpen(false)
+    setExpandedServers((prev) => ({ ...prev, [serverId]: true }))
   }
 
   // SEC-2：启动前把真正要执行的命令行摊开给用户看（导入/模板创建的记录只有在这里才落地成进程）
@@ -448,6 +484,8 @@ export const McpPanel: React.FC = () => {
                         {rt.tools.map((tool) => {
                           const runKey = `${r.id}:${tool.name}`
                           const run = toolRuns[runKey]
+                          const exampleArgs = buildExampleArgs(tool.parameters)
+                          const hasExample = Object.keys(exampleArgs).length > 0
                           return (
                             <div
                               key={tool.name}
@@ -500,19 +538,47 @@ export const McpPanel: React.FC = () => {
                                 <MiniBtn
                                   disabled={run?.running || status !== 'running'}
                                   title={t('agent.toolRunHint')}
-                                  onClick={() => void handleRunTool(r.id, tool.name)}
+                                  onClick={() => void handleRunTool(r.id, tool)}
                                 >
                                   {run?.running ? t('agent.toolRunning') : t('agent.toolRun')}
                                 </MiniBtn>
+                                <MiniBtn
+                                  disabled={run?.running || !hasExample}
+                                  title={t('agent.toolArgsFillExample')}
+                                  onClick={() =>
+                                    setToolRuns((prev) => ({
+                                      ...prev,
+                                      [runKey]: {
+                                        ...prev[runKey],
+                                        argsJson: JSON.stringify(exampleArgs, null, 2),
+                                        running: prev[runKey]?.running ?? false
+                                      }
+                                    }))
+                                  }
+                                >
+                                  {t('agent.toolArgsFillExample')}
+                                </MiniBtn>
                               </div>
                               {run?.result !== undefined && (
-                                <pre
-                                  className={`mt-1 max-h-32 overflow-y-auto bg-[var(--color-input-bg)] rounded p-1.5 text-[10px] whitespace-pre-wrap break-all ${
-                                    run.isError ? 'text-[var(--color-danger)]' : ''
-                                  }`}
-                                >
-                                  {run.result}
-                                </pre>
+                                <>
+                                  <div className="flex items-center gap-1 mt-1">
+                                    <MiniBtn onClick={() => void handleCopyResult(run.result ?? '')}>
+                                      {t('common.copy')}
+                                    </MiniBtn>
+                                    {run.durationMs !== undefined && (
+                                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                                        {run.durationMs}ms
+                                      </span>
+                                    )}
+                                  </div>
+                                  <pre
+                                    className={`mt-1 max-h-32 overflow-y-auto bg-[var(--color-input-bg)] rounded p-1.5 text-[10px] whitespace-pre-wrap break-all ${
+                                      run.isError ? 'text-[var(--color-danger)]' : ''
+                                    }`}
+                                  >
+                                    {run.result}
+                                  </pre>
+                                </>
                               )}
                             </div>
                           )
@@ -589,6 +655,13 @@ export const McpPanel: React.FC = () => {
                         [{new Date(l.createdAt).toLocaleTimeString('zh-CN', { hour12: false })}]
                       </span>{' '}
                       <span className={l.ok ? '' : 'text-[var(--color-danger)]'}>{l.tool}</span>{' '}
+                      {l.source === 'manual' && (
+                        <>
+                          <span className="text-[var(--color-text-muted)]">
+                            [{t('agent.callLogSourceManual')}]
+                          </span>{' '}
+                        </>
+                      )}
                       <span className="text-[var(--color-text-muted)]">
                         {l.ok ? `${l.durationMs}ms` : (l.error ?? t('common.unknownError'))}
                       </span>
@@ -647,7 +720,7 @@ export const McpPanel: React.FC = () => {
       )}
 
       {capabilityOpen && (
-        <CapabilityCenter onClose={() => setCapabilityOpen(false)} />
+        <CapabilityCenter onClose={() => setCapabilityOpen(false)} onTrialRun={handleGoTrialRun} />
       )}
     </div>
   )

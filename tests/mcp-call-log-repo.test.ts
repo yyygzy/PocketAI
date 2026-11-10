@@ -44,6 +44,7 @@ import type { McpCallEvent } from '../src/shared/types'
 const evt = (over: Partial<McpCallEvent> = {}): McpCallEvent => ({
   serverId: 'srv-1',
   tool: 'fetch',
+  source: 'agent',
   ok: true,
   durationMs: 1234.6,
   argsPreview: 'url="https://a"',
@@ -68,21 +69,24 @@ describe('mcpCallLogRepo.append', () => {
     expect(state.sqls[1]).toContain('ORDER BY created_at DESC, id DESC LIMIT ?')
   })
 
-  it('落库字段形状：ok 存 0/1、耗时取整非负、可空列存 NULL', () => {
-    mcpCallLogRepo.append(evt({ ok: false, durationMs: -5, argsPreview: null, resultPreview: null, error: 'boom' }))
+  it('落库字段形状：source 原样、ok 存 0/1、耗时取整非负、可空列存 NULL', () => {
+    mcpCallLogRepo.append(
+      evt({ source: 'manual', ok: false, durationMs: -5, argsPreview: null, resultPreview: null, error: 'boom' })
+    )
     const params = state.params[0]!
     expect(params[1]).toBe('fetch')
-    expect(params[2]).toBe(0)
-    expect(params[3]).toBe(0) // 负数夹到 0
-    expect(params[4]).toBeNull()
+    expect(params[2]).toBe('manual')
+    expect(params[3]).toBe(0)
+    expect(params[4]).toBe(0) // 负数夹到 0
     expect(params[5]).toBeNull()
-    expect(params[6]).toBe('boom')
-    expect(typeof params[7]).toBe('number')
+    expect(params[6]).toBeNull()
+    expect(params[7]).toBe('boom')
+    expect(typeof params[8]).toBe('number')
   })
 
   it('耗时四舍五入，不存小数', () => {
     mcpCallLogRepo.append(evt({ durationMs: 1234.6 }))
-    expect(state.params[0]![3]).toBe(1235)
+    expect(state.params[0]![4]).toBe(1235)
   })
 
   it('裁剪语句与插入同一个 serverId（不会把别的 server 的记录裁掉）', () => {
@@ -117,12 +121,13 @@ describe('mcpCallLogRepo.list / clear', () => {
     expect(state.params[3]![0]).toBe(DEFAULT_LIST_LIMIT)
   })
 
-  it('行映射：ok 的 0/1 还原成布尔、缺列回落 null', () => {
+  it('行映射：ok 的 0/1 还原成布尔、source 只认 manual、缺列回落 null', () => {
     state.rows = [
       {
         id: 7,
         server_id: 'srv-1',
         tool: 'fetch',
+        source: 'manual',
         ok: 0,
         duration_ms: 20,
         args_preview: null,
@@ -136,6 +141,7 @@ describe('mcpCallLogRepo.list / clear', () => {
       id: 7,
       serverId: 'srv-1',
       tool: 'fetch',
+      source: 'manual',
       ok: false,
       durationMs: 20,
       argsPreview: null,
@@ -143,6 +149,14 @@ describe('mcpCallLogRepo.list / clear', () => {
       error: 'boom',
       createdAt: 111
     })
+  })
+
+  it('v62 之前的行没有 source（或值异常）→ 一律按 agent 读，不抛错', () => {
+    state.rows = [
+      { id: 1, server_id: 's', tool: 'a', source: null, ok: 1, duration_ms: 1, args_preview: null, result_preview: null, error: null, created_at: 1 },
+      { id: 2, server_id: 's', tool: 'b', source: 'weird', ok: 1, duration_ms: 1, args_preview: null, result_preview: null, error: null, created_at: 2 }
+    ]
+    expect(mcpCallLogRepo.list(null).map((r) => r.source)).toEqual(['agent', 'agent'])
   })
 
   it('clear 传 server 只清该 server，省略则全清；返回删除条数', () => {

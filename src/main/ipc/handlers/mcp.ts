@@ -133,7 +133,12 @@ export function registerMcpHandlers(): void {
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       return { ok: false as const, error: '参数必须是 JSON 对象' }
     }
-    const raw = await mcpManager.callTool(args.serverId, args.toolName, parsed as Record<string, unknown>)
+    const raw = await mcpManager.callTool(
+      args.serverId,
+      args.toolName,
+      parsed as Record<string, unknown>,
+      'manual'
+    )
     // 复用 agent 链路同一套扁平化（含 256KB 截断），避免超大结果撑爆 IPC
     return { ok: true as const, content: stringifyMcpResult(raw), isError: mcpResultIsError(raw) }
   }, argsSchema(mcpCallToolSchema))

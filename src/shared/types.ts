@@ -574,11 +574,16 @@ export interface PerfSummary {
   byModel: PerfModelStat[]
 }
 
+/** MCP 调用来源：Agent 循环，还是用户在 MCP 面板点「试运行」 */
+export type McpCallSource = 'agent' | 'manual'
+
 /** MCP 工具调用记录（落库，跨重启可查；预览字段写入前已脱敏+截断） */
 export interface McpCallLogRecord {
   id: number
   serverId: string
   tool: string
+  /** 这次调用是谁发起的（v62 起落库；更早的历史行统一按 agent 读） */
+  source: McpCallSource
   /** 调用是否成功（server 返回业务级错误也算失败） */
   ok: boolean
   durationMs: number
@@ -595,6 +600,8 @@ export interface McpCallLogRecord {
 export interface McpCallEvent {
   serverId: string
   tool: string
+  /** 来源：Agent 循环（默认）或面板手工试运行 */
+  source: McpCallSource
   ok: boolean
   durationMs: number
   argsPreview: string | null

@@ -29,6 +29,7 @@ import type {
   McpServerStatusEvent,
   McpServerLogEvent,
   McpCallEvent,
+  McpCallSource,
   McpToolAnnotations,
   ToolSchema
 } from '../../shared/types'
@@ -523,8 +524,14 @@ export class McpManager extends EventEmitter {
   /**
    * 调用工具（对外唯一入口）：包一层耗时/成败/预览的调用记录事件。
    * 事件只在有人订阅时才构造预览文本（无订阅者时零开销），且写库失败绝不影响调用结果。
+   * `source` 只标记来源（Agent 循环 / 面板试运行），不参与任何权限判定。
    */
-  async callTool(id: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+  async callTool(
+    id: string,
+    name: string,
+    args: Record<string, unknown>,
+    source: McpCallSource = 'agent'
+  ): Promise<unknown> {
     const t0 = Date.now()
     if (this.listenerCount('call') === 0) return this.invokeTool(id, name, args)
     try {
@@ -534,6 +541,7 @@ export class McpManager extends EventEmitter {
       this.emit('call', {
         serverId: id,
         tool: name,
+        source,
         ok: !bizError,
         durationMs: Date.now() - t0,
         argsPreview: summarizeMcpArgs(args),
@@ -545,6 +553,7 @@ export class McpManager extends EventEmitter {
       this.emit('call', {
         serverId: id,
         tool: name,
+        source,
         ok: false,
         durationMs: Date.now() - t0,
         argsPreview: summarizeMcpArgs(args),

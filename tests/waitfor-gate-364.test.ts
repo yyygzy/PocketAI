@@ -543,6 +543,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/load-fail-read-retry-352.test.tsx': 7,
       'tests/load-fail-read-retry-354.test.tsx': 10,
       'tests/load-fail-read-retry-355.test.tsx': 35,
+      // V4-Iter-469：手工试运行加固——展开工具列表等 2 颗、forceConfirm 弹窗/确认调用 2 颗、
+      // 普通工具直接调用 1 颗、示例值写回 1 颗、结果落屏 1 颗……合计 8 颗，全部按「存在」读屏。
+      // 上限＝现数，不留余量。
+      'tests/mcp-manual-run-469.test.tsx': 8,
       'tests/mcp-manager.test.ts': 1,
       'tests/popup-payload-owner-321.test.tsx': 3,
       'tests/recovery-carry-notice-369.test.tsx': 6,
