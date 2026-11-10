@@ -1182,6 +1182,7 @@ export const zh = {
   'agent.approval.reason.TIMEOUT': '等待确认超时（5 分钟），按拒绝处理。',
   'agent.approval.reason.ABORTED': '运行被中止，未执行。',
   'agent.approval.reason.SESSION_ALLOW': '本会话已允许该工具，本次自动放行。',
+  'agent.approval.reason.FORCE_CONFIRM_OVERRIDE': '本会话已允许该工具，但此类操作要求逐次确认，本次仍强制重新询问。',
   'agent.approval.reason.UNATTENDED': '无人值守模式下不发起确认，按策略拒绝。',
 
   // 外观（透明度 / 自定义 CSS）

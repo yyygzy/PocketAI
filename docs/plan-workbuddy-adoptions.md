@@ -117,12 +117,14 @@
 - `ConversationList.tsx`：`loading && conversations.length===0` 时渲染 6–8 行骨架（形状与真实行一致），**不要**渲染「暂无会话」空态。现有空态条件已经排除「读取失败」（`ConversationList.tsx:707,796` 的 `!conversationsUnread`），加载态要加进同一个条件，避免 loading 时误判为空。
 - 新增 `src/renderer/src/components/Skeleton.tsx`：纯形状组件，不带文案（避免新增 i18n key），支持 `prefers-reduced-motion`。
 - 骨架延迟 120ms 出现：数据在 120ms 内返回则直接渲染，避免快机器上的闪烁。
+- 真机（2026-11-10）：骨架因 120ms 延迟阈值在本地数据下不可观测——数据回得比阈值快，骨架根本没出现；属预期行为，不是缺陷。
 
 **A-2（必须）主题首绘**
 
 - 新增 `app_config` KV：`ui.theme`（`'light'|'dark'`）。`app_config` 是 KV 表，**无需 schema 迁移**。
 - `ThemeLangControls.tsx`：切换主题时同时写 `localStorage` 与 `window.pocketai.setUiTheme(theme)`（新增 IPC；preload、shared 类型、handler 三处同步加）。
-- 主进程新增 `windowBackground(theme)` 帮助函数，建窗前读取 `ui.theme`（有进程内缓存），替换 `src/main/index.ts:123`、`unlock-window.ts:46`、`detached.ts:21` 的固定 `#1e1e2e`；`popup.ts` 保持透明。
+- 主进程新增 `windowBackground(theme)` 帮助函数，建窗前读取 `ui.theme`（每次直读 KV，不缓存——避免库未打开时的深色兜底被固化），替换 `src/main/index.ts:123`、`unlock-window.ts:46`、`detached.ts:21` 的固定 `#1e1e2e`；`popup.ts` 保持透明。
+- 渲染端启动回填：`ui.theme` 缺失时，`boot()` 经 `ui:get-theme` 判有无，把当前生效主题写一次（`ui:set-theme`）；KV 有值时一律以 KV 为准，不重写。写失败只记日志，不影响渲染。
 - 保留 `theme-init.js` 作为兜底；主进程读不到时退回当前深色，不阻塞建窗。
 
 **A-3（必须）语言首绘**
@@ -131,6 +133,7 @@
 - `main.tsx boot()`：非中文语言先 `await ensureLang(lang)` 再 `renderApp()`，上限 150ms；超时按中文兜底并继续渲染，避免拖慢启动。`ensureLang` 目前在 `i18n/index.tsx:27-33` 未导出，需导出或新增 `preloadLang(lang)`，避免把内部实现暴露给调用方。
 - `theme-init.js` 由 `index.html` 与 `unlock.html` 共用（`theme-init.js:1-4`），改动对两个窗口同时生效。
 - 只预加载「当前语言」一个词典，不预热全部语言。
+- 真机（2026-11-10）：ja/ko 通过；en 冷 chunk 首帧仍可能先渲染中文（150ms 上限不足，dev 可复现、生产未验）。后续若要彻底消除，需把上限或预载时机单独评估，不在 A 段继续扩。
 
 **A-4（可延后）锁屏/向导状态快照**
 
@@ -271,6 +274,7 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
 2. A 触发审批后切到 B：A 显示「待确认」；允许/拒绝/5 分钟超时后 1s 内消失；`approval_events` 有对应决策记录。
 3. 从渠道/远程发起 run（ChatModule 未参与）：侧栏仍能显示「进行中」，结束后清除（验证不再被 `requestId` 过滤丢弃）。
 4. 运行中强杀进程后重启：无「进行中」；A 显示一次「已中断/失败」；`conversation_runs` 中该行 `status='interrupted'`；`messages` 无残留 streaming。
+   - 真机（2026-11-10）：此项待下次重启补验（本次未走到强杀重启路径）。
 5. 归档会话收到后台 run：仍保持归档，不被顶回列表，不改变 `updated_at`。
 6. 独立窗口打开时：`getRuntimeStates()` 快照与主窗一致。
 
@@ -311,9 +315,9 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
   - MCP：`destructiveHint === true || openWorldHint === true` 或命中危险关键词（`manager.ts:116-130`）。
   - `fs_write`：保持 `confirm` 基线，不升级为 `forceConfirm`（D6 已定本阶段只保留 `danger`）。
 - 审批有效顺序：**硬拒绝（classification=deny）→ 无人值守拒绝 → 会话白名单 → 询问/放行**；`forceConfirm` 不改变 `decision`（仍是 `confirm`），只做两件事：跳过白名单、禁用「总是允许」。
-- `createApproval`：`forceConfirm` 时跳过白名单查询；`resolveApproval` 收到 `alwaysAllow` 时若 `forceConfirm`，忽略并记录 `ignored_always_allow`（不允许静默扩权）。
+- `createApproval`：`forceConfirm` 时跳过白名单查询；`resolveApproval` 收到 `alwaysAllow` 时若 `forceConfirm`，忽略（正常界面不提供该勾选项，属兜底）。
 - UI：`forceConfirm` 不渲染「本次会话总是允许」；MCP 危险工具复用现有 danger 样式（`ToolApprovalDialog.tsx:87-120`）。
-- 审计：`auto_allow` 只允许出现在非 force 场景；新增或复用 reason code 便于筛选。
+- 审计：`auto_allow` 只允许出现在非 force 场景；白名单确实命中却被 `forceConfirm`/`danger` 覆盖时，决策行的 `reason_code` 记独立回码 `FORCE_CONFIRM_OVERRIDE`（`decision` 仍按真实结果记，结论不变；未命中白名单不记，避免刷量）。
 
 ### C.2（必须）策略读取失败按「继续询问」，而不是 `BAD_ARGS`
 

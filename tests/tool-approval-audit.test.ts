@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ApprovalAuditContext, ApprovalAuditWriteInput } from '../src/shared/types'
 import {
   APPROVAL_TIMEOUT_MS,
+  FORCE_CONFIRM_OVERRIDE,
   createApproval,
   resolveApproval,
   resetApprovalStateForTest,
@@ -136,5 +137,60 @@ describe('五档分档', () => {
     resolveApproval(emitted[0]!.data.approvalId, true)
     expect(await promise).toBe(true)
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe('强制逐次确认覆盖会话白名单（C 段收尾）', () => {
+  /** 同工具同参数、危险档：forceConfirm 生效（此处用 risk='danger' 走另一条触发路径） */
+  function startDanger(): {
+    promise: Promise<boolean>
+    emitted: Array<{ channel: string; data: { approvalId: string } }>
+  } {
+    const emitted: Array<{ channel: string; data: { approvalId: string } }> = []
+    const promise = createApproval(
+      { ...req, requestId: 'req-2', risk: 'danger' },
+      (channel, data) => emitted.push({ channel, data: data as { approvalId: string } }),
+      undefined,
+      ARGS,
+      audit
+    )
+    return { promise, emitted }
+  }
+
+  it('命中会话级总是允许但被 force 覆盖 → 仍然弹窗，审计记 FORCE_CONFIRM_OVERRIDE', async () => {
+    // 先建立白名单：同一工具同参数勾选「本次会话总是允许」
+    const first = start()
+    resolveApproval(first.emitted[0]!.data.approvalId, true, true)
+    expect(await first.promise).toBe(true)
+    expect(calls[0]).toMatchObject({ decision: 'user_approve', scope: 'session' })
+
+    // 危险档：白名单被忽略，仍然逐次询问（结论不变）
+    const forced = startDanger()
+    expect(forced.emitted, '白名单命中也要弹窗，force 不允许静默放行').toHaveLength(1)
+    resolveApproval(forced.emitted[0]!.data.approvalId, true)
+    expect(await forced.promise).toBe(true)
+
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toMatchObject({
+      decision: 'user_approve',
+      reasonCode: FORCE_CONFIRM_OVERRIDE,
+      scope: 'once'
+    })
+  })
+
+  it('未命中白名单的强制确认 → 不记覆盖事件，reason 仍按真实结果', async () => {
+    const emitted: Array<{ channel: string; data: { approvalId: string } }> = []
+    const promise = createApproval(
+      { ...req, requestId: 'req-3', forceConfirm: true },
+      (channel, data) => emitted.push({ channel, data: data as { approvalId: string } }),
+      undefined,
+      ARGS,
+      audit
+    )
+    resolveApproval(emitted[0]!.data.approvalId, true)
+    expect(await promise).toBe(true)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ decision: 'user_approve', reasonCode: 'USER_APPROVE' })
+    expect(calls.some((c) => c.reasonCode === FORCE_CONFIRM_OVERRIDE)).toBe(false)
   })
 })

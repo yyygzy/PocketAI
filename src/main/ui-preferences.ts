@@ -149,6 +149,15 @@ export function getUiTheme(): UiTheme {
   }
 }
 
+/**
+ * 读 KV 里「有没有」主题值：没有（含脏值）返回 null，供渲染端决定是否回填一次。
+ * 与 getUiTheme 不同，**不吞读取异常**——库没打开时调用方应跳过回填，而不是误判成「无值」去写。
+ */
+export function readStoredUiTheme(): UiTheme | null {
+  const raw = appConfigRepo.get(K_THEME)
+  return raw === 'light' || raw === 'dark' ? raw : null
+}
+
 /** 主题化的窗口标记（浮窗保持透明、解锁窗不参与切换，故不靠标题判断） */
 export const THEMED_WINDOW_MARKER = '__pocketaiThemedWindow' as const
 

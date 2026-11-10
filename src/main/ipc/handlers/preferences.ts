@@ -10,7 +10,7 @@ import {
 import { isPortableRuntime } from '../../portable'
 import { getMachineId } from '../../steward/machine'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
-import { getUiPreferences, setUiPreferences, setUiTheme, type UiTheme } from '../../ui-preferences'
+import { getUiPreferences, readStoredUiTheme, setUiPreferences, setUiTheme, type UiTheme } from '../../ui-preferences'
 import { isReplyNotifyEnabled, setReplyNotifyEnabled, showReplyNotification } from '../../notify/reply-notify'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../../../shared/schemas/preferences'
@@ -98,6 +98,12 @@ export function registerPreferenceHandlers(): void {
     ok: true as const,
     data: setUiTheme(theme)
   }), argsSchema(z.enum(['light', 'dark'])))
+  // A-3 回填：只回答「KV 里有没有值」（null=没有），渲染端据此决定是否写一次；
+  // 读取异常不吞（库没打开时上层会看到 {ok:false}，渲染端按失败跳过，不会误判成无值）
+  safeHandle(IPC.UI_GET_THEME, () => ({
+    ok: true as const,
+    data: { theme: readStoredUiTheme() }
+  }))
 
   // ---------- 回复完成系统通知 ----------
   safeHandle(IPC.NOTIFY_REPLY_GET, () => isReplyNotifyEnabled())

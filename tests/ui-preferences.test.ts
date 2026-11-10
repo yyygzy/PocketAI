@@ -27,7 +27,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: mocks.appConfigRepo }))
 
-import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, MAX_PREFERENCE_ID_CHARS, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES, getUiTheme, windowBackground, setUiTheme, normalizeUiTheme, markThemedWindow } from '../src/main/ui-preferences'
+import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, MAX_PREFERENCE_ID_CHARS, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES, getUiTheme, readStoredUiTheme, windowBackground, setUiTheme, normalizeUiTheme, markThemedWindow } from '../src/main/ui-preferences'
 
 beforeEach(() => {
   mocks.store.clear()
@@ -239,6 +239,28 @@ describe('主题底色（ui.theme，A-3 / D1）', () => {
     setUiTheme('light')
     expect(getUiTheme()).toBe('light')
     expect(windowBackground()).toBe('#eff1f5')
+  })
+
+  it('readStoredUiTheme 只回答「有没有值」：缺省/脏值 → null，合法值原样', () => {
+    expect(readStoredUiTheme()).toBeNull()
+    mocks.store.set('ui.theme', 'light')
+    expect(readStoredUiTheme()).toBe('light')
+    mocks.store.set('ui.theme', 'dark')
+    expect(readStoredUiTheme()).toBe('dark')
+    mocks.store.set('ui.theme', 'bogus')
+    expect(readStoredUiTheme()).toBeNull()
+  })
+
+  it('readStoredUiTheme 不吞库未打开异常（调用方据此跳过回填，而不是误判成无值）', () => {
+    const original = mocks.appConfigRepo.get
+    mocks.appConfigRepo.get = () => {
+      throw new Error('Database not opened')
+    }
+    try {
+      expect(() => readStoredUiTheme()).toThrow()
+    } finally {
+      mocks.appConfigRepo.get = original
+    }
   })
 
   it('库未打开（读 KV 抛错）→ 退回深色且不污染后续读取', () => {

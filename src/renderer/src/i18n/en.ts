@@ -1180,6 +1180,7 @@ export const en = {
   'agent.approval.reason.TIMEOUT': 'Confirmation timed out after 5 minutes; treated as denied.',
   'agent.approval.reason.ABORTED': 'The run was aborted and not executed.',
   'agent.approval.reason.SESSION_ALLOW': 'This tool is allowed for the current session; auto-allowed this time.',
+  'agent.approval.reason.FORCE_CONFIRM_OVERRIDE': 'This tool is allowed for the current session, but this kind of action requires confirmation every time; it was asked again.',
   'agent.approval.reason.UNATTENDED': 'Unattended mode does not prompt for confirmation; denied by policy.',
 
   // Appearance (opacity / custom CSS)

@@ -1129,6 +1129,7 @@ export const ja = {
   'agent.approval.reason.TIMEOUT': '確認待ちが 5 分でタイムアウトしたため、拒否として扱いました。',
   'agent.approval.reason.ABORTED': '実行が中止され、未実行です。',
   'agent.approval.reason.SESSION_ALLOW': 'このセッションではこのツールを許可済みのため、今回自動許可しました。',
+  'agent.approval.reason.FORCE_CONFIRM_OVERRIDE': 'このセッションではこのツールを許可済みですが、この種の操作は毎回確認が必要なため、今回も改めて確認しました。',
   'agent.approval.reason.UNATTENDED': '無人モードでは確認を求めず、ポリシーにより拒否しました。',
   'set.appearance': '外観',
   'set.usage': '使用量',

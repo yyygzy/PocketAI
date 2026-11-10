@@ -1129,6 +1129,7 @@ export const ko = {
   'agent.approval.reason.TIMEOUT': '확인 대기 시간이 5분을 초과하여 거부로 처리했습니다.',
   'agent.approval.reason.ABORTED': '실행이 중단되어 수행되지 않았습니다.',
   'agent.approval.reason.SESSION_ALLOW': '이 세션에서 이 도구를 허용했으므로 이번에는 자동 허용했습니다.',
+  'agent.approval.reason.FORCE_CONFIRM_OVERRIDE': '이 세션에서 이 도구를 허용했지만, 이런 작업은 매번 확인이 필요하므로 이번에도 다시 확인했습니다.',
   'agent.approval.reason.UNATTENDED': '무인 모드에서는 확인을 요청하지 않으며 정책에 따라 거부했습니다.',
   'set.appearance': '모양',
   'set.usage': '사용량',

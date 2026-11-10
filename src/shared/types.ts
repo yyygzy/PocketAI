@@ -2867,6 +2867,7 @@ export const IPC = {
   // ---------- 界面偏好 ----------
   UI_GET_PREFS: 'ui:get-prefs',
   UI_SET_PREFS: 'ui:set-prefs',
+  UI_GET_THEME: 'ui:get-theme',
   UI_SET_THEME: 'ui:set-theme',
 
   // ---------- 回复完成系统通知 ----------

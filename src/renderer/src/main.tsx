@@ -11,6 +11,7 @@ import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { loadAndInjectCustomCss } from './custom-css'
 import { loadAndApplyChatFontSize } from './chat-font'
 import { loadCodeCollapseLines } from './code-collapse'
+import { backfillThemeIfUnset } from './theme-boot'
 import {
   parseModuleDeepLink,
   resolveAgentDeepLinkTarget,
@@ -100,6 +101,8 @@ async function boot(): Promise<void> {
   // A-3：首帧无闪烁——非 zh 时先把当前语言字典预载到位（上限 150ms，超时按旧行为兜底）
   await preloadInitialLang()
   if (!bridgeMissing && !isPopup && !isDetached) {
+    // A-3 回填：KV 无值时把当前生效主题写一次，让下次启动建窗就用对底色（失败只记日志）
+    void backfillThemeIfUnset()
     const link = parseModuleDeepLink(window.location.search, window.location.hash)
     if (link) {
       const target = await resolveAgentDeepLinkTarget(() =>

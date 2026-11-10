@@ -31,6 +31,12 @@ export const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 /** 单会话「总是允许」的条目上限，防无限增长 */
 const SESSION_ALLOW_MAX = 50
 
+/**
+ * 审计 reason code：命中会话级「总是允许」，但本次属于强制逐次确认（forceConfirm / risk='danger'），
+ * 白名单被忽略。独立回码，便于在审计里筛出「本该自动放行、却被强制重新询问」的事件。
+ */
+export const FORCE_CONFIRM_OVERRIDE = 'FORCE_CONFIRM_OVERRIDE'
+
 const pending = new Map<string, PendingApproval>()
 /** 会话级白名单：conversationId → 已允许的 allowKey 集合（不落库，进程生命周期） */
 const sessionAllows = new Map<string, Set<string>>()
@@ -133,7 +139,10 @@ export function createApproval(
 
   // 会话级「总是允许」：同一会话内同工具同参数不再弹窗（审计记 auto_allow + session）
   const allowKey = toolAllowKey(req.toolName, argsJson)
-  if (!forceConfirm && isSessionAllowed(req.conversationId, allowKey)) {
+  const sessionAllowed = isSessionAllowed(req.conversationId, allowKey)
+  // 白名单确实命中、却被逐次确认压回去：不改变询问结论，只让审计能看出这次询问是被强制触发的
+  const forceOverrodeSessionAllow = forceConfirm && sessionAllowed
+  if (!forceConfirm && sessionAllowed) {
     if (audit) writeAudit('auto_allow', 'SESSION_ALLOW', 'session')
     return Promise.resolve(true)
   }
@@ -152,14 +161,17 @@ export function createApproval(
       // B-2：待确认计数跟着这次裁决走（允许/拒绝/超时/中止都算结束）
       markApprovalSettled(req.conversationId, req.requestId)
       if (audit) {
+        // 命中白名单却被强制逐次确认：原因改用独立回码（结论与 decision 仍按真实结果记）
+        const reasonCode = (fallback: string): string =>
+          forceOverrodeSessionAllow ? FORCE_CONFIRM_OVERRIDE : fallback
         if (approved) {
-          writeAudit('user_approve', 'USER_APPROVE', alwaysAllow ? 'session' : 'once')
+          writeAudit('user_approve', reasonCode('USER_APPROVE'), alwaysAllow ? 'session' : 'once')
         } else if (reason === 'timeout') {
-          writeAudit('timeout_deny', 'TIMEOUT', 'once')
+          writeAudit('timeout_deny', reasonCode('TIMEOUT'), 'once')
         } else if (reason === 'abort') {
-          writeAudit('policy_deny', 'ABORTED', 'once')
+          writeAudit('policy_deny', reasonCode('ABORTED'), 'once')
         } else {
-          writeAudit('user_deny', 'USER_DENY', 'once')
+          writeAudit('user_deny', reasonCode('USER_DENY'), 'once')
         }
       }
       resolve(approved)
