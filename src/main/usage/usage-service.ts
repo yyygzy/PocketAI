@@ -3,8 +3,9 @@
 // 聚合在 JS 侧完成（行级数据量可控，且坏 JSON 容错/时区日切比 SQL JSON 函数更直观可控）
 import { dbService } from '../db/database'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageStats, UsageSummary, BudgetWarnEvent } from '../../shared/types'
-import { computeUsageCost, priceKey, roundCost } from '../../shared/usage-pricing'
+import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsagePricing, UsageStats, UsageSummary, BudgetWarnEvent } from '../../shared/types'
+import { computeUsageCost, currencySymbolOf, priceKey, roundCost } from '../../shared/usage-pricing'
+import { getUsagePricing } from './pricing-config'
 
 /** 聚合输入行（SQL 只拉必要列） */
 export interface UsageRow {
@@ -404,6 +405,26 @@ class UsageService {
       return { scope: 'monthly', cost: status.monthCost, limit: status.monthly }
     }
     return null
+  }
+
+  /**
+   * 硬阻断超额判定（供 Agent 循环在每次 LLM 调用前查询）。
+   * 与普通聊天 `chatService.assertBudget` 共用同一开关（`usage.budget.hardBlock`）与同一金额口径，
+   * 区别只是这里返回详情、不抛错——Agent 要在循环边界"收尾停止"，而不是整轮报错。
+   * 关闭硬阻断或未超限时返回 null。
+   */
+  getHardBlockExceeded(): {
+    scope: 'daily' | 'monthly'
+    cost: number
+    limit: number
+    currency: UsagePricing['currency']
+    symbol: string
+  } | null {
+    if (!appConfigRepo.isUsageBudgetHardBlockEnabled()) return null
+    const pricing = getUsagePricing()
+    const exceeded = this.checkBudgetExceeded(pricing.prices)
+    if (!exceeded) return null
+    return { ...exceeded, currency: pricing.currency, symbol: currencySymbolOf(pricing.currency) }
   }
 
   /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */

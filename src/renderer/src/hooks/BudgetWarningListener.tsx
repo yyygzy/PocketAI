@@ -12,6 +12,7 @@ export function BudgetWarningListener() {
 
   useEffect(() => {
     let off: (() => void) | undefined
+    let offStop: (() => void) | undefined
     try {
       off = window.pocketai.onUsageBudgetWarning((e) => {
         toast.warning(
@@ -25,10 +26,25 @@ export function BudgetWarningListener() {
           })
         )
       })
+      // 金额预算触顶后 Agent 循环已收尾停止：这是"本轮停了"，与 80% 软预警的"快到上限"分开说
+      offStop = window.pocketai.onUsageBudgetStop((e) => {
+        // 两条分支各用字面量 key：保持动态 key 调用点数量不变（闸门会钉住这个数）
+        const scope = e.scope === 'daily' ? t('usage.scopeDaily') : t('usage.scopeMonthly')
+        toast.warning(
+          t('usage.budgetStopped', {
+            scope,
+            symbol: currencySymbolOf(e.currency),
+            limit: e.limit.toFixed(2)
+          })
+        )
+      })
     } catch (e2) {
       reportIpcError('usage.budgetWarningSubscribe')(e2)
     }
-    return () => off?.()
+    return () => {
+      off?.()
+      offStop?.()
+    }
   }, [toast, t])
 
   return null

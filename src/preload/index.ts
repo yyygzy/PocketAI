@@ -1279,6 +1279,12 @@ const api = {
     ipcRenderer.on(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.USAGE_BUDGET_WARNING_EVENT, listener)
   },
+  /** Agent 循环因金额预算触顶而收尾停止（与 80% 软预警独立；每轮最多一次） */
+  onUsageBudgetStop: (handler: (e: import('../shared/types').BudgetStopBroadcastEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: import('../shared/types').BudgetStopBroadcastEvent) => handler(data)
+    ipcRenderer.on(IPC.USAGE_BUDGET_STOP_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.USAGE_BUDGET_STOP_EVENT, listener)
+  },
   /** 审批审计写失败（fail-open）：主进程每进程只广播一次，渲染端弹一条可见提示 */
   onApprovalAuditWarn: (handler: (e: ApprovalAuditWarnEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: ApprovalAuditWarnEvent) => handler(data)

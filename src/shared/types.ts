@@ -390,6 +390,17 @@ export interface BudgetWarnBroadcastEvent extends BudgetWarnEvent {
   currency: UsagePricing['currency']
 }
 
+/**
+ * 金额预算触顶后 Agent 循环收尾的广播载荷（USAGE_BUDGET_STOP_EVENT）。
+ * 只在"本轮不再发起新的 LLM 调用、写固定收尾文案"时发一次；与 80% 软预警是两条独立的广播。
+ */
+export interface BudgetStopBroadcastEvent {
+  scope: 'daily' | 'monthly'
+  cost: number
+  limit: number
+  currency: UsagePricing['currency']
+}
+
 /** KB 数据健康：缺向量/维度不匹配文档（需重建索引） */
 export interface KbBrokenDoc {
   id: string
@@ -2674,6 +2685,7 @@ export const IPC = {
   USAGE_BUDGET_GET: 'usage:budget-get', // 预算状态（今日/本月已花 + 已配置预算）
   USAGE_BUDGET_SET: 'usage:budget-set', // 保存预算（null=不限制）
   USAGE_BUDGET_WARNING_EVENT: 'usage:budget-warning', // 主进程→渲染端：日/月预算达 80% 软预警（每周期一次）
+  USAGE_BUDGET_STOP_EVENT: 'usage:budget-stop', // 主进程→渲染端：Agent 循环因金额预算触顶而收尾停止
   DATA_HEALTH_GET: 'dataHealth:get', // 数据健康度（体量/知识库索引状态/备份与维护任务）
   DATA_HEALTH_OPEN_DIR: 'dataHealth:open-dir', // 在系统文件管理器里打开数据目录（「浏览器缓存」那一格旁的只读跳转）
   DATA_HEALTH_CLEAR_CACHE: 'dataHealth:clear-cache', // 清 default session 的 HTTP 缓存（同那一格旁的显式动作；不做文件系统删除，见 cache-clean.ts）

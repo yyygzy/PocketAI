@@ -1253,6 +1253,7 @@ export const ja = {
   'usage.scopeDaily': '今日',
   'usage.scopeMonthly': '今月',
   'usage.budgetBlocked': '{scope}上限 {symbol}{limit}に達しました。リクエストを自動停止しました。上限を調整してから再試行してください。',
+  'usage.budgetStopped': '{scope}の予算上限 {symbol}{limit} に達したため、この実行ではモデルの呼び出しを停止しました。完了済みの内容は保持されます。',
   'usage.detailJumpHint': 'クリックで会話内のこのメッセージへ移動',
   'dh.total': 'データ合計',
   'dh.db': 'メインデータベース',

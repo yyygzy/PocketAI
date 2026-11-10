@@ -1307,6 +1307,7 @@ export const zh = {
   'usage.scopeDaily': '今日',
   'usage.scopeMonthly': '本月',
   'usage.budgetBlocked': '已达到{scope}上限 {symbol}{limit}，已自动停发，请调整上限后再试',
+  'usage.budgetStopped': '已达到{scope}预算上限 {symbol}{limit}，本轮已停止继续调用模型；已完成的部分保留。',
   'usage.detailJumpHint': '点击跳转到会话内该条消息',
   'dh.total': '数据合计',
   'dh.db': '主数据库',

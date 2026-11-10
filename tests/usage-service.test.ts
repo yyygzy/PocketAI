@@ -34,6 +34,11 @@ vi.mock('../src/main/db/database', () => ({
 // mock appConfigRepo（其 import 链 portable.ts → electron 在测试环境不可用）
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: {
+    // 计价配置：给 gpt-4o 一组单价，供 getHardBlockExceeded 用例算出非零费用
+    get: (key: string) =>
+      key === 'usage.pricing'
+        ? JSON.stringify({ currency: 'CNY', prices: { 'openai::gpt-4o': { input: 2, output: 4 } } })
+        : undefined,
     getUsageBudgetDaily: () => h.daily,
     getUsageBudgetMonthly: () => h.monthly,
     setUsageBudgetDaily: (v: number | null) => { h.daily = v },
@@ -510,5 +515,44 @@ describe('usageService.getBudgetStatus — 预算状态（今日/本月估算费
     expect(s.todayCost).toBe(0)
     h.daily = null
     h.monthly = null
+  })
+})
+
+describe('usageService.getHardBlockExceeded — Agent 循环的金额预算判定', () => {
+  const usageRow = (created_at: number) => ({
+    provider: 'openai',
+    model: 'gpt-4o',
+    usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150 }),
+    created_at
+  })
+
+  it('硬阻断开关关闭 → null（即便已超限）', () => {
+    h.hardBlock = false
+    h.daily = 0.0001
+    h.monthly = null
+    h.rows = [usageRow(Date.now())]
+    expect(usageService.getHardBlockExceeded()).toBeNull()
+  })
+
+  it('开关开启且超限 → 返回 scope/limit/currency/symbol（不抛错）', () => {
+    h.hardBlock = true
+    h.daily = 0.0001
+    h.monthly = null
+    h.rows = [usageRow(Date.now())]
+    const over = usageService.getHardBlockExceeded()
+    expect(over).toMatchObject({ scope: 'daily', limit: 0.0001, currency: 'CNY', symbol: '¥' })
+    expect(over!.cost).toBeCloseTo(0.0004, 6)
+    h.hardBlock = false
+    h.daily = null
+  })
+
+  it('开关开启但未超限 → null', () => {
+    h.hardBlock = true
+    h.daily = 100
+    h.monthly = null
+    h.rows = [usageRow(Date.now())]
+    expect(usageService.getHardBlockExceeded()).toBeNull()
+    h.hardBlock = false
+    h.daily = null
   })
 })

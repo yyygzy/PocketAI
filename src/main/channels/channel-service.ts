@@ -25,6 +25,8 @@ import { conversationRepo } from '../db/repositories/conversation.repo'
 import { chatService } from '../chat/chat-service'
 import { getChannelConfig, getChannelSecrets, convMapKey } from './channel-config'
 import { errMsg } from '../error'
+import { currencySymbolOf } from '../../shared/usage-pricing'
+import type { UsagePricing } from '../../shared/types'
 import { telegramGateway } from './telegram-gateway'
 import { discordGateway } from './discord-gateway'
 import { slackGateway } from './slack-gateway'
@@ -41,6 +43,20 @@ const GATEWAYS: Record<ChannelType, IGateway> = {
   slack: slackGateway,
   feishu: feishuGateway,
   dingtalk: dingtalkGateway
+}
+
+/**
+ * IM 回执不吐机器码：把聊天入口的 `BUDGET_EXCEEDED:scope:limit:currency:msg`
+ * 换成本地化可读文本（渠道层只做展示翻译，不参与判定）。
+ */
+function localizeChatError(error: string | undefined): string {
+  const text = (error || '').trim()
+  if (!text) return '无回复内容'
+  const m = text.match(/^BUDGET_EXCEEDED:(daily|monthly):([\d.]+)(?::([A-Z]{3}))?/)
+  if (!m) return text
+  const scopeLabel = m[1] === 'daily' ? '今日' : '本月'
+  const symbol = currencySymbolOf(m[3] as UsagePricing['currency'] | undefined)
+  return `已达到${scopeLabel}预算上限 ${symbol}${m[2]}，本次请求未执行；请调整预算上限后再试。`
 }
 
 export function loadConvMap(type: ChannelType): Record<string, string> {
@@ -184,7 +200,7 @@ export class ChannelService {
     if (result.ok && result.content?.trim()) {
       await GATEWAYS[type].sendText(msg.chatId, result.content)
     } else {
-      await GATEWAYS[type].sendText(msg.chatId, `处理失败：${result.error || '无回复内容'}`)
+      await GATEWAYS[type].sendText(msg.chatId, `处理失败：${localizeChatError(result.error)}`)
     }
   }
 

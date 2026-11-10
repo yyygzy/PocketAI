@@ -1306,6 +1306,7 @@ export const en = {
   'usage.scopeDaily': "today's",
   'usage.scopeMonthly': "this month's",
   'usage.budgetBlocked': '{scope} limit {symbol}{limit} reached, requests auto-stopped. Adjust the limit to continue.',
+  'usage.budgetStopped': 'The {scope} budget limit {symbol}{limit} has been reached. This run stopped calling the model; work already completed is kept.',
   'usage.detailJumpHint': 'Click to jump to this message in the conversation',
   'dh.total': 'Data total',
   'dh.db': 'Main database',

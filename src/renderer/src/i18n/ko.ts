@@ -1253,6 +1253,7 @@ export const ko = {
   'usage.scopeDaily': '오늘',
   'usage.scopeMonthly': '이번 달',
   'usage.budgetBlocked': '{scope} 한도 {symbol}{limit}에 도달했습니다. 요청이 자동 중지되었습니다. 한도를 조정한 후 다시 시도하세요.',
+  'usage.budgetStopped': '{scope} 예산 한도 {symbol}{limit}에 도달하여 이번 실행에서는 모델 호출을 중단했습니다. 완료된 부분은 유지됩니다.',
   'usage.detailJumpHint': '클릭하면 대화 내 해당 메시지로 이동',
   'dh.total': '데이터 합계',
   'dh.db': '메인 데이터베이스',

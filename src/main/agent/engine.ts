@@ -22,13 +22,15 @@ import type {
   MessageSource,
   MessageRetrieval,
   ApprovalPreviewField,
-  WorkspaceChangeSet
+  WorkspaceChangeSet,
+  UsagePricing
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import { slotDecision } from '../providers/local-slot'
 import type { AdapterChatMessage, ChatParams } from '../providers/types'
 import { recordChatStreamPerf } from '../steward/perf-probe'
-import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
+import { checkAndBroadcastBudgetWarnings, broadcastBudgetStop } from '../usage/budget-warn'
+import { usageService } from '../usage/usage-service'
 import { ProviderError } from '../providers/types'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { runFirstMessageTitle } from '../conversation/title-gen'
@@ -230,6 +232,20 @@ function safeTraceStats(requestId: string): AgentRunStats | null {
     logger.warn(`[agent] trace 统计失败: ${errMsg(e)}`)
     return null
   }
+}
+
+/**
+ * 金额预算触顶后的固定收尾文案（用户可见，随 assistant 消息落库）。
+ * 语义对齐子 run 的 RunBudget 触顶：带着已完成的部分收敛，而不是抛错让整轮作废。
+ * 主进程没有 i18n，这里与引擎其它用户可见文案一样写中文；四条提示语在渲染端（toast）。
+ */
+function budgetStopText(over: {
+  scope: 'daily' | 'monthly'
+  limit: number
+  symbol: string
+}): string {
+  const scopeLabel = over.scope === 'daily' ? '今日' : '本月'
+  return `（已达到${scopeLabel}预算上限 ${over.symbol}${over.limit.toFixed(2)}，本轮已停止继续调用模型；已完成的部分保留。）`
 }
 
 const REPLAN_EXTRA_STEPS = 5 // 首次超步数时重规划一次，追加的步数预算
@@ -598,6 +614,11 @@ async function summarizeHistoryWithLLM(
   }
   const input = cutToTokens(lines.join('\n'), LLM_SUMMARY_INPUT_TOKENS)
   const prompt = `请简要总结以下对话历史，保留关键信息：用户的核心需求、已执行的工具调用及重要结果、达成的结论。用简洁的中文，不超过 300 字。\n\n${input}`
+
+  // 金额预算闸：摘要也是一次 LLM 调用。触顶时不再发这一发，直接走规则摘要（不阻塞上下文组装）。
+  // TODO(预算口径待定)：上下文摘要属旁路调用，本轮**不把这一发的 usage 纳入金额计量**（见文档待定项），
+  // 只在这里遵守"每次 LLM 调用前查预算"；口径定了再决定是否落库计费。
+  if (usageService.getHardBlockExceeded()) return buildHistorySummary(earlyMsgs)
 
   try {
     const result = await adapter.streamChat(
@@ -1456,7 +1477,9 @@ class AgentEngine {
       const hasToolHistory = messages.some(
         (m) => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls?.length)
       )
-      if (!hasToolHistory && !shouldSkipPlanning(content, tools.length)) {
+      // TODO(预算口径待定)：规划属旁路 LLM 调用，本轮**不把这一发的 usage 纳入金额计量**（见文档待定项）。
+      // 但仍遵守"每次 LLM 调用前查预算"：触顶就跳过规划，交给主循环的同一道闸收尾停止。
+      if (!hasToolHistory && !shouldSkipPlanning(content, tools.length) && !usageService.getHardBlockExceeded()) {
         try {
           const planAdapter = providerManager.getAdapter(target.providerId)
           const planSystem = `你是一个任务规划助手。请分析用户的最新请求，制定简洁的执行计划。
@@ -1563,6 +1586,25 @@ class AgentEngine {
            */
           if (ctx.asChild && budgetExhausted(ctx.budget)) {
             logger.warn(`[agent] 委派预算触顶（${ctx.budget.used}/${ctx.budget.max}），子 run 提前收敛`)
+            break
+          }
+
+          /**
+           * 金额预算闸（与上面那条 RunBudget 是**两层**，不混在一层）：
+           * - RunBudget 数的是"本轮还能调几次模型 / 开几条子会话"，按整棵编排树共享，触顶只掐子 run；
+           * - 这里看的是"按本机单价估算的钱是否已到日/月上限"，触顶则**整轮**收尾停止（主/子 run 同口径）。
+           * 两者互不替代，谁先触顶按谁的语义停：RunBudget 触顶带着已做步骤收敛，金额触顶写固定收尾文案后停。
+           *
+           * 检查放在每个循环节点之前（llm 与 tools 都覆盖）：一旦超限，本轮不再发 LLM、也不再执行工具。
+           * **普通工具执行前不查**（web.search / kb.search 等语义不变），预算只拦"发模型"这个动作；
+           * 委派例外：delegate_task 会再开一条子 run（更多 LLM 调用），所以在 prepareDelegation 里单独再查一次。
+           */
+          const overBudget = usageService.getHardBlockExceeded()
+          if (overBudget) {
+            logger.warn(`[agent] 金额预算触顶（${overBudget.scope} ${overBudget.cost}/${overBudget.limit}），本轮收尾停止`)
+            ctx.stepCount++
+            this.runBudgetStopStep(ctx, ctx.stepCount, overBudget)
+            state = 'final'
             break
           }
 
@@ -2545,11 +2587,97 @@ class AgentEngine {
   }
 
   /**
+   * 金额预算触顶的收尾节点：写固定收尾文案、落终态、广播提示，**不抛错**。
+   * 与 `runDegradeStep` 的区别：这里一次 LLM 都不再发（降级那发也不发），
+   * 只把"本轮因预算停在这里、已完成部分保留"这件事告诉用户与渠道。
+   */
+  private runBudgetStopStep(
+    ctx: AgentRunContext,
+    stepIndex: number,
+    over: {
+      scope: 'daily' | 'monthly'
+      cost: number
+      limit: number
+      currency: UsagePricing['currency']
+      symbol: string
+    }
+  ): void {
+    const { conversationId, target, userMsg, emit, requestId } = ctx
+    const text = budgetStopText(over)
+    // 内存态先落：即使消息写库失败，外层 DONE 也能带走这段固定文案（不会给用户一片空白）
+    ctx.finalContent = text
+    try {
+      const msg = messageRepo.insert({
+        conversationId,
+        role: 'assistant',
+        content: text,
+        provider: target.providerId,
+        model: target.model,
+        status: 'done',
+        parentId: userMsg.id
+      })
+      ctx.finalMessageId = msg.id
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex,
+        type: 'thought',
+        text,
+        messageId: msg.id
+      })
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex,
+        type: 'final',
+        text,
+        messageId: msg.id,
+        done: true
+      })
+    } catch (e) {
+      logger.warn(`[agent] 预算停止收尾消息写入失败: ${errMsg(e)}`)
+      // 写库失败时仍把文案发到界面：前端按 messageId 对账，空 id 只影响"这条消息的锚点"
+      emit(IPC.AGENT_STEP_EVENT, {
+        requestId,
+        conversationId,
+        stepIndex,
+        type: 'final',
+        text,
+        done: true
+      })
+    }
+    safeTrace({
+      requestId,
+      conversationId,
+      stepIndex,
+      stepType: 'final',
+      durationMs: 0,
+      status: 'error',
+      error: 'budget_exceeded'
+    })
+    // 桌面 toast：本轮是"中途停了"，与 80% 软预警、聊天入口的"未开始就已停"分开说
+    broadcastBudgetStop({
+      scope: over.scope,
+      cost: over.cost,
+      limit: over.limit,
+      currency: over.currency
+    })
+  }
+
+  /**
    * 降级节点：超步数时再调一次 LLM（不带 tools）强制生成最终回答。
    * 成功返回 true；失败时内部已 trace + emit 错误事件 + 更新会话状态，返回 false，
    * 由调用方直接结束（不再发 DONE 事件）。
    */
   private async runDegradeStep(ctx: AgentRunContext): Promise<boolean> {
+    // 金额预算闸：降级本身也是一次 LLM 调用。触顶时不再发这一发，直接写固定收尾文案并算收尾成功。
+    // TODO(预算口径待定)：降级调用本轮**不计入金额计量**（见文档待定项）；这里只拦"发不发"。
+    const overBudget = usageService.getHardBlockExceeded()
+    if (overBudget) {
+      logger.warn(`[agent] 金额预算触顶（${overBudget.scope} ${overBudget.cost}/${overBudget.limit}），跳过降级总结`)
+      this.runBudgetStopStep(ctx, ctx.stepCount + 1, overBudget)
+      return true
+    }
     const { conversationId, target, messages, master, userMsg, defaultParams, emit, requestId } = ctx
     const stepStart = Date.now()
 
@@ -2728,6 +2856,17 @@ class AgentEngine {
           : '这一档没有"多个本地模型同驻"的实测依据，改填一个**云端**模型名或省略 model 让角色沿用当前模型——'
         return fail(`DELEGATE_DISTINCT_BLOCKED: ${verdict.reasons.join(' / ')}。${next}请省略 model 参数、让角色沿用当前模型顺序执行。`)
       }
+    }
+
+    // 金额预算闸：委派=再开一条子 run（会继续发 LLM 调用），触顶时不放行。
+    // 失败回成 isError 工具结果交给父代理改道（与下面两条 RunBudget 闸同一形状），不抛错中断整轮。
+    // TODO(预算口径待定)：判定复用聊天入口同一开关/金额口径；子 run 自身仍按"每次 LLM 前查"受控。
+    const overBudget = usageService.getHardBlockExceeded()
+    if (overBudget) {
+      const scopeLabel = overBudget.scope === 'daily' ? '今日' : '本月'
+      return fail(
+        `BUDGET_EXCEEDED: ${scopeLabel}预算上限 ${overBudget.symbol}${overBudget.limit.toFixed(2)} 已达到，本轮不再发起新的模型调用（不开子会话）`
+      )
     }
 
     if (!canOpenChild(ctx.budget)) {
