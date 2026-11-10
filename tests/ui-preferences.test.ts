@@ -27,7 +27,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: mocks.appConfigRepo }))
 
-import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, MAX_PREFERENCE_ID_CHARS, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES, getUiTheme, readStoredUiTheme, windowBackground, setUiTheme, normalizeUiTheme, markThemedWindow } from '../src/main/ui-preferences'
+import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPACITY, MAX_CSS_LENGTH, MAX_PREFERENCE_ID_CHARS, normalizeCodeCollapseLines, DEFAULT_CODE_COLLAPSE_LINES, MAX_CODE_COLLAPSE_LINES, getUiTheme, readStoredUiTheme, windowBackground, setUiTheme, normalizeUiTheme, markThemedWindow, hasStoredUiTheme, awaitRendererTheme, reportRendererTheme } from '../src/main/ui-preferences'
 
 beforeEach(() => {
   mocks.store.clear()
@@ -304,5 +304,81 @@ describe('代码块折叠阈值持久化', () => {
   it('KV 被外部写脏 → 读回默认', () => {
     mocks.store.set('ui.code_collapse_lines', 'not-a-number')
     expect(getUiPreferences().codeCollapseLines).toBe(DEFAULT_CODE_COLLAPSE_LINES)
+  })
+})
+
+describe('首帧主题上报（D1：首启不闪深色）', () => {
+  function fakeWindow(id: number): {
+    win: Record<string, unknown>
+    setBackgroundColor: ReturnType<typeof vi.fn>
+  } {
+    const setBackgroundColor = vi.fn()
+    const win = {
+      webContents: { id },
+      isDestroyed: () => false,
+      setBackgroundColor,
+      once: vi.fn()
+    }
+    return { win, setBackgroundColor }
+  }
+
+  it('hasStoredUiTheme：有值 true；缺省/脏值 false；读库抛错也按「没有」', () => {
+    expect(hasStoredUiTheme()).toBe(false)
+    mocks.store.set('ui.theme', 'light')
+    expect(hasStoredUiTheme()).toBe(true)
+    mocks.store.set('ui.theme', 'bogus')
+    expect(hasStoredUiTheme()).toBe(false)
+
+    const original = mocks.appConfigRepo.get
+    mocks.appConfigRepo.get = () => {
+      throw new Error('Database not opened')
+    }
+    try {
+      expect(hasStoredUiTheme()).toBe(false)
+    } finally {
+      mocks.appConfigRepo.get = original
+    }
+  })
+
+  it('上报后先把主题化窗口底色改对，再结算等待中的显示（只结算一次）', () => {
+    const { win, setBackgroundColor } = fakeWindow(7)
+    markThemedWindow(win as never)
+    const onReport = vi.fn()
+    awaitRendererTheme(win as never, onReport)
+
+    reportRendererTheme({ id: 7 } as never, 'light')
+    expect(setBackgroundColor).toHaveBeenLastCalledWith('#eff1f5')
+    expect(onReport).toHaveBeenCalledTimes(1)
+
+    reportRendererTheme({ id: 7 } as never, 'light')
+    expect(onReport).toHaveBeenCalledTimes(1)
+  })
+
+  it('没登记等待的窗口（KV 已有底色/解锁窗/独立窗）上报一律忽略，不动底色也不结算', () => {
+    const { win, setBackgroundColor } = fakeWindow(8)
+    markThemedWindow(win as never)
+    const onReport = vi.fn()
+    // 没有 awaitRendererTheme 登记
+    reportRendererTheme({ id: 8 } as never, 'light')
+    expect(setBackgroundColor).not.toHaveBeenCalled()
+    expect(onReport).not.toHaveBeenCalled()
+  })
+
+  it('登记了等待但窗口未打主题标记：只结算显示，不改底色', () => {
+    const { win, setBackgroundColor } = fakeWindow(9)
+    const onReport = vi.fn()
+    awaitRendererTheme(win as never, onReport)
+
+    reportRendererTheme({ id: 9 } as never, 'dark')
+    expect(setBackgroundColor).not.toHaveBeenCalled()
+    expect(onReport).toHaveBeenCalledTimes(1)
+  })
+
+  it('上报值非法按默认深色处理（与 normalizeUiTheme 同口径）', () => {
+    const { win, setBackgroundColor } = fakeWindow(10)
+    markThemedWindow(win as never)
+    awaitRendererTheme(win as never, vi.fn())
+    reportRendererTheme({ id: 10 } as never, 'bogus' as never)
+    expect(setBackgroundColor).toHaveBeenLastCalledWith('#1e1e2e')
   })
 })

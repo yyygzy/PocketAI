@@ -1061,6 +1061,9 @@ const api = {
   /** A-3 回填：KV 有没有主题值（theme=null 表示没有，渲染端会写一次） */
   getUiTheme: (): Promise<{ ok: boolean; data?: { theme: 'light' | 'dark' | null }; error?: string }> =>
     ipcRenderer.invoke(IPC.UI_GET_THEME),
+  /** 首帧主题上报：theme-init.js 在绘制前调用，主进程据此先改窗口底色再显示（首启不闪深色） */
+  reportWindowTheme: (theme: 'light' | 'dark'): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.UI_REPORT_THEME, theme),
 
   // ---------- 回复完成系统通知 ----------
   getReplyNotifyEnabled: (): Promise<boolean> =>

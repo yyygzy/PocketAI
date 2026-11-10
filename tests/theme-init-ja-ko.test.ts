@@ -7,7 +7,12 @@ import { describe, it, expect } from 'vitest'
 
 const code = fs.readFileSync(path.resolve(__dirname, '../src/renderer/public/theme-init.js'), 'utf-8')
 
-function run(opts: { storedLang?: string | null; nav?: string; storedTheme?: string | null }): {
+function run(opts: {
+  storedLang?: string | null
+  nav?: string
+  storedTheme?: string | null
+  onReport?: (theme: string) => void
+}): {
   lang: string
   light: boolean
 } {
@@ -25,7 +30,18 @@ function run(opts: { storedLang?: string | null; nav?: string; storedTheme?: str
       k === 'pocketai.theme' ? (opts.storedTheme ?? null) : k === 'pocketai.lang' ? (opts.storedLang ?? null) : null
   }
   const nav = { language: opts.nav ?? 'zh-CN' }
-  new Function('localStorage', 'navigator', 'document', code)(storage, nav, doc)
+  // 与真实环境同形：preload 在页面脚本前注入 window.pocketai；未传 onReport 时保持桥缺失态
+  const win: Record<string, unknown> = opts.onReport
+    ? {
+        pocketai: {
+          reportWindowTheme: (theme: string) => {
+            opts.onReport!(theme)
+            return Promise.resolve({ ok: true })
+          }
+        }
+      }
+    : {}
+  new Function('localStorage', 'navigator', 'document', 'window', code)(storage, nav, doc, win)
   return { lang: doc.documentElement.lang, light: classes.includes('light') }
 }
 
@@ -51,5 +67,17 @@ describe('theme-init.js — 首帧语言/主题', () => {
     const r = run({ storedLang: 'ko', nav: 'ja-JP', storedTheme: 'light' })
     expect(r.lang).toBe('ko')
     expect(r.light).toBe(true)
+  })
+
+  it('首帧主题上报：浅色报 light、缺省报 dark（只上报，不改 class 语义）', () => {
+    const reports: string[] = []
+    run({ storedTheme: 'light', onReport: (t) => reports.push(t) })
+    run({ onReport: (t) => reports.push(t) })
+    expect(reports).toEqual(['light', 'dark'])
+  })
+
+  it('桥缺失（window 无 pocketai）不抛错，主题仍照常还原', () => {
+    expect(() => run({ storedTheme: 'light' })).not.toThrow()
+    expect(run({ storedTheme: 'light' }).light).toBe(true)
   })
 })

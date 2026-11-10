@@ -10,7 +10,7 @@ import {
 import { isPortableRuntime } from '../../portable'
 import { getMachineId } from '../../steward/machine'
 import { appConfigRepo } from '../../db/repositories/app-config.repo'
-import { getUiPreferences, readStoredUiTheme, setUiPreferences, setUiTheme, type UiTheme } from '../../ui-preferences'
+import { getUiPreferences, readStoredUiTheme, reportRendererTheme, setUiPreferences, setUiTheme, type UiTheme } from '../../ui-preferences'
 import { isReplyNotifyEnabled, setReplyNotifyEnabled, showReplyNotification } from '../../notify/reply-notify'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../../../shared/schemas/preferences'
@@ -104,6 +104,12 @@ export function registerPreferenceHandlers(): void {
     ok: true as const,
     data: { theme: readStoredUiTheme() }
   }))
+  // D1 收尾：渲染端首帧前上报当前生效主题（theme-init.js 发出）。只改窗口底色、不写 KV；
+  // 首启 KV 还没有值时，主窗口靠这一发在显示前把底色改对，避免闪一帧深色。
+  safeHandle(IPC.UI_REPORT_THEME, (e, theme: UiTheme) => {
+    reportRendererTheme(e.sender, theme)
+    return { ok: true as const }
+  }, argsSchema(z.enum(['light', 'dark'])))
 
   // ---------- 回复完成系统通知 ----------
   safeHandle(IPC.NOTIFY_REPLY_GET, () => isReplyNotifyEnabled())

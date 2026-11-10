@@ -69,7 +69,7 @@ import { initBackupScheduler } from './backup/backup-scheduler'
 import { captureWebDAVForRekey, restoreWebDAVAfterRekey } from './backup/backup-service'
 import { initTaskScheduler } from './backup/task-scheduler'
 import { initReminderScheduler } from './reminder/scheduler'
-import { applyOpacityToMainWindows, MAIN_WINDOW_MARKER, markThemedWindow, windowBackground, type MarkedBrowserWindow } from './ui-preferences'
+import { applyOpacityToMainWindows, awaitRendererTheme, hasStoredUiTheme, MAIN_WINDOW_MARKER, markThemedWindow, windowBackground, type MarkedBrowserWindow } from './ui-preferences'
 import { beginQuit, isCleanupDone, isQuitting, runCleanupOnce, runFallbackCleanup } from './quit-manager'
 import { createLogger, configureLogDir } from './logger'
 import { bootMark } from './steward/boot-perf'
@@ -128,6 +128,9 @@ function tryOpenDbNoPassword(): boolean {
 // ─── 主窗口 ───────────────────────────────────────────────────────
 
 function createMainWindow(): void {
+  // 建窗底色是否已有可信来源（KV 里的用户主题）。没有值（首装/升级后第一次启动）时
+  // 底色只能先给默认深色，真实主题要等渲染端首帧前上报，见下方显示门控。
+  const themeKnown = hasStoredUiTheme()
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -145,7 +148,34 @@ function createMainWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // 首帧底色门控（D1 收尾）：KV 有值时底色已是用户主题，ready-to-show 直接显示（原行为不变）；
+  // KV 无值时先等渲染端在首帧前上报 localStorage 里的真实主题（主进程据上报改写底色）再显示，
+  // 避免首启闪一帧深色。最多等 300ms，超时照旧显示——兜底不把窗口卡在隐藏态。
+  let contentReady = false
+  let themeReady = themeKnown
+  let shown = false
+  const revealWhenReady = () => {
+    if (shown || !contentReady || !themeReady) return
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    shown = true
+    mainWindow.show()
+  }
+  mainWindow.on('ready-to-show', () => {
+    contentReady = true
+    revealWhenReady()
+    if (!themeReady) {
+      setTimeout(() => {
+        themeReady = true
+        revealWhenReady()
+      }, 300)
+    }
+  })
+  if (!themeKnown) {
+    awaitRendererTheme(mainWindow, () => {
+      themeReady = true
+      revealWhenReady()
+    })
+  }
   // 后台保活（2/2）：该窗口的 webContents 不参与 Chromium 背景节流
   mainWindow.webContents.setBackgroundThrottling(false)
   // 关闭按钮 → 二次确认（防止误触），确认后才真正退出并清理所有子进程

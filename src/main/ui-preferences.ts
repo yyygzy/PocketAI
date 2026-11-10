@@ -8,7 +8,7 @@
 //
 // 安全：CSS 仅作用于本应用渲染进程沙箱，不接触 Node API；限制长度防止误塞大内容。
 
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, type WebContents } from 'electron'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import type { UiPreferences, ChatFontSize } from '../shared/types'
 import { uiPrefsPatchSchema } from '../shared/schemas/preferences'
@@ -189,4 +189,55 @@ export function setUiTheme(theme: UiTheme): UiTheme {
   appConfigRepo.set(K_THEME, next)
   applyThemeToWindows(next)
   return next
+}
+
+// ─── 首帧主题上报（D1 收尾：首启不闪深色） ──────────────────────
+//
+// 首次启动（含升级后第一次）时 KV 里还没有主题，建窗只能先按默认深色；
+// 而渲染端 localStorage 里可能早就存着浅色。真实主题只有渲染端知道，
+// 所以由 theme-init.js 在页面首帧前上报，主进程先把窗口底色改对再显示。
+
+/**
+ * 建窗时 KV 里有没有主题值。读不到（库未打开/异常）也按「没有」处理：
+ * 两种情况都拿不到真实主题，建窗底色同样只能先给默认深色。
+ */
+export function hasStoredUiTheme(): boolean {
+  try {
+    return readStoredUiTheme() !== null
+  } catch {
+    return false
+  }
+}
+
+/** 等渲染端首帧上报的窗口（webContents.id → 窗口 + 结算回调，报到一次即移除） */
+const themeReportWaiters = new Map<number, { win: BrowserWindow; onReport: () => void }>()
+
+/**
+ * 登记「等该窗口的渲染端上报首帧主题」。上报由 theme-init.js 在页面首帧前发出；
+ * 超时兜底由调用方负责——等不到也必须照常显示，不能把窗口卡在隐藏态。
+ */
+export function awaitRendererTheme(win: BrowserWindow, onReport: () => void): void {
+  const id = win.webContents.id
+  themeReportWaiters.set(id, { win, onReport })
+  win.once('closed', () => themeReportWaiters.delete(id))
+}
+
+/**
+ * 渲染端在首帧前上报当前生效主题：把该窗底色改对，再放行等待中的显示。
+ * 只处理「建窗时登记了等待」的窗口——KV 已有底色的窗口、解锁窗、独立窗都不受影响；
+ * 也只改窗口底色、不写 KV（KV 仍由主窗口渲染端启动后回填）。
+ */
+export function reportRendererTheme(sender: WebContents, theme: UiTheme): void {
+  const pending = themeReportWaiters.get(sender.id)
+  if (!pending) return
+  themeReportWaiters.delete(sender.id)
+  const { win, onReport } = pending
+  if (!win.isDestroyed() && (win as ThemedBrowserWindow)[THEMED_WINDOW_MARKER] === true) {
+    try {
+      win.setBackgroundColor(windowBackground(normalizeUiTheme(theme)))
+    } catch {
+      /* 窗口正在销毁/平台不支持时忽略：上报只影响首帧底色 */
+    }
+  }
+  onReport()
 }

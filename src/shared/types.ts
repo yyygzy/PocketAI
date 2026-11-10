@@ -2933,6 +2933,7 @@ export const IPC = {
   UI_SET_PREFS: 'ui:set-prefs',
   UI_GET_THEME: 'ui:get-theme',
   UI_SET_THEME: 'ui:set-theme',
+  UI_REPORT_THEME: 'ui:report-theme', // 渲染端首帧前上报当前生效主题（不改 KV，只让主进程先改窗口底色）
 
   // ---------- 回复完成系统通知 ----------
   NOTIFY_REPLY_GET: 'notify:reply-get',
