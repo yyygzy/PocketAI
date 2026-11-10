@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
+import { themeIdFromClasses, UI_THEMES } from '../../../../shared/themes'
 
 // mermaid 11 为 ESM，默认导出
 type MermaidLib = typeof import('mermaid')['default']
@@ -20,8 +21,9 @@ function loadMermaid(): Promise<MermaidLib> {
   return mermaidPromise
 }
 
+// mermaid 只支持内置的 dark/default：具体取哪套由注册表决定（新增预设不必改这里）
 function currentTheme(): 'dark' | 'default' {
-  return document.documentElement.classList.contains('light') ? 'default' : 'dark'
+  return UI_THEMES[themeIdFromClasses(document.documentElement.classList)].mermaidTheme
 }
 
 // 渲染 id 必须全局唯一且合法（不能以数字开头）：mermaid 用它生成 DOM id

@@ -6,25 +6,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { stubPocketai } from './helpers/renderer'
 import { backfillThemeIfUnset } from '../src/renderer/src/theme-boot'
+import type { UiTheme } from '../src/shared/themes'
 
-const setCalls: Array<'light' | 'dark'> = []
+const setCalls: UiTheme[] = []
 
 beforeEach(() => {
   setCalls.length = 0
-  document.documentElement.classList.remove('light')
+  document.documentElement.classList.remove('light', 'ocean', 'sand')
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
-  document.documentElement.classList.remove('light')
+  document.documentElement.classList.remove('light', 'ocean', 'sand')
 })
 
 describe('backfillThemeIfUnset', () => {
   it('KV 无值 + 当前深色 → 写一次 dark', async () => {
     stubPocketai({
       getUiTheme: () => ({ ok: true, data: { theme: null } }),
-      setUiTheme: (theme: 'light' | 'dark') => {
+      setUiTheme: (theme: UiTheme) => {
         setCalls.push(theme)
         return { ok: true, data: theme }
       }
@@ -37,7 +38,7 @@ describe('backfillThemeIfUnset', () => {
     document.documentElement.classList.add('light')
     stubPocketai({
       getUiTheme: () => ({ ok: true, data: { theme: null } }),
-      setUiTheme: (theme: 'light' | 'dark') => {
+      setUiTheme: (theme: UiTheme) => {
         setCalls.push(theme)
         return { ok: true, data: theme }
       }
@@ -46,10 +47,27 @@ describe('backfillThemeIfUnset', () => {
     expect(setCalls).toEqual(['light'])
   })
 
+  it('KV 无值 + 新预设（ocean/sand）→ 按对应 id 回填，不再被压成 dark', async () => {
+    for (const id of ['ocean', 'sand'] as const) {
+      setCalls.length = 0
+      document.documentElement.classList.remove('light', 'ocean', 'sand')
+      document.documentElement.classList.add(id)
+      stubPocketai({
+        getUiTheme: () => ({ ok: true, data: { theme: null } }),
+        setUiTheme: (theme: UiTheme) => {
+          setCalls.push(theme)
+          return { ok: true, data: theme }
+        }
+      })
+      await backfillThemeIfUnset()
+      expect(setCalls).toEqual([id])
+    }
+  })
+
   it('KV 有值 → 不写（不改变「有值以 KV 为准」的语义）', async () => {
     stubPocketai({
       getUiTheme: () => ({ ok: true, data: { theme: 'light' } }),
-      setUiTheme: (theme: 'light' | 'dark') => {
+      setUiTheme: (theme: UiTheme) => {
         setCalls.push(theme)
         return { ok: true, data: theme }
       }
@@ -61,7 +79,7 @@ describe('backfillThemeIfUnset', () => {
   it('读 KV 失败 → 跳过回填，只记日志', async () => {
     stubPocketai({
       getUiTheme: () => ({ ok: false, error: 'Database not opened' }),
-      setUiTheme: (theme: 'light' | 'dark') => {
+      setUiTheme: (theme: UiTheme) => {
         setCalls.push(theme)
         return { ok: true, data: theme }
       }

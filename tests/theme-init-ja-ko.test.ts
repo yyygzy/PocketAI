@@ -15,6 +15,7 @@ function run(opts: {
 }): {
   lang: string
   light: boolean
+  classes: string[]
 } {
   const classes: string[] = []
   const doc = {
@@ -42,7 +43,7 @@ function run(opts: {
       }
     : {}
   new Function('localStorage', 'navigator', 'document', 'window', code)(storage, nav, doc, win)
-  return { lang: doc.documentElement.lang, light: classes.includes('light') }
+  return { lang: doc.documentElement.lang, light: classes.includes('light'), classes }
 }
 
 describe('theme-init.js — 首帧语言/主题', () => {
@@ -74,6 +75,18 @@ describe('theme-init.js — 首帧语言/主题', () => {
     run({ storedTheme: 'light', onReport: (t) => reports.push(t) })
     run({ onReport: (t) => reports.push(t) })
     expect(reports).toEqual(['light', 'dark'])
+  })
+
+  it('新预设按 id 挂 class 并原样上报；未知值落默认深色（不加 class）', () => {
+    for (const id of ['ocean', 'sand'] as const) {
+      const reports: string[] = []
+      const r = run({ storedTheme: id, onReport: (t) => reports.push(t) })
+      expect(r.classes).toEqual([id])
+      expect(reports).toEqual([id])
+    }
+    const bogus = run({ storedTheme: 'neon', onReport: () => {} })
+    expect(bogus.classes).toEqual([])
+    expect(bogus.light).toBe(false)
   })
 
   it('桥缺失（window 无 pocketai）不抛错，主题仍照常还原', () => {

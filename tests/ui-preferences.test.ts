@@ -241,6 +241,17 @@ describe('主题底色（ui.theme，A-3 / D1）', () => {
     expect(windowBackground()).toBe('#eff1f5')
   })
 
+  it('新预设 id（ocean/sand）走同一套读写：窗口底色查表，不再落回深色', () => {
+    expect(windowBackground('ocean')).toBe('#0f2033')
+    expect(windowBackground('sand')).toBe('#faf7f0')
+    expect(setUiTheme('ocean')).toBe('ocean')
+    expect(mocks.store.get('ui.theme')).toBe('ocean')
+    expect(getUiTheme()).toBe('ocean')
+    expect(readStoredUiTheme()).toBe('ocean')
+    expect(setUiTheme('sand')).toBe('sand')
+    expect(readStoredUiTheme()).toBe('sand')
+  })
+
   it('readStoredUiTheme 只回答「有没有值」：缺省/脏值 → null，合法值原样', () => {
     expect(readStoredUiTheme()).toBeNull()
     mocks.store.set('ui.theme', 'light')

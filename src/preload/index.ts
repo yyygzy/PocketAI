@@ -1,6 +1,7 @@
 // preload：安全桥，只暴露白名单 API
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
+import type { UiTheme } from '../shared/themes'
 import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
@@ -1055,14 +1056,14 @@ const api = {
     patch: Partial<UiPreferences>
   ): Promise<{ ok: boolean; data?: UiPreferences; error?: string }> =>
     ipcRenderer.invoke(IPC.UI_SET_PREFS, patch),
-  /** A-3：把当前主题同步给主进程（窗口底色 + 下次启动读回） */
-  setUiTheme: (theme: 'light' | 'dark'): Promise<{ ok: boolean; data?: 'light' | 'dark'; error?: string }> =>
+  /** A-3：把当前主题同步给主进程（窗口底色 + 下次启动读回）；id 白名单由主进程 IPC 校验 */
+  setUiTheme: (theme: UiTheme): Promise<{ ok: boolean; data?: UiTheme; error?: string }> =>
     ipcRenderer.invoke(IPC.UI_SET_THEME, theme),
   /** A-3 回填：KV 有没有主题值（theme=null 表示没有，渲染端会写一次） */
-  getUiTheme: (): Promise<{ ok: boolean; data?: { theme: 'light' | 'dark' | null }; error?: string }> =>
+  getUiTheme: (): Promise<{ ok: boolean; data?: { theme: UiTheme | null }; error?: string }> =>
     ipcRenderer.invoke(IPC.UI_GET_THEME),
   /** 首帧主题上报：theme-init.js 在绘制前调用，主进程据此先改窗口底色再显示（首启不闪深色） */
-  reportWindowTheme: (theme: 'light' | 'dark'): Promise<{ ok: boolean }> =>
+  reportWindowTheme: (theme: UiTheme): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.UI_REPORT_THEME, theme),
 
   // ---------- 回复完成系统通知 ----------

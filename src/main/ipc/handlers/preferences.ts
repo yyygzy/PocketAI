@@ -13,6 +13,7 @@ import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { getUiPreferences, readStoredUiTheme, reportRendererTheme, setUiPreferences, setUiTheme, type UiTheme } from '../../ui-preferences'
 import { isReplyNotifyEnabled, setReplyNotifyEnabled, showReplyNotification } from '../../notify/reply-notify'
 import { safeHandle, argsSchema, z } from '../safe-handle'
+import { UI_THEME_IDS } from '../../../shared/themes'
 import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../../../shared/schemas/preferences'
 
 const K_SIDEBAR_ORDER = 'sidebar.order'
@@ -97,7 +98,7 @@ export function registerPreferenceHandlers(): void {
   safeHandle(IPC.UI_SET_THEME, (_e, theme: UiTheme) => ({
     ok: true as const,
     data: setUiTheme(theme)
-  }), argsSchema(z.enum(['light', 'dark'])))
+  }), argsSchema(z.enum(UI_THEME_IDS)))
   // A-3 回填：只回答「KV 里有没有值」（null=没有），渲染端据此决定是否写一次；
   // 读取异常不吞（库没打开时上层会看到 {ok:false}，渲染端按失败跳过，不会误判成无值）
   safeHandle(IPC.UI_GET_THEME, () => ({
@@ -109,7 +110,7 @@ export function registerPreferenceHandlers(): void {
   safeHandle(IPC.UI_REPORT_THEME, (e, theme: UiTheme) => {
     reportRendererTheme(e.sender, theme)
     return { ok: true as const }
-  }, argsSchema(z.enum(['light', 'dark'])))
+  }, argsSchema(z.enum(UI_THEME_IDS)))
 
   // ---------- 回复完成系统通知 ----------
   safeHandle(IPC.NOTIFY_REPLY_GET, () => isReplyNotifyEnabled())

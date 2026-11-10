@@ -3,7 +3,7 @@
 // ui.opacity     窗口透明度（0.6–1），主进程 BrowserWindow.setOpacity
 //                Windows / macOS 原生支持；Linux 取决于窗口管理器（不支持时静默无效）
 // ui.custom_css  自定义 CSS 文本，渲染端读取后注入 <style>，主进程只负责存取
-// ui.theme       窗口底色主题（light/dark）。渲染端 localStorage 仍是切换时的事实来源，
+// ui.theme       窗口底色主题（内置预设 id，见 shared/themes.ts）。渲染端 localStorage 仍是切换时的事实来源，
 //                这里存一份是为了让 BrowserWindow 在页面首帧之前就用对底色（否则浅色主题会先黑一下）。
 //
 // 安全：CSS 仅作用于本应用渲染进程沙箱，不接触 Node API；限制长度防止误塞大内容。
@@ -12,6 +12,16 @@ import { BrowserWindow, type WebContents } from 'electron'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import type { UiPreferences, ChatFontSize } from '../shared/types'
 import { uiPrefsPatchSchema } from '../shared/schemas/preferences'
+import {
+  DEFAULT_UI_THEME,
+  isUiTheme,
+  normalizeUiTheme,
+  themeWindowBackground
+} from '../shared/themes'
+import type { UiTheme } from '../shared/themes'
+
+export type { UiTheme }
+export { isUiTheme, normalizeUiTheme }
 
 const K_OPACITY = 'ui.opacity'
 const K_CUSTOM_CSS = 'ui.custom_css'
@@ -121,20 +131,16 @@ export function applyOpacityToMainWindows(opacity?: number): void {
 }
 
 // ─── 主题底色（A-3 / D1） ────────────────────────────────────────
-
-export type UiTheme = 'light' | 'dark'
-
-/** 非法/缺失一律按现有默认（深色）：theme-init.js 的默认也是不加 .light */
-export function normalizeUiTheme(v: unknown): UiTheme {
-  return v === 'light' ? 'light' : 'dark'
-}
+//
+// 主题 id 与色板集中在 shared/themes.ts：这里不再有"非浅即深"的三元判断——
+// 新增预设只要在注册表里加一条，窗口底色/首帧 class/mermaid 主题就一起跟上。
 
 /**
- * BrowserWindow 的底色。取值必须与渲染端根背景一致：
- * 深色是现有写死的 #1e1e2e；浅色取 Catppuccin Latte 的 Base（theme.css `--color-bg`）。
+ * BrowserWindow 的底色。取值必须与渲染端根背景一致（各预设的 `--color-surface`），
+ * 否则页面首帧会先露出一条异色底。
  */
 export function windowBackground(theme: UiTheme = getUiTheme()): string {
-  return theme === 'light' ? '#eff1f5' : '#1e1e2e'
+  return themeWindowBackground(theme)
 }
 
 /**
@@ -145,7 +151,7 @@ export function getUiTheme(): UiTheme {
   try {
     return normalizeUiTheme(appConfigRepo.get(K_THEME))
   } catch {
-    return 'dark'
+    return DEFAULT_UI_THEME
   }
 }
 
@@ -155,7 +161,7 @@ export function getUiTheme(): UiTheme {
  */
 export function readStoredUiTheme(): UiTheme | null {
   const raw = appConfigRepo.get(K_THEME)
-  return raw === 'light' || raw === 'dark' ? raw : null
+  return isUiTheme(raw) ? raw : null
 }
 
 /** 主题化的窗口标记（浮窗保持透明、解锁窗不参与切换，故不靠标题判断） */
