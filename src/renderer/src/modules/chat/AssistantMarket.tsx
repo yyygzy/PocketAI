@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import type { AssistantRecord, ProviderRecord } from '../../../../shared/types'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import type { AssistantRecord, ProviderRecord, SkillRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { AssistantEditor } from './AssistantEditor'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
@@ -61,6 +61,52 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
   const current = view.mode === 'detail' || view.mode === 'edit'
     ? assistants.find((a) => a.id === view.id) ?? null
     : null
+
+  /**
+   * 详情页「关联技能」：`skill_ids` join 全局技能清单，只展示图标 + 名称。
+   * - 不复制技能侧的状态/反向计数，也不拿它做「能力」推断；
+   * - `skill_ids` 为空时根本不发这一发，区块也不渲染；
+   * - 清单读不到时保持 null ⇒ 区块不渲染（"不知道"不许画成"没有"）；回到网格后下次进详情再试一次。
+   */
+  const [skills, setSkills] = useState<SkillRecord[] | null>(null)
+  const skillsRequested = useRef<string | null>(null)
+  const detailId = view.mode === 'detail' ? view.id : null
+  const boundSkillIds = current?.skillIds ?? []
+
+  useEffect(() => {
+    if (!detailId) {
+      // 离开详情（回网格/去编辑）：允许下次进详情重新尝试
+      skillsRequested.current = null
+      return
+    }
+    if (!boundSkillIds.length || skills !== null) return
+    if (skillsRequested.current === detailId) return
+    skillsRequested.current = detailId
+    let cancelled = false
+    window.pocketai
+      .listSkills()
+      .then((v) => {
+        if (cancelled) return
+        // 失败对象 / 异常都停在 null：不写空数组，别把通道故障演成"这个助手没有技能"
+        if (hasIpcFailed(v)) return
+        setSkills(v)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) logIpcError('assistantMarket.skills', e)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [detailId, boundSkillIds.length, skills])
+
+  const boundSkills: SkillRecord[] = []
+  if (skills) {
+    const byId = new Map(skills.map((s) => [s.id, s]))
+    for (const id of boundSkillIds) {
+      const s = byId.get(id)
+      if (s) boundSkills.push(s)
+    }
+  }
 
   const handleDuplicate = async (id: string) => {
     const src = assistants.find((a) => a.id === id)
@@ -255,6 +301,25 @@ export const AssistantMarket: React.FC<Props> = ({ providers, onClose, onChanged
                   </dd>
                 </div>
               </dl>
+
+              {/* 关联技能：只在 skill_ids 非空且技能清单确实读到、且至少一条能 join 上时渲染。
+                  读不到 / 空引用都不出现，避免把"不知道"或"没有引用"说成能力缺失。 */}
+              {boundSkills.length > 0 && (
+                <div className="mt-5" data-testid="assistant-market-skills">
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1.5">{t('am.skills')}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {boundSkills.map((s) => (
+                      <span
+                        key={s.id}
+                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-[var(--color-input-bg)]"
+                      >
+                        <span aria-hidden>{s.icon}</span>
+                        <span>{s.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2 mt-5">
                 {current.isBuiltin && (
