@@ -4,26 +4,21 @@
 // 这里偏数据资产的日常可读快照——体量明细、知识库索引状态、备份与维护任务运行情况。
 // 全部只读探测，逐项容错：单项失败不阻断整份报告。
 //
-// 纯函数（classifyDataEntry / aggregateDataSizes / groupDocStatus / topErrorDocs）
+// 纯函数（classifyDataEntry / aggregateDataSizes / topErrorDocs）
 // 单独导出供 tests/data-health.test.ts 直测。
 
-import type { DataHealthReport, KbDocStatus, KbDocument, KbIntegrityReport } from '../../shared/types'
+import type { DataHealthReport, KbDocument, KbIntegrityReport } from '../../shared/types'
 import { isBrowserProfilePath } from '../../shared/data-dirs'
 import { walkEntries, type WalkFileEntry } from '../fs/dir-walk'
 import { DATA_DIR } from '../portable'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
 import { approvalEventRepo, getApprovalAuditFailureCount } from '../db/repositories/approval-event.repo'
 import { readWebDAVConfig } from '../backup/backup-service'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { errMsg } from '../error'
-import { getBootPerf } from './boot-perf'
-import { getRecentPerf } from './perf-probe'
-import { getPerfHistory } from './perf-history'
 import { getKbIntegrityReport, getVectorIndexStats } from '../knowledge/kb-health'
-import { getColdDataFailureStats } from '../agent/cold-data'
 import { OFFLOAD_DIR_NAME } from '../agent/tool-output-offload'
 import { SNAPSHOT_DIR_NAME } from '../agent/file-snapshots'
 
@@ -108,18 +103,7 @@ export function aggregateDataSizes(entries: DataSizeEntry[]): DataHealthReport['
   }
 }
 
-// ─── 纯函数：知识库文档状态 ──────────────────────────────────────
-
-export const KB_STATUSES: KbDocStatus[] = ['pending', 'parsing', 'indexing', 'ready', 'error']
-
-/** 全部文档按状态计数（五状态恒齐全，缺省补 0） */
-export function groupDocStatus(docs: KbDocument[]): Record<KbDocStatus, number> {
-  const out = { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 }
-  for (const d of docs) {
-    if (d.status in out) out[d.status]++
-  }
-  return out
-}
+// ─── 纯函数：知识库失败文档 ──────────────────────────────────────
 
 export interface DataHealthErrorDoc {
   id: string
@@ -224,10 +208,7 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
     browserCacheFiles: cache.files
   }
 
-  // 1b. Agent 运行账本（agent_traces）规模：总行数 + 单个会话最多行数。
-  //     后者贵一些（200,000 行实测 16 ms，要逐行数），所以只在这一屏被打开时算一次。
-  const traces = agentTraceRepo.countForHealth()
-  // 1c. 审批审计账本（approval_events）：行数 + 本次进程内写失败次数（fail-open 的可观测面）。
+  // 1b. 审批审计账本（approval_events）：行数 + 本次进程内写失败次数（fail-open 的可观测面）。
   const approvals = {
     rows: approvalEventRepo.count(),
     writeFailures: getApprovalAuditFailureCount()
@@ -248,7 +229,6 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   } catch { /* 探测失败按全空 */ }
   const kb = {
     total: docs.length,
-    byStatus: groupDocStatus(docs),
     errorDocs: topErrorDocs(docs, (kbId) => kbNameById.get(kbId) ?? '(未知库)'),
     integrity,
     vectorIndex: getVectorIndexStats()
@@ -289,32 +269,11 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
     backupVerifyLastOk: readLastOk('task.backup_verify.last_ok')
   }
 
-  // 5. 本次启动各阶段耗时（内存埋点即时快照）
-  const boot = getBootPerf()
-
-  // 6. 运行期慢操作（入库/检索/渲染长任务，环形缓冲快照）
-  const recentPerf = getRecentPerf()
-
-  // 7. 跨会话慢事件（从日志尾部聚合，只下发统计行）
-  const perfHistory = getPerfHistory()
-
-  // 8. 冷数据清理失败计数（P0-5 第三批）：三个数各自取，不做合计掩盖是哪一路失败
-  const coldFailures = getColdDataFailureStats()
-
   return {
     sizes,
-    traces,
     approvals,
-    coldFailures: {
-      purge: coldFailures.purgeFailures,
-      offloadPrune: coldFailures.offloadPruneFailures,
-      snapshotPrune: coldFailures.snapshotPruneFailures
-    },
     kb,
     backup,
-    tasks,
-    boot,
-    recentPerf,
-    perfHistory
+    tasks
   }
 }

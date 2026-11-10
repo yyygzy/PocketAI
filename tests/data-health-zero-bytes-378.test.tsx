@@ -42,21 +42,15 @@ const zeroSizes: DataHealthReport['sizes'] = {
 
 const fullReport = (sizes: DataHealthReport['sizes']): DataHealthReport => ({
   sizes,
-  coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
-  traces: { rows: 0, maxRowsInOneConversation: 0 },
   approvals: { rows: 0, writeFailures: 0 },
   kb: {
     total: 0,
-    byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 },
     errorDocs: [],
     integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] },
     vectorIndex: { count: 0, dims: [] }
   },
   backup: { configured: false, passwordUndecryptable: false, configUnreadable: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
-  tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
-  boot: { stages: [{ id: 'window', ms: 900 }], totalMs: 900 },
-  recentPerf: [],
-  perfHistory: []
+  tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null }
 })
 
 type CacheResult = { beforeBytes: number; afterBytes: number }

@@ -3,7 +3,6 @@
 // 覆盖 src/main/steward/data-health.ts 纯函数：
 // - classifyDataEntry：根级 db 文件 / 一级子目录 / 其他归类
 // - aggregateDataSizes：按桶聚合 + dataDirBytes 合计
-// - groupDocStatus：五状态计数（缺省补 0、非法状态忽略）
 // - topErrorDocs：错误筛选 / 创建时间倒序 / limit 截断 / kbName 注入
 import { describe, it, expect, vi } from 'vitest'
 
@@ -24,7 +23,6 @@ vi.mock('../src/main/backup/backup-service', () => ({
 import {
   classifyDataEntry,
   aggregateDataSizes,
-  groupDocStatus,
   topErrorDocs,
   type DataSizeEntry
 } from '../src/main/steward/data-health'
@@ -111,18 +109,6 @@ describe('aggregateDataSizes', () => {
     expect(s.otherBytes).toBe(0)
     expect(s.browserCacheBytes).toBe(0)
     expect(s.browserCacheFiles).toBe(0)
-  })
-})
-
-describe('groupDocStatus', () => {
-  it('五状态计数，缺省补 0', () => {
-    const doc = (status: KbDocument['status']): KbDocument =>
-      ({ id: status, kbId: 'k', source: '', sourceType: 'txt', title: '', chunkCount: 0, status, error: null, contentHash: null, enabled: true, createdAt: 0 })
-    const out = groupDocStatus([doc('ready'), doc('ready'), doc('error')])
-    expect(out).toEqual({ pending: 0, parsing: 0, indexing: 0, ready: 2, error: 1 })
-  })
-  it('空列表五状态全 0', () => {
-    expect(groupDocStatus([])).toEqual({ pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 })
   })
 })
 

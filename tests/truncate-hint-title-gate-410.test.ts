@@ -242,17 +242,25 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
       `现数 truncate位/纯句子（有title/没title）/混合/纯数据 ＝ ${ALL.length}/${pureSentence.length}（${goodSites.length}/${badSites.length}）/${mixedSites.length}/${dataSites.length}`
     // V4 交互改造：输入区「+」菜单新增 2 颗 truncate 位（模型行元信息那 1 颗混合＋列表项那 1 颗纯数据）⇒ 96→98。
     // 工作目录快捷入口移入「允许调用工具」行：路径 basename（数据）与未选提示（字典句）同挂 1 颗 truncate ⇒ 98→99。
-    ).toBe('99/6/1/5/12/81')
+    // 技能分类/标签提交：SkillModule 技能列表行的 truncate 容器里新增了 {s.category} / #{tag}
+    //   两个直接数据表达式，状态句又被包进内层 <span>；分类器只从「直接表达式子节点」收 t() 键，
+    //   内层 JSX 一律记作数据 ⇒ 该位从纯句子移入纯数据：纯句子 6→5、没 title 名单 5→4、纯数据 81→82。
+    //   总数 99 不变（它没离开 truncate 族，只换了桶）。
+    // 技能扫描报告（并行会话的 SkillScanReport.tsx:72）新增 1 颗纯数据 truncate 位（技能名，已带 title）
+    //   ⇒ 总数 99→100、纯数据 82→83。设置页签改造本身不新增 truncate 位，只让同文件行号漂移。
+    ).toBe('100/5/1/4/12/83')
   })
 
-  it('名单等式：5 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
+  it('名单等式：4 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
     const PINNED = [
       // ── 本枚未收（同屏之外），逐颗如实写"没量过＝未判定"，不许写成"不适用"──
       'src/renderer/src/modules/settings/SettingsModule.tsx#upd.autoUpdateHint', // 21 字，设置→自动更新那行
       'src/renderer/src/modules/knowledge/KnowledgeModule.tsx#kb.chunkPreview', // 14 字＋{title} 插值，弹窗标题
       'src/renderer/src/modules/settings/ProviderSettings.tsx#provider.nModels', // 7 字＋{n}，服务商列表行
-      'src/renderer/src/popup/PopupApp.tsx#popup.titleQuick,popup.titleSelection', // 4 字，浮窗标题栏
-      'src/renderer/src/modules/skills/SkillModule.tsx#skill.off,skill.on' // 3 字，技能列表行
+      'src/renderer/src/popup/PopupApp.tsx#popup.titleQuick,popup.titleSelection' // 4 字，浮窗标题栏
+      // 技能分类/标签提交移出：SkillModule.tsx#skill.off,skill.on —— 该 truncate 容器现在同时挂
+      //   {s.category} / #{tag} 数据，状态句也被包进内层 <span>；分类器按「直接表达式子节点」收键、
+      //   内层 JSX 记作数据 ⇒ 它已不属纯句子桶（现按实测记在纯数据 82 里），不再是本名单的一颗。
       // P4 批次 2 移出：AgentModelBar.tsx#agent.noModelsHint、AgentComposer.tsx#agent.toolConfig —— 文件已删。
       // §436 移出：ConversationList.tsx#chat.exportMultiCount —— 15c0101 已把 truncate 换成
       //   shrink-0 whitespace-nowrap（多选计数不再被压成 0 宽），它已不在 truncate 族里。
@@ -365,13 +373,17 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     // §429：能力中心卡片新入 4 颗纯数据位（技能名／服务器名／启动命令／模板名）；
     // 本批已逐颗补了 title（裁的是数据本来就该有 tooltip），桶数不变、只把登记改到实测。
     // V4 交互改造：输入区「+」的片段/最近文件列表再入 1 颗纯数据位（列表项标题）⇒ 80→81。
-    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(81)
+    // 技能分类/标签提交：SkillModule 技能列表行从「纯句子」移入此桶（容器里多了 category/tags
+    //   直接数据表达式，状态句被包进内层 <span> 后不再被收键）⇒ 81→82。
+    // 技能扫描报告（并行会话的 SkillScanReport.tsx:72）再入 1 颗纯数据位（技能名，已带 title）⇒ 82→83。
+    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(83)
     // 混合位里最像"句子被连坐"的一档：字典句 ≥10 字（这些将来要单独判，本枚只列不判）
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(
       // §436：身份＝WebDAV 备份文件列表的 f.name 单元格（数据＋16 字字典句，已带 title）。
-      // 行号随改动漂移：WebDAV 那批 1571→1585，P4 批次 2 后实测 1600；只重钉行号，身份未变。
-      'src/renderer/src/modules/settings/SettingsModule.tsx:1600(16字)'
+      // 行号随改动漂移：WebDAV 那批 1571→1585，P4 批次 2 后实测 1600；设置页签改造后实测 1671
+      //   （本批只动呈现层：页签容器在 return 前增行，该单元格身份未变，只重钉行号）。
+      'src/renderer/src/modules/settings/SettingsModule.tsx:1671(16字)'
     )
   })
 })

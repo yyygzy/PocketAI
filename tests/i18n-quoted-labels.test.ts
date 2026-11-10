@@ -35,7 +35,9 @@ const LABEL_KEYS = [
   'provider.title',
   'agent.textProtocol',
   'agent.textProtocolOn',
-  'sidebar.settings'
+  'sidebar.settings',
+  // 设置页签改造后，路径话术改成「设置 → 模型与用量」，第二段是新的页签名
+  'set.tab.models'
 ] as const
 
 /** ① 登记表：文案键 → 它引的 label 键（四语都得含各自那条的原文） */
@@ -46,10 +48,10 @@ const QUOTED_LABELS: Record<string, string[]> = {
   'delegate.failNeverProbed': ['provider.capNative'],
   'delegate.failNotCapable': ['provider.capNative'],
   // 路径型引用：两段各是一条 label
-  'wizard.probeHint': ['sidebar.settings', 'provider.title'],
-  'wizard.probeNotEnabled': ['sidebar.settings', 'provider.title'],
+  'wizard.probeHint': ['sidebar.settings', 'set.tab.models'],
+  'wizard.probeNotEnabled': ['sidebar.settings', 'set.tab.models'],
   // 156 新搬进字典的那句也引了栏位名（原来它是主进程里的中文整句，写着「模型提供商」这个不存在的名字）
-  'modelRec.onlineHint.low_end': ['sidebar.settings', 'provider.title']
+  'modelRec.onlineHint.low_end': ['sidebar.settings', 'set.tab.models']
 }
 
 /** ② 例外：口语强调，**不是**界面名字，所以不登记进 ①（每条都得写明为什么） */
@@ -152,7 +154,7 @@ describe('②这一簇里不许有没登记的手抄名', () => {
     for (const lang of Object.keys(DICTS) as Lang[]) {
       const d = DICTS[lang] as Dict
       for (const key of ['wizard.probeHint', 'wizard.probeNotEnabled']) {
-        expect(d[key], `${lang}.${key} 缺路径话术`).toContain(d['provider.title'])
+        expect(d[key], `${lang}.${key} 缺路径话术`).toContain(d['set.tab.models'])
       }
     }
   })

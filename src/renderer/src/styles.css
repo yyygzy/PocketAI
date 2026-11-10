@@ -320,6 +320,7 @@ select option:disabled {
 }
 .chip:hover { background-color: var(--color-hover-overlay); color: var(--color-text); }
 .chip-accent:hover { color: var(--color-accent); }
+.chip-active { background-color: var(--color-accent-soft); color: var(--color-accent); }
 .chip-danger:hover { background-color: var(--color-danger-bg); color: var(--color-danger); }
 
 .badge {

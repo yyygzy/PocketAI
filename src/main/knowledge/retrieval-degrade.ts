@@ -4,15 +4,14 @@
 // 于是「少了一路召回」在界面上不留痕迹（SEC-18 那次 BM25 恒 0 命中就是这么被埋了很久）。
 // 本模块只负责把降级**说出来**，不改变任何检索行为：
 //  - WARN 进 main.log（可事后 grep，与 MCP 启动失败同一口径）；
-//  - 同一条以 label `kb.degrade` 入 perf 环形缓冲 ⇒ 数据健康面板的「最近慢操作」与
-//    「跨会话慢事件统计」自动多出一行可数的降级（不新建表：日志本来就是持久层，见 shared/perf-lines.ts）。
+//  - 同一条以 label `kb.degrade` 入 perf 环形缓冲与 [perf] 日志（不新建表：日志本来就是持久层）。
 import { createLogger } from '../logger'
 import { recordPerf } from '../steward/perf-probe'
 import type { RetrievalDegradation } from '../../shared/types'
 
 const log = createLogger('kb')
 
-/** 面板与统计用的标签（i18n 键 dh.perf.label.kb.degrade） */
+/** 慢事件日志用的标签 */
 export const KB_DEGRADE_PERF_LABEL = 'kb.degrade'
 
 /**

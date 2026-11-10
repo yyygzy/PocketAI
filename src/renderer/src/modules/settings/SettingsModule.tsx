@@ -209,6 +209,8 @@ export function useLicenseCopy(): { lic: LicenseStatus | null; err: string | nul
   return { lic, err, refresh: () => { void syncLic() } }
 }
 
+type SettingsTab = 'models' | 'capability' | 'appearance' | 'network' | 'license' | 'data'
+
 export const SettingsModule: React.FC = () => {
   const { t } = useI18n()
   const [paths, setPaths] = useState<AppPaths | null>(null)
@@ -221,6 +223,32 @@ export const SettingsModule: React.FC = () => {
   // §346：许可证那一份（数据＋原因）搬进 licCopy——它有两个读者，不能再摆成两处各写各的 state。
   const [pathsErr, setPathsErr] = useState<string | null>(null)
   const [updErr, setUpdErr] = useState<string | null>(null)
+
+  // 页签：默认停在「模型与用量」，不做"记住上次页签"。
+  // visitedTabs 只增不减：未访问过的页签不渲染，访问后一律保活（hidden），草稿与滚动位置都还在。
+  const [activeTab, setActiveTab] = useState<SettingsTab>('models')
+  const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<SettingsTab>>(() => new Set<SettingsTab>(['models']))
+  const firstPanelRef = useRef<HTMLDivElement | null>(null)
+
+  const selectTab = (tab: SettingsTab) => {
+    setVisitedTabs((prev) => (prev.has(tab) ? prev : new Set(prev).add(tab)))
+    setActiveTab(tab)
+  }
+
+  // 首屏进入时滚回顶部；切页签**不**重置（每个页签各自一个滚动容器，位置互相独立）
+  useEffect(() => {
+    firstPanelRef.current?.scrollTo({ top: 0 })
+  }, [])
+
+  // 页签名逐条字面量取字典（不拼动态 key）
+  const tabs: Array<{ id: SettingsTab; label: string }> = [
+    { id: 'models', label: t('set.tab.models') },
+    { id: 'capability', label: t('set.tab.capability') },
+    { id: 'appearance', label: t('set.tab.appearance') },
+    { id: 'network', label: t('set.tab.network') },
+    { id: 'license', label: t('set.tab.license') },
+    { id: 'data', label: t('set.tab.data') }
+  ]
 
   // §354：这两发从挂载 effect 体内联抽成具名 loader，好让两张「读不到」的脸各有一颗按下去真再发一发的键。
   // 依赖**照旧写死 `[]`**（原文就是这样，`t` 只捕获挂载那一刻那份）——改成 `[t]` 会让 effect 在换语言时
@@ -263,133 +291,175 @@ export const SettingsModule: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 min-h-0 overflow-auto">
-        <ProviderSettings />
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.usage')}</h3>
-          <UsagePanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.dataHealth')}</h3>
-          <DataHealthPanel />
-        </div>
-
-        {/* 审批明细（P0-2c-3，只读 v1）：紧跟数据健康——同一类"账本"视图，跨会话审计，
-            会话内单条审批详情不在本批范围内（没有稳定的定位锚点，不假装能跳） */}
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.approvalAudit')}</h3>
-          <ApprovalAuditPanel />
-        </div>
-
-        {/* P3 / V4-Iter-460：能力台外移（只做加法）——设置里新增第二入口，Agent 壳旧标签保留到 P4。
-            设置页与 Agent 壳挂的是同一份面板组件（EmbeddedAgentPanels），不各留一份。 */}
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">{t('set.capability')}</h3>
-          <p className="mb-3 text-xs text-[var(--color-text-muted)]">{t('set.capabilityHint')}</p>
-          <CapabilitySettingsPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">{t('set.connection')}</h3>
-          <p className="mb-3 text-xs text-[var(--color-text-muted)]">{t('set.connectionHint')}</p>
-          <ConnectionSettingsPanel />
-        </div>
-
-        <div className="mt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.localModel')}</h3>
-          <OllamaPanel />
-        </div>
-
-        {/* 本机判据（V4-Iter-146）：紧跟「本地模型」——这块屏解释的正是"这台机器被允许怎么跑"，
-            放在服务商那屏旁边会被读成"某台模型的属性"，而它一半是硬件、一半是助手级事实 */}
-        <div className="mt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.localJudgement')}</h3>
-          <LocalJudgementPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.encryption')}</h3>
-          <EncryptionPanel enc={encCopy.enc} err={encCopy.err} onChange={encCopy.refresh} />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.backup')}</h3>
-          <BackupPanel enc={encCopy.enc} />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.outbound')}</h3>
-          <OutboundPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.update')}</h3>
-          <UpdatePanel info={updateInfo} err={updErr} status={updateStatus} onReloadInfo={loadUpdateInfo} />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.network')}</h3>
-          <NetworkPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.popup')}</h3>
-          <PopupPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.shortcuts.title')}</h3>
-          <ShortcutHelpPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.chat')}</h3>
-          <ConversationSettingsPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.appearance')}</h3>
-          <AppearancePanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.memory')}</h3>
-          <UserMemoryPanel />
-        </div>
-
-        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
-          {/* §346：面板那四颗动作键与 §345 那颗「重试」都调 onChange＝同一个 refresh，
-              与挂载那一发共用同一份代次计数器（原来这里是第二处自己 `.then(落值)` 的裸读） */}
-          <LicensePanel lic={licCopy.lic} err={licCopy.err} onChange={licCopy.refresh} />
-        </div>
+      {/* 设置页签：样式沿用用量区间的 chip 分段按钮。首次进入才挂载、挂载后保活（hidden），
+          每个页签各自一个滚动容器 ⇒ 切走再切回时草稿与滚动位置都还在 */}
+      <div className="shrink-0 flex flex-wrap items-center gap-1 border-b border-[var(--color-border)] pb-2">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            aria-pressed={activeTab === tab.id}
+            onClick={() => selectTab(tab.id)}
+            className={`chip shrink-0 ${activeTab === tab.id ? 'chip-active' : ''}`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {!paths && pathsErr && (
-        <div className="shrink-0 border-t border-[var(--color-border)] pt-3 mt-3">
-          <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-2">{t('set.paths')}</h3>
-          {/* §354：这一支整块只剩这一句（那四行路径要在 `paths` 到手后才画）⇒ 同级给一颗重读这一发的键 */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <LoadFailNotice msg={pathsErr} />
-            <button data-testid="paths-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={() => void loadPaths()}>
-              {t('agent.retryRead')}
-            </button>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {visitedTabs.has('models') && (
+          <div ref={firstPanelRef} hidden={activeTab !== 'models'} className="h-full overflow-auto">
+            <ProviderSettings />
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.usage')}</h3>
+              <UsagePanel />
+            </div>
           </div>
-        </div>
-      )}
-      {paths && (
-        <div className="shrink-0 border-t border-[var(--color-border)] pt-3 mt-3">
-          <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-2">{t('set.paths')}</h3>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px]">
-            <PathRow label={t('set.dataDir')} value={paths.dataDir} />
-            <PathRow label={t('set.dbPath')} value={paths.dbPath} />
-            <PathRow label={t('set.attachments')} value={paths.attachmentsDir} />
-            <PathRow label={t('set.extensions')} value={paths.extensionsDir} />
+        )}
+
+        {visitedTabs.has('capability') && (
+          <div hidden={activeTab !== 'capability'} className="h-full overflow-auto">
+            {/* P3 / V4-Iter-460：能力台外移（只做加法）——设置里新增第二入口，Agent 壳旧标签保留到 P4。
+                设置页与 Agent 壳挂的是同一份面板组件（EmbeddedAgentPanels），不各留一份。 */}
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4 first:mt-0 first:border-t-0">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">{t('set.capability')}</h3>
+              <p className="mb-3 text-xs text-[var(--color-text-muted)]">{t('set.capabilityHint')}</p>
+              <CapabilitySettingsPanel />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">{t('set.connection')}</h3>
+              <p className="mb-3 text-xs text-[var(--color-text-muted)]">{t('set.connectionHint')}</p>
+              <ConnectionSettingsPanel />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.localModel')}</h3>
+              <OllamaPanel />
+            </div>
+
+            {/* 本机判据（V4-Iter-146）：紧跟「本地模型」——这块屏解释的正是"这台机器被允许怎么跑"，
+                放在服务商那屏旁边会被读成"某台模型的属性"，而它一半是硬件、一半是助手级事实 */}
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.localJudgement')}</h3>
+              <LocalJudgementPanel />
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {visitedTabs.has('appearance') && (
+          <div hidden={activeTab !== 'appearance'} className="h-full overflow-auto">
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4 first:mt-0 first:border-t-0">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.appearance')}</h3>
+              <AppearancePanel />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.chat')}</h3>
+              <ConversationSettingsPanel />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.shortcuts.title')}</h3>
+              <ShortcutHelpPanel />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.popup')}</h3>
+              <PopupPanel />
+            </div>
+          </div>
+        )}
+
+        {visitedTabs.has('network') && (
+          <div hidden={activeTab !== 'network'} className="h-full overflow-auto">
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4 first:mt-0 first:border-t-0">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.network')}</h3>
+              <NetworkPanel />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.update')}</h3>
+              <UpdatePanel info={updateInfo} err={updErr} status={updateStatus} onReloadInfo={loadUpdateInfo} />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.outbound')}</h3>
+              <OutboundPanel />
+            </div>
+          </div>
+        )}
+
+        {visitedTabs.has('license') && (
+          <div hidden={activeTab !== 'license'} className="h-full overflow-auto">
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4 first:mt-0 first:border-t-0">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.license')}</h3>
+              {/* §346：面板那四颗动作键与 §345 那颗「重试」都调 onChange＝同一个 refresh，
+                  与挂载那一发共用同一份代次计数器（原来这里是第二处自己 `.then(落值)` 的裸读） */}
+              <LicensePanel lic={licCopy.lic} err={licCopy.err} onChange={licCopy.refresh} />
+            </div>
+
+            {!paths && pathsErr && (
+              <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-2">{t('set.paths')}</h3>
+                {/* §354：这一支整块只剩这一句（那四行路径要在 `paths` 到手后才画）⇒ 同级给一颗重读这一发的键 */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <LoadFailNotice msg={pathsErr} />
+                  <button data-testid="paths-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={() => void loadPaths()}>
+                    {t('agent.retryRead')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {paths && (
+              <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-2">{t('set.paths')}</h3>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px]">
+                  <PathRow label={t('set.dataDir')} value={paths.dataDir} />
+                  <PathRow label={t('set.dbPath')} value={paths.dbPath} />
+                  <PathRow label={t('set.attachments')} value={paths.attachmentsDir} />
+                  <PathRow label={t('set.extensions')} value={paths.extensionsDir} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {visitedTabs.has('data') && (
+          <div hidden={activeTab !== 'data'} className="h-full overflow-auto">
+            {/* 「数据与安全」内部按危险度排序：加密 → 备份 → 数据健康 → 审批明细 → 用户记忆；
+                每块的危险动作与二次确认原样留在各自面板内 */}
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4 first:mt-0 first:border-t-0">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.encryption')}</h3>
+              <EncryptionPanel enc={encCopy.enc} err={encCopy.err} onChange={encCopy.refresh} />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.backup')}</h3>
+              <BackupPanel enc={encCopy.enc} />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.dataHealth')}</h3>
+              <DataHealthPanel />
+            </div>
+
+            {/* 审批明细（P0-2c-3，只读 v1）：同一类"账本"视图，跨会话审计，
+                会话内单条审批详情不在本批范围内（没有稳定的定位锚点，不假装能跳） */}
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.approvalAudit')}</h3>
+              <ApprovalAuditPanel />
+            </div>
+
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">{t('set.memory')}</h3>
+              <UserMemoryPanel />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

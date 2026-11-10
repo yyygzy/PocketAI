@@ -57,9 +57,6 @@ vi.mock('../src/main/db/database', () => ({
 vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({ kbDocRepo: { listAll: () => [] } }))
 vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: { list: () => [] } }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: { get: () => undefined, set: () => {} } }))
-vi.mock('../src/main/db/repositories/agent-trace.repo', () => ({
-  agentTraceRepo: { countForHealth: () => ({ rows: 0, maxRowsInOneConversation: 0 }) }
-}))
 vi.mock('../src/main/backup/backup-service', () => ({
   // 改前的形状只有这一读；留着它是"桩形状"的一半——真读了 readWebDAVConfig，桩必须也给
   loadWebDAVConfig: () => M.read.cfg,

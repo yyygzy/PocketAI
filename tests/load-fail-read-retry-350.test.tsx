@@ -111,21 +111,15 @@ describe('数据健康：首读就失败 ⇒ 那颗长在报告里的「刷新�
         coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0,
         otherBytes: 0, browserCacheBytes: 0, browserCacheFiles: 0
       },
-      coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
-      traces: { rows: 0, maxRowsInOneConversation: 0 },
       approvals: { rows: 0, writeFailures: 0 },
       kb: {
         total: 0,
-        byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 0, error: 0 },
         errorDocs: [],
         integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [] },
         vectorIndex: { count: 0, dims: [] }
       },
       backup: { configured: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
-      tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
-      boot: { stages: [], totalMs: 0 },
-      recentPerf: [],
-      perfHistory: []
+      tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null }
     }) as unknown as DataHealthReport
 
   it('失败脸有键 ⇒ 按下去真再发一发（走的是本体那颗的同一个入口 load(true)）⇒ 报告上屏、那句收回', async () => {

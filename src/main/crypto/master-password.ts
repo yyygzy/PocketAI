@@ -69,7 +69,7 @@ export function verifyAndOpenMasterKey(password: string): KdfParams | null {
   const t0 = performance.now()
   // 计时裹住整个「派生 + 真正开库」的过程，成功与全部失败两条出口都要打一行：
   // 启动走它（index.ts），锁屏后解锁也走它（ipc/handlers/lock.ts:48），只在这里埋才两条路都有数。
-  // 标签用中文是刻意的——shared/perf-lines.ts 的 PERF_RE 只认 [\w.:-]+，于是不进「跨会话慢事件统计」。
+  // 标签用中文是刻意的——慢事件统计只认 ASCII 标签，于是它只留在日志里。
   try {
     for (const params of kdfCandidates()) {
       masterKeyManager.setKey(password, salt ?? undefined, params)

@@ -65,21 +65,15 @@ const reportWith = (integrity: Partial<DataHealthReport['kb']['integrity']>): Da
     coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0,
     otherBytes: 0, browserCacheBytes: 1024, browserCacheFiles: 1
   },
-  coldFailures: { purge: 0, offloadPrune: 0, snapshotPrune: 0 },
-  traces: { rows: 0, maxRowsInOneConversation: 0 },
   approvals: { rows: 0, writeFailures: 0 },
   kb: {
     total: 1,
-    byStatus: { pending: 0, parsing: 0, indexing: 0, ready: 1, error: 0 },
     errorDocs: [],
     integrity: { orphanVectors: 0, orphanChunks: 0, brokenDocs: [], duplicates: [], providerIssues: [], ...integrity },
     vectorIndex: { count: 0, dims: [] }
   },
   backup: { configured: false, passwordUndecryptable: false, configUnreadable: false, enabled: false, intervalHours: 24, lastRunAt: null, lastOkAt: null, lastError: null },
-  tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null },
-  boot: { stages: [], totalMs: 0 },
-  recentPerf: [],
-  perfHistory: []
+  tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null }
 })
 
 describe('② 数据健康面板的两条修复动作：改前弹的是"可数的假数字"', () => {

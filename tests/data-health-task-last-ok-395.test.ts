@@ -38,9 +38,6 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
     set: (key: string, value: string) => { M.config.set(key, value) }
   }
 }))
-vi.mock('../src/main/db/repositories/agent-trace.repo', () => ({
-  agentTraceRepo: { countForHealth: () => ({ rows: 0, maxRowsInOneConversation: 0 }) }
-}))
 vi.mock('../src/main/backup/backup-service', () => ({
   readWebDAVConfig: () => ({ cfg: null, passwordUndecryptable: false, configUnreadable: false })
 }))

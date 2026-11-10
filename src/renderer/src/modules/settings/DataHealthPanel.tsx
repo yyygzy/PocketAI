@@ -2,7 +2,7 @@
 // 数据来源：dataHealth:get 聚合（只读探测，见 src/main/steward/data-health.ts）
 // 修复动作：dataHealth:kb-clean / kb-dedup / kb-reindex（见 src/main/knowledge/kb-health.ts）
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { DataHealthReport, KbDocStatus, KbDocument, KbDuplicateGroup, KbProviderRole } from '../../../../shared/types'
+import type { DataHealthReport, KbDocument, KbDuplicateGroup, KbProviderRole } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -12,9 +12,6 @@ import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 import { formatVectorIndex } from '../../utils/vector-index'
-import { formatTraceLedger } from '../../utils/trace-ledger'
-
-const STATUSES: KbDocStatus[] = ['pending', 'parsing', 'indexing', 'ready', 'error']
 
 function fmtTime(ms: number | null): string {
   return ms === null ? '-' : new Date(ms).toLocaleString()
@@ -277,7 +274,7 @@ export const DataHealthPanel: React.FC = () => {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 
-  const { sizes, traces, approvals, coldFailures, kb, backup, tasks, boot, recentPerf, perfHistory } = report
+  const { sizes, approvals, kb, backup, tasks } = report
   // §436：冷数据段（P0-5）与审批段（P0-2c）是后加字段，旧夹具/旧报告可能没有。
   // 缺字段时降级成 0 并在顶部挂一句「数据不可读」，不许整屏白（:342 的 TypeError 就是这么炸的）。
   const coldOk =
@@ -285,25 +282,16 @@ export const DataHealthPanel: React.FC = () => {
     typeof sizes.coldOffloadFiles === 'number' &&
     typeof sizes.coldSnapshotBytes === 'number' &&
     typeof sizes.coldSnapshotFiles === 'number'
-  const coldFailuresOk =
-    coldFailures !== null &&
-    coldFailures !== undefined &&
-    typeof coldFailures.purge === 'number' &&
-    typeof coldFailures.offloadPrune === 'number' &&
-    typeof coldFailures.snapshotPrune === 'number'
   const approvalsOk =
     approvals !== null &&
     approvals !== undefined &&
     typeof approvals.rows === 'number' &&
     typeof approvals.writeFailures === 'number'
-  const reportIncomplete = !coldOk || !coldFailuresOk || !approvalsOk
+  const reportIncomplete = !coldOk || !approvalsOk
   const coldOffloadBytes = coldOk ? sizes.coldOffloadBytes : 0
   const coldOffloadFiles = coldOk ? sizes.coldOffloadFiles : 0
   const coldSnapshotBytes = coldOk ? sizes.coldSnapshotBytes : 0
   const coldSnapshotFiles = coldOk ? sizes.coldSnapshotFiles : 0
-  const coldPurge = coldFailuresOk ? coldFailures.purge : 0
-  const coldOffloadPrune = coldFailuresOk ? coldFailures.offloadPrune : 0
-  const coldSnapshotPrune = coldFailuresOk ? coldFailures.snapshotPrune : 0
   const approvalsRows = approvalsOk ? approvals.rows : 0
   const approvalsFailures = approvalsOk ? approvals.writeFailures : 0
   const integrity = kb.integrity
@@ -371,8 +359,8 @@ export const DataHealthPanel: React.FC = () => {
       </div>
 
       {/* 冷数据（P0-5 第三批）：以前混在「其他」里，用户既看不见也判断不了该不该在意。
-          这里只读列出体积与条数 + 三路清理失败计数；**不放一键清空**——那会和引用关系、
-          还原入口打架，留给以后专门设计。 */}
+          这里只读列出体积与条数；**不放一键清空**——那会和引用关系、还原入口打架，
+          留给以后专门设计。 */}
       <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.coldData')}</div>
       <div className="mb-4 space-y-1">
         <BarRow
@@ -391,21 +379,6 @@ export const DataHealthPanel: React.FC = () => {
             count: coldSnapshotFiles.toLocaleString('en-US')
           })}
         />
-        <Row
-          label={t('dh.coldFailures')}
-          value={t('dh.coldFailuresValue', {
-            purge: coldPurge,
-            prune: coldOffloadPrune,
-            snapshot: coldSnapshotPrune
-          })}
-          warn={coldPurge + coldOffloadPrune + coldSnapshotPrune > 0}
-        />
-        <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('dh.coldFailuresHint')}</div>
-      </div>
-
-      {/* Agent 运行账本的规模（探测见 agent-trace.repo.countForHealth；为什么报这两个数见台账 V4-Iter-173） */}
-      <div className="mb-4 space-y-1">
-        <Row label={t('dh.traces')} value={formatTraceLedger(traces, t)} />
       </div>
 
       {/* 审批审计账本（approval_events，P0-2c-1）：行数 + 本次进程写失败次数。
@@ -436,13 +409,6 @@ export const DataHealthPanel: React.FC = () => {
         <>
           <div className="flex flex-wrap gap-1.5 mb-2">
             <span className="chip">{t('dh.kbTotal', { count: kb.total })}</span>
-            {STATUSES.map((st) =>
-              kb.byStatus[st] > 0 ? (
-                <span key={st} className={`chip ${st === 'error' ? 'chip-danger' : st === 'ready' ? 'chip-accent' : ''}`}>
-                  {t(`kb.st.${st}`)} {kb.byStatus[st]}
-                </span>
-              ) : null
-            )}
           </div>
           {kb.errorDocs.length > 0 && (
             <table className="w-full text-xs mb-4">
@@ -605,82 +571,6 @@ export const DataHealthPanel: React.FC = () => {
         />
       </div>
 
-      {/* 本次启动耗时（USB 冷启动可视化；埋点见 src/main/steward/boot-perf.ts） */}
-      <div className="mt-4 mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.boot.title')}</div>
-      <div className="space-y-1">
-        {boot.stages.map((s) => (
-          <BarRow
-            key={s.id}
-            label={t(`dh.boot.${s.id}`)}
-            ratio={boot.totalMs > 0 ? s.ms / boot.totalMs : 0}
-            value={`${s.ms}ms`}
-          />
-        ))}
-      </div>
-      <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
-        {t('dh.boot.total', { ms: boot.totalMs })} · {t('dh.boot.hint')}
-      </div>
-
-      {/* 最近慢操作（运行期埋点环形缓冲，见 src/main/steward/perf-probe.ts） */}
-      <div className="mt-4 mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.perf.title')}</div>
-      {recentPerf.length === 0 ? (
-        <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('dh.perf.empty')}</div>
-      ) : (
-        <div className="space-y-1 mb-2">
-          {recentPerf.slice(-10).reverse().map((p, i) => {
-            const lk = `dh.perf.label.${p.label}`
-            const ll = t(lk)
-            return (
-              <div key={`${p.at}-${i}`} title={p.detail ?? ''}>
-                <Row
-                  label={ll === lk ? p.label : ll}
-                  value={`${p.ms}ms · ${new Date(p.at).toLocaleTimeString()}`}
-                  warn={p.ms >= 3000 || p.label === 'kb.degrade'}
-                />
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* 跨会话慢事件统计（读日志尾部聚合，见 src/main/steward/perf-history.ts） */}
-      <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.perf.histTitle')}</div>
-      {perfHistory.length === 0 ? (
-        <div className="text-xs text-[var(--color-text-muted)] mb-2">{t('dh.perf.histEmpty')}</div>
-      ) : (
-        <div className="space-y-1 mb-2">
-          {perfHistory.map((h) => {
-            const lk = `dh.perf.label.${h.label}`
-            const ll = t(lk)
-            const last = h.lastAt > 0 ? new Date(h.lastAt).toLocaleString() : '-'
-            return (
-              <div key={h.label}>
-                <Row
-                  label={ll === lk ? h.label : ll}
-                  value={t('dh.perf.histRow', {
-                    count: h.count,
-                    p50: h.p50Ms,
-                    max: h.maxMs,
-                    last
-                  })}
-                  warn={h.maxMs >= 3000 || h.label === 'kb.degrade'}
-                />
-                {/* 同一标签按模型拆开才答得出「哪个模型慢」——混在一起的峰值归因不到具体模型 */}
-                {h.byModel.map((m) => (
-                  <Row
-                    key={m.model}
-                    mono
-                    label={'· ' + m.model}
-                    value={t('dh.perf.histModel', { count: m.count, p50: m.p50Ms, max: m.maxMs })}
-                    warn={m.maxMs >= 3000}
-                  />
-                ))}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
       <div className="mt-3 flex items-center gap-2">
         <button onClick={() => load(true)} className="chip">{t('dh.refresh')}</button>
       </div>
@@ -696,7 +586,7 @@ const StatCard: React.FC<{ label: string; value: string }> = ({ label, value }) 
   </div>
 )
 
-/** 占比条行：名称 + 比例条 + 右侧值（体积明细 / 启动耗时共用） */
+/** 占比条行：名称 + 比例条 + 右侧值（体积明细） */
 const BarRow: React.FC<{ label: string; ratio: number; value: string }> = ({ label, ratio, value }) => (
   <div className="flex items-center gap-2 text-[11px]">
     <span className="text-[var(--color-text-muted)] w-28 shrink-0 truncate" title={label}>{label}</span>
@@ -710,9 +600,9 @@ const BarRow: React.FC<{ label: string; ratio: number; value: string }> = ({ lab
   </div>
 )
 
-const Row: React.FC<{ label: string; value: string; warn?: boolean; mono?: boolean }> = ({ label, value, warn, mono }) => (
+const Row: React.FC<{ label: string; value: string; warn?: boolean }> = ({ label, value, warn }) => (
   <div className="flex justify-between gap-4 text-sm">
-    <span className={'text-[var(--color-text-muted)] truncate ' + (mono ? 'font-mono' : '')}>{label}</span>
+    <span className="text-[var(--color-text-muted)] truncate">{label}</span>
     <span className={`text-right text-xs truncate ${warn ? 'text-[var(--color-warning)]' : 'text-[var(--color-text)]'}`} title={value}>
       {value}
     </span>

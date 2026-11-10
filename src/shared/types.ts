@@ -486,23 +486,11 @@ export interface DataHealthReport {
     browserCacheBytes: number
     browserCacheFiles: number
   }
-  /**
-   * 冷数据清理失败计数（本次进程内累计，重启归零）。
-   * 三个数不相加掩盖：删会话目录失败 / 卸载淘汰失败 / 快照淘汰失败 各自说明是哪一路坏了。
-   */
-  coldFailures: { purge: number; offloadPrune: number; snapshotPrune: number }
-  /**
-   * Agent 运行账本（`agent_traces`）的规模：总行数 + 单个会话最多多少行。
-   * 后一个不是凑的：复合索引 `(conversation_id, created_at)` 的收益自变量是**单个会话的行数**，
-   * 不是整张表多大（2026-10-17 合成实测，台账 V4-Iter-173）——没有这两个数，那批毫秒数落不到真实库上。
-   */
-  traces: { rows: number; maxRowsInOneConversation: number }
   /** 审批审计账本（`approval_events`）：行数 + 本次进程内写失败次数 */
   approvals: { rows: number; writeFailures: number }
-  /** 知识库文档索引状态分布 + 失败文档清单（最多 10 条，创建时间倒序） */
+  /** 知识库文档索引状态 + 失败文档清单（最多 10 条，创建时间倒序） */
   kb: {
     total: number
-    byStatus: Record<KbDocStatus, number>
     errorDocs: { id: string; kbName: string; title: string; error: string | null; createdAt: number }[]
     /** 完整性探测（KB 数据健康，见 src/main/knowledge/kb-health.ts） */
     integrity: KbIntegrityReport
@@ -539,16 +527,6 @@ export interface DataHealthReport {
     backupVerifyLastRunAt: number | null
     backupVerifyLastOk: boolean | null
   }
-  /** 本次启动各阶段累计耗时（主进程内存埋点；USB 冷启动可视化） */
-  boot: {
-    stages: { id: string; ms: number }[]
-    /** 启动流程完成总耗时（最后一个阶段的累计毫秒） */
-    totalMs: number
-  }
-  /** 最近慢操作事件（环形缓冲快照，仅本次会话） */
-  recentPerf: PerfEvent[]
-  /** 跨会话慢事件聚合（从已落盘的 [perf] 日志行统计，只下发聚合结果） */
-  perfHistory: PerfSummary[]
 }
 
 /** 运行期慢事件 */
@@ -561,29 +539,6 @@ export interface PerfEvent {
   detail?: string
   /** 事件产生时刻时间戳 */
   at: number
-}
-
-/** 同一标签内按模型细分的统计（回答「哪个模型慢」） */
-export interface PerfModelStat {
-  model: string
-  count: number
-  p50Ms: number
-  maxMs: number
-}
-
-/** 跨会话慢事件按标签聚合结果 */
-export interface PerfSummary {
-  label: string
-  /** 参与统计的样本数 */
-  count: number
-  /** 中位数耗时（偶数样本取下中位数） */
-  p50Ms: number
-  /** 最大耗时 */
-  maxMs: number
-  /** 最近一次发生时刻，无时间戳时为 0 */
-  lastAt: number
-  /** 按模型细分（最多 3 个；detail 里没有 model= 的事件不占这一维） */
-  byModel: PerfModelStat[]
 }
 
 /** MCP 调用来源：Agent 循环，还是用户在 MCP 面板点「试运行」 */

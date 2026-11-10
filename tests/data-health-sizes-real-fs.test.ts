@@ -22,9 +22,6 @@ vi.mock('../src/main/db/database', () => ({
 vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({ kbDocRepo: { listAll: () => [] } }))
 vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: { list: () => [] } }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: { get: () => undefined, set: () => {} } }))
-vi.mock('../src/main/db/repositories/agent-trace.repo', () => ({
-  agentTraceRepo: { countForHealth: () => ({ rows: 128, maxRowsInOneConversation: 65 }) }
-}))
 // §382：数据健康那一读换成了 readWebDAVConfig，桩要跟着给（缺成员＝整发抛 ⇒ handler 回 `{ok:false}`）
 vi.mock('../src/main/backup/backup-service', () => ({
   loadWebDAVConfig: () => null,
@@ -110,7 +107,6 @@ describe('getBrowserCacheStats · 按进程缓存，刷新才重算', () => {
     expect(r.sizes.browserCacheFiles).toBe(4)
     expect(r.sizes.userDataBytes).toBe(48)
     expect(r.sizes.userDataBytes + r.sizes.browserCacheBytes).toBe(1355)
-    expect(r.traces).toEqual({ rows: 128, maxRowsInOneConversation: 65 })
   })
 
   it('⑥ 报告不带 refresh ⇒ 用同一份缓存（又写一个文件也不动，证明它不是每次现数）', () => {

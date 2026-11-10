@@ -170,7 +170,7 @@ describe('D 两处屏各自绑门，第三档必须排在「没配过」之前',
   it('数据健康那一格：backup.configUnreadable 在 !backup.configured 之前，且 warn 位也带上它', () => {
     expect(PANEL.indexOf('backup.configUnreadable')).toBeGreaterThan(-1)
     expect(PANEL.indexOf('backup.configUnreadable'), '顺序反了＝新档永远不画').toBeLessThan(PANEL.indexOf('!backup.configured'))
-    // §436：原先取全文第一个 warn={，被上面新增的冷数据段（dh.coldFailures）截断 ⇒ 读到的是别人家的 warn。
+    // §436：原先取全文第一个 warn={，被上面新增的冷数据段截断 ⇒ 读到的是别人家的 warn。
     // 改成只读备份卡片这一块（dh.backup → dh.tasks），锚点坏了会先撞下面的长度断言，不会静默读空串。
     const warn = BACKUP_SEG.slice(
       BACKUP_SEG.indexOf('warn={'),
