@@ -337,27 +337,33 @@ describe('conversationRepo.setNote — 备注（v38）', () => {
   })
 })
 
-describe('conversationRepo.setRunState — 运行态写入不改变活跃排序', () => {
-  it('status 写入不碰 updated_at / archived / archived_at（D5）', () => {
-    conversationRepo.setRunState('c500', { status: 'done' })
-    expect(state.lastSql).toBe('UPDATE conversations SET status=? WHERE id=?')
-    expect(state.lastParams).toEqual(['done', 'c500'])
+describe('conversationRepo.setRunState — 会话元信息写入不改变活跃排序', () => {
+  it('model 写入不碰 updated_at / archived / archived_at（D5）', () => {
+    conversationRepo.setRunState('c500', { modelLabel: 'p:m' })
+    expect(state.lastSql).toBe('UPDATE conversations SET model=? WHERE id=?')
+    expect(state.lastParams).toEqual(['p:m', 'c500'])
     expect(state.lastSql).not.toContain('updated_at')
     expect(state.lastSql).not.toContain('archived')
   })
 
-  it('运行开始可同时写 model/agent_mode/status，仍不置顶、不取消归档', () => {
-    conversationRepo.setRunState('c501', {
-      modelLabel: 'p:m',
-      agentMode: true,
-      status: 'streaming'
-    })
-    expect(state.lastSql).toBe(
-      'UPDATE conversations SET model=?, agent_mode=?, status=? WHERE id=?'
-    )
-    expect(state.lastParams).toEqual(['p:m', 1, 'streaming', 'c501'])
+  it('运行开始可同时写 model/agent_mode，仍不置顶、不取消归档', () => {
+    conversationRepo.setRunState('c501', { modelLabel: 'p:m', agentMode: true })
+    expect(state.lastSql).toBe('UPDATE conversations SET model=?, agent_mode=? WHERE id=?')
+    expect(state.lastParams).toEqual(['p:m', 1, 'c501'])
     expect(state.lastSql).not.toContain('updated_at')
     expect(state.lastSql).not.toContain('archived')
+  })
+
+  it('status 已停写：patch 不再接受 status，且不产生 SQL', () => {
+    // @ts-expect-error conversations.status 自 v60 起停写，patch 类型已移除该字段
+    conversationRepo.setRunState('c504', { status: 'streaming' })
+    expect(state.runSqls).toHaveLength(0)
+  })
+
+  it('touch 也不再写 status（运行态只认 runtime-registry / conversation_runs）', () => {
+    // @ts-expect-error conversations.status 自 v60 起停写，patch 类型已移除该字段
+    conversationRepo.touch('c505', { status: 'done' })
+    expect(state.lastSql).not.toContain('status')
   })
 
   it('空 patch 不发 SQL（避免无意义写入）', () => {

@@ -42,6 +42,7 @@ import { assistantRepo } from '../src/main/db/repositories/assistant.repo'
 import { conversationRepo } from '../src/main/db/repositories/conversation.repo'
 import { messageRepo } from '../src/main/db/repositories/message.repo'
 import { agentEngine } from '../src/main/agent/engine'
+import { getRuntimeSnapshot } from '../src/main/chat/runtime-registry'
 import { IPC, type AgentErrorEvent, type SendMessagePayload } from '../src/shared/types'
 
 let providerId = ''
@@ -89,7 +90,7 @@ function makePayload(): { payload: SendMessagePayload; requestId: string; convId
 }
 
 describe('§307 setup 段抛出：补内层同款收尾（发错误事件 + 清登记），不把异常抛给调用方留泄漏', () => {
-  it('messageRepo.insert 抛 ⇒ run() 正常 resolve、发 AGENT_ERROR_EVENT、会话 status=error、engine.controllers 已摘该 requestId', async () => {
+  it('messageRepo.insert 抛 ⇒ run() 正常 resolve、发 AGENT_ERROR_EVENT、运行态 failed、engine.controllers 已摘该 requestId', async () => {
     const { payload, requestId, convId } = makePayload()
     const errs: AgentErrorEvent[] = []
     const emit = (channel: string, data: unknown): void => {
@@ -103,7 +104,8 @@ describe('§307 setup 段抛出：补内层同款收尾（发错误事件 + 清�
       await expect(agentEngine.run(payload, emit)).resolves.toBeUndefined()
       expect(errs, 'setup 抛出必须发一颗 AGENT_ERROR_EVENT（否则渲染端永远"思考中"）').toHaveLength(1)
       expect(String(errs[0]?.error)).toContain('写库失败')
-      expect(conversationRepo.get(convId)?.status).toBe('error')
+      // conversations.status 已停写：运行态唯一事实源是 runtime-registry（B-2/B-3）
+      expect(getRuntimeSnapshot().find((e) => e.conversationId === convId)?.state).toBe('failed')
       expect((agentEngine as unknown as { controllers: Map<string, unknown> }).controllers.has(requestId)).toBe(false)
     } finally {
       spy.mockRestore()

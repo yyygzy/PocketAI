@@ -159,8 +159,10 @@ export const conversationRepo = {
     dbService
       .getHandle()
       .prepare(
-        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default, parent_conversation_id, role_key)
-         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?, ?, ?)`
+        // conversations.status 已停写（v60 起运行态只认 runtime-registry / conversation_runs）；
+        // 新行留 NULL，读出来由 rowToRecord 兜成 'idle'，外部读到的记录形状不变
+        `INSERT INTO conversations (id, assistant_id, title, model, params, created_at, updated_at, title_default, parent_conversation_id, role_key)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -333,14 +335,18 @@ export const conversationRepo = {
   },
 
   /**
-   * 运行态写入：只更新 status / model / agent_mode，**不碰 updated_at、不取消归档**。
+   * 会话元信息写入：只更新 model / agent_mode，**不碰 updated_at、不取消归档**。
    *
    * 与 `touch()` 的分工：`touch()` 代表「用户可见消息活动」，会置顶并让归档会话回到列表；
-   * 运行开始/结束属于运行态变化，不应改变侧栏排序，也不应把后台 run 的归档会话顶回来（D5）。
+   * 换模型/切模式属于会话配置变化，不应改变侧栏排序，也不应把后台 run 的归档会话顶回来（D5）。
+   *
+   * `conversations.status` 自 v60 起**停写**：运行态的唯一事实源是 runtime-registry
+   * + `conversation_runs`（内存/持久各一份），这里再写一遍只会产生第二套事实源并与之分叉。
+   * 保留这一列与 `rowToRecord` 的映射仅作历史兼容透传，任何判断都不得读它。
    */
   setRunState(
     id: string,
-    patch: { modelLabel?: string; status?: string; agentMode?: boolean } = {}
+    patch: { modelLabel?: string; agentMode?: boolean } = {}
   ): void {
     const sets: string[] = []
     const vals: unknown[] = []
@@ -352,10 +358,6 @@ export const conversationRepo = {
       sets.push('agent_mode=?')
       vals.push(patch.agentMode ? 1 : 0)
     }
-    if (patch.status !== undefined) {
-      sets.push('status=?')
-      vals.push(patch.status)
-    }
     if (sets.length === 0) return
     vals.push(id)
     dbService
@@ -364,8 +366,8 @@ export const conversationRepo = {
       .run(...vals)
   },
 
-  touch(id: string, patch: { modelLabel?: string; status?: string; agentMode?: boolean } = {}): void {
-    // 用户可见消息活动：置顶并让归档会话回到主列表；运行态变化请用 setRunState
+  touch(id: string, patch: { modelLabel?: string; agentMode?: boolean } = {}): void {
+    // 用户可见消息活动：置顶并让归档会话回到主列表；会话配置变化请用 setRunState
     const sets = ['updated_at=?', 'archived=0', 'archived_at=NULL']
     const vals: unknown[] = [Date.now()]
     if (patch.modelLabel !== undefined) {
@@ -375,10 +377,6 @@ export const conversationRepo = {
     if (patch.agentMode !== undefined) {
       sets.push('agent_mode=?')
       vals.push(patch.agentMode ? 1 : 0)
-    }
-    if (patch.status !== undefined) {
-      sets.push('status=?')
-      vals.push(patch.status)
     }
     vals.push(id)
     dbService
@@ -521,8 +519,9 @@ export const conversationRepo = {
       const now = Date.now()
       const newConvId = randomUUID()
       db.prepare(
-        `INSERT INTO conversations (id, assistant_id, title, model, params, status, created_at, updated_at, title_default, system_prompt_override, agent_mode)
-         VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, 0, ?, ?)`
+        // 同 create()：status 停写，留 NULL 由 rowToRecord 兜成 'idle'
+        `INSERT INTO conversations (id, assistant_id, title, model, params, created_at, updated_at, title_default, system_prompt_override, agent_mode)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, 0, ?, ?)`
       ).run(
         newConvId,
         src.assistantId,

@@ -1,7 +1,7 @@
 // 主进程运行态注册表（B-2 / B-3）。
 //
 // 为什么需要它：渲染层过去只知道「自己发起的那一轮」在不在跑（useStreamSession 按 requestId 过滤），
-// 渠道/远程/独立窗口发起的 run 在侧栏完全看不见；`conversations.status` 又只写不读（D7）。
+// 渠道/远程/独立窗口发起的 run 在侧栏完全看不见；`conversations.status` 又已被停写（D7）。
 // 这里以「每会话一个活跃 run」为键（与 agent-conversation-guard-459 的并发约束一致），
 // 内存是事实来源，事件广播给所有渲染窗口，快照供窗口后开/聚焦时对齐。
 //

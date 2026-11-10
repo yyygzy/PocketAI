@@ -156,8 +156,9 @@ export interface ConversationRecord {
   title: string
   modelLabel: string | null // 形如 "providerId:model"
   /**
-   * D7：`conversations.status` 只写不读——主进程运行开始/结束仍写这一列（导出/降级兼容），
-   * 界面不得拿它当运行态事实来源；侧栏与对话页一律读 `ChatRuntimeStateEvent`（B-2）。
+   * D7：`conversations.status` 是**历史列，已停写**。v60 起运行态的唯一事实源是
+   * runtime-registry + `conversation_runs`，侧栏与对话页一律读 `ChatRuntimeStateEvent`（B-2）。
+   * 这里保留字段只为读老数据时兼容透传（列表/详情/导出），**任何判断都不得读它**。
    */
   status: string
   createdAt: number

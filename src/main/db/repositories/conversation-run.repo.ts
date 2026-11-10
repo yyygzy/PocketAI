@@ -1,7 +1,7 @@
 // v60：`conversation_runs` 运行态持久化（B-3 / D4）。
 //
 // 与 `conversations.status` 的分工（D7）：这一列只回答「这次 run 怎么结束的」，
-// 一行一个 requestId；`conversations.status` 仍继续写，但界面不再读它。
+// 一行一个 requestId；`conversations.status` 已停写（v60 起运行态只认本表 + 内存注册表）。
 //
 // 写入方只有主进程运行态注册表（runtime-registry）：内存是事实来源，本仓储只做落地。
 // 启动时由 `interruptActive()` 把上一进程残留的 running/pending_approval 标成 interrupted。

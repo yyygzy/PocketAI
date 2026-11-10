@@ -1365,7 +1365,7 @@ class AgentEngine {
         messageId: userMsg.id
       })
 
-      // 会话标题与状态
+      // 会话标题与模型标签
       // 首轮消息：先落截断标题，后台用模型生成短标题（开关可控、失败静默降级）
       runFirstMessageTitle({
         conversationId,
@@ -1379,7 +1379,6 @@ class AgentEngine {
         // Agent 模块建的会话此前只有前缀、没有这一列，靠这里在运行开始时补齐。
         agentMode: true
       })
-      conversationRepo.setRunState(conversationId, { status: 'streaming' })
 
       // 主控制器
       const master = new AbortController()
@@ -1607,7 +1606,6 @@ class AgentEngine {
           historyTight: windowPlan.noRoom ? true : undefined
         }
         emit(IPC.AGENT_DONE_EVENT, doneEvt)
-        conversationRepo.setRunState(conversationId, { status: 'done' })
         markRunFinished(conversationId, requestId, 'done')
       } catch (e) {
         const aborted = isAbortError(e) || /中止/.test(errMsg(e))
@@ -1634,7 +1632,6 @@ class AgentEngine {
         }
         const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
         emit(IPC.AGENT_ERROR_EVENT, errEvt)
-        conversationRepo.setRunState(conversationId, { status: aborted ? 'aborted' : 'error' })
         markRunFinished(conversationId, requestId, aborted ? 'aborted' : 'failed', aborted ? undefined : errText)
       } finally {
         clearTimeout(loopTimer)
@@ -1651,7 +1648,7 @@ class AgentEngine {
       }
     } catch (setupErr) {
       // §307：setup 段抛出（进不了循环体的 inner finally）的兜底收尾。此时 ctx 尚未构造，
-      // 流式占位消息那套清理不适用（跳过）；只补登记摘除 + 错误事件 + 会话状态。
+      // 流式占位消息那套清理不适用（跳过）；只补登记摘除 + 错误事件。
       const aborted = isAbortError(setupErr) || /中止/.test(errMsg(setupErr))
       const errText = aborted ? 'Agent 运行已中止' : errMsg(setupErr)
       if (loopTimer) clearTimeout(loopTimer)
@@ -1662,7 +1659,6 @@ class AgentEngine {
       this.releaseConversation(conversationId, requestId)
       const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
       emit(IPC.AGENT_ERROR_EVENT, errEvt)
-      conversationRepo.setRunState(conversationId, { status: aborted ? 'aborted' : 'error' })
       markRunFinished(conversationId, requestId, aborted ? 'aborted' : 'failed', aborted ? undefined : errText)
     }
   }
@@ -2667,7 +2663,6 @@ class AgentEngine {
           ? 'Agent 运行已中止'
           : `已达最大推理步数（${ctx.maxSteps}），且降级总结失败：${errMsg(e)}`
       })
-      conversationRepo.setRunState(conversationId, { status: aborted ? 'aborted' : 'error' })
       // 降级步骤失败后 run() 会直接 return（不经过成功分支），这里必须自己收口运行态
       markRunFinished(conversationId, ctx.requestId, aborted ? 'aborted' : 'failed', aborted ? undefined : errMsg(e))
       return false

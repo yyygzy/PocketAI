@@ -5,7 +5,7 @@
 //
 // 复现路径：假 adapter 在正常步骤永远返回同一个「不存在工具」的 tool_call（触发
 // 步数耗尽 → 重规划一次 → 再耗尽 → 降级），降级调用（不带 tools 参数）直接抛错。
-// 断言：degradeMsg 被收尾为 error 终态、会话 error、发出 AGENT_ERROR_EVENT、
+// 断言：degradeMsg 被收尾为 error 终态、运行态注册表标 failed、发出 AGENT_ERROR_EVENT、
 // 全会话没有任何 streaming 残留。
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'node:fs'
@@ -61,6 +61,7 @@ import { assistantRepo } from '../src/main/db/repositories/assistant.repo'
 import { conversationRepo } from '../src/main/db/repositories/conversation.repo'
 import { messageRepo } from '../src/main/db/repositories/message.repo'
 import { agentEngine } from '../src/main/agent/engine'
+import { getRuntimeSnapshot } from '../src/main/chat/runtime-registry'
 import { IPC, type AgentErrorEvent, type SendMessagePayload } from '../src/shared/types'
 
 let providerId = ''
@@ -94,7 +95,7 @@ afterAll(() => {
 })
 
 describe('runDegradeStep 失败收尾：占位消息写终态，不留永久 streaming 空行', () => {
-  it('降级 LLM 抛错 ⇒ degradeMsg 收尾为 error、会话 error、发 AGENT_ERROR_EVENT、无 streaming 残留', async () => {
+  it('降级 LLM 抛错 ⇒ degradeMsg 收尾为 error、运行态 failed、发 AGENT_ERROR_EVENT、无 streaming 残留', async () => {
     const requestId = 'rq-degrade-' + Math.random().toString(36).slice(2)
     const conv = conversationRepo.create({ assistantId, title: 't', titleDefault: false })
     const payload = {
@@ -115,7 +116,8 @@ describe('runDegradeStep 失败收尾：占位消息写终态，不留永久 str
 
     expect(errs.length).toBeGreaterThanOrEqual(1)
     expect(String(errs[errs.length - 1]?.error)).toContain('降级总结失败')
-    expect(conversationRepo.get(conv.id)?.status).toBe('error')
+    // conversations.status 已停写：运行态唯一事实源是 runtime-registry（B-2/B-3）
+    expect(getRuntimeSnapshot().find((e) => e.conversationId === conv.id)?.state).toBe('failed')
 
     const msgs = messageRepo.listByConversation(conv.id)
     const streaming = msgs.filter((m) => m.status === 'streaming')

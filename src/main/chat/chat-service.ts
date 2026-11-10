@@ -266,7 +266,7 @@ class ChatService {
         replyToId: payload.replyToId ?? null
       })
 
-      // 2. 会话标题与状态
+      // 2. 会话标题与模型标签
       // 首轮消息：先落截断标题，后台用模型生成短标题（开关可控、失败静默降级）
       runFirstMessageTitle({
         conversationId,
@@ -277,7 +277,6 @@ class ChatService {
       conversationRepo.touch(conversationId, {
         modelLabel: targets.map((t) => `${t.providerId}:${t.model}`).join(' | ')
       })
-      conversationRepo.setRunState(conversationId, { status: 'streaming' })
       // B-2：非 Agent 的普通对话也要进运行态注册表（以前只有渲染端本地知道自己在跑）
       markRunStarted({ conversationId, requestId, mode: 'chat' })
 
@@ -336,9 +335,8 @@ class ChatService {
         )
       )
 
-      // 全部目标失败 → 标记 error；否则 done
+      // 全部目标失败 → 注册表标记 failed；否则 done
       const allFailed = results.every((r) => r.status === 'rejected')
-      conversationRepo.setRunState(conversationId, { status: allFailed ? 'error' : 'done' })
       markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
     } catch (e) {
       // 运行中途抛错（供应商适配器/持久化）：注册表留「失败」角标，错误照原样抛给 IPC 层
@@ -398,7 +396,6 @@ class ChatService {
         })
       )
 
-      conversationRepo.setRunState(conversationId, { status: 'streaming' })
       markRunStarted({ conversationId, requestId, mode: 'chat' })
 
       // 并发执行
@@ -417,7 +414,6 @@ class ChatService {
       )
 
       const allFailed = results.every((r) => r.status === 'rejected')
-      conversationRepo.setRunState(conversationId, { status: allFailed ? 'error' : 'done' })
       markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
     } catch (e) {
       markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))
@@ -479,7 +475,6 @@ class ChatService {
         })
       )
 
-      conversationRepo.setRunState(conversationId, { status: 'streaming' })
       markRunStarted({ conversationId, requestId, mode: 'chat' })
 
       const results = await Promise.allSettled(
@@ -497,7 +492,6 @@ class ChatService {
       )
 
       const allFailed = results.every((r) => r.status === 'rejected')
-      conversationRepo.setRunState(conversationId, { status: allFailed ? 'error' : 'done' })
       markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
     } catch (e) {
       markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))

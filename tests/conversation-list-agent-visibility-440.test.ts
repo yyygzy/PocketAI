@@ -58,7 +58,7 @@ describe('① 活跃列表：前缀不再是身份，能力列才是', () => {
   it('只有 agent: 前缀、agent_mode=0 的会话只在对话侧；置位后才进 Agent 侧', () => {
     const conv = conversationRepo.create({ assistantId: null, title: '历史前缀行', titleDefault: false })
     // 模拟 v58 残留：前缀在、能力列关闭。迁移/启动修复之后正常不会再出现，这里故意保留
-    conversationRepo.touch(conv.id, { modelLabel: 'agent:prov-x:model-y', status: 'idle' })
+    conversationRepo.touch(conv.id, { modelLabel: 'agent:prov-x:model-y' })
     expect(conversationRepo.get(conv.id)!.agentMode).toBe(false)
 
     expect(ids(chatSidebar('asst-default')), '对话侧必须含它（P0 不能再丢会话）').toContain(conv.id)
