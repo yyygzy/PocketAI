@@ -37,6 +37,7 @@ import { appConfigRepo } from '../src/main/db/repositories/app-config.repo'
 import { toolRegistry } from '../src/main/tools/registry'
 import { delegateTaskTool } from '../src/main/tools/delegate-tool'
 import { agentEngine } from '../src/main/agent/engine'
+import { getRuntimeSnapshot } from '../src/main/chat/runtime-registry'
 import { setDelegationEnabled } from '../src/main/agent/delegate-capability'
 import { setTextProtocolModel } from '../src/main/agent/text-protocol-prefs'
 import { configureLocalSlot, resetLocalSlotsForTest } from '../src/main/providers/local-slot'
@@ -453,7 +454,7 @@ describe('委派真链（开关打开后）', () => {
     expect(toolRegistry.listAll().find((t) => t.name === 'calendar_read')!.permission).toBe('confirm')
   })
 
-  it('父中止 ⇒ 子 run 一起停（会话落在 aborted，不是留下一个还在占显存的孤儿）', async () => {
+  it('父中止 ⇒ 子 run 一起停（运行态落在 aborted，不是留下一个还在占显存的孤儿）', async () => {
     script.holdChild = true
     const conv = freshParent()
     let finished = false
@@ -465,8 +466,13 @@ describe('委派真链（开关打开后）', () => {
     await p
     await waitFor(() => finished)
     const kid = conversationRepo.list(undefined, undefined, { includeSubSessions: true }).find((c) => c.parentConversationId === conv)
-    expect(kid, '中止的父也要清掉子会话这一行（不留 status 悬空）').toBeDefined()
-    expect(kid!.status).toBe('aborted')
+    expect(kid, '中止的父也要清掉子会话这一行（不留运行态悬空）').toBeDefined()
+    // conversations.status 已停写（3f6121f）：运行态唯一事实源是 runtime-registry。
+    // markRunFinished('aborted') 会像 done 一样把登记移出注册表（见 runtime-registry:157），
+    // 所以这里断言"没有残留的活跃登记"——子 run 还挂着的话会是 running，失败则常驻 failed。
+    expect(getRuntimeSnapshot().find((e) => e.conversationId === kid!.id)).toBeUndefined()
+    // "确实是 aborted 而不是正常 done"由子会话消息终态印证（holdChild 的假模型不会自己收尾）
+    await waitFor(() => messageRepo.listByConversation(kid!.id).some((m) => m.status === 'aborted'))
   })
 
   it('预算触顶 ⇒ 委派被拒且**一条子请求都不发**（B79）', async () => {

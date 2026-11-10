@@ -454,13 +454,16 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     //     （absenceOnly 名单逐颗认身份、positive 必须为 0）与四桶守恒兜；
     //   · 上限＝登记时的现数，不留余量：要加一颗就得在这里 +1 并写理由，评审能看见；
     //   · 单文件现数最高 42（renderer-kb-detail-batch）——那是一个文件的上限，不是总量。
-    // 现数参考（仅供人看，不参与断言）：awaits＝1142（2026-11-06）。
+    // 现数参考（仅供人看，不参与断言）：awaits＝1143（2026-11-10）。
     const AWAIT_CAP: Record<string, number> = {
       // 同会话并发守卫（P2 / V4-Iter-459）：第一轮必须先真正挂到 LLM 闸门上（用户消息落库），
       // 此时再起第二轮才能断言「被拒且没有第二条用户消息」；不等这一颗会在并发窗口外读到只有 0 条。
       // 上限＝现数 1，不留余量。
       'tests/agent-conversation-guard-459.test.ts': 1,
-      'tests/agent-delegation-real-chain.test.ts': 2,
+      // 父中止 ⇒ 子 run 一起停（V4-Iter-468）：停写批次后 conversations.status 不再是事实源，
+      // 子 run 被中止后要等它的助手消息落到 aborted 终态，才能证明「确实一起停了」而不是正常 done。
+      // 上限 2→3，上限＝现数，不留余量。
+      'tests/agent-delegation-real-chain.test.ts': 3,
       'tests/agent-interject-ipc-238.test.ts': 1,
       'tests/agent-role-concurrency-chain.test.ts': 1,
       // 轮次检查器（P2 / V4-Iter-459）：展开后先等 getRunTraces 那一发真的发出（断言 beforeEach 的空账本
