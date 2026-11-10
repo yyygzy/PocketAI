@@ -339,6 +339,7 @@ export const en = {
   'chat.runtime.pendingApproval': 'Needs approval',
   'chat.runtime.failed': 'Last run failed',
   'chat.runtime.interrupted': 'Run interrupted',
+  'chat.unread': 'Unread reply',
   'chat.tools.filter.all': 'All',
   'chat.tools.filter.tools': 'Tools allowed',
   'chat.tools.filter.plain': 'Plain chat',

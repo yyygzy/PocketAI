@@ -324,6 +324,7 @@ export const ja = {
   'chat.runtime.pendingApproval': '承認待ち',
   'chat.runtime.failed': '前回の実行に失敗',
   'chat.runtime.interrupted': '実行が中断されました',
+  'chat.unread': '未読の返信',
   'chat.tools.filter.all': 'すべて',
   'chat.tools.filter.tools': 'ツール許可',
   'chat.tools.filter.plain': '通常チャット',

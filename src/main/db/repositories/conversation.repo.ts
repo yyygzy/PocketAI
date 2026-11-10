@@ -253,6 +253,46 @@ export const conversationRepo = {
       .run(pinned ? 1 : 0, id)
   },
 
+  /**
+   * B-4：标未读。守卫 `unread=0` 让重复调用不产生写（返回是否真的改了行）；
+   * 刻意不动 `updated_at`——未读不是「有新活动」，不能借机把会话顶到列表最前。
+   */
+  markUnread(id: string): boolean {
+    const info = dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET unread=1 WHERE id=? AND unread=0')
+      .run(id)
+    return info.changes > 0
+  },
+
+  /** B-4：清未读。同样带守卫：重复聚焦/重复上报不产生写放大。 */
+  clearUnread(id: string): boolean {
+    const info = dbService
+      .getHandle()
+      .prepare('UPDATE conversations SET unread=0 WHERE id=? AND unread=1')
+      .run(id)
+    return info.changes > 0
+  },
+
+  /** B-4：读态上报的返回（渲染端拿它对齐镜像，避免与快照赛跑） */
+  isUnread(id: string): boolean {
+    const row = dbService
+      .getHandle()
+      .prepare('SELECT unread FROM conversations WHERE id=?')
+      .get(id) as { unread?: number } | undefined
+    return !!row?.unread
+  },
+
+  /** B-4：所有未读的**顶层**会话（子会话不参与侧栏未读）。快照/重启恢复用 */
+  listUnreadIds(): string[] {
+    return (
+      dbService
+        .getHandle()
+        .prepare('SELECT id FROM conversations WHERE unread=1 AND parent_conversation_id IS NULL')
+        .all() as Array<{ id: string }>
+    ).map((r) => r.id)
+  },
+
   /** 备注：trim 后空串存 NULL；不动 updated_at（备注不改变活跃排序） */
   setNote(id: string, note: string | null): void {
     const v = note?.trim() || null

@@ -16,7 +16,7 @@ import { MessageSearchResults, relTime } from '../../components/MessageSearchRes
 import { logIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useToast } from '../../components/ToastProvider'
 import { formatDateTime } from '../../utils/time'
-import { useConversationRuntime } from '../../store/conversation-runtime-store'
+import { useConversationRuntime, useConversationUnread } from '../../store/conversation-runtime-store'
 
 interface Props {
   conversations: ConversationRecord[]
@@ -926,6 +926,8 @@ const ConvItem: React.FC<{
   const { t } = useI18n()
   // B-2：运行态角标（run 属于主进程，不按「当前窗口在不在跑」判断）
   const runtime = useConversationRuntime(conv.id)
+  // B-4：未读（主进程 conversations.unread 的投影），与运行态是两个槽位，可并存
+  const unread = useConversationUnread(conv.id)
   const runtimeLabel =
     runtime?.state === 'running'
       ? t('chat.runtime.running')
@@ -1072,6 +1074,16 @@ const ConvItem: React.FC<{
             <span className="block truncate text-[10px] leading-4 text-[var(--color-text-muted)] opacity-80" title={conv.note}>📝 {conv.note}</span>
           ) : null)}
         </div>
+      )}
+      {/* B-4：未读圆点。槽位在时间前，与标题前的运行态角标互不覆盖：
+          上一轮留下未读、这一轮又在跑/失败时，两个圆点会同时出现（各说各的事）。 */}
+      {!editing && !selectMode && unread && (
+        <span
+          role="status"
+          aria-label={t('chat.unread')}
+          title={t('chat.unread')}
+          className="shrink-0 ml-1 w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]"
+        />
       )}
       {/* 最后活跃相对时间：非编辑/非多选态显示，避免布局挤压 */}
       {!editing && !selectMode && (

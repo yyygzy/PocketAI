@@ -95,3 +95,10 @@ export const resendPayloadSchema = z.object({
 
 /** 请求 ID（CHAT_ABORT） */
 export const requestIdSchema = chatId
+
+/** B-4：读态上报（conversationId 为 null ＝ 当前没有会话可见） */
+export const readStateReportSchema = z.object({
+  conversationId: chatId.nullable(),
+  focused: z.boolean(),
+  visible: z.boolean()
+})

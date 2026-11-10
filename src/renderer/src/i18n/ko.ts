@@ -324,6 +324,7 @@ export const ko = {
   'chat.runtime.pendingApproval': '승인 대기',
   'chat.runtime.failed': '지난 실행 실패',
   'chat.runtime.interrupted': '실행이 중단됨',
+  'chat.unread': '읽지 않은 답장',
   'chat.tools.filter.all': '전체',
   'chat.tools.filter.tools': '도구 허용',
   'chat.tools.filter.plain': '일반 대화',

@@ -1033,6 +1033,21 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv
         ON conversation_runs(conversation_id, started_at DESC);
     `
+  },
+  {
+    // v61：会话未读（B-4 / D3 已定）。
+    //
+    // 为什么不另建表、也不放 app_config KV：未读是「每个会话一个布尔」，生命周期与会话完全一致
+    // （删除会话即消失），放身份表的这一列最省清理逻辑，也天然满足「重启后保留」。
+    // 唯一事实源就是这一列；运行时内存只记「哪扇窗在读哪个会话」，事件只是这一列的投影。
+    // 幂等：先查 PRAGMA，列已在就跳过（SQLite 的 ADD COLUMN 没有 IF NOT EXISTS）。
+    version: 61,
+    name: 'conversation_unread',
+    up: (db) => {
+      const cols = db.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>
+      if (cols.some((c) => c.name === 'unread')) return
+      db.exec('ALTER TABLE conversations ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;')
+    }
   }
 ]
 

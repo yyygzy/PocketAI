@@ -22,6 +22,7 @@ import { useAgentRunInsights } from './useAgentRunInsights'
 import { isReadonlyConversation } from './sub-session'
 import { useConversationLists } from './useConversationLists'
 import { useConversationRuntimeStore, useConversationRuntimeSync } from '../../store/conversation-runtime-store'
+import { useConversationReadReporter } from './useConversationReadReporter'
 import { useAppStore } from '../../store/app-store'
 import { APP_SHORTCUT_EVENT, isActiveModuleInstance, type AppShortcutEventDetail } from '../../hooks/useGlobalShortcuts'
 import { useI18n } from '../../i18n'
@@ -151,8 +152,13 @@ export const ChatModule: React.FC = () => {
     listState,
     reloadConversations
   } = useConversationLists({ assistantIdRef, currentConvRef, onAutoSelect: setCurrentConvId })
+  const activeModule = useAppStore((s) => s.activeModule)
   // B-2：运行态镜像（快照 + 增量），侧栏与对话页都从这里读；不再看 conversations.status（D7）
   useConversationRuntimeSync()
+  // B-4：读态上报（聚焦 + 可见才清未读；锁屏由主进程再判一次），每个窗口各报自己的。
+  // 模块是保活隐藏而不是卸载（Workspace display:none），所以「切到别的模块」必须显式报 null，
+  // 否则主进程会一直当这个会话「可见」。
+  useConversationReadReporter(activeModule === 'chat' ? currentConvId : null)
   // 用户打开会话即视为「看到过这次失败/中断」：主进程清角标成功后同步移除本地镜像
   useEffect(() => {
     if (!currentConvId) return
@@ -456,7 +462,6 @@ export const ChatModule: React.FC = () => {
       .catch(reportIpcError('chat.listProviders'))
   }, [])
 
-  const activeModule = useAppStore((s) => s.activeModule)
   const firstProviderLoadRef = useRef(true)
   useEffect(() => {
     if (activeModule !== 'chat') return

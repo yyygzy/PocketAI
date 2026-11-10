@@ -1681,6 +1681,8 @@ export type ChatRuntimeState =
   | 'idle'
 
 export interface ChatRuntimeStateEvent {
+  /** 与未读事件共用一个通道，靠这个字段区分；运行态事件可以不带（历史形状不变） */
+  kind?: 'runtime'
   conversationId: string
   /** 已清除/无归属时可为 null（当前实现总带 requestId） */
   requestId: string | null
@@ -1693,6 +1695,39 @@ export interface ChatRuntimeStateEvent {
   /** 待确认的审批数（state='pending_approval' 时 >0） */
   pendingApprovals?: number
   errorCode?: string
+}
+
+/**
+ * 会话未读（B-4）：与运行态共用 `CHAT_RUNTIME_STATE_EVENT` 通道与 `CHAT_GET_RUNTIME_STATES` 快照。
+ * 不另开订阅，也不在渲染端二次推导——DB 的 `conversations.unread` 是唯一事实源，
+ * 这里只是它的一份投影。
+ */
+export interface ChatUnreadEvent {
+  kind: 'unread'
+  conversationId: string
+  /** true=有未读的助手消息；false=已读（渲染端镜像里移除） */
+  unread: boolean
+  at: number
+}
+
+/** 运行态 + 未读的联合事件形状（同一通道）。 */
+export type ChatConversationStateEvent = ChatRuntimeStateEvent | ChatUnreadEvent
+
+/** B-4：渲染端上报「这扇窗此刻是不是真的在读某个会话」。 */
+export interface ChatReadStateReport {
+  /** 当前显示的会话；null＝没有会话可见（切走/模块卸载） */
+  conversationId: string | null
+  /** document.hasFocus() */
+  focused: boolean
+  /** !document.hidden */
+  visible: boolean
+}
+
+/** 上报的返回：清读之后该会话的未读真相（渲染端拿它对齐本地镜像，避免和快照赛跑）。
+ *  null＝此刻问不到（锁屏时库是关的），渲染端跳过对齐、保持现状。 */
+export interface ChatReadStateResult {
+  ok: true
+  unread: boolean | null
 }
 
 // ---------- 快捷浮窗 ----------
@@ -2653,7 +2688,8 @@ export const IPC = {
   CHAT_ERROR_EVENT: 'chat:error-event',
   CHAT_GET_RUNTIME_STATES: 'chat:get-runtime-states', // B-2：运行态快照（窗口挂载/聚焦时取）
   CHAT_CLEAR_RUNTIME_FAILURE: 'chat:clear-runtime-failure', // B-2：清除「失败/已中断」角标（用户打开会话时）
-  CHAT_RUNTIME_STATE_EVENT: 'chat:runtime-state-event', // 主进程→渲染端：运行态增量（只带身份与状态）
+  CHAT_RUNTIME_STATE_EVENT: 'chat:runtime-state-event', // 主进程→渲染端：运行态/未读增量（只带身份与状态）
+  CHAT_REPORT_READ_STATE: 'chat:report-read-state', // B-4：渲染端上报「聚焦+可见+未锁屏」的当前会话，主进程据此清未读
   CONVERSATION_TITLE_EVENT: 'conversation:title-event',
 
   KB_LIST: 'kb:list',

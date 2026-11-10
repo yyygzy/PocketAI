@@ -339,6 +339,7 @@ export const zh = {
   'chat.runtime.pendingApproval': '待确认',
   'chat.runtime.failed': '上次运行失败',
   'chat.runtime.interrupted': '运行已中断',
+  'chat.unread': '有未读回复',
   'chat.tools.filter.all': '全部',
   'chat.tools.filter.tools': '允许工具',
   'chat.tools.filter.plain': '普通对话',

@@ -35,7 +35,9 @@ import type {
   ChatChunkEvent,
   ChatDoneEvent,
   ChatErrorEvent,
-  ChatRuntimeStateEvent,
+  ChatConversationStateEvent,
+  ChatReadStateReport,
+  ChatReadStateResult,
   ConversationTitleEvent,
   MessageSource,
   KbAskChunkEvent,
@@ -444,12 +446,18 @@ const api = {
   // 原来标成 `Promise<{ ok: boolean }>` 就是在告诉调用方"不会失败"，于是没人判它，而界面下一句已经改成"已停"。
   abortChat: (requestId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.CHAT_ABORT, requestId),
-  /** B-2：运行态快照（挂载/聚焦对齐；增量走 onChatRuntimeState） */
-  getChatRuntimeStates: (): Promise<ChatRuntimeStateEvent[] | { ok: false; error: string }> =>
+  /** B-2：运行态快照（挂载/聚焦对齐；增量走 onChatRuntimeState）。
+   *  B-4：快照同时带未读投影（`kind='unread'`），与运行态共用这一发。 */
+  getChatRuntimeStates: (): Promise<ChatConversationStateEvent[] | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.CHAT_GET_RUNTIME_STATES),
   /** B-2：用户打开会话时清除「失败/已中断」角标 */
   clearChatRuntimeFailure: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.CHAT_CLEAR_RUNTIME_FAILURE, conversationId),
+  /** B-4：读态上报（主进程按「聚焦+可见+未锁屏」决定清不清未读） */
+  reportConversationReadState: (
+    report: ChatReadStateReport
+  ): Promise<ChatReadStateResult | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.CHAT_REPORT_READ_STATE, report),
 
   onChatChunk: (handler: (e: ChatChunkEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: ChatChunkEvent) => handler(data)
@@ -466,8 +474,8 @@ const api = {
     ipcRenderer.on(IPC.CHAT_ERROR_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.CHAT_ERROR_EVENT, listener)
   },
-  onChatRuntimeState: (handler: (e: ChatRuntimeStateEvent) => void): (() => void) => {
-    const listener = (_e: IpcRendererEvent, data: ChatRuntimeStateEvent) => handler(data)
+  onChatRuntimeState: (handler: (e: ChatConversationStateEvent) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: ChatConversationStateEvent) => handler(data)
     ipcRenderer.on(IPC.CHAT_RUNTIME_STATE_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.CHAT_RUNTIME_STATE_EVENT, listener)
   },

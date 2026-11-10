@@ -30,7 +30,12 @@ import { closeUnlockWindow, showUnlockWindow } from './windows/unlock-window'
 import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR, LOGS_DIR } from './portable'
 import { dbService } from './db/database'
 import { conversationRunRepo } from './db/repositories/conversation-run.repo'
-import { reconcileInterruptedRuns, setRuntimePersistence } from './chat/runtime-registry'
+import {
+  reconcileInterruptedRuns,
+  setConversationUnreadHook,
+  setRuntimePersistence
+} from './chat/runtime-registry'
+import { markConversationUnread } from './chat/unread-state'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { masterKeyManager } from './crypto/master-key'
@@ -88,6 +93,8 @@ let mainWindow: BrowserWindow | null = null
 
 // B-3：运行态注册表的落地面（模块级接线；repo 内部会自己判 dbService 是否已 open）
 setRuntimePersistence(conversationRunRepo)
+// B-4：助手一轮正常结束 → 按 D3 判定未读（注册表不 import 数据库，这里注入）
+setConversationUnreadHook(markConversationUnread)
 
 // ─── DB 打开（先尝试无密码，失败 = 已加密） ────────────────────────
 

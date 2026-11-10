@@ -11,7 +11,7 @@
 // running/pending_approval 标成 interrupted。
 // 失败态（failed）不自动过期：侧栏一直显示，直到用户打开该会话（clearFailure）才清除。
 import { createLogger } from '../logger'
-import type { ChatRuntimeState, ChatRuntimeStateEvent } from '../../shared/types'
+import type { ChatConversationStateEvent, ChatRuntimeState, ChatRuntimeStateEvent } from '../../shared/types'
 
 const logger = createLogger('runtime')
 
@@ -50,16 +50,33 @@ interface RuntimeEntry {
 }
 
 const entries = new Map<string, RuntimeEntry>()
-/** 由 chat 注册入口注入（只有那里拿得到 BrowserWindow）；测试/启动早期为空时只更新内存 */
-let broadcaster: ((event: ChatRuntimeStateEvent) => void) | null = null
+/**
+ * 由 chat 注册入口注入（只有那里拿得到 BrowserWindow）；测试/启动早期为空时只更新内存。
+ * B-4 起这条通道同时承载未读事件（`kind='unread'`），仍是同一个订阅，不另开通道。
+ */
+let broadcaster: ((event: ChatConversationStateEvent) => void) | null = null
 let persistence: RuntimePersistence | null = null
+/**
+ * B-4：一轮正常结束时的未读钩子。由 index.ts 注入（未读实现要读库，而本文件刻意不 import 数据库，
+ * 否则引擎/审批这些纯逻辑单测会被 database→portable→electron 的模块初始化拖下水）。
+ */
+let unreadHook: ((conversationId: string) => void) | null = null
 
-export function setRuntimeStateBroadcaster(fn: ((event: ChatRuntimeStateEvent) => void) | null): void {
+export function setRuntimeStateBroadcaster(fn: ((event: ChatConversationStateEvent) => void) | null): void {
   broadcaster = fn
 }
 
 export function setRuntimePersistence(p: RuntimePersistence | null): void {
   persistence = p
+}
+
+export function setConversationUnreadHook(fn: ((conversationId: string) => void) | null): void {
+  unreadHook = fn
+}
+
+/** 未读事件走运行态同一条广播（供 unread-state 使用） */
+export function publishConversationState(event: ChatConversationStateEvent): void {
+  broadcaster?.(event)
 }
 
 function toEvent(e: RuntimeEntry): ChatRuntimeStateEvent {
@@ -157,6 +174,9 @@ export function markRunFinished(
     publish(e)
     return
   }
+  // B-4：一轮正常结束＝多了一条助手消息。是否真的记未读（正在读/子会话/写库失败）由钩子判断；
+  // 放在「requestId 匹配」之后，迟到的旧 run 回调不会把新一轮的会话误标未读。
+  if (status === 'done') unreadHook?.(conversationId)
   entries.delete(conversationId)
   publishIdle(conversationId, requestId)
 }
