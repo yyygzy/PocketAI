@@ -56,7 +56,7 @@
 
 ### 1.3 现状范式判定
 
-- 入口层：`Workspace.tsx` 把 `chat` 与 `agent` 当两个顶级模块；Agent 模块内部再分 `AgentPanel` / `McpPanel` / `ChannelsPanel`（`src/renderer/src/modules/agent/AgentModule.tsx`）。
+- 入口层：`Workspace.tsx` 只挂 `chat` 一个聊天模块，Agent 顶级模块已于 P4 批次 2 删除（`AgentModule.tsx` / `AgentPanel.tsx` 等壳文件不再存在）；`src/renderer/src/modules/agent/` 现只余 `ui.tsx` 展示件与 `mcp/`、`channels/` 两个配置面板，后者经 `settings/EmbeddedAgentPanels.tsx` 挂在设置页。
 - 数据层：同一张表、同一套事件；Agent 会话在对话侧栏可见。
 - 因此现状是**「分栏并存 + 共享会话」**，且对话壳里已经长出「单一入口 + 模式开关」的雏形。
 
@@ -644,7 +644,7 @@ WHERE agent_mode = 1
 |---|---|
 | 入口与模块挂载 | `src/renderer/src/components/Sidebar.tsx`、`src/renderer/src/components/Workspace.tsx` |
 | 对话壳 | `src/renderer/src/modules/chat/ChatModule.tsx`、`ChatView.tsx`、`Composer.tsx`、`ConversationList.tsx`、`useStreamSession.ts`、`messages-reducer.ts`、`useAgentRunInsights.ts`、`agent-mode.ts`、`send-payload.ts` |
-| Agent 壳 | `src/renderer/src/modules/agent/AgentModule.tsx`、`chat/AgentPanel.tsx`、`hooks/useAgentChat.ts`、`components/SessionRail.tsx`、`components/AgentComposer.tsx` |
+| Agent 壳（已删除） | 已于 P4 批次 2 删除（`dbfd248`，81 文件／−11414 行）：`modules/agent/AgentModule.tsx`、`chat/AgentPanel.tsx`、`hooks/useAgentChat.ts`、`components/SessionRail.tsx`、`components/AgentComposer.tsx`；能力已并入对话壳，`modules/agent/` 现只余 `ui.tsx` 展示件与「配置面板」行的两个面板（经 `settings/EmbeddedAgentPanels.tsx` 挂到设置页） |
 | 共享运行组件 | `src/renderer/src/components/agent/AgentMessageCard.tsx`、`TraceReplayStatus.tsx`、`agent-shared.ts` |
 | 配置面板 | `src/renderer/src/modules/agent/mcp/McpPanel.tsx`、`src/renderer/src/modules/agent/channels/ChannelsPanel.tsx` |
 | 设置入口 | `src/renderer/src/modules/settings/SettingsModule.tsx` |
