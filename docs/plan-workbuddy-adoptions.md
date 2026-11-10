@@ -19,7 +19,7 @@
 2. C-1 风险档 `forceConfirm`（否则 B 的「待确认」角标没有稳定判定依据）。
 3. A-1 列表加载态 `listState`（A 与 B 共用同一份 list hook，先落最小改动）。
 
-**可延后**：A-4 锁屏/向导快照、B-4 未读、B-5 停写/删 `status`、C-3 计费档、C-4 MCP 手工试运行审批。
+**可延后**：A-4 锁屏/向导快照、B-4 未读、B-5 停写/删 `status`。
 
 ---
 
@@ -338,9 +338,17 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
 - 已知误差：`web.search` 仅在 Tavily／博查时产生外部开销（SearXNG 免 Key 免费）；`kb.search` 仅在知识库使用远程 embedding 时产生开销（本地模型免费）；`agent.delegate` 消耗的是子 run 的模型 token，不是外部付费调用。因此标签语义是「可能调用外部付费服务」，不是「一定产生费用」。
 - 图像生成不是 Agent 工具（独立模块，已有 `image.costHint` 文案），不在本档。
 
-### C.4（可延后）MCP 手工试运行
+### C.4（已落地，2026-11-10 收口）MCP 手工试运行
 
-- `registry.execute` 的测试/试运行路径绕过审批（`registry.ts:332-337` 注释已注明）。这是有意的调试能力，本次不动；若要收紧，需单独设「仅设置页可见 + 二次确认」。
+- 功能本身已于 V4-Iter-65 落地：`MCP_SERVER_CALL_TOOL` → `mcpManager.callTool`，面板工具行直接执行、行内看结果；本批（V4-Iter-469）只补安全与体验，不新建入口，也不改 Agent 循环里 MCP 的既有审批行为。
+- 安全口径：
+  - `forceConfirm`（`mcpToolForceConfirm`：`destructiveHint`/`openWorldHint`，或名字命中危险关键词）命中的工具，试运行前弹一次二次确认；取消则不发 IPC。
+  - `permission==='auto'` 不弹；普通 `confirm` 不再重复问——用户点「试运行」本身就是一次显式动作。
+  - 这条路径仍不写 `approval_events` / `agent_traces`，也不进入会话白名单；它是设置页可见的调试能力。
+- 审计口径：`mcp_call_log` 新增 `source`（`agent` / `manual`，迁移 v62）。Agent 循环缺省 `agent`，面板试运行显式传 `manual`；沿用原打码与截断，只做归因，不参与任何权限判定。v62 之前的历史行无法回溯区分，统一按 `agent` 读（不伪造 `manual`）。
+- 参数：保留 JSON 文本框，新增「填入示例值」；只从 schema 的 `default` / `examples[0]` / `enum[0]` 取，不展示完整 schema、不做校验器。
+- 结果：保持行内，新增复制与耗时；超时仍是错误文本，但耗时一并展示。
+- 能力中心：只加「去试运行」跳转（关浮层 + 展开该 Server），不复制一套执行 UI。
 
 ### C.5 数据与迁移
 
@@ -415,7 +423,7 @@ B-4（未读） ── 依赖 D3 口径；与 B-2/B-3 解耦
 
 - A-4 锁屏/向导快照、A-5 独立窗模块骨架。
 - B-4 未读、B-5 `status` 退役。
-- C-3 计费/高成本档（D6 已定不引入）、C-4 MCP 手工试运行审批。
+- C-3 计费/高成本档、C-4 MCP 手工试运行的审批收紧均已落地（C-3 只声明只展示；C-4 见上）。
 
 ### 5.4 可独立排期性
 
