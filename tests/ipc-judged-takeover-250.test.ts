@@ -211,7 +211,7 @@ const SILENT = SITES.filter((s) => s.side === 'none' || s.side === 'console')
 //  前两行的失败侧（`!r.ok`）靠第三行接管，但扫描器对复合条件 `r.ok && ...` 的 fallthrough 不识别。
 //  改成 error-first：`if (!r.ok) { ... return }` / `if (r.canceled) return` / `if (r.skill) { ... }`，
 //  行为不变，扫描器能识别。但扫描器仍找到 14 处设计内或待收的静默读 ⇒ CAP 维持 14）
-const SILENT_READ_CAP = 9
+const SILENT_READ_CAP = 12
 
 const STILL_SILENT_PROOF = [
   // §276 起换成这两份：ChatModule 与 ChatView 那两发已收干，再当"仍静默"的对照就是假证
@@ -266,9 +266,8 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/modules/wizard/FirstRunWizard.tsx': 2,
   // §257：这一簇没有设计内静默——`useAgentToolConfigs` 四发读全部收口（清零）。
   'src/renderer/src/modules/chat/useAgentToolConfigs.ts': 0,
-  // §268：输入框那圈的六发惰性读全部收口（各挂一句、逐发点名；知识库那两发带重试键，
-  // 片段与上下文中枢那几发的出口是"再点／再进一次触发态"自己会重拉——各屏的出口形状不同，理由写在各文件注释里）
-  'src/renderer/src/modules/chat/ChatConfigBar.tsx': 0,
+  // §268：输入框那圈的惰性读全部收口（各挂一句、逐发点名；知识库那两发带重试键，
+  // 片段与「+」里技能/知识库那几发的出口是"再打一次字／再点那一格"自己会重拉——各屏的出口形状不同，理由写在各文件注释里）
   'src/renderer/src/modules/chat/Composer.tsx': 0,
   // §270：助手编辑器那三发清单读收口（清零）。三份不同数据各挂一句、各给一颗键——
   // 这一屏"重开编辑器再拉"要丢掉整个表单，出口代价大到等于没出口，所以键不是多余机关
@@ -314,7 +313,20 @@ const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/components/RemindersModal.tsx': 0,
   // §279：片段导出那一颗按钮收口（清零）。改前 `if (res.ok && res.path)` 失败侧什么都不做 ⇒ 用户点了「导出」没反应；
   // 加 else 分支 toast.error（与同组件 :178 的 importPromptSnippets 同形）
-  'src/renderer/src/components/SnippetButton.tsx': 0
+  'src/renderer/src/components/SnippetManager.tsx': 0,
+  // §430 复核：实测 12 处里 FirstRunWizard 恰好就是已登记的 2 处（:189 反判无 else、:249 保存前现取的 console），
+  // 原先"FirstRunWizard 多 2 处"的判语是误读；真正没进名单的是下面三处 **写/镜像** 类 best-effort：
+  //  · ThemeLangControls :28 —— `setUiTheme` 是给主进程建窗底色做镜像写；localStorage + `<html class="light">`
+  //    已是切换的事实来源，注释与行为都明确"失败不回滚界面"。没有任何读数屏依赖它，硬加 toast 只会让每次
+  //    换主题都因桥故障弹一次 ⇒ 记诊断日志是设计内处置。
+  //  · useConversationReadReporter :62 —— 组件卸载时的 `reportConversationReadState(null)` 收尾上报。
+  //    此刻界面已卸载，没有可接管的展示位；不成功只让主进程多按"已读"一会儿 ⇒ 只能记日志。
+  //  · theme-boot :20 —— 启动期 KV 回填的 `setUiTheme` 镜像写：主题已由 localStorage 生效、页面尚未挂载，
+  //    失败只影响"下次建窗的底色" ⇒ 记日志；KV 有值时本就不写，不改既有语义。
+  //  这三处都不是"用户要看的数据读不到"，所以按设计内静默登记；CAP 同步 9→12，没有整体放宽。
+  'src/renderer/src/components/ThemeLangControls.tsx': 1,
+  'src/renderer/src/modules/chat/useConversationReadReporter.ts': 1,
+  'src/renderer/src/theme-boot.ts': 1
 }
 
 const REGISTERED_HANDLERS = ['onChatSendFailed', 'fail', 'backToQueue', 'failSend', 'applyPayload', 'handleRestoreResult', 'failAction', 'flash', 'notify', 'rollback', 'rollbackOrder',
@@ -446,47 +458,34 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     expect(unregistered, `未登记的助手：${unregistered.join(', ')}——去看它到底做没做事，再决定加名字还是改成直接接管`).toEqual([])
     expect(helpers.length, '这一档不是空的（空了说明分类器没在跑）').toBeGreaterThan(0)
   })
-  it('§268 那四发的形状数得出（两路各写失败对象、读到即收回、只进 console 那一形归零、渲染条件本身在场、键按各屏有没有天然出口配）', () => {
+  it('§268 那几发的形状数得出（两路各写失败对象、读到即收回、渲染条件本身在场、键按各屏有没有天然出口配）', () => {
     const read = (rel: string): string =>
       fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
     const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
-    const CC = read('src/renderer/src/modules/chat/ChatConfigBar.tsx')
     const CO = read('src/renderer/src/modules/chat/Composer.tsx')
 
-    // 每发两条失败路（resolve 的失败对象／reject）各写一次；读到即收回
-    for (const [name, src] of [['ChatConfigBar', CC], ['Composer', CO]] as const) {
-      // 每份文件两发惰性读、每发两条失败路（resolve 的失败对象／reject）⇒ 各写两次
-      expect(count(src, /set(?:Skills|Kbs|Snippets)Fail\(\{ error: /g), `${name}：两发 × 两条失败路各写一次`).toBe(4)
-      expect(count(src, /set(?:Skills|Kbs|Snippets)Fail\(null\)/g), `${name}：每发读到即收回，共两处`).toBe(2)
-    }
-    // 旧写法（裸交给 reportIpcError）在这两处归零
-    expect(count(CC, /\.catch\(reportIpcError\('chatConfig\./g), '中枢面板不再有那一形').toBe(0)
-    expect(count(CO, /\.catch\(reportIpcError\('chat\.list/g), '对话页输入框同').toBe(0)
+    // 四发惰性读（@ 知识库／/ # 片段／「+」里的技能与知识库），每发两条失败路（resolve 的失败对象／reject）各写一次；读到即收回
+    expect(count(CO, /set(?:Ctx)?(?:Skills|Kbs|Snippets)Fail\(\{ error: /g), 'Composer：四发 × 两条失败路各写一次').toBe(8)
+    expect(count(CO, /set(?:Ctx)?(?:Skills|Kbs|Snippets)Fail\(null\)/g), 'Composer：每发读到即收回，共四处').toBe(4)
+    // 旧写法（裸交给 reportIpcError）在这几处归零
+    expect(count(CO, /\.catch\(reportIpcError\('chat\.list/g), '对话页输入框不再有那一形').toBe(0)
 
-    // 那句真挂得出去：计数盯**渲染条件用的是哪一个 fail 状态**＋它旁边点的是哪个界面名词
-    // （§266 的 Z7 教训——只数文案会放过把守卫换成 `false &&` 那种写法；这里守卫名与名词成对，写串了也红）
-    const CC_SKILLS = /\{skillsFail && \([\s\S]{0,240}?what=\{t\('common\.skillsList'\)/g
-    const CC_KBS = /\{kbsFail && \([\s\S]{0,240}?what=\{t\('common\.kbList'\)/g
-    const CO_KBS = /\{kbsFail && \([\s\S]{0,240}?common\.kbList/g
-    const CO_SNIPPETS = /\{snippetsFail && \([\s\S]{0,240}?common\.snippetList/g
-    expect(count(CC, CC_SKILLS), '中枢面板·技能那句挂在渲染条件里').toBe(1)
-    expect(count(CC, CC_KBS), '中枢面板·知识库那句挂在渲染条件里').toBe(1)
-    expect(count(CO, CO_KBS), '对话页·知识库那句挂在渲染条件里').toBe(1)
-    expect(count(CO, CO_SNIPPETS), '对话页·片段那句挂在渲染条件里').toBe(1)
-    // 那句确实是要被读到的那种（alert 盒子或 LoadFailNotice 组件）
-    expect(count(CC, /<LoadFailNotice/g), '中枢面板两句都走 LoadFailNotice（role=alert 在那个组件里）').toBe(2)
+    // 四句失败句都挂在渲染条件里，且各自点自己的界面名词
+    expect(count(CO, /\{kbsFail && \([\s\S]{0,240}?common\.kbList/g), '对话页·@ 知识库那句').toBe(1)
+    expect(count(CO, /\{snippetsFail && \([\s\S]{0,240}?common\.snippetList/g), '对话页·片段那句').toBe(1)
+    expect(count(CO, /\{ctxKbsFail && \([\s\S]{0,260}?common\.kbList/g), '「+」知识库那句').toBe(1)
+    expect(count(CO, /\{ctxSkillsFail && \([\s\S]{0,260}?common\.skillsList/g), '「+」技能那句').toBe(1)
     // 精确到 JSX 属性写法（注释里也出现 role="alert" 这几个字，宽松的数法会把注释算进去）
     const ALERT = /role="alert" className="text-xs text-\[var\(--color-danger\)\]"/g
-    expect(count(CO, ALERT), '对话页两句都自带 alert 盒子').toBe(2)
+    expect(count(CO, ALERT), '四句都自带 alert 盒子').toBe(4)
 
-    // 重试键按"各屏有没有天然出口"配：不该造机关的地方别造，该有出口的地方别缺
-    expect(count(CC, /retry/g), '中枢面板一处键都不造（再点那一格本身就是出口）').toBe(0)
-    expect(count(CO, /data-testid="composer-(?:kbs|snippets)-retry"/g), '对话页两处都自带出口').toBe(2)
+    // 重试键按"各屏有没有天然出口"配：@ 那两发本来就会重打；「+」两发的句子在浮层外，浮层关着也得能重发
+    expect(count(CO, /data-testid="composer-(?:kbs|snippets)-retry"/g), '@ 两处都自带出口').toBe(2)
+    expect(count(CO, /data-testid="composer-plus-(?:kbs|skills)-retry"/g), '「+」两发各配同级出口').toBe(2)
     // 占位写死这条不许被"顺手修好"成清回 null（§221 真挂载量过：那会让输入框每次渲染重拉、卡死在转圈）
     expect(count(CO, /kbsRef\.current = \[\] \/\/ 占位防并发重复拉取/g), '对话页知识库占位仍在').toBe(1)
     expect(count(CO, /snippetsRef\.current = \[\] \/\/ 占位防并发重复拉取/g), '对话页片段占位仍在').toBe(1)
-    // 清回 null 只许出现在"点重试键"那条路上（数一下：对话页两个出口＝2、中枢面板 0）
-    expect(count(CC, /(?:kbs|snippets)Ref\.current = null/g), '中枢面板没有 ref 这件事').toBe(0)
+    // 清回 null 只许出现在"点重试键"那条路上（对话页两个出口＝2）；「+」那两发用 state 守卫，不碰 ref
     expect(count(CO, /(?:kbs|snippets)Ref\.current = null/g), '对话页只有两颗重试键各清一次').toBe(2)
 
     // 三个新界面名词四语都要有（一个界面名词只留一份键，§263）
