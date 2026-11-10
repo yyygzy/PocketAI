@@ -109,3 +109,18 @@ describe('theme.css 令牌', () => {
     }
   })
 })
+
+// 切主题闪白：实机表现为整窗白一帧。根因是画布底色只铺在 body 上，而 body 的
+// background-color 过渡把它提升成合成层；切到浅色预设时 html 已按新 color-scheme
+// 重绘，中间那帧就露出 UA 默认白。修法是「html 自己铺底 + 底色不做过渡」，两条都钉住。
+describe('切主题不闪白', () => {
+  const styles = fs.readFileSync(path.join(RENDERER_ROOT, 'styles.css'), 'utf8')
+
+  it('html 自己铺主题底色（不依赖 body 的合成层）', () => {
+    expect(styles).toMatch(/html\s*\{[^}]*background:\s*var\(--color-surface\)/)
+  })
+
+  it('没有 background-color 过渡（避免过渡层与 html 画布错帧）', () => {
+    expect(css).not.toMatch(/transition:[^;]*background-color/)
+  })
+})

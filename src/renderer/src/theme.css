@@ -214,7 +214,10 @@ html.sand {
   --hljs-built_in: #0b6a8f;
 }
 
-/* ── 主题切换平滑过渡（不作用于 transform 等，避免布局动画副作用）── */
+/* ── 主题切换过渡：只过渡文字/描边 ──────────────────────────────
+   不要给 background-color 加过渡：切主题时 body 的底色渐变会把 body 提升为合成层，
+   而 html 画布在新的 color-scheme 下先按浅色重绘，中间那一帧就是整窗闪白。
+   底色跟着 CSS 变量瞬时切换（html 已由 styles.css 直接铺底），观感反而更干净。 */
 body,
 button,
 input,
@@ -224,5 +227,5 @@ aside,
 nav,
 .markdown-body pre,
 .markdown-body code {
-  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  transition: border-color 0.2s ease, color 0.2s ease;
 }
