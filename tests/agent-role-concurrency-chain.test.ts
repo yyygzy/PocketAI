@@ -638,7 +638,7 @@ describe('resolveChildTarget：控制器点名的模型要能在 provider 表里
   it('未缓存的名字 ⇒ 拒，并把"先拉取模型"写在同句里（不发一次注定失败的推理）', () => {
     const r = resolveChildTarget(parent, 'not-a-model')
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toContain('设置 → 模型服务商')
+    if (!r.ok) expect(r.error).toContain('设置 → 模型与用量')
   })
 
   it('同名挂在多家 ⇒ 裸名拒掉并要求 providerId::model；全名可解析', () => {

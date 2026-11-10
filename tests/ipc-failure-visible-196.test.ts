@@ -24,7 +24,7 @@ vi.mock('../src/main/backup/backup-service', () => ({
   // §386：LIST 与其余五发各走这一读与这一取法，两枚都要在桩里（少一枚 ⇒ 通道直接抛「没有这个导出」）
   readWebDAVConfig: () => ({ cfg: WD.cfg, passwordUndecryptable: false, configUnreadable: false }),
   loadWebDAVConfigOrError: () => (WD.cfg ? { cfg: WD.cfg } : { error: '未配置 WebDAV' }),
-  WEBDAV_CONFIG_UNREADABLE_MSG: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存',
+  WEBDAV_CONFIG_UNREADABLE_MSG: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 数据与安全 重新填写并保存',
   listWebDAVBackups: async () => { throw new Error('WebDAV PROPFIND 401') },
   createWebDAVClient: vi.fn(),
   runWebDAVBackup: vi.fn(),

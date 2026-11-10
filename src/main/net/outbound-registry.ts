@@ -106,7 +106,7 @@ async function resolveWebdav(): Promise<OutboundAddress[]> {
   const { readWebDAVConfig } = await import('../backup/backup-service')
   const read = readWebDAVConfig()
   // 「有行但读不出来」不是「没配过」：不把坏配置画成未配置
-  if (read.configUnreadable) throw new Error('WebDAV 配置行读取失败（请到设置 → 备份 重新保存）')
+  if (read.configUnreadable) throw new Error('WebDAV 配置行读取失败（请到设置 → 数据与安全 重新保存）')
   const url = read.cfg?.url
   return url?.trim() ? [{ label: '', value: url }] : []
 }

@@ -1082,7 +1082,7 @@ export function loadWebDAVConfig(): WebDAVConfig | null {
  * 它走自己的键（`dh.backupCfgBroken`），不经这句话。
  */
 export const WEBDAV_CONFIG_UNREADABLE_MSG =
-  'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存'
+  'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 数据与安全 重新填写并保存'
 
 /**
  * §386：动作那几发（全量／增量／清单／恢复／合并扫描／合并执行／删除）的统一取法。

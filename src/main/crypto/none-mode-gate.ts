@@ -13,7 +13,7 @@
 import { masterKeyManager } from './master-key'
 
 /** 引导语：两处拒绝文案共用，避免口径漂移 */
-export const NONE_MODE_HINT = '请先在「设置 → 数据加密」中设置主密码后重试。'
+export const NONE_MODE_HINT = '请先在「设置 → 数据与安全」中设置主密码后重试。'
 
 /** 是否处于未设主密码的明文模式 */
 export function isNoneMode(): boolean {

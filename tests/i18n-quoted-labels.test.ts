@@ -125,7 +125,7 @@ describe('②这一簇里不许有没登记的手抄名', () => {
           if (/^\{[a-zA-Z_]+\}$/.test(q)) continue // {btn} / {capability} 这类运行时填的
           if (labels.includes(q)) continue
           const parts = q.split(/→|-/).map((p) => p.trim()).filter(Boolean)
-          if (parts.length > 1 && parts.every((p) => labels.includes(p))) continue // 「设置 → 模型服务商」
+          if (parts.length > 1 && parts.every((p) => labels.includes(p))) continue // 「设置 → 模型与用量」
           expect(prose, `${lang} 的 ${key} 引了「${q}」：既不是界面名字，也没写进 PROSE_QUOTES`).toContain(q)
         }
       }

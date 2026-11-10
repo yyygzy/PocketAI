@@ -11,7 +11,7 @@ import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/rende
 import { McpForm } from '../src/renderer/src/modules/agent/mcp/McpForm'
 
 const BLOCK_MSG =
-  '未设置主密码，新密钥不会被保存（env：API_KEY）。请先在「设置 → 数据加密」中设置主密码后重试。'
+  '未设置主密码，新密钥不会被保存（env：API_KEY）。请先在「设置 → 数据与安全」中设置主密码后重试。'
 
 let onSaved: (rec: McpServerRecord) => void
 

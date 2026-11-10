@@ -134,7 +134,7 @@ export type ChildTargetResolution =
  *
  * 谁决定用哪台模型（用户 2026-10-16 选定）：**控制器在 `delegate_task` 里带 model 参数**，
  * 所以这里面对的输入是模型写的，不是用户点的 ⇒ 三条拒绝都要给得出可执行的下一步：
- *  ① 未缓存的模型名 → 指「设置 → 模型服务商 → 拉取模型」（不猜：写个不存在的模型名去请求，
+ *  ① 未缓存的模型名 → 指「设置 → 模型与用量 → 拉取模型」（不猜：写个不存在的模型名去请求，
  *     失败要等到端点报错才看得见，而那时已经花了一次推理）；
  *  ② 裸名挂在多家下 → 要求写 `providerId::model`（选错一家比派错人更难发现）；
  *  ③ provider 被停用 → 直接说停用。
@@ -168,7 +168,7 @@ export function resolveChildTarget(parent: ChatTarget, requested: string | null)
     if (!provider.enabled) return { ok: false, error: `model "${want}"：provider「${provider.name}」已停用` }
     return {
       ok: false,
-      error: `model "${want}"：不在 provider「${provider.name}」的模型列表里。请先在「设置 → 模型服务商」点「拉取模型」，再从清单里原样选一个名字。`
+      error: `model "${want}"：不在 provider「${provider.name}」的模型列表里。请先在「设置 → 模型与用量」点「拉取模型」，再从清单里原样选一个名字。`
     }
   }
 
@@ -190,6 +190,6 @@ export function resolveChildTarget(parent: ChatTarget, requested: string | null)
   }
   return {
     ok: false,
-    error: `model "${want}"：不在任何已启用 provider 的模型列表里。可省略 model 沿用当前模型，或先在「设置 → 模型服务商」点「拉取模型」。`
+    error: `model "${want}"：不在任何已启用 provider 的模型列表里。可省略 model 沿用当前模型，或先在「设置 → 模型与用量」点「拉取模型」。`
   }
 }

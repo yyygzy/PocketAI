@@ -158,7 +158,7 @@ async function issueOne() {
 
   const features = await ask(`功能列表（回车=全量: ${DEFAULT_FEATURES}）\n: `, DEFAULT_FEATURES)
 
-  // 硬盘指纹（可选绑定）：用户在应用「设置 → 授权激活」页可查看本机指纹（16 位 hex）
+  // 硬盘指纹（可选绑定）：用户在应用「设置 → 授权与路径」页可查看本机指纹（16 位 hex）
   const fingerprint = (await ask('\n硬盘指纹（回车=不绑定设备；绑定后仅该硬盘可激活）\n: ', '')).trim()
   if (fingerprint && !/^[0-9a-fA-F]{16}$/.test(fingerprint)) {
     console.log('  ✗ 指纹格式无效（应为 16 位 hex），本次签发中止')
@@ -212,7 +212,7 @@ async function issueOne() {
   if (await askBool('复制激活内容到剪贴板? [y/N]: ', false)) {
     console.log(clipboardCopy(r.licenseJson) ? '✓ 已复制，可直接粘贴发给用户' : '（剪贴板不可用，请直接打开 .lic 文件复制）')
   }
-  console.log('\n用户激活方式: 设置 → 授权激活 → 导入该 .lic 文件，或点「粘贴激活码」粘贴 JSON 内容')
+  console.log('\n用户激活方式: 设置 → 授权与路径 → 导入该 .lic 文件，或点「粘贴激活码」粘贴 JSON 内容')
 }
 
 function cleanTerm(t) {

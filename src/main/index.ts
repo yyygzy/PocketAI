@@ -353,7 +353,7 @@ async function boot(): Promise<void> {
       restoreWebDAVAfterRekey(webdavTicket)
       if (webdavTicket.undecryptable) {
         // 这一发没有对应的界面回执（解锁窗此刻正在关闭）⇒ 至少留痕，且设置页那一格（§382 的三档脸）会自己说
-        log.warn('WebDAV 备份口令用旧字段密钥解不开，本次首次设密码未重写它（需在设置 → 备份 重填）')
+        log.warn('WebDAV 备份口令用旧字段密钥解不开，本次首次设密码未重写它（需在设置 → 数据与安全 重填）')
       }
       log.info('DB 已加密')
     }

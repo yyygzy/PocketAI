@@ -313,7 +313,7 @@ describe('runAudit 安全检测', () => {
     expect(item?.level).toBe('warn')
     expect(item?.detail).toContain('解不开')
     expect(item?.detail).not.toContain('每 6 小时执行')
-    expect(item?.suggestion).toContain('设置 → 备份')
+    expect(item?.suggestion).toContain('设置 → 数据与安全')
   })
 
   // §386：那一行**存在却解析不出来**（整库恢复把 app_config 整表换成坏行）原先与「没配过」共用出口，
@@ -324,7 +324,7 @@ describe('runAudit 安全检测', () => {
     expect(item?.level).toBe('danger')
     expect(item?.detail).toContain('读不出来')
     expect(item?.detail, '这一档与"没配过"是两件事').not.toContain('未配置 WebDAV')
-    expect(item?.suggestion).toContain('设置 → 备份')
+    expect(item?.suggestion).toContain('设置 → 数据与安全')
   })
 
   it('§386 反向对照：真没配过（那颗 false）⇒ 仍是原来那句 warn「未配置 WebDAV」', () => {

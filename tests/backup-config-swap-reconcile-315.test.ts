@@ -100,7 +100,7 @@ vi.mock('../src/main/backup/backup-service', () => ({
   loadWebDAVConfigOrError: () => (H.cfg ? { cfg: H.cfg } : { error: '未配置 WebDAV' }),
   readWebDAVConfig: () => ({ cfg: H.cfg, passwordUndecryptable: false, configUnreadable: false }),
   WEBDAV_CONFIG_UNREADABLE_MSG:
-    'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存',
+    'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 数据与安全 重新填写并保存',
   saveWebDAVConfig: () => {},
   // §384：这颗现在交回 `{cfg, passwordIsStoredCipher}`（意图由读侧声明，写侧不再猜形状）
   restoreWebDAVPassword: (c: unknown) => ({ cfg: c, passwordIsStoredCipher: false }),

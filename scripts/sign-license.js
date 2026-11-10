@@ -12,7 +12,7 @@
 // - --fingerprint 传入硬盘指纹（应用设置页可查看，16 位 hex）= 绑定设备，仅该硬盘可激活；
 //   不传 = 不绑定（任何硬盘可用，老格式行为）
 // - 输出为 license.lic JSON 文本（与 loadFromString 兼容），可让用户在
-//   设置 → 授权激活 里「导入文件」或「粘贴激活内容」完成离线激活
+//   设置 → 授权与路径 里「导入文件」或「粘贴激活内容」完成离线激活
 const fs = require('node:fs')
 const path = require('node:path')
 const { issueLicense, describeExpiry } = require('./lib/issue-license')

@@ -2827,7 +2827,7 @@ class AgentEngine {
 
     if (!isDelegationEnabledFor(ctx.target.providerId, ctx.target.model)) {
       // 清单里本来不该有它；走到这里说明模型凭空调了这个名字（或开关刚被关掉）
-      return fail('DELEGATION_DISABLED: 这台模型未被允许委派，请在「设置 → 模型服务商」打开「允许顺序委派」')
+      return fail('DELEGATION_DISABLED: 这台模型未被允许委派，请在「设置 → 模型与用量」打开「允许顺序委派」')
     }
 
     /**

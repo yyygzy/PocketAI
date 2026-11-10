@@ -75,7 +75,7 @@ export function runAudit(): AuditResult {
         label: '自动锁屏',
         level: 'warn',
         detail: '未开启自动锁屏，最小化或离开后数据一直可读',
-        suggestion: '设置 → 隐私与加密 → 自动锁屏，选择无操作锁定时间；也可用侧边栏「锁定」按钮或 Ctrl+L 立即锁定'
+        suggestion: '设置 → 数据与安全 → 自动锁屏，选择无操作锁定时间；也可用侧边栏「锁定」按钮或 Ctrl+L 立即锁定'
       })
     }
   } else {
@@ -84,7 +84,7 @@ export function runAudit(): AuditResult {
       label: '数据库加密',
       level: 'warn',
       detail: '数据库未加密：全部会话、知识库、配置以明文存储，拷贝数据文件即可读取',
-      suggestion: '设置 → 隐私与加密 → 启用主密码（便携/U 盘场景强烈建议）'
+      suggestion: '设置 → 数据与安全 → 启用主密码（便携/U 盘场景强烈建议）'
     })
   }
 
@@ -120,7 +120,7 @@ export function runAudit(): AuditResult {
         label: '云端备份',
         level: 'danger',
         detail: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），备份与恢复此刻都不可用',
-        suggestion: '设置 → 备份 → 重新填写地址、用户名与口令并保存'
+        suggestion: '设置 → 数据与安全 → 重新填写地址、用户名与口令并保存'
       })
     } else if (!wdRead.cfg) {
       checks.push({
@@ -128,7 +128,7 @@ export function runAudit(): AuditResult {
         label: '云端备份',
         level: 'warn',
         detail: '未配置 WebDAV 云备份，设备损坏/丢失时数据无法找回',
-        suggestion: '设置 → 备份 → 配置 WebDAV（坚果云 / Nextcloud 等）'
+        suggestion: '设置 → 数据与安全 → 配置 WebDAV（坚果云 / Nextcloud 等）'
       })
     } else if (wdRead.passwordUndecryptable) {
       // §382：这一档改前走的是下面那条 else——「WebDAV 已配置，定时备份每 N 小时执行」+ level:'ok'，
@@ -139,7 +139,7 @@ export function runAudit(): AuditResult {
         label: '云端备份',
         level: 'warn',
         detail: 'WebDAV 已配置，但备份口令用当前主密码解不开（多半是改过主密码后没跟着重写的那一份），定时备份会在鉴权那一步失败',
-        suggestion: '设置 → 备份 → 重新输入 WebDAV 备份口令，再点「保存配置」'
+        suggestion: '设置 → 数据与安全 → 重新输入 WebDAV 备份口令，再点「保存配置」'
       })
     } else {
       checks.push({
@@ -149,7 +149,7 @@ export function runAudit(): AuditResult {
         detail: schedule.enabled
           ? `WebDAV 已配置，定时备份每 ${schedule.intervalHours} 小时执行`
           : 'WebDAV 已配置但定时备份未开启，仅手动备份',
-        suggestion: schedule.enabled ? undefined : '设置 → 备份 → 勾选「启用定时自动备份」'
+        suggestion: schedule.enabled ? undefined : '设置 → 数据与安全 → 勾选「启用定时自动备份」'
       })
       const lastOkAt = schedule.lastOkAt
       if (lastOkAt === null) {
@@ -158,7 +158,7 @@ export function runAudit(): AuditResult {
           label: '备份新鲜度',
           level: 'warn',
           detail: '尚无成功的云端备份记录',
-          suggestion: '设置 → 备份 → 立即上传一次备份'
+          suggestion: '设置 → 数据与安全 → 立即上传一次备份'
         })
       } else {
         const days = (Date.now() - lastOkAt) / DAY_MS
@@ -308,7 +308,7 @@ export function runDiagnose(): DiagnoseResult {
       return {
         level: 'warn',
         detail: '尚未配置任何模型提供商，对话功能无法使用',
-        fix: '设置 → 模型提供商 → 添加 Ollama 或在线 API'
+        fix: '设置 → 模型与用量 → 添加 Ollama 或在线 API'
       }
     }
     const problems: string[] = []
@@ -321,7 +321,7 @@ export function runDiagnose(): DiagnoseResult {
       if (p.models.length === 0) problems.push(`「${p.name}」尚未拉取模型列表`)
     }
     if (problems.length > 0) {
-      return { level: 'warn', detail: problems.join('；'), fix: '设置 → 模型提供商 → 编辑对应提供商' }
+      return { level: 'warn', detail: problems.join('；'), fix: '设置 → 模型与用量 → 编辑对应提供商' }
     }
     const enabledCount = providers.filter((p) => p.enabled).length
     return { level: 'ok', detail: `已配置 ${providers.length} 个提供商（${enabledCount} 个启用），配置完整` }

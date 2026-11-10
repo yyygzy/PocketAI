@@ -96,7 +96,7 @@ vi.mock('../src/main/backup/backup-service', () => ({
   }),
   loadWebDAVConfigOrError: () =>
     mocks.webdavUnreadable
-      ? { error: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 备份 重新填写并保存' }
+      ? { error: 'WebDAV 配置那一行读不出来（多半是被旧备份整表覆盖过），请到设置 → 数据与安全 重新填写并保存' }
       : mocks.webdavCfg
         ? { cfg: mocks.webdavCfg }
         : { error: '未配置 WebDAV' },

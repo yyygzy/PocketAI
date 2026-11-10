@@ -254,7 +254,7 @@ export function assertCanCreateAssistant(nonBuiltinCount: number): void {
   if (isPaidPlan()) return
   if (nonBuiltinCount >= LITE_LIMITS.assistants) {
     throw new Error(
-      `免费版最多创建 ${LITE_LIMITS.assistants} 个助手，激活专业版后解除限制（设置 → 授权激活）`
+      `免费版最多创建 ${LITE_LIMITS.assistants} 个助手，激活专业版后解除限制（设置 → 授权与路径）`
     )
   }
 }
@@ -263,7 +263,7 @@ export function assertCanCreateKb(count: number): void {
   if (isPaidPlan()) return
   if (count >= LITE_LIMITS.knowledgeBases) {
     throw new Error(
-      `免费版最多创建 ${LITE_LIMITS.knowledgeBases} 个知识库，激活专业版后解除限制（设置 → 授权激活）`
+      `免费版最多创建 ${LITE_LIMITS.knowledgeBases} 个知识库，激活专业版后解除限制（设置 → 授权与路径）`
     )
   }
 }
