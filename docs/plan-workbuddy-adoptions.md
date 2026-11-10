@@ -329,11 +329,14 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conv ON conversation_runs(conve
 - i18n：新增 `agent.approval.reason.POLICY_UNAVAILABLE`，四语言同步（parity 用例会兜底）。
 - 边界：`getFsTools()` 读取工作区目录失败发生在「列工具」阶段，不是工具判定阶段，会直接让本轮失败；这属于失败关闭，不需要改，但要在文档里说明它和 `POLICY_UNAVAILABLE` 不是一类。
 
-### C.3（可延后，D6 已定不引入）计费/高成本档
+### C.3（已拍板：口径 A）高成本档：只声明、只展示
 
 - 现状只有全局用量预算（`app-config.repo.ts:61-64`、`usage` 模块），没有按工具计费。
-- D6 已定：不造「计费」概念，只保留「不可逆/高副作用」的 `danger` 档；未来若引入外部付费调用，再映射为 `costly` 并同样 forceConfirm。
-- 因此本批不需要给 web_search / 图像生成打 `costly` 标记，也不新增相关闸门。
+- **决策变化（2026-11-10）**：原「本阶段不引入 `costly`」更新为口径 A——**只声明、只展示，不引入计费概念、不改变执行行为**。
+- 落地：`ToolSchema.costTier?: 'high'`（只读提示档）→ `policySnapshot` 原样透到 `ToolPolicyEntry.costTier`；初始名单 `web.search`、`kb.search`、`agent.delegate`（MCP 不标）。仅工具策略屏与能力中心显示「高成本」徽标 + 一句说明。
+- 边界：不弹窗、不改 `permission`、不动会话白名单、不加 reason code、不加审计码；审批与执行路径零变化。
+- 已知误差：`web.search` 仅在 Tavily／博查时产生外部开销（SearXNG 免 Key 免费）；`kb.search` 仅在知识库使用远程 embedding 时产生开销（本地模型免费）；`agent.delegate` 消耗的是子 run 的模型 token，不是外部付费调用。因此标签语义是「可能调用外部付费服务」，不是「一定产生费用」。
+- 图像生成不是 Agent 工具（独立模块，已有 `image.costHint` 文案），不在本档。
 
 ### C.4（可延后）MCP 手工试运行
 
@@ -420,7 +423,7 @@ B-4（未读） ── 依赖 D3 口径；与 B-2/B-3 解耦
 | D3 | 未读的定义 | **已定：只算助手消息；打开且窗口聚焦才算读；锁屏不算读** | B-4 |
 | D4 | 运行态是否持久化 `conversation_runs` | **已定：持久化（v60）** | B-3 |
 | D5 | 归档会话收到后台 run 时，是否允许自动取消归档 | **已定：不再自动取消归档** | B-1 的行为变化 |
-| D6 | 「计费类工具」档位 | **已定：不引入 `costly`；本阶段只保留 `danger`（不可逆/高副作用）** | C 的范围 |
+| D6 | 「计费类工具」档位 | **已定（2026-11-10 修订）：采用口径 A「只声明、只展示」——`ToolSchema.costTier='high'` 提示字段 + 策略屏／能力中心徽标；不引入计费概念、不改变执行行为** | C 的范围 |
 | D7 | `conversations.status` 是否本批停写 | **已定：只停读，继续写** | B-5 |
 | D8 | 首屏串行链是否并行/后置清理 | **已定：保持现有顺序，靠骨架遮住等待** | A-1 的实现 |
 | D9 | 解锁窗/浮窗是否做骨架 | **已定：接受不做骨架** | A 的范围 |
