@@ -731,6 +731,9 @@ export const ko = {
   'tp.permission.confirm': '승인 필요',
   'tp.permission.deny': '실행 안 함',
   'tp.dynamic': '인자별 판정',
+  'tp.cost.high': '고비용',
+  'tp.cost.highHint':
+    '이 도구는 외부 유료 서비스를 호출할 수 있으며 실제 비용은 공급자 또는 지식베이스 설정에 따라 다릅니다. 표시만 하며 실행은 바뀌지 않습니다.',
   'tp.state.available': '사용 가능',
   'tp.state.disabled': '비활성',
   'tp.state.needsExplicit': '개별 허용 필요',

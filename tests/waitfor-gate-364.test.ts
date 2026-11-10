@@ -607,7 +607,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/stale-read-notice-345.test.tsx': 14,
       'tests/stale-read-notice-347.test.tsx': 25,
       'tests/terminal-frame-epoch-320.test.tsx': 4,
-      'tests/tool-policy-screen-417.test.tsx': 7,
+      // V4-Iter-467：新增「高成本只展示」用例——挂载后等空态、切注册表后等 web_search 到货，
+      // 两颗都按存在读屏；上限 7→9，上限＝现数，不留余量。
+      'tests/tool-policy-screen-417.test.tsx': 9,
       'tests/update-panel-restart-312.test.tsx': 3
     }
     const sum = Object.values(PER_FILE_AWAITS).reduce((a, b) => a + b, 0)

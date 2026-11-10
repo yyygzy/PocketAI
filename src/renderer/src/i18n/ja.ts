@@ -731,6 +731,9 @@ export const ja = {
   'tp.permission.confirm': '承認が必要',
   'tp.permission.deny': '実行しない',
   'tp.dynamic': '引数ごとに判定',
+  'tp.cost.high': '高コスト',
+  'tp.cost.highHint':
+    'このツールは外部の有料サービスを呼び出す場合があります。実際の費用はプロバイダーやナレッジベースの設定によって異なります。ここでは表示のみで、実行は変わりません。',
   'tp.state.available': '利用可能',
   'tp.state.disabled': '無効',
   'tp.state.needsExplicit': '個別許可が必要',

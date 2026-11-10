@@ -876,6 +876,12 @@ export interface ToolSchema {
    * 且审批弹窗不提供「总是允许」。当前只由 MCP 破坏性/开放世界注解或危险关键词置位。
    */
   forceConfirm?: boolean
+  /**
+   * 成本提示档（只声明、只展示）：'high' 表示该工具可能调用外部付费服务，
+   * 实际开销取决于用户的服务商／知识库配置。仅用于策略屏与能力中心的提示，
+   * 不参与权限判定、不改变审批与执行行为。
+   */
+  costTier?: 'high'
   timeoutMs?: number // 单工具执行超时（毫秒），未配置时使用默认 30s
 }
 
@@ -909,6 +915,8 @@ export interface ToolPolicyEntry {
   reasons: ToolPolicyReasonCode[]
   /** 仅「当前助手」视角：这条工具是否在该助手的授权面内（与 isToolAllowedBy 同一判定） */
   granted?: boolean
+  /** 成本提示档，原样取自 ToolSchema.costTier；仅供渲染端展示，不参与任何判定 */
+  costTier?: 'high'
 }
 
 export interface ShellPolicySnapshot {

@@ -34,6 +34,8 @@ export const kbSearchTool: BuiltinTool = {
     },
     source: 'builtin',
     permission: 'auto',
+    // 高成本提示：知识库用远程 embedding API 时按 token 计费（本地模型免费），只展示不改变执行
+    costTier: 'high',
     timeoutMs: 15_000 // 查询向量化可能走远程 embedding API
   },
   async execute(args, ctx?: ToolExecuteContext) {

@@ -1549,6 +1549,11 @@ const McpServerDetail: React.FC<{
                 <span className="font-mono truncate" title={tool.name}>
                   {tool.name}
                 </span>
+                {tool.costTier === 'high' && (
+                  <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    {t('tp.cost.high')}
+                  </span>
+                )}
                 <span className={`ml-auto ${chip}`}>{permissionText(tool, t)}</span>
                 <span className={`${chip}`}>{policyStateText(tool.state, t)}</span>
               </div>

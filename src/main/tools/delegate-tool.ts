@@ -38,6 +38,8 @@ export const delegateTaskTool: BuiltinTool = {
     // auto：委派本身不碰文件系统也不发消息，它只是多花一段模型时间；
     // 真正的闸门是"这台模型被用户点名允许委派"（delegate-prefs）与预算闸（delegation.ts）。
     permission: 'auto',
+    // 高成本提示：每次委派都会消耗子 run 的模型 token（只展示，不改变闸门）
+    costTier: 'high',
     // 截走路径不走 executeWithTimeout，这个值只是形状完整性的兜底：与父 run 的整轮超时同量级。
     timeoutMs: 5 * 60 * 1000
   },

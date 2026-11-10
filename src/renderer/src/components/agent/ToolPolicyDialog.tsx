@@ -126,6 +126,11 @@ export const ToolPolicyDialog: React.FC<{ assistantId?: string; onClose: () => v
           <span className={`text-[9px] px-1.5 py-0.5 rounded ${stateClass(tool.state)}`}>
             {stateLabel(tool.state)}
           </span>
+          {tool.costTier === 'high' && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              {t('tp.cost.high')}
+            </span>
+          )}
         </div>
       </div>
       <div className="w-24 shrink-0 text-[11px] text-[var(--color-text)]">
@@ -289,6 +294,14 @@ export const ToolPolicyDialog: React.FC<{ assistantId?: string; onClose: () => v
                 <>
                   {tableHead}
                   {rows.map(row)}
+                  {rows.some((tool) => tool.costTier === 'high') && (
+                    <p
+                      className="mt-2 text-[10px] leading-relaxed text-[var(--color-text-muted)]"
+                      data-testid="tp-cost-hint"
+                    >
+                      {t('tp.cost.highHint')}
+                    </p>
+                  )}
                 </>
               )}
 

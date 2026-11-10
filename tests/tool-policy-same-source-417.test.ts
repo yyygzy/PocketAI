@@ -89,6 +89,18 @@ describe('工具策略快照与 registry 同源（P0-3a）', () => {
     expect(shell.state).toBe(snap.shell.enabled ? 'available' : 'disabled')
   })
 
+  it('高成本提示档只做声明透传：三颗工具标 high，其余不标，生效面同口径', () => {
+    const snap = toolRegistry.policySnapshot(assistantContext(['*'], true))!
+    const highIds = snap.tools.filter((t) => t.costTier === 'high').map((t) => t.id).sort()
+    expect(highIds).toEqual(['agent.delegate', 'kb.search', 'web.search'])
+    // 快照不另写名单：每一档都等于 schema.costTier（终端行没有 schema 时就是 undefined）
+    const all = toolRegistry.listAll()
+    for (const entry of snap.tools) {
+      expect(entry.costTier).toBe(all.find((s) => s.id === entry.id)?.costTier)
+    }
+    expect(snap.assistant!.tools.filter((t) => t.costTier === 'high').map((t) => t.id).sort()).toEqual(highIds)
+  })
+
   it('MCP 的 `*` 不覆盖口径与 isToolAllowedBy 一致', () => {
     const mcp: ToolSchema = {
       id: 'mcp:demo',

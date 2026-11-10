@@ -759,6 +759,8 @@ export const zh = {
   'tp.permission.confirm': '需要批准',
   'tp.permission.deny': '永不执行',
   'tp.dynamic': '按参数判定',
+  'tp.cost.high': '高成本',
+  'tp.cost.highHint': '该工具可能调用外部付费服务，实际开销取决于你的服务商或知识库配置；这里只做提示，不改变执行。',
   'tp.state.available': '可用',
   'tp.state.disabled': '已停用',
   'tp.state.needsExplicit': '需逐条授权',

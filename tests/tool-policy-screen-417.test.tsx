@@ -119,6 +119,37 @@ describe('工具策略屏（P0-3a／P0-3c）', () => {
     // 注册表视角才标 `*` 的 MCP 口径
     expect(screen.getByText('* 只覆盖内置工具，MCP 工具必须逐条勾选；勾选后仍按各自判定执行')).toBeTruthy()
     expect(screen.getByText('这不是权限编辑器：要改开关请回到工具配置')).toBeTruthy()
+    // 没有高成本标记的快照不出现提示
+    expect(screen.queryByTestId('tp-cost-hint')).toBeNull()
+  })
+
+  it('高成本只在有标记的行出现徽标，并在表下给一句说明', async () => {
+    const costly: ToolPolicySnapshot = {
+      ...registrySnapshot,
+      tools: [
+        ...registrySnapshot.tools,
+        {
+          id: 'web.search',
+          name: 'web_search',
+          source: 'builtin',
+          permission: 'auto',
+          state: 'available',
+          dynamic: false,
+          reasons: [],
+          costTier: 'high'
+        }
+      ]
+    }
+    stubPocketai({ getToolPolicy: () => costly })
+    mountWithProviders(<ToolPolicyDialog onClose={() => {}} />)
+
+    await waitFor(() => expect(screen.getByTestId('tp-no-assistant')).toBeTruthy())
+    screen.getByText('注册表全量').click()
+    await waitFor(() => expect(screen.getByText('web_search')).toBeTruthy())
+    expect(screen.getByText('高成本')).toBeTruthy()
+    expect(screen.getByTestId('tp-cost-hint').textContent).toContain('外部付费服务')
+    // 没标记的行不长徽标
+    expect(screen.getAllByText('高成本').length).toBe(1)
   })
 
   it('用户自建助手空数组：横幅说“一个都不给”，每行标未授权且与内置助手长得不一样', async () => {

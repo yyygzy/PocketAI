@@ -187,6 +187,8 @@ const webSearchTool: BuiltinTool = {
     },
     source: 'builtin',
     permission: 'auto',
+    // 高成本提示：Tavily／博查按次计费（SearXNG 免 Key 免费），只展示不改变执行
+    costTier: 'high',
     // deep 自带 30s 总预算＋最长 10s 的正文补读，工具层留出余量；quick 由 provider 的 15s 超时兜住
     timeoutMs: 45_000
   },

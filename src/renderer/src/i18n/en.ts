@@ -758,6 +758,9 @@ export const en = {
   'tp.permission.confirm': 'Needs approval',
   'tp.permission.deny': 'Never runs',
   'tp.dynamic': 'Decided per arguments',
+  'tp.cost.high': 'High cost',
+  'tp.cost.highHint':
+    'This tool may call a paid external service; actual spending depends on your provider or knowledge base configuration. This is a hint only and does not change execution.',
   'tp.state.available': 'Available',
   'tp.state.disabled': 'Disabled',
   'tp.state.needsExplicit': 'Needs explicit grant',

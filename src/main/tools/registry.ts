@@ -140,7 +140,8 @@ class ToolRegistry {
         permission: tool.schema.permission ?? 'auto',
         state: tool.schema.permission === 'deny' ? 'denied' : 'available',
         dynamic: Boolean(tool.classify),
-        reasons: tool.policyReason ? [tool.policyReason] : []
+        reasons: tool.policyReason ? [tool.policyReason] : [],
+        ...(tool.schema.costTier ? { costTier: tool.schema.costTier } : {})
       })
     }
     entries.push({
@@ -208,7 +209,8 @@ class ToolRegistry {
         state,
         dynamic: Boolean(tool.classify),
         reasons: tool.policyReason ? [tool.policyReason] : [],
-        granted
+        granted,
+        ...(tool.schema.costTier ? { costTier: tool.schema.costTier } : {})
       })
     }
     const shellSchema = this.listBuiltin().find((s) => s.id === 'shell.exec')
