@@ -1461,6 +1461,7 @@ export const en = {
   'ui.theme.light': 'Light',
   'ui.theme.ocean': 'Ocean',
   'ui.theme.sand': 'Sand',
+  'ui.theme.sage': 'Sage',
   'ui.opacity': 'Window opacity',
   'ui.opacityHint': 'Takes effect when you release the slider; affects the main window only. Supported on Windows / macOS; on Linux it depends on the window manager.',
   'ui.fontSize': 'Chat font size',

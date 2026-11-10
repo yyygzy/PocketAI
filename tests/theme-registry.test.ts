@@ -83,13 +83,13 @@ function contrast(a: string, b: string): number {
 
 describe('注册表自身', () => {
   it('id / class / 窗口底色各自唯一（新增预设不许悄悄覆盖别的一套）', () => {
-    expect(new Set(UI_THEME_IDS).size).toBe(UI_THEME_IDS.length)
-    expect(new Set(UI_THEME_IDS.map((id) => UI_THEMES[id].className)).size).toBe(UI_THEME_IDS.length)
-    expect(new Set(UI_THEME_IDS.map((id) => UI_THEMES[id].windowBackground)).size).toBe(UI_THEME_IDS.length)
+    expect(new Set(IDS).size).toBe(IDS.length)
+    expect(new Set(IDS.map((id) => UI_THEMES[id].className)).size).toBe(IDS.length)
+    expect(new Set(IDS.map((id) => UI_THEMES[id].windowBackground)).size).toBe(IDS.length)
   })
 
   it('白名单只认注册过的 id；旧值 light/dark 仍然合法，脏值落默认深色', () => {
-    for (const id of UI_THEME_IDS) expect(isUiTheme(id)).toBe(true)
+    for (const id of IDS) expect(isUiTheme(id)).toBe(true)
     expect(isUiTheme('light')).toBe(true)
     expect(isUiTheme('dark')).toBe(true)
     expect(isUiTheme('#ff0000')).toBe(false)
@@ -101,7 +101,7 @@ describe('注册表自身', () => {
   })
 
   it('themeIdFromClasses 与 class 映射互逆；无 class/未知 class 落默认', () => {
-    for (const id of UI_THEME_IDS) {
+    for (const id of IDS) {
       const cls = themeClassName(id)
       const set = new Set(cls ? [cls] : [])
       expect(themeIdFromClasses({ contains: (c) => set.has(c) })).toBe(id)

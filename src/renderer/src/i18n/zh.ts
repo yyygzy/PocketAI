@@ -1462,6 +1462,7 @@ export const zh = {
   'ui.theme.light': '浅色',
   'ui.theme.ocean': '深海蓝',
   'ui.theme.sand': '暖砂',
+  'ui.theme.sage': '护眼绿',
   'ui.opacity': '窗口透明度',
   'ui.opacityHint': '拖动后松开即生效；仅影响主窗口，Windows / macOS 支持，Linux 视窗口管理器而定。',
   'ui.fontSize': '聊天字号',

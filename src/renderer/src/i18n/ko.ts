@@ -1408,6 +1408,7 @@ export const ko = {
   'ui.theme.light': '라이트',
   'ui.theme.ocean': '오션',
   'ui.theme.sand': '샌드',
+  'ui.theme.sage': '세이지',
   'ui.opacity': '창 투명도',
   'ui.opacityHint': '슬라이더에서 손을 떼면 즉시 적용. 메인 창에만 영향. Windows/macOS 지원, Linux는 창 관리자에 따라 다름.',
   'ui.fontSize': '채팅 글자 크기',

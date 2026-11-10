@@ -1408,6 +1408,7 @@ export const ja = {
   'ui.theme.light': 'ライト',
   'ui.theme.ocean': 'オーシャン',
   'ui.theme.sand': 'サンド',
+  'ui.theme.sage': 'セージ',
   'ui.opacity': 'ウィンドウ透明度',
   'ui.opacityHint': 'スライダーを離すと即座に反映。メインウィンドウのみ影響。Windows / macOS 対応、Linux はウィンドウマネージャー次第。',
   'ui.fontSize': 'チャット文字サイズ',

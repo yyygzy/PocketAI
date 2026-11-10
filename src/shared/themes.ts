@@ -11,7 +11,8 @@
 // 这里只声明"加哪个 class"与"窗口底色是什么"（BrowserWindow.backgroundColor 只能取纯色，
 // 必须与该预设的 `--color-surface` 逐字一致，否则首帧会先看到一条异色的底）。
 
-export const UI_THEME_IDS = ['dark', 'light', 'ocean', 'sand'] as const
+/** 内置预设清单（侧栏/设置页选择器与 IPC 白名单都直接迭代它） */
+export const UI_THEME_IDS = ['dark', 'light', 'ocean', 'sand', 'sage'] as const
 
 export type UiTheme = (typeof UI_THEME_IDS)[number]
 
@@ -64,6 +65,15 @@ export const UI_THEMES: Readonly<Record<UiTheme, UiThemePreset>> = {
     nativeColorScheme: 'light',
     mermaidTheme: 'default',
     labelKey: 'ui.theme.sand'
+  },
+  // 护眼绿：低饱和、偏暖的绿灰调，深色底，长时间阅读不刺眼。
+  sage: {
+    id: 'sage',
+    className: 'sage',
+    windowBackground: '#1a201a',
+    nativeColorScheme: 'dark',
+    mermaidTheme: 'dark',
+    labelKey: 'ui.theme.sage'
   }
 }
 

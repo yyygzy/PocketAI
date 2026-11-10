@@ -5,7 +5,7 @@
   try {
     // 主题 id → <html> class（空串 = 基础态深色）。这份映射必须与 shared/themes.ts 的 UI_THEMES 一致：
     // tests/theme-registry 会比对两边，谁改了没同步就红。未知/脏值一律按默认深色（不加 class）。
-    var THEME_CLASSES = { dark: '', light: 'light', ocean: 'ocean', sand: 'sand' }
+    var THEME_CLASSES = { dark: '', light: 'light', ocean: 'ocean', sand: 'sand', sage: 'sage' }
     var storedTheme = localStorage.getItem('pocketai.theme')
     var theme = Object.prototype.hasOwnProperty.call(THEME_CLASSES, storedTheme) ? storedTheme : 'dark'
     var themeClass = THEME_CLASSES[theme]

@@ -44,10 +44,13 @@ const light = definedIn(css, 'html.light')
 // L1：主题注册表扩成多套后，新增的两套同样要"变量名一个不差"（否则切过去会有一批声明失效）
 const ocean = definedIn(css, 'html.ocean')
 const sand = definedIn(css, 'html.sand')
+// sage（护眼绿）已实现但暂未在界面暴露：色板先落地，变量名同样一个不能少
+const sage = definedIn(css, 'html.sage')
 const blocks = [
   ['light', light],
   ['ocean', ocean],
-  ['sand', sand]
+  ['sand', sand],
+  ['sage', sage]
 ] as const
 
 /** 收集所有「无兜底值」且未定义的 var() 引用 */
@@ -59,7 +62,7 @@ function undefinedRefs(): Map<string, string[]> {
     for (const m of text.matchAll(/var\(\s*(--[\w-]+)(\s*,[^)]*)?\)/g)) {
       const name = m[1]!
       const hasFallback = Boolean(m[2])
-      if (hasFallback || dark.has(name) || light.has(name) || ocean.has(name) || sand.has(name)) continue
+      if (hasFallback || dark.has(name) || light.has(name) || ocean.has(name) || sand.has(name) || sage.has(name)) continue
       const line = text.slice(0, m.index).split('\n').length
       hits.set(name, [...(hits.get(name) ?? []), `${path.relative(process.cwd(), file)}:${line}`])
     }
@@ -81,12 +84,12 @@ describe('theme.css 令牌', () => {
     }
   })
 
-  it('回归点：--color-bg-elevated 四套都有且不透明（弹层不许再是透明）', () => {
-    for (const set of [dark, light, ocean, sand]) {
+  it('回归点：--color-bg-elevated 五套都有且不透明（弹层不许再是透明）', () => {
+    for (const set of [dark, light, ocean, sand, sage]) {
       expect(set.has('--color-bg-elevated')).toBe(true)
     }
     const values = [...css.matchAll(/--color-bg-elevated:\s*([^;]+);/g)].map((m) => m[1]!.trim())
-    expect(values).toHaveLength(4)
+    expect(values).toHaveLength(5)
     // 十六进制不透明色；rgba(...) 或 transparent 都会让浮层重新透出底下内容
     for (const v of values) expect(v).toMatch(/^#[0-9a-f]{3,8}$/i)
   })
