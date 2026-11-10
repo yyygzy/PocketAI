@@ -67,4 +67,31 @@ describe('rowToRecord — DB 行映射为 SkillRecord', () => {
     const rec = rowToRecord({ id: 's6', name: 'n', description: '', icon: null, content: null, enabled: 0, is_builtin: 0, created_at: 0 })
     expect(rec.description).toBe('')
   })
+
+  // v63：老库没有这两列（或值为 NULL）时读成空值，界面据此不渲染分类/标签
+  it('tags/category 缺列或 NULL → [] 与 空串', () => {
+    const rec = rowToRecord({
+      id: 's7', name: 'n', description: null, icon: null, content: null,
+      category: null, tags: null, enabled: 1, is_builtin: 0, created_at: 0
+    })
+    expect(rec.tags).toEqual([])
+    expect(rec.category).toBe('')
+  })
+
+  it('tags JSON 数组 → 字符串数组（保留含逗号的自由文本标签）', () => {
+    const rec = rowToRecord({
+      id: 's8', name: 'n', description: null, icon: null, content: null,
+      category: '开发', tags: JSON.stringify(['code, review', ' 调试 ']), enabled: 1, is_builtin: 0, created_at: 0
+    })
+    expect(rec.category).toBe('开发')
+    expect(rec.tags).toEqual(['code, review', '调试'])
+  })
+
+  it('tags 列损坏 → []（不把坏数据抛到界面）', () => {
+    const rec = rowToRecord({
+      id: 's9', name: 'n', description: null, icon: null, content: null,
+      category: 'x', tags: '{not-json', enabled: 1, is_builtin: 0, created_at: 0
+    })
+    expect(rec.tags).toEqual([])
+  })
 })

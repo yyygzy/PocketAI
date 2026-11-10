@@ -129,6 +129,10 @@ export interface SkillRecord {
   description: string
   icon: string // emoji
   content: string // 注入 SystemPrompt 的提示词片段
+  /** 作者写的自由文本分类；'' = 未写（老库/老导出文件读出来也是空串） */
+  category: string
+  /** 作者写的自由文本标签；[] = 未写（老库/老导出文件读出来也是空数组） */
+  tags: string[]
   /** §236：true=正文常驻 system prompt（老行为）；false=只留名字与用途，正文靠 load_skill 按需取 */
   resident: boolean
   enabled: boolean

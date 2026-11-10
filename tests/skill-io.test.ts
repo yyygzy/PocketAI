@@ -110,6 +110,21 @@ describe('saveShapeAsSkill — 保存为自定义技能', () => {
     expect(saved.content).toBe('你是一个测试助手')
   })
 
+  // v63：导入链路此前解析出分类/标签又丢掉，这里钉住它们确实进了 save
+  it('分类/标签透传给 skillRepo.save', () => {
+    saveShapeAsSkill({ ...validShape, category: '开发', tags: ['code', 'review'] })
+    const saved = mocks.savedCalls[0]!
+    expect(saved.category).toBe('开发')
+    expect(saved.tags).toEqual(['code', 'review'])
+  })
+
+  it('未写分类/标签 → 传空值（读取端与老技能同义）', () => {
+    saveShapeAsSkill(validShape)
+    const saved = mocks.savedCalls[0]!
+    expect(saved.category).toBe('')
+    expect(saved.tags).toEqual([])
+  })
+
   it('name 为空 → Zod 校验抛错', () => {
     expect(() => saveShapeAsSkill({ ...validShape, name: '' })).toThrow()
   })

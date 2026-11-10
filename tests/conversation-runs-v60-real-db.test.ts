@@ -96,7 +96,7 @@ describe('v60 空库升级', () => {
       db().prepare('SELECT name FROM schema_migrations WHERE version=60').get()
     ).toEqual({ name: 'conversation_runs' })
     // v61（B-4 会话未读）与 v62（mcp_call_log.source）都只 ADD COLUMN，不影响本文件的 v60 表结构断言
-    expect(LATEST_SCHEMA_VERSION).toBe(62)
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(62)
     expect(db().pragma('integrity_check', { simple: true })).toBe('ok')
   })
 })

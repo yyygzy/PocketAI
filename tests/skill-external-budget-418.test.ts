@@ -39,6 +39,8 @@ const skill = (over: Partial<SkillRecord> = {}): SkillRecord => ({
   name: '翻译助手',
   description: '专业翻译',
   icon: '🌐',
+  category: '',
+  tags: [],
   resident: true,
   content: '你是一个专业翻译。绝不添加原文没有的内容。',
   enabled: true,

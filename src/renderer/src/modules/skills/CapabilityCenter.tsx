@@ -369,6 +369,9 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
         description: s.description,
         icon: s.icon,
         content: s.content,
+        // 副本保留作者写的分类/标签（老技能没有时是 ''/[]，等于不传）
+        category: s.category,
+        tags: s.tags,
         enabled: true
       })
       if (hasIpcFailed(copy)) {
@@ -843,6 +846,21 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
                         <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed line-clamp-2 min-h-[2.4em]">
                           {item.skill.description || '—'}
                         </p>
+                        {/* 分类/标签：作者写的自由文本，空值不画 */}
+                        {(item.skill.category || (item.skill.tags ?? []).length > 0) && (
+                          <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-[var(--color-text-muted)]">
+                            {item.skill.category && (
+                              <span className="px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)]">
+                                {item.skill.category}
+                              </span>
+                            )}
+                            {(item.skill.tags ?? []).slice(0, 4).map((tag) => (
+                              <span key={tag} className="px-1.5 py-0.5 rounded border border-[var(--color-border)]">
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         <div className="mt-2">
                           {/* 助手清单没读到过就不画「已绑定 N」——空数组≠0，别把"不知道"说成"没人用" */}
                           <span className={chip}>
@@ -1241,10 +1259,12 @@ const InstalledSkillDetail: React.FC<{
         <div className="text-xs font-semibold">{t('cap.detail.behavior')}</div>
         <Row label={t('cap.behavior.mode')} value={skill.resident ? t('skill.residentOn') : t('skill.residentOff')} />
         <Row label={t('cap.behavior.contentChars')} value={t('cap.behavior.chars', { n: skill.content.length })} />
-        <Row
-          label={t('cap.behavior.enabled')}
-          value={skill.enabled ? t('skill.on') : t('skill.off')}
-        />
+        <Row label={t('cap.behavior.enabled')} value={skill.enabled ? t('skill.on') : t('skill.off')} />
+        {/* 作者写的自由文本；老技能没有这两列值 ⇒ 这两行整行缺席，不写「无分类」 */}
+        {skill.category && <Row label={t('skill.category')} value={skill.category} />}
+        {(skill.tags ?? []).length > 0 && (
+          <Row label={t('skill.tags')} value={(skill.tags ?? []).join(' · ')} />
+        )}
         {/* 助手清单读不到时这一行没有事实可写，宁可缺席也不写「0 个助手」 */}
         {!assistantsUnread && (
           <Row

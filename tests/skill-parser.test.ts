@@ -260,10 +260,22 @@ describe('parseRegistryIndex — 远程索引解析', () => {
 })
 
 describe('toBuiltinSkill — 转换', () => {
-  it('正确映射字段', () => {
+  it('正确映射字段（分类/标签缺省为空值）', () => {
     const builtin = toBuiltinSkill('id-1', {
       name: 'n', description: 'd', icon: '⚡', content: 'c'
     })
-    expect(builtin).toEqual({ id: 'id-1', name: 'n', description: 'd', icon: '⚡', content: 'c' })
+    expect(builtin).toEqual({
+      id: 'id-1', name: 'n', description: 'd', icon: '⚡', content: 'c',
+      category: '', tags: []
+    })
+  })
+
+  it('分类/标签原样透传（此前导入链路丢的就是这两个字段）', () => {
+    const builtin = toBuiltinSkill('id-2', {
+      name: 'n', description: 'd', icon: '⚡', content: 'c',
+      category: '开发', tags: ['code', 'review']
+    })
+    expect(builtin.category).toBe('开发')
+    expect(builtin.tags).toEqual(['code', 'review'])
   })
 })

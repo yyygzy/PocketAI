@@ -87,6 +87,8 @@ export function saveShapeAsSkill(shape: SkillShape, opts: { resident?: boolean }
     description: shape.description,
     icon: shape.icon,
     content: shape.content,
+    category: shape.category ?? '',
+    tags: shape.tags ?? [],
     enabled: true,
     resident: opts.resident ?? true
   })
@@ -109,7 +111,10 @@ export async function exportSkill(
         name: skill.name,
         description: skill.description,
         icon: skill.icon,
-        content: skill.content
+        content: skill.content,
+        // 只在有值时写：旧版本导出/导入的文件形状保持不变，空值不落一个空 category/tags
+        ...(skill.category ? { category: skill.category } : {}),
+        ...(skill.tags.length > 0 ? { tags: skill.tags } : {})
       }
     }
 

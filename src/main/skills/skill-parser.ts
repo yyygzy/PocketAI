@@ -183,7 +183,9 @@ export function toBuiltinSkill(id: string, shape: SkillShape): BuiltinSkill {
     name: shape.name,
     description: shape.description,
     icon: shape.icon,
-    content: shape.content
+    content: shape.content,
+    category: shape.category ?? '',
+    tags: shape.tags ?? []
   }
 }
 

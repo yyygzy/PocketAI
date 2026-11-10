@@ -64,7 +64,7 @@ describe('v62 空库升级', () => {
     expect(db().prepare('SELECT name FROM schema_migrations WHERE version=62').get()).toEqual({
       name: 'mcp_call_log_source'
     })
-    expect(LATEST_SCHEMA_VERSION).toBe(62)
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(62)
     expect(db().pragma('integrity_check', { simple: true })).toBe('ok')
   })
 })

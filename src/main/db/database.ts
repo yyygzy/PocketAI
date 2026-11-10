@@ -1066,6 +1066,27 @@ const MIGRATIONS: Migration[] = [
       if (cols.some((c) => c.name === 'source')) return
       db.exec("ALTER TABLE mcp_call_log ADD COLUMN source TEXT NOT NULL DEFAULT 'agent';")
     }
+  },
+  {
+    // v63：技能的 `tags` / `category` 落库（导入链路此前解析出来又丢掉，界面永远看不到）。
+    //
+    // 两列都是**作者写的自由文本**，不是需要四语翻译的枚举：category 是一个短字符串，
+    // tags 用 JSON 数组文本存——逗号拼接会把含逗号的标签切碎，而标签本来就是自由文本。
+    // 默认值保证老库升上来可读：tags='[]'、category=''，读取端统一成 []/''，界面只在非空时渲染。
+    // 空值语义是"作者未写"，不是"无分类"这个缺失态；与 v61/v62 一致，ADD COLUMN 先查 PRAGMA 保证可重跑。
+    version: 63,
+    name: 'skill_tags_category',
+    up: (db) => {
+      const cols = new Set(
+        (db.prepare('PRAGMA table_info(skills)').all() as Array<{ name: string }>).map((c) => c.name)
+      )
+      if (!cols.has('tags')) {
+        db.exec("ALTER TABLE skills ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';")
+      }
+      if (!cols.has('category')) {
+        db.exec("ALTER TABLE skills ADD COLUMN category TEXT NOT NULL DEFAULT '';")
+      }
+    }
   }
 ]
 

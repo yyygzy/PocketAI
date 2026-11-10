@@ -31,6 +31,8 @@ const skill = (over: Partial<SkillRecord> & Pick<SkillRecord, 'id' | 'name'>): S
   description: '',
   icon: '🧩',
   content: '',
+  category: '',
+  tags: [],
   resident: true,
   enabled: true,
   isBuiltin: false,

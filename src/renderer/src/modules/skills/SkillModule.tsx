@@ -145,8 +145,13 @@ export const SkillModule: React.FC = () => {
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
-                {s.enabled ? t('skill.on') : t('skill.off')}
+              <div className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
+                <span className="shrink-0">{s.enabled ? t('skill.on') : t('skill.off')}</span>
+                {/* 作者写的自由文本；老技能没有这两列值 → 这里不渲染，不写「无分类」 */}
+                {s.category && <span className="shrink-0">· {s.category}</span>}
+                {(s.tags ?? []).map((tag) => (
+                  <span key={tag} className="shrink-0">#{tag}</span>
+                ))}
               </div>
             </button>
           ))}
@@ -282,6 +287,28 @@ const SkillDetail: React.FC<{
             </div>
             {skill.description && (
               <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{skill.description}</div>
+            )}
+            {/* 分类/标签是作者写的自由文本，只按非空渲染 */}
+            {(skill.category || (skill.tags ?? []).length > 0) && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px]">
+                {skill.category && (
+                  <span
+                    className="px-2 py-0.5 rounded bg-[var(--color-inline-code-bg)] text-[var(--color-text-muted)]"
+                    title={t('skill.category')}
+                  >
+                    {skill.category}
+                  </span>
+                )}
+                {(skill.tags ?? []).map((tag) => (
+                  <span
+                    key={tag}
+                    className="px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+                    title={t('skill.tags')}
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         </div>

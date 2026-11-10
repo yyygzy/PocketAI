@@ -10,11 +10,35 @@ interface SkillRow {
   description: string | null
   icon: string | null
   content: string | null
+  /** v63：作者自由文本分类；缺列（老库）按 '' 读 */
+  category?: string | null
+  /** v63：作者自由文本标签（JSON 数组文本）；缺列/NULL/损坏都按 [] 读 */
+  tags?: string | null
   enabled: number
   /** v51：1=正文常驻 system prompt；0=只留名字与用途，正文靠 load_skill 取。缺列（老库）按 1 读 */
   resident?: number | null
   is_builtin: number
   created_at: number
+}
+
+/** 标签列 → 字符串数组。标签是作者自由文本，用 JSON 存（逗号拼接会把含逗号的标签切碎）。 */
+export function parseSkillTags(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((t): t is string => typeof t === 'string')
+      .map((t) => t.trim())
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+/** 字符串数组 → 标签列；空/无效一律写 '[]'，不写 NULL（"没读到"与"没有"在读取端已经同义） */
+function stringifySkillTags(tags: string[] | undefined): string {
+  return JSON.stringify((tags ?? []).map((t) => t.trim()).filter(Boolean))
 }
 
 export function rowToRecord(row: SkillRow): SkillRecord {
@@ -24,6 +48,9 @@ export function rowToRecord(row: SkillRow): SkillRecord {
     description: row.description ?? '',
     icon: row.icon ?? '⚡',
     content: row.content ?? '',
+    // 缺列/NULL 都读成空值：老库升上来不是"作者写了空分类"，界面只按非空渲染
+    category: row.category ?? '',
+    tags: parseSkillTags(row.tags),
     enabled: row.enabled === 1,
     // 缺列/NULL 都按常驻读：老库升上来行为不变，"没读到"不许演成"用户关过"
     resident: row.resident !== 0,
@@ -69,13 +96,19 @@ export const skillRepo = {
     const existing = this.get(s.id)
     if (existing) {
       db.prepare(
-        `UPDATE skills SET name=?, description=?, icon=?, content=?, is_builtin=1 WHERE id=?`
-      ).run(s.name, s.description, s.icon, s.content, s.id)
+        `UPDATE skills SET name=?, description=?, icon=?, content=?, category=?, tags=?, is_builtin=1 WHERE id=?`
+      ).run(
+        s.name, s.description, s.icon, s.content, s.category,
+        stringifySkillTags(s.tags), s.id
+      )
     } else {
       db.prepare(
-        `INSERT INTO skills (id, name, description, icon, content, enabled, is_builtin, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, 1, ?)`
-      ).run(s.id, s.name, s.description, s.icon, s.content, Date.now())
+        `INSERT INTO skills (id, name, description, icon, content, category, tags, enabled, is_builtin, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)`
+      ).run(
+        s.id, s.name, s.description, s.icon, s.content, s.category,
+        stringifySkillTags(s.tags), Date.now()
+      )
     }
   },
 
@@ -130,6 +163,8 @@ export const skillRepo = {
       description: input.description ?? existing?.description ?? '',
       icon: input.icon ?? existing?.icon ?? '⚡',
       content: input.content ?? existing?.content ?? '',
+      category: input.category ?? existing?.category ?? '',
+      tags: input.tags ?? existing?.tags ?? [],
       enabled: input.enabled ?? existing?.enabled ?? true,
       resident: input.resident ?? existing?.resident ?? true,
       isBuiltin: false,
@@ -138,17 +173,19 @@ export const skillRepo = {
 
     if (existing) {
       db.prepare(
-        `UPDATE skills SET name=?, description=?, icon=?, content=?, enabled=?, resident=? WHERE id=?`
+        `UPDATE skills SET name=?, description=?, icon=?, content=?, category=?, tags=?, enabled=?, resident=? WHERE id=?`
       ).run(
         record.name, record.description, record.icon, record.content,
+        record.category, stringifySkillTags(record.tags),
         record.enabled ? 1 : 0, record.resident ? 1 : 0, id
       )
     } else {
       db.prepare(
-        `INSERT INTO skills (id, name, description, icon, content, enabled, resident, is_builtin, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`
+        `INSERT INTO skills (id, name, description, icon, content, category, tags, enabled, resident, is_builtin, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
       ).run(
         record.id, record.name, record.description, record.icon, record.content,
+        record.category, stringifySkillTags(record.tags),
         record.enabled ? 1 : 0, record.resident ? 1 : 0, record.createdAt
       )
     }

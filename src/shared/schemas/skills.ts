@@ -22,6 +22,10 @@ const skillRecordFull = z.object({
   description: z.string().max(SKILL_MAX_DESC_CHARS),
   icon: z.string().max(SKILL_MAX_ICON_CHARS),
   content: z.string().max(SKILL_MAX_CONTENT_CHARS),
+  /** 作者自由文本；空串=未写 */
+  category: z.string().max(50),
+  /** 作者自由文本；空数组=未写 */
+  tags: skillTags,
   enabled: z.boolean(),
   /** §236：正文要不要常驻 system prompt（缺省=今天的 true） */
   resident: z.boolean(),
