@@ -7,12 +7,10 @@ import { ComparisonColumns, type CompareColumn } from './ComparisonColumns'
 import { BranchNav } from './BranchNav'
 import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
-import { ChatModelExtras } from './ChatModelExtras'
 import { ChatSessionStats } from './ChatSessionStats'
 import type { AgentModelExtras } from './useAgentModelExtras'
 import { ZeroToolCallNotice } from '../../components/agent/ZeroToolCallNotice'
 import type { AgentQueueItem } from './queue-settlement'
-import { ChatConfigBar } from './ChatConfigBar'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { MessagesSkeleton } from '../../components/Skeleton'
 import { useToast } from '../../components/ToastProvider'
@@ -934,8 +932,6 @@ export const ChatView: React.FC<Props> = ({
           onChange={onTargetsChange}
           disabled={streaming}
         />
-        {/* P4 批次 0：主目标的窗口 / 备用 / 文本协议徽标（迁移自 AgentModelBar，共用同一展示组件） */}
-        {modelExtras && <ChatModelExtras providers={providers} targets={targets} extras={modelExtras} />}
         {onRetrySessionStats && (
           <ChatSessionStats
             stats={sessionStats}
@@ -1440,28 +1436,33 @@ export const ChatView: React.FC<Props> = ({
             </div>
           )}
           <Composer
-          streaming={streaming}
-          canSend={canSend}
-          noModels={noModelsAtAll}
-          onSend={onSend}
-          onStop={onStop}
-          agentMode={agentMode}
-          onToggleAgentMode={onToggleAgentMode}
-          assistantId={assistant?.id}
-          queue={queue}
-          queueFull={queueFull}
-          onQueue={onQueue}
-          onInterject={onInterject}
-          onDropQueued={onDropQueued}
-          onSendQueuedNow={onSendQueuedNow}
-          replyTo={replyToMessage ?? null}
-          onCancelReply={() => onReply?.(null)}
-          draftKey={draftKey ?? ''}
-          draft={draft}
-          onDraftChange={onDraftChange}
-          onDraftCommit={onDraftCommit}
-          messages={messages}
-        />
+            streaming={streaming}
+            canSend={canSend}
+            noModels={noModelsAtAll}
+            onSend={onSend}
+            onStop={onStop}
+            agentMode={agentMode}
+            onToggleAgentMode={onToggleAgentMode}
+            assistantId={assistant?.id}
+            assistant={assistant}
+            onAssistantUpdated={onAssistantUpdated}
+            providers={providers}
+            targets={targets}
+            modelExtras={modelExtras}
+            queue={queue}
+            queueFull={queueFull}
+            onQueue={onQueue}
+            onInterject={onInterject}
+            onDropQueued={onDropQueued}
+            onSendQueuedNow={onSendQueuedNow}
+            replyTo={replyToMessage ?? null}
+            onCancelReply={() => onReply?.(null)}
+            draftKey={draftKey ?? ''}
+            draft={draft}
+            onDraftChange={onDraftChange}
+            onDraftCommit={onDraftCommit}
+            messages={messages}
+          />
         </>
       )}
 
@@ -1513,14 +1514,6 @@ export const ChatView: React.FC<Props> = ({
           </div>
         </div>
       )}
-
-      {/* 输入框下方：对话配置条（技能/知识库/工具权限/临时提示词） */}
-      <div className="shrink-0 px-4 pb-3">
-        <ChatConfigBar
-          assistant={assistant}
-          onAssistantUpdated={onAssistantUpdated}
-        />
-      </div>
     </div>
   )
 }

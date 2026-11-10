@@ -65,7 +65,7 @@ describe('列表类通道不许把失败咽成空数组', () => {
 describe('调用点按契约判返回值（V4-Iter-196 的四处）', () => {
   const sites: Array<[string, string]> = [
     ['../src/renderer/src/modules/chat/AssistantEditor.tsx', 'if (isIpcFail(saved))'],
-    ['../src/renderer/src/modules/chat/ChatConfigBar.tsx', 'if (isIpcFail(saved))'],
+    ['../src/renderer/src/modules/chat/Composer.tsx', 'if (isIpcFail(saved))'],
     ['../src/renderer/src/modules/settings/SettingsModule.tsx', 'if (hasIpcFailed(items))']
   ]
   for (const [file, needle] of sites) {

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-// P4 批次 0 / V4-Iter-461：工具配置（终端/联网/日历/工作目录）迁入对话 Composer（选项 A）
+// P4 批次 0 / V4-Iter-461：工具配置（终端/联网/日历/工作目录）
 //
-// 断言三件事：
-// · 普通对话（agentMode=false）整块不挂载 ⇒ 四发读数一次都不发（不是"隐藏了但仍在读"）；
+// V4 交互改造后从输入框上方那一行收进「+ → 执行设置」（仅 Agent 模式出现）。断言口径不变：
+// · 普通对话（agentMode=false）整块不出现 ⇒ 四发读数一次都不发（不是"隐藏了但仍在读"）；
 // · 开启后四发读数齐全，浮层内控件写回仍走既有 `setShellConfig`（无第二份状态）；
 // · 某一发读不到时，句子在浮层外面（菜单关着也不闭嘴），且工作目录那一读有同级重试键。
 import { describe, expect, it } from 'vitest'
@@ -42,15 +42,17 @@ const stubToolReads = (over: Record<string, unknown> = {}): void => {
     getShellConfig: () => shellConfig,
     getWebSearchConfig: () => wsConfig,
     getCalendarConfig: () => calConfig,
+    listPromptSnippets: () => [],
     ...over
   })
 }
 
-describe('P4 批次 0：工具配置迁入对话 Composer', () => {
-  it('普通对话整块不挂载：不发任何工具配置读', () => {
-    stubPocketai()
+describe('P4 批次 0：工具配置收进「+ → 执行设置」', () => {
+  it('普通对话不出现执行设置，也不发任何工具配置读', () => {
+    stubPocketai({ listPromptSnippets: () => [] })
     mount({ agentMode: false })
-    expect(screen.queryByTestId('chat-tool-config-open')).toBeNull()
+    fireEvent.click(screen.getByTestId('composer-plus-open'))
+    expect(screen.queryByTestId('composer-plus-tools')).toBeNull()
     expect(calledFns()).not.toContain('getShellConfig')
     expect(calledFns()).not.toContain('getAgentWorkspaceDir')
   })
@@ -60,23 +62,28 @@ describe('P4 批次 0：工具配置迁入对话 Composer', () => {
       setShellConfig: (patch: Record<string, unknown>) => ({ ...shellConfig, ...patch })
     })
     mount({ agentMode: true })
-    await screen.findByTestId('chat-tool-config-open')
-    // 四发挂载读都在
+    // 四发挂载读都在（不需要先打开菜单）
     for (const fn of ['getAgentWorkspaceDir', 'getShellConfig', 'getWebSearchConfig', 'getCalendarConfig']) {
       expect(calledFns()).toContain(fn)
     }
-    fireEvent.click(screen.getByTestId('chat-tool-config-open'))
-    await screen.findByTestId('chat-tool-config-menu')
+    fireEvent.click(screen.getByTestId('composer-plus-open'))
+    fireEvent.click(await screen.findByTestId('composer-plus-tools'))
+    await screen.findByLabelText(`🖥 终端命令`)
     const shellToggle = screen.getByLabelText(`🖥 终端命令`)
     fireEvent.click(shellToggle)
     expect(pocketaiCalls().some((c) => c.fn === 'setShellConfig' && (c.args[0] as { enabled?: boolean }).enabled === true)).toBe(true)
   })
 
-  it('工作目录行可选目录（写回仍走既有 pickAgentWorkspaceDir → 组件状态）', async () => {
+  it('工作目录快捷入口与「允许调用工具」同一行，选目录仍走既有 pickAgentWorkspaceDir', async () => {
     stubToolReads({ pickAgentWorkspaceDir: () => '/tmp/next' })
     mount({ agentMode: true })
-    fireEvent.click(await screen.findByTestId('chat-tool-config-open'))
-    fireEvent.click(await screen.findByTestId('chat-tool-config-workspace'))
+    const chip = await screen.findByTestId('composer-workspace-chip')
+    expect(chip.parentElement?.contains(screen.getByTestId('chat-agent-mode-toggle'))).toBe(true)
+    // 窄宽度：外层允许收缩、内层路径可截断（不靠撑破行 / 横向滚动）
+    expect(chip.className).toContain('min-w-0')
+    expect(chip.className).toContain('max-w-full')
+    expect(chip.querySelector('span.truncate')?.className).toContain('min-w-0')
+    fireEvent.click(chip)
     expect(pocketaiCalls().some((c) => c.fn === 'pickAgentWorkspaceDir')).toBe(true)
   })
 
@@ -89,7 +96,7 @@ describe('P4 批次 0：工具配置迁入对话 Composer', () => {
     // 两发都读不到 ⇒ 两条 alert（工作目录 + 终端命令），都应在浮层外
     const alerts = await screen.findAllByRole('alert')
     expect(alerts.some((a) => a.textContent?.includes('boom'))).toBe(true)
-    expect(screen.queryByTestId('chat-tool-config-menu')).toBeNull()
+    expect(screen.queryByTestId('composer-plus-menu')).toBeNull()
     const retry = screen.getByTestId('chat-tool-config-workspace-retry')
     fireEvent.click(retry)
     expect(calledFns().filter((fn) => fn === 'getAgentWorkspaceDir').length).toBeGreaterThan(1)

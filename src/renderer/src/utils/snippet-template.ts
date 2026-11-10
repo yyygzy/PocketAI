@@ -1,6 +1,6 @@
 // 提示词片段模板变量：用户自定义 {{变量}} 占位的提取与填充
 // 与 main/assistant/prompt-template.ts 的系统固定变量（date/user_name 等）无关——
-// 这里的变量名由片段作者定义，插入输入框前由 SnippetButton 弹框收集。
+// 这里的变量名由片段作者定义，插入输入框前由 SnippetManager 的变量填充态收集。
 // 变量名允许英文/数字/下划线/中文（一-龥），其余形态（含空格、空占位）不视为变量。
 
 const TEMPLATE_VAR_RE = /\{\{\s*([A-Za-z0-9_一-龥]+)\s*\}\}/g

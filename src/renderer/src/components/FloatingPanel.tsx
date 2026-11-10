@@ -1,9 +1,9 @@
 // 通用浮层（输入框「+」菜单的第一份原语）：fixed 定位 + 点外部关闭 + Esc 关闭。
 //
 // 为什么是 fixed 不是 absolute：Agent 面板的外壳链有 `overflow-hidden`，absolute 浮层会被裁切
-// （同一条教训写在 `SnippetButton.tsx` 文件头，那份弹层早就改用 fixed 了）。
+// （同一条教训写在 `SnippetManager.tsx` 的前身文件头，那份弹层早就改用 fixed 了）。
 // 为什么单独成一份：全仓此前没有 Popover/Dropdown/Menu 原语，三处手写先例各写各的；
-// 本枚只把新长出来的「+」菜单挂在这份上，既有三处（SnippetButton／SlashMenu／MentionMenu）不动，
+// 本枚只把新长出来的「+」菜单挂在这份上，既有两处（SlashMenu／MentionMenu）不动，
 // 免得把"零行为变化"的一枚变成四处搬家。
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 

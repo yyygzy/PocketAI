@@ -1,18 +1,9 @@
 // @vitest-environment jsdom
-// V4-Iter-268：输入框那圈四发**惰性清单读**——失败要逐发点名说一句，且各屏的出口形状按各屏自己有没有天然重发入口定。
-//
-// 闸门量出来的现数里这四处同一形状：`if (!hasIpcFailed(v)) 写进 ref/state`，
-// 失败侧什么都不做 ⇒ @ 菜单里的知识库组、/ # 菜单里的用户片段组、上下文面板里的技能／知识库芯片**整组消失**，
-// 屏上既不说"没读到"也不说"没有"（把通道故障演成"这里没东西"，§222 那一族的最后一种脸）。
-//
-// 重试键配不配，**按那一屏自己有没有天然入口**判（不是套模板）：
-//  · 上下文面板那两发——再点那一格就是重发（`=== null` 那道守卫留着）⇒ 不加键；
-//  · 对话页 Composer 的知识库——ref 被**占位写成 `[]`**（§221 量过：清回 null 会每次渲染重拉、输入框卡死转圈），
-//    所以再打字也不会重拉 ⇒ 句子必须自带一颗重试键，否则那是句没出路的话。
+// V4 交互改造后，技能/知识库从「⚙ 上下文」面板搬进输入区「+」菜单：
+// 失败句仍然必须在**浮层外**（浮层一关句子就没了＝替这次失败闭嘴），再点那一格就是重发。
 import { describe, it, expect, beforeAll } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, calledFns, stubPocketai } from './helpers/renderer'
-import { ChatConfigBar } from '../src/renderer/src/modules/chat/ChatConfigBar'
 import { Composer } from '../src/renderer/src/modules/chat/Composer'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type {
@@ -42,44 +33,64 @@ const SNIPPET = { id: 'p1', title: '探针片段', content: 'hello' } as unknown
 
 type Impl = (...a: unknown[]) => unknown
 
-describe('① 上下文中枢面板（ChatConfigBar）：点开那一格读不到 ⇒ 那一格里说出是哪一格', () => {
+describe('① 「+ → 技能/知识库」：读不到 ⇒ 句子在输入框上方，浮层里不放失败提示', () => {
   const assistant = { id: 'a1', name: 'a1', isBuiltin: false, skillIds: [], knowledgeBaseIds: [] } as unknown as AssistantRecord
-  const mount = (over: Record<string, Impl> = {}): void => {
-    stubPocketai({ listSkills: () => [SKILL], listKnowledgeBases: () => [KB], ...over })
-    mountWithProviders(<ChatConfigBar assistant={assistant} onAssistantUpdated={() => { /* 本批不判写入 */ }} />)
+  const props = {
+    streaming: false,
+    canSend: true,
+    onSend: () => { /* 本批不判发送 */ },
+    onStop: () => { /* 同上 */ },
+    draftKey: 'c1',
+    assistant,
+    onAssistantUpdated: () => { /* 本批不判写入 */ }
   }
-  const openContext = async (): Promise<void> => {
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(L('ccb.context')) }))
+  const mount = (over: Record<string, Impl> = {}): void => {
+    stubPocketai({ listSkills: () => [SKILL], listKnowledgeBases: () => [KB], listPromptSnippets: () => [], ...over })
+    mountWithProviders(<Composer {...props} />)
+  }
+  const openPlus = (): void => {
+    fireEvent.click(screen.getByTestId('composer-plus-open'))
+  }
+  const openSkills = async (): Promise<void> => {
+    openPlus()
+    fireEvent.click(screen.getByTestId('composer-plus-skills'))
     await settle()
   }
+  const backToMain = (): void => {
+    // 返回键的文字是 aria-hidden 的 ‹ ⇒ 可访问名就是二级页标题（芯片名带图标前缀，不会撞）
+    fireEvent.click(screen.getByRole('button', { name: L('ccb.skills') }))
+  }
+  // 失败句不许进浮层：浮层一关句子就没了＝替这次失败闭嘴
+  const menuAlerts = (): number =>
+    screen.getByTestId('composer-plus-menu').querySelectorAll('[role="alert"]').length
 
-  it('技能那发挂 ⇒ 面板里只有「技能清单读不到」那一句（点开知识库那一格之前，另一句不许冒）', async () => {
+  it('技能那发挂 ⇒ 输入框上方只有「技能清单读不到」那一句，浮层里零 alert', async () => {
     mount({ listSkills: () => FAIL })
-    await openContext()
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
+    await openSkills()
     await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.skillsList'), REASON)]), MOUNT_BUDGET)
     // 那一格此刻是空的（改前连「暂无可选项」都不出现）——句子替它把"为什么空"说了出来
     expect(screen.queryByText(L('ccb.none'))).toBeNull()
     expect(alerts()).toHaveLength(1)
+    expect(menuAlerts()).toBe(0)
   })
 
   it('知识库那发挂 ⇒ 说的是知识库；技能那发读到了 ⇒ 技能那句不许冒（一发挂不许替另一发闭嘴，也不许被合成一句）', async () => {
     mount({ listKnowledgeBases: () => FAIL })
-    await openContext()
+    await openSkills()
     // 先点开技能：这一发读到了 ⇒ 芯片摆出来、一句 alert 都不许有
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
     await waitFor(() => expect(screen.getByText('⚡ 技能一')).toBeTruthy(), MOUNT_BUDGET)
     expect(alerts()).toEqual([])
-    // 再点开知识库：此刻面板显示的是知识库那一格（一次只显示一格），那句必须只点知识库的名
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^📚 ' + L('ccb.kb')) }))
+    // 再切到知识库那一页：那句必须只点知识库的名
+    backToMain()
+    fireEvent.click(screen.getByTestId('composer-plus-kb'))
     await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.kbList'), REASON)]), MOUNT_BUDGET)
     expect(alerts().join(' ')).not.toContain(L('common.skillsList'))
+    expect(menuAlerts()).toBe(0)
   })
 
   it('reject 面 ⇒ 同一句、用的是抛出的原文（旧写法那条 `.catch(reportIpcError(...))` 屏上零字）', async () => {
     mount({ listSkills: () => Promise.reject(new Error('通道断了')) })
-    await openContext()
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
+    await openSkills()
     await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.skillsList'), '通道断了')]), MOUNT_BUDGET)
   })
 
@@ -91,21 +102,18 @@ describe('① 上下文中枢面板（ChatConfigBar）：点开那一格读不�
         return [SKILL]
       }
     })
-    await openContext()
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
+    await openSkills()
     await waitFor(() => expect(alerts()).toEqual([FAILED(L('common.skillsList'), REASON)]), MOUNT_BUDGET)
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
+    // 关掉「+」再打开 ⇒ 回到首层；再点技能那一格＝重发这一发
+    openPlus()
+    openPlus()
+    fireEvent.click(screen.getByTestId('composer-plus-skills'))
     await waitFor(() => expect(callsOf('listSkills'), '点那一格＝重发这一发').toBe(2), MOUNT_BUDGET)
-    // §365（牙齿轮 Q1 咬出来的更正）：「那句退场」不就地判，也不并进这道门——组件在重发前先把上一次的横幅
-    // 清掉，那一刻 `alerts()` 空是"在飞"给的不是"读到了"给的（并进门里也永远为真＝还是假绿）。
-    // 芯片上屏之后一起判才对：那一帧才是"落定了、且横幅随之退场"。
-    // 再点开那一格看芯片：读到之后守卫已关 ⇒ 不会再拉第三次（次数这条断言就是钉这一点）
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
+    // 芯片上屏之后一起判：那一帧才是"落定了、且横幅随之退场"
     await waitFor(() => {
       expect(screen.getByText('⚡ 技能一'), '读到 ⇒ 芯片上屏').toBeTruthy()
       expect(alerts(), '那句随之退场').toEqual([])
     }, MOUNT_BUDGET)
-    expect(screen.getByText('⚡ 技能一')).toBeTruthy()
     expect(callsOf('listSkills')).toBe(2)
     // 这一处**没有**自造的重试键（那一格本身就是出口）
     expect(screen.queryByTestId('composer-kbs-retry')).toBeNull()
@@ -113,10 +121,10 @@ describe('① 上下文中枢面板（ChatConfigBar）：点开那一格读不�
 
   it('反向对照：两发都读到 ⇒ 一个 alert 都没有，芯片照常摆', async () => {
     mount()
-    await openContext()
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^⚡ ' + L('ccb.skills')) }))
+    await openSkills()
     await waitFor(() => expect(screen.getByText('⚡ 技能一')).toBeTruthy(), MOUNT_BUDGET)
-    fireEvent.click(screen.getByRole('button', { name: new RegExp('^📚 ' + L('ccb.kb')) }))
+    backToMain()
+    fireEvent.click(screen.getByTestId('composer-plus-kb'))
     await waitFor(() => expect(screen.getByText('📚 库一')).toBeTruthy(), MOUNT_BUDGET)
     expect(alerts()).toEqual([])
   })
@@ -124,7 +132,7 @@ describe('① 上下文中枢面板（ChatConfigBar）：点开那一格读不�
 
 describe('② 对话页输入框（Composer）：两发的 ref 都被占位写死 ⇒ 两句各自自带重试键', () => {
   const props = { streaming: false, canSend: true, noModels: false, onSend: () => { /* 本批不判发送 */ }, onStop: () => { /* 同上 */ }, draftKey: 'c1' }
-  // SnippetButton 里还有一个 textbox ⇒ 不用 getByRole，取 Composer 自己标的 data-chat-composer-input
+  // 输入框自己带 data-chat-composer-input 标记 ⇒ 不用 getByRole 猜 textbox
   const type = (v: string): void => {
     fireEvent.change(document.querySelector('[data-chat-composer-input]') as Element, { target: { value: v } })
   }

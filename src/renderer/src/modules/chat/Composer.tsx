@@ -3,8 +3,9 @@ import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { MAX_QUEUE_ITEMS, type AgentQueueItem } from './useAgentQueue'
 import { ToolPolicyDialog } from '../../components/agent/ToolPolicyDialog'
-import { ComposerToolConfig } from './ComposerToolConfig'
-import { SnippetButton } from '../../components/SnippetButton'
+import { ComposerPlusMenu } from './ComposerPlusMenu'
+import { useAgentToolConfigs } from './useAgentToolConfigs'
+import { ShowingDefaultsNotice } from '../../components/ShowingDefaultsNotice'
 import { SlashMenu } from '../../components/SlashMenu'
 import { MentionMenu, type MentionItem } from '../../components/MentionMenu'
 import { SnippetVarsDialog } from '../../components/SnippetVarsDialog'
@@ -18,8 +19,18 @@ import {
   type SlashCommand
 } from '../../utils/snippet-slash'
 import { getMentionQuery, filterMentionKbs, filterMentionFiles } from '../../utils/mention'
-import type { ChatAttachment, KnowledgeBase, MessageRecord, PromptSnippetRecord } from '../../../../shared/types'
-import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
+import type {
+  AssistantRecord,
+  ChatAttachment,
+  ChatTarget,
+  KnowledgeBase,
+  MessageRecord,
+  PromptSnippetRecord,
+  ProviderRecord,
+  SkillRecord
+} from '../../../../shared/types'
+import type { AgentModelExtras } from './useAgentModelExtras'
+import { hasIpcFailed, ipcFailText, isIpcFail, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
 
 interface Props {
@@ -51,6 +62,13 @@ interface Props {
   onToggleAgentMode?: () => void
   /** 当前助手 id：工具策略总览按「这个助手到底能用什么」给视角 */
   assistantId?: string
+  /** 当前助手（「+」里的知识库/技能绑定写回要整条记录） */
+  assistant?: AssistantRecord | null
+  onAssistantUpdated?: (a: AssistantRecord) => void
+  /** 「+」里的模型级配置（窗口 / 备用 / 文本协议）按主目标读写 */
+  providers?: ProviderRecord[]
+  targets?: ChatTarget[]
+  modelExtras?: AgentModelExtras
   /** P4 批次 0：本会话的运行中排队条（仅「允许调用工具」时产生） */
   queue?: AgentQueueItem[]
   /** 排队条已满：入队/插队按钮禁用并给出上限文案 */
@@ -84,6 +102,11 @@ export const Composer: React.FC<Props> = ({
   agentMode = false,
   onToggleAgentMode,
   assistantId,
+  assistant = null,
+  onAssistantUpdated,
+  providers = [],
+  targets = [],
+  modelExtras,
   queue = [],
   queueFull = false,
   onQueue,
@@ -127,6 +150,22 @@ export const Composer: React.FC<Props> = ({
   // 知识库列表（首次触发时惰性拉取）
   const kbsRef = useRef<KnowledgeBase[] | null>(null)
   const [kbsFail, setKbsFail] = useState<{ error?: string } | null>(null)
+
+  // 「+」菜单：输入区唯一的能力入口（附件 / 片段 / 知识库 / 技能 / 模型 / 工具配置）
+  const [plusOpen, setPlusOpen] = useState(false)
+  const plusBtnRef = useRef<HTMLButtonElement>(null)
+  // 助手上下文那两发：点开二级页才惰性拉；null=未读（失败也停在 null ⇒ 再点那一格就是重发）
+  const [ctxSkills, setCtxSkills] = useState<SkillRecord[] | null>(null)
+  const [ctxKbs, setCtxKbs] = useState<KnowledgeBase[] | null>(null)
+  const [ctxSkillsFail, setCtxSkillsFail] = useState<{ error?: string } | null>(null)
+  const [ctxKbsFail, setCtxKbsFail] = useState<{ error?: string } | null>(null)
+  // 工具配置：只在「允许调用工具」时发那四发读数（普通对话不发）
+  const tools = useAgentToolConfigs(agentMode)
+  // 「允许调用工具」行的工作目录快捷入口：只显示 basename，完整路径放 title；
+  // 未设置/读不到时用中性短提示（读不到的失败句仍由下面那条 alert 负责）
+  const workspaceName = tools.workspaceDir
+    ? tools.workspaceDir.split(/[\\/]/).filter(Boolean).pop() ?? tools.workspaceDir
+    : ''
 
   // 内置斜杠指令（label/template 随界面语言）
   const builtins = useMemo<SlashCommand[]>(() => buildBuiltinSlashCommands(t), [t])
@@ -174,6 +213,9 @@ export const Composer: React.FC<Props> = ({
   }, [mentionInfo, messages, kbs, t])
 
   const mentionMenuOpen = mentionInfo !== null
+
+  // 「+ → 最近文件」：与 @ 面板同一份提取（本会话历史附件，按名去重）
+  const recentFiles = useMemo(() => filterMentionFiles(messages, ''), [messages])
 
   // @ 触发词变化时高亮回到第一项
   useEffect(() => {
@@ -246,6 +288,71 @@ export const Composer: React.FC<Props> = ({
   const retrySnippets = (): void => {
     snippetsRef.current = null
     loadSnippets()
+  }
+
+  // 「+ → 技能」那一页：点开才拉；失败停在 null（不写空列表），再点那一格即重发
+  const loadCtxSkills = useCallback((force = false) => {
+    if (!force && ctxSkills !== null) return
+    window.pocketai.listSkills()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setCtxSkillsFail({ error: v.error })
+          return
+        }
+        setCtxSkillsFail(null)
+        setCtxSkills(v)
+      })
+      .catch((e: unknown) => {
+        setCtxSkillsFail({ error: errText(e, '') })
+        logIpcError('composer.listSkills', e)
+      })
+  }, [ctxSkills])
+
+  // 「+ → 知识库」那一页：同上，与 @ 面板那一发是两份状态（后者是 ref 快照，这里要随勾选重渲染）
+  const loadCtxKbs = useCallback((force = false) => {
+    if (!force && ctxKbs !== null) return
+    window.pocketai.listKnowledgeBases()
+      .then((v) => {
+        if (hasIpcFailed(v)) {
+          setCtxKbsFail({ error: v.error })
+          return
+        }
+        setCtxKbsFail(null)
+        setCtxKbs(v)
+      })
+      .catch((e: unknown) => {
+        setCtxKbsFail({ error: errText(e, '') })
+        logIpcError('composer.contextListKnowledgeBases', e)
+      })
+  }, [ctxKbs])
+
+  const retryCtxSkills = (): void => {
+    setCtxSkills(null)
+    loadCtxSkills(true)
+  }
+  const retryCtxKbs = (): void => {
+    setCtxKbs(null)
+    loadCtxKbs(true)
+  }
+
+  /** 「+」里勾/取消助手绑定：整条记录写回，以后端回传为准（196：{ok:false} 不是异常） */
+  const toggleAssistantBinding = async (
+    field: 'skillIds' | 'knowledgeBaseIds',
+    id: string
+  ): Promise<void> => {
+    if (!assistant) return
+    const cur = assistant[field] ?? []
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    try {
+      const saved = await window.pocketai.saveAssistant({ ...assistant, [field]: next })
+      if (isIpcFail(saved)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(saved, t('common.unknownError')) }))
+        return
+      }
+      onAssistantUpdated?.(saved)
+    } catch (e) {
+      toast.error(t('common.opFailed', { msg: errText(e) }))
+    }
   }
 
   // draftKey 变化（切会话）或 draft 异步加载到达：提交旧会话 → 回填新会话草稿。
@@ -601,6 +708,11 @@ export const Composer: React.FC<Props> = ({
     setAttachments((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  /** 「+ → 最近文件」选中一份：从历史附件复制一份进来（上限同文件选择 8 份） */
+  const addRecentAttachment = (att: ChatAttachment) => {
+    setAttachments((prev) => [...prev, att].slice(0, 8))
+  }
+
   // 提示词片段：在 textarea 光标处替换选区插入（受控组件，走 setText 而非直接改 DOM）
   const insertAtCursor = (insert: string) => {
     const ta = taRef.current
@@ -616,11 +728,23 @@ export const Composer: React.FC<Props> = ({
     })
   }
 
+  /** 「+ → 提示词片段」选中一条：无变量直接插到光标处，有变量先弹填充层（不经过 / # 触发区间） */
+  const pickMenuSnippet = (s: PromptSnippetRecord) => {
+    if (extractTemplateVars(s.content).length === 0) {
+      insertAtCursor(s.content)
+      return
+    }
+    pendingReplaceRef.current = null
+    setVarSnippet(s)
+  }
+
   return (
     <div className="shrink-0 px-4 pb-4 pt-2">
       {policyOpen && (
         <ToolPolicyDialog assistantId={assistantId} onClose={() => setPolicyOpen(false)} />
       )}
+      {/* 明文模式保存新 Key 的确认弹窗：挂在根上，不随「+」浮层关闭而丢 */}
+      {tools.secretDialog}
       <div className="max-w-3xl mx-auto">
         {/* 附件预览 */}
         {attachments.length > 0 && (
@@ -687,6 +811,23 @@ export const Composer: React.FC<Props> = ({
           </div>
         )}
 
+        {ctxKbsFail && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span role="alert" className="text-xs text-[var(--color-danger)]">
+              {t('common.loadFailedNamed', { what: t('common.kbList'), msg: ipcFailText(ctxKbsFail, t('common.unknownError')) })}
+            </span>
+            <button data-testid="composer-plus-kbs-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={retryCtxKbs}>{t('agent.retryRead')}</button>
+          </div>
+        )}
+        {ctxSkillsFail && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span role="alert" className="text-xs text-[var(--color-danger)]">
+              {t('common.loadFailedNamed', { what: t('common.skillsList'), msg: ipcFailText(ctxSkillsFail, t('common.unknownError')) })}
+            </span>
+            <button data-testid="composer-plus-skills-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={retryCtxSkills}>{t('agent.retryRead')}</button>
+          </div>
+        )}
+
         {onToggleAgentMode && (
           <div className="mb-1.5 flex flex-wrap items-center gap-2">
             <button
@@ -706,6 +847,18 @@ export const Composer: React.FC<Props> = ({
               {t('composer.tools.label')}
             </button>
             {agentMode && (
+              <button
+                type="button"
+                data-testid="composer-workspace-chip"
+                onClick={() => void tools.pickWorkspace()}
+                title={tools.workspaceDir || t('agent.workspacePickTip')}
+                className="flex min-w-0 max-w-full items-center gap-1 px-2.5 py-1 rounded-full border border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] hover:bg-[var(--color-hover-overlay)] sm:max-w-[18rem]"
+              >
+                <span aria-hidden>📁</span>
+                <span className="min-w-0 truncate">{workspaceName || t('composer.workspacePick')}</span>
+              </button>
+            )}
+            {agentMode && (
               <>
                 <span className="text-[11px] text-[var(--color-text-muted)]">{t('composer.tools.hint')}</span>
                 <button
@@ -722,9 +875,32 @@ export const Composer: React.FC<Props> = ({
           </div>
         )}
 
-        {/* 工具配置（P4 批次 0 / 选项 A）：只允许调用工具时挂载——普通对话不发这四发读数。
-            组件内部复用 `useAgentToolConfigs` + `AgentToolBars`（唯一实现） */}
-        {agentMode && <ComposerToolConfig />}
+        {/* 工具配置已收进「+ → 执行设置」。浮层外面只留「读不到」的句子：
+            出口＝当场改一次配置（工作目录那一读带同级重试键），同原 ComposerToolConfig 口径 */}
+        {agentMode && tools.toolUnread.workspace && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span role="alert" className="text-[11px] text-[var(--color-danger)]" title={tools.toolUnread.workspace}>
+              {t('agent.workspaceUnread')}
+            </span>
+            <button
+              type="button"
+              data-testid="chat-tool-config-workspace-retry"
+              className="text-[11px] underline text-[var(--color-text-muted)]"
+              onClick={() => tools.retryWorkspace()}
+            >
+              {t('agent.retryRead')}
+            </button>
+          </div>
+        )}
+        {agentMode && tools.toolUnread.shell && (
+          <ShowingDefaultsNotice what={t('agent.shell.enable')} msg={tools.toolUnread.shell} />
+        )}
+        {agentMode && tools.toolUnread.webSearch && (
+          <ShowingDefaultsNotice what={t('agent.websearch.title')} msg={tools.toolUnread.webSearch} />
+        )}
+        {agentMode && tools.toolUnread.calendar && (
+          <ShowingDefaultsNotice what={t('agent.calendar.title')} msg={tools.toolUnread.calendar} />
+        )}
 
         {/* 运行中排队条（P4 批次 0，迁自 Agent 壳）：条上每一项都还没进正在跑的这一轮 */}
         {queue.length > 0 && (
@@ -807,22 +983,61 @@ export const Composer: React.FC<Props> = ({
                 pendingReplaceRef.current = null
               }}
               onInsert={(content) => {
-                replaceTriggerRange(content, pendingReplaceRef.current?.startPos)
+                // 「+」那条没有 / # 触发区间（pendingReplaceRef 为 null）⇒ 直接插到光标处
+                if (pendingReplaceRef.current) replaceTriggerRange(content, pendingReplaceRef.current.startPos)
+                else insertAtCursor(content)
                 setVarSnippet(null)
                 pendingReplaceRef.current = null
               }}
             />
           )}
-          {/* 文件选择按钮 */}
+          {/* 「+」：输入区唯一的能力入口。原 📎／📝／⚙ 上下文／顶栏三颗徽标都收进这里，不再留第二份 */}
           <button
-            onClick={() => fileRef.current?.click()}
-            title={t('common.attachFile')}
-            className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+            ref={plusBtnRef}
+            type="button"
+            data-testid="composer-plus-open"
+            aria-haspopup="menu"
+            aria-expanded={plusOpen}
+            title={t('composer.plus.title')}
+            onClick={() => {
+              setPlusOpen((v) => !v)
+              if (!plusOpen) loadSnippets()
+            }}
+            className={`shrink-0 w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
+              plusOpen
+                ? 'text-[var(--color-accent)] bg-[var(--color-hover-overlay)]'
+                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)]'
+            }`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              <path d="M12 5v14M5 12h14" />
             </svg>
           </button>
+          <ComposerPlusMenu
+            open={plusOpen}
+            anchorRef={plusBtnRef}
+            onClose={() => setPlusOpen(false)}
+            onPickFile={() => fileRef.current?.click()}
+            snippets={snippetsRef.current ?? []}
+            snippetsUnread={!!snippetsFail}
+            onPickSnippet={pickMenuSnippet}
+            recentFiles={recentFiles}
+            onPickRecent={addRecentAttachment}
+            skills={ctxSkills}
+            kbs={ctxKbs}
+            onLoadSkills={() => loadCtxSkills()}
+            onLoadKbs={() => loadCtxKbs()}
+            assistantSkillIds={assistant?.skillIds ?? []}
+            assistantKbIds={assistant?.knowledgeBaseIds ?? []}
+            onToggleSkill={(id) => void toggleAssistantBinding('skillIds', id)}
+            onToggleKb={(id) => void toggleAssistantBinding('knowledgeBaseIds', id)}
+            builtinAssistant={assistant?.isBuiltin}
+            providers={providers}
+            primary={targets[0]}
+            modelExtras={modelExtras}
+            agentMode={agentMode}
+            tools={tools}
+          />
           <input
             ref={fileRef}
             type="file"
@@ -831,8 +1046,6 @@ export const Composer: React.FC<Props> = ({
             className="hidden"
             onChange={handleFilePick}
           />
-
-          <SnippetButton onInsert={insertAtCursor} />
 
           <textarea
             ref={taRef}

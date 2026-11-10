@@ -472,6 +472,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/agent-run-inspector-459.test.tsx': 2,
       'tests/approval-audit-panel-p0-2c-3.test.tsx': 4,
       'tests/assistant-editor-skill-bind-412.test.tsx': 2,
+      // V4 交互改造：助手编辑页「提示词」两页签——先等片段清单落地再点、再等插完切回系统页。
+      // 上限＝现数 2，不留余量。
+      'tests/assistant-editor-prompt-tabs.test.tsx': 2,
       'tests/backup-cloud-time-327.test.tsx': 4,
       'tests/backup-late-response-324.test.tsx': 27,
       'tests/backup-merge-stopped-notice-315.test.tsx': 6,
@@ -490,7 +493,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/capability-online-seq-322.test.tsx': 8,
       'tests/capability-row-residue-326.test.tsx': 4,
       'tests/capability-visibility-428.test.tsx': 6,
-      'tests/chat-model-extras-461.test.tsx': 5,
+      // V4 交互改造：模型三项搬进「+ → 模型」后，断言要先等菜单里的行挂上再读元信息（新增 1 颗门）。
+      // 上限＝现数 6，不留余量。
+      'tests/chat-model-extras-461.test.tsx': 6,
       // P5 批次 1：run 索引 hook 搬到 `chat/` 后新开的行为用例——两发读库都是挂载后才落地，
       // 门要等 `runs`／`sessionStats`／`sessionUnread` 真的写进 hook 状态再断言；不等会在落地前读到空态。
       // 上限＝现数 4，不留余量。

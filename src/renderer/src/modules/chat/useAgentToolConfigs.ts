@@ -9,7 +9,7 @@ import { useConfirm } from '../../components/ConfirmDialog'
 import { isUnprotectedMode } from '../../utils/secret-consent'
 import { errText } from '../../utils/error'
 
-export function useAgentToolConfigs() {
+export function useAgentToolConfigs(enabled = true) {
   const { t } = useI18n()
   const toast = useToast()
   // B3：联网搜索 Key 不拦写入，但明文模式下保存新值要用户显式承认
@@ -52,6 +52,8 @@ export function useAgentToolConfigs() {
   }, [t, markUnread])
 
   useEffect(() => {
+    // 对话输入框那侧只有「允许调用工具」时才挂这四发读数；普通对话不发（原 ComposerToolConfig 的挂载口径）
+    if (!enabled) return
     loadWorkspace()
     window.pocketai.getShellConfig().then((v) => {
       if (hasIpcFailed(v)) {
@@ -78,7 +80,7 @@ export function useAgentToolConfigs() {
       markUnread('calendar', null)
       setCalConfigState(v)
     }).catch((e: unknown) => { markUnread('calendar', errText(e, t('agent.unknownError'))); logIpcError('agent.getCalendarConfig', e) })
-  }, [t, markUnread, loadWorkspace])
+  }, [t, markUnread, loadWorkspace, enabled])
 
   const pickWorkspace = async () => {
     const dir = await window.pocketai.pickAgentWorkspaceDir()

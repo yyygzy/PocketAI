@@ -4,6 +4,7 @@ import { planResidentSkills, RESIDENT_SKILL_TOTAL_CHAR_BUDGET } from '../../../.
 import { useI18n } from '../../i18n'
 import { hasIpcFailed, isIpcFail, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
+import { SnippetManager } from '../../components/SnippetManager'
 import { errText } from '../../utils/error'
 
 interface Props {
@@ -24,6 +25,9 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
   const [description, setDescription] = useState(initial.description ?? '')
   const [welcomeMessage, setWelcomeMessage] = useState(initial.welcomeMessage ?? '')
   const [systemPrompt, setSystemPrompt] = useState(initial.systemPrompt ?? '')
+  // 提示词：一个入口两个页签——系统提示词（assistants.system_prompt）／我的片段（prompt_snippets）。
+  // 两者写入各走各的表，不做迁移、不改注入：片段只用于往输入框/提示词里插文本。
+  const [promptTab, setPromptTab] = useState<'system' | 'snippets'>('system')
   const [providerId, setProviderId] = useState(initial.defaultProviderId ?? '')
   const [model, setModel] = useState(initial.defaultModel ?? '')
   const [kbIds, setKbIds] = useState<string[]>(initial.knowledgeBaseIds ?? [])
@@ -278,20 +282,62 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
       </div>
 
       <div>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('ae.prompt')}</label>
-        <textarea
-          className="input font-mono text-xs min-h-[180px] leading-relaxed"
-          value={systemPrompt}
-          onChange={(e) => setSystemPrompt(e.target.value)}
-          placeholder={t('ae.promptPh')}
-        />
-        <div className="flex flex-wrap gap-1.5 mt-1.5">
-          {VARIABLE_KEYS.map((vk) => (
-            <span key={vk} className="badge badge-muted">
-              {t(vk)}
-            </span>
-          ))}
+        <div className="flex items-center gap-1 mb-1.5">
+          <span className="text-xs text-[var(--color-text-muted)] mr-1">{t('ae.promptSection')}</span>
+          <button
+            type="button"
+            data-testid="ae-prompt-tab-system"
+            aria-pressed={promptTab === 'system'}
+            onClick={() => setPromptTab('system')}
+            className={`text-xs px-2.5 py-1 border-b-2 transition-colors ${
+              promptTab === 'system'
+                ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            {t('ae.promptTabSystem')}
+          </button>
+          <button
+            type="button"
+            data-testid="ae-prompt-tab-snippets"
+            aria-pressed={promptTab === 'snippets'}
+            onClick={() => setPromptTab('snippets')}
+            className={`text-xs px-2.5 py-1 border-b-2 transition-colors ${
+              promptTab === 'snippets'
+                ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            {t('ae.promptTabSnippets')}
+          </button>
         </div>
+        {promptTab === 'system' ? (
+          <>
+            <textarea
+              className="input font-mono text-xs min-h-[180px] leading-relaxed"
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder={t('ae.promptPh')}
+            />
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {VARIABLE_KEYS.map((vk) => (
+                <span key={vk} className="badge badge-muted">
+                  {t(vk)}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-[var(--color-text-muted)]">{t('ae.snippetsHint')}</p>
+            <SnippetManager
+              onInsert={(text) => {
+                setSystemPrompt((prev) => (prev.trim() ? `${prev}\n\n${text}` : text))
+                setPromptTab('system')
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div>

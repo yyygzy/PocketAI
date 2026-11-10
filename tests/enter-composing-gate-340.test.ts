@@ -127,7 +127,7 @@ describe('② 全仓现数与两桶身份证', () => {
   it('自由文本桶的身份证（文件＋动作名）逐条钉住：改名／搬走也要过这张表', () => {
     expect(freeText.map((s) => `${s.file}::${s.calls}`).sort()).toEqual([
       'components/OllamaPanel.tsx::doPull,setCustomModel',
-      'components/SnippetButton.tsx::insertWithVars',
+      'components/SnippetManager.tsx::insertWithVars',
       'components/SnippetVarsDialog.tsx::insert,onCancel',
       'components/agent/AgentMessageCard.tsx::onEditingChange,submit',
       'modules/chat/AgentToolBars.tsx::patchWsConfig',

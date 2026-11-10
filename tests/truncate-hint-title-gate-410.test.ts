@@ -240,7 +240,9 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     expect(
       [ALL.length, pureSentence.length, goodSites.length, badSites.length, mixedSites.length, dataSites.length].join('/'),
       `现数 truncate位/纯句子（有title/没title）/混合/纯数据 ＝ ${ALL.length}/${pureSentence.length}（${goodSites.length}/${badSites.length}）/${mixedSites.length}/${dataSites.length}`
-    ).toBe('96/6/1/5/10/80')
+    // V4 交互改造：输入区「+」菜单新增 2 颗 truncate 位（模型行元信息那 1 颗混合＋列表项那 1 颗纯数据）⇒ 96→98。
+    // 工作目录快捷入口移入「允许调用工具」行：路径 basename（数据）与未选提示（字典句）同挂 1 颗 truncate ⇒ 98→99。
+    ).toBe('99/6/1/5/12/81')
   })
 
   it('名单等式：5 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
@@ -355,10 +357,15 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
   })
 
   it('如实报出混合位与纯数据位的数量（本面不收，别让它听起来像"已判定没问题"）', () => {
-    expect(mixedSites.length, `混合位现数 ${mixedSites.length}＝句子与数据同挂一位，裁的是哪一半要逐处再看`).toBe(10)
+    // V4 交互改造：「+ → 模型」的备用模型行 meta 是「Provider · model」数据＋「未设／读不到」两种字典句，
+    // 同挂一个 truncate 位 ⇒ 混合位 10→11（该行已带 title，裁的是数据那半）。
+    // V4 交互改造：工作目录快捷入口移入「允许调用工具」行后，路径 basename（数据）＋「选择目录」（字典句）
+    // 同挂一颗 truncate ⇒ 混合位 11→12（该位外层按钮带完整路径 title）。
+    expect(mixedSites.length, `混合位现数 ${mixedSites.length}＝句子与数据同挂一位，裁的是哪一半要逐处再看`).toBe(12)
     // §429：能力中心卡片新入 4 颗纯数据位（技能名／服务器名／启动命令／模板名）；
     // 本批已逐颗补了 title（裁的是数据本来就该有 tooltip），桶数不变、只把登记改到实测。
-    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(80)
+    // V4 交互改造：输入区「+」的片段/最近文件列表再入 1 颗纯数据位（列表项标题）⇒ 80→81。
+    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(81)
     // 混合位里最像"句子被连坐"的一档：字典句 ≥10 字（这些将来要单独判，本枚只列不判）
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(

@@ -1,6 +1,6 @@
 // 片段变量填充层：选中含 {{变量}} 的片段后收集变量值再插入输入框。
 // 供 SlashMenu 选中片段时使用（chat / Agent 双侧 Composer 共用），
-// 与 SnippetButton 内部 vars 态同款交互，但定位为 absolute（跟随 Composer 容器）。
+// 与 SnippetManager 内部 vars 态同款交互，但定位为 absolute（跟随 Composer 容器）。
 import React, { useState } from 'react'
 import { useI18n } from '../i18n'
 import { applyTemplateVars, extractTemplateVars } from '../utils/snippet-template'
