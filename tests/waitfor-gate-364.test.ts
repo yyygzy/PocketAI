@@ -504,6 +504,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // 不等这一颗会在候选态之前读到初始 false，负向断言变成假绿。上限＝现数 7，不留余量。
       'tests/chat-deep-search-running-461.test.tsx': 7,
       'tests/chat-send-failure-visible-204.test.tsx': 0,
+      // 续跑提示（运行检查点那一批新增）：文案由 store 播种后异步落到 DOM，3 颗门都按「存在」读
+      // 同一颗 `conversation-runtime-resume` 再断文案（第 3 颗等的是列表行），门后的负向句读的是另一档。
+      // 上限＝现数 3，不留余量。
+      'tests/conversation-runtime-resume-label.test.tsx': 3,
       'tests/data-health-cold-243.test.tsx': 1,
       'tests/data-health-zero-bytes-378.test.tsx': 3,
       'tests/glossary-add-failure-211.test.tsx': 6,
@@ -602,7 +606,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-sidebar-nav.test.tsx': 2,
       'tests/renderer-skill-resident-236.test.tsx': 1,
       'tests/renderer-steward-ollama-liveness-380.test.tsx': 4,
-      'tests/renderer-steward-read-255.test.tsx': 8,
+      // 既有漂移补登记（工具面治理批发现）：`9a1082a`（备份验证三态并入故障诊断卡）新增 3 颗门未抬上限，
+      // 现数 11；新增的三颗都按「存在」读屏（PROBE-PICK／verifyBackupNow／VERIFY_IO toast）。
+      // 上限＝现数 11，不留余量。
+      'tests/renderer-steward-read-255.test.tsx': 11,
       'tests/renderer-steward-vacuum-377.test.tsx': 8,
       'tests/renderer-task-last-ok-face-395.test.tsx': 1,
       'tests/renderer-terminal-truncated-hint.test.tsx': 2,
@@ -619,10 +626,16 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/stale-read-notice-345.test.tsx': 14,
       'tests/stale-read-notice-347.test.tsx': 25,
       'tests/terminal-frame-epoch-320.test.tsx': 4,
+      // 结构化契约层（新增）：主进程用例，5 颗门全是 `vi.waitFor` 等桩调用计数（`H.calls`／`H.renamed`），
+      // 门后不读任何屏 ⇒ 与「门等 A、断言读 B」不同族。上限＝现数 5，不留余量。
+      'tests/title-gen-structured.test.ts': 5,
       // V4-Iter-467：新增「高成本只展示」用例——挂载后等空态、切注册表后等 web_search 到货，
       // 两颗都按存在读屏；上限 7→9，上限＝现数，不留余量。
       'tests/tool-policy-screen-417.test.tsx': 9,
-      'tests/update-panel-restart-312.test.tsx': 3
+      'tests/update-panel-restart-312.test.tsx': 3,
+      // 记忆来源面板（既有缺口，本次补登记）：列表与「来自会话」两发读库都在挂载后落地。
+      // 上限＝现数 4，不留余量。
+      'tests/user-memory-panel-provenance.test.tsx': 4
     }
     const sum = Object.values(PER_FILE_AWAITS).reduce((a, b) => a + b, 0)
     expect(sum, '逐文件合计必须等于总量（两套读法同源）').toBe(ALL.awaits)
@@ -643,7 +656,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
     expect(ALL.positive.map(where), `会假红的形状：\n${ALL.positive.map(detail).join('\n')}`).toEqual([])
   })
 
-  it('只会假绿那一档（要求「不存在」）＝22 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
+  it('只会假绿那一档（要求「不存在」）＝21 颗逐条判过的名单，逐字钉死：漂了要人工过目并补判语', () => {
     // §365 判语（分组，位置按现数名单）：
     //   ①「在飞那一帧」本身就是判据对象——负向句读的是"发出之后、落地之前"，折进门里反而把判据废掉：
     //     load-fail-read-retry-350／352／354（"还在加载那一支既没有那句也没有那颗键"）、
@@ -683,7 +696,11 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/capability-visibility-428.test.tsx:103 -> :104', // §429 迁移（原 §436 判语沿用）：门等 `reads === 1`（失败那一发已发出、渲染已重跑），紧随断言网格没长出假 0；门与断言读同一屏、失败落屏与计数条件同批 ⇒ 只会漏报，不会假红。
       'tests/chat-deep-search-running-461.test.tsx:191 -> :192', // §461 深搜提示：门等 getWebSearchConfig 那一发发出，紧随断言「quick 档屏上没有深搜提示」；门放行时配置 promise 未必已落地 ⇒ 只会假绿，判定本身由 judgeDeepSearchRunning 的三档单测兜底。
       'tests/chat-deep-search-running-461.test.tsx:198 -> :199', // §461 同上：auto 档末步没带 deepSearch，断言提示不在场。
-      'tests/stale-read-notice-347.test.tsx:159 -> :160'
+      'tests/stale-read-notice-347.test.tsx:159 -> :160',
+      // 补登记（工具面治理批发现）：门等 `listConversations` 第二发真的发出（调用计数），
+      // 紧随却断言「来自会话」不在场；会话读不到时产品根本不画指向 ⇒ 门放行时即便响应未落地
+      // 只会漏报（假绿），不会假红。
+      'tests/user-memory-panel-provenance.test.tsx:69 -> :70'
     ]
     // 比对用整串而非数组：数组的 diff 只印第一颗漂的，剩下几颗得跑好几趟才看得见（本批就撞过）
     const now = ALL.absenceOnly.map(where).sort()
