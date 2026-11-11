@@ -635,6 +635,8 @@ export const zh = {
   'agent.mcpToolsHeldBack': '另有 {n} 个未进请求（共 {total}）',
   'agent.toolSurfaceGrouped': '按需装载工具（省上下文）',
   'agent.toolSurfaceHint': '只把本轮命中的能力域发给模型，其余工具不占上下文；关掉则始终发送全部工具。不影响授权与审批。',
+  'agent.toolSurfaceName': '工具面装载方式',
+  'agent.toolSurfaceSaveFailed': '工具面装载方式没能保存：{msg}',
   'agent.mcpAnnotations': '注解',
   'agent.mcpAnnotationsUntrusted': '由 Server 自己申报，只用来把确认收紧；它不构成免确认的依据。',
   'agent.deleteConfirm': '确认删除该 MCP Server 配置？',

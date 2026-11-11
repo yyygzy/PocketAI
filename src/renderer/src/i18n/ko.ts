@@ -607,6 +607,8 @@ export const ko = {
   'agent.mcpToolsHeldBack': '{n}개는 요청에 포함되지 않음(총 {total})',
   'agent.toolSurfaceGrouped': '필요할 때 도구 로드(컨텍스트 절약)',
   'agent.toolSurfaceHint': '이번 턴에 해당하는 기능 그룹만 모델에 보내고 나머지는 컨텍스트를 차지하지 않습니다. 끄면 항상 모든 도구를 보냅니다. 권한과 승인에는 영향을 주지 않습니다.',
+  'agent.toolSurfaceName': '도구 로드 방식',
+  'agent.toolSurfaceSaveFailed': '도구 로드 방식을 저장하지 못했습니다: {msg}',
   'agent.mcpAnnotations': '단서',
   'agent.mcpAnnotationsUntrusted': 'Server가 스스로 신고한 정보입니다. 확인을 더 엄격하게 하는 데만 쓰이고, 확인을 생략하는 근거가 되지 않습니다.',
   'agent.deleteConfirm': '이 MCP 서버 구성을 삭제할까요?',

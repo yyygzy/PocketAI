@@ -69,24 +69,62 @@ export const McpPanel: React.FC = () => {
   const [capabilityOpen, setCapabilityOpen] = useState(false)
   // 工具面装载模式（全局，不随 Server 变）：grouped=按需 / full=全量
   const [surfaceMode, setSurfaceMode] = useState<'grouped' | 'full'>('grouped')
+  // §217：装载模式那两发的失败面。读失败 ⇒ 这格停在默认值（§226 第二形态，与 pip 源同一处上屏）；
+  // 写失败 ⇒ 开关退回原值并常驻点名，不靠 toast 说完就算。
+  const [surfaceUnread, setSurfaceUnread] = useState<{ error?: string } | null>(null)
+  const [surfaceSaveError, setSurfaceSaveError] = useState('')
   // §336：调用日志切换 server 时旧请求可能迟到，用代次计数器钉住"只接受最新那一发"
   const callLogGenRef = useRef(0)
 
   const pip = usePipSource(setNotice, askConfirm)
 
-  // 工具面装载模式读一次（读失败就停在默认 grouped：它只影响发多少 schema）
+  // 工具面装载模式读一次（读失败就停在默认 grouped，但要把"这是默认值"说出来——§217 判失败面、不吞）
   useEffect(() => {
     let alive = true
     void window.pocketai
       .getAgentToolSurface()
-      .then((m) => {
-        if (alive) setSurfaceMode(m)
+      .then((m: unknown) => {
+        if (!alive) return
+        if (hasIpcFailed(m)) {
+          setSurfaceUnread({ error: m.error })
+          return
+        }
+        setSurfaceUnread(null)
+        setSurfaceMode(m === 'full' ? 'full' : 'grouped')
       })
-      .catch(() => {})
+      .catch((e: unknown) => {
+        if (!alive) return
+        setSurfaceUnread({ error: errText(e, '') })
+        logIpcError('agent.toolSurfaceGet', e)
+      })
     return () => {
       alive = false
     }
   }, [])
+
+  // 写开关：先动、回读为准；失败退回原值并把原因留在那颗开关下面
+  const handleSurfaceModeChange = (next: 'grouped' | 'full'): void => {
+    const prev = surfaceMode
+    setSurfaceMode(next)
+    setSurfaceSaveError('')
+    void window.pocketai
+      .setAgentToolSurface(next)
+      .then((m: unknown) => {
+        if (hasIpcFailed(m)) {
+          setSurfaceMode(prev)
+          setSurfaceSaveError(m.error || t('common.unknownError'))
+          return
+        }
+        // 写后回读成功 ⇒ 这格的值已经是库里的真值，之前那句「显示的是默认值」随后失效
+        setSurfaceUnread(null)
+        setSurfaceMode(m === 'full' ? 'full' : 'grouped')
+      })
+      .catch((e: unknown) => {
+        setSurfaceMode(prev)
+        setSurfaceSaveError(errText(e, t('common.unknownError')))
+        logIpcError('agent.toolSurfaceSet', e)
+      })
+  }
 
   const load = useCallback(async () => {
     const [recs, runs] = await Promise.all([
@@ -358,13 +396,7 @@ export const McpPanel: React.FC = () => {
               data-testid="tool-surface-grouped"
               checked={surfaceMode === 'grouped'}
               onChange={(e) => {
-                const next = e.target.checked ? 'grouped' : 'full'
-                setSurfaceMode(next)
-                // 以库里回读的值为准（写失败就退回原值，不做乐观更新）
-                void window.pocketai
-                  .setAgentToolSurface(next)
-                  .then(setSurfaceMode)
-                  .catch(() => setSurfaceMode(next === 'grouped' ? 'full' : 'grouped'))
+                handleSurfaceModeChange(e.target.checked ? 'grouped' : 'full')
               }}
             />
             {t('agent.toolSurfaceGrouped')}
@@ -372,6 +404,15 @@ export const McpPanel: React.FC = () => {
           <p className="text-[10px] leading-4 text-[var(--color-text-muted)]">
             {t('agent.toolSurfaceHint')}
           </p>
+          {/* §217：读失败 ⇒ 这格停在默认值（§226 第二形态）；写失败 ⇒ 开关已退回原值，原因仍常驻点名 */}
+          {surfaceUnread && (
+            <ShowingDefaultsNotice what={t('agent.toolSurfaceName')} msg={ipcFailText(surfaceUnread, t('common.unknownError'))} />
+          )}
+          {surfaceSaveError && (
+            <p role="alert" className="text-[10px] leading-4 text-[var(--color-danger)]">
+              {t('agent.toolSurfaceSaveFailed', { msg: surfaceSaveError })}
+            </p>
+          )}
         </div>
         {/* pip 下载源：全局设置，Python 依赖安装时使用 */}
         <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2 space-y-1.5">

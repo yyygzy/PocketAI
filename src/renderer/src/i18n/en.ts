@@ -634,6 +634,8 @@ export const en = {
   'agent.mcpToolsHeldBack': '{n} more not in the request (of {total})',
   'agent.toolSurfaceGrouped': 'Load tools on demand (saves context)',
   'agent.toolSurfaceHint': 'Only the capability groups this turn needs are sent to the model; the rest take no context. Turn off to always send every tool. Permissions and approvals are unaffected.',
+  'agent.toolSurfaceName': 'Tool surface loading mode',
+  'agent.toolSurfaceSaveFailed': 'The tool surface mode could not be saved: {msg}',
   'agent.mcpAnnotations': 'Hints',
   'agent.mcpAnnotationsUntrusted': 'Declared by the server itself. It only tightens confirmation; it never justifies skipping it.',
   'agent.deleteConfirm': 'Delete this MCP Server configuration?',

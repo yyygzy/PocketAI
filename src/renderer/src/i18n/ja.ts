@@ -607,6 +607,8 @@ export const ja = {
   'agent.mcpToolsHeldBack': 'ほか {n} 個はリクエスト対象外（全 {total}）',
   'agent.toolSurfaceGrouped': 'ツールを必要時に読み込む（コンテキスト節約）',
   'agent.toolSurfaceHint': '今回のターンで該当する能力グループだけをモデルに送り、残りはコンテキストを使いません。オフにすると常に全ツールを送ります。権限と承認には影響しません。',
+  'agent.toolSurfaceName': 'ツール読み込み方式',
+  'agent.toolSurfaceSaveFailed': 'ツール読み込み方式を保存できませんでした：{msg}',
   'agent.mcpAnnotations': '注記',
   'agent.mcpAnnotationsUntrusted': 'Server 自身の申告です。確認を厳しくする材料にはなりますが、確認を省く根拠にはなりません。',
   'agent.deleteConfirm': 'この MCP Server 設定を削除しますか？',
