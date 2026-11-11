@@ -928,6 +928,7 @@ const ConvItem: React.FC<{
   const runtime = useConversationRuntime(conv.id)
   // B-4：未读（主进程 conversations.unread 的投影），与运行态是两个槽位，可并存
   const unread = useConversationUnread(conv.id)
+  // v66：中断不再只有一句"已中断"——重启对账已判定这次是能从边界继续，还是必须整轮重来
   const runtimeLabel =
     runtime?.state === 'running'
       ? t('chat.runtime.running')
@@ -936,7 +937,11 @@ const ConvItem: React.FC<{
         : runtime?.state === 'failed'
           ? t('chat.runtime.failed')
           : runtime?.state === 'interrupted'
-            ? t('chat.runtime.interrupted')
+            ? runtime.resumeState === 'resumable'
+              ? t('chat.runtime.interruptedResumable')
+              : runtime.resumeState === 'restart'
+                ? t('chat.runtime.interruptedRestart')
+                : t('chat.runtime.interrupted')
             : ''
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
@@ -1044,7 +1049,9 @@ const ConvItem: React.FC<{
                       ? 'bg-[var(--color-warning)]'
                       : runtime?.state === 'failed'
                         ? 'bg-[var(--color-danger)]'
-                        : 'bg-[var(--color-warning)] opacity-60'
+                        : runtime?.state === 'interrupted' && runtime.resumeState === 'restart'
+                          ? 'bg-[var(--color-danger)] opacity-60'
+                          : 'bg-[var(--color-warning)] opacity-60'
                 }`}
               />
             )}
@@ -1053,6 +1060,15 @@ const ConvItem: React.FC<{
           {/* 最新消息预览：多选态/空预览不渲染，避免行高跳动 */}
           {!selectMode && conv.lastMessagePreview && (
             <span className="block truncate text-[11px] leading-4 text-[var(--color-text-muted)]">{conv.lastMessagePreview}</span>
+          )}
+          {/* v66：中断判定要看得见（那颗圆点只有颜色与悬停标题，判断本身得有一行字） */}
+          {!selectMode && runtime?.state === 'interrupted' && runtime.resumeState && (
+            <span
+              data-testid="conversation-runtime-resume"
+              className="block text-[11px] leading-4 text-[var(--color-warning)]"
+            >
+              {runtimeLabel}
+            </span>
           )}
           {/* 备注：编辑态显示 input，否则有备注时显示一行 */}
           {!selectMode && noteEditing ? (

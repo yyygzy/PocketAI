@@ -338,6 +338,8 @@ export const en = {
   'chat.runtime.pendingApproval': 'Needs approval',
   'chat.runtime.failed': 'Last run failed',
   'chat.runtime.interrupted': 'Run interrupted',
+  'chat.runtime.interruptedResumable': 'Run interrupted (can continue)',
+  'chat.runtime.interruptedRestart': 'Run interrupted (tools already ran; restart needed)',
   'chat.unread': 'Unread reply',
   'chat.tools.filter.all': 'All',
   'chat.tools.filter.tools': 'Tools allowed',

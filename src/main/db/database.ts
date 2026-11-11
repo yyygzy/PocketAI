@@ -1146,6 +1146,52 @@ const MIGRATIONS: Migration[] = [
         db.exec('ALTER TABLE user_memory ADD COLUMN deleted_at INTEGER;')
       }
     }
+  },
+  {
+    // v66：运行检查点（可恢复的任务状态，第一层：只持久化"跑到哪"）。
+    //
+    // v60 的 `conversation_runs` 只记「跑过」：`status` 回答"怎么结束的"，`started_at/ended_at`
+    // 回答"跑了多久"，但**没有一处**记"跑到第几步、下一步是什么"。于是重启后只能把残留一律
+    // 标成 interrupted，用户看到的与实际情况一样粗糙——不知道这一轮是"从没动过手"还是
+    // "工具已经改过文件"，也就无法判断能不能接着跑（两者风险完全不同）。
+    //
+    // 这一版只加**事实**，不自动续跑（续跑要工具幂等与补偿，下一轮再说）：
+    //  · `stage`：进程倒下时正处于哪个阶段（preparing/model/tools/approval/final）；
+    //  · `steps_done`：已完整走完的步数边界（第几步之前的工作已经落库/生效）；
+    //  · `tool_steps_done`：已经进入过几次工具步。它是"有没有副作用"的唯一判据——
+    //    没有幂等就不能假装工具没执行过，哪怕只进过一次工具步也只能判"重来"；
+    //  · `resume_state`：重启对账时写下的判定（resumable=可从边界继续 / restart=只能重来）。
+    //    只由 `interruptActive()` 写，运行中的行恒为 NULL（没被中断就没有"要不要续"的问题）。
+    //
+    // 历史行口径（同 v62/v65 的思路：认不出来就不假装认得）：三列事实字段保持 NULL，
+    // **不给老记录编造阶段**；`interruptActive()` 对 stage IS NULL 的行判 'restart'——
+    // 这正是 v60 的既有语义（残留=重来），只是从"默认行为"变成"写下来的结论"。
+    //
+    // 幂等：SQLite 的 ADD COLUMN 没有 IF NOT EXISTS，先查 PRAGMA（同 v58/v61/v62/v63/v65）；
+    // 测试按惯例删掉 schema_migrations 的 v66 行再跑，第二遍是空操作。
+    version: 66,
+    name: 'conversation_runs_checkpoint',
+    up: (db) => {
+      const cols = new Set(
+        (db.prepare('PRAGMA table_info(conversation_runs)').all() as Array<{ name: string }>).map((c) => c.name)
+      )
+      if (!cols.has('stage')) {
+        db.exec(
+          "ALTER TABLE conversation_runs ADD COLUMN stage TEXT CHECK (stage IN ('preparing','model','tools','approval','final'));"
+        )
+      }
+      if (!cols.has('steps_done')) {
+        db.exec('ALTER TABLE conversation_runs ADD COLUMN steps_done INTEGER;')
+      }
+      if (!cols.has('tool_steps_done')) {
+        db.exec('ALTER TABLE conversation_runs ADD COLUMN tool_steps_done INTEGER;')
+      }
+      if (!cols.has('resume_state')) {
+        db.exec(
+          "ALTER TABLE conversation_runs ADD COLUMN resume_state TEXT CHECK (resume_state IN ('resumable','restart'));"
+        )
+      }
+    }
   }
 ]
 

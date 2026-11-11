@@ -323,6 +323,8 @@ export const ko = {
   'chat.runtime.pendingApproval': '승인 대기',
   'chat.runtime.failed': '지난 실행 실패',
   'chat.runtime.interrupted': '실행이 중단됨',
+  'chat.runtime.interruptedResumable': '실행이 중단됨(계속 가능)',
+  'chat.runtime.interruptedRestart': '실행이 중단됨(도구가 이미 실행되어 처음부터 다시 시작해야 함)',
   'chat.unread': '읽지 않은 답장',
   'chat.tools.filter.all': '전체',
   'chat.tools.filter.tools': '도구 허용',

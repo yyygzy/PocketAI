@@ -1674,6 +1674,19 @@ export type ChatRuntimeState =
   | 'interrupted'
   | 'idle'
 
+/**
+ * 运行阶段（v66 检查点）：回答"进程倒下时正处在哪一步"。
+ * `preparing`=循环还没开始；`model`=正在调模型；`tools`=正在执行工具；`approval`=等人工审批；
+ * `final`=正在生成最终回答（含超步降级那一发）。
+ */
+export type ChatRunStage = 'preparing' | 'model' | 'tools' | 'approval' | 'final'
+
+/**
+ * 重启对账后的续跑判定（v66）：`resumable`=中断点之前没有工具副作用，可从边界继续；
+ * `restart`=已经进过工具步（或没有检查点），只能整轮重来。本版只判定、不自动续跑。
+ */
+export type ChatRunResume = 'resumable' | 'restart'
+
 export interface ChatRuntimeStateEvent {
   /** 与未读事件共用一个通道，靠这个字段区分；运行态事件可以不带（历史形状不变） */
   kind?: 'runtime'
@@ -1689,6 +1702,12 @@ export interface ChatRuntimeStateEvent {
   /** 待确认的审批数（state='pending_approval' 时 >0） */
   pendingApprovals?: number
   errorCode?: string
+  /** v66：当前阶段；老记录/历史事件没有这一项（不编造） */
+  stage?: ChatRunStage
+  /** v66：已完成的步数边界（第几步之前的工作已经落库） */
+  stepsDone?: number
+  /** v66：只有 state='interrupted' 才有——中断后能不能接着跑 */
+  resumeState?: ChatRunResume
 }
 
 /**

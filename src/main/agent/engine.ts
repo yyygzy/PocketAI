@@ -53,7 +53,7 @@ import { injectAttachments, appendTextAttachments, buildImageParts } from '../ch
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
 import { createApproval, toolArgsFingerprint } from './tool-approval'
-import { markRunStarted, markRunFinished } from '../chat/runtime-registry'
+import { markRunStarted, markRunFinished, markRunCheckpoint } from '../chat/runtime-registry'
 import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
 import { redactSecretsInText, redactArgsInText } from '../security/audit-redact'
@@ -352,6 +352,8 @@ interface AgentRunContext {
   finalMessageId: string
   lastAssistantMsgId: string // 上一步 LLM 产出的 assistant 消息 DB id，供 tool 消息 parentId 引用
   recentToolSignatures: string[] // 最近几步工具调用签名，用于检测死循环（相同工具+参数重复调用）
+  /** v66：已经进入过几次工具步。>0 ⇒ 可能已有副作用，重启对账只能判"重来" */
+  toolStepsDone: number
 }
 
 /**
@@ -1561,7 +1563,8 @@ class AgentEngine {
         finalContent: '',
         finalMessageId: '',
         lastAssistantMsgId: '',
-        recentToolSignatures: []
+        recentToolSignatures: [],
+        toolStepsDone: 0
       }
 
       try {
@@ -1575,6 +1578,12 @@ class AgentEngine {
           if (ctx.stepCount >= ctx.maxSteps) {
             if (replanned) break
             replanned = true
+            // v66：重规划也是一次模型调用，检查点先落到"第 N 步之后、正在思考"
+            markRunCheckpoint(conversationId, requestId, {
+              stage: 'model',
+              stepsDone: ctx.stepCount,
+              toolStepsDone: ctx.toolStepsDone
+            })
             this.runReplanStep(ctx)
             continue
           }
@@ -1603,6 +1612,12 @@ class AgentEngine {
           if (overBudget) {
             logger.warn(`[agent] 金额预算触顶（${overBudget.scope} ${overBudget.cost}/${overBudget.limit}），本轮收尾停止`)
             ctx.stepCount++
+            // v66：收尾步也是"正在做的事"——停下时若没这条，会把它误读成"停在模型步"
+            markRunCheckpoint(conversationId, requestId, {
+              stage: 'final',
+              stepsDone: ctx.stepCount,
+              toolStepsDone: ctx.toolStepsDone
+            })
             this.runBudgetStopStep(ctx, ctx.stepCount, overBudget)
             state = 'final'
             break
@@ -1614,14 +1629,33 @@ class AgentEngine {
           if (state === 'llm') {
             // 步与步之间的唯一安全插入点：见 drainInterjections 上方那条消息顺序约束
             this.drainInterjections(ctx)
+            // v66：检查点写在**执行之前**——进程在这步里倒下时，库里记的就是"正在做的事"
+            markRunCheckpoint(conversationId, requestId, {
+              stage: 'model',
+              stepsDone: stepIndex - 1,
+              toolStepsDone: ctx.toolStepsDone
+            })
             state = await this.runLLMStep(ctx, stepIndex)
           } else {
+            // 进工具步就先记一笔：工具可能改文件/发请求，没有幂等时"进过"就等于"可能发生过"
+            ctx.toolStepsDone += 1
+            markRunCheckpoint(conversationId, requestId, {
+              stage: 'tools',
+              stepsDone: stepIndex - 1,
+              toolStepsDone: ctx.toolStepsDone
+            })
             state = await this.runToolsStep(ctx, stepIndex)
           }
         }
 
         // 超步数降级：再调一次 LLM（不带 tools）强制生成最终回答
         if (state !== 'final') {
+          // v66：降级这一步没走循环入口，检查点在这里补一笔
+          markRunCheckpoint(conversationId, requestId, {
+            stage: 'final',
+            stepsDone: ctx.stepCount,
+            toolStepsDone: ctx.toolStepsDone
+          })
           const degradeOk = await this.runDegradeStep(ctx)
           if (!degradeOk) {
             // 降级失败时 runDegradeStep 内已 emit 错误事件并更新会话状态，

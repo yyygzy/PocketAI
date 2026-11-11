@@ -11,7 +11,13 @@
 // running/pending_approval 标成 interrupted。
 // 失败态（failed）不自动过期：侧栏一直显示，直到用户打开该会话（clearFailure）才清除。
 import { createLogger } from '../logger'
-import type { ChatConversationStateEvent, ChatRuntimeState, ChatRuntimeStateEvent } from '../../shared/types'
+import type {
+  ChatConversationStateEvent,
+  ChatRunResume,
+  ChatRunStage,
+  ChatRuntimeState,
+  ChatRuntimeStateEvent
+} from '../../shared/types'
 
 const logger = createLogger('runtime')
 
@@ -26,16 +32,31 @@ export interface RuntimeRunSeed {
   startedAt: number
 }
 
+/** 逐步检查点（v66）：只记"跑到哪"，由引擎在每步入口推进 */
+export interface RuntimeCheckpoint {
+  stage: ChatRunStage
+  stepsDone: number
+  toolStepsDone: number
+}
+
 /** 由 index.ts 注入的落地面（conversation-run.repo 结构上满足它） */
 export interface RuntimePersistence {
   start(run: RuntimeRunSeed): void
+  checkpoint(requestId: string, cp: RuntimeCheckpoint): void
   setStatus(requestId: string, status: 'running' | 'pending_approval'): void
   finish(
     requestId: string,
     status: 'done' | 'failed' | 'aborted' | 'interrupted',
     errorCode?: string | null
   ): void
-  interruptActive(): Array<RuntimeRunSeed & { status: string }>
+  interruptActive(): Array<
+    RuntimeRunSeed & {
+      status: string
+      stage: ChatRunStage | null
+      stepsDone: number | null
+      resumeState: ChatRunResume
+    }
+  >
 }
 
 interface RuntimeEntry {
@@ -47,6 +68,12 @@ interface RuntimeEntry {
   at: number
   pendingApprovals: number
   errorCode?: string
+  /** v66：最近一次检查点（只用于把"跑到哪"随快照/事件带给界面） */
+  stage?: ChatRunStage
+  stepsDone?: number
+  toolStepsDone?: number
+  /** v66：只有 interrupted 才有——重启后的续跑判定 */
+  resumeState?: ChatRunResume
 }
 
 const entries = new Map<string, RuntimeEntry>()
@@ -88,7 +115,10 @@ function toEvent(e: RuntimeEntry): ChatRuntimeStateEvent {
     startedAt: e.startedAt,
     at: e.at,
     pendingApprovals: e.pendingApprovals,
-    errorCode: e.errorCode
+    errorCode: e.errorCode,
+    stage: e.stage,
+    stepsDone: e.stepsDone,
+    resumeState: e.resumeState
   }
 }
 
@@ -119,11 +149,33 @@ export function markRunStarted(args: {
     state: 'running',
     startedAt,
     at: Date.now(),
-    pendingApprovals: 0
+    pendingApprovals: 0,
+    stage: 'preparing',
+    stepsDone: 0,
+    toolStepsDone: 0
   }
   entries.set(args.conversationId, entry)
   persistence?.start({ ...args, startedAt })
   publish(entry)
+}
+
+/**
+ * v66：推进检查点（引擎每步入口 / 普通对话发出模型调用前调用）。
+ * 只更新内存与库里的事实列，不广播——每步都推一条事件会把侧栏刷成流水账,
+ * 新开的窗口由快照拿到最新值即可。与 requestId 不匹配的迟到调用只落库。
+ */
+export function markRunCheckpoint(
+  conversationId: string,
+  requestId: string,
+  cp: RuntimeCheckpoint
+): void {
+  persistence?.checkpoint(requestId, cp)
+  const e = entries.get(conversationId)
+  if (!e || e.requestId !== requestId) return
+  e.stage = cp.stage
+  e.stepsDone = cp.stepsDone
+  e.toolStepsDone = cp.toolStepsDone
+  e.at = Date.now()
 }
 
 /** 审批挂起：待确认计数 +1，状态切 pending_approval */
@@ -135,7 +187,14 @@ export function markApprovalPending(conversationId: string | undefined, requestI
   e.pendingApprovals += 1
   e.state = 'pending_approval'
   e.at = Date.now()
+  // v66：审批挂起也是一种"停在哪"（等人工决策），检查点跟着走
+  e.stage = 'approval'
   persistence?.setStatus(requestId, 'pending_approval')
+  persistence?.checkpoint(requestId, {
+    stage: 'approval',
+    stepsDone: e.stepsDone ?? 0,
+    toolStepsDone: e.toolStepsDone ?? 0
+  })
   publish(e)
 }
 
@@ -147,7 +206,14 @@ export function markApprovalSettled(conversationId: string | undefined, requestI
   if (e.pendingApprovals > 0) e.pendingApprovals -= 1
   if (e.pendingApprovals === 0 && e.state === 'pending_approval') {
     e.state = 'running'
+    // v66：还有审批在排队就仍是 approval；全部裁决完才回到工具步
+    e.stage = 'tools'
     persistence?.setStatus(requestId, 'running')
+    persistence?.checkpoint(requestId, {
+      stage: 'tools',
+      stepsDone: e.stepsDone ?? 0,
+      toolStepsDone: e.toolStepsDone ?? 0
+    })
   }
   e.at = Date.now()
   publish(e)
@@ -210,7 +276,11 @@ export function reconcileInterruptedRuns(): number {
       state: 'interrupted',
       startedAt: r.startedAt,
       at: Date.now(),
-      pendingApprovals: 0
+      pendingApprovals: 0,
+      // 老行没有检查点：保持 undefined/缺省，不编造阶段（判定照旧是 restart）
+      stage: r.stage ?? undefined,
+      stepsDone: r.stepsDone ?? undefined,
+      resumeState: r.resumeState
     })
   }
   if (rows.length > 0) logger.info(`标记中断的运行 ${rows.length} 条`)

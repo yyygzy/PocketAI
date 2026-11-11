@@ -20,10 +20,11 @@ vi.mock('../src/main/logger', () => ({
 }))
 
 import { dbService, LATEST_SCHEMA_VERSION } from '../src/main/db/database'
-import { conversationRunRepo } from '../src/main/db/repositories/conversation-run.repo'
+import { conversationRunRepo, judgeRunResume } from '../src/main/db/repositories/conversation-run.repo'
 import { conversationRepo } from '../src/main/db/repositories/conversation.repo'
 import {
   markRunStarted,
+  markRunCheckpoint,
   markApprovalPending,
   markApprovalSettled,
   markRunFinished,
@@ -53,6 +54,33 @@ function runRow(requestId: string): { status: string; ended_at: number | null } 
   return db()
     .prepare('SELECT status, ended_at FROM conversation_runs WHERE request_id=?')
     .get(requestId) as { status: string; ended_at: number | null } | undefined
+}
+
+/** v66：检查点三列 + 对账判定 */
+function checkpointRow(requestId: string):
+  | {
+      status: string
+      stage: string | null
+      stepsDone: number | null
+      toolStepsDone: number | null
+      resumeState: string | null
+    }
+  | undefined {
+  return db()
+    .prepare(
+      `SELECT status, stage, steps_done AS stepsDone, tool_steps_done AS toolStepsDone,
+              resume_state AS resumeState
+       FROM conversation_runs WHERE request_id=?`
+    )
+    .get(requestId) as
+    | {
+        status: string
+        stage: string | null
+        stepsDone: number | null
+        toolStepsDone: number | null
+        resumeState: string | null
+      }
+    | undefined
 }
 
 function insertConversation(id: string, title: string): void {
@@ -107,7 +135,8 @@ describe('v60 已有数据升级 + 幂等', () => {
     insertConversation('conv-v59-b', '老会话 B')
     // 回到「v59 已跑完、v60 还没跑」的形状
     db().prepare('DROP TABLE conversation_runs').run()
-    db().prepare('DELETE FROM schema_migrations WHERE version=60').run()
+    // v66 也依赖这张表（ADD COLUMN）：一起退回未跑，否则重建出来的新表缺检查点列
+    db().prepare('DELETE FROM schema_migrations WHERE version IN (60, 66)').run()
 
     expect(() => dbService.runMigrations()).not.toThrow()
     expect(tableExists('conversation_runs')).toBe(true)
@@ -206,5 +235,136 @@ describe('运行态注册表（真库落地）', () => {
     expect(db().prepare('SELECT COUNT(*) AS n FROM conversation_runs').get()).toEqual({ n: 1 })
     conversationRepo.delete('conv-run-d')
     expect(db().prepare('SELECT COUNT(*) AS n FROM conversation_runs').get()).toEqual({ n: 0 })
+  })
+})
+
+// v66：运行检查点（可恢复的任务状态第一层）。
+// 只验证"事实 + 判定"：不自动续跑，所以这里断言的是"重启后读得出跑到哪、能不能接着跑"。
+describe('v66 运行检查点', () => {
+  it('迁移补四列并登记 v66；重复执行是空操作', () => {
+    const cols = new Set(
+      (db().prepare('PRAGMA table_info(conversation_runs)').all() as Array<{ name: string }>).map((c) => c.name)
+    )
+    for (const name of ['stage', 'steps_done', 'tool_steps_done', 'resume_state']) {
+      expect(cols.has(name), name).toBe(true)
+    }
+    expect(db().prepare('SELECT name FROM schema_migrations WHERE version=66').get()).toEqual({
+      name: 'conversation_runs_checkpoint'
+    })
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(66)
+
+    // 删掉登记再跑：PRAGMA 守卫让 ADD COLUMN 不重复执行
+    db().prepare('DELETE FROM schema_migrations WHERE version=66').run()
+    expect(() => dbService.runMigrations()).not.toThrow()
+    expect(checkpointRow('nope')).toBeUndefined()
+  })
+
+  it('检查点逐步落库，终态行不被后来的检查点改动', () => {
+    insertConversation('conv-cp-a', '检查点 A')
+    markRunStarted({ conversationId: 'conv-cp-a', requestId: 'req-cp-a', mode: 'agent' })
+    expect(checkpointRow('req-cp-a')).toEqual(
+      expect.objectContaining({ status: 'running', stage: 'preparing', stepsDone: 0, toolStepsDone: 0 })
+    )
+
+    markRunCheckpoint('conv-cp-a', 'req-cp-a', { stage: 'model', stepsDone: 1, toolStepsDone: 0 })
+    expect(checkpointRow('req-cp-a')).toEqual(
+      expect.objectContaining({ stage: 'model', stepsDone: 1, toolStepsDone: 0 })
+    )
+    expect(getRuntimeSnapshot()[0]).toEqual(expect.objectContaining({ stage: 'model', stepsDone: 1 }))
+
+    markRunFinished('conv-cp-a', 'req-cp-a', 'done')
+    markRunCheckpoint('conv-cp-a', 'req-cp-a', { stage: 'tools', stepsDone: 2, toolStepsDone: 1 })
+    expect(checkpointRow('req-cp-a')).toEqual(
+      expect.objectContaining({ status: 'done', stage: 'model', stepsDone: 1, toolStepsDone: 0 })
+    )
+  })
+
+  it('重启对账按检查点判定：没进过工具步=可继续，进过/停在工作里=只能重来', () => {
+    insertConversation('conv-cp-b', '检查点 B')
+    insertConversation('conv-cp-c', '检查点 C')
+    insertConversation('conv-cp-d', '检查点 D')
+    // B：只走到模型步，没碰过工具
+    markRunStarted({ conversationId: 'conv-cp-b', requestId: 'req-cp-b', mode: 'agent' })
+    markRunCheckpoint('conv-cp-b', 'req-cp-b', { stage: 'model', stepsDone: 1, toolStepsDone: 0 })
+    // C：进过工具步（工具可能已经改过东西）
+    markRunStarted({ conversationId: 'conv-cp-c', requestId: 'req-cp-c', mode: 'agent' })
+    markRunCheckpoint('conv-cp-c', 'req-cp-c', { stage: 'model', stepsDone: 2, toolStepsDone: 1 })
+    // D：停在待审批
+    markRunStarted({ conversationId: 'conv-cp-d', requestId: 'req-cp-d', mode: 'agent' })
+    markRunCheckpoint('conv-cp-d', 'req-cp-d', { stage: 'tools', stepsDone: 1, toolStepsDone: 1 })
+    markApprovalPending('conv-cp-d', 'req-cp-d')
+    expect(checkpointRow('req-cp-d')?.stage).toBe('approval')
+    // 模拟重启
+    resetRuntimeRegistryForTest()
+
+    expect(reconcileInterruptedRuns()).toBe(3)
+    expect(checkpointRow('req-cp-b')).toEqual(
+      expect.objectContaining({ status: 'interrupted', stage: 'model', stepsDone: 1, resumeState: 'resumable' })
+    )
+    expect(checkpointRow('req-cp-c')).toEqual(
+      expect.objectContaining({ status: 'interrupted', stage: 'model', resumeState: 'restart' })
+    )
+    expect(checkpointRow('req-cp-d')).toEqual(
+      expect.objectContaining({ status: 'interrupted', stage: 'approval', resumeState: 'restart' })
+    )
+  })
+
+  it('界面上读得到判定：快照带 stage/stepsDone/resumeState，且中断不冒充正常结束', () => {
+    insertConversation('conv-cp-e', '检查点 E')
+    markRunStarted({ conversationId: 'conv-cp-e', requestId: 'req-cp-e', mode: 'chat' })
+    markRunCheckpoint('conv-cp-e', 'req-cp-e', { stage: 'model', stepsDone: 0, toolStepsDone: 0 })
+    resetRuntimeRegistryForTest()
+
+    reconcileInterruptedRuns()
+    expect(getRuntimeSnapshot()).toEqual([
+      expect.objectContaining({
+        conversationId: 'conv-cp-e',
+        state: 'interrupted',
+        stage: 'model',
+        stepsDone: 0,
+        resumeState: 'resumable'
+      })
+    ])
+    // 中断是终态：迟到的 done 不能把它改成"正常结束"
+    conversationRunRepo.finish('req-cp-e', 'done')
+    expect(checkpointRow('req-cp-e')?.status).toBe('interrupted')
+    // 第二次对账命中 0 行，也不会重写已有判定
+    expect(reconcileInterruptedRuns()).toBe(0)
+    expect(checkpointRow('req-cp-e')?.resumeState).toBe('resumable')
+  })
+
+  it('老记录没有检查点：不编造阶段，按 v60 语义判"只能重来"', () => {
+    insertConversation('conv-cp-old', '老运行')
+    // v66 之前的写入形状：只填 v60 的列
+    db()
+      .prepare(
+        `INSERT INTO conversation_runs (request_id, conversation_id, mode, status, started_at)
+         VALUES (?, ?, 'agent', 'running', ?)`
+      )
+      .run('req-cp-old', 'conv-cp-old', 1_700_000_400_000)
+
+    reconcileInterruptedRuns()
+    expect(checkpointRow('req-cp-old')).toEqual({
+      status: 'interrupted',
+      stage: null,
+      stepsDone: null,
+      toolStepsDone: null,
+      resumeState: 'restart'
+    })
+    const evt = getRuntimeSnapshot()[0]!
+    expect(evt.state).toBe('interrupted')
+    expect(evt.stage).toBeUndefined()
+    expect(evt.stepsDone).toBeUndefined()
+    expect(evt.resumeState).toBe('restart')
+  })
+
+  it('判定函数本身：没有任何检查点、或工具步 >0、或停在工作里，都不许判"可继续"', () => {
+    expect(judgeRunResume({ stage: null, toolStepsDone: null })).toBe('restart')
+    expect(judgeRunResume({ stage: 'preparing', toolStepsDone: 0 })).toBe('resumable')
+    expect(judgeRunResume({ stage: 'model', toolStepsDone: 0 })).toBe('resumable')
+    expect(judgeRunResume({ stage: 'model', toolStepsDone: 1 })).toBe('restart')
+    for (const stage of ['tools', 'approval', 'final'] as const) {
+      expect(judgeRunResume({ stage, toolStepsDone: 0 }), stage).toBe('restart')
+    }
   })
 })

@@ -36,7 +36,7 @@ import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
 const logger = createLogger('chat-service')
 import { withProviderLimit } from './concurrency'
 import { agentEngine } from '../agent/engine'
-import { markRunStarted, markRunFinished } from './runtime-registry'
+import { markRunStarted, markRunFinished, markRunCheckpoint } from './runtime-registry'
 import { injectAttachments, appendTextAttachments, buildImageParts } from './context-attachments'
 import type { AdapterChatMessage } from '../providers/types'
 import type { MessageRecord } from '../../shared/types'
@@ -319,6 +319,8 @@ class ChatService {
       )
 
       // 5. 并发执行（同 Provider 自动限流）
+      // v66：普通对话没有多步，进模型调用前记一次检查点（停在"模型调用中"⇒ 无副作用）
+      markRunCheckpoint(conversationId, requestId, { stage: 'model', stepsDone: 0, toolStepsDone: 0 })
       const results = await Promise.allSettled(
         targets.map((target, index) =>
           this.runTarget({
@@ -399,6 +401,8 @@ class ChatService {
       markRunStarted({ conversationId, requestId, mode: 'chat' })
 
       // 并发执行
+      // v66：同上——发出模型调用前落检查点
+      markRunCheckpoint(conversationId, requestId, { stage: 'model', stepsDone: 0, toolStepsDone: 0 })
       const results = await Promise.allSettled(
         targets.map((target, index) =>
           this.runTarget({
@@ -477,6 +481,8 @@ class ChatService {
 
       markRunStarted({ conversationId, requestId, mode: 'chat' })
 
+      // v66：发出模型调用前落检查点
+      markRunCheckpoint(conversationId, requestId, { stage: 'model', stepsDone: 0, toolStepsDone: 0 })
       const results = await Promise.allSettled(
         targets.map((target, index) =>
           this.runTarget({

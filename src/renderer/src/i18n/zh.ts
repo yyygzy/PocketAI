@@ -338,6 +338,8 @@ export const zh = {
   'chat.runtime.pendingApproval': '待确认',
   'chat.runtime.failed': '上次运行失败',
   'chat.runtime.interrupted': '运行已中断',
+  'chat.runtime.interruptedResumable': '运行已中断（可继续）',
+  'chat.runtime.interruptedRestart': '运行已中断（有工具已执行，需重新开始）',
   'chat.unread': '有未读回复',
   'chat.tools.filter.all': '全部',
   'chat.tools.filter.tools': '允许工具',

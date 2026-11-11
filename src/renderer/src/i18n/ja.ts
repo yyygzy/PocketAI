@@ -323,6 +323,8 @@ export const ja = {
   'chat.runtime.pendingApproval': '承認待ち',
   'chat.runtime.failed': '前回の実行に失敗',
   'chat.runtime.interrupted': '実行が中断されました',
+  'chat.runtime.interruptedResumable': '実行が中断されました（続行可能）',
+  'chat.runtime.interruptedRestart': '実行が中断されました（ツール実行済みのため最初からやり直しが必要）',
   'chat.unread': '未読の返信',
   'chat.tools.filter.all': 'すべて',
   'chat.tools.filter.tools': 'ツール許可',
