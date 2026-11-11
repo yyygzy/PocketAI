@@ -214,10 +214,13 @@ const FAIL_CLOSED = SITES.filter((s) => !s.successWrites)
  *   读不到就保持现状，不把名字/导出署名演成"未知助手"）⇒ 10。
  * §429：能力中心挂载读服务商清单（成功支 setProviders 上屏、失败支直接 return，不预选假服务商）＋
  *   ChatModule :438 那处旧账实测多出一处（`git blame` 指向 6c58cb9，只改登记不改代码）⇒ 12；
- * P4 批次 2 删掉 Agent 壳后，随 `useAgentChat`／`useProviderData` 一起减去 3 条 ⇒ **现数 9**。
- * 9 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
+ * P4 批次 2 删掉 Agent 壳后，随 `useAgentChat`／`useProviderData` 一起减去 3 条 ⇒ 9；
+ * 2026-11-11 全量闸门复核：`6a4c590`（助手市场详情页展示关联技能）带来的
+ *   AssistantMarket :91（`if (hasIpcFailed(v)) return`）实测多出一处 ⇒ **现数 10**。
+ *   判为合法（"少做一件事"）并逐文件登记，判语见下面那份表；不改产品码。
+ * 10 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
  */
-const JUMP_LIE_CAP = 9
+const JUMP_LIE_CAP = 10
 
 const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 首启向导／换电脑检测那一发：读不到就**不弹**（不会弹一个假向导），屏上没有假数字。
@@ -247,7 +250,14 @@ const JUMP_LIE_PER_FILE: Record<string, number> = {
   // （服务商只用于助手编辑器的默认项，读不到就不预选、不摆假服务商）⇒ 与"少做一件事"同档，登记。
   'src/renderer/src/modules/skills/CapabilityCenter.tsx': 1,
   // 深链解析（deep-link.ts）：成功支写状态上屏，失败支直接 return——同"少做一件事"档，登记。
-  'src/renderer/src/utils/deep-link.ts': 1
+  'src/renderer/src/utils/deep-link.ts': 1,
+  // 助手市场详情页「关联技能」（`6a4c590` 引入，当时没进本面登记 ⇒ 2026-11-11 全量复核补登，不改产品码）：
+  // 成功支 `setSkills(v)` 把图标+名称那一段摆上屏，失败支（失败对象／reject）停在 `null`。
+  // 判为**合法**而不是"失败被瞒下"：`skills` 是三态（`null`＝不知道／`[]`＝没有），失败支停在 null
+  // ⇒ 「关联技能」整块不渲染，屏上不会出现"这个助手没有技能"那种假空态；而且这一块只是装饰性的
+  // 图标＋名称 join，没有操作入口，离开详情再进来会重新读一次（`skillsRequested` 按 detailId 复位）。
+  // 与 CapabilityCenter「读不到不预选服务商」同一档：do nothing 是安全方向，不摆假数据。
+  'src/renderer/src/modules/chat/AssistantMarket.tsx': 1
 }
 
 /** 正向对照：这些文件必须**真的出现在名单里**（防"扫描器恒返回空"这种假绿，§250 同一条） */
@@ -314,7 +324,7 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     expect(LIE.length + FAIL_CLOSED.length, '总数＝判过失败面且只跳的那批').toBe(SITES.length)
   })
 
-  it('等式 ratchet：目标桶 9 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2，P4 批次 2 删 Agent 壳−3）', () => {
+  it('等式 ratchet：目标桶 10 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2，P4 批次 2 删 Agent 壳−3，6a4c590＋1）', () => {
     expect(LIE.length, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(JUMP_LIE_CAP)
   })
 

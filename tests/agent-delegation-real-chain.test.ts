@@ -236,7 +236,7 @@ function freshParent(): string {
   return conversationRepo.create({ assistantId, title: '父会话' }).id
 }
 
-function runParent(conversationId: string, requestId: string): Promise<AgentDoneEvent | null> {
+function runParent(conversationId: string, requestId: string, content: string = PARENT_TASK): Promise<AgentDoneEvent | null> {
   let done: AgentDoneEvent | null = null
   // 父 run 发到窗口的那批 step 事件（子 run 的走 childEmit，被吞掉 ⇒ 这里只可能收到父的）
   stepEvents.length = 0
@@ -250,7 +250,7 @@ function runParent(conversationId: string, requestId: string): Promise<AgentDone
         requestId,
         conversationId,
         assistantId,
-        content: PARENT_TASK,
+        content,
         targets: [{ providerId, model: MODEL }],
         agentMode: true
       },
@@ -387,7 +387,12 @@ describe('委派真链（开关打开后）', () => {
 
   it('父派子做：子清单 ⊆ 父清单、不含 delegate_task、不含 confirm 类；子会话看不到父的上下文', async () => {
     const conv = freshParent()
-    const done = await runParent(conv, 'req-on-1')
+    // 工具面治理后父面按能力域裁剪：这条用例的对照组要「父面里真有 confirm 类工具」，
+    // 所以这一轮的任务文本点名「会议日程」把 schedule 组装进来（calendar_read＝confirm）。
+    // 这一格只有 schedule 组可用：fs 三件套要配了工作目录才注册，本夹具没配。
+    // 分组规则不改：裁的是"本轮发不发 schema"、不碰授权与审批；confirm 类不需要常驻
+    // （藏起来只是让模型这一轮看不到，真调用仍会被闸门拒，而不是悄悄放行或弹一个不会来的确认框）。
+    const done = await runParent(conv, 'req-on-1', `${PARENT_TASK}（附会议日程）`)
     expect(done).not.toBeNull()
 
     const parentReqs = reqs.filter((r) => !r.isChild && !r.isMeta)
