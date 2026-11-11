@@ -115,3 +115,61 @@ describe('rerankChunks 的降级回调', () => {
     expect(reasons).toEqual([])
   })
 })
+
+// 结构化契约层的接线证据：严格 schema 失败后只修复一次，修复仍失败才退回旧兼容解析；
+// 旧解析也拿不到非零分时才真正放弃重排。
+describe('rerankChunks 的结构化契约接线', () => {
+  const chunks: RetrievedChunk[] = [
+    { chunkId: 'a', docId: 'd1', kbId: 'k1', seq: 0, docTitle: 'T1', content: '甲', score: 0.1 },
+    { chunkId: 'b', docId: 'd2', kbId: 'k1', seq: 1, docTitle: 'T2', content: '乙', score: 0.2 }
+  ]
+
+  /** 按顺序返回响应；第 N 次之后一直重复最后一条。返回当前调用次数。 */
+  function queueAdapter(responses: Array<string | Error>): () => number {
+    let index = 0
+    H.adapter = {
+      streamChat: async () => {
+        const next = responses[index] ?? responses[responses.length - 1]
+        index++
+        if (next instanceof Error) throw next
+        return { content: next ?? '' }
+      }
+    }
+    return () => index
+  }
+
+  it('首轮不合规、修复轮给出合法 JSON ⇒ 用第二份打分重排，不报降级', async () => {
+    const calls = queueAdapter([
+      '我觉得都挺相关的',
+      '[{"id":1,"score":0.2},{"id":2,"score":0.9}]'
+    ])
+    const reasons: string[] = []
+    const out = await rerankChunks('q', chunks, 'p1', 'm1', (r) => reasons.push(r))
+
+    expect(out.map((c) => c.chunkId)).toEqual(['b', 'a'])
+    expect(reasons).toEqual([])
+    expect(calls()).toBe(2)
+  })
+
+  it('严格契约失败但旧解析能救（多余字段）⇒ 保留重排结果，并报出不合规路径', async () => {
+    const output = '[{"id":1,"score":0.1,"extra":true},{"id":2,"score":0.9}]'
+    const calls = queueAdapter([output, output])
+    const reasons: string[] = []
+    const out = await rerankChunks('q', chunks, 'p1', 'm1', (r) => reasons.push(r))
+
+    expect(out.map((c) => c.chunkId)).toEqual(['b', 'a'])
+    expect(calls()).toBe(2)
+    expect(reasons[0]).toContain('兼容解析')
+    expect(reasons[0]).toContain('[0].extra')
+  })
+
+  it('严格契约失败且旧解析也拿不到非零分 ⇒ 原序退回，保留原降级文案', async () => {
+    queueAdapter(['我觉得都挺相关的', '我觉得都挺相关的'])
+    const reasons: string[] = []
+    const out = await rerankChunks('q', chunks, 'p1', 'm1', (r) => reasons.push(r))
+
+    expect(out.map((c) => c.chunkId)).toEqual(['a', 'b'])
+    expect(reasons[0]).toContain('解析不出任何非零分')
+    expect(reasons[0]).toContain('[BAD_OUTPUT]')
+  })
+})

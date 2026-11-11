@@ -4,6 +4,7 @@ import {
   PLACEHOLDER_TITLE,
   TITLE_INPUT_MAX,
   buildTitlePrompt,
+  buildTitleRepairPrompt,
   fallbackTitle,
   sanitizeTitle
 } from '../src/main/conversation/title-prompt'
@@ -33,6 +34,20 @@ describe('buildTitlePrompt — 标题生成 prompt', () => {
     const p = buildTitlePrompt('字'.repeat(TITLE_INPUT_MAX + 100))
     expect(p.includes('字'.repeat(TITLE_INPUT_MAX + 1))).toBe(false)
     expect(p.endsWith('字'.repeat(TITLE_INPUT_MAX))).toBe(true)
+  })
+  it('要求固定 JSON 对象格式', () => {
+    const p = buildTitlePrompt('你好')
+    expect(p).toContain('{"title":"标题"}')
+    expect(p).toContain('只输出这个 JSON 对象')
+  })
+})
+
+describe('buildTitleRepairPrompt — 修复轮 prompt', () => {
+  it('带上问题定位并再次要求 JSON 对象', () => {
+    const p = buildTitleRepairPrompt('[BAD_OUTPUT] title 缺少必填字段')
+    expect(p).toContain('[BAD_OUTPUT]')
+    expect(p).toContain('title 缺少必填字段')
+    expect(p).toContain('{"title":"简短标题"}')
   })
 })
 

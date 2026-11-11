@@ -5,11 +5,14 @@
 // - 开关开启时先同步落「截断标题」保证列表立即可读，再后台升级为模型标题，成功后广播事件
 // - 任何失败（无适配器/网络/超时/空返回）静默保留截断标题，绝不阻断对话
 import { IPC } from '../../shared/types'
+import { z } from 'zod'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { providerManager } from '../providers/manager'
+import type { AdapterChatMessage } from '../providers/types'
 import { broadcast } from '../ipc/broadcast'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
+import { generateStructured, describeStructuredError } from '../agent/structured-output'
 import { isSmartTitleEnabled } from './title-config'
 import { runInSlotKind } from '../providers/local-slot'
 import {
@@ -17,11 +20,18 @@ import {
   TITLE_MAX_TOKENS,
   TITLE_TIMEOUT_MS,
   buildTitlePrompt,
+  buildTitleRepairPrompt,
   fallbackTitle,
   sanitizeTitle
 } from './title-prompt'
 
 const log = createLogger('title-gen')
+
+/**
+ * 标题只消费 title 一个字段：未声明字段直接忽略（模型多说两句不判失败）。
+ * title 缺失/非字符串/空白才算不合规，交由修复轮处理。
+ */
+const titleOutputSchema = z.object({ title: z.string().trim().min(1) })
 
 export interface FirstMessageTitleArgs {
   conversationId: string
@@ -61,17 +71,41 @@ export function runFirstMessageTitle(args: FirstMessageTitleArgs): void {
 async function upgradeTitleWithLlm(args: FirstMessageTitleArgs, fallback: string): Promise<void> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
+  let lastRaw = ''
   try {
     const adapter = providerManager.getAdapter(args.providerId)
     // 标题升级是后台任务（调用方 void 触发、失败静默）⇒ 让路给前台对话，不抢小卡的显存
-    const result = await runInSlotKind('background', () =>
-      adapter.streamChat(
-        [{ role: 'user', content: buildTitlePrompt(args.userContent) }],
-        { model: args.model, signal: controller.signal, maxTokens: TITLE_MAX_TOKENS, temperature: 0.3 },
-        { onDelta: () => {} }
-      )
-    )
-    const title = sanitizeTitle(result.content ?? '', fallback)
+    const result = await generateStructured({
+      schema: titleOutputSchema,
+      generate: async (repair) => {
+        const messages: AdapterChatMessage[] = [
+          { role: 'user', content: buildTitlePrompt(args.userContent) }
+        ]
+        if (repair) {
+          // 空响应不占一条空的 assistant 消息（部分服务商不接受空 content）
+          if (repair.raw) messages.push({ role: 'assistant', content: repair.raw })
+          messages.push({ role: 'user', content: buildTitleRepairPrompt(describeStructuredError(repair)) })
+        }
+        const response = await runInSlotKind('background', () =>
+          adapter.streamChat(
+            messages,
+            { model: args.model, signal: controller.signal, maxTokens: TITLE_MAX_TOKENS, temperature: 0.3 },
+            { onDelta: () => {} }
+          )
+        )
+        lastRaw = response.content ?? ''
+        return lastRaw
+      }
+    })
+
+    // 结构化成功 ⇒ 用 title 字段；模型仍按旧习惯返回纯文本 ⇒ 保留原来的清洗降级；
+    // JSON 能解析但 title 缺失/非法 ⇒ 不把坏 JSON 当标题，保留截断标题。
+    const title = result.ok
+      ? sanitizeTitle(result.data.title, fallback)
+      : result.error.stage === 'UNPARSEABLE'
+        ? sanitizeTitle(lastRaw, fallback)
+        : fallback
+
     if (title && title !== fallback) {
       conversationRepo.rename(args.conversationId, title)
       broadcast(IPC.CONVERSATION_TITLE_EVENT, { conversationId: args.conversationId, title })
