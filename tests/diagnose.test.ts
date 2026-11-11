@@ -3,7 +3,7 @@
 // 覆盖 src/main/steward/diagnose.ts 的核心路径：
 // - levelScore / scoreOf 纯函数评分
 // - runAudit：加密 / 锁屏 / 自动锁 / 完整性 / 备份 / 便携风险 6 项
-// - runDiagnose：完整性 / 孤儿消息 / 孤儿向量块 / 迁移版本 / 目录可写 / DB 文件 / 磁盘 / Provider 8 项
+// - runDiagnose：完整性 / 孤儿消息 / 孤儿向量块 / 迁移版本 / 目录可写 / DB 文件 / 磁盘 / Provider / 备份验证 9 项
 // - safeItem 容错：单项异常返回 danger 不阻塞整份报告
 //
 // 策略：
@@ -39,6 +39,10 @@ const mocks = vi.hoisted(() => ({
   hwError: null as Error | null,
   // Provider
   providers: [] as ProviderRecord[],
+  // 备份验证三态（data-health 的快照读取）
+  verifyLastRunAt: null as number | null,
+  verifyLastStatus: null as 'passed' | 'failed' | 'skipped' | null,
+  verifyError: null as Error | null,
   // fs
   dbFileExists: true,
   writeOk: true,
@@ -60,6 +64,9 @@ const mocks = vi.hoisted(() => ({
     this.hwDiskFreeSpace = null
     this.hwError = null
     this.providers = []
+    this.verifyLastRunAt = null
+    this.verifyLastStatus = null
+    this.verifyError = null
     this.dbFileExists = true
     this.writeOk = true
   }
@@ -122,6 +129,19 @@ vi.mock('../src/main/backup/backup-service', () => ({
 
 vi.mock('../src/main/backup/backup-scheduler', () => ({
   getBackupSchedule: () => mocks.schedule
+}))
+
+// 备份验证结论走 data-health 的同一份快照读取（不另抄键名）；这里只提供那一颗函数，
+// 免把 data-health 整条目录遍历/知识库依赖链拉进本用例。
+vi.mock('../src/main/steward/data-health', () => ({
+  getBackupVerifySnapshot: () => {
+    if (mocks.verifyError) throw mocks.verifyError
+    return {
+      lastRunAt: mocks.verifyLastRunAt,
+      lastOk: mocks.verifyLastStatus === null ? null : mocks.verifyLastStatus === 'passed',
+      lastStatus: mocks.verifyLastStatus
+    }
+  }
 }))
 
 vi.mock('../src/main/steward/hardware', () => ({
@@ -493,6 +513,41 @@ describe('runDiagnose 故障诊断', () => {
     const item = findItem(runDiagnose().items, 'providers')
     expect(item?.level).toBe('warn')
     expect(item?.detail).toContain('API Key')
+  })
+
+  it('backup-verify：未运行 / 从未通过 / N 天前通过 三态互斥', () => {
+    const DAY = 24 * 3600 * 1000
+    mocks.verifyLastRunAt = null
+    mocks.verifyLastStatus = null
+    let item = findItem(runDiagnose().items, 'backup-verify')
+    expect(item?.level).toBe('warn')
+    expect(item?.detail).toBe('未运行')
+
+    // 「没跑成」（skipped）与 failed 都不许被画成通过
+    mocks.verifyLastRunAt = Date.now() - 3 * DAY
+    mocks.verifyLastStatus = 'skipped'
+    item = findItem(runDiagnose().items, 'backup-verify')
+    expect(item?.level).toBe('warn')
+    expect(item?.detail).toBe('从未通过')
+
+    mocks.verifyLastStatus = 'failed'
+    item = findItem(runDiagnose().items, 'backup-verify')
+    expect(item?.level).toBe('warn')
+    expect(item?.detail).toBe('从未通过')
+
+    mocks.verifyLastStatus = 'passed'
+    item = findItem(runDiagnose().items, 'backup-verify')
+    expect(item?.level).toBe('ok')
+    expect(item?.detail).toBe('3 天前通过')
+  })
+
+  it('backup-verify：快照读取抛错 → safeItem 一句原因（danger），不冒充未运行/正常', () => {
+    mocks.verifyError = new Error('config unreadable')
+    const item = findItem(runDiagnose().items, 'backup-verify')
+    expect(item?.level).toBe('danger')
+    expect(item?.detail).toContain('检测异常')
+    expect(item?.detail).toContain('config unreadable')
+    expect(item?.detail).not.toBe('未运行')
   })
 
   it('DB 查询全程抛错：涉 DB 各项 safeItem 容错返回 danger', () => {

@@ -56,6 +56,8 @@ export const StewardModule: React.FC = () => {
   // §377：「VACUUM 没跑成」以前被折成「回收 0 字节」的成功数字；换成带状态的结果，两张脸各按状态取
   const [vacuumResult, setVacuumResult] = useState<VacuumOutcome | null>(null)
   const [cleaning, setCleaning] = useState(false)
+  /** 「立即验证」备份校验进行中（那颗键要禁用，防重复点） */
+  const [verifyingBackup, setVerifyingBackup] = useState(false)
   /** 最近一次「手动重新检测」完成时间；null 表示展示的是启动时自动检测的快照 */
   const [manualCheckedAt, setManualCheckedAt] = useState<number | null>(null)
   /** 检测请求进行中（手动重新检测较慢，需禁用按钮） */
@@ -228,6 +230,31 @@ export const StewardModule: React.FC = () => {
       setDiagnose(r.data)
     } finally {
       setChecking(null)
+    }
+  }
+
+  // 故障诊断卡「备份验证」那颗「立即验证」：主进程真跑一次备份完整性校验。
+  // 回执三态——跳过（没配 WebDAV／云端零份／时间判不出）不许说成"通过"，失败要把原因带出来。
+  // 回执落地后重跑诊断，那一行不能停在旧的三态上。
+  const handleVerifyBackup = async () => {
+    setVerifyingBackup(true)
+    try {
+      const r = await window.pocketai.verifyBackupNow()
+      if (!r.ok || !r.status) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      const reason = r.reason || t('common.unknownError')
+      if (r.status === 'passed') {
+        toast.success(t('steward.verifyBackupPassed'))
+      } else if (r.status === 'skipped') {
+        toast.warning(t('steward.verifyBackupSkipped', { reason }))
+      } else {
+        toast.error(t('steward.verifyBackupFailed', { reason }))
+      }
+      await handleDiagnose()
+    } finally {
+      setVerifyingBackup(false)
     }
   }
 
@@ -724,6 +751,15 @@ export const StewardModule: React.FC = () => {
                 </div>
                 {it.fix && (
                   <p className="text-[11px] text-[var(--color-text-muted)] ml-6 mt-0.5">🔧 {it.fix}</p>
+                )}
+                {it.id === 'backup-verify' && (
+                  <button
+                    onClick={handleVerifyBackup}
+                    disabled={verifyingBackup || checking !== null}
+                    className="ml-6 mt-1 px-2 py-1 text-[11px] rounded border border-[var(--color-border)] text-[var(--color-text)] disabled:opacity-50 hover:bg-[var(--color-hover-overlay)] transition-colors"
+                  >
+                    {verifyingBackup ? t('steward.verifyingBackup') : t('steward.verifyBackupNow')}
+                  </button>
                 )}
               </div>
             ))}

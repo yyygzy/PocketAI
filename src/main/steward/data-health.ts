@@ -196,6 +196,35 @@ function readLastOk(key: string): boolean | null {
   }
 }
 
+export type BackupVerifySnapshotStatus = 'passed' | 'failed' | 'skipped' | null
+
+export interface BackupVerifySnapshot {
+  lastRunAt: number | null
+  lastOk: boolean | null
+  /** 真三态：last_ok 只说明「这一发没抛错」，跳过的也记 1，不能拿来声称「通过」 */
+  lastStatus: BackupVerifySnapshotStatus
+}
+
+/**
+ * 备份校验的三态快照（管家故障诊断那一条结论与数据健康卡共用这一读，不另抄一份键名）。
+ * 旧数据没有 `last_status` 时按 `last_ok` 回退——那是升级前唯一能拿到的口径。
+ */
+export function getBackupVerifySnapshot(): BackupVerifySnapshot {
+  const lastRunAt = readLastRun('task.backup_verify.last_run_at')
+  const lastOk = readLastOk('task.backup_verify.last_ok')
+  let lastStatus: BackupVerifySnapshotStatus = null
+  try {
+    const raw = appConfigRepo.get('task.backup_verify.last_status')
+    if (raw === 'passed' || raw === 'failed' || raw === 'skipped') lastStatus = raw
+  } catch {
+    lastStatus = null
+  }
+  if (lastStatus === null) {
+    lastStatus = lastOk === true ? 'passed' : lastOk === false ? 'failed' : null
+  }
+  return { lastRunAt, lastOk, lastStatus }
+}
+
 /** 聚合数据健康度报告（DB 未解锁时 kb/backup/tasks 探测会抛错，由 safeHandle 兜底）
  *  @param opts.refresh 面板上那颗「刷新」按钮：只影响浏览器缓存那一格是否重算（V4-Iter-177） */
 export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealthReport {
@@ -262,11 +291,12 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
   }
 
   // 4. 内置维护任务上次运行时间
+  const verify = getBackupVerifySnapshot()
   const tasks = {
     kbHealthCheckLastRunAt: readLastRun('task.kb_health_check.last_run_at'),
     kbHealthCheckLastOk: readLastOk('task.kb_health_check.last_ok'),
-    backupVerifyLastRunAt: readLastRun('task.backup_verify.last_run_at'),
-    backupVerifyLastOk: readLastOk('task.backup_verify.last_ok')
+    backupVerifyLastRunAt: verify.lastRunAt,
+    backupVerifyLastOk: verify.lastOk
   }
 
   return {

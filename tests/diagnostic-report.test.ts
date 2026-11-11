@@ -156,7 +156,8 @@ const audit: AuditResult = {
 const diagnose: DiagnoseResult = {
   items: [
     { id: 'db', label: '数据库', level: 'ok', detail: '正常' },
-    { id: 'orphan', label: '孤儿向量块', level: 'warn', detail: '2 个', fix: '执行安全清理' }
+    { id: 'orphan', label: '孤儿向量块', level: 'warn', detail: '2 个', fix: '执行安全清理' },
+    { id: 'backup-verify', label: '备份验证', level: 'warn', detail: '从未通过' }
   ]
 }
 
@@ -276,6 +277,8 @@ describe('buildDiagnosticReport — 全量数据', () => {
     expect(report).toContain('⑤ Troubleshooting')
     expect(report).toContain('⚠️ 孤儿向量块 — 2 个')
     expect(report).toContain('Fix: 执行安全清理')
+    // 第二段新增：备份验证三态结论（只加这一条，章节号与顺序不变）
+    expect(report).toContain('⚠️ 备份验证 — 从未通过')
   })
 
   it('五段顺序固定', () => {

@@ -1,7 +1,7 @@
 // 平台管家 · 安全检测（audit）与故障诊断（diagnose）
 //
 // audit：偏安全姿态 —— 加密 / 锁屏 / 备份新鲜度 / DB 完整性 / 便携物理风险，输出 0-100 评分
-// diagnose：偏可运行性 —— 完整性 / 孤儿数据 / 迁移版本 / 目录可写 / 磁盘空间 / Provider 配置
+// diagnose：偏可运行性 —— 完整性 / 孤儿数据 / 迁移版本 / 目录可写 / 磁盘空间 / Provider 配置 / 备份验证
 //
 // 所有探测逐项 try/catch：单项失败不影响整份报告。
 
@@ -22,6 +22,7 @@ import { readWebDAVConfig } from '../backup/backup-service'
 import { errMsg } from '../error'
 import { getBackupSchedule } from '../backup/backup-scheduler'
 import { getHardwareInfo } from './hardware'
+import { getBackupVerifySnapshot } from './data-health'
 import { DATA_DIR, DB_PATH } from '../portable'
 
 const DAY_MS = 24 * 3600 * 1000
@@ -325,6 +326,21 @@ export function runDiagnose(): DiagnoseResult {
     }
     const enabledCount = providers.filter((p) => p.enabled).length
     return { level: 'ok', detail: `已配置 ${providers.length} 个提供商（${enabledCount} 个启用），配置完整` }
+  }))
+
+  // 9. 备份验证结论：三态互斥——未运行／从未通过／N 天前通过。
+  // `last_ok` 只记「这一发没抛错」（跳过的分支也是 1），所以「通过」只认 last_status === 'passed'；
+  // 跳过（没配 WebDAV／云端零份／时间判不出）与失败一起落在「从未通过」，绝不许画成「正常」。
+  items.push(safeItem('backup-verify', '备份验证', () => {
+    const s = getBackupVerifySnapshot()
+    if (s.lastRunAt === null) {
+      return { level: 'warn', detail: '未运行' }
+    }
+    if (s.lastStatus === 'passed') {
+      const days = Math.floor((Date.now() - s.lastRunAt) / DAY_MS)
+      return { level: 'ok', detail: days <= 0 ? '今天通过' : `${days} 天前通过` }
+    }
+    return { level: 'warn', detail: '从未通过' }
   }))
 
   return { items }

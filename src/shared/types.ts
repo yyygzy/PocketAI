@@ -3013,6 +3013,7 @@ export const IPC = {
   STEWARD_MODEL_RECOMMEND: 'steward:model-recommend', // 按硬件画像推荐本地模型
   STEWARD_AUDIT: 'steward:audit', // 安全检测
   STEWARD_DIAGNOSE: 'steward:diagnose', // 故障诊断
+  STEWARD_VERIFY_BACKUP: 'steward:verify-backup', // 立即跑一次备份完整性校验（回三态）
   STEWARD_EXPORT_REPORT: 'steward:export-report', // 诊断报告导出为文本文件
 
   // ---------- 文件模块 ----------

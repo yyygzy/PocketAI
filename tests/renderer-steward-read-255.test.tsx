@@ -84,7 +84,7 @@ describe('① 模型推荐那块：读不到 ≠ 这台机器不该有', () => {
   })
 })
 
-describe('② 两颗用户按下的键：失败得当场说一句', () => {
+describe('② 三颗用户按下的键：失败得当场说一句', () => {
   it('点「开始安全检测」而通道回 {ok:false} ⇒ toast 里是那条原因，不是"点了没反应"', async () => {
     stubPocketai(baseStubs({ recommendModels: () => ({ ok: true, data: RECO }), runAudit: () => ({ ok: false, error: 'AUDIT_BUSY:体检正在进行' }) }))
     mountWithProviders(<StewardModule />)
@@ -114,6 +114,23 @@ describe('② 两颗用户按下的键：失败得当场说一句', () => {
     fireEvent.click(screen.getByText(L('steward.startDiagnose')))
     await waitFor(() => expect(toasts().join(' ')).toContain('DIAG_IO:读不到诊断项'))
   })
+
+  it('点「备份验证」卡片里的「立即验证」：通道失败同样进 toast', async () => {
+    stubPocketai(baseStubs({
+      recommendModels: () => ({ ok: true, data: RECO }),
+      runDiagnose: () => ({
+        ok: true,
+        data: { items: [{ id: 'backup-verify', label: '备份验证', level: 'warn', detail: '未运行' }] }
+      }),
+      verifyBackupNow: () => ({ ok: false, error: 'VERIFY_IO:下载失败' })
+    }))
+    mountWithProviders(<StewardModule />)
+    await waitFor(() => expect(screen.queryByText('PROBE-PICK:latest')).not.toBeNull())
+    fireEvent.click(screen.getByText(L('steward.startDiagnose')))
+    await waitFor(() => expect(screen.queryByText(L('steward.verifyBackupNow'))).not.toBeNull())
+    fireEvent.click(screen.getByText(L('steward.verifyBackupNow')))
+    await waitFor(() => expect(toasts().join(' ')).toContain('VERIFY_IO:下载失败'))
+  })
 })
 
 describe('③ 接线计数：旧写法只剩那一条，且它头上必须还留着设计内的理由', () => {
@@ -126,7 +143,7 @@ describe('③ 接线计数：旧写法只剩那一条，且它头上必须还留
     expect(count(/setRecErr\(ipcFailText\(r, t\('common\.unknownError'\)\)\)/g), '推荐：resolve 面').toBe(1)
     expect(count(/setRecErr\(errText\(e, t\('common\.unknownError'\)\)\)/g), '推荐：reject 面').toBe(1)
     expect(count(/!recommendation && recErr && \(/g), '推荐：读不到时的渲染分支').toBe(1)
-    expect(count(/toast\.error\(ipcFailText\(r, t\('common\.unknownError'\)\)\)/g), '两颗按键的失败都走 toast').toBe(2)
+    expect(count(/toast\.error\(ipcFailText\(r, t\('common\.unknownError'\)\)\)/g), '三颗按键的失败都走 toast').toBe(3)
     expect(count(/setAudit\(r\.data\)/g), '体检成功分支还在').toBe(1)
     expect(count(/setDiagnose\(r\.data\)/g), '诊断成功分支还在（handler 一处＋设计内那处）').toBe(2)
   })

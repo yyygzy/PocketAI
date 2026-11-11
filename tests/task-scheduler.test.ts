@@ -12,7 +12,7 @@
 // - vi.mock appConfigRepo（Map 模拟 get/set）/ kbDocRepo / backup-service / webdav-client / logger
 // - 调度周期用 fake timers 推进验证
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { tick, initTaskScheduler, stopTaskScheduler } from '../src/main/backup/task-scheduler'
+import { tick, initTaskScheduler, stopTaskScheduler, verifyBackupNow } from '../src/main/backup/task-scheduler'
 
 // ---------- mock 工厂 ----------
 
@@ -349,6 +349,76 @@ describe('backup_verify 备份校验', () => {
     expect(mocks.warns.some((w) => w.includes('本轮不校验'))).toBe(true)
     expect(mocks.warns.some((w) => w.includes('备份校验通过'))).toBe(false)
     expect(Number(mocks.config.get('task.backup_verify.last_run_at'))).toBeGreaterThan(0)
+  })
+})
+
+// ---------- backup_verify 三态（管家故障诊断那一条结论的判据） ----------
+
+describe('backup_verify last_status 三态', () => {
+  it('校验真的走完 → last_status=passed', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
+    await tick()
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('passed')
+    expect(mocks.config.get('task.backup_verify.last_ok')).toBe('1')
+  })
+
+  it('没配 WebDAV 跳过 → last_status=skipped（last_ok 仍是 1，但绝不能拿它声称通过）', async () => {
+    mocks.webdavCfg = null
+    await tick()
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('skipped')
+    expect(mocks.config.get('task.backup_verify.last_ok')).toBe('1')
+  })
+
+  it('一份都判不出时间跳过 → skipped', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [unknownTime('pocketai-backup.zip')]
+    await tick()
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('skipped')
+  })
+
+  it('抛错 → failed 且 last_ok=0', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [dated('pocketai-inc-20260927.json', 27)]
+    mocks.downloadRaw = Buffer.from(JSON.stringify({ kind: 'inc' })) // 缺 db.sha256
+    await verifyBackupNow()
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('failed')
+    expect(mocks.config.get('task.backup_verify.last_ok')).toBe('0')
+  })
+
+  it('知识库健康检查不接这颗三态（不许留下 kb 的 last_status 死键）', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
+    await tick()
+    expect(mocks.config.has('task.kb_health_check.last_status')).toBe(false)
+  })
+})
+
+describe('verifyBackupNow 手动「立即验证」', () => {
+  it('通过：回 passed，并把三颗键写进同一份配置', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
+    const r = await verifyBackupNow()
+    expect(r.status).toBe('passed')
+    expect(Number(mocks.config.get('task.backup_verify.last_run_at'))).toBeGreaterThan(0)
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('passed')
+  })
+
+  it('跳过不是通过：没配 WebDAV 回 skipped 并带一句原因', async () => {
+    mocks.webdavCfg = null
+    const r = await verifyBackupNow()
+    expect(r.status).toBe('skipped')
+    expect(r.reason).toContain('WebDAV')
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('skipped')
+  })
+
+  it('抛错：回 failed＋原因，不把异常冒给调用方', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [dated('pocketai-inc-20260927.json', 27)]
+    mocks.downloadRaw = Buffer.from(JSON.stringify({ kind: 'inc' }))
+    const r = await verifyBackupNow()
+    expect(r.status).toBe('failed')
+    expect(r.reason).toContain('增量索引格式无效')
   })
 })
 

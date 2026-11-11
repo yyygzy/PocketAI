@@ -8,6 +8,7 @@ import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
+import { verifyBackupNow } from '../../backup/task-scheduler'
 import { APPROVAL_AUDIT_MAX_PAGE, approvalEventRepo } from '../../db/repositories/approval-event.repo'
 import {
   APPROVAL_EXPORT_MAX_ROWS,
@@ -71,6 +72,13 @@ export function registerStewardHandlers(): void {
   }))
   safeHandle(IPC.STEWARD_AUDIT, () => ({ ok: true as const, data: runAudit() }))
   safeHandle(IPC.STEWARD_DIAGNOSE, () => ({ ok: true as const, data: runDiagnose() }))
+  // 故障诊断卡里「备份验证」那颗「立即验证」：真跑一次备份完整性校验。
+  // 回执三态（passed／failed／skipped）——跳过（没配 WebDAV／云端零份／时间判不出）如实回报，
+  // 不许被渲染端画成「通过」或「0」。
+  safeHandle(IPC.STEWARD_VERIFY_BACKUP, async () => ({
+    ok: true as const,
+    ...(await verifyBackupNow())
+  }))
   // 诊断报告导出：渲染端拼装纯文本 → 主进程弹保存框落盘（远程求助场景）
   safeHandle(
     IPC.STEWARD_EXPORT_REPORT,

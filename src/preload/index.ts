@@ -1367,6 +1367,12 @@ const api = {
     ipcRenderer.invoke(IPC.STEWARD_AUDIT),
   runDiagnose: (): Promise<{ ok: boolean; data?: DiagnoseResult; error?: string }> =>
     ipcRenderer.invoke(IPC.STEWARD_DIAGNOSE),
+  verifyBackupNow: (): Promise<{
+    ok: boolean
+    status?: 'passed' | 'failed' | 'skipped'
+    reason?: string
+    error?: string
+  }> => ipcRenderer.invoke(IPC.STEWARD_VERIFY_BACKUP),
   exportStewardReport: (
     content: string
   ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
