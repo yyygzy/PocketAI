@@ -184,6 +184,7 @@ describe('④ MCP 的「停止」：与渠道同一形状，另一个文件', ()
       onMcpLog: () => () => { /* 订阅卸载函数 */ },
       onPythonEnvEvent: () => () => { /* 订阅卸载函数 */ },
       getPythonPipSource: () => ({ ok: true, source: 'default', url: '' }),
+      getAgentToolSurface: () => 'grouped',
       stopMcpServer: stop
     })
     mountWithProviders(<McpPanel />)

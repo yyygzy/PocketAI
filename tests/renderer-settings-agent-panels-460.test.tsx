@@ -31,7 +31,8 @@ function stubMcp(): void {
     onMcpStatus: () => () => {},
     onMcpLog: () => () => {},
     onPythonEnvEvent: () => () => {},
-    getPythonPipSource: () => ({ ok: true, source: 'official' })
+    getPythonPipSource: () => ({ ok: true, source: 'official' }),
+    getAgentToolSurface: () => 'grouped'
   })
 }
 

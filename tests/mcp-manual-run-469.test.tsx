@@ -63,6 +63,7 @@ const stubs = (over: Record<string, Impl> = {}): Record<string, Impl> => ({
   onMcpLog: () => () => { /* 订阅卸载 */ },
   onPythonEnvEvent: () => () => { /* 订阅卸载 */ },
   getPythonPipSource: () => ({ ok: true, source: 'default', url: '' }),
+  getAgentToolSurface: () => 'grouped',
   ...over
 })
 

@@ -102,6 +102,7 @@ describe('② MCP 面板：pip 源那一格不再演成"你选的就是官方"',
         calls.pipSource += 1
         return { ok: true, source: 'tuna' }
       },
+      getAgentToolSurface: () => 'grouped',
       onMcpStatus: () => () => {},
       onMcpLog: () => () => {},
       onPythonEnvEvent: () => () => {},
