@@ -466,18 +466,24 @@ describe('委派真链（开关打开后）', () => {
     const p = runParent(conv, 'req-abort-1').then(() => {
       finished = true
     })
-    await waitFor(() => reqs.some((r) => r.isChild))
+    // 只等子的**推理**请求：子会话一进门会 fire-and-forget 发一条后台标题升级，
+    // 载荷里带着角色开场白 ⇒ 同样被 isChild 认成"子的推理"（见 resetScript 的注释）。
+    // 被那条元数据请求提前唤醒的话，abort 会打在子 run 还没进入推理的时刻，终态就可能压根没写。
+    await waitFor(() => reqs.some((r) => r.isChild && !r.isMeta))
     agentEngine.abort('req-abort-1')
     await p
     await waitFor(() => finished)
     const kid = conversationRepo.list(undefined, undefined, { includeSubSessions: true }).find((c) => c.parentConversationId === conv)
     expect(kid, '中止的父也要清掉子会话这一行（不留运行态悬空）').toBeDefined()
     // conversations.status 已停写（3f6121f）：运行态唯一事实源是 runtime-registry。
-    // markRunFinished('aborted') 会像 done 一样把登记移出注册表（见 runtime-registry:157），
-    // 所以这里断言"没有残留的活跃登记"——子 run 还挂着的话会是 running，失败则常驻 failed。
+    // markRunFinished('aborted') 会像 done 一样把登记移出注册表（见 runtime-registry:157）。
+    // 这里等的是"子 run 真收口"这个生命周期信号，而不是秒数：子 run 还挂着的话会一直是 running。
+    await waitFor(() => !getRuntimeSnapshot().some((e) => e.conversationId === kid!.id))
     expect(getRuntimeSnapshot().find((e) => e.conversationId === kid!.id)).toBeUndefined()
-    // "确实是 aborted 而不是正常 done"由子会话消息终态印证（holdChild 的假模型不会自己收尾）
-    await waitFor(() => messageRepo.listByConversation(kid!.id).some((m) => m.status === 'aborted'))
+    // "确实是 aborted 而不是正常 done"由子会话消息终态印证（holdChild 的假模型不会自己收尾）。
+    // engine 在摘登记之前就写了 aborted 终态（engine.ts:1724 → 1739），所以收口后直接断言即可，
+    // 不再用第二个轮询窗口去等一次同步写。
+    expect(messageRepo.listByConversation(kid!.id).some((m) => m.status === 'aborted')).toBe(true)
   })
 
   it('预算触顶 ⇒ 委派被拒且**一条子请求都不发**（B79）', async () => {
