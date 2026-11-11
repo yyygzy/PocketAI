@@ -45,6 +45,7 @@ const stubs = (data: ModelRecommendation): Record<string, (...a: unknown[]) => u
   getHardwareInfo: () => ({ ok: true, data: hardwareSample }),
   checkIntegrity: () => ({ ok: true, data: { ok: true, details: 'ok' } }),
   getHealthReport: () => ({ ok: true, data: healthSample }),
+  getDataHealth: () => ({ sizes: { coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0 }, approvals: { rows: 0 } }),
   getUpdateInfo: () => ({ isPackaged: false, currentVersion: '0.9.9', autoUpdateEnabled: false }),
   runAudit: () => ({ ok: true, data: { score: 88, checks: [] } as AuditResult }),
   onOllamaPullEvent: () => () => {},

@@ -72,7 +72,7 @@ describe('① 数据健康面板：失败时本体不许顶着「加载中…」
     mountWithProviders(<DataHealthPanel />)
     await settleAfter('getDataHealth')
     expect(alerts()).toEqual([])
-    expect(screen.getByText(L('dh.db'))).toBeTruthy()
+    expect(screen.getByText(L('dh.total'))).toBeTruthy()
     expect(screen.queryByText(L('common.loading'))).toBeNull()
   })
 })

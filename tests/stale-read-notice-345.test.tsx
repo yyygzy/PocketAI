@@ -197,12 +197,12 @@ describe('④ 数据健康：点「刷新」后那一发失败 ⇒ 报告画着�
     mountWithProviders(<DataHealthPanel />)
     await settleAfter('getDataHealth')
     expect(alerts()).toEqual([])
-    expect(screen.getByText(L('dh.db'))).toBeTruthy()
+    expect(screen.getByText(L('dh.total'))).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: L('dh.refresh') }))
     await settleAfter('getDataHealth', 2)
     expect(alerts()).toEqual([STALE(L('set.dataHealth'), '库被占用')])
-    expect(screen.getByText(L('dh.db'))).toBeTruthy()
+    expect(screen.getByText(L('dh.total'))).toBeTruthy()
 
     stubPocketai({ getDataHealth: () => report() })
     fireEvent.click(screen.getByTestId('data-health-stale-retry'))
@@ -332,6 +332,7 @@ const stewardStubs = (recommendModels: () => unknown): Record<string, unknown> =
   getHardwareInfo: () => ({ ok: true, data: hardwareSample }),
   checkIntegrity: () => ({ ok: true, data: { ok: true, details: 'ok' } }),
   getHealthReport: () => ({ ok: true, data: healthSample }),
+  getDataHealth: () => ({ sizes: { coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0 }, approvals: { rows: 0 } }),
   getUpdateInfo: () => ({ isPackaged: false, currentVersion: '0.9.9', autoUpdateEnabled: false }),
   onOllamaPullEvent: () => () => { /* 订阅卸载函数 */ },
   recommendModels

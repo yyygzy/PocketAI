@@ -275,25 +275,17 @@ export const DataHealthPanel: React.FC = () => {
   }
 
   const { sizes, approvals, kb, backup, tasks } = report
-  // §436：冷数据段（P0-5）与审批段（P0-2c）是后加字段，旧夹具/旧报告可能没有。
+  // §436：审批段是后加字段，旧夹具/旧报告可能没有。
   // 缺字段时降级成 0 并在顶部挂一句「数据不可读」，不许整屏白（:342 的 TypeError 就是这么炸的）。
-  const coldOk =
-    typeof sizes.coldOffloadBytes === 'number' &&
-    typeof sizes.coldOffloadFiles === 'number' &&
-    typeof sizes.coldSnapshotBytes === 'number' &&
-    typeof sizes.coldSnapshotFiles === 'number'
+  //
+  // 冷数据/快照/审批条数已并入平台管家「数据健康」卡：这里不再渲染计数，
+  // 但报告仍由同一次 `getDataHealth` 读回来（管家另读一发），所以 `sizes` 的冷字段继续留在类型里。
   const approvalsOk =
     approvals !== null &&
     approvals !== undefined &&
-    typeof approvals.rows === 'number' &&
-    typeof approvals.writeFailures === 'number'
-  const reportIncomplete = !coldOk || !approvalsOk
-  const coldOffloadBytes = coldOk ? sizes.coldOffloadBytes : 0
-  const coldOffloadFiles = coldOk ? sizes.coldOffloadFiles : 0
-  const coldSnapshotBytes = coldOk ? sizes.coldSnapshotBytes : 0
-  const coldSnapshotFiles = coldOk ? sizes.coldSnapshotFiles : 0
+    typeof approvals.rows === 'number'
+  const reportIncomplete = !approvalsOk
   const approvalsRows = approvalsOk ? approvals.rows : 0
-  const approvalsFailures = approvalsOk ? approvals.writeFailures : 0
   const integrity = kb.integrity
   const hasDimMismatch = integrity.brokenDocs.some((d) => d.reason === 'dim-mismatch')
   const integrityOk =
@@ -331,19 +323,10 @@ export const DataHealthPanel: React.FC = () => {
           {t('dh.reportIncomplete')}
         </div>
       )}
-      {/* 体积汇总卡片 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-        <StatCard label={t('dh.total')} value={formatBytes(sizes.userDataBytes)} />
-        <StatCard label={t('dh.db')} value={formatBytes(sizes.dbBytes)} />
-        <StatCard label={t('dh.vectorIndex')} value={formatVectorIndex(kb.vectorIndex, t)} />
-        <StatCard label={t('dh.attachments')} value={formatBytes(sizes.attachmentsBytes)} />
-      </div>
-
-      {/* 体积明细行 */}
+      {/* 磁盘占用摘要：体积明细（主库/附件/扩展/日志/其他）与冷数据计数已并入平台管家
+          「数据健康」卡；设置侧只留合计一行，免得同一批数字在两处各算一次、各显示一次。 */}
       <div className="mb-4 space-y-1">
-        <BarRow label={t('dh.extensions')} ratio={sizes.userDataBytes > 0 ? sizes.extensionsBytes / sizes.userDataBytes : 0} value={formatBytes(sizes.extensionsBytes)} />
-        <BarRow label={t('dh.logs')} ratio={sizes.userDataBytes > 0 ? sizes.logsBytes / sizes.userDataBytes : 0} value={formatBytes(sizes.logsBytes)} />
-        <BarRow label={t('dh.other')} ratio={sizes.userDataBytes > 0 ? sizes.otherBytes / sizes.userDataBytes : 0} value={formatBytes(sizes.otherBytes)} />
+        <Row label={t('dh.total')} value={formatBytes(sizes.userDataBytes)} />
         {/* 浏览器缓存：Electron 自己的档案树，不进上面那颗「合计」，按「刷新」才重算（V4-Iter-177） */}
         <Row
           label={t('dh.browserCache')}
@@ -358,41 +341,10 @@ export const DataHealthPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* 冷数据（P0-5 第三批）：以前混在「其他」里，用户既看不见也判断不了该不该在意。
-          这里只读列出体积与条数；**不放一键清空**——那会和引用关系、还原入口打架，
-          留给以后专门设计。 */}
-      <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.coldData')}</div>
-      <div className="mb-4 space-y-1">
-        <BarRow
-          label={t('dh.coldOffload')}
-          ratio={sizes.userDataBytes > 0 ? coldOffloadBytes / sizes.userDataBytes : 0}
-          value={t('dh.coldOffloadValue', {
-            bytes: formatBytes(coldOffloadBytes),
-            count: coldOffloadFiles.toLocaleString('en-US')
-          })}
-        />
-        <BarRow
-          label={t('dh.coldSnapshots')}
-          ratio={sizes.userDataBytes > 0 ? coldSnapshotBytes / sizes.userDataBytes : 0}
-          value={t('dh.coldSnapshotValue', {
-            bytes: formatBytes(coldSnapshotBytes),
-            count: coldSnapshotFiles.toLocaleString('en-US')
-          })}
-        />
-      </div>
-
-      {/* 审批审计账本（approval_events，P0-2c-1）：行数 + 本次进程写失败次数。
+      {/* 审批审计账本（approval_events，P0-2c-1）：条数已并入管家，这里只留清空入口。
           口径是「会话存在期间可回溯」，删会话会级联删除；不写成永久可查。 */}
       <div className="mb-4 space-y-1">
-        <Row
-          label={t('dh.approvals')}
-          value={
-            approvalsRows === 0
-              ? t('dh.approvals.empty')
-              : t('dh.approvals.value', { rows: approvalsRows.toLocaleString('en-US'), failures: approvalsFailures })
-          }
-          warn={approvalsFailures > 0}
-        />
+        <div className="text-xs font-semibold text-[var(--color-text)]">{t('dh.approvals')}</div>
         <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('dh.approvals.hint')}</div>
         <div className="flex flex-wrap gap-2">
           <button onClick={onClearApprovals} disabled={busy || approvalsRows === 0} className="chip">
@@ -403,6 +355,9 @@ export const DataHealthPanel: React.FC = () => {
 
       {/* 知识库索引状态 */}
       <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.kbStatus')}</div>
+      <div className="mb-2">
+        <Row label={t('dh.vectorIndex')} value={formatVectorIndex(kb.vectorIndex, t)} />
+      </div>
       {kb.total === 0 ? (
         <div className="text-xs text-[var(--color-text-muted)] mb-4">{t('dh.noKbDocs')}</div>
       ) : (
@@ -578,27 +533,6 @@ export const DataHealthPanel: React.FC = () => {
     </div>
   )
 }
-
-const StatCard: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-3 py-2">
-    <div className="text-[10px] text-[var(--color-text-muted)]">{label}</div>
-    <div className="text-base font-semibold font-mono text-[var(--color-text)] mt-0.5">{value}</div>
-  </div>
-)
-
-/** 占比条行：名称 + 比例条 + 右侧值（体积明细） */
-const BarRow: React.FC<{ label: string; ratio: number; value: string }> = ({ label, ratio, value }) => (
-  <div className="flex items-center gap-2 text-[11px]">
-    <span className="text-[var(--color-text-muted)] w-28 shrink-0 truncate" title={label}>{label}</span>
-    <div className="h-1.5 rounded bg-[var(--color-sidebar)] overflow-hidden flex-1">
-      <div
-        className="h-full rounded bg-[var(--color-accent)] opacity-70"
-        style={{ width: `${Math.max(ratio * 100, ratio > 0 ? 1 : 0)}%` }}
-      />
-    </div>
-    <span className="font-mono text-[var(--color-text)] w-20 text-right shrink-0">{value}</span>
-  </div>
-)
 
 const Row: React.FC<{ label: string; value: string; warn?: boolean }> = ({ label, value, warn }) => (
   <div className="flex justify-between gap-4 text-sm">

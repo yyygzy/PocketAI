@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { buildDiagnosticReport, type ReportLabels } from '../src/renderer/src/utils/diagnostic-report'
 import type {
   AuditResult,
+  DataHealthReport,
   DiagnoseResult,
   HardwareInfo,
   HealthReport,
@@ -75,6 +76,12 @@ const L: ReportLabels = {
   attachSize: 'Attachments',
   orphanMessages: 'Orphan messages',
   orphanChunks: 'Orphan chunks',
+  coldOffload: 'Cold data',
+  coldSnapshots: 'Snapshots',
+  approvals: 'Approval records',
+  coldOffloadValue: (bytes, count) => `${bytes} B · ${count} files`,
+  coldSnapshotValue: (bytes, count) => `${bytes} B · ${count} files`,
+  approvalsValue: (rows) => `${rows} records`,
   score: 'Security score',
   statusOk: 'OK',
   statusWarn: 'Warn',
@@ -153,12 +160,59 @@ const diagnose: DiagnoseResult = {
   ]
 }
 
+const dataHealth: DataHealthReport = {
+  sizes: {
+    userDataBytes: 10 * 1024 ** 2,
+    dbBytes: 1024 ** 2,
+    attachmentsBytes: 10 * 1024 ** 2,
+    extensionsBytes: 0,
+    logsBytes: 0,
+    coldOffloadBytes: 2048,
+    coldOffloadFiles: 3,
+    coldSnapshotBytes: 4096,
+    coldSnapshotFiles: 2,
+    otherBytes: 0,
+    browserCacheBytes: 0,
+    browserCacheFiles: 0
+  },
+  approvals: { rows: 5, writeFailures: 0 },
+  kb: {
+    total: 3,
+    errorDocs: [],
+    integrity: {
+      orphanVectors: 0,
+      orphanChunks: 2,
+      brokenDocs: [],
+      duplicates: [],
+      providerIssues: []
+    },
+    vectorIndex: { count: 0, dims: [] }
+  },
+  backup: {
+    configured: false,
+    passwordUndecryptable: false,
+    configUnreadable: false,
+    enabled: false,
+    intervalHours: 24,
+    lastRunAt: null,
+    lastOkAt: null,
+    lastError: null
+  },
+  tasks: {
+    kbHealthCheckLastRunAt: null,
+    kbHealthCheckLastOk: null,
+    backupVerifyLastRunAt: null,
+    backupVerifyLastOk: null
+  }
+}
+
 const baseData = {
   generatedAt: new Date(2026, 9, 2, 14, 3, 5).getTime(),
   appVersion: '1.2.8',
   hardware,
   integrity: { ok: true, details: 'ok' },
   health,
+  dataHealth,
   recommendation,
   audit,
   diagnose
@@ -199,12 +253,16 @@ describe('buildDiagnosticReport — 全量数据', () => {
     expect(report).not.toMatch(/mainstream_cpu|cpu_mainstream|qwen7b_q4_cpu_pick|mem_lt8/)
   })
 
-  it('③ 数据健康：完整性正常 + 各计数与附件占用', () => {
+  it('③ 数据健康：完整性正常 + 各计数与附件占用 + 冷数据/快照/审批条数', () => {
     expect(report).toContain('③ Data health')
     expect(report).toContain('✅ OK')
     expect(report).toContain('56')
     expect(report).toContain('1234')
     expect(report).toContain('10.0 MB')
+    // 从设置页搬来的三行：只增行，章节号/顺序不变
+    expect(report).toContain(`Cold data: ${L.coldOffloadValue(2048, 3)}`)
+    expect(report).toContain(`Snapshots: ${L.coldSnapshotValue(4096, 2)}`)
+    expect(report).toContain(`Approval records: ${L.approvalsValue(5)}`)
   })
 
   it('④ 安全体检：分数 + 每项图标/标签/明细/建议行', () => {
@@ -242,6 +300,7 @@ describe('buildDiagnosticReport — 缺失数据', () => {
         hardware: null,
         integrity: null,
         health: null,
+        dataHealth: null,
         recommendation: null,
         audit: null,
         diagnose: null
@@ -255,6 +314,15 @@ describe('buildDiagnosticReport — 缺失数据', () => {
     expect(empty).toContain('⑤ Troubleshooting')
     // 版本缺失显示占位
     expect(empty).toContain('App version: -')
+  })
+
+  it('冷数据那一发没读到时三行都写「无数据」，不折成 0', () => {
+    const r = buildDiagnosticReport({ ...baseData, dataHealth: null }, L)
+    expect(r).toContain(`Cold data: ${L.notAvailable}`)
+    expect(r).toContain(`Snapshots: ${L.notAvailable}`)
+    expect(r).toContain(`Approval records: ${L.notAvailable}`)
+    // 没读到不能演成「跑了但为 0」
+    expect(r).not.toContain('Cold data: 0 B')
   })
 
   it('体检已跑但无任何诊断项：显示整体正常而非空段', () => {

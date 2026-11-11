@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import type {
   HardwareInfo,
   HealthReport,
+  DataHealthReport,
   CleanupResult,
   VacuumOutcome,
   ModelRecommendation,
@@ -33,6 +34,11 @@ export const StewardModule: React.FC = () => {
   const [hardware, setHardware] = useState<HardwareInfo | null>(null)
   const [integrity, setIntegrity] = useState<{ ok: boolean; details: string } | null>(null)
   const [health, setHealth] = useState<HealthReport | null>(null)
+  // 冷数据/快照/审批条数从设置页「数据健康」搬到这里：主进程走 data-health.ts 的同一条查询，
+  // 不另抄 SQL（孤儿分块已经在两处算过，不能变成第三处）。这条通道是**裸值**——
+  // 成功直接是报告，失败才是 safeHandle 的 `{ok:false}`，所以判别只用 hasIpcFailed。
+  const [dataHealth, setDataHealth] = useState<DataHealthReport | null>(null)
+  const [dhFail, setDhFail] = useState<string | null>(null)
   // §258：这三发原本是裸值通道 ⇒ safeHandle 的失败对象 `{ok:false,error}` 是 truthy，
   // 而老写法只判那个变量的真值就把它当硬件快照用了 ⇒ 这一屏 render 当场 TypeError（整站进崩溃兜底屏）、
   // 完整性那行显示「❌ undefined」（＝谎报数据库损坏）、健康报告把"没读到"演成「✅ 0」孤儿。
@@ -94,10 +100,11 @@ export const StewardModule: React.FC = () => {
     try {
       // reject 面也归一成信封失败 ⇒ 下面每一发只有一条判据（`data: undefined` 是让两支同形状）
       const fail = (e: unknown) => ({ ok: false, data: undefined, error: errText(e, unknown) })
-      const [hw, integ, healthReport] = await Promise.all([
+      const [hw, integ, healthReport, dh] = await Promise.all([
         window.pocketai.getHardwareInfo(force).catch((e) => { logIpcError('steward.getHardwareInfo', e); return fail(e) }),
         window.pocketai.checkIntegrity().catch((e) => { logIpcError('steward.checkIntegrity', e); return fail(e) }),
-        window.pocketai.getHealthReport().catch((e) => { logIpcError('steward.getHealthReport', e); return fail(e) })
+        window.pocketai.getHealthReport().catch((e) => { logIpcError('steward.getHealthReport', e); return fail(e) }),
+        window.pocketai.getDataHealth(false).catch((e) => { logIpcError('steward.getDataHealth', e); return fail(e) })
       ])
       // 三发各自接管：读不到 ⇒ 这一块摆原因（旧快照一并清掉，不拿上一份冒充这一份）
       if (hasIpcFailed(hw) || !hw.data) {
@@ -120,6 +127,14 @@ export const StewardModule: React.FC = () => {
       } else {
         setHealthFail(null)
         setHealth(healthReport.data)
+      }
+      // 裸值通道：失败对象也带 ok:false，和信封同一判据；成功时整份报告就是数据本身
+      if (hasIpcFailed(dh)) {
+        setDataHealth(null)
+        setDhFail(ipcFailText(dh, unknown))
+      } else {
+        setDhFail(null)
+        setDataHealth(dh as DataHealthReport)
       }
       refreshRecommendation()
       if (force) setManualCheckedAt(Date.now())
@@ -302,6 +317,15 @@ export const StewardModule: React.FC = () => {
         attachSize: t('steward.attachSize'),
         orphanMessages: t('steward.orphanMessages'),
         orphanChunks: t('steward.orphanChunks'),
+        coldOffload: t('dh.coldOffload'),
+        coldSnapshots: t('dh.coldSnapshots'),
+        approvals: t('dh.approvals'),
+        coldOffloadValue: (bytes, count) =>
+          t('dh.coldOffloadValue', { bytes: formatBytes(bytes), count: count.toLocaleString('en-US') }),
+        coldSnapshotValue: (bytes, count) =>
+          t('dh.coldSnapshotValue', { bytes: formatBytes(bytes), count: count.toLocaleString('en-US') }),
+        approvalsValue: (rows) =>
+          rows === 0 ? t('dh.approvals.empty') : t('dh.approvals.value', { rows: rows.toLocaleString('en-US') }),
         score: t('steward.reportScore'),
         statusOk: t('steward.reportStatusOk'),
         statusWarn: t('steward.reportStatusWarn'),
@@ -315,6 +339,7 @@ export const StewardModule: React.FC = () => {
           hardware,
           integrity,
           health,
+          dataHealth,
           recommendation,
           audit: nextAudit,
           diagnose: nextDiagnose
@@ -585,27 +610,55 @@ export const StewardModule: React.FC = () => {
         </Section>
       )}
 
-      {/* 数据健康报告 */}
-      {healthFail && (
+      {/* 数据健康报告：两发读取各留一句失败原因（页头那颗「重新检测」是全局重试）。
+          冷数据/快照/审批条数来自设置页搬过来的那批计数；读到 0 与没读成是两件事——
+          失败时只摆原因，不拿 0 冒充。 */}
+      {(health || healthFail || dataHealth || dhFail) && (
         <Section title={t('steward.dataHealth')}>
-          <LoadFailNotice msg={healthFail} />
-        </Section>
-      )}
-
-      {health && (
-        <Section title={t('steward.dataHealth')}>
-          <Row label={t('steward.totalConv')} value={String(health.totalConversations)} />
-          <Row label={t('steward.totalMessages')} value={String(health.totalMessages)} />
-          <Row label={t('steward.kbCount')} value={String(health.kbCount)} />
-          <Row label={t('steward.attachSize')} value={formatBytes(health.totalAttachmentsBytes)} />
-          <Row
-            label={t('steward.orphanMessages')}
-            value={health.orphanMessages > 0 ? `⚠️ ${health.orphanMessages}` : '✅ 0'}
-          />
-          <Row
-            label={t('steward.orphanChunks')}
-            value={health.orphanChunks > 0 ? `⚠️ ${health.orphanChunks}` : '✅ 0'}
-          />
+          {healthFail && <LoadFailNotice msg={healthFail} />}
+          {dhFail && <LoadFailNotice msg={dhFail} />}
+          {health && (
+            <>
+              <Row label={t('steward.totalConv')} value={String(health.totalConversations)} />
+              <Row label={t('steward.totalMessages')} value={String(health.totalMessages)} />
+              <Row label={t('steward.kbCount')} value={String(health.kbCount)} />
+              <Row label={t('steward.attachSize')} value={formatBytes(health.totalAttachmentsBytes)} />
+              <Row
+                label={t('steward.orphanMessages')}
+                value={health.orphanMessages > 0 ? `⚠️ ${health.orphanMessages}` : '✅ 0'}
+              />
+              <Row
+                label={t('steward.orphanChunks')}
+                value={health.orphanChunks > 0 ? `⚠️ ${health.orphanChunks}` : '✅ 0'}
+              />
+            </>
+          )}
+          {dataHealth && (
+            <>
+              <Row
+                label={t('dh.coldOffload')}
+                value={t('dh.coldOffloadValue', {
+                  bytes: formatBytes(dataHealth.sizes.coldOffloadBytes),
+                  count: dataHealth.sizes.coldOffloadFiles.toLocaleString('en-US')
+                })}
+              />
+              <Row
+                label={t('dh.coldSnapshots')}
+                value={t('dh.coldSnapshotValue', {
+                  bytes: formatBytes(dataHealth.sizes.coldSnapshotBytes),
+                  count: dataHealth.sizes.coldSnapshotFiles.toLocaleString('en-US')
+                })}
+              />
+              <Row
+                label={t('dh.approvals')}
+                value={
+                  dataHealth.approvals.rows === 0
+                    ? t('dh.approvals.empty')
+                    : t('dh.approvals.value', { rows: dataHealth.approvals.rows.toLocaleString('en-US') })
+                }
+              />
+            </>
+          )}
         </Section>
       )}
 

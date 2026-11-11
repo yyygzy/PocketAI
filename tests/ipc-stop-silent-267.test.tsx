@@ -149,6 +149,7 @@ describe('② 管家页推荐卡片那一格：同一颗 ✕，同一句', () =>
     getHardwareInfo: () => ({ ok: true, data: hardwareSample }),
     checkIntegrity: () => ({ ok: true, data: { ok: true, details: 'ok' } }),
     getHealthReport: () => ({ ok: true, data: healthSample }),
+    getDataHealth: () => ({ sizes: { coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0 }, approvals: { rows: 0 } }),
     getUpdateInfo: () => ({ isPackaged: false, currentVersion: '0.9.9', autoUpdateEnabled: false }),
     recommendModels: () => ({ ok: true, data: RECO }),
     onOllamaPullEvent: () => () => { /* 订阅卸载函数 */ },

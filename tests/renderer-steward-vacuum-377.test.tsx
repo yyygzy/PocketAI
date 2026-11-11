@@ -67,6 +67,7 @@ const baseStubs = (over: Record<string, () => unknown> = {}): Record<string, () 
   getHardwareInfo: () => ({ ok: true, data: hardware() }),
   checkIntegrity: () => ({ ok: true, data: { ok: true, details: 'ok' } }),
   getHealthReport: () => ({ ok: true, data: healthSample }),
+  getDataHealth: () => ({ sizes: { coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0 }, approvals: { rows: 0 } }),
   recommendModels: () => ({ ok: true, data: null }),
   // 清理/压缩成功后那一发"顺带刷新诊断"是设计内静默（§255 记的账），但通道仍会被真发出去
   // ⇒ 助手必须预置它，否则桩层按「未预置通道」抛错（全量里那两条 Error 就是这么来的）

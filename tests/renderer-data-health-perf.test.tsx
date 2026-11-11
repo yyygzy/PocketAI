@@ -83,7 +83,7 @@ async function mount(
     deduplicateKbDocs: () => ({ removed: 0 })
   })
   mountWithProviders(<DataHealthPanel />)
-  await screen.findByText('数据合计')
+  await screen.findByText('磁盘占用')
 }
 
 // —— V4-Iter-172：B48 对账现查的缺口 ——
@@ -118,7 +118,7 @@ describe('数据健康面板 · 浏览器缓存单列（V4-Iter-177）', () => {
 
   it('合计读 userDataBytes，不掺缓存字节（缓存并进合计就该红）', async () => {
     await mount({}, { userDataBytes: 20 * 1024 * 1024, browserCacheBytes: 801 * 1024 * 1024 })
-    const card = screen.getByText('数据合计').parentElement
+    const card = screen.getByText('磁盘占用').parentElement
     expect(card?.textContent).toContain(formatBytes(20 * 1024 * 1024))
     expect(card?.textContent).not.toContain(formatBytes(821 * 1024 * 1024))
   })

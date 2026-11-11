@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
-// P0-5 第三批③：数据健康把冷数据单列（体积与条数）上屏，且**不放一键清空**。
-// 清空按钮故意不做——会跟引用关系与还原入口打架。
+// 冷数据/快照/审批条数已从设置页「数据健康」并入平台管家「数据健康」卡（同一批 Row）。
+// 口径要求：
+// ① 读到多少画多少（0 也是真实读数）；
+// ② 没读成只摆一句原因 + 页头全局重试，**不许**把失败演成 0 B／暂无审批记录；
+// ③ 冷数据仍不放「一键清空」——会跟引用关系与还原入口打架。
 import { describe, it, expect } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
-import { DataHealthPanel } from '../src/renderer/src/modules/settings/DataHealthPanel'
+import { StewardModule } from '../src/renderer/src/modules/steward/StewardModule'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { DataHealthReport } from '../src/shared/types'
 
@@ -15,7 +18,7 @@ const T = (key: string, params: Record<string, string | number>): string => {
   return out
 }
 
-const report = (): DataHealthReport => ({
+const report = (over: Partial<DataHealthReport['sizes']> = {}, approvalsRows = 0): DataHealthReport => ({
   sizes: {
     userDataBytes: 20 * 1024 * 1024,
     dbBytes: 10 * 1024 * 1024,
@@ -28,9 +31,10 @@ const report = (): DataHealthReport => ({
     coldSnapshotFiles: 2,
     otherBytes: 0,
     browserCacheBytes: 0,
-    browserCacheFiles: 0
+    browserCacheFiles: 0,
+    ...over
   },
-  approvals: { rows: 0, writeFailures: 0 },
+  approvals: { rows: approvalsRows, writeFailures: 0 },
   kb: {
     total: 0,
     errorDocs: [],
@@ -41,38 +45,67 @@ const report = (): DataHealthReport => ({
   tasks: { kbHealthCheckLastRunAt: null, kbHealthCheckLastOk: null, backupVerifyLastRunAt: null, backupVerifyLastOk: null }
 })
 
-describe('冷数据单列：体积 + 条数', () => {
-  it('卸载文件与快照各自一行，条数不是"0 B"那种含糊读数', async () => {
-    stubPocketai({ getDataHealth: () => report() })
-    mountWithProviders(<DataHealthPanel />)
-    await screen.findByText(L('dh.total'))
+const stubs = (over: Record<string, () => unknown> = {}): Record<string, () => unknown> => ({
+  getHardwareInfo: () => ({
+    ok: true,
+    data: {
+      cpu: { model: 'Test CPU', cores: 4 },
+      memory: { total: 16 * 1024 ** 3, free: 8 * 1024 ** 3 },
+      gpus: [],
+      disk: { type: 'SSD', freeSpace: 1024 ** 3, removable: false },
+      os: { platform: 'win32', release: '10', arch: 'x64', hostname: 'test-host' }
+    }
+  }),
+  checkIntegrity: () => ({ ok: true, data: { ok: true, details: 'ok' } }),
+  getHealthReport: () => ({
+    ok: true,
+    data: { totalConversations: 1, totalMessages: 2, kbCount: 0, totalAttachmentsBytes: 0, orphanMessages: 0, orphanChunks: 0 }
+  }),
+  getDataHealth: () => report(),
+  recommendModels: () => ({ ok: true, data: null }),
+  getUpdateInfo: () => ({ isPackaged: false, currentVersion: '0.9.9', autoUpdateEnabled: false }),
+  onOllamaPullEvent: () => () => {},
+  ...over
+})
 
-    expect(
-      screen.getByText(
-        T('dh.coldOffloadValue', {
-          bytes: '5.0 MB',
-          count: (3).toLocaleString('en-US')
-        })
-      )
-    ).toBeTruthy()
-    expect(
-      screen.getByText(
-        T('dh.coldSnapshotValue', {
-          bytes: '2.0 MB',
-          count: (2).toLocaleString('en-US')
-        })
-      )
-    ).toBeTruthy()
+describe('冷数据/快照/审批条数并入管家数据健康卡', () => {
+  it('三项各自一行，读到多少画多少', async () => {
+    stubPocketai(stubs({ getDataHealth: () => report({}, 7) }))
+    mountWithProviders(<StewardModule />)
+    await screen.findByText(L('dh.coldOffload'))
+
+    expect(screen.getByText(T('dh.coldOffloadValue', { bytes: '5.0 MB', count: (3).toLocaleString('en-US') }))).toBeTruthy()
+    expect(screen.getByText(T('dh.coldSnapshotValue', { bytes: '2.0 MB', count: (2).toLocaleString('en-US') }))).toBeTruthy()
+    expect(screen.getByText(T('dh.approvals.value', { rows: (7).toLocaleString('en-US') }))).toBeTruthy()
+  })
+
+  it('跑成了但都是 0：如实写 0 B／暂无审批记录（与"没跑成"分开）', async () => {
+    stubPocketai(stubs({ getDataHealth: () => report({ coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0 }, 0) }))
+    mountWithProviders(<StewardModule />)
+    await screen.findByText(L('dh.coldOffload'))
+
+    expect(screen.getByText(T('dh.coldOffloadValue', { bytes: '0 B', count: (0).toLocaleString('en-US') }))).toBeTruthy()
+    expect(screen.getByText(T('dh.coldSnapshotValue', { bytes: '0 B', count: (0).toLocaleString('en-US') }))).toBeTruthy()
+    expect(screen.getByText(L('dh.approvals.empty'))).toBeTruthy()
+  })
+
+  it('没读成：只摆原因，不拿 0 冒充', async () => {
+    stubPocketai(stubs({ getDataHealth: () => ({ ok: false, data: undefined, error: '冷数据读取失败' }) }))
+    mountWithProviders(<StewardModule />)
+    await screen.findByText(/冷数据读取失败/)
+
+    expect(screen.queryByText(L('dh.coldOffload'))).toBeNull()
+    expect(screen.queryByText(L('dh.coldSnapshots'))).toBeNull()
+    expect(screen.queryByText(L('dh.approvals.empty'))).toBeNull()
+    expect(screen.queryByText(T('dh.coldOffloadValue', { bytes: '0 B', count: (0).toLocaleString('en-US') }))).toBeNull()
   })
 
   it('冷数据区没有"一键清空"按钮', async () => {
-    stubPocketai({ getDataHealth: () => report() })
-    mountWithProviders(<DataHealthPanel />)
-    await screen.findByText(L('dh.total'))
+    stubPocketai(stubs())
+    mountWithProviders(<StewardModule />)
+    await screen.findByText(L('dh.coldOffload'))
 
-    await waitFor(() => {
-      const buttons = screen.getAllByRole('button').map((b) => (b.textContent ?? '').trim())
-      expect(buttons.some((text) => /冷|卸载|快照/.test(text))).toBe(false)
-    })
+    const buttons = screen.getAllByRole('button').map((b) => (b.textContent ?? '').trim())
+    expect(buttons.some((text) => /冷|卸载|快照/.test(text))).toBe(false)
   })
 })

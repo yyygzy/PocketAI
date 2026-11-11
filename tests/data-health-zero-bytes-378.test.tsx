@@ -1,12 +1,13 @@
 // V4-Iter-378（候选 #8）：`formatBytes` 以前把「确实没有」和「读不到」折成同一个 '-'。
 //
 // 真机现场（§377 第三趟）：清理与 VACUUM 都跑成了、可回收字节是 0 ⇒ 屏上「VACUUM 回收 -」；
-// 数据健康屏那六个体积在新装机器上天然全是 0 ⇒ 六格一排 '-'，与"这一项压根没读到"长成同一个串。
+// 数据健康屏的体积在新装机器上天然是 0 ⇒ 一排 '-'，与"这一项压根没读到"长成同一个串。
+// 冷数据/快照/审批条数搬去管家后，设置侧体积只剩「磁盘占用」与「浏览器缓存」两格（其余明细已删）。
 // 修法＝helper 分两档（0 ⇒ '0 B'；非有限值／负数 ⇒ '-'）＋ `DataHealthPanel.onClearCache`
 // 里那处 `report ? ... : formatBytes(0)`（借 0 当"没有报告"的哨兵，而那颗键只在 `!report` 那道门之后才存在）改成早退。
 //
 // 判据分三档：①helper 本体（tests/format.test.ts 里拆出来的两档）；
-// ②本文件＝真挂载看得到脸（数据健康屏七个体积格＋确认框与回执里那个数）；
+// ②本文件＝真挂载看得到脸（数据健康屏剩下的两格体积＋确认框与回执里那个数）；
 // ③steward 那两格由 §377 的挂载文件补一颗（回收 0 字节该说 0 B）。
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
@@ -79,18 +80,10 @@ const rowText = (label: string): string => {
   return (el?.textContent ?? '').trim()
 }
 
-describe('① 体积那七格：全 0 该说 0 B，不许再借「-」演「读不到」', () => {
-  it('新装机器（体积全 0）⇒ 合计／主数据库／附件／扩展／日志／其他／浏览器缓存都写 0 B', async () => {
+describe('① 体积那两格：全 0 该说 0 B，不许再借「-」演「读不到」', () => {
+  it('新装机器（体积全 0）⇒ 磁盘占用／浏览器缓存都写 0 B', async () => {
     await mount(zeroSizes)
-    for (const label of [
-      L('dh.total'),
-      L('dh.db'),
-      L('dh.attachments'),
-      L('dh.extensions'),
-      L('dh.logs'),
-      L('dh.other'),
-      L('dh.browserCache')
-    ]) {
+    for (const label of [L('dh.total'), L('dh.browserCache')]) {
       const text = rowText(label)
       expect(text, `「${label}」那一格没说 0 B`).toContain('0 B')
       expect(text, `「${label}」那一格还在借 '-' 演"读不到"`).not.toMatch(/(^|[^\w.\]])-(?![\w.%])/)
@@ -100,15 +93,11 @@ describe('① 体积那七格：全 0 该说 0 B，不许再借「-」演「读�
   it('正向对照：真有体积时数字照旧（0 B 这一档不是把单位换算一起改坏）', async () => {
     await mount({
       ...zeroSizes,
-      userDataBytes: 20 * 1024 * 1024,
-      dbBytes: 8 * 1024 * 1024,
-      logsBytes: 512 * 1024
+      userDataBytes: 20 * 1024 * 1024
     })
     expect(rowText(L('dh.total'))).toContain('20.0 MB')
-    expect(rowText(L('dh.db'))).toContain('8.0 MB')
-    expect(rowText(L('dh.logs'))).toContain('512 KB')
-    // 附件仍是 0 ⇒ 那一格该说 0 B（同一份屏上两张脸各自对）
-    expect(rowText(L('dh.attachments'))).toContain('0 B')
+    // 浏览器缓存仍是 0 ⇒ 那一格该说 0 B（同一份屏上两张脸各自对）
+    expect(rowText(L('dh.browserCache'))).toContain('0 B')
   })
 })
 

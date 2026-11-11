@@ -139,7 +139,7 @@ describe('数据健康：首读就失败 ⇒ 那颗长在报告里的「刷新�
     await settle()
     await waitFor(() => expect(alerts()).toEqual([]))
     expect(screen.queryByTestId('data-health-read-retry')).toBeNull()
-    expect(screen.getByText(L('dh.db'))).toBeTruthy()
+    expect(screen.getByText(L('dh.total'))).toBeTruthy()
   })
 })
 

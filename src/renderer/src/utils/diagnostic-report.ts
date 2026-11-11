@@ -5,6 +5,7 @@
 import type {
   AuditResult,
   CheckLevel,
+  DataHealthReport,
   DiagnoseResult,
   HardwareInfo,
   HealthReport,
@@ -19,6 +20,8 @@ export interface DiagnosticReportData {
   hardware: HardwareInfo | null
   integrity: { ok: boolean; details: string } | null
   health: HealthReport | null
+  /** 冷数据/快照/审批条数（与设置页同一发 data-health 查询，§把手搬进管家） */
+  dataHealth: DataHealthReport | null
   recommendation: ModelRecommendation | null
   audit: AuditResult | null
   diagnose: DiagnoseResult | null
@@ -89,6 +92,12 @@ export interface ReportLabels {
   attachSize: string
   orphanMessages: string
   orphanChunks: string
+  coldOffload: string
+  coldSnapshots: string
+  approvals: string
+  coldOffloadValue: (bytes: number, count: number) => string
+  coldSnapshotValue: (bytes: number, count: number) => string
+  approvalsValue: (rows: number) => string
   score: string
   statusOk: string
   statusWarn: string
@@ -214,6 +223,22 @@ export function buildDiagnosticReport(d: DiagnosticReportData, L: ReportLabels):
     )
   } else {
     healthBody.push(L.notAvailable)
+  }
+  // ③ 只增行：冷数据/快照/审批条数从设置页搬来后一并进报告；章节号与顺序不变。
+  // 没读到这一发时三行都写「无数据」——不许折成 0，那会和"跑了但为 0"混成一张脸。
+  if (d.dataHealth) {
+    const s = d.dataHealth.sizes
+    healthBody.push(
+      kv(L.coldOffload, L.coldOffloadValue(s.coldOffloadBytes, s.coldOffloadFiles)),
+      kv(L.coldSnapshots, L.coldSnapshotValue(s.coldSnapshotBytes, s.coldSnapshotFiles)),
+      kv(L.approvals, d.dataHealth.approvals ? L.approvalsValue(d.dataHealth.approvals.rows) : L.notAvailable)
+    )
+  } else {
+    healthBody.push(
+      kv(L.coldOffload, L.notAvailable),
+      kv(L.coldSnapshots, L.notAvailable),
+      kv(L.approvals, L.notAvailable)
+    )
   }
   lines.push(section(`③ ${L.healthSection}`, healthBody))
 

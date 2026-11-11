@@ -120,6 +120,7 @@ describe('② 导出报告：没读到的版本号要写「读不到：原因」
       }),
       checkIntegrity: () => ({ ok: true, data: { ok: true, details: '' } }),
       getHealthReport: () => ({ ok: true, data: { totalBytes: 0, sections: [], items: [], byCategory: [] } }),
+      getDataHealth: () => ({ sizes: { coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0 }, approvals: { rows: 0 } }),
       recommendModels: () => ({ ok: false }),
       listProviders: () => [],
       runAudit: () => ({ ok: true, data: { score: 80, checks: [] } }),

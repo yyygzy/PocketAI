@@ -50,7 +50,7 @@ describe('① 数据健康面板：改前把失败对象当报告用，解构当
     await settleAfter('getDataHealth')
     expect(panels()).toEqual(['库被占用'])
     // 报告主体一个格子都不许出现（改前正是从这里 TypeError）
-    expect(screen.queryByText(L('dh.db'))).toBeNull()
+    expect(screen.queryByText(L('dh.total'))).toBeNull()
   })
 
   it('反向对照：读到了 ⇒ 报告渲染出来，且不弹任何东西', async () => {
@@ -70,7 +70,7 @@ describe('① 数据健康面板：改前把失败对象当报告用，解构当
     mountWithProviders(<DataHealthPanel />)
     await settleAfter('getDataHealth')
     expect(panels()).toEqual([])
-    expect(screen.getByText(L('dh.db'))).toBeTruthy()
+    expect(screen.getByText(L('dh.total'))).toBeTruthy()
   })
 })
 

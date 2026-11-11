@@ -64,6 +64,7 @@ const stewardStubs = (over: Record<string, Impl> = {}): Record<string, Impl> => 
   getHardwareInfo: () => ({ ok: true, data: HW }),
   checkIntegrity: () => ({ ok: true, data: { ok: true, details: 'ok' } }),
   getHealthReport: () => ({ ok: true, data: HEALTH }),
+  getDataHealth: () => ({ sizes: { coldOffloadBytes: 0, coldOffloadFiles: 0, coldSnapshotBytes: 0, coldSnapshotFiles: 0 }, approvals: { rows: 0 } }),
   recommendModels: () => ({ ok: true, data: RECOMMEND }),
   getUpdateInfo: () => ({ isPackaged: false, currentVersion: '0.9.9', autoUpdateEnabled: false }),
   onOllamaPullEvent: () => () => {},
