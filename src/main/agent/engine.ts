@@ -69,6 +69,8 @@ import {
   buildTextProtocolPrompt
 } from '../../shared/text-tool-protocol'
 import { isTextProtocolForced } from './text-protocol-prefs'
+import { getToolSurfaceMode } from './tool-surface-prefs'
+import { selectToolSurface } from '../../shared/tool-groups'
 import { getModelContextWindow } from './model-window-prefs'
 import { getFallbackTarget } from './fallback-target-prefs'
 import { providerRepo } from '../db/repositories/provider.repo'
@@ -1224,7 +1226,13 @@ class AgentEngine {
   async run(
     payload: SendMessagePayload,
     emit: EmitFn,
-    internal?: { parentRequestId?: string; budget?: RunBudget; asChild?: boolean }
+    internal?: {
+      parentRequestId?: string
+      budget?: RunBudget
+      asChild?: boolean
+      /** 工具面治理：父 run 实际发出去的 id 集合，子 run 只能在其中再缩小 */
+      exposedToolIds?: Set<string>
+    }
   ): Promise<void> {
     const { requestId, conversationId, content, assistantId, targets, unattended } = payload
     if (!targets || targets.length === 0) throw new Error('CHAT_NO_TARGET:未选择模型')
@@ -1307,10 +1315,28 @@ class AgentEngine {
        *    "子级授权 ⊆ 父级"因此是结构性成立的，不需要再去读一遍助手的 tool_permissions。
        */
       const surface = toolRegistry.filterByPermissions(toolPermissions)
+      /**
+       * 工具面治理（候选 A）：把"发多少 schema"从"授权了什么"里拆开。
+       *  · 只裁 `'*'` 宽授权；显式逐条授权的工具一枚不裁（判据在 selectToolSurface 里）；
+       *  · MCP 工具不参与分组裁剪（它们本来就只能逐条授权，等价于显式）；
+       *  · 子 run 再叠一层：父面 id 由 `internal.exposedToolIds` 传下来，子只能在父面之内更小，
+       *    不会因为子任务里出现"提醒"这种词就把父面裁掉的组重新装回来（= 子级 ⊆ 父级）。
+       * 这里不动任何权限判定：`allowedToolIds`（L1472）仍按 toolPermissions 算。
+       */
+      const parentSurfaceIds = internal?.exposedToolIds
+      const permittedSurface = parentSurfaceIds
+        ? surface.filter((t) => parentSurfaceIds.has(t.id))
+        : surface
+      const surfaceSelection = selectToolSurface({
+        tools: permittedSurface,
+        permissions: toolPermissions,
+        message: content,
+        mode: getToolSurfaceMode()
+      })
       const delegationEnabled = !asChild && isDelegationEnabledFor(target.providerId, target.model)
       const baseTools = asChild
-        ? childToolSurface(surface)
-        : surface.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
+        ? childToolSurface(surfaceSelection.tools)
+        : surfaceSelection.tools.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
       /**
        * 145 定的两条合取，150 按用户选定（A2 + 一起细化）收到"**子对这机显存的实际占用**"上：
        *  ① 容量档只管**落在本地端点**的候选——"两个本地模型能否同驻"对云子没有对象（M3/M10 说的都是这张卡）；
@@ -1677,6 +1703,8 @@ class AgentEngine {
           retrieval: ctx.retrieval,
           usedTools: ctx.recentToolSignatures.length > 0,
           mcpHeldBack: mcpHeldBack > 0 ? mcpHeldBack : undefined,
+          // 与 mcpHeldBack 并列但**不是同一个数字**：这里数的是分组裁剪掉的内置工具
+          toolGroupsHeldBack: surfaceSelection.heldBackTools > 0 ? surfaceSelection.heldBackTools : undefined,
           // §237：§234 那条只进日志的实话上屏。判据是**我们自己那把尺子**算出来的（声明过窗口
           // 且固定开销已把它吃光）——没声明过的模型量不了，就不带这个标记，不猜一句话给用户。
           historyTight: windowPlan.noRoom ? true : undefined
@@ -2963,7 +2991,13 @@ class AgentEngine {
     }
     ctx.master.signal.addEventListener('abort', onParentAbort)
     try {
-      await this.run(payload, childEmit, { parentRequestId: ctx.requestId, budget: ctx.budget, asChild: true })
+      await this.run(payload, childEmit, {
+        parentRequestId: ctx.requestId,
+        budget: ctx.budget,
+        asChild: true,
+        // 父面已经裁过一次；子只能在这份 id 集合里挑，避免"子任务提到提醒就把日程组装回来"
+        exposedToolIds: new Set(ctx.tools.map((t) => t.id))
+      })
     } catch (e) {
       return fail(`子代理（${role}）运行失败：${errMsg(e)}`)
     } finally {

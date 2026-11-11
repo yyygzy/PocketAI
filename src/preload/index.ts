@@ -900,6 +900,12 @@ const api = {
   /** 开/关某台模型的文本协议；返回最新清单（以库里为准，调用方不做乐观更新） */
   setAgentTextProtocol: (providerId: string, model: string, on: boolean): Promise<string[]> =>
     ipcRenderer.invoke(IPC.AGENT_SET_TEXT_PROTOCOL, { providerId, model, on }),
+  /** 工具面装载模式：grouped=按需装载（默认）/ full=与治理前一致（全局单键） */
+  getAgentToolSurface: (): Promise<'grouped' | 'full'> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_TOOL_SURFACE),
+  /** 切换工具面装载模式；返回库里回读的值（调用方不做乐观更新） */
+  setAgentToolSurface: (mode: 'grouped' | 'full'): Promise<'grouped' | 'full'> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_TOOL_SURFACE, { mode }),
   /** §234：每台模型声明的上下文窗口（键 `providerId::model`，值为 token 数）。失败分支是 {ok:false} */
   getModelContextWindows: (): Promise<Record<string, number> | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.AGENT_GET_MODEL_WINDOWS),

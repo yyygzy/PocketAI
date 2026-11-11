@@ -67,10 +67,26 @@ export const McpPanel: React.FC = () => {
   const [templatesOpen, setTemplatesOpen] = useState(false)
   // 高级控制台只留一个入口；能力中心复用同一份外壳（不另写工具勾选逻辑）
   const [capabilityOpen, setCapabilityOpen] = useState(false)
+  // 工具面装载模式（全局，不随 Server 变）：grouped=按需 / full=全量
+  const [surfaceMode, setSurfaceMode] = useState<'grouped' | 'full'>('grouped')
   // §336：调用日志切换 server 时旧请求可能迟到，用代次计数器钉住"只接受最新那一发"
   const callLogGenRef = useRef(0)
 
   const pip = usePipSource(setNotice, askConfirm)
+
+  // 工具面装载模式读一次（读失败就停在默认 grouped：它只影响发多少 schema）
+  useEffect(() => {
+    let alive = true
+    void window.pocketai
+      .getAgentToolSurface()
+      .then((m) => {
+        if (alive) setSurfaceMode(m)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const load = useCallback(async () => {
     const [recs, runs] = await Promise.all([
@@ -151,6 +167,8 @@ export const McpPanel: React.FC = () => {
           pythonPackages: base?.pythonPackages ?? [],
           status: evt.status,
           tools: evt.tools ?? [],
+          toolsTotal: evt.toolsTotal ?? 0,
+          toolsHeldBack: evt.toolsHeldBack ?? 0,
           lastError: evt.lastError ?? null,
           pid: evt.pid
         }
@@ -332,6 +350,29 @@ export const McpPanel: React.FC = () => {
             </button>
           </div>
         </div>
+        {/* 工具面治理：全局单键，只决定"发多少工具 schema"，与授权/审批无关 */}
+        <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2 space-y-1">
+          <label className="flex items-center gap-2 text-[11px] font-medium text-[var(--color-text)]">
+            <input
+              type="checkbox"
+              data-testid="tool-surface-grouped"
+              checked={surfaceMode === 'grouped'}
+              onChange={(e) => {
+                const next = e.target.checked ? 'grouped' : 'full'
+                setSurfaceMode(next)
+                // 以库里回读的值为准（写失败就退回原值，不做乐观更新）
+                void window.pocketai
+                  .setAgentToolSurface(next)
+                  .then(setSurfaceMode)
+                  .catch(() => setSurfaceMode(next === 'grouped' ? 'full' : 'grouped'))
+              }}
+            />
+            {t('agent.toolSurfaceGrouped')}
+          </label>
+          <p className="text-[10px] leading-4 text-[var(--color-text-muted)]">
+            {t('agent.toolSurfaceHint')}
+          </p>
+        </div>
         {/* pip 下载源：全局设置，Python 依赖安装时使用 */}
         <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2 space-y-1.5">
           <label className="block text-[11px] font-medium text-[var(--color-text-muted)]">
@@ -478,6 +519,11 @@ export const McpPanel: React.FC = () => {
                       }
                     >
                       {expandedServers[r.id] ? '▾' : '▸'} {t('agent.nTools', { n: rt.tools.length })}
+                      {rt.toolsHeldBack > 0 && (
+                        <span className="ml-1 text-[var(--color-warning)]">
+                          · {t('agent.mcpToolsHeldBack', { n: rt.toolsHeldBack, total: rt.toolsTotal })}
+                        </span>
+                      )}
                     </button>
                     {expandedServers[r.id] && (
                       <div className="mt-1 space-y-1.5">

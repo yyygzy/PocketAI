@@ -90,6 +90,14 @@ export const textProtocolToggleSchema = z.object({
 })
 
 /**
+ * AGENT_SET_TOOL_SURFACE 入参：全局工具面装载模式（工具面治理，候选 A）。
+ * 只收两个字面量：这不是自由文本开关，脏值不该落库；读侧对未知值另有 grouped 兜底。
+ */
+export const toolSurfaceModeSchema = z.object({
+  mode: z.enum(['grouped', 'full'])
+})
+
+/**
  * AGENT_SET_FALLBACK 入参（V4-Iter-237）：设／清某台模型的备用 target。
  * `target: null` 表示清除（回到"没备用"），判据同 §234 那颗窗口：类型与形状在这儿挡，
  * "指向自己"这类语义拒绝留在服务层（它才知道现有表里是谁）。id 长度与 `FALLBACK_MAX_PART_CHARS` 同档。

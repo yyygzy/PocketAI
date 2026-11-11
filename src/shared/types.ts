@@ -1018,7 +1018,12 @@ export type PythonPipSource = 'official' | 'tuna' | (string & {})
 /** 运行时状态（不持久化，由 manager 维护并随事件推送） */
 export interface McpServerRuntime extends McpServerRecord {
   status: McpServerStatus
+  /** 已进入工具面的工具（超过 MAX_MCP_TOOLS 的部分不在其中） */
   tools: ToolSchema[]
+  /** 这次 tools/list 声明的总数（含被截断的）；未运行时为 0 */
+  toolsTotal: number
+  /** 因超过 MAX_MCP_TOOLS 而未进入请求的条数（= toolsTotal - tools.length） */
+  toolsHeldBack: number
   lastError: string | null
   pid?: number
 }
@@ -1027,6 +1032,8 @@ export interface McpServerStatusEvent {
   serverId: string
   status: McpServerStatus
   tools?: ToolSchema[]
+  toolsTotal?: number
+  toolsHeldBack?: number
   lastError?: string | null
   pid?: number
 }
@@ -1289,6 +1296,12 @@ export interface AgentDoneEvent {
    * 只在 >0 时携带；渲染层附在零调用提示里，告诉用户"不是模型懒，是工具没给"。
    */
   mcpHeldBack?: number
+  /**
+   * 本轮因「按需装载工具」而未进入请求的内置工具数（工具面治理，候选 A）。
+   * 只在 >0 时携带。与 `mcpHeldBack` **不是同一个数字**：那个数的是"因 `'*'` 只给内置
+   * 而被授权规则挡下的 MCP 工具"，这个数的是"分组没命中而没发 schema 的内置工具"。
+   */
+  toolGroupsHeldBack?: number
   /**
    * 这一轮的固定开销（system＋工具清单＋技能＋记忆）已经超过这台模型**声明过的**窗口，
    * 历史只带了最近一问（V4-Iter-237 把 §234 那句只进日志的实话搬上屏）。
@@ -2880,6 +2893,8 @@ export const IPC = {
   AGENT_LIST_RUNS: 'agent:list-runs', // P2：会话全部 run 索引（只读，按 request_id 聚合后映射轮次）
   AGENT_GET_TEXT_PROTOCOL: 'agent:get-text-protocol', // 被点名走文本协议的模型清单（只读）
   AGENT_SET_TEXT_PROTOCOL: 'agent:set-text-protocol', // 开/关某台模型的文本协议
+  AGENT_GET_TOOL_SURFACE: 'agent:get-tool-surface', // 工具面装载模式（grouped / full，只读）
+  AGENT_SET_TOOL_SURFACE: 'agent:set-tool-surface', // 切换工具面装载模式（全局，不建表）
   AGENT_LIST_DELEGATE_CAPS: 'agent:list-delegate-caps', // 已判出的"能不能当管控者"清单（只读，带 stale）
   AGENT_PROBE_DELEGATE_CAP: 'agent:probe-delegate-cap', // 对一台模型跑一次委派探针（会发真请求，用户点出来的）
   AGENT_ABORT_DELEGATE_PROBE: 'agent:abort-delegate-probe', // §246：停止正在跑的那一发探针（不下结论、不改写判定）

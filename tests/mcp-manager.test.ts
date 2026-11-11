@@ -140,6 +140,7 @@ import {
   McpManager,
   startupFailureHint,
   MAX_MCP_TOOLS,
+  MAX_MCP_TOOLS_ACCEPTED,
   MAX_MCP_TOOL_DESC_CHARS,
   MAX_MCP_TOOL_SCHEMA_CHARS
 } from '../src/main/mcp/manager'
@@ -399,9 +400,30 @@ describe('McpManager — tools/list 边界收紧（防恶意/失控 server）', 
     await expect(mgr.start('srv1')).rejects.toThrow(/工具列表格式非法/)
   })
 
-  it('工具数超过上限 → 拒绝启动', async () => {
-    mockToolsResult(Array.from({ length: MAX_MCP_TOOLS + 1 }, (_, i) => ({ name: `tool_${i}` })))
-    await expect(mgr.start('srv1')).rejects.toThrow(new RegExp(`超过上限 ${MAX_MCP_TOOLS}`))
+  it('工具数超过装载上限 → 不拒绝启动，按声明顺序截断并如实记数', async () => {
+    // 工具面治理：200 不再是"拒绝启动"线，而是"每轮最多进请求多少条"。
+    mockToolsResult(
+      Array.from({ length: MAX_MCP_TOOLS + 25 }, (_, i) => ({ name: `tool_${i}` }))
+    )
+    const r = await mgr.start('srv1')
+    expect(r.status).toBe('running')
+    expect(r.tools).toHaveLength(MAX_MCP_TOOLS)
+    expect(r.toolsTotal).toBe(MAX_MCP_TOOLS + 25)
+    expect(r.toolsHeldBack).toBe(25)
+    // 截断必须是确定性的：保留的是声明顺序里的前 N 个
+    expect(r.tools[0]!.name).toBe('tool_0')
+    expect(r.tools[MAX_MCP_TOOLS - 1]!.name).toBe(`tool_${MAX_MCP_TOOLS - 1}`)
+  })
+
+  it('工具数超过受理上限 → 拒绝启动，文案含声明数与受理上限', async () => {
+    mockToolsResult(
+      Array.from({ length: MAX_MCP_TOOLS_ACCEPTED + 1 }, (_, i) => ({ name: `tool_${i}` }))
+    )
+    await expect(mgr.start('srv1')).rejects.toThrow(
+      new RegExp(
+        `声明了 ${MAX_MCP_TOOLS_ACCEPTED + 1} 个工具，超过受理上限 ${MAX_MCP_TOOLS_ACCEPTED}`
+      )
+    )
   })
 
   it('工具名缺失/为空 → 拒绝启动', async () => {

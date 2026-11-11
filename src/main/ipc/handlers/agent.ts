@@ -24,6 +24,7 @@ import {
   calendarConfigSchema,
   toolApproveResponseSchema,
   textProtocolToggleSchema,
+  toolSurfaceModeSchema,
   modelWindowSetSchema,
   interjectSchema,
   fallbackSetSchema,
@@ -32,6 +33,7 @@ import {
   snapshotIdsSchema
 } from '../../../shared/schemas/agent'
 import { listTextProtocolModels, setTextProtocolModel } from '../../agent/text-protocol-prefs'
+import { getToolSurfaceMode, setToolSurfaceMode } from '../../agent/tool-surface-prefs'
 import {
   listModelContextWindows,
   setModelContextWindow
@@ -249,6 +251,15 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string; on: boolean }) =>
       setTextProtocolModel(payload.providerId, payload.model, payload.on),
     argsSchema(textProtocolToggleSchema)
+  )
+
+  // ---------- 工具面装载模式（工具面治理，候选 A）----------
+  // 全局单键：只决定"发多少工具 schema"，与授权/审批无关，所以没有 id 维度的入参。
+  safeHandle(IPC.AGENT_GET_TOOL_SURFACE, () => getToolSurfaceMode())
+  safeHandle(
+    IPC.AGENT_SET_TOOL_SURFACE,
+    (_e, payload: { mode: 'grouped' | 'full' }) => setToolSurfaceMode(payload.mode),
+    argsSchema(toolSurfaceModeSchema)
   )
 
   // ---------- 每台模型可选的上下文窗口（V4-Iter-234）----------

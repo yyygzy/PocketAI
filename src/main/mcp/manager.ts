@@ -74,8 +74,19 @@ const INIT_TIMEOUT = 15_000
 const STDIO_INIT_TIMEOUT = 60_000
 /** 进程退出后自动重启最大次数 */
 const MAX_AUTO_RESTART = 3
-/** 单个 MCP Server 允许声明的最大工具数（防伪造海量工具撑爆广播/LLM 系统提示） */
+/**
+ * 每个 Server **每轮进入工具面**的最大工具数（防伪造海量工具撑爆 LLM 系统提示）。
+ * 超过的部分不再拒绝启动，而是按声明顺序截断并如实记数（`toolsTotal` / `toolsHeldBack`）——
+ * 一个 server 声明 450 个工具是它的自由，拒绝启动只会让用户连那 200 个都用不上。
+ * 权限判定不受影响：截断只决定"发不发 schema"，授权仍按 id 逐条判（见 registry.ts）。
+ */
 export const MAX_MCP_TOOLS = 200
+/**
+ * 单个 Server 允许**受理**的工具数上限（唯一硬拒）。
+ * 为什么还留一道：`MAX_MCP_TOOL_SCHEMA_CHARS` 是 64KB，1000 个这样的 schema 就是 64MB 常驻内存，
+ * 属于外部输入的资源边界，而不是"渐进降级"能兜住的事。报错文案带声明数与这条上限。
+ */
+export const MAX_MCP_TOOLS_ACCEPTED = 1000
 /** 工具名遵循 MCP 规范：字母/数字开头，字母数字下划线连字符，1..64 */
 export const MCP_TOOL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 /** 单工具描述长度上限（仅喂 LLM，超长截断） */
@@ -206,7 +217,10 @@ interface RuntimeEntry {
   record: McpServerRecord
   client: McpTransportClient | null
   status: McpServerStatus
+  /** 进入工具面的工具（已按 MAX_MCP_TOOLS 截断） */
   tools: ToolSchema[]
+  /** Server 在这次 tools/list 里声明的总数（含被截断的）；进程没跑起来时为 0 */
+  toolsTotal: number
   lastError: string | null
   autoRestarts: number
   logBuffer: string[] // 最近的 stderr 日志（环形）
@@ -245,10 +259,15 @@ export class McpManager extends EventEmitter {
 
   private toRuntime(r: McpServerRecord): McpServerRuntime {
     const entry = this.runtimes.get(r.id)
+    const tools = entry?.tools ?? []
     return {
       ...r,
       status: entry?.status ?? 'stopped',
-      tools: entry?.tools ?? [],
+      tools,
+      // 两个计数是**同一份 tools/list 的两个事实**，不是 mcpHeldBack
+      // （那一个是"因 '*' 只给内置而被授权规则挡下"，与截断无关）
+      toolsTotal: entry?.toolsTotal ?? 0,
+      toolsHeldBack: Math.max(0, (entry?.toolsTotal ?? 0) - tools.length),
       lastError: entry?.lastError ?? null,
       pid: entry?.client?.pid
     }
@@ -306,6 +325,7 @@ export class McpManager extends EventEmitter {
       client: null,
       status: 'starting',
       tools: [],
+      toolsTotal: 0,
       lastError: null,
       autoRestarts: existing?.autoRestarts ?? 0,
       logBuffer: existing?.logBuffer ?? [],
@@ -341,7 +361,9 @@ export class McpManager extends EventEmitter {
 
       // 拉取工具列表（外部协议边界：形状/数量/字段大小全部收紧后才进入运行时）
       const toolsResult = await client.request<unknown>('tools/list', {}, handshakeTimeout)
-      entry.tools = this.normalizeToolList(toolsResult, id, entry.record.trustReadOnly)
+      const normalized = this.normalizeToolList(toolsResult, id, entry.record.trustReadOnly)
+      entry.tools = normalized.tools
+      entry.toolsTotal = normalized.total
       // 握手期间用户已点停止：不要把状态翻回 running，关掉刚起的进程
       if (entry.status === 'stopped') {
         client.shutdown().catch((e) => log.warn('shutdown 失败（握手期停止）:', errMsg(e)))
@@ -458,6 +480,7 @@ export class McpManager extends EventEmitter {
     entry.client = null
     entry.status = 'stopped'
     entry.tools = []
+    entry.toolsTotal = 0
     clearTimeout(entry.stableTimer)
     entry.stableTimer = undefined
     this.emitStatus(id, 'stopped')
@@ -614,16 +637,38 @@ export class McpManager extends EventEmitter {
     await Promise.allSettled(ids.map((id) => this.stop(id)))
   }
 
-  /** tools/list 结果收口：非数组/超量直接拒绝（恶意/失控 server 不应静默降级为空/部分工具集） */
-  private normalizeToolList(raw: unknown, serverId: string, trustReadOnly: boolean): ToolSchema[] {
+  /**
+   * tools/list 结果收口：非数组/超过**受理上限**才拒绝；超过**进入工具面上限**时按声明顺序截断。
+   *
+   * 为什么截断而不是拒绝（本轮治理）：拒绝启动的代价是"这台 Server 一个工具都用不上"，
+   * 而真实需求往往只是"前 N 个就够"。截断是确定性的（声明顺序，不排序、不随机），
+   * 因此同一份 tools/list 每次得到同一份工具面；被截掉的条数由 `toolsTotal - tools.length`
+   * 如实上屏（与 `countMcpHeldBack` 是两个语义，别合并）。
+   */
+  private normalizeToolList(
+    raw: unknown,
+    serverId: string,
+    trustReadOnly: boolean
+  ): { tools: ToolSchema[]; total: number } {
     const tools = (raw as { tools?: unknown } | null)?.tools
     if (!Array.isArray(tools)) {
       throw new Error('MCP Server 返回的工具列表格式非法（tools 不是数组），已拒绝启动')
     }
-    if (tools.length > MAX_MCP_TOOLS) {
-      throw new Error(`MCP Server 声明了 ${tools.length} 个工具，超过上限 ${MAX_MCP_TOOLS}，已拒绝启动`)
+    if (tools.length > MAX_MCP_TOOLS_ACCEPTED) {
+      throw new Error(
+        `MCP Server 声明了 ${tools.length} 个工具，超过受理上限 ${MAX_MCP_TOOLS_ACCEPTED}，已拒绝启动`
+      )
     }
-    return tools.map((t, i) => this.normalizeMcpTool(t, i, serverId, trustReadOnly))
+    const exposed = tools.slice(0, MAX_MCP_TOOLS)
+    if (exposed.length < tools.length) {
+      log.warn(
+        `MCP Server ${serverId} 声明了 ${tools.length} 个工具，本轮只装载前 ${MAX_MCP_TOOLS} 个（其余未进请求）`
+      )
+    }
+    return {
+      tools: exposed.map((t, i) => this.normalizeMcpTool(t, i, serverId, trustReadOnly)),
+      total: tools.length
+    }
   }
 
   /** 把 MCP 协议返回的单个 tool 校验并转成统一 ToolSchema；非法名称/schema 直接拒绝启动 */
@@ -696,6 +741,7 @@ export class McpManager extends EventEmitter {
 
     entry.client = null
     entry.tools = []
+    entry.toolsTotal = 0
     // 崩溃时清除稳定运行定时器（未到稳定时长，计数器不复位）
     clearTimeout(entry.stableTimer)
     entry.stableTimer = undefined
@@ -736,10 +782,13 @@ export class McpManager extends EventEmitter {
 
   private emitStatus(id: string, status: McpServerStatus, lastError?: string | null): void {
     const entry = this.runtimes.get(id)
+    const tools = entry?.tools ?? []
     const evt: McpServerStatusEvent = {
       serverId: id,
       status,
-      tools: entry?.tools ?? [],
+      tools,
+      toolsTotal: entry?.toolsTotal ?? 0,
+      toolsHeldBack: Math.max(0, (entry?.toolsTotal ?? 0) - tools.length),
       lastError: lastError ?? entry?.lastError ?? null,
       pid: entry?.client?.pid
     }

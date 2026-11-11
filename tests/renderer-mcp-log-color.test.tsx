@@ -34,6 +34,8 @@ function runtimeWith(status: McpServerStatus): McpServerRuntime {
     pythonPackages: [],
     status,
     tools: [],
+    toolsTotal: 0,
+    toolsHeldBack: 0,
     lastError: status === 'error' ? 'spawn npx ENOENT' : null,
     pid: 1234
   }
@@ -51,7 +53,9 @@ async function mountWith(status: McpServerStatus): Promise<RenderResult> {
       return () => {}
     },
     onPythonEnvEvent: () => () => {},
-    getPythonPipSource: () => ({ ok: true, source: 'official' })
+    getPythonPipSource: () => ({ ok: true, source: 'official' }),
+    // 工具面开关：面板挂载时会读一次（grouped=按需）
+    getAgentToolSurface: () => Promise.resolve('grouped')
   })
   const r = mountWithProviders(<McpPanel />)
   // 等 getMcpRuntimes 的 promise 落定（runtimes 为空就取不到状态）
