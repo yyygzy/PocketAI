@@ -1,5 +1,4 @@
 // 加密 IPC：主密码设置/解锁/轮换/启停、恢复密钥、剪贴板敏感内容守卫
-import fs from 'node:fs'
 import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import { dbService } from '../../db/database'
@@ -15,6 +14,7 @@ import { lockService } from '../../lock/lock'
 import { closeUnlockWindow, showUnlockWindow } from '../../windows/unlock-window'
 import { createLogger } from '../../logger'
 import { safeHandle, errMsg, argsSchema, z } from '../safe-handle'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import {
   masterPasswordSchema,
   newMasterPasswordSchema,
@@ -479,7 +479,8 @@ export function registerEncryptionHandlers(): void {
       filters: [{ name: '文本文件', extensions: ['txt'] }]
     })
     if (canceled || !filePath) return { ok: true as const, canceled: true }
-    fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 })
+    // 恢复密钥是"丢了就完蛋"的文件：原子写 + 0600，失败不许留半份
+    writeFileAtomicSync(filePath, content, { mode: 0o600 })
     return { ok: true as const, path: filePath }
   }, argsSchema(recoveryCodeSchema))
 

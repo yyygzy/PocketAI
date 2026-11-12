@@ -128,12 +128,17 @@ beforeEach(() => {
 })
 
 let writeSpy: ReturnType<typeof vi.spyOn>
+let renameSpy: ReturnType<typeof vi.spyOn>
 afterEach(() => {
   writeSpy.mockRestore()
+  renameSpy.mockRestore()
 })
 
 beforeEach(() => {
+  // §477 起落盘改原子写（tmp + rename）：这里两个都桩掉，只验证"写向哪儿"，
+  // 别让测试依赖真实磁盘（否则 rename 会因 tmp 不存在而失败，测的就变成磁盘而不是落点）
   writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined)
+  renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => undefined)
 })
 
 describe('① CONVERSATION_EXPORT_MESSAGES 与拖出通道同一道大小闸', () => {
@@ -189,8 +194,13 @@ describe('② CONVERSATION_EXPORT_ENCRYPTED：KDF 只在真要落盘之后做', 
     const r = await call(IPC.CONVERSATION_EXPORT_ENCRYPTED, 'c1', 'hunter2hunter2')
     expect(r).toEqual({ ok: true, path: target })
     expect(mocks.encrypt).toHaveBeenCalledTimes(1)
+    // 原子写：先落同目录 `<target>.pocketai-tmp`，再 rename 到用户选定路径（§477）
     expect(writeSpy).toHaveBeenCalledTimes(1)
-    expect(String((writeSpy.mock.calls[0] as unknown[])[0])).toBe(target)
+    expect(String((writeSpy.mock.calls[0] as unknown[])[0])).toBe(`${target}.pocketai-tmp`)
+    expect(renameSpy).toHaveBeenCalledTimes(1)
+    const [from, to] = renameSpy.mock.calls[0] as [string, string]
+    expect(from).toBe(`${target}.pocketai-tmp`)
+    expect(to).toBe(target)
   })
 
   it('会话不存在 ⇒ 报错且不弹框、不做 KDF', async () => {

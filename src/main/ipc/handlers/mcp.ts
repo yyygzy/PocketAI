@@ -1,6 +1,5 @@
 // MCP Server IPC + Python 依赖环境（venv/pip）+ 便携 Python 运行时
 import { dialog, BrowserWindow } from 'electron'
-import fs from 'node:fs'
 import { IPC } from '../../../shared/types'
 import type { McpServerRecord, PythonPipSource } from '../../../shared/types'
 import { mcpServerRepo } from '../../db/repositories/mcp-server.repo'
@@ -11,6 +10,7 @@ import { pythonEnvService, getPipSource, setPipSource } from '../../mcp/python-e
 import { listPythonRuntimes, downloadPortablePython } from '../../python-runtime'
 import { broadcast } from '../broadcast'
 import { safeHandle, errMsg, argsSchema } from '../safe-handle'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import {
   mcpServerSaveSchema,
   pythonPipSourceSchema,
@@ -59,7 +59,7 @@ export function registerMcpHandlers(): void {
     // 文件只写标准 mcpServers + 脱敏清单扩展键（redactedCount 等统计量不入文件）
     const file: Record<string, unknown> = { mcpServers: payload.mcpServers }
     if (payload.redactedEntries.length > 0) file[REDACTED_KEYS_NOTE] = payload.redactedEntries
-    fs.writeFileSync(filePath, JSON.stringify(file, null, 2), 'utf8')
+    writeFileAtomicSync(filePath, JSON.stringify(file, null, 2))
     return {
       ok: true as const,
       path: filePath,

@@ -1,5 +1,4 @@
 // 平台管家 IPC：健康报告/清理/VACUUM、模型推荐、安全审计、故障诊断、数据健康度
-import fs from 'node:fs'
 import { BrowserWindow, dialog, shell } from 'electron'
 import { z } from 'zod'
 import { IPC, type ApprovalAuditQuery, type ApprovalExportQuery } from '../../../shared/types'
@@ -24,6 +23,7 @@ import { recordPerf } from '../../steward/perf-probe'
 import { cleanOrphans, deduplicate, reindexDocs } from '../../knowledge/kb-health'
 import { idSchema } from '../../../shared/schemas/providers'
 import { safeHandle, argsSchema } from '../safe-handle'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 
 /** 报告文本上限（渲染端拼装的纯文本远小于此，仅做防灌爆） */
 const REPORT_MAX_CHARS = 200_000
@@ -93,7 +93,7 @@ export function registerStewardHandlers(): void {
         ]
       })
       if (canceled || !filePath) return { ok: true as const, canceled: true as const }
-      fs.writeFileSync(filePath, args.content, 'utf8')
+      writeFileAtomicSync(filePath, args.content)
       return { ok: true as const, path: filePath }
     },
     argsSchema(z.object({ content: z.string().min(1).max(REPORT_MAX_CHARS) }))
@@ -158,7 +158,7 @@ export function registerStewardHandlers(): void {
         ]
       })
       if (canceled || !filePath) return { ok: true as const, canceled: true as const }
-      fs.writeFileSync(filePath, content, 'utf8')
+      writeFileAtomicSync(filePath, content)
       return {
         ok: true as const,
         canceled: false as const,

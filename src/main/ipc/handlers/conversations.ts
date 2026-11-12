@@ -21,6 +21,7 @@ import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { deleteMessageAttachmentDocs } from '../../attachment/attachment-ingestion'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
 import { htmlToPdf } from '../../export/pdf'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import { errMsg } from '../../error'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { clearSessionAllow } from '../../agent/tool-approval'
@@ -190,7 +191,8 @@ export function registerConversationHandlers(): void {
     if (canceled || !filePath) return { ok: true, canceled: true }
 
     const md = buildConversationMarkdown(conv, messages, assistant?.name ?? null)
-    fs.writeFileSync(filePath, md, 'utf8')
+    // 原子写：磁盘满/崩溃不会在用户选的位置留下半份 .md（§477）
+    writeFileAtomicSync(filePath, md)
     return { ok: true, path: filePath }
   }, argsSchema(idSchema))
 
@@ -210,7 +212,7 @@ export function registerConversationHandlers(): void {
     })
     if (canceled || !filePath) return { ok: true, canceled: true }
 
-    fs.writeFileSync(filePath, html, 'utf8')
+    writeFileAtomicSync(filePath, html)
     return { ok: true, path: filePath }
   }, argsSchema(idSchema, z.string().min(1).max(50 * 1024 * 1024)))
 
@@ -231,7 +233,8 @@ export function registerConversationHandlers(): void {
     const failed: string[] = []
     files.forEach((f, i) => {
       try {
-        fs.writeFileSync(path.join(dir, finalNames[i]!), f.content, 'utf8')
+        // 逐份原子写：500 份里第 N 份失败时，前 N-1 份是完整文件，失败那份不留半截
+        writeFileAtomicSync(path.join(dir, finalNames[i]!), f.content)
         count++
       } catch {
         failed.push(f.name)
@@ -258,7 +261,7 @@ export function registerConversationHandlers(): void {
     })
     if (canceled || !filePath) return { ok: true, canceled: true }
 
-    fs.writeFileSync(filePath, payload.content, 'utf8')
+    writeFileAtomicSync(filePath, payload.content)
     return { ok: true, path: filePath }
   }, argsSchema(z.object({
     defaultName: z.string().min(1).max(200),
@@ -314,7 +317,7 @@ export function registerConversationHandlers(): void {
 
     try {
       const pdf = await htmlToPdf(html)
-      fs.writeFileSync(filePath, Buffer.from(pdf))
+      writeFileAtomicSync(filePath, Buffer.from(pdf))
       return { ok: true, path: filePath }
     } catch (err) {
       return { ok: false, error: errMsg(err) }
@@ -341,7 +344,7 @@ export function registerConversationHandlers(): void {
     for (let i = 0; i < files.length; i++) {
       try {
         const pdf = await htmlToPdf(files[i]!.content)
-        fs.writeFileSync(path.join(dir, finalNames[i]!), Buffer.from(pdf))
+        writeFileAtomicSync(path.join(dir, finalNames[i]!), Buffer.from(pdf))
         count++
       } catch {
         failed.push(files[i]!.name)
@@ -381,7 +384,7 @@ export function registerConversationHandlers(): void {
     // KDF 排在保存对话框之后（V4-Iter-330）：改前点完导出要先等一轮 PBKDF2 才弹框，
     // 用户在框里取消时那一轮纯白跑
     const encrypted = encryptWithPassword(password, JSON.stringify(payload))
-    fs.writeFileSync(filePath, encrypted)
+    writeFileAtomicSync(filePath, encrypted)
     return { ok: true, path: filePath }
   }, argsSchema(idSchema, z.string().min(1)))
   safeHandle(IPC.CONVERSATION_IMPORT_ENCRYPTED, async (e, password: string) => {

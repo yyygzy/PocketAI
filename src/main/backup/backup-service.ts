@@ -14,6 +14,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto'
 import { sha256Hex } from '../fs/hash'
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, statSync, readdirSync, rmSync, unlinkSync } from 'node:fs'
+import { writeFileAtomicSync } from '../files/atomic-write'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 // archiver 是 CJS 模块（module.exports = function），@types 未声明 default 导出，
@@ -349,7 +350,8 @@ export async function createLocalBackup(outDir: string): Promise<{ path: string;
   const filename = `pocketai-backup-${new Date().toISOString().replace(/[:.]/g, '')}.zip`
   mkdirSync(outDir, { recursive: true })
   const outPath = join(outDir, filename)
-  writeFileSync(outPath, zip)
+  // 备份包通常几十 MB：直接写会在磁盘满/中断时留下一个"看着像备份、解不开"的半份 zip
+  writeFileAtomicSync(outPath, zip)
   log.info(`本地备份: ${outPath} (${zip.length} bytes)`)
   return { path: outPath, size: zip.length, encrypted: false }
 }
@@ -363,7 +365,7 @@ export async function createEncryptedLocalBackup(outDir: string): Promise<{ path
   mkdirSync(outDir, { recursive: true })
   const outPath = join(outDir, filename)
   // 0600：密文备份仍按最小权限落盘（同机其他用户不可读）；仅对新建文件生效
-  writeFileSync(outPath, blob, { mode: 0o600 })
+  writeFileAtomicSync(outPath, blob, { mode: 0o600 })
   log.info(`加密本地备份: ${outPath} (${blob.length} bytes, salt=${salt.toString('base64').slice(0,8)}...)`)
   return { path: outPath, size: blob.length, encrypted: true, saltB64: salt.toString('base64') }
 }

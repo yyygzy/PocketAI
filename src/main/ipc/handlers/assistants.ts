@@ -9,6 +9,7 @@ import { kbRepo } from '../../db/repositories/kb.repo'
 import { skillRepo } from '../../db/repositories/skill.repo'
 import { assertCanCreateAssistant } from '../../license/license'
 import { safeHandle, argsSchema } from '../safe-handle'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import { assistantSaveSchema, booleanSchema, optionalStringSchema, assistantImportSchema } from '../../../shared/schemas/assistants'
 import { idSchema } from '../../../shared/schemas/providers'
 import { safeFileName } from '../../../shared/export-markdown'
@@ -103,7 +104,7 @@ export function registerAssistantHandlers(): void {
     })
     if (canceled || !filePath) return { ok: true, canceled: true }
     const payload = buildAssistantExportPayload(assistantRepo.list())
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8')
+    writeFileAtomicSync(filePath, JSON.stringify(payload, null, 2))
     return { ok: true, path: filePath, count: payload.assistants.length }
   })
 

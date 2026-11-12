@@ -7,6 +7,7 @@ import { DATA_DIR } from '../portable'
 import { assertWithinWorkspaceByRealpath } from '../tools/fs-tools'
 import type { FileEntry, FileReadResult, FileOpResult } from '../../shared/types'
 import { errMsg } from '../error'
+import { writeFileAtomicSync } from './atomic-write'
 import {
   safeRelPath,
   safeRelDir,
@@ -167,7 +168,8 @@ function upload(relDir: string, name: string, base64: string): FileOpResult {
         i++
       } while (fs.existsSync(target))
     }
-    fs.writeFileSync(target, buf)
+    // 附件目录是应用自有的，但半份附件同样会让 UI 显示成功、点开却是坏文件
+    writeFileAtomicSync(target, buf)
     return { ok: true }
   } catch (e) {
     return { ok: false, error: errMsg(e) }

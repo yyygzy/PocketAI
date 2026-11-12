@@ -1,6 +1,5 @@
 // 知识库 IPC：库管理 / 文档摄取 / 分块预览 / 检索测试（含免费版数量门控）
 import { z } from 'zod'
-import fs from 'node:fs'
 import { BrowserWindow, dialog } from 'electron'
 import { IPC, KB_ASK_MAX_HISTORY } from '../../../shared/types'
 import type { KnowledgeBase } from '../../../shared/types'
@@ -21,6 +20,7 @@ import { issuePathToken, peekPathToken } from '../dialog-path-token'
 import { detectSourceType } from '../../knowledge/parsers'
 import { assertCanCreateKb } from '../../license/license'
 import { safeHandle, argsSchema } from '../safe-handle'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import {
   kbSaveSchema,
   kbDocAddUrlArgsSchema,
@@ -293,7 +293,7 @@ export function registerKnowledgeHandlers(): void {
     })
     if (canceled || !filePath) return { ok: true, canceled: true }
     const md = buildKbAskSessionMarkdown(rec, rec.messages)
-    fs.writeFileSync(filePath, md, 'utf8')
+    writeFileAtomicSync(filePath, md)
     return { ok: true, path: filePath }
   }, argsSchema(idSchema))
 
@@ -311,7 +311,7 @@ export function registerKnowledgeHandlers(): void {
       ]
     })
     if (canceled || !filePath) return { ok: true, canceled: true }
-    fs.writeFileSync(filePath, html, 'utf8')
+    writeFileAtomicSync(filePath, html)
     return { ok: true, path: filePath }
   }, argsSchema(idSchema, z.string().min(1).max(50 * 1024 * 1024)))
 

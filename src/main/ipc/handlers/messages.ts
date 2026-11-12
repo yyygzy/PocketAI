@@ -1,5 +1,4 @@
 // 消息 IPC：列表 / 删除 / 全局搜索（FTS5 trigram + LIKE 兜底）
-import fs from 'node:fs'
 import { BrowserWindow, dialog } from 'electron'
 import { IPC } from '../../../shared/types'
 import { SNIPPET_MARK_OPEN, SNIPPET_MARK_CLOSE } from '../../../shared/snippet'
@@ -12,6 +11,7 @@ import { getUsagePricing, setUsagePricing } from '../../usage/pricing-config'
 import { parsePricing } from '../../../shared/usage-pricing'
 import { usagePricingSchema } from '../../../shared/schemas/usage'
 import { safeHandle, argsSchema, z } from '../safe-handle'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import { idSchema } from '../../../shared/schemas/providers'
 
 /** 全局搜索 SQL 行（FTS 与 LIKE 两查询同构，FTS 多一个 snippet 列） */
@@ -174,7 +174,7 @@ export function registerMessageHandlers(): void {
         ]
       })
       if (canceled || !filePath) return { ok: true as const, canceled: true as const }
-      fs.writeFileSync(filePath, args.content, 'utf8')
+      writeFileAtomicSync(filePath, args.content)
       return { ok: true as const, path: filePath }
     },
     argsSchema(z.object({ days: z.number().int().min(1).max(365), content: z.string().min(1).max(USAGE_CSV_MAX_CHARS) }))

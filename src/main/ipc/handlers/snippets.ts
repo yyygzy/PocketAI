@@ -5,6 +5,7 @@ import { IPC } from '../../../shared/types'
 import type { PromptSnippetRecord } from '../../../shared/types'
 import { snippetRepo } from '../../db/repositories/snippet.repo'
 import { safeHandle, argsSchema } from '../safe-handle'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import { snippetCreateSchema, snippetUpdatePatchSchema, snippetImportSchema } from '../../../shared/schemas/snippets'
 import { idSchema } from '../../../shared/schemas/providers'
 import { safeFileName } from '../../../shared/export-markdown'
@@ -51,7 +52,7 @@ export function registerSnippetHandlers(): void {
         updatedAt: s.updatedAt
       }))
     }
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8')
+    writeFileAtomicSync(filePath, JSON.stringify(payload, null, 2))
     return { ok: true, path: filePath }
   })
 

@@ -1,6 +1,6 @@
 // AI 绘图 IPC：生成/中止/图库/另存 + 灯箱图片 data URL 通用复制/另存
 import { BrowserWindow, clipboard, ClipboardItem, dialog, nativeImage } from 'electron'
-import fs from 'node:fs/promises'
+import { writeFileAtomicSync } from '../../files/atomic-write'
 import { IPC } from '../../../shared/types'
 import type { ImageGeneratePayload } from '../../../shared/types'
 import {
@@ -69,7 +69,7 @@ export function registerImageHandlers(): void {
       ]
     })
     if (canceled || !filePath) return { canceled: true as const }
-    await fs.writeFile(filePath, parsed.buffer)
+    writeFileAtomicSync(filePath, parsed.buffer)
     return { path: filePath }
   }, argsSchema(dataUrlImageSchema))
 }
