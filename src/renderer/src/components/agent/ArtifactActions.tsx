@@ -1,7 +1,9 @@
-// artifact_create 结果卡：文件信息 + 打开/另存为/打开所在目录 + 文字大纲
+// artifact_create 结果卡：文件信息 + 打开/另存为/打开所在目录 + 预览
 //
-// 三条界面口径：
+// 四条界面口径：
 //  · **不吹"预览成品"**：pptx 只能给文字大纲，文案必须写明「不还原版式」；
+//  · docx 预览是 mammoth 转出的 HTML，**只放进 `sandbox=""`（不带 allow-scripts）的 iframe**，
+//    绝不直接注入主文档；
 //  · 每个 IPC 都判 hasIpcFailed（形状闸门），失败走 toast，不把失败画成成功；
 //  · 磁盘文件被外部删掉时，预览/打开会如实说"文件已不在"，不假装还能用。
 import React, { useState } from 'react'
@@ -24,12 +26,12 @@ interface ArtifactResult {
 }
 
 /** 只认 artifact_create 的完整成功形状；解析不出来就当普通工具结果，不硬画成产物卡 */
-export function readArtifactResult(content: string): { id: string; kind: 'pptx' | 'md'; fileName: string; title: string; size: number; slideCount: number } | null {
+export function readArtifactResult(content: string): { id: string; kind: 'pptx' | 'docx' | 'md'; fileName: string; title: string; size: number; slideCount: number } | null {
   try {
     const p = JSON.parse(content) as ArtifactResult
     if (typeof p.id !== 'string' || !p.id) return null
     if (typeof p.fileName !== 'string' || !p.fileName) return null
-    if (p.kind !== 'pptx' && p.kind !== 'md') return null
+    if (p.kind !== 'pptx' && p.kind !== 'docx' && p.kind !== 'md') return null
     return {
       id: p.id,
       kind: p.kind,
@@ -105,7 +107,7 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
     <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
       <div className="flex items-center gap-2 min-w-0">
         <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          {info.kind === 'pptx' ? 'PPTX' : 'MD'}
+          {info.kind === 'pptx' ? 'PPTX' : info.kind === 'docx' ? 'DOCX' : 'MD'}
         </span>
         <span className="truncate text-[13px] font-medium text-[var(--color-text)]" title={info.title}>
           {info.title}
@@ -117,7 +119,9 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
       <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
         {info.kind === 'pptx'
           ? t('agent.artifact.pptxHint', { n: info.slideCount })
-          : t('agent.artifact.mdHint')}
+          : info.kind === 'docx'
+            ? t('agent.artifact.docxHint')
+            : t('agent.artifact.mdHint')}
       </div>
       <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
         {t('agent.artifact.backupHint')}
@@ -156,7 +160,13 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
           {t('agent.artifact.showInFolder')}
         </button>
         <button className="btn-ghost text-[11px]" disabled={loading} onClick={() => void togglePreview()}>
-          {previewOpen ? t('agent.artifact.outlineHide') : t('agent.artifact.outline')}
+          {info.kind === 'docx'
+            ? previewOpen
+              ? t('agent.artifact.docxPreviewHide')
+              : t('agent.artifact.docxPreview')
+            : previewOpen
+              ? t('agent.artifact.outlineHide')
+              : t('agent.artifact.outline')}
         </button>
       </div>
 
@@ -175,7 +185,11 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
           {preview && !previewError && (
             <>
               <div className="text-[10px] text-[var(--color-text-muted)]">
-                {preview.kind === 'pptx' ? t('agent.artifact.outlineNote') : null}
+                {preview.kind === 'pptx'
+                  ? t('agent.artifact.outlineNote')
+                  : preview.kind === 'docx'
+                    ? t('agent.artifact.docxPreviewNote')
+                    : null}
               </div>
               {preview.missing ? (
                 <div role="status" className="mt-1 text-[11px] text-[var(--color-danger)]">
@@ -192,6 +206,27 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
                     </div>
                   )}
                 </>
+              ) : preview.kind === 'docx' ? (
+                (preview.html ?? '') === '' ? (
+                  <div role="status" className="mt-1 text-[11px] text-[var(--color-danger)]">
+                    {t('agent.artifact.docxRenderFailed')}
+                  </div>
+                ) : (
+                  <>
+                    {/* 无脚本沙箱：sandbox="" 不授予 allow-scripts，HTML 只在这里渲染，绝不注入主文档 */}
+                    <iframe
+                      title={t('agent.artifact.docxPreview')}
+                      sandbox=""
+                      srcDoc={preview.html}
+                      className="mt-1 h-60 w-full rounded border border-[var(--color-border)] bg-white"
+                    />
+                    {preview.truncated && (
+                      <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                        {t('agent.artifact.docxTruncated')}
+                      </div>
+                    )}
+                  </>
+                )
               ) : (preview.slides?.length ?? 0) === 0 ? (
                 <div role="status" className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                   {t('agent.artifact.outlineEmpty')}

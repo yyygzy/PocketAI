@@ -1,8 +1,11 @@
-// 产物预览：md 给正文；pptx 只提取**文字大纲**（不还原版式）
+// 产物预览：md 给正文；pptx 只提取**文字大纲**（不还原版式）；docx 用 mammoth 转只读 HTML
 //
 // 为什么不做 pptx 视觉预览：离线产品里没有可靠的纯 JS pptx 渲染器，LibreOffice/Office 又不能随包。
 // 与其画一张假的"预览图"，不如老实给大纲，并在界面文案里写明"不还原版式"。
+// docx 的 HTML 由 mammoth 从 document.xml 转出：**仅供无脚本沙箱 iframe 渲染**，
+// 渲染端不许把它直接注入主文档（见 ArtifactActions）。
 import { Open } from 'unzipper'
+import mammoth from 'mammoth'
 import { getArtifact, readArtifact } from './artifact-service'
 import type { ArtifactMeta, ArtifactPreview } from '../../shared/types'
 
@@ -10,6 +13,8 @@ const MAX_MD_CHARS = 200_000
 const MAX_SLIDES = 60
 const MAX_LINES_PER_SLIDE = 12
 const MAX_LINE_CHARS = 200
+/** docx 预览 HTML 上限：再长也没人会在卡片里读完，截断并如实标注 */
+const MAX_DOCX_HTML_CHARS = 300_000
 
 function decodeXmlEntities(s: string): string {
   return s
@@ -65,10 +70,30 @@ async function readPptxOutline(meta: ArtifactMeta): Promise<ArtifactPreview> {
   }
 }
 
+async function readDocxHtml(meta: ArtifactMeta): Promise<ArtifactPreview> {
+  const bytes = readArtifact(meta.id)?.bytes
+  if (!bytes) return { id: meta.id, kind: 'docx', missing: true }
+  try {
+    const { value } = await mammoth.convertToHtml({ buffer: bytes })
+    const truncated = value.length > MAX_DOCX_HTML_CHARS
+    return {
+      id: meta.id,
+      kind: 'docx',
+      missing: false,
+      html: truncated ? value.slice(0, MAX_DOCX_HTML_CHARS) : value,
+      ...(truncated ? { truncated: true } : {})
+    }
+  } catch {
+    // 包损坏/被占用：html 给空串，界面如实说"渲染失败"，不假装预览成功
+    return { id: meta.id, kind: 'docx', missing: false, html: '' }
+  }
+}
+
 export async function buildArtifactPreview(id: string): Promise<ArtifactPreview | null> {
   const meta = getArtifact(id)
   if (!meta) return null
   if (meta.kind === 'pptx') return readPptxOutline(meta)
+  if (meta.kind === 'docx') return readDocxHtml(meta)
 
   const read = readArtifact(meta.id)
   if (!read) return { id: meta.id, kind: 'md', missing: true }

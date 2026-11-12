@@ -22,7 +22,7 @@ function toMeta(r: ArtifactRow): ArtifactMeta {
   return {
     id: r.id,
     // 表上有 CHECK 约束，这里仍按白名单收窄，避免库被外部改写后把未知 kind 漏给渲染端
-    kind: (r.kind === 'md' ? 'md' : 'pptx') as ArtifactKind,
+    kind: (r.kind === 'md' ? 'md' : r.kind === 'docx' ? 'docx' : 'pptx') as ArtifactKind,
     title: r.title,
     fileName: r.file_name,
     relPath: artifactRelPath(r.file_name),

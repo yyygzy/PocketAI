@@ -1423,8 +1423,8 @@ export interface SandboxFileMeta {
 }
 
 // ---------- 成品文件（v67 artifacts 表；文件本体存 data/generated/） ----------
-/** 目前只做 PPTX 与 Markdown 两种；xlsx/docx/项目脚手架按迭代另开 kind */
-export type ArtifactKind = 'pptx' | 'md'
+/** 目前做 PPTX / DOCX / Markdown 三种；xlsx/项目脚手架按迭代另开 kind */
+export type ArtifactKind = 'pptx' | 'docx' | 'md'
 
 export interface ArtifactMeta {
   id: string
@@ -1453,6 +1453,7 @@ export interface ArtifactPptxOutlineSlide {
 /**
  * 产物预览。注意：pptx 只给**文字大纲**——离线环境没有可靠的 .pptx 渲染器，
  * 这里不承诺还原版式（界面文案也不许说"预览成品"）。
+ * docx 给 mammoth 转出的**只读 HTML**，渲染端必须放进不带 allow-scripts 的 sandbox iframe。
  */
 export interface ArtifactPreview {
   id: string
@@ -1463,6 +1464,8 @@ export interface ArtifactPreview {
   slides?: ArtifactPptxOutlineSlide[]
   /** md：正文 */
   markdown?: string
+  /** docx：mammoth 转出的 HTML（空串＝转换失败）；只可放进无脚本沙箱渲染 */
+  html?: string
   /** 内容过长被截断 */
   truncated?: boolean
 }

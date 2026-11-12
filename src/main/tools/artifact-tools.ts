@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import type { BuiltinTool } from './builtin'
 import { buildPptx, formatSpecError } from '../artifacts/generators/pptx'
+import { buildDocx } from '../artifacts/generators/docx'
 import type { ArtifactMeta } from '../../shared/types'
 
 // 注意：**不要在模块顶层 import `artifact-service`**。它 → `portable` → 导入期读 `app.isPackaged`，
@@ -16,10 +17,14 @@ import type { ArtifactMeta } from '../../shared/types'
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 
 const argsSchema = z.object({
-  kind: z.enum(['pptx', 'md']),
+  kind: z.enum(['pptx', 'docx', 'md']),
   title: z.string().trim().min(1).max(120),
   subtitle: z.string().trim().max(200).optional(),
+  header: z.string().trim().max(80).optional(),
+  footer: z.string().trim().max(80).optional(),
+  pageNumbers: z.boolean().optional(),
   slides: z.unknown().optional(),
+  sections: z.unknown().optional(),
   markdown: z.string().optional()
 })
 
@@ -48,23 +53,26 @@ const artifactCreateTool: BuiltinTool = {
     description:
       '生成一份可打开的成品文件并保存到应用的「生成的文件」目录。' +
       'kind=pptx：用 slides 给出每页标题与要点（也可给 table 表格），主进程会排版成**可编辑的 PowerPoint**；' +
+      'kind=docx：用 sections 给出章节（标题、段落、有序/无序列表、表格），生成**可编辑的 Word 文档**；' +
       'kind=md：用 markdown 给正文，生成 Markdown 文件。' +
       '只在用户明确要「做一份 PPT / 演示文稿 / 文档文件」时调用；普通聊天回答不要调用。' +
-      '一页放 3~4 条要点、每条不超过 60 字；上限是每页 6 条、每条 160 字，超出会自动续页。' +
+      'pptx 一页放 3~4 条要点、每条不超过 60 字；上限是每页 6 条、每条 160 字，超出会自动续页。' +
+      'docx 一章放 1~3 段；上限是 30 章、每章 6 段（每段 ≤600 字）、列表 ≤10 条（每条 ≤160 字）、' +
+      '表格 ≤5 列 × 15 行（单元格 ≤80 字）、全文合计 ≤4 万字——**超了会被拒绝，不会自动压缩**，请自行拆分。' +
       '需要罗列数据时用 table（表头与每行列数必须一致）。',
     parameters: {
       type: 'object',
       properties: {
         kind: {
           type: 'string',
-          enum: ['pptx', 'md'],
-          description: '产物类型：pptx=PowerPoint；md=Markdown 文档'
+          enum: ['pptx', 'docx', 'md'],
+          description: '产物类型：pptx=PowerPoint；docx=Word；md=Markdown 文档'
         },
         title: {
           type: 'string',
-          description: '文件名与封面标题（≤120 字，不要带 / \\ : * ? " < > | 等非法字符）'
+          description: '文件名与文档标题（≤120 字，不要带 / \\ : * ? " < > | 等非法字符）'
         },
-        subtitle: { type: 'string', description: 'pptx 副标题（可选，≤200 字）' },
+        subtitle: { type: 'string', description: '副标题（pptx/docx 可选，≤200 字）' },
         slides: {
           type: 'array',
           description: 'kind=pptx 必填：1~60 页。每页一个对象。',
@@ -104,6 +112,55 @@ const artifactCreateTool: BuiltinTool = {
         markdown: {
           type: 'string',
           description: 'kind=md 必填：Markdown 正文（≤2MB）'
+        },
+        header: { type: 'string', description: 'docx 页眉（可选，≤80 字）' },
+        footer: { type: 'string', description: 'docx 页脚（可选，≤80 字）' },
+        pageNumbers: { type: 'boolean', description: 'docx 页码：默认开；传 false 才关' },
+        sections: {
+          type: 'array',
+          description: 'kind=docx 必填：1~30 章。每章一个对象，至少给 paragraphs / bullets / numbered / table 之一。',
+          items: {
+            type: 'object',
+            properties: {
+              heading: { type: 'string', description: '章节标题（≤120 字）' },
+              level: { type: 'number', description: '标题级别 1~3，默认 1' },
+              paragraphs: {
+                type: 'array',
+                description: '正文段落（≤6 段，每段 ≤600 字）',
+                items: { type: 'string' }
+              },
+              bullets: {
+                type: 'array',
+                description: '无序列表（≤10 条，每条 ≤160 字）',
+                items: { type: 'string' }
+              },
+              numbered: {
+                type: 'array',
+                description: '有序列表（≤10 条，每条 ≤160 字）',
+                items: { type: 'string' }
+              },
+              table: {
+                type: 'object',
+                description: '表格（可选，≤5 列 × 15 行）',
+                properties: {
+                  headers: {
+                    type: 'array',
+                    description: '表头（1~5 列，≤80 字/格）',
+                    items: { type: 'string' }
+                  },
+                  rows: {
+                    type: 'array',
+                    description: '数据行（≤15 行，单元格 ≤80 字）；每行列数必须与表头一致',
+                    items: { type: 'array', items: { type: 'string' } }
+                  }
+                },
+                required: ['headers', 'rows'],
+                additionalProperties: false
+              }
+            },
+            required: ['heading'],
+            additionalProperties: false
+          }
         }
       },
       required: ['kind', 'title'],
@@ -154,6 +211,28 @@ const artifactCreateTool: BuiltinTool = {
       })
       const slideCount = Array.isArray(input.slides) ? input.slides.length : 0
       return summarize(ARTIFACTS_DIR, meta, { slideCount })
+    }
+
+    if (input.kind === 'docx') {
+      if (!input.sections) throw badSpec('kind=docx 时必须提供 sections 数组')
+      const bytes = await buildDocx({
+        title: input.title,
+        ...(input.subtitle ? { subtitle: input.subtitle } : {}),
+        ...(input.header ? { header: input.header } : {}),
+        ...(input.footer ? { footer: input.footer } : {}),
+        ...(typeof input.pageNumbers === 'boolean' ? { pageNumbers: input.pageNumbers } : {}),
+        sections: input.sections
+      })
+      const meta = saveArtifact({
+        kind: 'docx',
+        title,
+        bytes,
+        conversationId: agent?.conversationId ?? null,
+        requestId,
+        stepIndex
+      })
+      const sectionCount = Array.isArray(input.sections) ? input.sections.length : 0
+      return summarize(ARTIFACTS_DIR, meta, { sectionCount })
     }
 
     const markdown = input.markdown ?? ''
