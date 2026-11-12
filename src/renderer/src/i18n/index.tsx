@@ -25,10 +25,18 @@ const langLoaders: Record<Exclude<Lang, 'zh'>, () => Promise<Dict>> = {
 }
 const langPromises: Partial<Record<Exclude<Lang, 'zh'>, Promise<Dict>>> = {}
 function ensureLang(lang: Exclude<Lang, 'zh'>): Promise<Dict> {
-  langPromises[lang] ??= langLoaders[lang]().then((dict) => {
-    dicts[lang] = dict
-    return dict
-  })
+  langPromises[lang] ??= langLoaders[lang]().then(
+    (dict) => {
+      dicts[lang] = dict
+      return dict
+    },
+    (e: unknown) => {
+      // 失败不能留在缓存里：否则一次 chunk 读取失败会把 rejected promise 钉死到本次会话结束，
+      // 之后所有 ensureLang 都拿到同一个拒绝，语言永远停在 zh 兜底，只能重启窗口。清掉才能重试。
+      delete langPromises[lang]
+      throw e
+    }
+  )
   return langPromises[lang]!
 }
 
@@ -87,9 +95,17 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (lang === 'zh' || dicts[lang]) return
     let alive = true
-    ensureLang(lang).then(() => {
-      if (alive) setDictVersion((n) => n + 1)
-    })
+    ensureLang(lang).then(
+      () => {
+        if (alive) setDictVersion((n) => n + 1)
+      },
+      (e: unknown) => {
+        // 失败可见但不打断使用：界面继续走 zh 兜底（完整可用），这里留一条可查日志；
+        // 不弹 UI 提示——解锁窗/分体窗这一层没有 ToastProvider，为非阻断失败新开四语文案不划算，
+        // 且用户再切一次语言就会触发新的 ensureLang 重试。
+        if (alive) logIpcError('i18n.ensureLang', e)
+      }
+    )
     return () => {
       alive = false
     }
