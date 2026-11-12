@@ -89,6 +89,15 @@ const TITLE_BOX = { y: 0.5, h: 0.85 }
 const COVER_TITLE_BOX = { y: 2.35, h: 1.5 }
 const COVER_SUBTITLE_BOX = { y: 4.05, h: 0.9 }
 const BODY_BOX = { y: 1.8, h: H - 2.6 }
+const TABLE_Y = 1.75
+/** 表格版心：顶部 TABLE_Y 到正文盒底边（不压页脚） */
+const TABLE_AVAIL_H = BODY_BOX.y + BODY_BOX.h - TABLE_Y
+/** 表格正文字号阶梯；都装不下一页时取最小号并续页（与要点同一取舍） */
+const TABLE_SIZES = [12, 11, 10] as const
+/** 单元格内边距合计（0.1in 上下左右各 0.05in）：PowerPoint 默认单元格边距 */
+const CELL_PADDING_PT = 7.2
+/** 单元格左右留白合计（0.1in）：实测可用宽度 = 列宽 - 14.4pt */
+const CELL_INSET_PT = 14.4
 
 const COVER_TITLE_SIZES = [40, 36, 32, 28, 24] as const
 const CONTENT_TITLE_SIZES = [28, 24, 22, 20, 18] as const
@@ -136,7 +145,9 @@ function fitText(
   boxH: number,
   sizes: readonly number[]
 ): FittedText {
-  const widthPt = boxW * PT - 12
+  // 宽度也吃同样的安全系数：PowerPoint 文本框有约 0.1in 内边距，
+  // 不留余量时实测会在「刚好 3 行」处被挤成 4 行（2402 字长标题真机复现）
+  const widthPt = (boxW * PT - 12) * FIT_SAFETY
   const maxHeight = boxH * PT * FIT_SAFETY
   for (const fontSize of sizes) {
     if (lineCount(text, fontSize, widthPt) * fontSize * TITLE_LINE_FACTOR <= maxHeight) {
@@ -163,6 +174,54 @@ function fitAllBullets(bullets: string[]): number | null {
     if (total <= limit) return fontSize
   }
   return null
+}
+
+/** 表格单行高度：按最宽单元格的行数估（实测 PowerPoint 12pt/120 字/140.8pt 列宽 = 180pt） */
+function tableRowHeightIn(cells: string[], fontSize: number, colWidthIn: number): number {
+  const usablePt = Math.max(1, colWidthIn * PT - CELL_INSET_PT)
+  const lines = Math.max(1, ...cells.map((c) => lineCount(c, fontSize, usablePt)))
+  return (lines * fontSize * TITLE_LINE_FACTOR + CELL_PADDING_PT) / PT
+}
+
+interface TablePlan {
+  fontSize: number
+  pages: string[][][]
+}
+
+/**
+ * 表格排版计划：优先整表一页（12→11→10pt 降档）；
+ * 最小字号仍装不下就按行续页、每页重复表头，标题由调用方加「（续 N）」。
+ */
+function planTable(table: NonNullable<PptxSpec['slides'][number]['table']>): TablePlan {
+  const colWidth = (W - MARGIN * 2) / table.headers.length
+  const heights = (fontSize: number) => {
+    const headerH = tableRowHeightIn(table.headers, fontSize + 1, colWidth)
+    const rowH = table.rows.map((r) => tableRowHeightIn(r, fontSize, colWidth))
+    return { headerH, rowH, total: headerH + rowH.reduce((a, b) => a + b, 0) }
+  }
+  for (const fontSize of TABLE_SIZES) {
+    if (heights(fontSize).total <= TABLE_AVAIL_H * FIT_SAFETY) {
+      return { fontSize, pages: [table.rows] }
+    }
+  }
+  const fontSize = TABLE_SIZES[TABLE_SIZES.length - 1]!
+  const { headerH, rowH } = heights(fontSize)
+  const limit = TABLE_AVAIL_H * FIT_SAFETY
+  const pages: string[][][] = []
+  let current: string[][] = []
+  let used = 0
+  for (let i = 0; i < table.rows.length; i++) {
+    const h = rowH[i]!
+    if (current.length > 0 && headerH + used + h > limit) {
+      pages.push(current)
+      current = []
+      used = 0
+    }
+    current.push(table.rows[i]!)
+    used += h
+  }
+  if (current.length > 0) pages.push(current)
+  return { fontSize, pages }
 }
 
 /** 按给定字号把要点切成若干页（每页高度不超过版心） */
@@ -242,7 +301,8 @@ function addContentSlide(
   slideSpec: PptxSpec['slides'][number],
   page: number,
   titleText: string,
-  bullets?: { items: string[]; fontSize: number }
+  bullets?: { items: string[]; fontSize: number },
+  table?: { rows: string[][]; fontSize: number }
 ): void {
   const slide = pptx.addSlide()
   const title = fitText(titleText, W - MARGIN * 2, TITLE_BOX.h, CONTENT_TITLE_SIZES)
@@ -273,7 +333,7 @@ function addContentSlide(
     line: { color: THEME.accent, width: 0 }
   })
 
-  if (slideSpec.table) {
+  if (slideSpec.table && table) {
     const rows: PptxGenJS.TableRow[] = [
       slideSpec.table.headers.map((h) => ({
         text: h,
@@ -282,17 +342,17 @@ function addContentSlide(
           color: THEME.white,
           fill: { color: THEME.accent },
           fontFace: THEME.font,
-          fontSize: 13
+          fontSize: table.fontSize + 1
         }
       })),
-      ...slideSpec.table.rows.map((r, ri) =>
+      ...table.rows.map((r, ri) =>
         r.map((cell) => ({
           text: cell,
           options: {
             color: THEME.body,
             fill: { color: ri % 2 === 0 ? THEME.white : THEME.zebra },
             fontFace: THEME.font,
-            fontSize: 12
+            fontSize: table.fontSize
           }
         }))
       )
@@ -300,7 +360,7 @@ function addContentSlide(
     const bodyWidth = W - MARGIN * 2
     slide.addTable(rows, {
       x: MARGIN,
-      y: 1.75,
+      y: TABLE_Y,
       w: bodyWidth,
       colW: Array.from({ length: slideSpec.table.headers.length }, () =>
         bodyWidth / (slideSpec.table?.headers.length ?? 1)
@@ -371,6 +431,15 @@ export async function buildPptx(spec: unknown): Promise<Buffer> {
           titleText,
           { items, fontSize }
         )
+      })
+    } else if (s.table) {
+      const plan = planTable(s.table)
+      plan.pages.forEach((rows, pi) => {
+        const titleText = pi === 0 ? s.title : `${s.title}（续 ${pi + 1}）`
+        addContentSlide(pptx, pi === 0 ? s : { ...s, notes: undefined }, ++page, titleText, undefined, {
+          rows,
+          fontSize: plan.fontSize
+        })
       })
     } else {
       addContentSlide(pptx, s, ++page, s.title)

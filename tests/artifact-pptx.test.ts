@@ -126,6 +126,31 @@ describe('buildPptx', () => {
     expect(sizesOf(first)).not.toContain(1700)
   })
 
+  it('表格顶格自动续页：6 列 × 12 行 × 120 字 → 每页重复表头，数据一条不少', async () => {
+    const headers = Array.from({ length: 6 }, (_, i) => `列${i + 1}：${'头'.repeat(56)}`)
+    const rows = Array.from({ length: 12 }, (_, r) =>
+      Array.from({ length: 6 }, () => `${r + 1}行：${'格'.repeat(116)}`)
+    )
+    const files = await unzip(
+      await buildPptx({ title: '表格续页', slides: [{ title: '整页长表格', table: { headers, rows } }] })
+    )
+    const names = slideNames(files)
+    expect(names.length).toBeGreaterThan(2) // 封面 + 多页表格
+
+    let dataCells = 0
+    for (const n of names.slice(1)) {
+      const xml = files.get(n)!.toString('utf8')
+      const texts = textsOf(xml)
+      // 每页都重复表头
+      expect(texts).toContain(headers[0])
+      for (const row of rows) for (const c of row) if (texts.includes(c)) dataCells++
+      // 顶格表格降到最小号 10pt（1000）
+      expect(sizesOf(xml)).toContain(1000)
+    }
+    expect(dataCells, '续页后数据单元格丢失').toBe(12 * 6)
+    expect(textsOf(files.get(names[2]!)!.toString('utf8'))).toContain('整页长表格（续 2）')
+  })
+
   it('超长标题先降字号：65 字封面 28pt、内容页 24pt，且不截断', async () => {
     const title =
       '关于二〇二六年第四季度产品路线、交付节奏、质量闸门与跨团队协作机制的阶段性汇报说明以及后续三个季度的资源投入计划与风险应对措施'
