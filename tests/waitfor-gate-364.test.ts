@@ -508,7 +508,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // 同一颗 `conversation-runtime-resume` 再断文案（第 3 颗等的是列表行），门后的负向句读的是另一档。
       // 上限＝现数 3，不留余量。
       'tests/conversation-runtime-resume-label.test.tsx': 3,
-      'tests/data-health-cold-243.test.tsx': 1,
+      // 审批清空搬进管家（V4-Iter-479）：新 describe 两例共 5 颗门（确认框 1×2、条数归零 1、成功回执 1、失败回执 1），
+      // 全部按「存在」读屏；上限＝现数 5，不留余量。
+      'tests/data-health-cold-243.test.tsx': 5,
       'tests/data-health-zero-bytes-378.test.tsx': 3,
       'tests/glossary-add-failure-211.test.tsx': 6,
       'tests/ipc-agent-config-unread-257.test.tsx': 3,

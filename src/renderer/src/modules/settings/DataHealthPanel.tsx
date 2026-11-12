@@ -229,30 +229,6 @@ export const DataHealthPanel: React.FC = () => {
     }
   }
 
-  /**
-   * 清空审批审计账本（P0-2c-1）：显式动作，与「清理 HTTP 缓存」同款确认框。
-   * 失败必须弹 toast（不许把"没清掉"画成「已清空」）；成功把实际删除条数报出来。
-   */
-  const onClearApprovals = async () => {
-    if (!report) return
-    if (!(await confirm({ message: t('dh.approvals.clearConfirm', { rows: report.approvals?.rows ?? 0 }), danger: true }))) return
-    setBusy(true)
-    try {
-      const r = await window.pocketai.clearApprovalRecords()
-      if (hasIpcFailed(r)) {
-        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
-      } else {
-        toast.success(t('dh.approvals.clearDone', { count: r.cleared }))
-      }
-      load()
-    } catch (e) {
-      reportIpcError('dataHealth.clearApprovals')(e)
-      load()
-    } finally {
-      setBusy(false)
-    }
-  }
-
   if (!report) {
     // §222：读失败与还没读到是两件事——前者要把原因留在界面上（toast 会消失，而这块一直挂着「加载中…」）
     // §350：这一支以前同屏没有出口——本体那颗「刷新」长在 report 到了之后的那块里，首读失败时它根本不在屏上
@@ -285,7 +261,6 @@ export const DataHealthPanel: React.FC = () => {
     approvals !== undefined &&
     typeof approvals.rows === 'number'
   const reportIncomplete = !approvalsOk
-  const approvalsRows = approvalsOk ? approvals.rows : 0
   const integrity = kb.integrity
   const hasDimMismatch = integrity.brokenDocs.some((d) => d.reason === 'dim-mismatch')
   const integrityOk =
@@ -338,18 +313,6 @@ export const DataHealthPanel: React.FC = () => {
         <div className="flex flex-wrap gap-2">
           <button onClick={onOpenDir} disabled={busy} className="chip">{t('dh.browserCache.open')}</button>
           <button onClick={onClearCache} disabled={busy} className="chip">{t('dh.browserCache.clear')}</button>
-        </div>
-      </div>
-
-      {/* 审批审计账本（approval_events，P0-2c-1）：条数已并入管家，这里只留清空入口。
-          口径是「会话存在期间可回溯」，删会话会级联删除；不写成永久可查。 */}
-      <div className="mb-4 space-y-1">
-        <div className="text-xs font-semibold text-[var(--color-text)]">{t('dh.approvals')}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('dh.approvals.hint')}</div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={onClearApprovals} disabled={busy || approvalsRows === 0} className="chip">
-            {t('dh.approvals.clear')}
-          </button>
         </div>
       </div>
 

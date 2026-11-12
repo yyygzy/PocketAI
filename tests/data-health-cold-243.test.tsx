@@ -5,7 +5,7 @@
 // ② 没读成只摆一句原因 + 页头全局重试，**不许**把失败演成 0 B／暂无审批记录；
 // ③ 冷数据仍不放「一键清空」——会跟引用关系与还原入口打架。
 import { describe, it, expect } from 'vitest'
-import { screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { StewardModule } from '../src/renderer/src/modules/steward/StewardModule'
 import { zh } from '../src/renderer/src/i18n/zh'
@@ -107,5 +107,57 @@ describe('冷数据/快照/审批条数并入管家数据健康卡', () => {
 
     const buttons = screen.getAllByRole('button').map((b) => (b.textContent ?? '').trim())
     expect(buttons.some((text) => /冷|卸载|快照/.test(text))).toBe(false)
+  })
+})
+
+// 审批记录：条数与「能清」放在同一张卡上（V4-Iter-2xx 从设置页「数据健康」搬来）。
+// 两条各守一侧：清成了要看得见条数归零 + 成功回执；没清成要看得见原因，且条数与按钮都不许被演成"清过了"。
+describe('审批记录清空：按钮搬进管家数据健康卡', () => {
+  it('能清：确认后调 clearApprovalRecords，条数回到 0 并给成功回执', async () => {
+    let reads = 0
+    stubPocketai(
+      stubs({
+        // 第一次是挂载时的读（7 条），清完那次重读回到 0
+        getDataHealth: () => {
+          reads += 1
+          return report({}, reads === 1 ? 7 : 0)
+        },
+        clearApprovalRecords: () => ({ cleared: 7 })
+      })
+    )
+    mountWithProviders(<StewardModule />)
+    await screen.findByText(T('dh.approvals.value', { rows: (7).toLocaleString('en-US') }))
+
+    fireEvent.click(screen.getByRole('button', { name: L('dh.approvals.clear') }))
+    await waitFor(() => expect(screen.queryByText(L('common.confirm'))).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: L('common.confirm') }))
+
+    await waitFor(() => expect(screen.queryByText(L('dh.approvals.empty'))).not.toBeNull())
+    await waitFor(() =>
+      expect(screen.queryAllByRole('status').map((e) => e.textContent).join('|')).toContain(
+        T('dh.approvals.clearDone', { count: 7 })
+      )
+    )
+  })
+
+  it('失败可见：回 {ok:false} ⇒ 弹原因、条数照旧、按钮仍可再点', async () => {
+    stubPocketai(
+      stubs({
+        getDataHealth: () => report({}, 7),
+        clearApprovalRecords: () => ({ ok: false, error: '账本被占用' })
+      })
+    )
+    mountWithProviders(<StewardModule />)
+    await screen.findByText(T('dh.approvals.value', { rows: (7).toLocaleString('en-US') }))
+
+    fireEvent.click(screen.getByRole('button', { name: L('dh.approvals.clear') }))
+    await waitFor(() => expect(screen.queryByText(L('common.confirm'))).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: L('common.confirm') }))
+
+    await waitFor(() =>
+      expect(screen.queryAllByRole('status').map((e) => e.textContent).join('|')).toContain('账本被占用')
+    )
+    expect(screen.getByText(T('dh.approvals.value', { rows: (7).toLocaleString('en-US') }))).toBeTruthy()
+    expect((screen.getByRole('button', { name: L('dh.approvals.clear') }) as HTMLButtonElement).disabled).toBe(false)
   })
 })

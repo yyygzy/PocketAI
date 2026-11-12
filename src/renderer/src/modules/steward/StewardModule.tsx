@@ -17,6 +17,7 @@ import { formatBytes } from '../../utils/format'
 import { modelRecKey } from '../../../../shared/model-rec-codes'
 import { buildDiagnosticReport, type ReportLabels } from '../../utils/diagnostic-report'
 import { useToast } from '../../components/ToastProvider'
+import { useConfirm } from '../../components/ConfirmDialog'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { StaleValueNotice } from '../../components/StaleValueNotice'
 import { useOllamaPull, pickPullState } from '../../hooks/useOllamaPull'
@@ -31,6 +32,7 @@ const LEVEL_CLS: Record<CheckLevel, string> = {
 export const StewardModule: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
+  const { confirm, dialog } = useConfirm()
   const [hardware, setHardware] = useState<HardwareInfo | null>(null)
   const [integrity, setIntegrity] = useState<{ ok: boolean; details: string } | null>(null)
   const [health, setHealth] = useState<HealthReport | null>(null)
@@ -56,6 +58,8 @@ export const StewardModule: React.FC = () => {
   // §377：「VACUUM 没跑成」以前被折成「回收 0 字节」的成功数字；换成带状态的结果，两张脸各按状态取
   const [vacuumResult, setVacuumResult] = useState<VacuumOutcome | null>(null)
   const [cleaning, setCleaning] = useState(false)
+  /** 「清空审批记录」进行中（这颗键在数据健康卡里，与条数同一屏） */
+  const [clearingApprovals, setClearingApprovals] = useState(false)
   /** 「立即验证」备份校验进行中（那颗键要禁用，防重复点） */
   const [verifyingBackup, setVerifyingBackup] = useState(false)
   /** 最近一次「手动重新检测」完成时间；null 表示展示的是启动时自动检测的快照 */
@@ -201,6 +205,37 @@ export const StewardModule: React.FC = () => {
       setHealth(report.data)
     } finally {
       setCleaning(false)
+    }
+  }
+
+  /**
+   * 清空审批审计账本（P0-2c-1，从设置页「数据健康」搬来）：条数本来就在这张卡上，
+   * 缺的正是「能动手」——两件事放同一屏，用户才能看着条数做决定。
+   * 失败必须弹 toast（不许把"没清掉"画成「已清空」）；成功把实际删除条数报出来。
+   */
+  const handleClearApprovals = async () => {
+    const rows = dataHealth?.approvals?.rows ?? 0
+    if (!(await confirm({ message: t('dh.approvals.clearConfirm', { rows }), danger: true }))) return
+    setClearingApprovals(true)
+    try {
+      const r = await window.pocketai.clearApprovalRecords()
+      if (hasIpcFailed(r)) {
+        toast.error(t('common.opFailed', { msg: ipcFailText(r, t('common.unknownError')) }))
+        return
+      }
+      toast.success(t('dh.approvals.clearDone', { count: r.cleared }))
+      // 只重读审批这一发（同 handleCleanup 的"顺带更新"口径）：读不到就说原因，不拿旧条数冒充刚清完
+      const dh = await window.pocketai.getDataHealth(false)
+      if (hasIpcFailed(dh)) {
+        setDhFail(ipcFailText(dh, t('common.unknownError')))
+      } else {
+        setDhFail(null)
+        setDataHealth(dh as DataHealthReport)
+      }
+    } catch (e) {
+      reportIpcError('dataHealth.clearApprovals')(e)
+    } finally {
+      setClearingApprovals(false)
     }
   }
 
@@ -684,6 +719,19 @@ export const StewardModule: React.FC = () => {
                     : t('dh.approvals.value', { rows: dataHealth.approvals.rows.toLocaleString('en-US') })
                 }
               />
+              {/* 口径是「会话存在期间可回溯」，删会话会级联删除；不写成永久可查 */}
+              <div className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                {t('dh.approvals.hint')}
+              </div>
+              <div className="pt-1">
+                <button
+                  onClick={handleClearApprovals}
+                  disabled={clearingApprovals || dataHealth.approvals.rows === 0}
+                  className="chip"
+                >
+                  {t('dh.approvals.clear')}
+                </button>
+              </div>
             </>
           )}
         </Section>
@@ -822,6 +870,7 @@ export const StewardModule: React.FC = () => {
           </div>
         )}
       </Section>
+      {dialog}
     </div>
   )
 }

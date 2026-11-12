@@ -1,8 +1,8 @@
-// V4-Iter-216：设置／技能／沙箱／图片面 13 个 await 点。
+// V4-Iter-216：设置／技能／沙箱／图片面 14 个 await 点。
 // 共同形状：safeHandle 的失败是 resolve 的 `{ok:false}`，被当成"这次做成了的凭据"用 ⇒
 // 绿色提示逐字说「已清理 undefined 条孤儿向量、…」「已创建并打开预览」「✓ 已复制」「✓ 已存入沙箱」「已创建可编辑副本」，而库/剪贴板/磁盘什么都没变；
 // 有的还会关掉表单、清空用户输入、把 disabled 永久打在按钮上。
-// 证据两层：① 真挂载行为用例（HtmlBlockActions 一对成功／失败对照）；② 13 点形状闸门 ＋ failAction 助手本体检查。
+// 证据两层：① 真挂载行为用例（HtmlBlockActions 一对成功／失败对照）；② 14 点形状闸门 ＋ failAction 助手本体检查。
 // DataHealthPanel／SettingsModule／StewardModule／OllamaPanel／两个技能面／SandboxModule／AttachmentGrid 的
 // 行为面只有闸门覆盖（真挂载要拉起整个设置页/管家页/灯箱，成本不值）——这点如实写进台账。
 // @vitest-environment jsdom
@@ -46,7 +46,7 @@ const readCode = (rel: string): string =>
     .filter((l) => l.trim() !== '')
     .join('\n')
 
-/** §212 表里"设置／技能／沙箱／图片"这一档的 13 个点位：[文件, await 锚点, 成功态锚点] */
+/** §212 表里"设置／技能／沙箱／图片"这一档的 14 个点位：[文件, await 锚点, 成功态锚点] */
 const SITES: Array<[string, string, string]> = [
   ['../src/renderer/src/modules/settings/DataHealthPanel.tsx', 'cleanKbOrphans()', "return t('dh.integrity.cleanDone'"],
   ['../src/renderer/src/modules/settings/DataHealthPanel.tsx', 'reindexKbDocs(', "return t('dh.integrity.reindexDone'"],
@@ -56,6 +56,8 @@ const SITES: Array<[string, string, string]> = [
   // 「没跑成」要能被带出来，就不能只回一个 0。锚点跟着搬家，判据（判失败排在写成功态之前＋失败有反馈面）一字未松。
   ['../src/renderer/src/modules/steward/StewardModule.tsx', 'runVacuum()', 'setVacuumResult(out)'],
   ['../src/renderer/src/modules/steward/StewardModule.tsx', 'setVacuumResult(out)\n      const report = await window.pocketai.getHealthReport()', 'setHealth(report.data)'],
+  // 「清空审批记录」从设置页数据健康搬进管家数据健康卡（条数与按钮同屏）：点位跟着搬，判据一字未松。
+  ['../src/renderer/src/modules/steward/StewardModule.tsx', 'clearApprovalRecords()', "toast.success(t('dh.approvals.clearDone'"],
   ['../src/renderer/src/components/OllamaPanel.tsx', 'installOllama()', 'setStatus(finalStatus)'],
   ['../src/renderer/src/modules/skills/SkillModule.tsx', 'const saved = await window.pocketai.saveSkill({', 'onSaved(saved)'],
   ['../src/renderer/src/modules/skills/CapabilityCenter.tsx', 'const copy = await window.pocketai.saveSkill({', "toast.success(t('skill.market.duplicated')"],
@@ -95,9 +97,9 @@ describe('① 真挂载行为：「▶ 在沙箱运行」失败不再把按钮�
   })
 })
 
-describe('② 形状闸门：13 个点逐个核对「判失败」排在「写成功态」之前', () => {
-  it('正好 13 个点位、9 个文件（§212 表里这一档的全集，少一处就是闸门在空转）', () => {
-    expect(SITES.length).toBe(13)
+describe('② 形状闸门：14 个点逐个核对「判失败」排在「写成功态」之前', () => {
+  it('正好 14 个点位、9 个文件（§212 表里这一档的全集，少一处就是闸门在空转）', () => {
+    expect(SITES.length).toBe(14)
     expect(FILES.length).toBe(9)
   })
 
