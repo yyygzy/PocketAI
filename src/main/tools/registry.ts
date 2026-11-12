@@ -6,6 +6,7 @@ import type { ToolAgentContext, ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
 import { getSkillTools } from './skill-tools'
 import { getShellTools, getShellPolicyInfo } from './shell-tools'
+import { getArtifactTools } from './artifact-tools'
 import { mcpManager } from '../mcp/manager'
 import type {
   ToolPolicyAssistantContext,
@@ -96,7 +97,13 @@ export function isToolAllowedBy(allowed: Set<string>, schema: ToolSchema): boole
 class ToolRegistry {
   /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
   private listBuiltinTools() {
-    return [...BUILTIN_TOOLS, ...getFsTools(), ...getShellTools(), ...getSkillTools()]
+    return [
+      ...BUILTIN_TOOLS,
+      ...getFsTools(),
+      ...getShellTools(),
+      ...getSkillTools(),
+      ...getArtifactTools()
+    ]
   }
 
   /** 列出所有内置工具的 schema */

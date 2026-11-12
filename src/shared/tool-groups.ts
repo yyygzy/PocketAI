@@ -38,6 +38,7 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'fs.list': 'file',
   'fs.read': 'file',
   'fs.write': 'file',
+  'artifact.create': 'file',
   'calendar.read': 'schedule',
   'reminder.set': 'schedule',
   'reminder.list': 'schedule',
@@ -74,6 +75,8 @@ const GROUP_KEYWORDS: Readonly<Record<'net' | 'file' | 'schedule', readonly stri
   ],
   file: [
     '文件', '目录', '文件夹', '读取', '读一下', '写入', '保存到', '路径', '文档', '附件',
+    '生成', '做一份', 'ppt', 'pptx', '幻灯片', '演示文稿', '演示', 'word', 'docx', 'excel',
+    'xlsx', '表格', '报告', '导出',
     'file', 'folder', 'directory', 'save', 'path', 'txt', 'csv', 'markdown'
   ],
   schedule: [

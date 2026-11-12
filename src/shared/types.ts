@@ -1422,6 +1422,51 @@ export interface SandboxFileMeta {
   isApp: boolean // true=迷你应用，false=普通沙箱产物
 }
 
+// ---------- 成品文件（v67 artifacts 表；文件本体存 data/generated/） ----------
+/** 目前只做 PPTX 与 Markdown 两种；xlsx/docx/项目脚手架按迭代另开 kind */
+export type ArtifactKind = 'pptx' | 'md'
+
+export interface ArtifactMeta {
+  id: string
+  kind: ArtifactKind
+  /** 模型给的标题（已清洗，展示用） */
+  title: string
+  /** 磁盘文件名（含扩展名，落在 DATA_DIR/generated/ 下） */
+  fileName: string
+  /** 相对 DATA_DIR 的路径（`generated/xxx.pptx`），复用文件模块的另存为/打开/定位 */
+  relPath: string
+  /** 字节数 */
+  size: number
+  createdAt: number
+  /** 生成它的会话；非 Agent 路径为 null */
+  conversationId: string | null
+  /** 生成它的运行标识（幂等键之一）；非 Agent 路径为 null */
+  requestId: string | null
+  stepIndex: number | null
+}
+
+export interface ArtifactPptxOutlineSlide {
+  title: string
+  lines: string[]
+}
+
+/**
+ * 产物预览。注意：pptx 只给**文字大纲**——离线环境没有可靠的 .pptx 渲染器，
+ * 这里不承诺还原版式（界面文案也不许说"预览成品"）。
+ */
+export interface ArtifactPreview {
+  id: string
+  kind: ArtifactKind
+  /** 磁盘文件已不在（被用户/杀软/清理工具删掉） */
+  missing: boolean
+  /** pptx：按页提取的文字；顺序与文件中的页序一致 */
+  slides?: ArtifactPptxOutlineSlide[]
+  /** md：正文 */
+  markdown?: string
+  /** 内容过长被截断 */
+  truncated?: boolean
+}
+
 /** 工具审批弹窗语义化预览字段（构造见 src/shared/tool-preview.ts） */
 export interface ApprovalPreviewField {
   /** i18n key 后缀：渲染端映射 agent.approval.field.<key>，缺失回退显示原始值 */
@@ -3058,5 +3103,12 @@ export const IPC = {
   FILE_DELETE: 'file:delete',
   FILE_SAVE_AS: 'file:save-as',
   FILE_OPEN_LOCATION: 'file:open-location',
-  FILE_OPEN_EXTERNAL: 'file:open-external'
+  FILE_OPEN_EXTERNAL: 'file:open-external',
+
+  // ---------- 成品文件（v67） ----------
+  /** 列表；参数为可选 conversationId */
+  ARTIFACT_LIST: 'artifact:list',
+  /** 预览（pptx 只给文字大纲，md 给正文） */
+  ARTIFACT_PREVIEW: 'artifact:preview',
+  ARTIFACT_DELETE: 'artifact:delete'
 } as const

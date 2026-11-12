@@ -6,6 +6,7 @@ import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
 import type { SkillScanResult } from '../shared/skill-scan'
+import type { ArtifactMeta, ArtifactPreview } from '../shared/types'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -1411,6 +1412,14 @@ const api = {
     ipcRenderer.invoke(IPC.FILE_OPEN_LOCATION, relPath),
   openFileExternal: (relPath: string): Promise<FileOpResult> =>
     ipcRenderer.invoke(IPC.FILE_OPEN_EXTERNAL, relPath),
+
+  // ---------- 成品文件（v67）：另存/打开/定位复用上面的文件模块通道 ----------
+  listArtifacts: (conversationId?: string | null): Promise<ArtifactMeta[]> =>
+    ipcRenderer.invoke(IPC.ARTIFACT_LIST, conversationId ?? null),
+  previewArtifact: (id: string): Promise<ArtifactPreview | null> =>
+    ipcRenderer.invoke(IPC.ARTIFACT_PREVIEW, id),
+  deleteArtifact: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.ARTIFACT_DELETE, id),
 
   // ---------- Ollama 便携运行时 ----------
   getOllamaStatus: (): Promise<OllamaRuntimeStatus> =>

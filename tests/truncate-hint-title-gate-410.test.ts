@@ -254,7 +254,11 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     //   `<span className="... truncate" title={label}>{label}</span>`（子节点是 label 标识符、
     //   自带 title ⇒ 纯数据位）随之消失 ⇒ 总数 100→99、纯数据 83→82；其余三桶不变。
     //   该提交没有同步本闸门（git log 本文件最后改动仍是 4fa1e4a），本次按实测补账。
-    ).toBe('99/5/1/4/12/82')
+    // 成品文件卡片（V4-Iter-470/471）：ArtifactActions.tsx 的产物标题
+    //   `<span className="truncate" title={info.title}>{info.title}</span>`——子节点是属性访问、无 t() 键
+    //   ⇒ 归「纯数据」桶且自带 title（裁的是标题值，tooltip 与正文同源），不是"整句被裁"那一档。
+    //   总数 99→100、纯数据 82→83，其余三桶不变。
+    ).toBe('100/5/1/4/12/83')
   })
 
   it('名单等式：4 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
@@ -384,7 +388,9 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     // 技能扫描报告（并行会话的 SkillScanReport.tsx:72）再入 1 颗纯数据位（技能名，已带 title）⇒ 82→83。
     // 数据健康五块收进主面板（5414f42）：DataHealthPanel 删除 BarRow 组件，其标签 span
     //   （`truncate` + `title={label}`，纯数据位）随组件移除 ⇒ 83→82（净回 82）。
-    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(82)
+    // 成品文件卡片（V4-Iter-470/471）：ArtifactActions.tsx 新增产物标题位（`title={info.title}`，
+    //   子节点同为属性访问 ⇒ 纯数据、自带 title）⇒ 82→83。
+    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(83)
     // 混合位里最像"句子被连坐"的一档：字典句 ≥10 字（这些将来要单独判，本枚只列不判）
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(

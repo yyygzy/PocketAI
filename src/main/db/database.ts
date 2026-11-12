@@ -1192,6 +1192,33 @@ const MIGRATIONS: Migration[] = [
         )
       }
     }
+  },
+  {
+    // v67：成品文件登记表（文件本体在 DATA_DIR/generated/，这里只存索引与归属）。
+    //
+    // 不建 `(request_id, step_index)` 唯一索引：一个工具步里可能并行发出多个工具调用，
+    // 同一 stepIndex 生成两份产物是合法行为；幂等只在 service 层按「request + step + kind + title」
+    // 查已有行（重启重放时返回原产物），用唯一索引会把并行调用误判成冲突。
+    //
+    // 幂等：CREATE TABLE/INDEX IF NOT EXISTS，测试删掉 schema_migrations 的 v67 行重跑是空操作。
+    version: 67,
+    name: 'artifacts',
+    up: `
+      CREATE TABLE IF NOT EXISTS artifacts (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('pptx','md')),
+        title TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        conversation_id TEXT,
+        request_id TEXT,
+        step_index INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_artifacts_conversation ON artifacts(conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_artifacts_run_step ON artifacts(request_id, step_index);
+    `
   }
 ]
 

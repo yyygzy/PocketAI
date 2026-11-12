@@ -8,6 +8,7 @@ import { extractFirstHtmlBlock, delegateRoleLabel, type AgentMessage } from './a
 import { readDelegateRoleForDisplay } from '../../../../shared/delegation-rules'
 import { HtmlBlockActions } from './HtmlBlockActions'
 import { FsWriteActions } from './FsWriteActions'
+import { ArtifactActions, readArtifactResult } from './ArtifactActions'
 import { writeClipboard } from '../../utils/clipboard'
 import { localizeShellDenial } from '../../utils/shell-denial'
 import { ReminderMenu } from '../../components/ReminderMenu'
@@ -312,9 +313,13 @@ const AgentMessageCardImpl: React.FC<{
         <div className={`font-mono ${m.isError ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'}`}>
           {m.isError ? t('agent.toolError') : t('agent.toolResult')}: {m.toolResult.name}
         </div>
-        <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-          {toolResultText}
-        </pre>
+        {m.toolResult.name === 'artifact_create' && !m.isError && readArtifactResult(toolResultText) ? (
+          <ArtifactActions resultContent={toolResultText} />
+        ) : (
+          <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+            {toolResultText}
+          </pre>
+        )}
         {/* §231：fs_write 的结果带快照 id 时给「还原到写入前」；没留快照时只说一句为什么，不出现坏按钮 */}
         {m.toolResult.name === 'fs_write' && !m.isError && (
           <FsWriteActions

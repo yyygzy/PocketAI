@@ -38,6 +38,7 @@
     "mammoth": "^1.13.0",
     "mermaid": "^11.17.2",
     "pdf-parse": "^2.4.5",
+    "pptxgenjs": "^4.0.1",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "rehype-katex": "^7.0.1",
