@@ -64,7 +64,12 @@ const artifactCreateTool: BuiltinTool = {
       '表格 ≤5 列 × 15 行（单元格 ≤80 字）、全文合计 ≤4 万字——**超了会被拒绝，不会自动压缩**，请自行拆分。' +
       'xlsx 上限：≤10 张表、每张 ≤30 列 × 200 数据行、单元格 ≤200 字、表头 ≤80 字、合并区域 ≤20 个、' +
       '全簿 ≤20000 个单元格、文件 ≤5MB；sheet 名 ≤31 字符且不能重复；**不做单元格字体/底色/边框**' +
-      '（SheetJS CE 不支持，不要承诺报表级样式）；数字格式只对数值/公式列生效，公式由 Excel 打开时重算。' +
+      '（SheetJS CE 不支持，不要承诺报表级样式）；数字格式只对数值/公式列生效。' +
+      '公式会尽量带上算好的缓存值（WPS / Google Sheets 打开即有内容，Excel 打开仍会重算）；' +
+      '缓存值只覆盖可解析的子集：数字、单元格引用（A1 / $A$1）、区域（A1:B4）、+ - * / 与括号、' +
+      'SUM / AVERAGE / MIN / MAX / COUNT；跨表引用（Sheet1!A1）、其它函数（IF / VLOOKUP 等）、' +
+      '文本拼接不写缓存值（这些公式在 WPS 里可能先显示空白）。错误按 Excel 语义写入 ' +
+      '#DIV/0!、#VALUE!、#REF!；循环引用的公式不写缓存值。' +
       '需要罗列数据时用 table（表头与每行列数必须一致）。',
     parameters: {
       type: 'object',
@@ -186,7 +191,7 @@ const artifactCreateTool: BuiltinTool = {
                 type: 'array',
                 description:
                   '数据行（≤200 行）；每行列数必须与表头一致。单元格可写字符串（≤200 字）、数字，' +
-                  '或对象 {"formula":"SUM(B2:B4)"} 表示公式（由 Excel 打开时重算）',
+                  '或对象 {"formula":"SUM(B2:B4)"} 表示公式（尽量带缓存值，Excel 打开仍会重算）',
                 items: {
                   type: 'array',
                   items: {

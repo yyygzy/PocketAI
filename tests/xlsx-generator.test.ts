@@ -134,3 +134,117 @@ describe('buildXlsx', () => {
     ).rejects.toThrow(/拆分/)
   })
 })
+
+// 公式缓存值：只有公式没有缓存值时，WPS / Google Sheets 打开会先显示空白（它们不保证打开即重算）。
+// 生成时自己算一份写进 v；算不了的维持现状（只写 f），并把公式文本原样保留。
+// 错误格在 xlsx 里是 t="e" + 数值错误码（写字符串会被 SheetJS 写成 <v>undefined</v>），读回时 v=码、w=文案。
+describe('公式缓存值', () => {
+  const oneSheet = (headers: string[], rows: unknown[][]) => ({
+    title: 'x',
+    sheets: [{ name: 's', headers, rows }]
+  })
+  const sheetOf = async (headers: string[], rows: unknown[]) =>
+    readBack(await buildXlsx(oneSheet(headers, rows as unknown[][]))).Sheets['s']!
+
+  it('数值公式：缓存值落盘且与手算一致，公式文本保留', async () => {
+    const ws = readBack(await buildXlsx(baseSpec())).Sheets['销售汇总']!
+    // C2 = B2/$B$4 = 12000/20000；C3 = 8000/20000
+    expect(ws['C2']!.t).toBe('n')
+    expect(ws['C2']!.f).toBe('B2/$B$4')
+    expect(ws['C2']!.v).toBeCloseTo(0.6, 10)
+    expect(ws['C3']!.f).toBe('B3/$B$4')
+    expect(ws['C3']!.v).toBeCloseTo(0.4, 10)
+    // B4 = SUM(B2:B3)（引用的是两个普通数字格）
+    expect(ws['B4']!.f).toBe('SUM(B2:B3)')
+    expect(ws['B4']!.v).toBe(20000)
+  })
+
+  it('绝对引用与混合引用（$A$2 / B$2 / $A2）都能算', async () => {
+    const ws = await sheetOf(['a', 'b', 'c'], [[2, 3, { formula: '$A$2*B$2*$A2' }]])
+    expect(ws['C2']!.f).toBe('$A$2*B$2*$A2')
+    expect(ws['C2']!.v).toBe(12)
+  })
+
+  it('除零 / 文本参与四则 / 越界 → 对应错误格', async () => {
+    const ws = await sheetOf(['值', '结果'], [
+      [6, { formula: 'A2/0' }],
+      ['x', { formula: 'A3+1' }],
+      [1, { formula: 'ZZZ9999999' }]
+    ])
+    expect(ws['B2']!.t).toBe('e')
+    expect(ws['B2']!.v).toBe(0x07)
+    expect(ws['B2']!.w).toBe('#DIV/0!')
+    expect(ws['B2']!.f).toBe('A2/0')
+
+    expect(ws['B3']!.t).toBe('e')
+    expect(ws['B3']!.v).toBe(0x0f)
+    expect(ws['B3']!.w).toBe('#VALUE!')
+    expect(ws['B3']!.f).toBe('A3+1')
+
+    expect(ws['B4']!.t).toBe('e')
+    expect(ws['B4']!.v).toBe(0x17)
+    expect(ws['B4']!.w).toBe('#REF!')
+    expect(ws['B4']!.f).toBe('ZZZ9999999')
+  })
+
+  it('区域为空：AVERAGE → #DIV/0!，SUM → 0（区域里一个数字都没有）', async () => {
+    const ws = await sheetOf(['值', '结果'], [
+      [1, { formula: 'AVERAGE(D2:D4)' }],
+      [2, { formula: 'SUM(D2:D4)' }],
+      [3, { formula: 'COUNT(D2:D4)' }]
+    ])
+    expect(ws['B2']!.t).toBe('e')
+    expect(ws['B2']!.v).toBe(0x07)
+    expect(ws['B3']!.t).toBe('n')
+    expect(ws['B3']!.v).toBe(0)
+    expect(ws['B4']!.v).toBe(0)
+  })
+
+  it('循环引用不写缓存值，公式文本保留', async () => {
+    const ws = await sheetOf(['a', 'b'], [[{ formula: 'B2' }, { formula: 'A2' }]])
+    expect(ws['A2']!.f).toBe('B2')
+    expect(ws['A2']!.v).toBeUndefined()
+    expect(ws['B2']!.f).toBe('A2')
+    expect(ws['B2']!.v).toBeUndefined()
+  })
+
+  it('跨表引用 / 不支持的函数 / 文本结果 → 不写缓存值', async () => {
+    const wb = readBack(
+      await buildXlsx({
+        title: 'x',
+        sheets: [
+          {
+            name: 's',
+            headers: ['a', 'b'],
+            rows: [
+              ['文本', { formula: '明细!A1' }],
+              [1, { formula: 'IF(A3>0,1,2)' }],
+              [2, { formula: 'A4' }]
+            ]
+          },
+          { name: '明细', headers: ['h'], rows: [['v']] }
+        ]
+      })
+    )
+    const ws = wb.Sheets['s']!
+    expect(ws['B2']!.f).toBe('明细!A1')
+    expect(ws['B2']!.v).toBeUndefined()
+    expect(ws['B3']!.f).toBe('IF(A3>0,1,2)')
+    expect(ws['B3']!.v).toBeUndefined()
+    // A4 是数字 2，公式 =A4 结果也是数字，能算
+    expect(ws['B4']!.v).toBe(2)
+    // 文本格引用：结果是文本，不缓存
+    const text = await sheetOf(['a', 'b'], [['文本', { formula: 'A2' }]])
+    expect(text['B2']!.f).toBe('A2')
+    expect(text['B2']!.v).toBeUndefined()
+  })
+
+  it('链式引用：公式引用公式也能算出缓存值', async () => {
+    const ws = await sheetOf(['a', 'b'], [
+      [1, { formula: 'A2*2' }],
+      [3, { formula: 'B2+A3' }]
+    ])
+    expect(ws['B2']!.v).toBe(2)
+    expect(ws['B3']!.v).toBe(5)
+  })
+})
