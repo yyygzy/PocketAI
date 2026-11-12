@@ -7,6 +7,7 @@ import { getFsTools } from './fs-tools'
 import { getSkillTools } from './skill-tools'
 import { getShellTools, getShellPolicyInfo } from './shell-tools'
 import { getArtifactTools } from './artifact-tools'
+import { getProjectTools } from './project-tools'
 import { mcpManager } from '../mcp/manager'
 import type {
   ToolPolicyAssistantContext,
@@ -102,7 +103,8 @@ class ToolRegistry {
       ...getFsTools(),
       ...getShellTools(),
       ...getSkillTools(),
-      ...getArtifactTools()
+      ...getArtifactTools(),
+      ...getProjectTools()
     ]
   }
 

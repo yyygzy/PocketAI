@@ -30,6 +30,7 @@ import { registerOutboundHandlers } from './handlers/outbound'
 import { registerPreferenceHandlers } from './handlers/preferences'
 import { registerFileHandlers } from './handlers/files'
 import { registerArtifactHandlers } from './handlers/artifacts'
+import { registerProjectHandlers } from './handlers/projects'
 import { registerReminderHandlers } from './handlers/reminders'
 import { registerTerminalHandlers } from './handlers/terminal'
 
@@ -61,6 +62,7 @@ export function registerIpcHandlers(): void {
   registerPreferenceHandlers()
   registerFileHandlers()
   registerArtifactHandlers()
+  registerProjectHandlers()
   registerReminderHandlers()
   registerTerminalHandlers()
 }

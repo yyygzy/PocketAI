@@ -1485,6 +1485,42 @@ export interface ArtifactPreview {
   truncated?: boolean
 }
 
+/** 多文件项目（v70）：目录形态产物，不是单个文件 */
+export interface ProjectFileEntry {
+  /** 项目内相对路径（POSIX 分隔符） */
+  path: string
+  sha256: string
+  size: number
+}
+
+export interface ProjectMeta {
+  id: string
+  name: string
+  /** DATA_DIR/generated/projects/ 下的目录名（同名时带 -2/-3） */
+  dirName: string
+  fileCount: number
+  totalBytes: number
+  createdAt: number
+  /** 相对 DATA_DIR 的定位路径，供 file:open-location 使用 */
+  relPath: string
+}
+
+/** 项目预览：只承诺清单与入口文本，不承诺整站（css/js/图片无本地静态服务） */
+export interface ProjectPreview {
+  id: string
+  name: string
+  dirName: string
+  relPath: string
+  fileCount: number
+  totalBytes: number
+  files: Array<{ path: string; size: number }>
+  /** 根目录 index.html（≤300KB；超出截断并置 truncated） */
+  indexHtml?: string
+  /** 根目录 README.md 正文（≤200KB） */
+  readme?: string
+  truncated?: boolean
+}
+
 /** 工具审批弹窗语义化预览字段（构造见 src/shared/tool-preview.ts） */
 export interface ApprovalPreviewField {
   /** i18n key 后缀：渲染端映射 agent.approval.field.<key>，缺失回退显示原始值 */
@@ -3126,5 +3162,13 @@ export const IPC = {
   ARTIFACT_LIST: 'artifact:list',
   /** 预览（pptx 只给文字大纲，md 给正文） */
   ARTIFACT_PREVIEW: 'artifact:preview',
-  ARTIFACT_DELETE: 'artifact:delete'
+  ARTIFACT_DELETE: 'artifact:delete',
+
+  // ---------- 多文件项目（v70） ----------
+  /** 预览：文件清单 + index.html / README.md 文本（不承诺整站预览） */
+  PROJECT_PREVIEW: 'project:preview',
+  /** 撤销本次生成：所有文件哈希仍一致才删目录 */
+  PROJECT_DELETE: 'project:delete',
+  /** 导出 ZIP（只写不读） */
+  PROJECT_EXPORT_ZIP: 'project:export-zip'
 } as const

@@ -39,6 +39,7 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'fs.read': 'file',
   'fs.write': 'file',
   'artifact.create': 'file',
+  'project.create': 'file',
   'calendar.read': 'schedule',
   'reminder.set': 'schedule',
   'reminder.list': 'schedule',

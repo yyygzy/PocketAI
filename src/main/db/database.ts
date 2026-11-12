@@ -1283,6 +1283,38 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_artifacts_conversation ON artifacts(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_artifacts_run_step ON artifacts(request_id, step_index);
     `
+  },
+  {
+    // v70：多文件项目（目录形态产物）。artifacts 只表示单文件，这里单独建两张表：
+    // projects 存项目元数据与幂等键，project_files 存写盘前的 {path, sha256, size} 清单。
+    // 只新增表，不重建 artifacts，既有行与索引原样保留。
+    version: 70,
+    name: 'projects',
+    up: `
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        dir_name TEXT NOT NULL,
+        file_count INTEGER NOT NULL,
+        total_bytes INTEGER NOT NULL,
+        conversation_id TEXT,
+        request_id TEXT,
+        step_index INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS project_files (
+        project_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        PRIMARY KEY (project_id, path),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_projects_created ON projects(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_projects_conversation ON projects(conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_projects_run_step ON projects(request_id, step_index);
+      CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id);
+    `
   }
 ]
 

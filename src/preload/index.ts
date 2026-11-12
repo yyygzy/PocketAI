@@ -6,7 +6,7 @@ import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
 import type { SkillScanResult } from '../shared/skill-scan'
-import type { ArtifactMeta, ArtifactPreview } from '../shared/types'
+import type { ArtifactMeta, ArtifactPreview, ProjectPreview } from '../shared/types'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -1420,6 +1420,16 @@ const api = {
     ipcRenderer.invoke(IPC.ARTIFACT_PREVIEW, id),
   deleteArtifact: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ARTIFACT_DELETE, id),
+
+  // ---------- 多文件项目（v70）：目录形态产物 ----------
+  previewProject: (id: string): Promise<ProjectPreview | null> =>
+    ipcRenderer.invoke(IPC.PROJECT_PREVIEW, id),
+  deleteProject: (id: string): Promise<{ ok: boolean; code?: string; path?: string; message?: string }> =>
+    ipcRenderer.invoke(IPC.PROJECT_DELETE, id),
+  exportProjectZip: (
+    id: string
+  ): Promise<{ ok: boolean; fileName?: string; relPath?: string; bytes?: number; code?: string; path?: string; message?: string }> =>
+    ipcRenderer.invoke(IPC.PROJECT_EXPORT_ZIP, id),
 
   // ---------- Ollama 便携运行时 ----------
   getOllamaStatus: (): Promise<OllamaRuntimeStatus> =>

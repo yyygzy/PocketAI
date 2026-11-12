@@ -9,6 +9,7 @@ import { readDelegateRoleForDisplay } from '../../../../shared/delegation-rules'
 import { HtmlBlockActions } from './HtmlBlockActions'
 import { FsWriteActions } from './FsWriteActions'
 import { ArtifactActions, readArtifactResult } from './ArtifactActions'
+import { ProjectActions, readProjectResult } from './ProjectActions'
 import { writeClipboard } from '../../utils/clipboard'
 import { localizeShellDenial } from '../../utils/shell-denial'
 import { ReminderMenu } from '../../components/ReminderMenu'
@@ -315,6 +316,8 @@ const AgentMessageCardImpl: React.FC<{
         </div>
         {m.toolResult.name === 'artifact_create' && !m.isError && readArtifactResult(toolResultText) ? (
           <ArtifactActions resultContent={toolResultText} />
+        ) : m.toolResult.name === 'project_create' && !m.isError && readProjectResult(toolResultText) ? (
+          <ProjectActions resultContent={toolResultText} />
         ) : (
           <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
             {toolResultText}
