@@ -1053,6 +1053,8 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
   const [cfg, setCfg] = useState<WebDAVConfig | null>(null)
   /** 配置文件那一读失败的原因（§262）：`error` 为空＝拿到了但形状不对 */
   const [wdCfgUnread, setWdCfgUnread] = useState<{ error?: string } | null>(null)
+  /** 配置那一读是否已落定：首帧 cfg 也是 null，不能把"还在读"演成"没配过" */
+  const [cfgLoaded, setCfgLoaded] = useState(false)
   /** §381：口令栏「有密文却用当前主密码解不开」——配过、但那份口令用不了，和「没配过」不是同一格 */
   const [wdPwdUndecryptable, setWdPwdUndecryptable] = useState(false)
   const [schedule, setSchedule] = useState<BackupScheduleStatus | null>(null)
@@ -1089,21 +1091,25 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
       if (hasIpcFailed(c)) {
         setWdCfgUnread({ error: c.error })
         setWdPwdUndecryptable(false)
+        setCfgLoaded(true)
         return
       }
       setWdCfgUnread(null)
       if (!c) {
         // 真的没配过：表单是空的，那句「解不开」也不该留着（它说的是配过、只是用不了）
         setWdPwdUndecryptable(false)
+        setCfgLoaded(true)
         return
       }
       setCfg(c)
       setWdPwdUndecryptable(c.passwordUndecryptable)
       setWdUrl(c.url); setWdUser(c.username); setWdDir(c.directory || '')
+      setCfgLoaded(true)
     }).catch((e: unknown) => {
       // reject 面（配置那台机器真抛了）：同一句，不让它只进 console
       setWdCfgUnread({ error: errText(e, '') })
       setWdPwdUndecryptable(false)
+      setCfgLoaded(true)
       logIpcError('settings.loadWebDAVConfig', e)
     })
   }, [])
@@ -1461,6 +1467,11 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
             </button>
           </div>
         )}
+        {/* 「真的没配过」这一句随数据健康那三行搬来：空表单本身不区分"没配"与"读不出来"。
+            等那一读落定后才说，且读不出来那一支有自己的失败提示——两种空各说各的 */}
+        {cfgLoaded && !cfg && !wdCfgUnread && (
+          <div className="mb-2 text-[11px] text-[var(--color-text-muted)]">{t('dh.backupNotConfigured')}</div>
+        )}
         {/* §381：口令解不开＝「配过，但那一份用不了」——地址/用户名与同步卡片都是真的，
             只有下一次备份会在鉴权那一步失败。这一格正是用户能当场重填的出口，所以必须上屏，
             不能只留日志（同 §375 那一族：跳过要显式带出）。 */}
@@ -1602,20 +1613,22 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
                   ))}
                 </select>
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">
-                {schedule.lastResult?.ok
-                  ? t('bk.scheduleLastOk', { time: new Date(schedule.lastResult.at).toLocaleString() }) +
-                    (schedule.lastResult.pruned ? t('bk.schedulePruned', { count: schedule.lastResult.pruned }) : '')
-                  : schedule.lastResult
-                    ? t('bk.scheduleLastFail', { time: new Date(schedule.lastResult.at).toLocaleString(), e: schedule.lastResult.error ?? '' })
-                    : t('bk.scheduleNever')}
-              </div>
               <div className="text-[11px] text-[var(--color-text-muted)]">{t('bk.scheduleHint')}</div>
               {schedule.retentionCount > 0 && (
                 <div className="text-[11px] text-[var(--color-text-muted)]">{t('bk.retentionHint')}</div>
               )}
             </div>
           )}
+          {/* 上次那一跑的结果与开关无关：把定时关掉之后，用户仍要知道"上一次到底成没成"
+              （原先这三件事在设置页「数据健康」另有一份只读摘要，那一份已下线） */}
+          <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+            {schedule.lastResult?.ok
+              ? t('bk.scheduleLastOk', { time: new Date(schedule.lastResult.at).toLocaleString() }) +
+                (schedule.lastResult.pruned ? t('bk.schedulePruned', { count: schedule.lastResult.pruned }) : '')
+              : schedule.lastResult
+                ? t('bk.scheduleLastFail', { time: new Date(schedule.lastResult.at).toLocaleString(), e: schedule.lastResult.error ?? '' })
+                : t('bk.scheduleNever')}
+          </div>
         </div>
       )}
 

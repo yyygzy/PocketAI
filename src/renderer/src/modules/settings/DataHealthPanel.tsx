@@ -1,4 +1,4 @@
-// 数据健康面板：数据体量明细 + 知识库索引状态 + 知识库完整性 + 备份与维护任务运行情况
+// 数据健康面板：数据体量明细 + 知识库索引状态 + 知识库完整性 + 维护任务运行情况
 // 数据来源：dataHealth:get 聚合（只读探测，见 src/main/steward/data-health.ts）
 // 修复动作：dataHealth:kb-clean / kb-dedup / kb-reindex（见 src/main/knowledge/kb-health.ts）
 import React, { useCallback, useEffect, useRef, useState } from 'react'
@@ -250,7 +250,7 @@ export const DataHealthPanel: React.FC = () => {
     return <div className="text-xs text-[var(--color-text-muted)] py-3">{t('common.loading')}</div>
   }
 
-  const { sizes, approvals, kb, backup, tasks } = report
+  const { sizes, approvals, kb, tasks } = report
   // §436：审批段是后加字段，旧夹具/旧报告可能没有。
   // 缺字段时降级成 0 并在顶部挂一句「数据不可读」，不许整屏白（:342 的 TypeError 就是这么炸的）。
   //
@@ -442,34 +442,8 @@ export const DataHealthPanel: React.FC = () => {
         </div>
       )}
 
-      {/* 备份与维护任务 */}
-      <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.backup')}</div>
-      <div className="space-y-1 mb-2">
-        <Row
-          label={t('dh.backupState')}
-          value={
-            // §386：「那一行读不出来」排在最前——它也让 configured 落成 false，
-            // 但说"未配置"会把用户支去填一份新配置，而点保存正好覆盖掉那份坏行（unknown 不许演成"没有"＝§377 同一把尺子）
-            backup.configUnreadable
-              ? t('dh.backupCfgBroken')
-              : !backup.configured
-                ? t('dh.backupNotConfigured')
-                : backup.passwordUndecryptable
-                  ? t('dh.backupPwdBroken')
-                  : backup.enabled
-                    ? t('dh.backupOn', { hours: backup.intervalHours })
-                    : t('dh.backupOff')
-          }
-          warn={backup.configUnreadable || !backup.configured || backup.passwordUndecryptable || !backup.enabled}
-        />
-        <Row
-          label={t('dh.lastOk')}
-          value={backup.lastOkAt === null ? t('dh.never') : fmtTime(backup.lastOkAt)}
-          warn={backup.lastOkAt === null}
-        />
-        {backup.lastError && <Row label={t('dh.lastError')} value={backup.lastError} warn />}
-      </div>
-
+      {/* 维护任务（备份状态三行已于本批下线：同页签上方的备份卡片才是可操作的那一处，
+          它的定时区块现在连"上次结果"也一并显示） */}
       <div className="mb-1 text-xs font-semibold text-[var(--color-text)]">{t('dh.tasks')}</div>
       {/* §415：这一栏只报了"上次什么时候跑的"，没说它什么时候不跑——判据是 last_run_at 的间隔，
           所以应用没开着时到点的任务会在下次启动后补跑（不是丢掉），这句得写在屏上 */}
