@@ -13,28 +13,10 @@ import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
 import { reportIpcError, hasIpcFailed, ipcFailText } from '../../utils/ipc'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
-
-const PREVIEW_CSP =
-  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:"
+import { injectCsp } from '../../lib/html-csp'
 
 // 预设 emoji 图标（迷你应用用）
 const ICON_PRESETS = ['📦', '🎮', '🎨', '📊', '📝', '🧮', '🔧', '🎵', '🌐', '⚡', '🚀', '🎯']
-
-/** 注入 CSP meta：DOMParser 结构化解析后插到真实 <head> 首位（杜绝正则定位被
- *  注释/属性/字符串中的字面 <head> 规避）；并剥离 meta-refresh——iframe 自导航后的
- *  新文档不继承 meta CSP（JS location 自导航无法用 CSP 阻止，为残余风险，见 review Minor-1） */
-function injectCsp(html: string): string {
-  const doc = new DOMParser().parseFromString(html, 'text/html')
-  doc.querySelectorAll('meta[http-equiv]').forEach((m) => {
-    const he = (m.getAttribute('http-equiv') || '').trim().toLowerCase()
-    if (he === 'refresh') m.remove()
-  })
-  const meta = doc.createElement('meta')
-  meta.setAttribute('http-equiv', 'Content-Security-Policy')
-  meta.setAttribute('content', PREVIEW_CSP)
-  doc.head.insertBefore(meta, doc.head.firstChild)
-  return '<!DOCTYPE html>' + doc.documentElement.outerHTML
-}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
