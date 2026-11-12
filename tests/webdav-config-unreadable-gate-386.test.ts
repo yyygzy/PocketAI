@@ -4,16 +4,15 @@
 //   A 契约三颗 flag 齐、catch 分支必须点亮第三颗（其余两支必须 false＝三档互斥）
 //   B 六发动作同源（不许再有一处 `if (!cfg) return { ok:false, error:'未配置 WebDAV' }`）
 //   C 那一读（LOAD_CONFIG）遇坏行必须回失败信封，且排在掩码之前
-//   D 两处屏各自绑门，且第三档排在「没配过」之前（顺序反了＝新档永远不画）
+//   D 两处屏各自绑门（设置页备份卡片／管家体检），且「读不出来」与「没配过」互斥
 //   E 两个调度器不许再把坏行演成安静
-//   F 四语齐＋两两不同字＋渲染层不许硬写那句中文
-//   G 读法自证：分类器在合成片段上要能认出"没绑门／绑错顺序"
+//   F 四语齐＋两两不同字＋渲染层不许硬写那句中文（键＝dh.backupNotConfigured）
+//   G 读法自证：把「未配置」那句自己的排除条件摘掉，同一条判据必须翻向
 //
 // 计数一律读**去掉注释后的源码**（第 33 条：自己写的注释会把同一串撑大→假红／假绿）。
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import ts from 'typescript'
 
 const ROOT = path.resolve(__dirname, '..')
 const raw = (rel: string): string => fs.readFileSync(path.join(ROOT, 'src', rel), 'utf8')
@@ -60,10 +59,10 @@ const TASKS = stripComments(raw('main/backup/task-scheduler.ts'))
 const HEALTH = stripComments(raw('main/steward/data-health.ts'))
 const DIAG = stripComments(raw('main/steward/diagnose.ts'))
 const TYPES = stripComments(raw('shared/types.ts'))
-const PANEL = stripComments(raw('renderer/src/modules/settings/DataHealthPanel.tsx'))
-// §436：备份卡片片段（dh.backup → dh.tasks）。D/G 原先从全文第一个 value={ / warn={ 起读，
-// 新增的冷数据段把锚点截断了；圈定到这一块，断言才有意义。
-const BACKUP_SEG = PANEL.slice(PANEL.indexOf("t('dh.backup')"), PANEL.indexOf("t('dh.tasks')"))
+const SETTINGS = stripComments(raw('renderer/src/modules/settings/SettingsModule.tsx'))
+// 设置页备份卡片片段（WebDAV 配置 → 本地备份）。原先是数据健康那一格（dh.backup → dh.tasks）；
+// 那一格退役后，「读不出来」与「没配过」两张脸落在备份卡片的两个互斥分支上，判据改钉这里。
+const WDSEG = SETTINGS.slice(SETTINGS.indexOf("t('bk.webdavTitle')"), SETTINGS.indexOf("t('bk.localTitle')"))
 
 const count = (src: string, needle: string): number => src.split(needle).length - 1
 
@@ -167,17 +166,17 @@ describe('C 那一读（LOAD_CONFIG）：坏行必须回失败信封，且排在
 })
 
 describe('D 两处屏各自绑门，第三档必须排在「没配过」之前', () => {
-  it('数据健康那一格：backup.configUnreadable 在 !backup.configured 之前，且 warn 位也带上它', () => {
-    expect(PANEL.indexOf('backup.configUnreadable')).toBeGreaterThan(-1)
-    expect(PANEL.indexOf('backup.configUnreadable'), '顺序反了＝新档永远不画').toBeLessThan(PANEL.indexOf('!backup.configured'))
-    // §436：原先取全文第一个 warn={，被上面新增的冷数据段截断 ⇒ 读到的是别人家的 warn。
-    // 改成只读备份卡片这一块（dh.backup → dh.tasks），锚点坏了会先撞下面的长度断言，不会静默读空串。
-    const warn = BACKUP_SEG.slice(
-      BACKUP_SEG.indexOf('warn={'),
-      BACKUP_SEG.indexOf('}', BACKUP_SEG.indexOf('warn={'))
-    )
-    expect(warn.length, '锚点没圈到备份卡片里的 warn').toBeGreaterThan(0)
-    expect(warn, 'warn 位不许只靠 !configured 喂绿').toContain('backup.configUnreadable')
+  it('设置页备份卡片：读不出来那一支先画，且「未配置」那句显式排掉读不出来', () => {
+    const gateOf = (src: string): string => {
+      const i = src.indexOf("t('dh.backupNotConfigured')")
+      return src.slice(src.lastIndexOf('cfgLoaded', i), i)
+    }
+    const unread = WDSEG.indexOf('{!cfg && wdCfgUnread &&')
+    expect(unread, '找不到「读不出来」那一支（锚点坏了先红这里，不是静默读空串）').toBeGreaterThan(-1)
+    expect(WDSEG.indexOf("t('dh.backupNotConfigured')"), '顺序反了＝读不出来时先说未配置').toBeGreaterThan(unread)
+    // 只查顺序还不够：那一句自己的条件必须排掉「读不出来」，否则两种空同时画、读不出来被说成没配过
+    expect(gateOf(WDSEG), '「未配置」那句没排掉 wdCfgUnread').toContain('!wdCfgUnread')
+    expect(gateOf(WDSEG), '「未配置」那句还要求配置那一读已落定（首帧 cfg 也是 null）').toContain('cfgLoaded')
   })
 
   it('管家体检那一格：configUnreadable 分支排在 !wdRead.cfg 之前，且说的是"读不出来"不是"未配置"', () => {
@@ -212,68 +211,54 @@ describe('E 两个调度器不许把坏行演成安静', () => {
 })
 
 describe('F 四语与「不许硬写」', () => {
-  const KEY = "'dh.backupCfgBroken'"
-  const zh = raw('renderer/src/i18n/zh.ts')
+  const KEY = "'dh.backupNotConfigured'"
+  // 数据健康那一格退役后，屏上唯一还说得上「没配过」的四语入口就是备份卡片这一句
+  const MUST: Record<string, RegExp> = {
+    zh: /未配置/,
+    en: /not configured/i,
+    ja: /未設定/,
+    ko: /미설정/
+  }
 
-  it('四语齐、每语只一颗、都真说出"读不出来"', () => {
+  it('四语齐、每语只一颗、都真说出"未配置"', () => {
     for (const lang of ['zh', 'en', 'ja', 'ko']) {
       const src = raw(`renderer/src/i18n/${lang}.ts`)
       expect(count(src, KEY), lang).toBe(1)
-      const m = src.match(/'dh\.backupCfgBroken':\s*'([^']*)'/)
+      const m = src.match(/'dh\.backupNotConfigured':\s*'([^']*)'/)
       expect(m, `${lang} 没读到那句的值（读法退化＝整面无声变绿）`).not.toBeNull()
       const line = m![1]!
-      expect(line.length, `${lang} 那句是空的`).toBeGreaterThan(10)
-      expect(/读不出来|cannot be parsed|読み取れません|읽을 수 없습니다/.test(line), `${lang} 没说清"读不出来"：${line}`).toBe(true)
+      expect(line.length, `${lang} 那句是空的`).toBeGreaterThan(5)
+      expect(MUST[lang]!.test(line), `${lang} 没说清"未配置"：${line}`).toBe(true)
     }
   })
 
-  it('三句两两不同字（zh）：新那句不许与「未配置」「解不开」共用文案', () => {
-    const three = ['dh.backupNotConfigured', 'dh.backupPwdBroken', 'dh.backupCfgBroken'].map(
-      (k) => zh.match(new RegExp(`'${k}':\\s*'([^']*)'`))![1]
-    )
-    expect(new Set(three).size, '三句必须两两不同字').toBe(3)
+  it('两句两两不同字（zh）：新那句不许与「解不开」共用文案', () => {
+    const zhSrc = raw('renderer/src/i18n/zh.ts')
+    const get = (k: string): string => zhSrc.match(new RegExp(`'${k}':\\s*'([^']*)'`))![1]!
+    expect(new Set([get('dh.backupNotConfigured'), get('bk.pwdUndecryptable')]).size, '两种空必须两两不同字').toBe(2)
   })
 
   it('渲染层不许硬写那句中文（走键）', () => {
-    expect(PANEL).not.toContain('读不出来')
-    expect(PANEL).toContain("t('dh.backupCfgBroken')")
+    expect(SETTINGS).not.toContain('未配置 WebDAV')
+    expect(SETTINGS).toContain("t('dh.backupNotConfigured')")
   })
 })
 
-describe('G 读法自证：分类器认得出"没绑门／绑错顺序"', () => {
-  // §436：同 D 的锚点问题——从全文第一个 value={ 开始会被冷数据段截断。圈到备份卡片，
-  // 并先断言圈到了东西：否则 GOOD 为空时 indexOf 全 -1，两例会以"-1 > -1"/"0 < 0"的形式假失败。
-  const GOOD = BACKUP_SEG.slice(BACKUP_SEG.indexOf('value={'), BACKUP_SEG.indexOf('warn={'))
+describe('G 读法自证：把「未配置」那句自己的门摘掉，同一条判据必须翻向', () => {
+  const gateOf = (src: string): string => {
+    const i = src.indexOf("t('dh.backupNotConfigured')")
+    return src.slice(src.lastIndexOf('cfgLoaded', i), i)
+  }
 
-  it('读法本身：好形状能读出"第三档在前"', () => {
-    expect(GOOD.length, '锚点没圈到备份卡片里的 value/warn').toBeGreaterThan(0)
-    expect(GOOD.indexOf('backup.configUnreadable')).toBeGreaterThan(-1)
-    expect(GOOD.indexOf('backup.configUnreadable')).toBeLessThan(GOOD.indexOf('!backup.configured'))
+  it('好形状：那一句的门里同时有"已落定"与"排掉读不出来"', () => {
+    expect(WDSEG.length, '锚点没圈到备份卡片').toBeGreaterThan(0)
+    expect(gateOf(WDSEG)).toContain('cfgLoaded')
+    expect(gateOf(WDSEG)).toContain('!wdCfgUnread')
   })
 
-  it('漏杀对照：把两个分支整体调序（＝改前那一形）⇒ 同一条顺序判据必须翻向', () => {
-    const order = (src: string): number => src.indexOf('backup.configUnreadable') - src.indexOf('!backup.configured')
-    expect(order(GOOD), '好形状＝新档在前').toBeLessThan(0)
-    const swapped = GOOD
-      .replace('backup.configUnreadable', '@NEW@')
-      .replace('!backup.configured', 'backup.configUnreadable')
-      .replace('@NEW@', '!backup.configured')
-    expect(order(swapped), '调序后判据仍指"在前"＝读的是字面，不是顺序').toBeGreaterThan(0)
-  })
-
-  it('漏杀对照②：门在但 warn 位没绑（警示色丢）⇒ warn 判据必须抓出', () => {
-    const noWarn = 'warn={!backup.configured || !backup.enabled}'
-    expect(noWarn).not.toContain('backup.configUnreadable')
-  })
-
-  it('ts 真解析一次：读到的字段数不为零（读法退化成空读＝整面无声变绿，第 41 条）', () => {
-    const file = ts.createSourceFile('p.tsx', raw('renderer/src/modules/settings/DataHealthPanel.tsx'), ts.ScriptTarget.ES2022, true)
-    let hits = 0
-    const walk = (n: ts.Node): void => {
-      if (ts.isPropertyAccessExpression(n) && n.name.text === 'configUnreadable') hits++
-      ts.forEachChild(n, walk)
-    }
-    walk(file)
-    expect(hits, 'AST 读法在真源码上读出 0 处＝正则/AST 本身坏了').toBeGreaterThanOrEqual(2)
+  it('漏杀对照：摘掉 !wdCfgUnread ⇒ 同一条判据必须翻向（读的是那一句自己的门）', () => {
+    const stripped = WDSEG.replace('!wdCfgUnread && (', '&& (')
+    expect(stripped.length).toBeLessThan(WDSEG.length)
+    expect(gateOf(stripped), '摘掉后仍读到排除条件＝读的是别处的字面').not.toContain('!wdCfgUnread')
   })
 })

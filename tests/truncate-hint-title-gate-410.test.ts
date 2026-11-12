@@ -402,8 +402,9 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(
       // §436：身份＝WebDAV 备份文件列表的 f.name 单元格（数据＋16 字字典句，已带 title）。
       // 行号随改动漂移：WebDAV 那批 1571→1585，P4 批次 2 后实测 1600；设置页签改造后实测 1671；
-      //   自定义 CSS 下线批删掉该文件里的 CSS 区块后整体上移 1 行，现按实测重钉为 1670。
-      'src/renderer/src/modules/settings/SettingsModule.tsx:1670(16字)'
+      //   自定义 CSS 下线批删掉该文件里的 CSS 区块后整体上移 1 行，实测 1670；
+      //   备份状态三行下线批在备份卡片里补了「未配置」那句与 cfgLoaded，整体下移 13 行，现按实测重钉为 1683。
+      'src/renderer/src/modules/settings/SettingsModule.tsx:1683(16字)'
     )
   })
 })

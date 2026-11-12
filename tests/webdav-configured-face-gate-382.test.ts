@@ -9,10 +9,10 @@
 // `backup/backup-scheduler.ts` 的 tick **故意不动**：那一判只决定"要不要试"，试了必失败并把
 // `{ok:false,error}` 落进 K_LAST_RESULT ⇒ 上面两处读得到真失败；改成"解不开就不试"＝把错误咽掉，负收益。
 //
-// 本闸门守七件事：A 契约两颗字段在／B 两处取法＋反向钉全仓不许有 `!!loadWebDAVConfig(`／
-// C 那一格的第三张脸绑在它自己的条件上＋warn 位也读那颗／D 诊断那一格绑在那一条 IfStatement 之内／
-// E 四语那句齐且真说了"解不开"／F 手抄 backup-service 桩的那几份测试必须带上 readWebDAVConfig／
-// G 读法自证（改前那两形喂进同一套读法必须被认成"没判／没绑"）
+// 本闸门守五件事：A 契约两颗字段在／B 两处取法＋反向钉全仓不许有 `!!loadWebDAVConfig(`／
+// D 诊断那一格绑在那一条 IfStatement 之内／E 四语那句齐且真说了"解不开"（键＝bk.pwdUndecryptable）／
+// F 手抄 backup-service 桩的那几份测试必须带上 readWebDAVConfig／G 诊断改前那一形的读法自证
+// （原 C 组守的是数据健康那一格；该格已下线，屏侧判据改钉 `webdav-config-unreadable-gate-386` 的 D 组）
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
@@ -54,7 +54,6 @@ const TYPES = read('shared/types.ts')
 const DH = read('main/steward/data-health.ts')
 const DIAG = read('main/steward/diagnose.ts')
 const SCHED = read('main/backup/backup-scheduler.ts')
-const PANEL = read('renderer/src/modules/settings/DataHealthPanel.tsx')
 const DICTS = { zh, en, ja, ko } as const
 type Lang = keyof typeof DICTS
 
@@ -97,62 +96,6 @@ function callCount(src: string, needle: string): number {
 }
 
 /**
- * 那句 JSX 的守卫条件链（同 §380／§381 那套：if／三元／`cond && (<JSX/>)` 三种落法都认）
- */
-function guardingConditions(src: string, fileName: string, exact: string): string[][] {
-  const file = sf(fileName, src)
-  const leaves: ts.Node[] = []
-  walk(file, (n) => {
-    if (n.getText(file) !== exact) return
-    let childSame = false
-    n.forEachChild((c) => {
-      if (c.getText(file) === exact) childSame = true
-    })
-    if (childSame) return
-    let inJsx = false
-    let p: ts.Node | undefined = n.parent
-    while (p) {
-      if (ts.isJsxElement(p) || ts.isJsxFragment(p) || ts.isJsxSelfClosingElement(p) || ts.isJsxText(p)) inJsx = true
-      p = p.parent
-    }
-    if (!inJsx) return
-    leaves.push(n)
-  })
-  return leaves.map((leaf) => {
-    const conds: string[] = []
-    let cur: ts.Node | undefined = leaf.parent
-    while (cur) {
-      if (ts.isIfStatement(cur)) conds.push(cur.expression.getText(file))
-      if (ts.isConditionalExpression(cur)) conds.push(cur.condition.getText(file))
-      if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
-        conds.push(cur.left.getText(file))
-      }
-      cur = cur.parent
-    }
-    return conds
-  })
-}
-
-/**
- * 同一个 JSX 元素上，按"兄弟属性里含某串"来认这一格，再取它某个属性的 initializer 文本。
- * 第 36 条：属性级判据要读 initializer 的表达式，只查属性在不在＝传常量的变异照样活。
- */
-function siblingAttrText(src: string, fileName: string, marker: string, attr: string): string[] {
-  const file = sf(fileName, src)
-  const out: string[] = []
-  walk(file, (n) => {
-    if (!ts.isJsxAttributes(n)) return
-    const all = n.properties.map((p) => p.getText(file))
-    if (!all.some((t) => t.includes(marker))) return
-    for (const p of n.properties) {
-      if (!ts.isJsxAttribute(p) || p.name.getText(file) !== attr) continue
-      out.push(p.initializer ? p.initializer.getText(file) : '')
-    }
-  })
-  return out
-}
-
-/**
  * runAudit 里那条「backup-cloud」的 if／else-if 链：返回每一支的 (条件, 体内文本)。
  * 第 34 条：判据要绑到那一条 IfStatement 的 thenStatement 之内，别在宿主函数上汇总。
  */
@@ -184,11 +127,7 @@ function backupCloudBranches(src: string): Array<{ cond: string; body: string }>
   return out
 }
 
-// 两种"没机关"的形状，喂进同一套读法必须各被认出不同的事：
-//   BEFORE_GONE＝改前那一形（第三张脸压根不存在）⇒ 读法不许凭空造出一句；
-//   BEFORE_WRONG＝那句还在、但挂在别的条件上（§381 的 M6／M7 那一族）⇒ 读法要认出"没绑"
-const BEFORE_GONE = PANEL.replace(/\s*:\s*backup\.passwordUndecryptable\s*\?\s*t\('dh\.backupPwdBroken'\)/, '')
-const BEFORE_WRONG = PANEL.replace('backup.passwordUndecryptable', 'backup.configured')
+// 改前那一形（两档 if／else、else 里直接 ok／warn）：喂进同一套读法必须被认成"没判"
 const BEFORE_DIAG = [
   '    if (!wdRead.cfg) {',
   "      checks.push({ id: 'backup-cloud', level: 'warn' })",
@@ -251,27 +190,9 @@ describe('B 两处取法：读的是 readWebDAVConfig，且全仓不再有「!!l
   })
 })
 
-describe('C 数据健康那一格：第三张脸绑在它自己的条件上', () => {
-  it('出现恰好一次，且条件链里含那颗 flag（缺它＝那张脸永不出现）', () => {
-    const chains = guardingConditions(PANEL, 'DataHealthPanel.tsx', "t('dh.backupPwdBroken')")
-    expect(chains.length).toBe(1)
-    expect(chains[0]!.join(' / '), '那句没绑在 passwordUndecryptable 上').toContain('passwordUndecryptable')
-  })
-
-  it('同一格里的三句互不相同、且各只出现一次（一句一键，不许两句并列）', () => {
-    for (const key of ['dh.backupNotConfigured', 'dh.backupPwdBroken', 'dh.backupOff']) {
-      expect(callCount(PANEL, `t('${key}')`), `${key} 在那一格里出现了不止一次`).toBe(1)
-    }
-  })
-
-  it('warn 位也读那颗（第 36 条：只查属性在不在＝传常量的变异照样活）', () => {
-    const warns = siblingAttrText(PANEL, 'DataHealthPanel.tsx', 'dh.backupPwdBroken', 'warn')
-    expect(warns.length).toBe(1)
-    expect(warns[0]).toContain('passwordUndecryptable')
-    expect(warns[0]).toContain('!backup.configured')
-    expect(warns[0]).toContain('!backup.enabled')
-  })
-})
+// 数据健康那一格（第三张脸）已随「备份状态三行」下线，C 组（那一格的 AST 结构）与 G 组里
+// 依赖它的两条读法自证一并退役；同一件事的屏侧判据改钉在 `webdav-config-unreadable-gate-386`
+// 的 D 组（设置页备份卡片：读不出来与没配过互斥）。
 
 describe('D 诊断那一格：绑在那一条 IfStatement 之内', () => {
   const branches = backupCloudBranches(DIAG)
@@ -300,31 +221,32 @@ describe('D 诊断那一格：绑在那一条 IfStatement 之内', () => {
   })
 })
 
-describe('E 四语：那颗键齐、且每一语都真的说了"解不开"这件事', () => {
+describe('E 四语：屏上那句「解不开」齐、且每一语都真的说了这件事', () => {
   const MUST: Record<Lang, string> = {
     zh: '解不开',
     en: 'cannot be decrypted',
     ja: '復号できません',
-    ko: '해독할 수 없어'
+    ko: '해독할 수 없습니다'
   }
 
-  it('dh.backupPwdBroken 四语都在、非空', () => {
+  // 数据健康那一格退役后，这句的可见面只剩备份卡片上的 `bk.pwdUndecryptable`（同一件事、同一口径）
+  it('bk.pwdUndecryptable 四语都在、非空', () => {
     for (const lang of Object.keys(DICTS) as Lang[]) {
-      const v = (DICTS[lang] as unknown as Record<string, string>)['dh.backupPwdBroken']
+      const v = (DICTS[lang] as unknown as Record<string, string>)['bk.pwdUndecryptable']
       expect(v, `${lang} 缺那颗键`).toBeTruthy()
     }
   })
 
   it('每一语都含自己那语的"解不开"说法（不许只翻译了一半就把事说成正常）', () => {
     for (const lang of Object.keys(DICTS) as Lang[]) {
-      const v = (DICTS[lang] as unknown as Record<string, string>)['dh.backupPwdBroken']!
+      const v = (DICTS[lang] as unknown as Record<string, string>)['bk.pwdUndecryptable']!
       expect(v, `${lang} 那句没说出"解不开"`).toContain(MUST[lang])
     }
   })
 
-  it('zh 那三句两两不同字（撞字＝按文本找元素的那套读法会认错）', () => {
-    const three = ['dh.backupNotConfigured', 'dh.backupPwdBroken', 'dh.backupOff'].map((k) => zh[k as keyof typeof zh])
-    expect(new Set(three).size).toBe(3)
+  it('zh 那两句两两不同字（撞字＝按文本找元素的那套读法会认错）', () => {
+    const two = ['dh.backupNotConfigured', 'bk.pwdUndecryptable'].map((k) => zh[k as keyof typeof zh])
+    expect(new Set(two).size).toBe(2)
   })
 })
 
@@ -371,19 +293,7 @@ describe('F 手抄 backup-service 桩的那几份测试必须带上 readWebDAVCo
   })
 })
 
-describe('G 读法自证：改前的形状喂进同一套读法，必须读成"没判／没绑"', () => {
-  it('面板改前那一形（第三张脸压根不存在）⇒ 读法不凭空造出一句', () => {
-    expect(BEFORE_GONE.length).toBeLessThan(PANEL.length)
-    expect(guardingConditions(BEFORE_GONE, 'DataHealthPanel.tsx', "t('dh.backupPwdBroken')")).toEqual([])
-  })
-
-  it('那句挂在别的条件上那一形 ⇒ 认出"没绑"（条件链里没有那颗 flag）', () => {
-    expect(BEFORE_WRONG.length).toBeLessThan(PANEL.length)
-    const chains = guardingConditions(BEFORE_WRONG, 'DataHealthPanel.tsx', "t('dh.backupPwdBroken')")
-    expect(chains.length).toBe(1)
-    expect(chains[0]!.join(' / ')).not.toContain('passwordUndecryptable')
-  })
-
+describe('G 读法自证：改前的形状喂进同一套读法，必须读成"没判"', () => {
   it('诊断那一形（两档 if／else、else 里直接 ok／warn）⇒ 链上没有走 flag 的那一支', () => {
     const branches = backupCloudBranches(BEFORE_DIAG)
     expect(branches.length).toBeGreaterThan(0)

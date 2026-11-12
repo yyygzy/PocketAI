@@ -9,9 +9,9 @@
 // 取法换成 `readWebDAVConfig()`＝判据排在密文被覆盖成明文**之前**（§381 的同一条纪律；
 // 拿解密后的值再判一遍会把恰以 `v1:` 开头的明文误报成解不开）。
 //
-// 本文件只管**决策与契约**（三档各自落到哪两个字段）；屏上那三张脸由
-// `tests/renderer-data-health-backup-pwd-382.test.tsx` 真挂载看；结构纪律在
-// `tests/webdav-configured-face-gate-382.test.ts`。
+// 本文件只管**决策与契约**（三档各自落到哪两个字段）；屏上那一格已随「备份状态三行」下线，
+// 同一件事的可见面改由 `tests/stale-read-notice-345.test.tsx` 与备份卡片承接；
+// 结构纪律在 `tests/webdav-configured-face-gate-382.test.ts`。
 // @vitest-environment node
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'

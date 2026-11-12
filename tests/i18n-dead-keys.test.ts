@@ -48,7 +48,11 @@ const DISPOSED = [
   // P4 批次 1（V4-Iter-461）摘除 Agent 侧栏入口后，这四把 UI 文案随入口一并四语删除
   'sidebar.agent', 'tab.newAgent', 'workspace.agent.title', 'workspace.agent.subtitle',
   // 下线「自定义 CSS」：这四把只服务于该区块（save 仍被别处使用，不在名单里）
-  'ui.customCss', 'ui.cssHint', 'ui.clear', 'ui.saved'
+  'ui.customCss', 'ui.cssHint', 'ui.clear', 'ui.saved',
+  // 下线设置页「数据健康」的备份状态三行（信息并入同页签上方的备份卡片）：
+  // backupState 仍被 StaleValueNotice 用、backupNotConfigured 已接到备份卡片，均不在名单里
+  'dh.backup', 'dh.backupCfgBroken', 'dh.backupPwdBroken', 'dh.backupOn', 'dh.backupOff',
+  'dh.lastOk', 'dh.lastError'
 ]
 
 /**
