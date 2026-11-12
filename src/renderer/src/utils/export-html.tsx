@@ -13,7 +13,8 @@ import { formatAttachments, roleLabel } from '../../../shared/export-markdown'
 import { Markdown } from '../modules/chat/Markdown'
 // react-dom/server 体积可观，动态 import 拆为独立 chunk——仅导出 HTML 时加载，不回退主包瘦身成果
 
-const STYLE = `
+// 导出/打印共用的基础样式：artifact-pdf 会在这份基础上叠「打印补丁」（见 artifact-pdf.ts）
+export const EXPORT_STYLE = `
 :root { color-scheme: light; }
 * { box-sizing: border-box; }
 body { margin:0; padding:32px 16px; background:#f5f6f8; color:#1f2329;
@@ -165,7 +166,7 @@ export async function buildConversationHtml(
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{conv.title}</title>
-        <style>{STYLE}</style>
+        <style>{EXPORT_STYLE}</style>
       </head>
       <body>
         <div className="doc">
@@ -233,7 +234,7 @@ export async function buildKbAskSessionHtml(
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{session.title}</title>
-        <style>{STYLE}</style>
+        <style>{EXPORT_STYLE}</style>
       </head>
       <body>
         <div className="doc">

@@ -1485,6 +1485,27 @@ export interface ArtifactPreview {
   truncated?: boolean
 }
 
+/**
+ * 产物全文读取结果（md 导出 PDF 专用）。
+ * 与 `file:read`（256KB 截断）、`artifact:preview`（20 万字符截断）刻意分开：
+ * 导出 PDF 时**超限必须拒绝**，绝不能拿截断后的正文去打印——那等于静默丢半篇。
+ */
+export interface ArtifactTextResult {
+  ok: boolean
+  error?: string
+  /** 全文（utf8）；仅在 ok 时存在 */
+  text?: string
+}
+
+/** 产物导出 PDF 的结果：取消不是错误（canceled=true），失败才给 error */
+export interface ArtifactPdfExportResult {
+  ok: boolean
+  error?: string
+  canceled?: boolean
+  /** 用户选择的目标路径；仅成功时存在 */
+  path?: string
+}
+
 /** 多文件项目（v70）：目录形态产物，不是单个文件 */
 export interface ProjectFileEntry {
   /** 项目内相对路径（POSIX 分隔符） */
@@ -3164,6 +3185,10 @@ export const IPC = {
   /** 预览（pptx 只给文字大纲，md 给正文） */
   ARTIFACT_PREVIEW: 'artifact:preview',
   ARTIFACT_DELETE: 'artifact:delete',
+  /** 读产物全文（md 导出 PDF 用；超限拒绝，不截断） */
+  ARTIFACT_READ_TEXT: 'artifact:read-text',
+  /** 导出 PDF（渲染端给自包含 HTML，主进程 printToPDF 后落用户选择的位置；不入库） */
+  ARTIFACT_EXPORT_PDF: 'artifact:export-pdf',
 
   // ---------- 多文件项目（v70） ----------
   /** 预览：文件清单 + index.html / README.md 文本（不承诺整站预览） */

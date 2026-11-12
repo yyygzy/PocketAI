@@ -13,6 +13,7 @@ import { errText } from '../../utils/error'
 import { hasIpcFailed, ipcFailureText, logIpcError } from '../../utils/ipc'
 import { formatBytes } from '../../utils/format'
 import { artifactRelPath } from '../../../../shared/artifacts'
+import { buildArtifactPdfHtml } from '../../utils/artifact-pdf'
 import type { ArtifactPreview } from '../../../../shared/types'
 
 interface ArtifactResult {
@@ -56,6 +57,7 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState<ArtifactPreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   if (!info) return null
   const relPath = artifactRelPath(info.fileName)
@@ -102,6 +104,37 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
       logIpcError('agent.previewArtifact', e)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // 导出 PDF（仅 md）：读全文 → 拼自包含 HTML → 主进程 printToPDF → 落用户选的位置。
+  // 取消静默；任何一步失败都必须给可见面（形状闸门要求这两个 await 都判失败面）。
+  const exportPdf = async (): Promise<void> => {
+    if (exporting || busy) return
+    setExporting(true)
+    try {
+      const text = await window.pocketai.readArtifactText(info.id)
+      if (hasIpcFailed(text)) {
+        toast.error(ipcFailureText(text, t))
+        return
+      }
+      if (!text.text) {
+        toast.error(t('agent.artifact.exportPdfFail', { e: t('agent.artifact.missing') }))
+        return
+      }
+      const html = await buildArtifactPdfHtml({ title: info.title, markdown: text.text })
+      const res = await window.pocketai.exportArtifactPdf(info.id, html)
+      if (hasIpcFailed(res)) {
+        toast.error(t('agent.artifact.exportPdfFail', { e: ipcFailureText(res, t) }))
+        return
+      }
+      if (res.canceled) return
+      toast.success(t('agent.artifact.exportPdfDone'))
+    } catch (e) {
+      toast.error(t('agent.artifact.exportPdfFail', { e: errText(e, t('common.unknownError')) }))
+      logIpcError('agent.exportArtifactPdf', e)
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -159,6 +192,16 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
         >
           {t('agent.artifact.saveAs')}
         </button>
+        {info.kind === 'md' && (
+          <button
+            className="btn-ghost text-[11px]"
+            disabled={exporting || busy || missing}
+            title={t('agent.artifact.exportPdfNote')}
+            onClick={() => void exportPdf()}
+          >
+            {exporting ? t('agent.artifact.exportingPdf') : t('agent.artifact.exportPdf')}
+          </button>
+        )}
         <button
           className="btn-ghost text-[11px]"
           disabled={busy || missing}

@@ -6,7 +6,13 @@ import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
 import type { SkillScanResult } from '../shared/skill-scan'
-import type { ArtifactMeta, ArtifactPreview, ProjectPreview } from '../shared/types'
+import type {
+  ArtifactMeta,
+  ArtifactPdfExportResult,
+  ArtifactPreview,
+  ArtifactTextResult,
+  ProjectPreview
+} from '../shared/types'
 import type { MainHandshakeReply } from '../shared/ipc-handshake'
 import type {
   ProviderRecord,
@@ -1427,6 +1433,11 @@ const api = {
     ipcRenderer.invoke(IPC.ARTIFACT_PREVIEW, id),
   deleteArtifact: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.ARTIFACT_DELETE, id),
+  // 导出 PDF：读全文单独一条（file:read 只给 256KB，会静默截断）；导出的 PDF 不入库
+  readArtifactText: (id: string): Promise<ArtifactTextResult> =>
+    ipcRenderer.invoke(IPC.ARTIFACT_READ_TEXT, id),
+  exportArtifactPdf: (id: string, html: string): Promise<ArtifactPdfExportResult> =>
+    ipcRenderer.invoke(IPC.ARTIFACT_EXPORT_PDF, id, html),
 
   // ---------- 多文件项目（v70）：目录形态产物 ----------
   previewProject: (id: string): Promise<ProjectPreview | null> =>

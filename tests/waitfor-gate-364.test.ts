@@ -565,6 +565,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // V4-Iter-472：docx 预览失败面用例——点「预览正文」后等 [role=status]
       // 的失败文案到货，按存在读屏；仅此 1 颗，上限＝现数，不留余量。
       'tests/renderer-artifact-docx-preview-472.test.tsx': 1,
+      // V4-Iter-476：md 产物「导出 PDF」用例——等 toast 上屏 / 等按钮离开 busy 态，
+      // 分别是成功、取消静默、导出失败、读全文超限四条；仅 4 颗，上限＝现数，不留余量。
+      'tests/renderer-artifact-pdf-button-476.test.tsx': 4,
       'tests/renderer-assistant-editor-tool-groups.test.tsx': 1,
       'tests/renderer-channel-b3.test.tsx': 7,
       'tests/renderer-data-health-perf.test.tsx': 2,

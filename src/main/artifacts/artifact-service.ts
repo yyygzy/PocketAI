@@ -206,6 +206,30 @@ export function readArtifact(id: string): { meta: ArtifactMeta; bytes: Buffer } 
   return { meta, bytes: fs.readFileSync(abs) }
 }
 
+/** 正文读取上限：与 md 产物的工具上限一致（2MB）。超限**拒绝**，不截断 */
+export const MAX_ARTIFACT_TEXT_BYTES = 2 * 1024 * 1024
+
+/**
+ * 读产物全文（md 导出 PDF 专用）。
+ * 刻意不复用 `file:read`（256KB 截断）与 `ARTIFACT_PREVIEW`（20 万字符截断）：
+ * 拿截断后的正文去打印，用户看到的是"少半篇的 PDF"且毫无提示。
+ */
+export function readArtifactText(
+  id: string
+): { ok: true; text: string } | { ok: false; error: string } {
+  const read = readArtifact(id)
+  if (!read) return { ok: false, error: '文件已不在磁盘上（可能已被删除或清理）' }
+  if (read.meta.kind !== 'md') return { ok: false, error: '只有 Markdown 产物支持导出 PDF' }
+  if (read.bytes.length > MAX_ARTIFACT_TEXT_BYTES) {
+    const mb = (read.bytes.length / 1024 / 1024).toFixed(1)
+    return {
+      ok: false,
+      error: `正文 ${mb}MB，超过 ${MAX_ARTIFACT_TEXT_BYTES / 1024 / 1024}MB 上限，请拆分后再导出`
+    }
+  }
+  return { ok: true, text: read.bytes.toString('utf8') }
+}
+
 /** 删除产物：先删库再删盘；文件已不在也算删除成功 */
 export function deleteArtifact(id: string): boolean {
   const meta = getArtifact(id)

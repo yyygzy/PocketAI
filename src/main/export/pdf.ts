@@ -53,10 +53,12 @@ async function doHtmlToPdf(html: string): Promise<Uint8Array> {
     app.getPath('temp'),
     `pocketai-pdf-${Date.now()}-${Math.random().toString(36).slice(2)}.html`
   )
-  fs.writeFileSync(tmpPath, src, 'utf8')
 
   let timeoutTimer: NodeJS.Timeout | undefined
   try {
+    // 临时 HTML 的写入也在 try 内：磁盘满/临时目录不可写时同样走下面统一的
+    // 「销毁窗口 + 可读错误」路径，而不是漏出一句裸 ENOSPC（§476）。
+    fs.writeFileSync(tmpPath, src, 'utf8')
     const w = ensureWindow()
     if (!ready) {
       // 首建窗口先加载空白页就绪；后续复用时 loadFile 自身即就绪信号
