@@ -2683,6 +2683,7 @@ export interface OutboundEntryView {
 export const IPC = {
   SYSTEM_HARDWARE_INFO: 'system:hardware-info',
   APP_GET_PATHS: 'app:get-paths',
+  APP_HANDSHAKE: 'app:handshake', // V4-Iter-475：主进程能力握手（通道清单 + 构建标识），旧主进程没有它
   MENU_SET_LANGUAGE: 'menu:set-language',
   UPDATE_SET_SETTINGS: 'update:set-settings',
   DB_RUN_MIGRATIONS: 'db:run-migrations',

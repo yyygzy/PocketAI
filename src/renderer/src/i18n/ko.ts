@@ -60,6 +60,10 @@ export const ko = {
   'bridge.missing.title': '보안 브리지가 주입되지 않음',
   'bridge.missing.hint': '이 창에는 프리로드 보안 브리지(window.pocketai)가 로드되지 않아 화면이 메인 프로세스와 통신할 수 없습니다. 앱을 다시 시작하세요. 계속되면 개발자에게 창 제목을 알려 주세요.',
   'bridge.missing.reload': '화면 새로 고침',
+  // ── 새 화면 + 오래된 메인 프로세스(V4-Iter-475): `No handler registered` 연발을 행동 가능한 한 줄로 모음 ──
+  'common.mainStale': '메인 프로세스가 오래되었습니다: 화면이 사용하는 {n}개 채널을 메인 프로세스가 인식하지 못합니다({channels}). 앱을 다시 시작해 화면과 메인 프로세스를 맞춰 주세요.',
+  'common.mainHandshakeFailed': '메인 프로세스 버전을 확인할 수 없습니다: {msg}. 앱을 다시 시작하세요. 다시 시작한 뒤에도 나타나면 이 메시지를 개발자에게 알려 주세요.',
+  'common.mainHandshakeMissing': '보안 브리지에 핸드셰이크 API가 없습니다(preload도 구버전입니다)',
   'common.deleting': '삭제 중…',
   'common.back': '뒤로',
   'common.stop': '중지',

@@ -18,6 +18,7 @@ import { createEncryptionFlagSyncer } from './utils/lock-flags'
 import { consumeBootDeepLinkTarget } from './utils/deep-link'
 import { requestOpenConversation } from './utils/palette-nav'
 import { ShowingDefaultsNotice } from './components/ShowingDefaultsNotice'
+import { MainProcessHandshakeNotice } from './components/MainProcessHandshakeNotice'
 import { startLongTaskObserver } from './utils/longtask'
 import { useAppStore } from './store/app-store'
 import { getChatFontLoadError } from './chat-font'
@@ -199,6 +200,8 @@ export default function App() {
           />
           {/* 侧栏即唯一导航：模块内容区直接顶到窗口顶部（原 36px 标签栏已随标签页系统下线） */}
           <div className="flex flex-col flex-1 min-w-0">
+            {/* V4-Iter-475：新界面 + 旧主进程时给一条统一提示（对齐时不渲染任何东西，不阻断模块） */}
+            <MainProcessHandshakeNotice />
             {(encReadErr || lockReadErr || chatFontUnread || codeCollapseUnread) && (
               <div className="px-3 pt-2 space-y-1">
                 {encReadErr && <ShowingDefaultsNotice what={t('enc.dbEnc')} msg={encReadErr} />}

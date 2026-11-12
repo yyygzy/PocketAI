@@ -60,6 +60,10 @@ export const ja = {
   'bridge.missing.title': 'セキュリティブリッジが未注入',
   'bridge.missing.hint': 'このウィンドウにはプリロードのセキュリティブリッジ（window.pocketai）が読み込まれておらず、画面はメインプロセスと通信できません。アプリを再起動してください。それでも続く場合は、開発者にウィンドウ名を伝えてください。',
   'bridge.missing.reload': '画面を再読み込み',
+  // ── 新しい画面 + 古いメインプロセス（V4-Iter-475）：`No handler registered` の連発を行動できる一文にまとめる ──
+  'common.mainStale': 'メインプロセスが古いままです: 画面が使う {n} 個のチャンネルをメインプロセスが認識していません（{channels}）。アプリを再起動して、画面とメインプロセスを揃えてください。',
+  'common.mainHandshakeFailed': 'メインプロセスのバージョンを確認できません: {msg}。アプリを再起動してください。再起動後も出る場合は、このメッセージを開発者に伝えてください。',
+  'common.mainHandshakeMissing': 'セキュリティブリッジにハンドシェイク API がありません（preload も古い版です）',
   'common.deleting': '削除中…',
   'common.back': '戻る',
   'common.stop': '停止',

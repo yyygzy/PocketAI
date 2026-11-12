@@ -7,6 +7,7 @@ import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
 import type { SkillScanResult } from '../shared/skill-scan'
 import type { ArtifactMeta, ArtifactPreview, ProjectPreview } from '../shared/types'
+import type { MainHandshakeReply } from '../shared/ipc-handshake'
 import type {
   ProviderRecord,
   AssistantRecord,
@@ -136,6 +137,12 @@ const api = {
   // `data` 才是库完整性结论（`{ok,details}`），外层 `ok` 只说"这一发读到了吗"
   checkIntegrity: (): Promise<{ ok: boolean; data?: { ok: boolean; details: string }; error?: string }> =>
     ipcRenderer.invoke(IPC.DB_INTEGRITY_CHECK),
+  /**
+   * V4-Iter-475：主进程能力握手（通道清单＋构建标识）。
+   * 旧主进程没有这个 handler，这一发会 reject（`No handler registered`）——
+   * 调用方必须把 reject 演成可见提示，不许当"没对齐"之外的第二层静默。
+   */
+  mainHandshake: (): Promise<MainHandshakeReply> => ipcRenderer.invoke(IPC.APP_HANDSHAKE),
 
   // ---------- Provider ----------
   listProviders: (): Promise<ProviderRecord[]> =>

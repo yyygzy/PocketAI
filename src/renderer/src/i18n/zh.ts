@@ -61,6 +61,10 @@ export const zh = {
   'bridge.missing.title': '安全桥未注入',
   'bridge.missing.hint': '这个窗口没有加载到 preload 安全桥（window.pocketai 不存在），界面无法与主进程通信。请重启应用；如果仍然出现，请把窗口标题告诉开发者。',
   'bridge.missing.reload': '重新加载界面',
+  // ── 新界面 + 旧主进程（V4-Iter-475）：把一串 `No handler registered` 收成一句能指导行动的提示 ──
+  'common.mainStale': '主进程版本过旧：当前界面有 {n} 个通道主进程不认识（{channels}）。请重启应用，让界面与主进程重新对齐。',
+  'common.mainHandshakeFailed': '无法确认主进程版本：{msg}。请重启应用；重启后仍出现，请把这句提示告诉开发者。',
+  'common.mainHandshakeMissing': '安全桥里没有握手接口（preload 也是旧版）',
   'common.deleting': '删除中…',
   'common.back': '返回',
   'common.stop': '停止',

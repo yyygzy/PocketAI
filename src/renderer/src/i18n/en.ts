@@ -61,6 +61,10 @@ export const en = {
   'bridge.missing.title': 'Security bridge not injected',
   'bridge.missing.hint': 'This window did not load the preload security bridge (window.pocketai is missing), so the interface cannot talk to the main process. Restart the app; if it still happens, tell the developer the window title.',
   'bridge.missing.reload': 'Reload the interface',
+  // ── New UI + old main process (V4-Iter-475): collapse a stream of `No handler registered` into one actionable line ──
+  'common.mainStale': 'The main process is out of date: the UI uses {n} channel(s) that it does not know ({channels}). Restart the app so the UI and main process line up again.',
+  'common.mainHandshakeFailed': 'Could not verify the main process version: {msg}. Restart the app; if this still appears after a restart, report this message to the developer.',
+  'common.mainHandshakeMissing': 'The security bridge has no handshake API (preload is out of date too)',
   'common.deleting': 'Deleting…',
   'common.back': 'Back',
   'common.stop': 'Stop',
