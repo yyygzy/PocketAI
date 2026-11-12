@@ -88,7 +88,7 @@ export function registerPreferenceHandlers(): void {
     return { ok: true as const }
   })
 
-  // ---------- 界面偏好（透明度 / 自定义 CSS） ----------
+  // ---------- 界面偏好（透明度） ----------
   safeHandle(IPC.UI_GET_PREFS, () => ({ ok: true as const, data: getUiPreferences() }))
   safeHandle(IPC.UI_SET_PREFS, (_e, patch: Partial<UiPreferences>) => ({
     ok: true as const,

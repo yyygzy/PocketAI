@@ -22,7 +22,6 @@ function mount(prefs: Record<string, unknown> = {}) {
       ok: true,
       data: {
         opacity: 1,
-        customCss: '',
         chatFontSize: 'medium',
         codeCollapseLines: 5,
         ...prefs
@@ -30,7 +29,7 @@ function mount(prefs: Record<string, unknown> = {}) {
     }),
     setUiPrefs: (patch: Record<string, unknown>) => {
       saved.push(patch)
-      return { ok: true, data: { opacity: 1, customCss: '', chatFontSize: 'medium', codeCollapseLines: 5, ...patch } }
+      return { ok: true, data: { opacity: 1, chatFontSize: 'medium', codeCollapseLines: 5, ...patch } }
     },
     getWindowBehavior: () => ({ launchAtLogin: false, closeToTray: false }),
     getReplyNotifyEnabled: () => true,
@@ -91,7 +90,7 @@ describe('外观面板 — 代码块折叠阈值', () => {
     stubPocketai({
       getUiPrefs: () => ({
         ok: true,
-        data: { opacity: 1, customCss: '', chatFontSize: 'medium', codeCollapseLines: 7 }
+        data: { opacity: 1, chatFontSize: 'medium', codeCollapseLines: 7 }
       }),
       setUiPrefs: () => ({ ok: false, error: '存不下' }),
       getWindowBehavior: () => ({ launchAtLogin: false, closeToTray: false }),

@@ -230,10 +230,9 @@ const STILL_SILENT_PROOF = [
  */
 const SILENT_PER_FILE: Record<string, number> = {
   'src/renderer/src/App.tsx': 0,
-  // §278：启动时那三发 UI 偏好读（字体／折叠／自定义 CSS）失败状态供 App 组件读取并显示通知
+  // §278：启动时那两发 UI 偏好读（字体／折叠）失败状态供 App 组件读取并显示通知
   'src/renderer/src/chat-font.ts': 0,
   'src/renderer/src/code-collapse.ts': 0,
-  'src/renderer/src/custom-css.ts': 0,
   'src/renderer/src/detached/DetachedApp.tsx': 0,
   // §275：侧栏那两发初始读（顺序／固定模块）收口（各挂一句、各给一颗键）；
   // 但 rollbackOrder 与 rollbackPinned 那两发仍是"反判无 else"（写失败后回滚读也失败时不再额外提示，

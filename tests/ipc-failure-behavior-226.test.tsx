@@ -3,7 +3,7 @@
 //
 // 撞出来的形状：`NetworkPanel` 与 `AppearancePanel` 的门是 `loaded`，而两条失败面**都会把门解除**
 // （`setLoaded(true)`，注释当时写的是"否则面板永远转圈"）。门解除后屏上摆的是各 state 的初始字面量：
-// 空代理框、透明度 100%、字号「中」、折叠阈值 20、CSS 空、两颗窗口行为开关未勾、回复通知勾着。
+// 空代理框、透明度 100%、字号「中」、折叠阈值 20、两颗窗口行为开关未勾、回复通知勾着。
 // 这些值逐条对过主进程的定义确实就是默认值（`app-config.repo.ts:367/:292/:300`、`ui-preferences.ts:42/48/70`、
 // `reply-notify.ts:19`），所以能说的是"这是默认值"而不是"没东西"——**但用户看到的是一屏看起来正常的设置**。
 // 最贵的一条是回复通知：读失败时它保持"开"，而"开"恰好是最打扰的那一侧。
@@ -24,10 +24,10 @@ const alerts = (): string[] => screen.queryAllByRole('alert').map((e) => (e.text
 const toasts = (): string[] => screen.queryAllByRole('status').map((e) => (e.textContent ?? '').trim())
 const box = (name: string): HTMLInputElement => screen.getByLabelText(name) as HTMLInputElement
 
-const UI_ITEMS = [L('ui.opacity'), L('ui.fontSize'), L('ui.codeCollapse'), L('ui.customCss')].join(' / ')
+const UI_ITEMS = [L('ui.opacity'), L('ui.fontSize'), L('ui.codeCollapse')].join(' / ')
 const BEHAVIOR_ITEMS = [L('ui.launchAtLogin'), L('ui.closeToTray')].join(' / ')
 
-const prefsOk = { opacity: 0.8, customCss: 'body{}', chatFontSize: 'large', codeCollapseLines: 5 }
+const prefsOk = { opacity: 0.8, chatFontSize: 'large', codeCollapseLines: 5 }
 const behaviorOk = { launchAtLogin: true, closeToTray: true, launchAtLoginApplied: true }
 
 /** 三发读按成败组合打桩：`fails` 里列的通道回 `{ok:false}` */
@@ -74,7 +74,7 @@ describe('② 外观面板：三发读彼此独立，谁没读到才点谁的名
     expect(box(L('set.replyNotify')).checked).toBe(false)
   })
 
-  it('只有界面偏好读不到 ⇒ 点那四项的名；两颗窗口行为开关与回复通知不许被顺带说成默认值', async () => {
+  it('只有界面偏好读不到 ⇒ 点那三项的名；两颗窗口行为开关与回复通知不许被顺带说成默认值', async () => {
     stubPocketai(stubPrefs(['getUiPrefs']))
     mountWithProviders(<AppearancePanel />)
     await waitFor(() => expect(alerts()).toEqual([DEFAULTS(UI_ITEMS, '配置库被占用')]))
@@ -86,9 +86,8 @@ describe('② 外观面板：三发读彼此独立，谁没读到才点谁的名
     stubPocketai(stubPrefs(['getWindowBehavior']))
     mountWithProviders(<AppearancePanel />)
     await waitFor(() => expect(alerts()).toEqual([DEFAULTS(BEHAVIOR_ITEMS, '配置库被占用')]))
-    // 三发独立：偏好读到了 ⇒ 透明度显示读到的 80%（默认是 100%），CSS 框里是读到的那段
+    // 三发独立：偏好读到了 ⇒ 透明度显示读到的 80%（默认是 100%）
     await waitFor(() => expect(screen.queryByText('80%')).not.toBeNull())
-    expect((screen.getByDisplayValue('body{}') as HTMLTextAreaElement).value).toBe('body{}')
   })
 
   it('只有回复通知读不到 ⇒ 那一句单独出现，开关仍显示默认「开」（这一侧才是打扰用户的方向）', async () => {

@@ -46,7 +46,9 @@ const DISPOSED = [
   // MCP 表单摘掉「启用」假开关（`mcp_servers.enabled` 从不参与运行判定）后成孤儿：四语一并删除
   'common.enable',
   // P4 批次 1（V4-Iter-461）摘除 Agent 侧栏入口后，这四把 UI 文案随入口一并四语删除
-  'sidebar.agent', 'tab.newAgent', 'workspace.agent.title', 'workspace.agent.subtitle'
+  'sidebar.agent', 'tab.newAgent', 'workspace.agent.title', 'workspace.agent.subtitle',
+  // 下线「自定义 CSS」：这四把只服务于该区块（save 仍被别处使用，不在名单里）
+  'ui.customCss', 'ui.cssHint', 'ui.clear', 'ui.saved'
 ]
 
 /**

@@ -25,8 +25,6 @@ export interface UiThemePreset {
   readonly className: string
   /** BrowserWindow.backgroundColor；必须等于 theme.css 该预设的 --color-surface */
   readonly windowBackground: string
-  /** color-scheme：决定原生控件（select 弹层、滚动条）跟哪一侧 */
-  readonly nativeColorScheme: 'light' | 'dark'
   /** mermaid 只认内置的 dark/default，映射到最接近的一套 */
   readonly mermaidTheme: 'default' | 'dark'
   /** 四语字典里的预设名 key（字面量，i18n 死键闸门据此判定"有人引用"） */
@@ -38,7 +36,6 @@ export const UI_THEMES: Readonly<Record<UiTheme, UiThemePreset>> = {
     id: 'dark',
     className: '',
     windowBackground: '#1e1e2e',
-    nativeColorScheme: 'dark',
     mermaidTheme: 'dark',
     labelKey: 'ui.theme.dark'
   },
@@ -46,7 +43,6 @@ export const UI_THEMES: Readonly<Record<UiTheme, UiThemePreset>> = {
     id: 'light',
     className: 'light',
     windowBackground: '#eff1f5',
-    nativeColorScheme: 'light',
     mermaidTheme: 'default',
     labelKey: 'ui.theme.light'
   },
@@ -54,7 +50,6 @@ export const UI_THEMES: Readonly<Record<UiTheme, UiThemePreset>> = {
     id: 'ocean',
     className: 'ocean',
     windowBackground: '#0f2033',
-    nativeColorScheme: 'dark',
     mermaidTheme: 'dark',
     labelKey: 'ui.theme.ocean'
   },
@@ -62,7 +57,6 @@ export const UI_THEMES: Readonly<Record<UiTheme, UiThemePreset>> = {
     id: 'sand',
     className: 'sand',
     windowBackground: '#faf7f0',
-    nativeColorScheme: 'light',
     mermaidTheme: 'default',
     labelKey: 'ui.theme.sand'
   },
@@ -71,7 +65,6 @@ export const UI_THEMES: Readonly<Record<UiTheme, UiThemePreset>> = {
     id: 'sage',
     className: 'sage',
     windowBackground: '#1a201a',
-    nativeColorScheme: 'dark',
     mermaidTheme: 'dark',
     labelKey: 'ui.theme.sage'
   }

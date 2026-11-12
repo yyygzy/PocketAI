@@ -2412,15 +2412,13 @@ export function inspectSidebarPinned(
   return { list, changed: !sameIds(raw, list) }
 }
 
-// ---------- 界面偏好（透明度 / 自定义 CSS / 聊天字号） ----------
+// ---------- 界面偏好（透明度 / 聊天字号） ----------
 /** 聊天正文字号档位：small 13px / medium 14px / large 16px */
 export type ChatFontSize = 'small' | 'medium' | 'large'
 
 export interface UiPreferences {
   /** 窗口透明度 0.6–1，1 = 不透明 */
   opacity: number
-  /** 渲染端注入的自定义 CSS */
-  customCss: string
   /** 聊天正文字号档位；旧数据缺省按 medium */
   chatFontSize: ChatFontSize
   /** 长代码块默认折叠阈值（行数）；0 = 永不折叠。旧数据缺省按 20 */

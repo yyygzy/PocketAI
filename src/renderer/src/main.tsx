@@ -8,7 +8,6 @@ import { DETACHABLE_MODULE_IDS } from '../../shared/types'
 import { I18nProvider, preloadInitialLang, useI18n } from './i18n'
 import { ToastProvider } from './components/ToastProvider'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
-import { loadAndInjectCustomCss } from './custom-css'
 import { loadAndApplyChatFontSize } from './chat-font'
 import { loadCodeCollapseLines } from './code-collapse'
 import { backfillThemeIfUnset } from './theme-boot'
@@ -60,8 +59,7 @@ function BridgeMissingScreen(): React.JSX.Element {
 // 清掉它遗留在 localStorage 的布局键，不给后续版本留孤儿数据
 localStorage.removeItem('pocketai.tabs.v1')
 
-// 先注入用户自定义 CSS / 应用聊天字号档位，再渲染（异步，可能有极短暂闪烁）
-loadAndInjectCustomCss()
+// 先应用聊天字号档位，再渲染（异步，可能有极短暂闪烁）
 loadAndApplyChatFontSize()
 loadCodeCollapseLines()
 

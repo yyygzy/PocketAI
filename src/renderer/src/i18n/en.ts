@@ -1470,11 +1470,7 @@ export const en = {
   'ui.launchAtLoginHint': 'Only applies to the installed build; portable mode (USB drive) never writes system startup entries.',
   'ui.closeToTray': 'Minimize to tray on close',
   'ui.closeToTrayHint': 'When enabled, closing the window does not quit the app. Right-click the tray icon and choose "Quit Moxia" to exit fully.',
-  'ui.customCss': 'Custom CSS',
-  'ui.cssHint': 'Injected immediately after saving and applies to this app only; clear the text and click “Clear” to restore the default style.',
   'ui.save': 'Save',
-  'ui.clear': 'Clear',
-  'ui.saved': 'Saved and applied',
 
   // Quick popup
   'set.shortcuts.title': 'Keyboard Shortcuts',

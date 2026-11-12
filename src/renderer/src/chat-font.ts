@@ -1,7 +1,7 @@
 // 聊天正文字号档位：CSS 变量 --chat-font-size 驱动消息气泡正文 / Markdown / 输入框。
 //
 // 启动时由入口拉取 UI 偏好后应用；设置页切换时立即应用，无需重启。
-// 与 custom-css 同构：主进程只存取档位值，渲染端负责落地样式。
+// 主进程只存取档位值，渲染端负责落地样式。
 
 import type { ChatFontSize } from '../../shared/types'
 import { logIpcError } from './utils/ipc'

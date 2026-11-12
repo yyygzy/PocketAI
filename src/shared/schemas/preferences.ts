@@ -3,12 +3,9 @@ import { z } from 'zod'
 import { DEFAULT_SIDEBAR_ORDER, MAX_PINNED_SIDEBAR_MODULES } from '../types'
 import type { SidebarModuleId } from '../types'
 
-/** UI_SET_PREFS 入参：Partial<UiPreferences>
- *  customCss 不在此设 max：服务层 setUiPreferences 统一截断到 MAX_CSS_LENGTH(200KB)，
- *  截断语义（不报错）是既有设计，schema 拒绝会改变该行为。 */
+/** UI_SET_PREFS 入参：Partial<UiPreferences> */
 export const uiPrefsPatchSchema = z.object({
   opacity: z.number().min(0.6).max(1).optional(),
-  customCss: z.string().optional(),
   chatFontSize: z.enum(['small', 'medium', 'large']).optional(),
   /** 代码块折叠阈值（行）：0 = 永不折叠，上限 200 防误填 */
   codeCollapseLines: z.number().int().min(0).max(200).optional(),

@@ -1224,7 +1224,7 @@ export const zh = {
   'agent.approval.reason.FORCE_CONFIRM_OVERRIDE': '本会话已允许该工具，但此类操作要求逐次确认，本次仍强制重新询问。',
   'agent.approval.reason.UNATTENDED': '无人值守模式下不发起确认，按策略拒绝。',
 
-  // 外观（透明度 / 自定义 CSS）
+  // 外观（透明度）
   'set.appearance': '外观',
   'set.usage': '用量统计',
   'set.dataHealth': '数据健康',
@@ -1471,11 +1471,7 @@ export const zh = {
   'ui.launchAtLoginHint': '仅安装版生效；便携模式（U盘运行）不会写入系统启动项。',
   'ui.closeToTray': '关闭窗口时最小化到托盘',
   'ui.closeToTrayHint': '开启后点关闭按钮不会退出应用，右键托盘图标选「退出墨匣」可彻底退出。',
-  'ui.customCss': '自定义 CSS',
-  'ui.cssHint': '保存后立即注入并生效，仅作用于本应用；清空后点「清空」即可恢复默认样式。',
   'ui.save': '保存',
-  'ui.clear': '清空',
-  'ui.saved': '已保存并生效',
 
   // 快捷浮窗
   'set.shortcuts.title': '键盘快捷键',

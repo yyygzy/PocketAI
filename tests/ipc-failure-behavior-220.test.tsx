@@ -18,8 +18,8 @@ const settle = (): Promise<void> => act(async () => { await new Promise((r) => s
 
 const mountPanel = (over: Record<string, unknown> = {}): void => {
   stubPocketai({
-    getUiPrefs: () => ({ ok: true, data: { opacity: 1, customCss: '', chatFontSize: 'medium', codeCollapseLines: 5 } }),
-    setUiPrefs: (patch: Record<string, unknown>) => ({ ok: true, data: { opacity: 1, customCss: '', chatFontSize: 'medium', codeCollapseLines: 5, ...patch } }),
+    getUiPrefs: () => ({ ok: true, data: { opacity: 1, chatFontSize: 'medium', codeCollapseLines: 5 } }),
+    setUiPrefs: (patch: Record<string, unknown>) => ({ ok: true, data: { opacity: 1, chatFontSize: 'medium', codeCollapseLines: 5, ...patch } }),
     getWindowBehavior: () => ({ launchAtLogin: false, closeToTray: false }),
     getReplyNotifyEnabled: () => true,
     setLaunchAtLogin: (v: boolean) => ({ launchAtLogin: v }),

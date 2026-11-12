@@ -395,9 +395,9 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(
       // §436：身份＝WebDAV 备份文件列表的 f.name 单元格（数据＋16 字字典句，已带 title）。
-      // 行号随改动漂移：WebDAV 那批 1571→1585，P4 批次 2 后实测 1600；设置页签改造后实测 1671
-      //   （本批只动呈现层：页签容器在 return 前增行，该单元格身份未变，只重钉行号）。
-      'src/renderer/src/modules/settings/SettingsModule.tsx:1671(16字)'
+      // 行号随改动漂移：WebDAV 那批 1571→1585，P4 批次 2 后实测 1600；设置页签改造后实测 1671；
+      //   自定义 CSS 下线批删掉该文件里的 CSS 区块后整体上移 1 行，现按实测重钉为 1670。
+      'src/renderer/src/modules/settings/SettingsModule.tsx:1670(16字)'
     )
   })
 })

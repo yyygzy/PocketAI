@@ -21,7 +21,7 @@ import { providerRecordSchema, idSchema } from '../src/shared/schemas/providers'
 import { websearchConfigSchema, calendarConfigSchema, toolApproveResponseSchema, textProtocolToggleSchema } from '../src/shared/schemas/agent'
 import { sandboxCreateSchema, sandboxUpdateMetaSchema } from '../src/shared/schemas/sandbox'
 import { channelSetConfigSchema } from '../src/shared/schemas/channels'
-import { uiPrefsPatchSchema, sidebarOrderSchema, sidebarPinnedSchema } from '../src/shared/schemas/preferences'
+import { sidebarOrderSchema, sidebarPinnedSchema } from '../src/shared/schemas/preferences'
 import { DEFAULT_SIDEBAR_ORDER, MAX_PINNED_SIDEBAR_MODULES } from '../src/shared/types'
 import { masterPasswordSchema, recoveryCodeSchema, recoverPayloadSchema } from '../src/shared/schemas/encryption'
 import { licenseCodeSchema, filePathSchema } from '../src/shared/schemas/license'
@@ -330,12 +330,6 @@ describe('channels/preferences/encryption/license — 上限', () => {
     expect(
       channelSetConfigSchema.safeParse({ enabled: true, whitelist: '123,456' }).success
     ).toBe(true)
-  })
-
-  it('customCss 走服务层 200KB 截断兜底（schema 不设 max，保持截断语义）', () => {
-    // 服务层 setUiPreferences 对超长 CSS 截断而非拒绝（既有设计），schema 不重复设限
-    expect(uiPrefsPatchSchema.safeParse({ customCss: 'c'.repeat(50_001) }).success).toBe(true)
-    expect(uiPrefsPatchSchema.safeParse({ opacity: 0.8, customCss: 'body{}' }).success).toBe(true)
   })
 
   it('校验档 <6 / 新设档 <10 / >128 拒绝；恢复码 >64 拒绝', () => {

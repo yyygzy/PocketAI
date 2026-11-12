@@ -5,8 +5,7 @@
 // 拿到加密密钥、备份、文件系统等全部能力。
 //
 // 约束：浮窗与主窗口共享 index.html bundle（仅渲染 <PopupApp />），
-// 因此本 preload 必须覆盖 PopupApp 及其依赖（custom-css 的 getUiPrefs）
-// 实际调用的全部方法，否则运行时 undefined。
+// 因此本 preload 必须覆盖 PopupApp 及其依赖实际调用的全部方法，否则运行时 undefined。
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '../shared/types'
 import type {
@@ -40,7 +39,7 @@ type PopupApiShape = Pick<
 >
 
 const api: PopupApiShape = {
-  // ── UI 偏好（custom-css 注入依赖） ──
+  // ── UI 偏好（字号档位等） ──
   getUiPrefs: (): Promise<{ ok: boolean; data?: UiPreferences; error?: string }> =>
     ipcRenderer.invoke(IPC.UI_GET_PREFS),
 

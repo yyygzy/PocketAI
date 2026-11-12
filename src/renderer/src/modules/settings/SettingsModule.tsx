@@ -22,7 +22,6 @@ import { LocalJudgementPanel } from './LocalJudgementPanel'
 import { OutboundPanel } from './OutboundPanel'
 import { CapabilitySettingsPanel, ConnectionSettingsPanel } from './EmbeddedAgentPanels'
 import { useI18n } from '../../i18n'
-import { injectCustomCss } from '../../custom-css'
 import { applyChatFontSize, normalizeFontSize } from '../../chat-font'
 import { MAX_CODE_COLLAPSE_LINES, normalizeCodeCollapseLines, setCodeCollapseLines } from '../../code-collapse'
 import { CODE_COLLAPSE_THRESHOLD } from '../../utils/code-block'
@@ -2390,7 +2389,7 @@ export const PopupPanel: React.FC = () => {
   )
 }
 
-// ─── 外观面板（窗口透明度 / 自定义 CSS）────────────────────────
+// ─── 外观面板（窗口透明度）────────────────────────
 
 // 网络面板：主进程 API 流量代理（http/https）。留空=直连；保存后立即应用，
 // 回环地址（localhost/127.0.0.1）始终直连。非法地址主进程返回错误且不写库。
@@ -2483,7 +2482,6 @@ export const AppearancePanel: React.FC = () => {
   const [opacity, setOpacity] = useState(1)
   // §333：commitOpacity 失败时回滚到「最后一次真正存住的值」，不是拖动中的本地值
   const savedOpacityRef = useRef(1)
-  const [css, setCss] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   // 窗口行为：开机自启 / 关窗最小化到托盘
@@ -2508,7 +2506,6 @@ export const AppearancePanel: React.FC = () => {
       } else {
         setOpacity(r.data.opacity)
         savedOpacityRef.current = r.data.opacity
-        setCss(r.data.customCss)
         setChatFontSize(normalizeFontSize(r.data.chatFontSize))
         const lines = normalizeCodeCollapseLines(r.data.codeCollapseLines)
         setCollapseLines(lines)
@@ -2656,31 +2653,6 @@ export const AppearancePanel: React.FC = () => {
     }
   }
 
-  const saveCss = async () => {
-    const r = await window.pocketai.setUiPrefs({ customCss: css })
-    if (r.ok && r.data) {
-      setCss(r.data.customCss)
-      injectCustomCss(r.data.customCss) // 立即在当前窗口生效
-      setNotice({ ok: true, text: t('ui.saved') })
-    } else {
-      setNotice({ ok: false, text: r.error ?? t('common.unknownError') })
-    }
-  }
-
-  const resetCss = async () => {
-    const prevCss = css
-    const r = await window.pocketai.setUiPrefs({ customCss: '' })
-    // 改前是先清 CSS、再静默失败：输入框空了而旧样式还在生效，也没有任何提示（§216）
-    if (!r.ok || !r.data) {
-      setCss(prevCss)
-      setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
-      return
-    }
-    setCss('')
-    injectCustomCss('')
-    setNotice({ ok: true, text: t('ui.saved') })
-  }
-
   if (!loaded) {
     return <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>
   }
@@ -2688,7 +2660,7 @@ export const AppearancePanel: React.FC = () => {
   return (
     <div className="space-y-4 text-xs">
       {uiErr && (
-        <ShowingDefaultsNotice what={[t('ui.opacity'), t('ui.fontSize'), t('ui.codeCollapse'), t('ui.customCss')].join(' / ')} msg={uiErr} />
+        <ShowingDefaultsNotice what={[t('ui.opacity'), t('ui.fontSize'), t('ui.codeCollapse')].join(' / ')} msg={uiErr} />
       )}
       {/* 主题：内置预设选择器（与侧栏共用注册表与状态，切换即写 localStorage + 主进程镜像） */}
       <div>
@@ -2808,36 +2780,6 @@ export const AppearancePanel: React.FC = () => {
           <span className="text-[var(--color-text)]">{t('set.replyNotify')}</span>
         </label>
         <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('set.replyNotifyHint')}</p>
-      </div>
-
-      {/* 自定义 CSS */}
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[var(--color-text)]">{t('ui.customCss')}</span>
-          <div className="flex gap-2">
-            <button
-              onClick={resetCss}
-              className="px-2 py-1 text-[11px] rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
-            >
-              {t('ui.clear')}
-            </button>
-            <button
-              onClick={saveCss}
-              className="px-2 py-1 text-[11px] rounded bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:opacity-90"
-            >
-              {t('ui.save')}
-            </button>
-          </div>
-        </div>
-        <textarea
-          value={css}
-          onChange={(e) => setCss(e.target.value)}
-          spellCheck={false}
-          rows={8}
-          placeholder={'body { /* ... */ }'}
-          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] p-2 font-mono text-[11px] resize-y outline-none focus:border-[var(--color-accent)]"
-        />
-        <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{t('ui.cssHint')}</p>
       </div>
 
       {notice && (

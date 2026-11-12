@@ -2,11 +2,8 @@
 //
 // ui.opacity     窗口透明度（0.6–1），主进程 BrowserWindow.setOpacity
 //                Windows / macOS 原生支持；Linux 取决于窗口管理器（不支持时静默无效）
-// ui.custom_css  自定义 CSS 文本，渲染端读取后注入 <style>，主进程只负责存取
 // ui.theme       窗口底色主题（内置预设 id，见 shared/themes.ts）。渲染端 localStorage 仍是切换时的事实来源，
 //                这里存一份是为了让 BrowserWindow 在页面首帧之前就用对底色（否则浅色主题会先黑一下）。
-//
-// 安全：CSS 仅作用于本应用渲染进程沙箱，不接触 Node API；限制长度防止误塞大内容。
 
 import { BrowserWindow, type WebContents } from 'electron'
 import { appConfigRepo } from './db/repositories/app-config.repo'
@@ -24,7 +21,6 @@ export type { UiTheme }
 export { isUiTheme, normalizeUiTheme }
 
 const K_OPACITY = 'ui.opacity'
-const K_CUSTOM_CSS = 'ui.custom_css'
 const K_CHAT_FONT_SIZE = 'ui.chat_font_size'
 const K_CODE_COLLAPSE_LINES = 'ui.code_collapse_lines'
 const K_THEME = 'ui.theme'
@@ -44,7 +40,6 @@ function normalizePreferenceId(v: unknown): string {
 
 export const MIN_OPACITY = 0.6
 export const MAX_OPACITY = 1
-export const MAX_CSS_LENGTH = 200_000
 /** 代码块折叠阈值：默认 20 行；0 是合法值（永不折叠），只有脏数据才回落默认 */
 export const DEFAULT_CODE_COLLAPSE_LINES = 20
 export const MAX_CODE_COLLAPSE_LINES = 200
@@ -81,7 +76,6 @@ export function getUiPreferences(): UiPreferences {
   const raw = Number(appConfigRepo.get(K_OPACITY))
   return {
     opacity: Number.isFinite(raw) && raw > 0 ? clampOpacity(raw) : 1,
-    customCss: appConfigRepo.get(K_CUSTOM_CSS) ?? '',
     chatFontSize: normalizeChatFontSize(appConfigRepo.get(K_CHAT_FONT_SIZE)),
     codeCollapseLines: normalizeCodeCollapseLines(appConfigRepo.get(K_CODE_COLLAPSE_LINES)),
     agentAssistantId: normalizePreferenceId(appConfigRepo.get(K_AGENT_ASSISTANT_ID)),
@@ -94,10 +88,6 @@ export function setUiPreferences(patch: Partial<UiPreferences>): UiPreferences {
   uiPrefsPatchSchema.parse(patch)
   if (patch.opacity !== undefined) {
     appConfigRepo.set(K_OPACITY, String(clampOpacity(patch.opacity)))
-  }
-  if (patch.customCss !== undefined) {
-    const css = patch.customCss.slice(0, MAX_CSS_LENGTH)
-    appConfigRepo.set(K_CUSTOM_CSS, css)
   }
   if (patch.chatFontSize !== undefined) {
     appConfigRepo.set(K_CHAT_FONT_SIZE, normalizeChatFontSize(patch.chatFontSize))
