@@ -1,4 +1,5 @@
-// 产物预览：md 给正文；pptx 只提取**文字大纲**（不还原版式）；docx 用 mammoth 转只读 HTML
+// 产物预览：md 给正文；pptx 只提取**文字大纲**（不还原版式）；docx 用 mammoth 转只读 HTML；
+// xlsx 用 SheetJS 读回单元格文本（按行列上限截断，不还原列宽/合并/样式）。
 //
 // 为什么不做 pptx 视觉预览：离线产品里没有可靠的纯 JS pptx 渲染器，LibreOffice/Office 又不能随包。
 // 与其画一张假的"预览图"，不如老实给大纲，并在界面文案里写明"不还原版式"。
@@ -6,8 +7,12 @@
 // 渲染端不许把它直接注入主文档（见 ArtifactActions）。
 import { Open } from 'unzipper'
 import mammoth from 'mammoth'
+import * as XLSX from 'xlsx'
 import { getArtifact, readArtifact } from './artifact-service'
-import type { ArtifactMeta, ArtifactPreview } from '../../shared/types'
+import { createLogger } from '../logger'
+import type { ArtifactMeta, ArtifactPreview, ArtifactXlsxSheetPreview } from '../../shared/types'
+
+const log = createLogger('artifacts')
 
 const MAX_MD_CHARS = 200_000
 const MAX_SLIDES = 60
@@ -15,6 +20,11 @@ const MAX_LINES_PER_SLIDE = 12
 const MAX_LINE_CHARS = 200
 /** docx 预览 HTML 上限：再长也没人会在卡片里读完，截断并如实标注 */
 const MAX_DOCX_HTML_CHARS = 300_000
+/** xlsx 预览的展示上限：界面只读文本，不还原版式 */
+const MAX_XLSX_SHEETS = 10
+const MAX_XLSX_ROWS = 200
+const MAX_XLSX_COLS = 30
+const MAX_XLSX_CELL_CHARS = 200
 
 function decodeXmlEntities(s: string): string {
   return s
@@ -89,11 +99,72 @@ async function readDocxHtml(meta: ArtifactMeta): Promise<ArtifactPreview> {
   }
 }
 
+async function readXlsxSheets(meta: ArtifactMeta): Promise<ArtifactPreview> {
+  const bytes = readArtifact(meta.id)?.bytes
+  if (!bytes) return { id: meta.id, kind: 'xlsx', missing: true }
+  try {
+    const wb = XLSX.read(bytes, {
+      type: 'buffer',
+      cellFormula: true,
+      cellHTML: false,
+      cellNF: false,
+      cellStyles: false,
+      sheetStubs: true
+    })
+    const sheets: ArtifactXlsxSheetPreview[] = []
+    let truncated = false
+    for (const name of wb.SheetNames.slice(0, MAX_XLSX_SHEETS)) {
+      const ws = wb.Sheets[name]
+      if (!ws) continue
+      const ref = ws['!ref']
+      const range = ref ? XLSX.utils.decode_range(ref) : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }
+      const totalRows = range.e.r - range.s.r + 1
+      const totalCols = range.e.c - range.s.c + 1
+      const rows: string[][] = []
+      const shownRows = Math.min(totalRows, MAX_XLSX_ROWS)
+      const shownCols = Math.min(totalCols, MAX_XLSX_COLS)
+      for (let r = 0; r < shownRows; r++) {
+        const line: string[] = []
+        for (let c = 0; c < shownCols; c++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: range.s.r + r, c: range.s.c + c })] as
+            | XLSX.CellObject
+            | undefined
+          const text = cell ? (cell.f ? `=${cell.f}` : cell.v == null ? '' : String(cell.v)) : ''
+          line.push(text.length > MAX_XLSX_CELL_CHARS ? text.slice(0, MAX_XLSX_CELL_CHARS) : text)
+        }
+        rows.push(line)
+      }
+      const sheetTruncated = shownRows < totalRows || shownCols < totalCols
+      if (sheetTruncated) truncated = true
+      sheets.push({ name, rows, totalRows, totalCols, truncated: sheetTruncated })
+    }
+    if (wb.SheetNames.length > MAX_XLSX_SHEETS) truncated = true
+    return {
+      id: meta.id,
+      kind: 'xlsx',
+      missing: false,
+      sheets,
+      ...(truncated ? { truncated: true } : {})
+    }
+  } catch (e) {
+    // 包损坏/被占用：给空表 + 可见错误，界面如实说「读取失败」，不假装预览成功
+    log.warn(`xlsx 预览读取失败 ${meta.fileName}:`, e)
+    return {
+      id: meta.id,
+      kind: 'xlsx',
+      missing: false,
+      sheets: [],
+      error: e instanceof Error ? e.message : String(e)
+    }
+  }
+}
+
 export async function buildArtifactPreview(id: string): Promise<ArtifactPreview | null> {
   const meta = getArtifact(id)
   if (!meta) return null
   if (meta.kind === 'pptx') return readPptxOutline(meta)
   if (meta.kind === 'docx') return readDocxHtml(meta)
+  if (meta.kind === 'xlsx') return readXlsxSheets(meta)
 
   const read = readArtifact(meta.id)
   if (!read) return { id: meta.id, kind: 'md', missing: true }

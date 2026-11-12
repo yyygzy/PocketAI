@@ -1423,8 +1423,8 @@ export interface SandboxFileMeta {
 }
 
 // ---------- 成品文件（v67 artifacts 表；文件本体存 data/generated/） ----------
-/** 目前做 PPTX / DOCX / Markdown 三种；xlsx/项目脚手架按迭代另开 kind */
-export type ArtifactKind = 'pptx' | 'docx' | 'md'
+/** 目前做 PPTX / DOCX / XLSX / Markdown；xlsx 由 SheetJS CE 生成（不做单元格样式） */
+export type ArtifactKind = 'pptx' | 'docx' | 'xlsx' | 'md'
 
 export interface ArtifactMeta {
   id: string
@@ -1450,10 +1450,21 @@ export interface ArtifactPptxOutlineSlide {
   lines: string[]
 }
 
+/** xlsx 预览：SheetJS 读回后的纯文本行数组（首行为表头） */
+export interface ArtifactXlsxSheetPreview {
+  name: string
+  rows: string[][]
+  /** 原始行/列数，用于界面提示「仅展示前 N 行 / M 列」 */
+  totalRows: number
+  totalCols: number
+  truncated: boolean
+}
+
 /**
  * 产物预览。注意：pptx 只给**文字大纲**——离线环境没有可靠的 .pptx 渲染器，
  * 这里不承诺还原版式（界面文案也不许说"预览成品"）。
  * docx 给 mammoth 转出的**只读 HTML**，渲染端必须放进不带 allow-scripts 的 sandbox iframe。
+ * xlsx 给按行列上限截断后的纯文本表格，只用于看内容，不还原列宽/合并/样式。
  */
 export interface ArtifactPreview {
   id: string
@@ -1466,6 +1477,10 @@ export interface ArtifactPreview {
   markdown?: string
   /** docx：mammoth 转出的 HTML（空串＝转换失败）；只可放进无脚本沙箱渲染 */
   html?: string
+  /** xlsx：工作表内容（最多 10 张、每张最多 200 行 × 30 列） */
+  sheets?: ArtifactXlsxSheetPreview[]
+  /** 预览读取失败时的可见原因（xlsx 用；界面必须显式展示，不许静默空表） */
+  error?: string
   /** 内容过长被截断 */
   truncated?: boolean
 }

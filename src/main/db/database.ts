@@ -1251,6 +1251,38 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_artifacts_conversation ON artifacts(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_artifacts_run_step ON artifacts(request_id, step_index);
     `
+  },
+  {
+    // v69：artifacts.kind 的 CHECK 再扩到 xlsx（SQLite 不能改 CHECK，只能重建表）。
+    // 口径与 v67/v68 一致：不建唯一索引，幂等由 service 层按「request + step + kind + title」兜；
+    // 重建时保留全部行与三个索引，允许重复执行（先 IF EXISTS 清掉中间表与旧索引）。
+    version: 69,
+    name: 'artifacts-xlsx-kind',
+    up: `
+      DROP INDEX IF EXISTS idx_artifacts_created;
+      DROP INDEX IF EXISTS idx_artifacts_conversation;
+      DROP INDEX IF EXISTS idx_artifacts_run_step;
+      DROP TABLE IF EXISTS artifacts_v68;
+      ALTER TABLE artifacts RENAME TO artifacts_v68;
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('pptx','docx','xlsx','md')),
+        title TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        conversation_id TEXT,
+        request_id TEXT,
+        step_index INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO artifacts (id, kind, title, file_name, size, conversation_id, request_id, step_index, created_at)
+        SELECT id, kind, title, file_name, size, conversation_id, request_id, step_index, created_at
+        FROM artifacts_v68;
+      DROP TABLE artifacts_v68;
+      CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_artifacts_conversation ON artifacts(conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_artifacts_run_step ON artifacts(request_id, step_index);
+    `
   }
 ]
 

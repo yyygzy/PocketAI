@@ -22,23 +22,25 @@ interface ArtifactResult {
   fileName?: unknown
   size?: unknown
   slideCount?: unknown
+  sheetCount?: unknown
   reused?: unknown
 }
 
 /** 只认 artifact_create 的完整成功形状；解析不出来就当普通工具结果，不硬画成产物卡 */
-export function readArtifactResult(content: string): { id: string; kind: 'pptx' | 'docx' | 'md'; fileName: string; title: string; size: number; slideCount: number } | null {
+export function readArtifactResult(content: string): { id: string; kind: 'pptx' | 'docx' | 'xlsx' | 'md'; fileName: string; title: string; size: number; slideCount: number; sheetCount: number } | null {
   try {
     const p = JSON.parse(content) as ArtifactResult
     if (typeof p.id !== 'string' || !p.id) return null
     if (typeof p.fileName !== 'string' || !p.fileName) return null
-    if (p.kind !== 'pptx' && p.kind !== 'docx' && p.kind !== 'md') return null
+    if (p.kind !== 'pptx' && p.kind !== 'docx' && p.kind !== 'xlsx' && p.kind !== 'md') return null
     return {
       id: p.id,
       kind: p.kind,
       fileName: p.fileName,
       title: typeof p.title === 'string' && p.title ? p.title : p.fileName,
       size: typeof p.size === 'number' && Number.isFinite(p.size) ? p.size : 0,
-      slideCount: typeof p.slideCount === 'number' && Number.isFinite(p.slideCount) ? p.slideCount : 0
+      slideCount: typeof p.slideCount === 'number' && Number.isFinite(p.slideCount) ? p.slideCount : 0,
+      sheetCount: typeof p.sheetCount === 'number' && Number.isFinite(p.sheetCount) ? p.sheetCount : 0
     }
   } catch {
     return null
@@ -107,7 +109,7 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
     <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
       <div className="flex items-center gap-2 min-w-0">
         <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          {info.kind === 'pptx' ? 'PPTX' : info.kind === 'docx' ? 'DOCX' : 'MD'}
+          {info.kind === 'pptx' ? 'PPTX' : info.kind === 'docx' ? 'DOCX' : info.kind === 'xlsx' ? 'XLSX' : 'MD'}
         </span>
         <span className="truncate text-[13px] font-medium text-[var(--color-text)]" title={info.title}>
           {info.title}
@@ -121,11 +123,18 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
           ? t('agent.artifact.pptxHint', { n: info.slideCount })
           : info.kind === 'docx'
             ? t('agent.artifact.docxHint')
-            : t('agent.artifact.mdHint')}
+            : info.kind === 'xlsx'
+              ? t('agent.artifact.xlsxHint', { n: info.sheetCount })
+              : t('agent.artifact.mdHint')}
       </div>
       <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
         {t('agent.artifact.backupHint')}
       </div>
+      {info.kind === 'xlsx' && (
+        <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+          {t('agent.artifact.xlsxNoStyle')}
+        </div>
+      )}
 
       {missing && (
         <div role="status" className="mt-1.5 text-[11px] text-[var(--color-danger)]">
@@ -164,9 +173,13 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
             ? previewOpen
               ? t('agent.artifact.docxPreviewHide')
               : t('agent.artifact.docxPreview')
-            : previewOpen
-              ? t('agent.artifact.outlineHide')
-              : t('agent.artifact.outline')}
+            : info.kind === 'xlsx'
+              ? previewOpen
+                ? t('agent.artifact.xlsxPreviewHide')
+                : t('agent.artifact.xlsxPreview')
+              : previewOpen
+                ? t('agent.artifact.outlineHide')
+                : t('agent.artifact.outline')}
         </button>
       </div>
 
@@ -189,7 +202,9 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
                   ? t('agent.artifact.outlineNote')
                   : preview.kind === 'docx'
                     ? t('agent.artifact.docxPreviewNote')
-                    : null}
+                    : preview.kind === 'xlsx'
+                      ? t('agent.artifact.xlsxPreviewNote')
+                      : null}
               </div>
               {preview.missing ? (
                 <div role="status" className="mt-1 text-[11px] text-[var(--color-danger)]">
@@ -227,6 +242,57 @@ export const ArtifactActions: React.FC<{ resultContent: string }> = ({ resultCon
                     )}
                   </>
                 )
+              ) : preview.kind === 'xlsx' ? (
+                <>
+                  {preview.error ? (
+                    <div role="status" className="mt-1 text-[11px] text-[var(--color-danger)]">
+                      {t('agent.artifact.xlsxReadFailed')}
+                    </div>
+                  ) : (preview.sheets?.length ?? 0) === 0 ? (
+                    <div role="status" className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                      {t('agent.artifact.xlsxEmpty')}
+                    </div>
+                  ) : (
+                    preview.sheets!.map((sheet) => (
+                      <div key={sheet.name} className="mt-2">
+                        <div className="text-[11px] font-medium text-[var(--color-text)]">{sheet.name}</div>
+                        <div className="mt-1 max-h-60 overflow-auto rounded border border-[var(--color-border)]">
+                          <table className="min-w-full border-collapse text-[11px]">
+                            <tbody>
+                              {sheet.rows.map((row, ri) => (
+                                <tr key={ri}>
+                                  {row.map((cell, ci) => (
+                                    <td
+                                      key={ci}
+                                      className={
+                                        'whitespace-pre-wrap break-words border-b border-r border-[var(--color-border)] px-1.5 py-1 align-top ' +
+                                        (ri === 0
+                                          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-text)]'
+                                          : 'text-[var(--color-text-muted)]')
+                                      }
+                                    >
+                                      {cell}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {sheet.truncated && (
+                          <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                            {t('agent.artifact.xlsxTruncated')}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                  {preview.truncated && (
+                    <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                      {t('agent.artifact.xlsxTruncated')}
+                    </div>
+                  )}
+                </>
               ) : (preview.slides?.length ?? 0) === 0 ? (
                 <div role="status" className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                   {t('agent.artifact.outlineEmpty')}

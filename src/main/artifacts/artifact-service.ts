@@ -29,6 +29,7 @@ const MAX_TITLE_CHARS = 80
 const EXT_BY_KIND: Readonly<Record<ArtifactKind, string>> = {
   pptx: 'pptx',
   docx: 'docx',
+  xlsx: 'xlsx',
   md: 'md'
 }
 

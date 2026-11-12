@@ -8,6 +8,7 @@ import { z } from 'zod'
 import type { BuiltinTool } from './builtin'
 import { buildPptx, formatSpecError } from '../artifacts/generators/pptx'
 import { buildDocx } from '../artifacts/generators/docx'
+import { buildXlsx } from '../artifacts/generators/xlsx'
 import type { ArtifactMeta } from '../../shared/types'
 
 // 注意：**不要在模块顶层 import `artifact-service`**。它 → `portable` → 导入期读 `app.isPackaged`，
@@ -17,7 +18,7 @@ import type { ArtifactMeta } from '../../shared/types'
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 
 const argsSchema = z.object({
-  kind: z.enum(['pptx', 'docx', 'md']),
+  kind: z.enum(['pptx', 'docx', 'xlsx', 'md']),
   title: z.string().trim().min(1).max(120),
   subtitle: z.string().trim().max(200).optional(),
   header: z.string().trim().max(80).optional(),
@@ -25,6 +26,7 @@ const argsSchema = z.object({
   pageNumbers: z.boolean().optional(),
   slides: z.unknown().optional(),
   sections: z.unknown().optional(),
+  sheets: z.unknown().optional(),
   markdown: z.string().optional()
 })
 
@@ -54,19 +56,23 @@ const artifactCreateTool: BuiltinTool = {
       '生成一份可打开的成品文件并保存到应用的「生成的文件」目录。' +
       'kind=pptx：用 slides 给出每页标题与要点（也可给 table 表格），主进程会排版成**可编辑的 PowerPoint**；' +
       'kind=docx：用 sections 给出章节（标题、段落、有序/无序列表、表格），生成**可编辑的 Word 文档**；' +
+      'kind=xlsx：用 sheets 给出工作表（表名、表头、数据行，可选列宽/数字格式/合并区域），生成**可编辑的 Excel 表格**；' +
       'kind=md：用 markdown 给正文，生成 Markdown 文件。' +
-      '只在用户明确要「做一份 PPT / 演示文稿 / 文档文件」时调用；普通聊天回答不要调用。' +
+      '只在用户明确要「做一份 PPT / 演示文稿 / 文档文件 / Excel 表格」时调用；普通聊天回答不要调用。' +
       'pptx 一页放 3~4 条要点、每条不超过 60 字；上限是每页 6 条、每条 160 字，超出会自动续页。' +
       'docx 一章放 1~3 段；上限是 30 章、每章 6 段（每段 ≤600 字）、列表 ≤10 条（每条 ≤160 字）、' +
       '表格 ≤5 列 × 15 行（单元格 ≤80 字）、全文合计 ≤4 万字——**超了会被拒绝，不会自动压缩**，请自行拆分。' +
+      'xlsx 上限：≤10 张表、每张 ≤30 列 × 200 数据行、单元格 ≤200 字、表头 ≤80 字、合并区域 ≤20 个、' +
+      '全簿 ≤20000 个单元格、文件 ≤5MB；sheet 名 ≤31 字符且不能重复；**不做单元格字体/底色/边框**' +
+      '（SheetJS CE 不支持，不要承诺报表级样式）；数字格式只对数值/公式列生效，公式由 Excel 打开时重算。' +
       '需要罗列数据时用 table（表头与每行列数必须一致）。',
     parameters: {
       type: 'object',
       properties: {
         kind: {
           type: 'string',
-          enum: ['pptx', 'docx', 'md'],
-          description: '产物类型：pptx=PowerPoint；docx=Word；md=Markdown 文档'
+          enum: ['pptx', 'docx', 'xlsx', 'md'],
+          description: '产物类型：pptx=PowerPoint；docx=Word；xlsx=Excel 表格；md=Markdown 文档'
         },
         title: {
           type: 'string',
@@ -161,6 +167,73 @@ const artifactCreateTool: BuiltinTool = {
             required: ['heading'],
             additionalProperties: false
           }
+        },
+        sheets: {
+          type: 'array',
+          description:
+            'kind=xlsx 必填：1~10 张工作表。每张一个对象；首行由 headers 生成，rows 为数据行。' +
+            '注意：SheetJS CE 不支持单元格字体/底色/边框，本工具不做单元格样式。',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: '工作表名（≤31 字符，自动去掉 []:*?/\\ 等非法字符）' },
+              headers: {
+                type: 'array',
+                description: '表头（1~30 列，≤80 字/格）',
+                items: { type: 'string' }
+              },
+              rows: {
+                type: 'array',
+                description:
+                  '数据行（≤200 行）；每行列数必须与表头一致。单元格可写字符串（≤200 字）、数字，' +
+                  '或对象 {"formula":"SUM(B2:B4)"} 表示公式（由 Excel 打开时重算）',
+                items: {
+                  type: 'array',
+                  items: {
+                    anyOf: [
+                      { type: 'string' },
+                      { type: 'number' },
+                      {
+                        type: 'object',
+                        properties: { formula: { type: 'string', description: 'Excel 公式，≤200 字' } },
+                        required: ['formula'],
+                        additionalProperties: false
+                      }
+                    ]
+                  }
+                }
+              },
+              colWidths: {
+                type: 'array',
+                description: '列宽（可选，长度必须等于列数；每列 5~100）',
+                items: { type: 'number' }
+              },
+              numberFormats: {
+                type: 'array',
+                description:
+                  '每列数字格式（可选，长度必须等于列数；如 "0.00"、"#,##0"、"0%"；空串表示该列不设格式）',
+                items: { type: 'string' }
+              },
+              merges: {
+                type: 'array',
+                description:
+                  '合并区域（可选，≤20 个；零基坐标，表头行 r=0，数据从 r=1 开始；不能重叠、不能超出表格）',
+                items: {
+                  type: 'object',
+                  properties: {
+                    r1: { type: 'number' },
+                    c1: { type: 'number' },
+                    r2: { type: 'number' },
+                    c2: { type: 'number' }
+                  },
+                  required: ['r1', 'c1', 'r2', 'c2'],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ['name', 'headers', 'rows'],
+            additionalProperties: false
+          }
         }
       },
       required: ['kind', 'title'],
@@ -233,6 +306,24 @@ const artifactCreateTool: BuiltinTool = {
       })
       const sectionCount = Array.isArray(input.sections) ? input.sections.length : 0
       return summarize(ARTIFACTS_DIR, meta, { sectionCount })
+    }
+
+    if (input.kind === 'xlsx') {
+      if (!input.sheets) throw badSpec('kind=xlsx 时必须提供 sheets 数组')
+      const bytes = await buildXlsx({ title: input.title, sheets: input.sheets })
+      const meta = saveArtifact({
+        kind: 'xlsx',
+        title,
+        bytes,
+        conversationId: agent?.conversationId ?? null,
+        requestId,
+        stepIndex
+      })
+      const sheetCount = Array.isArray(input.sheets) ? input.sheets.length : 0
+      return summarize(ARTIFACTS_DIR, meta, {
+        sheetCount,
+        styleNote: 'SheetJS CE 不支持单元格字体/底色/边框，本文件不含单元格样式。'
+      })
     }
 
     const markdown = input.markdown ?? ''
