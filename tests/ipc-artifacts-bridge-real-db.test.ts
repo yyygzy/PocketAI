@@ -61,6 +61,7 @@ vi.mock('electron', () => ({
 import { dbService } from '../src/main/db/database'
 import { registerArtifactHandlers } from '../src/main/ipc/handlers/artifacts'
 import { buildPptx } from '../src/main/artifacts/generators/pptx'
+import { buildDocx } from '../src/main/artifacts/generators/docx'
 import { ARTIFACTS_DIR, saveArtifact } from '../src/main/artifacts/artifact-service'
 import '../src/preload/index'
 
@@ -72,6 +73,7 @@ const call = (name: string, ...args: unknown[]): Promise<any> => {
 
 let pptxId = ''
 let mdId = ''
+let docxId = ''
 
 beforeAll(async () => {
   fs.rmSync(P.dir, { recursive: true, force: true })
@@ -86,6 +88,11 @@ beforeAll(async () => {
   })
   pptxId = saveArtifact({ kind: 'pptx', title: '桥测演示', bytes, conversationId: 'conv-b' }).id
   mdId = saveArtifact({ kind: 'md', title: '桥测文档', bytes: Buffer.from('# 标题\n正文') }).id
+  const docxBytes = await buildDocx({
+    title: '桥测 Word',
+    sections: [{ heading: '一、背景', paragraphs: ['正文段落'], bullets: ['要点'] }]
+  })
+  docxId = saveArtifact({ kind: 'docx', title: '桥测 Word', bytes: docxBytes }).id
 })
 
 afterAll(() => {
@@ -119,6 +126,16 @@ describe('artifact IPC 桥', () => {
     const md = await call('previewArtifact', mdId)
     expect(md.kind).toBe('md')
     expect(md.markdown).toBe('# 标题\n正文')
+  })
+
+  it('previewArtifact：docx 给 mammoth HTML（无脚本），供 sandbox iframe 渲染', async () => {
+    const docx = await call('previewArtifact', docxId)
+    expect(docx.kind).toBe('docx')
+    expect(docx.missing).toBe(false)
+    expect(docx.html).toContain('正文段落')
+    expect(docx.html).toContain('<p>')
+    expect(docx.html).toContain('<li>')
+    expect(docx.html.toLowerCase()).not.toContain('<script')
   })
 
   it('previewArtifact：不存在的 id → null；非法参数 → {ok:false}', async () => {

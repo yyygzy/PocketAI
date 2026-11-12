@@ -55,8 +55,8 @@ describe('artifact-service（真库 + 真磁盘）', () => {
     fs.rmSync(ARTIFACTS_DIR, { recursive: true, force: true })
   })
 
-  it('迁移 v67 建出 artifacts 表', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(67)
+  it('迁移 v68 建出 artifacts 表（kind 已含 docx）', () => {
+    expect(LATEST_SCHEMA_VERSION).toBe(68)
     const cols = (
       dbService.getHandle().prepare('PRAGMA table_info(artifacts)').all() as Array<{ name: string }>
     ).map((c) => c.name)
@@ -73,6 +73,17 @@ describe('artifact-service（真库 + 真磁盘）', () => {
         'created_at'
       ])
     )
+    // CHECK 是三选一：docx 必须能写进去（v68 重建表的目的）
+    const meta = saveArtifact({ kind: 'docx', title: '迁移校验', bytes: Buffer.from('docx-check') })
+    expect(meta.kind).toBe('docx')
+  })
+
+  it('保存 docx → 文件名带 .docx，字节原样可读', () => {
+    const bytes = Buffer.from('fake-docx-bytes')
+    const meta = saveArtifact({ kind: 'docx', title: '会议纪要', bytes })
+    expect(meta.fileName).toBe('会议纪要.docx')
+    expect(readArtifact(meta.id)?.bytes.equals(bytes)).toBe(true)
+    expect(fs.existsSync(path.join(ARTIFACTS_DIR, meta.fileName))).toBe(true)
   })
 
   it('保存 pptx → 字节原样可读，文件名带扩展名', () => {

@@ -98,6 +98,30 @@ describe('artifact_create 工具', () => {
     expect(listArtifacts('conv-1')).toHaveLength(1)
   })
 
+  it('生成 docx：摘要、磁盘文件、章节数齐全', async () => {
+    const tool = getArtifactTools()[0]!
+    const out = await tool.execute(
+      {
+        kind: 'docx',
+        title: '工具 Word',
+        subtitle: '验收稿',
+        header: '内部',
+        sections: [
+          { heading: '背景', paragraphs: ['离线优先。'] },
+          { heading: '结论', bullets: ['可编辑'] }
+        ]
+      },
+      ctx('run-docx', 1)
+    )
+    const json = JSON.parse(out)
+    expect(json.ok).toBe(true)
+    expect(json.kind).toBe('docx')
+    expect(json.fileName).toBe('工具 Word.docx')
+    expect(json.sectionCount).toBe(2)
+    expect(fs.existsSync(path.join(ARTIFACTS_DIR, json.fileName))).toBe(true)
+    expect(listArtifacts('conv-1')).toHaveLength(1)
+  })
+
   it('同一步重放：返回原产物（reused=true），不重复落盘', async () => {
     const tool = getArtifactTools()[0]!
     const args = { kind: 'pptx', title: '幂等工具', slides: [{ title: '封面' }] }
@@ -117,13 +141,16 @@ describe('artifact_create 工具', () => {
     expect(fs.readFileSync(path.join(ARTIFACTS_DIR, out.fileName), 'utf8')).toBe('# 标题\n正文')
   })
 
-  it('缺 slides / 空 markdown → 稳定错误码，且不落任何文件', async () => {
+  it('缺 slides / 缺 sections / 空 markdown → 稳定错误码，且不落任何文件', async () => {
     const tool = getArtifactTools()[0]!
     await expect(tool.execute({ kind: 'pptx', title: '缺页' }, ctx('run-4', 1))).rejects.toThrow(
       /ARTIFACT_INVALID_SPEC/
     )
+    await expect(tool.execute({ kind: 'docx', title: '缺章' }, ctx('run-4', 2))).rejects.toThrow(
+      /ARTIFACT_INVALID_SPEC/
+    )
     await expect(
-      tool.execute({ kind: 'md', title: '空文档', markdown: '   ' }, ctx('run-4', 2))
+      tool.execute({ kind: 'md', title: '空文档', markdown: '   ' }, ctx('run-4', 3))
     ).rejects.toThrow(/ARTIFACT_INVALID_SPEC/)
     expect(listArtifacts()).toEqual([])
     expect(fs.existsSync(ARTIFACTS_DIR) ? fs.readdirSync(ARTIFACTS_DIR) : []).toEqual([])
