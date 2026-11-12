@@ -9,7 +9,7 @@
 //
 // 环境：registry 的 import 链会拉到 portable（顶层读 app.isPackaged）与几个仓库，
 // 按 `tool-policy-same-source-417.test.ts` 的既有写法桩掉；shell 配置单独桩成"已开启"，
-// 这样 listBuiltin 才能真的凑齐 14 静态 + fs 3 + shell 1 + skill 1 + artifact 1 = 20。
+// 这样 listBuiltin 才能真的凑齐 14 静态 + fs 3 + shell 1 + skill 1 + artifact 1 + project 1 = 21。
 import { describe, expect, it, vi } from 'vitest'
 
 const WS = 'C:\\tmp\\pocketai-tool-groups-test'
@@ -71,8 +71,8 @@ function mcp(id: string): ToolSchema {
 describe('分组表覆盖运行时工具面', () => {
   it('listBuiltin() 的每一枚工具都在 TOOL_GROUP_OF 里', () => {
     const ids = toolRegistry.listBuiltin().map((t) => t.id)
-    // 先钉住"这个环境确实把 20 枚都注册出来了"（v67 新增 artifact.create），否则下面的覆盖断言会空转
-    expect(ids).toHaveLength(20)
+    // 先钉住"这个环境确实把 21 枚都注册出来了"（v70 新增 project.create），否则下面的覆盖断言会空转
+    expect(ids).toHaveLength(21)
     const missing = ids.filter((id) => !TOOL_GROUP_OF[id])
     expect(missing).toEqual([])
   })
@@ -155,7 +155,7 @@ describe('selectToolSurface — 选择规则', () => {
     expect(ids.has('web.search')).toBe(false)
     expect(ids.has('calendar.read')).toBe(false)
     expect(ids.has('mcp:demo:read_x')).toBe(true)
-    expect(r.heldBackTools).toBe(4 + 3 + 4) // file 4 枚 + web 3 枚 + schedule 4 枚
+    expect(r.heldBackTools).toBe(5 + 3 + 4) // file 5 枚（v70 加 project.create）+ net 3 枚 + schedule 4 枚
     expect(r.groups).toEqual([])
   })
 

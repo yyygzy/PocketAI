@@ -177,11 +177,11 @@ describe('`*` 的边界——只给内置，MCP 必须逐条显式授权（§4.4
     expect(isToolAllowedBy(explicit, BUILTIN_FS_WRITE)).toBe(false)
   })
 
-  it('发给模型的工具面：`*` 只剩内置那两条（本文件注入 1 内置 + 1 artifact + 4 MCP）', () => {
+  it('发给模型的工具面：`*` 只剩内置那三条（本文件注入 1 内置 + 1 artifact + 1 project + 4 MCP）', () => {
     const listed = toolRegistry.filterByPermissions(['*'])
-    // v67 起 `artifact.create` 与 fs 一样是常驻内置（permission=auto），故 `*` 面多出这一条；
-    // 这里仍是等式钉全量，MCP 的四条一个都不许跟进来。
-    expect(listed.map((x) => x.id)).toEqual(['fs.write', 'artifact.create'])
+    // v67 起 `artifact.create`、v70 起 `project.create` 与 fs 一样是常驻内置（permission=auto），
+    // 故 `*` 面多出这两条；这里仍是等式钉全量，MCP 的四条一个都不许跟进来。
+    expect(listed.map((x) => x.id)).toEqual(['fs.write', 'artifact.create', 'project.create'])
     // 反向对照：显式点名的 MCP 仍在工具面上，说明收紧只作用在 `*` 这一档
     const explicit = toolRegistry.filterByPermissions(['mcp:srv-a:read_file'])
     expect(explicit.map((x) => x.id)).toEqual(['mcp:srv-a:read_file'])

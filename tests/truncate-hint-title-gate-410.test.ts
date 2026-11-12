@@ -258,7 +258,11 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     //   `<span className="truncate" title={info.title}>{info.title}</span>`——子节点是属性访问、无 t() 键
     //   ⇒ 归「纯数据」桶且自带 title（裁的是标题值，tooltip 与正文同源），不是"整句被裁"那一档。
     //   总数 99→100、纯数据 82→83，其余三桶不变。
-    ).toBe('100/5/1/4/12/83')
+    // 多文件项目卡片（V4-Iter-474）：ProjectActions.tsx 新增 2 颗纯数据 truncate 位——
+    //   项目名 `{info.name}`（:134）与文件路径 `{f.path}`（:243），子节点都是数据表达式、
+    //   没有 t() 键，都自带 title 之外的写法保持原样 ⇒ 总数 100→102、纯数据 83→85；
+    //   纯句子/混合两桶不变，所以没 title 名单仍是 4 颗。
+    ).toBe('102/5/1/4/12/85')
   })
 
   it('名单等式：4 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
@@ -390,7 +394,9 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     //   （`truncate` + `title={label}`，纯数据位）随组件移除 ⇒ 83→82（净回 82）。
     // 成品文件卡片（V4-Iter-470/471）：ArtifactActions.tsx 新增产物标题位（`title={info.title}`，
     //   子节点同为属性访问 ⇒ 纯数据、自带 title）⇒ 82→83。
-    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(83)
+    // 多文件项目卡片（V4-Iter-474）：ProjectActions.tsx 的项目名（:134）与文件路径（:243）各入 1 颗
+    //   纯数据位（子节点是数据表达式，裁的是值）⇒ 83→85。
+    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(85)
     // 混合位里最像"句子被连坐"的一档：字典句 ≥10 字（这些将来要单独判，本枚只列不判）
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(

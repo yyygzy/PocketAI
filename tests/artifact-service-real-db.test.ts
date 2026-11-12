@@ -55,8 +55,8 @@ describe('artifact-service（真库 + 真磁盘）', () => {
     fs.rmSync(ARTIFACTS_DIR, { recursive: true, force: true })
   })
 
-  it('迁移 v69 建出 artifacts 表（kind 已含 xlsx）', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(69)
+  it('迁移 v70 建出 artifacts 表（kind 已含 xlsx；v70 只新增 projects 表）', () => {
+    expect(LATEST_SCHEMA_VERSION).toBe(70)
     const cols = (
       dbService.getHandle().prepare('PRAGMA table_info(artifacts)').all() as Array<{ name: string }>
     ).map((c) => c.name)
