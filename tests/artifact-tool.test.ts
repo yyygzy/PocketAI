@@ -122,6 +122,37 @@ describe('artifact_create 工具', () => {
     expect(listArtifacts('conv-1')).toHaveLength(1)
   })
 
+  it('生成 xlsx：摘要、磁盘文件、sheet 数齐全', async () => {
+    const tool = getArtifactTools()[0]!
+    const out = await tool.execute(
+      {
+        kind: 'xlsx',
+        title: '工具表格',
+        sheets: [
+          {
+            name: '汇总',
+            headers: ['区域', '金额'],
+            rows: [
+              ['华东', 12000],
+              ['合计', { formula: 'SUM(B2:B2)' }]
+            ],
+            colWidths: [16, 12],
+            numberFormats: ['@', '#,##0']
+          }
+        ]
+      },
+      ctx('run-xlsx', 1)
+    )
+    const json = JSON.parse(out)
+    expect(json.ok).toBe(true)
+    expect(json.kind).toBe('xlsx')
+    expect(json.fileName).toBe('工具表格.xlsx')
+    expect(json.sheetCount).toBe(1)
+    expect(json.styleNote).toContain('不支持单元格字体')
+    expect(fs.existsSync(path.join(ARTIFACTS_DIR, json.fileName))).toBe(true)
+    expect(listArtifacts('conv-1')).toHaveLength(1)
+  })
+
   it('同一步重放：返回原产物（reused=true），不重复落盘', async () => {
     const tool = getArtifactTools()[0]!
     const args = { kind: 'pptx', title: '幂等工具', slides: [{ title: '封面' }] }
@@ -149,8 +180,11 @@ describe('artifact_create 工具', () => {
     await expect(tool.execute({ kind: 'docx', title: '缺章' }, ctx('run-4', 2))).rejects.toThrow(
       /ARTIFACT_INVALID_SPEC/
     )
+    await expect(tool.execute({ kind: 'xlsx', title: '缺表' }, ctx('run-4', 3))).rejects.toThrow(
+      /ARTIFACT_INVALID_SPEC/
+    )
     await expect(
-      tool.execute({ kind: 'md', title: '空文档', markdown: '   ' }, ctx('run-4', 3))
+      tool.execute({ kind: 'md', title: '空文档', markdown: '   ' }, ctx('run-4', 4))
     ).rejects.toThrow(/ARTIFACT_INVALID_SPEC/)
     expect(listArtifacts()).toEqual([])
     expect(fs.existsSync(ARTIFACTS_DIR) ? fs.readdirSync(ARTIFACTS_DIR) : []).toEqual([])

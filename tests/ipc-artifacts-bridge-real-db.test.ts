@@ -62,6 +62,7 @@ import { dbService } from '../src/main/db/database'
 import { registerArtifactHandlers } from '../src/main/ipc/handlers/artifacts'
 import { buildPptx } from '../src/main/artifacts/generators/pptx'
 import { buildDocx } from '../src/main/artifacts/generators/docx'
+import { buildXlsx } from '../src/main/artifacts/generators/xlsx'
 import { ARTIFACTS_DIR, saveArtifact } from '../src/main/artifacts/artifact-service'
 import '../src/preload/index'
 
@@ -74,6 +75,7 @@ const call = (name: string, ...args: unknown[]): Promise<any> => {
 let pptxId = ''
 let mdId = ''
 let docxId = ''
+let xlsxId = ''
 
 beforeAll(async () => {
   fs.rmSync(P.dir, { recursive: true, force: true })
@@ -93,6 +95,11 @@ beforeAll(async () => {
     sections: [{ heading: '一、背景', paragraphs: ['正文段落'], bullets: ['要点'] }]
   })
   docxId = saveArtifact({ kind: 'docx', title: '桥测 Word', bytes: docxBytes }).id
+  const xlsxBytes = await buildXlsx({
+    title: '桥测表格',
+    sheets: [{ name: '汇总', headers: ['区域', '金额'], rows: [['华东', 12000]] }]
+  })
+  xlsxId = saveArtifact({ kind: 'xlsx', title: '桥测表格', bytes: xlsxBytes }).id
 })
 
 afterAll(() => {
@@ -136,6 +143,17 @@ describe('artifact IPC 桥', () => {
     expect(docx.html).toContain('<p>')
     expect(docx.html).toContain('<li>')
     expect(docx.html.toLowerCase()).not.toContain('<script')
+  })
+
+  it('previewArtifact：xlsx 给工作表文本行（首行表头）', async () => {
+    const xlsx = await call('previewArtifact', xlsxId)
+    expect(xlsx.kind).toBe('xlsx')
+    expect(xlsx.missing).toBe(false)
+    expect(xlsx.sheets).toHaveLength(1)
+    expect(xlsx.sheets[0].name).toBe('汇总')
+    expect(xlsx.sheets[0].rows[0]).toEqual(['区域', '金额'])
+    expect(xlsx.sheets[0].rows[1]).toEqual(['华东', '12000'])
+    expect(xlsx.error).toBeUndefined()
   })
 
   it('previewArtifact：不存在的 id → null；非法参数 → {ok:false}', async () => {

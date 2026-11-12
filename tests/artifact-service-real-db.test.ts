@@ -55,8 +55,8 @@ describe('artifact-service（真库 + 真磁盘）', () => {
     fs.rmSync(ARTIFACTS_DIR, { recursive: true, force: true })
   })
 
-  it('迁移 v68 建出 artifacts 表（kind 已含 docx）', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(68)
+  it('迁移 v69 建出 artifacts 表（kind 已含 xlsx）', () => {
+    expect(LATEST_SCHEMA_VERSION).toBe(69)
     const cols = (
       dbService.getHandle().prepare('PRAGMA table_info(artifacts)').all() as Array<{ name: string }>
     ).map((c) => c.name)
@@ -73,9 +73,19 @@ describe('artifact-service（真库 + 真磁盘）', () => {
         'created_at'
       ])
     )
-    // CHECK 是三选一：docx 必须能写进去（v68 重建表的目的）
-    const meta = saveArtifact({ kind: 'docx', title: '迁移校验', bytes: Buffer.from('docx-check') })
-    expect(meta.kind).toBe('docx')
+    // CHECK 是四选一：docx / xlsx 都必须能写进去（v68/v69 重建表的目的）
+    const docx = saveArtifact({ kind: 'docx', title: '迁移校验', bytes: Buffer.from('docx-check') })
+    expect(docx.kind).toBe('docx')
+    const xlsx = saveArtifact({ kind: 'xlsx', title: '迁移校验表', bytes: Buffer.from('xlsx-check') })
+    expect(xlsx.kind).toBe('xlsx')
+  })
+
+  it('保存 xlsx → 文件名带 .xlsx，字节原样可读', () => {
+    const bytes = Buffer.from('fake-xlsx-bytes')
+    const meta = saveArtifact({ kind: 'xlsx', title: '季度数据', bytes })
+    expect(meta.fileName).toBe('季度数据.xlsx')
+    expect(readArtifact(meta.id)?.bytes.equals(bytes)).toBe(true)
+    expect(fs.existsSync(path.join(ARTIFACTS_DIR, meta.fileName))).toBe(true)
   })
 
   it('保存 docx → 文件名带 .docx，字节原样可读', () => {
