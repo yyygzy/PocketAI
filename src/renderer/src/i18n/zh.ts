@@ -474,7 +474,7 @@ export const zh = {
   'steward.cleaning': '清理中...',
   'steward.startCleanup': '安全清理',
   'steward.vacuum': 'VACUUM 压缩',
-  'steward.cleanupHint': '「安全清理」删除孤儿消息/向量块并压缩数据库；「VACUUM」仅压缩不删除数据。',
+  'steward.cleanupHint': '「安全清理」会删除孤儿消息，并清理知识库孤儿数据（孤儿分块连同其向量、分块已不存在的孤儿向量），随后压缩数据库；设置页「知识库完整性」里的「清理」只做知识库这一部分。「VACUUM」仅压缩、不删除数据。',
   'steward.cleanupResult': '已删除孤儿消息 {m} 条、孤儿向量块 {c} 个，回收 {b}',
   'steward.vacuumResult': 'VACUUM 回收 {b}',
   'steward.cleanupVacuumFailed': '已删除孤儿消息 {m} 条、孤儿向量块 {c} 个，但 VACUUM 没跑成，空间未压缩',

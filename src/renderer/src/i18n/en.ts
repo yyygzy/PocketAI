@@ -474,7 +474,7 @@ export const en = {
   'steward.cleaning': 'Cleaning...',
   'steward.startCleanup': 'Safe cleanup',
   'steward.vacuum': 'VACUUM compact',
-  'steward.cleanupHint': '“Safe cleanup” deletes orphan messages/vector chunks and compacts the database; “VACUUM” only compacts without deleting.',
+  'steward.cleanupHint': '“Safe cleanup” deletes orphan messages and KB orphans (orphan chunks with their vectors, plus orphan vectors whose chunks are already gone), then compacts the database. The “Clean” button under “Knowledge Base Integrity” in Settings only handles the KB part. “VACUUM” only compacts without deleting.',
   'steward.cleanupResult': 'Removed {m} orphan messages and {c} orphan vector chunks, reclaimed {b}',
   'steward.vacuumResult': 'VACUUM reclaimed {b}',
   'steward.cleanupVacuumFailed': 'Removed {m} orphan messages and {c} orphan vector chunks, but VACUUM did not run, so no space was reclaimed',

@@ -453,7 +453,7 @@ export const ko = {
   'steward.cleaning': '정리 중…',
   'steward.startCleanup': '안전한 정리',
   'steward.vacuum': 'VACUUM 압축',
-  'steward.cleanupHint': '"안전한 정리"는 고아 메시지/벡터 청크를 삭제하고 데이터베이스를 압축합니다. "VACUUM"은 데이터를 삭제하지 않고 압축만 수행합니다.',
+  'steward.cleanupHint': '"안전한 정리"는 고아 메시지를 삭제하고 지식베이스 고아 데이터(고아 청크와 해당 벡터, 청크가 이미 없는 고아 벡터)를 정리한 뒤 데이터베이스를 압축합니다. 설정의 "지식베이스 무결성"에 있는 "정리" 버튼은 이 중 지식베이스 부분만 수행합니다. "VACUUM"은 데이터를 삭제하지 않고 압축만 합니다.',
   'steward.cleanupResult': '고아 메시지 {m}개, 고아 벡터 청크 {c}개 삭제, {b} 회수',
   'steward.vacuumResult': 'VACUUM으로 {b} 회수',
   'steward.cleanupVacuumFailed': '고아 메시지 {m}개, 고아 벡터 청크 {c}개를 삭제했지만 VACUUM을 실행하지 못해 공간을 회수하지 않았습니다',

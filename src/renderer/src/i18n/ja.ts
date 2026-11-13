@@ -453,7 +453,7 @@ export const ja = {
   'steward.cleaning': 'クリーンアップ中…',
   'steward.startCleanup': '安全なクリーンアップ',
   'steward.vacuum': 'VACUUM 圧縮',
-  'steward.cleanupHint': '「安全なクリーンアップ」は孤立メッセージ/ベクトルチャンクを削除してデータベースを圧縮します。「VACUUM」はデータを削除せずに圧縮のみ行います。',
+  'steward.cleanupHint': '「安全なクリーンアップ」は孤立メッセージを削除し、ナレッジベースの孤立データ（孤立チャンクとそのベクトル、チャンクが既に存在しない孤立ベクトル）を整理してからデータベースを圧縮します。設定の「ナレッジベース整合性」にある「クリーンアップ」は、そのうちナレッジベース部分だけを実行します。「VACUUM」はデータを削除せず圧縮のみ行います。',
   'steward.cleanupResult': '孤立メッセージ {m} 件、孤立ベクトルチャンク {c} 個を削除、{b} を回収',
   'steward.vacuumResult': 'VACUUM で {b} を回収',
   'steward.cleanupVacuumFailed': '孤立メッセージ {m} 件、孤立ベクトルチャンク {c} 個を削除しましたが、VACUUM は実行できず、領域は解放されていません',
