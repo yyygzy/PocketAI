@@ -67,6 +67,23 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_REDIRECTS = 5
 const USER_AGENT = 'PocketAI/0.1 (+local-first AI workstation)'
 
+// ---------- 出口计数（P0-5 dry-run 判据） ----------
+//
+// 只数**真正发出去的请求**：每次建连（含重定向的每一跳）加一。
+// 参数校验失败、超时在发请求前被拒的，不计数——那不是"出口调用"。
+// 这是只读计数，不改变任何出网行为；`dry-run` 回放前后各取一次做全等断言。
+let outboundRequestCount = 0
+
+/** 进程启动以来的出网请求数（safeFetch 口径；直接 fetch 调用点不在内，见 dry-run-safety 的说明） */
+export function getOutboundRequestCount(): number {
+  return outboundRequestCount
+}
+
+/** 仅供测试/诊断复位计数；生产路径不要调用 */
+export function resetOutboundRequestCount(): void {
+  outboundRequestCount = 0
+}
+
 // ---------- IP 白/黑名单校验 ----------
 
 /** IPv4 是否落在禁止访问的网段（环回/私网/链路本地/保留/组播等） */
@@ -286,6 +303,8 @@ function requestOnce(
       resolve({ req, res })
     }
     const req = isHttps ? https.request(options, onRes) : http.request(options, onRes)
+    // P0-5：只在这里加一——请求对象已建好，是真正会出网的调用（重定向的每一跳都会经过）。
+    outboundRequestCount++
     let timer: NodeJS.Timeout | undefined
     timer = setTimeout(() => {
       req.destroy(new SafeFetchError('SafeFetch 请求超时'))

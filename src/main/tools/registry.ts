@@ -20,6 +20,7 @@ import type {
 } from '../../shared/types'
 import { EXTERNAL_CONTENT_NOTICE } from '../../shared/external-content'
 import { errMsg } from '../error'
+import { assertToolExecutionAllowed } from '../agent/dry-run-scope'
 
 /** LLM 函数名合法形态（各 OpenAI 兼容端点普遍要求字母开头 + 字母数字下划线） */
 const LLM_FUNCTION_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
@@ -360,6 +361,10 @@ class ToolRegistry {
     skillIds?: string[],
     agent?: ToolAgentContext
   ): Promise<ToolResult> {
+    // P0-5 dry-run 回放：执行收口第一道闸。作用域外是 no-op；
+    // 作用域内抛错并计入 `blockedAttempts`，绝不落到下面的工具实现里。
+    assertToolExecutionAllowed(toolName)
+
     const all = this.listAll()
     const schema = all.find((t) => t.name === toolName)
     if (!schema) {
