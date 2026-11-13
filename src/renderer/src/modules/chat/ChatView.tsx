@@ -10,6 +10,7 @@ import { Composer } from './Composer'
 import { ChatSessionStats } from './ChatSessionStats'
 import type { AgentModelExtras } from './useAgentModelExtras'
 import { ZeroToolCallNotice } from '../../components/agent/ZeroToolCallNotice'
+import { useToolCapabilityAutoProbe } from './useToolCapabilityAutoProbe'
 import type { AgentQueueItem } from './queue-settlement'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
 import { MessagesSkeleton } from '../../components/Skeleton'
@@ -717,6 +718,9 @@ export const ChatView: React.FC<Props> = ({
   }, [])
 
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
+  // P0-4b：首次选中某台模型时自动探一次工具调用能力（3 次请求，计入用户额度）；
+  // 已有结论（含「跳过」）只读台账不发请求。四档都只提示，不挡发送。
+  const toolCapability = useToolCapabilityAutoProbe(targets[0]?.providerId ?? '', targets[0]?.model ?? '')
   /** 服务商是有的、只是一家都没有模型列表：提示语必须说「去拉取模型」，不能说「去配置服务商」 */
   const noModelsAtAll = providers.some((p) => p.enabled) && !providers.some((p) => hasUsableModel(p))
 
@@ -1432,6 +1436,13 @@ export const ChatView: React.FC<Props> = ({
                 textProtocolForced={textProtocolForced}
                 onClose={() => onCloseNoToolCallNotice?.()}
                 onEnableTextProtocol={() => onEnableTextProtocol?.()}
+                capability={toolCapability.capability}
+                probing={toolCapability.probing}
+                probeFailure={toolCapability.failure}
+                probeIpcError={toolCapability.ipcError}
+                onProbe={toolCapability.probe}
+                onStopProbe={toolCapability.stop}
+                onSkipProbe={toolCapability.skip}
               />
             </div>
           )}

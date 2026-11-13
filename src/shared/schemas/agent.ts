@@ -52,6 +52,12 @@ export const delegateProbeSchema = z.object({
   model: z.string().min(1).max(128)
 })
 
+/** AGENT_PROBE_TOOL_CAP 入参：与委派探针同一档（providerId 64 / model 128） */
+export const toolProbeSchema = z.object({
+  providerId: z.string().min(1).max(AGENT_MAX_ID_CHARS),
+  model: z.string().min(1).max(128)
+})
+
 /** AGENT_SET_DELEGATE_ENABLED 入参（决策③：默认关，用户点名某台模型才允许顺序委派） */
 export const delegateToggleSchema = z.object({
   providerId: z.string().min(1).max(AGENT_MAX_ID_CHARS),

@@ -29,6 +29,7 @@ import {
   interjectSchema,
   fallbackSetSchema,
   delegateProbeSchema,
+  toolProbeSchema,
   delegateToggleSchema,
   snapshotIdsSchema
 } from '../../../shared/schemas/agent'
@@ -45,6 +46,12 @@ import {
   probeDelegateCapability,
   setDelegationEnabled
 } from '../../agent/delegate-capability'
+import {
+  abortToolProbe,
+  listToolCapabilitiesWithStaleness,
+  probeToolCapability,
+  skipToolProbe
+} from '../../agent/tool-capability'
 import { idSchema } from '../../../shared/schemas/providers'
 
 const log = createLogger('agent')
@@ -309,6 +316,30 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string; on: boolean }) =>
       setDelegationEnabled(payload.providerId, payload.model, payload.on),
     argsSchema(delegateToggleSchema)
+  )
+
+  // ---------- 工具调用能力探针（P0-4b）----------
+  // 与委派探针分开的三条通道：清单只读；探测 3 发真请求（计入用户额度）；停止不下结论。
+  // 两个结论各存各的 app_config 键，互不顶替（见 shared/tool-capability.ts 文件头）。
+  safeHandle(IPC.AGENT_LIST_TOOL_CAPS, () => listToolCapabilitiesWithStaleness())
+  safeHandle(
+    IPC.AGENT_PROBE_TOOL_CAP,
+    (_e, payload: { providerId: string; model: string }) =>
+      probeToolCapability(payload.providerId, payload.model),
+    argsSchema(toolProbeSchema)
+  )
+  safeHandle(
+    IPC.AGENT_ABORT_TOOL_PROBE,
+    (_e, payload: { providerId: string; model: string }) => ({
+      stopped: abortToolProbe(payload.providerId, payload.model)
+    }),
+    argsSchema(toolProbeSchema)
+  )
+  // 跳过自动检测：与探测分开一条通道（语义不同：这条不发现场请求、只写一条 user_skipped）
+  safeHandle(
+    IPC.AGENT_SKIP_TOOL_PROBE,
+    (_e, payload: { providerId: string; model: string }) => skipToolProbe(payload.providerId, payload.model),
+    argsSchema(toolProbeSchema)
   )
 
   // §231「还原到写入前」：一条写操作一次还原机会（快照用过即废）。

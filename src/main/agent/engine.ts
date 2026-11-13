@@ -80,6 +80,7 @@ import { getFallbackTarget } from './fallback-target-prefs'
 import { providerRepo } from '../db/repositories/provider.repo'
 import { DEFAULT_MESSAGES_WHEN_WINDOW_UNSET } from '../../shared/model-window'
 import { isDelegationEnabledFor } from './delegate-prefs'
+import { recordNativeToolCallObservation, recordToolsRejected } from './tool-capability'
 import {
   budgetExhausted,
   canOpenChild,
@@ -1948,6 +1949,9 @@ class AgentEngine {
         ) {
           ctx.textProtocolMode = true
           llmError = e
+          // P0-4b：端点明确拒绝 tools 是确定性事实 ⇒ 落 known_unusable/tools_rejected。
+          // 与探针的 400 分支同一口径；写库不阻塞本轮的文本协议切换。
+          void recordToolsRejected(target.providerId, target.model)
           break
         }
         const retryable =
@@ -2524,6 +2528,13 @@ class AgentEngine {
     }
 
     await Promise.all(allowTasks)
+
+    // P0-4b：这一步确实是**原生** tool_calls（不是文本协议模拟）且至少有一条执行成功
+    // ⇒ 记一次正向观察（累计 3 次才判"会调工具"，单次不翻案）。
+    const nativeToolStep = !ctx.textProtocolMode && (lastAssistant?.tool_calls?.length ?? 0) > 0
+    if (nativeToolStep && results.some((r) => r && !r.isError)) {
+      void recordNativeToolCallObservation(ctx.target.providerId, ctx.target.model)
+    }
 
     // 按原顺序持久化 + push messages + emit tool_result
     //

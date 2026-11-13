@@ -8,6 +8,14 @@ import { useConfirm } from '../../components/ConfirmDialog'
 import { isPlainRemoteHttp } from '../../../../shared/url-policy'
 import { delegateKey, type DelegateCapabilityView } from '../../../../shared/delegate-capability'
 import { DelegateCapabilityBadge, DELEGATE_CAPABILITY_LABEL_KEY, delegateNoticeText } from './DelegateCapabilityBadge'
+import {
+  toolCapabilityKey,
+  toolFailureText,
+  toolReasonText,
+  toolTierText,
+  type ToolCapabilityView
+} from '../../../../shared/tool-capability'
+import { ToolCapabilityBadge } from './ToolCapabilityBadge'
 
 export const PROVIDER_PRESETS: { label: string; type: ProviderType; baseUrl: string; needKey: boolean }[] = [
   // ── 海外主流 ──
@@ -53,6 +61,9 @@ export const ProviderSettings: React.FC = () => {
   // 委派能力判定（V4-Iter-142）：providerId::model → 判定；probingKey 记哪一台正在探
   const [caps, setCaps] = useState<Record<string, DelegateCapabilityView>>({})
   const [probingKey, setProbingKey] = useState('')
+  // P0-4b：工具调用判定与委派判定分开存（两个结论不许互相顶替），探测键也分开
+  const [toolCaps, setToolCaps] = useState<Record<string, ToolCapabilityView>>({})
+  const [toolProbingKey, setToolProbingKey] = useState('')
   /**
    * §271：两发挂载读的失败面。改前都是 `if (!hasIpcFailed(v)) 写 state`＝失败什么都不做——
    * 服务商那发让左栏摆「尚未配置，点击「新增」」（把通道故障演成"你一台都没配"），
@@ -61,6 +72,8 @@ export const ProviderSettings: React.FC = () => {
    */
   const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
   const [capsUnread, setCapsUnread] = useState<{ error?: string } | null>(null)
+  // P0-4b 的清单是另一发读：它失败同样不许演成"这台从没测过"，所以自己一颗键、一颗重试按钮
+  const [toolCapsUnread, setToolCapsUnread] = useState<{ error?: string } | null>(null)
 
   const load = useCallback(
     () =>
@@ -106,6 +119,28 @@ export const ProviderSettings: React.FC = () => {
     loadCaps()
   }, [loadCaps])
 
+  const loadToolCaps = useCallback(
+    () =>
+      window.pocketai
+        .listToolCapabilities()
+        .then((list) => {
+          if (hasIpcFailed(list)) {
+            setToolCapsUnread({ error: list.error })
+            return
+          }
+          setToolCapsUnread(null)
+          setToolCaps(Object.fromEntries(list.map((e) => [e.key, e])))
+        })
+        .catch((e: unknown) => {
+          setToolCapsUnread({ error: errText(e, '') })
+          logIpcError('providerSettings.listToolCaps', e)
+        }),
+    []
+  )
+  useEffect(() => {
+    loadToolCaps()
+  }, [loadToolCaps])
+
   /**
    * 探一台模型（默认 3 发真请求，只走原生 tools 路径）。
    * error 不为空时**不许**写成"这台不行"——那可能是连不上或样本不足，判定保持原样（见探针侧的同一条规矩）。
@@ -146,6 +181,53 @@ export const ProviderSettings: React.FC = () => {
     if (!pid) return
     try {
       const r = await window.pocketai.abortDelegateProbe(pid, model)
+      if (hasIpcFailed(r)) {
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+        return
+      }
+      if (!r.stopped) setNotice({ ok: false, text: t('provider.probeNothingToStop') })
+    } catch (e) {
+      setNotice({ ok: false, text: errText(e) })
+    }
+  }
+
+  /**
+   * P0-4b：探一台模型"会不会调工具"（3 发真请求，计入用户额度）。
+   * error 只说明"这次没测出来"，绝不当成"这台不会"：判定保持库里的原样（见 shared/tool-capability.ts）。
+   */
+  const probeTool = async (model: string): Promise<void> => {
+    const pid = editing?.id ?? ''
+    if (!pid) {
+      setNotice({ ok: false, text: t('provider.toolCapSaveFirst') })
+      return
+    }
+    const key = toolCapabilityKey(pid, model)
+    setToolProbingKey(key)
+    try {
+      const r = await window.pocketai.probeToolCapability(pid, model)
+      if (hasIpcFailed(r)) {
+        setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
+      } else if (r.error) {
+        setNotice({ ok: false, text: toolFailureText(t, r.error, t('common.unknownError')) })
+      } else {
+        const reason = toolReasonText(t, r.entry)
+        const verdict = toolTierText(t, r.entry.tier)
+        setNotice({ ok: true, text: `${model}：${verdict}${reason ? `（${reason}）` : ''}` })
+      }
+      await loadToolCaps()
+    } catch (e) {
+      setNotice({ ok: false, text: errText(e) })
+    } finally {
+      setToolProbingKey('')
+    }
+  }
+
+  /** P0-4b：停掉这一台正在跑的那一发；`stopped:false` 不许假装「已停止」 */
+  const stopToolProbe = async (model: string): Promise<void> => {
+    const pid = editing?.id ?? ''
+    if (!pid) return
+    try {
+      const r = await window.pocketai.abortToolProbe(pid, model)
       if (hasIpcFailed(r)) {
         setNotice({ ok: false, text: ipcFailText(r, t('common.unknownError')) })
         return
@@ -446,6 +528,18 @@ export const ProviderSettings: React.FC = () => {
                   </button>
                 </div>
               )}
+              {toolCapsUnread && (
+                <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <LoadFailNotice what={t('common.toolCapabilityVerdicts')} msg={ipcFailText(toolCapsUnread, t('common.unknownError'))} />
+                  <button
+                    data-testid="provider-settings-tool-caps-retry"
+                    className="text-xs underline text-[var(--color-text-muted)]"
+                    onClick={loadToolCaps}
+                  >
+                    {t('agent.retryRead')}
+                  </button>
+                </div>
+              )}
               <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto p-2 rounded bg-[var(--color-input-bg)] border border-[var(--color-border)]">
                 {editing.models.length === 0 ? (
                   <span className="text-xs text-[var(--color-text-muted)]">{t('provider.noCached')}</span>
@@ -480,10 +574,26 @@ export const ProviderSettings: React.FC = () => {
                           }}
                         />
                       )}
+                      {editing.id && (
+                        <ToolCapabilityBadge
+                          entry={toolCaps[toolCapabilityKey(editing.id, m)]}
+                          probing={toolProbingKey === toolCapabilityKey(editing.id, m)}
+                          onProbe={() => {
+                            void probeTool(m)
+                          }}
+                          onStopProbe={() => {
+                            void stopToolProbe(m)
+                          }}
+                        />
+                      )}
                     </span>
                   ))
                 )}
               </div>
+              {/* 费用口径必须看得见，不能只藏在按钮 title 里：3 发真请求走用户自己的 Key */}
+              {editing.models.length > 0 && (
+                <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">{t('provider.toolCapFeeHint')}</p>
+              )}
             </Field>
 
             {notice && <Notice ok={notice.ok} text={notice.text} />}

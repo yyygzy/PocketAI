@@ -5,6 +5,7 @@ import type { UiTheme } from '../shared/themes'
 import type { LocalJudgementReport } from '../shared/local-judgement'
 import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
+import type { ToolCapabilityEntry, ToolCapabilityView, ToolProbeResult } from '../shared/tool-capability'
 import type { SkillScanResult } from '../shared/skill-scan'
 import type {
   ArtifactMeta,
@@ -964,6 +965,21 @@ const api = {
     on: boolean
   ): Promise<{ ok: boolean; error: DelegateFailure | string | null; models: string[] }> =>
     ipcRenderer.invoke(IPC.AGENT_SET_DELEGATE_ENABLED, { providerId, model, on }),
+  /** P0-4b：已判出的"这台模型会不会调工具"清单（带 stale：本地镜像换了就该重测） */
+  listToolCapabilities: (): Promise<ToolCapabilityView[]> =>
+    ipcRenderer.invoke(IPC.AGENT_LIST_TOOL_CAPS),
+  /** P0-4b：对一台模型跑一次工具调用探针（3 发真请求，计入你的额度）；失败原因在 error 里 */
+  probeToolCapability: (providerId: string, model: string): Promise<ToolProbeResult> =>
+    ipcRenderer.invoke(IPC.AGENT_PROBE_TOOL_CAP, { providerId, model }),
+  /** P0-4b：停止正在跑的那一发工具探针；`stopped:false` = 这一台此刻没在探 */
+  abortToolProbe: (
+    providerId: string,
+    model: string
+  ): Promise<{ stopped: boolean } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_ABORT_TOOL_PROBE, { providerId, model }),
+  /** P0-4b：跳过自动检测（写 unknown/user_skipped，之后不再自动重复问；仍可在设置页手动测） */
+  skipToolProbe: (providerId: string, model: string): Promise<ToolCapabilityEntry> =>
+    ipcRenderer.invoke(IPC.AGENT_SKIP_TOOL_PROBE, { providerId, model }),
   /**
    * §231「还原到写入前」：一条写操作一次机会，快照用过即废。
    * 类型带失败分支（与 205 那一族同口径）——写成 `Promise<{path: string}>` 就等于让界面以为它不会失败。

@@ -15,6 +15,7 @@ import { distinctRoleScope } from '../agent/local-capacity'
 import { retrievalHitsLocalEndpoint } from '../agent/role-facts'
 import { resolveAgentToolPermissions } from '../agent/engine'
 import { listDelegateCapabilitiesWithStaleness } from '../agent/delegate-capability'
+import { listToolCapabilitiesWithStaleness } from '../agent/tool-capability'
 import { surfaceUsesRetrieval } from '../../shared/delegation-rules'
 import { readGpuMemoryLive } from './hardware'
 import type { LocalJudgementReport } from '../../shared/local-judgement'
@@ -62,6 +63,7 @@ export async function computeLocalJudgements(deps: LocalJudgementDeps = {}): Pro
   })
 
   const caps = await listDelegateCapabilitiesWithStaleness()
+  const toolCaps = await listToolCapabilitiesWithStaleness()
   const liveRows = await readLive().catch(() => [])
 
   return {
@@ -79,6 +81,17 @@ export async function computeLocalJudgements(deps: LocalJudgementDeps = {}): Pro
       nativeHits: c.nativeHits,
       stale: c.stale,
       delegationEnabled: c.delegationEnabled
+    })),
+    // P0-4b：工具调用判定与委派判定分开列（同一台模型可能一个成立一个不成立），
+    // 取值直接搬台账，不在这里重判
+    toolCapabilities: toolCaps.map((c) => ({
+      key: c.key,
+      model: c.model,
+      tier: c.tier,
+      reason: c.reason,
+      samples: c.samples,
+      nativeHits: c.nativeHits,
+      stale: c.stale
     }))
   }
 }

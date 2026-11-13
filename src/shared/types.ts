@@ -3049,6 +3049,10 @@ export const IPC = {
   AGENT_PROBE_DELEGATE_CAP: 'agent:probe-delegate-cap', // 对一台模型跑一次委派探针（会发真请求，用户点出来的）
   AGENT_ABORT_DELEGATE_PROBE: 'agent:abort-delegate-probe', // §246：停止正在跑的那一发探针（不下结论、不改写判定）
   AGENT_SET_DELEGATE_ENABLED: 'agent:set-delegate-enabled', // 决策③：点名允许某台模型顺序委派（默认关）
+  AGENT_LIST_TOOL_CAPS: 'agent:list-tool-caps', // P0-4b：已判出的"会不会调工具"清单（只读，带 stale）
+  AGENT_PROBE_TOOL_CAP: 'agent:probe-tool-cap', // P0-4b：对一台模型跑一次工具调用探针（3 发真请求，计入用户额度）
+  AGENT_ABORT_TOOL_PROBE: 'agent:abort-tool-probe', // P0-4b：停止正在跑的那一发工具探针（不下结论、不改写判定）
+  AGENT_SKIP_TOOL_PROBE: 'agent:skip-tool-probe', // P0-4b：用户跳过自动检测（写 unknown/user_skipped，不再重复问）
   AGENT_RESTORE_FILE_WRITE: 'agent:restore-file-write', // §231：把一次 fs_write 还原到写入前（按快照 id）
   AGENT_SNAPSHOTS_EXIST: 'agent:snapshots-exist', // P0-5 第三批：批量判「本机还有没有这几份快照」（只读，供结果卡点击前禁用还原）
   AGENT_GET_MODEL_WINDOWS: 'agent:get-model-windows', // §234：每台模型声明的上下文窗口（token），只读

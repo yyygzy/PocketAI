@@ -59,6 +59,19 @@ export interface LocalJudgementReport {
     stale: boolean
     delegationEnabled: boolean
   }>
+  /**
+   * 每台被判定过的模型的**工具调用能力**（P0-4b，复用那本台账，不在这里重判）。
+   * 可选：老夹具不带这一段时按"未检测"画一行，别凭空补结论。
+   */
+  toolCapabilities?: Array<{
+    key: string
+    model: string
+    tier: string
+    reason: string
+    samples: number
+    nativeHits: number
+    stale: boolean
+  }>
 }
 
 /**
@@ -242,6 +255,46 @@ export function buildLocalJudgementRows(report: LocalJudgementReport): Judgement
       reasonCodes: [],
       noteKey: c.stale ? 'judgement.note.stale' : c.delegationEnabled ? 'judgement.note.delegation-on' : undefined
     })
+  }
+
+  /**
+   * P0-4b：工具调用能力。取值来自 shared/tool-capability 的四档，这里只按码出文案。
+   *  · 一条判定都没有 ⇒ 画一行「未检测」（来源档 no-measurement），不许省略成"没有这一行"；
+   *  · unknown 永远不升级成"测得"（跳过/没测出来都不是事实）；
+   *  · stale 与委派同一档降级：镜像换了，旧结论不能再当事实。
+   */
+  const toolCaps = report.toolCapabilities ?? []
+  if (toolCaps.length === 0) {
+    rows.push({
+      id: 'tool-capability',
+      labelKey: 'common.toolCapabilityVerdicts',
+      valueKey: 'provider.toolCapUnknown',
+      sourceCode: 'no-measurement',
+      reasonCodes: []
+    })
+  } else {
+    for (const c of toolCaps) {
+      rows.push({
+        id: `tool-capability:${c.key}`,
+        labelKey: 'common.toolCapabilityVerdicts',
+        valueKey:
+          c.tier === 'usable'
+            ? 'provider.toolCapUsable'
+            : c.tier === 'known_unusable'
+              ? 'provider.toolCapKnown'
+              : c.tier === 'likely_unusable'
+                ? 'provider.toolCapLikely'
+                : 'provider.toolCapUnknown',
+        params: { model: c.model, hits: c.nativeHits, samples: c.samples },
+        sourceCode: c.stale || c.tier === 'unknown' ? 'no-measurement' : 'measured',
+        reasonCodes: [],
+        noteKey: c.stale
+          ? 'judgement.note.stale'
+          : c.tier === 'unknown' && c.reason === 'user_skipped'
+            ? 'toolCap.reason.skipped'
+            : undefined
+      })
+    }
   }
 
   return rows
