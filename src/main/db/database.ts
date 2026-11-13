@@ -1315,6 +1315,29 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_projects_run_step ON projects(request_id, step_index);
       CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id);
     `
+  },
+  {
+    // v71：旁路 LLM 调用计费（规划/上下文摘要/降级收尾）。
+    // 不并进 messages.usage：旁路调用不是对话消息，混写会污染逐轮明细与按消息跳转；
+    // 这里单独存一条事件，usage JSON 与 messages 同形，聚合时与主循环同一套单价计算。
+    // 历史会话不回填，只从本版起记录；conversation_id 允许为空（防御老调用链）。
+    version: 71,
+    name: 'usage_events',
+    up: `
+      CREATE TABLE IF NOT EXISTS usage_events (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT,
+        request_id TEXT,
+        step_index INTEGER,
+        kind TEXT NOT NULL CHECK (kind IN ('planning','summary','degrade')),
+        provider TEXT,
+        model TEXT,
+        usage TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_usage_events_created ON usage_events(created_at);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_conversation ON usage_events(conversation_id, created_at);
+    `
   }
 ]
 

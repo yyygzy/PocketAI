@@ -23,7 +23,9 @@ import type {
   MessageRetrieval,
   ApprovalPreviewField,
   WorkspaceChangeSet,
-  UsagePricing
+  UsagePricing,
+  UsageSideCallKind,
+  UsageStats
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import { slotDecision } from '../providers/local-slot'
@@ -31,6 +33,7 @@ import type { AdapterChatMessage, ChatParams } from '../providers/types'
 import { recordChatStreamPerf } from '../steward/perf-probe'
 import { checkAndBroadcastBudgetWarnings, broadcastBudgetStop } from '../usage/budget-warn'
 import { usageService } from '../usage/usage-service'
+import { usageEventRepo } from '../db/repositories/usage-event.repo'
 import { ProviderError } from '../providers/types'
 import { conversationRepo } from '../db/repositories/conversation.repo'
 import { runFirstMessageTitle } from '../conversation/title-gen'
@@ -600,6 +603,35 @@ export function buildHistorySummary(earlyMsgs: MessageRecord[]): string {
 }
 
 /**
+ * 旁路 LLM 调用的用量落库（规划/摘要/降级）。
+ * 与主步 usage 分表存：不污染逐轮明细；失败静默忽略，绝不打断对话主链路。
+ * 落库成功后立刻跑一次 80% 软预警检查，让旁路花费也能触发提醒。
+ */
+function recordSideCallUsage(
+  kind: UsageSideCallKind,
+  meta: { conversationId: string; requestId: string; stepIndex?: number },
+  providerId: string | null,
+  model: string | null,
+  usage: UsageStats | undefined
+): void {
+  if (!usage) return
+  try {
+    usageEventRepo.insert({
+      conversationId: meta.conversationId,
+      requestId: meta.requestId,
+      stepIndex: meta.stepIndex ?? null,
+      kind,
+      providerId,
+      model,
+      usage
+    })
+    checkAndBroadcastBudgetWarnings()
+  } catch (e) {
+    logger.warn(`[agent] 旁路调用用量落库失败（${kind}，已忽略）: ${errMsg(e)}`)
+  }
+}
+
+/**
  * 用 LLM 生成对话历史摘要，失败/超时时降级为规则摘要。
  * 输入限制在 LLM_SUMMARY_INPUT_TOKENS 内避免 token 溢出，输出限制 800 token。
  */
@@ -607,7 +639,8 @@ async function summarizeHistoryWithLLM(
   earlyMsgs: MessageRecord[],
   adapter: ReturnType<typeof providerManager.getAdapter>,
   model: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  meta: { conversationId: string; requestId: string; providerId: string }
 ): Promise<string> {
   // 把早期消息压缩为简短文本（每条按 token 预算截断），作为摘要输入
   const lines: string[] = []
@@ -621,8 +654,7 @@ async function summarizeHistoryWithLLM(
   const prompt = `请简要总结以下对话历史，保留关键信息：用户的核心需求、已执行的工具调用及重要结果、达成的结论。用简洁的中文，不超过 300 字。\n\n${input}`
 
   // 金额预算闸：摘要也是一次 LLM 调用。触顶时不再发这一发，直接走规则摘要（不阻塞上下文组装）。
-  // TODO(预算口径待定)：上下文摘要属旁路调用，本轮**不把这一发的 usage 纳入金额计量**（见文档待定项），
-  // 只在这里遵守"每次 LLM 调用前查预算"；口径定了再决定是否落库计费。
+  // 这一发的 usage 计入总用量（usage_events.kind='summary'），与主循环同一单价口径。
   if (usageService.getHardBlockExceeded()) return buildHistorySummary(earlyMsgs)
 
   try {
@@ -631,6 +663,7 @@ async function summarizeHistoryWithLLM(
       { model, signal, maxTokens: 800, temperature: 0.3 },
       { onDelta: () => {} }
     )
+    recordSideCallUsage('summary', meta, meta.providerId, model, result.usage)
     const summary = (result.content || '').trim()
     return summary || buildHistorySummary(earlyMsgs)
   } catch {
@@ -1470,7 +1503,8 @@ class AgentEngine {
           windowPlan.early,
           summaryAdapter,
           target.model,
-          master.signal
+          master.signal,
+          { conversationId, requestId, providerId: target.providerId }
         )
       }
       const messages = buildContext(
@@ -1513,8 +1547,8 @@ class AgentEngine {
       const hasToolHistory = messages.some(
         (m) => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls?.length)
       )
-      // TODO(预算口径待定)：规划属旁路 LLM 调用，本轮**不把这一发的 usage 纳入金额计量**（见文档待定项）。
-      // 但仍遵守"每次 LLM 调用前查预算"：触顶就跳过规划，交给主循环的同一道闸收尾停止。
+      // 规划是旁路 LLM 调用，usage 计入总用量（usage_events.kind='planning'），与主循环同一单价口径。
+      // 仍遵守"每次 LLM 调用前查预算"：触顶就跳过规划，交给主循环的同一道闸收尾停止。
       if (!hasToolHistory && !shouldSkipPlanning(content, tools.length) && !usageService.getHardBlockExceeded()) {
         try {
           const planAdapter = providerManager.getAdapter(target.providerId)
@@ -1538,6 +1572,13 @@ class AgentEngine {
             { onDelta: () => {} }
           )
           planText = (planResult.content || '').trim()
+          recordSideCallUsage(
+            'planning',
+            { conversationId, requestId, stepIndex: 0 },
+            target.providerId,
+            target.model,
+            planResult.usage
+          )
         } catch {
           // 规划失败不阻塞主流程，降级为无计划模式
         }
@@ -2740,14 +2781,8 @@ class AgentEngine {
    * 由调用方直接结束（不再发 DONE 事件）。
    */
   private async runDegradeStep(ctx: AgentRunContext): Promise<boolean> {
-    // 金额预算闸：降级本身也是一次 LLM 调用。触顶时不再发这一发，直接写固定收尾文案并算收尾成功。
-    // TODO(预算口径待定)：降级调用本轮**不计入金额计量**（见文档待定项）；这里只拦"发不发"。
-    const overBudget = usageService.getHardBlockExceeded()
-    if (overBudget) {
-      logger.warn(`[agent] 金额预算触顶（${overBudget.scope} ${overBudget.cost}/${overBudget.limit}），跳过降级总结`)
-      this.runBudgetStopStep(ctx, ctx.stepCount + 1, overBudget)
-      return true
-    }
+    // 降级收尾即便预算触顶也允许发（用户拍板：避免长任务在最后一步拿不到回答）；
+    // 这一发的 usage 仍计入总用量（usage_events.kind='degrade'）。
     const { conversationId, target, messages, master, userMsg, defaultParams, emit, requestId } = ctx
     const stepStart = Date.now()
 
@@ -2806,6 +2841,13 @@ class AgentEngine {
         ? `${degradeText}\n\n_（回答因达到 token 上限被截断）_`
         : degradeText
       messageRepo.updateContent(insertedDegradeMsg.id, finalText, 'done', undefined, undefined, ctx.retrieval)
+      recordSideCallUsage(
+        'degrade',
+        { conversationId, requestId, stepIndex: ctx.stepCount + 1 },
+        target.providerId,
+        target.model,
+        degradeResult.usage
+      )
 
       ctx.finalContent = finalText
       ctx.finalMessageId = insertedDegradeMsg.id
@@ -2930,7 +2972,8 @@ class AgentEngine {
 
     // 金额预算闸：委派=再开一条子 run（会继续发 LLM 调用），触顶时不放行。
     // 失败回成 isError 工具结果交给父代理改道（与下面两条 RunBudget 闸同一形状），不抛错中断整轮。
-    // TODO(预算口径待定)：判定复用聊天入口同一开关/金额口径；子 run 自身仍按"每次 LLM 前查"受控。
+    // 口径说明：复用聊天入口同一开关/金额口径（含 usage_events 里的旁路调用）；子 run 自身
+    // 每一步仍按主循环"每次 LLM 前查"受控，这里只决定"要不要开"，不额外产生 LLM 调用。
     const overBudget = usageService.getHardBlockExceeded()
     if (overBudget) {
       const scopeLabel = overBudget.scope === 'daily' ? '今日' : '本月'

@@ -2,9 +2,11 @@
 // 文件头带 UTF-8 BOM，Excel 直接打开中文不乱码；字段按 RFC 4180 规则转义
 import type { UsageDetailItem } from '../../../shared/types'
 
-/** CSV 表头（顺序即列顺序，共 10 列） */
+/** CSV 表头（顺序即列顺序，共 11 列） */
 export interface UsageCsvHeader {
   time: string
+  /** 调用类别列：chat/planning/summary/degrade */
+  category: string
   conversation: string
   assistant: string
   provider: string
@@ -36,11 +38,12 @@ export function formatLocalTime(ts: number): string {
  */
 export function buildUsageCsv(items: UsageDetailItem[], h: UsageCsvHeader): string {
   const lines: string[] = []
-  lines.push([h.time, h.conversation, h.assistant, h.provider, h.model, h.prompt, h.completion, h.cached, h.total, h.cost].map(csvCell).join(','))
+  lines.push([h.time, h.category, h.conversation, h.assistant, h.provider, h.model, h.prompt, h.completion, h.cached, h.total, h.cost].map(csvCell).join(','))
   for (const it of items) {
     lines.push(
       [
         formatLocalTime(it.createdAt),
+        it.kind,
         it.conversationTitle,
         it.assistantName ?? '',
         it.provider,

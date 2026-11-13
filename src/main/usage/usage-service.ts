@@ -3,7 +3,8 @@
 // 聚合在 JS 侧完成（行级数据量可控，且坏 JSON 容错/时区日切比 SQL JSON 函数更直观可控）
 import { dbService } from '../db/database'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsagePricing, UsageStats, UsageSummary, BudgetWarnEvent } from '../../shared/types'
+import { usageEventRepo, type UsageEventDetailRow, type UsageEventRow } from '../db/repositories/usage-event.repo'
+import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsagePricing, UsageSideCallItem, UsageSideCallKind, UsageStats, UsageSummary, BudgetWarnEvent } from '../../shared/types'
 import { computeUsageCost, currencySymbolOf, priceKey, roundCost } from '../../shared/usage-pricing'
 import { getUsagePricing } from './pricing-config'
 
@@ -99,13 +100,16 @@ export function parseUsageJson(raw: string | null): UsageStats | null {
  * 聚合用量行 → UsageSummary。
  * daily 按本地时区切日并补零填充范围内每一天；byModel 取 Top10。
  * prices 为 `${provider}::${model}` 单价表；未配置的模型费用计 0（token 统计不受影响）。
+ * events 为旁路调用事件（规划/摘要/降级），与消息行同口径并入 totals/daily/排行，并单列 sideCalls。
  */
 export function aggregateUsage(
   rows: UsageRow[],
   days: number,
-  prices: Record<string, ModelPrice> = {}
+  prices: Record<string, ModelPrice> = {},
+  events: UsageEventRow[] = []
 ): UsageSummary {
   const totals = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, cost: 0 }
+  const sideMap = new Map<UsageSideCallKind, { requests: number; totalTokens: number; cost: number }>()
   const dailyMap = new Map<string, number>()
   // dailyCost 与 dailyMap 平行维护（dailyMap 承担补零键全集）
   const dailyCostMap = new Map<string, number>()
@@ -158,6 +162,49 @@ export function aggregateUsage(
     modelMap.set(mKey, m)
   }
 
+  // 旁路调用：与消息行同口径计入总额/日趋势/排行，同时按 kind 单列
+  for (const ev of events) {
+    const u = parseUsageJson(ev.usage)
+    if (!u) continue
+    const dateKey = localDateKey(ev.created_at)
+    if (!dailyMap.has(dateKey)) continue
+    const provider = ev.provider || '(未知)'
+    const model = ev.model || '(未知)'
+    const cost = prices[priceKey(provider, model)]
+      ? computeUsageCost(u, prices[priceKey(provider, model)]!)
+      : 0
+
+    totals.requests++
+    totals.promptTokens += u.promptTokens
+    totals.completionTokens += u.completionTokens
+    totals.totalTokens += u.totalTokens
+    totals.cachedTokens += u.cachedTokens ?? 0
+    totals.cost += cost
+
+    dailyMap.set(dateKey, (dailyMap.get(dateKey) ?? 0) + u.totalTokens)
+    dailyCostMap.set(dateKey, (dailyCostMap.get(dateKey) ?? 0) + cost)
+
+    const p = providerMap.get(provider) ?? { requests: 0, totalTokens: 0, cost: 0 }
+    p.requests++
+    p.totalTokens += u.totalTokens
+    p.cost += cost
+    providerMap.set(provider, p)
+
+    const mKey = `${provider}::${model}`
+    const m = modelMap.get(mKey) ?? { provider, model, requests: 0, totalTokens: 0, cost: 0 }
+    m.requests++
+    m.totalTokens += u.totalTokens
+    m.cost += cost
+    modelMap.set(mKey, m)
+
+    const kind = ev.kind as UsageSideCallKind
+    const s = sideMap.get(kind) ?? { requests: 0, totalTokens: 0, cost: 0 }
+    s.requests++
+    s.totalTokens += u.totalTokens
+    s.cost += cost
+    sideMap.set(kind, s)
+  }
+
   const byProvider = Array.from(providerMap.entries())
     .map(([provider, v]) => ({ provider, ...v, cost: roundCost(v.cost) }))
     .sort((a, b) => b.totalTokens - a.totalTokens)
@@ -166,6 +213,12 @@ export function aggregateUsage(
     .map((m) => ({ ...m, cost: roundCost(m.cost) }))
     .sort((a, b) => b.totalTokens - a.totalTokens)
     .slice(0, 10)
+
+  const sideOrder: UsageSideCallKind[] = ['planning', 'summary', 'degrade']
+  const sideCalls: UsageSideCallItem[] = sideOrder.map((kind) => {
+    const v = sideMap.get(kind) ?? { requests: 0, totalTokens: 0, cost: 0 }
+    return { kind, requests: v.requests, totalTokens: v.totalTokens, cost: roundCost(v.cost) }
+  })
 
   return {
     days,
@@ -176,13 +229,14 @@ export function aggregateUsage(
       cost: roundCost(dailyCostMap.get(date) ?? 0)
     })),
     byProvider,
-    byModel
+    byModel,
+    sideCalls
   }
 }
 
 /** 会话维度聚合输入行（LEFT JOIN conversations 带出标题） */
 export interface UsageConversationRow extends UsageRow {
-  conversation_id: string
+  conversation_id: string | null
   title: string | null
 }
 
@@ -190,16 +244,19 @@ export interface UsageConversationRow extends UsageRow {
  * 聚合会话维度用量行 → UsageConversationItem[]（按 totalTokens 倒序）。
  * 与 aggregateUsage 同口径：坏 JSON 跳过、未配单价费用计 0、roundCost 消浮点尾巴。
  * 会话标题取 JOIN 值，空/NULL 兜底「(未知会话)」；时间过滤由 SQL created_at >= since 承担。
+ * events 为 usage_events 的旁路调用行：同一会话的规划/摘要/降级并入该会话；
+ * conversation_id 为 NULL 或会话已删除的行统一归入「(未知会话)」，仍然计账、不静默丢弃。
  */
 export function aggregateConversationUsage(
   rows: UsageConversationRow[],
-  prices: Record<string, ModelPrice> = {}
+  prices: Record<string, ModelPrice> = {},
+  events: UsageConversationRow[] = []
 ): UsageConversationItem[] {
   const convMap = new Map<
     string,
     { title: string; requests: number; totalTokens: number; cost: number; lastUsedAt: number }
   >()
-  for (const row of rows) {
+  for (const row of [...rows, ...events]) {
     const u = parseUsageJson(row.usage)
     if (!u) continue
     const id = row.conversation_id || '(未知会话)'
@@ -231,16 +288,19 @@ export interface UsageAssistantRow extends UsageRow {
  * 聚合助手维度用量行 → UsageAssistantItem[]（按 totalTokens 倒序）。
  * 与 aggregateConversationUsage 同口径：坏 JSON 跳过、未配单价费用计 0、roundCost 消浮点尾巴。
  * 助手名称取 JOIN 值，空/NULL/已删除兜底「(未知助手)」；时间过滤由 SQL created_at >= since 承担。
+ * events 为 usage_events 的旁路调用行：经会话归属到助手；自由会话/会话已删/无法归属的
+ * 统一进入「(未知助手)」一行，仍然计账、不静默丢弃。
  */
 export function aggregateAssistantUsage(
   rows: UsageAssistantRow[],
-  prices: Record<string, ModelPrice> = {}
+  prices: Record<string, ModelPrice> = {},
+  events: UsageAssistantRow[] = []
 ): UsageAssistantItem[] {
   const asstMap = new Map<
     string,
     { name: string; requests: number; totalTokens: number; cost: number; lastUsedAt: number }
   >()
-  for (const row of rows) {
+  for (const row of [...rows, ...events]) {
     const u = parseUsageJson(row.usage)
     if (!u) continue
     const id = row.assistant_id || '(未知助手)'
@@ -290,6 +350,7 @@ export function aggregateUsageDetail(
     const price = prices[priceKey(provider, model)]
     items.push({
       createdAt: row.created_at,
+      kind: 'chat',
       messageId: row.message_id,
       conversationId: row.conversation_id || '(未知会话)',
       conversationTitle: row.conversation_title?.trim() || '(未知会话)',
@@ -308,18 +369,54 @@ export function aggregateUsageDetail(
 }
 
 /**
+ * 聚合旁路调用事件 → UsageDetailItem[]（与消息明细同形，kind 标明规划/摘要/降级）。
+ * 与消息明细同口径：坏 JSON 跳过；命不中单价 cost=null（CSV 留空，不写 0）。
+ */
+export function aggregateSideUsageDetail(
+  rows: UsageEventDetailRow[],
+  prices: Record<string, ModelPrice> = {}
+): UsageDetailItem[] {
+  const items: UsageDetailItem[] = []
+  for (const row of rows) {
+    const u = parseUsageJson(row.usage)
+    if (!u) continue
+    const provider = row.provider || '(未知)'
+    const model = row.model || '(未知)'
+    const price = prices[priceKey(provider, model)]
+    items.push({
+      createdAt: row.created_at,
+      kind: row.kind as UsageSideCallKind,
+      messageId: row.id,
+      conversationId: row.conversation_id || '(未知会话)',
+      conversationTitle: row.conversation_title?.trim() || '(未知会话)',
+      assistantId: row.assistant_id,
+      assistantName: row.assistant_name?.trim() || null,
+      provider,
+      model,
+      promptTokens: u.promptTokens,
+      completionTokens: u.completionTokens,
+      cachedTokens: u.cachedTokens ?? 0,
+      totalTokens: u.totalTokens,
+      cost: price ? computeUsageCost(u, price) : null
+    })
+  }
+  return items
+}
+/**
  * 明细查询维度过滤拼装（纯函数，便于单测）。
  * conversationId 非空 → 按会话过滤；assistantId：undefined=不过滤、null=自由会话（IS NULL）、字符串=按助手过滤。
+ * alias 为 conversation_id 所在表别名（messages=m / usage_events=e）。
  * 返回片段以空格开头，可直接拼进 WHERE 尾部；vals 顺序与片段占位符一致。
  */
 export function buildUsageDetailScope(
   conversationId?: string,
-  assistantId?: string | null
+  assistantId?: string | null,
+  alias = 'm'
 ): { sql: string; vals: unknown[] } {
   const conds: string[] = []
   const vals: unknown[] = []
   if (conversationId) {
-    conds.push('AND m.conversation_id = ?')
+    conds.push(`AND ${alias}.conversation_id = ?`)
     vals.push(conversationId)
   }
   if (assistantId === null) {
@@ -332,7 +429,7 @@ export function buildUsageDetailScope(
 }
 
 class UsageService {
-  /** 汇总一批 usage 行的估算费用（预算/面板共用口径：仅 done + usage 非空；未配置单价的模型计 0） */
+  /** 汇总一批 usage 行的估算费用（预算/面板共用口径：消息仅 done + usage 非空；旁路事件按 kind 全计；未配置单价的模型计 0） */
   private sumCostSince(sinceTs: number, prices: Record<string, ModelPrice>): number {
     const rows = dbService
       .getHandle()
@@ -346,6 +443,12 @@ class UsageService {
       const u = parseUsageJson(row.usage)
       if (!u) continue
       const p = prices[priceKey(row.provider || '(未知)', row.model || '(未知)')]
+      if (p) cost += computeUsageCost(u, p)
+    }
+    for (const ev of usageEventRepo.listSince(sinceTs)) {
+      const u = parseUsageJson(ev.usage)
+      if (!u) continue
+      const p = prices[priceKey(ev.provider || '(未知)', ev.model || '(未知)')]
       if (p) cost += computeUsageCost(u, p)
     }
     return roundCost(cost)
@@ -427,7 +530,7 @@ class UsageService {
     return { ...exceeded, currency: pricing.currency, symbol: currencySymbolOf(pricing.currency) }
   }
 
-  /** 查询最近 days 天的用量汇总（仅统计 status='done' 的 assistant 消息） */
+  /** 查询最近 days 天的用量汇总（消息仅统计 status='done' 的 assistant；旁路事件按 kind 全计） */
   getSummary(days = 30, prices: Record<string, ModelPrice> = {}): UsageSummary {
     const safeDays = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), 365) : 30
     const since = Date.now() - safeDays * 24 * 3600 * 1000
@@ -439,7 +542,7 @@ class UsageService {
          ORDER BY created_at ASC`
       )
       .all(since) as UsageRow[]
-    return aggregateUsage(rows, safeDays, prices)
+    return aggregateUsage(rows, safeDays, prices, usageEventRepo.listSince(since))
   }
 
   /**
@@ -464,7 +567,8 @@ class UsageService {
          ORDER BY m.created_at ASC`
       )
       .all(since) as UsageConversationRow[]
-    return aggregateConversationUsage(rows, prices).slice(0, safeLimit)
+    // 旁路调用按 conversation_id 归入同一会话；无法归属的进「(未知会话)」，保证排行金额之和＝总额
+    return aggregateConversationUsage(rows, prices, usageEventRepo.listConversationRowsSince(since)).slice(0, safeLimit)
   }
 
   /**
@@ -491,7 +595,8 @@ class UsageService {
          ORDER BY m.created_at ASC`
       )
       .all(since) as UsageAssistantRow[]
-    return aggregateAssistantUsage(rows, prices).slice(0, safeLimit)
+    // 旁路调用经会话归属到助手；自由会话/无法归属的进「(未知助手)」，保证排行金额之和＝总额
+    return aggregateAssistantUsage(rows, prices, usageEventRepo.listAssistantRowsSince(since)).slice(0, safeLimit)
   }
 
   /**
@@ -511,6 +616,7 @@ class UsageService {
     const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 20000) : 10000
     const since = Date.now() - safeDays * 24 * 3600 * 1000
     const scope = buildUsageDetailScope(conversationId, assistantId)
+    const eventScope = buildUsageDetailScope(conversationId, assistantId, 'e')
     const rows = dbService
       .getHandle()
       .prepare(
@@ -524,8 +630,14 @@ class UsageService {
          LIMIT ?`
       )
       .all(since, ...scope.vals, safeLimit + 1) as UsageDetailRow[]
-    const truncated = rows.length > safeLimit
-    return { items: aggregateUsageDetail(truncated ? rows.slice(0, safeLimit) : rows, prices), truncated }
+    // 旁路事件与消息行合并后统一截断：CSV/明细里三类调用单独成行，总额不会被漏掉
+    const eventRows = usageEventRepo.listDetailSince(since, safeLimit + 1, eventScope.sql, eventScope.vals)
+    const merged = [
+      ...aggregateUsageDetail(rows, prices),
+      ...aggregateSideUsageDetail(eventRows, prices)
+    ].sort((a, b) => b.createdAt - a.createdAt)
+    const truncated = merged.length > safeLimit
+    return { items: truncated ? merged.slice(0, safeLimit) : merged, truncated }
   }
 
   /**
@@ -545,7 +657,14 @@ class UsageService {
          LIMIT ?`
       )
       .all(safeLimit) as { provider: string; model: string; last_used_at: number }[]
-    return rows.map((r) => ({ provider: r.provider, model: r.model, lastUsedAt: r.last_used_at }))
+    const merged = new Map<string, { provider: string; model: string; lastUsedAt: number }>()
+    for (const r of rows) merged.set(`${r.provider}::${r.model}`, { provider: r.provider, model: r.model, lastUsedAt: r.last_used_at })
+    for (const r of usageEventRepo.listDistinctModels(safeLimit)) {
+      const key = `${r.provider}::${r.model}`
+      const prev = merged.get(key)
+      if (!prev || r.lastUsedAt > prev.lastUsedAt) merged.set(key, r)
+    }
+    return Array.from(merged.values()).sort((a, b) => b.lastUsedAt - a.lastUsedAt).slice(0, safeLimit)
   }
 }
 

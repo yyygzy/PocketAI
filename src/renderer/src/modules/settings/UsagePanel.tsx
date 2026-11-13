@@ -2,7 +2,7 @@
 // 数据来源：messages.usage（chat/agent 生成完成时落库），IPC getUsageSummary 聚合
 // 费用按本机配置的「每 100 万 token 单价」估算，单价仅存本地不上传
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSummary } from '../../../../shared/types'
+import type { ModelPrice, UsageAssistantItem, UsageBudgetStatus, UsageCallKind, UsageConversationItem, UsageDetailItem, UsageModelItem, UsagePricing, UsageSideCallKind, UsageSummary } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { builtinAssistantNameById } from '../../utils/assistant-display'
 import { useToast } from '../../components/ToastProvider'
@@ -108,6 +108,15 @@ export const UsagePanel: React.FC = () => {
    * `pricing === null`（那一发还在飞或读不到，失败另有 toast 报因）不算"没配"，只把金额那半留白。
    */
   const pricesConfigured = pricing !== null && Object.keys(pricing.prices).length > 0
+  // 静态键映射：仓库规则不允许新增动态 t()，三类旁路逐条写死
+  const sideKindLabel = (kind: UsageSideCallKind): string =>
+    kind === 'planning'
+      ? t('usage.sidePlanning')
+      : kind === 'summary'
+        ? t('usage.sideSummary')
+        : t('usage.sideDegrade')
+  const callKindLabel = (kind: UsageCallKind): string =>
+    kind === 'chat' ? t('usage.kindChat') : sideKindLabel(kind)
 
   const load = useCallback((d: number) => {
     window.pocketai.getUsageSummary(d).then((r) => {
@@ -181,6 +190,7 @@ export const UsagePanel: React.FC = () => {
       if (items.length === 0) return
       const csv = buildUsageCsv(items, {
         time: t('usage.colTime'),
+        category: t('usage.detailKind'),
         conversation: t('usage.conversation'),
         assistant: t('usage.assistant'),
         provider: t('usage.colProvider'),
@@ -262,6 +272,9 @@ export const UsagePanel: React.FC = () => {
               {t('usage.budgetNoPrice')}
             </div>
           )}
+          <div className="mt-1 text-[10px] text-[var(--color-text-muted)]" data-testid="usage-side-calls-note">
+            {t('usage.includeSideCalls')}
+          </div>
           {!budgetEditing && (
             <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
               {budget.warn ? t('usage.budgetWarnStateOn') : t('usage.budgetWarnStateOff')}
@@ -356,6 +369,27 @@ export const UsagePanel: React.FC = () => {
           {summary.totals.cachedTokens > 0 && (
             <div className="text-[11px] text-[var(--color-text-muted)] mb-3">
               {t('usage.cached', { count: fmtTokens(summary.totals.cachedTokens) })}
+            </div>
+          )}
+          {/* 旁路调用分项：数值已并入上面的总额，这里只单列规划/摘要/降级 */}
+          {summary.sideCalls.some((s) => s.requests > 0) && (
+            <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-sidebar)] px-3 py-2" data-testid="usage-side-calls">
+              <div className="text-[11px] text-[var(--color-text-muted)]">{t('usage.sideCallsTitle')}</div>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                {summary.sideCalls.map((s) => (
+                  <span key={s.kind} className="text-[11px]">
+                    <span className="text-[var(--color-text)]">{sideKindLabel(s.kind)}</span>
+                    <span className="text-[var(--color-text-muted)]">
+                      {' · '}{t('usage.sideCallItem', { count: s.requests, tokens: fmtTokens(s.totalTokens) })}
+                    </span>
+                    {pricesConfigured && (
+                      <span className="text-[var(--color-accent)]">
+                        {' · '}{currencySymbol}{fmtCost(s.cost) || '0'}
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
 
@@ -623,6 +657,7 @@ export const UsagePanel: React.FC = () => {
                     <tr className="text-left text-[var(--color-text-muted)]">
                       <th className="py-2 px-3 font-normal">{t('usage.detailTime')}</th>
                       {detail.showConv && <th className="py-2 px-3 font-normal">{t('usage.conversation')}</th>}
+                      <th className="py-2 px-3 font-normal">{t('usage.detailKind')}</th>
                       <th className="py-2 px-3 font-normal">{t('usage.detailModel')}</th>
                       <th className="py-2 px-3 font-normal text-right">{t('usage.detailIn')}</th>
                       <th className="py-2 px-3 font-normal text-right">{t('usage.detailOut')}</th>
@@ -634,10 +669,10 @@ export const UsagePanel: React.FC = () => {
                   <tbody>
                     {detailItems.map((m) => (
                       <tr
-                        key={m.messageId}
-                        className="border-t border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-hover-overlay)]"
-                        onClick={() => requestUsageJump({ type: 'conversation', convId: m.conversationId, messageId: m.messageId })}
-                        title={t('usage.detailJumpHint')}
+                        key={`${m.kind}:${m.messageId}`}
+                        className={`border-t border-[var(--color-border)] ${m.kind === 'chat' ? 'cursor-pointer hover:bg-[var(--color-hover-overlay)]' : ''}`}
+                        onClick={m.kind === 'chat' ? () => requestUsageJump({ type: 'conversation', convId: m.conversationId, messageId: m.messageId }) : undefined}
+                        title={m.kind === 'chat' ? t('usage.detailJumpHint') : undefined}
                       >
                         <td className="py-1.5 px-3 text-[var(--color-text-muted)] whitespace-nowrap">
                           {new Date(m.createdAt).toLocaleString()}
@@ -647,6 +682,7 @@ export const UsagePanel: React.FC = () => {
                             {m.conversationTitle}
                           </td>
                         )}
+                        <td className="py-1.5 px-3 text-[var(--color-text-muted)] whitespace-nowrap">{callKindLabel(m.kind)}</td>
                         <td className="py-1.5 px-3 text-[var(--color-text)] truncate max-w-[140px]" title={`${m.provider}/${m.model}`}>
                           {m.model}
                         </td>
@@ -669,14 +705,14 @@ export const UsagePanel: React.FC = () => {
                       <tr>
                         <td
                           className="py-1 px-3 text-[11px] text-[var(--color-text-muted)]"
-                          colSpan={detail.showConv ? 8 : 7}
+                          colSpan={detail.showConv ? 9 : 8}
                         >
                           {t('usage.detailTruncated', { limit: EXPORT_LIMIT })}
                         </td>
                       </tr>
                     )}
                     <tr className="border-t border-[var(--color-border)] font-semibold">
-                      <td className="py-2 px-3 text-[var(--color-text)]" colSpan={detail.showConv ? 3 : 2}>{t('usage.detailTotal')}</td>
+                      <td className="py-2 px-3 text-[var(--color-text)]" colSpan={detail.showConv ? 4 : 3}>{t('usage.detailTotal')}</td>
                       <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
                         {detailItems.reduce((s, m) => s + m.promptTokens, 0).toLocaleString()}
                       </td>

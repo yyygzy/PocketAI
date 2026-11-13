@@ -275,6 +275,20 @@ export interface UsageStats {
   cachedTokens?: number
 }
 
+/** 旁路 LLM 调用的计费类别（规划 / 上下文摘要 / 降级收尾；均计入总用量） */
+export type UsageSideCallKind = 'planning' | 'summary' | 'degrade'
+
+/** 用量明细的调用类别：主对话一步，或三类旁路调用 */
+export type UsageCallKind = 'chat' | UsageSideCallKind
+
+/** 单个旁路类别的汇总量（已并入 UsageSummary.totals） */
+export interface UsageSideCallItem {
+  kind: UsageSideCallKind
+  requests: number
+  totalTokens: number
+  cost: number
+}
+
 /** 用量聚合汇总（按时间范围过滤） */
 export interface UsageSummary {
   days: number
@@ -290,6 +304,8 @@ export interface UsageSummary {
   daily: { date: string; totalTokens: number; cost: number }[]
   byProvider: { provider: string; requests: number; totalTokens: number; cost: number }[]
   byModel: { provider: string; model: string; requests: number; totalTokens: number; cost: number }[]
+  /** 三类旁路调用的分项汇总（其数值已包含在 totals/daily/byProvider/byModel 中） */
+  sideCalls: UsageSideCallItem[]
 }
 
 /** 单个模型的单价（每 100 万 token，币种由 UsagePricing.currency 统一表示） */
@@ -343,7 +359,9 @@ export interface UsageModelItem {
 /** 用量行级明细项（CSV 导出，每轮 assistant 生成一行；按 createdAt 倒序） */
 export interface UsageDetailItem {
   createdAt: number
-  /** 消息 id（明细弹窗点击跳回会话内该条消息用） */
+  /** 调用类别：chat=主对话一步；planning/summary/degrade=旁路调用 */
+  kind: UsageCallKind
+  /** 消息 id（chat 行用于跳回会话内该条消息）；旁路行为 usage_events 行 id，不参与跳转 */
   messageId: string
   conversationId: string
   /** JOIN 不到会话标题时的兜底占位 */
