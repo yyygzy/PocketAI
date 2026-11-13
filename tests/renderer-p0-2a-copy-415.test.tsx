@@ -31,7 +31,8 @@ const summary = (cost: number): UsageSummary => ({
   totals: { requests: 3, promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 0, cost },
   daily: [],
   byProvider: [],
-  byModel: []
+  byModel: [],
+  sideCalls: []
 })
 const budget = (over: Partial<UsageBudgetStatus> = {}): UsageBudgetStatus => ({
   daily: 50, monthly: null, todayCost: 0, monthCost: 0, hardBlock: false, warn: true, ...over
@@ -159,7 +160,7 @@ describe('① 用量屏预算那两行：没配单价该说"算不出"，不是�
 
   it('明细弹窗合计格：全是算不出 ⇒ 留白，不画裸货币符号', async () => {
     const item = (cost: number): UsageDetailItem => ({
-      createdAt: 1, messageId: 'm1', conversationId: 'c1', conversationTitle: 'PROBE-会话',
+      createdAt: 1, kind: 'chat', messageId: 'm1', conversationId: 'c1', conversationTitle: 'PROBE-会话',
       assistantId: null, assistantName: null, provider: 'p1', model: 'm1',
       promptTokens: 10, completionTokens: 5, cachedTokens: 0, totalTokens: 15, cost
     })

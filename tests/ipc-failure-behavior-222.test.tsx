@@ -82,7 +82,8 @@ const summary = (requests: number): UsageSummary => ({
   totals: { requests, promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 0, cost: 0 },
   daily: [],
   byProvider: [],
-  byModel: []
+  byModel: [],
+  sideCalls: []
 })
 
 const okReads = {

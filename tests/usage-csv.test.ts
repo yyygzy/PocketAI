@@ -8,12 +8,13 @@ import { csvCell, formatLocalTime, buildUsageCsv } from '../src/renderer/src/uti
 import type { UsageDetailItem } from '../src/shared/types'
 
 const h = {
-  time: '时间', conversation: '会话', assistant: '助手', provider: '服务商',
+  time: '时间', category: '类别', conversation: '会话', assistant: '助手', provider: '服务商',
   model: '模型', prompt: '输入', completion: '输出', cached: '缓存', total: '总计', cost: '花费'
 }
 
 const item = (over: Partial<UsageDetailItem> = {}): UsageDetailItem => ({
   createdAt: new Date(2026, 9, 2, 15, 4, 5).getTime(),
+  kind: 'chat',
   messageId: 'm1',
   conversationId: 'c1',
   conversationTitle: '测试会话',
@@ -57,10 +58,10 @@ describe('buildUsageCsv', () => {
     expect(buildUsageCsv([], h).startsWith('\uFEFF')).toBe(true)
   })
 
-  it('表头按固定 10 列顺序', () => {
+  it('表头按固定 11 列顺序', () => {
     const csv = buildUsageCsv([], h)
     const firstLine = csv.replace('\uFEFF', '').split('\r\n')[0]
-    expect(firstLine).toBe('时间,会话,助手,服务商,模型,输入,输出,缓存,总计,花费')
+    expect(firstLine).toBe('时间,类别,会话,助手,服务商,模型,输入,输出,缓存,总计,花费')
   })
 
   it('行尾使用 CRLF，空明细只有表头一行', () => {
@@ -73,33 +74,40 @@ describe('buildUsageCsv', () => {
     const csv = buildUsageCsv([item(), item({ createdAt: new Date(2026, 8, 1, 0, 0, 0).getTime(), model: 'gpt-4o-mini' })], h)
     const lines = csv.replace('\uFEFF', '').trimEnd().split('\r\n')
     expect(lines).toHaveLength(3)
-    expect(lines[1]).toBe('2026-10-02 15:04:05,测试会话,写作助手,openai,gpt-4o,100,50,0,150,0.0004')
+    expect(lines[1]).toBe('2026-10-02 15:04:05,chat,测试会话,写作助手,openai,gpt-4o,100,50,0,150,0.0004')
     expect(lines[2]!.startsWith('2026-09-01 00:00:00')).toBe(true)
   })
 
   it('assistantName 为 null 时该列空串', () => {
     const csv = buildUsageCsv([item({ assistantId: null, assistantName: null })], h)
     const line = csv.replace('\uFEFF', '').trimEnd().split('\r\n')[1]
-    expect(line).toBe('2026-10-02 15:04:05,测试会话,,openai,gpt-4o,100,50,0,150,0.0004')
+    expect(line).toBe('2026-10-02 15:04:05,chat,测试会话,,openai,gpt-4o,100,50,0,150,0.0004')
   })
 
   it('标题含逗号/引号时按规则转义不破列', () => {
     const csv = buildUsageCsv([item({ conversationTitle: '周报, "Q3"' })], h)
     const line = csv.replace('\uFEFF', '').trimEnd().split('\r\n')[1]
-    expect(line).toBe('2026-10-02 15:04:05,"周报, ""Q3""",写作助手,openai,gpt-4o,100,50,0,150,0.0004')
+    expect(line).toBe('2026-10-02 15:04:05,chat,"周报, ""Q3""",写作助手,openai,gpt-4o,100,50,0,150,0.0004')
   })
 
   it('cost=null（该模型没配单价、算不出）时「估算花费」列留空，不写 0', () => {
     const csv = buildUsageCsv([item({ cost: null })], h)
     const line = csv.replace('\uFEFF', '').trimEnd().split('\r\n')[1]!
-    // 末列是空串（行尾没有多余的 0），列数仍为 10 —— 空 ≠ 0，也 ≠ "漏了一列"
-    expect(line).toBe('2026-10-02 15:04:05,测试会话,写作助手,openai,gpt-4o,100,50,0,150,')
-    expect(line.split(',')).toHaveLength(10)
+    // 末列是空串（行尾没有多余的 0），列数仍为 11 —— 空 ≠ 0，也 ≠ "漏了一列"
+    expect(line).toBe('2026-10-02 15:04:05,chat,测试会话,写作助手,openai,gpt-4o,100,50,0,150,')
+    expect(line.split(',')).toHaveLength(11)
   })
 
   it('真有单价且算出 0 时照常写 0（"花 0 元"是读数，不是缺价）', () => {
     const csv = buildUsageCsv([item({ cost: 0 })], h)
     const line = csv.replace('\uFEFF', '').trimEnd().split('\r\n')[1]!
     expect(line.endsWith(',150,0')).toBe(true)
+  })
+
+  it('旁路调用用 kind 单列，不伪装成主对话', () => {
+    const csv = buildUsageCsv([item({ kind: 'planning' }), item({ kind: 'degrade', messageId: 'ev1' })], h)
+    const lines = csv.replace('\uFEFF', '').trimEnd().split('\r\n')
+    expect(lines[1]!.split(',')[1]).toBe('planning')
+    expect(lines[2]!.split(',')[1]).toBe('degrade')
   })
 })

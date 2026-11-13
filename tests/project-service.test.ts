@@ -67,7 +67,7 @@ describe('project-service（真库 + 真磁盘）', () => {
   })
 
   it('v70 迁移建出 projects / project_files', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(70)
+    expect(LATEST_SCHEMA_VERSION).toBe(71)
     const tables = (
       dbService
         .getHandle()

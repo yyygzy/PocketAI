@@ -40,7 +40,8 @@ const summary = (byModel: UsageSummary['byModel']): UsageSummary => ({
   totals: { requests: 4, promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, cost: 0 },
   daily: [{ date: '2026-10-01', totalTokens: 0, cost: 0 }],
   byProvider: [],
-  byModel
+  byModel,
+  sideCalls: []
 })
 
 const okReads = {

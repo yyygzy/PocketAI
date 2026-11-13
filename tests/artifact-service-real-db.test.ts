@@ -56,7 +56,7 @@ describe('artifact-service（真库 + 真磁盘）', () => {
   })
 
   it('迁移 v70 建出 artifacts 表（kind 已含 xlsx；v70 只新增 projects 表）', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(70)
+    expect(LATEST_SCHEMA_VERSION).toBe(71)
     const cols = (
       dbService.getHandle().prepare('PRAGMA table_info(artifacts)').all() as Array<{ name: string }>
     ).map((c) => c.name)

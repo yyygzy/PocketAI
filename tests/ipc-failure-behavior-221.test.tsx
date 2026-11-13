@@ -40,7 +40,8 @@ const summary = (requests: number): UsageSummary => ({
   totals: { requests, promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 0, cost: 0 },
   daily: [],
   byProvider: [],
-  byModel: []
+  byModel: [],
+  sideCalls: []
 })
 
 describe('① 数据健康面板：改前把失败对象当报告用，解构当场崩', () => {

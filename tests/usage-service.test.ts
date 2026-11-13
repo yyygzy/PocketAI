@@ -8,9 +8,10 @@
 // - aggregateAssistantUsage：助手维度分组/名称兜底/费用
 import { describe, it, expect, vi } from 'vitest'
 
-// 可操控的 mock 状态：rows=sumCostSince 的 SQL 返回行；daily/monthly=预算 KV
+// 可操控的 mock 状态：rows=消息用量行；events=旁路调用事件行；daily/monthly=预算 KV
 const h = vi.hoisted(() => ({
   rows: [] as { provider: string | null; model: string | null; usage: string | null; created_at: number }[],
+  events: [] as { id: string; conversation_id: string | null; provider: string | null; model: string | null; usage: string; created_at: number; kind: string }[],
   daily: null as number | null,
   monthly: null as number | null,
   hardBlock: false as boolean,
@@ -21,10 +22,12 @@ const h = vi.hoisted(() => ({
 vi.mock('../src/main/db/database', () => ({
   dbService: {
     getHandle: () => ({
-      prepare: () => ({
-        // sumCostSince 带 sinceTs 参数：按 created_at >= since 过滤（贴近真实 SQL 语义）
-        all: (since?: number) =>
-          typeof since === 'number' ? h.rows.filter((r) => r.created_at >= since) : h.rows,
+      prepare: (sql: string) => ({
+        // 旁路事件走独立表：返回 h.events；消息行仍返回 h.rows
+        all: (since?: number) => {
+          const src = sql.includes('usage_events') ? h.events : h.rows
+          return typeof since === 'number' ? src.filter((r) => r.created_at >= since) : src
+        },
         get: () => undefined,
         run: () => {}
       })
@@ -52,7 +55,8 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   }
 }))
 
-import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, aggregateUsageDetail, buildUsageDetailScope, usageService, type UsageRow, type UsageConversationRow, type UsageAssistantRow, type UsageDetailRow } from '../src/main/usage/usage-service'
+import { parseUsageJson, localDateKey, aggregateUsage, aggregateConversationUsage, aggregateAssistantUsage, aggregateUsageDetail, aggregateSideUsageDetail, buildUsageDetailScope, usageService, type UsageRow, type UsageConversationRow, type UsageAssistantRow, type UsageDetailRow } from '../src/main/usage/usage-service'
+import type { UsageEventDetailRow, UsageEventRow } from '../src/main/db/repositories/usage-event.repo'
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   provider: 'openai',
@@ -554,5 +558,106 @@ describe('usageService.getHardBlockExceeded — Agent 循环的金额预算判�
     expect(usageService.getHardBlockExceeded()).toBeNull()
     h.hardBlock = false
     h.daily = null
+  })
+})
+
+describe('旁路调用计量（usage_events）', () => {
+  const evRow = (over: Partial<UsageEventRow> = {}): UsageEventRow => ({
+    id: 'ev1',
+    conversation_id: 'c1',
+    provider: 'openai',
+    model: 'gpt-4o',
+    usage: JSON.stringify({ promptTokens: 10, completionTokens: 5, totalTokens: 15 }),
+    created_at: Date.now(),
+    kind: 'planning',
+    ...over
+  })
+  const prices = { 'openai::gpt-4o': { input: 2, output: 4 } }
+
+  it('aggregateUsage：事件并入总额/日/排行，并按 kind 单列', () => {
+    h.events = []
+    const s = aggregateUsage([row()], 1, prices, [
+      evRow(),
+      evRow({ id: 'ev2', kind: 'summary' }),
+      evRow({ id: 'ev3', kind: 'degrade' })
+    ])
+    // 消息 150 + 事件 3×15
+    expect(s.totals.requests).toBe(4)
+    expect(s.totals.totalTokens).toBe(195)
+    expect(s.totals.cost).toBeCloseTo(0.0004 + 3 * (10 * 2 + 5 * 4) / 1_000_000, 6)
+    expect(s.sideCalls.map((x) => x.kind)).toEqual(['planning', 'summary', 'degrade'])
+    expect(s.sideCalls.every((x) => x.requests === 1 && x.totalTokens === 15)).toBe(true)
+    expect(s.daily[0]!.totalTokens).toBe(195)
+    expect(s.byProvider[0]!.requests).toBe(4)
+    h.events = []
+  })
+
+  it('aggregateSideUsageDetail：kind 与事件 id 保留，坏 JSON 跳过，缺单价 cost=null', () => {
+    const rows: UsageEventDetailRow[] = [
+      {
+        id: 'ev1', conversation_id: 'c1', provider: 'openai', model: 'gpt-4o',
+        usage: JSON.stringify({ promptTokens: 10, completionTokens: 5, totalTokens: 15 }),
+        created_at: 1, kind: 'degrade', conversation_title: '会话一', assistant_id: 'a1', assistant_name: '助手一'
+      },
+      {
+        id: 'ev2', conversation_id: 'c1', provider: 'openai', model: 'unknown',
+        usage: 'not-json', created_at: 2, kind: 'planning',
+        conversation_title: null, assistant_id: null, assistant_name: null
+      }
+    ]
+    const items = aggregateSideUsageDetail(rows, prices)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: 'degrade', messageId: 'ev1', totalTokens: 15, conversationTitle: '会话一' })
+    expect(items[0]!.cost).toBeCloseTo((10 * 2 + 5 * 4) / 1_000_000, 6)
+    expect(aggregateSideUsageDetail([{ ...rows[0]!, model: 'unknown' }], prices)[0]!.cost).toBeNull()
+  })
+
+  it('getBudgetStatus 的今日/本月费用包含事件，且不重复计消息行', () => {
+    h.daily = null
+    h.monthly = null
+    h.rows = [row()]
+    h.events = [evRow()]
+    const s = usageService.getBudgetStatus(prices)
+    expect(s.todayCost).toBeCloseTo(0.0004 + 0.00004, 6)
+    h.rows = []
+    h.events = []
+  })
+
+  it('会话排行并入事件：同一会话合并，无法归属的进「未知会话」且金额对平总额', () => {
+    const convRows = [{
+      conversation_id: 'c1', title: '会话一', provider: 'openai', model: 'gpt-4o',
+      usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150 }), created_at: Date.now()
+    }]
+    const convEvents = [
+      { conversation_id: 'c1', title: '会话一', provider: 'openai', model: 'gpt-4o', usage: evRow().usage, created_at: Date.now() },
+      { conversation_id: null, title: null, provider: 'openai', model: 'gpt-4o', usage: evRow().usage, created_at: Date.now() }
+    ]
+    const conv = aggregateConversationUsage(convRows, prices, convEvents)
+    expect(conv.find((c) => c.conversationId === 'c1')!.requests).toBe(2)
+    expect(conv.find((c) => c.conversationId === '(未知会话)')!.requests).toBe(1)
+    const total = aggregateUsage(convRows, 1, prices, [
+      { ...evRow(), ...convEvents[0]! },
+      { ...evRow({ id: 'ev2' }), ...convEvents[1]! }
+    ])
+    expect(conv.reduce((n, c) => n + c.cost, 0)).toBeCloseTo(total.totals.cost, 6)
+  })
+
+  it('助手排行并入事件：经会话归属，自由会话进「未知助手」且金额对平总额', () => {
+    const asstRows = [{
+      assistant_id: 'a1', name: '助手一', provider: 'openai', model: 'gpt-4o',
+      usage: JSON.stringify({ promptTokens: 100, completionTokens: 50, totalTokens: 150 }), created_at: Date.now()
+    }]
+    const asstEvents = [
+      { assistant_id: 'a1', name: '助手一', provider: 'openai', model: 'gpt-4o', usage: evRow().usage, created_at: Date.now() },
+      { assistant_id: null, name: null, provider: 'openai', model: 'gpt-4o', usage: evRow().usage, created_at: Date.now() }
+    ]
+    const asst = aggregateAssistantUsage(asstRows, prices, asstEvents)
+    expect(asst.find((a) => a.assistantId === 'a1')!.requests).toBe(2)
+    expect(asst.find((a) => a.assistantId === '(未知助手)')!.requests).toBe(1)
+    const total = aggregateUsage(asstRows, 1, prices, [
+      { ...evRow(), ...asstEvents[0]! },
+      { ...evRow({ id: 'ev2' }), ...asstEvents[1]! }
+    ])
+    expect(asst.reduce((n, a) => n + a.cost, 0)).toBeCloseTo(total.totals.cost, 6)
   })
 })
