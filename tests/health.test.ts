@@ -68,6 +68,8 @@ const mocks = vi.hoisted(() => {
           if (n.startsWith('PRAGMA integrity_check')) {
             return { get: () => ({ integrity_check: m.integrity }) }
           }
+          // 未写过向量的全新库：kb_vec_map 不存在，清理跳过向量步骤（真库行为见 health-cleanup-vectors.test.ts）
+          if (n.includes('FROM sqlite_master')) return { get: () => undefined }
           // DELETE 判定必须在孤儿 SELECT 之前：其子查询同样含 JOIN 特征
           if (n.startsWith('DELETE FROM messages')) {
             return { run: () => ({ changes: m.changes.delMessages }) }

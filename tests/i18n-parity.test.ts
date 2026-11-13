@@ -76,6 +76,20 @@ describe('i18n 字典对等', () => {
     }
     expect(mismatches).toEqual([])
   })
+
+  // 管家「安全清理」现在会一并清向量（修前只删 chunk，会把孤儿向量甩给设置页那颗按钮）。
+  // 文案必须说清这件事，并点明与设置页「知识库完整性 → 清理」的分工，不能还写成「向量块」一句话带过。
+  it('steward.cleanupHint 四语都说清清向量，并指向设置页那颗按钮', () => {
+    const VECTOR_WORD: Record<string, string> = { zh: '向量', en: 'vector', ja: 'ベクトル', ko: '벡터' }
+    const SETTINGS_WORD: Record<string, string> = { zh: '设置页', en: 'Settings', ja: '設定', ko: '설정' }
+    for (const name of names) {
+      const d = dicts[name]!
+      const hint = d['steward.cleanupHint']!
+      expect(hint, `${name} 的清理提示没提向量`).toContain(VECTOR_WORD[name]!)
+      expect(hint, `${name} 的清理提示没指向设置页`).toContain(SETTINGS_WORD[name]!)
+      expect(hint, `${name} 的清理提示没点名设置页那一栏`).toContain(d['dh.integrity.title']!)
+    }
+  })
 })
 
 // 引用了但四本字典都没有的 key：面板会原样显示 `a.b.c`。
