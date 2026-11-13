@@ -2655,6 +2655,19 @@ export interface FileOpResult {
   error?: string
 }
 
+/** 工作目录项目「打开所在目录」：失败时 error 形如 `CODE:中文说明`，界面按回码换四语 */
+export interface ProjectOpenDirResult extends FileOpResult {
+  path?: string
+}
+
+/** 工作目录项目「导出 ZIP」：取消不是错误（ok=true + canceled=true） */
+export interface ProjectZipAbsResult {
+  ok: boolean
+  canceled?: boolean
+  path?: string
+  error?: string
+}
+
 // ---------- 知识库内置本地 embedding ----------
 /** 内置 embedding 在 KB 配置中的虚拟 provider id（providers 表中不存在，embedding 服务拦截分派） */
 export const BUILTIN_EMBED_PROVIDER_ID = 'builtin'
@@ -3196,5 +3209,12 @@ export const IPC = {
   /** 撤销本次生成：所有文件哈希仍一致才删目录 */
   PROJECT_DELETE: 'project:delete',
   /** 导出 ZIP（只写不读） */
-  PROJECT_EXPORT_ZIP: 'project:export-zip'
+  PROJECT_EXPORT_ZIP: 'project:export-zip',
+  /**
+   * 工作目录项目的「打开所在目录」：入参是**绝对路径**，主进程重新 realpath 校验
+   * 落在 Agent 工作目录内才打开——渲染层传来的值一律不信任。
+   */
+  PROJECT_OPEN_DIR: 'project:open-dir',
+  /** 工作目录项目的「导出 ZIP」：按绝对路径打包 + 保存框（只写不读、不入库） */
+  PROJECT_EXPORT_ZIP_ABS: 'project:export-zip-abs'
 } as const

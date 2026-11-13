@@ -19,6 +19,12 @@ import { GENERATED_DIR } from '../../shared/artifacts'
 import { projectsRepo } from '../db/repositories/projects.repo'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
+import {
+  cleanProjectName,
+  findCaseInsensitiveEntry,
+  ILLEGAL_PATH_CHARS,
+  WINDOWS_RESERVED
+} from './project-target'
 import type { ProjectFileEntry, ProjectMeta, ProjectPreview } from '../../shared/types'
 
 const log = createLogger('projects')
@@ -29,7 +35,6 @@ export const MAX_PROJECT_FILES = 200
 export const MAX_PROJECT_TOTAL_BYTES = 50 * 1024 * 1024
 export const MAX_PROJECT_FILE_BYTES = 2 * 1024 * 1024
 export const MAX_PROJECT_PATH_CHARS = 240
-const MAX_PROJECT_NAME_CHARS = 80
 const MAX_PREVIEW_INDEX_CHARS = 300 * 1024
 const MAX_PREVIEW_README_CHARS = 200 * 1024
 
@@ -49,9 +54,6 @@ const BLOCKED_EXTENSIONS = new Set([
   '.vbe'
 ])
 
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
-const ILLEGAL_PATH_CHARS = /[<>:"|?*\x00-\x1f\x7f]/
-
 export type ProjectFailureCode =
   | 'PROJECT_INVALID_SPEC'
   | 'PROJECT_WRITE_FAILED'
@@ -60,6 +62,8 @@ export type ProjectFailureCode =
   | 'PROJECT_EXPORT_FAILED'
   | 'SNAPSHOT_DIVERGED'
   | 'PROJECT_DELETE_FAILED'
+  | 'PROJECT_TARGET_EXISTS'
+  | 'PROJECT_TARGET_INVALID'
 
 export interface ProjectFailure {
   ok: false
@@ -72,6 +76,17 @@ export interface ProjectSuccess {
   ok: true
   project: ProjectMeta
   reused: boolean
+}
+
+/** 工作目录写入：不进 projects 表（无预览/撤销/导出 ZIP 的元数据），只回报落点与规模 */
+export interface ProjectWorkspaceSuccess {
+  ok: true
+  location: 'workspace'
+  name: string
+  dirAbs: string
+  fileCount: number
+  totalBytes: number
+  reused: false
 }
 
 export interface ProjectUndoSuccess {
@@ -92,17 +107,7 @@ const fail = (code: ProjectFailureCode, message: string, p?: string): ProjectFai
   message
 })
 
-function cleanProjectName(raw: string): string {
-  const s = String(raw ?? '')
-    .replace(/[\x00-\x1f\x7f]/g, ' ')
-    .replace(/[<>:"/\\|?*]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[. ]+$/g, '')
-  const clipped = Array.from(s).slice(0, MAX_PROJECT_NAME_CHARS).join('')
-  if (!clipped) return '未命名项目'
-  return WINDOWS_RESERVED.test(clipped) || clipped.startsWith('.') ? `_${clipped}` : clipped
-}
+
 
 /** 项目内路径校验：只接受 POSIX 相对路径，拒绝绝对路径/盘符/../保留名/尾随点空格/可执行扩展名 */
 export function normalizeProjectPath(raw: unknown): { ok: true; path: string } | { ok: false; path: string } {
@@ -172,18 +177,89 @@ function sha256(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex')
 }
 
-export function createProject(input: {
-  name: string
-  files: Array<{ path: string; content: string }>
-  conversationId?: string | null
-  requestId?: string | null
-  stepIndex?: number | null
-}): ProjectSuccess | ProjectFailure {
-  const name = cleanProjectName(input.name)
-  if (!name) return fail('PROJECT_INVALID_SPEC', '项目名不能为空')
+/** 把文件写进临时目录并生成清单（应用目录与工作目录两条路共用同一套校验） */
+function writeProjectFiles(tmpAbs: string, files: NormalizedFile[]): ProjectFileEntry[] {
+  const manifest: ProjectFileEntry[] = []
+  fs.mkdirSync(tmpAbs, { recursive: true })
+  for (const f of files) {
+    const abs = path.join(tmpAbs, ...f.path.split('/'))
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, f.content, 'utf8')
+    const written = fs.readFileSync(abs)
+    if (written.length !== f.size) throw new Error(`写入长度不一致：${f.path}`)
+    manifest.push({ path: f.path, sha256: sha256(written), size: written.length })
+  }
+  return manifest
+}
 
+function removeTmpDir(tmpAbs: string): void {
+  try {
+    fs.rmSync(tmpAbs, { recursive: true, force: true })
+  } catch (cleanupErr) {
+    log.warn(`清理临时项目目录失败 ${tmpAbs}:`, cleanupErr)
+  }
+}
+
+/**
+ * 写进用户工作目录：目标父目录内**不递增、不合并**——同名直接拒写（不在用户目录造垃圾）。
+ * 不写 projects 表：这条路径只承诺"文件写进去了"，不提供预览/撤销/导出 ZIP 的元数据。
+ */
+function createWorkspaceProject(
+  targetDirAbs: string,
+  name: string,
+  files: NormalizedFile[]
+): ProjectWorkspaceSuccess | ProjectFailure {
+  if (!path.isAbsolute(targetDirAbs)) {
+    return fail('PROJECT_TARGET_INVALID', '目标目录必须是绝对路径')
+  }
+  try {
+    fs.mkdirSync(targetDirAbs, { recursive: true })
+  } catch (e) {
+    return fail('PROJECT_WRITE_FAILED', errMsg(e) || '目标目录不可写', targetDirAbs)
+  }
+  // 大小写不敏感地查一遍：Windows 的 existsSync 已不区分大小写，POSIX 上靠这层补齐
+  const existing = findCaseInsensitiveEntry(targetDirAbs, name)
+  if (existing) {
+    return fail(
+      'PROJECT_TARGET_EXISTS',
+      `目标位置已存在同名目录「${existing}」，请换一个项目名或目标目录`,
+      path.join(targetDirAbs, existing)
+    )
+  }
+  const targetAbs = path.join(targetDirAbs, name)
+  const tmpAbs = path.join(targetDirAbs, `.tmp-${randomUUID()}`)
+  try {
+    writeProjectFiles(tmpAbs, files)
+    // rename 是原子的：目标已存在（并发/探测后被占）时抛错，不会半合并
+    fs.renameSync(tmpAbs, targetAbs)
+  } catch (e) {
+    removeTmpDir(tmpAbs)
+    log.warn(`项目写入工作目录失败 ${name}:`, e)
+    return fail('PROJECT_WRITE_FAILED', errMsg(e) || '写入失败', targetAbs)
+  }
+  return {
+    ok: true,
+    location: 'workspace',
+    name,
+    dirAbs: targetAbs,
+    fileCount: files.length,
+    totalBytes: files.reduce((sum, f) => sum + f.size, 0),
+    reused: false
+  }
+}
+
+type PreparedProject =
+  | { ok: true; name: string; normalized: NormalizedFile[] }
+  | ProjectFailure
+
+function prepareProject(
+  nameRaw: string,
+  files: Array<{ path: string; content: string }>
+): PreparedProject {
+  const name = cleanProjectName(nameRaw)
+  if (!name) return fail('PROJECT_INVALID_SPEC', '项目名不能为空')
   const normalized: NormalizedFile[] = []
-  for (const f of input.files) {
+  for (const f of files) {
     const p = normalizeProjectPath(f.path)
     if (!p.ok) return fail('PROJECT_INVALID_SPEC', `路径不合法：${p.path}`, p.path)
     const size = Buffer.byteLength(f.content, 'utf8')
@@ -191,6 +267,30 @@ export function createProject(input: {
   }
   const invalid = validateFiles(normalized)
   if (invalid) return invalid
+  return { ok: true, name, normalized }
+}
+
+/** 写进用户工作目录（target 已由 project-target 解析并守卫）；不写 projects 表 */
+export function createProjectToWorkspace(input: {
+  name: string
+  files: Array<{ path: string; content: string }>
+  targetDirAbs: string
+}): ProjectWorkspaceSuccess | ProjectFailure {
+  const prepared = prepareProject(input.name, input.files)
+  if (!prepared.ok) return prepared
+  return createWorkspaceProject(input.targetDirAbs, prepared.name, prepared.normalized)
+}
+
+export function createProject(input: {
+  name: string
+  files: Array<{ path: string; content: string }>
+  conversationId?: string | null
+  requestId?: string | null
+  stepIndex?: number | null
+}): ProjectSuccess | ProjectFailure {
+  const prepared = prepareProject(input.name, input.files)
+  if (!prepared.ok) return prepared
+  const { name, normalized } = prepared
 
   // 幂等：同一次运行的同一工具步 + 同名，直接复用
   if (input.requestId && input.stepIndex != null) {
@@ -204,24 +304,12 @@ export function createProject(input: {
   const dirName = allocateDirName(name)
   const targetAbs = path.join(PROJECTS_DIR, dirName)
   const tmpAbs = path.join(PROJECTS_DIR, `.tmp-${randomUUID()}`)
-  const manifest: ProjectFileEntry[] = []
+  let manifest: ProjectFileEntry[]
 
   try {
-    fs.mkdirSync(tmpAbs, { recursive: true })
-    for (const f of normalized) {
-      const abs = path.join(tmpAbs, ...f.path.split('/'))
-      fs.mkdirSync(path.dirname(abs), { recursive: true })
-      fs.writeFileSync(abs, f.content, 'utf8')
-      const written = fs.readFileSync(abs)
-      if (written.length !== f.size) throw new Error(`写入长度不一致：${f.path}`)
-      manifest.push({ path: f.path, sha256: sha256(written), size: written.length })
-    }
+    manifest = writeProjectFiles(tmpAbs, normalized)
   } catch (e) {
-    try {
-      fs.rmSync(tmpAbs, { recursive: true, force: true })
-    } catch (cleanupErr) {
-      log.warn(`清理临时项目目录失败 ${tmpAbs}:`, cleanupErr)
-    }
+    removeTmpDir(tmpAbs)
     log.warn(`项目写入失败 ${name}:`, e)
     return fail('PROJECT_WRITE_FAILED', errMsg(e) || '写入失败', dirName)
   }
@@ -377,6 +465,50 @@ function allocateZipName(base: string): string {
   return candidate
 }
 
+/** 目录 → zip 文件（archiver 流式写入；调用方负责临时文件与 rename） */
+async function writeZipArchive(dirAbs: string, baseName: string, outAbs: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const output = fs.createWriteStream(outAbs)
+    const createArchive = (
+      archiverModule as unknown as {
+        create: (format: 'zip', options?: { zlib?: { level?: number } }) => Archiver
+      }
+    ).create
+    if (!createArchive) throw new Error('archiver 不可用')
+    const archive = createArchive('zip', { zlib: { level: 9 } })
+    output.on('close', resolve)
+    output.on('error', reject)
+    archive.on('error', reject)
+    archive.pipe(output)
+    archive.directory(dirAbs, baseName)
+    void archive.finalize().catch(reject)
+  })
+}
+
+/**
+ * 把任意目录打成 zip 到用户选定的位置（工作目录项目导出用）。
+ * 先写 `<dest>.pocketai-tmp` 再 rename：与 writeFileAtomicSync 同一手法，失败不留半份 zip。
+ */
+export async function zipDirToFile(
+  dirAbs: string,
+  destAbs: string
+): Promise<{ ok: true; bytes: number } | ProjectFailure> {
+  const tmpAbs = `${destAbs}.pocketai-tmp`
+  try {
+    await writeZipArchive(dirAbs, path.basename(dirAbs) || 'project', tmpAbs)
+    fs.renameSync(tmpAbs, destAbs)
+    return { ok: true, bytes: fs.statSync(destAbs).size }
+  } catch (e) {
+    try {
+      fs.rmSync(tmpAbs, { force: true })
+    } catch (cleanupErr) {
+      log.warn(`清理临时 zip 失败 ${tmpAbs}:`, cleanupErr)
+    }
+    log.warn(`导出工作目录项目 ZIP 失败 ${dirAbs}:`, e)
+    return fail('PROJECT_EXPORT_FAILED', errMsg(e) || '打包失败', dirAbs)
+  }
+}
+
 /** 只写不读：把项目目录打成 zip，落成同级 `<dir>.zip`，再交给 file:save-as 另存 */
 export async function exportProjectZip(id: string): Promise<ProjectZipSuccess | ProjectFailure> {
   const meta = projectsRepo.get(id)
@@ -388,22 +520,7 @@ export async function exportProjectZip(id: string): Promise<ProjectZipSuccess | 
   const finalAbs = path.join(PROJECTS_DIR, fileName)
   const tmpAbs = path.join(PROJECTS_DIR, `.tmp-${randomUUID()}.zip`)
   try {
-    await new Promise<void>((resolve, reject) => {
-      const output = fs.createWriteStream(tmpAbs)
-      const createArchive = (
-        archiverModule as unknown as {
-          create: (format: 'zip', options?: { zlib?: { level?: number } }) => Archiver
-        }
-      ).create
-      if (!createArchive) throw new Error('archiver 不可用')
-      const archive = createArchive('zip', { zlib: { level: 9 } })
-      output.on('close', resolve)
-      output.on('error', reject)
-      archive.on('error', reject)
-      archive.pipe(output)
-      archive.directory(dirAbs, meta.dirName)
-      void archive.finalize().catch(reject)
-    })
+    await writeZipArchive(dirAbs, meta.dirName, tmpAbs)
     fs.renameSync(tmpAbs, finalAbs)
     const bytes = fs.statSync(finalAbs).size
     return {

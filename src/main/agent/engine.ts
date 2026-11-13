@@ -47,6 +47,7 @@ import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { toolRegistry, badArgsError } from '../tools/registry'
 import type { ToolAgentContext, ToolClassification } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath, buildFsWritePreview } from '../tools/fs-tools'
+import { buildProjectApprovalPreview } from '../tools/project-tools'
 import { findDangerRanges } from '../tools/shell-tools'
 import { buildToolPreviewFields } from '../../shared/tool-preview'
 import { injectAttachments, appendTextAttachments, buildImageParts } from '../chat/context-attachments'
@@ -996,6 +997,13 @@ function buildApprovalDisplay(
   if (tc.function.name === 'fs_write') {
     const preview = buildFsWritePreview(String(parsed.path ?? ''), typeof parsed.content === 'string' ? parsed.content : '')
     return { command: String(parsed.path ?? ''), risk: 'custom', reason: preview.reason, fields: preview.fields }
+  }
+
+  // project_create 写工作目录（§B）：字段由 project-tools 的专用 builder 组装
+  // （通用启发式会把 files 数组截成半截 JSON）；这里只做搬运。
+  if (tc.function.name === 'project_create') {
+    const preview = buildProjectApprovalPreview(parsed)
+    return { command: preview.command, risk: 'custom', reason: preview.reason, fields: preview.fields }
   }
 
   // MCP 工具：按参数名启发式生成语义化预览字段（路径解析复用工作目录守卫）

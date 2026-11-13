@@ -40,6 +40,8 @@ import type {
   ApprovalExportQuery,
   ApprovalExportResult,
   SendMessagePayload,
+  ProjectOpenDirResult,
+  ProjectZipAbsResult,
   RegeneratePayload,
   ResendPayload,
   ChatChunkEvent,
@@ -1448,6 +1450,11 @@ const api = {
     id: string
   ): Promise<{ ok: boolean; fileName?: string; relPath?: string; bytes?: number; code?: string; path?: string; message?: string }> =>
     ipcRenderer.invoke(IPC.PROJECT_EXPORT_ZIP, id),
+  // 工作目录项目：只认绝对路径；主进程会重新校验落在 Agent 工作目录内
+  openProjectDir: (absPath: string): Promise<ProjectOpenDirResult> =>
+    ipcRenderer.invoke(IPC.PROJECT_OPEN_DIR, absPath),
+  exportProjectZipAbs: (absPath: string): Promise<ProjectZipAbsResult> =>
+    ipcRenderer.invoke(IPC.PROJECT_EXPORT_ZIP_ABS, absPath),
 
   // ---------- Ollama 便携运行时 ----------
   getOllamaStatus: (): Promise<OllamaRuntimeStatus> =>

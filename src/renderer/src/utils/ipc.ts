@@ -56,7 +56,12 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   SNAPSHOT_CORRUPT: 'agent.fsWrite.errCorrupt',
   SNAPSHOT_CONSUMED: 'agent.fsWrite.errConsumed',
   SNAPSHOT_DIVERGED: 'agent.fsWrite.errDiverged',
-  CURRENT_NOT_TEXT: 'agent.fsWrite.errNotText'
+  CURRENT_NOT_TEXT: 'agent.fsWrite.errNotText',
+  // 工作目录项目（§B）：绝对路径由主进程重新校验，失败回码在这里换四语
+  PROJECT_TARGET_NO_WORKSPACE: 'agent.project.noWorkspace',
+  PROJECT_OPEN_DIR_DENIED: 'agent.project.openDirDenied',
+  PROJECT_DIR_MISSING: 'agent.project.dirMissing',
+  PROJECT_EXPORT_FAILED: 'agent.project.exportFailed'
 }
 
 /**
