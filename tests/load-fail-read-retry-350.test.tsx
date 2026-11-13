@@ -147,7 +147,7 @@ describe('用量汇总：首读就失败 ⇒ 那颗 `usage-summary-stale-retry` 
   const summary = (requests: number): UsageSummary =>
     ({
       days: 30, totals: { requests, promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 0, cost: 0 },
-      daily: [], byProvider: [], byModel: []
+      daily: [], byProvider: [], byModel: [], sideCalls: []
     }) as unknown as UsageSummary
   const okReads = {
     getUsageConversations: () => [] as UsageConversationItem[],

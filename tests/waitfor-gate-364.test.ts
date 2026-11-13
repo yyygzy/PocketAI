@@ -621,6 +621,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-steward-vacuum-377.test.tsx': 8,
       'tests/renderer-task-last-ok-face-395.test.tsx': 1,
       'tests/renderer-terminal-truncated-hint.test.tsx': 2,
+      // P0-4b：对话区四档提示与自动探测（第二刀）。7 颗都等"结论落进状态后读屏"：
+      // 自动探测一次、已有台账不探测、同模型只探一次（两段等待）、跳过落 user_skipped、手动重测。
+      // 上限＝现数 7，不留余量。
+      'tests/renderer-tool-capability-chat.test.tsx': 7,
       'tests/renderer-unlock-rate-limit.test.tsx': 7,
       'tests/renderer-websearch-b3.test.tsx': 7,
       'tests/renderer-websearch-searxng-407.test.tsx': 17,

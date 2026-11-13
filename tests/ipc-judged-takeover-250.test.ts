@@ -580,7 +580,7 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     }
   })
 
-  it('§271 那四发的形状数得出（跨两屏、四份数据各一句一键、一发失败不许替另一发闭嘴、空态让位、键不多造）', () => {
+  it('§271 那四发（＋P0-4b 工具判定那一发）的形状数得出（跨两屏、五份数据各一句一键、一发失败不许替另一发闭嘴、空态让位、键不多造）', () => {
     const read = (rel: string): string =>
       fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
     const ch = read('src/renderer/src/modules/agent/channels/ChannelsPanel.tsx')
@@ -604,23 +604,26 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     expect(sends(ch, 'listAssistants'), '渠道面板：助手一发').toBe(1)
     expect(sends(ps, 'listProviders'), '设置页：服务商一发').toBe(1)
     expect(sends(ps, 'listDelegateCapabilities'), '设置页：能力判定一发').toBe(1)
+    // P0-4b：工具调用判定是另一个 app_config 键、另一发读，不能拿委派那发顶替
+    expect(sends(ps, 'listToolCapabilities'), '设置页：工具判定一发').toBe(1)
 
     // ② 四句真挂得出去：盯**渲染条件与所点名词成对**（§266 的 Z7 教训——只数文案 token 会放过 `false &&` 那种写法）
     expect(inCh(/\{providersUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.providersList'\)/g), '渠道面板那句服务商').toBe(1)
     expect(inCh(/\{assistantsUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.assistantsList'\)/g), '渠道面板那句助手').toBe(1)
     expect(inPs(/\{providersUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.providersList'\)/g), '设置页那句服务商').toBe(1)
     expect(inPs(/\{capsUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.capabilityVerdicts'\)/g), '设置页那句能力判定').toBe(1)
+    expect(inPs(/\{toolCapsUnread && \(\s*\n\s*<div[\s\S]{0,160}?<LoadFailNotice what=\{t\('common\.toolCapabilityVerdicts'\)/g), '设置页那句工具判定').toBe(1)
 
-    // ③ 一发挂掉不许替另一发闭嘴：四个渲染条件都是自己的 state，没有 `||` 把两发并成一句
+    // ③ 一发挂掉不许替另一发闭嘴：五个渲染条件都是自己的 state，没有 `||` 把几发并成一句
     expect(inCh(/(?:providers|assistants)Unread \|\|/g), '渠道面板：两发各说各的').toBe(0)
-    expect(inPs(/(?:providers|caps)Unread \|\|/g), '设置页：两发各说各的').toBe(0)
+    expect(inPs(/(?:providers|caps|toolCaps)Unread \|\|/g), '设置页：三发各说各的').toBe(0)
 
-    // ④ 四颗键各一颗，且**不多造**（这两屏的出口形状：渠道面板切网关类型不会重拉这两份清单；
+    // ④ 五颗键各一颗，且**不多造**（这两屏的出口形状：渠道面板切网关类型不会重拉这两份清单；
     //    设置页那颗「探测能否派活」是三发真请求、不是重读清单 ⇒ 不能拿它当这一发的出口）
     expect(inCh(/"channels-(?:providers|assistants)-retry"/g), '渠道面板两颗').toBe(2)
-    expect(inPs(/"provider-settings-(?:providers|caps)-retry"/g), '设置页两颗').toBe(2)
+    expect(inPs(/"provider-settings-(?:providers|caps|tool-caps)-retry"/g), '设置页三颗').toBe(3)
     expect(inCh(/agent\.retryRead/g), '渠道面板：一句一颗').toBe(2)
-    expect(inPs(/agent\.retryRead/g), '设置页：一句一颗').toBe(2)
+    expect(inPs(/agent\.retryRead/g), '设置页：一句一颗').toBe(3)
     // 「探测能否派活」长在子组件里，父屏那句吃不到它——这里钉的是"父屏的失败 state 不参与那颗键的渲染条件"
     expect(inPs(/!capsUnread/g), '能力判定读不到时不许把每行那颗探测键一起收掉').toBe(0)
     expect(read('src/renderer/src/modules/settings/DelegateCapabilityBadge.tsx').includes(`t('provider.capProbe')`), '那颗探测键仍在子组件里').toBe(true)
@@ -630,12 +633,16 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     expect(inPs(/\{providers\.length === 0 && !providersUnread && \(\s*\n\s*<p className="text-xs text-\[var\(--color-text-muted\)\]">\{t\('provider\.empty'\)\}/g), '空态让位那处').toBe(1)
     expect(inPs(/\bprovidersUnread\b/g), '服务商那份 state 只出现在：声明／那句的条件／那句的措辞／让位那一处').toBe(4)
     expect(inPs(/\bcapsUnread\b/g), '能力判定那份 state 只出现在：声明／那句的条件／那句的措辞').toBe(3)
+    // P0-4b 那一发同样只许三处（声明／条件／措辞）；它不许借 capsUnread 的出口
+    expect(inPs(/\btoolCapsUnread\b/g), '工具判定那份 state 只出现在：声明／那句的条件／那句的措辞').toBe(3)
 
-    // ⑥ 名词不重复开：三份复用既有 common.*，只新增 common.capabilityVerdicts 一份，四语都要有
+    // ⑥ 名词不重复开：四份复用既有 common.*，只新增 common.capabilityVerdicts 与 common.toolCapabilityVerdicts，四语都要有
     for (const dict of ['zh', 'en', 'ja', 'ko']) {
       const s = read(`src/renderer/src/i18n/${dict}.ts`)
       expect(s.includes(`'common.capabilityVerdicts'`), `${dict} 缺 common.capabilityVerdicts`).toBe(true)
       expect(s.split(`'common.capabilityVerdicts'`).length - 1, `${dict} 里这个键只许出现一次`).toBe(1)
+      expect(s.includes(`'common.toolCapabilityVerdicts'`), `${dict} 缺 common.toolCapabilityVerdicts`).toBe(true)
+      expect(s.split(`'common.toolCapabilityVerdicts'`).length - 1, `${dict} 里这个键只许出现一次`).toBe(1)
       expect(s.includes(`'common.providerList'`), `${dict} 不许为服务商另开一名`).toBe(false)
     }
   })

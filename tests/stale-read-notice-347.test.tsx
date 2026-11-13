@@ -165,7 +165,7 @@ describe('提醒中心：清单已经在屏上、那一发又没读到时，原�
 // ─────────────────────────── 定价表那份模型清单 ───────────────────────────
 const summary = (requests: number): UsageSummary => ({
   days: 30, totals: { requests, promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 0, cost: 0 },
-  daily: [], byProvider: [], byModel: []
+  daily: [], byProvider: [], byModel: [], sideCalls: []
 }) as unknown as UsageSummary
 const pricing = (): UsagePricing => ({ currency: 'CNY', prices: {} }) as unknown as UsagePricing
 const models = (label: string): UsageModelItem[] =>

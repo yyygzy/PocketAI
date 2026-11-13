@@ -258,6 +258,59 @@ describe('队列与判定行', () => {
     // 反向对照：开关与判定是两件事，开着委派也要另给一句"已被点名允许"
     expect(fresh.noteKey).toBe('judgement.note.delegation-on')
   })
+
+  it('工具调用判定：一条都没有也必须画「未检测」（来源档 no-measurement），不许省掉这一行', () => {
+    const r = row(buildLocalJudgementRows(report()), 'tool-capability')
+    expect(r).toBeTruthy()
+    expect(r.valueKey).toBe('provider.toolCapUnknown')
+    expect(r.sourceCode).toBe('no-measurement')
+  })
+
+  it('工具调用判定：四档各出各的话，unknown 不升级成"测得"', () => {
+    const base = { samples: 3, nativeHits: 3, stale: false }
+    const rows = buildLocalJudgementRows(
+      report({
+        toolCapabilities: [
+          { ...base, key: 'p::usable', model: 'usable', tier: 'usable', reason: '' },
+          { ...base, key: 'p::likely', model: 'likely', tier: 'likely_unusable', reason: 'partial_native_calls', nativeHits: 2 },
+          { ...base, key: 'p::known', model: 'known', tier: 'known_unusable', reason: 'tools_rejected', samples: 0, nativeHits: 0 },
+          { ...base, key: 'p::skipped', model: 'skipped', tier: 'unknown', reason: 'user_skipped', samples: 0, nativeHits: 0 }
+        ]
+      })
+    )
+    const mine = rows.filter((r) => r.id.startsWith('tool-capability:'))
+    expect(mine.map((r) => r.valueKey)).toEqual([
+      'provider.toolCapUsable',
+      'provider.toolCapLikely',
+      'provider.toolCapKnown',
+      'provider.toolCapUnknown'
+    ])
+    expect(mine.map((r) => r.sourceCode)).toEqual(['measured', 'measured', 'measured', 'no-measurement'])
+  })
+
+  it('工具调用判定：跳过与过期都降级；过期时附带"建议重测"', () => {
+    const skipped = buildLocalJudgementRows(
+      report({
+        toolCapabilities: [
+          { key: 'p::m', model: 'm', tier: 'unknown', reason: 'user_skipped', samples: 0, nativeHits: 0, stale: false }
+        ]
+      })
+    )
+    const r = row(skipped, 'tool-capability:p::m')
+    expect(r.sourceCode).toBe('no-measurement')
+    expect(r.noteKey).toBe('toolCap.reason.skipped')
+
+    const stale = buildLocalJudgementRows(
+      report({
+        toolCapabilities: [
+          { key: 'p::m', model: 'm', tier: 'usable', reason: '', samples: 3, nativeHits: 3, stale: true }
+        ]
+      })
+    )
+    const s = row(stale, 'tool-capability:p::m')
+    expect(s.sourceCode).toBe('no-measurement')
+    expect(s.noteKey).toBe('judgement.note.stale')
+  })
 })
 
 describe('没有派生数：这块屏上不许出现算术得出的结论', () => {
@@ -269,7 +322,9 @@ describe('没有派生数：这块屏上不许出现算术得出的结论', () =
       'chat-slots',
       'chat-embed-overlap',
       'distinct-roles:不碰知识库的助手',
-      'slot-queue'
+      'slot-queue',
+      // P0-4b：工具调用判定（没有判定时固定画一行「未检测」）——同样只搬台账，不做算术
+      'tool-capability'
     ])
   })
 

@@ -222,7 +222,7 @@ describe('④ 数据健康：点「刷新」后那一发失败 ⇒ 报告画着�
 // ───────────────────────────── ⑤ 用量汇总（切时间窗） ─────────────────────────────
 const summary = (requests: number): UsageSummary => ({
   days: 30, totals: { requests, promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 0, cost: 0 },
-  daily: [], byProvider: [], byModel: []
+  daily: [], byProvider: [], byModel: [], sideCalls: []
 }) as unknown as UsageSummary
 const okReads = {
   getUsageConversations: () => [] as UsageConversationItem[],

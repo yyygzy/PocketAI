@@ -56,6 +56,10 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   if (!state.impls.has('onAgentChunk')) state.impls.set('onAgentChunk', () => () => {})
   if (!state.impls.has('onAgentDone')) state.impls.set('onAgentDone', () => () => {})
   if (!state.impls.has('onAgentError')) state.impls.set('onAgentError', () => () => {})
+  // P0-4b：设置页挂载即读的第二份判定表（和 listDelegateCapabilities 一样是 mount 固定副作用）。
+  // 默认空表：挂 ProviderSettings 的旧用例主体不是工具判定，不该因为多一读就全红；
+  // 专门判这条读的用例必须自己覆盖这个键（覆盖后才验证得到失败面）。
+  if (!state.impls.has('listToolCapabilities')) state.impls.set('listToolCapabilities', () => [])
   const g = globalThis as unknown as { window: { pocketai: unknown } }
   g.window.pocketai = buildStub()
 }

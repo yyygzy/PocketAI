@@ -60,7 +60,7 @@ describe('单价设置那份模型清单：首读就失败 ⇒ 那一格补一�
   const summary = (): UsageSummary =>
     ({
       days: 30, totals: { requests: 3, promptTokens: 10, completionTokens: 5, totalTokens: 15, cachedTokens: 0, cost: 0 },
-      daily: [], byProvider: [], byModel: []
+      daily: [], byProvider: [], byModel: [], sideCalls: []
     }) as unknown as UsageSummary
   const okReads = {
     getUsageSummary: () => summary(),
