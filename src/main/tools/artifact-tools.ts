@@ -69,7 +69,7 @@ const artifactCreateTool: BuiltinTool = {
       '缓存值只覆盖可解析的子集：数字、单元格引用（A1 / $A$1）、区域（A1:B4）、+ - * / 与括号、' +
       'SUM / AVERAGE / MIN / MAX / COUNT；跨表引用（Sheet1!A1）、其它函数（IF / VLOOKUP 等）、' +
       '文本拼接不写缓存值（这些公式在 WPS 里可能先显示空白）。错误按 Excel 语义写入 ' +
-      '#DIV/0!、#VALUE!、#REF!；循环引用的公式不写缓存值。' +
+      '#DIV/0!、#VALUE!、#REF!、#NAME?（越界地址按未定义名称落 #NAME?）；循环引用的公式不写缓存值。' +
       '需要罗列数据时用 table（表头与每行列数必须一致）。',
     parameters: {
       type: 'object',

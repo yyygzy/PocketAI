@@ -150,15 +150,18 @@ function formulaText(raw: string): string {
 //  · 循环引用也不写缓存值：Excel 自己会弹循环引用警告，我们编一个数反而更误导。
 //
 // 错误语义对齐 Excel：
-//  · 除以 0 → #DIV/0!；文本参与四则运算 → #VALUE!；地址超出 Excel 网格 → #REF!；
+//  · 除以 0 → #DIV/0!；文本参与四则运算 → #VALUE!；
+//  · 地址超出 Excel 网格（如 ZZZ9999999、A1048577）→ #NAME?：Excel 只认 A1:XFD1048576，
+//    越界写法不是引用、会被当成未定义的名称；缓存成 #REF! 与 Excel 重算结果不一致；
+//  · 公式里本身带着已失效的引用（`#REF!`，如删掉被引用的行后 Excel 重写出来的）→ #REF!；
 //  · 区域聚合（SUM/AVERAGE/MIN/MAX/COUNT）只统计数字，文本与空格**跳过**（Excel 的区间语义）；
 //  · AVERAGE / MIN / MAX 的区域里一个数字都没有 → #DIV/0!；SUM/COUNT 则为 0。
 const EXCEL_MAX_ROW = 1_048_576
 const EXCEL_MAX_COL = 16_384
 
-type ErrCode = '#DIV/0!' | '#VALUE!' | '#REF!'
+type ErrCode = '#DIV/0!' | '#VALUE!' | '#REF!' | '#NAME?'
 /** SheetJS 写错误格必须给**数值错误码**（写字符串会被写成 `<v>undefined</v>`），读回时 v=码、w=文案 */
-const ERR_CODE: Record<ErrCode, number> = { '#DIV/0!': 0x07, '#VALUE!': 0x0f, '#REF!': 0x17 }
+const ERR_CODE: Record<ErrCode, number> = { '#DIV/0!': 0x07, '#VALUE!': 0x0f, '#REF!': 0x17, '#NAME?': 0x1d }
 type PVal =
   | { k: 'n'; n: number }
   | { k: 'e'; e: ErrCode }
@@ -195,6 +198,9 @@ class SheetEvaluator {
 
   /** 顶层：解析并求值；解析不了/循环引用 → skip（调用方据此不写缓存值） */
   evaluate(formula: string): PVal {
+    // 公式里带着已失效的引用（Excel 删掉被引用的行列后会把那一段重写成 `#REF!`）：
+    // 错误会沿运算传播，整格就是 #REF!，与 Excel 重算一致
+    if (/#REF!/i.test(formula)) return { k: 'e', e: '#REF!' }
     const p = new FormulaParser(formula, this)
     const v = p.parse()
     // 顶层只缓存数字与错误：文本结果（=A1 指向文本格）与整体区域（=A1:B2）都不缓存
@@ -202,7 +208,7 @@ class SheetEvaluator {
   }
 
   cell(r: number, c: number): PVal {
-    if (r < 0 || c < 0 || r >= EXCEL_MAX_ROW || c >= EXCEL_MAX_COL) return { k: 'e', e: '#REF!' }
+    if (r < 0 || c < 0 || r >= EXCEL_MAX_ROW || c >= EXCEL_MAX_COL) return { k: 'e', e: '#NAME?' }
     const key = `${r}:${c}`
     const hit = this.memo.get(key)
     if (hit) return hit
@@ -230,7 +236,7 @@ class SheetEvaluator {
     const out: PVal[] = []
     for (let r = Math.min(r1, r2); r <= Math.max(r1, r2); r++) {
       for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++) {
-        if (r >= EXCEL_MAX_ROW || c >= EXCEL_MAX_COL) return { k: 'e', e: '#REF!' }
+        if (r >= EXCEL_MAX_ROW || c >= EXCEL_MAX_COL) return { k: 'e', e: '#NAME?' }
         const raw = this.grid[r]?.[c]
         if (raw === OUT_OF_RANGE) return { k: 'e', e: '#REF!' }
         if (raw === undefined) continue
@@ -368,11 +374,11 @@ class FormulaParser {
     return SKIP
   }
 
-  /** 引用解析：去掉 `$`，返回零基坐标；地址越出 Excel 网格 → #REF! */
+  /** 引用解析：去掉 `$`，返回零基坐标；地址越出 Excel 网格 → #NAME?（越界写法是未定义名称，不是引用） */
   private cellRef(letters: string, digits: string): { k: 'ref'; r: number; c: number } | { k: 'e'; e: ErrCode } {
     const r = Number(digits) - 1
     const c = colIndex(letters)
-    if (c < 0 || c >= EXCEL_MAX_COL || r < 0 || r >= EXCEL_MAX_ROW) return { k: 'e', e: '#REF!' }
+    if (c < 0 || c >= EXCEL_MAX_COL || r < 0 || r >= EXCEL_MAX_ROW) return { k: 'e', e: '#NAME?' }
     return { k: 'ref', r, c }
   }
 
