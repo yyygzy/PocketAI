@@ -42,6 +42,23 @@ export function splitCitationText(value: string): CitationPart[] | null {
   return parts
 }
 
+/**
+ * 收集正文里真正会渲染成引用徽章的编号（去重、升序）。
+ * 与插件口径一致：代码块/行内代码不是 text 节点，链接与图片的方括号也不算引用。
+ * 仅用于展示「引用覆盖率」，不参与渲染。
+ */
+export function collectCitationRefs(markdown: string): number[] {
+  const withoutCode = markdown
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`\n]*`/g, '')
+    .replace(/!?\[[^\]\n]*\]\([^)\n]*\)/g, '')
+  const seen = new Set<number>()
+  const re = new RegExp(CITATION_RE.source, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(withoutCode))) seen.add(Number(m[1]))
+  return [...seen].sort((a, b) => a - b)
+}
+
 export function remarkCitations() {
   return (tree: Root): void => {
     visit(tree, 'text', (node, index, parent) => {

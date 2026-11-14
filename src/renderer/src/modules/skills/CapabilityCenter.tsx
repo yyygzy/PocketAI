@@ -491,6 +491,8 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       const r = await window.pocketai.importSkillFromUrl(s.url, s.hash)
       if (r.ok && r.skill) {
         await refreshSkills()
+        // 安装完成即进已装技能详情：绑定区就在同一屏，不再让用户自己回头找
+        setView({ kind: 'installedSkill', id: r.skill.id })
         toast.success(t('skill.market.importDone'))
         showScanReport(r.skill.name, r.scan)
       } else {
@@ -509,6 +511,8 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
     const r = await window.pocketai.importSkillFromUrl(url)
     if (r.ok && r.skill) {
       await refreshSkills()
+      // 与在线列表安装同一落点：进详情，绑定区就地可用
+      setView({ kind: 'installedSkill', id: r.skill.id })
       toast.success(t('skill.market.importDone'))
       setUrlInput('')
       showScanReport(r.skill.name, r.scan)

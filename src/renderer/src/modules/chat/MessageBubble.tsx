@@ -7,6 +7,7 @@ import { requestSourceJump } from '../knowledge/source-jump'
 import { AttachmentGrid } from '../../components/AttachmentGrid'
 import { ReminderMenu } from '../../components/ReminderMenu'
 import { Markdown } from './Markdown'
+import { collectCitationRefs } from './remark-citations'
 import { fmtTokens, fmtCost } from '../../utils/token'
 import { formatDateTime } from '../../utils/time'
 import { writeClipboard } from '../../utils/clipboard'
@@ -113,6 +114,22 @@ const MessageBubbleImpl: React.FC<Props> = ({
 }) => {
   const { t, lang } = useI18n()
   const isUser = role === 'user'
+  // P1-2 引用覆盖率：分母只用「本轮检索达标条数」；
+  // 混入网页来源时两边不是同一口径，宁可不显示也不给假比例。
+  const citationCoverage = (() => {
+    if (isUser || !sources || sources.length === 0) return null
+    // retrieval 存在时只信它的事实：未检索/失败/达标 0 条都不算覆盖率
+    if (retrieval && (!retrieval.searched || retrieval.failed)) return null
+    if (sources.some((s) => s.kind === 'web')) return null
+    // 旧消息没有 retrieval 字段时回退到已列来源数（即当时注入的达标条数）
+    const total = retrieval && retrieval.hits > 0 ? retrieval.hits : sources.length
+    const cited = collectCitationRefs(content).filter((n) => n <= sources.length).length
+    return {
+      cited,
+      total,
+      percent: Math.min(100, Math.round((cited / total) * 100))
+    }
+  })()
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(content)
@@ -363,6 +380,18 @@ const MessageBubbleImpl: React.FC<Props> = ({
               <span>{showSources ? '▼' : '▶'}</span>
               <span>{t('chatview.sources', { count: sources.length })}</span>
             </button>
+            {citationCoverage && (
+              <div
+                className="mt-1 text-[11px] text-[var(--color-text-muted)]"
+                title={t('chatview.citationCoverageNote')}
+              >
+                {t('chatview.citationCoverage', {
+                  percent: citationCoverage.percent,
+                  cited: citationCoverage.cited,
+                  total: citationCoverage.total
+                })}
+              </div>
+            )}
             {showSources && (
               <div className="mt-1.5 flex flex-col gap-1.5">
                 {sources.map((s, i) => (
