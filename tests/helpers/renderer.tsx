@@ -115,7 +115,6 @@ export function agentToolsStub(over: Partial<AgentToolConfigs> = {}): AgentToolC
     retryWorkspace: () => { /* 同上 */ },
     patchShellConfig: async () => { /* 同上 */ },
     patchWsConfig: async () => { /* 同上 */ },
-    secretDialog: null,
     patchCalConfig: async () => { /* 同上 */ },
     addIcs: async () => { /* 同上 */ },
     ...over

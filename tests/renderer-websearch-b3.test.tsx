@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
-// 联网搜索 Key 的 B3 确认（与渠道同一口径：不拦写入，但新值要承认）
+// 联网搜索 Key 在 none 模式下的写入闸（SEC-1：与渠道同一口径，主进程硬拒）
 //
-// 这一条测的是**挂接**：确认弹层由 useAgentToolConfigs 持有、由 AgentToolBars 渲染，
-// 少渲染一个 {secretDialog} 就会变成「点了没反应」的死锁——纯函数用例测不出来。
-// 所以这里挂真 hook + 真组件，只桩 IPC。
+// 这一条测的是**挂接**：拦截发生在 useAgentToolConfigs 里、由 AgentToolBars 显示 toast，
+// 只测纯函数测不出「输入框还在，用户能不能看到原因」。所以挂真 hook + 真组件，只桩 IPC。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
@@ -11,8 +10,8 @@ import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { AgentToolBars } from '../src/renderer/src/modules/chat/AgentToolBars'
 import { useAgentToolConfigs } from '../src/renderer/src/modules/chat/useAgentToolConfigs'
 
-const WARN =
-  '当前未设置主密码：这条凭据只会用源码中公开的固定密钥做本地混淆，拿到本机数据目录的人可以还原。确认仍要保存？'
+const BLOCKED =
+  '未设置主密码，这条凭据不会被保存。请先在「设置 → 数据与安全」中设置主密码后重试；已有凭据仍可读取或删除。'
 
 const setWebSearchConfig = vi.fn()
 
@@ -59,35 +58,22 @@ beforeEach(() => {
   setWebSearchConfig.mockClear()
 })
 
-describe('联网搜索 Key 的 B3 承认', () => {
-  it('none 模式：确认前不落库，点确认后写入一次', async () => {
+describe('联网搜索 Key 在 none 模式下不落库', () => {
+  it('none 模式：不发 IPC，给出指路文案', async () => {
     mount('none')
     fireEvent.change(keyInput(), { target: { value: 'tvly-new-key' } })
     fireEvent.keyDown(keyInput(), { key: 'Enter' })
-    await waitFor(() => expect(screen.queryByText(WARN)).toBeTruthy())
-    expect(setWebSearchConfig).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('button', { name: '确认' }))
-    await waitFor(() => expect(setWebSearchConfig).toHaveBeenCalledTimes(1))
-    expect(setWebSearchConfig.mock.calls[0]?.[0]).toEqual({ apiKey: 'tvly-new-key' })
-  })
-
-  it('none 模式点取消：不写入', async () => {
-    mount('none')
-    fireEvent.change(keyInput(), { target: { value: 'tvly-cancel-me' } })
-    fireEvent.keyDown(keyInput(), { key: 'Enter' })
-    await waitFor(() => expect(screen.queryByText(WARN)).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    await waitFor(() => expect(screen.queryByText(WARN)).toBeNull())
+    await waitFor(() => expect(screen.queryByText(BLOCKED)).toBeTruthy())
     expect(setWebSearchConfig).not.toHaveBeenCalled()
   })
 
-  it('db 模式不多弹一次', async () => {
+  it('db 模式照常保存，不出现拦截文案', async () => {
     mount('db')
     fireEvent.change(keyInput(), { target: { value: 'tvly-fine' } })
     fireEvent.keyDown(keyInput(), { key: 'Enter' })
     await waitFor(() => expect(setWebSearchConfig).toHaveBeenCalledTimes(1))
-    expect(screen.queryByText(WARN)).toBeNull()
+    expect(setWebSearchConfig.mock.calls[0]?.[0]).toEqual({ apiKey: 'tvly-fine' })
+    expect(screen.queryByText(BLOCKED)).toBeNull()
   })
 })
 
