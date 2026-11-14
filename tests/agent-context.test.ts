@@ -298,6 +298,22 @@ describe('injectAttachments', () => {
     injectAttachments(messages, undefined)
     expect(messages[0]!.content).toBe('原样')
   })
+
+  // 真实顺序：chat-service 先用 buildContext（按 DB 里的 attachments）还原成 multimodal，
+  // 再对最后一条 user 消息调 injectAttachments(payload.attachments)。旧实现第二次重建时
+  // 把数组 content 当"非字符串"，text part 变成空串——带图片时用户的文字提示被静默丢掉。
+  it('已是 multimodal 的消息二次注入不再清空文字', () => {
+    const atts: ChatAttachment[] = [
+      { type: 'text', name: 'a.txt', data: '附件内容', mimeType: 'text/plain', size: 12 },
+      { type: 'image', name: 'p.png', data: 'data:image/png;base64,xxx', mimeType: 'image/png', size: 100 }
+    ]
+    const already = buildImageParts(appendTextAttachments('请描述这张截图', [atts[0]!]), [atts[1]!])
+    const messages: AdapterChatMessage[] = [{ role: 'user', content: already }]
+    injectAttachments(messages, atts)
+    const parts = messages[0]!.content as Array<{ type: string; text?: string }>
+    expect(parts[0]).toEqual({ type: 'text', text: '请描述这张截图\n\n--- a.txt ---\n附件内容' })
+    expect(parts.filter((p) => p.type === 'image_url')).toHaveLength(1)
+  })
 })
 
 describe('appendTextAttachments — 文本附件拼接（收口层）', () => {

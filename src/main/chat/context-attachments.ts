@@ -33,6 +33,10 @@ export function injectAttachments(messages: AdapterChatMessage[], attachments?: 
     const m = messages[i]
     if (!m) continue
     if (m.role === 'user') {
+      // 已经是 multimodal（buildContext 已按 DB 里的 attachments 还原过）：不能再重建。
+      // 否则下面把数组当"非字符串"处理，text part 会被换成空串——用户写在附件旁的问题
+      // 就此丢失。粘贴 / 拖拽 / 截图三条来路都走同一段逻辑。
+      if (Array.isArray(m.content)) break
       const textContent = typeof m.content === 'string' ? m.content as string : ''
       const textAttachments = attachments.filter(a => a.type === 'text')
       const imageAttachments = attachments.filter(a => a.type === 'image')
