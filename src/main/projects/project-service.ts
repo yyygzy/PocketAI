@@ -465,24 +465,42 @@ function allocateZipName(base: string): string {
   return candidate
 }
 
+/** 关掉写流并等到句柄真的释放：Windows 上句柄还开着时删文件只会「删名挂起」，目录里仍能看到那条残留 */
+function closeZipOutput(output: fs.WriteStream): Promise<void> {
+  if (output.closed) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    output.once('close', () => resolve())
+    output.destroy()
+    // destroy 之后再判一次：句柄可能已同步释放（close 事件不会再发）
+    if (output.closed) resolve()
+  })
+}
+
 /** 目录 → zip 文件（archiver 流式写入；调用方负责临时文件与 rename） */
 async function writeZipArchive(dirAbs: string, baseName: string, outAbs: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const output = fs.createWriteStream(outAbs)
-    const createArchive = (
-      archiverModule as unknown as {
-        create: (format: 'zip', options?: { zlib?: { level?: number } }) => Archiver
-      }
-    ).create
-    if (!createArchive) throw new Error('archiver 不可用')
-    const archive = createArchive('zip', { zlib: { level: 9 } })
-    output.on('close', resolve)
-    output.on('error', reject)
-    archive.on('error', reject)
-    archive.pipe(output)
-    archive.directory(dirAbs, baseName)
-    void archive.finalize().catch(reject)
-  })
+  const output = fs.createWriteStream(outAbs)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const createArchive = (
+        archiverModule as unknown as {
+          create: (format: 'zip', options?: { zlib?: { level?: number } }) => Archiver
+        }
+      ).create
+      if (!createArchive) throw new Error('archiver 不可用')
+      const archive = createArchive('zip', { zlib: { level: 9 } })
+      output.on('close', resolve)
+      output.on('error', reject)
+      archive.on('error', reject)
+      archive.pipe(output)
+      archive.directory(dirAbs, baseName)
+      void archive.finalize().catch(reject)
+    })
+  } catch (e) {
+    // 打包失败时 archiver 已停笔，但 output 流仍攥着文件句柄；
+    // 不先关掉就删临时文件，NTFS 上是删名挂起——用户能在目录里看到一条打不开、删不掉的 `.pocketai-tmp`
+    await closeZipOutput(output)
+    throw e
+  }
 }
 
 /**
