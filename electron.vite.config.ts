@@ -65,9 +65,26 @@ export default defineConfig({
     build: {
       outDir: 'out/renderer',
       rollupOptions: {
+        // 默认只保留被图内引用的 entry 导出；语言 entry 是给运行时 URL import 用的，必须强制保留导出
+        preserveEntrySignatures: 'strict',
         input: {
           index: path.resolve(__dirname, 'src/renderer/index.html'),
-          unlock: path.resolve(__dirname, 'src/renderer/unlock.html')
+          unlock: path.resolve(__dirname, 'src/renderer/unlock.html'),
+          // 语言字典作为独立 entry 产出：运行时要按固定文件名重新 import（带 ?retry=N），
+          // 不能靠静态 import 的 hash 文件名。三者都是纯字典模块，作为 entry 无副作用。
+          'locale-en': path.resolve(__dirname, 'src/renderer/src/i18n/en.ts'),
+          'locale-ja': path.resolve(__dirname, 'src/renderer/src/i18n/ja.ts'),
+          'locale-ko': path.resolve(__dirname, 'src/renderer/src/i18n/ko.ts')
+        },
+        output: {
+          // 语言 chunk 固定文件名，与 index/unlock bundle 同目录，运行时可稳定推出 URL；
+          // 应用走 file://，不需要 hash 做缓存击穿。
+          entryFileNames: (chunk) => {
+            const id = (chunk.facadeModuleId ?? '').replace(/\\/g, '/')
+            const m = id.match(/\/i18n\/(en|ja|ko)\.ts$/)
+            if (m) return `assets/locale-${m[1]}.js`
+            return 'assets/[name]-[hash].js'
+          }
         }
       }
     },

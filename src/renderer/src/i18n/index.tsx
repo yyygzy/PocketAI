@@ -1,6 +1,7 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { zh } from './zh'
 import { logIpcError } from '../utils/ipc'
+import { buildLocaleChunkUrl, importLocaleChunk, type LazyLang } from './chunk-loader'
 
 export type Lang = 'zh' | 'en' | 'ja' | 'ko'
 
@@ -18,21 +19,22 @@ const STORAGE_KEY = 'pocketai.lang'
 type Dict = Record<string, string>
 const dicts: Partial<Record<Lang, Dict>> = { zh }
 
-const langLoaders: Record<Exclude<Lang, 'zh'>, () => Promise<Dict>> = {
-  en: () => import('./en').then((m) => m.en),
-  ja: () => import('./ja').then((m) => m.ja),
-  ko: () => import('./ko').then((m) => m.ko)
+// 每个语言记录已尝试次数：失败后递增，URL 随之变化，绕开浏览器 module map 对失败 URL 的缓存。
+const langLoadAttempts: Record<LazyLang, number> = { en: 0, ja: 0, ko: 0 }
+const langLoaders: Record<LazyLang, () => Promise<Dict>> = {
+  en: () => importLocaleChunk(buildLocaleChunkUrl('en', langLoadAttempts.en++)).then((m) => m.en as Dict),
+  ja: () => importLocaleChunk(buildLocaleChunkUrl('ja', langLoadAttempts.ja++)).then((m) => m.ja as Dict),
+  ko: () => importLocaleChunk(buildLocaleChunkUrl('ko', langLoadAttempts.ko++)).then((m) => m.ko as Dict)
 }
-const langPromises: Partial<Record<Exclude<Lang, 'zh'>, Promise<Dict>>> = {}
-function ensureLang(lang: Exclude<Lang, 'zh'>): Promise<Dict> {
+const langPromises: Partial<Record<LazyLang, Promise<Dict>>> = {}
+function ensureLang(lang: LazyLang): Promise<Dict> {
   langPromises[lang] ??= langLoaders[lang]().then(
     (dict) => {
       dicts[lang] = dict
       return dict
     },
     (e: unknown) => {
-      // 失败不能留在缓存里：否则一次 chunk 读取失败会把 rejected promise 钉死到本次会话结束，
-      // 之后所有 ensureLang 都拿到同一个拒绝，语言永远停在 zh 兜底，只能重启窗口。清掉才能重试。
+      // 失败不能留在缓存里：清掉 promise 才能让下一次调用真正发起新 URL 的加载。
       delete langPromises[lang]
       throw e
     }
@@ -90,6 +92,9 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [lang, setLangState] = useState<Lang>(readInitialLang)
   // 懒加载字典到位后要有一次渲染，否则界面会停在 zh 兜底直到下一次无关重渲染
   const [dictVersion, setDictVersion] = useState(0)
+  // setLang 是稳定引用，用 ref 读取当前语言，判断是否为「同语言重试」
+  const langRef = useRef<Lang>(lang)
+  langRef.current = lang
 
   // 初始语言为非 zh 时按需补载对应字典（加载完成前 t() 回退 zh）
   useEffect(() => {
@@ -112,7 +117,17 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [lang])
 
   const setLang = useCallback((next: Lang) => {
-    if (next !== 'zh' && !dicts[next]) void ensureLang(next)
+    if (next !== 'zh' && !dicts[next]) {
+      const pending = ensureLang(next)
+      // 同语言重试时 lang 不变、effect 不会重跑：自己补一次渲染与日志，
+      // 保证换 URL 后加载成功能立刻显示；同时绝不让拒绝逃逸成 unhandledrejection。
+      if (next === langRef.current) {
+        pending.then(
+          () => setDictVersion((n) => n + 1),
+          (e: unknown) => logIpcError('i18n.ensureLang', e)
+        )
+      }
+    }
     setLangState(next)
     try {
       localStorage.setItem(STORAGE_KEY, next)
