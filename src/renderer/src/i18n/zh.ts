@@ -1588,6 +1588,7 @@ export const zh = {
   'popup.capture.err.noWindow': '没有找到可截取的窗口（桌面或已最小化的窗口无法截取）',
   'popup.capture.err.permission': '系统拒绝了屏幕捕获权限',
   'popup.capture.err.empty': '截取到的画面为空',
+  'popup.capture.err.black': '截取到的画面是全黑（窗口可能受保护、被遮挡或尚未渲染）',
   'popup.capture.err.tooLarge': '截图超过 10MB，无法作为附件发送',
   'popup.capture.err.failed': '截图过程出错，请重试',
   'popup.editAccel': '修改',

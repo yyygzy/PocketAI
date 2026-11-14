@@ -61,6 +61,8 @@ const captureErrorText = (t: Translate, code: ScreenshotFailCode): string => {
       return t('popup.capture.err.permission')
     case 'empty':
       return t('popup.capture.err.empty')
+    case 'black':
+      return t('popup.capture.err.black')
     case 'too-large':
       return t('popup.capture.err.tooLarge')
     case 'failed':

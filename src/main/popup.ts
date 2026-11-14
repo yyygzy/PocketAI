@@ -29,7 +29,7 @@ import { denyNewWindows } from './net/external-links'
 import { errMsg } from './error'
 import { createLogger } from './logger'
 import { safeHandle, argsSchema, z } from './ipc/safe-handle'
-import { captureScreenshot } from './screenshot'
+import { captureScreenshot, popupHwndString } from './screenshot'
 
 const log = createLogger('popup')
 
@@ -336,8 +336,8 @@ function hidePopup(): void {
 }
 
 // ─── 截图进对话（P1-4 第一刀：Windows） ─────────────────────────────
-// 捕获总是先隐藏浮窗：快捷键从别的应用按下时浮窗本就不可见；从浮窗内 📷 入口触发时
-// 必须先让前台回到被截的应用，否则会把浮窗自己截进去。
+// 捕获总是先隐藏浮窗，避免把浮窗自己截进去；真机实测隐藏后 Windows 不会改派前台，
+// 所以目标窗口由捕获脚本按浮窗句柄做命中测试确定（见 screenshot.ts popupHwndString）。
 // 失败不吞：带失败原因码重新打开浮窗，由渲染层显示可读文案。
 
 let screenshotBusy = false
@@ -352,10 +352,10 @@ export function triggerScreenshot(target: ScreenshotTarget): void {
   if (screenshotBusy) return
   if (lockService.getStatus().state === 'locked') return
   screenshotBusy = true
-  const wasVisible = !!popupWin && !popupWin.isDestroyed() && popupWin.isVisible()
+  // 句柄必须在 hide() 之前取：隐藏后句柄仍有效，但此处语义更直白（"隐藏的是这个窗口"）
+  const popupHwnd = popupHwndString(popupWin)
   hidePopup()
-  void sleep(wasVisible ? 200 : 80)
-    .then(() => captureScreenshot(target))
+  void captureScreenshot(target, { popupHwnd })
     .then(reopenWithCapture)
     .catch((e) => {
       log.error('截图入口失败:', errMsg(e))
@@ -395,7 +395,7 @@ export function initPopup(): void {
   safeHandle(IPC.POPUP_GET_PAYLOAD, () => lastPayload)
   safeHandle(IPC.POPUP_GET_CONFIG, () => getPopupConfig())
 
-  // 浮窗内 📷 入口：先藏浮窗让前台回到被截应用，抓完再显示回来并回传结果。
+  // 浮窗内 📷 入口：先藏浮窗（避免把自己截进去），抓完再显示回来并回传结果。
   // 附件由渲染层加进既有附件栏；失败原因码同样原样回传，由浮窗上屏。
   safeHandle(
     IPC.SCREENSHOT_CAPTURE,
@@ -403,10 +403,10 @@ export function initPopup(): void {
       if (lockService.getStatus().state === 'locked') return { ok: false, code: 'locked' }
       if (screenshotBusy) return { ok: false, code: 'failed', detail: 'capture busy' }
       screenshotBusy = true
+      const popupHwnd = popupHwndString(popupWin)
       try {
         hidePopup()
-        await sleep(200)
-        const result = await captureScreenshot(target)
+        const result = await captureScreenshot(target, { popupHwnd })
         if (popupWin && !popupWin.isDestroyed()) {
           popupWin.show()
           popupWin.focus()

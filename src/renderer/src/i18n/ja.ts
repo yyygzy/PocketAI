@@ -1532,6 +1532,7 @@ export const ja = {
   'popup.capture.err.noWindow': '撮影できるウィンドウがありません（デスクトップや最小化されたウィンドウは撮影できません）',
   'popup.capture.err.permission': '画面キャプチャの権限が拒否されました',
   'popup.capture.err.empty': '撮影した画像が空でした',
+  'popup.capture.err.black': '撮影した画面が真っ黒です（ウィンドウが保護されているか、隠れているか、まだ描画されていません）',
   'popup.capture.err.tooLarge': 'スクリーンショットが 10MB を超えるため添付できません',
   'popup.capture.err.failed': '撮影中にエラーが発生しました。もう一度お試しください',
   'popup.editAccel': '変更',

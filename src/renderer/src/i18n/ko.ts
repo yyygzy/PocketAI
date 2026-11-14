@@ -1532,6 +1532,7 @@ export const ko = {
   'popup.capture.err.noWindow': '캡처할 창이 없습니다(바탕 화면이나 최소화된 창은 캡처할 수 없습니다)',
   'popup.capture.err.permission': '화면 캡처 권한이 거부되었습니다',
   'popup.capture.err.empty': '캡처된 화면이 비어 있습니다',
+  'popup.capture.err.black': '캡처된 화면이 완전히 검은색입니다(창이 보호되었거나 가려졌거나 아직 렌더링되지 않았을 수 있습니다)',
   'popup.capture.err.tooLarge': '스크린샷이 10MB를 넘어 첨부할 수 없습니다',
   'popup.capture.err.failed': '캡처 중 오류가 발생했습니다. 다시 시도해 주세요',
   'popup.editAccel': '변경',

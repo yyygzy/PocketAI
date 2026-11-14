@@ -1587,6 +1587,7 @@ export const en = {
   'popup.capture.err.noWindow': 'No window to capture (desktop or minimized windows cannot be captured)',
   'popup.capture.err.permission': 'Screen capture permission was denied',
   'popup.capture.err.empty': 'The captured image was empty',
+  'popup.capture.err.black': 'The captured image is completely black (the window may be protected, covered, or not rendered yet)',
   'popup.capture.err.tooLarge': 'The screenshot exceeds 10MB and cannot be sent as an attachment',
   'popup.capture.err.failed': 'Something went wrong while capturing; please try again',
   'popup.editAccel': 'Change',

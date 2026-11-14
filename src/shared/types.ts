@@ -1950,6 +1950,7 @@ export type ScreenshotFailCode =
   | 'no-window' // 没有可捕获的前台窗口（桌面/任务栏/已最小化）
   | 'permission' // 系统拒绝屏幕捕获
   | 'empty' // 捕获成功但画面为空
+  | 'black' // 捕获到全黑帧（隐藏/受保护/未渲染的窗口）
   | 'too-large' // 超过附件 10MB 上限
   | 'failed' // 其它异常（已记日志）
 
