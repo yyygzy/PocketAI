@@ -12,12 +12,24 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { IPC } from '../shared/types'
-import type { PopupConfig, PopupPayload, PopupSetConfigResult, SelectionAction } from '../shared/types'
+import type {
+  ChatAttachment,
+  PopupConfig,
+  PopupPayload,
+  PopupSetConfigResult,
+  ScreenshotCaptureResult,
+  ScreenshotFailCode,
+  ScreenshotTarget,
+  SelectionAction
+} from '../shared/types'
+import { isScreenshotPlatformSupported } from '../shared/screenshot'
+import { popupAccelConflict } from '../shared/popup-config'
 import { lockService } from './lock/lock'
 import { denyNewWindows } from './net/external-links'
 import { errMsg } from './error'
 import { createLogger } from './logger'
 import { safeHandle, argsSchema, z } from './ipc/safe-handle'
+import { captureScreenshot } from './screenshot'
 
 const log = createLogger('popup')
 
@@ -26,10 +38,14 @@ const WIN_H = 600
 
 const DEFAULT_QUICK_ACCEL = 'CommandOrControl+Shift+Space'
 const DEFAULT_SELECT_ACCEL = 'CommandOrControl+Shift+U'
+// P1-4 截图进对话：避开 Ctrl+Shift+S（其它程序常作"另存为"）与仓库内另两个默认键
+const DEFAULT_SHOT_ACCEL = 'CommandOrControl+Alt+S'
 const CFG_QUICK = 'popup.quick_enabled'
 const CFG_SELECTION = 'popup.selection_enabled'
+const CFG_SHOT = 'popup.screenshot_enabled'
 const CFG_QUICK_ACCEL = 'popup.quick_accel'
 const CFG_SELECT_ACCEL = 'popup.selection_accel'
+const CFG_SHOT_ACCEL = 'popup.screenshot_accel'
 
 let popupWin: BrowserWindow | null = null
 let lastPayload: PopupPayload | null = null
@@ -50,11 +66,16 @@ function readAccelerator(key: string, fallback: string): string {
 }
 
 export function getPopupConfig(): PopupConfig {
+  const screenshotSupported = isScreenshotPlatformSupported(process.platform)
   return {
     quickEnabled: readEnabled(CFG_QUICK),
     selectionEnabled: readEnabled(CFG_SELECTION),
+    // 非 Windows 上不假装支持：开关保持关闭，避免占着全局键却截不了图
+    screenshotEnabled: screenshotSupported && readEnabled(CFG_SHOT),
     quickAccelerator: readAccelerator(CFG_QUICK_ACCEL, DEFAULT_QUICK_ACCEL),
-    selectionAccelerator: readAccelerator(CFG_SELECT_ACCEL, DEFAULT_SELECT_ACCEL)
+    selectionAccelerator: readAccelerator(CFG_SELECT_ACCEL, DEFAULT_SELECT_ACCEL),
+    screenshotAccelerator: readAccelerator(CFG_SHOT_ACCEL, DEFAULT_SHOT_ACCEL),
+    screenshotSupported
   }
 }
 
@@ -88,6 +109,14 @@ function registerWith(cfg: PopupConfig): string | null {
       return cfg.selectionAccelerator
     }
     registeredAccels.push(cfg.selectionAccelerator)
+  }
+  if (cfg.screenshotEnabled && cfg.screenshotSupported) {
+    const ok = globalShortcut.register(cfg.screenshotAccelerator, () => triggerScreenshot('window'))
+    if (!ok) {
+      log.warn('截图快捷键注册失败（可能被其他程序占用）:', cfg.screenshotAccelerator)
+      return cfg.screenshotAccelerator
+    }
+    registeredAccels.push(cfg.screenshotAccelerator)
   }
   return null
 }
@@ -265,15 +294,29 @@ function createPopupWindow(payload: PopupPayload): BrowserWindow {
 /** 选区文本上限（应用内划词与模拟复制取词同一口径，防灌爆浮窗） */
 const MAX_SELECTION_TEXT = 8000
 
+/** 截图入口附加在 payload 上的内容（图片先上屏、可删，或失败原因） */
+interface PopupPayloadExtra {
+  screenshot?: ChatAttachment
+  screenshotError?: ScreenshotFailCode
+}
+
 /** 唯一入口：幂等打开/聚焦浮窗；锁屏状态下拒绝唤起，返回 null */
 export function openPopup(
   mode: 'quick' | 'selection',
   text?: string,
-  action?: SelectionAction
+  action?: SelectionAction,
+  extra?: PopupPayloadExtra
 ): BrowserWindow | null {
   // 浮窗会展示会话/选区文本，锁屏时唤起会绕过主窗口锁屏遮罩
   if (lockService.getStatus().state === 'locked') return null
-  lastPayload = { mode, text, action: mode === 'selection' ? action : undefined, ts: Date.now() }
+  lastPayload = {
+    mode,
+    text,
+    action: mode === 'selection' ? action : undefined,
+    screenshot: extra?.screenshot,
+    screenshotError: extra?.screenshotError,
+    ts: Date.now()
+  }
   if (popupWin && !popupWin.isDestroyed()) {
     popupWin.setBounds(positionFor(mode))
     if (!popupWin.isVisible()) popupWin.show()
@@ -290,6 +333,37 @@ export function openPopup(
 
 function hidePopup(): void {
   if (popupWin && !popupWin.isDestroyed()) popupWin.hide()
+}
+
+// ─── 截图进对话（P1-4 第一刀：Windows） ─────────────────────────────
+// 捕获总是先隐藏浮窗：快捷键从别的应用按下时浮窗本就不可见；从浮窗内 📷 入口触发时
+// 必须先让前台回到被截的应用，否则会把浮窗自己截进去。
+// 失败不吞：带失败原因码重新打开浮窗，由渲染层显示可读文案。
+
+let screenshotBusy = false
+
+function reopenWithCapture(result: ScreenshotCaptureResult): void {
+  if (result.ok) openPopup('quick', undefined, undefined, { screenshot: result.attachment })
+  else openPopup('quick', undefined, undefined, { screenshotError: result.code })
+}
+
+/** 全局快捷键入口：截当前活动窗口 */
+export function triggerScreenshot(target: ScreenshotTarget): void {
+  if (screenshotBusy) return
+  if (lockService.getStatus().state === 'locked') return
+  screenshotBusy = true
+  const wasVisible = !!popupWin && !popupWin.isDestroyed() && popupWin.isVisible()
+  hidePopup()
+  void sleep(wasVisible ? 200 : 80)
+    .then(() => captureScreenshot(target))
+    .then(reopenWithCapture)
+    .catch((e) => {
+      log.error('截图入口失败:', errMsg(e))
+      openPopup('quick', undefined, undefined, { screenshotError: 'failed' })
+    })
+    .finally(() => {
+      screenshotBusy = false
+    })
 }
 
 // ─── 初始化（boot 阶段 DB/IPC 就绪后调用一次） ──────────────────────
@@ -320,10 +394,36 @@ export function initPopup(): void {
   )
   safeHandle(IPC.POPUP_GET_PAYLOAD, () => lastPayload)
   safeHandle(IPC.POPUP_GET_CONFIG, () => getPopupConfig())
+
+  // 浮窗内 📷 入口：先藏浮窗让前台回到被截应用，抓完再显示回来并回传结果。
+  // 附件由渲染层加进既有附件栏；失败原因码同样原样回传，由浮窗上屏。
+  safeHandle(
+    IPC.SCREENSHOT_CAPTURE,
+    async (_e, target: ScreenshotTarget): Promise<ScreenshotCaptureResult> => {
+      if (lockService.getStatus().state === 'locked') return { ok: false, code: 'locked' }
+      if (screenshotBusy) return { ok: false, code: 'failed', detail: 'capture busy' }
+      screenshotBusy = true
+      try {
+        hidePopup()
+        await sleep(200)
+        const result = await captureScreenshot(target)
+        if (popupWin && !popupWin.isDestroyed()) {
+          popupWin.show()
+          popupWin.focus()
+        }
+        return result
+      } finally {
+        screenshotBusy = false
+      }
+    },
+    argsSchema(z.enum(['window', 'screen']))
+  )
+
   safeHandle(
     IPC.POPUP_SET_CONFIG,
     (_e, patch: Partial<PopupConfig>): PopupSetConfigResult => {
       const current = getPopupConfig()
+      const screenshotSupported = isScreenshotPlatformSupported(process.platform)
       const nextQuick =
         typeof patch.quickAccelerator === 'string'
           ? patch.quickAccelerator.trim()
@@ -332,6 +432,10 @@ export function initPopup(): void {
         typeof patch.selectionAccelerator === 'string'
           ? patch.selectionAccelerator.trim()
           : current.selectionAccelerator
+      const nextShot =
+        typeof patch.screenshotAccelerator === 'string'
+          ? patch.screenshotAccelerator.trim()
+          : current.screenshotAccelerator
       const next: PopupConfig = {
         quickEnabled:
           typeof patch.quickEnabled === 'boolean' ? patch.quickEnabled : current.quickEnabled,
@@ -339,17 +443,20 @@ export function initPopup(): void {
           typeof patch.selectionEnabled === 'boolean'
             ? patch.selectionEnabled
             : current.selectionEnabled,
+        // 非 Windows 上即使旧配置写着开启，也不注册、不参与冲突判定
+        screenshotEnabled:
+          screenshotSupported &&
+          (typeof patch.screenshotEnabled === 'boolean'
+            ? patch.screenshotEnabled
+            : current.screenshotEnabled),
         quickAccelerator: nextQuick,
-        selectionAccelerator: nextSelect
+        selectionAccelerator: nextSelect,
+        screenshotAccelerator: nextShot,
+        screenshotSupported
       }
 
-      // 两个快捷键不能相同（都启用时才会真正冲突）
-      if (
-        next.quickEnabled &&
-        next.selectionEnabled &&
-        nextQuick &&
-        nextQuick === nextSelect
-      ) {
+      // 已启用的入口之间不能共用快捷键（否则后注册的会顶掉前一个）
+      if (popupAccelConflict(next)) {
         return { ok: false, error: 'same', config: current }
       }
 
@@ -365,13 +472,17 @@ export function initPopup(): void {
       appConfigRepo.set(CFG_SELECTION, next.selectionEnabled ? '1' : '0')
       appConfigRepo.set(CFG_QUICK_ACCEL, nextQuick)
       appConfigRepo.set(CFG_SELECT_ACCEL, nextSelect)
+      appConfigRepo.set(CFG_SHOT, next.screenshotEnabled ? '1' : '0')
+      appConfigRepo.set(CFG_SHOT_ACCEL, nextShot)
       return { ok: true, config: getPopupConfig() }
     },
     argsSchema(z.object({
       quickEnabled: z.boolean().optional(),
       selectionEnabled: z.boolean().optional(),
+      screenshotEnabled: z.boolean().optional(),
       quickAccelerator: z.string().optional(),
-      selectionAccelerator: z.string().optional()
+      selectionAccelerator: z.string().optional(),
+      screenshotAccelerator: z.string().optional()
     }))
   )
 

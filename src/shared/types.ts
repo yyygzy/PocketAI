@@ -1900,19 +1900,63 @@ export type PopupMode = 'quick' | 'selection'
 /** 选区助手动作（浮条按钮与浮窗动作芯片共用） */
 export type SelectionAction = 'translate' | 'summary' | 'polish' | 'ask'
 
+/**
+ * 截图入口的目标（P1-4 第一刀）：
+ * window=当前活动窗口（默认），screen=鼠标所在显示器的整屏。
+ * 区域框选与 macOS 捕获不在本刀，等后续批次。
+ */
+export type ScreenshotTarget = 'window' | 'screen'
+
+/** 截图失败原因码（上屏文案按静态四语键映射，码本身不直接给用户看） */
+export type ScreenshotFailCode =
+  | 'unsupported-platform' // 本刀只做 Windows
+  | 'locked' // 锁屏期间拒绝捕获
+  | 'no-window' // 没有可捕获的前台窗口（桌面/任务栏/已最小化）
+  | 'permission' // 系统拒绝屏幕捕获
+  | 'empty' // 捕获成功但画面为空
+  | 'too-large' // 超过附件 10MB 上限
+  | 'failed' // 其它异常（已记日志）
+
+export interface ScreenshotCaptureSuccess {
+  ok: true
+  target: ScreenshotTarget
+  /** 已按附件链路规整好的图片附件（data URL），可直接进浮窗附件栏 */
+  attachment: ChatAttachment
+  width: number
+  height: number
+}
+
+export interface ScreenshotCaptureFailure {
+  ok: false
+  code: ScreenshotFailCode
+  /** 仅排障用；不直接上屏 */
+  detail?: string
+}
+
+export type ScreenshotCaptureResult = ScreenshotCaptureSuccess | ScreenshotCaptureFailure
+
 export interface PopupPayload {
   mode: PopupMode
   text?: string // selection 模式下取到的选中文本
   /** selection 模式下入口指定的动作；存在时浮窗就绪后自动执行（应用内划词浮条带此参） */
   action?: SelectionAction
+  /** P1-4：截图入口带进来的待发图片（先在附件栏可见、可删，再由用户发送） */
+  screenshot?: ChatAttachment
+  /** P1-4：截图失败原因（浮窗上屏，不静默） */
+  screenshotError?: ScreenshotFailCode
   ts: number
 }
 
 export interface PopupConfig {
   quickEnabled: boolean
   selectionEnabled: boolean
+  /** 截图进对话（P1-4 第一刀：仅 Windows） */
+  screenshotEnabled: boolean
   quickAccelerator: string // Electron accelerator 字符串（可在设置中自定义）
   selectionAccelerator: string
+  screenshotAccelerator: string
+  /** 当前平台是否支持截图（只读派生值；setConfig 不接受它） */
+  screenshotSupported: boolean
 }
 
 /** 设置浮窗配置（含自定义快捷键）的返回结果；error 为机器可读错误码 */
@@ -3104,6 +3148,8 @@ export const IPC = {
   POPUP_GET_CONFIG: 'popup:get-config',
   POPUP_SET_CONFIG: 'popup:set-config',
   POPUP_PAYLOAD_EVENT: 'popup:payload-event',
+  /** P1-4：浮窗内 📷 入口发起截图（当前窗口 / 整屏） */
+  SCREENSHOT_CAPTURE: 'screenshot:capture',
 
   // ---------- 界面偏好 ----------
   UI_GET_PREFS: 'ui:get-prefs',

@@ -1100,6 +1100,11 @@ const api = {
     patch: Partial<import('../shared/types').PopupConfig>
   ): Promise<import('../shared/types').PopupSetConfigResult> =>
     ipcRenderer.invoke(IPC.POPUP_SET_CONFIG, patch),
+  /** P1-4：浮窗内 📷 入口（当前窗口 / 整屏）；结果含待发附件或可读失败码 */
+  captureScreenshot: (
+    target: import('../shared/types').ScreenshotTarget
+  ): Promise<import('../shared/types').ScreenshotCaptureResult> =>
+    ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE, target),
 
   // ---------- 界面偏好 ----------
   getUiPrefs: (): Promise<{ ok: boolean; data?: UiPreferences; error?: string }> =>

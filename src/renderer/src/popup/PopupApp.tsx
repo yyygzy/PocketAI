@@ -12,7 +12,15 @@ import { LoadFailNotice } from '../components/LoadFailNotice'
 import { errText } from '../utils/error'
 import { useCopyFeedback } from '../hooks/useCopyFeedback'
 import { readFileAsAttachment, MAX_ATTACHMENTS, ATTACHMENT_ACCEPT } from '../components/agent/agent-shared'
-import type { AssistantRecord, ChatAttachment, PopupPayload, ProviderRecord, SelectionAction } from '../../../shared/types'
+import type {
+  AssistantRecord,
+  ChatAttachment,
+  PopupPayload,
+  ProviderRecord,
+  ScreenshotFailCode,
+  ScreenshotTarget,
+  SelectionAction
+} from '../../../shared/types'
 import {
   SELECTION_ACTIONS,
   composeSelectionPrompt
@@ -36,6 +44,29 @@ const pickChatModel = (models: string[]): string => {
   if (saved && models.includes(saved) && !EMBED_MODEL_RE.test(saved)) return saved
   const chat = models.find((m) => !EMBED_MODEL_RE.test(m))
   return chat ?? models[0] ?? ''
+}
+
+type Translate = ReturnType<typeof useI18n>['t']
+
+/** 截图失败原因 → 静态四语键（码不直接上屏；不拼动态 key） */
+const captureErrorText = (t: Translate, code: ScreenshotFailCode): string => {
+  switch (code) {
+    case 'unsupported-platform':
+      return t('popup.capture.err.unsupportedPlatform')
+    case 'locked':
+      return t('popup.capture.err.locked')
+    case 'no-window':
+      return t('popup.capture.err.noWindow')
+    case 'permission':
+      return t('popup.capture.err.permission')
+    case 'empty':
+      return t('popup.capture.err.empty')
+    case 'too-large':
+      return t('popup.capture.err.tooLarge')
+    case 'failed':
+    default:
+      return t('popup.capture.err.failed')
+  }
 }
 
 export const PopupApp: React.FC = () => {
@@ -66,6 +97,15 @@ export const PopupApp: React.FC = () => {
   const [streaming, setStreaming] = useState(false)
   /** 待发附件（发送成功后清空；随消息一起持久化） */
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  /** P1-4：截图失败原因（常驻到下一次截图/新载荷，不静默） */
+  const [captureError, setCaptureError] = useState<ScreenshotFailCode | null>(null)
+  /** P1-4：附件栏已满导致截图没放进去时给一句可见提示 */
+  const [captureFull, setCaptureFull] = useState(false)
+  /** P1-4：📷 双目标菜单展开态 */
+  const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
+  const [capturing, setCapturing] = useState(false)
+  /** applyPayload 的依赖是 []（避免重复拉载荷），附件数量用 ref 读最新值 */
+  const attachmentsRef = useRef<ChatAttachment[]>([])
   /** 拖拽进窗悬停计数（子元素 dragenter/leave 成对，计数器防闪烁） */
   const [dragOver, setDragOver] = useState(false)
   const dragCounterRef = useRef(0)
@@ -99,6 +139,18 @@ export const PopupApp: React.FC = () => {
     setMode(p.mode)
     setSelection(p.mode === 'selection' ? p.text ?? '' : '')
     pendingActionRef.current = p.mode === 'selection' && p.action && SELECTION_ACTIONS.includes(p.action) ? p.action : null
+    // P1-4：截图入口带来的图片进既有附件栏（可见、可删、随下次发送走原链路）；
+    // 失败原因同样由新载荷定义，普通快捷问答载荷会把它收掉
+    setCaptureError(p.screenshotError ?? null)
+    if (p.screenshot) {
+      const shot = p.screenshot
+      if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
+        setCaptureFull(true)
+      } else {
+        setCaptureFull(false)
+        setAttachments((prev) => [...prev, shot])
+      }
+    }
     if (p.mode === 'quick') {
       if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
       focusTimerRef.current = setTimeout(() => { taRef.current?.focus() }, 50)
@@ -259,6 +311,11 @@ export const PopupApp: React.FC = () => {
   }, [providerId, fetchingModels])
 
   // ─── 附件（粘贴 / 拖拽 / 文件选择三入口，规则与主窗 Composer 一致） ─────
+  // 附件数量给截图入口读（applyPayload / 📷 都是 [] 依赖的回调，不能闭包捕获 state）
+  useEffect(() => {
+    attachmentsRef.current = attachments
+  }, [attachments])
+
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files)
     if (list.length === 0) return
@@ -317,6 +374,38 @@ export const PopupApp: React.FC = () => {
   const removeAttachment = (idx: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== idx))
   }
+
+  /**
+   * P1-4：浮窗内 📷 入口。主进程会先隐藏浮窗、抓完再显示回来，
+   * 所以这里 await 到的结果可以直接进附件栏；失败按原因码上屏。
+   */
+  const captureFromPopup = useCallback(async (target: ScreenshotTarget) => {
+    setCaptureMenuOpen(false)
+    if (capturing) return
+    if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
+      setCaptureFull(true)
+      return
+    }
+    setCapturing(true)
+    try {
+      const r = await window.pocketai.captureScreenshot(target)
+      if (!r.ok) {
+        // safeHandle 的 `{ok:false,error}` 没有 code，与捕获原因分开：没有 code 就是通道级失败
+        const fail = r as { ok: false; code?: ScreenshotFailCode }
+        if (!fail.code) logIpcError('popup.captureScreenshot', r)
+        setCaptureError(fail.code ?? 'failed')
+        return
+      }
+      setCaptureError(null)
+      setCaptureFull(false)
+      setAttachments((prev) => (prev.length >= MAX_ATTACHMENTS ? prev : [...prev, r.attachment]))
+    } catch (e: unknown) {
+      setCaptureError('failed')
+      logIpcError('popup.captureScreenshot', e)
+    } finally {
+      setCapturing(false)
+    }
+  }, [capturing])
 
   // ─── 发送 ─────────────────────────────────────────────────────────
   const send = useCallback(
@@ -555,6 +644,22 @@ export const PopupApp: React.FC = () => {
           </div>
         )}
 
+        {/* P1-4：截图失败原因（含平台不支持/无窗口/权限/空图/超限），不静默 */}
+        {captureError && (
+          <div
+            role="alert"
+            data-testid="popup-capture-error"
+            className="px-3 pb-2 shrink-0 text-xs text-[var(--color-danger)]"
+          >
+            {t('popup.captureFailed', { reason: captureErrorText(t, captureError) })}
+          </div>
+        )}
+        {captureFull && (
+          <div data-testid="popup-capture-full" className="px-3 pb-2 shrink-0 text-xs text-[var(--color-danger)]">
+            {t('popup.attachLimit', { n: MAX_ATTACHMENTS })}
+          </div>
+        )}
+
         {/* 模型选择行 */}
         <div
           className="flex items-center gap-1.5 px-3 pb-2 shrink-0"
@@ -691,6 +796,43 @@ export const PopupApp: React.FC = () => {
               e.target.value = ''
             }}
           />
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              data-testid="popup-capture"
+              className="btn-ghost text-xs !px-1.5"
+              title={t('popup.capture')}
+              aria-expanded={captureMenuOpen}
+              disabled={capturing}
+              onClick={() => setCaptureMenuOpen((v) => !v)}
+            >
+              {capturing ? '⏳' : '📷'}
+            </button>
+            {captureMenuOpen && (
+              <>
+                {/* 点空白收起（浮窗失焦会整体隐藏，这里只处理窗内误触） */}
+                <div className="fixed inset-0 z-30" onClick={() => setCaptureMenuOpen(false)} />
+                <div className="absolute bottom-full left-0 mb-1 z-40 w-36 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1">
+                  <button
+                    type="button"
+                    data-testid="popup-capture-window"
+                    className="btn-ghost w-full !justify-start text-xs"
+                    onClick={() => void captureFromPopup('window')}
+                  >
+                    {t('popup.captureWindow')}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="popup-capture-screen"
+                    className="btn-ghost w-full !justify-start text-xs"
+                    onClick={() => void captureFromPopup('screen')}
+                  >
+                    {t('popup.captureScreen')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             type="button"
             className="btn-ghost text-xs shrink-0 !px-1.5"

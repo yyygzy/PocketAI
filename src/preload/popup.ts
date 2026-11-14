@@ -16,6 +16,8 @@ import type {
   ConversationRecord,
   PopupPayload,
   ProviderRecord,
+  ScreenshotCaptureResult,
+  ScreenshotTarget,
   SendMessagePayload,
   UiPreferences
 } from '../shared/types'
@@ -36,6 +38,7 @@ type PopupApiShape = Pick<
   | 'sendMessage'
   | 'abortChat'
   | 'hidePopup'
+  | 'captureScreenshot'
 >
 
 const api: PopupApiShape = {
@@ -88,7 +91,10 @@ const api: PopupApiShape = {
     const listener = (_e: IpcRendererEvent, data: PopupPayload) => handler(data)
     ipcRenderer.on(IPC.POPUP_PAYLOAD_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.POPUP_PAYLOAD_EVENT, listener)
-  }
+  },
+  // P1-4：截图由主进程捕获（先隐藏浮窗再抓），这里只发起与拿结果
+  captureScreenshot: (target: ScreenshotTarget): Promise<ScreenshotCaptureResult> =>
+    ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE, target)
 }
 
 contextBridge.exposeInMainWorld('pocketai', api)

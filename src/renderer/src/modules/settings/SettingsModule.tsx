@@ -2220,7 +2220,7 @@ export const PopupPanel: React.FC = () => {
   //（§196 那一族），而且这时候拨一颗开关就会把整份配置按默认值写回去
   const [cfgErr, setCfgErr] = useState<string | null>(null)
   // 正在捕获哪一个快捷键；candidate 为已捕获到的组合
-  const [capturing, setCapturing] = useState<'quick' | 'selection' | null>(null)
+  const [capturing, setCapturing] = useState<'quick' | 'selection' | 'screenshot' | null>(null)
   const [candidate, setCandidate] = useState('')
   const [captureErr, setCaptureErr] = useState('')
   const [saveErr, setSaveErr] = useState('')
@@ -2268,7 +2268,7 @@ export const PopupPanel: React.FC = () => {
     return t('common.unknownError')
   }
 
-  const toggle = async (key: 'quickEnabled' | 'selectionEnabled') => {
+  const toggle = async (key: 'quickEnabled' | 'selectionEnabled' | 'screenshotEnabled') => {
     const prev = cfg
     setCfg({ ...cfg, [key]: !cfg[key] }) // 乐观更新
     const r = await window.pocketai.setPopupConfig({ [key]: !cfg[key] })
@@ -2280,7 +2280,7 @@ export const PopupPanel: React.FC = () => {
     }
   }
 
-  const startCapture = (which: 'quick' | 'selection') => {
+  const startCapture = (which: 'quick' | 'selection' | 'screenshot') => {
     setCapturing(which)
     setCandidate('')
     setCaptureErr('')
@@ -2307,7 +2307,11 @@ export const PopupPanel: React.FC = () => {
   const confirmCapture = async () => {
     if (!capturing || !candidate) return
     const patch =
-      capturing === 'quick' ? { quickAccelerator: candidate } : { selectionAccelerator: candidate }
+      capturing === 'quick'
+        ? { quickAccelerator: candidate }
+        : capturing === 'selection'
+          ? { selectionAccelerator: candidate }
+          : { screenshotAccelerator: candidate }
     const r = await window.pocketai.setPopupConfig(patch)
     if (r.ok && r.config) {
       setCfg(r.config)
@@ -2319,12 +2323,15 @@ export const PopupPanel: React.FC = () => {
   }
 
   const rows: Array<{
-    which: 'quick' | 'selection'
-    key: 'quickEnabled' | 'selectionEnabled'
+    which: 'quick' | 'selection' | 'screenshot'
+    key: 'quickEnabled' | 'selectionEnabled' | 'screenshotEnabled'
     title: string
     hint: string
     accel: string
     platformNote?: string
+    noteTestId?: string
+    /** 当前平台不支持时整行禁用（开关与改键都不给假出口） */
+    disabled?: boolean
   }> = [
     {
       which: 'quick',
@@ -2341,7 +2348,19 @@ export const PopupPanel: React.FC = () => {
       accel: cfg.selectionAccelerator,
       // §415：Linux 上这条路本来就取不到系统选中文本（主进程只写了 win32/darwin），
       // 开关照常能用、按下只会打开快捷问答窗——这件事原先只存在于 popup.ts 的一行注释里。
-      platformNote: isLinuxPlatform() ? t('popup.selectionLinuxHint') : undefined
+      platformNote: isLinuxPlatform() ? t('popup.selectionLinuxHint') : undefined,
+      noteTestId: 'set-popup-linux-hint'
+    },
+    {
+      which: 'screenshot',
+      key: 'screenshotEnabled',
+      title: t('popup.screenshotTitle'),
+      hint: t('popup.screenshotHint'),
+      accel: cfg.screenshotAccelerator,
+      // P1-4 第一刀只做了 Windows 捕获：macOS/Linux 上不注册快捷键，界面如实说明
+      platformNote: cfg.screenshotSupported ? undefined : t('popup.screenshotPlatformNote'),
+      noteTestId: 'set-popup-screenshot-platform-hint',
+      disabled: !cfg.screenshotSupported
     }
   ]
 
@@ -2354,7 +2373,7 @@ export const PopupPanel: React.FC = () => {
               <div className="text-[var(--color-text)]">{r.title}</div>
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{r.hint}</div>
               {r.platformNote && (
-                <div className="text-[11px] text-[var(--color-warning)] leading-relaxed mt-1" data-testid="set-popup-linux-hint">
+                <div className="text-[11px] text-[var(--color-warning)] leading-relaxed mt-1" data-testid={r.noteTestId ?? 'set-popup-linux-hint'}>
                   ⚠️ {r.platformNote}
                 </div>
               )}
@@ -2362,8 +2381,9 @@ export const PopupPanel: React.FC = () => {
             <button
               role="switch"
               aria-checked={cfg[r.key]}
+              disabled={r.disabled}
               onClick={() => toggle(r.key)}
-              className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${
+              className={`relative shrink-0 w-9 h-5 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                 cfg[r.key] ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
               }`}
             >
@@ -2413,7 +2433,8 @@ export const PopupPanel: React.FC = () => {
                 </span>
                 <button
                   onClick={() => startCapture(r.which)}
-                  className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-2"
+                  disabled={r.disabled}
+                  className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
                 >
                   {t('popup.editAccel')}
                 </button>
