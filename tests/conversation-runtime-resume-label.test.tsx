@@ -54,7 +54,7 @@ beforeEach(() => {
 })
 
 describe('v66 中断判定上屏', () => {
-  it('可继续 ⇒ 明说「可继续」，不说「需重新开始」', async () => {
+  it('resumable ⇒ 只说「需重新开始」，不再承诺「可继续」（续跑未实现）', async () => {
     seed('resumable')
     mount()
     await waitFor(() =>
@@ -62,6 +62,9 @@ describe('v66 中断判定上屏', () => {
         L('chat.runtime.interruptedResumable')
       )
     )
+    // P1-3 止血：没有续跑入口，文案不许写成"可继续"
+    expect(L('chat.runtime.interruptedResumable')).toContain('重新开始')
+    expect(L('chat.runtime.interruptedResumable')).not.toContain('可继续')
     expect(screen.queryByText(L('chat.runtime.interruptedRestart'))).toBeNull()
   })
 
