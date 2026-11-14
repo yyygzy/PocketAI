@@ -4,8 +4,13 @@
 // - 内置公钥（public-key.ts）mock 为测试时动态生成的 RSA 公钥，私钥仅存在于本测试中；
 //   LicenseService.generateLicense 用该私钥签发，loadFromString 走完整真实验签链路。
 // - getDiskFingerprint mock 成可控值，用于验证「同盘通过 / 异盘拒绝」。
+// - §更新期：v2 件带 updates_until 参与签名；历史件缺失时回退 expires_at（不追溯收紧）。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { generateKeyPairSync } from 'node:crypto'
+import { createRequire } from 'node:module'
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() },
@@ -42,6 +47,7 @@ import {
 } from '../src/main/license/license'
 import * as keyModule from '../src/main/license/public-key'
 import { getDiskFingerprint } from '../src/main/steward/hardware'
+import { readUpdatesWatermark } from '../src/main/license/updates-watermark'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const privPem = (keyModule as any).__TEST_PRIVATE_KEY_PEM as string
@@ -67,6 +73,10 @@ function basePayload(over: Partial<LicensePayload> = {}): LicensePayload {
     disk_fingerprint: '',
     ...over
   }
+}
+
+function v2Payload(over: Partial<LicensePayload> = {}): LicensePayload {
+  return basePayload({ version: 2, updates_until: Date.now() + 60 * 86_400_000, ...over })
 }
 
 const sign = (p: LicensePayload): string => LicenseService.generateLicense(privPem, p)
@@ -248,5 +258,333 @@ describe('功能门控与 Lite 限制', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// §更新期：使用截止 / 更新截止双字段拆分（A 口径：停更不停用）
+describe('更新期拆分（停更不停用）', () => {
+  beforeEach(() => {
+    fpMock.mockReturnValue('aaaabbbbccccdddd')
+  })
+  afterEach(() => {
+    licenseService.clear()
+    vi.useRealTimers()
+  })
+
+  it('v2 件：updates_until 参与验签并透出到状态', () => {
+    const updatesUntil = Date.now() + 30 * 86_400_000
+    const st = new LicenseService().loadFromString(sign(v2Payload({ updates_until: updatesUntil })))
+    expect(st.valid).toBe(true)
+    expect(st.updatesUntil).toBe(updatesUntil)
+    expect(st.updatesExpired).toBe(false)
+  })
+
+  it('篡改 updates_until → 签名校验失败（无法自行延长更新期）', () => {
+    const lic = JSON.parse(sign(v2Payload())) as LicensePayload & { signature: string }
+    lic.updates_until = Date.now() + 10 * 365 * 86_400_000
+    const st = new LicenseService().loadFromString(JSON.stringify(lic))
+    expect(st.valid).toBe(false)
+    expect(st.signatureOk).toBe(false)
+  })
+
+  it('从 v2 件删除 updates_until → 签名校验失败（不能静默回退成按使用截止更新）', () => {
+    const lic = JSON.parse(sign(v2Payload())) as LicensePayload & { signature: string }
+    delete lic.updates_until
+    const st = new LicenseService().loadFromString(JSON.stringify(lic))
+    expect(st.valid).toBe(false)
+    expect(st.signatureOk).toBe(false)
+  })
+
+  it('历史件缺失 updates_until → 回退 expires_at（老用户升级后行为不变）', () => {
+    const st = new LicenseService().loadFromString(sign(basePayload()))
+    expect(st.valid).toBe(true)
+    expect(st.payload?.updates_until).toBeUndefined()
+    expect(st.updatesUntil).toBe(st.payload?.expires_at)
+    expect(st.updatesExpired).toBe(false)
+  })
+
+  it('更新期已过但使用期有效 → 仍 valid 且继续解除数量限制（只停更）', () => {
+    licenseService.loadFromString(
+      sign(v2Payload({ expires_at: Date.now() + 300 * 86_400_000, updates_until: Date.now() - 1000 }))
+    )
+    const st = licenseService.getStatus()
+    expect(st.valid).toBe(true)
+    expect(st.updatesExpired).toBe(true)
+    expect(licenseService.hasFeature('mcp')).toBe(true)
+    expect(() => assertCanCreateAssistant(999)).not.toThrow()
+    expect(() => assertCanCreateKb(999)).not.toThrow()
+  })
+
+  it('无许可证 → updatesExpired=false（免费版照常获取更新）', () => {
+    const st = new LicenseService().getStatus()
+    expect(st.valid).toBe(false)
+    expect(st.updatesExpired).toBe(false)
+    expect(st.updatesUntil).toBeUndefined()
+  })
+
+  it('运行时跨过更新截止 → updatesExpired 当场翻转，授权仍然有效', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-02T23:00:00Z'))
+    const svc = new LicenseService()
+    svc.loadFromString(
+      sign(v2Payload({
+        expires_at: Date.parse('2027-11-02T00:00:00Z'),
+        updates_until: Date.parse('2026-11-03T00:00:00Z')
+      }))
+    )
+    expect(svc.getStatus().updatesExpired).toBe(false)
+    vi.setSystemTime(new Date('2026-11-03T01:00:00Z'))
+    const st = svc.getStatus()
+    expect(st.valid).toBe(true)
+    expect(st.expired).toBe(false)
+    expect(st.updatesExpired).toBe(true)
+  })
+
+  it('重启语义：已过期许可证再次 getStatus 仍带 payload 且 expired=true（不再显示为未激活）', () => {
+    const svc = new LicenseService()
+    svc.loadFromString(sign(basePayload({ expires_at: Date.now() - 1000 })))
+    const st = svc.getStatus()
+    expect(st.valid).toBe(false)
+    expect(st.expired).toBe(true)
+    expect(st.payload?.license_id).toBe('LIC-TEST-0001')
+    expect(st.updatesExpired).toBe(true)
+    // 再查一次仍保持（不因首次查询丢失展示信息）
+    expect(svc.getStatus().payload).toBeDefined()
+    expect(svc.hasFeature('mcp')).toBe(false)
+  })
+
+  it('updates_until 类型非法 → 拒绝且提示字段无效', () => {
+    const lic = JSON.parse(sign(v2Payload())) as Record<string, unknown> & { signature: string }
+    lic.updates_until = 'forever'
+    const st = new LicenseService().loadFromString(JSON.stringify(lic))
+    expect(st.valid).toBe(false)
+    expect(st.error).toContain('updates_until')
+  })
+})
+
+// §更新期高水位：本机记录曾经获得过的最晚更新期，清除许可证/文件丢失/重装后仍受限
+describe('更新期高水位（本机记录）', () => {
+  let dir = ''
+  let wmPath = ''
+  const day = 86_400_000
+  const future = (days: number) => Date.now() + days * day
+
+  beforeEach(() => {
+    fpMock.mockReturnValue('aaaabbbbccccdddd')
+    dir = mkdtempSync(join(tmpdir(), 'pocketai-wm-'))
+    wmPath = join(dir, 'license-updates.json')
+  })
+  afterEach(() => {
+    licenseService.clear()
+    vi.useRealTimers()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('老用户升级：加载有效许可证时用其更新期初始化水位', () => {
+    const svc = new LicenseService(wmPath)
+    const until = future(30)
+    svc.loadFromString(sign(v2Payload({ expires_at: future(365), updates_until: until })))
+    expect(readUpdatesWatermark(wmPath)).toBe(until)
+  })
+
+  it('历史 v1 件：按运行时兜底的使用截止初始化水位', () => {
+    const svc = new LicenseService(wmPath)
+    const exp = future(365)
+    svc.loadFromString(sign(basePayload({ expires_at: exp })))
+    expect(readUpdatesWatermark(wmPath)).toBe(exp)
+  })
+
+  it('清除许可证后仍受限：更新期已过则继续拦更新，且许可证本身不再有效', () => {
+    const svc = new LicenseService(wmPath)
+    const ended = Date.now() - 1000 // 使用期还有效，但更新期已过
+    svc.loadFromString(sign(v2Payload({ expires_at: future(365), updates_until: ended })))
+    expect(svc.getStatus().updatesExpired).toBe(true)
+
+    svc.clear()
+    const st = svc.getStatus()
+    expect(st.valid).toBe(false)
+    expect(st.payload).toBeUndefined()
+    expect(st.updatesUntil).toBe(ended)
+    expect(st.updatesExpired).toBe(true)
+    // 清除许可证不清理本机记录
+    expect(readUpdatesWatermark(wmPath)).toBe(ended)
+  })
+
+  it('重装/无许可证文件：新实例只凭本机水位仍受限', () => {
+    const ended = Date.now() - 1000
+    new LicenseService(wmPath).loadFromString(
+      sign(v2Payload({ expires_at: future(365), updates_until: ended }))
+    )
+
+    // 模拟重启/重装后只有数据目录、没有 license.lic
+    const restarted = new LicenseService(wmPath)
+    const st = restarted.getStatus()
+    expect(st.valid).toBe(false)
+    expect(st.updatesUntil).toBe(ended)
+    expect(st.updatesExpired).toBe(true)
+  })
+
+  it('未来的水位同样保留：重启后即使没有许可证也不回到免费更新态', () => {
+    const until = future(90)
+    new LicenseService(wmPath).loadFromString(
+      sign(v2Payload({ expires_at: future(365), updates_until: until }))
+    )
+
+    const st = new LicenseService(wmPath).getStatus()
+    expect(st.valid).toBe(false)
+    expect(st.updatesUntil).toBe(until)
+    expect(st.updatesExpired).toBe(false)
+  })
+
+  it('许可证更新期更晚 → 抬高；换成更早的许可证 → 不回落', () => {
+    const svc = new LicenseService(wmPath)
+    const early = future(10)
+    const late = future(90)
+
+    svc.loadFromString(sign(v2Payload({ expires_at: future(365), updates_until: early })))
+    expect(svc.getStatus().updatesUntil).toBe(early)
+
+    svc.loadFromString(sign(v2Payload({ expires_at: future(365), updates_until: late })))
+    expect(svc.getStatus().updatesUntil).toBe(late)
+    expect(readUpdatesWatermark(wmPath)).toBe(late)
+
+    svc.loadFromString(sign(v2Payload({ expires_at: future(365), updates_until: early })))
+    expect(svc.getStatus().updatesUntil).toBe(late)
+    expect(readUpdatesWatermark(wmPath)).toBe(late)
+  })
+
+  it('设备绑定不匹配的许可证不抬高本机水位（别台机器的更新期不算数）', () => {
+    fpMock.mockReturnValue('eeeeffff00001111')
+    const svc = new LicenseService(wmPath)
+    svc.loadFromString(
+      sign(v2Payload({
+        disk_fingerprint: '1111222233334444',
+        expires_at: future(365),
+        updates_until: future(90)
+      }))
+    )
+    expect(svc.getStatus().valid).toBe(false)
+    expect(existsSync(wmPath)).toBe(false)
+    // 换一个新实例（无许可证）验证：本机水位确实没被别台机器的许可证抬高
+    expect(new LicenseService(wmPath).getStatus().updatesUntil).toBeUndefined()
+  })
+
+  it('无许可证的免费用户：不写记录、不改变免费更新行为', () => {
+    const svc = new LicenseService(wmPath)
+    const st = svc.getStatus()
+    expect(st.updatesUntil).toBeUndefined()
+    expect(st.updatesExpired).toBe(false)
+    expect(existsSync(wmPath)).toBe(false)
+  })
+
+  it('坏值容错：类型错误 / 负数 / 超大值 / Infinity / JSON 损坏都不永久放行或永久卡住', () => {
+    const until = future(30)
+    const badContents = [
+      '{"updates_until":"forever"}',
+      '{"updates_until":-1}',
+      '{"updates_until":9000000000000000}', // 约公元 287396 年
+      '{"updates_until":1e999}', // JSON.parse → Infinity
+      '{ this is not json'
+    ]
+    for (const content of badContents) {
+      writeFileSync(wmPath, content, 'utf8')
+      expect(readUpdatesWatermark(wmPath)).toBeNull()
+
+      const svc = new LicenseService(wmPath)
+      svc.loadFromString(sign(v2Payload({ expires_at: future(365), updates_until: until })))
+      // 坏记录被忽略并按许可证值重写，不会永久拦住更新
+      expect(svc.getStatus().updatesUntil).toBe(until)
+      expect(readUpdatesWatermark(wmPath)).toBe(until)
+    }
+  })
+
+  it('时钟回拨：水位是绝对时间戳，回拨不改小、前进按真实时间生效', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-02T00:00:00Z'))
+    const until = Date.parse('2027-01-01T00:00:00Z')
+    const svc = new LicenseService(wmPath)
+    svc.loadFromString(
+      sign(v2Payload({
+        expires_at: Date.parse('2028-01-01T00:00:00Z'),
+        updates_until: until
+      }))
+    )
+    expect(svc.getStatus().updatesExpired).toBe(false)
+
+    // 回拨到许可证签发之前：水位与判定都按绝对时间走，不被本地时钟改写
+    vi.setSystemTime(new Date('2025-01-01T00:00:00Z'))
+    expect(readUpdatesWatermark(wmPath)).toBe(until)
+    expect(svc.getStatus().updatesUntil).toBe(until)
+    expect(svc.getStatus().updatesExpired).toBe(false)
+
+    // 时钟前进到更新截止之后：正常翻转为已结束
+    vi.setSystemTime(new Date('2027-02-01T00:00:00Z'))
+    expect(svc.getStatus().updatesExpired).toBe(true)
+  })
+})
+
+// 发行侧脚本与 App 侧规范化必须一致：脚本签出的 v2 件要能被 App 验签
+describe('签发脚本与 App 验签一致', () => {
+  const requireScript = createRequire(import.meta.url)
+  const ISSUE = requireScript('../scripts/lib/issue-license.js') as {
+    issueLicense: (o: Record<string, unknown>) => {
+      licenseJson: string
+      updatesUntil: number | undefined
+      expiresAt: number
+      payload: LicensePayload
+    }
+  }
+
+  let dir = ''
+  let keyPath = ''
+  beforeEach(() => {
+    fpMock.mockReturnValue('aaaabbbbccccdddd')
+    dir = mkdtempSync(join(tmpdir(), 'pocketai-lic-'))
+    keyPath = join(dir, 'key.pem')
+    writeFileSync(keyPath, privPem, 'utf8')
+  })
+  afterEach(() => {
+    licenseService.clear()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('默认签发 v1：不写 updates_until，App 验签通过且更新期回退使用截止', () => {
+    const r = ISSUE.issueLicense({ owner: 'script-tester', plan: 'pro', days: 3650, keyPath })
+    const st = new LicenseService().loadFromString(r.licenseJson)
+    expect(st.valid).toBe(true)
+    expect(st.payload?.version).toBe(1)
+    expect(st.payload?.updates_until).toBeUndefined()
+    expect(r.updatesUntil).toBeUndefined()
+    expect(st.updatesUntil).toBe(st.payload?.expires_at)
+    expect(st.updatesExpired).toBe(false)
+  })
+
+  it('显式 updatesDays → 签 v2，更新截止与返回值一致', () => {
+    const r = ISSUE.issueLicense({ owner: 'script-tester', plan: 'pro', days: 3650, updatesDays: 30, keyPath })
+    const st = new LicenseService().loadFromString(r.licenseJson)
+    expect(st.valid).toBe(true)
+    expect(st.payload?.version).toBe(2)
+    expect(st.payload?.updates_until).toBe(r.updatesUntil)
+    expect(st.updatesUntil).toBe(r.updatesUntil)
+    expect(st.updatesExpired).toBe(false)
+  })
+
+  it('显式 updatesUntil → 签 v2 并采用给定截止', () => {
+    const until = Date.now() + 45 * 86_400_000
+    const r = ISSUE.issueLicense({ owner: 'script-tester', plan: 'pro', days: 3650, updatesUntil: until, keyPath })
+    expect(r.payload.version).toBe(2)
+    expect(r.updatesUntil).toBe(until)
+    expect(new LicenseService().loadFromString(r.licenseJson).updatesUntil).toBe(until)
+  })
+
+  it('显式更新期不超过使用截止（30 天件）', () => {
+    const r = ISSUE.issueLicense({ owner: 'short', plan: 'pro', days: 30, updatesDays: 365, keyPath })
+    expect(r.updatesUntil).toBe(r.expiresAt)
+
+    const perpetual = ISSUE.issueLicense({ owner: 'forever', plan: 'pro', updatesDays: 365, keyPath })
+    const year = 365 * 86_400_000
+    expect(perpetual.expiresAt).toBeGreaterThan(Date.parse('2099-01-01T00:00:00Z'))
+    expect(perpetual.updatesUntil).toBeGreaterThan(Date.now() + year - 86_400_000)
+    expect(perpetual.updatesUntil).toBeLessThan(Date.now() + year + 86_400_000)
   })
 })

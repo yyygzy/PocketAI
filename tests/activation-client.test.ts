@@ -143,6 +143,7 @@ describe('activateOnline — 本地验签与成功路径', () => {
       valid: false,
       signatureOk: true,
       expired: false,
+      updatesExpired: false,
       error: 'License 与当前硬盘不匹配'
     })
     const r = await activateOnline('PA-AAAA-BBBB-CCCC', FP)
@@ -156,6 +157,7 @@ describe('activateOnline — 本地验签与成功路径', () => {
       valid: true,
       signatureOk: true,
       expired: false,
+      updatesExpired: false,
       payload: {
         version: 1,
         license_id: 'lic-1',

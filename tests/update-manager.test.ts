@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   isPackaged: false,
   isPortable: false,
   autoEnabled: false,
+  /** 许可证更新期是否已结束（停更不停用） */
+  updatesExpired: false,
   setAutoEnabledCalls: [] as boolean[],
   setAutoEnabledThrows: false,
   // autoUpdater 事件回调表（init 时注册）
@@ -50,6 +52,7 @@ const mocks = vi.hoisted(() => ({
     this.isPackaged = false
     this.isPortable = false
     this.autoEnabled = false
+    this.updatesExpired = false
     this.setAutoEnabledCalls = []
     this.setAutoEnabledThrows = false
     this.listeners = new Map()
@@ -146,6 +149,12 @@ vi.mock('../src/main/portable', () => ({
   isPortableRuntime: () => mocks.isPortable
 }))
 
+vi.mock('../src/main/license/license', () => ({
+  licenseService: {
+    getStatus: () => ({ valid: true, expired: false, signatureOk: true, updatesExpired: mocks.updatesExpired })
+  }
+}))
+
 vi.mock('../src/main/ipc/safe-handle', () => ({
   safeHandle: () => {},
   argsSchema: (s: unknown) => s,
@@ -194,7 +203,8 @@ describe('init 与状态查询', () => {
       currentVersion: '1.2.7',
       isPackaged: true,
       isPortable: false,
-      autoUpdateEnabled: false
+      autoUpdateEnabled: false,
+      updatesExpired: false
     })
   })
 
@@ -468,6 +478,75 @@ describe('setAutoUpdate 自动更新开关', () => {
     const r = await updateManager.setAutoUpdate(false)
     expect(r).toEqual({ ok: true })
     expect(mocks.setAutoEnabledCalls).toEqual([false])
+  })
+})
+
+// ---------- 更新期门控（停更不停用）----------
+
+describe('更新期已结束：应用内不再提供/安装新版本', () => {
+  it('getInfo 透出 updatesExpired', () => {
+    mocks.isPackaged = true
+    mocks.updatesExpired = true
+    expect(updateManager.getInfo().updatesExpired).toBe(true)
+  })
+
+  it('init：不排启动检查，且关掉「退出时自动装」', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.isPackaged = true
+      mocks.autoEnabled = true
+      mocks.updatesExpired = true
+      updateManager.init()
+      expect(mocks.installOnQuit).toBe(false)
+      expect(updateManager.getStatusSnapshot().status).toBe('updates-ended')
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(mocks.checkCalls).toBe(0)
+    } finally {
+      updateManager.cancelStartupCheck()
+      vi.useRealTimers()
+    }
+  })
+
+  it('check：直接置 updates-ended，不触上游', async () => {
+    goPackaged()
+    mocks.updatesExpired = true
+    const r = await updateManager.check()
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('更新期')
+    expect(updateManager.getStatusSnapshot().status).toBe('updates-ended')
+    expect(mocks.checkCalls).toBe(0)
+  })
+
+  it('download：已在 available 也不许下载（续费前查到的版本不能装）', async () => {
+    goPackaged()
+    emit('update-available', { version: '1.3.0' })
+    mocks.updatesExpired = true
+    const r = await updateManager.download()
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('更新期')
+    expect(mocks.downloadCalls).toBe(0)
+    expect(updateManager.getStatusSnapshot().status).toBe('updates-ended')
+  })
+
+  it('quitAndInstall：已 downloaded 也不许安装，并关掉退出自动装', async () => {
+    goPackaged()
+    emit('update-downloaded', { version: '1.3.0' })
+    mocks.updatesExpired = true
+    const r = await updateManager.quitAndInstall()
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('更新期')
+    expect(mocks.quitInstallCalls).toHaveLength(0)
+    expect(mocks.restartCalls).toBe(0)
+    expect(mocks.installOnQuit).toBe(false)
+  })
+
+  it('setAutoUpdate(true)：更新期已结束不触发检查', async () => {
+    goPackaged()
+    mocks.updatesExpired = true
+    const r = await updateManager.setAutoUpdate(true)
+    expect(r).toEqual({ ok: true })
+    expect(mocks.setAutoEnabledCalls).toEqual([true])
+    expect(mocks.checkCalls).toBe(0)
   })
 })
 
