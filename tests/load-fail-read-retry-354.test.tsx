@@ -101,8 +101,11 @@ describe('设置页·浮窗配置：早退 return 把整块面板换成那一句
   const CFG: PopupConfig = {
     quickEnabled: true,
     selectionEnabled: false,
+    screenshotEnabled: false,
     quickAccelerator: 'CommandOrControl+Shift+P',
-    selectionAccelerator: ''
+    selectionAccelerator: '',
+    screenshotAccelerator: '',
+    screenshotSupported: false
   }
   it('失败脸有键 ⇒ 按下去真再发一发 ⇒ 到货后那句收回、也不再停在「加载中」', async () => {
     let fail = true

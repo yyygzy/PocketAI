@@ -210,7 +210,7 @@ describe('② 选区助手：Linux 上那句要说，其它平台不许凭空多
 
   it('Linux ⇒ 那颗开关下面一句"取不到选中文本，按下只打开快捷问答窗"', async () => {
     setPlatform('Linux x86_64')
-    stubPocketai({ getPopupConfig: () => ({ quickEnabled: true, selectionEnabled: true, quickAccelerator: 'CommandOrControl+Shift+Space', selectionAccelerator: 'CommandOrControl+Shift+E' }) })
+    stubPocketai({ getPopupConfig: () => ({ quickEnabled: true, selectionEnabled: true, screenshotEnabled: false, quickAccelerator: 'CommandOrControl+Shift+Space', selectionAccelerator: 'CommandOrControl+Shift+E', screenshotAccelerator: 'CommandOrControl+Alt+S', screenshotSupported: true }) })
     mountWithProviders(<PopupPanel />)
     const hint = await screen.findByTestId('set-popup-linux-hint', {}, MOUNT_BUDGET)
     expect(hint.textContent).toContain(L('popup.selectionLinuxHint').slice(0, 12))
@@ -220,7 +220,7 @@ describe('② 选区助手：Linux 上那句要说，其它平台不许凭空多
 
   it('反向对照：Windows ⇒ 那句不在', async () => {
     setPlatform('Win32')
-    stubPocketai({ getPopupConfig: () => ({ quickEnabled: true, selectionEnabled: true, quickAccelerator: 'CommandOrControl+Shift+Space', selectionAccelerator: 'CommandOrControl+Shift+E' }) })
+    stubPocketai({ getPopupConfig: () => ({ quickEnabled: true, selectionEnabled: true, screenshotEnabled: false, quickAccelerator: 'CommandOrControl+Shift+Space', selectionAccelerator: 'CommandOrControl+Shift+E', screenshotAccelerator: 'CommandOrControl+Alt+S', screenshotSupported: true }) })
     mountWithProviders(<PopupPanel />)
     await screen.findByText(L('popup.selectionTitle'), {}, MOUNT_BUDGET)
     expect(screen.queryByTestId('set-popup-linux-hint')).toBeNull()
