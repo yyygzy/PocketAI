@@ -743,8 +743,6 @@ export const Composer: React.FC<Props> = ({
       {policyOpen && (
         <ToolPolicyDialog assistantId={assistantId} onClose={() => setPolicyOpen(false)} />
       )}
-      {/* 明文模式保存新 Key 的确认弹窗：挂在根上，不随「+」浮层关闭而丢 */}
-      {tools.secretDialog}
       <div className="max-w-3xl mx-auto">
         {/* 附件预览 */}
         {attachments.length > 0 && (

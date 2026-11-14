@@ -18,13 +18,11 @@ import { LoadFailNotice } from '../../../components/LoadFailNotice'
 import { ShowingDefaultsNotice } from '../../../components/ShowingDefaultsNotice'
 import { errText } from '../../../utils/error'
 import { StatusDot, MiniBtn } from '../ui'
-import { useConfirm } from '../../../components/ConfirmDialog'
 import { isUnprotectedMode } from '../../../utils/secret-consent'
 
 export const ChannelsPanel: React.FC = () => {
   const { t } = useI18n()
   const toast = useToast()
-  const { confirm, dialog: confirmDialog } = useConfirm()
   const [activeType, setActiveType] = useState<ChannelType>('telegram')
   // 各网关配置缓存（按 type 分开）
   const [cfgs, setCfgs] = useState<Partial<Record<ChannelType, ChannelConfig>>>({})
@@ -164,13 +162,14 @@ export const ChannelsPanel: React.FC = () => {
       toast.error(t('channel.secretTooLong'))
       return
     }
-    // B3：新填的凭据在明文模式下只是固定密钥混淆 ⇒ 先让用户承认再保存
+    // SEC-1：none 模式下主进程会拒绝新增渠道凭据（与 provider/MCP 同级）。
+    // 这里先给同一句话，省一次必败的往返；主进程那道闸才是权威，注入渲染层绕不过去。
     const submittingSecret =
       (typeof patch.primarySecret === 'string' && patch.primarySecret.trim() !== '') ||
       (typeof patch.secondarySecret === 'string' && patch.secondarySecret.trim() !== '')
     if (submittingSecret && (await isUnprotectedMode())) {
-      const ok = await confirm({ message: t('secret.unprotectedWarn'), danger: true })
-      if (!ok) return
+      toast.error(t('secret.noneModeBlocked'))
+      return
     }
     try {
       // §336：乐观更新失败时不再回滚快照——回滚会覆盖用户在飞期间对其他字段的编辑（snapshot 是整份配置，不是补丁字段）
@@ -518,7 +517,6 @@ export const ChannelsPanel: React.FC = () => {
           <div className="text-[11px] text-[var(--color-warning)]">{t('channel.agentModeRisk')}</div>
         )}
       </div>
-      {confirmDialog}
     </div>
   )
 }

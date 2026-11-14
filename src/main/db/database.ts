@@ -1338,6 +1338,23 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_usage_events_created ON usage_events(created_at);
       CREATE INDEX IF NOT EXISTS idx_usage_events_conversation ON usage_events(conversation_id, created_at);
     `
+  },
+  {
+    // v72：安全动作审计（SEC-1 降级留痕）。
+    // 只记「加密模式切换让凭据保护发生了什么变化」，不记凭据值；
+    // 与 approval_events（工具调用审批）分开：这里没有会话/步骤语义，且必须在禁用/启用加密后仍可读。
+    version: 72,
+    name: 'security_events',
+    up: `
+      CREATE TABLE IF NOT EXISTS security_events (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        message TEXT NOT NULL,
+        detail TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC);
+    `
   }
 ]
 

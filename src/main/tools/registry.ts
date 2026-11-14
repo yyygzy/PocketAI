@@ -19,11 +19,16 @@ import type {
   ToolResult
 } from '../../shared/types'
 import { EXTERNAL_CONTENT_NOTICE } from '../../shared/external-content'
+import type { ToolPolicyReasonCode } from '../../shared/tool-policy-reasons'
 import { errMsg } from '../error'
 import { assertToolExecutionAllowed } from '../agent/dry-run-scope'
+import { recordPerf, logPerfDebug } from '../steward/perf-probe'
 
 /** LLM 函数名合法形态（各 OpenAI 兼容端点普遍要求字母开头 + 字母数字下划线） */
 const LLM_FUNCTION_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+
+/** 单次工具面重建达到该耗时才进「最近慢操作」缓冲；低于它只留 debug 日志 */
+const REGISTRY_SLOW_MS = 5
 
 /** 把任意工具名清洗成合法函数字符名（非法字符转下划线，缺首字母补 m） */
 export function sanitizeFunctionName(raw: string): string {
@@ -96,6 +101,13 @@ export function isToolAllowedBy(allowed: Set<string>, schema: ToolSchema): boole
   return allowed.has('*') && schema.source === 'builtin'
 }
 
+/** 内置工具的最小结构（策略屏与索引只用这三项，其余实现细节留在各工具模块） */
+interface BuiltinToolLike {
+  schema: ToolSchema
+  classify?: (args: Record<string, unknown>) => ToolClassification
+  policyReason?: ToolPolicyReasonCode
+}
+
 class ToolRegistry {
   /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
   private listBuiltinTools() {
@@ -125,9 +137,38 @@ class ToolRegistry {
     return tools
   }
 
+  /**
+   * 一次构建出「工具面 + 两张索引」。
+   *
+   * 为什么收口成一处：listAll / getSchema / classify / execute / 策略屏此前各自重建，
+   * 而 listAll 里 `listBuiltin()` 还被调了两遍（一次拼前置、一次传给改名器），
+   * 每遍都要读工作目录与终端策略（SQLite 点查）、MCP 段还要逐行解密 env/headers（SEC-11）。
+   * 这里只算一次，并把 name→schema、id→内置实现两张表一并建好，
+   * 使原来的线性 find（classify/execute 里还各多一次内置重扫）变成 O(1)。
+   * 仍然「每次调用重建」，不做缓存——失效点（MCP 启停、工作目录/终端策略变化）太多，
+   * 快照过期会让审批与执行看到不同的工具面（SEC-29 只做零风险项，见 perf 打点）。
+   */
+  private buildIndex() {
+    const startedAt = performance.now()
+    const builtin = this.listBuiltinTools()
+    const builtinSchemas = builtin.map((t) => t.schema)
+    const mcpSchemas = ensureUniqueToolNames(builtinSchemas, this.listMcp())
+    // 顺序与历史 listAll 一致：内置在前、MCP 在后；同名先出现者优先（等价于旧的 find 语义）
+    const tools = [...builtinSchemas, ...mcpSchemas]
+    const byName = new Map<string, ToolSchema>()
+    for (const t of tools) if (!byName.has(t.name)) byName.set(t.name, t)
+    const builtinById = new Map(builtin.map((t) => [t.schema.id, t] as const))
+    const ms = performance.now() - startedAt
+    const detail = `tools=${tools.length} mcp=${mcpSchemas.length}`
+    // 慢操作进环形缓冲（数据健康面板可见），快操作只留 debug 日志，避免稀释「最近慢操作」
+    if (ms >= REGISTRY_SLOW_MS) recordPerf('tools.registry', ms, detail)
+    else logPerfDebug('tools.registry', ms, detail)
+    return { builtin, builtinSchemas, mcpSchemas, tools, byName, builtinById }
+  }
+
   /** 全部工具（内置 + MCP，MCP 名称已保证全局唯一） */
   listAll(): ToolSchema[] {
-    return [...this.listBuiltin(), ...ensureUniqueToolNames(this.listBuiltin(), this.listMcp())]
+    return this.buildIndex().tools
   }
 
   /**
@@ -139,8 +180,9 @@ class ToolRegistry {
    */
   policySnapshot(assistant?: ToolPolicyAssistantContext): ToolPolicySnapshot {
     const shell = getShellPolicyInfo()
+    const index = this.buildIndex()
     const entries: ToolPolicyEntry[] = []
-    for (const tool of this.listBuiltinTools()) {
+    for (const tool of index.builtin) {
       // 终端即使被停用也要出现在屏上，单独由下面的 shell 段补齐
       if (tool.schema.id === 'shell.exec') continue
       entries.push({
@@ -163,7 +205,7 @@ class ToolRegistry {
       dynamic: true,
       reasons: []
     })
-    const mcpSchemas = ensureUniqueToolNames(this.listBuiltin(), this.listMcp())
+    const mcpSchemas = index.mcpSchemas
     for (const schema of mcpSchemas) {
       const state: ToolPolicyState =
         schema.permission === 'deny' ? 'denied' : 'needs-explicit'
@@ -183,7 +225,7 @@ class ToolRegistry {
       tools: entries,
       shell,
       mcpStoppedServers,
-      assistant: assistant ? this.effectiveView(assistant, shell, mcpSchemas) : undefined
+      assistant: assistant ? this.effectiveView(assistant, shell, mcpSchemas, index.builtin) : undefined
     }
   }
 
@@ -198,11 +240,12 @@ class ToolRegistry {
   private effectiveView(
     assistant: ToolPolicyAssistantContext,
     shell: ReturnType<typeof getShellPolicyInfo>,
-    mcpSchemas: ToolSchema[]
+    mcpSchemas: ToolSchema[],
+    builtin: BuiltinToolLike[]
   ): ToolPolicyAssistantView {
     const allowed = new Set(assistant.permissions)
     const tools: ToolPolicyEntry[] = []
-    for (const tool of this.listBuiltinTools()) {
+    for (const tool of builtin) {
       if (tool.schema.id === 'shell.exec') continue
       const granted = isToolAllowedBy(allowed, tool.schema)
       const state: ToolPolicyState =
@@ -223,7 +266,7 @@ class ToolRegistry {
         ...(tool.schema.costTier ? { costTier: tool.schema.costTier } : {})
       })
     }
-    const shellSchema = this.listBuiltin().find((s) => s.id === 'shell.exec')
+    const shellSchema = builtin.find((t) => t.schema.id === 'shell.exec')?.schema
     const shellGranted = shellSchema ? isToolAllowedBy(allowed, shellSchema) : false
     tools.push({
       id: 'shell.exec',
@@ -249,7 +292,7 @@ class ToolRegistry {
         granted
       })
     }
-    const loadSkillSchema = this.listBuiltin().find((s) => s.id === 'skill.load')
+    const loadSkillSchema = builtin.find((t) => t.schema.id === 'skill.load')?.schema
     return {
       ...assistant,
       loadSkillAvailable: loadSkillSchema ? isToolAllowedBy(allowed, loadSkillSchema) : false,
@@ -259,7 +302,7 @@ class ToolRegistry {
 
   /** 按工具名查找 schema（内置 + MCP），未找到返回 undefined */
   getSchema(toolName: string): ToolSchema | undefined {
-    return this.listAll().find((t) => t.name === toolName)
+    return this.buildIndex().byName.get(toolName)
   }
 
   /**
@@ -269,7 +312,7 @@ class ToolRegistry {
    */
   filterByPermissions(permissions: string[] | null | undefined): ToolSchema[] {
     if (!permissions || permissions.length === 0) return []
-    const all = this.listAll()
+    const all = this.buildIndex().tools
     // 判定只留 isToolAllowedBy 一处。这里曾为 '*' 单开分支（`return builtin`），
     // 于是 `['*', 'mcp:srv:tool']` 里逐条点名的 MCP 工具也被丢掉——而提示语恰恰叫用户去勾选。
     const allowed = new Set(permissions)
@@ -307,8 +350,8 @@ class ToolRegistry {
    * 最终取两者中更严格者（deny > confirm > allow）。
    */
   classify(toolName: string, argsJson: string, allowedToolIds: Set<string>): ToolClassification {
-    const all = this.listAll()
-    const schema = all.find((t) => t.name === toolName)
+    const index = this.buildIndex()
+    const schema = index.byName.get(toolName)
     if (!schema) return { decision: 'deny', reason: 'UNKNOWN_TOOL' }
     if (!isToolAllowedBy(allowedToolIds, schema)) {
       return { decision: 'deny', reason: 'TOOL_NOT_ALLOWED' }
@@ -334,7 +377,7 @@ class ToolRegistry {
           : { decision: 'allow' }
 
     if (schema.source === 'builtin') {
-      const builtin = this.listBuiltinTools().find((t) => t.schema.id === schema.id)
+      const builtin = index.builtinById.get(schema.id)
       if (builtin?.classify) {
         try {
           return stricterDecision(baseline, builtin.classify(args))
@@ -365,8 +408,8 @@ class ToolRegistry {
     // 作用域内抛错并计入 `blockedAttempts`，绝不落到下面的工具实现里。
     assertToolExecutionAllowed(toolName)
 
-    const all = this.listAll()
-    const schema = all.find((t) => t.name === toolName)
+    const index = this.buildIndex()
+    const schema = index.byName.get(toolName)
     if (!schema) {
       return { toolCallId: '', name: toolName, content: `未知工具: ${toolName}`, isError: true }
     }
@@ -395,7 +438,7 @@ class ToolRegistry {
 
     try {
       if (schema.source === 'builtin') {
-        const builtin = this.listBuiltinTools().find((t) => t.schema.id === schema.id)
+        const builtin = index.builtinById.get(schema.id)
         if (!builtin) {
           return { toolCallId: '', name: toolName, content: '内置工具未注册', isError: true }
         }

@@ -5,15 +5,12 @@ import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../s
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
-import { useConfirm } from '../../components/ConfirmDialog'
 import { isUnprotectedMode } from '../../utils/secret-consent'
 import { errText } from '../../utils/error'
 
 export function useAgentToolConfigs(enabled = true) {
   const { t } = useI18n()
   const toast = useToast()
-  // B3：联网搜索 Key 不拦写入，但明文模式下保存新值要用户显式承认
-  const { confirm: confirmSecret, dialog: secretDialog } = useConfirm()
   const [workspaceDir, setWorkspaceDir] = useState('')
   const [shellConfig, setShellConfigState] = useState<ShellConfig>({ enabled: false, policy: 'confirm' })
   const [calConfig, setCalConfigState] = useState<CalendarConfig>({ enabled: false, paths: [] })
@@ -125,8 +122,11 @@ export function useAgentToolConfigs(enabled = true) {
       toast.error(t('agent.websearch.searxngUrlTooLong'))
       return
     }
+    // SEC-1：none 模式下主进程会拒绝新增 Key（渠道/搜索与 provider 同级）。
+    // 这里先给同一句话，省一次必败的往返；主进程那道闸才是权威，注入渲染层绕不过去。
     if (typeof patch.apiKey === 'string' && patch.apiKey.trim() !== '' && (await isUnprotectedMode())) {
-      if (!(await confirmSecret({ message: t('secret.unprotectedWarn'), danger: true }))) return
+      toast.error(t('secret.noneModeBlocked'))
+      return
     }
     try {
       const next = await window.pocketai.setWebSearchConfig(patch)
@@ -184,7 +184,6 @@ export function useAgentToolConfigs(enabled = true) {
     retryWorkspace: loadWorkspace,
     patchShellConfig,
     patchWsConfig,
-    secretDialog,
     patchCalConfig,
     addIcs
   }

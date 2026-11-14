@@ -538,6 +538,7 @@ export const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; err: stri
       )}
 
       {!encrypted && <p className="unlock-recovery-warn mb-2">{t('enc.noneWarn')}</p>}
+      {!encrypted && <p className="unlock-recovery-warn mb-2">{t('enc.noneCredentialGate')}</p>}
       <AutoLockRow encrypted={encrypted} />
 
       <div className="flex flex-wrap gap-2 pt-1">
@@ -793,6 +794,8 @@ const DisableEncryptionBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }
     setBusy(true)
     try {
       const r = await window.pocketai.disableEncryption(pwd)
+      // 主进程原生确认被取消：不是失败，保持弹窗与输入，用户可再决定
+      if (r.canceled) return
       if (!r.ok) { setLocalErr(r.error ?? t('enc.pwdWrong')); return }
       setOpen(false); setPwd('')
       setNotice({ ok: true, text: t('enc.disabledOk') })

@@ -1050,7 +1050,7 @@ export const zh = {
   'channel.tokenClear': '清除',
   'channel.tokenClearTip': '清除已保存的凭据',
   'channel.secretTooLong': '凭据过长（上限 512 字符），未保存',
-  'secret.unprotectedWarn': '当前未设置主密码：这条凭据只会用源码中公开的固定密钥做本地混淆，拿到本机数据目录的人可以还原。确认仍要保存？',
+  'secret.noneModeBlocked': '未设置主密码，这条凭据不会被保存。请先在「设置 → 数据与安全」中设置主密码后重试；已有凭据仍可读取或删除。',
 
   // Telegram
   'channel.telegram.title': 'Telegram',
@@ -2390,6 +2390,7 @@ export const zh = {
   'enc.fieldValue': '透明（AES-256-GCM）',
   'enc.fieldValueNone': '仅本地混淆（密钥派生参数随源码公开，可被还原）',
   'enc.noneWarn': '⚠️ 当前未设主密码：数据库为明文。API Key 等字段只是用固定密钥做的本地混淆，不是安全边界——拿到本机 app.db 的人可以还原。建议设置主密码，让库级与字段级都受真实密钥保护。',
+  'enc.noneCredentialGate': '未设主密码时，渠道 Token、联网搜索 Key、Provider Key、MCP 密钥与备份口令都不允许新增保存——它们只会用源码中公开的固定密钥混淆，等于没有保护。已有凭据不受影响，仍可读取和删除。',
   'enc.enableBtn': '🔐 启用加密',
   'enc.changePwd': '修改密码',
   'enc.disable': '禁用加密',

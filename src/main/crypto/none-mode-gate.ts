@@ -8,8 +8,9 @@
 // - 删除某个键、把同一个值挪到别的键下 → 没有新增密钥材料，放行；
 // - 历史明文迁移与主密码轮换走 repo 的 migratePlaintextSecrets / restoreAllSecrets，
 //   加密模式切换流程直接调 backup-service 的 saveWebDAVConfig，均不经过本闸。
-// 覆盖面：B2 的 MCP env/headers + 备份口令，与 B1 的 provider apiKeys（B1 口径，见下）。
-// 渠道/websearch 凭据**不走本闸**——它们服务无人值守场景，按 B3 只做渲染层显式确认。
+// 覆盖面：B2 的 MCP env/headers + 备份口令，B1 的 provider apiKeys，以及升级后的
+// 渠道 token / websearch Key（原 B3 的「渲染层确认」已收口到主进程，杀进程边界一致）。
+// 仍然放行的只有「没有新增密钥材料」的写入：清空、回填原值、改动非密钥字段。
 import { masterKeyManager } from './master-key'
 
 /** 引导语：两处拒绝文案共用，避免口径漂移 */

@@ -44,7 +44,6 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs; onOpenPolicy?: (
     patchCalConfig,
     calConfig,
     addIcs,
-    secretDialog,
     toolUnread
   } = tools
 
@@ -237,9 +236,6 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs; onOpenPolicy?: (
         <span className="w-full basis-full text-[11px] text-[var(--color-text-muted)]" title={wsHint}>
           {wsHint}
         </span>
-        {/* 密钥确认弹窗就渲染在这一行里（§399②b 后它在嵌套层**内部**）＝点「确认」不算"点浮层外面"，
-            外层那颗「+」与这一层都不会被那一下 mousedown 关掉 */}
-        {secretDialog}
       </div>
 
       {/* 本地日历（calendar.read）配置：添加 .ics 文件后 Agent 可读取日程 */}

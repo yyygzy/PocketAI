@@ -1049,7 +1049,7 @@ export const en = {
   'channel.tokenClear': 'Clear',
   'channel.tokenClearTip': 'Clear the saved credential',
   'channel.secretTooLong': 'Credential is too long (max 512 characters); not saved',
-  'secret.unprotectedWarn': 'No master password is set: this credential would be obfuscated only with the fixed key published in the source code, so anyone with this data folder can recover it. Save it anyway?',
+  'secret.noneModeBlocked': 'No master password is set, so this credential was not saved. Set a master password in Settings → Data & Security and try again; existing credentials can still be read or deleted.',
 
   // Telegram
   'channel.telegram.title': 'Telegram',
@@ -2389,6 +2389,7 @@ export const en = {
   'enc.fieldValue': 'Transparent (AES-256-GCM)',
   'enc.fieldValueNone': 'Local obfuscation only (key-derivation inputs ship with the source and can be reversed)',
   'enc.noneWarn': '⚠️ No master password: the database is plaintext. Fields such as API keys are only obfuscated with a fixed key — that is not a security boundary. Anyone holding app.db on this machine can reverse it. Set a master password so the database and fields are protected by a real key.',
+  'enc.noneCredentialGate': 'Without a master password, new channel tokens, web search keys, provider keys, MCP secrets and backup passwords cannot be saved — they would only be obfuscated with the fixed key published in the source, which is no protection at all. Existing credentials are untouched and can still be read or deleted.',
   'enc.enableBtn': '🔐 Enable encryption',
   'enc.changePwd': 'Change password',
   'enc.disable': 'Disable encryption',

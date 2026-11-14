@@ -9,6 +9,7 @@
 //              translation_glossary/sandbox_files）：行级合并
 //   配置类表（assistants/providers/skills/mcp_servers/
 //            knowledge_bases/kb_documents/kb_chunks）：云端覆盖
+//   仅追加表（security_events）：只补本机没有的 id，不覆盖本机既有记录
 //   本地保留表（app_config/field_keys/license_records/schema_migrations）：不动
 //
 // 冲突：同 id 两边都存在且内容/时间戳不同。用户可选 local/cloud/newer。
@@ -91,6 +92,15 @@ const CLOUD_OVERWRITE_TABLES = [
   'assistants', 'providers', 'skills', 'mcp_servers',
   'knowledge_bases', 'kb_documents', 'kb_chunks'
 ]
+
+/**
+ * 仅追加表（审计类）：跨机恢复只补齐另一台机器的记录，**不覆盖本机既有行**。
+ *
+ * 为什么不能放进 ROW_MERGE_TABLES：那张表按 strategy 处理同 id 冲突，
+ * `cloud` / `newer` 会改写本机行；而安全审计是「本机发生过什么」的历史证据，
+ * 一份旧备份即可抹掉降级留痕。审计记录天然只增不改，同 id 重复写入无意义。
+ */
+const APPEND_ONLY_TABLES = ['security_events']
 
 /**
  * 配置表里的凭据列（字段级密文）：跨机合并时云端那份用源机主密钥加密，目标机
@@ -515,6 +525,35 @@ export function mergeTable(
   return { inserted, updated, skipped }
 }
 
+/** 仅追加合并（审计表）：只插入本机没有的 id，从不 UPDATE 本机既有行 */
+export function appendOnlyTable(
+  localDb: Database.Database,
+  cloudDb: Database.Database,
+  table: string
+): number {
+  const cloudTbl = cloudDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)
+  if (!cloudTbl) return 0
+
+  // 列名同样以本地 schema 白名单取交集（云端备份不可信，见 safeMergeColumns）
+  const columns = safeMergeColumns(localDb, cloudDb, table)
+  if (columns.length < 2 || !columns.includes('id')) return 0
+
+  const cloudRows = cloudDb.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>
+  const placeholders = columns.map(() => '?').join(', ')
+  const insertStmt = localDb.prepare(
+    `INSERT OR IGNORE INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`
+  )
+
+  let inserted = 0
+  const tx = localDb.transaction(() => {
+    for (const row of cloudRows) {
+      inserted += insertStmt.run(...columns.map((c) => row[c] ?? null)).changes
+    }
+  })
+  tx()
+  return inserted
+}
+
 /** 云端覆盖配置类表 */
 export function overwriteTable(
   localDb: Database.Database,
@@ -588,9 +627,9 @@ export function overwriteConfigTables(
 }
 
 /**
- * 库内合并（第 1、2 步）：行级合并用户内容表 + 云端覆盖配置表，整体包在一个外层事务里。
- * 任一表失败整体回滚，不再出现「报失败但已合并一半」的跨表不一致。
- * mergeTable/overwriteTable 内部的 transaction 在嵌套时自动降级为 savepoint
+ * 库内合并（第 1、2、3 步）：行级合并用户内容表 + 云端覆盖配置表 + 仅追加审计表，
+ * 整体包在一个外层事务里。任一表失败整体回滚，不再出现「报失败但已合并一半」的跨表不一致。
+ * mergeTable/overwriteTable/appendOnlyTable 内部的 transaction 在嵌套时自动降级为 savepoint
  * （better-sqlite3 语义），单表粒度不变。附件下载是网络 IO，不在这里面。
  * 返回合并摘要行。导出供真库测试直调（绕过 WebDAV 下载）。
  */
@@ -611,6 +650,12 @@ export function runDbMergeTx(
 
     // 2. 云端覆盖配置类表（凭据列按表保留本机值，见 overwriteConfigTables）
     summaryParts.push(...overwriteConfigTables(localDb, cloudDb))
+
+    // 3. 仅追加表（安全审计）：跨机恢复补齐另一台机器的记录，不动本机既有行
+    for (const table of APPEND_ONLY_TABLES) {
+      const n = appendOnlyTable(localDb, cloudDb, table)
+      if (n > 0) summaryParts.push(`${table}: +${n}(仅追加)`)
+    }
   })
   tx()
   return summaryParts

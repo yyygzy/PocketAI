@@ -14,6 +14,7 @@
 // 且默认关闭；URL 为公网/空时强制回落 false，避免旧勾选在改地址后被继承。
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { getSecret, setSecret, hasSecret, SECRET_KV_KEYS } from '../crypto/secret-store'
+import { isNoneMode, noneModeSecretBlock } from '../crypto/none-mode-gate'
 import type {
   WebSearchConfig,
   WebSearchDepthSetting,
@@ -118,6 +119,17 @@ export function setWebSearchConfig(
 
   // 先完成全部校验（尤其 URL），再写库：非法地址不应顺带改掉 enabled/provider
   const nextProvider = patch.provider ?? readProvider()
+  const slot = providerKeySlot(nextProvider)
+
+  // 写入闸（SEC-1）：none 模式下拒绝**新增**搜索 Key，与 provider/MCP 同级。
+  // 按值判定 ⇒ 清空 Key、回填原值、只改 provider/enabled/地址 都不受影响。
+  if (isNoneMode() && slot && typeof patch.apiKey === 'string') {
+    const block = noneModeSecretBlock([
+      { field: '联网搜索 Key', next: { apiKey: patch.apiKey.trim() }, existing: { apiKey: getSecret(slot) } }
+    ])
+    if (block) throw new Error(block)
+  }
+
   let nextUrl = readSearxngUrl()
   let nextAllow = readSearxngAllowPrivate()
   if (typeof patch.searxngBaseUrl === 'string') {
@@ -144,7 +156,6 @@ export function setWebSearchConfig(
   if (patch.provider) appConfigRepo.set(KEY_PROVIDER, patch.provider)
   if (patch.depth) appConfigRepo.set(KEY_DEPTH, patch.depth)
 
-  const slot = providerKeySlot(nextProvider)
   if (typeof patch.apiKey === 'string' && slot) {
     const trimmed = patch.apiKey.trim()
     if (trimmed.length === 0) {

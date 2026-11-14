@@ -6,6 +6,7 @@
 // - Telegram 沿用旧 `channel.tg_*` 前缀（向后兼容历史用户数据）
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { getSecret, setSecret, hasSecret, SECRET_KV_KEYS } from '../crypto/secret-store'
+import { isNoneMode, noneModeSecretBlock } from '../crypto/none-mode-gate'
 import type { ChannelConfig, ChannelType } from '../../shared/types'
 import { channelSetConfigSchema, channelTypeArgSchema } from '../../shared/schemas/channels'
 
@@ -90,6 +91,28 @@ export function setChannelConfig(
   const p = prefixFor(type)
   const pk = primarySecretKey(type)
   const sk = secondarySecretKey(type)
+
+  // 写入闸（SEC-1）：none 模式下拒绝**新增**渠道凭据，与 provider/MCP 同级。
+  // 按值判定 ⇒ 只改白名单/模型等字段、回填原值、清空凭据都不受影响（存量保持可读可删）。
+  if (isNoneMode()) {
+    const targets: Array<{ field: string; next: Record<string, string>; existing: Record<string, string> }> = []
+    if (pk) {
+      targets.push({
+        field: '渠道主凭据',
+        next: { primarySecret: (input.primarySecret ?? '').trim() },
+        existing: { primarySecret: getSecret(pk) }
+      })
+    }
+    if (sk) {
+      targets.push({
+        field: '渠道次凭据',
+        next: { secondarySecret: (input.secondarySecret ?? '').trim() },
+        existing: { secondarySecret: getSecret(sk) }
+      })
+    }
+    const block = noneModeSecretBlock(targets)
+    if (block) throw new Error(block)
+  }
 
   if (typeof input.enabled === 'boolean') {
     appConfigRepo.set(`${p}${FIELD_ENABLED}`, input.enabled ? '1' : '0')

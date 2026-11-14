@@ -5,6 +5,8 @@ import { dbService } from '../../db/database'
 import { masterKeyManager } from '../../crypto/master-key'
 import { commitNewMasterKeyState, kdfStatus, prepareNewMasterKey, verifyAndOpenMasterKey } from '../../crypto/master-password'
 import { exportFieldCredentials, restoreFieldCredentials } from '../../crypto/credential-rotation'
+import { countStoredCredentials, type CredentialInventory } from '../../crypto/credential-inventory'
+import { securityEventRepo } from '../../db/repositories/security-event.repo'
 import { recoveryKeyManager } from '../../crypto/recovery-key'
 import { clipboardGuard } from '../../crypto/clipboard-guard'
 import { unlockCoordinator } from '../../crypto/unlock-coordinator'
@@ -23,6 +25,34 @@ import {
 } from '../../../shared/schemas/encryption'
 
 const log = createLogger('encryption')
+
+/**
+ * 禁用加密前的「凭据降级」确认。
+ * 必须由主进程弹原生框：渲染层对话框可被注入代点，用户本人却没被告知；
+ * `Cancel`/关闭窗口一律视为取消，调用方据此**一个字节都不改**地退出。
+ */
+async function confirmCredentialDowngrade(
+  e: Electron.IpcMainInvokeEvent,
+  inventory: CredentialInventory
+): Promise<boolean> {
+  const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['取消', '确认禁用'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: '禁用加密会降低凭据保护',
+    message: `当前有 ${inventory.total} 项已加密凭据`,
+    detail:
+      '禁用后数据库将改为明文，这些凭据会改用源码中公开常量派生的固定密钥做本地混淆——' +
+      '拿到数据目录的人可以还原，等同于没有保护。\n\n仍要禁用加密吗？'
+  }
+  const { response } = win
+    ? await dialog.showMessageBox(win, options)
+    : await dialog.showMessageBox(options)
+  return response === 1
+}
 
 export function registerEncryptionHandlers(): void {
   safeHandle(IPC.ENCRYPTION_GET_STATUS, () => {
@@ -211,7 +241,7 @@ export function registerEncryptionHandlers(): void {
       undecryptableCount: (fieldSnapshot.undecryptable?.length ?? 0) + (webdavTicket.undecryptable ? 1 : 0)
     }
   }, argsSchema(masterPasswordSchema, newMasterPasswordSchema))
-  safeHandle(IPC.ENCRYPTION_DISABLE, async (_e, password: string) => {
+  safeHandle(IPC.ENCRYPTION_DISABLE, async (e, password: string) => {
     // 禁用加密：用密码验证 → rekey 空密码 → 清 app_config
     // 保存当前密钥，验证失败时回滚
     const currentKey = masterKeyManager.getDbKey()
@@ -225,6 +255,14 @@ export function registerEncryptionHandlers(): void {
         dbService.open()
       }
       return { ok: false, error: '密码错误' }
+    }
+    // SEC-1：禁用会把字段凭据从「主密码保护」降级为「公开常量派生密钥混淆」。
+    // 主进程自己清点并弹原生确认——渲染层的对话框可被注入代点，这里不行；
+    // 用户取消时库仍是加密态、config 未动，直接返回（不 rekey、不写审计）。
+    const inventory = countStoredCredentials()
+    if (inventory.total > 0 && !(await confirmCredentialDowngrade(e, inventory))) {
+      log.info('用户取消了禁用加密（凭据降级未确认），库与配置均未改动')
+      return { ok: false, canceled: true, error: '已取消：未禁用加密，库与配置均未改动' }
     }
     // ⚠️ key 还没切换：先在旧钥下读一次（§385 起五处轮换点共用同一对出口，见 backup-service）
     const { captureWebDAVForRekey, restoreWebDAVAfterRekey } = await import('../../backup/backup-service')
@@ -293,6 +331,15 @@ export function registerEncryptionHandlers(): void {
     restoreFieldCredentials(fieldSnapshot)
     // 已无主密码，恢复密钥失去意义（也避免残留包指向旧 masterKey）
     recoveryKeyManager.disableRecovery()
+    // SEC-1 留痕：说明这些凭据现在靠什么保护（只记计数，不记值）
+    securityEventRepo.append({
+      kind: 'encryption_disabled',
+      message:
+        inventory.total > 0
+          ? `禁用加密：${inventory.total} 项已加密字段凭据改用源码公开常量派生的固定密钥混淆（不再受主密码保护）`
+          : '禁用加密：当时没有已加密字段凭据，无凭据被降级',
+      detail: { ...inventory }
+    })
     return {
       ok: true,
       // §385：「已禁用」不许盖住「有 N 项凭据没能跟着换钥」——同 §375 口径（缺失按 0 算，别当崩）
@@ -304,6 +351,8 @@ export function registerEncryptionHandlers(): void {
     if (masterKeyManager.isDbEncrypted()) {
       return { ok: false, error: '已经加密' }
     }
+    // 先清点：此刻的凭据还在固定密钥下，换钥后会被主密钥重写——审计要说明「重写了多少项」
+    const inventory = countStoredCredentials()
     // ⚠️ key 还没切换（当前是 fixed key）：先在旧钥下读一次（§385 起五处轮换点共用同一对出口）
     const { captureWebDAVForRekey, restoreWebDAVAfterRekey } = await import('../../backup/backup-service')
     const webdavTicket = captureWebDAVForRekey()
@@ -334,6 +383,12 @@ export function registerEncryptionHandlers(): void {
     // §381：解不开那一档不进回写＝本次没被重写；留痕＋随这一发的 count 上屏（§385 起三发都带）
     if (webdavTicket.undecryptable) log.warn('WebDAV 备份口令用旧字段密钥解不开，本次轮换未重写（需用户在设置页重填）')
     restoreFieldCredentials(fieldSnapshot)
+    // SEC-1 留痕：与禁用反向——说明凭据已从固定密钥改由主密码派生密钥保护
+    securityEventRepo.append({
+      kind: 'encryption_enabled',
+      message: `启用加密：${inventory.total} 项字段凭据已用主密码派生密钥重写`,
+      detail: { ...inventory }
+    })
     return {
       ok: true,
       // §385：「已启用加密」同样不许盖住「有 N 项凭据没能跟着换钥」
