@@ -30,6 +30,15 @@ export interface RuntimeRunSeed {
   conversationId: string
   mode: ConversationRunMode
   startedAt: number
+  /** v73：这一轮锚定的用户消息（续跑据此接上下文；普通对话可为空） */
+  anchorUserMessageId?: string | null
+  /** v73：起点快照（由第一个检查点补齐；老行/未起步为空） */
+  workspaceDir?: string | null
+  toolPermissionsSig?: string | null
+  /** 续跑：接续的断点（不传＝从 preparing / 0 步开始） */
+  stage?: ChatRunStage
+  stepsDone?: number
+  toolStepsDone?: number
 }
 
 /** 逐步检查点（v66）：只记"跑到哪"，由引擎在每步入口推进 */
@@ -37,26 +46,34 @@ export interface RuntimeCheckpoint {
   stage: ChatRunStage
   stepsDone: number
   toolStepsDone: number
+  /** v73：第一个检查点顺带落起点快照（之后传空） */
+  workspaceDir?: string | null
+  toolPermissionsSig?: string | null
 }
 
 /** 由 index.ts 注入的落地面（conversation-run.repo 结构上满足它） */
 export interface RuntimePersistence {
   start(run: RuntimeRunSeed): void
   checkpoint(requestId: string, cp: RuntimeCheckpoint): void
+  /** v73：用户消息落库后补锚点（续跑据此接上下文） */
+  setAnchor(requestId: string, anchorUserMessageId: string): void
   setStatus(requestId: string, status: 'running' | 'pending_approval'): void
   finish(
     requestId: string,
     status: 'done' | 'failed' | 'aborted' | 'interrupted',
     errorCode?: string | null
   ): void
-  interruptActive(): Array<
-    RuntimeRunSeed & {
-      status: string
-      stage: ChatRunStage | null
-      stepsDone: number | null
-      resumeState: ChatRunResume
-    }
-  >
+  interruptActive(): Array<{
+    requestId: string
+    conversationId: string
+    mode: ConversationRunMode
+    startedAt: number
+    status: string
+    stage: ChatRunStage | null
+    stepsDone: number | null
+    toolStepsDone: number | null
+    resumeState: ChatRunResume
+  }>
 }
 
 interface RuntimeEntry {
@@ -135,6 +152,15 @@ export function markRunStarted(args: {
   conversationId: string
   requestId: string
   mode: ConversationRunMode
+  /** v73：这一轮锚定的用户消息（续跑与启动对账用） */
+  anchorUserMessageId?: string | null
+  /** v73：起点快照（第一个检查点补齐，这里一般不带） */
+  workspaceDir?: string | null
+  toolPermissionsSig?: string | null
+  /** 续跑：接续的断点（不传＝从 preparing / 0 步开始） */
+  stage?: ChatRunStage
+  stepsDone?: number
+  toolStepsDone?: number
 }): void {
   const prev = entries.get(args.conversationId)
   if (prev && prev.requestId !== args.requestId && prev.state !== 'failed' && prev.state !== 'interrupted') {
@@ -150,9 +176,10 @@ export function markRunStarted(args: {
     startedAt,
     at: Date.now(),
     pendingApprovals: 0,
-    stage: 'preparing',
-    stepsDone: 0,
-    toolStepsDone: 0
+    // 续跑从断点起步：行上带的 steps_done 就是这一步之前的边界，不能清零
+    stage: args.stage ?? 'preparing',
+    stepsDone: args.stepsDone ?? 0,
+    toolStepsDone: args.toolStepsDone ?? 0
   }
   entries.set(args.conversationId, entry)
   persistence?.start({ ...args, startedAt })
@@ -176,6 +203,13 @@ export function markRunCheckpoint(
   e.stepsDone = cp.stepsDone
   e.toolStepsDone = cp.toolStepsDone
   e.at = Date.now()
+}
+
+/** v73：用户消息落库后补锚点。只落库（内存快照不展示它），requestId 不匹配也照写（迟到落库） */
+export function markRunAnchor(conversationId: string, requestId: string, anchorUserMessageId: string): void {
+  persistence?.setAnchor(requestId, anchorUserMessageId)
+  const e = entries.get(conversationId)
+  if (e && e.requestId === requestId) e.at = Date.now()
 }
 
 /** 审批挂起：待确认计数 +1，状态切 pending_approval */
@@ -280,6 +314,7 @@ export function reconcileInterruptedRuns(): number {
       // 老行没有检查点：保持 undefined/缺省，不编造阶段（判定照旧是 restart）
       stage: r.stage ?? undefined,
       stepsDone: r.stepsDone ?? undefined,
+      toolStepsDone: r.toolStepsDone ?? undefined,
       resumeState: r.resumeState
     })
   }

@@ -5,6 +5,7 @@ import type {
   SendMessagePayload,
   RegeneratePayload,
   ResendPayload,
+  ResumeChatPayload,
   ChatReadStateReport,
   ChatReadStateResult
 } from '../../../shared/types'
@@ -24,6 +25,7 @@ import {
   sendMessagePayloadSchema,
   regeneratePayloadSchema,
   resendPayloadSchema,
+  resumeChatPayloadSchema,
   requestIdSchema,
   readStateReportSchema
 } from '../../../shared/schemas/chat'
@@ -92,4 +94,16 @@ export function registerChatHandlers(): void {
       if (!sender.isDestroyed()) sender.send(channel, data)
     })
   }, argsSchema(resendPayloadSchema))
+
+  // P1-3a：续跑候选只读 DB（运行态注册表在打开会话时会被清掉，不能当事实源）
+  safeHandle(IPC.CHAT_GET_RESUME_CANDIDATE, (_e, conversationId: string) => {
+    return chatService.getResumeCandidate(conversationId)
+  }, argsSchema(requestIdSchema))
+
+  safeHandle(IPC.CHAT_RESUME, (event, payload: ResumeChatPayload) => {
+    const sender: WebContents = event.sender
+    return chatService.resume(payload, (channel, data) => {
+      if (!sender.isDestroyed()) sender.send(channel, data)
+    })
+  }, argsSchema(resumeChatPayloadSchema))
 }

@@ -61,7 +61,16 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   PROJECT_TARGET_NO_WORKSPACE: 'agent.project.noWorkspace',
   PROJECT_OPEN_DIR_DENIED: 'agent.project.openDirDenied',
   PROJECT_DIR_MISSING: 'agent.project.dirMissing',
-  PROJECT_EXPORT_FAILED: 'agent.project.exportFailed'
+  PROJECT_EXPORT_FAILED: 'agent.project.exportFailed',
+  // P1-3a 续跑：准入不通过一律 fail-closed，界面只说"为什么不能续、请重新发送"
+  RESUME_NOT_FOUND: 'chat.resume.notFound',
+  RESUME_STALE: 'chat.resume.stale',
+  RESUME_ANCHOR_MISSING: 'chat.resume.anchorMissing',
+  RESUME_ARTIFACTS_MISMATCH: 'chat.resume.artifactsMismatch',
+  RESUME_TOOLS_EXECUTED: 'chat.resume.toolsExecuted',
+  RESUME_WORKSPACE_CHANGED: 'chat.resume.workspaceChanged',
+  RESUME_TOOL_PERMISSIONS_CHANGED: 'chat.resume.permissionsChanged',
+  RESUME_TARGET_MISSING: 'chat.resume.targetMissing'
 }
 
 /**

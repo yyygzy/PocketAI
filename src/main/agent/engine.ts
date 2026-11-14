@@ -15,6 +15,7 @@ import type {
   AgentRunStats,
   AgentErrorEvent,
   ChatTarget,
+  ChatRunStage,
   ToolCall,
   ToolResult,
   ToolSchema,
@@ -57,7 +58,7 @@ import { injectAttachments, appendTextAttachments, buildImageParts } from '../ch
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
 import { createApproval, toolArgsFingerprint } from './tool-approval'
-import { markRunStarted, markRunFinished, markRunCheckpoint } from '../chat/runtime-registry'
+import { markRunStarted, markRunFinished, markRunCheckpoint, markRunAnchor } from '../chat/runtime-registry'
 import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
 import { redactSecretsInText, redactArgsInText } from '../security/audit-redact'
@@ -460,7 +461,7 @@ export const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent
 
 {{memory}}`
 
-import { resolveAgentToolPermissions } from './tool-permissions'
+import { resolveAgentToolPermissions, toolPermissionsSignature } from './tool-permissions'
 // 策略屏与 Agent 运行共用同一份解析；保留从这里导出以兼容既有调用/测试
 export { resolveAgentToolPermissions }
 
@@ -1274,6 +1275,19 @@ class AgentEngine {
       asChild?: boolean
       /** 工具面治理：父 run 实际发出去的 id 集合，子 run 只能在其中再缩小 */
       exposedToolIds?: Set<string>
+      /**
+       * v73 续跑（P1-3a；主进程内部入口，schema 会剥掉渲染层伪造的字段）：
+       * - userMessage：已经落库的那条用户消息——续跑**不重新插入、也不重复 emit**；
+       * - startStep：检查点里的 `steps_done`，循环第一步从 `startStep + 1` 编号；
+       * - 后两项是准入时校验过的起点事实，原样交给运行态落地（口径见 v73 迁移注释）。
+       */
+      resume?: {
+        userMessage: MessageRecord
+        startStep: number
+        startToolStepsDone: number
+        workspaceDir: string | null
+        toolPermissionsSig: string | null
+      }
     }
   ): Promise<void> {
     const { requestId, conversationId, content, assistantId, targets, unattended } = payload
@@ -1281,6 +1295,7 @@ class AgentEngine {
     const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
     const asChild = internal?.asChild === true
     const parentRequestId = internal?.parentRequestId ?? null
+    const resume = internal?.resume
     // 预算不在这里建：它要按档收缩（147），而档位要等容量判据算出来 ⇒ 见下面 `capacity` 那一处。
     // 子 run 一律用父传下来的同一个对象，所以"这轮最坏花多久"整棵树只算一次。
     // §307：从**第一处登记**起就把 setup+循环整段包进这个 try。循环体本身自带 try/finally 收尾；
@@ -1296,7 +1311,18 @@ class AgentEngine {
     }
     this.activeConversations.set(conversationId, requestId)
     // B-2：并发守卫放行后即登记运行态（setup 段抛错也走下面的兜底 catch 落失败，不留「永久进行中」）
-    markRunStarted({ conversationId, requestId, mode: 'agent' })
+    // v73：起点工作目录随行落库（续跑前置条件）；续跑把断点一起带上，避免刚开始又崩时把步号清零。
+    const runWorkspaceDir = getWorkspaceDir()
+    markRunStarted({
+      conversationId,
+      requestId,
+      mode: 'agent',
+      anchorUserMessageId: resume?.userMessage.id ?? null,
+      workspaceDir: runWorkspaceDir,
+      stage: resume ? 'model' : undefined,
+      stepsDone: resume?.startStep,
+      toolStepsDone: resume?.startToolStepsDone
+    })
     let loopTimer: ReturnType<typeof setTimeout> | undefined
     try {
       traceParents.set(requestId, parentRequestId)
@@ -1318,6 +1344,8 @@ class AgentEngine {
         hasAssistant: !!assistantId,
         isBuiltin: assistant?.isBuiltin ?? false
       })
+      /** v73：起点授权快照（续跑准入与它比对；只算一次，随后每个检查点原样带上） */
+      const runToolPermissionsSig = toolPermissionsSignature(toolPermissions)
       // Agent 模式必须有系统提示词引导任务拆解与工具调用；助手未配置时用默认模板
       if (!effectivePrompt || !effectivePrompt.trim()) {
         effectivePrompt = DEFAULT_AGENT_PROMPT
@@ -1440,30 +1468,38 @@ class AgentEngine {
       })
 
       // 持久化用户消息
-      const userMsg = messageRepo.insert({
-        conversationId,
-        role: 'user',
-        content,
-        status: 'done',
-        attachments: payload.attachments
-      })
-      // 回传用户消息 DB id，渲染端本地占位卡（u_xxx）据此获得可删除的 dbId
-      emit(IPC.AGENT_STEP_EVENT, {
-        requestId,
-        conversationId,
-        stepIndex: 0,
-        type: 'user',
-        messageId: userMsg.id
-      })
+      // v73 续跑：这条消息在崩溃前就落库了 —— 不重新插入、不重复 emit（否则一次中断变两条用户消息），
+      // 但要把锚点补写到 run 行上（正常路径下 start 时还没这条 id）。
+      let userMsg: MessageRecord
+      if (resume) {
+        userMsg = resume.userMessage
+      } else {
+        userMsg = messageRepo.insert({
+          conversationId,
+          role: 'user',
+          content,
+          status: 'done',
+          attachments: payload.attachments
+        })
+        markRunAnchor(conversationId, requestId, userMsg.id)
+        // 回传用户消息 DB id，渲染端本地占位卡（u_xxx）据此获得可删除的 dbId
+        emit(IPC.AGENT_STEP_EVENT, {
+          requestId,
+          conversationId,
+          stepIndex: 0,
+          type: 'user',
+          messageId: userMsg.id
+        })
 
-      // 会话标题与模型标签
-      // 首轮消息：先落截断标题，后台用模型生成短标题（开关可控、失败静默降级）
-      runFirstMessageTitle({
-        conversationId,
-        userContent: content,
-        providerId: target.providerId,
-        model: target.model
-      })
+        // 会话标题与模型标签
+        // 首轮消息：先落截断标题，后台用模型生成短标题（开关可控、失败静默降级）
+        runFirstMessageTitle({
+          conversationId,
+          userContent: content,
+          providerId: target.providerId,
+          model: target.model
+        })
+      }
       conversationRepo.touch(conversationId, {
         modelLabel: `${target.providerId}:${target.model}`,
         // v2 P0：能力只认会话列，`model` 只存 `provider:model`（方案 §4.2）。
@@ -1517,7 +1553,8 @@ class AgentEngine {
       injectAttachments(messages, payload.attachments)
 
       // 附件自动入库到助手关联的所有知识库（文本直接入库，图片需 KB 配 OCR）
-      if (payload.attachments && kbIds.length > 0) {
+      // v73 续跑跳过：入库没有幂等键，重跑会把同一附件再写一遍；"未入库"最多是少一份索引，不能重复。
+      if (!resume && payload.attachments && kbIds.length > 0) {
         void import('../attachment/attachment-ingestion')
           .then(async (m) => {
             for (const kbId of kbIds) {
@@ -1550,7 +1587,9 @@ class AgentEngine {
       )
       // 规划是旁路 LLM 调用，usage 计入总用量（usage_events.kind='planning'），与主循环同一单价口径。
       // 仍遵守"每次 LLM 调用前查预算"：触顶就跳过规划，交给主循环的同一道闸收尾停止。
-      if (!hasToolHistory && !shouldSkipPlanning(content, tools.length) && !usageService.getHardBlockExceeded()) {
+      // v73 续跑跳过：计划文本本来就不落库（见下面 planText 的 emit 注释），统计上无从恢复，
+      // 重跑一次等于白付一次往返、还可能换出一份和已答内容不一致的计划 ⇒ 宁可不带计划继续。
+      if (!resume && !hasToolHistory && !shouldSkipPlanning(content, tools.length) && !usageService.getHardBlockExceeded()) {
         try {
           const planAdapter = providerManager.getAdapter(target.providerId)
           const planSystem = `你是一个任务规划助手。请分析用户的最新请求，制定简洁的执行计划。
@@ -1629,7 +1668,8 @@ class AgentEngine {
         skillIds,
         emit,
         unattended: unattended ?? false,
-        stepCount: 0,
+        // v73：续跑从断点编号（steps_done 是"这一步之前的边界"），工具步数原样接上
+        stepCount: resume?.startStep ?? 0,
         maxSteps: MAX_STEPS,
         retriedEmpty: false,
         textProtocolMode: forcedTextProtocol,
@@ -1640,7 +1680,18 @@ class AgentEngine {
         finalMessageId: '',
         lastAssistantMsgId: '',
         recentToolSignatures: [],
-        toolStepsDone: 0
+        toolStepsDone: resume?.startToolStepsDone ?? 0
+      }
+
+      /** v73：所有检查点都带上起点快照（checkpoint 用 COALESCE，重复写同值不会覆盖成空） */
+      const checkpoint = (stage: ChatRunStage, stepsDone: number): void => {
+        markRunCheckpoint(conversationId, requestId, {
+          stage,
+          stepsDone,
+          toolStepsDone: ctx.toolStepsDone,
+          workspaceDir: runWorkspaceDir,
+          toolPermissionsSig: runToolPermissionsSig
+        })
       }
 
       try {
@@ -1655,11 +1706,7 @@ class AgentEngine {
             if (replanned) break
             replanned = true
             // v66：重规划也是一次模型调用，检查点先落到"第 N 步之后、正在思考"
-            markRunCheckpoint(conversationId, requestId, {
-              stage: 'model',
-              stepsDone: ctx.stepCount,
-              toolStepsDone: ctx.toolStepsDone
-            })
+            checkpoint('model', ctx.stepCount)
             this.runReplanStep(ctx)
             continue
           }
@@ -1689,11 +1736,7 @@ class AgentEngine {
             logger.warn(`[agent] 金额预算触顶（${overBudget.scope} ${overBudget.cost}/${overBudget.limit}），本轮收尾停止`)
             ctx.stepCount++
             // v66：收尾步也是"正在做的事"——停下时若没这条，会把它误读成"停在模型步"
-            markRunCheckpoint(conversationId, requestId, {
-              stage: 'final',
-              stepsDone: ctx.stepCount,
-              toolStepsDone: ctx.toolStepsDone
-            })
+            checkpoint('final', ctx.stepCount)
             this.runBudgetStopStep(ctx, ctx.stepCount, overBudget)
             state = 'final'
             break
@@ -1706,20 +1749,12 @@ class AgentEngine {
             // 步与步之间的唯一安全插入点：见 drainInterjections 上方那条消息顺序约束
             this.drainInterjections(ctx)
             // v66：检查点写在**执行之前**——进程在这步里倒下时，库里记的就是"正在做的事"
-            markRunCheckpoint(conversationId, requestId, {
-              stage: 'model',
-              stepsDone: stepIndex - 1,
-              toolStepsDone: ctx.toolStepsDone
-            })
+            checkpoint('model', stepIndex - 1)
             state = await this.runLLMStep(ctx, stepIndex)
           } else {
             // 进工具步就先记一笔：工具可能改文件/发请求，没有幂等时"进过"就等于"可能发生过"
             ctx.toolStepsDone += 1
-            markRunCheckpoint(conversationId, requestId, {
-              stage: 'tools',
-              stepsDone: stepIndex - 1,
-              toolStepsDone: ctx.toolStepsDone
-            })
+            checkpoint('tools', stepIndex - 1)
             state = await this.runToolsStep(ctx, stepIndex)
           }
         }
@@ -1727,11 +1762,7 @@ class AgentEngine {
         // 超步数降级：再调一次 LLM（不带 tools）强制生成最终回答
         if (state !== 'final') {
           // v66：降级这一步没走循环入口，检查点在这里补一笔
-          markRunCheckpoint(conversationId, requestId, {
-            stage: 'final',
-            stepsDone: ctx.stepCount,
-            toolStepsDone: ctx.toolStepsDone
-          })
+          checkpoint('final', ctx.stepCount)
           const degradeOk = await this.runDegradeStep(ctx)
           if (!degradeOk) {
             // 降级失败时 runDegradeStep 内已 emit 错误事件并更新会话状态，

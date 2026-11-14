@@ -26,6 +26,9 @@ import { ragService } from '../knowledge/rag'
 import { chunksToSources } from '../../shared/kb-sources'
 import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { usageService } from '../usage/usage-service'
+import { conversationRunRepo, type ConversationRunSnapshot } from '../db/repositories/conversation-run.repo'
+import { resolveAgentToolPermissions, toolPermissionsSignature } from '../agent/tool-permissions'
+import { getWorkspaceDir } from '../tools/fs-tools'
 import { getUsagePricing } from '../usage/pricing-config'
 import { currencySymbolOf } from '../../shared/usage-pricing'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
@@ -39,9 +42,55 @@ import { agentEngine } from '../agent/engine'
 import { markRunStarted, markRunFinished, markRunCheckpoint } from './runtime-registry'
 import { injectAttachments, appendTextAttachments, buildImageParts } from './context-attachments'
 import type { AdapterChatMessage } from '../providers/types'
-import type { MessageRecord } from '../../shared/types'
+import type {
+  ChatResumeBlockCode,
+  ChatResumeCandidate,
+  MessageRecord,
+  ResumeChatPayload
+} from '../../shared/types'
 
 type EmitFn = (channel: string, data: unknown) => void
+
+/** 续跑准入结果：none=没得续；blocked=有候选但被拦下（入口显示原因）；ready=可续 */
+type ResumeEvaluation =
+  | { kind: 'none' }
+  | { kind: 'blocked'; candidate: ChatResumeCandidate }
+  | { kind: 'ready'; candidate: ChatResumeCandidate; run: ConversationRunSnapshot; anchor: MessageRecord }
+
+/** 续跑被拦下时的回码（渲染层按 code 查静态四语键；这里的文案只进日志/兜底） */
+function resumeBlockedError(code: ChatResumeBlockCode): Error {
+  switch (code) {
+    case 'RESUME_ANCHOR_MISSING':
+      return new Error('RESUME_ANCHOR_MISSING:原来的用户消息已不在，无法接着跑，请重新发送')
+    case 'RESUME_ARTIFACTS_MISMATCH':
+      return new Error('RESUME_ARTIFACTS_MISMATCH:中断点的记录对不上，无法接着跑，请重新发送')
+    case 'RESUME_TOOLS_EXECUTED':
+      return new Error('RESUME_TOOLS_EXECUTED:中断前已有工具执行过，为避免重复执行，请重新发送')
+    case 'RESUME_WORKSPACE_CHANGED':
+      return new Error('RESUME_WORKSPACE_CHANGED:工作目录已变更，为避免在错误的目录里续跑，请重新发送')
+    case 'RESUME_TOOL_PERMISSIONS_CHANGED':
+      return new Error('RESUME_TOOL_PERMISSIONS_CHANGED:工具授权已变更，请重新发送')
+    case 'RESUME_TARGET_MISSING':
+      return new Error('RESUME_TARGET_MISSING:会话的模型已不可用，请重新选择模型后发送')
+  }
+}
+
+/** 会话的 modelLabel 形如 `providerId:model`；解析不出来就不猜（续跑要求目标明确） */
+function parseModelLabel(label: string | null): ChatTarget | null {
+  if (!label) return null
+  const idx = label.indexOf(':')
+  if (idx <= 0 || idx === label.length - 1) return null
+  return { providerId: label.slice(0, idx), model: label.slice(idx + 1) }
+}
+
+/**
+ * 工作目录比对：只做"是不是同一个位置"的判断。
+ * Windows/macOS 路径大小写与尾部分隔符不携带语义，比较前统一；不做 realpath（目录被换到别处也算变化）。
+ */
+function sameWorkspaceDir(a: string, b: string): boolean {
+  const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  return norm(a) === norm(b)
+}
 
 /** 按 batch 分组一轮回复：有 batchId 按 batchId 归组；旧数据（null）按“连续 5 秒内”归为同批 */
 function groupRepliesByBatch(replies: MessageRecord[]): MessageRecord[][] {
@@ -507,6 +556,122 @@ class ChatService {
       releaseKeepAwake()
     }
     })
+  }
+
+  /**
+   * P1-3a：续跑候选（只读，打开会话时查）。
+   * 只认「该会话最新一条 run 且是 interrupted + resume_state=resumable」：
+   * 崩溃后用户已经发过新消息，就说明这一轮被放过了，不能拿更早的断点再续。
+   * 这里不抛错：准入不过就返回 blocked（入口显示原因、按钮禁用），比悄悄不显示更诚实。
+   */
+  getResumeCandidate(conversationId: string): ChatResumeCandidate | null {
+    const ev = this.evaluateResume(conversationId)
+    return ev.kind === 'none' ? null : ev.candidate
+  }
+
+  /**
+   * P1-3a：从检查点续跑（范围见 P1-3a 设计稿：只接管 toolStepsDone=0 且停在 preparing/model 的中断）。
+   *
+   * 三条硬约束：
+   * 1. 用**新 requestId** 落新 run 行，旧行保持 interrupted 作审计（不复用旧行，避免 INSERT OR REPLACE 覆盖断点）；
+   * 2. 不插用户消息、不重跑规划、不重做附件入库（理由见引擎里 `resume` 分支的注释）；
+   * 3. 准入在 markRunStarted 之前完成；任何一项对不上就抛可读回码，不做"尽力而为"的续跑。
+   */
+  async resume(payload: ResumeChatPayload, emit: EmitFn): Promise<void> {
+    return this.withConversationLock(payload.conversationId, async () => {
+      const { requestId, conversationId, resumeFromRequestId } = payload
+      // 预算闸与正常发送同一道：触顶就照旧抛 BUDGET_EXCEEDED（渲染端已有四语文案）
+      this.assertBudget()
+      const ev = this.evaluateResume(conversationId)
+      if (ev.kind === 'none') throw new Error('RESUME_NOT_FOUND:这次中断已不可续跑，请重新发送')
+      if (ev.candidate.requestId !== resumeFromRequestId) {
+        throw new Error('RESUME_STALE:这次中断已有新的运行，请重新开始')
+      }
+      if (ev.kind === 'blocked') throw resumeBlockedError(ev.candidate.code ?? 'RESUME_ARTIFACTS_MISMATCH')
+
+      const conv = conversationRepo.get(conversationId)
+      const target = parseModelLabel(conv?.modelLabel ?? null)
+      if (!conv || !target) throw resumeBlockedError('RESUME_TARGET_MISSING')
+
+      acquireKeepAwake()
+      try {
+        await agentEngine.run(
+          {
+            requestId,
+            conversationId,
+            assistantId: conv.assistantId,
+            content: ev.anchor.content ?? '',
+            targets: [target],
+            agentMode: true,
+            attachments: ev.anchor.attachments
+          },
+          emit,
+          {
+            resume: {
+              userMessage: ev.anchor,
+              startStep: ev.run.stepsDone ?? 0,
+              startToolStepsDone: 0,
+              workspaceDir: ev.run.workspaceDir,
+              toolPermissionsSig: ev.run.toolPermissionsSig
+            }
+          }
+        )
+      } finally {
+        releaseKeepAwake()
+      }
+    })
+  }
+
+  /**
+   * 续跑准入（只读）：候选 → 逐项核对。
+   * 顺序有讲究：先看"是不是这一轮"，再看"断点记录对不对"，最后才看"环境有没有变"——
+   * 这样用户看到的第一个原因总是最接近根因的那个。
+   */
+  private evaluateResume(conversationId: string): ResumeEvaluation {
+    const run = conversationRunRepo.getLatest(conversationId)
+    if (!run || run.status !== 'interrupted') return { kind: 'none' }
+    // 普通对话没有续跑入口；restart 的判定在启动对账时已经写下，不再复核
+    if (run.mode !== 'agent' || run.resumeState !== 'resumable') return { kind: 'none' }
+
+    const stepsDone = run.stepsDone ?? 0
+    const base = {
+      requestId: run.requestId,
+      conversationId,
+      nextStep: stepsDone + 1,
+      userMessageId: run.anchorUserMessageId ?? ''
+    }
+    const blocked = (code: ChatResumeBlockCode): ResumeEvaluation => ({
+      kind: 'blocked',
+      candidate: { ...base, state: 'blocked', code }
+    })
+
+    const anchorId = run.anchorUserMessageId
+    if (!anchorId) return blocked('RESUME_ANCHOR_MISSING')
+    const anchor = messageRepo.getById(anchorId)
+    if (!anchor || anchor.role !== 'user' || anchor.status !== 'done') return blocked('RESUME_ANCHOR_MISSING')
+
+    // 检查点写在步前：已落库的助手条数必须与 steps_done 对齐，否则断点落后一步（见 judgeRunResume 注释）
+    const counts = conversationRunRepo.countArtifacts(anchorId)
+    if (counts.toolMessages > 0) return blocked('RESUME_TOOLS_EXECUTED')
+    if (counts.doneAssistants !== stepsDone) return blocked('RESUME_ARTIFACTS_MISMATCH')
+
+    // 起点快照只在"还没走到第一个检查点"时为空（那种情况下这一步之前什么都没执行，无需比对）
+    if (run.workspaceDir && !sameWorkspaceDir(run.workspaceDir, getWorkspaceDir())) {
+      return blocked('RESUME_WORKSPACE_CHANGED')
+    }
+    const conv = conversationRepo.get(conversationId)
+    if (!conv) return blocked('RESUME_TARGET_MISSING')
+    const assistant = conv.assistantId ? assistantRepo.get(conv.assistantId) : null
+    const permissions = resolveAgentToolPermissions(assistant?.toolPermissions, {
+      hasAssistant: !!conv.assistantId,
+      isBuiltin: assistant?.isBuiltin ?? false
+    })
+    if (run.toolPermissionsSig && run.toolPermissionsSig !== toolPermissionsSignature(permissions)) {
+      return blocked('RESUME_TOOL_PERMISSIONS_CHANGED')
+    }
+    if (!parseModelLabel(conv.modelLabel)) return blocked('RESUME_TARGET_MISSING')
+
+    return { kind: 'ready', candidate: { ...base, state: 'ready' }, run, anchor }
   }
 
   /**

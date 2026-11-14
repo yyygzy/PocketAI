@@ -6,6 +6,7 @@ import type {
   MessageRecord,
   ChatTarget,
   ChatAttachment,
+  ChatResumeCandidate,
   ReminderRepeatRule
 } from '../../../../shared/types'
 import { AssistantRail } from './AssistantRail'
@@ -418,6 +419,35 @@ export const ChatModule: React.FC = () => {
   useEffect(() => {
     useAppStore.getState().setModuleBusy('chat', liveColumns !== null || agentRunning)
   }, [liveColumns, agentRunning])
+
+  /**
+   * P1-3a：续跑候选。
+   * 只读 DB（`chat:get-resume-candidate`），**不看 runtime 镜像**：打开会话时那边会被清掉，
+   * 恰好是最需要这个入口的时刻（见 ChatModule 的 clearChatRuntimeFailure 分支）。
+   * 依赖 agentRunning：一轮跑完后最新 run 已变终态，候选要跟着消失/刷新。
+   */
+  const [resumeCandidate, setResumeCandidate] = useState<ChatResumeCandidate | null>(null)
+  const [resumeBusy, setResumeBusy] = useState(false)
+  useEffect(() => {
+    const convId = currentConvId
+    setResumeCandidate(null)
+    if (!convId) return
+    let cancelled = false
+    void window.pocketai
+      .getChatResumeCandidate(convId)
+      .then((r) => {
+        if (cancelled) return
+        if (hasIpcFailed(r)) {
+          logIpcError('chat.getChatResumeCandidate', r.error)
+          return
+        }
+        setResumeCandidate(r)
+      })
+      .catch(reportIpcError('chat.getChatResumeCandidate'))
+    return () => {
+      cancelled = true
+    }
+  }, [currentConvId, agentRunning])
 
   /**
    * 拉服务商列表并回填默认目标。
@@ -1453,6 +1483,28 @@ export const ChatModule: React.FC = () => {
     void handleSend(text, attachments)
   }
 
+  /**
+   * P1-3a：从 banner 继续上次中断的 Agent 轮次。
+   * 与 `handleSend` 的差别只有两处：**不插本地临时用户消息**（那条早就在库里）、**不发 chat:send**；
+   * 流事件仍按新 requestId 走同一套 useStreamSession 归并。失败走 onChatSendFailed（toast + 卡片收尾）。
+   */
+  const handleResume = useCallback(() => {
+    const cand = resumeCandidate
+    const convId = currentConvId
+    if (!cand || !convId || cand.state !== 'ready' || resumeBusy || isStreaming()) return
+    const requestId = beginAgentStream(convId)
+    if (!requestId) return
+    setResumeCandidate(null)
+    setResumeBusy(true)
+    window.pocketai
+      .resumeChat({ requestId, conversationId: convId, resumeFromRequestId: cand.requestId })
+      .then((r) => {
+        if (hasIpcFailed(r)) onChatSendFailed(requestId, convId, r)
+      })
+      .catch((e) => onChatSendFailed(requestId, convId, errText(e)))
+      .finally(() => setResumeBusy(false))
+  }, [resumeCandidate, currentConvId, resumeBusy, isStreaming, beginAgentStream, onChatSendFailed])
+
   // 引用回复：ChatView 已查好完整消息，直接设置
   const handleSetReply = (msg: MessageRecord | null) => {
     setReplyToMessage(msg)
@@ -2072,6 +2124,9 @@ export const ChatModule: React.FC = () => {
         onStop={handleStop}
         onRegenerate={handleRegenerate}
         onResend={handleResend}
+        resumeCandidate={resumeCandidate}
+        resumeBusy={resumeBusy}
+        onResume={handleResume}
         onDeleteMessage={handleDeleteMessage}
         onDeleteMessages={handleDeleteMessages}
         onForkConversation={handleForkConversation}

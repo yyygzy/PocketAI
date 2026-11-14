@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry, AgentSessionStats } from '../../../../shared/types'
+import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry, AgentSessionStats, ChatResumeBlockCode, ChatResumeCandidate } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
@@ -30,6 +30,19 @@ import { exportConversationAsPng } from '../../utils/export-image'
 import { rangeBetween, mergeRange } from '../../utils/message-select'
 import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+
+/**
+ * P1-3a：续跑被拦下的原因 → 静态四语键。
+ * 用字面量映射（不是拼 key）：文案键必须可被 i18n 门禁静态扫到。
+ */
+const RESUME_BLOCK_TEXT_KEYS: Record<ChatResumeBlockCode, string> = {
+  RESUME_ANCHOR_MISSING: 'chat.resume.anchorMissing',
+  RESUME_ARTIFACTS_MISMATCH: 'chat.resume.artifactsMismatch',
+  RESUME_TOOLS_EXECUTED: 'chat.resume.toolsExecuted',
+  RESUME_WORKSPACE_CHANGED: 'chat.resume.workspaceChanged',
+  RESUME_TOOL_PERMISSIONS_CHANGED: 'chat.resume.permissionsChanged',
+  RESUME_TARGET_MISSING: 'chat.resume.targetMissing'
+}
 
 interface Turn {
   user: MessageRecord | null
@@ -222,6 +235,14 @@ interface Props {
   onStop: () => void
   onRegenerate: (messageId: string) => void
   onResend: (messageId: string, newContent?: string) => void
+  /**
+   * P1-3a：续跑入口（顶部 banner）。
+   * 候选来自主进程只读 DB 查询，不来自 runtime 镜像（打开会话时镜像会被清掉）。
+   * `state='blocked'` 仍显示 banner，但按钮禁用并给出原因——比悄悄消失更诚实。
+   */
+  resumeCandidate?: ChatResumeCandidate | null
+  resumeBusy?: boolean
+  onResume?: () => void
   onDeleteMessage: (id: string) => void
   onDeleteMessages: (ids: string[]) => void
   onForkConversation?: (messageId: string) => void
@@ -315,6 +336,9 @@ export const ChatView: React.FC<Props> = ({
   onStop,
   onRegenerate,
   onResend,
+  resumeCandidate,
+  resumeBusy,
+  onResume,
   onDeleteMessage,
   onDeleteMessages,
   onForkConversation,
@@ -987,6 +1011,33 @@ export const ChatView: React.FC<Props> = ({
           )}
         </button>
       </div>
+
+      {/* P1-3a 续跑入口：只认主进程的只读候选（打开会话时 runtime 镜像会被清掉，不能当事实源） */}
+      {resumeCandidate && (
+        <div
+          data-testid="chat-resume-banner"
+          className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-hover-overlay)]"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="text-[12px] text-[var(--color-text)]">
+              {t('chat.resume.title', { step: resumeCandidate.nextStep })}
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+              {resumeCandidate.state === 'blocked' && resumeCandidate.code
+                ? t(RESUME_BLOCK_TEXT_KEYS[resumeCandidate.code])
+                : t('chat.resume.hint')}
+            </div>
+          </div>
+          <button
+            data-testid="chat-resume-action"
+            className="btn-primary text-[11px] py-1 px-2.5 shrink-0 disabled:opacity-50"
+            disabled={resumeCandidate.state !== 'ready' || !!resumeBusy || !!streaming}
+            onClick={onResume}
+          >
+            {resumeBusy ? t('chat.resume.resuming') : t('chat.resume.action')}
+          </button>
+        </div>
+      )}
 
       {/* 单价读取失败提示 */}
       {pricingUnread && (

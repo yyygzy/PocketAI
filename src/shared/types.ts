@@ -1784,6 +1784,42 @@ export interface ResendPayload {
   targets: ChatTarget[]
 }
 
+/**
+ * P1-3a 续跑：拦下这次续跑的原因（渲染层按静态四语键显示，不读主进程文案）。
+ * 每一项都是 fail-closed：宁可让用户重新开始，也不在"事实已经变了"的前提下接着跑。
+ */
+export type ChatResumeBlockCode =
+  | 'RESUME_ANCHOR_MISSING'
+  | 'RESUME_ARTIFACTS_MISMATCH'
+  | 'RESUME_TOOLS_EXECUTED'
+  | 'RESUME_WORKSPACE_CHANGED'
+  | 'RESUME_TOOL_PERMISSIONS_CHANGED'
+  | 'RESUME_TARGET_MISSING'
+
+/**
+ * 续跑候选（只读 DB 得出，不依赖运行时内存注册表——打开会话时那边会被清掉）。
+ * `state='blocked'` 时入口仍要显示，但按钮禁用并给出原因；这比"悄悄不显示"更诚实。
+ */
+export interface ChatResumeCandidate {
+  /** 被中断的那次 run（续跑会用新 requestId，旧行保留作审计） */
+  requestId: string
+  conversationId: string
+  /** 接着跑的步号（= steps_done + 1） */
+  nextStep: number
+  /** 锚定的用户消息（续跑不重复插入它） */
+  userMessageId: string
+  state: 'ready' | 'blocked'
+  /** 仅 blocked */
+  code?: ChatResumeBlockCode
+}
+
+/** 续跑请求：requestId 是**新**的（流事件按它归组），resumeFromRequestId 是被接续的旧 run */
+export interface ResumeChatPayload {
+  requestId: string
+  conversationId: string
+  resumeFromRequestId: string
+}
+
 export interface ChatChunkEvent {
   requestId: string
   targetIndex: number
@@ -2933,6 +2969,8 @@ export const IPC = {
   CHAT_CLEAR_RUNTIME_FAILURE: 'chat:clear-runtime-failure', // B-2：清除「失败/已中断」角标（用户打开会话时）
   CHAT_RUNTIME_STATE_EVENT: 'chat:runtime-state-event', // 主进程→渲染端：运行态/未读增量（只带身份与状态）
   CHAT_REPORT_READ_STATE: 'chat:report-read-state', // B-4：渲染端上报「聚焦+可见+未锁屏」的当前会话，主进程据此清未读
+  CHAT_GET_RESUME_CANDIDATE: 'chat:get-resume-candidate', // P1-3a：只读 DB 的续跑候选（打开会话时取）
+  CHAT_RESUME: 'chat:resume', // P1-3a：从检查点续跑（新 requestId，旧 run 行保留）
   CONVERSATION_TITLE_EVENT: 'conversation:title-event',
 
   KB_LIST: 'kb:list',

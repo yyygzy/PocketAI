@@ -1355,6 +1355,21 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC);
     `
+  },
+  {
+    // v73：长任务续跑（P1-3a）的三列前置条件。
+    // 为什么不靠时间戳猜锚点：用户可能在崩溃后先发了别的消息，`started_at` 之后的第一条 user 消息
+    // 不一定是这一轮的用户消息；把锚点写死在 run 行上，续跑才知道该接哪段上下文（也不重复插用户消息）。
+    // `workspace_dir` / `tool_permissions_sig` 是**起点快照**：续跑时与当前值比对，不一致就 fail-closed，
+    // 而不是拿着旧计划在新目录/新授权下继续跑。三列都可为 NULL（老行 / 还没走到第一个检查点），
+    // 老行一律按 restart 判定，不猜。
+    version: 73,
+    name: 'conversation_runs_resume_anchor',
+    up: `
+      ALTER TABLE conversation_runs ADD COLUMN anchor_user_message_id TEXT;
+      ALTER TABLE conversation_runs ADD COLUMN workspace_dir TEXT;
+      ALTER TABLE conversation_runs ADD COLUMN tool_permissions_sig TEXT;
+    `
   }
 ]
 

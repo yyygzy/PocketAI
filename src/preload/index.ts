@@ -45,6 +45,8 @@ import type {
   ProjectZipAbsResult,
   RegeneratePayload,
   ResendPayload,
+  ResumeChatPayload,
+  ChatResumeCandidate,
   ChatChunkEvent,
   ChatDoneEvent,
   ChatErrorEvent,
@@ -474,6 +476,14 @@ const api = {
     ipcRenderer.invoke(IPC.CHAT_REGENERATE, payload),
   resendMessage: (payload: ResendPayload): Promise<void | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.CHAT_RESEND, payload),
+  /** P1-3a：续跑候选（只读 DB；null=这一轮没有可续的断点）。blocked 时带原因回码 */
+  getChatResumeCandidate: (
+    conversationId: string
+  ): Promise<ChatResumeCandidate | null | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.CHAT_GET_RESUME_CANDIDATE, conversationId),
+  /** P1-3a：从检查点续跑（新 requestId；事件走同一套 AGENT_STEP/CHAT_* 通道） */
+  resumeChat: (payload: ResumeChatPayload): Promise<void | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.CHAT_RESUME, payload),
   // §265：类型诚实化（照 §258 那三发的写法）——`safeHandle` 会把失败以**已 resolve 的 `{ok:false,error}`** 送回来，
   // 原来标成 `Promise<{ ok: boolean }>` 就是在告诉调用方"不会失败"，于是没人判它，而界面下一句已经改成"已停"。
   abortChat: (requestId: string): Promise<{ ok: boolean; error?: string }> =>

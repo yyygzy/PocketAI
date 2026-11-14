@@ -10,6 +10,8 @@
 // - 空数组 = **不授权任何工具**；只有两种情形保留旧的「空即全授权」：
 //   未选助手（平台默认 Agent 会话）与内置助手（避免升级后历史助手突然失去全部能力）。
 // 曾经的无条件 `[] → ['*']` 让「拿到一个助手 JSON」等价于「拿到全授权 Agent（含 shell_exec）」。
+import { createHash } from 'node:crypto'
+
 export function resolveAgentToolPermissions(
   assistantPermissions: string[] | null | undefined,
   opts: { hasAssistant: boolean; isBuiltin: boolean }
@@ -17,4 +19,14 @@ export function resolveAgentToolPermissions(
   const list = Array.isArray(assistantPermissions) ? assistantPermissions : []
   if (list.length > 0) return list
   return opts.hasAssistant && !opts.isBuiltin ? [] : ['*']
+}
+
+/**
+ * v73：工具授权签名（续跑前置条件）。
+ * 只关心「授权集合」本身：去重、排序后哈希，因此顺序变化不算变化，多一个少一个都算。
+ * 起点快照与续跑时各算一次，不一致就 fail-closed（见 chat-service 的续跑准入）。
+ */
+export function toolPermissionsSignature(toolIds: string[]): string {
+  const canonical = Array.from(new Set(toolIds)).sort().join('\n')
+  return createHash('sha256').update(canonical).digest('hex')
 }

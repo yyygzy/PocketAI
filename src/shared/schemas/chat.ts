@@ -96,6 +96,13 @@ export const resendPayloadSchema = z.object({
 /** 请求 ID（CHAT_ABORT） */
 export const requestIdSchema = chatId
 
+/** P1-3a：CHAT_RESUME 入参（新 requestId + 被接续的旧 run，两个 id 都必须带） */
+export const resumeChatPayloadSchema = z.object({
+  requestId: chatId,
+  conversationId: chatId,
+  resumeFromRequestId: chatId
+})
+
 /** B-4：读态上报（conversationId 为 null ＝ 当前没有会话可见） */
 export const readStateReportSchema = z.object({
   conversationId: chatId.nullable(),
