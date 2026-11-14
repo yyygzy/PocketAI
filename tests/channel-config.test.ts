@@ -38,6 +38,12 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: mocks.appConfigRepo
 }))
 
+// 本文件只测配置读写语义（加密档下照常落库）；none 模式的写入闸由
+// tests/channel-websearch-none-gate.test.ts 专门覆盖，这里固定成 db 档避免重复断言。
+vi.mock('../src/main/crypto/master-key', () => ({
+  masterKeyManager: { getMode: () => 'db' }
+}))
+
 vi.mock('../src/main/crypto/secret-store', () => ({
   getSecret: (k: string) => mocks.secretStore.getSecret(k),
   setSecret: (k: string, v: string) => mocks.secretStore.setSecret(k, v),

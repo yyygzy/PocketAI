@@ -204,7 +204,7 @@ describe('C 三发带回 count（§383 候选 ④ 的本体：解不开不只改
 
   it('preload 三处类型都带上那颗（类型不诚实＝渲染层读不到，只有 tsc 看得见）', () => {
     expect(count(PRELOAD, 'undecryptableCount?: number'), '改密＋禁用＋启用＋恢复码').toBe(4)
-    expect(PRELOAD).toMatch(/disableEncryption: \(password: string\): Promise<\{ ok: boolean; error\?: string; undecryptableCount\?: number \}>/)
+    expect(PRELOAD).toMatch(/disableEncryption: \(password: string\): Promise<\{ ok: boolean; error\?: string; undecryptableCount\?: number; canceled\?: boolean \}>/)
     expect(PRELOAD).toMatch(/enableEncryption: \(password: string\): Promise<\{ ok: boolean; error\?: string; undecryptableCount\?: number \}>/)
     expect(PRELOAD).toMatch(/Promise<AuthResult & \{ recoveryCode\?: string; undecryptableCount\?: number \}>/)
   })
@@ -271,6 +271,7 @@ describe('F 手抄 backup-service 桩、又真测轮换的测试必须带上这�
 
   it('名单现数（多一处＝有人新抄这一层；少一处＝某份的读法漂了）', () => {
     expect(stubbers, `抄了 backup-service 又测轮换的测试：${stubbers.join(', ')}`).toEqual([
+      'encryption-disable-downgrade-gate.test.ts',
       'encryption-state-commit-order.test.ts',
       'unlock-boot-preverify.test.ts'
     ])

@@ -693,9 +693,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/load-fail-read-retry-350.test.tsx:97 -> :99',
       'tests/load-fail-read-retry-352.test.tsx:90 -> :91',
       'tests/load-fail-read-retry-354.test.tsx:91 -> :92',
-      'tests/renderer-channel-b3.test.tsx:109 -> :110',
-      'tests/renderer-channel-b3.test.tsx:117 -> :119',
-      'tests/renderer-channel-b3.test.tsx:127 -> :128',
+      'tests/renderer-channel-b3.test.tsx:102 -> :104',
+      'tests/renderer-channel-b3.test.tsx:112 -> :113',
+      'tests/renderer-channel-b3.test.tsx:94 -> :95',
       'tests/renderer-file-open-332.test.tsx:107 -> :109',
       'tests/renderer-image-read-256.test.tsx:84 -> :85',
       // v58（删 mcp_servers.enabled）：该用例记录夹具少了一行 `enabled`，整块下移，故门与断言各上移一行（判语本身不变）。
@@ -703,7 +703,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-provider-http-confirm.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:64 -> :65',
       'tests/renderer-provider-settings.test.tsx:249 -> :250',
-      'tests/renderer-websearch-b3.test.tsx:89 -> :90', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动
+      'tests/renderer-websearch-b3.test.tsx:74 -> :76', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动；SEC-1 收口批删掉确认弹层后整体上移，重钉为 74→76
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
       'tests/capability-visibility-428.test.tsx:103 -> :104', // §429 迁移（原 §436 判语沿用）：门等 `reads === 1`（失败那一发已发出、渲染已重跑），紧随断言网格没长出假 0；门与断言读同一屏、失败落屏与计数条件同批 ⇒ 只会漏报，不会假红。
       'tests/chat-deep-search-running-461.test.tsx:191 -> :192', // §461 深搜提示：门等 getWebSearchConfig 那一发发出，紧随断言「quick 档屏上没有深搜提示」；门放行时配置 promise 未必已落地 ⇒ 只会假绿，判定本身由 judgeDeepSearchRunning 的三档单测兜底。

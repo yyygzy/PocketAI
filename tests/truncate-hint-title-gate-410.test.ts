@@ -404,7 +404,8 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
       // 行号随改动漂移：WebDAV 那批 1571→1585，P4 批次 2 后实测 1600；设置页签改造后实测 1671；
       //   自定义 CSS 下线批删掉该文件里的 CSS 区块后整体上移 1 行，实测 1670；
       //   备份状态三行下线批在备份卡片里补了「未配置」那句与 cfgLoaded，整体下移 13 行，现按实测重钉为 1683。
-      'src/renderer/src/modules/settings/SettingsModule.tsx:1683(16字)'
+      //   SEC-1 收口批在 none 模式警示下补了一句 `enc.noneCredentialGate`（+3 行），实测 1686。
+      'src/renderer/src/modules/settings/SettingsModule.tsx:1686(16字)'
     )
   })
 })
