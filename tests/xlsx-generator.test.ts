@@ -165,7 +165,7 @@ describe('公式缓存值', () => {
     expect(ws['C2']!.v).toBe(12)
   })
 
-  it('除零 / 文本参与四则 / 越界 → 对应错误格', async () => {
+  it('除零 / 文本参与四则 / 越界地址 → 对应错误格', async () => {
     const ws = await sheetOf(['值', '结果'], [
       [6, { formula: 'A2/0' }],
       ['x', { formula: 'A3+1' }],
@@ -181,10 +181,34 @@ describe('公式缓存值', () => {
     expect(ws['B3']!.w).toBe('#VALUE!')
     expect(ws['B3']!.f).toBe('A3+1')
 
+    // 越界地址（ZZZ 列 > XFD）在 Excel 里不是引用而是未定义的名称 ⇒ 重算得 #NAME?
     expect(ws['B4']!.t).toBe('e')
-    expect(ws['B4']!.v).toBe(0x17)
-    expect(ws['B4']!.w).toBe('#REF!')
+    expect(ws['B4']!.v).toBe(0x1d)
+    expect(ws['B4']!.w).toBe('#NAME?')
     expect(ws['B4']!.f).toBe('ZZZ9999999')
+  })
+
+  it('未定义名称与真正的 #REF! 分开落盘（缓存值与 Excel 重算一致）', async () => {
+    const ws = await sheetOf(['值', '结果'], [
+      [1, { formula: 'ZZZ9999999' }],
+      [2, { formula: 'A1048577' }],
+      [3, { formula: 'XFE1' }],
+      [4, { formula: '#REF!+1' }],
+      [5, { formula: 'SUM(A2:#REF!)' }]
+    ])
+    // 列/行越出 XFD1048576（含 A1048577、XFE1）：Excel 当成未定义名称 ⇒ #NAME?
+    for (const addr of ['B2', 'B3', 'B4']) {
+      expect(ws[addr]!.t).toBe('e')
+      expect(ws[addr]!.v).toBe(0x1d)
+      expect(ws[addr]!.w).toBe('#NAME?')
+    }
+    // 公式里带着已失效的引用（Excel 删行后重写出来的形状）⇒ #REF!
+    expect(ws['B5']!.t).toBe('e')
+    expect(ws['B5']!.v).toBe(0x17)
+    expect(ws['B5']!.w).toBe('#REF!')
+    expect(ws['B5']!.f).toBe('#REF!+1')
+    expect(ws['B6']!.v).toBe(0x17)
+    expect(ws['B6']!.w).toBe('#REF!')
   })
 
   it('区域为空：AVERAGE → #DIV/0!，SUM → 0（区域里一个数字都没有）', async () => {
