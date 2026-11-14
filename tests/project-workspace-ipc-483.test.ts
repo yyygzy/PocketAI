@@ -21,6 +21,8 @@ const H = vi.hoisted(() => ({
   openPathFailure: '',
   saveDialog: { canceled: true, filePath: '' } as { canceled: boolean; filePath: string },
   saveDialogCalls: [] as Array<{ win: unknown; opts: Record<string, unknown> }>,
+  /** 为 true 时 archiver.create 返回一个"打包即失败、且不去关 output 流"的假档——复现写流仍攥句柄的失败路径 */
+  failArchive: false,
   fakeWindow: { id: 483 }
 }))
 
@@ -28,6 +30,24 @@ vi.mock('../src/main/portable', () => ({ DATA_DIR: P.data, DB_PATH: P.db }))
 vi.mock('../src/main/logger', () => ({
   createLogger: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} })
 }))
+
+// 只在 failArchive 打开时把 archiver 换成"打包立刻抛错、且不动 output 流"的假档：
+// 真实 archiver 出错时会自己停笔，但 output 写流的句柄仍开着——正是删临时文件变成「删名挂起」的现场
+vi.mock('archiver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('archiver')>()
+  const { EventEmitter } = await import('node:events')
+  return {
+    ...actual,
+    create: (format: 'zip', opts?: unknown) => {
+      if (!H.failArchive) return (actual as unknown as { create: (f: string, o?: unknown) => unknown }).create(format, opts)
+      const fake = new EventEmitter() as unknown as Record<string, unknown>
+      fake.pipe = () => fake
+      fake.directory = () => fake
+      fake.finalize = () => Promise.reject(new Error('EBUSY: resource busy or locked, open locked.bin'))
+      return fake
+    }
+  }
+})
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getPath: () => P.dir, getAppPath: () => P.dir, quit: () => {} },
@@ -271,6 +291,31 @@ describe('工作目录项目 IPC（方案 A）', () => {
     }
     expect(fs.existsSync(dest)).toBe(false)
     expect(fs.existsSync(`${dest}.pocketai-tmp`)).toBe(false)
+  })
+
+  it('export-zip-abs：打包中途失败先释放写流，临时文件是真删（不是删名挂起）', async () => {
+    // 真机形状：源目录里的文件被独占占用 → archiver 报 EBUSY；此刻 output 写流的句柄还开着。
+    // Windows 上带着句柄 rmSync 只会「删名挂起」：existsSync 变 false，但目录里还列得出、且删不掉。
+    const dest = path.join(P.dir, 'busy-export.zip')
+    const tmp = `${dest}.pocketai-tmp`
+    H.saveDialog = { canceled: false, filePath: dest }
+    H.failArchive = true
+    try {
+      const res = await call('exportProjectZipAbs', path.join(APPS, 'demo'))
+      expect(res.ok).toBe(false)
+      expect(errOf(res).startsWith('PROJECT_EXPORT_FAILED:')).toBe(true)
+      expect(errOf(res)).toContain('EBUSY')
+    } finally {
+      H.failArchive = false
+    }
+
+    expect(fs.existsSync(dest)).toBe(false)
+    // 关键：不能只看 existsSync——删名挂起时它同样是 false，必须看目录项
+    expect(fs.readdirSync(P.dir).filter((n) => n === 'busy-export.zip.pocketai-tmp')).toEqual([])
+    // 名字可立即重建并删除 ⇒ 目录项已真正消失，不是挂起的僵尸条目
+    fs.writeFileSync(tmp, 'x')
+    fs.unlinkSync(tmp)
+    expect(fs.existsSync(tmp)).toBe(false)
   })
 
   it('export-zip-abs：越界路径在校验处就拒，根本不弹保存框', async () => {
