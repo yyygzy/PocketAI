@@ -1581,6 +1581,7 @@ export const en = {
   'popup.capture': 'Screenshot',
   'popup.captureWindow': 'Current window',
   'popup.captureScreen': 'Whole screen',
+  'popup.capturing': 'Capturing the window…',
   'popup.captureFailed': 'Screenshot failed: {reason}',
   'popup.capture.err.unsupportedPlatform': 'Screenshots are not supported on this system yet',
   'popup.capture.err.locked': 'The screen is locked, so the screenshot was cancelled',

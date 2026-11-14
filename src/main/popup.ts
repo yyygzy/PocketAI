@@ -29,7 +29,7 @@ import { denyNewWindows } from './net/external-links'
 import { errMsg } from './error'
 import { createLogger } from './logger'
 import { safeHandle, argsSchema, z } from './ipc/safe-handle'
-import { captureScreenshot, popupHwndString } from './screenshot'
+import { captureScreenshot, popupHwndString, prewarmCaptureHost, queryForegroundHwnd } from './screenshot'
 
 const log = createLogger('popup')
 
@@ -298,6 +298,8 @@ const MAX_SELECTION_TEXT = 8000
 interface PopupPayloadExtra {
   screenshot?: ChatAttachment
   screenshotError?: ScreenshotFailCode
+  /** 热键已按下、捕获还在路上：浮窗先出并显示"正在捕获" */
+  capturing?: boolean
 }
 
 /** 唯一入口：幂等打开/聚焦浮窗；锁屏状态下拒绝唤起，返回 null */
@@ -315,6 +317,7 @@ export function openPopup(
     action: mode === 'selection' ? action : undefined,
     screenshot: extra?.screenshot,
     screenshotError: extra?.screenshotError,
+    capturing: extra?.capturing,
     ts: Date.now()
   }
   if (popupWin && !popupWin.isDestroyed()) {
@@ -352,23 +355,51 @@ export function triggerScreenshot(target: ScreenshotTarget): void {
   if (screenshotBusy) return
   if (lockService.getStatus().state === 'locked') return
   screenshotBusy = true
-  // 句柄必须在 hide() 之前取：隐藏后句柄仍有效，但此处语义更直白（"隐藏的是这个窗口"）
-  const popupHwnd = popupHwndString(popupWin)
-  hidePopup()
-  void captureScreenshot(target, { popupHwnd })
-    .then(reopenWithCapture)
-    .catch((e) => {
+  void (async () => {
+    try {
+      // 1) 热键瞬间先记下前台窗口：浮窗一上屏就会把前台抢走
+      let foreground: string | undefined
+      try {
+        foreground = await queryForegroundHwnd()
+      } catch (e) {
+        log.warn('读取前台窗口失败，退回隐藏浮窗后按命中测试抓:', errMsg(e))
+      }
+      if (!foreground) {
+        // 宿主还没就绪/已崩溃：保持旧流程，至少不会截错目标
+        const popupHwnd = popupHwndString(popupWin)
+        hidePopup()
+        reopenWithCapture(await captureScreenshot(target, { popupHwnd }))
+        return
+      }
+      const popupHwnd = popupHwndString(popupWin)
+      if (popupHwnd && foreground === popupHwnd) {
+        // 浮窗自己在前台（用户正开着浮窗按热键）：必须先把浮窗藏掉，
+        // 否则命中测试会打回浮窗自身；抓完再按结果重新上屏
+        hidePopup()
+        reopenWithCapture(await captureScreenshot(target, { popupHwnd }))
+        return
+      }
+      // 2) 浮窗先出：用户立刻看到"正在捕获"，窗口创建与捕获并行
+      openPopup('quick', undefined, undefined, { capturing: true })
+      // 3) 目标按热键瞬间的 HWND 取源，浮窗保持可见也不影响 PrintWindow；
+      //    只有兜底 CopyFromScreen 时主进程才临时藏浮窗，避免把它自己截进去
+      const result = await captureScreenshot(target, { targetHwnd: foreground, onFallback: hidePopup })
+      reopenWithCapture(result)
+    } catch (e) {
       log.error('截图入口失败:', errMsg(e))
-      openPopup('quick', undefined, undefined, { screenshotError: 'failed' })
-    })
-    .finally(() => {
+      reopenWithCapture({ ok: false, code: 'failed' })
+    } finally {
       screenshotBusy = false
-    })
+    }
+  })()
 }
 
 // ─── 初始化（boot 阶段 DB/IPC 就绪后调用一次） ──────────────────────
 
 export function initPopup(): void {
+  // 预热捕获宿主：把 PowerShell 启动与 C# 编译挪到用户按下热键之前
+  // （真机实测每次拉一次 PowerShell 约 5.7–7.4s，Add-Type 还要 2.6–3.1s）
+  prewarmCaptureHost()
   // 锁屏时自动隐藏已打开的浮窗（浮窗内容属于敏感上下文）
   lockService.onStateChange((evt) => {
     if (evt.state === 'locked') hidePopup()

@@ -106,6 +106,8 @@ export const PopupApp: React.FC = () => {
   /** P1-4：📷 双目标菜单展开态 */
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const [capturing, setCapturing] = useState(false)
+  /** P1-4：热键入口先上屏、捕获还在路上（载荷 capturing=true；结果载荷会收掉） */
+  const [capturingHotkey, setCapturingHotkey] = useState(false)
   /** applyPayload 的依赖是 []（避免重复拉载荷），附件数量用 ref 读最新值 */
   const attachmentsRef = useRef<ChatAttachment[]>([])
   /** 拖拽进窗悬停计数（子元素 dragenter/leave 成对，计数器防闪烁） */
@@ -131,16 +133,18 @@ export const PopupApp: React.FC = () => {
   // 重复的那份整个不当数；而**每一份新载荷都重新定义待发动作**——不带 action（快捷键取词那一类）
   // 就是把待发的清掉，否则一个此前没跑成的旧动作会在 provider／模型凑齐的那一刻跑在新文本上。
   const pendingActionRef = useRef<SelectionAction | null>(null)
-  const handledPayloadRef = useRef<{ ts: number; mode: string; text: string; action: string } | null>(null)
+  const handledPayloadRef = useRef<{ ts: number; mode: string; text: string; action: string; capturing: boolean } | null>(null)
   const applyPayload = useCallback((p: PopupPayload | null) => {
     if (!p) return
-    const key = { ts: p.ts, mode: p.mode as string, text: p.text ?? '', action: p.action ?? '' }
+    const key = { ts: p.ts, mode: p.mode as string, text: p.text ?? '', action: p.action ?? '', capturing: p.capturing === true }
     const prev = handledPayloadRef.current
-    if (prev && prev.ts === key.ts && prev.mode === key.mode && prev.text === key.text && prev.action === key.action) return
+    if (prev && prev.ts === key.ts && prev.mode === key.mode && prev.text === key.text && prev.action === key.action && prev.capturing === key.capturing) return
     handledPayloadRef.current = key
     setMode(p.mode)
     setSelection(p.mode === 'selection' ? p.text ?? '' : '')
     pendingActionRef.current = p.mode === 'selection' && p.action && SELECTION_ACTIONS.includes(p.action) ? p.action : null
+    // P1-4：热键入口先上屏显示"正在捕获"，结果载荷（带图片或失败原因）负责收掉
+    setCapturingHotkey(p.capturing === true)
     // P1-4：截图入口带来的图片进既有附件栏（可见、可删、随下次发送走原链路）；
     // 失败原因同样由新载荷定义，普通快捷问答载荷会把它收掉
     setCaptureError(p.screenshotError ?? null)
@@ -646,6 +650,15 @@ export const PopupApp: React.FC = () => {
           </div>
         )}
 
+        {/* P1-4：热键已按下，先给可见反馈（浮窗先出），捕获完成后由结果载荷替换 */}
+        {capturingHotkey && (
+          <div
+            data-testid="popup-capturing"
+            className="px-3 pb-2 shrink-0 text-xs text-[var(--color-text-muted)]"
+          >
+            {t('popup.capturing')}
+          </div>
+        )}
         {/* P1-4：截图失败原因（含平台不支持/无窗口/权限/空图/超限），不静默 */}
         {captureError && (
           <div

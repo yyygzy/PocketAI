@@ -1526,6 +1526,7 @@ export const ja = {
   'popup.capture': 'スクリーンショット',
   'popup.captureWindow': '現在のウィンドウ',
   'popup.captureScreen': '画面全体',
+  'popup.capturing': 'ウィンドウをキャプチャしています…',
   'popup.captureFailed': 'スクリーンショットに失敗しました：{reason}',
   'popup.capture.err.unsupportedPlatform': 'このシステムではまだスクリーンショットに対応していません',
   'popup.capture.err.locked': '画面がロックされているため撮影を中止しました',

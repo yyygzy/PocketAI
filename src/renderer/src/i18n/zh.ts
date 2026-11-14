@@ -1582,6 +1582,7 @@ export const zh = {
   'popup.capture': '截图',
   'popup.captureWindow': '当前窗口',
   'popup.captureScreen': '整个屏幕',
+  'popup.capturing': '正在捕获窗口…',
   'popup.captureFailed': '截图失败：{reason}',
   'popup.capture.err.unsupportedPlatform': '当前系统暂不支持截图',
   'popup.capture.err.locked': '已锁屏，截图已取消',

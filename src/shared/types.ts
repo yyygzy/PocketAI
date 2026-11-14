@@ -1981,6 +1981,8 @@ export interface PopupPayload {
   screenshot?: ChatAttachment
   /** P1-4：截图失败原因（浮窗上屏，不静默） */
   screenshotError?: ScreenshotFailCode
+  /** P1-4：热键已按下、捕获还在路上——浮窗先出并显示"正在捕获" */
+  capturing?: boolean
   ts: number
 }
 

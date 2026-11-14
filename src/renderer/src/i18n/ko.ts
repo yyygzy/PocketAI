@@ -1526,6 +1526,7 @@ export const ko = {
   'popup.capture': '스크린샷',
   'popup.captureWindow': '현재 창',
   'popup.captureScreen': '전체 화면',
+  'popup.capturing': '창을 캡처하는 중…',
   'popup.captureFailed': '스크린샷 실패: {reason}',
   'popup.capture.err.unsupportedPlatform': '이 시스템에서는 아직 스크린샷을 지원하지 않습니다',
   'popup.capture.err.locked': '화면이 잠겨 있어 캡처를 취소했습니다',
