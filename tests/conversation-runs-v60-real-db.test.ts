@@ -89,6 +89,23 @@ function insertConversation(id: string, title: string): void {
     .run(id, title, 1_700_000_300_000, 1_700_000_300_000)
 }
 
+/** v73：造锚点用户消息 + n 条已完成的助手消息（续跑判定要求产物条数与 steps_done 对齐） */
+function insertAnchorWithAssistants(convId: string, userId: string, doneAssistants: number): void {
+  const base = 1_700_000_500_000
+  db()
+    .prepare(
+      'INSERT INTO messages (id, conversation_id, role, content, status, parent_id, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)'
+    )
+    .run(userId, convId, 'user', '用户消息', 'done', base)
+  for (let i = 0; i < doneAssistants; i++) {
+    db()
+      .prepare(
+        'INSERT INTO messages (id, conversation_id, role, content, status, parent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(`${userId}-a${i}`, convId, 'assistant', '回答', 'done', userId, base + i + 1)
+  }
+}
+
 function conversationTitle(id: string): string | undefined {
   return (db().prepare('SELECT title FROM conversations WHERE id=?').get(id) as { title: string } | undefined)?.title
 }
@@ -114,6 +131,7 @@ beforeEach(() => {
   resetRuntimeRegistryForTest()
   db().prepare('DELETE FROM conversation_runs').run()
   db().prepare('DELETE FROM conversations').run()
+  db().prepare('DELETE FROM messages').run()
 })
 
 describe('v60 空库升级', () => {
@@ -136,7 +154,8 @@ describe('v60 已有数据升级 + 幂等', () => {
     // 回到「v59 已跑完、v60 还没跑」的形状
     db().prepare('DROP TABLE conversation_runs').run()
     // v66 也依赖这张表（ADD COLUMN）：一起退回未跑，否则重建出来的新表缺检查点列
-    db().prepare('DELETE FROM schema_migrations WHERE version IN (60, 66)').run()
+    // v73 同样在这张表上 ADD COLUMN，一起退回（顺带验证三列能被迁移补回来）
+    db().prepare('DELETE FROM schema_migrations WHERE version IN (60, 66, 73)').run()
 
     expect(() => dbService.runMigrations()).not.toThrow()
     expect(tableExists('conversation_runs')).toBe(true)
@@ -283,14 +302,32 @@ describe('v66 运行检查点', () => {
     insertConversation('conv-cp-b', '检查点 B')
     insertConversation('conv-cp-c', '检查点 C')
     insertConversation('conv-cp-d', '检查点 D')
-    // B：只走到模型步，没碰过工具
-    markRunStarted({ conversationId: 'conv-cp-b', requestId: 'req-cp-b', mode: 'agent' })
+    // B：只走到模型步，没碰过工具（v73：还要有锚点，且产物条数与 steps_done 对齐）
+    insertAnchorWithAssistants('conv-cp-b', 'msg-cp-b', 1)
+    markRunStarted({
+      conversationId: 'conv-cp-b',
+      requestId: 'req-cp-b',
+      mode: 'agent',
+      anchorUserMessageId: 'msg-cp-b'
+    })
     markRunCheckpoint('conv-cp-b', 'req-cp-b', { stage: 'model', stepsDone: 1, toolStepsDone: 0 })
     // C：进过工具步（工具可能已经改过东西）
-    markRunStarted({ conversationId: 'conv-cp-c', requestId: 'req-cp-c', mode: 'agent' })
+    insertAnchorWithAssistants('conv-cp-c', 'msg-cp-c', 2)
+    markRunStarted({
+      conversationId: 'conv-cp-c',
+      requestId: 'req-cp-c',
+      mode: 'agent',
+      anchorUserMessageId: 'msg-cp-c'
+    })
     markRunCheckpoint('conv-cp-c', 'req-cp-c', { stage: 'model', stepsDone: 2, toolStepsDone: 1 })
     // D：停在待审批
-    markRunStarted({ conversationId: 'conv-cp-d', requestId: 'req-cp-d', mode: 'agent' })
+    insertAnchorWithAssistants('conv-cp-d', 'msg-cp-d', 1)
+    markRunStarted({
+      conversationId: 'conv-cp-d',
+      requestId: 'req-cp-d',
+      mode: 'agent',
+      anchorUserMessageId: 'msg-cp-d'
+    })
     markRunCheckpoint('conv-cp-d', 'req-cp-d', { stage: 'tools', stepsDone: 1, toolStepsDone: 1 })
     markApprovalPending('conv-cp-d', 'req-cp-d')
     expect(checkpointRow('req-cp-d')?.stage).toBe('approval')
@@ -309,9 +346,52 @@ describe('v66 运行检查点', () => {
     )
   })
 
+  it('v73：没有锚点、产物条数对不上、或普通对话，都不判"可继续"', () => {
+    insertConversation('conv-cp-f', '检查点 F')
+    // 有锚点但已落库助手条数（0）落后于 steps_done（1）：说明"模型答完了、下一步检查点没写"，不猜
+    insertAnchorWithAssistants('conv-cp-f', 'msg-cp-f', 0)
+    markRunStarted({
+      conversationId: 'conv-cp-f',
+      requestId: 'req-cp-f',
+      mode: 'agent',
+      anchorUserMessageId: 'msg-cp-f'
+    })
+    markRunCheckpoint('conv-cp-f', 'req-cp-f', { stage: 'model', stepsDone: 1, toolStepsDone: 0 })
+    // 没有锚点的 agent 行（v73 之前的老行形状）
+    insertConversation('conv-cp-g', '检查点 G')
+    db()
+      .prepare(
+        `INSERT INTO conversation_runs
+           (request_id, conversation_id, mode, status, started_at, stage, steps_done, tool_steps_done)
+         VALUES (?, ?, 'agent', 'running', ?, 'model', 0, 0)`
+      )
+      .run('req-cp-g', 'conv-cp-g', 1_700_000_600_000)
+    // 普通对话：有锚点也不给续跑入口
+    insertConversation('conv-cp-h', '检查点 H')
+    insertAnchorWithAssistants('conv-cp-h', 'msg-cp-h', 0)
+    markRunStarted({
+      conversationId: 'conv-cp-h',
+      requestId: 'req-cp-h',
+      mode: 'chat',
+      anchorUserMessageId: 'msg-cp-h'
+    })
+    resetRuntimeRegistryForTest()
+
+    reconcileInterruptedRuns()
+    expect(checkpointRow('req-cp-f')?.resumeState).toBe('restart')
+    expect(checkpointRow('req-cp-g')?.resumeState).toBe('restart')
+    expect(checkpointRow('req-cp-h')?.resumeState).toBe('restart')
+  })
+
   it('界面上读得到判定：快照带 stage/stepsDone/resumeState，且中断不冒充正常结束', () => {
     insertConversation('conv-cp-e', '检查点 E')
-    markRunStarted({ conversationId: 'conv-cp-e', requestId: 'req-cp-e', mode: 'chat' })
+    insertAnchorWithAssistants('conv-cp-e', 'msg-cp-e', 0)
+    markRunStarted({
+      conversationId: 'conv-cp-e',
+      requestId: 'req-cp-e',
+      mode: 'agent',
+      anchorUserMessageId: 'msg-cp-e'
+    })
     markRunCheckpoint('conv-cp-e', 'req-cp-e', { stage: 'model', stepsDone: 0, toolStepsDone: 0 })
     resetRuntimeRegistryForTest()
 
@@ -358,13 +438,28 @@ describe('v66 运行检查点', () => {
     expect(evt.resumeState).toBe('restart')
   })
 
-  it('判定函数本身：没有任何检查点、或工具步 >0、或停在工作里，都不许判"可继续"', () => {
-    expect(judgeRunResume({ stage: null, toolStepsDone: null })).toBe('restart')
-    expect(judgeRunResume({ stage: 'preparing', toolStepsDone: 0 })).toBe('resumable')
-    expect(judgeRunResume({ stage: 'model', toolStepsDone: 0 })).toBe('resumable')
-    expect(judgeRunResume({ stage: 'model', toolStepsDone: 1 })).toBe('restart')
+  it('判定函数本身：没有锚点/普通对话/工具步 >0/停在工作里，都不许判"可继续"', () => {
+    const agent = { mode: 'agent' as const, anchorUserMessageId: 'msg-u' }
+    expect(judgeRunResume({ ...agent, stage: null, toolStepsDone: null })).toBe('restart')
+    expect(judgeRunResume({ ...agent, stage: 'preparing', toolStepsDone: 0 })).toBe('resumable')
+    expect(judgeRunResume({ ...agent, stage: 'model', toolStepsDone: 0 })).toBe('resumable')
+    expect(judgeRunResume({ ...agent, stage: 'model', toolStepsDone: 1 })).toBe('restart')
+    // v73：普通对话没有续跑入口；没有锚点或产物对不齐，也不猜
+    expect(judgeRunResume({ mode: 'chat', anchorUserMessageId: 'msg-u', stage: 'model', toolStepsDone: 0 })).toBe(
+      'restart'
+    )
+    expect(judgeRunResume({ mode: 'agent', stage: 'model', toolStepsDone: 0 })).toBe('restart')
+    expect(
+      judgeRunResume({ ...agent, stage: 'model', stepsDone: 1, toolStepsDone: 0, doneAssistantCount: 0 })
+    ).toBe('restart')
+    expect(
+      judgeRunResume({ ...agent, stage: 'model', stepsDone: 1, toolStepsDone: 0, doneAssistantCount: 1 })
+    ).toBe('resumable')
+    expect(
+      judgeRunResume({ ...agent, stage: 'model', stepsDone: 0, toolStepsDone: 0, toolMessageCount: 1 })
+    ).toBe('restart')
     for (const stage of ['tools', 'approval', 'final'] as const) {
-      expect(judgeRunResume({ stage, toolStepsDone: 0 }), stage).toBe('restart')
+      expect(judgeRunResume({ ...agent, stage, toolStepsDone: 0 }), stage).toBe('restart')
     }
   })
 })

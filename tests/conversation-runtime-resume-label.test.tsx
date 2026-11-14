@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-// v66 界面：中断判定要如实上屏。
+// v66/v73 界面：中断判定要如实上屏。
 //
-// 改前侧栏只有一句「运行已中断」，与 v60 完全一样：用户看不出这一轮是"模型还没跑完、可以接着来"，
-// 还是"工具已经动过文件、只能整轮重来"。重启对账现在会把判定写进 resumeState，
-// 这里钉住界面按它分成两句，且老记录（没有判定）不被编造出一句。
+// v66 起侧栏按 resumeState 分成「可继续 / 需重新开始」两句；P1-3a 落地后 resumable 终于有真入口，
+// 文案才说“可继续”（止血批次里它曾被临时改成“需重新开始”）。这里钉住：
+// resumable 说可继续、restart 说需重新开始、老记录（没有判定）不编造。
 import { describe, it, expect, beforeEach } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
@@ -53,8 +53,8 @@ beforeEach(() => {
   useConversationRuntimeStore.getState().reset()
 })
 
-describe('v66 中断判定上屏', () => {
-  it('resumable ⇒ 只说「需重新开始」，不再承诺「可继续」（续跑未实现）', async () => {
+describe('v66/v73 中断判定上屏', () => {
+  it('resumable ⇒ 说「可继续」（P1-3a 已有续跑入口）', async () => {
     seed('resumable')
     mount()
     await waitFor(() =>
@@ -62,13 +62,11 @@ describe('v66 中断判定上屏', () => {
         L('chat.runtime.interruptedResumable')
       )
     )
-    // P1-3 止血：没有续跑入口，文案不许写成"可继续"
-    expect(L('chat.runtime.interruptedResumable')).toContain('重新开始')
-    expect(L('chat.runtime.interruptedResumable')).not.toContain('可继续')
+    expect(L('chat.runtime.interruptedResumable')).toContain('可继续')
     expect(screen.queryByText(L('chat.runtime.interruptedRestart'))).toBeNull()
   })
 
-  it('进过工具步 ⇒ 明说「需重新开始」，并点出原因（工具已执行）', async () => {
+  it('restart ⇒ 说「需重新开始」，不再承诺可继续', async () => {
     seed('restart')
     mount()
     await waitFor(() =>
@@ -76,7 +74,8 @@ describe('v66 中断判定上屏', () => {
         L('chat.runtime.interruptedRestart')
       )
     )
-    expect(L('chat.runtime.interruptedRestart')).toContain('工具')
+    expect(L('chat.runtime.interruptedRestart')).toContain('重新开始')
+    expect(L('chat.runtime.interruptedRestart')).not.toContain('可继续')
     expect(screen.queryByText(L('chat.runtime.interruptedResumable'))).toBeNull()
   })
 
