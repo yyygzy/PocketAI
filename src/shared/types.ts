@@ -1933,7 +1933,10 @@ export interface LicensePayload {
   license_id: string
   owner: string
   issued_at: number
+  /** 使用截止：到点后付费能力失效 */
   expires_at: number
+  /** 更新截止（v2 起参与签名）；缺失 = 历史许可证，更新权益回退 expires_at */
+  updates_until?: number
   plan: LicensePlan
   features: string[]
 }
@@ -1943,7 +1946,12 @@ export interface LicenseStatus {
   payload?: LicensePayload
   error?: string
   signatureOk: boolean
+  /** 使用截止是否已过 */
   expired: boolean
+  /** 更新期是否已结束（有效更新期 = max(许可证, 本机高水位)；两者都没有时恒 false） */
+  updatesExpired: boolean
+  /** 有效更新截止（许可证自带值与本机高水位取较晚者；历史许可证回退为 expires_at） */
+  updatesUntil?: number
 }
 
 // ---------- 卡密在线激活 ----------
@@ -1968,7 +1976,16 @@ export type ActivationResult =
   | { ok: false; code: ActivationErrorCode; detail?: string }
 
 // ---------- 自动更新 ----------
-export type UpdateStatus = 'idle' | 'checking' | 'available' | 'unavailable' | 'downloading' | 'downloaded' | 'error'
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'unavailable'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+  /** 许可证更新期已结束：应用内不再检查/下载/安装新版本（当前版本继续可用） */
+  | 'updates-ended'
 
 export interface UpdateInfo {
   /** package.json version */
@@ -1979,6 +1996,8 @@ export interface UpdateInfo {
   isPortable: boolean
   /** 自动更新开关是否开启（持久化于 app_config） */
   autoUpdateEnabled: boolean
+  /** 有效更新期是否已结束（含本机高水位；两者都没有时恒 false） */
+  updatesExpired: boolean
 }
 
 export interface UpdateEvent {

@@ -4,16 +4,18 @@
 //
 // 功能：
 //   1. 单个签发 —— 逐项问答 + 默认值 + 预览确认，签完自动存文件/记账/可复制到剪贴板
-//   2. 批量签发 —— 从 CSV 一次签一批（每行: 授权对象,plan,期限）
+//   2. 批量签发 —— 从 CSV 一次签一批（每行: 授权对象,plan,期限[,更新期天数]）
 //   3. 历史台账 —— 查看 licenses/issued-log.jsonl 签发记录
 //
 // 期限写法（批量 CSV 第三列 / 单发的自定义天数）：
 //   3650 = 天数   2027-12-31 = 到期日   perpetual / 0 = 永久买断
+// 更新期（第四列 / 单发问答，可选）：填写天数 = 签 v2 件；留空 = 签 v1 件，
+// 运行时更新期跟随使用截止（v1 件可被旧版本客户端验签，新版铺开前保持留空）。
 const readline = require('node:readline/promises')
 const fs = require('node:fs')
 const path = require('node:path')
 const { execSync } = require('node:child_process')
-const { issueLicense, PLANS, DEFAULT_FEATURES, describeExpiry } = require('./lib/issue-license')
+const { issueLicense, PLANS, DEFAULT_FEATURES, describeExpiry, describeUpdates } = require('./lib/issue-license')
 
 const ROOT = path.join(__dirname, '..')
 const KEY_PATH = path.join(ROOT, 'build', 'license-private.pem')
@@ -158,6 +160,17 @@ async function issueOne() {
 
   const features = await ask(`功能列表（回车=全量: ${DEFAULT_FEATURES}）\n: `, DEFAULT_FEATURES)
 
+  // 更新期：单独设置才签 v2；回车 = 签 v1（更新期跟随使用截止，兼容旧版本客户端）
+  const updatesDays = await askUntil(
+    '\n更新期天数（回车=不单独设置，签 v1 件并跟随使用截止；填写天数则签 v2 件）\n: ',
+    (a) => {
+      if (a === '') return { ok: true, value: undefined }
+      if (/^\d+$/.test(a)) return { ok: true, value: Number(a) }
+      return { ok: false }
+    },
+    '请输入正整数天数或直接回车'
+  )
+
   // 硬盘指纹（可选绑定）：用户在应用「设置 → 授权与路径」页可查看本机指纹（16 位 hex）
   const fingerprint = (await ask('\n硬盘指纹（回车=不绑定设备；绑定后仅该硬盘可激活）\n: ', '')).trim()
   if (fingerprint && !/^[0-9a-fA-F]{16}$/.test(fingerprint)) {
@@ -168,7 +181,7 @@ async function issueOne() {
   // 预览
   let preview
   try {
-    preview = issueLicense({ owner, plan, ...cleanTerm(termSpec), features: features.split(',').map((s) => s.trim()).filter(Boolean), diskFingerprint: fingerprint })
+    preview = issueLicense({ owner, plan, ...cleanTerm(termSpec), updatesDays, features: features.split(',').map((s) => s.trim()).filter(Boolean), diskFingerprint: fingerprint })
   } catch (e) {
     console.error('✗ ' + e.message)
     return
@@ -177,6 +190,7 @@ async function issueOne() {
   console.log(`  授权给   ${owner}`)
   console.log(`  版本     ${plan}`)
   console.log(`  有效期   ${describeExpiry(preview.expiresAt)}`)
+  console.log(`  更新期   ${describeUpdates(preview.updatesUntil)}`)
   console.log(`  功能     ${preview.payload.features.join(', ')}`)
   if (preview.payload.disk_fingerprint) {
     console.log(`  设备绑定 ${preview.payload.disk_fingerprint}`)
@@ -191,7 +205,7 @@ async function issueOne() {
   }
 
   // 重新签发确认版（license_id 换新，避免「取消了又复用预览」）
-  const r = issueLicense({ owner, plan, ...cleanTerm(termSpec), features: features.split(',').map((s) => s.trim()).filter(Boolean), diskFingerprint: fingerprint })
+  const r = issueLicense({ owner, plan, ...cleanTerm(termSpec), updatesDays, features: features.split(',').map((s) => s.trim()).filter(Boolean), diskFingerprint: fingerprint })
   const file = path.join(OUT_DIR, `${safeName(owner)}-${plan}-${todayTag()}.lic`)
   fs.mkdirSync(OUT_DIR, { recursive: true })
   fs.writeFileSync(file, r.licenseJson, 'utf8')
@@ -201,6 +215,7 @@ async function issueOne() {
     owner: r.payload.owner,
     plan: r.payload.plan,
     expires_at: r.expiresAt,
+    updates_until: r.updatesUntil,
     features: r.payload.features,
     file: path.basename(file)
   })
@@ -209,6 +224,7 @@ async function issueOne() {
   console.log(`  文件   ${file}`)
   console.log(`  编号   ${r.licenseId}`)
   console.log(`  有效期 ${describeExpiry(r.expiresAt)}`)
+  console.log(`  更新期 ${describeUpdates(r.updatesUntil)}`)
   if (await askBool('复制激活内容到剪贴板? [y/N]: ', false)) {
     console.log(clipboardCopy(r.licenseJson) ? '✓ 已复制，可直接粘贴发给用户' : '（剪贴板不可用，请直接打开 .lic 文件复制）')
   }
@@ -235,10 +251,10 @@ async function issueBatch() {
   if (!fs.existsSync(csvPath)) {
     console.error(`✗ 找不到 ${csvPath}`)
     console.error('  CSV 格式（每行一条，# 开头为注释）:')
-    console.error('    授权对象,plan,期限')
+    console.error('    授权对象,plan,期限[,更新期天数]')
     console.error('    张三,pro,3650')
-    console.error('    李四,pro,perpetual')
-    console.error('    XX公司,enterprise,2027-12-31')
+    console.error('    李四,pro,perpetual,365')
+    console.error('    XX公司,enterprise,2027-12-31,730')
     return
   }
   const rows = fs.readFileSync(csvPath, 'utf8')
@@ -253,13 +269,18 @@ async function issueBatch() {
   let okCount = 0
   const failed = []
   for (const { line, no } of rows) {
-    const [owner, plan, term] = line.split(',').map((s) => (s || '').trim())
+    const [owner, plan, term, updatesTerm] = line.split(',').map((s) => (s || '').trim())
     try {
       if (!owner) throw new Error('owner 为空')
       if (!PLANS.includes(plan)) throw new Error(`plan 无效: ${plan || '(空)'}`)
       const p = term ? parseTerm(term) : { perpetual: true }
       if (!p) throw new Error(`期限格式无效: ${term}（应为天数/YYYY-MM-DD/perpetual）`)
-      const r = issueLicense({ owner, plan, ...cleanTerm(p) })
+      let updatesDays
+      if (updatesTerm) {
+        if (!/^\d+$/.test(updatesTerm)) throw new Error(`更新期格式无效: ${updatesTerm}（应为天数）`)
+        updatesDays = Number(updatesTerm)
+      }
+      const r = issueLicense({ owner, plan, ...cleanTerm(p), updatesDays })
       const file = path.join(OUT_DIR, `${safeName(owner)}-${plan}-${todayTag()}.lic`)
       fs.mkdirSync(OUT_DIR, { recursive: true })
       fs.writeFileSync(file, r.licenseJson, 'utf8')
@@ -269,11 +290,12 @@ async function issueBatch() {
         owner: r.payload.owner,
         plan: r.payload.plan,
         expires_at: r.expiresAt,
+        updates_until: r.updatesUntil,
         features: r.payload.features,
         file: path.basename(file)
       })
       okCount++
-      console.log(`  ✓ 行${no}  ${owner}  ${plan}  ${describeExpiry(r.expiresAt)}  → ${path.basename(file)}`)
+      console.log(`  ✓ 行${no}  ${owner}  ${plan}  ${describeExpiry(r.expiresAt)}  更新期 ${describeUpdates(r.updatesUntil)}  → ${path.basename(file)}`)
     } catch (e) {
       failed.push({ no, line, reason: e.message })
       console.log(`  ✗ 行${no}  ${line}  ← ${e.message}`)
@@ -301,7 +323,8 @@ function showLedger() {
   for (const r of recent) {
     const d = new Date(r.issued_at).toLocaleString('zh-CN', { hour12: false })
     const exp = describeExpiry(r.expires_at)
-    console.log(`  ${d}  ${r.license_id}  ${r.owner}  ${r.plan}  ${exp}`)
+    const upd = r.updates_until ? `  更新期至 ${new Date(r.updates_until).toLocaleDateString('zh-CN')}` : '  更新期跟随使用截止'
+    console.log(`  ${d}  ${r.license_id}  ${r.owner}  ${r.plan}  ${exp}${upd}`)
   }
   const byPlan = {}
   for (const r of rows) byPlan[r.plan] = (byPlan[r.plan] || 0) + 1

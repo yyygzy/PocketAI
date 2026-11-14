@@ -2027,6 +2027,15 @@ export const LicensePanel: React.FC<{ lic: LicenseStatus | null; err: string | n
           <StatusRow label={t('lic.status')} value={t('lic.validValue', { plan: payload.plan.toUpperCase() })} ok />
           <StatusRow label={t('lic.holder')} value={payload.owner} ok />
           <StatusRow label={t('lic.expires')} value={new Date(payload.expires_at).toLocaleDateString(locale)} ok />
+          <StatusRow
+            label={t('lic.updatesUntil')}
+            value={
+              lic.updatesExpired
+                ? t('lic.updatesEndedValue', { date: new Date(lic.updatesUntil ?? payload.expires_at).toLocaleDateString(locale) })
+                : new Date(lic.updatesUntil ?? payload.expires_at).toLocaleDateString(locale)
+            }
+            ok={!lic.updatesExpired}
+          />
           {payload.features.length > 0 && (
             <div className="text-[11px] text-[var(--color-text-muted)]">
               {t('lic.features')}{payload.features.map((f) => `✅${f}`).join(' ')}
@@ -2040,6 +2049,20 @@ export const LicensePanel: React.FC<{ lic: LicenseStatus | null; err: string | n
         </>
       ) : (
         <StatusRow label={t('lic.status')} value={t('lic.free')} ok={false} />
+      )}
+
+      {/* 未激活但本机记过更新期（清除许可证/文件丢失）：把有效更新期显式列出来，
+          与更新区的「更新期已结束」保持一致，避免用户只看到「免费版」却不知道为什么不能更新 */}
+      {!lic.valid && lic.updatesUntil !== undefined && (
+        <StatusRow
+          label={t('lic.updatesUntil')}
+          value={
+            lic.updatesExpired
+              ? t('lic.updatesEndedValue', { date: new Date(lic.updatesUntil).toLocaleDateString(locale) })
+              : new Date(lic.updatesUntil).toLocaleDateString(locale)
+          }
+          ok={!lic.updatesExpired}
+        />
       )}
 
       {!lic.valid && (
@@ -2912,6 +2935,9 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
         return status?.error
           ? { text: t('upd.notSupported'), color: 'text-[var(--color-info)]' }
           : { text: t('upd.unavailable'), color: 'text-[var(--color-success)]' }
+      case 'updates-ended':
+        // 停更不停用：更新期结束后当前版本照常可用，只是不再提供/安装新版本
+        return { text: t('upd.updatesEnded'), color: 'text-[var(--color-info)]' }
       case 'downloading':
         return { text: t('upd.downloading', { p: progress }), color: 'text-[var(--color-info)]' }
       case 'downloaded':
@@ -2960,6 +2986,10 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
 
       <div className={label.color}>{label.text}</div>
 
+      {info.updatesExpired && (
+        <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{t('upd.updatesEndedHint')}</p>
+      )}
+
       {s === 'downloading' && (
         <div className="w-full h-2 bg-[var(--color-border)] rounded overflow-hidden">
           <div
@@ -2970,7 +3000,7 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
       )}
 
       <div className="flex gap-2 pt-1 flex-wrap">
-        <button className="btn-ghost" disabled={busy || s === 'checking' || s === 'downloading'} onClick={handleCheck}>
+        <button className="btn-ghost" disabled={busy || info.updatesExpired || s === 'checking' || s === 'downloading'} onClick={handleCheck}>
           {t('upd.checkBtn')}
         </button>
         {s === 'available' && (

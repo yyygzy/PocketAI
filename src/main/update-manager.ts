@@ -6,6 +6,7 @@ import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { downloadAsarPatch, restartToApplyPatch, isPatchPending, clearPendingPatch } from './update/asar-patcher'
 import { isPortableRuntime } from './portable'
+import { licenseService } from './license/license'
 import { safeFetch } from './net/safe-fetch'
 import { safeHandle, argsSchema, z } from './ipc/safe-handle'
 import { createLogger } from './logger'
@@ -27,6 +28,9 @@ interface GitHubReleaseApi {
 // 事件通过 IPC.UPDATE_EVENT 通道推送到渲染进程
 
 const log = createLogger('update')
+
+/** 更新期结束时的统一提示（UI 另有 i18n 文案，这里只作为 IPC 兜底） */
+const UPDATES_ENDED_MSG = '更新期已结束：当前版本可继续使用，如需获取新版本请续购更新'
 
 class UpdateManager extends EventEmitter {
   private status: UpdateStatus = 'idle'
@@ -56,8 +60,14 @@ class UpdateManager extends EventEmitter {
       return
     }
 
-    // 开启自动更新：启动后延迟检查一次（自动下载由 autoDownload 标志接管）
-    if (this.autoUpdateEnabled) {
+    // 更新期已结束（停更不停用）：不排自动检查，并关掉「退出时自动装」，
+    // 否则上一轮遗留的暂存包会在用户退出应用时被 electron-updater 自行装上。
+    if (this.updatesEnded()) {
+      autoUpdater.autoDownload = false
+      autoUpdater.autoInstallOnAppQuit = false
+      this.setStatus('updates-ended', { error: UPDATES_ENDED_MSG })
+    } else if (this.autoUpdateEnabled) {
+      // 开启自动更新：启动后延迟检查一次（自动下载由 autoDownload 标志接管）
       this.startupCheckTimer = setTimeout(() => {
         this.startupCheckTimer = null
         this.check().catch((e) => log.warn('启动延迟 check 失败:', errMsg(e)))
@@ -112,9 +122,21 @@ class UpdateManager extends EventEmitter {
         wc.send(IPC.UPDATE_EVENT, { status, ...extra })
       }
     } catch { /* 某些时刻没有 webContents */ }
-    // busy 锁：error / downloaded / unavailable / idle / available 释放
-    if (['error', 'downloaded', 'unavailable', 'idle', 'available'].includes(status)) {
+    // busy 锁：error / downloaded / unavailable / updates-ended / idle / available 释放
+    if (['error', 'downloaded', 'unavailable', 'updates-ended', 'idle', 'available'].includes(status)) {
       this.busy = false
+    }
+  }
+
+  /**
+   * 许可证更新期是否已结束（A 口径：停更不停用）。
+   * 只拦更新通道，不参与 hasFeature / 数量门控；无许可证 = 免费版，不拦。
+   */
+  private updatesEnded(): boolean {
+    try {
+      return licenseService.getStatus().updatesExpired
+    } catch {
+      return false
     }
   }
 
@@ -149,7 +171,8 @@ class UpdateManager extends EventEmitter {
       currentVersion: app.getVersion(),
       isPackaged: app.isPackaged,
       isPortable: app.isPackaged && isPortableRuntime(),
-      autoUpdateEnabled: this.autoUpdateEnabled
+      autoUpdateEnabled: this.autoUpdateEnabled,
+      updatesExpired: this.updatesEnded()
     }
   }
 
@@ -167,7 +190,8 @@ class UpdateManager extends EventEmitter {
     this.cancelStartupCheck()
 
     // 开启时立即检查一次（仅打包环境）；关闭时不打断进行中的流程
-    if (this.autoUpdateEnabled && app.isPackaged && !this.busy) {
+    // 更新期已结束时不再自动检查：开关只表达偏好，不越过许可边界
+    if (this.autoUpdateEnabled && app.isPackaged && !this.busy && !this.updatesEnded()) {
       this.check().catch((e) => log.warn('toggle autoUpdate 后 check 失败:', errMsg(e)))
     }
     return { ok: true }
@@ -181,6 +205,13 @@ class UpdateManager extends EventEmitter {
       // dev 环境：mock 一个"不可用"，让 UI 能正常展示
       this.setStatus('unavailable', { error: '开发环境不支持自动更新（打包后可用）' })
       return { ok: true }
+    }
+
+    // 更新期已结束：应用内不再提供新版本（便携版同样按此提示，手动下载无法拦截）
+    if (this.updatesEnded()) {
+      autoUpdater.autoInstallOnAppQuit = false
+      this.setStatus('updates-ended', { error: UPDATES_ENDED_MSG })
+      return { ok: false, error: UPDATES_ENDED_MSG }
     }
 
     // Linux：仅 AppImage 形态支持自动更新（electron-updater 的 AppImageUpdater 依赖 APPIMAGE env）
@@ -210,6 +241,12 @@ class UpdateManager extends EventEmitter {
   // ── 下载更新 ────────────────────────────────────────────────────
   async download(): Promise<{ ok: boolean; error?: string }> {
     if (this.busy) return { ok: false, error: '正在进行中的更新流程' }
+    // 更新期已结束：即便状态还停在 available（例如续费前就查到了新版本）也不许下载
+    if (this.updatesEnded()) {
+      autoUpdater.autoInstallOnAppQuit = false
+      this.setStatus('updates-ended', { error: UPDATES_ENDED_MSG })
+      return { ok: false, error: UPDATES_ENDED_MSG }
+    }
     if (this.status !== 'available') {
       return { ok: false, error: `当前状态 ${this.status}，需要先检查更新` }
     }
@@ -255,6 +292,12 @@ class UpdateManager extends EventEmitter {
 
   // ── 退出并安装 ──────────────────────────────────────────────────
   async quitAndInstall(): Promise<{ ok: boolean; error?: string }> {
+    // 安装前最后一刻再判一次：达标前下载的暂存包不能越过更新截止
+    if (this.updatesEnded()) {
+      autoUpdater.autoInstallOnAppQuit = false
+      this.setStatus('updates-ended', { error: UPDATES_ENDED_MSG })
+      return { ok: false, error: UPDATES_ENDED_MSG }
+    }
     if (this.status !== 'downloaded') {
       return { ok: false, error: `当前状态 ${this.status}，需要先下载完成` }
     }

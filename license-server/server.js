@@ -7,9 +7,12 @@
 //
 // 使用方式：
 //   node server.js                      # 启动服务（默认 0.0.0.0:8787，可用 HOST/PORT 环境变量覆盖）
-//   node server.js generate 张三 pro 365        # 生成 1 张 1 年卡密
+//   node server.js generate 张三 pro 365        # 生成 1 张 1 年卡密（默认 v1：更新期跟随使用截止）
 //   node server.js generate 张三 pro 3650 10    # 批量生成 10 张
-//   node server.js generate 李四 enterprise perpetual  # 永久买断
+//   node server.js generate 李四 enterprise perpetual  # 永久使用（更新期跟随使用截止）
+//   node server.js generate 李四 enterprise perpetual 1 730  # 永久使用 + 730 天更新期（签 v2 件）
+//
+// 注意：显式给「更新期天数」会签出 v2 件，旧版本客户端无法验签；新版客户端铺开前保持不传。
 //   node server.js unbind PA-XXXX-XXXX-XXXX    # 解绑（U 盘损坏换绑时用）
 //   node server.js list                        # 查看台账
 //
@@ -76,12 +79,17 @@ function maskCode(code) {
   return code.slice(0, 5) + '-****-****'
 }
 
-function cmdGenerate(owner, plan, daysArg, countArg) {
-  if (!owner) { console.error('用法: node server.js generate <owner> <pro|enterprise|free> <天数|perpetual> [数量]'); process.exit(1) }
+function cmdGenerate(owner, plan, daysArg, countArg, updatesArg) {
+  if (!owner) { console.error('用法: node server.js generate <owner> <pro|enterprise|free> <天数|perpetual> [数量] [更新期天数]'); process.exit(1) }
   if (!ISSUE.PLANS.includes(plan)) { console.error(`plan 仅支持 ${ISSUE.PLANS.join(' / ')}`); process.exit(1) }
   const days = daysArg === 'perpetual' ? null : Number(daysArg)
   if (daysArg !== 'perpetual' && (!Number.isFinite(days) || days <= 0)) {
     console.error('天数应为正整数或 perpetual'); process.exit(1)
+  }
+  // 更新期：不传则签 v1（运行时回退为使用截止，兼容旧客户端）；显式传入才签 v2
+  const updatesDays = updatesArg === undefined ? undefined : Number(updatesArg)
+  if (updatesDays !== undefined && (!Number.isFinite(updatesDays) || updatesDays <= 0)) {
+    console.error('更新期天数应为正整数（不传 = 跟随使用截止）'); process.exit(1)
   }
   const count = Math.max(1, Math.min(500, Number(countArg || 1)))
 
@@ -94,13 +102,14 @@ function cmdGenerate(owner, plan, daysArg, countArg) {
       status: 'unused',
       owner: String(owner).trim(),
       plan,
-      days, // null = 永久买断
+      days, // null = 永久使用
+      updates_days: updatesDays,
       created_at: Date.now()
     }
     made.push(code)
   }
   saveData(data)
-  console.log(`✓ 已生成 ${made.length} 张卡密（owner=${owner} plan=${plan} ${daysArg === 'perpetual' ? '永久' : days + ' 天'}）`)
+  console.log(`✓ 已生成 ${made.length} 张卡密（owner=${owner} plan=${plan} ${daysArg === 'perpetual' ? '永久使用' : days + ' 天'}，${updatesDays === undefined ? '更新期跟随使用截止（v1）' : `更新期 ${updatesDays} 天（v2）`}）`)
   for (const c of made) console.log('  ' + c)
 }
 
@@ -127,7 +136,7 @@ function cmdList() {
   for (const [code, rec] of entries) {
     const bound = rec.status === 'bound'
     console.log(
-      `${bound ? '●' : '○'} ${code}  ${rec.plan}  ${rec.days == null ? '永久' : rec.days + '天'}  ${rec.owner}` +
+      `${bound ? '●' : '○'} ${code}  ${rec.plan}  ${rec.days == null ? '永久' : rec.days + '天'}  更新期 ${rec.updates_days == null ? '跟随使用截止' : rec.updates_days + '天'}  ${rec.owner}` +
       (bound ? `  已绑定 ${rec.fingerprint} @ ${new Date(rec.bound_at).toLocaleString('zh-CN')}` : '  未使用')
     )
   }
@@ -250,6 +259,8 @@ async function handleActivate(req, res, ip) {
       owner: rec.owner,
       plan: rec.plan,
       days: rec.days ?? undefined,
+      // 只有显式设置过更新期的卡密才签 v2；老卡密（无该字段）继续签 v1
+      updatesDays: rec.updates_days ?? undefined,
       diskFingerprint: fingerprint
     })
   } catch (e) {
@@ -308,7 +319,7 @@ switch (cmd || 'serve') {
     startServer()
     break
   case 'generate':
-    cmdGenerate(args[0], args[1], args[2], args[3])
+    cmdGenerate(args[0], args[1], args[2], args[3], args[4])
     break
   case 'unbind':
     cmdUnbind(args[0])
@@ -317,6 +328,6 @@ switch (cmd || 'serve') {
     cmdList()
     break
   default:
-    console.error('用法: node server.js [serve | generate <owner> <plan> <days|perpetual> [count] | unbind <code> | list]')
+    console.error('用法: node server.js [serve | generate <owner> <plan> <days|perpetual> [count] [updatesDays] | unbind <code> | list]')
     process.exit(1)
 }

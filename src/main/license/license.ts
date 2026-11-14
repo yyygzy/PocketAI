@@ -6,7 +6,8 @@
 //   "license_id": "LIC-xxxxxxxxxxxx",
 //   "owner": "用户名或组织",
 //   "issued_at": 1735689600000,
-//   "expires_at": 1767225600000,
+//   "expires_at": 1767225600000, // 使用截止（到期后不再提供付费能力）
+//   "updates_until": 1767225600000, // 更新截止（v2 起参与签名；缺失时回退 expires_at）
 //   "plan": "pro",              // free / pro / enterprise
 //   "features": ["mcp", "agent", "backup", "encryption", "multi-runtime"],
 //   "disk_fingerprint": "",     // 硬盘指纹（SHA-256 前 16 位 hex）；空串 = 不绑定设备
@@ -23,16 +24,31 @@
 import { createVerify } from 'node:crypto'
 import { PUBLIC_KEY_DER_B64 } from './public-key'
 import { getDiskFingerprint } from '../steward/hardware'
+import { effectiveUpdatesUntil, raiseUpdatesWatermark } from './updates-watermark'
 import { errMsg } from '../error'
 
 export type LicensePlan = 'free' | 'pro' | 'enterprise'
+
+/**
+ * 更新截止：v2 取签名内的 updates_until；历史许可证回退为 expires_at（不追溯收紧）。
+ * 发行侧 issue-license.js 的同名逻辑必须与此保持一致。
+ */
+export function updatesUntilOf(payload: LicensePayload): number {
+  return typeof payload.updates_until === 'number' ? payload.updates_until : payload.expires_at
+}
 
 export interface LicensePayload {
   version: number
   license_id: string
   owner: string
   issued_at: number
+  /** 使用截止：到点后付费能力失效（数量上限回落免费版等） */
   expires_at: number
+  /**
+   * 更新截止（v2 起写入并参与签名）。
+   * 缺失 = 历史许可证：语义回退为 expires_at（不追溯收紧老用户的更新权益）。
+   */
+  updates_until?: number
   plan: LicensePlan
   features: string[]
   /**
@@ -57,12 +73,21 @@ export interface LicenseStatus {
   error?: string
   /** 签名是否通过 */
   signatureOk: boolean
-  /** 是否过期 */
+  /** 使用截止是否已过 */
   expired: boolean
+  /** 更新期是否已结束（有效更新期 = max(许可证, 本机高水位)；两者都没有时恒 false） */
+  updatesExpired: boolean
+  /** 有效更新截止（许可证自带值与本机高水位取较晚者；历史许可证回退为 expires_at） */
+  updatesUntil?: number
 }
 
 // 需要签名的字段（按 key 字典序）
-const SIGN_FIELDS: (keyof LicensePayload)[] = [
+// v1 = 历史许可证字段集（无 updates_until），v2 = 多一个更新截止。
+// 以「文件里是否带 updates_until」决定用哪套字段集：
+// - 给 v1 件补字段 ⇒ 签名串不一致，验签失败
+// - 从 v2 件删字段 ⇒ 签名串不一致，验签失败
+// 因此不能靠「新字段必填」兼容历史件，也不能让删字段回退成永久更新。
+const SIGN_FIELDS_V1: (keyof LicensePayload)[] = [
   'disk_fingerprint',
   'expires_at',
   'features',
@@ -73,10 +98,26 @@ const SIGN_FIELDS: (keyof LicensePayload)[] = [
   'version'
 ]
 
+const SIGN_FIELDS_V2: (keyof LicensePayload)[] = [
+  'disk_fingerprint',
+  'expires_at',
+  'features',
+  'issued_at',
+  'license_id',
+  'owner',
+  'plan',
+  'updates_until',
+  'version'
+]
+
+function signFieldsOf(payload: LicensePayload): (keyof LicensePayload)[] {
+  return payload.updates_until === undefined ? SIGN_FIELDS_V1 : SIGN_FIELDS_V2
+}
+
 /** 把 License 载荷规范化为可签名字符串 */
 function canonicalize(payload: LicensePayload): string {
   const parts: string[] = []
-  for (const key of SIGN_FIELDS) {
+  for (const key of signFieldsOf(payload)) {
     const v = payload[key]
     if (Array.isArray(v)) {
       parts.push(`${key}=${JSON.stringify(v.slice().sort())}`)
@@ -102,7 +143,19 @@ function verifySignature(signedData: string, signatureB64: string): boolean {
 }
 
 export class LicenseService {
+  /**
+   * @param watermarkPath 本机更新期高水位文件路径。
+   *   缺省 = app.getPath('userData')；测试可传临时目录，避免写真实应用数据。
+   */
+  constructor(private readonly watermarkPath?: string | null) {}
+
   private current: LicensePayload | null = null
+  /**
+   * 最近一次「签名通过但已过使用截止」的许可证。
+   * 保留它只为让重启后仍能显示「已过期（日期）」而不是「未激活」；
+   * 不得用于 hasFeature / 数量门控等任何授权判定。
+   */
+  private expiredPayload: LicensePayload | null = null
   private lastError: string | null = null
 
   /** 从 license.lic 文件加载并验签 */
@@ -127,10 +180,17 @@ export class LicenseService {
       return this.buildStatus(false)
     }
 
-    // 1. 必填字段检查
-    const missing = SIGN_FIELDS.filter((k) => (file as unknown as Record<string, unknown>)[k] === undefined)
+    // 1. 必填字段检查（v1 字段集始终必填；updates_until 可选，存在则必须合法）
+    const missing = SIGN_FIELDS_V1.filter((k) => (file as unknown as Record<string, unknown>)[k] === undefined)
     if (missing.length > 0) {
       this.lastError = `License 缺少字段: ${missing.join(', ')}`
+      return this.buildStatus(false)
+    }
+    if (
+      file.updates_until !== undefined &&
+      !(typeof file.updates_until === 'number' && Number.isFinite(file.updates_until))
+    ) {
+      this.lastError = 'License 的 updates_until 字段无效（应为时间戳）'
       return this.buildStatus(false)
     }
 
@@ -140,9 +200,10 @@ export class LicenseService {
       owner: file.owner,
       issued_at: file.issued_at,
       expires_at: file.expires_at,
+      ...(file.updates_until !== undefined ? { updates_until: file.updates_until } : {}),
       plan: file.plan,
       features: file.features,
-      // 必须参与规范化签名（SIGN_FIELDS 含此字段）；缺省按空串处理 = 不绑定设备
+      // 必须参与规范化签名（SIGN_FIELDS_V1/V2 都含此字段）；缺省按空串处理 = 不绑定设备
       disk_fingerprint: String(file.disk_fingerprint ?? '')
     }
 
@@ -154,14 +215,18 @@ export class LicenseService {
       return this.buildStatus(false)
     }
 
-    // 3. 过期检查
+    // 3. 使用截止检查
     const now = Date.now()
     const expired = now > payload.expires_at
     if (expired) {
       this.lastError = `License 已于 ${new Date(payload.expires_at).toLocaleString('zh-CN')} 过期`
       // 过期 license 不写入 current：否则 getStatus/hasFeature 会把它当有效授权。
-      // payload 通过本次返回值带给 UI 展示。
+      // 但保留在 expiredPayload 里，重启后仍能向 UI 说明「已过期」而不是「未激活」。
       this.current = null
+      this.expiredPayload = payload
+      // 已过使用截止但仍在本机合法：把它的更新期记入高水位（设备绑定必须匹配，
+      // 避免把别台机器的许可证算到这台头上）。
+      if (this.fingerprintMatches(payload)) this.rememberUpdates(payload)
       return this.buildStatus(false, payload, expired)
     }
 
@@ -174,28 +239,51 @@ export class LicenseService {
         this.lastError = `License 与当前硬盘不匹配（本机指纹: ${localFp ?? '无法读取'}），请联系卖家换绑`
         // 同上：绑定不匹配的 license 不得进入 current（避免换盘后仍享授权）
         this.current = null
+        this.expiredPayload = null
         return this.buildStatus(false, payload)
       }
     }
 
     // 全部通过
     this.current = payload
+    this.expiredPayload = null
     this.lastError = null
+    // 老用户升级到本版本时，用当前许可证初始化本机高水位；之后清除许可证也不会退回免费态。
+    this.rememberUpdates(payload)
     return this.buildStatus(true, payload, false)
   }
 
   /** 返回当前 License 状态（不触发验签）；§393：运行时重判 expires_at */
   getStatus(): LicenseStatus {
     if (this.current && Date.now() > this.current.expires_at) {
-      return this.buildStatus(false, this.current, true)
+      this.expiredPayload = this.current
+      this.current = null
+      this.lastError = `License 已于 ${new Date(this.expiredPayload.expires_at).toLocaleString('zh-CN')} 过期`
     }
-    return this.buildStatus(!!this.current, this.current ?? undefined, false)
+    if (this.current) return this.buildStatus(true, this.current, false)
+    if (this.expiredPayload) return this.buildStatus(false, this.expiredPayload, true)
+    return this.buildStatus(false, undefined, false)
   }
 
   /** 清除当前 License */
   clear(): void {
     this.current = null
+    this.expiredPayload = null
     this.lastError = null
+    // 注意：不清本机更新期高水位——清除许可证不应让人重新获得更新权益。
+  }
+
+  /** 许可证声明的硬盘指纹是否与本机一致（未绑定 = 一致） */
+  private fingerprintMatches(payload: LicensePayload): boolean {
+    const bound = String(payload.disk_fingerprint ?? '').trim().toLowerCase()
+    if (!bound) return true
+    const localFp = getDiskFingerprint()
+    return !!localFp && localFp === bound
+  }
+
+  /** 把许可证的更新期抬入本机高水位（只增不减） */
+  private rememberUpdates(payload: LicensePayload): void {
+    raiseUpdatesWatermark(updatesUntilOf(payload), this.watermarkPath)
   }
 
   /** 检查某个功能是否解锁；§393：过期即回 false */
@@ -210,12 +298,21 @@ export class LicenseService {
     payload?: LicensePayload,
     expired = false
   ): LicenseStatus {
+    // 有效更新期 = max(许可证自带更新期, 本机高水位)。没有许可证但本机记录过更新期时，
+    // 仍按记录判定——这正是「清除许可证/文件丢失后不回到免费更新态」的落点。
+    const updatesUntil = effectiveUpdatesUntil(
+      payload ? updatesUntilOf(payload) : undefined,
+      this.watermarkPath
+    )
     return {
       valid,
       payload,
       error: valid ? undefined : this.lastError ?? '未找到有效 License',
       signatureOk: valid || this.lastError?.includes('签名校验失败') !== true && payload !== undefined,
-      expired
+      expired,
+      updatesUntil,
+      // 停更不停用：更新期只影响更新通道，不参与 hasFeature / 数量门控
+      updatesExpired: updatesUntil !== undefined && Date.now() > updatesUntil
       // 注意：此处不能返回 hasFeature 等函数——IPC 结构化克隆无法序列化函数，
       // 会报 “An object could not be cloned”。功能门控走 license:has-feature 通道。
     }
