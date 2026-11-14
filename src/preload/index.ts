@@ -1207,9 +1207,7 @@ const api = {
     newPassword: string
   ): Promise<{ ok: boolean; error?: string; recoveryCode?: string; undecryptableCount?: number }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_CHANGE_PASSWORD, oldPassword, newPassword),
-  disableEncryption: (
-    password: string
-  ): Promise<{ ok: boolean; error?: string; undecryptableCount?: number; canceled?: boolean }> =>
+  disableEncryption: (password: string): Promise<{ ok: boolean; error?: string; undecryptableCount?: number; canceled?: boolean }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_DISABLE, password),
   enableEncryption: (password: string): Promise<{ ok: boolean; error?: string; undecryptableCount?: number }> =>
     ipcRenderer.invoke(IPC.ENCRYPTION_ENABLE, password),
