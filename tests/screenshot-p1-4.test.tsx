@@ -116,7 +116,39 @@ describe('P1-4 ① 截图作为附件进浮窗：可见、可删、未发送就�
   })
 })
 
-describe('P1-4 ② 失败原因上屏（不静默），新载荷会收掉旧错误', () => {
+describe('P1-4 ② 热键先上屏：捕获路上就有可见反馈，结果载荷收掉', () => {
+  it('capturing 载荷 ⇒ 显示"正在捕获"，还没有附件', async () => {
+    stubPopup({ mode: 'quick', capturing: true, ts: 300 })
+    mountWithProviders(<PopupApp />)
+
+    const hint = await screen.findByTestId('popup-capturing', {}, BUDGET)
+    expect(hint.textContent).toBe(L('popup.capturing'))
+    expect(shotCount()).toBe(0)
+  })
+
+  it('结果载荷（带图）⇒ 提示消失、图片进附件栏', async () => {
+    stubPopup({ mode: 'quick', capturing: true, ts: 301 })
+    mountWithProviders(<PopupApp />)
+
+    await screen.findByTestId('popup-capturing', {}, BUDGET)
+    await deliver({ mode: 'quick', screenshot: SHOT, ts: 302 })
+    await waitFor(() => expect(screen.queryByTestId('popup-capturing')).toBeNull())
+    expect(shotCount()).toBe(1)
+  })
+
+  it('结果载荷（失败）⇒ 提示消失、原因上屏（不静默）', async () => {
+    stubPopup({ mode: 'quick', capturing: true, ts: 303 })
+    mountWithProviders(<PopupApp />)
+
+    await screen.findByTestId('popup-capturing', {}, BUDGET)
+    await deliver({ mode: 'quick', screenshotError: 'black', ts: 304 })
+    await waitFor(() => expect(screen.queryByTestId('popup-capturing')).toBeNull())
+    const alert = await screen.findByTestId('popup-capture-error', {}, BUDGET)
+    expect(alert.textContent).toContain(L('popup.capture.err.black'))
+  })
+})
+
+describe('P1-4 ③ 失败原因上屏（不静默），新载荷会收掉旧错误', () => {
   it('no-window ⇒ 一句可读原因', async () => {
     stubPopup({ mode: 'quick', screenshotError: 'no-window', ts: 200 })
     mountWithProviders(<PopupApp />)
@@ -137,7 +169,7 @@ describe('P1-4 ② 失败原因上屏（不静默），新载荷会收掉旧错�
   })
 })
 
-describe('P1-4 ③ 浮窗内 📷 入口：同一条附件链路，目标二选一', () => {
+describe('P1-4 ④ 浮窗内 📷 入口：同一条附件链路，目标二选一', () => {
   it('选「整个屏幕」⇒ 向主进程要 screen，结果追加进附件栏', async () => {
     stubPopup(null, {
       captureScreenshot: (target: string) => ({
@@ -168,7 +200,7 @@ describe('P1-4 ③ 浮窗内 📷 入口：同一条附件链路，目标二选�
   })
 })
 
-describe('P1-4 ④ 设置页：第三行开关与平台差异说明', () => {
+describe('P1-4 ⑤ 设置页：第三行开关与平台差异说明', () => {
   const cfg = (over: Partial<PopupConfig> = {}): PopupConfig => ({
     quickEnabled: true,
     selectionEnabled: false,
@@ -202,7 +234,7 @@ describe('P1-4 ④ 设置页：第三行开关与平台差异说明', () => {
   })
 })
 
-describe('P1-4 ⑤ 纯判定：source 匹配 / 文件名 / 字节数 / 三键冲突', () => {
+describe('P1-4 ⑥ 纯判定：source 匹配 / 文件名 / 字节数 / 三键冲突', () => {
   it('平台闸门只放行 Windows', () => {
     expect(isScreenshotPlatformSupported('win32')).toBe(true)
     expect(isScreenshotPlatformSupported('darwin')).toBe(false)

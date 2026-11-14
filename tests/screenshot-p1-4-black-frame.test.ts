@@ -25,7 +25,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { buildScript, encodeCapture, isNearBlackImage, popupHwndString } from '../src/main/screenshot'
+import { buildHostScript } from '../src/main/screenshot-host'
+import { encodeCapture, isNearBlackImage, popupHwndString } from '../src/main/screenshot'
 
 type ShotGlobal = { __shotBitmap?: Buffer; __shotSize?: { width: number; height: number } }
 
@@ -77,20 +78,28 @@ describe('A：浮窗可见时的捕获不再产出黑帧', () => {
     expect(isNearBlackImage({ getSize: () => ({ width: 64, height: 64 }), toBitmap: () => blackBitmap() } as never)).toBe(true)
   })
 
-  it('抓图脚本按浮窗句柄做命中测试（不是"等前台变化"）', () => {
-    const script = buildScript('window', 'C:\\tmp\\moxia-shot.png', '4242')
-    expect(script).toContain("$popupArg = '4242'")
+  it('抓图脚本按浮窗句柄做命中测试（不是"等前台变化"），且支持显式 targetHwnd', () => {
+    const script = buildHostScript()
+    // 命中测试三件套 + 可见性校验
     expect(script).toContain('WindowFromPoint')
     expect(script).toContain('GetAncestor')
     expect(script).toContain('IsWindowVisible')
+    // 热键瞬间记录的前台 HWND 优先，不再依赖捕获时的前台
+    expect(script).toContain('targetHwnd')
+    expect(script).toContain('popupHwnd')
     // 桌面/任务栏不算窗口
     expect(script).toContain('Shell_TrayWnd')
-    expect(script).not.toContain('Start-Sleep -Milliseconds 200')
+    // 不再有"隐藏后等前台变化"的旧思路
+    expect(script).not.toContain('Start-Sleep -Milliseconds 2000')
   })
 
-  it('没有浮窗句柄时保持原行为（前台窗口）', () => {
-    const script = buildScript('window', 'C:\\tmp\\moxia-shot.png')
-    expect(script).toContain("$popupArg = ''")
+  it('PNG 直接按文件字节 base64，不再让 Electron 重编码', () => {
+    ;(globalThis as ShotGlobal).__shotSize = { width: 64, height: 64 }
+    ;(globalThis as ShotGlobal).__shotBitmap = normalBitmap()
+    const buf = Buffer.from('raw-png-bytes')
+    const r = encodeCapture('window', buf, new Date())
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.attachment.data).toBe(`data:image/png;base64,${buf.toString('base64')}`)
   })
 
   it('浮窗 HWND 取十进制字符串；已销毁/空窗口返回 undefined', () => {
