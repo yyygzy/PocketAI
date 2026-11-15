@@ -1325,6 +1325,9 @@ const api = {
     | { ok: false; error: string }
   > =>
     ipcRenderer.invoke(IPC.BACKUP_LOCAL_ENCRYPTED),
+  listLocalBackups: (): Promise<
+    import('../shared/types').LocalBackupEntry[] | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.BACKUP_LOCAL_LIST),
   restoreLocalBackup: (
     payload?: { restoreToken?: string; backupPassword?: string }
   ): Promise<import('../shared/types').BackupRestoreResult> =>

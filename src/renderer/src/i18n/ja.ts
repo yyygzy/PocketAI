@@ -2558,6 +2558,23 @@ export const ja = {
   'bk.restoreBadPwd': 'バックアップパスワードが正しくありません。再入力してください',
   'bk.restoreLegacy': 'このバックアップは旧形式のため、他の端末でパスワードによる復元はできません。作成した端末で復元するか、新しいバックアップを作成してください。',
   'bk.restoreFail': '復元失敗：{e}',
+  // P2-1：ホームの状態カード（ローカルバックアップ + ポータブル版の更新通知）
+  'home.backupTitle': 'ローカルバックアップ',
+  'home.backupLoading': 'ローカルバックアップを読み込み中…',
+  'home.backupNone': 'ローカルバックアップはまだありません',
+  'home.backupListFail': 'ローカルバックアップの読み込みに失敗しました：{e}',
+  'home.backupLast': '最新のバックアップ：{time}',
+  'home.backupCount': 'ローカルに {n} 件（新しい順）',
+  'home.restoreDetected':
+    '復元できるローカルバックアップがあります。復元は確認後にのみ実行され、データを自動で上書きしません。',
+  'home.backupBusy': 'バックアップ中…',
+  'home.portableTitle': 'ポータブル版の更新',
+  'home.portableChecking': '新しいバージョンを確認中…',
+  'home.portableHint':
+    'ポータブル版はアプリ内でダウンロード・置換しません。新しい版を手動でダウンロードしてください。',
+  'home.portableLatest': '最新バージョンです（{v}）',
+  'home.portableCheckFail': 'バージョン確認に失敗しました：{e}',
+  'home.downloadPage': 'ダウンロードページを開く',
   'bk.deleteConfirm': '{name} を削除しますか？',
   'bk.deleted': '削除しました',
   'bk.scheduleEnable': 'スケジュールバックアップを有効化',

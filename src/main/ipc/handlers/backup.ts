@@ -65,6 +65,15 @@ export function registerBackupHandlers(): void {
       return { ok: false as const, error: errMsg(e, '加密备份失败') }
     }
   })
+  safeHandle(IPC.BACKUP_LOCAL_LIST, async () => {
+    const { listLocalBackups } = await import('../../backup/local-backups')
+    // 目录不存在 ⇒ []（真没备份过）；其他读失败回失败信封，别让首页把「读不到」演成「没有备份」
+    try {
+      return listLocalBackups(path.join(DATA_DIR, 'backups'))
+    } catch (e) {
+      return { ok: false as const, error: errMsg(e, '读取本地备份失败') }
+    }
+  })
   safeHandle(IPC.BACKUP_WEBDAV_SAVE_CONFIG, async (_e, cfg: WebDAVConfigInput) => {
     const { saveWebDAVConfig, loadWebDAVConfig, restoreWebDAVPassword } = await import('../../backup/backup-service')
     // 先回填掩码，再判定：顺序反了会把「只改地址/目录」的保存当成改口令，

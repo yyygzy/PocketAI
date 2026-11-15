@@ -2134,6 +2134,8 @@ export interface UpdateEvent {
   totalBytes?: number
   /** 已下载字节 */
   downloadedBytes?: number
+  /** 便携版手动下载页地址（available 且便携版时有值；应用内不会自动下载该包） */
+  downloadUrl?: string
   /** 错误信息 */
   error?: string
 }
@@ -2757,6 +2759,18 @@ export interface WebDAVBackupFile {
   kind: 'full' | 'incremental'
 }
 
+/** 本地备份目录里的一份包（首页展示用，不含绝对路径） */
+export interface LocalBackupEntry {
+  /** 文件名：pocketai-backup-<时间戳>.zip / .enc.zip */
+  name: string
+  /** 修改时间（ms 时间戳） */
+  mtime: number
+  /** 字节数 */
+  size: number
+  /** 是否主密码加密包 */
+  encrypted: boolean
+}
+
 /** WebDAV/本地恢复结果；code 驱动渲染层备份密码弹窗 */
 export interface BackupRestoreResult {
   ok: boolean
@@ -3316,6 +3330,7 @@ export const IPC = {
   // ---------- 备份 ----------
   BACKUP_LOCAL: 'backup:local', // 本地备份（可选加密）
   BACKUP_LOCAL_ENCRYPTED: 'backup:local-encrypted', // 本地加密备份
+  BACKUP_LOCAL_LIST: 'backup:local-list', // 列出本地备份目录里的包（首页状态与恢复入口）
   BACKUP_LOCAL_RESTORE: 'backup:local-restore', // 从本地备份文件恢复（主进程弹文件选择器）
   BACKUP_WEBDAV_TEST: 'backup:webdav-test', // 测试 WebDAV 连接
   BACKUP_WEBDAV_UPLOAD: 'backup:webdav-upload', // 上传全量备份到 WebDAV

@@ -2,6 +2,7 @@ import { app, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import EventEmitter from 'node:events'
 import { IPC, type UpdateStatus, type UpdateEvent } from '../shared/types'
+import { compareVersionStrings } from '../shared/version'
 import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { downloadAsarPatch, restartToApplyPatch, isPatchPending, clearPendingPatch } from './update/asar-patcher'
@@ -32,6 +33,29 @@ const log = createLogger('update')
 /** 更新期结束时的统一提示（UI 另有 i18n 文案，这里只作为 IPC 兜底） */
 const UPDATES_ENDED_MSG = '更新期已结束：当前版本可继续使用，如需获取新版本请续购更新'
 
+/** 便携版只能「查」新版本：electron-builder 的 portable 包不生成 app-update.yml */
+const RELEASE_API_URL = 'https://api.github.com/repos/yyygzy/PocketAI/releases/latest'
+/** 兜底下载页（Releases API 没给 html_url 时用；同仓，不引第三方外链） */
+const RELEASES_PAGE_URL = 'https://github.com/yyygzy/PocketAI/releases'
+
+/**
+ * 查 GitHub Releases 拿「最新正式版版本号 + 下载页」。
+ * 便携版没有自动更新通道，这是唯一能知道「有没有新版本」的来源；只读，不下载、不替换。
+ */
+async function fetchLatestRelease(): Promise<{ version: string; url: string }> {
+  const res = await safeFetch(RELEASE_API_URL, {
+    timeoutMs: 12000,
+    maxBytes: 1024 * 1024,
+    headers: { Accept: 'application/vnd.github+json' }
+  })
+  if (res.status !== 200) throw new Error(`GitHub API HTTP ${res.status}`)
+  const data = JSON.parse(res.body.toString()) as GitHubReleaseApi
+  const version = String(data.tag_name ?? '').replace(/^v/i, '').trim()
+  if (!version) throw new Error('GitHub API 返回格式异常')
+  const url = String(data.html_url ?? '').trim() || RELEASES_PAGE_URL
+  return { version, url }
+}
+
 class UpdateManager extends EventEmitter {
   private status: UpdateStatus = 'idle'
   private newVersion?: string
@@ -39,6 +63,8 @@ class UpdateManager extends EventEmitter {
   private totalBytes = 0
   private downloadedBytes = 0
   private error?: string
+  /** 便携版手动下载页（只展示，应用内绝不下载替换） */
+  private downloadUrl?: string
   /** 互斥锁：任何时刻只能一个流程在跑 */
   private busy = false
   /** 自动更新开关（持久化于 app_config，默认关闭） */
@@ -149,12 +175,13 @@ class UpdateManager extends EventEmitter {
   }
 
   // ── 查询当前状态（IPC 直接返回，不用事件）───────────────────────
-  getStatusSnapshot(): Pick<UpdateEvent, 'status' | 'newVersion' | 'progress' | 'error'> {
+  getStatusSnapshot(): Pick<UpdateEvent, 'status' | 'newVersion' | 'progress' | 'error' | 'downloadUrl'> {
     return {
       status: this.status,
       newVersion: this.newVersion,
       progress: this.progress,
-      error: this.error
+      error: this.error,
+      downloadUrl: this.downloadUrl
     }
   }
 
@@ -220,10 +247,27 @@ class UpdateManager extends EventEmitter {
       return { ok: true }
     }
 
-    // Windows Portable：electron-builder 不生成 app-update.yml，无法自动更新
+    // Windows Portable：electron-builder 不生成 app-update.yml，无法自动更新。
+    // 但仍要能告诉用户「有没有新版本」：只查 GitHub Releases 拿版本号与下载页，绝不下载/替换。
     if (process.platform === 'win32' && isPortableRuntime()) {
-      this.setStatus('unavailable', { error: '便携版不支持自动更新，请手动下载新版替换' })
-      return { ok: true }
+      this.busy = true
+      this.error = undefined
+      this.setStatus('checking')
+      try {
+        const rel = await fetchLatestRelease()
+        this.newVersion = rel.version
+        this.downloadUrl = rel.url
+        if (compareVersionStrings(rel.version, app.getVersion()) > 0) {
+          this.setStatus('available', { newVersion: rel.version, downloadUrl: rel.url })
+        } else {
+          this.setStatus('unavailable', { newVersion: rel.version })
+        }
+        return { ok: true }
+      } catch (e) {
+        this.error = errMsg(e)
+        this.setStatus('error', { error: this.error })
+        return { ok: false, error: this.error }
+      }
     }
 
     this.busy = true
@@ -249,6 +293,11 @@ class UpdateManager extends EventEmitter {
     }
     if (this.status !== 'available') {
       return { ok: false, error: `当前状态 ${this.status}，需要先检查更新` }
+    }
+
+    // 便携版：available 只代表「有新版本」，包不归应用管——只提示 + 下载页，绝不应用内下载/替换
+    if (isPortableRuntime()) {
+      return { ok: false, error: '便携版不支持应用内下载，请到发布页手动下载新版替换' }
     }
 
     if (!app.isPackaged) {

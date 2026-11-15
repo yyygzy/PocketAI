@@ -2635,6 +2635,23 @@ export const en = {
   'bk.restoreBadPwd': 'Incorrect backup password, please try again',
   'bk.restoreLegacy': 'This backup uses an older format and cannot be restored on another device with a password. Restore it on the device that created it, or make a new backup.',
   'bk.restoreFail': 'Restore failed: {e}',
+  // P2-1: home status card (local backup + portable update notice); display and entry points only
+  'home.backupTitle': 'Local backup',
+  'home.backupLoading': 'Reading local backups…',
+  'home.backupNone': 'No local backup yet',
+  'home.backupListFail': 'Failed to read local backups: {e}',
+  'home.backupLast': 'Last backup: {time}',
+  'home.backupCount': '{n} local backup(s), newest first',
+  'home.restoreDetected':
+    'Restorable local backups found. Restoring asks for your confirmation and never overwrites data automatically.',
+  'home.backupBusy': 'Backing up…',
+  'home.portableTitle': 'Portable build update',
+  'home.portableChecking': 'Checking for a new version…',
+  'home.portableHint':
+    'The portable build never downloads or replaces itself; download the new version manually.',
+  'home.portableLatest': 'Up to date ({v})',
+  'home.portableCheckFail': 'Version check failed: {e}',
+  'home.downloadPage': 'Open download page',
   'bk.deleteConfirm': 'Delete {name}?',
   'bk.deleted': 'Deleted',
   'bk.scheduleEnable': 'Enable scheduled backup',

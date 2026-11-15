@@ -2558,6 +2558,23 @@ export const ko = {
   'bk.restoreBadPwd': '백업 비밀번호가 올바르지 않습니다. 다시 입력하세요',
   'bk.restoreLegacy': '이 백업은 이전 버전 형식이라 다른 기기에서 비밀번호로 복원할 수 없습니다. 만든 기기에서 복원하거나 새 백업을 만드세요.',
   'bk.restoreFail': '복원 실패: {e}',
+  // P2-1: 홈 상태 카드(로컬 백업 + 포터블 버전 업데이트 안내)
+  'home.backupTitle': '로컬 백업',
+  'home.backupLoading': '로컬 백업을 읽는 중…',
+  'home.backupNone': '아직 로컬 백업이 없습니다',
+  'home.backupListFail': '로컬 백업 목록을 읽지 못했습니다: {e}',
+  'home.backupLast': '최근 백업: {time}',
+  'home.backupCount': '로컬에 {n}개(최신 순)',
+  'home.restoreDetected':
+    '복원할 수 있는 로컬 백업이 있습니다. 복원은 확인 후에만 실행되며 데이터를 자동으로 덮어쓰지 않습니다.',
+  'home.backupBusy': '백업 중…',
+  'home.portableTitle': '포터블 버전 업데이트',
+  'home.portableChecking': '새 버전 확인 중…',
+  'home.portableHint':
+    '포터블 버전은 앱 안에서 다운로드하거나 교체하지 않습니다. 새 버전을 직접 내려받아 주세요.',
+  'home.portableLatest': '최신 버전입니다({v})',
+  'home.portableCheckFail': '버전 확인 실패: {e}',
+  'home.downloadPage': '다운로드 페이지 열기',
   'bk.deleteConfirm': '{name}을(를) 삭제할까요?',
   'bk.deleted': '삭제됨',
   'bk.scheduleEnable': '예약 백업 활성화',

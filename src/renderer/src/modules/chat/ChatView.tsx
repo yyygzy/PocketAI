@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry, AgentSessionStats, ChatResumeBlockCode, ChatResumeCandidate, RunToolGrant } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
+import { HomeStatusPanel } from '../../components/HomeStatusPanel'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
 import { ComparisonColumns, type CompareColumn } from './ComparisonColumns'
@@ -1240,7 +1241,7 @@ export const ChatView: React.FC<Props> = ({
           {messagesLoading ? (
             <MessagesSkeleton />
           ) : listCount === 0 ? (
-            <div className="flex flex-col items-center justify-center h-72 text-center px-6">
+            <div className="flex flex-col items-center justify-center min-h-72 text-center px-6 py-6">
               <div className="text-4xl mb-3">🎒</div>
               {assistantName && <p className="text-[var(--color-text)] font-semibold">{assistantName}</p>}
               {welcomeMessage ? (
@@ -1253,6 +1254,8 @@ export const ChatView: React.FC<Props> = ({
               <p className="text-[11px] text-[var(--color-text-muted)] mt-3">
                 {t('chatview.hint')}
               </p>
+              {/* P2-1：起始屏挂备份状态与便携版更新提示（子会话只读面不摆这些入口） */}
+              {!readonly && <HomeStatusPanel />}
             </div>
           ) : (
             <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
