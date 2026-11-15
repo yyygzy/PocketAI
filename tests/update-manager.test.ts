@@ -2,7 +2,7 @@
 //
 // 覆盖 src/main/update-manager.ts 的 UpdateManager：
 // - init：dev 环境读开关并置 unavailable
-// - check：busy 互斥 / dev 拒绝 / linux 无 APPIMAGE / win32 便携 / 上游抛错收敛
+// - check：busy 互斥 / dev 拒绝 / linux 无 APPIMAGE / win32 便携（P2-1：只查 Releases 拿版本与下载页） / 上游抛错收敛
 // - download：状态门 / dev 拒绝 / busy 互斥 / 增量补丁成功 / 回退全量 / 抛错 + keep-awake 释放
 //   §312：打补丁之前先 clearPendingPatch（上一轮的暂存不能留着）
 // - quitAndInstall：状态门 / 补丁待应用重启 / NSIS 安装
@@ -46,6 +46,9 @@ const mocks = vi.hoisted(() => ({
   restartArgs: [] as string[],
   clearCalls: 0,
   patchSeq: [] as string[],
+  // P2-1：便携版只能查 GitHub Releases（不下载），检查结果的版本号与下载页来自这里
+  releaseTag: 'v1.2.7',
+  releaseUrl: 'https://github.com/yyygzy/PocketAI/releases/tag/v1.2.7',
   // keep-awake 调用顺序
   keepAwakeCalls: [] as string[],
   reset() {
@@ -53,6 +56,8 @@ const mocks = vi.hoisted(() => ({
     this.isPortable = false
     this.autoEnabled = false
     this.updatesExpired = false
+    this.releaseTag = 'v1.2.7'
+    this.releaseUrl = 'https://github.com/yyygzy/PocketAI/releases/tag/v1.2.7'
     this.setAutoEnabledCalls = []
     this.setAutoEnabledThrows = false
     this.listeners = new Map()
@@ -162,7 +167,16 @@ vi.mock('../src/main/ipc/safe-handle', () => ({
 }))
 
 vi.mock('../src/main/net/safe-fetch', () => ({
-  safeFetch: async () => ({ status: 200, body: Buffer.from('[]') })
+  safeFetch: async (url: string) => {
+    // 便携版查新版本：GitHub Releases latest（只读，不下载任何包）
+    if (String(url).includes('/releases/latest')) {
+      return {
+        status: 200,
+        body: Buffer.from(JSON.stringify({ tag_name: mocks.releaseTag, html_url: mocks.releaseUrl }))
+      }
+    }
+    return { status: 200, body: Buffer.from('[]') }
+  }
 }))
 
 vi.mock('../src/main/logger', () => ({
@@ -293,11 +307,33 @@ describe('check 检查更新', () => {
     expect(mocks.checkCalls).toBe(0)
   })
 
-  it('win32 便携形态：置 unavailable', async () => {
+  it('win32 便携形态 + 有新版本：只查 Releases，置 available 并带下载页', async () => {
     goPackaged()
     const real = Object.getOwnPropertyDescriptor(process, 'platform')!
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     mocks.isPortable = true
+    mocks.releaseTag = 'v9.9.9'
+    mocks.releaseUrl = 'https://github.com/yyygzy/PocketAI/releases/tag/v9.9.9'
+    try {
+      const r = await updateManager.check()
+      expect(r).toEqual({ ok: true })
+      const s = updateManager.getStatusSnapshot()
+      expect(s.status).toBe('available')
+      expect(s.newVersion).toBe('9.9.9')
+      expect(s.downloadUrl).toBe('https://github.com/yyygzy/PocketAI/releases/tag/v9.9.9')
+    } finally {
+      Object.defineProperty(process, 'platform', real)
+    }
+    // 便携版没有自动更新通道：只读查询，不许碰 autoUpdater
+    expect(mocks.checkCalls).toBe(0)
+  })
+
+  it('win32 便携形态 + 已是最新：置 unavailable（不是失败）', async () => {
+    goPackaged()
+    const real = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    mocks.isPortable = true
+    mocks.releaseTag = 'v1.2.7' // 与 app.getVersion() 相同
     try {
       const r = await updateManager.check()
       expect(r).toEqual({ ok: true })
@@ -305,6 +341,16 @@ describe('check 检查更新', () => {
     } finally {
       Object.defineProperty(process, 'platform', real)
     }
+  })
+
+  it('便携版 available 也不许应用内下载（只给下载页）', async () => {
+    goPackaged()
+    mocks.isPortable = true
+    emit('update-available', { version: '9.9.9' })
+    const r = await updateManager.download()
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('便携版不支持应用内下载')
+    expect(mocks.downloadCalls).toBe(0)
   })
 
   it('打包环境上游抛错：收敛 {ok:false,error} 并置 error 状态', async () => {
