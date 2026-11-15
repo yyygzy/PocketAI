@@ -1028,12 +1028,15 @@ export const ChatView: React.FC<Props> = ({
         >
           <div className="min-w-0 flex-1">
             <div className="text-[12px] text-[var(--color-text)]">
-              {t('chat.resume.title', { step: resumeCandidate.nextStep })}
+              {t(
+                resumeCandidate.kind === 'failed' ? 'chat.resume.failedTitle' : 'chat.resume.title',
+                { step: resumeCandidate.nextStep }
+              )}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
               {resumeCandidate.state === 'blocked' && resumeCandidate.code
                 ? t(RESUME_BLOCK_TEXT_KEYS[resumeCandidate.code])
-                : t('chat.resume.hint')}
+                : t(resumeCandidate.kind === 'failed' ? 'chat.resume.failedHint' : 'chat.resume.hint')}
             </div>
           </div>
           <button
@@ -1042,7 +1045,9 @@ export const ChatView: React.FC<Props> = ({
             disabled={resumeCandidate.state !== 'ready' || !!resumeBusy || !!streaming}
             onClick={onResume}
           >
-            {resumeBusy ? t('chat.resume.resuming') : t('chat.resume.action')}
+            {resumeBusy
+              ? t('chat.resume.resuming')
+              : t(resumeCandidate.kind === 'failed' ? 'chat.resume.failedAction' : 'chat.resume.action')}
           </button>
         </div>
       )}

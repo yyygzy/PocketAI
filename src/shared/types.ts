@@ -1801,13 +1801,19 @@ export type ChatResumeBlockCode =
  * `state='blocked'` 时入口仍要显示，但按钮禁用并给出原因；这比"悄悄不显示"更诚实。
  */
 export interface ChatResumeCandidate {
-  /** 被中断的那次 run（续跑会用新 requestId，旧行保留作审计） */
+  /** 被中断/失败的那次 run（续跑会用新 requestId，旧行保留作审计） */
   requestId: string
   conversationId: string
-  /** 接着跑的步号（= steps_done + 1） */
+  /** 接着跑的步号（= 已完成的步数 + 1） */
   nextStep: number
   /** 锚定的用户消息（续跑不重复插入它） */
   userMessageId: string
+  /**
+   * 这一条候选来自哪种结局（P1-3c）：
+   * - interrupted：上次进程中断，接着往下跑；
+   * - failed：上次失败停在模型步，只重跑失败的那一步。
+   */
+  kind: 'interrupted' | 'failed'
   state: 'ready' | 'blocked'
   /** 仅 blocked */
   code?: ChatResumeBlockCode

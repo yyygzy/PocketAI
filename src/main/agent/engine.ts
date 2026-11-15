@@ -1278,8 +1278,11 @@ class AgentEngine {
       /**
        * v73 续跑（P1-3a；主进程内部入口，schema 会剥掉渲染层伪造的字段）：
        * - userMessage：已经落库的那条用户消息——续跑**不重新插入、也不重复 emit**；
-       * - startStep：检查点里的 `steps_done`，循环第一步从 `startStep + 1` 编号；
-       * - 后两项是准入时校验过的起点事实，原样交给运行态落地（口径见 v73 迁移注释）。
+       * - startStep：已完成步数（准入按产物事实算出），循环第一步从 `startStep + 1` 编号；
+       * - startToolStepsDone：旧行里的工具步计数原样继承（审计口径，不是完成判据）。
+       * P1-3b：带已完成工具步的断点也从这里接上——上下文由 buildContext 从库里还原，
+       * 已应答的 tool_calls 会连同 tool 结果进上下文，因此这些步骤不会被重放。
+       * P1-3c：失败 run 的「只重试该步」复用同一入口，startStep = 失败步之前的边界。
        */
       resume?: {
         userMessage: MessageRecord

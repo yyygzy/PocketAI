@@ -26,7 +26,7 @@ import { ragService } from '../knowledge/rag'
 import { chunksToSources } from '../../shared/kb-sources'
 import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { usageService } from '../usage/usage-service'
-import { conversationRunRepo, type ConversationRunSnapshot } from '../db/repositories/conversation-run.repo'
+import { conversationRunRepo, judgeRunResume, type ConversationRunSnapshot } from '../db/repositories/conversation-run.repo'
 import { resolveAgentToolPermissions, toolPermissionsSignature } from '../agent/tool-permissions'
 import { getWorkspaceDir } from '../tools/fs-tools'
 import { getUsagePricing } from '../usage/pricing-config'
@@ -55,7 +55,14 @@ type EmitFn = (channel: string, data: unknown) => void
 type ResumeEvaluation =
   | { kind: 'none' }
   | { kind: 'blocked'; candidate: ChatResumeCandidate }
-  | { kind: 'ready'; candidate: ChatResumeCandidate; run: ConversationRunSnapshot; anchor: MessageRecord }
+  | {
+      kind: 'ready'
+      candidate: ChatResumeCandidate
+      run: ConversationRunSnapshot
+      anchor: MessageRecord
+      /** 接续步号：已完成步数（= doneAssistants + settledToolSteps），引擎从它 + 1 起跑 */
+      startStep: number
+    }
 
 /** 续跑被拦下时的回码（渲染层按 code 查静态四语键；这里的文案只进日志/兜底） */
 function resumeBlockedError(code: ChatResumeBlockCode): Error {
@@ -570,10 +577,13 @@ class ChatService {
   }
 
   /**
-   * P1-3a：从检查点续跑（范围见 P1-3a 设计稿：只接管 toolStepsDone=0 且停在 preparing/model 的中断）。
+   * P1-3a / P1-3b / P1-3c：从检查点续跑。
+   * 接管范围（判定见 judgeRunResume）：
+   * - 中断后已完成若干工具步 —— 不重放，从下一个未完成步骤接上（P1-3b）；
+   * - 失败停在下一次模型调用之前 —— 只重跑失败的那一步，不回退整条 run（P1-3c）。
    *
    * 三条硬约束：
-   * 1. 用**新 requestId** 落新 run 行，旧行保持 interrupted 作审计（不复用旧行，避免 INSERT OR REPLACE 覆盖断点）；
+   * 1. 用**新 requestId** 落新 run 行，旧行保持 interrupted/failed 作审计（不复用旧行，避免 INSERT OR REPLACE 覆盖断点）；
    * 2. 不插用户消息、不重跑规划、不重做附件入库（理由见引擎里 `resume` 分支的注释）；
    * 3. 准入在 markRunStarted 之前完成；任何一项对不上就抛可读回码，不做"尽力而为"的续跑。
    */
@@ -609,8 +619,10 @@ class ChatService {
           {
             resume: {
               userMessage: ev.anchor,
-              startStep: ev.run.stepsDone ?? 0,
-              startToolStepsDone: 0,
+              // 用准入算出的完成步数，不直接信 steps_done：停在工具步且已全部落库时两者差 1
+              startStep: ev.startStep,
+              // 旧值原样继承：这一列是审计口径（进过几次工具步），续跑不能把它清零
+              startToolStepsDone: ev.run.toolStepsDone ?? 0,
               workspaceDir: ev.run.workspaceDir,
               toolPermissionsSig: ev.run.toolPermissionsSig
             }
@@ -626,23 +638,33 @@ class ChatService {
    * 续跑准入（只读）：候选 → 逐项核对。
    * 顺序有讲究：先看"是不是这一轮"，再看"断点记录对不对"，最后才看"环境有没有变"——
    * 这样用户看到的第一个原因总是最接近根因的那个。
+   *
+   * 判定本身只认产物事实（见 judgeRunResume）：assistant 是否 done、每个 tool_call 是否有 done 应答。
+   * 工具步已完成的中断（P1-3b）与停在模型步的失败（P1-3c）都走同一条准入，差别只在候选的 `kind`。
    */
   private evaluateResume(conversationId: string): ResumeEvaluation {
     const run = conversationRunRepo.getLatest(conversationId)
-    if (!run || run.status !== 'interrupted') return { kind: 'none' }
-    // 普通对话没有续跑入口；restart 的判定在启动对账时已经写下，不再复核
-    if (run.mode !== 'agent' || run.resumeState !== 'resumable') return { kind: 'none' }
+    if (!run || run.mode !== 'agent') return { kind: 'none' }
+    const failed = run.status === 'failed'
+    if (run.status !== 'interrupted' && !failed) return { kind: 'none' }
+    // 中断：启动对账已经用同一判据写下 resume_state（侧栏也读它，两处必须同一个答案）
+    if (!failed && run.resumeState !== 'resumable') return { kind: 'none' }
+    // 失败：只有"停在模型步"这一档可按步重试，其余情况连入口都不给（判定再复核一次）
+    if (failed && (run.stage ?? null) !== 'model') return { kind: 'none' }
 
+    const kind: ChatResumeCandidate['kind'] = failed ? 'failed' : 'interrupted'
     const stepsDone = run.stepsDone ?? 0
-    const base = {
-      requestId: run.requestId,
-      conversationId,
-      nextStep: stepsDone + 1,
-      userMessageId: run.anchorUserMessageId ?? ''
-    }
     const blocked = (code: ChatResumeBlockCode): ResumeEvaluation => ({
       kind: 'blocked',
-      candidate: { ...base, state: 'blocked', code }
+      candidate: {
+        requestId: run.requestId,
+        conversationId,
+        nextStep: stepsDone + 1,
+        userMessageId: run.anchorUserMessageId ?? '',
+        kind,
+        state: 'blocked',
+        code
+      }
     })
 
     const anchorId = run.anchorUserMessageId
@@ -650,10 +672,30 @@ class ChatService {
     const anchor = messageRepo.getById(anchorId)
     if (!anchor || anchor.role !== 'user' || anchor.status !== 'done') return blocked('RESUME_ANCHOR_MISSING')
 
-    // 检查点写在步前：已落库的助手条数必须与 steps_done 对齐，否则断点落后一步（见 judgeRunResume 注释）
-    const counts = conversationRunRepo.countArtifacts(anchorId)
-    if (counts.toolMessages > 0) return blocked('RESUME_TOOLS_EXECUTED')
-    if (counts.doneAssistants !== stepsDone) return blocked('RESUME_ARTIFACTS_MISMATCH')
+    const facts = conversationRunRepo.scanAnchorSteps(anchorId)
+    const verdict = judgeRunResume({
+      mode: run.mode,
+      stage: run.stage,
+      stepsDone: run.stepsDone,
+      toolStepsDone: run.toolStepsDone,
+      anchorUserMessageId: anchorId,
+      status: failed ? 'failed' : 'interrupted',
+      doneAssistantCount: facts.doneAssistants,
+      toolMessageCount: facts.toolMessages,
+      settledToolSteps: facts.settledToolSteps,
+      danglingToolCalls: facts.danglingToolCalls
+    })
+    if (verdict !== 'resumable') {
+      // 失败的 run 判定不通过时不给入口：能走到这里说明脚下事实没走完，重试只会重复执行
+      if (failed) return { kind: 'none' }
+      const code: ChatResumeBlockCode =
+        facts.danglingToolCalls > 0 || (facts.toolMessages > 0 && facts.settledToolSteps === 0)
+          ? 'RESUME_TOOLS_EXECUTED'
+          : 'RESUME_ARTIFACTS_MISMATCH'
+      return blocked(code)
+    }
+    // 完成步数按产物算：停在工具步且该步已全部落库时，它比 steps_done 多 1
+    const startStep = facts.doneAssistants + facts.settledToolSteps
 
     // 起点快照只在"还没走到第一个检查点"时为空（那种情况下这一步之前什么都没执行，无需比对）
     if (run.workspaceDir && !sameWorkspaceDir(run.workspaceDir, getWorkspaceDir())) {
@@ -671,7 +713,20 @@ class ChatService {
     }
     if (!parseModelLabel(conv.modelLabel)) return blocked('RESUME_TARGET_MISSING')
 
-    return { kind: 'ready', candidate: { ...base, state: 'ready' }, run, anchor }
+    return {
+      kind: 'ready',
+      candidate: {
+        requestId: run.requestId,
+        conversationId,
+        nextStep: startStep + 1,
+        userMessageId: anchorId,
+        kind,
+        state: 'ready'
+      },
+      run,
+      anchor,
+      startStep
+    }
   }
 
   /**
