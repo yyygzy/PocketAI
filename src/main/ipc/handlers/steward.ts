@@ -1,13 +1,13 @@
 // 平台管家 IPC：健康报告/清理/VACUUM、模型推荐、安全审计、故障诊断、数据健康度
 import { BrowserWindow, dialog, shell } from 'electron'
 import { z } from 'zod'
-import { IPC, type ApprovalAuditQuery, type ApprovalExportQuery } from '../../../shared/types'
+import { IPC, type ApprovalAuditQuery, type ApprovalExportQuery, type MaintenanceTaskKey, type MaintenanceTaskPatch } from '../../../shared/types'
 import { DATA_DIR } from '../../portable'
 import { healthService } from '../../health/health'
 import { recommendModels } from '../../steward/model-recommend'
 import { runAudit, runDiagnose } from '../../steward/diagnose'
 import { getDataHealthReport } from '../../steward/data-health'
-import { verifyBackupNow } from '../../backup/task-scheduler'
+import { verifyBackupNow, listTaskSchedules, updateTaskSchedule, TASK_INTERVAL_MIN_HOURS, TASK_INTERVAL_MAX_HOURS } from '../../backup/task-scheduler'
 import { APPROVAL_AUDIT_MAX_PAGE, approvalEventRepo } from '../../db/repositories/approval-event.repo'
 import {
   APPROVAL_EXPORT_MAX_ROWS,
@@ -54,6 +54,21 @@ const approvalExportSchema = z.object({
   to: z.number().int().min(0).optional()
 })
 
+/**
+ * P2-2：内置维护任务设置入参。
+ * `key` 用 enum 钉成闭集——不存在"用户自建任务"这条路；`patch` 只收开关与间隔两粒。
+ * 间隔的取值范围在这里挡一道，`updateTaskSchedule` 里再复核一道（领域层也要能独立测）。
+ */
+const taskScheduleSetSchema = z.object({
+  key: z.enum(['kb_health_check', 'backup_verify']),
+  patch: z
+    .object({
+      enabled: z.boolean().optional(),
+      intervalHours: z.number().int().min(TASK_INTERVAL_MIN_HOURS).max(TASK_INTERVAL_MAX_HOURS).optional()
+    })
+    .strict()
+})
+
 /** 默认文件名时间戳 YYYYMMDD-HHmm */
 function reportTimestamp(): string {
   const d = new Date()
@@ -79,6 +94,14 @@ export function registerStewardHandlers(): void {
     ok: true as const,
     ...(await verifyBackupNow())
   }))
+  // P2-2：内置维护任务的目录与设置。列表只读；设置只改开关/间隔，目录外 key 由 zod 直接挡下。
+  safeHandle(IPC.TASK_SCHEDULE_LIST, () => listTaskSchedules())
+  safeHandle(
+    IPC.TASK_SCHEDULE_SET,
+    (_e, args: { key: MaintenanceTaskKey; patch: MaintenanceTaskPatch }) =>
+      updateTaskSchedule(args.key, args.patch),
+    argsSchema(taskScheduleSetSchema)
+  )
   // 诊断报告导出：渲染端拼装纯文本 → 主进程弹保存框落盘（远程求助场景）
   safeHandle(
     IPC.STEWARD_EXPORT_REPORT,

@@ -6,6 +6,14 @@
 // 当前任务：
 //   - kb_health_check：知识库健康检查，修复卡在 pending/parsing/indexing 的文档
 //   - backup_verify：备份完整性校验，下载最新备份并校验 sha256
+//
+// P2-2：这个目录对用户开放**开关与间隔**（数据健康面板可改），键落在 app_config：
+//   - `task.<key>.enabled`＝'0' 时不跑（缺省／老库没这颗键＝照旧跑）
+//   - `task.<key>.interval_hours`＝1–720 的整数小时（缺省＝目录默认间隔）
+//   - `task.<key>.enabled_at`＝最近一次「关切 → 开」的时刻：重新启用即从现在起算
+//     （下一次到期＝它 + 间隔），不会一开开关就立刻跑一发
+// 补跑语义：due 只按「锚点 + 间隔」判，一轮 tick 每个任务最多跑一次，跑完即刷新
+// last_run_at ⇒ 关着应用错过多少轮都只在下次启动后补跑**一次**，不会开机瞬间发起一串。
 
 import { dbService } from '../db/database'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
@@ -15,11 +23,20 @@ import { errMsg } from '../error'
 import { readWebDAVConfig, listWebDAVBackups, isEncryptedBlob, ENC_PREFIX, decryptBackup, toCreds } from './backup-service'
 import { downloadFile } from './webdav-client'
 import { pickLatestBackup } from '../../shared/backup-latest'
+import type {
+  MaintenanceTaskKey,
+  MaintenanceTaskPatch,
+  MaintenanceTaskSchedule
+} from '../../shared/types'
 import { createHash } from 'node:crypto'
 
 const log = createLogger('task-scheduler')
 
 const TICK_MS = 10 * 60 * 1000 // 10 分钟检查一次
+
+/** 用户可配的间隔边界（小时）：下限 1 小时，上限 30 天 */
+export const TASK_INTERVAL_MIN_HOURS = 1
+export const TASK_INTERVAL_MAX_HOURS = 720
 
 export type BackupVerifyStatus = 'passed' | 'failed' | 'skipped'
 
@@ -30,7 +47,7 @@ export interface BackupVerifyRunResult {
 }
 
 interface TaskDef {
-  key: string
+  key: MaintenanceTaskKey
   name: string
   defaultIntervalHours: number
   /** 备份校验回三态；知识库健康检查不回执（那一支不接消费者） */
@@ -147,6 +164,111 @@ function setLastStatus(key: string, status: BackupVerifyStatus): void {
   appConfigRepo.set(`task.${key}.last_status`, status)
 }
 
+// ─── 用户可配的计划（P2-2） ──────────────────────────────────────
+
+function getLastOk(key: string): boolean | null {
+  const raw = appConfigRepo.get(`task.${key}.last_ok`)
+  return raw === '1' ? true : raw === '0' ? false : null
+}
+
+/** 开关：只认显式的 '0'。没这颗键（老库／刚升级）＝照旧一直跑，行为不变 */
+function readEnabled(key: string): boolean {
+  return appConfigRepo.get(`task.${key}.enabled`) !== '0'
+}
+
+/** 间隔：读不出来或越界（手改坏了配置）就退回目录默认值，不让一条坏数据把任务永久停摆 */
+function readIntervalHours(task: TaskDef): number {
+  const raw = Number(appConfigRepo.get(`task.${task.key}.interval_hours`))
+  return Number.isInteger(raw) && raw >= TASK_INTERVAL_MIN_HOURS && raw <= TASK_INTERVAL_MAX_HOURS
+    ? raw
+    : task.defaultIntervalHours
+}
+
+/** 启用锚点：最近一次「关切 → 开」的时刻；没重新启用过（老库/一直开着）为 null */
+function readEnabledAt(key: string): number | null {
+  const raw = Number(appConfigRepo.get(`task.${key}.enabled_at`))
+  return Number.isFinite(raw) && raw > 0 ? raw : null
+}
+
+function scheduleOf(task: TaskDef): MaintenanceTaskSchedule {
+  return {
+    key: task.key,
+    enabled: readEnabled(task.key),
+    intervalHours: readIntervalHours(task),
+    lastRunAt: getLastRun(task.key),
+    lastOk: getLastOk(task.key)
+  }
+}
+
+/** 目录全量：界面就按这份清单摆开关与间隔（闭集，不含任何用户自填内容） */
+export function listTaskSchedules(): MaintenanceTaskSchedule[] {
+  return tasks.map(scheduleOf)
+}
+
+export type TaskScheduleUpdateResult =
+  | { ok: true; task: MaintenanceTaskSchedule }
+  | { ok: false; code: 'UNKNOWN_TASK' | 'INVALID_INTERVAL'; error: string }
+
+/**
+ * 改单个内置任务的开关／间隔。
+ * 间隔只收 1–720 的整数小时：0、负数、小数、超上限一律拒，且**不落库**——
+ * 写进去一个 0 会让这个任务每个 tick 都"到点"，等于绕过用户设的节奏。
+ *
+ * 重新启用＝从现在起算：只有「关切 → 开」这一跳把 last_run_at 刷成现在，
+ * 让「下一次到期 = 现在 + 间隔」，避免用户刚打开开关就被立刻跑一发。
+ * 关的过程中（或本来就是开着的保存间隔）都不动 last_run_at；关→开→关→开 也只看最后一次开启时刻。
+ */
+export function updateTaskSchedule(key: string, patch: MaintenanceTaskPatch = {}): TaskScheduleUpdateResult {
+  const task = tasks.find((t) => t.key === key)
+  if (!task) return { ok: false, code: 'UNKNOWN_TASK', error: `不在内置任务目录里：${key}` }
+  if (patch.intervalHours !== undefined) {
+    const h = patch.intervalHours
+    if (!Number.isInteger(h) || h < TASK_INTERVAL_MIN_HOURS || h > TASK_INTERVAL_MAX_HOURS) {
+      return {
+        ok: false,
+        code: 'INVALID_INTERVAL',
+        error: `间隔必须是 ${TASK_INTERVAL_MIN_HOURS}–${TASK_INTERVAL_MAX_HOURS} 小时的整数`
+      }
+    }
+  }
+  const wasEnabled = readEnabled(key)
+  if (patch.enabled !== undefined) {
+    appConfigRepo.set(`task.${key}.enabled`, patch.enabled ? '1' : '0')
+    // 关切 → 开：只动「启用锚点」，不动 last_run_at——那颗键是「真的跑过」的事实，
+    // 刷新它会让面板把「刚打开开关」显示成「上次执行」。
+    if (patch.enabled && !wasEnabled) appConfigRepo.set(`task.${key}.enabled_at`, String(Date.now()))
+  }
+  if (patch.intervalHours !== undefined) {
+    appConfigRepo.set(`task.${key}.interval_hours`, String(patch.intervalHours))
+  }
+  return { ok: true, task: scheduleOf(task) }
+}
+
+/**
+ * 到点判定（纯函数，便于把「补跑只补一次」「重新启用从现在起算」钉在用例里）。
+ *
+ * 锚点取 `lastRunAt` 与 `enabledAt` 的较晚者：
+ *   - 正常跑过的任务看 last_run_at（`>=` 与旧实现同口径）；
+ *   - 刚从关切到开的任务有 enabled_at ⇒ 下一次到期＝启用时刻 + 间隔，不会立刻跑一发；
+ *   - 两者都没有（从未跑过也没被重新启用过）⇒ 到点。
+ * 关掉的任务一律不到点——不跑，也不刷新 last_run_at。
+ */
+export function isTaskDue(
+  schedule: {
+    enabled: boolean
+    intervalHours: number
+    lastRunAt: number | null
+    /** 最近一次「关切 → 开」的时刻（用户重新启用的锚点；没重新启用过为 null） */
+    enabledAt?: number | null
+  },
+  now: number
+): boolean {
+  if (!schedule.enabled) return false
+  const anchors = [schedule.lastRunAt, schedule.enabledAt ?? null].filter((x): x is number => x !== null)
+  if (!anchors.length) return true
+  return now - Math.max(...anchors) >= schedule.intervalHours * 3600 * 1000
+}
+
 async function runTask(task: TaskDef): Promise<BackupVerifyRunResult> {
   const at = Date.now()
   let ok = true
@@ -193,11 +315,12 @@ export async function tick(): Promise<void> {
   try {
     const now = Date.now()
     for (const task of tasks) {
-      const lastRun = getLastRun(task.key)
-      const due = lastRun === null || now - lastRun >= task.defaultIntervalHours * 3600 * 1000
-      if (due) {
-        await runTask(task)
-      }
+      // 关掉的任务在这一步就被挡下：不跑、不刷新 last_run_at。
+      // 重新启用的任务由 enabled_at 当锚点（下一次到期＝启用时刻 + 间隔），不会立刻跑一发。
+      if (!isTaskDue({ ...scheduleOf(task), enabledAt: readEnabledAt(task.key) }, now)) continue
+      // 一轮 tick 每个任务最多跑这一发：跑完 runTask 会把 last_run_at 刷成现在，
+      // 所以「关着应用错过 N 个间隔」也只在这里补跑一次，不会连着补一串
+      await runTask(task)
     }
   } catch (e) {
     log.warn('task-scheduler tick 异常:', errMsg(e))

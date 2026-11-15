@@ -2806,6 +2806,28 @@ export interface BackupScheduleStatus {
   lastResult: BackupRunResult | null
 }
 
+// ---------- 内置维护任务（P2-2：目录闭集，只能配开关与间隔） ----------
+/**
+ * 可配置的内置维护任务。**闭集**是有意的：不允许用户自填提示词或脚本——
+ * 那等于把无人值守 Agent 放进定时器，不在本轮范围。
+ */
+export type MaintenanceTaskKey = 'kb_health_check' | 'backup_verify'
+
+/** 单个内置任务的当前计划 + 上次执行事实（开关/间隔来自 app_config，缺省＝目录默认值） */
+export interface MaintenanceTaskSchedule {
+  key: MaintenanceTaskKey
+  enabled: boolean
+  intervalHours: number
+  lastRunAt: number | null
+  lastOk: boolean | null
+}
+
+/** 设置入参：只接受这两颗（间隔由主进程校验为 1–720 的整数小时） */
+export interface MaintenanceTaskPatch {
+  enabled?: boolean
+  intervalHours?: number
+}
+
 // ---------- 文件模块（数据目录文件管理器） ----------
 export interface FileEntry {
   name: string
@@ -3344,6 +3366,8 @@ export const IPC = {
   BACKUP_WEBDAV_LOAD_CONFIG: 'backup:webdav-load-config', // 读取 WebDAV 配置
   BACKUP_SCHEDULE_GET: 'backup:schedule-get', // 读取定时备份计划
   BACKUP_SCHEDULE_SET: 'backup:schedule-set', // 保存定时备份计划
+  TASK_SCHEDULE_LIST: 'task:schedule-list', // 内置维护任务目录 + 各自开关/间隔/上次执行
+  TASK_SCHEDULE_SET: 'task:schedule-set', // 改单个内置任务的开关/间隔（目录外拒绝）
 
   // ---------- 隐私锁 ----------
   LOCK_GET_STATUS: 'lock:get-status',

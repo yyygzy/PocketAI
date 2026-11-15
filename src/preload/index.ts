@@ -37,6 +37,9 @@ import type {
   UsageModelItem,
   UsageDetailResult,
   DataHealthReport,
+  MaintenanceTaskKey,
+  MaintenanceTaskPatch,
+  MaintenanceTaskSchedule,
   ApprovalAuditPage,
   ApprovalAuditQuery,
   ApprovalExportQuery,
@@ -1497,6 +1500,14 @@ const api = {
     reason?: string
     error?: string
   }> => ipcRenderer.invoke(IPC.STEWARD_VERIFY_BACKUP),
+  listTaskSchedules: (): Promise<MaintenanceTaskSchedule[]> =>
+    ipcRenderer.invoke(IPC.TASK_SCHEDULE_LIST),
+  setTaskSchedule: (
+    key: MaintenanceTaskKey,
+    patch: MaintenanceTaskPatch
+  ): Promise<
+    { ok: true; task: MaintenanceTaskSchedule } | { ok: false; code?: 'UNKNOWN_TASK' | 'INVALID_INTERVAL'; error?: string }
+  > => ipcRenderer.invoke(IPC.TASK_SCHEDULE_SET, { key, patch }),
   exportStewardReport: (
     content: string
   ): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>

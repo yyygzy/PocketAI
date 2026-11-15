@@ -2,7 +2,15 @@
 // 数据来源：dataHealth:get 聚合（只读探测，见 src/main/steward/data-health.ts）
 // 修复动作：dataHealth:kb-clean / kb-dedup / kb-reindex（见 src/main/knowledge/kb-health.ts）
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { DataHealthReport, KbDocument, KbDuplicateGroup, KbProviderRole } from '../../../../shared/types'
+import type {
+  DataHealthReport,
+  KbDocument,
+  KbDuplicateGroup,
+  KbProviderRole,
+  MaintenanceTaskKey,
+  MaintenanceTaskPatch,
+  MaintenanceTaskSchedule
+} from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -16,6 +24,9 @@ import { formatVectorIndex } from '../../utils/vector-index'
 function fmtTime(ms: number | null): string {
   return ms === null ? '-' : new Date(ms).toLocaleString()
 }
+
+/** 间隔可选档位（小时）。只是不给手输添麻烦：真正的合法性由主进程校验（1–720 的整数） */
+const TASK_INTERVAL_OPTIONS = [1, 6, 12, 24, 72, 168]
 
 export const DataHealthPanel: React.FC = () => {
   const { t } = useI18n()
@@ -31,6 +42,9 @@ export const DataHealthPanel: React.FC = () => {
   const { confirm, dialog } = useConfirm()
   const [report, setReport] = useState<DataHealthReport | null>(null)
   const [loadErr, setLoadErr] = useState<string | null>(null)
+  // P2-2：任务目录的开关/间隔单独读一发——报告里只有「上次跑成没跑成」，没有「按什么节奏跑」
+  const [schedules, setSchedules] = useState<MaintenanceTaskSchedule[] | null>(null)
+  const [schedulesErr, setSchedulesErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [reindexing, setReindexing] = useState(false)
   const reindexTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -70,6 +84,50 @@ export const DataHealthPanel: React.FC = () => {
   useEffect(() => {
     load()
   }, [load])
+
+  /** safeHandle 的失败是 resolve 的 `{ok:false}`：读不到就在这一格说出来，不假装「没有任务」 */
+  const loadSchedules = useCallback(() => {
+    void Promise.resolve()
+      // 同步抛（旧 preload／测试桩没这根方法）也要走 catch，不能带崩整块面板
+      .then(() => window.pocketai.listTaskSchedules())
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setSchedulesErr(ipcFailText(r, t('common.unknownError')))
+          return
+        }
+        setSchedulesErr(null)
+        setSchedules(Array.isArray(r) ? r : [])
+      })
+      .catch((e: unknown) => {
+        setSchedulesErr(errText(e, t('common.unknownError')))
+        reportIpcError('task.listSchedules')(e)
+      })
+  }, [t])
+
+  useEffect(() => {
+    loadSchedules()
+  }, [loadSchedules])
+
+  /** 改开关/间隔：主进程回了什么就以什么为准（非法间隔被拒时屏上不跟着变） */
+  const saveSchedule = useCallback(
+    (key: MaintenanceTaskKey, patch: MaintenanceTaskPatch) => {
+      void Promise.resolve()
+        .then(() => window.pocketai.setTaskSchedule(key, patch))
+        .then((r) => {
+          if (!r.ok) {
+            toast.error(
+              r.code === 'INVALID_INTERVAL'
+                ? t('dh.task.invalidInterval')
+                : ipcFailText(r, t('common.unknownError'))
+            )
+            return
+          }
+          setSchedules((prev) => prev?.map((s) => (s.key === r.task.key ? r.task : s)) ?? null)
+        })
+        .catch((e: unknown) => reportIpcError('task.setSchedule')(e))
+    },
+    [t, toast]
+  )
 
   // 卸载时停掉重建完成轮询，避免定时器继续碰已卸载组件的 state
   useEffect(
@@ -251,6 +309,9 @@ export const DataHealthPanel: React.FC = () => {
   }
 
   const { sizes, approvals, kb, tasks } = report
+  // 两颗任务名都是字面量取词（i18n 门禁口径：不把键名当实参）
+  const kbTaskLabel = t('dh.task.kbHealthCheck')
+  const verifyTaskLabel = t('dh.task.backupVerify')
   // §436：审批段是后加字段，旧夹具/旧报告可能没有。
   // 缺字段时降级成 0 并在顶部挂一句「数据不可读」，不许整屏白（:342 的 TypeError 就是这么炸的）。
   //
@@ -282,6 +343,51 @@ export const DataHealthPanel: React.FC = () => {
       : lastOk === false
         ? `${at} · ${t('dh.task.lastFailed')}`
         : at
+  }
+
+  /**
+   * P2-2：单个内置任务的开关 + 间隔。
+   * 目录里没有这颗 key（或设置还没读到）就不出控件——上面的 Row 照旧报「上次什么时候跑的」，
+   * 不会因为设置读失败把整格变成空白。
+   */
+  const taskControls = (key: MaintenanceTaskKey, label: string): React.ReactNode => {
+    const s = schedules?.find((x) => x.key === key)
+    if (!s) return null
+    // 手改过配置的历史值可能不在档位表里：把它补进去，否则 select 会把值画成第一档（谎报节奏）
+    const opts = TASK_INTERVAL_OPTIONS.includes(s.intervalHours)
+      ? TASK_INTERVAL_OPTIONS
+      : [...TASK_INTERVAL_OPTIONS, s.intervalHours].sort((a, b) => a - b)
+    return (
+      <div
+        className="mb-1.5 flex items-center gap-3 text-[11px] text-[var(--color-text-muted)]"
+        data-testid={`dh-task-controls-${key}`}
+      >
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={s.enabled}
+            onChange={(e) => saveSchedule(key, { enabled: e.target.checked })}
+            data-testid={`dh-task-enabled-${key}`}
+          />
+          {t('dh.task.autoNamed', { name: label })}
+        </label>
+        <span>{t('dh.task.interval')}</span>
+        <select
+          value={s.intervalHours}
+          onChange={(e) => saveSchedule(key, { intervalHours: Number(e.target.value) })}
+          data-testid={`dh-task-interval-${key}`}
+          className="chip"
+          aria-label={t('dh.task.intervalNamed', { name: label })}
+        >
+          {opts.map((h) => (
+            <option key={h} value={h}>
+              {t('dh.task.hours', { n: h })}
+            </option>
+          ))}
+        </select>
+        {!s.enabled && <span data-testid={`dh-task-off-${key}`}>{t('dh.task.off')}</span>}
+      </div>
+    )
   }
 
   return (
@@ -450,17 +556,29 @@ export const DataHealthPanel: React.FC = () => {
       <div className="mb-1.5 text-[11px] text-[var(--color-text-muted)] leading-relaxed" data-testid="dh-tasks-run-hint">
         {t('dh.tasksRunHint')}
       </div>
+      {/* 设置读不到时如实说一句：下面那两行 Row 还会显示上次执行时间，别让人以为「节奏也在正常跑」 */}
+      {schedulesErr && (
+        <div className="mb-1.5 text-[11px] text-[var(--color-warning)]" data-testid="dh-tasks-config-fail">
+          {t('dh.tasksConfigFail', { e: schedulesErr })}
+        </div>
+      )}
       <div className="space-y-1">
-        <Row
-          label={t('dh.task.kbHealthCheck')}
-          value={taskResult(tasks.kbHealthCheckLastRunAt, tasks.kbHealthCheckLastOk)}
-          warn={tasks.kbHealthCheckLastOk === false}
-        />
-        <Row
-          label={t('dh.task.backupVerify')}
-          value={taskResult(tasks.backupVerifyLastRunAt, tasks.backupVerifyLastOk)}
-          warn={tasks.backupVerifyLastOk === false}
-        />
+        <div>
+          <Row
+            label={kbTaskLabel}
+            value={taskResult(tasks.kbHealthCheckLastRunAt, tasks.kbHealthCheckLastOk)}
+            warn={tasks.kbHealthCheckLastOk === false}
+          />
+          {taskControls('kb_health_check', kbTaskLabel)}
+        </div>
+        <div>
+          <Row
+            label={verifyTaskLabel}
+            value={taskResult(tasks.backupVerifyLastRunAt, tasks.backupVerifyLastOk)}
+            warn={tasks.backupVerifyLastOk === false}
+          />
+          {taskControls('backup_verify', verifyTaskLabel)}
+        </div>
       </div>
 
       <div className="mt-3 flex items-center gap-2">
