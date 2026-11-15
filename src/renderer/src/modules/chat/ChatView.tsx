@@ -1031,15 +1031,17 @@ export const ChatView: React.FC<Props> = ({
         >
           <div className="min-w-0 flex-1">
             <div className="text-[12px] text-[var(--color-text)]">
-              {t(
-                resumeCandidate.kind === 'failed' ? 'chat.resume.failedTitle' : 'chat.resume.title',
-                { step: resumeCandidate.nextStep }
-              )}
+              {/* kind 是闭合二值联合：逐分支字面量取词，不把键名当实参（i18n 门禁口径） */}
+              {resumeCandidate.kind === 'failed'
+                ? t('chat.resume.failedTitle', { step: resumeCandidate.nextStep })
+                : t('chat.resume.title', { step: resumeCandidate.nextStep })}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
               {resumeCandidate.state === 'blocked' && resumeCandidate.code
                 ? t(RESUME_BLOCK_TEXT_KEYS[resumeCandidate.code])
-                : t(resumeCandidate.kind === 'failed' ? 'chat.resume.failedHint' : 'chat.resume.hint')}
+                : resumeCandidate.kind === 'failed'
+                  ? t('chat.resume.failedHint')
+                  : t('chat.resume.hint')}
             </div>
           </div>
           <button
@@ -1050,7 +1052,9 @@ export const ChatView: React.FC<Props> = ({
           >
             {resumeBusy
               ? t('chat.resume.resuming')
-              : t(resumeCandidate.kind === 'failed' ? 'chat.resume.failedAction' : 'chat.resume.action')}
+              : resumeCandidate.kind === 'failed'
+                ? t('chat.resume.failedAction')
+                : t('chat.resume.action')}
           </button>
         </div>
       )}
