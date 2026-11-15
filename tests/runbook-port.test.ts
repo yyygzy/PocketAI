@@ -4,12 +4,13 @@
 //  · 工具序列按调用顺序拆开、只留参数键名；
 //  · 导出 JSON **不含** toolPermissions / id / 参数值；
 //  · 导入文件即使写了授权也一律清空，并如实回传被丢弃的条数；
-//  · 缺引用 / 授权为空时 blocked=true，且缺的清单可逐条列出。
+//  · 缺引用 / 一条授权都没确认 / 勾了但这一轮拿不到授权时 blocked=true，清单可逐条列出；
+//  · 本机不存在的工具单独列清单（不影响"已确认"的判定）。
 import { describe, it, expect } from 'vitest'
 import {
   RUNBOOK_EXPORT_VERSION,
   buildRunbookExportPayload,
-  evaluateRunbookApply,
+  evaluateRunbookStart,
   extractRunbookSteps,
   isAbsolutePathLike,
   missingRunbookRefs,
@@ -147,6 +148,13 @@ describe('启动前校验', () => {
     mcpServerIds: new Set(['srv-1']),
     pathExists: (p: string) => p === 'C:\\work\\logs'
   }
+  // 本机注册表 + 这一轮的授权面（渲染端从 TOOL_POLICY_SNAPSHOT 取，这里直接给结果）
+  const known = [
+    { id: 'shell.exec', name: 'shell_exec' },
+    { id: 'kb.search', name: 'kb_search' },
+    { id: 'mcp:ci:deploy', name: 'mcp_ci_deploy' }
+  ]
+  const granted = new Set(['shell.exec', 'kb.search', 'mcp:ci:deploy'])
 
   it('逐条列出缺失引用（知识库不存在、相对路径不算可用）', () => {
     const refs = [
@@ -161,23 +169,73 @@ describe('启动前校验', () => {
   })
 
   it('缺引用时 blocked=true，清单原样带出', () => {
-    const gate = evaluateRunbookApply(record({ toolPermissions: ['shell.exec'] }), [
-      { kind: 'mcp', id: 'srv-9', label: '另一台机器的 MCP' }
-    ])
+    const gate = evaluateRunbookStart(record({ toolPermissions: ['shell.exec', 'kb.search'] }), {
+      missingRefs: [{ kind: 'mcp', id: 'srv-9', label: '另一台机器的 MCP' }],
+      known,
+      grantedIds: granted
+    })
     expect(gate.blocked).toBe(true)
     expect(gate.missingRefs).toHaveLength(1)
-    expect(gate.toolPermissionsEmpty).toBe(false)
+    expect(gate.unconfirmed).toBe(false)
   })
 
   it('导入后授权为空时同样 blocked（必须重勾）', () => {
-    const gate = evaluateRunbookApply(record({ toolPermissions: [] }), [])
-    expect(gate.toolPermissionsEmpty).toBe(true)
+    const gate = evaluateRunbookStart(record({ toolPermissions: [] }), { missingRefs: [], known, grantedIds: granted })
+    expect(gate.unconfirmed).toBe(true)
     expect(gate.blocked).toBe(true)
   })
 
-  it('引用齐全 + 有授权才放行', () => {
-    const gate = evaluateRunbookApply(record(), [])
-    expect(gate).toEqual({ missingRefs: [], toolPermissionsEmpty: false, blocked: false })
+  it('勾了但这一轮拿不到授权的工具要拦下，并逐条列出', () => {
+    const gate = evaluateRunbookStart(record({ toolPermissions: ['shell.exec', 'kb.search'] }), {
+      missingRefs: [],
+      known,
+      grantedIds: new Set(['kb.search', 'mcp:ci:deploy'])
+    })
+    expect(gate.unauthorizedTools.map((t) => t.toolId)).toEqual(['shell.exec'])
+    expect(gate.blocked).toBe(true)
+  })
+
+  it('本机没有的工具只列清单、不当成"没确认"：其余勾齐即可放行', () => {
+    const gate = evaluateRunbookStart(
+      record({
+        steps: [
+          { toolName: 'shell_exec', toolId: 'shell.exec', argKeys: ['command'] },
+          { toolName: 'mcp_old_gone', toolId: 'mcp:old:gone', argKeys: [] }
+        ],
+        toolPermissions: ['shell.exec', 'mcp:old:gone']
+      }),
+      { missingRefs: [], known, grantedIds: granted }
+    )
+    expect(gate.missingTools.map((t) => t.toolName)).toEqual(['mcp_old_gone'])
+    expect(gate.unconfirmed).toBe(false)
+    expect(gate.blocked).toBe(false)
+  })
+
+  it('老模板 toolId 为空时按模型侧工具名回注册表解析', () => {
+    const gate = evaluateRunbookStart(
+      record({
+        steps: [{ toolName: 'kb_search', toolId: null, argKeys: ['query'] }],
+        toolPermissions: ['kb.search']
+      }),
+      { missingRefs: [], known, grantedIds: granted }
+    )
+    expect(gate.tools).toEqual([
+      { toolName: 'kb_search', toolId: 'kb.search', available: true, confirmed: true, granted: true }
+    ])
+    expect(gate.blocked).toBe(false)
+  })
+
+  it('引用齐全 + 授权齐全且这一轮拿得到才放行', () => {
+    const gate = evaluateRunbookStart(record({ toolPermissions: ['shell.exec', 'kb.search'] }), {
+      missingRefs: [],
+      known,
+      grantedIds: granted
+    })
+    expect(gate.blocked).toBe(false)
+    expect(gate.tools.map((t) => [t.toolId, t.available, t.confirmed, t.granted])).toEqual([
+      ['shell.exec', true, true, true],
+      ['kb.search', true, true, true]
+    ])
   })
 })
 
