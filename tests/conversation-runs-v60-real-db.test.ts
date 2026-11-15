@@ -154,8 +154,8 @@ describe('v60 已有数据升级 + 幂等', () => {
     // 回到「v59 已跑完、v60 还没跑」的形状
     db().prepare('DROP TABLE conversation_runs').run()
     // v66 也依赖这张表（ADD COLUMN）：一起退回未跑，否则重建出来的新表缺检查点列
-    // v73 同样在这张表上 ADD COLUMN，一起退回（顺带验证三列能被迁移补回来）
-    db().prepare('DELETE FROM schema_migrations WHERE version IN (60, 66, 73)').run()
+    // v73 / v75 同样在这张表上 ADD COLUMN，一起退回（顺带验证这些列能被迁移补回来）
+    db().prepare('DELETE FROM schema_migrations WHERE version IN (60, 66, 73, 75)').run()
 
     expect(() => dbService.runMigrations()).not.toThrow()
     expect(tableExists('conversation_runs')).toBe(true)

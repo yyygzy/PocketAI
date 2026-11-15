@@ -27,7 +27,7 @@ const tool = (over: Partial<ToolPolicyEntry>): ToolPolicyEntry => ({
 })
 
 /** 本机注册表：只有 shell.exec / kb.search；`mcp:old:gone` 不存在（模拟跨机导入） */
-const policy = (): ToolPolicySnapshot => ({
+const policy = (over: Partial<ToolPolicySnapshot> = {}): ToolPolicySnapshot => ({
   tools: [tool({}), tool({ id: 'kb.search', name: 'kb_search' })],
   shell: { enabled: false, policy: 'confirm', confirmReasons: [], denyReasons: [] },
   assistant: {
@@ -39,7 +39,8 @@ const policy = (): ToolPolicySnapshot => ({
     loadSkillAvailable: true,
     tools: [tool({}), tool({ id: 'kb.search', name: 'kb_search' })]
   },
-  mcpStoppedServers: 0
+  mcpStoppedServers: 0,
+  ...over
 })
 
 const rec = (over: Partial<RunbookRecord> = {}): RunbookRecord => ({
@@ -149,7 +150,36 @@ describe('导入后的授权确认', () => {
     )
 
     fireEvent.click(screen.getByTestId('runbook-apply'))
-    await waitFor(() => expect(onApply).toHaveBeenCalledWith('检查昨天的构建日志并汇总失败项'))
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith('检查昨天的构建日志并汇总失败项', undefined))
+  })
+
+  it('开关打开：套用交出"本机可用且已勾选"的本轮授权（缺失工具不进 grant）', async () => {
+    const stored = rec({
+      steps: [
+        { toolName: 'shell_exec', toolId: 'shell.exec', argKeys: ['command'] },
+        { toolName: 'mcp_old_gone', toolId: 'mcp:old:gone', argKeys: [] }
+      ],
+      toolPermissions: ['shell.exec']
+    })
+    const onApply = vi.fn()
+    stubPocketai({
+      listRunbooks: () => [stored],
+      getToolPolicy: () => policy({ perRunGrantEnabled: true }),
+      checkRunbook: () => ({ missingRefs: [] })
+    })
+    mountWithProviders(<RunbookPanel onApply={onApply} assistantId="asst-1" />)
+    await openPanel()
+
+    // 提示必须可见：这一轮只启用勾选的工具
+    expect(screen.getByTestId('runbook-grant-hint').textContent).toContain('勾选')
+
+    fireEvent.click(screen.getByTestId('runbook-apply'))
+    await waitFor(() =>
+      expect(onApply).toHaveBeenCalledWith(stored.promptSummary, {
+        runbookId: 'rb-1',
+        toolIds: ['shell.exec']
+      })
+    )
   })
 
   it('缺失引用在点套用之前就列清单（不用等失败）', async () => {
