@@ -69,6 +69,14 @@ export interface McpExportOptions {
 /** 导出文件里的脱敏清单扩展键（标准客户端忽略未知键，PocketAI 用于提示需补哪些密钥） */
 export const REDACTED_KEYS_NOTE = 'x-pocketai-redacted-keys'
 
+/**
+ * 键名命中敏感规则或值形似凭据 ⇒ 该键值视为凭据。
+ * 导出脱敏与导入清空共用这一判据：两处口径一旦分叉，就会出现「导出没脱、导入没清」的缝。
+ */
+export function isSecretEntry(key: string, value: string): boolean {
+  return SENSITIVE_KEY_RE.test(key) || looksLikeSecret(value)
+}
+
 /** 复制一份字符串映射，命中敏感键名或形似凭据的值时替换；返 [新映射, 脱敏键列表] */
 function redactRecord(
   rec: Record<string, string>,
@@ -77,7 +85,7 @@ function redactRecord(
   const out: Record<string, string> = {}
   const hit: string[] = []
   for (const [k, v] of Object.entries(rec)) {
-    if (redact && (SENSITIVE_KEY_RE.test(k) || looksLikeSecret(v))) {
+    if (redact && isSecretEntry(k, v)) {
       out[k] = REDACTED_PLACEHOLDER
       hit.push(k)
     } else {

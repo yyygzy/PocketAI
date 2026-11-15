@@ -1,4 +1,5 @@
 // MCP Server IPC + Python 依赖环境（venv/pip）+ 便携 Python 运行时
+import fs from 'node:fs'
 import { dialog, BrowserWindow } from 'electron'
 import { IPC } from '../../../shared/types'
 import type { McpServerRecord, PythonPipSource } from '../../../shared/types'
@@ -20,7 +21,9 @@ import {
 } from '../../../shared/schemas/mcp'
 import { idSchema } from '../../../shared/schemas/providers'
 import { stringifyMcpResult, mcpResultIsError } from '../../tools/registry'
-import { buildMcpExportPayload, REDACTED_KEYS_NOTE } from '../../../shared/mcp-export'
+import { buildMcpExportPayload } from '../../../shared/mcp-export'
+import { buildMcpPackageFile, MCP_MAX_IMPORT_BYTES } from '../../mcp/mcp-package'
+import { importMcpPackageText } from '../../mcp/mcp-import-service'
 import { safeFileName } from '../../../shared/export-markdown'
 import { maskSecretMap } from '../../../shared/secret-mask'
 import type { McpServerRuntime } from '../../../shared/types'
@@ -56,9 +59,8 @@ export function registerMcpHandlers(): void {
       ]
     })
     if (canceled || !filePath) return { ok: true as const, canceled: true as const }
-    // 文件只写标准 mcpServers + 脱敏清单扩展键（redactedCount 等统计量不入文件）
-    const file: Record<string, unknown> = { mcpServers: payload.mcpServers }
-    if (payload.redactedEntries.length > 0) file[REDACTED_KEYS_NOTE] = payload.redactedEntries
+    // 标准 mcpServers + 包级 sha256 + 脱敏清单扩展键（统计量不入文件）
+    const file = buildMcpPackageFile(payload.mcpServers, payload.redactedEntries)
     writeFileAtomicSync(filePath, JSON.stringify(file, null, 2))
     return {
       ok: true as const,
@@ -66,6 +68,26 @@ export function registerMcpHandlers(): void {
       count: records.length,
       redactedCount: payload.redactedCount
     }
+  })
+
+  // 导入 MCP 配置包：校验和一致才落库；同名并存；凭据一律清空（口径见 mcp-import-service）
+  safeHandle(IPC.MCP_SERVER_IMPORT, async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false as const, error: '窗口不可用' }
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'MCP 配置（JSON）', extensions: ['json'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || filePaths.length === 0) return { ok: true as const, canceled: true as const }
+
+    const file = filePaths[0]!
+    if (fs.statSync(file).size > MCP_MAX_IMPORT_BYTES) {
+      return { ok: false as const, error: 'FILE_TOO_LARGE' }
+    }
+    return importMcpPackageText(fs.readFileSync(file, 'utf8'))
   })
 
   safeHandle(IPC.MCP_SERVER_GET, (_e, id: string) => {

@@ -5,6 +5,7 @@
 //          { "type": "http"|"sse", "url": "...", "headers": {...} }（sse 按 http 处理并告警）
 // 单条失败不阻断其他条目；落库仍由 IPC 层 mcpServerSaveSchema 兜底校验。
 import type { McpRuntime } from './types'
+import { isSecretEntry, REDACTED_PLACEHOLDER } from './mcp-export'
 
 export interface McpImportDraft {
   name: string
@@ -166,4 +167,48 @@ export function parseMcpServersJson(text: string): McpImportResult {
   )
   if (items.length === 0) return { items, error: 'mcpServers 为空' }
   return { items }
+}
+
+/** 清空凭据后的结果；clearedKeys 形如 `serverName>API_KEY`，供界面逐项提示需重填 */
+export interface McpSecretStrip {
+  env: Record<string, string>
+  headers: Record<string, string>
+  clearedKeys: string[]
+}
+
+/**
+ * 导入侧「密钥一律清空」：命中敏感键名、值形似凭据、或值就是导出占位 REDACTED 的，
+ * 一律置空字符串而不是删除键——保留键名才能让界面点名「这个键需要重填」。
+ * 非凭据配置（PATH、NODE_ENV、X-Trace 等）原样保留。
+ */
+export function stripMcpSecrets(
+  label: string,
+  env: Record<string, string>,
+  headers: Record<string, string>
+): McpSecretStrip {
+  const clearedKeys: string[] = []
+  const walk = (rec: Record<string, string>): Record<string, string> => {
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(rec)) {
+      if (isSecretEntry(k, v) || String(v) === REDACTED_PLACEHOLDER) {
+        out[k] = ''
+        clearedKeys.push(`${label}>${k}`)
+      } else {
+        out[k] = v
+      }
+    }
+    return out
+  }
+  return { env: walk(env), headers: walk(headers), clearedKeys }
+}
+
+/**
+ * 同名不覆盖：已被占用的名字加 ` (2)`、` (3)` 后缀并存。
+ * 不静默改第一条记录，也不让第二条落库失败——两者都违反「并存」。
+ */
+export function uniqueMcpServerName(base: string, taken: Set<string>): string {
+  if (!taken.has(base)) return base
+  let n = 2
+  while (taken.has(`${base} (${n})`)) n++
+  return `${base} (${n})`
 }

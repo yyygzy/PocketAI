@@ -479,6 +479,38 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshSkills, showScanReport, t, toast])
 
+  /** MCP 配置包导入：校验和、同名并存、凭据清空都由主进程执行，这里只把结果说清楚 */
+  const handleImportMcp = useCallback(async () => {
+    try {
+      const r = await window.pocketai.importMcpServers()
+      if ('canceled' in r) return
+      if (!r.ok) {
+        toast.error(mcpImportErrorText(r.error, t))
+        return
+      }
+      await loadMcp()
+      const renamed = r.imported.filter((i) => i.name !== i.key).length
+      const notes = [
+        r.clearedKeys.length > 0 ? t('cap.mcp.importSecretsCleared', { n: r.clearedKeys.length }) : '',
+        renamed > 0 ? t('cap.mcp.importRenamed', { n: renamed }) : '',
+        r.checksum === 'absent' ? t('cap.mcp.checksumAbsent') : ''
+      ].filter(Boolean)
+      if (r.imported.length > 0) {
+        toast.success([t('cap.mcp.importDone', { n: r.imported.length }), ...notes].join(' '))
+      }
+      if (r.failed.length > 0) {
+        toast.warning(
+          t('cap.mcp.importFailedItems', {
+            n: r.failed.length,
+            detail: r.failed.map((f) => `${f.key}: ${f.error}`).join('；')
+          })
+        )
+      }
+    } catch (e) {
+      toast.error(errText(e, t('common.unknownError')))
+    }
+  }, [loadMcp, t, toast])
+
   const handleDelete = useCallback(
     async (s: SkillRecord) => {
       if (!(await confirm({ message: t('skill.deleteConfirm', { name: s.name }), danger: true }))) return
@@ -956,6 +988,15 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
 
               {/* 3. MCP 已配置服务器 */}
               <Section title={groupTitles.mcpServers} count={filtered.mcpServers.length}>
+                <div className="mb-2 flex items-center gap-2">
+                  <button
+                    className="btn-ghost text-xs"
+                    data-testid="capability-mcp-import"
+                    onClick={() => void handleImportMcp()}
+                  >
+                    {t('cap.mcp.import')}
+                  </button>
+                </div>
                 {serversUnread || runtimeUnread ? (
                   <div className="space-y-1">
                     {serversUnread && (
@@ -1777,6 +1818,17 @@ const Row: React.FC<{ label: string; value: string }> = ({ label, value }) => (
     <span className="ml-auto text-right">{value}</span>
   </div>
 )
+
+/**
+ * MCP 导入的错误既可能是回码，也可能是可直接展示的原文（JSON 解析失败 / 缺少 mcpServers）：
+ * 只把回码翻成四语文案，其余原样透出。
+ */
+function mcpImportErrorText(code: string | undefined, t: (k: string) => string): string {
+  if (code === 'CHECKSUM_MISMATCH') return t('cap.mcp.checksumMismatch')
+  if (code === 'CHECKSUM_UNSUPPORTED') return t('cap.mcp.checksumUnsupported')
+  if (code === 'FILE_TOO_LARGE') return t('cap.mcp.importTooLarge')
+  return code ?? t('cap.mcp.importFailed')
+}
 
 /**
  * 远程导入的错误既可能是回码，也可能是可直接展示的原文（网络失败 / 解析失败）：

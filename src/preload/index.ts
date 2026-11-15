@@ -698,6 +698,21 @@ const api = {
   exportMcpServers: (): Promise<
     { ok: true; canceled: true } | { ok: true; path: string; count: number; redactedCount: number } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.MCP_SERVER_EXPORT),
+  /**
+   * 导入 MCP 配置包（showOpenDialog）。校验和不一致/算法不认识整包拒绝；
+   * 同名自动加序号并存；包内凭据一律清空并在 clearedKeys 里逐项回报。
+   */
+  importMcpServers: (): Promise<
+    | { ok: true; canceled: true }
+    | {
+        ok: true
+        checksum: 'verified' | 'absent'
+        imported: Array<{ key: string; name: string }>
+        failed: Array<{ key: string; error: string }>
+        clearedKeys: string[]
+      }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.MCP_SERVER_IMPORT),
   getMcpServer: (id: string): Promise<McpServerRecord | null> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_GET, id),
   /** 按需揭示单个 Server 的 env/headers 真实值（列表与表单默认为掩码视图） */
