@@ -14,7 +14,9 @@ import type { ScreenshotTarget } from '../shared/types'
 
 const log = createLogger('screenshot-host')
 
-const HOST_START_TIMEOUT_MS = 30_000
+// 启动（PowerShell 拉起 + Add-Type 编译 C#）在真机冷缓存/高负载下见过 31.6s，给足 60s；
+// 这只是上限，正常 5.7–7.4s 返回 ready 就开始服务。
+const HOST_START_TIMEOUT_MS = 60_000
 const HOST_REQUEST_TIMEOUT_MS = 20_000
 
 /** 宿主返回的一条消息（事件或响应；id 只在响应里有） */
