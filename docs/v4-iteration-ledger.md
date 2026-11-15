@@ -67,6 +67,65 @@
 - **（2026-10-22 对账更正：这条当时「未做」，后来做了）**：`mcpHeldBack` 这件事在 V4-Iter-117／118 那两批接满了——`countMcpHeldBack(...)` 在 `engine.ts:1093` 算数、`:1357` 只在 >0 时挂进 `AGENT_DONE`；渲染层 `agent-shared.ts:266-273` 把它折进零调用提示（`showHeldBack: s.mcpHeldBack > 0`），句子是 `agent.mcpHeldBackHint`（四语都有）。CI 侧三份用例看着这条链：`tests/agent-mcp-tool-real-run.test.ts:202`（真注册表算出 3；`:210` 反向——全授权时**不带**这个字段）、`tests/renderer-agent-zero-call-notice.test.tsx`（那句提示逐字上屏）、`tests/renderer-agent-text-protocol-badge.test.tsx:97-100`（有被挡下的工具时不再建议开文本协议）。⇒ 这一行留在原处只为记「当时怎么想的」，**状态以清单 B54 为准**；B54 仍是 🔶，缺的是真机那一格 ②（勾掉一条后「提示不出现」或「数字减一」两种都算对）——那是用户库里的操作，不是代码缺口。
 - **未实测**：真机确认"未勾选的 MCP 工具确实不进工具面、勾选后立刻可用" ⇒ 验收清单 **B51**。主进程改动，须重启 dev。
 
+### V4-Iter-275 P2-2：内置维护任务开放「开关 + 间隔」（已落地，已提交 `8e76a63`／`eb1b00f`，未推送）
+
+- **范围**：把既有 tick／补跑语义开放给用户，但**只开放调度参数，不开放任务体**。任务目录仍是内置两支：`kb_health_check`（默认 6h）与 `backup_verify`（默认 24h）；不接受用户自建任务，也不允许填任意提示词或脚本。
+- **落点**：`src/main/backup/task-scheduler.ts` 新增 `listTaskSchedules()`／`updateTaskSchedule(key, patch)`／`isTaskDue()`，三个 `app_config` 键——`task.<key>.enabled`（只有 `'0'` 算关）、`task.<key>.interval_hours`（1–720 整数）、`task.<key>.enabled_at`；IPC `TASK_SCHEDULE_LIST`／`TASK_SCHEDULE_SET` 走 `safeHandle`＋`zod`（`z.enum(['kb_health_check','backup_verify'])`、间隔 `z.number().int().min(1).max(720)`、`.strict()`）；preload 两个方法；`DataHealthPanel.tsx` 每支任务一行「开关＋间隔下拉」（`TASK_INTERVAL_OPTIONS = [1,6,12,24,72,168]`，testid `dh-task-enabled-*`／`dh-task-interval-*`／`dh-task-off-*`）。
+- **边界（本轮如实写死）**：
+  - **应用没开就不会跑，下次启动后只补跑一次**：一轮 tick 每任务最多执行一次，跑完即刷 `last_run_at`；错过多少轮都只补最近一次，不会开机瞬间发起一串。
+  - **重开开关从现在起算**：`isTaskDue` 取 `max(last_run_at, enabledAt)`；关切→开且此前是关时写 `task.<key>.enabled_at = Date.now()`，所以刚打开不会立刻执行一次。关闭状态不刷新任何锚点，tick 见 `enabled=false` 直接跳过。
+  - **读目录不写库**：`listTaskSchedules()` 只返回「存量值＋目录默认值」，不把「没配过」变成「配过」。
+  - **非法值不落库**：非整数／越界回 `INVALID_INTERVAL`，目录外 key 回 `UNKNOWN_TASK`，两条都在落库前拒。
+  - `tick()` 首行 `if (!dbService.isOpen()) return`，库没开不跑。
+- **相对初稿的主动收紧**：初稿允许用 `last_run_at` 当启用锚点，那会让面板把「刚打开开关」显示成「上次执行」（谎报）。改为独立键 `task.<key>.enabled_at`，并用例钉住「启用不写 `last_run_at`」。
+- **i18n**：四语各补 7 把静态键（`dh.task.autoNamed`／`interval`／`intervalNamed`／`hours`／`off`／`invalidInterval`／`tasksConfigFail`）；`dh.tasksRunHint` 改成「应用没开着就不会跑，下次启动后只补跑一次」，不写「需保持应用运行」。
+- **测试**（`eb1b00f`）：`tests/p2-2-task-settings.test.ts` 27 例（目录闭集、读目录不落库、开关与间隔读回、关闭不跑且不刷 `last_run_at`、关切再开立刻 tick 不执行／到期才执行、关→开→关→开只认最后一次开启、错过 3 天一轮只补一次、边界 1／720 合法、手改坏间隔退回默认）、`tests/p2-2-task-settings-ui.test.tsx` 6 例；`tests/task-scheduler.test.ts` 32 例复跑全绿。
+- **验证**：`npm run typecheck` exit 0；`i18n-interpolation-361` 9 例通过，同口径扫描动态 `t()` 仍为 97。**未实测**：真机面板目视、重启后补跑（主进程改动，须重启 dev）。
+
+### V4-Iter-276 P2-1：首页备份状态、恢复入口与便携版新版本提示（已落地，已提交 `6c275e9`／`4e24058`，未推送；含 `c7465e4` 的 i18n 取词修正）
+
+- **范围**：首页起始屏（`ChatView` 空会话态，子会话只读面不摆）挂 `HomeStatusPanel.tsx`：本地备份卡（最近一次时间／份数／备份键／恢复键）与便携版更新卡。备份与恢复都只「展示与给入口」——不自动备份、不自动恢复。
+- **备份清单口径**：`src/main/backup/local-backups.ts` 只认 `pocketai-backup-*.zip`（含 `.enc.zip`），按 `mtime` 倒序；目录 `ENOENT` → `[]`（真的没备份过），其他读失败往上抛、由 IPC 回失败信封，首页显示读取失败而不是「一份备份都没有」。新 IPC `backup:local-list`（`IPC.BACKUP_LOCAL_LIST`）＋`LocalBackupEntry`。
+- **恢复口径**：仍走既有 `restoreLocalBackup` 通道，先确认再执行、不自动覆盖；加密包由主进程回恢复令牌＋文件名，密码在本卡内重试（路径不进渲染层）。**没有本地备份时不摆「从备份恢复」**——入口默认摆着等于暗示「有东西可恢复」。
+- **便携版口径（只提示，不自动替换）**：`update-manager.ts` 在 `isPortableRuntime()` 下改查 `https://api.github.com/repos/yyygzy/PocketAI/releases/latest`（`safeFetch`，12s／1MB），用 `compareVersionStrings`（`shared/version.ts`，只比数字段）与新版本比较：更高 → `available`＋`downloadUrl`，否则 `unavailable`；失败 → `error`。**`download()` 在便携版硬拒**（`便携版不支持应用内下载，请到发布页手动下载新版替换`），设置页 `available` 时便携版不再显示下载按钮；首页只给可复制的发布页链接。**只提示，不下载、不替换任何包。**
+- **非便携版不进这条**：`getUpdateInfo()` 返回 `!isPackaged || !isPortable` 时首页更新卡整块不出现，也不订阅更新事件，不重复自动更新那套 UI。
+- **`c7465e4`（独立提交，不夹在 P2-1 里）**：`ChatView.tsx` 续跑横幅三处动态取词改为分支内字面量，动态 `t()` 计数回到 97，钉死值未改。
+- **测试**（`4e24058`）：`tests/p2-1-home-status.test.tsx` 5 例（无备份不摆恢复入口／有备份给时间与入口且提示不自动覆盖／备份成功上屏并立刻刷新／便携版查新版本只上屏不下载／非便携版卡片不出现）；`tests/p2-1-local-backups.test.ts` 4 例（目录不存在→`[]`、只收自家包名并按 `mtime` 倒序、版本号按数值比、容忍 `v` 前缀与预发布后缀）；`tests/update-manager.test.ts` 新增 3 例（便携版有新版本→`available`＋下载页且不碰 `autoUpdater`、已是最新→`unavailable`、便携版 `download()` 被拒且零下载调用）。
+- **未实测**：真机首页目视、便携版真机检查（需打包产物与发布页）。
+
+### V4-Iter-277 P2-3 第三刀：粘贴导入收口，与文件通道同一条路径（已落地，已提交 `d1fb085`／`3bc0947`，未推送）
+
+- **问题**：`McpImportModal.tsx` 原先在渲染端逐条 `saveMcpServer`，自带一套「成功计数／告警拼接」，与文件通道的同名并存、凭据清空、警告回传口径分叉。
+- **改法**：前端不再落库，改调新 IPC `mcp-server:import-text`（preload `importMcpServersFromText`）→ 主进程 `importMcpPackageText(raw, { verifyChecksum: false })`。解析、同名并存、凭据清空、`trustReadOnly=false` 与文件导入**完全同一条路径**。
+- **`checksum` 恒 `absent`**：粘贴没有文件包，就没有包级校验和可言。即使粘贴内容自带 `checksum` 字段也按 `absent` 处理，结果区明示「未校验完整性」（testid `mcp-import-unverified`），不冒充 `verified`；粘贴框上方先声明一次「不校验完整性」。
+- **结果上屏**：`clearedKeys` 逐项点名（形如 `fs>API_KEY`）并提示需重新填写；同名加后缀的条数、解析期 `warnings`、逐条失败原因一并回传；导入成功后不再自动关窗，改为展示结果＋「关闭」。
+- **边界**：导入结果**无审计落库**（`mcp-import-service.ts` 只走 `mcpServerRepo.save`，没有审计表写入；要落审计需新迁移 v76，本轮 `LATEST_SCHEMA_VERSION` 仍为 75）。
+- **测试**（`3bc0947`）：`tests/p2-3-mcp-import.test.ts` 新增 2 例——同一段 JSON 走文件与粘贴两条通道，落库结果与 `clearedKeys` 完全一致（同名落 `fs (2)`、`API_KEY` 为空、`PATH` 保留）；粘贴内容即使带 `checksum` 也按 `absent`。`tests/renderer-mcp-import-templates-mount.test.tsx` 契约同步（旧断言是逐条 `saveMcpServer`，改为主进程回传口径）并新增「密钥清空需重填＋明示未校验」一例。
+
+### V4-Iter-278 P2-3 第二刀：MCP 配置包导入通道（已落地，已提交 `aed81d2`／`3a2b402`，未推送）
+
+- **范围**：`src/main/mcp/mcp-package.ts` 给导出文件加包级 `checksum{algo:'sha256',value}`；`src/main/mcp/mcp-import-service.ts` 做「校验 → 解析 → 逐条落库」；`shared/mcp-import.ts` 承载纯解析、凭据清空与同名改名；IPC `mcp-server:import`（文件通道，上限 `MCP_MAX_IMPORT_BYTES = 512KB`，超出 `FILE_TOO_LARGE`）；能力中心 MCP 分组「导入配置包」（testid `capability-mcp-import`）。
+- **校验和口径**：只覆盖 `mcpServers` 本体，**不含 `exportedAt`、不含脱敏清单扩展键**（不同时刻导出同一批配置必须同值）；服务名排序、条目字段固定顺序、`env`／`headers` 键排序，换键序不误判。校验先于解析：`mismatch` → `CHECKSUM_MISMATCH`，算法或形态不认识 → `CHECKSUM_UNSUPPORTED`，**整包拒绝、零落库**。
+- **缺校验和放行但标未校验**：Claude Desktop 原生文件没有 `checksum` → `absent`，照常导入，界面明示「完整性未校验」。
+- **同名并存不覆盖**：已占用的名字加 ` (2)`／` (3)` 后缀并存（`uniqueMcpServerName`），已有配置不被改写；覆盖模式本轮未做。
+- **密钥一律清空需重填**：命中敏感键名、值形似凭据、或值等于导出占位 `REDACTED` 的字段置空字符串——**保留键名**，以便界面逐项点名「这个键需要重填」；非凭据配置（`PATH`、`NODE_ENV` 等）原样保留。导出侧脱敏判据收敛为共用的 `isSecretEntry`，两端口径不再分叉。
+- **其他边界**：导入不会让配置跳过 SEC-5，`trustReadOnly` 固定 `false`；单条结构非法不阻断其他条目（逐条原因进 `failed`）。
+- **口径**：**校验和不等于签名**——只证明「内容与导出时一致」，不证明「来源可信」，界面文案不写「已签名／可信来源」。
+- **未做**：签名打包器（需证书与密钥托管，本轮不推）；导入结果无审计落库（要落需 v76，本轮未加迁移，`LATEST_SCHEMA_VERSION` 仍为 75）。
+- **测试**（`3a2b402`）：`tests/p2-3-mcp-import.test.ts` 12 例（导出带 sha256 且可验回、`exportedAt` 不同不影响、键序不影响、篡改→`mismatch`、算法不支持→`unsupported`、一致→`verified`、篡改包零落库、无校验和放行标 `absent`、同名加序号且不覆盖、凭据清空非凭据保留、`REDACTED` 占位即使键名不敏感也清空、单条非法不阻断）。
+
+### V4-Iter-279 P2-3 第一刀：技能包导出带 sha256 校验和，导入拒绝被改动的包（已落地，已提交 `e10ba63`／`9697e47`，未推送）
+
+- **范围**：新增 `src/main/skills/skill-package.ts`；`skill-io.ts` 的导出、文件导入、URL 导入三处接入；能力中心把完整性结果说清楚。
+- **校验和口径**：`canonicalize` 固定顺序重建对象，覆盖 `name`／`description`／`icon`／`content`／`category`／`tags`，**不含 `exportedAt`／`version`**（同一技能重复导出必须同值）；`category`／`tags` 缺省归一为 `''`／`[]`，老导出形状仍可校验；包内字段书写顺序不影响结果。只认 `sha256`，其它算法一律拒（无法验证等于没验证）。
+- **导入口径**：文件导入与 URL 导入都在解析前校验——`mismatch` → `CHECKSUM_MISMATCH`，算法／形态不认识 → `CHECKSUM_UNSUPPORTED`，**均不落库**（内容可能整段被换，形状不该先信）。
+- **无校验和老包放行但标未校验**：非 JSON（Markdown 技能）、坏 JSON、没有 `checksum` 字段 → `absent`，照常导入但返回 `checksum='absent'`，能力中心在成功提示后附一句「完整性未校验」；不把「导入成功」读成「已校验完整性」。
+- **与 registry hash 的关系**：URL 导入的 registry `expectedHash` 校验的是「下载到的字节」，包内 `checksum` 校验的是「字段」——两道不同承诺，能同时给就同时给。
+- **口径**：**校验和不等于签名**，界面不写「已签名／可信来源」。
+- **未做**：签名打包器（需证书与密钥托管，本轮不推）。
+- **测试**（`9697e47`）：`tests/p2-3-skill-checksum.test.ts` 16 例（导出可验回、`exportedAt` 不同不影响、字段顺序不影响、空 `category/tags` 与不写等价、改 `content`→`mismatch`、算法／形态不认识→`unsupported`、无 `checksum` 老包与 Markdown→`absent`；链路侧：导出入盘可验、一致→`verified`、被改→拒且不落库、旧包→放行标 `absent`、算法不支持→拒且不落库）。
+- **未实测**：真机导入被改动的包目视（主进程改动，须重启 dev）。
+
 ### V4-Iter-274 V4-Iter-73~77 四个功能块现状审查 + #1/#2 修复（已落地，未提交）
 
 - **来由**：对 HEAD 现状做四个功能块只读审查（KB txt 编辑重命名 / 双链路口径埋点 / 提醒中心 / 导入归属助手，相关测试 77 例全绿），产出 1 严重 + 5 一般 + 3 风险；本批只修用户批准的 #1 与 #2。
