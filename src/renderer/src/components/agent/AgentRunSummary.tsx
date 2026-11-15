@@ -10,6 +10,8 @@ interface AgentRunSummaryProps {
   highlight?: boolean
   /** 子会话入口：从轮次里的子 run 进对应子会话 */
   onOpenSubSession?: (conversationId: string) => void
+  /** P1-5：把这一轮存成流程模板（只对没有失败步的 run 开放） */
+  onSaveAsRunbook?: () => void
 }
 
 /**
@@ -19,7 +21,7 @@ interface AgentRunSummaryProps {
  * 点开才挂载 `AgentRunInspector` 读库——折叠态不产生任何查询。
  * `run.changeCount` 为 `undefined` 时**不写 0**——那是「没记录变更清单」，不是「没有变更」。
  */
-export const AgentRunSummary: React.FC<AgentRunSummaryProps> = ({ run, highlight, onOpenSubSession }) => {
+export const AgentRunSummary: React.FC<AgentRunSummaryProps> = ({ run, highlight, onOpenSubSession, onSaveAsRunbook }) => {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   return (
@@ -49,6 +51,17 @@ export const AgentRunSummary: React.FC<AgentRunSummaryProps> = ({ run, highlight
         {run.errorSteps > 0 && (
           <span className="text-[var(--color-danger)]">· {t('agent.runSummaryErrors', { count: run.errorSteps })}</span>
         )}
+        {onSaveAsRunbook && run.errorSteps === 0 && (
+          <button
+            type="button"
+            onClick={onSaveAsRunbook}
+            title={t('runbook.saveTitle')}
+            data-testid="agent-run-save-runbook"
+            className="ml-auto px-1 rounded hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+          >
+            {t('runbook.save')}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -56,7 +69,7 @@ export const AgentRunSummary: React.FC<AgentRunSummaryProps> = ({ run, highlight
           aria-label={open ? t('agent.runSummaryCollapse') : t('agent.runSummaryExpand')}
           title={open ? t('agent.runSummaryCollapse') : t('agent.runSummaryExpand')}
           data-testid="agent-run-summary-toggle"
-          className="ml-auto px-1 rounded hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+          className={`${onSaveAsRunbook && run.errorSteps === 0 ? '' : 'ml-auto '}px-1 rounded hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors`}
         >
           {open ? '▾' : '▸'}
         </button>

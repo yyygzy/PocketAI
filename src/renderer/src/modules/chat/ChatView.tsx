@@ -8,6 +8,7 @@ import { BranchNav } from './BranchNav'
 import { BranchCompare } from './BranchCompare'
 import { Composer } from './Composer'
 import { ChatSessionStats } from './ChatSessionStats'
+import { RunbookPanel } from './RunbookPanel'
 import type { AgentModelExtras } from './useAgentModelExtras'
 import { ZeroToolCallNotice } from '../../components/agent/ZeroToolCallNotice'
 import { useToolCapabilityAutoProbe } from './useToolCapabilityAutoProbe'
@@ -261,6 +262,10 @@ interface Props {
     conversationId: string,
     anchor: { turnKey: string; requestId?: string | null }
   ) => void
+  /** P1-5：套用流程模板（把模板的提示词摘要交给 ChatModule 落进输入框草稿） */
+  onApplyRunbook?: (text: string) => void
+  /** P1-5：把一轮成功结束的 run 存成流程模板（失败提示由 ChatModule 负责） */
+  onSaveRunAsRunbook?: (requestId: string) => void
   /** 当前待回复的引用消息（Composer 显示引用条） */
   replyToMessage?: MessageRecord | null
   /** 设置/清除引用消息 */
@@ -347,6 +352,8 @@ export const ChatView: React.FC<Props> = ({
   focusMessageId,
   focusRunRequestId,
   onOpenSubSession,
+  onApplyRunbook,
+  onSaveRunAsRunbook,
   replyToMessage,
   onReply,
   onToggleStar,
@@ -967,6 +974,7 @@ export const ChatView: React.FC<Props> = ({
             onRetry={onRetrySessionStats}
           />
         )}
+        {onApplyRunbook && <RunbookPanel onApply={onApplyRunbook} />}
         <button
           onClick={openSearch}
           className="ml-auto p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
@@ -1410,6 +1418,11 @@ export const ChatView: React.FC<Props> = ({
                         onOpenSubSession={
                           onOpenSubSession
                             ? (id) => onOpenSubSession(id, { turnKey, requestId: runSummary.requestId })
+                            : undefined
+                        }
+                        onSaveAsRunbook={
+                          onSaveRunAsRunbook
+                            ? () => onSaveRunAsRunbook(runSummary.requestId)
                             : undefined
                         }
                       />

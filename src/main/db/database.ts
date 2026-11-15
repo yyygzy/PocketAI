@@ -1370,6 +1370,28 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE conversation_runs ADD COLUMN workspace_dir TEXT;
       ALTER TABLE conversation_runs ADD COLUMN tool_permissions_sig TEXT;
     `
+  },
+  {
+    // v74：流程模板（P1-5 第一刀）。
+    // 只存「一次成功 run 的形状」：工具序列（含参数键名，不含参数值）、提示词摘要、引用清单。
+    // `tool_permissions` 是**本机**的授权决定：导出时剔除，导入时一律写 '[]'（SEC-3 同口径）。
+    // 引用（技能/知识库/MCP/绝对路径）按原样存下来，启动前再校验——跨机失效要能说清缺的是哪个，
+    // 所以不在这里做「导入时过滤」，那是助手导入的策略（助手缺引用还能用，模板缺引用就跑不出那条流程）。
+    version: 74,
+    name: 'agent_runbooks',
+    up: `
+      CREATE TABLE IF NOT EXISTS agent_runbooks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        prompt_summary TEXT NOT NULL,
+        steps TEXT NOT NULL,
+        refs TEXT NOT NULL,
+        tool_permissions TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runbooks_updated ON agent_runbooks(updated_at DESC);
+    `
   }
 ]
 

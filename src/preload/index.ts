@@ -7,6 +7,7 @@ import type { KbEvalRunResult } from '../shared/kb-eval'
 import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } from '../shared/delegate-capability'
 import type { ToolCapabilityEntry, ToolCapabilityView, ToolProbeResult } from '../shared/tool-capability'
 import type { SkillScanResult } from '../shared/skill-scan'
+import type { RunbookRecord, RunbookRef } from '../shared/runbook'
 import type {
   ArtifactMeta,
   ArtifactPdfExportResult,
@@ -200,6 +201,34 @@ const api = {
     | { ok: true; imported: number; overwritten: number; skipped: number; droppedKb: number; droppedSkills: number; droppedTools: number }
     | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.ASSISTANT_IMPORT, opts),
+
+  // ---------- 流程模板（P1-5） ----------
+  // 与助手导入导出区分：这里导出/导入的是一次成功 run 的流程形状，且不含工具授权；
+  // 导入后 `toolPermissions` 恒为空，必须由用户在模板面板里重勾。
+  listRunbooks: (): Promise<RunbookRecord[] | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.RUNBOOK_LIST),
+  createRunbookFromRun: (
+    input: { requestId: string; name?: string }
+  ): Promise<RunbookRecord | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.RUNBOOK_CREATE_FROM_RUN, input),
+  updateRunbook: (patch: {
+    id: string
+    name?: string
+    toolPermissions?: string[]
+  }): Promise<RunbookRecord | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.RUNBOOK_UPDATE, patch),
+  deleteRunbook: (id: string): Promise<{ ok: boolean } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.RUNBOOK_DELETE, id),
+  checkRunbook: (id: string): Promise<{ missingRefs: RunbookRef[] } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.RUNBOOK_CHECK, id),
+  exportRunbooks: (): Promise<
+    { ok: true; canceled: true } | { ok: true; path: string; count: number } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.RUNBOOK_EXPORT),
+  importRunbooks: (): Promise<
+    | { ok: true; canceled: true }
+    | { ok: true; imported: number; skipped: number; droppedTools: number; droppedRefs: number }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.RUNBOOK_IMPORT),
 
   // ---------- 用户记忆 ----------
   // §333：这四条改前只写成功形状 ⇒ safeHandle 折出来的 `{ok:false}` 过不了 tsc 那一关就没人判，

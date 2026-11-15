@@ -6,6 +6,7 @@
 import { registerSystemHandlers } from './handlers/system'
 import { registerProviderHandlers } from './handlers/providers'
 import { registerAssistantHandlers } from './handlers/assistants'
+import { registerRunbookHandlers } from './handlers/runbooks'
 import { registerSkillHandlers } from './handlers/skills'
 import { registerConversationHandlers } from './handlers/conversations'
 import { registerMessageHandlers } from './handlers/messages'
@@ -38,6 +39,7 @@ export function registerIpcHandlers(): void {
   registerSystemHandlers()
   registerProviderHandlers()
   registerAssistantHandlers()
+  registerRunbookHandlers()
   registerSkillHandlers()
   registerConversationHandlers()
   registerMessageHandlers()

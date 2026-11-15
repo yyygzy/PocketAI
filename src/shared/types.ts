@@ -2861,6 +2861,16 @@ export const IPC = {
   ASSISTANT_EXPORT: 'assistant:export', // 导出全部用户助手为 JSON
   ASSISTANT_IMPORT: 'assistant:import', // 从 JSON 导入助手（同名覆盖）
 
+  // P1-5：流程模板（runbook）。与上面的「助手配置导出」是两件事：
+  // 助手导出身份与配置；模板导出的是一次成功 run 的流程形状，且**不含工具授权**。
+  RUNBOOK_LIST: 'runbook:list', // 本地模板清单（只读）
+  RUNBOOK_CREATE_FROM_RUN: 'runbook:create-from-run', // 从一次成功 run 生成模板
+  RUNBOOK_UPDATE: 'runbook:update', // 改名字 / 重新勾选工具授权（只在本机生效）
+  RUNBOOK_DELETE: 'runbook:delete',
+  RUNBOOK_CHECK: 'runbook:check', // 套用前校验引用（缺失项清单）
+  RUNBOOK_EXPORT: 'runbook:export', // 导出为 JSON（不含授权）
+  RUNBOOK_IMPORT: 'runbook:import', // 从 JSON 导入（授权一律清空）
+
   SKILL_LIST: 'skill:list',
   SKILL_GET: 'skill:get',
   SKILL_SAVE: 'skill:save',

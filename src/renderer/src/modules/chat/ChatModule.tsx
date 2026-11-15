@@ -700,6 +700,27 @@ export const ChatModule: React.FC = () => {
     saveDraft(convId, text)
   }, [saveDraft])
 
+  /** P1-5：套用流程模板——只把提示词摘要填进输入框，不自动发送、不重放工具序列 */
+  const handleApplyRunbook = useCallback((text: string): void => {
+    setActiveDraft(text)
+    handleDraftChange(text)
+  }, [handleDraftChange])
+
+  /** P1-5：把一轮成功结束的 run 存成流程模板（名字沿用当前会话标题） */
+  const handleSaveRunAsRunbook = useCallback(async (requestId: string): Promise<void> => {
+    const title = conversations.find((c) => c.id === currentConvRef.current)?.title ?? ''
+    try {
+      const r = await window.pocketai.createRunbookFromRun({ requestId, name: title || undefined })
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('runbook.readFailed')))
+        return
+      }
+      toast.success(t('runbook.saved'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('runbook.readFailed'))
+    }
+  }, [conversations, t, toast])
+
   // 会话切换统一加载草稿（手动切换/新对话/初始自动选中/搜索跳转全覆盖）；
   // 同步清空防旧会话文本闪现，异步加载完成后回填；迟到响应按 currentConvRef 判归属（§264）
   const loadDraft = useCallback((id: string): void => {
@@ -2135,6 +2156,8 @@ export const ChatModule: React.FC = () => {
         focusMessageId={focusMessageId}
         focusRunRequestId={focusRunRequestId}
         onOpenSubSession={handleOpenSubSession}
+        onApplyRunbook={handleApplyRunbook}
+        onSaveRunAsRunbook={handleSaveRunAsRunbook}
         replyToMessage={replyToMessage}
         onReply={handleSetReply}
         onToggleStar={handleToggleStar}

@@ -275,6 +275,28 @@ export const conversationRunRepo = {
   },
 
   /**
+   * 按 requestId 取一条 run（P1-5 生成流程模板时判定"这次 run 成功结束了吗"）。
+   * 与 `getLatest` 同一个快照形状，一字不差；读不到返回 null（老库/被清理的行）。
+   */
+  getByRequest(requestId: string): ConversationRunSnapshot | null {
+    if (!dbService.isOpen()) return null
+    const row = dbService
+      .getHandle()
+      .prepare(
+        `SELECT request_id AS requestId, conversation_id AS conversationId, mode, status,
+                started_at AS startedAt, ended_at AS endedAt,
+                stage, steps_done AS stepsDone, tool_steps_done AS toolStepsDone,
+                resume_state AS resumeState,
+                anchor_user_message_id AS anchorUserMessageId,
+                workspace_dir AS workspaceDir, tool_permissions_sig AS toolPermissionsSig
+         FROM conversation_runs
+         WHERE request_id=?`
+      )
+      .get(requestId) as ConversationRunSnapshot | undefined
+    return row ?? null
+  },
+
+  /**
    * 该会话最近一条 run（不分状态）。
    * 续跑只认「最新一条且是 interrupted」——用户崩溃后先发了新消息，就说明这一轮已经被放过了，
    * 不能拿更早的断点再续。
