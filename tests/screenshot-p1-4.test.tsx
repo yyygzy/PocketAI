@@ -132,7 +132,10 @@ describe('P1-4 ② 热键先上屏：捕获路上就有可见反馈，结果载�
 
     await screen.findByTestId('popup-capturing', {}, BUDGET)
     await deliver({ mode: 'quick', screenshot: SHOT, ts: 302 })
-    await waitFor(() => expect(screen.queryByTestId('popup-capturing')).toBeNull())
+    // §364：门要等"结果真到了"（图片上屏），不能只等提示消失就去读附件栏——
+    // 否则门 t=0 就放行，紧随的 shotCount() 读到的是图片落地之前那一帧。
+    await screen.findByAltText(SHOT.name, {}, BUDGET)
+    expect(screen.queryByTestId('popup-capturing')).toBeNull()
     expect(shotCount()).toBe(1)
   })
 

@@ -78,10 +78,11 @@ describe('injectAttachments 注入最后一条 user 消息', () => {
     expect(msgs[1]!.content).toBe('原话\n\n--- a.txt ---\n内容A')
   })
 
-  it('user 内容为 parts 数组：兜底分支按空文本处理，仅附件区块（固化现状语义）', () => {
-    const msgs = [{ role: 'user' as const, content: [{ type: 'text' as const, text: '原话' }] }]
+  it('user 内容已是 parts 数组：不再重建，原 parts 原样保留（避免用户写在附件旁的问题被空串覆盖）', () => {
+    const original = [{ type: 'text' as const, text: '原话' }]
+    const msgs = [{ role: 'user' as const, content: original }]
     injectAttachments(msgs, [att('text', 'a.txt', 'X')])
-    expect(msgs[0]!.content).toBe('\n\n--- a.txt ---\nX')
+    expect(msgs[0]!.content).toEqual([{ type: 'text', text: '原话' }])
   })
 
   it('文本 + 图片混合：content 重建为 parts（text 含附件区块 + image_url）', () => {

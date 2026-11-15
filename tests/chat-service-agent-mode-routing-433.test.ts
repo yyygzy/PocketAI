@@ -17,6 +17,12 @@ const state = vi.hoisted(() => ({
   emitted: [] as string[]
 }))
 
+// chat-service 现经 conversation-run.repo→database→portable 顶层读 app.isPackaged；
+// 本文件不关心真 electron，按既有做法给最小桩（否则模块加载即崩）。
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+
 vi.mock('../src/main/db/repositories/message.repo', () => ({
   messageRepo: {
     insert: (row: Record<string, unknown>) => {

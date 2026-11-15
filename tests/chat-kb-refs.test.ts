@@ -19,6 +19,12 @@ const { state } = vi.hoisted(() => ({
   }
 }))
 
+// chat-service 现经 fs-tools→file-snapshots 拉进 portable，其顶层要用 app.isPackaged；
+// 本文件不关心真 electron，按 agent-context.test.ts 的既有做法给最小桩（否则模块加载即崩）。
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+
 // 降级记账打桩：只关心「整次检索失败有没有被说出来」，不去动真 perf 环形缓冲
 vi.mock('../src/main/knowledge/retrieval-degrade', () => ({
   noteRetrievalDegradation: (d: { stage: string; reason: string }) => {

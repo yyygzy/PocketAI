@@ -49,6 +49,15 @@ vi.mock('../src/main/crypto/secret-store', () => ({
 vi.mock('../src/main/logger', () => ({
   createLogger: () => ({ info: () => {}, warn: () => {}, debug: () => {}, error: () => {} })
 }))
+// SEC-1 起 setWebSearchConfig 多了一道 none-mode 写入闸；本文件只测「按 provider 隔离密钥」，
+// 需以「已设主密码」的口径运行（否则 isNoneMode() 在无库单测里恒为 true，合法保存被拦）。
+// 闸本身的口径由 none-mode-gate.test.ts 钉住，这里按同行做法放行。
+vi.mock('../src/main/crypto/none-mode-gate', () => ({
+  isNoneMode: () => false,
+  newSecretKeys: () => [],
+  noneModeSecretBlock: () => null,
+  NONE_MODE_HINT: ''
+}))
 
 import {
   getWebSearchConfig,

@@ -143,7 +143,9 @@ describe('④ 划词浮窗：自己拉配置，两条失败面都要落到「读
   })
 
   it('反向对照：读到配置 ⇒ 两颗开关照常在，alert 与「加载中…」都不该出现', async () => {
-    stubPocketai({ getPopupConfig: () => ({ quickEnabled: true, selectionEnabled: false, quickAccelerator: 'CommandOrControl+Shift+K', selectionAccelerator: '' }) })
+    // PopupConfig 自 P1-4 起含截图三字段（screenshotEnabled/Accelerator/Supported），
+    // 类型要求齐全；漏掉会让 fmtAccel(undefined) 抛错（本用例的反向对照就是被这半个桩打红的）
+    stubPocketai({ getPopupConfig: () => ({ quickEnabled: true, selectionEnabled: false, screenshotEnabled: false, quickAccelerator: 'CommandOrControl+Shift+K', selectionAccelerator: '', screenshotAccelerator: '', screenshotSupported: false }) })
     mountWithProviders(<PopupPanel />)
     await waitFor(() => expect(screen.queryByText(L('popup.quickTitle'))).not.toBeNull())
     expect(alerts()).toEqual([])
