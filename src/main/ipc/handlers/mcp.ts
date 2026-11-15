@@ -90,6 +90,12 @@ export function registerMcpHandlers(): void {
     return importMcpPackageText(fs.readFileSync(file, 'utf8'))
   })
 
+  // 粘贴导入：没有文件包 ⇒ 校验和按 absent；解析、同名并存、凭据清空与文件通道走同一条路径
+  safeHandle(IPC.MCP_SERVER_IMPORT_TEXT, async (_e, text: string) => {
+    if (typeof text !== 'string' || !text.trim()) return { ok: false as const, error: 'IMPORT_EMPTY' }
+    return importMcpPackageText(text, { verifyChecksum: false })
+  })
+
   safeHandle(IPC.MCP_SERVER_GET, (_e, id: string) => {
     const rec = mcpServerRepo.get(id)
     return rec ? maskMcpRecord(rec) : null

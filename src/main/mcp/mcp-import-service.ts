@@ -22,15 +22,24 @@ export interface McpImportOutcome {
   failed?: Array<{ key: string; error: string }>
   /** 被清空的凭据键，形如 `fs>API_KEY` */
   clearedKeys?: string[]
+  /** 解析期非阻断警告（如 x-pocketai-python-packages 类型不对被忽略），逐条回传给界面 */
+  warnings?: string[]
   error?: string
 }
 
 /**
  * 从文本导入整包 MCP 配置。文件读取/大小闸在 IPC 层，这里只管内容与落库，便于直接测。
  * 返回 ok=true 也可能 imported 为空（全部条目结构非法）：那不是包的问题，逐条原因在 failed 里。
+ *
+ * verifyChecksum=false 只给「粘贴导入」用：没有文件包就没有包级校验和可言，
+ * 此时一律按 absent 处理并在界面照实说未校验——不能把「没验」说成「验过了」。
  */
-export function importMcpPackageText(raw: string): McpImportOutcome {
-  const verification = verifyMcpPackage(raw)
+export function importMcpPackageText(
+  raw: string,
+  opts: { verifyChecksum?: boolean } = {}
+): McpImportOutcome {
+  const verification =
+    opts.verifyChecksum === false ? ({ state: 'absent' } as const) : verifyMcpPackage(raw)
   if (verification.state === 'mismatch') return { ok: false, error: 'CHECKSUM_MISMATCH' }
   if (verification.state === 'unsupported') return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
 
@@ -42,6 +51,7 @@ export function importMcpPackageText(raw: string): McpImportOutcome {
   const imported: Array<{ key: string; name: string }> = []
   const failed: Array<{ key: string; error: string }> = []
   const clearedKeys: string[] = []
+  const warnings: string[] = []
 
   for (const item of parsed.items) {
     if (!item.draft) {
@@ -68,6 +78,7 @@ export function importMcpPackageText(raw: string): McpImportOutcome {
       taken.add(rec.name)
       imported.push({ key: item.key, name: rec.name })
       clearedKeys.push(...stripped.clearedKeys)
+      if (item.warning) warnings.push(`${item.key}: ${item.warning}`)
     } catch (e) {
       failed.push({ key: item.key, error: errMsg(e) })
     }
@@ -78,6 +89,7 @@ export function importMcpPackageText(raw: string): McpImportOutcome {
     checksum: verification.state === 'ok' ? 'verified' : 'absent',
     imported,
     failed,
-    clearedKeys
+    clearedKeys,
+    warnings
   }
 }

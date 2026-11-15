@@ -710,9 +710,25 @@ const api = {
         imported: Array<{ key: string; name: string }>
         failed: Array<{ key: string; error: string }>
         clearedKeys: string[]
+        warnings: string[]
       }
     | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.MCP_SERVER_IMPORT),
+  /**
+   * 粘贴导入 MCP 配置：与文件通道共用同一条解析/落库路径；没有文件包，校验和恒为 absent，
+   * 界面据此照实提示「未校验完整性」。
+   */
+  importMcpServersFromText: (text: string): Promise<
+    | {
+        ok: true
+        checksum: 'absent'
+        imported: Array<{ key: string; name: string }>
+        failed: Array<{ key: string; error: string }>
+        clearedKeys: string[]
+        warnings: string[]
+      }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.MCP_SERVER_IMPORT_TEXT, text),
   getMcpServer: (id: string): Promise<McpServerRecord | null> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_GET, id),
   /** 按需揭示单个 Server 的 env/headers 真实值（列表与表单默认为掩码视图） */

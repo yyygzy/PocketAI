@@ -1,4 +1,7 @@
 // MCP Server 批量导入弹窗（Claude Desktop 风格 mcpServers JSON）
+//
+// 解析/落库统一走主进程 mcp-import-service：与文件导入同一条路径（同名并存、凭据清空）。
+// 粘贴没有文件包，所以包级校验和恒为 absent——界面照实说「未校验完整性」，不假装验过。
 import React, { useState } from 'react'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
@@ -11,17 +14,34 @@ interface Props {
   onImported: () => Promise<void>
 }
 
+interface ImportResult {
+  imported: Array<{ key: string; name: string }>
+  failed: Array<{ key: string; error: string }>
+  clearedKeys: string[]
+  warnings: string[]
+}
+
+/** 只把回码翻成四语文案；主进程给的用户可读原文原样透出 */
+function pasteImportErrorText(code: string | undefined, t: (k: string) => string): string {
+  if (code === 'IMPORT_EMPTY') return t('agent.importEmpty')
+  if (code === 'CHECKSUM_MISMATCH') return t('cap.mcp.checksumMismatch')
+  if (code === 'CHECKSUM_UNSUPPORTED') return t('cap.mcp.checksumUnsupported')
+  return code ?? t('cap.mcp.importFailed')
+}
+
 export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
   const { t } = useI18n()
   const toast = useToast()
   const [raw, setRaw] = useState('')
   const [parsed, setParsed] = useState<{ ok: McpImportItem[]; err: McpImportItem[] } | null>(null)
   const [importing, setImporting] = useState(false)
+  const [result, setResult] = useState<ImportResult | null>(null)
 
   const handleParse = () => {
     const r = parseMcpServersJson(raw)
     if (r.error) {
       setParsed(null)
+      setResult(null)
       toast.error(r.error)
       return
     }
@@ -31,43 +51,27 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
   const handleImport = async () => {
     if (!parsed || parsed.ok.length === 0) return
     setImporting(true)
-    let success = 0
-    const warnings: string[] = []
-    for (const item of parsed.ok) {
-      if (!item.draft) continue
-      try {
-        const saved = await window.pocketai.saveMcpServer({
-          name: item.draft.name,
-          transport: item.draft.transport,
-          runtime: item.draft.runtime,
-          command: item.draft.command,
-          args: item.draft.args,
-          env: item.draft.env,
-          url: item.draft.url,
-          headers: item.draft.headers,
-          pythonPackages: item.draft.pythonPackages
-        })
-        // 闸门拒绝（如未设主密码时的新密钥）走结构化失败，不是异常
-        if ('ok' in saved) {
-          warnings.push(`${item.key}: ${saved.error}`)
-          continue
-        }
-        success++
-        if (item.warning) warnings.push(`${item.key}: ${item.warning}`)
-      } catch (e) {
-        warnings.push(`${item.key}: ${errText(e)}`)
-      }
-    }
-    // §336：onImported 调父级的 load()，若抛异常必须 finally 释放 importing 锁，否则模态框卡死
     try {
+      // 预览只决定按钮能不能按；真正的解析与落库在主进程，和文件导入同一函数
+      const r = await window.pocketai.importMcpServersFromText(raw)
+      if (!r.ok) {
+        toast.error(pasteImportErrorText(r.error, t))
+        return
+      }
+      setResult(r)
       await onImported()
+      if (r.imported.length > 0) toast.success(t('agent.importSuccess', { n: r.imported.length }))
+      if (r.failed.length > 0) {
+        toast.error(r.failed.map((f) => `${f.key}: ${f.error}`).join('；'))
+      }
+    } catch (e) {
+      toast.error(errText(e, t('common.unknownError')))
     } finally {
       setImporting(false)
     }
-    toast.success(t('agent.importSuccess', { n: success }))
-    if (warnings.length) toast.error(warnings.join('；'))
-    onClose()
   }
+
+  const renamed = result ? result.imported.filter((i) => i.name !== i.key).length : 0
 
   return (
     <div
@@ -91,10 +95,14 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
           <textarea
             className="input font-mono text-xs w-full min-h-[160px]"
             value={raw}
-            onChange={(e) => setRaw(e.target.value)}
+            onChange={(e) => {
+              setRaw(e.target.value)
+              setResult(null)
+            }}
             placeholder={t('agent.importPh')}
             spellCheck={false}
           />
+          <p className="text-[11px] text-[var(--color-text-muted)]">{t('agent.importPasteNotice')}</p>
           {parsed && (
             <div className="space-y-2">
               {parsed.ok.length > 0 && (
@@ -150,21 +158,66 @@ export const McpImportModal: React.FC<Props> = ({ onClose, onImported }) => {
               )}
             </div>
           )}
+          {result && (
+            <div
+              className="space-y-1 rounded border border-[var(--color-border)] p-2 text-[11px]"
+              data-testid="mcp-import-result"
+            >
+              <div className="text-[var(--color-success)]">
+                {t('agent.importSuccess', { n: result.imported.length })}
+              </div>
+              {result.clearedKeys.length > 0 && (
+                <div className="text-[var(--color-warning)]" data-testid="mcp-import-cleared">
+                  {t('agent.importSecretsCleared', {
+                    n: result.clearedKeys.length,
+                    keys: result.clearedKeys.join('、')
+                  })}
+                </div>
+              )}
+              {renamed > 0 && (
+                <div className="text-[var(--color-text-muted)]">
+                  {t('agent.importNameSuffixed', { n: renamed })}
+                </div>
+              )}
+              {/* 粘贴没有文件包：这里必须明说没校验，不能让人以为「导入成功」＝「验过完整性」 */}
+              <div className="text-[var(--color-text-muted)]" data-testid="mcp-import-unverified">
+                {t('agent.importUnverified')}
+              </div>
+              {result.warnings.length > 0 && (
+                <div className="text-[var(--color-text-muted)]">
+                  {result.warnings.join('；')}
+                </div>
+              )}
+              {result.failed.length > 0 && (
+                <div className="text-[var(--color-danger)]">
+                  {result.failed.map((f) => `${f.key}: ${f.error}`).join('；')}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="p-4 border-t border-[var(--color-border)] flex gap-2 justify-end">
-          <button className="btn-ghost" onClick={onClose}>
-            {t('common.cancel')}
-          </button>
-          <button className="btn-ghost" onClick={handleParse}>
-            {t('agent.importParse')}
-          </button>
-          <button
-            className="btn-primary"
-            onClick={() => void handleImport()}
-            disabled={!parsed || parsed.ok.length === 0 || importing}
-          >
-            {importing ? t('agent.importing') : t('agent.importConfirm')}
-          </button>
+          {result ? (
+            <button className="btn-primary" onClick={onClose}>
+              {t('common.close')}
+            </button>
+          ) : (
+            <>
+              <button className="btn-ghost" onClick={onClose}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-ghost" onClick={handleParse}>
+                {t('agent.importParse')}
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => void handleImport()}
+                disabled={!parsed || parsed.ok.length === 0 || importing}
+              >
+                {importing ? t('agent.importing') : t('agent.importConfirm')}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

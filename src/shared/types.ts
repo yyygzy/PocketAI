@@ -3086,6 +3086,7 @@ export const IPC = {
   /** 导出全部 MCP 配置为标准 mcpServers JSON（敏感值默认脱敏，showSaveDialog 选路径） */
   MCP_SERVER_EXPORT: 'mcp-server:export',
   MCP_SERVER_IMPORT: 'mcp-server:import',
+  MCP_SERVER_IMPORT_TEXT: 'mcp-server:import-text',
   MCP_SERVER_START: 'mcp-server:start',
   MCP_SERVER_STOP: 'mcp-server:stop',
   MCP_SERVER_RESTART: 'mcp-server:restart',
