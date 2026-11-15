@@ -56,7 +56,8 @@ describe('artifact-service（真库 + 真磁盘）', () => {
   })
 
   it('迁移 v70 建出 artifacts 表（kind 已含 xlsx；v70 只新增 projects 表）', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(72)
+    // v74 起：P1-3a 的 conversation_runs 快照列（v73）与 P1-5 的 agent_runbooks（v74）都已并入
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(74)
     const cols = (
       dbService.getHandle().prepare('PRAGMA table_info(artifacts)').all() as Array<{ name: string }>
     ).map((c) => c.name)

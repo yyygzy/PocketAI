@@ -67,7 +67,8 @@ describe('project-service（真库 + 真磁盘）', () => {
   })
 
   it('v70 迁移建出 projects / project_files', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(72)
+    // v74 起：v73（P1-3a 运行快照列）与 v74（P1-5 agent_runbooks）都已并入
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(74)
     const tables = (
       dbService
         .getHandle()

@@ -320,7 +320,10 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     //  P4 批次 2（V4-Iter-461）：删 Agent 壳时 `AgentPanel` 里 `t(\`agent.${...}\`)` 那 1 发随之退场 ⇒ 100→99（只减不增）。
     //  设置页签改造：新增的页签名一律走字面量 `t('set.tab.*')`，不产生动态 key；实测 96（较 99 少 3，
     //  差额来自并行 P4 批次对 Agent 壳动态取词的清理，本批既未新增也未删除动态调用点）。
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(96)
+    //  P1-5 对账：`ChatView.tsx:1035` 的 `t(RESUME_BLOCK_TEXT_KEYS[resumeCandidate.code])` 是 P1-3a
+    //  续跑横幅带来的**既有**动态点，上批改完没同步这里钉死的数（96 应为 97）。本批（P1-5）自身
+    //  零新增动态取词：RunbookPanel 的引用种类名走 switch 逐分支字面量，不改这一格；97→97 只补记既有漂移。
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(97)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {
