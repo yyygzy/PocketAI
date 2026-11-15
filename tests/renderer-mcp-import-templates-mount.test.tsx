@@ -2,7 +2,7 @@
 // MCP 的两条"批量入口"挂到界面上（V4-Iter-172，B19 对账现查的零覆盖）
 //
 // 解析/实例化早有 CI（mcp-import.test / mcp-templates.test），但**用户看到的结果计数**没人证：
-// ① 导入时闸门拒了其中一条 ⇒ 成功数不能虚增、被拒那条要出现在警告里；
+// ① 粘贴导入与文件通道同一条主进程路径（P2-3）：成功数按主进程回传、密钥清空要提示、未校验要说出来；
 // ② 模板创建失败 ⇒ 那张卡不许标成"已创建"（否则用户以为有了，实际没有）。
 import { describe, it, expect } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
@@ -12,8 +12,10 @@ import { McpTemplatesModal } from '../src/renderer/src/modules/agent/mcp/McpTemp
 import { zh } from '../src/renderer/src/i18n/zh'
 
 const saveCalls = (): number => pocketaiCalls().filter((c) => c.fn === 'saveMcpServer').length
+const importCalls = (): number =>
+  pocketaiCalls().filter((c) => c.fn === 'importMcpServersFromText').length
 
-describe('① 批量导入：闸门拒绝的那条计入警告，成功数不虚增', () => {
+describe('① 批量导入：走主进程同一条路径，计数与提示都按回传说', () => {
   const JSON_TWO = JSON.stringify({
     mcpServers: {
       'plain-one': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] },
@@ -21,43 +23,101 @@ describe('① 批量导入：闸门拒绝的那条计入警告，成功数不虚
     }
   })
 
-  function mount(save: (rec: unknown) => unknown): void {
-    stubPocketai({ saveMcpServer: save })
+  type Outcome = {
+    ok: true
+    checksum: 'absent'
+    imported: Array<{ key: string; name: string }>
+    failed: Array<{ key: string; error: string }>
+    clearedKeys: string[]
+    warnings: string[]
+  }
+
+  function mount(outcome: Outcome): void {
+    stubPocketai({ importMcpServersFromText: async () => outcome })
     mountWithProviders(<McpImportModal onClose={() => {}} onImported={async () => {}} />)
   }
 
-  it('一条被闸门挡下 ⇒ toast 说"成功导入 1 个"，并把被拒那条连原因一起列出来', async () => {
-    mount((rec) => {
-      const name = (rec as { name: string }).name
-      return name === 'secret-two'
-        ? { ok: false, error: '未设置主密码，新密钥不会被保存' }
-        : { id: 'srv-1', name, transport: 'stdio' }
-    })
+  async function pasteAndImport(): Promise<void> {
     fireEvent.change(screen.getByPlaceholderText(zh['agent.importPh']), { target: { value: JSON_TWO } })
     fireEvent.click(screen.getByText(zh['agent.importParse']))
     expect(await screen.findByText(zh['agent.importOk'].replace('{n}', '2'))).toBeTruthy()
     fireEvent.click(screen.getByText(zh['agent.importConfirm']))
-    // 关键断言：成功的只有 1 个（改前这里是"导入 2 个"，第二条其实被主进程挡了）
-    expect(await screen.findByText(zh['agent.importSuccess'].replace('{n}', '1'))).toBeTruthy()
-    expect(screen.getByText(/未设置主密码/)).toBeTruthy()
-    expect(saveCalls()).toBe(2)
+  }
+
+  it('一条被闸门挡下 ⇒ 成功数按回传为 1，被拒那条连原因一起列出', async () => {
+    mount({
+      ok: true,
+      checksum: 'absent',
+      imported: [{ key: 'plain-one', name: 'plain-one' }],
+      failed: [{ key: 'secret-two', error: '未设置主密码，新密钥不会被保存' }],
+      clearedKeys: [],
+      warnings: []
+    })
+    await pasteAndImport()
+    expect(
+      (await screen.findAllByText(zh['agent.importSuccess'].replace('{n}', '1'))).length
+    ).toBeGreaterThan(0)
+    expect(screen.getAllByText(/未设置主密码/).length).toBeGreaterThan(0)
+    // 改前这里是逐条 saveMcpServer；现在必须只有一次主进程导入
+    expect(importCalls()).toBe(1)
+    expect(saveCalls()).toBe(0)
   })
 
-  it('反向对照：全部成功时不出现警告条，成功数等于条数', async () => {
-    mount((rec) => ({ id: 'srv-ok', name: (rec as { name: string }).name, transport: 'stdio' }))
-    fireEvent.change(screen.getByPlaceholderText(zh['agent.importPh']), { target: { value: JSON_TWO } })
-    fireEvent.click(screen.getByText(zh['agent.importParse']))
-    fireEvent.click(await screen.findByText(zh['agent.importConfirm']))
-    expect(await screen.findByText(zh['agent.importSuccess'].replace('{n}', '2'))).toBeTruthy()
+  it('全部成功时不出现失败原因，成功数等于条数', async () => {
+    mount({
+      ok: true,
+      checksum: 'absent',
+      imported: [
+        { key: 'plain-one', name: 'plain-one' },
+        { key: 'secret-two', name: 'secret-two' }
+      ],
+      failed: [],
+      clearedKeys: [],
+      warnings: []
+    })
+    await pasteAndImport()
+    expect(
+      (await screen.findAllByText(zh['agent.importSuccess'].replace('{n}', '2'))).length
+    ).toBeGreaterThan(0)
     expect(screen.queryByText(/未设置主密码/)).toBeNull()
   })
 
+  it('密钥被清空 ⇒ 结果区点名需重填，并明说未校验完整性', async () => {
+    mount({
+      ok: true,
+      checksum: 'absent',
+      imported: [{ key: 'secret-two', name: 'secret-two' }],
+      failed: [],
+      clearedKeys: ['secret-two>API_KEY'],
+      warnings: []
+    })
+    await pasteAndImport()
+    const cleared = await screen.findByTestId('mcp-import-cleared')
+    expect(cleared.textContent).toContain('API_KEY')
+    expect(cleared.textContent).toContain(zh['agent.importSecretsCleared'].split('{')[0])
+    const unverified = screen.getByTestId('mcp-import-unverified')
+    expect(unverified.textContent).toBe(zh['agent.importUnverified'])
+  })
+
+  it('粘贴前就写明「完整性不校验、密钥会清空」', () => {
+    mount({
+      ok: true,
+      checksum: 'absent',
+      imported: [],
+      failed: [],
+      clearedKeys: [],
+      warnings: []
+    })
+    expect(screen.getByText(zh['agent.importPasteNotice'])).toBeTruthy()
+  })
+
   it('一条都没有时「导入」按钮不可点（不让人对着空列表按下去等一个不会来的结果）', async () => {
-    mount((rec) => rec)
+    mount({ ok: true, checksum: 'absent', imported: [], failed: [], clearedKeys: [], warnings: [] })
     fireEvent.change(screen.getByPlaceholderText(zh['agent.importPh']), { target: { value: '{' } })
     fireEvent.click(screen.getByText(zh['agent.importParse']))
     const btn = (await screen.findByText(zh['agent.importConfirm'])).closest('button') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
+    expect(importCalls()).toBe(0)
     expect(saveCalls()).toBe(0)
   })
 })

@@ -174,3 +174,62 @@ describe('importMcpPackageText：落库口径', () => {
     expect(h.rows).toHaveLength(1)
   })
 })
+
+describe('粘贴通道：与文件通道同一条解析/落库路径', () => {
+  /** 去掉每次自增的 id/createdAt，只比配置本体 */
+  function rowsSansIdentity(): Array<Record<string, unknown>> {
+    return h.rows.map((row) => {
+      const copy = { ...row }
+      delete copy.id
+      delete copy.createdAt
+      return copy
+    })
+  }
+
+  it('同一段 JSON 走文件通道与粘贴通道，落库结果与 clearedKeys 完全一致', () => {
+    const text = JSON.stringify({
+      mcpServers: {
+        fs: {
+          command: 'npx',
+          args: [],
+          env: { PATH: '/usr/bin', API_KEY: 'sk-abcdefgh12345678' }
+        },
+        remote: {
+          type: 'http',
+          url: 'https://example.com/mcp',
+          headers: { Authorization: 'Bearer abcdefghijklmnop' }
+        }
+      }
+    })
+    // 先占一个同名，验证两条通道都走「加序号并存」
+    h.rows.push({ id: 'old', name: 'fs', command: 'old-cmd' })
+    const byFile = importMcpPackageText(text)
+    const fileRows = rowsSansIdentity()
+    h.rows.length = 0
+    h.rows.push({ id: 'old', name: 'fs', command: 'old-cmd' })
+    const byPaste = importMcpPackageText(text, { verifyChecksum: false })
+    const pasteRows = rowsSansIdentity()
+
+    expect(byFile.ok).toBe(true)
+    expect(byPaste.ok).toBe(true)
+    expect(pasteRows).toEqual(fileRows)
+    expect(byPaste.clearedKeys).toEqual(byFile.clearedKeys)
+    expect(byPaste.imported).toEqual([
+      { key: 'fs', name: 'fs (2)' },
+      { key: 'remote', name: 'remote' }
+    ])
+    // 密钥确实为空，非凭据保留
+    const savedFs = pasteRows.find((r) => r.name === 'fs (2)') as { env: Record<string, string> }
+    expect(savedFs.env.API_KEY).toBe('')
+    expect(savedFs.env.PATH).toBe('/usr/bin')
+  })
+
+  it('粘贴内容即使带 checksum 也按 absent 处理（没有文件包，不做完整性承诺）', () => {
+    const r = importMcpPackageText(pkg({ fs: { command: 'npx', args: [] } }), {
+      verifyChecksum: false
+    })
+    expect(r.ok).toBe(true)
+    expect(r.checksum).toBe('absent')
+    expect(h.rows).toHaveLength(1)
+  })
+})
