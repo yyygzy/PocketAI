@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry, AgentSessionStats, ChatResumeBlockCode, ChatResumeCandidate } from '../../../../shared/types'
+import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry, AgentSessionStats, ChatResumeBlockCode, ChatResumeCandidate, RunToolGrant } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { MessageBubble } from './MessageBubble'
@@ -42,6 +42,9 @@ const RESUME_BLOCK_TEXT_KEYS: Record<ChatResumeBlockCode, string> = {
   RESUME_TOOLS_EXECUTED: 'chat.resume.toolsExecuted',
   RESUME_WORKSPACE_CHANGED: 'chat.resume.workspaceChanged',
   RESUME_TOOL_PERMISSIONS_CHANGED: 'chat.resume.permissionsChanged',
+  RESUME_TOOL_GRANT_CHANGED: 'chat.resume.grantChanged',
+  RESUME_TOOL_PERMISSIONS_REVOKED: 'chat.resume.permissionsRevoked',
+  RESUME_TOOL_UNAVAILABLE: 'chat.resume.toolUnavailable',
   RESUME_TARGET_MISSING: 'chat.resume.targetMissing'
 }
 
@@ -262,8 +265,8 @@ interface Props {
     conversationId: string,
     anchor: { turnKey: string; requestId?: string | null }
   ) => void
-  /** P1-5：套用流程模板（把模板的提示词摘要交给 ChatModule 落进输入框草稿） */
-  onApplyRunbook?: (text: string) => void
+  /** P1-5：套用流程模板（把模板的提示词摘要与本轮勾选交给 ChatModule 落进草稿/待发授权） */
+  onApplyRunbook?: (text: string, grant?: RunToolGrant) => void
   /** P1-5：把一轮成功结束的 run 存成流程模板（失败提示由 ChatModule 负责） */
   onSaveRunAsRunbook?: (requestId: string) => void
   /** 当前待回复的引用消息（Composer 显示引用条） */

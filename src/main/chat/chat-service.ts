@@ -27,6 +27,14 @@ import { chunksToSources } from '../../shared/kb-sources'
 import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { usageService } from '../usage/usage-service'
 import { conversationRunRepo, judgeRunResume, type ConversationRunSnapshot } from '../db/repositories/conversation-run.repo'
+import { runbookRepo } from '../db/repositories/runbook.repo'
+import {
+  checkRunToolScopeForResume,
+  isPerRunToolGrantEnabled,
+  parseRunToolScope,
+  resolveRunToolScope,
+  sameToolSet
+} from '../agent/run-tool-scope'
 import { resolveAgentToolPermissions, toolPermissionsSignature } from '../agent/tool-permissions'
 import { getWorkspaceDir } from '../tools/fs-tools'
 import { getUsagePricing } from '../usage/pricing-config'
@@ -46,7 +54,8 @@ import type {
   ChatResumeBlockCode,
   ChatResumeCandidate,
   MessageRecord,
-  ResumeChatPayload
+  ResumeChatPayload,
+  RunToolScope
 } from '../../shared/types'
 
 type EmitFn = (channel: string, data: unknown) => void
@@ -62,6 +71,8 @@ type ResumeEvaluation =
       anchor: MessageRecord
       /** 接续步号：已完成步数（= doneAssistants + settledToolSteps），引擎从它 + 1 起跑 */
       startStep: number
+      /** P1-5：旧 run 的 per-run 工具范围；null ⇒ 旧口径（按当前助手签名比对） */
+      toolScope: RunToolScope | null
     }
 
 /** 续跑被拦下时的回码（渲染层按 code 查静态四语键；这里的文案只进日志/兜底） */
@@ -77,6 +88,12 @@ function resumeBlockedError(code: ChatResumeBlockCode): Error {
       return new Error('RESUME_WORKSPACE_CHANGED:工作目录已变更，为避免在错误的目录里续跑，请重新发送')
     case 'RESUME_TOOL_PERMISSIONS_CHANGED':
       return new Error('RESUME_TOOL_PERMISSIONS_CHANGED:工具授权已变更，请重新发送')
+    case 'RESUME_TOOL_GRANT_CHANGED':
+      return new Error('RESUME_TOOL_GRANT_CHANGED:这一轮的模板授权已被修改或模板已删除，请重新开始一轮')
+    case 'RESUME_TOOL_PERMISSIONS_REVOKED':
+      return new Error('RESUME_TOOL_PERMISSIONS_REVOKED:助手已收回这一轮用过的工具权限，请重新发送')
+    case 'RESUME_TOOL_UNAVAILABLE':
+      return new Error('RESUME_TOOL_UNAVAILABLE:这一轮用过的工具已不可用，请重新发送')
     case 'RESUME_TARGET_MISSING':
       return new Error('RESUME_TARGET_MISSING:会话的模型已不可用，请重新选择模型后发送')
   }
@@ -238,6 +255,18 @@ class ChatService {
     if (!targets || targets.length === 0) throw new Error('CHAT_NO_TARGET:未选择模型')
 
     this.assertBudget()
+
+    // P1-5：带 grant 的 Agent 轮次在**建 run 之前**先把渲染端的勾选复核一遍。
+    // 越权/不可用直接抛出 `CODE:说明`（经 safeHandle 变成 {ok:false}）：
+    // 不写用户消息、不建运行行——用户改完勾选再发，不是"跑起来才发现工具被拒"。
+    if (payload.agentMode && payload.toolGrant && isPerRunToolGrantEnabled()) {
+      const assistant = assistantId ? assistantRepo.get(assistantId) ?? null : null
+      const base = resolveAgentToolPermissions(assistant?.toolPermissions, {
+        hasAssistant: !!assistantId,
+        isBuiltin: assistant?.isBuiltin ?? false
+      })
+      resolveRunToolScope(base, payload.toolGrant)
+    }
 
     // Agent 模式：委托给 AgentEngine 走 ReAct 循环
     if (payload.agentMode) {
@@ -624,7 +653,9 @@ class ChatService {
               // 旧值原样继承：这一列是审计口径（进过几次工具步），续跑不能把它清零
               startToolStepsDone: ev.run.toolStepsDone ?? 0,
               workspaceDir: ev.run.workspaceDir,
-              toolPermissionsSig: ev.run.toolPermissionsSig
+              toolPermissionsSig: ev.run.toolPermissionsSig,
+              // P1-5：有 scope 就让引擎用旧范围；null 时引擎按当前助手基线（v73 口径）
+              toolScope: ev.toolScope
             }
           }
         )
@@ -708,7 +739,31 @@ class ChatService {
       hasAssistant: !!conv.assistantId,
       isBuiltin: assistant?.isBuiltin ?? false
     })
-    if (run.toolPermissionsSig && run.toolPermissionsSig !== toolPermissionsSignature(permissions)) {
+    /**
+     * P1-5：续跑按 run 起点的 scope 复核，而不是只比"当前助手算出来的签名"。
+     * 三种拦截要能分开：
+     * · 模板勾选变了/模板被删 → GRANT_CHANGED（要求重开一轮）；
+     * · 助手收回了 run 已确认的权限 → PERMISSIONS_REVOKED；
+     * · 工具已不在注册表（被删/MCP 未启动）→ TOOL_UNAVAILABLE。
+     * scope 为空＝v75 之前的旧 run：保持原口径，只比签名，历史不被误判。
+     * 非空但解析失败（坏数据）→ fail-closed 按 GRANT_CHANGED 处理，绝不退回旧口径放宽。
+     */
+    const storedScope = run.toolScopeJson ? parseRunToolScope(run.toolScopeJson) : null
+    if (run.toolScopeJson && !storedScope) return blocked('RESUME_TOOL_GRANT_CHANGED')
+    if (storedScope) {
+      const scopeBlock = checkRunToolScopeForResume(storedScope, permissions)
+      if (scopeBlock) return blocked(scopeBlock)
+      if (storedScope.mode === 'runbook' && storedScope.runbookId) {
+        const template = runbookRepo.get(storedScope.runbookId)
+        // 模板被删＝"勾选已变更"（已定口径 3）：不拿它当"无变化"放行
+        if (!template || !sameToolSet(template.toolPermissions, storedScope.toolIds)) {
+          return blocked('RESUME_TOOL_GRANT_CHANGED')
+        }
+      }
+      if (run.toolPermissionsSig && run.toolPermissionsSig !== toolPermissionsSignature(storedScope.toolIds)) {
+        return blocked('RESUME_TOOL_PERMISSIONS_CHANGED')
+      }
+    } else if (run.toolPermissionsSig && run.toolPermissionsSig !== toolPermissionsSignature(permissions)) {
       return blocked('RESUME_TOOL_PERMISSIONS_CHANGED')
     }
     if (!parseModelLabel(conv.modelLabel)) return blocked('RESUME_TARGET_MISSING')
@@ -725,7 +780,8 @@ class ChatService {
       },
       run,
       anchor,
-      startStep
+      startStep,
+      toolScope: storedScope
     }
   }
 

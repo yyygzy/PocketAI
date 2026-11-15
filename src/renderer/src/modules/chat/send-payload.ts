@@ -1,4 +1,4 @@
-import type { ChatAttachment, ChatTarget, SendMessagePayload } from '../../../../shared/types'
+import type { ChatAttachment, ChatTarget, RunToolGrant, SendMessagePayload } from '../../../../shared/types'
 
 /**
  * 组装 chat:send 载荷（P0-4 v1）。
@@ -16,6 +16,8 @@ export function buildChatSendPayload(args: {
   attachments?: ChatAttachment[]
   replyToId?: string | null
   kbRefs?: string[]
+  /** P1-5：本轮工具授权（来自模板确认页；仅在开关打开且存在有效勾选时提供） */
+  toolGrant?: RunToolGrant
 }): SendMessagePayload {
   return {
     requestId: args.requestId,
@@ -26,6 +28,7 @@ export function buildChatSendPayload(args: {
     ...(args.agentMode ? { agentMode: true } : {}),
     attachments: args.attachments,
     replyToId: args.replyToId ?? null,
-    kbRefs: args.kbRefs
+    kbRefs: args.kbRefs,
+    ...(args.toolGrant ? { toolGrant: args.toolGrant } : {})
   }
 }

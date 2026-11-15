@@ -7,7 +7,8 @@ import type {
   ChatTarget,
   ChatAttachment,
   ChatResumeCandidate,
-  ReminderRepeatRule
+  ReminderRepeatRule,
+  RunToolGrant
 } from '../../../../shared/types'
 import { AssistantRail } from './AssistantRail'
 import { AssistantMarket } from './AssistantMarket'
@@ -128,6 +129,12 @@ export const ChatModule: React.FC = () => {
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
   /** 当前会话已加载的草稿文本（切会话同步清空，异步加载后回填） */
   const [activeDraft, setActiveDraft] = useState('')
+  /**
+   * P1-5：套用模板时带过来的**本轮**工具授权草稿。
+   * 只跟随紧随其后的那一次 Agent 发送；换会话/清空输入/开非 Agent 发送都会丢弃。
+   * 这里存的只是用户勾选意图，run 启动前主进程还会按助手基线逐条复核（不可信输入）。
+   */
+  const [runbookGrant, setRunbookGrant] = useState<RunToolGrant | null>(null)
   /** 草稿那一读失败的原因（§264 第五面）：读不到时输入框是空的，但那不是"这条没存过草稿" */
   const [draftUnread, setDraftUnread] = useState<{ error?: string } | null>(null)
 
@@ -675,6 +682,8 @@ export const ChatModule: React.FC = () => {
   const handleDraftChange = useCallback((text: string) => {
     const id = currentConvRef.current
     draftTextRef.current = text
+    // P1-5：草稿被清空＝这一轮不发了，模板带来的勾选一并作废（避免下次随手输入误用）
+    if (!text.trim()) setRunbookGrant(null)
     if (!id) return
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current)
@@ -700,10 +709,14 @@ export const ChatModule: React.FC = () => {
     saveDraft(convId, text)
   }, [saveDraft])
 
-  /** P1-5：套用流程模板——只把提示词摘要填进输入框，不自动发送、不重放工具序列 */
-  const handleApplyRunbook = useCallback((text: string): void => {
+  /**
+   * P1-5：套用流程模板——把提示词摘要填进输入框，并记住本轮勾选的工具授权。
+   * 开关关闭时面板不会带 grant（传 undefined），这里同步清掉旧值，行为与旧版一致。
+   */
+  const handleApplyRunbook = useCallback((text: string, grant?: RunToolGrant): void => {
     setActiveDraft(text)
     handleDraftChange(text)
+    setRunbookGrant(grant ?? null)
   }, [handleDraftChange])
 
   /** P1-5：把一轮成功结束的 run 存成流程模板（名字沿用当前会话标题） */
@@ -746,6 +759,8 @@ export const ChatModule: React.FC = () => {
   }, [currentConvRef])
 
   useEffect(() => {
+    // P1-5：授权草稿只属于"套用那一刻的那个会话"，换会话即失效
+    setRunbookGrant(null)
     if (!currentConvId) {
       setActiveDraft('')
       draftTextRef.current = ''
@@ -1422,6 +1437,8 @@ export const ChatModule: React.FC = () => {
   const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => {
     if (isStreaming()) return
     const useAgent = agentMode
+    // P1-5：模板带来的勾选只对这一次 Agent 发送生效（渲染端只是转述用户意图，主进程会复核）
+    const toolGrant = useAgent ? runbookGrant ?? undefined : undefined
     const validTargets = targets.filter((t) => t.providerId && t.model)
     if (validTargets.length === 0) return
 
@@ -1491,12 +1508,15 @@ export const ChatModule: React.FC = () => {
         agentMode: useAgent,
         attachments,
         replyToId,
-        kbRefs
+        kbRefs,
+        toolGrant
       }))
       .then((r) => {
         if (hasIpcFailed(r)) onChatSendFailed(requestId, convId, r)
       })
       .catch((e) => onChatSendFailed(requestId, convId, errText(e)))
+    // 一次发送即消费掉这份授权草稿：下一轮不再自动继承模板勾选
+    setRunbookGrant(null)
     setReplyToMessage(null)
   }
   // 队列的自动发送与排队条「发送」都走这里：始终指向当前渲染的 handleSend（含最新 agentMode/targets）

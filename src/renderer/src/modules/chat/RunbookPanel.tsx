@@ -10,15 +10,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RunbookRecord, RunbookRef, RunbookToolStatus } from '../../../../shared/runbook'
 import { evaluateRunbookStart } from '../../../../shared/runbook'
-import type { ToolPolicySnapshot } from '../../../../shared/types'
+import type { RunToolGrant, ToolPolicySnapshot } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
 
 interface Props {
-  /** 套用模板：把提示词摘要交给输入框（由 ChatModule 落进草稿） */
-  onApply: (text: string) => void
+  /**
+   * 套用模板：把提示词摘要交给输入框（由 ChatModule 落进草稿）。
+   * 开关打开时一并交出**本轮**工具授权（只含本机可用、已勾选的工具）；
+   * 后端会再逐条复核，这里交出去的只是用户的意图，不是授权凭据。
+   */
+  onApply: (text: string, grant?: RunToolGrant) => void
   /** 当前这一轮归属的助手；授权面按它解析（与 run 启动同一口径） */
   assistantId?: string
 }
@@ -215,7 +219,17 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
         if (fresh.unconfirmed) toast.error(t('runbook.toolsRequired'))
         return
       }
-      onApply(selected.promptSummary)
+      // P1-5：开关打开时把"本机可用且已勾选"的工具作为本轮授权交给 run。
+      // 用 `fresh.tools` 的 resolvedId（注册表 id），不用模板里存的原始串——名称回填过的工具也能对上；
+      // 本机缺失的不进 grant（套用不被阻塞），全都缺失时索性不带 grant，这一轮按助手基线跑。
+      const grantIds = Array.from(
+        new Set(fresh.tools.filter((tool) => tool.available && tool.confirmed).map((tool) => tool.toolId))
+      )
+      const grant: RunToolGrant | undefined =
+        freshPolicy.perRunGrantEnabled && grantIds.length > 0
+          ? { runbookId: selected.id, toolIds: grantIds }
+          : undefined
+      onApply(selected.promptSummary, grant)
       toast.success(t('runbook.applied'))
       setOpen(false)
     } catch (e) {
@@ -591,6 +605,12 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
                     {t('runbook.rename')}
                   </button>
                 </div>
+              )}
+
+              {policy?.perRunGrantEnabled && (
+                <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="runbook-grant-hint">
+                  {t('runbook.grantHint')}
+                </p>
               )}
 
               <div className="flex items-center gap-2 pt-1">

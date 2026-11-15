@@ -49,6 +49,8 @@ export interface RuntimeCheckpoint {
   /** v73：第一个检查点顺带落起点快照（之后传空） */
   workspaceDir?: string | null
   toolPermissionsSig?: string | null
+  /** v75：本轮有效工具集快照（第一个检查点写入；之后传空，COALESCE 不覆盖） */
+  toolScopeJson?: string | null
 }
 
 /** 由 index.ts 注入的落地面（conversation-run.repo 结构上满足它） */

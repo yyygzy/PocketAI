@@ -53,6 +53,7 @@ import {
   skipToolProbe
 } from '../../agent/tool-capability'
 import { idSchema } from '../../../shared/schemas/providers'
+import { isPerRunToolGrantEnabled } from '../../agent/run-tool-scope'
 
 const log = createLogger('agent')
 
@@ -66,18 +67,22 @@ export function registerAgentHandlers(): void {
     IPC.TOOL_POLICY_SNAPSHOT,
     (_e, assistantId?: string) => {
       const record = assistantId ? assistantRepo.get(assistantId) : null
-      if (!record) return toolRegistry.policySnapshot()
+      const enabled = isPerRunToolGrantEnabled()
+      if (!record) return { ...toolRegistry.policySnapshot(), perRunGrantEnabled: enabled }
       const permissions = resolveAgentToolPermissions(record.toolPermissions, {
         hasAssistant: true,
         isBuiltin: record.isBuiltin
       })
-      return toolRegistry.policySnapshot({
-        id: record.id,
-        name: record.name,
-        isBuiltin: record.isBuiltin,
-        permissions,
-        emptyPermissions: permissions.length === 0
-      })
+      return {
+        ...toolRegistry.policySnapshot({
+          id: record.id,
+          name: record.name,
+          isBuiltin: record.isBuiltin,
+          permissions,
+          emptyPermissions: permissions.length === 0
+        }),
+        perRunGrantEnabled: enabled
+      }
     },
     argsSchema(idSchema.optional())
   )

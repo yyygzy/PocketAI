@@ -956,6 +956,11 @@ export interface ToolPolicySnapshot {
   assistant?: ToolPolicyAssistantView
   /** 未启动的 MCP Server 数：它们的工具不在任何一列，屏上单独说明 */
   mcpStoppedServers: number
+  /**
+   * P1-5：per-run 授权通道开关（`agent.perRunToolGrant`）。
+   * 关闭时渲染端不发本轮授权、引擎也不认；打开后确认页勾选的工具才是这一轮的工具面。
+   */
+  perRunGrantEnabled?: boolean
 }
 
 export interface ToolCall {
@@ -1752,6 +1757,30 @@ export interface SendMessagePayload {
   replyToId?: string | null
   /** @ 引用的知识库 id 列表（从 attachments 中提取，仅发送时有效） */
   kbRefs?: string[]
+  /**
+   * P1-5：流程模板确认的**本轮**工具授权（渲染端提供，后端必须复核）。
+   * 只会在 agentMode + `agent.perRunToolGrant` 打开时生效；关闭时后端忽略这个字段。
+   */
+  toolGrant?: RunToolGrant
+}
+
+/** P1-5：一次 run 的授权草稿（来自模板确认页的勾选） */
+export interface RunToolGrant {
+  /** 来源模板；续跑时用它与模板当前勾选比对 */
+  runbookId: string
+  /** 本轮勾选确认的工具 id（可能含缺工具；后端逐条复核，越权直接拒绝启动） */
+  toolIds: string[]
+}
+
+/**
+ * v75：run 起点的有效工具集快照，写 `conversation_runs.tool_scope_json`。
+ * `mode='assistant'` 表示这一轮没有 per-run 收窄（E = 助手基线），与旧 run 同一口径。
+ */
+export interface RunToolScope {
+  v: 1
+  mode: 'assistant' | 'runbook'
+  runbookId?: string
+  toolIds: string[]
 }
 
 /** 聊天附件（图片或文档） */
@@ -1794,6 +1823,12 @@ export type ChatResumeBlockCode =
   | 'RESUME_TOOLS_EXECUTED'
   | 'RESUME_WORKSPACE_CHANGED'
   | 'RESUME_TOOL_PERMISSIONS_CHANGED'
+  /** P1-5：模板勾选在中断后被改/模板被删 ⇒ 要求重开一轮 */
+  | 'RESUME_TOOL_GRANT_CHANGED'
+  /** P1-5：助手把 run 已确认的工具收回了 */
+  | 'RESUME_TOOL_PERMISSIONS_REVOKED'
+  /** P1-5：已确认的工具现在不在注册表（工具被删/MCP 未启动） */
+  | 'RESUME_TOOL_UNAVAILABLE'
   | 'RESUME_TARGET_MISSING'
 
 /**

@@ -26,7 +26,8 @@ import type {
   WorkspaceChangeSet,
   UsagePricing,
   UsageSideCallKind,
-  UsageStats
+  UsageStats,
+  RunToolScope
 } from '../../shared/types'
 import { providerManager } from '../providers/manager'
 import { slotDecision } from '../providers/local-slot'
@@ -58,6 +59,7 @@ import { injectAttachments, appendTextAttachments, buildImageParts } from '../ch
 import { errMsg, isAbortError } from '../error'
 import { createLogger } from '../logger'
 import { createApproval, toolArgsFingerprint } from './tool-approval'
+import { isPerRunToolGrantEnabled, resolveRunToolScope } from './run-tool-scope'
 import { markRunStarted, markRunFinished, markRunCheckpoint, markRunAnchor } from '../chat/runtime-registry'
 import { recordApprovalDecision } from './approval-audit'
 import { pickSafeParams } from './safe-params'
@@ -1290,6 +1292,12 @@ class AgentEngine {
         startToolStepsDone: number
         workspaceDir: string | null
         toolPermissionsSig: string | null
+        /**
+         * P1-5：旧 run 起点的有效工具集快照（`tool_scope_json` 解析后）。
+         * 有值 ⇒ 这一轮的工具面用快照里的 id，不再按当前助手重算；
+         * 为空 ⇒ 旧 run，续跑继续用当前助手基线（v73 口径）。
+         */
+        toolScope?: RunToolScope | null
       }
     }
   ): Promise<void> {
@@ -1343,10 +1351,27 @@ class AgentEngine {
       skillIds = assistant?.skillIds ?? []
       defaultParams = assistant?.defaultParams ?? null
       // 工具授权（含 SEC-3 的空数组语义收口）
-      const toolPermissions = resolveAgentToolPermissions(assistant?.toolPermissions, {
+      const baseToolPermissions = resolveAgentToolPermissions(assistant?.toolPermissions, {
         hasAssistant: !!assistantId,
         isBuiltin: assistant?.isBuiltin ?? false
       })
+      /**
+       * P1-5：本轮有效工具集 E。
+       * · 续跑有 scope：用 run 起点落库的那份（准入已复核），不按当前助手重算；
+       * · 新 run 且开关打开、带了 grant：E = 用户勾选集（这里逐条复核越权/不可用）；
+       * · 其余（含开关关闭）：E = 助手基线，与 v73/v74 完全一致，scope 不写。
+       */
+      let runToolScope: RunToolScope | null = resume?.toolScope ?? null
+      let toolPermissions = baseToolPermissions
+      if (runToolScope) {
+        toolPermissions = runToolScope.toolIds
+      } else if (!resume && isPerRunToolGrantEnabled() && payload.toolGrant) {
+        const resolvedScope = resolveRunToolScope(baseToolPermissions, payload.toolGrant)
+        runToolScope = resolvedScope.scope
+        toolPermissions = resolvedScope.effective
+      }
+      /** v75：scope 与 sig 同一句写库；无 scope 时传 null，COALESCE 不覆盖旧值 */
+      const runToolScopeJson = runToolScope ? JSON.stringify(runToolScope) : null
       /** v73：起点授权快照（续跑准入与它比对；只算一次，随后每个检查点原样带上） */
       const runToolPermissionsSig = toolPermissionsSignature(toolPermissions)
       // Agent 模式必须有系统提示词引导任务拆解与工具调用；助手未配置时用默认模板
@@ -1693,7 +1718,8 @@ class AgentEngine {
           stepsDone,
           toolStepsDone: ctx.toolStepsDone,
           workspaceDir: runWorkspaceDir,
-          toolPermissionsSig: runToolPermissionsSig
+          toolPermissionsSig: runToolPermissionsSig,
+          toolScopeJson: runToolScopeJson
         })
       }
 

@@ -71,7 +71,14 @@ export const sendMessagePayloadSchema = z.object({
   agentMode: z.boolean().optional(),
   attachments: attachmentsField.optional(),
   unattended: z.boolean().optional(),
-  kbRefs: z.array(z.string().max(CHAT_MAX_ID_CHARS)).max(10).optional()
+  kbRefs: z.array(z.string().max(CHAT_MAX_ID_CHARS)).max(10).optional(),
+  // P1-5：渲染端传来的本轮授权，只当"用户意图"看；是否生效由主进程按开关与助手基线复核
+  toolGrant: z
+    .object({
+      runbookId: chatId,
+      toolIds: z.array(z.string().min(1).max(CHAT_MAX_ID_CHARS)).max(200)
+    })
+    .optional()
 })
 
 /** CHAT_REGENERATE 入参 */

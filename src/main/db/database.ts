@@ -1392,6 +1392,17 @@ const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_agent_runbooks_updated ON agent_runbooks(updated_at DESC);
     `
+  },
+  {
+    // v75：per-run 工具授权（P1-5 第三刀）。
+    // 只加一列、不回填：老 run 为 NULL ⇒ 续跑继续走 v73 的「当前助手签名」口径，历史不被误判。
+    // 新 run 在第一个检查点与 sig 同一句写入：mode/toolIds/来源模板 id 都在这列里，
+    // 续跑才能区分「助手收回了权限」「用户改了模板勾选」「工具已不存在」三种拦截原因。
+    version: 75,
+    name: 'conversation_runs_tool_scope',
+    up: `
+      ALTER TABLE conversation_runs ADD COLUMN tool_scope_json TEXT;
+    `
   }
 ]
 

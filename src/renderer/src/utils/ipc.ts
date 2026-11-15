@@ -70,7 +70,14 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   RESUME_TOOLS_EXECUTED: 'chat.resume.toolsExecuted',
   RESUME_WORKSPACE_CHANGED: 'chat.resume.workspaceChanged',
   RESUME_TOOL_PERMISSIONS_CHANGED: 'chat.resume.permissionsChanged',
-  RESUME_TARGET_MISSING: 'chat.resume.targetMissing'
+  // P1-5：按落库的 per-run 工具范围分档（模板勾选变了/被删、助手收回、工具不可用）
+  RESUME_TOOL_GRANT_CHANGED: 'chat.resume.grantChanged',
+  RESUME_TOOL_PERMISSIONS_REVOKED: 'chat.resume.permissionsRevoked',
+  RESUME_TOOL_UNAVAILABLE: 'chat.resume.toolUnavailable',
+  RESUME_TARGET_MISSING: 'chat.resume.targetMissing',
+  // P1-5：渲染端传来的本轮授权在**启动前**被复核拒绝（越权/不可用）
+  RUN_TOOL_NOT_GRANTED: 'chat.errToolNotGranted',
+  RUN_TOOL_UNAVAILABLE: 'chat.errToolUnavailable'
 }
 
 /**
