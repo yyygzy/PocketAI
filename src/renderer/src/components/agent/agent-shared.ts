@@ -14,6 +14,11 @@ export interface AgentMessage {
   stepIndex?: number
   isFinal?: boolean
   isError?: boolean
+  /**
+   * 本条失败占位已被后续重试取代（P1-3c 收尾）：同一锚点下后面还有 assistant 记录。
+   * 只在渲染层折叠置灰并标「已重试」；库里的行、发给模型的历史、步数计算都不受影响。
+   */
+  supersededByRetry?: boolean
   attachments?: ChatAttachment[]
   /** 知识库引用来源（RAG 检索命中的 chunk） */
   sources?: MessageSource[]
@@ -205,16 +210,31 @@ export function shouldShowZeroToolCallNotice(
 /** DB MessageRecord[] → Agent 对话视图的 AgentMessage[]（tool 消息拆 call/result 两张卡） */
 export function toAgentMessages(dbMsgs: MessageRecord[]): AgentMessage[] {
   const out: AgentMessage[] = []
-  for (const m of dbMsgs) {
+  // 「这条失败占位已被重试取代」的判据（P1-3c 收尾）：同一锚点（parentId）下，它后面还有 assistant 记录。
+  // 为什么后续只要有 assistant 就算被取代：LLM 步失败会 throw 终止整轮 run，同一次 run 不会再写 assistant；
+  // 同一锚点下后出现的 assistant 只能来自新一次 run（按步重试）。不按文案猜，也不看「成功/失败」——
+  // 重试又失败时，前一条仍标「已重试」，最后一条没有后续记录，保持原样展示。
+  const lastAssistantIdxByParent = new Map<string, number>()
+  dbMsgs.forEach((m, i) => {
+    if (m.role === 'assistant' && m.parentId) lastAssistantIdxByParent.set(m.parentId, i)
+  })
+  for (let i = 0; i < dbMsgs.length; i++) {
+    const m = dbMsgs[i]!
     if (m.role === 'user') {
       out.push({ id: m.id, role: 'user', text: m.content, attachments: m.attachments, dbId: m.id })
     } else if (m.role === 'assistant') {
-      // 历史加载：streaming 残留（中断/出错未清理）视为终止，避免永远显示「思考中…」
+      // 历史加载：streaming 残留（中断/出错未清理）视为终止，避免永远显示「思考中…」；
+      // status='error' 的占位要如实带上 isError（live 卡片一直有，历史卡片此前漏了这一格）。
+      const isError = m.status === 'error'
+      const supersededByRetry =
+        isError && !!m.parentId && (lastAssistantIdxByParent.get(m.parentId) ?? -1) > i
       out.push({
         id: m.id,
         role: 'assistant',
         text: m.content || (m.status === 'streaming' ? '（中断）' : ''),
         isFinal: true,
+        isError,
+        supersededByRetry,
         sources: m.sources ?? undefined,
         retrieval: m.retrieval ?? undefined,
         dbId: m.id

@@ -171,6 +171,8 @@ const AgentMessageCardImpl: React.FC<{
   const { t } = useI18n()
   const [showReasoning, setShowReasoning] = useState(false)
   const [showSources, setShowSources] = useState(false)
+  // 已被重试取代的失败占位：默认折叠，只留「已重试」一行；展开才看原始失败文本
+  const [showSuperseded, setShowSuperseded] = useState(false)
   // 用户卡编辑态提升到本层：右键菜单「编辑」可直接进入编辑
   const [editing, setEditing] = useState(false)
   // 右键菜单：点项即执行，点击外部/Esc 关闭（与 Chat MessageBubble 同模式）
@@ -362,6 +364,36 @@ const AgentMessageCardImpl: React.FC<{
             </li>
           ))}
         </ul>
+      </div>
+    )
+  }
+
+  // 已被后续重试取代的失败占位（P1-3c 收尾）：折叠置灰 + 「已重试」，让当前有效回答一眼可见。
+  // 只改展示：库里的行、发给模型的历史、步数计算都不受影响；最后一条失败没有后续记录，不走这里。
+  if (m.role === 'assistant' && m.supersededByRetry) {
+    return (
+      <div
+        className="px-3 py-2 rounded-lg text-sm border border-[var(--color-border)] bg-[var(--color-input-bg)] opacity-70"
+        data-superseded-retry="1"
+        onContextMenu={handleCtx}
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-hover-overlay)] text-[var(--color-text-muted)]">
+            {t('agent.supersededRetry')}
+          </span>
+          <span className="text-[11px] text-[var(--color-text-muted)]">{t('agent.supersededRetryHint')}</span>
+          <button
+            onClick={() => setShowSuperseded((v) => !v)}
+            aria-expanded={showSuperseded}
+            className="ml-auto text-[10px] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"
+          >
+            {showSuperseded ? t('agent.supersededRetryHide') : t('agent.supersededRetryShow')}
+          </button>
+        </div>
+        {showSuperseded && (
+          <div className="mt-1 whitespace-pre-wrap text-[var(--color-text-muted)]">{m.text}</div>
+        )}
+        {ctxMenuNode}
       </div>
     )
   }
