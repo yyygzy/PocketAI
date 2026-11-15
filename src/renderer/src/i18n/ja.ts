@@ -2778,7 +2778,7 @@ export const ja = {
   // ── フローテンプレート（P1-5）──
   'runbook.entry': 'フローテンプレート',
   'runbook.title': 'フローテンプレート',
-  'runbook.hint': '適用するとプロンプト要約を入力欄に入れるだけで、ツール列は自動実行されません。送信前にツール権限を確認してください。',
+  'runbook.hint': 'フローテンプレートは 1 回の実行で使ったツールと流れだけを表すもので、「アシスタントを JSON へエクスポート」（システムプロンプト・モデル・紐付けを含む）とは別物です。適用するとプロンプト要約を入力欄に入れるだけで、送信前にツール権限を 1 項ずつ確認してください。',
   'runbook.empty': 'テンプレートはまだありません。正常に終了した実行サマリーで「テンプレートとして保存」を押してください。',
   'runbook.stepsTitle': 'ツール列（{n} ステップ）',
   'runbook.promptTitle': 'プロンプト要約',
@@ -2807,5 +2807,21 @@ export const ja = {
   'runbook.kind.knowledge_base': 'ナレッジベース',
   'runbook.kind.mcp': 'MCP',
   'runbook.kind.path': 'パス',
-  'runbook.stepsCount': '{n} ステップ'
+  'runbook.stepsCount': '{n} ステップ',
+  'runbook.needsConfirm': '権限の確認待ち',
+  'runbook.blockedHint': '未確認の項目があるため、今は適用できません（下の一覧を参照）。',
+  'runbook.importGuideTitle': '{n} 件のテンプレートを取り込みました。1 件ずつツール権限を確認してください。',
+  'runbook.importGuideHint': 'テンプレートはツール権限を持ちません。今回呼び出してよいツールにチェックすると適用できます。このマシンに無いツールは「欠落」と表示されます。',
+  'runbook.importGuidePending': '権限の確認待ちのテンプレートが {n} 件あります',
+  'runbook.toolsUsedHint': '一覧はテンプレートの実行で実際に使ったツールだけです。このマシンに無いものは欠落、現在のアシスタントが許可していないものも表示されます。',
+  'runbook.toolMissing': 'このマシンに無し',
+  'runbook.toolNotGranted': '現在のアシスタント未許可',
+  'runbook.missingToolsTitle': 'このマシンに無いツール（{n}）：今回の実行では使えません',
+  'runbook.unauthorizedTitle': '現在のアシスタントが許可していないツール（{n}）',
+  'runbook.unauthorizedHint': '適用後の実行は現在のアシスタントの権限で始まります（run 開始と同じ判定）。先にアシスタント設定で許可するか、これらのツールのチェックを外してください。',
+  'runbook.rename': '名前を変更',
+  'runbook.renamePlaceholder': 'テンプレート名',
+  'runbook.renamed': '名前を変更しました',
+  'runbook.nameEmpty': 'テンプレート名は空にできません',
+  'runbook.nameDuplicate': '同名のテンプレート「{name}」が既にあります。この名前のままにしますか？'
 } satisfies Record<string, string>

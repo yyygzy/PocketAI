@@ -2867,7 +2867,7 @@ export const zh = {
   // ── 流程模板（P1-5）──
   'runbook.entry': '流程模板',
   'runbook.title': '流程模板',
-  'runbook.hint': '套用只把提示词摘要填进输入框，不会自动执行工具序列；发送前请确认工具授权。',
+  'runbook.hint': '流程模板只描述一轮运行用过的工具与流程，不是「导出助手配置为 JSON」（那里才是系统提示词、模型与绑定）。套用只把提示词摘要填进输入框；发送前请逐项确认工具授权。',
   'runbook.empty': '还没有模板。在成功结束的一轮运行摘要里点「存为模板」。',
   'runbook.stepsTitle': '工具序列（{n} 步）',
   'runbook.promptTitle': '提示词摘要',
@@ -2896,5 +2896,21 @@ export const zh = {
   'runbook.kind.knowledge_base': '知识库',
   'runbook.kind.mcp': 'MCP',
   'runbook.kind.path': '路径',
-  'runbook.stepsCount': '{n} 步'
+  'runbook.stepsCount': '{n} 步',
+  'runbook.needsConfirm': '待确认授权',
+  'runbook.blockedHint': '还有未确认的事项，暂时不能套用（见下方清单）。',
+  'runbook.importGuideTitle': '已导入 {n} 条模板，请逐条确认工具授权',
+  'runbook.importGuideHint': '模板不携带工具授权。勾选本次允许调用的工具后才能套用；本机没有的工具会标成缺失。',
+  'runbook.importGuidePending': '还有 {n} 条模板待确认授权',
+  'runbook.toolsUsedHint': '列表只含模板那次运行实际用过的工具；本机没有的标为缺失，当前助手未授权的也会标出来。',
+  'runbook.toolMissing': '本机缺失',
+  'runbook.toolNotGranted': '当前助手未授权',
+  'runbook.missingToolsTitle': '本机没有这些工具（{n}）：这一轮不会获得它们',
+  'runbook.unauthorizedTitle': '当前助手未授权这些工具（{n}）',
+  'runbook.unauthorizedHint': '套用后这一轮按当前助手的授权启动（与 run 启动同一口径）。请先在助手配置里授权，或取消勾选这些工具。',
+  'runbook.rename': '重命名',
+  'runbook.renamePlaceholder': '模板名称',
+  'runbook.renamed': '已重命名',
+  'runbook.nameEmpty': '模板名称不能为空',
+  'runbook.nameDuplicate': '已有同名模板「{name}」，仍要使用这个名字吗？'
 } satisfies Record<string, string>

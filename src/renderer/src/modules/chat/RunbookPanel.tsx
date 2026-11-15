@@ -1,13 +1,16 @@
-// P1-5 第一刀：流程模板面板（顶栏入口 + 下拉）。
+// P1-5 第二刀：流程模板面板（顶栏入口 + 下拉）。
 //
 // 边界（诚实写在界面上）：
 //  · 模板只保存"这一轮跑了什么"的形状；套用只把**提示词摘要**填进输入框，
 //    工具序列是给人看的参考，不会自动重放（引擎侧不认模板）；
-//  · 套用前先过一道闸门：缺引用 / 工具授权为空都拦下并把原因列出来，不静默失败；
-//  · 工具授权只在本机生效：导入的模板恒为空，必须在这里逐条重勾。
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { RunbookRecord, RunbookRef } from '../../../../shared/runbook'
-import { evaluateRunbookApply, uniqueRunbookTools } from '../../../../shared/runbook'
+//  · 套用前先过一道闸门：缺引用 / 一条授权都没确认 / 确认的工具这一轮拿不到授权，都拦下并把原因列出来；
+//  · 工具授权只在本机生效：导入的模板恒为空，必须在这里逐条重勾——所以导入后直接把用户带到确认清单；
+//  · 授权口径不另写一套：这一轮能不能用某个工具，读的是 TOOL_POLICY_SNAPSHOT（与 run 启动同一个解析），
+//    面板只负责把"模板用过 / 本机缺失 / 助手未授权"翻成可读的三档。
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RunbookRecord, RunbookRef, RunbookToolStatus } from '../../../../shared/runbook'
+import { evaluateRunbookStart } from '../../../../shared/runbook'
+import type { ToolPolicySnapshot } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
@@ -16,9 +19,29 @@ import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
 interface Props {
   /** 套用模板：把提示词摘要交给输入框（由 ChatModule 落进草稿） */
   onApply: (text: string) => void
+  /** 当前这一轮归属的助手；授权面按它解析（与 run 启动同一口径） */
+  assistantId?: string
 }
 
-export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
+/** 本机注册表里的工具（内置 + 已启动 MCP）：只读快照，不在渲染端复制判定规则 */
+function knownToolsOf(policy: ToolPolicySnapshot): Array<{ id: string; name: string }> {
+  return (policy.assistant?.tools ?? policy.tools).map((t) => ({ id: t.id, name: t.name }))
+}
+
+/**
+ * 当前这一轮的授权面。
+ * · 有助手视角时直接用注册表判好的 `granted`（`'*'` 只覆盖内置、MCP 必须逐条，规则不在这里重写）；
+ * · 自由会话（没有助手 id）时 run 侧按 `['*']` 解析 ⇒ 内置可用即授权，MCP 仍需逐条，所以只收 builtin/available。
+ */
+function grantedIdsOf(policy: ToolPolicySnapshot): Set<string> {
+  const view = policy.assistant?.tools
+  if (view) return new Set(view.filter((t) => t.granted === true).map((t) => t.id))
+  return new Set(
+    policy.tools.filter((t) => t.source === 'builtin' && t.state === 'available').map((t) => t.id)
+  )
+}
+
+export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
   const { t } = useI18n()
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
@@ -27,6 +50,12 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [missing, setMissing] = useState<RunbookRef[] | null>(null)
   const [unread, setUnread] = useState<string | null>(null)
+  const [policy, setPolicy] = useState<ToolPolicySnapshot | null>(null)
+  const [policyUnread, setPolicyUnread] = useState<string | null>(null)
+  /** 刚导入的一批：导入后停在第一条，并把"要逐条重勾"的引导顶在详情上方 */
+  const [importedBatch, setImportedBatch] = useState<{ count: number; ids: string[] } | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -47,10 +76,47 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
     }
   }, [t])
 
+  /** 读当前这一轮的授权面（失败时保留上一次成功值，但套用时必须重读成功才放行） */
+  const loadPolicy = useCallback(async (): Promise<ToolPolicySnapshot | null> => {
+    try {
+      const p = await window.pocketai.getToolPolicy(assistantId)
+      if (hasIpcFailed(p)) {
+        setPolicyUnread(ipcFailText(p, t('runbook.readFailed')))
+        return null
+      }
+      setPolicyUnread(null)
+      setPolicy(p)
+      return p
+    } catch (e) {
+      setPolicyUnread(e instanceof Error ? e.message : t('runbook.readFailed'))
+      return null
+    }
+  }, [assistantId, t])
+
   useEffect(() => {
     if (!open) return
     void reload()
-  }, [open, reload])
+    void loadPolicy()
+  }, [open, reload, loadPolicy])
+
+  // 选中即查一次引用：跨机失效的清单要在"点套用之前"就看得见，不能等失败才说
+  useEffect(() => {
+    setMissing(null)
+    if (!open || !selectedId) return
+    let cancelled = false
+    window.pocketai
+      .checkRunbook(selectedId)
+      .then((r) => {
+        if (cancelled || hasIpcFailed(r)) return
+        setMissing(r.missingRefs)
+      })
+      .catch(() => {
+        /* 读不到就按"未校验"处理：套用那一刻还会再查一次，失败会明确报错 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, selectedId])
 
   // 点外部 / Esc 收起（与顶栏其他下拉同一套手感）
   useEffect(() => {
@@ -88,6 +154,19 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
 
   const selected = list?.find((r) => r.id === selectedId) ?? null
 
+  /** 闸门随选中项/授权面/缺失清单同步重算：界面上的"为什么不能套用"与套用那一刻同源 */
+  const gate = useMemo(() => {
+    if (!selected || !policy) return null
+    return evaluateRunbookStart(selected, {
+      missingRefs: missing ?? [],
+      known: knownToolsOf(policy),
+      grantedIds: grantedIdsOf(policy)
+    })
+  }, [selected, policy, missing])
+
+  const pendingCount =
+    list?.filter((r) => r.steps.length > 0 && r.toolPermissions.length === 0).length ?? 0
+
   const applyPatch = useCallback(
     async (id: string, toolPermissions: string[]): Promise<void> => {
       // 先落库再更新本地：失败时不能留下"界面已勾、库里没勾"的假象
@@ -101,12 +180,12 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
     [t, toast]
   )
 
-  const handleToggleTool = (toolId: string): void => {
-    if (!selected) return
-    const has = selected.toolPermissions.includes(toolId)
+  const handleToggleTool = (tool: RunbookToolStatus): void => {
+    if (!selected || !tool.available) return
+    const has = selected.toolPermissions.includes(tool.toolId)
     const next = has
-      ? selected.toolPermissions.filter((x) => x !== toolId)
-      : [...selected.toolPermissions, toolId]
+      ? selected.toolPermissions.filter((x) => x !== tool.toolId)
+      : [...selected.toolPermissions, tool.toolId]
     void applyPatch(selected.id, next)
   }
 
@@ -114,16 +193,26 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
     if (!selected || busy) return
     setBusy(true)
     try {
+      // 授权面在套用那一刻重读一次：面板打开后助手配置可能已经改过
+      const freshPolicy = await loadPolicy()
+      if (!freshPolicy) {
+        toast.error(policyUnread ?? t('runbook.readFailed'))
+        return
+      }
       const checked = await window.pocketai.checkRunbook(selected.id)
       if (hasIpcFailed(checked)) {
         toast.error(ipcFailText(checked, t('runbook.readFailed')))
         return
       }
-      const gate = evaluateRunbookApply(selected, checked.missingRefs)
-      setMissing(gate.missingRefs)
-      if (gate.blocked) {
-        // 缺引用列在面板里；授权为空只给一句"先勾选"（勾选项就在下方）
-        if (gate.toolPermissionsEmpty) toast.error(t('runbook.toolsRequired'))
+      setMissing(checked.missingRefs)
+      const fresh = evaluateRunbookStart(selected, {
+        missingRefs: checked.missingRefs,
+        known: knownToolsOf(freshPolicy),
+        grantedIds: grantedIdsOf(freshPolicy)
+      })
+      if (fresh.blocked) {
+        // 缺引用 / 未授权都已在详情里逐条列出；"一条都没勾"只给一句提示（勾选项就在上方）
+        if (fresh.unconfirmed) toast.error(t('runbook.toolsRequired'))
         return
       }
       onApply(selected.promptSummary)
@@ -149,6 +238,11 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
       const skipped = r.skipped > 0 ? t('runbook.importSkipped', { n: r.skipped }) : ''
       toast.success(t('runbook.imported', { n: r.imported }) + skipped)
       await reload()
+      // 导入后直接停在第一条新模板：授权清单就在详情里，不用用户再找
+      if (r.ids[0]) setSelectedId(r.ids[0])
+      setImportedBatch({ count: r.imported, ids: r.ids })
+      setRenaming(false)
+      setMissing(null)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t('runbook.readFailed'))
     } finally {
@@ -186,6 +280,7 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
       }
       toast.success(t('runbook.deleted'))
       setMissing(null)
+      setRenaming(false)
       await reload()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t('runbook.readFailed'))
@@ -194,7 +289,39 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
     }
   }
 
-  const tools = selected ? uniqueRunbookTools(selected.steps) : []
+  const handleRename = async (): Promise<void> => {
+    if (!selected || busy) return
+    const name = renameDraft.trim()
+    if (!name) {
+      toast.error(t('runbook.nameEmpty'))
+      return
+    }
+    if (name === selected.name) {
+      setRenaming(false)
+      return
+    }
+    // 重名不禁止（导入本来就允许同名并列），但要让用户知道会多出一条同名模板
+    if (list?.some((r) => r.id !== selected.id && r.name === name)) {
+      if (!(await confirm({ message: t('runbook.nameDuplicate', { name }) }))) return
+    }
+    setBusy(true)
+    try {
+      const r = await window.pocketai.updateRunbook({ id: selected.id, name })
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('runbook.readFailed')))
+        return
+      }
+      setList((prev) => prev?.map((item) => (item.id === selected.id ? r : item)) ?? prev)
+      setRenaming(false)
+      toast.success(t('runbook.renamed'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('runbook.readFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const tools = gate?.tools ?? []
 
   return (
     <div className="relative" ref={rootRef}>
@@ -238,8 +365,28 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
           <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t('runbook.hint')}</p>
 
           {unread && <p className="mt-2 text-[var(--color-danger)]">{unread}</p>}
+          {policyUnread && (
+            <p className="mt-2 text-[var(--color-danger)]" data-testid="runbook-policy-unread">
+              {policyUnread}
+            </p>
+          )}
           {!unread && list && list.length === 0 && (
             <p className="mt-2 text-[var(--color-text-muted)]">{t('runbook.empty')}</p>
+          )}
+
+          {importedBatch && importedBatch.count > 0 && (
+            <div
+              className="mt-2 rounded border border-[var(--color-warning)] bg-[var(--color-warning-bg)] p-2"
+              data-testid="runbook-import-guide"
+            >
+              <p className="text-[var(--color-text)]">{t('runbook.importGuideTitle', { n: importedBatch.count })}</p>
+              <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t('runbook.importGuideHint')}</p>
+              {pendingCount > 0 && (
+                <p className="mt-1 text-[11px] text-[var(--color-warning)]" data-testid="runbook-import-pending">
+                  {t('runbook.importGuidePending', { n: pendingCount })}
+                </p>
+              )}
+            </div>
           )}
 
           {list && list.length > 0 && (
@@ -251,6 +398,7 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
                   onClick={() => {
                     setSelectedId(item.id)
                     setMissing(null)
+                    setRenaming(false)
                   }}
                   data-testid="runbook-item"
                   className={`px-2 py-0.5 rounded border text-[11px] ${
@@ -260,6 +408,11 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
                   }`}
                 >
                   {item.name} · {t('runbook.stepsCount', { n: item.steps.length })}
+                  {item.steps.length > 0 && item.toolPermissions.length === 0 && (
+                    <span className="ml-1 text-[var(--color-warning)]" data-testid="runbook-item-pending">
+                      · {t('runbook.needsConfirm')}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -267,6 +420,12 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
 
           {selected && (
             <div className="mt-3 space-y-2" data-testid="runbook-detail">
+              {gate?.blocked && (
+                <p className="text-[var(--color-danger)]" data-testid="runbook-blocked">
+                  {t('runbook.blockedHint')}
+                </p>
+              )}
+
               {missing && missing.length > 0 && (
                 <div className="rounded border border-[var(--color-danger)] p-2" data-testid="runbook-missing">
                   <p className="text-[var(--color-danger)]">{t('runbook.missingTitle', { n: missing.length })}</p>
@@ -278,6 +437,40 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
                     ))}
                   </ul>
                   <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t('runbook.missingHint')}</p>
+                </div>
+              )}
+
+              {gate && gate.missingTools.length > 0 && (
+                <div
+                  className="rounded border border-[var(--color-warning)] p-2"
+                  data-testid="runbook-missing-tools"
+                >
+                  <p className="text-[var(--color-warning)]">
+                    {t('runbook.missingToolsTitle', { n: gate.missingTools.length })}
+                  </p>
+                  <ul className="mt-1 list-disc pl-4">
+                    {gate.missingTools.map((tool) => (
+                      <li key={tool.toolId} className="break-words font-mono">
+                        {tool.toolName}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {gate && gate.unauthorizedTools.length > 0 && (
+                <div className="rounded border border-[var(--color-danger)] p-2" data-testid="runbook-unauthorized">
+                  <p className="text-[var(--color-danger)]">
+                    {t('runbook.unauthorizedTitle', { n: gate.unauthorizedTools.length })}
+                  </p>
+                  <ul className="mt-1 list-disc pl-4">
+                    {gate.unauthorizedTools.map((tool) => (
+                      <li key={tool.toolId} className="break-words font-mono">
+                        {tool.toolName}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t('runbook.unauthorizedHint')}</p>
                 </div>
               )}
 
@@ -323,17 +516,30 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
 
               <div>
                 <p className="text-[var(--color-text-muted)]">{t('runbook.toolsTitle')}</p>
+                <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{t('runbook.toolsUsedHint')}</p>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                   {tools.map((tool) => (
                     <label key={tool.toolId} className="flex items-center gap-1">
                       <input
                         type="checkbox"
                         checked={selected.toolPermissions.includes(tool.toolId)}
-                        onChange={() => handleToggleTool(tool.toolId)}
+                        disabled={!tool.available || busy}
+                        onChange={() => handleToggleTool(tool)}
                         data-testid="runbook-tool"
                         data-tool-id={tool.toolId}
+                        data-available={tool.available ? '1' : '0'}
                       />
                       <span className="font-mono">{tool.toolName}</span>
+                      {!tool.available && (
+                        <span className="text-[var(--color-warning)]" data-testid="runbook-tool-missing">
+                          {t('runbook.toolMissing')}
+                        </span>
+                      )}
+                      {tool.available && !tool.granted && (
+                        <span className="text-[var(--color-danger)]" data-testid="runbook-tool-not-granted">
+                          {t('runbook.toolNotGranted')}
+                        </span>
+                      )}
                     </label>
                   ))}
                 </div>
@@ -341,6 +547,51 @@ export const RunbookPanel: React.FC<Props> = ({ onApply }) => {
                   <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t('runbook.toolsHint')}</p>
                 )}
               </div>
+
+              {renaming ? (
+                <div className="flex items-center gap-1" data-testid="runbook-rename-form">
+                  <input
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    maxLength={100}
+                    placeholder={t('runbook.renamePlaceholder')}
+                    data-testid="runbook-rename-input"
+                    className="min-w-0 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-0.5 text-[var(--color-text)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleRename()}
+                    disabled={busy}
+                    data-testid="runbook-rename-save"
+                    className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+                  >
+                    {t('common.save')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRenaming(false)}
+                    disabled={busy}
+                    data-testid="runbook-rename-cancel"
+                    className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenameDraft(selected.name)
+                      setRenaming(true)
+                    }}
+                    data-testid="runbook-rename"
+                    className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)]"
+                  >
+                    {t('runbook.rename')}
+                  </button>
+                </div>
+              )}
 
               <div className="flex items-center gap-2 pt-1">
                 <button

@@ -974,7 +974,7 @@ export const ChatView: React.FC<Props> = ({
             onRetry={onRetrySessionStats}
           />
         )}
-        {onApplyRunbook && <RunbookPanel onApply={onApplyRunbook} />}
+        {onApplyRunbook && <RunbookPanel onApply={onApplyRunbook} assistantId={assistant?.id} />}
         <button
           onClick={openSearch}
           className="ml-auto p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"

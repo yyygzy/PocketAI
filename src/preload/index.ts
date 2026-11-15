@@ -226,7 +226,7 @@ const api = {
   > => ipcRenderer.invoke(IPC.RUNBOOK_EXPORT),
   importRunbooks: (): Promise<
     | { ok: true; canceled: true }
-    | { ok: true; imported: number; skipped: number; droppedTools: number; droppedRefs: number }
+    | { ok: true; imported: number; skipped: number; droppedTools: number; droppedRefs: number; ids: string[] }
     | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.RUNBOOK_IMPORT),
 

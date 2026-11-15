@@ -2778,7 +2778,7 @@ export const ko = {
   // ── 플로우 템플릿(P1-5) ──
   'runbook.entry': '플로우 템플릿',
   'runbook.title': '플로우 템플릿',
-  'runbook.hint': '적용은 프롬프트 요약을 입력창에 넣기만 하며, 도구 순서를 자동 실행하지 않습니다. 보내기 전에 도구 권한을 확인하세요.',
+  'runbook.hint': '플로우 템플릿은 한 번의 실행에서 쓴 도구와 흐름만 담으며, "어시스턴트를 JSON으로 내보내기"(시스템 프롬프트·모델·바인딩 포함)와는 다릅니다. 적용은 프롬프트 요약을 입력창에 넣기만 하며, 보내기 전에 도구 권한을 항목별로 확인하세요.',
   'runbook.empty': '아직 템플릿이 없습니다. 정상 종료된 실행 요약에서 "템플릿으로 저장"을 누르세요.',
   'runbook.stepsTitle': '도구 순서({n}단계)',
   'runbook.promptTitle': '프롬프트 요약',
@@ -2807,5 +2807,21 @@ export const ko = {
   'runbook.kind.knowledge_base': '지식베이스',
   'runbook.kind.mcp': 'MCP',
   'runbook.kind.path': '경로',
-  'runbook.stepsCount': '{n}단계'
+  'runbook.stepsCount': '{n}단계',
+  'runbook.needsConfirm': '권한 확인 대기',
+  'runbook.blockedHint': '확인하지 않은 항목이 있어 지금은 적용할 수 없습니다(아래 목록 참조).',
+  'runbook.importGuideTitle': '템플릿 {n}개를 가져왔습니다. 하나씩 도구 권한을 확인하세요.',
+  'runbook.importGuideHint': '템플릿은 도구 권한을 담지 않습니다. 이번 실행에서 호출해도 되는 도구를 체크해야 적용할 수 있으며, 이 PC에 없는 도구는 누락으로 표시됩니다.',
+  'runbook.importGuidePending': '권한 확인을 기다리는 템플릿이 {n}개 있습니다',
+  'runbook.toolsUsedHint': '목록에는 템플릿 실행에서 실제로 쓴 도구만 있습니다. 이 PC에 없는 것은 누락, 현재 어시스턴트가 허용하지 않은 것도 표시됩니다.',
+  'runbook.toolMissing': '이 PC에 없음',
+  'runbook.toolNotGranted': '현재 어시스턴트 미허용',
+  'runbook.missingToolsTitle': '이 PC에 없는 도구({n}): 이번 실행에서는 쓸 수 없습니다',
+  'runbook.unauthorizedTitle': '현재 어시스턴트가 허용하지 않은 도구({n})',
+  'runbook.unauthorizedHint': '적용 후 이번 실행은 현재 어시스턴트 권한으로 시작합니다(run 시작과 같은 판정). 먼저 어시스턴트 설정에서 허용하거나 이 도구들의 체크를 해제하세요.',
+  'runbook.rename': '이름 변경',
+  'runbook.renamePlaceholder': '템플릿 이름',
+  'runbook.renamed': '이름을 변경했습니다',
+  'runbook.nameEmpty': '템플릿 이름은 비울 수 없습니다',
+  'runbook.nameDuplicate': '같은 이름의 템플릿 "{name}"이(가) 이미 있습니다. 그래도 이 이름을 사용할까요?'
 } satisfies Record<string, string>

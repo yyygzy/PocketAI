@@ -301,26 +301,94 @@ export function missingRunbookRefs(
   return missing
 }
 
-export interface RunbookApplyGate {
+/**
+ * 模板用到的某个工具在「这台机器 + 这一轮」的状态。
+ * 三种状态各有分工，不能相互替代：
+ *  · available=false ⇒ 本机注册表里没有（换了机器、MCP Server 没启动），勾了也跑不到；
+ *  · confirmed      ⇒ 用户已在面板里勾过（模板记录里的 toolPermissions）；
+ *  · granted        ⇒ 当前这一轮的授权面里有它（与 run 启动同一口径解析，见 TOOL_POLICY_SNAPSHOT）。
+ */
+export interface RunbookToolStatus {
+  toolName: string
+  /** 解析后的授权 id（注册表按 name 能对上时用注册表的 id） */
+  toolId: string
+  available: boolean
+  confirmed: boolean
+  granted: boolean
+}
+
+/** 注册表里的一条工具（渲染端从 TOOL_POLICY_SNAPSHOT 取，不复制规则） */
+export interface RunbookKnownTool {
+  id: string
+  name: string
+}
+
+/**
+ * 把模板的工具序列摊成逐项状态（同一工具只留一项）。
+ * 解析顺序与生成时一致：先认模板里的 toolId，再按模型侧工具名回注册表找。
+ */
+export function describeRunbookTools(
+  runbook: Pick<RunbookRecord, 'steps' | 'toolPermissions'>,
+  known: ReadonlyArray<RunbookKnownTool>,
+  grantedIds: ReadonlySet<string>
+): RunbookToolStatus[] {
+  const knownIds = new Set(known.map((k) => k.id))
+  const byName = new Map(known.map((k) => [k.name, k.id]))
+  const confirmed = new Set(runbook.toolPermissions)
+  return uniqueRunbookTools(runbook.steps).map((tool) => {
+    const foundByName = byName.get(tool.toolName)
+    const resolvedId = knownIds.has(tool.toolId) ? tool.toolId : (foundByName ?? tool.toolId)
+    const available = knownIds.has(tool.toolId) || foundByName !== undefined
+    return {
+      toolName: tool.toolName,
+      toolId: resolvedId,
+      available,
+      confirmed: confirmed.has(tool.toolId) || confirmed.has(resolvedId),
+      granted: grantedIds.has(resolvedId)
+    }
+  })
+}
+
+export interface RunbookStartCheckInput {
+  missingRefs: ReadonlyArray<RunbookRef>
+  /** 本机注册表里的工具（内置 + 已启动 MCP） */
+  known: ReadonlyArray<RunbookKnownTool>
+  /** 当前这一轮的授权面；MCP 的 `'*'` 语义已由注册表判好，这里只做集合判定 */
+  grantedIds: ReadonlySet<string>
+}
+
+export interface RunbookStartCheck {
   missingRefs: RunbookRef[]
-  /** 模板有工具序列、但本地一个工具授权都没勾 */
-  toolPermissionsEmpty: boolean
-  /** true ⇒ 不允许套用（渲染端必须把原因列出来，不能静默失败） */
+  tools: RunbookToolStatus[]
+  /** 本机没有的工具：套用后这一轮不会获得它们 */
+  missingTools: RunbookToolStatus[]
+  /** 已勾选、但当前这一轮的授权面里没有的工具 */
+  unauthorizedTools: RunbookToolStatus[]
+  /** 模板有工具步骤，但一条授权都没确认 */
+  unconfirmed: boolean
   blocked: boolean
 }
 
 /**
- * 套用前的唯一闸门：缺引用 / 授权为空都拦下。
- * 授权为空必须拦：模板本来就不带授权，不勾就等于让 Agent 在无授权下跑一条它跑不动的序列。
+ * 启动（套用）前的唯一闸门。
+ * 拦三种情况：缺引用、一条授权都没确认、确认的工具这一轮拿不到授权。
+ * 第三种必须拦：模板的授权只在本机有效，用户勾了但运行侧不认，等于让 Agent
+ * 带着一份「看起来授权了」的清单跑一条它跑不动的序列——与 run 启动口径不一致。
  */
-export function evaluateRunbookApply(
+export function evaluateRunbookStart(
   runbook: Pick<RunbookRecord, 'steps' | 'toolPermissions'>,
-  missingRefs: ReadonlyArray<RunbookRef>
-): RunbookApplyGate {
-  const toolPermissionsEmpty = runbook.steps.length > 0 && runbook.toolPermissions.length === 0
+  input: RunbookStartCheckInput
+): RunbookStartCheck {
+  const tools = describeRunbookTools(runbook, input.known, input.grantedIds)
+  const missingTools = tools.filter((t) => !t.available)
+  const unauthorizedTools = tools.filter((t) => t.available && t.confirmed && !t.granted)
+  const unconfirmed = runbook.steps.length > 0 && runbook.toolPermissions.length === 0
   return {
-    missingRefs: [...missingRefs],
-    toolPermissionsEmpty,
-    blocked: missingRefs.length > 0 || toolPermissionsEmpty
+    missingRefs: [...input.missingRefs],
+    tools,
+    missingTools,
+    unauthorizedTools,
+    unconfirmed,
+    blocked: input.missingRefs.length > 0 || unconfirmed || unauthorizedTools.length > 0
   }
 }

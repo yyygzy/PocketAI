@@ -56,6 +56,13 @@ export function registerRunbookHandlers(): void {
   safeHandle(
     IPC.RUNBOOK_UPDATE,
     (_e, patch: { id: string; name?: string; toolPermissions?: string[] }) => {
+      // 空名不落库：repo 的空名回落是给「只改授权」那一路用的，改名传了空串必须报错，
+      // 否则界面上会出现一次「保存成功但名字没变」。
+      // 重名**不在这里拦**：导入本来就允许同名并列（同名当新模板），改名沿用同一口径，
+      // 由渲染端把「已有同名」提示成一次确认，而不是让改名叫不出这个名字。
+      if (patch.name !== undefined && !patch.name.trim()) {
+        return { ok: false as const, error: '模板名称不能为空' }
+      }
       const updated = runbookRepo.update(patch.id, {
         name: patch.name,
         toolPermissions: patch.toolPermissions
@@ -116,17 +123,21 @@ export function registerRunbookHandlers(): void {
     let skipped = 0
     let droppedTools = 0
     let droppedRefs = 0
+    // 回传新模板 id：渲染端导入后直接跳到第一条，展开「逐项重勾授权」的确认引导。
+    // 不回传的话只能靠「最近更新的一条」猜，撞上同名/同秒导入就指错人。
+    const ids: string[] = []
     for (const raw of rawList.slice(0, RUNBOOK_IMPORT_MAX)) {
       const resolved = resolveRunbookImportItem(raw)
       if (!resolved) {
         skipped++
         continue
       }
-      runbookRepo.insert(resolved.draft)
+      const saved = runbookRepo.insert(resolved.draft)
+      ids.push(saved.id)
       imported++
       droppedTools += resolved.droppedTools
       droppedRefs += resolved.droppedRefs
     }
-    return { ok: true as const, imported, skipped, droppedTools, droppedRefs }
+    return { ok: true as const, imported, skipped, droppedTools, droppedRefs, ids }
   })
 }

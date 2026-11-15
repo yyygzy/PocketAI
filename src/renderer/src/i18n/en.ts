@@ -2866,7 +2866,7 @@ export const en = {
   // ── Runbooks (P1-5) ──
   'runbook.entry': 'Runbooks',
   'runbook.title': 'Runbooks',
-  'runbook.hint': 'Applying a runbook only fills the prompt summary into the composer; it never replays the tool sequence. Confirm tool permissions before sending.',
+  'runbook.hint': 'A runbook only describes the tools and flow of one run; it is not "Export assistants to JSON" (that one carries system prompt, model and bindings). Applying only fills the prompt summary into the composer; confirm tool permissions item by item before sending.',
   'runbook.empty': 'No runbooks yet. Use "Save as runbook" on a successfully finished run summary.',
   'runbook.stepsTitle': 'Tool sequence ({n} steps)',
   'runbook.promptTitle': 'Prompt summary',
@@ -2895,5 +2895,21 @@ export const en = {
   'runbook.kind.knowledge_base': 'Knowledge base',
   'runbook.kind.mcp': 'MCP',
   'runbook.kind.path': 'Path',
-  'runbook.stepsCount': '{n} steps'
+  'runbook.stepsCount': '{n} steps',
+  'runbook.needsConfirm': 'permissions pending',
+  'runbook.blockedHint': 'Some items are still unconfirmed, so applying is blocked for now (see the lists below).',
+  'runbook.importGuideTitle': 'Imported {n} runbook(s). Confirm tool permissions for each one.',
+  'runbook.importGuideHint': 'Runbooks carry no tool permissions. Check the tools this run may call before applying; tools missing on this machine are marked as missing.',
+  'runbook.importGuidePending': '{n} runbook(s) still need permission confirmation',
+  'runbook.toolsUsedHint': 'This list only contains tools the template actually used; tools missing on this machine are marked missing, and tools the current assistant does not grant are marked too.',
+  'runbook.toolMissing': 'missing here',
+  'runbook.toolNotGranted': 'not granted by this assistant',
+  'runbook.missingToolsTitle': 'Tools not found on this machine ({n}): this run will not have them',
+  'runbook.unauthorizedTitle': 'Tools not granted by the current assistant ({n})',
+  'runbook.unauthorizedHint': 'The run starts with the current assistant authorization (the same resolution as run start). Grant them in the assistant settings first, or uncheck these tools.',
+  'runbook.rename': 'Rename',
+  'runbook.renamePlaceholder': 'Runbook name',
+  'runbook.renamed': 'Renamed',
+  'runbook.nameEmpty': 'Runbook name cannot be empty',
+  'runbook.nameDuplicate': 'A runbook named "{name}" already exists. Use this name anyway?'
 } satisfies Record<string, string>
