@@ -408,6 +408,10 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
         return t('skill.market.parseFailed')
       case 'MISSING_FIELDS':
         return t('skill.market.missingFields')
+      case 'CHECKSUM_MISMATCH':
+        return t('skill.market.checksumMismatch')
+      case 'CHECKSUM_UNSUPPORTED':
+        return t('skill.market.checksumUnsupported')
       default:
         return t('skill.market.importFailed')
     }
@@ -443,7 +447,10 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
     if (r.skill) {
       await refreshSkills()
       setView({ kind: 'installedSkill', id: r.skill.id })
-      toast.success(r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone'))
+      // 没有校验和的老包照样放行，但必须说出来：不能让人以为「导入成功」等于「完整性已校验」
+      const base = r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone')
+      const note = r.checksum === 'absent' ? t('skill.market.checksumAbsent') : ''
+      toast.success([base, note].filter(Boolean).join(' '))
       showScanReport(r.skill.name, r.scan)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -493,10 +500,12 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
         await refreshSkills()
         // 安装完成即进已装技能详情：绑定区就在同一屏，不再让用户自己回头找
         setView({ kind: 'installedSkill', id: r.skill.id })
-        toast.success(t('skill.market.importDone'))
+        // 没有校验和的老包照样放行，但必须说出来（不能让人把「导入成功」读成「已校验完整性」）
+        const note = r.checksum === 'absent' ? t('skill.market.checksumAbsent') : ''
+        toast.success([t('skill.market.importDone'), note].filter(Boolean).join(' '))
         showScanReport(r.skill.name, r.scan)
       } else {
-        toast.error(r.error ?? t('skill.market.importFailed'))
+        toast.error(remoteImportErrorText(r.error, t))
       }
     },
     [refreshSkills, showScanReport, t, toast]
@@ -513,11 +522,12 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       await refreshSkills()
       // 与在线列表安装同一落点：进详情，绑定区就地可用
       setView({ kind: 'installedSkill', id: r.skill.id })
-      toast.success(t('skill.market.importDone'))
+      const note = r.checksum === 'absent' ? t('skill.market.checksumAbsent') : ''
+      toast.success([t('skill.market.importDone'), note].filter(Boolean).join(' '))
       setUrlInput('')
       showScanReport(r.skill.name, r.scan)
     } else {
-      toast.error(r.error ?? t('skill.market.importFailed'))
+      toast.error(remoteImportErrorText(r.error, t))
     }
   }, [urlInput, refreshSkills, showScanReport, t, toast])
 
@@ -1767,6 +1777,16 @@ const Row: React.FC<{ label: string; value: string }> = ({ label, value }) => (
     <span className="ml-auto text-right">{value}</span>
   </div>
 )
+
+/**
+ * 远程导入的错误既可能是回码，也可能是可直接展示的原文（网络失败 / 解析失败）：
+ * 只把完整性回码翻成四语文案，其余原样透出，别把可读原因吞成「导入失败」。
+ */
+function remoteImportErrorText(code: string | undefined, t: (k: string) => string): string {
+  if (code === 'CHECKSUM_MISMATCH') return t('skill.market.checksumMismatch')
+  if (code === 'CHECKSUM_UNSUPPORTED') return t('skill.market.checksumUnsupported')
+  return code ?? t('skill.market.importFailed')
+}
 
 /** 权限档直接读快照里的 permission（auto/confirm/deny），不另写名单 */
 function permissionText(entry: ToolPolicyEntry, t: (k: string) => string): string {

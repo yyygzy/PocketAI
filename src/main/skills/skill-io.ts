@@ -22,6 +22,7 @@ import {
 const log = createLogger('skill-io')
 import type { SkillRecord } from '../../shared/types'
 import { parseSkillText, type SkillShape } from './skill-parser'
+import { buildSkillExportPayload, verifySkillPackage } from './skill-package'
 import { safeUrlForDisplay, scanSkill, type SkillScanResult } from './skill-scan'
 import { installSkillFiles, readSkillFolder, rollbackSkillFiles } from './skill-files'
 import { safeFetch } from '../net/safe-fetch'
@@ -125,20 +126,9 @@ export async function exportSkill(
     const skill = skillRepo.get(String(id ?? ''))
     if (!skill) return { ok: false, error: '技能不存在' }
 
-    const payload = {
-      format: 'pocketai-skill',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      skill: {
-        name: skill.name,
-        description: skill.description,
-        icon: skill.icon,
-        content: skill.content,
-        // 只在有值时写：旧版本导出/导入的文件形状保持不变，空值不落一个空 category/tags
-        ...(skill.category ? { category: skill.category } : {}),
-        ...(skill.tags.length > 0 ? { tags: skill.tags } : {})
-      }
-    }
+    // 校验和由 skill-package 统一算：只在有值时写 category/tags（旧文件形状不变），
+    // 哈希仍按归一口径（空 category=''／空 tags=[]）计算，读回来能对上。
+    const payload = buildSkillExportPayload(skill)
 
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       defaultPath: `技能-${safeFileName(skill.name)}.json`,
@@ -163,6 +153,8 @@ export async function importSkill(
   nameDuplicated?: boolean
   /** 装前静态扫描结果（候选与事实，不是安全判定；界面下一轮再用） */
   scan?: SkillScanResult
+  /** verified＝包内校验和一致；absent＝没有校验和（旧包/Markdown），已放行但未校验完整性 */
+  checksum?: 'verified' | 'absent'
   error?: string
 }> {
   try {
@@ -177,6 +169,11 @@ export async function importSkill(
     if (stat.size > MAX_IMPORT_BYTES) return { ok: false, error: 'FILE_TOO_LARGE' }
 
     const raw = fs.readFileSync(file, 'utf8')
+    // 完整性先于解析：校验和不一致时连形状都不该信（内容可能整段被换掉）
+    const verification = verifySkillPackage(raw)
+    if (verification.state === 'mismatch') return { ok: false, error: 'CHECKSUM_MISMATCH' }
+    if (verification.state === 'unsupported') return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
+
     const { shape, error, ignoredKeys } = parseSkillText(raw)
     if (!shape) {
       // 兼容旧格式：非标准 pocketai-skill 的 JSON 也给个明确错误
@@ -192,7 +189,7 @@ export async function importSkill(
     const scan = scanSkill({ content: shape.content, ignoredKeys })
     const skill = saveShapeAsSkill(shape)
     auditImported(skill, 'file', path.basename(file), scan)
-    return { ok: true, skill, nameDuplicated, scan }
+    return { ok: true, skill, nameDuplicated, scan, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }
@@ -290,7 +287,14 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
 export async function importSkillFromUrl(
   url: string,
   expectedHash?: string
-): Promise<{ ok: boolean; skill?: SkillRecord; scan?: SkillScanResult; error?: string }> {
+): Promise<{
+  ok: boolean
+  skill?: SkillRecord
+  scan?: SkillScanResult
+  /** verified＝包内校验和一致；absent＝没有校验和（Markdown/旧包），已放行但未校验完整性 */
+  checksum?: 'verified' | 'absent'
+  error?: string
+}> {
   try {
     if (!url || typeof url !== 'string') return { ok: false, error: 'URL 为空' }
     const { primaryUrl, fallbackUrl } = githubSkillCandidates(url)
@@ -311,6 +315,12 @@ export async function importSkillFromUrl(
     const text = res.body.toString('utf8')
     if (!text.trim()) return { ok: false, error: '远程内容为空' }
 
+    // registry 的 hash 校验的是「下载到的字节」；包内 checksum 校验的是「字段」。
+    // 两道是不同承诺，能同时给就给：前者证明分发没被换，后者证明字段没被改。
+    const verification = verifySkillPackage(text)
+    if (verification.state === 'mismatch') return { ok: false, error: 'CHECKSUM_MISMATCH' }
+    if (verification.state === 'unsupported') return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
+
     const { shape, error, ignoredKeys } = parseSkillText(text)
     if (!shape) return { ok: false, error: `解析失败: ${error}` }
 
@@ -318,7 +328,7 @@ export async function importSkillFromUrl(
     const skill = saveShapeAsSkill(shape)
     // 来源明细只留 origin + pathname：URL 的查询串可能带令牌，审计不抄
     auditImported(skill, 'url', safeUrlForDisplay(url), scan)
-    return { ok: true, skill, scan }
+    return { ok: true, skill, scan, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }

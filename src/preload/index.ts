@@ -277,6 +277,8 @@ const api = {
     nameDuplicated?: boolean
     /** 装前静态扫描的候选与事实；none 时通常不展示 */
     scan?: SkillScanResult
+    /** verified＝包内校验和一致；absent＝没有校验和，已放行但未校验完整性 */
+    checksum?: 'verified' | 'absent'
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT),
   /* §236：目录导入与「这条技能带了哪些文件」。两个返回类型都带失败分支（safeHandle 把抛错转成返回值）。 */
@@ -312,8 +314,14 @@ const api = {
   importSkillFromUrl: (
     url: string,
     hash?: string
-  ): Promise<{ ok: boolean; skill?: SkillRecord; scan?: SkillScanResult; error?: string }> =>
-    ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url, hash ?? ''),
+  ): Promise<{
+    ok: boolean
+    skill?: SkillRecord
+    scan?: SkillScanResult
+    /** verified＝包内校验和一致；absent＝没有校验和，已放行但未校验完整性 */
+    checksum?: 'verified' | 'absent'
+    error?: string
+  }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url, hash ?? ''),
   validateSkill: (text: string): Promise<{ ok: boolean; error?: string; warnings: string[]; shape?: { name: string; description: string; icon: string; content: string } }> =>
     ipcRenderer.invoke(IPC.SKILL_VALIDATE, text),
   getSkillTemplates: (): Promise<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>> =>
