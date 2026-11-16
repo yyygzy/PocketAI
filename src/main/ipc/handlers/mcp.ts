@@ -7,6 +7,7 @@ import { mcpServerRepo } from '../../db/repositories/mcp-server.repo'
 import { mcpCallLogRepo } from '../../db/repositories/mcp-call-log.repo'
 import { createLogger } from '../../logger'
 import { mcpManager } from '../../mcp/manager'
+import { getMcpSitePolicy, saveMcpSitePolicy } from '../../mcp/outbound-policy'
 import { pythonEnvService, getPipSource, setPipSource } from '../../mcp/python-env'
 import { listPythonRuntimes, downloadPortablePython } from '../../python-runtime'
 import { broadcast } from '../broadcast'
@@ -17,7 +18,8 @@ import {
   pythonPipSourceSchema,
   mcpCallToolSchema,
   mcpCallLogServerIdSchema,
-  mcpCallLogLimitSchema
+  mcpCallLogLimitSchema,
+  mcpSitePolicySchema
 } from '../../../shared/schemas/mcp'
 import { idSchema } from '../../../shared/schemas/providers'
 import { stringifyMcpResult, mcpResultIsError } from '../../tools/registry'
@@ -43,6 +45,15 @@ function maskRuntime(rt: McpServerRuntime): McpServerRuntime {
 
 export function registerMcpHandlers(): void {
   safeHandle(IPC.MCP_SERVER_LIST, () => mcpServerRepo.list().map(maskMcpRecord))
+
+  // 站点级出网约束（全局一条，存 app_config）：只管 MCP HTTP 传输能不能连某个 host。
+  // 不参与工具授权（那是逐工具 confirm / trustReadOnly 的事），也不另造域名清单。
+  safeHandle(IPC.MCP_SITE_POLICY_GET, () => getMcpSitePolicy())
+  safeHandle(
+    IPC.MCP_SITE_POLICY_SET,
+    (_e, policy: unknown) => saveMcpSitePolicy(policy),
+    argsSchema(mcpSitePolicySchema)
+  )
 
   // 导出全部配置为标准 mcpServers JSON：默认脱敏 env/headers 中的密钥（U 盘易丢场景）
   safeHandle(IPC.MCP_SERVER_EXPORT, async (e) => {

@@ -154,3 +154,13 @@ export const mcpCallLogServerIdSchema = z.string().min(1).max(64).nullish()
 
 /** MCP_CALL_LOG_LIST 第二参：条数上限 */
 export const mcpCallLogLimitSchema = z.number().int().min(1).max(1000).nullish()
+
+/**
+ * MCP_SITE_POLICY_SET 入参：站点级出网约束（全局一条）。
+ * 上限与主进程 `mcp/outbound-policy.ts` 的常量保持一致——入口先挡住超长/超量，
+ * host 的语法合法性（能不能解析出 hostname）由主进程 `saveMcpSitePolicy` 统一判。
+ */
+export const mcpSitePolicySchema = z.object({
+  allowedHosts: z.array(z.string().max(253)).max(100),
+  allowOtherHosts: z.boolean()
+})

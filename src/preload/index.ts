@@ -72,6 +72,7 @@ import type {
   RetrievalResult,
   McpServerRecord,
   McpServerRuntime,
+  McpSitePolicy,
   McpServerStatusEvent,
   McpServerLogEvent,
   PythonEnvState,
@@ -697,6 +698,14 @@ const api = {
 
   // ---------- MCP Server ----------
   listMcpServers: (): Promise<McpServerRecord[]> => ipcRenderer.invoke(IPC.MCP_SERVER_LIST),
+  /** 站点级出网约束（只作用于 MCP HTTP 传输；stdio 子进程拦不到） */
+  getMcpSitePolicy: (): Promise<McpSitePolicy | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_SITE_POLICY_GET),
+  /** 保存站点策略；非法 host 由主进程拒绝并返回 { ok:false, error } */
+  setMcpSitePolicy: (
+    policy: McpSitePolicy
+  ): Promise<McpSitePolicy | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_SITE_POLICY_SET, policy),
   /** 导出全部 MCP 配置（showSaveDialog；敏感值已脱敏；canceled 表示用户取消） */
   exportMcpServers: (): Promise<
     { ok: true; canceled: true } | { ok: true; path: string; count: number; redactedCount: number } | { ok: false; error: string }

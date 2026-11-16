@@ -11,17 +11,25 @@
 //  2. 文件树哈希：Agent 工作目录 + 应用数据目录（DATA_DIR）。数据库文件本身排除
 //     （行数由第 1 组覆盖；WAL/shm 会因打开连接而变，拿它做断言只会制造假红）；
 //     日志目录也排除，理由与表的豁免相同——日志写入是允许的，且必须写明。
-//  3. 出口计数：`safe-fetch.ts` 的 `getOutboundRequestCount()`。口径是 safeFetch 发出的
-//     请求（含重定向每跳）；直接 `fetch(` 调用点不在计数内，测试需另加桩证明回放链路零出口。
+//  3. 出口计数：`safe-fetch.ts` 的 `getOutboundRequestCount()` + `mcp/outbound-policy.ts` 的
+//     `getMcpHttpRequestCount()`（MCP HTTP 传输每次 POST，含 initialize/tools/list/tools/call）。
+//     口径是"真正发出去的 HTTP 请求"；其余直接 `fetch(` 调用点不在计数内，测试需另加桩证明回放链路零出口。
+//  4. MCP `tools/call` 计数：`getMcpToolCallCount()`（两种传输共用）。stdio 子进程的出网
+//     无法按域观测，这一项是它的替代判据——没有调用＝没有让子进程去干什么。
 //
 // 已知限制（不在这里偷偷补口径）：行数只能发现插入/删除，**发现不了原地 UPDATE**。
 // 判据原文写的就是"行数"，要升级成表内容哈希需要产品另行确认，不能由实现方顺手扩大。
+//
+// 第二处已知限制：**stdio MCP server 的流量观测不到**。子进程由 OS 直连网络（npx 首启
+// 还会自己下载依赖），应用没有代理 hook／防火墙权限，既拦不住也数不清。替代判据是
+// `mcpToolCallCount` 全等 + 回放期 `assertMcpConnectAllowed` 拒绝建立连接（见 dry-run-scope.ts）。
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type Database from 'better-sqlite3-multiple-ciphers'
 import { walkEntries } from '../fs/dir-walk'
 import { getOutboundRequestCount } from '../net/safe-fetch'
+import { getMcpHttpRequestCount, getMcpToolCallCount } from '../mcp/outbound-metrics'
 import { DATA_DIR, DB_PATH, LOGS_DIR } from '../portable'
 import { dbService } from '../db/database'
 
@@ -54,7 +62,7 @@ export interface DryRunFileScope {
 export interface DryRunSafetyOptions {
   db: Database.Database
   fileScopes: readonly DryRunFileScope[]
-  /** 出口计数来源；缺省用 safe-fetch 的进程内计数（测试可注入更宽的探针） */
+  /** 出口计数来源；缺省＝safeFetch 请求 + MCP HTTP 请求（测试可注入更宽的探针） */
   outboundCount?: () => number
 }
 
@@ -63,7 +71,10 @@ export interface DryRunSafetySnapshot {
   fileTreeHash: string
   /** 参与哈希的文件数；0 也要能说明"扫到了空树"，不是"没扫" */
   fileCount: number
+  /** 出口请求数：safeFetch 请求 + MCP HTTP 传输请求 */
   outboundCount: number
+  /** MCP `tools/call` 次数（两种传输共用；stdio 出网不可观测时的替代判据） */
+  mcpToolCallCount: number
   /** 表名 → 行数（已剔除豁免表） */
   tableRowCounts: Record<string, number>
 }
@@ -77,6 +88,7 @@ export interface DryRunTableDiff {
 export interface DryRunSafetyDiff {
   fileTreeEqual: boolean
   outboundEqual: boolean
+  mcpToolCallsEqual: boolean
   tableRowsEqual: boolean
   allEqual: boolean
   before: DryRunSafetySnapshot
@@ -172,9 +184,15 @@ export function captureDryRunSafetySnapshot(opts: DryRunSafetyOptions): DryRunSa
   return {
     fileTreeHash: hash,
     fileCount,
-    outboundCount: (opts.outboundCount ?? getOutboundRequestCount)(),
+    outboundCount: (opts.outboundCount ?? getDefaultOutboundCount)(),
+    mcpToolCallCount: getMcpToolCallCount(),
     tableRowCounts: countDryRunBusinessTableRows(opts.db)
   }
+}
+
+/** 默认出口口径：safeFetch 的请求 + MCP HTTP 传输的请求（stdio 子进程不在这里，见文件头） */
+function getDefaultOutboundCount(): number {
+  return getOutboundRequestCount() + getMcpHttpRequestCount()
 }
 
 /** 默认口径：Agent 工作目录 + DATA_DIR，排除 DB 文件与日志目录 */
@@ -213,12 +231,14 @@ export function diffDryRunSafety(
   }
   const fileTreeEqual = before.fileTreeHash === after.fileTreeHash
   const outboundEqual = before.outboundCount === after.outboundCount
+  const mcpToolCallsEqual = before.mcpToolCallCount === after.mcpToolCallCount
   const tableRowsEqual = tableDiffs.length === 0
   return {
     fileTreeEqual,
     outboundEqual,
+    mcpToolCallsEqual,
     tableRowsEqual,
-    allEqual: fileTreeEqual && outboundEqual && tableRowsEqual,
+    allEqual: fileTreeEqual && outboundEqual && mcpToolCallsEqual && tableRowsEqual,
     before,
     after,
     tableDiffs

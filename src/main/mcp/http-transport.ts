@@ -15,6 +15,7 @@
 
 import { EventEmitter } from 'node:events'
 import { errMsg, isAbortError } from '../error'
+import { noteMcpHttpRequest } from './outbound-metrics'
 import {
   McpBusinessError,
   McpTransportError,
@@ -32,6 +33,12 @@ export interface HttpTransportOptions {
   maxLineBytes?: number
   /** 自定义请求头（如 Authorization）；协议头（Content-Type/Accept/Mcp-Session-Id）后写优先，不可被覆盖 */
   headers?: Record<string, string>
+  /**
+   * 站点策略钩子（由 manager 注入）：每次发请求前判这个 URL 能不能连，抛错即拒发。
+   * 做成注入而不是在这里 import 策略模块，是为了让 transport 保持零依赖——
+   * 策略要读 app_config（→ 数据库 → electron），不该把协议层单元测试一起拖进去。
+   */
+  checkHostAllowed?: (url: string) => void
 }
 
 /** 单条 SSE 事件的最大字节数（与 stdio NDJSON 上限对齐） */
@@ -195,6 +202,11 @@ export class HttpJsonRpcClient implements McpTransportClient {
       try {
         const headers = this.buildHeaders()
 
+        // 站点策略（连接级域名闸，默认全放行）：在真正发请求前判，拒绝时抛错给调用方。
+        // 只校验 host，不做 DNS 解析——DNS 重绑定不在这一层的职责里（目标 URL 由用户显式配置）。
+        this.opts.checkHostAllowed?.(this.opts.url)
+        noteMcpHttpRequest()
+
         const res = await fetch(this.opts.url, {
           method: 'POST',
           headers,
@@ -272,6 +284,15 @@ export class HttpJsonRpcClient implements McpTransportClient {
     const notif: JsonRpcNotification = { jsonrpc: '2.0', method, params }
     const body = JSON.stringify(notif)
     if (Buffer.byteLength(body, 'utf8') > MAX_REQUEST_BODY_BYTES) return
+
+    // 通知没有失败回传通道：被站点策略拒了就静默放弃，与网络失败同一口径。
+    // 必须放在创建 AbortController 之前——早退也要清干净，不能留下永不中止的 inflight。
+    try {
+      this.opts.checkHostAllowed?.(this.opts.url)
+    } catch {
+      return
+    }
+    noteMcpHttpRequest()
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.opts.requestTimeout ?? 30000)

@@ -1003,6 +1003,17 @@ export interface McpServerRecord {
   pythonPackages: string[]
 }
 
+/**
+ * MCP 出网的站点级约束（全局一条，存 app_config）。
+ * 只作用于 **HTTP 传输**：stdio 子进程的网络应用拦不到也数不清（见 mcp/outbound-policy.ts）。
+ */
+export interface McpSitePolicy {
+  /** 允许连接的 host（小写、不含协议/端口/路径）；`allowOtherHosts=false` 时生效 */
+  allowedHosts: string[]
+  /** true=不限制（默认，保持既有行为）；false=只允许 allowedHosts 内的 host */
+  allowOtherHosts: boolean
+}
+
 // ---------- Python MCP 虚拟环境 ----------
 /** none=未创建；installing=安装进行中；ready=可用且依赖已装；stale=venv 失效（换盘符/换解释器/缺标记） */
 export type PythonEnvStatus = 'none' | 'installing' | 'ready' | 'stale'
@@ -3127,6 +3138,9 @@ export const IPC = {
   MCP_SERVER_STOP: 'mcp-server:stop',
   MCP_SERVER_RESTART: 'mcp-server:restart',
   MCP_SERVER_LIST_TOOLS: 'mcp-server:list-tools',
+  /** MCP 出网站点级约束（全局）：读/写 app_config 里的 mcp_http_site_policy */
+  MCP_SITE_POLICY_GET: 'mcp-server:site-policy-get',
+  MCP_SITE_POLICY_SET: 'mcp-server:site-policy-set',
   // 手动试运行工具（面板调试用，等价于用户显式确认后执行，不走 assistant 权限链路）
   MCP_SERVER_CALL_TOOL: 'mcp-server:call-tool',
   MCP_SERVER_GET_RUNTIMES: 'mcp-server:get-runtimes', // 一次性拉取所有运行时状态

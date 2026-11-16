@@ -15,6 +15,9 @@ import { MCP_EXTENSIONS_DIR } from '../portable'
 import { errMsg } from '../error'
 import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
 import { createLogger } from '../logger'
+import { assertMcpConnectAllowed } from '../agent/dry-run-scope'
+import { assertMcpHostAllowed } from './outbound-policy'
+import { noteMcpToolCall } from './outbound-metrics'
 import {
   MCP_CALL_ERROR_CHARS,
   redactStrings,
@@ -320,6 +323,11 @@ export class McpManager extends EventEmitter {
     // 只是发现得晚，界面显示的形状不变，不新增用户可见串。
     if (!mcpServerRepo.get(id)) throw new Error(`MCP Server 不存在: ${id}`)
 
+    // 回放期禁连：stdio server 是独立子进程，连起来之后它出不出网、出到哪，应用无从观测
+    // （npx 首启还会下载依赖）。所以回放的「零出口」不能只靠工具闸，必须连"建立连接"一起拒。
+    // 正常情况下这条永远走不到；走到说明有代码在回放链路里试图拉起 MCP。
+    assertMcpConnectAllowed(record.name)
+
     const entry: RuntimeEntry = {
       record,
       client: null,
@@ -403,7 +411,11 @@ export class McpManager extends EventEmitter {
   ): Promise<McpTransportClient> {
     if (record.transport === 'http') {
       if (!record.url) throw new Error('HTTP 传输缺少 url')
+      // 启动即判站点策略：比等到首次调用才失败更早，用户点「启动」就能看到原因
+      assertMcpHostAllowed(record.url, record.name)
       return new HttpJsonRpcClient({
+        // 启动后策略若被收紧，下一次请求会在 transport 里再判一次（同一把尺）
+        checkHostAllowed: (url) => assertMcpHostAllowed(url, record.name),
         url: record.url,
         requestTimeout: TOOL_CALL_TIMEOUT,
         headers: record.headers ?? {}
@@ -594,6 +606,7 @@ export class McpManager extends EventEmitter {
       throw new Error('MCP Server 未运行')
     }
     try {
+      noteMcpToolCall()
       return await entry.client.request<unknown>(
         'tools/call',
         { name, arguments: args ?? {} },
@@ -613,6 +626,7 @@ export class McpManager extends EventEmitter {
           if (!cur?.client || cur.status !== 'running') {
             throw new Error('重连后 MCP Server 未处于运行状态')
           }
+          noteMcpToolCall()
           return await cur.client.request<unknown>(
             'tools/call',
             { name, arguments: args ?? {} },

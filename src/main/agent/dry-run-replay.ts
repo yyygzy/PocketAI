@@ -62,6 +62,8 @@ export interface DryRunReplayReport {
   steps: DryRunReplayedStep[]
   /** 恒为 0：回放不执行工具；>0 说明有代码在回放里试图执行（被 scope 闸拦下） */
   toolAttemptsBlocked: number
+  /** 恒为 0：回放不建立 MCP 连接；>0 说明有代码在回放里试图拉起 MCP（被 scope 闸拦下） */
+  mcpConnectsBlocked: number
   /** trace 读不出来（库被关／表缺失）：判定不可用，不硬凑成空运行 */
   unavailable?: boolean
   /** `unavailable` 时的原因（诊断用，不上屏） */
@@ -150,7 +152,9 @@ function toReplayedStep(rec: AgentTraceRecord, deps: DryRunReplayDeps): DryRunRe
  * 回放一次运行（dry-run）。
  *
  * 全程在「工具禁用」作用域内：任何绕回 `toolRegistry.execute` 的调用都会被硬拒并计入
- * `toolAttemptsBlocked`；正常情况下它恒为 0。本函数自身只读 DB，不写文件、不联网。
+ * `toolAttemptsBlocked`；任何试图建立 MCP 连接的调用同样被拒并计入 `mcpConnectsBlocked`
+ * （stdio 子进程一出网就不可观测，所以连"连上去"都要挡在回放之外）。两者正常情况下恒为 0。
+ * 本函数自身只读 DB，不写文件、不联网。
  */
 export async function replayTraceDryRun(
   requestId: string,
@@ -166,6 +170,7 @@ export async function replayTraceDryRun(
         requestId,
         steps: [],
         toolAttemptsBlocked: scope.blockedAttempts,
+        mcpConnectsBlocked: scope.blockedConnects,
         unavailable: true,
         error: (e as Error).message
       }
@@ -174,7 +179,8 @@ export async function replayTraceDryRun(
       requestId,
       conversationId: records[0]?.conversationId,
       steps: records.map((rec) => toReplayedStep(rec, deps)),
-      toolAttemptsBlocked: scope.blockedAttempts
+      toolAttemptsBlocked: scope.blockedAttempts,
+      mcpConnectsBlocked: scope.blockedConnects
     }
   })
 }

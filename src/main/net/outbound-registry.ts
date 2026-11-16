@@ -263,6 +263,8 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     resolve: resolveWebdav
   },
   {
+    // 这一条是**声明**（供展示与覆盖测试），不拦截；能不能连某个 host 由
+    // `mcp/outbound-policy.ts` 的站点级策略在发请求前判（默认全放行）。
     id: 'mcp-http',
     labelKey: 'outbound.entry.mcpHttp',
     purposeKey: 'outbound.purpose.mcpHttp',

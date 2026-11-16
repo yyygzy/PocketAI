@@ -20,6 +20,7 @@ import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
 import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
+import { McpSitePolicyCard } from './McpSitePolicyCard'
 import { CapabilityCenter } from '../../skills/CapabilityCenter'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
@@ -459,6 +460,8 @@ export const McpPanel: React.FC = () => {
             </div>
           )}
         </div>
+        {/* 站点级出网限制：全局一条，只作用于 MCP HTTP 传输（stdio 拦不到，卡里写明） */}
+        <McpSitePolicyCard notify={setNotice} />
         {notice && (
           <div className="mb-2 text-[11px] text-[var(--color-warning)] bg-[var(--color-warning-bg)] px-2 py-1.5 rounded flex items-start justify-between gap-1">
             <span className="break-all">{notice}</span>
