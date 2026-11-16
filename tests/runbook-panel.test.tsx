@@ -235,4 +235,111 @@ describe('模板管理：重命名', () => {
     fireEvent.click(screen.getByText('确认'))
     await waitFor(() => expect(updateRunbook).toHaveBeenCalledWith({ id: 'rb-1', name: '乙' }))
   })
+
+  it('名称超过上限：给出上限与当前长度，且不落库', async () => {
+    const first = rec({ id: 'rb-1', name: '甲' })
+    const updateRunbook = vi.fn((patch: { id: string; name?: string }) => ({ ...first, ...patch }))
+    stubPocketai({
+      listRunbooks: () => [first],
+      getToolPolicy: () => policy(),
+      checkRunbook: () => ({ missingRefs: [] }),
+      updateRunbook
+    })
+    mountWithProviders(<RunbookPanel onApply={vi.fn()} assistantId="asst-1" />)
+    await openPanel()
+
+    fireEvent.click(screen.getByTestId('runbook-rename'))
+    const input = screen.getByTestId('runbook-rename-input') as HTMLInputElement
+    // 常驻提示写清上限，不靠 maxLength 让人自己撞墙
+    expect(screen.getByTestId('runbook-name-limit').textContent).toContain('100')
+
+    const tooLong = 'x'.repeat(101)
+    fireEvent.change(input, { target: { value: tooLong } })
+    const line = screen.getByTestId('runbook-name-too-long')
+    expect(line.textContent).toContain('100')
+    expect(line.textContent).toContain('101')
+
+    fireEvent.click(screen.getByTestId('runbook-rename-save'))
+    await waitFor(() => expect(screen.getByText(/名称超长/)).toBeTruthy())
+    expect(updateRunbook).not.toHaveBeenCalled()
+
+    // 收到上限以内：提示消失、保存放行
+    fireEvent.change(input, { target: { value: 'x'.repeat(100) } })
+    expect(screen.queryByTestId('runbook-name-too-long')).toBeNull()
+    fireEvent.click(screen.getByTestId('runbook-rename-save'))
+    await waitFor(() =>
+      expect(updateRunbook).toHaveBeenCalledWith({ id: 'rb-1', name: 'x'.repeat(100) })
+    )
+  })
+})
+
+describe('批量导入后的逐条确认引导', () => {
+  it('落到第一条待确认；确认一条自动跳下一条；全部确认后引导消失', async () => {
+    const a = rec({
+      id: 'rb-a',
+      name: '甲',
+      steps: [{ toolName: 'shell_exec', toolId: 'shell.exec', argKeys: ['command'] }]
+    })
+    const b = rec({
+      id: 'rb-b',
+      name: '乙',
+      steps: [{ toolName: 'kb_search', toolId: 'kb.search', argKeys: ['query'] }]
+    })
+    const c = rec({ id: 'rb-c', name: '丙' })
+    let stored: RunbookRecord[] = []
+    const updateRunbook = vi.fn((patch: { id: string; toolPermissions?: string[] }) => {
+      const cur = stored.find((x) => x.id === patch.id)!
+      const next = { ...cur, toolPermissions: [...(patch.toolPermissions ?? [])] }
+      stored = stored.map((x) => (x.id === patch.id ? next : x))
+      return next
+    })
+    stubPocketai({
+      listRunbooks: () => stored,
+      importRunbooks: () => {
+        stored = [a, b, c]
+        return { ok: true, imported: 3, skipped: 0, droppedTools: 0, droppedRefs: 0, ids: ['rb-a', 'rb-b', 'rb-c'] }
+      },
+      getToolPolicy: () => policy(),
+      checkRunbook: () => ({ missingRefs: [] }),
+      updateRunbook
+    })
+    mountWithProviders(<RunbookPanel onApply={vi.fn()} assistantId="asst-1" />)
+    await openPanel()
+
+    fireEvent.click(screen.getByTestId('runbook-import'))
+    await waitFor(() => expect(screen.getByTestId('runbook-import-guide')).toBeTruthy())
+    expect(screen.getByTestId('runbook-import-pending').textContent).toContain('3')
+
+    // 第一条：甲，只有 shell.exec 一个工具
+    expect(screen.getAllByTestId('runbook-tool').map((x) => x.getAttribute('data-tool-id'))).toEqual([
+      'shell.exec'
+    ])
+    fireEvent.click(screen.getAllByTestId('runbook-tool')[0]!)
+    await waitFor(() => expect(updateRunbook).toHaveBeenLastCalledWith({ id: 'rb-a', toolPermissions: ['shell.exec'] }))
+
+    // 自动跳下一条：乙，只剩 kb.search；进度 3 → 2
+    await waitFor(() =>
+      expect(screen.getAllByTestId('runbook-tool').map((x) => x.getAttribute('data-tool-id'))).toEqual([
+        'kb.search'
+      ])
+    )
+    expect(screen.getByTestId('runbook-import-pending').textContent).toContain('2')
+
+    fireEvent.click(screen.getAllByTestId('runbook-tool')[0]!)
+    await waitFor(() => expect(updateRunbook).toHaveBeenLastCalledWith({ id: 'rb-b', toolPermissions: ['kb.search'] }))
+
+    // 再跳丙：两个工具都在，进度 1
+    await waitFor(() =>
+      expect(screen.getAllByTestId('runbook-tool').map((x) => x.getAttribute('data-tool-id'))).toEqual([
+        'shell.exec',
+        'kb.search'
+      ])
+    )
+    expect(screen.getByTestId('runbook-import-pending').textContent).toContain('1')
+
+    fireEvent.click(screen.getAllByTestId('runbook-tool')[0]!)
+    await waitFor(() => expect(updateRunbook).toHaveBeenLastCalledWith({ id: 'rb-c', toolPermissions: ['shell.exec'] }))
+    // 最后一条确认完：引导与进度整块消失（列表徽标另算）
+    await waitFor(() => expect(screen.queryByTestId('runbook-import-guide')).toBeNull())
+  })
 })

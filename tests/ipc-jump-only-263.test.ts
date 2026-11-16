@@ -218,9 +218,10 @@ const FAIL_CLOSED = SITES.filter((s) => !s.successWrites)
  * 2026-11-11 全量闸门复核：`6a4c590`（助手市场详情页展示关联技能）带来的
  *   AssistantMarket :91（`if (hasIpcFailed(v)) return`）实测多出一处 ⇒ **现数 10**。
  *   判为合法（"少做一件事"）并逐文件登记，判语见下面那份表；不改产品码。
- * 10 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
+ * P1-5 逐条确认（2026-11-16）：RunbookPanel 选中即查引用，失败侧只 return ⇒ **现数 11**，同样登记。
+ * 11 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
  */
-const JUMP_LIE_CAP = 10
+const JUMP_LIE_CAP = 11
 
 const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 首启向导／换电脑检测那一发：读不到就**不弹**（不会弹一个假向导），屏上没有假数字。
@@ -257,7 +258,12 @@ const JUMP_LIE_PER_FILE: Record<string, number> = {
   // ⇒ 「关联技能」整块不渲染，屏上不会出现"这个助手没有技能"那种假空态；而且这一块只是装饰性的
   // 图标＋名称 join，没有操作入口，离开详情再进来会重新读一次（`skillsRequested` 按 detailId 复位）。
   // 与 CapabilityCenter「读不到不预选服务商」同一档：do nothing 是安全方向，不摆假数据。
-  'src/renderer/src/modules/chat/AssistantMarket.tsx': 1
+  'src/renderer/src/modules/chat/AssistantMarket.tsx': 1,
+  // P1-5 逐条确认引导（2026-11-16）：RunbookPanel 选中模板即查一次引用，
+  // 成功支 `setMissing(r.missingRefs)` 把"哪些引用在本机缺失"摆上屏，失败/取消支直接 return。
+  // 判为**合法**：读不到就停在"未校验"（不摆一份假的"零缺失"），真正套用那一刻还会再查一次，
+  // 失败会明确报错 ⇒ 属于"少做一件事"，登记而不改产品码。
+  'src/renderer/src/modules/chat/RunbookPanel.tsx': 1
 }
 
 /** 正向对照：这些文件必须**真的出现在名单里**（防"扫描器恒返回空"这种假绿，§250 同一条） */
@@ -324,7 +330,7 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     expect(LIE.length + FAIL_CLOSED.length, '总数＝判过失败面且只跳的那批').toBe(SITES.length)
   })
 
-  it('等式 ratchet：目标桶 10 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2，P4 批次 2 删 Agent 壳−3，6a4c590＋1）', () => {
+  it('等式 ratchet：目标桶 11 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2，P4 批次 2 删 Agent 壳−3，6a4c590＋1，P1-5 逐条确认＋1）', () => {
     expect(LIE.length, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(JUMP_LIE_CAP)
   })
 
