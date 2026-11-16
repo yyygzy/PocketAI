@@ -46,6 +46,8 @@ describe('replayTraceDryRun — 只读账本重建', () => {
     ])
     expect(step.missing).toBeUndefined()
     expect(report.toolAttemptsBlocked).toBe(0)
+    // 回放不建立 MCP 连接（stdio 子进程一旦拉起就不可观测，所以连"连上去"都要挡在外面）
+    expect(report.mcpConnectsBlocked).toBe(0)
   })
 
   it('没有引用列时退回 trace 的诊断副本，并标成 trace 来源', async () => {

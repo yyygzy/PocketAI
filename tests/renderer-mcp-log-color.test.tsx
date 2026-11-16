@@ -55,7 +55,9 @@ async function mountWith(status: McpServerStatus): Promise<RenderResult> {
     onPythonEnvEvent: () => () => {},
     getPythonPipSource: () => ({ ok: true, source: 'official' }),
     // 工具面开关：面板挂载时会读一次（grouped=按需）
-    getAgentToolSurface: () => Promise.resolve('grouped')
+    getAgentToolSurface: () => Promise.resolve('grouped'),
+    // 站点级出网限制：新卡片挂载即读一次（默认全放行）
+    getMcpSitePolicy: () => ({ allowedHosts: [], allowOtherHosts: true })
   })
   const r = mountWithProviders(<McpPanel />)
   // 等 getMcpRuntimes 的 promise 落定（runtimes 为空就取不到状态）

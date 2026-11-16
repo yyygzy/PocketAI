@@ -79,6 +79,16 @@ vi.mock('../src/main/db/repositories/mcp-call-log.repo', () => ({
   }
 }))
 
+// 站点策略会读 app_config（→ 数据库 → electron.app），这一份只验删除/忘记那条桥，
+// 与出网策略无关：假掉它，保持本文件的依赖面只有"桥的形状 + 互斥 + repo 增删"。
+vi.mock('../src/main/mcp/outbound-policy', () => ({
+  MCP_HTTP_SITE_POLICY_KEY: 'mcp_http_site_policy',
+  MCP_HOST_BLOCKED: 'MCP_HOST_BLOCKED',
+  getMcpSitePolicy: () => ({ allowedHosts: [], allowOtherHosts: true }),
+  saveMcpSitePolicy: (p: unknown) => p,
+  assertMcpHostAllowed: () => {}
+}))
+
 vi.mock('../src/main/mcp/manager', () => ({
   mcpManager: {
     start: async (id: string) => {

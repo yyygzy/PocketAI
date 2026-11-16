@@ -107,6 +107,8 @@ describe('② MCP 面板：pip 源那一格不再演成"你选的就是官方"',
       onMcpLog: () => () => {},
       onPythonEnvEvent: () => () => {},
       listMcpCallLogs: () => [],
+      // 站点级出网限制卡片挂载即读一次（默认全放行）
+      getMcpSitePolicy: () => ({ allowedHosts: [], allowOtherHosts: true }),
       ...over
     })
     mountWithProviders(<McpPanel />)

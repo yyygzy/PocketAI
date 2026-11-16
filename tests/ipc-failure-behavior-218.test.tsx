@@ -180,6 +180,8 @@ describe('④ MCP 的「停止」：与渠道同一形状，另一个文件', ()
       listMcpServers: () => [record],
       getMcpRuntimes: () => running,
       listMcpCallLogs: () => ({ ok: true, logs: [] }),
+      // 站点级出网限制卡片挂载即读一次（默认全放行）
+      getMcpSitePolicy: () => ({ allowedHosts: [], allowOtherHosts: true }),
       onMcpStatus: () => () => { /* 订阅卸载函数 */ },
       onMcpLog: () => () => { /* 订阅卸载函数 */ },
       onPythonEnvEvent: () => () => { /* 订阅卸载函数 */ },

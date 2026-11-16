@@ -64,6 +64,7 @@ const stubs = (over: Record<string, Impl> = {}): Record<string, Impl> => ({
   onPythonEnvEvent: () => () => { /* 订阅卸载 */ },
   getPythonPipSource: () => ({ ok: true, source: 'default', url: '' }),
   getAgentToolSurface: () => 'grouped',
+  getMcpSitePolicy: () => ({ allowedHosts: [], allowOtherHosts: true }),
   ...over
 })
 

@@ -35,6 +35,8 @@ const mcpStubs = (over: Record<string, Impl> = {}): Record<string, Impl> => ({
   listMcpServers: () => [RECORD],
   getMcpRuntimes: () => RUNTIME,
   listMcpCallLogs: () => ({ ok: true, logs: [] }),
+  // 站点级出网限制：B 新增的卡片挂载即读一次（默认全放行）
+  getMcpSitePolicy: () => ({ allowedHosts: [], allowOtherHosts: true }),
   onMcpStatus: () => () => { /* 订阅卸载 */ },
   onMcpLog: () => () => { /* 订阅卸载 */ },
   onPythonEnvEvent: () => () => { /* 订阅卸载 */ },
