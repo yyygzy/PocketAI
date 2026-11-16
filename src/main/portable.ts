@@ -1,8 +1,10 @@
 // 可移植性：路径锚定
-// 所有数据路径以「可执行文件所在目录」为基准，不依赖 cwd、不依赖系统目录
+// 数据默认跟着应用本体走；安装版（NSIS/dmg/deb）的安装目录会被覆盖安装整目录重建，
+// 因此安装版的数据落到系统 appData 下，并在首次启动时从旧位置迁移过来。
 import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import type { AppPaths } from '../shared/types'
 import { createLogger } from './logger'
 import { errMsg } from './error'
@@ -29,8 +31,33 @@ export const APP_ROOT = process.env.POCKETAI_APP_ROOT
         : process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')))
     : process.cwd())
 
-/** 数据目录 = APP_ROOT/data（永远跟着应用走） */
-export const DATA_DIR = path.join(APP_ROOT, 'data')
+/**
+ * 旧版数据目录（≤1.2.8）：永远在应用本体旁边。
+ *
+ * NSIS 安装版的「安装目录」在覆盖安装时会被整个目录重建（electron-builder
+ * 卸载段 `RMDir /r $INSTDIR`），所以安装目录里的数据不能当作长期落点，
+ * 只能作为迁移来源。见 migrateInstalledDataDir()。
+ */
+export const LEGACY_DATA_DIR = path.join(APP_ROOT, 'data')
+
+/** 安装版的数据根目录名（app.getPath('appData') 下的子目录） */
+const INSTALLED_DATA_ROOT_NAME = 'Moxia'
+
+/**
+ * 数据目录落点：
+ *   1. POCKETAI_APP_ROOT（测试隔离）→ APP_ROOT/data，保持旧语义、不迁移
+ *   2. 开发态                       → 仓库根/data
+ *   3. 便携形态（portable / AppImage）→ APP_ROOT/data（跟着应用本体，允许整体搬走）
+ *   4. 安装版（NSIS / dmg / deb）    → appData/Moxia/data（脱离安装目录，覆盖安装不受影响）
+ */
+function resolveDataDir(): string {
+  if (process.env.POCKETAI_APP_ROOT) return LEGACY_DATA_DIR
+  if (!app.isPackaged) return LEGACY_DATA_DIR
+  if (isPortableRuntime()) return LEGACY_DATA_DIR
+  return path.join(app.getPath('appData'), INSTALLED_DATA_ROOT_NAME, 'data')
+}
+
+export const DATA_DIR = resolveDataDir()
 export const DB_PATH = path.join(DATA_DIR, 'app.db')
 // 向量索引没有独立文件：kb_vec_map 与按维度建的 kb_vec_<dim> 虚表都在 app.db 里
 //（见 db/repositories/kb-vec.repo.ts）。这里曾有个 VECTOR_DB_PATH 常量，全仓无人使用，
@@ -129,5 +156,141 @@ export function migrateMcpExtensionsDir(): void {
     log.info(`MCP 扩展目录已迁移: ${oldDir} → ${MCP_EXTENSIONS_DIR}`)
   } catch (e) {
     log.warn('MCP 扩展目录迁移失败（不阻塞启动）:', errMsg(e))
+  }
+}
+
+// ─── 安装版数据目录迁移（≤1.2.8 的安装目录 data/ → appData/Moxia/data） ─────
+
+/** 迁移完成标记：存在即代表新位置是迁移产物（不再看 app.db 猜） */
+const MIGRATION_MARKER = 'migrated-from.json'
+/** 复制中的哨兵：存在即代表新位置是半成品，下次启动先清掉重来 */
+const MIGRATING_SENTINEL = '.migrating'
+
+export interface DataMigrationResult {
+  from: string
+  to: string
+  files: number
+  bytes: number
+  removedLegacy: boolean
+}
+
+function listFiles(root: string): Map<string, number> {
+  const out = new Map<string, number>()
+  const walk = (dir: string): void => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, ent.name)
+      if (ent.isDirectory()) walk(abs)
+      else if (ent.isFile()) out.set(path.relative(root, abs), fs.statSync(abs).size)
+    }
+  }
+  walk(root)
+  return out
+}
+
+function sha256File(file: string): string {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+/** 旧位置是否真的有用户数据（没有就不迁，避免搬一个空目录） */
+function hasLegacyUserData(): boolean {
+  return fs.existsSync(path.join(LEGACY_DATA_DIR, 'app.db'))
+    || fs.existsSync(path.join(LEGACY_DATA_DIR, 'config.json'))
+}
+
+/**
+ * 安装版首次启动时把安装目录里的旧数据搬到新位置。
+ *
+ * 语义（必须早于 ensureDirs / 开库）：
+ *  - 只对「非便携的打包安装版」生效；便携版与开发态什么都不做；
+ *  - 先整目录复制，再逐文件比对相对路径与字节数，并对 app.db / config.json 做
+ *    SHA-256 比对，确认新位置可读后才清理旧副本；
+ *  - 任一步失败：删掉新位置的半成品（原数据完整留在旧位置）并抛错，由调用方
+ *    弹窗告知并退出——不能带着空库继续启动，把「丢数据」演成「全新安装」；
+ *  - 成功写 migrated-from.json 作为幂等标记；旧目录删不掉只告警（数据已在新位置）。
+ */
+export function migrateInstalledDataDir(): DataMigrationResult | null {
+  if (DATA_DIR === LEGACY_DATA_DIR) return null
+  if (!fs.existsSync(LEGACY_DATA_DIR)) return null
+
+  // 上次复制中途退出（进程被杀/断电）：新位置只是半成品，清掉重来
+  if (fs.existsSync(path.join(DATA_DIR, MIGRATING_SENTINEL)) && hasLegacyUserData()) {
+    log.warn(`检测到未完成的数据迁移，清理半成品后重试: ${DATA_DIR}`)
+    fs.rmSync(DATA_DIR, { recursive: true, force: true })
+  }
+
+  const newHasDb = fs.existsSync(path.join(DATA_DIR, 'app.db'))
+  const newHasMarker = fs.existsSync(path.join(DATA_DIR, MIGRATION_MARKER))
+  if (newHasDb || newHasMarker) {
+    // 新位置已有数据（例如用户先装过 1.3.0）：保留新位置，不动旧目录，只记一笔
+    if (!newHasMarker && hasLegacyUserData()) {
+      log.warn(`新旧两处都有数据，保留新位置并跳过迁移；旧数据仍在 ${LEGACY_DATA_DIR}`)
+    }
+    return null
+  }
+  if (!hasLegacyUserData()) return null
+
+  const startedAt = Date.now()
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true })
+    fs.writeFileSync(path.join(DATA_DIR, MIGRATING_SENTINEL), JSON.stringify({ at: new Date().toISOString() }), 'utf8')
+    fs.cpSync(LEGACY_DATA_DIR, DATA_DIR, { recursive: true })
+
+    // 校验：文件集合与大小逐项一致
+    const src = listFiles(LEGACY_DATA_DIR)
+    const dst = listFiles(DATA_DIR)
+    dst.delete(MIGRATING_SENTINEL)
+    if (src.size !== dst.size) {
+      throw new Error(`复制后文件数不一致：源 ${src.size}，目标 ${dst.size}`)
+    }
+    for (const [rel, size] of src) {
+      const got = dst.get(rel)
+      if (got === undefined) throw new Error(`目标缺少文件：${rel}`)
+      if (got !== size) throw new Error(`文件大小不一致：${rel}（源 ${size}，目标 ${got}）`)
+    }
+    // 强校验：库与配置做 SHA-256 比对（这两份坏了就等于数据丢了）
+    for (const name of ['app.db', 'config.json']) {
+      const from = path.join(LEGACY_DATA_DIR, name)
+      if (!fs.existsSync(from)) continue
+      if (sha256File(from) !== sha256File(path.join(DATA_DIR, name))) {
+        throw new Error(`校验和不一致：${name}`)
+      }
+    }
+    // 确认新库可读（能打开并读出开头字节）
+    const fd = fs.openSync(path.join(DATA_DIR, 'app.db'), 'r')
+    try {
+      const buf = Buffer.alloc(16)
+      fs.readSync(fd, buf, 0, 16, 0)
+    } finally {
+      fs.closeSync(fd)
+    }
+
+    const marker = {
+      from: LEGACY_DATA_DIR,
+      to: DATA_DIR,
+      at: new Date().toISOString(),
+      files: src.size,
+      bytes: [...src.values()].reduce((a, b) => a + b, 0),
+      elapsedMs: Date.now() - startedAt
+    }
+    fs.writeFileSync(path.join(DATA_DIR, MIGRATION_MARKER), JSON.stringify(marker, null, 2), 'utf8')
+    fs.rmSync(path.join(DATA_DIR, MIGRATING_SENTINEL), { force: true })
+
+    let removedLegacy = false
+    try {
+      fs.rmSync(LEGACY_DATA_DIR, { recursive: true, force: true })
+      removedLegacy = true
+    } catch (e) {
+      log.warn(`旧数据目录清理失败（新位置已可用，旧副本保留）: ${LEGACY_DATA_DIR}: ${errMsg(e)}`)
+    }
+    log.info(`安装版数据目录已迁移：${LEGACY_DATA_DIR} → ${DATA_DIR}（${marker.files} 个文件 / ${marker.bytes} 字节）`)
+    return { from: marker.from, to: marker.to, files: marker.files, bytes: marker.bytes, removedLegacy }
+  } catch (e) {
+    // 半成品不能留：否则下次启动会把不完整的新位置当成正式数据
+    try {
+      fs.rmSync(DATA_DIR, { recursive: true, force: true })
+    } catch (cleanupErr) {
+      log.error(`半成品数据目录清理失败: ${DATA_DIR}: ${errMsg(cleanupErr)}`)
+    }
+    throw new Error(`数据迁移失败（原数据仍在 ${LEGACY_DATA_DIR}）：${errMsg(e)}`)
   }
 }

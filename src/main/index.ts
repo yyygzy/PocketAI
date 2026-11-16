@@ -27,7 +27,14 @@ import fs from 'node:fs'
 import { SESSION_DATA_DIR_NAME, USER_DATA_DIR_NAME } from '../shared/data-dirs'
 import { IS_DEV_MODE, appIconPath, installLoadRetry, installShowFallback } from './windows/boot-guards'
 import { closeUnlockWindow, showUnlockWindow } from './windows/unlock-window'
-import { ensureDirs, migrateMcpExtensionsDir, DATA_DIR, LOGS_DIR } from './portable'
+import {
+  ensureDirs,
+  migrateInstalledDataDir,
+  migrateMcpExtensionsDir,
+  DATA_DIR,
+  LEGACY_DATA_DIR,
+  LOGS_DIR
+} from './portable'
 import { dbService } from './db/database'
 import { conversationRunRepo } from './db/repositories/conversation-run.repo'
 import {
@@ -232,6 +239,25 @@ function createMainWindow(): void {
 // 启动埋点已抽至 steward/boot-perf（内存记录供数据健康面板读取，日志打点不变）
 
 async function boot(): Promise<void> {
+  // 安装版：把 ≤1.2.8 留在安装目录里的数据搬到 appData 下。必须早于 ensureDirs——
+  // 先造目录就分不清「新位置已有数据」还是「刚建的空目录」，会把旧数据当不存在。
+  // 失败时原数据仍在旧位置，这里只负责把话说清楚并放弃启动，绝不带着空库继续。
+  try {
+    const migrated = migrateInstalledDataDir()
+    if (migrated) {
+      log.info(`数据目录迁移完成：${migrated.from} → ${migrated.to}（${migrated.files} 个文件 / ${migrated.bytes} 字节，旧目录已清理=${migrated.removedLegacy}）`)
+    }
+  } catch (e) {
+    const msg = errMsg(e, '未知错误')
+    log.error('数据目录迁移失败:', msg)
+    dialog.showErrorBox(
+      '数据迁移失败',
+      `${msg}\n\n原始数据完整保留在：\n${LEGACY_DATA_DIR}\n\n请确认磁盘空间与权限后重新启动；也可以手动把该目录复制到：\n${DATA_DIR}\n\n程序不会带着空数据库继续启动。`
+    )
+    app.quit()
+    return
+  }
+
   ensureDirs()
   configureLogDir(LOGS_DIR)
   migrateMcpExtensionsDir()
