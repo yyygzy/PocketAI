@@ -2878,5 +2878,7 @@ export const ja = {
   'runbook.renamePlaceholder': 'テンプレート名',
   'runbook.renamed': '名前を変更しました',
   'runbook.nameEmpty': 'テンプレート名は空にできません',
-  'runbook.nameDuplicate': '同名のテンプレート「{name}」が既にあります。この名前のままにしますか？'
+  'runbook.nameDuplicate': '同名のテンプレート「{name}」が既にあります。この名前のままにしますか？',
+  'runbook.nameLimit': '名前は最大 {n} 文字までです',
+  'runbook.nameTooLong': '名前が長すぎます：最大 {n} 文字まで（現在 {len} 文字）'
 } satisfies Record<string, string>

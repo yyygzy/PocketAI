@@ -2878,5 +2878,7 @@ export const ko = {
   'runbook.renamePlaceholder': '템플릿 이름',
   'runbook.renamed': '이름을 변경했습니다',
   'runbook.nameEmpty': '템플릿 이름은 비울 수 없습니다',
-  'runbook.nameDuplicate': '같은 이름의 템플릿 "{name}"이(가) 이미 있습니다. 그래도 이 이름을 사용할까요?'
+  'runbook.nameDuplicate': '같은 이름의 템플릿 "{name}"이(가) 이미 있습니다. 그래도 이 이름을 사용할까요?',
+  'runbook.nameLimit': '이름은 최대 {n}자까지 가능합니다',
+  'runbook.nameTooLong': '이름이 너무 깁니다: 최대 {n}자 (현재 {len}자)'
 } satisfies Record<string, string>

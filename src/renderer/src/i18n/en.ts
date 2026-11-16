@@ -2966,5 +2966,7 @@ export const en = {
   'runbook.renamePlaceholder': 'Runbook name',
   'runbook.renamed': 'Renamed',
   'runbook.nameEmpty': 'Runbook name cannot be empty',
-  'runbook.nameDuplicate': 'A runbook named "{name}" already exists. Use this name anyway?'
+  'runbook.nameDuplicate': 'A runbook named "{name}" already exists. Use this name anyway?',
+  'runbook.nameLimit': 'Name must be at most {n} characters',
+  'runbook.nameTooLong': 'Name is too long: at most {n} characters (currently {len})'
 } satisfies Record<string, string>

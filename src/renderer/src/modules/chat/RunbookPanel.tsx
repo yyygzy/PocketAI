@@ -9,12 +9,12 @@
 //    面板只负责把"模板用过 / 本机缺失 / 助手未授权"翻成可读的三档。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RunbookRecord, RunbookRef, RunbookToolStatus } from '../../../../shared/runbook'
-import { evaluateRunbookStart } from '../../../../shared/runbook'
+import { RUNBOOK_NAME_MAX, evaluateRunbookStart } from '../../../../shared/runbook'
 import type { RunToolGrant, ToolPolicySnapshot } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { useConfirm } from '../../components/ConfirmDialog'
-import { hasIpcFailed, ipcFailText } from '../../utils/ipc'
+import { hasIpcFailed, ipcFailText, reportIpcError } from '../../utils/ipc'
 
 interface Props {
   /**
@@ -63,20 +63,22 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
   const [busy, setBusy] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
-  const reload = useCallback(async (): Promise<void> => {
+  const reload = useCallback(async (): Promise<RunbookRecord[] | null> => {
     try {
       const r = await window.pocketai.listRunbooks()
       if (hasIpcFailed(r)) {
         setUnread(ipcFailText(r, t('runbook.readFailed')))
         setList([])
-        return
+        return null
       }
       setUnread(null)
       setList(r)
       setSelectedId((prev) => (prev && r.some((x) => x.id === prev) ? prev : (r[0]?.id ?? null)))
+      return r
     } catch (e) {
       setUnread(e instanceof Error ? e.message : t('runbook.readFailed'))
       setList([])
+      return null
     }
   }, [t])
 
@@ -103,6 +105,11 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
     void loadPolicy()
   }, [open, reload, loadPolicy])
 
+  // 关面板即退出逐条引导：下次打开重新按"还有没有待确认"算，不接着上一次的临时批次
+  useEffect(() => {
+    if (!open) setImportedBatch(null)
+  }, [open])
+
   // 选中即查一次引用：跨机失效的清单要在"点套用之前"就看得见，不能等失败才说
   useEffect(() => {
     setMissing(null)
@@ -114,9 +121,9 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
         if (cancelled || hasIpcFailed(r)) return
         setMissing(r.missingRefs)
       })
-      .catch(() => {
-        /* 读不到就按"未校验"处理：套用那一刻还会再查一次，失败会明确报错 */
-      })
+      // 读不到就按"未校验"处理：套用那一刻还会再查一次，失败会明确报错。
+      // 但 reject 面不许空挂（§224）：至少留下可查的日志，不能把一次真抛错彻底咽掉。
+      .catch(reportIpcError('runbook.checkRunbook'))
     return () => {
       cancelled = true
     }
@@ -168,8 +175,17 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
     })
   }, [selected, policy, missing])
 
-  const pendingCount =
-    list?.filter((r) => r.steps.length > 0 && r.toolPermissions.length === 0).length ?? 0
+  /**
+   * 本次导入批次里还没确认工具授权的（只算这批）。
+   * 不用全库计数：历史遗留的零授权模板没有参与这次导入，算进来会把"还剩几条"说大。
+   */
+  const importPending = useMemo(() => {
+    if (!importedBatch || !list) return []
+    const byId = new Map(list.map((x) => [x.id, x]))
+    return importedBatch.ids
+      .map((id) => byId.get(id))
+      .filter((x): x is RunbookRecord => !!x && x.steps.length > 0 && x.toolPermissions.length === 0)
+  }, [importedBatch, list])
 
   const applyPatch = useCallback(
     async (id: string, toolPermissions: string[]): Promise<void> => {
@@ -180,8 +196,29 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
         return
       }
       setList((prev) => prev?.map((item) => (item.id === id ? r : item)) ?? prev)
+      // 逐条引导：这一条从"有步骤但零授权"变成有授权，就自动跳到同批下一条未确认的。
+      // 只在批次内推进；取消勾选（又变回零授权）不跳，用户仍停在这一条上。
+      if (
+        importedBatch?.ids.includes(id) &&
+        r.steps.length > 0 &&
+        r.toolPermissions.length > 0
+      ) {
+        const byId = new Map((list ?? []).map((x) => [x.id, x]))
+        byId.set(id, r)
+        const next = importedBatch.ids
+          .map((x) => byId.get(x))
+          .find(
+            (x): x is RunbookRecord =>
+              !!x && x.id !== id && x.steps.length > 0 && x.toolPermissions.length === 0
+          )
+        if (next) {
+          setSelectedId(next.id)
+          setMissing(null)
+          setRenaming(false)
+        }
+      }
     },
-    [t, toast]
+    [t, toast, importedBatch, list]
   )
 
   const handleToggleTool = (tool: RunbookToolStatus): void => {
@@ -251,9 +288,14 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
       if ('canceled' in r) return
       const skipped = r.skipped > 0 ? t('runbook.importSkipped', { n: r.skipped }) : ''
       toast.success(t('runbook.imported', { n: r.imported }) + skipped)
-      await reload()
-      // 导入后直接停在第一条新模板：授权清单就在详情里，不用用户再找
-      if (r.ids[0]) setSelectedId(r.ids[0])
+      const fresh = await reload()
+      // 导入后直接落到这批里第一条"待确认授权"的模板（零步骤的模板不需要确认，跳过它）
+      const byId = new Map((fresh ?? []).map((x) => [x.id, x]))
+      const firstPending = r.ids.find((id) => {
+        const item = byId.get(id)
+        return !!item && item.steps.length > 0 && item.toolPermissions.length === 0
+      })
+      setSelectedId(firstPending ?? r.ids[0] ?? null)
       setImportedBatch({ count: r.imported, ids: r.ids })
       setRenaming(false)
       setMissing(null)
@@ -312,6 +354,11 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
     }
     if (name === selected.name) {
       setRenaming(false)
+      return
+    }
+    // 长度上限不交给 zod：超长时在这里挡住并给出明确文案，别让用户只看到一句"读取失败"
+    if (name.length > RUNBOOK_NAME_MAX) {
+      toast.error(t('runbook.nameTooLong', { n: RUNBOOK_NAME_MAX, len: name.length }))
       return
     }
     // 重名不禁止（导入本来就允许同名并列），但要让用户知道会多出一条同名模板
@@ -388,18 +435,16 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
             <p className="mt-2 text-[var(--color-text-muted)]">{t('runbook.empty')}</p>
           )}
 
-          {importedBatch && importedBatch.count > 0 && (
+          {importedBatch && importedBatch.count > 0 && importPending.length > 0 && (
             <div
               className="mt-2 rounded border border-[var(--color-warning)] bg-[var(--color-warning-bg)] p-2"
               data-testid="runbook-import-guide"
             >
               <p className="text-[var(--color-text)]">{t('runbook.importGuideTitle', { n: importedBatch.count })}</p>
               <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t('runbook.importGuideHint')}</p>
-              {pendingCount > 0 && (
-                <p className="mt-1 text-[11px] text-[var(--color-warning)]" data-testid="runbook-import-pending">
-                  {t('runbook.importGuidePending', { n: pendingCount })}
-                </p>
-              )}
+              <p className="mt-1 text-[11px] text-[var(--color-warning)]" data-testid="runbook-import-pending">
+                {t('runbook.importGuidePending', { n: importPending.length })}
+              </p>
             </div>
           )}
 
@@ -563,33 +608,43 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
               </div>
 
               {renaming ? (
-                <div className="flex items-center gap-1" data-testid="runbook-rename-form">
-                  <input
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    maxLength={100}
-                    placeholder={t('runbook.renamePlaceholder')}
-                    data-testid="runbook-rename-input"
-                    className="min-w-0 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-0.5 text-[var(--color-text)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleRename()}
-                    disabled={busy}
-                    data-testid="runbook-rename-save"
-                    className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
-                  >
-                    {t('common.save')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRenaming(false)}
-                    disabled={busy}
-                    data-testid="runbook-rename-cancel"
-                    className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
-                  >
-                    {t('common.cancel')}
-                  </button>
+                <div data-testid="runbook-rename-form">
+                  <div className="flex items-center gap-1">
+                    <input
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      placeholder={t('runbook.renamePlaceholder')}
+                      aria-invalid={renameDraft.length > RUNBOOK_NAME_MAX}
+                      data-testid="runbook-rename-input"
+                      className="min-w-0 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-0.5 text-[var(--color-text)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleRename()}
+                      disabled={busy}
+                      data-testid="runbook-rename-save"
+                      className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+                    >
+                      {t('common.save')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRenaming(false)}
+                      disabled={busy}
+                      data-testid="runbook-rename-cancel"
+                      className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+                    >
+                      {t('common.cancel')}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[11px] text-[var(--color-text-muted)]" data-testid="runbook-name-limit">
+                    {t('runbook.nameLimit', { n: RUNBOOK_NAME_MAX })}
+                  </p>
+                  {renameDraft.length > RUNBOOK_NAME_MAX && (
+                    <p className="text-[11px] text-[var(--color-danger)]" data-testid="runbook-name-too-long">
+                      {t('runbook.nameTooLong', { n: RUNBOOK_NAME_MAX, len: renameDraft.length })}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center gap-2 pt-1">

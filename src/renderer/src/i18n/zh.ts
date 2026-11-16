@@ -2965,5 +2965,7 @@ export const zh = {
   'runbook.renamePlaceholder': '模板名称',
   'runbook.renamed': '已重命名',
   'runbook.nameEmpty': '模板名称不能为空',
-  'runbook.nameDuplicate': '已有同名模板「{name}」，仍要使用这个名字吗？'
+  'runbook.nameDuplicate': '已有同名模板「{name}」，仍要使用这个名字吗？',
+  'runbook.nameLimit': '名称最多 {n} 个字符',
+  'runbook.nameTooLong': '名称超长：最多 {n} 个字符（当前 {len} 个）'
 } satisfies Record<string, string>
