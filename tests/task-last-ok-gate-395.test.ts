@@ -118,8 +118,15 @@ describe('A 写入侧：两档各记各的，且两颗都写在那颗保护里',
     expect(flagAt, '顺序：flag 必须排在时间戳之前').toBeLessThan(runAt)
   })
 
-  it('那一颗的键名只在一处拼（读写两侧不许各抄一份模板）', () => {
-    expect(SCHED.match(/task\.\$\{key\}\.last_ok/g)?.length ?? 0).toBe(1)
+  it('那一颗的键名只用同一个模板拼（写读各一处，不许再长出第三处）', () => {
+    // §395 定这条时读写两侧各在一处：调度写、data-health 读（那一侧用字面键，不在本文件的扫面里）。
+    // P2-2 之后调度自己也要读这一档（scheduleOf → getLastOk 报 lastOk），模板于是从 1 处变 2 处：
+    // setLastOk 写、getLastOk 读。两处必须拼成**同一串**（改一个忘一个就是两档漂开的入口），
+    // 且不许再出现第三处。上限＝现数 2，多一处就要人工过目并抬数。
+    const hits = SCHED.match(/task\.\$\{key\}\.last_ok/g) ?? []
+    expect(hits.length, `现数 ${hits.length} 处：应为 setLastOk 写／getLastOk 读`).toBe(2)
+    expect(blockAfter(SCHED, 'function setLastOk'), '写侧模板').toContain('task.${key}.last_ok')
+    expect(blockAfter(SCHED, 'function getLastOk'), '读侧模板').toContain('task.${key}.last_ok')
   })
 })
 
@@ -176,6 +183,18 @@ describe('C 契约：四颗字段齐、flag 是必填的三档', () => {
 describe('D 屏侧：三档机关一份定义、两行按身份各自绑门', () => {
   const sf = ts.createSourceFile('panel.tsx', PANEL_RAW, ts.ScriptTarget.ES2020, true, ts.ScriptKind.TSX)
 
+  /** P2-2 起两行文案先落成常量（`const kbTaskLabel = t('dh.task.kbHealthCheck')`：
+   *  同一个名字既喂 Row 的 label 又喂开关控件的 aria/文案，免得同一条任务两处措辞漂开）。
+   *  于是 `label={标识符}` 要解析回它的初始化式再比；解析不出来就按原文比——
+   *  认不出就是 0 处、当场红，不会静默放行。 */
+  const labelText = (attrs: Map<string, string>): string => {
+    const raw = attrs.get('label') ?? ''
+    const id = raw.match(/^\{([A-Za-z_$][\w$]*)\}$/)?.[1]
+    if (!id) return raw
+    const decl = new RegExp(`const\\s+${id}(?:\\s*:[^=]+)?\\s*=\\s*([^\\n]+)`).exec(PANEL)
+    return decl ? decl[1]!.trim() : raw
+  }
+
   /** 收集 `<Row ... />` 自闭合元素上的属性文本 */
   const rowsOf = (labelKey: string): Map<string, string> => {
     const found: Map<string, string>[] = []
@@ -185,7 +204,7 @@ describe('D 屏侧：三档机关一份定义、两行按身份各自绑门', ()
         for (const p of n.attributes.properties) {
           if (ts.isJsxAttribute(p) && p.initializer) attrs.set(p.name.getText(sf), p.initializer.getText(sf))
         }
-        if ((attrs.get('label') ?? '').includes(labelKey)) found.push(attrs)
+        if (labelText(attrs).includes(labelKey)) found.push(attrs)
       }
       ts.forEachChild(n, walk)
     }

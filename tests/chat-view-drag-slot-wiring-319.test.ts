@@ -161,11 +161,13 @@ function scan(src: string): Scan {
   return { slots, pairs, directWrites }
 }
 
-const SRC = fs.readFileSync(FILE, 'utf8')
 // 按行手术，不按整串 replace：这棵树现在工作副本是 LF，但 autocrlf 之后会翻成 CRLF，
 // 那时含换行的字符串锚点会静默不命中 ⇒ 三份假源码都等于原文件、对照全废（§309 同款教训）。
-const nl = SRC.includes('\r\n') ? '\r\n' : '\n'
-const scanLines = (arr: string[]): Scan => scan(arr.join(nl))
+// 所以这里**先把换行归一成 LF** 再切行：`includes('\r\n')` 的一刀切在这份文件上会翻车——
+// ChatView.tsx 现在混着 4 行 CRLF 与 1600 多行 LF，一刀切会把整份当 CRLF、只切出 5 段，
+// 三份假源码全落空（闸门报的正是「锚点找不到」）。归一之后按行手术与 EOL 无关。
+const SRC = fs.readFileSync(FILE, 'utf8').split(/\r?\n/).join('\n')
+const scanLines = (arr: string[]): Scan => scan(arr.join('\n'))
 const replaceLine = (lines: string[], pred: (l: string) => boolean, next: (l: string) => string): string[] => {
   const idx = lines.findIndex(pred)
   if (idx < 0) throw new Error('漏杀对照的锚点找不到（源码形状变了，对照要跟着改）')
@@ -204,7 +206,7 @@ describe('§319 ChatView 拖拽槽的接线（源码级闸门）', () => {
   })
 
   it('漏杀对照：共用一格／绕开代次直接写／代次写死常量——三种都得判红', () => {
-    const lines = SRC.split(nl)
+    const lines = SRC.split('\n')
 
     // ① 改前的形状：多选那颗按钮的 dragstart 换回长图那个 handler（两对同格）
     const shared = scanLines(
@@ -229,10 +231,10 @@ describe('§319 ChatView 拖拽槽的接线（源码级闸门）', () => {
   })
 
   it('反向对照：新添一颗按钮要进名单——配对了就两判据都绿、配错格就当场红', () => {
-    const ok = `${SRC}${nl}const probeDragRef = useRef<DragSlot>({ gen: 0, path: null })${nl}` +
-      `const __probeDown = useCallback(() => { const s = probeDragRef.current; const g = beginDrag(s); commitDrag(s, g, 'x') }, [])${nl}` +
-      `const __probeStart = useCallback((e: React.DragEvent) => { if (!probeDragRef.current.path) e.preventDefault() }, [])${nl}` +
-      `const __probeJsx = <button onPointerDown={__probeDown} onDragStart={__probeStart} />${nl}`
+    const ok = `${SRC}\nconst probeDragRef = useRef<DragSlot>({ gen: 0, path: null })\n` +
+      `const __probeDown = useCallback(() => { const s = probeDragRef.current; const g = beginDrag(s); commitDrag(s, g, 'x') }, [])\n` +
+      `const __probeStart = useCallback((e: React.DragEvent) => { if (!probeDragRef.current.path) e.preventDefault() }, [])\n` +
+      `const __probeJsx = <button onPointerDown={__probeDown} onDragStart={__probeStart} />\n`
     const s = scan(ok)
     expect(s.slots.length, '第三格要数得到').toBe(3)
     expect(s.pairs.length, '第三对要进名单').toBe(3)

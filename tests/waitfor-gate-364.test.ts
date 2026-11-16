@@ -559,6 +559,11 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // 上限＝现数，不留余量。
       'tests/mcp-manual-run-469.test.tsx': 8,
       'tests/mcp-manager.test.ts': 1,
+      // P2-1 首页状态：点亮/熄灭那一发落地后读屏，按存在断；仅 1 颗，上限＝现数，不留余量。
+      'tests/p2-1-home-status.test.tsx': 1,
+      // P2-2 维护任务开关/间隔：四颗门分别等设置读回、保存成功、非法间隔回包、关闭态文案落地，
+      // 门里都按「存在」读屏；上限＝现数 4，不留余量。
+      'tests/p2-2-task-settings-ui.test.tsx': 4,
       'tests/popup-payload-owner-321.test.tsx': 3,
       'tests/recovery-carry-notice-369.test.tsx': 6,
       'tests/reminder-generation-348.test.tsx': 7,
@@ -630,6 +635,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-websearch-searxng-407.test.tsx': 17,
       'tests/renderer-wizard-328.test.tsx': 6,
       'tests/renderer-wizard-412.test.tsx': 1,
+      // P1-5 runbook 打磨：既有外壳里的门全量登记（原先漏登），加上本批「批量导入逐条确认引导」
+      // 与「超长名称不落库」两条新用例里的门；上限＝现数 22，不留余量。
+      'tests/runbook-panel.test.tsx': 22,
       'tests/sandbox-meta-envelope-326.test.tsx': 13,
       'tests/search-late-response-353.test.tsx': 8,
       'tests/settings-enc-copy-344.test.tsx': 1,
