@@ -7,6 +7,10 @@ asar: true
 asarUnpack:
   - node_modules/better-sqlite3-multiple-ciphers/**/*.node
   - node_modules/better-sqlite3/**/*.node
+  # 对齐 package.json build.asarUnpack：这两个是运行时从磁盘加载原生库的，
+  # 留在 asar 里会加载失败（onnxruntime-node 的 .so 在 bin/napi-v*/linux-x64/ 下）
+  - node_modules/sqlite-vec*/**/*.{dll,dylib,so}
+  - node_modules/onnxruntime-node/**
 directories:
   output: dist
   buildResources: build
