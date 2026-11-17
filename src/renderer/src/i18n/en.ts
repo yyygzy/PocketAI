@@ -1769,6 +1769,9 @@ export const en = {
   'steward.free': 'Free',
   'steward.gpu': 'GPU',
   'steward.notDetected': 'Not detected',
+  'steward.hwProbingShort': 'Probing…',
+  'steward.hwNotMeasured': 'Not measured (use "Check again")',
+  'steward.hwProbing': 'Probing hardware… the GPU and disk are still being read in the background (up to about half a minute). The readings and model suggestions below will update automatically — no need to click again.',
   'steward.disk': 'Storage media',
   'steward.type': 'Type',
   'steward.removable': 'Removable disk',
@@ -2531,7 +2534,11 @@ export const en = {
 
   // ── First-run wizard ──
   'wizard.welcomeTitle': '👋 Welcome to Moxia',
-  'wizard.welcomeSubtitle': "Take 30 seconds to check your hardware — we'll use it to recommend suitable AI models",
+  'wizard.welcomeSubtitle': "First we take a look at this machine's GPU and disk — usually a dozen seconds, up to half a minute on slower machines. We'll use that to recommend suitable AI models.",
+  'wizard.hwDetecting': 'Checking GPU and disk… (usually a dozen seconds, up to half a minute on slower machines; model suggestions come right after)',
+  'wizard.hwNotMeasured': "Couldn't read the GPU and disk: the check timed out or the system command is unavailable. Model suggestions need this data, so none are shown this time — you can run the check again.",
+  'wizard.hwRetry': 'Check again',
+  'wizard.notMeasured': 'Not measured',
   'wizard.cpu': 'CPU',
   'wizard.memory': 'Memory (free / total)',
   'wizard.gpu': 'GPU',

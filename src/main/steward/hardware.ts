@@ -7,7 +7,7 @@ import os from 'node:os'
 import fs from 'node:fs'
 import { execSync, execFileSync, execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import type { HardwareInfo, GpuInfo, DiskInfo } from '../../shared/types'
+import type { HardwareInfo, GpuInfo, DiskInfo, HardwareProbeState } from '../../shared/types'
 import { APP_ROOT } from '../portable'
 
 function getCpu() {
@@ -40,6 +40,23 @@ function runPowerShell(script: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 异步版 PowerShell：**启动路径上只许用这条**。
+ * execFileSync 在真机上能把主线程钉住 15–30s（PowerShell 冷启动 8s + CIM 查询 10–20s），
+ * 期间窗口导航、8s 加载重试与 12s 显示兜底计时器全部被推迟——2026-11-16 冷启动白屏的根因。
+ */
+function runPowerShellAsync(script: string, timeoutMs: number): Promise<string | null> {
+  const b64 = Buffer.from(script, 'utf16le').toString('base64')
+  return new Promise((resolve) => {
+    execFile(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64],
+      { encoding: 'utf8', timeout: Math.max(1000, Math.floor(timeoutMs)), windowsHide: true },
+      (err, stdout) => resolve(err ? null : String(stdout).trim())
+    )
+  })
 }
 
 export function parseJsonSafe<T>(text: string | null): T | null {
@@ -88,8 +105,8 @@ foreach ($g in $gpus) {
 ConvertTo-Json -InputObject $result -Compress
 `
 
-function getGpusWin32(): GpuInfo[] {
-  const raw = parseJsonSafe<RawGpu[] | RawGpu>(runPowerShell(GPU_PS_SCRIPT))
+function parseGpuRows(text: string | null): GpuInfo[] {
+  const raw = parseJsonSafe<RawGpu[] | RawGpu>(text)
   if (!raw) return []
   const list = Array.isArray(raw) ? raw : [raw]
   return list
@@ -101,6 +118,10 @@ function getGpusWin32(): GpuInfo[] {
       cuda: /nvidia/i.test(String(g.name)),
       mps: false
     }))
+}
+
+function getGpusWin32(): GpuInfo[] {
+  return parseGpuRows(runPowerShell(GPU_PS_SCRIPT))
 }
 
 // ─── 实占显存（V4-Iter-140）────────────────────────────────────────
@@ -245,6 +266,21 @@ function getGpus(): GpuInfo[] {
   }
 }
 
+/**
+ * Windows GPU 采集（异步）：`ok=false` 表示**这次没采到**（PowerShell 失败/超时），
+ * 不是"这台机器没有显卡"——界面据此区分「没测到」与「未检测到独显」。
+ */
+async function probeGpusWin32(deadline: number): Promise<{ gpus: GpuInfo[]; ok: boolean }> {
+  const text = await runPowerShellAsync(GPU_PS_SCRIPT, deadline - Date.now())
+  // 解析不出 JSON（null / 被超时杀掉）⇒ 没采到；输出 `[]` 才是"确实没有可报告的显卡"
+  if (text === null || parseJsonSafe<RawGpu[] | RawGpu>(text) === null) return { gpus: [], ok: false }
+  const gpus = parseGpuRows(text)
+  if (!gpus.some((g) => g.cuda)) return { gpus, ok: true }
+  // 预算已经花光就不再为 nvidia-smi 多付一条进程：返回的总量仍然是 WMI 的真实读数
+  if (deadline - Date.now() < 500) return { gpus, ok: true }
+  return { gpus: applyNvidiaRows(gpus, await readGpuMemoryLive()), ok: true }
+}
+
 // ─── 运行介质（APP_ROOT 所在磁盘） ─────────────────────────────────
 
 interface RawDisk {
@@ -307,8 +343,8 @@ export function deriveDiskTypeDarwin(removable: boolean): DiskInfo['type'] {
   return removable ? 'usb' : 'unknown'
 }
 
-function getDiskWin32(driveLetter: string): DiskInfo {
-  const info: DiskInfo = {
+function emptyDiskWin32(driveLetter: string): DiskInfo {
+  return {
     type: 'unknown',
     removable: false,
     drive: `${driveLetter}:`,
@@ -319,11 +355,21 @@ function getDiskWin32(driveLetter: string): DiskInfo {
     mediumType: null,
     busType: null
   }
+}
 
-  const script = `
+/**
+ * 磁盘快段：盘符/卷标/文件系统/容量/DriveType 只查 `Win32_LogicalDisk`。
+ *
+ * 为什么要把磁盘探测拆成两段：同一条脚本里混进 `Get-Partition` + `Get-PhysicalDisk`
+ * （为了拿介质/总线）会让整条命令在本机跑到 22–36s——30s 的向导预算必被它吃光，
+ * 结果连"磁盘多大、还剩多少"这种本来 10s 就能拿到的真数据都一起丢了。
+ * 拆开后快段独立负责 `got.disk`，慢段只补 type/medium/bus，慢段失败不影响快段读数。
+ */
+function logicalDiskPsScript(driveLetter: string): string {
+  return `
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
-$r = @{ drive = $null; label = $null; fs = $null; total = $null; free = $null; dtype = $null; medium = $null; bus = $null }
+$r = @{ drive = $null; label = $null; fs = $null; total = $null; free = $null; dtype = $null }
 $ld = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${driveLetter}:'" | Select-Object -First 1
 if ($ld) {
   $r.drive = $ld.DeviceID
@@ -332,10 +378,30 @@ if ($ld) {
   $r.total = [string][uint64]$ld.Size
   $r.free = [string][uint64]$ld.FreeSpace
   $r.dtype = [int]$ld.DriveType
-  $letter = $ld.DeviceID.TrimEnd(':')
-  $part = Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($part) {
-    $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { [string]$_.DeviceId -eq [string]$part.DiskNumber } | Select-Object -First 1
+}
+ConvertTo-Json -InputObject $r -Compress
+`
+}
+
+/**
+ * 磁盘慢段：只补介质（HDD/SSD）与总线（NVMe/SATA/USB）。
+ *
+ * 不用 `Get-Partition`/`Get-PhysicalDisk`（本机单独 22.56s，加载 Storage 模块太贵），
+ * 改走 `Win32_LogicalDiskToPartition` 关联 + Storage 命名空间直查 `MSFT_PhysicalDisk`
+ * （本机 11.38s，读数与 cmdlet 那条一致：SSD / NVMe）。
+ * 拿不到就什么都不写——留下 unknown 由 §377 的派生规则处理，绝不猜。
+ */
+function physicalDiskPsScript(driveLetter: string): string {
+  return `
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+$r = @{ medium = $null; bus = $null }
+$link = Get-CimInstance -ClassName Win32_LogicalDiskToPartition | Where-Object { [string]$_.Dependent.DeviceID -eq '${driveLetter}:' } | Select-Object -First 1
+if ($link) {
+  $idx = $null
+  if ([string]$link.Antecedent.DeviceID -match 'Disk #(\\d+)') { $idx = $matches[1] }
+  if ($idx -ne $null) {
+    $pd = Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_PhysicalDisk -Filter "DeviceId='$idx'" | Select-Object -First 1
     if ($pd) {
       $r.medium = [string]$pd.MediaType
       $r.bus = [string]$pd.BusType
@@ -344,7 +410,9 @@ if ($ld) {
 }
 ConvertTo-Json -InputObject $r -Compress
 `
-  const raw = parseJsonSafe<RawDisk>(runPowerShell(script))
+}
+
+function applyDiskRaw(info: DiskInfo, raw: RawDisk | null): DiskInfo {
   if (!raw) return info
 
   info.volumeLabel = raw.label || null
@@ -359,24 +427,73 @@ ConvertTo-Json -InputObject $r -Compress
   return info
 }
 
+function getDiskWin32(driveLetter: string): DiskInfo {
+  // 同步兜底只取快段：慢段（Get-Partition/Get-PhysicalDisk）同步跑能钉住主线程 20s+
+  return applyDiskRaw(emptyDiskWin32(driveLetter), parseDiskRaw(runPowerShell(logicalDiskPsScript(driveLetter))))
+}
+
+/**
+ * 只收「对象」形状的磁盘 JSON：`parseJsonSafe` 对数组也会成功，
+ * 而把 GPU 那种 `[...]` 误当成磁盘读数会让 `ok` 变成 true（＝谎报测到了磁盘）。
+ */
+function parseDiskRaw(text: string | null): RawDisk | null {
+  const raw = parseJsonSafe<RawDisk>(text)
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return raw
+}
+
+/**
+ * 磁盘探测：快段定 `ok`，慢段只补介质/总线。
+ * - 两段**并行**跑（各自受同一个截止时间约束）：本机快段 ~10s、慢段 ~11s，并行后总耗时仍由 GPU 那条 ~15–20s 决定；
+ * - 慢段拿不到 ⇒ 只留 unknown，磁盘容量/剩余照样是真实读数；
+ * - 快段没回来 ⇒ `ok=false`（＝没测到），界面画「没测到」而不是画一份空磁盘当结论。
+ */
+async function probeDiskWin32(driveLetter: string, deadline: number): Promise<{ disk: DiskInfo; ok: boolean }> {
+  const slowAt = deadline - Date.now()
+  // 预算已不足 3s 就不再多起一条注定被杀的 PowerShell（冷启动本身就要 7–9s）
+  const slowPromise = slowAt >= 3000
+    ? runPowerShellAsync(physicalDiskPsScript(driveLetter), slowAt)
+    : Promise.resolve(null)
+  const [fastText, slowText] = await Promise.all([
+    runPowerShellAsync(logicalDiskPsScript(driveLetter), Math.max(0, deadline - Date.now())),
+    slowPromise
+  ])
+
+  const raw = parseDiskRaw(fastText)
+  const info = applyDiskRaw(emptyDiskWin32(driveLetter), raw)
+  const slow = parseDiskRaw(slowText)
+  if (slow) {
+    info.mediumType = mapEnum(MEDIA_MAP, slow.medium)
+    info.busType = mapEnum(BUS_MAP, slow.bus)
+    info.type = deriveDiskTypeWin32({ dtype: raw?.dtype ?? null, mediumType: info.mediumType, busType: info.busType })
+    info.removable = info.type === 'usb'
+  }
+  return { disk: info, ok: raw !== null }
+}
+
+/** 「不知道」的磁盘结论：网页号/容量一律 null，type=unknown（§377：不探测就不许推断） */
+function emptyDisk(): DiskInfo {
+  return {
+    type: 'unknown',
+    removable: false,
+    drive: null,
+    volumeLabel: null,
+    filesystem: null,
+    totalSpace: null,
+    freeSpace: null,
+    mediumType: null,
+    busType: null
+  }
+}
+
 function getDisk(): DiskInfo {
   try {
     if (process.platform === 'win32') {
       const drive = APP_ROOT.match(/^([A-Za-z]):/)?.[1]?.toUpperCase()
       if (drive) return getDiskWin32(drive)
-      return { type: 'unknown', removable: false, drive: null, volumeLabel: null, filesystem: null, totalSpace: null, freeSpace: null, mediumType: null, busType: null }
+      return emptyDisk()
     }
-    const info: DiskInfo = {
-      type: 'unknown',
-      removable: false,
-      drive: null,
-      volumeLabel: null,
-      filesystem: null,
-      totalSpace: null,
-      freeSpace: null,
-      mediumType: null,
-      busType: null
-    }
+    const info = emptyDisk()
     if (process.platform === 'darwin') {
       // SEC-21：execFileSync + JS 侧过滤，替代 shell 字符串拼接与管道
       const out = execFileSync('diskutil', ['info', APP_ROOT], { encoding: 'utf8' })
@@ -386,42 +503,197 @@ function getDisk(): DiskInfo {
     }
     return info
   } catch {
-    return { type: 'unknown', removable: false, drive: null, volumeLabel: null, filesystem: null, totalSpace: null, freeSpace: null, mediumType: null, busType: null }
+    return emptyDisk()
   }
 }
 
-/** 实际执行一次硬件采集（CPU/内存/GPU/磁盘/系统，可能调用系统命令，较重） */
-function collectHardwareInfo(): HardwareInfo {
+function getOsInfo(): HardwareInfo['os'] {
   return {
-    cpu: getCpu(),
-    memory: getMemory(),
-    gpus: getGpus(),
-    disk: getDisk(),
-    os: {
-      platform: process.platform,
-      release: os.release(),
-      arch: process.arch,
-      hostname: os.hostname()
-    }
+    platform: process.platform,
+    release: os.release(),
+    arch: process.arch,
+    hostname: os.hostname()
   }
 }
 
-// 硬件画像在平台启动时只采集一次，之后复用快照；
-// 用户在管家页面点「重新检测」时才通过 refreshHardwareInfo() 重新采集。
-let cachedHardware: HardwareInfo | null = null
+/**
+ * 还没采到时的最小快照：只有 os 级信息，`gpus: []` / `disk.type: 'unknown'` 表示「未知」而非结论。
+ * §377 纪律：不知道就写不知道，不填估算值。
+ */
+function provisionalHardware(): HardwareInfo {
+  return { cpu: getCpu(), memory: getMemory(), gpus: [], disk: emptyDisk(), os: getOsInfo() }
+}
 
-/** 获取硬件画像（首次调用时采集并缓存，后续直接返回快照） */
+// ─── 探测调度（能力页 8s 先答 + 后台补采；向导 30s 等真数据） ─────────
+//
+// 为什么要分档：这台机器 PowerShell 冷启动 7–9s，GPU 那条 15–20s；磁盘拆成快段（Win32_LogicalDisk，~10s）
+// 与慢段（CIM 直查 MSFT_PhysicalDisk，~11s）后并行跑，三路一起约 15–20s。
+// 能力页只需要尽快给个答复（先画「探测中」，后台补完自动更正），
+// 向导要拿这份数据出模型建议（等不到就必须明说「没测到」，不许拿降级值冒充结论）。
+
+/** 交互路径（能力页）最多等这么久就先出结果，其余交给后台补采 */
+export const HARDWARE_INTERACTIVE_WAIT_MS = 8000
+/** 后台补采预算：三路 PowerShell 并行约 15–20s，留 30s 给慢机器 */
+export const HARDWARE_BACKGROUND_BUDGET_MS = 30000
+/** 向导等真数据的上限：等不到就判「没测到」，不能拿降级快照给模型建议 */
+export const HARDWARE_WIZARD_WAIT_MS = 30000
+const HARDWARE_MAX_WAIT_MS = 60000
+
+interface ProbeSnapshot {
+  info: HardwareInfo
+  got: HardwareProbeState
+}
+
+let cachedProbe: ProbeSnapshot | null = null
+let activeProbe: { promise: Promise<ProbeSnapshot>; budgetMs: number; gen: number } | null = null
+let probeGen = 0
+let backgroundProbe: Promise<void> | null = null
+
+function probeComplete(snapshot: ProbeSnapshot | null): boolean {
+  return !!snapshot && snapshot.got.gpus && snapshot.got.disk
+}
+
+/** 超时或命令失败一律降级成「未知」，并把没采到的字段在 `got` 里标 false */
+async function collectHardwareProbe(budgetMs: number): Promise<ProbeSnapshot> {
+  const base = provisionalHardware()
+  if (process.platform !== 'win32') {
+    // Mac/Linux 那几条命令都是轻量 CLI（system_profiler / lspci / diskutil），沿用同步实现即可
+    return { info: { ...base, gpus: getGpus(), disk: getDisk() }, got: { gpus: true, disk: true } }
+  }
+  const drive = APP_ROOT.match(/^([A-Za-z]):/)?.[1]?.toUpperCase()
+  const deadline = Date.now() + budgetMs
+  const work = (async (): Promise<ProbeSnapshot> => {
+    const [gpu, disk] = await Promise.all([
+      probeGpusWin32(deadline),
+      drive ? probeDiskWin32(drive, deadline) : Promise.resolve({ disk: base.disk, ok: false })
+    ])
+    return { info: { ...base, gpus: gpu.gpus, disk: disk.disk }, got: { gpus: gpu.ok, disk: disk.ok } }
+  })()
+  // 单条子命令的 timeout 只保证杀进程，杀不掉（PowerShell 卡在磁盘 IO）时还要有独立截止时间
+  const raced = await waitAtMost(work, deadline)
+  return raced ?? { info: base, got: { gpus: false, disk: false } }
+}
+
+function startProbe(budgetMs: number): { promise: Promise<ProbeSnapshot>; budgetMs: number; gen: number } {
+  const gen = ++probeGen
+  const probe = {
+    budgetMs,
+    gen,
+    promise: collectHardwareProbe(budgetMs)
+      .catch((): ProbeSnapshot => ({ info: provisionalHardware(), got: { gpus: false, disk: false } }))
+      .then((snapshot) => {
+        // 只有最新一趟能写缓存（旧探测被淘汰后不许覆盖新结果），且降级结果不许盖掉已有的真实读数
+        if (gen === probeGen && (probeComplete(snapshot) || !probeComplete(cachedProbe))) {
+          cachedProbe = snapshot
+        }
+        return snapshot
+      })
+      .finally(() => {
+        if (activeProbe && activeProbe.gen === gen) activeProbe = null
+      })
+  }
+  activeProbe = probe
+  return probe
+}
+
+/** 等到 deadline 为止；超时返回 null（不抛错、不取消底层探测） */
+function waitAtMost<T>(promise: Promise<T>, deadline: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()))
+    timer.unref?.()
+    promise.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(null)
+      }
+    )
+  })
+}
+
+/**
+ * 后台补采：交互等待没等满就排一趟 30s 冷探测，采到后覆盖缓存——
+ * 能力页轮询 `probeHardwareInfo()` 就能自动更正，不用用户再点一次。
+ */
+function scheduleBackgroundProbe(): void {
+  if (backgroundProbe || probeComplete(cachedProbe)) return
+  backgroundProbe = (async () => {
+    // 先让在跑的那趟（可能是 8s 的短探测）收尾，避免两套 PowerShell 同时抢机器
+    const running = activeProbe
+    if (running) await waitAtMost(running.promise, Date.now() + running.budgetMs + 2000)
+    if (probeComplete(cachedProbe)) return
+    const probe = startProbe(HARDWARE_BACKGROUND_BUDGET_MS)
+    await waitAtMost(probe.promise, Date.now() + HARDWARE_BACKGROUND_BUDGET_MS + 5000)
+  })()
+    .catch(() => undefined)
+    .finally(() => {
+      backgroundProbe = null
+    })
+}
+
+export interface HardwareProbeOptions {
+  /** true = 用户点了「重新检测」：忽略缓存重采 */
+  force?: boolean
+  /** 本次最多等多久（缺省＝能力页那 8s；向导传 30s） */
+  waitMs?: number
+}
+
+export interface HardwareProbeResult {
+  info: HardwareInfo
+  got: HardwareProbeState
+  /** true ⇒ 有字段没采到（超时/命令失败）；界面必须画成「没测到/探测中」，不许当结论 */
+  incomplete: boolean
+  /** true ⇒ 后台补采还在跑（能力页据此显示「探测中」并轮询） */
+  probing: boolean
+}
+
+/**
+ * 硬件探测统一入口。并发调用共享同一趟探测；等不满 `waitMs` 就交已有快照并排后台补采。
+ * - 能力页：`{ waitMs: 8000 }`（默认）→ 8s 内给答复，剩下的后台补；
+ * - 向导：`{ waitMs: 30000 }` → 等真数据，超时才判「没测到」；
+ * - 重新检测：`{ force: true }` → 无视缓存重采。
+ */
+export async function probeHardwareInfo(opts: HardwareProbeOptions = {}): Promise<HardwareProbeResult> {
+  const waitMs = Math.min(HARDWARE_MAX_WAIT_MS, Math.max(1000, Math.floor(opts.waitMs ?? HARDWARE_INTERACTIVE_WAIT_MS)))
+  const deadline = Date.now() + waitMs
+
+  if (!opts.force && probeComplete(cachedProbe)) {
+    return { info: cachedProbe!.info, got: cachedProbe!.got, incomplete: false, probing: false }
+  }
+
+  // 复用一趟预算够长的在跑探测（避免两套 PowerShell 并行）；否则（重测 / 旧探测预算太短）另起一趟
+  let probe = activeProbe
+  if (!probe || opts.force || probe.budgetMs < waitMs) probe = startProbe(waitMs)
+
+  const finished = await waitAtMost(probe.promise, deadline)
+  const snapshot = finished ?? cachedProbe
+  const complete = !!finished && probeComplete(finished)
+  if (!complete) scheduleBackgroundProbe()
+  return {
+    info: snapshot?.info ?? provisionalHardware(),
+    got: snapshot?.got ?? { gpus: false, disk: false },
+    incomplete: !complete,
+    probing: !complete
+  }
+}
+
+/**
+ * 同步读快照（不采集、不阻塞）。
+ * 尚未采完时返回 os 级最小快照——调用方拿到的是「未知」，不是一份伪造的完整画像。
+ * 需要真实读数且能 await 的路径（IPC、向导、能力页）一律走 probeHardwareInfo()。
+ */
 export function getHardwareInfo(): HardwareInfo {
-  if (!cachedHardware) {
-    cachedHardware = collectHardwareInfo()
-  }
-  return cachedHardware
+  return cachedProbe?.info ?? provisionalHardware()
 }
 
-/** 重新采集硬件画像并刷新缓存（仅响应用户手动刷新） */
-export function refreshHardwareInfo(): HardwareInfo {
-  cachedHardware = collectHardwareInfo()
-  return cachedHardware
+/**
+ * 异步采集（按能力页那 8s 预算）并写缓存；`got` 明细请直接用 probeHardwareInfo()。
+ */
+export async function getHardwareInfoAsync(force = false): Promise<HardwareInfo> {
+  return (await probeHardwareInfo({ force })).info
 }
 
 // ─── 硬盘物理序列号指纹（License 绑定用） ────────────────────────────
@@ -436,7 +708,12 @@ function getDiskSerialWin32(): string | null {
   // APP_ROOT 形如 E:\...，取盘符
   const drive = APP_ROOT.match(/^([A-Za-z]):/)?.[1]?.toUpperCase()
   if (!drive) return null
-  const script = `
+  const out = runPowerShell(diskSerialScript(drive))
+  return out && out.trim() ? out.trim() : null
+}
+
+function diskSerialScript(drive: string): string {
+  return `
 $ErrorActionPreference = 'SilentlyContinue'
 $letter = '${drive}'
 $part = Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -444,7 +721,18 @@ if (-not $part) { exit 0 }
 $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { [string]$_.DeviceId -eq [string]$part.DiskNumber } | Select-Object -First 1
 if ($pd -and $pd.SerialNumber) { Write-Output $pd.SerialNumber.Trim() }
 `
-  const out = runPowerShell(script)
+}
+
+/**
+ * 指纹探测的独立预算：绑盘判定必须拿到真实序列号，**不允许降级**，
+ * 所以这里不套硬件画像那 8s 总预算（同一条 Get-Partition/Get-PhysicalDisk 在坏驱动机器上可跑 20s+）。
+ */
+const FINGERPRINT_PROBE_TIMEOUT_MS = 30000
+
+async function getDiskSerialWin32Async(): Promise<string | null> {
+  const drive = APP_ROOT.match(/^([A-Za-z]):/)?.[1]?.toUpperCase()
+  if (!drive) return null
+  const out = await runPowerShellAsync(diskSerialScript(drive), FINGERPRINT_PROBE_TIMEOUT_MS)
   return out && out.trim() ? out.trim() : null
 }
 
@@ -512,10 +800,30 @@ export function getDiskFingerprint(): string | null {
   } catch {
     serial = null
   }
-  if (!serial) {
-    cachedFingerprint = null
-    return null
-  }
-  cachedFingerprint = createHash('sha256').update(serial).digest('hex').slice(0, 16)
+  cachedFingerprint = fingerprintOf(serial)
   return cachedFingerprint
+}
+
+/**
+ * 异步版指纹：**判定语义与同步版完全一致**（同一个序列号、同一个哈希、同一个缓存），
+ * 只是把 Windows 那条 20s+ 的 Get-Partition/Get-PhysicalDisk 从主线程挪出去。
+ * 启动期加载 license 必须走这条——同步版会把窗口导航与兜底计时器一起冻住。
+ */
+export async function getDiskFingerprintAsync(): Promise<string | null> {
+  if (cachedFingerprint !== undefined) return cachedFingerprint
+  let serial: string | null = null
+  try {
+    if (process.platform === 'win32') serial = await getDiskSerialWin32Async()
+    else if (process.platform === 'darwin') serial = getDiskSerialDarwin()
+    else serial = getDiskSerialLinux()
+  } catch {
+    serial = null
+  }
+  cachedFingerprint = fingerprintOf(serial)
+  return cachedFingerprint
+}
+
+function fingerprintOf(serial: string | null): string | null {
+  if (!serial) return null
+  return createHash('sha256').update(serial).digest('hex').slice(0, 16)
 }

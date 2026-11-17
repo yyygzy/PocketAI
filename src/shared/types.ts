@@ -61,6 +61,15 @@ export interface HardwareInfo {
   os: OsInfo
 }
 
+/**
+ * 硬件探测完成度：`false` 的字段是「这次没采到」（命令失败/超时），**不是**「没有」。
+ * 界面必须把 false 画成「没测到/探测中」——把空的 gpus 当「没有独显」会给出错的模型建议。
+ */
+export interface HardwareProbeState {
+  gpus: boolean
+  disk: boolean
+}
+
 export interface AppPaths {
   appRoot: string
   dataDir: string

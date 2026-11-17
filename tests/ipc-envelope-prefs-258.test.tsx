@@ -159,7 +159,7 @@ describe('② 接线计数：旧形状归零，新形状数得出', () => {
   const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length
 
   it('main 侧三发都包了信封，preload 三条签名都带 data', () => {
-    expect(count(MAIN_SYS, /ok: true as const,\s*data: force \? refreshHardwareInfo\(\) : getHardwareInfo\(\)/g), '硬件画像包了信封').toBe(1)
+    expect(count(MAIN_SYS, /ok: true as const,\s*data: probe\.info,/g), '硬件画像包了信封').toBe(1)
     expect(count(MAIN_SYS, /ok: true as const, data: dbService\.integrityCheck\(\)/g), '完整性结论挪进 data').toBe(1)
     expect(count(MAIN_STEWARD, /ok: true as const, data: healthService\.report\(\)/g)).toBe(1)
     expect(count(PRELOAD, /data\?: HardwareInfo/g), 'preload 不再谎报裸值').toBe(1)

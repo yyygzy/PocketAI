@@ -29,7 +29,7 @@ import { denyNewWindows } from './net/external-links'
 import { errMsg } from './error'
 import { createLogger } from './logger'
 import { safeHandle, argsSchema, z } from './ipc/safe-handle'
-import { captureScreenshot, popupHwndString, prewarmCaptureHost, queryForegroundHwnd } from './screenshot'
+import { captureScreenshot, popupHwndString, queryForegroundHwnd } from './screenshot'
 
 const log = createLogger('popup')
 
@@ -397,9 +397,9 @@ export function triggerScreenshot(target: ScreenshotTarget): void {
 // ─── 初始化（boot 阶段 DB/IPC 就绪后调用一次） ──────────────────────
 
 export function initPopup(): void {
-  // 预热捕获宿主：把 PowerShell 启动与 C# 编译挪到用户按下热键之前
-  // （真机实测每次拉一次 PowerShell 约 5.7–7.4s，Add-Type 还要 2.6–3.1s）
-  prewarmCaptureHost()
+  // 截图宿主不再在启动时预热：PowerShell 拉起 + Add-Type 编译在真机上实测 8–31s，
+  // 与渲染进程抢 CPU 正是冷启动白屏的帮凶之一。改为首次截图/问答时按需启动
+  // （queryForegroundHwnd → ensureReady，宿主带 60s 启动上限），功能不受影响。
   // 锁屏时自动隐藏已打开的浮窗（浮窗内容属于敏感上下文）
   lockService.onStateChange((evt) => {
     if (evt.state === 'locked') hidePopup()

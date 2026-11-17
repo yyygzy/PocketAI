@@ -308,13 +308,6 @@ export class CaptureHost {
     return this.ready
   }
 
-  /** 应用启动后预热点：把 PowerShell 启动与 C# 编译的 8–10s 挪到用户看不见的时候 */
-  prewarm(): void {
-    void this.ensureReady().catch(() => {
-      // 预热失败不打扰用户；真正捕获时会再试并返回可读失败
-    })
-  }
-
   private ensureReady(): Promise<void> {
     if (this.disposed) return Promise.reject(new Error('capture host disposed'))
     if (this.ready) return Promise.resolve()

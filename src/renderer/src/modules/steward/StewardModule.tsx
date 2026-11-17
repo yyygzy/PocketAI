@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type {
   HardwareInfo,
+  HardwareProbeState,
   HealthReport,
   DataHealthReport,
   CleanupResult,
@@ -64,6 +65,10 @@ export const StewardModule: React.FC = () => {
   const [verifyingBackup, setVerifyingBackup] = useState(false)
   /** 最近一次「手动重新检测」完成时间；null 表示展示的是启动时自动检测的快照 */
   const [manualCheckedAt, setManualCheckedAt] = useState<number | null>(null)
+  /** 硬件后台补采还在跑（true ⇒ 页面画「探测中」，补完轮询自动更正） */
+  const [hwProbing, setHwProbing] = useState(false)
+  /** 哪些硬件字段真采到了（false ＝「没测到」，不是「没有」——空的 gpus 绝不画成「未检测到独显」） */
+  const [hwGot, setHwGot] = useState<HardwareProbeState>({ gpus: true, disk: true })
   /** 检测请求进行中（手动重新检测较慢，需禁用按钮） */
   const [refreshing, setRefreshing] = useState(false)
   /** 诊断报告导出中（补跑体检/诊断+弹保存框，需禁用按钮） */
@@ -107,7 +112,7 @@ export const StewardModule: React.FC = () => {
       // reject 面也归一成信封失败 ⇒ 下面每一发只有一条判据（`data: undefined` 是让两支同形状）
       const fail = (e: unknown) => ({ ok: false, data: undefined, error: errText(e, unknown) })
       const [hw, integ, healthReport, dh] = await Promise.all([
-        window.pocketai.getHardwareInfo(force).catch((e) => { logIpcError('steward.getHardwareInfo', e); return fail(e) }),
+        window.pocketai.getHardwareInfo({ force }).catch((e) => { logIpcError('steward.getHardwareInfo', e); return fail(e) }),
         window.pocketai.checkIntegrity().catch((e) => { logIpcError('steward.checkIntegrity', e); return fail(e) }),
         window.pocketai.getHealthReport().catch((e) => { logIpcError('steward.getHealthReport', e); return fail(e) }),
         window.pocketai.getDataHealth(false).catch((e) => { logIpcError('steward.getDataHealth', e); return fail(e) })
@@ -116,9 +121,15 @@ export const StewardModule: React.FC = () => {
       if (hasIpcFailed(hw) || !hw.data) {
         setHardware(null)
         setHwFail(ipcFailText(hw, unknown))
+        setHwProbing(false)
       } else {
         setHwFail(null)
         setHardware(hw.data)
+        setHwGot(hw.got ?? { gpus: true, disk: true })
+        // 能力页先按 8s 出结果：还没采全 ⇒ 主进程后台还有一趟 30s 冷探测，
+        // 这里画「探测中」，由下面的轮询在补完后自动更正读数与推荐。
+        setHwProbing(hw.incomplete === true)
+        if (hw.incomplete !== true) refreshRecommendation()
       }
       if (hasIpcFailed(integ) || !integ.data) {
         setIntegrity(null)
@@ -142,12 +153,46 @@ export const StewardModule: React.FC = () => {
         setDhFail(null)
         setDataHealth(dh as DataHealthReport)
       }
-      refreshRecommendation()
       if (force) setManualCheckedAt(Date.now())
     } finally {
       setRefreshing(false)
     }
   }, [refreshRecommendation, t])
+
+  // 硬件后台补采的自动更正：能力页 8s 先答之后，主进程还有一趟 30s 冷探测；
+  // 这里每 3s 轻问一发（waitMs=1000，不会又把页面挂住），补完即更正读数并重算推荐。
+  useEffect(() => {
+    if (!hwProbing) return
+    let cancelled = false
+    const until = Date.now() + 45000
+    const poll = async () => {
+      while (!cancelled && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 3000))
+        if (cancelled) return
+        let r: Awaited<ReturnType<typeof window.pocketai.getHardwareInfo>>
+        try {
+          r = await window.pocketai.getHardwareInfo({ waitMs: 1000 })
+        } catch (e) {
+          logIpcError('steward.getHardwareInfo', e)
+          continue
+        }
+        if (cancelled || hasIpcFailed(r) || !r.data) continue
+        setHardware(r.data)
+        setHwGot(r.got ?? { gpus: true, disk: true })
+        if (r.incomplete !== true) {
+          setHwProbing(false)
+          refreshRecommendation()
+          return
+        }
+      }
+      // 45s 还没补到就不再多等：界面保留「没测到」，用户可点「重新检测」
+      if (!cancelled) setHwProbing(false)
+    }
+    void poll()
+    return () => {
+      cancelled = true
+    }
+  }, [hwProbing, refreshRecommendation])
 
   // 仅在挂载时读取一次快照，不设定时器、不在每次点击时重新采集
   useEffect(() => {
@@ -518,7 +563,10 @@ export const StewardModule: React.FC = () => {
             <Row label={t('steward.free')} value={formatBytes(hardware.memory.free)} />
           </Section>
           <Section title={t('steward.gpu')}>
-            {hardware.gpus.length === 0 ? (
+            {!hwGot.gpus ? (
+              // 没采到 ≠ 没有：这里不摆「未检测到独立显卡」，只说这次没测到
+              <Row label="-" value={hwProbing ? t('steward.hwProbingShort') : t('steward.hwNotMeasured')} />
+            ) : hardware.gpus.length === 0 ? (
               <Row label="-" value={t('steward.notDetected')} />
             ) : (
               hardware.gpus.map((g, i) => (
@@ -540,29 +588,41 @@ export const StewardModule: React.FC = () => {
             )}
           </Section>
           <Section title={t('steward.disk')}>
-            {hardware.disk.drive && <Row label={t('steward.drive')} value={hardware.disk.drive} />}
-            <Row label={t('steward.type')} value={fmtDiskType(hardware.disk.type)} />
-            {hardware.disk.mediumType && <Row label={t('steward.mediumType')} value={hardware.disk.mediumType} />}
-            {hardware.disk.busType && <Row label={t('steward.busType')} value={fmtBus(hardware.disk.busType)} />}
-            {hardware.disk.volumeLabel && <Row label={t('steward.volumeLabel')} value={hardware.disk.volumeLabel} />}
-            {hardware.disk.filesystem && <Row label={t('steward.filesystem')} value={hardware.disk.filesystem} />}
-            {hardware.disk.totalSpace != null && <Row label={t('steward.capacity')} value={formatBytes(hardware.disk.totalSpace)} />}
-            {hardware.disk.freeSpace != null && <Row label={t('steward.freeSpace')} value={formatBytes(hardware.disk.freeSpace)} />}
-            <Row
-              label={t('steward.removable')}
-              value={hardware.disk.removable ? t('steward.portableYes') : t('steward.no')}
-            />
+            {!hwGot.disk ? (
+              <Row label="-" value={hwProbing ? t('steward.hwProbingShort') : t('steward.hwNotMeasured')} />
+            ) : (
+              <>
+                {hardware.disk.drive && <Row label={t('steward.drive')} value={hardware.disk.drive} />}
+                <Row label={t('steward.type')} value={fmtDiskType(hardware.disk.type)} />
+                {hardware.disk.mediumType && <Row label={t('steward.mediumType')} value={hardware.disk.mediumType} />}
+                {hardware.disk.busType && <Row label={t('steward.busType')} value={fmtBus(hardware.disk.busType)} />}
+                {hardware.disk.volumeLabel && <Row label={t('steward.volumeLabel')} value={hardware.disk.volumeLabel} />}
+                {hardware.disk.filesystem && <Row label={t('steward.filesystem')} value={hardware.disk.filesystem} />}
+                {hardware.disk.totalSpace != null && <Row label={t('steward.capacity')} value={formatBytes(hardware.disk.totalSpace)} />}
+                {hardware.disk.freeSpace != null && <Row label={t('steward.freeSpace')} value={formatBytes(hardware.disk.freeSpace)} />}
+                <Row
+                  label={t('steward.removable')}
+                  value={hardware.disk.removable ? t('steward.portableYes') : t('steward.no')}
+                />
+              </>
+            )}
           </Section>
         </>
       )}
 
       {/* 模型推荐（硬件画像） */}
-      {!recommendation && recErr && (
+      {/* 硬件还没采全时不摆档位：档位是按 GPU/显存算的，拿降级快照算出来的是错的 */}
+      {hwProbing && (
+        <Section title={t('steward.modelRec')}>
+          <p className="text-[12px] text-[var(--color-text-muted)] leading-relaxed">{t('steward.hwProbing')}</p>
+        </Section>
+      )}
+      {!hwProbing && !recommendation && recErr && (
         <Section title={t('steward.modelRec')}>
           <LoadFailNotice msg={recErr} />
         </Section>
       )}
-      {recommendation && (
+      {!hwProbing && recommendation && (
         <Section title={t('steward.modelRec')}>
           {/* §345：这一发会被 `load(force)` 与"拉完一个模型"重跑；失败侧旧推荐留着，
               但那三个档位徽标与「下载」那颗键都照旧值摆 ⇒ 要点名"没能刷新成最新" */}

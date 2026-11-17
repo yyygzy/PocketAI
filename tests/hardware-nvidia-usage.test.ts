@@ -25,7 +25,7 @@ const childProcessMock = vi.hoisted(() => ({
 }))
 vi.mock('node:child_process', () => childProcessMock)
 
-import { applyNvidiaRows, parseNvidiaSmiCsv, readGpuMemoryLive, refreshHardwareInfo } from '../src/main/steward/hardware'
+import { applyNvidiaRows, getHardwareInfoAsync, parseNvidiaSmiCsv, readGpuMemoryLive } from '../src/main/steward/hardware'
 import type { GpuInfo } from '../src/shared/types'
 
 const GPU_1050TI: GpuInfo = {
@@ -130,15 +130,24 @@ describe('applyNvidiaRows', () => {
   })
 })
 
-// 接线用例：函数写得再对，没被 getGpus 调用就等于没采到（V4-Iter-139 那批"没接线"教训的同族）
+// 接线用例：函数写得再对，没被采集调用就等于没采到（V4-Iter-139 那批"没接线"教训的同族）
 describe('getGpus 接线：采集确实把实占挂上了', () => {
   const setup = (): void => {
+    // Windows 采集已改为异步（PowerShell 走 execFile）；Mac/Linux 的轻量 CLI 仍是同步，两边都给桩
     childProcessMock.execFileSync.mockImplementation((cmd: unknown) => {
       const c = String(cmd).toLowerCase()
       if (c.startsWith('powershell')) return WMI_JSON
       if (c.startsWith('nvidia-smi')) return NVIDIA_CSV
       return ''
     })
+    childProcessMock.execFile.mockImplementation(
+      (cmd: unknown, _args: unknown, _opts: unknown, cb: (err: unknown, out?: string) => void) => {
+        const c = String(cmd).toLowerCase()
+        if (c.startsWith('powershell')) return cb(null, WMI_JSON)
+        if (c.startsWith('nvidia-smi')) return cb(null, NVIDIA_CSV)
+        return cb(new Error('ENOENT'))
+      }
+    )
     childProcessMock.execSync.mockImplementation((cmd: unknown) => {
       const c = String(cmd)
       if (c.startsWith('lspci')) return LSPCI_LINE
@@ -149,9 +158,9 @@ describe('getGpus 接线：采集确实把实占挂上了', () => {
 
   it.runIf(process.platform !== 'darwin')(
     '非 Mac：gpus[0] 带 usedMemory（= nvidia-smi 的 2041MiB 换算字节）',
-    () => {
+    async () => {
       setup()
-      const hw = refreshHardwareInfo()
+      const hw = await getHardwareInfoAsync(true)
       const gpu = hw.gpus.find((g) => g.cuda)
       expect(gpu, '本用例需要至少一条 cuda 卡：WMI/lspci 桩里都给了 NVIDIA').toBeDefined()
       expect(gpu!.usedMemory).toBe(2041 * 1048576)
@@ -162,13 +171,13 @@ describe('getGpus 接线：采集确实把实占挂上了', () => {
     }
   )
 
-  it.runIf(process.platform === 'darwin')('Mac：统一内存不是显存，故意留空', () => {
+  it.runIf(process.platform === 'darwin')('Mac：统一内存不是显存，故意留空', async () => {
     setup()
-    const hw = refreshHardwareInfo()
+    const hw = await getHardwareInfoAsync(true)
     expect(hw.gpus.every((g) => g.usedMemory === undefined)).toBe(true)
   })
 
-  it('nvidia-smi 不在场（命令直接失败）⇒ 一条也不挂，采集本身照常出表', () => {
+  it('nvidia-smi 不在场（命令直接失败）⇒ 一条也不挂，采集本身照常出表', async () => {
     // 注意别让 gpus 空掉：空数组上的 every 恒真，那就成了一条空断言
     childProcessMock.execSync.mockImplementation((cmd: unknown) =>
       String(cmd).startsWith('lspci') ? LSPCI_LINE : 'Chipset Model: Apple M1'
@@ -177,7 +186,13 @@ describe('getGpus 接线：采集确实把实占挂上了', () => {
       if (String(cmd).toLowerCase().startsWith('powershell')) return WMI_JSON
       throw new Error('ENOENT: 没有 nvidia-smi')
     })
-    const hw = refreshHardwareInfo()
+    childProcessMock.execFile.mockImplementation(
+      (cmd: unknown, _args: unknown, _opts: unknown, cb: (err: unknown, out?: string) => void) => {
+        if (String(cmd).toLowerCase().startsWith('powershell')) return cb(null, WMI_JSON)
+        return cb(new Error('ENOENT: 没有 nvidia-smi'))
+      }
+    )
+    const hw = await getHardwareInfoAsync(true)
     expect(hw.gpus.length).toBeGreaterThan(0)
     expect(hw.gpus.every((g) => g.usedMemory === undefined)).toBe(true)
   })

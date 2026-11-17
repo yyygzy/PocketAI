@@ -22,6 +22,7 @@ import { DELEGATE_CAPABILITY_LABEL_KEY, delegateNoticeText } from '../settings/D
 import type { DelegateProbeResult } from '../../../../shared/delegate-capability'
 import type {
   HardwareInfo,
+  HardwareProbeState,
   ModelRecommendation,
   EncryptionStatus,
   ProviderRecord,
@@ -52,6 +53,12 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
   const [recFail, setRecFail] = useState<{ error?: string } | null>(null)
   // §258：这一发以前失败侧只有一句 `return`（闸门把它算作接管，屏上却什么都没说的桶）
   const [hwFail, setHwFail] = useState<{ error?: string } | null>(null)
+  // 向导必须等真数据再出模型建议：检测中显示进度，等满 30s 还没测到就明说「没测到」并给「重新检测」，
+  // 绝不允许拿降级快照（gpus: [] / disk: unknown）去算推荐——那等于指着错模型让用户选。
+  const [hwLoading, setHwLoading] = useState(true)
+  const [hwIncomplete, setHwIncomplete] = useState(false)
+  /** 哪些硬件字段是真采到的（false ＝「没测到」，不是「没有」） */
+  const [hwGot, setHwGot] = useState<HardwareProbeState>({ gpus: true, disk: true })
   const [isPortable, setIsPortable] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -130,27 +137,10 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
 
   // §355：这两发从挂载 effect 体内联提成具名 loader（依赖照旧 `[]`），好让那两张「读不到」的脸各有一颗
   // 按下去真再发一发的键；加密态与 provider 快照那两发不动（前者有自己的落点，后者 §256 判过设计内静默）
-  const loadHardware = useCallback(() => {
-    // 硬件画像 boot 时主进程已采集并缓存，这里只读快照（force=false，秒回）
-    window.pocketai
-      .getHardwareInfo(false)
-      .then((hw) => {
-        if (hasIpcFailed(hw) || !hw.data) {
-          setHwFail(hw)
-          return
-        }
-        setHwFail(null)
-        setHardware(hw.data)
-        setIsPortable(hw.data.disk.removable)
-      })
-      .catch((e: unknown) => {
-        setHwFail({ error: errText(e, '') })
-        logIpcError('wizard.getHardwareInfo', e)
-      })
-  }, [])
-
   const loadRecommendation = useCallback(() => {
-    // 模型推荐含一次 Ollama 端口探测，较轻，后台加载
+    // 模型推荐含一次 Ollama 端口探测，较轻，后台加载。
+    // **只在硬件真采到之后才发**：降级快照（gpus: [] / disk: unknown）算出来的档位是错的，
+    // 而用户下一步就是拿这份推荐去选模型。
     window.pocketai
       .recommendModels()
       .then((r) => {
@@ -167,6 +157,42 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       })
   }, [])
 
+  /**
+   * 硬件检测（向导必须等真数据）：
+   * - `waitMs: 30000`——磁盘那条 Get-Partition/Get-PhysicalDisk 在这台机器上就要 ~24s，8s 必超时；
+   * - 等到了才发推荐（见上面 loadRecommendation）；
+   * - 显卡没采到 ⇒ `hwIncomplete`，界面明说「没测到」并给「重新检测」；
+   * - 磁盘单独没采到不拦推荐，但那一行画「没测到」（不许把 unknown 当结论）。
+   */
+  const loadHardware = useCallback((force = false) => {
+    setHwLoading(true)
+    window.pocketai
+      .getHardwareInfo({ force, waitMs: 30000 })
+      .then((hw) => {
+        setHwLoading(false)
+        if (hasIpcFailed(hw) || !hw.data) {
+          setHwFail(hw)
+          return
+        }
+        setHwFail(null)
+        setHardware(hw.data)
+        setIsPortable(hw.data.disk.removable)
+        const got = hw.got ?? { gpus: true, disk: true }
+        setHwGot(got)
+        if (!got.gpus) {
+          setHwIncomplete(true)
+          return
+        }
+        setHwIncomplete(false)
+        loadRecommendation()
+      })
+      .catch((e: unknown) => {
+        setHwLoading(false)
+        setHwFail({ error: errText(e, '') })
+        logIpcError('wizard.getHardwareInfo', e)
+      })
+  }, [loadRecommendation])
+
   useEffect(() => {
     loadHardware()
     window.pocketai.getEncryptionStatus().then((v) => {
@@ -180,7 +206,6 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       setEncFail({ error: errText(e, '') })
       logIpcError('wizard.getEncryptionStatus', e)
     })
-    loadRecommendation()
 
     // 加载已有 provider + assistant（向导 Step 1 用）
     // §256 复核：这份 provider 快照**没有任何渲染消费者**，只在保存那步用来判「已有同 baseUrl 就追加 key」；
@@ -538,7 +563,13 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     </div>
   ) : null
 
-  const hardwareSummary = hardware ? (
+  // 顺序有讲究：检测中先摆进度（不许让「加载中…」在 30s 里一动不动），
+  // 采到了才摆读数，没采到（显卡）就明说「没测到」并给「重新检测」——绝不拿空 gpus 冒充「没有独显」。
+  const hardwareSummary = hwLoading ? (
+    <div className="text-[12px] text-[var(--color-text-muted)] py-4 text-center">
+      {t('wizard.hwDetecting')}
+    </div>
+  ) : hardware && !hwIncomplete ? (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
       <Summary label={t('wizard.cpu')} value={`${hardware.cpu.model} × ${hardware.cpu.cores}`} />
       <Summary
@@ -557,13 +588,17 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
       />
       <Summary
         label={t('wizard.disk')}
-        value={[
-          hardware.disk.type,
-          hardware.disk.freeSpace != null ? `${t('wizard.free')} ${formatBytes(hardware.disk.freeSpace)}` : '',
-          hardware.disk.removable ? t('wizard.removable') : '',
-        ]
-          .filter(Boolean)
-          .join(' · ')}
+        value={
+          !hwGot.disk
+            ? t('wizard.notMeasured')
+            : [
+                hardware.disk.type,
+                hardware.disk.freeSpace != null ? `${t('wizard.free')} ${formatBytes(hardware.disk.freeSpace)}` : '',
+                hardware.disk.removable ? t('wizard.removable') : '',
+              ]
+                .filter(Boolean)
+                .join(' · ')
+        }
       />
     </div>
   ) : hwFail ? (
@@ -571,8 +606,20 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
     // §355：同一份两槽位；这一屏（欢迎页与换电脑重检页）都没有会重发 getHardwareInfo 的键
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <LoadFailNotice msg={ipcFailText(hwFail, t('common.unknownError'))} />
-      <button data-testid="wizard-hardware-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={loadHardware}>
+      <button data-testid="wizard-hardware-read-retry" className="text-xs underline text-[var(--color-text-muted)]" onClick={() => loadHardware()}>
         {t('agent.retryRead')}
+      </button>
+    </div>
+  ) : hwIncomplete ? (
+    // 等满 30s 仍没测到显卡：明说「没测到」，模型建议这一屏不给（宁可没有，也不给错的）
+    <div className="rounded-lg border border-[var(--color-warning-bg)] bg-[var(--color-warning-bg)] p-3 text-[12px] leading-relaxed">
+      <p className="text-[var(--color-warning)]">{t('wizard.hwNotMeasured')}</p>
+      <button
+        data-testid="wizard-hardware-retry"
+        className="mt-1 text-xs underline text-[var(--color-accent)]"
+        onClick={() => loadHardware(true)}
+      >
+        {t('wizard.hwRetry')}
       </button>
     </div>
   ) : (

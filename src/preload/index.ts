@@ -122,6 +122,7 @@ import type {
   PromptSnippetRecord,
   PythonRuntime,
   HardwareInfo,
+  HardwareProbeState,
   TranslateRequestPayload,
   TranslateChunkEvent,
   TranslationRecord,
@@ -144,8 +145,17 @@ const api = {
   // ---------- 系统 ----------
   // §258：这三发原来标成裸值（`Promise<HardwareInfo>` 等），可 safeHandle 失败时送来的是 `{ok:false,error}`
   // ⇒ 失败对象过得了类型、过得了 `if (hw)`。改成信封后调用点必须判（同 :1210 的 recommendModels 口径）。
-  getHardwareInfo: (force?: boolean): Promise<{ ok: boolean; data?: HardwareInfo; error?: string }> =>
-    ipcRenderer.invoke(IPC.SYSTEM_HARDWARE_INFO, force),
+  // `got` 说哪些字段是真采到的（false ＝「没测到」，不是「没有」）；`incomplete/probing` 是同一件事的总判据。
+  // `waitMs` 决定这一发最多等多久：缺省 8s（能力页先出「探测中」，后台补完自动更正），
+  // 向导传 30000 等真数据（等不到就明说「没测到」，不许拿降级值出模型建议）。
+  getHardwareInfo: (opts?: { force?: boolean; waitMs?: number }): Promise<{
+    ok: boolean
+    data?: HardwareInfo
+    got?: HardwareProbeState
+    incomplete?: boolean
+    probing?: boolean
+    error?: string
+  }> => ipcRenderer.invoke(IPC.SYSTEM_HARDWARE_INFO, opts),
   getPaths: () => ipcRenderer.invoke(IPC.APP_GET_PATHS),
   setAppLanguage: (lang: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.MENU_SET_LANGUAGE, lang),

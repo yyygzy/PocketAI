@@ -69,12 +69,6 @@ function getCaptureHost(): CaptureHost {
   return captureHost
 }
 
-/** 启动后预热：把 PowerShell 启动与 C# 编译挪到用户看不见的时候 */
-export function prewarmCaptureHost(): void {
-  if (!isScreenshotPlatformSupported(process.platform)) return
-  getCaptureHost().prewarm()
-}
-
 /**
  * 热键按下瞬间的前台窗口。
  * 浮窗上屏会抢走前台，所以必须在 show 之前取；拿到后即使浮窗盖住目标也能按 HWND 取源。

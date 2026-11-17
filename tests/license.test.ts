@@ -34,7 +34,9 @@ vi.mock('../src/main/license/public-key', async () => {
 })
 
 vi.mock('../src/main/steward/hardware', () => ({
-  getDiskFingerprint: vi.fn(() => 'aaaabbbbccccdddd')
+  getDiskFingerprint: vi.fn(() => 'aaaabbbbccccdddd'),
+  // 异步加载走这条；口径必须与同步版一致，用例里给同一个值
+  getDiskFingerprintAsync: vi.fn(async () => 'aaaabbbbccccdddd')
 }))
 
 import {
@@ -46,12 +48,13 @@ import {
   type LicensePayload
 } from '../src/main/license/license'
 import * as keyModule from '../src/main/license/public-key'
-import { getDiskFingerprint } from '../src/main/steward/hardware'
+import { getDiskFingerprint, getDiskFingerprintAsync } from '../src/main/steward/hardware'
 import { readUpdatesWatermark } from '../src/main/license/updates-watermark'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const privPem = (keyModule as any).__TEST_PRIVATE_KEY_PEM as string
 const fpMock = vi.mocked(getDiskFingerprint)
+const fpAsyncMock = vi.mocked(getDiskFingerprintAsync)
 
 // 另一把私钥（用于「签名公钥不匹配」用例）
 const wrongKeypair = generateKeyPairSync('rsa', {
@@ -588,3 +591,62 @@ describe('签发脚本与 App 验签一致', () => {
     expect(perpetual.updatesUntil).toBeLessThan(Date.now() + year + 86_400_000)
   })
 })
+
+// 冷启动白屏修复后追加：license 加载改走异步指纹（getDiskFingerprintAsync），
+// 绑盘判定必须与同步版逐字一致——否则「异步化」会悄悄改变谁能用这台机器。
+describe('异步加载与同步加载的绑盘判定一致', () => {
+  const boundFp = '1111222233334444'
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lic-async-'))
+    fpMock.mockReturnValue(boundFp)
+    fpAsyncMock.mockResolvedValue(boundFp)
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('同盘许可证：文件加载的两条路都 valid，判定字段与错误文案一致', async () => {
+    const code = sign(basePayload({ disk_fingerprint: boundFp }))
+    const licPath = join(dir, 'license.lic')
+    writeFileSync(licPath, code)
+    const syncStatus = new LicenseService(join(dir, 'wm-sync.json')).loadFromFile(licPath)
+    const asyncStatus = await new LicenseService(join(dir, 'wm-async.json')).loadFromFileAsync(licPath)
+    expect(syncStatus.valid).toBe(true)
+    expect(asyncStatus.valid).toBe(syncStatus.valid)
+    expect(asyncStatus.signatureOk).toBe(syncStatus.signatureOk)
+    expect(asyncStatus.error).toBe(syncStatus.error)
+    expect(asyncStatus.payload?.disk_fingerprint).toBe(syncStatus.payload?.disk_fingerprint)
+  })
+
+  it('异盘许可证：两条路都拒绝，错误文案逐字一致', async () => {
+    fpMock.mockReturnValue('eeeeffff00001111')
+    fpAsyncMock.mockResolvedValue('eeeeffff00001111')
+    const code = sign(basePayload({ disk_fingerprint: boundFp }))
+    const syncStatus = new LicenseService(join(dir, 'wm-sync2.json')).loadFromString(code)
+    const asyncStatus = await new LicenseService(join(dir, 'wm-async2.json')).loadFromStringAsync(code)
+    expect(asyncStatus.valid).toBe(false)
+    expect(asyncStatus.valid).toBe(syncStatus.valid)
+    expect(asyncStatus.error).toBe(syncStatus.error)
+  })
+
+  it('读不到本机指纹：两条路都 fail closed（同一句「无法读取」）', async () => {
+    fpMock.mockReturnValue(null)
+    fpAsyncMock.mockResolvedValue(null)
+    const code = sign(basePayload({ disk_fingerprint: boundFp }))
+    const syncStatus = new LicenseService(join(dir, 'wm-sync3.json')).loadFromString(code)
+    const asyncStatus = await new LicenseService(join(dir, 'wm-async3.json')).loadFromStringAsync(code)
+    expect(asyncStatus.valid).toBe(false)
+    expect(asyncStatus.error).toBe(syncStatus.error)
+  })
+
+  it('未绑定许可证：异步路径根本不去取指纹（不白付一条 PowerShell）', async () => {
+    fpAsyncMock.mockClear()
+    const st = await new LicenseService(join(dir, 'wm-none.json')).loadFromStringAsync(sign(basePayload()))
+    expect(st.valid).toBe(true)
+    expect(fpAsyncMock).not.toHaveBeenCalled()
+  })
+})
+

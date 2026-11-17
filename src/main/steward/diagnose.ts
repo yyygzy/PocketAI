@@ -292,7 +292,7 @@ export function runDiagnose(): DiagnoseResult {
   items.push(safeItem('disk-space', '磁盘剩余空间', () => {
     const hw = getHardwareInfo()
     const free = hw.disk.freeSpace
-    if (free == null) return { level: 'ok', detail: '未能获取磁盘容量（非 Windows 平台）' }
+    if (free == null) return { level: 'ok', detail: '未能获取磁盘容量（探测未完成或不可用）' }
     const gb = free / (1024 * 1024 * 1024)
     const level: CheckLevel = gb < 2 ? 'danger' : gb < 5 ? 'warn' : 'ok'
     return {

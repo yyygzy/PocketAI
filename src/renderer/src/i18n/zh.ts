@@ -1770,6 +1770,9 @@ export const zh = {
   'steward.free': '可用',
   'steward.gpu': 'GPU',
   'steward.notDetected': '未检测到',
+  'steward.hwProbingShort': '探测中…',
+  'steward.hwNotMeasured': '没测到（可点「重新检测」）',
+  'steward.hwProbing': '硬件探测中…后台还在读显卡与磁盘（最长约半分钟），补完会自动更正下面的读数与模型推荐，不用再点一次。',
   'steward.disk': '运行介质',
   'steward.type': '类型',
   'steward.removable': '可移动磁盘',
@@ -2532,7 +2535,11 @@ export const zh = {
 
   // ── 首启向导 ──
   'wizard.welcomeTitle': '👋 欢迎使用墨匣',
-  'wizard.welcomeSubtitle': '先花 30 秒看看你的电脑配置，我们会据此推荐合适的 AI 模型',
+  'wizard.welcomeSubtitle': '先看一眼这台电脑的显卡和磁盘，我们会据此推荐合适的 AI 模型（一般十几秒，慢一点的机器可能要半分钟）',
+  'wizard.hwDetecting': '正在检测显卡与磁盘…（一般十几秒，慢一点的机器可能要半分钟；测完再给模型建议）',
+  'wizard.hwNotMeasured': '没能测到显卡与磁盘：检测超时或系统命令不可用。模型建议需要这份数据，所以这次先不给建议——可以重新检测一次。',
+  'wizard.hwRetry': '重新检测',
+  'wizard.notMeasured': '没测到',
   'wizard.cpu': '处理器',
   'wizard.memory': '内存（可用 / 总量）',
   'wizard.gpu': '显卡',

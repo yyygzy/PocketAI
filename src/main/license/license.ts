@@ -23,7 +23,7 @@
 
 import { createVerify } from 'node:crypto'
 import { PUBLIC_KEY_DER_B64 } from './public-key'
-import { getDiskFingerprint } from '../steward/hardware'
+import { getDiskFingerprint, getDiskFingerprintAsync } from '../steward/hardware'
 import { effectiveUpdatesUntil, raiseUpdatesWatermark } from './updates-watermark'
 import { errMsg } from '../error'
 
@@ -170,28 +170,64 @@ export class LicenseService {
     }
   }
 
+  /**
+   * 文件加载的异步版：读盘与硬盘指纹都不再阻塞主线程。
+   * 判定顺序、验签口径、绑定比对与同步版完全一致，只是把两步 IO 变成 await。
+   */
+  async loadFromFileAsync(filePath: string): Promise<LicenseStatus> {
+    try {
+      const fs = require('node:fs') as typeof import('node:fs')
+      const raw = await fs.promises.readFile(filePath, 'utf8')
+      return await this.loadFromStringAsync(raw)
+    } catch (e) {
+      this.lastError = `读取文件失败: ${errMsg(e)}`
+      return this.buildStatus(false)
+    }
+  }
+
   /** 从字符串加载并验签 */
   loadFromString(content: string): LicenseStatus {
+    const parsed = this.parseAndVerify(content)
+    if (!parsed.ok) return parsed.status
+    return this.applyVerified(parsed.payload, getDiskFingerprint)
+  }
+
+  /**
+   * 字符串加载的异步版：只在许可证确实声明了硬盘绑定时才去取指纹（与同步版的惰性时机一致），
+   * 取指纹走 getDiskFingerprintAsync()，避免 PowerShell 把主线程钉住。
+   */
+  async loadFromStringAsync(content: string): Promise<LicenseStatus> {
+    const parsed = this.parseAndVerify(content)
+    if (!parsed.ok) return parsed.status
+    const bound = String(parsed.payload.disk_fingerprint ?? '').trim()
+    const localFp = bound ? await getDiskFingerprintAsync() : null
+    return this.applyVerified(parsed.payload, () => localFp)
+  }
+
+  /** 步骤 1–2：解析、必填字段、签名。不涉及硬件，纯字符串计算 */
+  private parseAndVerify(
+    content: string
+  ): { ok: true; payload: LicensePayload } | { ok: false; status: LicenseStatus } {
     let file: LicenseFile
     try {
       file = JSON.parse(content) as LicenseFile
     } catch (e) {
       this.lastError = `JSON 解析失败: ${errMsg(e)}`
-      return this.buildStatus(false)
+      return { ok: false, status: this.buildStatus(false) }
     }
 
     // 1. 必填字段检查（v1 字段集始终必填；updates_until 可选，存在则必须合法）
     const missing = SIGN_FIELDS_V1.filter((k) => (file as unknown as Record<string, unknown>)[k] === undefined)
     if (missing.length > 0) {
       this.lastError = `License 缺少字段: ${missing.join(', ')}`
-      return this.buildStatus(false)
+      return { ok: false, status: this.buildStatus(false) }
     }
     if (
       file.updates_until !== undefined &&
       !(typeof file.updates_until === 'number' && Number.isFinite(file.updates_until))
     ) {
       this.lastError = 'License 的 updates_until 字段无效（应为时间戳）'
-      return this.buildStatus(false)
+      return { ok: false, status: this.buildStatus(false) }
     }
 
     const payload: LicensePayload = {
@@ -212,9 +248,18 @@ export class LicenseService {
     const signatureOk = verifySignature(signedData, file.signature)
     if (!signatureOk) {
       this.lastError = 'License 签名校验失败（文件可能被篡改或公钥不匹配）'
-      return this.buildStatus(false)
+      return { ok: false, status: this.buildStatus(false) }
     }
 
+    return { ok: true, payload }
+  }
+
+  /**
+   * 步骤 3–4：使用截止与设备绑定，并落 current/expiredPayload。
+   * @param resolveLocalFp 本机指纹的取值器。同步路径传 getDiskFingerprint（惰性、有缓存），
+   *   异步路径传一个已取好的闭包——两条路的比对与报错口径必须是同一份代码。
+   */
+  private applyVerified(payload: LicensePayload, resolveLocalFp: () => string | null): LicenseStatus {
     // 3. 使用截止检查
     const now = Date.now()
     const expired = now > payload.expires_at
@@ -226,7 +271,7 @@ export class LicenseService {
       this.expiredPayload = payload
       // 已过使用截止但仍在本机合法：把它的更新期记入高水位（设备绑定必须匹配，
       // 避免把别台机器的许可证算到这台头上）。
-      if (this.fingerprintMatches(payload)) this.rememberUpdates(payload)
+      if (this.fingerprintMatches(payload, resolveLocalFp)) this.rememberUpdates(payload)
       return this.buildStatus(false, payload, expired)
     }
 
@@ -234,7 +279,7 @@ export class LicenseService {
     //    （同一 U 盘插任意电脑都通过；复制 license 到别的硬盘则拒绝）
     const bound = String(payload.disk_fingerprint ?? '').trim().toLowerCase()
     if (bound) {
-      const localFp = getDiskFingerprint()
+      const localFp = resolveLocalFp()
       if (!localFp || localFp !== bound) {
         this.lastError = `License 与当前硬盘不匹配（本机指纹: ${localFp ?? '无法读取'}），请联系卖家换绑`
         // 同上：绑定不匹配的 license 不得进入 current（避免换盘后仍享授权）
@@ -273,11 +318,34 @@ export class LicenseService {
     // 注意：不清本机更新期高水位——清除许可证不应让人重新获得更新权益。
   }
 
+  private bootLoad: Promise<unknown> | null = null
+
+  /**
+   * 登记启动期那次异步加载，让此期间到达的状态查询等它出结果。
+   * 为什么需要：绑盘指纹在慢机器上要 20s+，boot 不能等（托盘/隐私锁/提醒都被它拖着），
+   * 但「还没验完」不能对 UI 说成「未激活」——查询侧等这一趟即可。
+   */
+  trackBootLoad(task: Promise<unknown>): void {
+    this.bootLoad = task.catch(() => undefined)
+  }
+
+  /** 等启动期加载结束（没有在跑的加载就立即返回）；失败不抛，状态由 getStatus 反映 */
+  async waitForBootLoad(): Promise<void> {
+    const pending = this.bootLoad
+    if (!pending) return
+    try {
+      await pending
+    } catch {
+      /* 已由 lastError 反映 */
+    }
+    this.bootLoad = null
+  }
+
   /** 许可证声明的硬盘指纹是否与本机一致（未绑定 = 一致） */
-  private fingerprintMatches(payload: LicensePayload): boolean {
+  private fingerprintMatches(payload: LicensePayload, resolveLocalFp: () => string | null): boolean {
     const bound = String(payload.disk_fingerprint ?? '').trim().toLowerCase()
     if (!bound) return true
-    const localFp = getDiskFingerprint()
+    const localFp = resolveLocalFp()
     return !!localFp && localFp === bound
   }
 

@@ -3,7 +3,7 @@ import { app } from 'electron'
 import { IPC } from '../../../shared/types'
 import { handshakeChannelList } from '../../../shared/ipc-handshake'
 import { getPaths } from '../../portable'
-import { getHardwareInfo, refreshHardwareInfo } from '../../steward/hardware'
+import { probeHardwareInfo } from '../../steward/hardware'
 import { buildAppMenu } from '../../menu'
 import { dbService } from '../../db/database'
 import { createDetachedWindow, DETACHED_MODULES } from '../../windows/detached'
@@ -28,10 +28,20 @@ export function registerSystemHandlers(): void {
   // 「integrity_check ❌ undefined」）。改成信封后调用点必须判，编译期就挡。
   // 注意 `integrityCheck()` 自己的形状就是 `{ok,details}`（库确实损坏时它返回 ok:false），
   // 所以它现在嵌在 `data` 里：信封的 `ok` 说"读到了吗"，`data.ok` 才说"库是否完整"。
-  safeHandle(IPC.SYSTEM_HARDWARE_INFO, (_e, force?: boolean) => ({
-    ok: true as const,
-    data: force ? refreshHardwareInfo() : getHardwareInfo()
-  }), argsSchema(z.boolean().optional()))
+  // 硬件画像走异步探测：同步版会在能力页/向导那一发上把主线程钉住 8–30s。
+  // 并发调用共享同一趟探测；`force` 是用户点「重新检测」，`waitMs` 是本发最多等多久
+  // （能力页缺省 8s，先出「探测中」；向导传 30s，等真数据再出模型建议）。
+  // `incomplete/got/probing` 一起回：界面得知道哪些字段是「没采到」而不是「没有」。
+  safeHandle(IPC.SYSTEM_HARDWARE_INFO, async (_e, opts?: { force?: boolean; waitMs?: number }) => {
+    const probe = await probeHardwareInfo(opts ?? {})
+    return {
+      ok: true as const,
+      data: probe.info,
+      got: probe.got,
+      incomplete: probe.incomplete,
+      probing: probe.probing
+    }
+  }, argsSchema(z.object({ force: z.boolean().optional(), waitMs: z.number().int().min(1000).max(60000).optional() }).optional()))
   safeHandle(IPC.APP_GET_PATHS, () => getPaths())
   safeHandle(IPC.MENU_SET_LANGUAGE, (_e, lang: string) => {
     buildAppMenu(lang === 'en' ? 'en' : 'zh')

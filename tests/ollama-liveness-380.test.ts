@@ -15,8 +15,8 @@ import { classifyProbeFailure, OLLAMA_PROBE_TIMEOUT_MS } from '../src/shared/oll
 
 const GB = 1024 * 1024 * 1024
 
-vi.mock('../src/main/steward/hardware', () => ({
-  getHardwareInfo: (): HardwareInfo => ({
+vi.mock('../src/main/steward/hardware', () => {
+  const hw = (): HardwareInfo => ({
     cpu: { model: 'x', cores: 4, threads: 8 },
     memory: { total: 16 * GB, free: 8 * GB },
     gpus: [],
@@ -33,7 +33,9 @@ vi.mock('../src/main/steward/hardware', () => ({
     },
     os: { platform: 'win32', release: '10', arch: 'x64' }
   }) as HardwareInfo
-}))
+  // 推荐入口已改异步探测：同一份硬件桩，两条导出都给
+  return { getHardwareInfo: hw, getHardwareInfoAsync: async () => hw() }
+})
 
 import { recommendModels } from '../src/main/steward/model-recommend'
 

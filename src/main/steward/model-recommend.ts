@@ -20,7 +20,7 @@ import type {
 } from '../../shared/model-rec-codes'
 import { isLowEndTier } from '../../shared/model-rec-codes'
 import { classifyProbeFailure } from '../../shared/ollama-probe'
-import { getHardwareInfo } from './hardware'
+import { getHardwareInfoAsync } from './hardware'
 
 const GB = 1024 * 1024 * 1024
 const OLLAMA_TAGS_URL = 'http://localhost:11434/api/tags'
@@ -229,7 +229,7 @@ export function pickByHardware(hw: HardwareInfo): TierRule {
 }
 
 export async function recommendModels(): Promise<ModelRecommendation> {
-  const hw = getHardwareInfo()
+  const hw = await getHardwareInfoAsync()
   const rule = pickByHardware(hw)
   const ollama = await probeOllamaModels()
 

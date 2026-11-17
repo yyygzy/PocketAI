@@ -331,8 +331,8 @@ const wizardStubs = (over: Record<string, any> = {}): Record<string, any> => ({
   ...over
 })
 
-describe('首启向导欢迎页：硬件与推荐那两发各配一颗键（同一份 JSX 挂两个槽位⇒这一屏只两颗）', () => {
-  it('两发都读不到 ⇒ 两句两颗键 ⇒ 各按一次只多发自己那一条通道，到货后各自收回自己那句', async () => {
+describe('首启向导欢迎页：硬件与推荐那两发各配一颗键（硬件没到货前不发推荐）', () => {
+  it('硬件读不到 ⇒ 只摆硬件那句一颗键，且压根不发推荐；硬件到货后才发推荐，推荐失败再摆它自己那句', async () => {
     const hwFail = { v: true }
     const recFail = { v: true }
     stubPocketai(wizardStubs({
@@ -342,23 +342,26 @@ describe('首启向导欢迎页：硬件与推荐那两发各配一颗键（同�
     mountWithProviders(<FirstRunWizard variant="full" onClose={() => {}} />)
     await waitFor(() => expect(callsOf('getHardwareInfo')).toBe(1))
     await settle()
-    expect(alerts()).toEqual([FAILED('HW:探测炸了'), FAILED('REC:探测炸了')])
+    // 硬件没读到时不出模型建议：降级快照（空 gpus/未知磁盘）算出来的档位是错的，宁可不给
+    expect(callsOf('recommendModels')).toBe(0)
+    expect(alerts()).toEqual([FAILED('HW:探测炸了')])
     const hk = screen.getByTestId('wizard-hardware-read-retry')
     expect(hk.textContent).toBe(RETRY)
-    const rk = screen.getByTestId('wizard-rec-read-retry')
-    expect(rk.textContent).toBe(RETRY)
+    expect(screen.queryByTestId('wizard-rec-read-retry')).toBeNull()
     expect(alerts().some((a) => a.includes(RETRY))).toBe(false)
 
     hwFail.v = false
     fireEvent.click(hk)
     await waitFor(() => expect(callsOf('getHardwareInfo')).toBe(2))
-    expect(callsOf('recommendModels'), '按硬件那颗不该顺带重发推荐').toBe(1)
+    // 硬件到货后推荐才发（这才是按真数据算的档位）
+    await waitFor(() => expect(callsOf('recommendModels')).toBe(1))
     await settle()
     await waitFor(() => expect(alerts()).toEqual([FAILED('REC:探测炸了')]))
     expect(screen.queryByTestId('wizard-hardware-read-retry')).toBeNull()
     expect(document.body.textContent, '硬件本体那行回来了').toContain('PROBE-CPU × 8')
-    expect(screen.getByTestId('wizard-rec-read-retry')).toBeTruthy()
 
+    const rk = screen.getByTestId('wizard-rec-read-retry')
+    expect(rk.textContent).toBe(RETRY)
     recFail.v = false
     fireEvent.click(rk)
     await waitFor(() => expect(callsOf('recommendModels')).toBe(2))

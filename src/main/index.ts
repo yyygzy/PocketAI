@@ -55,7 +55,7 @@ import { recoveryKeyManager } from './crypto/recovery-key'
 import { providerRepo } from './db/repositories/provider.repo'
 import { mcpServerRepo } from './db/repositories/mcp-server.repo'
 import { appConfigRepo } from './db/repositories/app-config.repo'
-import { getHardwareInfo } from './steward/hardware'
+import { getHardwareInfo, probeHardwareInfo, HARDWARE_BACKGROUND_BUDGET_MS } from './steward/hardware'
 import { configureLocalSlot, SLOT_WAIT_PERF_LABEL } from './providers/local-slot'
 import { largestCudaVramMiB } from './agent/local-capacity'
 import { recordPerf } from './steward/perf-probe'
@@ -216,6 +216,18 @@ function createMainWindow(): void {
   mainWindow.on('show', () => lockService.onAppShown())
   mainWindow.on('minimize', () => lockService.onAppHidden())
   mainWindow.on('restore', () => lockService.onAppShown())
+
+  // 硬件画像：首帧之后 1.5s 再采（PowerShell 冷启动 + CIM 查询在真机上可占 8–30s）。
+  // 过去这活是 whenReady 里一个 setImmediate 同步跑的，直接把窗口导航、8s 加载重试与
+  // 12s 显示兜底计时器一起推迟——2026-11-16 冷启动白屏的根因。
+  // 现在主线程只发一条异步探测：预算给足 30s（磁盘那条命令单独就要 ~24s），采到的结果进快照；
+  // 向导/能力页经 IPC 等同一趟（向导等真数据 30s，能力页 8s 先答 + 后台补采）。
+  let hardwareProbeScheduled = false
+  mainWindow.once('show', () => {
+    if (hardwareProbeScheduled) return
+    hardwareProbeScheduled = true
+    setTimeout(() => { void probeHardwareInfo({ waitMs: HARDWARE_BACKGROUND_BUDGET_MS }) }, 1500)
+  })
 
   /** 主窗口的导航入口：加载重试要用它重发，而不是 reload()（导航没提交时那只是 about:blank） */
   const load = () => {
@@ -434,24 +446,31 @@ async function boot(): Promise<void> {
   initChannelRuntime()
 
   // 阶段 4：License 验证（仅当存在 license.lic 时）
-  try {
+  // 走异步版：绑盘指纹要跑 Get-Partition/Get-PhysicalDisk（本机实测 25s）。
+  // boot **不等**它：托盘、隐私锁、提醒调度器不能被一条 PowerShell 拖着；
+  // 但校验照常执行，期间到达的 license:get-status / has-feature 由 waitForBootLoad() 等到出结果
+  // （见 ipc/handlers/license.ts），所以首个查询不会把付费用户误答成「未激活」。
+  const licenseBoot = (async () => {
     const licPath = appConfigRepo.getLicensePath()
     if (licPath) {
-      licenseService.loadFromFile(licPath)
+      await licenseService.loadFromFileAsync(licPath)
       licenseLog.info('已加载:', licPath)
-    } else {
-      // 尝试默认路径
-      const defaultLic = path.join(DATA_DIR, 'license.lic')
-      const fs = require('node:fs')
-      if (fs.existsSync(defaultLic)) {
-        licenseService.loadFromFile(defaultLic)
-        appConfigRepo.setLicensePath(defaultLic)
-        licenseLog.info('已加载默认 license.lic')
-      }
+      return
     }
-  } catch (e) {
-    licenseLog.warn('加载失败:', errMsg(e))
-  }
+    // 尝试默认路径
+    const defaultLic = path.join(DATA_DIR, 'license.lic')
+    const fs = require('node:fs')
+    if (fs.existsSync(defaultLic)) {
+      await licenseService.loadFromFileAsync(defaultLic)
+      appConfigRepo.setLicensePath(defaultLic)
+      licenseLog.info('已加载默认 license.lic')
+    }
+  })()
+  licenseService.trackBootLoad(
+    licenseBoot.catch((e) => {
+      licenseLog.warn('加载失败:', errMsg(e))
+    })
+  )
   bootMark('浮窗/Channels/License')
 
   // 系统托盘：单击切换可见性，右键菜单显示/退出
@@ -561,16 +580,6 @@ if (!gotLock) {
     installPermissionGuards()
     // 默认中文菜单；渲染进程加载后会上报实际语言并重建
     buildAppMenu('zh')
-    // 硬件画像在启动时后台采集一次（结果缓存在主进程），
-    // 之后管家页面只读快照；需要时由用户点「重新检测」手动刷新。
-    // 延后到启动流程之后执行，避免系统命令采集拖慢开窗。
-    setImmediate(() => {
-      try {
-        getHardwareInfo()
-      } catch (err) {
-        log.warn('启动硬件检测失败:', err)
-      }
-    })
 
     // 本地推理槽位的接线（V4-Iter-141）：容量判据读硬件快照、慢等待进 perf 面板。
     // 这两件事必须在 composition root 做 —— local-slot 自己不 import hardware/perf-probe，
