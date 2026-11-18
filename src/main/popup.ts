@@ -40,6 +40,11 @@ const DEFAULT_QUICK_ACCEL = 'CommandOrControl+Shift+Space'
 const DEFAULT_SELECT_ACCEL = 'CommandOrControl+Shift+U'
 // P1-4 截图进对话：避开 Ctrl+Shift+S（其它程序常作"另存为"）与仓库内另两个默认键
 const DEFAULT_SHOT_ACCEL = 'CommandOrControl+Alt+S'
+// Wayland 会话下 Electron 的 globalShortcut 依赖 X11 抓键，注册必然失败；
+// 失败日志里带上换 XWayland 启动的提示，避免被误判成"被其他程序占用"
+const WAYLAND_ACCEL_HINT = process.env.WAYLAND_DISPLAY
+  ? '（Wayland 会话不支持全局快捷键，可用 --ozone-platform=x11 启动）'
+  : ''
 const CFG_QUICK = 'popup.quick_enabled'
 const CFG_SELECTION = 'popup.selection_enabled'
 const CFG_SHOT = 'popup.screenshot_enabled'
@@ -87,7 +92,7 @@ function registerWith(cfg: PopupConfig): string | null {
   if (cfg.quickEnabled) {
     const ok = globalShortcut.register(cfg.quickAccelerator, () => openPopup('quick'))
     if (!ok) {
-      log.warn('快捷问答快捷键注册失败（可能被其他程序占用）:', cfg.quickAccelerator)
+      log.warn(`快捷问答快捷键注册失败（可能被其他程序占用）${WAYLAND_ACCEL_HINT}:`, cfg.quickAccelerator)
       return cfg.quickAccelerator
     }
     registeredAccels.push(cfg.quickAccelerator)
@@ -104,7 +109,7 @@ function registerWith(cfg: PopupConfig): string | null {
         })
     })
     if (!ok) {
-      log.warn('选区助手快捷键注册失败（可能被其他程序占用）:', cfg.selectionAccelerator)
+      log.warn(`选区助手快捷键注册失败（可能被其他程序占用）${WAYLAND_ACCEL_HINT}:`, cfg.selectionAccelerator)
       // 失败时保留已成功注册的另一个
       return cfg.selectionAccelerator
     }
@@ -113,7 +118,7 @@ function registerWith(cfg: PopupConfig): string | null {
   if (cfg.screenshotEnabled && cfg.screenshotSupported) {
     const ok = globalShortcut.register(cfg.screenshotAccelerator, () => triggerScreenshot('window'))
     if (!ok) {
-      log.warn('截图快捷键注册失败（可能被其他程序占用）:', cfg.screenshotAccelerator)
+      log.warn(`截图快捷键注册失败（可能被其他程序占用）${WAYLAND_ACCEL_HINT}:`, cfg.screenshotAccelerator)
       return cfg.screenshotAccelerator
     }
     registeredAccels.push(cfg.screenshotAccelerator)

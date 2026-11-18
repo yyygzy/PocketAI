@@ -18,10 +18,11 @@
     "test": "vitest run",
     "test:full": "node scripts/test-full.mjs",
     "check:update-yml": "node scripts/check-update-yml.cjs dist",
-    "dist": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win",
-    "dist:portable": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win portable",
-    "dist:nsis": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win nsis",
-    "dist:linux": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --linux --config electron-builder.linux.yml",
+    "dist": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win && node scripts/collect-installers.cjs",
+    "dist:portable": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win portable && node scripts/collect-installers.cjs",
+    "dist:nsis": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --win nsis && node scripts/collect-installers.cjs",
+    "dist:linux": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --linux --config electron-builder.linux.yml && node scripts/collect-installers.cjs",
+    "dist:linux:rpm": "node scripts/fetch-embedding-model.mjs && electron-vite build && electron-builder --linux rpm --config electron-builder.linux.yml && node scripts/collect-installers.cjs",
     "fetch:model": "node scripts/fetch-embedding-model.mjs",
     "license": "node scripts/license-studio.js",
     "postinstall": "electron-builder install-app-deps"
@@ -95,6 +96,7 @@
     "files": [
       "out/**/*",
       "package.json",
+      "build/icon/**/*",
       "extensions/**/*",
       "node_modules/**/*",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
