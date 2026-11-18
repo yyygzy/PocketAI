@@ -292,7 +292,7 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     expect(parametrized.map(rel), '模板标记键被带参调用＝渲染出半个字面大括号').toEqual([])
   })
 
-  it('动态 key 调用点钉在 99 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
+  it('动态 key 调用点钉在 98 发：本面判不了它们，新增一发要人工对账后改这个数', () => {
     // §417 P0-3a：工具策略屏两发 `tp.reason.${code}`（旧注释 99／116，现 ToolPolicyDialog.tsx:108／125）
     //   已改为 `satisfies Record<ToolPolicyReasonCode, string>` 字面表 ⇒ 动态点 −2
     //
@@ -323,7 +323,10 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     //  P1-5 对账：`ChatView.tsx:1035` 的 `t(RESUME_BLOCK_TEXT_KEYS[resumeCandidate.code])` 是 P1-3a
     //  续跑横幅带来的**既有**动态点，上批改完没同步这里钉死的数（96 应为 97）。本批（P1-5）自身
     //  零新增动态取词：RunbookPanel 的引用种类名走 switch 逐分支字面量，不改这一格；97→97 只补记既有漂移。
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(97)
+    //  9629451（Linux 自绘标题条）新增第 98 发：`App.tsx:219 t(\`sidebar.${activeModule}\`)`。
+    //  人工对账：`activeModule` 是 `SidebarModuleId` **闭合联合**（11 个模块 id），`sidebar.<id>` 四语都在
+    //  （键集对齐由 i18n-parity 钉住）⇒ 属静态可穷举的取值域，登记而不是改产品码。97→98。
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(98)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {

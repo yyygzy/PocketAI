@@ -219,9 +219,10 @@ const FAIL_CLOSED = SITES.filter((s) => !s.successWrites)
  *   AssistantMarket :91（`if (hasIpcFailed(v)) return`）实测多出一处 ⇒ **现数 10**。
  *   判为合法（"少做一件事"）并逐文件登记，判语见下面那份表；不改产品码。
  * P1-5 逐条确认（2026-11-16）：RunbookPanel 选中即查引用，失败侧只 return ⇒ **现数 11**，同样登记。
- * 11 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
+ * 529304（2026-11-17）硬件后台补采轮询那一发（StewardModule:179）补登 ⇒ **现数 12**。
+ * 12 条逐条回读过，理由在下面那份注释里；剩下的都是"少做一件事"或已有既有决定托底的那一档。
  */
-const JUMP_LIE_CAP = 11
+const JUMP_LIE_CAP = 12
 
 const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 首启向导／换电脑检测那一发：读不到就**不弹**（不会弹一个假向导），屏上没有假数字。
@@ -263,7 +264,12 @@ const JUMP_LIE_PER_FILE: Record<string, number> = {
   // 成功支 `setMissing(r.missingRefs)` 把"哪些引用在本机缺失"摆上屏，失败/取消支直接 return。
   // 判为**合法**：读不到就停在"未校验"（不摆一份假的"零缺失"），真正套用那一刻还会再查一次，
   // 失败会明确报错 ⇒ 属于"少做一件事"，登记而不改产品码。
-  'src/renderer/src/modules/chat/RunbookPanel.tsx': 1
+  'src/renderer/src/modules/chat/RunbookPanel.tsx': 1,
+  // 硬件后台补采轮询（529304）：主进程 30s 冷探测还在跑时，界面每 3s 轻问一发 `getHardwareInfo`；
+  // 失败／取消／无数据就 `continue` 等下一轮（45s 到点停轮询），成功支 `setHardware(r.data)` 上屏。
+  // 判为**合法**：失败不把"没测到"演成一组读数，屏上保留「没测到」并留有「重新检测」入口
+  // ⇒ 同"少做一件事／稍后重试"档，登记而不改产品码。
+  'src/renderer/src/modules/steward/StewardModule.tsx': 1
 }
 
 /** 正向对照：这些文件必须**真的出现在名单里**（防"扫描器恒返回空"这种假绿，§250 同一条） */
@@ -330,7 +336,7 @@ describe('§263 第五面：失败侧只有流程跳，而成功那支要上屏�
     expect(LIE.length + FAIL_CLOSED.length, '总数＝判过失败面且只跳的那批').toBe(SITES.length)
   })
 
-  it('等式 ratchet：目标桶 11 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2，P4 批次 2 删 Agent 壳−3，6a4c590＋1，P1-5 逐条确认＋1）', () => {
+  it('等式 ratchet：目标桶 12 处（§263 开批 19→13，§264 再收六处→7，§335＋1，货架式助手＋2，§429＋2，P4 批次 2 删 Agent 壳−3，6a4c590＋1，P1-5 逐条确认＋1，529304＋1）', () => {
     expect(LIE.length, `现数 ${LIE.length}：\n${LIE.map((s) => `  ${s.file}:${s.line} if (${s.cond}) ⇒ ${s.body}`).join('\n')}`).toBe(JUMP_LIE_CAP)
   })
 
