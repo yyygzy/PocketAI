@@ -173,7 +173,6 @@ export const ko = {
   'unlock.setSubtitle': '마스터 비밀번호를 설정하여 데이터베이스를 AES-256-GCM으로 암호화합니다.',
   'unlock.password': '마스터 비밀번호',
   'unlock.confirm': '비밀번호 확인',
-  'unlock.phPwd': '6자 이상',
   'unlock.phConfirm': '비밀번호 다시 입력',
   'unlock.enterPwd': '비밀번호를 입력하세요',
   'unlock.pwdTooShort': '새 비밀번호는 10자 이상이어야 합니다 (문구 권장)',

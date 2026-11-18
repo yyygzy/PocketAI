@@ -373,7 +373,10 @@ export function UnlockPage() {
             {renderPwd({
               value: password,
               onChange: setPassword,
-              placeholder: t('unlock.phPwd'),
+              // 解锁态输入的是「已有密码」，最短长度只对 6~9 位的历史密码生效，
+              // 提示里写死下限会让人误以为自己密码不合格；新设/重置才是 10 位下限。
+              placeholder:
+                mode === 'setPassword' ? t('unlock.phNewPwd') : t('lock.pwdPlaceholder'),
               autoFocus: true,
               disabled: busy || remainingMs > 0
             })}

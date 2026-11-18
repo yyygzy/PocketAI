@@ -545,6 +545,14 @@ const userDataDir = path.join(DATA_DIR, USER_DATA_DIR_NAME)
 fs.mkdirSync(userDataDir, { recursive: true })
 app.setPath('userData', userDataDir)
 
+// Windows 任务栏归组/图标：AUMID 决定任务栏按钮用哪个图标与名字。必须在 app ready 之前设，
+// 放到 whenReady 里设会让 Chromium 已经按默认身份建好窗口（2026-11-18 实测对比）。
+// 值必须与 package.json 的 build.appId 一致（tests/win-aumid-appid.test.ts 钉住）。
+// ⚠️ 排查提示：任务栏显示 Electron 原子图标且归组名为「Electron」时，先查开始菜单里有没有
+// 残留的 Electron.lnk（AUMID 同样是 ai.pocket.desktop 但指向 node_modules 的 electron.exe）——
+// Windows 按 AUMID 反查快捷方式取图标和名字，这种残留 lnk 会把图标整个劫走，改代码没用。
+if (process.platform === 'win32') app.setAppUserModelId('ai.pocket.desktop')
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   // 已有实例在运行（含残留后台进程）：弹窗告知而非静默退出，
@@ -581,14 +589,6 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
-    // Windows 任务栏按钮按「AppUserModelID」归组，没设的话进程在系统眼里就是 electron.exe，
-    // 于是**无视每个窗口都设好的 icon**、直接显示 Electron 的原子图标
-    // （标题栏用的是窗口图标所以看着是对的，任务栏才是这个症状；dev 与 portable 版都会中）。
-    // 值与 package.json 的 build.appId 一致：安装版可与快捷方式同组复用其图标，
-    // ⚠️ 这一行修不好 dev：V4-Iter-132 重启 dev 后实测——主窗口的 PKEY_AppUserModel_ID 仍为空，
-    // 任务栏按钮仍归成「Electron - 1 个运行窗口」。Windows 11 要这个 AUMID 对应到一个**已注册的
-    // 快捷方式**才换图标，dev 没有快捷方式；安装版由 NSIS 写快捷方式，才是这行的用武之地。
-    if (process.platform === 'win32') app.setAppUserModelId('ai.pocket.desktop')
     // 生产环境 CSP 必须在任何窗口创建前安装（解锁窗在 boot() 内创建）
     installContentSecurityPolicy()
     // 权限收口同理：默认拒绝 Chromium 所有权限（摄像头/麦克风/定位/通知/剪贴板等）

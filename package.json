@@ -85,6 +85,7 @@
     "productName": "Moxia",
     "asar": true,
     "asarUnpack": [
+      "build/icon/**/*",
       "node_modules/better-sqlite3-multiple-ciphers/**/*.node",
       "node_modules/sqlite-vec*/**/*.{dll,dylib,so}",
       "node_modules/onnxruntime-node/**"

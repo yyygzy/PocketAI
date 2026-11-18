@@ -184,7 +184,6 @@ export const zh = {
   'unlock.setSubtitle': '为您的数据设置一个主密码，将对数据库启用 AES-256-GCM 加密',
   'unlock.password': '主密码',
   'unlock.confirm': '确认密码',
-  'unlock.phPwd': '至少 6 位',
   'unlock.phConfirm': '再次输入密码',
   'unlock.enterPwd': '请输入密码',
   'unlock.pwdTooShort': '新密码至少 10 位，建议用短语',

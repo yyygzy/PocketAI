@@ -1,10 +1,11 @@
 // 独立窗口（标签弹出）：与主窗口共用 index.html 入口，#/detached?module=xxx hash 分流
 // 放独立模块避免 index.ts ↔ ipc/index.ts 循环依赖
-import { BrowserWindow, app } from 'electron'
+import { BrowserWindow } from 'electron'
 import path from 'node:path'
 import { lockService } from '../lock/lock'
 import { denyNewWindows } from '../net/external-links'
 import { markThemedWindow, windowBackground } from '../ui-preferences'
+import { appIconPath } from './boot-guards'
 
 /** 模块白名单：独立窗口只允许打开这些模块（settings/steward 不允许弹出） */
 export const DETACHED_MODULES = new Set([
@@ -21,8 +22,9 @@ export function createDetachedWindow(moduleId: string): void {
     show: false,
     backgroundColor: windowBackground(),
     title: '墨匣 Moxia - PocketAI',
+    // win32 用 appIconPath()（asar 解包后的 ico，见 boot-guards 注释）；其他平台沿用 out/main 相对路径
     icon: process.platform === 'win32'
-      ? path.join(app.getAppPath(), 'build/icon/icon.ico')
+      ? appIconPath()
       : path.join(__dirname, '../../build/icon/icon-256.png'),
     webPreferences: {
       // __dirname 是构建后的 out/main（见 package.json main 与 electron.vite.config.ts 的 outDir），

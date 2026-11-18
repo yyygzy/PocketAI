@@ -173,7 +173,6 @@ export const ja = {
   'unlock.setSubtitle': 'マスターパスワードを設定し、データベースを AES-256-GCM 暗号化します。',
   'unlock.password': 'マスターパスワード',
   'unlock.confirm': 'パスワードの確認',
-  'unlock.phPwd': '6 文字以上',
   'unlock.phConfirm': 'パスワードを再入力',
   'unlock.enterPwd': 'パスワードを入力してください',
   'unlock.pwdTooShort': '新しいパスワードは 10 文字以上必要です（短文フレーズ推奨）',

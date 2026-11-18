@@ -19,9 +19,14 @@ export const IS_DEV_MODE = !app.isPackaged || process.env.ELECTRON_RENDERER_URL 
 
 /** 应用图标：Windows 用 .ico（含 16/32/48/256 多尺寸，任务栏显示更清晰），其他平台用 256px png */
 export function appIconPath(): string {
+  // 打包版图标不能留在 app.asar 内部：Windows 原生窗口图标加载不走 asar 桥，读不到
+  // ⇒ 空图标 ⇒ 任务栏回落成 Electron 默认原子图标（1.3.0 打包实测）。asarUnpack 已把
+  // build/icon 解包到 resources/app.asar.unpacked，这里把 base 指向解包目录；
+  // dev 下 getAppPath 是项目根、不含 app.asar，replace 无效果，两态共用无分支。
+  const base = app.getAppPath().replace('app.asar', 'app.asar.unpacked')
   return process.platform === 'win32'
-    ? path.join(app.getAppPath(), 'build/icon/icon.ico')
-    : path.join(app.getAppPath(), 'build/icon/icon-256.png')
+    ? path.join(base, 'build/icon/icon.ico')
+    : path.join(base, 'build/icon/icon-256.png')
 }
 
 /**

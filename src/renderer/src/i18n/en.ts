@@ -184,7 +184,6 @@ export const en = {
   'unlock.setSubtitle': 'Set a master password to enable AES-256-GCM encryption for your database.',
   'unlock.password': 'Master password',
   'unlock.confirm': 'Confirm password',
-  'unlock.phPwd': 'At least 6 characters',
   'unlock.phConfirm': 'Re-enter password',
   'unlock.enterPwd': 'Please enter the password',
   'unlock.pwdTooShort': 'New password must be at least 10 characters — a phrase works well',
