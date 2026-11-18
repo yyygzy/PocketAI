@@ -231,15 +231,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }
 
   const pinFull = pinnedModules.length >= MAX_PINNED_SIDEBAR_MODULES
+  // Linux 自绘标题栏（WCO）生效时，Logo 区兼任窗口拖拽区（区内无按钮等交互元素，安全）
+  // navigator.windowControlsOverlay 的 TS lib.dom 尚未收录，用结构断言（可选属性，运行时缺失即 false）
+  const wcoTitlebar = !!(
+    window.navigator as Navigator & { windowControlsOverlay?: { visible: boolean } }
+  ).windowControlsOverlay?.visible
 
   return (
     <aside
       className="flex flex-col bg-[var(--color-sidebar)] border-r border-[var(--color-border)] transition-all duration-200"
       style={{ width: collapsed ? 56 : 200 }}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-2 px-3 h-14 border-b border-[var(--color-border)]">
-        <img src={logoUrl} alt="墨匣" className="w-10 h-10 shrink-0" />
+      {/* Logo（WCO 生效时兼任窗口拖拽区；img 禁原生拖拽防抢拖动） */}
+      <div
+        className="flex items-center gap-2 px-3 h-14 border-b border-[var(--color-border)] select-none"
+        style={wcoTitlebar ? ({ WebkitAppRegion: 'drag' } as React.CSSProperties) : undefined}
+      >
+        <img src={logoUrl} alt="墨匣" className="w-10 h-10 shrink-0" draggable={false} />
         {!collapsed && <span className="font-bold text-base">墨匣</span>}
       </div>
 

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=墨匣 Moxia
+Comment=本地优先可随身携带的 AI 工作台（双击启动，自动检测环境）
+Exec=/bin/bash -c 'cd "$(dirname "%k")" && ./启动墨匣.sh'
+Icon=application-x-executable
+Terminal=false
+Categories=Utility;
+StartupWMClass=Moxia

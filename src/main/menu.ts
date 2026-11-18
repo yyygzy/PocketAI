@@ -1,5 +1,6 @@
-// 应用菜单：中英文文案随渲染进程语言切换（IPC 上报）
-import { app, Menu, dialog, BrowserWindow, nativeImage, type MenuItemConstructorOptions } from 'electron'
+// 应用菜单：macOS 保留完整菜单（系统惯例）；Windows/Linux 菜单栏整行去掉（用户要求），
+// 由 buildAppMenu 直接 setApplicationMenu(null)，开发用 F12 兜底（见 index.ts before-input-event）。
+import { app, Menu, type MenuItemConstructorOptions } from 'electron'
 import path from 'node:path'
 
 export type MenuLang = 'zh' | 'en'
@@ -36,17 +37,12 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
     })
   }
 
+  // 非 macOS 不会走到这里（buildAppMenu 已提前 setApplicationMenu(null)）；
+  // 防御一下：返回空模板而不是去 set 菜单（本函数只管模板，不碰 Menu 状态）
+  if (process.platform !== 'darwin') return template
+
+  // macOS：无菜单栏不符合系统惯例，保留完整菜单
   template.push(
-    {
-      label: zh ? '文件' : 'File',
-      // 不用 role:'close'：其默认 accelerator CmdOrCtrl+W 会抢在渲染端之前关掉整个窗口；
-      // Ctrl/⌘+W 已让给「关闭当前标签」（见 useGlobalShortcuts），此处仅保留鼠标可点的关闭窗口项（无快捷键）
-      submenu: [
-        isMac
-          ? { label: zh ? '关闭窗口' : 'Close Window', click: () => BrowserWindow.getFocusedWindow()?.close() }
-          : { role: 'quit' as const, label: zh ? '退出' : 'Exit' }
-      ]
-    },
     {
       label: zh ? '编辑' : 'Edit',
       submenu: [
@@ -56,12 +52,8 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
         { role: 'cut', label: zh ? '剪切' : 'Cut' },
         { role: 'copy', label: zh ? '复制' : 'Copy' },
         { role: 'paste', label: zh ? '粘贴' : 'Paste' },
-        ...(isMac
-          ? [
-              { role: 'pasteAndMatchStyle' as const, label: zh ? '粘贴并匹配样式' : 'Paste and Match Style' },
-              { role: 'delete' as const, label: zh ? '删除' : 'Delete' }
-            ]
-          : []),
+        { role: 'pasteAndMatchStyle' as const, label: zh ? '粘贴并匹配样式' : 'Paste and Match Style' },
+        { role: 'delete' as const, label: zh ? '删除' : 'Delete' },
         { role: 'selectAll', label: zh ? '全选' : 'Select All' }
       ]
     },
@@ -83,34 +75,15 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
       label: zh ? '窗口' : 'Window',
       submenu: [
         { role: 'minimize', label: zh ? '最小化' : 'Minimize' },
-        ...(isMac
-          ? [{ role: 'zoom' as const, label: zh ? '缩放' : 'Zoom' }, { type: 'separator' } as MenuItemConstructorOptions, { role: 'front' as const, label: zh ? '前置全部窗口' : 'Bring All to Front' }]
-          : [{ label: zh ? '关闭窗口' : 'Close Window', click: () => BrowserWindow.getFocusedWindow()?.close() }])
+        { role: 'zoom' as const, label: zh ? '缩放' : 'Zoom' },
+        { type: 'separator' as const },
+        { role: 'front' as const, label: zh ? '前置全部窗口' : 'Bring All to Front' }
       ]
     },
     {
-      role: 'help',
       label: zh ? '帮助' : 'Help',
       submenu: [
-        {
-          label: zh ? '关于墨匣' : 'About Moxia',
-          click: () => {
-            const iconPath = path.join(app.getAppPath(), 'build/icon/icon-512.png')
-            const opts = {
-              type: 'info' as const,
-              title: '墨匣 Moxia - PocketAI',
-              message: `墨匣 v${app.getVersion()}`,
-              detail: zh
-                ? '本地优先的 AI 工作站 · 便携 · 加密'
-                : 'Local-first AI workstation · Portable · Encrypted',
-              icon: nativeImage.createFromPath(iconPath),
-              buttons: [zh ? '好的' : 'OK']
-            }
-            const focused = BrowserWindow.getFocusedWindow()
-            if (focused) dialog.showMessageBox(focused, opts)
-            else dialog.showMessageBox(opts)
-          }
-        }
+        { role: 'about', label: zh ? '关于墨匣' : 'About Moxia' }
       ]
     }
   )
@@ -120,5 +93,11 @@ function buildTemplate(lang: MenuLang): MenuItemConstructorOptions[] {
 
 /** 构建 / 重建应用菜单 */
 export function buildAppMenu(lang: MenuLang): void {
+  void lang
+  if (process.platform !== 'darwin') {
+    // 菜单栏整行去掉：setApplicationMenu(null) 后窗口内容直接顶到标题栏下沿
+    Menu.setApplicationMenu(null)
+    return
+  }
   Menu.setApplicationMenu(Menu.buildFromTemplate(buildTemplate(lang)))
 }

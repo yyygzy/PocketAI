@@ -486,6 +486,53 @@ function emptyDisk(): DiskInfo {
   }
 }
 
+/**
+ * Linux 磁盘采集：df -T 拿容量/文件系统，lsblk 拿介质类型。
+ * 两条都是毫秒级轻量 CLI（无需 root），符合 collectHardwareProbe 对非 win32「同步实现即可」的前提。
+ * §377 口径：采不到的字段保持 null，不推断。
+ */
+function getDiskLinux(): DiskInfo {
+  const info = emptyDisk()
+  // df -T -B1 <路径> 输出 7 列：Filesystem Type 1B-blocks Used Available Capacity Mounted-on
+  const out = execFileSync('df', ['-T', '-B1', APP_ROOT], { encoding: 'utf8' })
+  const line = out.trim().split('\n').at(-1) ?? ''
+  const m = line.match(/^(\S+)\s+(\S+)\s+(\d+)\s+\d+\s+(\d+)\s+\d+%?\s+(.+)$/)
+  if (!m) return info
+  info.filesystem = m[2]!
+  info.totalSpace = Number(m[3])
+  info.freeSpace = Number(m[4])
+  info.drive = m[5]!.trim() // Linux 无盘符：挂载点承担同一语义
+  // 设备名 → 整盘名（与 getDiskSerialLinux 同规则）：nvme0n1p4→nvme0n1 / mmcblk0p2→mmcblk0 / sda12→sda
+  const devMatch = m[1]!.match(/^\/dev\/([A-Za-z0-9]+)$/)
+  if (!devMatch) return info
+  let dev = devMatch[1]!
+  if (/^(nvme\d+n\d+|mmcblk\d+)p\d+$/.test(dev)) dev = dev.replace(/p\d+$/, '')
+  else dev = dev.replace(/\d+$/, '')
+  // lsblk -J：JSON 输出免列对齐（util-linux 新旧版本的 ROTA/RM 布尔形态不同，一并兼容）
+  try {
+    const lb = execFileSync('lsblk', ['-d', '-J', '-o', 'TRAN,ROTA,RM,LABEL', `/dev/${dev}`], { encoding: 'utf8' })
+    const parsed = parseJsonSafe<{
+      blockdevices?: Array<{ tran?: string | null; rota?: boolean | string | number | null; rm?: boolean | string | number | null; label?: string | null }>
+    }>(lb)
+    const d = parsed?.blockdevices?.[0]
+    if (!d) return info
+    if (d.label) info.volumeLabel = d.label
+    if (d.tran && d.tran !== 'null') {
+      const tran = d.tran.toLowerCase()
+      info.busType = tran === 'nvme' ? 'NVMe' : tran === 'sata' ? 'SATA' : tran === 'usb' ? 'USB' : d.tran.toUpperCase()
+    }
+    info.removable = d.rm === true || d.rm === 1 || d.rm === '1' || d.tran === 'usb'
+    if (d.rota === false || d.rota === 0 || d.rota === '0') info.mediumType = 'SSD'
+    else if (d.rota === true || d.rota === 1 || d.rota === '1') info.mediumType = 'HDD'
+  } catch {
+    // lsblk 不可用（极简发行版/容器）：容量与文件系统已拿到，介质/总线保持 null
+  }
+  if (info.removable) info.type = 'usb'
+  else if (info.mediumType === 'SSD') info.type = 'ssd'
+  else if (info.mediumType === 'HDD') info.type = 'hdd'
+  return info
+}
+
 function getDisk(): DiskInfo {
   try {
     if (process.platform === 'win32') {
@@ -493,6 +540,7 @@ function getDisk(): DiskInfo {
       if (drive) return getDiskWin32(drive)
       return emptyDisk()
     }
+    if (process.platform === 'linux') return getDiskLinux()
     const info = emptyDisk()
     if (process.platform === 'darwin') {
       // SEC-21：execFileSync + JS 侧过滤，替代 shell 字符串拼接与管道
@@ -769,13 +817,15 @@ function getDiskSerialLinux(): string | null {
     // 找 APP_ROOT 所在设备（SEC-21：不再走 shell 管道，tail 在 JS 里取）
     const stat = execFileSync('df', [APP_ROOT], { encoding: 'utf8' })
     const lastLine = stat.trim().split('\n').at(-1) ?? ''
-    const devMatch = lastLine.match(/^(\/dev\/[a-z]+\d*)/)
+    // 注意：设备名里字母数字交错（nvme0n1p4），不能按 [a-z]+\d* 截——
+    // 那会把 /dev/nvme0n1p4 截成 /dev/nvme0，序列号路径必错（1.3.0 Linux 指纹恒 null 的根因）
+    const devMatch = lastLine.match(/^(\/dev\/[A-Za-z0-9]+)/)
     if (!devMatch) return null
-    // /dev/sdb1 → /sys/block/sdb/device/serial
     let dev = devMatch[1]!.replace('/dev/', '')
-    // 去掉分区号
-    dev = dev.replace(/\d+$/, '')
-    // dev 由上面的白名单式正则导出（仅字母+数字），且改为直读文件不再经 shell
+    // 分区名 → 整盘名：nvme0n1p4 → nvme0n1；mmcblk0p2 → mmcblk0；sda1/sda12 → sda
+    if (/^(nvme\d+n\d+|mmcblk\d+)p\d+$/.test(dev)) dev = dev.replace(/p\d+$/, '')
+    else dev = dev.replace(/\d+$/, '')
+    // 序列号统一在 /sys/block/<整盘>/device/serial（SATA/NVMe 都适用；拿不到返回 null）
     const serial = fs.readFileSync(`/sys/block/${dev}/device/serial`, 'utf8').trim()
     return serial || null
   } catch {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Sidebar, type ModuleId } from './components/Sidebar'
 import { Workspace } from './components/Workspace'
 import { LockOverlay } from './components/LockOverlay'
@@ -49,6 +49,14 @@ export default function App() {
   const [remindersOpen, setRemindersOpen] = useState(false)
   const [lockPwd, setLockPwd] = useState('')
   const [lockErr, setLockErr] = useState('')
+  // Linux 自绘标题栏（main 进程 titleBarOverlay）生效时，窗口拖拽区只能由应用自己提供
+  // （系统标题栏没了）：内容列顶部渲染一条应用内标题条（WebkitAppRegion: drag）。
+  // Windows/macOS 走系统原生标题栏，不加（避免多一条空白）。
+  // navigator.windowControlsOverlay 的 TS lib.dom 尚未收录，用结构断言（可选属性，运行时缺失即 false）
+  const wcoTitlebar = !!(
+    window.navigator as Navigator & { windowControlsOverlay?: { visible: boolean } }
+  ).windowControlsOverlay?.visible
+
   // 挂载那两发读的失败原因（V4-Iter-250）：读不到 ≠ "没加密、没锁"，得在屏上说得出
   const [encReadErr, setEncReadErr] = useState<string | null>(null)
   const [lockReadErr, setLockReadErr] = useState<string | null>(null)
@@ -200,6 +208,17 @@ export default function App() {
           />
           {/* 侧栏即唯一导航：模块内容区直接顶到窗口顶部（原 36px 标签栏已随标签页系统下线） */}
           <div className="flex flex-col flex-1 min-w-0">
+            {/* WCO 生效（Linux）：应用内标题条 = 窗口拖拽区，高度对齐 titleBarOverlay(36px)。
+                右上角系统按钮在 overlay 层，点击不落入本条；双击本条 = 最大化/还原（系统行为）。 */}
+            {wcoTitlebar && (
+              <div
+                className="h-9 shrink-0 flex items-center gap-2 px-3 select-none bg-[var(--color-surface)] border-b border-[var(--color-border)]"
+                style={{ WebkitAppRegion: 'drag' } as CSSProperties}
+              >
+                <span className="text-xs font-semibold">墨匣</span>
+                <span className="text-xs text-[var(--color-text-muted)]">{t(`sidebar.${activeModule}`)}</span>
+              </div>
+            )}
             {/* V4-Iter-475：新界面 + 旧主进程时给一条统一提示（对齐时不渲染任何东西，不阻断模块） */}
             <MainProcessHandshakeNotice />
             {(encReadErr || lockReadErr || chatFontUnread || codeCollapseUnread) && (

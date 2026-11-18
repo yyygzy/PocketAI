@@ -76,7 +76,7 @@ import { initBackupScheduler } from './backup/backup-scheduler'
 import { captureWebDAVForRekey, restoreWebDAVAfterRekey } from './backup/backup-service'
 import { initTaskScheduler } from './backup/task-scheduler'
 import { initReminderScheduler } from './reminder/scheduler'
-import { applyOpacityToMainWindows, awaitRendererTheme, hasStoredUiTheme, MAIN_WINDOW_MARKER, markThemedWindow, windowBackground, type MarkedBrowserWindow } from './ui-preferences'
+import { applyOpacityToMainWindows, awaitRendererTheme, hasStoredUiTheme, MAIN_WINDOW_MARKER, markThemedWindow, syncNativeTheme, titlebarOverlayFor, windowBackground, type MarkedBrowserWindow } from './ui-preferences'
 import { beginQuit, isCleanupDone, isQuitting, runCleanupOnce, runFallbackCleanup } from './quit-manager'
 import { createLogger, configureLogDir } from './logger'
 import { bootMark } from './steward/boot-perf'
@@ -138,6 +138,9 @@ function createMainWindow(): void {
   // 建窗底色是否已有可信来源（KV 里的用户主题）。没有值（首装/升级后第一次启动）时
   // 底色只能先给默认深色，真实主题要等渲染端首帧前上报，见下方显示门控。
   const themeKnown = hasStoredUiTheme()
+  // 启动即把 KV 主题同步到原生层：菜单栏/标题栏（Win 直接生效；GTK 主题支持时跟随）与 Web
+  // 的 prefers-color-scheme 不用等用户手动切一次主题才对齐
+  syncNativeTheme()
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -147,6 +150,11 @@ function createMainWindow(): void {
     backgroundColor: windowBackground(),
     title: '墨匣 Moxia - PocketAI',
     icon: appIconPath(),
+    // Linux：Wayland 的系统标题栏（SSD）不跟随应用内主题，换成 Electron 自绘覆盖层，
+    // 颜色随主题切换（applyThemeToWindows → setTitleBarOverlay）；Windows 保持原生框（DWM 深色已跟随）
+    ...(process.platform === 'linux'
+      ? { titleBarStyle: 'hidden' as const, titleBarOverlay: titlebarOverlayFor() }
+      : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -185,6 +193,13 @@ function createMainWindow(): void {
   }
   // 后台保活（2/2）：该窗口的 webContents 不参与 Chromium 背景节流
   mainWindow.webContents.setBackgroundThrottling(false)
+  // 菜单栏已整行移除（menu.ts）：F12 兜底开关开发者工具，避免排查问题没有入口
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') {
+      mainWindow?.webContents.toggleDevTools()
+      event.preventDefault()
+    }
+  })
   // 关闭按钮 → 二次确认（防止误触），确认后才真正退出并清理所有子进程
   mainWindow.on('close', async (e) => {
     if (isQuitting()) return // 已在退出流程中（如托盘退出菜单主动设标志后 app.quit()）

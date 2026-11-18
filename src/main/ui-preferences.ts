@@ -5,7 +5,7 @@
 // ui.theme       窗口底色主题（内置预设 id，见 shared/themes.ts）。渲染端 localStorage 仍是切换时的事实来源，
 //                这里存一份是为了让 BrowserWindow 在页面首帧之前就用对底色（否则浅色主题会先黑一下）。
 
-import { BrowserWindow, type WebContents } from 'electron'
+import { BrowserWindow, nativeTheme, type WebContents } from 'electron'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import type { UiPreferences, ChatFontSize } from '../shared/types'
 import { uiPrefsPatchSchema } from '../shared/schemas/preferences'
@@ -13,6 +13,7 @@ import {
   DEFAULT_UI_THEME,
   isUiTheme,
   normalizeUiTheme,
+  themePreset,
   themeWindowBackground
 } from '../shared/themes'
 import type { UiTheme } from '../shared/themes'
@@ -134,6 +135,35 @@ export function windowBackground(theme: UiTheme = getUiTheme()): string {
 }
 
 /**
+ * Linux hidden 标题栏（titleBarOverlay）的配色：底色=窗口底色，符号颜色按深浅色系取反。
+ * Wayland 的系统标题栏（SSD）不跟随应用内主题，只能换成 Electron 自绘的覆盖层。
+ */
+export function titlebarOverlayFor(theme: UiTheme = getUiTheme()): {
+  color: string
+  symbolColor: string
+  height: number
+} {
+  const dark = themePreset(theme).mermaidTheme === 'dark'
+  return {
+    color: windowBackground(theme),
+    symbolColor: dark ? '#e6e6e6' : '#3a3a3a',
+    height: 36
+  }
+}
+
+/** 运行时刷新标题栏覆盖层颜色（Windows/Linux；平台不支持或无覆盖层时静默忽略） */
+export function applyTitlebarOverlayTheme(win: BrowserWindow, theme: UiTheme): void {
+  try {
+    const candidate = win as unknown as {
+      setTitleBarOverlay?: (o: { color: string; symbolColor: string; height?: number }) => void
+    }
+    candidate.setTitleBarOverlay?.(titlebarOverlayFor(theme))
+  } catch {
+    /* 平台不支持时静默忽略 */
+  }
+}
+
+/**
  * 读回上次主题。库未打开时（解锁窗创建早于解锁）退回深色，且**不缓存**——
  * 解锁后主窗口要能读到真实值。
  */
@@ -143,6 +173,16 @@ export function getUiTheme(): UiTheme {
   } catch {
     return DEFAULT_UI_THEME
   }
+}
+
+/**
+ * 把应用内主题同步到 Electron 原生主题（nativeTheme.themeSource）：深色系→dark、浅色系→light。
+ * 影响：原生菜单栏/标题栏配色（Windows 直接出深色框；Linux/GTK 主题带 dark variant 时菜单栏跟随）、
+ * 以及 Web 内容的 prefers-color-scheme。幂等，可随意多次调用。
+ */
+export function syncNativeTheme(theme: UiTheme = getUiTheme()): void {
+  const scheme = themePreset(theme).mermaidTheme === 'dark' ? 'dark' : 'light'
+  if (nativeTheme.themeSource !== scheme) nativeTheme.themeSource = scheme
 }
 
 /**
@@ -173,17 +213,19 @@ export function applyThemeToWindows(theme: UiTheme = getUiTheme()): void {
     if ((win as ThemedBrowserWindow)[THEMED_WINDOW_MARKER] !== true) continue
     try {
       win.setBackgroundColor(color)
+      applyTitlebarOverlayTheme(win, theme)
     } catch {
       /* 窗口正在销毁/平台不支持时忽略：下次启动仍会按 KV 重建 */
     }
   }
 }
 
-/** 保存主题（KV + 立即刷所有主题化窗口的底色），返回归一后的值 */
+/** 保存主题（KV + 立即刷所有主题化窗口的底色 + 原生主题跟随），返回归一后的值 */
 export function setUiTheme(theme: UiTheme): UiTheme {
   const next = normalizeUiTheme(theme)
   appConfigRepo.set(K_THEME, next)
   applyThemeToWindows(next)
+  syncNativeTheme(next)
   return next
 }
 
@@ -231,6 +273,7 @@ export function reportRendererTheme(sender: WebContents, theme: UiTheme): void {
   if (!win.isDestroyed() && (win as ThemedBrowserWindow)[THEMED_WINDOW_MARKER] === true) {
     try {
       win.setBackgroundColor(windowBackground(normalizeUiTheme(theme)))
+      syncNativeTheme(normalizeUiTheme(theme))
     } catch {
       /* 窗口正在销毁/平台不支持时忽略：上报只影响首帧底色 */
     }

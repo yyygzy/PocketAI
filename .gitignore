@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+# 构建产物统一收拢目录（collect-installers.cjs 产出，1GB+ 不入库）
+artifacts/
 dist-v*/
 data/
 *.log

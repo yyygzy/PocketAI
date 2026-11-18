@@ -79,8 +79,6 @@ export const EXTENSIONS_DIR = path.join(app.getAppPath(), 'extensions')
 export const USER_EXTENSIONS_DIR = path.join(DATA_DIR, 'extensions')
 export const MCP_EXTENSIONS_DIR = path.join(USER_EXTENSIONS_DIR, 'mcp')
 export const LOGS_DIR = path.join(DATA_DIR, 'logs')
-/** 运行时目录（存放便携 Python 等第三方运行时） */
-export const RUNTIME_DIR = path.join(APP_ROOT, 'runtime')
 
 /**
  * 当前是否为便携运行形态（数据跟随应用本体）：
@@ -91,6 +89,19 @@ export function isPortableRuntime(): boolean {
   if (process.platform === 'linux') return !!process.env.APPIMAGE
   return false
 }
+
+/**
+ * 运行时目录（存放便携 Python/Ollama 等第三方运行时）。
+ *   便携/开发态 → APP_ROOT/runtime（跟应用本体走）
+ *   安装版      → appData/Moxia/runtime
+ * 安装目录（/opt/Moxia、Program Files）归 root/管理员所有，普通用户不可写——
+ * 1.3.0 deb 首启就崩在 `mkdir /opt/Moxia/runtime`（EACCES）。运行时是可重建的
+ * 下载缓存，落 appData 与数据目录同级，权限无忧且覆盖安装不丢。
+ */
+export const RUNTIME_DIR =
+  app.isPackaged && !isPortableRuntime()
+    ? path.join(app.getPath('appData'), INSTALLED_DATA_ROOT_NAME, 'runtime')
+    : path.join(APP_ROOT, 'runtime')
 
 export function getPaths(): AppPaths {
   return {

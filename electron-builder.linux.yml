@@ -17,6 +17,9 @@ directories:
 files:
   - out/**/*
   - package.json
+  # 运行时通过 app.getAppPath() + build/icon/xxx 读取（托盘/菜单/浮窗/窗口图标），
+  # 不打包会导致打包后 nativeImage 为空、托盘直接跳过初始化
+  - build/icon/**/*
   - extensions/**/*
   - node_modules/**/*
   - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
@@ -31,8 +34,17 @@ linux:
     - target: AppImage
       arch:
         - x64
+    # 同时出 .deb：装到 /opt，由系统包管理器安装，不依赖 FUSE2，
+    # Ubuntu 24.04+ 双击即可安装（AppImage 在这些版本上需要额外装 libfuse2t64）
+    - target: deb
+      arch:
+        - x64
+  # rpm（Fedora/openSUSE/UOS/麒麟）不在默认目标里：fpm 依赖宿主的 rpmbuild，
+  # 缺 rpm-build 会让整次 dist:linux 失败。需要时单独跑 npm run dist:linux:rpm
   category: Utility
   icon: build/icon/icon-256.png
+  # deb/rpm 的 Maintainer 字段必填，electron-builder 不会从 package.json 的纯字符串 author 推断邮箱
+  maintainer: Moxia <3854313@qq.com>
   artifactName: Moxia-${version}-Linux-${arch}.${ext}
 publish:
   provider: github
