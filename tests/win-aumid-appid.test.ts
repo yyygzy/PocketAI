@@ -30,4 +30,12 @@ describe('Windows AUMID 与 build.appId 同源（清单 B66 的 CI 半边）', (
     expect(line, '调用点整行找不到').toBeTruthy()
     expect(line).toContain("process.platform === 'win32'")
   })
+
+  it('调用点带便携形态闸门：portable 跳过 AUMID（任务栏白纸图标修复）', () => {
+    // 便携版解压到随机 Temp 目录、无安装快捷方式 ⇒ 显式 AUMID 反查落空＝白纸图标。
+    // 跳过后任务栏直接用窗口/exe 内嵌图标。判定沿用仓库便携形态惯例（PORTABLE_EXECUTABLE_DIR）。
+    const line = SRC.split(/\r?\n/).find((l) => l.includes('app.setAppUserModelId('))
+    expect(line, '调用点整行找不到').toBeTruthy()
+    expect(line).toContain('PORTABLE_EXECUTABLE_DIR')
+  })
 })

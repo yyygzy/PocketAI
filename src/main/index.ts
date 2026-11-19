@@ -551,7 +551,12 @@ app.setPath('userData', userDataDir)
 // ⚠️ 排查提示：任务栏显示 Electron 原子图标且归组名为「Electron」时，先查开始菜单里有没有
 // 残留的 Electron.lnk（AUMID 同样是 ai.pocket.desktop 但指向 node_modules 的 electron.exe）——
 // Windows 按 AUMID 反查快捷方式取图标和名字，这种残留 lnk 会把图标整个劫走，改代码没用。
-if (process.platform === 'win32') app.setAppUserModelId('ai.pocket.desktop')
+// ⚠️ 便携版必须跳过 AUMID（1.3.0 便携版真机实测的任务栏白纸图标根因）：electron-builder
+// portable 每次解压到随机 Temp 目录运行，没有安装快捷方式；开始菜单里若还残留指向旧解压
+// 目录的死链，Windows 按 AUMID 反查快捷方式取图标必然落空 ⇒ 白纸图标。跳过 AUMID 后任务栏
+// 直接用窗口/exe 的内嵌图标（BrowserWindow icon=appIconPath() 两态都已就位）。安装版不受
+// 影响：NSIS 快捷方式带同款 AUMID，归组、跳转清单、通知身份照旧。
+if (process.platform === 'win32' && !process.env.PORTABLE_EXECUTABLE_DIR) app.setAppUserModelId('ai.pocket.desktop')
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
