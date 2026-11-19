@@ -337,7 +337,7 @@ interface AgentRunContext {
   sources: MessageSource[]
   /** P0-2b：首轮 {{knowledge}} 检索的事实（没触发/0 命中/失败都如实记，随最终回答落库并随 done 下发） */
   retrieval: MessageRetrieval
-  /** 当前助手绑定的知识库 id 列表，按次运行透传给 kb_search 工具 */
+  /** 助手绑定的 + 本轮用户 @ 引用的知识库 id 列表，按次运行透传给 kb_search 工具 */
   kbIds: string[]
   /** §236：这次运行绑定的技能 id——load_skill 唯一的可读范围，与 buildSkillsContext 同一个来源 */
   skillIds: string[]
@@ -400,7 +400,9 @@ export const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent
 - 用户问时间/日期 → 调用 time_now
 - 数学计算 → 调用 calculator，表达式仅支持 + - * / ** % () 和数学函数
 - 需要读取网页内容 → 调用 web_fetch（url + 可选 maxChars）
-- 用户问天气/新闻/价格/赛事等实时信息 → 调用 web_search（没有专门的天气工具；联网搜索未启用时它会返回开启指引，据其引导用户开启，不要因此断定无法查询而只向用户复述选项）
+- 用户问天气 → 调用 weather_query（城市名 + 可选预报天数）
+- 汇率换算 → exchange_rate；加密货币行情 → crypto_price；IP 归属/运营商 → ip_lookup；节假日 → public_holiday；百科背景知识 → wiki_summary；空气质量 → air_quality；英文单词释义 → dictionary_en；文本翻译 → translate（免 Key 免配置，直接可用）
+- 用户问新闻/股价/赛事等其它实时信息 → 调用 web_search（联网搜索未启用时它会返回开启指引，据其引导用户开启，不要因此断定无法查询而只向用户复述选项）
 - 需要查询用户知识库中的资料 → 调用 kb_search（query + 可选 top_k）
 - 复杂多步任务 → 先调用 todo_write 建立任务清单，每完成一步就更新对应项状态（pending → in_progress → completed）
 - 用户表达个人偏好、背景事实或要求"记住某事" → 调用 memory_save（禁止记录密码、密钥等敏感信息）
@@ -1348,7 +1350,10 @@ class AgentEngine {
       let assistant: ReturnType<typeof assistantRepo.get> = null
       if (assistantId) assistant = assistantRepo.get(assistantId) ?? null
       effectivePrompt = assistant?.systemPrompt ?? ''
-      kbIds = assistant?.knowledgeBaseIds ?? []
+      const assistantKbIds = assistant?.knowledgeBaseIds ?? []
+      // ① 用户显式 @ 引用的知识库（kbRefs）并入检索范围并去重——口径与普通对话
+      // （chat-service 的 allKbIds）对齐：Agent 会话里 @ 一个知识库同样触发检索。
+      kbIds = [...new Set([...assistantKbIds, ...(payload.kbRefs ?? [])])]
       skillIds = assistant?.skillIds ?? []
       defaultParams = assistant?.defaultParams ?? null
       // 工具授权（含 SEC-3 的空数组语义收口）
@@ -1385,7 +1390,10 @@ class AgentEngine {
       let sources: MessageSource[] = []
       // P0-2b：把「有没有检索 / 命中几条 / 是否失败」一起记下来（渲染层只念事实，不靠 sources.length 猜）
       let retrieval: MessageRetrieval = { searched: false, hits: 0 }
-      if (effectivePrompt.includes('{{knowledge}}') && kbIds.length > 0) {
+      // 触发条件与普通对话（chat-service）对齐：模板含 {{knowledge}}（助手默认行为）
+      // 或用户显式 @ 引用了知识库（kbRefs 非空）
+      const shouldRetrieve = effectivePrompt.includes('{{knowledge}}') || (payload.kbRefs?.length ?? 0) > 0
+      if (shouldRetrieve && kbIds.length > 0) {
         const tKb = performance.now()
         try {
           const result = await ragService.retrieve(kbIds, content)
@@ -1578,15 +1586,26 @@ class AgentEngine {
         summaryPrefix ? `${renderedPrompt}\n\n## 对话摘要（早期对话的精简记忆）\n${summaryPrefix}` : renderedPrompt
       )
 
+      // ① kbRefs 触发但模板不含 {{knowledge}} → 检索结果追加为独立 system 消息
+      // （口径同 chat-service 的 extraSystemPrompt；模板里没有占位可渲染，只能独立注入）
+      if (!effectivePrompt.includes('{{knowledge}}') && knowledgeContext) {
+        const sysIdx = messages.findIndex((m) => m.role === 'system')
+        messages.splice(sysIdx + 1, 0, {
+          role: 'system',
+          content: `以下是与用户问题相关的知识库内容：\n\n${knowledgeContext}`
+        })
+      }
+
       // 注入附件：图片→multimodal，文本→追加到用户消息
       injectAttachments(messages, payload.attachments)
 
       // 附件自动入库到助手关联的所有知识库（文本直接入库，图片需 KB 配 OCR）
       // v73 续跑跳过：入库没有幂等键，重跑会把同一附件再写一遍；"未入库"最多是少一份索引，不能重复。
-      if (!resume && payload.attachments && kbIds.length > 0) {
+      // 入库落点只看助手绑定的库：@ 引用只影响本轮检索范围，不悄悄改变附件入库去向。
+      if (!resume && payload.attachments && assistantKbIds.length > 0) {
         void import('../attachment/attachment-ingestion')
           .then(async (m) => {
-            for (const kbId of kbIds) {
+            for (const kbId of assistantKbIds) {
               const kb = kbRepo.get(kbId)
               const ocrConfig = kb?.ocrProviderId && kb.ocrModel
                 ? { providerId: kb.ocrProviderId, model: kb.ocrModel }
@@ -2636,10 +2655,19 @@ class AgentEngine {
       }
       // kb_search 命中并入引用来源（SEC-29）；web_search/web_fetch 成功结果按 kind='web' 并入（P1）
       // 两次提取各自解析，最后只走一次 mergeSources（12 条上限与去重口径不重复实现）
+      const kbSearchSources = extractKbSearchSources(tc.function.name, toolResult.content, toolResult.isError)
       ctx.sources = mergeSources(ctx.sources, [
-        ...extractKbSearchSources(tc.function.name, toolResult.content, toolResult.isError),
+        ...kbSearchSources,
         ...extractWebSearchSources(tc.function.name, toolResult.content, toolResult.isError)
       ])
+      // ② kb_search 执行过就如实补记检索事实——否则徽标会在已带知识库引用的回答上
+      // 仍显示「本轮未启用知识库检索」。命中 >0 时清掉首轮注入的 failed 标记
+      // （整体确实拿到了资料）；命中 0 也记 searched=true，让徽标走「0 命中」而不是「未启用」。
+      if (tc.function.name === 'kb_search' && !toolResult.isError) {
+        ctx.retrieval = kbSearchSources.length > 0
+          ? { searched: true, hits: ctx.retrieval.hits + kbSearchSources.length, kbCount: ctx.kbIds.length, failed: false }
+          : { ...ctx.retrieval, searched: true, kbCount: ctx.kbIds.length }
+      }
       if (ctx.textProtocolMode) {
         // 文本协议模式：以 user 消息回填工具结果（role:'tool' 需要 tool_call_id，
         // 对不支持 tools 的端点可能报错）

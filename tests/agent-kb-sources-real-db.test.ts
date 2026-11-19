@@ -172,9 +172,16 @@ afterAll(async () => {
 
 const providerId = () => (globalThis as { __providerId?: string }).__providerId!
 
-async function run(content: string): Promise<AgentDoneEvent | null> {
+async function run(
+  content: string,
+  opts: { kbRefs?: string[]; assistantId?: string } = {}
+): Promise<AgentDoneEvent | null> {
   bodies = []
-  conversationId = conversationRepo.create({ assistantId, title: 'kb 引用', titleDefault: false }).id
+  conversationId = conversationRepo.create({
+    assistantId: opts.assistantId ?? assistantId,
+    title: 'kb 引用',
+    titleDefault: false
+  }).id
   let done: AgentDoneEvent | null = null
   const emit = (channel: string, data: unknown) => {
     if (channel === IPC.AGENT_DONE_EVENT) done = data as AgentDoneEvent
@@ -184,11 +191,12 @@ async function run(content: string): Promise<AgentDoneEvent | null> {
     {
       requestId: `req-${Date.now()}`,
       conversationId,
-      assistantId,
+      assistantId: opts.assistantId ?? assistantId,
       content,
       agentMode: true,
-      targets: [{ providerId: providerId(), model: MODEL }]
-    },
+      targets: [{ providerId: providerId(), model: MODEL }],
+      ...(opts.kbRefs ? { kbRefs: opts.kbRefs } : {})
+    } as never,
     emit
   )
   return done
@@ -278,5 +286,71 @@ describe('A2：Agent 引用来源带 kbId/seq（跳转原文的前提）', () =>
     expect(details[0]).toContain('stage=retrieve')
     expect(details[0]).toContain('Agent 侧知识库检索整次失败')
     expect(details[0]).toContain('embedding 服务商不存在')
+  })
+})
+
+describe('缺口①②：kbRefs 在 Agent 模式生效 + kb_search 补记检索事实', () => {
+  let asstNoKbId = ''
+  let asstNoPlaceholderId = ''
+  beforeAll(async () => {
+    // 模板不含 {{knowledge}}：首轮注入路径天然不触发，用来隔离两条修复各自的判定
+    asstNoKbId = assistantRepo.save({
+      name: '无占位无库助手',
+      toolPermissions: ['*'],
+      systemPrompt: '你是助手。',
+      knowledgeBaseIds: [],
+      skillIds: []
+    }).id
+    asstNoPlaceholderId = assistantRepo.save({
+      name: '无占位有库助手',
+      toolPermissions: ['*'],
+      systemPrompt: '你是助手。',
+      knowledgeBaseIds: ['kb-alpha'],
+      skillIds: []
+    }).id
+  })
+
+  it('缺口①：kbRefs 并入助手绑定库一起去重检索', async () => {
+    R.queue = [[chunk('c1', 'kb-alpha', 0)]]
+    const done = await run('退款政策是什么', { kbRefs: ['kb-beta', 'kb-gamma'] })
+    expect(done).not.toBeNull()
+    // 一次检索，库列表 = 绑定 ∪ @引用（保序去重）
+    expect(R.calls).toEqual([['kb-alpha', 'kb-beta', 'kb-gamma']])
+    expect(done!.retrieval).toEqual({ searched: true, hits: 1, kbCount: 3 })
+  })
+
+  it('缺口①：kbRefs 触发但模板不含 {{knowledge}} → 检索结果走独立 system 消息注入', async () => {
+    R.queue = [[chunk('c1', 'kb-x', 0)]]
+    const done = await run('退款政策是什么', { kbRefs: ['kb-x'], assistantId: asstNoKbId })
+    expect(done).not.toBeNull()
+    expect(done!.retrieval).toEqual({ searched: true, hits: 1, kbCount: 1 })
+    // 某条 system 消息带上了检索上下文（模板无占位，只能独立注入）
+    const allMessages = bodies.flatMap((b) => ((b.messages ?? []) as Array<{ role: string; content: unknown }>))
+    const injected = allMessages.some(
+      (m) => m.role === 'system' && String(m.content).includes('[知识上下文 1 段]')
+    )
+    expect(injected).toBe(true)
+  })
+
+  it('缺口②：首轮未触发但 kb_search 命中 → 检索事实补记（徽标不再显示未启用）', async () => {
+    endpointMode = 'callKbSearch'
+    // 首轮不触发（模板无占位、无 kbRefs）⇒ 队列第 1 批就是 kb_search 的命中
+    R.queue = [[chunk('c9', 'kb-beta', 12)]]
+    const done = await run('再查一下退款政策', { assistantId: asstNoPlaceholderId })
+    expect(done).not.toBeNull()
+    expect(done!.usedTools).toBe(true)
+    expect(done!.retrieval).toEqual({ searched: true, hits: 1, kbCount: 1, failed: false })
+    // 引用来源照旧并入
+    expect(finalSources().map((s) => s.chunkId)).toEqual(['c9'])
+  })
+
+  it('缺口②：kb_search 执行但 0 命中 → 记 searched=true / hits=0（徽标走「0 命中」而非「未启用」）', async () => {
+    endpointMode = 'callKbSearch'
+    R.queue = [[]]
+    const done = await run('再查一下退款政策', { assistantId: asstNoPlaceholderId })
+    expect(done).not.toBeNull()
+    expect(done!.usedTools).toBe(true)
+    expect(done!.retrieval).toEqual({ searched: true, hits: 0, kbCount: 1 })
+    expect(finalSources()).toEqual([])
   })
 })
