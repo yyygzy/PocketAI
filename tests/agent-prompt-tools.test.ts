@@ -80,6 +80,9 @@ describe('DEFAULT_AGENT_PROMPT 与工具清单注入', () => {
     expect(DEFAULT_AGENT_PROMPT).toContain('{{memory}}')
     // 选择规则仍按名字点名工具——删的是清单，不是「该用哪个工具」的指引
     expect(DEFAULT_AGENT_PROMPT).toContain('time_now')
+    // 实时信息（天气等）必须点名 web_search：没有专门天气工具，模型不主动调 web_search
+    // 就会像 8B 小模型那样复述"未检测到天气查询工具"然后反问用户（真机截图实证）
+    expect(DEFAULT_AGENT_PROMPT).toContain('web_search')
   })
 
   it('即使调用方传了清单文本，默认提示词渲染结果里也不出现清单', () => {

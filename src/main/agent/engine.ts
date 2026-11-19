@@ -400,6 +400,7 @@ export const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent
 - 用户问时间/日期 → 调用 time_now
 - 数学计算 → 调用 calculator，表达式仅支持 + - * / ** % () 和数学函数
 - 需要读取网页内容 → 调用 web_fetch（url + 可选 maxChars）
+- 用户问天气/新闻/价格/赛事等实时信息 → 调用 web_search（没有专门的天气工具；联网搜索未启用时它会返回开启指引，据其引导用户开启，不要因此断定无法查询而只向用户复述选项）
 - 需要查询用户知识库中的资料 → 调用 kb_search（query + 可选 top_k）
 - 复杂多步任务 → 先调用 todo_write 建立任务清单，每完成一步就更新对应项状态（pending → in_progress → completed）
 - 用户表达个人偏好、背景事实或要求"记住某事" → 调用 memory_save（禁止记录密码、密钥等敏感信息）
