@@ -35,6 +35,15 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'web.fetch': 'net',
   'web.search': 'net',
   'weather.query': 'net',
+  // 免费公共 API 工具（v77 批次）：全部走固定域名 safeFetch，归 net 组
+  'exchange.rate': 'net',
+  'ip.lookup': 'net',
+  'crypto.price': 'net',
+  'holiday.public': 'net',
+  'wiki.summary': 'net',
+  'air.quality': 'net',
+  'dict.en': 'net',
+  'translate.mymemory': 'net',
   'fs.list': 'file',
   'fs.read': 'file',
   'fs.write': 'file',
@@ -72,6 +81,7 @@ export const MAX_EXPOSED_GROUPS = 2
 const GROUP_KEYWORDS: Readonly<Record<'net' | 'file' | 'schedule', readonly string[]>> = {
   net: [
     '联网', '搜索', '搜一下', '查一下', '网页', '链接', '网址', '天气', '温度', '新闻',
+    '汇率', '币价', '加密货币', '比特币', '翻译', '节假日', '放假', '空气质量', '词典', '百科',
     'search', 'google', 'web', 'http', 'url', 'weather', 'forecast'
   ],
   file: [

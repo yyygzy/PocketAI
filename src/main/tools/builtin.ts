@@ -14,6 +14,16 @@ import { safeFetch } from '../net/safe-fetch'
 import { extractReadableText, extractTitle } from '../net/readable'
 import { weatherTool } from './weather'
 import { errMsg } from '../error'
+import {
+  exchangeRateTool,
+  ipLookupTool,
+  cryptoPriceTool,
+  publicHolidayTool,
+  wikiSummaryTool,
+  airQualityTool,
+  dictionaryTool,
+  translateTool
+} from './free-api'
 import { calendarReadTool } from './calendar-ics'
 import { kbSearchTool } from './kb-search'
 import { todoWriteTool } from './todo-write'
@@ -254,6 +264,14 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   webSearchTool,
   jsEvalTool,
   weatherTool,
+  exchangeRateTool,
+  ipLookupTool,
+  cryptoPriceTool,
+  publicHolidayTool,
+  wikiSummaryTool,
+  airQualityTool,
+  dictionaryTool,
+  translateTool,
   calendarReadTool,
   kbSearchTool,
   todoWriteTool,

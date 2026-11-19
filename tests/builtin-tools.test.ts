@@ -51,10 +51,11 @@ beforeEach(() => {
 // ── BUILTIN_TOOLS 聚合 ────────────────────────────────────
 
 describe('BUILTIN_TOOLS 聚合', () => {
-  it('含 14 个工具', () => {
+  it('含 22 个工具', () => {
     // 这一条是**有意的绊线**：加一个内置工具会抬高每个助手的可见面（'*' 直接覆盖内置），
-    // 所以必须显式改这里。V4-Iter-144 加的是第 14 个：agent.delegate（委派本身）。
-    expect(BUILTIN_TOOLS).toHaveLength(14)
+    // 所以必须显式改这里。V4-Iter-144 加的是第 14 个：agent.delegate（委派本身）；
+    // v77 加的是第 15-22 个：8 枚免 Key 免费公共 API 工具（free-api.ts，全部 permission=auto）。
+    expect(BUILTIN_TOOLS).toHaveLength(22)
   })
 
   it('id 集合包含全部预期工具', () => {
@@ -62,7 +63,9 @@ describe('BUILTIN_TOOLS 聚合', () => {
     expect(ids).toEqual(
       expect.arrayContaining([
         'time.now', 'calculator', 'web.fetch', 'web.search', 'js.eval',
-        'weather.query', 'calendar.read', 'kb_search', 'todo_write',
+        'weather.query', 'exchange.rate', 'ip.lookup', 'crypto.price',
+        'holiday.public', 'wiki.summary', 'air.quality', 'dict.en', 'translate.mymemory',
+        'calendar.read', 'kb_search', 'todo_write',
         'memory_save', 'reminder.set', 'reminder.list', 'reminder.cancel',
         'agent.delegate'
       ])

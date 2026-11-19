@@ -71,8 +71,8 @@ function mcp(id: string): ToolSchema {
 describe('分组表覆盖运行时工具面', () => {
   it('listBuiltin() 的每一枚工具都在 TOOL_GROUP_OF 里', () => {
     const ids = toolRegistry.listBuiltin().map((t) => t.id)
-    // 先钉住"这个环境确实把 21 枚都注册出来了"（v70 新增 project.create），否则下面的覆盖断言会空转
-    expect(ids).toHaveLength(21)
+    // 先钉住"这个环境确实把 29 枚都注册出来了"（v77 加 8 枚免 Key 公共 API 工具），否则下面的覆盖断言会空转
+    expect(ids).toHaveLength(29)
     const missing = ids.filter((id) => !TOOL_GROUP_OF[id])
     expect(missing).toEqual([])
   })
@@ -145,7 +145,7 @@ describe('selectToolSurface — 选择规则', () => {
     // MCP 工具不参与分组裁剪
     expect(ids.has('mcp:demo:read_x')).toBe(true)
     expect(r.groups).toEqual(['file'])
-    expect(r.heldBackTools).toBe(3 + 4) // web 3 枚 + schedule 4 枚
+    expect(r.heldBackTools).toBe(11 + 4) // web 3 枚 + 免费公共 API 8 枚（v77）+ schedule 4 枚
   })
 
   it('无关键词 → 只留常驻组 + MCP', () => {
@@ -155,7 +155,7 @@ describe('selectToolSurface — 选择规则', () => {
     expect(ids.has('web.search')).toBe(false)
     expect(ids.has('calendar.read')).toBe(false)
     expect(ids.has('mcp:demo:read_x')).toBe(true)
-    expect(r.heldBackTools).toBe(5 + 3 + 4) // file 5 枚（v70 加 project.create）+ net 3 枚 + schedule 4 枚
+    expect(r.heldBackTools).toBe(5 + 11 + 4) // file 5 枚（v70 加 project.create）+ net 11 枚（v77 加 8 枚免费公共 API）+ schedule 4 枚
     expect(r.groups).toEqual([])
   })
 

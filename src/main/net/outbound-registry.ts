@@ -33,6 +33,27 @@ const TAVILY_API = 'https://api.tavily.com'
 const BOCHA_API = 'https://api.bochaai.com'
 const OPEN_METEO_GEOCODING = 'https://geocoding-api.open-meteo.com'
 const OPEN_METEO_FORECAST = 'https://api.open-meteo.com'
+const FX_ERAPI = 'https://open.er-api.com'
+const IPWHO = 'https://ipwho.is'
+const COINGECKO = 'https://api.coingecko.com'
+const OKX_PUBLIC = 'https://www.okx.com'
+const NAGER_DATE = 'https://date.nager.at'
+const AIR_QUALITY_OPEN_METEO = 'https://air-quality-api.open-meteo.com'
+const DICTIONARY_API = 'https://api.dictionaryapi.dev'
+const MYMEMORY_TRANS = 'https://api.mymemory.translated.net'
+/** 维基百科 REST 摘要：语言子域由白名单动态拼接（free-api.ts），扫描器对模板串不可见 ⇒ evidence=config */
+const WIKIPEDIA_HOSTS = [
+  'https://zh.wikipedia.org',
+  'https://en.wikipedia.org',
+  'https://ja.wikipedia.org',
+  'https://ko.wikipedia.org',
+  'https://fr.wikipedia.org',
+  'https://de.wikipedia.org',
+  'https://es.wikipedia.org',
+  'https://ru.wikipedia.org',
+  'https://pt.wikipedia.org',
+  'https://it.wikipedia.org'
+]
 const OLLAMA_LOOPBACK = 'http://127.0.0.1:11434'
 const OLLAMA_RECOMMEND_LOOPBACK = 'http://localhost:11434'
 const OLLAMA_OFFICIAL = 'https://github.com/ollama/ollama'
@@ -220,6 +241,36 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     endpoints: [OPEN_METEO_GEOCODING, OPEN_METEO_FORECAST],
     transport: 'safeFetch',
     files: ['tools/weather.ts']
+  },
+  {
+    id: 'free-api',
+    labelKey: 'outbound.entry.freeApi',
+    purposeKey: 'outbound.purpose.freeApi',
+    kind: 'fixed',
+    configSource: '无（固定端点，免 Key 免注册公共 API）',
+    endpoints: [
+      FX_ERAPI,
+      IPWHO,
+      COINGECKO,
+      OKX_PUBLIC,
+      NAGER_DATE,
+      AIR_QUALITY_OPEN_METEO,
+      DICTIONARY_API,
+      MYMEMORY_TRANS
+    ],
+    transport: 'safeFetch',
+    files: ['tools/free-api.ts']
+  },
+  {
+    id: 'wiki-summary',
+    labelKey: 'outbound.entry.wikiSummary',
+    purposeKey: 'outbound.purpose.wikiSummary',
+    kind: 'fixed',
+    configSource: '语言子域白名单动态拼接（zh/en/ja/ko/fr/de/es/ru/pt/it.wikipedia.org）',
+    endpoints: WIKIPEDIA_HOSTS,
+    endpointEvidence: 'config',
+    transport: 'safeFetch',
+    files: ['tools/free-api.ts']
   },
   {
     id: 'image-download',

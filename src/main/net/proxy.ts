@@ -9,8 +9,8 @@
 //      因此首次应用时把 globalThis.fetch 替换为 undici 包的 fetch
 //      （标准 Web Fetch，SSE body.getReader() / redirect:'manual' 均兼容）。
 // 不覆盖 web_fetch / 深度搜索 / 图片 / 知识库等运行时 URL 抓取（它们走 safeFetch 的
-// SSRF 收口并保持直连）；固定域名类 safeFetch 调用（weather、更新检查）按调用点显式
-// 传入 useProxy 才会复用这里的代理配置。
+// SSRF 收口并保持直连）；固定域名类 safeFetch 调用（weather、免费公共 API 工具 free-api、
+// 更新检查）按调用点显式传入 useProxy 才会复用这里的代理配置。
 import { Agent, EnvHttpProxyAgent, fetch as undiciFetch, setGlobalDispatcher } from 'undici'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { IPC } from '../../shared/types'

@@ -65,7 +65,7 @@ function describeCode(code: number | undefined): string {
   return WMO_CODES[code] ?? `未知天气码(${code})`
 }
 
-interface GeocodeHit {
+export interface GeocodeHit {
   name: string
   latitude: number
   longitude: number
@@ -73,7 +73,8 @@ interface GeocodeHit {
   admin1?: string
 }
 
-async function geocode(location: string, deadline: number, signal?: AbortSignal): Promise<GeocodeHit> {
+/** 导出供 air_quality（free-api.ts）复用同一套 open-meteo 地理编码 */
+export async function geocode(location: string, deadline: number, signal?: AbortSignal): Promise<GeocodeHit> {
   const url =
     'https://geocoding-api.open-meteo.com/v1/search?name=' +
     encodeURIComponent(location) +
