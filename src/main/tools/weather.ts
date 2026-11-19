@@ -3,7 +3,30 @@
 // 天气数据：https://api.open-meteo.com/v1/forecast（WMO weather_code → 中文描述）
 // 全部出网走 safeFetch（SSRF 防护 + 超时 + 字节上限）。
 import type { BuiltinTool } from './builtin'
-import { safeFetch } from '../net/safe-fetch'
+import { SafeFetchError, safeFetch } from '../net/safe-fetch'
+
+/** 单次请求上限：与 web_fetch 的实际每跳预算对齐 */
+const REQUEST_TIMEOUT_MS = 15_000
+/** 地理编码 + 预报共享总预算：避免两次请求各自吃满时间把整步拖爆 */
+const TOTAL_BUDGET_MS = 25_000
+
+/** 从共享 deadline 里取本次请求可用的超时（不额外放大总预算） */
+function requestTimeout(deadline: number): number {
+  return Math.max(1, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()))
+}
+
+/**
+ * 网络类失败补一层「服务/阶段」上下文；safeFetch 已给出可行动原因（超时/连接被重置等），
+ * 这里只做定位，不再重复「连接失败」之类的外层结论。SSRF/HTTP 状态/JSON 等原有语义原样透传。
+ */
+function wrapNetworkError(e: unknown, stage: '地理编码' | '预报'): Error {
+  if (e instanceof SafeFetchError && e.phase) {
+    return new Error(
+      `天气服务不可用（${stage}阶段，open-meteo.com）：${e.message}。请检查网络或代理设置后重试`
+    )
+  }
+  return e instanceof Error ? e : new Error(String(e))
+}
 
 /** WMO weather interpretation codes（官方码表 → 中文描述） */
 const WMO_CODES: Record<number, string> = {
@@ -50,12 +73,18 @@ interface GeocodeHit {
   admin1?: string
 }
 
-async function geocode(location: string, signal?: AbortSignal): Promise<GeocodeHit> {
+async function geocode(location: string, deadline: number, signal?: AbortSignal): Promise<GeocodeHit> {
   const url =
     'https://geocoding-api.open-meteo.com/v1/search?name=' +
     encodeURIComponent(location) +
     '&count=1&language=zh&format=json'
-  const res = await safeFetch(url, { signal, timeoutMs: 10_000, maxBytes: 512 * 1024 })
+  // 固定域名公共服务：允许复用用户在设置里配置的 HTTP 代理（未配置时代码路径等同直连）
+  const res = await safeFetch(url, {
+    signal,
+    timeoutMs: requestTimeout(deadline),
+    maxBytes: 512 * 1024,
+    useProxy: true
+  })
   if (res.status !== 200) throw new Error(`地理编码服务返回 HTTP ${res.status}`)
   let data: { results?: GeocodeHit[] }
   try {
@@ -84,21 +113,33 @@ export const weatherTool: BuiltinTool = {
       additionalProperties: false
     },
     source: 'builtin',
-    permission: 'auto'
+    permission: 'auto',
+    // 外层兜底必须大于两次请求共享的 25s 预算，避免先撞引擎默认的 30s 工具超时
+    timeoutMs: 45_000
   },
   async execute(args, ctx) {
     const location = String(args?.location ?? '').trim()
     if (!location) throw new Error('location 不能为空')
     const days = Math.min(3, Math.max(1, Math.floor(Number(args?.days) || 1)))
+    const deadline = Date.now() + TOTAL_BUDGET_MS
 
-    const hit = await geocode(location, ctx?.signal)
+    const hit = await geocode(location, deadline, ctx?.signal).catch((e: unknown) => {
+      throw wrapNetworkError(e, '地理编码')
+    })
     const url =
       'https://api.open-meteo.com/v1/forecast' +
       `?latitude=${hit.latitude}&longitude=${hit.longitude}` +
       '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation' +
       '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum' +
       `&timezone=auto&forecast_days=${days}`
-    const res = await safeFetch(url, { signal: ctx?.signal, timeoutMs: 10_000, maxBytes: 512 * 1024 })
+    const res = await safeFetch(url, {
+      signal: ctx?.signal,
+      timeoutMs: requestTimeout(deadline),
+      maxBytes: 512 * 1024,
+      useProxy: true
+    }).catch((e: unknown) => {
+      throw wrapNetworkError(e, '预报')
+    })
     if (res.status !== 200) throw new Error(`天气服务返回 HTTP ${res.status}`)
     let data: {
       current?: Record<string, number>

@@ -8,12 +8,15 @@
 //   2) 外部 undici 包的 setGlobalDispatcher 不影响 Electron 内置全局 fetch，
 //      因此首次应用时把 globalThis.fetch 替换为 undici 包的 fetch
 //      （标准 Web Fetch，SSE body.getReader() / redirect:'manual' 均兼容）。
-// 不覆盖 safeFetch 下载链路（python/ollama/图片下载走自带 SSRF 收口，刻意分离）。
+// 不覆盖 web_fetch / 深度搜索 / 图片 / 知识库等运行时 URL 抓取（它们走 safeFetch 的
+// SSRF 收口并保持直连）；固定域名类 safeFetch 调用（weather、更新检查）按调用点显式
+// 传入 useProxy 才会复用这里的代理配置。
 import { Agent, EnvHttpProxyAgent, fetch as undiciFetch, setGlobalDispatcher } from 'undici'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { IPC } from '../../shared/types'
 import { safeHandle, argsSchema, z } from '../ipc/safe-handle'
 import { createLogger } from '../logger'
+import { registerProxyResolver } from './safe-fetch'
 
 const log = createLogger('proxy')
 
@@ -43,23 +46,46 @@ export function normalizeProxyUrl(raw: string | null | undefined): string | null
   return u.href.replace(/\/+$/, '')
 }
 
+/** 日志用：隐去内嵌 user:pass，其余保持可读（凭据不得落日志） */
+export function maskProxyUrl(raw: string | null | undefined): string {
+  const s = (raw ?? '').trim()
+  if (s === '') return '(空)'
+  try {
+    const u = new URL(s)
+    if (u.username !== '' || u.password !== '') {
+      u.username = '***'
+      u.password = '***'
+    }
+    return u.href.replace(/\/+$/, '')
+  } catch {
+    return '(无法解析的代理地址)'
+  }
+}
+
 /** 全局 fetch 是否已替换为 undici fetch（全程只替换一次，空代理也走 undici 直连 Agent） */
 let fetchPatched = false
 
 /**
  * 读取已保存配置并应用到全局 dispatcher；任何异常只记日志不抛出
  * （boot 阶段调用，代理配置错误不得阻断启动）。
+ * 同时把同一个值注册给 safeFetch（固定域名调用点用），保存后立即生效。
  */
 export function applyProxySettings(): void {
+  let normalized: string | null = null
   try {
-    const normalized = normalizeProxyUrl(appConfigRepo.getProxyUrl())
+    normalized = normalizeProxyUrl(appConfigRepo.getProxyUrl())
+  } catch (e) {
+    log.warn('应用代理设置失败:', e instanceof Error ? e.message : e)
+  }
+  registerProxyResolver(normalized ? () => normalized : () => null)
+  try {
     if (normalized) {
       setGlobalDispatcher(new EnvHttpProxyAgent({
         httpProxy: normalized,
         httpsProxy: normalized,
         noProxy: LOCAL_NO_PROXY
       }))
-      log.info(`出网代理已启用: ${normalized}（回环地址直连）`)
+      log.info(`出网代理已启用: ${maskProxyUrl(normalized)}（回环地址直连）`)
     } else {
       setGlobalDispatcher(new Agent())
     }

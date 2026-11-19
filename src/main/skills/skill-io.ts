@@ -55,8 +55,8 @@ async function fetchRemote(url: string): Promise<RemoteFetchResult> {
     const res = await safeFetch(
       url,
       headers
-        ? { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000, headers }
-        : { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000 }
+        ? { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000, headers, useProxy: true }
+        : { maxBytes: MAX_REMOTE_BYTES, timeoutMs: 15_000, useProxy: true }
     )
     if (res.status >= 300) {
       return { ok: false, kind: 'http', status: res.status, error: githubHttpErrorText(res.status) }

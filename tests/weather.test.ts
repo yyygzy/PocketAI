@@ -16,11 +16,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 vi.mock('../src/main/net/safe-fetch', () => ({
-  safeFetch: vi.fn()
+  safeFetch: vi.fn(),
+  SafeFetchError: class SafeFetchError extends Error {
+    phase?: string
+    constructor(message: string, phase?: string) {
+      super(message)
+      this.name = 'SafeFetchError'
+      this.phase = phase
+    }
+  }
 }))
 
 import { weatherTool } from '../src/main/tools/weather'
-import { safeFetch } from '../src/main/net/safe-fetch'
+import { SafeFetchError, safeFetch } from '../src/main/net/safe-fetch'
 
 const mockSafeFetch = vi.mocked(safeFetch)
 
@@ -111,6 +119,29 @@ describe('weatherTool.execute geocode 错误分支', () => {
   it('geocode results 空 → 抛 未找到地点', async () => {
     mockGeocodeRaw(JSON.stringify({ results: [] }))
     await expect(weatherTool.execute({ location: '不存在地' })).rejects.toThrow('未找到地点「不存在地」')
+  })
+
+  it('网络层超时（带阶段）→ 可行动文案并标注地理编码阶段', async () => {
+    mockSafeFetch.mockImplementationOnce(async () => {
+      throw new SafeFetchError('SafeFetch 请求超时（连接）', 'connect')
+    })
+    await expect(weatherTool.execute({ location: '开封' })).rejects.toThrow(
+      /天气服务不可用（地理编码阶段，open-meteo\.com）：SafeFetch 请求超时（连接）/
+    )
+  })
+
+  it('连接被重置 → 外层不重复「连接失败」，原因只出现一次', async () => {
+    mockSafeFetch.mockImplementationOnce(async () => {
+      throw new SafeFetchError('SafeFetch 连接被重置（read ECONNRESET）', 'ttfb')
+    })
+    const err = await weatherTool
+      .execute({ location: '开封' })
+      .then(() => null)
+      .catch((e: Error) => e)
+    expect(err?.message).toBe(
+      '天气服务不可用（地理编码阶段，open-meteo.com）：SafeFetch 连接被重置（read ECONNRESET）。请检查网络或代理设置后重试'
+    )
+    expect(err?.message).not.toContain('连接失败')
   })
 })
 

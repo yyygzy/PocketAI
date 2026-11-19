@@ -174,7 +174,11 @@ export async function downloadAsarPatch(latestVersion: string): Promise<AsarPatc
   const url = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest/download/asar-patch-${currentVersion}-${latestVersion}.json.gz`
 
   // 1. 下载
-  const res = await safeFetch(url, { maxBytes: PATCH_MAX_BYTES, timeoutMs: PATCH_TIMEOUT_MS })
+  const res = await safeFetch(url, {
+    maxBytes: PATCH_MAX_BYTES,
+    timeoutMs: PATCH_TIMEOUT_MS,
+    useProxy: true
+  })
   if (res.status !== 200) {
     throw new Error(`补丁不存在（HTTP ${res.status}），回退全量更新`)
   }

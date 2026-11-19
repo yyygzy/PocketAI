@@ -467,7 +467,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     labelKey: 'outbound.entry.httpProxy',
     purposeKey: 'outbound.purpose.httpProxy',
     kind: 'configurable',
-    configSource: 'app_config.net_proxy_url（全局 fetch 的下一跳）',
+    configSource: 'app_config.net_proxy_url（全局 fetch + 固定域名 safeFetch 的下一跳）',
     endpoints: [],
     transport: 'fetch',
     files: ['net/proxy.ts'],

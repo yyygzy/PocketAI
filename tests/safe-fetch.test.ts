@@ -10,12 +10,14 @@
 // 策略：纯函数直接断言，无需 mock。SSRF 防护是安全关键路径，
 // asar-patcher.test.ts 里 safeFetch 仅作 mock 占位，真实实现零覆盖。
 import { describe, it, expect } from 'vitest'
+import net from 'node:net'
 import {
   isDisallowedIpv4,
   expandIpv6,
   isDisallowedIpv6,
   isDisallowedIp,
   assertFetchable,
+  safeFetch,
   SafeFetchError
 } from '../src/main/net/safe-fetch'
 
@@ -137,5 +139,33 @@ describe('assertFetchable — URL 协议白名单', () => {
 
   it('javascript: 协议 → 抛 SafeFetchError', () => {
     expect(() => assertFetchable(new URL('javascript:alert(1)'))).toThrow(SafeFetchError)
+  })
+})
+
+describe('safeFetch — 连接类错误文案', () => {
+  it('直连被拒绝（ECONNREFUSED）→ SafeFetch 连接被拒绝（保留原始 message）', async () => {
+    // 借 0 端口拿一个空闲端口再关闭，保证连接必然被拒绝
+    const port = await new Promise<number>((resolve, reject) => {
+      const srv = net.createServer()
+      srv.once('error', reject)
+      srv.listen(0, '127.0.0.1', () => {
+        const addr = srv.address() as net.AddressInfo
+        srv.close(() => resolve(addr.port))
+      })
+    })
+    await expect(
+      safeFetch(`http://127.0.0.1:${port}/`, {
+        allowPrivateOrigin: `http://127.0.0.1:${port}`,
+        timeoutMs: 3000
+      })
+    ).rejects.toMatchObject({
+      name: 'SafeFetchError',
+      phase: 'connect',
+      message: expect.stringMatching(/^SafeFetch 连接被拒绝（.*ECONNREFUSED/)
+    })
+  })
+
+  it('SSRF 拦截文案不被连接类包装改写', async () => {
+    await expect(safeFetch('http://127.0.0.1:80/')).rejects.toThrow('禁止访问内网主机: 127.0.0.1')
   })
 })

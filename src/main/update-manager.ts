@@ -46,7 +46,8 @@ async function fetchLatestRelease(): Promise<{ version: string; url: string }> {
   const res = await safeFetch(RELEASE_API_URL, {
     timeoutMs: 12000,
     maxBytes: 1024 * 1024,
-    headers: { Accept: 'application/vnd.github+json' }
+    headers: { Accept: 'application/vnd.github+json' },
+    useProxy: true
   })
   if (res.status !== 200) throw new Error(`GitHub API HTTP ${res.status}`)
   const data = JSON.parse(res.body.toString()) as GitHubReleaseApi
@@ -409,6 +410,7 @@ export function initUpdateManager(): void {
         timeoutMs: 12000,
         maxBytes: 2 * 1024 * 1024,
         headers: { Accept: 'application/vnd.github+json' },
+        useProxy: true
       })
       if (res.status !== 200) {
         return { ok: false, error: `GitHub API HTTP ${res.status}` }

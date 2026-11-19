@@ -41,7 +41,8 @@ vi.mock('../src/main/db/repositories/app-config.repo', () => ({
 import {
   normalizeProxyUrl,
   applyProxySettings,
-  saveProxyUrl
+  saveProxyUrl,
+  maskProxyUrl
 } from '../src/main/net/proxy'
 
 beforeEach(() => {
@@ -101,6 +102,25 @@ describe('applyProxySettings', () => {
   it('首次应用后全局 fetch 被替换为 undici fetch', () => {
     applyProxySettings()
     expect(globalThis.fetch).toBe(mocks.undiciFetch as unknown as typeof fetch)
+  })
+})
+
+describe('maskProxyUrl', () => {
+  it('隐去内嵌账号密码，只保留主机与端口', () => {
+    const masked = maskProxyUrl('http://user:p%40ss@127.0.0.1:7890/')
+    expect(masked).toContain('127.0.0.1:7890')
+    expect(masked).not.toContain('user')
+    expect(masked).not.toContain('p%40ss')
+    expect(masked).not.toContain('pass')
+  })
+
+  it('空值与非法值给出可读占位，不抛出', () => {
+    expect(maskProxyUrl('')).toBe('(空)')
+    expect(maskProxyUrl('not-a-url')).toBe('(无法解析的代理地址)')
+  })
+
+  it('无凭据时保持原样（去末尾斜杠）', () => {
+    expect(maskProxyUrl('http://127.0.0.1:7890/')).toBe('http://127.0.0.1:7890')
   })
 })
 

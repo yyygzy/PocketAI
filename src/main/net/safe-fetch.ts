@@ -10,13 +10,17 @@
 //  - 连接钉在已校验的 IP 上（SNI/证书仍按原域名校验），防 DNS 重绑定 TOCTOU；
 //  - 手动跟随重定向（默认最多 5 跳），跨跳不携带任何凭据（本模块从不存 Cookie）；
 //  - 响应体流式读取并强制字节上限，Content-Length 超限直接拒收；
-//  - 总超时贯穿「连接 + 响应头 + 读体」全程；
+//  - 总超时贯穿「DNS + 连接 + 响应头 + 读体」全程，DNS 另有独立超时；
+//  - 可选走用户配置的 HTTP 代理（默认直连）：仍先做 SSRF/私网校验，
+//    CONNECT 目标写已校验 IP（保持防 DNS 重绑定），本机与 allowPrivateOrigin 目标强制直连；
 //  - 响应外部 AbortSignal，中止时立刻销毁底层连接。
 import http from 'node:http'
 import https from 'node:https'
 import dns from 'node:dns'
 import net from 'node:net'
+import tls from 'node:tls'
 import fs from 'node:fs'
+import type { Duplex } from 'node:stream'
 
 /** IPv6 展开后的 8 个 hextet 数字（expandIpv6 返回时保证长度为 8） */
 type Hextets = [number, number, number, number, number, number, number, number]
@@ -49,7 +53,18 @@ export interface SafeFetchOptions {
    * 仅供用户显式确认的 SearXNG 实例使用，web_fetch 等通用抓取不得传入。
    */
   allowPrivateOrigin?: string
+  /**
+   * 是否允许走用户在设置里配置的 HTTP 代理（默认 false=直连）。
+   * 只有固定域名/用户显式动作的调用点才应打开；模型/用户给出的运行时 URL 保持直连。
+   * 打开后仍先做 SSRF/私网校验，CONNECT 的是已校验 IP；本机目标与 allowPrivateOrigin 强制直连。
+   */
+  useProxy?: boolean
+  /** DNS 解析超时毫秒数，默认 5000；超时抛「SafeFetch 域名解析超时」 */
+  dnsTimeoutMs?: number
 }
+
+/** 超时/失败发生的阶段（错误文案与排查用） */
+export type SafeFetchPhase = 'dns' | 'connect' | 'tunnel' | 'tls' | 'ttfb' | 'body'
 
 export interface SafeFetchResult {
   status: number
@@ -60,12 +75,108 @@ export interface SafeFetchResult {
   finalUrl: string
 }
 
-export class SafeFetchError extends Error {}
+export class SafeFetchError extends Error {
+  /** 失败发生的阶段；非超时类错误可能为空 */
+  readonly phase?: SafeFetchPhase
+  constructor(message: string, phase?: SafeFetchPhase) {
+    super(message)
+    this.name = 'SafeFetchError'
+    this.phase = phase
+  }
+}
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 15_000
+const DEFAULT_DNS_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_REDIRECTS = 5
 const USER_AGENT = 'PocketAI/0.1 (+local-first AI workstation)'
+
+/** 阶段 → 超时文案（统一大写 SafeFetch 前缀，便于用户/日志检索） */
+function phaseTimeoutMessage(phase: SafeFetchPhase): string {
+  switch (phase) {
+    case 'dns':
+      return 'SafeFetch 域名解析超时'
+    case 'connect':
+      return 'SafeFetch 请求超时（连接）'
+    case 'tunnel':
+      return 'SafeFetch 请求超时（代理隧道）'
+    case 'tls':
+      return 'SafeFetch 请求超时（TLS 握手）'
+    case 'ttfb':
+      return 'SafeFetch 请求超时（等待响应）'
+    case 'body':
+      return 'SafeFetch 读取响应超时（读体）'
+  }
+}
+
+/** 连接类底层错误码 → 中文说明（原始 message 保留在括号里，便于排查） */
+const CONNECTION_ERROR_TEXT: Record<string, string> = {
+  ECONNRESET: '连接被重置',
+  ECONNREFUSED: '连接被拒绝',
+  EHOSTUNREACH: '主机不可达',
+  ENETUNREACH: '网络不可达',
+  ENETDOWN: '网络不可用',
+  ETIMEDOUT: '连接超时',
+  EPIPE: '连接已中断',
+  ECONNABORTED: '连接被中止'
+}
+
+/**
+ * 把底层连接类错误包装成可行动文案，风格与超时文案一致：
+ * `SafeFetch 连接被重置（read ECONNRESET）`。
+ * 其余错误（自建 SafeFetchError、HTTP 状态码、JSON 解析、SSRF 拦截等）原样返回，语义不变。
+ */
+function wrapConnectionError(e: unknown, phase?: SafeFetchPhase): unknown {
+  if (e instanceof SafeFetchError) return e
+  if (!(e instanceof Error)) return e
+  const code = (e as NodeJS.ErrnoException).code
+  const label = code ? CONNECTION_ERROR_TEXT[code] : undefined
+  if (!label) return e
+  return new SafeFetchError(`SafeFetch ${label}（${e.message}）`, phase)
+}
+
+// ---------- 代理 resolver（由 net/proxy.ts 注册，本模块不依赖 DB/Electron） ----------
+
+/** 返回已规整的 http(s) 代理 URL；null/空串=直连。由 proxy.ts 在启动与保存后注册。 */
+let proxyResolver: (() => string | null) | null = null
+
+/** 注册 / 清除代理来源（传 null 即恢复全部直连）。仅 net/proxy.ts 调用。 */
+export function registerProxyResolver(fn: (() => string | null) | null): void {
+  proxyResolver = fn
+}
+
+interface ProxyConfig {
+  host: string
+  port: number
+  /** 是否 TLS 连代理本身（https:// 代理） */
+  tls: boolean
+  /** CONNECT 用的 Proxy-Authorization 值；绝不写入日志/错误文案 */
+  authHeader: string | null
+  /** 可安全展示的 host:port（不含凭据） */
+  display: string
+}
+
+/** 解析代理 URL；非法返回 null（坏配置降级直连，不阻断出网） */
+function parseProxyConfig(raw: string | null | undefined): ProxyConfig | null {
+  const s = (raw ?? '').trim()
+  if (s === '') return null
+  let u: URL
+  try {
+    u = new URL(s)
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+  if (!u.hostname) return null
+  const isTls = u.protocol === 'https:'
+  const port = Number(u.port) || (isTls ? 443 : 80)
+  let authHeader: string | null = null
+  if (u.username !== '' || u.password !== '') {
+    const cred = `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`
+    authHeader = 'Basic ' + Buffer.from(cred, 'utf8').toString('base64')
+  }
+  return { host: u.hostname, port, tls: isTls, authHeader, display: `${u.hostname}:${port}` }
+}
 
 // ---------- 出口计数（P0-5 dry-run 判据） ----------
 //
@@ -228,7 +339,12 @@ export function isPrivateHostname(hostname: string): boolean {
  * 主机名是字面 IP 时直接校验；域名则取 DNS 全部记录逐个校验。
  * allowPrivate=true 仅由 allowPrivateOrigin 精确匹配的调用方传入（默认仍拒绝私网）。
  */
-async function resolveAndValidate(u: URL, allowPrivate = false): Promise<string> {
+async function resolveAndValidate(
+  u: URL,
+  allowPrivate = false,
+  dnsTimeoutMs = DEFAULT_DNS_TIMEOUT_MS,
+  deadline = Number.POSITIVE_INFINITY
+): Promise<string> {
   // WHATWG URL 对 IPv6 字面量主机名保留方括号（'[::1]'），先剥掉
   const raw = u.hostname.toLowerCase()
   const host = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw
@@ -240,10 +356,13 @@ async function resolveAndValidate(u: URL, allowPrivate = false): Promise<string>
     return host
   }
   let list: { address: string }[]
+  // DNS 本身必须有界：否则解析挂起时会绕过总超时，最后统一报成「请求超时」而看不出真实阶段
+  const budget = Math.max(1, Math.min(dnsTimeoutMs, deadline - Date.now()))
   try {
-    const resolved = await dns.promises.lookup(host, { all: true, verbatim: true })
+    const resolved = await lookupWithTimeout(host, budget)
     list = Array.isArray(resolved) ? resolved : [resolved]
-  } catch {
+  } catch (e) {
+    if (e instanceof SafeFetchError) throw e
     throw new SafeFetchError(`域名解析失败: ${host}`)
   }
   if (list.length === 0) throw new SafeFetchError(`域名解析失败: ${host}`)
@@ -255,6 +374,23 @@ async function resolveAndValidate(u: URL, allowPrivate = false): Promise<string>
   return ok.address
 }
 
+/** dns.lookup + 独立超时；超时文案带阶段，便于和「连接/等待响应」区分 */
+function lookupWithTimeout(host: string, ms: number): Promise<dns.LookupAddress[]> {
+  const pending = dns.promises.lookup(host, { all: true, verbatim: true })
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const label = ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms)}ms`
+      reject(new SafeFetchError(`${phaseTimeoutMessage('dns')}（${label}）`, 'dns'))
+    }, ms)
+  })
+  return Promise.race([pending, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+    // 超时后底层查询仍可能失败，避免未处理的 rejection
+    pending.catch(() => {})
+  })
+}
+
 // ---------- 底层请求 ----------
 
 interface HopResult {
@@ -262,57 +398,307 @@ interface HopResult {
   res: http.IncomingMessage
 }
 
+// ---------- 代理隧道 ----------
+//
+// 安全边界：目标域名先由 resolveAndValidate 解析并校验，CONNECT 的目标写「已校验 IP」，
+// 代理只做 TCP 转发，不能把连接改投到其它地址；https 的 SNI/证书仍按原域名校验。
+// 代理地址本身不参与私网拦截（本机 127.0.0.1:7890 是常见合法配置）。
+
+const MAX_PROXY_HEAD_BYTES = 8 * 1024
+
+/** 等待 net socket 建连；超时/关闭都按指定阶段失败 */
+function waitForConnect(socket: net.Socket, ms: number, phase: SafeFetchPhase): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let done = false
+    let timer: NodeJS.Timeout | undefined
+    const finish = (err?: Error): void => {
+      if (done) return
+      done = true
+      if (timer) clearTimeout(timer)
+      socket.removeListener('connect', onConnect)
+      socket.removeListener('error', onError)
+      socket.removeListener('close', onClose)
+      if (err) reject(err)
+      else resolve()
+    }
+    const onConnect = (): void => finish()
+    const onError = (e: Error): void => finish(e)
+    const onClose = (): void => finish(new SafeFetchError(phaseTimeoutMessage(phase), phase))
+    socket.once('connect', onConnect)
+    socket.once('error', onError)
+    socket.once('close', onClose)
+    if (!socket.connecting) finish()
+    else timer = setTimeout(() => finish(new SafeFetchError(phaseTimeoutMessage(phase), phase)), Math.max(ms, 1))
+  })
+}
+
+/** 等待 TLS 握手完成（含代理自身的 TLS 与目标 TLS） */
+function waitForTls(socket: tls.TLSSocket, ms: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let done = false
+    let timer: NodeJS.Timeout | undefined
+    const finish = (err?: Error): void => {
+      if (done) return
+      done = true
+      if (timer) clearTimeout(timer)
+      socket.removeListener('secureConnect', onSecure)
+      socket.removeListener('error', onError)
+      socket.removeListener('close', onClose)
+      if (err) reject(err)
+      else resolve()
+    }
+    const onSecure = (): void => finish()
+    const onError = (e: Error): void => finish(e)
+    const onClose = (): void => finish(new SafeFetchError(phaseTimeoutMessage('tls'), 'tls'))
+    socket.once('secureConnect', onSecure)
+    socket.once('error', onError)
+    socket.once('close', onClose)
+    timer = setTimeout(() => finish(new SafeFetchError(phaseTimeoutMessage('tls'), 'tls')), Math.max(ms, 1))
+  })
+}
+
+/** 读取 CONNECT 应答头（到空行为止），返回状态码与剩余字节 */
+function readConnectResponse(
+  socket: net.Socket | tls.TLSSocket,
+  ms: number
+): Promise<{ status: number; rest: Buffer }> {
+  return new Promise((resolve, reject) => {
+    let buf = Buffer.alloc(0)
+    let done = false
+    let timer: NodeJS.Timeout | undefined
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer)
+      socket.removeListener('data', onData)
+      socket.removeListener('error', onError)
+      socket.removeListener('close', onClose)
+    }
+    const fail = (err: Error): void => {
+      if (done) return
+      done = true
+      cleanup()
+      reject(err)
+    }
+    const onData = (chunk: Buffer): void => {
+      buf = Buffer.concat([buf, chunk])
+      const idx = buf.indexOf('\r\n\r\n')
+      if (idx < 0) {
+        if (buf.length > MAX_PROXY_HEAD_BYTES) {
+          fail(new SafeFetchError('SafeFetch 代理隧道响应异常（应答头超长）', 'tunnel'))
+        }
+        return
+      }
+      const head = buf.subarray(0, idx).toString('latin1')
+      const m = /^HTTP\/\d(?:\.\d)?\s+(\d{3})/.exec(head)
+      if (!m) {
+        fail(new SafeFetchError('SafeFetch 代理隧道响应异常（无法解析状态行）', 'tunnel'))
+        return
+      }
+      done = true
+      cleanup()
+      resolve({ status: Number(m[1]), rest: buf.subarray(idx + 4) })
+    }
+    const onError = (e: Error): void => fail(e)
+    const onClose = (): void => fail(new SafeFetchError(phaseTimeoutMessage('tunnel'), 'tunnel'))
+    socket.on('data', onData)
+    socket.once('error', onError)
+    socket.once('close', onClose)
+    timer = setTimeout(() => fail(new SafeFetchError(phaseTimeoutMessage('tunnel'), 'tunnel')), Math.max(ms, 1))
+  })
+}
+
+/**
+ * 通过代理建立到「已校验 IP」的隧道；https 目标在隧道内再做一次 TLS（SNI=原域名）。
+ * 返回可直接承载 HTTP 报文的流。代理凭据只出现在 CONNECT 头里，不进入错误文案。
+ */
+async function openProxyTunnel(
+  proxy: ProxyConfig,
+  u: URL,
+  ip: string,
+  deadline: number,
+  signal?: AbortSignal
+): Promise<Duplex> {
+  const remaining = (): number => deadline - Date.now()
+  let socket: net.Socket | tls.TLSSocket | null = null
+  let aborted = false
+  /** 当前子阶段，供连接类错误标注（连接代理 → 代理 TLS → CONNECT 隧道 → 目标 TLS） */
+  let phase: SafeFetchPhase = 'connect'
+  const onAbort = (): void => {
+    aborted = true
+    socket?.destroy()
+  }
+  if (signal?.aborted) throw new SafeFetchError('已中止')
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    if (remaining() <= 0) throw new SafeFetchError(phaseTimeoutMessage('connect'), 'connect')
+    const raw = net.connect({ host: proxy.host, port: proxy.port })
+    socket = raw
+    await waitForConnect(raw, remaining(), 'connect')
+
+    let carrier: net.Socket | tls.TLSSocket = raw
+    if (proxy.tls) {
+      phase = 'tls'
+      const outer = tls.connect({ socket: raw, servername: proxy.host })
+      socket = outer
+      await waitForTls(outer, remaining())
+      carrier = outer
+    }
+
+    phase = 'tunnel'
+    const targetPort = Number(u.port) || (u.protocol === 'https:' ? 443 : 80)
+    const authority = `${ip}:${targetPort}`
+    const head =
+      `CONNECT ${authority} HTTP/1.1\r\n` +
+      `Host: ${authority}\r\n` +
+      (proxy.authHeader ? `Proxy-Authorization: ${proxy.authHeader}\r\n` : '') +
+      'Proxy-Connection: Keep-Alive\r\n\r\n'
+    carrier.write(head)
+
+    const { status, rest } = await readConnectResponse(carrier, remaining())
+    if (status !== 200) {
+      const message =
+        status === 407
+          ? `SafeFetch 代理认证失败（HTTP 407，代理 ${proxy.display}）`
+          : `SafeFetch 代理拒绝连接（HTTP ${status}，代理 ${proxy.display}）`
+      throw new SafeFetchError(message, 'tunnel')
+    }
+    if (rest.length > 0) {
+      try {
+        carrier.unshift(rest)
+      } catch {
+        // CONNECT 成功后代理不应再发数据；无法回填时忽略，后续握手会自然失败
+      }
+    }
+    if (u.protocol !== 'https:') return carrier
+    if (remaining() <= 0) throw new SafeFetchError(phaseTimeoutMessage('tls'), 'tls')
+    phase = 'tls'
+    const target = tls.connect({ socket: carrier, servername: u.hostname })
+    socket = target
+    await waitForTls(target, remaining())
+    return target
+  } catch (e) {
+    socket?.destroy()
+    if (aborted) throw new SafeFetchError('已中止')
+    throw wrapConnectionError(e, phase)
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+/** 把已建立（含 TLS）的流交给 http 客户端，避免 Agent 再次做 DNS/TLS */
+class TunnelAgent extends http.Agent {
+  private readonly factory: () => Duplex
+  constructor(factory: () => Duplex) {
+    super({ keepAlive: false })
+    this.factory = factory
+  }
+  override createConnection(
+    _options: net.NetConnectOpts,
+    callback?: (err: Error | null, stream: Duplex) => void
+  ): Duplex | null | undefined {
+    const socket = this.factory()
+    callback?.(null, socket)
+    return socket
+  }
+}
+
 /** 发起单跳请求；连接钉在已校验 IP 上，https 仍按原域名做 SNI 与证书校验。
+ *  传入 proxy 时先建隧道（CONNECT 已校验 IP），HTTP 报文在隧道内发送。
  *  onRequest 在请求对象创建时同步回调，用于把外部 abort 接到「连接建立阶段」。 */
-function requestOnce(
+async function requestOnce(
   u: URL,
   ip: string,
   method: string,
   body: string | Buffer | undefined,
   headers: Record<string, string>,
   deadline: number,
-  onRequest: (req: http.ClientRequest) => void
+  onRequest: (req: http.ClientRequest) => void,
+  proxy: ProxyConfig | null,
+  signal?: AbortSignal
 ): Promise<HopResult> {
+  const isHttps = u.protocol === 'https:'
+  const port = Number(u.port) || (isHttps ? 443 : 80)
+  const bodyBuf: Buffer | undefined = body !== undefined ? Buffer.from(body) : undefined
+  const reqHeaders: Record<string, string> = {
+    Host: u.host,
+    'User-Agent': USER_AGENT,
+    ...headers
+  }
+  if (bodyBuf !== undefined) {
+    reqHeaders['Content-Length'] = String(bodyBuf.length)
+  }
+
+  let tunnel: Duplex | null = null
+  if (proxy) tunnel = await openProxyTunnel(proxy, u, ip, deadline, signal)
+
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) {
+    if (tunnel) tunnel.destroy()
+    throw new SafeFetchError(phaseTimeoutMessage(proxy ? 'ttfb' : 'connect'), proxy ? 'ttfb' : 'connect')
+  }
+
   return new Promise<HopResult>((resolve, reject) => {
-    const isHttps = u.protocol === 'https:'
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) {
-      reject(new SafeFetchError('SafeFetch 请求超时'))
-      return
-    }
-    const bodyBuf: Buffer | undefined = body !== undefined ? Buffer.from(body) : undefined
-    const reqHeaders: Record<string, string> = {
-      Host: u.host,
-      'User-Agent': USER_AGENT,
-      ...headers
-    }
-    if (bodyBuf !== undefined) {
-      reqHeaders['Content-Length'] = String(bodyBuf.length)
-    }
-    const options: https.RequestOptions = {
-      method,
-      host: ip,
-      port: Number(u.port) || (isHttps ? 443 : 80),
-      path: u.pathname + u.search,
-      headers: reqHeaders,
-      ...(isHttps ? { servername: u.hostname } : {})
-    }
+    // 直连时用 socket 事件细化「连接 / TLS / 等待响应」；代理隧道已在上面建好
+    let phase: SafeFetchPhase = proxy ? 'ttfb' : 'connect'
     const onRes = (res: http.IncomingMessage): void => {
       if (timer) clearTimeout(timer)
-      res.on('error', reject) // 响应阶段错误（含主动销毁）走统一拒绝
+      // 响应阶段错误（含主动销毁）走统一拒绝；连接类底层错误在此换成可行动文案
+      res.on('error', (e) => reject(wrapConnectionError(e, phase)))
       resolve({ req, res })
     }
-    const req = isHttps ? https.request(options, onRes) : http.request(options, onRes)
+    const options: http.RequestOptions = proxy
+      ? {
+          method,
+          host: u.hostname,
+          port,
+          path: u.pathname + u.search,
+          headers: reqHeaders,
+          agent: new TunnelAgent(() => tunnel!)
+        }
+      : {
+          method,
+          host: ip,
+          port,
+          path: u.pathname + u.search,
+          headers: reqHeaders,
+          ...(isHttps ? { servername: u.hostname } : {})
+        }
+    const req = proxy
+      ? http.request(options, onRes)
+      : isHttps
+        ? https.request(options, onRes)
+        : http.request(options, onRes)
     // P0-5：只在这里加一——请求对象已建好，是真正会出网的调用（重定向的每一跳都会经过）。
     outboundRequestCount++
+    if (!proxy) {
+      req.on('socket', (socket) => {
+        if (!socket.connecting) {
+          phase = 'ttfb'
+          return
+        }
+        if (isHttps) {
+          socket.once('connect', () => {
+            phase = 'tls'
+          })
+          socket.once('secureConnect', () => {
+            phase = 'ttfb'
+          })
+        } else {
+          socket.once('connect', () => {
+            phase = 'ttfb'
+          })
+        }
+      })
+    }
     let timer: NodeJS.Timeout | undefined
     timer = setTimeout(() => {
-      req.destroy(new SafeFetchError('SafeFetch 请求超时'))
+      req.destroy(new SafeFetchError(phaseTimeoutMessage(phase), phase))
+      if (tunnel) tunnel.destroy()
     }, remaining)
     onRequest(req)
     req.on('error', (e) => {
       if (timer) clearTimeout(timer)
-      reject(e)
+      if (tunnel) tunnel.destroy()
+      reject(wrapConnectionError(e, phase))
     })
     if (bodyBuf !== undefined) req.write(bodyBuf)
     req.end()
@@ -337,7 +723,7 @@ function readBody(
     }
     const remaining = deadline - Date.now()
     const timer = setTimeout(() => {
-      req.destroy(new SafeFetchError('SafeFetch 读取响应超时'))
+      req.destroy(new SafeFetchError(phaseTimeoutMessage('body'), 'body'))
     }, Math.max(remaining, 1))
 
     // sink 模式：边收边写文件，避免数百 MB 响应整体进内存
@@ -346,7 +732,7 @@ function readBody(
       const fileStream = fs.createWriteStream(sink.file)
       let received = 0
       let lastReport = 0
-      const fail = (err: Error) => {
+      const fail = (err: unknown) => {
         clearTimeout(timer)
         fileStream.close(() => {
           fs.rm(sink.file, { force: true }, () => reject(err))
@@ -378,11 +764,11 @@ function readBody(
       res.on('error', (e) => {
         clearTimeout(timer)
         req.destroy()
-        fail(e)
+        fail(wrapConnectionError(e, 'body'))
       })
       req.on('error', (e) => {
         clearTimeout(timer)
-        fail(e)
+        fail(wrapConnectionError(e, 'body'))
       })
       return
     }
@@ -405,11 +791,11 @@ function readBody(
     })
     res.on('error', (e) => {
       clearTimeout(timer)
-      reject(e)
+      reject(wrapConnectionError(e, 'body'))
     })
     req.on('error', (e) => {
       clearTimeout(timer)
-      reject(e)
+      reject(wrapConnectionError(e, 'body'))
     })
   })
 }
@@ -452,6 +838,9 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
   assertFetchable(current)
 
   const deadline = Date.now() + timeoutMs
+  const dnsTimeoutMs = opts.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS
+  // 代理只在调用点显式打开时解析；坏配置解析失败→null→直连，不阻断出网
+  const proxySetting = opts.useProxy ? parseProxyConfig(proxyResolver?.()) : null
   let currentReq: http.ClientRequest | null = null
   const onAbort = () => {
     currentReq?.destroy(new SafeFetchError('已中止'))
@@ -468,8 +857,11 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
       assertFetchable(current)
       // 只对用户显式确认的那一个精确 origin 放行私网；重定向换了 origin 即失效
       const allowPrivate = !!opts.allowPrivateOrigin && current.origin === opts.allowPrivateOrigin
-      const ip = await resolveAndValidate(current, allowPrivate)
+      const ip = await resolveAndValidate(current, allowPrivate, dnsTimeoutMs, deadline)
       if (signal?.aborted) throw new SafeFetchError('已中止')
+      // 本机目标与 allowPrivateOrigin 强制直连：访私网的语义不能被代理改写
+      const proxy =
+        proxySetting && !allowPrivate && !isPrivateHostname(current.hostname) ? proxySetting : null
 
       const { req, res } = await requestOnce(
         current,
@@ -480,7 +872,9 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
         deadline,
         (r) => {
           currentReq = r
-        }
+        },
+        proxy,
+        signal
       )
       const status = res.statusCode ?? 0
 

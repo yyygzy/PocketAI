@@ -352,6 +352,7 @@ async function install(onEvent?: (e: OllamaInstallEvent) => void): Promise<Ollam
         maxBytes: MAX_DOWNLOAD_BYTES(spec),
         sinkFile: tmpArchive,
         headers: { 'User-Agent': 'PocketAI' },
+        useProxy: true,
         onProgress: (received, total) => {
           const t = total ?? spec.size
           onEvent?.({

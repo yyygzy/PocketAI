@@ -186,7 +186,8 @@ async function downloadToFile(url: string, dest: string, opts: DownloadOptions =
   const res = await safeFetch(url, {
     timeoutMs: opts.timeoutMs ?? 180_000,
     maxBytes: MAX_DOWNLOAD_BYTES,
-    headers: { 'User-Agent': 'PocketAI' }
+    headers: { 'User-Agent': 'PocketAI' },
+    useProxy: true
   })
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`下载失败：HTTP ${res.status}`)
