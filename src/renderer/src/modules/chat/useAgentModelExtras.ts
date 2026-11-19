@@ -28,6 +28,12 @@ export interface AgentModelExtras {
   /** 文本协议清单重读（「读不到」那句旁边的同级出口） */
   retryTextProtocol: () => void
   setTextProtocol: (on: boolean) => void
+  /** 当前 provider+model 已被用户显式关闭思考模式（下发 enable_thinking=false） */
+  thinkingDisabled: boolean
+  thinkingUnread: string | null
+  /** 思考开关清单重读（读不到时那一格的同级出口） */
+  retryThinking: () => void
+  setThinkingDisabled: (on: boolean) => void
   /** 当前模型声明的窗口；null=未设（引擎退回「最近 30 条」） */
   contextWindowTokens: number | null
   contextWindowUnread: string | null
@@ -51,6 +57,9 @@ export function useAgentModelExtras(
   const [textProtocolModels, setTextProtocolModels] = useState<string[]>([])
   // §257：这发读失败时徽标会显示「文本协议」（＝没走），与"读到了但没走"同一张脸
   const [textProtocolUnread, setTextProtocolUnread] = useState<string | null>(null)
+  /** 被显式关闭思考的模型键（`providerId::model`）；空=都按服务端默认 */
+  const [thinkingDisabledModels, setThinkingDisabledModels] = useState<string[]>([])
+  const [thinkingUnread, setThinkingUnread] = useState<string | null>(null)
   /** §234：每台模型声明的上下文窗口（键同上，值是 token 数）。表里没有=未设=按 30 条 */
   const [modelWindows, setModelWindows] = useState<Record<string, number>>({})
   /** 那一读失败过：界面不许把"没读到"演成"没有一台模型设过窗口"（§222 那一族） */
@@ -86,6 +95,35 @@ export function useAgentModelExtras(
 
   /** 当前选中的 provider+model 是否已被点名走文本协议 */
   const textProtocolForced = !!providerId && !!model && textProtocolModels.includes(`${providerId}::${model}`)
+
+  /** 当前选中的 provider+model 是否已被点名关掉思考 */
+  const thinkingDisabled =
+    !!providerId && !!model && thinkingDisabledModels.includes(`${providerId}::${model}`)
+
+  /**
+   * 思考开关清单：与文本协议同构（挂载读一次，读不到要说"读不到"而不是演成"默认"）。
+   * 抽成具名 loader 是因为「读不到」那一格需要一键重读的出口。
+   */
+  const loadThinking = useCallback(() => {
+    void window.pocketai
+      .getAgentThinkingDisabled()
+      .then((list) => {
+        if (hasIpcFailed(list)) {
+          setThinkingUnread(ipcFailText(list, t('agent.unknownError')))
+          return
+        }
+        setThinkingUnread(null)
+        setThinkingDisabledModels(Array.isArray(list) ? list : [])
+      })
+      .catch((e: unknown) => {
+        setThinkingUnread(errText(e, t('agent.unknownError')))
+        logIpcError('agent.getThinkingDisabled', e)
+      })
+  }, [t])
+
+  useEffect(() => {
+    loadThinking()
+  }, [loadThinking])
 
   // §234：每台模型的上下文窗口表，挂载读一次，之后以 set 通道回传的最新值为准
   useEffect(() => {
@@ -222,11 +260,35 @@ export function useAgentModelExtras(
     [providerId, model, toast, t]
   )
 
+  /** 开/关当前这台模型的思考（下一轮运行生效；以库里回传的清单为准，不做乐观更新） */
+  const setThinkingDisabled = useCallback(
+    (on: boolean) => {
+      if (!providerId || !model) return
+      void window.pocketai
+        .setAgentThinkingDisabled(providerId, model, on)
+        .then((list) => {
+          // 与文本协议同一条纪律：写失败必须说话，不能把 {ok:false} 咽成空清单
+          if (hasIpcFailed(list)) {
+            toast.error(ipcFailText(list, t('agent.unknownError')))
+            return
+          }
+          setThinkingDisabledModels(Array.isArray(list) ? list : [])
+          setThinkingUnread(null)
+        })
+        .catch(reportIpcError('agent.setAgentThinkingDisabled'))
+    },
+    [providerId, model, toast, t]
+  )
+
   return {
     textProtocolForced,
     textProtocolUnread,
     retryTextProtocol: loadTextProtocol,
     setTextProtocol,
+    thinkingDisabled,
+    thinkingUnread,
+    retryThinking: loadThinking,
+    setThinkingDisabled,
     contextWindowTokens,
     contextWindowUnread: modelWindowsUnread,
     setContextWindow,

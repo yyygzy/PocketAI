@@ -14,6 +14,7 @@
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import {
   MODEL_WINDOW_MAX_ENTRIES,
+  builtinModelWindowTokens,
   isModelWindowTokens,
   modelWindowKey
 } from '../../shared/model-window'
@@ -62,6 +63,31 @@ export function listModelContextWindows(): ModelWindowMap {
 export function getModelContextWindow(providerId: string, model: string): number | null {
   if (!providerId || !model) return null
   return listModelContextWindows()[modelWindowKey(providerId, model)] ?? null
+}
+
+export interface ResolvedContextWindow {
+  tokens: number
+  /** configured=用户在模型栏里填过；builtin=按模型名推断的内置默认 */
+  source: 'configured' | 'builtin'
+}
+
+/**
+ * 引擎实际使用的窗口：**用户配置优先**，没配过再按模型名查内置表。
+ * 分开返回 source 是为了日志/排障时能答"这个数是用户给的还是我们猜的"。
+ *
+ * `builtinAllowed=false`（本地端点）时只用用户配置：本地 `qwen2.5:7b` 之类的名字
+ * 也会命中云端模式，但本地服务端窗口由 `num_ctx` 决定，按内置表放开等于假装它装得下。
+ */
+export function resolveContextWindow(
+  providerId: string,
+  model: string,
+  builtinAllowed = true
+): ResolvedContextWindow | null {
+  const configured = getModelContextWindow(providerId, model)
+  if (configured) return { tokens: configured, source: 'configured' }
+  if (!builtinAllowed) return null
+  const builtin = builtinModelWindowTokens(model)
+  return builtin ? { tokens: builtin, source: 'builtin' } : null
 }
 
 /**

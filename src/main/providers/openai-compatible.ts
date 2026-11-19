@@ -20,6 +20,42 @@ import { errMsg, isAbortError } from '../error'
  *  不会对 API 端点发 3xx，因此直接拒绝重定向最安全。 */
 const NO_REDIRECT: RequestInit = { redirect: 'manual' }
 
+/**
+ * 云 API 的三种"时间"必须分开看（v78 网络层加固）：
+ *  · 首字节超时：请求已发出但服务端迟迟不回响应头（排队/网关卡住）；
+ *  · 流空闲超时：已经开始吐字，但长时间没有新 chunk（代理断流）；
+ *  · 总时长：兜住"慢慢吐、永远吐不完"。
+ * 为什么不能只靠引擎那 5 分钟整轮预算：它兜住的是整轮 Agent，一次调用卡死会把后面
+ * 所有步骤的预算一起烧掉，错误也只剩"运行已中止"，分不清网络还是服务问题。
+ */
+const FIRST_BYTE_TIMEOUT_MS = 90_000
+const STREAM_IDLE_TIMEOUT_MS = 60_000
+const REQUEST_TOTAL_TIMEOUT_MS = 180_000
+
+/** `Retry-After` 只接受官方两种形态：秒数、HTTP 日期；解析不出返回 undefined */
+export function parseRetryAfterMs(header: string | null | undefined, now = Date.now()): number | undefined {
+  const raw = String(header ?? '').trim()
+  if (!raw) return undefined
+  const asNumber = Number(raw)
+  if (Number.isFinite(asNumber) && asNumber >= 0) return Math.floor(asNumber * 1000)
+  const at = Date.parse(raw)
+  if (!Number.isFinite(at)) return undefined
+  return Math.max(0, at - now)
+}
+
+/**
+ * 400/422 且报文指向 `stream_options`/`include_usage`/未知参数时，判定为"该端点不认这个字段"。
+ * 为什么不看所有 400：`tools` 类 400 要留给文本协议降级路径，吞掉会把真正的原因藏起来。
+ */
+export function isStreamOptionsUnsupported(status: number, text: string): boolean {
+  if (status !== 400 && status !== 422) return false
+  const t = String(text ?? '')
+  if (/tools?/i.test(t) && !/stream_options|include_usage/i.test(t)) return false
+  return /stream_options|include_usage|unknown (?:field|parameter|argument)|unrecognized (?:field|parameter|argument)|extra fields (?:are )?not permitted/i.test(
+    t
+  )
+}
+
 // ─── OpenAI 兼容响应形状（外部 API 边界，按用到字段最小声明）──────
 interface ModelsListResponse {
   data?: Array<{ id?: unknown }>
@@ -241,55 +277,159 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     if (params.tools && params.tools.length > 0) {
       body.tools = toOpenAITools(params.tools)
       body.tool_choice = params.toolChoice ?? 'auto'
-    }
-
-    const errors: string[] = []
-    // 连接建立前的失败可切换 Key 重试；一旦开始读流则不再切换
-    for (let attempt = 0; attempt < Math.max(1, this.apiKeys.length); attempt++) {
-      const key = this.nextKey()
-      let res: Response
-      try {
-        res = await fetch(`${this.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: this.authHeaders(key),
-          body: JSON.stringify(body),
-          signal: params.signal,
-          ...NO_REDIRECT
-        })
-      } catch (e) {
-        if (isAbortError(e)) throw e
-        if (e instanceof ProviderError) throw e
-        errors.push(errMsg(e))
-        continue
+      if (typeof params.parallelToolCalls === 'boolean') {
+        body.parallel_tool_calls = params.parallelToolCalls
       }
-      assertNoRedirect(res)
+    }
+    // 生成参数：只下发调用方明确给出的值（不发 undefined，避免"字段存在但值为空"被端点拒绝）
+    if (typeof params.topP === 'number') body.top_p = params.topP
+    if (typeof params.frequencyPenalty === 'number') body.frequency_penalty = params.frequencyPenalty
+    if (typeof params.presencePenalty === 'number') body.presence_penalty = params.presencePenalty
+    // Qwen/DashScope 专用：只在用户显式配置时下发（多数 OpenAI 兼容端点不认这个字段）
+    if (typeof params.enableThinking === 'boolean') body.enable_thinking = params.enableThinking
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        // 认证/限流错误尝试下一个 Key
-        if ((res.status === 401 || res.status === 403 || res.status === 429) && attempt < this.apiKeys.length - 1) {
-          errors.push(`HTTP ${res.status}: ${text.slice(0, 120)}`)
-          continue
-        }
-        throw new ProviderError(
-          `请求失败 HTTP ${res.status}: ${text.slice(0, 200)}`,
-          res.status,
-          res.status === 429 || res.status >= 500
+    // ── 超时与取消：外部取消 + 内部三档超时合并到同一个 controller ──
+    const ac = new AbortController()
+    let timedOutPhase: 'first-byte' | 'idle' | 'total' | null = null
+    const external = params.signal
+    const onExternalAbort = (): void => ac.abort()
+    if (external) {
+      if (external.aborted) ac.abort()
+      else external.addEventListener('abort', onExternalAbort)
+    }
+    let firstByteTimer: ReturnType<typeof setTimeout> | undefined
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const totalTimer = setTimeout(() => {
+      timedOutPhase ??= 'total'
+      ac.abort()
+    }, REQUEST_TOTAL_TIMEOUT_MS)
+    const armFirstByte = (): void => {
+      clearTimeout(firstByteTimer)
+      firstByteTimer = setTimeout(() => {
+        timedOutPhase ??= 'first-byte'
+        ac.abort()
+      }, FIRST_BYTE_TIMEOUT_MS)
+    }
+    /** 收到任一 chunk 就重臂空闲计时；首字节到货前由首字节计时兜住 */
+    const armIdle = (): void => {
+      clearTimeout(firstByteTimer)
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        timedOutPhase ??= 'idle'
+        ac.abort()
+      }, STREAM_IDLE_TIMEOUT_MS)
+    }
+    /** 超时被包装成可重试的 ProviderError；用户主动取消（timedOutPhase 为空）原样抛 */
+    const timeoutError = (): ProviderError | null => {
+      if (timedOutPhase === 'first-byte') {
+        return new ProviderError(
+          `请求超时：${FIRST_BYTE_TIMEOUT_MS / 1000}s 内未收到响应（${params.model}）`,
+          undefined,
+          true
         )
       }
-
-      if (!res.body) throw new ProviderError('响应体为空')
-
-      return await this.readSSE(res, handlers, params.signal)
+      if (timedOutPhase === 'idle') {
+        return new ProviderError(
+          `流式响应空闲超时：${STREAM_IDLE_TIMEOUT_MS / 1000}s 无新数据（${params.model}）`,
+          undefined,
+          true
+        )
+      }
+      if (timedOutPhase === 'total') {
+        return new ProviderError(
+          `请求总时长超过 ${REQUEST_TOTAL_TIMEOUT_MS / 1000}s（${params.model}）`,
+          undefined,
+          true
+        )
+      }
+      return null
     }
+    const clearTimers = (): void => {
+      clearTimeout(firstByteTimer)
+      clearTimeout(idleTimer)
+      clearTimeout(totalTimer)
+    }
+    armFirstByte()
 
-    throw new ProviderError(`所有 Key 均不可用: ${errors.join('; ')}`)
+    try {
+      const errors: string[] = []
+      /** 连接建立前的失败可切换 Key 重试；一旦开始读流则不再切换 */
+      const maxKeyAttempts = Math.max(1, this.apiKeys.length)
+      let keyAttempt = 0
+      /** stream_options 兼容降级只做一次（同一 Key 重发，不消耗 Key 尝试次数） */
+      let optionFallbackUsed = false
+
+      while (keyAttempt < maxKeyAttempts) {
+        const key = this.nextKey()
+        let res: Response
+        try {
+          res = await fetch(`${this.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: this.authHeaders(key),
+            body: JSON.stringify(body),
+            signal: ac.signal,
+            ...NO_REDIRECT
+          })
+        } catch (e) {
+          const te = timeoutError()
+          if (te) throw te
+          if (isAbortError(e) || e instanceof ProviderError) throw e
+          errors.push(errMsg(e))
+          keyAttempt++
+          continue
+        }
+        // 响应头已到：首字节计时结束，转入流空闲计时
+        clearTimeout(firstByteTimer)
+        assertNoRedirect(res)
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          if (!optionFallbackUsed && isStreamOptionsUnsupported(res.status, text)) {
+            optionFallbackUsed = true
+            delete body.stream_options
+            continue
+          }
+          const retryAfterMs = parseRetryAfterMs(res.headers.get('retry-after'))
+          // 认证/限流错误尝试下一个 Key
+          if (
+            (res.status === 401 || res.status === 403 || res.status === 429) &&
+            keyAttempt < maxKeyAttempts - 1
+          ) {
+            errors.push(`HTTP ${res.status}: ${text.slice(0, 120)}`)
+            keyAttempt++
+            continue
+          }
+          throw new ProviderError(
+            `请求失败 HTTP ${res.status}: ${text.slice(0, 200)}`,
+            res.status,
+            res.status === 429 || res.status >= 500,
+            retryAfterMs
+          )
+        }
+
+        if (!res.body) throw new ProviderError('响应体为空')
+        armIdle()
+        try {
+          return await this.readSSE(res, handlers, ac.signal, armIdle)
+        } catch (e) {
+          const te = timeoutError()
+          if (te) throw te
+          throw e
+        }
+      }
+
+      throw new ProviderError(`所有 Key 均不可用: ${errors.join('; ')}`)
+    } finally {
+      clearTimers()
+      external?.removeEventListener('abort', onExternalAbort)
+    }
   }
 
   private async readSSE(
     res: Response,
     handlers: ChatStreamHandlers,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    /** 每收到一个 chunk 回调一次：调用方用它重臂「流空闲」计时 */
+    onActivity?: () => void
   ): Promise<ChatStreamResult> {
     // 防御性二次守卫：调用方已 throw 但 TS 不能跨方法保持收窄，readSSE 自包含
     if (!res.body) throw new ProviderError('响应体为空')
@@ -324,6 +464,7 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
+        onActivity?.()
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''

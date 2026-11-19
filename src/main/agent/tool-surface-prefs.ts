@@ -12,13 +12,26 @@ import type { ToolSurfaceMode } from '../../shared/tool-groups'
 
 const K_TOOL_SURFACE_MODE = 'agent.tool_surface_mode'
 
+/**
+ * 读配置**原值**：未配置（老库没有这个键）返回 null。
+ *
+ * 为什么需要与原实现分开：`getToolSurfaceMode` 把"没配过"与"用户显式选了 grouped"
+ * 压成同一个值，于是线上模型没法默认全量——两条事实必须能区分。引擎按
+ * `resolveToolSurfaceMode(原值, 端点是否本地)` 决定：没配过时云端=full、本地=grouped；
+ * 配过就一律听用户的。
+ */
+export function readToolSurfaceModePref(): ToolSurfaceMode | null {
+  try {
+    const v = appConfigRepo.get(K_TOOL_SURFACE_MODE)
+    return v === 'full' || v === 'grouped' ? v : null
+  } catch {
+    return null
+  }
+}
+
 /** 引擎每轮开始读一次；读库失败时按默认值（grouped）——它不影响任何授权判定 */
 export function getToolSurfaceMode(): ToolSurfaceMode {
-  try {
-    return appConfigRepo.get(K_TOOL_SURFACE_MODE) === 'full' ? 'full' : 'grouped'
-  } catch {
-    return 'grouped'
-  }
+  return readToolSurfaceModePref() ?? 'grouped'
 }
 
 /** 写开关并回读（以库里为准，调用方不做乐观更新） */

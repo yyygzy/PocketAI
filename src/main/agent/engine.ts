@@ -72,16 +72,21 @@ import {
 import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot, writeOffloadFile, OFFLOAD_PREVIEW_MIN_CHARS } from './tool-output-offload'
 import {
   isToolsUnsupportedError,
+  isKnownToolsCapableModel,
   extractTextToolCalls,
   buildTextProtocolPrompt
 } from '../../shared/text-tool-protocol'
+import { buildAvailableToolsHint } from './tool-prompt-hint'
+import { validateToolArguments } from './tool-args-validate'
 import { isTextProtocolForced } from './text-protocol-prefs'
-import { getToolSurfaceMode } from './tool-surface-prefs'
-import { selectToolSurface } from '../../shared/tool-groups'
-import { getModelContextWindow } from './model-window-prefs'
+import { readToolSurfaceModePref } from './tool-surface-prefs'
+import { resolveToolSurfaceMode, selectToolSurface } from '../../shared/tool-groups'
+import { resolveContextWindow } from './model-window-prefs'
+import { thinkingParamFor } from './thinking-prefs'
 import { getFallbackTarget } from './fallback-target-prefs'
 import { providerRepo } from '../db/repositories/provider.repo'
-import { DEFAULT_MESSAGES_WHEN_WINDOW_UNSET } from '../../shared/model-window'
+import { DEFAULT_AGENT_OUTPUT_TOKENS, DEFAULT_MESSAGES_WHEN_WINDOW_UNSET, resolveAgentOutputTokens } from '../../shared/model-window'
+import { isContextOverflowError, trimOldestConversationTurn } from './context-overflow'
 import { isDelegationEnabledFor } from './delegate-prefs'
 import { recordNativeToolCallObservation, recordToolsRejected } from './tool-capability'
 import {
@@ -273,7 +278,7 @@ const MAX_CONTEXT_MESSAGES_CEILING = 120
  * 窗口算术要把这一段先扣掉才算得准，所以**请求侧与预算侧共用这一个数**——
  * 两处各写一个 4096，将来改一处就会让"发出去多少"与"预留多少"漂移。
  */
-const AGENT_OUTPUT_RESERVE_TOKENS = 4096
+const AGENT_OUTPUT_RESERVE_TOKENS = DEFAULT_AGENT_OUTPUT_TOKENS
 /**
  * 早期对话摘要为窗口预留的量：规则摘要的上限是 HISTORY_TOTAL_TOKENS=1200，
  * LLM 摘要那一条走 maxTokens=800、且提示词写"不超过 300 字"。取 1500 覆盖两者，
@@ -288,8 +293,15 @@ const CONTEXT_SUMMARY_RESERVE_TOKENS = 1500
 const IMAGE_TOKEN_ESTIMATE = 1024
 const MAX_TOOL_RESULT_CHARS = 2000 // 工具结果在上下文中的最大字符数（截断防止撑爆 token 窗口）
 const MAX_MESSAGE_SOURCES = 12 // 单条最终回答最多挂多少个引用来源
-const MAX_LLM_RETRIES = 2 // LLM 调用失败重试次数（网络抖动/429/5xx），不含首次
-const RETRY_BASE_DELAY_MS = 1000 // 重试退避基数（指数退避：1s → 2s）
+const MAX_LLM_RETRIES = 2 // LLM 调用失败重试次数（网络抖动/5xx），不含首次
+/**
+ * 429 单独给更宽的预算：限流是"等一会儿就好"，重试次数与网络抖动不是一回事。
+ * 为什么不连它一起提到 5：5xx/超时多试几次往往只是把同一份上下文再付一遍钱。
+ */
+const MAX_RATE_LIMIT_RETRIES = 5
+const RETRY_BASE_DELAY_MS = 1000 // 重试退避基数（指数退避：1s → 2s → 4s…）
+/** 单次退避上限：服务端给 `Retry-After: 600` 时不替用户睡十分钟才失败 */
+const MAX_RETRY_DELAY_MS = 30_000
 const MAX_REPEAT_TOOL_CALLS = 2 // 相同工具+参数连续调用次数阈值，超过则触发反思（防止死循环）
 const PLAN_SKIP_MIN_CHARS = 30 // 单行输入不超过此长度时跳过规划阶段（问候/闲聊/一句话问答不值得多花一次 LLM 往返）
 
@@ -347,6 +359,10 @@ interface AgentRunContext {
   stepCount: number
   maxSteps: number // 步数预算上限（首次触顶重规划后 += REPLAN_EXTRA_STEPS）
   retriedEmpty: boolean // 空响应已重试过一次（本地小模型可能返回空 content + 空 tool_calls）
+  /** 本轮主推理步的输出预算（窗口算术与请求侧共用；云模型/思考模型按能力放宽） */
+  outputReserveTokens: number
+  /** 上下文超长（服务端 400）已裁掉最早一轮重试过一次（每轮 run 只做一次） */
+  contextOverflowRetried: boolean
   // 模型不支持原生 function calling 时自动降级的文本协议模式（ReAct 兜底）：
   // 工具清单注入 system prompt，模型用 ```tool_call 围栏声明调用，引擎抽取后走原执行链
   textProtocolMode: boolean
@@ -858,8 +874,11 @@ export function planHistoryWindow(opts: {
   systemPrompt: string
   tools: ToolSchema[]
   declaredTokens: number | null
+  /** 本轮主推理步的输出预算（默认沿用旧口径 4096；云模型按能力给更宽） */
+  outputReserveTokens?: number
 }): HistoryWindowPlan {
   const { allHistory, systemPrompt, tools, declaredTokens } = opts
+  const outputReserve = opts.outputReserveTokens ?? AGENT_OUTPUT_RESERVE_TOKENS
   if (!declaredTokens) {
     const over = allHistory.length > MAX_CONTEXT_MESSAGES
     return {
@@ -875,7 +894,7 @@ export function planHistoryWindow(opts: {
   const budget =
     declaredTokens -
     staticTokens -
-    AGENT_OUTPUT_RESERVE_TOKENS -
+    outputReserve -
     CONTEXT_SUMMARY_RESERVE_TOKENS
   const groups = groupHistoryByTurn(allHistory)
   const kept: MessageRecord[][] = []
@@ -1438,7 +1457,12 @@ class AgentEngine {
         tools: permittedSurface,
         permissions: toolPermissions,
         message: content,
-        mode: getToolSurfaceMode()
+        // 没配过时：云端端点全量下发（128k 付得起 ≈3k token），本地端点保留按需裁剪。
+        // 「该调不调」的主因是工具不在请求里，而不是模型不肯调——见 resolveToolSurfaceMode 注释。
+        mode: resolveToolSurfaceMode(
+          readToolSurfaceModePref(),
+          providerEndpointLocal(target.providerId)
+        )
       })
       const delegationEnabled = !asChild && isDelegationEnabledFor(target.providerId, target.model)
       const baseTools = asChild
@@ -1503,6 +1527,17 @@ class AgentEngine {
         skills: skillsContext,
         memory: memoryContext
       })
+      /**
+       * 动态工具面（v78 第 4 批）：默认提示词里那份「工具使用场景」是静态写死的，
+       * 而真正下发的 tools 可能因分组裁剪/未配工作目录/MCP 未授权而少几枚——模型照着
+       * 提示词去调一个不在请求里的工具，只会得到"工具不存在"。追加一份以本轮实际
+       * 工具面为准的清单，明确"未列出 = 不可用"，让提示词与请求面成为同一份事实。
+       * 文本协议模式跳过：那份清单已由协议段带 schema 完整注入，不再重复。
+       */
+      const toolsHint = forcedTextProtocol ? '' : buildAvailableToolsHint(tools)
+      const renderedPromptWithTools = toolsHint
+        ? `${renderedPrompt}\n\n${toolsHint}`
+        : renderedPrompt
 
       // 持久化用户消息
       // v73 续跑：这条消息在崩溃前就落库了 —— 不重新插入、不重复 emit（否则一次中断变两条用户消息），
@@ -1556,12 +1591,23 @@ class AgentEngine {
       // 凡是被窗口切掉的早期消息都要进摘要（SEC-19）——这条规矩由规划器返回的 early 承载，
       // 不再靠"两个阈值凑巧对齐"。
       const allHistory = messageRepo.listByConversation(conversationId)
-      const declaredWindow = getModelContextWindow(target.providerId, target.model)
+      // 用户显式配置优先；没配过则按模型名查内置窗口（线上 128k 不再被当成"最近 30 条"）。
+      // 本地端点只认用户配置：本地模型名同样会命中云端模式，但窗口由服务端 num_ctx 决定。
+      const endpointLocal = providerEndpointLocal(target.providerId)
+      const windowResolution = resolveContextWindow(target.providerId, target.model, !endpointLocal)
+      const declaredWindow = windowResolution?.tokens ?? null
+      const outputReserveTokens = resolveAgentOutputTokens(target.model, declaredWindow, !endpointLocal)
+      if (windowResolution?.source === 'builtin') {
+        logger.info(
+          `[agent] 模型 ${target.model} 未配置窗口，按内置默认 ${declaredWindow} token（输出预算 ${outputReserveTokens}）`
+        )
+      }
       const windowPlan = planHistoryWindow({
         allHistory,
-        systemPrompt: renderedPrompt,
+        systemPrompt: renderedPromptWithTools,
         tools,
-        declaredTokens: declaredWindow
+        declaredTokens: declaredWindow,
+        outputReserveTokens
       })
       // 装不下时只进日志（口径与停止/卸载类同档，界面那一句写在设置数的当下说，见模型栏）
       if (windowPlan.noRoom) {
@@ -1583,7 +1629,9 @@ class AgentEngine {
       }
       const messages = buildContext(
         windowPlan.windowed,
-        summaryPrefix ? `${renderedPrompt}\n\n## 对话摘要（早期对话的精简记忆）\n${summaryPrefix}` : renderedPrompt
+        summaryPrefix
+          ? `${renderedPromptWithTools}\n\n## 对话摘要（早期对话的精简记忆）\n${summaryPrefix}`
+          : renderedPromptWithTools
       )
 
       // ① kbRefs 触发但模板不含 {{knowledge}} → 检索结果追加为独立 system 消息
@@ -1720,6 +1768,8 @@ class AgentEngine {
         stepCount: resume?.startStep ?? 0,
         maxSteps: MAX_STEPS,
         retriedEmpty: false,
+        outputReserveTokens,
+        contextOverflowRetried: false,
         textProtocolMode: forcedTextProtocol,
         pendingToolCalls: null,
         retriedBadCall: false,
@@ -1944,9 +1994,13 @@ class AgentEngine {
     const chatParams: ChatParams = {
       model: target.model,
       signal: master.signal,
-      maxTokens: AGENT_OUTPUT_RESERVE_TOKENS,
-      temperature: 0.7,
-      ...pickSafeParams(defaultParams)
+      // 输出预算与窗口算术共用同一个数：云模型 8k/思考模型 16k，本地/未知仍 4096
+      maxTokens: ctx.outputReserveTokens,
+      // 工具场景温度更低：选工具与填参数要稳；纯聊天保留 0.7
+      temperature: tools.length > 0 ? 0.3 : 0.7,
+      ...pickSafeParams(defaultParams),
+      // 模型级「关闭思考」是用户对本机模型的直接点名，优先级高于助手 defaultParams
+      ...thinkingParamFor(target.providerId, target.model)
     }
     // 文本协议模式下不传 tools（部分端点见 tools 即报错），改由 system prompt 内的协议承载
     if (tools.length > 0 && !ctx.textProtocolMode) {
@@ -1966,7 +2020,7 @@ class AgentEngine {
     const markStepTtft = (): void => {
       if (stepTtft === undefined) stepTtft = performance.now() - stepT0
     }
-    for (let attempt = 0; attempt <= MAX_LLM_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
       if (master.signal.aborted) throw new Error('Agent 运行已中止')
       if (attempt > 0) {
         accumulated = ''
@@ -2027,26 +2081,60 @@ class AgentEngine {
           tools.length > 0 &&
           isToolsUnsupportedError(errMsg(e))
         ) {
-          ctx.textProtocolMode = true
-          llmError = e
-          // P0-4b：端点明确拒绝 tools 是确定性事实 ⇒ 落 known_unusable/tools_rejected。
-          // 与探针的 400 分支同一口径；写库不阻塞本轮的文本协议切换。
-          void recordToolsRejected(target.providerId, target.model)
-          break
+          /**
+           * v78 第 4 批：已知原生支持 function calling 的模型不做自动降级。
+           * 这类 400 更可能是网关/代理层挡掉了 tools，而文本协议对它们是明显更差的路径
+           * （没有原生工具调用、靠围栏 JSON）。真要兜底请用户在模型栏显式开启文本协议。
+           */
+          if (isKnownToolsCapableModel(target.model)) {
+            logger.warn(
+              `[agent] 模型 ${target.model} 属已知支持工具调用的模型，端点却返回"不支持 tools"，` +
+                `不自动降级到文本协议（如确属网关限制，请在模型设置里手动开启该模型的文本协议）：${errMsg(e)}`
+            )
+          } else {
+            ctx.textProtocolMode = true
+            llmError = e
+            // P0-4b：端点明确拒绝 tools 是确定性事实 ⇒ 落 known_unusable/tools_rejected。
+            // 与探针的 400 分支同一口径；写库不阻塞本轮的文本协议切换。
+            void recordToolsRejected(target.providerId, target.model)
+            break
+          }
+        }
+        /**
+         * 上下文超长（云端 400 context_length_exceeded）：估算预算与真实计数总有偏差，
+         * 这类错误此前不可重试 ⇒ 整轮直接失败。这里砍掉最早一整轮再试一次（每轮 run 只做一次）；
+         * 只剩当前一轮时不再砍——删掉用户的问题本身等于没回答。
+         */
+        if (!ctx.contextOverflowRetried && isContextOverflowError(errMsg(e))) {
+          if (trimOldestConversationTurn(messages)) {
+            ctx.contextOverflowRetried = true
+            logger.warn(
+              `[agent] step=${stepIndex} 上下文超长，已裁掉最早一轮重试: ${errMsg(e)}`
+            )
+            continue
+          }
         }
         const retryable =
           (e instanceof ProviderError && e.retryable) || !(e instanceof ProviderError)
-        if (!retryable || attempt >= MAX_LLM_RETRIES) {
+        // 429 与 5xx/超时用两套预算：限流值得等，网络类错误不宜反复重付上下文
+        const rateLimited = e instanceof ProviderError && e.status === 429
+        const retryBudget = rateLimited ? MAX_RATE_LIMIT_RETRIES : MAX_LLM_RETRIES
+        if (!retryable || attempt >= retryBudget) {
           /**
            * 「重试跑完了」与「这类错重试没意义」是两档（§237 用户选定只认前者）：
            * 401／400 那一类第一发就 break，换台机器救不了根因，还会把"你没配 Key"
            * 演成"另一台答完了"——那是把失败藏起来，不是兜住失败。
            */
-          retryExhausted = retryable && attempt >= MAX_LLM_RETRIES
+          retryExhausted = retryable && attempt >= retryBudget
           llmError = e
           break
         }
-        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt)
+        const backoff = Math.min(MAX_RETRY_DELAY_MS, RETRY_BASE_DELAY_MS * Math.pow(2, attempt))
+        // 服务端点名要等多久就等多久（上限仍由 MAX_RETRY_DELAY_MS 兜住）；抖动避免多客户端同时重试
+        const retryAfterMs = e instanceof ProviderError ? e.retryAfterMs : undefined
+        const delay =
+          Math.min(MAX_RETRY_DELAY_MS, Math.max(backoff, retryAfterMs ?? 0)) +
+          Math.floor(Math.random() * 250)
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, delay)
           master.signal.addEventListener(
@@ -3172,6 +3260,20 @@ class AgentEngine {
     skillIds?: string[],
     agent?: ToolAgentContext
   ): Promise<ToolResult> {
+    // 执行前参数校验（v78 第 4 批）：把"缺必填/类型不对/JSON 非法"变成模型看得懂的
+    // 结构化错误（作为工具结果回注），模型可自行修正后重试；重复调用另有签名去重兜底。
+    // 放在线程池/定时器之前：不合法就不该占用一次 30s 的执行预算。
+    const toolSchema = toolRegistry.getSchema(tc.function.name)
+    const argCheck = validateToolArguments(toolSchema, tc.function.arguments)
+    if (!argCheck.ok) {
+      return {
+        toolCallId: tc.id,
+        name: tc.function.name,
+        content: argCheck.error ?? '参数校验失败',
+        isError: true
+      }
+    }
+
     // 子控制器：超时或 Agent 中止时主动 abort，让底层工具（shell 进程树、MCP 请求、
     // 网络请求等）及时清理，避免 Promise.race 超时后底层进程继续悬空运行。
     const subController = new AbortController()
@@ -3188,7 +3290,6 @@ class AgentEngine {
     )
     // 按工具 schema 配置的 timeoutMs 决定超时；未配置时使用默认 30s。
     // 不同工具需求不同（如 shell_exec 可长，calculator 应短）。
-    const toolSchema = toolRegistry.getSchema(tc.function.name)
     const timeoutMs = toolSchema?.timeoutMs ?? TOOL_TIMEOUT_MS
     // 定时器句柄保留：工具先结束时必须 clear，否则 timer 会白挂 N 秒（虽不产生
     // unhandledRejection，但会无谓持有 reject 闭包并推迟进程退出条件）

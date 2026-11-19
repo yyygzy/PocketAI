@@ -7,7 +7,10 @@ const SAFE_DEFAULT_PARAM_KEYS = new Set([
   'maxTokens',
   'topP',
   'frequencyPenalty',
-  'presencePenalty'
+  'presencePenalty',
+  // v78：这两枚此前只在白名单里出现过"想传"却没有下游映射；现在 ChatParams → body 已接齐
+  'parallelToolCalls',
+  'enableThinking'
 ])
 
 /** 从助手 defaultParams 中仅挑出白名单内的生成参数 */

@@ -34,6 +34,10 @@ import {
   snapshotIdsSchema
 } from '../../../shared/schemas/agent'
 import { listTextProtocolModels, setTextProtocolModel } from '../../agent/text-protocol-prefs'
+import {
+  listThinkingDisabledModels,
+  setThinkingDisabled
+} from '../../agent/thinking-prefs'
 import { getToolSurfaceMode, setToolSurfaceMode } from '../../agent/tool-surface-prefs'
 import {
   listModelContextWindows,
@@ -262,6 +266,16 @@ export function registerAgentHandlers(): void {
     IPC.AGENT_SET_TEXT_PROTOCOL,
     (_e, payload: { providerId: string; model: string; on: boolean }) =>
       setTextProtocolModel(payload.providerId, payload.model, payload.on),
+    argsSchema(textProtocolToggleSchema)
+  )
+
+  // ---------- 模型级「关闭思考模式」（Qwen3/QwQ 等默认思考模型） ----------
+  // 入参与文本协议开关同形（providerId + model + on），复用同一份 schema。
+  safeHandle(IPC.AGENT_GET_THINKING_DISABLED, () => listThinkingDisabledModels())
+  safeHandle(
+    IPC.AGENT_SET_THINKING_DISABLED,
+    (_e, payload: { providerId: string; model: string; on: boolean }) =>
+      setThinkingDisabled(payload.providerId, payload.model, payload.on),
     argsSchema(textProtocolToggleSchema)
   )
 

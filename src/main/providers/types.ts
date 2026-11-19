@@ -23,6 +23,14 @@ export interface ChatParams {
   signal?: AbortSignal
   tools?: ToolSchema[] // function calling：传入则模型可决定调用工具
   toolChoice?: 'auto' | 'none' | 'required' // 工具调用策略，默认 'auto'
+  // ── v78：生成参数补齐（此前只有 temperature/maxTokens 真正发出去，其余在助手 defaultParams 里配了也无效）
+  topP?: number
+  frequencyPenalty?: number
+  presencePenalty?: number
+  /** OpenAI `parallel_tool_calls`：只在本次请求带 tools 时下发 */
+  parallelToolCalls?: boolean
+  /** Qwen/DashScope `enable_thinking`：仅显式配置时下发（不认识的端点会 400） */
+  enableThinking?: boolean
   /** §246 本地槽位排到了、请求开始往外发的那一刻回调一次（探针用它起超时，见 local-slot 的注释） */
   onSlotStart?: () => void
 }
@@ -51,7 +59,9 @@ export class ProviderError extends Error {
   constructor(
     message: string,
     public readonly status?: number,
-    public readonly retryable: boolean = false
+    public readonly retryable: boolean = false,
+    /** 服务端 `Retry-After` 解析出的等待毫秒数（429 常见）；缺省表示服务端没给 */
+    public readonly retryAfterMs?: number
   ) {
     super(message)
     this.name = 'ProviderError'

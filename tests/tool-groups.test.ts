@@ -44,6 +44,7 @@ import {
   PRUNABLE_GROUPS,
   TOOL_GROUP_OF,
   pickToolGroups,
+  resolveToolSurfaceMode,
   scoreToolGroups,
   selectToolSurface
 } from '../src/shared/tool-groups'
@@ -121,6 +122,39 @@ describe('pickToolGroups — 消息里命中哪些可裁剪组', () => {
   it('同一句话恒得同一结果（确定性，不依赖 locale）', () => {
     const msg = '读取文件并搜索网页'
     expect(scoreToolGroups(msg)).toEqual(scoreToolGroups(msg))
+  })
+
+  // v78 盲区补全：这些句子原先一个 net 命中词都没有，工具被裁掉 → 模型只能凭记忆编
+  it('不含"汇率"二字的外汇问题也进 net', () => {
+    expect(pickToolGroups('100 美元等于多少人民币')).toContain('net')
+  })
+
+  it('股价/比分等实时行情问题进 net', () => {
+    expect(pickToolGroups('茅台股价现在多少')).toContain('net')
+    expect(pickToolGroups('昨晚的比分是多少')).toContain('net')
+  })
+
+  it('口语化天气问题进 net（"冷吗"没有"天气/温度"字样）', () => {
+    expect(pickToolGroups('北京明天冷吗')).toContain('net')
+  })
+
+  it('IP 归属类问题进 net', () => {
+    expect(pickToolGroups('这个 IP 是哪家的')).toContain('net')
+  })
+})
+
+describe('resolveToolSurfaceMode — 没配过时按端点位置分默认', () => {
+  it('云端端点 → full（线上模型付得起全量 schema，避免"该调不调"）', () => {
+    expect(resolveToolSurfaceMode(null, false)).toBe('full')
+  })
+
+  it('本地端点 → grouped（小窗口必须省 schema）', () => {
+    expect(resolveToolSurfaceMode(null, true)).toBe('grouped')
+  })
+
+  it('用户配过就一律听用户的（含云端显式选 grouped）', () => {
+    expect(resolveToolSurfaceMode('grouped', false)).toBe('grouped')
+    expect(resolveToolSurfaceMode('full', true)).toBe('full')
   })
 })
 

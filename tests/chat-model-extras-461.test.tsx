@@ -16,16 +16,17 @@ import { fallbackTargetKey } from '../src/shared/fallback-target'
 import { calledFns, mountWithProviders, pocketaiCalls, stubPocketai } from './helpers/renderer'
 
 const providers = [
-  { id: 'p1', name: '甲', enabled: true, models: ['m1'] },
+  { id: 'p1', name: '甲', enabled: true, models: ['qwen3-8b'] },
   { id: 'p2', name: '乙', enabled: true, models: ['m2'] }
 ] as unknown as ProviderRecord[]
-const targets: ChatTarget[] = [{ providerId: 'p1', model: 'm1' }] as ChatTarget[]
+const targets: ChatTarget[] = [{ providerId: 'p1', model: 'qwen3-8b' }] as ChatTarget[]
 
 const stubReads = (over: Record<string, unknown> = {}): void => {
   stubPocketai({
-    getModelContextWindows: () => ({ [modelWindowKey('p1', 'm1')]: 64000 }),
-    getFallbackTargets: () => ({ [fallbackTargetKey('p1', 'm1')]: { providerId: 'p2', model: 'm2' } }),
+    getModelContextWindows: () => ({ [modelWindowKey('p1', 'qwen3-8b')]: 64000 }),
+    getFallbackTargets: () => ({ [fallbackTargetKey('p1', 'qwen3-8b')]: { providerId: 'p2', model: 'm2' } }),
     getAgentTextProtocol: () => [],
+    getAgentThinkingDisabled: () => [],
     listPromptSnippets: () => [],
     ...over
   })
@@ -65,7 +66,7 @@ describe('P4 批次 0：「+ → 模型」三项按主目标读写', () => {
     await waitFor(() => expect(windowRow.textContent).toContain('64000'))
     await waitFor(() => expect(screen.getByTestId('composer-plus-fallback').textContent).toContain('m2'))
     expect(screen.getByTestId('composer-plus-text-protocol').textContent).toContain('未启用')
-    for (const fn of ['getModelContextWindows', 'getFallbackTargets', 'getAgentTextProtocol']) {
+    for (const fn of ['getModelContextWindows', 'getFallbackTargets', 'getAgentTextProtocol', 'getAgentThinkingDisabled']) {
       expect(calledFns()).toContain(fn)
     }
   })
@@ -81,26 +82,49 @@ describe('P4 批次 0：「+ → 模型」三项按主目标读写', () => {
     await waitFor(() =>
       expect(
         pocketaiCalls().some(
-          (c) => c.fn === 'setModelContextWindow' && c.args[0] === 'p1' && c.args[1] === 'm1' && c.args[2] === 32000
+          (c) => c.fn === 'setModelContextWindow' && c.args[0] === 'p1' && c.args[1] === 'qwen3-8b' && c.args[2] === 32000
         )
       ).toBe(true)
     )
   })
 
   it('文本协议那一行点击走 setAgentTextProtocol，并以后端回传清单为准', async () => {
-    stubReads({ setAgentTextProtocol: () => [`p1::m1`] })
+    stubReads({ setAgentTextProtocol: () => [`p1::qwen3-8b`] })
     mount()
     openPlus()
     fireEvent.click(await screen.findByTestId('composer-plus-text-protocol'))
     await waitFor(() =>
       expect(
         pocketaiCalls().some(
-          (c) => c.fn === 'setAgentTextProtocol' && c.args[0] === 'p1' && c.args[1] === 'm1' && c.args[2] === true
+          (c) => c.fn === 'setAgentTextProtocol' && c.args[0] === 'p1' && c.args[1] === 'qwen3-8b' && c.args[2] === true
         )
       ).toBe(true)
     )
     await waitFor(() =>
       expect(screen.getByTestId('composer-plus-text-protocol').textContent).toContain('文本协议已启用')
+    )
+  })
+
+  it('思考开关那一行：默认显示服务端默认，点击走 setAgentThinkingDisabled(主目标) 并以后端回传清单为准', async () => {
+    stubReads({ setAgentThinkingDisabled: () => [`p1::qwen3-8b`] })
+    mount()
+    openPlus()
+    const row = await screen.findByTestId('composer-plus-thinking')
+    expect(row.textContent).toContain('服务端默认')
+    fireEvent.click(row)
+    await waitFor(() =>
+      expect(
+        pocketaiCalls().some(
+          (c) =>
+            c.fn === 'setAgentThinkingDisabled' &&
+            c.args[0] === 'p1' &&
+            c.args[1] === 'qwen3-8b' &&
+            c.args[2] === true
+        )
+      ).toBe(true)
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-plus-thinking').textContent).toContain('已关闭')
     )
   })
 

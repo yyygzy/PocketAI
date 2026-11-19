@@ -3266,6 +3266,8 @@ export const IPC = {
   AGENT_LIST_RUNS: 'agent:list-runs', // P2：会话全部 run 索引（只读，按 request_id 聚合后映射轮次）
   AGENT_GET_TEXT_PROTOCOL: 'agent:get-text-protocol', // 被点名走文本协议的模型清单（只读）
   AGENT_SET_TEXT_PROTOCOL: 'agent:set-text-protocol', // 开/关某台模型的文本协议
+  AGENT_GET_THINKING_DISABLED: 'agent:get-thinking-disabled', // 被显式关闭思考模式的模型清单（只读）
+  AGENT_SET_THINKING_DISABLED: 'agent:set-thinking-disabled', // 开/关某台模型的思考模式
   AGENT_GET_TOOL_SURFACE: 'agent:get-tool-surface', // 工具面装载模式（grouped / full，只读）
   AGENT_SET_TOOL_SURFACE: 'agent:set-tool-surface', // 切换工具面装载模式（全局，不建表）
   AGENT_LIST_DELEGATE_CAPS: 'agent:list-delegate-caps', // 已判出的"能不能当管控者"清单（只读，带 stale）

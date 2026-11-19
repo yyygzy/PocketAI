@@ -16,8 +16,24 @@ import type { ToolSchema } from './types'
 
 export type ToolGroupId = 'core' | 'net' | 'file' | 'shell' | 'schedule' | 'skill' | 'delegate'
 
-/** 工具面装载模式：grouped=按需（默认）；full=与治理前完全一致 */
+/** 工具面装载模式：grouped=按需；full=与治理前完全一致 */
 export type ToolSurfaceMode = 'grouped' | 'full'
+
+/**
+ * 实际装载模式：**用户配过就听用户的**；没配过按端点位置分默认。
+ *
+ * 为什么不给"没配过"也留 grouped：分组裁剪是靠关键词开合的，线上大模型恰恰是
+ * "该调不调"的重灾区——问「100 美元等于多少人民币」不含"汇率"二字，exchange_rate
+ * 就不在请求里，模型不是不想调，是根本看不见。云端窗口（128k）付得起全量 schema
+ * （实测 19 枚 ≈3k token），本地小窗口才是必须省的那一侧。
+ */
+export function resolveToolSurfaceMode(
+  pref: ToolSurfaceMode | null,
+  endpointLocal: boolean
+): ToolSurfaceMode {
+  if (pref) return pref
+  return endpointLocal ? 'grouped' : 'full'
+}
 
 /**
  * 内置工具 id → 组。**新增内置工具必须在这里登记**，否则 `tests/tool-groups.test.ts` 的
@@ -82,7 +98,14 @@ const GROUP_KEYWORDS: Readonly<Record<'net' | 'file' | 'schedule', readonly stri
   net: [
     '联网', '搜索', '搜一下', '查一下', '网页', '链接', '网址', '天气', '温度', '新闻',
     '汇率', '币价', '加密货币', '比特币', '翻译', '节假日', '放假', '空气质量', '词典', '百科',
-    'search', 'google', 'web', 'http', 'url', 'weather', 'forecast'
+    // 盲区补全（v78）：这些说法不出现"汇率/搜索/查一下"也会落在 net 组，
+    // 漏判的代价是工具被裁掉 → 模型只能凭记忆编（正是"该调不调"的成因之一）
+    '股票', '股价', '大盘', '指数', '比分', '赛果', '赛事', '赛程', '竞猜',
+    '美元', '人民币', '港币', '日元', '欧元', '英镑', '韩元', '币种', '兑换', '换算',
+    '冷吗', '热吗', '下雨', '降雨', '降雪', '刮风', '气温', '摄氏度', '天气预报', '台风',
+    'ip', '归属', '运营商', '域名', '时区', '汇率换算',
+    'search', 'google', 'web', 'http', 'url', 'weather', 'forecast',
+    'stock', 'price', 'match', 'score', 'exchange', 'currency', 'usd', 'cny', 'ip'
   ],
   file: [
     '文件', '目录', '文件夹', '读取', '读一下', '写入', '保存到', '路径', '文档', '附件',

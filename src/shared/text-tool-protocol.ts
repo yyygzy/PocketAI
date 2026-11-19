@@ -16,6 +16,21 @@ export function isToolsUnsupportedError(message: string): boolean {
   )
 }
 
+/**
+ * 已知原生支持 function calling 的模型族（v78 第 4 批）。
+ *
+ * 为什么需要：线上模型（DeepSeek/Qwen/GPT…）被网关或代理挡掉 tools 时，报错文案也可能
+ * 撞上 `isToolsUnsupportedError` 的正则。自动降级到文本协议对这类模型是**明显更差**的路径
+ * （没有原生工具调用、靠围栏 JSON，稳定性与成功率都低）。因此"已知支持"的模型不自动降级，
+ * 由用户显式开启该模型的文本协议开关（text-protocol-prefs）来兜底。
+ */
+const KNOWN_TOOLS_CAPABLE_RE =
+  /deepseek|qwen|qwq|gpt-|o1|o3|o4|claude|gemini|kimi|moonshot|glm-|llama-?3|mistral-large|doubao/i
+
+export function isKnownToolsCapableModel(model: string): boolean {
+  return KNOWN_TOOLS_CAPABLE_RE.test(String(model ?? '').toLowerCase())
+}
+
 export interface TextToolCall {
   name: string
   arguments: Record<string, unknown>

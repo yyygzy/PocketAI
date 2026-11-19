@@ -7,10 +7,38 @@
 import { describe, it, expect } from 'vitest'
 import {
   isToolsUnsupportedError,
+  isKnownToolsCapableModel,
   extractTextToolCalls,
   buildTextProtocolPrompt
 } from '../src/shared/text-tool-protocol'
 import type { ToolSchema } from '../src/shared/types'
+
+describe('isKnownToolsCapableModel — 已知支持工具调用的模型不自动降级', () => {
+  it('线上主流模型族命中', () => {
+    for (const m of [
+      'deepseek-chat',
+      'deepseek-reasoner',
+      'qwen-plus',
+      'qwen2.5:7b',
+      'gpt-4o',
+      'o3-mini',
+      'claude-3-7-sonnet',
+      'gemini-2.5-pro',
+      'kimi-k2',
+      'glm-4-plus',
+      'llama-3.1-70b',
+      'doubao-pro'
+    ]) {
+      expect(isKnownToolsCapableModel(m)).toBe(true)
+    }
+  })
+
+  it('未知/自建模型名不命中（仍允许自动降级）', () => {
+    for (const m of ['my-own-model', 'local-gguf', 'phi-4', '']) {
+      expect(isKnownToolsCapableModel(m)).toBe(false)
+    }
+  })
+})
 
 describe('isToolsUnsupportedError', () => {
   it('匹配 Ollama 文案', () => {

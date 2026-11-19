@@ -47,6 +47,7 @@ import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
 const logger = createLogger('chat-service')
 import { withProviderLimit } from './concurrency'
 import { agentEngine } from '../agent/engine'
+import { thinkingParamFor } from '../agent/thinking-prefs'
 import { markRunStarted, markRunFinished, markRunCheckpoint } from './runtime-registry'
 import { injectAttachments, appendTextAttachments, buildImageParts } from './context-attachments'
 import type { AdapterChatMessage } from '../providers/types'
@@ -834,7 +835,12 @@ class ChatService {
         const adapter = providerManager.getAdapter(target.providerId)
         return adapter.streamChat(
           messages,
-          { model: target.model, signal },
+          {
+            model: target.model,
+            signal,
+            // 模型级「关闭思考」对普通对话同样生效：Qwen 等默认思考模型不再额外思考
+            ...thinkingParamFor(target.providerId, target.model)
+          },
           { onDelta: sendChunk }
         )
       })

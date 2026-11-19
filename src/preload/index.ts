@@ -1017,6 +1017,12 @@ const api = {
   /** 开/关某台模型的文本协议；返回最新清单（以库里为准，调用方不做乐观更新） */
   setAgentTextProtocol: (providerId: string, model: string, on: boolean): Promise<string[]> =>
     ipcRenderer.invoke(IPC.AGENT_SET_TEXT_PROTOCOL, { providerId, model, on }),
+  /** 被显式关闭思考模式的模型清单（元素形如 `providerId::model`） */
+  getAgentThinkingDisabled: (): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_THINKING_DISABLED),
+  /** 开/关某台模型的思考模式；返回最新清单（以库里为准，调用方不做乐观更新） */
+  setAgentThinkingDisabled: (providerId: string, model: string, on: boolean): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_THINKING_DISABLED, { providerId, model, on }),
   /** 工具面装载模式：grouped=按需装载（默认）/ full=与治理前一致（全局单键） */
   getAgentToolSurface: (): Promise<'grouped' | 'full'> =>
     ipcRenderer.invoke(IPC.AGENT_GET_TOOL_SURFACE),

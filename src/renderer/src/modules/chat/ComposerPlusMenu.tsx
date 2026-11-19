@@ -7,6 +7,7 @@
 // · 「读不到」的句子**不进本浮层**：浮层一关句子就没了＝替这次失败闭嘴（§222／§268）。
 //   技能／知识库／工具那几发的失败句由 Composer 渲染在输入框上方；这里只负责让"再点那一格"就是重发。
 import React, { useEffect, useState } from 'react'
+import { isThinkingCapableModel } from '../../../../shared/thinking-models'
 import type {
   ChatAttachment,
   ChatTarget,
@@ -160,6 +161,13 @@ export const ComposerPlusMenu: React.FC<Props> = ({
       : currentFns.textProtocolForced
         ? t('agent.textProtocolOn')
         : t('agent.textProtocolOff')
+  const thinkingText = !currentFns
+    ? ''
+    : currentFns.thinkingUnread
+      ? t('agent.thinkingReadFail')
+      : currentFns.thinkingDisabled
+        ? t('agent.thinkingDisabled')
+        : t('agent.thinkingDefault')
 
   const windowNumber = windowDraft.trim() === '' ? Number.NaN : Number(windowDraft)
   const windowValid = Number.isInteger(windowNumber)
@@ -345,6 +353,29 @@ export const ComposerPlusMenu: React.FC<Props> = ({
                   <span className="flex-1 min-w-0">{t('agent.textProtocol')}</span>
                   <span className={META} title={textProtocolText}>{textProtocolText}</span>
                 </button>
+                {isThinkingCapableModel(model) && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="composer-plus-thinking"
+                    className={ROW}
+                    title={
+                      modelExtras.thinkingUnread
+                        ? `${t('agent.thinkingUnread')} — ${modelExtras.thinkingUnread}`
+                        : modelExtras.thinkingDisabled
+                          ? t('agent.thinkingDisabledHint')
+                          : t('agent.thinkingHint')
+                    }
+                    onClick={() => {
+                      if (modelExtras.thinkingUnread) modelExtras.retryThinking()
+                      else modelExtras.setThinkingDisabled(!modelExtras.thinkingDisabled)
+                    }}
+                  >
+                    <span aria-hidden>🧠</span>
+                    <span className="flex-1 min-w-0">{t('agent.thinkingMode')}</span>
+                    <span className={META} title={thinkingText}>{thinkingText}</span>
+                  </button>
+                )}
               </Group>
             </>
           )}
