@@ -1403,6 +1403,29 @@ const MIGRATIONS: Migration[] = [
     up: `
       ALTER TABLE conversation_runs ADD COLUMN tool_scope_json TEXT;
     `
+  },
+  {
+    // v76：模型级启用白名单（providers.enabled_models）。
+    //
+    // 三态语义（与 models 的「空」区分开）：
+    //  · NULL = 未配置（老库 / 新服务商）⇒ 全部 models 视为启用，升级零感知；
+    //  · []   = 用户明确全部停用；
+    //  · ["a"] = 白名单，读取时与 models 求交集。
+    // 不回填：回填会让老用户重新拉取后新模型默认变成「未启用」，与定稿决策 3 相反。
+    // 一旦用户在设置页动过启用集，才物化成显式数组。
+    // 幂等：SQLite 的 ADD COLUMN 没有 IF NOT EXISTS，先查 PRAGMA（同 v61/v62/v63）。
+    version: 76,
+    name: 'provider_enabled_models',
+    up: (db) => {
+      const cols = new Set(
+        (db.prepare('PRAGMA table_info(providers)').all() as Array<{ name: string }>).map(
+          (c) => c.name
+        )
+      )
+      if (!cols.has('enabled_models')) {
+        db.exec('ALTER TABLE providers ADD COLUMN enabled_models TEXT;')
+      }
+    }
   }
 ]
 

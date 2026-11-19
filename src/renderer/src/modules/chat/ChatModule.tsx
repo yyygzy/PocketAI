@@ -36,6 +36,7 @@ import { buildConversationHtml } from '../../utils/export-html'
 import { buildChatSendPayload } from './send-payload'
 import { PENDING_AGENT_MODE_KEY, resolveAgentMode } from './agent-mode'
 import { buildMessagesMarkdown, safeFileName } from '../../../../shared/export-markdown'
+import { enabledModelsOf } from '../../../../shared/provider-models'
 import { capSelection, buildBatchExportFiles, finishBatchExport, reportBatchOutcome, BATCH_EXPORT_MAX, BATCH_PDF_MAX } from '../../utils/batch-export'
 import { consumePendingUsageJump, USAGE_JUMP_EVENT } from '../settings/usage-jump'
 import { consumePendingOpenConversation, OPEN_CONVERSATION_EVENT, type OpenConversationDetail } from '../../utils/palette-nav'
@@ -70,6 +71,8 @@ export const ChatModule: React.FC = () => {
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
+  const providersRef = useRef<ProviderRecord[]>([])
+  providersRef.current = providers
   // §357：服务商清单那一读失败的原因（同 §263 的绘图／翻译页两处）——不判就是"把失败对象当数组写进 state"，
   // 渲染期 `providers.some(...)` 抛 TypeError 把整个应用送进根 error boundary
   const [providersUnread, setProvidersUnread] = useState<{ error?: string } | null>(null)
@@ -487,11 +490,12 @@ export const ChatModule: React.FC = () => {
           setTargets([])
           return
         }
-        // 挑到但没有模型列表：仍建一条 target（model 为空），让下拉显示「无模型，去拉取」
+        // 挑到但没有可用模型：仍建一条 target（model 为空），让下拉显示「无模型，去拉取」
         // 而不是整个下拉消失——空盒子比说实话的下拉更难懂
+        // 启用集口径：可选列表 = enabledModelsOf（未配置 NULL＝全部 models；显式白名单与 models 求交）
         const chatModel = hasUsableModel(pick)
-          ? pick.models.find((m) => !/^(bge[-_]|embed|gte[-_]|e5[-_]|minilm|nomic-embed)/i.test(m)) ??
-            pick.models[0] ??
+          ? enabledModelsOf(pick).find((m) => !/^(bge[-_]|embed|gte[-_]|e5[-_]|minilm|nomic-embed)/i.test(m)) ??
+            enabledModelsOf(pick)[0] ??
             ''
           : ''
         setTargets([{ providerId: pick.id, model: chatModel }])
@@ -604,10 +608,17 @@ export const ChatModule: React.FC = () => {
     setMessages([])
     reloadConversations(true)
 
-    // 应用助手默认模型（助手级参数）；未配置则保留当前全局选择
+    // 应用助手默认模型（助手级参数）；未配置则保留当前全局选择。
+    // 启用集口径（§5.3）：旧助手可能配置了已停用的模型——不自动重新启用，也不静默换模型，
+    // 回退到当前全局选择并给一条可见提示。
     const asst = assistants.find((a) => a.id === id) ?? extraAssistantsRef.current.get(id)
     if (asst?.defaultProviderId && asst.defaultModel) {
-      setTargets([{ providerId: asst.defaultProviderId, model: asst.defaultModel }])
+      const prov = providersRef.current.find((x) => x.id === asst.defaultProviderId)
+      if (prov && prov.enabled && enabledModelsOf(prov).includes(asst.defaultModel)) {
+        setTargets([{ providerId: asst.defaultProviderId, model: asst.defaultModel }])
+      } else {
+        toast.info(t('chat.staleModelDisabled'))
+      }
     }
   }
 
@@ -619,9 +630,15 @@ export const ChatModule: React.FC = () => {
         if (userEditedTargetsRef.current) return // 用户已手动选择，尊重用户
         const valid = pairs.filter((p) => {
           const prov = providers.find((x) => x.id === p.providerId)
-          return prov && prov.models.includes(p.model)
+          // 启用集口径：历史模型必须仍在该服务商的启用集里（未配置＝全部启用）
+          return prov && prov.enabled && enabledModelsOf(prov).includes(p.model)
         })
-        if (valid.length) setTargets(valid)
+        if (valid.length) {
+          setTargets(valid)
+        } else if (pairs.length > 0) {
+          // §5.3：历史模型已停用时不静默换模型——保留当前选择并明确说出来
+          toast.info(t('chat.staleModelDisabled'))
+        }
       }
 
       // 优先用会话的 modelLabel："pid1:m1 | pid2:m2"，Agent 前缀 "agent:pid:model"
@@ -655,7 +672,7 @@ export const ChatModule: React.FC = () => {
         }
       }).catch(reportIpcError('chat.restoreLastModel'))
     },
-    [providers]
+    [providers, t, toast]
   )
 
   /** 落库草稿并同步列表 📝 标记（空文本=删除草稿行）；清待发防抖由调用方负责 */

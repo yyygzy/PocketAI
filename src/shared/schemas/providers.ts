@@ -29,6 +29,12 @@ export const providerRecordSchema = z.object({
   baseUrl: z.string().max(PROVIDER_MAX_BASEURL_CHARS),
   apiKeys: z.array(z.string().max(PROVIDER_MAX_APIKEY_CHARS)).max(PROVIDER_MAX_APIKEYS),
   models: z.array(z.string().max(PROVIDER_MAX_MODEL_CHARS)).max(PROVIDER_MAX_MODELS),
+  // 启用白名单：可选可空（null=未配置＝全部启用）；undefined 表示调用方不关心，repo 原样保留旧值
+  enabledModels: z
+    .array(z.string().max(PROVIDER_MAX_MODEL_CHARS))
+    .max(PROVIDER_MAX_MODELS)
+    .nullable()
+    .optional(),
   enabled: z.boolean(),
   createdAt: z.number().int().nonnegative()
 })

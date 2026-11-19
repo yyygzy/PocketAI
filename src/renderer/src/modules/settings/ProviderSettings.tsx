@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { ProviderRecord, ProviderType } from '../../../../shared/types'
+import { enabledModelsOf } from '../../../../shared/provider-models'
 import { useI18n } from '../../i18n'
 import { isIpcFail, hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
@@ -44,6 +45,7 @@ function emptyProvider(): ProviderRecord {
     baseUrl: 'https://api.openai.com/v1',
     apiKeys: [],
     models: [],
+    enabledModels: null,
     enabled: true,
     createdAt: 0
   }
@@ -74,6 +76,16 @@ export const ProviderSettings: React.FC = () => {
   const [capsUnread, setCapsUnread] = useState<{ error?: string } | null>(null)
   // P0-4b 的清单是另一发读：它失败同样不许演成"这台从没测过"，所以自己一颗键、一颗重试按钮
   const [toolCapsUnread, setToolCapsUnread] = useState<{ error?: string } | null>(null)
+  // ── 模型启用白名单（双栏草稿态）──
+  // 左栏搜索词；启用集的移动只在 editing 草稿里生效，点「保存」才落库
+  const [modelSearch, setModelSearch] = useState('')
+  const [enabledDirty, setEnabledDirty] = useState(false)
+
+  /** 草稿态的「有效启用集」：NULL＝全部启用；显式数组与 models 求交（自动裁剪失效项） */
+  const effectiveEnabled = editing ? enabledModelsOf(editing) : []
+  /** 显式启用集里已不在当前缓存中的残留项（重新拉取后被远端删掉的 id），保存时自动清理 */
+  const staleEnabledCount =
+    editing?.enabledModels?.filter((m) => !editing.models.includes(m)).length ?? 0
 
   const load = useCallback(
     () =>
@@ -270,6 +282,8 @@ export const ProviderSettings: React.FC = () => {
     setKeysText(rec.apiKeys.join('\n'))
     setKeysRevealed(false)
     setNotice(null)
+    setModelSearch('')
+    setEnabledDirty(false)
   }
 
   /**
@@ -282,11 +296,52 @@ export const ProviderSettings: React.FC = () => {
     setKeysText('')
     setKeysRevealed(false)
     setNotice(null)
+    setModelSearch('')
+    setEnabledDirty(false)
   }
 
-  /** 从缓存模型里摘掉一条（保存后才落库：与表单其余字段同一套生效时机） */
+  /** 从缓存模型里摘掉一条（保存后才落库：与表单其余字段同一套生效时机）；显式启用集同步移除，NULL 保持 NULL */
   const removeModel = (m: string) => {
-    setEditing((cur) => (cur ? { ...cur, models: cur.models.filter((x) => x !== m) } : cur))
+    setEditing((cur) =>
+      cur
+        ? {
+            ...cur,
+            models: cur.models.filter((x) => x !== m),
+            ...(cur.enabledModels != null ? { enabledModels: cur.enabledModels.filter((x) => x !== m) } : {})
+          }
+        : cur
+    )
+    setEnabledDirty(true)
+  }
+
+  // ── 启用集移动（全部只在草稿里改，保存才落库）──
+  // NULL 物化：用户第一次移动时把「未配置」写成显式数组（方案 §6.1）
+  const toggleModelEnabled = (m: string) => {
+    setEditing((cur) => {
+      if (!cur) return cur
+      const curEnabled = enabledModelsOf(cur)
+      const next = curEnabled.includes(m) ? curEnabled.filter((x) => x !== m) : [...curEnabled, m]
+      return { ...cur, enabledModels: next }
+    })
+    setEnabledDirty(true)
+  }
+
+  /** 一键启用左栏搜索命中的模型（避免误以为启用了全部 N 个） */
+  const enableFiltered = () => {
+    setEditing((cur) => {
+      if (!cur) return cur
+      const q = modelSearch.trim().toLowerCase()
+      const hits = cur.models.filter((m) => m.toLowerCase().includes(q))
+      const curEnabled = enabledModelsOf(cur)
+      return { ...cur, enabledModels: [...curEnabled, ...hits] }
+    })
+    setEnabledDirty(true)
+  }
+
+  /** 右栏「全部停用」：写显式 []（与「未配置」严格区分） */
+  const disableAllModels = () => {
+    setEditing((cur) => (cur ? { ...cur, enabledModels: [] } : cur))
+    setEnabledDirty(true)
   }
 
   // 用户显式点击才取回明文：单条查询，不改变「列表不落明文」的默认
@@ -321,6 +376,11 @@ export const ProviderSettings: React.FC = () => {
     if (isPlainRemoteHttp(baseUrl) && !(await confirm({ message: t('provider.plainHttpWarn'), danger: true }))) {
       return
     }
+    // 有缓存模型但一个都没启用是合法意图，但不能让人误操作后无感知：保存前二次确认（方案 §5.4）
+    if (editing.models.length > 0 && effectiveEnabled.length === 0) {
+      const ok = await confirm({ message: t('provider.zeroEnabledConfirm'), danger: true })
+      if (!ok) return
+    }
     const toSave: ProviderRecord = {
       ...editing,
       baseUrl,
@@ -338,6 +398,7 @@ export const ProviderSettings: React.FC = () => {
     setNotice({ ok: true, text: t('provider.saved', { name: saved.name }) })
     await load()
     setEditing(saved)
+    setEnabledDirty(false)
     // 保存后回到掩码视图（saved.apiKeys 已是掩码），避免明文长期停留在表单里
     setKeysText(saved.apiKeys.join('\n'))
     setKeysRevealed(false)
@@ -359,8 +420,18 @@ export const ProviderSettings: React.FC = () => {
         setNotice({ ok: false, text: t('provider.fetchFail', { e: why }) })
         return
       }
+      // 拉取只替换 models，保留 editing.enabledModels（显式白名单下新模型默认不启用，方案 §3.4）
       setEditing({ ...editing, models })
-      setNotice({ ok: true, text: t('provider.fetchOk', { n: models.length }) })
+      // 新增的「未启用」模型数：NULL 口径下全部自动启用 ⇒ 恒为 0；显式白名单下 = 不在白名单里的新模型
+      const nextEnabledSet = new Set(editing.enabledModels ?? models)
+      const addedDisabled = models.filter((m) => !nextEnabledSet.has(m)).length
+      setNotice({
+        ok: true,
+        text:
+          addedDisabled > 0
+            ? `${t('provider.fetchOk', { n: models.length })} ${t('provider.fetchAdded', { n: addedDisabled })}`
+            : t('provider.fetchOk', { n: models.length })
+      })
       await load()
     } catch (e) {
       setNotice({ ok: false, text: t('provider.fetchFail', { e: errText(e) }) })
@@ -444,7 +515,7 @@ export const ProviderSettings: React.FC = () => {
             {t('provider.selectPrompt')}
           </div>
         ) : (
-          <div className="max-w-xl space-y-4">
+          <div className="max-w-3xl space-y-4">
             {/* 预设 */}
             <div>
               <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('provider.presets')}</label>
@@ -513,7 +584,7 @@ export const ProviderSettings: React.FC = () => {
               </div>
             </Field>
 
-            <Field label={t('provider.f.cached', { n: editing.models.length })}>
+            <Field label={t('provider.f.cached')}>
               {/* §271：那一读失败时每行模型后面那枚徽标整块不出现＝把"读不到判定"演成"这台从没探过"（判定其实存在库里）。
                   那颗「探测能否派活」不是这一发的出口（它是三发真请求，不是重读清单）⇒ 这里给一颗自己的键 */}
               {capsUnread && (
@@ -540,55 +611,172 @@ export const ProviderSettings: React.FC = () => {
                   </button>
                 </div>
               )}
-              <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto p-2 rounded bg-[var(--color-input-bg)] border border-[var(--color-border)]">
-                {editing.models.length === 0 ? (
-                  <span className="text-xs text-[var(--color-text-muted)]">{t('provider.noCached')}</span>
-                ) : (
-                  editing.models.map((m) => (
-                    <span
-                      key={m}
-                      className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-inline-code-bg)] font-mono inline-flex items-center gap-1"
-                    >
-                      {m}
-                      <button
-                        type="button"
-                        onClick={() => removeModel(m)}
-                        title={t('provider.removeModel')}
-                        aria-label={`${t('provider.removeModel')}: ${m}`}
-                        className="opacity-50 hover:opacity-100 leading-none"
-                      >
-                        ✕
-                      </button>
-                      {editing.id && (
-                        <DelegateCapabilityBadge
-                          entry={caps[delegateKey(editing.id, m)]}
-                          probing={probingKey === delegateKey(editing.id, m)}
-                          onProbe={() => {
-                            void probeModel(m)
-                          }}
-                          onStopProbe={() => {
-                            void stopProbe(m)
-                          }}
-                          onToggleDelegation={(on) => {
-                            void toggleDelegation(m, on)
-                          }}
+              {/* 双栏：左=缓存全集（探测仍在这里做），右=启用白名单；移动只在草稿里，保存才落库（方案 §3.1） */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {(() => {
+                  const q = modelSearch.trim().toLowerCase()
+                  const filtered = q ? editing.models.filter((m) => m.toLowerCase().includes(q)) : editing.models
+                  const filteredNotEnabled = filtered.filter((m) => !effectiveEnabled.includes(m)).length
+                  return (
+                    <div className="flex flex-col rounded border border-[var(--color-border)] bg-[var(--color-input-bg)]">
+                      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-[var(--color-border)]">
+                        <span className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
+                          {t('provider.colAll', { n: editing.models.length })}
+                        </span>
+                        <input
+                          className="input text-[11px] py-0.5 flex-1 min-w-0"
+                          value={modelSearch}
+                          onChange={(e) => setModelSearch(e.target.value)}
+                          placeholder={t('provider.searchModels')}
                         />
-                      )}
-                      {editing.id && (
-                        <ToolCapabilityBadge
-                          entry={toolCaps[toolCapabilityKey(editing.id, m)]}
-                          probing={toolProbingKey === toolCapabilityKey(editing.id, m)}
-                          onProbe={() => {
-                            void probeTool(m)
-                          }}
-                          onStopProbe={() => {
-                            void stopToolProbe(m)
-                          }}
-                        />
-                      )}
+                        {q && filteredNotEnabled > 0 && (
+                          <button
+                            type="button"
+                            className="chip chip-accent whitespace-nowrap"
+                            onClick={enableFiltered}
+                          >
+                            {t('provider.enableFiltered', { n: filteredNotEnabled })}
+                          </button>
+                        )}
+                      </div>
+                      <div className="h-64 overflow-y-auto p-1.5 space-y-0.5">
+                        {editing.models.length === 0 ? (
+                          <span className="text-xs text-[var(--color-text-muted)] p-1 block">{t('provider.noCached')}</span>
+                        ) : filtered.length === 0 ? (
+                          <span className="text-xs text-[var(--color-text-muted)] p-1 block">{t('provider.noModelMatch')}</span>
+                        ) : (
+                          filtered.map((m) => {
+                            const on = effectiveEnabled.includes(m)
+                            return (
+                              <div
+                                key={m}
+                                onClick={() => toggleModelEnabled(m)}
+                                className="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-[var(--color-hover-overlay)] cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={on}
+                                  onChange={() => toggleModelEnabled(m)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  aria-label={m}
+                                  className="shrink-0"
+                                />
+                                <span className="text-[11px] font-mono truncate flex-1" title={m}>
+                                  {m}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    removeModel(m)
+                                  }}
+                                  title={t('provider.removeModel')}
+                                  aria-label={`${t('provider.removeModel')}: ${m}`}
+                                  className="opacity-50 hover:opacity-100 leading-none shrink-0"
+                                >
+                                  ✕
+                                </button>
+                                {/* 探测徽标不参与启用切换：点「测一下 / 探测能否派活」不得顺带改勾选态（stopPropagation） */}
+                                {editing.id && (
+                                  <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                    <DelegateCapabilityBadge
+                                      entry={caps[delegateKey(editing.id, m)]}
+                                      probing={probingKey === delegateKey(editing.id, m)}
+                                      onProbe={() => {
+                                        void probeModel(m)
+                                      }}
+                                      onStopProbe={() => {
+                                        void stopProbe(m)
+                                      }}
+                                      onToggleDelegation={(on) => {
+                                        void toggleDelegation(m, on)
+                                      }}
+                                    />
+                                  </span>
+                                )}
+                                {editing.id && (
+                                  <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                    <ToolCapabilityBadge
+                                      entry={toolCaps[toolCapabilityKey(editing.id, m)]}
+                                      probing={toolProbingKey === toolCapabilityKey(editing.id, m)}
+                                      onProbe={() => {
+                                        void probeTool(m)
+                                      }}
+                                      onStopProbe={() => {
+                                        void stopToolProbe(m)
+                                      }}
+                                    />
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+                      <div className="px-2 py-1 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
+                        {t('provider.disabledCount', { n: editing.models.length - effectiveEnabled.length })}
+                      </div>
+                    </div>
+                  )
+                })()}
+                <div className="flex flex-col rounded border border-[var(--color-border)] bg-[var(--color-input-bg)]">
+                  <div className="flex items-center gap-2 px-2 py-1.5 border-b border-[var(--color-border)]">
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      {t('provider.colEnabled', { n: effectiveEnabled.length })}
                     </span>
-                  ))
-                )}
+                    {enabledDirty && (
+                      <span
+                        data-testid="provider-enabled-unsaved"
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                      >
+                        {t('provider.unsaved')}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="ml-auto text-[11px] underline text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-40"
+                      onClick={disableAllModels}
+                      disabled={editing.models.length === 0}
+                    >
+                      {t('provider.disableAll')}
+                    </button>
+                  </div>
+                  <div className="h-64 overflow-y-auto p-1.5 space-y-0.5">
+                    {editing.models.length === 0 ? (
+                      <span className="text-xs text-[var(--color-text-muted)] p-1 block">{t('provider.pullFirst')}</span>
+                    ) : effectiveEnabled.length === 0 ? (
+                      <span className="text-xs text-[var(--color-text-muted)] p-1 block">{t('provider.noEnabledYet')}</span>
+                    ) : (
+                      effectiveEnabled.map((m) => (
+                        <div
+                          key={m}
+                          className="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-[var(--color-hover-overlay)]"
+                        >
+                          <span className="text-[11px] font-mono truncate flex-1" title={m}>
+                            {m}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleModelEnabled(m)}
+                            title={t('provider.disableKeepCached')}
+                            aria-label={`${t('provider.disableKeepCached')}: ${m}`}
+                            className="opacity-50 hover:opacity-100 leading-none shrink-0"
+                          >
+                            ←
+                          </button>
+                        </div>
+                      ))
+                    )}
+                    {staleEnabledCount > 0 && (
+                      <p className="text-[10px] text-[var(--color-warning, #d97706)] p-1">
+                        {t('provider.enabledStale', { n: staleEnabledCount })}
+                      </p>
+                    )}
+                  </div>
+                  <div className="px-2 py-1 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
+                    {t('provider.enabledOfTotal', { n: effectiveEnabled.length, total: editing.models.length })} · {t('provider.draftHint')}
+                  </div>
+                </div>
               </div>
               {/* 费用口径必须看得见，不能只藏在按钮 title 里：3 发真请求走用户自己的 Key */}
               {editing.models.length > 0 && (

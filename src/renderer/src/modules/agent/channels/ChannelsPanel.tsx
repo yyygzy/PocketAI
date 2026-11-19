@@ -10,6 +10,7 @@ import type {
   ChannelType
 } from '../../../../../shared/types'
 import { CHANNEL_TYPES } from '../../../../../shared/types'
+import { enabledModelsOf } from '../../../../../shared/provider-models'
 import { useI18n } from '../../../i18n'
 import { assistantDisplayName } from '../../../utils/assistant-display'
 import { useToast } from '../../../components/ToastProvider'
@@ -216,6 +217,8 @@ export const ChannelsPanel: React.FC = () => {
 
   const gatewayActive = status.status === 'running' || status.status === 'starting'
   const selectedProvider = providers.find((p) => p.id === cfg.providerId)
+  // 渠道运行模型的可选范围 = 启用集（未配置 NULL＝全部 models）
+  const usableModels = selectedProvider ? enabledModelsOf(selectedProvider) : []
 
   // 该网关是否需要主/次凭据
   const needPrimary = activeType === 'telegram' || activeType === 'discord' || activeType === 'slack'
@@ -492,8 +495,9 @@ export const ChannelsPanel: React.FC = () => {
           value={cfg.model}
           onChange={(e) => void patchCfg({ model: e.target.value })}
         >
-          <option value="">{selectedProvider.models.length > 0 ? t('agent.selectModel') : t('agent.noModelsHint')}</option>
-          {selectedProvider.models.map((m) => (
+          {/* 启用集口径（方案 §1.3）：渠道运行模型只从启用集里挑；失效的旧配置仍显示原值便于改选 */}
+          <option value="">{usableModels.length > 0 ? t('agent.selectModel') : t('agent.noModelsHint')}</option>
+          {usableModels.map((m) => (
             <option key={m} value={m}>{m}</option>
           ))}
         </select>

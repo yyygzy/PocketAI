@@ -89,6 +89,13 @@ export interface ProviderRecord {
   baseUrl: string
   apiKeys: string[] // 多 Key 轮询（Phase 1 明文，Phase 4 字段级加密）
   models: string[] // 已缓存的模型 ID
+  /**
+   * 已启用模型白名单（按服务商维度）：
+   *  - null / undefined：未配置，全部 models 视为启用（老库升级零感知）
+   *  - []：用户明确全部停用
+   *  - string[]：只启用这些（读取时与 models 求交集）
+   */
+  enabledModels?: string[] | null
   enabled: boolean
   createdAt: number
 }

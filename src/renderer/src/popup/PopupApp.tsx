@@ -4,6 +4,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { pickDefaultProvider } from '../utils/provider-pick'
+import { enabledModelsOf } from '../../../shared/provider-models'
+import { ModelPicker } from '../components/ModelPicker'
 import { Markdown } from '../modules/chat/Markdown'
 import { AttachmentGrid } from '../components/AttachmentGrid'
 import { useToast } from '../components/ToastProvider'
@@ -229,10 +231,12 @@ export const PopupApp: React.FC = () => {
     if (model) localStorage.setItem(LS_MODEL, model)
   }, [model])
   useEffect(() => {
-    if (selectedProvider && selectedProvider.models.length > 0) {
-      // 未选模型，或之前误存了嵌入模型 → 自动纠正为对话模型
-      if (!model || EMBED_MODEL_RE.test(model)) {
-        const next = pickChatModel(selectedProvider.models)
+    // 启用集口径：自动纠正只在「有效启用模型」里挑（未配置 NULL＝全部；显式白名单下不含未启用项）
+    const usable = selectedProvider ? enabledModelsOf(selectedProvider) : []
+    if (usable.length > 0) {
+      // 未选模型，或之前误存了嵌入模型 / 已停用的模型 → 自动纠正为对话模型
+      if (!model || !usable.includes(model) || EMBED_MODEL_RE.test(model)) {
+        const next = pickChatModel(usable)
         if (next && next !== model) setModel(next)
       }
     }
@@ -556,7 +560,8 @@ export const PopupApp: React.FC = () => {
   }
 
   const canSend = !streaming && !!providerId && !!model
-  const models = selectedProvider?.models ?? []
+  // 可选模型走启用集口径（未配置 NULL＝全部；显式白名单与 models 求交）
+  const models = selectedProvider ? enabledModelsOf(selectedProvider) : []
 
   return (
     <div
@@ -675,33 +680,38 @@ export const PopupApp: React.FC = () => {
           </div>
         )}
 
-        {/* 模型选择行 */}
+        {/* 模型选择行：两级选择器（来源 → 型号），面板向上展开（浮窗贴底） */}
         <div
           className="flex items-center gap-1.5 px-3 pb-2 shrink-0"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <select
-            className="select-mini flex-1 min-w-0 text-xs"
-            value={providerId}
-            onChange={(e) => { setProviderId(e.target.value); setModel('') }}
-          >
-            {providers.length === 0 && !providersUnread && <option value="">{t('popup.noProvider')}</option>}
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-          {models.length > 0 ? (
-            <select
-              className="select-mini flex-1 min-w-0 text-xs"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
+          <div className="flex-1 min-w-0">
+            <ModelPicker
+              providers={providers}
+              value={providerId && model ? `${providerId}:${model}` : ''}
+              up
+              emptyText={
+                providers.length === 0 && !providersUnread
+                  ? t('popup.noProvider')
+                  : providers.length > 0
+                    ? // 空态也要让来源名可见：原双下拉里服务商名一直在场，合并成单触发器后不能把它吞掉
+                      `${providers[0]!.name} · ${
+                        providers.some((p) => p.models.length > 0) ? t('ms.noEnabledModels') : t('ms.noModels')
+                      }`
+                    : t('ms.noModels')
+              }
+              onChange={(pid, m) => {
+                setProviderId(pid)
+                setModel(m)
+              }}
+            />
+          </div>
+          {selectedProvider && models.length === 0 && (
+            <button
+              className="btn-ghost text-xs shrink-0"
+              disabled={fetchingModels || !providerId}
+              onClick={fetchModels}
             >
-              {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          ) : (
-            <button className="btn-ghost text-xs shrink-0" disabled={fetchingModels || !providerId} onClick={fetchModels}>
               {fetchingModels ? t('agent.fetching') : t('agent.fetchModels')}
             </button>
           )}

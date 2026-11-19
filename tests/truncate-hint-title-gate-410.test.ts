@@ -262,7 +262,14 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     //   项目名 `{info.name}`（:134）与文件路径 `{f.path}`（:243），子节点都是数据表达式、
     //   没有 t() 键，都自带 title 之外的写法保持原样 ⇒ 总数 100→102、纯数据 83→85；
     //   纯句子/混合两桶不变，所以没 title 名单仍是 4 颗。
-    ).toBe('102/5/1/4/12/85')
+    // 模型启用与两级选择（V4 本批）：
+    //   · ModelPicker.tsx 新增 5 颗位——「全部来源」按钮与来源名 span 是纯句子（本批已补
+    //     title，title 与正文同一份量）⇒ 纯句子 5→7、有 title 1→3；触发器模型名 span、
+    //     左右两栏型号行 span（均裁数据值）⇒ 纯数据 +3。
+    //   · ProviderSettings.tsx 双栏改造新增 2 颗型号行 span（`title={m}` 与正文同源）
+    //     ⇒ 纯数据 +2。
+    //   合计：总数 102→109、纯句子 5→7（3 有 title／4 没 title）、混合不变 12、纯数据 85→90。
+    ).toBe('109/7/3/4/12/90')
   })
 
   it('名单等式：4 颗「整句说明挂在 truncate 且没 title」逐颗认身份，多一颗少一颗都红', () => {
@@ -396,7 +403,10 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
     //   子节点同为属性访问 ⇒ 纯数据、自带 title）⇒ 82→83。
     // 多文件项目卡片（V4-Iter-474）：ProjectActions.tsx 的项目名（:134）与文件路径（:243）各入 1 颗
     //   纯数据位（子节点是数据表达式，裁的是值）⇒ 83→85。
-    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(85)
+    // 模型启用与两级选择（V4 本批）：ModelPicker 触发器模型名 span、左右两栏型号行 span（+3）、
+    //   ProviderSettings 双栏型号行 span（+2）；型号行均 `title={m}` 与正文同源，触发器模型名由
+    //   外层 button 的 title 覆盖 ⇒ 85→90。
+    expect(dataSites.length, `纯数据位现数 ${dataSites.length}＝裁的是文件名／标题这类值`).toBe(90)
     // 混合位里最像"句子被连坐"的一档：字典句 ≥10 字（这些将来要单独判，本枚只列不判）
     const longish = mixedSites.filter((r) => r.maxZh >= 10).map((r) => `${r.file}:${r.line}(${r.maxZh}字)`)
     expect(longish.join(' '), `混合位里字典句 ≥10 字的现数：${longish.join(' ')}`).toBe(

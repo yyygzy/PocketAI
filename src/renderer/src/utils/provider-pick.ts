@@ -7,10 +7,11 @@
 // 而用户明明配了服务商。规则改成：**优先挑有模型的**，全都没有模型时仍返回其中一个，
 // 好让界面能指出真问题（去拉取模型），而不是假装没有服务商。
 import type { ChatTarget, ProviderRecord } from '../../../shared/types'
+import { enabledModelsOf } from '../../../shared/provider-models'
 
-/** 该服务商当前有没有可选项（模型列表非空） */
+/** 该服务商当前有没有可选项（启用集非空；未配置＝全部 models 启用） */
 export function hasUsableModel(p: ProviderRecord | undefined | null): boolean {
-  return !!p && p.enabled && (p.models?.length ?? 0) > 0
+  return !!p && p.enabled && enabledModelsOf(p).length > 0
 }
 
 /**
@@ -42,5 +43,5 @@ export function pickDefaultProvider(
 export function isTargetStillValid(cur: ChatTarget | undefined, providers: ProviderRecord[]): boolean {
   if (!cur || !cur.providerId || !cur.model) return false
   const p = providers.find((x) => x.id === cur.providerId)
-  return !!p && p.enabled && (p.models ?? []).includes(cur.model)
+  return !!p && p.enabled && enabledModelsOf(p).includes(cur.model)
 }

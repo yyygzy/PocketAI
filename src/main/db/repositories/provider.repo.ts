@@ -18,6 +18,7 @@ interface ProviderRow {
   base_url: string | null
   api_key_encrypted: string | null
   models: string | null
+  enabled_models: string | null
   enabled: number
   created_at: number
 }
@@ -30,6 +31,7 @@ function rowToRecord(row: ProviderRow): ProviderRecord {
     baseUrl: row.base_url ?? '',
     apiKeys: decryptApiKeys(row.api_key_encrypted),
     models: safeJsonArray(row.models),
+    enabledModels: safeJsonArrayOrNull(row.enabled_models),
     enabled: row.enabled === 1,
     createdAt: row.created_at
   }
@@ -42,6 +44,18 @@ function safeJsonArray(s: string | null): string[] {
     return Array.isArray(v) ? v.map(String) : []
   } catch {
     return []
+  }
+}
+
+// 启用集的坏 JSON 必须降级为 null（未配置＝全部启用），不能像 models 那样降级成 []：
+// 一次损坏就「一个模型都不可选」是不可接受的，宁可回到老库的宽容口径。
+function safeJsonArrayOrNull(s: string | null): string[] | null {
+  if (s == null || s === '') return null
+  try {
+    const v = JSON.parse(s)
+    return Array.isArray(v) ? v.map(String) : null
+  } catch {
+    return null
   }
 }
 
@@ -111,15 +125,39 @@ export const providerRepo = {
     )
     const enabled = input.enabled ? 1 : 0
 
+    // enabledModels 的三态写入规则（方案 §2.5）：
+    //  · undefined：调用方不关心启用集（首启向导、翻译历史补位等）⇒ 原样保留，绝不误清空；
+    //  · null：显式写回「未配置」（全部启用）；
+    //  · 数组（含 []）：去重后与最终 models 求交集落库。
+    //  · 去重命中（foundByDedupe）时调用方以为自己在新建，那份 [] 只是表单默认值，
+    //    与 models 的空语义同构：existing 已有显式启用集就保留，只有带 id 的保存才允许清空。
+    let nextEnabled: string[] | null
+    if (input.enabledModels === undefined) {
+      nextEnabled = existing?.enabledModels ?? null
+    } else if (input.enabledModels === null) {
+      nextEnabled = null
+    } else if (
+      foundByDedupe &&
+      input.enabledModels.length === 0 &&
+      existing?.enabledModels != null
+    ) {
+      nextEnabled = existing.enabledModels
+    } else {
+      const finalModels: string[] = JSON.parse(models)
+      const set = new Set(input.enabledModels)
+      nextEnabled = finalModels.filter((m) => set.has(m))
+    }
+    const enabledModelsJson = nextEnabled === null ? null : JSON.stringify(nextEnabled)
+
     if (existing) {
       db.prepare(
-        `UPDATE providers SET type=?, name=?, base_url=?, api_key_encrypted=?, models=?, enabled=? WHERE id=?`
-      ).run(input.type, input.name, input.baseUrl, apiKeysCipher, models, enabled, id)
+        `UPDATE providers SET type=?, name=?, base_url=?, api_key_encrypted=?, models=?, enabled_models=?, enabled=? WHERE id=?`
+      ).run(input.type, input.name, input.baseUrl, apiKeysCipher, models, enabledModelsJson, enabled, id)
     } else {
       db.prepare(
-        `INSERT INTO providers (id, type, name, base_url, api_key_encrypted, models, enabled, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(id, input.type, input.name, input.baseUrl, apiKeysCipher, models, enabled, createdAt)
+        `INSERT INTO providers (id, type, name, base_url, api_key_encrypted, models, enabled_models, enabled, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(id, input.type, input.name, input.baseUrl, apiKeysCipher, models, enabledModelsJson, enabled, createdAt)
     }
     return mustGet(() => this.get(id), 'Provider')
   },
@@ -136,8 +174,8 @@ export const providerRepo = {
   deduplicate(): void {
     const db = dbService.getHandle()
     const rows = db
-      .prepare('SELECT id, type, base_url, models, api_key_encrypted FROM providers ORDER BY created_at ASC')
-      .all() as { id: string; type: string; base_url: string | null; models: string | null; api_key_encrypted: string | null }[]
+      .prepare('SELECT id, type, base_url, models, enabled_models, api_key_encrypted FROM providers ORDER BY created_at ASC')
+      .all() as { id: string; type: string; base_url: string | null; models: string | null; enabled_models: string | null; api_key_encrypted: string | null }[]
 
     const rowById = new Map(rows.map((r) => [r.id, r]))
     const seen = new Map<string, string>() // key: `${type}|${baseUrl}` → survivor id
@@ -150,14 +188,30 @@ export const providerRepo = {
         seen.set(key, row.id)
         continue
       }
-      // 合并 models 到 survivor（survivorId 来自 seen，必然存在于 rowById）
+      // 合并 models / enabledModels 到 survivor（survivorId 来自 seen，必然存在于 rowById）
       const survivorRow = rowById.get(survivorId)
       if (!survivorRow) continue
       const survivorModels = safeJsonArray(survivorRow.models)
       const dupModels = safeJsonArray(row.models)
       const merged = [...new Set([...survivorModels, ...dupModels])]
-      db.prepare('UPDATE providers SET models=? WHERE id=?').run(JSON.stringify(merged), survivorId)
+      // 启用集合并（方案 §2.6）：双方 NULL ⇒ NULL；任一方显式 ⇒ 合并各自的有效启用集，
+      // NULL 一方按其全部 models 计（未配置＝全部启用）。合并结果顺序跟 survivor models 走。
+      const survivorEnabled = safeJsonArrayOrNull(survivorRow.enabled_models)
+      const dupEnabled = safeJsonArrayOrNull(row.enabled_models)
+      const mergedEnabled =
+        survivorEnabled == null && dupEnabled == null
+          ? null
+          : (() => {
+              const set = new Set([...(survivorEnabled ?? survivorModels), ...(dupEnabled ?? dupModels)])
+              return [...new Set([...survivorModels, ...dupModels])].filter((m) => set.has(m))
+            })()
+      db.prepare('UPDATE providers SET models=?, enabled_models=? WHERE id=?').run(
+        JSON.stringify(merged),
+        mergedEnabled == null ? null : JSON.stringify(mergedEnabled),
+        survivorId
+      )
       survivorRow.models = JSON.stringify(merged)
+      survivorRow.enabled_models = mergedEnabled == null ? null : JSON.stringify(mergedEnabled)
       toDelete.push(row.id)
     }
 

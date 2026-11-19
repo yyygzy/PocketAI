@@ -11,6 +11,7 @@
 //  ③ 拒绝码逐条翻译：数字取自共享常量，四语 key 既有，不新增文案。
 import { useCallback, useEffect, useState } from 'react'
 import type { ProviderRecord } from '../../../../shared/types'
+import { enabledModelsOf } from '../../../../shared/provider-models'
 import type { FallbackTarget } from '../../../../shared/fallback-target'
 import { fallbackTargetKey } from '../../../../shared/fallback-target'
 import { modelWindowKey } from '../../../../shared/model-window'
@@ -159,13 +160,13 @@ export function useAgentModelExtras(
   const fallbackTarget = providerId && model ? fallbackTargets[fallbackTargetKey(providerId, model)] ?? null : null
 
   /**
-   * 备用**设过但那台已经不在这个实例里**：provider 不在清单／被停用，或模型清单里没这个名字。
-   * 判据与引擎那处逐字同一条（enabled ＋ models.includes），差别只是界面拿得到列表，能把它说出来。
+   * 备用**设过但那台已经不在这个实例里**：provider 不在清单／被停用，或模型不在启用集里。
+   * 启用集口径（方案 §1.3）：未配置 NULL＝全部 models；显式白名单与 models 求交。
    */
   const fallbackMissing = (() => {
     if (!fallbackTarget) return false
     const p = providers.find((x) => x.id === fallbackTarget.providerId)
-    return !p || !p.enabled || !p.models.includes(fallbackTarget.model)
+    return !p || !p.enabled || !enabledModelsOf(p).includes(fallbackTarget.model)
   })()
 
   /**

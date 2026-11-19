@@ -42,6 +42,7 @@ const DDL = `
     base_url TEXT NOT NULL,
     api_key_encrypted TEXT,
     models TEXT,
+    enabled_models TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL
   )`

@@ -3,6 +3,8 @@
 // - 对照模式收纳为一个不显眼的图标按钮，单模型时不占视觉重心
 import React from 'react'
 import type { ProviderRecord, ChatTarget } from '../../../../shared/types'
+import { enabledModelsOf } from '../../../../shared/provider-models'
+import { ModelPicker } from '../../components/ModelPicker'
 import { useI18n } from '../../i18n'
 import { hasUsableModel } from '../../utils/provider-pick'
 
@@ -21,22 +23,15 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
   // 合并下拉的 value = "providerId:model"
   const combinedValue = (t: ChatTarget) => `${t.providerId}:${t.model}`
 
-  const handleCombinedChange = (index: number, value: string) => {
-    const i = value.indexOf(':')
-    if (i <= 0) return
-    const providerId = value.slice(0, i)
-    const model = value.slice(i + 1)
-    onChange(targets.map((t, idx) => (idx === index ? { ...t, providerId, model } : t)))
-  }
-
   const addTarget = () => {
     const base = enabled[0]
-    // 一家模型都没有时不新增 target：多出来的只会是一个空下拉 + 空 model 的目标，
+    // 一家启用模型都没有时不新增 target：多出来的只会是一个空下拉 + 空 model 的目标，
     // 除了让 canSend 更不可能成立之外没有任何作用
     if (!base || !hasUsableModel(base)) return
+    const usable = enabledModelsOf(base)
     const used = new Set(targets.map((t) => `${t.providerId}:${t.model}`))
-    const candidate = base.models.find((m) => !used.has(`${base.id}:${m}`))
-    onChange([...targets, { providerId: base.id, model: candidate ?? base.models[0] ?? '' }])
+    const candidate = usable.find((m) => !used.has(`${base.id}:${m}`))
+    onChange([...targets, { providerId: base.id, model: candidate ?? usable[0] ?? '' }])
   }
 
   const removeTarget = (index: number) => {
@@ -48,10 +43,17 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
     onChange([targets[0]!])
   }
 
-  // 扁平化所有可选模型：Provider名 / 模型名
-  const options = enabled.flatMap((p) =>
-    p.models.map((m) => ({ value: `${p.id}:${m}`, label: `${p.name} / ${m}` }))
-  )
+  // 空态三分（§5.4）：触发器上要区分「没配置」「没拉取」「没启用」
+  const emptyText =
+    enabled.length === 0
+      ? t('ms.notConfigured')
+      : enabled.some((p) => p.models.length > 0)
+        ? t('ms.noEnabledModels')
+        : t('ms.noModels')
+
+  const handlePick = (index: number, providerId: string, model: string) => {
+    onChange(targets.map((t, idx) => (idx === index ? { ...t, providerId, model } : t)))
+  }
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
@@ -62,25 +64,21 @@ export const ModelSelector: React.FC<Props> = ({ providers, targets, onChange, d
         </span>
       )}
 
+      {/* targets 为空（全部服务商都没启用模型）时保留一个触发器/提示，不整条栏消失（方案 §5.2） */}
+      {targets.length === 0 && (
+        <ModelPicker providers={providers} value="" disabled emptyText={emptyText} onChange={() => {}} />
+      )}
+
       {targets.map((target, i) => (
         <div key={`${target.providerId}-${target.model}`} className="flex items-center gap-1">
-          <select
-            className="select-mini min-w-[140px]"
+          {/* 两级选择器（来源 → 型号）；空态三分文案由 emptyText 传给触发器 */}
+          <ModelPicker
+            providers={providers}
             value={combinedValue(target)}
             disabled={disabled}
-            onChange={(e) => handleCombinedChange(i, e.target.value)}
-          >
-            {/* 下拉里一个可选项都没有时必须有话说：区分"没配服务商"与
-                "配了但模型列表是空的"（后者去拉模型，不是再配一家） */}
-            {options.length === 0 && (
-              <option value="">{enabled.length === 0 ? t('ms.notConfigured') : t('ms.noModels')}</option>
-            )}
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            emptyText={emptyText}
+            onChange={(providerId, model) => handlePick(i, providerId, model)}
+          />
           {compareMode && (
             <button
               onClick={() => removeTarget(i)}

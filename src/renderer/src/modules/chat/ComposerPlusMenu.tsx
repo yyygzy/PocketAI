@@ -21,6 +21,7 @@ import {
   MODEL_WINDOW_MIN_TOKENS
 } from '../../../../shared/model-window'
 import { useI18n } from '../../i18n'
+import { enabledModelsOf } from '../../../../shared/provider-models'
 import { FloatingPanel } from '../../components/FloatingPanel'
 import { AgentToolBars, agentToolSummary } from './AgentToolBars'
 import type { AgentToolConfigs } from './useAgentToolConfigs'
@@ -168,7 +169,8 @@ export const ComposerPlusMenu: React.FC<Props> = ({
     .map((p) => ({
       id: p.id,
       name: p.name,
-      models: p.models.filter((m) => !(p.id === providerId && m === model))
+      // 启用集口径：备用模型候选只从启用集里挑（当前主目标占用的那个也不列）
+      models: enabledModelsOf(p).filter((m) => !(p.id === providerId && m === model))
     }))
     .filter((p) => p.models.length > 0)
 

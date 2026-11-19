@@ -38,6 +38,8 @@ interface Props {
   canSend: boolean
   /** 服务商已配置但一家都没有模型列表：占位文案改说「去拉取模型」 */
   noModels?: boolean
+  /** 有缓存模型但一个都没启用：占位文案说「去设置启用」，不说「未配置」 */
+  noEnabledModels?: boolean
   onSend: (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => void
   onStop: () => void
   /** 当前待回复的引用消息（显示引用条） */
@@ -89,6 +91,7 @@ export const Composer: React.FC<Props> = ({
   streaming,
   canSend,
   noModels,
+  noEnabledModels,
   onSend,
   onStop,
   replyTo,
@@ -1059,7 +1062,15 @@ export const Composer: React.FC<Props> = ({
             }}
             onKeyDown={handleKeyDown}
             rows={1}
-            placeholder={canSend ? t('composer.ph') : noModels ? t('composer.noModels') : t('composer.noProvider')}
+            placeholder={
+              canSend
+                ? t('composer.ph')
+                : noModels
+                  ? t('composer.noModels')
+                  : noEnabledModels
+                    ? t('composer.noEnabledModels')
+                    : t('composer.noProvider')
+            }
             className="flex-1 bg-transparent resize-none outline-none text-[var(--chat-font-size)] leading-relaxed px-2 py-1.5 max-h-[200px]"
           />
 

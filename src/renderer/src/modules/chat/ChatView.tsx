@@ -756,8 +756,13 @@ export const ChatView: React.FC<Props> = ({
   // P0-4b：首次选中某台模型时自动探一次工具调用能力（3 次请求，计入用户额度）；
   // 已有结论（含「跳过」）只读台账不发请求。四档都只提示，不挡发送。
   const toolCapability = useToolCapabilityAutoProbe(targets[0]?.providerId ?? '', targets[0]?.model ?? '')
+  // 空态三分（方案 §5.4）：「没配置」「没拉取」「没启用」必须各说各话，不能都推给「未配置服务商」
+  const hasEnabledProvider = providers.some((p) => p.enabled)
   /** 服务商是有的、只是一家都没有模型列表：提示语必须说「去拉取模型」，不能说「去配置服务商」 */
-  const noModelsAtAll = providers.some((p) => p.enabled) && !providers.some((p) => hasUsableModel(p))
+  const noModelsAtAll = hasEnabledProvider && !providers.some((p) => p.enabled && (p.models?.length ?? 0) > 0)
+  /** 有缓存模型但一个都没启用：合法意图，但要给出去设置启用的明确指引 */
+  const noEnabledModels =
+    !noModelsAtAll && hasEnabledProvider && !providers.some((p) => hasUsableModel(p))
 
   /** 回到底部：滚到最后一轮并标记在底部（恢复流式跟滚） */
   const jumpToBottom = useCallback(() => {
@@ -1529,6 +1534,7 @@ export const ChatView: React.FC<Props> = ({
             streaming={streaming}
             canSend={canSend}
             noModels={noModelsAtAll}
+            noEnabledModels={noEnabledModels}
             onSend={onSend}
             onStop={onStop}
             agentMode={agentMode}

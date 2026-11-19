@@ -80,7 +80,10 @@ describe('快捷预设不得残留上一条的信息', () => {
     await openGlm()
     expect(baseUrlInput().value).toBe('https://open.bigmodel.cn/api/paas/v4')
     expect(keyBox().value).toBe('••••st6I')
-    expect(screen.getByText('已缓存模型（2）')).toBeTruthy()
+    // 双栏后标题不再带总数；左栏与右栏各自带计数（启用集未配置 ⇒ 全部启用）
+    expect(screen.getByText('已缓存模型')).toBeTruthy()
+    expect(screen.getByText('全部模型（2）')).toBeTruthy()
+    expect(screen.getByText('已启用（2）')).toBeTruthy()
     expect(screen.queryByText('暂无，点「拉取模型」')).toBeNull()
   })
 })
@@ -94,9 +97,10 @@ describe('已缓存模型逐个移除', () => {
     // §365 成色：这一发**没有"到货"那一步**（摘模型是本地 setState，不经 IPC）⇒延迟杠杆不适用，
     // 只能按形状判：同一批里计数与那行一起掉，把计数写进门里是让"见证"与"判据"落在同一帧，不新增等待。
     await waitFor(() => {
-      expect(screen.getByText('已缓存模型（1）'), '计数跟着掉').toBeTruthy()
+      expect(screen.getByText('全部模型（1）'), '计数跟着掉').toBeTruthy()
       expect(screen.queryByText('glm-4.6')).not.toBeTruthy()
-      expect(screen.getByText('glm-5')).toBeTruthy()
+      // 双栏下模型名会同时出现在左栏与右栏
+      expect(screen.getAllByText('glm-5').length).toBeGreaterThan(0)
     })
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
@@ -109,8 +113,48 @@ describe('已缓存模型逐个移除', () => {
     await openGlm()
     fireEvent.click(screen.getByLabelText('从缓存中移除该模型（保存后生效）: glm-4.6'))
     fireEvent.click(screen.getByLabelText('从缓存中移除该模型（保存后生效）: glm-5'))
-    await waitFor(() => expect(screen.getByText('已缓存模型（0）')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('全部模型（0）')).toBeTruthy())
     expect(screen.getByText('暂无，点「拉取模型」')).toBeTruthy()
+  })
+})
+
+// ── 模型启用白名单（方案 P2）：右栏是启用集的草稿态，保存才落库 ──
+describe('启用白名单双栏草稿', () => {
+  it('未配置（NULL）⇒ 全部启用；点右栏「←」⇒ 出现「未保存」标记，保存载荷带显式数组', async () => {
+    await openGlm()
+    expect(screen.getByText('已启用（2）')).toBeTruthy()
+    expect(screen.queryByTestId('provider-enabled-unsaved')).toBeNull()
+    fireEvent.click(screen.getByLabelText('停用（保留缓存）: glm-4.6'))
+    expect(screen.getByTestId('provider-enabled-unsaved')).toBeTruthy()
+    expect(screen.getByText('已启用（1）')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(saved).toHaveLength(1))
+    expect(saved[0]!.enabledModels).toEqual(['glm-5'])
+    // 保存后草稿标记清掉
+    await waitFor(() => expect(screen.queryByTestId('provider-enabled-unsaved')).toBeNull())
+  })
+
+  it('点「全部停用」⇒ 保存前弹零启用确认；确认后载荷 enabledModels 为 []', async () => {
+    await openGlm()
+    fireEvent.click(screen.getByRole('button', { name: zh['provider.disableAll'] }))
+    expect(screen.getByText('已启用（0）')).toBeTruthy()
+    expect(screen.getByText(zh['provider.noEnabledYet'])).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(zh['provider.zeroEnabledConfirm'])).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['common.confirm'] }))
+    await waitFor(() => expect(saved).toHaveLength(1))
+    expect(saved[0]!.enabledModels).toEqual([])
+  })
+
+  it('点探测徽标不顺带改勾选态（stopPropagation）', async () => {
+    await openGlm()
+    fireEvent.click(screen.getAllByText(zh['provider.capProbe'])[0]!)
+    // 探测发出了，但右栏计数与「未保存」标记都不动
+    expect(pocketaiCalls().some((c) => c.fn === 'probeDelegateCapability')).toBe(true)
+    expect(screen.getByText('已启用（2）')).toBeTruthy()
+    expect(screen.queryByTestId('provider-enabled-unsaved')).toBeNull()
   })
 })
 
@@ -138,8 +182,8 @@ describe('IPC 失败必须被当失败（不是 rejection，也不许当成功�
     fireEvent.click(screen.getByRole('button', { name: '拉取模型' }))
     expect(await screen.findByText(/拉取失败/)).toBeTruthy()
     // 白屏的反证：这一句在旧代码里已经拿不到了（render 抛错后整棵树没了）
-    expect(screen.getByText('已缓存模型（2）')).toBeTruthy()
-    expect(screen.getByText('glm-4.6')).toBeTruthy()
+    expect(screen.getByText('全部模型（2）')).toBeTruthy()
+    expect(screen.getAllByText('glm-4.6').length).toBeGreaterThan(0)
   })
 
   it('显示密钥失败 ⇒ 不许把输入框清空并翻成"已显示"（那是静默假成功）', async () => {

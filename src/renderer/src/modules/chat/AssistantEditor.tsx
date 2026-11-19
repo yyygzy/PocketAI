@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { AssistantRecord, ProviderRecord, KnowledgeBase, ToolSchema, SkillRecord } from '../../../../shared/types'
+import { enabledModelsOf } from '../../../../shared/provider-models'
+import { ModelPicker } from '../../components/ModelPicker'
 import { planResidentSkills, RESIDENT_SKILL_TOTAL_CHAR_BUDGET } from '../../../../shared/skill-budget'
 import { useI18n } from '../../i18n'
 import { hasIpcFailed, isIpcFail, ipcFailText, logIpcError } from '../../utils/ipc'
@@ -264,19 +266,27 @@ export const AssistantEditor: React.FC<Props> = ({ initial, providers, onCancel,
       <div>
         <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('ae.defaultModel')}</label>
         <div className="flex gap-2">
-          <select className="select-mini flex-1" value={providerId} onChange={(e) => { setProviderId(e.target.value); setModel('') }}>
+          {/* 「跟随当前」保留为独立选项；选定服务商后具体模型走两级选择器（启用集口径） */}
+          <select
+            className="select-mini shrink-0"
+            value={providerId}
+            onChange={(e) => {
+              setProviderId(e.target.value)
+              setModel('')
+            }}
+          >
             <option value="">{t('ae.followCurrent')}</option>
             {enabledProviders.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          {provider && provider.models.length > 0 && (
-            <select className="select-mini flex-1" value={model} onChange={(e) => setModel(e.target.value)}>
-              <option value="">{t('ae.selectModel')}</option>
-              {provider.models.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+          {provider && (
+            <ModelPicker
+              providers={enabledProviders}
+              value={model ? `${provider.id}:${model}` : ''}
+              emptyText={enabledModelsOf(provider).length === 0 ? t('ms.noEnabledModels') : t('ae.selectModel')}
+              onChange={(_pid, m) => setModel(m)}
+            />
           )}
         </div>
       </div>
