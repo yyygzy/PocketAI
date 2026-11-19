@@ -51,11 +51,12 @@ beforeEach(() => {
 // ── BUILTIN_TOOLS 聚合 ────────────────────────────────────
 
 describe('BUILTIN_TOOLS 聚合', () => {
-  it('含 22 个工具', () => {
+  it('含 27 个工具', () => {
     // 这一条是**有意的绊线**：加一个内置工具会抬高每个助手的可见面（'*' 直接覆盖内置），
     // 所以必须显式改这里。V4-Iter-144 加的是第 14 个：agent.delegate（委派本身）；
-    // v77 加的是第 15-22 个：8 枚免 Key 免费公共 API 工具（free-api.ts，全部 permission=auto）。
-    expect(BUILTIN_TOOLS).toHaveLength(22)
+    // v77 加的是第 15-22 个：8 枚免 Key 免费公共 API 工具（free-api.ts，全部 permission=auto）；
+    // v79 加的是第 23-27 个：世界银行/链上费率/金银/地震/日出日落（同一文件）。
+    expect(BUILTIN_TOOLS).toHaveLength(27)
   })
 
   it('id 集合包含全部预期工具', () => {
@@ -65,6 +66,7 @@ describe('BUILTIN_TOOLS 聚合', () => {
         'time.now', 'calculator', 'web.fetch', 'web.search', 'js.eval',
         'weather.query', 'exchange.rate', 'ip.lookup', 'crypto.price',
         'holiday.public', 'wiki.summary', 'air.quality', 'dict.en', 'translate.mymemory',
+        'worldbank.indicator', 'btc.fees', 'metal.price', 'earthquake.feed', 'sun.times',
         'calendar.read', 'kb_search', 'todo_write',
         'memory_save', 'reminder.set', 'reminder.list', 'reminder.cancel',
         'agent.delegate'

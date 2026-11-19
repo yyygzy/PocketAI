@@ -1,6 +1,6 @@
-// 免费公共 API 工具集 execute 测试（v77 批次八件套）
+// 免费公共 API 工具集 execute 测试（v77 批次八件套 + v79 五件套）
 //
-// 覆盖 src/main/tools/free-api.ts 的 8 枚工具：
+// 覆盖 src/main/tools/free-api.ts 的 13 枚工具：
 //  - exchange_rate：默认/指定 base、target 单档、币种码校验、result!=success、HTTP/JSON 错误
 //  - ip_lookup：默认本机（根路径）、带 ip、非法字符、success=false
 //  - crypto_price：默认 bitcoin/usd、未知币种、非法 coin、coingecko 失败走 OKX 备源（仅 usd）
@@ -9,9 +9,14 @@
 //  - air_quality：location 走 geocode、经纬度直用、两者皆缺、输出字段映射
 //  - dictionary_en：正常词条裁剪、非英文单词、HTTP 404
 //  - translate：正常、空文本、超长、语言代码校验（不支持 auto）、responseDetails 透出
+//  - worldbank_indicator：正常取点、rows=null、指标码/国家码校验、缺参数
+//  - btc_fees：正常五档、无费率字段、HTTP 错误
+//  - metal_price：默认 gold、silver、非法金属
+//  - earthquake_feed：默认 feed、按震级选源、裁剪 8 条、空列表
+//  - sun_times：经纬度直查、city 走 geocode、两者皆缺
 //
-// 策略：mock safeFetch 按 url 子串分派（同 weather.test.ts 范式）；air_quality 的地理编码
-//       mock '../src/main/tools/weather' 的 geocode。
+// 策略：mock safeFetch 按 url 子串分派（同 weather.test.ts 范式）；air_quality/sun_times 的
+//       地理编码 mock '../src/main/tools/weather' 的 geocode。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 vi.mock('../src/main/net/safe-fetch', () => ({
@@ -35,7 +40,12 @@ import {
   wikiSummaryTool,
   airQualityTool,
   dictionaryTool,
-  translateTool
+  translateTool,
+  worldBankTool,
+  btcFeesTool,
+  metalPriceTool,
+  earthquakeTool,
+  sunTimesTool
 } from '../src/main/tools/free-api'
 import { SafeFetchError, safeFetch } from '../src/main/net/safe-fetch'
 import { geocode } from '../src/main/tools/weather'
@@ -416,5 +426,202 @@ describe('translate', () => {
       responseData: {}
     })
     await expect(translateTool.execute({ text: 'x' })).rejects.toThrow('FREE TRANSLATIONS')
+  })
+})
+
+// ── worldbank_indicator ──────────────────────────────────
+
+describe('worldbank_indicator', () => {
+  const rows = [
+    { date: '2024', value: 1.8e13, country: { value: 'China' }, indicator: { value: 'GDP (current US$)' } },
+    { date: '2023', value: 1.7e13, country: { value: 'China' }, indicator: { value: 'GDP (current US$)' } }
+  ]
+
+  it('正常 → 取点、带国家与指标名、per_page 跟随 years', async () => {
+    mockJson('api.worldbank.org', [{ page: 1 }, rows])
+    const out = JSON.parse(
+      await worldBankTool.execute({ indicator: 'NY.GDP.MKTP.CD', country: 'CN', years: 2 })
+    )
+    expect(out.country).toBe('China')
+    expect(out.indicator).toEqual({ id: 'NY.GDP.MKTP.CD', name: 'GDP (current US$)' })
+    expect(out.points).toEqual([
+      { year: '2024', value: 1.8e13 },
+      { year: '2023', value: 1.7e13 }
+    ])
+    expect(String(mockSafeFetch.mock.calls[0]![0])).toContain('per_page=2')
+  })
+
+  it('缺 indicator / 非法指标码 / 非法国家码 → 报错且不出网', async () => {
+    await expect(worldBankTool.execute({})).rejects.toThrow('indicator 不能为空')
+    await expect(worldBankTool.execute({ indicator: 'A' })).rejects.toThrow('指标代码')
+    await expect(worldBankTool.execute({ indicator: 'NY.GDP', country: '中' })).rejects.toThrow('国家码')
+    expect(mockSafeFetch).not.toHaveBeenCalled()
+  })
+
+  it('rows=null → 报错说明国家码/指标码可能不适用', async () => {
+    mockJson('api.worldbank.org', [{ page: 1 }, null])
+    await expect(worldBankTool.execute({ indicator: 'NY.GDP.MKTP.CD' })).rejects.toThrow('数据')
+  })
+
+  it('过滤 value=null 的点；全为空 → 报错', async () => {
+    mockJson('api.worldbank.org', [
+      { page: 1 },
+      [{ date: '2024', value: null }, { date: '2023', value: null }]
+    ])
+    await expect(worldBankTool.execute({ indicator: 'NY.GDP.MKTP.CD' })).rejects.toThrow('数据')
+  })
+})
+
+// ── btc_fees ─────────────────────────────────────────────
+
+describe('btc_fees', () => {
+  it('正常 → 五档费率（sat/vB）', async () => {
+    mockJson('mempool.space', {
+      fastestFee: 12,
+      halfHourFee: 8,
+      hourFee: 5,
+      economyFee: 2,
+      minimumFee: 1
+    })
+    const out = JSON.parse(await btcFeesTool.execute({}))
+    expect(out).toMatchObject({
+      unit: 'sat/vB',
+      fastest: 12,
+      halfHour: 8,
+      hour: 5,
+      economy: 2,
+      minimum: 1
+    })
+    expect(String(mockSafeFetch.mock.calls[0]![0])).toContain('/api/v1/fees/recommended')
+  })
+
+  it('缺 fastestFee → 报错', async () => {
+    mockJson('mempool.space', { hourFee: 5 })
+    await expect(btcFeesTool.execute({})).rejects.toThrow('费率数据')
+  })
+
+  it('HTTP 500 → 报错', async () => {
+    mockJson('mempool.space', {}, 500)
+    await expect(btcFeesTool.execute({})).rejects.toThrow('HTTP 500')
+  })
+})
+
+// ── metal_price ──────────────────────────────────────────
+
+describe('metal_price', () => {
+  it('默认 gold → 请求 XAU，返回 USD/盎司', async () => {
+    mockJson('api.gold-api.com', { name: 'Gold', price: 2400.5, updatedAt: '2026-11-19T00:00:00Z' })
+    const out = JSON.parse(await metalPriceTool.execute({}))
+    expect(out).toMatchObject({ metal: '黄金', symbol: 'XAU', price: 2400.5, unit: 'USD/盎司' })
+    expect(String(mockSafeFetch.mock.calls[0]![0])).toContain('/XAU')
+  })
+
+  it('silver → 请求 XAG', async () => {
+    mockJson('api.gold-api.com', { name: 'Silver', price: 30.2 })
+    const out = JSON.parse(await metalPriceTool.execute({ metal: 'Silver' }))
+    expect(out).toMatchObject({ metal: '白银', symbol: 'XAG' })
+    expect(String(mockSafeFetch.mock.calls[0]![0])).toContain('/XAG')
+  })
+
+  it('非法金属 → 报错且不出网', async () => {
+    await expect(metalPriceTool.execute({ metal: 'copper' })).rejects.toThrow('gold 或 silver')
+    expect(mockSafeFetch).not.toHaveBeenCalled()
+  })
+
+  it('无价格字段 → 报错', async () => {
+    mockJson('api.gold-api.com', { name: 'Gold' })
+    await expect(metalPriceTool.execute({})).rejects.toThrow('未返回价格')
+  })
+})
+
+// ── earthquake_feed ──────────────────────────────────────
+
+describe('earthquake_feed', () => {
+  const feature = (mag: number, place: string) => ({
+    properties: { mag, place, time: 1_700_000_000_000, url: 'https://example.org/e', tsunami: 0 },
+    geometry: { coordinates: [1, 2, 10.5] }
+  })
+
+  it('默认 → 4.5_day，按震级过滤并裁剪到 8 条', async () => {
+    const features = [
+      ...Array.from({ length: 10 }, (_, i) => feature(4.5 + i, `P${i}`)),
+      feature(4.0, 'below')
+    ]
+    mockJson('earthquake.usgs.gov', { features })
+    const out = JSON.parse(await earthquakeTool.execute({}))
+    expect(String(mockSafeFetch.mock.calls[0]![0])).toContain('4.5_day.geojson')
+    expect(out.count).toBe(8)
+    expect(out.truncated).toBe(true)
+    expect(out.events).toHaveLength(8)
+    expect(out.events[0].magnitude).toBe(4.5)
+    expect(out.events[0].depthKm).toBe(10.5)
+    expect(out.events[0].tsunami).toBe(false)
+    expect(out.events.some((e: { place: string }) => e.place === 'below')).toBe(false)
+  })
+
+  it('min_magnitude>=5 → significant 源；days>=7 → week', async () => {
+    mockJson('earthquake.usgs.gov', { features: [feature(6.1, 'X')] })
+    const out = JSON.parse(await earthquakeTool.execute({ min_magnitude: 5, days: 7 }))
+    expect(String(mockSafeFetch.mock.calls[0]![0])).toContain('significant_week.geojson')
+    expect(out.minMagnitude).toBe(5)
+    expect(out.count).toBe(1)
+  })
+
+  it('空列表 → count=0 且不报错（"今天没有"是正常结果）', async () => {
+    mockJson('earthquake.usgs.gov', { features: [] })
+    const out = JSON.parse(await earthquakeTool.execute({}))
+    expect(out.count).toBe(0)
+    expect(out.truncated).toBe(false)
+  })
+})
+
+// ── sun_times ────────────────────────────────────────────
+
+describe('sun_times', () => {
+  const daily = {
+    timezone: 'Asia/Shanghai',
+    daily: {
+      time: ['2026-11-19'],
+      sunrise: ['2026-11-19T07:03'],
+      sunset: ['2026-11-19T16:51'],
+      uv_index_max: [2.4]
+    }
+  }
+
+  it('经纬度 → 直接查预报（不做地理编码）', async () => {
+    mockJson('api.open-meteo.com', daily)
+    const out = JSON.parse(await sunTimesTool.execute({ latitude: 39.9, longitude: 116.4 }))
+    expect(out.timezone).toBe('Asia/Shanghai')
+    expect(out.days[0]).toEqual({
+      date: '2026-11-19',
+      sunrise: '2026-11-19T07:03',
+      sunset: '2026-11-19T16:51',
+      uvIndexMax: 2.4
+    })
+    expect(mockGeocode).not.toHaveBeenCalled()
+    const url = String(mockSafeFetch.mock.calls[0]![0])
+    expect(url).toContain('daily=sunrise,sunset,uv_index_max')
+    expect(url).toContain('forecast_days=1')
+  })
+
+  it('城市名 → 先地理编码再用其经纬度', async () => {
+    mockGeocode.mockResolvedValueOnce({ name: 'Beijing', latitude: 39.9, longitude: 116.4, admin1: 'Beijing', country: 'China' } as any)
+    mockJson('api.open-meteo.com', daily)
+    const out = JSON.parse(await sunTimesTool.execute({ location: '北京', days: 2 }))
+    expect(out.location).toMatchObject({ name: 'Beijing', country: 'China' })
+    const url = String(mockSafeFetch.mock.calls[0]![0])
+    expect(url).toContain('latitude=39.9')
+    expect(url).toContain('forecast_days=2')
+  })
+
+  it('location 与经纬度都缺 → 报错且不出网', async () => {
+    await expect(sunTimesTool.execute({})).rejects.toThrow('必须提供一个')
+    expect(mockSafeFetch).not.toHaveBeenCalled()
+    expect(mockGeocode).not.toHaveBeenCalled()
+  })
+
+  it('无预报数据 → 报错', async () => {
+    mockJson('api.open-meteo.com', { daily: { time: [] } })
+    await expect(sunTimesTool.execute({ latitude: 1, longitude: 1 })).rejects.toThrow('未返回预报数据')
   })
 })

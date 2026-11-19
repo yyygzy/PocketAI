@@ -418,6 +418,7 @@ export const DEFAULT_AGENT_PROMPT = `你是一个智能工作助手（Work Agent
 - 需要读取网页内容 → 调用 web_fetch（url + 可选 maxChars）
 - 用户问天气 → 调用 weather_query（城市名 + 可选预报天数）
 - 汇率换算 → exchange_rate；加密货币行情 → crypto_price；IP 归属/运营商 → ip_lookup；节假日 → public_holiday；百科背景知识 → wiki_summary；空气质量 → air_quality；英文单词释义 → dictionary_en；文本翻译 → translate（免 Key 免配置，直接可用）
+- 世界银行经济数据（GDP/人口/通胀等）→ worldbank_indicator（indicator + 可选 country/years）；比特币链上手续费 → btc_fees（无参数）；金价/银价 → metal_price（可选 metal）；地震速报 → earthquake_feed（可选 min_magnitude/days）；日出日落与紫外线 → sun_times（location 或经纬度）
 - 用户问新闻/股价/赛事等其它实时信息 → 调用 web_search（联网搜索未启用时它会返回开启指引，据其引导用户开启，不要因此断定无法查询而只向用户复述选项）
 - 需要查询用户知识库中的资料 → 调用 kb_search（query + 可选 top_k）
 - 复杂多步任务 → 先调用 todo_write 建立任务清单，每完成一步就更新对应项状态（pending → in_progress → completed）

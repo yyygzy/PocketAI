@@ -12,6 +12,12 @@
 //   air_quality    → air-quality-api.open-meteo.com PM2.5/PM10/AQI（含 open-meteo 地理编码）
 //   dictionary_en  → api.dictionaryapi.dev          英文词典：音标/释义/例句
 //   translate      → api.mymemory.translated.net    机器翻译（匿名 5000 字符/天）
+// v79 第一批梯队（同一打法）：
+//   worldbank_indicator → api.worldbank.org        世界银行经济指标（GDP/人口等）
+//   btc_fees            → mempool.space             BTC 链上手续费建议（sat/vB）
+//   metal_price         → api.gold-api.com          黄金/白银现货参考价（USD/盎司）
+//   earthquake_feed     → earthquake.usgs.gov       全球地震速报（GeoJSON）
+//   sun_times           → api.open-meteo.com        日出日落/紫外线（复用 open-meteo 地理编码）
 import type { BuiltinTool, ToolExecuteContext } from './builtin'
 import { SafeFetchError, safeFetch } from '../net/safe-fetch'
 import { geocode } from './weather'
@@ -601,6 +607,334 @@ export const translateTool: BuiltinTool = {
       from,
       to,
       match: typeof data.responseData?.match === 'number' ? data.responseData.match : null
+    })
+  }
+}
+
+// ── worldbank_indicator：api.worldbank.org 经济指标 ──────────
+// 官方数据，无 Key；响应 [meta, rows|null]。rows 按年份倒序，裁剪到 ≤10 个点。
+
+interface WorldBankRow {
+  date?: string
+  value?: number | null
+  country?: { value?: string }
+  indicator?: { value?: string }
+}
+
+export const worldBankTool: BuiltinTool = {
+  schema: {
+    id: 'worldbank.indicator',
+    name: 'worldbank_indicator',
+    description:
+      '查询世界银行官方经济指标（GDP/人口/通胀/失业率等，免 Key，按国家与指标代码取最近若干年）。参数：indicator (string, 必填, 指标代码如 NY.GDP.MKTP.CD 为 GDP、SP.POP.TOTL 为人口)，country (string, 可选, ISO2/ISO3 国家码如 CN/USA，默认 CN)，years (number, 可选, 返回年份数 1-10，默认 5)。',
+    parameters: {
+      type: 'object',
+      properties: {
+        indicator: { type: 'string', description: '世界银行指标代码，如 NY.GDP.MKTP.CD（GDP）' },
+        country: { type: 'string', description: '国家码，如 CN / USA / CHN，默认 CN' },
+        years: { type: 'number', description: '返回最近几年，1-10，默认 5' }
+      },
+      required: ['indicator'],
+      additionalProperties: false
+    },
+    source: 'builtin',
+    permission: 'auto',
+    timeoutMs: 20_000
+  },
+  async execute(args, ctx) {
+    const indicator = String(args?.indicator ?? '').trim()
+    if (!indicator) throw new Error('indicator 不能为空（如 NY.GDP.MKTP.CD）')
+    if (!/^[A-Za-z][A-Za-z0-9._]{1,40}$/.test(indicator)) {
+      throw new Error('indicator 必须是指标代码（字母/数字/点/下划线，如 NY.GDP.MKTP.CD）')
+    }
+    const country = String(args?.country ?? '').trim() || 'CN'
+    if (!/^[A-Za-z0-9]{2,4}$/.test(country)) {
+      throw new Error('country 必须是 2-4 位国家码（如 CN / USA / CHN）')
+    }
+    const years = Math.min(10, Math.max(1, Math.floor(Number(args?.years) || 5)))
+
+    let data: [unknown, WorldBankRow[] | null]
+    try {
+      data = await getJson<[unknown, WorldBankRow[] | null]>(
+        '世界银行服务',
+        `https://api.worldbank.org/v2/country/${encodeURIComponent(country)}/indicator/${encodeURIComponent(indicator)}?format=json&per_page=${years}&page=1`,
+        ctx
+      )
+    } catch (e) {
+      throw wrapNetworkError(e, '世界银行服务')
+    }
+    const rows = Array.isArray(data?.[1]) ? data[1] : []
+    const points = rows
+      .filter((r) => r && typeof r.date === 'string' && typeof r.value === 'number')
+      .slice(0, years)
+      .map((r) => ({ year: r.date as string, value: r.value as number }))
+    if (points.length === 0) {
+      throw new Error(`世界银行未返回 ${country} 的 ${indicator} 数据（国家码或指标代码可能不适用）`)
+    }
+    return JSON.stringify({
+      country: rows[0]?.country?.value ?? country,
+      indicator: { id: indicator, name: rows[0]?.indicator?.value ?? null },
+      points,
+      note: '世界银行年度数据，数值单位以指标定义为准'
+    })
+  }
+}
+
+// ── btc_fees：mempool.space 链上手续费 ───────────────────────
+// 响应极小（实测 74B），无 Key。
+
+interface MempoolFees {
+  fastestFee?: number
+  halfHourFee?: number
+  hourFee?: number
+  economyFee?: number
+  minimumFee?: number
+}
+
+export const btcFeesTool: BuiltinTool = {
+  schema: {
+    id: 'btc.fees',
+    name: 'btc_fees',
+    description:
+      '查询比特币链上手续费建议（sat/vB：最快/半小时/一小时/经济/最低档，免 Key）。无参数。用于解释当前转账成本或选择费率档位。',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    source: 'builtin',
+    permission: 'auto',
+    timeoutMs: 20_000
+  },
+  async execute(_args, ctx) {
+    let data: MempoolFees
+    try {
+      data = await getJson<MempoolFees>('比特币手续费服务', 'https://mempool.space/api/v1/fees/recommended', ctx)
+    } catch (e) {
+      throw wrapNetworkError(e, '比特币手续费服务')
+    }
+    if (typeof data.fastestFee !== 'number') {
+      throw new Error('比特币手续费服务未返回费率数据')
+    }
+    return JSON.stringify({
+      unit: 'sat/vB',
+      fastest: data.fastestFee,
+      halfHour: data.halfHourFee ?? null,
+      hour: data.hourFee ?? null,
+      economy: data.economyFee ?? null,
+      minimum: data.minimumFee ?? null,
+      source: 'mempool.space'
+    })
+  }
+}
+
+// ── metal_price：api.gold-api.com 金银现货价 ─────────────────
+// 免 Key；返回 USD/盎司的现货参考价（小服务，失败要能降级成"查不到"而非硬依赖）。
+
+interface GoldApiPrice {
+  name?: string
+  price?: number
+  updatedAt?: string
+  updatedAtReadable?: string
+}
+
+const METALS: Readonly<Record<string, { symbol: 'XAU' | 'XAG'; label: string }>> = {
+  gold: { symbol: 'XAU', label: '黄金' },
+  xau: { symbol: 'XAU', label: '黄金' },
+  silver: { symbol: 'XAG', label: '白银' },
+  xag: { symbol: 'XAG', label: '白银' }
+}
+
+export const metalPriceTool: BuiltinTool = {
+  schema: {
+    id: 'metal.price',
+    name: 'metal_price',
+    description:
+      '查询黄金/白银现货参考价（美元/盎司，免 Key）。参数：metal (string, 可选, gold/silver，默认 gold)。价格来自公开聚合服务，仅供行情参考。',
+    parameters: {
+      type: 'object',
+      properties: {
+        metal: { type: 'string', description: 'gold 或 silver，默认 gold' }
+      },
+      additionalProperties: false
+    },
+    source: 'builtin',
+    permission: 'auto',
+    timeoutMs: 20_000
+  },
+  async execute(args, ctx) {
+    const raw = String(args?.metal ?? '').trim().toLowerCase() || 'gold'
+    const hit = METALS[raw]
+    if (!hit) throw new Error('metal 只支持 gold 或 silver')
+    let data: GoldApiPrice
+    try {
+      data = await getJson<GoldApiPrice>(
+        '贵金属行情服务',
+        `https://api.gold-api.com/price/${hit.symbol}`,
+        ctx
+      )
+    } catch (e) {
+      throw wrapNetworkError(e, '贵金属行情服务')
+    }
+    if (typeof data.price !== 'number') throw new Error('贵金属行情服务未返回价格')
+    return JSON.stringify({
+      metal: hit.label,
+      symbol: hit.symbol,
+      price: data.price,
+      unit: 'USD/盎司',
+      updatedAt: data.updatedAt ?? data.updatedAtReadable ?? null
+    })
+  }
+}
+
+// ── earthquake_feed：earthquake.usgs.gov 地震速报 ────────────
+// GeoJSON，无 Key；按震级选 feed，裁剪到最多 8 条事件。
+
+interface UsgsFeature {
+  properties?: {
+    mag?: number | null
+    place?: string | null
+    time?: number
+    url?: string
+    tsunami?: number
+  }
+  geometry?: { coordinates?: number[] }
+}
+
+export const earthquakeTool: BuiltinTool = {
+  schema: {
+    id: 'earthquake.feed',
+    name: 'earthquake_feed',
+    description:
+      '查询全球地震速报（USGS 官方，免 Key）。参数：min_magnitude (number, 可选, 最低震级 2.5/4.5/5+，默认 4.5)，days (number, 可选, 1 或 7，默认 1)。返回时间、震级、地点、深度、海啸标记与详情链接，最多 8 条。',
+    parameters: {
+      type: 'object',
+      properties: {
+        min_magnitude: { type: 'number', description: '最低震级，默认 4.5（>=5 用显著地震源）' },
+        days: { type: 'number', description: '时间范围：1 或 7 天，默认 1' }
+      },
+      additionalProperties: false
+    },
+    source: 'builtin',
+    permission: 'auto',
+    timeoutMs: 20_000
+  },
+  async execute(args, ctx) {
+    const minMagRaw = Number(args?.min_magnitude)
+    const minMag = Number.isFinite(minMagRaw) ? Math.min(9, Math.max(2.5, minMagRaw)) : 4.5
+    const days = Number(args?.days) >= 7 ? 7 : 1
+    const level = minMag >= 5 ? 'significant' : minMag >= 4.5 ? '4.5' : '2.5'
+    const span = days === 7 ? 'week' : 'day'
+    const url = `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/${level}_${span}.geojson`
+
+    let data: { features?: UsgsFeature[] }
+    try {
+      data = await getJson<{ features?: UsgsFeature[] }>('地震速报服务', url, ctx)
+    } catch (e) {
+      throw wrapNetworkError(e, '地震速报服务')
+    }
+    const all = Array.isArray(data?.features) ? data.features : []
+    const events = all
+      .filter((f) => typeof f?.properties?.mag === 'number' && (f.properties?.mag as number) >= minMag)
+      .slice(0, 8)
+      .map((f) => ({
+        time: typeof f.properties?.time === 'number' ? new Date(f.properties.time).toISOString() : null,
+        magnitude: f.properties?.mag ?? null,
+        place: f.properties?.place ?? null,
+        depthKm:
+          Array.isArray(f.geometry?.coordinates) && typeof f.geometry?.coordinates[2] === 'number'
+            ? f.geometry.coordinates[2]
+            : null,
+        tsunami: f.properties?.tsunami === 1,
+        url: f.properties?.url ?? null
+      }))
+    return JSON.stringify({
+      feed: `${level}_${span}`,
+      minMagnitude: minMag,
+      count: events.length,
+      events,
+      truncated: all.length > events.length,
+      source: 'USGS'
+    })
+  }
+}
+
+// ── sun_times：open-meteo 日出日落与紫外线 ───────────────────
+// 复用 open-meteo 地理编码（weather.ts 的 geocode），不引入新域名。
+
+interface SunForecast {
+  timezone?: string
+  daily?: {
+    time?: string[]
+    sunrise?: string[]
+    sunset?: string[]
+    uv_index_max?: number[]
+  }
+}
+
+export const sunTimesTool: BuiltinTool = {
+  schema: {
+    id: 'sun.times',
+    name: 'sun_times',
+    description:
+      '查询指定地点的日出/日落时刻与紫外线指数（免 Key）。参数：location (string, 城市名，中英文均可) 或 latitude+longitude (number 对)，二者提供一个；days (number, 可选, 1-3，默认 1)。时刻为目标地点本地时间（ISO 8601）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        location: { type: 'string', description: '城市名，如 北京 / Shanghai（与经纬度二选一）' },
+        latitude: { type: 'number', description: '纬度（与 location 二选一）' },
+        longitude: { type: 'number', description: '经度（与 location 二选一）' },
+        days: { type: 'number', description: '预报天数 1-3，默认 1' }
+      },
+      additionalProperties: false
+    },
+    source: 'builtin',
+    permission: 'auto',
+    // 可能地理编码 + 查询两次请求：与 weather.query / air.quality 同一预算
+    timeoutMs: 45_000
+  },
+  async execute(args, ctx) {
+    const lat = Number(args?.latitude)
+    const lon = Number(args?.longitude)
+    const hasCoord =
+      Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+    let where: { name: string; admin1: string | null; country: string | null } | { latitude: number; longitude: number }
+    let queryLat: number
+    let queryLon: number
+    const deadline = Date.now() + 25_000
+    if (hasCoord) {
+      queryLat = lat
+      queryLon = lon
+      where = { latitude: lat, longitude: lon }
+    } else {
+      const location = String(args?.location ?? '').trim()
+      if (!location) throw new Error('location 或 latitude/longitude 必须提供一个')
+      const hit = await geocode(location, deadline, ctx?.signal).catch((e: unknown) => {
+        throw wrapNetworkError(e, '地理编码服务')
+      })
+      queryLat = hit.latitude
+      queryLon = hit.longitude
+      where = { name: hit.name, admin1: hit.admin1 ?? null, country: hit.country ?? null }
+    }
+    const days = Math.min(3, Math.max(1, Math.floor(Number(args?.days) || 1)))
+    const url =
+      'https://api.open-meteo.com/v1/forecast' +
+      `?latitude=${queryLat}&longitude=${queryLon}` +
+      '&daily=sunrise,sunset,uv_index_max' +
+      `&timezone=auto&forecast_days=${days}`
+    let data: SunForecast
+    try {
+      data = await getJson<SunForecast>('日出日落服务', url, ctx, Math.max(1, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now())))
+    } catch (e) {
+      throw wrapNetworkError(e, '日出日落服务')
+    }
+    const dates = data?.daily?.time ?? []
+    if (dates.length === 0) throw new Error('日出日落服务未返回预报数据')
+    return JSON.stringify({
+      location: where,
+      timezone: data.timezone ?? 'unknown',
+      days: dates.map((date, i) => ({
+        date,
+        sunrise: data.daily?.sunrise?.[i] ?? null,
+        sunset: data.daily?.sunset?.[i] ?? null,
+        uvIndexMax: data.daily?.uv_index_max?.[i] ?? null
+      }))
     })
   }
 }

@@ -41,6 +41,10 @@ const NAGER_DATE = 'https://date.nager.at'
 const AIR_QUALITY_OPEN_METEO = 'https://air-quality-api.open-meteo.com'
 const DICTIONARY_API = 'https://api.dictionaryapi.dev'
 const MYMEMORY_TRANS = 'https://api.mymemory.translated.net'
+const WORLD_BANK_API = 'https://api.worldbank.org'
+const MEMPOOL_SPACE = 'https://mempool.space'
+const GOLD_API = 'https://api.gold-api.com'
+const USGS_EARTHQUAKE = 'https://earthquake.usgs.gov'
 /** 维基百科 REST 摘要：语言子域由白名单动态拼接（free-api.ts），扫描器对模板串不可见 ⇒ evidence=config */
 const WIKIPEDIA_HOSTS = [
   'https://zh.wikipedia.org',
@@ -256,7 +260,12 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
       NAGER_DATE,
       AIR_QUALITY_OPEN_METEO,
       DICTIONARY_API,
-      MYMEMORY_TRANS
+      MYMEMORY_TRANS,
+      // v79：世界银行经济指标 / BTC 链上费率 / 金银现货 / USGS 地震速报
+      WORLD_BANK_API,
+      MEMPOOL_SPACE,
+      GOLD_API,
+      USGS_EARTHQUAKE
     ],
     transport: 'safeFetch',
     files: ['tools/free-api.ts']

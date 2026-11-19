@@ -22,7 +22,12 @@ import {
   wikiSummaryTool,
   airQualityTool,
   dictionaryTool,
-  translateTool
+  translateTool,
+  worldBankTool,
+  btcFeesTool,
+  metalPriceTool,
+  earthquakeTool,
+  sunTimesTool
 } from './free-api'
 import { calendarReadTool } from './calendar-ics'
 import { kbSearchTool } from './kb-search'
@@ -272,6 +277,11 @@ export const BUILTIN_TOOLS: BuiltinTool[] = [
   airQualityTool,
   dictionaryTool,
   translateTool,
+  worldBankTool,
+  btcFeesTool,
+  metalPriceTool,
+  earthquakeTool,
+  sunTimesTool,
   calendarReadTool,
   kbSearchTool,
   todoWriteTool,

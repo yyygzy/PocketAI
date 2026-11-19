@@ -60,6 +60,12 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'air.quality': 'net',
   'dict.en': 'net',
   'translate.mymemory': 'net',
+  // 免费公共 API 工具（v79 第一批梯队）：世界银行/链上费率/金银/地震/日出日落
+  'worldbank.indicator': 'net',
+  'btc.fees': 'net',
+  'metal.price': 'net',
+  'earthquake.feed': 'net',
+  'sun.times': 'net',
   'fs.list': 'file',
   'fs.read': 'file',
   'fs.write': 'file',
@@ -104,6 +110,12 @@ const GROUP_KEYWORDS: Readonly<Record<'net' | 'file' | 'schedule', readonly stri
     '美元', '人民币', '港币', '日元', '欧元', '英镑', '韩元', '币种', '兑换', '换算',
     '冷吗', '热吗', '下雨', '降雨', '降雪', '刮风', '气温', '摄氏度', '天气预报', '台风',
     'ip', '归属', '运营商', '域名', '时区', '汇率换算',
+    // v79：世界银行 / 链上费率 / 金银 / 地震 / 日出日落
+    '世界银行', 'gdp', '人均', '经济指标', '通胀', '失业率',
+    '金价', '黄金', '白银', '银价', '贵金属',
+    '地震', '震级', '余震',
+    '日出', '日落', '紫外线', 'uv',
+    '手续费', '矿工费', '链上', 'sat/vb',
     'search', 'google', 'web', 'http', 'url', 'weather', 'forecast',
     'stock', 'price', 'match', 'score', 'exchange', 'currency', 'usd', 'cny', 'ip'
   ],
