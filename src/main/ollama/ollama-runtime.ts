@@ -475,8 +475,10 @@ async function pullModel(model: string, onEvent?: (e: OllamaPullEvent) => void):
           throw new Error(evt.error)
         }
 
-        // 只对 downloading 状态做层进度聚合；verifying/writing manifest 等保持原进度
-        if (evt.status === 'downloading' && evt.digest && evt.total != null) {
+        // Ollama 的下载进度行 status 形如 "downloading sha256:…"（digest 拼在状态串里），
+        // 不能做全等匹配；这里直接以 digest/total 字段为判据，兼容 pulling <digest> 等阶段。
+        // verifying/writing manifest 等无 total 的行不参与聚合，保持原进度。
+        if (evt.digest && evt.total != null) {
           layers.set(evt.digest, { total: evt.total, completed: evt.completed ?? 0 })
         }
 

@@ -387,15 +387,15 @@ describe('pullModel', () => {
     setupFetch({
       api: 'up',
       pullChunks: [
-        '{"status":"downloading","digest":"sha256:abc","total":100,"completed":50}\n',
-        '{"status":"downloading","digest":"sha256:abc","total":100,"completed":100}\n',
+        '{"status":"downloading sha256:abc","digest":"sha256:abc","total":100,"completed":50}\n',
+        '{"status":"downloading sha256:abc","digest":"sha256:abc","total":100,"completed":100}\n',
         '{"status":"success"}\n'
       ]
     })
     const events: { percent: number; done: boolean; status: string }[] = []
     await ollamaRuntime.pullModel('llama3', (e) => events.push(e))
     expect(events.length).toBeGreaterThanOrEqual(2)
-    expect(events[0]!.status).toBe('downloading')
+    expect(events[0]!.status).toBe('downloading sha256:abc')
     expect(events[0]!.percent).toBe(50)
     const last = events[events.length - 1]!
     expect(last.status).toBe('success')
@@ -408,11 +408,11 @@ describe('pullModel', () => {
       api: 'up',
       pullChunks: [
         // 层 a 完成下载 50%
-        '{"status":"downloading","digest":"sha256:a","total":100,"completed":50}\n',
+        '{"status":"downloading sha256:a","digest":"sha256:a","total":100,"completed":50}\n',
         // 层 a 完成
-        '{"status":"downloading","digest":"sha256:a","total":100,"completed":100}\n',
+        '{"status":"downloading sha256:a","digest":"sha256:a","total":100,"completed":100}\n',
         // 新层 b 开始（completed=0），按计算整体进度会回退到 50，但 lastPercent 锁住应保持 100
-        '{"status":"downloading","digest":"sha256:b","total":100,"completed":0}\n',
+        '{"status":"downloading sha256:b","digest":"sha256:b","total":100,"completed":0}\n',
         '{"status":"success"}\n'
       ]
     })
@@ -433,7 +433,7 @@ describe('pullModel', () => {
   it('error 事件含 EOF → 抛 下载连接中断...', async () => {
     setupFetch({
       api: 'up',
-      pullChunks: ['{"status":"downloading","digest":"sha256:abc","total":100,"completed":10}\n', '{"error":"EOF"}\n']
+      pullChunks: ['{"status":"downloading sha256:abc","digest":"sha256:abc","total":100,"completed":10}\n', '{"error":"EOF"}\n']
     })
     await expect(ollamaRuntime.pullModel('llama3')).rejects.toThrow('下载连接中断，请检查网络后重试')
   })

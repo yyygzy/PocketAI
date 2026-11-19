@@ -2464,7 +2464,7 @@ export interface OllamaInstallEvent {
 
 export interface OllamaPullEvent {
   model: string
-  /** ollama 原始状态：pulling manifest / pulling … / verifying sha256 / success / error */
+  /** ollama 原始状态：pulling manifest / pulling <digest> / downloading <digest> / verifying sha256 / success / error */
   status: string
   /** 0-100（completed/total；total 未知时为 0） */
   percent: number
