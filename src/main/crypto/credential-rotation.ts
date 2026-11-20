@@ -18,6 +18,7 @@
 
 import { providerRepo } from '../db/repositories/provider.repo'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
+import { mcpOauthRepo } from '../db/repositories/mcp-oauth.repo'
 import { exportSecrets, restoreSecrets } from './secret-store'
 import { createLogger } from '../logger'
 
@@ -33,6 +34,8 @@ export interface FieldCredentialSnapshot {
   providers: Record<string, string[]>
   /** MCP Server 的 env/headers（stdio 环境变量与 http 鉴权头，同为字段级密文） */
   mcp: Record<string, McpSecretSnapshot>
+  /** 远程 MCP OAuth 的 client_secret/access_token/refresh_token（v78，字段级密文） */
+  oauth: Record<string, { clientSecret: string; accessToken: string; refreshToken: string }>
   /** §375：有密文但旧字段密钥解不开的条目 id/键（不进快照＝保持原密文不动，交给调用方如实上报，绝不当「没配过」悄悄丢） */
   undecryptable: string[]
 }
@@ -42,11 +45,18 @@ export function exportFieldCredentials(): FieldCredentialSnapshot {
   const kv = exportSecrets()
   const providers = providerRepo.exportAllApiKeys()
   const mcp = mcpServerRepo.exportAllSecrets()
+  const oauth = mcpOauthRepo.exportAllSecrets()
   return {
     kv: kv.snapshot,
     providers: providers.snapshot,
     mcp: mcp.snapshot,
-    undecryptable: [...kv.undecryptable, ...providers.undecryptable, ...mcp.undecryptable]
+    oauth: oauth.snapshot,
+    undecryptable: [
+      ...kv.undecryptable,
+      ...providers.undecryptable,
+      ...mcp.undecryptable,
+      ...oauth.undecryptable
+    ]
   }
 }
 
@@ -55,6 +65,7 @@ export function restoreFieldCredentials(snapshot: FieldCredentialSnapshot): void
   restoreSecrets(snapshot.kv)
   providerRepo.restoreAllApiKeys(snapshot.providers)
   mcpServerRepo.restoreAllSecrets(snapshot.mcp ?? {})
+  mcpOauthRepo.restoreAllSecrets(snapshot.oauth ?? {})
   if (snapshot.undecryptable?.length) {
     log.warn(
       `凭据轮换：${snapshot.undecryptable.length} 项凭据有密文但旧字段密钥解不开（不匹配或损坏），已跳过未重写、需手动重填：${snapshot.undecryptable.join(', ')}`

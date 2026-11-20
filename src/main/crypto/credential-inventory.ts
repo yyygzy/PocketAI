@@ -2,7 +2,7 @@
 //
 // 只数「有没有值」，不解密：判据与 hasSecret 同源（落盘非空即算），
 // 因此解不开的密文也计入——它同样是被本次降级影响的存量凭据。
-// 覆盖五类：KV 密钥（渠道/联网搜索）、Provider apiKeys、MCP env/headers、WebDAV 口令。
+// 覆盖六类：KV 密钥（渠道/联网搜索）、Provider apiKeys、MCP env/headers、MCP OAuth 凭据、WebDAV 口令。
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { dbService } from '../db/database'
 import { SECRET_KV_KEYS } from './secret-store'
@@ -14,6 +14,8 @@ export interface CredentialInventory {
   providers: number
   /** MCP env/headers（按 Server 计，一个 Server 有任一非空即算一项） */
   mcp: number
+  /** 远程 MCP OAuth 凭据（client_secret/access/refresh 任一非空即算一项） */
+  oauth: number
   /** WebDAV 备份口令（0/1） */
   webdav: number
   total: number
@@ -51,6 +53,10 @@ export function countStoredCredentials(): CredentialInventory {
   const mcp = countRows(
     "SELECT COUNT(*) AS n FROM mcp_servers WHERE (env IS NOT NULL AND env <> '') OR (headers IS NOT NULL AND headers <> '')"
   )
+  // v78：OAuth 三列秘密任一非空即计入；与 hasSecret 同一判据，不解密
+  const oauth = countRows(
+    "SELECT COUNT(*) AS n FROM mcp_oauth_credentials WHERE COALESCE(client_secret_enc,'') <> '' OR COALESCE(access_token_enc,'') <> '' OR COALESCE(refresh_token_enc,'') <> ''"
+  )
   const webdav = hasWebDAVPassword() ? 1 : 0
-  return { kv, providers, mcp, webdav, total: kv + providers + mcp + webdav }
+  return { kv, providers, mcp, oauth, webdav, total: kv + providers + mcp + oauth + webdav }
 }

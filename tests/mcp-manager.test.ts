@@ -86,6 +86,17 @@ vi.mock('../src/main/mcp/http-transport', () => ({
       mocks.clients.push(self)
       return self
     }
+  },
+  // v78：manager 以 instanceof McpAuthError 收口 401/403（不重试、标需重新授权），
+  // mock 必须与生产同名导出，否则静态导入取到 undefined、整条 catch 路径失效
+  McpAuthError: class McpAuthError extends Error {
+    readonly kind = 'auth'
+    readonly status: number
+    constructor(status: number) {
+      super('服务端拒绝了当前授权，需要重新授权。')
+      this.name = 'McpAuthError'
+      this.status = status
+    }
   }
 }))
 

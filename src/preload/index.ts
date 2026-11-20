@@ -10,6 +10,11 @@ import type { SkillScanResult } from '../shared/skill-scan'
 import type { RunbookRecord, RunbookRef } from '../shared/runbook'
 import type { McpCatalogView } from '../shared/mcp-catalog'
 import type {
+  McpCatalogTrustKeyInput,
+  McpCatalogTrustKeyView
+} from '../shared/mcp-catalog-trust'
+import type { McpOauthManualConfig, McpOauthView } from '../shared/mcp-oauth'
+import type {
   ArtifactMeta,
   ArtifactPdfExportResult,
   ArtifactPreview,
@@ -709,6 +714,18 @@ const api = {
 
   // ---------- MCP Server ----------
   listMcpServers: (): Promise<McpServerRecord[]> => ipcRenderer.invoke(IPC.MCP_SERVER_LIST),
+  /** 远程 MCP OAuth 视图（只含状态/过期/scope，绝无 token） */
+  listMcpOauthViews: (): Promise<{ ok: true; views: McpOauthView[] } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_OAUTH_LIST),
+  beginMcpOauth: (
+    id: string,
+    manual?: McpOauthManualConfig
+  ): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_OAUTH_BEGIN, id, manual),
+  cancelMcpOauth: (id: string): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_OAUTH_CANCEL, id),
+  clearMcpOauth: (id: string): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_OAUTH_CLEAR, id),
   /** 连接器目录：默认只用本地内置精选清单；远程索引需显式刷新 */
   listMcpCatalog: (): Promise<McpCatalogView | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.MCP_CATALOG_LIST),
@@ -720,6 +737,18 @@ const api = {
   /** 清空远程目录缓存，回到纯内置清单 */
   resetMcpCatalog: (): Promise<{ ok: true; catalog: McpCatalogView } | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.MCP_CATALOG_RESET),
+  /** 签名信任库：默认空，用户自行导入发布者 Ed25519 公钥 */
+  listMcpCatalogTrustKeys: (): Promise<
+    { ok: true; keys: McpCatalogTrustKeyView[] } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.MCP_CATALOG_TRUST_LIST),
+  importMcpCatalogTrustKey: (
+    input: McpCatalogTrustKeyInput
+  ): Promise<{ ok: true; keys: McpCatalogTrustKeyView[] } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_CATALOG_TRUST_IMPORT, input),
+  removeMcpCatalogTrustKey: (
+    keyId: string
+  ): Promise<{ ok: true; keys: McpCatalogTrustKeyView[] } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_CATALOG_TRUST_REMOVE, keyId),
   /** 站点级出网约束（只作用于 MCP HTTP 传输；stdio 子进程拦不到） */
   getMcpSitePolicy: (): Promise<McpSitePolicy | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.MCP_SITE_POLICY_GET),
@@ -815,6 +844,12 @@ const api = {
     const listener = (_e: IpcRendererEvent, data: McpServerStatusEvent) => handler(data)
     ipcRenderer.on(IPC.MCP_SERVER_STATUS_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC.MCP_SERVER_STATUS_EVENT, listener)
+  },
+  /** OAuth 状态广播：登录/过期/撤销后界面即时更新，不轮询 */
+  onMcpOauthStatus: (handler: (e: McpOauthView | null) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, data: McpOauthView | null) => handler(data)
+    ipcRenderer.on(IPC.MCP_OAUTH_STATUS_EVENT, listener)
+    return () => ipcRenderer.removeListener(IPC.MCP_OAUTH_STATUS_EVENT, listener)
   },
   onMcpLog: (handler: (e: McpServerLogEvent) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, data: McpServerLogEvent) => handler(data)

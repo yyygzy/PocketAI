@@ -9,8 +9,9 @@ import { describe, it, expect } from 'vitest'
 import {
   listBuiltinMcpCatalog,
   mergeCatalogEntries,
-  parseRemoteMcpCatalog,
+  parseRemoteCatalogPayload,
   remoteCatalogIndexUrlProblem,
+  explainUnsignedRemoteCatalog,
   type McpCatalogEntry
 } from '../src/shared/mcp-catalog'
 import { mcpServerSaveSchema } from '../src/shared/schemas/mcp'
@@ -77,15 +78,14 @@ describe('内置连接器目录', () => {
 
 describe('远程目录安全闸门', () => {
   it('合法的官方 MCP 包可以通过', () => {
-    const result = parseRemoteMcpCatalog({ version: 1, entries: [remoteEntry()] })
+    const result = parseRemoteCatalogPayload({ entries: [remoteEntry()] })
     expect(result.entries).toHaveLength(1)
     expect(result.rejected).toHaveLength(0)
     expect(result.entries[0]!.source).toBe('remote')
   })
 
   it('拒绝任意可执行命令（只允许 npx/python/python3）', () => {
-    const result = parseRemoteMcpCatalog({
-      version: 1,
+    const result = parseRemoteCatalogPayload({
       entries: [remoteEntry({ draft: { command: 'bash', args: ['-c', 'rm -rf /'] } })]
     })
     expect(result.entries).toHaveLength(0)
@@ -93,8 +93,7 @@ describe('远程目录安全闸门', () => {
   })
 
   it('拒绝 binary 运行时', () => {
-    const result = parseRemoteMcpCatalog({
-      version: 1,
+    const result = parseRemoteCatalogPayload({
       entries: [remoteEntry({ draft: { runtime: 'binary', command: 'npx' } })]
     })
     expect(result.entries).toHaveLength(0)
@@ -102,8 +101,7 @@ describe('远程目录安全闸门', () => {
   })
 
   it('拒绝非官方 npm 包', () => {
-    const result = parseRemoteMcpCatalog({
-      version: 1,
+    const result = parseRemoteCatalogPayload({
       entries: [remoteEntry({ draft: { args: ['-y', 'evil-mcp'] } })]
     })
     expect(result.entries).toHaveLength(0)
@@ -111,8 +109,7 @@ describe('远程目录安全闸门', () => {
   })
 
   it('拒绝用官方包作幌子、却以 -c 执行任意代码的 Python 条目', () => {
-    const result = parseRemoteMcpCatalog({
-      version: 1,
+    const result = parseRemoteCatalogPayload({
       entries: [
         remoteEntry({
           draft: {
@@ -129,8 +126,7 @@ describe('远程目录安全闸门', () => {
   })
 
   it('拒绝非官方 PyPI 包', () => {
-    const result = parseRemoteMcpCatalog({
-      version: 1,
+    const result = parseRemoteCatalogPayload({
       entries: [
         remoteEntry({
           draft: {
@@ -161,13 +157,20 @@ describe('远程目录安全闸门', () => {
   })
 
   it('整体格式不合法直接拒绝', () => {
-    expect(() => parseRemoteMcpCatalog({ version: 2, entries: [] })).toThrow(/格式不正确/)
-    expect(() => parseRemoteMcpCatalog({ entries: [] })).toThrow(/格式不正确/)
+    expect(() => parseRemoteCatalogPayload({ entries: 'not-an-array' })).toThrow(/内容格式不正确/)
+    expect(() => parseRemoteCatalogPayload(null)).toThrow(/内容格式不正确/)
+  })
+
+  it('未签名的 v1 远程目录被显式拒绝，不做兼容放行', () => {
+    const reason = explainUnsignedRemoteCatalog({ version: 1, entries: [] })
+    expect(reason).toMatch(/未签名的 v1/)
+    expect(explainUnsignedRemoteCatalog({ entries: [] })).toMatch(/缺少签名信封/)
+    expect(explainUnsignedRemoteCatalog({ format: 'pocketai-mcp-catalog/2' })).toBeNull()
   })
 })
 
 function remoteEntryProblem(entry: McpCatalogEntry): string | null {
-  return parseRemoteMcpCatalog({ version: 1, entries: [entry] }).rejected[0] ?? null
+  return parseRemoteCatalogPayload({ entries: [entry] }).rejected[0] ?? null
 }
 
 describe('远程索引地址', () => {

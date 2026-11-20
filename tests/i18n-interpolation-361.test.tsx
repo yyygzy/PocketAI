@@ -326,7 +326,10 @@ describe('§361 轴二：调用点与字典占位符对账（源码级）', () =
     //  9629451（Linux 自绘标题条）新增第 98 发：`App.tsx:219 t(\`sidebar.${activeModule}\`)`。
     //  人工对账：`activeModule` 是 `SidebarModuleId` **闭合联合**（11 个模块 id），`sidebar.<id>` 四语都在
     //  （键集对齐由 i18n-parity 钉住）⇒ 属静态可穷举的取值域，登记而不是改产品码。97→98。
-    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(98)
+    //  MCP OAuth + 目录签名信任批次：本批**零新增**动态取词（新增文案全部走字面量键）。
+    //  实测 HEAD 7600b2c 的同一扫描已是 101 发（旧钉 98 早已漂移，McpCatalogModal 的
+    //  `t(p.label)` 两发与 `t(riskLabelKey(...))` 一发一直存在）⇒ 本批只补记既有漂移，98→101。
+    expect(CORPUS.dynamicKey.length, `现数 ${CORPUS.dynamicKey.length}：\n${CORPUS.dynamicKey.map(rel).join('\n')}`).toBe(101)
   })
 
   it('漏杀对照：改前三颗形状各自放回源码文本，分类器一一报出（不是空转）', () => {

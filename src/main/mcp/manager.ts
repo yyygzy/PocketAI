@@ -9,7 +9,7 @@ import {
   McpTransportError,
   type McpTransportClient
 } from './json-rpc'
-import { HttpJsonRpcClient } from './http-transport'
+import { HttpJsonRpcClient, McpAuthError } from './http-transport'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
 import { MCP_EXTENSIONS_DIR } from '../portable'
 import { errMsg } from '../error'
@@ -395,6 +395,10 @@ export class McpManager extends EventEmitter {
       // 已被 stop 标记的不再回 error（保持 stopped），但异常仍抛给等待方。
       // 已是 error 也不覆盖：进程退出时 handleExit 先跑，那里带的是退出码 + stderr 尾部，
       // 比这里被 reject 的握手错误更贴近真实原因。
+      if (e instanceof McpAuthError && record.authMode === 'oauth') {
+        // 懒加载：OAuth 服务会拉起 DB/加密仓储，不该让只测 manager 的用例被迫起整条链
+        ;(await import('./oauth/service')).mcpOauthService.markUnauthorized(record.id)
+      }
       if (entry.status !== 'stopped' && entry.status !== 'error') {
         entry.status = 'error'
         // 界面上只显示可行动的人话；原始 spawn/握手错误留在日志里（SEC-2 的确认与排障不受影响）
@@ -417,12 +421,31 @@ export class McpManager extends EventEmitter {
       if (!record.url) throw new Error('HTTP 传输缺少 url')
       // 启动即判站点策略：比等到首次调用才失败更早，用户点「启动」就能看到原因
       assertMcpHostAllowed(record.url, record.name)
+      const staticHeaders: Record<string, string> = { ...(record.headers ?? {}) }
+      const authMode = record.authMode ?? 'headers'
+      // oauth / none 都不应把旧静态 Authorization 带出去（避免过期 token 盖住 OAuth 或显式无鉴权）
+      if (authMode !== 'headers') {
+        for (const k of Object.keys(staticHeaders)) {
+          if (k.toLowerCase() === 'authorization') delete staticHeaders[k]
+        }
+      }
+      let resolveAuth: (() => Promise<Record<string, string>>) | undefined
+      if (authMode === 'oauth') {
+        // 懒加载：同上，只有真要连 OAuth 的 server 才拉起令牌服务
+        const { mcpOauthService } = await import('./oauth/service')
+        // 启动前先取一次：过期会先刷新，已撤销则立即以人话失败，而不是等握手
+        await mcpOauthService.getAuthorizationHeader(record.id)
+        resolveAuth = async () => ({
+          Authorization: await mcpOauthService.getAuthorizationHeader(record.id)
+        })
+      }
       return new HttpJsonRpcClient({
         // 启动后策略若被收紧，下一次请求会在 transport 里再判一次（同一把尺）
         checkHostAllowed: (url) => assertMcpHostAllowed(url, record.name),
         url: record.url,
         requestTimeout: TOOL_CALL_TIMEOUT,
-        headers: record.headers ?? {}
+        headers: staticHeaders,
+        ...(resolveAuth ? { resolveAuth } : {})
       })
     }
 
@@ -621,6 +644,14 @@ export class McpManager extends EventEmitter {
       // 先尝试透明恢复：重建 client + 握手 + 刷新 tools（restart），再原样重试一次；
       // 重试仍失败才置 error 状态——保持「失败后需用户手动处理」的既有语义，但消除单次网络抖动误伤。
       // 业务级错误（McpBusinessError）是 server 正常响应，不联动。
+      if (e instanceof McpAuthError && entry.record.authMode === 'oauth') {
+        // 401/403 不重试：先刷新也不成立，重连只会再被拒；标记状态让用户重新授权
+        ;(await import('./oauth/service')).mcpOauthService.markUnauthorized(id)
+        entry.status = 'error'
+        entry.lastError = '服务端拒绝了当前登录状态，请点「重新授权」后再试。'
+        this.emitStatus(id, 'error', entry.lastError)
+        throw new Error(entry.lastError)
+      }
       if (entry.record.transport === 'http' && e instanceof McpTransportError) {
         log.warn(`HTTP 传输调用失败，尝试重连后重试一次: ${errMsg(e)}`)
         try {
@@ -678,6 +709,8 @@ export class McpManager extends EventEmitter {
 
   /** 停止所有运行中的 MCP Server（应用退出时调用） */
   async stopAll(): Promise<void> {
+    // 退出时一并取消等待中的 OAuth 回环回调，避免监听端口吊着不释放
+    ;(await import('./oauth/service')).mcpOauthService.dispose()
     const ids = Array.from(this.runtimes.keys())
     await Promise.allSettled(ids.map((id) => this.stop(id)))
   }

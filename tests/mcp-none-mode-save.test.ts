@@ -61,7 +61,8 @@ const DDL = `
     headers TEXT,
     trust_read_only INTEGER DEFAULT 0,
     auto_connect INTEGER NOT NULL DEFAULT 0,
-    catalog_id TEXT
+    catalog_id TEXT,
+    auth_mode TEXT NOT NULL DEFAULT 'headers'
   )`
 
 function rowCount(): number {

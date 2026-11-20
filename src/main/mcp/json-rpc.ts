@@ -97,7 +97,7 @@ export interface StdioLogHandler {
 }
 
 /** 传输级错误类别：连接级失败，非 server 正常响应 */
-export type McpTransportErrorKind = 'network' | 'timeout' | 'protocol'
+export type McpTransportErrorKind = 'network' | 'timeout' | 'protocol' | 'auth'
 
 /**
  * 传输级错误：请求未能获得 server 的有效协议响应

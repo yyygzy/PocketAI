@@ -30,6 +30,7 @@ interface McpServerRow {
   trust_read_only?: number | null // 0/1（v44 起；旧库按未信任处理）
   auto_connect?: number | null // 0/1（v77 起；旧库按不自动连接处理）
   catalog_id?: string | null // 连接器目录 id（v77 起）
+  auth_mode?: string | null // none|headers|oauth（v78 起；旧库按 headers/none 处理）
 }
 
 function rowToRecord(row: McpServerRow): McpServerRecord {
@@ -75,6 +76,13 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
     // v77 前的旧库无此列 → 不自动连接（默认不把历史记录静默拉起）
     autoConnect: row.auto_connect === 1,
     catalogId: row.catalog_id ?? null,
+    // v78 前的旧库无此列：http 沿用静态 Headers 的旧行为，stdio 没有鉴权概念
+    authMode:
+      row.auth_mode === 'none' || row.auth_mode === 'headers' || row.auth_mode === 'oauth'
+        ? row.auth_mode
+        : row.transport === 'http'
+          ? 'headers'
+          : 'none',
     pythonPackages
   }
 }
@@ -84,7 +92,13 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
 function normalizeInput(
   input: Partial<McpServerRecord> & { name: string },
   existing: McpServerRecord | null
-): { transport: McpTransport; runtime: McpRuntime; pythonPackages: string[]; headers: Record<string, string> } {
+): {
+  transport: McpTransport
+  runtime: McpRuntime
+  pythonPackages: string[]
+  headers: Record<string, string>
+  authMode: 'none' | 'headers' | 'oauth'
+} {
   const transport = input.transport ?? existing?.transport ?? 'stdio'
   const runtime = input.runtime ?? existing?.runtime ?? 'binary'
   const rawPkgs = input.pythonPackages ?? existing?.pythonPackages ?? []
@@ -101,7 +115,12 @@ function normalizeInput(
             .filter(([k]) => k.length > 0)
         )
       : {}
-  return { transport, runtime, pythonPackages, headers }
+  // stdio 没有 HTTP 鉴权；http 缺省沿用旧行为（静态 Headers）
+  const authMode =
+    transport === 'http'
+      ? input.authMode ?? existing?.authMode ?? 'headers'
+      : 'none'
+  return { transport, runtime, pythonPackages, headers, authMode }
 }
 
 export const mcpServerRepo = {
@@ -132,10 +151,13 @@ export const mcpServerRepo = {
       input.headers !== undefined
         ? restoreMaskedMap(input.headers, existing?.headers)
         : undefined
-    const { transport, runtime, pythonPackages, headers: normalizedHeaders } = normalizeInput(
-      { ...input, env, headers },
-      existing
-    )
+    const {
+      transport,
+      runtime,
+      pythonPackages,
+      headers: normalizedHeaders,
+      authMode
+    } = normalizeInput({ ...input, env, headers }, existing)
     // B2：明文模式下新密钥一律拒绝（掩码回填/改键名/删键都不触发），错误经 safeHandle 回 UI
     const block = noneModeSecretBlock([
       { field: 'env', next: env, existing: existing?.env },
@@ -157,7 +179,7 @@ export const mcpServerRepo = {
     if (existing) {
       db.prepare(
         `UPDATE mcp_servers SET
-           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, python_packages=?, headers=?, trust_read_only=?, auto_connect=?, catalog_id=?
+           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, python_packages=?, headers=?, trust_read_only=?, auto_connect=?, catalog_id=?, auth_mode=?
          WHERE id=?`
       ).run(
         input.name ?? existing.name,
@@ -172,14 +194,15 @@ export const mcpServerRepo = {
         trustReadOnly,
         autoConnect,
         catalogId,
+        authMode,
         id
       )
     } else {
       const now = Date.now()
       db.prepare(
         `INSERT INTO mcp_servers
-           (id, name, transport, runtime, command, args, env, url, created_at, python_packages, headers, trust_read_only, auto_connect, catalog_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, name, transport, runtime, command, args, env, url, created_at, python_packages, headers, trust_read_only, auto_connect, catalog_id, auth_mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -194,7 +217,8 @@ export const mcpServerRepo = {
         headersCipher,
         trustReadOnly,
         autoConnect,
-        catalogId
+        catalogId,
+        authMode
       )
     }
     return mustGet(() => this.get(id), 'MCP Server')

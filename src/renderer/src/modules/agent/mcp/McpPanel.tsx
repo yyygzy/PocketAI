@@ -22,6 +22,7 @@ import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
 import { McpCatalogModal } from './McpCatalogModal'
 import { findBuiltinCatalogEntry, type McpCatalogEntry } from '../../../../../shared/mcp-catalog'
+import type { McpOauthView } from '../../../../../shared/mcp-oauth'
 import { McpSitePolicyCard } from './McpSitePolicyCard'
 import { CapabilityCenter } from '../../skills/CapabilityCenter'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
@@ -48,6 +49,8 @@ export const McpPanel: React.FC = () => {
   const [records, setRecords] = useState<McpServerRecord[]>([])
   // 目录元数据（含远程索引覆盖）：列表卡片据此显示「它能干什么」。读失败只影响摘要，不挡清单
   const [catalogEntries, setCatalogEntries] = useState<McpCatalogEntry[]>([])
+  // v78：OAuth 脱敏视图（状态/过期/人话错误）；读不到不影响清单
+  const [oauthViews, setOauthViews] = useState<McpOauthView[]>([])
   const [runtimes, setRuntimes] = useState<McpServerRuntime[]>([])
   const [editing, setEditing] = useState<Partial<McpServerRecord> | null>(null)
   const [logs, setLogs] = useState<McpServerLogEvent[]>([])
@@ -146,6 +149,12 @@ export const McpPanel: React.FC = () => {
     } catch {
       /* 保留内置摘要兜底 */
     }
+    try {
+      const oauth = await window.pocketai.listMcpOauthViews()
+      if (!hasIpcFailed(oauth) && Array.isArray(oauth.views)) setOauthViews(oauth.views)
+    } catch {
+      /* 旧桥/测试桩无此通道：列表照常 */
+    }
     // 两发各判各的：清单读到而运行状态没读到，清单照常列出（状态那半单独点名，见 runtimeUnread）
     if (hasIpcFailed(recs) || !Array.isArray(recs)) {
       setServersUnread({ error: hasIpcFailed(recs) ? recs.error : undefined })
@@ -170,6 +179,20 @@ export const McpPanel: React.FC = () => {
       logIpcError('mcp.list', e)
     })
   }, [load])
+
+  useEffect(() => {
+    const off = window.pocketai.onMcpOauthStatus((v) => {
+      setOauthViews((prev) => {
+        if (!v) return prev
+        const idx = prev.findIndex((x) => x.serverId === v.serverId)
+        if (idx === -1) return [...prev, v]
+        const next = [...prev]
+        next[idx] = v
+        return next
+      })
+    })
+    return off
+  }, [])
 
   const reloadCallLogs = useCallback(async () => {
     const gen = ++callLogGenRef.current
@@ -338,6 +361,20 @@ export const McpPanel: React.FC = () => {
     const r = await window.pocketai.restartMcpServer(id)
     if (!r.ok) toast.error(t('agent.restartFail', { e: r.error ?? t('common.unknownError') }))
   }
+  // v78：远程 OAuth 授权/重新授权；失败只给可行动提示（高级端点入口在编辑页）
+  const handleOauth = async (id: string) => {
+    try {
+      const r = await window.pocketai.beginMcpOauth(id)
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      toast.success(t('agent.oauthBrowserOpened'))
+    } catch (e) {
+      toast.error(errText(e, t('common.unknownError')))
+    }
+  }
+
   const handleDelete = async (id: string) => {
     if (!(await askConfirm({ title: t('common.delete'), message: t('agent.deleteConfirm'), danger: true }))) return
     const r = await window.pocketai.deleteMcpServer(id)
@@ -527,6 +564,8 @@ export const McpPanel: React.FC = () => {
             const catalogEntry =
               catalogEntries.find((e) => e.id === r.catalogId) ??
               findBuiltinCatalogEntry(r.catalogId)
+            const oauthView = oauthViews.find((v) => v.serverId === r.id)
+            const needsOauth = r.transport === 'http' && (r.authMode ?? 'headers') === 'oauth'
             return (
               <div
                 key={r.id}
@@ -554,6 +593,39 @@ export const McpPanel: React.FC = () => {
                   <span className="inline-block mt-0.5 text-[9px] px-1 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
                     {t('agent.autoConnectBadge')}
                   </span>
+                )}
+                {needsOauth && (
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <span
+                      className={`text-[9px] px-1 rounded ${
+                        oauthView?.status === 'authorized'
+                          ? 'text-[var(--color-success)] bg-[var(--color-success-bg)]'
+                          : oauthView?.status === 'needs_reauth' || oauthView?.status === 'error'
+                            ? 'text-[var(--color-danger)] bg-[var(--color-danger-bg)]'
+                            : 'text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]'
+                      }`}
+                    >
+                      {oauthView?.status === 'authorized'
+                        ? t('agent.oauthAuthorized')
+                        : oauthView?.status === 'needs_reauth'
+                          ? t('agent.oauthNeedsReauth')
+                          : oauthView?.status === 'error'
+                            ? t('agent.oauthError')
+                            : t('agent.oauthNotAuthorized')}
+                    </span>
+                    {oauthView?.status !== 'authorized' && (
+                      <MiniBtn onClick={() => void handleOauth(r.id)}>
+                        {oauthView?.status === 'needs_reauth' || oauthView?.status === 'error'
+                          ? t('agent.oauthReauthorize')
+                          : t('agent.oauthAuthorize')}
+                      </MiniBtn>
+                    )}
+                  </div>
+                )}
+                {needsOauth && oauthView?.lastError && oauthView.status !== 'authorized' && (
+                  <div className="text-[10px] text-[var(--color-danger)] mt-1 leading-relaxed">
+                    {oauthView.lastError}
+                  </div>
                 )}
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
                   {r.transport === 'http' ? `🌐 ${r.url}` : `${r.command} ${(r.args || []).join(' ')}`}

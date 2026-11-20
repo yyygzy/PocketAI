@@ -63,6 +63,10 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   // v78：模型级「关闭思考」清单是模型附加菜单挂载即读的固定副作用；默认空清单，
   // 专门断言这条读的用例自己覆盖该键（覆盖后才验证得到"已关闭"那一面）。
   if (!state.impls.has('getAgentThinkingDisabled')) state.impls.set('getAgentThinkingDisabled', () => [])
+  // v78：MCP 面板挂载即订阅 OAuth 状态、并读一次 OAuth 视图——它们是 mount 的固定副作用，
+  // 与 §436 的订阅类通道同口径给空默认；专门断言 OAuth 面的用例自己覆盖这两个键。
+  if (!state.impls.has('onMcpOauthStatus')) state.impls.set('onMcpOauthStatus', () => () => { /* 订阅卸载 */ })
+  if (!state.impls.has('listMcpOauthViews')) state.impls.set('listMcpOauthViews', () => ({ ok: true, views: [] }))
   const g = globalThis as unknown as { window: { pocketai: unknown } }
   g.window.pocketai = buildStub()
 }

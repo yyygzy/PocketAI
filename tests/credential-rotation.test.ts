@@ -15,7 +15,9 @@ const mocks = vi.hoisted(() => ({
   exportAllApiKeys: vi.fn(),
   restoreAllApiKeys: vi.fn(),
   exportAllMcpSecrets: vi.fn(),
-  restoreAllMcpSecrets: vi.fn()
+  restoreAllMcpSecrets: vi.fn(),
+  exportAllOauthSecrets: vi.fn(),
+  restoreAllOauthSecrets: vi.fn()
 }))
 
 vi.mock('../src/main/crypto/secret-store', () => ({
@@ -37,6 +39,13 @@ vi.mock('../src/main/db/repositories/mcp-server.repo', () => ({
   }
 }))
 
+vi.mock('../src/main/db/repositories/mcp-oauth.repo', () => ({
+  mcpOauthRepo: {
+    exportAllSecrets: mocks.exportAllOauthSecrets,
+    restoreAllSecrets: mocks.restoreAllOauthSecrets
+  }
+}))
+
 import {
   exportFieldCredentials,
   restoreFieldCredentials,
@@ -52,6 +61,10 @@ describe('exportFieldCredentials — 快照导出', () => {
     mocks.exportSecrets.mockReturnValue({ snapshot: { webdavPassword: 'enc:xxx' }, undecryptable: ['agent.websearch_api_key'] })
     mocks.exportAllApiKeys.mockReturnValue({ snapshot: { 'prov-1': ['sk-a', 'sk-b'] }, undecryptable: ['prov-9'] })
     mocks.exportAllMcpSecrets.mockReturnValue({ snapshot: { 'srv-1': { env: { API_KEY: 'k' }, headers: {} } }, undecryptable: [] })
+    mocks.exportAllOauthSecrets.mockReturnValue({
+      snapshot: { 'srv-1': { clientSecret: '', accessToken: 'at', refreshToken: 'rt' } },
+      undecryptable: []
+    })
 
     const snapshot = exportFieldCredentials()
 
@@ -59,6 +72,7 @@ describe('exportFieldCredentials — 快照导出', () => {
       kv: { webdavPassword: 'enc:xxx' },
       providers: { 'prov-1': ['sk-a', 'sk-b'] },
       mcp: { 'srv-1': { env: { API_KEY: 'k' }, headers: {} } },
+      oauth: { 'srv-1': { clientSecret: '', accessToken: 'at', refreshToken: 'rt' } },
       undecryptable: ['agent.websearch_api_key', 'prov-9']
     })
     expect(mocks.exportSecrets).toHaveBeenCalledTimes(1)
@@ -70,10 +84,11 @@ describe('exportFieldCredentials — 快照导出', () => {
     mocks.exportSecrets.mockReturnValue({ snapshot: {}, undecryptable: [] })
     mocks.exportAllApiKeys.mockReturnValue({ snapshot: {}, undecryptable: [] })
     mocks.exportAllMcpSecrets.mockReturnValue({ snapshot: {}, undecryptable: [] })
+    mocks.exportAllOauthSecrets.mockReturnValue({ snapshot: {}, undecryptable: [] })
 
     const snapshot = exportFieldCredentials()
 
-    expect(snapshot).toEqual({ kv: {}, providers: {}, mcp: {}, undecryptable: [] })
+    expect(snapshot).toEqual({ kv: {}, providers: {}, mcp: {}, oauth: {}, undecryptable: [] })
   })
 })
 
@@ -83,6 +98,7 @@ describe('restoreFieldCredentials — 快照恢复', () => {
       kv: { webdavPassword: 'enc:yyy' },
       providers: { 'prov-2': ['sk-c'] },
       mcp: { 'srv-2': { env: {}, headers: { Authorization: 'Bearer t' } } },
+      oauth: { 'srv-2': { clientSecret: 'cs', accessToken: 'at', refreshToken: 'rt' } },
       undecryptable: ['prov-7']
     }
 
@@ -93,6 +109,9 @@ describe('restoreFieldCredentials — 快照恢复', () => {
     expect(mocks.restoreAllMcpSecrets).toHaveBeenCalledWith({
       'srv-2': { env: {}, headers: { Authorization: 'Bearer t' } }
     })
+    expect(mocks.restoreAllOauthSecrets).toHaveBeenCalledWith({
+      'srv-2': { clientSecret: 'cs', accessToken: 'at', refreshToken: 'rt' }
+    })
   })
 
   it('旧快照缺 mcp 字段时按空处理（不因字段增量而崩）', () => {
@@ -101,6 +120,7 @@ describe('restoreFieldCredentials — 快照恢复', () => {
     expect(mocks.restoreSecrets).toHaveBeenCalledWith({})
     expect(mocks.restoreAllApiKeys).toHaveBeenCalledWith({})
     expect(mocks.restoreAllMcpSecrets).toHaveBeenCalledWith({})
+    expect(mocks.restoreAllOauthSecrets).toHaveBeenCalledWith({})
   })
 })
 
@@ -112,6 +132,8 @@ describe('导出 → 恢复往返', () => {
     mocks.exportSecrets.mockReturnValue({ snapshot: kv, undecryptable: [] })
     mocks.exportAllApiKeys.mockReturnValue({ snapshot: providers, undecryptable: [] })
     mocks.exportAllMcpSecrets.mockReturnValue({ snapshot: mcp, undecryptable: [] })
+    const oauth = { 'srv-a': { clientSecret: 'cs', accessToken: 'at', refreshToken: 'rt' } }
+    mocks.exportAllOauthSecrets.mockReturnValue({ snapshot: oauth, undecryptable: [] })
 
     const snapshot = exportFieldCredentials()
     restoreFieldCredentials(snapshot)
@@ -119,5 +141,6 @@ describe('导出 → 恢复往返', () => {
     expect(mocks.restoreSecrets).toHaveBeenCalledWith(kv)
     expect(mocks.restoreAllApiKeys).toHaveBeenCalledWith(providers)
     expect(mocks.restoreAllMcpSecrets).toHaveBeenCalledWith(mcp)
+    expect(mocks.restoreAllOauthSecrets).toHaveBeenCalledWith(oauth)
   })
 })

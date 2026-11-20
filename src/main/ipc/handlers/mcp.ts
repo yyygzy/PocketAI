@@ -12,6 +12,11 @@ import { pythonEnvService, getPipSource, setPipSource } from '../../mcp/python-e
 import { listPythonRuntimes, downloadPortablePython } from '../../python-runtime'
 import { broadcast } from '../broadcast'
 import { safeHandle, errMsg, argsSchema, z } from '../safe-handle'
+import { mcpOauthManualConfigSchema, type McpOauthManualConfig } from '../../../shared/mcp-oauth'
+import {
+  mcpCatalogTrustKeyInputSchema,
+  type McpCatalogTrustKeyInput
+} from '../../../shared/mcp-catalog-trust'
 import { writeFileAtomicSync } from '../../files/atomic-write'
 import {
   mcpServerSaveSchema,
@@ -41,6 +46,20 @@ function maskMcpRecord(r: McpServerRecord): McpServerRecord {
 
 function maskRuntime(rt: McpServerRuntime): McpServerRuntime {
   return { ...rt, env: maskSecretMap(rt.env), headers: maskSecretMap(rt.headers) }
+}
+
+type McpOauthService = typeof import('../../mcp/oauth/service').mcpOauthService
+
+let oauthStatusWired = false
+
+/** 懒加载 OAuth 服务，并只在第一次接上状态广播（token 永不出主进程，只广播脱敏视图） */
+async function getOAuthService(): Promise<McpOauthService> {
+  const { mcpOauthService } = await import('../../mcp/oauth/service')
+  if (!oauthStatusWired) {
+    oauthStatusWired = true
+    mcpOauthService.setOnStatus((view) => broadcast(IPC.MCP_OAUTH_STATUS_EVENT, view))
+  }
+  return mcpOauthService
 }
 
 export function registerMcpHandlers(): void {
@@ -137,6 +156,15 @@ export function registerMcpHandlers(): void {
         warning = `配置已删除，但虚拟环境目录清理失败：${errMsg(e)}`
       }
       mcpServerRepo.delete(id)
+      // v78：删除连接器时一并清除 OAuth 行，避免 token 遗留；等待中的授权也取消
+      try {
+        const oauth = await getOAuthService()
+        oauth.cancelAuth(id)
+        const { mcpOauthRepo } = await import('../../db/repositories/mcp-oauth.repo')
+        mcpOauthRepo.deleteForServer(id)
+      } catch (e) {
+        warning = warning ?? `清除 OAuth 凭据失败：${errMsg(e)}`
+      }
       return { ok: true as const, warning }
     }),
   argsSchema(idSchema))
@@ -260,6 +288,55 @@ export function registerMcpHandlers(): void {
     const { resetMcpCatalog } = await import('../../mcp/catalog')
     return { ok: true as const, catalog: resetMcpCatalog() }
   })
+  // 签名信任库：默认空；导入/移除都会回传最新全量视图（含指纹），界面无需二次读
+  safeHandle(IPC.MCP_CATALOG_TRUST_LIST, async () => {
+    const { listTrustKeys } = await import('../../mcp/catalog-trust')
+    return { ok: true as const, keys: listTrustKeys() }
+  })
+  safeHandle(
+    IPC.MCP_CATALOG_TRUST_IMPORT,
+    async (_e, input: McpCatalogTrustKeyInput) => {
+      const { importTrustKey } = await import('../../mcp/catalog-trust')
+      return { ok: true as const, keys: importTrustKey(input) }
+    },
+    argsSchema(mcpCatalogTrustKeyInputSchema)
+  )
+  safeHandle(
+    IPC.MCP_CATALOG_TRUST_REMOVE,
+    async (_e, keyId: string) => {
+      const { removeTrustKey } = await import('../../mcp/catalog-trust')
+      return { ok: true as const, keys: removeTrustKey(keyId) }
+    },
+    argsSchema(z.string().min(1).max(64))
+  )
+
+  // ---------- 远程 MCP OAuth ----------
+  // 状态事件只广播脱敏视图（状态/过期/scope/人话错误），token 永不出主进程。
+  // 懒接线：OAuth 服务会拉起 DB/加密仓储，模块加载期就去拉会让只测删除/启动桥接的用例
+  // 被迫起整条 DB 链（还会在测试的 electron 桩上抛未处理 rejection）。首次用到 OAuth 通道时再接。
+  safeHandle(IPC.MCP_OAUTH_LIST, async () => {
+    const oauth = await getOAuthService()
+    return { ok: true as const, views: oauth.listViews() }
+  })
+  safeHandle(
+    IPC.MCP_OAUTH_BEGIN,
+    async (_e, id: string, manual?: McpOauthManualConfig) => {
+      const oauth = await getOAuthService()
+      await oauth.beginAuth(id, manual ?? undefined)
+      return { ok: true as const }
+    },
+    argsSchema(idSchema, mcpOauthManualConfigSchema.optional())
+  )
+  safeHandle(IPC.MCP_OAUTH_CANCEL, async (_e, id: string) => {
+    const oauth = await getOAuthService()
+    oauth.cancelAuth(id)
+    return { ok: true as const }
+  }, argsSchema(idSchema))
+  safeHandle(IPC.MCP_OAUTH_CLEAR, async (_e, id: string) => {
+    const oauth = await getOAuthService()
+    await oauth.clear(id)
+    return { ok: true as const }
+  }, argsSchema(idSchema))
 
   // Python 运行时
   safeHandle(IPC.PYTHON_RUNTIME_LIST, () => listPythonRuntimes())

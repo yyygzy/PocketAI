@@ -7,7 +7,12 @@
 //  · 反向：一条注解都没有时，结果与改动前逐条相同（这批不许有任何静默收紧）。
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('../src/main/mcp/json-rpc', () => ({ StdioJsonRpcClient: class {} }))
+vi.mock('../src/main/mcp/json-rpc', () => ({
+  StdioJsonRpcClient: class {},
+  // manager 静态导入的 http-transport 会从这里取错误类；mock 缺导出会让整条导入链失败
+  McpTransportError: class McpTransportError extends Error {},
+  McpBusinessError: class McpBusinessError extends Error {}
+}))
 vi.mock('../src/main/db/repositories/mcp-server.repo', () => ({ mcpServerRepo: {} }))
 vi.mock('../src/main/portable', () => ({ MCP_EXTENSIONS_DIR: '/mock/ext/mcp' }))
 vi.mock('../src/main/mcp/python-env', () => ({

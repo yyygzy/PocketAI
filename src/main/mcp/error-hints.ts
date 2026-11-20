@@ -38,8 +38,8 @@ export function humanizeMcpStartError(raw: string, record?: ErrorRecord): string
   if (/EACCES|EPERM|permission denied|access is denied|权限不足|拒绝访问/i.test(text)) {
     return '没有权限启动这个连接器，可能被系统权限或安全软件拦截。请检查文件权限后重试。'
   }
-  if (/401|403|unauthorized|forbidden|认证失败|鉴权失败/i.test(text)) {
-    return '远端服务拒绝了访问，请检查地址或访问令牌后重试。'
+  if (/401|403|unauthorized|forbidden|认证失败|鉴权失败|需要重新授权|拒绝了当前授权|拒绝了当前登录/i.test(text)) {
+    return '授权已失效或服务端拒绝了访问，请点「重新授权」后再试。'
   }
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|network error|网络连接/i.test(text)) {
     return '网络连接失败，或远端服务没有启动。请检查网络和地址后重试。'

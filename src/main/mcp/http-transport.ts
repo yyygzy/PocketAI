@@ -34,11 +34,26 @@ export interface HttpTransportOptions {
   /** 自定义请求头（如 Authorization）；协议头（Content-Type/Accept/Mcp-Session-Id）后写优先，不可被覆盖 */
   headers?: Record<string, string>
   /**
+   * 动态鉴权头（v78 OAuth）：每次请求前调用，返回值里的 Authorization 覆盖静态 headers。
+   * 抛错即中止本次请求（由 manager 转成「需要重新授权」的人话）。
+   */
+  resolveAuth?: () => Promise<Record<string, string>>
+  /**
    * 站点策略钩子（由 manager 注入）：每次发请求前判这个 URL 能不能连，抛错即拒发。
    * 做成注入而不是在这里 import 策略模块，是为了让 transport 保持零依赖——
    * 策略要读 app_config（→ 数据库 → electron），不该把协议层单元测试一起拖进去。
    */
   checkHostAllowed?: (url: string) => void
+}
+
+/** 鉴权失败（401/403）：只带状态码，不带任何 token/响应体 */
+export class McpAuthError extends McpTransportError {
+  readonly status: number
+  constructor(status: number) {
+    super('auth', '服务端拒绝了当前授权，需要重新授权。')
+    this.name = 'McpAuthError'
+    this.status = status
+  }
 }
 
 /** 单条 SSE 事件的最大字节数（与 stdio NDJSON 上限对齐） */
@@ -143,10 +158,11 @@ export class HttpJsonRpcClient implements McpTransportClient {
 
   constructor(private readonly opts: HttpTransportOptions) {}
 
-  /** 组装请求头：自定义头在前，协议头后写优先（防用户头覆盖 Content-Type/Accept/会话 ID 破坏协议） */
-  private buildHeaders(): Record<string, string> {
+  /** 组装请求头：自定义头在前，OAuth 动态头其次，协议头后写优先 */
+  private buildHeaders(authHeaders?: Record<string, string>): Record<string, string> {
     const headers: Record<string, string> = {
       ...(this.opts.headers ?? {}),
+      ...(authHeaders ?? {}),
       'Content-Type': 'application/json',
       Accept: 'text/event-stream'
     }
@@ -154,6 +170,10 @@ export class HttpJsonRpcClient implements McpTransportClient {
       headers['Mcp-Session-Id'] = this.sessionId
     }
     return headers
+  }
+
+  private async authHeaders(): Promise<Record<string, string> | undefined> {
+    return this.opts.resolveAuth ? this.opts.resolveAuth() : undefined
   }
 
   /** http 传输无本地进程，pid 恒为 undefined */
@@ -200,7 +220,7 @@ export class HttpJsonRpcClient implements McpTransportClient {
 
     return (async (): Promise<T> => {
       try {
-        const headers = this.buildHeaders()
+        const headers = this.buildHeaders(await this.authHeaders())
 
         // 站点策略（连接级域名闸，默认全放行）：在真正发请求前判，拒绝时抛错给调用方。
         // 只校验 host，不做 DNS 解析——DNS 重绑定不在这一层的职责里（目标 URL 由用户显式配置）。
@@ -214,6 +234,12 @@ export class HttpJsonRpcClient implements McpTransportClient {
           signal: controller.signal,
           redirect: 'error' // 禁止重定向，防 SSRF 绕过
         })
+
+        // 401/403 只报状态码：不解析/不回显响应体，避免把 OAuth 错误详情或 token 带进日志
+        if (res.status === 401 || res.status === 403) {
+          if (res.body) await res.body.cancel().catch(() => {})
+          throw new McpAuthError(res.status)
+        }
 
         // 提取 session ID（initialize 响应通常带 Mcp-Session-Id）
         const sid = res.headers.get('Mcp-Session-Id')
@@ -265,8 +291,9 @@ export class HttpJsonRpcClient implements McpTransportClient {
           throw e
         }
       } catch (e) {
-        // 已分类的错误原样透传
+        // 已分类的错误原样透传；OAuth 服务的「需重新授权」错误也原样透传
         if (e instanceof McpTransportError || e instanceof McpBusinessError) throw e
+        if (e instanceof Error && e.name === 'McpOauthAuthRequiredError') throw e
         if (isAbortError(e)) {
           throw new McpTransportError('timeout', `JSON-RPC 请求超时: ${method} (${timeout}ms)`)
         }
@@ -298,26 +325,25 @@ export class HttpJsonRpcClient implements McpTransportClient {
     const timer = setTimeout(() => controller.abort(), this.opts.requestTimeout ?? 30000)
     this.inflight.add(controller)
 
-    const headers = this.buildHeaders()
-
-    fetch(this.opts.url, {
-      method: 'POST',
-      headers,
-      body,
-      signal: controller.signal,
-      redirect: 'error'
-    })
-      .then(async (res) => {
+    void (async () => {
+      try {
+        const headers = this.buildHeaders(await this.authHeaders())
+        const res = await fetch(this.opts.url, {
+          method: 'POST',
+          headers,
+          body,
+          signal: controller.signal,
+          redirect: 'error'
+        })
         // 通知不需要响应体，但需要消费掉避免连接泄漏
         if (res.body) await res.body.cancel().catch(() => {})
-      })
-      .catch(() => {
-        // 通知失败静默忽略
-      })
-      .finally(() => {
+      } catch {
+        // 通知失败静默忽略（含取不到授权头）
+      } finally {
         clearTimeout(timer)
         this.inflight.delete(controller)
-      })
+      }
+    })()
   }
 
   onNotification(handler: (n: JsonRpcNotification) => void): () => void {

@@ -1449,6 +1449,46 @@ const MIGRATIONS: Migration[] = [
         db.exec('ALTER TABLE mcp_servers ADD COLUMN catalog_id TEXT;')
       }
     }
+  },
+  {
+    // v78：远程 MCP 的 OAuth 授权方式与凭据表。
+    //
+    // auth_mode：none | headers | oauth。旧记录默认 headers（保留原有静态 Header 行为），
+    // stdio 由仓储归一化为 none。OAuth token/client_secret 只以字段级密文落盘，
+    // 明文 token 不进入 IPC/日志。
+    version: 78,
+    name: 'mcp_oauth_credentials',
+    up: (db) => {
+      const cols = new Set(
+        (db.prepare('PRAGMA table_info(mcp_servers)').all() as Array<{ name: string }>).map(
+          (c) => c.name
+        )
+      )
+      if (!cols.has('auth_mode')) {
+        db.exec("ALTER TABLE mcp_servers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'headers';")
+      }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mcp_oauth_credentials (
+          server_id TEXT PRIMARY KEY,
+          issuer TEXT,
+          authorization_endpoint TEXT,
+          token_endpoint TEXT,
+          registration_endpoint TEXT,
+          revocation_endpoint TEXT,
+          client_id TEXT,
+          client_secret_enc TEXT,
+          token_endpoint_auth_method TEXT,
+          access_token_enc TEXT,
+          refresh_token_enc TEXT,
+          token_type TEXT,
+          scope TEXT,
+          expires_at INTEGER,
+          status TEXT NOT NULL DEFAULT 'needs_reauth',
+          last_error TEXT,
+          updated_at INTEGER NOT NULL
+        )
+      `)
+    }
   }
 ]
 

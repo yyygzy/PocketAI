@@ -998,6 +998,9 @@ export type McpTransport = 'stdio' | 'http'
 export type McpRuntime = 'node' | 'python' | 'binary'
 export type McpServerStatus = 'stopped' | 'starting' | 'running' | 'error'
 
+/** 远程 MCP 的鉴权方式（v78）：无 / 静态 Headers / OAuth。stdio 恒为 none。 */
+export type McpAuthMode = 'none' | 'headers' | 'oauth'
+
 export interface McpServerRecord {
   id: string
   name: string
@@ -1009,6 +1012,8 @@ export interface McpServerRecord {
   url: string | null // http 传输
   /** http 传输的自定义请求头（如 Authorization: Bearer xxx）；stdio 恒为 {} */
   headers: Record<string, string>
+  /** v78：http 鉴权方式；stdio 恒为 none。oauth 时静态 Authorization 头不参与请求 */
+  authMode?: McpAuthMode
   createdAt: number
   /**
    * SEC-5：是否信任该 Server 的「只读命名」工具免确认。默认 false ⇒ 该 Server 的全部工具
@@ -3175,6 +3180,16 @@ export const IPC = {
   MCP_CATALOG_LIST: 'mcp-catalog:list',
   MCP_CATALOG_REFRESH: 'mcp-catalog:refresh',
   MCP_CATALOG_RESET: 'mcp-catalog:reset',
+  // 连接器目录签名信任库：默认空，用户自行导入发布者 Ed25519 公钥
+  MCP_CATALOG_TRUST_LIST: 'mcp-catalog:trust-list',
+  MCP_CATALOG_TRUST_IMPORT: 'mcp-catalog:trust-import',
+  MCP_CATALOG_TRUST_REMOVE: 'mcp-catalog:trust-remove',
+  // 远程 MCP OAuth（v78）：渲染层只拿状态，不拿 token
+  MCP_OAUTH_LIST: 'mcp-oauth:list',
+  MCP_OAUTH_BEGIN: 'mcp-oauth:begin',
+  MCP_OAUTH_CANCEL: 'mcp-oauth:cancel',
+  MCP_OAUTH_CLEAR: 'mcp-oauth:clear',
+  MCP_OAUTH_STATUS_EVENT: 'mcp-oauth:status-event',
 
   // ---------- 终端模块（用户手动交互式终端，非 Agent 工具） ----------
   TERMINAL_START: 'terminal:start',

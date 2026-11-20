@@ -16,6 +16,7 @@ import {
   type McpTemplate
 } from '../../../../../shared/mcp-templates'
 import type { McpCatalogEntry, McpCatalogRisk, McpCatalogView } from '../../../../../shared/mcp-catalog'
+import type { McpCatalogTrustKeyView } from '../../../../../shared/mcp-catalog-trust'
 import { useI18n } from '../../../i18n'
 import { useToast } from '../../../components/ToastProvider'
 import { useConfirm } from '../../../components/ConfirmDialog'
@@ -68,6 +69,15 @@ export const McpCatalogModal: React.FC<Props> = ({ onClose, onChanged }) => {
   const [remoteUrl, setRemoteUrl] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [remoteNotice, setRemoteNotice] = useState('')
+  // 签名信任库：默认空；读失败只影响这块，不挡内置清单
+  const [trustKeys, setTrustKeys] = useState<McpCatalogTrustKeyView[]>([])
+  const [trustUnread, setTrustUnread] = useState<{ error?: string } | null>(null)
+  const [trustKeyId, setTrustKeyId] = useState('')
+  const [trustLabel, setTrustLabel] = useState('')
+  const [trustPublicKey, setTrustPublicKey] = useState('')
+  const [trustBusy, setTrustBusy] = useState(false)
+  const [trustNotice, setTrustNotice] = useState('')
+  const [trustError, setTrustError] = useState('')
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -82,6 +92,19 @@ export const McpCatalogModal: React.FC<Props> = ({ onClose, onChanged }) => {
     } catch (e) {
       setLoadError(errText(e, t('common.unknownError')))
       logIpcError('mcp.catalogList', e)
+    }
+    // 信任库单独读：读不到只让这块点名，目录本身照常显示
+    try {
+      const r = await window.pocketai.listMcpCatalogTrustKeys()
+      if (hasIpcFailed(r)) {
+        setTrustUnread({ error: r.error })
+        return
+      }
+      setTrustUnread(null)
+      setTrustKeys(r.keys ?? [])
+    } catch (e) {
+      setTrustUnread({ error: errText(e, t('common.unknownError')) })
+      logIpcError('mcp.catalogTrustList', e)
     }
   }, [t])
 
@@ -270,6 +293,63 @@ export const McpCatalogModal: React.FC<Props> = ({ onClose, onChanged }) => {
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
       logIpcError('mcp.catalogReset', e)
+    }
+  }
+
+  const handleImportTrust = async () => {
+    const keyId = trustKeyId.trim()
+    const publicKey = trustPublicKey.trim()
+    if (!keyId || !publicKey) {
+      setTrustError(t('agent.catalogTrustNeedFields'))
+      return
+    }
+    setTrustBusy(true)
+    setTrustError('')
+    setTrustNotice('')
+    try {
+      const r = await window.pocketai.importMcpCatalogTrustKey({
+        keyId,
+        publicKey,
+        ...(trustLabel.trim() ? { label: trustLabel.trim() } : {})
+      })
+      if (hasIpcFailed(r)) {
+        setTrustError(r.error)
+        return
+      }
+      setTrustKeys(r.keys ?? [])
+      setTrustUnread(null)
+      setTrustKeyId('')
+      setTrustLabel('')
+      setTrustPublicKey('')
+      setTrustNotice(t('agent.catalogTrustImported'))
+      // 信任根变了：远程缓存需要按新信任库重验，直接回读目录视图
+      await loadCatalog()
+    } catch (e) {
+      setTrustError(errText(e, t('common.unknownError')))
+      logIpcError('mcp.catalogTrustImport', e)
+    } finally {
+      setTrustBusy(false)
+    }
+  }
+
+  const handleRemoveTrust = async (keyId: string) => {
+    setTrustBusy(true)
+    setTrustError('')
+    setTrustNotice('')
+    try {
+      const r = await window.pocketai.removeMcpCatalogTrustKey(keyId)
+      if (hasIpcFailed(r)) {
+        setTrustError(r.error)
+        return
+      }
+      setTrustKeys(r.keys ?? [])
+      setTrustNotice(t('agent.catalogTrustRemoved'))
+      await loadCatalog()
+    } catch (e) {
+      setTrustError(errText(e, t('common.unknownError')))
+      logIpcError('mcp.catalogTrustRemove', e)
+    } finally {
+      setTrustBusy(false)
     }
   }
 
@@ -462,11 +542,96 @@ export const McpCatalogModal: React.FC<Props> = ({ onClose, onChanged }) => {
                 </button>
               </div>
               {remoteNotice && <p className="text-[10px] text-[var(--color-success)]">{remoteNotice}</p>}
+              {catalog?.remoteError && (
+                <p className="text-[10px] text-[var(--color-danger)] leading-relaxed">
+                  {t('agent.catalogRemoteError', { msg: catalog.remoteError })}
+                </p>
+              )}
+              {catalog?.remoteVerified && (
+                <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+                  {t('agent.catalogRemoteVerified', {
+                    keyId: catalog.remoteVerified.keyId,
+                    serial: String(catalog.remoteVerified.serial)
+                  })}
+                </p>
+              )}
               {catalog && catalog.remoteCount > 0 && (
                 <p className="text-[10px] text-[var(--color-text-muted)]">
                   {catalog.remoteCount} / {catalog.builtinCount}
                 </p>
               )}
+
+              <div className="rounded border border-[var(--color-border)] p-2 space-y-1.5">
+                <p className="text-[11px] font-medium">{t('agent.catalogTrustTitle')}</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+                  {t('agent.catalogTrustHint')}
+                </p>
+                {trustUnread && (
+                  <p className="text-[10px] text-[var(--color-danger)]">
+                    {t('agent.catalogTrustLoadFailed', { msg: trustUnread.error ?? t('common.unknownError') })}
+                  </p>
+                )}
+                {!trustUnread && trustKeys.length === 0 && (
+                  <p className="text-[10px] text-[var(--color-warning)]">{t('agent.catalogTrustEmpty')}</p>
+                )}
+                {trustKeys.map((k) => (
+                  <div
+                    key={k.keyId}
+                    className="flex items-start gap-2 text-[10px] bg-[var(--color-bg-secondary)] rounded px-2 py-1"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono break-all">
+                        {k.keyId}
+                        {k.label ? ` · ${k.label}` : ''}
+                      </p>
+                      {k.fingerprint && (
+                        <p className="font-mono text-[var(--color-text-muted)] break-all">
+                          {t('agent.catalogTrustFingerprint')}：{k.fingerprint}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      className="btn-ghost text-[10px] py-0 px-1.5 shrink-0"
+                      disabled={trustBusy}
+                      onClick={() => void handleRemoveTrust(k.keyId)}
+                    >
+                      {t('agent.catalogTrustRemove')}
+                    </button>
+                  </div>
+                ))}
+
+                <div className="grid grid-cols-2 gap-1">
+                  <input
+                    className="input font-mono text-[11px] py-1"
+                    value={trustKeyId}
+                    onChange={(e) => setTrustKeyId(e.target.value)}
+                    placeholder={t('agent.catalogTrustKeyId')}
+                    spellCheck={false}
+                  />
+                  <input
+                    className="input text-[11px] py-1"
+                    value={trustLabel}
+                    onChange={(e) => setTrustLabel(e.target.value)}
+                    placeholder={t('agent.catalogTrustLabel')}
+                  />
+                </div>
+                <textarea
+                  className="input font-mono text-[10px] py-1 w-full h-16 resize-y"
+                  value={trustPublicKey}
+                  onChange={(e) => setTrustPublicKey(e.target.value)}
+                  placeholder={t('agent.catalogTrustPublicKeyPh')}
+                  spellCheck={false}
+                />
+                {trustError && <p className="text-[10px] text-[var(--color-danger)]">{trustError}</p>}
+                {trustNotice && <p className="text-[10px] text-[var(--color-success)]">{trustNotice}</p>}
+                <button
+                  className="btn-ghost text-[11px] py-0.5 px-2"
+                  disabled={trustBusy}
+                  onClick={() => void handleImportTrust()}
+                >
+                  {trustBusy ? t('agent.catalogTrustImporting') : t('agent.catalogTrustImport')}
+                </button>
+              </div>
             </div>
           </details>
         </div>

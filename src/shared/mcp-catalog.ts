@@ -46,6 +46,12 @@ export interface McpCatalogView {
   updatedAt: number
   /** 远程索引最近一次读取失败的原因（内置条目仍然可用） */
   remoteError?: string
+  /** 当前远程缓存验签通过时的信封信息（未加载远程条目时缺省） */
+  remoteVerified?: {
+    keyId: string
+    serial: number
+    issuedAt: number
+  }
 }
 
 const BUILTIN_META: Record<
@@ -202,11 +208,20 @@ const catalogEntrySchema = z.object({
   placeholders: z.array(catalogPlaceholderSchema).max(8).optional()
 })
 
-export const remoteMcpCatalogSchema = z.object({
-  /** 远程索引版本：只认 1，后续格式变更必须显式升级，避免旧解析器误读 */
-  version: z.literal(1),
+/**
+ * 签名信封里的 payload。未签名的 v1（`{ version:1, entries:[...] }`）不再被解析：
+ * 整份目录必须先通过 `pocketai-mcp-catalog/2` 的 Ed25519 验签（见 shared/mcp-catalog-trust.ts）。
+ */
+export const remoteMcpCatalogPayloadSchema = z.object({
   updatedAt: z.number().int().nonnegative().optional(),
-  entries: z.array(catalogEntrySchema).max(100)
+  entries: z.array(catalogEntrySchema).max(100),
+  revoked: z
+    .object({
+      keyIds: z.array(z.string().min(1).max(64)).max(100).optional(),
+      entryIds: z.array(z.string().min(1).max(64)).max(1000).optional(),
+      entryHashes: z.array(z.string().regex(/^[0-9a-f]{64}$/)).max(1000).optional()
+    })
+    .optional()
 })
 
 const NPM_OFFICIAL_PREFIX = '@modelcontextprotocol/'
@@ -294,15 +309,45 @@ export function remoteCatalogEntryProblem(entry: McpCatalogEntry): string | null
 
 export interface RemoteCatalogParseResult {
   entries: McpCatalogEntry[]
-  /** 被安全闸门拒绝的条目说明（不阻断其余条目） */
+  /** 被安全闸门/撤销列表拒绝的条目说明（不阻断其余条目） */
   rejected: string[]
 }
 
-/** 解析远程索引 JSON：整体格式非法直接抛错；单条不安全只拒绝该条 */
-export function parseRemoteMcpCatalog(raw: unknown): RemoteCatalogParseResult {
-  const top = remoteMcpCatalogSchema.safeParse(raw)
+export interface RemoteCatalogParseOptions {
+  /** 发布者撤销的条目：返回非空原因即丢弃该条（哈希需要主进程算，故用回调注入） */
+  entryRevoked?: (entry: McpCatalogEntry, rawEntry: unknown) => string | null
+}
+
+/**
+ * 未签名/旧格式的显式拒绝原因（验签前的第一道闸）。
+ * 返回 null 表示「形状像签名信封」，交给信封 schema 继续判。
+ */
+export function explainUnsignedRemoteCatalog(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return '远程目录不是签名信封（需要 pocketai-mcp-catalog/2），已拒绝加载。'
+  }
+  const obj = raw as Record<string, unknown>
+  if ('format' in obj) return null
+  if (obj.version === 1) {
+    return '远程目录是未签名的 v1 格式，已拒绝加载。请让发布者改用 pocketai-mcp-catalog/2 签名信封后重试。'
+  }
+  if ('entries' in obj) {
+    return '远程目录缺少签名信封（pocketai-mcp-catalog/2），已拒绝加载。未签名的目录一律不加载。'
+  }
+  return '远程目录不是签名信封（需要 pocketai-mcp-catalog/2），已拒绝加载。'
+}
+
+/**
+ * 解析**已通过验签**的信封 payload：整体格式非法直接抛错；单条不安全只拒绝该条。
+ * 撤销列表里的条目在这里一并丢弃（撤销=发布者明确作废，不等于「没签名也能装」）。
+ */
+export function parseRemoteCatalogPayload(
+  payload: unknown,
+  options: RemoteCatalogParseOptions = {}
+): RemoteCatalogParseResult {
+  const top = remoteMcpCatalogPayloadSchema.safeParse(payload)
   if (!top.success) {
-    throw new Error('远程目录格式不正确（需要 version=1 与 entries 数组）')
+    throw new Error('远程目录内容格式不正确（签名信封的 payload 需要 entries 数组）')
   }
   const entries: McpCatalogEntry[] = []
   const rejected: string[] = []
@@ -311,6 +356,11 @@ export function parseRemoteMcpCatalog(raw: unknown): RemoteCatalogParseResult {
     const problem = remoteCatalogEntryProblem(candidate)
     if (problem) {
       rejected.push(`${candidate.id}: ${problem}`)
+      continue
+    }
+    const revoked = options.entryRevoked?.(candidate, item) ?? null
+    if (revoked) {
+      rejected.push(`${candidate.id}: ${revoked}`)
       continue
     }
     entries.push(candidate)

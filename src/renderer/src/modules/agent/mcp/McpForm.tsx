@@ -9,7 +9,9 @@ import { useI18n } from '../../../i18n'
 import { errText } from '../../../utils/error'
 import { logIpcError, hasIpcFailed, ipcFailText } from '../../../utils/ipc'
 import { usePythonEnv } from './usePythonEnv'
+import { McpOauthSection } from './McpOauthSection'
 import { LoadFailNotice } from '../../../components/LoadFailNotice'
+import type { McpAuthMode } from '../../../../../shared/types'
 
 const ARGS_PLACEHOLDER = '["-y","@modelcontextprotocol/server-filesystem","/tmp"]'
 const ENV_PLACEHOLDER = '{"API_KEY":"xxx"}'
@@ -30,6 +32,10 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   const [argsText, setArgsText] = useState(JSON.stringify(initial.args ?? [], null, 2))
   const [envText, setEnvText] = useState(JSON.stringify(initial.env ?? {}, null, 2))
   const [url, setUrl] = useState(initial.url ?? '')
+  // v78：远程鉴权方式；stdio 恒为 none
+  const [authMode, setAuthMode] = useState<McpAuthMode>(
+    (initial.transport ?? 'stdio') === 'http' ? initial.authMode ?? 'headers' : 'none'
+  )
   const [headersText, setHeadersText] = useState(JSON.stringify(initial.headers ?? {}, null, 2))
   // SEC-5：MCP 工具默认每次调用都要人工确认；勾选「信任只读命名工具」后，
   // get/list/read 等只读前缀才免确认（名字由 Server 自报，默认不信任）
@@ -167,7 +173,8 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         pythonPackages:
           transport === 'stdio' && runtime === 'python' ? packageLines : [],
         trustReadOnly,
-        autoConnect
+        autoConnect,
+        authMode
       })
       // 主进程闸门（如未设主密码时拒绝新密钥）以 { ok:false, error } 返回，
       // 不是异常：必须就地展示并保持表单打开，否则用户会以为已保存
@@ -210,7 +217,15 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
       </div>
       <div>
         <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('agent.f.transport')}</label>
-        <select className="select-mini w-full" value={transport} onChange={(e) => setTransport(e.target.value as 'stdio' | 'http')}>
+        <select
+          className="select-mini w-full"
+          value={transport}
+          onChange={(e) => {
+            const next = e.target.value as 'stdio' | 'http'
+            setTransport(next)
+            setAuthMode((prev) => (next === 'stdio' ? 'none' : prev === 'none' ? 'headers' : prev))
+          }}
+        >
           <option value="stdio">{t('agent.f.stdio')}</option>
           <option value="http">{t('agent.f.http')}</option>
         </select>
@@ -438,16 +453,45 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
             <p className="text-[11px] text-[var(--color-warning)] mt-1">{t('agent.f.httpWarn')}</p>
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('agent.f.headers')}</label>
-            <textarea
-              className="input font-mono text-xs min-h-[64px]"
-              value={headersText}
-              onChange={(e) => setHeadersText(e.target.value)}
-              placeholder={HEADERS_PLACEHOLDER}
-              spellCheck={false}
-            />
-            {revealRow}
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('agent.f.authMode')}</label>
+            <select
+              className="select-mini w-full"
+              value={authMode}
+              onChange={(e) => setAuthMode(e.target.value as McpAuthMode)}
+            >
+              <option value="headers">{t('agent.f.authHeaders')}</option>
+              <option value="oauth">{t('agent.f.authOauth')}</option>
+              <option value="none">{t('agent.f.authNone')}</option>
+            </select>
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+              {authMode === 'oauth'
+                ? t('agent.f.authOauthHint')
+                : authMode === 'none'
+                  ? t('agent.f.authNoneHint')
+                  : t('agent.f.authHeadersHint')}
+            </p>
           </div>
+          {authMode === 'oauth' && <McpOauthSection serverId={initial.id} />}
+          {authMode !== 'none' && (
+            <div>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+                {authMode === 'oauth' ? t('agent.f.extraHeaders') : t('agent.f.headers')}
+              </label>
+              <textarea
+                className="input font-mono text-xs min-h-[64px]"
+                value={headersText}
+                onChange={(e) => setHeadersText(e.target.value)}
+                placeholder={HEADERS_PLACEHOLDER}
+                spellCheck={false}
+              />
+              {authMode === 'oauth' && (
+                <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                  {t('agent.f.oauthHeadersIgnored')}
+                </p>
+              )}
+              {revealRow}
+            </div>
+          )}
         </>
       )}
       <div className="space-y-2">
