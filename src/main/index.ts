@@ -54,6 +54,7 @@ import { exportFieldCredentials, restoreFieldCredentials } from './crypto/creden
 import { recoveryKeyManager } from './crypto/recovery-key'
 import { providerRepo } from './db/repositories/provider.repo'
 import { mcpServerRepo } from './db/repositories/mcp-server.repo'
+import { mcpManager } from './mcp/manager'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { getHardwareInfo, probeHardwareInfo, HARDWARE_BACKGROUND_BUDGET_MS } from './steward/hardware'
 import { configureLocalSlot, SLOT_WAIT_PERF_LABEL } from './providers/local-slot'
@@ -459,6 +460,12 @@ async function boot(): Promise<void> {
 
   // Channels 网关运行时接线（需读 app_config，必须在 DB 打开之后）
   initChannelRuntime()
+
+  // v77：恢复上次启用过的 MCP 连接器。必须等 DB 打开/解锁完成之后；
+  // 不阻塞启动（部分连接器首次启动要现下载依赖），状态会进列表，失败带「重试」。
+  void mcpManager
+    .restoreAutoConnect()
+    .catch((e) => log.warn('自动恢复 MCP 连接器失败（不阻塞启动）:', errMsg(e)))
 
   // 阶段 4：License 验证（仅当存在 license.lic 时）
   // 走异步版：绑盘指纹要跑 Get-Partition/Get-PhysicalDisk（本机实测 25s）。

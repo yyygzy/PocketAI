@@ -34,6 +34,8 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   // SEC-5：MCP 工具默认每次调用都要人工确认；勾选「信任只读命名工具」后，
   // get/list/read 等只读前缀才免确认（名字由 Server 自报，默认不信任）
   const [trustReadOnly, setTrustReadOnly] = useState(initial.trustReadOnly ?? false)
+  // v77：应用启动时自动恢复连接（默认关闭；显式停止会取消）
+  const [autoConnect, setAutoConnect] = useState(initial.autoConnect ?? false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   // env/headers 由主进程以掩码视图下发（••••+末 4 位）；点「显示密钥」才取回明文
@@ -164,7 +166,8 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
         // 仅 stdio+python 保留依赖列表；repo 层也会兜底归一化
         pythonPackages:
           transport === 'stdio' && runtime === 'python' ? packageLines : [],
-        trustReadOnly
+        trustReadOnly,
+        autoConnect
       })
       // 主进程闸门（如未设主密码时拒绝新密钥）以 { ok:false, error } 返回，
       // 不是异常：必须就地展示并保持表单打开，否则用户会以为已保存
@@ -458,6 +461,18 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
           <span>
             {t('agent.f.trustReadOnly')}
             <span className="block text-[11px] text-[var(--color-text-muted)]">{t('agent.f.trustReadOnlyHint')}</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={autoConnect}
+            onChange={(e) => setAutoConnect(e.target.checked)}
+          />
+          <span>
+            {t('agent.autoConnect')}
+            <span className="block text-[11px] text-[var(--color-text-muted)]">{t('agent.autoConnectHint')}</span>
           </span>
         </label>
       </div>

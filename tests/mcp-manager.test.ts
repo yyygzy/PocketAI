@@ -356,10 +356,11 @@ describe('McpManager — start 成功路径', () => {
   it('spawn 失败 → status error，throw，client.shutdown 被调', async () => {
     mocks.repoList = [makeRecord()]
     mocks.spawnImpl = async () => { throw new Error('spawn ENOENT') }
-    await expect(mgr.start('srv1')).rejects.toThrow('spawn ENOENT')
+    // v77：对外只抛人话，原始 spawn 错误只进日志
+    await expect(mgr.start('srv1')).rejects.toThrow('找不到启动命令')
     expect(mocks.clients[0]!.shutdown).toHaveBeenCalledTimes(1)
     expect(events.at(-1)?.status).toBe('error')
-    expect(events.at(-1)?.lastError).toBe('spawn ENOENT')
+    expect(events.at(-1)?.lastError).toContain('找不到启动命令')
   })
 
   it('握手中已停止 → 不翻回 running，client.shutdown 被调', async () => {
@@ -585,7 +586,7 @@ describe('McpManager — handleExit 自动重启', () => {
     entry.autoRestarts = 3
     mocks.clients[0]!.callOnExit(1, null)
     expect(events.at(-1)?.status).toBe('error')
-    expect(events.at(-1)?.lastError).toContain('已达自动重启上限')
+    expect(events.at(-1)?.lastError).toContain('已暂停自动重试')
     expect(mocks.clients).toHaveLength(1)
   })
 })
@@ -650,14 +651,16 @@ describe('McpManager — 启动即退出（从未 running 过）不自动重启'
       return { tools: [] }
     }
     mocks.repoList = [makeRecord()]
-    await expect(mgr.start('srv1')).rejects.toThrow('进程退出')
+    // v77：对外抛人话（E404 原文已人话化为「软件包不可用」）
+    await expect(mgr.start('srv1')).rejects.toThrow('软件包')
     // 核心：必然失败的启动不再被当崩溃重播 4 遍
     expect(mocks.clients).toHaveLength(1)
     expect(events.some((e) => e.lastError?.includes('自动重启'))).toBe(false)
     const last = events.at(-1)!
     expect(last.status).toBe('error')
-    expect(last.lastError).toContain('进程启动后立即退出 (code=1')
-    expect(last.lastError).toContain('E404')
+    // v77：退出码与 E404 原文只进日志，界面拿到的是「软件包不可用 + 重试」
+    expect(last.lastError).toContain('软件包')
+    expect(last.lastError).not.toContain('E404')
   })
 
   it('catch 不覆盖 handleExit 记下的原因（否则退化成没用的「进程退出」）', async () => {
@@ -673,7 +676,8 @@ describe('McpManager — 启动即退出（从未 running 过）不自动重启'
     await mgr.start('srv1').catch(() => undefined)
     const errs = events.filter((e) => e.status === 'error')
     expect(errs.length).toBe(1) // 只 emit 一次 error，catch 不重复覆盖
-    expect(errs[0]!.lastError).toContain('E404')
+    // handleExit 记下的具体原因（经人话化）不能被 catch 的泛化文案盖掉
+    expect(errs[0]!.lastError).toContain('软件包')
   })
 
   it('反向保护：握手超时但进程还活着，catch 仍要自己兜住转 error', async () => {
@@ -685,7 +689,7 @@ describe('McpManager — 启动即退出（从未 running 过）不自动重启'
     await expect(mgr.start('srv1')).rejects.toThrow('超时')
     const last = events.at(-1)!
     expect(last.status).toBe('error')
-    expect(last.lastError).toContain('initialize')
+    expect(last.lastError).toContain('启动超时')
   })
 })
 
@@ -724,7 +728,7 @@ describe('McpManager — 握手超时按传输分层（#41：npx 首次下载依
     await mgr.start('srv1').catch(() => undefined)
     const last = events.at(-1)!
     expect(last.status).toBe('error')
-    expect(last.lastError).toContain('首次通过 npx 启动需现下载依赖')
+    expect(last.lastError).toContain('首次通过 npx / pip')
   })
 })
 
@@ -822,12 +826,15 @@ describe('McpManager — callTool HTTP 断线自动重连（重试一次，仍�
     }
     await mgr.start('srv1')
 
-    await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('fetch failed')
+    // v77：重试仍失败时对外抛人话（原始 fetch failed 只进日志）
+    await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('重试')
     // 重连发生过（新 client 建立且握手成功），但重试的 tools/call 再次失败
     expect(mocks.clients).toHaveLength(2)
     expect(getEntry().status).toBe('error')
-    expect(getEntry().lastError).toBe('fetch failed')
-    expect(events.at(-1)).toMatchObject({ status: 'error', lastError: 'fetch failed' })
+    expect(getEntry().lastError).toContain('重试')
+    expect(getEntry().lastError).not.toContain('fetch failed')
+    expect(events.at(-1)).toMatchObject({ status: 'error' })
+    expect(events.at(-1)?.lastError).toContain('重试')
 
     // error 状态必须经 restart 恢复：callTool 直接被守门拒绝
     await expect(mgr.callTool('srv1', 'get_x', {})).rejects.toThrow('MCP Server 未运行')

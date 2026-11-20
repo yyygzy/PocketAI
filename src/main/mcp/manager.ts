@@ -15,6 +15,7 @@ import { MCP_EXTENSIONS_DIR } from '../portable'
 import { errMsg } from '../error'
 import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
 import { createLogger } from '../logger'
+import { humanizeMcpStartError } from './error-hints'
 import { assertMcpConnectAllowed } from '../agent/dry-run-scope'
 import { assertMcpHostAllowed } from './outbound-policy'
 import { noteMcpToolCall } from './outbound-metrics'
@@ -396,10 +397,13 @@ export class McpManager extends EventEmitter {
       // 比这里被 reject 的握手错误更贴近真实原因。
       if (entry.status !== 'stopped' && entry.status !== 'error') {
         entry.status = 'error'
-        entry.lastError = startupFailureHint(errMsg(e))
+        // 界面上只显示可行动的人话；原始 spawn/握手错误留在日志里（SEC-2 的确认与排障不受影响）
+        entry.lastError = startupFailureHint(humanizeMcpStartError(errMsg(e), record))
         this.emitStatus(id, 'error', entry.lastError)
       }
-      throw e
+      // 对外也只抛人话：IPC / 界面不会拿到 spawn ENOENT、npm E404 这类原始串。
+      // 若 handleExit 已记下更贴近真相的原因，以它为准。
+      throw new Error(entry.lastError ?? humanizeMcpStartError(errMsg(e), record))
     }
   }
 
@@ -636,13 +640,40 @@ export class McpManager extends EventEmitter {
           // 同样作用于当前 entry（restart 失败时 doStart 已置 error 并 emit，这里兜底对齐）
           const cur = this.runtimes.get(id) ?? entry
           cur.status = 'error'
-          cur.lastError = errMsg(retryErr)
+          cur.lastError = humanizeMcpStartError(errMsg(retryErr), cur.record)
           this.emitStatus(id, 'error', cur.lastError)
-          throw retryErr
+          throw new Error(cur.lastError)
         }
       }
       throw e
     }
+  }
+
+  /**
+   * 应用启动后恢复「上次启用过」的连接器（v77）。
+   *
+   * 只处理 autoConnect=true 的记录：旧记录升级后默认 false，不会被静默拉起。
+   * 串行启动，避免一次性 spawn 一堆子进程拖慢首屏；任一失败只记录并继续，
+   * 状态与失败原因会经既有 status 事件/列表进入界面，用户可点「重试」。
+   */
+  async restoreAutoConnect(): Promise<{ started: string[]; failed: Array<{ id: string; error: string }> }> {
+    const targets = mcpServerRepo.list().filter((r) => r.autoConnect === true)
+    const started: string[] = []
+    const failed: Array<{ id: string; error: string }> = []
+    for (const record of targets) {
+      try {
+        await this.start(record.id)
+        started.push(record.id)
+      } catch (e) {
+        const friendly = humanizeMcpStartError(errMsg(e), record)
+        failed.push({ id: record.id, error: friendly })
+        log.warn(`自动连接失败: ${record.name} (${record.id}) — ${friendly}`)
+      }
+    }
+    if (targets.length > 0) {
+      log.info(`自动连接恢复完成：成功 ${started.length}，失败 ${failed.length}（共 ${targets.length}）`)
+    }
+    return { started, failed }
   }
 
   /** 停止所有运行中的 MCP Server（应用退出时调用） */
@@ -764,8 +795,10 @@ export class McpManager extends EventEmitter {
     // 重启只会把同一份错误重播几遍，还会让 lastError 变成误导性的「已达自动重启上限」。
     if (!entry.everRan) {
       entry.status = 'error'
-      entry.lastError = describeStartupExit(code, signal, entry.logBuffer)
-      log.warn(`stdio 启动即退出，不自动重启: ${id} — ${entry.lastError}`)
+      const detail = describeStartupExit(code, signal, entry.logBuffer)
+      // 原始退出码/stderr 只进日志；界面拿到的是人话
+      entry.lastError = humanizeMcpStartError(detail, entry.record)
+      log.warn(`stdio 启动即退出，不自动重启: ${id} — ${detail}`)
       this.emitStatus(id, 'error', entry.lastError)
       return
     }
@@ -790,7 +823,7 @@ export class McpManager extends EventEmitter {
     }
 
     entry.status = 'error'
-    entry.lastError = `进程退出且已达自动重启上限 (code=${code}, signal=${signal?.toString() ?? 'null'})`
+    entry.lastError = '连接器多次意外退出，已暂停自动重试。请点「重试」；如果反复失败，可展开运行时日志查看详情。'
     this.emitStatus(id, 'error', entry.lastError)
   }
 

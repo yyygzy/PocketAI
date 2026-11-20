@@ -90,8 +90,9 @@ describe('stdio 启动即退出（真实进程）', () => {
 
     const last = events.at(-1)!
     expect(last.status).toBe('error')
-    expect(last.lastError).toContain('进程启动后立即退出 (code=1')
-    expect(last.lastError).toContain('E404 simulated')
+    // v77：退出码 / stderr 原文只进日志，界面只显示可行动的人话
+    expect(last.lastError).toContain('软件包')
+    expect(last.lastError).not.toContain('E404 simulated')
     expect(events.some((e) => e.lastError?.includes('自动重启'))).toBe(false)
     off()
   }, 20_000)

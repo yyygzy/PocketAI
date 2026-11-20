@@ -93,7 +93,16 @@ const mcpServerRecordFull = z.object({
   createdAt: z.number().int().nonnegative(),
   pythonPackages: z
     .array(z.string().max(MCP_MAX_PACKAGE_CHARS))
-    .max(MCP_MAX_PACKAGES)
+    .max(MCP_MAX_PACKAGES),
+  /** v77：应用启动时自动恢复连接；缺省 false（旧记录不会被静默拉起） */
+  autoConnect: z.boolean().optional(),
+  /** 从连接器目录安装时的目录 id；手填配置为空 */
+  catalogId: z
+    .string()
+    .max(64)
+    .regex(/^[A-Za-z0-9_-]{1,64}$/, '目录 id 不合法')
+    .nullable()
+    .optional()
 })
 
 /** MCP_SERVER_SAVE 入参 */

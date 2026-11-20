@@ -1015,6 +1015,13 @@ export interface McpServerRecord {
    * 每次调用都要人工确认（工具名与描述由 Server 自报，名字骗人即可绕过确认）。
    */
   trustReadOnly: boolean
+  /**
+   * 是否在应用启动时自动恢复连接（v77）。只有在用户显式启用/启动成功后才置 true；
+   * 显式停止会清掉。缺省 false（旧记录升级后不会被静默拉起）。
+   */
+  autoConnect?: boolean
+  /** 从连接器目录安装时记录的目录 id（用于列表卡片展示「它能干什么」）；手填配置为空 */
+  catalogId?: string | null
   /** runtime=python 时的 pip 依赖描述列表（每行一个，如 mcp-server-fetch==0.1.0）；其他 runtime 恒为 [] */
   pythonPackages: string[]
 }
@@ -3164,6 +3171,10 @@ export const IPC = {
   MCP_SERVER_LOG_EVENT: 'mcp-server:log-event',
   MCP_CALL_LOG_LIST: 'mcp:call-log-list', // 读历史调用记录（可按 server 过滤）
   MCP_CALL_LOG_CLEAR: 'mcp:call-log-clear', // 清空调用记录（传 serverId 只清该 server）
+  // 连接器目录：默认只用本地内置清单；远程索引必须由用户显式配置 https 地址
+  MCP_CATALOG_LIST: 'mcp-catalog:list',
+  MCP_CATALOG_REFRESH: 'mcp-catalog:refresh',
+  MCP_CATALOG_RESET: 'mcp-catalog:reset',
 
   // ---------- 终端模块（用户手动交互式终端，非 Agent 工具） ----------
   TERMINAL_START: 'terminal:start',

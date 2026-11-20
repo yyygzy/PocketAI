@@ -11,7 +11,7 @@ import { getMcpSitePolicy, saveMcpSitePolicy } from '../../mcp/outbound-policy'
 import { pythonEnvService, getPipSource, setPipSource } from '../../mcp/python-env'
 import { listPythonRuntimes, downloadPortablePython } from '../../python-runtime'
 import { broadcast } from '../broadcast'
-import { safeHandle, errMsg, argsSchema } from '../safe-handle'
+import { safeHandle, errMsg, argsSchema, z } from '../safe-handle'
 import { writeFileAtomicSync } from '../../files/atomic-write'
 import {
   mcpServerSaveSchema,
@@ -140,18 +140,24 @@ export function registerMcpHandlers(): void {
       return { ok: true as const, warning }
     }),
   argsSchema(idSchema))
-  safeHandle(IPC.MCP_SERVER_START, async (_e, id: string) => ({
-    ok: true as const,
-    runtime: maskRuntime(await mcpManager.start(id))
-  }), argsSchema(idSchema))
+  // 显式启动成功 ⇒ 记住「这个连接器是启用过的」，应用重启时据此自动恢复（v77）。
+  // 自动重启/内部 restart 不经过这里，不会把用户已停用的连接器重新标成启用。
+  safeHandle(IPC.MCP_SERVER_START, async (_e, id: string) => {
+    const runtime = await mcpManager.start(id)
+    mcpServerRepo.setAutoConnect(id, true)
+    return { ok: true as const, runtime: maskRuntime(runtime) }
+  }, argsSchema(idSchema))
+  // 显式停止 ⇒ 取消自动恢复（用户看到的是「关掉了」，重启后不应该又自己连上）
   safeHandle(IPC.MCP_SERVER_STOP, async (_e, id: string) => {
     await mcpManager.stop(id)
+    mcpServerRepo.setAutoConnect(id, false)
     return { ok: true }
   }, argsSchema(idSchema))
-  safeHandle(IPC.MCP_SERVER_RESTART, async (_e, id: string) => ({
-    ok: true as const,
-    runtime: maskRuntime(await mcpManager.restart(id))
-  }), argsSchema(idSchema))
+  safeHandle(IPC.MCP_SERVER_RESTART, async (_e, id: string) => {
+    const runtime = await mcpManager.restart(id)
+    mcpServerRepo.setAutoConnect(id, true)
+    return { ok: true as const, runtime: maskRuntime(runtime) }
+  }, argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_LIST_TOOLS, async (_e, id: string) => ({
     ok: true as const,
     tools: await mcpManager.listTools(id)
@@ -234,6 +240,26 @@ export function registerMcpHandlers(): void {
     (_e, serverId?: string | null) => ({ ok: true as const, removed: mcpCallLogRepo.clear(serverId ?? null) }),
     argsSchema(mcpCallLogServerIdSchema)
   )
+
+  // ---------- 连接器目录 ----------
+  // 默认只返回本地内置清单；远程索引仅在用户显式刷新时拉取，且逐条过安全闸门。
+  // 目录服务按需加载：它依赖 app_config，不应让只测删除/启动桥接的单测被迫起整条 DB 链
+  safeHandle(IPC.MCP_CATALOG_LIST, async () => {
+    const { listMcpCatalog } = await import('../../mcp/catalog')
+    return listMcpCatalog()
+  })
+  safeHandle(
+    IPC.MCP_CATALOG_REFRESH,
+    async (_e, url?: string | null) => {
+      const { refreshMcpCatalog } = await import('../../mcp/catalog')
+      return { ok: true as const, catalog: await refreshMcpCatalog(url) }
+    },
+    argsSchema(z.string().max(2048).nullish())
+  )
+  safeHandle(IPC.MCP_CATALOG_RESET, async () => {
+    const { resetMcpCatalog } = await import('../../mcp/catalog')
+    return { ok: true as const, catalog: resetMcpCatalog() }
+  })
 
   // Python 运行时
   safeHandle(IPC.PYTHON_RUNTIME_LIST, () => listPythonRuntimes())

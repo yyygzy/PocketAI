@@ -59,7 +59,9 @@ const DDL = `
     created_at INTEGER NOT NULL,
     python_packages TEXT,
     headers TEXT,
-    trust_read_only INTEGER DEFAULT 0
+    trust_read_only INTEGER DEFAULT 0,
+    auto_connect INTEGER NOT NULL DEFAULT 0,
+    catalog_id TEXT
   )`
 
 function rowCount(): number {

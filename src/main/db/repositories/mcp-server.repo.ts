@@ -28,6 +28,8 @@ interface McpServerRow {
   python_packages?: string | null // JSON 字符串数组（v16 起；旧库可能无此列）
   headers?: string | null // JSON 对象字符串（v41 起；旧库可能无此列）
   trust_read_only?: number | null // 0/1（v44 起；旧库按未信任处理）
+  auto_connect?: number | null // 0/1（v77 起；旧库按不自动连接处理）
+  catalog_id?: string | null // 连接器目录 id（v77 起）
 }
 
 function rowToRecord(row: McpServerRow): McpServerRecord {
@@ -70,6 +72,9 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
     createdAt: row.created_at,
     // v44 前的旧库无此列 → 一律按「不信任」处理（SEC-5 的默认必须偏保守）
     trustReadOnly: row.trust_read_only === 1,
+    // v77 前的旧库无此列 → 不自动连接（默认不把历史记录静默拉起）
+    autoConnect: row.auto_connect === 1,
+    catalogId: row.catalog_id ?? null,
     pythonPackages
   }
 }
@@ -141,11 +146,18 @@ export const mcpServerRepo = {
     const headersCipher = encryptSecretMap(normalizedHeaders)
     const trustReadOnly =
       input.trustReadOnly !== undefined ? (input.trustReadOnly ? 1 : 0) : existing?.trustReadOnly ? 1 : 0
+    // 自动连接/目录 id：未提交则沿用已有值；新记录缺省不自动连接
+    const autoConnect =
+      input.autoConnect !== undefined ? (input.autoConnect ? 1 : 0) : existing?.autoConnect ? 1 : 0
+    const catalogId =
+      input.catalogId !== undefined
+        ? (input.catalogId || null)
+        : (existing?.catalogId ?? null)
 
     if (existing) {
       db.prepare(
         `UPDATE mcp_servers SET
-           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, python_packages=?, headers=?, trust_read_only=?
+           name=?, transport=?, runtime=?, command=?, args=?, env=?, url=?, python_packages=?, headers=?, trust_read_only=?, auto_connect=?, catalog_id=?
          WHERE id=?`
       ).run(
         input.name ?? existing.name,
@@ -158,14 +170,16 @@ export const mcpServerRepo = {
         JSON.stringify(pythonPackages),
         headersCipher,
         trustReadOnly,
+        autoConnect,
+        catalogId,
         id
       )
     } else {
       const now = Date.now()
       db.prepare(
         `INSERT INTO mcp_servers
-           (id, name, transport, runtime, command, args, env, url, created_at, python_packages, headers, trust_read_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, name, transport, runtime, command, args, env, url, created_at, python_packages, headers, trust_read_only, auto_connect, catalog_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name,
@@ -178,7 +192,9 @@ export const mcpServerRepo = {
         now,
         JSON.stringify(pythonPackages),
         headersCipher,
-        trustReadOnly
+        trustReadOnly,
+        autoConnect,
+        catalogId
       )
     }
     return mustGet(() => this.get(id), 'MCP Server')
@@ -186,6 +202,14 @@ export const mcpServerRepo = {
 
   delete(id: string): void {
     dbService.getHandle().prepare('DELETE FROM mcp_servers WHERE id=?').run(id)
+  },
+
+  /** 显式启用/停用开机自动连接（不触碰其他配置；记录不存在时无操作） */
+  setAutoConnect(id: string, enabled: boolean): void {
+    dbService
+      .getHandle()
+      .prepare('UPDATE mcp_servers SET auto_connect=? WHERE id=?')
+      .run(enabled ? 1 : 0, id)
   },
 
   /**

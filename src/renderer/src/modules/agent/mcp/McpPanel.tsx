@@ -20,6 +20,8 @@ import { usePipSource } from './usePipSource'
 import { McpForm } from './McpForm'
 import { McpImportModal } from './McpImportModal'
 import { McpTemplatesModal } from './McpTemplatesModal'
+import { McpCatalogModal } from './McpCatalogModal'
+import { findBuiltinCatalogEntry, type McpCatalogEntry } from '../../../../../shared/mcp-catalog'
 import { McpSitePolicyCard } from './McpSitePolicyCard'
 import { CapabilityCenter } from '../../skills/CapabilityCenter'
 import { hasIpcFailed, ipcFailText, logIpcError, reportIpcError } from '../../../utils/ipc'
@@ -44,6 +46,8 @@ export const McpPanel: React.FC = () => {
   // §333：handleDelete 那颗原生 confirm 收到 askConfirm，与其他五发统一
   const { confirm: askConfirm, dialog: confirmDialog } = useConfirm()
   const [records, setRecords] = useState<McpServerRecord[]>([])
+  // 目录元数据（含远程索引覆盖）：列表卡片据此显示「它能干什么」。读失败只影响摘要，不挡清单
+  const [catalogEntries, setCatalogEntries] = useState<McpCatalogEntry[]>([])
   const [runtimes, setRuntimes] = useState<McpServerRuntime[]>([])
   const [editing, setEditing] = useState<Partial<McpServerRecord> | null>(null)
   const [logs, setLogs] = useState<McpServerLogEvent[]>([])
@@ -66,6 +70,7 @@ export const McpPanel: React.FC = () => {
   const [toolRuns, setToolRuns] = useState<Record<string, ToolRunState>>({})
   const [importOpen, setImportOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [catalogOpen, setCatalogOpen] = useState(false)
   // 高级控制台只留一个入口；能力中心复用同一份外壳（不另写工具勾选逻辑）
   const [capabilityOpen, setCapabilityOpen] = useState(false)
   // 工具面装载模式（全局，不随 Server 变）：grouped=按需 / full=全量
@@ -132,6 +137,15 @@ export const McpPanel: React.FC = () => {
       window.pocketai.listMcpServers(),
       window.pocketai.getMcpRuntimes()
     ])
+    // 目录摘要单独读：读不到（含旧桥/测试桩没有该通道）只影响卡片文案，不许拖垮清单与运行状态
+    try {
+      const catalog = await window.pocketai.listMcpCatalog()
+      if (!hasIpcFailed(catalog) && Array.isArray(catalog.entries)) {
+        setCatalogEntries(catalog.entries)
+      }
+    } catch {
+      /* 保留内置摘要兜底 */
+    }
     // 两发各判各的：清单读到而运行状态没读到，清单照常列出（状态那半单独点名，见 runtimeUnread）
     if (hasIpcFailed(recs) || !Array.isArray(recs)) {
       setServersUnread({ error: hasIpcFailed(recs) ? recs.error : undefined })
@@ -203,6 +217,8 @@ export const McpPanel: React.FC = () => {
           headers: base?.headers ?? {},
           createdAt: base?.createdAt ?? Date.now(),
           trustReadOnly: base?.trustReadOnly ?? false,
+          autoConnect: base?.autoConnect ?? false,
+          catalogId: base?.catalogId ?? null,
           pythonPackages: base?.pythonPackages ?? [],
           status: evt.status,
           tools: evt.tools ?? [],
@@ -364,6 +380,12 @@ export const McpPanel: React.FC = () => {
               {t('cap.title')}
             </button>
             <button
+              onClick={() => setCatalogOpen(true)}
+              className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
+            >
+              {t('agent.catalog')}
+            </button>
+            <button
               onClick={() => setTemplatesOpen(true)}
               className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]"
             >
@@ -501,6 +523,10 @@ export const McpPanel: React.FC = () => {
             const rt = runtimeOf(r.id)
             const status = rt?.status ?? 'stopped'
             const envInstalling = installingIds.has(r.id)
+            // 从目录安装的记录：列表里先把「它能干什么」说清楚，再露命令
+            const catalogEntry =
+              catalogEntries.find((e) => e.id === r.catalogId) ??
+              findBuiltinCatalogEntry(r.catalogId)
             return (
               <div
                 key={r.id}
@@ -519,6 +545,16 @@ export const McpPanel: React.FC = () => {
                   </button>
                   <StatusDot status={status} />
                 </div>
+                {catalogEntry && (
+                  <div className="text-[11px] text-[var(--color-text)] mt-0.5 leading-relaxed">
+                    {catalogEntry.summary}
+                  </div>
+                )}
+                {r.autoConnect && (
+                  <span className="inline-block mt-0.5 text-[9px] px-1 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+                    {t('agent.autoConnectBadge')}
+                  </span>
+                )}
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
                   {r.transport === 'http' ? `🌐 ${r.url}` : `${r.command} ${(r.args || []).join(' ')}`}
                 </div>
@@ -533,7 +569,7 @@ export const McpPanel: React.FC = () => {
                   ) : status === 'error' ? (
                     // error 状态走 restart：start 不会清理残留 client（其 stop 才会 shutdown）
                     <MiniBtn onClick={() => void handleRestart(r.id)}>
-                      {t('common.restart')}
+                      {t('agent.retryConnect')}
                     </MiniBtn>
                   ) : (
                     <MiniBtn
@@ -804,6 +840,15 @@ export const McpPanel: React.FC = () => {
         <McpTemplatesModal
           onClose={() => setTemplatesOpen(false)}
           onCreated={async () => {
+            await load()
+          }}
+        />
+      )}
+
+      {catalogOpen && (
+        <McpCatalogModal
+          onClose={() => setCatalogOpen(false)}
+          onChanged={async () => {
             await load()
           }}
         />

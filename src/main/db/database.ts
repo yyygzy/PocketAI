@@ -1426,6 +1426,29 @@ const MIGRATIONS: Migration[] = [
         db.exec('ALTER TABLE providers ADD COLUMN enabled_models TEXT;')
       }
     }
+  },
+  {
+    // v77：连接器「启用/自动连接」状态与目录来源。
+    //
+    // auto_connect：只在用户显式启用（启动成功/目录安装）后置 1，应用重启时据此恢复连接；
+    // 显式停止/删除会清 0。不复用 v58 已删除的 enabled 列（语义不同，且那列已作为历史债清掉）。
+    // catalog_id：从连接器目录安装时记录目录 id，列表卡片据此展示「它能干什么」。
+    // 幂等：SQLite 的 ADD COLUMN 没有 IF NOT EXISTS，先查 PRAGMA（同 v61/v62/v63）。
+    version: 77,
+    name: 'mcp_auto_connect_catalog',
+    up: (db) => {
+      const cols = new Set(
+        (db.prepare('PRAGMA table_info(mcp_servers)').all() as Array<{ name: string }>).map(
+          (c) => c.name
+        )
+      )
+      if (!cols.has('auto_connect')) {
+        db.exec('ALTER TABLE mcp_servers ADD COLUMN auto_connect INTEGER NOT NULL DEFAULT 0;')
+      }
+      if (!cols.has('catalog_id')) {
+        db.exec('ALTER TABLE mcp_servers ADD COLUMN catalog_id TEXT;')
+      }
+    }
   }
 ]
 

@@ -8,6 +8,7 @@ import type { DelegateCapabilityView, DelegateFailure, DelegateProbeResult } fro
 import type { ToolCapabilityEntry, ToolCapabilityView, ToolProbeResult } from '../shared/tool-capability'
 import type { SkillScanResult } from '../shared/skill-scan'
 import type { RunbookRecord, RunbookRef } from '../shared/runbook'
+import type { McpCatalogView } from '../shared/mcp-catalog'
 import type {
   ArtifactMeta,
   ArtifactPdfExportResult,
@@ -708,6 +709,17 @@ const api = {
 
   // ---------- MCP Server ----------
   listMcpServers: (): Promise<McpServerRecord[]> => ipcRenderer.invoke(IPC.MCP_SERVER_LIST),
+  /** 连接器目录：默认只用本地内置精选清单；远程索引需显式刷新 */
+  listMcpCatalog: (): Promise<McpCatalogView | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_CATALOG_LIST),
+  /** 拉取远程目录（url 为空则复用上次保存的地址；默认不联网） */
+  refreshMcpCatalog: (
+    url?: string | null
+  ): Promise<{ ok: true; catalog: McpCatalogView } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_CATALOG_REFRESH, url ?? null),
+  /** 清空远程目录缓存，回到纯内置清单 */
+  resetMcpCatalog: (): Promise<{ ok: true; catalog: McpCatalogView } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.MCP_CATALOG_RESET),
   /** 站点级出网约束（只作用于 MCP HTTP 传输；stdio 子进程拦不到） */
   getMcpSitePolicy: (): Promise<McpSitePolicy | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.MCP_SITE_POLICY_GET),

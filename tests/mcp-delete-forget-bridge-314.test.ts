@@ -64,6 +64,7 @@ vi.mock('../src/main/db/repositories/mcp-server.repo', () => ({
     list: () => H.records,
     get: (id: string) => H.records.find((r) => r.id === id) ?? null,
     save: (r: McpServerRecord) => r,
+    setAutoConnect: () => {},
     delete: (id: string) => {
       H.calls.push(`repo.delete:${id}`)
       H.records = H.records.filter((r) => r.id !== id)
