@@ -99,7 +99,13 @@ function main() {
     return
 
   }
-  const exe = path.join(REPO_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
+  const exe = path.join(
+    REPO_ROOT,
+    'node_modules',
+    'electron',
+    'dist',
+    process.platform === 'win32' ? 'electron.exe' : 'electron'
+  )
   const child = spawn(exe, [REPO_ROOT, `--remote-debugging-port=${port}`], {
     env: { ...process.env, POCKETAI_APP_ROOT: plan.abs },
     stdio: 'inherit'
