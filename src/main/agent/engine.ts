@@ -80,7 +80,8 @@ import { buildAvailableToolsHint } from './tool-prompt-hint'
 import { validateToolArguments } from './tool-args-validate'
 import { isTextProtocolForced } from './text-protocol-prefs'
 import { readToolSurfaceModePref } from './tool-surface-prefs'
-import { resolveToolSurfaceMode, selectToolSurface } from '../../shared/tool-groups'
+import { resolveToolSurfacePlan, selectToolSurface } from '../../shared/tool-groups'
+import { shouldFallbackOnClaim, shouldFallbackOnEmptySurface } from '../../shared/tool-surface-fallback'
 import { resolveContextWindow } from './model-window-prefs'
 import { thinkingParamFor } from './thinking-prefs'
 import { getFallbackTarget } from './fallback-target-prefs'
@@ -344,6 +345,12 @@ interface AgentRunContext {
   master: AbortController
   userMsg: MessageRecord
   tools: ToolSchema[]
+  /** 全量授权面（分组裁剪之前，已过委派/子级过滤）；收窄侧兜底重试用 */
+  fullTools: ToolSchema[]
+  /** 本轮是否允许一次全量兜底（grouped 侧；full 侧不需要） */
+  fallbackEnabled: boolean
+  /** 兜底是否已用掉：空集或模型声称无工具，整轮只给一次，绝不循环 */
+  surfaceFallbackUsed: boolean
   allowedToolIds: Set<string>
   defaultParams: Record<string, unknown>
   sources: MessageSource[]
@@ -1454,21 +1461,42 @@ class AgentEngine {
       const permittedSurface = parentSurfaceIds
         ? surface.filter((t) => parentSurfaceIds.has(t.id))
         : surface
+      /**
+       * v79 第二批：按模型档位自动选面（用户手动配置优先，见 resolveToolSurfacePlan）。
+       * ≤13B（含 8B 及以下）走收窄+兜底；≥14B 走全量；认不出参数量沿用"云端全量/本地收窄"。
+       */
+      const surfacePlan = resolveToolSurfacePlan(
+        readToolSurfaceModePref(),
+        providerEndpointLocal(target.providerId),
+        target.model
+      )
       const surfaceSelection = selectToolSurface({
         tools: permittedSurface,
         permissions: toolPermissions,
         message: content,
-        // 没配过时：云端端点全量下发（128k 付得起 ≈3k token），本地端点保留按需裁剪。
-        // 「该调不调」的主因是工具不在请求里，而不是模型不肯调——见 resolveToolSurfaceMode 注释。
-        mode: resolveToolSurfaceMode(
-          readToolSurfaceModePref(),
-          providerEndpointLocal(target.providerId)
-        )
+        mode: surfacePlan.mode
       })
       const delegationEnabled = !asChild && isDelegationEnabledFor(target.providerId, target.model)
-      const baseTools = asChild
-        ? childToolSurface(surfaceSelection.tools)
-        : surfaceSelection.tools.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
+      /** 同一套委派/子级过滤，分别作用在"全量授权面"与"分组裁剪面"上 */
+      const applySurfaceGuard = (list: ToolSchema[]): ToolSchema[] =>
+        asChild
+          ? childToolSurface(list)
+          : list.filter((t) => t.name !== DELEGATE_TOOL_NAME || delegationEnabled)
+      const fullBaseTools = applySurfaceGuard(permittedSurface)
+      const narrowedBaseTools = applySurfaceGuard(surfaceSelection.tools)
+      /** 空集兜底：分组把面裁空 ≠ 授权为空；只有前者且全量确实有货才补回全量 */
+      const emptyFallback = shouldFallbackOnEmptySurface({
+        fallbackEnabled: surfacePlan.fallbackToFull,
+        narrowedCount: narrowedBaseTools.length,
+        authorizedCount: fullBaseTools.length,
+        alreadyUsed: false
+      })
+      if (emptyFallback) {
+        logger.warn(
+          `[agent] tool_surface_fallback reason=empty_set requestId=${requestId} step=0 mode=${surfacePlan.mode} from=0 to=${fullBaseTools.length} groups=${surfaceSelection.groups.join(',') || '-'} heldBack=${surfaceSelection.heldBackTools} paramsB=${surfacePlan.paramsB ?? 'unknown'}`
+        )
+      }
+      const baseTools = emptyFallback ? fullBaseTools : narrowedBaseTools
       /**
        * 145 定的两条合取，150 按用户选定（A2 + 一起细化）收到"**子对这机显存的实际占用**"上：
        *  ① 容量档只管**落在本地端点**的候选——"两个本地模型能否同驻"对云子没有对象（M3/M10 说的都是这张卡）；
@@ -1505,6 +1533,13 @@ class AgentEngine {
               t.name === DELEGATE_TOOL_NAME ? withDelegateModelParam(t, roleModelOptions) : t
             )
           : baseTools
+      /** 兜底时换上的全量面：与当前面走同一套委派/子级过滤与模型参数改写 */
+      const fullTools =
+        roleModelOptions.length > 0
+          ? fullBaseTools.map((t) =>
+              t.name === DELEGATE_TOOL_NAME ? withDelegateModelParam(t, roleModelOptions) : t
+            )
+          : fullBaseTools
       /**
        * 用户点名为"走文本协议"的模型（§4.4-⑦）：首轮就不传 tools，改由 system prompt 里的协议段
        * 承载工具清单。与"端点报 400 才自动降级"是两条独立入口，共用同一个注入 helper。
@@ -1757,6 +1792,9 @@ class AgentEngine {
         master,
         userMsg,
         tools,
+        fullTools,
+        fallbackEnabled: surfacePlan.fallbackToFull,
+        surfaceFallbackUsed: emptyFallback,
         allowedToolIds,
         defaultParams: defaultParams ?? {},
         sources,
@@ -2349,6 +2387,50 @@ class AgentEngine {
         return 'llm'
       }
       stepText = '（模型未返回内容，请重试或更换模型）'
+    }
+
+    /**
+     * v79：收窄侧的一次性兜底 —— 模型明确声称「没有可用工具」时，把全量授权面换上再试一次。
+     * 判据全在纯函数里（shouldFallbackOnClaim）；这里只负责留痕、换面、续跑。
+     * `surfaceFallbackUsed` 保证整轮只做一次，不做任何循环。
+     */
+    if (
+      shouldFallbackOnClaim({
+        fallbackEnabled: ctx.fallbackEnabled,
+        alreadyUsed: ctx.surfaceFallbackUsed,
+        toolCallsCount: toolCalls?.length ?? 0,
+        narrowedCount: ctx.tools.length,
+        fullCount: ctx.fullTools.length,
+        text: stepText
+      })
+    ) {
+      ctx.surfaceFallbackUsed = true
+      const fromCount = ctx.tools.length
+      ctx.tools = ctx.fullTools
+      logger.warn(
+        `[agent] tool_surface_fallback reason=model_claims_no_tools requestId=${ctx.requestId} step=${stepIndex} from=${fromCount} to=${ctx.fullTools.length}`
+      )
+      const retryText = '（模型声称没有可用工具，已切换为全量工具重试一次…）'
+      messageRepo.updateContent(assistantMsg.id, retryText, 'done')
+      ctx.pendingAssistantMsgId = ''
+      messages.push({ role: 'assistant', content: stepText })
+      messages.push({
+        role: 'user',
+        content: `[系统提示] 本轮已切换为全量工具面，可用工具：${ctx.fullTools.map((t) => t.name).join('、')}。请重新判断是否需要调用工具，不要声称没有可用工具。`
+      })
+      safeTrace({
+        requestId: ctx.requestId,
+        conversationId,
+        stepIndex,
+        stepType: 'llm',
+        durationMs: Date.now() - stepStart,
+        tokenUsage,
+        promptTokens,
+        completionTokens,
+        status: 'error',
+        error: 'tool_surface_fallback:model_claims_no_tools'
+      })
+      return 'llm'
     }
 
     messageRepo.updateContent(

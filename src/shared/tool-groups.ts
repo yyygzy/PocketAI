@@ -36,6 +36,56 @@ export function resolveToolSurfaceMode(
 }
 
 /**
+ * 从模型名识别参数量（单位 B）。只做**名字里写明了**的那一类：
+ *  · `qwen3:8b` / `Qwen3-8B` / `llama-3.1-70b` / `Qwen3-235B-A22B` → 8 / 70 / 235；
+ *  · 名字里没有数字+B（`gpt-4o`、`deepseek-v3`、`kimi-k2`）→ null，交给端点位置规则，不猜。
+ * 注意 `8x7b` 这类 MoE 写法只取第一个数字（7），归入小模型侧——按"激活参数"口径可以接受。
+ */
+export function detectModelParamsB(model: string): number | null {
+  const m = String(model ?? '').toLowerCase()
+  const hit = m.match(/(\d+(?:\.\d+)?)\s*b(?![a-z0-9])/)
+  if (!hit) return null
+  const n = Number(hit[1])
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** 工具面的完整计划：模式 + 是否允许"空集/模型称无工具"时兜底到全量 */
+export interface ToolSurfacePlan {
+  mode: ToolSurfaceMode
+  /** 仅 grouped 侧需要：收窄后允许一次全量兜底 */
+  fallbackToFull: boolean
+  /** 名字里识别到的参数量（null=认不出，走端点规则） */
+  paramsB: number | null
+}
+
+/**
+ * v79 第二批：按模型档位自动选面。
+ *
+ *  · 用户配过 → 一律听用户的（手动 full/grouped 优先级最高，不被自动规则覆盖）；
+ *  · 名字认得出参数量：≥14B 走全量；≤13B（含 8B 及以下、9-13B）走收窄+兜底；
+ *  · 认不出 → 沿用现有"云端全量 / 本地收窄"规则（不瞎猜档位）。
+ *
+ * 手动 grouped 也保留兜底：兜底是运行期的一次性安全网，不是对偏好本身的改写；
+ * 手动 full 不需要兜底（面已经是全量）。
+ */
+export function resolveToolSurfacePlan(
+  pref: ToolSurfaceMode | null,
+  endpointLocal: boolean,
+  model: string
+): ToolSurfacePlan {
+  const paramsB = detectModelParamsB(model)
+  if (pref === 'full') return { mode: 'full', fallbackToFull: false, paramsB }
+  if (pref === 'grouped') return { mode: 'grouped', fallbackToFull: true, paramsB }
+  if (paramsB !== null) {
+    return paramsB >= 14
+      ? { mode: 'full', fallbackToFull: false, paramsB }
+      : { mode: 'grouped', fallbackToFull: true, paramsB }
+  }
+  const fallbackMode = resolveToolSurfaceMode(null, endpointLocal)
+  return { mode: fallbackMode, fallbackToFull: fallbackMode === 'grouped', paramsB: null }
+}
+
+/**
  * 内置工具 id → 组。**新增内置工具必须在这里登记**，否则 `tests/tool-groups.test.ts` 的
  * 覆盖断言会失败（真机上则由 `selectToolSurface` 的 fail-open 兜底，不会静默丢工具）。
  */

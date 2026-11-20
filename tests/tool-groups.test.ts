@@ -44,7 +44,9 @@ import {
   PRUNABLE_GROUPS,
   TOOL_GROUP_OF,
   pickToolGroups,
+  detectModelParamsB,
   resolveToolSurfaceMode,
+  resolveToolSurfacePlan,
   scoreToolGroups,
   selectToolSurface
 } from '../src/shared/tool-groups'
@@ -155,6 +157,67 @@ describe('resolveToolSurfaceMode — 没配过时按端点位置分默认', () =
   it('用户配过就一律听用户的（含云端显式选 grouped）', () => {
     expect(resolveToolSurfaceMode('grouped', false)).toBe('grouped')
     expect(resolveToolSurfaceMode('full', true)).toBe('full')
+  })
+})
+
+describe('detectModelParamsB — 只认名字里写明的参数量', () => {
+  it('常见写法都能认出来', () => {
+    expect(detectModelParamsB('qwen3:8b')).toBe(8)
+    expect(detectModelParamsB('Qwen3-8B')).toBe(8)
+    expect(detectModelParamsB('Qwen2.5:7b')).toBe(7)
+    expect(detectModelParamsB('llama-3.1-70b-instruct')).toBe(70)
+    expect(detectModelParamsB('deepseek-r1:14b')).toBe(14)
+    expect(detectModelParamsB('Qwen3-235B-A22B')).toBe(235)
+    expect(detectModelParamsB('gemma-3-27b')).toBe(27)
+  })
+
+  it('没写参数量的名字返回 null（不猜）', () => {
+    for (const m of ['gpt-4o', 'deepseek-v3', 'kimi-k2', 'claude-3-7-sonnet', 'qwen-plus', 'glm-4.5']) {
+      expect(detectModelParamsB(m)).toBeNull()
+    }
+  })
+})
+
+describe('resolveToolSurfacePlan — 按模型档位自动选面（手动配置优先）', () => {
+  it('≤13B（含 8B 及以下、9-13B）→ 收窄 + 兜底', () => {
+    for (const m of ['qwen3:8b', 'Qwen2.5:7b', 'gemma-3-9b', 'mistral:13b']) {
+      expect(resolveToolSurfacePlan(null, false, m)).toMatchObject({
+        mode: 'grouped',
+        fallbackToFull: true,
+        paramsB: detectModelParamsB(m)
+      })
+    }
+  })
+
+  it('≥14B → 全量，无兜底', () => {
+    for (const m of ['deepseek-r1:14b', 'gemma-3-27b', 'llama-3.1-70b']) {
+      expect(resolveToolSurfacePlan(null, true, m)).toMatchObject({
+        mode: 'full',
+        fallbackToFull: false,
+        paramsB: detectModelParamsB(m)
+      })
+    }
+  })
+
+  it('认不出参数量 → 沿用云端 full / 本地 grouped', () => {
+    expect(resolveToolSurfacePlan(null, false, 'gpt-4o')).toMatchObject({
+      mode: 'full',
+      fallbackToFull: false,
+      paramsB: null
+    })
+    expect(resolveToolSurfacePlan(null, true, 'deepseek-v3')).toMatchObject({
+      mode: 'grouped',
+      fallbackToFull: true,
+      paramsB: null
+    })
+  })
+
+  it('用户手动配置优先，不被自动档位覆盖', () => {
+    expect(resolveToolSurfacePlan('full', true, 'qwen3:8b')).toMatchObject({ mode: 'full', fallbackToFull: false })
+    expect(resolveToolSurfacePlan('grouped', false, 'llama-3.1-70b')).toMatchObject({
+      mode: 'grouped',
+      fallbackToFull: true
+    })
   })
 })
 
