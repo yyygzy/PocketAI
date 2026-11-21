@@ -67,21 +67,42 @@ export function useConversationUnread(conversationId: string | null | undefined)
  */
 export function useConversationRuntimeSync(): void {
   useEffect(() => {
+    // 快照在途期间到达的增量事件：主进程 invoke 取数与回包之间可能有事件先到，
+    // 旧写法用旧快照整体 replace，会把那些新事件抹掉（未读角标/运行态短暂回退）。
+    // 这里把在途事件留一份，回包时先 replace 再补 apply，保证"快照 + 之后的增量"都生效。
+    let generation = 0
+    let inFlight = 0
+    let pending: ChatConversationStateEvent[] = []
     const refresh = (): void => {
+      const myGen = ++generation
+      inFlight++
+      pending = []
       window.pocketai
         .getChatRuntimeStates()
         .then((list) => {
+          inFlight--
+          // 有更新的 refresh 已发出：这一发快照更旧，直接丢弃（避免乱序覆盖）
+          if (myGen !== generation) return
           if (hasIpcFailed(list)) {
             logIpcError('chat.runtime.snapshot', list.error)
             return
           }
           if (!Array.isArray(list)) return
-          useConversationRuntimeStore.getState().replace(list)
+          const store = useConversationRuntimeStore.getState()
+          store.replace(list)
+          // 补上快照在途期间到达的增量（按到达顺序）
+          for (const e of pending) store.apply(e)
+          pending = []
         })
-        .catch(reportIpcError('chat.runtime.snapshot'))
+        .catch((e) => {
+          inFlight--
+          pending = []
+          reportIpcError('chat.runtime.snapshot')(e)
+        })
     }
     const off = window.pocketai.onChatRuntimeState((e) => {
       useConversationRuntimeStore.getState().apply(e)
+      if (inFlight > 0) pending.push(e)
     })
     refresh()
     window.addEventListener('focus', refresh)

@@ -19,20 +19,29 @@ let timer: NodeJS.Timeout | null = null
 /** 触发一条到期提醒：系统通知 + 广播；循环提醒 scheduleNext 重排，一次性提醒 markFired */
 function fireOne(r: ReminderRecord): void {
   try {
+    // 先认领（带 pending 条件写库）再通知：通知一旦 show 出去不可撤销，
+    // 旧写法先弹后写库，写库失败时记录仍 pending ⇒ 下个 30s tick 再弹一条，用户被反复骚扰。
+    const claimed = r.repeatRule
+      ? (() => {
+          const nextFireAt = computeNextFireAt(r.fireAt, r.repeatRule!, Date.now())
+          const ok = reminderRepo.scheduleNext(r.id, nextFireAt, r.repeatRule!)
+          if (ok) log.info(`循环提醒已重排: ${r.id}，下次 ${new Date(nextFireAt).toLocaleString()}`)
+          return ok
+        })()
+      : (() => {
+          const ok = reminderRepo.markFired(r.id)
+          if (ok) log.info(`提醒已触发: ${r.id}`)
+          return ok
+        })()
+    if (!claimed) {
+      log.debug(`提醒已被别的 tick 认领或状态已变，跳过重复通知: ${r.id}`)
+      return
+    }
     if (Notification.isSupported()) {
       new Notification({ title: 'PocketAI 提醒', body: r.text }).show()
     }
     const payload: ReminderFiredPayload = { id: r.id, text: r.text, fireAt: r.fireAt }
     broadcast(IPC.REMINDER_FIRED, payload)
-    if (r.repeatRule) {
-      // 循环提醒：计算下次触发时间并重排 pending（不新建记录）
-      const nextFireAt = computeNextFireAt(r.fireAt, r.repeatRule, Date.now())
-      reminderRepo.scheduleNext(r.id, nextFireAt, r.repeatRule)
-      log.info(`循环提醒已重排: ${r.id}，下次 ${new Date(nextFireAt).toLocaleString()}`)
-    } else {
-      reminderRepo.markFired(r.id)
-      log.info(`提醒已触发: ${r.id}`)
-    }
   } catch (e) {
     log.warn(`提醒触发失败: ${r.id}`, e)
   }

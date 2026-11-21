@@ -269,7 +269,7 @@ export function registerBackupHandlers(): void {
     const got = loadWebDAVConfigOrError()
     if ('error' in got) return { ok: false, error: got.error } // §386
     const cfg = got.cfg
-    let result: { ok: boolean; error?: string; summary?: string; code?: string; mcpStopped?: number; reconcileFailed?: boolean }
+    let result: { ok: boolean; error?: string; summary?: string; code?: string; mcpStopped?: number; reconcileFailed?: boolean; attachmentFailure?: string }
     try {
       result = await executeMerge(cfg, payload.filename, payload.strategy, {
         backupPassword: payload.backupPassword || undefined

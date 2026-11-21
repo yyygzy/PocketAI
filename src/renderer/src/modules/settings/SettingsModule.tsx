@@ -1428,6 +1428,7 @@ export const BackupPanel: React.FC<{ enc: EncryptionStatus | null }> = ({ enc })
         // §315：合并会把「记录已被云端取代或删除」的那几台 MCP Server 从运行时里摘掉（原先在跑的就停了）。
         // 这句必须上屏——悄悄停机＝屏上什么都没变，用户只会发现工具突然不能用了。
         const parts = [t('bk.mergeOk')]
+        if (r.attachmentFailure) parts.push(t('bk.mergeAttachmentPartial', { detail: r.attachmentFailure }))
         if (r.reconcileFailed) parts.push(t('bk.mergeReconcileFail'))
         else if (typeof r.mcpStopped === 'number' && r.mcpStopped > 0) {
           parts.push(t('bk.mergeMcpStopped', { n: r.mcpStopped }))

@@ -206,11 +206,14 @@ export const reminderRepo = {
     return rows.map(rowToRecord)
   },
 
-  markFired(id: string): void {
-    dbService
+  /** 一次性提醒认领：只有仍为 pending 的行才写 fired；返回 changes>0 表示本次真的认领到了。
+   *  scheduler 据此先认领后弹通知，避免写库失败时通知已不可撤销、下个 tick 再弹一次。 */
+  markFired(id: string): boolean {
+    const info = dbService
       .getHandle()
-      .prepare('UPDATE reminders SET status=? WHERE id=?')
-      .run('fired', reminderIdSchema.parse(id))
+      .prepare("UPDATE reminders SET status='fired' WHERE id=? AND status='pending'")
+      .run(reminderIdSchema.parse(id))
+    return info.changes > 0
   },
 
   markMissed(id: string): void {
@@ -220,12 +223,14 @@ export const reminderRepo = {
       .run('missed', reminderIdSchema.parse(id))
   },
 
-  /** 循环提醒到点重排：UPDATE fire_at 与 repeat_rule，状态保持 pending（不新建记录） */
-  scheduleNext(id: string, fireAt: number, rule: ReminderRepeatRule): void {
-    dbService
+  /** 循环提醒到点重排：UPDATE fire_at 与 repeat_rule，状态保持 pending（不新建记录）。
+   *  返回 changes>0 表示本次真的把当前周期推进了（CAS 条件见下），scheduler 先认领后通知。 */
+  scheduleNext(id: string, fireAt: number, rule: ReminderRepeatRule): boolean {
+    const info = dbService
       .getHandle()
       .prepare('UPDATE reminders SET status=?, fire_at=?, repeat_rule=? WHERE id=?')
       .run('pending', fireAt, JSON.stringify(rule), reminderIdSchema.parse(id))
+    return info.changes > 0
   },
 
   /** 历史 tab「重新安排」：missed/cancelled/fired 行重置 pending，可选改循环规则。

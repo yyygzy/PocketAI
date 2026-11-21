@@ -2766,6 +2766,8 @@ export interface MergeExecuteResult {
    */
   mcpStopped?: number
   reconcileFailed?: boolean
+  /** 附件合并阶段部分失败：DB 已提交、不能报整体失败，但必须让用户知道有几件没落地 */
+  attachmentFailure?: string
 }
 
 // ---------- WebDAV 备份配置与文件列表 ----------

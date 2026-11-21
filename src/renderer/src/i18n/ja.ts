@@ -2757,6 +2757,7 @@ export const ja = {
   'bk.mergeCredNote': '認証情報（API Key / env / headers）はマシン間で移動しません：ローカルに既存の行はローカルの値を維持し、クラウド側の新規行は「設定 → モデルと使用量」で再入力が必要です',
   'bk.mergeMcpStopped': 'MCP サーバー {n} 件の記録がクラウド側に置換または削除されたため停止しました。必要時に手動で再起動してください',
   'bk.mergeReconcileFail': '設定はマージされましたがランタイムの照合を完了できませんでした。アプリの再起動を推奨します',
+  'bk.mergeAttachmentPartial': '添付ファイルの一部が保存できませんでした: {detail}（データベースのマージは完了済み、再試行不要です）',
   'bk.mergeFail': 'マージ失敗：{e}',
   'lic.activate': 'ライセンスをアクティベート',
   'lic.clear': 'クリア',

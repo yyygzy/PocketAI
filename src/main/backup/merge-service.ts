@@ -667,7 +667,7 @@ export async function executeMerge(
   filename: string,
   strategy: MergeStrategy,
   opts: MergeOpts = {}
-): Promise<{ ok: boolean; error?: string; summary?: string; code?: MergeResultCode }> {
+): Promise<{ ok: boolean; error?: string; summary?: string; code?: MergeResultCode; attachmentFailure?: string }> {
   let cloudDb: Database.Database | null = null
   let cleanup: (() => void) | null = null
 
@@ -685,59 +685,81 @@ export async function executeMerge(
 
     summaryParts.push('提示：跨机合并不搬运模型/服务凭据（Key、env、headers 仍是本机值或本机新行的云端密文），目标机请在「设置」重新填写')
 
-    // 3. 附件合并
-    const { ATTACHMENTS_DIR } = await import('../portable')
-    mkdirSync(ATTACHMENTS_DIR, { recursive: true })
+    // 3. 附件合并 —— DB 事务已提交，这一步的网络/解密/落盘失败不能再把整体报成失败：
+    //    否则用户看到「合并失败」会重试，而重试只会重复合并数据库。收集失败数，如实告知。
+    let attachmentFailure: string | undefined
     let attAdded = 0
+    let attFailed = 0
+    try {
+      const { ATTACHMENTS_DIR } = await import('../portable')
+      mkdirSync(ATTACHMENTS_DIR, { recursive: true })
 
-    if (filename.startsWith('pocketai-inc-')) {
-      // 增量备份：按 sha256 去重下载缺失附件
-      const creds = toCreds(cfg)
-      const indexRaw = await downloadFile(creds, filename)
-      let indexBuf = indexRaw
-      if (isEncryptedBlob(indexRaw, filename)) {
-        indexBuf = decryptMergeBlob(indexRaw, opts)
-      }
-      const index = parseIncrementalIndex(indexBuf)
+      if (filename.startsWith('pocketai-inc-')) {
+        // 增量备份：按 sha256 去重下载缺失附件
+        const creds = toCreds(cfg)
+        const indexRaw = await downloadFile(creds, filename)
+        let indexBuf = indexRaw
+        if (isEncryptedBlob(indexRaw, filename)) {
+          indexBuf = decryptMergeBlob(indexRaw, opts)
+        }
+        const index = parseIncrementalIndex(indexBuf)
 
-      for (const a of index.attachments) {
-        if (a.name.includes('/') || a.name.includes('\\') || a.name.includes('..')) continue
-        const local = join(ATTACHMENTS_DIR, a.name)
-        if (existsSync(local)) {
+        for (const a of index.attachments) {
+          if (a.name.includes('/') || a.name.includes('\\') || a.name.includes('..')) continue
+          const local = join(ATTACHMENTS_DIR, a.name)
+          if (existsSync(local)) {
+            try {
+              if (sha256Hex(readFileSync(local)) === a.sha256) continue
+            } catch { /* 下载 */ }
+          }
           try {
-            if (sha256Hex(readFileSync(local)) === a.sha256) continue
-          } catch { /* 下载 */ }
+            const blobRaw = await downloadRemoteFile(creds, a.blob)
+            let data = blobRaw
+            if (index.encrypted || isEncryptedBlob(blobRaw, a.blob)) {
+              data = decryptMergeBlob(blobRaw, opts)
+            }
+            if (sha256Hex(data) !== a.sha256) { attFailed++; continue }
+            writeFileSync(local, data)
+            attAdded++
+          } catch {
+            attFailed++ // 单件失败不拖垮整批，也不吞整体
+          }
         }
-        const blobRaw = await downloadRemoteFile(creds, a.blob)
-        let data = blobRaw
-        if (index.encrypted || isEncryptedBlob(blobRaw, a.blob)) {
-          data = decryptMergeBlob(blobRaw, opts)
+      } else if (extracted.attachmentsDir) {
+        // 全量备份：从临时附件目录复制缺失附件到本地（按文件名去重）
+        const { readdirSync, statSync, copyFileSync } = await import('node:fs')
+        for (const name of readdirSync(extracted.attachmentsDir)) {
+          if (name.includes('/') || name.includes('\\') || name.includes('..')) continue
+          const src = join(extracted.attachmentsDir, name)
+          try {
+            if (!statSync(src).isFile()) continue
+            const local = join(ATTACHMENTS_DIR, name)
+            // 本地已有同名文件则跳过（不覆盖，避免覆盖本地更新的附件）
+            if (existsSync(local)) continue
+            copyFileSync(src, local)
+            attAdded++
+          } catch {
+            attFailed++
+          }
         }
-        if (sha256Hex(data) !== a.sha256) continue
-        writeFileSync(local, data)
-        attAdded++
       }
-    } else if (extracted.attachmentsDir) {
-      // 全量备份：从临时附件目录复制缺失附件到本地（按文件名去重）
-      const { readdirSync, statSync, copyFileSync } = await import('node:fs')
-      for (const name of readdirSync(extracted.attachmentsDir)) {
-        if (name.includes('/') || name.includes('\\') || name.includes('..')) continue
-        const src = join(extracted.attachmentsDir, name)
-        try {
-          if (!statSync(src).isFile()) continue
-          const local = join(ATTACHMENTS_DIR, name)
-          // 本地已有同名文件则跳过（不覆盖，避免覆盖本地更新的附件）
-          if (existsSync(local)) continue
-          copyFileSync(src, local)
-          attAdded++
-        } catch { /* skip */ }
-      }
+    } catch (e) {
+      // 索引/目录读取这一级失败：整批附件没做，但 DB 合并有效
+      attFailed++
+      attachmentFailure = errMsg(e, '附件合并失败')
+      log.warn(`合并恢复的附件阶段失败（DB 已提交）: ${attachmentFailure}`)
     }
-
+    if (attFailed > 0) {
+      attachmentFailure = attachmentFailure ?? `${attFailed} 个附件没能落地，数据库合并已完成`
+    }
     if (attAdded > 0) summaryParts.push(`附件: +${attAdded}`)
 
-    log.info(`合并完成: ${filename} (${summaryParts.join(', ') || '无变化'})`)
-    return { ok: true, summary: summaryParts.join('; ') || '无变化' }
+    log.info(`合并完成: ${filename} (${summaryParts.join(', ') || '无变化'})${attachmentFailure ? ' [部分附件失败]' : ''}`)
+    return {
+      ok: true,
+      summary: summaryParts.join('; ') || '无变化',
+      ...(attachmentFailure ? { attachmentFailure } : {})
+    }
   } catch (e) {
     const code = mapDecryptCode(e)
     return {

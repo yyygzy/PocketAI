@@ -27,7 +27,9 @@ describe('PKCE / state', () => {
     const state = createOauthState()
     expect(state).toMatch(/^[A-Za-z0-9_-]{32}$/)
     expect(safeStateEqual(state, state)).toBe(true)
-    expect(safeStateEqual(state, state.slice(0, -1) + 'x')).toBe(false)
+    // 末位恰好就是 'x' 时直接替换会得到同一个串（1/64 概率误报）⇒ 挑一个确定不同的字符
+    const flipped = state.slice(0, -1) + (state.endsWith('x') ? 'y' : 'x')
+    expect(safeStateEqual(state, flipped)).toBe(false)
     expect(safeStateEqual(state, base64url(randomBytes(24)))).toBe(false)
     expect(safeStateEqual(state, 'short')).toBe(false)
   })

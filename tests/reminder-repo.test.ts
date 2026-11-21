@@ -86,11 +86,20 @@ describe('reminderRepo — CRUD 与状态流转', () => {
     expect(allMock.mock.calls[0]![0]).toBe(100)
   })
 
-  it('markFired / markMissed：状态翻转', () => {
-    reminderRepo.markFired('r1')
-    expect(runMock.mock.calls[0]![0]).toBe('fired')
+  it('markFired / markMissed：状态翻转（markFired 带 pending 条件认领、返回是否认领到）', () => {
+    // 原子认领：SQL 里带 status='pending' 守卫，run 只传 id；changes>0 → true
+    expect(reminderRepo.markFired('r1')).toBe(true)
+    const firedSql = String(prepareMock.mock.calls[0]![0])
+    expect(firedSql).toContain("SET status='fired'")
+    expect(firedSql).toContain("status='pending'")
+    expect(runMock.mock.calls[0]![0]).toBe('r1')
     reminderRepo.markMissed('r2')
     expect(runMock.mock.calls[1]![0]).toBe('missed')
+  })
+
+  it('markFired：changes=0（已被别的 tick 认领）→ false，调度器据此跳过重复通知', () => {
+    runMock.mockImplementation(() => ({ changes: 0 }))
+    expect(reminderRepo.markFired('r1')).toBe(false)
   })
 
   it('cancel：仅 pending 可取消，changes=0 → false', () => {

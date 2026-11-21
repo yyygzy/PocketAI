@@ -1,7 +1,7 @@
 // Ollama 模型拉取共用 hook：设置页 OllamaPanel 与管家页推荐卡片共用
 // 同一条拉取链路（主进程全局单例，同一时刻只允许一个拉取任务）。
 // 封装：事件订阅/清理、并发与空名守卫、成功回调、错误复位；组件卸载不中断后台拉取。
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { OllamaLiveness, OllamaPullEvent } from '../../../shared/types'
 import { hasIpcFailed, logIpcError } from '../utils/ipc'
 import { errText } from '../utils/error'
@@ -25,6 +25,33 @@ export function pickPullState(args: {
   return 'pullable'
 }
 
+/**
+ * 拉取中的模型名是**全局唯一**的（主进程全局单例，第二发会掐掉第一发）。
+ * 旧实现放在 useState 里，设置页与管家页各持一份 ⇒ 两边都以为自己能拉，实际互相中止。
+ * 这里提到模块级 store，所有实例共享同一份 pulling，useSyncExternalStore 订阅变更。
+ */
+const pullStore = (() => {
+  let pulling: string | null = null
+  const listeners = new Set<() => void>()
+  return {
+    get: (): string | null => pulling,
+    set: (value: string | null): void => {
+      if (pulling === value) return
+      pulling = value
+      for (const l of listeners) l()
+    },
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+        // 最后一个跟踪界面卸载后不留残态，下次挂载从 null 开始。
+        // 多实例并存时不会走这一支（listeners 未归零），跨实例共享语义不变。
+        if (listeners.size === 0) pulling = null
+      }
+    }
+  }
+})()
+
 export interface UseOllamaPullOptions {
   /** 拉取成功完成（pull 返回 ok）时回调，参数为模型名；调用方各自刷新 UI */
   onDone?: (model: string) => void
@@ -33,7 +60,8 @@ export interface UseOllamaPullOptions {
 }
 
 export function useOllamaPull(opts?: UseOllamaPullOptions) {
-  const [pulling, setPulling] = useState<string | null>(null)
+  // 跨实例共享：设置页与管家页看到的 pulling 是同一份，不会各自放行并发拉取
+  const pulling = useSyncExternalStore(pullStore.subscribe, pullStore.get, pullStore.get)
   const [pullEvt, setPullEvt] = useState<OllamaPullEvent | null>(null)
   const [error, setError] = useState('')
   // §267：那颗 ✕ 没送到主进程时要说一句——下载还在走，而界面以前连 console 都不留
@@ -53,9 +81,10 @@ export function useOllamaPull(opts?: UseOllamaPullOptions) {
   /** @returns 是否拉取成功（调用方据此清空输入框/弹 toast） */
   const pull = useCallback(async (model: string): Promise<boolean> => {
     const name = model.trim()
-    if (!name || pulling !== null) return false
+    // 直接读共享 store 的当前值（不是 render 快照）：两个实例同一 tick 调用也只有一个能拿到 null
+    if (!name || pullStore.get() !== null) return false
     setError('')
-    setPulling(name)
+    pullStore.set(name)
     setPullEvt({ model: name, status: '', percent: 0, done: false })
     try {
       const r = await window.pocketai.pullOllamaModel(name)
@@ -74,11 +103,11 @@ export function useOllamaPull(opts?: UseOllamaPullOptions) {
       onErrorRef.current?.(name, msg)
       return false
     } finally {
-      setPulling(null)
+      pullStore.set(null)
       // §267：这一发落定了 ⇒ "可能还在继续"到点，那句必须跟着作废（§266 同一条反向纪律）
       setStopUnread(null)
     }
-  }, [pulling])
+  }, [])
 
   const abort = useCallback((): void => {
     window.pocketai.abortOllamaPull()

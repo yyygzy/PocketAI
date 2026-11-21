@@ -60,7 +60,7 @@ interface Turn {
   tools: MessageRecord[]
 }
 
-/** 一轮回复按批次分组：有 batchId 按 batchId 归组；旧数据按“连续 5 秒内”归为同批 */
+/** 一轮回复按批次分组：有 batchId 按 batchId 归组；旧数据按"连续 5 秒内"归为同批 */
 function groupBatches(replies: MessageRecord[]): MessageRecord[][] {
   const batches: MessageRecord[][] = []
   let current: MessageRecord[] = []
@@ -413,6 +413,22 @@ export const ChatView: React.FC<Props> = ({
   /** P2：刚跑完、正被聚焦的那一轮 requestId（只高亮本轮摘要，2.5s 后褪掉） */
   const [highlightRunId, setHighlightRunId] = useState<string | null>(null)
   const focusedRunIdRef = useRef<string | null>(null)
+  /**
+   * 回调里点按触发的临时高亮/聚焦定时器：不在 effect 里，没有自动 cleanup。
+   * 统一登记，卸载时一次清掉，避免组件没了还 setState / 摸已卸载的 ref。
+   */
+  const transientTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
+  const trackTimer = useCallback((fn: () => void, ms: number): void => {
+    const timer = setTimeout(() => {
+      transientTimersRef.current.delete(timer)
+      fn()
+    }, ms)
+    transientTimersRef.current.add(timer)
+  }, [])
+  useEffect(() => () => {
+    for (const timer of transientTimersRef.current) clearTimeout(timer)
+    transientTimersRef.current.clear()
+  }, [])
   /** 长会话滚动超过阈值时显示「回到顶部」按钮 */
   const [showJumpTop, setShowJumpTop] = useState(false)
   /** 当前是否在底部（state 驱动回底按钮显隐，与 isAtBottomRef 同步） */
@@ -661,9 +677,9 @@ export const ChatView: React.FC<Props> = ({
       if (idx < 0) return
       virtualizer.scrollToIndex(idx, { align: 'center' })
       setHighlightMsgId(id)
-      setTimeout(() => setHighlightMsgId(null), 2000)
+      trackTimer(() => setHighlightMsgId(null), 2000)
     },
-    [renderedTurns, virtualizer]
+    [renderedTurns, virtualizer, trackTimer]
   )
 
   /** 批次标识：有 batchId 用 batchId，旧数据退化为下标 */
@@ -909,12 +925,12 @@ export const ChatView: React.FC<Props> = ({
         if (idx >= 0) {
           virtualizer.scrollToIndex(idx, { align: 'center' })
           setHighlightMsgId(mid)
-          setTimeout(() => setHighlightMsgId(null), 2000)
+          trackTimer(() => setHighlightMsgId(null), 2000)
         }
         return next
       })
     },
-    [matchIds, renderedTurns, virtualizer]
+    [matchIds, renderedTurns, virtualizer, trackTimer]
   )
 
   // 点击引用条：跳转到被引用消息并临时高亮
@@ -925,15 +941,15 @@ export const ChatView: React.FC<Props> = ({
     if (idx >= 0) {
       virtualizer.scrollToIndex(idx, { align: 'center' })
       setHighlightMsgId(targetId)
-      setTimeout(() => setHighlightMsgId(null), 2000)
+      trackTimer(() => setHighlightMsgId(null), 2000)
     }
-  }, [renderedTurns, virtualizer])
+  }, [renderedTurns, virtualizer, trackTimer])
 
   // 打开搜索并聚焦输入框
   const openSearch = useCallback(() => {
     setSearchOpen(true)
-    setTimeout(() => searchInputRef.current?.focus(), 0)
-  }, [])
+    trackTimer(() => searchInputRef.current?.focus(), 0)
+  }, [trackTimer])
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false)

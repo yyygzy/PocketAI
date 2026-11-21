@@ -85,6 +85,9 @@ beforeEach(() => {
   logInfoMock.mockClear()
   logDebugMock.mockClear()
   listDueMock.mockImplementation(() => [])
+  // 先认领后通知：mock 默认认领成功，否则所有"应该弹通知"的用例都会因为 undefined 而不弹
+  markFiredMock.mockReturnValue(true)
+  scheduleNextMock.mockReturnValue(true)
 })
 
 afterEach(() => {
@@ -135,18 +138,30 @@ describe('reminder scheduler', () => {
     expect(markFiredMock).toHaveBeenCalledWith('r4')
   })
 
-  it('单条触发失败不中断后续条目', () => {
+  it('写库失败不弹通知、不广播，也不中断后续条目', () => {
     initReminderScheduler()
     listDueMock.mockImplementation(() => [
       { id: 'r5', text: 'a', fireAt: 1 },
       { id: 'r6', text: 'b', fireAt: 2 }
     ])
+    // 先认领后通知：认领失败（写库抛错）的那条绝不能弹通知，否则下个 tick 还会再弹
     markFiredMock.mockImplementationOnce(() => {
       throw new Error('boom')
     })
     vi.advanceTimersByTime(30_000)
     expect(markFiredMock).toHaveBeenCalledTimes(2)
-    expect(broadcastMock).toHaveBeenCalledTimes(2)
+    expect(broadcastMock).toHaveBeenCalledTimes(1)
+    expect(broadcastMock.mock.calls[0]![1].id).toBe('r6')
+    expect(notificationShowMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('认领返回 false（状态已被别的 tick 改掉）⇒ 不弹通知、不广播', () => {
+    initReminderScheduler()
+    listDueMock.mockImplementation(() => [{ id: 'r7', text: 'x', fireAt: 3 }])
+    markFiredMock.mockReturnValueOnce(false)
+    vi.advanceTimersByTime(30_000)
+    expect(notificationShowMock).not.toHaveBeenCalled()
+    expect(broadcastMock).not.toHaveBeenCalled()
   })
 
   it('重复 init 不产生多个 timer；stop 后不再 tick', () => {

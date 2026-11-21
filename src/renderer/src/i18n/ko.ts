@@ -2757,6 +2757,7 @@ export const ko = {
   'bk.mergeCredNote': '자격 증명(API Key / env / headers)은 기기 간에 이동하지 않습니다: 로컬에 이미 있는 행은 로컬 값을 유지하고, 클라우드의 새 행은 "설정 → 모델 및 사용량"에서 다시 입력해야 합니다',
   'bk.mergeMcpStopped': '로컬의 MCP 서버 {n}개 기록이 클라우드본으로 교체 또는 삭제되어 프로세스가 중지되었습니다. 필요할 때 다시 시작하세요',
   'bk.mergeReconcileFail': '설정은 병합되었으나 런타임 대조를 마치지 못했습니다. 앱 재시작을 권장합니다',
+  'bk.mergeAttachmentPartial': '첨부 파일 일부가 저장되지 않았습니다: {detail} (데이터베이스 병합은 완료되었으므로 다시 시도할 필요가 없습니다)',
   'bk.mergeFail': '병합 실패: {e}',
   'lic.activate': '라이선스 활성화',
   'lic.clear': '지우기',

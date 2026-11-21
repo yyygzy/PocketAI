@@ -415,7 +415,8 @@ describe('§410 闸门：truncate 位上的整句说明必须带 title', () => {
       //   自定义 CSS 下线批删掉该文件里的 CSS 区块后整体上移 1 行，实测 1670；
       //   备份状态三行下线批在备份卡片里补了「未配置」那句与 cfgLoaded，整体下移 13 行，现按实测重钉为 1683。
       //   SEC-1 收口批在 none 模式警示下补了一句 `enc.noneCredentialGate`（+3 行），实测 1686。
-      'src/renderer/src/modules/settings/SettingsModule.tsx:1686(16字)'
+      //   合并恢复部分成功提示（附件失败单独成句）在备份卡片里新增 1 行 ⇒ 实测 1687。
+      'src/renderer/src/modules/settings/SettingsModule.tsx:1687(16字)'
     )
   })
 })
