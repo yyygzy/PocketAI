@@ -176,7 +176,9 @@ export class McpOauthService {
       void this.finishAuthorization(pending)
     } catch (e) {
       loopback.close()
-      this.pending.delete(serverId)
+      // openUrl 等同步抛错时可能已经 set 过 pending；只删本次建的那条，不碰别的并发流程
+      const current = this.pending.get(serverId)
+      if (current && current.state === state) this.pending.delete(serverId)
       const friendly = humanizeOauthError(e)
       this.recordFailure(serverId, friendly, existing)
       throw new Error(friendly)
@@ -479,6 +481,8 @@ export class McpOauthService {
       if (!safeStateEqual(result.state, pending.state)) {
         throw new Error('授权回调状态不匹配，请重新授权。')
       }
+      // 取消与新发起的竞态里旧流程仍可能拿到回调：已被取代就不写库、不广播，避免覆盖新凭据
+      if (this.pending.get(serverId) !== pending) return
       const body = await this.postToken(pending.config, {
         grant_type: 'authorization_code',
         code: result.code,
@@ -511,13 +515,18 @@ export class McpOauthService {
       this.emit(serverId)
       log.info(`OAuth 授权完成: ${serverId}`)
     } catch (e) {
+      // 被新一次授权取代、或被用户主动取消时，自己已不是当前 pending：
+      // 不能把「旧等待已取消」写成失败状态广播到 UI，覆盖正在进行的新流程。
+      if (this.pending.get(serverId) !== pending) return
       const code = e instanceof OauthTokenError ? e.oauthCode : null
       const friendly = oauthCodeMessage(code) ?? humanizeOauthError(e)
       this.recordFailure(serverId, friendly)
       log.warn(`OAuth 授权失败 ${serverId}: ${code ?? friendly}`)
     } finally {
       pending.loopback.close()
-      this.pending.delete(serverId)
+      // 只能删自己：重新发起授权时旧的 finishAuthorization 会被 cancel，它的 finally 若无条件删
+      // pending[serverId] 会把刚登记的新流程一起删掉，导致新回环服务泄漏、cancelAuth 也找不到它。
+      if (this.pending.get(serverId) === pending) this.pending.delete(serverId)
     }
   }
 

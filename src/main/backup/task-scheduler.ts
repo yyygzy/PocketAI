@@ -127,7 +127,13 @@ const tasks: TaskDef[] = [
         if (!index.kind || !index.db?.sha256) throw new Error('增量索引格式无效')
         log.info(`备份校验通过：${latest.name}（增量索引）`)
       } else {
-        // 全量 zip：校验 sha256
+        // 全量 zip：读中央目录校验 app.db 存在（注释承诺的"解压校验"，但只读目录不解压全文件，开销可控）。
+        // 只算个 sha256 打印日志等于什么都没验：云端文件被截断/损坏也能下载成功，面板却报"校验通过"。
+        const unzipper = await import('unzipper')
+        const archive = await unzipper.Open.buffer(buf).catch(() => null)
+        if (!archive) throw new Error('全量备份包损坏：无法读取 ZIP 目录')
+        const hasDb = archive.files.some((f) => f.path === 'app.db' || f.path.endsWith('/app.db'))
+        if (!hasDb) throw new Error('全量备份包缺少 app.db')
         const hash = sha256Hex(buf)
         log.info(`备份校验通过：${latest.name}（sha256=${hash.slice(0, 16)}…）`)
       }

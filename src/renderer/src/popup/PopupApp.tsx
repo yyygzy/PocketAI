@@ -118,6 +118,8 @@ export const PopupApp: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const requestIdRef = useRef<string | null>(null)
+  /** 发送同步锁：无会话时 createConversation 是 await，期间 streaming 仍 false，双击会建两个会话并丢消息 */
+  const sendBusyRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -421,7 +423,8 @@ export const PopupApp: React.FC = () => {
   const send = useCallback(
     async (text: string) => {
       const content = text.trim()
-      if ((!content && attachments.length === 0) || streaming || !providerId || !model) return
+      if ((!content && attachments.length === 0) || streaming || sendBusyRef.current || !providerId || !model) return
+      sendBusyRef.current = true
       let convId = conversationId
       try {
         if (!convId) {
@@ -440,6 +443,9 @@ export const PopupApp: React.FC = () => {
         // input 未清空、streaming 未置 true，用户可重试
         setMessages((ms) => [...ms, { role: 'assistant', content: errText(e, t('common.unknownError')), error: true }])
         return
+      } finally {
+        // 创建会话窗口结束后 streaming 即将置 true；即便上面提前 return 也必须解锁，否则永久不能发送
+        sendBusyRef.current = false
       }
       const rid = `popup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       const sentAtts = attachments

@@ -218,6 +218,9 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
         const res = await fetch(`${this.baseUrl}/models`, {
           method: 'GET',
           headers: this.authHeaders(key),
+          // 元数据请求没有引擎整轮预算兜底：服务端能建连却不回响应时 fetch 永不超时，
+          // 设置页会永久转圈、无法取消；这里用总时长硬超时，超时转成下面的 ProviderError。
+          signal: AbortSignal.timeout(REQUEST_TOTAL_TIMEOUT_MS),
           ...NO_REDIRECT
         })
         assertNoRedirect(res)
@@ -554,6 +557,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
           method: 'POST',
           headers: this.authHeaders(key),
           body: JSON.stringify({ model, input: texts }),
+          // 后台索引同样不能被一个挂死的 embedding 端点永久占住队列（同 listModels 的总时长口径）
+          signal: AbortSignal.timeout(REQUEST_TOTAL_TIMEOUT_MS),
           ...NO_REDIRECT
         })
         assertNoRedirect(res)

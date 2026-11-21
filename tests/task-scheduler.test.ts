@@ -127,6 +127,17 @@ const dated = (name: string, day: number): { name: string; mtime: number } => ({
 /** 时间判不出来的一份：手放的包名没有日期，服务器那格又是空元素 ⇒ §327 的两层兜底都兜不住 */
 const unknownTime = (name: string): { name: string; mtime: number } => ({ name, mtime: NaN })
 
+/** 全量备份校验现在会读 ZIP 目录断言 app.db 存在；测试夹具得给一个真 zip，不再是任意字节 */
+const makeFullZip = async (): Promise<Buffer> => {
+  const archiver = (await import('archiver')).default
+  const archive = archiver('zip')
+  const chunks: Buffer[] = []
+  archive.on('data', (c: Buffer) => chunks.push(c))
+  archive.append(Buffer.from('sqlite-fixture'), { name: 'app.db' })
+  await archive.finalize()
+  return Buffer.concat(chunks)
+}
+
 afterEach(() => {
   stopTaskScheduler()
   vi.useRealTimers()
@@ -282,24 +293,34 @@ describe('backup_verify 备份校验', () => {
     expect(mocks.downloadCalls).toBe(0)
   })
 
-  it('全量 zip（未加密）：下载后走 sha256 校验路径，任务正常完成', async () => {
+  it('全量 zip（未加密）：下载后读 ZIP 目录校验 app.db，任务正常完成', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
-    mocks.downloadRaw = Buffer.from('zip content')
+    mocks.downloadRaw = await makeFullZip()
     await tick()
     expect(mocks.downloadCalls).toBe(1)
     expect(mocks.decryptCalls).toBe(0)
     expect(Number(mocks.config.get('task.backup_verify.last_run_at'))).toBeGreaterThan(0)
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('passed')
   })
 
   it('加密备份：先解密再校验', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
     mocks.encrypted = true
-    mocks.decryptedRaw = Buffer.from('plain zip')
+    mocks.decryptedRaw = await makeFullZip()
     await tick()
     expect(mocks.decryptCalls).toBe(1)
     expect(Number(mocks.config.get('task.backup_verify.last_run_at'))).toBeGreaterThan(0)
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('passed')
+  })
+
+  it('全量 zip 损坏/缺 app.db ⇒ failed，不谎报校验通过', async () => {
+    mocks.webdavCfg = { host: 'dav.example.com' }
+    mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
+    mocks.downloadRaw = Buffer.from('not a zip')
+    await tick()
+    expect(mocks.config.get('task.backup_verify.last_status')).toBe('failed')
   })
 
   it('增量备份索引有效（含 kind 与 db.sha256）：校验通过', async () => {
@@ -358,6 +379,7 @@ describe('backup_verify last_status 三态', () => {
   it('校验真的走完 → last_status=passed', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
+    mocks.downloadRaw = await makeFullZip()
     await tick()
     expect(mocks.config.get('task.backup_verify.last_status')).toBe('passed')
     expect(mocks.config.get('task.backup_verify.last_ok')).toBe('1')
@@ -389,6 +411,7 @@ describe('backup_verify last_status 三态', () => {
   it('知识库健康检查不接这颗三态（不许留下 kb 的 last_status 死键）', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
+    mocks.downloadRaw = await makeFullZip()
     await tick()
     expect(mocks.config.has('task.kb_health_check.last_status')).toBe(false)
   })
@@ -398,6 +421,7 @@ describe('verifyBackupNow 手动「立即验证」', () => {
   it('通过：回 passed，并把三颗键写进同一份配置', async () => {
     mocks.webdavCfg = { host: 'dav.example.com' }
     mocks.backups = [dated('pocketai-full-20260927.zip', 27)]
+    mocks.downloadRaw = await makeFullZip()
     const r = await verifyBackupNow()
     expect(r.status).toBe('passed')
     expect(Number(mocks.config.get('task.backup_verify.last_run_at'))).toBeGreaterThan(0)

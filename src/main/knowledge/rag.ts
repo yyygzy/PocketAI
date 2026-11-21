@@ -276,9 +276,11 @@ class RAGService {
     }
 
     const tSearch = performance.now()
-    /** 相似度阈值要比的「检索用查询向量」：复用向量路第一次成功的结果，不为过滤再打一次 embedding API。
-     *  HyDE 开着时它是假设文档的向量——阈值含义始终是「与本次检索实际用的向量有多像」 */
-    let refVec: Float32Array | null = null
+    /** 相似度阈值要比的「检索用查询向量」，按 KB 分别记：多库可能用不同 embedding 模型，
+     *  就算维度碰巧相同，跨模型的余弦相似度也没有语义（会把别的库的相关 chunk 整批滤掉）。
+     *  复用各库向量路第一次成功的结果，不为过滤再打一次 embedding API；
+     *  HyDE 开着时它是假设文档的向量——阈值含义始终是「与该库本次检索实际用的向量有多像」。 */
+    const refVecs = new Map<string, Float32Array>()
     for (const { kb, embedText, queryVariants } of jobs) {
       const kbId = kb.id
       const topK = topKOf(kb)
@@ -297,7 +299,7 @@ class RAGService {
               kb.embeddingModel,
               useHyde ? embedText : q
             )
-            if (!refVec) refVec = qVec
+            if (!refVecs.has(kbId)) refVecs.set(kbId, qVec)
             vectorResults.push(...kbChunkRepo.knnSearch(qVec, [kbId], topK))
           } catch (e) {
             // 向量化失败不阻断，仅跳过该查询的向量检索 —— 但「少了向量这一路」必须留痕
@@ -350,21 +352,22 @@ class RAGService {
 
     // 4. 相似度：阈值判定要用它，检索测试面板也要它来回答「阈值该调到多少」。
     //    只在「诊断模式」或「有库设了阈值」时才算——否则等于给主链路每次检索多读一遍候选向量，纯开销。
-    const qVec = refVec
     const hasThreshold = reranked.some((c) => minScoreOf(c.kbId) > 0)
     const wantSim = diag !== null || hasThreshold
     let loadedVecs: Map<string, Float32Array> | null = null
     let pool = reranked
     let filteredByThreshold = 0
-    if (wantSim && qVec) {
+    if (wantSim && refVecs.size > 0) {
       try {
         loadedVecs = kbChunkRepo.loadEmbeddingsByIds(reranked.map((c) => c.chunkId))
-        const base = qVec
         const vecs = loadedVecs
         pool = reranked.map((c) => {
+          // 每条 chunk 用它所属 KB 的查询向量：不同库的 embedding 模型不可混算相似度
+          const base = refVecs.get(c.kbId)
           const v = vecs.get(c.chunkId)
-          // 维度不符（换过 embedding 模型的旧向量）就没有可比相似度：宁可不显示，也不报个错数
-          return v && v.length === base.length ? { ...c, similarity: cosineSimilarity(base, v) } : c
+          // 该库没打出查询向量（向量化全失败）或维度不符（换过模型的旧向量）⇒ 没有可比相似度：
+          // 宁可不显示，也不报个错数；阈值过滤对无相似度者保留，不默默丢资料。
+          return base && v && v.length === base.length ? { ...c, similarity: cosineSimilarity(base, v) } : c
         })
         if (hasThreshold) {
           // 过滤必须在 MMR 之前：放在后面，多样性会把刚滤掉的又选回来
