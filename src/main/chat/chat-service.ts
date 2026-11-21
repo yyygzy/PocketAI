@@ -101,6 +101,20 @@ function resumeBlockedError(code: ChatResumeBlockCode): Error {
   }
 }
 
+/**
+ * 多目标落定 → 整轮运行记录状态。
+ * 至少一列 done → done；全 rejection/error（没一个 done 也没一个 aborted）→ failed；
+ * 有 aborted 且无 done → aborted（用户点了停止，不能记成成功、也不触发未读角标）。
+ */
+function settledRunStatus(
+  results: PromiseSettledResult<'done' | 'error' | 'aborted'>[]
+): 'done' | 'failed' | 'aborted' {
+  const values = results.map((r) => (r.status === 'fulfilled' ? r.value : 'error'))
+  if (values.includes('done')) return 'done'
+  if (values.length > 0 && values.every((v) => v === 'aborted')) return 'aborted'
+  return 'failed'
+}
+
 /** 会话的 modelLabel 形如 `providerId:model`；解析不出来就不猜（续跑要求目标明确） */
 function parseModelLabel(label: string | null): ChatTarget | null {
   if (!label) return null
@@ -424,9 +438,8 @@ class ChatService {
         )
       )
 
-      // 全部目标失败 → 注册表标记 failed；否则 done
-      const allFailed = results.every((r) => r.status === 'rejected')
-      markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
+      // 按每列的真实落定状态结算：被用户停止的一轮记 aborted，不记成功、不触发未读角标
+      markRunFinished(conversationId, requestId, settledRunStatus(results))
     } catch (e) {
       // 运行中途抛错（供应商适配器/持久化）：注册表留「失败」角标，错误照原样抛给 IPC 层
       markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))
@@ -504,8 +517,7 @@ class ChatService {
         )
       )
 
-      const allFailed = results.every((r) => r.status === 'rejected')
-      markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
+      markRunFinished(conversationId, requestId, settledRunStatus(results))
     } catch (e) {
       markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))
       throw e
@@ -584,8 +596,7 @@ class ChatService {
         )
       )
 
-      const allFailed = results.every((r) => r.status === 'rejected')
-      markRunFinished(conversationId, requestId, allFailed ? 'failed' : 'done')
+      markRunFinished(conversationId, requestId, settledRunStatus(results))
     } catch (e) {
       markRunFinished(conversationId, requestId, 'failed', errMsg(e, 'UNKNOWN'))
       throw e
@@ -815,7 +826,7 @@ class ChatService {
     emit: EmitFn
     sources?: MessageSource[]
     retrieval?: MessageRetrieval
-  }): Promise<void> {
+  }): Promise<'done' | 'error' | 'aborted'> {
     const { requestId, index, target, messages, messageId, signal, emit, sources, retrieval } = args
 
     let accumulated = ''
@@ -865,6 +876,7 @@ class ChatService {
       checkAndBroadcastBudgetWarnings()
       const e: ChatDoneEvent = { requestId, targetIndex: index, messageId, fullContent: full, sources }
       emit(IPC.CHAT_DONE_EVENT, e)
+      return 'done'
     } catch (err) {
       const aborted = isAbortError(err)
       // 中止/失败的耗时不进慢操作缓冲（无诊断意义），仅 debug 日志
@@ -894,6 +906,7 @@ class ChatService {
         }
         emit(IPC.CHAT_ERROR_EVENT, e)
       }
+      return aborted ? 'aborted' : 'error'
     }
   }
 }

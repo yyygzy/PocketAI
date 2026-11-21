@@ -98,11 +98,19 @@ describe('scanFolderFiles — 递归扫描', () => {
     expect(KB_MAX_FILES_PER_IMPORT).toBeGreaterThan(0)
   })
 
-  it('不存在的目录静默返回空结果（读取失败不抛错，与子目录无权限行为一致）', () => {
-    const r = scanFolderFiles(path.join(os.tmpdir(), 'pocketai-not-exist-dir-xyz'), true)
-    expect(r.files).toEqual([])
-    expect(r.skippedCount).toBe(0)
-    expect(r.truncated).toBe(false)
+  it('顶层目录不存在/不可读 ⇒ 抛错，不伪装成空目录（调用方据此报真实错误）', () => {
+    expect(() => scanFolderFiles(path.join(os.tmpdir(), 'pocketai-not-exist-dir-xyz'), true)).toThrow()
+  })
+
+  it('子目录读取失败不拖垮顶层扫描，其余文件照常收', () => {
+    const dir = mkdtemp()
+    fs.writeFileSync(path.join(dir, 'a.md'), 'x')
+    // 同名普通文件占据子目录位置 ⇒ walk 的 readdirSync 抛 ENOTDIR；该分支对非顶层静默跳过
+    fs.writeFileSync(path.join(dir, 'no-access'), 'not a dir')
+    const r = scanFolderFiles(dir, true)
+    expect(r.files.map((f) => path.basename(f))).toEqual(['a.md'])
+    // no-access 没有支持的扩展名，按普通文件计一次 skip
+    expect(r.skippedCount).toBe(1)
   })
 
   it('图片文件：includeImages=true 收入、false 计入 skipped', () => {

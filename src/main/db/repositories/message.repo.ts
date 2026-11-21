@@ -195,6 +195,23 @@ export const messageRepo = {
   },
 
   /**
+   * 列出「从某消息起、同会话其后全部消息」的 id（截断重跑将删除的那些）。
+   * 供删除前清理附件 KB 文档用——消息删了但附件入库的 kb_documents 还在会被继续检索。
+   * 目标不存在时返回空数组；与 truncateFrom 同用 rowid 边界，口径一致。
+   */
+  listIdsFrom(messageId: string): string[] {
+    const handle = dbService.getHandle()
+    const target = handle
+      .prepare('SELECT rowid AS rid, conversation_id FROM messages WHERE id=?')
+      .get(messageId) as { rid: number; conversation_id: string } | undefined
+    if (!target) return []
+    const rows = handle
+      .prepare('SELECT id FROM messages WHERE conversation_id=? AND rowid>=? ORDER BY rowid')
+      .all(target.conversation_id, target.rid) as { id: string }[]
+    return rows.map((r) => r.id)
+  },
+
+  /**
    * 截断重跑：删除目标消息及其在同一会话中之后插入的所有消息。
    * 以 rowid（插入顺序）为界，比 created_at 同毫秒歧义更精确；
    * 不影响其他会话。返回删除行数，目标不存在时返回 0。

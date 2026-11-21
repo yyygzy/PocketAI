@@ -1263,6 +1263,9 @@ export const ChatModule: React.FC = () => {
   // 批量导出：convs 缺省 = 当前助手全部会话；传入 = 多选导出（重名由主进程加序号）
   // pdf 逐会话 printToPDF 耗时高，选中上限收紧为 BATCH_PDF_MAX
   const batchBusyRef = useRef(false)
+  // 发送同步锁：isStreaming() 要等 createConversation/reload 等 await 之后才由 beginStream 置位，
+  // 无会话时首条消息在这段窗口内双击会建两个空会话并丢消息；这里同步上锁覆盖整段 await。
+  const sendBusyRef = useRef(false)
   // §330：逐会话构建那一步的进度（50 个 PDF 约 50 秒，这个读数此前无处可去）
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
   const handleBatchExport = async (format: 'md' | 'html' | 'pdf', convs?: ConversationRecord[]) => {
@@ -1452,7 +1455,9 @@ export const ChatModule: React.FC = () => {
   }
 
   const handleSend = async (text: string, attachments?: ChatAttachment[], replyToId?: string | null, kbRefs?: string[]) => {
-    if (isStreaming()) return
+    if (isStreaming() || sendBusyRef.current) return
+    sendBusyRef.current = true
+    try {
     const useAgent = agentMode
     // P1-5：模板带来的勾选只对这一次 Agent 发送生效（渲染端只是转述用户意图，主进程会复核）
     const toolGrant = useAgent ? runbookGrant ?? undefined : undefined
@@ -1514,6 +1519,8 @@ export const ChatModule: React.FC = () => {
     // Agent 模式不建虚拟列：走既有 chat:send + agentMode，事件由 useStreamSession 归并成卡片
     const requestId = useAgent ? beginAgentStream(convId) : beginStream(convId, validTargets)
     if (!requestId) return
+    // beginStream 已置 requestId，isStreaming() 现在能挡住重入，同步锁可以先放掉
+    sendBusyRef.current = false
 
     window.pocketai
       .sendMessage(buildChatSendPayload({
@@ -1535,6 +1542,10 @@ export const ChatModule: React.FC = () => {
     // 一次发送即消费掉这份授权草稿：下一轮不再自动继承模板勾选
     setRunbookGrant(null)
     setReplyToMessage(null)
+    } finally {
+      // 覆盖所有提前 return（vision 取消 / 建会话失败 / begin 失败）：同步锁必须释放，否则界面永久不能发送
+      sendBusyRef.current = false
+    }
   }
   // 队列的自动发送与排队条「发送」都走这里：始终指向当前渲染的 handleSend（含最新 agentMode/targets）
   queueSendRef.current = (text, attachments) => {

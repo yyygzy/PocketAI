@@ -42,13 +42,15 @@ export function scanFolderFiles(dir: string, includeImages: boolean): FolderScan
   let skippedCount = 0
   let truncated = false
 
-  const walk = (current: string): void => {
+  const walk = (current: string, isTop: boolean): void => {
     if (truncated) return
     let entries: fs.Dirent[]
     try {
       entries = fs.readdirSync(current, { withFileTypes: true })
-    } catch {
-      // 无权限等读取失败的子目录直接跳过
+    } catch (e) {
+      // 子目录无权限等读取失败直接跳过；但顶层目录读不到必须抛错，
+      // 否则会把「目录被删/盘断开/无权限」伪装成「空目录」，UI 误报「文件夹里没有匹配的文件」。
+      if (isTop) throw e
       return
     }
     for (const entry of entries) {
@@ -59,7 +61,7 @@ export function scanFolderFiles(dir: string, includeImages: boolean): FolderScan
       const full = path.join(current, name)
       if (entry.isDirectory()) {
         if (IGNORED_DIRS.has(name)) continue
-        walk(full)
+        walk(full, false)
         continue
       }
       if (!entry.isFile()) continue
@@ -90,6 +92,6 @@ export function scanFolderFiles(dir: string, includeImages: boolean): FolderScan
     }
   }
 
-  walk(dir)
+  walk(dir, true)
   return { files, skippedCount, truncated }
 }

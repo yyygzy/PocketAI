@@ -117,6 +117,9 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
   const streamingConvRef = useRef<string | null>(null)
   // 各列落定状态（finalize 时汇总成败供 onStreamsSettled）
   const resultsRef = useRef<SettledStatus[]>([])
+  // finalize 延迟清状态的 timer：必须在下一轮 begin 时取消，否则上一轮 200ms 后清掉新一轮的 live 状态
+  const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentFinalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // opts 存 ref，避免事件订阅 effect 因回调重建而反复重订阅（流式期间重订阅可能丢 chunk）
   const optsRef = useRef(opts)
@@ -193,7 +196,6 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
         }
       })
     })
-    let agentFinalizeTimer: ReturnType<typeof setTimeout> | null = null
     function finalizeAgent(convId: string, outcome: 'done' | 'error') {
       if (finalizedRef.current) return
       finalizedRef.current = true
@@ -205,13 +207,17 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       streamingConvRef.current = null
       // 与聊天流一样延迟 200ms：先让最后一段 chunk 画完，再重读库里的持久化消息并撤掉实时卡，
       // 避免 done 时立刻清空出现空白闪断。done 事件本身不再追加任何卡片（去重在 reducer/持久化）。
-      agentFinalizeTimer = setTimeout(() => {
-        agentFinalizeTimer = null
+      agentFinalizeTimerRef.current = setTimeout(() => {
+        agentFinalizeTimerRef.current = null
         optsRef.current.reloadConversations()
         const clearLive = () => {
           setAgentStream((prev) => (prev && prev.requestId === requestId ? null : prev))
-          setAgentRunning(false)
-          setLiveSteps([])
+          // 归属校验：finalize 时已把 requestIdRef 置 null；此刻若仍为 null 说明没有新一轮，
+          // 才清运行中状态；若已非 null（新一轮 begin 过）则保留新一轮的 agentRunning/liveSteps。
+          if (requestIdRef.current === null) {
+            setAgentRunning(false)
+            setLiveSteps([])
+          }
         }
         if (convId && optsRef.current.getCurrentConvId() === convId) {
           Promise.resolve(optsRef.current.loadMessages(convId)).finally(clearLive)
@@ -257,8 +263,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     })
 
     // finalize 在流式结束后延迟 200ms 再清空/重载，避免立即重渲染打断最后一段输出。
-    // 这个 timer 必须在 effect cleanup 时清掉，否则组件卸载后会触发 setLiveColumns 等。
-    let finalizeTimer: ReturnType<typeof setTimeout> | null = null
+    // timer 走 ref：effect cleanup 要清，下一轮 begin 也要清（否则旧 timer 抹掉新一轮的 liveColumns）。
     function finalize() {
       if (finalizedRef.current) return
       finalizedRef.current = true
@@ -270,9 +275,10 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       }
       requestIdRef.current = null
       streamingConvRef.current = null
-      finalizeTimer = setTimeout(() => {
-        finalizeTimer = null
-        setLiveColumns(null)
+      finalizeTimerRef.current = setTimeout(() => {
+        finalizeTimerRef.current = null
+        // 归属校验：只有当前没有新一轮流式时才清 liveColumns，否则会抹掉新一轮刚开始的虚拟列
+        if (requestIdRef.current === null) setLiveColumns(null)
         optsRef.current.reloadConversations()
         if (convId && optsRef.current.getCurrentConvId() === convId) optsRef.current.loadMessages(convId)
       }, 200)
@@ -286,8 +292,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       offAgentChunk()
       offAgentDone()
       offAgentError()
-      if (finalizeTimer) clearTimeout(finalizeTimer)
-      if (agentFinalizeTimer) clearTimeout(agentFinalizeTimer)
+      if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current)
+      if (agentFinalizeTimerRef.current) clearTimeout(agentFinalizeTimerRef.current)
     }
   }, [])
 
@@ -296,6 +302,9 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
 
   const beginStream = useCallback((convId: string, targets: ChatTarget[]): string | null => {
     if (requestIdRef.current) return null // 正在流式中
+    // 取消上一轮尚未触发的 finalize timer：否则它 200ms 后会清掉本轮刚建好的 liveColumns
+    if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null }
+    if (agentFinalizeTimerRef.current) { clearTimeout(agentFinalizeTimerRef.current); agentFinalizeTimerRef.current = null }
     const requestId = crypto.randomUUID()
     requestIdRef.current = requestId
     setStopUnread(null) // §266：新一轮流式，上一发"停止没送到"不再作数（陈旧谎报要自己退场，§256）
@@ -320,6 +329,9 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
   /** Agent 模式：同一 requestId 认领，不建虚拟列；步骤由 agent 事件流归并成 AgentMessage 卡片 */
   const beginAgentStream = useCallback((convId: string): string | null => {
     if (requestIdRef.current) return null
+    // 同 beginStream：取消上一轮遗留的 finalize timer，避免它清掉本轮的 agentRunning/liveSteps
+    if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null }
+    if (agentFinalizeTimerRef.current) { clearTimeout(agentFinalizeTimerRef.current); agentFinalizeTimerRef.current = null }
     const requestId = crypto.randomUUID()
     requestIdRef.current = requestId
     setStopUnread(null)
@@ -337,6 +349,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
 
   const failStream = useCallback((requestId: string, convId: string) => {
     if (requestIdRef.current !== requestId) return
+    if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null }
+    if (agentFinalizeTimerRef.current) { clearTimeout(agentFinalizeTimerRef.current); agentFinalizeTimerRef.current = null }
     requestIdRef.current = null
     streamingConvRef.current = null
     setLiveColumns(null)

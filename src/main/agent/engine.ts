@@ -1240,6 +1240,12 @@ interface PendingInterjection {
 
 class AgentEngine {
   private controllers = new Map<string, AbortController>()
+  /**
+   * setup 窗口（markRunStarted 之后、master controller 登记之前）用户点停止时的挂起标记。
+   * 这段窗口里 controller 还没建，abort() 直接 no-op 会让用户以为停了、run 却照常跑完整轮烧 token。
+   * abort() 命中未登记 id 时记这里；controller 一登记就消费并立即 abort。
+   */
+  private pendingAborts = new Set<string>()
 
   /**
    * 同会话单活动 run 守卫（P2 / V4-Iter-459）：过渡期两个壳可能同时保活，而控制器只按
@@ -1274,16 +1280,23 @@ class AgentEngine {
   }
 
   abort(requestId: string): void {
-    this.controllers.get(requestId)?.abort()
+    const controller = this.controllers.get(requestId)
+    if (controller) {
+      controller.abort()
+    } else {
+      // setup 窗口：controller 尚未登记，先记账；等登记时立即消费（见 run() 里 controllers.set 之后）
+      this.pendingAborts.add(requestId)
+    }
   }
 
   /**
    * 有没有还在跑的 run（主干与子都算）。评测入口用它拦一道：
    * Agent 的工作目录是 `app_config` 里那一个全局键，评测一头发一发地切它，
    * 与用户的普通运行同时跑就是抢同一个目录——两边的产物都会串。
+   * pendingAborts 也算活跃：那段时间 run 已在 setup（会话已标记运行中），不能放行评测并发。
    */
   hasActiveRun(): boolean {
-    return this.controllers.size > 0
+    return this.controllers.size > 0 || this.pendingAborts.size > 0
   }
 
   /** 只摘自己登记的那一轮：并发守卫登记的是 requestId，别的 run 不能替它解锁 */
@@ -1618,6 +1631,9 @@ class AgentEngine {
       // 主控制器
       const master = new AbortController()
       this.controllers.set(requestId, master)
+      // setup 窗口里用户可能已经点过停止：登记即消费挂起标记，立即 abort，
+      // 下面的循环顶部/各 await 会按 signal.aborted 走既有中止收尾，不会白跑一整轮。
+      if (this.pendingAborts.delete(requestId)) master.abort()
       // 插队收件箱只给主干开（子 run 不接插队，理由见 interjections 的注释）
       if (!asChild) this.interjections.set(requestId, [])
       loopTimer = setTimeout(() => master.abort(), LOOP_TIMEOUT_MS)
@@ -1959,6 +1975,7 @@ class AgentEngine {
       } finally {
         clearTimeout(loopTimer)
         this.controllers.delete(requestId)
+        this.pendingAborts.delete(requestId)
         // 归因表必须跟着清理：漏了它，同一个 requestId 的残留会把以后某轮的 trace
         // 挂到别的父运行上（归因错比没归因更难查）
         traceParents.delete(requestId)
@@ -1976,6 +1993,7 @@ class AgentEngine {
       const errText = aborted ? 'Agent 运行已中止' : errMsg(setupErr)
       if (loopTimer) clearTimeout(loopTimer)
       this.controllers.delete(requestId)
+      this.pendingAborts.delete(requestId)
       traceParents.delete(requestId)
       traceModels.delete(requestId)
       this.interjections.delete(requestId)

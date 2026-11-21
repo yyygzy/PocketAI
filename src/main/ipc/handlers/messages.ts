@@ -13,6 +13,7 @@ import { usagePricingSchema } from '../../../shared/schemas/usage'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 import { writeFileAtomicSync } from '../../files/atomic-write'
 import { idSchema } from '../../../shared/schemas/providers'
+import { deleteMessageAttachmentDocs } from '../../attachment/attachment-ingestion'
 
 /** 全局搜索 SQL 行（FTS 与 LIKE 两查询同构，FTS 多一个 snippet 列） */
 interface MessageSearchRow {
@@ -51,18 +52,24 @@ export function registerMessageHandlers(): void {
   argsSchema(idSchema))
   safeHandle(IPC.MESSAGE_DELETE, (_e, id: string) => {
     messageRepo.delete(id)
+    // 消息附件曾异步入库到 KB（source=msg_<id>）：消息没了也要清掉那份副本，否则仍被检索命中
+    deleteMessageAttachmentDocs(id)
     return { ok: true }
   }, argsSchema(idSchema))
 
   // 批量删除：单 IPC 删除多条消息（上限 500）
   safeHandle(IPC.MESSAGE_DELETE_BATCH, (_e, ids: string[]) => {
     const deleted = messageRepo.deleteBatch(ids)
+    for (const id of ids) deleteMessageAttachmentDocs(id)
     return { ok: true, deleted }
   }, argsSchema(z.array(idSchema).min(1).max(500)))
 
   // 截断重跑：删除目标消息及同会话其后全部消息（Agent 线性历史「重新运行」）
   safeHandle(IPC.MESSAGE_TRUNCATE_FROM, (_e, id: string) => {
+    // 先取将被截断的 id，删除后逐个清附件 KB 文档（与删会话、删单条消息同一口径）
+    const affectedIds = messageRepo.listIdsFrom(id)
     const deleted = messageRepo.truncateFrom(id)
+    for (const mid of affectedIds) deleteMessageAttachmentDocs(mid)
     return { ok: true, deleted }
   }, argsSchema(idSchema))
 
