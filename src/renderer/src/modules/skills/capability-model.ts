@@ -24,6 +24,8 @@ export interface OnlineSkill {
   url: string
   /** 清单可选提供的 sha256/md5；有就校验，没有就放行 */
   hash?: string
+  /** 可选：远程目录包清单 URL，有则按「SKILL.md + 资源」逐文件同源代码安装 */
+  manifest?: string
 }
 
 /** 技能状态是闭合三档：停用 / 启用但没绑任何助手 / 已绑定（N 个助手）。 */

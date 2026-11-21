@@ -2012,6 +2012,7 @@ export const zh = {
   'skill.market.checksumMismatch': '文件内容与校验和不一致，可能已被改动，已拒绝导入',
   'skill.market.checksumUnsupported': '校验和格式不受支持，已拒绝导入',
   'skill.market.checksumAbsent': '此文件没有校验和，完整性未校验（校验和不等于签名）',
+  'skill.market.dirUnverified': '目录包里有 {n} 个文件未提供校验和，未逐文件校验',
   'skill.market.exportDone': '已导出',
   'skill.market.exportFailed': '导出失败',
   'skill.market.builtinHint': '内置技能内容不可直接修改；「复制为我的技能」后即可编辑副本。',

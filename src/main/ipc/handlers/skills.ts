@@ -62,6 +62,10 @@ export function registerSkillHandlers(): void {
     const { importSkillFromUrl } = await import('../../skills/skill-io')
     return importSkillFromUrl(url, expectedHash)
   }, argsSchema(z.string().url('URL 不合法'), z.string().max(128)))
+  safeHandle(IPC.SKILL_IMPORT_DIR, async (_e, manifestUrl: string) => {
+    const { importSkillDirFromManifest } = await import('../../skills/skill-io')
+    return importSkillDirFromManifest(manifestUrl)
+  }, argsSchema(z.string().url('清单 URL 不合法')))
 
   // SDK：技能校验 + 模板
   safeHandle(IPC.SKILL_VALIDATE, (_e, text: string) => validateSkillText(text), argsSchema(z.string()))

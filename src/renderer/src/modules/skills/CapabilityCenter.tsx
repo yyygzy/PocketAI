@@ -527,14 +527,24 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
 
   const handleImportRemote = useCallback(
     async (s: OnlineSkill) => {
-      const r = await window.pocketai.importSkillFromUrl(s.url, s.hash)
+      // 有 manifest ⇒ 目录包（SKILL.md + references/scripts/assets 逐文件同源安装）
+      const r = s.manifest
+        ? await window.pocketai.importSkillDir(s.manifest)
+        : await window.pocketai.importSkillFromUrl(s.url, s.hash)
       if (r.ok && r.skill) {
         await refreshSkills()
         // 安装完成即进已装技能详情：绑定区就在同一屏，不再让用户自己回头找
         setView({ kind: 'installedSkill', id: r.skill.id })
-        // 没有校验和的老包照样放行，但必须说出来（不能让人把「导入成功」读成「已校验完整性」）
-        const note = r.checksum === 'absent' ? t('skill.market.checksumAbsent') : ''
-        toast.success([t('skill.market.importDone'), note].filter(Boolean).join(' '))
+        const notes: string[] = []
+        if ('checksum' in r && r.checksum === 'absent') notes.push(t('skill.market.checksumAbsent'))
+        if ('unverified' in r && (r.unverified ?? 0) > 0) {
+          notes.push(t('skill.market.dirUnverified', { n: r.unverified ?? 0 }))
+        }
+        if ('forcedOnDemand' in r && r.forcedOnDemand) notes.push(t('skill.market.forcedOnDemand'))
+        if ('skipped' in r && (r.skipped ?? []).length > 0) {
+          notes.push(t('skill.market.skippedFiles', { n: r.skipped!.length }))
+        }
+        toast.success([t('skill.market.importDone'), ...notes].filter(Boolean).join(' '))
         showScanReport(r.skill.name, r.scan)
       } else {
         toast.error(remoteImportErrorText(r.error, t))

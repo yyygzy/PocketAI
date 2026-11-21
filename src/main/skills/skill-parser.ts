@@ -199,6 +199,8 @@ export interface RegistrySkill {
   url: string
   /** md5/sha256 可选，暂不强制 */
   hash?: string
+  /** 可选：远程目录包清单 URL（含 SKILL.md + resources），有就走逐文件同源安装 */
+  manifest?: string
 }
 
 /** 解析远程 registry index */
@@ -229,7 +231,10 @@ export function parseRegistryIndex(text: string): { skills: RegistrySkill[]; err
       description: typeof r.description === 'string' ? r.description.trim() : undefined,
       icon: typeof r.icon === 'string' ? r.icon.trim().slice(0, 4) : undefined,
       url,
-      hash: typeof r.hash === 'string' ? r.hash.trim() : undefined
+      hash: typeof r.hash === 'string' ? r.hash.trim() : undefined,
+      manifest: typeof r.manifest === 'string' && r.manifest.trim().startsWith('https://')
+        ? r.manifest.trim()
+        : undefined
     })
   }
   return { skills: out, error: '' }

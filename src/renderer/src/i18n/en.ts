@@ -2011,6 +2011,7 @@ export const en = {
   'skill.market.checksumMismatch': 'File content does not match its checksum and may have been modified. Import rejected.',
   'skill.market.checksumUnsupported': 'Unsupported checksum format. Import rejected.',
   'skill.market.checksumAbsent': 'This file has no checksum, so its integrity was not verified (a checksum is not a signature)',
+  'skill.market.dirUnverified': '{n} file(s) in the directory pack had no checksum and were not verified individually',
   'skill.market.exportDone': 'Exported',
   'skill.market.exportFailed': 'Export failed',
   'skill.market.builtinHint': 'Built-in skill content is read-only. Duplicate it as yours to edit a copy.',

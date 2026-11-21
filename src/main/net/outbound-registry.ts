@@ -296,10 +296,10 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     labelKey: 'outbound.entry.skillRemote',
     purposeKey: 'outbound.purpose.skillRemote',
     kind: 'runtime-url',
-    configSource: '技能包 URL / 索引地址（运行时输入，默认走 GitHub Contents API，raw 兜底）',
+    configSource: '技能包 URL / 索引地址 / 远程目录包（运行时输入，默认走 GitHub Contents API，raw 兜底）',
     endpoints: [],
     transport: 'safeFetch',
-    files: ['skills/skill-io.ts']
+    files: ['skills/skill-io.ts', 'skills/skill-remote-dir.ts']
   },
   {
     id: 'kb-url',

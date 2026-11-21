@@ -2996,6 +2996,7 @@ export const IPC = {
   SKILL_SYNC: 'skill:sync',
   SKILL_FETCH_INDEX: 'skill:fetch-index',
   SKILL_IMPORT_URL: 'skill:import-url',
+  SKILL_IMPORT_DIR: 'skill:import-dir', // 远程技能目录包（manifest + 逐文件同源抓取）
   SKILL_VALIDATE: 'skill:validate',
   SKILL_IMPORT_FOLDER: 'skill:import-folder', // §236：选一个 SKILL.md 技能目录导入（连资源文件一起快照进来）
   SKILL_LIST_FILES: 'skill:list-files', // §236：某个技能自带哪些文件

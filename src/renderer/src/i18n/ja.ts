@@ -1949,6 +1949,7 @@ export const ja = {
   'skill.market.checksumMismatch': 'ファイル内容がチェックサムと一致しません。改変された可能性があるため、インポートを拒否しました',
   'skill.market.checksumUnsupported': '未対応のチェックサム形式のため、インポートを拒否しました',
   'skill.market.checksumAbsent': 'このファイルにはチェックサムがないため、完全性は検証されていません（チェックサムは署名ではありません）',
+  'skill.market.dirUnverified': 'ディレクトリパック内の {n} 個のファイルにチェックサムがなく、個別検証されていません',
   'skill.market.exportDone': 'エクスポートしました',
   'skill.market.exportFailed': 'エクスポートに失敗しました',
   'skill.market.builtinHint': 'ビルトインスキルの内容は直接変更できません。「マイスキルとして複製」すると編集可能です。',

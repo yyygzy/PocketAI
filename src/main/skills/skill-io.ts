@@ -26,6 +26,7 @@ import { buildSkillExportPayload, verifySkillPackage } from './skill-package'
 import { safeUrlForDisplay, scanSkill, type SkillScanResult } from './skill-scan'
 import { installSkillFiles, readSkillFolder, rollbackSkillFiles } from './skill-files'
 import { safeFetch } from '../net/safe-fetch'
+import { downloadSkillDir, parseSkillDirManifest, SKILL_MANIFEST_MAX_BYTES, type DownloadedSkillDir } from './skill-remote-dir'
 import { skillShapeSchema } from '../../shared/schemas/skills'
 import {
   GITHUB_NOT_FOUND_TEXT,
@@ -280,6 +281,98 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
     }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
+  }
+}
+
+/**
+ * 从远程「目录包」导入技能：清单 URL → 逐文件同源抓取 → 复用目录导入的解析/扫描/落库/回滚。
+ * manifestUrl 由 registry 条目的 manifest 字段提供，调用方（handler）把它透传过来。
+ */
+export async function importSkillDirFromManifest(
+  manifestUrl: string
+): Promise<{
+  ok: boolean
+  skill?: SkillRecord
+  scan?: SkillScanResult
+  copied?: string[]
+  skipped?: Array<{ path: string; reason: string }>
+  ignoredKeys?: string[]
+  forcedOnDemand?: boolean
+  unverified?: number
+  error?: string
+}> {
+  let downloaded: DownloadedSkillDir | null = null
+  try {
+    // 清单本身也走 safeFetch（同源任何 host，但受 SSRF/IP pin/5MB 约束）
+    const candidates = githubIndexCandidates(manifestUrl)
+    let manifestRes: { ok: true; text: string } | { ok: false; error: string } = { ok: false, error: '拉取失败' }
+    const errors: string[] = []
+    for (const url of candidates) {
+      const res = await fetchRemote(url)
+      if (res.ok) {
+        if (res.body.byteLength > SKILL_MANIFEST_MAX_BYTES) {
+          return { ok: false, error: '技能目录清单过大' }
+        }
+        manifestRes = { ok: true, text: res.body.toString('utf8') }
+        break
+      }
+      errors.push(res.error)
+    }
+    if (!manifestRes.ok) return { ok: false, error: pickRegistryError(errors) }
+
+    const parsedManifest = parseSkillDirManifest(manifestRes.text)
+    if (!parsedManifest.ok) return { ok: false, error: parsedManifest.error }
+
+    const dl = await downloadSkillDir(manifestUrl, parsedManifest.manifest)
+    if (!dl.ok) return { ok: false, error: dl.error }
+    downloaded = dl.result
+
+    // 与 importSkillFolder 同款两段式解析：先常驻档、超了按按需档；两档都装不下才失败
+    const residentTry = parseSkillText(downloaded.entryText, true)
+    const useResident = residentTry.shape !== null
+    const parsed = useResident ? residentTry : parseSkillText(downloaded.entryText, false)
+    const shape = parsed.shape
+    if (!shape) return { ok: false, error: parsed.error || residentTry.error }
+
+    const scan = scanSkill({
+      content: shape.content,
+      resources: downloaded.files.map((f) => ({ path: f.rel, size: f.size })),
+      ignoredKeys: parsed.ignoredKeys
+    })
+    const skill = saveShapeAsSkill(shape, { resident: useResident })
+    let copied: string[] = []
+    let skipped: Array<{ path: string; reason: string }> = []
+    try {
+      const inst = installSkillFiles(skill.id, downloaded.files)
+      copied = inst.copied
+      skipped = inst.skipped
+    } catch (e) {
+      rollbackSkillFiles(skill.id)
+      try {
+        skillRepo.delete(skill.id)
+      } catch (deleteErr) {
+        log.warn(`技能资源已回滚、记录删不掉（列表里会留下打不开的这条 ${skill.id}）:`, errMsg(deleteErr))
+        return { ok: false, error: 'SKILL_ROW_RESIDUE' }
+      }
+      return { ok: false, error: errMsg(e) }
+    }
+    auditImported(skill, 'url', safeUrlForDisplay(manifestUrl), scan)
+    return {
+      ok: true,
+      skill,
+      scan,
+      copied,
+      skipped,
+      ignoredKeys: parsed.ignoredKeys,
+      forcedOnDemand: !useResident,
+      unverified: downloaded.unverified
+    }
+  } catch (e) {
+    return { ok: false, error: errMsg(e) }
+  } finally {
+    if (downloaded) {
+      try { fs.rmSync(downloaded.tempDir, { recursive: true, force: true }) } catch { /* 临时目录清理失败不影响导入结果 */ }
+    }
   }
 }
 

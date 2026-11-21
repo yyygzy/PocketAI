@@ -27,9 +27,9 @@ const mocks = vi.hoisted(() => ({
   webdavUnreadable: false,
   // 真形状带 mtime（listWebDAVBackups 回的就是 BackupFile，§338 的判据要看它）
   backups: [] as Array<{ name: string; mtime: number }>,
-  downloadRaw: Buffer.from('raw'),
+  downloadRaw: Buffer.from('raw') as Buffer<ArrayBufferLike>,
   encrypted: false,
-  decryptedRaw: Buffer.from('decrypted'),
+  decryptedRaw: Buffer.from('decrypted') as Buffer<ArrayBufferLike>,
   downloadCalls: 0,
   downloadNames: [] as string[],
   decryptCalls: 0,
@@ -128,14 +128,15 @@ const dated = (name: string, day: number): { name: string; mtime: number } => ({
 const unknownTime = (name: string): { name: string; mtime: number } => ({ name, mtime: NaN })
 
 /** 全量备份校验现在会读 ZIP 目录断言 app.db 存在；测试夹具得给一个真 zip，不再是任意字节 */
-const makeFullZip = async (): Promise<Buffer> => {
-  const archiver = (await import('archiver')).default
+const makeFullZip = async (): Promise<Buffer<ArrayBufferLike>> => {
+  // @types/archiver 用 export=：类型上没有 default，但 Vite 转译后的运行时模块在 .default 上
+  const archiver = ((await import('archiver')) as { default: (format: string) => import('archiver').Archiver }).default
   const archive = archiver('zip')
   const chunks: Buffer[] = []
   archive.on('data', (c: Buffer) => chunks.push(c))
   archive.append(Buffer.from('sqlite-fixture'), { name: 'app.db' })
   await archive.finalize()
-  return Buffer.concat(chunks)
+  return Buffer.concat(chunks) as Buffer<ArrayBufferLike>
 }
 
 afterEach(() => {

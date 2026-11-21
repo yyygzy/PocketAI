@@ -329,7 +329,7 @@ const api = {
     ipcRenderer.invoke(IPC.SKILL_SYNC),
   fetchSkillIndex: (
     indexUrl: string
-  ): Promise<{ ok: boolean; skills?: Array<{ id: string; name: string; description?: string; icon?: string; url: string; hash?: string }>; error?: string }> =>
+  ): Promise<{ ok: boolean; skills?: Array<{ id: string; name: string; description?: string; icon?: string; url: string; hash?: string; manifest?: string }>; error?: string }> =>
     ipcRenderer.invoke(IPC.SKILL_FETCH_INDEX, indexUrl),
   importSkillFromUrl: (
     url: string,
@@ -342,6 +342,20 @@ const api = {
     checksum?: 'verified' | 'absent'
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url, hash ?? ''),
+  importSkillDir: (
+    manifestUrl: string
+  ): Promise<{
+    ok: boolean
+    skill?: SkillRecord
+    scan?: SkillScanResult
+    copied?: string[]
+    skipped?: Array<{ path: string; reason: string }>
+    ignoredKeys?: string[]
+    forcedOnDemand?: boolean
+    /** 清单里没提供 hash、未逐文件校验的数量 */
+    unverified?: number
+    error?: string
+  }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_DIR, manifestUrl),
   validateSkill: (text: string): Promise<{ ok: boolean; error?: string; warnings: string[]; shape?: { name: string; description: string; icon: string; content: string } }> =>
     ipcRenderer.invoke(IPC.SKILL_VALIDATE, text),
   getSkillTemplates: (): Promise<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>> =>
