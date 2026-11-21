@@ -324,7 +324,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
   },
   {
     // 这一条是**声明**（供展示与覆盖测试），不拦截；能不能连某个 host 由
-    // `mcp/outbound-policy.ts` 的站点级策略在发请求前判（默认全放行）。
+    // `mcp/outbound-policy.ts` 的站点级策略在发请求前判（默认拒绝清单外地址）。
     id: 'mcp-http',
     labelKey: 'outbound.entry.mcpHttp',
     purposeKey: 'outbound.purpose.mcpHttp',
@@ -334,6 +334,28 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     transport: 'fetch',
     files: ['mcp/http-transport.ts'],
     resolve: resolveMcpHttp
+  },
+  {
+    // 远程连接器目录索引：用户显式配置的 https 地址，走 safeFetch 逐跳校验
+    id: 'mcp-catalog',
+    labelKey: 'outbound.entry.mcpHttp',
+    purposeKey: 'outbound.purpose.mcpHttp',
+    kind: 'configurable',
+    configSource: 'mcp_catalog_index_url（远程连接器目录索引）',
+    endpoints: [],
+    transport: 'fetch',
+    files: ['mcp/catalog.ts']
+  },
+  {
+    // OAuth 发现/令牌请求：端点运行时从 MCP server 元数据发现，统一经 safeFetchLike 出网
+    id: 'mcp-oauth',
+    labelKey: 'outbound.entry.mcpHttp',
+    purposeKey: 'outbound.purpose.mcpHttp',
+    kind: 'configurable',
+    configSource: 'MCP OAuth 元数据/令牌端点（运行时发现，依附 MCP server URL）',
+    endpoints: [],
+    transport: 'fetch',
+    files: ['net/fetch-like.ts']
   },
   {
     id: 'mcp-stdio',

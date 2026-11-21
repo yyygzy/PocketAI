@@ -73,7 +73,8 @@ import { registerSkillHandlers } from '../src/main/ipc/handlers/skills'
 import '../src/preload/index'
 import { IPC } from '../src/shared/types'
 
-const SKILL_DIR = path.resolve(__dirname, '../data/tmp/skill-import-b134')
+// 夹具放到测试自己的临时数据根里：仓库 data/ 被 gitignore，依赖它会在干净 checkout 上消失
+const SKILL_DIR = path.join(P.dir, 'skill-import-b134-src')
 
 const call = async (name: string, ...args: unknown[]): Promise<any> => {
   const fn = (H.api as Record<string, unknown>)[name]
@@ -83,7 +84,14 @@ const call = async (name: string, ...args: unknown[]): Promise<any> => {
 
 beforeAll(() => {
   fs.rmSync(P.dir, { recursive: true, force: true })
-  fs.mkdirSync(P.dir, { recursive: true })
+  fs.mkdirSync(path.join(SKILL_DIR, 'references'), { recursive: true })
+  fs.mkdirSync(path.join(SKILL_DIR, 'scripts'), { recursive: true })
+  fs.writeFileSync(
+    path.join(SKILL_DIR, 'SKILL.md'),
+    '---\nname: b134-probe\ndescription: import bridge fixture\n---\n# B134 Probe\n'
+  )
+  fs.writeFileSync(path.join(SKILL_DIR, 'references', 'notes.md'), '# notes\n')
+  fs.writeFileSync(path.join(SKILL_DIR, 'scripts', 'count.sh'), 'echo 1\n')
   dbService.open()
   dbService.runMigrations()
   registerSkillHandlers()

@@ -77,6 +77,17 @@ describe('safeHandle', () => {
     await expect(invoke()).resolves.toEqual({ ok: false, error: '未知错误' })
   })
 
+  it('上游回显 API Key 的错误 → IPC 回包脱敏（M1）', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    safeHandle(CH, async () => {
+      throw new Error('Incorrect API key provided: sk-abcdefgh1234567890')
+    })
+    const r = (await invoke()) as { ok: false; error: string }
+    expect(r.ok).toBe(false)
+    expect(r.error).not.toContain('sk-abcdefgh1234567890')
+    expect(r.error).toContain('[redacted]')
+  })
+
   it('listener 返回 Promise：resolved 值透传', async () => {
     safeHandle(CH, async () => ({ ok: true as const, data: await Promise.resolve('ok') }))
     await expect(invoke()).resolves.toEqual({ ok: true, data: 'ok' })

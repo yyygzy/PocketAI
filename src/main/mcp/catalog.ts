@@ -10,6 +10,7 @@
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
+import { safeFetch, SafeFetchError } from '../net/safe-fetch'
 import {
   listBuiltinMcpCatalog,
   mergeCatalogEntries,
@@ -125,24 +126,28 @@ export async function refreshMcpCatalog(inputUrl?: string | null): Promise<McpCa
 
   let text: string
   try {
-    const res = await fetch(url, {
+    // M4/M10：统一出网闸逐跳 DNS 校验 + IP pinning + 流式字节上限，禁止重定向
+    const res = await safeFetch(url, {
       method: 'GET',
-      redirect: 'error',
+      maxRedirects: 0,
+      maxBytes: MAX_INDEX_BYTES,
+      timeoutMs: INDEX_TIMEOUT_MS,
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(INDEX_TIMEOUT_MS)
+      useProxy: true
     })
-    if (!res.ok) throw new Error(`远程目录请求失败（HTTP ${res.status}）`)
-    text = await res.text()
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`远程目录请求失败（HTTP ${res.status}）`)
+    }
+    text = res.body.toString('utf8')
   } catch (e) {
     const msg = errMsg(e)
-    if (/abort|timeout|timed out/i.test(msg)) {
+    if (e instanceof SafeFetchError && /超时/.test(msg)) {
       throw new Error('远程目录读取超时，请检查网络后重试。')
     }
+    if (/上限/.test(msg)) {
+      throw new Error(`远程目录过大（超过 ${MAX_INDEX_BYTES / 1024}KB），已拒绝。`)
+    }
     throw new Error(`远程目录读取失败：${msg}`)
-  }
-
-  if (text.length > MAX_INDEX_BYTES) {
-    throw new Error(`远程目录过大（超过 ${MAX_INDEX_BYTES / 1024}KB），已拒绝。`)
   }
 
   const result = parseVerifiedRemote(text)

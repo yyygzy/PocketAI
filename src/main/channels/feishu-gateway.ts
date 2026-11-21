@@ -24,6 +24,7 @@ import {
   splitMessage,
   sleep,
   fetchWithTimeout,
+  assertGatewaySocketUrl,
   MAX_REPLY_CHARS,
   MAX_BACKOFF_MS
 } from './gateway-base'
@@ -31,6 +32,13 @@ import {
 const log = createLogger('channels')
 
 const API_BASE = 'https://open.feishu.cn'
+/**
+ * 飞书长连接回调域名白名单：URL 来自服务端响应，连接后会带上 tenant token 派生的凭据，
+ * 只接受官方域名（根域及子域），IP 字面量与伪装后缀一律拒绝。
+ */
+const FEISHU_WS_HOST_ALLOWLIST = ['feishu.cn', 'larksuite.com'] as const
+/** 服务端下发的 ws URL 长度上限 */
+const MAX_WS_URL_CHARS = 2048
 const REQUEST_TIMEOUT_MS = 15_000
 const FEISHU_MSG_LIMIT = 4000 // 飞书单条消息文本上限约 4096，留 buffer
 const MIN_BACKOFF_MS = 1_000
@@ -159,11 +167,17 @@ class FeishuGateway implements IGateway {
         throw new Error('HTTP 重定向，已拒绝以保护 tenant_access_token')
       }
       const data = (await res.json().catch(() => null)) as WsUrlResult | null
-      const url = data?.data?.url ?? data?.url
-      if (!res.ok || !url) {
+      const rawUrl = data?.data?.url ?? data?.url
+      if (
+        !res.ok ||
+        typeof rawUrl !== 'string' ||
+        rawUrl.length === 0 ||
+        rawUrl.length > MAX_WS_URL_CHARS
+      ) {
         throw new Error(data?.msg ?? `HTTP ${res.status}`)
       }
-      return url
+      // 凭据在这条连接上发送：域名/协议必须在建连前收口（start 与 reconnect 共用本方法）
+      return assertGatewaySocketUrl(rawUrl, '飞书', FEISHU_WS_HOST_ALLOWLIST)
   }
 
   private connect(url: string, appId: string, appSecret: string, ctrl: AbortController): void {

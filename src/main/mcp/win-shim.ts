@@ -8,7 +8,10 @@
 // 唯一可靠的走法是交一条我们自己构造的命令行给 cmd.exe（shell:true）。实测口径（本机 Node 22）：
 //  - 参数一律加双引号、内嵌 " 翻倍 → 子进程拿到精确 argv：["a b", "x&y", 'p"q']，& | ^ 全部失效
 //  - **命令名不能加引号**：`"npx" "--version"` 会让 npx.cmd 把参数当位置参数（node loader 报错）
-//  - `%` 在引号内仍会被 cmd 展开成环境变量，无法转义 ⇒ 含 % 直接拒绝而不是悄悄改写
+//  - 安全性不靠「命令名恰好没空格」，而是先把 cmd 全部元字符拒掉（M7）：
+//    `%&|<>()^"` 与 CR/LF 在引号内外都可能改变解析结果，一律拒绝，不做猜测式转义
+//
+// 导入外部 MCP 配置包时同样调用 `assertCommandLineSafe` 早拒，避免恶意 command 落库后等待启动。
 
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -19,8 +22,13 @@ export type CommandKind = 'pe' | 'batch' | 'bare'
 const PE_EXT_RE = /\.(exe|com)$/i
 const BATCH_EXT_RE = /\.(cmd|bat)$/i
 
-/** 拒绝字符：换行/回车会截断命令行；% 会被 cmd 展开（引号内也生效，无安全写法） */
-const UNSAFE_RE = /[%\r\n]/
+/**
+ * cmd.exe 无法安全转义的全部元字符（M7）：
+ * - `%`：在引号内仍会展开环境变量；
+ * - `& | < > ( ) ^ "`：改变命令行分割/重定向/引用语义；
+ * - CR/LF：截断命令行追加第二条命令。
+ */
+const UNSAFE_RE = /[%&|<>()^"\r\n]/
 
 export function classifyCommandName(command: string): CommandKind {
   const base = command.split(/[\\/]/).pop() ?? command
@@ -33,20 +41,31 @@ export function classifyCommandName(command: string): CommandKind {
  * 在 PATH 目录里找这个命令到底是什么：
  * 先找 `<name>.exe`（CreateProcess 自己就能补上，不需要垫片），再找 `<name>.cmd/.bat`。
  * 两者都没有返回 'unknown' —— 保持原样去 spawn，让 ENOENT 如实冒出来，不做猜测式兜底。
+ * 调用方显式写了扩展名时必须真的找得到该文件，否则不把它当 batch（M7）。
  */
 export function findCommandInPath(
   command: string,
   pathDirs: string[],
   exists: (p: string) => boolean = existsSync
 ): 'exe' | 'batch' | 'unknown' {
-  if (path.isAbsolute(command) || command.includes(path.sep) || command.includes('/')) {
-    // 带目录的命令按扩展名判；无扩展名时不猜（CreateProcess 只会补 .exe），原样 spawn 让 ENOENT 如实冒出来
-    if (PE_EXT_RE.test(command)) return 'exe'
-    if (BATCH_EXT_RE.test(command)) return 'batch'
+  const hasDir = path.isAbsolute(command) || command.includes(path.sep) || command.includes('/')
+  if (PE_EXT_RE.test(command)) {
+    return hasDir ? (exists(command) ? 'exe' : 'unknown') : 'exe'
+  }
+  if (BATCH_EXT_RE.test(command)) {
+    if (!hasDir) {
+      // 裸 npx.cmd：在 PATH 里确认同名文件真实存在，避免凭后缀就把不存在的文件当垫片
+      for (const dir of pathDirs) {
+        if (dir && exists(path.join(dir, command))) return 'batch'
+      }
+      return 'unknown'
+    }
+    return exists(command) ? 'batch' : 'unknown'
+  }
+  if (hasDir) {
+    // 带目录且无扩展名时不猜（CreateProcess 只会补 .exe），原样 spawn 让 ENOENT 如实冒出来
     return 'unknown'
   }
-  if (PE_EXT_RE.test(command)) return 'exe'
-  if (BATCH_EXT_RE.test(command)) return 'batch'
   for (const dir of pathDirs) {
     if (!dir) continue
     if (exists(path.join(dir, `${command}.exe`))) return 'exe'
@@ -76,22 +95,25 @@ function quoteToken(token: string): string {
 function assertSafe(label: string, value: string): void {
   if (UNSAFE_RE.test(value)) {
     throw new Error(
-      `${label}含 cmd.exe 无法安全转义的字符（% 或换行）：${JSON.stringify(value)}；请改用不含 % 的路径/参数`
+      `${label}含 cmd.exe 无法安全转义的字符（% & | < > ( ) ^ " 或换行）：${JSON.stringify(value)}；请改用不含这些字符的路径/参数`
     )
   }
 }
 
+/** 导入配置/构造命令行前统一校验：任何 cmd 元字符都拒绝，不做降级放行 */
+export function assertCommandLineSafe(command: string, args: readonly string[]): void {
+  assertSafe('命令', command)
+  for (const arg of args) assertSafe('参数', arg)
+}
+
 /**
  * 构造交给 cmd.exe 的命令行（配合 spawn(line, { shell: true })）。
- * 命令名只在含空格时才加引号——npm 那类垫片加引号会碎，带空格的路径又必须加，二者不可兼得，
- * 这里按「不加会失败 vs 加了可能失败」取实测结论：bare 名不加，带空格的路径加。
+ * 命令名只在含空格时才加引号——npm 那类垫片加引号会碎，带空格的路径又必须加，二者不可兼得；
+ * 无条件先过 assertCommandLineSafe，剩下的「裸命令名」只可能由安全字符组成，不会被 cmd 追加指令。
  */
 export function buildCmdShimLine(command: string, args: string[]): string {
-  assertSafe('命令', command)
+  assertCommandLineSafe(command, args)
   const commandToken = /\s/.test(command) ? quoteToken(command) : command
-  const rest = args.map((a) => {
-    assertSafe('参数', a)
-    return quoteToken(a)
-  })
+  const rest = args.map(quoteToken)
   return [commandToken, ...rest].join(' ')
 }

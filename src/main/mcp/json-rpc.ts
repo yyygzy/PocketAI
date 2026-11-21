@@ -13,6 +13,7 @@ import { EventEmitter } from 'node:events'
 import type { Readable } from 'node:stream'
 import { errMsg } from '../error'
 import { buildCmdShimLine, needsCmdShim } from './win-shim'
+import { envValue } from './env-policy'
 
 /** 单条 NDJSON 消息/日志行的最大字节数（正常协议消息远小于此） */
 export const DEFAULT_MAX_LINE_BYTES = 32 * 1024 * 1024
@@ -195,18 +196,22 @@ export class StdioJsonRpcClient implements McpTransportClient {
     // ChildProcessWithoutNullStreams 的 stdin/stdout/stderr 类型本身就是非 null 的 Writable
     // Windows 的 npm/npx 一类是 .cmd 批处理：CreateProcess 不认（ENOENT），显式写 .cmd
     // 又被 Node 的 shell 限制拒（EINVAL），只能把整条命令行交给 cmd.exe 解释（见 win-shim.ts）
-    this.shimmed = needsCmdShim(command)
+    // env 由 manager 经 env-policy 合并好（用户配置 → process.env → 安全值），
+    // 这里不再二次合并，否则 process.env 会把安全覆盖的 PATH 冲掉。
+    const spawnEnv: Record<string, string> = { ...(env ?? (process.env as Record<string, string>)) }
+    // M8：垫片判断要用实际 spawn 的 PATH，不能用主进程的 PATH
+    this.shimmed = needsCmdShim(command, process.platform, envValue(spawnEnv, 'PATH'))
     const proc = (
       this.shimmed
         ? spawn(buildCmdShimLine(command, args), {
             cwd,
-            env: { ...process.env, ...(env ?? {}) },
+            env: spawnEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: true
           })
         : spawn(command, args, {
             cwd,
-            env: { ...process.env, ...(env ?? {}) },
+            env: spawnEnv,
             stdio: ['pipe', 'pipe', 'pipe']
           })
     ) as ChildProcessWithoutNullStreams

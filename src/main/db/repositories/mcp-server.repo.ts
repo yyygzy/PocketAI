@@ -9,6 +9,7 @@ import { mustGet } from '../must-get'
 import { encryptSecretMap, decryptSecretMap, isCipherText, hasUndecryptableCipher } from '../../crypto/field-encrypt'
 import { noneModeSecretBlock } from '../../crypto/none-mode-gate'
 import { restoreMaskedMap } from '../../../shared/secret-mask'
+import { resolveSharedPath, resolveSharedPathList, serializeSharedPath, serializeSharedPathList } from '../../portable-paths'
 import { createLogger } from '../../logger'
 import { errMsg } from '../../error'
 import type { McpServerRecord, McpTransport, McpRuntime } from '../../../shared/types'
@@ -65,8 +66,8 @@ function rowToRecord(row: McpServerRow): McpServerRecord {
     name: row.name,
     transport: row.transport,
     runtime,
-    command: row.command,
-    args,
+    command: resolveSharedPath(row.command) ?? null,
+    args: resolveSharedPathList(args),
     env,
     url: row.url,
     headers,
@@ -185,8 +186,8 @@ export const mcpServerRepo = {
         input.name ?? existing.name,
         transport,
         runtime,
-        input.command ?? existing.command,
-        JSON.stringify(input.args ?? existing.args),
+        serializeSharedPath(input.command ?? existing.command ?? null),
+        JSON.stringify(serializeSharedPathList(input.args ?? existing.args ?? [])),
         envCipher,
         input.url ?? existing.url,
         JSON.stringify(pythonPackages),
@@ -208,8 +209,8 @@ export const mcpServerRepo = {
         input.name,
         transport,
         runtime,
-        input.command ?? null,
-        JSON.stringify(input.args ?? []),
+        serializeSharedPath(input.command ?? null),
+        JSON.stringify(serializeSharedPathList(input.args ?? [])),
         envCipher,
         input.url ?? null,
         now,

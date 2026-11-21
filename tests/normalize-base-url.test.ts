@@ -56,3 +56,25 @@ describe('normalizeBaseUrl — Base URL 标准化', () => {
     expect(normalizeBaseUrl('HTTPS://api.example.com/v1')).toBe('HTTPS://api.example.com/v1')
   })
 })
+
+describe('normalizeBaseUrl — SSRF 边界（M9）', () => {
+  it('非回环明文 http → 拒绝（明文携带 API Key）', () => {
+    expect(() => normalizeBaseUrl('http://api.example.com/v1')).toThrow(/https/)
+  })
+
+  it('字面内网/保留地址 → 拒绝；回环仍放行', () => {
+    for (const url of [
+      'https://127.0.0.1/v1', // 回环放行（见下）
+    ]) {
+      expect(() => normalizeBaseUrl(url)).not.toThrow()
+    }
+    for (const url of [
+      'https://10.0.0.5/v1',
+      'https://192.168.1.10/v1',
+      'https://169.254.169.254/v1',
+      'https://nas.local/v1'
+    ]) {
+      expect(() => normalizeBaseUrl(url)).toThrow(/内网|保留/)
+    }
+  })
+})

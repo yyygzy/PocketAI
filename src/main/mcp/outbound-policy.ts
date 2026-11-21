@@ -1,7 +1,8 @@
 // MCP 出网的站点级约束
 //
-// 职责：MCP **HTTP** 传输的目标 URL 在发请求前校验 host。默认全放行
-// （allowOtherHosts=true），保持既有行为；用户显式收紧后，清单外的域名直接拒连。
+// 职责：MCP **HTTP** 传输的目标 URL 在发请求前校验 host。默认拒绝清单外地址
+// （allowOtherHosts=false）；用户显式打开「允许其它主机」或把 host 加入清单后才可连接。
+// DNS 解析与 IP pinning 由 net/safe-fetch 在每次建连时完成，本文件只负责站点级字符串策略。
 // 出口计数（dry-run 判据）在零依赖的 `outbound-metrics.ts`——本文件要读 app_config，
 // 不能把协议层单元测试拖进「配置 → 数据库 → electron」这条链。
 //
@@ -37,11 +38,11 @@ const MCP_MAX_HOST_CHARS = 253
 export interface McpSitePolicy {
   /** 允许连接的 host（小写、不含协议/端口/路径）；`allowOtherHosts=false` 时生效 */
   allowedHosts: string[]
-  /** true=不限制（默认，保持既有行为）；false=只允许 allowedHosts 内的 host */
+  /** true=用户显式允许清单外主机；false=只允许 allowedHosts 内的 host（默认，失败关闭） */
   allowOtherHosts: boolean
 }
 
-const DEFAULT_POLICY: McpSitePolicy = { allowedHosts: [], allowOtherHosts: true }
+const DEFAULT_POLICY: McpSitePolicy = { allowedHosts: [], allowOtherHosts: false }
 
 /**
  * 把用户输入规整成 host：接受裸域名、host:port 或完整 URL，统一取出 hostname。
@@ -77,8 +78,8 @@ export function normalizeMcpSitePolicy(raw: unknown): McpSitePolicy {
   }
   return {
     allowedHosts: [...seen],
-    // 缺省 true：老配置/读不出来时维持「不限制」，不因为一次解析失败把用户锁死在外面
-    allowOtherHosts: o.allowOtherHosts !== false
+    // 缺省 false：未显式打开「允许其它主机」时按清单收口（失败关闭）
+    allowOtherHosts: o.allowOtherHosts === true
   }
 }
 
@@ -86,7 +87,7 @@ let cachedRaw: string | null | undefined
 let cachedPolicy: McpSitePolicy = DEFAULT_POLICY
 let readFailureLogged = false
 
-/** 当前站点策略（app_config 读缓存；DB 未开时按默认放行，且只记一次 warn） */
+/** 当前站点策略（app_config 读缓存；DB 未开时按默认拒绝，且只记一次 warn） */
 export function getMcpSitePolicy(): McpSitePolicy {
   let raw: string | null
   try {
@@ -94,7 +95,7 @@ export function getMcpSitePolicy(): McpSitePolicy {
   } catch (e) {
     if (!readFailureLogged) {
       readFailureLogged = true
-      log.warn(`站点策略读取失败（按默认全放行处理）: ${e instanceof Error ? e.message : String(e)}`)
+      log.warn(`站点策略读取失败（按默认拒绝处理）: ${e instanceof Error ? e.message : String(e)}`)
     }
     return DEFAULT_POLICY
   }
@@ -104,7 +105,7 @@ export function getMcpSitePolicy(): McpSitePolicy {
     try {
       parsed = JSON.parse(raw)
     } catch {
-      log.warn('站点策略 JSON 解析失败（按默认全放行处理）')
+      log.warn('站点策略 JSON 解析失败（按默认拒绝处理）')
     }
   }
   cachedRaw = raw
@@ -132,7 +133,8 @@ export function saveMcpSitePolicy(input: unknown): McpSitePolicy {
   }
   const policy: McpSitePolicy = {
     allowedHosts: hosts,
-    allowOtherHosts: o.allowOtherHosts !== false
+    // 必须显式打开：缺省/误传 false 都按拒绝处理（失败关闭）
+    allowOtherHosts: o.allowOtherHosts === true
   }
   appConfigRepo.set(MCP_HTTP_SITE_POLICY_KEY, JSON.stringify(policy))
   cachedRaw = undefined
@@ -146,17 +148,45 @@ export function isMcpHostAllowed(host: string, policy: McpSitePolicy): boolean {
 }
 
 /**
- * 发请求前的收口断言。只校验 host，不解析 DNS、不跟随跳转
- * （`http-transport` 的 `redirect:'error'` 已经堵死跳出目标域的路）。
+ * 发请求前的站点策略断言（纯字符串匹配，不做 DNS）。
+ * DNS 解析/IP pinning/逐跳重定向校验由 `net/safe-fetch` 在建连时完成，
+ * http-transport 以 maxRedirects:0 禁止任何跳转，策略不会被重定向绕过。
  */
 export function assertMcpHostAllowed(rawUrl: string, serverName?: string): void {
   const policy = getMcpSitePolicy()
-  if (policy.allowOtherHosts) return
   const host = sanitizeHost(rawUrl)
-  if (host && policy.allowedHosts.includes(host)) return
-  const target = host ?? rawUrl
-  throw new Error(
-    `${MCP_HOST_BLOCKED}:站点策略不允许连接 ${target}${serverName ? `（${serverName}）` : ''}`
-  )
+  if (!isMcpHostAllowed(host ?? '', policy)) {
+    const target = host ?? rawUrl
+    throw new Error(
+      `${MCP_HOST_BLOCKED}:站点策略不允许连接 ${target}${serverName ? `（${serverName}）` : ''}`
+    )
+  }
+}
+
+/** 回环地址：用户显式打开「允许其它主机」时仍允许本地 MCP server（本地开发场景） */
+function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[/, '').replace(/\]$/, '')
+  return h === 'localhost' || h === '::1' || h.startsWith('127.')
+}
+
+/**
+ * 仅当目标 host 明确在白名单（或用户显式允许其它主机且目标是回环）时，
+ * 才把该 origin 交给 safeFetch 作为私网放行 origin。
+ * 其余情况返回 undefined——域名解析到内网/保留地址时 safeFetch 会拒绝建连。
+ */
+export function mcpAllowedPrivateOrigin(rawUrl: string): string | undefined {
+  let u: URL
+  try {
+    u = new URL(rawUrl)
+  } catch {
+    return undefined
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined
+  const host = sanitizeHost(u.hostname)
+  if (!host) return undefined
+  const policy = getMcpSitePolicy()
+  const explicitlyAllowed =
+    policy.allowedHosts.includes(host) || (policy.allowOtherHosts && isLoopbackHost(host))
+  return explicitlyAllowed ? u.origin : undefined
 }
 

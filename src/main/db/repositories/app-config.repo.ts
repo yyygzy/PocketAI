@@ -4,6 +4,8 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { basename } from 'node:path'
 import { dbService } from '../database'
 import { CONFIG_PATH } from '../../portable'
+import { readProfileOverrides, writeProfileOverrides } from '../../platform-profile'
+import { resolveSharedPath, serializeSharedPath } from '../../portable-paths'
 import { errMsg } from '../../error'
 import { createLogger } from '../../logger'
 import { KDF_LEGACY, normalizeKdfParams, type KdfParams } from '../../crypto/index'
@@ -299,6 +301,25 @@ export const appConfigRepo = {
     getCache.set(key, null)
   },
 
+  /** 当前平台生效值：override 优先，未覆盖时读共享 app_config */
+  getEffective(key: string): string | null {
+    const overrides = readProfileOverrides()
+    if (Object.prototype.hasOwnProperty.call(overrides, key)) return overrides[key] ?? null
+    return this.get(key)
+  },
+
+  /** 写入仅当前平台生效的覆盖值；value=null 表示删除覆盖 */
+  setOverride(key: string, value: string | null): void {
+    const overrides = readProfileOverrides()
+    if (value === null) delete overrides[key]
+    else overrides[key] = value
+    writeProfileOverrides(overrides)
+  },
+
+  listProfileOverrides(): Record<string, string> {
+    return readProfileOverrides()
+  },
+
   // ---------- 便捷方法 ----------
 
   getEncryptionMode(): EncryptionMode {
@@ -405,11 +426,11 @@ export const appConfigRepo = {
   },
 
   getLicensePath(): string {
-    return this.get(KEYS.LICENSE_PATH) ?? ''
+    return resolveSharedPath(this.getEffective(KEYS.LICENSE_PATH)) ?? ''
   },
 
   setLicensePath(p: string): void {
-    this.set(KEYS.LICENSE_PATH, p)
+    this.set(KEYS.LICENSE_PATH, serializeSharedPath(p) ?? p)
   },
 
   // 自动更新默认关闭：未配置时返回 false

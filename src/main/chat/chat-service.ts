@@ -41,6 +41,7 @@ import { getUsagePricing } from '../usage/pricing-config'
 import { currencySymbolOf } from '../../shared/usage-pricing'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { errMsg, isAbortError } from '../error'
+import { redactSecretsInText } from '../security/audit-redact'
 import { createLogger } from '../logger'
 import { recordChatStreamPerf, logPerfDebug } from '../steward/perf-probe'
 import { checkAndBroadcastBudgetWarnings } from '../usage/budget-warn'
@@ -865,7 +866,7 @@ class ChatService {
       const partial = accumulated
       const finalContent = aborted
         ? partial || '_(已停止)_'
-        : partial || `请求失败: ${errMsg(err)}`
+        : partial || `请求失败: ${redactSecretsInText(errMsg(err))}`
       messageRepo.updateContent(messageId, finalContent, aborted ? 'aborted' : 'error', sources, undefined, retrieval)
 
       if (aborted) {
@@ -882,7 +883,7 @@ class ChatService {
           requestId,
           targetIndex: index,
           messageId,
-          error: errMsg(err)
+          error: redactSecretsInText(errMsg(err))
         }
         emit(IPC.CHAT_ERROR_EVENT, e)
       }

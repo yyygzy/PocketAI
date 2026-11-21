@@ -13,6 +13,7 @@ import {
   uniqueMcpServerName
 } from '../../shared/mcp-import'
 import { verifyMcpPackage } from './mcp-package'
+import { assertCommandLineSafe } from './win-shim'
 
 export interface McpImportOutcome {
   ok: boolean
@@ -59,6 +60,15 @@ export function importMcpPackageText(
       continue
     }
     const d = item.draft
+    // M7：cmd.exe 元字符在导入时即拒，避免恶意 command 落库等待 Windows 启动时注入
+    if (d.transport !== 'http' && d.command) {
+      try {
+        assertCommandLineSafe(d.command, d.args ?? [])
+      } catch (e) {
+        failed.push({ key: item.key, error: errMsg(e) })
+        continue
+      }
+    }
     const stripped = stripMcpSecrets(d.name, d.env, d.headers)
     const name = uniqueMcpServerName(d.name, taken)
     try {

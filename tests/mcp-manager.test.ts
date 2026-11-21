@@ -127,6 +127,15 @@ vi.mock('../src/main/portable', () => ({
   MCP_EXTENSIONS_DIR: '/ext/mcp'
 }))
 
+// 站点策略默认已收紧；本文件测的是 manager 生命周期，显式放开避免测试 host 被策略挡住
+vi.mock('../src/main/mcp/outbound-policy', () => ({
+  assertMcpHostAllowed: () => {},
+  getMcpSitePolicy: () => ({ allowedHosts: [], allowOtherHosts: true }),
+  isMcpHostAllowed: () => true,
+  mcpAllowedPrivateOrigin: () => undefined,
+  sanitizeHost: () => ''
+}))
+
 vi.mock('node:fs', () => {
   const fs = {
     existsSync: () => true,

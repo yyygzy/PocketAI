@@ -95,9 +95,16 @@ export const McpOauthSection: React.FC<Props> = ({ serverId }) => {
   const cancel = async () => {
     if (!serverId) return
     setBusy(true)
+    setError('')
     try {
-      await window.pocketai.cancelMcpOauth(serverId)
+      const r = await window.pocketai.cancelMcpOauth(serverId)
+      if (hasIpcFailed(r)) {
+        setError(ipcFailText(r, t('common.unknownError')))
+        return
+      }
       setPending(false)
+    } catch (e) {
+      setError(errText(e, t('common.unknownError')))
     } finally {
       setBusy(false)
     }

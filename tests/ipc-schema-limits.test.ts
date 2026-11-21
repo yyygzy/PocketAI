@@ -24,7 +24,7 @@ import { channelSetConfigSchema } from '../src/shared/schemas/channels'
 import { sidebarOrderSchema, sidebarPinnedSchema } from '../src/shared/schemas/preferences'
 import { DEFAULT_SIDEBAR_ORDER, MAX_PINNED_SIDEBAR_MODULES } from '../src/shared/types'
 import { masterPasswordSchema, recoveryCodeSchema, recoverPayloadSchema } from '../src/shared/schemas/encryption'
-import { licenseCodeSchema, filePathSchema } from '../src/shared/schemas/license'
+import { licenseCodeSchema, licensePathTokenSchema } from '../src/shared/schemas/license'
 
 // ── skills（content 进 LLM system prompt） ────────────────
 describe('skills schema — LLM 注入面上限', () => {
@@ -344,9 +344,12 @@ describe('channels/preferences/encryption/license — 上限', () => {
     ).toBe(true)
   })
 
-  it('licenseCode 超 4096 / filePath 超 1024 拒绝', () => {
+  it('licenseCode 超 4096 拒绝；文件加载只接受 UUID 令牌，路径一律拒绝', () => {
     expect(licenseCodeSchema.safeParse('L'.repeat(4097)).success).toBe(false)
-    expect(filePathSchema.safeParse('/'.repeat(1025)).success).toBe(false)
+    expect(licensePathTokenSchema.safeParse('3f2504e0-4f89-41d3-9a0c-0305e82c3301').success).toBe(true)
+    for (const raw of ['C:\\Windows\\win.ini', '\\\\attacker\\share\\x', '/'.repeat(1025)]) {
+      expect(licensePathTokenSchema.safeParse(raw).success).toBe(false)
+    }
   })
 })
 

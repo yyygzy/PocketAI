@@ -8,6 +8,7 @@
 import fs from 'node:fs'
 import type { BuiltinTool } from './builtin'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
+import { resolveSharedPathList, serializeSharedPath } from '../portable-paths'
 import type { CalendarConfig } from '../../shared/types'
 import { errMsg } from '../error'
 
@@ -23,7 +24,7 @@ export function getCalendarConfig(): CalendarConfig {
   let paths: string[] = []
   try {
     const raw = appConfigRepo.get(KEY_PATHS)
-    if (raw) paths = JSON.parse(raw) as string[]
+    if (raw) paths = resolveSharedPathList(JSON.parse(raw) as string[])
   } catch {
     paths = []
   }
@@ -42,11 +43,13 @@ export function setCalendarConfig(input: Partial<{ enabled: boolean; paths: stri
     for (const p of input.paths) {
       if (typeof p !== 'string') continue
       const trimmed = p.trim()
-      if (!trimmed || !/\.ics$/i.test(trimmed)) continue
-      const key = trimmed.toLowerCase()
+      if (!trimmed) continue
+      const stored = serializeSharedPath(trimmed) ?? trimmed
+      if (!/\.ics$/i.test(stored)) continue
+      const key = stored.toLowerCase()
       if (seen.has(key)) continue
       seen.add(key)
-      cleaned.push(trimmed)
+      cleaned.push(stored)
       if (cleaned.length >= MAX_PATHS) break
     }
     appConfigRepo.set(KEY_PATHS, JSON.stringify(cleaned))

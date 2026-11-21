@@ -4,6 +4,8 @@
 // 发现失败时由上层提示用户填写手动端点，不静默跳过授权。
 import { oauthEndpointProblem } from '../../../shared/mcp-oauth'
 import { errMsg, isAbortError } from '../../error'
+import { readTextLimited } from '../../net/bounded-read'
+import { safeFetchLike } from '../../net/fetch-like'
 
 const DISCOVERY_TIMEOUT_MS = 8_000
 const MAX_JSON_BYTES = 256 * 1024
@@ -38,8 +40,7 @@ async function fetchJson(url: string, fetchImpl: FetchLike): Promise<unknown> {
     throw new Error(`读取 OAuth 元数据失败：${errMsg(e)}`)
   }
   if (!res.ok) throw new Error(`OAuth 元数据请求失败（HTTP ${res.status}）`)
-  const text = await res.text()
-  if (text.length > MAX_JSON_BYTES) throw new Error('OAuth 元数据过大，已拒绝。')
+  const text = await readTextLimited(res, MAX_JSON_BYTES, 'OAuth 元数据')
   try {
     return JSON.parse(text) as unknown
   } catch {
@@ -147,7 +148,7 @@ async function probeChallengeResourceMetadata(
  */
 export async function discoverOauthConfig(
   serverUrl: string,
-  fetchImpl: FetchLike = fetch
+  fetchImpl: FetchLike = safeFetchLike
 ): Promise<DiscoveredOauthConfig> {
   let origin: string
   try {

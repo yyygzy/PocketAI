@@ -13,7 +13,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto'
 import { sha256Hex } from '../fs/hash'
-import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, statSync, readdirSync, rmSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, statSync, readdirSync, rmSync, unlinkSync } from 'node:fs'
 import { writeFileAtomicSync } from '../files/atomic-write'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -217,9 +217,9 @@ async function createZipBuffer(): Promise<{ zip: Buffer; manifest: BackupManifes
   checkpointDB()
   // 整份 app.db 的副本落在宿主机临时目录，SEC-8：无论成功失败都必须在 finally 销毁
   // （便携场景下把库留在 %TEMP% 等于把数据遗留在宿主机上）
-  const tmp = join(tmpdir(), `pocketai-backup-${Date.now()}`)
+  // M6：独占创建随机目录，避免同秒并发互相踩踏 / 预测路径抢占
+  const tmp = mkdtempSync(join(tmpdir(), 'pocketai-backup-'))
   try {
-    mkdirSync(tmp, { recursive: true })
 
     // 2. 复制 DB 到临时目录（避免打包锁住文件）
     const dbFile = join(tmp, 'app.db')
@@ -822,12 +822,12 @@ export async function restoreBackupBlob(
   // 4. 解压到临时目录；解压及之后的全部处理包在 try/finally 中：
   //    tmp 目录里是备份包解出的明文 app.db（加密备份也已在第 2 步解密），
   //    任何路径退出（含解压失败、符号链接拒绝、manifest 损坏、恢复异常）都必须清除
-  const tmp = join(tmpdir(), `pocketai-restore-${Date.now()}`)
+  // M6：随机独占目录 + 0700 权限，解压前目录不可能被他人预置符号链接
+  const tmp = mkdtempSync(join(tmpdir(), 'pocketai-restore-'))
   let result: RestoreResult = { ok: true }
   let dbReplaced = false
   const usedBackupPassword = !!opts.backupPassword && encrypted
   try {
-    mkdirSync(tmp, { recursive: true })
     await new Promise<void>((resolve, reject) => {
       const { Readable } = require('node:stream')
       Readable.from(zip)

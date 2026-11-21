@@ -67,6 +67,8 @@ import {
   setSlotDecisionForTest
 } from '../src/main/providers/local-slot'
 import { agentTraceRepo } from '../src/main/db/repositories/agent-trace.repo'
+import { providerManager } from '../src/main/providers/manager'
+import { OpenAICompatibleAdapter } from '../src/main/providers/openai-compatible'
 import { IPC, BUILTIN_EMBED_PROVIDER_ID, type AgentDoneEvent, type ChatTarget } from '../src/shared/types'
 
 const CHILD_BRIEFS = Object.values(ROLE_BRIEF).map((b) => b.slice(0, 11))
@@ -431,6 +433,14 @@ beforeAll(async () => {
     enabled: true,
     createdAt: Date.now()
   }).id
+  // 127.0.0.2 在调度判据眼里是云，但真实适配器的 SSRF 守卫会拒绝这条明文“非回环”地址。
+  // 这里只绕过适配器构造（落点判据读 provider 表，仍是云），让假端点能真正收到子请求。
+  const realGetAdapter = providerManager.getAdapter.bind(providerManager)
+  vi.spyOn(providerManager, 'getAdapter').mockImplementation((providerId: string) =>
+    providerId === remoteProviderId
+      ? new OpenAICompatibleAdapter(remoteBaseUrl, [])
+      : realGetAdapter(providerId)
+  )
   assistantId = assistantRepo.save({
     name: '链测助手（全授权）',
     systemPrompt: '你是主控代理，按任务需要调用工具。',

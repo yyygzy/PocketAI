@@ -3,6 +3,7 @@ import { providerRepo } from '../db/repositories/provider.repo'
 import { OpenAICompatibleAdapter } from './openai-compatible'
 import { normalizeBaseUrl, type ProviderAdapter } from './types'
 import { errMsg } from '../error'
+import { redactSecretsInText } from '../security/audit-redact'
 import type { ProviderRecord } from '../../shared/types'
 
 class ProviderManager {
@@ -52,7 +53,8 @@ class ProviderManager {
       const models = await this.fetchModels(id)
       return { ok: true, modelCount: models.length }
     } catch (e) {
-      return { ok: false, error: errMsg(e) }
+      // test 结果直接回渲染层：上游错误体可能回显 API Key
+      return { ok: false, error: redactSecretsInText(errMsg(e)) }
     }
   }
 

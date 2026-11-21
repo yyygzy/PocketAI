@@ -5,6 +5,7 @@
 // 无界字段可造成 DB 膨胀、spawn E2BIG 与超长命令行；id 与文件系统 serverDir 同源，
 // 字符集/长度必须与 python-env.serverDir 保持一致，非法配置在入口即拒。
 import { z } from 'zod'
+import { isDangerousMcpEnvKey } from '../mcp-env-policy'
 
 const mcpTransportSchema = z.enum(['stdio', 'http'])
 const mcpRuntimeSchema = z.enum(['node', 'python', 'binary'])
@@ -73,6 +74,13 @@ const mcpServerRecordFull = z.object({
           code: 'custom',
           message: `环境变量不能超过 ${MCP_MAX_ENV_ENTRIES} 项`
         })
+      }
+      // M8：LD_PRELOAD / DYLD_* / NODE_OPTIONS / PATH 等会改变进程加载/查找行为，
+      // 配置入口直接拒绝，不能等到 spawn 时才悄悄丢弃（用户会以为配置生效了）
+      for (const key of Object.keys(env)) {
+        if (isDangerousMcpEnvKey(key)) {
+          ctx.addIssue({ code: 'custom', message: `环境变量 ${key} 不允许在 MCP 配置中设置` })
+        }
       }
     }),
   url: mcpHttpUrlSchema.nullable(),

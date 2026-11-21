@@ -13,6 +13,7 @@
 // 测试里很多模块会 import 引擎/聊天服务但没有真库（dbService 未 open）：
 // 持久化是旁路，不能因为「没有库」把一次 run 打挂——未开库时静默跳过（内存注册表照常工作）。
 import { dbService } from '../database'
+import { resolveSharedPath, serializeSharedPath } from '../../portable-paths'
 import type { ChatRunResume, ChatRunStage, ToolCall } from '../../../shared/types'
 
 export type ConversationRunMode = 'chat' | 'agent'
@@ -23,6 +24,11 @@ export type ConversationRunStatus =
   | 'failed'
   | 'aborted'
   | 'interrupted'
+
+/** 起点快照里的 workspace_dir 也要跟着共享数据根走 */
+function resolveRunRow<T extends { workspaceDir?: string | null }>(row: T): T {
+  return { ...row, workspaceDir: resolveSharedPath(row.workspaceDir ?? null) ?? undefined }
+}
 
 export interface ConversationRunSeed {
   requestId: string
@@ -209,7 +215,7 @@ export const conversationRunRepo = {
         run.stepsDone ?? 0,
         run.toolStepsDone ?? 0,
         run.anchorUserMessageId ?? null,
-        run.workspaceDir ?? null,
+        serializeSharedPath(run.workspaceDir ?? null),
         run.toolPermissionsSig ?? null,
         run.toolScopeJson ?? null
       )
@@ -236,7 +242,7 @@ export const conversationRunRepo = {
         cp.stage,
         cp.stepsDone,
         cp.toolStepsDone,
-        cp.workspaceDir ?? null,
+        serializeSharedPath(cp.workspaceDir ?? null),
         cp.toolPermissionsSig ?? null,
         cp.toolScopeJson ?? null,
         requestId
@@ -332,7 +338,7 @@ export const conversationRunRepo = {
         danglingToolCalls: facts?.danglingToolCalls
       })
       update.run(now, resumeState, row.requestId)
-      out.push({ ...row, resumeState })
+      out.push(resolveRunRow({ ...row, resumeState }))
     }
     return out
   },
@@ -357,7 +363,7 @@ export const conversationRunRepo = {
          WHERE request_id=?`
       )
       .get(requestId) as ConversationRunSnapshot | undefined
-    return row ?? null
+    return row ? resolveRunRow(row) : null
   },
 
   /**
@@ -383,7 +389,7 @@ export const conversationRunRepo = {
          LIMIT 1`
       )
       .get(conversationId) as ConversationRunSnapshot | undefined
-    return row ?? null
+    return row ? resolveRunRow(row) : null
   },
 
   /**

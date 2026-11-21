@@ -143,7 +143,9 @@ export const McpPanel: React.FC = () => {
     // 目录摘要单独读：读不到（含旧桥/测试桩没有该通道）只影响卡片文案，不许拖垮清单与运行状态
     try {
       const catalog = await window.pocketai.listMcpCatalog()
-      if (!hasIpcFailed(catalog) && Array.isArray(catalog.entries)) {
+      if (hasIpcFailed(catalog) || !Array.isArray(catalog.entries)) {
+        toast.error(ipcFailText(catalog, t('common.unknownError')))
+      } else {
         setCatalogEntries(catalog.entries)
       }
     } catch {
@@ -151,7 +153,11 @@ export const McpPanel: React.FC = () => {
     }
     try {
       const oauth = await window.pocketai.listMcpOauthViews()
-      if (!hasIpcFailed(oauth) && Array.isArray(oauth.views)) setOauthViews(oauth.views)
+      if (hasIpcFailed(oauth) || !Array.isArray(oauth.views)) {
+        toast.error(ipcFailText(oauth, t('common.unknownError')))
+      } else {
+        setOauthViews(oauth.views)
+      }
     } catch {
       /* 旧桥/测试桩无此通道：列表照常 */
     }
@@ -168,7 +174,7 @@ export const McpPanel: React.FC = () => {
       setRuntimeUnread(null)
       setRuntimes(runs)
     }
-  }, [])
+  }, [t, toast])
 
   useEffect(() => {
     // load 内部无 try-catch，需挂 .catch 避免未处理 rejection；reject 面两半同一句原因

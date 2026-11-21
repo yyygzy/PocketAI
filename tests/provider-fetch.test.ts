@@ -1,21 +1,29 @@
-// provider-fetch 出网层：全局 fetch（代理感知）、3xx 拒绝、超时、字节上限、
-// JSON 解析、私网精确 origin 放行（默认拒绝）。
+// provider-fetch 出网层：统一走 safeFetch（DNS 校验/IP pinning/字节上限）、3xx 拒绝、
+// 超时、JSON 解析、私网精确 origin 放行（默认拒绝）。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { safeFetch, SafeFetchError, type SafeFetchResult } from '../src/main/net/safe-fetch'
 import { assertProviderHostAllowed, providerFetchJson, ProviderFetchError } from '../src/main/search/provider-fetch'
 
-function jsonResponse(body: unknown, init?: ResponseInit): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-    ...init
-  })
-}
+vi.mock('../src/main/net/safe-fetch', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/net/safe-fetch')>()
+  return { ...actual, safeFetch: vi.fn() }
+})
 
+const mockSafeFetch = vi.mocked(safeFetch)
 const originalFetch = globalThis.fetch
 
+function result(body: string, status = 200): SafeFetchResult {
+  return {
+    status,
+    headers: {},
+    body: Buffer.from(body, 'utf8'),
+    finalUrl: 'https://example.com'
+  }
+}
+
 beforeEach(() => {
-  vi.restoreAllMocks()
-  globalThis.fetch = originalFetch
+  vi.clearAllMocks()
+  globalThis.fetch = vi.fn() as unknown as typeof fetch
 })
 
 afterEach(() => {
@@ -23,39 +31,46 @@ afterEach(() => {
 })
 
 describe('providerFetchJson — 正常路径', () => {
-  it('走全局 fetch（main/net/proxy.ts 已替换为代理感知实现）并解析 JSON', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }))
-    globalThis.fetch = fetchMock as unknown as typeof fetch
+  it('统一走 safeFetch（DNS pinning），不经全局 fetch，并解析 JSON', async () => {
+    mockSafeFetch.mockResolvedValueOnce(result('{"ok":true}'))
     const json = await providerFetchJson<{ ok: boolean }>('https://api.tavily.com/search', {
       method: 'POST',
       body: '{"q":"x"}'
     })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0]![1]).toMatchObject({ method: 'POST', redirect: 'manual' })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(mockSafeFetch).toHaveBeenCalledTimes(1)
+    expect(mockSafeFetch.mock.calls[0]![1]).toMatchObject({
+      method: 'POST',
+      body: '{"q":"x"}',
+      maxRedirects: 0,
+      useProxy: true
+    })
     expect(json).toEqual({ ok: true })
   })
 
   it('空响应体 → 解析为 null（由 provider 判空）', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch
+    mockSafeFetch.mockResolvedValueOnce(result(''))
     expect(await providerFetchJson('https://example.com')).toBeNull()
   })
 })
 
 describe('providerFetchJson — 失败路径', () => {
   it('3xx → 拒绝跟随（防 Key 被转发）', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response('', { status: 302, headers: { location: 'https://evil.example.com' } })
-      ) as unknown as typeof fetch
+    mockSafeFetch.mockRejectedValueOnce(new SafeFetchError('重定向次数超限'))
     await expect(providerFetchJson('https://api.tavily.com/search')).rejects.toThrow('重定向')
+  })
+
+  it('DNS 校验失败（疑似 DNS rebinding）→ 拒绝且不回退直连', async () => {
+    mockSafeFetch.mockRejectedValueOnce(
+      new SafeFetchError('目标解析到内网/保留地址，已拦截: public.example.com')
+    )
+    await expect(providerFetchJson('https://public.example.com/search')).rejects.toThrow('已拦截')
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
   it('401/429/5xx 保留状态码，供 registry 分档', async () => {
     for (const status of [401, 429, 503]) {
-      globalThis.fetch = vi
-        .fn()
-        .mockResolvedValue(new Response('denied', { status })) as unknown as typeof fetch
+      mockSafeFetch.mockResolvedValueOnce(result('denied', status))
       await expect(providerFetchJson('https://example.com')).rejects.toMatchObject({
         name: 'ProviderFetchError',
         status
@@ -64,40 +79,33 @@ describe('providerFetchJson — 失败路径', () => {
   })
 
   it('无效 JSON → ProviderFetchError', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(new Response('<html>not json</html>', { status: 200 })) as unknown as typeof fetch
+    mockSafeFetch.mockResolvedValueOnce(result('<html>not json</html>'))
     await expect(providerFetchJson('https://example.com')).rejects.toThrow('无效的 JSON')
   })
 
   it('超时 → 中止请求并报超时', async () => {
-    globalThis.fetch = vi.fn((_url: string, init?: RequestInit) => {
-      return new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-      })
-    }) as unknown as typeof fetch
+    mockSafeFetch.mockImplementationOnce(
+      (_url, opts) =>
+        new Promise<SafeFetchResult>((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () =>
+            reject(new SafeFetchError('SafeFetch 请求超时（等待响应）', 'ttfb'))
+          )
+        })
+    )
     await expect(providerFetchJson('https://example.com', { timeoutMs: 10 })).rejects.toThrow('超时')
   })
 
   it('外部 signal 已中止 → 报已中止', async () => {
     const ctrl = new AbortController()
     ctrl.abort()
-    globalThis.fetch = vi.fn().mockRejectedValue(new DOMException('Aborted', 'AbortError')) as unknown as typeof fetch
+    mockSafeFetch.mockRejectedValueOnce(new SafeFetchError('已中止'))
     await expect(providerFetchJson('https://example.com', { signal: ctrl.signal })).rejects.toThrow('已中止')
   })
 
-  it('响应体超过 maxBytes → 中止并报上限', async () => {
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('x'.repeat(8)))
-        controller.enqueue(new TextEncoder().encode('y'.repeat(8)))
-        controller.close()
-      }
-    })
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(new Response(stream, { status: 200 })) as unknown as typeof fetch
+  it('响应体超过 maxBytes → safeFetch 拒绝，上限参数原样透传', async () => {
+    mockSafeFetch.mockRejectedValueOnce(new SafeFetchError('响应体超过上限（0MB）'))
     await expect(providerFetchJson('https://example.com', { maxBytes: 10 })).rejects.toThrow('上限')
+    expect(mockSafeFetch.mock.calls[0]![1]).toMatchObject({ maxBytes: 10 })
   })
 })
 
@@ -142,24 +150,24 @@ describe('私网放行边界（assertProviderHostAllowed）', () => {
     ).resolves.toBeUndefined()
   })
 
-  it('guardHost=true 时 providerFetchJson 对私网地址在发请求前拒绝', async () => {
-    const fetchMock = vi.fn()
-    globalThis.fetch = fetchMock as unknown as typeof fetch
+  it('guardHost=true 时私网地址在发请求前拒绝，safeFetch 也未调用', async () => {
     await expect(
       providerFetchJson('http://127.0.0.1:8080/search', { guardHost: true })
     ).rejects.toBeInstanceOf(ProviderFetchError)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mockSafeFetch).not.toHaveBeenCalled()
   })
 
-  it('guardHost=true + 精确 origin 放行 → 正常发请求', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ results: [] }))
-    globalThis.fetch = fetchMock as unknown as typeof fetch
+  it('guardHost=true + 精确 origin 放行 → 仅该 origin 以 allowPrivateOrigin 传给 safeFetch', async () => {
+    mockSafeFetch.mockResolvedValueOnce(result('{"results":[]}'))
     await expect(
       providerFetchJson('http://127.0.0.1:8080/search', {
         guardHost: true,
         allowPrivateOrigin: 'http://127.0.0.1:8080'
       })
     ).resolves.toEqual({ results: [] })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(mockSafeFetch).toHaveBeenCalledTimes(1)
+    expect(mockSafeFetch.mock.calls[0]![1]).toMatchObject({
+      allowPrivateOrigin: 'http://127.0.0.1:8080'
+    })
   })
 })

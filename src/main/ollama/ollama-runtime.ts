@@ -307,6 +307,19 @@ function runExtract(cmd: string, args: string[]): Promise<void> {
   })
 }
 
+/** L6：系统 tar 不校验条目，解压完成后拒绝任何符号链接（含逃逸链接） */
+function assertNoSymlinks(root: string): void {
+  const walk = (dir: string): void => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name)
+      const st = fs.lstatSync(full)
+      if (st.isSymbolicLink()) throw new Error(`解压结果含符号链接，已拒绝：${full}`)
+      if (st.isDirectory()) walk(full)
+    }
+  }
+  if (fs.existsSync(root)) walk(root)
+}
+
 async function extractTarZst(archive: string, dest: string): Promise<void> {
   // 现代 GNU tar / Windows 11 bsdtar 能按内容自动识别 zstd；不行再显式指定 zstd 程序
   try {
@@ -381,7 +394,10 @@ async function install(onEvent?: (e: OllamaInstallEvent) => void): Promise<Ollam
   onEvent?.({ stage: 'extract', percent: 96 })
   try {
     if (spec.format === 'zip') await extractZip(tmpArchive, dir)
-    else await extractTarZst(tmpArchive, dir)
+    else {
+      await extractTarZst(tmpArchive, dir)
+      assertNoSymlinks(dir)
+    }
   } catch (e) {
     throw new Error(`解压失败：${errMsg(e)}`)
   } finally {

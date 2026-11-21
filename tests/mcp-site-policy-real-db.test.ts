@@ -2,7 +2,7 @@
 // B：MCP 站点级出网约束 + dry-run 出口计数（真库）
 //
 // 这一面钉两件事：
-//  1. 站点策略只作用于 MCP HTTP 传输的 host：默认全放行；收紧后清单外拒连；
+//  1. 站点策略只作用于 MCP HTTP 传输的 host：默认拒绝清单外地址；显式打开或入清单后才放行；
 //     保存侧对非法 host **拒绝**（不是静默丢弃），读取侧才做丢弃（不让一行坏配置锁死全机）。
 //  2. MCP 的出口/调用计数真的进了 dry-run 判据：HTTP 请求数并入出口计数，
 //     `tools/call` 单独一组；回放作用域内拒绝建立连接并计数。
@@ -40,6 +40,7 @@ import {
   assertMcpHostAllowed,
   getMcpSitePolicy,
   isMcpHostAllowed,
+  mcpAllowedPrivateOrigin,
   normalizeMcpSitePolicy,
   sanitizeHost,
   saveMcpSitePolicy
@@ -89,15 +90,15 @@ describe('host 归一化（纯函数）', () => {
     expect(sanitizeHost(123)).toBeNull()
   })
 
-  it('读取侧：非法项丢弃、重复去重、缺省不限制', () => {
+  it('读取侧：非法项丢弃、重复去重、缺省拒绝清单外地址', () => {
     const p = normalizeMcpSitePolicy({
       allowedHosts: ['A.example.com', 'a.example.com', '', 'http://'],
       allowOtherHosts: false
     })
     expect(p).toEqual({ allowedHosts: ['a.example.com'], allowOtherHosts: false })
-    // 缺字段 / 不是对象 ⇒ 维持默认全放行，不因为一次解析失败把用户锁死
-    expect(normalizeMcpSitePolicy(null)).toEqual({ allowedHosts: [], allowOtherHosts: true })
-    expect(normalizeMcpSitePolicy({ allowedHosts: ['x.example.com'] }).allowOtherHosts).toBe(true)
+    // 缺字段 / 不是对象 ⇒ 默认拒绝（失败关闭），需用户显式打开「允许其它主机」
+    expect(normalizeMcpSitePolicy(null)).toEqual({ allowedHosts: [], allowOtherHosts: false })
+    expect(normalizeMcpSitePolicy({ allowedHosts: ['x.example.com'] }).allowOtherHosts).toBe(false)
   })
 
   it('判定：allowOtherHosts=true 放行一切；false 时只放行清单内（大小写不敏感）', () => {
@@ -109,11 +110,23 @@ describe('host 归一化（纯函数）', () => {
     expect(isMcpHostAllowed('API.example.com', strict)).toBe(true)
     expect(isMcpHostAllowed('evil.example.net', strict)).toBe(false)
   })
+
+  it('私网放行 origin：仅白名单内 host（或显式放开时的回环）返回 origin', () => {
+    saveMcpSitePolicy({ allowedHosts: ['localhost:3000'], allowOtherHosts: false })
+    expect(mcpAllowedPrivateOrigin('http://localhost:3000/mcp')).toBe('http://localhost:3000')
+    expect(mcpAllowedPrivateOrigin('http://127.0.0.1:3000/mcp')).toBeUndefined()
+    expect(mcpAllowedPrivateOrigin('https://evil.example.com/mcp')).toBeUndefined()
+
+    saveMcpSitePolicy({ allowedHosts: [], allowOtherHosts: true })
+    expect(mcpAllowedPrivateOrigin('http://127.0.0.1:3000/mcp')).toBe('http://127.0.0.1:3000')
+
+    saveMcpSitePolicy({ allowedHosts: [], allowOtherHosts: false })
+  })
 })
 
 describe('站点策略落库（app_config，无新增迁移）', () => {
-  it('保存 → 读回 → 请求前校验按 host 拒绝；撤回默认后恢复放行', () => {
-    expect(getMcpSitePolicy()).toEqual({ allowedHosts: [], allowOtherHosts: true })
+  it('保存 → 读回 → 请求前校验按 host 拒绝；显式打开后恢复放行', () => {
+    expect(getMcpSitePolicy()).toEqual({ allowedHosts: [], allowOtherHosts: false })
 
     const saved = saveMcpSitePolicy({
       allowedHosts: ['API.example.com', ' api.example.com ', 'localhost:3000'],

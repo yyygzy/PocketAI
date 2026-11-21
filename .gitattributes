@@ -1,0 +1,26 @@
+# E1：统一行尾，避免签名/脚本/锁文件因 CRLF 与 LF 混用产生大面积 diff
+* text=auto eol=lf
+
+# 二进制资源不参与行尾归一化
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.zst binary
+*.node binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.exe binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp3 binary
+*.mp4 binary

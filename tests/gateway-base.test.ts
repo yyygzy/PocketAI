@@ -10,6 +10,7 @@ import {
   safeError,
   splitMessage,
   sanitizeIncoming,
+  assertGatewaySocketUrl,
   MAX_INCOMING_TEXT_CHARS,
   MAX_INCOMING_ID_CHARS,
   MAX_INCOMING_NAME_CHARS
@@ -215,5 +216,50 @@ describe('sanitizeIncoming — 入站消息统一收口', () => {
   it('返回新对象，不复用入站引用', () => {
     const r = sanitizeIncoming(valid)
     expect(r).not.toBe(valid)
+  })
+})
+
+// ── assertGatewaySocketUrl ────────────────────────────────
+describe('assertGatewaySocketUrl — 回调地址校验', () => {
+  it('缺省模式：wss 放行，http/ws 公网拒绝，回环 ws 放行', () => {
+    expect(assertGatewaySocketUrl('wss://api.dingtalk.com/ws', '钉钉')).toBe(
+      'wss://api.dingtalk.com/ws'
+    )
+    expect(() => assertGatewaySocketUrl('ws://attacker.example/ws', '钉钉')).toThrow('协议')
+    expect(() => assertGatewaySocketUrl('https://api.dingtalk.com/ws', '钉钉')).toThrow('协议')
+    expect(assertGatewaySocketUrl('ws://127.0.0.1:3000/ws', '本地')).toBe(
+      'ws://127.0.0.1:3000/ws'
+    )
+  })
+
+  it('严格模式：仅 wss + 官方域名后缀（根域/子域均命中）', () => {
+    expect(
+      assertGatewaySocketUrl('wss://open.feishu.cn/ws', '飞书', ['feishu.cn', 'larksuite.com'])
+    ).toBe('wss://open.feishu.cn/ws')
+    expect(
+      assertGatewaySocketUrl('wss://open.larksuite.com/ws', '飞书', ['feishu.cn', 'larksuite.com'])
+    ).toBe('wss://open.larksuite.com/ws')
+  })
+
+  it('严格模式：拒绝 IP 字面量、伪装后缀、ws 明文与凭据 URL', () => {
+    const hosts = ['feishu.cn', 'larksuite.com'] as const
+    for (const url of [
+      'wss://127.0.0.1/ws',
+      'wss://[::1]/ws',
+      'wss://evil-feishu.cn/ws',
+      'wss://feishu.cn.attacker.example/ws',
+      'ws://open.feishu.cn/ws',
+      'wss://user:pass@open.feishu.cn/ws'
+    ]) {
+      expect(() => assertGatewaySocketUrl(url, '飞书', hosts)).toThrow()
+    }
+  })
+
+  it('非法 URL 与超长串直接拒绝', () => {
+    expect(() => assertGatewaySocketUrl('not a url', '飞书')).toThrow('非法')
+    expect(() => assertGatewaySocketUrl('', '飞书')).toThrow('长度非法')
+    expect(() => assertGatewaySocketUrl(`wss://open.feishu.cn/${'x'.repeat(3000)}`, '飞书')).toThrow(
+      '长度非法'
+    )
   })
 })

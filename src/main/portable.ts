@@ -43,14 +43,61 @@ export const LEGACY_DATA_DIR = path.join(APP_ROOT, 'data')
 /** 安装版的数据根目录名（app.getPath('appData') 下的子目录） */
 const INSTALLED_DATA_ROOT_NAME = 'Moxia'
 
+/** 共享数据根标记：放在启动器所在目录或其父目录，插拔移动硬盘后所有平台共用同一份 data/ */
+export const DATA_ROOT_MARKER = 'pocketai.json'
+
+interface DataRootMarker {
+  version: number
+  dataDir?: string
+  profileDir?: string
+}
+
+/**
+ * 从启动器目录向上查找 pocketai.json，定位共享数据根。
+ * 标记里的 dataDir 必须是相对路径且不能逃出标记所在目录，避免误配把数据写到盘外。
+ */
+function discoverSharedDataRoot(startDir: string): string | null {
+  let dir = path.resolve(startDir)
+  for (;;) {
+    const marker = path.join(dir, DATA_ROOT_MARKER)
+    if (fs.existsSync(marker)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(marker, 'utf8')) as DataRootMarker
+        if (raw.version !== 1) throw new Error(`不支持的标记版本: ${String(raw.version)}`)
+        const rel = raw.dataDir ?? 'data'
+        if (typeof rel !== 'string' || rel.trim() === '' || path.isAbsolute(rel)) {
+          throw new Error(`dataDir 必须是相对路径: ${rel}`)
+        }
+        const resolved = path.resolve(dir, rel)
+        if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
+          throw new Error(`dataDir 逃出标记目录: ${rel}`)
+        }
+        return resolved
+      } catch (e) {
+        log.warn(`共享数据根标记无效（忽略）: ${marker}: ${errMsg(e)}`)
+        return null
+      }
+    }
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
 /**
  * 数据目录落点：
- *   1. POCKETAI_APP_ROOT（测试隔离）→ APP_ROOT/data，保持旧语义、不迁移
- *   2. 开发态                       → 仓库根/data
- *   3. 便携形态（portable / AppImage）→ APP_ROOT/data（跟着应用本体，允许整体搬走）
- *   4. 安装版（NSIS / dmg / deb）    → appData/Moxia/data（脱离安装目录，覆盖安装不受影响）
+ *   1. POCKETAI_DATA_DIR（显式指定）→ 该目录，最高优先级
+ *   2. pocketai.json 标记           → 标记指定的共享 dataDir（跨系统共用）
+ *   3. POCKETAI_APP_ROOT（测试隔离）→ APP_ROOT/data，保持旧语义、不迁移
+ *   4. 开发态                       → 仓库根/data
+ *   5. 便携形态（portable / AppImage）→ APP_ROOT/data（跟着应用本体，允许整体搬走）
+ *   6. 安装版（NSIS / dmg / deb）    → appData/Moxia/data（兼容回退；有标记时走第 2 条）
  */
 function resolveDataDir(): string {
+  if (process.env.POCKETAI_DATA_DIR) return path.resolve(process.env.POCKETAI_DATA_DIR)
+  const shared = discoverSharedDataRoot(APP_ROOT)
+  if (shared) return shared
   if (process.env.POCKETAI_APP_ROOT) return LEGACY_DATA_DIR
   if (!app.isPackaged) return LEGACY_DATA_DIR
   if (isPortableRuntime()) return LEGACY_DATA_DIR
@@ -58,6 +105,15 @@ function resolveDataDir(): string {
 }
 
 export const DATA_DIR = resolveDataDir()
+// 供 portable-paths 惰性读取：避免纯函数测试因顶层 import electron 链而崩。
+// 这里只在真实 portable 模块加载后写入，路径解析函数优先读它，缺失时再退回环境变量。
+;(globalThis as Record<string, unknown>).__POCKETAI_DATA_DIR__ = DATA_DIR
+;(globalThis as Record<string, unknown>).__POCKETAI_APP_ROOT__ = APP_ROOT
+;(globalThis as Record<string, unknown>).__POCKETAI_LEGACY_DATA_DIR__ = LEGACY_DATA_DIR
+
+/** 平台 profile 根目录：P2 用于放 win32/linux 差异配置，P0 先建常量 */
+export const PROFILE_ROOT = path.join(DATA_DIR, 'profiles')
+export const PLATFORM_PROFILE_DIR = path.join(PROFILE_ROOT, process.platform)
 export const DB_PATH = path.join(DATA_DIR, 'app.db')
 // 向量索引没有独立文件：kb_vec_map 与按维度建的 kb_vec_<dim> 虚表都在 app.db 里
 //（见 db/repositories/kb-vec.repo.ts）。这里曾有个 VECTOR_DB_PATH 常量，全仓无人使用，
@@ -202,10 +258,13 @@ function sha256File(file: string): string {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
-/** 旧位置是否真的有用户数据（没有就不迁，避免搬一个空目录） */
+/** 给定目录是否真的有用户数据（没有就不迁，避免搬一个空目录） */
+function hasUserDataAt(root: string): boolean {
+  return fs.existsSync(path.join(root, 'app.db')) || fs.existsSync(path.join(root, 'config.json'))
+}
+
 function hasLegacyUserData(): boolean {
-  return fs.existsSync(path.join(LEGACY_DATA_DIR, 'app.db'))
-    || fs.existsSync(path.join(LEGACY_DATA_DIR, 'config.json'))
+  return hasUserDataAt(LEGACY_DATA_DIR)
 }
 
 /**
@@ -303,5 +362,68 @@ export function migrateInstalledDataDir(): DataMigrationResult | null {
       log.error(`半成品数据目录清理失败: ${DATA_DIR}: ${errMsg(cleanupErr)}`)
     }
     throw new Error(`数据迁移失败（原数据仍在 ${LEGACY_DATA_DIR}）：${errMsg(e)}`)
+  }
+}
+
+/**
+ * 共享数据根场景：把本机 appData/Moxia/data 迁到移动硬盘共享 data/（P3 双向迁移的一半）。
+ * 只在显式配置共享根（POCKETAI_DATA_DIR 或 pocketai.json）时生效；成功后保留本机副本，
+ * 避免拔盘后用户在本机启动时找不到数据。
+ */
+export function migrateInstalledDataToSharedDir(): DataMigrationResult | null {
+  if (!process.env.POCKETAI_DATA_DIR && !discoverSharedDataRoot(APP_ROOT)) return null
+  let installed = ''
+  try {
+    installed = path.join(app.getPath('appData'), 'Moxia', 'data')
+  } catch {
+    return null
+  }
+  if (installed === DATA_DIR || !hasUserDataAt(installed)) return null
+  if (fs.existsSync(path.join(DATA_DIR, 'app.db')) || fs.existsSync(path.join(DATA_DIR, MIGRATION_MARKER))) return null
+
+  if (fs.existsSync(path.join(DATA_DIR, MIGRATING_SENTINEL))) {
+    log.warn(`检测到未完成的共享根迁移，清理半成品后重试: ${DATA_DIR}`)
+    fs.rmSync(DATA_DIR, { recursive: true, force: true })
+  }
+
+  const startedAt = Date.now()
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true })
+    fs.writeFileSync(path.join(DATA_DIR, MIGRATING_SENTINEL), JSON.stringify({ at: new Date().toISOString() }), 'utf8')
+    fs.cpSync(installed, DATA_DIR, { recursive: true })
+
+    const src = listFiles(installed)
+    const dst = listFiles(DATA_DIR)
+    dst.delete(MIGRATING_SENTINEL)
+    if (src.size !== dst.size) throw new Error(`复制后文件数不一致：源 ${src.size}，目标 ${dst.size}`)
+    for (const [rel, size] of src) {
+      const got = dst.get(rel)
+      if (got === undefined || got !== size) throw new Error(`文件校验失败：${rel}`)
+    }
+    for (const name of ['app.db', 'config.json']) {
+      const from = path.join(installed, name)
+      if (fs.existsSync(from) && sha256File(from) !== sha256File(path.join(DATA_DIR, name))) {
+        throw new Error(`校验和不一致：${name}`)
+      }
+    }
+
+    const marker = {
+      from: installed,
+      to: DATA_DIR,
+      at: new Date().toISOString(),
+      files: src.size,
+      bytes: [...src.values()].reduce((a, b) => a + b, 0),
+      elapsedMs: Date.now() - startedAt,
+      kind: 'installed-to-shared'
+    }
+    fs.writeFileSync(path.join(DATA_DIR, MIGRATION_MARKER), JSON.stringify(marker, null, 2), 'utf8')
+    fs.rmSync(path.join(DATA_DIR, MIGRATING_SENTINEL), { force: true })
+    log.info(`本机数据已复制到共享数据根：${installed} → ${DATA_DIR}（${marker.files} 个文件）`)
+    return { from: marker.from, to: marker.to, files: marker.files, bytes: marker.bytes, removedLegacy: false }
+  } catch (e) {
+    try { fs.rmSync(DATA_DIR, { recursive: true, force: true }) } catch (cleanupErr) {
+      log.error(`半成品共享根清理失败: ${errMsg(cleanupErr)}`)
+    }
+    throw new Error(`共享数据根迁移失败（本机原数据仍在 ${installed}）：${errMsg(e)}`)
   }
 }

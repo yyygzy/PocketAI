@@ -10,7 +10,12 @@ import { appConfigRepo } from '../../db/repositories/app-config.repo'
 import { DATA_DIR } from '../../portable'
 import { createLogger } from '../../logger'
 import { safeHandle, argsSchema, errMsg } from '../safe-handle'
-import { licenseCodeSchema, filePathSchema, featureSchema } from '../../../shared/schemas/license'
+import { issuePathToken, peekPathToken } from '../dialog-path-token'
+import {
+  licenseCodeSchema,
+  licensePathTokenSchema,
+  featureSchema
+} from '../../../shared/schemas/license'
 
 const log = createLogger('license')
 
@@ -54,9 +59,12 @@ export function registerLicenseHandlers(): void {
       filters: [{ name: '授权文件', extensions: ['lic', 'txt', 'json'] }]
     })
     if (result.canceled || result.filePaths.length === 0) return { canceled: true }
-    const status = await licenseService.loadFromFileAsync(result.filePaths[0]!)
-    persistLicense(status, readLicenseFile(result.filePaths[0]!))
-    return { canceled: false, status }
+    // 路径只留在主进程：返回一次性令牌，后续加载只认令牌，不接受渲染层回传路径（M5）
+    const filePath = result.filePaths[0]!
+    const pathToken = issuePathToken(filePath)
+    const status = await licenseService.loadFromFileAsync(filePath)
+    persistLicense(status, readLicenseFile(filePath))
+    return { canceled: false, status, pathToken }
   })
 
   // ---------- License 状态 / 导入 / 清除 / 门控 ----------
@@ -65,11 +73,14 @@ export function registerLicenseHandlers(): void {
     await licenseService.waitForBootLoad()
     return licenseService.getStatus()
   })
-  safeHandle(IPC.LICENSE_LOAD_FILE, async (_e, filePath: string) => {
+  // 仅接受 LICENSE_IMPORT_FILE 对话框签发的令牌；渲染层直传路径一律拒绝（M5）
+  safeHandle(IPC.LICENSE_LOAD_FILE, async (_e, token: string) => {
+    const filePath = peekPathToken(token)
+    if (!filePath) throw new Error('授权文件令牌无效或已过期，请重新选择文件')
     const status = await licenseService.loadFromFileAsync(filePath)
     persistLicense(status, readLicenseFile(filePath))
     return status
-  }, argsSchema(filePathSchema))
+  }, argsSchema(licensePathTokenSchema))
   safeHandle(IPC.LICENSE_LOAD_STRING, async (_e, content: string) => {
     const status = await licenseService.loadFromStringAsync(content)
     persistLicense(status, content)
@@ -79,8 +90,17 @@ export function registerLicenseHandlers(): void {
     licenseService.clear()
     // 同步删除落盘的 license.lic 并清空记录路径，防止重启后授权「复活」
     try {
-      const licPath = appConfigRepo.getLicensePath() || path.join(DATA_DIR, 'license.lic')
-      if (fs.existsSync(licPath)) fs.unlinkSync(licPath)
+      // L3：只允许删应用数据目录内的授权文件；DB 里的路径被篡改时不得变成任意文件删除原语
+      const dataDir = path.resolve(DATA_DIR)
+      const defaultPath = path.join(dataDir, 'license.lic')
+      const stored = appConfigRepo.getLicensePath()
+      const licPath = stored ? path.resolve(stored) : defaultPath
+      const inside = licPath === defaultPath || licPath.startsWith(dataDir + path.sep)
+      if (!inside) {
+        log.warn('LICENSE_CLEAR：记录的路径不在应用数据目录内，已拒绝删除')
+      } else if (fs.existsSync(licPath)) {
+        fs.unlinkSync(licPath)
+      }
     } catch (e) {
       log.warn('删除 license.lic 失败:', errMsg(e))
     }

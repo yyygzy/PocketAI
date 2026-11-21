@@ -6,6 +6,7 @@
 // 读取端不猜修复（见 runbook-service 的注释）。
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { resolveSharedPath, serializeSharedPath } from '../../portable-paths'
 import type { RunbookRecord, RunbookRef, RunbookStep } from '../../../shared/runbook'
 
 interface RunbookRow {
@@ -28,13 +29,19 @@ function parseArray<T>(raw: string): T[] {
   }
 }
 
+function mapRefs(refs: RunbookRef[], mapper: (p: string) => string | null): RunbookRef[] {
+  return refs.map((ref) =>
+    ref.kind === 'path' ? { ...ref, id: mapper(ref.id) ?? ref.id } : ref
+  )
+}
+
 function rowToRecord(row: RunbookRow): RunbookRecord {
   return {
     id: row.id,
     name: row.name,
     promptSummary: row.prompt_summary,
     steps: parseArray<RunbookStep>(row.steps),
-    refs: parseArray<RunbookRef>(row.refs),
+    refs: mapRefs(parseArray<RunbookRef>(row.refs), resolveSharedPath),
     toolPermissions: parseArray<string>(row.tool_permissions).filter((x) => typeof x === 'string'),
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -87,7 +94,7 @@ export const runbookRepo = {
         input.name,
         input.promptSummary,
         JSON.stringify(input.steps),
-        JSON.stringify(input.refs),
+        JSON.stringify(mapRefs(input.refs, serializeSharedPath)),
         JSON.stringify(input.toolPermissions ?? []),
         now,
         now

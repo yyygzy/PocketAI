@@ -16,7 +16,7 @@ import { app } from 'electron'
 import { createHash, createPublicKey, verify as cryptoVerify } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync, existsSync, openSync, readSync, closeSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, lstatSync, openSync, readSync, closeSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { safeFetch } from '../net/safe-fetch'
 import { PUBLIC_KEY_DER_B64 } from '../license/public-key'
@@ -79,6 +79,25 @@ interface PendingPatchMeta {
 
 function workDirPath(): string {
   return path.join(app.getPath('temp'), WORK_DIR_NAME)
+}
+
+/**
+ * 暂存目录准备（M6）：路径固定是延迟替换脚本的跨重启契约，不能加随机段；
+ * 改为「每次写入前校验归属（拒绝符号链接）+ 清空重建」，防止预置目录里的链接被后续写入跟随。
+ */
+function prepareWorkDir(): string {
+  const dir = workDirPath()
+  try {
+    const st = lstatSync(dir)
+    if (st.isSymbolicLink() || !st.isDirectory()) {
+      throw new Error('补丁暂存目录不是普通目录，已拒绝写入')
+    }
+    rmSync(dir, { recursive: true, force: true })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  return dir
 }
 function stagedAsarPath(): string {
   return path.join(workDirPath(), 'app.asar')
@@ -245,8 +264,7 @@ export async function downloadAsarPatch(latestVersion: string): Promise<AsarPatc
   }
 
   // 7. 写临时目录 + 生成延迟替换脚本 + 落身份记录（记录**最后**写：半截的暂存目录不当作「补丁就绪」）
-  const workDir = workDirPath()
-  mkdirSync(workDir, { recursive: true })
+  const workDir = prepareWorkDir()
   const newAsarPath = stagedAsarPath()
   writeFileSync(newAsarPath, newBuf)
   writeReplaceScript(workDir, newAsarPath, asarPath)

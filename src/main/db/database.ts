@@ -12,6 +12,7 @@
 //
 import Database from 'better-sqlite3-multiple-ciphers'
 import fs from 'node:fs'
+import path from 'node:path'
 import { DB_PATH, DATA_DIR } from '../portable'
 import { errMsg } from '../error'
 import { createLogger } from '../logger'
@@ -1524,6 +1525,8 @@ export class DatabaseService {
 
     if (encrypted && masterKey) {
       const hex = masterKey.toString('hex')
+      // L2：SQLCipher PRAGMA key 不进入 SQLite 查询日志；启动时绝不把 hex 密钥写日志，
+      // 仅输出「加密模式已启用」这类无密钥信息。
       this.db.pragma(`key = "x'${hex}'"`)
     }
 
@@ -1537,6 +1540,15 @@ export class DatabaseService {
       const vec = require('sqlite-vec') as { getLoadablePath: () => string; load: (db: unknown, path: string) => void }
       let extPath = vec.getLoadablePath()
       extPath = extPath.replace('app.asar', 'app.asar.unpacked')
+      // L4：只加载 sqlite-vec 自带的原生扩展文件，路径被篡改时拒绝 loadExtension
+      const resolvedExt = path.resolve(extPath)
+      if (
+        !/sqlite-vec/i.test(resolvedExt) ||
+        !/\.(node|dll|so|dylib)$/i.test(resolvedExt) ||
+        (fs.existsSync(resolvedExt) && fs.lstatSync(resolvedExt).isSymbolicLink())
+      ) {
+        throw new Error(`sqlite-vec 扩展路径不在允许范围: ${resolvedExt}`)
+      }
       this.db.loadExtension(extPath)
       this.vecEnabled = true
       logger.info('sqlite-vec 向量扩展已加载')

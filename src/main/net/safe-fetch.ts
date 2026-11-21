@@ -61,6 +61,11 @@ export interface SafeFetchOptions {
   useProxy?: boolean
   /** DNS 解析超时毫秒数，默认 5000；超时抛「SafeFetch 域名解析超时」 */
   dnsTimeoutMs?: number
+  /**
+   * 是否允许跨 origin 重定向时继续携带凭据头（默认 false，自动剥离）。
+   * 打开后会在控制台留一条审计告警；只在确实需要跨站 Bearer 转发时使用。
+   */
+  allowCredentialForwarding?: boolean
 }
 
 /** 超时/失败发生的阶段（错误文案与排查用） */
@@ -90,6 +95,29 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_DNS_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_REDIRECTS = 5
 const USER_AGENT = 'PocketAI/0.1 (+local-first AI workstation)'
+
+/** 跨 origin 重定向时必须剥离的请求头（M3） */
+const CREDENTIAL_REQUEST_HEADERS = [
+  'authorization',
+  'cookie',
+  'proxy-authorization',
+  'www-authenticate'
+] as const
+
+/**
+ * 就地剥离凭据头，返回被剥离的键名（大小写保留，供审计日志）。
+ * 供跨 origin 重定向使用；同 origin 与普通请求不受影响。
+ */
+export function stripCredentialHeaders(headers: Record<string, string>): string[] {
+  const stripped: string[] = []
+  for (const key of Object.keys(headers)) {
+    if ((CREDENTIAL_REQUEST_HEADERS as readonly string[]).includes(key.toLowerCase())) {
+      delete headers[key]
+      stripped.push(key)
+    }
+  }
+  return stripped
+}
 
 /** 阶段 → 超时文案（统一大写 SafeFetch 前缀，便于用户/日志检索） */
 function phaseTimeoutMessage(phase: SafeFetchPhase): string {
@@ -820,8 +848,8 @@ function normalizeHeaders(src: http.IncomingHttpHeaders): Record<string, string>
  * 响应体有硬性字节上限，全程受总超时与外部 AbortSignal 约束。
  *
  * 重定向安全策略：301/302/303 自动降级为 GET 并丢弃请求体（防止凭据/body 转发到第三方）；
- * 307/308 保留原方法与 body；每一跳的 headers 始终来自 opts.headers（含 Authorization），
- * 因此如需避免凭据泄漏到重定向目标，请设置 maxRedirects: 0。
+ * 307/308 保留原方法与 body；跨 origin 自动剥离凭据头（Authorization/Cookie/...），
+ * 除非调用方显式打开 allowCredentialForwarding（会留审计告警）。
  */
 export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -847,9 +875,10 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
   }
   signal?.addEventListener('abort', onAbort, { once: true })
 
-  // 重定向时可能降级方法/丢弃 body，用可变副本
+  // 重定向时可能降级方法/丢弃 body，用可变副本；凭据头也在跨 origin 时可变
   let method = (opts.method ?? 'GET').toUpperCase()
   let body: string | Buffer | undefined = opts.body
+  let requestHeaders: Record<string, string> = { ...(opts.headers ?? {}) }
 
   try {
     for (let hop = 0; ; hop++) {
@@ -868,7 +897,7 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
         ip,
         method,
         body,
-        opts.headers ?? {},
+        requestHeaders,
         deadline,
         (r) => {
           currentReq = r
@@ -899,6 +928,17 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
           body = undefined
         }
         // 307/308：保留 method 与 body
+        // M3：跨 origin 自动剥离凭据；默认关闭显式转发，打开时留审计告警
+        if (next.origin !== current.origin) {
+          if (opts.allowCredentialForwarding === true) {
+            console.warn(`[safeFetch] 凭据头跨 origin 转发已显式允许: ${current.origin} -> ${next.origin}`)
+          } else {
+            const stripped = stripCredentialHeaders(requestHeaders)
+            if (stripped.length > 0) {
+              console.warn(`[safeFetch] 跨域重定向已剥离凭据头: ${stripped.join(',')} (${current.origin} -> ${next.origin})`)
+            }
+          }
+        }
         current = next
         continue
       }

@@ -13,6 +13,7 @@ import {
 import type { ToolCall, ToolSchema } from '../../shared/types'
 import { withLocalSlot } from './local-slot'
 import { errMsg, isAbortError } from '../error'
+import { redactSecretsInText } from '../security/audit-redact'
 
 /** 所有携带 Bearer API Key 的请求统一使用的 fetch 选项片段。
  *  redirect:'manual'：fetch 默认 follow 会把 Authorization 头原样带给 Location
@@ -394,12 +395,12 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
             (res.status === 401 || res.status === 403 || res.status === 429) &&
             keyAttempt < maxKeyAttempts - 1
           ) {
-            errors.push(`HTTP ${res.status}: ${text.slice(0, 120)}`)
+            errors.push(`HTTP ${res.status}: ${redactSecretsInText(text).slice(0, 120)}`)
             keyAttempt++
             continue
           }
           throw new ProviderError(
-            `请求失败 HTTP ${res.status}: ${text.slice(0, 200)}`,
+            `请求失败 HTTP ${res.status}: ${redactSecretsInText(text).slice(0, 200)}`,
             res.status,
             res.status === 429 || res.status >= 500,
             retryAfterMs
@@ -562,7 +563,10 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
             errors.push(`HTTP ${res.status}`)
             continue
           }
-          throw new ProviderError(`向量化失败 HTTP ${res.status}: ${text.slice(0, 200)}`, res.status)
+          throw new ProviderError(
+            `向量化失败 HTTP ${res.status}: ${redactSecretsInText(text).slice(0, 200)}`,
+            res.status
+          )
         }
         const json = (await res.json()) as EmbeddingsResponse
         const data = json.data ?? []
@@ -621,7 +625,10 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
             errors.push(`HTTP ${res.status}`)
             continue
           }
-          throw new ProviderError(`图像生成失败 HTTP ${res.status}: ${text.slice(0, 200)}`, res.status)
+          throw new ProviderError(
+            `图像生成失败 HTTP ${res.status}: ${redactSecretsInText(text).slice(0, 200)}`,
+            res.status
+          )
         }
         const json = (await res.json()) as ImagesGenerationResponse
         const item = json.data?.[0]

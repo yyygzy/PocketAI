@@ -17,6 +17,7 @@ import {
   isDisallowedIpv6,
   isDisallowedIp,
   assertFetchable,
+  stripCredentialHeaders,
   safeFetch,
   SafeFetchError
 } from '../src/main/net/safe-fetch'
@@ -167,5 +168,29 @@ describe('safeFetch — 连接类错误文案', () => {
 
   it('SSRF 拦截文案不被连接类包装改写', async () => {
     await expect(safeFetch('http://127.0.0.1:80/')).rejects.toThrow('禁止访问内网主机: 127.0.0.1')
+  })
+})
+
+describe('safeFetch — 跨 origin 重定向凭据剥离（M3）', () => {
+  it('Authorization / Cookie 等被剥离，普通头保留，大小写不敏感', () => {
+    const headers: Record<string, string> = {
+      Authorization: 'Bearer secret',
+      cookie: 'sid=abc',
+      'Proxy-Authorization': 'Basic xyz',
+      'WWW-Authenticate': 'Bearer realm=x',
+      Accept: 'application/json',
+      'X-Trace': 'keep-me'
+    }
+    expect(stripCredentialHeaders(headers).sort()).toEqual(
+      ['Authorization', 'Proxy-Authorization', 'WWW-Authenticate', 'cookie'].sort()
+    )
+    expect(headers).toEqual({ Accept: 'application/json', 'X-Trace': 'keep-me' })
+  })
+
+  it('重复调用幂等（已剥离的不会再出现）', () => {
+    const headers = { Authorization: 'Bearer x', Accept: '*/*' }
+    expect(stripCredentialHeaders(headers)).toEqual(['Authorization'])
+    expect(stripCredentialHeaders(headers)).toEqual([])
+    expect(headers).toEqual({ Accept: '*/*' })
   })
 })

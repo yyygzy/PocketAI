@@ -11,6 +11,8 @@ import { errMsg } from '../../error'
 import { mcpServerRepo } from '../../db/repositories/mcp-server.repo'
 import { mcpOauthRepo, type McpOauthRecord } from '../../db/repositories/mcp-oauth.repo'
 import { openExternalSecure } from '../../net/external-links'
+import { readTextLimited } from '../../net/bounded-read'
+import { safeFetchLike } from '../../net/fetch-like'
 import {
   oauthEndpointProblem,
   isOpenableOauthUrl,
@@ -84,14 +86,9 @@ function asNumber(v: unknown): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null
 }
 
-function boundText(text: string, label: string): string {
-  if (text.length > MAX_TOKEN_BODY_BYTES) throw new Error(`${label}响应过大，已拒绝。`)
-  return text
-}
-
 async function readJsonResponse(res: Response, label: string): Promise<unknown> {
-  const text = await res.text()
-  boundText(text, label)
+  // M4：流式有界读取，超限立即取消，不先把整段响应读进内存
+  const text = await readTextLimited(res, MAX_TOKEN_BODY_BYTES, label)
   try {
     return JSON.parse(text) as unknown
   } catch {
@@ -108,7 +105,7 @@ export class McpOauthService {
     this.deps = {
       getServer: deps?.getServer ?? ((id) => mcpServerRepo.get(id)),
       repo: deps?.repo ?? mcpOauthRepo,
-      fetchImpl: deps?.fetchImpl ?? fetch,
+      fetchImpl: deps?.fetchImpl ?? safeFetchLike,
       openUrl: deps?.openUrl ?? openExternalSecure,
       now: deps?.now ?? (() => Date.now()),
       onStatus: deps?.onStatus

@@ -44,14 +44,17 @@ describe('findCommandInPath', () => {
     expect(findCommandInPath('npx', ['C:\\nodejs'], existsIn([]))).toBe('unknown')
   })
 
-  it('带目录的命令不查 PATH，只看扩展名', () => {
-    expect(findCommandInPath('C:\\a\\b\\x.cmd', [], existsIn([]))).toBe('batch')
-    expect(findCommandInPath('C:\\a\\b\\x.exe', [], existsIn([]))).toBe('exe')
+  it('带目录的命令不查 PATH，按扩展名且要求文件真实存在', () => {
+    expect(findCommandInPath('C:\\a\\b\\x.cmd', [], existsIn(['C:\\a\\b\\x.cmd']))).toBe('batch')
+    expect(findCommandInPath('C:\\a\\b\\x.exe', [], existsIn(['C:\\a\\b\\x.exe']))).toBe('exe')
     expect(findCommandInPath('C:\\a\\b\\x', [], existsIn(['C:\\a\\b\\x']))).toBe('unknown')
   })
 
-  it('调用方已写扩展名时以扩展名为准（不去 PATH 找同名 .exe）', () => {
-    expect(findCommandInPath('npx.cmd', ['C:\\nodejs'], existsIn(['C:\\nodejs\\npx.exe']))).toBe('batch')
+  it('调用方已写扩展名时必须在 PATH 找到同名文件，不能凭后缀就当垫片（M7）', () => {
+    expect(findCommandInPath('npx.cmd', ['C:\\nodejs'], existsIn(['C:\\nodejs\\npx.exe']))).toBe('unknown')
+    expect(findCommandInPath('npx.cmd', ['C:\\nodejs'], existsIn(['C:\\nodejs\\npx.cmd']))).toBe('batch')
+    expect(findCommandInPath('C:\\bin\\x.cmd', [], existsIn(['C:\\bin\\x.cmd']))).toBe('batch')
+    expect(findCommandInPath('C:\\bin\\x.cmd', [], existsIn([]))).toBe('unknown')
   })
 })
 
@@ -85,15 +88,28 @@ describe('buildCmdShimLine', () => {
     )
   })
 
-  it('内嵌双引号翻倍：cmd 里 "" 才是字面量引号，参数不会被 & 逃逸', () => {
-    expect(buildCmdShimLine('echo', ['x"&whoami'])).toBe('echo "x""&whoami"')
+  it('普通含空格参数加引号，安全字符原样通过', () => {
     expect(buildCmdShimLine('echo', ['a b'])).toBe('echo "a b"')
+    expect(buildCmdShimLine('npx', ['-y', 'pkg'])).toBe('npx "-y" "pkg"')
   })
 
-  it('% 与换行直接拒绝（% 在引号内也会被 cmd 展开，换行会截断命令行）', () => {
-    expect(() => buildCmdShimLine('echo', ['%PATH%'])).toThrow(/无法安全转义/)
-    expect(() => buildCmdShimLine('echo', ['a\nb'])).toThrow(/无法安全转义/)
-    expect(() => buildCmdShimLine('ec%ho', [])).toThrow(/无法安全转义/)
+  it('cmd 全部元字符直接拒绝（M7），不以引号逃生', () => {
+    const attacks = [
+      ['foo&calc.cmd', []],
+      ['foo|bar.cmd', []],
+      ['foo^bar', []],
+      ['echo', ['x&whoami']],
+      ['echo', ['x"']],
+      ['echo', ['x<y']],
+      ['echo', ['x>y']],
+      ['echo', ['(calc)']],
+      ['%PATH%', []],
+      ['ec%ho', []],
+      ['echo', ['a\nb']]
+    ] as const
+    for (const [command, args] of attacks) {
+      expect(() => buildCmdShimLine(command, [...args])).toThrow(/无法安全转义/)
+    }
   })
 
   it('空参数数组只出命令名；参数是空串仍出成对引号（不能被 cmd 丢掉位置）', () => {

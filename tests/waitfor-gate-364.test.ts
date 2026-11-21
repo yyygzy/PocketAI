@@ -554,7 +554,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/load-fail-read-retry-351.test.tsx': 5,
       'tests/load-fail-read-retry-352.test.tsx': 7,
       'tests/load-fail-read-retry-354.test.tsx': 10,
-      'tests/load-fail-read-retry-355.test.tsx': 35,
+      'tests/load-fail-read-retry-355.test.tsx': 36,
       // V4-Iter-469：手工试运行加固——展开工具列表等 2 颗、forceConfirm 弹窗/确认调用 2 颗、
       // 普通工具直接调用 1 颗、示例值写回 1 颗、结果落屏 1 颗……合计 8 颗，全部按「存在」读屏。
       // 上限＝现数，不留余量。
@@ -610,7 +610,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-p0-2a-copy-415.test.tsx': 9,
       'tests/renderer-pip-source-confirm.test.tsx': 1,
       'tests/renderer-provider-http-confirm.test.tsx': 3,
-      'tests/renderer-provider-settings.test.tsx': 7,
+      'tests/renderer-provider-settings.test.tsx': 10,
       'tests/renderer-reminder-busy-332.test.tsx': 7,
       'tests/renderer-reminders-modal-reschedule.test.tsx': 3,
       'tests/renderer-reminders-modal-rule.test.tsx': 1,
@@ -717,7 +717,8 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-mcp-none-mode-save.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:64 -> :65',
-      'tests/renderer-provider-settings.test.tsx:249 -> :250',
+      // 该用例新增反向对照后这颗「不在场」判据下移到 293→294，判语本身不变
+      'tests/renderer-provider-settings.test.tsx:293 -> :294',
       'tests/renderer-websearch-b3.test.tsx:74 -> :76', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动；SEC-1 收口批删掉确认弹层后整体上移，重钉为 74→76
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
       'tests/capability-visibility-428.test.tsx:103 -> :104', // §429 迁移（原 §436 判语沿用）：门等 `reads === 1`（失败那一发已发出、渲染已重跑），紧随断言网格没长出假 0；门与断言读同一屏、失败落屏与计数条件同批 ⇒ 只会漏报，不会假红。

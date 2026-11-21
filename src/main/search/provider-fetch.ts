@@ -1,14 +1,13 @@
 // 搜索 provider 的统一出网层
 //
-// 与 safeFetch 的分工：
-// - 固定服务商端点（Tavily/博查）走**全局 fetch**（main/net/proxy.ts 已把它替换为
-//   proxy 感知的 undici fetch），因此配置了 Clash/V2Ray 的用户可正常出网；
+// 出网统一走 safeFetch（DNS 校验 + IP pinning + 逐跳重定向校验 + 流式字节上限）：
+// - 固定服务商端点（Tavily/博查）打开 useProxy，配置了 Clash/V2Ray 的用户仍可出网；
 // - 用户可控地址（SearXNG）额外做 host 预检：默认拒绝私网/环回，只有
 //   allowPrivateOrigin 与请求 URL 的 origin 精确一致时才放行；
-// - 全程 redirect:'manual'（3xx 直接拒绝，防止 Key 被转发）、总超时、响应体字节上限。
+// - 全程 maxRedirects:0（3xx 直接拒绝，防止 Key 被转发）、总超时、响应体字节上限。
 import dns from 'node:dns'
 import net from 'node:net'
-import { isDisallowedIp, isPrivateHostname } from '../net/safe-fetch'
+import { safeFetch, SafeFetchError, isDisallowedIp, isPrivateHostname } from '../net/safe-fetch'
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024
@@ -76,29 +75,6 @@ export async function assertProviderHostAllowed(
   }
 }
 
-/** 流式读体并强制字节上限 */
-async function readBodyLimited(res: Response, maxBytes: number): Promise<string> {
-  const declared = Number(res.headers.get('content-length') ?? 0)
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new ProviderFetchError(`搜索响应体超过上限（${Math.round(maxBytes / 1024 / 1024)}MB）`)
-  }
-  const reader = res.body?.getReader()
-  if (!reader) return ''
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > maxBytes) {
-      await reader.cancel()
-      throw new ProviderFetchError(`搜索响应体超过上限（${Math.round(maxBytes / 1024 / 1024)}MB）`)
-    }
-    chunks.push(value)
-  }
-  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8')
-}
-
 /** 发起请求并解析 JSON；3xx/非 2xx/无效 JSON 均抛 ProviderFetchError */
 export async function providerFetchJson<T>(
   rawUrl: string,
@@ -129,18 +105,26 @@ export async function providerFetchJson<T>(
     else opts.signal.addEventListener('abort', onAbort, { once: true })
   }
 
-  let res: Response
+  let res: { status: number; body: Buffer }
   try {
-    res = await globalThis.fetch(u.toString(), {
+    res = await safeFetch(u.toString(), {
       method: opts.method ?? 'GET',
       headers: opts.headers,
       body: opts.body,
-      redirect: 'manual',
-      signal: ctrl.signal
+      signal: ctrl.signal,
+      timeoutMs,
+      maxBytes,
+      // 等价于原来的 redirect:'manual'：任何 3xx 都拒绝，不跟随、不转发 Key
+      maxRedirects: 0,
+      useProxy: true,
+      allowPrivateOrigin: opts.guardHost ? opts.allowPrivateOrigin : undefined
     })
   } catch (e) {
     if (timedOut) throw new ProviderFetchError(`搜索请求超时（${timeoutMs / 1000}s）`)
     if (opts.signal?.aborted) throw new ProviderFetchError('已中止')
+    if (e instanceof SafeFetchError && /重定向次数超限/.test(e.message)) {
+      throw new ProviderFetchError('搜索服务返回重定向，已拒绝跟随（防止 API Key 泄漏）')
+    }
     throw new ProviderFetchError(e instanceof Error ? e.message : '搜索请求失败')
   } finally {
     clearTimeout(timer)
@@ -148,16 +132,11 @@ export async function providerFetchJson<T>(
   }
 
   const status = res.status
+  // safeFetch 在 maxRedirects:0 下遇到 3xx 已抛错；这里保留兜底，防御未来改动
   if (status >= 300 && status < 400) {
     throw new ProviderFetchError('搜索服务返回重定向，已拒绝跟随（防止 API Key 泄漏）', status)
   }
-  let text: string
-  try {
-    text = await readBodyLimited(res, maxBytes)
-  } catch (e) {
-    if (timedOut) throw new ProviderFetchError(`搜索请求超时（${timeoutMs / 1000}s）`)
-    throw e
-  }
+  const text = res.body.toString('utf8')
   if (status < 200 || status >= 300) {
     throw new ProviderFetchError(`搜索失败 HTTP ${status}`, status, cut(text, 200))
   }

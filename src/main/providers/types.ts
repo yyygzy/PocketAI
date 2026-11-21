@@ -1,6 +1,7 @@
 // Provider 适配器抽象接口（L2 模型抽象层）
 import type { ToolSchema, ToolCall } from '../../shared/types'
-import { ensureScheme } from '../../shared/url-policy'
+import { ensureScheme, isLoopbackHost } from '../../shared/url-policy'
+import { isPrivateHostname } from '../net/safe-fetch'
 
 export interface MessageContentPart {
   type: 'text' | 'image_url'
@@ -81,9 +82,34 @@ export interface ProviderAdapter {
   embed(texts: string[], model: string): Promise<number[][]>
 }
 
+/**
+ * Provider baseUrl 的 SSRF 边界（M9）：字面内网/保留地址与非回环明文 http 一律拒绝。
+ * 域名解析到私网由 safeFetch 在建连时拦截（ providerFetchJson 已收敛）；这里先挡字面量。
+ */
+export function assertProviderBaseUrlSafe(raw: string): void {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    throw new Error(`Provider Base URL 无效: ${raw}`)
+  }
+  const loopback = isLoopbackHost(u.hostname.toLowerCase())
+  if (u.protocol === 'http:' && !loopback) {
+    throw new Error('Provider Base URL 非本机地址必须使用 https（明文会泄露 API Key）')
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error(`Provider Base URL 仅支持 http(s): ${u.protocol}`)
+  }
+  const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (!loopback && isPrivateHostname(host)) {
+    throw new Error(`Provider Base URL 不能指向内网/保留地址: ${host}`)
+  }
+}
+
 /** 规范化 base URL：去除末尾斜杠，缺协议按 https 优先补全，自动补 /v1 */
 export function normalizeBaseUrl(input: string): string {
   let url = ensureScheme(input.trim().replace(/\/+$/, ''))
+  assertProviderBaseUrlSafe(url)
   // 已含版本号前缀则保留，否则补 /v1
   if (/\/v\d+$/.test(url)) return url
   return url + '/v1'

@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const mocks = vi.hoisted(() => ({
   store: new Map<string, string>(),
   windows: [] as unknown[],
+  nativeTheme: { themeSource: 'system' as 'system' | 'light' | 'dark' },
   appConfigRepo: {
     get: (k: string) => mocks.store.get(k) ?? null,
     set: (k: string, v: string) => { mocks.store.set(k, v) },
@@ -23,7 +24,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   BrowserWindow: {
     getAllWindows: () => mocks.windows
-  }
+  },
+  nativeTheme: mocks.nativeTheme
 }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: mocks.appConfigRepo }))
 
@@ -32,6 +34,7 @@ import { clampOpacity, getUiPreferences, setUiPreferences, MIN_OPACITY, MAX_OPAC
 beforeEach(() => {
   mocks.store.clear()
   mocks.windows.length = 0
+  mocks.nativeTheme.themeSource = 'system'
 })
 
 describe('clampOpacity — 透明度限幅', () => {

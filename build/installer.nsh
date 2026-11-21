@@ -7,37 +7,46 @@
 ; （src/main/portable.ts）根本没机会看到它。
 ;
 ; customInit 在 .onInit 里、installSection 之前执行（installer.nsi:79），此时 $INSTDIR
-; 已被 initMultiUser 按上一次安装的 InstallLocation 还原。这里把旧数据搬到新落点
-; $APPDATA\Moxia\data（与安装版一致），移动失败再用 xcopy 兜底；两边都失败时保持原样，
-; 让首启迁移/用户手动处理，不吞错误。
+; 已被 initMultiUser 按上一次安装的 InstallLocation 还原。没有共享数据根标记时，把旧数据
+; 搬到兼容落点 $APPDATA\Moxia\data，移动失败再用 xcopy 兜底。
+;
+; 共享数据根整改：如果安装目录或其一两级父目录存在 pocketai.json，说明用户把客户端放在
+; 移动硬盘共享根目录里；此时**不能**把 $INSTDIR\data 搬离，交给应用按标记定位共享 data/。
 ;
 ; 只处理「安装目录里确实有 app.db」的旧安装；全新安装、已经迁过的新位置都不会命中。
 
 !macro MoxiaMoveLegacyData
   ${If} ${FileExists} "$INSTDIR\data\app.db"
-  ${AndIfNot} ${FileExists} "$APPDATA\Moxia\data\app.db"
-    DetailPrint "Moxia: moving user data out of the install directory..."
-    CreateDirectory "$APPDATA\Moxia"
+    ${If} ${FileExists} "$INSTDIR\pocketai.json"
+    ${OrIf} ${FileExists} "$INSTDIR\..\pocketai.json"
+    ${OrIf} ${FileExists} "$INSTDIR\..\..\pocketai.json"
+      DetailPrint "Moxia: shared data root marker found; keeping install-dir data for app-side migration"
+    ${Else}
+      ${IfNot} ${FileExists} "$APPDATA\Moxia\data\app.db"
+        DetailPrint "Moxia: moving user data out of the install directory..."
+        CreateDirectory "$APPDATA\Moxia"
 
-    ClearErrors
-    Rename "$INSTDIR\data" "$APPDATA\Moxia\data"
-    ${If} ${Errors}
-      ; 跨卷（安装目录在 D: 等）时 Rename 会失败，退回复制
-      DetailPrint "Moxia: rename failed, copying instead"
-      nsExec::ExecToLog 'xcopy /e /i /h /y "$INSTDIR\data" "$APPDATA\Moxia\data"'
-      Pop $R9
-      ${If} $R9 == "0"
-        RMDir /r "$INSTDIR\data"
-      ${Else}
-        DetailPrint "Moxia: xcopy exited with $R9, keeping the old data in place"
+        ClearErrors
+        Rename "$INSTDIR\data" "$APPDATA\Moxia\data"
+        ${If} ${Errors}
+          ; 跨卷（安装目录在 D: 等）时 Rename 会失败，退回复制
+          DetailPrint "Moxia: rename failed, copying instead"
+          nsExec::ExecToLog 'xcopy /e /i /h /y "$INSTDIR\data" "$APPDATA\Moxia\data"'
+          Pop $R9
+          ${If} $R9 == "0"
+            RMDir /r "$INSTDIR\data"
+          ${Else}
+            DetailPrint "Moxia: xcopy exited with $R9, keeping the old data in place"
+          ${EndIf}
+        ${EndIf}
+
+        ; 迁移标记（应用只判断存在性，内容给人看）。写成正斜杠，免得 JSON 里出现裸反斜杠。
+        ${If} ${FileExists} "$APPDATA\Moxia\data\app.db"
+          FileOpen $R8 "$APPDATA\Moxia\data\migrated-from.json" w
+          FileWrite $R8 '{"by":"nsis-updater","from":"install-dir/data","to":"appdata/Moxia/data"}'
+          FileClose $R8
+        ${EndIf}
       ${EndIf}
-    ${EndIf}
-
-    ; 迁移标记（应用只判断存在性，内容给人看）。写成正斜杠，免得 JSON 里出现裸反斜杠。
-    ${If} ${FileExists} "$APPDATA\Moxia\data\app.db"
-      FileOpen $R8 "$APPDATA\Moxia\data\migrated-from.json" w
-      FileWrite $R8 '{"by":"nsis-updater","from":"install-dir/data","to":"appdata/Moxia/data"}'
-      FileClose $R8
     ${EndIf}
   ${EndIf}
 !macroend
@@ -52,7 +61,7 @@
 !macro customUnInstall
   ${IfNot} ${Silent}
   ${AndIfNot} ${isUpdated}
-    MessageBox MB_OK|MB_ICONINFORMATION "用户数据保存在：$\r$\n$APPDATA\Moxia\data$\r$\n$\r$\n本次卸载只会删除程序文件，不会删除该目录；重新安装后会自动沿用。$\r$\n如需彻底清除，请在卸载后手动删除该目录。"
+    MessageBox MB_OK|MB_ICONINFORMATION "用户数据不在安装目录内：$\r$\n- 安装版默认：$APPDATA\Moxia\data$\r$\n- 便携/共享根：启动器旁 data/（由 pocketai.json 标记指定）$\r$\n$\r$\n本次卸载只会删除程序文件，不会删除该目录；重新安装后会自动沿用。$\r$\n如需彻底清除，请在卸载后手动删除对应目录。"
   ${EndIf}
 !macroend
 

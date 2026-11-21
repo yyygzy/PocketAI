@@ -11,8 +11,10 @@ import { ACTIVATION_BASE_URL } from './server-config'
 import { licenseService } from './license'
 import type { ActivationErrorCode, ActivationResult } from '../../shared/types'
 import { isAbortError } from '../error'
+import { readTextLimited } from '../net/bounded-read'
 
 const REQUEST_TIMEOUT_MS = 15_000
+const MAX_RESPONSE_BYTES = 256 * 1024
 
 /** 服务端错误码 → 客户端错误码白名单（未知 code 一律按 SERVER_ERROR 处理） */
 const SERVER_CODE_MAP: Record<string, ActivationErrorCode> = {
@@ -57,7 +59,9 @@ export async function activateOnline(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, fingerprint }),
-      signal: ctrl.signal
+      signal: ctrl.signal,
+      // 绝不跟随跳转：3xx 可能把卡密转到内网或明文端点（M2/M4）
+      redirect: 'error'
     })
   } catch (e) {
     // AbortController 触发的中止 = 超时；其余 fetch 失败 = 连不上（拒绝连接/DNS/断网）
@@ -67,7 +71,13 @@ export async function activateOnline(
     clearTimeout(timer)
   }
 
-  const data = (await res.json().catch(() => null)) as ServerErrorBody | null
+  let data: ServerErrorBody | null
+  try {
+    const text = await readTextLimited(res, MAX_RESPONSE_BYTES, '激活响应')
+    data = JSON.parse(text || 'null') as ServerErrorBody | null
+  } catch {
+    data = null
+  }
 
   if (!res.ok || !data?.ok || typeof data.license !== 'string') {
     // 优先采信服务端稳定错误码；HTTP 状态码作兜底

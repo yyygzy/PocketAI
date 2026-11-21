@@ -15,7 +15,7 @@
 // 冲突：同 id 两边都存在且内容/时间戳不同。用户可选 local/cloud/newer。
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import Database from 'better-sqlite3-multiple-ciphers'
@@ -225,8 +225,8 @@ async function extractCloudDb(
   opts: MergeOpts = {}
 ): Promise<{ dbPath: string; attachmentsDir: string | null; cloudDbKey: Buffer | null; cleanup: () => void }> {
   const creds = toCreds(cfg)
-  const tmp = join(tmpdir(), `pocketai-merge-${Date.now()}`)
-  mkdirSync(tmp, { recursive: true })
+  // M6：随机独占目录，避免可预测路径被本地其他进程抢占
+  const tmp = mkdtempSync(join(tmpdir(), 'pocketai-merge-'))
 
   const cleanup = () => {
     try { rmSync(tmp, { recursive: true, force: true }) } catch { /* ignore */ }

@@ -21,7 +21,9 @@ function jsonRes(status: number, body?: unknown, jsonImpl?: () => Promise<unknow
   return {
     status,
     ok: status >= 200 && status < 300,
-    json: jsonImpl ?? (() => Promise.resolve(body))
+    json: jsonImpl ?? (() => Promise.resolve(body)),
+    // 生产代码走有界读取（res.text），测试桩要提供真实 Response 的 text 入口
+    text: () => (jsonImpl ? Promise.reject(new Error('invalid json')) : Promise.resolve(JSON.stringify(body ?? null)))
   } as unknown as Response
 }
 

@@ -8,7 +8,11 @@
 // 直接测试纯函数 classifyMcpToolPermission。
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('../src/main/mcp/json-rpc', () => ({ StdioJsonRpcClient: class {} }))
+vi.mock('../src/main/mcp/json-rpc', () => ({
+  StdioJsonRpcClient: class {},
+  McpTransportError: class extends Error {},
+  McpBusinessError: class extends Error {}
+}))
 vi.mock('../src/main/db/repositories/mcp-server.repo', () => ({ mcpServerRepo: {} }))
 vi.mock('../src/main/portable', () => ({ MCP_EXTENSIONS_DIR: '/mock/ext/mcp' }))
 vi.mock('../src/main/mcp/python-env', () => ({

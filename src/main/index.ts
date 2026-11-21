@@ -30,11 +30,13 @@ import { closeUnlockWindow, showUnlockWindow } from './windows/unlock-window'
 import {
   ensureDirs,
   migrateInstalledDataDir,
+  migrateInstalledDataToSharedDir,
   migrateMcpExtensionsDir,
   DATA_DIR,
   LEGACY_DATA_DIR,
   LOGS_DIR
 } from './portable'
+import { acquireDataLock } from './data-lock'
 import { dbService } from './db/database'
 import { conversationRunRepo } from './db/repositories/conversation-run.repo'
 import {
@@ -271,6 +273,10 @@ async function boot(): Promise<void> {
   // 先造目录就分不清「新位置已有数据」还是「刚建的空目录」，会把旧数据当不存在。
   // 失败时原数据仍在旧位置，这里只负责把话说清楚并放弃启动，绝不带着空库继续。
   try {
+    const sharedMigrated = migrateInstalledDataToSharedDir()
+    if (sharedMigrated) {
+      log.info(`本机数据已复制到共享数据根：${sharedMigrated.from} → ${sharedMigrated.to}`)
+    }
     const migrated = migrateInstalledDataDir()
     if (migrated) {
       log.info(`数据目录迁移完成：${migrated.from} → ${migrated.to}（${migrated.files} 个文件 / ${migrated.bytes} 字节，旧目录已清理=${migrated.removedLegacy}）`)
@@ -287,6 +293,18 @@ async function boot(): Promise<void> {
   }
 
   ensureDirs()
+
+  // 共享数据根一次只允许一个实例写；第二个实例明确拒绝，避免两个系统并发写坏 SQLite
+  const dataLock = acquireDataLock()
+  if (!dataLock) {
+    dialog.showErrorBox(
+      '数据目录已被占用',
+      `共享数据目录 ${DATA_DIR} 正在被另一个客户端使用。\n请退出另一个实例后再启动；不要在两个系统/两个进程间同时写同一份数据。`
+    )
+    app.quit()
+    return
+  }
+
   configureLogDir(LOGS_DIR)
   migrateMcpExtensionsDir()
   bootMark('目录/日志初始化')
@@ -297,7 +315,7 @@ async function boot(): Promise<void> {
 
   // IPC 必须在任何窗口（含解锁窗）创建/加载前就位：
   // 解锁窗挂载即会调用 encryption:unlock / menu:set-language 等通道，
-  // 若延后到解锁流程之后注册，这些 invoke 会得到 “No handler registered”。
+  // 若延后到解锁流程之后注册，这些 invoke 会得到 "No handler registered"。
   // handler 均为惰性闭包，DB 尚未打开时注册也安全。
   installLockGate()
   registerIpcHandlers()

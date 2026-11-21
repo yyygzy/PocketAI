@@ -3368,7 +3368,7 @@ export const IPC = {
 
   // ---------- License 授权 ----------
   LICENSE_GET_STATUS: 'license:get-status',
-  LICENSE_LOAD_FILE: 'license:load-file', // 传入 license.lic 文件路径
+  LICENSE_LOAD_FILE: 'license:load-file', // 传入 LICENSE_IMPORT_FILE 签发的文件令牌，不传路径
   LICENSE_LOAD_STRING: 'license:load-string', // 传入 license 字符串
   LICENSE_CLEAR: 'license:clear',
   LICENSE_HAS_FEATURE: 'license:has-feature',

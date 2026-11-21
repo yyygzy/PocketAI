@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { mustGet } from '../must-get'
 import { kbChunkRepo } from './kb-chunk.repo'
+import { resolveSharedPath, serializeSharedPath } from '../../portable-paths'
 import type { KbDocument, KbDocStatus, KbSourceType } from '../../../shared/types'
 
 interface KbDocRow {
@@ -24,7 +25,7 @@ export function rowToRecord(row: KbDocRow): KbDocument {
   return {
     id: row.id,
     kbId: row.kb_id,
-    source: row.source ?? '',
+    source: resolveSharedPath(row.source) ?? '',
     sourceType: (row.source_type ?? 'txt') as KbSourceType,
     title: row.title ?? '',
     chunkCount: row.chunk_count,
@@ -76,7 +77,14 @@ export const kbDocRepo = {
         `INSERT INTO kb_documents (id, kb_id, source, source_type, title, chunk_count, status, error, created_at)
          VALUES (?, ?, ?, ?, ?, 0, 'pending', NULL, ?)`
       )
-      .run(id, input.kbId, input.source, input.sourceType, input.title ?? input.source, Date.now())
+      .run(
+        id,
+        input.kbId,
+        serializeSharedPath(input.source) ?? input.source,
+        input.sourceType,
+        input.title ?? input.source,
+        Date.now()
+      )
     return mustGet(() => this.get(id), '知识库文档')
   },
 
@@ -86,12 +94,24 @@ export const kbDocRepo = {
    */
   existingSources(kbId: string, sources: string[]): Set<string> {
     if (sources.length === 0) return new Set()
-    const placeholders = sources.map(() => '?').join(',')
+    // 新库写 token，老库可能还是绝对路径：两种形态都查，再映射回调用方传进来的原始值
+    const encoded = sources.map((s) => serializeSharedPath(s) ?? s)
+    const decodedByValue = new Map<string, string>()
+    sources.forEach((raw, i) => {
+      decodedByValue.set(raw, raw)
+      decodedByValue.set(encoded[i]!, raw)
+    })
+    const values = [...new Set([...sources, ...encoded])]
+    const placeholders = values.map(() => '?').join(',')
     const rows = dbService
       .getHandle()
       .prepare(`SELECT source FROM kb_documents WHERE kb_id=? AND source IN (${placeholders})`)
-      .all(kbId, ...sources) as Array<{ source: string | null }>
-    return new Set(rows.map((r) => r.source).filter((s): s is string => !!s))
+      .all(kbId, ...values) as Array<{ source: string | null }>
+    return new Set(
+      rows
+        .map((r) => (r.source === null ? undefined : decodedByValue.get(r.source)))
+        .filter((s): s is string => !!s)
+    )
   },
 
   /** 这个库已经索引过的内容指纹（源文件被改名或复制成两份时靠它拦） */
@@ -107,10 +127,13 @@ export const kbDocRepo = {
 
   /** 按 (库, 来源) 取回已存在的那篇文档（重复添加时把它原样回给前端，不再建第二份） */
   findBySource(kbId: string, source: string): KbDocument | null {
+    const encoded = serializeSharedPath(source) ?? source
     const row = dbService
       .getHandle()
-      .prepare('SELECT * FROM kb_documents WHERE kb_id=? AND source=? ORDER BY created_at ASC LIMIT 1')
-      .get(kbId, source) as KbDocRow | undefined
+      .prepare(
+        'SELECT * FROM kb_documents WHERE kb_id=? AND source IN (?,?) ORDER BY created_at ASC LIMIT 1'
+      )
+      .get(kbId, source, encoded) as KbDocRow | undefined
     return row ? rowToRecord(row) : null
   },
 

@@ -9,6 +9,7 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { z, type ZodTuple } from 'zod'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
+import { redactSecretsInText } from '../security/audit-redact'
 
 // 兼容既有 handler 的导入路径（errMsg 实现已移至中性模块 main/error.ts）
 export { errMsg }
@@ -180,7 +181,8 @@ export function safeHandle<A extends unknown[]>(
       return await listener(event, ...(validated as unknown as A))
     } catch (e) {
       log.warn(`${channel} 失败:`, e instanceof Error ? e.message : e)
-      return { ok: false as const, error: errMsg(e) } satisfies IpcFail
+      // IPC 回包直达渲染层：错误文本里可能夹带上游回显的 API Key，统一脱敏
+      return { ok: false as const, error: redactSecretsInText(errMsg(e)) } satisfies IpcFail
     }
   })
 }

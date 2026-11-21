@@ -54,7 +54,8 @@ const functionBody = (src: string, name: string): string => {
 describe('读法自证（闸门自己的牙）', () => {
   it('functionBody 取到 getDiskWin32 / getDisk 的体内文本', () => {
     const win32 = functionBody(HW, 'getDiskWin32')
-    expect(win32).toContain('parseJsonSafe<RawDisk>')
+    // 读盘已拆成 parseDiskRaw（内部才调 parseJsonSafe<RawDisk>），读的是拆完的那一层
+    expect(win32).toContain('parseDiskRaw(')
     expect(functionBody(HW, 'getDisk')).toContain("process.platform === 'darwin'")
   })
 
@@ -104,7 +105,8 @@ describe('#3 hardware.ts：推断支归零 ＋ 结论出自纯函数', () => {
   })
 
   it('removable 与 type 同源（同一个"是不是可移动"判据不许在两处各写一遍）', () => {
-    const body = functionBody(HW, 'getDiskWin32')
+    // 赋值已随快/慢两段共用逻辑抽到 applyDiskRaw；判据仍是同一处，不许在调用点另写一遍
+    const body = functionBody(HW, 'applyDiskRaw')
     expect(body).toMatch(/info\.removable = info\.type === 'usb'/)
     expect(body, '又出现了平行的 dtype===2||USB 判据').not.toMatch(/dtype === 2/)
   })

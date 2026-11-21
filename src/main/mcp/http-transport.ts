@@ -7,14 +7,16 @@
 //  - 通知（notifications）从响应流中提取并转发
 //
 // 安全边界：
-//  - URL 已由 shared/schemas/mcp.ts 校验为 http(s)
-//  - MCP server 通常是用户配置的本地/远程服务，允许 localhost（不走 safeFetch 的内网拦截）
+//  - URL 已由 shared/schemas/mcp.ts 校验为 http(s)，站点策略默认拒绝清单外 host
+//  - 所有请求走 safeFetch：逐次 DNS 校验 + IP pinning + 流式字节上限 + maxRedirects:0
+//  - localhost/内网 server 仅在用户显式加入白名单时以 allowPrivateOrigin 放行
+//  - 凭据头仅在目标 host 被站点策略放行时附带；跨 origin 一律不跟随跳转
 //  - 连接超时 + SSE 事件字节上限，防恶意 server 巨事件内存耗尽
-//  - 直接 JSON 响应体同样有界读取
 //  - 不做进程管理（无 spawn/exit），shutdown 仅发送协议级 shutdown 请求
 
 import { EventEmitter } from 'node:events'
 import { errMsg, isAbortError } from '../error'
+import { safeFetch, SafeFetchError } from '../net/safe-fetch'
 import { noteMcpHttpRequest } from './outbound-metrics'
 import {
   McpBusinessError,
@@ -40,10 +42,14 @@ export interface HttpTransportOptions {
   resolveAuth?: () => Promise<Record<string, string>>
   /**
    * 站点策略钩子（由 manager 注入）：每次发请求前判这个 URL 能不能连，抛错即拒发。
+   * 返回值是「显式放行私网的目标 origin」（无则 undefined），透传给 safeFetch 的
+   * allowPrivateOrigin，避免白名单外域名解析到内网时被放行。
    * 做成注入而不是在这里 import 策略模块，是为了让 transport 保持零依赖——
    * 策略要读 app_config（→ 数据库 → electron），不该把协议层单元测试一起拖进去。
    */
-  checkHostAllowed?: (url: string) => void
+  checkHostAllowed?: (url: string) => string | undefined | void
+  /** 目标 host 未被站点策略放行时，用户配置的凭据头一律不附带 */
+  credentialsAllowed?: boolean
 }
 
 /** 鉴权失败（401/403）：只带状态码，不带任何 token/响应体 */
@@ -148,6 +154,25 @@ export async function readBoundedBody(
   return Buffer.concat(parts).toString('utf8')
 }
 
+/** safeFetch 已按 maxBytes 流式读体；这里再做一次防御性检查并把 Buffer 转成文本 */
+function boundedText(body: Buffer, maxBytes: number): string {
+  if (body.byteLength > maxBytes) {
+    throw new McpTransportError('protocol', `响应体超过 ${maxBytes} 字节上限，已终止读取`)
+  }
+  return body.toString('utf8')
+}
+
+/** 把 safeFetch 缓冲的响应体喂给 SSE 解析器（本传输的 SSE 是单次请求的有界响应） */
+function parseSseBody(body: Buffer, maxBytes: number): AsyncGenerator<{ event: string; data: string }> {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (body.byteLength > 0) controller.enqueue(body)
+      controller.close()
+    }
+  })
+  return parseSseStream(stream, maxBytes)
+}
+
 export class HttpJsonRpcClient implements McpTransportClient {
   private nextId = 1
   private closed = false
@@ -158,14 +183,29 @@ export class HttpJsonRpcClient implements McpTransportClient {
 
   constructor(private readonly opts: HttpTransportOptions) {}
 
+  /** 凭据头：host 未被策略放行时一律剥离，防止跨 origin 泄露 */
+  private static readonly CREDENTIAL_HEADERS = new Set([
+    'authorization',
+    'proxy-authorization',
+    'cookie',
+    'set-cookie',
+    'x-api-key',
+    'api-key'
+  ])
+
   /** 组装请求头：自定义头在前，OAuth 动态头其次，协议头后写优先 */
   private buildHeaders(authHeaders?: Record<string, string>): Record<string, string> {
     const headers: Record<string, string> = {
       ...(this.opts.headers ?? {}),
-      ...(authHeaders ?? {}),
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream'
+      ...(authHeaders ?? {})
     }
+    if (this.opts.credentialsAllowed === false) {
+      for (const k of Object.keys(headers)) {
+        if (HttpJsonRpcClient.CREDENTIAL_HEADERS.has(k.toLowerCase())) delete headers[k]
+      }
+    }
+    headers['Content-Type'] = 'application/json'
+    headers.Accept = 'text/event-stream'
     if (this.sessionId) {
       headers['Mcp-Session-Id'] = this.sessionId
     }
@@ -174,6 +214,12 @@ export class HttpJsonRpcClient implements McpTransportClient {
 
   private async authHeaders(): Promise<Record<string, string> | undefined> {
     return this.opts.resolveAuth ? this.opts.resolveAuth() : undefined
+  }
+
+  /** 站点策略钩子：拒绝时抛错，返回仅对该 origin 生效的私网放行标记 */
+  private checkHostAllowed(): string | undefined {
+    const allowedOrigin = this.opts.checkHostAllowed?.(this.opts.url)
+    return typeof allowedOrigin === 'string' ? allowedOrigin : undefined
   }
 
   /** http 传输无本地进程，pid 恒为 undefined */
@@ -222,43 +268,45 @@ export class HttpJsonRpcClient implements McpTransportClient {
       try {
         const headers = this.buildHeaders(await this.authHeaders())
 
-        // 站点策略（连接级域名闸，默认全放行）：在真正发请求前判，拒绝时抛错给调用方。
-        // 只校验 host，不做 DNS 解析——DNS 重绑定不在这一层的职责里（目标 URL 由用户显式配置）。
-        this.opts.checkHostAllowed?.(this.opts.url)
+        // 站点策略（默认拒绝清单外 host）：每次请求前判，拒绝时抛错给调用方。
+        // 返回值只包含「白名单内 origin」，safeFetch 会以它做私网放行并逐跳 DNS 校验。
+        const allowPrivateOrigin = this.checkHostAllowed()
         noteMcpHttpRequest()
 
-        const res = await fetch(this.opts.url, {
+        const maxBytes = this.opts.maxLineBytes ?? DEFAULT_MAX_BYTES
+        const res = await safeFetch(this.opts.url, {
           method: 'POST',
           headers,
           body,
           signal: controller.signal,
-          redirect: 'error' // 禁止重定向，防 SSRF 绕过
+          timeoutMs: timeout,
+          maxBytes,
+          maxRedirects: 0, // 等价于 redirect:'error'：任何跳转都拒绝，防 SSRF/凭据外送
+          useProxy: true,
+          allowPrivateOrigin
         })
 
         // 401/403 只报状态码：不解析/不回显响应体，避免把 OAuth 错误详情或 token 带进日志
         if (res.status === 401 || res.status === 403) {
-          if (res.body) await res.body.cancel().catch(() => {})
           throw new McpAuthError(res.status)
         }
 
-        // 提取 session ID（initialize 响应通常带 Mcp-Session-Id）
-        const sid = res.headers.get('Mcp-Session-Id')
+        // 提取 session ID（initialize 响应通常带 Mcp-Session-Id；safeFetch 头名为小写）
+        const sid = res.headers['mcp-session-id']
         if (sid) this.sessionId = sid
 
-        const contentType = res.headers.get('content-type') ?? ''
-        const maxBytes = this.opts.maxLineBytes ?? DEFAULT_MAX_BYTES
+        const contentType = res.headers['content-type'] ?? ''
 
         // 形态 1：直接 JSON 响应（有界读取）
         if (contentType.includes('application/json')) {
-          const text = await readBoundedBody(res, maxBytes)
-          const msg = JSON.parse(text) as JsonRpcResponse
+          const msg = JSON.parse(boundedText(res.body, maxBytes)) as JsonRpcResponse
           if (msg.error) throw new McpBusinessError(msg.error.code, msg.error.message)
           return msg.result as T
         }
 
-        // 形态 2：SSE 流
-        if (contentType.includes('text/event-stream') && res.body) {
-          for await (const evt of parseSseStream(res.body, maxBytes)) {
+        // 形态 2：SSE 流（safeFetch 已流式收满并有界，交由 SSE 解析器提取事件）
+        if (contentType.includes('text/event-stream')) {
+          for await (const evt of parseSseBody(res.body, maxBytes)) {
             if (evt.event === 'result') {
               const msg = JSON.parse(evt.data) as JsonRpcResponse
               if (msg.error) throw new McpBusinessError(msg.error.code, msg.error.message)
@@ -278,7 +326,7 @@ export class HttpJsonRpcClient implements McpTransportClient {
         }
 
         // 未知 Content-Type：尝试当 JSON 解析（同样有界读取）
-        const text = await readBoundedBody(res, maxBytes)
+        const text = boundedText(res.body, maxBytes)
         try {
           const msg = JSON.parse(text) as JsonRpcResponse
           if (msg.error) throw new McpBusinessError(msg.error.code, msg.error.message)
@@ -294,10 +342,13 @@ export class HttpJsonRpcClient implements McpTransportClient {
         // 已分类的错误原样透传；OAuth 服务的「需重新授权」错误也原样透传
         if (e instanceof McpTransportError || e instanceof McpBusinessError) throw e
         if (e instanceof Error && e.name === 'McpOauthAuthRequiredError') throw e
-        if (isAbortError(e)) {
+        if (
+          isAbortError(e) ||
+          (e instanceof SafeFetchError && controller.signal.aborted)
+        ) {
           throw new McpTransportError('timeout', `JSON-RPC 请求超时: ${method} (${timeout}ms)`)
         }
-        // fetch 网络失败 / JSON 响应体畸形：连接级失败
+        // safeFetch 网络/SSRF 失败 / JSON 响应体畸形：连接级失败
         throw new McpTransportError(e instanceof SyntaxError ? 'protocol' : 'network', errMsg(e))
       } finally {
         cleanup()
@@ -314,29 +365,33 @@ export class HttpJsonRpcClient implements McpTransportClient {
 
     // 通知没有失败回传通道：被站点策略拒了就静默放弃，与网络失败同一口径。
     // 必须放在创建 AbortController 之前——早退也要清干净，不能留下永不中止的 inflight。
+    let allowPrivateOrigin: string | undefined
     try {
-      this.opts.checkHostAllowed?.(this.opts.url)
+      allowPrivateOrigin = this.checkHostAllowed()
     } catch {
       return
     }
     noteMcpHttpRequest()
 
+    const timeout = this.opts.requestTimeout ?? 30000
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.opts.requestTimeout ?? 30000)
+    const timer = setTimeout(() => controller.abort(), timeout)
     this.inflight.add(controller)
 
     void (async () => {
       try {
         const headers = this.buildHeaders(await this.authHeaders())
-        const res = await fetch(this.opts.url, {
+        await safeFetch(this.opts.url, {
           method: 'POST',
           headers,
           body,
           signal: controller.signal,
-          redirect: 'error'
+          timeoutMs: timeout,
+          maxBytes: this.opts.maxLineBytes ?? DEFAULT_MAX_BYTES,
+          maxRedirects: 0,
+          useProxy: true,
+          allowPrivateOrigin
         })
-        // 通知不需要响应体，但需要消费掉避免连接泄漏
-        if (res.body) await res.body.cancel().catch(() => {})
       } catch {
         // 通知失败静默忽略（含取不到授权头）
       } finally {

@@ -113,9 +113,17 @@ export const McpCatalogModal: React.FC<Props> = ({ onClose, onChanged }) => {
       window.pocketai.listMcpServers(),
       window.pocketai.getMcpRuntimes()
     ])
-    if (!hasIpcFailed(recs) && Array.isArray(recs)) setRecords(recs)
-    if (!hasIpcFailed(runs) && Array.isArray(runs)) setRuntimes(runs)
-  }, [])
+    if (hasIpcFailed(recs) || !Array.isArray(recs)) {
+      toast.error(ipcFailText(recs, t('common.unknownError')))
+    } else {
+      setRecords(recs)
+    }
+    if (hasIpcFailed(runs) || !Array.isArray(runs)) {
+      toast.error(ipcFailText(runs, t('common.unknownError')))
+    } else {
+      setRuntimes(runs)
+    }
+  }, [t, toast])
 
   useEffect(() => {
     void loadCatalog()

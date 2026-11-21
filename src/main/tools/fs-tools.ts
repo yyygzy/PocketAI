@@ -17,6 +17,7 @@ import type { ApprovalPreviewField } from '../../shared/types'
 import { buildFileDiff, diffToText } from '../../shared/fs-diff'
 import { errMsg } from '../error'
 import { OFFLOAD_PREFIX, defaultOffloadRoot, resolveOffloadPath } from '../agent/tool-output-offload'
+import { resolveSharedPath, serializeSharedPath } from '../portable-paths'
 
 const WORKSPACE_KEY = 'agent.workspace_dir'
 const READ_LIMIT_BYTES = 256 * 1024 // 文本读取上限，超出截断
@@ -24,11 +25,11 @@ const BINARY_PROBE_BYTES = 8192 // 前 8KB 含 NUL 视为二进制
 const LIST_LIMIT = 500 // 目录列表条目上限
 
 export function getWorkspaceDir(): string {
-  return appConfigRepo.get(WORKSPACE_KEY) ?? ''
+  return resolveSharedPath(appConfigRepo.get(WORKSPACE_KEY)) ?? ''
 }
 
 export function setWorkspaceDir(dir: string): void {
-  if (dir) appConfigRepo.set(WORKSPACE_KEY, dir)
+  if (dir) appConfigRepo.set(WORKSPACE_KEY, serializeSharedPath(dir) ?? dir)
   else appConfigRepo.delete(WORKSPACE_KEY)
 }
 

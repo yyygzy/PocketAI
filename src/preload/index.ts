@@ -1152,7 +1152,7 @@ const api = {
   // ---------- License 授权 ----------
   activateLicense: (code: string): Promise<LicenseStatus> =>
     ipcRenderer.invoke(IPC.LICENSE_ACTIVATE, code),
-  importLicenseFile: (): Promise<{ canceled: boolean; status?: LicenseStatus }> =>
+  importLicenseFile: (): Promise<{ canceled: boolean; status?: LicenseStatus; pathToken?: string }> =>
     ipcRenderer.invoke(IPC.LICENSE_IMPORT_FILE),
   /** 本机硬盘指纹（16 位 hex）；null = 无法读取 */
   getLicenseFingerprint: (): Promise<string | null> =>
@@ -1340,8 +1340,9 @@ const api = {
   // ---------- License 授权 ----------
   getLicenseStatus: (): Promise<LicenseStatus> =>
     ipcRenderer.invoke(IPC.LICENSE_GET_STATUS),
-  loadLicenseFile: (filePath: string): Promise<LicenseStatus> =>
-    ipcRenderer.invoke(IPC.LICENSE_LOAD_FILE, filePath),
+  /** 只接受 LICENSE_IMPORT_FILE 返回的令牌，绝不传绝对路径（M5） */
+  loadLicenseFile: (pathToken: string): Promise<LicenseStatus> =>
+    ipcRenderer.invoke(IPC.LICENSE_LOAD_FILE, pathToken),
   loadLicenseString: (content: string): Promise<LicenseStatus> =>
     ipcRenderer.invoke(IPC.LICENSE_LOAD_STRING, content),
   clearLicense: (): Promise<{ ok: boolean }> =>

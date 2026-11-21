@@ -17,7 +17,14 @@ import { pythonEnvService, venvPython, venvDir, venvBinDir } from './python-env'
 import { createLogger } from '../logger'
 import { humanizeMcpStartError } from './error-hints'
 import { assertMcpConnectAllowed } from '../agent/dry-run-scope'
-import { assertMcpHostAllowed } from './outbound-policy'
+import {
+  assertMcpHostAllowed,
+  getMcpSitePolicy,
+  isMcpHostAllowed,
+  mcpAllowedPrivateOrigin,
+  sanitizeHost
+} from './outbound-policy'
+import { envValue, mergeMcpEnv } from './env-policy'
 import { noteMcpToolCall } from './outbound-metrics'
 import {
   MCP_CALL_ERROR_CHARS,
@@ -439,9 +446,16 @@ export class McpManager extends EventEmitter {
           Authorization: await mcpOauthService.getAuthorizationHeader(record.id)
         })
       }
+      const sitePolicy = getMcpSitePolicy()
       return new HttpJsonRpcClient({
-        // 启动后策略若被收紧，下一次请求会在 transport 里再判一次（同一把尺）
-        checkHostAllowed: (url) => assertMcpHostAllowed(url, record.name),
+        // 启动后策略若被收紧，下一次请求会在 transport 里再判一次（同一把尺）；
+        // 返回值只对白名单内 origin 放行私网连接，其余由 safeFetch 做 DNS/IP 校验。
+        checkHostAllowed: (url) => {
+          assertMcpHostAllowed(url, record.name)
+          return mcpAllowedPrivateOrigin(url)
+        },
+        // 凭据头只在目标 host 被站点策略放行时附带，策略收紧后一律剥离
+        credentialsAllowed: isMcpHostAllowed(sanitizeHost(record.url) ?? '', sitePolicy),
         url: record.url,
         requestTimeout: TOOL_CALL_TIMEOUT,
         headers: staticHeaders,
@@ -466,8 +480,10 @@ export class McpManager extends EventEmitter {
     // - python（未声明依赖，脚本/自备环境模式）：直接用 record.command，兼容旧用法
     const runtime = record.runtime ?? 'binary'
     let spawnCommand = record.command
-    let spawnArgs = record.args ?? []
-    const baseEnv: Record<string, string> = { ...process.env, ...(record.env ?? {}) } as Record<string, string>
+    const spawnArgs = record.args ?? []
+    // M8：用户 env 先写、应用 process.env 覆盖、应用侧安全值最后写；
+    // 危险键（LD_PRELOAD / NODE_OPTIONS / PATH 等）在合并时一律丢弃。
+    const safetyOverrides: Record<string, string> = {}
     if (runtime === 'python') {
       const packages = record.pythonPackages ?? []
       if (packages.length > 0) {
@@ -482,17 +498,19 @@ export class McpManager extends EventEmitter {
           throw new Error('Python 依赖尚未安装，请先在编辑页点击「安装依赖」，完成后再启动')
         }
         spawnCommand = venvPython(id)
-        Object.assign(baseEnv, {
+        const appPath = envValue(process.env, 'PATH') ?? ''
+        Object.assign(safetyOverrides, {
           VIRTUAL_ENV: venvDir(id),
-          PATH: `${venvBinDir(id)}${path.delimiter}${baseEnv.PATH ?? ''}`
+          PATH: `${venvBinDir(id)}${path.delimiter}${appPath}`
         })
       }
-      Object.assign(baseEnv, {
+      Object.assign(safetyOverrides, {
         PYTHONIOENCODING: 'utf-8',
         PYTHONUTF8: '1',
         PYTHONUNBUFFERED: '1'
       })
     }
+    const baseEnv = mergeMcpEnv(record.env, safetyOverrides)
 
     return new StdioJsonRpcClient({
       command: spawnCommand,

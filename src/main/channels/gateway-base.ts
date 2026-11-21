@@ -130,17 +130,48 @@ export function safeError(err: unknown, method: string): string {
 }
 
 /** 按长度分片（优先在换行处切，避免硬切出现半句） */
+/** 回调 URL 长度上限（正常平台地址远小于此，防超长串进入 WebSocket 构造器） */
+const MAX_GATEWAY_SOCKET_URL_CHARS = 2048
+
 /**
  * 网关回调地址合法性（SEC-23）：socket URL 来自平台服务端响应，可被中间人或
- * 被攻陷的开放接口替换；而我们随后会在这条连接上带上 appKey / bot token / 订阅凭据，
- * 因此只接受 wss（本机回环允许 ws，便于本地联调）。
+ * 被攻陷的开放接口替换；而我们随后会在这条连接上带上 appKey / bot token / 订阅凭据。
+ *
+ * - 缺省：只接受 wss（本机回环允许 ws，便于本地联调）；
+ * - 传入 allowedHosts 时进入严格模式：只接受 wss，且 host 必须命中官方域名后缀
+ *   （根域本身也匹配），IP 字面量、伪装后缀（evil-feishu.cn）与回环地址一律拒绝。
  */
-export function assertGatewaySocketUrl(raw: string, label: string): string {
+export function assertGatewaySocketUrl(
+  raw: string,
+  label: string,
+  allowedHosts?: readonly string[]
+): string {
+  const text = String(raw ?? '')
+  if (!text || text.length > MAX_GATEWAY_SOCKET_URL_CHARS) {
+    throw new Error(`${label} 返回的网关地址长度非法`)
+  }
   let u: URL
   try {
-    u = new URL(String(raw ?? ''))
+    u = new URL(text)
   } catch {
     throw new Error(`${label} 返回的网关地址非法`)
+  }
+  if (u.username || u.password) {
+    throw new Error(`${label} 网关地址不允许携带用户名/密码`)
+  }
+  if (allowedHosts && allowedHosts.length > 0) {
+    if (u.protocol !== 'wss:') {
+      throw new Error(`${label} 网关地址协议不被允许：${u.protocol}`)
+    }
+    const host = u.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '')
+    const matched = allowedHosts.some((suffix) => {
+      const s = suffix.toLowerCase().replace(/^\./, '')
+      return s !== '' && (host === s || host.endsWith(`.${s}`))
+    })
+    if (!matched) {
+      throw new Error(`${label} 网关地址域名不在官方白名单内`)
+    }
+    return u.toString()
   }
   const loopback = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1'
   if (u.protocol !== 'wss:' && !(u.protocol === 'ws:' && loopback)) {
