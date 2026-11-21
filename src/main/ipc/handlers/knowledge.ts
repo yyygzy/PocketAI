@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { BrowserWindow, dialog } from 'electron'
 import { IPC, KB_ASK_MAX_HISTORY } from '../../../shared/types'
 import type { KnowledgeBase } from '../../../shared/types'
+import { dbService } from '../../db/database'
 import { kbRepo } from '../../db/repositories/kb.repo'
 import { kbDocRepo } from '../../db/repositories/kb-doc.repo'
 import { kbChunkRepo } from '../../db/repositories/kb-chunk.repo'
@@ -175,9 +176,15 @@ export function registerKnowledgeHandlers(): void {
         // 非 txt 不应走到（UI 无入口）；v42 前存量无原文无法编辑
         throw new Error('该文本录入于旧版本，原文未保存，无法编辑，请删除后重新添加')
       }
-      kbDocRepo.rename(docId, title)
-      kbDocRepo.setRawText(docId, text)
-      kbDocRepo.setStatus(docId, 'pending')
+      // 三步写包进事务：中途失败回滚，不留「原文已改、status 仍 done」的半更新（旧分块继续被检索）
+      const handle = dbService.getHandle()
+      const tx = handle.transaction(() => {
+        kbDocRepo.rename(docId, title)
+        kbDocRepo.setRawText(docId, text)
+        kbDocRepo.setStatus(docId, 'pending')
+      })
+      tx()
+      // 入队是异步副作用、无法回滚，必须留在事务外：避免 DB 回滚后仍重建索引
       indexQueue.enqueue({ kbId: doc.kbId, docId, kind: 'text', payload: { text, title } })
       return kbDocRepo.get(docId)
     },

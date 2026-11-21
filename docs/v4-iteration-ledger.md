@@ -134,12 +134,12 @@
 - **测试**：新建 `tests/import-external-envelope-gate.test.ts` 3 例（AST 源码级闸门：守卫位置必须排在 `r.conversationCount`/`r.warnings` 读取点之前、支内必含 `setImportExternal(null)`+return、条件只认顶层 `hasIpcFailed(r)` 调用；两条漏杀对照，其中中和写法对照第一版踩了「全文件 9 处同形 `if (hasIpcFailed(r))`、裸 replace 换错目标」的坑，已改为带支内独有下文定位）；新建 `tests/conversation-import-owner-fallback.test.ts` 5 例（复用 conversation-import-rollback 的 mock 骨架：JSON 与加密两条路径 × 助手存在落原 id / 不存在落 null / 本就 null 落 null）。typecheck 0；四个导入相关测试文件 36 例全绿。
 - **另一批并行**：本批期间另一批修复在改 `conversations.ts`（导入失败回滚）、`engine.ts` 等文件，编辑前已重读、只动 assistantId 校验三处与新增公共函数，对方改动原样保留。
 
-#### 留尾待办（审查发现 #3~#6，后续批次做）
+#### 审查发现 #3~#6（已全部修复并提交，验证：typecheck 0 + 全量 696 文件 / 7478 断言 / 0 失败）
 
-- **#3 普通对话 TTFT 未覆盖 reasoning 通道（一般，度量口径）**：`src/main/chat/chat-service.ts` runTarget 只传 `onDelta`，`reasoning_content` 走独立回调 `onReasoningDelta`（`providers/openai-compatible.ts`），Agent 侧 `agent/engine.ts` 两个回调都打点——deepseek-r1/qwen 类先吐思维链的模型 `chat.ttft` 虚高整个思考段，与 `agent.ttft` 不可比。修复方向：runTarget 增传 `onReasoningDelta` 仅用于打点。
-- **#4 reminder reschedule 缺 status 守卫（一般，纵深防御）**：`db/repositories/reminder.repo.ts` 的 `reschedule`/`rescheduleNext` 只有 `WHERE id=?`（同文件 `update`/`cancel` 都带 `status='pending'`），pending 循环提醒理论上可被 RESCHEDULE_NEXT 推到下一周期；UI 入口只在终态行暴露，正常不可达。修复方向：UPDATE 加 `AND status IN ('missed','cancelled','fired')`。
-- **#5 KB_DOC_UPDATE_TEXT 三步 UPDATE 无事务（一般）**：`ipc/handlers/knowledge.ts` 的 rename→setRawText→setStatus 三次独立写，中途失败留半更新（原文已改但 status 仍 done，旧分块继续被检索）；better-sqlite3 同步写失败概率低、可重试自愈。修复方向：三步包进 `handle.transaction`（对照 conversations.ts 导入路径写法）。
-- **#6 weekly 多工作日规则追平跳点（一般，可接受）**：`reminder.repo.ts` computeNextFireAt 的 `advancePastNow` 只按 7 天整周期步进——周一+周三规则、上次周一触发、周三中午「一键重新安排」落点是下周三而非下周一；只晚不早、不丢触发。修复方向：追平循环按「下一个匹配 weekday」迭代而非固定 7 天。
+- **#3 普通对话 TTFT 未覆盖 reasoning 通道（已修）**：`src/main/chat/chat-service.ts` runTarget 原先只传 `onDelta`，`reasoning_content` 走独立回调 `onReasoningDelta`（`providers/openai-compatible.ts`），Agent 侧 `agent/engine.ts` 两个回调都打点——deepseek-r1/qwen 类先吐思维链的模型 `chat.ttft` 虚高整个思考段，与 `agent.ttft` 不可比。修法：抽出 `markTtft`，runTarget 增传 `onReasoningDelta` 仅用于打点（不累加正文、不发 CHAT_CHUNK_EVENT，同 engine.ts 分工）。
+- **#4 reminder reschedule 缺 status 守卫（已修）**：`db/repositories/reminder.repo.ts` 的 `reschedule` 原为裸 `WHERE id=?`（同文件 `update`/`cancel` 都带 `status='pending'`）。修法：UPDATE 加 `AND status IN ('missed','cancelled','fired')`，pending 行不被误改期；同步改 `tests/reminder-repo.test.ts` 的 SQL 形状断言。`rescheduleNext` 本就有 CAS + 前置 pending 排除（原测试已钉），无需再改。
+- **#5 KB_DOC_UPDATE_TEXT 三步 UPDATE 无事务（已修）**：`ipc/handlers/knowledge.ts` 的 rename→setRawText→setStatus 三次独立写，中途失败留半更新（原文已改但 status 仍 done，旧分块继续被检索）。修法：补 `dbService` 导入，三步包进 `handle.transaction`（同 conversations.ts 导入路径写法）；`indexQueue.enqueue` 是异步副作用、留在事务外，回读在提交后。
+- **#6 weekly 多工作日规则追平跳点（已修）**：`reminder.repo.ts` computeNextFireAt 的 weekly 分支原先找到首个匹配 weekday 后按固定 7 天追平——周一+周三规则、上次周一触发、周三中午「一键重新安排」落点错成下周三而非下周一。修法：按「下一个匹配 weekday」逐日迭代（粗估跳过整周避免旧规则循环上万次），`> now` 边界与 DST 日历步进不变；新增一条区分新旧写法的行为用例（落 11-09 周一而非 11-11 周三）。
 
 #### 已知风险，暂不处理（影响范围写明，复评时可改判）
 

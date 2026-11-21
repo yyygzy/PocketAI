@@ -111,12 +111,20 @@ export function computeNextFireAt(prevFireAt: number, rule: ReminderRepeatRule, 
   if (rule.kind === 'weekly') {
     const days = rule.weekdays
     if (days.length === 0) return advanceDaysPastNow(addLocalDays(prevFireAt, 7), 7, now)
-    for (let i = 1; i <= 7; i++) {
-      const candidate = addLocalDays(prevFireAt, i)
-      const dow = ((new Date(candidate).getDay() + 6) % 7) + 1 // 周一=1 ... 周日=7
-      if (days.includes(dow)) return advanceDaysPastNow(candidate, 7, now)
+    // 多工作日规则按「下一个匹配 weekday」逐日找，不能只按 7 天整周期追平：
+    // 周一+周三规则、上次周一触发、周三中午重排时，固定 7 天会落到下周三，
+    // 而本周三 9:00 已过，正确的下一个匹配日是下周一（仍满足 > now、不丢触发）。
+    let cur = addLocalDays(prevFireAt, 1)
+    // 粗估跳过已过去的整周：补录旧规则时避免逐日循环上万次；DST 的 ±小时误差由下面逐日收尾吸收。
+    if (cur <= now) {
+      const approxWeeks = Math.floor((now - cur) / (7 * 86_400_000))
+      if (approxWeeks > 0) cur = addLocalDays(cur, approxWeeks * 7)
     }
-    return advanceDaysPastNow(addLocalDays(prevFireAt, 7), 7, now)
+    for (;;) {
+      const dow = ((new Date(cur).getDay() + 6) % 7) + 1 // 周一=1 ... 周日=7
+      if (cur > now && days.includes(dow)) return cur
+      cur = addLocalDays(cur, 1)
+    }
   }
   // monthly：下一个自然月的 dayOfMonth；该月没有这天就取当月最后一天（2 月 30 号→2 月末）
   const base = new Date(prevFireAt)
@@ -220,11 +228,15 @@ export const reminderRepo = {
       .run('pending', fireAt, JSON.stringify(rule), reminderIdSchema.parse(id))
   },
 
-  /** 历史 tab「重新安排」：missed/cancelled/fired 行重置 pending，可选改循环规则 */
+  /** 历史 tab「重新安排」：missed/cancelled/fired 行重置 pending，可选改循环规则。
+   *  WHERE 带终态白名单：pending 行（当前周期仍有效）不被这里推到下一周期。 */
   reschedule(id: string, fireAt: number, rule?: ReminderRepeatRule): boolean {
     const info = dbService
       .getHandle()
-      .prepare('UPDATE reminders SET status=?, fire_at=?, repeat_rule=? WHERE id=?')
+      .prepare(
+        `UPDATE reminders SET status=?, fire_at=?, repeat_rule=?
+         WHERE id=? AND status IN ('missed','cancelled','fired')`
+      )
       .run(
         'pending',
         fireAt,

@@ -173,7 +173,8 @@ describe('reminderRepo.update — 编辑 pending', () => {
 })
 
 describe('reminderRepo.reschedule — 终态行手动改期（历史 tab 的「改期」入口）', () => {
-  const SQL = "UPDATE reminders SET status=?, fire_at=?, repeat_rule=? WHERE id=?"
+  const SQL = `UPDATE reminders SET status=?, fire_at=?, repeat_rule=?
+         WHERE id=? AND status IN ('missed','cancelled','fired')`
 
   it('带规则改期：写回 pending + 新时间 + 规则 JSON', () => {
     expect(reminderRepo.reschedule('r1', 5000, { kind: 'daily', intervalDays: 2 })).toBe(true)
@@ -186,11 +187,18 @@ describe('reminderRepo.reschedule — 终态行手动改期（历史 tab 的「�
     expect(runMock.mock.calls[0]![2]).toBeNull()
   })
 
-  it('WHERE 只按 id、不带状态条件：这正是 fired/cancelled 行也能改回 pending 的原因', () => {
+  it('终态白名单守卫：fired/cancelled/missed 行能改回 pending，pending 行不被误改期', () => {
     reminderRepo.reschedule('r1', 5000, { kind: 'monthly', dayOfMonth: 1 })
-    const sql = prepareMock.mock.calls[0]![0]
-    // SET 里当然有 status=?，要看的是 WHERE 段
-    expect(sql.split('WHERE')[1]!.trim()).toBe('id=?')
+    const sql = prepareMock.mock.calls[0]![0] as string
+    const where = sql.split('WHERE')[1]!
+    // SET 里当然有 status=?，要看的是 WHERE 段的终态白名单
+    expect(where).toContain('id=?')
+    expect(where).toContain("status IN ('missed','cancelled','fired')")
+    expect(where).not.toContain("status='pending'")
+    // 白名单覆盖除 pending 外的全部状态，不漏掉任何终态
+    expect(where).toContain('missed')
+    expect(where).toContain('cancelled')
+    expect(where).toContain('fired')
   })
 
   it('记录不存在（changes=0）→ false', () => {
@@ -394,6 +402,21 @@ describe('computeNextFireAt — §332 三档都要追平到 now 之后', () => {
     expect(d.getDay(), '周五的提醒不许追平到别的日子').toBe(5)
     expect([d.getHours(), d.getMinutes()]).toEqual([9, 0])
     expect(next - now).toBeLessThanOrEqual(7 * DAY)
+  })
+
+  it('weekly 多工作日 [周一,周三]：上次周一触发、周三中午重排 ⇒ 落下周一而非下周三', () => {
+    // 旧写法：找到 prev 之后首个匹配 weekday（周三 11-04 09:00）后按 7 天整周期追平 ⇒ 落 11-11 周三，晚了两天。
+    // 新写法：按「下一个匹配 weekday」逐日迭代 ⇒ 本周三 09:00 已过，下一个匹配是 11-09 周一。
+    const now = at(2026, 10, 4, 12) // 2026-11-04 周三中午
+    const prev = at(2026, 10, 2, 9) // 2026-11-02 周一 09:00
+    expect(new Date(prev).getDay()).toBe(1)
+    expect(new Date(now).getDay()).toBe(3)
+    const next = computeNextFireAt(prev, { kind: 'weekly', weekdays: [1, 3] }, now)
+    expect(next).toBeGreaterThan(now)
+    const d = new Date(next)
+    expect(d.getDay(), '必须落在周一，不是旧写法给出的周三').toBe(1)
+    expect([d.getMonth(), d.getDate()]).toEqual([10, 9]) // 11-09 周一（旧写法会是 11-11）
+    expect([d.getHours(), d.getMinutes()]).toEqual([9, 0])
   })
 
   it('weekly 空 weekdays（脏规则）⇒ 退化成 7 天周期，同样必须 > now', () => {

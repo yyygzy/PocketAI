@@ -823,9 +823,12 @@ class ChatService {
     // TTFT/整轮耗时实测（Iter-74）：t0 含 withProviderLimit 排队 = 用户真实体感等待
     const streamStart = performance.now()
     let ttftMs: number | undefined
+    const markTtft = (): void => {
+      if (ttftMs === undefined) ttftMs = performance.now() - streamStart
+    }
 
     const sendChunk = (delta: string): void => {
-      if (ttftMs === undefined) ttftMs = performance.now() - streamStart
+      markTtft()
       accumulated += delta
       const e: ChatChunkEvent = { requestId, targetIndex: index, messageId, delta }
       emit(IPC.CHAT_CHUNK_EVENT, e)
@@ -842,7 +845,11 @@ class ChatService {
             // 模型级「关闭思考」对普通对话同样生效：Qwen 等默认思考模型不再额外思考
             ...thinkingParamFor(target.providerId, target.model)
           },
-          { onDelta: sendChunk }
+          {
+            onDelta: sendChunk,
+            // 先吐思维链的模型首个 token 可能走 reasoning 通道；只打 TTFT，不进正文、不发 CHAT_CHUNK_EVENT（同 agent/engine.ts 的分工）
+            onReasoningDelta: markTtft
+          }
         )
       })
 

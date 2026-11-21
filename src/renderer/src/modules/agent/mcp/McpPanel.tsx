@@ -144,7 +144,7 @@ export const McpPanel: React.FC = () => {
     try {
       const catalog = await window.pocketai.listMcpCatalog()
       if (hasIpcFailed(catalog) || !Array.isArray(catalog.entries)) {
-        toast.error(ipcFailText(catalog, t('common.unknownError')))
+        toast.error(hasIpcFailed(catalog) ? (catalog.error ?? t('common.unknownError')) : t('common.unknownError'))
       } else {
         setCatalogEntries(catalog.entries)
       }
@@ -154,7 +154,7 @@ export const McpPanel: React.FC = () => {
     try {
       const oauth = await window.pocketai.listMcpOauthViews()
       if (hasIpcFailed(oauth) || !Array.isArray(oauth.views)) {
-        toast.error(ipcFailText(oauth, t('common.unknownError')))
+        toast.error(hasIpcFailed(oauth) ? (oauth.error ?? t('common.unknownError')) : t('common.unknownError'))
       } else {
         setOauthViews(oauth.views)
       }
