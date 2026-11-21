@@ -299,6 +299,8 @@ const api = {
     scan?: SkillScanResult
     /** verified＝包内校验和一致；absent＝没有校验和，已放行但未校验完整性 */
     checksum?: 'verified' | 'absent'
+    /** 上游声明的许可证，仅导入时告知 */
+    license?: string
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT),
   /* §236：目录导入与「这条技能带了哪些文件」。两个返回类型都带失败分支（safeHandle 把抛错转成返回值）。 */
@@ -314,6 +316,8 @@ const api = {
         nameDuplicated?: boolean
         /** 装前静态扫描的候选与事实；none 时通常不展示 */
         scan?: SkillScanResult
+        /** 上游声明的许可证，仅导入时告知 */
+        license?: string
         error?: string
       }
     | { ok: false; error: string }
@@ -340,6 +344,8 @@ const api = {
     scan?: SkillScanResult
     /** verified＝包内校验和一致；absent＝没有校验和，已放行但未校验完整性 */
     checksum?: 'verified' | 'absent'
+    /** 上游声明的许可证，仅导入时告知 */
+    license?: string
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url, hash ?? ''),
   importSkillDir: (
@@ -354,6 +360,8 @@ const api = {
     forcedOnDemand?: boolean
     /** 清单里没提供 hash、未逐文件校验的数量 */
     unverified?: number
+    /** 上游声明的许可证，仅导入时告知 */
+    license?: string
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_DIR, manifestUrl),
   validateSkill: (text: string): Promise<{ ok: boolean; error?: string; warnings: string[]; shape?: { name: string; description: string; icon: string; content: string } }> =>

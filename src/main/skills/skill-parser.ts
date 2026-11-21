@@ -20,6 +20,8 @@ export interface SkillShape {
   author?: string
   tags?: string[]
   category?: string
+  /** 技能许可证（如 MIT / Apache-2.0）：只用于导入时告知用户，不入库、不注入、不执行 */
+  license?: string
 }
 
 /** 常驻技能的正文上限：它整段进 system prompt */
@@ -28,7 +30,7 @@ export const MAX_RESIDENT_CONTENT_BYTES = 8 * 1024
 export const MAX_STORED_CONTENT_BYTES = 32 * 1024
 
 /** 合法 frontmatter key（白名单，拒绝任意字段注入） */
-const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'icon', 'title', 'version', 'author', 'tags', 'category'])
+const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'icon', 'title', 'version', 'author', 'tags', 'category', 'license'])
 
 /** 标量 YAML 值解析（只处理 string / number / boolean，不支持嵌套） */
 function parseScalar(raw: string): string | number | boolean {
@@ -63,6 +65,9 @@ function parseFrontmatter(text: string): { known: Record<string, string>; ignore
   const out: Record<string, string> = {}
   const ignored: string[] = []
   for (const rawLine of text.split('\n')) {
+    // 只解析顶层标量：缩进子行（如 metadata: 下的 author:）不是本解析器支持的字段，
+    // 旧写法把 trim 后的 author 当顶层 author，会把上游的 metadata.author 误读成技能作者。
+    if (/^\s/.test(rawLine)) continue
     const line = rawLine.trimEnd()
     if (!line || line.startsWith('#')) continue
     const colonIdx = line.indexOf(':')
@@ -128,6 +133,7 @@ export function parseSkillJson(text: string, resident = true): SkillParseResult 
     version: typeof raw.version === 'string' ? raw.version.trim() : undefined,
     author: typeof raw.author === 'string' ? raw.author.trim() : undefined,
     category: typeof raw.category === 'string' ? raw.category.trim() : undefined,
+    license: typeof raw.license === 'string' && raw.license.trim() ? raw.license.trim().slice(0, 64) : undefined,
     tags: Array.isArray(raw.tags)
       ? raw.tags.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).slice(0, 10)
       : undefined
@@ -156,12 +162,13 @@ export function parseSkillMarkdown(text: string, resident = true): SkillParseRes
   const version = (fm.version || '').trim() || undefined
   const author = (fm.author || '').trim() || undefined
   const category = (fm.category || '').trim() || undefined
+  const license = (fm.license || '').trim().slice(0, 64) || undefined
   // tags 支持逗号分隔：tag1, tag2, tag3
   const tags = fm.tags
     ? fm.tags.split(',').map((t) => t.trim()).filter(Boolean).slice(0, 10)
     : undefined
 
-  const shape: SkillShape = { name, description, icon, content, version, author, tags, category }
+  const shape: SkillShape = { name, description, icon, content, version, author, tags, category, license }
   const err = validate(shape, resident)
   if (err) return { shape: null, error: err, ignoredKeys }
   return { shape, error: '', ignoredKeys }

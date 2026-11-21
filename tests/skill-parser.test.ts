@@ -279,3 +279,59 @@ describe('toBuiltinSkill — 转换', () => {
     expect(builtin.tags).toEqual(['code', 'review'])
   })
 })
+
+describe('frontmatter 许可与嵌套字段', () => {
+  it('license 作为已识别字段解析，不再混进"本应用不执行"清单', () => {
+    const md = `---
+name: 许可证技能
+description: 带 license 的上游包
+license: Apache-2.0
+---
+正文内容在这里足够长以通过校验
+`
+    const r = parseSkillMarkdown(md)
+    expect(r.error).toBe('')
+    expect(r.shape?.license).toBe('Apache-2.0')
+    expect(r.ignoredKeys).not.toContain('license')
+    // license 不进 builtin：只用于导入时告知
+    expect(toBuiltinSkill('id', r.shape!)).not.toHaveProperty('license')
+  })
+
+  it('JSON 格式同样解析 license', () => {
+    const r = parseSkillJson(JSON.stringify({
+      name: 'x', content: 'body content here', license: 'MIT'
+    }))
+    expect(r.shape?.license).toBe('MIT')
+  })
+
+  it('metadata 缩进块的 author 不再被误读成顶层 author', () => {
+    const md = `---
+name: 上游包
+description: 描述
+metadata:
+  author: Upstream Author
+  license: MIT
+---
+正文内容在这里足够长以通过校验
+`
+    const r = parseSkillMarkdown(md)
+    expect(r.error).toBe('')
+    expect(r.shape?.author).toBeUndefined()
+    expect(r.shape?.license).toBeUndefined()
+    expect(r.ignoredKeys).toContain('metadata')
+  })
+
+  it('被识别的 license 之外，未知字段仍照旧进 ignoredKeys', () => {
+    const md = `---
+name: 混合包
+description: 描述
+license: MIT
+allowed-tools: [read, write]
+---
+正文内容在这里足够长以通过校验
+`
+    const r = parseSkillMarkdown(md)
+    expect(r.shape?.license).toBe('MIT')
+    expect(r.ignoredKeys).toContain('allowed-tools')
+  })
+})

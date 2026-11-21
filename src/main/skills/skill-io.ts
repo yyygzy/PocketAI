@@ -156,6 +156,8 @@ export async function importSkill(
   scan?: SkillScanResult
   /** verified＝包内校验和一致；absent＝没有校验和（旧包/Markdown），已放行但未校验完整性 */
   checksum?: 'verified' | 'absent'
+  /** 上游声明的许可证（如 MIT），仅导入时告知，不入库 */
+  license?: string
   error?: string
 }> {
   try {
@@ -190,7 +192,7 @@ export async function importSkill(
     const scan = scanSkill({ content: shape.content, ignoredKeys })
     const skill = saveShapeAsSkill(shape)
     auditImported(skill, 'file', path.basename(file), scan)
-    return { ok: true, skill, nameDuplicated, scan, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
+    return { ok: true, skill, nameDuplicated, scan, license: shape.license, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }
@@ -217,6 +219,8 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
   nameDuplicated?: boolean
   /** 装前静态扫描结果（正文 + 随包资源清单 + 白名单外声明字段） */
   scan?: SkillScanResult
+  /** 上游声明的许可证（如 MIT），仅导入时告知，不入库 */
+  license?: string
   error?: string
 }> {
   try {
@@ -277,6 +281,7 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
       ignoredKeys: parsed.ignoredKeys,
       forcedOnDemand: !useResident,
       nameDuplicated,
+      license: shape.license,
       scan
     }
   } catch (e) {
@@ -299,6 +304,8 @@ export async function importSkillDirFromManifest(
   ignoredKeys?: string[]
   forcedOnDemand?: boolean
   unverified?: number
+  /** 上游声明的许可证（如 MIT），仅导入时告知，不入库 */
+  license?: string
   error?: string
 }> {
   let downloaded: DownloadedSkillDir | null = null
@@ -365,7 +372,8 @@ export async function importSkillDirFromManifest(
       skipped,
       ignoredKeys: parsed.ignoredKeys,
       forcedOnDemand: !useResident,
-      unverified: downloaded.unverified
+      unverified: downloaded.unverified,
+      license: shape.license
     }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
@@ -386,6 +394,8 @@ export async function importSkillFromUrl(
   scan?: SkillScanResult
   /** verified＝包内校验和一致；absent＝没有校验和（Markdown/旧包），已放行但未校验完整性 */
   checksum?: 'verified' | 'absent'
+  /** 上游声明的许可证（如 MIT），仅导入时告知，不入库 */
+  license?: string
   error?: string
 }> {
   try {
@@ -421,7 +431,7 @@ export async function importSkillFromUrl(
     const skill = saveShapeAsSkill(shape)
     // 来源明细只留 origin + pathname：URL 的查询串可能带令牌，审计不抄
     auditImported(skill, 'url', safeUrlForDisplay(url), scan)
-    return { ok: true, skill, scan, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
+    return { ok: true, skill, scan, license: shape.license, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }

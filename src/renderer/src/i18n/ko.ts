@@ -1950,6 +1950,7 @@ export const ko = {
   'skill.market.checksumUnsupported': '지원하지 않는 체크섬 형식이라 가져오기를 거부했습니다',
   'skill.market.checksumAbsent': '이 파일에는 체크섬이 없어 무결성을 검증하지 못했습니다(체크섬은 서명이 아닙니다)',
   'skill.market.dirUnverified': '디렉터리 팩의 {n}개 파일에 체크섬이 없어 개별 검증하지 못했습니다',
+  'skill.market.declaredLicense': '상위 선언 라이선스: {license} (참고용이며, 재배포 전 직접 확인하세요)',
   'skill.market.exportDone': '내보내기 완료',
   'skill.market.exportFailed': '내보내기 실패',
   'skill.market.builtinHint': '내장 스킬 내용은 직접 수정할 수 없습니다. "내 스킬로 복제"하면 편집 가능합니다.',

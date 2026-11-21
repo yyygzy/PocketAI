@@ -437,6 +437,12 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
     if (scan && scan.level !== 'none') setScanReport({ skillName, scan })
   }, [])
 
+  /** 上游 frontmatter 声明的许可证只在导入时告知（不入库）：让用户知道再分发要遵守什么 */
+  const licenseNote = useCallback(
+    (license?: string) => (license?.trim() ? t('skill.market.declaredLicense', { license: license.trim() }) : ''),
+    [t]
+  )
+
   const handleImport = useCallback(async () => {
     const r = await window.pocketai.importSkill()
     if (!r.ok) {
@@ -449,12 +455,15 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       setView({ kind: 'installedSkill', id: r.skill.id })
       // 没有校验和的老包照样放行，但必须说出来：不能让人以为「导入成功」等于「完整性已校验」
       const base = r.nameDuplicated ? t('skill.market.importedDupName') : t('skill.market.importDone')
-      const note = r.checksum === 'absent' ? t('skill.market.checksumAbsent') : ''
-      toast.success([base, note].filter(Boolean).join(' '))
+      const notes = [
+        r.checksum === 'absent' ? t('skill.market.checksumAbsent') : '',
+        licenseNote(r.license)
+      ].filter(Boolean)
+      toast.success([base, ...notes].join(' '))
       showScanReport(r.skill.name, r.scan)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSkills, showScanReport, t, toast])
+  }, [refreshSkills, showScanReport, licenseNote, t, toast])
 
   const handleImportFolder = useCallback(async () => {
     const r = await window.pocketai.importSkillFolder()
@@ -471,13 +480,14 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
         (r.ignoredKeys ?? []).length > 0
           ? t('skill.market.ignoredKeys', { keys: r.ignoredKeys!.join('、') })
           : '',
-        (r.skipped ?? []).length > 0 ? t('skill.market.skippedFiles', { n: r.skipped!.length }) : ''
+        (r.skipped ?? []).length > 0 ? t('skill.market.skippedFiles', { n: r.skipped!.length }) : '',
+        licenseNote(r.license)
       ].filter(Boolean)
       toast.success([t('skill.market.importFolderDone'), ...notes].filter(Boolean).join(' '))
       showScanReport(r.skill.name, r.scan)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSkills, showScanReport, t, toast])
+  }, [refreshSkills, showScanReport, licenseNote, t, toast])
 
   /** MCP 配置包导入：校验和、同名并存、凭据清空都由主进程执行，这里只把结果说清楚 */
   const handleImportMcp = useCallback(async () => {
@@ -544,13 +554,14 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
         if ('skipped' in r && (r.skipped ?? []).length > 0) {
           notes.push(t('skill.market.skippedFiles', { n: r.skipped!.length }))
         }
+        notes.push(licenseNote(r.license))
         toast.success([t('skill.market.importDone'), ...notes].filter(Boolean).join(' '))
         showScanReport(r.skill.name, r.scan)
       } else {
         toast.error(remoteImportErrorText(r.error, t))
       }
     },
-    [refreshSkills, showScanReport, t, toast]
+    [refreshSkills, showScanReport, licenseNote, t, toast]
   )
 
   const handleImportFromUrl = useCallback(async () => {
@@ -564,14 +575,17 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
       await refreshSkills()
       // 与在线列表安装同一落点：进详情，绑定区就地可用
       setView({ kind: 'installedSkill', id: r.skill.id })
-      const note = r.checksum === 'absent' ? t('skill.market.checksumAbsent') : ''
-      toast.success([t('skill.market.importDone'), note].filter(Boolean).join(' '))
+      const notes = [
+        r.checksum === 'absent' ? t('skill.market.checksumAbsent') : '',
+        licenseNote(r.license)
+      ].filter(Boolean)
+      toast.success([t('skill.market.importDone'), ...notes].join(' '))
       setUrlInput('')
       showScanReport(r.skill.name, r.scan)
     } else {
       toast.error(remoteImportErrorText(r.error, t))
     }
-  }, [urlInput, refreshSkills, showScanReport, t, toast])
+  }, [urlInput, refreshSkills, showScanReport, licenseNote, t, toast])
 
   // ---------- 第二段：绑定 / 启动 / 授权 ----------
   const reloadAssistants = useCallback(async () => {
