@@ -10,6 +10,8 @@ import type { ChatAttachment, KbDocument } from '../src/shared/types'
 
 const inserted: Array<{ kbId: string; source: string; sourceType: string; title: string }> = []
 let docs: KbDocument[] = []
+/** 默认消息存在；删除竞态用例置 false 验证不再插入孤儿文档 */
+let messageAlive = true
 const ingested: Array<{ kbId: string; docId: string; content: string; name: string }> = []
 let ingestFailFor: string | null = null
 let ocrFailFor: string | null = null
@@ -41,6 +43,10 @@ vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
       docs = docs.filter((d) => d.id !== id)
     }
   }
+}))
+
+vi.mock('../src/main/db/repositories/message.repo', () => ({
+  messageRepo: { getById: () => (messageAlive ? { id: 'msg1' } : null) }
 }))
 
 vi.mock('../src/main/knowledge/ingestion', () => ({
@@ -90,6 +96,7 @@ beforeEach(() => {
   ingestFailFor = null
   ocrFailFor = null
   nextDocId = 0
+  messageAlive = true
 })
 
 describe('ingestAttachmentsToKb', () => {
@@ -147,6 +154,13 @@ describe('ingestAttachmentsToKb', () => {
   it('多个附件共享同一 messageId source 前缀', async () => {
     await ingestAttachmentsToKb('kb1', 'm8', [textAtt('1.txt', '一'), imgAtt('2.png', '二')], OCR)
     expect(inserted.map((i) => i.source)).toEqual(['msg_m8', 'msg_m8'])
+  })
+
+  it('消息在异步入库期间被删 ⇒ 不再插入孤儿 KB 文档（文本/图片都不插）', async () => {
+    messageAlive = false
+    await ingestAttachmentsToKb('kb1', 'm9', [textAtt('1.txt', '一'), imgAtt('2.png', '二')], OCR)
+    expect(inserted).toEqual([])
+    expect(ingested).toEqual([])
   })
 })
 
