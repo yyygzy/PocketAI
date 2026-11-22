@@ -869,7 +869,7 @@ export const zh = {
   'agent.tplDescTime': '时间时区：获取当前时间与时区转换',
   'agent.tplDescSeq': '顺序思考：分步推理复杂问题，提升回答质量',
   'agent.tplDescGit': 'Git 仓库：查询提交历史、分支与状态',
-  'agent.tplDescPuppeteer': '网页自动化：浏览器操作、截图、点击与表单填写',
+  'agent.tplDescPlaywright': '网页自动化：基于无障碍树定位元素，操作更稳；支持点击、填表、截图与连接已有浏览器',
   'agent.tplDescSqlite': 'SQLite 数据库：本地数据库查询与表结构浏览',
   'agent.tplCatWeb': '网页抓取',
   'agent.tplCatFile': '文件与数据',

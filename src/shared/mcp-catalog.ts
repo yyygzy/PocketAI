@@ -65,10 +65,10 @@ const BUILTIN_META: Record<
     permissionNote: '只读网页，不会改动本机文件；只在你允许联网时使用。',
     risk: 'low'
   },
-  puppeteer: {
+  playwright: {
     title: '浏览器自动化',
-    summary: '替你打开网页、点击按钮、填表和截图。',
-    capabilities: ['自动打开浏览器访问网页', '点击、输入、提交表单', '截图并保存页面结果'],
+    summary: '基于无障碍树操作网页：打开、点击、填表与截图，定位更稳。',
+    capabilities: ['用无障碍树定位元素并操作网页', '点击、输入、提交表单', '截图并保存页面结果', '可连接已有浏览器复用登录态'],
     permissionNote: '能操作浏览器里的一切内容；涉及提交、发送、删除等动作时会逐次确认。',
     risk: 'high'
   },

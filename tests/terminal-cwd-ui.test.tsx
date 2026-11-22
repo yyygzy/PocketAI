@@ -1,7 +1,7 @@
 // 终端工作目录 UI：回包带的 cwd 要显示出来；点它编辑、回车提交要用新目录重启 shell；
 // 清空提交＝恢复默认（startTerminal 不传参）；无效目录由主进程退档，界面显示回包的真实落点。
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, screen, waitFor, cleanup } from '@testing-library/react'
 import { mountWithProviders, stubPocketai } from './helpers/renderer'
 import { TerminalModule } from '../src/renderer/src/modules/terminal/TerminalModule'

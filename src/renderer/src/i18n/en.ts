@@ -868,7 +868,7 @@ export const en = {
   'agent.tplDescTime': 'Time: get the current time and convert time zones',
   'agent.tplDescSeq': 'Sequential thinking: step-by-step reasoning for complex problems',
   'agent.tplDescGit': 'Git repository: query commit history, branches and status',
-  'agent.tplDescPuppeteer': 'Web automation: browser control, screenshots, clicks and forms',
+  'agent.tplDescPlaywright': 'Web automation via accessibility tree: stable clicks, forms, screenshots and connect-to-existing-browser',
   'agent.tplDescSqlite': 'SQLite database: query local databases and browse schemas',
   'agent.tplCatWeb': 'Web Scraping',
   'agent.tplCatFile': 'Files & Data',

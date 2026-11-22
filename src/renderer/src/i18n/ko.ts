@@ -841,7 +841,7 @@ export const ko = {
   'agent.tplDescTime': '시간·시간대: 현재 시간 조회 및 변환',
   'agent.tplDescSeq': '순차 사고: 복잡한 문제를 단계별 추론하여 품질 향상',
   'agent.tplDescGit': 'Git 저장소: 커밋 이력·브랜치·상태 조회',
-  'agent.tplDescPuppeteer': '웹 자동화: 브라우저 제어·스크린샷·클릭·폼 입력',
+  'agent.tplDescPlaywright': '웹 자동화: 접근성 트리로 요소를 찾아 클릭·입력·스크린샷·기존 브라우저 연결 지원',
   'agent.tplDescSqlite': 'SQLite 데이터베이스: 로컬 DB 쿼리 및 스키마 탐색',
   'agent.tplCatWeb': '웹 수집',
   'agent.tplCatFile': '파일 및 데이터',

@@ -45,15 +45,17 @@ const TEMPLATES: McpTemplate[] = [
     }
   },
   {
-    id: 'puppeteer',
-    desc: 'agent.tplDescPuppeteer',
+    id: 'playwright',
+    desc: 'agent.tplDescPlaywright',
     category: 'web',
     draft: {
-      name: 'puppeteer',
+      name: 'playwright',
       transport: 'stdio',
       runtime: 'node',
       command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-puppeteer'],
+      // Playwright MCP 用无障碍树（而非截图）定位元素，交互确定性强；
+      // 官方包 @playwright/mcp，默认有头模式，需要连接已有浏览器可加 --cdp-endpoint / --extension。
+      args: ['-y', '@playwright/mcp@latest'],
       env: {},
       url: null,
       headers: {},

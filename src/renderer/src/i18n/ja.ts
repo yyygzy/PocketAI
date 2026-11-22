@@ -841,7 +841,7 @@ export const ja = {
   'agent.tplDescTime': '時刻・タイムゾーン：現在時刻の取得と変換',
   'agent.tplDescSeq': '順次思考：複雑な問題を段階的に推論し回答品質を向上',
   'agent.tplDescGit': 'Git リポジトリ：コミット履歴・ブランチ・状態を照会',
-  'agent.tplDescPuppeteer': 'Web 自動化：ブラウザ操作・スクリーンショット・クリック・フォーム入力',
+  'agent.tplDescPlaywright': 'Web 自動化：アクセシビリティツリーで要素を特定し、クリック・入力・スクリーンショット・既存ブラウザ接続に対応',
   'agent.tplDescSqlite': 'SQLite データベース：ローカル DB のクエリとスキーマ参照',
   'agent.tplCatWeb': 'Web 取得',
   'agent.tplCatFile': 'ファイルとデータ',

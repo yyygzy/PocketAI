@@ -31,11 +31,12 @@ describe('模板清单结构', () => {
     }
   })
 
-  it('新增 puppeteer/sqlite 模板结构正确', () => {
-    const puppeteer = templates.find((t) => t.id === 'puppeteer')!
-    expect(puppeteer.draft.runtime).toBe('node')
-    expect(puppeteer.draft.args).toEqual(['-y', '@modelcontextprotocol/server-puppeteer'])
-    expect(puppeteer.placeholders).toBeUndefined()
+  it('playwright/sqlite 模板结构正确', () => {
+    const playwright = templates.find((t) => t.id === 'playwright')!
+    expect(playwright.draft.runtime).toBe('node')
+    expect(playwright.draft.command).toBe('npx')
+    expect(playwright.draft.args).toEqual(['-y', '@playwright/mcp@latest'])
+    expect(playwright.placeholders).toBeUndefined()
     const sqlite = templates.find((t) => t.id === 'sqlite')!
     expect(sqlite.draft.runtime).toBe('python')
     expect(sqlite.draft.pythonPackages).toEqual(['mcp-server-sqlite'])

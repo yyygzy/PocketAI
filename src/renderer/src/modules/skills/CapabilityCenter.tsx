@@ -1919,8 +1919,8 @@ function templateDescText(id: string, t: (k: string) => string): string {
   switch (id) {
     case 'fetch':
       return t('agent.tplDescFetch')
-    case 'puppeteer':
-      return t('agent.tplDescPuppeteer')
+    case 'playwright':
+      return t('agent.tplDescPlaywright')
     case 'filesystem':
       return t('agent.tplDescFilesystem')
     case 'git':
