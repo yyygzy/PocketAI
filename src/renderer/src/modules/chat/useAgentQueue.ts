@@ -46,6 +46,8 @@ export interface AgentQueueApi {
   ackInterject: (clientRef: string) => void
   /** 一轮结束后的结算：归位未送达的插队项，并按需自动发下一条 */
   settleAfterRun: (conversationId: string, requestId: string, autoSend: boolean) => void
+  /** 自动发出的那条被主进程拒绝时归回队列（否则消息既不进对话也不回队列） */
+  restoreSent: (text: string) => void
 }
 
 export function useAgentQueue(host: AgentQueueHost): AgentQueueApi {
@@ -202,8 +204,29 @@ export function useAgentQueue(host: AgentQueueHost): AgentQueueApi {
     [writeQueue]
   )
 
+  /**
+   * 自动发送的那条被主进程拒绝（CHAT_NO_TARGET / AGENT_RUN_BUSY / BUDGET_EXCEEDED 等）。
+   * settleAfterRun 已经把它从队列摘掉并登记了账本；这里用一个新 clientRef 放回队尾，
+   * 不复用旧 key，避免被本轮的幂等账本再次拦下。
+   */
+  const restoreSent = useCallback(
+    (text: string): void => {
+      const conversationId = hostRef.current.getConversationId()
+      if (!conversationId || !text.trim()) return
+      const item: AgentQueueItem = {
+        clientRef: `q_restore_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        conversationId,
+        text,
+        interjecting: false
+      }
+      writeQueue([...queueRef.current.filter((q) => q.text !== text), item])
+    },
+    [writeQueue]
+  )
+
   return {
     queue,
+    restoreSent,
     enqueueText,
     interjectText,
     dropQueued,

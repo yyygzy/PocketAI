@@ -1914,6 +1914,11 @@ export interface ChatDoneEvent {
   fullContent: string
   /** 知识库引用来源（RAG 检索命中的 chunk 元信息） */
   sources?: MessageSource[]
+  /**
+   * 落定状态：省略＝旧口径的成功；'aborted'＝用户主动停止（流式占位仍走 done 通道推送，
+   * 但渲染层据此记 aborted，不再当成"回复已完成"弹通知或聚焦摘要）。
+   */
+  status?: 'done' | 'aborted'
 }
 
 /** 智能标题后台生成完成事件（主进程广播，渲染端就地更新会话列表） */

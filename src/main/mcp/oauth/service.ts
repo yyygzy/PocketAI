@@ -246,6 +246,10 @@ export class McpOauthService {
 
   /** 用户主动清除授权：本地立即删除；服务端 revocation 尽力而为，不影响本地结果 */
   async clear(serverId: string): Promise<void> {
+    // 先取消进行中的授权：否则用户在浏览器完成回调时 finishAuthorization 看到自己
+    // 仍是当前 pending，照常写入新 token 并广播 authorized——清除被静默回滚，
+    // 且 revoke 撤的是旧 token、新 token 反而有效。
+    this.cancelAuth(serverId)
     const rec = this.deps.repo.get(serverId)
     this.deps.repo.clear(serverId)
     this.emit(serverId)

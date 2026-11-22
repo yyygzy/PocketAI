@@ -916,7 +916,10 @@ class ChatService {
           targetIndex: index,
           messageId,
           fullContent: partial,
-          sources
+          sources,
+          // 仍走 done 通道推送已生成的部分内容，但带上真实落定状态：
+          // 渲染层据此记 aborted，不再误报"回复已完成"并聚焦该轮摘要。
+          status: 'aborted'
         }
         emit(IPC.CHAT_DONE_EVENT, e)
       } else {

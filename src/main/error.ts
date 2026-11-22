@@ -12,6 +12,9 @@ export function errMsg(e: unknown, fallback = '未知错误'): string {
 
 /** 是否为主动中止（AbortSignal.abort / 超时 abort）抛出的错误 */
 export function isAbortError(e: unknown): boolean {
-  if (e instanceof DOMException) return e.name === 'AbortError'
+  // DOMException 在 Node/Chromium 里既可能是主动 AbortError，也可能是
+  // AbortSignal.timeout() 到期的 TimeoutError。旧写法对 DOMException 只认前者，
+  // 导致绘图 120s 超时的专用文案分支永远不可达、还会把所有 Key 重试一遍。
+  if (e instanceof DOMException) return e.name === 'AbortError' || e.name === 'TimeoutError'
   return e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')
 }

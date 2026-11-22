@@ -151,7 +151,10 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     }
 
     const offDone = window.pocketai.onChatDone((e) => {
-      if (e.requestId === requestIdRef.current) markSettled(e.requestId, e.targetIndex, { status: 'done' })
+      if (e.requestId !== requestIdRef.current) return
+      // 用户停止仍走 done 通道推部分内容，但事件带 status:'aborted'：
+      // 记成 done 会让 settledOutcome 汇总出成功，误弹"回复已完成"并聚焦摘要。
+      markSettled(e.requestId, e.targetIndex, { status: e.status === 'aborted' ? 'aborted' : 'done' })
     })
     const offError = window.pocketai.onChatError((e) => {
       if (e.requestId === requestIdRef.current) markSettled(e.requestId, e.targetIndex, { status: 'error', error: e.error })

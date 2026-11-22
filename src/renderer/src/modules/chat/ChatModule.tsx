@@ -147,6 +147,8 @@ export const ChatModule: React.FC = () => {
   /** P4 批次 0：运行中排队/插队迁到对话壳，host 需要的「此刻」取值全部走 ref */
   const agentModeRef = useRef(false)
   const queueSendRef = useRef<(text: string, attachments: ChatAttachment[]) => void>(() => {})
+  /** 最近一次队列自动发送是否被主进程拒绝（由 onChatSendFailed 置位） */
+  const queueSendFailedRef = useRef(false)
   const queueAckRef = useRef<(clientRef: string) => void>(() => {})
   const queueSettleRef = useRef<(convId: string, requestId: string, autoSend: boolean) => void>(() => {})
   // §260：会话／归档／分组这三发读连同「失败对象绝不进 state」的收口一起抽到 hook 里
@@ -406,7 +408,8 @@ export const ChatModule: React.FC = () => {
     dropQueued,
     sendQueuedNow,
     ackInterject,
-    settleAfterRun: settleQueueAfterRun
+    settleAfterRun: settleQueueAfterRun,
+    restoreSent: restoreQueuedSent
   } = useAgentQueue({
     getConversationId: () => currentConvRef.current,
     getRequestId: () => getRequestId(),
@@ -1450,6 +1453,9 @@ export const ChatModule: React.FC = () => {
    */
   const onChatSendFailed = (requestId: string, convId: string, msg: IpcFailureInput): void => {
     failStream(requestId, convId)
+    // 自动发送的排队条已被 settleAfterRun 摘除；这里置位让 queueSendRef 包裹层把它放回队列，
+    // 否则这条消息既不进对话也不回队列，用户只能重新输入。
+    queueSendFailedRef.current = true
     const text = chatSendFailureText(msg, t) || t('common.unknownError')
     toast.error(text)
   }
@@ -1547,9 +1553,16 @@ export const ChatModule: React.FC = () => {
       sendBusyRef.current = false
     }
   }
-  // 队列的自动发送与排队条「发送」都走这里：始终指向当前渲染的 handleSend（含最新 agentMode/targets）
-  queueSendRef.current = (text, attachments) => {
-    void handleSend(text, attachments)
+  // 队列的自动发送与排队条「发送」都走这里：始终指向当前渲染的 handleSend（含最新 agentMode/targets）。
+  // 主进程可能在落库前拒绝（预算/无目标/正忙）：handleSend 走 onChatSendFailed 收口，
+  // 这里据失败标记把已摘除的那条放回队列，避免静默丢消息。
+  queueSendRef.current = async (text, attachments) => {
+    queueSendFailedRef.current = false
+    await handleSend(text, attachments)
+    if (queueSendFailedRef.current) {
+      queueSendFailedRef.current = false
+      restoreQueuedSent(text)
+    }
   }
 
   /**
