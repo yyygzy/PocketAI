@@ -3238,6 +3238,9 @@ export const IPC = {
   OLLAMA_PULL_EVENT: 'ollama:pull-event',
   OLLAMA_MIRROR_GET: 'ollama:mirror-get',
   OLLAMA_MIRROR_SET: 'ollama:mirror-set',
+  /** Ollama keep_alive：模型驻留时长（prefix cache 命中前提） */
+  OLLAMA_KEEPALIVE_GET: 'ollama:keepalive-get',
+  OLLAMA_KEEPALIVE_SET: 'ollama:keepalive-set',
 
   // Python MCP 虚拟环境（venv + pip）
   PYTHON_ENV_INSTALL: 'python-env:install',

@@ -191,7 +191,9 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     private readonly baseUrl: string,
     private readonly apiKeys: string[] = [],
     /** Anthropic prompt caching：对 system 与最后一条 user 消息打 cache_control 断点 */
-    private readonly promptCache = false
+    private readonly promptCache = false,
+    /** Ollama keep_alive：让模型驻留内存以命中 prefix cache；其他端点不下发 */
+    private readonly keepAlive?: string
   ) {}
 
   private nextKey(): string | null {
@@ -291,6 +293,8 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     if (typeof params.presencePenalty === 'number') body.presence_penalty = params.presencePenalty
     // Qwen/DashScope 专用：只在用户显式配置时下发（多数 OpenAI 兼容端点不认这个字段）
     if (typeof params.enableThinking === 'boolean') body.enable_thinking = params.enableThinking
+    // Ollama 专用：keep_alive 让模型驻留内存以命中 prefix cache；仅 ollama provider 配置了才带
+    if (this.keepAlive) body.keep_alive = this.keepAlive
 
     // ── 超时与取消：外部取消 + 内部三档超时合并到同一个 controller ──
     const ac = new AbortController()

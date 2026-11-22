@@ -8,6 +8,17 @@ import type { ProviderRecord } from '../../shared/types'
 
 class ProviderManager {
   private adapters = new Map<string, ProviderAdapter>()
+  /**
+   * Ollama keep_alive 读取器，由主进程入口注入（避免本模块顶层拉入 app_config → portable → electron
+   * 依赖链，那会让纯 manager 测试在无 electron mock 时崩）。未注入时返回 undefined＝不下发。
+   */
+  private keepAliveResolver: () => string | undefined = () => undefined
+
+  setKeepAliveResolver(fn: () => string | undefined): void {
+    this.keepAliveResolver = fn
+    // 已缓存的 ollama adapter 拿不到新配置：清掉让下次 getAdapter 重建
+    this.adapters.clear()
+  }
 
   /** 获取（或创建）某 Provider 的适配器 */
   getAdapter(id: string): ProviderAdapter {
@@ -24,7 +35,10 @@ class ProviderManager {
     const adapter = new OpenAICompatibleAdapter(
       normalizeBaseUrl(record.baseUrl),
       record.apiKeys,
-      record.type === 'anthropic'
+      record.type === 'anthropic',
+      // 只有本地 Ollama 才带 keep_alive（让模型驻留内存命中 prefix cache）；
+      // 其他 OpenAI 兼容端点不认这个字段，绝不污染。
+      record.type === 'ollama' ? this.keepAliveResolver() : undefined
     )
     this.adapters.set(id, adapter)
     return adapter

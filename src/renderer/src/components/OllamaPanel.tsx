@@ -41,6 +41,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   // 出路只有"关掉面板再开一次"，而 Ollama 面板里可能正在配别的东西 ⇒ 按 §268 判据算"代价大到等于没出口"⇒ 配一颗重试键。
   const [mirrorUnread, setMirrorUnread] = useState<{ error: string } | null>(null)
   const { notice: mirrorSaved, show: markMirrorSaved } = useTransientNotice<boolean>(2000)
+  // keep_alive：模型驻留时长，决定 prefix cache 能否跨请求命中（Ollama 默认 5 分钟后卸载）
+  const [keepAliveDraft, setKeepAliveDraft] = useState('')
+  const [keepAliveSaved, setKeepAliveSaved] = useState(false)
   // handleStop 的延时回调：组件卸载后必须清理，避免对已卸载组件 setState
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -99,6 +102,17 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   useEffect(() => {
     refresh()
     loadMirror()
+    window.pocketai.getOllamaKeepAlive().then((r) => {
+      if (!r.ok) {
+        // 判了失败面就得接管：否则面板停在空草稿，看着像"没设过驻留"（§250）
+        setErr(`${t('ollama.keepAliveReadFailed')}${r.error ? `（${r.error}）` : ''}`)
+        return
+      }
+      if (r.keepAlive != null) setKeepAliveDraft(r.keepAlive)
+    }).catch((e: unknown) => {
+      setErr(errText(e, t('ollama.keepAliveReadFailed')))
+      reportIpcError('ollama.getKeepAlive')(e)
+    })
     const off1 = window.pocketai.onOllamaInstallEvent((e) => setInstallEvt(e))
     const timer = setInterval(refresh, 8000) // 兜底轮询（外部启停/系统 ollama 变化）
     return () => {
@@ -354,6 +368,47 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
           <div className="mt-1 leading-relaxed">
             {mirror ? t('ollama.mirrorOn') : t('ollama.mirrorHint')}
             {mirrorSaved && <span className="text-[var(--color-success)]"> ✓ {t('ollama.mirrorSaved')}</span>}
+          </div>
+        </details>
+      )}
+
+      {/* keep_alive：模型驻留时长——prefix cache 命中的前提，仅对 ollama provider 生效 */}
+      {status?.liveness === 'up' && (
+        <details className="text-[10px] text-[var(--color-text-muted)]">
+          <summary className="cursor-pointer select-none hover:text-[var(--color-text)]">
+            {t('ollama.keepAliveTitle')}
+          </summary>
+          <div className="mt-1.5 flex gap-1.5">
+            <input
+              data-testid="ollama-keepalive-input"
+              className="input flex-1 py-1 text-[10px]"
+              placeholder={t('ollama.keepAlivePh')}
+              value={keepAliveDraft}
+              onChange={(e) => setKeepAliveDraft(e.target.value)}
+            />
+            <button
+              data-testid="ollama-keepalive-save"
+              className="shrink-0 px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text)]"
+              onClick={async () => {
+                try {
+                  const r = await window.pocketai.setOllamaKeepAlive(keepAliveDraft.trim())
+                  if (r.ok) {
+                    setKeepAliveSaved(true)
+                    setErr('')
+                  } else {
+                    setErr(r.error || t('common.unknownError'))
+                  }
+                } catch (e) {
+                  setErr(errText(e))
+                }
+              }}
+            >
+              {t('ollama.keepAliveSave')}
+            </button>
+          </div>
+          <div className="mt-1 leading-relaxed">
+            {t('ollama.keepAliveHint')}
+            {keepAliveSaved && <span className="text-[var(--color-success)]"> ✓ {t('ollama.keepAliveSaved')}</span>}
           </div>
         </details>
       )}

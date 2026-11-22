@@ -1,7 +1,9 @@
 // Ollama 便携运行时 IPC：安装/启停/拉模型/镜像源
 import { IPC } from '../../../shared/types'
 import { ollamaRuntime } from '../../ollama/ollama-runtime'
+import { getOllamaKeepAlive, setOllamaKeepAlive } from '../../ollama/keepalive-config'
 import { providerRepo } from '../../db/repositories/provider.repo'
+import { providerManager } from '../../providers/manager'
 import { broadcast } from '../broadcast'
 import { safeHandle, argsSchema, z } from '../safe-handle'
 
@@ -31,6 +33,9 @@ function ensureOllamaProvider(model: string): void {
 }
 
 export function registerOllamaHandlers(): void {
+  // 把 keep_alive 读取器注入 provider manager：manager 本身不碰 DB，
+  // 这里才把 app_config 依赖接进来（纯 manager 测试无需 electron mock）。
+  providerManager.setKeepAliveResolver(() => getOllamaKeepAlive())
   safeHandle(IPC.OLLAMA_GET_STATUS, () => ollamaRuntime.getStatus())
   safeHandle(IPC.OLLAMA_INSTALL, async () =>
     ollamaRuntime.install((e) => broadcast(IPC.OLLAMA_EVENT, e))
@@ -59,6 +64,16 @@ export function registerOllamaHandlers(): void {
   safeHandle(IPC.OLLAMA_MIRROR_GET, () => ({ ok: true, mirror: ollamaRuntime.getMirror() }))
   safeHandle(IPC.OLLAMA_MIRROR_SET, (_e, prefix: string) => {
     ollamaRuntime.setMirror(String(prefix ?? ''))
+    return { ok: true }
+  }, argsSchema(z.string()))
+  // keep_alive 配置：让本地模型驻留内存命中 prefix cache；仅 ollama provider 下发。
+  safeHandle(IPC.OLLAMA_KEEPALIVE_GET, () => ({ ok: true, keepAlive: getOllamaKeepAlive() ?? '' }))
+  safeHandle(IPC.OLLAMA_KEEPALIVE_SET, (_e, value: string) => {
+    if (!setOllamaKeepAlive(String(value ?? ''))) {
+      return { ok: false, error: '驻留时间格式不正确（示例：10m / 24h / -1，留空恢复默认）' }
+    }
+    // 已缓存的 ollama adapter 是旧配置构造的，清掉让下次请求重建后带上新 keep_alive
+    providerManager.invalidate()
     return { ok: true }
   }, argsSchema(z.string()))
 }

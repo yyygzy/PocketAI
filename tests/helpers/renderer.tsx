@@ -67,6 +67,9 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   // 与 §436 的订阅类通道同口径给空默认；专门断言 OAuth 面的用例自己覆盖这两个键。
   if (!state.impls.has('onMcpOauthStatus')) state.impls.set('onMcpOauthStatus', () => () => { /* 订阅卸载 */ })
   if (!state.impls.has('listMcpOauthViews')) state.impls.set('listMcpOauthViews', () => ({ ok: true, views: [] }))
+  // Ollama 面板挂载即读 keep_alive（模型驻留配置）——与 mirror 一样是 mount 固定副作用；
+  // 专门断言这一格的用例自己覆盖该键。
+  if (!state.impls.has('getOllamaKeepAlive')) state.impls.set('getOllamaKeepAlive', () => ({ ok: true, keepAlive: '' }))
   const g = globalThis as unknown as { window: { pocketai: unknown } }
   g.window.pocketai = buildStub()
 }

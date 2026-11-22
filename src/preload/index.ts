@@ -1695,7 +1695,12 @@ const api = {
   getOllamaMirror: (): Promise<{ ok: boolean; mirror?: string }> =>
     ipcRenderer.invoke(IPC.OLLAMA_MIRROR_GET),
   setOllamaMirror: (prefix: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke(IPC.OLLAMA_MIRROR_SET, prefix)
+    ipcRenderer.invoke(IPC.OLLAMA_MIRROR_SET, prefix),
+  /** Ollama keep_alive：模型驻留时长（prefix cache 命中前提）；空串＝用默认 5 分钟 */
+  getOllamaKeepAlive: (): Promise<{ ok: boolean; keepAlive?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_KEEPALIVE_GET),
+  setOllamaKeepAlive: (value: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_KEEPALIVE_SET, value)
 }
 
 contextBridge.exposeInMainWorld('pocketai', api)
