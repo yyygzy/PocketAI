@@ -48,3 +48,6 @@ scripts/tests/*.json
 scripts/tests/*.log
 # vitest JSON reporter 产物
 .vitest/
+# 本地审查/验证临时脚本与报告（不入库）
+_*.cjs
+verify.json
