@@ -10,11 +10,13 @@
 // 应用目录——实际落点取决于进程从哪里启动。现在按 resolveTerminalCwd 的优先级显式选定。
 //
 // 生命周期：每个渲染窗口（webContentsId）最多一个 session；窗口销毁/模块 kill 时清理。
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { accessSync, constants, statSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, platform } from 'node:os'
+import { promisify } from 'node:util'
 import { app, type WebContents } from 'electron'
 import { IPC } from '../../shared/types'
+import { errMsg } from '../error'
 import { classifyDenyOnly } from '../tools/shell-tools'
 import { getWorkspaceDir } from '../tools/fs-tools'
 import { APP_ROOT } from '../portable'
@@ -114,6 +116,11 @@ export function startTerminal(wc: WebContents, requestedCwd?: string): { ok: tru
   proc.on('error', (e) => {
     log.warn('终端进程错误', { error: e.message })
     push('stderr', `\n[进程错误] ${e.message}\n`)
+    // spawn() 返回对象后才注册 error 监听；$SHELL 不存在时 error(ENOENT) 后
+    // Node 不保证再发 exit。不清 session 的话渲染端 running 永久为 true，
+    // 之后每次输入都得到"终端未运行"，用户只能切模块重开。
+    if (sessions.get(ownerId)?.proc === proc) sessions.delete(ownerId)
+    push('exit', '-1')
   })
 
   sessions.set(ownerId, { proc, ownerId })
@@ -144,6 +151,17 @@ export function killTerminal(ownerId: number): void {
   const s = sessions.get(ownerId)
   if (!s) return
   sessions.delete(ownerId)
+  const pid = s.proc.pid
+  if (platform() === 'win32' && typeof pid === 'number') {
+    // proc.kill() 在 Windows 只杀直接子进程 cmd.exe；用户跑 npm run dev / ping -t
+    // 后离开模块，孙进程仍占端口与 CPU。taskkill /T /F 连带整棵树，与
+    // killAllTerminals「防子进程泄漏」的承诺对齐。异步执行、不阻塞 IPC 返回。
+    void promisify(execFile)('taskkill', ['/PID', String(pid), '/T', '/F']).catch((e) => {
+      log.warn('终端进程树终止失败（回退单进程 kill）', { error: errMsg(e) })
+      try { s.proc.kill() } catch { /* 进程可能已退出 */ }
+    })
+    return
+  }
   try {
     s.proc.kill()
   } catch (e) {

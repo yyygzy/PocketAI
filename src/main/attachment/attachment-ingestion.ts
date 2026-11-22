@@ -8,6 +8,7 @@
 // 5. 入库失败静默忽略（不阻断聊天主流程），仅记日志
 import { ingestionService } from '../knowledge/ingestion'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
+import { messageRepo } from '../db/repositories/message.repo'
 import { ocrImageDataUrl } from '../knowledge/ocr'
 import type { ChatAttachment } from '../../shared/types'
 import { errMsg } from '../error'
@@ -37,8 +38,15 @@ export async function ingestAttachmentsToKb(
   attachments: ChatAttachment[],
   ocrConfig: KbOcrConfig | null
 ): Promise<void> {
+  // 这条链路是 fire-and-forget，图片还要等 OCR（数秒）。期间用户删消息/截断重跑时，
+  // deleteMessageAttachmentDocs 按 source=msg_<id> 扫描找不到尚未插入的文档；等 OCR
+  // 回来再插就成了永远清不掉的孤儿（仍可被检索命中）。每个写入点前复核消息还在。
+  const stillAlive = (): boolean => !!messageRepo.getById(messageId)
+  if (!stillAlive()) return
+
   for (const att of attachments) {
     if (att.type === 'kb') continue
+    if (!stillAlive()) return
 
     if (att.type === 'text') {
       if (!att.data?.trim()) continue
@@ -62,6 +70,8 @@ export async function ingestAttachmentsToKb(
       if (!ocrConfig || !att.data) continue
       try {
         const text = await ocrImageDataUrl(att.data, ocrConfig.providerId, ocrConfig.model)
+        // OCR 耗时数秒，回来时消息可能已被删除 ⇒ 不再插文档，避免孤儿
+        if (!stillAlive()) return
         const doc = kbDocRepo.insert({
           kbId,
           source: `msg_${messageId}`,

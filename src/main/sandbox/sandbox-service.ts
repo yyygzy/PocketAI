@@ -7,6 +7,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { DATA_DIR } from '../portable'
+import { assertWithinWorkspaceByRealpath } from '../tools/fs-tools'
 import { sandboxRepo } from '../db/repositories/sandbox.repo'
 import { errMsg } from '../error'
 import { createLogger } from '../logger'
@@ -29,6 +30,8 @@ function resolveDataPath(rel: string): string {
   if (abs !== DATA_DIR && !abs.startsWith(DATA_DIR + path.sep)) {
     throw new Error('路径超出数据目录范围')
   }
+  // 与 Files 模块同一套符号链接守卫：单凭字符串前缀挡不住 sandbox/ 内指向外部的链接。
+  assertWithinWorkspaceByRealpath(abs, DATA_DIR)
   return abs
 }
 

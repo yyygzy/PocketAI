@@ -12,6 +12,8 @@ import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { nativeImage, dialog } from 'electron'
 import { DATA_DIR } from '../portable'
+import { assertWithinWorkspaceByRealpath } from '../tools/fs-tools'
+import { writeFileAtomicSync } from '../files/atomic-write'
 import { providerManager } from '../providers/manager'
 import { OpenAICompatibleAdapter } from '../providers/openai-compatible'
 import { imageRepo, IMAGE_HISTORY_LIMIT } from '../db/repositories/image.repo'
@@ -38,6 +40,9 @@ export function resolveDataPath(rel: string): string {
   if (abs !== DATA_DIR && !abs.startsWith(DATA_DIR + path.sep)) {
     throw new Error('路径超出数据目录范围')
   }
+  // 与 Files 模块同一套符号链接守卫：只按字符串前缀判断挡不住
+  // DATA_DIR/images 里指向外部的链接（用户可通过自带终端 mklink/ln -s 造出）。
+  assertWithinWorkspaceByRealpath(abs, DATA_DIR)
   return abs
 }
 
@@ -80,7 +85,9 @@ function saveImage(buf: Buffer, ext: string): { rel: string; abs: string; bytes:
   const rel = `images/${monthDir}/${randomUUID()}${ext}`
   const abs = resolveDataPath(rel)
   fs.mkdirSync(path.dirname(abs), { recursive: true })
-  fs.writeFileSync(abs, buf)
+  // 与 IMAGE_SAVE_DATAURL / 附件上传同口径：大图写一半遇 ENOSPC 或被杀会留下半张图 + 库记录，
+  // 用原子写避免落半个文件。
+  writeFileAtomicSync(abs, buf)
 
   // 缩略图：nativeImage 解码失败（如非标准格式）不阻塞，列表侧返回 null 兜底
   try {
@@ -88,7 +95,7 @@ function saveImage(buf: Buffer, ext: string): { rel: string; abs: string; bytes:
     if (!img.isEmpty()) {
       const thumbAbs = resolveDataPath(thumbRelOf(rel))
       fs.mkdirSync(path.dirname(thumbAbs), { recursive: true })
-      fs.writeFileSync(thumbAbs, img.resize({ width: THUMB_WIDTH }).toJPEG(THUMB_QUALITY))
+      writeFileAtomicSync(thumbAbs, img.resize({ width: THUMB_WIDTH }).toJPEG(THUMB_QUALITY))
     }
   } catch {
     /* 缩略图失败不阻塞主流程 */
