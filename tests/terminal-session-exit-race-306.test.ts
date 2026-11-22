@@ -42,6 +42,14 @@ vi.mock('../src/main/logger', () => ({
   createLogger: () => ({ info: () => {}, warn: () => {}, debug: () => {}, error: () => {} })
 }))
 
+// 终端现在会解析工作目录（electron.isPackaged / APP_ROOT / Agent 工作目录）⇒ 一并隔离，
+// 本用例只判 session 身份与 epoch，不判落点（落点由 terminal-cwd.test.ts 专测）。
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => '', getAppPath: () => process.cwd() }
+}))
+vi.mock('../src/main/portable', () => ({ APP_ROOT: process.cwd() }))
+vi.mock('../src/main/tools/fs-tools', () => ({ getWorkspaceDir: () => '' }))
+
 // 隔离终端工具的分类器依赖链（本用例不走 inputTerminal，仅为让模块能加载）
 vi.mock('../src/main/tools/shell-tools', () => ({
   classifyDenyOnly: () => null

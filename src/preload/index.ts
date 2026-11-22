@@ -1563,8 +1563,8 @@ const api = {
   // 现在写成可判别联合（判完 `ok:false` 那一支，tsc 就接管剩下的一半），startTerminal 另回一个
   // **轮次号 epoch**：同一窗口重开终端时 webContents id 不变，渲染端只有靠它才分得出
   // 「这帧是刚起的那台 shell 的首屏」与「上一台被杀掉的 shell 迟到的退出」——后者会把 running 误置 false。
-  startTerminal: (): Promise<{ ok: true; sessionId: number; epoch: number } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
-    ipcRenderer.invoke(IPC.TERMINAL_START),
+  startTerminal: (cwd?: string): Promise<{ ok: true; sessionId: number; epoch: number; cwd?: string } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.TERMINAL_START, cwd ? { cwd } : undefined),
   terminalInput: (data: string): Promise<{ ok: true } | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
     ipcRenderer.invoke(IPC.TERMINAL_INPUT, { data }),
   killTerminal: (): Promise<{ ok: boolean }> =>

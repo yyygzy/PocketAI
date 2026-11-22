@@ -6,11 +6,18 @@
 //    输出流式推送渲染端；安全上仅保留 deny 黑名单硬拒（classifyDenyOnly），
 //    因为用户本身就有能力打开系统终端，confirm 审批对「用户本人」无意义。
 //
+// 工作目录：旧的 `cwd: undefined` 注释写着「便携包根目录」，但代码并没有锚定到任何
+// 应用目录——实际落点取决于进程从哪里启动。现在按 resolveTerminalCwd 的优先级显式选定。
+//
 // 生命周期：每个渲染窗口（webContentsId）最多一个 session；窗口销毁/模块 kill 时清理。
 import { spawn, type ChildProcess } from 'node:child_process'
-import type { WebContents } from 'electron'
+import { statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { app, type WebContents } from 'electron'
 import { IPC } from '../../shared/types'
 import { classifyDenyOnly } from '../tools/shell-tools'
+import { getWorkspaceDir } from '../tools/fs-tools'
+import { APP_ROOT } from '../portable'
 import { createLogger } from '../logger'
 
 const log = createLogger('terminal')
@@ -39,16 +46,41 @@ function shellCommand(): { cmd: string; args: string[] } {
   return { cmd: process.env.SHELL || '/bin/sh', args: ['-i'] }
 }
 
+/**
+ * 终端工作目录的优先级：
+ *  ① 本轮显式传入（终端页将来切换目录时用）
+ *  ② 用户在设置里选定的 Agent 工作目录（与 shell_exec / fs.* 同一份）
+ *  ③ 便携版 / 开发态 / AppImage ⇒ APP_ROOT（exe 旁边或项目根，可写）
+ *  ④ 安装版 ⇒ 用户主目录（APP_ROOT 通常是 Program Files，普通用户不可写，也不该被终端污染）
+ * 每个候选都必须是确实存在的目录，坏配置不会把 shell 起在一个奇怪的位置；全落空兜到进程 cwd。
+ */
+export function resolveTerminalCwd(requested?: string): string {
+  const packaged = app?.isPackaged === true
+  const appRootUsable = !packaged || !!process.env.PORTABLE_EXECUTABLE_DIR || !!process.env.APPIMAGE
+  const candidates = [requested, getWorkspaceDir(), appRootUsable ? APP_ROOT : undefined, homedir()]
+  for (const c of candidates) {
+    if (!c) continue
+    try {
+      if (statSync(c).isDirectory()) return c
+    } catch {
+      // 不存在/不可读 ⇒ 退下一档
+    }
+  }
+  return process.cwd()
+}
+
 /** 启动终端 session（同窗口重复调用先杀旧的） */
-export function startTerminal(wc: WebContents): { ok: true; sessionId: number; epoch: number } | { ok: false; error: string } {
+export function startTerminal(wc: WebContents, requestedCwd?: string): { ok: true; sessionId: number; epoch: number; cwd?: string } | { ok: false; error: string } {
   const ownerId = wc.id
   killTerminal(ownerId)
   const epoch = ++lastEpoch
   const { cmd, args } = shellCommand()
   let proc: ChildProcess
+  let cwd: string
   try {
+    cwd = resolveTerminalCwd(requestedCwd)
     proc = spawn(cmd, args, {
-      cwd: undefined, // 继承应用工作目录（便携包根目录）
+      cwd,
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true
@@ -80,7 +112,7 @@ export function startTerminal(wc: WebContents): { ok: true; sessionId: number; e
   })
 
   sessions.set(ownerId, { proc, ownerId })
-  return { ok: true, sessionId: ownerId, epoch }
+  return { ok: true, sessionId: ownerId, epoch, cwd }
 }
 
 /** 向终端 stdin 写入一行（渲染端已附换行）；deny 黑名单命令直接拦截 */
