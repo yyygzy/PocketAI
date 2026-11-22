@@ -11,7 +11,7 @@
 //
 // 生命周期：每个渲染窗口（webContentsId）最多一个 session；窗口销毁/模块 kill 时清理。
 import { spawn, type ChildProcess } from 'node:child_process'
-import { statSync } from 'node:fs'
+import { accessSync, constants, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { app, type WebContents } from 'electron'
 import { IPC } from '../../shared/types'
@@ -52,7 +52,8 @@ function shellCommand(): { cmd: string; args: string[] } {
  *  ② 用户在设置里选定的 Agent 工作目录（与 shell_exec / fs.* 同一份）
  *  ③ 便携版 / 开发态 / AppImage ⇒ APP_ROOT（exe 旁边或项目根，可写）
  *  ④ 安装版 ⇒ 用户主目录（APP_ROOT 通常是 Program Files，普通用户不可写，也不该被终端污染）
- * 每个候选都必须是确实存在的目录，坏配置不会把 shell 起在一个奇怪的位置；全落空兜到进程 cwd。
+ * 每个候选都必须是确实存在、当前用户可写的目录（readonly 网络盘 / Program Files 下目录
+ * 会让 shell 起来却无法重定向输出或建文件）；坏配置自动退档，全落空兜到进程 cwd。
  */
 export function resolveTerminalCwd(requested?: string): string {
   const packaged = app?.isPackaged === true
@@ -61,9 +62,13 @@ export function resolveTerminalCwd(requested?: string): string {
   for (const c of candidates) {
     if (!c) continue
     try {
-      if (statSync(c).isDirectory()) return c
+      if (!statSync(c).isDirectory()) continue
+      // W_OK 探测当前用户可写性：不创建文件、无副作用。root/管理员环境下
+      // access(W_OK) 通常恒真，这档退化的后果只是仍落在该目录，不会误删数据。
+      accessSync(c, constants.W_OK)
+      return c
     } catch {
-      // 不存在/不可读 ⇒ 退下一档
+      // 不存在/不可读/不可写 ⇒ 退下一档
     }
   }
   return process.cwd()

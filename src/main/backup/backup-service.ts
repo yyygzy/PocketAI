@@ -658,6 +658,10 @@ export async function restoreIncrementalFromWebDAV(
     dbService.close()
     removeStaleSidecars(DB_PATH)
     writeFileSync(DB_PATH, dbRes.data)
+    // 与全量恢复 restoreBackupBlob 同口径：DB 整体替换后 app_config 表已换成备份那份，
+    // 进程级读缓存必须失效，否则 has_master_password / webdav_config / 预算 / workspace_dir
+    // 仍读到旧库值，直到重启（曾只在全量路径调用，增量漏掉）。
+    clearAppConfigCache()
   } catch (e) {
     // 抛出必在库替换之前或那一句本身（替换成功后到重开之间那一段自己有 catch）⇒ 只有一档：
     // 磁盘仍是原库，把会话密钥换回去并确保库是开着的（open() 见已开着会直接 return，幂等）
@@ -875,13 +879,19 @@ export async function restoreBackupBlob(
     // 8. 删陈旧 WAL/SHM → 替换 DB 文件
     removeStaleSidecars(DB_PATH)
     const dbInBackup = join(tmp, 'app.db')
-    if (existsSync(dbInBackup)) {
-      copyFileSync(dbInBackup, DB_PATH)
-      dbReplaced = true
-      // DB 文件已被备份内容整体替换（含 app_config 表）：内存读缓存失效，
-      // 后续 appConfigRepo.get 重新查库，避免读到替换前的 stale 配置
-      clearAppConfigCache()
+    // 缺 app.db 的 zip（截断/伪造但 manifest 合法）不能当恢复成功：
+    // 否则 DB 未还原、附件却被覆盖，用户误以为数据已回来。merge-service 的全量提取
+    // 早有同样断言（'备份包缺少 app.db'），这条路径必须对齐。
+    if (!existsSync(dbInBackup)) {
+      restoreSessionKey()
+      result = { ok: false, error: '备份包缺少 app.db，无法恢复' }
+      return result
     }
+    copyFileSync(dbInBackup, DB_PATH)
+    dbReplaced = true
+    // DB 文件已被备份内容整体替换（含 app_config 表）：内存读缓存失效，
+    // 后续 appConfigRepo.get 重新查库，避免读到替换前的 stale 配置
+    clearAppConfigCache()
 
     // 9. 替换 attachments（如果备份里有）
     const attDir = join(tmp, 'attachments')

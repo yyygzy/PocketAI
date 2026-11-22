@@ -4,22 +4,18 @@
 //  M1 启动去重丢重复 provider 的 API Key（注释承诺合并 apiKeys 但实现只合 models）
 // 低优先附带：普通对话停止不再污染 agent 的 pendingAborts / hasActiveRun。
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import Database from 'better-sqlite3-multiple-ciphers'
 import { load as loadVec } from 'sqlite-vec'
 
 // ---------- H1：chat-service 的停止窗口 ----------
-const { chatAbort, agentAbortCalled, agentKnown, isKnownRunResult, setKnownRun } = vi.hoisted(() => ({
-  chatAbort: { fn: null as ((id: string) => void) | null },
-  agentAbortCalled: { value: [] as string[] },
-  agentKnown: { value: false },
-  isKnownRunResult: { value: false },
-  setKnownRun: { value: null as ((requestId: string) => void) | null }
+const { isKnownRunResult } = vi.hoisted(() => ({
+  isKnownRunResult: { value: false }
 }))
 
 vi.mock('../src/main/agent/engine', () => ({
   agentEngine: {
-    abort: (id: string) => { agentAbortCalled.value.push(id) },
+    abort: () => {},
     isKnownRun: () => isKnownRunResult.value
   }
 }))
