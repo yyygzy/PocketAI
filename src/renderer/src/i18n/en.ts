@@ -2950,6 +2950,7 @@ export const en = {
   'translate.swap': 'Swap languages',
   'translate.noProvider': '(No provider available)',
   'translate.providerDisabled': '(disabled)',
+  'translate.modelDisabled': '(disabled)',
   'translate.noModel': '(No model available)',
   'translate.sourcePlaceholder': 'Type or paste the text to translate…',
   'translate.targetPlaceholder': 'The translation will appear here in real time',

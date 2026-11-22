@@ -2864,6 +2864,7 @@ export const ko = {
   'translate.swap': '언어 바꾸기',
   'translate.noProvider': '(사용 가능한 공급자 없음)',
   'translate.providerDisabled': '(비활성화됨)',
+  'translate.modelDisabled': '(비활성화됨)',
   'translate.noModel': '(사용 가능한 모델 없음)',
   'translate.sourcePlaceholder': '번역할 텍스트를 입력하거나 붙여넣기…',
   'translate.targetPlaceholder': '번역문이 실시간으로 여기에 표시됩니다',

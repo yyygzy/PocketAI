@@ -12,6 +12,7 @@ import type {
   TranslateLang,
   TranslateStyle
 } from '../../../../shared/types'
+import { enabledModelsOf } from '../../../../shared/provider-models'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { hasIpcFailed, ipcFailureText, ipcFailText, isIpcFail, logIpcError, reportIpcError } from '../../utils/ipc'
@@ -114,12 +115,16 @@ export const TranslateModule: React.FC = () => {
     () => (activeProvider ? null : providers.find((p) => p.id === providerId) ?? null),
     [activeProvider, providers, providerId]
   )
-  /** 模型下拉候选；回填历史时模型可能已不在缓存列表，补一条避免空选 */
+  /** 模型下拉只列设置里确认启用的模型，不再摆 /models 拉回来的全量 */
+  const enabledModels = useMemo(
+    () => (activeProvider ? enabledModelsOf(activeProvider) : []),
+    [activeProvider]
+  )
+  /** 回填历史时那条模型可能已被停用：补一条禁用项保留显示，与上面 provider 那一格同口径 */
   const modelOptions = useMemo(() => {
-    const list = activeProvider?.models ?? []
-    if (model && !list.includes(model)) return [model, ...list]
-    return list
-  }, [activeProvider, model])
+    if (model && !enabledModels.includes(model)) return [model, ...enabledModels]
+    return enabledModels
+  }, [enabledModels, model])
 
   // ---------- 清单两发读（§269）：两条失败路各写原因、读到即收回；失败侧保持上一份 ----------
   /**
@@ -173,7 +178,8 @@ export const TranslateModule: React.FC = () => {
       const first = list.find((p) => p.enabled)
       if (first) {
         setProviderId(first.id)
-        if (first.models[0]) setModel(first.models[0])
+        const firstModel = enabledModelsOf(first)[0]
+        if (firstModel) setModel(firstModel)
       }
     }).catch((e: unknown) => {
       setProvidersUnread({ error: errText(e, '') })
@@ -566,7 +572,7 @@ export const TranslateModule: React.FC = () => {
             onChange={(e) => {
               setProviderId(e.target.value)
               const p = enabledProviders.find((x) => x.id === e.target.value)
-              setModel(p?.models[0] ?? '')
+              setModel(p ? enabledModelsOf(p)[0] ?? '' : '')
             }}
           >
             {enabledProviders.length === 0 && !disabledSelectedProvider && !providersUnread && (
@@ -585,6 +591,7 @@ export const TranslateModule: React.FC = () => {
             )}
           </select>
           <select
+            data-testid="translate-model-select"
             className="input text-xs py-1 w-auto max-w-[12rem]"
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -593,8 +600,8 @@ export const TranslateModule: React.FC = () => {
               <option value="">{t('translate.noModel')}</option>
             )}
             {modelOptions.map((m) => (
-              <option key={m} value={m}>
-                {m}
+              <option key={m} value={m} disabled={!enabledModels.includes(m)}>
+                {m}{!enabledModels.includes(m) ? ` ${t('translate.modelDisabled')}` : ''}
               </option>
             ))}
           </select>

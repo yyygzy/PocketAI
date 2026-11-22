@@ -596,6 +596,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-local-judgement-panel.test.tsx': 13,
       'tests/renderer-mcp-import-templates-mount.test.tsx': 2,
       'tests/renderer-mcp-none-mode-save.test.tsx': 4,
+      // 翻译/绘图模型选择器只列设置启用模型的回归用例：挂载后先等下拉/datalist 到货再断言候选，
+      // 切换服务商与历史回填各多一颗门；12 颗都按「存在」读屏。上限＝现数，不留余量。
+      'tests/renderer-model-options-enabled-only.test.tsx': 12,
       // 2026-11-07（settle 假等待修复）9→11，**+2 全在 332③#3**，不是写多了：
       //   原 9 处断言前都只有 `settle()`（setTimeout 0）当屏障——React 提交走 `setImmediate`，
       //   全量多 worker 下 timer 先到就断言，反向对照那条会停在初值空态「还没有笔记」＝偶发假红。

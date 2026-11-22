@@ -2864,6 +2864,7 @@ export const ja = {
   'translate.swap': '言語を入れ替え',
   'translate.noProvider': '（利用可能なプロバイダーなし）',
   'translate.providerDisabled': '（無効）',
+  'translate.modelDisabled': '（無効）',
   'translate.noModel': '（利用可能なモデルなし）',
   'translate.sourcePlaceholder': '翻訳するテキストを入力または貼り付け…',
   'translate.targetPlaceholder': '訳文がリアルタイムでここに表示されます',

@@ -2949,6 +2949,7 @@ export const zh = {
   'translate.swap': '互换语言',
   'translate.noProvider': '（无可用服务商）',
   'translate.providerDisabled': '（已停用）',
+  'translate.modelDisabled': '（已停用）',
   'translate.noModel': '（无可用模型）',
   'translate.sourcePlaceholder': '输入或粘贴要翻译的文本…',
   'translate.targetPlaceholder': '译文将在这里实时显示',

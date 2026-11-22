@@ -14,6 +14,7 @@ import type {
   ProviderRecord
 } from '../../../../shared/types'
 import { IMAGE_SIZES } from '../../../../shared/types'
+import { enabledModelsOf } from '../../../../shared/provider-models'
 import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { useTransientNotice } from '../../hooks/useTransientNotice'
@@ -98,8 +99,8 @@ export const ImageModule: React.FC = () => {
     },
     [gallery, previewId, latest, latestDataUrl]
   )
-  /** 模型 datalist 候选（图像模型常不在 /models 列表，允许手输） */
-  const modelOptions = activeProvider?.models ?? []
+  /** 模型 datalist 只列设置里确认启用的模型；图像模型常不在 /models 列表，输入框仍保留手输 */
+  const modelOptions = activeProvider ? enabledModelsOf(activeProvider) : []
 
   const flash = useCallback((ok: boolean, text: string) => showNotice({ ok, text }), [showNotice])
 
@@ -357,7 +358,7 @@ export const ImageModule: React.FC = () => {
             onChange={(e) => {
               setProviderId(e.target.value)
               const p = enabledProviders.find((x) => x.id === e.target.value)
-              setModel(p?.models[0] ?? '')
+              setModel(p ? enabledModelsOf(p)[0] ?? '' : '')
             }}
           >
             {enabledProviders.length === 0 && !providersUnread && <option value="">{t('image.noProvider')}</option>}
