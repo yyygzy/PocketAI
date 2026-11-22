@@ -1290,6 +1290,19 @@ class AgentEngine {
   }
 
   /**
+   * 这个 requestId 是否确实属于某个 Agent run（已登记 controller、挂起停止、或 setup 中已占会话）。
+   * ChatService.abort 用它决定要不要把停止转交过来——普通对话的 requestId 不能进来，
+   * 否则会在 pendingAborts 里留下永不回收的条目（那套集合只在 Agent run 的 finally 清理）。
+   */
+  isKnownRun(requestId: string): boolean {
+    return (
+      this.controllers.has(requestId) ||
+      this.pendingAborts.has(requestId) ||
+      [...this.activeConversations.values()].includes(requestId)
+    )
+  }
+
+  /**
    * 有没有还在跑的 run（主干与子都算）。评测入口用它拦一道：
    * Agent 的工作目录是 `app_config` 里那一个全局键，评测一头发一发地切它，
    * 与用户的普通运行同时跑就是抢同一个目录——两边的产物都会串。

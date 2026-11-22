@@ -120,33 +120,59 @@ export const kbVecRepo = {
     if (kbIds.length === 0) return []
     this.ensureTable(dim)
     const db = dbService.getHandle()
-    const placeholders = kbIds.map(() => '?').join(',')
-    // 子查询先在 vec0 表上完成 KNN（带 LIMIT，sqlite-vec 要求），再 JOIN 映射与分块表；
-    // JOIN 层排除已停用文档（enabled=0），因此子查询按 3 倍超额取样防止过滤后不足 topK
-    const oversample = topK * 3
-    const rows = db
-      .prepare(
-        `SELECT c.id AS chunk_id, c.doc_id, c.kb_id, c.sequence, c.content, v.distance
-         FROM (
-           SELECT rowid, distance FROM ${vecTableName(dim)}
-           WHERE embedding MATCH ?
-           ORDER BY distance ASC
-           LIMIT ?
-         ) v
-         JOIN ${MAP_TABLE} m ON m.vec_rowid = v.rowid AND m.dim = ?
-         JOIN kb_chunks c ON c.id = m.chunk_id
-         WHERE c.kb_id IN (${placeholders})
-           AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)
-         ORDER BY v.distance ASC`
-      )
-      .all(float32ToBuffer(query), oversample, dim, ...kbIds) as Array<{
+    const kbPlaceholders = kbIds.map(() => '?').join(',')
+
+    // vec0 表按「维度」全局共用，不同 KB 但同嵌入模型的块都在同一张表里。
+    // 旧写法在全局表上先 `LIMIT topK*3` 取最近邻，再在外层按 kb_id 过滤——大库的近邻
+    // 会占满取样名额，小库一条都不返回（且 BM25 对中文常 0 命中 ⇒ 整库像没资料）。
+    // sqlite-vec 0.1.9 支持 `embedding MATCH ? AND rowid IN (...)`：先把目标库里
+    // 「启用文档」的 rowid 取出来，把过滤压进 KNN 子查询，取样即精确，不再需要超额补偿。
+    const rowids = (
+      db
+        .prepare(
+          `SELECT m.vec_rowid AS rowid FROM ${MAP_TABLE} m
+           JOIN kb_chunks c ON c.id = m.chunk_id
+           WHERE m.dim = ? AND c.kb_id IN (${kbPlaceholders})
+             AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)`
+        )
+        .all(dim, ...kbIds) as Array<{ rowid: number }>
+    ).map((r) => r.rowid)
+    if (rowids.length === 0) return []
+
+    type VecRow = {
       chunk_id: string
       doc_id: string
       kb_id: string
       sequence: number
       content: string
       distance: number
-    }>
+    }
+    // sqlite-vec 0.1.9：一旦 KNN 子查询带 rowid IN 约束，就**只认 `k = ?`**，
+    // 写 `LIMIT ?` 或字面 `LIMIT n` 都会在 prepare 抛「A LIMIT or 'k = ?' constraint is required」，
+    // 并被上层 rag 吞成「向量路 0 命中」（无留痕）。topK 夹逼后走 k = ?。
+    const k = Math.max(1, Math.min(1000, Math.floor(topK)))
+    const knnBatch = (batch: number[]): VecRow[] => {
+      const rowidPlaceholders = batch.map(() => '?').join(',')
+      return db
+        .prepare(
+          `SELECT c.id AS chunk_id, c.doc_id, c.kb_id, c.sequence, c.content, v.distance
+           FROM (
+             SELECT rowid, distance FROM ${vecTableName(dim)}
+             WHERE embedding MATCH ? AND rowid IN (${rowidPlaceholders}) AND k = ?
+             ORDER BY distance ASC
+           ) v
+           JOIN ${MAP_TABLE} m ON m.vec_rowid = v.rowid AND m.dim = ?
+           JOIN kb_chunks c ON c.id = m.chunk_id
+           WHERE c.kb_id IN (${kbPlaceholders})
+           ORDER BY v.distance ASC`
+        )
+        .all(float32ToBuffer(query), ...batch, k, dim, ...kbIds) as VecRow[]
+    }
+    // SQLite 默认 bind 变量上限 32766；超大库分批各取 topK，再全局归并即可等价。
+    const BATCH = 32000
+    const rows: VecRow[] = []
+    for (let i = 0; i < rowids.length; i += BATCH) rows.push(...knnBatch(rowids.slice(i, i + BATCH)))
+    rows.sort((a, b) => a.distance - b.distance)
     return rows.slice(0, topK).map((r) => ({
       chunkId: r.chunk_id,
       docId: r.doc_id,

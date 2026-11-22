@@ -205,13 +205,33 @@ export const providerRepo = {
               const set = new Set([...(survivorEnabled ?? survivorModels), ...(dupEnabled ?? dupModels)])
               return [...new Set([...survivorModels, ...dupModels])].filter((m) => set.has(m))
             })()
-      db.prepare('UPDATE providers SET models=?, enabled_models=? WHERE id=?').run(
+      // apiKeys 合并：旧实现注释承诺「models / apiKeys 都合并」，SELECT 也取了
+      // api_key_encrypted，却从未读取——重复行连同它持有的 Key 被静默永久删除。
+      // 有解不开的密文时不碰 survivor 的凭据（避免把旧密文覆盖掉），仅记日志。
+      let mergedKeysCipher = survivorRow.api_key_encrypted
+      if (
+        hasUndecryptableCipher(survivorRow.api_key_encrypted) ||
+        hasUndecryptableCipher(row.api_key_encrypted)
+      ) {
+        log.warn(`Provider 去重跳过凭据合并（存在无法解密的密文）: ${row.id}`)
+      } else {
+        const mergedKeys = [
+          ...new Set([
+            ...decryptApiKeys(survivorRow.api_key_encrypted),
+            ...decryptApiKeys(row.api_key_encrypted)
+          ])
+        ]
+        mergedKeysCipher = encryptApiKeys(mergedKeys)
+      }
+      db.prepare('UPDATE providers SET models=?, enabled_models=?, api_key_encrypted=? WHERE id=?').run(
         JSON.stringify(merged),
         mergedEnabled == null ? null : JSON.stringify(mergedEnabled),
+        mergedKeysCipher,
         survivorId
       )
       survivorRow.models = JSON.stringify(merged)
       survivorRow.enabled_models = mergedEnabled == null ? null : JSON.stringify(mergedEnabled)
+      survivorRow.api_key_encrypted = mergedKeysCipher
       toDelete.push(row.id)
     }
 

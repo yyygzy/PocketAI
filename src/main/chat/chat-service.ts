@@ -230,14 +230,24 @@ function buildContext(history: MessageRecord[], systemPrompt?: string): AdapterC
 
 class ChatService {
   private controllers = new Map<string, AbortController>()
+  /**
+   * setup 窗口（RAG 检索等 await 已完成、master controller 尚未登记）点停止时的挂起标记。
+   * 与 AgentEngine 同名机制同构：abort 查不到 controller 时先记账，controller 一登记立即消费。
+   * 旧写法里这段窗口的停止是 no-op——用户以为停了，整轮照跑并持续烧 token。
+   */
+  private pendingAborts = new Set<string>()
   /** 会话级互斥锁：同一 conversationId 的 send/regenerate/resend 串行执行，
    *  避免 Web 端与 IM 通道并发写入导致上下文重建错乱。 */
   private conversationLocks = new Map<string, Promise<unknown>>()
 
   abort(requestId: string): void {
-    this.controllers.get(requestId)?.abort()
-    // Agent 模式共用同一 requestId
-    agentEngine.abort(requestId)
+    const controller = this.controllers.get(requestId)
+    if (controller) controller.abort()
+    else this.pendingAborts.add(requestId)
+    // Agent 模式共用同一 requestId：只在引擎确实认识这轮时才转交。
+    // 普通对话若无条件转交，会在 agent 的 pendingAborts 留一个永不回收的条目
+    // （那套集合只在 Agent run 的 finally 清理），并使 hasActiveRun 长期为 true。
+    if (agentEngine.isKnownRun(requestId)) agentEngine.abort(requestId)
   }
 
   /**
@@ -354,6 +364,9 @@ class ChatService {
     // 主控制器：停止时中断全部目标
     const master = new AbortController()
     this.controllers.set(requestId, master)
+    // setup 窗口（含 RAG 检索）里用户可能已经点过停止：登记即消费挂起标记，立即 abort，
+    // 下面的目标循环按 signal.aborted 走既有中止收尾，不会白跑整轮。
+    if (this.pendingAborts.delete(requestId)) master.abort()
     acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
 
     try {
@@ -446,6 +459,7 @@ class ChatService {
       throw e
     } finally {
       this.controllers.delete(requestId)
+      this.pendingAborts.delete(requestId)
       releaseKeepAwake()
     }
     })
@@ -481,6 +495,9 @@ class ChatService {
     // 主控制器
     const master = new AbortController()
     this.controllers.set(requestId, master)
+    // setup 窗口（含 RAG 检索）里用户可能已经点过停止：登记即消费挂起标记，立即 abort，
+    // 下面的目标循环按 signal.aborted 走既有中止收尾，不会白跑整轮。
+    if (this.pendingAborts.delete(requestId)) master.abort()
     acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
 
     try {
@@ -523,6 +540,7 @@ class ChatService {
       throw e
     } finally {
       this.controllers.delete(requestId)
+      this.pendingAborts.delete(requestId)
       releaseKeepAwake()
     }
     })
@@ -561,6 +579,9 @@ class ChatService {
 
     const master = new AbortController()
     this.controllers.set(requestId, master)
+    // setup 窗口（含 RAG 检索）里用户可能已经点过停止：登记即消费挂起标记，立即 abort，
+    // 下面的目标循环按 signal.aborted 走既有中止收尾，不会白跑整轮。
+    if (this.pendingAborts.delete(requestId)) master.abort()
     acquireKeepAwake() // 生成期间阻止系统睡眠（锁屏后台保活）
 
     try {
@@ -602,6 +623,7 @@ class ChatService {
       throw e
     } finally {
       this.controllers.delete(requestId)
+      this.pendingAborts.delete(requestId)
       releaseKeepAwake()
     }
     })
