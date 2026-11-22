@@ -283,7 +283,7 @@ export class McpOauthService {
         grant_type: 'refresh_token',
         refresh_token: rec.refreshToken,
         client_id: rec.clientId
-      })
+      }, rec.issuer)
       const accessToken = asString(body.access_token)
       if (!accessToken) throw new OauthTokenError(null, '授权服务器没有返回 access_token。')
       const expiresIn = asNumber(body.expires_in)
@@ -434,6 +434,8 @@ export class McpOauthService {
           grant_types: ['authorization_code', 'refresh_token'],
           response_types: ['code'],
           token_endpoint_auth_method: 'none',
+          // RFC 9207 / MCP 2026-07-28：声明原生桌面客户端，避免一些 AS 拒绝 loopback redirect
+          application_type: 'native',
           ...(config.scope ? { scope: config.scope } : {})
         }),
         signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS)
@@ -485,6 +487,12 @@ export class McpOauthService {
       if (!safeStateEqual(result.state, pending.state)) {
         throw new Error('授权回调状态不匹配，请重新授权。')
       }
+      // RFC 9207：授权服务器在回调里带 iss 时，必须与 AS metadata 的 issuer 严格一致，
+      // 否则是 authorization server mix-up（攻击者把 code 换到自己的 token 端点）。
+      // 老服务器不带 iss 时放行，保持兼容。
+      if (result.iss && result.iss !== pending.config.issuer) {
+        throw new Error('授权回调的签发方与授权服务器不一致，已拒绝以避免凭据混淆。')
+      }
       // 取消与新发起的竞态里旧流程仍可能拿到回调：已被取代就不写库、不广播，避免覆盖新凭据
       if (this.pending.get(serverId) !== pending) return
       const body = await this.postToken(pending.config, {
@@ -493,7 +501,7 @@ export class McpOauthService {
         redirect_uri: pending.redirectUri,
         client_id: pending.config.clientId ?? '',
         code_verifier: pending.verifier
-      })
+      }, pending.config.issuer)
       const accessToken = asString(body.access_token)
       if (!accessToken) throw new OauthTokenError(null, '授权服务器没有返回 access_token。')
       const expiresIn = asNumber(body.expires_in)
@@ -536,7 +544,8 @@ export class McpOauthService {
 
   private async postToken(
     rec: Pick<McpOauthRecord, 'tokenEndpoint' | 'clientId' | 'clientSecret' | 'tokenEndpointAuthMethod'>,
-    params: Record<string, string>
+    params: Record<string, string>,
+    expectedIssuer?: string | null
   ): Promise<Record<string, unknown>> {
     const tokenEndpoint = rec.tokenEndpoint
     if (!tokenEndpoint) throw new Error('缺少令牌端点，请重新授权。')
@@ -579,6 +588,11 @@ export class McpOauthService {
     const obj = body as Record<string, unknown>
     if (obj.error) {
       throw new OauthTokenError(asString(obj.error), oauthCodeMessage(asString(obj.error)) ?? '授权失败。')
+    }
+    // RFC 9207：token 响应也可带 iss；与回调侧同口径——带了就必须等于 metadata issuer。
+    const tokenIss = asString(obj.iss)
+    if (expectedIssuer && tokenIss && tokenIss !== expectedIssuer) {
+      throw new OauthTokenError(null, '令牌响应的签发方与授权服务器不一致，已拒绝以避免凭据混淆。')
     }
     return obj
   }

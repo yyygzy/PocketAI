@@ -12,6 +12,8 @@ const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
 export interface LoopbackResult {
   code: string
   state: string
+  /** RFC 9207：授权服务器回跳时带的 issuer，需与 AS metadata 的 issuer 一致（防 mix-up） */
+  iss?: string
 }
 
 export class OAuthLoopbackServer {
@@ -142,8 +144,9 @@ export class OAuthLoopbackServer {
       this.fail(new Error('授权回调缺少授权码，请重新授权。'))
       return
     }
+    const iss = url.searchParams.get('iss') ?? undefined
     this.respond(res, 200, '授权完成，可以关闭此页面并回到 PocketAI')
-    this.succeed({ code, state })
+    this.succeed({ code, state, ...(iss ? { iss } : {}) })
   }
 
   private respond(res: ServerResponse, status: number, text: string): void {

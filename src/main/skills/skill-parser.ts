@@ -208,6 +208,8 @@ export interface RegistrySkill {
   hash?: string
   /** 可选：远程目录包清单 URL（含 SKILL.md + resources），有就走逐文件同源安装 */
   manifest?: string
+  /** 可选：发布者 Ed25519 公钥（PEM / base64 raw / SPKI），用于验 manifest 签名 */
+  publicKey?: string
 }
 
 /** 解析远程 registry index */
@@ -241,7 +243,8 @@ export function parseRegistryIndex(text: string): { skills: RegistrySkill[]; err
       hash: typeof r.hash === 'string' ? r.hash.trim() : undefined,
       manifest: typeof r.manifest === 'string' && r.manifest.trim().startsWith('https://')
         ? r.manifest.trim()
-        : undefined
+        : undefined,
+      publicKey: typeof r.publicKey === 'string' && r.publicKey.trim() ? r.publicKey.trim().slice(0, 4096) : undefined
     })
   }
   return { skills: out, error: '' }

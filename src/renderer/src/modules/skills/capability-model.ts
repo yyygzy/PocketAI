@@ -26,6 +26,8 @@ export interface OnlineSkill {
   hash?: string
   /** 可选：远程目录包清单 URL，有则按「SKILL.md + 资源」逐文件同源代码安装 */
   manifest?: string
+  /** 可选：发布者 Ed25519 公钥，用于验清单签名 */
+  publicKey?: string
 }
 
 /** 技能状态是闭合三档：停用 / 启用但没绑任何助手 / 已绑定（N 个助手）。 */

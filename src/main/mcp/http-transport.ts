@@ -18,6 +18,9 @@ import { EventEmitter } from 'node:events'
 import { errMsg, isAbortError } from '../error'
 import { safeFetch, SafeFetchError } from '../net/safe-fetch'
 import { noteMcpHttpRequest } from './outbound-metrics'
+
+/** 与 manager 的 MCP_PROTOCOL_VERSION 保持一致；HTTP 传输必须显式带上协议版本头 */
+const PROTOCOL_VERSION_HEADER_VALUE = '2024-11-05'
 import {
   McpBusinessError,
   McpTransportError,
@@ -206,6 +209,9 @@ export class HttpJsonRpcClient implements McpTransportClient {
     }
     headers['Content-Type'] = 'application/json'
     headers.Accept = 'text/event-stream'
+    // MCP Streamable HTTP 要求每个请求显式带协议版本（网关据此路由/计量）。
+    // 用户自定义头在前，协议头在此后写覆盖，防误配。
+    headers['MCP-Protocol-Version'] = PROTOCOL_VERSION_HEADER_VALUE
     if (this.sessionId) {
       headers['Mcp-Session-Id'] = this.sessionId
     }

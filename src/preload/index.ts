@@ -349,7 +349,8 @@ const api = {
     error?: string
   }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url, hash ?? ''),
   importSkillDir: (
-    manifestUrl: string
+    manifestUrl: string,
+    publicKey?: string
   ): Promise<{
     ok: boolean
     skill?: SkillRecord
@@ -362,8 +363,10 @@ const api = {
     unverified?: number
     /** 上游声明的许可证，仅导入时告知 */
     license?: string
+    /** 清单签名是否验过（发布者身份可信） */
+    signatureVerified?: boolean
     error?: string
-  }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_DIR, manifestUrl),
+  }> => ipcRenderer.invoke(IPC.SKILL_IMPORT_DIR, manifestUrl, publicKey ?? ''),
   validateSkill: (text: string): Promise<{ ok: boolean; error?: string; warnings: string[]; shape?: { name: string; description: string; icon: string; content: string } }> =>
     ipcRenderer.invoke(IPC.SKILL_VALIDATE, text),
   getSkillTemplates: (): Promise<Array<{ id: string; name: string; description: string; shape: { name: string; description: string; icon: string; content: string } }>> =>

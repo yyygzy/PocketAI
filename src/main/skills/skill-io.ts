@@ -294,7 +294,8 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
  * manifestUrl 由 registry 条目的 manifest 字段提供，调用方（handler）把它透传过来。
  */
 export async function importSkillDirFromManifest(
-  manifestUrl: string
+  manifestUrl: string,
+  publisherPublicKey?: string
 ): Promise<{
   ok: boolean
   skill?: SkillRecord
@@ -306,6 +307,8 @@ export async function importSkillDirFromManifest(
   unverified?: number
   /** 上游声明的许可证（如 MIT），仅导入时告知，不入库 */
   license?: string
+  /** 清单签名是否验过（发布者身份可信） */
+  signatureVerified?: boolean
   error?: string
 }> {
   let downloaded: DownloadedSkillDir | null = null
@@ -329,6 +332,16 @@ export async function importSkillDirFromManifest(
 
     const parsedManifest = parseSkillDirManifest(manifestRes.text)
     if (!parsedManifest.ok) return { ok: false, error: parsedManifest.error }
+
+    // 清单签名在下载资源之前验：带签名就必须验过（fail-closed），没签名则放行并在回执里标记。
+    // 公钥来自 registry 索引条目，不由 manifest 自报。
+    const { verifySkillDirManifestSignature } = await import('./skill-dir-trust')
+    const trust = verifySkillDirManifestSignature(
+      manifestRes.text,
+      parsedManifest.manifest,
+      publisherPublicKey
+    )
+    if (trust.error) return { ok: false, error: trust.error }
 
     const dl = await downloadSkillDir(manifestUrl, parsedManifest.manifest)
     if (!dl.ok) return { ok: false, error: dl.error }
@@ -373,7 +386,8 @@ export async function importSkillDirFromManifest(
       ignoredKeys: parsed.ignoredKeys,
       forcedOnDemand: !useResident,
       unverified: downloaded.unverified,
-      license: shape.license
+      license: shape.license,
+      signatureVerified: trust.verified
     }
   } catch (e) {
     return { ok: false, error: errMsg(e) }

@@ -2014,6 +2014,8 @@ export const zh = {
   'skill.market.checksumAbsent': '此文件没有校验和，完整性未校验（校验和不等于签名）',
   'skill.market.dirUnverified': '目录包里有 {n} 个文件未提供校验和，未逐文件校验',
   'skill.market.declaredLicense': '上游声明许可：{license}（仅告知，导入与再分发请自行核对）',
+  'skill.market.signatureVerified': '发布者签名已验证',
+  'skill.market.signatureAbsent': '发布者未签名（来源未经身份核验）',
   'skill.market.exportDone': '已导出',
   'skill.market.exportFailed': '导出失败',
   'skill.market.builtinHint': '内置技能内容不可直接修改；「复制为我的技能」后即可编辑副本。',

@@ -539,13 +539,20 @@ export const CapabilityCenter: React.FC<Props> = ({ onClose, onChanged, onTrialR
     async (s: OnlineSkill) => {
       // 有 manifest ⇒ 目录包（SKILL.md + references/scripts/assets 逐文件同源安装）
       const r = s.manifest
-        ? await window.pocketai.importSkillDir(s.manifest)
+        ? await window.pocketai.importSkillDir(s.manifest, s.publicKey)
         : await window.pocketai.importSkillFromUrl(s.url, s.hash)
       if (r.ok && r.skill) {
         await refreshSkills()
         // 安装完成即进已装技能详情：绑定区就在同一屏，不再让用户自己回头找
         setView({ kind: 'installedSkill', id: r.skill.id })
         const notes: string[] = []
+        if ('signatureVerified' in r) {
+          notes.push(
+            r.signatureVerified
+              ? t('skill.market.signatureVerified')
+              : t('skill.market.signatureAbsent')
+          )
+        }
         if ('checksum' in r && r.checksum === 'absent') notes.push(t('skill.market.checksumAbsent'))
         if ('unverified' in r && (r.unverified ?? 0) > 0) {
           notes.push(t('skill.market.dirUnverified', { n: r.unverified ?? 0 }))
