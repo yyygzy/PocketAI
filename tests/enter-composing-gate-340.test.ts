@@ -113,10 +113,11 @@ describe('② 全仓现数与两桶身份证', () => {
   const freeText = sites.filter((s) => !s.secret)
   const secret = sites.filter((s) => s.secret)
 
-  it(`Enter 提交点总数＝32（口令 11＋自由文本 21）——新增提交点必须先进这张表`, () => {
-    expect(sites.length).toBe(32)
+  it(`Enter 提交点总数＝33（口令 11＋自由文本 22）——新增提交点必须先进这张表`, () => {
+    // 终端工作目录输入框（TerminalModule applyCwd）是新增的自由文本提交点，已判 isComposing。
+    expect(sites.length).toBe(33)
     expect(secret.length).toBe(11)
-    expect(freeText.length).toBe(21)
+    expect(freeText.length).toBe(22)
   })
 
   it('一个不漏（§341 起两桶并一条判据）：32 个提交点每个都得判 isComposing', () => {
@@ -146,6 +147,7 @@ describe('② 全仓现数与两桶身份证', () => {
       'modules/settings/UserMemoryPanel.tsx::add',
       'modules/settings/UserMemoryPanel.tsx::saveEdit,setEditingId',
       'modules/skills/CapabilityCenter.tsx::handleImportFromUrl',
+      'modules/terminal/TerminalModule.tsx::applyCwd,setCwdDraft,setCwdEditing',
       'modules/translate/TranslateModule.tsx::submit'
     ].sort())
   })

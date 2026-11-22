@@ -2960,6 +2960,11 @@ export const ko = {
   'terminal.sendFailed': '명령어를 전송하지 않았습니다: {msg}',
   'terminal.startFailed': '터미널 시작 실패',
   'terminal.outputTruncated': '출력이 너무 길어 잘림…',
+  'terminal.cwdLabel': '작업 디렉터리:',
+  'terminal.cwdPending': '(시작 중…)',
+  'terminal.cwdPlaceholder': '디렉터리 경로(비우면 기본값 복원)',
+  'terminal.changeCwd': '클릭하여 작업 디렉터리 변경(터미널 재시작)',
+  'terminal.resetCwd': '기본값 복원',
 
   // ── 어시스턴트 에디터 도구 그룹 ──
   'ae.groupBuiltin': '내장 도구',

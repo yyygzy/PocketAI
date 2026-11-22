@@ -2960,6 +2960,11 @@ export const ja = {
   'terminal.sendFailed': 'コマンドを送信できませんでした：{msg}',
   'terminal.startFailed': 'ターミナルの起動に失敗しました',
   'terminal.outputTruncated': '出力が長すぎて切り詰められました…',
+  'terminal.cwdLabel': '作業ディレクトリ:',
+  'terminal.cwdPending': '（起動中…）',
+  'terminal.cwdPlaceholder': 'ディレクトリ パス（空欄＝既定に戻す）',
+  'terminal.changeCwd': 'クリックして作業ディレクトリを変更（端末を再起動します）',
+  'terminal.resetCwd': '既定に戻す',
 
   // ── アシスタントエディタツールグループ ──
   'ae.groupBuiltin': '組み込みツール',

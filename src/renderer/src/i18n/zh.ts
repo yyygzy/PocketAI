@@ -3047,6 +3047,11 @@ export const zh = {
   'terminal.sendFailed': '命令没送出去：{msg}',
   'terminal.startFailed': '终端启动失败',
   'terminal.outputTruncated': '输出过长已截断…',
+  'terminal.cwdLabel': '工作目录：',
+  'terminal.cwdPending': '（启动中…）',
+  'terminal.cwdPlaceholder': '目录路径（留空＝恢复默认）',
+  'terminal.changeCwd': '点击修改工作目录（将重启终端）',
+  'terminal.resetCwd': '恢复默认',
 
   // ── 助手编辑器工具分组 ──
   'ae.groupBuiltin': '内置工具',

@@ -44,6 +44,12 @@ export const TerminalModule: React.FC = () => {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [clipped, setClipped] = useState(false)
+  /** 本轮 shell 的实际工作目录（启动回包带回来）；切换目录后重启 shell 会更新 */
+  const [cwd, setCwd] = useState<string>('')
+  const [cwdDraft, setCwdDraft] = useState<string>('')
+  const [cwdEditing, setCwdEditing] = useState(false)
+  /** 用户请求的启动目录；变化即触发 useEffect 重启 shell（cleanup 先杀旧进程树） */
+  const [requestedCwd, setRequestedCwd] = useState<string | undefined>(undefined)
   const preRef = useRef<HTMLPreElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -84,7 +90,7 @@ export const TerminalModule: React.FC = () => {
     })
 
     void (async () => {
-      const r = await window.pocketai.startTerminal()
+      const r = await window.pocketai.startTerminal(requestedCwd)
       if (!mounted) return
       if (hasIpcFailed(r)) {
         setError(ipcFailText(r, t('terminal.startFailed')))
@@ -92,6 +98,9 @@ export const TerminalModule: React.FC = () => {
       }
       setRunning(true)
       setError(null)
+      // 回包带的是主进程实际落点（显式目录无效时会退档到工作目录/用户目录）——显示真值
+      setCwd(r.cwd ?? '')
+      setCwdDraft(r.cwd ?? '')
       epoch = r.epoch
       for (const p of pending) {
         if (p.epoch === epoch) apply(p)
@@ -104,7 +113,8 @@ export const TerminalModule: React.FC = () => {
       if (unsub) unsub()
       window.pocketai.killTerminal().catch(reportIpcError('terminal.killTerminal'))
     }
-  }, [t])
+    // requestedCwd 变化：cleanup 杀旧 shell（含孙进程），下面重新起一台
+  }, [t, requestedCwd])
 
   useEffect(() => {
     const el = preRef.current
@@ -128,6 +138,18 @@ export const TerminalModule: React.FC = () => {
     }
     setError(null)
     return true
+  }
+
+  /** 提交目录切换：空输入＝恢复默认落点（清除显式目录，重启后走主进程优先级） */
+  const applyCwd = (): void => {
+    const next = cwdDraft.trim() || undefined
+    setCwdEditing(false)
+    if (next === requestedCwd) return
+    setRequestedCwd(next)
+    setOutput('')
+    setClipped(false)
+    setError(null)
+    setRunning(false)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -170,6 +192,55 @@ export const TerminalModule: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full gap-2">
+      <div className="flex items-center gap-2 shrink-0 text-xs">
+        <span className="text-[var(--color-text-muted)] shrink-0">{t('terminal.cwdLabel')}</span>
+        {cwdEditing ? (
+          <>
+            <input
+              data-testid="terminal-cwd-input"
+              value={cwdDraft}
+              onChange={(e) => setCwdDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // 输入法组字中的 Enter 不是提交（§340：新增输入框必须判 isComposing）
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing) applyCwd()
+                if (e.key === 'Escape') {
+                  setCwdDraft(cwd)
+                  setCwdEditing(false)
+                }
+              }}
+              placeholder={t('terminal.cwdPlaceholder')}
+              className="flex-1 min-w-0 bg-transparent outline-none font-mono text-[var(--color-text)] border-b border-[var(--color-border)]"
+            />
+            <button type="button" onClick={applyCwd} className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]">
+              {t('common.confirm')}
+            </button>
+            <button type="button" onClick={() => { setCwdDraft(cwd); setCwdEditing(false) }} className="px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-hover-overlay)]">
+              {t('common.cancel')}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              data-testid="terminal-cwd"
+              title={t('terminal.changeCwd')}
+              onClick={() => { setCwdDraft(cwd); setCwdEditing(true) }}
+              className="flex-1 min-w-0 text-left truncate font-mono text-[var(--color-text)] hover:text-[var(--color-text)]"
+            >
+              {cwd || t('terminal.cwdPending')}
+            </button>
+            {requestedCwd && (
+              <button
+                type="button"
+                onClick={() => { setCwdDraft(''); setRequestedCwd(undefined) }}
+                className="px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >
+                {t('terminal.resetCwd')}
+              </button>
+            )}
+          </>
+        )}
+      </div>
       <pre
         ref={preRef}
         className="flex-1 min-h-0 overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs font-mono whitespace-pre-wrap break-all"

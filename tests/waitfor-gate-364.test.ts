@@ -650,6 +650,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/stale-read-notice-345.test.tsx': 14,
       'tests/stale-read-notice-347.test.tsx': 25,
       'tests/terminal-frame-epoch-320.test.tsx': 4,
+      // 终端工作目录 UI：5 颗门都在等屏上那颗 cwd 按钮/输入框落地，门后读的也是同一颗按钮 ⇒ 存在型门，
+      // 非「门等 A、断言读 B」。上限＝现数 5，不留余量。
+      'tests/terminal-cwd-ui.test.tsx': 5,
       // 结构化契约层（新增）：主进程用例，5 颗门全是 `vi.waitFor` 等桩调用计数（`H.calls`／`H.renamed`），
       // 门后不读任何屏 ⇒ 与「门等 A、断言读 B」不同族。上限＝现数 5，不留余量。
       'tests/title-gen-structured.test.ts': 5,

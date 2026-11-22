@@ -3048,6 +3048,11 @@ export const en = {
   'terminal.sendFailed': 'Command not sent: {msg}',
   'terminal.startFailed': 'Terminal failed to start',
   'terminal.outputTruncated': 'Output truncated…',
+  'terminal.cwdLabel': 'Working directory:',
+  'terminal.cwdPending': '(starting…)',
+  'terminal.cwdPlaceholder': 'Directory path (empty = restore default)',
+  'terminal.changeCwd': 'Click to change working directory (restarts terminal)',
+  'terminal.resetCwd': 'Restore default',
 
   // ── 助手编辑器工具分组 ──
   'ae.groupBuiltin': 'Built-in Tools',
