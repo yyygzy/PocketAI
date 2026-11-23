@@ -33,7 +33,7 @@ import { classifyProbeFailure, OLLAMA_PROBE_TIMEOUT_MS } from '../../shared/olla
 
 const log = createLogger('ollama')
 
-const OLLAMA_VERSION = 'v0.34.2'
+const OLLAMA_VERSION = 'v0.40.17'
 const HOST = '127.0.0.1'
 const PORT = 11434
 const BASE_URL = `http://${HOST}:${PORT}`
@@ -57,15 +57,15 @@ interface AssetSpec {
 const ASSETS: Partial<Record<string, AssetSpec>> = {
   'win32-x64': {
     file: 'ollama-windows-amd64.zip',
-    sha256: '8f3fd071a2a2f9497b562f43502c77c2b701a99d1ee5dfda28da8c786373063b',
+    sha256: '3dd80f6e3a9699f2eadf4ac418f00529cee594df9557541806eda1f1f3f5588a',
     format: 'zip',
-    size: 1_460_825_696
+    size: 1_618_522_644
   },
   'linux-x64': {
     file: 'ollama-linux-amd64.tar.zst',
-    sha256: 'e155b83589986d2c581fdbf1381ea3ebdb16549883679cd5a0627f7cdc05b12b',
+    sha256: '1df9d6228bac5a22e420b242708c0d10e5b886db97bab99d446a41760f4e79af',
     format: 'tar.zst',
-    size: 1_427_644_769
+    size: 1_545_470_208
   }
 }
 
