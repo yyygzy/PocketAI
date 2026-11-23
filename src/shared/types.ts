@@ -2496,6 +2496,38 @@ export interface OllamaPullEvent {
   error?: string
 }
 
+// ---------- Ollama Jev 决策模型（/v1/systemone，Ollama ≥0.35） ----------
+export type SystemOneQuestionType = 'choice' | 'noul' | 'score'
+
+export interface SystemOneQuestion {
+  type: SystemOneQuestionType
+  instructions: string
+  /** choice：选项名→说明；score：档位名数组 */
+  criteria?: Record<string, string> | string[]
+}
+
+export interface SystemOneRequest {
+  model: string
+  state: Record<string, string>
+  questions: Record<string, SystemOneQuestion>
+}
+
+export interface SystemOneAnswer {
+  type: SystemOneQuestionType
+  choice?: string
+  noul?: number
+  score?: number
+  legend?: Record<string, string>
+  probabilities?: Record<string, number>
+  confidence?: number
+}
+
+export interface SystemOneResponse {
+  model: string
+  answers: Record<string, SystemOneAnswer>
+  usage?: { input_tokens?: number; output_tokens?: number }
+}
+
 // ---------- 翻译模块 ----------
 /** 源语言可用 auto（自动检测），目标语言不可 */
 export type TranslateLang =
@@ -3241,6 +3273,8 @@ export const IPC = {
   /** Ollama keep_alive：模型驻留时长（prefix cache 命中前提） */
   OLLAMA_KEEPALIVE_GET: 'ollama:keepalive-get',
   OLLAMA_KEEPALIVE_SET: 'ollama:keepalive-set',
+  /** Ollama Jev 决策模型（/v1/systemone，Ollama ≥0.35） */
+  OLLAMA_SYSTEMONE: 'ollama:systemone',
 
   // Python MCP 虚拟环境（venv + pip）
   PYTHON_ENV_INSTALL: 'python-env:install',

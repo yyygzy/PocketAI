@@ -112,6 +112,8 @@ import type {
   OllamaRuntimeStatus,
   OllamaInstallEvent,
   OllamaPullEvent,
+  SystemOneRequest,
+  SystemOneResponse,
   HealthReport,
   CleanupResult,
   VacuumOutcome,
@@ -1700,7 +1702,10 @@ const api = {
   getOllamaKeepAlive: (): Promise<{ ok: boolean; keepAlive?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.OLLAMA_KEEPALIVE_GET),
   setOllamaKeepAlive: (value: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke(IPC.OLLAMA_KEEPALIVE_SET, value)
+    ipcRenderer.invoke(IPC.OLLAMA_KEEPALIVE_SET, value),
+  /** Ollama Jev 决策模型（/v1/systemone，Ollama ≥0.35；模型需先 pull） */
+  runOllamaSystemOne: (req: SystemOneRequest): Promise<{ ok: boolean; data?: SystemOneResponse; error?: string }> =>
+    ipcRenderer.invoke(IPC.OLLAMA_SYSTEMONE, req)
 }
 
 contextBridge.exposeInMainWorld('pocketai', api)

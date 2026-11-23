@@ -609,6 +609,7 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       //   在选中笔记那一刻就已存在、拿它当门会在到货前就放行＝假通过；唯一可观测的是「保存中…」的
       //   **在场→退场**过渡 ⇒ 第一颗等它上屏（在飞那一帧）、第二颗等它退场（到货），两段缺一不可。
       'tests/renderer-notes-332.test.tsx': 11,
+      'tests/renderer-ollama-decision.test.tsx': 6,
       'tests/renderer-ollama-panel-liveness-380.test.tsx': 8,
       'tests/renderer-p0-2a-copy-415.test.tsx': 9,
       'tests/renderer-pip-source-confirm.test.tsx': 1,

@@ -4,7 +4,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   OllamaRuntimeStatus,
   OllamaInstallEvent,
-  ModelRecommendation
+  ModelRecommendation,
+  SystemOneResponse
 } from '../../../shared/types'
 import { modelRecKey } from '../../../shared/model-rec-codes'
 import { OLLAMA_PROBE_TIMEOUT_MS } from '../../../shared/ollama-probe'
@@ -44,6 +45,12 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   // keep_alive：模型驻留时长，决定 prefix cache 能否跨请求命中（Ollama 默认 5 分钟后卸载）
   const [keepAliveDraft, setKeepAliveDraft] = useState('')
   const [keepAliveSaved, setKeepAliveSaved] = useState(false)
+  // Jev 决策模型（Ollama ≥0.35）：预置工单分诊场景，三种题型 choice/noul/score 全覆盖
+  const [systemOneModel, setSystemOneModel] = useState('nimble')
+  const [systemOneState, setSystemOneState] = useState('')
+  const [systemOneRunning, setSystemOneRunning] = useState(false)
+  const [systemOneResult, setSystemOneResult] = useState<SystemOneResponse | null>(null)
+  const [systemOneErr, setSystemOneErr] = useState('')
   // handleStop 的延时回调：组件卸载后必须清理，避免对已卸载组件 setState
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -213,6 +220,52 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const doPull = (model: string): Promise<boolean> => {
     clearPullDone()
     return pull(model)
+  }
+
+  const runDecision = async () => {
+    if (!systemOneState.trim()) {
+      setSystemOneErr(t('ollama.decisionStateRequired'))
+      return
+    }
+    setSystemOneRunning(true)
+    setSystemOneErr('')
+    setSystemOneResult(null)
+    try {
+      const r = await window.pocketai.runOllamaSystemOne({
+        model: systemOneModel.trim(),
+        state: { ticket: systemOneState.trim() },
+        questions: {
+          team: {
+            type: 'choice',
+            instructions: t('ollama.decisionQTeam'),
+            criteria: {
+              billing: t('ollama.decisionTeamBilling'),
+              technical: t('ollama.decisionTeamTechnical'),
+              other: t('ollama.decisionTeamOther')
+            }
+          },
+          refund: {
+            type: 'noul',
+            instructions: t('ollama.decisionQRefund')
+          },
+          urgency: {
+            type: 'score',
+            instructions: t('ollama.decisionQUrgency'),
+            criteria: [t('ollama.decisionUrgencyLow'), t('ollama.decisionUrgencyMid'), t('ollama.decisionUrgencyHigh')]
+          }
+        }
+      })
+      if (r.ok && r.data) {
+        setSystemOneResult(r.data)
+      } else {
+        setSystemOneErr(r.error || t('common.unknownError'))
+      }
+    } catch (e) {
+      setSystemOneErr(errText(e))
+      reportIpcError('ollama.systemOne')(e)
+    } finally {
+      setSystemOneRunning(false)
+    }
   }
 
   return (
@@ -409,6 +462,65 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
           <div className="mt-1 leading-relaxed">
             {t('ollama.keepAliveHint')}
             {keepAliveSaved && <span className="text-[var(--color-success)]"> ✓ {t('ollama.keepAliveSaved')}</span>}
+          </div>
+        </details>
+      )}
+
+      {/* Jev 决策模型：Ollama ≥0.35 的 /v1/systemone；仅 up 时可用，失败一律上屏 */}
+      {status?.liveness === 'up' && (
+        <details className="text-[10px] text-[var(--color-text-muted)]">
+          <summary className="cursor-pointer select-none hover:text-[var(--color-text)]">
+            {t('ollama.decisionTitle')}
+          </summary>
+          <div className="mt-1.5 space-y-1.5">
+            <div className="flex gap-1.5">
+              <input
+                data-testid="ollama-decision-model"
+                className="input flex-1 py-1 text-[10px] font-mono"
+                value={systemOneModel}
+                onChange={(e) => setSystemOneModel(e.target.value)}
+                aria-label={t('ollama.decisionModelLabel')}
+              />
+            </div>
+            <textarea
+              data-testid="ollama-decision-state"
+              className="input w-full py-1 text-[10px]"
+              rows={3}
+              placeholder={t('ollama.decisionStatePh')}
+              value={systemOneState}
+              onChange={(e) => setSystemOneState(e.target.value)}
+            />
+            <button
+              data-testid="ollama-decision-run"
+              className="px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] disabled:opacity-50"
+              disabled={systemOneRunning}
+              onClick={() => void runDecision()}
+            >
+              {systemOneRunning ? t('ollama.decisionRunning') : t('ollama.decisionRun')}
+            </button>
+            <div className="leading-relaxed">{t('ollama.decisionHint')}</div>
+            {systemOneErr && (
+              <div role="alert" className="text-[var(--color-danger)]">⚠️ {systemOneErr}</div>
+            )}
+            {systemOneResult && (
+              <div data-testid="ollama-decision-result" className="space-y-1 border-t border-[var(--color-border)] pt-1.5">
+                <div className="text-[var(--color-text)]">{t('ollama.decisionResultTitle')}：{systemOneResult.model}</div>
+                {Object.entries(systemOneResult.answers).map(([name, a]) => (
+                  <div key={name} className="font-mono">
+                    <span className="text-[var(--color-text)]">{name}</span>
+                    {' = '}
+                    {a.type === 'choice' && <span>{a.choice} ({Math.round((a.confidence ?? 0) * 100)}%)</span>}
+                    {a.type === 'noul' && <span>{Math.round((a.noul ?? 0) * 100)}%</span>}
+                    {a.type === 'score' && <span>{(a.score ?? 0).toFixed(2)}</span>}
+                  </div>
+                ))}
+                {systemOneResult.usage && (
+                  <div className="text-[var(--color-text-muted)]">
+                    {t('ollama.decisionUsage')}: {systemOneResult.usage.input_tokens ?? 0} / {systemOneResult.usage.output_tokens ?? 0}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </details>
       )}

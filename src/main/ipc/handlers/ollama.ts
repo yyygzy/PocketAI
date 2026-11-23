@@ -1,7 +1,8 @@
 // Ollama 便携运行时 IPC：安装/启停/拉模型/镜像源
-import { IPC } from '../../../shared/types'
+import { IPC, type SystemOneRequest } from '../../../shared/types'
 import { ollamaRuntime } from '../../ollama/ollama-runtime'
 import { getOllamaKeepAlive, setOllamaKeepAlive } from '../../ollama/keepalive-config'
+import { runSystemOne } from '../../ollama/systemone'
 import { providerRepo } from '../../db/repositories/provider.repo'
 import { providerManager } from '../../providers/manager'
 import { broadcast } from '../broadcast'
@@ -76,4 +77,14 @@ export function registerOllamaHandlers(): void {
     providerManager.invalidate()
     return { ok: true }
   }, argsSchema(z.string()))
+  // Jev 决策模型：Ollama ≥0.35 的 /v1/systemone，直连本地 11434；入参结构先由 zod 挡一道
+  safeHandle(IPC.OLLAMA_SYSTEMONE, async (_e, req: SystemOneRequest) => runSystemOne(req), argsSchema(z.object({
+    model: z.string().min(1),
+    state: z.record(z.string(), z.string()),
+    questions: z.record(z.string(), z.object({
+      type: z.enum(['choice', 'noul', 'score']),
+      instructions: z.string().min(1),
+      criteria: z.union([z.record(z.string(), z.string()), z.array(z.string())]).optional()
+    }))
+  })))
 }
