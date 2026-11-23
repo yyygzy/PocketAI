@@ -44,7 +44,9 @@ beforeEach(() => {
   mocks.store.clear()
   mocks.spawns.length = 0
   mocks.store.set('agent.workspace_dir', 'C:\\proj')
-  mocks.cp.impl = (cmd: string, args: string[]) => {
+  mocks.cp.impl = (...a: unknown[]) => {
+    const cmd = String(a[0])
+    const args = (a[1] as string[]) ?? []
     mocks.spawns.push({ cmd, args, cwd: 'C:\\proj' })
     return fakeChild({ stdout: 'Test Files  1 passed (1)\nTests  7 passed (7)\n', exitCode: 0 })
   }

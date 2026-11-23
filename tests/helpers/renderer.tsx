@@ -72,6 +72,8 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   if (!state.impls.has('getOllamaKeepAlive')) state.impls.set('getOllamaKeepAlive', () => ({ ok: true, keepAlive: '' }))
   // Jev 语义审核配置与 keep_alive 同属挂载即读的固定副作用；默认关闭，专门断言者自行覆盖。
   if (!state.impls.has('getJevReviewPrefs')) state.impls.set('getJevReviewPrefs', () => ({ enabled: false, model: 'tev1:0.8b', threshold: 0.7 }))
+  // 隐私模式缺省开（fail-safe），AppearancePanel 挂载即读
+  if (!state.impls.has('getPrivacyMode')) state.impls.set('getPrivacyMode', () => ({ ok: true, data: { enabled: true } }))
   const g = globalThis as unknown as { window: { pocketai: unknown } }
   g.window.pocketai = buildStub()
 }

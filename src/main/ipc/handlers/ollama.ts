@@ -2,6 +2,7 @@
 import { IPC, type SystemOneRequest } from '../../../shared/types'
 import { ollamaRuntime } from '../../ollama/ollama-runtime'
 import { getOllamaKeepAlive, setOllamaKeepAlive } from '../../ollama/keepalive-config'
+import { isProviderAllowedUnderPrivacy } from '../../agent/privacy-prefs'
 import { runSystemOne } from '../../ollama/systemone'
 import { createContextModel } from '../../ollama/create-context-model'
 import { setModelContextWindow } from '../../agent/model-window-prefs'
@@ -39,6 +40,8 @@ export function registerOllamaHandlers(): void {
   // 把 keep_alive 读取器注入 provider manager：manager 本身不碰 DB，
   // 这里才把 app_config 依赖接进来（纯 manager 测试无需 electron mock）。
   providerManager.setKeepAliveResolver(() => getOllamaKeepAlive())
+  // 隐私模式守卫注入：providerManager 本身不碰 app_config，这里才把判定接进来（纯 manager 测试无 electron 依赖）
+  providerManager.setPrivacyGuardResolver((id) => isProviderAllowedUnderPrivacy(id))
   safeHandle(IPC.OLLAMA_GET_STATUS, () => ollamaRuntime.getStatus())
   safeHandle(IPC.OLLAMA_INSTALL, async () =>
     ollamaRuntime.install((e) => broadcast(IPC.OLLAMA_EVENT, e))

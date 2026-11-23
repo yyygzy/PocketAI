@@ -49,6 +49,8 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   RUN_NOT_FOUND: 'agent.interjectRunEnded',
   // 同会话并发起两轮（P2 / V4-Iter-459）：引擎侧兜底守卫，明确告诉被拒的一方而不是静默丢弃
   AGENT_RUN_BUSY: 'agent.conversationBusy',
+  // 隐私模式拦截云端模型：回码来自引擎主闸门与 provider 适配器双层守卫
+  PRIVACY_MODE_BLOCKED_CLOUD: 'agent.privacyBlocked',
   // 「还原到写入前」那一族的六条拒绝（V4-Iter-242 真机撞出来的：它们原本是光秃秃的码，
   // 既躲过了§206 那道闸门，也让界面只能把码原样贴给用户；§371 补上 SNAPSHOT_CORRUPT＝快照坏了）
   SNAPSHOT_ID_INVALID: 'agent.fsWrite.errIdInvalid',

@@ -2554,6 +2554,9 @@ export const AppearancePanel: React.FC = () => {
   const [collapseLines, setCollapseLines] = useState(CODE_COLLAPSE_THRESHOLD)
   const [collapseInput, setCollapseInput] = useState(String(CODE_COLLAPSE_THRESHOLD))
   const [replyNotify, setReplyNotify] = useState(true)
+  // 隐私/离线模式：缺省 true（fail-safe）；读取失败也保持 true，只有明确回包才改
+  const [privacyMode, setPrivacyMode] = useState(true)
+  const [privacyErr, setPrivacyErr] = useState<string | null>(null)
   // §226：这一页是**三发彼此独立的读**（界面偏好／窗口行为／回复通知）；谁没读到就只有谁那几项是默认值，
   // 混成一句会把成功读到的那几项也说成默认值 ⇒ 三个原因各说各的
   const [uiErr, setUiErr] = useState<string | null>(null)
@@ -2606,6 +2609,18 @@ export const AppearancePanel: React.FC = () => {
         setNotifyErr(errText(e, t('common.unknownError')))
         logIpcError('settings.getReplyNotifyEnabled', e)
       })
+    // 隐私模式：读不到保持 fail-safe 默认开，但失败必须上屏（IPC 静默闸门）
+    window.pocketai.getPrivacyMode().then((r) => {
+      if (!r.ok || !r.data) {
+        setPrivacyErr(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      setPrivacyErr('')
+      setPrivacyMode(r.data.enabled)
+    }).catch((e) => {
+      setPrivacyErr(errText(e, t('common.unknownError')))
+      logIpcError('settings.getPrivacyMode', e)
+    })
   }, [])
 
   const toggleLaunchAtLogin = async (next: boolean) => {
@@ -2697,6 +2712,23 @@ export const AppearancePanel: React.FC = () => {
     } catch (e) {
       setReplyNotify(!next)
       setNotice({ ok: false, text: errText(e, t('common.unknownError')) })
+    }
+  }
+
+  const togglePrivacyMode = async (next: boolean) => {
+    setPrivacyMode(next) // 乐观更新
+    try {
+      const r = await window.pocketai.setPrivacyMode(next)
+      if (!r.ok || !r.data) {
+        setPrivacyMode(!next) // 失败回滚，不谎报已生效
+        setPrivacyErr(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      setPrivacyMode(r.data.enabled)
+      setPrivacyErr('')
+    } catch (e) {
+      setPrivacyMode(!next)
+      setPrivacyErr(errText(e, t('common.unknownError')))
     }
   }
 
@@ -2841,6 +2873,22 @@ export const AppearancePanel: React.FC = () => {
           <span className="text-[var(--color-text)]">{t('set.replyNotify')}</span>
         </label>
         <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('set.replyNotifyHint')}</p>
+      </div>
+
+      {/* 隐私/离线模式：缺省开；开启后只允许回环地址的本地模型参与对话与委派 */}
+      <div>
+        {privacyErr && <ShowingDefaultsNotice what={t('set.privacyMode')} msg={privacyErr} />}
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            data-testid="settings-privacy-mode"
+            type="checkbox"
+            className="w-4 h-4 accent-[var(--color-accent)]"
+            checked={privacyMode}
+            onChange={(e) => void togglePrivacyMode(e.target.checked)}
+          />
+          <span className="text-[var(--color-text)]">{t('set.privacyMode')}</span>
+        </label>
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('set.privacyModeHint')}</p>
       </div>
 
       {notice && (

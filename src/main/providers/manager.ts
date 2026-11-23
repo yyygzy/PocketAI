@@ -14,6 +14,17 @@ class ProviderManager {
    */
   private keepAliveResolver: () => string | undefined = () => undefined
 
+  /**
+   * 隐私模式守卫，由主进程入口注入（与 keepAlive 同理，避免本模块顶层拉入 app_config → electron 链）。
+   * 默认 () => true＝放行，纯 manager 测试无需 electron mock；真实运行时由 registerOllamaHandlers 注入判定。
+   */
+  private privacyGuardResolver: (id: string) => boolean = () => true
+
+  setPrivacyGuardResolver(fn: (id: string) => boolean): void {
+    this.privacyGuardResolver = fn
+    this.adapters.clear()
+  }
+
   setKeepAliveResolver(fn: () => string | undefined): void {
     this.keepAliveResolver = fn
     // 已缓存的 ollama adapter 拿不到新配置：清掉让下次 getAdapter 重建
@@ -28,6 +39,11 @@ class ProviderManager {
     const record = providerRepo.get(id)
     if (!record) throw new Error(`Provider 不存在: ${id}`)
     if (!record.enabled) throw new Error(`Provider 已禁用: ${record.name}`)
+    // 隐私模式纵深：所有 LLM 出口（主对话/规划/摘要/降级/拉取模型）都过 getAdapter，
+    // 在这里拒绝云端，覆盖任何绕过 engine.run() 主闸门的调用路径。
+    if (!this.privacyGuardResolver(id)) {
+      throw new Error('PRIVACY_MODE_BLOCKED_CLOUD:隐私模式已开启，禁止向云端模型发送数据')
+    }
 
     // Phase 1：所有类型（含 ollama）均走 OpenAI 兼容端点
     // Phase 后续：gemini / anthropic 在此分派专用适配器

@@ -44,6 +44,7 @@ import { kbRepo } from '../src/main/db/repositories/kb.repo'
 import { delegateTaskTool } from '../src/main/tools/delegate-tool'
 import { agentEngine } from '../src/main/agent/engine'
 import { setDelegationEnabled } from '../src/main/agent/delegate-capability'
+import { setPrivacyMode } from '../src/main/agent/privacy-prefs'
 import { listRoleModelOptions, resolveChildTarget } from '../src/main/agent/delegation'
 import {
   mayAssignDistinctModelRole,
@@ -402,6 +403,9 @@ beforeAll(async () => {
   fs.mkdirSync(P.dir, { recursive: true })
   dbService.open()
   dbService.runMigrations()
+  // 这组用例故意把 127.0.0.2 当“判据眼里的云”，验证的是旧调度约束；
+  // 隐私模式缺省 fail-safe 会拦掉这些云端候选，显式关掉以保持本文件原有语义。
+  setPrivacyMode(false)
 
   localHttp = makeServer('local')
   remoteHttp = makeServer('remote')

@@ -16,7 +16,7 @@ import { annotateTraceReplay } from '../../agent/trace-replay'
 import { redactTraceFieldsForRead } from '../../security/audit-redact'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { resolveAgentToolPermissions } from '../../agent/tool-permissions'
-import { safeHandle, argsSchema } from '../safe-handle'
+import { safeHandle, argsSchema, z } from '../safe-handle'
 import { createLogger } from '../../logger'
 import {
   shellConfigSchema,
@@ -51,6 +51,7 @@ import {
   setJevReviewEnabled,
   setJevThreshold
 } from '../../agent/jev-review-prefs'
+import { getPrivacyMode, setPrivacyMode } from '../../agent/privacy-prefs'
 import {
   abortDelegateProbe,
   listDelegateCapabilitiesWithStaleness,
@@ -335,6 +336,13 @@ export function registerAgentHandlers(): void {
     },
     argsSchema(jevReviewSetSchema)
   )
+
+  // 隐私/离线模式（缺省开/fail-safe）：只回布尔状态，写入失败按失败回，不让界面误以为已生效
+  safeHandle(IPC.AGENT_GET_PRIVACY, () => ({ ok: true as const, data: getPrivacyMode() }))
+  safeHandle(IPC.AGENT_SET_PRIVACY, (_e, enabled: boolean) => {
+    if (!setPrivacyMode(enabled)) return { ok: false as const, error: '隐私模式设置保存失败' }
+    return { ok: true as const, data: getPrivacyMode() }
+  }, argsSchema(z.boolean()))
 
   // ---------- 委派能力探针（V4-Iter-142）----------
   // 清单只读；探测会发真请求（默认 3 发），所以只允许用户在设置页点名触发

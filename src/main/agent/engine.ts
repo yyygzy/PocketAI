@@ -87,6 +87,7 @@ import { resolveContextWindow } from './model-window-prefs'
 import { thinkingParamFor } from './thinking-prefs'
 import { getFallbackTarget } from './fallback-target-prefs'
 import { reviewToolCall } from './jev-review'
+import { isProviderAllowedUnderPrivacy } from './privacy-prefs'
 import { providerRepo } from '../db/repositories/provider.repo'
 import { DEFAULT_AGENT_OUTPUT_TOKENS, DEFAULT_MESSAGES_WHEN_WINDOW_UNSET, resolveAgentOutputTokens } from '../../shared/model-window'
 import { isContextOverflowError, trimOldestConversationTurn } from './context-overflow'
@@ -1373,6 +1374,11 @@ class AgentEngine {
     const { requestId, conversationId, content, assistantId, targets, unattended } = payload
     if (!targets || targets.length === 0) throw new Error('CHAT_NO_TARGET:未选择模型')
     const target: ChatTarget = targets[0]! // Agent 模式只取第一个目标（length 已校验）
+    // 隐私模式（缺省开/fail-safe）：在任何消息落库、adapter 创建、状态登记之前拒绝云端目标。
+    // 放在 busy guard 之前——被拒的 run 不动会话状态（见下方 §307 的顺序注释）。
+    if (!isProviderAllowedUnderPrivacy(target.providerId)) {
+      throw new Error('PRIVACY_MODE_BLOCKED_CLOUD:隐私模式已开启，禁止向云端模型发送数据；请在设置里关闭隐私模式或选择本地模型')
+    }
     const asChild = internal?.asChild === true
     const parentRequestId = internal?.parentRequestId ?? null
     const resume = internal?.resume
@@ -1548,7 +1554,9 @@ class AgentEngine {
       // 局部变量与导入的函数**不能同名**（同名会自引用进 TDZ，`const x = x(...)` 当场炸）
       const hitsLocalEmbeddingEndpoint = retrievalHitsLocalEndpoint(kbIds)
       const capacity = slotDecision()
-      const roleAllows = (candidate: { endpointLocal: boolean }): boolean =>
+      const roleAllows = (candidate: { endpointLocal: boolean; providerId: string }): boolean =>
+        // 隐私模式：委派候选也只允许回环地址的本地模型，云端落点连"看得见"都不给
+        (isProviderAllowedUnderPrivacy(candidate.providerId)) &&
         mayAssignDistinctModelRole(capacity, {
           childEndpointLocal: candidate.endpointLocal,
           childUsesRetrieval,

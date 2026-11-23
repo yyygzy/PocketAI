@@ -1133,6 +1133,11 @@ const api = {
   setJevReviewPrefs: (patch: { enabled?: boolean; model?: string; threshold?: number }): Promise<{
     ok: boolean; data?: { enabled: boolean; model: string; threshold: number }; error?: string
   }> => ipcRenderer.invoke(IPC.AGENT_SET_JEV_REVIEW, patch),
+  /** 隐私/离线模式（缺省开）：开启后只允许回环地址的本地模型参与对话/委派 */
+  getPrivacyMode: (): Promise<{ ok: boolean; data?: { enabled: boolean }; error?: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_PRIVACY),
+  setPrivacyMode: (enabled: boolean): Promise<{ ok: boolean; data?: { enabled: boolean }; error?: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_PRIVACY, enabled),
   /** 已判出的"这台模型当得了管控者吗"清单（带 stale：本地镜像换了就该重探） */
   listDelegateCapabilities: (): Promise<DelegateCapabilityView[]> =>
     ipcRenderer.invoke(IPC.AGENT_LIST_DELEGATE_CAPS),
