@@ -54,6 +54,11 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   // Jev 语义审核增强：agent 级开关，默认关；读取/写入失败都要上屏（IPC 静默闸门）
   const [jevReview, setJevReview] = useState<{ enabled: boolean; model: string; threshold: number } | null>(null)
   const [jevReviewErr, setJevReviewErr] = useState('')
+  // 大上下文衍生模型：基础 coder 拉好后可派生一个带 num_ctx 的版本（兼容端点不支持 num_ctx）
+  const [ctxSize, setCtxSize] = useState('131072')
+  const [ctxCreating, setCtxCreating] = useState(false)
+  const [ctxErr, setCtxErr] = useState('')
+  const [ctxCreated, setCtxCreated] = useState('')
   // handleStop 的延时回调：组件卸载后必须清理，避免对已卸载组件 setState
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -235,6 +240,35 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const doPull = (model: string): Promise<boolean> => {
     clearPullDone()
     return pull(model)
+  }
+
+  /** 派生大上下文模型：名字约定与 main 的 derivedModelName 一致，由测试钉住 */
+  const createCtxModel = async () => {
+    if (!coderPick?.installed) return
+    const n = Number(ctxSize)
+    if (!Number.isInteger(n) || n < 2048 || n > 1048576) {
+      setCtxErr(t('ollama.ctxInvalid'))
+      return
+    }
+    const label = n >= 1_000_000 ? `${Math.round(n / 1_000_000)}m` : `${Math.round(n / 1024)}k`
+    const model = `${coderPick.id}-${label}`
+    setCtxCreating(true)
+    setCtxErr('')
+    setCtxCreated('')
+    try {
+      const r = await window.pocketai.createOllamaContextModel({ from: coderPick.id, model, numCtx: n })
+      if (r.ok) {
+        setCtxCreated(model)
+        if (r.windowRejected) setCtxErr(r.windowRejected)
+      } else {
+        setCtxErr(r.error || t('common.unknownError'))
+      }
+    } catch (e) {
+      setCtxErr(errText(e, t('common.unknownError')))
+      reportIpcError('ollama.createContextModel')(e)
+    } finally {
+      setCtxCreating(false)
+    }
   }
 
   const runDecision = async () => {
@@ -651,6 +685,34 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
                 {coderPick.installed ? '✓ ' : '⬇️ '}
                 {coderPick.id}
               </button>
+              {coderPick.installed && (
+                <div className="mt-1 space-y-1">
+                  <div className="flex gap-1">
+                    <input
+                      data-testid="ollama-ctx-size"
+                      className="input flex-1 py-1 text-[10px] font-mono"
+                      value={ctxSize}
+                      onChange={(e) => setCtxSize(e.target.value)}
+                      aria-label={t('ollama.ctxSizeLabel')}
+                    />
+                    <button
+                      data-testid="ollama-ctx-create"
+                      className="px-2 py-1 rounded border border-[var(--color-border)] text-[10px] text-[var(--color-text)] hover:border-[var(--color-accent)] disabled:opacity-50"
+                      disabled={ctxCreating}
+                      onClick={() => void createCtxModel()}
+                    >
+                      {ctxCreating ? t('ollama.ctxCreating') : t('ollama.ctxCreate')}
+                    </button>
+                  </div>
+                  <div className="leading-relaxed text-[var(--color-text-muted)]">{t('ollama.ctxHint')}</div>
+                  {ctxCreated && (
+                    <div role="status" className="text-[var(--color-success)]">{t('ollama.ctxCreated')}: {ctxCreated}</div>
+                  )}
+                  {ctxErr && (
+                    <div role="alert" className="text-[var(--color-danger)]">⚠️ {ctxErr}</div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

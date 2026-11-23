@@ -3277,6 +3277,8 @@ export const IPC = {
   OLLAMA_KEEPALIVE_SET: 'ollama:keepalive-set',
   /** Ollama Jev 决策模型（/v1/systemone，Ollama ≥0.35） */
   OLLAMA_SYSTEMONE: 'ollama:systemone',
+  /** Ollama 大上下文衍生模型（native /api/create，因兼容端点拒绝 num_ctx） */
+  OLLAMA_CREATE_CONTEXT_MODEL: 'ollama:create-context-model',
 
   // Python MCP 虚拟环境（venv + pip）
   PYTHON_ENV_INSTALL: 'python-env:install',

@@ -3,6 +3,8 @@ import { IPC, type SystemOneRequest } from '../../../shared/types'
 import { ollamaRuntime } from '../../ollama/ollama-runtime'
 import { getOllamaKeepAlive, setOllamaKeepAlive } from '../../ollama/keepalive-config'
 import { runSystemOne } from '../../ollama/systemone'
+import { createContextModel } from '../../ollama/create-context-model'
+import { setModelContextWindow } from '../../agent/model-window-prefs'
 import { providerRepo } from '../../db/repositories/provider.repo'
 import { providerManager } from '../../providers/manager'
 import { broadcast } from '../broadcast'
@@ -12,16 +14,16 @@ import { safeHandle, argsSchema, z } from '../safe-handle'
  * 拉取模型成功后，确保存在指向本地 11434 的 Ollama provider 并包含该模型。
  * 用户已手动配置过（含 LM Studio 等其他本地端口）时不动其记录，只补缺失的 ollama 条目。
  */
-function ensureOllamaProvider(model: string): void {
+function ensureOllamaProvider(model: string): string {
   const localBaseUrl = 'http://localhost:11434/v1'
   const existing = providerRepo.list().find((p) => p.type === 'ollama' && p.baseUrl.includes('11434'))
   if (existing) {
     if (!existing.models.includes(model)) {
       providerRepo.updateModels(existing.id, [...existing.models, model])
     }
-    return
+    return existing.id
   }
-  providerRepo.save({
+  return providerRepo.save({
     id: '',
     type: 'ollama',
     name: 'Ollama（本地模型）',
@@ -30,7 +32,7 @@ function ensureOllamaProvider(model: string): void {
     models: [model],
     enabled: true,
     createdAt: Date.now()
-  })
+  }).id
 }
 
 export function registerOllamaHandlers(): void {
@@ -87,4 +89,28 @@ export function registerOllamaHandlers(): void {
       criteria: z.union([z.record(z.string(), z.string()), z.array(z.string())]).optional()
     }))
   })))
+  // 大上下文衍生模型：native /api/create 派生后，把新模型加入 provider 并写入 model-window，
+  // 让引擎按这个窗口裁历史（本地端点不吃内置窗口表，必须显式配置）。
+  safeHandle(
+    IPC.OLLAMA_CREATE_CONTEXT_MODEL,
+    async (_e, req: { from: string; model: string; numCtx: number }) => {
+      const result = await createContextModel(req)
+      if (!result.ok) return result
+      const providerId = ensureOllamaProvider(req.model.trim())
+      const { windows, rejected } = setModelContextWindow(providerId, req.model.trim(), req.numCtx)
+      return {
+        ok: true,
+        providerId,
+        model: req.model.trim(),
+        numCtx: req.numCtx,
+        windows,
+        windowRejected: rejected ?? null
+      }
+    },
+    argsSchema(z.object({
+      from: z.string().min(1),
+      model: z.string().min(1),
+      numCtx: z.number().int().min(2048).max(1_048_576)
+    }))
+  )
 }

@@ -399,7 +399,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     configSource: '固定环回 127.0.0.1:11434',
     endpoints: [OLLAMA_LOOPBACK],
     transport: 'fetch',
-    files: ['ollama/ollama-runtime.ts', 'ollama/systemone.ts']
+    files: ['ollama/ollama-runtime.ts', 'ollama/systemone.ts', 'ollama/create-context-model.ts']
   },
   {
     id: 'model-recommend',

@@ -1712,7 +1712,12 @@ const api = {
     ipcRenderer.invoke(IPC.OLLAMA_KEEPALIVE_SET, value),
   /** Ollama Jev 决策模型（/v1/systemone，Ollama ≥0.35；模型需先 pull） */
   runOllamaSystemOne: (req: SystemOneRequest): Promise<{ ok: boolean; data?: SystemOneResponse; error?: string }> =>
-    ipcRenderer.invoke(IPC.OLLAMA_SYSTEMONE, req)
+    ipcRenderer.invoke(IPC.OLLAMA_SYSTEMONE, req),
+  /** 从本地基础模型派生一个带大 num_ctx 的版本（native /api/create） */
+  createOllamaContextModel: (req: { from: string; model: string; numCtx: number }): Promise<{
+    ok: boolean; error?: string; providerId?: string; model?: string; numCtx?: number;
+    windows?: Record<string, number>; windowRejected?: string | null
+  }> => ipcRenderer.invoke(IPC.OLLAMA_CREATE_CONTEXT_MODEL, req)
 }
 
 contextBridge.exposeInMainWorld('pocketai', api)
