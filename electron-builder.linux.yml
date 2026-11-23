@@ -26,7 +26,7 @@ files:
   - '!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}'
   - '!**/node_modules/*.d.ts'
   - '!**/node_modules/.cache'
-  - '!**/node_modules/{@types,typescript}'
+  - '!**/node_modules/@types'
   # Linux 版：排除 macOS/Windows 的 sqlite prebuilds，保留 linux(-musl) 运行时
   - '!**/node_modules/{better-sqlite3-multiple-ciphers,better-sqlite3}/prebuilds/{darwin,win32}-*.node'
 linux:
