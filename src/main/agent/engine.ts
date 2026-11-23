@@ -85,6 +85,7 @@ import { shouldFallbackOnClaim, shouldFallbackOnEmptySurface } from '../../share
 import { resolveContextWindow } from './model-window-prefs'
 import { thinkingParamFor } from './thinking-prefs'
 import { getFallbackTarget } from './fallback-target-prefs'
+import { reviewToolCall } from './jev-review'
 import { providerRepo } from '../db/repositories/provider.repo'
 import { DEFAULT_AGENT_OUTPUT_TOKENS, DEFAULT_MESSAGES_WHEN_WINDOW_UNSET, resolveAgentOutputTokens } from '../../shared/model-window'
 import { isContextOverflowError, trimOldestConversationTurn } from './context-overflow'
@@ -2615,6 +2616,22 @@ class AgentEngine {
       toolRegistry.classify(tc.function.name, tc.function.arguments, allowedToolIds)
     )
 
+    // Jev 语义审核增强（默认关，fail-open）：只对规则已 allow 的调用并行跑一次 score 判定，
+    // 超阈值则把那一条提升为 confirm，交给下面现成的 createApproval 走用户确认。
+    // 任何失败/关闸都不改原判定——"我们不知道"不许变成拦截或放行。
+    const jevUpgraded = new Set<number>()
+    if (classifications.some((c) => c.decision === 'allow')) {
+      const upgrades = await Promise.all(toolCalls.map(async (tc, idx) => {
+        if (classifications[idx]!.decision !== 'allow') return false
+        const r = await reviewToolCall({
+          toolName: tc.function.name,
+          argsSummary: redactedToolSignatureText([tc])
+        })
+        return r.decision === 'confirm'
+      }))
+      upgrades.forEach((up, idx) => { if (up) jevUpgraded.add(idx) })
+    }
+
     // P0-3b（427 收窄）：**只对「被判 confirm 且用户已批准」的 shell／MCP 调用**前后各扫一次工作目录。
     // 自动放行的调用不扫——每一步固定两扫的代价会落到所有步骤上（按本仓历史基线 ≈0.027 ms/文件：
     // 5k 文件≈0.27 s、25k≈1.35 s／次审计；推算依据见 workspace-changes 的 CHANGE_SET_LIMITS），
@@ -2642,7 +2659,12 @@ class AgentEngine {
     for (let i = 0; i < toolCalls.length; i++) {
       if (master.signal.aborted) throw new Error('Agent 运行已中止')
       const tc = toolCalls[i]!
-      const classification = classifications[i]!
+      // Jev 增强只把 allow 提升为 confirm（走现成审批），不改 deny/原 confirm；
+      // reason 用独立码，界面按现有 i18n 显示，不复制规则判定的口径。
+      const baseClassification = classifications[i]!
+      const classification = jevUpgraded.has(i)
+        ? { ...baseClassification, decision: 'confirm' as const, reason: 'JEV_RISK', forceConfirm: true }
+        : baseClassification
 
       emit(IPC.AGENT_STEP_EVENT, {
         requestId,

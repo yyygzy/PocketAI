@@ -51,6 +51,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const [systemOneRunning, setSystemOneRunning] = useState(false)
   const [systemOneResult, setSystemOneResult] = useState<SystemOneResponse | null>(null)
   const [systemOneErr, setSystemOneErr] = useState('')
+  // Jev 语义审核增强：agent 级开关，默认关；读取/写入失败都要上屏（IPC 静默闸门）
+  const [jevReview, setJevReview] = useState<{ enabled: boolean; model: string; threshold: number } | null>(null)
+  const [jevReviewErr, setJevReviewErr] = useState('')
   // handleStop 的延时回调：组件卸载后必须清理，避免对已卸载组件 setState
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -119,6 +122,17 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
     }).catch((e: unknown) => {
       setErr(errText(e, t('ollama.keepAliveReadFailed')))
       reportIpcError('ollama.getKeepAlive')(e)
+    })
+    window.pocketai.getJevReviewPrefs().then((r) => {
+      if (hasIpcFailed(r)) {
+        setJevReviewErr(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      setJevReviewErr('')
+      setJevReview(r)
+    }).catch((e: unknown) => {
+      setJevReviewErr(errText(e, t('common.unknownError')))
+      reportIpcError('agent.getJevReview')(e)
     })
     const off1 = window.pocketai.onOllamaInstallEvent((e) => setInstallEvt(e))
     const timer = setInterval(refresh, 8000) // 兜底轮询（外部启停/系统 ollama 变化）
@@ -499,6 +513,35 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
               {systemOneRunning ? t('ollama.decisionRunning') : t('ollama.decisionRun')}
             </button>
             <div className="leading-relaxed">{t('ollama.decisionHint')}</div>
+            {/* Jev 语义审核增强：把 allow 的工具调用按语义风险升级为「人工确认」，默认关 */}
+            <div className="border-t border-[var(--color-border)] pt-1.5 space-y-1">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  data-testid="ollama-jev-review-toggle"
+                  type="checkbox"
+                  checked={jevReview?.enabled === true}
+                  onChange={(e) => {
+                    setJevReview((prev) => prev ? { ...prev, enabled: e.target.checked } : prev)
+                    window.pocketai.setJevReviewPrefs({ enabled: e.target.checked }).then((r) => {
+                      if (r.ok && r.data) {
+                        setJevReview(r.data)
+                        setJevReviewErr('')
+                      } else {
+                        setJevReviewErr(r.error || t('common.unknownError'))
+                      }
+                    }).catch((e: unknown) => {
+                      setJevReviewErr(errText(e, t('common.unknownError')))
+                      reportIpcError('agent.setJevReview')(e)
+                    })
+                  }}
+                />
+                <span>{t('ollama.jevReviewToggle')}</span>
+              </label>
+              <div className="leading-relaxed">{t('ollama.jevReviewHint')}</div>
+              {jevReviewErr && (
+                <div role="alert" className="text-[var(--color-danger)]">⚠️ {jevReviewErr}</div>
+              )}
+            </div>
             {systemOneErr && (
               <div role="alert" className="text-[var(--color-danger)]">⚠️ {systemOneErr}</div>
             )}

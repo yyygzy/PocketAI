@@ -2372,6 +2372,8 @@ export const ko = {
   'ollama.decisionUrgencyHigh': '긴급',
   'ollama.decisionResultTitle': '결정 결과',
   'ollama.decisionUsage': '입력/출력 토큰',
+  'ollama.jevReviewToggle': '의미론적 검토 활성화(기본 꺼짐, 결정 모델 필요)',
+  'ollama.jevReviewHint': '켜지면 Agent가 도구 실행 전 의미론적 위험을 평가합니다. 고위험 호출은 사용자 확인으로 넘어갑니다. 실패하거나 꺼진 경우 기존 규칙 판정을 그대로 유지합니다.',
   'ollama.mirrorOn': '미러 프리픽스 설정됨. 다운로드는 해당 주소를 경유합니다.',
   'ollama.noModels': '모델이 아직 없습니다. 아래 추천에서 시작하세요:',
   'ollama.recommend': '이 하드웨어에 맞는 추천 (클릭하여 가져오기)',

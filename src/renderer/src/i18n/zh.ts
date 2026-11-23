@@ -2441,6 +2441,8 @@ export const zh = {
   'ollama.decisionUrgencyHigh': '紧急',
   'ollama.decisionResultTitle': '决策结果',
   'ollama.decisionUsage': '输入/输出 token',
+  'ollama.jevReviewToggle': '启用语义审核增强（默认关，需决策模型）',
+  'ollama.jevReviewHint': '开启后，Agent 执行工具前会用决策模型评估语义风险；高风险调用将转为你确认，失败或关闭时保持原有规则判定不变。',
   'ollama.mirrorOn': '已配置镜像前缀，下载将经由该地址转发。',
   'ollama.noModels': '尚未拉取模型，点下方推荐项开始：',
   'ollama.recommend': '按本机硬件推荐（点击拉取）',

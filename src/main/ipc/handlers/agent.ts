@@ -28,6 +28,7 @@ import {
   modelWindowSetSchema,
   interjectSchema,
   fallbackSetSchema,
+  jevReviewSetSchema,
   delegateProbeSchema,
   toolProbeSchema,
   delegateToggleSchema,
@@ -44,6 +45,12 @@ import {
   setModelContextWindow
 } from '../../agent/model-window-prefs'
 import { listFallbackTargets, setFallbackTarget } from '../../agent/fallback-target-prefs'
+import {
+  getJevReviewPrefs,
+  setJevModel,
+  setJevReviewEnabled,
+  setJevThreshold
+} from '../../agent/jev-review-prefs'
 import {
   abortDelegateProbe,
   listDelegateCapabilitiesWithStaleness,
@@ -307,6 +314,26 @@ export function registerAgentHandlers(): void {
     (_e, payload: { providerId: string; model: string; target: { providerId: string; model: string } | null }) =>
       setFallbackTarget(payload.providerId, payload.model, payload.target),
     argsSchema(fallbackSetSchema)
+  )
+
+  // ---------- Jev 语义审核增强（Ollama ≥0.35 /v1/systemone，默认关）----------
+  safeHandle(IPC.AGENT_GET_JEV_REVIEW, () => getJevReviewPrefs())
+  safeHandle(
+    IPC.AGENT_SET_JEV_REVIEW,
+    (_e, payload: { enabled?: boolean; model?: string; threshold?: number }) => {
+      // 先全部校验再落库：避免模型名非法时 enabled 已经改了造成半写入
+      if (payload.model !== undefined && !/^[\w.\-:]{1,128}$/.test(payload.model.trim()) && payload.model.trim() !== '') {
+        return { ok: false as const, error: '决策模型名不合法' }
+      }
+      if (payload.threshold !== undefined && (!Number.isFinite(payload.threshold) || payload.threshold < 0 || payload.threshold > 1)) {
+        return { ok: false as const, error: '风险阈值需在 0 到 1 之间' }
+      }
+      if (payload.enabled !== undefined) setJevReviewEnabled(payload.enabled)
+      if (payload.model !== undefined) setJevModel(payload.model)
+      if (payload.threshold !== undefined) setJevThreshold(payload.threshold)
+      return { ok: true as const, data: getJevReviewPrefs() }
+    },
+    argsSchema(jevReviewSetSchema)
   )
 
   // ---------- 委派能力探针（V4-Iter-142）----------

@@ -2440,6 +2440,8 @@ export const en = {
   'ollama.decisionUrgencyHigh': 'Urgent',
   'ollama.decisionResultTitle': 'Decision result',
   'ollama.decisionUsage': 'Input/output tokens',
+  'ollama.jevReviewToggle': 'Enable semantic review boost (off by default, needs a decision model)',
+  'ollama.jevReviewHint': 'When on, the Agent evaluates tool calls for semantic risk before running them; high-risk calls are routed to your confirmation. Failures or off-state keep the original rule-based decision unchanged.',
   'ollama.mirrorOn': 'Mirror prefix configured; the download will be proxied through it.',
   'ollama.noModels': 'No models yet — pick a recommendation below:',
   'ollama.recommend': 'Recommended for this hardware (click to pull)',

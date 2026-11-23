@@ -2372,6 +2372,8 @@ export const ja = {
   'ollama.decisionUrgencyHigh': '緊急',
   'ollama.decisionResultTitle': '決定結果',
   'ollama.decisionUsage': '入力/出力トークン',
+  'ollama.jevReviewToggle': 'セマンティック審査を有効にする（既定オフ・決定モデルが必要）',
+  'ollama.jevReviewHint': '有効時、Agent はツール実行前にセマンティックリスクを評価します。高リスク呼び出しは確認に回ります。失敗時やオフ時は既存のルール判定をそのまま維持します。',
   'ollama.mirrorOn': 'ミラープレフィックス設定済み。ダウンロードはそのアドレスを経由します。',
   'ollama.noModels': 'モデルはまだ取得されていません。下の推奨から始めてください：',
   'ollama.recommend': 'このハードウェア向け推奨（クリックで取得）',

@@ -132,3 +132,14 @@ export const modelWindowSetSchema = z.object({
   model: z.string().min(1).max(128),
   tokens: z.number().int().nullable()
 })
+
+/**
+ * AGENT_SET_JEV_REVIEW 入参：Jev 语义审核增强的开关/模型/阈值。
+ * 三个字段都可选——只改用户点动的那一格，避免界面把没改的值回写覆盖；
+ * model 与阈值的值域校验留在服务层（那里才知道默认与拒绝口径）。
+ */
+export const jevReviewSetSchema = z.object({
+  enabled: z.boolean().optional(),
+  model: z.string().max(128).optional(),
+  threshold: z.number().min(0).max(1).optional()
+})

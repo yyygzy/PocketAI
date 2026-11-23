@@ -3355,6 +3355,8 @@ export const IPC = {
   AGENT_SET_MODEL_WINDOW: 'agent:set-model-window', // §234：设/清一台模型的上下文窗口，回传最新表
   AGENT_GET_FALLBACKS: 'agent:get-fallbacks', // §237：每台模型的备用 target（`providerId::model` → 一台），只读
   AGENT_SET_FALLBACK: 'agent:set-fallback', // §237：设/清某台模型的备用，回传最新表
+  AGENT_GET_JEV_REVIEW: 'agent:get-jev-review', // Jev 语义审核增强配置（默认关），只读
+  AGENT_SET_JEV_REVIEW: 'agent:set-jev-review', // 开/关 Jev 语义审核增强，回传最新配置
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',

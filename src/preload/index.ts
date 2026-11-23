@@ -1126,6 +1126,13 @@ const api = {
     | { targets: Record<string, { providerId: string; model: string }>; rejected?: string }
     | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.AGENT_SET_FALLBACK, { providerId, model, target }),
+  /** Jev 语义审核增强配置（默认关）；失败回 {ok:false} 由界面上屏 */
+  getJevReviewPrefs: (): Promise<{
+    enabled: boolean; model: string; threshold: number
+  } | { ok: false; error: string }> => ipcRenderer.invoke(IPC.AGENT_GET_JEV_REVIEW),
+  setJevReviewPrefs: (patch: { enabled?: boolean; model?: string; threshold?: number }): Promise<{
+    ok: boolean; data?: { enabled: boolean; model: string; threshold: number }; error?: string
+  }> => ipcRenderer.invoke(IPC.AGENT_SET_JEV_REVIEW, patch),
   /** 已判出的"这台模型当得了管控者吗"清单（带 stale：本地镜像换了就该重探） */
   listDelegateCapabilities: (): Promise<DelegateCapabilityView[]> =>
     ipcRenderer.invoke(IPC.AGENT_LIST_DELEGATE_CAPS),
