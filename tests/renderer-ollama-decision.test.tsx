@@ -67,7 +67,7 @@ describe('Ollama 面板 Jev 决策区', () => {
     const call = pocketaiCalls().find((c) => c.fn === 'runOllamaSystemOne')
     expect(call).toBeDefined()
     const req = call!.args[0] as { model: string; state: Record<string, string>; questions: Record<string, { type: string }> }
-    expect(req.model).toBe('nimble')
+    expect(req.model).toBe('tev1:0.8b')
     expect(req.state.ticket).toBe('charged twice')
     expect(Object.values(req.questions).map((q) => q.type).sort()).toEqual(['choice', 'noul', 'score'])
   })

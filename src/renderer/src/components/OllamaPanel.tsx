@@ -46,7 +46,7 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
   const [keepAliveDraft, setKeepAliveDraft] = useState('')
   const [keepAliveSaved, setKeepAliveSaved] = useState(false)
   // Jev 决策模型（Ollama ≥0.35）：预置工单分诊场景，三种题型 choice/noul/score 全覆盖
-  const [systemOneModel, setSystemOneModel] = useState('nimble')
+  const [systemOneModel, setSystemOneModel] = useState('tev1:0.8b')
   const [systemOneState, setSystemOneState] = useState('')
   const [systemOneRunning, setSystemOneRunning] = useState(false)
   const [systemOneResult, setSystemOneResult] = useState<SystemOneResponse | null>(null)

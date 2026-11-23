@@ -8,12 +8,12 @@
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 
 const K_JEV_REVIEW_ENABLED = 'agent.jev_review_enabled'
-/** 决策用的本地模型名；空＝用默认 nimble */
+/** 决策用的本地模型名；空＝用默认 tev1:0.8b（轻量、已实测可用） */
 const K_JEV_MODEL = 'agent.jev_model'
 /** 风险分阈值：score ≥ 此值（0-1）时把 allow 提升为 confirm */
 const K_JEV_THRESHOLD = 'agent.jev_review_threshold'
 
-export const JEV_DEFAULT_MODEL = 'nimble'
+export const JEV_DEFAULT_MODEL = 'tev1:0.8b'
 export const JEV_DEFAULT_THRESHOLD = 0.7
 const MODEL_RE = /^[\w.\-:]+$/
 const MAX_MODEL_CHARS = 128
