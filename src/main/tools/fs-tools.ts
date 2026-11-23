@@ -234,7 +234,7 @@ const fsWriteTool: BuiltinTool = {
       prev === TOO_LARGE_OR_BINARY
         ? null
         : captureSnapshot(defaultSnapshotRoot(), {
-            relPath: relativeWorkspacePath(abs),
+            relPath: relativeWorkspacePathFor(abs),
             prevExists: !created,
             prevContent: typeof prev === 'string' ? prev : '',
             wroteContent: content
@@ -252,12 +252,12 @@ const fsWriteTool: BuiltinTool = {
 }
 
 /** 快照读不到旧内容时用的哨兵（区分"文件不存在"与"太大/二进制所以没留"） */
-const TOO_LARGE_OR_BINARY = Symbol('too-large-or-binary')
+export const TOO_LARGE_OR_BINARY = Symbol('too-large-or-binary')
 /**
  * 读旧内容用于快照：仅文本、仅 `MAX_SNAPSHOT_BYTES` 以内。
  * 返回 null=文件不存在；返回哨兵=存在但不肯存（二进制或过大），调用方据此报告"不可还原"。
  */
-function readPrevText(abs: string): string | typeof TOO_LARGE_OR_BINARY | null {
+export function readPrevText(abs: string): string | typeof TOO_LARGE_OR_BINARY | null {
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null
   const size = fs.statSync(abs).size
   if (size > MAX_SNAPSHOT_BYTES) return TOO_LARGE_OR_BINARY
@@ -267,7 +267,7 @@ function readPrevText(abs: string): string | typeof TOO_LARGE_OR_BINARY | null {
 }
 
 /** 存进快照的相对路径：由绝对路径反推，保证还原时按当时的工作目录再解析一次能指回同一文件 */
-function relativeWorkspacePath(abs: string): string {
+export function relativeWorkspacePathFor(abs: string): string {
   const ws = getWorkspaceDir()
   const rel = path.relative(ws, abs).replace(/\\/g, '/')
   return rel === '' ? '.' : rel

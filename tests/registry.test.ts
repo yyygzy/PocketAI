@@ -14,6 +14,7 @@ vi.mock('../src/main/tools/builtin', () => ({
   ToolDecision: {}
 }))
 vi.mock('../src/main/tools/fs-tools', () => ({ getFsTools: () => [] }))
+vi.mock('../src/main/tools/patch-tools', () => ({ getPatchTools: () => [] }))
 vi.mock('../src/main/tools/shell-tools', () => ({ getShellTools: () => [] }))
 vi.mock('../src/main/tools/skill-tools', () => ({ getSkillTools: () => [] }))
 vi.mock('../src/main/mcp/manager', () => ({

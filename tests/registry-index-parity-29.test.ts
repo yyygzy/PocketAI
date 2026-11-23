@@ -67,6 +67,7 @@ vi.mock('../src/main/tools/fs-tools', () => ({
     return [{ schema: builtinSchema('fs.read', 'fs_read'), execute: async () => 'FS_READ' }]
   }
 }))
+vi.mock('../src/main/tools/patch-tools', () => ({ getPatchTools: () => [] }))
 vi.mock('../src/main/tools/shell-tools', () => ({
   getShellTools: () => {
     mocks.shellCalls += 1

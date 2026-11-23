@@ -4,6 +4,7 @@
 import { BUILTIN_TOOLS } from './builtin'
 import type { ToolAgentContext, ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
+import { getPatchTools } from './patch-tools'
 import { getSkillTools } from './skill-tools'
 import { getShellTools, getShellPolicyInfo } from './shell-tools'
 import { getArtifactTools } from './artifact-tools'
@@ -114,6 +115,7 @@ class ToolRegistry {
     return [
       ...BUILTIN_TOOLS,
       ...getFsTools(),
+      ...getPatchTools(),
       ...getShellTools(),
       ...getSkillTools(),
       ...getArtifactTools(),

@@ -52,6 +52,7 @@ import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
 import { toolRegistry, badArgsError } from '../tools/registry'
 import type { ToolAgentContext, ToolClassification } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath, buildFsWritePreview } from '../tools/fs-tools'
+import { buildApplyPatchPreview } from '../tools/patch-tools'
 import { buildProjectApprovalPreview } from '../tools/project-tools'
 import { findDangerRanges } from '../tools/shell-tools'
 import { buildToolPreviewFields } from '../../shared/tool-preview'
@@ -1065,6 +1066,17 @@ function buildApprovalDisplay(
   if (tc.function.name === 'fs_write') {
     const preview = buildFsWritePreview(String(parsed.path ?? ''), typeof parsed.content === 'string' ? parsed.content : '')
     return { command: String(parsed.path ?? ''), risk: 'custom', reason: preview.reason, fields: preview.fields }
+  }
+
+  // fs_apply_patch（结构化补丁）：预览按文件给行级 diff，字段由 patch-tools 的专用 builder 组装
+  if (tc.function.name === 'fs_apply_patch') {
+    const preview = buildApplyPatchPreview(parsed)
+    return {
+      command: `${Array.isArray(parsed.patches) ? parsed.patches.length : 0} file(s)`,
+      risk: 'custom',
+      reason: preview.reason,
+      fields: preview.fields
+    }
   }
 
   // project_create 写工作目录（§B）：字段由 project-tools 的专用 builder 组装
