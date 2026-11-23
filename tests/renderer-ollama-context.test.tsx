@@ -21,7 +21,7 @@ const rec: ModelRecommendation = {
   localPicks: [],
   coderPick: { id: 'qwen3-coder:30b', reason: 'coder_qwen3_30b' as never, tag: 'coder', installed: true },
   onlineHint: 'highend' as never, ollamaLiveness: 'up', installedModels: ['qwen3-coder:30b'],
-  warn: null as never
+  warnings: []
 }
 
 const baseStubs = (create: () => unknown) => ({

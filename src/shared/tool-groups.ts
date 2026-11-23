@@ -120,6 +120,7 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'fs.read': 'file',
   'fs.write': 'file',
   'fs.apply_patch': 'file',
+  'run_tests': 'shell',
   'artifact.create': 'file',
   'project.create': 'file',
   'calendar.read': 'schedule',
