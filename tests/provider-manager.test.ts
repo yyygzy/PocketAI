@@ -15,8 +15,9 @@ import type { ProviderRecord } from '../src/shared/types'
 
 const mocks = vi.hoisted(() => ({
   records: new Map<string, ProviderRecord>(),
-  // OpenAICompatibleAdapter 构造参数记录
+  // 各适配器构造参数记录
   constructed: [] as Array<{ baseUrl: string; apiKeys: string[]; anthropic: boolean }>,
+  nativeConstructed: [] as Array<{ kind: 'anthropic' | 'gemini'; baseUrl: string; apiKeys: string[] }>,
   // adapter.listModels 行为
   listModels: [] as string[],
   listModelsError: null as Error | null,
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   reset() {
     this.records.clear()
     this.constructed = []
+    this.nativeConstructed = []
     this.listModels = []
     this.listModelsError = null
     this.updatedModels = []
@@ -77,6 +79,22 @@ vi.mock('../src/main/providers/openai-compatible', () => ({
   }
 }))
 
+function mockNative(kind: 'anthropic' | 'gemini') {
+  return {
+    [`${kind[0]!.toUpperCase()}${kind.slice(1)}NativeAdapter`]: class MockNativeAdapter {
+      constructor(public baseUrl: string, public apiKeys: string[]) {
+        mocks.nativeConstructed.push({ kind, baseUrl, apiKeys })
+      }
+      async listModels(): Promise<string[]> {
+        if (mocks.listModelsError) throw mocks.listModelsError
+        return mocks.listModels
+      }
+    }
+  }
+}
+vi.mock('../src/main/providers/anthropic-native', () => mockNative('anthropic'))
+vi.mock('../src/main/providers/gemini-native', () => mockNative('gemini'))
+
 beforeEach(() => {
   mocks.reset()
   providerManager.invalidate()
@@ -94,10 +112,22 @@ describe('getAdapter 适配器获取与缓存', () => {
     ])
   })
 
-  it('anthropic 类型：构造第三参为 true（启用 prompt caching）', () => {
+  it('anthropic 类型：改走原生 Messages 适配器', () => {
     mocks.records.set('p1', makeRecord({ type: 'anthropic' as ProviderRecord['type'] }))
     providerManager.getAdapter('p1')
-    expect(mocks.constructed[0]!.anthropic).toBe(true)
+    expect(mocks.constructed).toHaveLength(0)
+    expect(mocks.nativeConstructed).toEqual([
+      { kind: 'anthropic', baseUrl: 'http://localhost:11434/v1', apiKeys: ['k1', 'k2'] }
+    ])
+  })
+
+  it('gemini 类型：改走原生 generateContent 适配器', () => {
+    mocks.records.set('p1', makeRecord({ type: 'gemini' as ProviderRecord['type'] }))
+    providerManager.getAdapter('p1')
+    expect(mocks.constructed).toHaveLength(0)
+    expect(mocks.nativeConstructed).toEqual([
+      { kind: 'gemini', baseUrl: 'http://localhost:11434/v1', apiKeys: ['k1', 'k2'] }
+    ])
   })
 
   it('缓存命中：二次调用同实例且不再查 repo', () => {

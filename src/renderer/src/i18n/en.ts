@@ -2258,6 +2258,8 @@ export const en = {
   'provider.f.type': 'Type',
   'provider.f.type1': 'OpenAI-compatible (OpenAI/DeepSeek/any endpoint)',
   'provider.f.type2': 'Ollama / LM Studio (local)',
+  'provider.f.type3': 'Anthropic Claude (native Messages API)',
+  'provider.f.type4': 'Google Gemini (native generateContent)',
   'provider.f.key': 'API Keys (one per line; round-robin)',
   'provider.revealKeys': 'Reveal keys',
   'provider.revealHint': 'Plaintext is fetched only when you ask to view or copy it',

@@ -1,6 +1,8 @@
 // Provider 管理器：从 DB 加载配置 → 构造适配器 → 缓存
 import { providerRepo } from '../db/repositories/provider.repo'
 import { OpenAICompatibleAdapter } from './openai-compatible'
+import { AnthropicNativeAdapter } from './anthropic-native'
+import { GeminiNativeAdapter } from './gemini-native'
 import { normalizeBaseUrl, type ProviderAdapter } from './types'
 import { errMsg } from '../error'
 import { redactSecretsInText } from '../security/audit-redact'
@@ -45,17 +47,24 @@ class ProviderManager {
       throw new Error('PRIVACY_MODE_BLOCKED_CLOUD:隐私模式已开启，禁止向云端模型发送数据')
     }
 
-    // Phase 1：所有类型（含 ollama）均走 OpenAI 兼容端点
-    // Phase 后续：gemini / anthropic 在此分派专用适配器
-    // Anthropic 型走 OpenAI 兼容层并启用 prompt caching（cache_control 断点降输入成本）
-    const adapter = new OpenAICompatibleAdapter(
-      normalizeBaseUrl(record.baseUrl),
-      record.apiKeys,
-      record.type === 'anthropic',
-      // 只有本地 Ollama 才带 keep_alive（让模型驻留内存命中 prefix cache）；
-      // 其他 OpenAI 兼容端点不认这个字段，绝不污染。
-      record.type === 'ollama' ? this.keepAliveResolver() : undefined
-    )
+    const baseUrl = normalizeBaseUrl(record.baseUrl)
+    // Anthropic / Gemini 走各自原生协议：真实 tool_use / functionCall 形状与 token 用量，
+    // 不再靠 OpenAI 兼容层猜字段。其余类型（含 ollama）仍走 OpenAI 兼容端点。
+    let adapter: ProviderAdapter
+    if (record.type === 'anthropic') {
+      adapter = new AnthropicNativeAdapter(baseUrl, record.apiKeys)
+    } else if (record.type === 'gemini') {
+      adapter = new GeminiNativeAdapter(baseUrl, record.apiKeys)
+    } else {
+      adapter = new OpenAICompatibleAdapter(
+        baseUrl,
+        record.apiKeys,
+        false,
+        // 只有本地 Ollama 才带 keep_alive（让模型驻留内存命中 prefix cache）；
+        // 其他 OpenAI 兼容端点不认这个字段，绝不污染。
+        record.type === 'ollama' ? this.keepAliveResolver() : undefined
+      )
+    }
     this.adapters.set(id, adapter)
     return adapter
   }

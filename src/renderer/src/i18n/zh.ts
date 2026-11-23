@@ -2259,6 +2259,8 @@ export const zh = {
   'provider.f.type': '类型',
   'provider.f.type1': 'OpenAI 兼容（OpenAI/DeepSeek/任意端点）',
   'provider.f.type2': 'Ollama / LM Studio（本地）',
+  'provider.f.type3': 'Anthropic Claude（原生 Messages API）',
+  'provider.f.type4': 'Google Gemini（原生 generateContent）',
   'provider.f.key': 'API Key（多个 Key 每行一个，自动轮询）',
   'provider.revealKeys': '显示密钥',
   'provider.revealHint': '仅在需要查看或复制时取回明文',

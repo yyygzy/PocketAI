@@ -550,6 +550,8 @@ export const ProviderSettings: React.FC = () => {
               >
                 <option value="openai-compatible">{t('provider.f.type1')}</option>
                 <option value="ollama">{t('provider.f.type2')}</option>
+                <option value="anthropic">{t('provider.f.type3')}</option>
+                <option value="gemini">{t('provider.f.type4')}</option>
               </select>
             </Field>
 

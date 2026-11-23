@@ -2193,6 +2193,8 @@ export const ja = {
   'provider.f.type': 'タイプ',
   'provider.f.type1': 'OpenAI 互換（OpenAI/DeepSeek/任意エンドポイント）',
   'provider.f.type2': 'Ollama / LM Studio（ローカル）',
+  'provider.f.type3': 'Anthropic Claude（ネイティブ Messages API）',
+  'provider.f.type4': 'Google Gemini（ネイティブ generateContent）',
   'provider.f.key': 'API Keys（1 行に 1 つ、自動でラウンドロビン）',
   'provider.revealKeys': 'キーを表示',
   'provider.revealHint': '平文は閲覧・コピーを明示的に要求したときだけ取得します',

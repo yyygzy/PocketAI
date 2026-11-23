@@ -2193,6 +2193,8 @@ export const ko = {
   'provider.f.type': '유형',
   'provider.f.type1': 'OpenAI 호환 (OpenAI/DeepSeek/임의 엔드포인트)',
   'provider.f.type2': 'Ollama / LM Studio (로컬)',
+  'provider.f.type3': 'Anthropic Claude (네이티브 Messages API)',
+  'provider.f.type4': 'Google Gemini (네이티브 generateContent)',
   'provider.f.key': 'API 키 (한 줄에 하나, 자동 라운드로빈)',
   'provider.revealKeys': '키 표시',
   'provider.revealHint': '평문은 확인하거나 복사할 때만 가져옵니다',

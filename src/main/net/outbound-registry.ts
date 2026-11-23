@@ -182,7 +182,11 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     configSource: 'providers.base_url',
     endpoints: [],
     transport: 'fetch',
-    files: ['providers/openai-compatible.ts'],
+    files: [
+      'providers/openai-compatible.ts',
+      'providers/anthropic-native.ts',
+      'providers/gemini-native.ts'
+    ],
     resolve: resolveProviderBaseUrls
   },
   {
