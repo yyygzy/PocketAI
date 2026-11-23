@@ -34,7 +34,22 @@ vi.mock('../src/main/db/repositories/skill.repo', () => ({
   skillRepo: { list: () => [], listEnabledByIds: () => [], get: () => undefined }
 }))
 vi.mock('../src/main/mcp/manager', () => ({
-  mcpManager: { listRuntimes: () => [], callTool: async () => ({ isError: false }) }
+  mcpManager: {
+    listRuntimes: () => [{
+      id: 'lsp',
+      status: 'running',
+      tools: [{
+        id: 'mcp:lsp:lsp_definition',
+        name: 'lsp_definition',
+        description: '跳定义',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+        source: 'mcp',
+        mcpServerId: 'lsp',
+        permission: 'auto'
+      }]
+    }],
+    callTool: async () => ({ isError: false })
+  }
 }))
 
 import { toolRegistry } from '../src/main/tools/registry'
@@ -74,8 +89,8 @@ function mcp(id: string): ToolSchema {
 describe('分组表覆盖运行时工具面', () => {
   it('listBuiltin() 的每一枚工具都在 TOOL_GROUP_OF 里', () => {
     const ids = toolRegistry.listBuiltin().map((t) => t.id)
-    // 先钉住"这个环境确实把 37 枚都注册出来了"（含 fs.apply_patch、run_tests、code.symbol；v77+v79 共 13 枚免 Key 公共 API 工具），否则下面的覆盖断言会空转
-    expect(ids).toHaveLength(37)
+    // 先钉住"这个环境确实把 38 枚都注册出来了"（含 fs.apply_patch、run_tests、code.symbol、mcp.symbol；v77+v79 共 13 枚免 Key 公共 API 工具），否则下面的覆盖断言会空转
+    expect(ids).toHaveLength(38)
     const missing = ids.filter((id) => !TOOL_GROUP_OF[id])
     expect(missing).toEqual([])
   })
@@ -236,7 +251,7 @@ describe('selectToolSurface — 选择规则', () => {
     expect(ids.has('web.search')).toBe(false)
     expect(ids.has('reminder.set')).toBe(false)
     // 常驻组一枚不少
-    for (const id of ['time.now', 'calculator', 'js.eval', 'kb.search', 'todo.write', 'memory.save', 'code.symbol', 'shell.exec', 'skill.load', 'agent.delegate']) {
+    for (const id of ['time.now', 'calculator', 'js.eval', 'kb.search', 'todo.write', 'memory.save', 'code.symbol', 'mcp.symbol', 'shell.exec', 'skill.load', 'agent.delegate']) {
       expect(ids.has(id)).toBe(true)
     }
     // MCP 工具不参与分组裁剪

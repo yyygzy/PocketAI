@@ -7,6 +7,7 @@ import { getFsTools } from './fs-tools'
 import { getPatchTools } from './patch-tools'
 import { getRunTestsTools } from './run-tests'
 import { getSymbolTools } from './symbol-tools'
+import { getMcpSymbolTools } from './mcp-symbol-tools'
 import { getSkillTools } from './skill-tools'
 import { getShellTools, getShellPolicyInfo } from './shell-tools'
 import { getArtifactTools } from './artifact-tools'
@@ -120,6 +121,7 @@ class ToolRegistry {
       ...getPatchTools(),
       ...getRunTestsTools(),
       ...getSymbolTools(),
+      ...getMcpSymbolTools(),
       ...getShellTools(),
       ...getSkillTools(),
       ...getArtifactTools(),

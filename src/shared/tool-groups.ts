@@ -98,6 +98,7 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'todo.write': 'core',
   'memory.save': 'core',
   'code.symbol': 'core',
+  'mcp.symbol': 'core',
   // 按需
   'web.fetch': 'net',
   'web.search': 'net',
