@@ -97,6 +97,7 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'kb.search': 'core',
   'todo.write': 'core',
   'memory.save': 'core',
+  'code.symbol': 'core',
   // 按需
   'web.fetch': 'net',
   'web.search': 'net',

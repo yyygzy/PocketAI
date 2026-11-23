@@ -74,8 +74,8 @@ function mcp(id: string): ToolSchema {
 describe('分组表覆盖运行时工具面', () => {
   it('listBuiltin() 的每一枚工具都在 TOOL_GROUP_OF 里', () => {
     const ids = toolRegistry.listBuiltin().map((t) => t.id)
-    // 先钉住"这个环境确实把 36 枚都注册出来了"（含 fs.apply_patch、run_tests；v77+v79 共 13 枚免 Key 公共 API 工具），否则下面的覆盖断言会空转
-    expect(ids).toHaveLength(36)
+    // 先钉住"这个环境确实把 37 枚都注册出来了"（含 fs.apply_patch、run_tests、code.symbol；v77+v79 共 13 枚免 Key 公共 API 工具），否则下面的覆盖断言会空转
+    expect(ids).toHaveLength(37)
     const missing = ids.filter((id) => !TOOL_GROUP_OF[id])
     expect(missing).toEqual([])
   })
@@ -236,7 +236,7 @@ describe('selectToolSurface — 选择规则', () => {
     expect(ids.has('web.search')).toBe(false)
     expect(ids.has('reminder.set')).toBe(false)
     // 常驻组一枚不少
-    for (const id of ['time.now', 'calculator', 'js.eval', 'kb.search', 'todo.write', 'memory.save', 'shell.exec', 'skill.load', 'agent.delegate']) {
+    for (const id of ['time.now', 'calculator', 'js.eval', 'kb.search', 'todo.write', 'memory.save', 'code.symbol', 'shell.exec', 'skill.load', 'agent.delegate']) {
       expect(ids.has(id)).toBe(true)
     }
     // MCP 工具不参与分组裁剪

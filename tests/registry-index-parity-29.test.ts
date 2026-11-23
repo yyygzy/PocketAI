@@ -68,6 +68,7 @@ vi.mock('../src/main/tools/fs-tools', () => ({
   }
 }))
 vi.mock('../src/main/tools/patch-tools', () => ({ getPatchTools: () => [] }))
+vi.mock('../src/main/tools/symbol-tools', () => ({ getSymbolTools: () => [] }))
 vi.mock('../src/main/tools/shell-tools', () => ({
   getShellTools: () => {
     mocks.shellCalls += 1

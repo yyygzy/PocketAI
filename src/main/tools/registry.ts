@@ -6,6 +6,7 @@ import type { ToolAgentContext, ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
 import { getPatchTools } from './patch-tools'
 import { getRunTestsTools } from './run-tests'
+import { getSymbolTools } from './symbol-tools'
 import { getSkillTools } from './skill-tools'
 import { getShellTools, getShellPolicyInfo } from './shell-tools'
 import { getArtifactTools } from './artifact-tools'
@@ -118,6 +119,7 @@ class ToolRegistry {
       ...getFsTools(),
       ...getPatchTools(),
       ...getRunTestsTools(),
+      ...getSymbolTools(),
       ...getShellTools(),
       ...getSkillTools(),
       ...getArtifactTools(),
