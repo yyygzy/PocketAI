@@ -53,6 +53,10 @@ import {
 } from '../../agent/jev-review-prefs'
 import { getPrivacyMode, setPrivacyMode } from '../../agent/privacy-prefs'
 import {
+  getPostEditValidationPrefs,
+  setPostEditValidationEnabled
+} from '../../agent/post-edit-validation-prefs'
+import {
   abortDelegateProbe,
   listDelegateCapabilitiesWithStaleness,
   probeDelegateCapability,
@@ -342,6 +346,15 @@ export function registerAgentHandlers(): void {
   safeHandle(IPC.AGENT_SET_PRIVACY, (_e, enabled: boolean) => {
     if (!setPrivacyMode(enabled)) return { ok: false as const, error: '隐私模式设置保存失败' }
     return { ok: true as const, data: getPrivacyMode() }
+  }, argsSchema(z.boolean()))
+
+  // 编辑后自动验证（默认关）：写入失败按失败回，不让界面误以为钩子已生效
+  safeHandle(IPC.AGENT_GET_POST_EDIT_VALIDATION, () => ({ ok: true as const, data: getPostEditValidationPrefs() }))
+  safeHandle(IPC.AGENT_SET_POST_EDIT_VALIDATION, (_e, enabled: boolean) => {
+    if (!setPostEditValidationEnabled(enabled)) {
+      return { ok: false as const, error: '自动验证设置保存失败' }
+    }
+    return { ok: true as const, data: getPostEditValidationPrefs() }
   }, argsSchema(z.boolean()))
 
   // ---------- 委派能力探针（V4-Iter-142）----------

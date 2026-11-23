@@ -2557,6 +2557,9 @@ export const AppearancePanel: React.FC = () => {
   // 隐私/离线模式：缺省 true（fail-safe）；读取失败也保持 true，只有明确回包才改
   const [privacyMode, setPrivacyMode] = useState(true)
   const [privacyErr, setPrivacyErr] = useState<string | null>(null)
+  // 编辑后自动验证：缺省关；读取失败保持关，但必须上屏
+  const [postEditValidation, setPostEditValidation] = useState(false)
+  const [postEditValidationErr, setPostEditValidationErr] = useState<string | null>(null)
   // §226：这一页是**三发彼此独立的读**（界面偏好／窗口行为／回复通知）；谁没读到就只有谁那几项是默认值，
   // 混成一句会把成功读到的那几项也说成默认值 ⇒ 三个原因各说各的
   const [uiErr, setUiErr] = useState<string | null>(null)
@@ -2620,6 +2623,18 @@ export const AppearancePanel: React.FC = () => {
     }).catch((e) => {
       setPrivacyErr(errText(e, t('common.unknownError')))
       logIpcError('settings.getPrivacyMode', e)
+    })
+    // 编辑后自动验证：读不到保持默认关，不让用户以为钩子在跑
+    window.pocketai.getPostEditValidation().then((r) => {
+      if (!r.ok || !r.data) {
+        setPostEditValidationErr(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      setPostEditValidationErr('')
+      setPostEditValidation(r.data.enabled)
+    }).catch((e) => {
+      setPostEditValidationErr(errText(e, t('common.unknownError')))
+      logIpcError('settings.getPostEditValidation', e)
     })
   }, [])
 
@@ -2729,6 +2744,23 @@ export const AppearancePanel: React.FC = () => {
     } catch (e) {
       setPrivacyMode(!next)
       setPrivacyErr(errText(e, t('common.unknownError')))
+    }
+  }
+
+  const togglePostEditValidation = async (next: boolean) => {
+    setPostEditValidation(next)
+    try {
+      const r = await window.pocketai.setPostEditValidation(next)
+      if (!r.ok || !r.data) {
+        setPostEditValidation(!next)
+        setPostEditValidationErr(ipcFailText(r, t('common.unknownError')))
+        return
+      }
+      setPostEditValidation(r.data.enabled)
+      setPostEditValidationErr('')
+    } catch (e) {
+      setPostEditValidation(!next)
+      setPostEditValidationErr(errText(e, t('common.unknownError')))
     }
   }
 
@@ -2889,6 +2921,22 @@ export const AppearancePanel: React.FC = () => {
           <span className="text-[var(--color-text)]">{t('set.privacyMode')}</span>
         </label>
         <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('set.privacyModeHint')}</p>
+      </div>
+
+      {/* 编辑后自动验证：默认关；开启后 fs_write / fs_apply_patch 成功会追加 typecheck + 相关测试结果 */}
+      <div>
+        {postEditValidationErr && <ShowingDefaultsNotice what={t('set.autoValidate')} msg={postEditValidationErr} />}
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            data-testid="settings-auto-validate"
+            type="checkbox"
+            className="w-4 h-4 accent-[var(--color-accent)]"
+            checked={postEditValidation}
+            onChange={(e) => void togglePostEditValidation(e.target.checked)}
+          />
+          <span className="text-[var(--color-text)]">{t('set.autoValidate')}</span>
+        </label>
+        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 ml-6">{t('set.autoValidateHint')}</p>
       </div>
 
       {notice && (

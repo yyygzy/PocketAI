@@ -670,7 +670,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/capability-online-install-bind-497.test.tsx': 5,
       // P1-4 截图进对话：载荷注入、缩略图、失败原因各自落地后断言。
       // §364 本轮把「等提示消失就断附件栏」那一发改成等图片实际上屏 ⇒ 4→3，上限＝现数 3。
-      'tests/screenshot-p1-4.test.tsx': 3
+      'tests/screenshot-p1-4.test.tsx': 3,
+      // 编辑后自动验证开关：乐观更新后必须等 IPC 回填 checked，才能断言真的写进设置。
+      // 上限＝现数 1，不留余量。
+      'tests/renderer-appearance-panel.test.tsx': 1
     }
     const sum = Object.values(PER_FILE_AWAITS).reduce((a, b) => a + b, 0)
     expect(sum, '逐文件合计必须等于总量（两套读法同源）').toBe(ALL.awaits)

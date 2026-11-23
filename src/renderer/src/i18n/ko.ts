@@ -1642,6 +1642,8 @@ export const ko = {
   'set.replyNotifyHint': '창이 최소화되어 있거나 다른 앱에 포커스된 동안, 어시스턴트 답변 완료(또는 실패) 시 시스템 알림을 표시합니다. 알림을 클릭하면 앱으로 돌아갑니다.',
   'set.privacyMode': '개인정보 보호 모드(기본 켜짐)',
   'set.privacyModeHint': '켜지면 루프백 로컬 모델만 대화와 위임에 참여하며 내용이 클라우드 모델로 전송되지 않습니다. 끄기 전에 데이터가 외부로 나가는 것을 동의해야 합니다.',
+  'set.autoValidate': '편집 후 자동 검증',
+  'set.autoValidateHint': '기본값은 꺼짐. 켜면 작업 공간 파일을 쓴 뒤 typecheck와 관련 테스트를 실행하고 결과를 도구 회신에 덧붙입니다.',
   'set.network': '🌐 네트워크',
   'set.proxySave': '저장',
   'set.proxyUrlLabel': '프록시 주소',

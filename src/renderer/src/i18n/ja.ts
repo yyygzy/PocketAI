@@ -1642,6 +1642,8 @@ export const ja = {
   'set.replyNotifyHint': 'ウィンドウを最小化中、または他アプリにフォーカス中に、アシスタントの返信完了（または失敗）をシステム通知します。通知をクリックするとアプリに戻ります。',
   'set.privacyMode': 'プライバシーモード（既定オン）',
   'set.privacyModeHint': 'オンの場合、ループバックのローカルモデルのみが会話と委譲に参加でき、内容はクラウドモデルに送信されません。オフにする前にデータが外部に出ることを承認してください。',
+  'set.autoValidate': '編集後に自動検証',
+  'set.autoValidateHint': 'デフォルトはオフ。オンにするとワークスペースへの書き込み後に typecheck と関連テストを実行し、結果をツール結果に追記します。',
   'set.network': '🌐 ネットワーク',
   'set.proxySave': '保存',
   'set.proxyUrlLabel': 'プロキシアドレス',

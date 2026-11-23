@@ -1698,6 +1698,8 @@ export const zh = {
   'set.replyNotifyHint': '窗口最小化或切到其他应用时，助手回复完成（或失败）后弹出系统通知，点击通知返回应用。',
   'set.privacyMode': '隐私模式（默认开）',
   'set.privacyModeHint': '开启后只允许回环地址的本地模型参与对话与委派，禁止把内容发往云端模型。关闭前请确认可以接受数据出本机。',
+  'set.autoValidate': '编辑后自动验证',
+  'set.autoValidateHint': '默认关。开启后在写入或修改工作区文件后自动跑 typecheck 与相关测试，结果会追加到工具回执。',
   'set.network': '🌐 网络',
   'set.proxySave': '保存',
   'set.proxyUrlLabel': '代理地址',

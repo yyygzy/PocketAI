@@ -1697,6 +1697,8 @@ export const en = {
   'set.replyNotifyHint': 'When the window is minimized or another app is focused, show a system notification when the assistant finishes (or fails). Click it to return to the app.',
   'set.privacyMode': 'Privacy mode (on by default)',
   'set.privacyModeHint': 'When on, only loopback local models may join chats and delegation; content is never sent to cloud models. Turn off only if you accept data leaving this machine.',
+  'set.autoValidate': 'Auto-verify after edits',
+  'set.autoValidateHint': 'Off by default. When on, typecheck and related tests run after workspace files are written; results are appended to the tool receipt.',
   'set.network': '🌐 Network',
   'set.proxySave': 'Save',
   'set.proxyUrlLabel': 'Proxy address',

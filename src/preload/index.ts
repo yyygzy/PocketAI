@@ -1138,6 +1138,11 @@ const api = {
     ipcRenderer.invoke(IPC.AGENT_GET_PRIVACY),
   setPrivacyMode: (enabled: boolean): Promise<{ ok: boolean; data?: { enabled: boolean }; error?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SET_PRIVACY, enabled),
+  /** 编辑后自动验证（缺省关）；读取失败由界面上屏 */
+  getPostEditValidation: (): Promise<{ ok: boolean; data?: { enabled: boolean }; error?: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_GET_POST_EDIT_VALIDATION),
+  setPostEditValidation: (enabled: boolean): Promise<{ ok: boolean; data?: { enabled: boolean }; error?: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_POST_EDIT_VALIDATION, enabled),
   /** 已判出的"这台模型当得了管控者吗"清单（带 stale：本地镜像换了就该重探） */
   listDelegateCapabilities: (): Promise<DelegateCapabilityView[]> =>
     ipcRenderer.invoke(IPC.AGENT_LIST_DELEGATE_CAPS),

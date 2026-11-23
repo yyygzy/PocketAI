@@ -74,6 +74,8 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   if (!state.impls.has('getJevReviewPrefs')) state.impls.set('getJevReviewPrefs', () => ({ enabled: false, model: 'tev1:0.8b', threshold: 0.7 }))
   // 隐私模式缺省开（fail-safe），AppearancePanel 挂载即读
   if (!state.impls.has('getPrivacyMode')) state.impls.set('getPrivacyMode', () => ({ ok: true, data: { enabled: true } }))
+  // 编辑后自动验证缺省关，AppearancePanel 挂载即读
+  if (!state.impls.has('getPostEditValidation')) state.impls.set('getPostEditValidation', () => ({ ok: true, data: { enabled: false } }))
   const g = globalThis as unknown as { window: { pocketai: unknown } }
   g.window.pocketai = buildStub()
 }

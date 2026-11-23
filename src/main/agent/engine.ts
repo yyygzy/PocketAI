@@ -88,6 +88,8 @@ import { thinkingParamFor } from './thinking-prefs'
 import { getFallbackTarget } from './fallback-target-prefs'
 import { reviewToolCall } from './jev-review'
 import { isProviderAllowedUnderPrivacy } from './privacy-prefs'
+import { isPostEditValidationEnabled } from './post-edit-validation-prefs'
+import { collectEditedPaths, runPostEditValidation } from './post-edit-validation'
 import { providerRepo } from '../db/repositories/provider.repo'
 import { DEFAULT_AGENT_OUTPUT_TOKENS, DEFAULT_MESSAGES_WHEN_WINDOW_UNSET, resolveAgentOutputTokens } from '../../shared/model-window'
 import { isContextOverflowError, trimOldestConversationTurn } from './context-overflow'
@@ -2852,6 +2854,33 @@ class AgentEngine {
     }
 
     await Promise.all(allowTasks)
+
+    // 编辑后自动验证（默认关）：只在写入工具成功后跑，结果追加进回执；
+    // 不把验证失败改成工具失败——文件已经写进去了，模型需要看到的是"改成没过哪一项"。
+    if (isPostEditValidationEnabled() && !master.signal.aborted) {
+      const editedIdx: number[] = []
+      const changedPaths: string[] = []
+      for (let i = 0; i < toolCalls.length; i++) {
+        const r = results[i]
+        if (!r || r.isError) continue
+        const paths = collectEditedPaths(r.name || toolCalls[i]!.function.name, r.content)
+        if (paths.length === 0) continue
+        editedIdx.push(i)
+        changedPaths.push(...paths)
+      }
+      if (editedIdx.length > 0) {
+        let note: string
+        try {
+          note = await runPostEditValidation(changedPaths, master.signal)
+        } catch (e) {
+          note = `[自动验证] 执行失败：${errMsg(e)}`
+        }
+        for (const i of editedIdx) {
+          const r = results[i]!
+          r.content = `${r.content}\n\n${note}`
+        }
+      }
+    }
 
     // P0-4b：这一步确实是**原生** tool_calls（不是文本协议模拟）且至少有一条执行成功
     // ⇒ 记一次正向观察（累计 3 次才判"会调工具"，单次不翻案）。

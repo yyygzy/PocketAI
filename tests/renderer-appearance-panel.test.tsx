@@ -5,7 +5,7 @@
 // 桩 7 个 IPC 通道就能挂起来。测的重点是三条只有真点才有意义的行为：
 // 越界夹取、空输入不写库、写库失败要连全局阈值一起回滚。
 import { describe, it, expect, beforeEach } from 'vitest'
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { AppearancePanel } from '../src/renderer/src/modules/settings/SettingsModule'
 import { CODE_COLLAPSE_THRESHOLD } from '../src/renderer/src/utils/code-block'
@@ -35,7 +35,8 @@ function mount(prefs: Record<string, unknown> = {}) {
     getReplyNotifyEnabled: () => true,
     setLaunchAtLogin: (v: boolean) => ({ launchAtLogin: v }),
     setCloseToTray: (v: boolean) => ({ closeToTray: v }),
-    setReplyNotifyEnabled: (v: boolean) => v
+    setReplyNotifyEnabled: (v: boolean) => v,
+    setPostEditValidation: (v: boolean) => ({ ok: true, data: { enabled: v } })
   })
   mountWithProviders(<AppearancePanel />)
 }
@@ -109,5 +110,16 @@ describe('外观面板 — 代码块折叠阈值', () => {
     // 回滚回到「面板加载到的持久化值」，且输入框与全局阈值不能一个新一一个旧
     expect(input().value).toBe('7')
     expect(codeCollapseLines()).toBe(7)
+  })
+})
+
+describe('外观面板 — 编辑后自动验证', () => {
+  it('默认关；勾选后写入设置并立即反映到开关', async () => {
+    mount()
+    const box = await screen.findByTestId('settings-auto-validate') as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.click(box)
+    await waitFor(() => expect(box.checked).toBe(true))
+    expect(pocketaiCalls().some((c) => c.fn === 'setPostEditValidation' && c.args[0] === true)).toBe(true)
   })
 })

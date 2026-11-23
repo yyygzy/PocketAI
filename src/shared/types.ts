@@ -3363,6 +3363,8 @@ export const IPC = {
   AGENT_SET_JEV_REVIEW: 'agent:set-jev-review', // 开/关 Jev 语义审核增强，回传最新配置
   AGENT_GET_PRIVACY: 'agent:get-privacy', // 隐私/离线模式（默认开/fail-safe），只读
   AGENT_SET_PRIVACY: 'agent:set-privacy', // 开/关隐私模式，回传最新状态
+  AGENT_GET_POST_EDIT_VALIDATION: 'agent:get-post-edit-validation', // 编辑后自动验证（默认关），只读
+  AGENT_SET_POST_EDIT_VALIDATION: 'agent:set-post-edit-validation', // 开/关编辑后自动验证，回传最新状态
 
   // ---------- License 授权（商业版） ----------
   LICENSE_ACTIVATE: 'license:activate',
