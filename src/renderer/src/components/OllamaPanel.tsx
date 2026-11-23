@@ -227,8 +227,9 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
 
   // 推荐里排除纯向量模型单独标注，其余作为对话模型快捷拉取。
   // 156 起 tag 是**码**（'embedding'）而不是中文「向量」——这里以前是拿界面文案做逻辑判断
-  const chatPicks = (rec?.localPicks ?? []).filter((p) => p.tag !== 'embedding').slice(0, 3)
+  const chatPicks = (rec?.localPicks ?? []).filter((p) => p.tag !== 'embedding' && p.tag !== 'coder').slice(0, 3)
   const embedPick = (rec?.localPicks ?? []).find((p) => p.tag === 'embedding')
+  const coderPick = rec?.coderPick
 
   /** 发起拉取并清掉上一次的完成提示（hook 不管调用方的 notice） */
   const doPull = (model: string): Promise<boolean> => {
@@ -629,6 +630,27 @@ export const OllamaPanel: React.FC<{ compact?: boolean }> = ({ compact = false }
                   </button>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* 编程模型单列（tag=coder）：本地做编程项目一键拉取，与对话模型分开 */}
+          {coderPick && (
+            <div>
+              <div className="text-[10px] text-[var(--color-text-muted)] mb-1">{t(modelRecKey('tag', 'coder'))}</div>
+              <button
+                data-testid="ollama-coder-pick"
+                disabled={!!pulling || coderPick.installed}
+                title={t(modelRecKey('reason', coderPick.reason))}
+                onClick={() => void doPull(coderPick.id)}
+                className={`text-[10px] px-2 py-1 rounded border font-mono ${
+                  coderPick.installed
+                    ? 'border-[var(--color-success)] text-[var(--color-success)] cursor-default'
+                    : 'border-dashed border-[var(--color-accent)] text-[var(--color-text)] hover:bg-[var(--color-accent)] disabled:opacity-50'
+                }`}
+              >
+                {coderPick.installed ? '✓ ' : '⬇️ '}
+                {coderPick.id}
+              </button>
             </div>
           )}
 

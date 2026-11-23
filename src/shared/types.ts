@@ -2371,6 +2371,8 @@ export interface ModelRecommendation {
   /** 总结句里的参数（GPU 名只有主进程知道；量化阈值是分支常量，写在字典文案里） */
   summaryParams: Record<string, string | number>
   localPicks: ModelPick[]
+  /** 编程模型推荐（tag='coder'，独立于对话三选一；本地做编程项目用） */
+  coderPick?: ModelPick
   /** 在线模型使用建议的码：`modelRec.onlineHint.*`（低配档与非低配档各一句） */
   onlineHint: ModelOnlineHintCode
   /** §380：本机 Ollama 探测三态（与便携运行时面板同一口径）；只有 `down` 才支持"没在跑" */

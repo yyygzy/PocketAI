@@ -14,7 +14,9 @@ vi.mock('../src/main/steward/hardware', () => ({
   getHardwareInfo: (): HardwareInfo => ({} as HardwareInfo)
 }))
 
-import { isInstalled, pickByHardware } from '../src/main/steward/model-recommend'
+import {
+  isInstalled, pickByHardware, pickCoderModel, CODER_MODEL_BY_TIER
+} from '../src/main/steward/model-recommend'
 
 const GB = 1024 * 1024 * 1024
 
@@ -176,5 +178,37 @@ describe('pickByHardware — 硬件分档推荐', () => {
     for (const t of tiers) {
       expect(t.picks.length).toBeGreaterThanOrEqual(3)
     }
+  })
+})
+
+describe('pickCoderModel — 编程模型按档位推荐', () => {
+  it('旗舰档 → qwen3-coder:30b（MoE 30B/3.3B，256K）', () => {
+    const p = pickCoderModel('flagship', [])
+    expect(p.id).toBe('qwen3-coder:30b')
+    expect(p.tag).toBe('coder')
+    expect(p.reason).toBe('coder_qwen3_30b')
+  })
+
+  it('高/主流/入门档各自给出装得下的 coder，模型名与 Ollama tag 一致', () => {
+    expect(pickCoderModel('high', []).id).toBe('qwen2.5-coder:14b')
+    expect(pickCoderModel('mainstream', []).id).toBe('qwen2.5-coder:7b')
+    expect(pickCoderModel('entry', []).id).toBe('qwen2.5-coder:3b')
+  })
+
+  it('CPU 档位也各有 coder（纯 CPU 编程可用）', () => {
+    for (const tier of ['high_cpu', 'mainstream_cpu', 'entry_cpu', 'low'] as const) {
+      expect(pickCoderModel(tier, []).id).toMatch(/^qwen2\.5-coder:(14b|7b|3b)$/)
+    }
+  })
+
+  it('8 个档位全覆盖，reason 码只有 4 种（避免字典爆炸）', () => {
+    const codes = Object.values(CODER_MODEL_BY_TIER).map((p) => p.reason)
+    expect(new Set(codes).size).toBe(4)
+    expect(Object.keys(CODER_MODEL_BY_TIER)).toHaveLength(8)
+  })
+
+  it('已安装判定与对话模型同源（tag 前缀匹配）', () => {
+    expect(pickCoderModel('mainstream', ['qwen2.5-coder:7b-instruct-q4_K_M']).installed).toBe(true)
+    expect(pickCoderModel('flagship', ['qwen2.5-coder:7b']).installed).toBe(false)
   })
 })

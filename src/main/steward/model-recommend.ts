@@ -70,6 +70,36 @@ export const KB_EMBED_MODEL_ID = 'bge-m3'
 export const KB_EMBED_REASON: ModelReasonCode = 'bge_m3_kb'
 export const KB_EMBED_TAG: ModelPickTagCode = 'embedding'
 
+/**
+ * 编程模型推荐（本地做编程项目用）：按硬件档位给一个 coder 模型，独立于对话模型的 11 分支表。
+ *
+ * 为什么单独一列而不是塞进 `rule.picks`：coder 模型的取舍维度是**显存能否装下 + 有无原生长上下文**，
+ * 与对话模型的"日常质量/速度"排序不同；塞进去会挤掉现有 3 个对话位、打乱 61 条码的闸门。
+ * tag='coder' 让界面单独渲染一行，UI 按 `p.tag==='coder'` 区分。
+ *
+ * 模型 tag 均经 Ollama Library 核对（2026-11）：qwen3-coder:30b≈19GB/256K(MoE 30B/3.3B 活跃)；
+ * qwen2.5-coder:14b≈9GB、:7b≈4.7GB、:3b≈1.9GB（均 32K）。宁可推荐装得下的，不推荐"名义能装实际爆显存"的。
+ */
+export const CODER_TAG: ModelPickTagCode = 'coder'
+export const CODER_MODEL_REASONS: readonly ModelReasonCode[] = [
+  'coder_qwen3_30b', 'coder_qwen25_14b', 'coder_qwen25_7b', 'coder_qwen25_3b'
+]
+export const CODER_MODEL_BY_TIER: Readonly<Record<ModelTierCode, { id: string; reason: ModelReasonCode }>> = {
+  flagship: { id: 'qwen3-coder:30b', reason: 'coder_qwen3_30b' },
+  high: { id: 'qwen2.5-coder:14b', reason: 'coder_qwen25_14b' },
+  mainstream: { id: 'qwen2.5-coder:7b', reason: 'coder_qwen25_7b' },
+  entry: { id: 'qwen2.5-coder:3b', reason: 'coder_qwen25_3b' },
+  high_cpu: { id: 'qwen2.5-coder:14b', reason: 'coder_qwen25_14b' },
+  mainstream_cpu: { id: 'qwen2.5-coder:7b', reason: 'coder_qwen25_7b' },
+  entry_cpu: { id: 'qwen2.5-coder:3b', reason: 'coder_qwen25_3b' },
+  low: { id: 'qwen2.5-coder:3b', reason: 'coder_qwen25_3b' }
+}
+
+export function pickCoderModel(tier: ModelTierCode, installed: string[]): ModelPick {
+  const p = CODER_MODEL_BY_TIER[tier]
+  return { id: p.id, tag: CODER_TAG, reason: p.reason, installed: isInstalled(installed, p.id) }
+}
+
 interface TierRule {
   tier: ModelTierCode
   summary: ModelSummaryCode
@@ -249,6 +279,9 @@ export async function recommendModels(): Promise<ModelRecommendation> {
   }
   localPicks.push(embedPick)
 
+  // 编程模型单列（不塞进对话三选一，避免挤位/打乱 61 条码闸门）
+  const coderPick = pickCoderModel(rule.tier, ollama.models)
+
   const warnings: ModelWarnCode[] = []
   const memGB = hw.memory.total / GB
   if (memGB < 8) warnings.push('mem_lt8')
@@ -268,6 +301,7 @@ export async function recommendModels(): Promise<ModelRecommendation> {
     summary: rule.summary,
     summaryParams: rule.summaryParams,
     localPicks,
+    coderPick,
     onlineHint,
     ollamaLiveness: ollama.liveness,
     installedModels: ollama.models,

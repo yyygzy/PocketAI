@@ -39,7 +39,7 @@ export type ModelSummaryCode =
   | 'cpu_entry'
   | 'cpu_low'
 
-export type ModelPickTagCode = 'primary' | 'alternate' | 'embedding'
+export type ModelPickTagCode = 'primary' | 'alternate' | 'embedding' | 'coder'
 
 /** 每条推荐的说明（同一个码可以在多个分支复用：文案相同才复用，不同就另开码） */
 export type ModelReasonCode =
@@ -75,6 +75,11 @@ export type ModelReasonCode =
   | 'llama32_1b_last_resort'
   | 'qwen3b_try_if_ram'
   | 'bge_m3_kb'
+  // 编程模型（coderPick，独立于硬件分支表；tag='coder'，不占 3 个对话位）
+  | 'coder_qwen3_30b'
+  | 'coder_qwen25_14b'
+  | 'coder_qwen25_7b'
+  | 'coder_qwen25_3b'
 
 /** §380：`no_ollama`＝探到"确实没人听"；`ollama_unknown`＝探了但没探出个所以然（超时／不应答／答不出） */
 export type ModelWarnCode = 'mem_lt8' | 'no_gpu_accel' | 'disk_lt10g' | 'no_ollama' | 'ollama_unknown'
@@ -133,7 +138,7 @@ export const MODEL_REC_CODES: Record<ModelRecKind, readonly string[]> = {
     'cpu_entry',
     'cpu_low'
   ] as ModelSummaryCode[],
-  tag: ['primary', 'alternate', 'embedding'] as ModelPickTagCode[],
+  tag: ['primary', 'alternate', 'embedding', 'coder'] as ModelPickTagCode[],
   warn: ['mem_lt8', 'no_gpu_accel', 'disk_lt10g', 'no_ollama', 'ollama_unknown'] as ModelWarnCode[],
   onlineHint: ['low_end', 'general'] as ModelOnlineHintCode[],
   reason: [
@@ -169,5 +174,9 @@ export const MODEL_REC_CODES: Record<ModelRecKind, readonly string[]> = {
     'llama32_1b_last_resort',
     'qwen3b_try_if_ram',
     'bge_m3_kb',
+    'coder_qwen3_30b',
+    'coder_qwen25_14b',
+    'coder_qwen25_7b',
+    'coder_qwen25_3b',
   ] as ModelReasonCode[]
 }

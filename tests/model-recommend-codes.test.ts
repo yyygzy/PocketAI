@@ -21,7 +21,9 @@ import { ko } from '../src/renderer/src/i18n/ko'
 vi.mock('../src/main/steward/hardware', () => ({
   getHardwareInfo: (): HardwareInfo => ({} as HardwareInfo)
 }))
-import { KB_EMBED_REASON, KB_EMBED_TAG, pickByHardware } from '../src/main/steward/model-recommend'
+import {
+  KB_EMBED_REASON, KB_EMBED_TAG, CODER_MODEL_REASONS, pickByHardware
+} from '../src/main/steward/model-recommend'
 
 const DICTS = { zh, en, ja, ko } as const
 type Lang = keyof typeof DICTS
@@ -65,8 +67,8 @@ const emitted = (() => {
   return {
     tier: [...new Set(acc.tier)],
     summary: [...new Set(acc.summary)],
-    // 向量那条不在分支表里，由 recommendModels 追加 ⇒ 从导出的常量并进
-    reason: [...new Set([...acc.reason, KB_EMBED_REASON])]
+    // 向量与 coder 那几条不在分支表里，由 recommendModels 追加 ⇒ 从导出的常量并进
+    reason: [...new Set([...acc.reason, KB_EMBED_REASON, ...CODER_MODEL_REASONS])]
   }
 })()
 
@@ -142,7 +144,7 @@ describe('④ 清单不许漂', () => {
       const keys = Object.keys(DICTS[lang]).filter((k) => k.startsWith('modelRec.'))
       expect(keys.length, `${lang} 的 modelRec 键数与清单不符`).toBe(total)
     }
-    expect(total).toBe(61)
+    expect(total).toBe(66)
   })
 })
 
