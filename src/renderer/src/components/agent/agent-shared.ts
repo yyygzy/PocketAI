@@ -2,6 +2,7 @@
 import type { ChatAttachment, MessageRecord, MessageRetrieval, TodoItem, ToolCall, ToolResult, MessageSource } from '../../../../shared/types'
 import { readDelegateRoleForDisplay, type DelegateRole } from '../../../../shared/delegation-rules'
 import type { SlashCommand } from '../../utils/snippet-slash'
+import { hasIpcFailed } from '../../utils/ipc'
 
 export interface AgentMessage {
   id: string
@@ -135,34 +136,74 @@ export function filterSlashCommands(commands: SlashCommand[], query: string): Sl
 
 // ---------- 附件读取 ----------
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
-const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript']
-const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js', '.ts', '.tsx', '.jsx', '.yaml', '.yml', '.sh', '.sql', '.log', '.ini', '.conf', '.toml']
+const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript', 'application/x-yaml', 'text/x-yaml']
+const TEXT_EXTS = [
+  '.txt', '.md', '.json', '.csv', '.xml', '.yaml', '.yml',
+  '.py', '.js', '.ts', '.tsx', '.jsx', '.sh', '.sql', '.log',
+  '.ini', '.conf', '.toml', '.svg',
+  '.c', '.h', '.cpp', '.cs', '.java', '.go', '.rs',
+  '.php', '.rb', '.swift', '.kt', '.vue', '.svelte', '.css', '.scss', '.jsonl'
+]
+/** 需要主进程提取文本的结构化文档（复用知识库解析器） */
+const DOC_EXTS = ['.pdf', '.docx', '.xlsx', '.xls', '.html', '.htm']
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024
 const MAX_TEXT_SIZE = 2 * 1024 * 1024
+const MAX_DOC_SIZE = 20 * 1024 * 1024
 /** 单条消息最多附带的附件数（与原实现保持一致） */
 export const MAX_ATTACHMENTS = 8
-/** 文件选择框 accept 列表（与 Chat Composer 对齐） */
-export const ATTACHMENT_ACCEPT = 'image/*,.txt,.md,.json,.csv,.html,.xml,.py,.js,.ts,.tsx,.jsx,.yaml,.yml,.sh,.sql,.log,.ini,.conf,.toml'
+/** 文件选择框 accept 列表（Chat Composer / 浮窗共用，避免两处漂移） */
+export const ATTACHMENT_ACCEPT = `image/*,${[...TEXT_EXTS, ...DOC_EXTS].join(',')}`
+
+function readFileAs(file: File, asDataUrl: boolean): Promise<string | null> {
+  return new Promise((resolve) => {
+    const r = new FileReader()
+    r.onload = () => resolve(typeof r.result === 'string' ? r.result : null)
+    r.onerror = () => resolve(null)
+    if (asDataUrl) r.readAsDataURL(file)
+    else r.readAsText(file)
+  })
+}
 
 export async function readFileAsAttachment(file: File): Promise<ChatAttachment | null> {
   const ext = '.' + file.name.split('.').pop()?.toLowerCase()
   const isImage = IMAGE_TYPES.includes(file.type) || ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'].includes(ext)
-  const isText = TEXT_TYPES.includes(file.type) || TEXT_EXTS.includes(ext)
-  return new Promise((resolve) => {
-    if (isImage) {
-      if (file.size > MAX_IMAGE_SIZE) { resolve(null); return }
-      const r = new FileReader()
-      r.onload = () => resolve({ type: 'image', name: file.name, mimeType: file.type || 'image/png', size: file.size, data: r.result as string })
-      r.onerror = () => resolve(null)
-      r.readAsDataURL(file)
-    } else if (isText) {
-      if (file.size > MAX_TEXT_SIZE) { resolve(null); return }
-      const r = new FileReader()
-      r.onload = () => resolve({ type: 'text', name: file.name, mimeType: file.type || 'text/plain', size: file.size, data: r.result as string })
-      r.onerror = () => resolve(null)
-      r.readAsText(file)
-    } else { resolve(null) }
-  })
+  const isDoc = DOC_EXTS.includes(ext)
+  const isText = !isDoc && (TEXT_TYPES.includes(file.type) || TEXT_EXTS.includes(ext))
+
+  if (isImage) {
+    if (file.size > MAX_IMAGE_SIZE) return null
+    const data = await readFileAs(file, true)
+    return data ? { type: 'image', name: file.name, mimeType: file.type || 'image/png', size: file.size, data } : null
+  }
+
+  if (isText) {
+    if (file.size > MAX_TEXT_SIZE) return null
+    const data = await readFileAs(file, false)
+    return data !== null ? { type: 'text', name: file.name, mimeType: file.type || 'text/plain', size: file.size, data } : null
+  }
+
+  if (isDoc) {
+    if (file.size > MAX_DOC_SIZE) return null
+    const dataUrl = await readFileAs(file, true)
+    if (!dataUrl) return null
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    try {
+      const parsed = await window.pocketai.parseAttachmentDocument(file.name, base64)
+      if (hasIpcFailed(parsed)) return null
+      if (!parsed || !('text' in parsed) || typeof parsed.text !== 'string') return null
+      return {
+        type: 'text',
+        name: `${file.name}（已提取文本）`,
+        mimeType: 'text/plain',
+        size: file.size,
+        data: parsed.text
+      }
+    } catch {
+      return null
+    }
+  }
+
+  return null
 }
 
 /** 运行耗时人类可读：<1s 显示毫秒，否则秒（保留 1 位小数） */

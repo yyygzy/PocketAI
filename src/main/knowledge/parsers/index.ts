@@ -60,14 +60,13 @@ async function parseText(filePath: string): Promise<ParseResult> {
   return { text, title: path.basename(filePath) }
 }
 
-/** PDF → 文本（pdf-parse v2） */
-async function parsePdf(filePath: string): Promise<ParseResult> {
+/** PDF → 文本（pdf-parse v2）；知识库走文件路径，聊天附件走同一份字节实现 */
+async function parsePdfBytes(data: Uint8Array, fallbackTitle: string): Promise<ParseResult> {
   const { PDFParse } = await import('pdf-parse')
-  const data = new Uint8Array(fs.readFileSync(filePath))
   const parser = new PDFParse({ data })
   try {
     const textResult = await parser.getText()
-    let title = path.basename(filePath)
+    let title = fallbackTitle
     try {
       const info = await parser.getInfo() as { info?: { Title?: unknown } } | null | undefined
       const t = info?.info?.Title
@@ -81,20 +80,25 @@ async function parsePdf(filePath: string): Promise<ParseResult> {
   }
 }
 
-/** DOCX → 文本（mammoth 转 HTML 再去标签） */
-async function parseDocx(filePath: string): Promise<ParseResult> {
-  const mammoth = await import('mammoth')
-  const result = await mammoth.extractRawText({ path: filePath })
-  return {
-    text: (result.value ?? '').trim(),
-    title: path.basename(filePath)
-  }
+async function parsePdf(filePath: string): Promise<ParseResult> {
+  return parsePdfBytes(new Uint8Array(fs.readFileSync(filePath)), path.basename(filePath))
 }
 
-/** XLSX → 文本（每个 sheet 转 CSV 拼接） */
-async function parseXlsx(filePath: string): Promise<ParseResult> {
+/** DOCX → 文本（mammoth 转 HTML 再去标签）；buffer 版供聊天附件复用 */
+async function parseDocxBytes(bytes: Uint8Array, fallbackTitle: string): Promise<ParseResult> {
+  const mammoth = await import('mammoth')
+  const result = await mammoth.extractRawText({ buffer: Buffer.from(bytes) })
+  return { text: (result.value ?? '').trim(), title: fallbackTitle }
+}
+
+async function parseDocx(filePath: string): Promise<ParseResult> {
+  return parseDocxBytes(fs.readFileSync(filePath), path.basename(filePath))
+}
+
+/** XLSX/XLS → 文本（每个 sheet 转 CSV 拼接）；buffer 版供聊天附件复用 */
+async function parseXlsxBytes(bytes: Uint8Array, fallbackTitle: string): Promise<ParseResult> {
   const XLSX = await import('xlsx')
-  const wb = XLSX.readFile(filePath)
+  const wb = XLSX.read(Buffer.from(bytes), { type: 'buffer' })
   const parts: string[] = []
   for (const name of wb.SheetNames) {
     const sheet = wb.Sheets[name]
@@ -102,7 +106,27 @@ async function parseXlsx(filePath: string): Promise<ParseResult> {
     const csv = XLSX.utils.sheet_to_csv(sheet)
     parts.push(`# ${name}\n${csv}`)
   }
-  return { text: parts.join('\n\n'), title: path.basename(filePath) }
+  return { text: parts.join('\n\n'), title: fallbackTitle }
+}
+
+async function parseXlsx(filePath: string): Promise<ParseResult> {
+  return parseXlsxBytes(fs.readFileSync(filePath), path.basename(filePath))
+}
+
+/**
+ * 聊天附件用：不落临时文件，直接按文件名判定类型并从字节提取纯文本。
+ * 图片/URL 不走这里（图片直接作为视觉附件，URL 不是本地文件）。
+ */
+export async function parseDocumentBytes(fileName: string, bytes: Uint8Array): Promise<ParseResult> {
+  const type = detectSourceType(fileName)
+  const title = path.basename(fileName)
+  if (type === 'image' || type === 'url') throw new Error('该格式不支持作为聊天文档附件解析')
+  if (type === 'pdf') return parsePdfBytes(bytes, title)
+  if (type === 'docx') return parseDocxBytes(bytes, title)
+  if (type === 'xlsx') return parseXlsxBytes(bytes, title)
+  const text = Buffer.from(bytes).toString('utf8')
+  if (type === 'html') return parseHtml(text, title)
+  return { text, title }
 }
 
 /** HTML → 文本（cheerio 去标签） */

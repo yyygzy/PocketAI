@@ -32,6 +32,7 @@ import type {
 import type { AgentModelExtras } from './useAgentModelExtras'
 import { hasIpcFailed, ipcFailText, isIpcFail, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
+import { ATTACHMENT_ACCEPT, MAX_ATTACHMENTS, readFileAsAttachment } from '../../components/agent/agent-shared'
 
 interface Props {
   streaming: boolean
@@ -80,12 +81,6 @@ interface Props {
   onDropQueued?: (clientRef: string) => void
   onSendQueuedNow?: (clientRef: string) => void
 }
-
-const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']
-const TEXT_TYPES = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'application/xml', 'text/x-python', 'text/javascript', 'application/x-yaml', 'text/x-yaml']
-const TEXT_EXTS = ['.txt', '.md', '.json', '.csv', '.html', '.xml', '.py', '.js', '.ts', '.tsx', '.jsx', '.yaml', '.yml', '.sh', '.sql', '.log', '.ini', '.conf', '.toml']
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
-const MAX_TEXT_SIZE = 2 * 1024 * 1024 // 2MB
 
 export const Composer: React.FC<Props> = ({
   streaming,
@@ -634,52 +629,17 @@ export const Composer: React.FC<Props> = ({
     }
   }
 
-  const readFile = (file: File): Promise<ChatAttachment | null> => {
-    return new Promise((resolve) => {
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase()
-      const isImage = IMAGE_TYPES.includes(file.type) || ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'].includes(ext)
-      const isText = TEXT_TYPES.includes(file.type) || TEXT_EXTS.includes(ext)
-
-      if (isImage) {
-        if (file.size > MAX_IMAGE_SIZE) { resolve(null); return }
-        const reader = new FileReader()
-        reader.onload = () => {
-          resolve({
-            type: 'image',
-            name: file.name,
-            mimeType: file.type || 'image/png',
-            size: file.size,
-            data: reader.result as string
-          })
-        }
-        reader.onerror = () => resolve(null)
-        reader.readAsDataURL(file)
-      } else if (isText) {
-        if (file.size > MAX_TEXT_SIZE) { resolve(null); return }
-        const reader = new FileReader()
-        reader.onload = () => {
-          resolve({
-            type: 'text',
-            name: file.name,
-            mimeType: file.type || 'text/plain',
-            size: file.size,
-            data: reader.result as string
-          })
-        }
-        reader.onerror = () => resolve(null)
-        reader.readAsText(file)
-      } else {
-        resolve(null)
-      }
-    })
-  }
-
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     const fileArr = Array.from(files)
-    const results = await Promise.all(fileArr.map(readFile))
+    const results = await Promise.all(fileArr.map((file) => readFileAsAttachment(file)))
     const valid = results.filter((r): r is ChatAttachment => r !== null)
-    if (valid.length > 0) setAttachments((prev) => [...prev, ...valid].slice(0, 8))
-  }, [])
+    if (valid.length < fileArr.length) toast.warning(t('popup.attachUnsupported'))
+    if (valid.length === 0) return
+    if (valid.length > MAX_ATTACHMENTS - attachments.length) {
+      toast.warning(t('popup.attachLimit', { n: MAX_ATTACHMENTS }))
+    }
+    setAttachments((prev) => [...prev, ...valid].slice(0, MAX_ATTACHMENTS))
+  }, [attachments.length, t, toast])
 
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) handleFiles(e.target.files)
@@ -1043,7 +1003,7 @@ export const Composer: React.FC<Props> = ({
             ref={fileRef}
             type="file"
             multiple
-            accept="image/*,.txt,.md,.json,.csv,.html,.xml,.py,.js,.ts,.tsx,.jsx,.yaml,.yml,.sh,.sql,.log,.ini,.conf,.toml"
+            accept={ATTACHMENT_ACCEPT}
             className="hidden"
             onChange={handleFilePick}
           />

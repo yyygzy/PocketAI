@@ -250,25 +250,33 @@ describe('selectToolSurface — 选择规则', () => {
     expect(ids.has('fs.read')).toBe(true)
     expect(ids.has('web.search')).toBe(false)
     expect(ids.has('reminder.set')).toBe(false)
-    // 常驻组一枚不少
-    for (const id of ['time.now', 'calculator', 'js.eval', 'kb.search', 'todo.write', 'memory.save', 'code.symbol', 'mcp.symbol', 'shell.exec', 'skill.load', 'agent.delegate']) {
+    // 常驻组一枚不少（天气查询已按常用工具归入 core）
+    for (const id of ['time.now', 'calculator', 'js.eval', 'kb.search', 'todo.write', 'memory.save', 'weather.query', 'code.symbol', 'mcp.symbol', 'shell.exec', 'skill.load', 'agent.delegate']) {
       expect(ids.has(id)).toBe(true)
     }
     // MCP 工具不参与分组裁剪
     expect(ids.has('mcp:demo:read_x')).toBe(true)
     expect(r.groups).toEqual(['file'])
-    expect(r.heldBackTools).toBe(16 + 4) // web 3 枚 + 免费公共 API 13 枚（v77 八枚 + v79 五枚）+ schedule 4 枚
+    expect(r.heldBackTools).toBe(15 + 4) // web 2 枚 + 免费公共 API 13 枚（v77 八枚 + v79 五枚）+ schedule 4 枚；weather.query 已转常驻
   })
 
-  it('无关键词 → 只留常驻组 + MCP', () => {
+  it('无关键词 → 只留常驻组 + MCP（含常用工具 weather.query）', () => {
     const r = selectToolSurface({ tools, permissions: ['*'], message: '你好', mode: 'grouped' })
     const ids = new Set(r.tools.map((t) => t.id))
     expect(ids.has('fs.read')).toBe(false)
     expect(ids.has('web.search')).toBe(false)
     expect(ids.has('calendar.read')).toBe(false)
+    expect(ids.has('weather.query')).toBe(true)
     expect(ids.has('mcp:demo:read_x')).toBe(true)
-    expect(r.heldBackTools).toBe(6 + 16 + 4) // file 6 枚（v70 加 project.create、含 fs.apply_patch）+ net 16 枚（v77 八枚 + v79 五枚免费公共 API）+ schedule 4 枚
+    expect(r.heldBackTools).toBe(6 + 15 + 4) // file 6 枚（v70 加 project.create、含 fs.apply_patch）+ net 15 枚（v77 八枚 + v79 五枚免费公共 API）+ schedule 4 枚；weather.query 已转常驻
     expect(r.groups).toEqual([])
+  })
+
+  it('天气查询是常用工具：开封市今天的天气在 grouped 下也带 weather.query', () => {
+    const r = selectToolSurface({ tools, permissions: ['*'], message: '开封市今天的天气。', mode: 'grouped' })
+    const ids = new Set(r.tools.map((t) => t.id))
+    expect(ids.has('weather.query')).toBe(true)
+    expect(r.groups).toContain('net')
   })
 
   it('显式逐条授权（不含 *）→ 一枚都不裁', () => {

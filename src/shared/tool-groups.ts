@@ -99,10 +99,12 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   'memory.save': 'core',
   'code.symbol': 'core',
   'mcp.symbol': 'core',
+  // 常用工具：天气查询按用户要求常驻，不依赖消息是否命中 net 关键词。
+  // 仍受助手 toolPermissions 与本轮 toolGrant 约束，只是不再被分组裁剪。
+  'weather.query': 'core',
   // 按需
   'web.fetch': 'net',
   'web.search': 'net',
-  'weather.query': 'net',
   // 免费公共 API 工具（v77 批次）：全部走固定域名 safeFetch，归 net 组
   'exchange.rate': 'net',
   'ip.lookup': 'net',

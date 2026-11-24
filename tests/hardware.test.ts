@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../src/main/portable', () => ({ APP_ROOT: '/mock/app/root' }))
 
-import { parseJsonSafe, mapEnum } from '../src/main/steward/hardware'
+import { parseJsonSafe, mapEnum, isVirtualGpuName, parseGpuRows } from '../src/main/steward/hardware'
 
 describe('parseJsonSafe — PowerShell 输出安全 JSON 提取', () => {
   it('纯 JSON 对象 → 原样解析', () => {
@@ -95,5 +95,41 @@ describe('mapEnum — 枚举映射', () => {
   it('非纯数字 → 原样返回', () => {
     expect(mapEnum(map, 'NVMe')).toBe('NVMe')
     expect(mapEnum(map, 'SATA')).toBe('SATA')
+  })
+})
+
+describe('GPU 名称过滤 — 虚拟显示适配器不进硬件画像', () => {
+  it('远程/虚拟适配器命中，真实显卡不命中', () => {
+    for (const name of [
+      'GameViewer Virtual Display Adapter',
+      'Microsoft Remote Display Adapter',
+      'Microsoft Hyper-V Video',
+      'VirtualBox Graphics Adapter',
+      'VMware SVGA 3D',
+      'QXL Graphics'
+    ]) {
+      expect(isVirtualGpuName(name), name).toBe(true)
+    }
+    for (const name of [
+      'NVIDIA GeForce GTX 1050 Ti',
+      'Intel(R) HD Graphics 630',
+      'AMD Radeon RX 6800 XT',
+      'Apple M3 Max'
+    ]) {
+      expect(isVirtualGpuName(name), name).toBe(false)
+    }
+  })
+
+  it('解析层兜底：混合列表只留下真实显卡', () => {
+    const rows = parseGpuRows(JSON.stringify([
+      { name: 'GameViewer Virtual Display Adapter', memory: null, driver: null },
+      { name: 'Intel(R) HD Graphics 630', memory: 1073741824, driver: '31.0.101.2140' },
+      { name: 'NVIDIA GeForce GTX 1050 Ti', memory: 4293918720, driver: '32.0.15.8266' }
+    ]))
+    expect(rows.map((g) => g.name)).toEqual([
+      'Intel(R) HD Graphics 630',
+      'NVIDIA GeForce GTX 1050 Ti'
+    ])
+    expect(rows[1]?.cuda).toBe(true)
   })
 })

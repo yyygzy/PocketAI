@@ -380,8 +380,9 @@ export const TranslateModule: React.FC = () => {
     async (e: React.MouseEvent, id: string) => {
       e.stopPropagation()
       const r = await window.pocketai.deleteTranslation(id)
+      // 这一族 ack 通道成功也回 `{ok:true}`，只能认 `ok===false`：用 isIpcFail 会把成功演成失败。
       // §217：失败不判就本地过滤掉 ⇒ 那条只是看不见了，切回模块又回来
-      if (isIpcFail(r)) {
+      if (hasIpcFailed(r)) {
         toast.error(ipcFailureText(r, t) || t('common.unknownError'))
         return
       }
@@ -393,7 +394,8 @@ export const TranslateModule: React.FC = () => {
   const handleClearHistory = useCallback(async () => {
     if (!(await confirm({ message: t('translate.history.clearConfirm'), danger: true }))) return
     const r = await window.pocketai.clearTranslations()
-    if (isIpcFail(r)) {
+    // 成功回 `{ok:true}`：用 isIpcFail 会在这里提前 return，库清了但屏上还留着旧历史。
+    if (hasIpcFailed(r)) {
       toast.error(ipcFailureText(r, t) || t('common.unknownError'))
       return
     }
@@ -423,7 +425,7 @@ export const TranslateModule: React.FC = () => {
 
   const handleDeleteTerm = useCallback(async (id: string) => {
     const r = await window.pocketai.deleteGlossaryTerm(id)
-    if (isIpcFail(r)) {
+    if (hasIpcFailed(r)) {
       toast.error(ipcFailureText(r, t) || t('common.unknownError'))
       return
     }

@@ -171,11 +171,12 @@ npm run build        # electron-vite build，产物在 out/
 
 ## 5. 当前已知问题
 
-### 5.1 打包版没有托盘图标
+### 5.1 打包版托盘图标（已修复，旧记录作废）
 
-- 现象：日志出现 `icon not found, skip tray init: ...app.asar\build\icon\icon-256.png`，托盘不初始化。
-- 代码事实：`src/main/tray.ts` 用 `path.join(app.getAppPath(), 'build/icon/icon-256.png')` 取图标；打包后 `app.getAppPath()` 指向 `resources/app.asar`，而 `package.json` 的 `build.files` 只包含 `out/**/*`、`package.json`、`extensions/**/*`、`node_modules/**/*`，**没有把 `build/` 打进 asar**，因此 `nativeImage.createFromPath()` 为空并跳过托盘。
-- 范围：`docs/release-notes-1.3.0.md` 记录 1.2.8 同样存在，非 1.3.0 新增。修复方向是补打包资源或改用已打包路径，但**本次未改动**。
+- 旧现象：日志出现 `icon not found, skip tray init: ...app.asar\build\icon\icon-256.png`，托盘不初始化（1.2.8 同样存在）。
+- 已修复：提交 `1f3027a`（`fix(win): 修正任务栏图标与主密码提示文案`）在 `package.json` 的 `asarUnpack` 加入 `build/icon/**/*`，`src/main/windows/boot-guards.ts` 的 `appIconPath()` 把 `app.asar` 换成 `app.asar.unpacked` 后取图标。打包产物 `resources/app.asar` 内确有 `build/icon/icon-256.png`。
+- 实测：2026-11-24 重新打包并运行后，`artifacts/data/logs/main.log` 的启动段已不再出现 `skip tray init`。
+- 因此「当前已知问题」不再列此项；旧的 `docs/release-notes-1.3.0.md` 已知问题行同步纠偏。
 
 ### 5.2 Linux 截图与选区取词缺口
 

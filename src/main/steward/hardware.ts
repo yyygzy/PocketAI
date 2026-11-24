@@ -86,7 +86,7 @@ const GPU_PS_SCRIPT = `
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 $result = @()
-$gpus = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -and $_.Name -notmatch 'Basic Display|Hyper-V' })
+$gpus = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -and $_.Name -notmatch 'Basic Display|Hyper-V|Virtual Display|Remote Display|GameViewer|VirtualBox|VMware|Parallels|QXL|virtio' })
 foreach ($g in $gpus) {
   $mem = [uint64]$g.AdapterRAM
   if ($g.PNPDeviceID) {
@@ -105,12 +105,19 @@ foreach ($g in $gpus) {
 ConvertTo-Json -InputObject $result -Compress
 `
 
-function parseGpuRows(text: string | null): GpuInfo[] {
+/** 常见虚拟/远程显示适配器：不是机器上的真实显卡，画进硬件画像只会误导模型档位判断 */
+const VIRTUAL_GPU_NAME_RE = /basic display|hyper-v|virtual display|remote display|gameviewer|virtualbox|vmware|parallels|qxl|virtio/i
+
+export function isVirtualGpuName(name: string): boolean {
+  return VIRTUAL_GPU_NAME_RE.test(String(name ?? ''))
+}
+
+export function parseGpuRows(text: string | null): GpuInfo[] {
   const raw = parseJsonSafe<RawGpu[] | RawGpu>(text)
   if (!raw) return []
   const list = Array.isArray(raw) ? raw : [raw]
   return list
-    .filter((g) => g?.name)
+    .filter((g) => g?.name && !isVirtualGpuName(String(g.name)))
     .map((g) => ({
       name: String(g.name),
       memory: g.memory && g.memory > 0 ? g.memory : undefined,

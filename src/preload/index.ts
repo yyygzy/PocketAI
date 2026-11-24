@@ -19,6 +19,7 @@ import type {
   ArtifactPdfExportResult,
   ArtifactPreview,
   ArtifactTextResult,
+  AttachmentDocumentParseResult,
   ProjectPreview
 } from '../shared/types'
 import type { MainHandshakeReply } from '../shared/ipc-handshake'
@@ -1639,6 +1640,13 @@ const api = {
     ipcRenderer.invoke(IPC.WIZARD_GET_LAST_PROVIDER),
   setLastProvider: (providerId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.WIZARD_SET_LAST_PROVIDER, providerId),
+
+  // ---------- 聊天附件 ----------
+  parseAttachmentDocument: (
+    name: string,
+    base64: string
+  ): Promise<AttachmentDocumentParseResult | { ok: false; error: string; ipcCode?: string; ipcArgs?: string }> =>
+    ipcRenderer.invoke(IPC.ATTACHMENT_PARSE_DOC, name, base64),
 
   // ---------- 文件模块 ----------
   listFiles: (relDir: string): Promise<FileEntry[]> =>

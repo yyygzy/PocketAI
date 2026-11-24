@@ -18,7 +18,7 @@ import { scanFolderFiles } from '../../knowledge/folder-scan'
 import { planFileIngest } from '../../knowledge/dedupe'
 import { kbEvalFileName, runKbEvalSet, KB_EVAL_MAX_K } from '../../knowledge/kb-eval-runner'
 import { issuePathToken, peekPathToken } from '../dialog-path-token'
-import { detectSourceType } from '../../knowledge/parsers'
+import { detectSourceType, parseDocumentBytes } from '../../knowledge/parsers'
 import { assertCanCreateKb } from '../../license/license'
 import { safeHandle, argsSchema } from '../safe-handle'
 import { writeFileAtomicSync } from '../../files/atomic-write'
@@ -387,5 +387,21 @@ export function registerKnowledgeHandlers(): void {
       return { ok: true }
     },
     argsSchema(idSchema, idSchema, z.boolean()),
+  )
+
+  // ---------- 聊天附件：结构化文档 → 纯文本 ----------
+  // 只收 base64 字节，不收渲染层传来的绝对路径；不落临时文件，直接复用知识库解析器。
+  const ATTACHMENT_DOC_MAX_BYTES = 20 * 1024 * 1024
+  safeHandle(
+    IPC.ATTACHMENT_PARSE_DOC,
+    async (_e, name: string, base64: string) => {
+      const bytes = new Uint8Array(Buffer.from(base64, 'base64'))
+      if (bytes.byteLength === 0) throw new Error('文档内容为空或编码无效')
+      if (bytes.byteLength > ATTACHMENT_DOC_MAX_BYTES) throw new Error('文档超过 20MB，无法作为附件解析')
+      const parsed = await parseDocumentBytes(name, bytes)
+      if (!parsed.text.trim()) throw new Error('文档未包含可提取文本（扫描版 PDF 请先转成图片后发送）')
+      return parsed
+    },
+    argsSchema(z.string().min(1).max(255), z.string().min(1).max(Math.ceil(ATTACHMENT_DOC_MAX_BYTES * 4 / 3)))
   )
 }

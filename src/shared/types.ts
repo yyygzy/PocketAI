@@ -1834,6 +1834,12 @@ export interface ChatAttachment {
   kbId?: string
 }
 
+/** 聊天附件的结构化文档解析回执（主进程 PDF/DOCX/XLSX/HTML → 纯文本） */
+export interface AttachmentDocumentParseResult {
+  text: string
+  title: string
+}
+
 export interface RegeneratePayload {
   requestId: string
   conversationId: string
@@ -3514,6 +3520,10 @@ export const IPC = {
   STEWARD_DIAGNOSE: 'steward:diagnose', // 故障诊断
   STEWARD_VERIFY_BACKUP: 'steward:verify-backup', // 立即跑一次备份完整性校验（回三态）
   STEWARD_EXPORT_REPORT: 'steward:export-report', // 诊断报告导出为文本文件
+
+  // ---------- 聊天附件 ----------
+  /** 结构化文档（PDF/DOCX/XLSX/HTML）按字节解析成纯文本，不落临时文件 */
+  ATTACHMENT_PARSE_DOC: 'attachment:parse-doc',
 
   // ---------- 文件模块 ----------
   FILE_LIST: 'file:list',

@@ -673,7 +673,10 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/screenshot-p1-4.test.tsx': 3,
       // 编辑后自动验证开关：乐观更新后必须等 IPC 回填 checked，才能断言真的写进设置。
       // 上限＝现数 1，不留余量。
-      'tests/renderer-appearance-panel.test.tsx': 1
+      'tests/renderer-appearance-panel.test.tsx': 1,
+      // 翻译页 ack 回执回归：清空/删除要等列表从屏上消失，再断言空态与 toast 面。
+      // 上限＝现数 6，不留余量。
+      'tests/translate-ack-ok-true.test.tsx': 6
     }
     const sum = Object.values(PER_FILE_AWAITS).reduce((a, b) => a + b, 0)
     expect(sum, '逐文件合计必须等于总量（两套读法同源）').toBe(ALL.awaits)

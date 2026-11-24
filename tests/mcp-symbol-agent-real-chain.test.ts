@@ -47,7 +47,6 @@ vi.mock('../src/main/logger', () => ({
 }))
 
 import { dbService } from '../src/main/db/database'
-import { appConfigRepo } from '../src/main/db/repositories/app-config.repo'
 import { providerRepo } from '../src/main/db/repositories/provider.repo'
 import { assistantRepo } from '../src/main/db/repositories/assistant.repo'
 import { conversationRepo } from '../src/main/db/repositories/conversation.repo'
