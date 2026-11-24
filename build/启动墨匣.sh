@@ -2,6 +2,8 @@
 # 墨匣一键启动器（Linux）
 # 双击本文件即可：自动检测环境，选择最合适的客户端启动方式。
 # 优先级：已安装版本（deb/rpm → /opt/Moxia）→ 同目录 AppImage。
+# Wayland 会话下强制 X11 后端：Electron 在 Wayland 下窗口可能创建成功却不可见
+# （本机实测：默认 Wayland 后端看不到窗口，加 --ozone-platform=x11 后正常显示）。
 # AppImage 缺 FUSE2 时自动切免挂载模式；沙箱不可用时自动加 --no-sandbox。
 # 启动过程记录在同目录「启动日志.txt」，报问题时把这个文件发过来即可。
 set -u
@@ -10,13 +12,31 @@ LOG="$DIR/启动日志.txt"
 say() { echo "[$(date '+%H:%M:%S')] [墨匣启动器] $*" | tee -a "$LOG"; }
 : > "$LOG"
 
-# 1) 已通过 deb/rpm 安装：直接启动，沙箱由系统安装器配好
-if [ -x /opt/Moxia/pocket-ai ]; then
-  say "检测到已安装版本，直接启动 /opt/Moxia/pocket-ai"
-  exec /opt/Moxia/pocket-ai "$@"
+FLAGS=()
+ENVV=()
+
+# 1) 显示后端：Wayland 会话下 Electron 自动选 wayland ozone 后端，窗口可能
+#    创建成功却不在屏幕上显示。有 XWayland（DISPLAY）时统一强制走 X11。
+if { [ "${XDG_SESSION_TYPE:-}" = "wayland" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && [ -n "${DISPLAY:-}" ]; then
+  FLAGS+=(--ozone-platform=x11)
+  say "检测到 Wayland 会话且有 XWayland：强制 X11 后端（避免窗口创建后不可见）"
 fi
 
-# 2) 找同目录的 AppImage
+# 2) 沙箱检测：Electron 沙箱依赖非特权用户命名空间，被禁用时降级 --no-sandbox
+if unshare --user true 2>/dev/null; then
+  say "沙箱可用：保持系统沙箱启动"
+else
+  say "系统禁用非特权用户命名空间（部分发行版默认策略）：本次以 --no-sandbox 启动"
+  FLAGS+=(--no-sandbox)
+fi
+
+# 3) 已通过 deb/rpm 安装：直接启动，带上上面算好的显示/沙箱参数
+if [ -x /opt/Moxia/pocket-ai ]; then
+  say "检测到已安装版本，启动 /opt/Moxia/pocket-ai ${FLAGS[*]:-}"
+  exec /opt/Moxia/pocket-ai "${FLAGS[@]}" "$@"
+fi
+
+# 4) 找同目录的 AppImage
 APPIMAGE="$(ls "$DIR"/Moxia-*.AppImage 2>/dev/null | head -n1)"
 if [ -z "$APPIMAGE" ]; then
   say "未找到已安装版本，也没在同目录找到 Moxia-*.AppImage，无法启动。"
@@ -26,23 +46,12 @@ if [ -z "$APPIMAGE" ]; then
 fi
 chmod +x "$APPIMAGE" 2>/dev/null || true
 
-FLAGS=()
-ENVV=()
-
-# 3) FUSE2 检测：有 libfuse2 且 /dev/fuse 存在才尝试挂载运行，否则免挂载解压运行
+# 5) FUSE2 检测：有 libfuse2 且 /dev/fuse 存在才尝试挂载运行，否则免挂载解压运行
 if ls /dev/fuse >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q "libfuse\.so\.2"; then
   say "FUSE2 可用：按常规方式挂载启动"
 else
   say "缺少 FUSE2（Ubuntu 24.04+ 默认不带）：改用免挂载模式，首次启动会慢几秒"
   ENVV+=("APPIMAGE_EXTRACT_AND_RUN=1")
-fi
-
-# 4) 沙箱检测：Electron 沙箱依赖非特权用户命名空间，被禁用时降级 --no-sandbox
-if unshare --user true 2>/dev/null; then
-  say "沙箱可用：保持系统沙箱启动"
-else
-  say "系统禁用非特权用户命名空间（部分发行版默认策略）：本次以 --no-sandbox 启动"
-  FLAGS+=(--no-sandbox)
 fi
 
 say "启动：$APPIMAGE ${FLAGS[*]:-}"
