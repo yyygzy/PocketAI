@@ -1,12 +1,16 @@
 import { app, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import EventEmitter from 'node:events'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { IPC, type UpdateStatus, type UpdateEvent } from '../shared/types'
 import { compareVersionStrings } from '../shared/version'
 import { acquireKeepAwake, releaseKeepAwake } from './keep-awake'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { downloadAsarPatch, restartToApplyPatch, isPatchPending, clearPendingPatch } from './update/asar-patcher'
-import { isPortableRuntime } from './portable'
+import { DATA_DIR, isPortableRuntime } from './portable'
 import { licenseService } from './license/license'
 import { safeFetch } from './net/safe-fetch'
 import { safeHandle, argsSchema, z } from './ipc/safe-handle'
@@ -22,6 +26,12 @@ interface GitHubReleaseApi {
   body?: string
   html_url?: string
   prerelease?: boolean
+  assets?: Array<{
+    name?: string
+    size?: number
+    digest?: string
+    browser_download_url?: string
+  }>
 }
 
 // ─── 单例 UpdateManager ──────────────────────────────────────────
@@ -57,6 +67,109 @@ async function fetchLatestRelease(): Promise<{ version: string; url: string }> {
   return { version, url }
 }
 
+/** 便携版安装包（来自 GitHub Release assets，带 digest 才算可信） */
+export interface PortableReleaseAsset {
+  name: string
+  url: string
+  sha256: string
+  size: number | null
+}
+
+/**
+ * 只认本仓库 Releases 里精确命名、且带 `sha256:` digest 的便携版资产。
+ * 名字/域名/digest 任一不符就当没找到，绝不下载来路不明的 exe。
+ */
+export function parsePortableAsset(release: unknown, version: string): PortableReleaseAsset | null {
+  const assets = (release as GitHubReleaseApi | null)?.assets
+  if (!Array.isArray(assets)) return null
+  const name = `Moxia-${version}-Portable-x64.exe`
+  const asset = assets.find((a) => a?.name === name)
+  if (!asset || typeof asset.browser_download_url !== 'string') return null
+  const digest = /^sha256:([0-9a-f]{64})$/i.exec(String(asset.digest ?? ''))
+  if (!digest) return null
+  let url: URL
+  try { url = new URL(asset.browser_download_url) } catch { return null }
+  if (!['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'].includes(url.hostname)) return null
+  const size = Number(asset.size)
+  return {
+    name,
+    url: url.toString(),
+    sha256: digest[1]!.toLowerCase(),
+    size: Number.isFinite(size) && size > 0 ? size : null
+  }
+}
+
+async function fetchPortableAsset(version: string): Promise<PortableReleaseAsset> {
+  const res = await safeFetch(RELEASE_API_URL, {
+    timeoutMs: 15000,
+    maxBytes: 4 * 1024 * 1024,
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Moxia-Updater' },
+    useProxy: true
+  })
+  if (res.status !== 200) throw new Error(`GitHub API HTTP ${res.status}`)
+  const asset = parsePortableAsset(JSON.parse(res.body.toString('utf8')), version)
+  if (!asset) throw new Error(`未找到 ${version} 便携版安装包或 SHA-256 校验值`)
+  return asset
+}
+
+/** 流式下载后的文件摘要，用来和 Release digest 对账 */
+export function sha256File(file: string): string {
+  const hash = createHash('sha256')
+  const fd = fs.openSync(file, 'r')
+  try {
+    const buf = Buffer.allocUnsafe(1024 * 1024)
+    let read: number
+    while ((read = fs.readSync(fd, buf, 0, buf.length, null)) > 0) hash.update(buf.subarray(0, read))
+  } finally {
+    fs.closeSync(fd)
+  }
+  return hash.digest('hex')
+}
+
+/** 独立 PowerShell 脚本：等主进程退出 → 替换原 exe → 重启；数据目录不动 */
+export function portableUpdateScript(): string {
+  return [
+    'param([string]$Target, [string]$Staged, [int]$ParentPid)',
+    "$ErrorActionPreference = 'Stop'",
+    'if ($ParentPid -gt 0) { Wait-Process -Id $ParentPid -Timeout 60 -ErrorAction SilentlyContinue }',
+    'try {',
+    '  $done = $false',
+    '  for ($i = 0; $i -lt 20; $i++) {',
+    '    try { Copy-Item -LiteralPath $Staged -Destination $Target -Force; $done = $true; break }',
+    '    catch { Start-Sleep -Milliseconds 500 }',
+    '  }',
+    '  if (-not $done) { throw "替换便携版失败: $Target" }',
+    '  Start-Process -FilePath $Target',
+    '} catch {',
+    "  $_ | Out-File -FilePath (Join-Path (Split-Path -Parent $Staged) 'apply-error.log') -Append",
+    '  exit 1',
+    '}',
+    ''
+  ].join('\r\n')
+}
+
+function portableExePath(): string | null {
+  // PORTABLE_EXECUTABLE_FILE 由 electron-builder 的 portable runner 注入，指向用户双击的那个 exe；
+  // app.getPath('exe') 在 portable 运行时指向临时解压目录，不能拿来替换。
+  const p = process.env.PORTABLE_EXECUTABLE_FILE
+  if (!p || path.extname(p).toLowerCase() !== '.exe') return null
+  return path.resolve(p)
+}
+
+function launchPortableUpdate(target: string, staged: string): void {
+  const dir = path.join(DATA_DIR, 'updates')
+  fs.mkdirSync(dir, { recursive: true })
+  const script = path.join(dir, 'apply-portable-update.ps1')
+  fs.writeFileSync(script, portableUpdateScript(), 'utf8')
+  const child = spawn(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
+      '-Target', target, '-Staged', staged, '-ParentPid', String(process.pid)],
+    { detached: true, stdio: 'ignore', windowsHide: true }
+  )
+  child.unref()
+}
+
 class UpdateManager extends EventEmitter {
   private status: UpdateStatus = 'idle'
   private newVersion?: string
@@ -64,8 +177,10 @@ class UpdateManager extends EventEmitter {
   private totalBytes = 0
   private downloadedBytes = 0
   private error?: string
-  /** 便携版手动下载页（只展示，应用内绝不下载替换） */
+  /** 展示用下载页（安装版异常时兜底） */
   private downloadUrl?: string
+  /** 便携版已下载并校验通过、等待重启替换的 exe */
+  private pendingPortable?: { version: string; staged: string }
   /** 互斥锁：任何时刻只能一个流程在跑 */
   private busy = false
   /** 自动更新开关（持久化于 app_config，默认关闭） */
@@ -248,8 +363,8 @@ class UpdateManager extends EventEmitter {
       return { ok: true }
     }
 
-    // Windows Portable：electron-builder 不生成 app-update.yml，无法自动更新。
-    // 但仍要能告诉用户「有没有新版本」：只查 GitHub Releases 拿版本号与下载页，绝不下载/替换。
+    // Windows Portable：electron-builder 不生成 app-update.yml，走不了 electron-updater。
+    // 这里只查 GitHub Releases 拿版本号与下载页；真正的下载/替换在 download()/quitAndInstall() 里走专用链路。
     if (process.platform === 'win32' && isPortableRuntime()) {
       this.busy = true
       this.error = undefined
@@ -296,9 +411,46 @@ class UpdateManager extends EventEmitter {
       return { ok: false, error: `当前状态 ${this.status}，需要先检查更新` }
     }
 
-    // 便携版：available 只代表「有新版本」，包不归应用管——只提示 + 下载页，绝不应用内下载/替换
-    if (isPortableRuntime()) {
-      return { ok: false, error: '便携版不支持应用内下载，请到发布页手动下载新版替换' }
+    // 便携版：不走 electron-updater，下载 Release 里的 Portable exe + SHA-256 校验后暂存，
+    // 重启时由独立脚本替换原 exe（原文件所在目录不变 ⇒ data/ 数据目录原样保留）。
+    if (process.platform === 'win32' && isPortableRuntime()) {
+      if (!this.newVersion) return { ok: false, error: '请先检查更新' }
+      this.busy = true
+      this.error = undefined
+      acquireKeepAwake()
+      try {
+        const asset = await fetchPortableAsset(this.newVersion)
+        const dir = path.join(DATA_DIR, 'updates')
+        fs.mkdirSync(dir, { recursive: true })
+        const staged = path.join(dir, `${asset.name}.${Date.now()}`)
+        const version = this.newVersion
+        const res = await safeFetch(asset.url, {
+          timeoutMs: 10 * 60 * 1000,
+          maxBytes: 500 * 1024 * 1024,
+          useProxy: true,
+          sinkFile: staged,
+          onProgress: (received, total) => {
+            const pct = total && total > 0 ? Math.min(99, Math.round((received / total) * 100)) : 0
+            if (pct !== this.progress) {
+              this.progress = pct
+              this.setStatus('downloading', { progress: pct, newVersion: version })
+            }
+          }
+        })
+        if (res.status !== 200) throw new Error(`下载 HTTP ${res.status}`)
+        if (asset.size !== null && fs.statSync(staged).size !== asset.size) throw new Error('下载包大小与发布页不一致')
+        if (sha256File(staged) !== asset.sha256) throw new Error('下载包 SHA-256 校验失败，已丢弃')
+        this.pendingPortable = { version, staged }
+        this.progress = 100
+        this.setStatus('downloaded', { newVersion: version })
+        return { ok: true }
+      } catch (e) {
+        this.error = errMsg(e)
+        this.setStatus('error', { error: this.error })
+        return { ok: false, error: this.error }
+      } finally {
+        releaseKeepAwake()
+      }
     }
 
     if (!app.isPackaged) {
@@ -353,6 +505,27 @@ class UpdateManager extends EventEmitter {
     }
     if (!app.isPackaged) {
       return { ok: false, error: '开发环境不支持安装' }
+    }
+
+    // 便携版：退出后由独立脚本替换用户双击的那个 exe，再重启；不碰 app.asar 补丁与 NSIS
+    if (process.platform === 'win32' && isPortableRuntime()) {
+      const pending = this.pendingPortable
+      if (!pending || pending.version !== this.newVersion || !fs.existsSync(pending.staged)) {
+        return { ok: false, error: '更新包尚未下载完成，请重新下载' }
+      }
+      const target = portableExePath()
+      if (!target || !fs.existsSync(target)) {
+        return { ok: false, error: '无法定位便携版主程序，请关闭后手动替换' }
+      }
+      try {
+        launchPortableUpdate(target, pending.staged)
+        app.quit()
+        return { ok: true }
+      } catch (e) {
+        this.error = errMsg(e)
+        this.setStatus('error', { error: this.error })
+        return { ok: false, error: this.error }
+      }
     }
 
     // 增量补丁就绪**且对得上这次要装的版本**（§312）→ 延迟替换脚本 + 重启（不走 NSIS 安装器）

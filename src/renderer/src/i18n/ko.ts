@@ -2765,7 +2765,7 @@ export const ko = {
   'home.portableTitle': '포터블 버전 업데이트',
   'home.portableChecking': '새 버전 확인 중…',
   'home.portableHint':
-    '포터블 버전은 앱 안에서 다운로드하거나 교체하지 않습니다. 새 버전을 직접 내려받아 주세요.',
+    '설정 → 모델 및 사용량 → 일반에서 새 버전을 한 번에 다운로드하고 설치할 수 있습니다.',
   'home.portableLatest': '최신 버전입니다({v})',
   'home.portableCheckFail': '버전 확인 실패: {e}',
   'home.downloadPage': '다운로드 페이지 열기',
@@ -2875,7 +2875,7 @@ export const ko = {
   'upd.installBtn': '🔄 재시작 후 설치',
   'upd.restartConfirm': '업데이트가 다운로드되었습니다. 지금 재시작하여 설치할까요?',
   'upd.devHint': '개발 모드에서는 자동 업데이트를 사용할 수 없습니다. 패키징(npm run dist) 후 활성화됩니다.',
-  'upd.portableHint': '포터블 버전은 새 릴리스를 다운로드하여 실행 파일을 수동으로 교체하세요. 자동 업데이트는 NSIS 설치판에서 최적으로 작동합니다.',
+  'upd.portableHint': '포터블 버전도 여기에서 새 버전을 다운로드하고 검증할 수 있습니다. "설치 및 다시 시작"을 누르면 종료 시 원래 exe를 교체하며 데이터 폴더는 유지됩니다.',
   'upd.changelogBtn': '📋 변경 이력',
   'upd.changelogTitle': '릴리스 이력',
   'upd.changelogLoading': '로딩 중…',

@@ -25,13 +25,60 @@ function getMemory() {
   }
 }
 
+// ─── WSL 识别 ───────────────────────────────────────────────────────
+// WSL2 的 /proc、os.totalmem() 与 df 看到的是虚拟机自己的视图（内存受 .wslconfig 限制、
+// 磁盘是 ext4.vhdx），不是宿主机真值。这里只认可证伪的内核/环境证据，绝不按 "linux" 就猜。
+
+export function isWslEnv(
+  procVersion: string | null,
+  osRelease: string | null,
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  return /microsoft|wsl/i.test(`${procVersion ?? ''} ${osRelease ?? ''}`) || Boolean(env.WSL_DISTRO_NAME)
+}
+
+export function isWsl(): boolean {
+  if (process.platform !== 'linux') return false
+  try {
+    if (isWslEnv(fs.readFileSync('/proc/version', 'utf8'), os.release())) return true
+  } catch {
+    // 权限/容器里读不到就再看环境变量
+  }
+  return isWslEnv(null, null)
+}
+
+/** 宿主机 PowerShell 路径；环境变量可覆盖，便于非标准挂载点 */
+export function wslPowerShellExe(exists: (p: string) => boolean = (p) => fs.existsSync(p)): string | null {
+  const override = process.env.POCKETAI_WSL_POWERSHELL
+  if (override && exists(override)) return override
+  return [
+    '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
+    '/mnt/c/Windows/SysWOW64/WindowsPowerShell/v1.0/powershell.exe'
+  ].find(exists) ?? null
+}
+
+/** `wslpath -w` 的输出 → 宿主机盘符；非 Windows 路径返回 null（不许默认 C:） */
+export function windowsDriveFromWslPath(windowsPath: string | null): string | null {
+  const m = String(windowsPath ?? '').match(/^([A-Za-z]):[\\/]/)
+  return m ? m[1]!.toUpperCase() : null
+}
+
+function wslWindowsDrive(): string | null {
+  try {
+    const out = execFileSync('wslpath', ['-w', APP_ROOT], { encoding: 'utf8', timeout: 3000 })
+    return windowsDriveFromWslPath(out.trim())
+  } catch {
+    return null
+  }
+}
+
 // ─── PowerShell 辅助（base64 EncodedCommand，规避引号转义问题） ──────
 
-function runPowerShell(script: string): string | null {
+function runPowerShellWith(exe: string, script: string): string | null {
   try {
     const b64 = Buffer.from(script, 'utf16le').toString('base64')
     // execFileSync + 参数数组：不经 cmd 解析，安装路径/设备名里的引号与元字符无从逃逸（SEC-21）
-    const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64], {
+    const out = execFileSync(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64], {
       encoding: 'utf8',
       timeout: 15000,
       windowsHide: true
@@ -42,21 +89,29 @@ function runPowerShell(script: string): string | null {
   }
 }
 
+function runPowerShell(script: string): string | null {
+  return runPowerShellWith('powershell', script)
+}
+
 /**
  * 异步版 PowerShell：**启动路径上只许用这条**。
  * execFileSync 在真机上能把主线程钉住 15–30s（PowerShell 冷启动 8s + CIM 查询 10–20s），
  * 期间窗口导航、8s 加载重试与 12s 显示兜底计时器全部被推迟——2026-11-16 冷启动白屏的根因。
  */
-function runPowerShellAsync(script: string, timeoutMs: number): Promise<string | null> {
+function runPowerShellAsyncWith(exe: string, script: string, timeoutMs: number): Promise<string | null> {
   const b64 = Buffer.from(script, 'utf16le').toString('base64')
   return new Promise((resolve) => {
     execFile(
-      'powershell',
+      exe,
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64],
       { encoding: 'utf8', timeout: Math.max(1000, Math.floor(timeoutMs)), windowsHide: true },
       (err, stdout) => resolve(err ? null : String(stdout).trim())
     )
   })
+}
+
+function runPowerShellAsync(script: string, timeoutMs: number): Promise<string | null> {
+  return runPowerShellAsyncWith('powershell', script, timeoutMs)
 }
 
 export function parseJsonSafe<T>(text: string | null): T | null {
@@ -277,8 +332,8 @@ function getGpus(): GpuInfo[] {
  * Windows GPU 采集（异步）：`ok=false` 表示**这次没采到**（PowerShell 失败/超时），
  * 不是"这台机器没有显卡"——界面据此区分「没测到」与「未检测到独显」。
  */
-async function probeGpusWin32(deadline: number): Promise<{ gpus: GpuInfo[]; ok: boolean }> {
-  const text = await runPowerShellAsync(GPU_PS_SCRIPT, deadline - Date.now())
+async function probeGpusWin32(deadline: number, exe = 'powershell'): Promise<{ gpus: GpuInfo[]; ok: boolean }> {
+  const text = await runPowerShellAsyncWith(exe, GPU_PS_SCRIPT, deadline - Date.now())
   // 解析不出 JSON（null / 被超时杀掉）⇒ 没采到；输出 `[]` 才是"确实没有可报告的显卡"
   if (text === null || parseJsonSafe<RawGpu[] | RawGpu>(text) === null) return { gpus: [], ok: false }
   const gpus = parseGpuRows(text)
@@ -455,14 +510,14 @@ function parseDiskRaw(text: string | null): RawDisk | null {
  * - 慢段拿不到 ⇒ 只留 unknown，磁盘容量/剩余照样是真实读数；
  * - 快段没回来 ⇒ `ok=false`（＝没测到），界面画「没测到」而不是画一份空磁盘当结论。
  */
-async function probeDiskWin32(driveLetter: string, deadline: number): Promise<{ disk: DiskInfo; ok: boolean }> {
+async function probeDiskWin32(driveLetter: string, deadline: number, exe = 'powershell'): Promise<{ disk: DiskInfo; ok: boolean }> {
   const slowAt = deadline - Date.now()
   // 预算已不足 3s 就不再多起一条注定被杀的 PowerShell（冷启动本身就要 7–9s）
   const slowPromise = slowAt >= 3000
-    ? runPowerShellAsync(physicalDiskPsScript(driveLetter), slowAt)
+    ? runPowerShellAsyncWith(exe, physicalDiskPsScript(driveLetter), slowAt)
     : Promise.resolve(null)
   const [fastText, slowText] = await Promise.all([
-    runPowerShellAsync(logicalDiskPsScript(driveLetter), Math.max(0, deadline - Date.now())),
+    runPowerShellAsyncWith(exe, logicalDiskPsScript(driveLetter), Math.max(0, deadline - Date.now())),
     slowPromise
   ])
 
@@ -608,11 +663,91 @@ function probeComplete(snapshot: ProbeSnapshot | null): boolean {
   return !!snapshot && snapshot.got.gpus && snapshot.got.disk
 }
 
+/** WSL 的 CPU/内存真值只能问宿主：Win32_Processor + Win32_ComputerSystem/OperatingSystem */
+const HOST_SYSTEM_PS_SCRIPT = `
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+$c = Get-CimInstance Win32_Processor | Select-Object -First 1
+$m = Get-CimInstance Win32_ComputerSystem | Select-Object -First 1
+$o = Get-CimInstance Win32_OperatingSystem | Select-Object -First 1
+[pscustomobject]@{
+  model = [string]$c.Name
+  cores = [int]$c.NumberOfLogicalProcessors
+  total = [string][uint64]$m.TotalPhysicalMemory
+  free  = [string]([uint64]$o.FreePhysicalMemory * 1024)
+} | ConvertTo-Json -Compress
+`
+
+export interface HostSystemRaw {
+  model: string
+  cores: number | null
+  total: number
+  free: number | null
+}
+
+export function parseHostSystemJson(text: string | null): HostSystemRaw | null {
+  const raw = parseJsonSafe<Record<string, unknown>>(text)
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const total = Number(raw.total)
+  if (!raw.model || !Number.isFinite(total) || total <= 0) return null
+  const cores = Number(raw.cores)
+  const free = Number(raw.free)
+  return {
+    model: String(raw.model).trim(),
+    cores: Number.isFinite(cores) && cores > 0 ? Math.floor(cores) : null,
+    total,
+    free: Number.isFinite(free) && free >= 0 ? free : null
+  }
+}
+
+async function probeHostSystem(exe: string, deadline: number): Promise<HostSystemRaw | null> {
+  const text = await runPowerShellAsyncWith(exe, HOST_SYSTEM_PS_SCRIPT, Math.max(0, deadline - Date.now()))
+  return parseHostSystemJson(text)
+}
+
+/**
+ * WSL 专用：经 /mnt/c 下的宿主 powershell.exe 取 CPU/内存/GPU/磁盘真值。
+ * 一条宿主查询都没成功 ⇒ 返回 null，让调用方退回原生 Linux 视图（至少给出 WSL 自己的数据）。
+ */
+async function collectHardwareProbeWsl(exe: string, budgetMs: number): Promise<ProbeSnapshot | null> {
+  const base = provisionalHardware()
+  const deadline = Date.now() + budgetMs
+  const drive = wslWindowsDrive()
+  const work = (async (): Promise<ProbeSnapshot | null> => {
+    const [sys, gpu, disk] = await Promise.all([
+      probeHostSystem(exe, deadline),
+      probeGpusWin32(deadline, exe),
+      drive ? probeDiskWin32(drive, deadline, exe) : Promise.resolve({ disk: base.disk, ok: false })
+    ])
+    const anyHost = Boolean(sys) || gpu.ok || disk.ok
+    if (!anyHost) return null
+    return {
+      info: {
+        ...base,
+        cpu: { model: sys?.model || base.cpu.model, cores: sys?.cores ?? base.cpu.cores },
+        memory: { total: sys?.total ?? base.memory.total, free: sys?.free ?? base.memory.free },
+        gpus: gpu.gpus,
+        disk: disk.disk
+      },
+      got: { gpus: gpu.ok, disk: disk.ok }
+    }
+  })()
+  return await waitAtMost(work, deadline)
+}
+
 /** 超时或命令失败一律降级成「未知」，并把没采到的字段在 `got` 里标 false */
 async function collectHardwareProbe(budgetMs: number): Promise<ProbeSnapshot> {
   const base = provisionalHardware()
   if (process.platform !== 'win32') {
-    // Mac/Linux 那几条命令都是轻量 CLI（system_profiler / lspci / diskutil），沿用同步实现即可
+    // WSL：/proc 与 df 看到的是虚拟机，不是宿主机；能连上宿主 PowerShell 就取真值
+    if (isWsl()) {
+      const exe = wslPowerShellExe()
+      if (exe) {
+        const host = await collectHardwareProbeWsl(exe, budgetMs)
+        if (host) return host
+      }
+    }
+    // Mac/原生 Linux 那几条命令都是轻量 CLI（system_profiler / lspci / diskutil），沿用同步实现即可
     return { info: { ...base, gpus: getGpus(), disk: getDisk() }, got: { gpus: true, disk: true } }
   }
   const drive = APP_ROOT.match(/^([A-Za-z]):/)?.[1]?.toUpperCase()
@@ -791,6 +926,23 @@ async function getDiskSerialWin32Async(): Promise<string | null> {
   return out && out.trim() ? out.trim() : null
 }
 
+/** WSL 下 /sys/block 是 ext4.vhdx 的虚拟盘，序列号必须问宿主 */
+function getDiskSerialWsl(): string | null {
+  const exe = wslPowerShellExe()
+  const drive = wslWindowsDrive()
+  if (!exe || !drive) return null
+  const out = runPowerShellWith(exe, diskSerialScript(drive))
+  return out && out.trim() ? out.trim() : null
+}
+
+async function getDiskSerialWslAsync(): Promise<string | null> {
+  const exe = wslPowerShellExe()
+  const drive = wslWindowsDrive()
+  if (!exe || !drive) return null
+  const out = await runPowerShellAsyncWith(exe, diskSerialScript(drive), FINGERPRINT_PROBE_TIMEOUT_MS)
+  return out && out.trim() ? out.trim() : null
+}
+
 function getDiskSerialDarwin(): string | null {
   try {
     // 1. 找到 APP_ROOT 所在卷的设备标识，如 disk2s1
@@ -853,6 +1005,7 @@ export function getDiskFingerprint(): string | null {
   try {
     if (process.platform === 'win32') serial = getDiskSerialWin32()
     else if (process.platform === 'darwin') serial = getDiskSerialDarwin()
+    else if (isWsl()) serial = getDiskSerialWsl()
     else serial = getDiskSerialLinux()
   } catch {
     serial = null
@@ -872,6 +1025,7 @@ export async function getDiskFingerprintAsync(): Promise<string | null> {
   try {
     if (process.platform === 'win32') serial = await getDiskSerialWin32Async()
     else if (process.platform === 'darwin') serial = getDiskSerialDarwin()
+    else if (isWsl()) serial = await getDiskSerialWslAsync()
     else serial = getDiskSerialLinux()
   } catch {
     serial = null

@@ -2765,7 +2765,7 @@ export const ja = {
   'home.portableTitle': 'ポータブル版の更新',
   'home.portableChecking': '新しいバージョンを確認中…',
   'home.portableHint':
-    'ポータブル版はアプリ内でダウンロード・置換しません。新しい版を手動でダウンロードしてください。',
+    '「設定 → モデルと使用量 → 一般」から新版をダウンロードしてインストールできます。',
   'home.portableLatest': '最新バージョンです（{v}）',
   'home.portableCheckFail': 'バージョン確認に失敗しました：{e}',
   'home.downloadPage': 'ダウンロードページを開く',
@@ -2875,7 +2875,7 @@ export const ja = {
   'upd.installBtn': '🔄 再起動してインストール',
   'upd.restartConfirm': '更新がダウンロードされました。今すぐ再起動してインストールしますか？',
   'upd.devHint': '開発モードでは自動更新は利用できません。パッケージ化（npm run dist）後に有効になります。',
-  'upd.portableHint': 'ポータブル版は新しいリリースをダウンロードして実行ファイルを手動で置き換えてください。自動更新は NSIS インストーラー版で最適に動作します。',
+  'upd.portableHint': 'ポータブル版もこの画面で新版をダウンロード・検証できます。「インストールして再起動」で終了時に元の exe を置き換え、データフォルダーはそのまま保持します。',
   'upd.changelogBtn': '📋 変更履歴',
   'upd.changelogTitle': 'リリース履歴',
   'upd.changelogLoading': '読み込み中…',

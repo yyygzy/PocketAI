@@ -264,7 +264,7 @@ export const HomeStatusPanel: React.FC = () => {
               <div className="text-[11px] text-[var(--color-text-muted)]">{t('home.portableHint')}</div>
               {downloadUrl && (
                 <>
-                  {/* 链接可选中复制：不依赖额外 IPC，也不在应用内下载任何包 */}
+                  {/* 下载页保留为直通入口；应用内下载安装在「设置 → 通用」里完成 */}
                   <input
                     readOnly
                     className="input font-mono text-[10px] w-full"

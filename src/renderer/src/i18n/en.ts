@@ -2842,7 +2842,7 @@ export const en = {
   'home.portableTitle': 'Portable build update',
   'home.portableChecking': 'Checking for a new version…',
   'home.portableHint':
-    'The portable build never downloads or replaces itself; download the new version manually.',
+    'Open Settings → Models & Usage → General to download and install the new version in one step.',
   'home.portableLatest': 'Up to date ({v})',
   'home.portableCheckFail': 'Version check failed: {e}',
   'home.downloadPage': 'Open download page',
@@ -2957,7 +2957,7 @@ export const en = {
   'upd.installBtn': '🔄 Restart & install',
   'upd.restartConfirm': 'Update downloaded. Restart and install now?',
   'upd.devHint': 'Auto-update is unavailable in development. It activates after packaging (npm run dist).',
-  'upd.portableHint': 'For the portable build, download a new release and replace the executable manually; auto-update works best with the NSIS installer.',
+  'upd.portableHint': 'Portable builds can download and verify a new release here. Choose "Install & restart" to replace the original exe on exit; your data folder is untouched.',
   'upd.changelogBtn': '📋 Changelog',
   'upd.changelogTitle': 'Release History',
   'upd.changelogLoading': 'Loading…',

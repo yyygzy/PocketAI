@@ -14,7 +14,15 @@
 // 策略：vi.mock electron / electron-updater / keep-awake / app-config / asar-patcher /
 // portable / safe-handle / safe-fetch；autoUpdater 用 listener Map 可触发事件。
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { updateManager, initUpdateManager } from '../src/main/update-manager'
+import * as fs from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  updateManager,
+  initUpdateManager,
+  parsePortableAsset,
+  portableUpdateScript,
+  sha256File
+} from '../src/main/update-manager'
 
 const mocks = vi.hoisted(() => ({
   isPackaged: false,
@@ -87,7 +95,8 @@ vi.mock('electron', () => ({
     get isPackaged() { return mocks.isPackaged },
     getVersion: () => '1.2.7'
   },
-  webContents: { getAllWebContents: () => [] }
+  webContents: { getAllWebContents: () => [] },
+  quit: () => {}
 }))
 
 vi.mock('electron-updater', () => ({
@@ -151,7 +160,8 @@ vi.mock('../src/main/update/asar-patcher', () => ({
 }))
 
 vi.mock('../src/main/portable', () => ({
-  isPortableRuntime: () => mocks.isPortable
+  isPortableRuntime: () => mocks.isPortable,
+  DATA_DIR: '/tmp/mock-pocketai-data'
 }))
 
 vi.mock('../src/main/license/license', () => ({
@@ -167,13 +177,30 @@ vi.mock('../src/main/ipc/safe-handle', () => ({
 }))
 
 vi.mock('../src/main/net/safe-fetch', () => ({
-  safeFetch: async (url: string) => {
-    // 便携版查新版本：GitHub Releases latest（只读，不下载任何包）
+  safeFetch: async (url: string, opts: { sinkFile?: string; onProgress?: (r: number, t: number | null) => void } = {}) => {
+    // 便携版查新版本 / 解析资产：GitHub Releases latest（同一接口，assets 里带 digest）
     if (String(url).includes('/releases/latest')) {
+      const tag = mocks.releaseTag
+      const version = tag.replace(/^v/i, '')
       return {
         status: 200,
-        body: Buffer.from(JSON.stringify({ tag_name: mocks.releaseTag, html_url: mocks.releaseUrl }))
+        body: Buffer.from(JSON.stringify({
+          tag_name: tag,
+          html_url: mocks.releaseUrl,
+          assets: [{
+            name: `Moxia-${version}-Portable-x64.exe`,
+            size: Buffer.byteLength('fake-portable-pkg'),
+            digest: `sha256:${createHash('sha256').update('fake-portable-pkg').digest('hex')}`,
+            browser_download_url: `https://github.com/yyygzy/PocketAI/releases/download/${tag}/Moxia-${version}-Portable-x64.exe`
+          }]
+        }))
       }
+    }
+    // 便携版下载：把假包写进 sinkFile，走完真实的 sha256File 校验路径
+    if (String(url).includes('/releases/download/')) {
+      if (opts.sinkFile) fs.writeFileSync(opts.sinkFile, 'fake-portable-pkg')
+      opts.onProgress?.(17, 17)
+      return { status: 200, body: Buffer.alloc(0) }
     }
     return { status: 200, body: Buffer.from('[]') }
   }
@@ -343,13 +370,23 @@ describe('check 检查更新', () => {
     }
   })
 
-  it('便携版 available 也不许应用内下载（只给下载页）', async () => {
+  it('便携版 available → 下载 Release 资产、校验 SHA-256 后进入 downloaded', async () => {
     goPackaged()
+    const real = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     mocks.isPortable = true
+    mocks.releaseTag = 'v9.9.9'
     emit('update-available', { version: '9.9.9' })
-    const r = await updateManager.download()
-    expect(r.ok).toBe(false)
-    expect(r.error).toContain('便携版不支持应用内下载')
+    try {
+      const r = await updateManager.download()
+      expect(r).toEqual({ ok: true })
+      const s = updateManager.getStatusSnapshot()
+      expect(s.status).toBe('downloaded')
+      expect(s.newVersion).toBe('9.9.9')
+    } finally {
+      Object.defineProperty(process, 'platform', real)
+    }
+    // 便携版绝不走 electron-updater
     expect(mocks.downloadCalls).toBe(0)
   })
 
@@ -601,5 +638,45 @@ describe('更新期已结束：应用内不再提供/安装新版本', () => {
 describe('initUpdateManager', () => {
   it('不抛错即可完成（safeHandle 已 mock，注册逻辑在打包路径外不执行 updater）', () => {
     expect(() => initUpdateManager()).not.toThrow()
+  })
+})
+
+// ---------- 便携版自更新：解析 / 替换脚本 / 校验 ----------
+
+describe('便携版自更新纯函数', () => {
+  const sha = 'a'.repeat(64)
+  const goodAsset = {
+    name: 'Moxia-9.9.9-Portable-x64.exe',
+    size: 123,
+    digest: `sha256:${sha}`,
+    browser_download_url: 'https://github.com/yyygzy/PocketAI/releases/download/v9.9.9/Moxia-9.9.9-Portable-x64.exe'
+  }
+
+  it('只认精确命名 + sha256 digest + 本仓库域名的资产', () => {
+    expect(parsePortableAsset({ assets: [goodAsset] }, '9.9.9')).toEqual({
+      name: 'Moxia-9.9.9-Portable-x64.exe',
+      url: goodAsset.browser_download_url,
+      sha256: sha,
+      size: 123
+    })
+    expect(parsePortableAsset({ assets: [{ ...goodAsset, digest: 'md5:abc' }] }, '9.9.9')).toBeNull()
+    expect(parsePortableAsset({ assets: [{ ...goodAsset, browser_download_url: 'https://evil.example/x.exe' }] }, '9.9.9')).toBeNull()
+    expect(parsePortableAsset({ assets: [goodAsset] }, '1.2.8')).toBeNull()
+    expect(parsePortableAsset({}, '9.9.9')).toBeNull()
+  })
+
+  it('替换脚本等主进程退出、重试复制、再拉起新 exe', () => {
+    const script = portableUpdateScript()
+    expect(script).toContain('param([string]$Target, [string]$Staged, [int]$ParentPid)')
+    expect(script).toContain('Wait-Process -Id $ParentPid')
+    expect(script).toContain('Copy-Item -LiteralPath $Staged -Destination $Target -Force')
+    expect(script).toContain('Start-Process -FilePath $Target')
+    expect(script).toContain('apply-error.log')
+  })
+
+  it('sha256File 与文件内容一致', () => {
+    const file = process.cwd().replace(/\\/g, '/') + '/package.json'
+    const expected = createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+    expect(sha256File(file)).toBe(expected)
   })
 })

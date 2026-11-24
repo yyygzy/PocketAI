@@ -3124,8 +3124,7 @@ export const UpdatePanel: React.FC<{ info: UpdateInfo | null; err: string | null
         <button className="btn-ghost" disabled={busy || info.updatesExpired || s === 'checking' || s === 'downloading'} onClick={handleCheck}>
           {t('upd.checkBtn')}
         </button>
-        {/* 便携版只提示不下载（P2-1）：available 在便携版只代表「有新版本」，包由用户手动换 */}
-        {s === 'available' && !info.isPortable && (
+        {s === 'available' && (
           <button className="btn-primary" disabled={busy} onClick={handleDownload}>
             {t('upd.downloadBtn', { v: newVer ?? '' })}
           </button>

@@ -184,11 +184,13 @@ npm run build        # electron-vite build，产物在 out/
 - **选区取词**：`src/main/popup.ts` 的 Linux 分支明确注释「无零依赖的统一取词方案（xdotool/xclip 不一定存在），v1 不支持」；Linux 上按选区快捷键只会打开快捷问答窗。设置页通过 `isLinuxPlatform()` 显示不支持提示（`src/renderer/src/utils/shortcuts.ts`、`SettingsModule.tsx`）。
 - 结论：这是**产品边界/未实现**，不是偶发 bug；接 Linux 功能前需要先定方案与依赖。
 
-### 5.3 WSL 环境下硬件探测拿不到真数据
+### 5.3 WSL 硬件探测（已接宿主通道，仍需 WSL 实机复核）
 
-- 代码事实：`src/main/steward/hardware.ts` 的非 Windows 分支中，`getDisk()` 只返回 `emptyDisk()`（容量、剩余空间、介质、总线均为 `null`，`type` 为 `unknown`）；`getGpus()` 依赖 `lspci`（失败则返回空数组）并仅在检测到 NVIDIA 时补 `nvidia-smi`。
-- 因此 WSL 里通常拿不到宿主机磁盘容量/介质与 GPU 真值，界面会按「未知/没测到」呈现，而不是给出宿主结论。
-- **待确认**：仓库与 docs 中没有 WSL 专项实测记录；上述为代码路径推断，具体机型/发行版上的表现需实机复核。
+- 旧问题：WSL2 的 `/proc`、`os.totalmem()` 与 `df` 看到的是虚拟机视图（内存受 `.wslconfig` 限制、磁盘是 `ext4.vhdx`），拿不到宿主机真值。
+- 现已处理：`src/main/steward/hardware.ts` 通过 `/proc/version`、`os.release()`、`WSL_DISTRO_NAME` 识别 WSL，定位 `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`（可用 `POCKETAI_WSL_POWERSHELL` 覆盖），并行向宿主查 `Win32_Processor` / `Win32_ComputerSystem` / `Win32_OperatingSystem` / `Win32_VideoController` / `Win32_LogicalDisk` / `MSFT_PhysicalDisk`；`wslpath -w APP_ROOT` 决定查哪个盘符，不默认 C:。
+- 硬盘指纹同步改走宿主 `Get-PhysicalDisk.SerialNumber`；拿不到就返回 null 不绑机，不用 VHD 虚拟序列号冒充。
+- 宿主 PowerShell 一条都没查成时，退回原生 Linux 视图并保留「没测到」语义。
+- **待确认**：仓库内没有 WSL 实机；`tests/hardware-wsl.test.ts` 钉住了识别/路径映射/回执解析纯函数，具体发行版与 GPU 直通场景仍需 WSL 实机复核。
 
 ### 5.4 安装包未签名导致 SmartScreen 提示
 
