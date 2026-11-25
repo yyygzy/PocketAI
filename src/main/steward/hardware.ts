@@ -63,7 +63,22 @@ export function windowsDriveFromWslPath(windowsPath: string | null): string | nu
   return m ? m[1]!.toUpperCase() : null
 }
 
-function wslWindowsDrive(): string | null {
+/**
+ * 显式宿主盘符：`POCKETAI_WSL_DISK=C` / `C:` / `C:\PocketAI` 都接受。
+ * 用于 APP_ROOT 落在 WSL 扩展区（/home 等）时 `wslpath -w` 返回 UNC、无法自动映射盘符的场景。
+ * 只放行单个字母，进 PowerShell 脚本前没有注入面。
+ */
+export function wslDiskOverride(env: Record<string, string | undefined> = process.env): string | null {
+  const raw = env.POCKETAI_WSL_DISK?.trim()
+  if (!raw) return null
+  const m = raw.match(/^([A-Za-z])(?::(?:[\\/].*)?)?$/)
+  return m ? m[1]!.toUpperCase() : null
+}
+
+export function wslWindowsDrive(): string | null {
+  // 显式配置优先：用户说盘在哪就查哪，不让 wslpath 的 UNC 结果把真值吞掉
+  const override = wslDiskOverride()
+  if (override) return override
   try {
     const out = execFileSync('wslpath', ['-w', APP_ROOT], { encoding: 'utf8', timeout: 3000 })
     return windowsDriveFromWslPath(out.trim())

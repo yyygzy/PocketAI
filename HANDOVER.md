@@ -190,9 +190,10 @@ npm run build        # electron-vite build，产物在 out/
 
 - 旧问题：WSL2 的 `/proc`、`os.totalmem()` 与 `df` 看到的是虚拟机视图（内存受 `.wslconfig` 限制、磁盘是 `ext4.vhdx`），拿不到宿主机真值。
 - 现已处理：`src/main/steward/hardware.ts` 通过 `/proc/version`、`os.release()`、`WSL_DISTRO_NAME` 识别 WSL，定位 `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`（可用 `POCKETAI_WSL_POWERSHELL` 覆盖），并行向宿主查 `Win32_Processor` / `Win32_ComputerSystem` / `Win32_OperatingSystem` / `Win32_VideoController` / `Win32_LogicalDisk` / `MSFT_PhysicalDisk`；`wslpath -w APP_ROOT` 决定查哪个盘符，不默认 C:。
+- APP_ROOT 落在 WSL 扩展区（如 `/home`）时 `wslpath -w` 返回 UNC、无法映射盘符，可用 `POCKETAI_WSL_DISK=C` / `C:` / `E:\PocketAI` 显式指定宿主盘；该值同时用于磁盘画像与硬盘指纹，只放行单个盘符字母，不默认 C:。
 - 硬盘指纹同步改走宿主 `Get-PhysicalDisk.SerialNumber`；拿不到就返回 null 不绑机，不用 VHD 虚拟序列号冒充。
 - 宿主 PowerShell 一条都没查成时，退回原生 Linux 视图并保留「没测到」语义。
-- **待确认**：仓库内没有 WSL 实机；`tests/hardware-wsl.test.ts` 钉住了识别/路径映射/回执解析纯函数，具体发行版与 GPU 直通场景仍需 WSL 实机复核。
+- **待确认**：仓库内没有 WSL 实机；`tests/hardware-wsl.test.ts` 钉住了识别/路径映射/盘符覆盖/回执解析纯函数，具体发行版与 GPU 直通场景仍需 WSL 实机复核。
 
 ### 5.4 安装包未签名导致 SmartScreen 提示
 
@@ -203,7 +204,7 @@ npm run build        # electron-vite build，产物在 out/
 
 ### 5.5 其他交接时会碰到的限制
 
-- **便携版不支持应用内下载更新**：只能查「有没有新版本」，需要手动到发布页下载替换（`src/main/update-manager.ts`）。
+- **便携版应用内下载更新已实现，但真机 E2E 未跑**：设置页可下载 Release 资产、校验 SHA-256 并退出替换原 exe；仍需更高版本 Release 提供带 `sha256:` digest 的资产才能验证完整链路（`src/main/update-manager.ts`）。
 - **应用内检查更新读到的正式版仍是 v1.2.8**：在 1.3.0 的 Release 真正发布前，1.3.0 会显示「已是最新」，这是版本比较的正确结果（`docs/release-notes-1.3.0.md`）。
 - **升级迁移耗时**：大库/大附件升级时迁移会明显变慢，等待期间不要强杀进程。
 

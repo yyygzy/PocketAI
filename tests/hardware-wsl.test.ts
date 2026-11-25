@@ -7,6 +7,8 @@ vi.mock('../src/main/portable', () => ({ APP_ROOT: '/mock/app/root' }))
 import {
   isWslEnv,
   windowsDriveFromWslPath,
+  wslDiskOverride,
+  wslWindowsDrive,
   wslPowerShellExe,
   parseHostSystemJson
 } from '../src/main/steward/hardware'
@@ -35,6 +37,28 @@ describe('宿主路径映射', () => {
     expect(windowsDriveFromWslPath('C:/Users/CXL/AppData')).toBe('C')
     expect(windowsDriveFromWslPath('/home/cxl/.config/Moxia')).toBeNull()
     expect(windowsDriveFromWslPath(null)).toBeNull()
+  })
+
+  it('POCKETAI_WSL_DISK 接受盘符或 Windows 路径，拒绝 UNC 与非法值', () => {
+    expect(wslDiskOverride({ POCKETAI_WSL_DISK: 'C' })).toBe('C')
+    expect(wslDiskOverride({ POCKETAI_WSL_DISK: ' c: ' })).toBe('C')
+    expect(wslDiskOverride({ POCKETAI_WSL_DISK: 'E:\\PocketAI\\data' })).toBe('E')
+    expect(wslDiskOverride({ POCKETAI_WSL_DISK: 'E:/PocketAI/data' })).toBe('E')
+    expect(wslDiskOverride({ POCKETAI_WSL_DISK: '\\\\wsl.localhost\\Ubuntu\\home' })).toBeNull()
+    expect(wslDiskOverride({ POCKETAI_WSL_DISK: '/home/cxl' })).toBeNull()
+    expect(wslDiskOverride({ POCKETAI_WSL_DISK: 'C:relative' })).toBeNull()
+    expect(wslDiskOverride({})).toBeNull()
+  })
+
+  it('显式盘符优先于 wslpath 自动映射（/home 场景）', () => {
+    const prev = process.env.POCKETAI_WSL_DISK
+    process.env.POCKETAI_WSL_DISK = 'E:\\PocketAI'
+    try {
+      expect(wslWindowsDrive()).toBe('E')
+    } finally {
+      if (prev === undefined) delete process.env.POCKETAI_WSL_DISK
+      else process.env.POCKETAI_WSL_DISK = prev
+    }
   })
 
   it('宿主 PowerShell：标准挂载点 + 环境变量覆盖', () => {

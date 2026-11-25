@@ -20,6 +20,9 @@ export default defineConfig({
      * mcp-stdio-win-shim 5036ms 树杀）。它们不是逻辑不稳，是被饿到——
      * 与其给每条单独写大数字，不如把全局线抬到 20s，真挂死的用例仍然会红。
      */
-    testTimeout: 20_000
+    testTimeout: 20_000,
+    // 全量并在 200+ 个 worker 时，个别 afterAll 的清理会超过默认 10s；
+    // 业务断言仍由 testTimeout 管，这里只放宽 hook 清理窗口。
+    hookTimeout: 60_000
   }
 })
