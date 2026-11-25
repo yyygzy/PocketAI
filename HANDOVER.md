@@ -303,16 +303,21 @@ git tag --list
 Get-FileHash .\artifacts\Moxia-1.3.0-x64.exe -Algorithm SHA256
 ```
 
-### 7.4 敏感文件提醒（交接前请确认授权范围）
+### 7.4 敏感文件交付范围（已核定）
 
-本次按「除排除目录外全量复制」执行，因此快照里包含以下 `.gitignore` 中标注为本地保管的内容：
+**对外交付包含**：
+- Git `HEAD` 中的源码、脚本、测试、文档与配置；`build/license-public.pem`（公钥）和 `license-server/server.js`（服务器实现，不含密钥/台账）可随源码交付。
+- 正式安装包 `artifacts/Moxia-1.3.0-x64.exe`、`artifacts/Moxia-1.3.0-Portable-x64.exe` 与 `artifacts/latest.yml`。
 
-- `build/license-private.pem`：License **私钥**（`.gitignore` 注释写明「仅发行侧本地保管，严禁入库」）。
-- `licenses/`：已签发/测试激活码与 `issued-log.jsonl`、`batch.csv`，文件名含用户/公司标识。
-- `build/test-license.lic`：测试许可证。
-- `license-server/server.js`：激活服务器实现（不含 `licenses.json` 私钥副本，本次源目录也没有该文件）。
+**不对外交付，仅发行侧本地保管**：
+- `build/license-private.pem`：License 私钥（1704 B；未进入 Git 历史，`.gitignore` 明确排除）。
+- `licenses/`：`batch.csv`、`issued-log.jsonl` 与已签发 `.lic`，文件名含用户/公司标识（未进入 Git 历史）。
+- `build/test-license.lic`：测试许可证（616 B；工作树中被忽略，但历史提交 `afe3483` 曾加入、`2065c99` 删除）。
+- `license-server/licenses.json`、`license-server/licenses.json.tmp`、`license-server/*.pem`：台账与私钥副本（忽略规则已覆盖，当前快照中不存在）。
 
-如果同事不需要参与发行/签发，建议在交付前从快照中删除上述文件，或单独走安全渠道传递。**本次未删除任何文件**，以免破坏「全量快照」的完整性。
+**发布包核验**：最终 NSIS 安装后扫描应用目录与 `app.asar`（21,028 个文件），应用代码块无 `license-private` / `test-license` / `issued-log` / `batch.csv` / `license-server` / `.pem` / `.lic` 命中；只看到 Electron/Chromium 与第三方依赖的通用许可证文件。构建配置的 `files` 只收 `out/**`、`package.json`、`build/icon/**`、`extensions/**`、`node_modules/**`，`extraResources` 只收 `resources/models`。
+
+**注意**：本交接快照含完整 `.git` 历史，历史里曾有 `build/test-license.lic`。对外交付若包含 `.git`，应先做历史清理，或改用 `git archive HEAD` + 单独复制正式安装包，避免带出历史中的测试许可证。
 
 ---
 
