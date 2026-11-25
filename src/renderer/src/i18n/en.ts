@@ -786,7 +786,7 @@ export const en = {
   'agent.oauthClear': 'Clear authorization',
   'agent.oauthExpiresAt': 'Valid until {time}',
   'agent.oauthScope': 'Scopes: {scope}',
-  'agent.oauthHint': 'Authorization completes in your system browser. Credentials are encrypted locally; tokens are never shown in the UI or written to logs.',
+  'agent.oauthHint': 'Authorization completes in your system browser. With a master password set, credentials are encrypted locally; without one, OAuth tokens are not saved. Tokens are never shown in the UI or written to logs.',
   'agent.oauthSaveFirst': 'Save this connector first, then click “Authorize”.',
   'agent.oauthAdvanced': 'Advanced: manual endpoints',
   'agent.oauthAdvancedHint': 'Only fill these when discovery or dynamic registration is unsupported; leave blank to auto-discover.',

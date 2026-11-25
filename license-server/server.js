@@ -22,6 +22,7 @@
 //   - license 一经签发即存储原文，同盘重复激活幂等重发（license_id/issued_at 不变）
 //   - 内存限速：单 IP 每分钟 10 次；单卡密失败 5 次锁定 10 分钟（重启清零，够用）
 //   - HTTPS 交给部署层（nginx/caddy 终结 TLS）；license 本身 RSA 签名，中间人只能阻断激活
+//   - 管理员解绑：POST /v1/admin/unbind，x-admin-token 必须匹配 LICENSE_ADMIN_TOKEN；未配置则通道关闭
 
 'use strict'
 
@@ -41,6 +42,23 @@ const CODE_RE = /^PA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/
 const FP_RE = /^[0-9a-f]{16}$/
 // 卡密字母表：去掉易混淆的 0/O/1/I/L
 const ALPHABET = '23456789ACDEFGHJKMNPQRSTUVWXYZ'
+
+// 管理员解绑通道：默认关闭，必须显式配置 LICENSE_ADMIN_TOKEN 才启用。
+// 用定长 SHA-256 + timingSafeEqual 比较，避免按长度/首字节泄露 token。
+const ADMIN_TOKEN_ENV = 'LICENSE_ADMIN_TOKEN'
+
+function adminTokenDigest(value) {
+  return crypto.createHash('sha256').update(String(value ?? ''), 'utf8').digest()
+}
+
+function isAdminToken(req, configured) {
+  if (!configured) return false
+  const header = String(req?.headers?.['x-admin-token'] ?? '')
+  if (!header) return false
+  const a = adminTokenDigest(header)
+  const b = adminTokenDigest(configured)
+  return crypto.timingSafeEqual(a, b)
+}
 
 // ── 存储（licenses.json：{ codes: { CODE: {...} } }） ────────────────
 
@@ -113,20 +131,37 @@ function cmdGenerate(owner, plan, daysArg, countArg, updatesArg) {
   for (const c of made) console.log('  ' + c)
 }
 
-function cmdUnbind(code) {
+/**
+ * 解绑核心：返回新台账（不修改入参），供 CLI 与 HTTP 共用。
+ * 结果形状：{ ok, error?, code?, data?, changed? }
+ */
+function unbindCode(data, code) {
   const c = String(code || '').trim().toUpperCase()
-  if (!CODE_RE.test(c)) { console.error('卡密格式无效'); process.exit(1) }
-  const data = loadData()
-  const rec = data.codes[c]
-  if (!rec) { console.error('卡密不存在'); process.exit(1) }
-  if (rec.status !== 'bound') { console.log('该卡密未绑定，无需解绑'); return }
-  delete rec.fingerprint
-  delete rec.bound_at
-  delete rec.license_id
-  delete rec.license_json
-  rec.status = 'unused'
-  saveData(data)
-  console.log(`✓ 已解绑 ${maskCode(c)}，可用于新硬盘激活`)
+  if (!CODE_RE.test(c)) return { ok: false, error: 'CODE_FORMAT_INVALID' }
+  const rec = data?.codes?.[c]
+  if (!rec) return { ok: false, error: 'CODE_NOT_FOUND' }
+  if (rec.status !== 'bound') return { ok: true, code: c, data, changed: false }
+
+  const next = { ...data, codes: { ...data.codes } }
+  const nextRec = { ...rec }
+  delete nextRec.fingerprint
+  delete nextRec.bound_at
+  delete nextRec.license_id
+  delete nextRec.license_json
+  nextRec.status = 'unused'
+  next.codes[c] = nextRec
+  return { ok: true, code: c, data: next, changed: true }
+}
+
+function cmdUnbind(code) {
+  const result = unbindCode(loadData(), code)
+  if (!result.ok) {
+    console.error(result.error === 'CODE_NOT_FOUND' ? '卡密不存在' : '卡密格式无效')
+    process.exit(1)
+  }
+  if (!result.changed) { console.log('该卡密未绑定，无需解绑'); return }
+  saveData(result.data)
+  console.log(`✓ 已解绑 ${maskCode(result.code)}，可用于新硬盘激活`)
 }
 
 function cmdList() {
@@ -200,6 +235,50 @@ function readBody(req, maxBytes) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
+}
+
+/** 管理员解绑核心：返回 { status, body }，便于不需要真起 HTTP 服务也能测试 */
+async function handleAdminUnbind(req, ip, deps = {}) {
+  const configured = deps.adminToken ?? process.env[ADMIN_TOKEN_ENV]
+  if (!configured) {
+    return { status: 503, body: { ok: false, code: 'ADMIN_DISABLED', error: '管理员解绑通道未启用' } }
+  }
+  if (!deps.skipAuth && !isAdminToken(req, configured)) {
+    console.warn(`[admin-unbind] ${ip} token 无效`)
+    return { status: 401, body: { ok: false, code: 'UNAUTHORIZED', error: '未授权' } }
+  }
+  const limit = deps.rateLimit ?? rateLimitByIp
+  if (!limit(ip)) {
+    return { status: 429, body: { ok: false, code: 'RATE_LIMITED', error: '请求过于频繁，请稍后再试' } }
+  }
+
+  let raw
+  try {
+    raw = await (deps.readBody ?? readBody)(req, 8 * 1024)
+  } catch {
+    return { status: 413, body: { ok: false, code: 'BAD_REQUEST', error: '请求体过大' } }
+  }
+  let body
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    return { status: 400, body: { ok: false, code: 'BAD_REQUEST', error: '请求格式错误' } }
+  }
+
+  const result = unbindCode((deps.loadData ?? loadData)(), body?.code)
+  if (!result.ok) {
+    const status = result.error === 'CODE_NOT_FOUND' ? 404 : 400
+    const code = result.error === 'CODE_NOT_FOUND' ? 'CODE_NOT_FOUND' : 'CODE_FORMAT_INVALID'
+    const error = result.error === 'CODE_NOT_FOUND' ? '卡密不存在' : '卡密格式无效'
+    return { status, body: { ok: false, code, error } }
+  }
+  if (result.changed) await (deps.saveData ?? saveData)(result.data)
+
+  console.log(`[admin-unbind] ${ip} ${result.changed ? '已解绑' : '无需解绑'} ${maskCode(result.code)}`)
+  return {
+    status: 200,
+    body: { ok: true, code: maskCode(result.code), changed: result.changed }
+  }
 }
 
 /** 卡密激活核心：返回 { status, body } */
@@ -293,6 +372,11 @@ function startServer() {
         json(res, status, body)
         return
       }
+      if (req.method === 'POST' && req.url === '/v1/admin/unbind') {
+        const { status, body } = await handleAdminUnbind(req, ip)
+        json(res, status, body)
+        return
+      }
       if (req.method === 'GET' && req.url === '/health') {
         json(res, 200, { ok: true })
         return
@@ -307,27 +391,39 @@ function startServer() {
   server.listen(PORT, HOST, () => {
     console.log(`✓ 激活服务器已启动: http://${HOST}:${PORT}`)
     console.log('  接口: POST /v1/activate  {code, fingerprint}')
+    if (process.env[ADMIN_TOKEN_ENV]) console.log('  管理: POST /v1/admin/unbind  {code}  (x-admin-token)')
+    else console.log('  管理: POST /v1/admin/unbind  未启用（未配置 LICENSE_ADMIN_TOKEN）')
     console.log(`  台账: ${DATA_FILE}`)
   })
 }
 
 // ── CLI 入口 ────────────────────────────────────────────────────────
 
-const [cmd, ...args] = process.argv.slice(2)
-switch (cmd || 'serve') {
-  case 'serve':
-    startServer()
-    break
-  case 'generate':
-    cmdGenerate(args[0], args[1], args[2], args[3], args[4])
-    break
-  case 'unbind':
-    cmdUnbind(args[0])
-    break
-  case 'list':
-    cmdList()
-    break
-  default:
-    console.error('用法: node server.js [serve | generate <owner> <plan> <days|perpetual> [count] [updatesDays] | unbind <code> | list]')
-    process.exit(1)
+module.exports = {
+  CODE_RE,
+  unbindCode,
+  handleAdminUnbind,
+  isAdminToken,
+  maskCode
+}
+
+if (require.main === module) {
+  const [cmd, ...args] = process.argv.slice(2)
+  switch (cmd || 'serve') {
+    case 'serve':
+      startServer()
+      break
+    case 'generate':
+      cmdGenerate(args[0], args[1], args[2], args[3], args[4])
+      break
+    case 'unbind':
+      cmdUnbind(args[0])
+      break
+    case 'list':
+      cmdList()
+      break
+    default:
+      console.error('用法: node server.js [serve | generate <owner> <plan> <days|perpetual> [count] [updatesDays] | unbind <code> | list]')
+      process.exit(1)
+  }
 }

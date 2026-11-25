@@ -319,6 +319,19 @@ Get-FileHash .\artifacts\Moxia-1.3.0-x64.exe -Algorithm SHA256
 
 **注意**：本交接快照含完整 `.git` 历史，历史里曾有 `build/test-license.lic`。对外交付若包含 `.git`，应先做历史清理，或改用 `git archive HEAD` + 单独复制正式安装包，避免带出历史中的测试许可证。
 
+### 7.5 商业化能力进度（2026-11-25）
+
+- 服务端已新增管理员解绑通道 `POST /v1/admin/unbind`：请求头 `x-admin-token` 必须与 `LICENSE_ADMIN_TOKEN` 匹配（SHA-256 + `timingSafeEqual` 定长比较）；未配置 token 时返回 503，避免默认暴露。CLI `unbind` 与 HTTP 共用纯函数 `unbindCode`，解绑会清 `fingerprint` / `bound_at` / `license_id` / `license_json`，状态回 `unused`，并保留 owner/plan/days/updates_days/created_at。
+- 错误码：`ADMIN_DISABLED` / `UNAUTHORIZED` / `RATE_LIMITED` / `BAD_REQUEST` / `CODE_FORMAT_INVALID` / `CODE_NOT_FOUND`；未绑定卡密幂等返回 `changed:false` 且不写盘。服务端启动日志会显示该通道是否启用。该通道只在 `license-server/`，不进客户端安装包，不改变已发布包行为。
+- 解绑只让卡密重新可用于新机器；已签发旧 license 仍可在原指纹机器上离线使用至 `expires_at`，离线授权无法远程吊销。
+- 测试：`tests/license-server-unbind.test.ts` 10/10；连同 `tests/license.test.ts` 共 55/55 通过，`npm run typecheck` 通过。席位、宽限期与 v1→v2 默认切换仍未做，客户端仍无自助解绑入口。
+
+### 7.6 安全台账收口（2026-11-25）
+
+- 修正四语 `agent.oauthHint`：原先无条件声称「凭据加密保存在本机」，但 none 模式下 `mcp-oauth.repo.assertPersistAllowed`（`src/main/db/repositories/mcp-oauth.repo.ts:121-129`）会拒存新 OAuth token/secret。现明确「设置主密码后加密保存；未设主密码时不会保存 OAuth Token」，并保留 Token 不进 UI/日志的承诺。
+- 新增 `tests/i18n-oauth-hint-none-mode.test.ts`，钉住四语文案不再无条件承诺加密；已登记到 `docs/security-audit-ledger.md` 的 P1 收口行。
+- KDF 升档标记复核：`config.json.kdfParams` + `app_config.master_kdf` 双通道、白名单校验、逐档回退与成功固化保持现状，不改协议；`tests/master-password-kdf.test.ts` + `tests/kdf-config-channel.test.ts` 加上文案测试共 20/20 通过。
+
 ---
 
 ## 8. 接手后的建议顺序

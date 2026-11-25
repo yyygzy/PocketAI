@@ -759,7 +759,7 @@ export const ko = {
   'agent.oauthClear': '인증 지우기',
   'agent.oauthExpiresAt': '유효기간 {time}',
   'agent.oauthScope': '권한 범위: {scope}',
-  'agent.oauthHint': '시스템 브라우저에서 인증합니다. 자격 증명은 암호화되어 저장되며 토큰은 화면이나 로그에 표시되지 않습니다.',
+  'agent.oauthHint': '시스템 브라우저에서 인증합니다. 마스터 비밀번호를 설정하면 자격 증명이 로컬에 암호화되어 저장되고, 설정하지 않으면 OAuth Token을 저장하지 않습니다. Token은 화면이나 로그에 표시되지 않습니다.',
   'agent.oauthSaveFirst': '먼저 이 커넥터를 저장한 뒤 「인증하기」를 누르세요.',
   'agent.oauthAdvanced': '고급: 수동 엔드포인트',
   'agent.oauthAdvancedHint': '자동 검색이나 동적 등록을 지원하지 않는 경우에만 입력하세요. 비워 두면 자동 검색합니다.',

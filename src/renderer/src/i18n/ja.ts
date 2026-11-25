@@ -759,7 +759,7 @@ export const ja = {
   'agent.oauthClear': '認可をクリア',
   'agent.oauthExpiresAt': '有効期限 {time}',
   'agent.oauthScope': 'スコープ：{scope}',
-  'agent.oauthHint': 'システムブラウザで認可します。資格情報は暗号化して保存され、トークンは画面にもログにも出しません。',
+  'agent.oauthHint': 'システムブラウザで認可します。マスターパスワードを設定すると資格情報はローカルに暗号化して保存され、未設定の場合は OAuth トークンを保存しません。トークンは画面にもログにも出しません。',
   'agent.oauthSaveFirst': '先にこのコネクタを保存してから「認可する」を押してください。',
   'agent.oauthAdvanced': '詳細：手動エンドポイント',
   'agent.oauthAdvancedHint': '自動検出や動的登録に対応していない場合のみ入力してください。空欄なら自動検出します。',

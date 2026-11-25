@@ -787,7 +787,7 @@ export const zh = {
   'agent.oauthClear': '清除授权',
   'agent.oauthExpiresAt': '有效期至 {time}',
   'agent.oauthScope': '权限范围：{scope}',
-  'agent.oauthHint': '会在系统浏览器里完成授权，凭据加密保存在本机；Token 不会显示在界面，也不会写进日志。',
+  'agent.oauthHint': '会在系统浏览器里完成授权；设置主密码后，凭据加密保存在本机；未设主密码时不会保存 OAuth Token。Token 不会显示在界面，也不会写进日志。',
   'agent.oauthSaveFirst': '先保存这个连接器，再点「去授权」。',
   'agent.oauthAdvanced': '高级：手动端点',
   'agent.oauthAdvancedHint': '服务端不支持自动发现或动态注册时再填；留空则自动发现。',
