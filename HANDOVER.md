@@ -186,14 +186,18 @@ npm run build        # electron-vite build，产物在 out/
 - **选区取词**：`src/main/popup.ts` 的 Linux 分支明确注释「无零依赖的统一取词方案（xdotool/xclip 不一定存在），v1 不支持」；Linux 上按选区快捷键只会打开快捷问答窗。设置页通过 `isLinuxPlatform()` 显示不支持提示（`src/renderer/src/utils/shortcuts.ts`、`SettingsModule.tsx`）。
 - 结论：这是**产品边界/未实现**，不是偶发 bug；接 Linux 功能前需要先定方案与依赖。
 
-### 5.3 WSL 硬件探测（已接宿主通道，仍需 WSL 实机复核）
+### 5.3 WSL 硬件探测（已接宿主通道，MoxiaBuild 真机已复核）
 
 - 旧问题：WSL2 的 `/proc`、`os.totalmem()` 与 `df` 看到的是虚拟机视图（内存受 `.wslconfig` 限制、磁盘是 `ext4.vhdx`），拿不到宿主机真值。
 - 现已处理：`src/main/steward/hardware.ts` 通过 `/proc/version`、`os.release()`、`WSL_DISTRO_NAME` 识别 WSL，定位 `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`（可用 `POCKETAI_WSL_POWERSHELL` 覆盖），并行向宿主查 `Win32_Processor` / `Win32_ComputerSystem` / `Win32_OperatingSystem` / `Win32_VideoController` / `Win32_LogicalDisk` / `MSFT_PhysicalDisk`；`wslpath -w APP_ROOT` 决定查哪个盘符，不默认 C:。
 - APP_ROOT 落在 WSL 扩展区（如 `/home`）时 `wslpath -w` 返回 UNC、无法映射盘符，可用 `POCKETAI_WSL_DISK=C` / `C:` / `E:\PocketAI` 显式指定宿主盘；该值同时用于磁盘画像与硬盘指纹，只放行单个盘符字母，不默认 C:。
 - 硬盘指纹同步改走宿主 `Get-PhysicalDisk.SerialNumber`；拿不到就返回 null 不绑机，不用 VHD 虚拟序列号冒充。
 - 宿主 PowerShell 一条都没查成时，退回原生 Linux 视图并保留「没测到」语义。
-- **待确认**：仓库内没有 WSL 实机；`tests/hardware-wsl.test.ts` 钉住了识别/路径映射/盘符覆盖/回执解析纯函数，具体发行版与 GPU 直通场景仍需 WSL 实机复核。
+- **真机复核（2026-11-25，WSL2 发行版 `MoxiaBuild`，内核 `6.18.33.2-microsoft-standard-WSL2`）**：
+  - `/mnt/e/PocketAI-handover-1.3.0` → `E:\PocketAI-handover-1.3.0`；`/home` → `\\wsl.localhost\MoxiaBuild\home`（UNC），确认 `/home` 场景确实需要 `POCKETAI_WSL_DISK`。
+  - 宿主 PowerShell 在 WSL 内可直接调用，读到 CPU `Intel(R) Core(TM) i7-7700HQ` / 8 逻辑核，内存 `17,093,177,344` B；E: 为 NTFS、总容量 `128,034,271,232` B、空闲 `102,528,385,024` B、DriveType 3；GPU 为 Intel HD 630 + NVIDIA GTX 1050 Ti；物理盘序列号读到 `YS2020…73HP`（非 VHD 虚拟序列号）。
+  - `tests/hardware-wsl.test.ts` 在 WSL 内 `10/10` 通过；另用一次性用例在真机确认 `isWsl()`、`wslWindowsDrive()` 自动映射 `E:`、以及 `POCKETAI_WSL_DISK=E:` 覆盖 UNC 场景均通过（临时用例已删除）。
+- **仍未覆盖**：其他发行版与不同 GPU 直通组合仍有差异，需在目标机按需复核。
 
 ### 5.4 安装包未签名导致 SmartScreen 提示
 
@@ -207,6 +211,13 @@ npm run build        # electron-vite build，产物在 out/
 - **便携版应用内下载更新已实现，但真机 E2E 未跑**：设置页可下载 Release 资产、校验 SHA-256 并退出替换原 exe；仍需更高版本 Release 提供带 `sha256:` digest 的资产才能验证完整链路（`src/main/update-manager.ts`）。
 - **应用内检查更新读到的正式版仍是 v1.2.8**：在 1.3.0 的 Release 真正发布前，1.3.0 会显示「已是最新」，这是版本比较的正确结果（`docs/release-notes-1.3.0.md`）。
 - **升级迁移耗时**：大库/大附件升级时迁移会明显变慢，等待期间不要强杀进程。
+
+### 5.6 NSIS 安装版隔离冒烟（2026-11-25）
+
+- 用 `Moxia-1.3.0-x64.exe /S /D=...\artifacts\nsis-smoke-install` 静默安装到隔离目录，退出码 0；目录内有 `Moxia.exe`（ProductVersion `1.3.0.0`）、`Uninstall Moxia.exe`、`resources/app.asar`、`app-update.yml`，托盘图标解包到 `resources/app.asar.unpacked/build/icon/icon-256.png`。
+- 用 `POCKETAI_APP_ROOT=...\artifacts\nsis-smoke-root` 启动安装版（Electron 不认 `APPDATA` 覆盖，故用应用根隔离数据；该路径不触发共享根迁移），主窗口标题 `墨匣 Moxia - PocketAI`，`data/app.db` 正常创建，`data/logs/main.log` 记录 DB 打开、窗口创建、助手/技能同步与调度器启动，无 ERROR。
+- 静默卸载 `Uninstall Moxia.exe /S` 后 `Moxia.exe` 已删除，隔离 `data/app.db` 仍保留；测试进程、临时目录与首次尝试遗留的真实数据锁均已清理。
+- 注意：当前安装包打包于共享根迁移修复之前；若用 `POCKETAI_DATA_DIR` 指向全新目录，仍会命中旧版 EPERM。修复后的代码需下次重新打包才进入安装包。
 
 ---
 
