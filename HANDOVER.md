@@ -224,6 +224,7 @@ npm run build        # electron-vite build，产物在 out/
 - **自动锁 / 睡眠锁验收（2026-11-25 20:12）**：安装版页面 `setAutoLockTimeout(5000)` 返回 ok，内存状态从 `autoLockTimeout:0` 变为 `5000`，`app_config.auto_lock_timeout='5000'` 已落库；静置 13s 后状态自动变 `locked`，`unlock()` 恢复为 `unlocked`。重启后 `getLockStatus()` 仍为 `autoLockTimeout:5000` 且因超过阈值再次锁定，确认档位重启保持。锁屏态调用 `captureScreenshot('window')` 被主进程拒绝（`Error invoking remote method 'screenshot:capture': Error: APP_LOCKED`）。`tests/lock.test.ts` + `tests/auto-lock-persist-228.test.ts` 共 29/29 通过。
 - **混合 DPI 验收（2026-11-25 20:20）**：当前单显示器 `\\.\DISPLAY1` 逻辑分辨率 1536×864、`AppliedDPI=240`（250% 缩放）；安装版渲染层 `devicePixelRatio=2.5`，窗口 CSS 1200×800 / inner 1188×765，主窗口屏幕捕获 1200×800，布局未溢出；整屏截图返回 3840×2160 物理像素（与 1536×864 逻辑分辨率恰为 2.5×）。真机暂无第二块不同缩放显示器，跨屏拖动切换 DPI 仍需目标机复核。
 - **DRM / 截图限制验收（2026-11-25 20:25）**：锁屏态截图被 `APP_LOCKED` 闸门拒绝；解锁态 `captureScreenshot('window')` 对桌面返回可读失败码 `no-window/detail:desktop`，`captureScreenshot('screen')` 成功返回 3840×2160 PNG；黑帧识别回归 `tests/screenshot-p1-4-black-frame.test.ts` 6/6 通过（纯黑→`black`、正常画面不误伤、采样点只要一个非黑像素即放行）。真机 DRM/受保护视频窗口未在当前环境构造，代码路径以黑帧/透明帧拒绝兜底。
+- **环境受限复核（2026-11-25 20:35）**：`powercfg /a` 显示本机仅支持 S3 睡眠；为避免挂起会话未触发真实睡眠，改用广播 `WM_POWERBROADCAST / PBT_APMSUSPEND (0x0004)`，安装版 `getLockStatus()` 从 `unlocked` 变为 `locked`；随后广播 `PBT_APMRESUMESUSPEND (0x0007)` 仍保持 `locked`，与 `onOsWake()` 的“唤醒后保持锁定”语义一致。`WM_WTSSESSION_CHANGE / WTS_SESSION_LOCK (0x0007)` 的 HWND_BROADCAST 模拟未触发应用锁定（系统锁定通知只发给已注册窗口），真实 `Win+L` 未执行以免锁住交互会话。显示器计数实测为 1（`\\.\DISPLAY1`，1536×864），无法构造跨屏不同缩放；未发现 DRM/受保护视频窗口（仅普通 Edge 页面），真实 DRM 捕获仍需目标机。
 
 ---
 
