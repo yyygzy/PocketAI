@@ -217,7 +217,8 @@ npm run build        # electron-vite build，产物在 out/
 - 用 `Moxia-1.3.0-x64.exe /S /D=...\artifacts\nsis-smoke-install` 静默安装到隔离目录，退出码 0；目录内有 `Moxia.exe`（ProductVersion `1.3.0.0`）、`Uninstall Moxia.exe`、`resources/app.asar`、`app-update.yml`，托盘图标解包到 `resources/app.asar.unpacked/build/icon/icon-256.png`。
 - 用 `POCKETAI_APP_ROOT=...\artifacts\nsis-smoke-root` 启动安装版（Electron 不认 `APPDATA` 覆盖，故用应用根隔离数据；该路径不触发共享根迁移），主窗口标题 `墨匣 Moxia - PocketAI`，`data/app.db` 正常创建，`data/logs/main.log` 记录 DB 打开、窗口创建、助手/技能同步与调度器启动，无 ERROR。
 - 静默卸载 `Uninstall Moxia.exe /S` 后 `Moxia.exe` 已删除，隔离 `data/app.db` 仍保留；测试进程、临时目录与首次尝试遗留的真实数据锁均已清理。
-- 注意：当前安装包打包于共享根迁移修复之前；若用 `POCKETAI_DATA_DIR` 指向全新目录，仍会命中旧版 EPERM。修复后的代码需下次重新打包才进入安装包。
+- 注意：上面的隔离冒烟用的是共享根迁移修复之前的旧包；用 `POCKETAI_DATA_DIR` 指向全新目录仍会命中旧版 EPERM。
+- **新包复测（2026-11-25 18:23）**：重新打包后的 `Moxia-1.3.0-x64.exe` 已纳入共享根迁移修复。静默安装到 `nsis-smoke-install2`，用 `POCKETAI_DATA_DIR=...\nsis-smoke-data2` 启动：主窗口标题正常，`migrated-from.json` 写入（`kind: installed-to-shared`，4 个文件 / 1,929,851 字节 / 41ms），`app.db` 到位，`logs/main.log` 启动链无 ERROR，旧版 EPERM 不再出现。测试进程、隔离目录与测试安装均已清理。
 
 ---
 
