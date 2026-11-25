@@ -73,6 +73,42 @@ describe('本机数据迁往共享数据根（P3）', () => {
     expect(m.migrateInstalledDataToSharedDir()).toBeNull()
   })
 
+  it('目标已有 Electron 缓存树时跳过旧缓存，不覆盖当前进程档案', async () => {
+    const installed = seedInstalled()
+    fs.mkdirSync(path.join(installed, 'userdata', 'GPUCache'), { recursive: true })
+    fs.writeFileSync(path.join(installed, 'userdata', 'GPUCache', 'stale-cache'), 'old-cache')
+
+    const target = process.env.POCKETAI_DATA_DIR!
+    fs.mkdirSync(path.join(target, 'userdata', 'GPUCache'), { recursive: true })
+    fs.writeFileSync(path.join(target, 'userdata', 'GPUCache', 'live-cache'), 'current-cache')
+
+    const m = await loadPortable()
+    const result = m.migrateInstalledDataToSharedDir()
+
+    expect(result?.files).toBe(3)
+    expect(fs.readFileSync(path.join(target, 'app.db'), 'utf8')).toBe('SQLite format 3\0shared-migrate')
+    expect(fs.readFileSync(path.join(target, 'userdata', 'GPUCache', 'live-cache'), 'utf8')).toBe('current-cache')
+    expect(fs.existsSync(path.join(target, 'userdata', 'GPUCache', 'stale-cache'))).toBe(false)
+  })
+
+  it('校验失败时只回滚本次产物，目标中预存在的文件与缓存原样保留', async () => {
+    const installed = seedInstalled()
+    const target = process.env.POCKETAI_DATA_DIR!
+    fs.mkdirSync(path.join(target, 'userdata', 'GPUCache'), { recursive: true })
+    fs.writeFileSync(path.join(target, 'userdata', 'GPUCache', 'live-cache'), 'current-cache')
+    fs.writeFileSync(path.join(target, 'config.json'), 'preexisting-config')
+
+    const m = await loadPortable()
+    expect(() => m.migrateInstalledDataToSharedDir()).toThrow(/共享数据根迁移失败/)
+
+    expect(fs.readFileSync(path.join(target, 'config.json'), 'utf8')).toBe('preexisting-config')
+    expect(fs.readFileSync(path.join(target, 'userdata', 'GPUCache', 'live-cache'), 'utf8')).toBe('current-cache')
+    expect(fs.existsSync(path.join(target, 'app.db'))).toBe(false)
+    expect(fs.existsSync(path.join(target, 'attachments'))).toBe(false)
+    expect(fs.existsSync(path.join(target, '.migrating'))).toBe(false)
+    expect(fs.existsSync(path.join(installed, 'app.db'))).toBe(true)
+  })
+
   it('未配置共享根时不迁本机数据', async () => {
     delete process.env.POCKETAI_DATA_DIR
     process.env.POCKETAI_APP_ROOT = path.join(roots.tmp, 'app')

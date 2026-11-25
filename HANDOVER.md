@@ -143,13 +143,15 @@ npm run build        # electron-vite build，产物在 out/
 1.2.8 及更早的安装版把数据放在安装目录的 `data\`。覆盖安装时 electron-builder 的旧卸载器会重建整个安装目录，所以 1.3.0 采用两层保护：
 
 1. **安装器层**：`build/installer.nsh` 的 `customInit` 在旧卸载器执行前，把 `$INSTDIR\data` 搬到 `$APPDATA\Moxia\data`；`Rename` 跨卷失败时用 `xcopy /e /i /h /y` 兜底；成功后写 `migrated-from.json`（`by: nsis-updater`）。
-2. **首次启动层**：`migrateInstalledDataDir()` 在 `ensureDirs()` 之前运行。新位置没有数据、旧位置有 `app.db` 或 `config.json` 时，整目录复制到新位置；逐文件比对相对路径与字节数，并对 `app.db` / `config.json` 做 SHA-256 校验；写 `migrated-from.json` 后再删除旧副本。中途失败会清掉新位置半成品并弹窗退出，原数据保留在旧目录；复制中的 `.migrating` 哨兵用于下次启动清理半成品。
+2. **首次启动层**：`migrateInstalledDataDir()` 在 `ensureDirs()` 之前运行。新位置没有数据、旧位置有 `app.db` 或 `config.json` 时，逐顶层项复制到新位置；逐文件比对相对路径与字节数，并对 `app.db` / `config.json` 做 SHA-256 校验；写 `migrated-from.json` 后再删除旧副本。中途失败只回滚本次创建的路径并弹窗退出，原数据保留在旧目录；复制中的 `.migrating` 哨兵用于下次启动清理半成品。
 
 补充事实：
 
+- `userdata/`、`session/` 是 Electron 档案树（本模块加载时就已 `app.setPath` 并可能正在写入），迁移一律跳过，不复制旧缓存也不覆盖目标缓存；`.lock` / `.migrating` / `migrated-from.json` 作为进程状态与幂等标记同样跳过。共享数据根 `migrateInstalledDataToSharedDir()` 复用同一套规则。
+- 失败清理不再递归删整个目标 `DATA_DIR`，只删本次迁移写下的哨兵与文件/目录；目标里预存在的缓存或用户文件原样保留。
 - 卸载程序只删程序文件，不删 `%APPDATA%\Moxia\data`（`build/installer.nsh` 的 `customUnInstall` 会提示该路径）。
-- 迁移是一次性整目录复制，大库/大附件会让升级或首次启动明显变慢。
-- 便携版与 AppImage 不参与上述迁移（数据本来就在应用旁边）。
+- 迁移是一次性复制，大库/大附件会让升级或首次启动明显变慢。
+- 便携版与 AppImage 不参与上述安装版迁移（数据本来就在应用旁边）；显式共享根仍会触发本机数据 → 共享根的迁移。
 
 ---
 

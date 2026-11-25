@@ -5,6 +5,7 @@ import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { createHash } from 'node:crypto'
+import { isBrowserProfilePath } from '../shared/data-dirs'
 import type { AppPaths } from '../shared/types'
 import { createLogger } from './logger'
 import { errMsg } from './error'
@@ -241,17 +242,68 @@ export interface DataMigrationResult {
   removedLegacy: boolean
 }
 
-function listFiles(root: string): Map<string, number> {
+/**
+ * 迁移时必须跳过的顶层项。userData/sessionData 在本模块加载时就已被 Electron 建好，
+ * 里面是正在写入且可能被独占的 Chromium 缓存；旧目录里的 .lock / 迁移标记同样是进程状态，
+ * 拷进新根只会污染下一次幂等判断。
+ */
+function isMigrationRuntimeEntry(rel: string): boolean {
+  const top = rel.replaceAll('\\', '/').split('/')[0] ?? ''
+  return isBrowserProfilePath(top) || top === '.lock' || top === MIGRATION_MARKER || top === MIGRATING_SENTINEL
+}
+
+function listFiles(root: string, skipRuntime: boolean): Map<string, number> {
   const out = new Map<string, number>()
   const walk = (dir: string): void => {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
       const abs = path.join(dir, ent.name)
+      const rel = path.relative(root, abs)
+      if (skipRuntime && isMigrationRuntimeEntry(rel)) continue
       if (ent.isDirectory()) walk(abs)
-      else if (ent.isFile()) out.set(path.relative(root, abs), fs.statSync(abs).size)
+      else if (ent.isFile()) out.set(rel, fs.statSync(abs).size)
     }
   }
   walk(root)
   return out
+}
+
+/** 逐顶层项复制，记录真正由本次迁移创建的路径，失败时只回滚这些路径。 */
+function copyMigrationEntries(src: string, dst: string): string[] {
+  const created: string[] = []
+  fs.mkdirSync(dst, { recursive: true })
+  for (const name of fs.readdirSync(src)) {
+    if (isMigrationRuntimeEntry(name)) continue
+    const from = path.join(src, name)
+    const to = path.join(dst, name)
+    // 目标已有同名项：不覆盖，交给后面的逐文件校验判定（保护当前进程已建的目录）
+    if (fs.existsSync(to)) {
+      log.warn(`目标已存在同名项，迁移跳过覆盖: ${to}`)
+      continue
+    }
+    fs.cpSync(from, to, { recursive: true })
+    created.push(to)
+  }
+  return created
+}
+
+/** 清掉上一次失败留下的半成品，但绝不递归删整个 DATA_DIR（Electron 缓存可能正被占用）。 */
+function clearPartialMigration(dst: string): void {
+  if (!fs.existsSync(dst)) return
+  for (const name of fs.readdirSync(dst)) {
+    if (isMigrationRuntimeEntry(name)) continue
+    fs.rmSync(path.join(dst, name), { recursive: true, force: true })
+  }
+}
+
+function rollbackMigration(dst: string, created: string[], dstExisted: boolean): void {
+  for (const p of [...created].reverse()) {
+    try { fs.rmSync(p, { recursive: true, force: true }) } catch { /* 退出路径只告警，不影响原错误 */ }
+  }
+  if (!dstExisted) {
+    try {
+      if (fs.readdirSync(dst).length === 0) fs.rmSync(dst, { recursive: false })
+    } catch { /* 目录不空或已被清理：保持原错误 */ }
+  }
 }
 
 function sha256File(file: string): string {
@@ -282,10 +334,11 @@ export function migrateInstalledDataDir(): DataMigrationResult | null {
   if (DATA_DIR === LEGACY_DATA_DIR) return null
   if (!fs.existsSync(LEGACY_DATA_DIR)) return null
 
-  // 上次复制中途退出（进程被杀/断电）：新位置只是半成品，清掉重来
+  // 上次复制中途退出（进程被杀/断电）：新位置只是半成品，清掉重来。
+  // 只删迁移产物，不碰 Electron 已经建好的 userData/sessionData。
   if (fs.existsSync(path.join(DATA_DIR, MIGRATING_SENTINEL)) && hasLegacyUserData()) {
     log.warn(`检测到未完成的数据迁移，清理半成品后重试: ${DATA_DIR}`)
-    fs.rmSync(DATA_DIR, { recursive: true, force: true })
+    clearPartialMigration(DATA_DIR)
   }
 
   const newHasDb = fs.existsSync(path.join(DATA_DIR, 'app.db'))
@@ -300,14 +353,18 @@ export function migrateInstalledDataDir(): DataMigrationResult | null {
   if (!hasLegacyUserData()) return null
 
   const startedAt = Date.now()
+  const dataDirExisted = fs.existsSync(DATA_DIR)
+  let created: string[] = []
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true })
-    fs.writeFileSync(path.join(DATA_DIR, MIGRATING_SENTINEL), JSON.stringify({ at: new Date().toISOString() }), 'utf8')
-    fs.cpSync(LEGACY_DATA_DIR, DATA_DIR, { recursive: true })
+    const sentinel = path.join(DATA_DIR, MIGRATING_SENTINEL)
+    fs.writeFileSync(sentinel, JSON.stringify({ at: new Date().toISOString() }), 'utf8')
+    created.push(sentinel)
+    created.push(...copyMigrationEntries(LEGACY_DATA_DIR, DATA_DIR))
 
-    // 校验：文件集合与大小逐项一致
-    const src = listFiles(LEGACY_DATA_DIR)
-    const dst = listFiles(DATA_DIR)
+    // 校验：文件集合与大小逐项一致（浏览器档案树不参与比对）
+    const src = listFiles(LEGACY_DATA_DIR, true)
+    const dst = listFiles(DATA_DIR, true)
     dst.delete(MIGRATING_SENTINEL)
     if (src.size !== dst.size) {
       throw new Error(`复制后文件数不一致：源 ${src.size}，目标 ${dst.size}`)
@@ -355,12 +412,8 @@ export function migrateInstalledDataDir(): DataMigrationResult | null {
     log.info(`安装版数据目录已迁移：${LEGACY_DATA_DIR} → ${DATA_DIR}（${marker.files} 个文件 / ${marker.bytes} 字节）`)
     return { from: marker.from, to: marker.to, files: marker.files, bytes: marker.bytes, removedLegacy }
   } catch (e) {
-    // 半成品不能留：否则下次启动会把不完整的新位置当成正式数据
-    try {
-      fs.rmSync(DATA_DIR, { recursive: true, force: true })
-    } catch (cleanupErr) {
-      log.error(`半成品数据目录清理失败: ${DATA_DIR}: ${errMsg(cleanupErr)}`)
-    }
+    // 半成品不能留：只回滚本次创建的文件/目录，目标里原有（含 Electron 缓存）必须原样保留
+    rollbackMigration(DATA_DIR, created, dataDirExisted)
     throw new Error(`数据迁移失败（原数据仍在 ${LEGACY_DATA_DIR}）：${errMsg(e)}`)
   }
 }
@@ -383,17 +436,21 @@ export function migrateInstalledDataToSharedDir(): DataMigrationResult | null {
 
   if (fs.existsSync(path.join(DATA_DIR, MIGRATING_SENTINEL))) {
     log.warn(`检测到未完成的共享根迁移，清理半成品后重试: ${DATA_DIR}`)
-    fs.rmSync(DATA_DIR, { recursive: true, force: true })
+    clearPartialMigration(DATA_DIR)
   }
 
   const startedAt = Date.now()
+  const dataDirExisted = fs.existsSync(DATA_DIR)
+  let created: string[] = []
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true })
-    fs.writeFileSync(path.join(DATA_DIR, MIGRATING_SENTINEL), JSON.stringify({ at: new Date().toISOString() }), 'utf8')
-    fs.cpSync(installed, DATA_DIR, { recursive: true })
+    const sentinel = path.join(DATA_DIR, MIGRATING_SENTINEL)
+    fs.writeFileSync(sentinel, JSON.stringify({ at: new Date().toISOString() }), 'utf8')
+    created.push(sentinel)
+    created.push(...copyMigrationEntries(installed, DATA_DIR))
 
-    const src = listFiles(installed)
-    const dst = listFiles(DATA_DIR)
+    const src = listFiles(installed, true)
+    const dst = listFiles(DATA_DIR, true)
     dst.delete(MIGRATING_SENTINEL)
     if (src.size !== dst.size) throw new Error(`复制后文件数不一致：源 ${src.size}，目标 ${dst.size}`)
     for (const [rel, size] of src) {
@@ -421,9 +478,8 @@ export function migrateInstalledDataToSharedDir(): DataMigrationResult | null {
     log.info(`本机数据已复制到共享数据根：${installed} → ${DATA_DIR}（${marker.files} 个文件）`)
     return { from: marker.from, to: marker.to, files: marker.files, bytes: marker.bytes, removedLegacy: false }
   } catch (e) {
-    try { fs.rmSync(DATA_DIR, { recursive: true, force: true }) } catch (cleanupErr) {
-      log.error(`半成品共享根清理失败: ${errMsg(cleanupErr)}`)
-    }
+    // 只回滚本次迁移写下的东西；Electron 已建的 userData/sessionData 不能被递归删掉
+    rollbackMigration(DATA_DIR, created, dataDirExisted)
     throw new Error(`共享数据根迁移失败（本机原数据仍在 ${installed}）：${errMsg(e)}`)
   }
 }

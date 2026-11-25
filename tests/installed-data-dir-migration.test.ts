@@ -79,6 +79,23 @@ describe('安装版数据目录迁移', () => {
     expect(result?.files).toBe(3)
   })
 
+  it('迁移时不覆盖目标已建的 Electron 缓存，也不搬运旧缓存', async () => {
+    const legacy = seedLegacyData()
+    fs.mkdirSync(path.join(legacy, 'userdata', 'GPUCache'), { recursive: true })
+    fs.writeFileSync(path.join(legacy, 'userdata', 'GPUCache', 'stale-cache'), 'old-cache')
+    const m = await loadModule()
+
+    fs.mkdirSync(path.join(m.DATA_DIR, 'userdata', 'GPUCache'), { recursive: true })
+    fs.writeFileSync(path.join(m.DATA_DIR, 'userdata', 'GPUCache', 'live-cache'), 'current-cache')
+
+    const result = m.migrateInstalledDataDir()
+
+    expect(result?.files).toBe(3)
+    expect(fs.readFileSync(path.join(m.DATA_DIR, 'app.db'), 'utf8')).toBe('SQLite format 3\0fake-db-content')
+    expect(fs.readFileSync(path.join(m.DATA_DIR, 'userdata', 'GPUCache', 'live-cache'), 'utf8')).toBe('current-cache')
+    expect(fs.existsSync(path.join(m.DATA_DIR, 'userdata', 'GPUCache', 'stale-cache'))).toBe(false)
+  })
+
   it('新位置已有数据库时跳过迁移，旧目录原样保留', async () => {
     const legacy = seedLegacyData()
     const m = await loadModule()
