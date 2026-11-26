@@ -58,6 +58,7 @@ vi.mock('../src/main/tools/patch-tools', () => ({ getPatchTools: () => [] }))
 vi.mock('../src/main/tools/symbol-tools', () => ({ getSymbolTools: () => [] }))
 vi.mock('../src/main/tools/shell-tools', () => ({ getShellTools: () => [] }))
 vi.mock('../src/main/tools/skill-tools', () => ({ getSkillTools: () => [] }))
+vi.mock('../src/main/tools/skill-script-tools', () => ({ getSkillScriptTools: () => [] }))
 vi.mock('../src/main/mcp/manager', () => ({
   mcpManager: {
     listRuntimes: () => [

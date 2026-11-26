@@ -89,8 +89,9 @@ function mcp(id: string): ToolSchema {
 describe('分组表覆盖运行时工具面', () => {
   it('listBuiltin() 的每一枚工具都在 TOOL_GROUP_OF 里', () => {
     const ids = toolRegistry.listBuiltin().map((t) => t.id)
-    // 先钉住"这个环境确实把 38 枚都注册出来了"（含 fs.apply_patch、run_tests、code.symbol、mcp.symbol；v77+v79 共 13 枚免 Key 公共 API 工具），否则下面的覆盖断言会空转
-    expect(ids).toHaveLength(38)
+    // 先钉住"这个环境确实把 39 枚都注册出来了"（含 fs.apply_patch、run_tests、code.symbol、mcp.symbol；
+    // v77+v79 共 13 枚免 Key 公共 API 工具；阶段 5 多一枚默认 deny 的 skill.run_script），否则覆盖断言会空转
+    expect(ids).toHaveLength(39)
     const missing = ids.filter((id) => !TOOL_GROUP_OF[id])
     expect(missing).toEqual([])
   })

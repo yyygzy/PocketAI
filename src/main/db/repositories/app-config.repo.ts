@@ -70,6 +70,7 @@ const KEYS = {
   NET_PROXY_URL: 'net_proxy_url', // 主进程 API 流量代理 URL（http/https）；空/缺省=直连
   SKILL_ROUTING_ENABLED: 'skill_routing_enabled', // '1'=按任务描述路由技能；缺省=关闭（灰度）
   SKILL_ROUTING_TOP_N: 'skill_routing_top_n', // 路由命中时全文注入的 top-N；缺省=3
+  SKILL_SCRIPT_ENABLED: 'skill_script_enabled', // '1'=允许技能 JS 脚本在沙箱里执行；缺省=关闭
 } as const
 
 // 主密码 salt 双通道与 config.json 的读写通道
@@ -462,6 +463,14 @@ export const appConfigRepo = {
 
   setSkillRoutingTopN(topN: number): void {
     this.set(KEYS.SKILL_ROUTING_TOP_N, String(clampSkillRoutingTopN(topN)))
+  },
+
+  isSkillScriptEnabled(): boolean {
+    return this.get(KEYS.SKILL_SCRIPT_ENABLED) === '1'
+  },
+
+  setSkillScriptEnabled(enabled: boolean): void {
+    this.set(KEYS.SKILL_SCRIPT_ENABLED, enabled ? '1' : '0')
   },
 
   // ---------- 窗口行为（开机自启 / 关窗到托盘） ----------

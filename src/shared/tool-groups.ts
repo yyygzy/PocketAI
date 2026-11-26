@@ -135,6 +135,8 @@ export const TOOL_GROUP_OF: Readonly<Record<string, ToolGroupId>> = {
   // 因为一条消息里没提到"命令/技能/子代理"就把它们藏起来，等于悄悄关掉用户的开关。
   'shell.exec': 'shell',
   'skill.load': 'skill',
+  // 阶段 5：默认 deny、逐次确认的浏览器沙箱脚本工具，与 load_skill 同组
+  'skill.run_script': 'skill',
   'agent.delegate': 'delegate'
 }
 

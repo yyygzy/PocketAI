@@ -30,6 +30,8 @@ const SKILL_ENTRY_NAME = 'SKILL.md'
 export const SKILL_RESOURCE_PREFIXES = ['references', 'assets'] as const
 /** 安装时写入的逐文件哈希清单（隐藏文件；既不在 UI 列出，也不在白名单里） */
 const SKILL_FILE_MANIFEST = '.skill-files.json'
+/** 阶段 5 只执行浏览器沙箱能承载的 JS；shell/python/bat 明确拒绝，不造半吊子 OS 沙箱 */
+export const SKILL_SCRIPT_EXTENSIONS = ['.js', '.mjs', '.cjs'] as const
 
 /** 与 resolveSkillFilePath 共用的相对路径归一化口径 */
 function normalizeSkillRel(rel: string): string {
@@ -342,6 +344,75 @@ export function readSkillFile(
       path: norm,
       verified: Boolean(expected)
     }
+  } finally {
+    fs.closeSync(fh)
+  }
+}
+
+/** 阶段 5：脚本清单只认安装快照里 scripts/** 的 JS 文件（不认 UI 清单、不认新增文件） */
+function isRegisteredSkillScriptRel(norm: string): boolean {
+  if (!norm.startsWith('scripts/') || !norm.includes('/')) return false
+  return (SKILL_SCRIPT_EXTENSIONS as readonly string[]).some((ext) => norm.toLowerCase().endsWith(ext))
+}
+
+/** 列出安装清单内可执行的脚本；只给工具内部用，不进 UI 资源预览 */
+export function listSkillScripts(id: string): SkillFileEntry[] {
+  const out: SkillFileEntry[] = []
+  for (const rel of Object.keys(readFileManifest(id)).sort()) {
+    if (!isRegisteredSkillScriptRel(rel)) continue
+    try {
+      const st = fs.lstatSync(resolveSkillFilePath(id, rel))
+      if (st.isSymbolicLink() || !st.isFile()) continue
+      out.push({ path: rel, size: st.size })
+    } catch {
+      continue
+    }
+  }
+  return out
+}
+
+/** 读一份清单内脚本：仍走 realpath 防逃逸 + sha256 复验，缺失/改过/非 JS 一律拒 */
+export function readSkillScript(id: string, rel: string): { content: string; size: number; path: string; verified: boolean } {
+  const norm = normalizeSkillRel(rel)
+  if (!isRegisteredSkillScriptRel(norm)) {
+    throw new Error('只执行安装清单内 scripts/ 下的 .js/.mjs/.cjs 脚本')
+  }
+  const expected = readFileManifest(id)[norm]
+  if (!expected) throw new Error('脚本不在该技能的安装清单内')
+
+  const abs = resolveSkillFilePath(id, norm)
+  const st = fs.lstatSync(abs)
+  if (st.isSymbolicLink()) throw new Error('技能脚本里的符号链接不被支持')
+  if (!st.isFile()) throw new Error('不是一个文件')
+  if (st.size > SKILL_FILE_READ_LIMIT_BYTES) throw new Error('脚本超过单文件上限')
+
+  const root = skillFilesDir(id)
+  let rootReal: string
+  let real: string
+  try {
+    rootReal = fs.realpathSync(root)
+    real = fs.realpathSync(abs)
+  } catch {
+    throw new Error('脚本路径越出技能目录')
+  }
+  if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
+    throw new Error('脚本路径越出技能目录')
+  }
+
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+  const fh = fs.openSync(abs, flags)
+  try {
+    const buf = Buffer.alloc(st.size)
+    fs.readSync(fh, buf, 0, buf.length, 0)
+    if (buf.includes(0)) throw new Error('脚本不是文本文件')
+    let content: string
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+    } catch {
+      throw new Error('脚本不是 UTF-8 文本')
+    }
+    if (sha256(buf) !== expected) throw new Error('脚本校验失败：内容与安装清单不一致')
+    return { content, size: st.size, path: norm, verified: true }
   } finally {
     fs.closeSync(fh)
   }

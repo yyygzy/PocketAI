@@ -26,6 +26,10 @@ const builtinSchema = (id: string, name: string): ToolSchema => ({
   permission: 'auto'
 })
 
+// 阶段 5：注册表会动态聚合 skill.run_script；它读 app_config 的开关，
+// 这条等价性用例不关心开关值，按"读取失败即关闭"的空桩处理，避免把 electron/portable 拉进来。
+vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: {} }))
+
 const mocks = vi.hoisted(() => ({
   fsCalls: 0,
   shellCalls: 0,
@@ -82,6 +86,8 @@ vi.mock('../src/main/tools/skill-tools', () => ({
     return []
   }
 }))
+// 阶段 5 的新工具与本用例的等价性无关；空桩免得把 skill.repo / portable 拉进来
+vi.mock('../src/main/tools/skill-script-tools', () => ({ getSkillScriptTools: () => [] }))
 vi.mock('../src/main/tools/artifact-tools', () => ({ getArtifactTools: () => [] }))
 vi.mock('../src/main/tools/project-tools', () => ({ getProjectTools: () => [] }))
 vi.mock('../src/main/mcp/manager', () => ({

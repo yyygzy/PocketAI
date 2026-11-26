@@ -9,6 +9,7 @@ import { getRunTestsTools } from './run-tests'
 import { getSymbolTools } from './symbol-tools'
 import { getMcpSymbolTools } from './mcp-symbol-tools'
 import { getSkillTools } from './skill-tools'
+import { getSkillScriptTools } from './skill-script-tools'
 import { getShellTools, getShellPolicyInfo } from './shell-tools'
 import { getArtifactTools } from './artifact-tools'
 import { getProjectTools } from './project-tools'
@@ -124,6 +125,7 @@ class ToolRegistry {
       ...getMcpSymbolTools(),
       ...getShellTools(),
       ...getSkillTools(),
+      ...getSkillScriptTools(),
       ...getArtifactTools(),
       ...getProjectTools()
     ]

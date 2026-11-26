@@ -35,6 +35,7 @@ vi.mock('../src/main/tools/shell-tools', () => ({
   getShellPolicyInfo: () => ({ enabled: false })
 }))
 vi.mock('../src/main/tools/skill-tools', () => ({ getSkillTools: () => [] }))
+vi.mock('../src/main/tools/skill-script-tools', () => ({ getSkillScriptTools: () => [] }))
 vi.mock('../src/main/tools/artifact-tools', () => ({ getArtifactTools: () => [] }))
 vi.mock('../src/main/tools/project-tools', () => ({ getProjectTools: () => [] }))
 vi.mock('../src/main/mcp/manager', () => ({
