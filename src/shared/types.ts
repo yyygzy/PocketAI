@@ -3116,6 +3116,7 @@ export const IPC = {
   SKILL_VALIDATE: 'skill:validate',
   SKILL_IMPORT_FOLDER: 'skill:import-folder', // §236：选一个 SKILL.md 技能目录导入（连资源文件一起快照进来）
   SKILL_LIST_FILES: 'skill:list-files', // §236：某个技能自带哪些文件
+  SKILL_READ_FILE: 'skill:read-file', // 阶段 4：按需只读 references/assets 文本
   SKILL_LIST_VERSIONS: 'skill:list-versions', // 阶段 1：版本历史（回滚依据）
   SKILL_ROLLBACK: 'skill:rollback', // 阶段 1：回滚到历史版本
   SKILL_TEMPLATES: 'skill:templates',

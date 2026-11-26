@@ -10,6 +10,7 @@
 // 路径**完全由技能 id 推出** ⇒ 库里不需要新列，删掉技能就等于删掉目录（残留由 removeSkillFiles 收）。
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { DATA_DIR } from '../portable'
 import { errMsg } from '../error'
 
@@ -24,6 +25,51 @@ export const SKILL_DIR_MAX_DEPTH = 4
 
 /** 顶层入口文件名（大小写不敏感匹配，优先精确这个写法） */
 const SKILL_ENTRY_NAME = 'SKILL.md'
+
+/** 阶段 4：按需只读这两棵子树；scripts/ 等目录仍可随包保存，但不经这颗窄工具开放 */
+export const SKILL_RESOURCE_PREFIXES = ['references', 'assets'] as const
+/** 安装时写入的逐文件哈希清单（隐藏文件；既不在 UI 列出，也不在白名单里） */
+const SKILL_FILE_MANIFEST = '.skill-files.json'
+
+/** 与 resolveSkillFilePath 共用的相对路径归一化口径 */
+function normalizeSkillRel(rel: string): string {
+  const rest = String(rel ?? '').replace(/\\/g, '/')
+  if (rest.includes('\0')) throw new Error('非法的技能文件路径')
+  const norm = path.posix.normalize(rest).replace(/^\/+/, '')
+  if (norm === '' || norm === '.' || norm.startsWith('..')) throw new Error('非法的技能文件路径')
+  return norm
+}
+
+export function isReadableSkillResourcePath(rel: string): boolean {
+  let norm: string
+  try {
+    norm = normalizeSkillRel(rel)
+  } catch {
+    return false
+  }
+  const first = norm.split('/')[0] ?? ''
+  return (SKILL_RESOURCE_PREFIXES as readonly string[]).includes(first) && norm.includes('/')
+}
+
+function sha256(buf: Buffer): string {
+  return crypto.createHash('sha256').update(buf).digest('hex')
+}
+
+/** 读安装清单；老包没有清单时返回空表（读侧标成"未校验"，不把存量技能卡死） */
+function readFileManifest(id: string): Record<string, string> {
+  try {
+    const raw = fs.readFileSync(path.join(skillFilesDir(id), SKILL_FILE_MANIFEST), 'utf8')
+    const parsed = JSON.parse(raw) as { version?: number; files?: Record<string, string> }
+    if (parsed?.version !== 1 || !parsed.files || typeof parsed.files !== 'object') return {}
+    const out: Record<string, string> = {}
+    for (const [rel, hash] of Object.entries(parsed.files)) {
+      if (typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash)) out[rel] = hash
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
 
 /** 导入一份技能目录的结果 */
 export interface SkillFolderImport {
@@ -69,10 +115,7 @@ export function skillFilesDir(id: string): string {
  * 这一层不判存在性：把"不存在"混进路径解析里，等于让一个纯函数带上 fs 副作用，调用点与用例都会开始说谎。
  */
 export function resolveSkillFilePath(id: string, rel: string): string {
-  const rest = String(rel ?? '').replace(/\\/g, '/')
-  if (rest.includes('\0')) throw new Error('非法的技能文件路径')
-  const norm = path.posix.normalize(rest).replace(/^\/+/, '')
-  if (norm === '' || norm === '.' || norm.startsWith('..')) throw new Error('非法的技能文件路径')
+  const norm = normalizeSkillRel(rel)
   const root = skillFilesDir(id)
   const abs = path.resolve(root, norm)
   if (abs !== root && !abs.startsWith(root + path.sep)) throw new Error('路径超出技能目录范围')
@@ -194,6 +237,15 @@ export function installSkillFiles(
     copied.push(f.rel)
     totalBytes += f.size
   }
+  // 逐文件 sha256 随包留底：读/预览时按同一份清单复验，沿用"安装时逐文件校验"的口径，
+  // 不在读侧另造一套 hash 规则。隐藏清单不进 copied，也不进 UI 列表。
+  const hashes: Record<string, string> = {}
+  for (const rel of copied) hashes[rel] = sha256(fs.readFileSync(resolveSkillFilePath(id, rel)))
+  fs.writeFileSync(
+    path.join(skillFilesDir(id), SKILL_FILE_MANIFEST),
+    JSON.stringify({ version: 1, files: hashes }, null, 2),
+    'utf8'
+  )
   return { entryText: '', copied, skipped, totalBytes }
 }
 
@@ -217,10 +269,13 @@ export function listSkillFiles(id: string): SkillFileEntry[] {
       // 目录要钻进去：装进来那一刻是带子目录复制的（references/api.md），
       // 只列顶层等于把清单说成"没有"，而 load_skill 明明能读到那份东西
       if (st.isDirectory()) {
+        // 阶段 4：清单只列可读的两棵子树，scripts/ 等仍留在磁盘上但不给预览按钮
+        if (prefix === '' && !(SKILL_RESOURCE_PREFIXES as readonly string[]).includes(name)) continue
         walk(abs, rel, depth + 1)
         continue
       }
       if (!st.isFile()) continue
+      if (!isReadableSkillResourcePath(rel)) continue
       out.push({ path: rel, size: st.size })
       if (out.length >= SKILL_DIR_MAX_FILES) return
     }
@@ -229,24 +284,64 @@ export function listSkillFiles(id: string): SkillFileEntry[] {
   return out
 }
 
-/** 读某技能自带的一个文件（越界／越目录的软链／二进制／超长都有明确一句） */
+/**
+ * 读某技能自带的一份**文本**参考资源（阶段 4）。
+ * 四道闸：白名单前缀 → 词法越界 → realpath 实路径仍在本目录（父目录软链也挡住）→ 逐文件 sha256 复验。
+ * 只读，不执行、不联网；二进制继续拒读。
+ */
 export function readSkillFile(
   id: string,
   rel: string
-): { content: string; size: number; truncated: boolean; path: string } {
-  const abs = resolveSkillFilePath(id, rel)
+): { content: string; size: number; truncated: boolean; path: string; verified: boolean } {
+  const norm = normalizeSkillRel(rel)
+  if (!isReadableSkillResourcePath(norm)) {
+    throw new Error('只允许读取技能自带的 references/ 或 assets/ 下的文本文件')
+  }
+  const abs = resolveSkillFilePath(id, norm)
   const st = fs.lstatSync(abs)
   if (st.isSymbolicLink()) throw new Error('技能资源里的符号链接不被支持')
   if (!st.isFile()) throw new Error('不是一个文件')
-  const fh = fs.openSync(abs, 'r')
+
+  const root = skillFilesDir(id)
+  let rootReal: string
+  let real: string
   try {
-    const probe = Buffer.alloc(Math.min(1024, st.size))
-    fs.readSync(fh, probe, 0, probe.length, 0)
-    if (probe.includes(0)) throw new Error('疑似二进制文件，不支持按文本读取')
+    rootReal = fs.realpathSync(root)
+    real = fs.realpathSync(abs)
+  } catch {
+    throw new Error('资源路径越出技能目录')
+  }
+  if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
+    throw new Error('资源路径越出技能目录')
+  }
+  const realSt = fs.lstatSync(real)
+  if (!realSt.isFile()) throw new Error('不是一个文件')
+
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+  const fh = fs.openSync(abs, flags)
+  try {
     const len = Math.min(st.size, SKILL_FILE_READ_LIMIT_BYTES)
     const buf = Buffer.alloc(len)
     fs.readSync(fh, buf, 0, len, 0)
-    return { content: buf.toString('utf-8'), size: st.size, truncated: st.size > len, path: rel }
+    if (buf.includes(0)) throw new Error('疑似二进制文件，不支持按文本读取')
+    let content: string
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+    } catch {
+      throw new Error('疑似二进制文件，不支持按文本读取')
+    }
+
+    const expected = readFileManifest(id)[norm]
+    if (expected && sha256(buf) !== expected) {
+      throw new Error('资源校验失败：文件内容与安装清单不一致')
+    }
+    return {
+      content,
+      size: st.size,
+      truncated: st.size > len,
+      path: norm,
+      verified: Boolean(expected)
+    }
   } finally {
     fs.closeSync(fh)
   }

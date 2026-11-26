@@ -738,10 +738,11 @@ describe('§250~§279 第四面＋第五面：判了失败面还得接管它（�
     // 两份市场文件里 `reportIpcError` 归零；另两份**按"还剩几条"断言**（那几条不是本批的漏收：
     //   技能模块余 listSkillFiles／validateSkill 两条（§333：syncSkills 改成 toast.error，用户看得见），
     //   加上阶段 1 版本历史读取失败那一条（listVersions 失败也要留痕，不能静默成空历史），
+    //   加上阶段 4 资源预览读取失败那一条（readFile 失败不静默成空预览），
     //   用户记忆余删除那一条（§333：改成 flash＋判 hasIpcFailed，不再走 reportIpcError），都是 §224 那批定的留痕）
     expect(n(am, /reportIpcError/g), '助手市场不留那一形').toBe(0)
     expect(n(sm, /reportIpcError/g), '能力中心不留那一形').toBe(0)
-    expect(n(sk, /reportIpcError\(/g), '技能模块余那三条留痕').toBe(3)
+    expect(n(sk, /reportIpcError\(/g), '技能模块余那四条留痕').toBe(4)
     expect(n(um, /reportIpcError\(/g), '用户记忆余删除那一条留痕').toBe(0)
     // 一根 loader 只发一个通道
     expect(n(am, /window\.pocketai\s*\.listAssistants\(/g), '助手市场一发').toBe(1)

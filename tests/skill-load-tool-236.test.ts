@@ -115,6 +115,28 @@ describe('四条不许放宽的边界', () => {
     ).rejects.toThrow()
   })
 
+  it('阶段 4 白名单：assets/** 可读，scripts/** 仍不开放', async () => {
+    const id = 's-4-white'
+    bound.skills = [rec({ id, name: '白名单' })]
+    const src = path.join(TMP, 'src-white')
+    fs.mkdirSync(path.join(src, 'assets'), { recursive: true })
+    fs.mkdirSync(path.join(src, 'scripts'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'SKILL.md'), '入口', 'utf8')
+    fs.writeFileSync(path.join(src, 'assets', 'note.txt'), '资产内容', 'utf8')
+    fs.writeFileSync(path.join(src, 'scripts', 'run.sh'), 'echo hi', 'utf8')
+    const read = (await import('../src/main/skills/skill-files')).readSkillFolder(src)
+    installSkillFiles(id, read.files)
+
+    const out = JSON.parse(
+      await tool.execute({ skill: id, path: 'assets/note.txt' }, { skillIds: [id] })
+    )
+    expect(out.content).toContain('资产内容')
+    expect(out.verified).toBe(true)
+    await expect(
+      tool.execute({ skill: id, path: 'scripts/run.sh' }, { skillIds: [id] })
+    ).rejects.toThrow(/references\/ 或 assets\//)
+  })
+
   it('禁用中的技能读不到（与注入那一档同一条口径：enabled=false 就不该出现）', async () => {
     bound.skills = [rec({ id: 's10', name: '停用的', enabled: false })]
     await expect(tool.execute({ skill: '停用的' }, { skillIds: ['s10'] })).rejects.toThrow()

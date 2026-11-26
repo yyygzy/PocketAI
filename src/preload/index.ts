@@ -330,6 +330,13 @@ const api = {
   listSkillFiles: (id: string): Promise<
     { ok: true; files: Array<{ path: string; size: number }> } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.SKILL_LIST_FILES, id),
+  readSkillFile: (id: string, rel: string): Promise<
+    | {
+        ok: true
+        file: { path: string; content: string; size: number; truncated: boolean; verified: boolean }
+      }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.SKILL_READ_FILE, id, rel),
   listSkillVersions: (id: string): Promise<
     { ok: true; versions: SkillVersionRecord[] } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.SKILL_LIST_VERSIONS, id),

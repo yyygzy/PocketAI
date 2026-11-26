@@ -22,6 +22,7 @@ import { assistantRepo } from '../db/repositories/assistant.repo'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
+import { configuredSkillRouting } from '../assistant/skill-routing-config'
 import { ragService } from '../knowledge/rag'
 import { chunksToSources } from '../../shared/kb-sources'
 import { noteRetrievalDegradation } from '../knowledge/retrieval-degrade'
@@ -355,7 +356,10 @@ class ChatService {
       }
     }
 
-    const skillsContext = buildSkillsContext(assistantSkillIds)
+    const skillsContext = buildSkillsContext(assistantSkillIds, {
+      taskDescription: content,
+      routing: configuredSkillRouting(content)
+    })
     const renderedPrompt = renderPrompt(effectivePrompt, {
       knowledge: knowledgeContext,
       skills: skillsContext

@@ -45,6 +45,7 @@ import { kbRepo } from '../db/repositories/kb.repo'
 import { agentTraceRepo } from '../db/repositories/agent-trace.repo'
 import { renderPrompt } from '../assistant/prompt-template'
 import { buildSkillsContext } from '../assistant/skills'
+import { configuredSkillRouting } from '../assistant/skill-routing-config'
 import { buildMemoryContext } from '../assistant/memory'
 import { ragService } from '../knowledge/rag'
 import { chunksToSources } from '../../shared/kb-sources'
@@ -1603,7 +1604,9 @@ class AgentEngine {
       // §236：按需档只有在模型真拿得到 load_skill 时才是实话 ⇒ 判据取自**这次实际生效的工具面**，
       // 不是取自「这是 Agent 运行」（助手没授权这颗工具时，技能照旧全文注入）
       const skillsContext = buildSkillsContext(skillIds, {
-        loadToolAvailable: tools.some((t) => t.id === 'skill.load')
+        loadToolAvailable: tools.some((t) => t.id === 'skill.load'),
+        taskDescription: content,
+        routing: configuredSkillRouting(content)
       })
       const memoryContext = buildMemoryContext()
       const renderedPrompt = renderPrompt(effectivePrompt, {

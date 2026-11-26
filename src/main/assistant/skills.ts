@@ -14,6 +14,7 @@ import { skillRepo } from '../db/repositories/skill.repo'
 import { createLogger } from '../logger'
 import { EXTERNAL_CONTENT_NOTICE } from '../../shared/external-content'
 import { planResidentSkills, RESIDENT_SKILL_TOTAL_CHAR_BUDGET } from '../../shared/skill-budget'
+import { DEFAULT_SKILL_ROUTING_TOP_N, routeSkills, type SkillRoutingOptions } from '../../shared/skill-routing'
 import type { SkillRecord } from '../../shared/types'
 
 const log = createLogger('skills')
@@ -33,6 +34,10 @@ export function formatSkillPointer(s: SkillRecord): string {
 export interface SkillsContextOptions {
   /** 这次请求里模型是否真能调到 `load_skill`（按实际工具面传，不按"是不是 Agent"猜） */
   loadToolAvailable?: boolean
+  /** 本轮任务描述；只有路由开关打开时才会改变注入选择 */
+  taskDescription?: string
+  /** 显式路由参数；不给则由 app_config 的灰度开关决定 */
+  routing?: SkillRoutingOptions
 }
 
 export interface SkillsContextResult {
@@ -40,13 +45,15 @@ export interface SkillsContextResult {
   text: string
   /** 因总预算被整份跳过的技能（按绑定顺序） */
   excluded: SkillRecord[]
+  /** 未给全文、只给指针（或因无 load 工具而省略）的技能 */
+  deferred: SkillRecord[]
   /** 实际注入的全文技能正文字符数 */
   usedChars: number
   budgetChars: number
 }
 
 /**
- * 按助手配置的 skillIds 构建技能注入块，并返回被预算跳过的条目供调用方展示/记录。
+ * 按助手配置的 skillIds 构建技能注入块，并返回被预算跳过/被路由延后的条目供调用方记录。
  * 只取存在且 enabled 的技能；无有效技能返回空文本。
  */
 export function buildSkillsContextResult(
@@ -55,16 +62,41 @@ export function buildSkillsContextResult(
 ): SkillsContextResult {
   const skills = skillRepo.listEnabledByIds(skillIds ?? [])
   if (skills.length === 0) {
-    return { text: '', excluded: [], usedChars: 0, budgetChars: RESIDENT_SKILL_TOTAL_CHAR_BUDGET }
+    return {
+      text: '', excluded: [], deferred: [], usedChars: 0,
+      budgetChars: RESIDENT_SKILL_TOTAL_CHAR_BUDGET
+    }
   }
   // 工具不在面上 ⇒ 一条都不许走按需档（那会把正文换成一个模型执行不了的指令）
   const canLoad = opts.loadToolAvailable === true
-  const lazy = canLoad ? skills.filter((s) => !s.resident) : []
-  const lazyIds = new Set(lazy.map((s) => s.id))
-  const resident = skills.filter((s) => !lazyIds.has(s.id))
+  const routingEnabled = opts.routing?.enabled === true
 
-  // 只有**全文进提示词**的那一档吃预算；按需档只占一行元数据，不参与（`load_skill` 取正文另受 32KB 单条上限）
-  const plan = planResidentSkills(resident)
+  let full: SkillRecord[]
+  let pointer: SkillRecord[]
+  let deferred: SkillRecord[]
+
+  if (routingEnabled) {
+    const decision = routeSkills(
+      skills,
+      opts.routing?.taskDescription ?? opts.taskDescription ?? '',
+      opts.routing?.topN ?? DEFAULT_SKILL_ROUTING_TOP_N
+    )
+    full = decision.selected
+    pointer = canLoad ? decision.deferred : []
+    deferred = decision.deferred
+    log.debug(
+      `[skill-routing] 命中 ${decision.selected.length}/${skills.length} 条：` +
+        `${decision.selected.map((s) => s.name).join('、') || '无'}`
+    )
+  } else {
+    pointer = canLoad ? skills.filter((s) => !s.resident) : []
+    const pointerIds = new Set(pointer.map((s) => s.id))
+    full = skills.filter((s) => !pointerIds.has(s.id))
+    deferred = []
+  }
+
+  // 只有**全文进提示词**的那一档吃预算；指针档只占一行元数据（`load_skill` 另受 32KB 单条上限）
+  const plan = planResidentSkills(full)
   if (plan.excluded.length > 0) {
     log.warn(
       `[resident-budget] 常驻技能正文 ${plan.usedChars}/${plan.budgetChars} 字符，` +
@@ -79,16 +111,17 @@ export function buildSkillsContextResult(
         `${plan.kept.map(formatSkill).join('\n\n')}`
     )
   }
-  if (lazy.length > 0) {
+  if (pointer.length > 0) {
     blocks.push(
       `以下技能只给了名字与用途（正文没在这里）。决定要用某条技能时，先调 load_skill 取回它的完整指令：\n\n` +
-        lazy.map(formatSkillPointer).join('\n')
+        pointer.map(formatSkillPointer).join('\n')
     )
   }
   if (blocks.length === 0) {
     return {
       text: '',
       excluded: plan.excluded,
+      deferred,
       usedChars: plan.usedChars,
       budgetChars: plan.budgetChars
     }
@@ -96,6 +129,7 @@ export function buildSkillsContextResult(
   return {
     text: `## 已启用技能\n\n${EXTERNAL_CONTENT_NOTICE}\n\n${blocks.join('\n\n')}`,
     excluded: plan.excluded,
+    deferred,
     usedChars: plan.usedChars,
     budgetChars: plan.budgetChars
   }
@@ -103,5 +137,11 @@ export function buildSkillsContextResult(
 
 /** 兼容旧调用：只要注入文本（预算/跳过的细节由 buildSkillsContextResult 提供） */
 export function buildSkillsContext(skillIds: string[], opts: SkillsContextOptions = {}): string {
-  return buildSkillsContextResult(skillIds, opts).text
+  const task = opts.taskDescription ?? opts.routing?.taskDescription ?? ''
+  const routing: SkillRoutingOptions = {
+    ...(opts.routing ?? {}),
+    taskDescription: task,
+    enabled: opts.routing?.enabled === true && task.trim().length > 0
+  }
+  return buildSkillsContextResult(skillIds, { ...opts, routing }).text
 }

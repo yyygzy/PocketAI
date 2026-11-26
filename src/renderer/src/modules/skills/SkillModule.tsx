@@ -2,6 +2,7 @@
 // 技能 = 可复用提示词片段，关联到助手后自动注入 SystemPrompt
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { SkillRecord, SkillVersionRecord } from '../../../../shared/types'
+import { auditSkillDescriptions } from '../../../../shared/skill-quality'
 import { useI18n } from '../../i18n'
 import { reportIpcError, hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
@@ -180,6 +181,7 @@ export const SkillModule: React.FC = () => {
         ) : selected ? (
           <SkillDetail
             skill={selected}
+            skills={skills}
             onEdit={() => setMode('edit')}
             onToggle={() => toggleEnabled(selected)}
             onToggleResident={() => void toggleResident(selected)}
@@ -207,15 +209,27 @@ export const SkillModule: React.FC = () => {
  * 技能自带的文件（§236 第三层）。三张脸分开：读不到／确实没有／有清单。
  * "读不到"演成"没有"是这一族的老毛病（§222／§226），所以这里宁可多一句。
  */
+interface SkillFilePreview {
+  path: string
+  content: string
+  size: number
+  truncated: boolean
+  verified: boolean
+}
+
 const SkillFilesPanel: React.FC<{ skillId: string }> = ({ skillId }) => {
   const { t } = useI18n()
   const [files, setFiles] = useState<Array<{ path: string; size: number }> | null>(null)
   const [unread, setUnread] = useState<string | null>(null)
+  const [preview, setPreview] = useState<SkillFilePreview | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setFiles(null)
     setUnread(null)
+    setPreview(null)
+    setPreviewError(null)
     void window.pocketai
       .listSkillFiles(skillId)
       .then((r) => {
@@ -235,6 +249,24 @@ const SkillFilesPanel: React.FC<{ skillId: string }> = ({ skillId }) => {
     }
   }, [skillId, t])
 
+  const openPreview = (rel: string): void => {
+    setPreview(null)
+    setPreviewError(null)
+    void window.pocketai
+      .readSkillFile(skillId, rel)
+      .then((r) => {
+        if (hasIpcFailed(r) || r.ok !== true) {
+          setPreviewError(ipcFailText(r, t('skill.filePreviewError')))
+          return
+        }
+        setPreview(r.file)
+      })
+      .catch((e) => {
+        reportIpcError('skills.readFile')(e)
+        setPreviewError(errText(e))
+      })
+  }
+
   return (
     <div>
       <label className="block text-xs text-[var(--color-text-muted)] mb-1">{t('skill.files')}</label>
@@ -252,12 +284,48 @@ const SkillFilesPanel: React.FC<{ skillId: string }> = ({ skillId }) => {
       {!unread && files !== null && files.length > 0 && (
         <ul data-testid="skill-files-list" className="text-xs space-y-0.5">
           {files.map((f) => (
-            <li key={f.path} className="font-mono">
-              {f.path} <span className="text-[var(--color-text-muted)]">({f.size})</span>
+            <li key={f.path} className="flex items-center justify-between gap-2 font-mono">
+              <span>
+                {f.path} <span className="text-[var(--color-text-muted)]">({f.size})</span>
+              </span>
+              <button
+                type="button"
+                data-testid="skill-file-preview"
+                className="btn-ghost font-sans"
+                onClick={() => openPreview(f.path)}
+              >
+                {t('skill.filePreview')}
+              </button>
             </li>
           ))}
           <li className="text-[var(--color-text-muted)] mt-1">{t('skill.filesHint')}</li>
         </ul>
+      )}
+      {previewError && (
+        <div data-testid="skill-file-preview-error" className="text-xs text-[var(--color-danger)]">
+          {previewError}
+        </div>
+      )}
+      {preview && (
+        <div data-testid="skill-file-preview-modal" role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold">{t('skill.filePreviewTitle')}：{preview.path}</span>
+              <button type="button" data-testid="skill-file-preview-close" className="btn-ghost" onClick={() => setPreview(null)}>
+                {t('skill.filePreviewClose')}
+              </button>
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">
+              {preview.verified ? t('skill.filePreviewVerified') : t('skill.filePreviewUnverified')}
+            </div>
+            {preview.truncated && (
+              <div className="text-[11px] text-[var(--color-warning)]">{t('skill.filePreviewTruncated')}</div>
+            )}
+            <pre data-testid="skill-file-preview-content" className="whitespace-pre-wrap break-words rounded-lg bg-[var(--color-surface)] p-3 text-xs">
+              {preview.content}
+            </pre>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -361,15 +429,47 @@ const SkillVersionPanel: React.FC<{
   )
 }
 
+// ---------- 阶段 3：描述质量（只报事实，不阻断） ----------
+const SkillQualityPanel: React.FC<{ skill: SkillRecord; skills: SkillRecord[] }> = ({ skill, skills }) => {
+  const { t } = useI18n()
+  const issues = auditSkillDescriptions(
+    skills.map((s) => ({ id: s.id, name: s.name, description: s.description }))
+  ).filter((i) => i.skillId === skill.id || i.relatedSkillId === skill.id)
+
+  const label = (code: string, name: string, other: string): string => {
+    if (code === 'DESC_TOO_SHORT') return t('skill.qualityTooShort', { name })
+    if (code === 'DESC_NO_WHEN_TO_USE') return t('skill.qualityNoWhen', { name })
+    return t('skill.qualitySimilar', { name, other })
+  }
+
+  return (
+    <div data-testid="skill-quality-panel" className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+      <div className="text-xs font-semibold text-[var(--color-text)]">{t('skill.qualityTitle')}</div>
+      {issues.length === 0 ? (
+        <div className="text-[11px] text-[var(--color-text-muted)]">{t('skill.qualityEmpty')}</div>
+      ) : (
+        <ul className="space-y-1">
+          {issues.map((i) => (
+            <li key={`${i.code}-${i.skillId}-${i.relatedSkillId ?? ''}`} className="text-[11px] text-[var(--color-text-muted)]">
+              {label(i.code, i.skillName, i.relatedSkillName ?? '')}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ---------- 技能详情 ----------
 const SkillDetail: React.FC<{
   skill: SkillRecord
+  skills: SkillRecord[]
   onEdit: () => void
   onToggle: () => void
   onToggleResident: () => void
   onDelete: () => void
   onRolledBack: () => void
-}> = ({ skill, onEdit, onToggle, onToggleResident, onDelete, onRolledBack }) => {
+}> = ({ skill, skills, onEdit, onToggle, onToggleResident, onDelete, onRolledBack }) => {
   const { t } = useI18n()
   return (
     <div className="max-w-2xl space-y-4">
@@ -451,6 +551,8 @@ const SkillDetail: React.FC<{
       <SkillFilesPanel skillId={skill.id} />
 
       <SkillVersionPanel skill={skill} onRolledBack={onRolledBack} />
+
+      <SkillQualityPanel skill={skill} skills={skills} />
 
       <div className="flex gap-2">
         <button className="btn-ghost" onClick={onToggle}>

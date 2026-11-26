@@ -114,7 +114,8 @@ describe('装进 <DATA_DIR>/skills/<id>/ 再读回来', () => {
     const r = readSkillFolder(SRC)
     const inst = installSkillFiles(id, r.files)
     expect(inst.copied.sort()).toEqual(['references/api.md', 'scripts/run.sh'])
-    expect(listSkillFiles(id).map((f) => f.path).sort()).toEqual(['references/api.md', 'scripts/run.sh'])
+    // 阶段 4：scripts/ 仍随包保存，但不在只读白名单里，清单也不再给它预览按钮
+    expect(listSkillFiles(id).map((f) => f.path).sort()).toEqual(['references/api.md'])
     expect(readSkillFile(id, 'references/api.md').content).toBe('API 说明')
     expect(skillFilesDir(id).startsWith(skillFilesRoot())).toBe(true)
   })
@@ -142,17 +143,17 @@ describe('装进 <DATA_DIR>/skills/<id>/ 再读回来', () => {
 
   it('文件数超上限：多出来的被拒并带 TOO_MANY_FILES，装进来的不超过那道闸', () => {
     const many = path.join(TMP, 'many-skill', 'files')
-    fs.mkdirSync(many, { recursive: true })
+    fs.mkdirSync(path.join(many, 'references'), { recursive: true })
     for (let i = 0; i < SKILL_DIR_MAX_FILES + 5; i++) {
-      fs.writeFileSync(path.join(many, `f${i}.txt`), 'x', 'utf8')
+      fs.writeFileSync(path.join(many, 'references', `f${i}.txt`), 'x', 'utf8')
     }
     const r = readSkillFolder(path.join(TMP, 'many-skill', 'files'))
     // 这一份源目录里没有 SKILL.md，readSkillFolder 会直接报错——改用底层清单条数上限来验：
     // 直接构造超限清单喂给 installSkillFiles（上限那一档在两条路上都得成立）
     void r
     const files = Array.from({ length: SKILL_DIR_MAX_FILES + 3 }, (_, i) => ({
-      rel: `f${i}.txt`,
-      abs: path.join(many, `f${i}.txt`),
+      rel: `references/f${i}.txt`,
+      abs: path.join(many, 'references', `f${i}.txt`),
       size: 1
     }))
     const inst = installSkillFiles('s-236-many', files)

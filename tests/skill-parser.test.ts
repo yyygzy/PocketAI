@@ -191,7 +191,7 @@ name: md-skill
 describe('validateSkillText — 校验+警告', () => {
   it('合法技能返回 ok:true，无警告', () => {
     const result = validateSkillText(JSON.stringify({
-      name: 'x', description: 'd', icon: '🤖', content: 'a'.repeat(30)
+      name: 'x', description: '当需要在翻译用户文本、校对译文时作为方法参考使用这条技能', icon: '🤖', content: 'a'.repeat(30)
     }))
     expect(result.ok).toBe(true)
     expect(result.warnings).toEqual([])
@@ -211,6 +211,20 @@ describe('validateSkillText — 校验+警告', () => {
     }))
     expect(result.ok).toBe(true)
     expect(result.warnings).toContainEqual(expect.stringContaining('过短'))
+  })
+
+  it('description 过短与缺 when-to-use 都只警告不阻断', () => {
+    const short = validateSkillText(JSON.stringify({
+      name: 'x', description: '短', icon: '🤖', content: 'a'.repeat(30)
+    }))
+    expect(short.ok).toBe(true)
+    expect(short.warnings).toContainEqual(expect.stringContaining('description 过短'))
+
+    const noWhen = validateSkillText(JSON.stringify({
+      name: 'x', description: '这是一段既不短也没有触发线索的普通说明文字', icon: '🤖', content: 'a'.repeat(30)
+    }))
+    expect(noWhen.ok).toBe(true)
+    expect(noWhen.warnings).toContainEqual(expect.stringContaining('when-to-use'))
   })
 
   it('正文超过 500 行只给拆分建议，不判非法', () => {

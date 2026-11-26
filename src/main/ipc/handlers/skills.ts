@@ -4,7 +4,7 @@ import { IPC } from '../../../shared/types'
 import type { SkillRecord } from '../../../shared/types'
 import { skillRepo } from '../../db/repositories/skill.repo'
 import { exportSkill, importSkill, importSkillFolder } from '../../skills/skill-io'
-import { listSkillFiles, removeSkillFiles } from '../../skills/skill-files'
+import { listSkillFiles, readSkillFile, removeSkillFiles } from '../../skills/skill-files'
 import { syncBuiltinSkills } from '../../assistant/builtin'
 import { validateSkillText, SKILL_TEMPLATES } from '../../skills/skill-parser'
 import { safeHandle, argsSchema, z } from '../safe-handle'
@@ -46,6 +46,17 @@ export function registerSkillHandlers(): void {
     if (!skillRepo.get(String(id ?? ''))) return { ok: false, error: 'SKILL_NOT_FOUND' }
     return { ok: true, files: listSkillFiles(String(id ?? '')) }
   }, argsSchema(idSchema))
+  // 阶段 4：只读预览；白名单/越界/二进制/哈希校验都在 skill-files 那一层，handler 只做接线
+  safeHandle(IPC.SKILL_READ_FILE, (_e, id: string, rel: string) => {
+    const skill = skillRepo.get(String(id ?? ''))
+    if (!skill) return { ok: false, error: 'SKILL_NOT_FOUND' }
+    try {
+      const file = readSkillFile(skill.id, String(rel ?? ''))
+      return { ok: true, file }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }, argsSchema(idSchema, z.string().min(1).max(512)))
   // 阶段 1：版本历史与回滚。内置技能没有版本历史（内容锁定），只读空列表；回滚也拒绝内置。
   safeHandle(IPC.SKILL_LIST_VERSIONS, (_e, id: string) => {
     const skill = skillRepo.get(String(id ?? ''))

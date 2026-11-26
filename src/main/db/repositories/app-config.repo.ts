@@ -9,6 +9,7 @@ import { resolveSharedPath, serializeSharedPath } from '../../portable-paths'
 import { errMsg } from '../../error'
 import { createLogger } from '../../logger'
 import { KDF_LEGACY, normalizeKdfParams, type KdfParams } from '../../crypto/index'
+import { clampSkillRoutingTopN, DEFAULT_SKILL_ROUTING_TOP_N } from '../../../shared/skill-routing'
 
 const log = createLogger('config')
 
@@ -67,6 +68,8 @@ const KEYS = {
   USAGE_BUDGET_WARNED_DAILY_PREFIX: 'usage_budget_warned_daily_', // +YYYY-MM-DD：今日已弹软预警标记
   USAGE_BUDGET_WARNED_MONTHLY_PREFIX: 'usage_budget_warned_monthly_', // +YYYY-MM：本月已弹标记
   NET_PROXY_URL: 'net_proxy_url', // 主进程 API 流量代理 URL（http/https）；空/缺省=直连
+  SKILL_ROUTING_ENABLED: 'skill_routing_enabled', // '1'=按任务描述路由技能；缺省=关闭（灰度）
+  SKILL_ROUTING_TOP_N: 'skill_routing_top_n', // 路由命中时全文注入的 top-N；缺省=3
 } as const
 
 // 主密码 salt 双通道与 config.json 的读写通道
@@ -440,6 +443,25 @@ export const appConfigRepo = {
 
   setAutoUpdateEnabled(enabled: boolean): void {
     this.set(KEYS.AUTO_UPDATE_ENABLED, enabled ? '1' : '0')
+  },
+
+  // ---------- 技能路由（默认关闭，灰度开启） ----------
+
+  isSkillRoutingEnabled(): boolean {
+    return this.get(KEYS.SKILL_ROUTING_ENABLED) === '1'
+  },
+
+  setSkillRoutingEnabled(enabled: boolean): void {
+    this.set(KEYS.SKILL_ROUTING_ENABLED, enabled ? '1' : '0')
+  },
+
+  getSkillRoutingTopN(): number {
+    const raw = this.get(KEYS.SKILL_ROUTING_TOP_N)
+    return raw === null || raw === '' ? DEFAULT_SKILL_ROUTING_TOP_N : clampSkillRoutingTopN(raw)
+  },
+
+  setSkillRoutingTopN(topN: number): void {
+    this.set(KEYS.SKILL_ROUTING_TOP_N, String(clampSkillRoutingTopN(topN)))
   },
 
   // ---------- 窗口行为（开机自启 / 关窗到托盘） ----------

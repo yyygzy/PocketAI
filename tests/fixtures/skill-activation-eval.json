@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "name": "技能触发基线 2026-11",
+  "topN": 2,
+  "skills": [
+    {
+      "id": "code-review",
+      "name": "代码审查",
+      "description": "当需要在提交前审查代码质量、性能与安全隐患时使用这条技能"
+    },
+    {
+      "id": "translation",
+      "name": "翻译助手",
+      "description": "需要把中文翻译成英文或其他语言时使用这条技能"
+    },
+    {
+      "id": "writing",
+      "name": "周报助手",
+      "description": "当要写周报、总结或工作汇报时使用这条技能"
+    },
+    {
+      "id": "data-analysis",
+      "name": "数据分析",
+      "description": "需要处理 CSV 或表格数据并给出统计结论时使用这条技能"
+    },
+    {
+      "id": "general",
+      "name": "通用问答",
+      "description": "当用户提出日常问答、解释概念、写作或分析类问题且没有专门技能时使用"
+    }
+  ],
+  "cases": [
+    {
+      "id": "review-ts",
+      "prompt": "帮我审查这段 TypeScript 代码的性能和安全隐患",
+      "expected": ["code-review"]
+    },
+    {
+      "id": "review-pr",
+      "prompt": "审查这个 Pull Request 里的改动有没有安全漏洞",
+      "expected": ["code-review"]
+    },
+    {
+      "id": "translate-zh-en",
+      "prompt": "把这两段中文翻译成英文",
+      "expected": ["translation"]
+    },
+    {
+      "id": "translate-en-zh",
+      "prompt": "把这份英文文档翻成中文",
+      "expected": ["translation"]
+    },
+    {
+      "id": "write-weekly",
+      "prompt": "帮我写一份本周的工作周报",
+      "expected": ["writing"]
+    },
+    {
+      "id": "analyze-csv",
+      "prompt": "分析这个 CSV 表格，给出统计结论",
+      "expected": ["data-analysis"]
+    },
+    {
+      "id": "analyze-sales",
+      "prompt": "根据这些销售表格做一个统计分析",
+      "expected": ["data-analysis"]
+    },
+    {
+      "id": "explain-concept",
+      "prompt": "解释一下量子纠缠是什么",
+      "expected": ["general"]
+    }
+  ]
+}

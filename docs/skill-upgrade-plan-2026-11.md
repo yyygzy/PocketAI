@@ -44,7 +44,7 @@
 
 ---
 
-## 阶段 3：运行时技能路由 + 描述质量检查
+## 阶段 3：运行时技能路由 + 描述质量检查（已完成）
 
 **目标**：从“全量注入绑定技能”走向“按任务描述选择技能”，对齐业界 description 决定触发的机制。
 
@@ -56,7 +56,7 @@
 
 ---
 
-## 阶段 4：references / assets 按需读取
+## 阶段 4：references / assets 按需读取（已完成）
 
 **目标**：让目录包里的参考文件真正可用，而不是只存不读。
 
@@ -105,3 +105,16 @@
   - 导入：文件 / 目录 / URL 继续接受 `.md` 与标准 `SKILL.md`；kebab-case 目录名按原入口规则读取，不拿目录名充当技能名；标准样例导入后真库读回 version/author/license/来源/commit/哈希/安装时间。
   - 软提示：正文超过 500 行新增 `LONG_BODY_SPLIT_HINT`（info 事实块），四语文案与扫描报告同步；只给“建议拆分到 references/”，不阻断、不改 8KB/32KB 上限。
   - 验证：`npm run typecheck` 通过；阶段 2 专项 6 文件 / 102 测试通过；最终全量 735 文件 / 7786 测试通过（1 文件 / 2 测试跳过）；`read_lints` 无新增问题。
+- 2026-11-26：阶段 3 完成并通过验收。
+  - 开关：新增 `skill_routing_enabled`（缺省关闭）与 `skill_routing_top_n`（缺省 3，收敛到 1..10）两个 app_config 键；路由配置读取失败一律退回关闭，灰度开关不把正常对话带崩。
+  - 路由：`src/shared/skill-routing.ts` 用中英混合 token 重叠打分，同分保持绑定顺序；top-N 给全文，其余在有 `load_skill` 时给指针、无工具时省略并记入 `deferred`。仅改变注入哪几段正文，不改任何工具权限。
+  - 接线：普通聊天与 Agent 都把本轮用户消息作为 `taskDescription` 传入；开关关闭时 `buildSkillsContext` 输出与阶段 2 逐字一致，§236 两层披露不变。
+  - 描述质量：解析/校验屏提示 description 过短与缺 when-to-use；共享 `auditSkillDescriptions` 额外做两两相似检查，技能详情页新增"描述质量"面板，四语文案齐全。
+  - 评测：`tests/fixtures/skill-activation-eval.json` 固化 8 条 prompt，CI 基线 8/8@1、8/8@2；阈值守住 top-1 ≥ 75%、top-N ≥ 87.5%。
+  - 验证：`npm run typecheck` 通过；阶段 3 核心专项 6 文件 / 73 测试、UI/i18n 专项 7 文件 / 39 测试通过；最终全量 738 文件 / 7804 测试通过（1 文件 / 2 测试跳过）；`read_lints` 无新增问题。
+- 2026-11-26：阶段 4 完成并通过验收。
+  - 白名单：`load_skill(path)` 与 UI 清单只开放 `references/**` / `assets/**` 文本文件；`scripts/**` 仍随包保存但不给读、不给预览按钮。
+  - 防护：词法越界/NUL/绝对路径 → realpath 实路径仍须在本技能目录（父目录软链也挡住）→ 安装时逐文件 sha256 隐藏清单在读取时复验 → 全缓冲区 NUL + 严格 UTF-8 拒二进制。旧包无清单时可读但标"未校验"。
+  - 接线：新增 `skill:read-file` IPC 与 preload 方法；技能详情页文件清单可点开只读模态，展示路径、内容、截断/校验状态与读失败原因，四语文案齐全。
+  - 安全：只读，不执行、不联网；不改目录包大小/文件数上限；删技能仍整目录清理（含隐藏清单）。
+  - 验证：`npm run typecheck` 通过；阶段 4 专项 6 文件 / 46 测试通过；最终全量 740 文件 / 7814 测试通过（1 文件 / 2 测试跳过）；`read_lints` 无新增问题。

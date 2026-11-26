@@ -9,6 +9,7 @@
 //    按需 32KB（§236 存得下、由 load_skill 一次取一段，不进每次请求的固定开销）
 import type { BuiltinSkill } from '../db/repositories/skill.repo'
 import { SKILL_BODY_SPLIT_HINT_LINES } from '../../shared/skill-scan'
+import { checkSkillDescription } from '../../shared/skill-quality'
 
 /** 解析后的统一技能形状（skillRepo.save 接受的子集） */
 export interface SkillShape {
@@ -294,6 +295,12 @@ export function validateSkillText(text: string): SkillValidationResult {
     return { ok: false, error, warnings }
   }
   if (!shape.description) warnings.push('缺少 description，建议补充技能用途说明')
+  else {
+    for (const code of checkSkillDescription(shape.description)) {
+      if (code === 'DESC_TOO_SHORT') warnings.push('description 过短，建议写清用途与何时使用')
+      if (code === 'DESC_NO_WHEN_TO_USE') warnings.push('description 缺少 when-to-use（何时该用这条技能）')
+    }
+  }
   if (shape.content.length < 20) warnings.push('content 过短，可能无法有效引导模型')
   if (shape.icon === '⚡') warnings.push('未设置 icon，使用默认 ⚡')
   const lineCount = shape.content.split(/\r?\n/).length

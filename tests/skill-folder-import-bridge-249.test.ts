@@ -119,10 +119,13 @@ describe('SKILL_IMPORT_FOLDER 整条桥（真 preload ⇄ 真 handler ⇄ 真库
     const onDisk = (fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true }).map(String) : [])
       .map((p) => p.split(path.sep).join('/'))
     console.log('落盘 =', onDisk.join(', '))
-    expect(onDisk.sort()).toEqual(['references', 'references/notes.md', 'scripts', 'scripts/count.sh'].sort())
+    // 阶段 4：隐藏清单随包落盘；scripts 仍留在盘上，但不在只读白名单的清单里
+    expect(onDisk.sort()).toEqual([
+      '.skill-files.json', 'references', 'references/notes.md', 'scripts', 'scripts/count.sh'
+    ].sort())
     const list = await call('listSkillFiles', id)
     console.log('清单 =', JSON.stringify(list))
-    expect(list.files.map((f: { path: string }) => f.path).sort()).toEqual(['references/notes.md', 'scripts/count.sh'])
+    expect(list.files.map((f: { path: string }) => f.path).sort()).toEqual(['references/notes.md'])
     // 删技能连自带文件一起走（这条也是桥：SKILL_DELETE 里那次 removeSkillFiles 只有跨桥才证得到）
     const del = await call('deleteSkill', id)
     expect(del).toEqual({ ok: true, filesRemoved: true })

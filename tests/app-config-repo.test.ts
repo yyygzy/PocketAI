@@ -134,3 +134,29 @@ describe('appConfigRepo 用量预算 helper（null=不限制）', () => {
     expect(ctx.appConfigRepo.getUsageBudgetMonthly()).toBeNull()
   })
 })
+
+describe('appConfigRepo 技能路由灰度开关', () => {
+  let ctx: Awaited<ReturnType<typeof loadRepo>>
+
+  beforeEach(async () => {
+    ctx = await loadRepo()
+  })
+
+  it('缺省关闭；显式开启后可回读', () => {
+    expect(ctx.appConfigRepo.isSkillRoutingEnabled()).toBe(false)
+    ctx.appConfigRepo.setSkillRoutingEnabled(true)
+    expect(ctx.appConfigRepo.isSkillRoutingEnabled()).toBe(true)
+    ctx.appConfigRepo.setSkillRoutingEnabled(false)
+    expect(ctx.appConfigRepo.isSkillRoutingEnabled()).toBe(false)
+  })
+
+  it('top-N 缺省 3，读写时收敛到 1..10', () => {
+    expect(ctx.appConfigRepo.getSkillRoutingTopN()).toBe(3)
+    ctx.appConfigRepo.setSkillRoutingTopN(5)
+    expect(ctx.appConfigRepo.getSkillRoutingTopN()).toBe(5)
+    ctx.appConfigRepo.setSkillRoutingTopN(99)
+    expect(ctx.appConfigRepo.getSkillRoutingTopN()).toBe(10)
+    ctx.appConfigRepo.setSkillRoutingTopN(0)
+    expect(ctx.appConfigRepo.getSkillRoutingTopN()).toBe(1)
+  })
+})

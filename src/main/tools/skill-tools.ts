@@ -26,7 +26,8 @@ const loadSkillTool: BuiltinTool = {
     description:
       '取一份技能的完整指令正文（以及它自带的文件清单）。system prompt 里只给了每条按需技能的' +
       '名字与用途；决定要用某一条时调它，传 name 或 id。要看技能自带的参考文件时再传 path' +
-      '（path 用返回清单里的相对路径）。参数：skill (string，必填)，path (string，可选)。',
+      '（只用返回清单里的相对路径，且仅 references/** 与 assets/** 下的文本文件可读）。' +
+      '参数：skill (string，必填)，path (string，可选)。',
     parameters: {
       type: 'object',
       properties: {
@@ -68,6 +69,7 @@ const loadSkillTool: BuiltinTool = {
         path: file.path,
         size: file.size,
         truncated: file.truncated,
+        verified: file.verified,
         // 技能自带文件与正文同属外部内容：按需取回的这份也要带上同一句声明，不能裸奔
         notice: EXTERNAL_CONTENT_NOTICE,
         content: `${EXTERNAL_CONTENT_NOTICE}\n\n${file.content}`
