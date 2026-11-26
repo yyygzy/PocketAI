@@ -1,7 +1,7 @@
 # 墨匣（Moxia / PocketAI）交接说明
 
 > 快照生成时间：2026-11-17（Asia/Shanghai）；最近回写：2026-11-26
-> 源码版本：`package.json` 中 `version` 为 **1.3.0**；当前 `main` 分支 HEAD 为 `d173434`（快照生成时为 `6dbeff0`）
+> 源码版本：`package.json` 中 `version` 为 **1.3.0**；当前 `main` 分支 HEAD 为 `554f82c`（快照生成时为 `6dbeff0`）
 > 快照根目录：`E:\PocketAI-handover-1.3.0\`
 
 本文只描述仓库里已经存在的代码与文档事实。凡本次未实测、无法从代码/文档确认的内容，会明确写「待确认」，不当作结论使用。
@@ -176,6 +176,7 @@ npm run build        # electron-vite build，产物在 out/
 | `df6f60c` | `feat(skill): 标准化 SKILL.md 与元数据兼容` | 标准 `SKILL.md`、`metadata.*` 补位、超长正文软提示、真库落库验收。 |
 | `900d8f5` | `feat(skill): 完成技能路由、质量检查与资源按需读取` | 默认关闭的运行时路由 + activation eval、描述质量面板、`references/assets` 白名单只读与预览。 |
 | `d173434` | `feat(skill): 增加浏览器沙箱技能脚本执行` | `run_skill_script` 默认 deny、逐次确认、仅清单内 JS、浏览器沙箱执行；详见 `docs/skill-upgrade-plan-2026-11.md` 与 `docs/skill-script-sandbox-2026-11.md`。 |
+| `554f82c` | `feat(screenshot): 完成双平台区域截图并接入主窗 Composer` | macOS `desktopCapturer` 整屏捕获、双平台浮窗区域框选、主窗 `+ → 截图` 的 window/screen 入口；四语文案与专项测试同步，已推送 `origin/main` 与 `gitee/main`。 |
 
 冷启动白屏的根因（`fe2669c` 提交说明与代码注释）：旧实现用同步 `execSync`/`execFileSync` 跑 PowerShell，Windows 上冷启动加 CIM 查询可占用主线程 15–30s，期间窗口导航、加载重试与显示兜底计时器都被推迟。现在启动路径只发起异步探测，主线程不再等待。
 
@@ -197,6 +198,8 @@ npm run build        # electron-vite build，产物在 out/
 - **截图**：`src/shared/screenshot.ts` 的 `isScreenshotPlatformSupported()` 放行 `win32` 与 `darwin`；Windows 用 PrintWindow/DWM，macOS 用 `desktopCapturer` 整屏，双平台区域框选在浮窗会话里完成。主窗 `+ → 截图` 另给「当前窗口／整个屏幕」两目标，复用同一条截图 IPC 与 Composer 附件链路，捕获后不自动发送；主窗调用不会显示/聚焦浮窗。Linux 仍按 `unsupported-platform` 处理，没有截图进对话入口。
 - **选区取词**：`src/main/popup.ts` 的 Linux 分支明确注释「无零依赖的统一取词方案（xdotool/xclip 不一定存在），v1 不支持」；Linux 上按选区快捷键只会打开快捷问答窗。设置页通过 `isLinuxPlatform()` 显示不支持提示（`src/renderer/src/utils/shortcuts.ts`、`SettingsModule.tsx`）。
 - 结论：这是**产品边界/未实现**，不是偶发 bug；接 Linux 功能前需要先定方案与依赖。
+
+**Windows 真机验收（2026-11-26）**：从 `dist/win-unpacked/Moxia.exe` 启动，经 CDP 驱动真实 Electron 窗口完成。主窗 `+ → 截图 → 当前窗口` 得到 `3840×2160` PNG、`整个屏幕` 得到 `3840×2160` JPEG，截图只进 Composer 附件栏、不自动发送、可删除；浮窗区域框选拖 500×300 逻辑矩形得到 `1250×750` 物理裁剪，取消不产生附件。安装包与 asar 已重建核验，`latest.yml` 校验通过；证据在 `artifacts/qa-*.png`。macOS 授权/捕获与多显示器跨 DPI 仍未验。
 
 ### 5.3 WSL 硬件探测（已接宿主通道，MoxiaBuild 真机已复核）
 
@@ -242,7 +245,7 @@ npm run build        # electron-vite build，产物在 out/
 
 ## 6. 提交与推送状态
 
-> 当前复核（2026-11-26）：`main` HEAD 为 `d173434`，知识库与技能升级全部提交均已推送到 `origin/main` 与 `gitee/main`，工作区干净。下方命令输出与 `[ahead 1]` 均为 2026-11-17 历史快照，不再代表当前状态。tag / Release 状态仍待发布时复核，不作为代码遗留。
+> 当前复核（2026-11-26）：`main` HEAD 为 `554f82c`，知识库、技能升级与截图第二／三刀全部提交均已推送到 `origin/main` 与 `gitee/main`，工作区干净。Windows 真机验收已完成，`dist/` 安装包与 `artifacts/` 资产已同步到该 HEAD；下方命令输出与 `[ahead 1]` 均为 2026-11-17 历史快照，不再代表当前状态。tag / Release 状态仍待发布时复核，不作为代码遗留。
 
 快照生成时的实际状态（`c:\PocketAI`）：
 
@@ -299,15 +302,17 @@ git tag --list
 
 ### 7.3 `artifacts/`（1.3.0 安装包）
 
-| 文件 | 字节数 | SHA-256（与源文件一致） |
+| 文件 | 字节数 | SHA-256（与 `dist/` 源文件一致） |
 |---|---:|---|
-| `Moxia-1.3.0-x64.exe` | 301,038,573 | `32A5F24E8E0B30B39C388311A79A3C8CE23BE8E2F0E6FFF69F0B9368D86E8C85` |
-| `Moxia-1.3.0-Portable-x64.exe` | 300,804,308 | `300C06A166E0607D25316B99B54E043ED018718F95A43041E237310340C619EE` |
-| `Moxia-1.3.0-Linux-x86_64.AppImage` | 327,449,882 | `5C6DD5D3A3E52F1FF14848E46B1DD988A8BFCD1CC2985E0358B98ED12FC71930` |
-| `latest.yml` | 335 | `B10176CEC54B9B42BE4D6434E8CD382FECBFB9DEF92B6E6FF4746F6E2D019B23` |
-| `latest-linux.yml` | 388 | `B2082529339502D2F733916A7483F026C37DED07055FB99A160D85FF41D83C8F` |
+| `Moxia-1.3.0-x64.exe` | 336,166,884 | `C5A161F90BA9E9CFA1A0CBD7F2A39298C98311E35DCB8FED22D53109CBABDE44` |
+| `Moxia-1.3.0-Portable-x64.exe` | 267,423,354 | `C96C6A00CBBB505A0474539FA5294A25E88B5EABED3A17279695B45B0B72D4CE` |
+| `Moxia-1.3.0-Linux-x86_64.AppImage` | 346,358,488 | `5654FCAC6EFB3D8F906406A87389FDCCBAED55E8C76E1596350C664FAE204938` |
+| `Moxia-1.3.0-Linux-amd64.deb` | 264,966,048 | `A1EF5F35173549E14AE02AA191534F01AC09CE9875598ADD0363DCD8FA52242F` |
+| `latest.yml` | 335 | `FC159E03965F7A06E71E14DBEFC7185EC5F1E41869065410B861DF228B1F6E00` |
+| `latest-linux.yml` | 546 | `632D81DCB42CA45949D678E2B6480B5083EBE392B340D45B04CF51CC55270DAF` |
+| `Moxia-1.3.0-x64.exe.blockmap` | 343,821 | `A530A3790848DC6AEC26C1A632D16B25BFFC6372E90EF1F38ED57BFE77B4FEAA` |
 
-合计 **5 个文件 / 929,293,486 字节**。`dist/` 内其他旧版本文件（如 `Moxia-1.1.8-x64 (2).exe`、1.2.x 的包与 blockmap、`win-unpacked/`、`builder-debug.yml`）**未带入**。
+合计 **7 个文件 / 1,215,259,476 字节**，已按 `554f82c` 重新构建并同步。`dist/` 内其他旧版本文件（如 `Moxia-1.1.8-x64 (2).exe`、1.2.x 的包、`win-unpacked/`、`builder-debug.yml`）**未带入**。
 
 自查命令（Windows PowerShell）：
 
