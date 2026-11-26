@@ -1,6 +1,7 @@
 // 入库流水线：解析 → 分块 → 向量化 → 存储
 // 失败不中断整个知识库，仅记录单文档错误
 // 性能埋点：各阶段耗时经 perf-probe 入环形缓冲（数据健康面板「最近慢操作」可见）
+import fs from 'node:fs'
 import path from 'node:path'
 import { kbRepo } from '../db/repositories/kb.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
@@ -8,7 +9,7 @@ import { kbChunkRepo } from '../db/repositories/kb-chunk.repo'
 import { kbAskSessionRepo } from '../db/repositories/kb-ask-session.repo'
 import { chunkMarkdown } from './chunker'
 import { embedTexts } from './embedding'
-import { parseDocument } from './parsers'
+import { detectSourceType, parseDocument } from './parsers'
 import { ocrImageFile } from './ocr'
 import { hashFile } from './sync-check'
 import { recordPerf, logPerfDebug } from '../steward/perf-probe'
@@ -49,16 +50,21 @@ export class IngestionService {
     // 文本类文档（手工录入/消息附件）的 source 是标题或 msg_* 标记而非文件路径，
     // parseDocument 会把它当路径读文件必失败——分流到 ingestText 用留存原文重建。
     // v42 前录入的文本没有 raw_text：给小白明确引导，而非抛底层 ENOENT。
+    let effectiveType = doc.sourceType
     if (doc.sourceType === 'txt') {
       const rawText = kbDocRepo.getRawText(docId)
-      if (!rawText) {
+      if (rawText) return this.ingestText(kbId, docId, rawText, doc.title)
+      // 兼容旧版本把 CSV 等文件误判为 txt 的存量记录：source 是真实文件则按扩展名重判，
+      // 让它们走文件解析（含新的结构化解析）而不是「原文未保存」的死路。
+      if (fs.existsSync(doc.source) && /\.(csv|txt|md|markdown|json|log)$/i.test(doc.source)) {
+        effectiveType = detectSourceType(doc.source)
+      } else {
         markDocumentFailure(
           docId,
           new Error('该文本录入于旧版本，原文未保存，无法重建，请删除后重新添加')
         )
         return mustGet(() => kbDocRepo.get(docId), '知识库文档')
       }
-      return this.ingestText(kbId, docId, rawText, doc.title)
     }
 
     try {
@@ -75,7 +81,7 @@ export class IngestionService {
         contentHash = null
       }
       const t0 = performance.now()
-      const parsed = await parseForIngest(doc.source, doc.sourceType, kb)
+      const parsed = await parseForIngest(doc.source, effectiveType, kb)
       const parseMs = performance.now() - t0
       if (!parsed.text.trim()) {
         throw new Error(

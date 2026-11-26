@@ -4,6 +4,8 @@ import type {
   KnowledgeBase,
   KbDocument,
   KbChunk,
+  KbReindexNotice,
+  KbSaveResult,
   RetrievedChunk,
   RetrievalDiagnostics,
   ProviderRecord
@@ -35,6 +37,8 @@ export const KnowledgeModule: React.FC = () => {
   const [askJumpId, setAskJumpId] = useState<string | null>(null)
   // §254：这一读失败时以前只剩空态那句「还没有知识库」，把"没读到"演成"真没有"（闸门第四面）
   const [kbsErr, setKbsErr] = useState<string | null>(null)
+  // KB 升级阶段 1：配置变更重建提示（按 kbId 归属，交给详情页显示；切库不串台）
+  const [reindexNotice, setReindexNotice] = useState<KbReindexNotice | null>(null)
 
   const load = useCallback(
     () =>
@@ -182,12 +186,15 @@ export const KnowledgeModule: React.FC = () => {
               setSelectedId(kb.id)
               load()
             }}
+            onNeedReindex={setReindexNotice}
             onCancel={() => setMode('detail')}
           />
         ) : selected ? (
           <KbDetail
             kb={selected}
             onChanged={load}
+            reindexNotice={reindexNotice}
+            onReindexNoticeChange={setReindexNotice}
             jumpFocus={jumpFocus}
             onJumpHandled={() => setJumpFocus(null)}
             askJumpId={askJumpId}
@@ -206,9 +213,11 @@ export const KnowledgeModule: React.FC = () => {
 // ---------- 知识库创建/编辑表单 ----------
 const KbForm: React.FC<{
   kb?: KnowledgeBase
-  onSaved: (kb: KnowledgeBase) => void
+  onSaved: (kb: KbSaveResult) => void
+  /** 配置变更导致旧索引失配时上抛提示，由详情页统一展示；不传则退回旧 toast */
+  onNeedReindex?: (notice: KbReindexNotice) => void
   onCancel: () => void
-}> = ({ kb, onSaved, onCancel }) => {
+}> = ({ kb, onSaved, onNeedReindex, onCancel }) => {
   const { t } = useI18n()
   const toast = useToast()
   const [providers, setProviders] = useState<ProviderRecord[]>([])
@@ -295,8 +304,16 @@ const KbForm: React.FC<{
         setError(ipcFailText(saved, t('common.unknownError')))
         return
       }
-      // A9：向量模型换过 ⇒ 旧向量维度不匹配、检索时不可见，提示用户重建索引
-      if (saved.embeddingChanged) {
+      // A9 / KB 升级阶段 1：配置变更 ⇒ 旧索引失配，交给详情页统一提示条；
+      // 没有 onNeedReindex 的调用方仍走原来的 toast，行为不倒退。
+      if (saved.needReindex) {
+        onNeedReindex?.({
+          kbId: saved.id,
+          docCount: saved.needReindexDocCount ?? 0,
+          embeddingChanged: !!saved.embeddingChanged,
+          chunkingChanged: !!saved.chunkingChanged
+        })
+      } else if (saved.embeddingChanged && !onNeedReindex) {
         toast.warning(t('kb.embeddingChanged'))
       }
       onSaved(saved)
@@ -625,12 +642,24 @@ const KbForm: React.FC<{
 export const KbDetail: React.FC<{
   kb: KnowledgeBase
   onChanged: () => void
+  /** 配置变更重建提示（父级保存后传入；按 kbId 归属） */
+  reindexNotice?: KbReindexNotice | null
+  onReindexNoticeChange?: (notice: KbReindexNotice | null) => void
   jumpFocus?: { docId: string; seq: number } | null
   onJumpHandled?: () => void
   /** 跨库漫游跳转目标会话 id（切到问答 tab 并透传给 KbAskPanel） */
   askJumpId?: string | null
   onAskJumpHandled?: () => void
-}> = ({ kb, onChanged, jumpFocus, onJumpHandled, askJumpId = null, onAskJumpHandled }) => {
+}> = ({
+  kb,
+  onChanged,
+  reindexNotice,
+  onReindexNoticeChange,
+  jumpFocus,
+  onJumpHandled,
+  askJumpId = null,
+  onAskJumpHandled
+}) => {
   const { t } = useI18n()
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
@@ -648,6 +677,10 @@ export const KbDetail: React.FC<{
   /** 批量模式：行首那个复选框在批量模式下表示「选中要处理」，平时表示「参与检索」 */
   const [batchMode, setBatchMode] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
+  /** KB 升级阶段 1：源文件变更检测结果（取消确认也留在提示条上，给一键处理入口） */
+  const [syncIssues, setSyncIssues] = useState<
+    Array<{ docId: string; title?: string; source?: string; kind: 'changed' | 'missing' }>
+  >([])
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // §311：`kb` 是 prop、`KbDetail` 在 :175 渲染时不带 key ⇒ 切库是**同一个实例**，docs/readErr 跨库存活。
   // 这里要挡的不是"旧 state"（那是另一族，见台账 §311 记的候选），而是**旧那一发的迟到响应**：
@@ -666,6 +699,7 @@ export const KbDetail: React.FC<{
   useEffect(() => {
     setBatchMode(false)
     setSelected([])
+    setSyncIssues([])
   }, [kb.id])
 
   // 跨库漫游跳转：切到问答 tab（KbAskPanel 挂载/保活后自行消费 askJumpId）
@@ -872,6 +906,8 @@ export const KbDetail: React.FC<{
       startPolling()
       // 队列只认库里还存在的文档：入队数少于选中的篇数就如实报差值，不假装全成功
       toast.info(t('kb.batchDone', { n: r.enqueued, m: ids.length - r.enqueued }))
+      // 重建已入队 ⇒ 配置变更提示条完成使命（失败分支在上面提前 return，提示条保留）
+      onReindexNoticeChange?.(null)
     } catch (e) {
       toast.error(errText(e))
       setBusy(false)
@@ -958,10 +994,13 @@ export const KbDetail: React.FC<{
       const changed = r.issues.filter((i) => i.kind === 'changed')
       const missing = r.issues.filter((i) => i.kind === 'missing')
       if (r.issues.length === 0) {
+        setSyncIssues([])
         toast.info(t('kb.syncUpToDate', { n: r.checked }))
         setBusy(false)
         return
       }
+      // 提示条先挂上：用户取消确认也还能从「处理源文件变更」再进来（只提示、不自动重建）
+      setSyncIssues(r.issues)
       const ok = await confirm({
         message: t('kb.syncConfirm', { n: changed.length, m: missing.length }),
         danger: missing.length > 0
@@ -986,6 +1025,7 @@ export const KbDetail: React.FC<{
         else removed++
       }
       await refresh()
+      setSyncIssues([])
       if (reindexed > 0) {
         // §337：busy 由 startPolling 检测到全部 ready 后清，防索引期间重复点击
         startPolling()
@@ -1010,7 +1050,15 @@ export const KbDetail: React.FC<{
     // 而 KbForm 的二十来个字段只在 mount 时取初值、`handleSave` 传的却是**当前**那份 `kb?.id`：
     // 库 A 点「设置」→ 左栏点库 B → 保存 ⇒ 屏上是 A 的嵌入模型与分块参数，落库落进 B（A 没动、B 被覆盖，
     // 且 embeddingDim 保旧值 ⇒ B 的旧向量按 dim 分片表再也召不回来）
-    return <KbForm key={kb.id} kb={kb} onSaved={() => { setEditing(false); onChanged() }} onCancel={() => setEditing(false)} />
+    return (
+      <KbForm
+        key={kb.id}
+        kb={kb}
+        onSaved={() => { setEditing(false); onChanged() }}
+        onNeedReindex={(notice) => onReindexNoticeChange?.(notice)}
+        onCancel={() => setEditing(false)}
+      />
+    )
   }
 
   return (
@@ -1037,6 +1085,56 @@ export const KbDetail: React.FC<{
           </button>
         </div>
       </div>
+
+      {/* KB 升级阶段 1：配置变更 / 源文件变更统一提示条（只提示与一键处理，不自动重建） */}
+      {reindexNotice?.kbId === kb.id && (
+        <div
+          role="status"
+          data-testid="kb-reindex-notice"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-bg)] px-3 py-2 text-xs text-[var(--color-warning)]"
+        >
+          <span className="flex-1 min-w-0">
+            {t('kb.reindexNotice', { n: reindexNotice.docCount })}
+          </span>
+          <button
+            data-testid="kb-reindex-all"
+            onClick={() => void handleBatchReindex(docs.map((d) => d.id))}
+            disabled={busy}
+            className="btn-ghost text-xs disabled:opacity-50"
+          >
+            {t('kb.reindexAll')}
+          </button>
+          <button
+            data-testid="kb-reindex-dismiss"
+            onClick={() => onReindexNoticeChange?.(null)}
+            className="btn-ghost text-xs"
+          >
+            {t('kb.dismissNotice')}
+          </button>
+        </div>
+      )}
+      {syncIssues.length > 0 && (
+        <div
+          role="status"
+          data-testid="kb-sync-notice"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-bg)] px-3 py-2 text-xs text-[var(--color-warning)]"
+        >
+          <span className="flex-1 min-w-0">
+            {t('kb.syncIssuesNotice', {
+              n: syncIssues.filter((i) => i.kind === 'changed').length,
+              m: syncIssues.filter((i) => i.kind === 'missing').length
+            })}
+          </span>
+          <button
+            data-testid="kb-sync-handle"
+            onClick={() => void handleSyncCheck()}
+            disabled={busy}
+            className="btn-ghost text-xs disabled:opacity-50"
+          >
+            {t('kb.handleSyncIssues')}
+          </button>
+        </div>
+      )}
 
       {/* 视图切换：文档管理 / 问答（hidden 保挂载，问答对话不丢） */}
       <div className="flex gap-1">

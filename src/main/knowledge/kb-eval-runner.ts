@@ -123,6 +123,8 @@ export async function runKbEvalSet(input: RunKbEvalInput): Promise<KbEvalRunResu
     kbId: kb.id,
     fileName: input.fileName ?? kbEvalFileName(input.filePath),
     metrics: toEvalMetrics(summary),
+    // 缺失清单由判分派生，不重跑检索、不改 rows 顺序
+    missingSources: summary.missingSources,
     rows: summary.perCase.map((p) => ({
       caseId: p.caseId,
       query: queryOf.get(p.caseId) ?? '',

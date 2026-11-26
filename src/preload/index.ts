@@ -20,6 +20,7 @@ import type {
   ArtifactPreview,
   ArtifactTextResult,
   AttachmentDocumentParseResult,
+  KbSaveResult,
   ProjectPreview
 } from '../shared/types'
 import type { MainHandshakeReply } from '../shared/ipc-handshake'
@@ -677,7 +678,7 @@ const api = {
     ipcRenderer.invoke(IPC.KB_GET, id),
   saveKnowledgeBase: (
     record: Partial<KnowledgeBase> & { name: string }
-  ): Promise<KnowledgeBase & { embeddingChanged?: boolean }> =>
+  ): Promise<KbSaveResult> =>
     ipcRenderer.invoke(IPC.KB_SAVE, record),
   deleteKnowledgeBase: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.KB_DELETE, id),

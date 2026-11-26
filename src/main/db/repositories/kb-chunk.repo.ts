@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
 import { kbVecRepo } from './kb-vec.repo'
-import { buildFtsMatchQuery } from '../../knowledge/fts-query'
+import { buildFtsMatchQuery, buildShortFtsMatchQuery } from '../../knowledge/fts-query'
 import { recordPerf, logPerfDebug } from '../../steward/perf-probe'
 import type { KbChunk, RetrievedChunk } from '../../../shared/types'
 
@@ -366,42 +366,75 @@ export const kbChunkRepo = {
   ): RetrievedChunk[] {
     if (kbIds.length === 0 || !query.trim()) return []
     const db = dbService.getHandle()
+    const exists = (name: string): boolean =>
+      !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name)
 
-    // 检查 FTS 表是否存在（兼容旧库未迁移的情况）
-    const ftsExists = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='kb_chunks_fts'"
-    ).get()
-    if (!ftsExists) return []
+    // 主路：trigram（SEC-18）；≥3 字 CJK 与常规拉丁词仍只走这一路，排名口径不变
+    const primaryExpr = buildFtsMatchQuery(query)
+    const primary =
+      primaryExpr && exists('kb_chunks_fts')
+        ? ftsSearch(db, 'kb_chunks_fts', primaryExpr, kbIds, topK)
+        : []
 
-    // 构造 FTS5 MATCH 查询：CJK 切成 3 字滑窗 OR、拉丁词整词匹配（SEC-18，见 knowledge/fts-query.ts）。
-    // 短 CJK 查询产不出词项时直接跳过 BM25（向量路覆盖），不要发一个恒空的 MATCH。
-    const matchExpr = buildFtsMatchQuery(query)
-    if (!matchExpr) return []
+    // 辅助路：unicode61 + 单字展开，只补 trigram 匹配不到的 1–2 字段 / 短拉丁词
+    const shortExpr = buildShortFtsMatchQuery(query)
+    const short =
+      shortExpr && exists('kb_chunks_fts_short')
+        ? ftsSearch(db, 'kb_chunks_fts_short', shortExpr, kbIds, topK)
+        : []
 
-    const placeholders = kbIds.map(() => '?').join(',')
-    const rows = db
-      .prepare(
-        `SELECT f.content, f.doc_id, f.kb_id, f.chunk_id, c.sequence, bm25(kb_chunks_fts) AS score
-         FROM kb_chunks_fts f
-         JOIN kb_chunks c ON c.id = f.chunk_id
-         WHERE f.kb_chunks_fts MATCH ? AND f.kb_id IN (${placeholders})
-           AND f.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)
-         ORDER BY score ASC
-         LIMIT ?`
-      )
-      .all(matchExpr, ...kbIds, topK) as Array<{ content: string; doc_id: string; kb_id: string; chunk_id: string; sequence: number; score: number }>
+    if (short.length === 0) return primary
+    if (primary.length === 0) return short
 
-    // FTS5 bm25() 返回值越小越相关，取负数使降序排列时相关的在前
-    return rows.map((r) => ({
-      chunkId: r.chunk_id,
-      docId: r.doc_id,
-      kbId: r.kb_id,
-      seq: r.sequence,
-      docTitle: '',
-      content: r.content,
-      score: -r.score
-    }))
+    // 同一 chunk 被两路命中只算一次；两张表 bm25 量纲不同，取较大值避免重复计权
+    const merged = new Map<string, RetrievedChunk>()
+    for (const r of [...primary, ...short]) {
+      const prev = merged.get(r.chunkId)
+      if (!prev || r.score > prev.score) merged.set(r.chunkId, r)
+    }
+    return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, topK)
   }
+}
+
+/** 两张 FTS 表共用的检索；表名是字面量联合，不接外部输入 */
+type FtsTableName = 'kb_chunks_fts' | 'kb_chunks_fts_short'
+
+function ftsSearch(
+  db: ReturnType<typeof dbService.getHandle>,
+  table: FtsTableName,
+  matchExpr: string,
+  kbIds: string[],
+  topK: number
+): RetrievedChunk[] {
+  const placeholders = kbIds.map(() => '?').join(',')
+  const rows = db
+    .prepare(
+      `SELECT f.content, f.doc_id, f.kb_id, f.chunk_id, c.sequence, bm25(${table}) AS score
+       FROM ${table} f
+       JOIN kb_chunks c ON c.id = f.chunk_id
+       WHERE f.${table} MATCH ? AND f.kb_id IN (${placeholders})
+         AND f.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)
+       ORDER BY score ASC
+       LIMIT ?`
+    )
+    .all(matchExpr, ...kbIds, topK) as Array<{
+      content: string
+      doc_id: string
+      kb_id: string
+      chunk_id: string
+      sequence: number
+      score: number
+    }>
+  // FTS5 bm25() 越小越相关，取负数使降序排列时相关的在前
+  return rows.map((r) => ({
+    chunkId: r.chunk_id,
+    docId: r.doc_id,
+    kbId: r.kb_id,
+    seq: r.sequence,
+    docTitle: '',
+    content: r.content,
+    score: -r.score
+  }))
 }
 
 /** 余弦相似度：dot(a,b) / (|a|*|b|)；零向量返回 0（避免 NaN 污染排序） */

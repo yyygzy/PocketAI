@@ -17,7 +17,10 @@ const result = (over: Partial<KbEvalRunResult> = {}): KbEvalRunResult => ({
   name: '退款政策评测',
   kbId: 'kbE',
   fileName: 'set.json',
-  metrics: { k: 2, cases: 4, missedCases: 2, recallAtK: 0.5, mrr: 0.3333333, medianRank: 1.5 },
+  metrics: {
+    k: 2, cases: 4, missedCases: 2, recallAtK: 0.5, mrr: 0.3333333, medianRank: 1.5,
+    sourceCoverageAtK: 0.75, missingSourceCount: 1
+  },
   rows: [
     {
       caseId: 'c1',
@@ -40,6 +43,7 @@ const result = (over: Partial<KbEvalRunResult> = {}): KbEvalRunResult => ({
       returned: [{ docId: 'dx', seq: 0, title: '退款主文' }]
     }
   ],
+  missingSources: [{ caseId: 'c3', docId: 'dz' }],
   stale: [{ caseId: 'c4', docId: 'ghost-doc' }],
   disabledTargets: [{ caseId: 'c3', docId: 'dz', title: '已停用文档' }],
   warnings: ['该库没有配置 Embedding 模型：向量路不参与，这份分数只反映全文检索与融合结果'],
@@ -111,6 +115,10 @@ describe('评测集面板', () => {
     fireEvent.click(screen.getByText(zh['kb.evalRun']))
     await waitFor(() => expect(screen.getByText('50.0%')).toBeTruthy())
     expect(screen.getByText(zh['kb.evalRecall'].replace('{k}', '2'))).toBeTruthy()
+    expect(screen.getByText(zh['kb.evalSourceCoverage'].replace('{k}', '2'))).toBeTruthy()
+    expect(screen.getByText('75.0%')).toBeTruthy()
+    expect(screen.getByText(zh['kb.evalMissingSources'].replace('{n}', '1'))).toBeTruthy()
+    expect(screen.getByText('c3 → dz')).toBeTruthy()
     expect(screen.getByText('0.333')).toBeTruthy()
     expect(screen.getByText('1.5')).toBeTruthy()
     expect(screen.getByText(zh['kb.evalMissed'].replace('{n}', '2'))).toBeTruthy()

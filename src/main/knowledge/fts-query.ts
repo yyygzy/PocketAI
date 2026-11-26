@@ -7,18 +7,22 @@
 // 做法（纯查询侧，**不需要重建索引**，以下均为对本机 sqlite 的实测结论）：
 // - 拉丁/数字词按原样整词匹配（trigram 会把它拆成 gram 并做顺序拼接，"BM25" 可命中）；
 // - CJK 连续段切成 3 字滑窗，窗口之间 OR —— 命中越多 gram 的片段 bm25 排名越靠前（实测）；
-// - 长度 1-2 的 CJK 段不产出 FTS 词项：trigram 短语要求 ≥3 字符，实测 2 字短语恒空；
-//   也不退化去 LIKE 兜底——实测 LIKE '%库%'（1 字）在 trigram 表上被索引加速后**静默返回空**，
-//   比报错更糟；这类短查询交给向量路。
+// - 长度 1-2 的 CJK 段在 trigram 表上恒空，也不退化去 LIKE（实测 LIKE '%库%' 被 trigram
+//   索引加速后静默返回空）；阶段 2 由 kb_chunks_fts_short（unicode61 + 单字展开）辅助路补齐：
+//   buildShortFtsMatchQuery 只为短段产出词项，≥3 字段仍只走 trigram，长查询排名不变。
 // - 所有词项都用双引号包裹并对内嵌引号加倍转义，避免用户输入改变 MATCH 语法。
 
 /** 单次查询最多产出的 CJK 三元组数（防长句产出上百个词项撑大查询串） */
 export const MAX_FTS_TERMS = 32
 /** trigram 索引的最小可匹配长度 */
 const TRIGRAM_MIN = 3
+/** 辅助表只补 trigram 覆盖不到的短段（1–2 字），≥3 字仍走 trigram 保证长查询排名不变 */
+const SHORT_CJK_MAX = 2
 
 /** CJK 及全角标点范围（与 engine 的 token 估算口径一致，另含日文假名） */
 const CJK_RE = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/
+/** 按 CJK 连续段切分（捕获组保留段本身） */
+const CJK_RUN_SPLIT_RE = /([\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]+)/
 
 /** 词项加引号并转义内嵌双引号 */
 function quote(term: string): string {
@@ -54,7 +58,7 @@ export function buildFtsMatchQuery(query: string, maxTerms = MAX_FTS_TERMS): str
   }
 
   // 按 CJK / 非 CJK 边界切段：非 CJK 段再按空白与标点分词
-  const segments = raw.split(/([\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]+)/)
+  const segments = raw.split(CJK_RUN_SPLIT_RE)
   for (const seg of segments) {
     if (!seg) continue
     if (CJK_RE.test(seg)) {
@@ -72,4 +76,54 @@ export function buildFtsMatchQuery(query: string, maxTerms = MAX_FTS_TERMS): str
   const usable = terms.filter((t) => !CJK_RE.test(t) || [...t].length >= TRIGRAM_MIN)
   if (usable.length === 0) return null
   return usable.slice(0, maxTerms).map(quote).join(' OR ')
+}
+
+/**
+ * 索引侧预处理（注册为 SQLite 自定义函数 cjk_spaced）：把 CJK 字符逐个用空格隔开，
+ * 让 unicode61 tokenizer 把每个汉字当成独立 token；非 CJK 文本原样保留。
+ * 查询侧用 buildShortFtsMatchQuery 生成相邻短语，从而命中任意位置的 1–2 字中文。
+ */
+export function cjkSpacedText(text: string): string {
+  let out = ''
+  for (const ch of String(text ?? '')) {
+    out += CJK_RE.test(ch) ? ` ${ch} ` : ch
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * 短段辅助 MATCH 表达式：只为 trigram 覆盖不到的短段（1–2 字 CJK / ≤2 字符拉丁词）产出词项。
+ * CJK 段转成空格分隔的相邻短语（如「人工」→ `"人 工"`），在 cjkSpacedText 展开后的索引里精确命中；
+ * ≥3 字 CJK 段不产出，交由 trigram 主路，保证长查询排名完全不变。
+ */
+export function buildShortFtsMatchQuery(query: string, maxTerms = MAX_FTS_TERMS): string | null {
+  const raw = String(query ?? '').trim()
+  if (!raw) return null
+
+  const terms: string[] = []
+  const seen = new Set<string>()
+  const push = (t: string): void => {
+    const v = t.trim()
+    if (!v || seen.has(v)) return
+    seen.add(v)
+    terms.push(v)
+  }
+
+  for (const seg of raw.split(CJK_RUN_SPLIT_RE)) {
+    if (!seg) continue
+    if (CJK_RE.test(seg)) {
+      const chars = [...seg]
+      if (chars.length <= SHORT_CJK_MAX) push(chars.join(' '))
+      continue
+    }
+    for (const rawWord of seg.split(/\s+/)) {
+      const word = rawWord.replace(/^[\p{P}\p{S}]+/u, '').replace(/[\p{P}\p{S}]+$/u, '')
+      // 短拉丁/数字词在 trigram 同样匹配不到，unicode61 辅助表补上
+      if (word && [...word].length <= SHORT_CJK_MAX) push(word)
+    }
+    if (terms.length >= maxTerms) break
+  }
+
+  if (terms.length === 0) return null
+  return terms.slice(0, maxTerms).map(quote).join(' OR ')
 }

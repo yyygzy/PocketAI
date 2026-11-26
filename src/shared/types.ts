@@ -561,6 +561,8 @@ export interface DataHealthReport {
     backupVerifyLastRunAt: number | null
     backupVerifyLastOk: boolean | null
   }
+  /** 最近一次后台源文件检测（只检测不重建）。可选：旧夹具/旧报告缺这颗键时面板按「从未运行」显示 */
+  sourceSyncScan?: KbSourceSyncScanResult | null
 }
 
 /** 运行期慢事件 */
@@ -759,7 +761,7 @@ export interface MessageSearchResult {
 
 // ---------- 知识库 ----------
 export type KbDocStatus = 'pending' | 'parsing' | 'indexing' | 'ready' | 'error'
-export type KbSourceType = 'pdf' | 'docx' | 'xlsx' | 'html' | 'url' | 'txt' | 'md' | 'image'
+export type KbSourceType = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'url' | 'txt' | 'md' | 'image'
 
 export interface KnowledgeBase {
   id: string
@@ -790,6 +792,26 @@ export interface KnowledgeBase {
   documentCount: number
   chunkCount: number
   createdAt: number
+}
+
+/** KB_SAVE 返回：命中配置变更时附带重建提示信息（只提示，不自动重建） */
+export interface KbSaveResult extends KnowledgeBase {
+  /** 兼容旧字段：Embedding provider/model 变更（且旧库已有向量维度） */
+  embeddingChanged?: boolean
+  /** 分块大小/重叠变更 */
+  chunkingChanged?: boolean
+  /** 任一需要重建索引的配置发生变更 */
+  needReindex?: boolean
+  /** 受影响的已索引文档数 */
+  needReindexDocCount?: number
+}
+
+/** 渲染层统一重建提示条的数据（按 kbId 归属，切库不串台） */
+export interface KbReindexNotice {
+  kbId: string
+  docCount: number
+  embeddingChanged: boolean
+  chunkingChanged: boolean
 }
 
 export interface KbDocument {
@@ -2897,7 +2919,21 @@ export interface BackupScheduleStatus {
  * 可配置的内置维护任务。**闭集**是有意的：不允许用户自填提示词或脚本——
  * 那等于把无人值守 Agent 放进定时器，不在本轮范围。
  */
-export type MaintenanceTaskKey = 'kb_health_check' | 'backup_verify'
+export type MaintenanceTaskKey = 'kb_health_check' | 'backup_verify' | 'kb_source_sync'
+
+/** 后台源文件检测的最近一次结果（只检测、不重建；app_config 以 JSON 持久化） */
+export interface KbSourceSyncScanResult {
+  at: number
+  /** 本轮检查过的 file 文档总数 */
+  checked: number
+  /** 仅有变更/丢失的库，按 kbRepo.list() 原序 */
+  scans: Array<{
+    kbId: string
+    kbName: string
+    changed: number
+    missing: number
+  }>
+}
 
 /** 单个内置任务的当前计划 + 上次执行事实（开关/间隔来自 app_config，缺省＝目录默认值） */
 export interface MaintenanceTaskSchedule {

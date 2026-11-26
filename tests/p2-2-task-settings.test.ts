@@ -106,10 +106,10 @@ afterEach(() => {
 // ---------- 目录与默认值 ----------
 
 describe('内置任务目录', () => {
-  it('只列两个内置任务，默认开着、间隔取目录默认值（kb 6h／备份校验 24h）', () => {
+  it('只列内置闭集任务，默认开着、间隔取目录默认值（kb 6h／备份校验 24h／源文件检测 6h）', () => {
     const list = listTaskSchedules()
-    expect(list.map((s) => s.key)).toEqual(['kb_health_check', 'backup_verify'])
-    expect(list.map((s) => s.intervalHours)).toEqual([6, 24])
+    expect(list.map((s) => s.key)).toEqual(['kb_health_check', 'backup_verify', 'kb_source_sync'])
+    expect(list.map((s) => s.intervalHours)).toEqual([6, 24, 6])
     expect(list.every((s) => s.enabled)).toBe(true)
     expect(list.every((s) => s.lastRunAt === null && s.lastOk === null)).toBe(true)
   })
@@ -173,7 +173,7 @@ describe('开关与间隔', () => {
     mocks.config.set('task.kb_health_check.interval_hours', '0')
     mocks.config.set('task.backup_verify.interval_hours', 'abc')
     const list = listTaskSchedules()
-    expect(list.map((s) => s.intervalHours)).toEqual([6, 24])
+    expect(list.map((s) => s.intervalHours)).toEqual([6, 24, 6])
   })
 })
 

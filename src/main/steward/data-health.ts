@@ -7,7 +7,12 @@
 // 纯函数（classifyDataEntry / aggregateDataSizes / topErrorDocs）
 // 单独导出供 tests/data-health.test.ts 直测。
 
-import type { DataHealthReport, KbDocument, KbIntegrityReport } from '../../shared/types'
+import type {
+  DataHealthReport,
+  KbDocument,
+  KbIntegrityReport,
+  KbSourceSyncScanResult
+} from '../../shared/types'
 import { isBrowserProfilePath } from '../../shared/data-dirs'
 import { walkEntries, type WalkFileEntry } from '../fs/dir-walk'
 import { DATA_DIR } from '../portable'
@@ -17,6 +22,7 @@ import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { approvalEventRepo, getApprovalAuditFailureCount } from '../db/repositories/approval-event.repo'
 import { readWebDAVConfig } from '../backup/backup-service'
 import { getBackupSchedule } from '../backup/backup-scheduler'
+import { getLastSourceSyncScan } from '../backup/task-scheduler'
 import { errMsg } from '../error'
 import { getKbIntegrityReport, getVectorIndexStats } from '../knowledge/kb-health'
 import { OFFLOAD_DIR_NAME } from '../agent/tool-output-offload'
@@ -299,11 +305,20 @@ export function getDataHealthReport(opts: { refresh?: boolean } = {}): DataHealt
     backupVerifyLastOk: verify.lastOk
   }
 
+  // 5. 后台源文件检测摘要：结果落 app_config，坏配置/未跑过按 null，单项失败不阻断整份报告
+  let sourceSyncScan: KbSourceSyncScanResult | null = null
+  try {
+    sourceSyncScan = getLastSourceSyncScan()
+  } catch {
+    // 读不到就当没扫过
+  }
+
   return {
     sizes,
     approvals,
     kb,
     backup,
-    tasks
+    tasks,
+    sourceSyncScan
   }
 }

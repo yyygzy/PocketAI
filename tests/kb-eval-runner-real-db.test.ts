@@ -11,8 +11,8 @@
 // 「候选数 ≤ 请求数就直接返回原序」短路生效 ⇒ 名次是融合序（Y 第 3）；k=2 时多样性才真的跑，
 // 相关性差距（归一化后只有 0.015）压不过相似度惩罚（0.8 vs 0.6）⇒ Y 升到第 2。
 // 这正是"期望目标要能写文档级也能写分块级"的原因，也是运行器必须跑真检索而不是喂假结果的原因。
-// 查询串刻意用 3 字：FTS 是 trigram 分词，2 字中文查询恒空命中（SEC-18 已记），
-// 用 2 字就只剩向量一路，测不到融合顺序。
+// 查询串刻意用 3 字：早期 FTS 只有 trigram，2 字中文恒空（SEC-18 已记）；
+// v79 起 2 字已有 unicode61 辅助路，但本用例仍用 3 字以固定住「双路命中」的手算名次。
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'
 
@@ -135,6 +135,13 @@ describe('逐条跑真检索并算指标', () => {
     expect(r.metrics.medianRank).toBe(2)
     expect(r.metrics.missedCases).toBe(2)
     expect(r.metrics.cases).toBe(4)
+    // 闭环新增：micro 覆盖 = (1+1)/4；缺失清单聚合两条全漏题的期望来源（含失效 ghost）
+    expect(Number(r.metrics.sourceCoverageAtK.toFixed(4))).toBe(0.5)
+    expect(r.missingSources).toEqual([
+      { caseId: 'c3', docId: DOC_Z },
+      { caseId: 'c4', docId: 'ghost-doc' }
+    ])
+    expect(r.metrics.missingSourceCount).toBe(2)
     expect(r.name).toBe('退款政策评测')
     expect(r.fileName).toBe('set.json')
   })
@@ -144,6 +151,8 @@ describe('逐条跑真检索并算指标', () => {
     expect(r.metrics.k).toBe(1)
     expect(r.rows.map((x) => x.recallAtK)).toEqual([1, 0, 0, 0])
     expect(Number(r.metrics.recallAtK.toFixed(4))).toBe(0.25)
+    expect(Number(r.metrics.sourceCoverageAtK.toFixed(4))).toBe(0.25)
+    expect(r.metrics.missingSourceCount).toBe(3)
     expect(r.metrics.missedCases).toBe(3)
     expect(r.metrics.medianRank).toBe(1)
   })

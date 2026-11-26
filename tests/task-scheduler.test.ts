@@ -12,7 +12,11 @@
 // - vi.mock appConfigRepo（Map 模拟 get/set）/ kbDocRepo / backup-service / webdav-client / logger
 // - 调度周期用 fake timers 推进验证
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { tick, initTaskScheduler, stopTaskScheduler, verifyBackupNow } from '../src/main/backup/task-scheduler'
+import {
+  tick, initTaskScheduler, stopTaskScheduler, verifyBackupNow,
+  runSourceSyncNow, getLastSourceSyncScan
+} from '../src/main/backup/task-scheduler'
+import type { KbSourceSyncScanResult } from '../src/shared/types'
 
 // ---------- mock 工厂 ----------
 
@@ -34,6 +38,10 @@ const mocks = vi.hoisted(() => ({
   downloadNames: [] as string[],
   decryptCalls: 0,
   listBackupsError: null as Error | null,
+  // kb_source_sync：库清单 / 每库检测结果 / perf 记录
+  kbs: [] as Array<{ id: string; name: string }>,
+  checkResults: {} as Record<string, { checked: number; issues: Array<{ kind: 'changed' | 'missing' }> }>,
+  perfCalls: [] as Array<{ label: string; ms: number; detail?: string }>,
   // 库是否处于打开态（锁屏/未解锁时为 false）与捕获到的 warn 文案
   dbOpen: true,
   setThrows: false,
@@ -55,6 +63,9 @@ const mocks = vi.hoisted(() => ({
     this.dbOpen = true
     this.setThrows = false
     this.warns = []
+    this.kbs = []
+    this.checkResults = {}
+    this.perfCalls = []
   }
 }))
 
@@ -78,6 +89,23 @@ vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
     setStatus: (id: string, status: string, error?: string | null) => {
       mocks.statusCalls.push({ id, status, error })
     }
+  }
+}))
+
+vi.mock('../src/main/db/repositories/kb.repo', () => ({
+  kbRepo: { list: () => mocks.kbs }
+}))
+
+vi.mock('../src/main/knowledge/sync-check', () => ({
+  checkKbFileUpdates: async (kbId: string) => {
+    if (kbId === 'bad') throw new Error('source file unreadable')
+    return mocks.checkResults[kbId] ?? { checked: 0, issues: [] }
+  }
+}))
+
+vi.mock('../src/main/steward/perf-probe', () => ({
+  recordPerf: (label: string, ms: number, detail?: string) => {
+    mocks.perfCalls.push({ label, ms, detail })
   }
 }))
 
@@ -495,5 +523,57 @@ describe('initTaskScheduler / stopTaskScheduler 调度周期', () => {
     expect(setIntervalSpy).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(mocks.downloadCalls).toBe(1)
+  })
+})
+
+describe('kb_source_sync：后台源文件检测（只检测、不重建）', () => {
+  it('逐库检测 changed/missing 落盘，绝不触发重建或改写文档状态', async () => {
+    mocks.kbs = [
+      { id: 'kb1', name: '库一' },
+      { id: 'kb2', name: '库二' }
+    ]
+    mocks.checkResults = {
+      kb1: { checked: 3, issues: [{ kind: 'changed' }, { kind: 'changed' }] },
+      kb2: { checked: 2, issues: [{ kind: 'missing' }] }
+    }
+    const r = await runSourceSyncNow()
+    expect(r.status).toBe('passed')
+
+    const saved = JSON.parse(mocks.config.get('kb.sourceSync.lastResult')!) as KbSourceSyncScanResult
+    expect(saved.checked).toBe(5)
+    expect(saved.scans).toEqual([
+      { kbId: 'kb1', kbName: '库一', changed: 2, missing: 0 },
+      { kbId: 'kb2', kbName: '库二', changed: 0, missing: 1 }
+    ])
+    // 只检测：没有走重建路径（setStatus 是重建/健康检查才会碰的）
+    expect(mocks.statusCalls).toEqual([])
+    expect(mocks.perfCalls.some((p) => p.label === 'kb.sourceSync')).toBe(true)
+    expect(getLastSourceSyncScan()).toEqual(saved)
+  })
+
+  it('无变更的库不进清单；坏 JSON 当「没扫过」', async () => {
+    mocks.kbs = [{ id: 'kb1', name: '库一' }]
+    mocks.checkResults = { kb1: { checked: 4, issues: [] } }
+    await runSourceSyncNow()
+    const saved = getLastSourceSyncScan()!
+    expect(saved.checked).toBe(4)
+    expect(saved.scans).toEqual([])
+
+    mocks.config.set('kb.sourceSync.lastResult', '{bad json')
+    expect(getLastSourceSyncScan()).toBeNull()
+  })
+
+  it('单库检测抛错不拖垮整轮，其他库照常落盘', async () => {
+    mocks.kbs = [
+      { id: 'bad', name: '坏库' },
+      { id: 'kb1', name: '库一' }
+    ]
+    mocks.checkResults = { kb1: { checked: 1, issues: [{ kind: 'changed' }] } }
+    const r = await runSourceSyncNow()
+    expect(r.status).toBe('passed')
+    expect(getLastSourceSyncScan()?.scans).toEqual([
+      { kbId: 'kb1', kbName: '库一', changed: 1, missing: 0 }
+    ])
+    expect(mocks.warns.some((w) => w.includes('坏库'))).toBe(true)
   })
 })

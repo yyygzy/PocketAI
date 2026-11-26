@@ -137,6 +137,13 @@ export function findStaleTargets(
   return out
 }
 
+/** 跨用例聚合的缺失来源：粒度 = 用例 + 文档（+可选分块），保持卷子与 expected 原序 */
+export interface KbEvalMissingSource {
+  caseId: string
+  docId: string
+  seq?: number
+}
+
 export interface CaseResult {
   caseId: string
   /** 期望目标总数（分母） */
@@ -189,6 +196,13 @@ export interface EvalSummary {
   mrr: number
   /** 有命中的用例里第一名的中位名次；全漏则为 null */
   medianRank: number | null
+  /**
+   * 来源覆盖率@k（micro）：总命中期望来源 / 总期望来源。
+   * 与 recallAtK（macro：逐题平均）同判分口径但聚合方式不同——各题 expected 数不等时两者会分化。
+   */
+  sourceCoverageAtK: number
+  /** 所有未进入前 k 的期望来源，带 caseId；与 missedCases（全漏题数）互补 */
+  missingSources: KbEvalMissingSource[]
   perCase: CaseResult[]
 }
 
@@ -213,6 +227,18 @@ export function summarizeEval(set: KbEvalSet, run: Record<string, RankedHit[]>, 
     recallAtK: perCase.length ? perCase.reduce((sum, r) => sum + r.recallAtK, 0) / perCase.length : 0,
     mrr: perCase.length ? perCase.reduce((sum, r) => sum + (r.firstRank === null ? 0 : 1 / r.firstRank), 0) / perCase.length : 0,
     medianRank: median(ranks),
+    // micro 聚合：直接复用 evaluateCase 的 matched/expected，不重判、不重排
+    sourceCoverageAtK: (() => {
+      const totalExpected = perCase.reduce((sum, r) => sum + r.expected, 0)
+      return totalExpected === 0 ? 0 : perCase.reduce((sum, r) => sum + r.matched, 0) / totalExpected
+    })(),
+    missingSources: perCase.flatMap((r) =>
+      r.missing.map((t) => ({
+        caseId: r.caseId,
+        docId: t.docId,
+        ...(t.seq === undefined ? {} : { seq: t.seq })
+      }))
+    ),
     perCase
   }
 }
@@ -245,6 +271,10 @@ export interface KbEvalMetrics {
   recallAtK: number
   mrr: number
   medianRank: number | null
+  /** 来源覆盖率@k（micro） */
+  sourceCoverageAtK: number
+  /** 缺失来源条数（完整清单在 KbEvalRunResult.missingSources） */
+  missingSourceCount: number
 }
 
 export interface KbEvalRunResult {
@@ -254,6 +284,8 @@ export interface KbEvalRunResult {
   fileName: string
   metrics: KbEvalMetrics
   rows: KbEvalRow[]
+  /** 所有未进入前 k 的期望来源（用例 + 文档 + 可选分块），按卷子原序 */
+  missingSources: KbEvalMissingSource[]
   /** 期望引用了库里已不存在的文档 ⇒ 这份分数是在坏卷子上算的 */
   stale: Array<{ caseId: string; docId: string }>
   /** 期望引用的文档存在但被停用了（不参与检索）——不是失效，但一定漏 */
@@ -265,5 +297,14 @@ export interface KbEvalRunResult {
 
 /** 指标从 EvalSummary 摘出来（去掉 perCase——逐条明细在 rows 里给，别在同一份载荷里出现两遍） */
 export function toEvalMetrics(s: EvalSummary): KbEvalMetrics {
-  return { k: s.k, cases: s.cases, missedCases: s.missedCases, recallAtK: s.recallAtK, mrr: s.mrr, medianRank: s.medianRank }
+  return {
+    k: s.k,
+    cases: s.cases,
+    missedCases: s.missedCases,
+    recallAtK: s.recallAtK,
+    mrr: s.mrr,
+    medianRank: s.medianRank,
+    sourceCoverageAtK: s.sourceCoverageAtK,
+    missingSourceCount: s.missingSources.length
+  }
 }

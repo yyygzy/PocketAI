@@ -13,6 +13,7 @@ import {
   findStaleTargets,
   evaluateCase,
   summarizeEval,
+  toEvalMetrics,
   type KbEvalCase,
   type KbEvalSet,
   type RankedHit
@@ -185,6 +186,49 @@ describe('summarizeEval — 整份卷子', () => {
       q4: hits(['x', 0], ['x', 1], ['x', 2], ['d4', 0])
     }
     expect(summarizeEval(s, run, 5).medianRank).toBeCloseTo(2.5, 10)
+  })
+
+  it('来源覆盖率@k 是 micro 聚合，与 macro recall 在题目期望数不等时分化', () => {
+    const s: KbEvalSet = {
+      version: KB_EVAL_FILE_VERSION,
+      kbId: 'kb1',
+      name: 'n',
+      cases: [
+        { id: 'q1', query: 'x', expected: [{ docId: 'dA' }] },
+        { id: 'q2', query: 'x', expected: [{ docId: 'dB' }, { docId: 'dC' }] }
+      ]
+    }
+    const sum = summarizeEval(s, { q1: hits(['dA', 0]), q2: hits(['dB', 0]) }, 5)
+    // macro = (1 + 1/2)/2；micro = (1+1)/(1+2)，两者同判分口径但聚合方式不同
+    expect(sum.recallAtK).toBeCloseTo(0.75, 10)
+    expect(sum.sourceCoverageAtK).toBeCloseTo(2 / 3, 10)
+  })
+
+  it('缺失来源清单按卷子/expected 原序聚合，分块级目标保留 seq', () => {
+    const sum = summarizeEval(set(), { q1: hits(['nope', 0]), q2: hits(['dB', 2]) }, 5)
+    expect(sum.missingSources).toEqual([
+      { caseId: 'q1', docId: 'dA' },
+      { caseId: 'q2', docId: 'dB', seq: 5 }
+    ])
+    expect(sum.missedCases).toBe(1) // 清单是来源级，missedCases 是整题级，互补
+  })
+
+  it('空卷子的新指标为 0 / 空清单，不出 NaN', () => {
+    const sum = summarizeEval({ ...set(), cases: [] }, {}, 5)
+    expect(sum.sourceCoverageAtK).toBe(0)
+    expect(sum.missingSources).toEqual([])
+  })
+})
+
+describe('toEvalMetrics — 顶栏指标摘取', () => {
+  it('新指标随汇总带出，缺失条数取清单长度', () => {
+    const sum = summarizeEval(set(), { q1: hits(['dA', 0]), q2: hits(['dB', 2]) }, 5)
+    const m = toEvalMetrics(sum)
+    // q1 全中、q2 中 1/2 ⇒ macro recall 0.75，micro 覆盖 (1+1)/(1+2)=2/3，漏 1 条来源
+    expect(m.sourceCoverageAtK).toBeCloseTo(2 / 3, 10)
+    expect(m.missingSourceCount).toBe(1)
+    expect(m.recallAtK).toBeCloseTo(0.75, 10)
+    expect('perCase' in m).toBe(false)
   })
 })
 

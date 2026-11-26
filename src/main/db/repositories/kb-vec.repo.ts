@@ -169,9 +169,8 @@ export const kbVecRepo = {
         .all(float32ToBuffer(query), ...batch, k, dim, ...kbIds) as VecRow[]
     }
     // SQLite 默认 bind 变量上限 32766；超大库分批各取 topK，再全局归并即可等价。
-    const BATCH = 32000
     const rows: VecRow[] = []
-    for (let i = 0; i < rowids.length; i += BATCH) rows.push(...knnBatch(rowids.slice(i, i + BATCH)))
+    for (const batch of chunkRowids(rowids)) rows.push(...knnBatch(batch))
     rows.sort((a, b) => a.distance - b.distance)
     return rows.slice(0, topK).map((r) => ({
       chunkId: r.chunk_id,
@@ -182,4 +181,15 @@ export const kbVecRepo = {
       score: 1 / (1 + r.distance)
     }))
   }
+}
+
+/**
+ * SQLite 默认 bind 变量上限 32766，留余量按 32000 切片。
+ * 抽成纯函数而不是埋在 knn 里：超大库的批次边界可以脱离 sqlite-vec 单独验证（阶段 5）。
+ */
+export function chunkRowids(rowids: number[], size = 32000): number[][] {
+  if (!Number.isInteger(size) || size <= 0) throw new Error('batch size must be a positive integer')
+  const out: number[][] = []
+  for (let i = 0; i < rowids.length; i += size) out.push(rowids.slice(i, i + size))
+  return out
 }

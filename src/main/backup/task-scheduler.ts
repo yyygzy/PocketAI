@@ -6,6 +6,7 @@
 // 当前任务：
 //   - kb_health_check：知识库健康检查，修复卡在 pending/parsing/indexing 的文档
 //   - backup_verify：备份完整性校验，下载最新备份并校验 sha256
+//   - kb_source_sync：知识库源文件变更检测（只检测不重建，结果落 app_config 供面板展示）
 //
 // P2-2：这个目录对用户开放**开关与间隔**（数据健康面板可改），键落在 app_config：
 //   - `task.<key>.enabled`＝'0' 时不跑（缺省／老库没这颗键＝照旧跑）
@@ -18,12 +19,16 @@
 import { dbService } from '../db/database'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
 import { kbDocRepo } from '../db/repositories/kb-doc.repo'
+import { kbRepo } from '../db/repositories/kb.repo'
+import { checkKbFileUpdates } from '../knowledge/sync-check'
+import { recordPerf } from '../steward/perf-probe'
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
 import { readWebDAVConfig, listWebDAVBackups, isEncryptedBlob, ENC_PREFIX, decryptBackup, toCreds } from './backup-service'
 import { downloadFile } from './webdav-client'
 import { pickLatestBackup } from '../../shared/backup-latest'
 import type {
+  KbSourceSyncScanResult,
   MaintenanceTaskKey,
   MaintenanceTaskPatch,
   MaintenanceTaskSchedule
@@ -138,6 +143,35 @@ const tasks: TaskDef[] = [
         log.info(`备份校验通过：${latest.name}（sha256=${hash.slice(0, 16)}…）`)
       }
       return { status: 'passed' }
+    }
+  },
+  {
+    key: 'kb_source_sync',
+    name: '知识库源文件变更检测',
+    defaultIntervalHours: 6,
+    run: async () => {
+      // KB 升级阶段 5：只检测、不重建。changed/missing 落盘供用户查看，
+      // 重建入口仍由知识库详情页的手动按钮触发（阶段 1 口径不变）。
+      const started = Date.now()
+      const kbs = kbRepo.list()
+      const result: KbSourceSyncScanResult = { at: started, checked: 0, scans: [] }
+      for (const kb of kbs) {
+        try {
+          const r = await checkKbFileUpdates(kb.id)
+          result.checked += r.checked
+          const changed = r.issues.filter((i) => i.kind === 'changed').length
+          const missing = r.issues.filter((i) => i.kind === 'missing').length
+          if (r.issues.length > 0) result.scans.push({ kbId: kb.id, kbName: kb.name, changed, missing })
+        } catch (e) {
+          // 单个库读不到源文件不拖垮整轮：记一句后继续扫别的库
+          log.warn(`源文件检测跳过「${kb.name}」：${errMsg(e)}`)
+        }
+      }
+      appConfigRepo.set('kb.sourceSync.lastResult', JSON.stringify(result))
+      recordPerf('kb.sourceSync', Date.now() - started, `${kbs.length}kb/${result.checked}docs`)
+      if (result.scans.length > 0) {
+        log.info(`源文件检测：${result.scans.length} 个库有变更（共 ${result.checked} 篇），等待用户处理`)
+      }
     }
   }
 ]
@@ -312,6 +346,25 @@ export async function verifyBackupNow(): Promise<BackupVerifyRunResult> {
   const task = tasks.find((t) => t.key === 'backup_verify')
   if (!task) return { status: 'failed', reason: '备份校验任务未注册' }
   return runTask(task)
+}
+
+/** 手动触发一次源文件检测；与定时 tick 共用 runTask 的 last_run_at／last_ok 口径 */
+export async function runSourceSyncNow(): Promise<BackupVerifyRunResult> {
+  const task = tasks.find((t) => t.key === 'kb_source_sync')
+  if (!task) return { status: 'failed', reason: '源文件检测任务未注册' }
+  return runTask(task)
+}
+
+/** 最近一次检测结果；坏 JSON 当「没扫过」，不让面板崩在解析上 */
+export function getLastSourceSyncScan(): KbSourceSyncScanResult | null {
+  const raw = appConfigRepo.get('kb.sourceSync.lastResult')
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as KbSourceSyncScanResult
+    return typeof parsed?.at === 'number' && Array.isArray(parsed.scans) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 export async function tick(): Promise<void> {

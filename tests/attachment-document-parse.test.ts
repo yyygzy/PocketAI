@@ -15,7 +15,7 @@ afterEach(() => {
 })
 
 describe('主进程：文档字节直接解析', () => {
-  it('XLSX 字节 → 按 sheet 拼成 CSV 文本', async () => {
+  it('XLSX 字节 → 按 sheet 产出「列名: 值」行式文本', async () => {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['姓名', '年龄'], ['张三', 18]]), '人员')
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
@@ -24,8 +24,8 @@ describe('主进程：文档字节直接解析', () => {
 
     expect(parsed.title).toBe('花名册.xlsx')
     expect(parsed.text).toContain('# 人员')
-    expect(parsed.text).toContain('姓名,年龄')
-    expect(parsed.text).toContain('张三,18')
+    expect(parsed.text).toContain('姓名: 张三')
+    expect(parsed.text).toContain('年龄: 18')
   })
 
   it('HTML 字节 → 去标签后只留正文', async () => {

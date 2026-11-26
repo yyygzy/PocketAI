@@ -10,7 +10,7 @@ export interface ParseResult {
   title: string
 }
 
-const TEXT_EXTS = new Set(['.txt', '.md', '.markdown', '.csv', '.log', '.json'])
+const TEXT_EXTS = new Set(['.txt', '.md', '.markdown', '.log', '.json'])
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
 
 export function detectSourceType(filePathOrUrl: string): KbSourceType {
@@ -22,6 +22,7 @@ export function detectSourceType(filePathOrUrl: string): KbSourceType {
   if (ext === '.pdf') return 'pdf'
   if (ext === '.docx') return 'docx'
   if (ext === '.xlsx' || ext === '.xls') return 'xlsx'
+  if (ext === '.csv') return 'csv'
   if (ext === '.html' || ext === '.htm') return 'html'
   if (IMAGE_EXTS.has(ext)) return 'image'
   if (TEXT_EXTS.has(ext)) return ext === '.md' || ext === '.markdown' ? 'md' : 'txt'
@@ -40,6 +41,8 @@ export async function parseDocument(
       return parseDocx(source)
     case 'xlsx':
       return parseXlsx(source)
+    case 'csv':
+      return parseCsv(source)
     case 'html':
       return parseHtml(fs.readFileSync(source, 'utf8'), path.basename(source))
     case 'url':
@@ -95,7 +98,7 @@ async function parseDocx(filePath: string): Promise<ParseResult> {
   return parseDocxBytes(fs.readFileSync(filePath), path.basename(filePath))
 }
 
-/** XLSX/XLS → 文本（每个 sheet 转 CSV 拼接）；buffer 版供聊天附件复用 */
+/** XLSX/XLS → 行式「列名: 值」文本（每 sheet 带 # 标题）；字节版供聊天附件复用 */
 async function parseXlsxBytes(bytes: Uint8Array, fallbackTitle: string): Promise<ParseResult> {
   const XLSX = await import('xlsx')
   const wb = XLSX.read(Buffer.from(bytes), { type: 'buffer' })
@@ -103,14 +106,97 @@ async function parseXlsxBytes(bytes: Uint8Array, fallbackTitle: string): Promise
   for (const name of wb.SheetNames) {
     const sheet = wb.Sheets[name]
     if (!sheet) continue
-    const csv = XLSX.utils.sheet_to_csv(sheet)
-    parts.push(`# ${name}\n${csv}`)
+    const rows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      blankrows: false
+    }) as string[][]
+    // 无表头/无数据行 ⇒ 保留平铺 CSV 纯文本回退，不让结构化格式吞掉内容
+    parts.push(rowsToStructuredText(rows, name) ?? `# ${name}\n${XLSX.utils.sheet_to_csv(sheet)}`)
   }
   return { text: parts.join('\n\n'), title: fallbackTitle }
 }
 
 async function parseXlsx(filePath: string): Promise<ParseResult> {
   return parseXlsxBytes(fs.readFileSync(filePath), path.basename(filePath))
+}
+
+/**
+ * CSV → 行式「列名: 值」文本（文件名作 # 标题，让 chunkMarkdown 的标题节机制带上来源）。
+ * 只做 UTF-8 + BOM 剥离 + 引号转义，不猜 GBK：读不出的字节宁可交给用户另存为 UTF-8。
+ */
+async function parseCsvBytes(bytes: Uint8Array, fallbackTitle: string): Promise<ParseResult> {
+  const raw = Buffer.from(bytes).toString('utf8').replace(/^\uFEFF/, '')
+  return {
+    text: rowsToStructuredText(parseCsvRows(raw), fallbackTitle) ?? raw.trim(),
+    title: fallbackTitle
+  }
+}
+
+async function parseCsv(filePath: string): Promise<ParseResult> {
+  return parseCsvBytes(new Uint8Array(fs.readFileSync(filePath)), path.basename(filePath))
+}
+
+/** 支持引号包裹、引号内逗号与双引号转义的 CSV 行解析；空行丢弃 */
+function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let quoted = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"'
+          i++
+        } else quoted = false
+      } else field += ch
+      continue
+    }
+    if (ch === '"') quoted = true
+    else if (ch === ',') {
+      row.push(field)
+      field = ''
+    } else if (ch === '\n') {
+      row.push(field)
+      rows.push(row)
+      row = []
+      field = ''
+    } else if (ch !== '\r') field += ch
+  }
+  if (field !== '' || row.length > 0) {
+    row.push(field)
+    rows.push(row)
+  }
+  return rows.filter((r) => r.some((c) => String(c ?? '').trim()))
+}
+
+/**
+ * 表头 + 数据行 → 每行「列名: 值 | 列名: 值」。
+ * 表头重复进每个数据行，保证「关键词 + 表头」落在同一分块；无有效数据行时返回 null 走纯文本回退。
+ */
+function rowsToStructuredText(rows: string[][], label?: string): string | null {
+  if (rows.length < 2) return null
+  const header = (rows[0] ?? []).map((c) => String(c ?? '').trim())
+  const lines: string[] = []
+  if (label) lines.push(`# ${label}`)
+  let dataRows = 0
+  for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i] ?? []
+    const pairs: string[] = []
+    for (let j = 0; j < header.length; j++) {
+      const key = header[j]!
+      if (!key) continue
+      const val = String(cells[j] ?? '').trim()
+      if (val) pairs.push(`${key}: ${val}`)
+    }
+    if (pairs.length) {
+      lines.push(pairs.join(' | '))
+      dataRows++
+    }
+  }
+  return dataRows > 0 ? lines.join('\n') : null
 }
 
 /**
@@ -124,6 +210,7 @@ export async function parseDocumentBytes(fileName: string, bytes: Uint8Array): P
   if (type === 'pdf') return parsePdfBytes(bytes, title)
   if (type === 'docx') return parseDocxBytes(bytes, title)
   if (type === 'xlsx') return parseXlsxBytes(bytes, title)
+  if (type === 'csv') return parseCsvBytes(bytes, title)
   const text = Buffer.from(bytes).toString('utf8')
   if (type === 'html') return parseHtml(text, title)
   return { text, title }

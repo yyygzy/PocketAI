@@ -125,7 +125,7 @@ describe('detectSourceType — 来源类型探测', () => {
     expect(detectSourceType('a.htm')).toBe('html')
     expect(detectSourceType('a.md')).toBe('md')
     expect(detectSourceType('a.markdown')).toBe('md')
-    expect(detectSourceType('a.csv')).toBe('txt')
+    expect(detectSourceType('a.csv')).toBe('csv')
     expect(detectSourceType('a.json')).toBe('txt')
     expect(detectSourceType('a.log')).toBe('txt')
   })

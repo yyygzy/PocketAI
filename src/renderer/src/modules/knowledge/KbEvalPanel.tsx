@@ -110,6 +110,9 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
               {t('kb.evalRecall', { k: m.k })} <strong>{pct(m.recallAtK)}</strong>
             </span>
             <span>
+              {t('kb.evalSourceCoverage', { k: m.k })} <strong>{pct(m.sourceCoverageAtK)}</strong>
+            </span>
+            <span>
               {t('kb.evalMrr')} <strong>{m.mrr.toFixed(3)}</strong>
             </span>
             <span>
@@ -117,6 +120,9 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
               <strong>{m.medianRank === null ? '—' : m.medianRank.toFixed(1)}</strong>
             </span>
             <span className="text-[var(--color-danger)]">{t('kb.evalMissed', { n: m.missedCases })}</span>
+            <span className="text-[var(--color-warning)]">
+              {t('kb.evalMissingSources', { n: m.missingSourceCount })}
+            </span>
             <span className="text-[var(--color-text-muted)]">
               {t('kb.evalCases', { n: m.cases, ms: result?.elapsedMs ?? 0 })}
             </span>
@@ -144,6 +150,19 @@ export const KbEvalPanel: React.FC<{ kbId: string }> = ({ kbId }) => {
             <p className="text-[11px] text-[var(--color-text-muted)]">
               {t('kb.evalDisabled', { n: result?.disabledTargets.length ?? 0 })}
             </p>
+          )}
+
+          {(result?.missingSources.length ?? 0) > 0 && (
+            <ul className="text-[11px] text-[var(--color-text-muted)] list-disc pl-4 space-y-0.5">
+              {result?.missingSources.slice(0, 20).map((s, i) => (
+                <li key={`${s.caseId}-${s.docId}-${s.seq ?? ''}-${i}`}>
+                  {s.caseId} → {s.seq === undefined ? s.docId : `${s.docId}#${s.seq}`}
+                </li>
+              ))}
+              {(result?.missingSources.length ?? 0) > 20 && (
+                <li>{t('kb.evalMissingSourcesMore', { n: (result?.missingSources.length ?? 0) - 20 })}</li>
+              )}
+            </ul>
           )}
 
           <ul className="space-y-1">

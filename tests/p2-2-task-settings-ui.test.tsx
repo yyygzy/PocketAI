@@ -11,7 +11,11 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { DataHealthPanel } from '../src/renderer/src/modules/settings/DataHealthPanel'
 import { zh } from '../src/renderer/src/i18n/zh'
-import type { DataHealthReport, MaintenanceTaskSchedule } from '../src/shared/types'
+import type {
+  DataHealthReport,
+  KbSourceSyncScanResult,
+  MaintenanceTaskSchedule
+} from '../src/shared/types'
 
 const L = (key: string): string => (zh as unknown as Record<string, string>)[key]!
 
@@ -53,6 +57,7 @@ const reportOf: DataHealthReport = {
 
 const kbSchedule: MaintenanceTaskSchedule = { key: 'kb_health_check', enabled: true, intervalHours: 6, lastRunAt: null, lastOk: null }
 const verifySchedule: MaintenanceTaskSchedule = { key: 'backup_verify', enabled: true, intervalHours: 24, lastRunAt: null, lastOk: null }
+const sourceSyncSchedule: MaintenanceTaskSchedule = { key: 'kb_source_sync', enabled: true, intervalHours: 6, lastRunAt: null, lastOk: null }
 
 /** 面板挂载即读的那几发（缺一发桩就当场抛，见 helper 顶部说明） */
 function baseImpls(over: Record<string, (...args: any[]) => unknown> = {}): Record<string, (...args: any[]) => unknown> {
@@ -62,10 +67,17 @@ function baseImpls(over: Record<string, (...args: any[]) => unknown> = {}): Reco
     cleanKbOrphans: () => ({ removedVectors: 0, removedChunks: 0 }),
     reindexKbDocs: () => ({ enqueued: 0 }),
     deduplicateKbDocs: () => ({ removed: 0 }),
-    listTaskSchedules: () => [kbSchedule, verifySchedule],
+    listTaskSchedules: () => [kbSchedule, verifySchedule, sourceSyncSchedule],
     setTaskSchedule: (key: string, patch: { enabled?: boolean; intervalHours?: number }) => ({
       ok: true,
-      task: { ...(key === 'kb_health_check' ? kbSchedule : verifySchedule), ...patch }
+      task: {
+        ...(key === 'kb_health_check'
+          ? kbSchedule
+          : key === 'backup_verify'
+            ? verifySchedule
+            : sourceSyncSchedule),
+        ...patch
+      }
     }),
     ...over
   }
@@ -144,15 +156,15 @@ describe('③ 主进程拒了就如实说，屏上不许跟着变', () => {
 })
 
 describe('④ 设置读失败：说原因，但不把「上次执行」一起抹掉', () => {
-  it('listTaskSchedules 回 {ok:false} → 出失败行、不出控件，两行 Row 照旧', async () => {
+  it('listTaskSchedules 回 {ok:false} → 出失败行、不出控件，三行 Row 照旧', async () => {
     stubPocketai(baseImpls({ listTaskSchedules: () => ({ ok: false, error: '读不到任务配置' }) }))
     mountWithProviders(<DataHealthPanel />)
 
     const fail = await screen.findByTestId('dh-tasks-config-fail')
     expect(fail.textContent).toContain('读不到任务配置')
     expect(screen.queryByTestId('dh-task-controls-kb_health_check')).toBeNull()
-    // 值位还在（这一格的「上次什么时候跑的」不依赖设置读没读到）：两条任务各一句「从未运行」
-    expect(screen.queryAllByText(L('dh.never'))).toHaveLength(2)
+    // 值位还在（这一格的「上次什么时候跑的」不依赖设置读没读到）：三条任务各一句「从未运行」
+    expect(screen.queryAllByText(L('dh.never'))).toHaveLength(3)
   })
 
   it('反向对照：读成功就不出那行（失败行不是常驻装饰）', async () => {
@@ -160,5 +172,33 @@ describe('④ 设置读失败：说原因，但不把「上次执行」一起抹
     mountWithProviders(<DataHealthPanel />)
     await screen.findByTestId('dh-task-controls-kb_health_check')
     expect(screen.queryByTestId('dh-tasks-config-fail')).toBeNull()
+  })
+})
+
+describe('⑤ 后台源文件扫描摘要上屏', () => {
+  it('报告带 sourceSyncScan ⇒ 第三行显示变更数/库数，并给出该任务开关', async () => {
+    const scan: KbSourceSyncScanResult = {
+      at: 1_764_000_000_000,
+      checked: 12,
+      scans: [
+        { kbId: 'kb1', kbName: '库一', changed: 2, missing: 1 },
+        { kbId: 'kb2', kbName: '库二', changed: 0, missing: 0 }
+      ]
+    }
+    stubPocketai(baseImpls({ getDataHealth: () => ({ ...reportOf, sourceSyncScan: scan }) }))
+    mountWithProviders(<DataHealthPanel />)
+
+    expect(await screen.findByText(L('dh.task.kbSourceSync'))).toBeTruthy()
+    const expected = L('dh.task.sourceChanges').replace('{n}', '3').replace('{m}', '2')
+    // 摘要与时间戳拼在同一格里，按子串匹配
+    expect(screen.getByText(new RegExp(expected.replace('/', '\\/')))).toBeTruthy()
+    expect(screen.getByTestId('dh-task-controls-kb_source_sync')).toBeTruthy()
+  })
+
+  it('没有扫描结果 ⇒ 第三行按「从未运行」显示，不编造摘要', async () => {
+    stubPocketai(baseImpls())
+    mountWithProviders(<DataHealthPanel />)
+    await screen.findByText(L('dh.task.kbSourceSync'))
+    expect(screen.queryAllByText(L('dh.never'))).toHaveLength(3)
   })
 })

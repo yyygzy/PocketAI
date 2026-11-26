@@ -134,6 +134,59 @@ function buildHeadingPrefix(chain: string[], maxLen: number): string {
   return prefix + '\n'
 }
 
+/** 行式表格文本判定：多数非空行形如「列名: 值 | 列名: 值」 */
+function isTableRows(content: string): boolean {
+  const lines = content.split('\n').map((l) => l.trim()).filter(Boolean)
+  if (lines.length < 2) return false
+  const tableLines = lines.filter((l) => l.includes(': ') && l.includes(' | '))
+  return tableLines.length >= Math.ceil(lines.length * 0.6)
+}
+
+/**
+ * 表格行分块：每次累加整行，超预算时整行断开；重叠也按整行回退，
+ * 保证「列名: 值」关系不被切断。单行超预算时独占一块（宁可超长也不切列值）。
+ */
+export function chunkTableLines(
+  content: string,
+  opts: { chunkSize: number; chunkOverlap: number }
+): ChunkResult[] {
+  const { chunkSize, chunkOverlap } = opts
+  const lines = content.split('\n').map((l) => l.trim()).filter(Boolean)
+  if (lines.length === 0) return []
+
+  // 防止 overlap 接近 chunkSize 时几乎整块重复
+  const maxOverlap = Math.min(chunkOverlap, Math.floor(chunkSize / 2))
+  const chunks: ChunkResult[] = []
+  let current: string[] = []
+  let length = 0
+
+  const flush = () => {
+    if (current.length > 0) chunks.push({ content: current.join('\n'), sequence: chunks.length })
+  }
+
+  for (const line of lines) {
+    const add = current.length === 0 ? line.length : line.length + 1
+    if (current.length > 0 && length + add > chunkSize) {
+      flush()
+      const overlap: string[] = []
+      let overlapLen = 0
+      for (let i = current.length - 1; i >= 0; i--) {
+        const l = current[i]!
+        const cost = l.length + (overlap.length > 0 ? 1 : 0)
+        if (overlapLen + cost > maxOverlap) break
+        overlap.unshift(l)
+        overlapLen += cost
+      }
+      current = overlap
+      length = current.join('\n').length
+    }
+    current.push(line)
+    length += current.length === 1 ? line.length : line.length + 1
+  }
+  flush()
+  return chunks
+}
+
 /**
  * Markdown 结构感知分块：
  * 1. 按标题层级（# ~ ######）切节，跳过代码块内的 #
@@ -169,7 +222,10 @@ export function chunkMarkdown(
       const content = (prefix + section.content).trim()
       if (content) chunks.push({ content, sequence: seq++ })
     } else {
-      const sub = chunkText(section.content, { chunkSize: budget, chunkOverlap })
+      // 行式表格（CSV/XLSX 解析产物）按整行切，避免把「列名: 值」切断；其余仍走原字符窗口
+      const sub = isTableRows(section.content)
+        ? chunkTableLines(section.content, { chunkSize: budget, chunkOverlap })
+        : chunkText(section.content, { chunkSize: budget, chunkOverlap })
       for (const s of sub) {
         const content = (prefix + s.content).trim()
         if (content) chunks.push({ content, sequence: seq++ })

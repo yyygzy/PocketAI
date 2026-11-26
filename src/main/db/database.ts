@@ -17,6 +17,7 @@ import { DB_PATH, DATA_DIR } from '../portable'
 import { errMsg } from '../error'
 import { createLogger } from '../logger'
 import { BUILTIN_ASSISTANT_SKILL_IDS, mergeBuiltinSkillIds } from './builtin-assistant-skills'
+import { cjkSpacedText } from '../knowledge/fts-query'
 
 const logger = createLogger('db')
 
@@ -1490,6 +1491,42 @@ const MIGRATIONS: Migration[] = [
         )
       `)
     }
+  },
+  {
+    // v79：短中文（1–2 字）全文检索辅助表。
+    // trigram 表（v18）对 <3 字符的 CJK 恒空，向量路是语义相似而非字面命中；
+    // 新增 unicode61 表写入 cjk_spaced() 单字展开文本，配合查询侧相邻短语 MATCH 精确命中短词。
+    // 触发器与 v18 同构：chunk 插入/删除/内容更新自动同步，不改 kb-chunk.repo 的写入链路。
+    version: 79,
+    name: 'kb_chunks_fts_short',
+    up: `
+      CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunks_fts_short USING fts5(
+        content,
+        doc_id UNINDEXED,
+        kb_id UNINDEXED,
+        chunk_id UNINDEXED,
+        tokenize='unicode61'
+      );
+
+      -- 回填存量 chunk（新库为空表，等价无操作）
+      INSERT INTO kb_chunks_fts_short(content, doc_id, kb_id, chunk_id)
+        SELECT cjk_spaced(content), doc_id, kb_id, id FROM kb_chunks;
+
+      CREATE TRIGGER IF NOT EXISTS kb_chunks_short_ai AFTER INSERT ON kb_chunks BEGIN
+        INSERT INTO kb_chunks_fts_short(content, doc_id, kb_id, chunk_id)
+          VALUES (cjk_spaced(new.content), new.doc_id, new.kb_id, new.id);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS kb_chunks_short_ad AFTER DELETE ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts_short WHERE chunk_id = old.id;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS kb_chunks_short_au AFTER UPDATE OF content ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts_short WHERE chunk_id = old.id;
+        INSERT INTO kb_chunks_fts_short(content, doc_id, kb_id, chunk_id)
+          VALUES (cjk_spaced(new.content), new.doc_id, new.kb_id, new.id);
+      END;
+    `
   }
 ]
 
@@ -1533,6 +1570,10 @@ export class DatabaseService {
     // WAL 在加密/无加密模式下都可用
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+
+    // v79 短中文辅助 FTS 表的触发器/回填要用 cjk_spaced；必须早于 runMigrations 注册。
+    // deterministic 允许 SQLite 在索引构建时安全缓存结果。
+    this.db.function('cjk_spaced', { deterministic: true }, (text: string) => cjkSpacedText(text))
 
     // 尝试加载 sqlite-vec 向量扩展（失败不阻断，降级为纯 JS KNN）
     try {

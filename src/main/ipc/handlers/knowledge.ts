@@ -14,6 +14,7 @@ import { ragService } from '../../knowledge/rag'
 import { kbAskService } from '../../knowledge/ask-service'
 import { getKbAskRetention, setKbAskRetention } from '../../knowledge/ask-retention-config'
 import { checkKbFileUpdates } from '../../knowledge/sync-check'
+import { countDocsNeedingReindex, detectKbConfigChanges } from '../../knowledge/reindex-detection'
 import { scanFolderFiles } from '../../knowledge/folder-scan'
 import { planFileIngest } from '../../knowledge/dedupe'
 import { kbEvalFileName, runKbEvalSet, KB_EVAL_MAX_K } from '../../knowledge/kb-eval-runner'
@@ -43,15 +44,20 @@ export function registerKnowledgeHandlers(): void {
     if (!record.id || !kbRepo.get(record.id)) {
       assertCanCreateKb(kbRepo.list().length)
     }
-    // §334 A9：检测 embedding 模型变更——改后旧向量维度不匹配⇒检索静默丢失，必须提醒重建
+    // §334 A9 / KB 升级阶段 1：检测需要重建索引的配置变更——
+    // embedding provider/model 改后旧向量维度失配，chunkSize/chunkOverlap 改后旧分块边界失效，
+    // 两者都会让检索静默退化，必须提醒重建（只提示、不自动重建）。
     const existing = record.id ? kbRepo.get(record.id) : null
-    const embeddingChanged =
-      existing &&
-      existing.embeddingDim !== null &&
-      (record.embeddingProviderId !== existing.embeddingProviderId ||
-        record.embeddingModel !== existing.embeddingModel)
+    const change = detectKbConfigChanges(existing, record)
     const saved = kbRepo.save(record)
-    return embeddingChanged ? { ...saved, embeddingChanged: true } : saved
+    if (!change.needReindex || !existing) return saved
+    return {
+      ...saved,
+      ...(change.embeddingChanged ? { embeddingChanged: true } : {}),
+      chunkingChanged: change.chunkingChanged,
+      needReindex: true,
+      needReindexDocCount: countDocsNeedingReindex(kbDocRepo.list(existing.id))
+    }
   }, argsSchema(kbSaveSchema))
   safeHandle(IPC.KB_DELETE, (_e, id: string) => {
     ingestionService.deleteKb(id)

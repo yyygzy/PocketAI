@@ -6,7 +6,12 @@
 //    分词器可以自洽地生成一堆永远匹配不上的词项。
 import { describe, it, expect } from 'vitest'
 import Database from 'better-sqlite3-multiple-ciphers'
-import { buildFtsMatchQuery, MAX_FTS_TERMS } from '../src/main/knowledge/fts-query'
+import {
+  buildFtsMatchQuery,
+  buildShortFtsMatchQuery,
+  cjkSpacedText,
+  MAX_FTS_TERMS
+} from '../src/main/knowledge/fts-query'
 
 describe('buildFtsMatchQuery — 词项形状', () => {
   it('CJK 段切成 3 字滑窗并以 OR 连接、加引号', () => {
@@ -96,5 +101,96 @@ describe('buildFtsMatchQuery × 真实 FTS5 trigram 表', () => {
     const db = makeDb()
     expect(buildFtsMatchQuery('好的')).toBeNull()
     expect(() => db.prepare('SELECT 1 FROM t WHERE t MATCH ?').get('')).toThrow(/fts5/)
+  })
+})
+
+// ── 阶段 2：1–2 字短中文辅助路（unicode61 + 单字展开） ──────────────────────
+describe('短查询辅助路 — 纯函数', () => {
+  it('cjkSpacedText 把 CJK 逐字展开，非 CJK 原样保留', () => {
+    expect(cjkSpacedText('人工智能')).toBe('人 工 智 能')
+    expect(cjkSpacedText('AI 人工智能')).toBe('AI 人 工 智 能')
+    expect(cjkSpacedText('')).toBe('')
+  })
+
+  it('1–2 字 CJK 产出相邻短语（trigram 主路这些查询返回 null）', () => {
+    expect(buildFtsMatchQuery('库')).toBeNull()
+    expect(buildShortFtsMatchQuery('库')).toBe('"库"')
+    expect(buildFtsMatchQuery('内存')).toBeNull()
+    expect(buildShortFtsMatchQuery('内存')).toBe('"内 存"')
+  })
+
+  it('≥3 字 CJK 不产出词项，长查询完全交给 trigram 主路', () => {
+    expect(buildShortFtsMatchQuery('知识库')).toBeNull()
+    expect(buildShortFtsMatchQuery('知识库检索')).toBeNull()
+  })
+
+  it('短拉丁/数字词也补齐（trigram 对 ≤2 字符同样匹配不到）', () => {
+    expect(buildShortFtsMatchQuery('AI')).toBe('"AI"')
+    expect(buildShortFtsMatchQuery('BM25')).toBeNull()
+  })
+
+  it('重复短段去重、空查询返回 null', () => {
+    expect(buildShortFtsMatchQuery('库 库')).toBe('"库"')
+    expect(buildShortFtsMatchQuery('')).toBeNull()
+    expect(buildShortFtsMatchQuery('   ')).toBeNull()
+  })
+
+  it('内嵌双引号被转义，不破坏 MATCH 表达式', () => {
+    const q = buildShortFtsMatchQuery('"库"')!
+    expect(q).toBe('"库"')
+    for (const term of q.split(' OR ')) {
+      expect(term.startsWith('"') && term.endsWith('"')).toBe(true)
+    }
+  })
+})
+
+describe('短查询辅助路 × 真实 FTS5 unicode61 表', () => {
+  function makeDb() {
+    const db = new Database(':memory:')
+    db.exec(`CREATE VIRTUAL TABLE t USING fts5(content, tokenize='unicode61')`)
+    const ins = db.prepare('INSERT INTO t(content) VALUES (?)')
+    for (const text of [
+      '知识库检索系统使用向量与 BM25 双路混合召回',
+      '今天天气不错，适合出门散步',
+      'MCP server 的工具列表需要握手后才能拿到',
+      'AI 助手可以回答问题'
+    ]) {
+      ins.run(cjkSpacedText(text))
+    }
+    return db
+  }
+  const hits = (db: Database.Database, match: string | null): string[] =>
+    match === null
+      ? []
+      : (db
+          .prepare('SELECT content AS c FROM t WHERE t MATCH ? ORDER BY bm25(t) ASC')
+          .all(match) as Array<{ c: string }>).map((r) => r.c)
+
+  it('1 字中文命中包含该字的片段（trigram 表此处恒空）', () => {
+    const db = makeDb()
+    const lib = hits(db, buildShortFtsMatchQuery('库'))
+    expect(lib).toHaveLength(1)
+    expect(lib[0]).toContain('知 识 库')
+    expect(hits(db, buildShortFtsMatchQuery('天'))).toHaveLength(1)
+  })
+
+  it('2 字中文按相邻短语命中，不跨文档/不跨字符', () => {
+    const db = makeDb()
+    expect(hits(db, buildShortFtsMatchQuery('知识'))[0]).toContain('知 识 库')
+    expect(hits(db, buildShortFtsMatchQuery('天气'))[0]).toContain('今 天 天 气')
+    // 「库天」分属两句，展开后不相邻 ⇒ 不应命中
+    expect(hits(db, buildShortFtsMatchQuery('库天'))).toEqual([])
+  })
+
+  it('辅助路不抢长查询：≥3 字段不产出 MATCH 词项', () => {
+    const db = makeDb()
+    expect(hits(db, buildShortFtsMatchQuery('知识库'))).toEqual([])
+    expect(hits(db, buildShortFtsMatchQuery('知识库检索'))).toEqual([])
+  })
+
+  it('2 字拉丁词命中，长拉丁词不短路', () => {
+    const db = makeDb()
+    expect(hits(db, buildShortFtsMatchQuery('AI'))[0]).toContain('AI 助 手')
+    expect(hits(db, buildShortFtsMatchQuery('BM25'))).toEqual([])
   })
 })

@@ -309,9 +309,17 @@ export const DataHealthPanel: React.FC = () => {
   }
 
   const { sizes, approvals, kb, tasks } = report
-  // 两颗任务名都是字面量取词（i18n 门禁口径：不把键名当实参）
+  // 任务名都是字面量取词（i18n 门禁口径：不把键名当实参）
   const kbTaskLabel = t('dh.task.kbHealthCheck')
   const verifyTaskLabel = t('dh.task.backupVerify')
+  const sourceSyncLabel = t('dh.task.kbSourceSync')
+  const scan = report?.sourceSyncScan
+  const sourceSyncValue = scan
+    ? `${fmtTime(scan.at)} · ${t('dh.task.sourceChanges', {
+        n: scan.scans.reduce((sum, s) => sum + s.changed + s.missing, 0),
+        m: scan.scans.length
+      })}`
+    : t('dh.never')
   // §436：审批段是后加字段，旧夹具/旧报告可能没有。
   // 缺字段时降级成 0 并在顶部挂一句「数据不可读」，不许整屏白（:342 的 TypeError 就是这么炸的）。
   //
@@ -578,6 +586,10 @@ export const DataHealthPanel: React.FC = () => {
             warn={tasks.backupVerifyLastOk === false}
           />
           {taskControls('backup_verify', verifyTaskLabel)}
+        </div>
+        <div>
+          <Row label={sourceSyncLabel} value={sourceSyncValue} />
+          {taskControls('kb_source_sync', sourceSyncLabel)}
         </div>
       </div>
 
