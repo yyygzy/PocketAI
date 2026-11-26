@@ -3145,6 +3145,7 @@ export const IPC = {
   // 助手导出身份与配置；模板导出的是一次成功 run 的流程形状，且**不含工具授权**。
   RUNBOOK_LIST: 'runbook:list', // 本地模板清单（只读）
   RUNBOOK_CREATE_FROM_RUN: 'runbook:create-from-run', // 从一次成功 run 生成模板
+  RUNBOOK_CREATE_FROM_CONVERSATION: 'runbook:create-from-conversation', // P1-5：从当前会话里最近一次可成模板的成功 run 生成
   RUNBOOK_UPDATE: 'runbook:update', // 改名字 / 重新勾选工具授权（只在本机生效）
   RUNBOOK_DELETE: 'runbook:delete',
   RUNBOOK_CHECK: 'runbook:check', // 套用前校验引用（缺失项清单）

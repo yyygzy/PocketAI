@@ -114,6 +114,32 @@ export function createRunbookFromRun(input: CreateRunbookInput, deps: CreateRunb
   return runbookRepo.insert(insert)
 }
 
+/**
+ * 从一次会话直接沉淀模板：挑该会话里**最近一次**能成模板的成功 run。
+ * 判定完全复用 `createRunbookFromRun`——这一刀只是把"先找到是哪一轮"自动化，
+ * 不另写一套步骤／失败／授权口径；找不出合格 run 时报错，绝不拿旧模板或半份 trace 冒充。
+ */
+export function createRunbookFromConversation(
+  conversationId: string,
+  name?: string,
+  deps: CreateRunbookDeps = {}
+): RunbookRecord {
+  const id = String(conversationId ?? '').trim()
+  if (!id) throw new Error('缺少会话标识')
+
+  for (const run of agentTraceRepo.listRuns(id, 50)) {
+    if (run.errorSteps > 0) continue
+    const row = conversationRunRepo.getByRequest(run.requestId)
+    if (row && row.status !== 'done') continue
+    try {
+      return createRunbookFromRun({ requestId: run.requestId, name }, deps)
+    } catch {
+      // 这一轮没有工具步／引用解析不出来，继续往前找；都不行才在下面统一报错
+    }
+  }
+  throw new Error('这个会话里没有可存成模板的成功运行')
+}
+
 /** 套用前校验：只回答"哪些引用在这台机器上找不到"，不修改模板 */
 export function checkRunbookRefs(id: string): RunbookRef[] {
   const runbook = runbookRepo.get(id)

@@ -270,6 +270,8 @@ interface Props {
   onApplyRunbook?: (text: string, grant?: RunToolGrant) => void
   /** P1-5：把一轮成功结束的 run 存成流程模板（失败提示由 ChatModule 负责） */
   onSaveRunAsRunbook?: (requestId: string) => void
+  /** P1-5：从当前会话最近一次可成模板的成功 run 沉淀（返回是否成功） */
+  onSaveConversationAsRunbook?: () => Promise<boolean>
   /** 当前待回复的引用消息（Composer 显示引用条） */
   replyToMessage?: MessageRecord | null
   /** 设置/清除引用消息 */
@@ -358,6 +360,7 @@ export const ChatView: React.FC<Props> = ({
   onOpenSubSession,
   onApplyRunbook,
   onSaveRunAsRunbook,
+  onSaveConversationAsRunbook,
   replyToMessage,
   onReply,
   onToggleStar,
@@ -999,7 +1002,13 @@ export const ChatView: React.FC<Props> = ({
             onRetry={onRetrySessionStats}
           />
         )}
-        {onApplyRunbook && <RunbookPanel onApply={onApplyRunbook} assistantId={assistant?.id} />}
+        {onApplyRunbook && (
+          <RunbookPanel
+            onApply={onApplyRunbook}
+            assistantId={assistant?.id}
+            onSaveCurrentConversation={onSaveConversationAsRunbook}
+          />
+        )}
         <button
           onClick={openSearch}
           className="ml-auto p-1.5 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text)] transition-colors"

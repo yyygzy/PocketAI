@@ -16,11 +16,20 @@ import {
 } from '../../../shared/runbook'
 import { runbookRepo } from '../../db/repositories/runbook.repo'
 import { toolRegistry } from '../../tools/registry'
-import { checkRunbookRefs, createRunbookFromRun } from '../../runbooks/runbook-service'
+import {
+  checkRunbookRefs,
+  createRunbookFromConversation,
+  createRunbookFromRun,
+  type RunbookToolResolver
+} from '../../runbooks/runbook-service'
 
 const idSchema = z.string().min(1).max(64)
 const createSchema = z.object({
   requestId: z.string().min(1).max(64),
+  name: z.string().max(100).optional()
+})
+const createFromConversationSchema = z.object({
+  conversationId: z.string().min(1).max(64),
   name: z.string().max(100).optional()
 })
 const updateSchema = z.object({
@@ -33,24 +42,31 @@ function windowOf(e: Electron.IpcMainInvokeEvent): BrowserWindow | null {
   return BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0] ?? null
 }
 
+/** 一次 listAll 建 name→schema 索引：getSchema 每次都会重建整个工具面（含 MCP env 解密） */
+function toolResolver(): RunbookToolResolver {
+  const byName = new Map(toolRegistry.listAll().map((schema) => [schema.name, schema]))
+  return {
+    // 授权 id 与模型侧工具名不是一回事（`kb.search` vs `kb_search`），只能回注册表查
+    toolId: (name) => byName.get(name)?.id ?? null,
+    mcpServerId: (name) => byName.get(name)?.mcpServerId ?? null
+  }
+}
+
 export function registerRunbookHandlers(): void {
   safeHandle(IPC.RUNBOOK_LIST, () => runbookRepo.list())
 
   safeHandle(
     IPC.RUNBOOK_CREATE_FROM_RUN,
-    (_e, input: { requestId: string; name?: string }) => {
-      // 一次 listAll 建 name→schema 索引：getSchema 每次都会重建整个工具面（含 MCP env 解密），
-      // 按步骤逐个查会把同一份索引算几十遍
-      const byName = new Map(toolRegistry.listAll().map((schema) => [schema.name, schema]))
-      return createRunbookFromRun(input, {
-        resolveTool: {
-          // 授权 id 与模型侧工具名不是一回事（`kb.search` vs `kb_search`），只能回注册表查
-          toolId: (name) => byName.get(name)?.id ?? null,
-          mcpServerId: (name) => byName.get(name)?.mcpServerId ?? null
-        }
-      })
-    },
+    (_e, input: { requestId: string; name?: string }) =>
+      createRunbookFromRun(input, { resolveTool: toolResolver() }),
     argsSchema(createSchema)
+  )
+
+  safeHandle(
+    IPC.RUNBOOK_CREATE_FROM_CONVERSATION,
+    (_e, input: { conversationId: string; name?: string }) =>
+      createRunbookFromConversation(input.conversationId, input.name, { resolveTool: toolResolver() }),
+    argsSchema(createFromConversationSchema)
   )
 
   safeHandle(

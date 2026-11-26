@@ -237,6 +237,11 @@ const api = {
     input: { requestId: string; name?: string }
   ): Promise<RunbookRecord | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.RUNBOOK_CREATE_FROM_RUN, input),
+  /** P1-5：从当前会话最近一次可成模板的成功 run 生成（找不到就报错，不拿半份 trace 冒充） */
+  createRunbookFromConversation: (
+    input: { conversationId: string; name?: string }
+  ): Promise<RunbookRecord | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.RUNBOOK_CREATE_FROM_CONVERSATION, input),
   updateRunbook: (patch: {
     id: string
     name?: string

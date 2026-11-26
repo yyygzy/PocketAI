@@ -754,6 +754,31 @@ export const ChatModule: React.FC = () => {
     }
   }, [conversations, t, toast])
 
+  /** P1-5：从当前会话最近一次可成模板的成功 run 沉淀；找不到合格 run 时如实报错 */
+  const handleSaveConversationAsRunbook = useCallback(async (): Promise<boolean> => {
+    const conversationId = currentConvRef.current
+    if (!conversationId) {
+      toast.error(t('runbook.noConversation'))
+      return false
+    }
+    const title = conversations.find((c) => c.id === conversationId)?.title ?? ''
+    try {
+      const r = await window.pocketai.createRunbookFromConversation({
+        conversationId,
+        name: title || undefined
+      })
+      if (hasIpcFailed(r)) {
+        toast.error(ipcFailText(r, t('runbook.readFailed')))
+        return false
+      }
+      toast.success(t('runbook.saved'))
+      return true
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('runbook.readFailed'))
+      return false
+    }
+  }, [conversations, t, toast])
+
   // 会话切换统一加载草稿（手动切换/新对话/初始自动选中/搜索跳转全覆盖）；
   // 同步清空防旧会话文本闪现，异步加载完成后回填；迟到响应按 currentConvRef 判归属（§264）
   const loadDraft = useCallback((id: string): void => {
@@ -2219,6 +2244,7 @@ export const ChatModule: React.FC = () => {
         onOpenSubSession={handleOpenSubSession}
         onApplyRunbook={handleApplyRunbook}
         onSaveRunAsRunbook={handleSaveRunAsRunbook}
+        onSaveConversationAsRunbook={handleSaveConversationAsRunbook}
         replyToMessage={replyToMessage}
         onReply={handleSetReply}
         onToggleStar={handleToggleStar}

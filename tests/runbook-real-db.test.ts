@@ -23,7 +23,11 @@ vi.mock('../src/main/logger', () => ({
 
 import { dbService, LATEST_SCHEMA_VERSION } from '../src/main/db/database'
 import { runbookRepo } from '../src/main/db/repositories/runbook.repo'
-import { checkRunbookRefs, createRunbookFromRun } from '../src/main/runbooks/runbook-service'
+import {
+  checkRunbookRefs,
+  createRunbookFromConversation,
+  createRunbookFromRun
+} from '../src/main/runbooks/runbook-service'
 import { resolveRunbookImportItem } from '../src/shared/runbook'
 
 const CONV = 'conv-rb-1'
@@ -158,6 +162,16 @@ describe('runbook（真库）', () => {
     seedConversation()
     seedRun('aborted', 'req-rb-bad')
     expect(() => createRunbookFromRun({ requestId: 'req-rb-bad' })).toThrow(/没有成功结束/)
+  })
+
+  it('从会话沉淀：跳过最近一轮失败，取更早的合格 run', () => {
+    seedConversation()
+    seedRun('done')
+    seedRun('aborted', 'req-rb-bad')
+    const record = createRunbookFromConversation(CONV, '巡检沉淀')
+    expect(record.name).toBe('巡检沉淀')
+    expect(record.steps.map((s) => s.toolName)).toEqual(['shell_exec', 'kb_search', 'mcp_ci_fetch'])
+    expect(runbookRepo.get(record.id)).toEqual(record)
   })
 
   it('启动前校验：跨机失效的引用逐条列出（路径存在则不算缺）', () => {

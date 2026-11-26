@@ -8,7 +8,7 @@
 //  · 逐项勾选后确认结果落到模板的授权字段，套用才放行；
 //  · 改名空名不落库、重名先给一次可理解的确认。
 import { describe, it, expect, vi } from 'vitest'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { mountWithProviders, stubPocketai, pocketaiCalls } from './helpers/renderer'
 import { RunbookPanel } from '../src/renderer/src/modules/chat/RunbookPanel'
 import type { RunbookRecord } from '../src/shared/runbook'
@@ -341,5 +341,32 @@ describe('批量导入后的逐条确认引导', () => {
     await waitFor(() => expect(updateRunbook).toHaveBeenLastCalledWith({ id: 'rb-c', toolPermissions: ['shell.exec'] }))
     // 最后一条确认完：引导与进度整块消失（列表徽标另算）
     await waitFor(() => expect(screen.queryByTestId('runbook-import-guide')).toBeNull())
+  })
+})
+
+describe('从当前会话直接沉淀', () => {
+  it('模板面板给出会话保存入口，成功后回调并重读列表', async () => {
+    const onSave = vi.fn(async () => true)
+    let listCalls = 0
+    stubPocketai({
+      listRunbooks: () => {
+        listCalls += 1
+        return [rec()]
+      },
+      getToolPolicy: () => policy(),
+      checkRunbook: () => ({ missingRefs: [] })
+    })
+    mountWithProviders(
+      <RunbookPanel onApply={vi.fn()} assistantId="asst-1" onSaveCurrentConversation={onSave} />
+    )
+    await openPanel()
+    const before = listCalls
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('runbook-save-conversation'))
+    })
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(listCalls).toBeGreaterThan(before)
   })
 })

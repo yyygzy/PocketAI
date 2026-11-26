@@ -25,6 +25,8 @@ interface Props {
   onApply: (text: string, grant?: RunToolGrant) => void
   /** 当前这一轮归属的助手；授权面按它解析（与 run 启动同一口径） */
   assistantId?: string
+  /** P1-5：从当前会话最近一次可成模板的成功 run 沉淀；父级负责 IPC 与失败提示 */
+  onSaveCurrentConversation?: () => Promise<boolean>
 }
 
 /** 本机注册表里的工具（内置 + 已启动 MCP）：只读快照，不在渲染端复制判定规则 */
@@ -45,7 +47,7 @@ function grantedIdsOf(policy: ToolPolicySnapshot): Set<string> {
   )
 }
 
-export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
+export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId, onSaveCurrentConversation }) => {
   const { t } = useI18n()
   const toast = useToast()
   const { confirm, dialog } = useConfirm()
@@ -384,6 +386,16 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
 
   const tools = gate?.tools ?? []
 
+  const handleSaveCurrentConversation = async (): Promise<void> => {
+    if (!onSaveCurrentConversation || busy) return
+    setBusy(true)
+    try {
+      if (await onSaveCurrentConversation()) await reload()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="relative" ref={rootRef}>
       <button
@@ -403,12 +415,24 @@ export const RunbookPanel: React.FC<Props> = ({ onApply, assistantId }) => {
         >
           <div className="flex items-center gap-2">
             <span className="font-medium text-[var(--color-text)]">{t('runbook.title')}</span>
+            {onSaveCurrentConversation && (
+              <button
+                type="button"
+                onClick={() => void handleSaveCurrentConversation()}
+                disabled={busy}
+                title={t('runbook.saveFromConversationHint')}
+                data-testid="runbook-save-conversation"
+                className="ml-auto px-2 py-0.5 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:opacity-80 disabled:opacity-50"
+              >
+                {t('runbook.saveFromConversation')}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void handleImport()}
               disabled={busy}
               data-testid="runbook-import"
-              className="ml-auto px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+              className={`px-2 py-0.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50 ${onSaveCurrentConversation ? '' : 'ml-auto'}`}
             >
               {t('runbook.import')}
             </button>
