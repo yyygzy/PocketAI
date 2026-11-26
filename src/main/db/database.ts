@@ -1527,6 +1527,50 @@ const MIGRATIONS: Migration[] = [
           VALUES (cjk_spaced(new.content), new.doc_id, new.kb_id, new.id);
       END;
     `
+  },
+  {
+    // 技能升级阶段 1：版本/来源/内容哈希 + 历史版本表。
+    // 老库全部走默认值（''/0），不改变任何现有技能的注入与启停行为；
+    // 历史表只在"同来源更新/用户编辑"时写入，给回滚提供依据，不自动清理。
+    version: 80,
+    name: 'skill_versions',
+    up: (db) => {
+      const skillColumns = new Set(
+        (db.prepare('PRAGMA table_info(skills)').all() as Array<{ name: string }>).map((c) => c.name)
+      )
+      const addColumn = (name: string, decl: string): void => {
+        if (!skillColumns.has(name)) db.exec(`ALTER TABLE skills ADD COLUMN ${name} ${decl}`)
+      }
+      addColumn('version', "TEXT NOT NULL DEFAULT ''")
+      addColumn('author', "TEXT NOT NULL DEFAULT ''")
+      addColumn('license', "TEXT NOT NULL DEFAULT ''")
+      addColumn('source_url', "TEXT NOT NULL DEFAULT ''")
+      addColumn('source_commit', "TEXT NOT NULL DEFAULT ''")
+      addColumn('content_hash', "TEXT NOT NULL DEFAULT ''")
+      addColumn('installed_at', 'INTEGER NOT NULL DEFAULT 0')
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_versions (
+          id TEXT PRIMARY KEY,
+          skill_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          icon TEXT NOT NULL DEFAULT '',
+          content TEXT NOT NULL DEFAULT '',
+          category TEXT NOT NULL DEFAULT '',
+          tags TEXT NOT NULL DEFAULT '[]',
+          version TEXT NOT NULL DEFAULT '',
+          author TEXT NOT NULL DEFAULT '',
+          license TEXT NOT NULL DEFAULT '',
+          source_url TEXT NOT NULL DEFAULT '',
+          source_commit TEXT NOT NULL DEFAULT '',
+          content_hash TEXT NOT NULL DEFAULT '',
+          imported_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_skill_versions_skill_at
+          ON skill_versions(skill_id, imported_at DESC);
+      `)
+    }
   }
 ]
 

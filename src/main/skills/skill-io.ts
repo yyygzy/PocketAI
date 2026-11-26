@@ -22,7 +22,7 @@ import {
 const log = createLogger('skill-io')
 import type { SkillRecord } from '../../shared/types'
 import { parseSkillText, type SkillShape } from './skill-parser'
-import { buildSkillExportPayload, verifySkillPackage } from './skill-package'
+import { buildSkillExportPayload, computeSkillChecksum, verifySkillPackage } from './skill-package'
 import { safeUrlForDisplay, scanSkill, type SkillScanResult } from './skill-scan'
 import { installSkillFiles, readSkillFolder, rollbackSkillFiles } from './skill-files'
 import { safeFetch } from '../net/safe-fetch'
@@ -88,9 +88,25 @@ export function safeFileName(name: string): string {
  * 把 SkillShape 保存为自定义技能（不传 id → 自动生成 UUID；isBuiltin=false）。
  * `resident` 不给就是 true——导入的默认形状必须等于今天的行为，按需档是用户/超长逼出来的例外。
  */
-export function saveShapeAsSkill(shape: SkillShape, opts: { resident?: boolean } = {}): SkillRecord {
+export function saveShapeAsSkill(
+  shape: SkillShape,
+  opts: { resident?: boolean; sourceUrl?: string; sourceCommit?: string } = {}
+): SkillRecord {
   skillShapeSchema.parse(shape)
+  // 阶段 1：同来源再次导入 ⇒ 更新同一条（而不是造同名副本），旧内容先存一份历史快照
+  const sourceUrl = String(opts.sourceUrl ?? '')
+  const existing = sourceUrl ? skillRepo.findBySourceUrl(sourceUrl) : null
+  const installedAt = Date.now()
+  const contentHash = computeSkillChecksum({
+    name: shape.name,
+    description: shape.description,
+    icon: shape.icon,
+    content: shape.content,
+    category: shape.category ?? '',
+    tags: shape.tags ?? []
+  }).value
   return skillRepo.save({
+    ...(existing ? { id: existing.id } : {}),
     name: shape.name,
     description: shape.description,
     icon: shape.icon,
@@ -98,7 +114,14 @@ export function saveShapeAsSkill(shape: SkillShape, opts: { resident?: boolean }
     category: shape.category ?? '',
     tags: shape.tags ?? [],
     enabled: true,
-    resident: opts.resident ?? true
+    resident: opts.resident ?? true,
+    version: shape.version ?? '',
+    author: shape.author ?? '',
+    license: shape.license ?? '',
+    sourceUrl,
+    sourceCommit: String(opts.sourceCommit ?? ''),
+    contentHash,
+    installedAt
   })
 }
 
@@ -359,7 +382,10 @@ export async function importSkillDirFromManifest(
       resources: downloaded.files.map((f) => ({ path: f.rel, size: f.size })),
       ignoredKeys: parsed.ignoredKeys
     })
-    const skill = saveShapeAsSkill(shape, { resident: useResident })
+    const skill = saveShapeAsSkill(shape, {
+      resident: useResident,
+      sourceUrl: manifestUrl
+    })
     let copied: string[] = []
     let skipped: Array<{ path: string; reason: string }> = []
     try {
@@ -442,9 +468,10 @@ export async function importSkillFromUrl(
     if (!shape) return { ok: false, error: `解析失败: ${error}` }
 
     const scan = scanSkill({ content: shape.content, ignoredKeys })
-    const skill = saveShapeAsSkill(shape)
-    // 来源明细只留 origin + pathname：URL 的查询串可能带令牌，审计不抄
-    auditImported(skill, 'url', safeUrlForDisplay(url), scan)
+    // 来源身份与审计口径一致：只留 origin + pathname，查询串可能带令牌不落库
+    const sourceUrl = safeUrlForDisplay(url)
+    const skill = saveShapeAsSkill(shape, { sourceUrl })
+    auditImported(skill, 'url', sourceUrl, scan)
     return { ok: true, skill, scan, license: shape.license, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
   } catch (e) {
     return { ok: false, error: errMsg(e) }

@@ -46,6 +46,20 @@ export function registerSkillHandlers(): void {
     if (!skillRepo.get(String(id ?? ''))) return { ok: false, error: 'SKILL_NOT_FOUND' }
     return { ok: true, files: listSkillFiles(String(id ?? '')) }
   }, argsSchema(idSchema))
+  // 阶段 1：版本历史与回滚。内置技能没有版本历史（内容锁定），只读空列表；回滚也拒绝内置。
+  safeHandle(IPC.SKILL_LIST_VERSIONS, (_e, id: string) => {
+    const skill = skillRepo.get(String(id ?? ''))
+    if (!skill) return { ok: false, error: 'SKILL_NOT_FOUND' }
+    return { ok: true, versions: skill.isBuiltin ? [] : skillRepo.listVersions(skill.id) }
+  }, argsSchema(idSchema))
+  safeHandle(IPC.SKILL_ROLLBACK, (_e, id: string, versionId: string) => {
+    const skill = skillRepo.get(String(id ?? ''))
+    if (!skill) return { ok: false, error: 'SKILL_NOT_FOUND' }
+    if (skill.isBuiltin) return { ok: false, error: 'BUILTIN_SKILL_LOCKED' }
+    const restored = skillRepo.rollbackTo(skill.id, String(versionId ?? ''))
+    return restored ? { ok: true, skill: restored } : { ok: false, error: 'VERSION_NOT_FOUND' }
+  }, argsSchema(idSchema, z.string().min(1).max(64)))
+
   safeHandle(IPC.SKILL_SYNC, () => {
     return syncBuiltinSkills()
   })

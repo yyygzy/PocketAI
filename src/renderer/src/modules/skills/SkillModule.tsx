@@ -1,7 +1,7 @@
 // 技能管理模块：技能列表 / 创建编辑 / 启用开关 / 删除 / 市场（浏览/搜索/复制/导入导出）
 // 技能 = 可复用提示词片段，关联到助手后自动注入 SystemPrompt
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { SkillRecord } from '../../../../shared/types'
+import type { SkillRecord, SkillVersionRecord } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { reportIpcError, hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { LoadFailNotice } from '../../components/LoadFailNotice'
@@ -184,6 +184,7 @@ export const SkillModule: React.FC = () => {
             onToggle={() => toggleEnabled(selected)}
             onToggleResident={() => void toggleResident(selected)}
             onDelete={() => handleDelete(selected)}
+            onRolledBack={() => void load()}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-sm text-[var(--color-text-muted)]">
@@ -262,6 +263,104 @@ const SkillFilesPanel: React.FC<{ skillId: string }> = ({ skillId }) => {
   )
 }
 
+// ---------- 阶段 1：版本 / 来源 / 回滚 ----------
+const SkillVersionPanel: React.FC<{
+  skill: SkillRecord
+  onRolledBack: () => void
+}> = ({ skill, onRolledBack }) => {
+  const { t } = useI18n()
+  const toast = useToast()
+  const { confirm, dialog } = useConfirm()
+  const [versions, setVersions] = useState<SkillVersionRecord[] | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    setFailed(null)
+    void Promise.resolve()
+      .then(() => window.pocketai.listSkillVersions(skill.id))
+      .then((r) => {
+        if (hasIpcFailed(r)) {
+          setFailed(ipcFailText(r, t('common.unknownError')))
+          return
+        }
+        setVersions(r.versions)
+      })
+      .catch((e: unknown) => {
+        setFailed(errText(e, t('common.unknownError')))
+        reportIpcError('skill.listVersions')(e)
+      })
+  }, [skill.id, t])
+
+  useEffect(() => {
+    if (!skill.isBuiltin) load()
+  }, [load, skill.isBuiltin])
+
+  const rollback = async (v: SkillVersionRecord) => {
+    const label = v.version || new Date(v.importedAt).toLocaleString()
+    if (!(await confirm({ message: t('skill.rollbackConfirm', { version: label }), danger: true }))) return
+    const r = await window.pocketai.rollbackSkill(skill.id, v.id)
+    if (hasIpcFailed(r)) {
+      toast.error(ipcFailText(r, t('common.unknownError')))
+      return
+    }
+    toast.success(t('skill.rollbackDone'))
+    load()
+    onRolledBack()
+  }
+
+  const meta: Array<[string, string]> = [
+    [t('skill.metaVersion'), skill.version || ''],
+    [t('skill.metaAuthor'), skill.author || ''],
+    [t('skill.metaLicense'), skill.license || ''],
+    [t('skill.metaSource'), skill.sourceUrl || ''],
+    [t('skill.metaInstalledAt'), skill.installedAt ? new Date(skill.installedAt).toLocaleString() : '']
+  ].filter(([, value]) => value) as Array<[string, string]>
+
+  if (skill.isBuiltin) return null
+
+  return (
+    <div data-testid="skill-version-panel" className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+      <div className="text-xs font-semibold text-[var(--color-text)]">{t('skill.versionTitle')}</div>
+      {meta.length > 0 ? (
+        <dl className="text-[11px] text-[var(--color-text-muted)] space-y-0.5">
+          {meta.map(([label, value]) => (
+            <div key={label} className="flex gap-2">
+              <dt className="shrink-0">{label}:</dt>
+              <dd className="break-all">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <div className="text-[11px] text-[var(--color-text-muted)]">{t('skill.metaEmpty')}</div>
+      )}
+
+      {failed && <LoadFailNotice msg={failed} />}
+      {versions && versions.length > 0 && (
+        <ul className="space-y-1" data-testid="skill-version-list">
+          {versions.map((v) => (
+            <li key={v.id} className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-[var(--color-text-muted)] truncate" title={v.content}>
+                {v.version || t('skill.versionUntitled')} · {new Date(v.importedAt).toLocaleString()}
+              </span>
+              <button
+                className="btn-ghost text-[11px]"
+                onClick={() => void rollback(v)}
+                data-testid="skill-version-rollback"
+              >
+                {t('skill.rollback')}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {versions && versions.length === 0 && (
+        <div className="text-[11px] text-[var(--color-text-muted)]">{t('skill.versionEmpty')}</div>
+      )}
+      {dialog}
+    </div>
+  )
+}
+
 // ---------- 技能详情 ----------
 const SkillDetail: React.FC<{
   skill: SkillRecord
@@ -269,7 +368,8 @@ const SkillDetail: React.FC<{
   onToggle: () => void
   onToggleResident: () => void
   onDelete: () => void
-}> = ({ skill, onEdit, onToggle, onToggleResident, onDelete }) => {
+  onRolledBack: () => void
+}> = ({ skill, onEdit, onToggle, onToggleResident, onDelete, onRolledBack }) => {
   const { t } = useI18n()
   return (
     <div className="max-w-2xl space-y-4">
@@ -349,6 +449,8 @@ const SkillDetail: React.FC<{
       </div>
 
       <SkillFilesPanel skillId={skill.id} />
+
+      <SkillVersionPanel skill={skill} onRolledBack={onRolledBack} />
 
       <div className="flex gap-2">
         <button className="btn-ghost" onClick={onToggle}>

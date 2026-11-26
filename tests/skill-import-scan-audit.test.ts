@@ -54,6 +54,7 @@ vi.mock('../src/main/db/repositories/skill.repo', () => ({
     },
     list: () => [],
     get: () => null,
+    findBySourceUrl: () => null,
     delete: () => {}
   }
 }))

@@ -19,7 +19,8 @@ const mocks = vi.hoisted(() => {
         return { id: 'auto-uuid', isBuiltin: false, enabled: true, ...rec }
       },
       get: () => null,
-      list: () => []
+      list: () => [],
+      findBySourceUrl: () => null
     }
   }
 })

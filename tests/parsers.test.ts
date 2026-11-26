@@ -56,8 +56,8 @@ describe('detectSourceType — 源类型推断', () => {
     expect(detectSourceType('/data/log.txt')).toBe('txt')
   })
 
-  it('.csv → txt（文本类）', () => {
-    expect(detectSourceType('/data/data.csv')).toBe('txt')
+  it('.csv → csv（结构化表格）', () => {
+    expect(detectSourceType('/data/data.csv')).toBe('csv')
   })
 
   it('.json → txt（文本类）', () => {

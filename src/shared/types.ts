@@ -154,6 +154,39 @@ export interface SkillRecord {
   enabled: boolean
   isBuiltin: boolean
   createdAt: number
+  /** 技能升级阶段 1：作者声明版本（老记录/旧导出为 ''） */
+  version?: string
+  /** 作者名（老记录为 ''） */
+  author?: string
+  /** 许可证（老记录为 ''） */
+  license?: string
+  /** 来源 URL：同来源再次导入视为更新而非新建（手工技能为 ''） */
+  sourceUrl?: string
+  /** 来源 commit / 版本标识（可空） */
+  sourceCommit?: string
+  /** 正文+元数据 sha256（复用 skill-package 校验和口径） */
+  contentHash?: string
+  /** 最近一次导入时刻（老记录为 0） */
+  installedAt?: number
+}
+
+/** 技能版本历史（回滚用）：一条 = 一次导入/保存前的快照 */
+export interface SkillVersionRecord {
+  id: string
+  skillId: string
+  name: string
+  description: string
+  icon: string
+  content: string
+  category: string
+  tags: string[]
+  version: string
+  author: string
+  license: string
+  sourceUrl: string
+  sourceCommit: string
+  contentHash: string
+  importedAt: number
 }
 
 // ---------- 用户记忆（长期记忆条目） ----------
@@ -3083,6 +3116,8 @@ export const IPC = {
   SKILL_VALIDATE: 'skill:validate',
   SKILL_IMPORT_FOLDER: 'skill:import-folder', // §236：选一个 SKILL.md 技能目录导入（连资源文件一起快照进来）
   SKILL_LIST_FILES: 'skill:list-files', // §236：某个技能自带哪些文件
+  SKILL_LIST_VERSIONS: 'skill:list-versions', // 阶段 1：版本历史（回滚依据）
+  SKILL_ROLLBACK: 'skill:rollback', // 阶段 1：回滚到历史版本
   SKILL_TEMPLATES: 'skill:templates',
 
   MEMORY_LIST: 'memory:list',

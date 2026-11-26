@@ -42,7 +42,9 @@ beforeEach(() => {
     validateSkill: () => ({ ok: true, warnings: [] }),
     saveSkill: () => saveResult,
     deleteSkill: () => ({ ok: true, filesRemoved: false }),
-    listSkillFiles: () => filesResult
+    listSkillFiles: () => filesResult,
+    listSkillVersions: () => ({ ok: true, versions: [] }),
+    rollbackSkill: () => ({ ok: true, skill: skill() })
   })
 })
 

@@ -46,6 +46,8 @@ export const skillShapeSchema = z.object({
   content: z.string().max(SKILL_MAX_CONTENT_CHARS),
   version: z.string().max(50).optional(),
   author: z.string().max(100).optional(),
+  /** 许可证：阶段 1 起落库，只用于展示，不注入、不执行 */
+  license: z.string().max(100).optional(),
   tags: skillTags.optional(),
   category: z.string().max(50).optional()
 })

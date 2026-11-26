@@ -30,6 +30,7 @@ import type {
   AssistantListScope,
   DuplicatedAssistant,
   SkillRecord,
+  SkillVersionRecord,
   UserMemoryRecord,
   ConversationRecord,
   MessageRecord,
@@ -329,6 +330,12 @@ const api = {
   listSkillFiles: (id: string): Promise<
     { ok: true; files: Array<{ path: string; size: number }> } | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.SKILL_LIST_FILES, id),
+  listSkillVersions: (id: string): Promise<
+    { ok: true; versions: SkillVersionRecord[] } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.SKILL_LIST_VERSIONS, id),
+  rollbackSkill: (id: string, versionId: string): Promise<
+    { ok: true; skill: SkillRecord } | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.SKILL_ROLLBACK, id, versionId),
   /** removed/retired：内置清单同步时删掉/停用的下线内置技能数（见 assistant/builtin.ts） */
   syncSkills: (): Promise<
     { count: number; removed: number; retired: number; errors: string[] } |

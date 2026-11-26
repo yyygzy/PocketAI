@@ -591,6 +591,8 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-kb-eval-panel.test.tsx': 20,
       'tests/renderer-kb-jump-focus-282.test.tsx': 8,
       'tests/renderer-kb-retrieval-panel.test.tsx': 1,
+      // 知识库重建提示回归：8 颗门都等提示/进度落到屏上再断言；上限＝现数 8。
+      'tests/renderer-kb-reindex-notice.test.tsx': 8,
       'tests/renderer-kb-switch-332.test.tsx': 5,
       'tests/renderer-late-response-owner-311.test.tsx': 14,
       'tests/renderer-local-judgement-panel.test.tsx': 13,
@@ -624,6 +626,8 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-sidebar-badge-250.test.tsx': 1,
       'tests/renderer-sidebar-nav.test.tsx': 2,
       'tests/renderer-skill-resident-236.test.tsx': 1,
+      // 技能版本面板：2 颗门分别等确认/取消按钮真正上屏，门后读的也是确认框；上限＝现数 2。
+      'tests/renderer-skill-version-236.test.tsx': 2,
       'tests/renderer-steward-ollama-liveness-380.test.tsx': 4,
       // 既有漂移补登记（工具面治理批发现）：`9a1082a`（备份验证三态并入故障诊断卡）新增 3 颗门未抬上限，
       // 现数 11；新增的三颗都按「存在」读屏（PROBE-PICK／verifyBackupNow／VERIFY_IO toast）。
