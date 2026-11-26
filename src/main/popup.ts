@@ -13,12 +13,14 @@ import { execFile } from 'node:child_process'
 import { appConfigRepo } from './db/repositories/app-config.repo'
 import { IPC } from '../shared/types'
 import type {
+  BeginRegionSelectResult,
   ChatAttachment,
   PopupConfig,
   PopupPayload,
   PopupSetConfigResult,
   ScreenshotCaptureResult,
   ScreenshotFailCode,
+  ScreenshotRect,
   ScreenshotTarget,
   SelectionAction
 } from '../shared/types'
@@ -55,6 +57,7 @@ const CFG_SHOT_ACCEL = 'popup.screenshot_accel'
 let popupWin: BrowserWindow | null = null
 let lastPayload: PopupPayload | null = null
 let grabbing: Promise<unknown> | null = null // 取词串行锁，防连按
+let regionSelecting = false // 区域框选中：抑制 blur 自动隐藏，捕获/取消后才恢复
 // 当前已注册的快捷键（更换/退出时按此清单反注册）
 let registeredAccels: string[] = []
 
@@ -116,7 +119,8 @@ function registerWith(cfg: PopupConfig): string | null {
     registeredAccels.push(cfg.selectionAccelerator)
   }
   if (cfg.screenshotEnabled && cfg.screenshotSupported) {
-    const ok = globalShortcut.register(cfg.screenshotAccelerator, () => triggerScreenshot('window'))
+    const hotkeyTarget: ScreenshotTarget = process.platform === 'darwin' ? 'screen' : 'window'
+    const ok = globalShortcut.register(cfg.screenshotAccelerator, () => triggerScreenshot(hotkeyTarget))
     if (!ok) {
       log.warn(`截图快捷键注册失败（可能被其他程序占用）${WAYLAND_ACCEL_HINT}:`, cfg.screenshotAccelerator)
       return cfg.screenshotAccelerator
@@ -288,7 +292,7 @@ function createPopupWindow(payload: PopupPayload): BrowserWindow {
 
   // 失焦自动隐藏（Spotlight 式）；流式回复在主进程继续，隐藏不中断
   win.on('blur', () => {
-    if (!win.webContents.isDevToolsOpened()) win.hide()
+    if (!regionSelecting && !win.webContents.isDevToolsOpened()) win.hide()
   })
   win.on('closed', () => {
     popupWin = null
@@ -343,7 +347,36 @@ function hidePopup(): void {
   if (popupWin && !popupWin.isDestroyed()) popupWin.hide()
 }
 
-// ─── 截图进对话（P1-4 第一刀：Windows） ─────────────────────────────
+/** 区域框选：把同一个浮窗临时铺满当前 display，不新建第二个窗口 */
+function beginRegionSelect(): BeginRegionSelectResult {
+  if (lockService.getStatus().state === 'locked') return { ok: false, error: 'locked' }
+  const cursor = screen.getCursorScreenPoint()
+  const display = screen.getDisplayNearestPoint(cursor)
+  const win = popupWin && !popupWin.isDestroyed()
+    ? popupWin
+    : createPopupWindow(lastPayload ?? { mode: 'quick', ts: Date.now() })
+  regionSelecting = true
+  popupWin = win
+  win.setBounds(display.bounds)
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.show()
+  win.focus()
+  return {
+    ok: true,
+    display: {
+      ...display.bounds,
+      scaleFactor: Number.isFinite(display.scaleFactor) && display.scaleFactor > 0 ? display.scaleFactor : 1
+    }
+  }
+}
+
+/** 取消或捕获完成后恢复浮窗常规位置；不主动 show，交给截图结果流程 */
+function endRegionSelect(): void {
+  regionSelecting = false
+  if (popupWin && !popupWin.isDestroyed()) popupWin.setBounds(positionFor('quick'))
+}
+
+// ─── 截图进对话（P1-4：Windows 窗口/整屏；macOS 整屏；双平台区域） ──
 // 捕获总是先隐藏浮窗，避免把浮窗自己截进去；真机实测隐藏后 Windows 不会改派前台，
 // 所以目标窗口由捕获脚本按浮窗句柄做命中测试确定（见 screenshot.ts popupHwndString）。
 // 失败不吞：带失败原因码重新打开浮窗，由渲染层显示可读文案。
@@ -362,12 +395,14 @@ export function triggerScreenshot(target: ScreenshotTarget): void {
   screenshotBusy = true
   void (async () => {
     try {
-      // 1) 热键瞬间先记下前台窗口：浮窗一上屏就会把前台抢走
+      // 1) Windows 在热键瞬间记下前台窗口；macOS 走 desktopCapturer，不碰 PowerShell 宿主
       let foreground: string | undefined
-      try {
-        foreground = await queryForegroundHwnd()
-      } catch (e) {
-        log.warn('读取前台窗口失败，退回隐藏浮窗后按命中测试抓:', errMsg(e))
+      if (process.platform === 'win32') {
+        try {
+          foreground = await queryForegroundHwnd()
+        } catch (e) {
+          log.warn('读取前台窗口失败，退回隐藏浮窗后按命中测试抓:', errMsg(e))
+        }
       }
       if (!foreground) {
         // 宿主还没就绪/已崩溃：保持旧流程，至少不会截错目标
@@ -431,19 +466,22 @@ export function initPopup(): void {
   safeHandle(IPC.POPUP_GET_PAYLOAD, () => lastPayload)
   safeHandle(IPC.POPUP_GET_CONFIG, () => getPopupConfig())
 
-  // 浮窗内 📷 入口：先藏浮窗（避免把自己截进去），抓完再显示回来并回传结果。
-  // 附件由渲染层加进既有附件栏；失败原因码同样原样回传，由浮窗上屏。
+  // 截图入口：先藏浮窗（避免把自己截进去），抓完只恢复原本就可见的浮窗。
+  // 浮窗内 📷 会看到它回来；主窗 Composer 调用时浮窗本来是隐藏的，抓完不该把焦点抢走。
+  // 附件由渲染层加进各自附件栏；失败原因码同样原样回传，由上屏方解释。
   safeHandle(
     IPC.SCREENSHOT_CAPTURE,
-    async (_e, target: ScreenshotTarget): Promise<ScreenshotCaptureResult> => {
+    async (_e, target: ScreenshotTarget, rect?: ScreenshotRect): Promise<ScreenshotCaptureResult> => {
       if (lockService.getStatus().state === 'locked') return { ok: false, code: 'locked' }
       if (screenshotBusy) return { ok: false, code: 'failed', detail: 'capture busy' }
       screenshotBusy = true
       const popupHwnd = popupHwndString(popupWin)
+      const popupWasVisible = !!popupWin && !popupWin.isDestroyed() && popupWin.isVisible()
       try {
+        endRegionSelect()
         hidePopup()
-        const result = await captureScreenshot(target, { popupHwnd })
-        if (popupWin && !popupWin.isDestroyed()) {
+        const result = await captureScreenshot(target, { popupHwnd, rect })
+        if (popupWasVisible && popupWin && !popupWin.isDestroyed()) {
           popupWin.show()
           popupWin.focus()
         }
@@ -452,8 +490,22 @@ export function initPopup(): void {
         screenshotBusy = false
       }
     },
-    argsSchema(z.enum(['window', 'screen']))
+    argsSchema(
+      z.enum(['window', 'screen', 'region']),
+      z.object({
+        x: z.number().min(0).max(100000),
+        y: z.number().min(0).max(100000),
+        width: z.number().min(1).max(100000),
+        height: z.number().min(1).max(100000)
+      }).optional()
+    )
   )
+
+  safeHandle(IPC.POPUP_BEGIN_REGION_SELECT, () => beginRegionSelect())
+  safeHandle(IPC.POPUP_END_REGION_SELECT, () => {
+    endRegionSelect()
+    return { ok: true }
+  })
 
   safeHandle(
     IPC.POPUP_SET_CONFIG,

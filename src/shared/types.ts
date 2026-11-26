@@ -2083,21 +2083,30 @@ export type PopupMode = 'quick' | 'selection'
 export type SelectionAction = 'translate' | 'summary' | 'polish' | 'ask'
 
 /**
- * 截图入口的目标（P1-4 第一刀）：
- * window=当前活动窗口（默认），screen=鼠标所在显示器的整屏。
- * 区域框选与 macOS 捕获不在本刀，等后续批次。
+ * 截图入口的目标：
+ * window=当前活动窗口（Windows），screen=鼠标所在显示器整屏（Windows/macOS），
+ * region=浮窗内框选的矩形（两平台都可）。
  */
-export type ScreenshotTarget = 'window' | 'screen'
+export type ScreenshotTarget = 'window' | 'screen' | 'region'
+
+/** 区域框选的逻辑像素矩形（相对目标 display 的原点） */
+export interface ScreenshotRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 /** 截图失败原因码（上屏文案按静态四语键映射，码本身不直接给用户看） */
 export type ScreenshotFailCode =
-  | 'unsupported-platform' // 本刀只做 Windows
+  | 'unsupported-platform' // Windows / macOS 之外
   | 'locked' // 锁屏期间拒绝捕获
   | 'no-window' // 没有可捕获的前台窗口（桌面/任务栏/已最小化）
   | 'permission' // 系统拒绝屏幕捕获
   | 'empty' // 捕获成功但画面为空
   | 'black' // 捕获到全黑帧（隐藏/受保护/未渲染的窗口）
   | 'too-large' // 超过附件 10MB 上限
+  | 'cancelled' // 用户取消区域框选
   | 'failed' // 其它异常（已记日志）
 
 export interface ScreenshotCaptureSuccess {
@@ -2118,6 +2127,14 @@ export interface ScreenshotCaptureFailure {
 
 export type ScreenshotCaptureResult = ScreenshotCaptureSuccess | ScreenshotCaptureFailure
 
+/** 区域框选会话：浮窗临时铺满该 display，渲染层按逻辑坐标画框 */
+export type BeginRegionSelectResult =
+  | {
+      ok: true
+      display: { x: number; y: number; width: number; height: number; scaleFactor: number }
+    }
+  | { ok: false; error: string }
+
 export interface PopupPayload {
   mode: PopupMode
   text?: string // selection 模式下取到的选中文本
@@ -2135,7 +2152,7 @@ export interface PopupPayload {
 export interface PopupConfig {
   quickEnabled: boolean
   selectionEnabled: boolean
-  /** 截图进对话（P1-4 第一刀：仅 Windows） */
+  /** 截图进对话（P1-4：Windows 窗口/整屏，macOS 整屏，双平台区域框选） */
   screenshotEnabled: boolean
   quickAccelerator: string // Electron accelerator 字符串（可在设置中自定义）
   selectionAccelerator: string
@@ -3469,8 +3486,11 @@ export const IPC = {
   POPUP_GET_CONFIG: 'popup:get-config',
   POPUP_SET_CONFIG: 'popup:set-config',
   POPUP_PAYLOAD_EVENT: 'popup:payload-event',
-  /** P1-4：浮窗内 📷 入口发起截图（当前窗口 / 整屏） */
+  /** P1-4：浮窗内 📷 入口发起截图（当前窗口 / 整屏 / 区域） */
   SCREENSHOT_CAPTURE: 'screenshot:capture',
+  /** 区域框选：把同一个浮窗临时铺到目标显示区，并回传逻辑坐标基准 */
+  POPUP_BEGIN_REGION_SELECT: 'popup:begin-region-select',
+  POPUP_END_REGION_SELECT: 'popup:end-region-select',
 
   // ---------- 界面偏好 ----------
   UI_GET_PREFS: 'ui:get-prefs',

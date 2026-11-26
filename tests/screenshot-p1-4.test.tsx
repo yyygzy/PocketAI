@@ -22,6 +22,8 @@ import {
   findScreenSourceId,
   findWindowSourceId,
   isScreenshotPlatformSupported,
+  normalizeRegionRect,
+  toPhysicalRect,
   screenshotDataUrlBytes,
   screenshotFileName,
   SCREENSHOT_MAX_BYTES
@@ -172,7 +174,7 @@ describe('P1-4 ③ 失败原因上屏（不静默），新载荷会收掉旧错�
   })
 })
 
-describe('P1-4 ④ 浮窗内 📷 入口：同一条附件链路，目标二选一', () => {
+describe('P1-4 ④ 浮窗内 📷 入口：同一条附件链路，目标三选一', () => {
   it('选「整个屏幕」⇒ 向主进程要 screen，结果追加进附件栏', async () => {
     stubPopup(null, {
       captureScreenshot: (target: string) => ({
@@ -188,6 +190,52 @@ describe('P1-4 ④ 浮窗内 📷 入口：同一条附件链路，目标二选�
     const calls = pocketaiCalls().filter((c) => c.fn === 'captureScreenshot')
     expect(calls).toHaveLength(1)
     expect(calls[0]!.args[0]).toBe('screen')
+  })
+
+  it('选「区域框选」⇒ 拖出逻辑矩形，captureScreenshot 第二参带 rect', async () => {
+    stubPopup(null, {
+      beginRegionSelect: () => Promise.resolve({
+        ok: true, display: { x: 0, y: 0, width: 800, height: 600, scaleFactor: 2 }
+      }),
+      endRegionSelect: () => Promise.resolve({ ok: true }),
+      captureScreenshot: (target: string, rect?: unknown) => ({
+        ok: true, target, width: 120, height: 100, attachment: SHOT, rect
+      })
+    })
+    mountWithProviders(<PopupApp />)
+
+    fireEvent.click(await screen.findByTestId('popup-capture', {}, BUDGET))
+    fireEvent.click(await screen.findByTestId('popup-capture-region', {}, BUDGET))
+    const overlay = await screen.findByTestId('popup-region-overlay', {}, BUDGET)
+    fireEvent.mouseDown(overlay, { button: 0, clientX: 100, clientY: 80 })
+    fireEvent.mouseMove(overlay, { clientX: 220, clientY: 180 })
+    expect(screen.getByTestId('popup-region-box')).toBeTruthy()
+    fireEvent.mouseUp(overlay, { clientX: 220, clientY: 180 })
+
+    await screen.findByAltText(SHOT.name, {}, BUDGET)
+    const call = pocketaiCalls().find((c) => c.fn === 'captureScreenshot')!
+    expect(call.args[0]).toBe('region')
+    expect(call.args[1]).toEqual({ x: 100, y: 80, width: 120, height: 100 })
+  })
+
+  it('区域框选取消 ⇒ 收起浮窗叠层，不发起截图', async () => {
+    stubPopup(null, {
+      beginRegionSelect: () => Promise.resolve({
+        ok: true, display: { x: 0, y: 0, width: 800, height: 600, scaleFactor: 1 }
+      }),
+      endRegionSelect: () => Promise.resolve({ ok: true }),
+      captureScreenshot: () => ({ ok: true, target: 'region', width: 1, height: 1, attachment: SHOT })
+    })
+    mountWithProviders(<PopupApp />)
+
+    fireEvent.click(await screen.findByTestId('popup-capture', {}, BUDGET))
+    fireEvent.click(await screen.findByTestId('popup-capture-region', {}, BUDGET))
+    fireEvent.click(await screen.findByTestId('popup-region-cancel', {}, BUDGET))
+
+    expect(screen.queryByTestId('popup-region-overlay')).toBeNull()
+    expect(pocketaiCalls().some((c) => c.fn === 'captureScreenshot')).toBe(false)
+    expect((await screen.findByTestId('popup-capture-error', {}, BUDGET)).textContent)
+      .toContain(L('popup.capture.err.cancelled'))
   })
 
   it('主进程回「权限被拒」⇒ 原因上屏，附件栏不动', async () => {
@@ -238,10 +286,19 @@ describe('P1-4 ⑤ 设置页：第三行开关与平台差异说明', () => {
 })
 
 describe('P1-4 ⑥ 纯判定：source 匹配 / 文件名 / 字节数 / 三键冲突', () => {
-  it('平台闸门只放行 Windows', () => {
+  it('平台闸门放行 Windows 与 macOS，Linux 仍拒', () => {
     expect(isScreenshotPlatformSupported('win32')).toBe(true)
-    expect(isScreenshotPlatformSupported('darwin')).toBe(false)
+    expect(isScreenshotPlatformSupported('darwin')).toBe(true)
     expect(isScreenshotPlatformSupported('linux')).toBe(false)
+  })
+
+  it('区域矩形：拖动方向无关、夹取到 display 内、按 scaleFactor 转物理像素', () => {
+    expect(normalizeRegionRect({ x: 80, y: 60 }, { x: 20, y: 10 }, 100, 50))
+      .toEqual({ x: 20, y: 10, width: 60, height: 40 })
+    expect(normalizeRegionRect({ x: -5, y: 5 }, { x: 200, y: 999 }, 100, 50))
+      .toEqual({ x: 0, y: 5, width: 100, height: 45 })
+    expect(toPhysicalRect({ x: 10, y: 20, width: 30, height: 40 }, 2))
+      .toEqual({ x: 20, y: 40, width: 60, height: 80 })
   })
 
   it('window source 按 HWND 全等匹配，不做字符串包含', () => {

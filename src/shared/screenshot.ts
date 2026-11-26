@@ -4,14 +4,45 @@
 // - 平台闸门（本刀只做 Windows）
 // - desktopCapturer 返回的 source id 与前台窗口 HWND / 显示器 id 的匹配
 // - 文件名与 data URL 字节数（10MB 附件上限要按真实字节判，不按字符串长度）
-import type { ChatAttachment, ScreenshotTarget } from './types'
+import type { ChatAttachment, ScreenshotRect, ScreenshotTarget } from './types'
 
 /** 图片附件上限（与渲染层 readFileAsAttachment 的 MAX_IMAGE_SIZE 同口径） */
 export const SCREENSHOT_MAX_BYTES = 10 * 1024 * 1024
 
-/** 本刀只做 Windows；macOS/Linux 走 unsupported-platform 的可读原因 */
+/** P1-4 第二刀：Windows 与 macOS 都可用；Linux 仍给 unsupported-platform 的可读原因 */
 export function isScreenshotPlatformSupported(platform: string): boolean {
-  return platform === 'win32'
+  return platform === 'win32' || platform === 'darwin'
+}
+
+/** 把小矩形收敛到显示区内；拖动方向反了也能正常框选 */
+export function normalizeRegionRect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  maxWidth: number,
+  maxHeight: number
+): ScreenshotRect {
+  const clamp = (v: number, max: number): number => Math.max(0, Math.min(max, Number.isFinite(v) ? v : 0))
+  const x1 = clamp(a.x, maxWidth)
+  const y1 = clamp(a.y, maxHeight)
+  const x2 = clamp(b.x, maxWidth)
+  const y2 = clamp(b.y, maxHeight)
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1)
+  }
+}
+
+/** 逻辑矩形 → 物理像素矩形；crop 不接受 0 宽高，最小收敛到 1 */
+export function toPhysicalRect(rect: ScreenshotRect, scaleFactor: number): ScreenshotRect {
+  const scale = Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1
+  return {
+    x: Math.max(0, Math.round(rect.x * scale)),
+    y: Math.max(0, Math.round(rect.y * scale)),
+    width: Math.max(1, Math.round(rect.width * scale)),
+    height: Math.max(1, Math.round(rect.height * scale))
+  }
 }
 
 /**

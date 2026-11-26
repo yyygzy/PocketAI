@@ -505,6 +505,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // 不等这一颗会在候选态之前读到初始 false，负向断言变成假绿。上限＝现数 7，不留余量。
       'tests/chat-deep-search-running-461.test.tsx': 7,
       'tests/chat-send-failure-visible-204.test.tsx': 0,
+      // P1-4 第三刀：主窗截图入口两颗门分别等「图片进附件栏」与「失败原因＋不留半张图」落地；
+      // 失败那颗把正向 toast 与负向「无缩略图」写在同一个 waitFor 里，门后不再读另一块屏。上限＝现数 2。
+      'tests/composer-screenshot-entry.test.tsx': 2,
       // 续跑提示（运行检查点那一批新增）：文案由 store 播种后异步落到 DOM，3 颗门都按「存在」读
       // 同一颗 `conversation-runtime-resume` 再断文案（第 3 颗等的是列表行），门后的负向句读的是另一档。
       // 上限＝现数 3，不留余量。

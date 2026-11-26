@@ -194,7 +194,7 @@ npm run build        # electron-vite build，产物在 out/
 
 ### 5.2 Linux 截图与选区取词缺口
 
-- **截图**：`src/shared/screenshot.ts` 的 `isScreenshotPlatformSupported()` 只返回 `platform === 'win32'`；`src/main/popup.ts` 在非 Windows 上按 `unsupported-platform` 处理。Linux 目前没有截图进对话入口。
+- **截图**：`src/shared/screenshot.ts` 的 `isScreenshotPlatformSupported()` 放行 `win32` 与 `darwin`；Windows 用 PrintWindow/DWM，macOS 用 `desktopCapturer` 整屏，双平台区域框选在浮窗会话里完成。主窗 `+ → 截图` 另给「当前窗口／整个屏幕」两目标，复用同一条截图 IPC 与 Composer 附件链路，捕获后不自动发送；主窗调用不会显示/聚焦浮窗。Linux 仍按 `unsupported-platform` 处理，没有截图进对话入口。
 - **选区取词**：`src/main/popup.ts` 的 Linux 分支明确注释「无零依赖的统一取词方案（xdotool/xclip 不一定存在），v1 不支持」；Linux 上按选区快捷键只会打开快捷问答窗。设置页通过 `isLinuxPlatform()` 显示不支持提示（`src/renderer/src/utils/shortcuts.ts`、`SettingsModule.tsx`）。
 - 结论：这是**产品边界/未实现**，不是偶发 bug；接 Linux 功能前需要先定方案与依赖。
 

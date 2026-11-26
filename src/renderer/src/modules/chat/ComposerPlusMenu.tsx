@@ -28,7 +28,7 @@ import { AgentToolBars, agentToolSummary } from './AgentToolBars'
 import type { AgentToolConfigs } from './useAgentToolConfigs'
 import type { AgentModelExtras } from './useAgentModelExtras'
 
-type View = 'main' | 'snippets' | 'recent' | 'kb' | 'skills' | 'window' | 'fallback' | 'tools'
+type View = 'main' | 'screenshot' | 'snippets' | 'recent' | 'kb' | 'skills' | 'window' | 'fallback' | 'tools'
 
 interface Props {
   open: boolean
@@ -36,6 +36,8 @@ interface Props {
   onClose: () => void
   /** 上传图片或文档：点完就关菜单，由宿主拉起隐藏的 file input */
   onPickFile: () => void
+  /** 截图进对话：点完关菜单，由宿主调主进程捕获并追加进 Composer 附件栏 */
+  onCaptureScreenshot: (target: 'window' | 'screen') => void
   snippets: PromptSnippetRecord[]
   /** 片段清单那一发没读到：二级页只说"…"，失败句在浮层外（不在浮层里把故障演成"没有片段"） */
   snippetsUnread: boolean
@@ -82,6 +84,7 @@ export const ComposerPlusMenu: React.FC<Props> = ({
   anchorRef,
   onClose,
   onPickFile,
+  onCaptureScreenshot,
   snippets,
   snippetsUnread,
   onPickSnippet,
@@ -222,6 +225,17 @@ export const ComposerPlusMenu: React.FC<Props> = ({
             >
               <span aria-hidden>📎</span>
               <span className="flex-1 min-w-0">{t('common.attachFile')}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="composer-plus-screenshot"
+              className={ROW}
+              onClick={() => go('screenshot')}
+            >
+              <span aria-hidden>📷</span>
+              <span className="flex-1 min-w-0">{t('popup.capture')}</span>
+              <span aria-hidden className={CHEVRON}>›</span>
             </button>
             <button
               type="button"
@@ -399,6 +413,40 @@ export const ComposerPlusMenu: React.FC<Props> = ({
               </Group>
             </>
           )}
+        </div>
+      )}
+
+      {view === 'screenshot' && (
+        <div>
+          {back(t('popup.capture'))}
+          <Group label={t('popup.capture')}>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="composer-plus-capture-window"
+              className={ROW}
+              onClick={() => {
+                close()
+                onCaptureScreenshot('window')
+              }}
+            >
+              <span aria-hidden>🪟</span>
+              <span className="flex-1 min-w-0">{t('popup.captureWindow')}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="composer-plus-capture-screen"
+              className={ROW}
+              onClick={() => {
+                close()
+                onCaptureScreenshot('screen')
+              }}
+            >
+              <span aria-hidden>🖥</span>
+              <span className="flex-1 min-w-0">{t('popup.captureScreen')}</span>
+            </button>
+          </Group>
         </div>
       )}
 

@@ -1313,11 +1313,17 @@ const api = {
     patch: Partial<import('../shared/types').PopupConfig>
   ): Promise<import('../shared/types').PopupSetConfigResult> =>
     ipcRenderer.invoke(IPC.POPUP_SET_CONFIG, patch),
-  /** P1-4：浮窗内 📷 入口（当前窗口 / 整屏）；结果含待发附件或可读失败码 */
+  /** P1-4：浮窗内 📷 入口（窗口 / 整屏 / 区域）；结果含待发附件或可读失败码 */
   captureScreenshot: (
-    target: import('../shared/types').ScreenshotTarget
+    target: import('../shared/types').ScreenshotTarget,
+    rect?: import('../shared/types').ScreenshotRect
   ): Promise<import('../shared/types').ScreenshotCaptureResult> =>
-    ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE, target),
+    ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE, target, rect),
+  /** 区域框选：把同一个浮窗临时铺满当前显示器，回传逻辑坐标基准 */
+  beginRegionSelect: (): Promise<import('../shared/types').BeginRegionSelectResult> =>
+    ipcRenderer.invoke(IPC.POPUP_BEGIN_REGION_SELECT),
+  endRegionSelect: (): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC.POPUP_END_REGION_SELECT),
 
   // ---------- 界面偏好 ----------
   getUiPrefs: (): Promise<{ ok: boolean; data?: UiPreferences; error?: string }> =>

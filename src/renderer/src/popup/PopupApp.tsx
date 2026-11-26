@@ -20,9 +20,11 @@ import type {
   PopupPayload,
   ProviderRecord,
   ScreenshotFailCode,
+  ScreenshotRect,
   ScreenshotTarget,
   SelectionAction
 } from '../../../shared/types'
+import { normalizeRegionRect } from '../../../shared/screenshot'
 import {
   SELECTION_ACTIONS,
   composeSelectionPrompt
@@ -67,6 +69,8 @@ const captureErrorText = (t: Translate, code: ScreenshotFailCode): string => {
       return t('popup.capture.err.black')
     case 'too-large':
       return t('popup.capture.err.tooLarge')
+    case 'cancelled':
+      return t('popup.capture.err.cancelled')
     case 'failed':
     default:
       return t('popup.capture.err.failed')
@@ -110,6 +114,12 @@ export const PopupApp: React.FC = () => {
   const [capturing, setCapturing] = useState(false)
   /** P1-4：热键入口先上屏、捕获还在路上（载荷 capturing=true；结果载荷会收掉） */
   const [capturingHotkey, setCapturingHotkey] = useState(false)
+  /** P1-4 第二刀：区域框选会话（同一个浮窗临时铺满 display） */
+  const [regionDisplay, setRegionDisplay] = useState<{
+    x: number; y: number; width: number; height: number; scaleFactor: number
+  } | null>(null)
+  const [regionStart, setRegionStart] = useState<{ x: number; y: number } | null>(null)
+  const [regionEnd, setRegionEnd] = useState<{ x: number; y: number } | null>(null)
   /** applyPayload 的依赖是 []（避免重复拉载荷），附件数量用 ref 读最新值 */
   const attachmentsRef = useRef<ChatAttachment[]>([])
   /** 拖拽进窗悬停计数（子元素 dragenter/leave 成对，计数器防闪烁） */
@@ -391,7 +401,7 @@ export const PopupApp: React.FC = () => {
    * P1-4：浮窗内 📷 入口。主进程会先隐藏浮窗、抓完再显示回来，
    * 所以这里 await 到的结果可以直接进附件栏；失败按原因码上屏。
    */
-  const captureFromPopup = useCallback(async (target: ScreenshotTarget) => {
+  const captureFromPopup = useCallback(async (target: ScreenshotTarget, rect?: ScreenshotRect) => {
     setCaptureMenuOpen(false)
     if (capturing) return
     if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
@@ -400,7 +410,7 @@ export const PopupApp: React.FC = () => {
     }
     setCapturing(true)
     try {
-      const r = await window.pocketai.captureScreenshot(target)
+      const r = await window.pocketai.captureScreenshot(target, rect)
       if (!r.ok) {
         // safeHandle 的 `{ok:false,error}` 没有 code，与捕获原因分开：没有 code 就是通道级失败
         const fail = r as { ok: false; code?: ScreenshotFailCode }
@@ -418,6 +428,51 @@ export const PopupApp: React.FC = () => {
       setCapturing(false)
     }
   }, [capturing])
+
+  /** 区域框选：主进程把同一个浮窗铺到当前 display，渲染层只画一层透明画布 */
+  const beginRegionSelect = useCallback(async () => {
+    setCaptureMenuOpen(false)
+    if (capturing || regionDisplay) return
+    try {
+      const r = await window.pocketai.beginRegionSelect()
+      if (!r.ok) {
+        setCaptureError(r.error === 'locked' ? 'locked' : 'failed')
+        return
+      }
+      setRegionDisplay(r.display)
+      setRegionStart(null)
+      setRegionEnd(null)
+    } catch (e) {
+      setCaptureError('failed')
+      logIpcError('popup.beginRegionSelect', e)
+    }
+  }, [capturing, regionDisplay])
+
+  const cancelRegionSelect = useCallback(async () => {
+    setRegionDisplay(null)
+    setRegionStart(null)
+    setRegionEnd(null)
+    setCaptureError('cancelled')
+    try {
+      await window.pocketai.endRegionSelect()
+    } catch (e) {
+      logIpcError('popup.endRegionSelect', e)
+    }
+  }, [])
+
+  const finishRegionSelect = useCallback(async (endPoint?: { x: number; y: number }) => {
+    if (!regionDisplay || !regionStart) return
+    const end = endPoint ?? regionEnd ?? regionStart
+    const rect = normalizeRegionRect(regionStart, end, regionDisplay.width, regionDisplay.height)
+    setRegionDisplay(null)
+    setRegionStart(null)
+    setRegionEnd(null)
+    if (rect.width < 4 || rect.height < 4) {
+      await cancelRegionSelect()
+      return
+    }
+    await captureFromPopup('region', rect)
+  }, [regionDisplay, regionStart, regionEnd, cancelRegionSelect, captureFromPopup])
 
   // ─── 发送 ─────────────────────────────────────────────────────────
   const send = useCallback(
@@ -860,6 +915,14 @@ export const PopupApp: React.FC = () => {
                   >
                     {t('popup.captureScreen')}
                   </button>
+                  <button
+                    type="button"
+                    data-testid="popup-capture-region"
+                    className="btn-ghost w-full !justify-start text-xs"
+                    onClick={() => void beginRegionSelect()}
+                  >
+                    {t('popup.captureRegion')}
+                  </button>
                 </div>
               </>
             )}
@@ -897,6 +960,51 @@ export const PopupApp: React.FC = () => {
           )}
         </div>
       </div>
+
+      {regionDisplay && (
+        <div
+          data-testid="popup-region-overlay"
+          role="presentation"
+          className="fixed inset-0 z-[9999] cursor-crosshair bg-black/10"
+          onMouseDown={(e) => {
+            if (e.button !== 0) return
+            setRegionStart({ x: e.clientX, y: e.clientY })
+            setRegionEnd({ x: e.clientX, y: e.clientY })
+          }}
+          onMouseMove={(e) => {
+            if (regionStart) setRegionEnd({ x: e.clientX, y: e.clientY })
+          }}
+          onMouseUp={(e) => {
+            if (!regionStart) return
+            void finishRegionSelect({ x: e.clientX, y: e.clientY })
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') void cancelRegionSelect()
+          }}
+        >
+          <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-lg bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text)] shadow-lg">
+            {t('popup.regionHint')}
+          </div>
+          {regionStart && regionEnd && (() => {
+            const rect = normalizeRegionRect(regionStart, regionEnd, regionDisplay.width, regionDisplay.height)
+            return (
+              <div
+                data-testid="popup-region-box"
+                className="absolute border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+                style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
+              />
+            )
+          })()}
+          <button
+            type="button"
+            data-testid="popup-region-cancel"
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 btn-ghost text-xs"
+            onClick={() => void cancelRegionSelect()}
+          >
+            {t('popup.regionCancel')}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

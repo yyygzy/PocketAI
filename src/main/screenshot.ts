@@ -12,19 +12,26 @@
 // 失败面按可读原因分码（no-window / empty / permission / black / too-large / failed），
 // 上屏文案由渲染层按静态四语键映射，主进程只给码与排障日志。
 // 捕获到的图只留在本机内存里，直到用户点发送才随消息走既有多模态附件链路。
-import { app, nativeImage, type NativeImage } from 'electron'
+import { app, nativeImage, screen, type NativeImage } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { createLogger } from './logger'
 import { errMsg } from './error'
 import { CaptureHost } from './screenshot-host'
+import { grabMacOSScreen } from './screenshot-macos'
 import {
   isScreenshotPlatformSupported,
   screenshotAttachment,
   screenshotDataUrlBytes,
+  toPhysicalRect,
   SCREENSHOT_MAX_BYTES
 } from '../shared/screenshot'
-import type { ScreenshotCaptureResult, ScreenshotFailCode, ScreenshotTarget } from '../shared/types'
+import type {
+  ScreenshotCaptureResult,
+  ScreenshotFailCode,
+  ScreenshotRect,
+  ScreenshotTarget
+} from '../shared/types'
 
 const log = createLogger('screenshot')
 
@@ -177,20 +184,55 @@ export function encodeCapture(target: ScreenshotTarget, buf: Buffer, at: Date): 
   }
 }
 
+/** 区域框选：逻辑坐标 → 物理像素裁剪，bounds 外多出来的部分收敛到图像边缘 */
+function cropRegionBuffer(buf: Buffer, rect: ScreenshotRect, scaleFactor: number): Buffer {
+  const img = nativeImage.createFromBuffer(buf)
+  if (img.isEmpty()) return Buffer.alloc(0)
+  const size = img.getSize()
+  const physical = toPhysicalRect(rect, scaleFactor)
+  const x = Math.min(physical.x, Math.max(0, size.width - 1))
+  const y = Math.min(physical.y, Math.max(0, size.height - 1))
+  const width = Math.max(1, Math.min(physical.width, size.width - x))
+  const height = Math.max(1, Math.min(physical.height, size.height - y))
+  return Buffer.from(img.crop({ x, y, width, height }).toPNG())
+}
+
 /**
  * 捕获一次。
  *
+ * - `rect`：区域框选的逻辑坐标；两平台都先取整屏，再用 nativeImage.crop 按 scaleFactor 裁。
  * - `targetHwnd`：热键瞬间记录的前台窗口；有它就不再依赖捕获时的前台，浮窗可以边抓边显示。
  * - `popupHwnd`：浮窗句柄；当前台是浮窗时（📷 入口 / 浮窗可见时按热键）走命中测试。
  * - `onFallback`：脚本需要 CopyFromScreen 兜底时会先要主进程把浮窗藏掉，避免把浮窗截进去。
  */
 export async function captureScreenshot(
   target: ScreenshotTarget,
-  opts: { popupHwnd?: string; targetHwnd?: string; onFallback?: () => void } = {}
+  opts: {
+    popupHwnd?: string
+    targetHwnd?: string
+    onFallback?: () => void
+    rect?: ScreenshotRect
+  } = {}
 ): Promise<ScreenshotCaptureResult> {
   if (!isScreenshotPlatformSupported(process.platform)) {
     return { ok: false, code: 'unsupported-platform' }
   }
+  if (target === 'region' && (!opts.rect || opts.rect.width < 1 || opts.rect.height < 1)) {
+    return { ok: false, code: 'cancelled' }
+  }
+
+  if (process.platform === 'darwin') {
+    const grab = await grabMacOSScreen(target, opts.rect)
+    if (!grab.ok) return { ok: false, code: grab.code, detail: grab.detail }
+    const buf = opts.rect && target === 'region'
+      ? cropRegionBuffer(grab.buffer, opts.rect, grab.scaleFactor)
+      : grab.buffer
+    if (!buf || buf.length === 0) return { ok: false, code: 'empty' }
+    const result = encodeCapture(target, buf, new Date())
+    if (!result.ok) log.warn(`截图结果不可用(${target}):`, result.code)
+    return result
+  }
+
   const outFile = path.join(
     app.getPath('temp'),
     `moxia-shot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`
@@ -198,7 +240,13 @@ export async function captureScreenshot(
   const startedAt = Date.now()
   try {
     const resp = await getCaptureHost().request(
-      { cmd: 'capture', target, out: outFile, targetHwnd: opts.targetHwnd, popupHwnd: opts.popupHwnd },
+      {
+        cmd: 'capture',
+        target: target === 'region' ? 'screen' : target,
+        out: outFile,
+        targetHwnd: opts.targetHwnd,
+        popupHwnd: opts.popupHwnd
+      },
       undefined,
       opts.onFallback
     )
@@ -207,7 +255,12 @@ export async function captureScreenshot(
       return { ok: false, code: normalizeFailCode(resp.code), detail: resp.detail }
     }
     const readStart = Date.now()
-    const buf = await fs.readFile(outFile)
+    let buf: Buffer = await fs.readFile(outFile)
+    if (target === 'region' && opts.rect) {
+      const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+      buf = cropRegionBuffer(buf, opts.rect, display.scaleFactor || 1)
+      if (!buf.length) return { ok: false, code: 'empty' }
+    }
     const readMs = Date.now() - readStart
     const encStart = Date.now()
     const result = encodeCapture(target, buf, new Date())

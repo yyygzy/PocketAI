@@ -27,6 +27,7 @@ import type {
   MessageRecord,
   PromptSnippetRecord,
   ProviderRecord,
+  ScreenshotFailCode,
   SkillRecord
 } from '../../../../shared/types'
 import type { AgentModelExtras } from './useAgentModelExtras'
@@ -676,6 +677,42 @@ export const Composer: React.FC<Props> = ({
     setAttachments((prev) => [...prev, att].slice(0, 8))
   }
 
+  const captureFailText = useCallback((code?: ScreenshotFailCode): string => {
+    switch (code) {
+      case 'unsupported-platform': return t('popup.capture.err.unsupportedPlatform')
+      case 'locked': return t('popup.capture.err.locked')
+      case 'no-window': return t('popup.capture.err.noWindow')
+      case 'permission': return t('popup.capture.err.permission')
+      case 'empty': return t('popup.capture.err.empty')
+      case 'black': return t('popup.capture.err.black')
+      case 'too-large': return t('popup.capture.err.tooLarge')
+      case 'cancelled': return t('popup.capture.err.cancelled')
+      default: return t('popup.capture.err.failed')
+    }
+  }, [t])
+
+  /** 「+ → 截图」：主进程抓完直接进附件栏，仍由用户点发送；不自动发、不抢焦点到浮窗 */
+  const captureToComposer = useCallback(async (target: 'window' | 'screen') => {
+    try {
+      const result = await window.pocketai.captureScreenshot(target)
+      if (!result.ok) {
+        const code = 'code' in result ? result.code : undefined
+        if (!code) logIpcError('composer.captureScreenshot', result)
+        toast.error(t('popup.captureFailed', { reason: captureFailText(code) }))
+        return
+      }
+      if (attachments.length >= MAX_ATTACHMENTS) {
+        toast.warning(t('popup.attachLimit', { n: MAX_ATTACHMENTS }))
+        return
+      }
+      setAttachments((prev) => [...prev, result.attachment].slice(0, MAX_ATTACHMENTS))
+      requestAnimationFrame(() => taRef.current?.focus())
+    } catch (e) {
+      toast.error(t('popup.captureFailed', { reason: captureFailText('failed') }))
+      logIpcError('composer.captureScreenshot', e)
+    }
+  }, [attachments.length, captureFailText, t, toast])
+
   // 提示词片段：在 textarea 光标处替换选区插入（受控组件，走 setText 而非直接改 DOM）
   const insertAtCursor = (insert: string) => {
     const ta = taRef.current
@@ -979,6 +1016,7 @@ export const Composer: React.FC<Props> = ({
             anchorRef={plusBtnRef}
             onClose={() => setPlusOpen(false)}
             onPickFile={() => fileRef.current?.click()}
+            onCaptureScreenshot={(target) => void captureToComposer(target)}
             snippets={snippetsRef.current ?? []}
             snippetsUnread={!!snippetsFail}
             onPickSnippet={pickMenuSnippet}
