@@ -121,6 +121,18 @@ describe('② 改开关／间隔只发这两粒，并以回执为准', () => {
     expect(checkboxOf('dh-task-enabled-kb_health_check').checked).toBe(false)
   })
 
+  it('源文件检测同在可配置闭集：关掉它只发这一粒', async () => {
+    stubPocketai(baseImpls())
+    mountWithProviders(<DataHealthPanel />)
+    const box = (await screen.findByTestId('dh-task-enabled-kb_source_sync')) as HTMLInputElement
+
+    fireEvent.click(box)
+
+    expect(await screen.findByTestId('dh-task-off-kb_source_sync')).toBeTruthy()
+    const call = pocketaiCalls().find((c) => c.fn === 'setTaskSchedule')
+    expect(call?.args).toEqual(['kb_source_sync', { enabled: false }])
+  })
+
   it('改间隔 → 发 {intervalHours:12}，回执后下拉停在 12', async () => {
     stubPocketai(baseImpls())
     mountWithProviders(<DataHealthPanel />)

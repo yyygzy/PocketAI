@@ -144,6 +144,15 @@ describe('开关与间隔', () => {
     expect(kb.intervalHours).toBe(6)
   })
 
+  it('源文件检测同为可配置内置任务：关闭 + 12 小时能回读', () => {
+    const r = updateTaskSchedule('kb_source_sync', { enabled: false, intervalHours: 12 })
+    expect(r.ok).toBe(true)
+    expect(mocks.config.get('task.kb_source_sync.enabled')).toBe('0')
+    expect(mocks.config.get('task.kb_source_sync.interval_hours')).toBe('12')
+    const s = listTaskSchedules().find((x) => x.key === 'kb_source_sync')!
+    expect(s).toMatchObject({ enabled: false, intervalHours: 12 })
+  })
+
   it('重新打开：enabled 写回 1，间隔保持用户设的值（不见回默认）', () => {
     updateTaskSchedule('kb_health_check', { enabled: false, intervalHours: 12 })
     updateTaskSchedule('kb_health_check', { enabled: true })

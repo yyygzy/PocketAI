@@ -56,11 +56,11 @@ const approvalExportSchema = z.object({
 
 /**
  * P2-2：内置维护任务设置入参。
- * `key` 用 enum 钉成闭集——不存在"用户自建任务"这条路；`patch` 只收开关与间隔两粒。
- * 间隔的取值范围在这里挡一道，`updateTaskSchedule` 里再复核一道（领域层也要能独立测）。
+ * `key` 用 enum 钉成闭集——三支内置任务都可调（面板已列出源文件检测），不存在"用户自建任务"这条路；
+ * `patch` 只收开关与间隔两粒。间隔的取值范围在这里挡一道，`updateTaskSchedule` 里再复核一道。
  */
 const taskScheduleSetSchema = z.object({
-  key: z.enum(['kb_health_check', 'backup_verify']),
+  key: z.enum(['kb_health_check', 'backup_verify', 'kb_source_sync']),
   patch: z
     .object({
       enabled: z.boolean().optional(),
