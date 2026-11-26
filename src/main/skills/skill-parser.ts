@@ -8,6 +8,7 @@
 //  - 两道正文上限：常驻 8KB（它整段进 system prompt，是注入面，闸必须紧）；
 //    按需 32KB（§236 存得下、由 load_skill 一次取一段，不进每次请求的固定开销）
 import type { BuiltinSkill } from '../db/repositories/skill.repo'
+import { SKILL_BODY_SPLIT_HINT_LINES } from '../../shared/skill-scan'
 
 /** 解析后的统一技能形状（skillRepo.save 接受的子集） */
 export interface SkillShape {
@@ -31,6 +32,9 @@ export const MAX_STORED_CONTENT_BYTES = 32 * 1024
 
 /** 合法 frontmatter key（白名单，拒绝任意字段注入） */
 const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'icon', 'title', 'version', 'author', 'tags', 'category', 'license'])
+
+/** 上游 SKILL.md 常见的 metadata.* 误写：只在顶层缺字段时补位，不覆盖显式声明 */
+const NESTED_METADATA_KEYS = new Set(['version', 'author', 'license', 'category'])
 
 /** 标量 YAML 值解析（只处理 string / number / boolean，不支持嵌套） */
 function parseScalar(raw: string): string | number | boolean {
@@ -64,21 +68,43 @@ function splitFrontmatter(md: string): { frontmatter: string | null; body: strin
 function parseFrontmatter(text: string): { known: Record<string, string>; ignored: string[] } {
   const out: Record<string, string> = {}
   const ignored: string[] = []
+  let parent = ''
   for (const rawLine of text.split('\n')) {
-    // 只解析顶层标量：缩进子行（如 metadata: 下的 author:）不是本解析器支持的字段，
-    // 旧写法把 trim 后的 author 当顶层 author，会把上游的 metadata.author 误读成技能作者。
-    if (/^\s/.test(rawLine)) continue
-    const line = rawLine.trimEnd()
+    const line = rawLine.trim()
     if (!line || line.startsWith('#')) continue
     const colonIdx = line.indexOf(':')
     if (colonIdx === -1) continue
     const key = line.slice(0, colonIdx).trim()
     if (!key) continue
+    const rawVal = line.slice(colonIdx + 1)
+
+    // 缩进子行：只认 metadata.* 的白名单标量。显式顶层字段优先，嵌套值仅补位；
+    // 其它子键按 metadata.<key> 原样报出，不猜、不执行。
+    if (/^\s/.test(rawLine)) {
+      if (parent === 'metadata') {
+        const nestedKey = NESTED_METADATA_KEYS.has(key) ? key : `metadata.${key}`
+        const val = parseScalar(rawVal)
+        if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
+          const textVal = String(val).trim()
+          if (NESTED_METADATA_KEYS.has(key)) {
+            if (!(key in out)) out[key] = textVal
+          } else if (!ignored.includes(nestedKey)) {
+            ignored.push(nestedKey)
+          }
+        }
+      }
+      continue
+    }
+
+    parent = key
+    // metadata 是兼容解析时的容器，不是"本应用不执行"的字段本身；
+    // 里面的未知子键会按 metadata.<key> 单独报出。
+    if (key === 'metadata') continue
     if (!ALLOWED_FRONTMATTER_KEYS.has(key)) {
       if (!ignored.includes(key)) ignored.push(key)
       continue
     }
-    const val = parseScalar(line.slice(colonIdx + 1))
+    const val = parseScalar(rawVal)
     if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
       out[key] = String(val).trim()
     }
@@ -270,6 +296,10 @@ export function validateSkillText(text: string): SkillValidationResult {
   if (!shape.description) warnings.push('缺少 description，建议补充技能用途说明')
   if (shape.content.length < 20) warnings.push('content 过短，可能无法有效引导模型')
   if (shape.icon === '⚡') warnings.push('未设置 icon，使用默认 ⚡')
+  const lineCount = shape.content.split(/\r?\n/).length
+  if (lineCount > SKILL_BODY_SPLIT_HINT_LINES) {
+    warnings.push(`正文 ${lineCount} 行，建议拆分到 references/`)
+  }
   // §236 互操作面：上游技能包常见的 allowed-tools / compatibility 这类字段不阻断导入，
   // 但也不能默默吃掉——校验那一屏要列出"这些字段本应用不执行"，用户才知道自己装的东西少了一半功能
   if (ignoredKeys.length > 0) warnings.push(`这些字段本应用不执行：${ignoredKeys.join(', ')}`)

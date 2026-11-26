@@ -16,6 +16,7 @@ import type {
   SkillScanResource,
   SkillScanResult
 } from '../../shared/skill-scan'
+import { SKILL_BODY_SPLIT_HINT_LINES } from '../../shared/skill-scan'
 
 export type {
   SkillFinding,
@@ -277,6 +278,20 @@ function scanIgnoredKeys(keys: string[]): SkillFinding[] {
   return f ? [f] : []
 }
 
+/** 正文过长只给拆分建议（软提示）：不阻断导入，也不改变大小上限 */
+function scanLongBody(content: string): SkillFinding[] {
+  const lines = content.split(/\r?\n/).length
+  if (lines <= SKILL_BODY_SPLIT_HINT_LINES) return []
+  const f = finding(
+    'LONG_BODY_SPLIT_HINT',
+    'info',
+    'content',
+    `正文超过 ${SKILL_BODY_SPLIT_HINT_LINES} 行（仅事实，建议拆分到 references/）`,
+    [`${lines} 行`]
+  )
+  return f ? [f] : []
+}
+
 /** 扫描一份技能：正文 + 随包资源清单 + 白名单外声明字段 */
 export function scanSkill(input: SkillScanInput): SkillScanResult {
   const rawContent = String(input.content ?? '')
@@ -285,6 +300,7 @@ export function scanSkill(input: SkillScanInput): SkillScanResult {
 
   const findings: SkillFinding[] = [
     ...scanContentRules(scanned),
+    ...scanLongBody(rawContent),
     ...scanUrls(scanned),
     ...scanAbsolutePaths(scanned),
     ...scanResources(resources),

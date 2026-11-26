@@ -34,7 +34,7 @@
 
 ---
 
-## 阶段 2：对齐 SKILL.md 标准 + 元数据落库
+## 阶段 2：对齐 SKILL.md 标准 + 元数据落库（已完成）
 
 **目标**：接受标准 `SKILL.md` 作为一等输入格式，减少互操作摩擦。
 
@@ -100,3 +100,8 @@
   - IPC/UI：`skill:list-versions` / `skill:rollback` 打通；详情页展示元数据与历史版本，确认后回滚并刷新；四语文案补齐。
   - 验证：`npm run typecheck` 通过；技能专项 27 文件 / 240 测试通过；最终全量 734 文件 / 7776 测试通过（1 文件 / 2 测试跳过）；`read_lints` 无新增问题。
   - 收尾：修正回滚确认框未挂载的 UI 缺陷；补登 waitFor / truncate 闸门；同步 `csv` 源类型与远程导入仓储桩等既有测试口径。
+- 2026-11-26：阶段 2 完成并通过验收。
+  - 解析：Markdown 走标准 `SKILL.md` 形状；`metadata.author/license/version/category` 在顶层缺字段时补位，显式顶层字段始终优先；`metadata` 容器本身不再误列为“本应用不执行”，未知子键按 `metadata.<key>` 单独报出。
+  - 导入：文件 / 目录 / URL 继续接受 `.md` 与标准 `SKILL.md`；kebab-case 目录名按原入口规则读取，不拿目录名充当技能名；标准样例导入后真库读回 version/author/license/来源/commit/哈希/安装时间。
+  - 软提示：正文超过 500 行新增 `LONG_BODY_SPLIT_HINT`（info 事实块），四语文案与扫描报告同步；只给“建议拆分到 references/”，不阻断、不改 8KB/32KB 上限。
+  - 验证：`npm run typecheck` 通过；阶段 2 专项 6 文件 / 102 测试通过；最终全量 735 文件 / 7786 测试通过（1 文件 / 2 测试跳过）；`read_lints` 无新增问题。

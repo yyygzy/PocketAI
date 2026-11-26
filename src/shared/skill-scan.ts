@@ -6,6 +6,9 @@ export type SkillFindingLevel = 'info' | 'notice' | 'attention'
 export type SkillScanLevel = 'none' | SkillFindingLevel
 export type SkillFindingWhere = 'content' | 'resource' | 'declaration'
 
+/** 正文超过这个行数只给软提示（建议拆分到 references/），不阻断导入 */
+export const SKILL_BODY_SPLIT_HINT_LINES = 500
+
 /** 随包资源清单的一项（只读路径与大小，不读内容） */
 export interface SkillScanResource {
   path: string

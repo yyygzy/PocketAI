@@ -213,6 +213,15 @@ describe('validateSkillText — 校验+警告', () => {
     expect(result.warnings).toContainEqual(expect.stringContaining('过短'))
   })
 
+  it('正文超过 500 行只给拆分建议，不判非法', () => {
+    const result = validateSkillText(JSON.stringify({
+      name: 'x', description: 'd', icon: '🤖',
+      content: Array.from({ length: 501 }, (_, i) => `line-${i}`).join('\n')
+    }))
+    expect(result.ok).toBe(true)
+    expect(result.warnings).toContainEqual(expect.stringContaining('references/'))
+  })
+
   it('非法技能返回 ok:false', () => {
     const result = validateSkillText('not a skill')
     expect(result.ok).toBe(false)
@@ -304,7 +313,7 @@ license: Apache-2.0
     expect(r.shape?.license).toBe('MIT')
   })
 
-  it('metadata 缩进块的 author 不再被误读成顶层 author', () => {
+  it('metadata 缩进块的 author/license 兼容落位（顶层显式声明优先）', () => {
     const md = `---
 name: 上游包
 description: 描述
@@ -316,9 +325,48 @@ metadata:
 `
     const r = parseSkillMarkdown(md)
     expect(r.error).toBe('')
-    expect(r.shape?.author).toBeUndefined()
-    expect(r.shape?.license).toBeUndefined()
-    expect(r.ignoredKeys).toContain('metadata')
+    expect(r.shape?.author).toBe('Upstream Author')
+    expect(r.shape?.license).toBe('MIT')
+    expect(r.ignoredKeys).not.toContain('metadata')
+  })
+
+  it('顶层显式 author 覆盖 metadata.author，与 frontmatter 顺序无关', () => {
+    const md = `---
+name: 上游包
+description: 描述
+author: Explicit Author
+metadata:
+  author: Upstream Author
+---
+正文内容在这里足够长以通过校验
+`
+    expect(parseSkillMarkdown(md).shape?.author).toBe('Explicit Author')
+    const reversed = `---
+name: 上游包
+description: 描述
+metadata:
+  author: Upstream Author
+author: Explicit Author
+---
+正文内容在这里足够长以通过校验
+`
+    expect(parseSkillMarkdown(reversed).shape?.author).toBe('Explicit Author')
+  })
+
+  it('metadata 里的未知子键按 metadata.<key> 报出，不静默吞掉', () => {
+    const md = `---
+name: 上游包
+description: 描述
+metadata:
+  author: Upstream Author
+  tags: nested-should-not-run
+---
+正文内容在这里足够长以通过校验
+`
+    const r = parseSkillMarkdown(md)
+    expect(r.shape?.author).toBe('Upstream Author')
+    expect(r.ignoredKeys).toContain('metadata.tags')
+    expect(r.ignoredKeys).not.toContain('metadata')
   })
 
   it('被识别的 license 之外，未知字段仍照旧进 ignoredKeys', () => {

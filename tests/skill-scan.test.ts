@@ -144,6 +144,27 @@ describe('IGNORED_DECLARATION — 白名单外字段', () => {
   })
 })
 
+describe('LONG_BODY_SPLIT_HINT — 超长正文软提示', () => {
+  const body = (lines: number) => Array.from({ length: lines }, (_, i) => `line-${i}`).join('\n')
+
+  it('500 行不提示，501 行只给 info 拆分建议', () => {
+    expect(codes(body(500))).not.toContain('LONG_BODY_SPLIT_HINT')
+    const r = scanSkill({ content: body(501) })
+    const f = r.findings.find((x) => x.code === 'LONG_BODY_SPLIT_HINT')
+    expect(f).toBeTruthy()
+    expect(f!.level).toBe('info')
+    expect(f!.where).toBe('content')
+    expect(f!.examples).toEqual(['501 行'])
+    expect(r.level).toBe('info')
+  })
+
+  it('软提示不阻断：仍返回正常扫描结果，不写安全结论', () => {
+    const r = scanSkill({ content: body(600) })
+    expect(r.findings.length).toBe(1)
+    expect(r.findings[0]!.detail).toContain('建议拆分到 references/')
+  })
+})
+
 describe('整体分级与边界', () => {
   it('干净正文 → none 且无 findings', () => {
     const r = scanSkill({ content: '你是一个翻译助手，请忠实原文表达。' })

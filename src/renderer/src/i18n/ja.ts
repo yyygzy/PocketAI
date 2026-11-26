@@ -1945,6 +1945,7 @@ export const ja = {
   'skill.scan.code.SCRIPT_RESOURCE': '同梱リソースにスクリプトファイルがあります（一覧上の事実のみ・未実行）',
   'skill.scan.code.BINARY_RESOURCE': '同梱リソースにバイナリまたは実行ファイルがあります（一覧上の事実のみ・未実行）',
   'skill.scan.code.IGNORED_DECLARATION': 'ホワイトリスト外の宣言項目（本アプリでは実行されません）',
+  'skill.scan.code.LONG_BODY_SPLIT_HINT': '本文が 500 行を超えています（事実のみ、references/ への分割を推奨）',
   'skill.market.ignoredKeys': 'これらの項目は本アプリでは実行されません：{keys}',
   'skill.market.skippedFiles': '{n} 件のファイルは取り込みませんでした',
   'skill.builtin': 'ビルトイン',

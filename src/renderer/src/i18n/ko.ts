@@ -1945,6 +1945,7 @@ export const ko = {
   'skill.scan.code.SCRIPT_RESOURCE': '함께 포함된 리소스에 스크립트 파일이 있습니다 (목록 사실만, 실행하지 않음)',
   'skill.scan.code.BINARY_RESOURCE': '함께 포함된 리소스에 바이너리 또는 실행 파일이 있습니다 (목록 사실만, 실행하지 않음)',
   'skill.scan.code.IGNORED_DECLARATION': '허용 목록 밖의 선언 필드 (이 앱에서는 실행되지 않음)',
+  'skill.scan.code.LONG_BODY_SPLIT_HINT': '본문이 500줄을 넘습니다 (사실만, references/ 로 분할 권장)',
   'skill.market.ignoredKeys': '이 항목들은 이 앱에서 실행되지 않습니다: {keys}',
   'skill.market.skippedFiles': '{n}개 파일을 가져오지 않았습니다',
   'skill.builtin': '내장',

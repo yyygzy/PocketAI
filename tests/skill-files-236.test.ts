@@ -84,6 +84,15 @@ describe('读一份上游技能目录', () => {
     expect(r.files.map((f) => f.rel).sort()).toEqual(['references/api.md', 'scripts/run.sh'])
   })
 
+  it('kebab-case 目录名照常以 SKILL.md 为入口，不拿目录名当技能名', () => {
+    const dir = path.join(TMP, 'code-review-skill')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: 代码审查\n---\n\n正文在此\n', 'utf8')
+    const r = readSkillFolder(dir)
+    expect(r.error).toBeUndefined()
+    expect(r.entryText).toContain('正文在此')
+  })
+
   it('反向对照：没有 SKILL.md 的目录判 NO_SKILL_MD，不随便挑一个 .md 当正文', () => {
     const dir = path.join(TMP, 'no-entry')
     fs.mkdirSync(dir, { recursive: true })

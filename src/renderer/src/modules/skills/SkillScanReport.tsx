@@ -39,7 +39,8 @@ const FINDING_LABEL: Record<string, (t: Translate) => string> = {
   ABSOLUTE_PATH: (t) => t('skill.scan.code.ABSOLUTE_PATH'),
   SCRIPT_RESOURCE: (t) => t('skill.scan.code.SCRIPT_RESOURCE'),
   BINARY_RESOURCE: (t) => t('skill.scan.code.BINARY_RESOURCE'),
-  IGNORED_DECLARATION: (t) => t('skill.scan.code.IGNORED_DECLARATION')
+  IGNORED_DECLARATION: (t) => t('skill.scan.code.IGNORED_DECLARATION'),
+  LONG_BODY_SPLIT_HINT: (t) => t('skill.scan.code.LONG_BODY_SPLIT_HINT')
 }
 
 function labelOf(finding: SkillFinding, t: Translate): string {

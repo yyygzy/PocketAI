@@ -53,6 +53,23 @@ const INFO_SCAN: SkillScanResult = {
   findings: [ATTENTION_SCAN.findings[1]!]
 }
 
+const LONG_BODY_SCAN: SkillScanResult = {
+  level: 'info',
+  counts: { info: 1, notice: 0, attention: 0 },
+  scannedChars: 12,
+  resourceCount: 0,
+  findings: [
+    {
+      code: 'LONG_BODY_SPLIT_HINT',
+      level: 'info',
+      where: 'content',
+      detail: '正文超过 500 行（仅事实，建议拆分到 references/）',
+      count: 1,
+      examples: ['501 行']
+    }
+  ]
+}
+
 const IGNORED_SCAN: SkillScanResult = {
   level: 'info',
   counts: { info: 1, notice: 0, attention: 0 },
@@ -116,6 +133,13 @@ describe('分级渲染', () => {
     expect(screen.getByText(L('skill.scan.level.info'))).toBeTruthy()
     expect(screen.getByText(L('skill.scan.code.URL_REFERENCE'))).toBeTruthy()
   })
+
+  it('超长正文拆分建议走 info 事实块，附行数但不写安全结论', () => {
+    const { container } = mount(LONG_BODY_SCAN)
+    expect(screen.getByText(L('skill.scan.code.LONG_BODY_SPLIT_HINT'))).toBeTruthy()
+    expect(screen.getByText('501 行')).toBeTruthy()
+    expect(container.querySelector('[data-finding-code="LONG_BODY_SPLIT_HINT"]')?.getAttribute('data-finding-level')).toBe('info')
+  })
 })
 
 describe('none 不出块', () => {
@@ -151,7 +175,7 @@ describe('四语文案', () => {
   const scanKeys = Object.keys(zh).filter((k) => k.startsWith('skill.scan.'))
 
   it('skill.scan.* 在四语中 key 集合一致且都非空', () => {
-    expect(scanKeys.length).toBe(17)
+    expect(scanKeys.length).toBe(18)
     for (const [name, dict] of Object.entries(dicts)) {
       expect(Object.keys(dict).filter((k) => k.startsWith('skill.scan.')).sort(), name).toEqual([...scanKeys].sort())
       for (const key of scanKeys) {

@@ -2005,6 +2005,7 @@ export const en = {
   'skill.scan.code.SCRIPT_RESOURCE': 'Bundled resources include script files (file-list fact only; not executed)',
   'skill.scan.code.BINARY_RESOURCE': 'Bundled resources include binary or executable files (file-list fact only; not executed)',
   'skill.scan.code.IGNORED_DECLARATION': 'Declaration fields outside the whitelist (not executed by this app)',
+  'skill.scan.code.LONG_BODY_SPLIT_HINT': 'Body exceeds 500 lines (fact only; consider splitting into references/)',
   'skill.market.ignoredKeys': 'These fields are not enforced here: {keys}',
   'skill.market.skippedFiles': '{n} files were not brought in',
   'skill.builtin': 'Built-in',

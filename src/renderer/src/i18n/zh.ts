@@ -2006,6 +2006,7 @@ export const zh = {
   'skill.scan.code.SCRIPT_RESOURCE': '随包资源含脚本文件（仅清单事实，未执行）',
   'skill.scan.code.BINARY_RESOURCE': '随包资源含二进制或可执行文件（仅清单事实，未执行）',
   'skill.scan.code.IGNORED_DECLARATION': '白名单外的声明字段（本应用不执行）',
+  'skill.scan.code.LONG_BODY_SPLIT_HINT': '正文超过 500 行（仅事实，建议拆分到 references/）',
   'skill.market.ignoredKeys': '这些字段本应用不执行：{keys}',
   'skill.market.skippedFiles': '有 {n} 个文件没被带进来',
   'skill.builtin': '内置',
