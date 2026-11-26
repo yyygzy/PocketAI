@@ -107,6 +107,12 @@ function isExcluded(rel: string, exclude: readonly string[] | undefined): boolea
   for (const raw of exclude) {
     const rule = normalizeRel(raw)
     if (rule === '') continue
+    // `**/NAME`：任意深度的同名文件（Chromium 各级 LOCK 由主进程独占，读不得）
+    if (rule.startsWith('**/')) {
+      const name = rule.slice(3)
+      if (r === name || r.endsWith(`/${name}`)) return true
+      continue
+    }
     if (rule.endsWith('/')) {
       const dir = rule.slice(0, -1)
       if (r === dir || r.startsWith(rule)) return true
@@ -207,6 +213,10 @@ export function defaultDryRunSafetyOptions(workspaceDir?: string | null): DryRun
         `${dbName}-wal`,
         `${dbName}-shm`,
         `${dbName}-journal`,
+        // 单实例锁文件与 Chromium 各级 LOCK 由主进程长期独占；
+        // Windows 下 readFileSync 会 EBUSY，它们也不是业务产物。
+        '.lock',
+        '**/LOCK',
         logsRel ? `${logsRel}/` : 'logs/'
       ]
     }

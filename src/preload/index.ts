@@ -95,6 +95,7 @@ import type {
   AgentSessionStats,
   AgentTraceRecord,
   AgentRunIndexEntry,
+  DryRunReplayResult,
   ToolSchema,
   ToolPolicySnapshot,
   LicenseStatus,
@@ -1092,6 +1093,9 @@ const api = {
    */
   getRunTraces: (requestId: string): Promise<AgentTraceRecord[] | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.AGENT_GET_RUN_TRACES, requestId),
+  /** P0-5 dry-run 回放：只读账本重建，不做任何真实执行；返回报告与前后全等判据 */
+  replayTraceDryRun: (requestId: string): Promise<DryRunReplayResult | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.AGENT_REPLAY_DRY_RUN, requestId),
   /** 会话级累计统计（跨全部运行：运行次数/总耗时/总 token）；无记录返回 null */
   getSessionStats: (conversationId: string): Promise<AgentSessionStats | null> =>
     ipcRenderer.invoke(IPC.AGENT_GET_SESSION_STATS, conversationId),

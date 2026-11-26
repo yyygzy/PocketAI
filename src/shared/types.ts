@@ -1272,6 +1272,37 @@ export type TraceReplayState =
   /** 从未留全文：旧行没有引用列，或内容从未超过截断上限 */
   | 'never_stored'
 
+/** P0-5 dry-run 回放：只读账本重建出的单步摘要（不执行工具、不重跑模型） */
+export interface DryRunReplayStepView {
+  stepIndex: number
+  toolName?: string
+  status: string
+  missing?: 'expired' | 'never_stored'
+}
+
+/** P0-5 dry-run 回放报告：被拦下的工具/MCP 连接正常恒为 0 */
+export interface DryRunReplayReportView {
+  requestId: string
+  steps: DryRunReplayStepView[]
+  toolAttemptsBlocked: number
+  mcpConnectsBlocked: number
+  unavailable?: boolean
+}
+
+/** P0-5 dry-run 三组全等判据：文件树／出网／业务表行数 */
+export interface DryRunSafetyDiffView {
+  fileTreeEqual: boolean
+  outboundEqual: boolean
+  mcpToolCallsEqual: boolean
+  tableDiffs: Array<{ table: string; before: number; after: number }>
+}
+
+/** dry-run 回放的 UI 结果：报告本身 + 前后快照全等结论 */
+export interface DryRunReplayResult {
+  report: DryRunReplayReportView
+  safety: DryRunSafetyDiffView
+}
+
 /** 执行后变更清单里的单个路径（只记录事实，不承诺可还原） */
 export interface WorkspaceChangeEntry {
   /** 相对受保护目录的路径（不落绝对路径） */
@@ -3432,6 +3463,7 @@ export const IPC = {
   AGENT_GET_RUN_STATS: 'agent:get-run-stats', // §398：**按这一次运行**（requestId）取统计，不按会话取最近一次（只读）
   AGENT_GET_LATEST_RUN_TRACES: 'agent:get-latest-run-traces', // 会话最近一次运行分步明细（只读）
   AGENT_GET_RUN_TRACES: 'agent:get-run-traces', // §398：**按这一次运行**（requestId）取分步明细，与「本次运行统计」同一条口径（只读）
+  AGENT_REPLAY_DRY_RUN: 'agent:replay-dry-run', // P0-5：按 requestId 只读回放账本（不执行工具／不重跑模型）
   AGENT_GET_SESSION_STATS: 'agent:get-session-stats', // 会话级累计统计（跨全部运行聚合，只读）
   AGENT_LIST_RUNS: 'agent:list-runs', // P2：会话全部 run 索引（只读，按 request_id 聚合后映射轮次）
   AGENT_GET_TEXT_PROTOCOL: 'agent:get-text-protocol', // 被点名走文本协议的模型清单（只读）

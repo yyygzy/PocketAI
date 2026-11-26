@@ -101,6 +101,11 @@ function defaultOpts(): ReturnType<typeof defaultDryRunSafetyOptions> {
 }
 
 describe('dry-run 三组判据', () => {
+  it('默认文件树快照排除主进程独占的 .lock', () => {
+    expect(defaultOpts().fileScopes?.[0]?.exclude).toContain('.lock')
+    expect(defaultOpts().fileScopes?.[0]?.exclude).toContain('**/LOCK')
+  })
+
   it('回放本体确实按账本重建（不是空跑），且三组全等', async () => {
     const before = captureDryRunSafetySnapshot(defaultOpts())
     const report = await replayTraceDryRun('req-1')

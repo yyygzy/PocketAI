@@ -13,6 +13,12 @@ import { getCalendarConfig, setCalendarConfig } from '../../tools/calendar-ics'
 import { resolveApproval } from '../../agent/tool-approval'
 import { agentTraceRepo } from '../../db/repositories/agent-trace.repo'
 import { annotateTraceReplay } from '../../agent/trace-replay'
+import { replayTraceDryRun } from '../../agent/dry-run-replay'
+import {
+  captureDryRunSafetySnapshot,
+  defaultDryRunSafetyOptions,
+  diffDryRunSafety
+} from '../../agent/dry-run-safety'
 import { redactTraceFieldsForRead } from '../../security/audit-redact'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
 import { resolveAgentToolPermissions } from '../../agent/tool-permissions'
@@ -259,6 +265,19 @@ export function registerAgentHandlers(): void {
   safeHandle(IPC.AGENT_GET_RUN_TRACES, (_e, requestId: string) =>
     annotateTraceReplay(agentTraceRepo.listByRequest(requestId)).map(redactTraceFieldsForRead),
   argsSchema(idSchema))
+
+  // P0-5 dry-run：只读账本重建，回放前后各取一次三组全等快照（文件树／出网／业务表行数）
+  safeHandle(
+    IPC.AGENT_REPLAY_DRY_RUN,
+    async (_e, requestId: string) => {
+      const safetyOpts = defaultDryRunSafetyOptions()
+      const before = captureDryRunSafetySnapshot(safetyOpts)
+      const report = await replayTraceDryRun(requestId)
+      const after = captureDryRunSafetySnapshot(safetyOpts)
+      return { report, safety: diffDryRunSafety(before, after) }
+    },
+    argsSchema(idSchema)
+  )
 
   // 会话级累计统计（跨该会话全部运行：运行次数/总耗时/总 token）
   safeHandle(IPC.AGENT_GET_SESSION_STATS, (_e, conversationId: string) =>

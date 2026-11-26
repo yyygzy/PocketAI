@@ -1,6 +1,6 @@
 // 轮次检查器（P2 / V4-Iter-459）：摘要展开后才读库，步骤流 / 每步 token / 变更清单 / replay / 子会话
 import React, { useEffect, useState } from 'react'
-import type { AgentRunIndexEntry, AgentTraceRecord } from '../../../../shared/types'
+import type { AgentRunIndexEntry, AgentTraceRecord, DryRunReplayResult } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
 import { errText } from '../../utils/error'
@@ -23,6 +23,9 @@ export const AgentRunInspector: React.FC<AgentRunInspectorProps> = ({ run, onOpe
   const [unread, setUnread] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [reload, setReload] = useState(0)
+  const [dryRunBusy, setDryRunBusy] = useState(false)
+  const [dryRun, setDryRun] = useState<DryRunReplayResult | null>(null)
+  const [dryRunError, setDryRunError] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -54,8 +57,70 @@ export const AgentRunInspector: React.FC<AgentRunInspectorProps> = ({ run, onOpe
 
   const childIds = run.childConversationIds ?? []
 
+  const runDryReplay = async (): Promise<void> => {
+    setDryRunBusy(true)
+    setDryRunError(null)
+    setDryRun(null)
+    try {
+      const result = await window.pocketai.replayTraceDryRun(run.requestId)
+      if (hasIpcFailed(result)) {
+        setDryRunError(ipcFailText(result, t('agent.unknownError')))
+        return
+      }
+      setDryRun(result as DryRunReplayResult)
+    } catch (e) {
+      logIpcError('agent.replayTraceDryRun', e)
+      setDryRunError(errText(e, t('agent.unknownError')))
+    } finally {
+      setDryRunBusy(false)
+    }
+  }
+
   return (
     <div data-testid="agent-run-inspector" className="mt-1.5 space-y-1.5 rounded border border-[var(--color-border)] p-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <button
+          type="button"
+          data-testid="agent-run-dry-replay"
+          disabled={dryRunBusy}
+          onClick={() => void runDryReplay()}
+          title={t('agent.traceReplay.dryRunHint')}
+          className="px-1.5 py-0.5 rounded border border-[var(--color-accent)] text-xs text-[var(--color-accent)] hover:opacity-80 disabled:opacity-50"
+        >
+          {dryRunBusy ? t('agent.traceReplay.dryRunRunning') : t('agent.traceReplay.dryRun')}
+        </button>
+        <span className="text-[11px] text-[var(--color-text-muted)]">{t('agent.traceReplay.dryRunHint')}</span>
+      </div>
+      {dryRunError && (
+        <div data-testid="agent-run-dry-replay-error" className="text-xs text-[var(--color-danger)]">
+          {dryRunError}
+        </div>
+      )}
+      {dryRun && (
+        <div data-testid="agent-run-dry-replay-result" className="text-xs text-[var(--color-text-muted)]">
+          {dryRun.report.unavailable
+            ? t('agent.traceReplay.dryRunUnavailable')
+            : t('agent.traceReplay.dryRunResult', {
+                steps: dryRun.report.steps.length,
+                tools: dryRun.report.toolAttemptsBlocked,
+                mcp: dryRun.report.mcpConnectsBlocked,
+                file: dryRun.safety.fileTreeEqual
+                  ? t('agent.traceReplay.dryRunEqual')
+                  : t('agent.traceReplay.dryRunNotEqual'),
+                net: dryRun.safety.outboundEqual
+                  ? t('agent.traceReplay.dryRunEqual')
+                  : t('agent.traceReplay.dryRunNotEqual'),
+                db: dryRun.safety.tableDiffs.length === 0
+                  ? t('agent.traceReplay.dryRunEqual')
+                  : t('agent.traceReplay.dryRunNotEqual')
+              })}
+          {dryRun.safety.tableDiffs.length > 0 && (
+            <span className="ml-1 text-[var(--color-danger)]">
+              {dryRun.safety.tableDiffs.map((d) => `${d.table} ${d.before}→${d.after}`).join('，')}
+            </span>
+          )}
+        </div>
+      )}
       {loading && <div className="text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>}
       {/* 读不到与「确实没有明细」分开说：三态口径同 Agent 调试台（§257） */}
       {!loading && unread && (
