@@ -15,6 +15,7 @@ const { state } = vi.hoisted(() => ({
     retrieveError: null as string | null,
     degradeNotes: [] as Array<{ stage: string; reason: string }>,
     insertedMessages: [] as { role: string; content: string }[],
+    updates: [] as Array<{ id: string; retrieval?: unknown }>,
     runTargetMessages: null as unknown
   }
 }))
@@ -59,6 +60,9 @@ vi.mock('../src/main/db/repositories/message.repo', () => ({
       state.insertedMessages.push({ role: m.role, content: m.content })
       return { id: `m${state.insertedMessages.length}` }
     },
+    updateContent: (id: string, _content: string, _status: string, _sources: unknown, _usage: unknown, retrieval?: unknown) => {
+      state.updates.push({ id, retrieval })
+    },
     listByConversation: () => [],
     getById: () => undefined
   }
@@ -82,12 +86,20 @@ vi.mock('../src/main/knowledge/rag', () => ({
     buildContext: (chunks: unknown[]) => chunks.length > 0 ? '[知识库上下文]' : ''
   }
 }))
-vi.mock('../src/main/providers/manager', () => ({ providerManager: {} }))
+vi.mock('../src/main/providers/manager', () => ({
+  providerManager: {
+    getAdapter: () => ({
+      streamChat: async () => ({ content: '回答正文', usage: {} })
+    })
+  }
+}))
 vi.mock('../src/main/keep-awake', () => ({ acquireKeepAwake: () => {}, releaseKeepAwake: () => {} }))
 vi.mock('../src/main/chat/concurrency', () => ({ withProviderLimit: (_p: unknown, fn: () => unknown) => fn() }))
 vi.mock('../src/main/agent/engine', () => ({ agentEngine: { abort: () => {}, run: async () => {} } }))
 vi.mock('../src/main/error', () => ({ errMsg: (e: unknown) => String(e), isAbortError: () => false }))
-vi.mock('../src/main/usage/usage-service', () => ({ usageService: { checkBudgetExceeded: () => null } }))
+vi.mock('../src/main/usage/usage-service', () => ({
+  usageService: { checkBudgetExceeded: () => null, consumeBudgetWarnings: () => [] }
+}))
 vi.mock('../src/main/usage/pricing-config', () => ({ getUsagePricing: () => ({ prices: {} as Record<string, unknown> }) }))
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({ appConfigRepo: { isUsageBudgetHardBlockEnabled: () => false } }))
 vi.mock('../src/main/db/repositories/kb.repo', () => ({ kbRepo: { get: () => null } }))
@@ -100,6 +112,7 @@ beforeEach(() => {
   state.retrieveError = null
   state.degradeNotes = []
   state.insertedMessages = []
+  state.updates = []
 })
 
 const basePayload = {
@@ -147,10 +160,22 @@ describe('chat-service kbRefs 合并检索', () => {
     expect(state.degradeNotes).toHaveLength(1)
     expect(state.degradeNotes[0]!.stage).toBe('retrieve')
     expect(state.degradeNotes[0]!.reason).toContain('embedding 服务连不上')
-    // 反向对照：检索成功时不该有降级记录
+    // P0-2b：失败事实要随消息落库，渲染层才能说「检索失败」而不是冒充「没找到」
+    expect(state.updates).toHaveLength(1)
+    expect(state.updates[0]!.retrieval).toMatchObject({
+      searched: true,
+      hits: 0,
+      failed: true,
+      kbCount: 3
+    })
+    // 反向对照：检索成功时不该有降级记录，也不该带 failed 标记
     state.retrieveError = null
     state.degradeNotes = []
+    state.updates = []
     await chatService.send({ ...basePayload, kbRefs: ['kbX'] } as any, () => {}).catch(() => {})
     expect(state.degradeNotes).toEqual([])
+    expect(state.updates).toHaveLength(1)
+    expect(state.updates[0]!.retrieval).toMatchObject({ searched: true, hits: 0, kbCount: 3 })
+    expect((state.updates[0]!.retrieval as { failed?: boolean }).failed).toBeFalsy()
   })
 })
