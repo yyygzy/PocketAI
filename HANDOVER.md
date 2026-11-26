@@ -1,7 +1,7 @@
 # 墨匣（Moxia / PocketAI）交接说明
 
-> 快照生成时间：2026-11-17（Asia/Shanghai）
-> 源码版本：`package.json` 中 `version` 为 **1.3.0**；本地 `main` 分支 HEAD 为 `6dbeff0`
+> 快照生成时间：2026-11-17（Asia/Shanghai）；最近回写：2026-11-26
+> 源码版本：`package.json` 中 `version` 为 **1.3.0**；当前 `main` 分支 HEAD 为 `d173434`（快照生成时为 `6dbeff0`）
 > 快照根目录：`E:\PocketAI-handover-1.3.0\`
 
 本文只描述仓库里已经存在的代码与文档事实。凡本次未实测、无法从代码/文档确认的内容，会明确写「待确认」，不当作结论使用。
@@ -155,9 +155,11 @@ npm run build        # electron-vite build，产物在 out/
 
 ---
 
-## 4. 1.3.0 这一轮做了什么
+## 4. 1.3.0 原始发布轮与后续升级轮
 
-本地 `main` 上与本轮直接相关的三个提交（由旧到新）：
+### 4.1 1.3.0 原始发布轮（历史快照）
+
+本地 `main` 上与该轮直接相关的三个提交（由旧到新）：
 
 | 提交 | 摘要 | 关键内容 |
 |---|---|---|
@@ -165,9 +167,19 @@ npm run build        # electron-vite build，产物在 out/
 | `fe2669c` | `fix(boot): 修复冷启动白屏并让硬件探测等真数据` | 硬件采集改异步 PowerShell，启动路径不再被 CIM 查询钉住；硬件探测改为窗口 `show` 后延迟 1.5s 触发，能力页 8s 先答、后台 30s 补采，向导等真实数据、测不到就明说「没能测到」；磁盘探测拆快段（`Win32_LogicalDisk`）与慢段（`MSFT_PhysicalDisk`）并行；License 磁盘指纹改异步（`loadFromFileAsync`）、截图宿主懒加载；IPC 回执增加 `got/incomplete/probing`；四语文案与测试同步。 |
 | `6dbeff0` | `build(linux): 补齐 AppImage 原生模块解包` | `electron-builder.linux.yml` 的 `asarUnpack` 补上 `sqlite-vec*/**/*.{dll,dylib,so}` 与 `node_modules/onnxruntime-node/**`，并排除 darwin/win32 的 sqlite prebuild，保留 Linux/linuxmusl。 |
 
+### 4.2 后续升级轮（2026-11-26 回写）
+
+| 提交 | 摘要 | 关键内容 |
+|---|---|---|
+| `8b62b25` | `feat(kb): 完成知识库升级五阶段与后台检测闭环` | 短中文 FTS 辅助路、CSV/XLSX 结构化检索、micro `sourceCoverageAtK` / `missingSources`、源文件变更检测与数据健康面板闭环；详见 `docs/kb-upgrade-plan-2026-11.md`。 |
+| `67e675c` | `feat(skill): 完成技能版本治理与回滚` | v80 版本/来源/哈希字段、`skill_versions` 历史与回滚、内置技能锁定、四语文案与 UI。 |
+| `df6f60c` | `feat(skill): 标准化 SKILL.md 与元数据兼容` | 标准 `SKILL.md`、`metadata.*` 补位、超长正文软提示、真库落库验收。 |
+| `900d8f5` | `feat(skill): 完成技能路由、质量检查与资源按需读取` | 默认关闭的运行时路由 + activation eval、描述质量面板、`references/assets` 白名单只读与预览。 |
+| `d173434` | `feat(skill): 增加浏览器沙箱技能脚本执行` | `run_skill_script` 默认 deny、逐次确认、仅清单内 JS、浏览器沙箱执行；详见 `docs/skill-upgrade-plan-2026-11.md` 与 `docs/skill-script-sandbox-2026-11.md`。 |
+
 冷启动白屏的根因（`fe2669c` 提交说明与代码注释）：旧实现用同步 `execSync`/`execFileSync` 跑 PowerShell，Windows 上冷启动加 CIM 查询可占用主线程 15–30s，期间窗口导航、加载重试与显示兜底计时器都被推迟。现在启动路径只发起异步探测，主线程不再等待。
 
-> 状态提醒：`docs/release-notes-1.3.0.md` 仍把「冷启动白屏」列在「已知问题」里作为待查项；修复已提交（`fe2669c`），但发布说明尚未回写该条，接手后请以代码与实测为准。
+> 状态回写（2026-11-26）：`docs/release-notes-1.3.0.md` 已同步「冷启动白屏」为已修复，并保留目标机专项冷启动复测建议。
 
 ---
 
@@ -230,7 +242,7 @@ npm run build        # electron-vite build，产物在 out/
 
 ## 6. 提交与推送状态
 
-> 当前复核（交付时）：本节下方的 `[ahead 1]` 与 `6dbeff0 未推送` 是交接快照生成时的历史状态，已过时。现已全部推送，`main` 与 `gitee/main`、`origin/main` 完全同步（均为 `af5561b`），工作区干净。仍未打 `v1.3.0` 标签、未发布 Release——这是待用户决定的发布动作，不是代码遗留。
+> 当前复核（2026-11-26）：`main` HEAD 为 `d173434`，知识库与技能升级全部提交均已推送到 `origin/main` 与 `gitee/main`，工作区干净。下方命令输出与 `[ahead 1]` 均为 2026-11-17 历史快照，不再代表当前状态。tag / Release 状态仍待发布时复核，不作为代码遗留。
 
 快照生成时的实际状态（`c:\PocketAI`）：
 
@@ -251,7 +263,7 @@ v1.2.8
 
 - 分支 `main` 比 `origin/main` **领先 1 个提交**：`6dbeff0`。该提交只改 `electron-builder.linux.yml`。
 - 工作区干净（`git status --porcelain` 无输出）。
-- **未打 `v1.3.0` 标签**，最新标签仍是 `v1.2.8`；仓库也尚未有 1.3.0 的 Release。
+- **历史快照状态**：当时未打 `v1.3.0` 标签，最新标签为 `v1.2.8`，也尚未有 1.3.0 的 Release；当前 tag/Release 状态请另行复核。
 - `package.json` 的版本已经是 `1.3.0`，属于已提交状态。
 - remote：`origin https://github.com/yyygzy/PocketAI.git`（fetch/push 同址）。
 - 接手后可用以下命令自行复核：
