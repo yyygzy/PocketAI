@@ -71,6 +71,7 @@ import {
   buildStepChangeSet,
   finishWorkspaceChangeAudit
 } from './workspace-changes'
+import { createWorkspaceFingerprint } from './resume-workspace-fingerprint'
 import { offloadToolOutput, buildOffloadPreview, defaultOffloadRoot, writeOffloadFile, OFFLOAD_PREVIEW_MIN_CHARS } from './tool-output-offload'
 import {
   isToolsUnsupportedError,
@@ -1402,12 +1403,16 @@ class AgentEngine {
     // B-2：并发守卫放行后即登记运行态（setup 段抛错也走下面的兜底 catch 落失败，不留「永久进行中」）
     // v73：起点工作目录随行落库（续跑前置条件）；续跑把断点一起带上，避免刚开始又崩时把步号清零。
     const runWorkspaceDir = getWorkspaceDir()
+    // P1-3d：起点内容指纹与路径快照同一时刻采集；读不全时存 degraded，后续续跑 fail-closed。
+    const runWorkspaceFingerprint = createWorkspaceFingerprint(runWorkspaceDir)
+    const runWorkspaceFingerprintJson = runWorkspaceFingerprint ? JSON.stringify(runWorkspaceFingerprint) : null
     markRunStarted({
       conversationId,
       requestId,
       mode: 'agent',
       anchorUserMessageId: resume?.userMessage.id ?? null,
       workspaceDir: runWorkspaceDir,
+      workspaceFingerprintJson: runWorkspaceFingerprintJson,
       stage: resume ? 'model' : undefined,
       stepsDone: resume?.startStep,
       toolStepsDone: resume?.startToolStepsDone
@@ -1883,7 +1888,8 @@ class AgentEngine {
           toolStepsDone: ctx.toolStepsDone,
           workspaceDir: runWorkspaceDir,
           toolPermissionsSig: runToolPermissionsSig,
-          toolScopeJson: runToolScopeJson
+          toolScopeJson: runToolScopeJson,
+          workspaceFingerprintJson: runWorkspaceFingerprintJson
         })
       }
 

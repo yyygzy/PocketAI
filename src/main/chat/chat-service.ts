@@ -37,6 +37,7 @@ import {
   sameToolSet
 } from '../agent/run-tool-scope'
 import { resolveAgentToolPermissions, toolPermissionsSignature } from '../agent/tool-permissions'
+import { compareWorkspaceFingerprint } from '../agent/resume-workspace-fingerprint'
 import { getWorkspaceDir } from '../tools/fs-tools'
 import { getUsagePricing } from '../usage/pricing-config'
 import { currencySymbolOf } from '../../shared/usage-pricing'
@@ -89,6 +90,10 @@ function resumeBlockedError(code: ChatResumeBlockCode): Error {
       return new Error('RESUME_TOOLS_EXECUTED:中断前已有工具执行过，为避免重复执行，请重新发送')
     case 'RESUME_WORKSPACE_CHANGED':
       return new Error('RESUME_WORKSPACE_CHANGED:工作目录已变更，为避免在错误的目录里续跑，请重新发送')
+    case 'RESUME_WORKSPACE_FILES_CHANGED':
+      return new Error('RESUME_WORKSPACE_FILES_CHANGED:工作目录里的文件已变更，请重新发送')
+    case 'RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE':
+      return new Error('RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE:无法确认工作目录内容未变更，请重新发送')
     case 'RESUME_TOOL_PERMISSIONS_CHANGED':
       return new Error('RESUME_TOOL_PERMISSIONS_CHANGED:工具授权已变更，请重新发送')
     case 'RESUME_TOOL_GRANT_CHANGED':
@@ -812,6 +817,12 @@ class ChatService {
     // 起点快照只在"还没走到第一个检查点"时为空（那种情况下这一步之前什么都没执行，无需比对）
     if (run.workspaceDir && !sameWorkspaceDir(run.workspaceDir, getWorkspaceDir())) {
       return blocked('RESUME_WORKSPACE_CHANGED')
+    }
+    // v81：路径相同还不够——文件内容变了就不能盲续（只有新 run 带指纹，老 run 继续走 v73 口径）
+    if (run.workspaceFingerprintJson != null) {
+      const fingerprintVerdict = compareWorkspaceFingerprint(run.workspaceFingerprintJson, getWorkspaceDir())
+      if (fingerprintVerdict === 'unavailable') return blocked('RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE')
+      if (fingerprintVerdict === 'changed') return blocked('RESUME_WORKSPACE_FILES_CHANGED')
     }
     const conv = conversationRepo.get(conversationId)
     if (!conv) return blocked('RESUME_TARGET_MISSING')

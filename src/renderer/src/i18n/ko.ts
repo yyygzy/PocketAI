@@ -343,6 +343,8 @@ export const ko = {
   'chat.resume.artifactsMismatch': '중단 지점 기록이 저장된 메시지와 맞지 않습니다. 다시 보내 주세요.',
   'chat.resume.toolsExecuted': '중단 전에 도구가 실행되었습니다. 중복 실행을 피하려면 다시 보내 주세요.',
   'chat.resume.workspaceChanged': '작업 폴더가 변경되었습니다. 잘못된 폴더에서 계속하지 않도록 다시 보내 주세요.',
+  'chat.resume.filesChanged': '작업 폴더의 파일이 변경되었습니다. 내용이 달라졌으므로 이어서 실행할 수 없습니다. 다시 보내 주세요.',
+  'chat.resume.fingerprintUnavailable': '작업 폴더 내용이 변경되지 않았는지 확인할 수 없습니다. 다시 보내 주세요.',
   'chat.resume.permissionsChanged': '도구 권한이 변경되었습니다. 다시 보내 주세요.',
   'chat.resume.grantChanged': '이 실행의 템플릿 권한이 변경되었거나 템플릿이 삭제되었습니다. 새 실행을 시작해 주세요.',
   'chat.resume.permissionsRevoked': '어시스턴트가 이 실행에서 사용한 도구 권한을 회수했습니다. 다시 보내 주세요.',

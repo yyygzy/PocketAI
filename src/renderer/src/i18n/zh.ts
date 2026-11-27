@@ -358,6 +358,8 @@ export const zh = {
   'chat.resume.artifactsMismatch': '中断点的记录对不上，无法接着跑，请重新发送。',
   'chat.resume.toolsExecuted': '中断前已有工具执行过，为避免重复执行，请重新发送。',
   'chat.resume.workspaceChanged': '工作目录已变更，为避免在错误的目录里续跑，请重新发送。',
+  'chat.resume.filesChanged': '工作目录里的文件已变更，为避免在错误的内容上续跑，请重新发送。',
+  'chat.resume.fingerprintUnavailable': '无法确认工作目录内容未变更，请重新发送。',
   'chat.resume.permissionsChanged': '工具授权已变更，请重新发送。',
   'chat.resume.grantChanged': '这一轮的模板授权已被修改或模板已删除，请重新开始一轮。',
   'chat.resume.permissionsRevoked': '助手已收回这一轮用过的工具权限，请重新发送。',

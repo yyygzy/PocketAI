@@ -1953,6 +1953,10 @@ export type ChatResumeBlockCode =
   | 'RESUME_ARTIFACTS_MISMATCH'
   | 'RESUME_TOOLS_EXECUTED'
   | 'RESUME_WORKSPACE_CHANGED'
+  /** v81：同目录但受控文件内容与起点指纹不一致 */
+  | 'RESUME_WORKSPACE_FILES_CHANGED'
+  /** v81：起点指纹坏/降级或当前目录扫不全 ⇒ fail-closed */
+  | 'RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE'
   | 'RESUME_TOOL_PERMISSIONS_CHANGED'
   /** P1-5：模板勾选在中断后被改/模板被删 ⇒ 要求重开一轮 */
   | 'RESUME_TOOL_GRANT_CHANGED'

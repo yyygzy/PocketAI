@@ -1571,6 +1571,20 @@ const MIGRATIONS: Migration[] = [
           ON skill_versions(skill_id, imported_at DESC);
       `)
     }
+  },
+  {
+    // P1-3d：run 起点的工作目录内容指纹。NULL＝v81 之前的老 run，续跑继续走 v73 路径口径；
+    // 新 run 必须写指纹（读不全时写 degraded），续跑侧 fail-closed。
+    version: 81,
+    name: 'conversation_runs_workspace_fingerprint',
+    up: (db) => {
+      const cols = new Set(
+        (db.prepare('PRAGMA table_info(conversation_runs)').all() as Array<{ name: string }>).map((c) => c.name)
+      )
+      if (!cols.has('workspace_fingerprint_json')) {
+        db.exec('ALTER TABLE conversation_runs ADD COLUMN workspace_fingerprint_json TEXT;')
+      }
+    }
   }
 ]
 

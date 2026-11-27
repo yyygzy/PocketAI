@@ -42,6 +42,8 @@ const RESUME_BLOCK_TEXT_KEYS: Record<ChatResumeBlockCode, string> = {
   RESUME_ARTIFACTS_MISMATCH: 'chat.resume.artifactsMismatch',
   RESUME_TOOLS_EXECUTED: 'chat.resume.toolsExecuted',
   RESUME_WORKSPACE_CHANGED: 'chat.resume.workspaceChanged',
+  RESUME_WORKSPACE_FILES_CHANGED: 'chat.resume.filesChanged',
+  RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE: 'chat.resume.fingerprintUnavailable',
   RESUME_TOOL_PERMISSIONS_CHANGED: 'chat.resume.permissionsChanged',
   RESUME_TOOL_GRANT_CHANGED: 'chat.resume.grantChanged',
   RESUME_TOOL_PERMISSIONS_REVOKED: 'chat.resume.permissionsRevoked',

@@ -6,6 +6,7 @@
 //   · 失败的 run 停在模型步 ⇒ 只重试该步（一次 LLM，零工具调用），其余步骤调用次数为零。
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import fs from 'node:fs'
+import path from 'node:path'
 
 const P = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMP || '/tmp'
@@ -62,6 +63,8 @@ import { messageRepo } from '../src/main/db/repositories/message.repo'
 import { conversationRunRepo, judgeRunResume } from '../src/main/db/repositories/conversation-run.repo'
 import { setRuntimePersistence, resetRuntimeRegistryForTest } from '../src/main/chat/runtime-registry'
 import { chatService } from '../src/main/chat/chat-service'
+import { createWorkspaceFingerprint } from '../src/main/agent/resume-workspace-fingerprint'
+import { getWorkspaceDir, setWorkspaceDir } from '../src/main/tools/fs-tools'
 import { IPC } from '../src/shared/types'
 import type { MessageRecord, ToolCall } from '../src/shared/types'
 
@@ -464,5 +467,88 @@ describe('P1-3c：失败只重试该步', () => {
     conversationRunRepo.finish('req-3c-tools', 'failed', '工具步炸了')
 
     expect(chatService.getResumeCandidate(convId)).toBeNull()
+  })
+
+  it('P1-3d：同目录但文件内容变了 ⇒ 不给续跑入口', () => {
+    const ws = path.join(P.data, 'ws-p13d-changed')
+    fs.rmSync(ws, { recursive: true, force: true })
+    fs.mkdirSync(ws, { recursive: true })
+    fs.writeFileSync(path.join(ws, 'a.txt'), 'v1')
+    setWorkspaceDir(ws)
+
+    const convId = newConversation('P1-3d-files-changed')
+    const anchor = anchorOf(convId)
+    const assistant = messageRepo.insert({
+      conversationId: convId,
+      role: 'assistant',
+      content: '已答',
+      status: 'done',
+      parentId: anchor.id
+    })
+    expect(assistant.id).toBeTruthy()
+    const fingerprint = createWorkspaceFingerprint(ws)
+    conversationRunRepo.start({
+      requestId: 'req-p13d-files',
+      conversationId: convId,
+      mode: 'agent',
+      startedAt: Date.now() - 1000,
+      anchorUserMessageId: anchor.id,
+      workspaceDir: getWorkspaceDir(),
+      workspaceFingerprintJson: JSON.stringify(fingerprint)
+    })
+    conversationRunRepo.checkpoint('req-p13d-files', { stage: 'model', stepsDone: 1, toolStepsDone: 0 })
+    conversationRunRepo.interruptActive()
+
+    expect(chatService.getResumeCandidate(convId)?.state).toBe('ready')
+    fs.writeFileSync(path.join(ws, 'a.txt'), 'v2')
+    expect(chatService.getResumeCandidate(convId)).toMatchObject({
+      state: 'blocked',
+      code: 'RESUME_WORKSPACE_FILES_CHANGED'
+    })
+  })
+
+  it('P1-3d：指纹坏或降级 ⇒ fail-closed，老 run 无指纹仍走路径口径', () => {
+    const ws = path.join(P.data, 'ws-p13d-unavailable')
+    fs.rmSync(ws, { recursive: true, force: true })
+    fs.mkdirSync(ws, { recursive: true })
+    fs.writeFileSync(path.join(ws, 'a.txt'), 'v1')
+    setWorkspaceDir(ws)
+
+    const runCase = (requestId: string, fingerprintJson: string | null) => {
+      const convId = newConversation(requestId)
+      const anchor = anchorOf(convId)
+      messageRepo.insert({ conversationId: convId, role: 'assistant', content: '已答', status: 'done', parentId: anchor.id })
+      conversationRunRepo.start({
+        requestId,
+        conversationId: convId,
+        mode: 'agent',
+        startedAt: Date.now() - 1000,
+        anchorUserMessageId: anchor.id,
+        workspaceDir: getWorkspaceDir(),
+        workspaceFingerprintJson: fingerprintJson
+      })
+      conversationRunRepo.checkpoint(requestId, { stage: 'model', stepsDone: 1, toolStepsDone: 0 })
+      conversationRunRepo.interruptActive()
+      return convId
+    }
+
+    const bad = runCase('req-p13d-bad', '{not-json')
+    expect(chatService.getResumeCandidate(bad)).toMatchObject({
+      state: 'blocked',
+      code: 'RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE'
+    })
+
+    const degraded = runCase(
+      'req-p13d-degraded',
+      JSON.stringify({ v: 1, status: 'degraded', root: ws, reason: 'timeout', files: {} })
+    )
+    expect(chatService.getResumeCandidate(degraded)).toMatchObject({
+      state: 'blocked',
+      code: 'RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE'
+    })
+
+    // v81 之前的老 run：只有路径、没有指纹，仍然可续（历史不被新闸门误伤）
+    const legacy = runCase('req-p13d-legacy', null)
+    expect(chatService.getResumeCandidate(legacy)?.state).toBe('ready')
   })
 })

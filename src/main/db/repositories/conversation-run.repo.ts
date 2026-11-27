@@ -46,6 +46,8 @@ export interface ConversationRunSeed {
   toolPermissionsSig?: string | null
   /** v75：本轮有效工具集快照（JSON）；NULL＝旧口径，续跑按当前助手签名比对 */
   toolScopeJson?: string | null
+  /** v81：起点工作目录内容指纹（JSON）；NULL＝老 run 只比路径，degraded 也照写以 fail-closed */
+  workspaceFingerprintJson?: string | null
   /** 续跑：接续的断点（不传＝按 preparing / 0 步开始） */
   stage?: ChatRunStage
   stepsDone?: number
@@ -64,6 +66,8 @@ export interface ConversationRunCheckpoint {
   toolPermissionsSig?: string | null
   /** v75：与 sig 同一句写入，避免出现「有签名没范围」或反过来的半截状态 */
   toolScopeJson?: string | null
+  /** v81：内容指纹只在第一次写入，后续 COALESCE 保住 */
+  workspaceFingerprintJson?: string | null
 }
 
 export interface InterruptedRunRow {
@@ -80,6 +84,8 @@ export interface InterruptedRunRow {
   workspaceDir: string | null
   toolPermissionsSig: string | null
   toolScopeJson: string | null
+  /** v81：起点内容指纹；NULL＝老 run（继续走路径口径） */
+  workspaceFingerprintJson: string | null
   /** 启动对账写下的判定，随行一起返回给注册表 */
   resumeState: ChatRunResume
 }
@@ -101,6 +107,8 @@ export interface ConversationRunSnapshot {
   toolPermissionsSig: string | null
   /** v75：per-run 授权快照；NULL＝旧 run（续跑走当前助手签名口径） */
   toolScopeJson: string | null
+  /** v81：起点内容指纹；NULL＝老 run（续跑只比路径） */
+  workspaceFingerprintJson: string | null
 }
 
 /**
@@ -203,8 +211,9 @@ export const conversationRunRepo = {
         `INSERT OR REPLACE INTO conversation_runs
            (request_id, conversation_id, mode, status, started_at, ended_at, error_code,
             stage, steps_done, tool_steps_done, resume_state,
-            anchor_user_message_id, workspace_dir, tool_permissions_sig, tool_scope_json)
-         VALUES (?, ?, ?, 'running', ?, NULL, NULL, ?, ?, ?, NULL, ?, ?, ?, ?)`
+            anchor_user_message_id, workspace_dir, tool_permissions_sig, tool_scope_json,
+            workspace_fingerprint_json)
+         VALUES (?, ?, ?, 'running', ?, NULL, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`
       )
       .run(
         run.requestId,
@@ -217,7 +226,8 @@ export const conversationRunRepo = {
         run.anchorUserMessageId ?? null,
         serializeSharedPath(run.workspaceDir ?? null),
         run.toolPermissionsSig ?? null,
-        run.toolScopeJson ?? null
+        run.toolScopeJson ?? null,
+        run.workspaceFingerprintJson ?? null
       )
   },
 
@@ -235,7 +245,8 @@ export const conversationRunRepo = {
          SET stage=?, steps_done=?, tool_steps_done=?,
              workspace_dir=COALESCE(?, workspace_dir),
              tool_permissions_sig=COALESCE(?, tool_permissions_sig),
-             tool_scope_json=COALESCE(?, tool_scope_json)
+             tool_scope_json=COALESCE(?, tool_scope_json),
+             workspace_fingerprint_json=COALESCE(?, workspace_fingerprint_json)
          WHERE request_id=? AND status NOT IN ('done','failed','aborted','interrupted')`
       )
       .run(
@@ -245,6 +256,7 @@ export const conversationRunRepo = {
         serializeSharedPath(cp.workspaceDir ?? null),
         cp.toolPermissionsSig ?? null,
         cp.toolScopeJson ?? null,
+        cp.workspaceFingerprintJson ?? null,
         requestId
       )
   },
@@ -307,7 +319,8 @@ export const conversationRunRepo = {
                 stage, steps_done AS stepsDone, tool_steps_done AS toolStepsDone,
                 anchor_user_message_id AS anchorUserMessageId,
                 workspace_dir AS workspaceDir, tool_permissions_sig AS toolPermissionsSig,
-                tool_scope_json AS toolScopeJson
+                tool_scope_json AS toolScopeJson,
+                workspace_fingerprint_json AS workspaceFingerprintJson
          FROM conversation_runs
          WHERE status IN ('running','pending_approval')
          ORDER BY started_at ASC`
@@ -358,7 +371,8 @@ export const conversationRunRepo = {
                 resume_state AS resumeState,
                 anchor_user_message_id AS anchorUserMessageId,
                 workspace_dir AS workspaceDir, tool_permissions_sig AS toolPermissionsSig,
-                tool_scope_json AS toolScopeJson
+                tool_scope_json AS toolScopeJson,
+                workspace_fingerprint_json AS workspaceFingerprintJson
          FROM conversation_runs
          WHERE request_id=?`
       )
@@ -382,7 +396,8 @@ export const conversationRunRepo = {
                 resume_state AS resumeState,
                 anchor_user_message_id AS anchorUserMessageId,
                 workspace_dir AS workspaceDir, tool_permissions_sig AS toolPermissionsSig,
-                tool_scope_json AS toolScopeJson
+                tool_scope_json AS toolScopeJson,
+                workspace_fingerprint_json AS workspaceFingerprintJson
          FROM conversation_runs
          WHERE conversation_id=?
          ORDER BY started_at DESC

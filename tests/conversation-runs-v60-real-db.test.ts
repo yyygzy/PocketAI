@@ -142,7 +142,11 @@ describe('v60 空库升级', () => {
       db().prepare('SELECT name FROM schema_migrations WHERE version=60').get()
     ).toEqual({ name: 'conversation_runs' })
     // v61（B-4 会话未读）与 v62（mcp_call_log.source）都只 ADD COLUMN，不影响本文件的 v60 表结构断言
-    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(62)
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(81)
+    expect(
+      (db().prepare('PRAGMA table_info(conversation_runs)').all() as Array<{ name: string }>)
+        .map((c) => c.name)
+    ).toContain('workspace_fingerprint_json')
     expect(db().pragma('integrity_check', { simple: true })).toBe('ok')
   })
 })
@@ -154,8 +158,8 @@ describe('v60 已有数据升级 + 幂等', () => {
     // 回到「v59 已跑完、v60 还没跑」的形状
     db().prepare('DROP TABLE conversation_runs').run()
     // v66 也依赖这张表（ADD COLUMN）：一起退回未跑，否则重建出来的新表缺检查点列
-    // v73 / v75 同样在这张表上 ADD COLUMN，一起退回（顺带验证这些列能被迁移补回来）
-    db().prepare('DELETE FROM schema_migrations WHERE version IN (60, 66, 73, 75)').run()
+    // v73 / v75 / v81 同样在这张表上 ADD COLUMN，一起退回（顺带验证这些列能被迁移补回来）
+    db().prepare('DELETE FROM schema_migrations WHERE version IN (60, 66, 73, 75, 81)').run()
 
     expect(() => dbService.runMigrations()).not.toThrow()
     expect(tableExists('conversation_runs')).toBe(true)

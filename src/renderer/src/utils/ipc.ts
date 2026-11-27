@@ -71,6 +71,8 @@ export const IPC_FAIL_TEXT_KEYS: Record<string, string> = {
   RESUME_ARTIFACTS_MISMATCH: 'chat.resume.artifactsMismatch',
   RESUME_TOOLS_EXECUTED: 'chat.resume.toolsExecuted',
   RESUME_WORKSPACE_CHANGED: 'chat.resume.workspaceChanged',
+  RESUME_WORKSPACE_FILES_CHANGED: 'chat.resume.filesChanged',
+  RESUME_WORKSPACE_FINGERPRINT_UNAVAILABLE: 'chat.resume.fingerprintUnavailable',
   RESUME_TOOL_PERMISSIONS_CHANGED: 'chat.resume.permissionsChanged',
   // P1-5：按落库的 per-run 工具范围分档（模板勾选变了/被删、助手收回、工具不可用）
   RESUME_TOOL_GRANT_CHANGED: 'chat.resume.grantChanged',

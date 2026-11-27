@@ -35,6 +35,8 @@ export interface RuntimeRunSeed {
   /** v73：起点快照（由第一个检查点补齐；老行/未起步为空） */
   workspaceDir?: string | null
   toolPermissionsSig?: string | null
+  /** v81：起点内容指纹 JSON；NULL＝老 run/degraded 也照写 */
+  workspaceFingerprintJson?: string | null
   /** 续跑：接续的断点（不传＝从 preparing / 0 步开始） */
   stage?: ChatRunStage
   stepsDone?: number
@@ -51,6 +53,8 @@ export interface RuntimeCheckpoint {
   toolPermissionsSig?: string | null
   /** v75：本轮有效工具集快照（第一个检查点写入；之后传空，COALESCE 不覆盖） */
   toolScopeJson?: string | null
+  /** v81：内容指纹只在第一次写入，后续 COALESCE 保住 */
+  workspaceFingerprintJson?: string | null
 }
 
 /** 由 index.ts 注入的落地面（conversation-run.repo 结构上满足它） */
@@ -159,6 +163,8 @@ export function markRunStarted(args: {
   /** v73：起点快照（第一个检查点补齐，这里一般不带） */
   workspaceDir?: string | null
   toolPermissionsSig?: string | null
+  /** v81：起点内容指纹 JSON；NULL＝老 run/degraded 也照写 */
+  workspaceFingerprintJson?: string | null
   /** 续跑：接续的断点（不传＝从 preparing / 0 步开始） */
   stage?: ChatRunStage
   stepsDone?: number

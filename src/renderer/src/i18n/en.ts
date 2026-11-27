@@ -358,6 +358,8 @@ export const en = {
   'chat.resume.artifactsMismatch': 'The checkpoint does not match the saved messages. Please send again.',
   'chat.resume.toolsExecuted': 'Tools already ran before the interruption; to avoid running them twice, please send again.',
   'chat.resume.workspaceChanged': 'The workspace folder changed; to avoid continuing in the wrong folder, please send again.',
+  'chat.resume.filesChanged': 'Files in the workspace changed; to avoid continuing on different content, please send again.',
+  'chat.resume.fingerprintUnavailable': 'Could not verify that workspace contents stayed the same. Please send again.',
   'chat.resume.permissionsChanged': 'Tool permissions changed. Please send again.',
   'chat.resume.grantChanged': 'This run\'s template grant was changed or the template was deleted. Please start a new run.',
   'chat.resume.permissionsRevoked': 'The assistant revoked tools this run had used. Please send again.',

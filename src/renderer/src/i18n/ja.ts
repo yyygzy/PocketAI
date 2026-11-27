@@ -343,6 +343,8 @@ export const ja = {
   'chat.resume.artifactsMismatch': '中断地点の記録が保存済みメッセージと一致しません。もう一度送信してください。',
   'chat.resume.toolsExecuted': '中断前にツールが実行済みです。二重実行を避けるため、もう一度送信してください。',
   'chat.resume.workspaceChanged': '作業フォルダが変更されました。誤ったフォルダで続行しないため、もう一度送信してください。',
+  'chat.resume.filesChanged': '作業フォルダ内のファイルが変更されました。内容が異なるため続行できません。もう一度送信してください。',
+  'chat.resume.fingerprintUnavailable': '作業フォルダの内容が未変更か確認できません。もう一度送信してください。',
   'chat.resume.permissionsChanged': 'ツールの権限が変更されました。もう一度送信してください。',
   'chat.resume.grantChanged': 'この実行のテンプレート権限が変更されたか、テンプレートが削除されました。新しい実行を開始してください。',
   'chat.resume.permissionsRevoked': 'アシスタントがこの実行で使ったツールの権限を取り消しました。もう一度送信してください。',
