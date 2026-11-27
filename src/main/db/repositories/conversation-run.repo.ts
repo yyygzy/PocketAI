@@ -408,6 +408,24 @@ export const conversationRunRepo = {
   },
 
   /**
+   * P1-3e：启动后自动续跑的跨会话候选。
+   * 只给「已对账为 resumable 的 interrupted」——failed 单步重试不自动触发，
+   * 具体能不能续仍由 chat-service 的 evaluateResume 复核（这里只缩小扫描面）。
+   */
+  listAutoResumeCandidates(): Array<{ conversationId: string; requestId: string }> {
+    if (!dbService.isOpen()) return []
+    return dbService
+      .getHandle()
+      .prepare(
+        `SELECT DISTINCT conversation_id AS conversationId, request_id AS requestId
+         FROM conversation_runs
+         WHERE status='interrupted' AND resume_state='resumable' AND mode='agent'
+         ORDER BY started_at ASC`
+      )
+      .all() as Array<{ conversationId: string; requestId: string }>
+  },
+
+  /**
    * 锚点下的逐步产物事实（续跑准入用，P1-3b）。
    * 完成判定只认两件事：assistant 是 done、它的每个 tool_call 都有 done 的 tool 应答
    * （应答从 tool 消息 content 里的 `toolCallId` 对上）。**不数 tool_steps_done**——

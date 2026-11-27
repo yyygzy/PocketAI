@@ -45,6 +45,7 @@ import {
   setRuntimePersistence
 } from './chat/runtime-registry'
 import { markConversationUnread } from './chat/unread-state'
+import { startAutoResume } from './chat/auto-resume'
 import { registerIpcHandlers, initChannelRuntime } from './ipc'
 import { syncBuiltinAssistants, syncBuiltinSkills } from './assistant/builtin'
 import { masterKeyManager } from './crypto/master-key'
@@ -116,6 +117,8 @@ function tryOpenDbNoPassword(): boolean {
     dbService.repairLegacyAgentLabels()
     // v60/B-3：上一进程残留的运行态标 interrupted（只在这里做——此刻本进程还没起任何 run）
     reconcileInterruptedRuns()
+    // P1-3e：对账之后才复核并自动续跑；每进程最多一次，失败只记日志不阻塞启动
+    void startAutoResume()
     return true
   } catch (e) {
     // SQLITE_NOTADB = 文件是加密的，必须用密码打开
@@ -390,6 +393,7 @@ async function boot(): Promise<void> {
       dbService.sweepStaleStreamingMessages()
       dbService.repairLegacyAgentLabels()
       reconcileInterruptedRuns()
+      void startAutoResume()
       log.info('DB 解锁成功')
     } else if ('setPassword' in result) {
       // 设置新密码（明文 DB 首次加密）

@@ -2051,7 +2051,7 @@ export type ChatRunStage = 'preparing' | 'model' | 'tools' | 'approval' | 'final
 
 /**
  * 重启对账后的续跑判定（v66）：`resumable`=中断点之前没有工具副作用，可从边界继续；
- * `restart`=已经进过工具步（或没有检查点），只能整轮重来。本版只判定、不自动续跑。
+ * `restart`=已经进过工具步（或没有检查点），只能整轮重来。P1-3e 起启动后只自动续 `resumable` 的 interrupted。
  */
 export type ChatRunResume = 'resumable' | 'restart'
 
