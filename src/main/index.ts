@@ -39,6 +39,8 @@ import {
 import { acquireDataLock } from './data-lock'
 import { dbService } from './db/database'
 import { conversationRunRepo } from './db/repositories/conversation-run.repo'
+// P2-3：加载仓储即把真实写入口注入纯审计模块（纯逻辑路径不 import 仓储）
+import './db/repositories/import-result-audit.repo'
 import {
   reconcileInterruptedRuns,
   setConversationUnreadHook,

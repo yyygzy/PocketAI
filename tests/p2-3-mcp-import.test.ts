@@ -8,7 +8,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
-  rows: [] as Array<Record<string, unknown>>
+  rows: [] as Array<Record<string, unknown>>,
+  audits: [] as Array<Record<string, unknown>>
+}))
+
+vi.mock('../src/main/db/import-result-audit', () => ({
+  recordImportResult: (input: Record<string, unknown>) => {
+    h.audits.push(input)
+    return true
+  }
 }))
 
 vi.mock('../src/main/db/repositories/mcp-server.repo', () => ({
@@ -31,6 +39,7 @@ function pkg(servers: Record<string, unknown>): string {
 
 beforeEach(() => {
   h.rows.length = 0
+  h.audits.length = 0
 })
 
 describe('mcp-package：校验和口径', () => {
@@ -231,5 +240,44 @@ describe('粘贴通道：与文件通道同一条解析/落库路径', () => {
     expect(r.ok).toBe(true)
     expect(r.checksum).toBe('absent')
     expect(h.rows).toHaveLength(1)
+  })
+})
+
+describe('导入结果审计（v82）', () => {
+  it('成功导入落一行：kind/source/checksum/计数齐全，不含凭据值', () => {
+    importMcpPackageText(pkg({
+      fs: { command: 'npx', args: [], env: { API_KEY: 'sk-should-not-leak' } }
+    }))
+    expect(h.audits).toHaveLength(1)
+    expect(h.audits[0]).toMatchObject({
+      kind: 'mcp', source: 'file', checksum: 'verified', ok: true,
+      importedCount: 1, failedCount: 0, clearedKeyCount: 1
+    })
+    expect(JSON.stringify(h.audits[0])).not.toContain('sk-should-not-leak')
+  })
+
+  it('校验和不一致也落一行失败审计，但不落任何配置', () => {
+    const payload = JSON.parse(pkg({ fs: { command: 'npx', args: [] } })) as {
+      mcpServers: { fs: { command: string } }
+    }
+    payload.mcpServers.fs.command = 'rm'
+    importMcpPackageText(JSON.stringify(payload))
+    expect(h.audits).toHaveLength(1)
+    expect(h.audits[0]).toMatchObject({
+      kind: 'mcp', source: 'file', checksum: 'mismatch', ok: false, errorCode: 'CHECKSUM_MISMATCH'
+    })
+    expect(h.rows).toHaveLength(0)
+  })
+
+  it('粘贴通道落 source=paste/checksum=absent；逐条失败记入 failedCount', () => {
+    importMcpPackageText(
+      pkg({ good: { command: 'npx', args: [] }, bad: { url: 'ftp://example.com' } }),
+      { verifyChecksum: false }
+    )
+    expect(h.audits).toHaveLength(1)
+    expect(h.audits[0]).toMatchObject({
+      kind: 'mcp', source: 'paste', checksum: 'absent', ok: true,
+      importedCount: 1, failedCount: 1
+    })
   })
 })

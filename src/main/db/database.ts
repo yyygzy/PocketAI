@@ -1585,6 +1585,31 @@ const MIGRATIONS: Migration[] = [
         db.exec('ALTER TABLE conversation_runs ADD COLUMN workspace_fingerprint_json TEXT;')
       }
     }
+  },
+  {
+    // P2-3：导入结果审计（与 v64 的静态扫描分级分开）。
+    // 只存来源/校验状态/计数/错误码，不存包正文、findings examples、env/headers 值。
+    version: 82,
+    name: 'import_result_audits',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS import_result_audits (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          source TEXT NOT NULL,
+          source_detail TEXT NOT NULL DEFAULT '',
+          checksum TEXT NOT NULL DEFAULT '',
+          ok INTEGER NOT NULL,
+          error_code TEXT NOT NULL DEFAULT '',
+          imported_count INTEGER NOT NULL DEFAULT 0,
+          failed_count INTEGER NOT NULL DEFAULT 0,
+          cleared_key_count INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_import_result_audits_kind_at
+          ON import_result_audits(kind, created_at DESC);
+      `)
+    }
   }
 ]
 

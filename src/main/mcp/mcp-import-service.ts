@@ -8,6 +8,11 @@
 import { errMsg } from '../error'
 import { mcpServerRepo } from '../db/repositories/mcp-server.repo'
 import {
+  recordImportResult,
+  type ImportChecksumState,
+  type ImportResultSource
+} from '../db/import-result-audit'
+import {
   parseMcpServersJson,
   stripMcpSecrets,
   uniqueMcpServerName
@@ -28,6 +33,21 @@ export interface McpImportOutcome {
   error?: string
 }
 
+/** 结果审计是旁路：只记来源/校验状态/计数/错误码，绝不记密钥值或包正文 */
+function auditImport(
+  source: ImportResultSource,
+  input: {
+    checksum: ImportChecksumState
+    ok: boolean
+    errorCode?: string
+    importedCount?: number
+    failedCount?: number
+    clearedKeyCount?: number
+  }
+): void {
+  recordImportResult({ kind: 'mcp', source, ...input })
+}
+
 /**
  * 从文本导入整包 MCP 配置。文件读取/大小闸在 IPC 层，这里只管内容与落库，便于直接测。
  * 返回 ok=true 也可能 imported 为空（全部条目结构非法）：那不是包的问题，逐条原因在 failed 里。
@@ -39,14 +59,24 @@ export function importMcpPackageText(
   raw: string,
   opts: { verifyChecksum?: boolean } = {}
 ): McpImportOutcome {
+  const source: ImportResultSource = opts.verifyChecksum === false ? 'paste' : 'file'
   const verification =
     opts.verifyChecksum === false ? ({ state: 'absent' } as const) : verifyMcpPackage(raw)
-  if (verification.state === 'mismatch') return { ok: false, error: 'CHECKSUM_MISMATCH' }
-  if (verification.state === 'unsupported') return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
+  if (verification.state === 'mismatch') {
+    auditImport(source, { checksum: 'mismatch', ok: false, errorCode: 'CHECKSUM_MISMATCH' })
+    return { ok: false, error: 'CHECKSUM_MISMATCH' }
+  }
+  if (verification.state === 'unsupported') {
+    auditImport(source, { checksum: 'unsupported', ok: false, errorCode: 'CHECKSUM_UNSUPPORTED' })
+    return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
+  }
 
   const parsed = parseMcpServersJson(raw)
   // 整体结构非法时 parser 给的是用户可读原文（JSON 解析失败 / 缺少 mcpServers），原样上抛
-  if (parsed.error) return { ok: false, error: parsed.error }
+  if (parsed.error) {
+    auditImport(source, { checksum: verification.state === 'ok' ? 'verified' : 'absent', ok: false, errorCode: 'PARSE_FAILED' })
+    return { ok: false, error: parsed.error }
+  }
 
   const taken = new Set(mcpServerRepo.list().map((r) => r.name))
   const imported: Array<{ key: string; name: string }> = []
@@ -94,9 +124,17 @@ export function importMcpPackageText(
     }
   }
 
+  const checksum: ImportChecksumState = verification.state === 'ok' ? 'verified' : 'absent'
+  auditImport(source, {
+    checksum,
+    ok: true,
+    importedCount: imported.length,
+    failedCount: failed.length,
+    clearedKeyCount: clearedKeys.length
+  })
   return {
     ok: true,
-    checksum: verification.state === 'ok' ? 'verified' : 'absent',
+    checksum,
     imported,
     failed,
     clearedKeys,

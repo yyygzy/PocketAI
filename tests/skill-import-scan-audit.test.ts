@@ -14,6 +14,7 @@ const H = vi.hoisted(() => ({
   remoteBody: '',
   saved: [] as Array<Record<string, unknown>>,
   audits: [] as Array<Record<string, unknown>>,
+  resultAudits: [] as Array<Record<string, unknown>>,
   reset(): void {
     this.fileContent = ''
     this.folderEntry = ''
@@ -21,6 +22,7 @@ const H = vi.hoisted(() => ({
     this.remoteBody = ''
     this.saved = []
     this.audits = []
+    this.resultAudits = []
   }
 }))
 
@@ -65,6 +67,13 @@ vi.mock('../src/main/db/repositories/skill-import-audit.repo', () => ({
       H.audits.push(input)
       return true
     }
+  }
+}))
+
+vi.mock('../src/main/db/import-result-audit', () => ({
+  recordImportResult: (input: Record<string, unknown>) => {
+    H.resultAudits.push(input)
+    return true
   }
 }))
 
@@ -127,14 +136,23 @@ describe('文件导入', () => {
       sourceDetail: 'skill.md'
     })
     expect((H.audits[0]!.scan as { level: string }).level).toBe('attention')
+    // v64 扫描账与 v82 结果账并行写，互不覆盖
+    expect(H.resultAudits).toHaveLength(1)
+    expect(H.resultAudits[0]).toMatchObject({
+      kind: 'skill', source: 'file', sourceDetail: 'skill.md', ok: true, importedCount: 1
+    })
   })
 
-  it('解析失败 → 不落库、不写审计', async () => {
+  it('解析失败 → 不落库、不写扫描审计，但写一条结果失败审计', async () => {
     H.fileContent = '{}'
     const r = await importSkill({} as never)
     expect(r.ok).toBe(false)
     expect(H.saved).toHaveLength(0)
     expect(H.audits).toHaveLength(0)
+    expect(H.resultAudits).toHaveLength(1)
+    expect(H.resultAudits[0]).toMatchObject({
+      kind: 'skill', source: 'file', ok: false, errorCode: 'MISSING_FIELDS'
+    })
   })
 })
 
@@ -167,6 +185,9 @@ describe('目录导入', () => {
 
     expect(H.audits).toHaveLength(1)
     expect(H.audits[0]).toMatchObject({ source: 'folder', sourceDetail: 'my-skill' })
+    expect(H.resultAudits[0]).toMatchObject({
+      kind: 'skill', source: 'folder', sourceDetail: 'my-skill', ok: true, importedCount: 1
+    })
   })
 })
 
@@ -190,6 +211,9 @@ describe('URL 导入', () => {
     expect(H.audits[0]).toMatchObject({
       source: 'url',
       sourceDetail: 'https://example.com/skill.md'
+    })
+    expect(H.resultAudits[0]).toMatchObject({
+      kind: 'skill', source: 'url', sourceDetail: 'https://example.com/skill.md', ok: true, importedCount: 1
     })
   })
 })

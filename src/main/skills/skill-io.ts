@@ -18,6 +18,10 @@ import {
   skillImportAuditRepo,
   type SkillImportSource
 } from '../db/repositories/skill-import-audit.repo'
+import {
+  recordImportResult,
+  type ImportChecksumState
+} from '../db/import-result-audit'
 
 const log = createLogger('skill-io')
 import type { SkillRecord } from '../../shared/types'
@@ -141,6 +145,25 @@ function auditImported(
   })
 }
 
+/** v82：导入动作结果审计，与 v64 的静态扫描分级并行写、互不覆盖 */
+function auditResult(
+  source: SkillImportSource,
+  sourceDetail: string,
+  input: {
+    checksum: ImportChecksumState
+    ok: boolean
+    errorCode?: string
+    importedCount?: number
+  }
+): void {
+  recordImportResult({
+    kind: 'skill',
+    source,
+    sourceDetail,
+    ...input
+  })
+}
+
 /** 导出单个技能为 JSON 文件（用户选择保存位置） */
 export async function exportSkill(
   win: BrowserWindow,
@@ -197,15 +220,25 @@ export async function importSkill(
     const raw = fs.readFileSync(file, 'utf8')
     // 完整性先于解析：校验和不一致时连形状都不该信（内容可能整段被换掉）
     const verification = verifySkillPackage(raw)
-    if (verification.state === 'mismatch') return { ok: false, error: 'CHECKSUM_MISMATCH' }
-    if (verification.state === 'unsupported') return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
+    const sourceDetail = path.basename(file)
+    if (verification.state === 'mismatch') {
+      auditResult('file', sourceDetail, { checksum: 'mismatch', ok: false, errorCode: 'CHECKSUM_MISMATCH' })
+      return { ok: false, error: 'CHECKSUM_MISMATCH' }
+    }
+    if (verification.state === 'unsupported') {
+      auditResult('file', sourceDetail, { checksum: 'unsupported', ok: false, errorCode: 'CHECKSUM_UNSUPPORTED' })
+      return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
+    }
 
+    const checksum: ImportChecksumState = verification.state === 'ok' ? 'verified' : 'absent'
     const { shape, error, ignoredKeys } = parseSkillText(raw)
     if (!shape) {
       // 兼容旧格式：非标准 pocketai-skill 的 JSON 也给个明确错误
-      if (error === '缺少 name 字段' || error === '缺少 content 字段') {
-        return { ok: false, error: 'MISSING_FIELDS' }
-      }
+      const errorCode = error === '缺少 name 字段' || error === '缺少 content 字段'
+        ? 'MISSING_FIELDS'
+        : 'PARSE_FAILED'
+      auditResult('file', sourceDetail, { checksum, ok: false, errorCode })
+      if (errorCode === 'MISSING_FIELDS') return { ok: false, error: 'MISSING_FIELDS' }
       if (error === 'JSON 解析失败') return { ok: false, error: 'PARSE_FAILED' }
       return { ok: false, error }
     }
@@ -214,8 +247,9 @@ export async function importSkill(
     // 落库前先扫：扫描是纯函数，不碰文件系统，也不改变导入判定
     const scan = scanSkill({ content: shape.content, ignoredKeys })
     const skill = saveShapeAsSkill(shape)
-    auditImported(skill, 'file', path.basename(file), scan)
-    return { ok: true, skill, nameDuplicated, scan, license: shape.license, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
+    auditImported(skill, 'file', sourceDetail, scan)
+    auditResult('file', sourceDetail, { checksum, ok: true, importedCount: 1 })
+    return { ok: true, skill, nameDuplicated, scan, license: shape.license, checksum }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }
@@ -295,7 +329,9 @@ export async function importSkillFolder(win: BrowserWindow): Promise<{
       return { ok: false, error: cleanup ? `${errMsg(e)}；残留清理也失败：${cleanup}` : errMsg(e) }
     }
     const nameDuplicated = skillRepo.list().some((s) => s.name === shape.name && s.id !== skill.id)
-    auditImported(skill, 'folder', path.basename(filePaths[0]!), scan)
+    const sourceDetail = path.basename(filePaths[0]!)
+    auditImported(skill, 'folder', sourceDetail, scan)
+    auditResult('folder', sourceDetail, { checksum: 'absent', ok: true, importedCount: 1 })
     return {
       ok: true,
       skill,
@@ -402,7 +438,9 @@ export async function importSkillDirFromManifest(
       }
       return { ok: false, error: errMsg(e) }
     }
-    auditImported(skill, 'url', safeUrlForDisplay(manifestUrl), scan)
+    const sourceDetail = safeUrlForDisplay(manifestUrl)
+    auditImported(skill, 'url', sourceDetail, scan)
+    auditResult('url', sourceDetail, { checksum: 'absent', ok: true, importedCount: 1 })
     return {
       ok: true,
       skill,
@@ -461,18 +499,29 @@ export async function importSkillFromUrl(
     // registry 的 hash 校验的是「下载到的字节」；包内 checksum 校验的是「字段」。
     // 两道是不同承诺，能同时给就给：前者证明分发没被换，后者证明字段没被改。
     const verification = verifySkillPackage(text)
-    if (verification.state === 'mismatch') return { ok: false, error: 'CHECKSUM_MISMATCH' }
-    if (verification.state === 'unsupported') return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
-
-    const { shape, error, ignoredKeys } = parseSkillText(text)
-    if (!shape) return { ok: false, error: `解析失败: ${error}` }
-
-    const scan = scanSkill({ content: shape.content, ignoredKeys })
     // 来源身份与审计口径一致：只留 origin + pathname，查询串可能带令牌不落库
     const sourceUrl = safeUrlForDisplay(url)
+    if (verification.state === 'mismatch') {
+      auditResult('url', sourceUrl, { checksum: 'mismatch', ok: false, errorCode: 'CHECKSUM_MISMATCH' })
+      return { ok: false, error: 'CHECKSUM_MISMATCH' }
+    }
+    if (verification.state === 'unsupported') {
+      auditResult('url', sourceUrl, { checksum: 'unsupported', ok: false, errorCode: 'CHECKSUM_UNSUPPORTED' })
+      return { ok: false, error: 'CHECKSUM_UNSUPPORTED' }
+    }
+
+    const checksum: ImportChecksumState = verification.state === 'ok' ? 'verified' : 'absent'
+    const { shape, error, ignoredKeys } = parseSkillText(text)
+    if (!shape) {
+      auditResult('url', sourceUrl, { checksum, ok: false, errorCode: 'PARSE_FAILED' })
+      return { ok: false, error: `解析失败: ${error}` }
+    }
+
+    const scan = scanSkill({ content: shape.content, ignoredKeys })
     const skill = saveShapeAsSkill(shape, { sourceUrl })
     auditImported(skill, 'url', sourceUrl, scan)
-    return { ok: true, skill, scan, license: shape.license, checksum: verification.state === 'ok' ? 'verified' : 'absent' }
+    auditResult('url', sourceUrl, { checksum, ok: true, importedCount: 1 })
+    return { ok: true, skill, scan, license: shape.license, checksum }
   } catch (e) {
     return { ok: false, error: errMsg(e) }
   }
