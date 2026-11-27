@@ -23,9 +23,11 @@ import {
   MAX_BACKOFF_MS
 } from './gateway-base'
 
+import { OUTBOUND_FIXED_ENDPOINTS } from '../net/outbound-registry'
+
 const log = createLogger('channels')
 
-const API_BASE = 'https://slack.com/api'
+const API_BASE = OUTBOUND_FIXED_ENDPOINTS.slackApi
 const REQUEST_TIMEOUT_MS = 15_000
 const SLACK_MSG_LIMIT = 2900 // Slack 文本建议上限 4000，留 buffer
 const MIN_BACKOFF_MS = 1_000

@@ -21,6 +21,7 @@ import net from 'node:net'
 import tls from 'node:tls'
 import fs from 'node:fs'
 import type { Duplex } from 'node:stream'
+import { assertOutboundHostAllowed } from './outbound-policy'
 
 /** IPv6 展开后的 8 个 hextet 数字（expandIpv6 返回时保证长度为 8） */
 type Hextets = [number, number, number, number, number, number, number, number]
@@ -344,6 +345,9 @@ export function assertFetchable(u: URL): void {
     throw new SafeFetchError(`仅支持 http/https 协议: ${u.protocol}`)
   }
   if (!u.hostname) throw new SafeFetchError('URL 缺少主机名')
+  // v2 全局 allowlist：开启后每一跳（含重定向）都要过域名闸门。
+  // 默认关闭，且读配置失败时退回关闭，不影响升级前行为。
+  assertOutboundHostAllowed(u)
 }
 
 /** 主机名是否属于本机/内网/保留语义（字面 IP 或常见内网后缀；域名解析结果另由 resolveAndValidate 判定） */

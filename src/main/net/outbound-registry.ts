@@ -15,6 +15,7 @@
 //
 // endpointEvidence 说明「该端点在本仓库里如何被证实」：
 //  - callsite（默认）：调用点文件里能找到该地址（含模板常量拼接）；
+//  - registry：调用点从本文件的 OUTBOUND_FIXED_ENDPOINTS 取单一来源（v2 回灌后不再手抄 URL）；
 //  - redirect：上游 302 后由 safeFetch 跟随到该地址，调用点文件里没有字面量；
 //  - config：地址由构建配置/环境变量决定（如 electron-builder publish）；
 //  - runtime：由子进程或运行时决定，应用自身不直接请求。
@@ -77,6 +78,48 @@ const DINGTALK_API = 'https://api.dingtalk.com'
 const PIP_INDEX_OFFICIAL = 'https://pypi.org/simple'
 const PIP_INDEX_TUNA = 'https://pypi.tuna.tsinghua.edu.cn/simple'
 
+/**
+ * v2 单一来源：固定端点只允许从这里取。
+ * 上面的私有常量仍是表内引用，调用点一律 import 本对象，避免 UI 显示与实际请求两份手抄数据。
+ */
+export const OUTBOUND_FIXED_ENDPOINTS = {
+  tavily: TAVILY_API,
+  bocha: BOCHA_API,
+  weatherGeocoding: OPEN_METEO_GEOCODING,
+  weatherForecast: OPEN_METEO_FORECAST,
+  airQuality: AIR_QUALITY_OPEN_METEO,
+  fxErApi: FX_ERAPI,
+  ipWho: IPWHO,
+  coinGecko: COINGECKO,
+  okxPublic: OKX_PUBLIC,
+  nagerDate: NAGER_DATE,
+  dictionaryApi: DICTIONARY_API,
+  myMemory: MYMEMORY_TRANS,
+  worldBank: WORLD_BANK_API,
+  mempool: MEMPOOL_SPACE,
+  goldApi: GOLD_API,
+  usgs: USGS_EARTHQUAKE,
+  wikipediaHosts: WIKIPEDIA_HOSTS,
+  ollamaLoopback: OLLAMA_LOOPBACK,
+  ollamaRecommendLoopback: OLLAMA_RECOMMEND_LOOPBACK,
+  ollamaOfficial: OLLAMA_OFFICIAL,
+  ollamaRegistry: OLLAMA_REGISTRY,
+  pythonStandalone: PYTHON_STANDALONE,
+  ghReleases: GH_RELEASES,
+  ghReleaseCdnObjects: GH_RELEASE_CDN_OBJECTS,
+  ghReleaseCdnAssets: GH_RELEASE_CDN_ASSETS,
+  ghApi: GH_API,
+  npmRegistry: NPM_REGISTRY_DEFAULT,
+  telegramApi: TELEGRAM_API,
+  discordApi: DISCORD_API,
+  discordGatewayWs: DISCORD_GATEWAY_WS,
+  slackApi: SLACK_API,
+  feishuApi: FEISHU_API,
+  dingtalkApi: DINGTALK_API,
+  pipIndexOfficial: PIP_INDEX_OFFICIAL,
+  pipIndexTuna: PIP_INDEX_TUNA
+} as const
+
 export interface OutboundEntry {
   id: string
   labelKey: string
@@ -88,7 +131,7 @@ export interface OutboundEntry {
   /** 覆盖测试用：相对 src/main 的源文件路径 */
   files: string[]
   /** 端点证据类型；缺省按 callsite 校验（见文件头说明） */
-  endpointEvidence?: 'callsite' | 'redirect' | 'config' | 'runtime'
+  endpointEvidence?: 'callsite' | 'registry' | 'redirect' | 'config' | 'runtime'
   /** 读现有配置仓储拿当前真实地址；未配置返回 []，抛错由上层区分 */
   resolve?: () => Promise<OutboundAddress[]>
 }
@@ -196,6 +239,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     kind: 'fixed',
     configSource: 'agent.websearch_provider + agent.websearch_tavily_key',
     endpoints: [TAVILY_API],
+    endpointEvidence: 'registry',
     transport: 'fetch',
     files: ['search/providers/tavily.ts', 'search/provider-fetch.ts']
   },
@@ -206,6 +250,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     kind: 'fixed',
     configSource: 'agent.websearch_provider + agent.websearch_bocha_key',
     endpoints: [BOCHA_API],
+    endpointEvidence: 'registry',
     transport: 'fetch',
     files: ['search/providers/bocha.ts']
   },
@@ -247,6 +292,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     kind: 'fixed',
     configSource: '无（固定端点）',
     endpoints: [OPEN_METEO_GEOCODING, OPEN_METEO_FORECAST],
+    endpointEvidence: 'registry',
     transport: 'safeFetch',
     files: ['tools/weather.ts']
   },
@@ -271,6 +317,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
       GOLD_API,
       USGS_EARTHQUAKE
     ],
+    endpointEvidence: 'registry',
     transport: 'safeFetch',
     files: ['tools/free-api.ts']
   },
@@ -506,6 +553,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     kind: 'fixed',
     configSource: 'channels 中对应渠道的开关与凭据',
     endpoints: [TELEGRAM_API, DISCORD_API, SLACK_API, FEISHU_API, DINGTALK_API],
+    endpointEvidence: 'registry',
     transport: 'fetch',
     files: [
       'channels/gateway-base.ts',
@@ -523,6 +571,7 @@ export const OUTBOUND_ENTRIES: OutboundEntry[] = [
     kind: 'fixed',
     configSource: 'channels.discord 开关与凭据',
     endpoints: [DISCORD_GATEWAY_WS],
+    endpointEvidence: 'registry',
     transport: 'websocket',
     files: ['channels/discord-gateway.ts']
   },

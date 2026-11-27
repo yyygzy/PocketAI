@@ -76,6 +76,9 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   if (!state.impls.has('getPrivacyMode')) state.impls.set('getPrivacyMode', () => ({ ok: true, data: { enabled: true } }))
   // 编辑后自动验证缺省关，AppearancePanel 挂载即读
   if (!state.impls.has('getPostEditValidation')) state.impls.set('getPostEditValidation', () => ({ ok: true, data: { enabled: false } }))
+  // 出网策略面板挂载即读；默认关闭，专门断言策略的用例自行覆盖。
+  if (!state.impls.has('getOutboundPolicy')) state.impls.set('getOutboundPolicy', () => ({ enabled: false, allowedHosts: [] }))
+  if (!state.impls.has('setOutboundPolicy')) state.impls.set('setOutboundPolicy', (p: unknown) => p)
   const g = globalThis as unknown as { window: { pocketai: unknown } }
   g.window.pocketai = buildStub()
 }

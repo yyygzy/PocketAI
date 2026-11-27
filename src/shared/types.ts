@@ -3095,6 +3095,12 @@ export interface OutboundAddress {
   value: string
 }
 
+/** v2 全局出网 allowlist：默认关闭；打开后仅放行名单内 hostname（fail-closed） */
+export interface OutboundSitePolicyView {
+  enabled: boolean
+  allowedHosts: string[]
+}
+
 export interface OutboundEntryView {
   id: string
   /** 类别名 i18n 键 */
@@ -3338,6 +3344,9 @@ export const IPC = {
   /** MCP 出网站点级约束（全局）：读/写 app_config 里的 mcp_http_site_policy */
   MCP_SITE_POLICY_GET: 'mcp-server:site-policy-get',
   MCP_SITE_POLICY_SET: 'mcp-server:site-policy-set',
+  /** v2 全局出网 allowlist（经 safeFetch 的所有 HTTP(S) 请求，默认关闭） */
+  OUTBOUND_POLICY_GET: 'outbound:policy-get',
+  OUTBOUND_POLICY_SET: 'outbound:policy-set',
   // 手动试运行工具（面板调试用，等价于用户显式确认后执行，不走 assistant 权限链路）
   MCP_SERVER_CALL_TOOL: 'mcp-server:call-tool',
   MCP_SERVER_GET_RUNTIMES: 'mcp-server:get-runtimes', // 一次性拉取所有运行时状态

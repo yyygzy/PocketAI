@@ -4,7 +4,7 @@
 //  1. 文件级：扫 src/main 下出现出网调用点的源文件，断言已登记在 OUTBOUND_ENTRIES[*].files；
 //  2. 调用点 → 清单：调用点文件里出现的 URL 必须能在清单里找到对应端点；
 //  3. 清单 → 调用点：callsite 条目登记的每个端点必须真的出现在它的调用点文件里
-//     （redirect / config / runtime 条目按 endpointEvidence 明确豁免，并在注册表里写清原因）。
+//     （registry / redirect / config / runtime 条目按 endpointEvidence 明确豁免，并在注册表里写清原因）。
 // 只改地址不更新清单、或清单写了实际不走的地址，这里都会直接变红。
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
@@ -301,6 +301,47 @@ describe('出网调用点覆盖', () => {
       }
     }
     expect(missing, `注册表里有字典查不到的 key：\n${missing.join('\n')}`).toEqual([])
+  })
+
+  // v2 固定域名回灌：这些调用点只能从 OUTBOUND_FIXED_ENDPOINTS 取地址，
+  // 再出现手抄 URL 就说明面板和实际请求又要分叉了（注释由 readMain 剥掉，不误判文档）。
+  it('固定端点调用点统一引用 OUTBOUND_FIXED_ENDPOINTS，不再手抄 URL', () => {
+    const callsites: Array<[string, string[]]> = [
+      ['search/providers/tavily.ts', ['https://api.tavily.com']],
+      ['search/providers/bocha.ts', ['https://api.bochaai.com']],
+      ['tools/weather.ts', ['https://geocoding-api.open-meteo.com', 'https://api.open-meteo.com']],
+      [
+        'tools/free-api.ts',
+        [
+          'https://open.er-api.com',
+          'https://ipwho.is',
+          'https://api.coingecko.com',
+          'https://www.okx.com',
+          'https://date.nager.at',
+          'https://air-quality-api.open-meteo.com',
+          'https://api.dictionaryapi.dev',
+          'https://api.mymemory.translated.net',
+          'https://api.worldbank.org',
+          'https://mempool.space',
+          'https://api.gold-api.com',
+          'https://earthquake.usgs.gov'
+        ]
+      ],
+      ['channels/telegram-gateway.ts', ['https://api.telegram.org']],
+      ['channels/discord-gateway.ts', ['wss://gateway.discord.gg', 'https://discord.com']],
+      ['channels/slack-gateway.ts', ['https://slack.com']],
+      ['channels/feishu-gateway.ts', ['https://open.feishu.cn']],
+      ['channels/dingtalk-gateway.ts', ['https://api.dingtalk.com']]
+    ]
+    const drift: string[] = []
+    for (const [rel, literals] of callsites) {
+      const src = readMain(rel)
+      if (!src.includes('OUTBOUND_FIXED_ENDPOINTS')) drift.push(`${rel} 未引用单一来源`)
+      for (const literal of literals) {
+        if (src.includes(literal)) drift.push(`${rel} 仍手抄 ${literal}`)
+      }
+    }
+    expect(drift, `固定端点调用点漂移：\n${drift.join('\n')}`).toEqual([])
   })
 })
 

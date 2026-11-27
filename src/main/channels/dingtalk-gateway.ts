@@ -30,9 +30,11 @@ import {
   MAX_BACKOFF_MS
 } from './gateway-base'
 
+import { OUTBOUND_FIXED_ENDPOINTS } from '../net/outbound-registry'
+
 const log = createLogger('channels')
 
-const API_BASE = 'https://api.dingtalk.com'
+const API_BASE = OUTBOUND_FIXED_ENDPOINTS.dingtalkApi
 const REQUEST_TIMEOUT_MS = 15_000
 const DINGTALK_MSG_LIMIT = 4000 // 钉钉单条消息文本上限约 4096，留 buffer
 const MIN_BACKOFF_MS = 1_000

@@ -9,8 +9,28 @@
 //
 // 策略：纯函数直接断言，无需 mock。SSRF 防护是安全关键路径，
 // asar-patcher.test.ts 里 safeFetch 仅作 mock 占位，真实实现零覆盖。
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import net from 'node:net'
+
+const outboundPolicyState = vi.hoisted(() => ({
+  policy: { enabled: false, allowedHosts: [] as string[] }
+}))
+vi.mock('../src/main/net/outbound-policy', () => ({
+  assertOutboundHostAllowed: (u: URL) => {
+    const p = outboundPolicyState.policy
+    if (!p.enabled) return
+    if (!p.allowedHosts.includes(u.hostname.toLowerCase())) {
+      const e = new Error(`出网被策略拦截：${u.hostname}`) as Error & { code: string }
+      e.code = 'OUTBOUND_HOST_BLOCKED'
+      throw e
+    }
+  }
+}))
+
+beforeEach(() => {
+  outboundPolicyState.policy = { enabled: false, allowedHosts: [] }
+})
+
 import {
   isDisallowedIpv4,
   expandIpv6,
@@ -128,6 +148,10 @@ describe('isDisallowedIp — 地址族分派', () => {
 })
 
 describe('assertFetchable — URL 协议白名单', () => {
+  beforeEach(() => {
+    outboundPolicyState.policy = { enabled: false, allowedHosts: [] }
+  })
+
   it('http/https → 不抛', () => {
     expect(() => assertFetchable(new URL('http://example.com/'))).not.toThrow()
     expect(() => assertFetchable(new URL('https://example.com/path'))).not.toThrow()
@@ -140,6 +164,17 @@ describe('assertFetchable — URL 协议白名单', () => {
 
   it('javascript: 协议 → 抛 SafeFetchError', () => {
     expect(() => assertFetchable(new URL('javascript:alert(1)'))).toThrow(SafeFetchError)
+  })
+
+  it('v2 策略开启后：名单外域名被拦，名单内域名放行（默认关闭不受影响）', () => {
+    outboundPolicyState.policy = { enabled: true, allowedHosts: ['allowed.example.com'] }
+    expect(() => assertFetchable(new URL('https://allowed.example.com/x'))).not.toThrow()
+    try {
+      assertFetchable(new URL('https://blocked.example.com/x'))
+      throw new Error('应当被策略拦截')
+    } catch (e) {
+      expect((e as Error & { code?: string }).code).toBe('OUTBOUND_HOST_BLOCKED')
+    }
   })
 })
 

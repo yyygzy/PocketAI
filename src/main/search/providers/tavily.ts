@@ -2,6 +2,7 @@
 // body { api_key, query, max_results }；响应 results[]
 import { providerFetchJson } from '../provider-fetch'
 import type { RawSearchHit, SearchProvider } from '../types'
+import { OUTBOUND_FIXED_ENDPOINTS } from '../../net/outbound-registry'
 
 interface TavilyItem {
   title?: unknown
@@ -18,7 +19,7 @@ export const tavilyProvider: SearchProvider = {
   id: 'tavily',
   requiresKey: true,
   async search({ query, count, apiKey, signal }) {
-    const json = await providerFetchJson<TavilyResponse>('https://api.tavily.com/search', {
+    const json = await providerFetchJson<TavilyResponse>(`${OUTBOUND_FIXED_ENDPOINTS.tavily}/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey, query, max_results: count }),

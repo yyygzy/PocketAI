@@ -20,6 +20,7 @@
 //   sun_times           → api.open-meteo.com        日出日落/紫外线（复用 open-meteo 地理编码）
 import type { BuiltinTool, ToolExecuteContext } from './builtin'
 import { SafeFetchError, safeFetch } from '../net/safe-fetch'
+import { OUTBOUND_FIXED_ENDPOINTS } from '../net/outbound-registry'
 import { geocode } from './weather'
 
 /** 单次请求超时与字节上限（与 weather 对齐） */
@@ -94,7 +95,7 @@ export const exchangeRateTool: BuiltinTool = {
     const target = hasTarget ? code(targetRaw, 'target') : null
     let data: FxResponse
     try {
-      data = await getJson<FxResponse>('汇率服务', `https://open.er-api.com/v6/latest/${base}`, ctx)
+      data = await getJson<FxResponse>('汇率服务', `${OUTBOUND_FIXED_ENDPOINTS.fxErApi}/v6/latest/${base}`, ctx)
     } catch (e) {
       throw wrapNetworkError(e, '汇率服务')
     }
@@ -159,7 +160,7 @@ export const ipLookupTool: BuiltinTool = {
     if (ip && !/^[0-9a-fA-F.:]{3,45}$/.test(ip)) {
       throw new Error('ip 格式无效（应为 IPv4/IPv6 地址）')
     }
-    const url = ip ? `https://ipwho.is/${encodeURIComponent(ip)}` : 'https://ipwho.is/'
+    const url = ip ? `${OUTBOUND_FIXED_ENDPOINTS.ipWho}/${encodeURIComponent(ip)}` : `${OUTBOUND_FIXED_ENDPOINTS.ipWho}/`
     let data: IpWhoResponse
     try {
       data = await getJson<IpWhoResponse>('IP 查询服务', url, ctx)
@@ -234,7 +235,7 @@ export const cryptoPriceTool: BuiltinTool = {
     }
     if (!/^[a-z]{2,10}$/.test(vs)) throw new Error('vs 应为计价币代码（如 usd/cny/jpy）')
     const url =
-      `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(coin)}` +
+      `${OUTBOUND_FIXED_ENDPOINTS.coinGecko}/api/v3/simple/price?ids=${encodeURIComponent(coin)}` +
       `&vs_currencies=${encodeURIComponent(vs)}&include_24hr_change=true`
     let data: Record<string, CgEntry>
     try {
@@ -246,7 +247,7 @@ export const cryptoPriceTool: BuiltinTool = {
         try {
           const okx = await getJson<{ code?: string; data?: Array<{ last?: string }> }>(
             '行情备源',
-            `https://www.okx.com/api/v5/market/ticker?instId=${sym}-USDT`,
+            `${OUTBOUND_FIXED_ENDPOINTS.okxPublic}/api/v5/market/ticker?instId=${sym}-USDT`,
             ctx
           )
           const last = okx.code === '0' ? Number(okx.data?.[0]?.last) : NaN
@@ -318,7 +319,7 @@ export const publicHolidayTool: BuiltinTool = {
     try {
       data = await getJson<NagerHoliday[]>(
         '节假日服务',
-        `https://date.nager.at/api/v3/NextPublicHolidays/${country}`,
+        `${OUTBOUND_FIXED_ENDPOINTS.nagerDate}/api/v3/NextPublicHolidays/${country}`,
         ctx
       )
     } catch (e) {
@@ -447,7 +448,7 @@ export const airQualityTool: BuiltinTool = {
       where = { name: hit.name, country: hit.country ?? null, admin1: hit.admin1 ?? null }
     }
     const url =
-      `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${queryLat}&longitude=${queryLon}` +
+      `${OUTBOUND_FIXED_ENDPOINTS.airQuality}/v1/air-quality?latitude=${queryLat}&longitude=${queryLon}` +
       '&current=pm2_5,pm10,ozone,nitrogen_dioxide,sulphur_dioxide,carbon_monoxide,us_aqi&timezone=auto'
     let data: { current?: Record<string, number | null | string>; current_units?: Record<string, string> }
     try {
@@ -518,7 +519,7 @@ export const dictionaryTool: BuiltinTool = {
     try {
       data = await getJson<DictEntry[]>(
         '词典服务',
-        `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`,
+        `${OUTBOUND_FIXED_ENDPOINTS.dictionaryApi}/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`,
         ctx
       )
     } catch (e) {
@@ -591,7 +592,7 @@ export const translateTool: BuiltinTool = {
     try {
       data = await getJson<MyMemoryResponse>(
         '翻译服务',
-        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(from)}|${encodeURIComponent(to)}`,
+        `${OUTBOUND_FIXED_ENDPOINTS.myMemory}/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(from)}|${encodeURIComponent(to)}`,
         ctx
       )
     } catch (e) {
@@ -657,7 +658,7 @@ export const worldBankTool: BuiltinTool = {
     try {
       data = await getJson<[unknown, WorldBankRow[] | null]>(
         '世界银行服务',
-        `https://api.worldbank.org/v2/country/${encodeURIComponent(country)}/indicator/${encodeURIComponent(indicator)}?format=json&per_page=${years}&page=1`,
+        `${OUTBOUND_FIXED_ENDPOINTS.worldBank}/v2/country/${encodeURIComponent(country)}/indicator/${encodeURIComponent(indicator)}?format=json&per_page=${years}&page=1`,
         ctx
       )
     } catch (e) {
@@ -705,7 +706,7 @@ export const btcFeesTool: BuiltinTool = {
   async execute(_args, ctx) {
     let data: MempoolFees
     try {
-      data = await getJson<MempoolFees>('比特币手续费服务', 'https://mempool.space/api/v1/fees/recommended', ctx)
+      data = await getJson<MempoolFees>('比特币手续费服务', `${OUTBOUND_FIXED_ENDPOINTS.mempool}/api/v1/fees/recommended`, ctx)
     } catch (e) {
       throw wrapNetworkError(e, '比特币手续费服务')
     }
@@ -766,7 +767,7 @@ export const metalPriceTool: BuiltinTool = {
     try {
       data = await getJson<GoldApiPrice>(
         '贵金属行情服务',
-        `https://api.gold-api.com/price/${hit.symbol}`,
+        `${OUTBOUND_FIXED_ENDPOINTS.goldApi}/price/${hit.symbol}`,
         ctx
       )
     } catch (e) {
@@ -821,7 +822,7 @@ export const earthquakeTool: BuiltinTool = {
     const days = Number(args?.days) >= 7 ? 7 : 1
     const level = minMag >= 5 ? 'significant' : minMag >= 4.5 ? '4.5' : '2.5'
     const span = days === 7 ? 'week' : 'day'
-    const url = `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/${level}_${span}.geojson`
+    const url = `${OUTBOUND_FIXED_ENDPOINTS.usgs}/earthquakes/feed/v1.0/summary/${level}_${span}.geojson`
 
     let data: { features?: UsgsFeature[] }
     try {
@@ -914,7 +915,7 @@ export const sunTimesTool: BuiltinTool = {
     }
     const days = Math.min(3, Math.max(1, Math.floor(Number(args?.days) || 1)))
     const url =
-      'https://api.open-meteo.com/v1/forecast' +
+      `${OUTBOUND_FIXED_ENDPOINTS.weatherForecast}/v1/forecast` +
       `?latitude=${queryLat}&longitude=${queryLon}` +
       '&daily=sunrise,sunset,uv_index_max' +
       `&timezone=auto&forecast_days=${days}`

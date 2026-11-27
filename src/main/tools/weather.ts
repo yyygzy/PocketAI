@@ -1,9 +1,10 @@
 // weather.query 工具：Open-Meteo 免费天气 API（无需 Key、无需注册）
-// 地理编码：https://geocoding-api.open-meteo.com/v1/search（支持中英文城市名）
-// 天气数据：https://api.open-meteo.com/v1/forecast（WMO weather_code → 中文描述）
+// 地理编码：OUTBOUND_FIXED_ENDPOINTS.weatherGeocoding（支持中英文城市名）
+// 天气数据：OUTBOUND_FIXED_ENDPOINTS.weatherForecast（WMO weather_code → 中文描述）
 // 全部出网走 safeFetch（SSRF 防护 + 超时 + 字节上限）。
 import type { BuiltinTool } from './builtin'
 import { SafeFetchError, safeFetch } from '../net/safe-fetch'
+import { OUTBOUND_FIXED_ENDPOINTS } from '../net/outbound-registry'
 
 /** 单次请求上限：与 web_fetch 的实际每跳预算对齐 */
 const REQUEST_TIMEOUT_MS = 15_000
@@ -76,7 +77,7 @@ export interface GeocodeHit {
 /** 导出供 air_quality（free-api.ts）复用同一套 open-meteo 地理编码 */
 export async function geocode(location: string, deadline: number, signal?: AbortSignal): Promise<GeocodeHit> {
   const url =
-    'https://geocoding-api.open-meteo.com/v1/search?name=' +
+    `${OUTBOUND_FIXED_ENDPOINTS.weatherGeocoding}/v1/search?name=` +
     encodeURIComponent(location) +
     '&count=1&language=zh&format=json'
   // 固定域名公共服务：允许复用用户在设置里配置的 HTTP 代理（未配置时代码路径等同直连）
@@ -128,7 +129,7 @@ export const weatherTool: BuiltinTool = {
       throw wrapNetworkError(e, '地理编码')
     })
     const url =
-      'https://api.open-meteo.com/v1/forecast' +
+      `${OUTBOUND_FIXED_ENDPOINTS.weatherForecast}/v1/forecast` +
       `?latitude=${hit.latitude}&longitude=${hit.longitude}` +
       '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation' +
       '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum' +

@@ -2,6 +2,7 @@
 // Bearer + body { query, count, summary }；响应 data.webPages.value[]
 import { providerFetchJson } from '../provider-fetch'
 import type { RawSearchHit, SearchProvider } from '../types'
+import { OUTBOUND_FIXED_ENDPOINTS } from '../../net/outbound-registry'
 
 interface BochaItem {
   name?: unknown
@@ -18,7 +19,7 @@ export const bochaProvider: SearchProvider = {
   id: 'bocha',
   requiresKey: true,
   async search({ query, count, apiKey, signal }) {
-    const json = await providerFetchJson<BochaResponse>('https://api.bochaai.com/v1/web-search', {
+    const json = await providerFetchJson<BochaResponse>(`${OUTBOUND_FIXED_ENDPOINTS.bocha}/v1/web-search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ query, count, summary: true }),

@@ -29,9 +29,11 @@ import {
   MAX_BACKOFF_MS
 } from './gateway-base'
 
+import { OUTBOUND_FIXED_ENDPOINTS } from '../net/outbound-registry'
+
 const log = createLogger('channels')
 
-const API_BASE = 'https://open.feishu.cn'
+const API_BASE = OUTBOUND_FIXED_ENDPOINTS.feishuApi
 /**
  * 飞书长连接回调域名白名单：URL 来自服务端响应，连接后会带上 tenant token 派生的凭据，
  * 只接受官方域名（根域及子域），IP 字面量与伪装后缀一律拒绝。

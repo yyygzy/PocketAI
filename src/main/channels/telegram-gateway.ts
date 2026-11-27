@@ -21,9 +21,11 @@ import {
   MAX_BACKOFF_MS
 } from './gateway-base'
 
+import { OUTBOUND_FIXED_ENDPOINTS } from '../net/outbound-registry'
+
 const log = createLogger('channels')
 
-const API_BASE = 'https://api.telegram.org'
+const API_BASE = OUTBOUND_FIXED_ENDPOINTS.telegramApi
 const LONG_POLL_TIMEOUT_S = 25
 const REQUEST_TIMEOUT_MS = 35_000 // 覆盖 long poll 25s + 网络余量
 const GETME_TIMEOUT_MS = 10_000

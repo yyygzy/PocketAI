@@ -22,10 +22,12 @@ import {
   MAX_BACKOFF_MS
 } from './gateway-base'
 
+import { OUTBOUND_FIXED_ENDPOINTS } from '../net/outbound-registry'
+
 const log = createLogger('channels')
 
-const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json'
-const API_BASE = 'https://discord.com/api/v10'
+const GATEWAY_URL = `${OUTBOUND_FIXED_ENDPOINTS.discordGatewayWs}/?v=10&encoding=json`
+const API_BASE = `${OUTBOUND_FIXED_ENDPOINTS.discordApi}/v10`
 const REQUEST_TIMEOUT_MS = 15_000
 const DISCORD_MSG_LIMIT = 2000
 const MIN_BACKOFF_MS = 1_000

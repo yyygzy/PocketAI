@@ -1368,6 +1368,14 @@ const api = {
   getOutboundEntries: (): Promise<
     import('../shared/types').OutboundEntryView[] | { ok: false; error: string }
   > => ipcRenderer.invoke(IPC.OUTBOUND_GET),
+  /** v2 全局出网 allowlist：默认关闭；开启后仅放行名单内 hostname */
+  getOutboundPolicy: (): Promise<
+    import('../shared/types').OutboundSitePolicyView | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC.OUTBOUND_POLICY_GET),
+  setOutboundPolicy: (
+    policy: import('../shared/types').OutboundSitePolicyView
+  ): Promise<import('../shared/types').OutboundSitePolicyView | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.OUTBOUND_POLICY_SET, policy),
 
   // ---------- 侧栏模块顺序与固定 ----------
   getSidebarOrder: (): Promise<{ ok: boolean; data?: import('../shared/types').SidebarModuleId[]; error?: string }> =>

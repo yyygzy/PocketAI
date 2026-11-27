@@ -7,8 +7,8 @@
 //  - 配置型当前地址来自 IPC（不是写死文案），读取失败单独显示
 //  - v1 只读：没有按钮/跳转
 import { describe, it, expect } from 'vitest'
-import { screen } from '@testing-library/react'
-import { mountWithProviders, stubPocketai } from './helpers/renderer'
+import { fireEvent, screen } from '@testing-library/react'
+import { mountWithProviders, pocketaiCalls, stubPocketai } from './helpers/renderer'
 import { OutboundPanel } from '../src/renderer/src/modules/settings/OutboundPanel'
 import { zh } from '../src/renderer/src/i18n/zh'
 import type { OutboundEntryView } from '../src/shared/types'
@@ -107,12 +107,34 @@ describe('OutboundPanel', () => {
     expect(await screen.findByText(/数据库未就绪/)).toBeTruthy()
   })
 
-  it('v1 只读：面板里没有按钮（不提供跳转设置）', async () => {
+  it('v2：面板提供可关闭的 allowlist 编辑器（默认关闭）', async () => {
     stubPocketai({ getOutboundEntries: () => entries })
     mountWithProviders(<OutboundPanel />)
 
     await screen.findByText(zh['outbound.entry.modelProviders'])
-    expect(screen.queryAllByRole('button')).toEqual([])
+    const toggle = screen.getByTestId('outbound-policy-enabled') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    expect(screen.getByTestId('outbound-policy-hosts')).toBeTruthy()
+    expect(screen.getByTestId('outbound-policy-save')).toBeTruthy()
+  })
+
+  it('v2：保存时下发规范化的域名列表，不把空行/空格写进去', async () => {
+    stubPocketai({
+      getOutboundEntries: () => entries,
+      getOutboundPolicy: () => ({ enabled: false, allowedHosts: [] }),
+      setOutboundPolicy: (p: unknown) => p
+    })
+    mountWithProviders(<OutboundPanel />)
+
+    fireEvent.click(await screen.findByTestId('outbound-policy-enabled'))
+    fireEvent.change(screen.getByTestId('outbound-policy-hosts'), {
+      target: { value: ' a.example.com \n b.example.com,\n' }
+    })
+    fireEvent.click(screen.getByTestId('outbound-policy-save'))
+
+    expect(await screen.findByTestId('outbound-policy-saved')).toBeTruthy()
+    const call = pocketaiCalls().find((c) => c.fn === 'setOutboundPolicy')
+    expect(call?.args[0]).toEqual({ enabled: true, allowedHosts: ['a.example.com', 'b.example.com'] })
   })
 
   it('IPC 失败时显示失败原因，不渲染空表', async () => {
