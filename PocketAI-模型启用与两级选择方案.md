@@ -106,7 +106,7 @@ enabledModels?: string[] | null
 
 ### 2.3 迁移 v76：仅加列、不回填
 
-现有迁移数组末尾是 v75，见 `src/main/db/database.ts:1396-1410`。新增：
+本文写作时迁移数组末尾是 v75（见当时的 `src/main/db/database.ts:1396-1410`）；当前 `LATEST_SCHEMA_VERSION` 已到 v82，`MIGRATIONS` 末项见 `src/main/db/database.ts` 尾部，但本方案描述的 v76 加列与不回填口径未变。当时计划新增：
 
 ```ts
 {

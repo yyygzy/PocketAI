@@ -1,7 +1,7 @@
 # 墨匣（Moxia / PocketAI）交接说明
 
-> 快照生成时间：2026-11-17（Asia/Shanghai）；最近回写：2026-11-26
-> 源码版本：`package.json` 中 `version` 为 **1.3.0**；当前 `main` 分支 HEAD 为 `554f82c`（快照生成时为 `6dbeff0`）
+> 快照生成时间：2026-11-17（Asia/Shanghai）；最近回写：2026-11-27
+> 源码版本：`package.json` 中 `version` 为 **1.3.0**；当前 `main` 分支 HEAD 为 `cc5aa88`（快照生成时为 `6dbeff0`）
 > 快照根目录：`E:\PocketAI-handover-1.3.0\`
 
 本文只描述仓库里已经存在的代码与文档事实。凡本次未实测、无法从代码/文档确认的内容，会明确写「待确认」，不当作结论使用。
@@ -178,6 +178,16 @@ npm run build        # electron-vite build，产物在 out/
 | `d173434` | `feat(skill): 增加浏览器沙箱技能脚本执行` | `run_skill_script` 默认 deny、逐次确认、仅清单内 JS、浏览器沙箱执行；详见 `docs/skill-upgrade-plan-2026-11.md` 与 `docs/skill-script-sandbox-2026-11.md`。 |
 | `554f82c` | `feat(screenshot): 完成双平台区域截图并接入主窗 Composer` | macOS `desktopCapturer` 整屏捕获、双平台浮窗区域框选、主窗 `+ → 截图` 的 window/screen 入口；四语文案与专项测试同步，已推送 `origin/main` 与 `gitee/main`。 |
 
+### 4.3 2026-11-27 后续升级轮（均已推送 `origin/main` 与 `gitee/main`）
+
+| 提交 | 摘要 | 关键内容 |
+|---|---|---|
+| `932b21d` | `fix(agent): 保护仍被引用的冷 blob 不被淘汰` | `agent_traces.cold_ref + messages` 双在作为活跃引用，时间/份数/字节淘汰均跳过；补测后全量通过。 |
+| `0ed5380` 起 | P1-3 续跑收口 | 成功后清理旧错误占位；`fc175c1` 增加 v81 内容指纹（同目录但文件内容变了不续跑）；`d75b0b0` 启动后只自动续可续的 interrupted，failed 仍手动；`agent.autoResume='0'` 为急停开关。 |
+| `cc5aa88` | `feat(import): 落库导入结果审计` | v82 `import_result_audits`；技能/MCP 导入动作只记来源、校验状态、计数、错误码，不存包正文或凭据值；写入 fail-open。 |
+
+> 上述后续升级之后，`dist/` 安装包尚未按最新 HEAD 重建；tag / Release 仍待发布时复核。
+
 冷启动白屏的根因（`fe2669c` 提交说明与代码注释）：旧实现用同步 `execSync`/`execFileSync` 跑 PowerShell，Windows 上冷启动加 CIM 查询可占用主线程 15–30s，期间窗口导航、加载重试与显示兜底计时器都被推迟。现在启动路径只发起异步探测，主线程不再等待。
 
 > 状态回写（2026-11-26）：`docs/release-notes-1.3.0.md` 已同步「冷启动白屏」为已修复，并保留目标机专项冷启动复测建议。
@@ -245,7 +255,7 @@ npm run build        # electron-vite build，产物在 out/
 
 ## 6. 提交与推送状态
 
-> 当前复核（2026-11-26）：`main` HEAD 为 `554f82c`，知识库、技能升级与截图第二／三刀全部提交均已推送到 `origin/main` 与 `gitee/main`，工作区干净。Windows 真机验收已完成，`dist/` 安装包与 `artifacts/` 资产已同步到该 HEAD；下方命令输出与 `[ahead 1]` 均为 2026-11-17 历史快照，不再代表当前状态。tag / Release 状态仍待发布时复核，不作为代码遗留。
+> 当前复核（2026-11-27）：`main` HEAD 为 `cc5aa88`，知识库、技能、截图、P1-3、P2-2、出网 v2、冷 blob 引用计数与 P2-3 v82 审计均已提交并推送到 `origin/main` 与 `gitee/main`，工作区干净。`dist/` 安装包与 `artifacts/` 资产仍停在 `554f82c` 时期，后续源码升级尚未重新打包；下方命令输出与 `[ahead 1]` 均为 2026-11-17 历史快照，不再代表当前状态。tag / Release 状态仍待发布时复核，不作为代码遗留。
 
 快照生成时的实际状态（`c:\PocketAI`）：
 
