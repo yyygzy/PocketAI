@@ -26,6 +26,8 @@ import {
   conversationOffloadDir,
   defaultOffloadRoot,
   getOffloadPruneFailureCount,
+  setProtectedColdRefsProvider,
+  resetProtectedColdRefsProvider,
   OFFLOAD_PREFIX
 } from '../src/main/agent/tool-output-offload'
 import { purgeConversationColdData, getColdDataFailureStats } from '../src/main/agent/cold-data'
@@ -42,6 +44,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetProtectedColdRefsProvider()
   fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -115,6 +118,65 @@ describe('上限：时间 30 天 + 字节 512 MB（目录级淘汰）', () => {
     expect(fs.existsSync(d2)).toBe(false)
     expect(fs.existsSync(fresh)).toBe(true)
     expect(pruneOffloads(root)).toBe(0)
+  })
+
+  it('活跃引用保护：仍被 trace+messages 指向的目录即使过期也不删', () => {
+    const d = makeDir('protected', 10, 40 * 24 * 3600 * 1000)
+    const ref = `${OFFLOAD_PREFIX}protected/protected.txt`
+    expect(pruneOffloads(root, { protectedRefs: [ref] })).toBe(0)
+    expect(fs.existsSync(d)).toBe(true)
+    // 反向对照：拿掉引用后同一目录立即按时间淘汰，证明不是恒真保护
+    expect(pruneOffloads(root)).toBe(1)
+    expect(fs.existsSync(d)).toBe(false)
+  })
+
+  it('活跃引用提供者会被写入后的 prune 自动调用', () => {
+    const d = makeDir('provider-protected', 10, 40 * 24 * 3600 * 1000)
+    setProtectedColdRefsProvider(() => [`${OFFLOAD_PREFIX}provider-protected/provider-protected.txt`])
+    writeOffloadFile(root, 'trigger', text(5000), 'trigger-conv')
+    expect(fs.existsSync(d)).toBe(true)
+  })
+
+  it('活跃引用保护旧平铺文件的份数淘汰；去掉引用后仍按 LRU 淘汰', () => {
+    const old = path.join(root, 'l-old.txt')
+    const fresh = path.join(root, 'l-fresh.txt')
+    fs.writeFileSync(old, 'x'.repeat(10))
+    fs.writeFileSync(fresh, 'x'.repeat(10))
+    const oldTime = new Date(Date.now() - 60 * 1000)
+    const freshTime = new Date(Date.now())
+    fs.utimesSync(old, oldTime, oldTime)
+    fs.utimesSync(fresh, freshTime, freshTime)
+
+    expect(pruneOffloads(root, { keep: 1, protectedRefs: [`${OFFLOAD_PREFIX}l-old.txt`] })).toBe(0)
+    expect(fs.existsSync(old)).toBe(true)
+    expect(fs.existsSync(fresh)).toBe(true)
+
+    expect(pruneOffloads(root, { keep: 1 })).toBe(1)
+    expect(fs.existsSync(old)).toBe(false)
+    expect(fs.existsSync(fresh)).toBe(true)
+  })
+
+  it('非法 protectedRefs 不会卡住淘汰', () => {
+    const d = makeDir('bad-ref', 10, 40 * 24 * 3600 * 1000)
+    expect(
+      pruneOffloads(root, {
+        protectedRefs: [`${OFFLOAD_PREFIX}../escape.txt`, 'not-outputs.txt']
+      })
+    ).toBe(1)
+    expect(fs.existsSync(d)).toBe(false)
+  })
+
+  it('字节淘汰同样跳过被引用目录', () => {
+    const older = makeDir('older', 10, 60 * 1000)
+    const newer = makeDir('newer', 8, 0)
+    expect(
+      pruneOffloads(root, {
+        maxBytes: 15,
+        protectedRefs: [`${OFFLOAD_PREFIX}older/older.txt`]
+      })
+    ).toBe(0)
+    expect(fs.existsSync(older)).toBe(true)
+    expect(fs.existsSync(newer)).toBe(true)
   })
 
   it('字节超限按目录 LRU 整目录淘汰，直到达标；再次调用不再删', () => {

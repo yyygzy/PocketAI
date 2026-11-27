@@ -176,6 +176,49 @@ describe('三档判定（真库 + 真 fs）', () => {
     expect(resolveTraceReplay(rec)).toBe('replayable')
   })
 
+  it('活跃引用集合随 messages 行存在与否增减（淘汰器据此保护冷 blob）', () => {
+    const msg = makeMessage('q'.repeat(5000))
+    const off = offloadToolOutput(root(), msg, 'q'.repeat(5000))!
+    agentTraceRepo.insert({
+      requestId: 'r-live-ref', conversationId: CONV, stepIndex: 0, stepType: 'tools',
+      status: 'success', messageId: msg, coldRef: off.ref, resultChars: 5000
+    })
+    expect(agentTraceRepo.listLiveColdRefs()).toContain(off.ref)
+    messageRepo.delete(msg)
+    expect(agentTraceRepo.listLiveColdRefs()).not.toContain(off.ref)
+  })
+
+  it('活跃引用集合去重，并排除空 messageId / 空 coldRef / 消息已删的 trace', () => {
+    const msg = makeMessage('d'.repeat(5000))
+    const sharedRef = `${OFFLOAD_PREFIX}live-dedup.txt`
+    agentTraceRepo.insert({
+      requestId: 'r-live-ref-dedup-1', conversationId: CONV, stepIndex: 0, stepType: 'tools',
+      status: 'success', messageId: msg, coldRef: sharedRef, resultChars: 5000
+    })
+    agentTraceRepo.insert({
+      requestId: 'r-live-ref-dedup-2', conversationId: CONV, stepIndex: 1, stepType: 'tools',
+      status: 'success', messageId: msg, coldRef: sharedRef, resultChars: 5000
+    })
+    agentTraceRepo.insert({
+      requestId: 'r-live-ref-null-message', conversationId: CONV, stepIndex: 0, stepType: 'tools',
+      status: 'success', coldRef: `${OFFLOAD_PREFIX}null-message.txt`, resultChars: 5000
+    })
+    agentTraceRepo.insert({
+      requestId: 'r-live-ref-missing-message', conversationId: CONV, stepIndex: 0, stepType: 'tools',
+      status: 'success', messageId: 'missing-message', coldRef: `${OFFLOAD_PREFIX}missing-message.txt`, resultChars: 5000
+    })
+    agentTraceRepo.insert({
+      requestId: 'r-live-ref-empty', conversationId: CONV, stepIndex: 0, stepType: 'tools',
+      status: 'success', messageId: msg, coldRef: '', resultChars: 5000
+    })
+
+    const refs = agentTraceRepo.listLiveColdRefs()
+    expect(refs.filter((r) => r === sharedRef)).toHaveLength(1)
+    expect(refs).not.toContain(`${OFFLOAD_PREFIX}null-message.txt`)
+    expect(refs).not.toContain(`${OFFLOAD_PREFIX}missing-message.txt`)
+    expect(refs).not.toContain('')
+  })
+
   it('messages 行被删 ⇒ 原文已清理（文件还在也不许兜底）', () => {
     const msg = makeMessage('y'.repeat(5000))
     const off = offloadToolOutput(root(), msg, 'y'.repeat(5000))!

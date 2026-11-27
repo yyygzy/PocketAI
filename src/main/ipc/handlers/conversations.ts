@@ -18,6 +18,8 @@ import { conversationRepo } from '../../db/repositories/conversation.repo'
 import { conversationGroupRepo } from '../../db/repositories/conversation-group.repo'
 import { messageRepo } from '../../db/repositories/message.repo'
 import { assistantRepo } from '../../db/repositories/assistant.repo'
+import { agentTraceRepo } from '../../db/repositories/agent-trace.repo'
+import { setProtectedColdRefsProvider } from '../../agent/tool-output-offload'
 import { deleteMessageAttachmentDocs } from '../../attachment/attachment-ingestion'
 import { encryptWithPassword, decryptWithPassword } from '../../crypto/portable-crypto'
 import { htmlToPdf } from '../../export/pdf'
@@ -54,6 +56,8 @@ function resolveImportOwnerId(assistantId: string | null | undefined): string | 
 }
 
 export function registerConversationHandlers(): void {
+  // 冷 blob 淘汰器只认文件系统；活跃引用（trace + messages 双在）在这里注入。
+  setProtectedColdRefsProvider(() => agentTraceRepo.listLiveColdRefs())
   safeHandle(IPC.CONVERSATION_LIST, (_e, assistantId?: string, isAgent?: boolean, archivedOnly?: boolean) =>
     conversationRepo.list(assistantId, isAgent, { archivedOnly }),
   conversationListArgsSchema)

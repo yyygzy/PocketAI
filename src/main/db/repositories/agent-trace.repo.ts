@@ -196,6 +196,29 @@ export const agentTraceRepo = {
   },
 
   /**
+   * P0-5 第三批：仍可回放的冷引用集合。
+   * 必须有 `messages` 行：trace 里有 `cold_ref` 但消息已被删/清扫时，回放档位是 `expired`，
+   * 文件不再是可信证据，不该挡住时间/字节淘汰。
+   */
+  listLiveColdRefs(): string[] {
+    try {
+      const rows = dbService.getHandle().prepare(
+        `SELECT DISTINCT t.cold_ref AS ref
+         FROM agent_traces t
+         JOIN messages m ON m.id = t.message_id
+         WHERE t.cold_ref IS NOT NULL AND t.message_id IS NOT NULL`
+      ).all() as Array<{ ref: string }>
+      return rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r.length > 0)
+    } catch (e) {
+      if (isTableMissingError(e)) {
+        warnTableMissingOnce()
+        return []
+      }
+      throw e
+    }
+  },
+
+  /**
    * 一次运行的汇总：**token 按整棵编排树算，步数与耗时只算主干**（V4-Iter-163，用户选定口径）。
    *
    * 这条不对称是刻意的，两处都有实测依据：

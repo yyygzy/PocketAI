@@ -54,6 +54,22 @@ export const OFFLOAD_MAX_BYTES = 512 * 1024 * 1024
 const PART_SUFFIX = '.part'
 /** 半小时内不动过的 `.part` 才当垃圾清：避免和正在写的另一个进程抢文件 */
 const STALE_PART_MS = 60 * 60 * 1000
+
+/**
+ * P0-5 第三批：引用计数。
+ * 卸载文件不是"写一次过期就删"的临时盘——`agent_traces.cold_ref` 还指向它、且对应
+ * `messages` 行还在时，它就是可回放证据。仓储依赖由 IPC 注册时注入，本模块保持纯文件系统。
+ */
+type ColdRefProvider = () => Iterable<string>
+let protectedRefsProvider: ColdRefProvider = () => []
+
+export function setProtectedColdRefsProvider(provider: ColdRefProvider): void {
+  protectedRefsProvider = provider
+}
+
+export function resetProtectedColdRefsProvider(): void {
+  protectedRefsProvider = () => []
+}
 /** 给模型看的路径前缀：只有 `fs_read` 认它，指向应用数据目录下的卸载根 */
 export const OFFLOAD_PREFIX = '@outputs/'
 
@@ -132,8 +148,11 @@ export function writeOffloadFile(
   } catch {
     return null
   }
-  pruneOffloads(root)
-  return { ref: conv ? `${OFFLOAD_PREFIX}${conv}/${file}` : `${OFFLOAD_PREFIX}${file}`, absPath }
+  const ref = conv ? `${OFFLOAD_PREFIX}${conv}/${file}` : `${OFFLOAD_PREFIX}${file}`
+  // 本次刚写的引用还没来得及落库（trace 在下一步才 insert），必须自己护住它。
+  // 旧平铺布局只有兼容测试/老调用会走，没有会话归属，保持原淘汰行为不额外保护。
+  pruneOffloads(root, { protectedRefs: new Set([...protectedRefsProvider(), ...(conv ? [ref] : [])]) })
+  return { ref, absPath }
 }
 
 /**
@@ -216,6 +235,8 @@ export interface OffloadPruneOptions {
   maxAgeMs?: number
   /** 卸载根总字节上限（默认 512 MB） */
   maxBytes?: number
+  /** 仍被 `agent_traces.cold_ref + messages` 引用的路径；命中者不参与任何淘汰 */
+  protectedRefs?: Iterable<string>
   /** 测试注入：替换文件删除实现（默认 fs.rmSync） */
   removeFile?: (abs: string) => void
   /** 测试注入：替换目录删除实现（默认 fs.rmSync recursive） */
@@ -244,6 +265,19 @@ export function pruneOffloads(root: string, opts: number | OffloadPruneOptions =
   const maxBytes = o.maxBytes ?? OFFLOAD_MAX_BYTES
   const removeFile = o.removeFile ?? ((abs: string) => fs.rmSync(abs))
   const removeDir = o.removeDir ?? ((abs: string) => fs.rmSync(abs, { recursive: true }))
+  const protectedAbs = new Set<string>()
+  for (const ref of o.protectedRefs ?? []) {
+    try {
+      protectedAbs.add(resolveOffloadPath(root, ref))
+    } catch {
+      // 引用形状非法就不参与保护；不能因为一条坏引用把整个淘汰器卡死
+    }
+  }
+  const isProtectedFile = (abs: string): boolean => protectedAbs.has(abs)
+  const isProtectedDir = (abs: string): boolean => {
+    for (const p of protectedAbs) if (p.startsWith(abs + path.sep)) return true
+    return false
+  }
 
   if (!fs.existsSync(root)) return 0
   const now = Date.now()
@@ -304,7 +338,7 @@ export function pruneOffloads(root: string, opts: number | OffloadPruneOptions =
   }
 
   // 1) 时间：会话目录整体过期 / 平铺文件过期
-  for (const d of dirs.filter((x) => now - x.newestMtime > maxAgeMs)) {
+  for (const d of dirs.filter((x) => now - x.newestMtime > maxAgeMs && !isProtectedDir(x.abs))) {
     try {
       removeDir(d.abs)
       removed++
@@ -312,7 +346,7 @@ export function pruneOffloads(root: string, opts: number | OffloadPruneOptions =
       recordPruneFailure(d.abs, e)
     }
   }
-  for (const f of legacyFiles.filter((x) => now - x.mtime > maxAgeMs)) {
+  for (const f of legacyFiles.filter((x) => now - x.mtime > maxAgeMs && !isProtectedFile(x.abs))) {
     try {
       removeFile(f.abs)
       removed++
@@ -322,7 +356,9 @@ export function pruneOffloads(root: string, opts: number | OffloadPruneOptions =
   }
 
   // 2) 旧平铺布局的份数上限（新目录不按份数淘汰，交给时间/字节）
-  const freshLegacy = legacyFiles.filter((x) => now - x.mtime <= maxAgeMs).sort((a, b) => b.mtime - a.mtime)
+  const freshLegacy = legacyFiles
+    .filter((x) => now - x.mtime <= maxAgeMs && !isProtectedFile(x.abs))
+    .sort((a, b) => b.mtime - a.mtime)
   for (const f of freshLegacy.slice(keep)) {
     try {
       removeFile(f.abs)
@@ -334,7 +370,7 @@ export function pruneOffloads(root: string, opts: number | OffloadPruneOptions =
 
   // 3) 字节：按目录 LRU 整目录删，再删平铺旧文件
   const liveDirs = [...dirs]
-    .filter((d) => now - d.newestMtime <= maxAgeMs)
+    .filter((d) => now - d.newestMtime <= maxAgeMs && !isProtectedDir(d.abs))
     .sort((a, b) => a.newestMtime - b.newestMtime)
   const liveLegacy = freshLegacy.slice(0, keep)
   let total = liveDirs.reduce((s, d) => s + d.bytes, 0) + liveLegacy.reduce((s, f) => s + f.bytes, 0)
