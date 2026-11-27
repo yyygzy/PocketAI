@@ -133,6 +133,31 @@ function sameWorkspaceDir(a: string, b: string): boolean {
   return norm(a) === norm(b)
 }
 
+/**
+ * P1-3 续跑成功后的旧错误占位清理范围。
+ * 只认「旧 run 时间窗内 + 挂在同一个锚点下 + 未收藏/未置顶的 error assistant」：
+ * 其他锚点、用户留痕的消息、以及新 run 的错误都不动；失败续跑保留旧证据。
+ */
+export function pickStaleFailedAssistantIds(
+  messages: MessageRecord[],
+  run: ConversationRunSnapshot,
+  anchorId: string
+): string[] {
+  const end = run.endedAt ?? Date.now()
+  return messages
+    .filter(
+      (m) =>
+        m.role === 'assistant' &&
+        m.status === 'error' &&
+        m.parentId === anchorId &&
+        !m.starred &&
+        !m.pinned &&
+        m.createdAt >= run.startedAt &&
+        m.createdAt <= end
+    )
+    .map((m) => m.id)
+}
+
 /** 按 batch 分组一轮回复：有 batchId 按 batchId 归组；旧数据（null）按“连续 5 秒内”归为同批 */
 function groupRepliesByBatch(replies: MessageRecord[]): MessageRecord[][] {
   const batches: MessageRecord[][] = []
@@ -671,6 +696,16 @@ class ChatService {
       const target = parseModelLabel(conv?.modelLabel ?? null)
       if (!conv || !target) throw resumeBlockedError('RESUME_TARGET_MISSING')
 
+      // 先圈定旧失败的 error 占位；只有这次续跑真成功才删，失败就保留证据。
+      const staleErrorIds =
+        ev.candidate.kind === 'failed'
+          ? pickStaleFailedAssistantIds(
+              messageRepo.listByConversation(conversationId),
+              ev.run,
+              ev.anchor.id
+            )
+          : []
+
       acquireKeepAwake()
       try {
         await agentEngine.run(
@@ -698,6 +733,13 @@ class ChatService {
             }
           }
         )
+        if (staleErrorIds.length > 0 && conversationRunRepo.getByRequest(requestId)?.status === 'done') {
+          try {
+            messageRepo.deleteBatch(staleErrorIds)
+          } catch (e) {
+            logger.warn('续跑成功后清理旧错误占位失败:', errMsg(e))
+          }
+        }
       } finally {
         releaseKeepAwake()
       }

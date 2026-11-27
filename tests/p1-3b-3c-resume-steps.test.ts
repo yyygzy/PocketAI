@@ -40,12 +40,14 @@ vi.mock('electron', () => ({
 /** 每次 streamChat 都记下来：用例要证明"只发了一次、发的是什么上下文" */
 let llmCalls = 0
 let lastMessages: Array<Record<string, unknown>> = []
+let llmShouldThrow = false
 vi.mock('../src/main/providers/manager', () => ({
   providerManager: {
     getAdapter: () => ({
       streamChat: async (messages: Array<Record<string, unknown>>) => {
         llmCalls += 1
         lastMessages = messages
+        if (llmShouldThrow) throw new Error('provider 500')
         return { content: '重试后的回答', toolCalls: [] }
       }
     })
@@ -100,6 +102,7 @@ beforeEach(() => {
   resetRuntimeRegistryForTest()
   llmCalls = 0
   lastMessages = []
+  llmShouldThrow = false
 })
 
 function newConversation(title = '续跑步'): string {
@@ -110,6 +113,17 @@ function newConversation(title = '续跑步'): string {
 
 const anchorOf = (convId: string): MessageRecord =>
   messageRepo.insert({ conversationId: convId, role: 'user', content: '原始提问', status: 'done' })
+
+/** 种一条旧失败留下的 error 占位（挂同一个锚点，落在失败 run 的时间窗里） */
+function seedErrorPlaceholder(convId: string, anchor: MessageRecord): MessageRecord {
+  return messageRepo.insert({
+    conversationId: convId,
+    role: 'assistant',
+    content: '（出错：provider 500）',
+    status: 'error',
+    parentId: anchor.id
+  })
+}
 
 /** 种一个"已经做完的工具步"：assistant 带 tool_calls，回答齐全的 tool 消息挂在其下 */
 function seedToolStep(
@@ -332,6 +346,7 @@ describe('P1-3c：失败只重试该步', () => {
       anchorUserMessageId: anchor.id
     })
     conversationRunRepo.checkpoint('req-3c', { stage: 'model', stepsDone: 2, toolStepsDone: 1 })
+    const stale = seedErrorPlaceholder(convId, anchor)
     conversationRunRepo.finish('req-3c', 'failed', 'provider 500')
 
     const cand = chatService.getResumeCandidate(convId)
@@ -354,6 +369,8 @@ describe('P1-3c：失败只重试该步', () => {
     // 已完成的工具步没有被重跑（tool 消息仍是 1 条），用户消息也没有重发
     expect(toolMessages(convId)).toHaveLength(1)
     expect(userMessages(convId)).toHaveLength(1)
+    // 旧失败留下的 error 占位在成功后清掉，不留一张"又错了一次"的假卡
+    expect(messageRepo.getById(stale.id)).toBeNull()
     // 旧行保持 failed 作审计；新行是新 requestId 且完成
     expect(conversationRunRepo.getByRequest('req-3c')?.status).toBe('failed')
     const latest = conversationRunRepo.getLatest(convId)!
@@ -361,6 +378,75 @@ describe('P1-3c：失败只重试该步', () => {
     expect(latest.status).toBe('done')
     expect(latest.stepsDone).toBe(2)
     expect(latest.toolStepsDone).toBe(1)
+  })
+
+  it('重试仍然失败 ⇒ 旧错误占位保留，不把失败痕迹抹掉', async () => {
+    const convId = newConversation('P1-3c-keep-error')
+    const anchor = anchorOf(convId)
+    seedToolStep(convId, anchor, [call('call_1')], ['call_1'])
+    conversationRunRepo.start({
+      requestId: 'req-3c-keep',
+      conversationId: convId,
+      mode: 'agent',
+      startedAt: Date.now() - 1000,
+      anchorUserMessageId: anchor.id
+    })
+    conversationRunRepo.checkpoint('req-3c-keep', { stage: 'model', stepsDone: 2, toolStepsDone: 1 })
+    const stale = seedErrorPlaceholder(convId, anchor)
+    conversationRunRepo.finish('req-3c-keep', 'failed', 'provider 500')
+
+    llmShouldThrow = true
+    const { sink } = collectEvents()
+    await chatService.resume(
+      { requestId: 'req-3c-keep-retry', conversationId: convId, resumeFromRequestId: 'req-3c-keep' },
+      sink
+    )
+
+    expect(messageRepo.getById(stale.id)).not.toBeNull()
+    expect(conversationRunRepo.getByRequest('req-3c-keep-retry')?.status).toBe('failed')
+  })
+
+  it('只删旧 run 时间窗内、同锚点、未留痕的 error；其他错误一律保留', async () => {
+    const convId = newConversation('P1-3c-cleanup-boundary')
+    const anchor = anchorOf(convId)
+    seedToolStep(convId, anchor, [call('call_1')], ['call_1'])
+    conversationRunRepo.start({
+      requestId: 'req-3c-boundary',
+      conversationId: convId,
+      mode: 'agent',
+      startedAt: Date.now() - 1000,
+      anchorUserMessageId: anchor.id
+    })
+    conversationRunRepo.checkpoint('req-3c-boundary', { stage: 'model', stepsDone: 2, toolStepsDone: 1 })
+
+    const stale = seedErrorPlaceholder(convId, anchor)
+    const starred = seedErrorPlaceholder(convId, anchor)
+    messageRepo.setStarred(starred.id, true)
+    const pinned = seedErrorPlaceholder(convId, anchor)
+    messageRepo.setPinned(pinned.id, true)
+    const otherAnchor = messageRepo.insert({
+      conversationId: convId,
+      role: 'assistant',
+      content: '别的锚点下的错误',
+      status: 'error',
+      parentId: 'other-anchor'
+    })
+    conversationRunRepo.finish('req-3c-boundary', 'failed', 'provider 500')
+    // run 结束之后才出现的错误：不属于旧 run 的占位（错开毫秒，避免同毫秒边界含糊）
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    const late = seedErrorPlaceholder(convId, anchor)
+
+    const { sink } = collectEvents()
+    await chatService.resume(
+      { requestId: 'req-3c-boundary-retry', conversationId: convId, resumeFromRequestId: 'req-3c-boundary' },
+      sink
+    )
+
+    expect(messageRepo.getById(stale.id)).toBeNull()
+    expect(messageRepo.getById(starred.id)).not.toBeNull()
+    expect(messageRepo.getById(pinned.id)).not.toBeNull()
+    expect(messageRepo.getById(otherAnchor.id)).not.toBeNull()
+    expect(messageRepo.getById(late.id)).not.toBeNull()
   })
 
   it('失败落在工具步 ⇒ 不给"只重试该步"入口', () => {
