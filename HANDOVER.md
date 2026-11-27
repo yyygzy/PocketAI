@@ -186,7 +186,7 @@ npm run build        # electron-vite build，产物在 out/
 | `0ed5380` 起 | P1-3 续跑收口 | 成功后清理旧错误占位；`fc175c1` 增加 v81 内容指纹（同目录但文件内容变了不续跑）；`d75b0b0` 启动后只自动续可续的 interrupted，failed 仍手动；`agent.autoResume='0'` 为急停开关。 |
 | `cc5aa88` | `feat(import): 落库导入结果审计` | v82 `import_result_audits`；技能/MCP 导入动作只记来源、校验状态、计数、错误码，不存包正文或凭据值；写入 fail-open。 |
 
-> 上述后续升级之后，`dist/` 安装包尚未按最新 HEAD 重建；tag / Release 仍待发布时复核。
+> 上述后续升级之后，Windows 安装包已按 `19743f3` 重建并同步到 `artifacts/`；tag / Release 仍待发布时复核。
 
 冷启动白屏的根因（`fe2669c` 提交说明与代码注释）：旧实现用同步 `execSync`/`execFileSync` 跑 PowerShell，Windows 上冷启动加 CIM 查询可占用主线程 15–30s，期间窗口导航、加载重试与显示兜底计时器都被推迟。现在启动路径只发起异步探测，主线程不再等待。
 
@@ -255,7 +255,7 @@ npm run build        # electron-vite build，产物在 out/
 
 ## 6. 提交与推送状态
 
-> 当前复核（2026-11-27）：`main` HEAD 为 `cc5aa88`，知识库、技能、截图、P1-3、P2-2、出网 v2、冷 blob 引用计数与 P2-3 v82 审计均已提交并推送到 `origin/main` 与 `gitee/main`，工作区干净。`dist/` 安装包与 `artifacts/` 资产仍停在 `554f82c` 时期，后续源码升级尚未重新打包；下方命令输出与 `[ahead 1]` 均为 2026-11-17 历史快照，不再代表当前状态。tag / Release 状态仍待发布时复核，不作为代码遗留。
+> 当前复核（2026-11-27）：`main` HEAD 为 `19743f3`，知识库、技能、截图、P1-3、P2-2、出网 v2、冷 blob 引用计数、P2-3 v82 审计与文档口径收口均已提交并推送到 `origin/main` 与 `gitee/main`，工作区干净。Windows 与 Linux 安装包均已按该 HEAD 重新构建并同步到 `artifacts/`；下方命令输出与 `[ahead 1]` 均为 2026-11-17 历史快照，不再代表当前状态。tag / Release 状态仍待发布时复核，不作为代码遗留。
 
 快照生成时的实际状态（`c:\PocketAI`）：
 
@@ -314,15 +314,15 @@ git tag --list
 
 | 文件 | 字节数 | SHA-256（与 `dist/` 源文件一致） |
 |---|---:|---|
-| `Moxia-1.3.0-x64.exe` | 336,166,884 | `C5A161F90BA9E9CFA1A0CBD7F2A39298C98311E35DCB8FED22D53109CBABDE44` |
-| `Moxia-1.3.0-Portable-x64.exe` | 267,423,354 | `C96C6A00CBBB505A0474539FA5294A25E88B5EABED3A17279695B45B0B72D4CE` |
-| `Moxia-1.3.0-Linux-x86_64.AppImage` | 346,358,488 | `5654FCAC6EFB3D8F906406A87389FDCCBAED55E8C76E1596350C664FAE204938` |
-| `Moxia-1.3.0-Linux-amd64.deb` | 264,966,048 | `A1EF5F35173549E14AE02AA191534F01AC09CE9875598ADD0363DCD8FA52242F` |
-| `latest.yml` | 335 | `FC159E03965F7A06E71E14DBEFC7185EC5F1E41869065410B861DF228B1F6E00` |
-| `latest-linux.yml` | 546 | `632D81DCB42CA45949D678E2B6480B5083EBE392B340D45B04CF51CC55270DAF` |
-| `Moxia-1.3.0-x64.exe.blockmap` | 343,821 | `A530A3790848DC6AEC26C1A632D16B25BFFC6372E90EF1F38ED57BFE77B4FEAA` |
+| `Moxia-1.3.0-x64.exe` | 336,177,961 | `E51E91247368FC651AC6F363386675FB02A025DF36FA42E0DC1BA8A4AB5EF53E` |
+| `Moxia-1.3.0-Portable-x64.exe` | 335,943,509 | `6E29BCDE1B4787A46909C8B1F1403FBD89852695767B4A966479B4E419AA3240` |
+| `Moxia-1.3.0-Linux-x86_64.AppImage` | 346,391,073 | `3BF4F7033F2E2763B9690D75A004DDB5C5A173CE1861748CF368779F9A4EE649` |
+| `Moxia-1.3.0-Linux-amd64.deb` | 264,994,632 | `B7A06929B0BCD42994E77B947C8100E6747C0F9F55741622C2F28C69F7E3F81F` |
+| `latest.yml` | 335 | `1551234B6C39E1AA186F2E335C272852CF4A32D93BD89B43CECEEE9260A02FC8` |
+| `latest-linux.yml` | 546 | `B922758526F25DEDB49A3612C497387D610C3CBCB7264E99B9175141B55A83BE` |
+| `Moxia-1.3.0-x64.exe.blockmap` | 343,430 | `8D4FA0DF370E2F4C493376926CCFFAD39D5DD870FBB2BC4917C985809F8C1C6F` |
 
-合计 **7 个文件 / 1,215,259,476 字节**，已按 `554f82c` 重新构建并同步。`dist/` 内其他旧版本文件（如 `Moxia-1.1.8-x64 (2).exe`、1.2.x 的包、`win-unpacked/`、`builder-debug.yml`）**未带入**。
+合计 **7 个文件 / 1,283,851,486 字节**；Windows portable/NSIS 与 Linux AppImage/deb 均已按 `19743f3` 重新构建并同步，两块平台的 `latest*.yml` 与 Windows blockmap 也已更新。`dist/` 内其他旧版本文件（如 `Moxia-1.1.8-x64 (2).exe`、1.2.x 的包、`win-unpacked/`、`builder-debug.yml`）**未带入** `artifacts/`。
 
 自查命令（Windows PowerShell）：
 

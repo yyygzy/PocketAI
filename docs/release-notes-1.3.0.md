@@ -8,7 +8,7 @@
 - 知识库升级五阶段已完成（`8b62b25`）：短中文 FTS 辅助路、CSV/XLSX 结构化检索、micro `sourceCoverageAtK` / `missingSources`、源文件变更检测与数据健康面板闭环。详见 `docs/kb-upgrade-plan-2026-11.md`。
 - 技能升级五阶段已完成（`67e675c` / `df6f60c` / `900d8f5` / `d173434`）：版本治理与回滚、SKILL.md 标准化、默认关闭的路由 + activation eval、`references/assets` 白名单只读、默认关闭且逐次确认的 JS 浏览器沙箱脚本执行。详见 `docs/skill-upgrade-plan-2026-11.md` 与 `docs/skill-script-sandbox-2026-11.md`。
 - 截图升级三刀已完成（`554f82c`）：macOS 整屏捕获、双平台浮窗区域框选、主窗 `+ → 截图` 的 window/screen 入口；Windows 真机验收与安装包重建已完成，macOS 授权/捕获与多显示器跨 DPI 仍未验。详见 `HANDOVER.md` 第 5.2 节。
-- 2026-11-27 追加：P2-2 第三支维护任务、流程模板从会话沉淀、出网清单 v2 allowlist 阻断、冷 blob 引用计数保护、P1-3 续跑 a–e、P2-3 v82 导入结果审计均已交付并推送；当前源码 HEAD `cc5aa88`。上述后续升级均未重新打 tag / Release，`dist/` 安装包仍是 `554f82c` 时期产物。
+- 2026-11-27 追加：P2-2 第三支维护任务、流程模板从会话沉淀、出网清单 v2 allowlist 阻断、冷 blob 引用计数保护、P1-3 续跑 a–e、P2-3 v82 导入结果审计均已交付并推送；当前源码 HEAD `19743f3`。Windows 与 Linux 安装包均已按该 HEAD 重新构建并同步到 `artifacts/`；tag / Release 仍未发布。
 - 上述升级不是历史原始 1.3.0 发布包内容；工作区已按 `554f82c` 重新打包并补做 Windows 真机复核，但 tag / Release 尚未发布。
 
 ## 安装前请先看：安装包未签名
