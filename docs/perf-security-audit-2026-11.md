@@ -1193,7 +1193,7 @@ setSvg(CLEAN)
 
 **级别** 中 ｜ **状态** 修复中 ｜ **位置** `src/main/license/license.ts:131-143`、`src/main/license/public-key.ts:4-5`、发行侧 `scripts/lib/issue-license.js:86` ｜ **验证** 已实测
 
-> 修复口径：签名字段前缀分流（ed25519: / 旧 RSA 裸 base64），验签严格 fail-closed；ED25519_PUBLIC_KEY_B64 留空待运维离线生成密钥对后填入，与 SEC-16-02 私钥轮换 / 客户端发布同批上线。旧 RSA 证过渡期仍有效，过渡截止由产品决定。
+> 修复口径：签名字段前缀分流（ed25519: / 旧 RSA 裸 base64），验签严格 fail-closed；ED25519_PUBLIC_KEY_B64 留空待运维离线生成密钥对后填入，与 SEC-16-02 私钥轮换 / 客户端发布同批上线。旧 RSA 证长期并存、不设过渡截止；新签发走 Ed25519（2026-11-28 用户决策）。
 
 **问题**
 
@@ -1278,13 +1278,13 @@ export function normalizeRecoveryCode(input: string): string {
 }
 ```
 
-### 待人工确认（需部署侧证据，本次不定级）
+### 人工确认结论（2026-11-28 收口）
 
-| # | 事项 | 代码位置 | 需确认 |
+| # | 事项 | 代码位置 | 结论 / 需确认 |
 |---|---|---|---|
-| C1 | `license-server` 默认 `http://0.0.0.0:8787` 明文 | `license-server/server.js:39,367,391` | 生产是否置于 HTTPS 反代之后？（客户端侧已强制 https，`server-config.ts:26-28` 非法直接抛错拒绝启动） |
-| C2 | 改密后恢复码是否强制用户保存 | `encryption.ts:227-231,504-505` | 渲染层是否**强制**保存新恢复码？若用户忽略则忘密码即永久丢失 |
-| C3 | 主密码最小 10 位无复杂度要求 | `src/shared/schemas/encryption.ts:8,16-18` | 产品是否接受 10 位纯小写口令配合 scrypt N=2^17 作为离线暴破门槛 |
+| C1 | `license-server` 默认 `http://0.0.0.0:8787` 明文 | `license-server/server.js:39,367,391` | **已确认（2026-11-28）**：生产置于 HTTPS 反代之后，服务端 http 仅由反代终止 TLS；客户端侧已强制 https（`server-config.ts:26-28` 非法直接抛错拒绝启动）。无需代码改动 |
+| C2 | 改密后恢复码是否强制用户保存 | `encryption.ts:227-231,504-505` | **已决策（2026-11-28）**：改密后强制保存新恢复码；当前仅提示，需后续实施渲染层流程（本次只记口径，不改代码） |
+| C3 | 主密码长度与字符形态 | `src/shared/schemas/encryption.ts:8,16-18` | **已确认（2026-11-28）**：≥10 位即可，允许大小写字母、数字符号及其任意组合，含纯字母或纯数字；不引入复杂度强制。现有 `newMasterPasswordSchema` 已符合该口径，无需代码改动 |
 | C4 | 终端会话的窗口关闭清理 | `src/main/terminal/terminal-service.ts` + `src/main/quit-manager.ts` + `src/main/index.ts` | 应用退出/锁屏/隐藏时子进程树是否被完整清理。**代码侧已收口**（`bf5a343`）：退出链（正常与 `will-quit` 兜底）调用 `killAllTerminals()` + `killInFlightShellJobs()`（`quit-manager.ts:104,108,135,139`）；主窗口 hide/minimize 调用 `killAllTerminals()`（`index.ts:244,249`）；锁屏态由 `lockService.onStateChange` 终止会话（`terminal-service.ts:221-226`）。剩余仅真机确认进程树无残留 |
 
 ---
@@ -1365,7 +1365,7 @@ export function normalizeRecoveryCode(input: string): string {
 - [ ] SEC-16-02：确认私钥已从交付目录移除**且已从磁盘删除**（`git rm --cached` 无效，它是未跟踪文件）；确认打包产物（安装包 / asar / portable exe）内不含 pem。
 - [ ] SEC-16-04：手动终端内执行 `dd`/`fsutil`/`vssadmin` 应被拦；锁屏后终端应终止。
 - [ ] SEC-16-06：确认产品是否必须支持内网 NAS 的 http WebDAV（影响是否加二次确认而非直接拒绝）。
-- [ ] SEC-16-08：产品决策 —— 是否把默认加密模式从 `none` 改为强制设密（影响首次启动体验与老库迁移）。
+- [x] SEC-16-08：产品决策 —— 保留 `none` 默认；UI 标注「凭据未受保护」并将「字段加密」改称「字段混淆」（2026-11-28 用户决策，文案改动待实施）。
 - [ ] SEC-16-09：审批弹窗是否展示将读取的日历文件名（需确认 UI 文案与交互）。
 - [ ] PERF-01 / PERF-05：性能数字需在**目标用户真实数据量**下复测（至少 3k / 20k chunk 两档）。
 - [ ] 全文核对：`安全审查修复方案.md` 的 H/M/L 编号与本文件的 SEC-16-xx / PERF-xx 无冲突；建议把本文件的 P0 三项回写进该文档的「分期计划」表。
@@ -1392,5 +1392,6 @@ export function normalizeRecoveryCode(input: string): string {
 | 2026-11-27 | 修复批（P0+P1） | 17 项实施完成：SEC-16-01（run_tests/post-edit-validation 直跑 Node + 路径白名单）、SEC-16-02（打包拦截脚本，私钥运维待办）、SEC-16-03（fs 守卫逐段 lstat+readlink 重写）、SEC-16-04/05（终端硬拒+审计+锁屏清会话、shell deny-list 补齐；reasonCode 正式拆分留下迭代）、SEC-16-06（WebDAV 强制 https + 本地备份 0600）、SEC-16-07（字段解密 fail-closed 迁移闸）、SEC-16-08（注释口径修正）、SEC-16-09（日历 path-token）、SEC-16-10（备份合并 KB 行级合并+向量一致性收口）、SEC-16-11（reveal 一次性令牌+审计+冷却）、PERF-01（KNN MATERIALIZED CTE）、PERF-02/03（highlight 收敛+组件提升+rAF 合批）、PERF-04（复合索引+游标分页；ChatView 接线留下迭代）、PERF-05（FTS 触发器按 rowid 重写，v84）、PERF-06（sumCostSince 指纹缓存+SQL 预过滤）；新增回归测试 12 个文件 111 例，全量 760 文件 7975 用例通过，tsc --noEmit 0 错误 | 已修复 |
 | 2026-11-27 | 文档自审与勘误 | 对本文件自身做事实核查（两路核查代理核对约 90 条行号引用与全部事实断言 + 改法代码逐条推演）：修正 7 处事实错误（PKBK2 档位断言、0o600 计数、「唯一 http 通道」、throttle 漏检、Options 枚举、createCipheriv 计数、变更记录算术）、4 处改法缺陷（ELECTRON_RUN_AS_NODE 前提、TEST_FILE_RE 与意图不符、symlink 守卫越界回溯、old.rowid 触发器语义）、6 处偏差（SEC-16-10 表清单全引、PERF-04/06 冗余索引、SEC-16-07 函数名、SEC-16-05 正则缺口、§1.2 表述）；补充引文约定 | 已修订（本文档当前版本） |
 | 2026-11-28 | 修复批（P2+P3） | 10 项实施完成并接上 4 处遗留：PERF-07（GROUP BY 聚合 + 批量 IN + v85 source 索引，1000 行 prepare 2N+1→1）、PERF-08（statement-cache WeakMap，基准 21.9×）、PERF-09（容量/去重/并发 3/指数退避/app_config 进度）、PERF-10（帧缓存，N 条调用 buildIndex 2N+2→1 + 失效路径）、SEC-16-12（导出 HTML href 白名单+CSP）、SEC-16-13（远程图片零跨域请求：SAFE_IMG_SRC 收紧+CSP img-src+referrerPolicy+cacheBust:false；行为变化=默认不显示远程图片）、SEC-16-14（DOMPurify 二次净化+dompurify 显式依赖）、SEC-16-15（Ed25519 签名字段前缀分流，公钥待运维填入 → 修复中）、SEC-16-16（MOXENC2+kdfId，旧格式兼容）、SEC-16-17（Crockford 容错映射接线）；遗留收口：reasonCode 独立拆分+两套四语字典同步、ChatView 滚动加载接 MESSAGE_LIST_PAGE（保留 §309 闸门并登记新写点）、SecurityEventKind 收编 credential_reveal/terminal_command、隐藏即杀终端会话。新增测试 12 个文件 80 例；全量 771 文件 8036 用例通过（1 例沙箱清理超时 flake，单跑 13/13 复绿），tsc 0 错误 | 已修复（2026-11-28 提交 `bf5a343` 并推送；SEC-16-15 代码侧完成，公钥待运维） |
+| 2026-11-28 | 决策收口（C1/C2/C3/C4/SEC-16-08/RSA） | C1 确认生产经 HTTPS 反代；C2 改密强制保存新恢复码（待实施）；C3 确认 ≥10 位且字符形态不限，现有 schema 已符合；C4 代码侧已收口仅剩真机确认；SEC-16-08 保留 none 默认 + UI 标注未受保护/字段混淆（文案待实施）；旧 RSA 证长期并存不设截止 | 决策已收口；C2 / SEC-16-08 实现待排期 |
 
 > 回写建议：本批次定稿后，把 P0 三项（SEC-16-01 / SEC-16-02 / PERF-01）与 P1 六项追加进 `docs/security-audit-ledger.md` 的「五、修复批次规划」表，并在「八、变更记录」新增一行。
